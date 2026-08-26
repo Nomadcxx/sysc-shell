@@ -6,7 +6,7 @@
 
 **Architecture:** One goroutine owns the `dankgo` Wayland connection and every Wayland proxy. Pure UI and rendering packages build and paint a retained tree into released `wl_shm` buffers. A Niri client publishes typed workspace snapshots, and pointer actions mutate the proof model through the Wayland owner's command queue.
 
-**Tech Stack:** Go 1.26+, pinned `dankgo`, pinned `go-text/typesetting`, `golang.org/x/image`, `golang.org/x/sys`, Niri JSON IPC, `wlr-layer-shell-unstable-v1`, and `wl_shm`.
+**Tech Stack:** Go 1.26 language level (verified against toolchain `go1.27.0`), pinned `dankgo`, pinned `go-text/typesetting`, `golang.org/x/image`, `golang.org/x/sys`, Niri JSON IPC, `wlr-layer-shell-unstable-v1`, and `wl_shm`.
 
 ---
 
@@ -18,6 +18,7 @@
 - Do not add a framework, dependency-injection container, logging package, configuration library, Makefile, or renderer interface.
 - Keep the UI fixture fixed: one row with a workspace label, a meter, and a button.
 - Commit after each task. Stop at Task 10 even if later roadmap work looks easy.
+- This plan carries the corrections from [the 2026-08-27 plan audit](2026-08-27-plan-audit-report.md). Protocol contracts marked below as verified were executed against Niri 26.04 on the reference machine.
 
 ## Proof acceptance contract
 
@@ -84,6 +85,8 @@ go get github.com/go-text/typesetting@ddb7ff96ad4d2dc730cbcae9dd5140023f319c3e
 go get golang.org/x/image@v0.44.0
 go get golang.org/x/sys@v0.47.0
 ```
+
+All four pins resolve at these versions: `dankgo v0.0.0-20260823164143-10434658325c`, `typesetting v0.3.5-0.20260729084153-ddb7ff96ad4d`, `x/image v0.44.0`, `x/sys v0.47.0`. After Task 6 runs the generator, `go mod tidy` must leave `go.sum` holding only these and their transitive requirements.
 
 Use `flag.NewFlagSet` with `flag.ContinueOnError`. `main()` parses arguments, creates a signal-aware context, calls a stub `run(ctx, options)`, writes errors to stderr, and exits non-zero. The stub returns `errors.New("architectural proof not implemented")`.
 
@@ -197,7 +200,9 @@ git commit -m "feat: add proof UI tree and row layout"
 
 **Step 1: Write failing text tests**
 
-Use `golang.org/x/image/font/gofont/goregular.TTF` for the Latin fixture. Add one small test font fixture with Arabic coverage under `internal/render/testdata/` only if no dependency test font has a redistribution-compatible license.
+Use `golang.org/x/image/font/gofont/goregular.TTF` for the Latin fixture; it has no Arabic coverage.
+
+For the joined-script fixture, copy `Amiri-Regular.ttf` and `OFL.txt` from the pinned `go-text/typesetting` module's `font/testdata/` into `internal/render/testdata/`. Amiri is SIL OFL 1.1; keep `OFL.txt` beside the font and record its provenance in `docs/prior-art.md`.
 
 Test these behaviors:
 
@@ -221,7 +226,9 @@ func TestTextMeasureAndRaster(t *testing.T) {
 }
 ```
 
-Add a joined/right-to-left fixture and assert that shaping returns glyphs, positive bounds, and stable output across two calls. Do not assert a fragile exact glyph sequence.
+Add a joined/right-to-left fixture and assert that shaping returns glyphs, positive bounds, and stable output across two calls.
+
+Do not assert an exact glyph sequence, and do not stop at "shaping returned glyphs" -- that passes even when shaping degenerates to a plain `cmap` lookup with no joining. Assert instead that **no shaped glyph ID equals the nominal glyph ID** of its source rune (`Face.NominalGlyph`). Contextual substitution is what makes the result different, and the assertion stays stable across font and shaper updates.
 
 **Step 2: Run and confirm failure**
 
@@ -240,6 +247,8 @@ Expected: compilation fails because `TextRenderer` does not exist.
 - Return an `image.Alpha` mask plus baseline and advance data.
 - Cache parsed faces. Do not add a global glyph cache until painting measures a need.
 - Return errors for empty font data, invalid size, missing glyph data, and unsupported bitmap/color glyphs.
+- Shape at the **physical** pixel size (`base * scale120 / 120`). Do not shape at the logical size and upscale the mask.
+- `font.GlyphData` returns a `font.GlyphData` interface; only `font.GlyphOutline` is supported. Map its `opentype.SegmentOp` values onto `vector.Rasterizer`'s `MoveTo`, `LineTo`, `QuadTo` and `CubeTo`, negating Y to convert font units to raster coordinates.
 
 Use the upstream pinned `shaping/render_test.go` only as a segment and coordinate reference. Do not copy its diagnostic point renderer.
 
@@ -331,9 +340,16 @@ Test a two-slot scheduler:
 2. mark it submitted and busy;
 3. request another redraw while a frame callback is pending;
 4. verify no second submission occurs;
-5. receive frame done and buffer release;
-6. verify exactly one coalesced redraw becomes ready;
-7. verify an idle scheduler produces no work.
+5. receive **frame done while the slot is still busy** and verify the scheduler does not offer that slot;
+6. receive the release afterwards and verify exactly one coalesced redraw becomes ready;
+7. repeat 5 and 6 with the **release arriving first**, and verify the same single redraw;
+8. receive a configure while a frame is pending: verify the pending render is discarded and a redraw at the new size becomes ready;
+9. receive a close while a frame is pending: verify the scheduler produces no further work;
+10. verify an idle scheduler produces no work.
+
+Frame completion never implies a free buffer. Observed on Niri 26.04: `wl_callback.done` for a commit
+arrives while that commit's buffer is still held, and `wl_buffer.release` arrives only after the **next**
+buffer is attached and committed. A scheduler that treats frame-done as release will reuse a busy buffer.
 
 **Step 2: Run and confirm failure**
 
@@ -381,13 +397,23 @@ git commit -m "feat: add frame and buffer scheduling state"
 
 **Step 1: Pin the protocol source**
 
-Copy `wlr-layer-shell-unstable-v1.xml` from the same protocol revision used by the inspected DMS commit. Copy `fractional-scale-v1.xml` and `viewporter.xml` from the pinned `wayland-protocols` revision used by Noctalia. Preserve copyright headers and record upstream URLs and commits in each `generate.go`.
+Copy `wlr-layer-shell-unstable-v1.xml` from `wlr-protocols` at the revision providing `zwlr_layer_shell_v1` version 5, which is the version Niri 26.04 advertises. Copy `fractional-scale-v1.xml` and `viewporter.xml` from the pinned `wayland-protocols` revision used by Noctalia. Preserve copyright headers and record upstream URLs and commits in each `generate.go`.
 
 **Step 2: Add the generator command**
 
 ```go
-//go:generate go run github.com/AvengeMedia/dankgo/cmd/go-wayland-scanner -pkg layershell -o layer_shell.go -i ../../../../protocols/wlr-layer-shell-unstable-v1.xml
+//go:generate go run github.com/AvengeMedia/dankgo/cmd/go-wayland-scanner@10434658325c -pkg layershell -o layer_shell.go -i ../../../../protocols/wlr-layer-shell-unstable-v1.xml
 ```
+
+Keep the `@10434658325c` suffix. Without it the generator resolves inside the main module and writes its
+own build dependencies -- `golang.org/x/crypto`, `golang.org/x/mod`, `golang.org/x/sync`,
+`golang.org/x/tools`, `mvdan.cc/gofumpt` and `github.com/iancoleman/strcase` -- into this repository's
+`go.sum`. The version suffix builds it in an isolated module context instead.
+
+Generation is reproducible, with two conditions. The generated header embeds the literal `-i` argument,
+so the relative path must not change; and the generator shells out to `go list -m -f '{{.GoVersion}}'`
+to pick a `gofumpt` language version, so the `go` directive in `go.mod` must not change without
+regenerating.
 
 Add equivalent commands in packages `fractionalscale` and `viewporter`. Do not trim protocol prefixes. Keeping protocol names makes source comparisons with XML and upstream generated bindings direct.
 
@@ -434,11 +460,14 @@ git commit -m "build: generate shell protocol bindings"
 Model registry events with local structs and test:
 
 - required globals become ready only after compositor, shm, seat, layer-shell, fractional-scale manager, viewporter, and at least one output exist;
-- bind versions use the lower server/client value;
-- a named output selection fails when no output matches after the initial roundtrip;
+- bind versions use the lower server/client value, taken from an explicit client-side table (see Step 3);
+- `ARGB8888` selected from the advertised `wl_shm.format` list, and a named error when it is absent;
+- a named output selection matches on the `wl_output.name` string and fails when no output matches after the initial roundtrips;
+- output hosts are keyed by `wl_registry` global name, never by connector string;
 - output removal returns the host ID to destroy;
 - configure acknowledgement precedes buffer eligibility;
-- cleanup order is buffer, pool, layer surface, `wl_surface`, output proxy, globals, display.
+- cleanup order is buffer, pool, mapping, viewport, fractional-scale object, layer surface, `wl_surface`, output proxy, globals, display;
+- a buffer generation is retired only after every buffer in it has been released, or the surface is destroyed.
 
 **Step 2: Run and confirm failure**
 
@@ -456,7 +485,10 @@ Implement:
 type Options struct { Output string; Height int }
 type Event struct { Kind EventKind; X, Y int; Button uint32 }
 type App interface {
-	Configure(width, height, scale int) error
+	// logicalWidth and logicalHeight come from zwlr_layer_surface_v1.configure.
+	// scale120 is the wp_fractional_scale_v1 numerator over 120; 120 means scale 1.0.
+	Configure(logicalWidth, logicalHeight, scale120 int) error
+	// pixels is the physical buffer: width and height are buffer pixels, not logical units.
 	Render(pixels []byte, width, height, stride int) error
 	Handle(Event) bool
 	Invalidations() <-chan struct{}
@@ -464,24 +496,84 @@ type App interface {
 func Run(ctx context.Context, options Options, app App) error
 ```
 
-The interface has two implementations during tests: the proof app and a lifecycle fake. Keep it at the platform boundary.
+`scale120` must not be reduced to an integer scale factor. The compositor reports the preferred scale as
+a numerator over 120, so 150 (1.25), 180 (1.5) and 200 (1.667) all collapse onto the same integer and
+produce the wrong buffer size.
+
+The interface has two implementations during tests: the proof app and a lifecycle fake. See owner
+decision **D1** in the audit report -- the fake may not be worth the interface, because the lifecycle
+assertions above are properties of pure state machines and need no app at all.
 
 Inside `Run`:
 
 - connect with `client.Connect("")`;
+- install a `wl_display` error handler **before any other request**. `dankgo` discards `wl_display.error`
+  when no handler is set, so an unhandled protocol error is indistinguishable from an idle connection.
+  The handler cannot return an error; record it in a sticky field the loop checks after every dispatch,
+  and exit non-zero;
 - bind compositor, shm, seat, outputs, and layer-shell;
-- bind fractional-scale manager and viewporter;
-- cap each bound version to the generated client's supported version;
-- select the named output or the first output after discovery;
+- bind fractional-scale manager and viewporter; treat both as **required** and fail with a named error
+  when either is absent (owner decision **D2**);
+- cap each bound version at `min(server version, client maximum)`. `dankgo` exports no per-interface
+  version constant, so the client maximum is an explicit table owned by this package:
+
+  | Interface | Client max | Niri 26.04 offers |
+  |---|---|---|
+  | `wl_compositor` | 6 | 6 |
+  | `wl_shm` | 1 | 2 |
+  | `wl_seat` | 7 | 9 |
+  | `wl_output` | 4 | 4 |
+  | `zwlr_layer_shell_v1` | 4 | 5 |
+  | `wp_fractional_scale_manager_v1` | 1 | 1 |
+  | `wp_viewporter` | 1 | 1 |
+
+- select the output by matching `--output` against the `wl_output.name` event, which `wl_output`
+  version 4 provides directly. Do not bind `zxdg_output_manager_v1`, and do not correlate through Niri
+  IPC. Two roundtrips are required: the first delivers the globals, the second the per-output
+  `name`, `scale`, `geometry` and `done` events;
+- collect `wl_shm.format` events during those roundtrips and confirm `ARGB8888` is advertised before
+  creating a pool. It is present on Niri but arrives last in the list;
 - create `wl_surface` and a top-layer surface with namespace `sysc-shell:proof`;
 - anchor top, left, and right;
 - set size `0 x 48`, exclusive zone `48`, and keyboard interactivity `none`;
 - commit once without a buffer;
 - obtain one fractional-scale object and viewport for the surface;
-- acknowledge configure, combine the preferred scale in 120ths with the logical configure size, allocate two memfd-backed buffers at physical scale, set viewport source and logical destination, attach the released slot, damage, request a frame callback, and commit;
-- bind pointer input from the seat and route coordinates in logical surface units;
+- acknowledge every configure before attaching a buffer, then derive sizes as follows:
+
+  - the configure width and height are **logical** units, and they are **not** the output size. They are
+    what remains after other layer surfaces' exclusive zones. Observed on the reference machine: a
+    3440-wide output produced a configure width of 3396 because another shell's bar held 44 logical
+    pixels. Never compute the surface size from `wl_output` mode or from Niri IPC;
+  - buffer width and height are `(logical * scale120 + 60) / 120` -- multiply by the scale and round half
+    away from zero, as `fractional-scale-v1` specifies;
+  - default `scale120` to 120 until the first `preferred_scale` arrives. It is not ordered against
+    `zwlr_layer_surface_v1.configure`, and it can also arrive **alone**, with no configure following,
+    when the output scale changes at an unchanged logical size. Treat that as a reconfigure;
+
+- leave `wl_surface.set_buffer_scale` at its default of 1 and call **`wp_viewport.set_destination`** with
+  the logical configure size. Do **not** call `wp_viewport.set_source`: the default source is the whole
+  buffer, which is what is wanted, and a source rectangle in the wrong units is a protocol error;
+- allocate two memfd-backed buffers at the physical size, attach the released slot, submit damage with
+  **`wl_surface.damage_buffer`** in buffer pixels (not `wl_surface.damage`, which is in surface units and
+  ambiguous under a viewport), request a frame callback, and commit;
+- own the memfd, mapping, pool and buffers together as one **buffer generation**. A pool may be destroyed
+  while its buffers live, but storage the compositor still reads must not be written or unmapped. On
+  reconfigure, allocate a new generation and retire the old one only after every buffer in it has emitted
+  `wl_buffer.release`, or the surface is destroyed;
+- bind pointer input from the seat on `wl_seat.capabilities` when the pointer bit is set, and release it
+  when the bit clears. `dankgo` delivers `SurfaceX`/`SurfaceY` as `float64` already converted from
+  `wl_fixed`; under a viewport those are logical units, matching hit testing. Track focus with
+  enter/leave, record the node on button press, and treat a release inside the same node as the click;
 - coalesce redraw through the scheduler;
-- poll context cancellation and `App.Invalidations()` without dispatching Wayland from another goroutine. A bridge goroutine may write to a wake pipe or eventfd; it may not invoke a Wayland proxy. Poll the Wayland fd and wake fd with `unix.Poll`;
+- poll context cancellation and `App.Invalidations()` without dispatching Wayland from another goroutine.
+  A bridge goroutine may write to a wake pipe or eventfd; it may not invoke a Wayland proxy. Poll the
+  Wayland fd and the wake fd with `unix.Poll`. `dankgo` has no `prepare_read`/`read_events` split and no
+  write buffer -- requests go straight to the socket, so no flush exists and none is needed. It also
+  keeps no user-space read buffer, which is what makes a plain `poll()` correct. `Dispatch()` reads
+  exactly **one** message and blocks when none is pending, so dispatch once per readiness and re-poll
+  with a zero timeout to drain. Capture `Context.Fd()` once at startup and never use it after the
+  connection closes;
+- check the sticky protocol-error field after every dispatch and exit non-zero when it is set;
 - destroy in tested child-to-parent order.
 
 Create anonymous files with `unix.MemfdCreate`, `Ftruncate`, and `Mmap`. Validate multiplication and `int32` conversions before allocating or sending sizes.
@@ -495,9 +587,14 @@ go vet ./internal/platform/wayland
 
 Expected: pass without a compositor.
 
-**Step 5: Add a temporary live smoke call**
+**Step 5: Add the flat-color smoke path**
 
-Wire `cmd/sysc-shell` to a flat-color fake app. Run on Niri and verify configure, map, exclusive zone, and clean exit. Remove the fake wiring in Task 9, but keep the platform code.
+Wire `cmd/sysc-shell --smoke` to a flat-color app. Run on Niri and verify configure, map, exclusive zone,
+and clean exit.
+
+Keep this path permanently behind the flag rather than deleting it in Task 9. Task 7 is the largest step
+in the plan, and without it a live failure after Task 9 has five candidate causes. The flag costs a few
+lines and stays useful for triaging every later live gate.
 
 **Step 6: Commit**
 
@@ -519,13 +616,22 @@ git commit -m "feat: add Wayland layer-surface owner"
 Start a temporary Unix socket server in the test. Assert that the client:
 
 - writes JSON string `"EventStream"` followed by a newline;
+- reads the reply line **before** any event and requires `{"Ok":"Handled"}`;
+- fails startup on `{"Err":"..."}` instead of discarding it as an unknown event;
 - parses `WorkspacesChanged` and `WorkspaceActivated` lines;
+- treats the first `WorkspacesChanged` as the complete initial snapshot;
 - projects active workspace name and output into one snapshot;
 - ignores an unknown top-level event while keeping the stream alive;
 - rejects a line larger than 1 MiB;
 - returns context cancellation without leaking the reader goroutine.
 
-Use fixture lines copied from the installed Niri version's `niri msg -j event-stream` output. Remove window titles and user data from committed fixtures.
+Use fixture lines copied from the installed Niri version's `niri msg -j event-stream` output. Remove
+window titles and user data from committed fixtures.
+
+Verified against Niri 26.04 on the reference machine: the reply is the bare string form
+`{"Ok":"Handled"}`, and a malformed request returns `{"Err":"error parsing request"}`. Because the client
+must tolerate unknown events, an unread `Err` reply would be silently discarded and the client would wait
+forever -- so the reply must be read and checked explicitly.
 
 **Step 2: Run and confirm failure**
 
@@ -544,6 +650,22 @@ type Workspace struct { ID int64; Index int; Name, Output string; Active, Focuse
 type Snapshot struct { Workspaces []Workspace; FocusedOutput string }
 func Stream(ctx context.Context, socketPath string) (<-chan Snapshot, <-chan error)
 ```
+
+Wire shape observed on Niri 26.04:
+
+```json
+{"id":5,"idx":1,"name":null,"output":"DP-3","is_urgent":false,"is_active":true,"is_focused":false,"active_window_id":80}
+```
+
+`name` and `output` are nullable and decode to `""`. `id` is a `u64` narrowed to `int64`. `FocusedOutput`
+has no dedicated event or field; derive it from the workspace whose `is_focused` is true. Niri may **add**
+fields without breaking `encoding/json` -- `is_urgent` and `active_window_id` are recent additions this
+struct correctly ignores -- but a removed or retyped field breaks decoding, so keep every field optional
+and never drop a whole snapshot because one workspace failed to decode.
+
+**Niri emits no output event.** `OutputsChanged` does not exist. Workspaces carry an output *name* only.
+Output existence, identity, scale, mode, transform and hotplug all come from Wayland. Do not project
+output state from this package.
 
 Read with a buffered reader and an explicit maximum line size. Decode the top-level event key first, then decode known payloads. Sort snapshots by output, index, and ID so the UI receives stable ordering. Send only the newest snapshot when the consumer channel is full.
 
@@ -654,14 +776,40 @@ Record:
 
 - Niri version;
 - output name, mode, transform, and scale;
-- configure width and height;
+- configure width and height, and the output's logical width for comparison;
+- `preferred_scale` numerator, and whether it arrived before or after the first configure;
 - buffer width, height, and stride;
+- the `wl_shm` format list and the selected format;
 - successful click and workspace update;
 - clean shutdown result.
 
 **Step 3: Verify non-1 scale**
 
-Use an existing scaled output or change one test output through Niri configuration. Confirm logical size, physical buffer size, text, meter, hit region, and exclusive zone.
+Prefer an output already running at a non-1 scale and select it with `--output`; that path mutates
+nothing. When every output is at scale 1, change a **non-focused** output temporarily.
+`niri msg output` is documented as changing configuration "temporarily and not saved into the config
+file", so no configuration file is touched and no backup is required -- but capture the current value so
+the restore is exact:
+
+```bash
+OUT=DP-3
+BEFORE=$(niri msg -j outputs | python3 -c "import json,sys;print(json.load(sys.stdin)['$OUT']['logical']['scale'])")
+niri msg output "$OUT" scale 1.5
+
+go run ./cmd/sysc-shell --output "$OUT"
+
+niri msg output "$OUT" scale "$BEFORE"      # or: niri msg action load-config-file
+niri msg -j outputs | python3 -c "import json,sys;print(json.load(sys.stdin)['$OUT']['logical']['scale'])"
+```
+
+Confirm logical size, physical buffer size, text, meter, hit region, and exclusive zone. Record the
+logical configure size and the derived buffer size together; they are different numbers and both must be
+right. Expect the buffer to be `(logical * scale120 + 60) / 120` and **not** a multiple of the output's
+pixel width -- a 1707-logical surface at scale 1.5 yields a 2561-pixel buffer on a 2560-pixel output,
+which is correct because the viewport scales the buffer to the destination.
+
+Also confirm that Niri's own `logical.width` and the layer-surface configure width may differ. Both were
+observed to differ on the reference machine, in both directions.
 
 **Step 4: Verify idle rendering**
 

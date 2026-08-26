@@ -1,7 +1,7 @@
 # sysc-shell Architecture Design
 
 Date: 2026-08-26
-Status: Approved
+Status: Approved. Amended 2026-08-27 by [the plan audit](2026-08-27-plan-audit-report.md).
 
 ## Product definition
 
@@ -84,7 +84,35 @@ The Wayland package owns:
 - frame callbacks, buffer release and damage submission;
 - shutdown ordering.
 
-Each registry global binds at `min(server version, client supported version)`. Missing required globals fail startup with a named error. Optional protocols expose an unavailable capability and do not abort the shell.
+Each registry global binds at `min(server version, client supported version)`, where the client maximum
+comes from a table this project owns; `dankgo` exports no per-interface version constant. Missing required
+globals fail startup with a named error. Optional protocols expose an unavailable capability and do not
+abort the shell.
+
+Output identity comes from `wl_output.name`, which `wl_output` version 4 provides directly.
+`zxdg_output_manager_v1` is not required.
+
+### Source of truth for output and workspace state
+
+Wayland owns outputs. Niri owns workspaces. There is no overlap to reconcile, because Niri's event stream
+emits no output events at all.
+
+| Property | Owner |
+|---|---|
+| Output existence, add and remove | `wl_registry.global` / `global_remove` for `wl_output` |
+| Connector identity (`DP-1`) | `wl_output.name` (version 4) |
+| Transform, mode, physical size | `wl_output.geometry` / `mode`, committed on `done` |
+| Render scale | `wp_fractional_scale_v1.preferred_scale`, per surface |
+| Usable surface size | `zwlr_layer_surface_v1.configure` -- **not** the output size |
+| Workspaces and active workspace per output | Niri `WorkspacesChanged` / `WorkspaceActivated`, keyed by output name |
+| Focused output | derived from the workspace whose `is_focused` is true |
+
+A Niri workspace event may name an output whose `wl_output` has not yet been announced, or has already
+been removed. Hold Niri workspace state keyed by output name and join it to hosts lazily. Never create or
+destroy an output host from a Niri event.
+
+The layer-surface configure size is the output area minus other clients' exclusive zones, so it can be
+smaller than the output. Nothing may derive a surface size from `wl_output` mode or from Niri IPC.
 
 ### Output and surface model
 
@@ -106,27 +134,56 @@ The output host state machine is:
 ```text
 discovered -> role-created -> initial-empty-commit -> configured
 configured -> buffer-attached -> mapped
-mapped -> reconfigure -> mapped
+mapped -> reconfigure -> mapped          (layer-surface configure: new logical size)
+mapped -> rescale -> mapped              (preferred_scale alone: same logical size, new buffer size)
 mapped -> output-removed/closed -> destroyed
 ```
+
+`wp_fractional_scale_v1.preferred_scale` is independent of layer-shell configure. A scale change at an
+unchanged logical size emits only `preferred_scale`, with no configure to acknowledge, and still requires
+a new buffer generation. It is also unordered against the first configure, so the host starts at 120.
+
+Hosts are keyed by `wl_registry` global name, never by connector string. Global names are unique for the
+connection's lifetime; a connector name can disappear and return as a different monitor.
 
 The shell acknowledges every configure before attaching a matching buffer. It destroys child resources before the parent surface and disconnects only after all hosts stop.
 
 ## Rendering
 
-The first renderer writes premultiplied ARGB pixels into `wl_shm` buffers. Each surface owns at least two slots. A slot remains busy from attach until `wl_buffer.release`. The renderer skips or coalesces a redraw when no slot is free.
+The first renderer writes premultiplied ARGB pixels into `wl_shm` buffers. `ARGB8888` is selected from
+the advertised `wl_shm.format` list, not assumed. Each surface owns at least two slots. A slot remains busy
+from attach until `wl_buffer.release`.
+
+Frame completion does not release a buffer. `wl_callback.done` for a commit arrives while that commit's
+buffer is still held; the release arrives only once the next buffer has been attached and committed. The
+renderer skips or coalesces a redraw when no slot is free, and never infers slot availability from a frame
+callback.
+
+The scale contract is fixed by `fractional-scale-v1`: `wl_surface.set_buffer_scale` stays at 1, the
+`wp_viewport` destination is the logical size, and the buffer is the logical size multiplied by the
+preferred scale in 120ths, rounded half away from zero. No viewport source rectangle is set. Layout and
+hit testing work in logical units; painting works in buffer pixels.
 
 A state change marks affected nodes dirty. Layout changes expand damage to old and new bounds. The surface requests one frame callback, submits accumulated damage, commits, and waits. A later invalidation sets a pending flag instead of issuing another frame.
 
-The proof starts with full-surface damage. The bar milestone adds rectangle damage after tests cover old and new bounds. The project will add EGL/OpenGL ES only when profiling shows that shared-memory rendering misses an agreed frame, CPU, or power budget.
+Damage is submitted with `wl_surface.damage_buffer` in buffer pixels. `wl_surface.damage` takes surface
+units, which are ambiguous under a viewport. The proof starts with full-surface damage. The bar milestone
+adds rectangle damage after tests cover old and new bounds. The project will add EGL/OpenGL ES only when profiling shows that shared-memory rendering misses an agreed frame, CPU, or power budget.
 
 No renderer interface will exist while `wl_shm` is the only implementation. The second renderer, if required, will justify the shared contract.
 
 ## Text
 
-Text quality is a foundation concern. The proof will shape and rasterise Latin plus one right-to-left or joined-script fixture with `go-text/typesetting`. It will measure runs before layout. The bar milestone adds a glyph-mask cache after the proof records the uncached cost.
+Text quality is a foundation concern. The proof will shape and rasterise Latin plus one explicitly
+directed right-to-left joined-script run with `go-text/typesetting`, using `Amiri-Regular.ttf` (SIL OFL
+1.1) from the pinned module's test data. That qualifies shaping, contextual joining and rasterisation; it
+does not claim general bidirectional support. Paragraph-level bidi and segmentation become a gate when
+real user text such as window titles reaches the bar. It will measure runs before layout. The bar milestone adds a glyph-mask cache after the proof records the uncached cost.
 
-The bar milestone adds system font discovery, fallback, truncation, and scale tests. Color emoji, input methods, and advanced accessibility enter later milestones when a component needs them.
+The bar milestone adds system font discovery, fallback, truncation, and scale tests. The pinned
+dependency's `fontscan` package already supplies the whole minimum -- system scanning with a disk cache,
+family and aspect matching, and per-rune fallback -- so this is component work, not a font-management
+project. Color emoji, input methods, and advanced accessibility enter later milestones when a component needs them.
 
 HarfBuzz and FreeType remain the fallback. The team will choose them only if the pure-Go implementation fails shaping, fallback, memory, or rendering benchmarks that matter to shell content.
 
@@ -148,15 +205,26 @@ The runtime stays internal. It will not expose arbitrary shaders, user-defined p
 
 The Niri adapter connects to `$NIRI_SOCKET` and uses newline-delimited JSON requests and responses. It owns one event-stream connection and short-lived or serialized request traffic as required by the protocol.
 
+The adapter connects with a bare JSON request terminated by a newline and reads one reply line, either
+`{"Ok":<response>}` or `{"Err":"<message>"}`, before any events follow. The `EventStream` reply is
+`{"Ok":"Handled"}`. The event stream then delivers a **complete initial snapshot** -- every workspace on
+every output -- so no separate initial query is needed and no reconciliation race exists.
+
 The adapter projects Niri events into typed shell state:
 
-- outputs and focused output;
 - workspaces and active workspace per output;
+- focused output, derived from the focused workspace;
 - windows and focused window;
 - keyboard layouts;
 - overview and cast state when a feature consumes them.
 
-The architecture proof needs output and workspace state only. It must parse unknown event types without disconnecting so a Niri update does not break the shell.
+Niri emits **no output event**; there is no `OutputsChanged`. Output identity, scale, mode, transform and
+hotplug come from Wayland, as the source table above records. Workspace events carry an output *name*
+only.
+
+The architecture proof needs workspace state only. It must parse unknown event types without
+disconnecting so a Niri update does not break the shell, and it must not extend that tolerance to the
+reply line -- a discarded `Err` reply would hang the client silently.
 
 ## Services
 
@@ -185,7 +253,21 @@ Plugins may:
 - read and write namespaced settings through the host;
 - request a standard popout after the host grants the capability.
 
-Plugins may not create Wayland surfaces, access host memory, run inside the shell process, or define executable rendering code. The host applies restart limits, timeouts, backpressure, and capability checks.
+Plugins may not create Wayland surfaces, access host memory, run inside the shell process, or define
+executable rendering code. The host applies restart limits, timeouts, backpressure, and capability checks.
+
+**Scope of the guarantee.** The capability model limits calls into the host. It does not provide
+filesystem, network, process or D-Bus isolation: a plugin is an ordinary child process holding the shell's
+own privileges. Version one treats plugins as trusted code the user chose to install, and capabilities as
+a mechanism for declaring intent and auditing it -- not as a security boundary against hostile code. Any
+stronger claim requires OS-level sandboxing and a separate design. State this before the protocol is
+designed, because "capabilities" invites the stronger reading.
+
+Message-size limits bound one message, not a sender. A well-formed plugin sending valid updates in a tight
+loop, or one deep node tree, can still exhaust layout time and redraw bandwidth. The plugin milestone
+therefore needs update-rate limits with coalescing, node-count and depth caps, a bounded inbound queue
+that drops to the newest snapshot, and a layout budget that marks a plugin degraded rather than stalling
+the shell.
 
 The protocol begins after built-in widgets prove the component vocabulary. The team will not design a hypothetical schema before those widgets exist.
 
@@ -251,3 +333,6 @@ Niri-only support, no lock screen, and direct reuse of `dankgo` and `dgop` reduc
 - Prove that `go-text/typesetting` meets the bar's shaping, font fallback, and memory needs.
 - Measure shared-memory rendering before deciding whether to add EGL/OpenGL ES.
 - Derive the plugin node vocabulary from built-in widgets before versioning it.
+- Choose an SVG strategy for icons. Neither the standard library nor `golang.org/x/image` decodes SVG, and
+  freedesktop icon themes are predominantly SVG.
+- Decide whether screen-reader export through AT-SPI is in scope, and at which milestone.

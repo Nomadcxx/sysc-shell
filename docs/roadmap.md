@@ -1,6 +1,6 @@
 # sysc-shell Roadmap
 
-Date: 2026-08-26
+Date: 2026-08-26. Amended 2026-08-27 by [the plan audit](plans/2026-08-27-plan-audit-report.md).
 
 Each milestone ends at a working gate. Later work does not enter the branch until the current gate passes on Niri.
 
@@ -27,8 +27,9 @@ Required behavior:
 
 - pure-Go Wayland connection through pinned `dankgo`;
 - generated layer-shell protocol binding;
-- generated fractional-scale and viewporter bindings;
+- generated fractional-scale and viewporter bindings, both treated as required;
 - initial empty commit followed by configure acknowledgement;
+- fractional scale carried as a numerator over 120, never as an integer factor;
 - `wl_shm` buffer pool with release tracking;
 - text measurement and rasterisation through the selected Go text stack;
 - row layout, painting, hit testing, and action dispatch;
@@ -55,9 +56,14 @@ Turn the proof surface into one `OutputHost` and bar per active output.
 
 Required behavior:
 
-- output add/remove and layer-surface close handling;
+- output add/remove and layer-surface close handling, driven by `wl_registry` events. Niri emits no
+  output event, so Wayland is the only hotplug signal and the only source of connector identity, scale,
+  mode and transform;
+- output hosts keyed by `wl_registry` global name, never by connector string, so a reconnected or renamed
+  connector cannot produce a duplicate host;
 - top, bottom, left, and right anchors in the model, with top as the first supported configuration;
-- integer and fractional scale handling;
+- integer and fractional scale handling, including a scale change that arrives with no accompanying
+  layer-surface configure;
 - output transform handling;
 - exclusive-zone reservation;
 - left, center, and right bar sections;
@@ -95,7 +101,10 @@ Work:
 - add icon, meter, graph, tooltip, stale-data, and error states only as widgets need them;
 - share each service snapshot across output-specific widget instances;
 - set update intervals by data type and power cost;
-- add accessible names and keyboard activation for interactive widgets.
+- add accessible names and keyboard activation for interactive widgets;
+- decide the icon decoding strategy before the first icon ships. PNG, JPEG and GIF come from the standard
+  library and WebP, TIFF and BMP from `golang.org/x/image`; **SVG has no decoder in either**, and icon
+  themes are predominantly SVG.
 
 Exit gate:
 
@@ -123,7 +132,13 @@ Exit gate:
 - only the open panel requests keyboard focus;
 - a panel never changes the bar's exclusive zone;
 - placement remains within transformed and scaled output bounds;
-- keyboard-only interaction covers every shipped control.
+- keyboard-only interaction covers every shipped control;
+- every interactive node carries an accessible name and role;
+- reduced-motion and high-contrast preferences change behavior rather than being ignored.
+
+Accessibility becomes an acceptance gate at this milestone, because this is where panels first request
+keyboard focus and ship interactive controls. Screen-reader export through AT-SPI is a separate decision
+with its own D-Bus subsystem; it is not part of this gate.
 
 ## Milestone 5: External widget and plugin host
 
@@ -145,7 +160,13 @@ Exit gate:
 - an example plugin supplies a clock-like widget and a standard popout without linking to the shell;
 - malformed, oversized, slow, and crashed plugins cannot crash or block the shell;
 - protocol compatibility tests pin version-one behavior;
-- disabling a plugin removes its nodes and child process.
+- disabling a plugin removes its nodes and child process;
+- a plugin sending well-formed updates in a tight loop, or one deep node tree, cannot exhaust CPU,
+  memory, layout time or redraw bandwidth. Message-size validation bounds one message, not a sender, so
+  this gate needs update-rate limits with coalescing, node-count and depth caps, a bounded inbound queue
+  that drops to the newest snapshot, and a layout budget that marks a plugin degraded;
+- the design states plainly whether capabilities are a security boundary. As designed they are not: a
+  plugin is an ordinary child process with the shell's privileges.
 
 ## Milestone 6: Shell breadth
 
@@ -162,6 +183,28 @@ Candidate order:
 7. desktop widgets and richer plugin surfaces.
 
 No slice may import a full DMS or Noctalia subsystem without a dependency and ownership review.
+
+Four of these slices are specification-sized subsystems on D-Bus, not Wayland, and none has a design gate
+yet. Each needs one before it enters a branch:
+
+- notifications: the `org.freedesktop.Notifications` server interface, including replacement, actions,
+  hints and expiry;
+- system tray: StatusNotifierItem plus `com.canonical.dbusmenu`, whose under-specification makes
+  application behavior vary widely;
+- media controls: MPRIS player discovery, per-player state, and position handling;
+- screen-reader support, if adopted: AT-SPI.
+
+The Wayland protocols these slices need are all present on Niri 26.04 and require no new negotiation
+design: `ext_data_control_manager_v1` and `zwlr_data_control_manager_v1` for clipboard history,
+`zwp_primary_selection_device_manager_v1`, `zwlr_screencopy_manager_v1`, `xdg_activation_v1`,
+`ext_foreign_toplevel_list_v1`, `zwlr_foreign_toplevel_manager_v1`, `ext_idle_notifier_v1` and
+`zwp_idle_inhibit_manager_v1`. Two are worth adopting earlier than their slice: `wp_cursor_shape_manager_v1`
+sets a pointer cursor without shipping cursor bitmaps, and `zwlr_output_manager_v1` is the path for any
+output configuration feature.
+
+The wallpaper slice consumes gSlapper's existing control socket. Decide now that the shell does **not**
+own gSlapper's lifecycle by default, so a wallpaper feature stays a socket client instead of growing a
+process-supervision subsystem.
 
 ## Milestone 7: Rendering qualification
 

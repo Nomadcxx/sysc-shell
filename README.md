@@ -4,6 +4,8 @@
 
 The project is in the design and architectural-proof stage. No production shell exists yet.
 
+The plans were independently audited on 2026-08-27. The verdict is *ready after listed fixes*; the corrections are applied in the owning documents and the remaining owner decisions are listed in the [plan-audit report](docs/plans/2026-08-27-plan-audit-report.md).
+
 ## Scope
 
 The first useful release will provide:
@@ -32,6 +34,7 @@ The first releases exclude a lock screen, a compositor, Noctalia configuration c
 - [Architectural-proof implementation plan](docs/plans/2026-08-26-architectural-proof.md)
 - [Development orchestration](docs/plans/2026-08-26-development-orchestration.md)
 - [Independent plan-audit handover](docs/plans/2026-08-27-plan-audit-handover.md)
+- [Plan-audit report](docs/plans/2026-08-27-plan-audit-report.md)
 
 ## Planned repository layout
 
