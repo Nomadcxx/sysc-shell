@@ -31,6 +31,7 @@ The first releases exclude a lock screen, a compositor, Noctalia configuration c
 - [Prior-art assessment](docs/prior-art.md)
 - [Architectural-proof implementation plan](docs/plans/2026-08-26-architectural-proof.md)
 - [Development orchestration](docs/plans/2026-08-26-development-orchestration.md)
+- [Independent plan-audit handover](docs/plans/2026-08-27-plan-audit-handover.md)
 
 ## Planned repository layout
 
