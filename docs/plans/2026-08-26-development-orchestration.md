@@ -30,7 +30,10 @@ Do not keep a permanent development branch containing several unfinished milesto
 - Rebase or merge task branches into the milestone branch before the live gate.
 - Tag working milestone baselines after review, for example `proof-v0` and `bar-v0`.
 
-The project stays in one repository. A package moves to another repository only after a second consumer exists, the API survives two releases, and the move reduces total maintenance.
+Shell product code stays in this repository. `sysc-wayland` is the owner-approved platform exception: it
+owns the extracted Wayland transport and scanner because shell development depends on independent
+correctness and release gates. Any further split still requires a second consumer, two stable releases,
+and lower total maintenance.
 
 ## Planning gates
 
@@ -66,15 +69,25 @@ Standard library and installed platform services take precedence. A new framewor
 
 ## Work lanes
 
-The architectural proof has three lanes after module setup:
+`sysc-wayland` runs as a separate foundation project first. Its `v0.1.0` tag must pass the tests,
+generator reproduction, shell-generation probe, and live Niri probe in its foundation plan. No
+`sysc-shell` implementation lane starts against an untagged commit or a local replacement.
 
-| Lane | Owns | May proceed with |
+After `sysc-wayland v0.1.0` is published, run `sysc-shell` Task 1 alone. Then use these lanes:
+
+| Lane | Plan tasks | Owns |
 |---|---|---|
-| UI/text | retained tree, layout, shaping, rasterisation, pixel tests | Niri client |
-| Niri | socket framing, event decoding, state projection | UI/text |
-| Wayland | generated protocol, registry, outputs, buffers, surfaces, input | only after UI/render data contracts settle |
+| UI/render | 2 through 5, in order | retained tree, layout, shaping, rasterisation, pixels, scheduler |
+| Protocols | 6 | pinned XML and reproducible generated bindings |
+| Niri | 8 | socket framing, event decoding, state projection |
 
-Integration owns the command, proof model, live compositor run, and shutdown. One person or agent owns integration decisions even when others research or implement independent lanes.
+The integration owner reviews and merges all three lanes, then runs Task 7 after UI/render and protocol
+work pass. Task 9 waits for Tasks 7 and 8. The same owner runs Tasks 9 and 10 because the command, proof
+model, live compositor run, and shutdown cross lane boundaries.
+
+Use one worktree per lane. Each lane branches from the Task 1 commit and touches only its listed files.
+Merge UI/render and protocols before Task 7; merge Niri before Task 9. If a lane needs to change another
+lane's public contract, stop it and resolve the contract in the integration branch.
 
 The stable-bar milestone may separate output lifecycle, bar layout, and configuration parsing after its design fixes their contracts. Widget services can proceed in parallel only after the bar's state and invalidation model passes its gate.
 
@@ -205,10 +218,12 @@ Update `docs/roadmap.md` only when evidence changes a gate or scope. Do not turn
 ## First execution sequence
 
 1. Commit the documentation baseline on `main`.
-2. Create `milestone/architectural-proof` in a dedicated worktree.
-3. Execute `docs/plans/2026-08-26-architectural-proof.md` task by task.
-4. Review pure UI/text and Niri work before Wayland integration.
-5. Run the live Niri acceptance gate.
+2. Execute the `sysc-wayland` foundation plan in its repository and obtain owner approval for
+   `v0.1.0` publication.
+3. Create `milestone/architectural-proof` in a dedicated `sysc-shell` worktree and execute Task 1.
+4. Branch the UI/render, protocols, and Niri lanes from the Task 1 commit.
+5. Review and merge the lanes in dependency order, then execute Tasks 7, 9, and 10 under one integration
+   owner.
 6. Tag the accepted baseline `proof-v0`.
 7. Return to design mode for the stable multi-output bar.
 

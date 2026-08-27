@@ -4,15 +4,22 @@
 
 **Goal:** Build one interactive Niri layer surface that proves the Wayland, text, retained-layout, input, Niri IPC, event-driven rendering, and shutdown architecture.
 
-**Architecture:** One goroutine owns the `dankgo` Wayland connection and every Wayland proxy. Pure UI and rendering packages build and paint a retained tree into released `wl_shm` buffers. A Niri client publishes typed workspace snapshots, and pointer actions mutate the proof model through the Wayland owner's command queue.
+**Architecture:** One goroutine owns the `sysc-wayland` connection and every Wayland proxy. Pure UI and
+rendering packages build and paint a retained tree into released `wl_shm` buffers. A Niri client
+publishes typed workspace snapshots, and pointer actions mutate the proof model through the Wayland
+owner's command queue.
 
-**Tech Stack:** Go 1.26 language level (verified against toolchain `go1.27.0`), pinned `dankgo`, pinned `go-text/typesetting`, `golang.org/x/image`, `golang.org/x/sys`, Niri JSON IPC, `wlr-layer-shell-unstable-v1`, and `wl_shm`.
+**Tech Stack:** Go 1.26 language level (verified against toolchain `go1.27.0`),
+`github.com/Nomadcxx/sysc-wayland v0.1.0`, pinned `go-text/typesetting`, `golang.org/x/image`,
+`golang.org/x/sys`, Niri JSON IPC, `wlr-layer-shell-unstable-v1`, and `wl_shm`.
 
 ---
 
 ## Working rules
 
 - Execute this plan in a dedicated worktree from the documentation baseline.
+- Start only after the owner approves and publishes `sysc-wayland v0.1.0` and the release resolves without
+  a local `replace` directive.
 - Use `github.com/Nomadcxx/sysc-shell` as the module path unless the repository owner supplies another canonical path before Task 1.
 - Keep the first proof in `cmd/sysc-shell`; do not create a throwaway binary.
 - Do not add a framework, dependency-injection container, logging package, configuration library, Makefile, or renderer interface.
@@ -80,13 +87,16 @@ Expected: compilation fails because `parseOptions` does not exist.
 ```bash
 go mod init github.com/Nomadcxx/sysc-shell
 go mod edit -go=1.26
-go get github.com/AvengeMedia/dankgo@10434658325c
+go get github.com/Nomadcxx/sysc-wayland@v0.1.0
 go get github.com/go-text/typesetting@ddb7ff96ad4d2dc730cbcae9dd5140023f319c3e
 go get golang.org/x/image@v0.44.0
 go get golang.org/x/sys@v0.47.0
 ```
 
-All four pins resolve at these versions: `dankgo v0.0.0-20260823164143-10434658325c`, `typesetting v0.3.5-0.20260729084153-ddb7ff96ad4d`, `x/image v0.44.0`, `x/sys v0.47.0`. After Task 6 runs the generator, `go mod tidy` must leave `go.sum` holding only these and their transitive requirements.
+All four direct dependencies resolve at these versions: `sysc-wayland v0.1.0`,
+`typesetting v0.3.5-0.20260729084153-ddb7ff96ad4d`, `x/image v0.44.0`, and `x/sys v0.47.0`.
+After Task 6 runs the scanner in its version-suffixed module context, `go mod tidy` must leave `go.sum`
+holding only these and their transitive requirements.
 
 Use `flag.NewFlagSet` with `flag.ContinueOnError`. `main()` parses arguments, creates a signal-aware context, calls a stub `run(ctx, options)`, writes errors to stderr, and exits non-zero. The stub returns `errors.New("architectural proof not implemented")`.
 
@@ -386,49 +396,73 @@ git commit -m "feat: add frame and buffer scheduling state"
 **Files:**
 
 - Create: `protocols/wlr-layer-shell-unstable-v1.xml`
+- Create: `protocols/xdg-shell.xml`
 - Create: `protocols/fractional-scale-v1.xml`
 - Create: `protocols/viewporter.xml`
+- Create: `internal/platform/wayland/xdgshell/generate.go`
 - Create: `internal/platform/wayland/layershell/generate.go`
 - Create: `internal/platform/wayland/fractionalscale/generate.go`
 - Create: `internal/platform/wayland/viewporter/generate.go`
+- Generate: `internal/platform/wayland/xdgshell/xdg_shell.go`
 - Generate: `internal/platform/wayland/layershell/layer_shell.go`
 - Generate: `internal/platform/wayland/fractionalscale/fractional_scale.go`
 - Generate: `internal/platform/wayland/viewporter/viewporter.go`
 
 **Step 1: Pin the protocol source**
 
-Copy `wlr-layer-shell-unstable-v1.xml` from `wlr-protocols` at the revision providing `zwlr_layer_shell_v1` version 5, which is the version Niri 26.04 advertises. Copy `fractional-scale-v1.xml` and `viewporter.xml` from the pinned `wayland-protocols` revision used by Noctalia. Preserve copyright headers and record upstream URLs and commits in each `generate.go`.
+Copy `wlr-layer-shell-unstable-v1.xml` from `wlr-protocols` at the revision providing
+`zwlr_layer_shell_v1` version 5, which is the version Niri 26.04 advertises. Copy `xdg-shell.xml`,
+`fractional-scale-v1.xml`, and `viewporter.xml` from the pinned `wayland-protocols` revision used by
+Noctalia. Preserve copyright headers and record upstream URLs and commits in each `generate.go`.
+
+Layer-shell references `xdg_popup`, so its generated package needs the local xdg-shell package even
+though the proof does not create an xdg surface.
 
 **Step 2: Add the generator command**
 
 ```go
-//go:generate go run github.com/AvengeMedia/dankgo/cmd/go-wayland-scanner@10434658325c -pkg layershell -o layer_shell.go -i ../../../../protocols/wlr-layer-shell-unstable-v1.xml
+// internal/platform/wayland/xdgshell/generate.go
+//go:generate go run github.com/Nomadcxx/sysc-wayland/cmd/sysc-wayland-scanner@v0.1.0 -pkg xdgshell -o xdg_shell.go -i ../../../../protocols/xdg-shell.xml
+
+// internal/platform/wayland/layershell/generate.go
+//go:generate go run github.com/Nomadcxx/sysc-wayland/cmd/sysc-wayland-scanner@v0.1.0 -pkg layershell -xdg-shell-import github.com/Nomadcxx/sysc-shell/internal/platform/wayland/xdgshell -o layer_shell.go -i ../../../../protocols/wlr-layer-shell-unstable-v1.xml
+
+// internal/platform/wayland/fractionalscale/generate.go
+//go:generate go run github.com/Nomadcxx/sysc-wayland/cmd/sysc-wayland-scanner@v0.1.0 -pkg fractionalscale -o fractional_scale.go -i ../../../../protocols/fractional-scale-v1.xml
+
+// internal/platform/wayland/viewporter/generate.go
+//go:generate go run github.com/Nomadcxx/sysc-wayland/cmd/sysc-wayland-scanner@v0.1.0 -pkg viewporter -o viewporter.go -i ../../../../protocols/viewporter.xml
 ```
 
-Keep the `@10434658325c` suffix. Without it the generator resolves inside the main module and writes its
-own build dependencies -- `golang.org/x/crypto`, `golang.org/x/mod`, `golang.org/x/sync`,
-`golang.org/x/tools`, `mvdan.cc/gofumpt` and `github.com/iancoleman/strcase` -- into this repository's
-`go.sum`. The version suffix builds it in an isolated module context instead.
+Keep the `@v0.1.0` suffix. Without it the scanner resolves inside the main module and writes its build
+dependencies into this repository's `go.sum`. The version suffix builds it in an isolated module
+context.
 
 Generation is reproducible, with two conditions. The generated header embeds the literal `-i` argument,
 so the relative path must not change; and the generator shells out to `go list -m -f '{{.GoVersion}}'`
 to pick a `gofumpt` language version, so the `go` directive in `go.mod` must not change without
 regenerating.
 
-Add equivalent commands in packages `fractionalscale` and `viewporter`. Do not trim protocol prefixes. Keeping protocol names makes source comparisons with XML and upstream generated bindings direct.
+Add a scanner command for `xdgshell` and equivalent commands in `fractionalscale` and `viewporter`.
+Only the layer-shell command needs `-xdg-shell-import`. Do not trim protocol prefixes. Keeping protocol
+names makes source comparisons with XML and upstream generated bindings direct.
 
 **Step 3: Generate and prove reproducibility**
 
 ```bash
+go generate ./internal/platform/wayland/xdgshell
 go generate ./internal/platform/wayland/layershell
 go generate ./internal/platform/wayland/fractionalscale
 go generate ./internal/platform/wayland/viewporter
+cp internal/platform/wayland/xdgshell/xdg_shell.go /tmp/sysc-shell-xdg-shell.go
 cp internal/platform/wayland/layershell/layer_shell.go /tmp/sysc-shell-layer-shell.go
 cp internal/platform/wayland/fractionalscale/fractional_scale.go /tmp/sysc-shell-fractional-scale.go
 cp internal/platform/wayland/viewporter/viewporter.go /tmp/sysc-shell-viewporter.go
+go generate ./internal/platform/wayland/xdgshell
 go generate ./internal/platform/wayland/layershell
 go generate ./internal/platform/wayland/fractionalscale
 go generate ./internal/platform/wayland/viewporter
+cmp /tmp/sysc-shell-xdg-shell.go internal/platform/wayland/xdgshell/xdg_shell.go
 cmp /tmp/sysc-shell-layer-shell.go internal/platform/wayland/layershell/layer_shell.go
 cmp /tmp/sysc-shell-fractional-scale.go internal/platform/wayland/fractionalscale/fractional_scale.go
 cmp /tmp/sysc-shell-viewporter.go internal/platform/wayland/viewporter/viewporter.go
@@ -447,11 +481,9 @@ git commit -m "build: generate shell protocol bindings"
 
 ## Task 7: Implement the Wayland owner and shared-memory surface
 
-**Dependency gate:** Tasks 1 through 6 may proceed with the pinned `dankgo`, but Task 7 must not start
-until its stream reader handles valid fragmented reads. At commit `10434658325c`, `ReadMsg` treats any
-short header or body read from the Wayland `SOCK_STREAM` connection as fatal. Use a newer pinned commit
-with a socket-pair regression check that splits both header and body reads. If upstream has no fix, use
-the smallest reviewed fork containing that fix. Do not compensate for a broken wire reader in the shell.
+**Dependency gate:** `sysc-wayland v0.1.0` must pass its full release gate before this plan starts. Task 7
+must resolve that tag without a local `replace` directive. Do not compensate for a broken wire reader,
+descriptor path, or proxy lifecycle in the shell.
 
 **Files:**
 
@@ -513,15 +545,14 @@ callbacks. Lifecycle tests exercise the pure state machines directly and do not 
 Inside `Run`:
 
 - connect with `client.Connect("")`;
-- install a `wl_display` error handler **before any other request**. `dankgo` discards `wl_display.error`
-  when no handler is set, so an unhandled protocol error is indistinguishable from an idle connection.
-  The handler cannot return an error; record it in a sticky field the loop checks after every dispatch,
-  and exit non-zero;
+- install an optional `wl_display` error handler before any other request to add object and message
+  context to logs. `sysc-wayland` records the protocol error on the connection before calling this
+  handler, and later dispatch calls return that sticky error;
 - bind compositor, shm, seat, outputs, and layer-shell;
 - bind fractional-scale manager and viewporter; treat both as **required** and fail with a named error
   when either is absent. The proof exists to qualify this path, so an integer-scale fallback would let it
   pass without proving its stated architecture;
-- cap each bound version at `min(server version, client maximum)`. `dankgo` exports no per-interface
+- cap each bound version at `min(server version, client maximum)`. The generated client exports no per-interface
   version constant, so the client maximum is an explicit table owned by this package:
 
   | Interface | Client max | Niri 26.04 offers |
@@ -568,19 +599,16 @@ Inside `Run`:
   reconfigure, allocate a new generation and retire the old one only after every buffer in it has emitted
   `wl_buffer.release`, or the surface is destroyed;
 - bind pointer input from the seat on `wl_seat.capabilities` when the pointer bit is set, and release it
-  when the bit clears. `dankgo` delivers `SurfaceX`/`SurfaceY` as `float64` already converted from
+  when the bit clears. `sysc-wayland` delivers `SurfaceX`/`SurfaceY` as `float64` already converted from
   `wl_fixed`; under a viewport those are logical units, matching hit testing. Track focus with
   enter/leave, record the node on button press, and treat a release inside the same node as the click;
 - coalesce redraw through the scheduler;
 - poll context cancellation and `callbacks.Invalidations` without dispatching Wayland from another goroutine.
   A bridge goroutine may write to a wake pipe or eventfd; it may not invoke a Wayland proxy. Poll the
-  Wayland fd and the wake fd with `unix.Poll`. `dankgo` has no `prepare_read`/`read_events` split and no
-  write buffer -- requests go straight to the socket, so no flush exists and none is needed. It also
-  keeps no user-space read buffer, which is what makes a plain `poll()` correct. `Dispatch()` reads
-  exactly **one** message and blocks when none is pending, so dispatch once per readiness and re-poll
-  with a zero timeout to drain. Capture `Context.Fd()` once at startup and never use it after the
-  connection closes;
-- check the sticky protocol-error field after every dispatch and exit non-zero when it is set;
+  Wayland descriptor and the wake descriptor with `unix.Poll` inside `Context.ControlFD`; do not retain
+  the Wayland descriptor after its callback. `sysc-wayland` has no `prepare_read`/`read_events` split and
+  no write buffer. `Dispatch()` reads one message and blocks when none is pending, so dispatch once per
+  readiness and re-poll with a zero timeout to drain. Return any `ControlFD` or dispatch error;
 - destroy in tested child-to-parent order.
 
 Create anonymous files with `unix.MemfdCreate`, `Ftruncate`, and `Mmap`. Validate multiplication and `int32` conversions before allocating or sending sizes.

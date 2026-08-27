@@ -67,7 +67,7 @@ Relevant findings:
 
 Use directly or adapt:
 
-- pin `dankgo` and generate local protocol bindings;
+- use the focused `sysc-wayland` extraction and generate local protocol bindings;
 - pin `dgop` for monitoring collectors;
 - adapt direct Niri event-stream handling;
 - adapt output and buffer lifecycle patterns from native screenshot/color-picker code;
@@ -80,12 +80,13 @@ Skip:
 - multi-compositor branches;
 - DMS's full backend as one imported service.
 
-## dankgo
+## dankgo and sysc-wayland
 
 Source: <https://github.com/AvengeMedia/dankgo>
 Inspected commit: `10434658325c` from 2026-08-23.
 
-License: MIT. The commit is the tip of `main`, not a tagged release.
+The upstream repository uses MIT at its root. The copied Wayland client and scanner subtrees carry
+BSD-3-Clause licence files. The commit is the tip of `main`, not a tagged release.
 
 `dankgo` provides:
 
@@ -107,9 +108,12 @@ requests flush immediately and a plain `poll()` is correct; `Dispatch()` reads e
 blocks when none is pending; and `wl_display.error` is **silently discarded** unless a handler is
 installed.
 
-Decision: import the Wayland packages at a pinned commit. Keep their types inside the platform package.
-Generate and own the layer-shell binding from pinned protocol XML, invoking the scanner with an `@commit`
-suffix so its own build dependencies stay out of this repository's `go.sum`.
+Decision: extract the client and scanner into `github.com/Nomadcxx/sysc-wayland`, preserve the subtree
+licences and provenance, repair stream and descriptor handling there, and publish `v0.1.0` before shell
+implementation. Keep xdg-shell and shell extension XML and bindings in `sysc-shell`; the scanner accepts
+the local xdg-shell import path when layer-shell generation needs `xdg_popup`.
+Generate and own the layer-shell binding from pinned protocol XML, invoking the scanner with an
+`@v0.1.0` suffix so its build dependencies stay out of this repository's `go.sum`.
 
 ## dgop
 
@@ -167,16 +171,16 @@ It proves:
 - per-output layer-surface creation;
 - operation on a multi-monitor Niri session.
 
-It proves **nothing about the `dankgo` path**, which is the risk the architectural proof exists to
+It proves **nothing about the pure-Go client path**, which is the risk the architectural proof exists to
 qualify. It also lacks render buffers, complete configure/scale propagation, frame callbacks, damage, full
 output lifecycle, seats, and input. Use it as proof history for layer-shell behavior, not as evidence for
 the Go Wayland client and not as the new platform package.
 
 ## Licensing summary
 
-Noctalia, DankMaterialShell, dgop and `dankgo` are MIT. `go-text/typesetting` is Unlicense or
-BSD-3-Clause. The generated bindings derive from a BSD-licensed scanner. `Amiri-Regular.ttf` is SIL OFL
-1.1.
+Noctalia, DankMaterialShell, dgop and the `dankgo` repository root use MIT. The extracted Wayland client
+and scanner use BSD-3-Clause. `go-text/typesetting` is Unlicense or BSD-3-Clause, and
+`Amiri-Regular.ttf` is SIL OFL 1.1.
 
 Behavior, layout, interaction and feature inventory are not copyrightable and may be copied freely as
 requirements, which covers most of what this assessment proposes to reuse. MIT also permits source

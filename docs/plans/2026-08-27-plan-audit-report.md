@@ -65,9 +65,9 @@ Severity key: `B` blocker, `M1` fix before Milestone 1, `T7` gate before Task 7,
 | 23 | MS | No image decoder covers SVG, and icon themes are largely SVG. | **[V]** `golang.org/x/image@v0.44.0` ships `bmp`, `tiff`, `webp`, `vector`, `draw` — no SVG; stdlib covers PNG/JPEG/GIF only. | roadmap M3, M6 | Recorded as an owner decision (D3). |
 | 24 | MS | The plugin capability model's threat model is unstated, so "capabilities" could be read as OS-level isolation. | **[I]** design "Plugin model" lists only host-call restrictions; no namespace, seccomp, or cgroup mechanism appears anywhere. | design "Plugin model"; roadmap M5 | Scope of the guarantee stated explicitly. Applied. |
 | 25 | MS | Nothing bounds a well-formed plugin's update rate or tree size after size validation passes. | **[I]** design "Plugin model" bounds message size and restart count only. | roadmap M5 | Design gate added. Applied. |
-| 26 | T7 | `dankgo`'s `ReadMsg` treats a short read as fatal rather than resuming. | **[I]** `event.go:25-27, 65-67` return an error when `n != 8` or `n != msgSize`; `SOCK_STREAM` permits short reads. Never observed in this audit's runs. | dependency risk | Owner review elevated this to a pre-Task-7 dependency gate. |
-| 27 | D | `Context.Fd()` returns a descriptor used outside `RawConn.Control`. | **[I]** `context.go:61-71`; `syscall.RawConn` documents the descriptor as valid only during the callback. | proof Task 7 | Capture-once rule noted in the plan. Applied. |
-| 28 | D | `GetDispatch`'s doc comment claims multi-goroutine safety. Two concurrent callers would interleave header and body reads. | **[I]** `context.go:88-90` vs `event.go:15-81` (two sequential socket reads per message, no lock). | dependency risk | Recorded; the single-owner rule already prevents it. |
+| 26 | T7 | `dankgo`'s `ReadMsg` treats a short read as fatal rather than resuming. | **[I]** `event.go:25-27, 65-67` return an error when `n != 8` or `n != msgSize`; `SOCK_STREAM` permits short reads. Never observed in this audit's runs. | dependency risk | `sysc-wayland v0.1.0` now gates all shell implementation and carries the fragmented-read regressions. |
+| 27 | D | `Context.Fd()` returns a descriptor used outside `RawConn.Control`. | **[I]** `context.go:61-71`; `syscall.RawConn` documents the descriptor as valid only during the callback. | proof Task 7 | `sysc-wayland` replaces it with bounded `ControlFD`; the proof polls inside that callback. |
+| 28 | D | `GetDispatch`'s doc comment claims multi-goroutine safety. Two concurrent callers would interleave header and body reads. | **[I]** `context.go:88-90` vs `event.go:15-81` (two sequential socket reads per message, no lock). | dependency risk | `sysc-wayland` removes `GetDispatch` and enforces the single-owner rule. |
 
 ## Answers
 
@@ -93,13 +93,12 @@ axis-aligned rectangles and glyph masks — the text rasteriser already takes a 
 Sufficient, but not shaped like libwayland. There is **no** `prepare_read`/`read_events` split and
 **no flush**, because `WriteMsg` writes straight to the socket **[V]** and `ReadMsg` reads straight from
 it with no user-space buffer **[V]**. That absence is what makes a plain `poll()` correct: no bytes can
-hide in a client buffer. The loop is: `unix.Poll` on `Context.Fd()` plus a wake `eventfd`; on `POLLIN`
-call `Dispatch()` exactly once; re-poll with timeout 0 to drain. Cancellation and wakeup come from the
-eventfd, written by other goroutines that never touch a proxy. Fatal socket errors surface as a
-`Dispatch()` error; fatal *protocol* errors do not — they arrive as `wl_display.error` and are dropped
-unless a handler is set (finding 8). One blocking hazard remains: a large burst of requests could block
-in `WriteMsgUnix` while the client is not reading. A bar's request volume makes this remote; recorded,
-not designed around.
+hide in a client buffer. The proof now calls `unix.Poll` on the Wayland descriptor and a wake `eventfd`
+inside `sysc-wayland.Context.ControlFD`; on `POLLIN`, it calls `Dispatch()` once and then polls with
+timeout 0 to drain. Cancellation writes the eventfd, and other goroutines never touch a proxy.
+`sysc-wayland` returns socket and sticky `wl_display.error` failures from dispatch. One blocking hazard
+remains: a large burst of requests could block in `WriteMsgUnix` while the client is not reading. A bar's
+request volume makes this remote; the proof does not add a write queue for an unmeasured case.
 
 **5. Required globals and degradation — `fix before Milestone 1`.**
 Required: `wl_compositor`, `wl_shm`, `wl_seat`, `wl_output`, `zwlr_layer_shell_v1`. Client-side caps and
@@ -351,8 +350,10 @@ Alternative: commit to AT-SPI at Milestone 4, which pulls a large D-Bus subsyste
 - **D5 deferred:** settle AT-SPI scope during the Milestone 4 design. The keyboard, focus, motion, and
   contrast gates already recorded for that milestone remain required.
 
-Owner review also elevated the `dankgo` short-read defect to a pre-Task-7 gate, kept Niri workspace IDs
-as `uint64` with required-field validation, and removed the proposed permanent `--smoke` CLI path.
+Owner review elevated the `dankgo` short-read defect to a dependency gate, kept Niri workspace IDs as
+`uint64` with required-field validation, and removed the proposed permanent `--smoke` CLI path. The
+owner later chose a focused extraction in `github.com/Nomadcxx/sysc-wayland`; its `v0.1.0` release gate
+now resolves findings 26 through 28 before any shell implementation starts.
 
 ## Research not completed
 
@@ -373,7 +374,8 @@ as `uint64` with required-field validation, and removed the proposed permanent `
 
 ## Revised pre-implementation gate
 
-Tasks 1 through 6 may start when items 1 through 8 hold. Task 7 also requires item 9.
+All `sysc-shell` implementation tasks require items 1 through 9. This keeps each parallel lane on the
+same released Wayland transport and scanner.
 
 1. The corrected plan documents carry the `scale120` signature, the rounding rule, the
    destination-only viewport contract, and `damage_buffer`.
@@ -388,7 +390,8 @@ Tasks 1 through 6 may start when items 1 through 8 hold. Task 7 also requires it
    holding only the four approved dependencies and their transitive requirements.
 7. Owner decisions **D1** and **D2** are resolved. **D3**, **D4** and **D5** may remain open.
 8. The live-scale procedure, including restoration, has passed on the target machine.
-9. Before Task 7, the `dankgo` pin moves to an upstream revision or minimal reviewed fork whose reader
-   passes fragmented-header and fragmented-body socket tests.
+9. `sysc-wayland v0.1.0` passes fragmented-header, fragmented-body, descriptor, generator, and live Niri
+   gates and resolves from its remote module path without a local replacement.
 
-Items 1 through 8 are complete. Tasks 1 through 6 may start. Item 9 gates Task 7.
+Items 1 through 8 are complete. Item 9 now gates every `sysc-shell` implementation task so parallel lanes
+share one qualified transport and scanner baseline.

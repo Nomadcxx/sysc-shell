@@ -35,7 +35,9 @@ The project aims for growing capability parity with Noctalia and DMS. It will no
 - Quickshell, QML, Noctalia, or DMS compatibility.
 - Multi-compositor portability during the foundation stages.
 - GPU rendering before a measured software-rendering limit.
-- A separate Wayland bridge repository before a second consumer exists.
+- Additional platform repositories without a second consumer. `sysc-wayland` is the owner-approved
+  exception because the shell depends on transport fixes and generator changes that need an independent
+  release gate.
 
 ## System shape
 
@@ -59,15 +61,19 @@ One process owns the shell. It may run collectors and plugin supervision in sepa
 
 ## Dependency policy
 
-The first proof pins these upstream projects:
+The first proof pins these projects:
 
-- `github.com/AvengeMedia/dankgo` for the Wayland wire client and protocol generator;
+- `github.com/Nomadcxx/sysc-wayland v0.1.0` for the Wayland wire client and protocol generator;
 - `github.com/go-text/typesetting` for pure-Go shaping and font parsing;
 - `golang.org/x/image` and `golang.org/x/sys` for rasterisation and Linux system calls.
 
 The system-monitor milestone pins `github.com/AvengeMedia/dgop` and imports its collector packages. The shell will not execute a new `dgop` process for each sample.
 
-`dankgo` and `go-text/typesetting` use unstable versions. Their types stay behind the platform and text packages, and the project pins known commits. The team will fork only after an upstream defect blocks progress or an accepted fix cannot arrive within the milestone.
+`sysc-wayland` starts as an owned extraction from `dankgo` commit
+`10434658325c819efaf063f48eec4ae36555727e`; its repository records provenance and local divergences.
+`go-text/typesetting` uses an unstable version, so its types stay behind the text package and the project
+pins a known commit. Other dependencies follow the dependency-ownership ladder in the `sysc-wayland`
+design; the new repository does not make forks the default.
 
 ## Wayland platform
 
@@ -85,7 +91,7 @@ The Wayland package owns:
 - shutdown ordering.
 
 Each registry global binds at `min(server version, client supported version)`, where the client maximum
-comes from a table this project owns; `dankgo` exports no per-interface version constant. Missing required
+comes from a table this project owns; the generated client exports no per-interface version constant. Missing required
 globals fail startup with a named error. Optional protocols expose an unavailable capability and do not
 abort the shell.
 
@@ -312,16 +318,18 @@ These ranges guide planning rather than delivery commitments:
 - useful retained UI runtime with panels: 30,000 to 60,000 lines;
 - broad Noctalia or DMS capability parity: at least 100,000 lines and a year-scale effort.
 
-Niri-only support, no lock screen, and direct reuse of `dankgo` and `dgop` reduce the scope. Text, input, accessibility, popouts, and plugin UI still require deliberate runtime work.
+Niri-only support, no lock screen, and reuse of `sysc-wayland` and `dgop` reduce the scope. Text, input,
+accessibility, popouts, and plugin UI still require deliberate runtime work.
 
 ## Decisions
 
 1. The project name is `sysc-shell`.
 2. Go is the primary language.
-3. The first Wayland path uses `dankgo`; CGO/libwayland is a fallback.
+3. The first Wayland path uses `sysc-wayland`; CGO/libwayland is a fallback.
 4. The first renderer uses `wl_shm`; GPU work needs profiling evidence.
 5. The shell owns one bar surface per output.
-6. The project stays in one repository through the foundation stages.
+6. Shell product code stays in one repository through the foundation stages; `sysc-wayland` owns the
+   separately released transport and scanner.
 7. Plugins run out of process and use host-rendered components.
 8. Noctalia and DMS provide behavior references, not compatibility contracts.
 9. Niri is the sole required compositor.
@@ -329,9 +337,9 @@ Niri-only support, no lock screen, and direct reuse of `dankgo` and `dgop` reduc
 
 ## Open qualification gates
 
-- Prove that `dankgo` handles the required Niri registry, buffer, input, and shutdown paths under this long-running workload.
-- Before Task 7, pin a `dankgo` revision whose Wayland stream reader handles fragmented header and body
-  reads, with a socket-pair regression check. Commit `10434658325c` treats a valid short read as fatal.
+- Publish `sysc-wayland v0.1.0` only after its socket-pair, generator, and live Niri release gates pass.
+- Prove that the pinned `sysc-wayland` release handles the required Niri registry, buffer, input, and
+  shutdown paths under this long-running workload.
 - Prove that `go-text/typesetting` meets the bar's shaping, font fallback, and memory needs.
 - Measure shared-memory rendering before deciding whether to add EGL/OpenGL ES.
 - Derive the plugin node vocabulary from built-in widgets before versioning it.

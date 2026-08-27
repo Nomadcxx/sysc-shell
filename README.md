@@ -21,7 +21,9 @@ The first releases exclude a lock screen, a compositor, Noctalia configuration c
 ## Technology direction
 
 - Go owns shell state, Niri IPC, layout, widgets, services, configuration, and plugin supervision.
-- [`dankgo`](https://github.com/AvengeMedia/dankgo) supplies the pure-Go Wayland client and protocol generator.
+- [`sysc-wayland`](https://github.com/Nomadcxx/sysc-wayland) supplies the owned pure-Go Wayland client
+  and protocol generator. `sysc-shell` starts implementation only after `sysc-wayland v0.1.0` passes its
+  release gate.
 - `wl_shm` supplies the first renderer. EGL/OpenGL ES enters the project only after profiling shows a need.
 - [`go-text/typesetting`](https://github.com/go-text/typesetting) is the first text-shaping candidate. HarfBuzz and FreeType remain a fallback if the pure-Go stack fails production text tests.
 - [`dgop`](https://github.com/AvengeMedia/dgop) supplies system metrics for built-in monitoring widgets.
@@ -47,7 +49,7 @@ internal/ui/                   retained nodes, measurement, layout, hit testing
 internal/shell/                output hosts, bars, panels, shell lifecycle
 internal/services/             clock, weather, system metrics and later integrations
 internal/plugins/              plugin manifests, supervision and IPC
-protocols/                     pinned layer-shell, fractional-scale and viewporter XML
+protocols/                     pinned xdg-shell, layer-shell, fractional-scale and viewporter XML
 assets/fonts/                  fonts only when system discovery cannot cover a requirement
 tests/integration/             Niri and Wayland integration checks
 docs/                          architecture, roadmap and implementation plans
