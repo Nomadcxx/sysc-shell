@@ -36,7 +36,7 @@ or specification text, **[U]** unverified.
 
 ## Findings
 
-Severity key: `B` blocker, `M1` fix before Milestone 1, `MS` fix before affected milestone, `D` safe to defer.
+Severity key: `B` blocker, `M1` fix before Milestone 1, `T7` gate before Task 7, `MS` fix before affected milestone, `D` safe to defer.
 
 | # | Sev | Finding | Evidence | Affected section | Resolution |
 |---|---|---|---|---|---|
@@ -65,7 +65,7 @@ Severity key: `B` blocker, `M1` fix before Milestone 1, `MS` fix before affected
 | 23 | MS | No image decoder covers SVG, and icon themes are largely SVG. | **[V]** `golang.org/x/image@v0.44.0` ships `bmp`, `tiff`, `webp`, `vector`, `draw` — no SVG; stdlib covers PNG/JPEG/GIF only. | roadmap M3, M6 | Recorded as an owner decision (D3). |
 | 24 | MS | The plugin capability model's threat model is unstated, so "capabilities" could be read as OS-level isolation. | **[I]** design "Plugin model" lists only host-call restrictions; no namespace, seccomp, or cgroup mechanism appears anywhere. | design "Plugin model"; roadmap M5 | Scope of the guarantee stated explicitly. Applied. |
 | 25 | MS | Nothing bounds a well-formed plugin's update rate or tree size after size validation passes. | **[I]** design "Plugin model" bounds message size and restart count only. | roadmap M5 | Design gate added. Applied. |
-| 26 | D | `dankgo`'s `ReadMsg` treats a short read as fatal rather than resuming. | **[I]** `event.go:25-27, 65-67` return an error when `n != 8` or `n != msgSize`; `SOCK_STREAM` permits short reads. Never observed in this audit's runs. | dependency risk | Recorded as an upstream watch item. |
+| 26 | T7 | `dankgo`'s `ReadMsg` treats a short read as fatal rather than resuming. | **[I]** `event.go:25-27, 65-67` return an error when `n != 8` or `n != msgSize`; `SOCK_STREAM` permits short reads. Never observed in this audit's runs. | dependency risk | Owner review elevated this to a pre-Task-7 dependency gate. |
 | 27 | D | `Context.Fd()` returns a descriptor used outside `RawConn.Control`. | **[I]** `context.go:61-71`; `syscall.RawConn` documents the descriptor as valid only during the callback. | proof Task 7 | Capture-once rule noted in the plan. Applied. |
 | 28 | D | `GetDispatch`'s doc comment claims multi-goroutine safety. Two concurrent callers would interleave header and body reads. | **[I]** `context.go:88-90` vs `event.go:15-81` (two sequential socket reads per message, no lock). | dependency risk | Recorded; the single-owner rule already prevents it. |
 
@@ -150,12 +150,11 @@ sequence is needed **[V]**: the reply line is followed immediately by a full `Wo
 carrying every workspace on every output. That removes the race the question anticipates. What the plan
 does need (finding 3) is to read the `{"Ok":"Handled"}` reply before entering the event loop.
 On field shapes **[V]**: `{"id":5,"idx":1,"name":null,"output":"DP-3","is_urgent":false,"is_active":true,"is_focused":false,"active_window_id":80}`.
-`name` and `output` are nullable and decode to `""`. `id` is a `u64` narrowed to `int64` — safe in
-practice, worth a comment. The plan's `Snapshot.FocusedOutput` has no direct source; derive it from the
-workspace whose `is_focused` is true. Fields may be **added** without breaking `encoding/json`;
-`is_urgent` and `active_window_id` are recent examples the plan's struct correctly ignores. A **removed**
-or **retyped** field breaks decoding, so keep every field optional and never fail a snapshot on one bad
-workspace.
+`name` and `output` are nullable and decode to `""`. The public ID remains `uint64`, matching Niri's wire
+type. The plan's `Snapshot.FocusedOutput` has no direct source; derive it from the workspace whose
+`is_focused` is true. Fields may be **added** without breaking `encoding/json`; `is_urgent` and
+`active_window_id` are examples the projection ignores. A missing or retyped required field rejects the
+complete event and publishes no partial snapshot.
 
 **12, 13. Text stack qualification — `fix before Milestone 1`.**
 `go-text/typesetting` at `ddb7ff96ad4d` exposes exactly what Task 3 assumes, verified by execution
@@ -188,11 +187,9 @@ honouring `prefers-reduced-motion` and high-contrast equivalents. AT-SPI (D-Bus)
 is a separate, larger decision — see Q26.
 
 **17. Task 7's throwaway app — `fix before Milestone 1`.**
-It does not justify code that Task 9 deletes, but the *risk* it covers is real: Task 7 is by far the
-largest step, and going straight from unit fakes to the full integrated proof means a live failure has
-five candidate causes. Resolution: keep the flat-colour path permanently behind a `--smoke` flag rather
-than deleting it. It is a few lines, it stays useful for triaging every future live gate, and it removes
-the delete-later work without merging two large tasks.
+The live smoke step isolates the largest integration risk, but a permanent diagnostic CLI path is not a
+product requirement. Task 7 temporarily wires flat-colour callbacks into the command; Task 9 replaces
+that wiring with the proof application. Add a permanent smoke mode only after a repeated diagnostic need.
 
 **18. Live scale test safety — `fix before Milestone 1`.**
 Safe. `niri msg output` is documented as changing configuration "temporarily and not saved into the
@@ -305,7 +302,7 @@ Amiri font (OFL notice and licence file).
 
 | File | Change |
 |---|---|
-| `docs/plans/2026-08-26-architectural-proof.md` | `Configure` now takes `scale120`; buffer-rounding rule; `damage_buffer`; `set_source` removed; explicit bind-version table; mandatory `wl_display.error` handler; poll/drain rule; buffer-generation ownership; `wl_output.name` selection; shm format scan; Task 5 ordering cases; Task 3 joining assertion and Amiri fixture; Task 8 reply envelope; Task 6 version-suffixed generator; Task 7 `--smoke` flag retained instead of deleted; Task 10 scale procedure with restore. |
+| `docs/plans/2026-08-26-architectural-proof.md` | `Configure` now takes `scale120`; buffer-rounding rule; `damage_buffer`; `set_source` removed; explicit bind-version table; mandatory `wl_display.error` handler; poll/drain rule; buffer-generation ownership; `wl_output.name` selection; shm format scan; Task 5 ordering cases; Task 3 joining assertion and Amiri fixture; Task 8 reply envelope; Task 6 version-suffixed generator; temporary Task 7 smoke wiring; Task 10 scale procedure with restore. |
 | `docs/plans/2026-08-26-sysc-shell-design.md` | Niri no longer credited with output events; output-property source table; scale-only reconfigure edge; fractional-scale contract; plugin isolation scope stated. |
 | `docs/roadmap.md` | M2 output-source ownership and host-identity invariant; M4 accessibility gate; M5 resource-exhaustion gates; M6 D-Bus subsystem design gates. |
 | `docs/prior-art.md` | `sysc-lock` corrected to CGO; scanner provenance and licence; Amiri fixture and `fontscan` recorded; local repository paths corrected. |
@@ -342,6 +339,21 @@ precede protocol design because it changes what the handshake means.
 acceptance gates at Milestone 4, and treat AT-SPI screen-reader export as a separate later milestone.*
 Alternative: commit to AT-SPI at Milestone 4, which pulls a large D-Bus subsystem into the panel work.
 
+## Owner resolutions
+
+- **D1 accepted:** use one concrete callback struct. The caller owns its invalidation channel, and
+  lifecycle tests target pure state machines without an application fake.
+- **D2 accepted:** fractional-scale and viewporter are required for the proof. Missing either produces a
+  named startup error; the proof has no integer-scale fallback.
+- **D3 deferred:** choose the SVG strategy before Milestone 3.
+- **D4 deferred:** the existing trusted-plugin statement remains the version-one contract; reconsider
+  OS-level isolation before Milestone 5.
+- **D5 deferred:** settle AT-SPI scope during the Milestone 4 design. The keyboard, focus, motion, and
+  contrast gates already recorded for that milestone remain required.
+
+Owner review also elevated the `dankgo` short-read defect to a pre-Task-7 gate, kept Niri workspace IDs
+as `uint64` with required-field validation, and removed the proposed permanent `--smoke` CLI path.
+
 ## Research not completed
 
 - **Multi-output and hotplug behaviour** — not exercised. This machine has two outputs but the audit did
@@ -361,7 +373,7 @@ Alternative: commit to AT-SPI at Milestone 4, which pulls a large D-Bus subsyste
 
 ## Revised pre-implementation gate
 
-Milestone 1 may start when all of the following hold.
+Tasks 1 through 6 may start when items 1 through 8 hold. Task 7 also requires item 9.
 
 1. The corrected plan documents carry the `scale120` signature, the rounding rule, the
    destination-only viewport contract, and `damage_buffer`.
@@ -375,6 +387,8 @@ Milestone 1 may start when all of the following hold.
 6. Task 6 uses the version-suffixed generator invocation, and a clean `go mod tidy` leaves `go.sum`
    holding only the four approved dependencies and their transitive requirements.
 7. Owner decisions **D1** and **D2** are resolved. **D3**, **D4** and **D5** may remain open.
-8. The operator confirms the live-scale procedure, including the restore step, on the target machine.
+8. The live-scale procedure, including restoration, has passed on the target machine.
+9. Before Task 7, the `dankgo` pin moves to an upstream revision or minimal reviewed fork whose reader
+   passes fragmented-header and fragmented-body socket tests.
 
-Items 1 through 6 are complete in this commit. Items 7 and 8 remain with the owner.
+Items 1 through 8 are complete. Tasks 1 through 6 may start. Item 9 gates Task 7.

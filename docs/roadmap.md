@@ -48,6 +48,8 @@ Exit gate:
 
 Kill or reconsider gate:
 
+- Task 7 cannot start while the pinned `dankgo` reader assumes each stream read returns a complete
+  Wayland header or body. Update the pin to a tested upstream fix or the smallest reviewed fork first;
 - stop and compare a Gio-backed renderer or GTK4 if `dankgo` cannot maintain protocol correctness, the text stack cannot render the fixtures, or the design requires cross-goroutine Wayland access.
 
 ## Milestone 2: Stable bar on every output

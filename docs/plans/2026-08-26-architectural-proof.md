@@ -447,6 +447,12 @@ git commit -m "build: generate shell protocol bindings"
 
 ## Task 7: Implement the Wayland owner and shared-memory surface
 
+**Dependency gate:** Tasks 1 through 6 may proceed with the pinned `dankgo`, but Task 7 must not start
+until its stream reader handles valid fragmented reads. At commit `10434658325c`, `ReadMsg` treats any
+short header or body read from the Wayland `SOCK_STREAM` connection as fatal. Use a newer pinned commit
+with a socket-pair regression check that splits both header and body reads. If upstream has no fix, use
+the smallest reviewed fork containing that fix. Do not compensate for a broken wire reader in the shell.
+
 **Files:**
 
 - Create: `internal/platform/wayland/client.go`
@@ -484,25 +490,25 @@ Implement:
 ```go
 type Options struct { Output string; Height int }
 type Event struct { Kind EventKind; X, Y int; Button uint32 }
-type App interface {
+type Callbacks struct {
 	// logicalWidth and logicalHeight come from zwlr_layer_surface_v1.configure.
 	// scale120 is the wp_fractional_scale_v1 numerator over 120; 120 means scale 1.0.
-	Configure(logicalWidth, logicalHeight, scale120 int) error
+	Configure func(logicalWidth, logicalHeight, scale120 int) error
 	// pixels is the physical buffer: width and height are buffer pixels, not logical units.
-	Render(pixels []byte, width, height, stride int) error
-	Handle(Event) bool
-	Invalidations() <-chan struct{}
+	Render func(pixels []byte, width, height, stride int) error
+	Handle func(Event) bool
+	// The caller owns this channel. Run only receives from it and never closes it.
+	Invalidations <-chan struct{}
 }
-func Run(ctx context.Context, options Options, app App) error
+func Run(ctx context.Context, options Options, callbacks Callbacks) error
 ```
 
 `scale120` must not be reduced to an integer scale factor. The compositor reports the preferred scale as
 a numerator over 120, so 150 (1.25), 180 (1.5) and 200 (1.667) all collapse onto the same integer and
 produce the wrong buffer size.
 
-The interface has two implementations during tests: the proof app and a lifecycle fake. See owner
-decision **D1** in the audit report -- the fake may not be worth the interface, because the lifecycle
-assertions above are properties of pure state machines and need no app at all.
+Validate the three function fields before connecting to Wayland. The proof supplies one concrete set of
+callbacks. Lifecycle tests exercise the pure state machines directly and do not need an application fake.
 
 Inside `Run`:
 
@@ -513,7 +519,8 @@ Inside `Run`:
   and exit non-zero;
 - bind compositor, shm, seat, outputs, and layer-shell;
 - bind fractional-scale manager and viewporter; treat both as **required** and fail with a named error
-  when either is absent (owner decision **D2**);
+  when either is absent. The proof exists to qualify this path, so an integer-scale fallback would let it
+  pass without proving its stated architecture;
 - cap each bound version at `min(server version, client maximum)`. `dankgo` exports no per-interface
   version constant, so the client maximum is an explicit table owned by this package:
 
@@ -565,7 +572,7 @@ Inside `Run`:
   `wl_fixed`; under a viewport those are logical units, matching hit testing. Track focus with
   enter/leave, record the node on button press, and treat a release inside the same node as the click;
 - coalesce redraw through the scheduler;
-- poll context cancellation and `App.Invalidations()` without dispatching Wayland from another goroutine.
+- poll context cancellation and `callbacks.Invalidations` without dispatching Wayland from another goroutine.
   A bridge goroutine may write to a wake pipe or eventfd; it may not invoke a Wayland proxy. Poll the
   Wayland fd and the wake fd with `unix.Poll`. `dankgo` has no `prepare_read`/`read_events` split and no
   write buffer -- requests go straight to the socket, so no flush exists and none is needed. It also
@@ -587,14 +594,11 @@ go vet ./internal/platform/wayland
 
 Expected: pass without a compositor.
 
-**Step 5: Add the flat-color smoke path**
+**Step 5: Add a temporary live smoke call**
 
-Wire `cmd/sysc-shell --smoke` to a flat-color app. Run on Niri and verify configure, map, exclusive zone,
-and clean exit.
-
-Keep this path permanently behind the flag rather than deleting it in Task 9. Task 7 is the largest step
-in the plan, and without it a live failure after Task 9 has five candidate causes. The flag costs a few
-lines and stays useful for triaging every later live gate.
+Wire `cmd/sysc-shell` to flat-color callbacks. Run on Niri and verify configure, map, exclusive zone, and
+clean exit. Task 9 replaces this temporary wiring with the proof application. Do not add a permanent
+diagnostic flag.
 
 **Step 6: Commit**
 
@@ -621,6 +625,8 @@ Start a temporary Unix socket server in the test. Assert that the client:
 - parses `WorkspacesChanged` and `WorkspaceActivated` lines;
 - treats the first `WorkspacesChanged` as the complete initial snapshot;
 - projects active workspace name and output into one snapshot;
+- rejects a known event with a missing or mistyped required workspace field without publishing a partial snapshot;
+- accepts nullable `name` and `output` fields;
 - ignores an unknown top-level event while keeping the stream alive;
 - rejects a line larger than 1 MiB;
 - returns context cancellation without leaking the reader goroutine.
@@ -646,7 +652,7 @@ Expected: compilation fails because the client does not exist.
 Expose:
 
 ```go
-type Workspace struct { ID int64; Index int; Name, Output string; Active, Focused bool }
+type Workspace struct { ID uint64; Index int; Name, Output string; Active, Focused bool }
 type Snapshot struct { Workspaces []Workspace; FocusedOutput string }
 func Stream(ctx context.Context, socketPath string) (<-chan Snapshot, <-chan error)
 ```
@@ -657,11 +663,14 @@ Wire shape observed on Niri 26.04:
 {"id":5,"idx":1,"name":null,"output":"DP-3","is_urgent":false,"is_active":true,"is_focused":false,"active_window_id":80}
 ```
 
-`name` and `output` are nullable and decode to `""`. `id` is a `u64` narrowed to `int64`. `FocusedOutput`
-has no dedicated event or field; derive it from the workspace whose `is_focused` is true. Niri may **add**
-fields without breaking `encoding/json` -- `is_urgent` and `active_window_id` are recent additions this
-struct correctly ignores -- but a removed or retyped field breaks decoding, so keep every field optional
-and never drop a whole snapshot because one workspace failed to decode.
+Use a private wire struct with pointer fields to distinguish a missing required field from its zero value.
+Require valid `id`, `idx`, `is_active`, and `is_focused` values. Treat `name` and `output` as nullable and
+project null to `""`. Decode `id` as `uint64`; narrowing it has no benefit. `FocusedOutput` has no dedicated
+event or field, so derive it from the workspace whose `is_focused` is true.
+
+Niri may add fields without breaking `encoding/json`; `is_urgent` and `active_window_id` are examples the
+projection ignores. A malformed known event is different: reject the complete event with a descriptive
+error and publish no partial snapshot. Unknown top-level events remain ignorable.
 
 **Niri emits no output event.** `OutputsChanged` does not exist. Workspaces carry an output *name* only.
 Output existence, identity, scale, mode, transform and hotplug all come from Wayland. Do not project

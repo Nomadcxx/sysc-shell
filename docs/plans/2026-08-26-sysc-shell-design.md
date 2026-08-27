@@ -330,6 +330,8 @@ Niri-only support, no lock screen, and direct reuse of `dankgo` and `dgop` reduc
 ## Open qualification gates
 
 - Prove that `dankgo` handles the required Niri registry, buffer, input, and shutdown paths under this long-running workload.
+- Before Task 7, pin a `dankgo` revision whose Wayland stream reader handles fragmented header and body
+  reads, with a socket-pair regression check. Commit `10434658325c` treats a valid short read as fatal.
 - Prove that `go-text/typesetting` meets the bar's shaping, font fallback, and memory needs.
 - Measure shared-memory rendering before deciding whether to add EGL/OpenGL ES.
 - Derive the plugin node vocabulary from built-in widgets before versioning it.
