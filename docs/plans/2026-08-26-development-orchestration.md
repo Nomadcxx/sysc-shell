@@ -30,10 +30,15 @@ Do not keep a permanent development branch containing several unfinished milesto
 - Rebase or merge task branches into the milestone branch before the live gate.
 - Tag working milestone baselines after review, for example `proof-v0` and `bar-v0`.
 
-Shell product code stays in this repository. `sysc-wayland` is the owner-approved platform exception: it
-owns the extracted Wayland transport and scanner because shell development depends on independent
-correctness and release gates. Any further split still requires a second consumer, two stable releases,
-and lower total maintenance.
+Shell presentation and product coordination stay in this repository. Four supporting repositories have
+approved independent ownership:
+
+- `sysc-wayland`: Wayland transport, core bindings, and scanner;
+- `sysc-metrics`: read-only Linux telemetry library;
+- `sysc-notify`: freedesktop notification service and shell IPC;
+- `sysc-tray`: StatusNotifierItem, DBusMenu, and shell IPC.
+
+Further splits require an independently testable Linux service boundary and lower total maintenance.
 
 ## Planning gates
 
@@ -90,6 +95,26 @@ Merge UI/render and protocols before Task 7; merge Niri before Task 9. If a lane
 lane's public contract, stop it and resolve the contract in the integration branch.
 
 The stable-bar milestone may separate output lifecycle, bar layout, and configuration parsing after its design fixes their contracts. Widget services can proceed in parallel only after the bar's state and invalidation model passes its gate.
+
+### Cross-repository lanes
+
+Repository work may proceed in parallel only at settled boundaries:
+
+| Lane | May start | Merge or release gate |
+|---|---|---|
+| `sysc-wayland` foundation | now | `v0.1.0` before shell Task 1 |
+| `sysc-metrics` core | after its M0 API gate | tagged core release before shell metric widgets |
+| `sysc-notify` headless service | after its M0 protocol gate | private-bus and IPC tests before shell popup integration |
+| `sysc-tray` headless service | after its M0 compatibility gate | watcher/item and IPC tests before shell tray integration |
+| `sysc-shell` presentation | after each dependency tag | live Niri gate for the consuming milestone |
+
+Metrics has no dependency on shell rendering and can develop beside the architectural proof. Notification
+and tray protocol research can also proceed, but their shell adapters wait for panel, image, menu, input,
+and accessibility contracts from Milestone 4. Do not let service repositories define shell widget trees.
+
+Each service uses its own versioned protocol and release tag. Do not create a shared IPC or model
+repository until two released services expose stable, materially identical code that costs less to share
+than to keep local.
 
 ## Agent use
 
@@ -220,11 +245,15 @@ Update `docs/roadmap.md` only when evidence changes a gate or scope. Do not turn
 1. Commit the documentation baseline on `main`.
 2. Execute the `sysc-wayland` foundation plan in its repository and obtain owner approval for
    `v0.1.0` publication.
-3. Create `milestone/architectural-proof` in a dedicated `sysc-shell` worktree and execute Task 1.
-4. Branch the UI/render, protocols, and Niri lanes from the Task 1 commit.
-5. Review and merge the lanes in dependency order, then execute Tasks 7, 9, and 10 under one integration
+3. Run the M0 design gates for `sysc-metrics`, `sysc-notify`, and `sysc-tray`; create exact implementation
+   plans only after each contract passes review.
+4. Create `milestone/architectural-proof` in a dedicated `sysc-shell` worktree and execute Task 1.
+5. Start `sysc-metrics` core work in its own repository once its M0 gate settles public types.
+6. Branch the shell UI/render, protocols, and Niri lanes from the Task 1 commit.
+7. Review and merge the lanes in dependency order, then execute Tasks 7, 9, and 10 under one integration
    owner.
-6. Tag the accepted baseline `proof-v0`.
-7. Return to design mode for the stable multi-output bar.
+8. Tag the accepted baseline `proof-v0`.
+9. Return to design mode for the stable multi-output bar; keep headless notification and tray work behind
+   their repository gates until the shell has the presentation primitives they require.
 
 The proof plan supplies the stop condition. Do not start the bar milestone in the proof worktree.

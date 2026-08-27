@@ -12,6 +12,7 @@ Deliverables:
 - prior-art assessment;
 - architectural-proof implementation plan;
 - development orchestration plan;
+- approved `sysc-metrics`, `sysc-notify`, and `sysc-tray` boundaries and roadmaps;
 - qualified `sysc-wayland v0.1.0` release;
 - empty package directories on disk, without placeholder Go packages.
 
@@ -95,12 +96,13 @@ Initial widgets:
 - clock and date;
 - Niri workspaces and focused window title;
 - CPU and memory;
-- disk and network rates;
+- filesystem capacity, block-device and network rates;
+- battery state and remaining time;
 - weather through Open-Meteo.
 
 Work:
 
-- pin and import `dgop` collectors;
+- pin and import `sysc-metrics` after its core and power gates pass;
 - add consumer-counted service lifetimes;
 - add icon, meter, graph, tooltip, stale-data, and error states only as widgets need them;
 - share each service snapshot across output-specific widget instances;
@@ -144,7 +146,39 @@ Accessibility becomes an acceptance gate at this milestone, because this is wher
 keyboard focus and ship interactive controls. Screen-reader export through AT-SPI is a separate decision
 with its own D-Bus subsystem; it is not part of this gate.
 
-## Milestone 5: External widget and plugin host
+## Milestone 5: Notifications and system tray
+
+Integrate the two independent D-Bus services after bars, panel surfaces, menus, image handling, keyboard
+focus, and accessibility have owners in the shell runtime.
+
+Notification work:
+
+- qualify and pin `sysc-notify`'s `org.freedesktop.Notifications` implementation;
+- connect through bounded, versioned Unix-socket IPC and recover a current snapshot after reconnect;
+- render popup surfaces with actions, images, progress, urgency, expiry, and dismiss behavior;
+- resolve sender PID lineage against cached Niri windows and focus only one unambiguous match;
+- add `xdg_activation_v1` tokens later, then advertise that capability.
+
+Tray work:
+
+- qualify and pin `sysc-tray`'s watcher, host, item, and DBusMenu implementation;
+- connect through bounded, versioned Unix-socket IPC and recover item state after reconnect;
+- render normal, attention, and overlay icon state in the bar;
+- render keyboard-accessible DBusMenu surfaces within the active output;
+- survive item, watcher, bus, service, and shell restarts without duplicate registrations.
+
+Exit gate:
+
+- notification replacement, actions, close reasons, expiry, shell restart, and ambiguous focus pass;
+- tray registration, property updates, activation, scrolling, menus, owner replacement, and restart pass;
+- malformed or oversized D-Bus data can remove only its source item or notification request;
+- neither service imports Wayland or owns presentation;
+- shell absence does not block `Notify` or discard valid tray registration state within documented bounds.
+
+The repository-specific M0 gates must settle exact protocol and compatibility behavior before product code
+starts. `sysc-shell` consumes tagged releases, not unreviewed local replacements.
+
+## Milestone 6: External widget and plugin host
 
 Version the component vocabulary proven by built-in widgets and expose it to supervised processes.
 
@@ -172,31 +206,25 @@ Exit gate:
 - the design states plainly whether capabilities are a security boundary. As designed they are not: a
   plugin is an ordinary child process with the shell's privileges.
 
-## Milestone 6: Shell breadth
+## Milestone 7: Shell breadth
 
 Add features in vertical slices. Each slice owns its service, state projection, components, surfaces, actions, tests, and failure behavior.
 
 Candidate order:
 
-1. system tray and media controls;
-2. notifications and OSDs;
-3. launcher and application search;
-4. clipboard history;
-5. control center, network, Bluetooth, audio, brightness, battery, and power actions;
+1. launcher and application search;
+2. OSDs and richer notification history;
+3. clipboard history;
+4. control center, network, Bluetooth, audio, brightness, and power actions;
+5. media controls;
 6. wallpaper control through external gSlapper and static wallpaper providers;
 7. desktop widgets and richer plugin surfaces.
 
 No slice may import a full DMS or Noctalia subsystem without a dependency and ownership review.
 
-Four of these slices are specification-sized subsystems on D-Bus, not Wayland, and none has a design gate
-yet. Each needs one before it enters a branch:
-
-- notifications: the `org.freedesktop.Notifications` server interface, including replacement, actions,
-  hints and expiry;
-- system tray: StatusNotifierItem plus `com.canonical.dbusmenu`, whose under-specification makes
-  application behavior vary widely;
-- media controls: MPRIS player discovery, per-player state, and position handling;
-- screen-reader support, if adopted: AT-SPI.
+Notifications and tray have dedicated repositories and Milestone 5 gates. Two later D-Bus subsystems still
+need designs before entering a branch: MPRIS player discovery and position handling, and AT-SPI if the
+project adopts screen-reader export.
 
 The Wayland protocols these slices need are all present on Niri 26.04 and require no new negotiation
 design: `ext_data_control_manager_v1` and `zwlr_data_control_manager_v1` for clipboard history,
@@ -210,7 +238,7 @@ The wallpaper slice consumes gSlapper's existing control socket. Decide now that
 own gSlapper's lifecycle by default, so a wallpaper feature stays a socket client instead of growing a
 process-supervision subsystem.
 
-## Milestone 7: Rendering qualification
+## Milestone 8: Rendering qualification
 
 Keep `wl_shm` when it meets the measured budgets. Add EGL/OpenGL ES only for a named failing case such as animation frame time, large blurred panels, image-heavy grids, or unacceptable CPU/power use.
 

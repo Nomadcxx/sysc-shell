@@ -6,7 +6,7 @@ Date: 2026-08-26. Amended 2026-08-27 by [the plan audit](plans/2026-08-27-plan-a
 
 No inspected project supplies a complete Go-native desktop shell runtime. Several projects remove large parts of the work:
 
-- DMS supplies reusable Go system integrations and a working pure-Go Wayland client path.
+- DMS supplies reusable behavior and a working pure-Go Wayland client path.
 - `sysc-lock` proves layer-shell discovery and per-output surface creation on Niri, through CGO.
 - gSlapper provides the strongest local example of long-running native Wayland surface and frame lifecycle.
 - Noctalia v5 provides the feature, ownership, scene-tree, and service reference.
@@ -60,6 +60,8 @@ Relevant findings:
 - `DankBarWindow.qml` assigns the screen, anchors, layer, namespace, size, exclusive zone, and input mask.
 - `NiriService.qml` connects to `$NIRI_SOCKET`, requests `EventStream`, and projects workspace, window, output, layout, overview, and cast events.
 - DMS imports `dgop` as a Go library inside its IPC backend.
+- DMS still implements notification and tray presentation in Quickshell. It has no reusable Go
+  notification daemon or tray host. Its Go tray-recovery service remains useful behavioral reference.
 - DMS's screenshot selector and color picker use pure-Go Wayland, layer-shell, seats, `wl_shm`, viewporter, output scaling, buffer release, damage, and frame callbacks.
 - Noctalia v5 uses `fractional-scale-v1` with `viewporter` and treats the compositor's preferred scale in 120ths as the surface scale. `sysc-shell` adopts the same contract; see the design's rendering section.
 - DMS plugins remain dynamic QML. Their useful traits are manifests, source precedence, per-output instances, startup checks, namespaced state, and component injection.
@@ -68,7 +70,7 @@ Relevant findings:
 Use directly or adapt:
 
 - use the focused `sysc-wayland` extraction and generate local protocol bindings;
-- pin `dgop` for monitoring collectors;
+- use dgop collectors as behavioral reference for focused `sysc-metrics` implementations;
 - adapt direct Niri event-stream handling;
 - adapt output and buffer lifecycle patterns from native screenshot/color-picker code;
 - copy behavior and visual requirements from built-in widgets.
@@ -129,7 +131,50 @@ Evidence collected on 2026-08-26:
 - a live `meta --modules cpu,memory --json` call returned valid metrics on the development machine;
 - DMS imports `github.com/AvengeMedia/dgop/gops` and calls `GetMeta` inside its Go backend.
 
-Decision: import pinned collector packages for built-in monitoring widgets. Do not launch a CLI process for each update. Wrap collection in one consumer-counted shell service.
+The collector code is not a clean library boundary: packages import dgop logging, and the process path
+imports Huma. Forking the full repository would also inherit CLI, TUI, HTTP, and unrelated application
+surface.
+
+Decision: build `sysc-metrics` as a focused BSD-3 Linux library. Use dgop's units, cursor behavior, and
+real-hardware results as reference, but do not import or fork the full project.
+
+## Notification services
+
+The strongest Go references are:
+
+- [`crispuscrew/zde`](https://github.com/crispuscrew/zde), commit
+  `0be9c66950a43b05e3b7fa4f5bbd52ab0a15f86f`, Apache-2.0. Its notification service has strong ingress
+  bounds, lifecycle behavior, action handling, and method-level tests. It is internal, coupled to ZDE,
+  omits several rich hints, and deliberately returns an internal queue ID instead of following exact
+  replacement-ID semantics.
+- [`jmylchreest/histui`](https://github.com/jmylchreest/histui), commit
+  `55dbd8f773b1053c6a265168854407a26ffe6de7`, MIT. It covers images, progress, actions, and persistence,
+  but its internal server has weak protocol tests and needs replacement and raw-image validation fixes.
+
+Decision: `sysc-notify` implements notification specification 1.3 directly with Go D-Bus. Use ZDE's
+trust-boundary and test invariants plus Histui's rich-hint behavior as reference. Preserve exact
+replacement IDs, bound images and history, advertise only working capabilities, and leave all Wayland
+presentation to `sysc-shell`.
+
+[`Oaklight/niri-notify-focus`](https://github.com/Oaklight/niri-notify-focus), commit
+`f0e3a7c12abf3b8c371e6f9dd8e55101a1476d37`, is a small MIT Python daemon. It monitors D-Bus, walks
+`/proc` parents, repeatedly queries Niri, maps notification IDs to windows, and focuses on actions. The
+useful behavior belongs inside the two owned services: `sysc-notify` captures sender metadata and
+`sysc-shell` matches it against cached Niri state. The shell refuses ambiguous PID-to-window matches and
+does not copy the resize-pulse workaround.
+
+## System tray
+
+[`nekorg/pawbar`](https://github.com/nekorg/pawbar), commit
+`b4084519f8223cfad5c178c27ef2181c9d3be76b`, is the strongest BSD-3 Go reference. It owns or attaches to
+StatusNotifierWatcher, registers a host, tracks items, handles takeover, processes icons and pixmaps, and
+supports activation, context menus, and scrolling. Its DBusMenu client is coupled to Pawbar rendering and
+has little focused test coverage. The item path also omits several update signals and complete attention
+and overlay pixmap handling.
+
+Decision: extract only the watcher, host, item, and DBusMenu behavior that fits `sysc-tray`; retain BSD
+attribution, complete the missing signals, and add private-bus tests. `sysc-tray` owns D-Bus state and
+shell IPC. `sysc-shell` owns icon-theme lookup, menu surfaces, interaction, and pixels.
 
 ## go-text/typesetting
 
@@ -178,8 +223,9 @@ the Go Wayland client and not as the new platform package.
 
 ## Licensing summary
 
-Noctalia, DankMaterialShell, dgop and the `dankgo` repository root use MIT. The extracted Wayland client
-and scanner use BSD-3-Clause. `go-text/typesetting` is Unlicense or BSD-3-Clause, and
+Noctalia, DankMaterialShell, dgop and the `dankgo` repository root use MIT. ZDE is Apache-2.0; Histui and
+niri-notify-focus are MIT; Pawbar is BSD-3. The extracted Wayland client and scanner use BSD-3-Clause.
+`go-text/typesetting` is Unlicense or BSD-3-Clause, and
 `Amiri-Regular.ttf` is SIL OFL 1.1.
 
 Behavior, layout, interaction and feature inventory are not copyrightable and may be copied freely as

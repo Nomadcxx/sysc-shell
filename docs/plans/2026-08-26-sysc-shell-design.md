@@ -35,29 +35,40 @@ The project aims for growing capability parity with Noctalia and DMS. It will no
 - Quickshell, QML, Noctalia, or DMS compatibility.
 - Multi-compositor portability during the foundation stages.
 - GPU rendering before a measured software-rendering limit.
-- Additional platform repositories without a second consumer. `sysc-wayland` is the owner-approved
-  exception because the shell depends on transport fixes and generator changes that need an independent
-  release gate.
+- Further repository splits without an independently testable Linux service boundary. The approved
+  supporting repositories are `sysc-wayland`, `sysc-metrics`, `sysc-notify`, and `sysc-tray`.
 
 ## System shape
 
 ```text
-Niri event socket ──> Niri adapter ───────┐
-                                          │
-Linux and D-Bus services ─> services ─────┼─> immutable shell state
-                                          │             │
-plugin processes <── versioned IPC ─> plugin host       │
-                                                        v
-                                                 retained UI tree
-                                                        │
-                                                measure + layout
-                                                        │
-                                                damage + hit map
-                                                        │
-Wayland events ──> output hosts ──> surfaces ──> wl_shm renderer
+Niri event socket ──> Niri adapter ─────────────┐
+sysc-metrics ───────> metrics service ──────────┤
+sysc-notify <── IPC ─> notification adapter ────┼─> immutable shell state
+sysc-tray   <── IPC ─> tray adapter ────────────┤             │
+plugin processes <──> plugin host ─────────────┘             v
+                                                     retained UI tree
+                                                             │
+                                                     measure + layout
+                                                             │
+                                                     damage + hit map
+                                                             │
+Wayland events ──> output hosts ──> surfaces ───────> wl_shm renderer
 ```
 
 One process owns the shell. It may run collectors and plugin supervision in separate goroutines, but one goroutine owns every Wayland proxy and dispatch operation. Callers send commands to that goroutine instead of invoking Wayland objects themselves.
+
+### Repository boundaries
+
+- `sysc-wayland` owns the pure-Go Wayland transport, core bindings, and protocol scanner.
+- `sysc-metrics` owns read-only Linux telemetry and sampling. It has no shell, daemon, or portability API.
+- `sysc-notify` owns `org.freedesktop.Notifications`, bounded notification state, and its shell IPC.
+- `sysc-tray` owns StatusNotifierWatcher/Host, StatusNotifierItem, DBusMenu, and its shell IPC.
+- `sysc-shell` owns Niri state, all Wayland surfaces, presentation, user interaction, configuration, and
+  plugin supervision.
+
+The notification and tray services remain useful while shell surfaces restart. Neither imports Wayland
+or renders UI. Each accepts one versioned presentation connection from `sysc-shell`, continues bounded
+D-Bus work while that connection is absent, and sends a current snapshot after reconnect.
 
 ## Dependency policy
 
@@ -67,7 +78,12 @@ The first proof pins these projects:
 - `github.com/go-text/typesetting` for pure-Go shaping and font parsing;
 - `golang.org/x/image` and `golang.org/x/sys` for rasterisation and Linux system calls.
 
-The system-monitor milestone pins `github.com/AvengeMedia/dgop` and imports its collector packages. The shell will not execute a new `dgop` process for each sample.
+The system-monitor milestone pins `github.com/Nomadcxx/sysc-metrics`. The new library uses Linux
+interfaces directly and imports none of dgop's CLI, HTTP, logging, or unrelated process dependencies.
+
+The notification and tray milestones use the versioned Unix-socket protocols published by
+`github.com/Nomadcxx/sysc-notify` and `github.com/Nomadcxx/sysc-tray`. Their Go D-Bus dependency remains
+inside those service repositories.
 
 `sysc-wayland` starts as an owned extraction from `dankgo` commit
 `10434658325c819efaf063f48eec4ae36555727e`; its repository records provenance and local divergences.
@@ -240,8 +256,17 @@ Initial services:
 
 - clock from Go's `time` package;
 - Niri workspaces from the event socket;
-- CPU, memory, disk and network metrics from `dgop`;
+- CPU, memory, filesystem, block-device and network metrics from `sysc-metrics`;
 - weather from Open-Meteo through `net/http`, with explicit coordinates first and automatic location later.
+
+`sysc-notify` and `sysc-tray` are external Linux services rather than in-process collectors. Shell
+adapters project their snapshots into the same immutable state model used by built-in services. The shell
+returns notification actions, dismissals, tray activation, scrolling, and menu events through their IPC
+connections.
+
+For notification focus, `sysc-notify` supplies ephemeral sender process metadata. `sysc-shell` compares
+that lineage with its cached Niri window state and focuses only one unambiguous match. It never persists a
+Niri window ID or guesses between several windows from the same process.
 
 The shell keeps gSlapper external for wallpaper and video. Existing sysc-greet lifecycle code provides patterns for retry, scoped shutdown, and startup reconciliation.
 
@@ -318,7 +343,7 @@ These ranges guide planning rather than delivery commitments:
 - useful retained UI runtime with panels: 30,000 to 60,000 lines;
 - broad Noctalia or DMS capability parity: at least 100,000 lines and a year-scale effort.
 
-Niri-only support, no lock screen, and reuse of `sysc-wayland` and `dgop` reduce the scope. Text, input,
+Niri-only support, no lock screen, and reuse of the four focused sysc repositories reduce the scope. Text, input,
 accessibility, popouts, and plugin UI still require deliberate runtime work.
 
 ## Decisions
@@ -334,6 +359,9 @@ accessibility, popouts, and plugin UI still require deliberate runtime work.
 8. Noctalia and DMS provide behavior references, not compatibility contracts.
 9. Niri is the sole required compositor.
 10. Lockscreen and compositor work stay out of scope.
+11. Linux is the platform contract across the sysc repositories; no cross-platform abstraction is planned.
+12. `sysc-metrics`, `sysc-notify`, and `sysc-tray` own their focused library or service boundaries.
+13. `sysc-shell` remains the only owner of Wayland surfaces and shell presentation.
 
 ## Open qualification gates
 

@@ -12,7 +12,7 @@ The first useful release will provide:
 
 - one layer-shell bar on every active Niri output;
 - correct output hotplug, scale, configure, input, damage, and buffer handling;
-- built-in clock, workspace, weather, CPU, memory, disk, and network widgets;
+- built-in clock, workspace, weather, CPU, memory, storage, network, and battery widgets;
 - host-owned visual components with consistent styling;
 - supervised external plugins over a versioned IPC protocol.
 
@@ -26,7 +26,12 @@ The first releases exclude a lock screen, a compositor, Noctalia configuration c
   release gate.
 - `wl_shm` supplies the first renderer. EGL/OpenGL ES enters the project only after profiling shows a need.
 - [`go-text/typesetting`](https://github.com/go-text/typesetting) is the first text-shaping candidate. HarfBuzz and FreeType remain a fallback if the pure-Go stack fails production text tests.
-- [`dgop`](https://github.com/AvengeMedia/dgop) supplies system metrics for built-in monitoring widgets.
+- [`sysc-metrics`](https://github.com/Nomadcxx/sysc-metrics) supplies focused Linux telemetry for built-in
+  monitoring widgets.
+- [`sysc-notify`](https://github.com/Nomadcxx/sysc-notify) owns the freedesktop notification service;
+  `sysc-shell` owns its popup surfaces and Niri focus integration.
+- [`sysc-tray`](https://github.com/Nomadcxx/sysc-tray) owns StatusNotifierItem and DBusMenu behavior;
+  `sysc-shell` owns tray and menu presentation.
 
 ## Documentation
 
