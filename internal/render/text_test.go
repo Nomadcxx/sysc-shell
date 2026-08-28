@@ -172,3 +172,26 @@ func TestTextRejectsMissingGlyphData(t *testing.T) {
 		t.Fatal("glyphOutline accepted a glyph id with no data")
 	}
 }
+
+// TestTextParseFaceReturnsDistinctFaces guards the sharing rule: go-text
+// documents *font.Font as safe for concurrent use and *font.Face as NOT safe,
+// because a Face carries mutable cmap and extents caches. The parse cache may
+// therefore share the Font but must hand every caller its own Face.
+func TestTextParseFaceReturnsDistinctFaces(t *testing.T) {
+	t.Parallel()
+
+	first, err := ParseFace(goregular.TTF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := ParseFace(goregular.TTF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("ParseFace shared one Face between callers")
+	}
+	if first.Upem() != second.Upem() {
+		t.Fatal("the two faces disagree about the font")
+	}
+}

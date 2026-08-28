@@ -19,27 +19,35 @@ import (
 	"golang.org/x/image/vector"
 )
 
-var faceCache sync.Map // [32]byte content hash -> *font.Face
+var fontCache sync.Map // [32]byte content hash -> *font.Font
 
-// ParseFace parses OpenType font data into a face, reusing an already parsed
-// face for identical data.
+// ParseFace parses OpenType font data, reusing the parsed font for identical
+// data and returning a fresh face each call.
+//
+// go-text documents *font.Font as read-only and safe for concurrent use, and
+// *font.Face as NOT safe: a face carries mutable cmap and extents caches. Only
+// the font may be cached, so every caller gets its own face.
 func ParseFace(data []byte) (*font.Face, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("render: empty font data")
 	}
 
 	key := sha256.Sum256(data)
-	if cached, ok := faceCache.Load(key); ok {
-		return cached.(*font.Face), nil
+	if cached, ok := fontCache.Load(key); ok {
+		return font.NewFace(cached.(*font.Font)), nil
 	}
 
-	face, err := font.ParseTTF(bytes.NewReader(data))
+	loader, err := ot.NewLoader(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("render: load font: %w", err)
+	}
+	parsed, err := font.NewFont(loader)
 	if err != nil {
 		return nil, fmt.Errorf("render: parse font: %w", err)
 	}
 
-	actual, _ := faceCache.LoadOrStore(key, face)
-	return actual.(*font.Face), nil
+	actual, _ := fontCache.LoadOrStore(key, parsed)
+	return font.NewFace(actual.(*font.Font)), nil
 }
 
 // Mask is a rasterised run: alpha coverage plus the metrics needed to place it.
@@ -54,6 +62,9 @@ type Mask struct {
 }
 
 // TextRenderer shapes and rasterises single-script horizontal runs for one face.
+//
+// A renderer owns its face and shaper, neither of which is safe for concurrent
+// use. Give every goroutine that draws its own renderer.
 type TextRenderer struct {
 	face   *font.Face
 	shaper shaping.HarfbuzzShaper
