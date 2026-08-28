@@ -12,7 +12,7 @@ type ProofStyle struct {
 	// Size is the logical font size; shaping happens at the physical size.
 	Size int
 	// Scale120 is the fractional render scale as a numerator over 120.
-	Scale120 int
+	Scale120 ui.Scale120
 
 	Background Color
 	Foreground Color
@@ -32,18 +32,6 @@ func (s ProofStyle) accent() Color {
 	return s.Accent
 }
 
-// physical converts a logical length to buffer pixels, rounding to nearest.
-func (s ProofStyle) physical(logical int) int {
-	return (logical*s.Scale120 + 60) / 120
-}
-
-// physicalRect maps a logical rectangle by its edges, so adjacent rectangles
-// stay adjacent after scaling.
-func (s ProofStyle) physicalRect(r ui.Rect) ui.Rect {
-	x0, y0 := s.physical(r.X), s.physical(r.Y)
-	return ui.Rect{X: x0, Y: y0, W: s.physical(r.X+r.W) - x0, H: s.physical(r.Y+r.H) - y0}
-}
-
 // Paint draws the arranged row into the canvas. Node bounds are logical; every
 // write is converted to buffer pixels and clipped to the canvas.
 func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style ProofStyle) error {
@@ -54,7 +42,7 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style ProofStyle) error
 		return fmt.Errorf("render: nil root")
 	case text == nil:
 		return fmt.Errorf("render: nil text renderer")
-	case style.Scale120 <= 0:
+	case !style.Scale120.Valid():
 		return fmt.Errorf("render: scale120 %d is not positive", style.Scale120)
 	case style.Size <= 0:
 		return fmt.Errorf("render: text size %d is not positive", style.Size)
@@ -62,7 +50,7 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style ProofStyle) error
 
 	fillRect(c, ui.Rect{W: c.Width, H: c.Height}, style.Background)
 
-	size := style.physical(style.Size)
+	size := style.Scale120.Physical(style.Size)
 	for i, child := range root.Children {
 		if child == nil {
 			return fmt.Errorf("render: nil child %d", i)
@@ -77,25 +65,25 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style ProofStyle) error
 func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size int) error {
 	switch n.Kind {
 	case ui.KindText:
-		return paintText(c, n.Text, style.physicalRect(n.Bounds), text, style, size)
+		return paintText(c, n.Text, style.Scale120.PhysicalRect(n.Bounds), text, style, size)
 
 	case ui.KindMeter:
-		box := style.physicalRect(n.Bounds)
+		box := style.Scale120.PhysicalRect(n.Bounds)
 		fillRect(c, box, style.Track)
 		filled := box
-		filled.W = style.physical(n.Bounds.X+int(float64(n.Bounds.W)*n.Value+0.5)) - box.X
+		filled.W = style.Scale120.Physical(n.Bounds.X+int(float64(n.Bounds.W)*n.Value+0.5)) - box.X
 		fillRect(c, filled, style.accent())
 		return nil
 
 	case ui.KindButton:
-		fillRect(c, style.physicalRect(n.Bounds), style.accent())
+		fillRect(c, style.Scale120.PhysicalRect(n.Bounds), style.accent())
 		label := ui.Rect{
 			X: n.Bounds.X + n.Padding,
 			Y: n.Bounds.Y + n.Padding,
 			W: n.Bounds.W - 2*n.Padding,
 			H: n.Bounds.H - 2*n.Padding,
 		}
-		return paintText(c, n.Text, style.physicalRect(label), text, style, size)
+		return paintText(c, n.Text, style.Scale120.PhysicalRect(label), text, style, size)
 
 	default:
 		return fmt.Errorf("unsupported kind %d", n.Kind)

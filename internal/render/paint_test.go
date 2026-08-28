@@ -14,7 +14,7 @@ const (
 
 var testStyle = ProofStyle{
 	Size:       16,
-	Scale120:   120,
+	Scale120:   ui.ScaleUnit,
 	Background: Color{R: 0x10, G: 0x14, B: 0x18, A: 0xff},
 	Foreground: Color{R: 0xff, G: 0xff, B: 0xff, A: 0xff},
 	Track:      Color{R: 0x30, G: 0x34, B: 0x38, A: 0xff},
