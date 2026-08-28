@@ -6,16 +6,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/shell"
 )
-
-// barHeight is the logical height and exclusive zone of the proof surface.
-const barHeight = 48
 
 // options holds the parsed command line.
 type options struct {
@@ -37,30 +35,62 @@ func parseOptions(args []string) (options, error) {
 	return opts, nil
 }
 
-// run wires flat-colour callbacks to the Wayland owner. Task 9 replaces this
-// temporary wiring with the proof application.
+// run streams Niri workspace state into the proof model and hands the model to
+// the Wayland owner. The owner goroutine performs all Wayland work.
 func run(ctx context.Context, opts options) error {
-	invalidations := make(chan struct{}, 1)
+	// Validated before opening Wayland so the startup error names the missing
+	// environment variable.
+	socket := os.Getenv("NIRI_SOCKET")
+	if socket == "" {
+		return fmt.Errorf("NIRI_SOCKET is not set; start sysc-shell from a Niri session")
+	}
 
-	return wayland.Run(ctx, wayland.Options{Output: opts.Output, Height: barHeight}, wayland.Callbacks{
-		Configure: func(logicalWidth, logicalHeight, scale120 int) error {
-			log.Printf("configure: logical %dx%d scale120 %d", logicalWidth, logicalHeight, scale120)
-			return nil
-		},
-		Render: func(pixels []byte, width, height, stride int) error {
-			log.Printf("render: buffer %dx%d stride %d bytes %d", width, height, stride, len(pixels))
-			// Opaque slate, premultiplied and stored as B, G, R, A.
-			for i := 0; i+3 < len(pixels); i += 4 {
-				pixels[i], pixels[i+1], pixels[i+2], pixels[i+3] = 0x28, 0x1c, 0x14, 0xff
+	proof, err := shell.New()
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	snapshots, niriErrs := niri.Stream(ctx, socket)
+	streamFailed := make(chan error, 1)
+	go func() {
+		for {
+			select {
+			case snapshot, ok := <-snapshots:
+				if !ok {
+					return
+				}
+				proof.UpdateNiri(snapshot)
+			case err, ok := <-niriErrs:
+				if ok && err != nil {
+					select {
+					case streamFailed <- err:
+					default:
+					}
+					cancel()
+				}
+				return
 			}
-			return nil
-		},
-		Handle: func(e wayland.Event) bool {
-			log.Printf("pointer: kind %d at %d,%d button %d", e.Kind, e.X, e.Y, e.Button)
-			return false
-		},
-		Invalidations: invalidations,
+		}
+	}()
+
+	runErr := wayland.Run(ctx, wayland.Options{Output: opts.Output, Height: shell.BarHeight}, wayland.Callbacks{
+		Configure:     proof.Configure,
+		Render:        proof.Render,
+		Handle:        proof.Handle,
+		Invalidations: proof.Invalidations(),
 	})
+	if runErr != nil {
+		return runErr
+	}
+	select {
+	case err := <-streamFailed:
+		return err
+	default:
+		return nil
+	}
 }
 
 func main() {

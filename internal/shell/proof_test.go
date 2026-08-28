@@ -1,0 +1,233 @@
+package shell
+
+import (
+	"testing"
+
+	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+)
+
+func newTestProof(t *testing.T) *Proof {
+	t.Helper()
+	p, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// drain reports how many invalidations are waiting.
+func drain(p *Proof) int {
+	count := 0
+	for {
+		select {
+		case <-p.Invalidations():
+			count++
+		default:
+			return count
+		}
+	}
+}
+
+func TestProofFirstSnapshotSetsWorkspace(t *testing.T) {
+	t.Parallel()
+
+	p := newTestProof(t)
+	p.UpdateNiri(niri.Snapshot{
+		FocusedOutput: "DP-1",
+		Workspaces: []niri.Workspace{
+			{ID: 1, Index: 1, Output: "DP-1", Active: true, Focused: true},
+		},
+	})
+
+	if got := p.WorkspaceLabel(); got != "Workspace: 1" {
+		t.Fatalf("label = %q, want %q", got, "Workspace: 1")
+	}
+	if drain(p) != 1 {
+		t.Fatal("the first snapshot did not request exactly one redraw")
+	}
+}
+
+func TestProofPrefersWorkspaceName(t *testing.T) {
+	t.Parallel()
+
+	p := newTestProof(t)
+	p.UpdateNiri(niri.Snapshot{
+		FocusedOutput: "DP-1",
+		Workspaces: []niri.Workspace{
+			{ID: 5, Index: 1, Name: "code", Output: "DP-1", Active: true, Focused: true},
+		},
+	})
+
+	if got := p.WorkspaceLabel(); got != "Workspace: code" {
+		t.Fatalf("label = %q, want the workspace name", got)
+	}
+}
+
+func TestProofLaterSnapshotChangesTextAndInvalidatesOnce(t *testing.T) {
+	t.Parallel()
+
+	p := newTestProof(t)
+	first := niri.Snapshot{
+		FocusedOutput: "DP-1",
+		Workspaces: []niri.Workspace{
+			{ID: 1, Index: 1, Output: "DP-1", Active: true, Focused: true},
+		},
+	}
+	p.UpdateNiri(first)
+	drain(p)
+
+	second := niri.Snapshot{
+		FocusedOutput: "DP-1",
+		Workspaces: []niri.Workspace{
+			{ID: 3, Index: 2, Output: "DP-1", Active: true, Focused: true},
+		},
+	}
+	p.UpdateNiri(second)
+
+	if got := p.WorkspaceLabel(); got != "Workspace: 2" {
+		t.Fatalf("label = %q, want %q", got, "Workspace: 2")
+	}
+	if got := drain(p); got != 1 {
+		t.Fatalf("a changed snapshot requested %d redraws, want exactly 1", got)
+	}
+}
+
+func TestProofRepeatedSnapshotRequestsNoRedraw(t *testing.T) {
+	t.Parallel()
+
+	p := newTestProof(t)
+	snap := niri.Snapshot{
+		FocusedOutput: "DP-1",
+		Workspaces: []niri.Workspace{
+			{ID: 1, Index: 1, Output: "DP-1", Active: true, Focused: true},
+		},
+	}
+	p.UpdateNiri(snap)
+	drain(p)
+
+	p.UpdateNiri(snap)
+	if got := drain(p); got != 0 {
+		t.Fatalf("an unchanged snapshot requested %d redraws, want none", got)
+	}
+}
+
+// press and release drive a full click at one point.
+func click(p *Proof, x, y int) bool {
+	p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: x, Y: y})
+	pressed := p.Handle(wayland.Event{Kind: wayland.EventPointerPress})
+	released := p.Handle(wayland.Event{Kind: wayland.EventPointerRelease})
+	return pressed || released
+}
+
+// layoutForTest arranges the tree at the proof's fixed height.
+func layoutForTest(t *testing.T, p *Proof, width int) {
+	t.Helper()
+	if err := p.Layout(width, BarHeight); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProofClickTogglesMeter(t *testing.T) {
+	t.Parallel()
+
+	p := newTestProof(t)
+	layoutForTest(t, p, 600)
+	drain(p)
+
+	if got := p.MeterValue(); got != 0.25 {
+		t.Fatalf("initial meter = %v, want 0.25", got)
+	}
+
+	button := p.ButtonBounds()
+	if !click(p, button.X+button.W/2, button.Y+button.H/2) {
+		t.Fatal("a click on the button reported no change")
+	}
+	if got := p.MeterValue(); got != 0.75 {
+		t.Fatalf("meter after one click = %v, want 0.75", got)
+	}
+	if drain(p) == 0 {
+		t.Fatal("the click requested no redraw")
+	}
+
+	if !click(p, button.X+button.W/2, button.Y+button.H/2) {
+		t.Fatal("a second click reported no change")
+	}
+	if got := p.MeterValue(); got != 0.25 {
+		t.Fatalf("meter after two clicks = %v, want 0.25", got)
+	}
+}
+
+func TestProofClickOutsideAnActionChangesNothing(t *testing.T) {
+	t.Parallel()
+
+	p := newTestProof(t)
+	layoutForTest(t, p, 600)
+	drain(p)
+
+	if click(p, 1, 1) {
+		t.Fatal("a click outside every action reported a change")
+	}
+	if got := p.MeterValue(); got != 0.25 {
+		t.Fatalf("meter = %v, want it unchanged at 0.25", got)
+	}
+	if drain(p) != 0 {
+		t.Fatal("a click outside every action requested a redraw")
+	}
+}
+
+// TestProofReleaseOutsideThePressedNodeIsNotAClick covers the press/release
+// rule: a click counts only when both land on the same node.
+func TestProofReleaseOutsideThePressedNodeIsNotAClick(t *testing.T) {
+	t.Parallel()
+
+	p := newTestProof(t)
+	layoutForTest(t, p, 600)
+	drain(p)
+
+	button := p.ButtonBounds()
+	p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: button.X + button.W/2, Y: button.Y + button.H/2})
+	p.Handle(wayland.Event{Kind: wayland.EventPointerPress})
+	// Slide off the button before releasing.
+	p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: 1, Y: 1})
+	if p.Handle(wayland.Event{Kind: wayland.EventPointerRelease}) {
+		t.Fatal("a release outside the pressed node counted as a click")
+	}
+	if got := p.MeterValue(); got != 0.25 {
+		t.Fatalf("meter = %v, want it unchanged", got)
+	}
+}
+
+func TestProofPointerLeaveCancelsThePress(t *testing.T) {
+	t.Parallel()
+
+	p := newTestProof(t)
+	layoutForTest(t, p, 600)
+
+	button := p.ButtonBounds()
+	p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: button.X + button.W/2, Y: button.Y + button.H/2})
+	p.Handle(wayland.Event{Kind: wayland.EventPointerPress})
+	p.Handle(wayland.Event{Kind: wayland.EventPointerLeave})
+	p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: button.X + button.W/2, Y: button.Y + button.H/2})
+	if p.Handle(wayland.Event{Kind: wayland.EventPointerRelease}) {
+		t.Fatal("a release after the pointer left counted as a click")
+	}
+}
+
+func TestProofLayoutUsesConfiguredWidthAndBarHeight(t *testing.T) {
+	t.Parallel()
+
+	p := newTestProof(t)
+	layoutForTest(t, p, 3396)
+
+	root := p.Root()
+	if root.Bounds.W != 3396 || root.Bounds.H != BarHeight {
+		t.Fatalf("root bounds = %+v, want 3396x%d", root.Bounds, BarHeight)
+	}
+	if len(root.Children) != 4 {
+		t.Fatalf("tree holds %d children, want the fixed four", len(root.Children))
+	}
+	if p.ButtonBounds().W <= 0 {
+		t.Fatal("the button was not arranged")
+	}
+}
