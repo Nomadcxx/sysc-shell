@@ -1,11 +1,45 @@
 package shell
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 )
+
+func TestProofConcurrentUpdateAndRender(t *testing.T) {
+	p := newTestProof(t)
+	if err := p.Configure(600, BarHeight, 120); err != nil {
+		t.Fatal(err)
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := 0; i < 100_000; i++ {
+			p.UpdateNiri(niri.Snapshot{Workspaces: []niri.Workspace{{
+				ID: 1, Index: i, Focused: true,
+			}}})
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		pixels := make([]byte, 600*BarHeight*4)
+		for i := 0; i < 20; i++ {
+			if err := p.Render(pixels, 600, BarHeight, 600*4); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	}()
+	close(start)
+	wg.Wait()
+}
 
 func newTestProof(t *testing.T) *Proof {
 	t.Helper()
@@ -155,6 +189,22 @@ func TestProofClickTogglesMeter(t *testing.T) {
 	}
 	if got := p.MeterValue(); got != 0.25 {
 		t.Fatalf("meter after two clicks = %v, want 0.25", got)
+	}
+}
+
+func TestProofClickImmediatelyAfterPointerEnter(t *testing.T) {
+	p := newTestProof(t)
+	layoutForTest(t, p, 600)
+	button := p.ButtonBounds()
+	x, y := button.X+button.W/2, button.Y+button.H/2
+
+	p.Handle(wayland.Event{Kind: wayland.EventPointerEnter, X: x, Y: y})
+	p.Handle(wayland.Event{Kind: wayland.EventPointerPress})
+	if !p.Handle(wayland.Event{Kind: wayland.EventPointerRelease}) {
+		t.Fatal("a click immediately after enter reported no change")
+	}
+	if got := p.MeterValue(); got != meterHigh {
+		t.Fatalf("meter after click = %v, want %v", got, meterHigh)
 	}
 }
 

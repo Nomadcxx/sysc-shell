@@ -26,6 +26,7 @@ const (
 	EventPointerPress
 	EventPointerRelease
 	EventPointerLeave
+	EventPointerEnter
 )
 
 // Event is one pointer event in logical surface coordinates, which match the
@@ -277,6 +278,9 @@ func (o *owner) onSeatCapabilities(e client.SeatCapabilitiesEvent) {
 		o.pointer = pointer
 		pointer.SetEnterHandler(func(e client.PointerEnterEvent) {
 			o.pointerInside = e.Surface == o.surface
+			if o.pointerInside {
+				o.deliver(Event{Kind: EventPointerEnter, X: int(e.SurfaceX), Y: int(e.SurfaceY)})
+			}
 		})
 		pointer.SetLeaveHandler(func(client.PointerLeaveEvent) {
 			o.pointerInside = false

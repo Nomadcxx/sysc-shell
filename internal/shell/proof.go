@@ -120,7 +120,6 @@ func (p *Proof) UpdateNiri(snapshot niri.Snapshot) {
 	changed := label != p.workspace
 	if changed {
 		p.workspace = label
-		p.label.Text = p.workspaceLabelLocked()
 	}
 	p.mu.Unlock()
 
@@ -209,10 +208,27 @@ func (p *Proof) Render(pixels []byte, width, height, stride int) error {
 	}
 
 	p.mu.Lock()
-	style := p.style
+	root, style := p.renderViewLocked()
 	p.mu.Unlock()
 
-	return render.Paint(canvas, p.root, p.text, style)
+	return render.Paint(canvas, root, p.text, style)
+}
+
+// renderViewLocked copies the mutable values painting reads so the Niri
+// goroutine can update the model while shaping and rasterization run.
+func (p *Proof) renderViewLocked() (*ui.Node, render.ProofStyle) {
+	root := *p.root
+	root.Children = make([]*ui.Node, len(p.root.Children))
+	// ponytail: The proof tree is one level; use a recursive snapshot when a
+	// nested shell component becomes a real consumer.
+	for i, child := range p.root.Children {
+		copy := *child
+		if child == p.label {
+			copy.Text = p.workspaceLabelLocked()
+		}
+		root.Children[i] = &copy
+	}
+	return &root, p.style
 }
 
 // Handle applies a pointer event and reports whether the model changed. A click
@@ -223,7 +239,7 @@ func (p *Proof) Handle(event wayland.Event) bool {
 	defer p.mu.Unlock()
 
 	switch event.Kind {
-	case wayland.EventPointerMotion:
+	case wayland.EventPointerEnter, wayland.EventPointerMotion:
 		p.hoverAt.x, p.hoverAt.y = event.X, event.Y
 		p.inside = true
 		return false
