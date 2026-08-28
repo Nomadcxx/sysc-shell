@@ -16,8 +16,9 @@ import (
 // Wire fixtures captured from `niri msg -j event-stream` on Niri 26.04. They
 // carry no window titles or user data.
 const (
-	replyOK  = `{"Ok":"Handled"}`
-	replyErr = `{"Err":"error parsing request"}`
+	replyOK         = `{"Ok":"Handled"}`
+	replyErr        = `{"Err":"error parsing request"}`
+	replyUnexpected = `{"Ok":"Unexpected"}`
 
 	workspacesChanged = `{"WorkspacesChanged":{"workspaces":[` +
 		`{"id":1,"idx":1,"name":null,"output":"DP-1","is_urgent":false,"is_active":true,"is_focused":true,"active_window_id":null},` +
@@ -154,6 +155,19 @@ func TestStreamRejectsErrorReply(t *testing.T) {
 	err := nextError(t, snapshots, errs)
 	if !strings.Contains(err.Error(), "error parsing request") {
 		t.Fatalf("error = %v, want it to quote the compositor's reply", err)
+	}
+}
+
+func TestStreamRejectsUnexpectedOKReply(t *testing.T) {
+	t.Parallel()
+
+	f := startFakeNiri(t, replyUnexpected, workspacesChanged)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	snapshots, errs := Stream(ctx, f.path)
+	if err := nextError(t, snapshots, errs); err == nil {
+		t.Fatal("the client accepted an unexpected Ok reply")
 	}
 }
 
@@ -339,6 +353,29 @@ func TestStreamStopsOnContextCancellation(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("the reader goroutine did not return after cancellation")
 		}
+	}
+}
+
+func TestStreamHandshakeStopsOnContextCancellation(t *testing.T) {
+	f := startFakeNiri(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		Stream(ctx, f.path)
+		close(done)
+	}()
+
+	select {
+	case <-f.requests:
+	case <-time.After(time.Second):
+		t.Fatal("client did not send the request")
+	}
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("Stream remained blocked in handshake after cancellation")
 	}
 }
 

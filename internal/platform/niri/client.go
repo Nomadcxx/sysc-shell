@@ -49,6 +49,8 @@ func handshake(ctx context.Context, socketPath string) (net.Conn, *bufio.Scanner
 	if err != nil {
 		return nil, nil, fmt.Errorf("niri: connect to %s: %w", socketPath, err)
 	}
+	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopCancel()
 
 	if _, err := fmt.Fprintln(conn, request); err != nil {
 		conn.Close()
@@ -71,9 +73,9 @@ func handshake(ctx context.Context, socketPath string) (net.Conn, *bufio.Scanner
 	case reply.Err != nil:
 		conn.Close()
 		return nil, nil, fmt.Errorf("niri: the compositor refused the event stream: %s", *reply.Err)
-	case reply.Ok == nil:
+	case reply.Ok == nil || *reply.Ok != "Handled":
 		conn.Close()
-		return nil, nil, fmt.Errorf("niri: expected a reply to %s, got %s", request, scanner.Text())
+		return nil, nil, fmt.Errorf("niri: expected {\"Ok\":\"Handled\"}, got %s", scanner.Text())
 	}
 	return conn, scanner, nil
 }
