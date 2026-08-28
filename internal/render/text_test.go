@@ -195,3 +195,40 @@ func TestTextParseFaceReturnsDistinctFaces(t *testing.T) {
 		t.Fatal("the two faces disagree about the font")
 	}
 }
+
+// TestTextRejectsUnsupportedGlyphData covers the classification rule directly.
+// Only vector outlines can be rasterised into a shared-memory ARGB buffer;
+// bitmap, SVG and colour glyphs must be refused rather than drawn as blanks.
+func TestTextRejectsUnsupportedGlyphData(t *testing.T) {
+	t.Parallel()
+
+	unsupported := []struct {
+		name string
+		data font.GlyphData
+	}{
+		{"bitmap", font.GlyphBitmap{}},
+		{"svg", font.GlyphSVG{}},
+		{"colour", font.GlyphColor{}},
+	}
+	for _, tc := range unsupported {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := outlineFrom(tc.data, font.GID(7)); err == nil {
+				t.Fatalf("outlineFrom accepted %s glyph data", tc.name)
+			}
+		})
+	}
+
+	t.Run("outline", func(t *testing.T) {
+		t.Parallel()
+		if _, err := outlineFrom(font.GlyphOutline{}, font.GID(7)); err != nil {
+			t.Fatalf("outlineFrom rejected a vector outline: %v", err)
+		}
+	})
+	t.Run("missing", func(t *testing.T) {
+		t.Parallel()
+		if _, err := outlineFrom(nil, font.GID(7)); err == nil {
+			t.Fatal("outlineFrom accepted a glyph with no data")
+		}
+	})
+}

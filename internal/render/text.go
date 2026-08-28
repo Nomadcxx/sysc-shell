@@ -148,10 +148,16 @@ func runBox(out shaping.Output) (width, height, baseline int) {
 	return out.Advance.Ceil(), ascent + descent, ascent
 }
 
-// glyphOutline returns the vector outline for a glyph. Bitmap, SVG, and colour
-// glyphs are not supported by the shared-memory painter.
+// glyphOutline returns the vector outline for a glyph.
 func glyphOutline(face *font.Face, gid font.GID) (font.GlyphOutline, error) {
-	switch data := face.GlyphData(gid).(type) {
+	return outlineFrom(face.GlyphData(gid), gid)
+}
+
+// outlineFrom classifies glyph data. Only vector outlines can be rasterised
+// into a shared-memory ARGB buffer, so bitmap, SVG and colour glyphs are
+// refused rather than silently drawn as blanks.
+func outlineFrom(data font.GlyphData, gid font.GID) (font.GlyphOutline, error) {
+	switch data := data.(type) {
 	case font.GlyphOutline:
 		return data, nil
 	case nil:
