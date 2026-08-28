@@ -180,8 +180,8 @@ func TestProofClickTogglesMeter(t *testing.T) {
 	if got := p.MeterValue(); got != 0.75 {
 		t.Fatalf("meter after one click = %v, want 0.75", got)
 	}
-	if drain(p) == 0 {
-		t.Fatal("the click requested no redraw")
+	if got := drain(p); got != 0 {
+		t.Fatalf("the synchronous click queued %d duplicate invalidations", got)
 	}
 
 	if !click(p, button.X+button.W/2, button.Y+button.H/2) {

@@ -76,7 +76,7 @@ func (c Callbacks) validate() error {
 // Run owns the Wayland connection and every proxy created from it until the
 // context is cancelled or the compositor closes the surface. No other goroutine
 // may call a Wayland proxy.
-func Run(ctx context.Context, options Options, callbacks Callbacks) error {
+func Run(ctx context.Context, options Options, callbacks Callbacks) (err error) {
 	if err := callbacks.validate(); err != nil {
 		return err
 	}
@@ -90,7 +90,7 @@ func Run(ctx context.Context, options Options, callbacks Callbacks) error {
 		state:   newSurfaceState(),
 		sched:   render.NewScheduler(),
 	}
-	defer o.shutdown()
+	defer func() { err = errors.Join(err, o.shutdown()) }()
 
 	if err := o.connect(); err != nil {
 		return err
@@ -155,7 +155,6 @@ func (o *owner) connect() error {
 		return fmt.Errorf("wayland: connect: %w", err)
 	}
 	o.display = display
-	o.cleanup.push("display", display.Context().Close)
 
 	// Installed before any other request so protocol errors carry context.
 	display.SetErrorHandler(func(e client.DisplayErrorEvent) {
@@ -431,7 +430,9 @@ func (o *owner) reconfigure() error {
 	}
 
 	// The outstanding frame callback belongs to a retired generation.
-	o.dropFrameCallback()
+	if err := o.dropFrameCallback(); err != nil {
+		return err
+	}
 	if o.current != nil {
 		o.retiring = append(o.retiring, o.current)
 		o.current = nil
@@ -478,11 +479,13 @@ func (o *owner) sweepRetired() {
 	o.retiring = kept
 }
 
-func (o *owner) dropFrameCallback() {
+func (o *owner) dropFrameCallback() error {
 	if o.frameCallback != nil {
-		o.fail(o.frameCallback.Destroy())
+		err := o.frameCallback.Destroy()
 		o.frameCallback = nil
+		return err
 	}
+	return nil
 }
 
 // renderJob paints one slot and submits it.
@@ -621,8 +624,10 @@ func (o *owner) poll(wakeFD, timeout int) (waylandReady, wakeReady bool, err err
 	return waylandReady, wakeReady, nil
 }
 
-// shutdown destroys everything child-to-parent and releases the buffers.
-func (o *owner) shutdown() {
+// shutdown destroys everything child-to-parent, flushes the destructor
+// requests, and reports every cleanup failure.
+func (o *owner) shutdown() error {
+	var errs []error
 	if o.current != nil {
 		o.current.retire.destroy()
 		o.retiring = append(o.retiring, o.current)
@@ -630,10 +635,26 @@ func (o *owner) shutdown() {
 	}
 	for _, gen := range o.retiring {
 		gen.retire.destroy()
-		_ = gen.destroy()
+		if err := gen.destroy(); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	o.retiring = nil
 
-	o.dropFrameCallback()
-	_, _ = o.cleanup.unwind()
+	if err := o.dropFrameCallback(); err != nil {
+		errs = append(errs, err)
+	}
+	if _, err := o.cleanup.unwind(); err != nil {
+		errs = append(errs, err)
+	}
+	if o.display != nil {
+		if err := o.display.Roundtrip(); err != nil {
+			errs = append(errs, fmt.Errorf("wayland: shutdown roundtrip: %w", err))
+		}
+		if err := o.display.Context().Close(); err != nil {
+			errs = append(errs, fmt.Errorf("wayland: close display: %w", err))
+		}
+		o.display = nil
+	}
+	return errors.Join(errs...)
 }

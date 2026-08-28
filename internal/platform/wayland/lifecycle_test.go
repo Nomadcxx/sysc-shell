@@ -321,6 +321,16 @@ func TestLifecycleCleanupContinuesAfterAFailure(t *testing.T) {
 	}
 }
 
+func TestLifecycleShutdownReportsCleanupFailure(t *testing.T) {
+	t.Parallel()
+
+	o := &owner{}
+	o.cleanup.push("failing", func() error { return errTest })
+	if err := o.shutdown(); !errors.Is(err, errTest) {
+		t.Fatalf("shutdown error = %v, want %v", err, errTest)
+	}
+}
+
 func TestLifecycleGenerationRetiresAfterEveryRelease(t *testing.T) {
 	t.Parallel()
 

@@ -286,6 +286,5 @@ func (p *Proof) activateLocked(action string) bool {
 	} else {
 		p.meter.Value = meterLow
 	}
-	p.invalidate()
 	return true
 }
