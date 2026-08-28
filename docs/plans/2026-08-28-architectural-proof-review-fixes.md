@@ -83,3 +83,14 @@
 3. Run `go test -race -count=1 ./...`, `go vet ./...`, and `go build -o /tmp/sysc-shell-review ./cmd/sysc-shell`.
 4. Run the live Niri one-output, real-pointer, non-1-scale, idle-frame, ten-restart, SIGINT, and SIGTERM gates.
 5. Commit the fixes, merge `milestone/architectural-proof` into `main`, and rerun the full automated gate on merged `main`.
+
+## Qualification status
+
+The automated gate, live mapping, idle-rendering check, restart loop, SIGINT, and SIGTERM checks passed
+on 2026-08-28. The owner approved merging and continuing development with two live checks deferred:
+
+- click the button with a physical pointer; the installed synthetic input device did not reach Niri's seat;
+- run at a non-1 scale when a spare output is connected.
+
+Run those checks from `tests/integration/README.md` before recording final milestone qualification. Do not
+treat the synthetic-input attempt as pointer acceptance evidence.
