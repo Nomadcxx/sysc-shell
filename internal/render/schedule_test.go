@@ -236,3 +236,21 @@ func TestSchedulerConfigureFreesEverySlot(t *testing.T) {
 		t.Fatalf("job = %dx%d, want the new 360x48", job.Width, job.Height)
 	}
 }
+
+// TestSchedulerWaitsUntilConfigured guards the startup ordering: an
+// invalidation can arrive from the application before the compositor has sent
+// its first configure, and at that point no buffer generation exists yet.
+func TestSchedulerWaitsUntilConfigured(t *testing.T) {
+	t.Parallel()
+
+	s := NewScheduler()
+	s.Invalidate()
+	if d, _ := s.Next(); d != DecisionWait {
+		t.Fatal("scheduler offered a render before any configure, when no buffer exists")
+	}
+
+	s.Configure(240, 48)
+	if d, _ := s.Next(); d != DecisionRender {
+		t.Fatal("scheduler withheld the redraw the configure made ready")
+	}
+}

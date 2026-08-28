@@ -133,7 +133,10 @@ func (s *Scheduler) Submitted(index int) error {
 // slot. It offers work only when the surface is dirty, no frame callback is
 // outstanding, and a slot of the current generation is free.
 func (s *Scheduler) Next() (Decision, Job) {
-	if s.closed || !s.dirty || s.framePending {
+	// generation stays zero until the first configure. An application
+	// invalidation can arrive before that, and there is no buffer to draw into
+	// until a configure has allocated one.
+	if s.closed || s.generation == 0 || !s.dirty || s.framePending {
 		return DecisionWait, Job{}
 	}
 	for i := 1; i <= slotCount; i++ {
