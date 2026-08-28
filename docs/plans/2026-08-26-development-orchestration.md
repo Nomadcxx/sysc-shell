@@ -74,11 +74,11 @@ Standard library and installed platform services take precedence. A new framewor
 
 ## Work lanes
 
-`sysc-wayland` runs as a separate foundation project first. Its `v0.1.0` tag must pass the tests,
+`sysc-wayland` runs as a separate foundation project first. Its `v0.1.1` tag must pass the tests,
 generator reproduction, shell-generation probe, and live Niri probe in its foundation plan. No
 `sysc-shell` implementation lane starts against an untagged commit or a local replacement.
 
-After `sysc-wayland v0.1.0` is published, run `sysc-shell` Task 1 alone. Then use these lanes:
+After `sysc-wayland v0.1.1` is published, run `sysc-shell` Task 1 alone. Then use these lanes:
 
 | Lane | Plan tasks | Owns |
 |---|---|---|
@@ -102,7 +102,7 @@ Repository work may proceed in parallel only at settled boundaries:
 
 | Lane | May start | Merge or release gate |
 |---|---|---|
-| `sysc-wayland` foundation | now | `v0.1.0` before shell Task 1 |
+| `sysc-wayland` foundation | now | `v0.1.1` before shell Task 1 |
 | `sysc-metrics` core | after its M0 API gate | tagged core release before shell metric widgets |
 | `sysc-notify` headless service | after its M0 protocol gate | private-bus and IPC tests before shell popup integration |
 | `sysc-tray` headless service | after its M0 compatibility gate | watcher/item and IPC tests before shell tray integration |
@@ -244,7 +244,7 @@ Update `docs/roadmap.md` only when evidence changes a gate or scope. Do not turn
 
 1. Commit the documentation baseline on `main`.
 2. Execute the `sysc-wayland` foundation plan in its repository and obtain owner approval for
-   `v0.1.0` publication.
+   `v0.1.1` publication.
 3. Run the M0 design gates for `sysc-metrics`, `sysc-notify`, and `sysc-tray`; create exact implementation
    plans only after each contract passes review.
 4. Create `milestone/architectural-proof` in a dedicated `sysc-shell` worktree and execute Task 1.

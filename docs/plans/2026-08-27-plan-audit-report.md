@@ -65,7 +65,7 @@ Severity key: `B` blocker, `M1` fix before Milestone 1, `T7` gate before Task 7,
 | 23 | MS | No image decoder covers SVG, and icon themes are largely SVG. | **[V]** `golang.org/x/image@v0.44.0` ships `bmp`, `tiff`, `webp`, `vector`, `draw` — no SVG; stdlib covers PNG/JPEG/GIF only. | roadmap M3, M6 | Recorded as an owner decision (D3). |
 | 24 | MS | The plugin capability model's threat model is unstated, so "capabilities" could be read as OS-level isolation. | **[I]** design "Plugin model" lists only host-call restrictions; no namespace, seccomp, or cgroup mechanism appears anywhere. | design "Plugin model"; roadmap M5 | Scope of the guarantee stated explicitly. Applied. |
 | 25 | MS | Nothing bounds a well-formed plugin's update rate or tree size after size validation passes. | **[I]** design "Plugin model" bounds message size and restart count only. | roadmap M5 | Design gate added. Applied. |
-| 26 | T7 | `dankgo`'s `ReadMsg` treats a short read as fatal rather than resuming. | **[I]** `event.go:25-27, 65-67` return an error when `n != 8` or `n != msgSize`; `SOCK_STREAM` permits short reads. Never observed in this audit's runs. | dependency risk | `sysc-wayland v0.1.0` now gates all shell implementation and carries the fragmented-read regressions. |
+| 26 | T7 | `dankgo`'s `ReadMsg` treats a short read as fatal rather than resuming. | **[I]** `event.go:25-27, 65-67` return an error when `n != 8` or `n != msgSize`; `SOCK_STREAM` permits short reads. Never observed in this audit's runs. | dependency risk | `sysc-wayland v0.1.1` now gates all shell implementation and carries the fragmented-read regressions. |
 | 27 | D | `Context.Fd()` returns a descriptor used outside `RawConn.Control`. | **[I]** `context.go:61-71`; `syscall.RawConn` documents the descriptor as valid only during the callback. | proof Task 7 | `sysc-wayland` replaces it with bounded `ControlFD`; the proof polls inside that callback. |
 | 28 | D | `GetDispatch`'s doc comment claims multi-goroutine safety. Two concurrent callers would interleave header and body reads. | **[I]** `context.go:88-90` vs `event.go:15-81` (two sequential socket reads per message, no lock). | dependency risk | `sysc-wayland` removes `GetDispatch` and enforces the single-owner rule. |
 
@@ -352,7 +352,7 @@ Alternative: commit to AT-SPI at Milestone 4, which pulls a large D-Bus subsyste
 
 Owner review elevated the `dankgo` short-read defect to a dependency gate, kept Niri workspace IDs as
 `uint64` with required-field validation, and removed the proposed permanent `--smoke` CLI path. The
-owner later chose a focused extraction in `github.com/Nomadcxx/sysc-wayland`; its `v0.1.0` release gate
+owner later chose a focused extraction in `github.com/Nomadcxx/sysc-wayland`; its `v0.1.1` release gate
 now resolves findings 26 through 28 before any shell implementation starts.
 
 ## Research not completed
@@ -390,7 +390,7 @@ same released Wayland transport and scanner.
    holding only the four approved dependencies and their transitive requirements.
 7. Owner decisions **D1** and **D2** are resolved. **D3**, **D4** and **D5** may remain open.
 8. The live-scale procedure, including restoration, has passed on the target machine.
-9. `sysc-wayland v0.1.0` passes fragmented-header, fragmented-body, descriptor, generator, and live Niri
+9. `sysc-wayland v0.1.1` passes fragmented-header, fragmented-body, descriptor, generator, and live Niri
    gates and resolves from its remote module path without a local replacement.
 
 Items 1 through 8 are complete. Item 9 now gates every `sysc-shell` implementation task so parallel lanes

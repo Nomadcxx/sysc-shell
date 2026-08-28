@@ -111,11 +111,11 @@ blocks when none is pending; and `wl_display.error` is **silently discarded** un
 installed.
 
 Decision: extract the client and scanner into `github.com/Nomadcxx/sysc-wayland`, preserve the subtree
-licences and provenance, repair stream and descriptor handling there, and publish `v0.1.0` before shell
+licences and provenance, repair stream and descriptor handling there, and publish `v0.1.1` before shell
 implementation. Keep xdg-shell and shell extension XML and bindings in `sysc-shell`; the scanner accepts
 the local xdg-shell import path when layer-shell generation needs `xdg_popup`.
 Generate and own the layer-shell binding from pinned protocol XML, invoking the scanner with an
-`@v0.1.0` suffix so its build dependencies stay out of this repository's `go.sum`.
+`@v0.1.1` suffix so its build dependencies stay out of this repository's `go.sum`.
 
 ## dgop
 

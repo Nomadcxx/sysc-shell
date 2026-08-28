@@ -22,7 +22,7 @@ The first releases exclude a lock screen, a compositor, Noctalia configuration c
 
 - Go owns shell state, Niri IPC, layout, widgets, services, configuration, and plugin supervision.
 - [`sysc-wayland`](https://github.com/Nomadcxx/sysc-wayland) supplies the owned pure-Go Wayland client
-  and protocol generator. `sysc-shell` starts implementation only after `sysc-wayland v0.1.0` passes its
+  and protocol generator. `sysc-shell` starts implementation only after `sysc-wayland v0.1.1` passes its
   release gate.
 - `wl_shm` supplies the first renderer. EGL/OpenGL ES enters the project only after profiling shows a need.
 - [`go-text/typesetting`](https://github.com/go-text/typesetting) is the first text-shaping candidate. HarfBuzz and FreeType remain a fallback if the pure-Go stack fails production text tests.

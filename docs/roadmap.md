@@ -13,7 +13,7 @@ Deliverables:
 - architectural-proof implementation plan;
 - development orchestration plan;
 - approved `sysc-metrics`, `sysc-notify`, and `sysc-tray` boundaries and roadmaps;
-- qualified `sysc-wayland v0.1.0` release;
+- qualified `sysc-wayland v0.1.1` release;
 - empty package directories on disk, without placeholder Go packages.
 
 Exit gate:
@@ -27,7 +27,7 @@ Build one top-anchored layer surface on one selected Niri output. The surface re
 
 Required behavior:
 
-- pure-Go Wayland connection through pinned `sysc-wayland v0.1.0`;
+- pure-Go Wayland connection through pinned `sysc-wayland v0.1.1`;
 - generated layer-shell protocol binding;
 - generated fractional-scale and viewporter bindings, both treated as required;
 - initial empty commit followed by configure acknowledgement;
@@ -50,7 +50,7 @@ Exit gate:
 
 Kill or reconsider gate:
 
-- no `sysc-shell` implementation task starts until `sysc-wayland v0.1.0` passes fragmented-read,
+- no `sysc-shell` implementation task starts until `sysc-wayland v0.1.1` passes fragmented-read,
   descriptor, generator, and live Niri qualification;
 - stop and compare a Gio-backed renderer or GTK4 if `sysc-wayland` cannot maintain protocol correctness,
   the text stack cannot render the fixtures, or the design requires cross-goroutine Wayland access.

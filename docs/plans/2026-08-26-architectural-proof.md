@@ -10,7 +10,7 @@ publishes typed workspace snapshots, and pointer actions mutate the proof model 
 owner's command queue.
 
 **Tech Stack:** Go 1.26 language level (verified against toolchain `go1.27.0`),
-`github.com/Nomadcxx/sysc-wayland v0.1.0`, pinned `go-text/typesetting`, `golang.org/x/image`,
+`github.com/Nomadcxx/sysc-wayland v0.1.1`, pinned `go-text/typesetting`, `golang.org/x/image`,
 `golang.org/x/sys`, Niri JSON IPC, `wlr-layer-shell-unstable-v1`, and `wl_shm`.
 
 ---
@@ -18,7 +18,7 @@ owner's command queue.
 ## Working rules
 
 - Execute this plan in a dedicated worktree from the documentation baseline.
-- Start only after the owner approves and publishes `sysc-wayland v0.1.0` and the release resolves without
+- Start only after the owner approves and publishes `sysc-wayland v0.1.1` and the release resolves without
   a local `replace` directive.
 - Use `github.com/Nomadcxx/sysc-shell` as the module path unless the repository owner supplies another canonical path before Task 1.
 - Keep the first proof in `cmd/sysc-shell`; do not create a throwaway binary.
@@ -87,13 +87,13 @@ Expected: compilation fails because `parseOptions` does not exist.
 ```bash
 go mod init github.com/Nomadcxx/sysc-shell
 go mod edit -go=1.26
-go get github.com/Nomadcxx/sysc-wayland@v0.1.0
+go get github.com/Nomadcxx/sysc-wayland@v0.1.1
 go get github.com/go-text/typesetting@ddb7ff96ad4d2dc730cbcae9dd5140023f319c3e
 go get golang.org/x/image@v0.44.0
 go get golang.org/x/sys@v0.47.0
 ```
 
-All four direct dependencies resolve at these versions: `sysc-wayland v0.1.0`,
+All four direct dependencies resolve at these versions: `sysc-wayland v0.1.1`,
 `typesetting v0.3.5-0.20260729084153-ddb7ff96ad4d`, `x/image v0.44.0`, and `x/sys v0.47.0`.
 After Task 6 runs the scanner in its version-suffixed module context, `go mod tidy` must leave `go.sum`
 holding only these and their transitive requirements.
@@ -422,19 +422,19 @@ though the proof does not create an xdg surface.
 
 ```go
 // internal/platform/wayland/xdgshell/generate.go
-//go:generate go run github.com/Nomadcxx/sysc-wayland/cmd/sysc-wayland-scanner@v0.1.0 -pkg xdgshell -o xdg_shell.go -i ../../../../protocols/xdg-shell.xml
+//go:generate go run github.com/Nomadcxx/sysc-wayland/cmd/sysc-wayland-scanner@v0.1.1 -pkg xdgshell -prefix xdg_ -o xdg_shell.go -i ../../../../protocols/xdg-shell.xml
 
 // internal/platform/wayland/layershell/generate.go
-//go:generate go run github.com/Nomadcxx/sysc-wayland/cmd/sysc-wayland-scanner@v0.1.0 -pkg layershell -xdg-shell-import github.com/Nomadcxx/sysc-shell/internal/platform/wayland/xdgshell -o layer_shell.go -i ../../../../protocols/wlr-layer-shell-unstable-v1.xml
+//go:generate go run github.com/Nomadcxx/sysc-wayland/cmd/sysc-wayland-scanner@v0.1.1 -pkg layershell -xdg-shell-import github.com/Nomadcxx/sysc-shell/internal/platform/wayland/xdgshell -o layer_shell.go -i ../../../../protocols/wlr-layer-shell-unstable-v1.xml
 
 // internal/platform/wayland/fractionalscale/generate.go
-//go:generate go run github.com/Nomadcxx/sysc-wayland/cmd/sysc-wayland-scanner@v0.1.0 -pkg fractionalscale -o fractional_scale.go -i ../../../../protocols/fractional-scale-v1.xml
+//go:generate go run github.com/Nomadcxx/sysc-wayland/cmd/sysc-wayland-scanner@v0.1.1 -pkg fractionalscale -o fractional_scale.go -i ../../../../protocols/fractional-scale-v1.xml
 
 // internal/platform/wayland/viewporter/generate.go
-//go:generate go run github.com/Nomadcxx/sysc-wayland/cmd/sysc-wayland-scanner@v0.1.0 -pkg viewporter -o viewporter.go -i ../../../../protocols/viewporter.xml
+//go:generate go run github.com/Nomadcxx/sysc-wayland/cmd/sysc-wayland-scanner@v0.1.1 -pkg viewporter -o viewporter.go -i ../../../../protocols/viewporter.xml
 ```
 
-Keep the `@v0.1.0` suffix. Without it the scanner resolves inside the main module and writes its build
+Keep the `@v0.1.1` suffix. Without it the scanner resolves inside the main module and writes its build
 dependencies into this repository's `go.sum`. The version suffix builds it in an isolated module
 context.
 
@@ -444,8 +444,11 @@ to pick a `gofumpt` language version, so the `go` directive in `go.mod` must not
 regenerating.
 
 Add a scanner command for `xdgshell` and equivalent commands in `fractionalscale` and `viewporter`.
-Only the layer-shell command needs `-xdg-shell-import`. Do not trim protocol prefixes. Keeping protocol
-names makes source comparisons with XML and upstream generated bindings direct.
+Only the layer-shell command needs `-xdg-shell-import`, and only the xdg-shell command needs
+`-prefix xdg_`. That prefix is mandatory: the layer-shell generator emits its `xdg_popup` references
+against the trimmed names, so an xdg-shell package generated without it does not compile against the
+layer-shell package. Do not trim prefixes in any other protocol package. Keeping protocol names there
+makes source comparisons with XML and upstream generated bindings direct.
 
 **Step 3: Generate and prove reproducibility**
 
@@ -481,7 +484,7 @@ git commit -m "build: generate shell protocol bindings"
 
 ## Task 7: Implement the Wayland owner and shared-memory surface
 
-**Dependency gate:** `sysc-wayland v0.1.0` must pass its full release gate before this plan starts. Task 7
+**Dependency gate:** `sysc-wayland v0.1.1` must pass its full release gate before this plan starts. Task 7
 must resolve that tag without a local `replace` directive. Do not compensate for a broken wire reader,
 descriptor path, or proxy lifecycle in the shell.
 

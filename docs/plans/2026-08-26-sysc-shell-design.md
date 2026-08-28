@@ -74,7 +74,7 @@ D-Bus work while that connection is absent, and sends a current snapshot after r
 
 The first proof pins these projects:
 
-- `github.com/Nomadcxx/sysc-wayland v0.1.0` for the Wayland wire client and protocol generator;
+- `github.com/Nomadcxx/sysc-wayland v0.1.1` for the Wayland wire client and protocol generator;
 - `github.com/go-text/typesetting` for pure-Go shaping and font parsing;
 - `golang.org/x/image` and `golang.org/x/sys` for rasterisation and Linux system calls.
 
@@ -365,7 +365,7 @@ accessibility, popouts, and plugin UI still require deliberate runtime work.
 
 ## Open qualification gates
 
-- Publish `sysc-wayland v0.1.0` only after its socket-pair, generator, and live Niri release gates pass.
+- Publish `sysc-wayland v0.1.1` only after its socket-pair, generator, and live Niri release gates pass.
 - Prove that the pinned `sysc-wayland` release handles the required Niri registry, buffer, input, and
   shutdown paths under this long-running workload.
 - Prove that `go-text/typesetting` meets the bar's shaping, font fallback, and memory needs.
