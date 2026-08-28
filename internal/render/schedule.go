@@ -23,10 +23,10 @@ type Job struct {
 }
 
 type slot struct {
-	// busy is true from submission until wl_buffer.release.
+	// busy is true from submission until wl_buffer.release. It is scoped to
+	// the current generation: a configure allocates fresh buffers, which frees
+	// every slot regardless of what the compositor still holds.
 	busy bool
-	// generation is the buffer generation the slot's storage belongs to.
-	generation int
 }
 
 // Scheduler owns the pure draw-scheduling state: two buffer slots, one
@@ -73,12 +73,11 @@ func (s *Scheduler) Configure(width, height int) {
 	s.framePending = false
 	s.dirty = true
 
-	// A free slot takes new storage immediately. A slot the compositor still
-	// holds keeps its old generation and stays unavailable until released.
+	// The new generation allocates two fresh buffers, so every slot is free.
+	// Buffers the compositor still holds belong to the retired generation and
+	// are tracked by its owner; their releases never reach the scheduler.
 	for i := range s.slots {
-		if !s.slots[i].busy {
-			s.slots[i].generation = s.generation
-		}
+		s.slots[i].busy = false
 	}
 }
 
@@ -111,7 +110,6 @@ func (s *Scheduler) Release(index int) error {
 		return fmt.Errorf("render: release of slot %d, which is not busy", index)
 	}
 	s.slots[index].busy = false
-	s.slots[index].generation = s.generation
 	return nil
 }
 
@@ -140,7 +138,7 @@ func (s *Scheduler) Next() (Decision, Job) {
 	}
 	for i := 1; i <= slotCount; i++ {
 		index := (s.last + i) % slotCount
-		if s.slots[index].busy || s.slots[index].generation != s.generation {
+		if s.slots[index].busy {
 			continue
 		}
 		return DecisionRender, Job{

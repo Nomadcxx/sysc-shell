@@ -151,9 +151,6 @@ func TestSchedulerConfigureDiscardsPendingRender(t *testing.T) {
 	if job.Width != 360 || job.Height != 48 {
 		t.Fatalf("job = %dx%d, want the new 360x48", job.Width, job.Height)
 	}
-	if job.Slot == 0 {
-		t.Fatal("scheduler reused a slot the compositor still holds across the configure")
-	}
 	if job.Generation == 0 {
 		t.Fatal("configure did not start a new buffer generation")
 	}
@@ -198,5 +195,44 @@ func TestSchedulerRejectsUnexpectedEvents(t *testing.T) {
 	job := submitFirstFrame(t, s)
 	if err := s.Submitted(job.Slot); err == nil {
 		t.Error("Submitted accepted a slot that is already busy")
+	}
+}
+
+// TestSchedulerConfigureFreesEverySlot reproduces a stall observed on Niri:
+// after two reconfigures, both slots were still marked busy and the surface
+// never redrew again.
+//
+// Slot busy-ness is scoped to one buffer generation. A configure allocates a
+// new generation with two fresh buffers, so both slots are free even while the
+// compositor still holds buffers from the retired generation. Those retired
+// buffers are tracked separately, and their releases never reach the scheduler.
+func TestSchedulerConfigureFreesEverySlot(t *testing.T) {
+	t.Parallel()
+
+	s := NewScheduler()
+	submitFirstFrame(t, s)
+
+	// Fill the second slot too, so both are busy in this generation.
+	s.Invalidate()
+	if err := s.Frame(); err != nil {
+		t.Fatal(err)
+	}
+	d, second := s.Next()
+	if d != DecisionRender {
+		t.Fatalf("decision = %v, want DecisionRender for the second slot", d)
+	}
+	if err := s.Submitted(second.Slot); err != nil {
+		t.Fatal(err)
+	}
+
+	// A configure starts a new generation of two fresh buffers.
+	s.Configure(360, 48)
+
+	d, job := s.Next()
+	if d != DecisionRender {
+		t.Fatal("configure left every slot busy, so the surface can never redraw")
+	}
+	if job.Width != 360 || job.Height != 48 {
+		t.Fatalf("job = %dx%d, want the new 360x48", job.Width, job.Height)
 	}
 }
