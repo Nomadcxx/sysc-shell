@@ -20,6 +20,11 @@ func TestScale120Physical(t *testing.T) {
 		{"1.25 scales the output width", 150, 3440, 4300},
 		{"1.3 rounds 62.4 down", 156, 48, 62},
 		{"1.75 scales the bar height", 210, 48, 84},
+		// Measured on Niri 26.04: DP-1 runs a 3440x1440 mode, and at scale 1.5
+		// Niri reports a logical size of 2293x960. The conversion must map that
+		// logical width back onto the exact mode width.
+		{"1.5 maps a measured logical width onto its mode", 180, 2293, 3440},
+		{"1.5 maps a measured logical height onto its mode", 180, 960, 1440},
 		{"0.5 halves the bar height", 60, 48, 24},
 		{"0.5 rounds a half pixel up", 60, 1, 1},
 	}
