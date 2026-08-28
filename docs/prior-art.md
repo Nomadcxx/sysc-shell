@@ -237,6 +237,13 @@ source.
 Two vendored assets do carry notice obligations: the protocol XML files, whose copyright headers must be
 preserved verbatim, and `Amiri-Regular.ttf`, which must ship beside `OFL.txt`.
 
+`Amiri-Regular.ttf` and `OFL.txt` were copied verbatim during Task 3 from `font/testdata/` in
+`github.com/go-text/typesetting@v0.3.5-0.20260729084153-ddb7ff96ad4d` into `internal/render/testdata/`,
+where they serve only as the joined-script shaping fixture. Upstream records the font as SIL OFL 1.1
+from <https://fonts.google.com/specimen/Amiri>; it is copyright 2010-2020 The Amiri Project Authors
+(<https://github.com/alif-type/amiri>). The vendored file has SHA-256
+`e38162048fca91187a7c3d73a4a1109ca0490d6bac8acf3ff32a57f5fff7e5b6`.
+
 ## sysc-greet
 
 Source assessed from the local `sysc-greet` repository (`~/sysc-greet`).
