@@ -459,12 +459,20 @@ Multiple updates between frames coalesce: the dirty set is a set, and the schedu
 already idempotent. The latest visible state cannot be dropped, because the node text is written before
 the global is marked dirty and the mark is not consumed until the owner drains it.
 
-**One invariant this tranche must verify rather than assume.** `Registry.invalidations` is presently a
-capacity-8 channel with a non-blocking `default:` drop, so a ninth changed bar could lose its redraw
-entirely. Invalidation is listed among Milestone 2's in-flight corrections, so this design does not
-pre-emptively rewrite it. Instead the integration checkpoint carries a test asserting that every state
-change reaches its bar's scheduler exactly once, coalesced but never lost. If the merged Milestone 2
-correction satisfies it, the test passes untouched; if not, Tranche 3A fixes it in the integration lane.
+**The registry keeps publishing; the returned globals are not a substitute for it.** `UpdateClock` and
+`UpdateNiri` both return the changed globals *and* send one `wayland.Invalidation` per changed global on
+the channel `Registry.Invalidations()` exposes. `cmd/sysc-shell/main.go` wires that channel into
+`wayland.Callbacks`, so the channel — not the return value — is what actually drives a frame. The return
+value exists for the tests and for any future transport.
+
+Milestone 2's version of this send is non-blocking with a `default:` drop on a capacity-8 channel, so a
+ninth changed bar loses its redraw. Tranche 3A does not inherit that. The send **blocks** instead: the
+owner's bridge goroutine drains the channel continuously into an unbounded queue, so blocking is bounded,
+and `Registry.Close` closes a `closed` channel that releases any pending send at shutdown. A dropped
+invalidation is a bar that never repaints, which is precisely the defect this tranche must not ship.
+
+The integration checkpoint tests this at the transport, not just at the return value: more bars change at
+once than the channel can buffer, a drainer runs concurrently, and every changed global must arrive.
 
 ## Files
 
@@ -559,8 +567,10 @@ RSS, submitted and skipped frame counts, layout and paint duration, allocations 
    correct but have no caller; `internal/shell` still parses embedded `goregular`. Window titles are the
    first unbounded user text and need per-rune fallback and cluster truncation. Tranche 3A adds only the
    bound test on top.
-3. **Milestone 2's invalidation correction delivers lossless delivery.** Verified by test rather than
-   assumed; see the invalidation section.
+3. **Milestone 2's invalidation transport keeps the shape `chan wayland.Invalidation`.** Tranche 3A no
+   longer depends on Milestone 2 fixing the lossy drop — it publishes with a blocking send of its own and
+   tests delivery at the transport. Only the channel's element type is assumed; if the merged correction
+   changed it, `Registry.publish` and one wiring line in `main.go` adapt.
 4. **Niri emits `WorkspaceActiveWindowChanged` when focus moves between windows within one workspace.**
    **Verified live on 2026-08-30** by the audit, on niri `26.04 (8ed0da4)`: two windows were spawned on
    one workspace and focus alternated between them with `niri msg action focus-window`. Every move emitted

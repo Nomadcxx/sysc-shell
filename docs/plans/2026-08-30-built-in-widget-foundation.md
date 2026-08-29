@@ -2203,7 +2203,13 @@ implementations; there is simply one green checkpoint and one commit for the who
   `(*Registry).NewHost(global uint32, connector string) (wayland.HostCallbacks, error)`;
   `(*Registry).DropHost(global uint32)`; `(*Registry).UpdateNiri(niri.Snapshot) []uint32`;
   `(*Registry).UpdateClock(time.Time) []uint32`; `(*Registry).Clock() *services.Clock`;
-  `(*Registry).Close()`. Tasks 11 and 12 use these.
+  `(*Registry).Invalidations() <-chan wayland.Invalidation`; `(*Registry).Close()`.
+  Tasks 11 and 12 use these.
+
+`Invalidations()` is retained deliberately. `cmd/sysc-shell/main.go` passes it into
+`wayland.Callbacks`, so dropping it breaks the build; and without publishing the changed globals
+onto it, no bar would ever repaint even if it compiled. The `[]uint32` returns are for the tests
+and for any future transport; the channel is what actually drives a frame today.
 
 **Expect a red tree between Steps 4 and 5.** That is intended: `registry.go` still calls the methods
 Step 4 removes. Do not try to make Step 4 compile on its own.
@@ -2750,21 +2756,54 @@ type Registry struct {
 	now     time.Time
 
 	clock *services.Clock
+
+	// invalidations carries one entry per bar whose rendered text changed.
+	// The Wayland owner receives from it; the registry owns it and never
+	// closes it.
+	invalidations chan wayland.Invalidation
+	// closed unblocks a pending publish at shutdown.
+	closed    chan struct{}
+	closeOnce sync.Once
 }
 
 func NewRegistry(cfg config.Config) *Registry {
 	return &Registry{
-		cfg:     cfg,
-		outputs: make(map[string]outputState),
-		bars:    make(map[uint32]*Bar),
-		leases:  make(map[uint32][]*services.Lease),
-		clock:   services.NewClock(),
+		cfg:           cfg,
+		outputs:       make(map[string]outputState),
+		bars:          make(map[uint32]*Bar),
+		leases:        make(map[uint32][]*services.Lease),
+		clock:         services.NewClock(),
+		invalidations: make(chan wayland.Invalidation, 8),
+		closed:        make(chan struct{}),
 	}
 }
 
 // Clock is the shared clock service. The process pumps its updates into
 // UpdateClock.
 func (r *Registry) Clock() *services.Clock { return r.clock }
+
+// Invalidations is the channel the Wayland owner receives from. The registry
+// owns it and never closes it.
+func (r *Registry) Invalidations() <-chan wayland.Invalidation { return r.invalidations }
+
+// publish sends one invalidation per changed global.
+//
+// The send blocks rather than dropping. A dropped invalidation is a bar that
+// never repaints, which is exactly the defect this tranche must not ship. The
+// owner's bridge goroutine drains this channel continuously into an unbounded
+// queue, so blocking is bounded; Close unblocks a pending send at shutdown.
+//
+// Callers must not hold r.mu: the send can block, and the owner must stay free
+// to make progress.
+func (r *Registry) publish(globals []uint32) {
+	for _, global := range globals {
+		select {
+		case r.invalidations <- wayland.Invalidation{Global: global}:
+		case <-r.closed:
+			return
+		}
+	}
+}
 
 // NewHost builds the hooks for one output's bar and acquires its services.
 func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbacks, error) {
@@ -2801,6 +2840,9 @@ func (r *Registry) DropHost(global uint32) {
 
 // Close releases every bar and service. It is safe to call twice.
 func (r *Registry) Close() {
+	// Unblocks any publish waiting on a full channel, so shutdown cannot hang.
+	r.closeOnce.Do(func() { close(r.closed) })
+
 	r.mu.Lock()
 	var leases []*services.Lease
 	for global, held := range r.leases {
@@ -2821,8 +2863,6 @@ func (r *Registry) Close() {
 // unchanged is not reported, so no frame is submitted for it.
 func (r *Registry) UpdateClock(now time.Time) []uint32 {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	r.now = now
 	var changed []uint32
 	for global, bar := range r.bars {
@@ -2830,6 +2870,9 @@ func (r *Registry) UpdateClock(now time.Time) []uint32 {
 			changed = append(changed, global)
 		}
 	}
+	r.mu.Unlock()
+
+	r.publish(changed)
 	return changed
 }
 
@@ -2839,8 +2882,6 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	next := projectOutputs(s)
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	// Replaced wholesale, not merged: a connector absent from the projection
 	// has no workspace state any more, and keeping its last value would render
 	// a stale workspace or title on a host that reconnects under that name.
@@ -2852,6 +2893,9 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 			changed = append(changed, global)
 		}
 	}
+	r.mu.Unlock()
+
+	r.publish(changed)
 	return changed
 }
 
@@ -3246,9 +3290,11 @@ After the Niri pump goroutine, add:
 	}()
 ```
 
-If the merged Milestone 2 invalidation transport requires the registry to publish changed globals itself,
-`UpdateClock`'s return value is already what it needs; wire it exactly as `UpdateNiri`'s is wired in the
-existing Niri pump, so both paths are identical.
+`main.go`'s existing `Invalidations: registry.Invalidations()` wiring is unchanged and must stay:
+`UpdateClock` and `UpdateNiri` publish onto that channel themselves, so the clock pump correctly
+discards their return value. If the merged Milestone 2 correction replaced the transport with a
+different type, adapt `Registry.publish` and this one wiring line — nothing else in the tranche
+touches it.
 
 - [ ] **Step 4: Run the tests and build**
 
@@ -3479,6 +3525,23 @@ func TestEveryChangedBarIsReportedWhenManyChangeAtOnce(t *testing.T) {
 	}
 	newHosts(t, reg, hosts)
 
+	// Drain concurrently: publish blocks rather than dropping, and more bars
+	// change here than the channel can buffer. That is the point — a
+	// non-blocking send would silently lose the overflow.
+	received := make(chan uint32, 4*len(hosts))
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case inv := <-reg.Invalidations():
+				received <- inv.Global
+			case <-done:
+				return
+			}
+		}
+	}()
+
 	changed := reg.UpdateNiri(niri.Snapshot{Workspaces: workspaces})
 	if len(changed) != len(hosts) {
 		t.Fatalf("changed %d bars, want all %d; an invalidation was dropped",
@@ -3494,6 +3557,21 @@ func TestEveryChangedBarIsReportedWhenManyChangeAtOnce(t *testing.T) {
 			t.Fatalf("global %d reported %d times, want exactly one", global, count)
 		}
 	}
+
+	// Every changed bar must also reach the transport. Returning the globals
+	// is not enough: the channel is what actually drives a frame.
+	onTransport := make(map[uint32]bool, len(hosts))
+	deadline := time.After(2 * time.Second)
+	for len(onTransport) < len(hosts) {
+		select {
+		case global := <-received:
+			onTransport[global] = true
+		case <-deadline:
+			t.Fatalf("only %d of %d invalidations reached the channel; the rest were lost",
+				len(onTransport), len(hosts))
+		}
+	}
+	close(done)
 }
 ```
 
