@@ -34,7 +34,7 @@ Run `go run ./cmd/sysc-shell` for each check. The shell creates a bar on each co
 | 3 | physical hotplug | a bar appears without restarting the shell |
 | 4 | physical unplug | that bar disappears, the others keep running |
 | 5 | reconnect | a new registry global, one bar, no duplicate |
-| 6 | one transformed output | configure dimensions swap; the bar is upright and hit-tests correctly |
+| 6 | one transformed output | width follows the transformed logical output; height stays 44; the bar is upright and hit-tests correctly |
 | 7 | mixed scales, one non-1 | per-output buffer sizes correct |
 | 8 | scale or mode change while mapped | no stale buffer, no wrong hit region |
 | 9 | exclusive zone with Niri windows | windows begin at the configured distance |
@@ -63,7 +63,7 @@ The design expects the configure size in the output's post-transform logical spa
 
 ```bash
 OUT=<connector>
-BEFORE=$(niri msg -j outputs | python3 -c "import json,sys;print(json.load(sys.stdin)['$OUT']['transform'])")
+BEFORE=$(niri msg -j outputs | python3 -c "import json,sys;print(json.load(sys.stdin)['$OUT']['logical']['transform'])")
 niri msg output "$OUT" transform 90
 
 go run ./cmd/sysc-shell
@@ -71,8 +71,10 @@ go run ./cmd/sysc-shell
 niri msg output "$OUT" transform "$BEFORE"
 ```
 
-Record the configure width and height before and after rotation. They must swap. If the compositor
-rotates the bar pixels, add `set_buffer_transform` and rerun this check.
+Record the configure width and height before and after rotation. The height must stay 44. The width must
+follow the output's post-transform logical width, normally the old logical height minus any competing
+exclusive zones. If the compositor rotates the bar pixels, add `set_buffer_transform` and rerun this
+check.
 
 ## Check 7: mixed scales
 

@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -83,7 +85,15 @@ func Load(path string) (Config, error) {
 // Config only when every field passes.
 func Parse(data []byte) (Config, error) {
 	var wire wireConfig
-	if err := json.Unmarshal(data, &wire); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&wire); err != nil {
+		return Config{}, fmt.Errorf("config: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			err = fmt.Errorf("more than one JSON value")
+		}
 		return Config{}, fmt.Errorf("config: %w", err)
 	}
 

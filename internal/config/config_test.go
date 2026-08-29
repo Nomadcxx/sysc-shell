@@ -122,6 +122,30 @@ func TestMalformedJSONIsRejected(t *testing.T) {
 	}
 }
 
+func TestUnknownConfigurationFieldsAreRejected(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		doc  string
+		want string
+	}{
+		{"top level", `{"bars":{}}`, "bars"},
+		{"nested", `{"bar":{"heigth":56}}`, "heigth"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := Parse([]byte(tc.doc))
+			if err == nil {
+				t.Fatalf("Parse(%s) accepted an unknown field", tc.doc)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %q does not name %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestLoadTreatsAMissingFileAsDefaults(t *testing.T) {
 	t.Parallel()
 	cfg, err := Load(filepath.Join(t.TempDir(), "absent.json"))

@@ -15,24 +15,26 @@ func TestCloseRetryBudgetIsBounded(t *testing.T) {
 		if !h.mayRecreate(at) {
 			t.Fatalf("attempt %d was refused inside the budget", i+1)
 		}
-		h.recordCloseAttempt(at)
+		h.recordCloseAttempt()
 	}
 	if h.mayRecreate(base.Add(30 * time.Second)) {
 		t.Fatalf("attempt %d was permitted beyond the budget", closeRetryLimit+1)
 	}
 }
 
-func TestCloseRetryHonoursTheBackoff(t *testing.T) {
+func TestLayerClosedDecisionAllowsImmediateBoundedSequence(t *testing.T) {
 	t.Parallel()
 	h := newHost(1, nil)
 	base := time.Unix(1000, 0)
 
-	h.recordCloseAttempt(base)
-	if h.mayRecreate(base.Add(closeRetryBackoff - time.Second)) {
-		t.Fatal("a retry was permitted before the backoff elapsed")
+	for attempt := 1; attempt <= closeRetryLimit; attempt++ {
+		if !h.mayRecreate(base) {
+			t.Fatalf("immediate attempt %d was refused", attempt)
+		}
+		h.recordCloseAttempt()
 	}
-	if !h.mayRecreate(base.Add(closeRetryBackoff)) {
-		t.Fatal("a retry was refused after the backoff elapsed")
+	if h.mayRecreate(base) {
+		t.Fatalf("attempt %d was permitted beyond the budget", closeRetryLimit+1)
 	}
 }
 
@@ -41,8 +43,8 @@ func TestSustainedMappingResetsTheBudget(t *testing.T) {
 	h := newHost(1, nil)
 	base := time.Unix(1000, 0)
 
-	for i := range closeRetryLimit {
-		h.recordCloseAttempt(base.Add(time.Duration(i) * 6 * time.Second))
+	for range closeRetryLimit {
+		h.recordCloseAttempt()
 	}
 	// A bar that stayed up long enough earns a fresh budget, so a transient
 	// compositor reset does not permanently exhaust recovery.
@@ -57,7 +59,7 @@ func TestRecordingAnAttemptClearsTheMappedClock(t *testing.T) {
 	h := newHost(1, nil)
 	h.mappedSince = time.Unix(1000, 0)
 
-	h.recordCloseAttempt(time.Unix(1010, 0))
+	h.recordCloseAttempt()
 	if !h.mappedSince.IsZero() {
 		t.Fatal("recordCloseAttempt left a stale mapped clock, which would grant a free reset")
 	}

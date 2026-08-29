@@ -13,7 +13,6 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
-	"golang.org/x/image/font/gofont/goregular"
 )
 
 // BarHeight is the nominal bar height token. It is not a Wayland dimension:
@@ -78,7 +77,7 @@ func NewWithTheme(theme Theme, policy config.Bar) (*Proof, error) {
 	if err := theme.Valid(); err != nil {
 		return nil, err
 	}
-	face, err := render.ParseFace(goregular.TTF)
+	fonts, err := render.NewSystemFontMap(policy.FontFamily, render.DefaultFontCacheDir())
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +85,7 @@ func NewWithTheme(theme Theme, policy config.Bar) (*Proof, error) {
 	p := &Proof{
 		workspace:     "-",
 		theme:         theme,
-		text:          render.NewTextRenderer(face),
+		text:          render.NewTextRendererWithFontMap(fonts),
 		invalidations: make(chan struct{}, 1),
 		style: render.ProofStyle{
 			Size:       theme.TextSize,

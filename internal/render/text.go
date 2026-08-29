@@ -66,17 +66,34 @@ type Mask struct {
 // A renderer owns its face and shaper, neither of which is safe for concurrent
 // use. Give every goroutine that draws its own renderer.
 type TextRenderer struct {
-	face   *font.Face
-	shaper shaping.HarfbuzzShaper
+	face    *font.Face
+	fontMap *FontMap
+	shaper  shaping.HarfbuzzShaper
 }
 
 func NewTextRenderer(face *font.Face) *TextRenderer {
 	return &TextRenderer{face: face}
 }
 
+// NewTextRendererWithFontMap builds a renderer that resolves a face for every
+// rune and shapes adjacent runes with the same resolved face together.
+func NewTextRendererWithFontMap(fontMap *FontMap) *TextRenderer {
+	if fontMap == nil {
+		return &TextRenderer{}
+	}
+	return &TextRenderer{face: fontMap.Primary(), fontMap: fontMap}
+}
+
 // Shape lays out one run at the given physical pixel size.
 func (r *TextRenderer) Shape(text string, size int) (shaping.Output, error) {
 	if r == nil || r.face == nil {
+		return shaping.Output{}, fmt.Errorf("render: nil face")
+	}
+	return r.shapeFace(r.face, text, size)
+}
+
+func (r *TextRenderer) shapeFace(face *font.Face, text string, size int) (shaping.Output, error) {
+	if face == nil {
 		return shaping.Output{}, fmt.Errorf("render: nil face")
 	}
 	if size <= 0 {
@@ -90,48 +107,95 @@ func (r *TextRenderer) Shape(text string, size int) (shaping.Output, error) {
 		RunStart:  0,
 		RunEnd:    len(runes),
 		Direction: scriptDirection(script),
-		Face:      r.face,
+		Face:      face,
 		Size:      fixed.I(size),
 		Script:    script,
 		Language:  language.NewLanguage("und"),
 	}), nil
 }
 
+type shapedFaceRun struct {
+	face      *font.Face
+	text      string
+	runeStart int
+	output    shaping.Output
+}
+
+func (r *TextRenderer) shapeRuns(text string, size int) ([]shapedFaceRun, error) {
+	if r == nil || r.face == nil {
+		return nil, fmt.Errorf("render: nil face")
+	}
+	fontRuns := []Run{{Face: r.face, Text: text}}
+	if r.fontMap != nil {
+		fontRuns = r.fontMap.SplitRuns(text)
+		if text == "" {
+			fontRuns = []Run{{Face: r.face}}
+		}
+	}
+	shaped := make([]shapedFaceRun, 0, len(fontRuns))
+	runeStart := 0
+	for _, run := range fontRuns {
+		out, err := r.shapeFace(run.Face, run.Text, size)
+		if err != nil {
+			return nil, err
+		}
+		shaped = append(shaped, shapedFaceRun{
+			face: run.Face, text: run.Text, runeStart: runeStart, output: out,
+		})
+		runeStart += len([]rune(run.Text))
+	}
+	return shaped, nil
+}
+
+func shapedMetrics(runs []shapedFaceRun) (advance fixed.Int26_6, width, height, baseline int) {
+	var ascent, descent fixed.Int26_6
+	for _, run := range runs {
+		advance += run.output.Advance
+		ascent = max(ascent, run.output.LineBounds.Ascent)
+		descent = min(descent, run.output.LineBounds.Descent)
+	}
+	return advance, advance.Ceil(), ascent.Ceil() + (-descent).Ceil(), ascent.Ceil()
+}
+
 // Measure reports the advance width and line height of a run in pixels.
 func (r *TextRenderer) Measure(text string, size int) (int, int, error) {
-	out, err := r.Shape(text, size)
+	runs, err := r.shapeRuns(text, size)
 	if err != nil {
 		return 0, 0, err
 	}
-	w, h, _ := runBox(out)
+	_, w, h, _ := shapedMetrics(runs)
 	return w, h, nil
 }
 
 // Raster shapes a run and draws its glyphs into an alpha mask.
 func (r *TextRenderer) Raster(text string, size int) (Mask, error) {
-	out, err := r.Shape(text, size)
+	runs, err := r.shapeRuns(text, size)
 	if err != nil {
 		return Mask{}, err
 	}
 
-	w, h, baseline := runBox(out)
+	_, w, h, baseline := shapedMetrics(runs)
 	if w <= 0 || h <= 0 {
 		return Mask{}, fmt.Errorf("render: run measures %dx%d", w, h)
 	}
 
-	scale := float32(size) / float32(r.face.Upem())
 	rast := vector.NewRasterizer(w, h)
 
-	penX := fixed.Int26_6(0)
-	for _, g := range out.Glyphs {
-		outline, err := glyphOutline(r.face, g.GlyphID)
-		if err != nil {
-			return Mask{}, err
+	lineX := fixed.Int26_6(0)
+	for _, run := range runs {
+		scale := float32(size) / float32(run.face.Upem())
+		penX := fixed.Int26_6(0)
+		for _, g := range run.output.Glyphs {
+			outline, err := glyphOutline(run.face, g.GlyphID)
+			if err != nil {
+				return Mask{}, err
+			}
+			originX := float32(lineX+penX+g.XOffset) / 64
+			originY := float32(baseline) - float32(g.YOffset)/64
+			addOutline(rast, outline, originX, originY, scale)
+			penX += g.Advance
 		}
-		originX := float32(penX+g.XOffset) / 64
-		originY := float32(baseline) - float32(g.YOffset)/64
-		addOutline(rast, outline, originX, originY, scale)
-		penX += g.Advance
+		lineX += run.output.Advance
 	}
 
 	mask := image.NewAlpha(image.Rect(0, 0, w, h))
@@ -150,7 +214,11 @@ func runBox(out shaping.Output) (width, height, baseline int) {
 
 // glyphOutline returns the vector outline for a glyph.
 func glyphOutline(face *font.Face, gid font.GID) (font.GlyphOutline, error) {
-	return outlineFrom(face.GlyphData(gid), gid)
+	outline, ok := face.GlyphDataOutline(gid)
+	if !ok {
+		return font.GlyphOutline{}, fmt.Errorf("render: glyph %d has no vector outline", gid)
+	}
+	return outline, nil
 }
 
 // outlineFrom classifies glyph data. Only vector outlines can be rasterised

@@ -52,20 +52,27 @@ type Invalidation struct{ Connector string }
 // live state. Commit publishes their matching shell models after the Wayland
 // owner has applied every host policy.
 type PreparedConfig struct {
-	Hosts  map[string]HostCallbacks
+	Hosts  map[uint32]HostCallbacks
 	Commit func()
+}
+
+// HostIdentity carries the registry global that owns a bar and the connector
+// attribute used to join configuration and Niri state.
+type HostIdentity struct {
+	Global    uint32
+	Connector string
 }
 
 // Callbacks are the concrete hooks the application supplies. This is a struct
 // rather than an interface because there is one implementation.
 type Callbacks struct {
 	// NewHost supplies the per-bar hooks when a bar is created for a connector.
-	NewHost func(connector string) (HostCallbacks, error)
+	NewHost func(global uint32, connector string) (HostCallbacks, error)
 	// PrepareConfig builds replacement bars for every enabled connector without
 	// changing live shell state.
-	PrepareConfig func(config.Config, []string) (PreparedConfig, error)
+	PrepareConfig func(config.Config, []HostIdentity) (PreparedConfig, error)
 	// DropHost releases per-bar resources after a bar is destroyed.
-	DropHost func(connector string)
+	DropHost func(global uint32)
 	// Invalidations is owned by the caller. Run only receives from it and
 	// never closes it.
 	Invalidations <-chan Invalidation
@@ -200,7 +207,7 @@ func (o *owner) connect() error {
 		if h, ok := o.hosts.remove(e.Name); ok {
 			o.fail(o.teardownHost(h))
 			if o.cb.DropHost != nil {
-				o.cb.DropHost(h.connector)
+				o.cb.DropHost(h.global)
 			}
 		}
 	})
@@ -300,7 +307,7 @@ func (o *owner) hostBecameReady(h *OutputHost) error {
 		h.state = hostIdle
 		return nil
 	}
-	app, err := o.cb.NewHost(h.connector)
+	app, err := o.cb.NewHost(h.global, h.connector)
 	if err != nil {
 		return err
 	}
@@ -493,7 +500,7 @@ func (o *owner) onLayerClosed(h *OutputHost) error {
 			"sysc-shell: bar on %s closed %d times; leaving it down\n", h.connector, h.closeAttempts)
 		return nil
 	}
-	h.recordCloseAttempt(now)
+	h.recordCloseAttempt()
 	return o.createBar(h)
 }
 
@@ -540,16 +547,7 @@ func (o *owner) reconfigure(h *OutputHost) error {
 		return fmt.Errorf("wayland: set viewport destination: %w", err)
 	}
 
-	// The surface is the configure size; the body is that surface inset by the
-	// gap on the anchored edge and both ends.
-	gap := h.policy.Gap
-	surface := ui.Rect{W: h.ss.logicalWidth, H: h.ss.logicalHeight}
-	body := ui.Rect{
-		X: gap, Y: gap,
-		W: max(0, surface.W-2*gap),
-		H: max(0, surface.H-gap),
-	}
-	if err := o.applyRegions(h, surface, body, h.policy.Radius, h.opaqueBackground); err != nil {
+	if err := o.applyHostRegions(h, h.policy, h.opaqueBackground); err != nil {
 		return fmt.Errorf("wayland: set regions: %w", err)
 	}
 
@@ -729,10 +727,10 @@ func (o *owner) prepareConfig(cfg config.Config) (preparedOwnerConfig, error) {
 		return preparedOwnerConfig{}, err
 	}
 
-	enabled := make([]string, 0, len(ready))
+	enabled := make([]HostIdentity, 0, len(ready))
 	for i, h := range ready {
 		if policies[i].Enabled {
-			enabled = append(enabled, h.connector)
+			enabled = append(enabled, HostIdentity{Global: h.global, Connector: h.connector})
 		}
 	}
 	prepared, err := o.cb.PrepareConfig(cfg, enabled)
@@ -751,12 +749,18 @@ func (o *owner) prepareConfig(cfg config.Config) (preparedOwnerConfig, error) {
 			opaqueBackground: cfg.Theme.BackgroundOpaque(),
 		}
 		if update.policy.Enabled {
-			app, ok := prepared.Hosts[h.connector]
+			app, ok := prepared.Hosts[h.global]
 			if !ok {
 				return preparedOwnerConfig{}, fmt.Errorf("wayland: prepared config omitted %s", h.connector)
 			}
 			if err := app.validate(h.connector); err != nil {
 				return preparedOwnerConfig{}, err
+			}
+			if h.state == hostMapped {
+				if err := app.Configure(h.ss.logicalWidth, h.ss.logicalHeight, int(h.ss.scale120)); err != nil {
+					return preparedOwnerConfig{}, fmt.Errorf(
+						"wayland: configure prepared replacement for %s: %w", h.connector, err)
+				}
 			}
 			update.app = app
 		}
@@ -806,16 +810,25 @@ func (o *owner) applyPreparedConfig(prepared preparedOwnerConfig) error {
 			if err := o.applyGeometryRequests(h); err != nil {
 				return err
 			}
+			if refreshRegionsOnReload(h) {
+				if err := o.applyHostRegions(h, bar, update.opaqueBackground); err != nil {
+					return fmt.Errorf("wayland: refresh regions for %s: %w", h.connector, err)
+				}
+			}
 			if err := h.surface.Commit(); err != nil {
 				return err
 			}
-			h.sched.Invalidate()
+			if h.state == hostMapped {
+				h.sched.Invalidate()
+			}
 		}
 	}
 	o.cfg = &prepared.cfg
 	prepared.commit()
 	return nil
 }
+
+func refreshRegionsOnReload(h *OutputHost) bool { return h.state == hostMapped }
 
 // teardownSurface releases everything scoped to one bar and leaves the host and
 // its wl_output intact, so a closed bar can be rebuilt without a registry cycle.

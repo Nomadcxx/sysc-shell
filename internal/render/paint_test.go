@@ -52,6 +52,27 @@ func TestPaintFillsOnlyTheRoundedBody(t *testing.T) {
 	}
 }
 
+func TestPaintKeepsChildrenInsideTheRoundedBody(t *testing.T) {
+	t.Parallel()
+
+	c := newTestCanvas(t, 100, 44)
+	style := testStyle
+	style.Body = ui.Rect{X: 4, Y: 4, W: 92, H: 40}
+	style.Radius = 12
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{{
+		Kind: ui.KindMeter, Bounds: style.Body, Value: 1,
+	}}}
+	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatal(err)
+	}
+	if got := pixelAt(t, c, 4, 4); got != (Color{}) {
+		t.Fatalf("child repainted rounded corner %+v, want transparent", got)
+	}
+	if got := pixelAt(t, c, 16, 4); got != style.Accent {
+		t.Fatalf("child inside rounded body = %+v, want accent %+v", got, style.Accent)
+	}
+}
+
 func TestPaintClearsPixelsFromThePreviousBody(t *testing.T) {
 	t.Parallel()
 

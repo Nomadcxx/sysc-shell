@@ -22,7 +22,7 @@ func TestDisabledHostDoesNotBuildABar(t *testing.T) {
 	built := false
 	o := owner{
 		cfg: &cfg,
-		cb: Callbacks{NewHost: func(string) (HostCallbacks, error) {
+		cb: Callbacks{NewHost: func(uint32, string) (HostCallbacks, error) {
 			built = true
 			return HostCallbacks{}, errors.New("disabled host requested callbacks")
 		}},
@@ -75,6 +75,7 @@ func TestPrepareConfigDoesNotMutateLiveHosts(t *testing.T) {
 	hosts.arrival = append(hosts.arrival, h.global)
 
 	candidate := config.Default()
+	candidate.Theme.Background = "#10141880"
 	override := candidate.Bar
 	override.Height = 56
 	override.Gap = 6
@@ -83,12 +84,12 @@ func TestPrepareConfigDoesNotMutateLiveHosts(t *testing.T) {
 	o := owner{
 		cfg:   &current,
 		hosts: hosts,
-		cb: Callbacks{PrepareConfig: func(_ config.Config, connectors []string) (PreparedConfig, error) {
-			if len(connectors) != 1 || connectors[0] != "DP-1" {
-				t.Fatalf("connectors = %v, want [DP-1]", connectors)
+		cb: Callbacks{PrepareConfig: func(_ config.Config, identities []HostIdentity) (PreparedConfig, error) {
+			if len(identities) != 1 || identities[0] != (HostIdentity{Global: 7, Connector: "DP-1"}) {
+				t.Fatalf("identities = %v, want global 7 / DP-1", identities)
 			}
 			return PreparedConfig{
-				Hosts:  map[string]HostCallbacks{"DP-1": validHostCallbacks()},
+				Hosts:  map[uint32]HostCallbacks{7: validHostCallbacks()},
 				Commit: func() { committed = true },
 			}, nil
 		}},
@@ -109,6 +110,69 @@ func TestPrepareConfigDoesNotMutateLiveHosts(t *testing.T) {
 	}
 	if len(prepared.hosts) != 1 || prepared.hosts[0].policy.Height != 56 || prepared.hosts[0].policy.Gap != 6 {
 		t.Fatalf("prepared hosts = %+v, want DP-1 policy 56/6", prepared.hosts)
+	}
+	if prepared.hosts[0].opaqueBackground {
+		t.Fatal("translucent candidate prepared an opaque host")
+	}
+}
+
+func TestPrepareConfigConfiguresMappedReplacementBeforePublishing(t *testing.T) {
+	t.Parallel()
+
+	current := config.Default()
+	h := newHost(7, nil)
+	h.connector = "DP-1"
+	h.doneSeen = true
+	h.state = hostMapped
+	h.policy = current.Bar
+	h.ss.configure(1200, h.surfaceHeight())
+	h.ss.acknowledge()
+	h.ss.preferredScale(180)
+	hosts := newHostSet()
+	hosts.hosts[h.global] = h
+	hosts.arrival = append(hosts.arrival, h.global)
+
+	configured := false
+	o := owner{
+		cfg:   &current,
+		hosts: hosts,
+		cb: Callbacks{PrepareConfig: func(_ config.Config, _ []HostIdentity) (PreparedConfig, error) {
+			callbacks := validHostCallbacks()
+			callbacks.Configure = func(width, height, scale120 int) error {
+				configured = true
+				if width != 1200 || height != 44 || scale120 != 180 {
+					t.Fatalf("Configure(%d, %d, %d), want (1200, 44, 180)",
+						width, height, scale120)
+				}
+				return nil
+			}
+			return PreparedConfig{
+				Hosts:  map[uint32]HostCallbacks{7: callbacks},
+				Commit: func() {},
+			}, nil
+		}},
+	}
+
+	if _, err := o.prepareConfig(config.Default()); err != nil {
+		t.Fatalf("prepareConfig: %v", err)
+	}
+	if !configured {
+		t.Fatal("mapped replacement was not configured during preparation")
+	}
+}
+
+func TestReloadBeforeFirstConfigureDefersRegionRefresh(t *testing.T) {
+	t.Parallel()
+
+	h := newHost(7, nil)
+	h.state = hostCreating
+	if refreshRegionsOnReload(h) {
+		t.Fatal("creating host refreshed regions before it had accepted configure geometry")
+	}
+
+	h.state = hostMapped
+	if !refreshRegionsOnReload(h) {
+		t.Fatal("mapped host did not refresh regions from its accepted configure geometry")
 	}
 }
 
@@ -132,11 +196,11 @@ func TestApplyConfigCommitsDisabledPoliciesTogether(t *testing.T) {
 	o := owner{
 		cfg:   &current,
 		hosts: hosts,
-		cb: Callbacks{PrepareConfig: func(_ config.Config, connectors []string) (PreparedConfig, error) {
-			if len(connectors) != 0 {
-				t.Fatalf("enabled connectors = %v, want none", connectors)
+		cb: Callbacks{PrepareConfig: func(_ config.Config, identities []HostIdentity) (PreparedConfig, error) {
+			if len(identities) != 0 {
+				t.Fatalf("enabled identities = %v, want none", identities)
 			}
-			return PreparedConfig{Hosts: map[string]HostCallbacks{}, Commit: func() { committed = true }}, nil
+			return PreparedConfig{Hosts: map[uint32]HostCallbacks{}, Commit: func() { committed = true }}, nil
 		}},
 	}
 
@@ -175,12 +239,12 @@ func TestHotplugUsesTheAcceptedOutputPolicy(t *testing.T) {
 		cfg:   &current,
 		hosts: newHostSet(),
 		cb: Callbacks{
-			NewHost: func(string) (HostCallbacks, error) {
+			NewHost: func(uint32, string) (HostCallbacks, error) {
 				built = true
 				return validHostCallbacks(), nil
 			},
-			PrepareConfig: func(_ config.Config, _ []string) (PreparedConfig, error) {
-				return PreparedConfig{Hosts: map[string]HostCallbacks{}, Commit: func() { committed = true }}, nil
+			PrepareConfig: func(_ config.Config, _ []HostIdentity) (PreparedConfig, error) {
+				return PreparedConfig{Hosts: map[uint32]HostCallbacks{}, Commit: func() { committed = true }}, nil
 			},
 		},
 	}

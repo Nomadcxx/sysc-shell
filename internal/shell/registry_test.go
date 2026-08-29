@@ -1,10 +1,12 @@
 package shell
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 )
 
 func TestBarShowsOnlyItsOwnOutputsWorkspace(t *testing.T) {
@@ -57,6 +59,36 @@ func TestChangedConnectorsReportsOnlyRealChanges(t *testing.T) {
 	}
 }
 
+func TestInvalidationOverflowCoalescesToAllBars(t *testing.T) {
+	t.Parallel()
+
+	reg := NewRegistry(config.Default())
+	workspaces := make([]niri.Workspace, 0, cap(reg.invalidations)+1)
+	for i := 0; i < cap(reg.invalidations)+1; i++ {
+		workspaces = append(workspaces, niri.Workspace{
+			ID: uint64(i + 1), Index: i + 1, Output: fmt.Sprintf("DP-%d", i+1), Active: true,
+		})
+	}
+	reg.UpdateNiri(niri.Snapshot{Workspaces: workspaces})
+
+	global := false
+	seen := make(map[string]bool)
+	for {
+		select {
+		case inv := <-reg.Invalidations():
+			if inv.Connector == "" {
+				global = true
+			}
+			seen[inv.Connector] = true
+		default:
+			if !global && len(seen) != len(workspaces) {
+				t.Fatalf("overflow retained %d connector invalidations without a global one", len(seen))
+			}
+			return
+		}
+	}
+}
+
 func TestFocusedWorkspaceOutranksAnActiveOneOnTheSameOutput(t *testing.T) {
 	t.Parallel()
 	reg := NewRegistry(config.Default())
@@ -81,10 +113,10 @@ func TestNewHostAppliesTheHeldWorkspaceAndPerOutputPolicy(t *testing.T) {
 		{Output: "DP-1", Name: "web", Focused: true},
 	}})
 
-	if _, err := reg.NewHost("DP-1"); err != nil {
+	if _, err := reg.NewHost(7, "DP-1"); err != nil {
 		t.Fatalf("NewHost: %v", err)
 	}
-	bar, ok := reg.bars["DP-1"]
+	bar, ok := reg.bars[7]
 	if !ok {
 		t.Fatal("NewHost did not record the bar")
 	}
@@ -99,12 +131,32 @@ func TestNewHostAppliesTheHeldWorkspaceAndPerOutputPolicy(t *testing.T) {
 func TestDropHostReleasesTheBar(t *testing.T) {
 	t.Parallel()
 	reg := NewRegistry(config.Default())
-	if _, err := reg.NewHost("DP-1"); err != nil {
+	if _, err := reg.NewHost(7, "DP-1"); err != nil {
 		t.Fatalf("NewHost: %v", err)
 	}
-	reg.DropHost("DP-1")
+	reg.DropHost(7)
 	if len(reg.bars) != 0 {
 		t.Fatal("DropHost left the bar behind")
+	}
+}
+
+func TestReconnectOverlapKeepsBarsDistinctByGlobal(t *testing.T) {
+	t.Parallel()
+
+	reg := NewRegistry(config.Default())
+	if _, err := reg.NewHost(7, "DP-1"); err != nil {
+		t.Fatalf("NewHost(7): %v", err)
+	}
+	if _, err := reg.NewHost(9, "DP-1"); err != nil {
+		t.Fatalf("NewHost(9): %v", err)
+	}
+	if len(reg.bars) != 2 || reg.bars[7] == reg.bars[9] {
+		t.Fatalf("bars = %+v, want distinct globals 7 and 9", reg.bars)
+	}
+
+	reg.DropHost(7)
+	if len(reg.bars) != 1 || reg.bars[9] == nil {
+		t.Fatalf("dropping old global removed reconnecting bar: %+v", reg.bars)
 	}
 }
 
@@ -116,24 +168,28 @@ func TestPrepareConfigReplacesAllBarsOnCommit(t *testing.T) {
 		{Output: "DP-1", Name: "web", Focused: true},
 		{Output: "HDMI-A-1", Name: "chat", Active: true},
 	}})
-	for _, connector := range []string{"DP-1", "HDMI-A-1"} {
-		if _, err := reg.NewHost(connector); err != nil {
-			t.Fatalf("NewHost(%s): %v", connector, err)
+	identities := []wayland.HostIdentity{
+		{Global: 7, Connector: "DP-1"},
+		{Global: 8, Connector: "HDMI-A-1"},
+	}
+	for _, identity := range identities {
+		if _, err := reg.NewHost(identity.Global, identity.Connector); err != nil {
+			t.Fatalf("NewHost(%s): %v", identity.Connector, err)
 		}
 	}
-	beforeDP := reg.bars["DP-1"]
-	beforeHDMI := reg.bars["HDMI-A-1"]
+	beforeDP := reg.bars[7]
+	beforeHDMI := reg.bars[8]
 
 	candidate := config.Default()
 	candidate.Theme.Accent = "#ff8800"
 	candidate.Bar.Left = []string{"workspace"}
 	candidate.Bar.Center = nil
-	prepared, err := reg.PrepareConfig(candidate, []string{"DP-1", "HDMI-A-1"})
+	prepared, err := reg.PrepareConfig(candidate, identities)
 	if err != nil {
 		t.Fatalf("PrepareConfig: %v", err)
 	}
 
-	if reg.bars["DP-1"] != beforeDP || reg.bars["HDMI-A-1"] != beforeHDMI {
+	if reg.bars[7] != beforeDP || reg.bars[8] != beforeHDMI {
 		t.Fatal("PrepareConfig changed live bars before commit")
 	}
 	if len(prepared.Hosts) != 2 {
@@ -141,17 +197,17 @@ func TestPrepareConfigReplacesAllBarsOnCommit(t *testing.T) {
 	}
 
 	prepared.Commit()
-	if reg.bars["DP-1"] == beforeDP || reg.bars["HDMI-A-1"] == beforeHDMI {
+	if reg.bars[7] == beforeDP || reg.bars[8] == beforeHDMI {
 		t.Fatal("commit retained an old bar")
 	}
-	if got := reg.bars["DP-1"].WorkspaceLabel(); got != "Workspace: web" {
+	if got := reg.bars[7].WorkspaceLabel(); got != "Workspace: web" {
 		t.Fatalf("DP-1 label = %q, want held workspace", got)
 	}
-	if got := reg.bars["HDMI-A-1"].WorkspaceLabel(); got != "Workspace: chat" {
+	if got := reg.bars[8].WorkspaceLabel(); got != "Workspace: chat" {
 		t.Fatalf("HDMI-A-1 label = %q, want held workspace", got)
 	}
 	wantAccent := (Color{R: 0xff, G: 0x88, B: 0x00, A: 0xff})
-	if got := reg.bars["DP-1"].theme.Accent; got != wantAccent {
+	if got := reg.bars[7].theme.Accent; got != wantAccent {
 		t.Fatalf("DP-1 accent = %+v, want %+v", got, wantAccent)
 	}
 }

@@ -4,7 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-text/typesetting/shaping"
 	"golang.org/x/image/font/gofont/goregular"
+	"golang.org/x/image/math/fixed"
 )
 
 func newTestRenderer(t *testing.T) *TextRenderer {
@@ -14,6 +16,20 @@ func newTestRenderer(t *testing.T) *TextRenderer {
 		t.Fatalf("ParseFace: %v", err)
 	}
 	return NewTextRenderer(face)
+}
+
+func TestClusterPrefixRejectsAPartialMultiGlyphCluster(t *testing.T) {
+	t.Parallel()
+
+	glyphs := []shaping.Glyph{
+		{Advance: fixed.I(5), ClusterIndex: 0, RuneCount: 1, GlyphCount: 2},
+		{Advance: fixed.I(5), ClusterIndex: 0, RuneCount: 1, GlyphCount: 2},
+		{Advance: fixed.I(4), ClusterIndex: 1, RuneCount: 1, GlyphCount: 1},
+	}
+	keep, _ := clusterPrefix(glyphs, 7)
+	if keep != 0 {
+		t.Fatalf("clusterPrefix kept %d runes after only part of the first cluster fit", keep)
+	}
 }
 
 func TestTruncateLeavesFittingTextAlone(t *testing.T) {

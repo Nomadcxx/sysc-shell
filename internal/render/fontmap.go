@@ -15,9 +15,9 @@ const faceCacheLimit = 16
 
 // FontMap resolves faces from the system font set with per-rune fallback.
 //
-// It is owned by the Wayland owner goroutine, which is the only goroutine that
-// paints. *font.Face is not safe for concurrent use, so one shared map is
-// correct here and per-host duplication would be waste, not safety.
+// A bar owns its map and the Wayland owner goroutine is the only goroutine that
+// shapes or paints through it. *font.Face and fontscan.FontMap are not safe for
+// concurrent use.
 type FontMap struct {
 	inner   *fontscan.FontMap
 	primary *font.Face
@@ -72,10 +72,7 @@ func (m *FontMap) Face(r rune) *font.Face {
 	if face, ok := m.cache[r]; ok {
 		return face
 	}
-	face := m.inner.ResolveFace(r)
-	if face == nil {
-		face = m.primary
-	}
+	face := outlineFaceForRune(m.inner.ResolveFace(r), m.primary, r)
 	if len(m.order) >= faceCacheLimit {
 		delete(m.cache, m.order[0])
 		m.order = m.order[1:]
@@ -83,6 +80,20 @@ func (m *FontMap) Face(r rune) *font.Face {
 	m.cache[r] = face
 	m.order = append(m.order, r)
 	return face
+}
+
+func outlineFaceForRune(candidate, primary *font.Face, r rune) *font.Face {
+	if candidate == nil {
+		return primary
+	}
+	gid, ok := candidate.NominalGlyph(r)
+	if !ok {
+		return primary
+	}
+	if _, ok := candidate.GlyphDataOutline(gid); !ok {
+		return primary
+	}
+	return candidate
 }
 
 // Run is one span of text shaped with a single face.

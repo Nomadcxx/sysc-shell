@@ -81,16 +81,42 @@ func fillRoundedRect(c *Canvas, r ui.Rect, radius int, col Color) {
 		fillRect(c, r, col)
 		return
 	}
-	radiusSquared := float64(radius) * float64(radius)
 	for y := 0; y < r.H; y++ {
-		edgeY := min(y, r.H-1-y)
-		inset := 0
-		if edgeY < radius {
-			dy := float64(radius-edgeY) - 0.5
-			dx := math.Sqrt(max(0, radiusSquared-dy*dy))
-			inset = max(0, int(math.Ceil(float64(radius)-dx-0.5)))
-		}
+		inset := roundedInset(y, r.H, radius)
 		fillRect(c, ui.Rect{X: r.X + inset, Y: r.Y + y, W: r.W - 2*inset, H: 1}, col)
+	}
+}
+
+func roundedInset(y, height, radius int) int {
+	edgeY := min(y, height-1-y)
+	if edgeY >= radius {
+		return 0
+	}
+	radiusSquared := float64(radius) * float64(radius)
+	dy := float64(radius-edgeY) - 0.5
+	dx := math.Sqrt(max(0, radiusSquared-dy*dy))
+	return max(0, int(math.Ceil(float64(radius)-dx-0.5)))
+}
+
+// clearOutsideRoundedRect restores transparency after children paint. Child
+// bounds may reach a body corner when padding is zero, but the final surface
+// silhouette must remain the same rounded rectangle as its background.
+func clearOutsideRoundedRect(c *Canvas, r ui.Rect, radius int) {
+	radius = min(radius, min(r.W, r.H)/2)
+	for y := 0; y < c.Height; y++ {
+		row := c.Pix[y*c.Stride : y*c.Stride+c.Width*4]
+		if y < r.Y || y >= r.Y+r.H || r.W <= 0 || r.H <= 0 {
+			clear(row)
+			continue
+		}
+		inset := 0
+		if radius > 0 {
+			inset = roundedInset(y-r.Y, r.H, radius)
+		}
+		x0 := max(0, min(c.Width, r.X+inset))
+		x1 := max(x0, min(c.Width, r.X+r.W-inset))
+		clear(row[:x0*4])
+		clear(row[x1*4:])
 	}
 }
 

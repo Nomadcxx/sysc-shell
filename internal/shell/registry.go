@@ -19,16 +19,19 @@ type Registry struct {
 	mu         sync.Mutex
 	cfg        config.Config
 	workspaces map[string]string
-	bars       map[string]*Proof
+	bars       map[uint32]*Proof
+	connectors map[uint32]string
 
-	invalidations chan wayland.Invalidation
+	invalidationMu sync.Mutex
+	invalidations  chan wayland.Invalidation
 }
 
 func NewRegistry(cfg config.Config) *Registry {
 	return &Registry{
 		cfg:           cfg,
 		workspaces:    make(map[string]string),
-		bars:          make(map[string]*Proof),
+		bars:          make(map[uint32]*Proof),
+		connectors:    make(map[uint32]string),
 		invalidations: make(chan wayland.Invalidation, 8),
 	}
 }
@@ -38,7 +41,7 @@ func NewRegistry(cfg config.Config) *Registry {
 func (r *Registry) Invalidations() <-chan wayland.Invalidation { return r.invalidations }
 
 // NewHost builds the hooks for one connector's bar.
-func (r *Registry) NewHost(connector string) (wayland.HostCallbacks, error) {
+func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbacks, error) {
 	r.mu.Lock()
 	cfg := r.cfg
 	r.mu.Unlock()
@@ -52,7 +55,8 @@ func (r *Registry) NewHost(connector string) (wayland.HostCallbacks, error) {
 	if label, ok := r.workspaces[connector]; ok {
 		bar.SetWorkspace(label)
 	}
-	r.bars[connector] = bar
+	r.bars[global] = bar
+	r.connectors[global] = connector
 	r.mu.Unlock()
 
 	return callbacks, nil
@@ -61,29 +65,33 @@ func (r *Registry) NewHost(connector string) (wayland.HostCallbacks, error) {
 // PrepareConfig builds every enabled connector's replacement bar before the
 // caller changes live host policy. Commit publishes the complete set under one
 // registry lock and applies the latest workspace labels at that point.
-func (r *Registry) PrepareConfig(cfg config.Config, connectors []string) (wayland.PreparedConfig, error) {
-	bars := make(map[string]*Proof, len(connectors))
-	hosts := make(map[string]wayland.HostCallbacks, len(connectors))
-	for _, connector := range connectors {
-		bar, callbacks, err := buildHost(cfg, connector)
+func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIdentity) (wayland.PreparedConfig, error) {
+	bars := make(map[uint32]*Proof, len(identities))
+	connectors := make(map[uint32]string, len(identities))
+	hosts := make(map[uint32]wayland.HostCallbacks, len(identities))
+	for _, identity := range identities {
+		bar, callbacks, err := buildHost(cfg, identity.Connector)
 		if err != nil {
 			return wayland.PreparedConfig{}, err
 		}
-		bars[connector] = bar
-		hosts[connector] = callbacks
+		bars[identity.Global] = bar
+		connectors[identity.Global] = identity.Connector
+		hosts[identity.Global] = callbacks
 	}
 
 	return wayland.PreparedConfig{
 		Hosts: hosts,
 		Commit: func() {
 			r.mu.Lock()
-			for connector, bar := range bars {
+			for global, bar := range bars {
+				connector := connectors[global]
 				if label, ok := r.workspaces[connector]; ok {
 					bar.SetWorkspace(label)
 				}
 			}
 			r.cfg = cfg
 			r.bars = bars
+			r.connectors = connectors
 			r.mu.Unlock()
 		},
 	}, nil
@@ -103,9 +111,10 @@ func buildHost(cfg config.Config, connector string) (*Proof, wayland.HostCallbac
 }
 
 // DropHost releases a bar after its surface is destroyed.
-func (r *Registry) DropHost(connector string) {
+func (r *Registry) DropHost(global uint32) {
 	r.mu.Lock()
-	delete(r.bars, connector)
+	delete(r.bars, global)
+	delete(r.connectors, global)
 	r.mu.Unlock()
 }
 
@@ -133,19 +142,42 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []string {
 		}
 		r.workspaces[connector] = label
 		changed = append(changed, connector)
-		if bar, ok := r.bars[connector]; ok {
-			bar.SetWorkspace(label)
+		// ponytail: bar count is output count. Add a connector index only if
+		// this scan ever appears in a profile.
+		for global, bar := range r.bars {
+			if r.connectors[global] == connector {
+				bar.SetWorkspace(label)
+			}
 		}
 	}
 	r.mu.Unlock()
 
 	for _, connector := range changed {
-		select {
-		case r.invalidations <- wayland.Invalidation{Connector: connector}:
-		default:
-		}
+		r.queueInvalidation(connector)
 	}
 	return changed
+}
+
+// queueInvalidation keeps connector-specific redraws while capacity permits.
+// On overflow it replaces the pending set with one global redraw, which covers
+// every state update that any removed connector message represented.
+func (r *Registry) queueInvalidation(connector string) {
+	r.invalidationMu.Lock()
+	defer r.invalidationMu.Unlock()
+	select {
+	case r.invalidations <- wayland.Invalidation{Connector: connector}:
+		return
+	default:
+	}
+	for {
+		select {
+		case <-r.invalidations:
+			continue
+		default:
+			r.invalidations <- wayland.Invalidation{}
+			return
+		}
+	}
 }
 
 // projectWorkspaces reduces a snapshot to one label per output. A focused

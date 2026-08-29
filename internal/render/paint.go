@@ -67,6 +67,8 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style ProofStyle) error
 			return fmt.Errorf("render: child %d: %w", i, err)
 		}
 	}
+	clearOutsideRoundedRect(c, style.Scale120.PhysicalRect(style.Body),
+		style.Scale120.Physical(style.Radius))
 	return nil
 }
 

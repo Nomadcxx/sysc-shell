@@ -1,6 +1,9 @@
 package wayland
 
-import "github.com/Nomadcxx/sysc-shell/internal/ui"
+import (
+	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
+)
 
 // inputRect is the area the bar accepts pointer input in: the whole surface.
 //
@@ -9,6 +12,24 @@ import "github.com/Nomadcxx/sysc-shell/internal/ui"
 // lands on the bar rather than in a dead strip. A later milestone that adds a
 // shadow grows the surface past the exclusive zone and excludes that band here.
 func inputRect(surface ui.Rect) ui.Rect { return surface }
+
+// hostRegionGeometry derives regions from the host's accepted configure and a
+// candidate policy. Reload uses the current configure until the compositor
+// sends a replacement configure for changed layer-surface geometry.
+func hostRegionGeometry(h *OutputHost, policy config.Bar) (surface, body ui.Rect) {
+	surface = ui.Rect{W: h.ss.logicalWidth, H: h.ss.logicalHeight}
+	body = ui.Rect{
+		X: policy.Gap, Y: policy.Gap,
+		W: max(0, surface.W-2*policy.Gap),
+		H: max(0, surface.H-policy.Gap),
+	}
+	return surface, body
+}
+
+func (o *owner) applyHostRegions(h *OutputHost, policy config.Bar, opaqueBackground bool) error {
+	surface, body := hostRegionGeometry(h, policy)
+	return o.applyRegions(h, surface, body, policy.Radius, opaqueBackground)
+}
 
 // opaqueRects decomposes the painted body into rectangles the bar fills with
 // fully opaque pixels.

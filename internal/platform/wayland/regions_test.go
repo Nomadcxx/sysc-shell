@@ -76,3 +76,21 @@ func TestInputRegionCoversTheWholeSurfaceIncludingTheGap(t *testing.T) {
 		t.Fatal("the input region excluded the gap band, leaving a dead strip at the screen edge")
 	}
 }
+
+func TestHostRegionGeometryUsesCurrentConfigureAndCandidateGap(t *testing.T) {
+	t.Parallel()
+
+	h := newHost(7, nil)
+	h.ss.configure(1200, 44)
+	h.ss.acknowledge()
+	policy := h.policy
+	policy.Gap = 6
+
+	surface, body := hostRegionGeometry(h, policy)
+	if surface != (ui.Rect{W: 1200, H: 44}) {
+		t.Fatalf("surface = %+v, want current configure 1200x44", surface)
+	}
+	if body != (ui.Rect{X: 6, Y: 6, W: 1188, H: 38}) {
+		t.Fatalf("body = %+v, want candidate 6px gap inside current configure", body)
+	}
+}

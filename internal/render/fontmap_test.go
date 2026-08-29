@@ -1,6 +1,36 @@
 package render
 
-import "testing"
+import (
+	"bytes"
+	"os"
+	"testing"
+
+	"github.com/go-text/typesetting/font"
+	"github.com/go-text/typesetting/fontscan"
+	"golang.org/x/image/font/gofont/goregular"
+)
+
+func newFixtureFontMap(t *testing.T) *FontMap {
+	t.Helper()
+	inner := fontscan.NewFontMap(nil)
+	if err := inner.AddFont(bytes.NewReader(goregular.TTF), "fixture:latin", "Fixture Latin"); err != nil {
+		t.Fatal(err)
+	}
+	arabic, err := os.Open("testdata/Amiri-Regular.ttf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer arabic.Close()
+	if err := inner.AddFont(arabic, "fixture:arabic", "Fixture Arabic"); err != nil {
+		t.Fatal(err)
+	}
+	inner.SetQuery(fontscan.Query{Families: []string{"Fixture Latin", "Fixture Arabic"}})
+	primary := inner.ResolveFace('A')
+	if primary == nil {
+		t.Fatal("fixture font map resolved no primary face")
+	}
+	return &FontMap{inner: inner, primary: primary, cache: make(map[rune]*font.Face)}
+}
 
 // These exercise the real system font set. A machine with no fonts installed
 // cannot run them, and skipping is honest: the alternative is asserting against
@@ -47,6 +77,36 @@ func TestFaceNeverReturnsNil(t *testing.T) {
 	// degrades to notdef rather than failing the frame.
 	if face := m.Face(''); face == nil {
 		t.Fatal("Face returned nil for an uncovered rune")
+	}
+}
+
+func TestSystemFontMapDoesNotSelectUnsupportedFallback(t *testing.T) {
+	t.Parallel()
+	m := newSystemMap(t)
+
+	const glyph = '😀'
+	resolved := m.inner.ResolveFace(glyph)
+	if resolved == nil {
+		t.Skip("system font set has no emoji fallback")
+	}
+	gid, ok := resolved.NominalGlyph(glyph)
+	if !ok {
+		t.Skip("resolved emoji face has no nominal glyph")
+	}
+	if _, ok := resolved.GlyphData(gid).(font.GlyphOutline); ok {
+		t.Skip("system emoji fallback is already an outline font")
+	}
+	if selected := outlineFaceForRune(resolved, m.primary, glyph); selected != m.primary {
+		t.Fatal("unsupported fallback did not degrade to the primary notdef face")
+	}
+
+	r := NewTextRendererWithFontMap(m)
+	mask, err := r.Raster("A"+string(glyph), 16)
+	if err != nil {
+		t.Fatalf("Raster failed instead of degrading unsupported fallback: %v", err)
+	}
+	if !hasNonZeroAlpha(mask) {
+		t.Fatal("fallback raster contains no glyph pixels")
 	}
 }
 

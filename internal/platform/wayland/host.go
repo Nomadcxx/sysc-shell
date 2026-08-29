@@ -29,8 +29,6 @@ const (
 	// closeRetryLimit bounds recreation after zwlr_layer_surface_v1.closed so a
 	// persistent refusal cannot become a create/destroy livelock.
 	closeRetryLimit = 3
-	// closeRetryBackoff is the minimum spacing between recreation attempts.
-	closeRetryBackoff = 5 * time.Second
 	// closeRetryResetAfter is how long a host must stay mapped to earn a fresh
 	// budget. A transient reset should self-heal without spending it forever.
 	closeRetryResetAfter = 60 * time.Second
@@ -87,7 +85,6 @@ type OutputHost struct {
 
 	// Bounded recreation budget for zwlr_layer_surface_v1.closed.
 	closeAttempts int
-	lastCloseAt   time.Time
 	mappedSince   time.Time
 
 	app HostCallbacks
@@ -136,12 +133,11 @@ func (h *OutputHost) mayRecreate(now time.Time) bool {
 	if h.closeAttempts >= closeRetryLimit {
 		return false
 	}
-	return h.lastCloseAt.IsZero() || now.Sub(h.lastCloseAt) >= closeRetryBackoff
+	return true
 }
 
 // recordCloseAttempt spends one unit of the recreation budget.
-func (h *OutputHost) recordCloseAttempt(now time.Time) {
+func (h *OutputHost) recordCloseAttempt() {
 	h.closeAttempts++
-	h.lastCloseAt = now
 	h.mappedSince = time.Time{}
 }

@@ -73,6 +73,36 @@ func TestTextMeasureAndRaster(t *testing.T) {
 	}
 }
 
+func TestTextRendererUsesPerRuneFallbackForAllOperations(t *testing.T) {
+	t.Parallel()
+
+	fonts := newFixtureFontMap(t)
+	const mixed = "sysc عربية"
+	if runs := fonts.SplitRuns(mixed); len(runs) < 2 {
+		t.Fatalf("fixture produced %d face runs, want Latin plus Arabic fallback", len(runs))
+	}
+	r := NewTextRendererWithFontMap(fonts)
+	w, h, err := r.Measure(mixed, 32)
+	if err != nil || w <= 0 || h <= 0 {
+		t.Fatalf("Measure = %dx%d, %v", w, h, err)
+	}
+	mask, err := r.Raster(mixed, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mask.Advance != w || !hasNonZeroAlpha(mask) {
+		t.Fatalf("Raster advance=%d/nonzero=%v, want measured width %d with pixels",
+			mask.Advance, hasNonZeroAlpha(mask), w)
+	}
+	fitted, advance, err := r.Truncate(mixed+mixed, 32, w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fitted == "" || advance > w {
+		t.Fatalf("Truncate = %q/%d, want non-empty text within %d", fitted, advance, w)
+	}
+}
+
 // TestTextShapesJoinedScript proves contextual joining rather than a plain cmap
 // lookup: every shaped glyph must differ from its source rune's nominal glyph.
 func TestTextShapesJoinedScript(t *testing.T) {
