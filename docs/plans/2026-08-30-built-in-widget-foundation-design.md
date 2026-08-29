@@ -537,7 +537,8 @@ connector names, titles and measurements stay out of Git.
 - one output, then at least two;
 - one clock snapshot rendered on every configured bar;
 - independent workspace and title text per output;
-- **focus moved between two windows in the same workspace updates the title** — see the assumption below;
+- focus moved between two windows in the same workspace updates the title — the underlying event was
+  verified live during the audit, so this item confirms the rendered result rather than the event;
 - focus and title changes without restarting the shell;
 - output reconnect with no duplicate or missing widget instance;
 - reload adding and removing clock and Niri widgets;
@@ -560,10 +561,45 @@ RSS, submitted and skipped frame counts, layout and paint duration, allocations 
 3. **Milestone 2's invalidation correction delivers lossless delivery.** Verified by test rather than
    assumed; see the invalidation section.
 4. **Niri emits `WorkspaceActiveWindowChanged` when focus moves between windows within one workspace.**
-   Not verified: the SSH session used for this design had no windows open. DMS relies on the same event
-   for the same purpose, which is strong but indirect evidence. If it proves false, the fix is local —
-   consume `WindowFocusChanged` as a second trigger. Listed in the live gate.
+   **Verified live on 2026-08-30** by the audit, on niri `26.04 (8ed0da4)`: two windows were spawned on
+   one workspace and focus alternated between them with `niri msg action focus-window`. Every move emitted
+   exactly one `WorkspaceActiveWindowChanged{"workspace_id":3,"active_window_id":N}`, each followed by a
+   `WindowFocusChanged`. The projection this design uses is therefore correct, and the contingency of
+   consuming `WindowFocusChanged` as a second trigger is not needed. This was the design's most
+   consequential unverified claim; it now holds.
 5. **No `sysc-metrics` import, tag, or module replacement.** That is Tranche 3B.
+
+## Design audit outcome
+
+A design audit was run against this document and the plan on 2026-08-30. Result: 0 critical, 1 major,
+3 minor. Its findings are recorded here with what was done about each.
+
+**Major — figure rendering.** Nothing requested tabular figures, so a proportional face gives digits
+different advances and the centre clock shifts by a pixel or two every minute, because `ArrangeBar` pins
+the centre from the section's own width. **Accepted.** `ui.Node` gains a `Tabular` flag and
+`ui.MeasureText` widens to `func(text string, tabular bool)`, so the flag reaches
+`shaping.Input.FontFeatures` as `tnum`. Only the clock sets it. This is the one change that grew scope
+after the audit and it is isolated in a single late task the owner may cut.
+
+**Minor — token discipline (`defaultTitleMaxWidth = 260` lives in `internal/config`).** *Not adopted, with
+reason.* The recommendation was to lift the default into the theme token set. But `config.Default()`
+already owns every other geometry default — height 48, gap 4, padding 8, spacing 6, radius 12, font size
+14 — and `Theme` is *derived* from them through `ThemeFrom`. Moving 260 alone would make it the only
+geometry default that does not live beside the others, and `internal/config` cannot import
+`internal/shell` to reach the token set. The rule the finding cites — no component carries an independent
+pixel constant — is satisfied: 260 is a named configuration default a component reads, not a literal
+buried in a component.
+
+**Minor — palette provenance (`accent #0080ff`).** Noted, not actionable here. The accent is an
+owner-supplied baseline fixed by the charter, and no Tranche 3A widget paints in accent or error, so
+nothing in this tranche depends on it. It reopens when a widget first uses colour.
+
+**Minor — muted token contrast (1.47:1).** Noted. `muted #303438` is sound as a decorative track fill and
+would fail as text at size 14. Tranche 3A removes the meter, so the token has no consumer at all in this
+tranche. Recording the constraint beside the token belongs with whoever next touches `internal/shell/theme.go`.
+
+Measured contrast from the audit, for the record: foreground/background 15.6:1, accent/background 4.87:1,
+error/background 5.34:1, muted/background 1.47:1.
 
 ## Stop conditions
 

@@ -66,8 +66,9 @@ Every task's requirements implicitly include this section.
 | `internal/platform/niri/events.go` | `Window` type, `Workspace.ActiveWindowID`, four new events, unchanged-state suppression. |
 | `internal/platform/niri/client.go` | Publish the stored snapshot instead of rebuilding it. |
 | `internal/platform/niri/client_test.go` | Window fixtures through the fake socket. |
-| `internal/ui/tree.go` | `Node.MaxWidth`. |
-| `internal/ui/layout.go` | `measureNode` clamps text width to `MaxWidth`. |
+| `internal/ui/tree.go` | `Node.MaxWidth`, and `Node.Tabular` plus the widened `MeasureText` in Task 14. |
+| `internal/ui/layout.go` | `measureNode` clamps text width to `MaxWidth` and passes the tabular flag. |
+| `internal/render/text.go`, `truncate.go`, `paint.go` | Tabular-figure shaping (Task 14 only). |
 | `internal/ui/layout_test.go` | Clamp coverage. |
 | `internal/config/config.go` | `Item` type, new vocabulary, new defaults. |
 | `internal/config/load.go` | String-or-object item decoding, per-item validation, boundary derivation. |
@@ -134,7 +135,7 @@ grep -n "invalidations" -A6 internal/shell/registry.go
 ```
 
 Expected: no non-blocking `default:` that discards an invalidation for a bar whose state changed. If a
-lossy drop remains, record it and carry it into Task 14, which tests the invariant directly.
+lossy drop remains, record it and carry it into Task 13, which tests the invariant directly.
 
 - [ ] **Step 5: Record the outcome**
 
@@ -755,9 +756,10 @@ func (s *state) publishIfChanged() bool {
 }
 ```
 
-Replace every `return true, nil` in `apply` with `return s.publishIfChanged(), nil`. There are five: the
+Replace every `return true, nil` in `apply` with `return s.publishIfChanged(), nil`. There are six: the
 `WorkspacesChanged`, `WorkspaceActivated`, `WorkspaceActiveWindowChanged`, `WindowsChanged`,
-`WindowOpenedOrChanged` and `WindowClosed` blocks. `WorkspaceActivated` currently reads
+`WindowOpenedOrChanged` and `WindowClosed` blocks. Leave `WindowClosed`'s unknown-id branch returning
+`false, nil` — it is already a no-op and must stay one. `WorkspaceActivated` currently reads
 `return true, s.activate(...)`; rewrite it so the error is checked first:
 
 ```go
@@ -798,7 +800,7 @@ git commit -m "perf(niri): publish only when projected state changes"
 - Consumes: nothing.
 - Produces: `services.NewClock() *Clock`; `(*Clock).Acquire(boundary time.Duration) (*Lease, error)`;
   `(*Lease).Release()`; `(*Clock).Updates() <-chan time.Time`; `(*Clock).Close()`;
-  `(*Clock).Running() bool`; `(*Clock).Starts() int`. Task 11 holds the leases.
+  `(*Clock).Running() bool`; `(*Clock).Starts() int`. Task 10 holds the leases.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1872,12 +1874,12 @@ git commit -m "feat(config): adopt the tranche 3A widget vocabulary"
 
 **Files:**
 - Create: `internal/shell/projection.go`, `internal/shell/projection_test.go`
-- Modify: `internal/shell/registry.go` (delete the superseded `projectWorkspaces`)
+- No other file is touched. This task is purely additive.
 
 **Interfaces:**
 - Consumes: `niri.Snapshot`, `niri.Window`, `Workspace.ActiveWindowID` from Tasks 1–2.
 - Produces: `outputState{Workspace string; Title string}` and
-  `projectOutputs(niri.Snapshot) map[string]outputState`. Task 11 calls this.
+  `projectOutputs(niri.Snapshot) map[string]outputState`. Task 10 calls this.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2082,7 +2084,9 @@ func projectOutputs(s niri.Snapshot) map[string]outputState {
 }
 ```
 
-Delete `projectWorkspaces` from `internal/shell/registry.go`; Task 11 replaces its caller.
+Leave `projectWorkspaces` and `Registry.UpdateNiri` in `internal/shell/registry.go` exactly as they
+are. `projectWorkspaces` still has a live caller until Task 10 rewrites the registry, and deleting it
+here would leave the tree red at this task's own checkpoint. This task only adds.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -2093,7 +2097,7 @@ Expected: PASS, seven tests.
 
 ```bash
 gofmt -l internal/shell
-git add internal/shell/projection.go internal/shell/projection_test.go internal/shell/registry.go
+git add internal/shell/projection.go internal/shell/projection_test.go
 git commit -m "feat(shell): project workspace and window title per connector"
 ```
 
@@ -2176,19 +2180,36 @@ git commit -m "refactor(shell): rename the proof type to Bar"
 
 ---
 
-### Task 10: Widget views
+### Task 10: Widget views and registry ownership
+
+Tasks 10 and 11 of the original plan are merged here, on the audit's finding 1 and 2. The migration of
+`internal/shell` from the Milestone 2 shape to the Tranche 3A shape is atomic: `Registry.UpdateNiri`
+calls `projectWorkspaces` and `Bar.SetWorkspace`, and both disappear in this change. Splitting it leaves
+the tree red at a task checkpoint, so the plan would fail its own gate. Tests are still written before
+implementations; there is simply one green checkpoint and one commit for the whole migration.
 
 **Files:**
 - Create: `internal/shell/widget.go`, `internal/shell/widget_test.go`
-- Modify: `internal/shell/bar.go`
+- Modify: `internal/shell/bar.go`, `internal/shell/bar_test.go`
+- Modify: `internal/shell/registry.go`, `internal/shell/registry_test.go`
 
 **Interfaces:**
-- Consumes: `config.Item` from Task 7, `ui.Node.MaxWidth` from Task 6.
+- Consumes: `config.Item` (Task 7), `ui.Node.MaxWidth` (Task 6), `projectOutputs`/`outputState`/
+  `noWorkspace` (Task 8), `services.Clock` (Task 4).
 - Produces: `barView{Now time.Time; Workspace string; Title string}`;
-  `buildWidgets([]config.Item) []textWidget`; `(*Bar).apply(barView) bool`;
-  `(*Bar).connector() string`. Task 11 calls `apply`.
+  `buildWidgets([]config.Item) []textWidget`; `clockBoundaries(...[]config.Item) []time.Duration`;
+  `(*Bar).apply(barView) bool`; `(*Bar).connector() string`;
+  `NewRegistry(config.Config) *Registry`;
+  `(*Registry).NewHost(global uint32, connector string) (wayland.HostCallbacks, error)`;
+  `(*Registry).DropHost(global uint32)`; `(*Registry).UpdateNiri(niri.Snapshot) []uint32`;
+  `(*Registry).UpdateClock(time.Time) []uint32`; `(*Registry).Clock() *services.Clock`;
+  `(*Registry).Close()`. Tasks 11 and 12 use these.
 
-- [ ] **Step 1: Write the failing test**
+**Expect a red tree between Steps 4 and 5.** That is intended: `registry.go` still calls the methods
+Step 4 removes. Do not try to make Step 4 compile on its own.
+
+
+- [ ] **Step 1: Write the widget-view tests**
 
 Create `internal/shell/widget_test.go`:
 
@@ -2291,238 +2312,7 @@ func TestABarRemembersItsConnector(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
-
-Run: `go test ./internal/shell/ -run 'Widget|Apply|Connector' -v`
-Expected: FAIL to compile — `buildWidgets`, `barView`, `apply`, `connector` undefined, and
-`NewWithTheme` takes two arguments.
-
-- [ ] **Step 3: Write the implementation**
-
-Create `internal/shell/widget.go`:
-
-```go
-package shell
-
-import (
-	"time"
-
-	"github.com/Nomadcxx/sysc-shell/internal/config"
-	"github.com/Nomadcxx/sysc-shell/internal/ui"
-)
-
-// barView is the immutable input every widget formats from. The Registry
-// assembles it from one process-wide clock snapshot and this output's Niri
-// projection, so two bars share one clock update while keeping their own
-// workspace and title.
-type barView struct {
-	// Now is zero until the first clock tick.
-	Now       time.Time
-	Workspace string
-	Title     string
-}
-
-// textWidget is one configured widget instance: a retained node plus the pure
-// function that produces its text.
-//
-// Every Tranche 3A widget is a function of the view alone, with no mutable
-// state and no lifecycle, so there is nothing for an interface to abstract.
-// Change detection lives in Bar.apply rather than in each widget, because the
-// node already holds the last rendered text.
-type textWidget struct {
-	node   *ui.Node
-	format func(barView) string
-}
-
-// buildWidgets turns validated items into widget instances. Ids and options
-// are validated at load, so an unknown id cannot reach here.
-func buildWidgets(items []config.Item) []textWidget {
-	out := make([]textWidget, 0, len(items))
-	for _, item := range items {
-		switch item.ID {
-		case "clock":
-			layout := item.Format
-			out = append(out, textWidget{
-				node: &ui.Node{Kind: ui.KindText},
-				format: func(v barView) string {
-					if v.Now.IsZero() {
-						return ""
-					}
-					return v.Now.Format(layout)
-				},
-			})
-		case "workspace":
-			out = append(out, textWidget{
-				node:   &ui.Node{Kind: ui.KindText},
-				format: func(v barView) string { return v.Workspace },
-			})
-		case "window-title":
-			out = append(out, textWidget{
-				node:   &ui.Node{Kind: ui.KindText, MaxWidth: item.MaxWidth},
-				format: func(v barView) string { return v.Title },
-			})
-		}
-	}
-	return out
-}
-
-// clockBoundaries reports the distinct tick boundaries a section set needs.
-// The Registry acquires one lease per entry.
-func clockBoundaries(sections ...[]config.Item) []time.Duration {
-	var out []time.Duration
-	for _, section := range sections {
-		for _, item := range section {
-			if item.ID == "clock" && item.Boundary > 0 {
-				out = append(out, item.Boundary)
-			}
-		}
-	}
-	return out
-}
-```
-
-In `internal/shell/bar.go`, replace the node fields with widget sections and add the connector. Change the
-struct fields:
-
-```go
-	// Sections are arranged by ui.ArrangeBar into absolute bounds, so painting
-	// and hit testing walk them as one flat list.
-	left, center, right []textWidget
-
-	// conn is the connector this bar renders for. It selects configuration and
-	// joins Niri state; it is never this bar's identity, which is its Wayland
-	// global.
-	conn string
-```
-
-Delete the `label` field and `workspace`, `toggled` model fields. Change the constructors:
-
-```go
-// New builds a bar from the built-in defaults for one connector.
-func New(connector string) (*Bar, error) {
-	cfg := config.Default()
-	return NewWithTheme(ThemeFrom(cfg, cfg.Bar), cfg.Bar, connector)
-}
-
-// NewWithTheme builds a bar from resolved theme tokens, a bar policy, and the
-// connector whose Niri state it reads.
-func NewWithTheme(theme Theme, policy config.Bar, connector string) (*Bar, error) {
-	if err := theme.Valid(); err != nil {
-		return nil, err
-	}
-	face, err := render.ParseFace(goregular.TTF)
-	if err != nil {
-		return nil, err
-	}
-
-	b := &Bar{
-		conn:          connector,
-		theme:         theme,
-		text:          render.NewTextRenderer(face),
-		invalidations: make(chan struct{}, 1),
-		style: render.ProofStyle{
-			Size:       theme.TextSize,
-			Scale120:   ui.ScaleUnit,
-			Background: theme.Background,
-			Foreground: theme.Foreground,
-			Track:      theme.Muted,
-			Accent:     theme.Accent,
-			AccentOn:   theme.Error,
-		},
-	}
-
-	b.left = buildWidgets(policy.Left)
-	b.center = buildWidgets(policy.Center)
-	b.right = buildWidgets(policy.Right)
-	return b, nil
-}
-```
-
-If Task 0 confirmed the font map is wired, keep whatever `NewWithTheme` already does for text rather than
-reintroducing `render.ParseFace`; only the widget construction and the connector are new here.
-
-Add the accessors and view application:
-
-```go
-// connector reports the output this bar renders for.
-func (b *Bar) connector() string { return b.conn }
-
-// widgets returns the three sections in paint order.
-func (b *Bar) widgets() [][]textWidget { return [][]textWidget{b.left, b.center, b.right} }
-
-// sections returns the retained nodes in paint order, for layout and painting.
-func (b *Bar) sections() [][]*ui.Node {
-	out := make([][]*ui.Node, 0, 3)
-	for _, section := range b.widgets() {
-		nodes := make([]*ui.Node, 0, len(section))
-		for _, w := range section {
-			nodes = append(nodes, w.node)
-		}
-		out = append(out, nodes)
-	}
-	return out
-}
-
-// apply writes each widget's text from the view and reports whether anything
-// changed. A false return means no layout and no redraw: no state change, no
-// submitted frame.
-func (b *Bar) apply(view barView) bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.applyLocked(view)
-}
-
-func (b *Bar) applyLocked(view barView) bool {
-	changed := false
-	for _, section := range b.widgets() {
-		for _, w := range section {
-			if text := w.format(view); text != w.node.Text {
-				w.node.Text = text
-				changed = true
-			}
-		}
-	}
-	return changed
-}
-```
-
-Delete `SetWorkspace`, `UpdateNiri`, `activeWorkspace`, `workspaceLabelLocked`, and `WorkspaceLabel` from
-`bar.go`; the Registry now owns the projection. In `layoutLocked` and `renderViewLocked`, remove the
-`p.label.Text = …` lines: text is written by `apply`, not by layout. Update both to iterate `b.sections()`.
-
-Update `internal/shell/bar_test.go` and `registry_test.go` call sites for the third `NewWithTheme`
-argument, and replace `WorkspaceLabel()` assertions with `apply` plus a node-text check.
-
-- [ ] **Step 4: Run the test to verify it passes**
-
-Run: `go test ./internal/shell/ -v`
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-go build ./... && gofmt -l internal/shell
-git add internal/shell/
-git commit -m "feat(shell): build widget views from an immutable bar view"
-```
-
----
-
-### Task 11: Registry keyed by global, with clock leases
-
-**Files:**
-- Modify: `internal/shell/registry.go`, `internal/shell/registry_test.go`
-
-**Interfaces:**
-- Consumes: `projectOutputs` (Task 8), `buildWidgets`/`clockBoundaries`/`(*Bar).apply` (Task 10),
-  `services.Clock` (Task 4).
-- Produces: `NewRegistry(cfg config.Config) *Registry`;
-  `(*Registry).NewHost(global uint32, connector string) (wayland.HostCallbacks, error)`;
-  `(*Registry).DropHost(global uint32)`; `(*Registry).UpdateNiri(niri.Snapshot) []uint32`;
-  `(*Registry).UpdateClock(time.Time) []uint32`; `(*Registry).Clock() *services.Clock`;
-  `(*Registry).Close()`. Tasks 12–13 use these.
-
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 2: Write the registry tests**
 
 Replace the body of `internal/shell/registry_test.go` with:
 
@@ -2720,12 +2510,211 @@ func TestCloseReleasesEverything(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [ ] **Step 3: Run both to verify they fail**
 
-Run: `go test ./internal/shell/ -run 'Registry|Clock|Global|Output|Close|Held' -v`
-Expected: FAIL to compile — `NewHost` takes one argument, `UpdateClock` and `Clock` undefined.
+Run: `go test ./internal/shell/ -v`
+Expected: FAIL to compile — `buildWidgets`, `barView`, `apply`, `connector`, `UpdateClock` and
+`Clock` are undefined, and `NewWithTheme` still takes two arguments.
 
-- [ ] **Step 3: Write the implementation**
+- [ ] **Step 4: Implement the widget views**
+
+Create `internal/shell/widget.go`:
+
+```go
+package shell
+
+import (
+	"time"
+
+	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
+)
+
+// barView is the immutable input every widget formats from. The Registry
+// assembles it from one process-wide clock snapshot and this output's Niri
+// projection, so two bars share one clock update while keeping their own
+// workspace and title.
+type barView struct {
+	// Now is zero until the first clock tick.
+	Now       time.Time
+	Workspace string
+	Title     string
+}
+
+// textWidget is one configured widget instance: a retained node plus the pure
+// function that produces its text.
+//
+// Every Tranche 3A widget is a function of the view alone, with no mutable
+// state and no lifecycle, so there is nothing for an interface to abstract.
+// Change detection lives in Bar.apply rather than in each widget, because the
+// node already holds the last rendered text.
+type textWidget struct {
+	node   *ui.Node
+	format func(barView) string
+}
+
+// buildWidgets turns validated items into widget instances. Ids and options
+// are validated at load, so an unknown id cannot reach here.
+func buildWidgets(items []config.Item) []textWidget {
+	out := make([]textWidget, 0, len(items))
+	for _, item := range items {
+		switch item.ID {
+		case "clock":
+			layout := item.Format
+			out = append(out, textWidget{
+				node: &ui.Node{Kind: ui.KindText},
+				format: func(v barView) string {
+					if v.Now.IsZero() {
+						return ""
+					}
+					return v.Now.Format(layout)
+				},
+			})
+		case "workspace":
+			out = append(out, textWidget{
+				node:   &ui.Node{Kind: ui.KindText},
+				format: func(v barView) string { return v.Workspace },
+			})
+		case "window-title":
+			out = append(out, textWidget{
+				node:   &ui.Node{Kind: ui.KindText, MaxWidth: item.MaxWidth},
+				format: func(v barView) string { return v.Title },
+			})
+		}
+	}
+	return out
+}
+
+// clockBoundaries reports the distinct tick boundaries a section set needs.
+// The Registry acquires one lease per entry.
+func clockBoundaries(sections ...[]config.Item) []time.Duration {
+	var out []time.Duration
+	for _, section := range sections {
+		for _, item := range section {
+			if item.ID == "clock" && item.Boundary > 0 {
+				out = append(out, item.Boundary)
+			}
+		}
+	}
+	return out
+}
+```
+
+In `internal/shell/bar.go`, replace the node fields with widget sections and add the connector. Change the
+struct fields:
+
+```go
+	// Sections are arranged by ui.ArrangeBar into absolute bounds, so painting
+	// and hit testing walk them as one flat list.
+	left, center, right []textWidget
+
+	// conn is the connector this bar renders for. It selects configuration and
+	// joins Niri state; it is never this bar's identity, which is its Wayland
+	// global.
+	conn string
+```
+
+Delete the `label` field and `workspace`, `toggled` model fields. Change the constructors:
+
+```go
+// New builds a bar from the built-in defaults for one connector.
+func New(connector string) (*Bar, error) {
+	cfg := config.Default()
+	return NewWithTheme(ThemeFrom(cfg, cfg.Bar), cfg.Bar, connector)
+}
+
+// NewWithTheme builds a bar from resolved theme tokens, a bar policy, and the
+// connector whose Niri state it reads.
+func NewWithTheme(theme Theme, policy config.Bar, connector string) (*Bar, error) {
+	if err := theme.Valid(); err != nil {
+		return nil, err
+	}
+	face, err := render.ParseFace(goregular.TTF)
+	if err != nil {
+		return nil, err
+	}
+
+	b := &Bar{
+		conn:          connector,
+		theme:         theme,
+		text:          render.NewTextRenderer(face),
+		invalidations: make(chan struct{}, 1),
+		style: render.ProofStyle{
+			Size:       theme.TextSize,
+			Scale120:   ui.ScaleUnit,
+			Background: theme.Background,
+			Foreground: theme.Foreground,
+			Track:      theme.Muted,
+			Accent:     theme.Accent,
+			AccentOn:   theme.Error,
+		},
+	}
+
+	b.left = buildWidgets(policy.Left)
+	b.center = buildWidgets(policy.Center)
+	b.right = buildWidgets(policy.Right)
+	return b, nil
+}
+```
+
+If Task 0 confirmed the font map is wired, keep whatever `NewWithTheme` already does for text rather than
+reintroducing `render.ParseFace`; only the widget construction and the connector are new here.
+
+Add the accessors and view application:
+
+```go
+// connector reports the output this bar renders for.
+func (b *Bar) connector() string { return b.conn }
+
+// widgets returns the three sections in paint order.
+func (b *Bar) widgets() [][]textWidget { return [][]textWidget{b.left, b.center, b.right} }
+
+// sections returns the retained nodes in paint order, for layout and painting.
+// This REPLACES the existing sections() method, which returned the three node
+// slices directly; it now derives them from the widget instances.
+func (b *Bar) sections() [][]*ui.Node {
+	out := make([][]*ui.Node, 0, 3)
+	for _, section := range b.widgets() {
+		nodes := make([]*ui.Node, 0, len(section))
+		for _, w := range section {
+			nodes = append(nodes, w.node)
+		}
+		out = append(out, nodes)
+	}
+	return out
+}
+
+// apply writes each widget's text from the view and reports whether anything
+// changed. A false return means no layout and no redraw: no state change, no
+// submitted frame.
+func (b *Bar) apply(view barView) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.applyLocked(view)
+}
+
+func (b *Bar) applyLocked(view barView) bool {
+	changed := false
+	for _, section := range b.widgets() {
+		for _, w := range section {
+			if text := w.format(view); text != w.node.Text {
+				w.node.Text = text
+				changed = true
+			}
+		}
+	}
+	return changed
+}
+```
+
+Delete `SetWorkspace`, `UpdateNiri`, `activeWorkspace`, `workspaceLabelLocked`, and `WorkspaceLabel` from
+`bar.go`; the Registry now owns the projection. In `layoutLocked` and `renderViewLocked`, remove the
+`p.label.Text = …` lines: text is written by `apply`, not by layout. Update both to iterate `b.sections()`.
+
+Update `internal/shell/bar_test.go` and `registry_test.go` call sites for the third `NewWithTheme`
+argument, and replace `WorkspaceLabel()` assertions with `apply` plus a node-text check.
+
+- [ ] **Step 5: Implement the registry**
 
 Replace `internal/shell/registry.go`:
 
@@ -2852,9 +2841,10 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	for connector, state := range next {
-		r.outputs[connector] = state
-	}
+	// Replaced wholesale, not merged: a connector absent from the projection
+	// has no workspace state any more, and keeping its last value would render
+	// a stale workspace or title on a host that reconnects under that name.
+	r.outputs = next
 
 	var changed []uint32
 	for global, bar := range r.bars {
@@ -2910,9 +2900,8 @@ func releaseAll(leases []*services.Lease) {
 }
 ```
 
-`PrepareConfig` is rewritten in Task 12; leave the existing one compiling by having it return an error for
-now, or move directly to Task 12 in the same working tree and keep the build red between the two commits
-only if you are executing both together. Prefer the former:
+`PrepareConfig` is rewritten in Task 11. Leave it compiling here by returning a named error, so a
+half-migrated reload cannot run:
 
 ```go
 // PrepareConfig is replaced in the reload task. Until then it refuses, so a
@@ -2925,29 +2914,29 @@ func (r *Registry) PrepareConfig(cfg config.Config, hosts map[uint32]string) (wa
 Note `NewHost` calls `bar.apply`, which takes `Bar.mu`, while holding `Registry.mu`. That ordering —
 registry then bar, never the reverse — must hold everywhere. `UpdateClock` and `UpdateNiri` follow it too.
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [ ] **Step 6: Run the package with the race detector**
 
-Run: `go test -race ./internal/shell/ -v`
-Expected: PASS with no race report.
+Run: `go build ./... && go test -race ./internal/shell/ -v`
+Expected: PASS with no race report. This is the first green checkpoint since Step 3.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-go build ./... && gofmt -l internal/shell
-git add internal/shell/registry.go internal/shell/registry_test.go
-git commit -m "feat(shell): key bars by output global and own their service leases"
+gofmt -l internal/shell
+git add internal/shell/
+git commit -m "feat(shell): build widget views and key bars by output global"
 ```
 
 ---
 
-### Task 12: Reload staging with acquire before release
+### Task 11: Reload staging with acquire before release
 
 **Files:**
 - Modify: `internal/shell/registry.go`, `internal/shell/registry_test.go`
 - Modify: `internal/platform/wayland/client.go`
 
 **Interfaces:**
-- Consumes: `buildBar`, `releaseAll` from Task 11.
+- Consumes: `buildBar`, `releaseAll` from Task 10.
 - Produces: `wayland.PreparedConfig{Hosts map[uint32]HostCallbacks; Commit func(); Rollback func()}`;
   `(*Registry).PrepareConfig(config.Config, map[uint32]string) (wayland.PreparedConfig, error)`.
 
@@ -3191,13 +3180,13 @@ git commit -m "feat(shell): stage reload so a live service is never restarted"
 
 ---
 
-### Task 13: Process wiring
+### Task 12: Process wiring
 
 **Files:**
 - Modify: `cmd/sysc-shell/main.go`
 
 **Interfaces:**
-- Consumes: `Registry.Clock`, `Registry.UpdateClock`, `Registry.Close` from Tasks 11–12.
+- Consumes: `Registry.Clock`, `Registry.UpdateClock`, `Registry.Close` from Tasks 10–11.
 - Produces: nothing.
 
 - [ ] **Step 1: Write the failing test**
@@ -3280,7 +3269,7 @@ git commit -m "feat(shell): pump clock snapshots into the bar registry"
 
 ---
 
-### Task 14: Cross-cutting evidence
+### Task 13: Cross-cutting evidence
 
 The remaining behaviors from the design's evidence table that no single earlier task proves end to end.
 
@@ -3289,7 +3278,7 @@ The remaining behaviors from the design's evidence table that no single earlier 
 - Modify: `internal/platform/niri/client_test.go`
 
 **Interfaces:**
-- Consumes: everything from Tasks 1–13.
+- Consumes: everything from Tasks 1–12.
 - Produces: nothing.
 
 - [ ] **Step 1: Write the failing test**
@@ -3304,6 +3293,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
@@ -3364,7 +3354,12 @@ func TestALongTitleStaysWithinItsCapAndKeepsItsNeighbour(t *testing.T) {
 	t.Cleanup(reg.Close)
 	newHosts(t, reg, map[uint32]string{1: "DP-9"})
 
-	long := strings.Repeat("Fixture Title Segment ", 40)
+	// Mixed scripts on purpose: titles are the first unbounded user text, so
+	// truncation has to hold across a per-rune face change, not just ASCII.
+	// The non-Latin run sits beyond the cap, where the cut lands.
+	long := strings.Repeat("Fixture Title Segment ", 20) +
+		strings.Repeat("\u3053\u3093\u306b\u3061\u306f\u4e16\u754c ", 10) +
+		strings.Repeat("\u0645\u0631\u062d\u0628\u0627 \u0628\u0627\u0644\u0639\u0627\u0644\u0645 ", 10)
 	reg.UpdateNiri(niri.Snapshot{
 		Workspaces: []niri.Workspace{
 			{ID: 5, Name: "code", Output: "DP-9", Active: true,
@@ -3389,6 +3384,60 @@ func TestALongTitleStaysWithinItsCapAndKeepsItsNeighbour(t *testing.T) {
 	// The title must not run past the bar's content band.
 	if right := title.Bounds.X + title.Bounds.W; right > 1920 {
 		t.Fatalf("title right edge %d exceeds the surface width", right)
+	}
+	// The truncated text must remain valid UTF-8: a cut inside a multi-byte
+	// rune would render replacement characters.
+	if !utf8.ValidString(title.Text) {
+		t.Fatal("truncation split a multi-byte rune")
+	}
+}
+
+// Finding 6: a window moving to another workspace changes which output shows
+// it. Only the affected bars may be reported.
+func TestMovingAWindowInvalidatesOnlyTheOutputsItLeavesAndJoins(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(config.Default())
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9", 2: "HDMI-A-9", 3: "DP-8"})
+
+	base := niri.Snapshot{
+		Workspaces: []niri.Workspace{
+			{ID: 5, Name: "code", Output: "DP-9", Active: true,
+				ActiveWindowID: 80, HasActiveWindow: true},
+			{ID: 6, Name: "chat", Output: "HDMI-A-9", Active: true},
+			{ID: 7, Name: "idle", Output: "DP-8", Active: true},
+		},
+		Windows: []niri.Window{{ID: 80, Title: "Fixture One", WorkspaceID: 5, HasWorkspace: true}},
+	}
+	reg.UpdateNiri(base)
+
+	// The window moves from workspace 5 (DP-9) to workspace 6 (HDMI-A-9).
+	moved := niri.Snapshot{
+		Workspaces: []niri.Workspace{
+			{ID: 5, Name: "code", Output: "DP-9", Active: true},
+			{ID: 6, Name: "chat", Output: "HDMI-A-9", Active: true,
+				ActiveWindowID: 80, HasActiveWindow: true},
+			{ID: 7, Name: "idle", Output: "DP-8", Active: true},
+		},
+		Windows: []niri.Window{{ID: 80, Title: "Fixture One", WorkspaceID: 6, HasWorkspace: true}},
+	}
+	changed := reg.UpdateNiri(moved)
+
+	seen := map[uint32]bool{}
+	for _, g := range changed {
+		seen[g] = true
+	}
+	if !seen[1] || !seen[2] {
+		t.Fatalf("changed = %v, want the output it left (1) and the one it joined (2)", changed)
+	}
+	if seen[3] {
+		t.Fatalf("changed = %v, want the untouched output 3 excluded", changed)
+	}
+	if got := reg.bars[1].left[1].node.Text; got != "" {
+		t.Fatalf("DP-9 title = %q, want empty after the window left", got)
+	}
+	if got := reg.bars[2].left[1].node.Text; got != "Fixture One" {
+		t.Fatalf("HDMI-A-9 title = %q, want the window it gained", got)
 	}
 }
 
@@ -3498,7 +3547,7 @@ returned, and record that Milestone 2's correction did not cover it.
 
 - [ ] **Step 3: Fix whatever the tests expose**
 
-There is no new feature to write here if Tasks 1–13 are correct. Any failure is a real defect in an
+There is no new feature to write here if Tasks 1–12 are correct. Any failure is a real defect in an
 earlier task; fix it there rather than weakening the test.
 
 - [ ] **Step 4: Run the full suite with the race detector**
@@ -3515,6 +3564,282 @@ Expected: `ok` for every package, no race report.
 gofmt -l internal
 git add internal/shell/tranche3a_test.go internal/platform/niri/client_test.go
 git commit -m "test(shell): cover sharing, fallback, title bounds and teardown"
+```
+
+---
+
+### Task 14: Tabular figures for the clock
+
+From the design audit's one major finding. A proportional face gives digits different advances, so the
+centre clock's measured width changes as the time changes — `15:04` and `15:19` are not the same width —
+and because `ArrangeBar` pins the centre from its own width, the clock shifts by a pixel or two every
+minute. Tabular figures fix it at the shaping layer.
+
+**The owner may cut this task.** It is the only task that grew scope after the audit, and it changes the
+`ui.MeasureText` contract. Nothing else in Tranche 3A depends on it; cutting it ships a clock that jitters
+slightly on the minute. If it is cut, delete this task and note the deferral in the completion handover.
+
+`shaping.Input` carries `FontFeatures []FontFeature`, and `ot.MustNewTag("tnum")` is the tabular-figures
+tag, so this needs no new dependency.
+
+**Files:**
+- Modify: `internal/ui/tree.go`, `internal/ui/layout.go`
+- Modify: `internal/render/text.go`, `internal/render/truncate.go`, `internal/render/paint.go`
+- Modify: `internal/shell/widget.go`, `internal/shell/bar.go`
+- Test: `internal/render/text_test.go`, `internal/render/truncate_test.go`,
+  `internal/render/paint_test.go`, `internal/ui/layout_test.go`, `internal/ui/bar_test.go`,
+  `internal/shell/widget_test.go`
+
+**Interfaces:**
+- Consumes: `buildWidgets` (Task 10), `ui.Node` (Task 6).
+- Produces: `ui.Node.Tabular bool`; `ui.MeasureText` becomes
+  `func(text string, tabular bool) (width, height int)`;
+  `(*TextRenderer).Shape/Measure/Truncate` each take a trailing `tabular bool`.
+
+Note that `Layout`, `ArrangeBar`, `sectionWidth` and `placeSection` only pass `MeasureText` through, so
+none of their signatures change. Only the two `measure(n.Text)` call sites in `measureNode` do.
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `internal/render/text_test.go`:
+
+```go
+// Every digit must advance identically, or a clock changes width as the time
+// changes. This is the whole point of tabular figures.
+func TestTabularFiguresGiveEveryDigitTheSameWidth(t *testing.T) {
+	t.Parallel()
+	r := NewTextRenderer(mustTestFace(t))
+
+	widths := make(map[int]string)
+	for d := 0; d <= 9; d++ {
+		s := fmt.Sprintf("%d%d:%d%d", d, d, d, d)
+		w, _, err := r.Measure(s, 14, true)
+		if err != nil {
+			t.Fatalf("Measure(%q): %v", s, err)
+		}
+		widths[w] = s
+	}
+	if len(widths) != 1 {
+		t.Fatalf("tabular measurement produced %d distinct widths, want 1: %v", len(widths), widths)
+	}
+}
+
+// The flag must actually reach the shaper: proportional measurement of the
+// same strings should not be uniform for a face with proportional figures.
+func TestTheTabularFlagReachesTheShaper(t *testing.T) {
+	t.Parallel()
+	r := NewTextRenderer(mustTestFace(t))
+
+	tab, _, err := r.Measure("00:00", 14, true)
+	if err != nil {
+		t.Fatalf("Measure: %v", err)
+	}
+	prop, _, err := r.Measure("00:00", 14, false)
+	if err != nil {
+		t.Fatalf("Measure: %v", err)
+	}
+	// Go Regular's digits are already tabular, so the widths may legitimately
+	// match. What must hold is that both paths shape successfully and return a
+	// positive width; a silently dropped feature would still be caught by
+	// TestTabularFiguresGiveEveryDigitTheSameWidth on any proportional face.
+	if tab <= 0 || prop <= 0 {
+		t.Fatalf("widths tab=%d prop=%d, want both positive", tab, prop)
+	}
+}
+```
+
+Append to `internal/shell/widget_test.go`:
+
+```go
+// Only the clock asks for tabular figures; nothing else should.
+func TestOnlyClockWidgetsRequestTabularFigures(t *testing.T) {
+	t.Parallel()
+	widgets := buildWidgets([]config.Item{
+		{ID: "clock", Format: "15:04"},
+		{ID: "workspace"},
+		{ID: "window-title", MaxWidth: 120},
+	})
+
+	if !widgets[0].node.Tabular {
+		t.Fatal("the clock node does not request tabular figures")
+	}
+	if widgets[1].node.Tabular || widgets[2].node.Tabular {
+		t.Fatal("a non-clock widget requested tabular figures")
+	}
+}
+```
+
+`mustTestFace` is the existing helper at `text_test.go:12`. Add `"fmt"` to that file's imports if absent;
+`goregular` is already imported there.
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `go test ./internal/render/ ./internal/shell/ -run 'Tabular' -v`
+Expected: FAIL to compile — `Measure` takes two arguments and `Node.Tabular` is undefined.
+
+- [ ] **Step 3: Write the implementation**
+
+In `internal/ui/tree.go`, add the field and widen the measurement contract:
+
+```go
+	// Tabular requests tabular (fixed-advance) figures when shaping this node.
+	// A clock sets it: with proportional digits the rendered width changes as
+	// the time changes, which visibly shifts a centred clock every minute.
+	Tabular bool
+```
+
+```go
+// MeasureText reports the logical width and height of a shaped string. The
+// tabular flag is the node's, and reaches the shaper as an OpenType feature.
+type MeasureText func(text string, tabular bool) (width, height int)
+```
+
+In `internal/ui/layout.go`, pass the flag at both `measureNode` call sites:
+
+```go
+	case KindText:
+		w, h := measure(n.Text, n.Tabular)
+		if n.MaxWidth > 0 && w > n.MaxWidth {
+			w = n.MaxWidth
+		}
+		return w, h, nil
+	case KindMeter:
+		...
+	case KindButton:
+		w, h := measure(n.Text, n.Tabular)
+		return w + 2*n.Padding, h + 2*n.Padding, nil
+```
+
+In `internal/render/text.go`, thread the feature into the shaper:
+
+```go
+// tabularFigures is the OpenType feature that gives every digit the same
+// advance. Applied per call, because only some runs want it.
+var tabularFigures = []shaping.FontFeature{{Tag: ot.MustNewTag("tnum"), Value: 1}}
+
+// Shape lays out one run at the given physical pixel size. When tabular is
+// set, digits shape with equal advances.
+func (r *TextRenderer) Shape(text string, size int, tabular bool) (shaping.Output, error) {
+	if r == nil || r.face == nil {
+		return shaping.Output{}, fmt.Errorf("render: nil face")
+	}
+	if size <= 0 {
+		return shaping.Output{}, fmt.Errorf("render: size %d is not positive", size)
+	}
+
+	runes := []rune(text)
+	script := runScript(runes)
+	input := shaping.Input{
+		Text:      runes,
+		RunStart:  0,
+		RunEnd:    len(runes),
+		Direction: scriptDirection(script),
+		Face:      r.face,
+		Size:      fixed.I(size),
+		Script:    script,
+		Language:  language.NewLanguage("und"),
+	}
+	if tabular {
+		input.FontFeatures = tabularFigures
+	}
+	return r.shaper.Shape(input), nil
+}
+```
+
+`ot` is already imported in this file as `ot "github.com/go-text/typesetting/font/opentype"`.
+
+Give `Measure` and the file's other `Shape` caller the same trailing parameter, and pass it through
+`Truncate`:
+
+```go
+func (r *TextRenderer) Measure(text string, size int, tabular bool) (int, int, error) {
+	out, err := r.Shape(text, size, tabular)
+	...
+}
+```
+
+```go
+func (r *TextRenderer) Truncate(text string, size, avail int, tabular bool) (string, int, error) {
+```
+
+and pass `tabular` at all three `r.Shape(...)` calls inside `truncate.go`.
+
+In `internal/render/paint.go`, the text case has the node, so pass its flag:
+
+```go
+	fitted, _, err := text.Truncate(s, size, box.W, n.Tabular)
+```
+
+In `internal/shell/bar.go`, widen the measure closure in `layoutLocked`:
+
+```go
+	measure := func(s string, tabular bool) (int, int) {
+		w, h, err := b.text.Measure(s, b.style.Size, tabular)
+		if err != nil {
+			return 0, 0
+		}
+		return w, h
+	}
+```
+
+In `internal/shell/widget.go`, set the flag on the clock node only:
+
+```go
+		case "clock":
+			layout := item.Format
+			out = append(out, textWidget{
+				node: &ui.Node{Kind: ui.KindText, Tabular: true},
+				format: func(v barView) string {
+					if v.Now.IsZero() {
+						return ""
+					}
+					return v.Now.Format(layout)
+				},
+			})
+```
+
+Widen every existing test measurement helper. These are the exact sites, verified against
+`milestone/stable-bar@57b49f0`; `internal/ui/scale_test.go` has none and needs no change.
+
+| File | Site |
+|---|---|
+| `internal/ui/layout_test.go:6` | `func fakeMeasure(s string) (int, int)` — package level |
+| `internal/ui/layout_test.go` | the local `measure := func(s string) (int, int)` closures added by Task 6 |
+| `internal/ui/bar_test.go:6` | `func fixed(s string) (int, int)` — package level |
+| `internal/render/paint_test.go:119,219` | two local `measure := func(s string) (int, int)` closures |
+
+Each takes a trailing `bool`, ignored where the test does not care:
+
+```go
+func fakeMeasure(s string, _ bool) (int, int) { return len(s) * 8, 16 }
+func fixed(s string, _ bool) (int, int)       { return len([]rune(s)) * 10, 20 }
+```
+
+The `paint_test.go` closures forward it, since they call the real renderer:
+
+```go
+	measure := func(s string, tabular bool) (int, int) {
+		w, h, err := r.Measure(s, style.Size, tabular)
+		...
+	}
+```
+
+Also add the trailing argument at every existing direct call in `internal/render`'s own tests:
+`text_test.go:50,90,113,119,154,160` (`Measure`/`Shape`) and
+`truncate_test.go:22,27,43,49,70,92,110,115` (`Measure`/`Truncate`). Pass `false` — those tests are about
+shaping and truncation, not figures.
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `go build ./... && go test -race ./internal/ui/ ./internal/render/ ./internal/shell/ -v`
+Expected: PASS across all three packages.
+
+- [ ] **Step 5: Commit**
+
+```bash
+gofmt -l internal
+git add internal/ui/ internal/render/ internal/shell/
+git commit -m "feat(render): shape clock runs with tabular figures"
 ```
 
 ---
