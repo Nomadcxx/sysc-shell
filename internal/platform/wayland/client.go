@@ -52,6 +52,9 @@ type Options struct {
 	// Gap is the outer gap between the screen edge and the painted body. It
 	// lives inside the surface, so the screen edge stays clickable.
 	Gap int
+	// Radius rounds the body's corners. It shapes the opaque region, which must
+	// exclude the corners the bar does not actually fill.
+	Radius int
 }
 
 // Invalidation requests a redraw. An empty Connector invalidates every bar.
@@ -521,6 +524,20 @@ func (o *owner) reconfigure(h *OutputHost) error {
 	if err := h.viewport.SetDestination(int32(h.ss.logicalWidth), int32(h.ss.logicalHeight)); err != nil {
 		return fmt.Errorf("wayland: set viewport destination: %w", err)
 	}
+
+	// The surface is the configure size; the body is that surface inset by the
+	// gap on the anchored edge and both ends.
+	gap := o.options.Gap
+	surface := ui.Rect{W: h.ss.logicalWidth, H: h.ss.logicalHeight}
+	body := ui.Rect{
+		X: gap, Y: gap,
+		W: max(0, surface.W-2*gap),
+		H: max(0, surface.H-gap),
+	}
+	if err := o.applyRegions(h, surface, body, o.options.Radius, true); err != nil {
+		return fmt.Errorf("wayland: set regions: %w", err)
+	}
+
 	if err := h.app.Configure(h.ss.logicalWidth, h.ss.logicalHeight, int(h.ss.scale120)); err != nil {
 		return err
 	}
