@@ -325,10 +325,17 @@ protocol and map to empty or absent. `active_window_id` is nullable on a `Worksp
 
 **Failure policy** follows the existing package rules. A malformed known event is a stream error that
 publishes nothing; `WindowsChanged` builds its whole set before replacing so a bad member cannot publish
-partial state. A `WindowClosed` naming an unknown id is a divergence error, matching the existing
-`WorkspaceActivated` treatment: there is no resync path in this tranche, so a silently wrong projection is
-worse than a named stop. Noctalia's backend is laxer here, skipping members it cannot parse; the stricter
-existing policy is kept.
+partial state. Noctalia's backend is laxer here, skipping members it cannot parse; the stricter existing
+policy is kept.
+
+Unknown ids are treated by consequence, not uniformly:
+
+- `WorkspaceActiveWindowChanged` naming an unknown workspace is a **stream error**, matching the existing
+  `WorkspaceActivated` treatment. The event carries state that cannot be recorded anywhere, so the
+  projection would silently keep showing a stale title, and this tranche has no resync path.
+- `WindowClosed` naming an unknown window is a **no-op that publishes nothing**. The event's desired
+  post-state — that window absent from the set — already holds, so there is nothing to diverge. Erroring
+  here would stop the shell over an event that asks for no change.
 
 **Publication is suppressed when the decoded state is unchanged**, so a no-op event produces no snapshot,
 no wake and no projection pass.
