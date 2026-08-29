@@ -28,6 +28,7 @@ that branch is mid-correction and its owning agent is still working. They land w
 |---|---|
 | `main` | Every document except the three Milestone 2 ones |
 | `milestone/stable-bar` | Everything on `main` at branch time, plus the three Milestone 2 documents |
+| `milestone/panels-controls` | Merged into `main` on 2026-08-30; stays live for further Milestone 4 work |
 
 Re-check with `git ls-tree -r --name-only <branch> -- docs/` rather than trusting this table blindly.
 
@@ -120,21 +121,50 @@ Split into four reviewed tranches by the charter. Only 3A is designed.
 
 ## Milestone 4 — panels and standard controls
 
-Designed and planned on `milestone/panels-controls` (branched from `296b0eb`), reviewed 2026-08-30.
+Designed, planned, reviewed and corrected. All documents are on `main`; `milestone/panels-controls`
+stays live for further work.
 
-| Document | Kind | Branch | State |
-|---|---|---|---|
-| `2026-08-30-panels-and-controls-prior-art.md` | assessment | `milestone/panels-controls` | Noctalia v5 and DMS v1.5.3 inventories with file:line evidence. |
-| `2026-08-30-panels-and-controls-research.md` | research | `milestone/panels-controls` | Niri capability claims, source-verified. |
-| `2026-08-30-panel-foundation-design.md` | design | `milestone/panels-controls` | Tranche 4A. Owner-approved. D1–D13. |
-| `2026-08-30-panel-foundation.md` | plan | `milestone/panels-controls` | Tranche 4A, 14 tasks. |
-| `2026-08-30-settings-osd-theme-catalog-design.md` | design | `milestone/panels-controls` | Tranche 4B. Owner-approved. D1–D10. |
-| `2026-08-30-settings-osd-theme-catalog.md` | plan | `milestone/panels-controls` | Tranche 4B, 14 tasks. |
-| `2026-08-30-milestone-4-review.md` | review | `main` | Verdict: proceed after two blocking findings. |
+| Document | Kind | State |
+|---|---|---|
+| `2026-08-30-panels-and-controls-prior-art.md` | assessment | Noctalia v5 and DMS v1.5.3 inventories with file:line evidence. |
+| `2026-08-30-panels-and-controls-research.md` | research | Niri capability claims, source-verified against niri main. |
+| `2026-08-30-panel-foundation-design.md` | design | Tranche 4A. Owner-approved; amended for the review. D1–D13. |
+| `2026-08-30-panel-foundation.md` | plan | Tranche 4A, **13 tasks**. Ready to execute once its prerequisites clear. |
+| `2026-08-30-settings-osd-theme-catalog-design.md` | design | Tranche 4B. Owner-approved; amended for the review. D1–D10. |
+| `2026-08-30-settings-osd-theme-catalog.md` | plan | Tranche 4B, 14 tasks. See the open scope question below. |
+| `2026-08-30-milestone-4-review.md` | review | Closed. Both blockers fixed in `3fc026c`; findings tracked as `sysc-16`. |
 
-Two blockers before 4A executes: the `sysc-metrics` local `replace` (violates a recorded stop condition
-and bypasses the qualification gate `sysc-7`), and a config reload closing the settings panel that
-triggered it. See the review.
+### Tranche state
+
+| Tranche | Scope | State |
+|---|---|---|
+| 4A | Panel machinery, placement, rounding and shadows, button/label/separator, matugen theming, clock/calendar and session/power popouts, IPC | Ready. Blocked only by the M2 corrections and Tranche 3A. |
+| 4B | Controls, settings modal and registry, OSD with audio/brightness services, stock themes, template catalog | Planned. Blocked by 4A. Scope question open — see below. |
+
+### What the review changed
+
+- The system-monitor popout, `MetricsService`, and the `tabs` and `graphs` controls are **deferred out
+  of Milestone 4** until Tranche 3B qualifies and tags `sysc-metrics`. 4A had reached for a local
+  `replace` on an untagged module — a recorded stop condition — and the exit gate is a disjunction, so
+  clock/calendar carries it. **Milestone 4 now adds no module dependency.**
+- A configuration reload leaves panel surfaces mapped. Tearing them down would have dismissed 4B's
+  settings modal on every change made inside it.
+- Colour fields that palette generation now owns are removed from the schema, and unknown keys are
+  rejected at load, so a stale file fails with its field path named rather than silently doing nothing.
+- Every template apply hook gained a reverse, so disabling one removes the include line and file it
+  added to another application's configuration.
+
+### Open owner decisions
+
+- **External binary dependencies** (`sysc-16`). matugen and `loginctl` in 4A, `wpctl` and
+  `brightnessctl` in 4B are the first runtime binary dependencies in a shell that is otherwise pure Go
+  over a pinned client. Each has a clean fallback and beats its alternative, but the dependency ladder
+  in the project design stops at "new code" and does not cover execing a binary the user may not have.
+- **4B tranche size** (`sysc-16`). Six controls, the settings modal, a schema registry, persistence,
+  two services, OSD, ten themes, sixteen templates, and a cross-repository `sysc-wayland` release, in
+  fourteen tasks. Tranche 3A ships four read-only text widgets in sixteen. Splitting along the seams
+  the design already names — controls and settings, OSD and services, themes and catalog — would give
+  three reviewable pieces.
 
 ## Milestones 5 to 8 — not yet designed
 
@@ -155,18 +185,38 @@ No design or plan exists for any of these. The roadmap is the only record.
 | `sysc-wayland` | `v0.1.1` | Pinned dependency. Qualified. |
 | `sysc-notify`, `sysc-tray` | — | Approved boundaries and roadmaps only. No repository yet. Milestone 5. |
 
+## Execution order once Milestone 2 clears
+
+Everything below is written, reviewed, and waiting. `bd ready` is authoritative; this is the same
+graph in prose.
+
+1. **Milestone 2 corrections** (`sysc-4`) — global-keyed host identity, the system font map wired into
+   the bar, and the invalidation transport. Owned by the implementing agent on `milestone/stable-bar`.
+   Blocks everything else.
+2. **Milestone 2 live Niri gate** (`sysc-5`) — the exit gate, needs a live session with two outputs.
+3. **Tranche 3A** (`sysc-6`) — 16 tasks, plan on `main`. Its Task 0 gates on the three corrections
+   from step 1 and stops if any is absent.
+4. **Tranche 4A** (`sysc-17`) — 13 tasks, plan on `main`. Needs steps 1 and 3; explicitly does **not**
+   need Tranches 3B, 3C or 3D.
+5. **Tranche 4B** — 14 tasks, after 4A, subject to the scope question above.
+
+Off the critical path, and startable now: **`sysc-metrics` qualification** (`sysc-7`) — audit the
+public API, qualify it from a proposed consumer, tag and push. It unblocks Tranche 3B (`sysc-8`) and
+3C (`sysc-9`), and it is what would let the deferred system-monitor popout return.
+
 ## What can proceed while Milestone 2 finishes
 
 Milestone 2 blocks *implementation* of Tranche 3A, not design work elsewhere, and its blocker is an
 agent quota that clears at 05:00 on 2026-08-30. Available now, in rough order of value:
 
-1. **Milestone 4 design.** The next milestone, wholly undesigned, and the one Tranche 3A's read-only
-   restraint was chosen to avoid pre-empting. Its component set should be driven by named consumers.
-2. **`sysc-metrics` qualification.** Audit the public API, qualify it from one proposed shell consumer,
-   tag and push. This is the single dependency unblocking Tranche 3B.
-3. **Launcher prior-art research**, scoped as input to Milestone 4's component vocabulary rather than as
-   Milestone 7 implementation.
-4. **Icon-asset policy application** for Tranche 3D: author the SVG sources and decide the checked-in
+1. **`sysc-metrics` qualification** (`sysc-7`). Audit the public API, qualify it from one proposed shell
+   consumer, tag and push. The single dependency unblocking Tranches 3B and 3C, and the thing that
+   would let Milestone 4's system-monitor popout return.
+2. **The two open Milestone 4 owner decisions** (`sysc-16`): the external-binary dependency policy, and
+   whether Tranche 4B splits.
+3. **Icon-asset policy application** for Tranche 3D: author the SVG sources and decide the checked-in
    raster size set after measuring the supported fractional scales.
+4. **Launcher prior-art research** (`sysc-12`), scoped as input to the component vocabulary rather than
+   as Milestone 7 implementation. Lower value now that Milestone 4 is designed.
 
 Do not start Tranche 3A product code, and do not edit the Milestone 2 progress handover.
