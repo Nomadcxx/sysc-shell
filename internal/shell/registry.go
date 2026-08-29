@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 )
@@ -16,18 +17,28 @@ import (
 // destroyed from a Niri event.
 type Registry struct {
 	mu         sync.Mutex
+	cfg        config.Config
 	workspaces map[string]string
 	bars       map[string]*Proof
 
 	invalidations chan wayland.Invalidation
 }
 
-func NewRegistry() *Registry {
+func NewRegistry(cfg config.Config) *Registry {
 	return &Registry{
+		cfg:           cfg,
 		workspaces:    make(map[string]string),
 		bars:          make(map[string]*Proof),
 		invalidations: make(chan wayland.Invalidation, 8),
 	}
+}
+
+// SetConfig installs an accepted candidate. Bars created after this point use
+// it; existing bars are rebuilt by the owner when their geometry changes.
+func (r *Registry) SetConfig(cfg config.Config) {
+	r.mu.Lock()
+	r.cfg = cfg
+	r.mu.Unlock()
 }
 
 // Invalidations is the channel the Wayland owner receives from. The registry
@@ -36,7 +47,14 @@ func (r *Registry) Invalidations() <-chan wayland.Invalidation { return r.invali
 
 // NewHost builds the hooks for one connector's bar.
 func (r *Registry) NewHost(connector string) (wayland.HostCallbacks, error) {
-	bar, err := New()
+	r.mu.Lock()
+	cfg := r.cfg
+	r.mu.Unlock()
+
+	// The theme is resolved per connector, so a per-output geometry override
+	// reaches the bar rather than only the base policy.
+	policy := cfg.ForConnector(connector)
+	bar, err := NewWithTheme(ThemeFrom(cfg, policy), policy)
 	if err != nil {
 		return wayland.HostCallbacks{}, err
 	}

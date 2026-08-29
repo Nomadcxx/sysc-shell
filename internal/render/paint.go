@@ -91,11 +91,22 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 }
 
 // paintText shapes at the physical size and blends the mask at the box origin.
+//
+// Truncation happens here rather than in layout because it needs cluster
+// measurement, which the text renderer owns. The box is already physical, so
+// the available width is compared in the same units the shaper reports.
 func paintText(c *Canvas, s string, box ui.Rect, text *TextRenderer, style ProofStyle, size int) error {
-	if s == "" {
+	if s == "" || box.W <= 0 {
 		return nil
 	}
-	mask, err := text.Raster(s, size)
+	fitted, _, err := text.Truncate(s, size, box.W)
+	if err != nil {
+		return err
+	}
+	if fitted == "" {
+		return nil // not even an ellipsis fits
+	}
+	mask, err := text.Raster(fitted, size)
 	if err != nil {
 		return err
 	}

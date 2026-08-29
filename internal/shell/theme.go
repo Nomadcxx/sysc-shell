@@ -2,7 +2,9 @@ package shell
 
 import (
 	"fmt"
+	"strconv"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 )
 
@@ -51,6 +53,45 @@ func DefaultTheme() Theme {
 		Muted:      Color{R: 0x30, G: 0x34, B: 0x38, A: 0xff},
 		Error:      Color{R: 0xff, G: 0x40, B: 0x40, A: 0xff},
 	}
+}
+
+// ThemeFrom maps a validated configuration onto theme tokens.
+//
+// Colours have already passed the #RRGGBB pattern at load, so a parse failure
+// here is unreachable in practice; the fallback keeps the default rather than
+// painting with a zero colour if one ever slipped through.
+// Geometry comes from the supplied bar policy rather than the base bar, so a
+// per-output override reaches the theme the bar is actually built from.
+func ThemeFrom(cfg config.Config, bar config.Bar) Theme {
+	t := DefaultTheme()
+	t.BarHeight = bar.Height
+	t.BarGap = bar.Gap
+	t.BarPadding = bar.Padding
+	t.Spacing = bar.Spacing
+	t.TextSize = bar.FontSize
+	t.Radius = cfg.Theme.Radius
+	t.Background = parseColor(cfg.Theme.Background, t.Background)
+	t.Foreground = parseColor(cfg.Theme.Foreground, t.Foreground)
+	t.Accent = parseColor(cfg.Theme.Accent, t.Accent)
+	t.Muted = parseColor(cfg.Theme.Muted, t.Muted)
+	t.Error = parseColor(cfg.Theme.Error, t.Error)
+	return t
+}
+
+// parseColor reads #RRGGBB or #RRGGBBAA, falling back when the string is not
+// one of those shapes.
+func parseColor(s string, fallback Color) Color {
+	if len(s) != 7 && len(s) != 9 {
+		return fallback
+	}
+	v, err := strconv.ParseUint(s[1:], 16, 32)
+	if err != nil {
+		return fallback
+	}
+	if len(s) == 7 {
+		return Color{R: uint8(v >> 16), G: uint8(v >> 8), B: uint8(v), A: 0xff}
+	}
+	return Color{R: uint8(v >> 24), G: uint8(v >> 16), B: uint8(v >> 8), A: uint8(v)}
 }
 
 // Geometry derives the Wayland dimensions from the tokens. The surface height

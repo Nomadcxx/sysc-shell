@@ -264,18 +264,36 @@ func TestProofPointerLeaveCancelsThePress(t *testing.T) {
 	}
 }
 
-func TestProofLayoutUsesConfiguredWidthAndBarHeight(t *testing.T) {
+// The single root is gone: three sections are arranged into absolute bounds
+// inside a content band derived from the theme tokens.
+func TestProofArrangesSectionsInsideTheContentBand(t *testing.T) {
 	t.Parallel()
 
 	p := newTestProof(t)
-	layoutForTest(t, p, 3396)
-
-	root := p.Root()
-	if root.Bounds.W != 3396 || root.Bounds.H != BarHeight {
-		t.Fatalf("root bounds = %+v, want 3396x%d", root.Bounds, BarHeight)
+	surfaceHeight, _, _ := DefaultTheme().Geometry()
+	if err := p.Layout(3396, surfaceHeight); err != nil {
+		t.Fatal(err)
 	}
-	if len(root.Children) != 4 {
-		t.Fatalf("tree holds %d children, want the fixed four", len(root.Children))
+
+	content := p.contentLocked(3396, surfaceHeight)
+	if content.W <= 0 || content.H <= 0 {
+		t.Fatalf("content band = %+v, want a positive band", content)
+	}
+
+	var arranged int
+	for _, section := range p.sections() {
+		for _, n := range section {
+			arranged++
+			if n.Bounds.W < 0 || n.Bounds.H < 0 {
+				t.Fatalf("node has negative bounds %+v", n.Bounds)
+			}
+			if n.Bounds.Y < content.Y || n.Bounds.Y+n.Bounds.H > content.Y+content.H {
+				t.Fatalf("node bounds %+v escape the content band %+v", n.Bounds, content)
+			}
+		}
+	}
+	if arranged != 4 {
+		t.Fatalf("arranged %d items, want the fixture's four", arranged)
 	}
 	if p.ButtonBounds().W <= 0 {
 		t.Fatal("the button was not arranged")

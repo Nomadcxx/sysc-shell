@@ -33,7 +33,7 @@ func run(ctx context.Context) error {
 		return err
 	}
 
-	registry := shell.NewRegistry()
+	registry := shell.NewRegistry(cfg)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -86,6 +86,7 @@ func run(ctx context.Context) error {
 		Invalidations: registry.Invalidations(),
 		Reloads:       reloads,
 		ConfigPath:    cfgPath,
+		OnConfig:      registry.SetConfig,
 	})
 	if runErr != nil {
 		return runErr

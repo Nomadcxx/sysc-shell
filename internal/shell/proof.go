@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
@@ -47,7 +48,11 @@ type Proof struct {
 	hoverAt   struct{ x, y int }
 	inside    bool
 
-	root   *ui.Node
+	// Sections are arranged by ui.ArrangeBar into absolute bounds, so painting
+	// and hit testing walk them as one flat list.
+	left, center, right []*ui.Node
+
+	theme  Theme
 	label  *ui.Node
 	meter  *ui.Node
 	button *ui.Node
@@ -58,14 +63,21 @@ type Proof struct {
 	invalidations chan struct{}
 }
 
-// New builds the proof with its fixed tree:
+// New builds a bar with the Milestone 2 fixture: a static name on the left, the
+// output's workspace in the centre, and a meter plus a toggle on the right.
 //
-//	row padding=12 gap=12
-//	├── text "sysc-shell"
-//	├── text "Workspace: <value>"
-//	├── meter width=120 value=0.25|0.75
-//	└── button action="toggle-meter" text="Toggle"
+// The fixture reuses the proof's node kinds and adds none. It exercises
+// alignment, truncation, hit testing and redraw across all three sections
+// without a widget framework.
 func New() (*Proof, error) {
+	return NewWithTheme(DefaultTheme(), config.Default().Bar)
+}
+
+// NewWithTheme builds a bar from resolved theme tokens and item ids.
+func NewWithTheme(theme Theme, policy config.Bar) (*Proof, error) {
+	if err := theme.Valid(); err != nil {
+		return nil, err
+	}
 	face, err := render.ParseFace(goregular.TTF)
 	if err != nil {
 		return nil, err
@@ -73,38 +85,51 @@ func New() (*Proof, error) {
 
 	p := &Proof{
 		workspace:     "-",
+		theme:         theme,
 		text:          render.NewTextRenderer(face),
 		invalidations: make(chan struct{}, 1),
 		style: render.ProofStyle{
-			Size:       16,
+			Size:       theme.TextSize,
 			Scale120:   ui.ScaleUnit,
-			Background: render.Color{R: 0x10, G: 0x14, B: 0x18, A: 0xff},
-			Foreground: render.Color{R: 0xe8, G: 0xec, B: 0xf0, A: 0xff},
-			Track:      render.Color{R: 0x30, G: 0x34, B: 0x38, A: 0xff},
-			Accent:     render.Color{R: 0x00, G: 0x80, B: 0xff, A: 0xff},
-			AccentOn:   render.Color{R: 0xff, G: 0x60, B: 0x00, A: 0xff},
+			Background: theme.Background,
+			Foreground: theme.Foreground,
+			Track:      theme.Muted,
+			Accent:     theme.Accent,
+			AccentOn:   theme.Error,
 		},
 	}
 
 	p.label = &ui.Node{Kind: ui.KindText, Text: p.workspaceLabelLocked()}
 	p.meter = &ui.Node{Kind: ui.KindMeter, Width: 120, Value: meterLow}
-	// The row's fixed padding of 12 leaves 48-2*12 = 24 logical pixels of
-	// content height, and text at size 16 measures 20 tall, so the button's
-	// own padding is capped at 2 and the button fills the content band.
 	p.button = &ui.Node{Kind: ui.KindButton, Text: "Toggle", Padding: 2, Action: toggleAction}
-	p.root = &ui.Node{
-		Kind:    ui.KindRow,
-		Padding: 12,
-		Gap:     12,
-		Children: []*ui.Node{
-			{Kind: ui.KindText, Text: "sysc-shell"},
-			p.label,
-			p.meter,
-			p.button,
-		},
-	}
+
+	p.left = p.build(policy.Left)
+	p.center = p.build(policy.Center)
+	p.right = p.build(policy.Right)
 	return p, nil
 }
+
+// build turns configured item ids into nodes. Ids are validated at load, so an
+// unknown id cannot reach here.
+func (p *Proof) build(ids []string) []*ui.Node {
+	out := make([]*ui.Node, 0, len(ids))
+	for _, id := range ids {
+		switch id {
+		case "shell-name":
+			out = append(out, &ui.Node{Kind: ui.KindText, Text: "sysc-shell"})
+		case "workspace":
+			out = append(out, p.label)
+		case "meter":
+			out = append(out, p.meter)
+		case "toggle":
+			out = append(out, p.button)
+		}
+	}
+	return out
+}
+
+// sections returns the three sections in paint order.
+func (p *Proof) sections() [][]*ui.Node { return [][]*ui.Node{p.left, p.center, p.right} }
 
 // Invalidations is the channel the Wayland owner receives from. The proof owns
 // it and never closes it.
@@ -169,9 +194,6 @@ func (p *Proof) MeterValue() float64 {
 	return p.meter.Value
 }
 
-// Root exposes the arranged tree.
-func (p *Proof) Root() *ui.Node { return p.root }
-
 // ButtonBounds reports the button's arranged logical bounds.
 func (p *Proof) ButtonBounds() ui.Rect {
 	p.mu.Lock()
@@ -179,14 +201,27 @@ func (p *Proof) ButtonBounds() ui.Rect {
 	return p.button.Bounds
 }
 
-// Layout arranges the tree at the logical configure size.
+// Layout arranges the three sections at the logical configure size.
 func (p *Proof) Layout(width, height int) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.layoutLocked(width, height)
 }
 
+// contentLocked derives the content band from the theme tokens. The surface is
+// the configure size; the body is that surface inset by the gap on the anchored
+// edge and both ends; the content is the body inset by the padding.
+func (p *Proof) contentLocked(width, height int) ui.Rect {
+	gap, pad := p.theme.BarGap, p.theme.BarPadding
+	body := ui.Rect{X: gap, Y: gap, W: max(0, width-2*gap), H: max(0, height-gap)}
+	return ui.Rect{
+		X: body.X + pad, Y: body.Y + pad,
+		W: max(0, body.W-2*pad), H: max(0, body.H-2*pad),
+	}
+}
+
 func (p *Proof) layoutLocked(width, height int) error {
+	p.label.Text = p.workspaceLabelLocked()
 	measure := func(s string) (int, int) {
 		w, h, err := p.text.Measure(s, p.style.Size)
 		if err != nil {
@@ -194,7 +229,8 @@ func (p *Proof) layoutLocked(width, height int) error {
 		}
 		return w, h
 	}
-	return ui.Layout(p.root, ui.Rect{W: width, H: height}, measure)
+	return ui.ArrangeBar(p.contentLocked(width, height),
+		p.left, p.center, p.right, p.theme.Spacing, measure)
 }
 
 // Configure records a new logical size and scale from the Wayland owner.
@@ -224,21 +260,50 @@ func (p *Proof) Render(pixels []byte, width, height, stride int) error {
 	return render.Paint(canvas, root, p.text, style)
 }
 
-// renderViewLocked copies the mutable values painting reads so the Niri
+// renderViewLocked copies the mutable values painting reads, so the Niri
 // goroutine can update the model while shaping and rasterization run.
+//
+// The three sections are already arranged into absolute bounds, so they flatten
+// into one child list: the painter walks bounds, not structure.
 func (p *Proof) renderViewLocked() (*ui.Node, render.ProofStyle) {
-	root := *p.root
-	root.Children = make([]*ui.Node, len(p.root.Children))
-	// ponytail: The proof tree is one level; use a recursive snapshot when a
-	// nested shell component becomes a real consumer.
-	for i, child := range p.root.Children {
-		copy := *child
-		if child == p.label {
-			copy.Text = p.workspaceLabelLocked()
+	p.label.Text = p.workspaceLabelLocked()
+	root := &ui.Node{Kind: ui.KindRow}
+	for _, section := range p.sections() {
+		for _, n := range section {
+			root.Children = append(root.Children, copyNode(n))
 		}
-		root.Children[i] = &copy
 	}
-	return &root, p.style
+	return root, p.style
+}
+
+// copyNode deep-copies a node so no pointer into live model state reaches the
+// painter.
+func copyNode(n *ui.Node) *ui.Node {
+	if n == nil {
+		return nil
+	}
+	c := *n
+	if len(n.Children) > 0 {
+		c.Children = make([]*ui.Node, len(n.Children))
+		for i, child := range n.Children {
+			c.Children[i] = copyNode(child)
+		}
+	}
+	return &c
+}
+
+// hitLocked searches every section in reverse paint order.
+func (p *Proof) hitLocked(x, y int) (string, bool) {
+	sections := p.sections()
+	for i := len(sections) - 1; i >= 0; i-- {
+		section := sections[i]
+		for j := len(section) - 1; j >= 0; j-- {
+			if action, ok := ui.Hit(section[j], x, y); ok {
+				return action, true
+			}
+		}
+	}
+	return "", false
 }
 
 // Handle applies a pointer event and reports whether the model changed. A click
@@ -266,7 +331,7 @@ func (p *Proof) Handle(event wayland.Event) bool {
 		if !p.inside {
 			return false
 		}
-		action, ok := ui.Hit(p.root, p.hoverAt.x, p.hoverAt.y)
+		action, ok := p.hitLocked(p.hoverAt.x, p.hoverAt.y)
 		if ok {
 			p.pressed = action
 		}
@@ -278,7 +343,7 @@ func (p *Proof) Handle(event wayland.Event) bool {
 		if pressed == "" || !p.inside {
 			return false
 		}
-		action, ok := ui.Hit(p.root, p.hoverAt.x, p.hoverAt.y)
+		action, ok := p.hitLocked(p.hoverAt.x, p.hoverAt.y)
 		if !ok || action != pressed {
 			return false
 		}
