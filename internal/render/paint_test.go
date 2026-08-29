@@ -15,11 +15,82 @@ const (
 var testStyle = ProofStyle{
 	Size:       16,
 	Scale120:   ui.ScaleUnit,
+	Body:       ui.Rect{W: canvasW, H: canvasH},
 	Background: Color{R: 0x10, G: 0x14, B: 0x18, A: 0xff},
 	Foreground: Color{R: 0xff, G: 0xff, B: 0xff, A: 0xff},
 	Track:      Color{R: 0x30, G: 0x34, B: 0x38, A: 0xff},
 	Accent:     Color{R: 0x00, G: 0x80, B: 0xff, A: 0xff},
 	AccentOn:   Color{R: 0xff, G: 0x60, B: 0x00, A: 0xff},
+}
+
+func TestPaintFillsOnlyTheRoundedBody(t *testing.T) {
+	t.Parallel()
+
+	c := newTestCanvas(t, 100, 44)
+	for i := range c.Pix {
+		c.Pix[i] = 0xff
+	}
+	style := testStyle
+	style.Body = ui.Rect{X: 4, Y: 4, W: 92, H: 40}
+	style.Radius = 12
+	r := NewTextRenderer(mustTestFace(t))
+	root := &ui.Node{Kind: ui.KindRow}
+	if err := Paint(c, root, r, style); err != nil {
+		t.Fatal(err)
+	}
+
+	transparent := Color{}
+	for _, p := range []image.Point{{X: 0, Y: 0}, {X: 50, Y: 2}, {X: 4, Y: 4}, {X: 95, Y: 4}} {
+		if got := pixelAt(t, c, p.X, p.Y); got != transparent {
+			t.Errorf("gap/corner pixel %v = %+v, want transparent", p, got)
+		}
+	}
+	for _, p := range []image.Point{{X: 16, Y: 4}, {X: 50, Y: 20}, {X: 4, Y: 16}, {X: 95, Y: 16}} {
+		if got := pixelAt(t, c, p.X, p.Y); got != style.Background {
+			t.Errorf("body pixel %v = %+v, want %+v", p, got, style.Background)
+		}
+	}
+}
+
+func TestPaintClearsPixelsFromThePreviousBody(t *testing.T) {
+	t.Parallel()
+
+	c := newTestCanvas(t, 100, 44)
+	r := NewTextRenderer(mustTestFace(t))
+	root := &ui.Node{Kind: ui.KindRow}
+	style := testStyle
+	style.Body = ui.Rect{W: 100, H: 44}
+	if err := Paint(c, root, r, style); err != nil {
+		t.Fatal(err)
+	}
+	style.Body = ui.Rect{X: 4, Y: 4, W: 92, H: 40}
+	style.Radius = 12
+	if err := Paint(c, root, r, style); err != nil {
+		t.Fatal(err)
+	}
+	if got := pixelAt(t, c, 0, 0); got != (Color{}) {
+		t.Fatalf("old background pixel = %+v, want transparent", got)
+	}
+}
+
+func TestPaintScalesRoundedBodyToBufferPixels(t *testing.T) {
+	t.Parallel()
+
+	c := newTestCanvas(t, 150, 66)
+	r := NewTextRenderer(mustTestFace(t))
+	style := testStyle
+	style.Scale120 = 180
+	style.Body = ui.Rect{X: 4, Y: 4, W: 92, H: 40}
+	style.Radius = 12
+	if err := Paint(c, &ui.Node{Kind: ui.KindRow}, r, style); err != nil {
+		t.Fatal(err)
+	}
+	if got := pixelAt(t, c, 75, 30); got != style.Background {
+		t.Fatalf("scaled body centre = %+v, want %+v", got, style.Background)
+	}
+	if got := pixelAt(t, c, 6, 6); got != (Color{}) {
+		t.Fatalf("scaled rounded corner = %+v, want transparent", got)
+	}
 }
 
 func newTestCanvas(t *testing.T, w, h int) *Canvas {

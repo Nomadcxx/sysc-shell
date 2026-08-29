@@ -59,6 +59,25 @@ func TestParseIsMissingFieldTolerant(t *testing.T) {
 	}
 }
 
+func TestThemeReportsBackgroundOpacity(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		background string
+		want       bool
+	}{
+		{"#101418", true},
+		{"#101418ff", true},
+		{"#101418FF", true},
+		{"#101418fe", false},
+		{"", false},
+	} {
+		if got := (Theme{Background: tc.background}).BackgroundOpaque(); got != tc.want {
+			t.Errorf("BackgroundOpaque(%q) = %v, want %v", tc.background, got, tc.want)
+		}
+	}
+}
+
 func TestValidationReportsTheFieldPath(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

@@ -3,6 +3,7 @@ package render
 import (
 	"fmt"
 	"image"
+	"math"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -66,6 +67,30 @@ func fillRect(c *Canvas, r ui.Rect, col Color) {
 		for x := x0; x < x1; x++ {
 			blendPixel(row[x*4:x*4+4], src, uint32(col.A))
 		}
+	}
+}
+
+// fillRoundedRect fills one clipped rounded rectangle. Each scanline computes
+// its corner inset from the pixel centre, then reuses the rectangle blender.
+func fillRoundedRect(c *Canvas, r ui.Rect, radius int, col Color) {
+	if r.W <= 0 || r.H <= 0 || col.A == 0 {
+		return
+	}
+	radius = min(radius, min(r.W, r.H)/2)
+	if radius <= 0 {
+		fillRect(c, r, col)
+		return
+	}
+	radiusSquared := float64(radius) * float64(radius)
+	for y := 0; y < r.H; y++ {
+		edgeY := min(y, r.H-1-y)
+		inset := 0
+		if edgeY < radius {
+			dy := float64(radius-edgeY) - 0.5
+			dx := math.Sqrt(max(0, radiusSquared-dy*dy))
+			inset = max(0, int(math.Ceil(float64(radius)-dx-0.5)))
+		}
+		fillRect(c, ui.Rect{X: r.X + inset, Y: r.Y + y, W: r.W - 2*inset, H: 1}, col)
 	}
 }
 

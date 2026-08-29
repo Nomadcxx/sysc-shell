@@ -294,6 +294,7 @@ func (o *owner) bindOutput(global, version uint32) {
 func (o *owner) hostBecameReady(h *OutputHost) error {
 	if o.cfg != nil {
 		h.policy = o.cfg.ForConnector(h.connector)
+		h.opaqueBackground = o.cfg.Theme.BackgroundOpaque()
 	}
 	if !h.policy.Enabled {
 		h.state = hostIdle
@@ -548,7 +549,7 @@ func (o *owner) reconfigure(h *OutputHost) error {
 		W: max(0, surface.W-2*gap),
 		H: max(0, surface.H-gap),
 	}
-	if err := o.applyRegions(h, surface, body, h.policy.Radius, true); err != nil {
+	if err := o.applyRegions(h, surface, body, h.policy.Radius, h.opaqueBackground); err != nil {
 		return fmt.Errorf("wayland: set regions: %w", err)
 	}
 
@@ -698,9 +699,10 @@ func (o *owner) reloadConfig() error {
 }
 
 type preparedHostConfig struct {
-	host   *OutputHost
-	policy config.Bar
-	app    HostCallbacks
+	host             *OutputHost
+	policy           config.Bar
+	opaqueBackground bool
+	app              HostCallbacks
 }
 
 type preparedOwnerConfig struct {
@@ -743,7 +745,11 @@ func (o *owner) prepareConfig(cfg config.Config) (preparedOwnerConfig, error) {
 
 	updates := make([]preparedHostConfig, 0, len(ready))
 	for i, h := range ready {
-		update := preparedHostConfig{host: h, policy: policies[i]}
+		update := preparedHostConfig{
+			host:             h,
+			policy:           policies[i],
+			opaqueBackground: cfg.Theme.BackgroundOpaque(),
+		}
 		if update.policy.Enabled {
 			app, ok := prepared.Hosts[h.connector]
 			if !ok {
@@ -777,6 +783,7 @@ func (o *owner) applyPreparedConfig(prepared preparedOwnerConfig) error {
 	for _, update := range prepared.hosts {
 		h, bar := update.host, update.policy
 		h.policy = bar
+		h.opaqueBackground = update.opaqueBackground
 		switch {
 		case !bar.Enabled:
 			if h.surface != nil {

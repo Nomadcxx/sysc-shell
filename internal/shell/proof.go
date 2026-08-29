@@ -212,12 +212,17 @@ func (p *Proof) Layout(width, height int) error {
 // the configure size; the body is that surface inset by the gap on the anchored
 // edge and both ends; the content is the body inset by the padding.
 func (p *Proof) contentLocked(width, height int) ui.Rect {
-	gap, pad := p.theme.BarGap, p.theme.BarPadding
-	body := ui.Rect{X: gap, Y: gap, W: max(0, width-2*gap), H: max(0, height-gap)}
+	body := p.bodyLocked(width, height)
+	pad := p.theme.BarPadding
 	return ui.Rect{
 		X: body.X + pad, Y: body.Y + pad,
 		W: max(0, body.W-2*pad), H: max(0, body.H-2*pad),
 	}
+}
+
+func (p *Proof) bodyLocked(width, height int) ui.Rect {
+	gap := p.theme.BarGap
+	return ui.Rect{X: gap, Y: gap, W: max(0, width-2*gap), H: max(0, height-gap)}
 }
 
 func (p *Proof) layoutLocked(width, height int) error {
@@ -243,6 +248,8 @@ func (p *Proof) Configure(logicalWidth, logicalHeight, scale120 int) error {
 		return fmt.Errorf("shell: scale120 %d is not usable", scale120)
 	}
 	p.style.Scale120 = scale
+	p.style.Body = p.bodyLocked(logicalWidth, logicalHeight)
+	p.style.Radius = p.theme.Radius
 	return p.layoutLocked(logicalWidth, logicalHeight)
 }
 

@@ -5,7 +5,10 @@
 // both reference shells store JSON, so no parser dependency is needed.
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Bar is the resolved policy for one bar.
 type Bar struct {
@@ -31,6 +34,13 @@ type Theme struct {
 	Muted      string
 	Error      string
 	Radius     int
+}
+
+// BackgroundOpaque reports whether the validated background colour has full
+// alpha. Six-digit colours imply ff.
+func (t Theme) BackgroundOpaque() bool {
+	return len(t.Background) == 7 ||
+		(len(t.Background) == 9 && strings.EqualFold(t.Background[7:], "ff"))
 }
 
 // OutputOverride adjusts the bar on one connector.

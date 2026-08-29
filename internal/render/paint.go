@@ -13,6 +13,10 @@ type ProofStyle struct {
 	Size int
 	// Scale120 is the fractional render scale as a numerator over 120.
 	Scale120 ui.Scale120
+	// Body is the logical painted bar body inside the transparent layer
+	// surface. Radius is its logical corner radius.
+	Body   ui.Rect
+	Radius int
 
 	Background Color
 	Foreground Color
@@ -46,9 +50,13 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style ProofStyle) error
 		return fmt.Errorf("render: scale120 %d is not positive", style.Scale120)
 	case style.Size <= 0:
 		return fmt.Errorf("render: text size %d is not positive", style.Size)
+	case style.Body.W <= 0 || style.Body.H <= 0:
+		return fmt.Errorf("render: body %dx%d has a non-positive dimension", style.Body.W, style.Body.H)
 	}
 
-	fillRect(c, ui.Rect{W: c.Width, H: c.Height}, style.Background)
+	clear(c.Pix)
+	fillRoundedRect(c, style.Scale120.PhysicalRect(style.Body),
+		style.Scale120.Physical(style.Radius), style.Background)
 
 	size := style.Scale120.Physical(style.Size)
 	for i, child := range root.Children {

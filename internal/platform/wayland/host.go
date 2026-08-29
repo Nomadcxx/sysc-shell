@@ -60,6 +60,9 @@ type OutputHost struct {
 	modeHeight int32
 	doneSeen   bool
 	policy     config.Bar
+	// opaqueBackground controls the compositor's opaque-region hint for this
+	// host's accepted theme.
+	opaqueBackground bool
 
 	state hostState
 	// alive gates every host-level transition. It clears before any proxy is
