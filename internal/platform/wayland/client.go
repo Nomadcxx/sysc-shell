@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/fractionalscale"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/viewporter"
@@ -70,6 +71,14 @@ type Callbacks struct {
 	// Invalidations is owned by the caller. Run only receives from it and
 	// never closes it.
 	Invalidations <-chan Invalidation
+	// Reloads carries reload requests, normally from SIGHUP. The owner reads
+	// and validates the file itself, so no other goroutine parses
+	// configuration while a bar is mapped.
+	Reloads <-chan struct{}
+	// ConfigPath is the file a reload re-reads. Empty disables reloading.
+	ConfigPath string
+	// OnConfig publishes an accepted candidate to the application.
+	OnConfig func(config.Config)
 }
 
 func (c Callbacks) validate() error {
@@ -143,6 +152,9 @@ type owner struct {
 	// focus identifies the bar the pointer is on and the latest logical
 	// coordinates, replacing the single boolean the proof used.
 	focus pointerFocus
+	// cfg is the live configuration. It is replaced only after a candidate has
+	// resolved for every connected output.
+	cfg *config.Config
 
 	cleanup cleanupStack
 	fatal   error
@@ -661,6 +673,83 @@ func (o *owner) invalidate(inv Invalidation) {
 	}
 }
 
+// reloadConfig re-reads and applies the configuration file. A failure at any
+// stage leaves the previous configuration live and applies nothing.
+func (o *owner) reloadConfig() {
+	if o.cb.ConfigPath == "" {
+		return
+	}
+	cfg, err := config.Load(o.cb.ConfigPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sysc-shell: reload rejected: %v\n", err)
+		return
+	}
+	if err := o.applyConfig(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "sysc-shell: reload rejected: %v\n", err)
+		return
+	}
+	if o.cb.OnConfig != nil {
+		o.cb.OnConfig(cfg)
+	}
+}
+
+// applyConfig resolves every live host's policy before committing, then applies
+// the result in one pass.
+//
+// Resolving first is what keeps the outputs consistent: a candidate valid as a
+// document but unresolvable for one connected output is rejected whole, so the
+// shell can never end up with half its bars on new policy and half on old.
+func (o *owner) applyConfig(cfg config.Config) error {
+	live := o.hosts.each()
+	connectors := make([]string, 0, len(live))
+	for _, h := range live {
+		connectors = append(connectors, h.connector)
+	}
+	policies, err := config.Resolve(cfg, connectors)
+	if err != nil {
+		return err
+	}
+
+	o.cfg = &cfg
+	var errs []error
+	for i, h := range live {
+		if !h.alive {
+			continue
+		}
+		bar := policies[i]
+		o.options.Height, o.options.Gap, o.options.Radius = bar.Height, bar.Gap, bar.Radius
+
+		switch {
+		case !bar.Enabled && h.surface != nil:
+			if err := o.teardownSurface(h); err != nil {
+				errs = append(errs, err)
+			}
+			h.state = hostIdle
+			if o.cb.DropHost != nil {
+				o.cb.DropHost(h.connector)
+			}
+		case bar.Enabled && h.surface == nil && h.ready():
+			if err := o.createBar(h); err != nil {
+				errs = append(errs, err)
+			}
+		case bar.Enabled && h.surface != nil:
+			// Geometry and anchor changes are ordinary layer-surface requests
+			// followed by a configure, which is cheaper and more correct than
+			// destroying and rebuilding the role.
+			if err := o.applyGeometryRequests(h); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			if err := h.surface.Commit(); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			h.sched.Invalidate()
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // teardownSurface releases everything scoped to one bar and leaves the host and
 // its wl_output intact, so a closed bar can be rebuilt without a registry cycle.
 func (o *owner) teardownSurface(h *OutputHost) error {
@@ -710,7 +799,7 @@ func (o *owner) loop(ctx context.Context) error {
 		return err
 	}
 	defer wake.close()
-	wake.bridge(runCtx, o.cb.Invalidations)
+	wake.bridge(runCtx, o.cb.Invalidations, o.cb.Reloads)
 
 	for {
 		if o.fatal != nil {
@@ -733,6 +822,9 @@ func (o *owner) loop(ctx context.Context) error {
 		}
 		if wakeReady {
 			wake.drain()
+			if wake.takeReload() {
+				o.reloadConfig()
+			}
 			for _, inv := range wake.take() {
 				o.invalidate(inv)
 			}

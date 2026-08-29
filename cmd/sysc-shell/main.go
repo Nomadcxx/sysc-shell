@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/shell"
@@ -22,6 +23,14 @@ func run(ctx context.Context) error {
 	socket := os.Getenv("NIRI_SOCKET")
 	if socket == "" {
 		return fmt.Errorf("NIRI_SOCKET is not set; start sysc-shell from a Niri session")
+	}
+
+	// A missing file is not an error: the built-in defaults apply. An invalid
+	// one fails startup, because there is no previous configuration to keep.
+	cfgPath := config.DefaultPath()
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return err
 	}
 
 	registry := shell.NewRegistry()
@@ -52,13 +61,31 @@ func run(ctx context.Context) error {
 		}
 	}()
 
+	// SIGHUP reloads. The handler only signals; the owner goroutine re-reads
+	// and validates the file itself, so no proxy is touched from here.
+	reloads := make(chan struct{}, 1)
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	defer signal.Stop(hup)
+	go func() {
+		for range hup {
+			select {
+			case reloads <- struct{}{}:
+			default:
+			}
+		}
+	}()
+
 	runErr := wayland.Run(ctx, wayland.Options{
-		Height: shell.BarHeight,
-		Gap:    shell.BarGap,
+		Height: cfg.Bar.Height,
+		Gap:    cfg.Bar.Gap,
+		Radius: cfg.Bar.Radius,
 	}, wayland.Callbacks{
 		NewHost:       registry.NewHost,
 		DropHost:      registry.DropHost,
 		Invalidations: registry.Invalidations(),
+		Reloads:       reloads,
+		ConfigPath:    cfgPath,
 	})
 	if runErr != nil {
 		return runErr
