@@ -7,6 +7,14 @@ import (
 	"testing"
 )
 
+func TestDefaultBarMatchesDMSContentBand(t *testing.T) {
+	t.Parallel()
+	bar := Default().Bar
+	if bar.Padding != 6 || bar.Spacing != 4 {
+		t.Fatalf("default padding/spacing = %d/%d, want 6/4", bar.Padding, bar.Spacing)
+	}
+}
+
 func TestParseAcceptsAFullDocument(t *testing.T) {
 	t.Parallel()
 	const doc = `{

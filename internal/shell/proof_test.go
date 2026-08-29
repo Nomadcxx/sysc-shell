@@ -299,3 +299,11 @@ func TestProofArrangesSectionsInsideTheContentBand(t *testing.T) {
 		t.Fatal("the button was not arranged")
 	}
 }
+
+func TestProofUsesDMSButtonPadding(t *testing.T) {
+	t.Parallel()
+	p := newTestProof(t)
+	if p.button.Padding != 4 {
+		t.Fatalf("button padding = %d, want the DMS reference value 4", p.button.Padding)
+	}
+}

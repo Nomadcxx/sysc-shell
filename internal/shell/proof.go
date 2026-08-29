@@ -100,7 +100,7 @@ func NewWithTheme(theme Theme, policy config.Bar) (*Proof, error) {
 
 	p.label = &ui.Node{Kind: ui.KindText, Text: p.workspaceLabelLocked()}
 	p.meter = &ui.Node{Kind: ui.KindMeter, Width: 120, Value: meterLow}
-	p.button = &ui.Node{Kind: ui.KindButton, Text: "Toggle", Padding: 2, Action: toggleAction}
+	p.button = &ui.Node{Kind: ui.KindButton, Text: "Toggle", Padding: 4, Action: toggleAction}
 
 	p.left = p.build(policy.Left)
 	p.center = p.build(policy.Center)

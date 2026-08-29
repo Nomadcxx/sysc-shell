@@ -594,7 +594,7 @@ after the audit and it is isolated in a single late task the owner may cut.
 
 **Minor — token discipline (`defaultTitleMaxWidth = 260` lives in `internal/config`).** *Not adopted, with
 reason.* The recommendation was to lift the default into the theme token set. But `config.Default()`
-already owns every other geometry default — height 48, gap 4, padding 8, spacing 6, radius 12, font size
+already owns every other geometry default: height 48, gap 4, padding 6, spacing 4, radius 12, font size
 14 — and `Theme` is *derived* from them through `ThemeFrom`. Moving 260 alone would make it the only
 geometry default that does not live beside the others, and `internal/config` cannot import
 `internal/shell` to reach the token set. The rule the finding cites — no component carries an independent

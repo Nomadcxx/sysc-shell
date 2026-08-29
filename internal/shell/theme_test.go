@@ -18,6 +18,17 @@ func TestDefaultThemeGeometryMatchesTheBaseline(t *testing.T) {
 	}
 }
 
+func TestDefaultThemeMatchesDMSContentBand(t *testing.T) {
+	t.Parallel()
+	th := DefaultTheme()
+	if th.BarPadding != 6 {
+		t.Fatalf("bar padding = %d, want 6 for a 28px item band inside the 40px body", th.BarPadding)
+	}
+	if th.Spacing != 4 {
+		t.Fatalf("item spacing = %d, want the DMS reference value 4", th.Spacing)
+	}
+}
+
 func TestNominalHeightIsATokenNotASurfaceDimension(t *testing.T) {
 	t.Parallel()
 	th := DefaultTheme()

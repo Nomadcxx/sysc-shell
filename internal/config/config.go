@@ -77,7 +77,7 @@ func Default() Config {
 	return Config{
 		Bar: Bar{
 			Enabled: true, Edge: "top",
-			Height: 48, Gap: 4, Padding: 8, Spacing: 6, Radius: 12,
+			Height: 48, Gap: 4, Padding: 6, Spacing: 4, Radius: 12,
 			FontFamily: "sans-serif", FontSize: 14,
 			Left:   []string{"shell-name"},
 			Center: []string{"workspace"},

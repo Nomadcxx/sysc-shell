@@ -43,8 +43,8 @@ func DefaultTheme() Theme {
 	return Theme{
 		BarHeight:  BarHeight,
 		BarGap:     BarGap,
-		BarPadding: 8,
-		Spacing:    6,
+		BarPadding: 6,
+		Spacing:    4,
 		Radius:     12,
 		TextSize:   14,
 		Background: Color{R: 0x10, G: 0x14, B: 0x18, A: 0xff},
