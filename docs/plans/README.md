@@ -14,20 +14,13 @@ status written into a document header drifts, and one already did.
 
 ## Why this file exists
 
-Documents are written on milestone branches and only reach `main` when that milestone merges. No branch
-currently holds the whole set:
-
-**Resolved on 2026-08-30.** Documents now land on `main` as docs-only commits as soon as they are
-written, so every branch and worktree sees them. `main` fast-forwarded to `5512816` to bring the Tranche
-3A set across.
-
-One exception remains: the three Milestone 2 documents still exist only on `milestone/stable-bar`, because
-that branch is mid-correction and its owning agent is still working. They land when it merges.
+Documents were first written on milestone branches and reached `main` at different times. This was
+resolved on 2026-08-30. Every registered document now lives on `main`, including the Milestone 2 set.
 
 | Branch | Holds |
 |---|---|
-| `main` | Every document except the three Milestone 2 ones |
-| `milestone/stable-bar` | Everything on `main` at branch time, plus the three Milestone 2 documents |
+| `main` | Every registered document |
+| `milestone/stable-bar` | Milestone 2 implementation branch, merged into `main` at `309f9d2` |
 | `milestone/panels-controls` | Merged into `main` on 2026-08-30; stays live for further Milestone 4 work |
 
 Re-check with `git ls-tree -r --name-only <branch> -- docs/` rather than trusting this table blindly.
@@ -65,20 +58,15 @@ Status: **complete and merged to `main`.**
 
 ## Milestone 2 — stable bar on every output
 
-Status: **implemented, audited, corrections in flight, live gate not run.** Blocks Milestone 3
-implementation.
-
-**Current blocker (2026-08-30): scheduling, not technical.** The agent that owns the Milestone 2
-corrections is quota-limited and resumes at 05:00 today. The corrections themselves are understood; they
-are simply not written yet. Tranche 3A's Task 0 gates on three of them — global-keyed host identity, the
-system font map wired into the bar, and lossless invalidation.
+Milestone 2 implementation and review corrections are on `main`. The remaining exit gate is `sysc-5`,
+which needs two connected outputs, physical hotplug and pointer checks, and the full idle duration.
 
 | Document | Kind | Branch | State |
 |---|---|---|---|
 | `2026-08-29-stable-multi-output-bar-design-handover.md` | commission | `main` | Closed. Geometry and ownership contracts. Its implementation status is historical. |
-| `2026-08-29-stable-multi-output-bar-design.md` | design | **`milestone/stable-bar` only** | Owner-approved. |
-| `2026-08-29-stable-multi-output-bar.md` | plan | **`milestone/stable-bar` only** | The five-task *correction* plan, not the original. |
-| `2026-08-29-stable-multi-output-bar-progress-handover.md` | progress-handover | **`milestone/stable-bar` only** | Live. Records 16 tasks implemented, automated gate green, live gate not run. Do not edit from another tranche. |
+| `2026-08-29-stable-multi-output-bar-design.md` | design | `main` | Owner-approved. |
+| `2026-08-29-stable-multi-output-bar.md` | plan | `main` | The five-task correction plan, not the missing original. Executed. |
+| `2026-08-29-stable-multi-output-bar-progress-handover.md` | progress-handover | `main` | Historical pre-correction state. Do not edit from another tranche. |
 
 ### Known gap: the original Milestone 2 plan is missing
 
@@ -93,10 +81,8 @@ not map one-to-one onto the handover's "16 tasks", and no document reconciles th
 
 This is the concrete reason this register exists. Do not repeat it: commit the plan before executing it.
 
-### Uncommitted work on that branch
-
-`internal/platform/wayland/policy_test.go` is modified and uncommitted in the `milestone/stable-bar`
-worktree as of 2026-08-30. It is not backed up by any commit.
+The formerly uncommitted `internal/platform/wayland/policy_test.go` landed in `72cb086`; `sysc-13` tracks
+that resolved defect.
 
 ## Milestone 3 — built-in widget foundation
 
@@ -104,17 +90,18 @@ Split into four reviewed tranches by the charter. Only 3A is designed.
 
 | Document | Kind | Branch | State |
 |---|---|---|---|
-| `2026-08-30-built-in-widget-foundation-execution-handover.md` | commission | `milestone/widget-foundation` | Live. The charter for Tranche 3A. Also vendored here from an untracked file that existed only in the `stable-bar` worktree. |
-| `2026-08-30-built-in-widget-foundation-design.md` | design | **`milestone/widget-foundation` only** | Owner-approved, audited, amended. Records D1–D8 and the design-audit outcome. |
-| `2026-08-30-built-in-widget-foundation.md` | plan | **`milestone/widget-foundation` only** | Complete. 16 tasks (0–15). Audit findings applied. **Execution blocked on Milestone 2** by Task 0's gates. |
-| `2026-08-30-built-in-widget-foundation-audit-handover.md` | audit-handover | **`milestone/widget-foundation` only** | Closed. Commissioned the technical and design audits. |
-| `2026-08-30-built-in-widget-foundation-audit-report.md` | audit-report | **`milestone/widget-foundation` only** | Closed. Verdict: proceed with named corrections; all seven applied at `9a114eb`. Verified assumption 4 live. |
+| `2026-08-30-built-in-widget-foundation-execution-handover.md` | commission | `main` | Historical commission that produced the approved design and plan. |
+| `2026-08-30-live-gate-to-tranche-3a-execution-handover.md` | execution-handover | `main` | Current receiving-agent handover. Complete `sysc-5`, then execute Tranche 3A. |
+| `2026-08-30-built-in-widget-foundation-design.md` | design | `main` | Owner-approved, audited, amended. Records D1–D8 and the design-audit outcome. |
+| `2026-08-30-built-in-widget-foundation.md` | plan | `main` | Complete. 16 tasks (0–15). Audit findings applied. Execution blocked by `sysc-5`. |
+| `2026-08-30-built-in-widget-foundation-audit-handover.md` | audit-handover | `main` | Closed. Commissioned the technical and design audits. |
+| `2026-08-30-built-in-widget-foundation-audit-report.md` | audit-report | `main` | Closed. Verdict: proceed with named corrections; all seven applied at `9a114eb`. Verified assumption 4 live. |
 
 ### Tranche state
 
 | Tranche | Scope | State |
 |---|---|---|
-| 3A | Clock, date, Niri workspace, focused-window title; service lifetime; per-output widget instances | Designed, planned, audited. Blocked on the Milestone 2 corrections merging. |
+| 3A | Clock, date, Niri workspace, focused-window title; service lifetime; per-output widget instances | Designed, planned, audited. Blocked on the complete Milestone 2 live gate. |
 | 3B | CPU, memory, filesystem, block and network rates | **Blocked**: needs a reviewed, tagged `sysc-metrics` release. None exists. |
 | 3C | Battery and remaining time | **Blocked**: needs `sysc-metrics` M2 power and thermal gates. |
 | 3D | Weather, icons, meter/graph/tooltip nodes | Not started. Needs the icon-asset policy applied and an Open-Meteo decision. |
@@ -190,9 +177,7 @@ No design or plan exists for any of these. The roadmap is the only record.
 Everything below is written, reviewed, and waiting. `bd ready` is authoritative; this is the same
 graph in prose.
 
-1. **Milestone 2 corrections** (`sysc-4`) — global-keyed host identity, the system font map wired into
-   the bar, and the invalidation transport. Owned by the implementing agent on `milestone/stable-bar`.
-   Blocks everything else.
+1. **Milestone 2 corrections** (`sysc-4`) — complete and merged.
 2. **Milestone 2 live Niri gate** (`sysc-5`) — the exit gate, needs a live session with two outputs.
 3. **Tranche 3A** (`sysc-6`) — 16 tasks, plan on `main`. Its Task 0 gates on the three corrections
    from step 1 and stops if any is absent.
@@ -206,8 +191,7 @@ public API, qualify it from a proposed consumer, tag and push. It unblocks Tranc
 
 ## What can proceed while Milestone 2 finishes
 
-Milestone 2 blocks *implementation* of Tranche 3A, not design work elsewhere, and its blocker is an
-agent quota that clears at 05:00 on 2026-08-30. Available now, in rough order of value:
+The live Niri gate blocks Tranche 3A implementation. Work outside that dependency remains available:
 
 1. **`sysc-metrics` qualification** (`sysc-7`). Audit the public API, qualify it from one proposed shell
    consumer, tag and push. The single dependency unblocking Tranches 3B and 3C, and the thing that
