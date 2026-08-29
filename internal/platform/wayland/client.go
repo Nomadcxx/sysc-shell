@@ -103,10 +103,11 @@ func (c HostCallbacks) validate(connector string) error {
 // Run owns the Wayland connection and every proxy created from it until the
 // context is cancelled or the compositor closes the surface. No other goroutine
 // may call a Wayland proxy.
-func Run(ctx context.Context, options Options, callbacks Callbacks) (err error) {
+func Run(ctx context.Context, cfg config.Config, callbacks Callbacks) (err error) {
 	if err := callbacks.validate(); err != nil {
 		return err
 	}
+	options := Options{Height: cfg.Bar.Height, Gap: cfg.Bar.Gap, Radius: cfg.Bar.Radius}
 	if options.Gap < 0 {
 		return fmt.Errorf("wayland: gap %d is negative", options.Gap)
 	}
@@ -119,6 +120,7 @@ func Run(ctx context.Context, options Options, callbacks Callbacks) (err error) 
 		options: options,
 		cb:      callbacks,
 		hosts:   newHostSet(),
+		cfg:     &cfg,
 	}
 	defer func() { err = errors.Join(err, o.shutdown()) }()
 
@@ -293,7 +295,16 @@ func (o *owner) bindOutput(global, version uint32) {
 }
 
 // hostBecameReady creates the bar for a host that just gained done and a name.
-func (o *owner) hostBecameReady(h *OutputHost) error { return o.createBar(h) }
+func (o *owner) hostBecameReady(h *OutputHost) error {
+	if o.cfg != nil {
+		h.policy = o.cfg.ForConnector(h.connector)
+	}
+	if !h.policy.Enabled {
+		h.state = hostIdle
+		return nil
+	}
+	return o.createBar(h)
+}
 
 func (o *owner) destroyGlobals() error {
 	var errs []error
@@ -364,11 +375,6 @@ func (o *owner) onSeatCapabilities(e client.SeatCapabilitiesEvent) {
 		o.pointer = nil
 	}
 }
-
-// surfaceHeight is the layer surface height, which is also the exclusive zone.
-// The nominal Height token is not a Wayland dimension: the painted body is
-// Height-2*Gap, and the surface carries the gap plus that body.
-func (o *owner) surfaceHeight() int { return o.options.Gap + (o.options.Height - 2*o.options.Gap) }
 
 // createBar builds one host's layer surface and its fractional-scale and
 // viewport objects, then performs the fixed initial sequence: set properties,
@@ -449,7 +455,7 @@ func (o *owner) createBar(h *OutputHost) error {
 // The surface height equals the exclusive zone, and the gap lives inside the
 // surface with a zero layer margin, so the screen edge stays clickable.
 func (o *owner) applyGeometryRequests(h *OutputHost) error {
-	height := o.surfaceHeight()
+	height := h.surfaceHeight()
 	if height <= 0 || height > math.MaxInt32 {
 		return fmt.Errorf("wayland: surface height %d is unusable", height)
 	}
@@ -539,14 +545,14 @@ func (o *owner) reconfigure(h *OutputHost) error {
 
 	// The surface is the configure size; the body is that surface inset by the
 	// gap on the anchored edge and both ends.
-	gap := o.options.Gap
+	gap := h.policy.Gap
 	surface := ui.Rect{W: h.ss.logicalWidth, H: h.ss.logicalHeight}
 	body := ui.Rect{
 		X: gap, Y: gap,
 		W: max(0, surface.W-2*gap),
 		H: max(0, surface.H-gap),
 	}
-	if err := o.applyRegions(h, surface, body, o.options.Radius, true); err != nil {
+	if err := o.applyRegions(h, surface, body, h.policy.Radius, true); err != nil {
 		return fmt.Errorf("wayland: set regions: %w", err)
 	}
 

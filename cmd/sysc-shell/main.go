@@ -76,11 +76,7 @@ func run(ctx context.Context) error {
 		}
 	}()
 
-	runErr := wayland.Run(ctx, wayland.Options{
-		Height: cfg.Bar.Height,
-		Gap:    cfg.Bar.Gap,
-		Radius: cfg.Bar.Radius,
-	}, wayland.Callbacks{
+	runErr := wayland.Run(ctx, cfg, wayland.Callbacks{
 		NewHost:       registry.NewHost,
 		DropHost:      registry.DropHost,
 		Invalidations: registry.Invalidations(),

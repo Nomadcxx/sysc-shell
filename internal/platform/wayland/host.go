@@ -3,6 +3,7 @@ package wayland
 import (
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/fractionalscale"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/viewporter"
@@ -58,6 +59,7 @@ type OutputHost struct {
 	modeWidth  int32
 	modeHeight int32
 	doneSeen   bool
+	policy     config.Bar
 
 	state hostState
 	// alive gates every host-level transition. It clears before any proxy is
@@ -103,6 +105,11 @@ func newHost(global uint32, proxy *client.Output) *OutputHost {
 // ready reports whether the host has the minimum metadata a bar needs: an
 // atomic commit (done) and the connector name that selects configuration.
 func (h *OutputHost) ready() bool { return h.doneSeen && h.connector != "" }
+
+// surfaceHeight is the layer surface height and exclusive zone for this host.
+func (h *OutputHost) surfaceHeight() int {
+	return h.policy.Gap + (h.policy.Height - 2*h.policy.Gap)
+}
 
 // bufferSize converts this host's logical size and scale to buffer pixels.
 func (h *OutputHost) bufferSize() (int32, int32, error) { return h.ss.bufferSize() }
