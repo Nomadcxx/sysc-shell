@@ -148,7 +148,7 @@ func TestProofRepeatedSnapshotRequestsNoRedraw(t *testing.T) {
 
 // press and release drive a full click at one point.
 func click(p *Proof, x, y int) bool {
-	p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: x, Y: y})
+	p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: float64(x), Y: float64(y)})
 	pressed := p.Handle(wayland.Event{Kind: wayland.EventPointerPress})
 	released := p.Handle(wayland.Event{Kind: wayland.EventPointerRelease})
 	return pressed || released
@@ -198,7 +198,7 @@ func TestProofClickImmediatelyAfterPointerEnter(t *testing.T) {
 	button := p.ButtonBounds()
 	x, y := button.X+button.W/2, button.Y+button.H/2
 
-	p.Handle(wayland.Event{Kind: wayland.EventPointerEnter, X: x, Y: y})
+	p.Handle(wayland.Event{Kind: wayland.EventPointerEnter, X: float64(x), Y: float64(y)})
 	p.Handle(wayland.Event{Kind: wayland.EventPointerPress})
 	if !p.Handle(wayland.Event{Kind: wayland.EventPointerRelease}) {
 		t.Fatal("a click immediately after enter reported no change")
@@ -236,7 +236,7 @@ func TestProofReleaseOutsideThePressedNodeIsNotAClick(t *testing.T) {
 	drain(p)
 
 	button := p.ButtonBounds()
-	p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: button.X + button.W/2, Y: button.Y + button.H/2})
+	p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: float64(button.X + button.W/2), Y: float64(button.Y + button.H/2)})
 	p.Handle(wayland.Event{Kind: wayland.EventPointerPress})
 	// Slide off the button before releasing.
 	p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: 1, Y: 1})
@@ -255,10 +255,10 @@ func TestProofPointerLeaveCancelsThePress(t *testing.T) {
 	layoutForTest(t, p, 600)
 
 	button := p.ButtonBounds()
-	p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: button.X + button.W/2, Y: button.Y + button.H/2})
+	p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: float64(button.X + button.W/2), Y: float64(button.Y + button.H/2)})
 	p.Handle(wayland.Event{Kind: wayland.EventPointerPress})
 	p.Handle(wayland.Event{Kind: wayland.EventPointerLeave})
-	p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: button.X + button.W/2, Y: button.Y + button.H/2})
+	p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: float64(button.X + button.W/2), Y: float64(button.Y + button.H/2)})
 	if p.Handle(wayland.Event{Kind: wayland.EventPointerRelease}) {
 		t.Fatal("a release after the pointer left counted as a click")
 	}

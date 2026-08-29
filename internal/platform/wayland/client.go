@@ -34,9 +34,14 @@ const (
 // Event is one pointer event in logical surface coordinates, which match the
 // viewport destination and therefore the layout's hit-test bounds.
 type Event struct {
-	Kind   EventKind
-	X, Y   int
+	Kind EventKind
+	// X and Y are logical surface coordinates. They stay float64 because
+	// wl_pointer reports sub-pixel precision; the consumer floors them at the
+	// hit-test boundary rather than losing it here.
+	X, Y   float64
 	Button uint32
+	// Serial is the input serial. Recorded now, first consumed at Milestone 4.
+	Serial uint32
 }
 
 // Options configures every bar.
@@ -132,9 +137,9 @@ type owner struct {
 	// hosts holds every bound wl_output, keyed by registry global name. Every
 	// ready host carries its own bar.
 	hosts *hostSet
-	// focus is the host whose surface the pointer is currently on, replacing
-	// the single boolean the proof used. Nil means the pointer is on no bar.
-	focus *OutputHost
+	// focus identifies the bar the pointer is on and the latest logical
+	// coordinates, replacing the single boolean the proof used.
+	focus pointerFocus
 
 	cleanup cleanupStack
 	fatal   error
@@ -304,68 +309,44 @@ func (o *owner) onSeatCapabilities(e client.SeatCapabilitiesEvent) {
 		}
 		o.pointer = pointer
 		pointer.SetEnterHandler(func(e client.PointerEnterEvent) {
-			h, ok := o.hostBySurface(e.Surface)
-			if !ok {
-				return
+			if h, ok := o.hostBySurface(e.Surface); ok {
+				o.enterSurface(h, e.SurfaceX, e.SurfaceY, e.Serial)
 			}
-			o.focus = h
-			o.deliver(h, Event{Kind: EventPointerEnter, X: int(e.SurfaceX), Y: int(e.SurfaceY)})
 		})
 		pointer.SetLeaveHandler(func(e client.PointerLeaveEvent) {
-			h, ok := o.hostBySurface(e.Surface)
-			if !ok || o.focus != h {
-				return
+			if h, ok := o.hostBySurface(e.Surface); ok {
+				o.leaveSurface(h)
 			}
-			o.focus = nil
-			o.deliver(h, Event{Kind: EventPointerLeave})
 		})
 		pointer.SetMotionHandler(func(e client.PointerMotionEvent) {
-			if o.focus == nil {
+			if o.focus.host == nil {
 				return
 			}
-			o.deliver(o.focus, Event{Kind: EventPointerMotion, X: int(e.SurfaceX), Y: int(e.SurfaceY)})
+			o.focus.x, o.focus.y = e.SurfaceX, e.SurfaceY
+			o.deliver(o.focus.host, Event{
+				Kind: EventPointerMotion, X: e.SurfaceX, Y: e.SurfaceY,
+			})
 		})
 		pointer.SetButtonHandler(func(e client.PointerButtonEvent) {
-			if o.focus == nil {
+			if o.focus.host == nil {
 				return
 			}
 			kind := EventPointerRelease
 			if e.State == uint32(client.PointerButtonStatePressed) {
 				kind = EventPointerPress
 			}
-			o.deliver(o.focus, Event{Kind: kind, Button: e.Button})
+			// A button event carries no coordinates, so the focus position is
+			// what the press acts on.
+			o.deliver(o.focus.host, Event{
+				Kind: kind, Button: e.Button, Serial: e.Serial,
+				X: o.focus.x, Y: o.focus.y,
+			})
 		})
 	case !hasPointer && o.pointer != nil:
-		if o.focus != nil {
-			o.deliver(o.focus, Event{Kind: EventPointerLeave})
-			o.focus = nil
-		}
+		// Capability loss must reset focus, not merely release the proxy.
+		o.clearFocus()
 		o.fail(o.pointer.Release())
 		o.pointer = nil
-	}
-}
-
-// hostBySurface resolves a wl_surface to the host that owns it.
-func (o *owner) hostBySurface(surface *client.Surface) (*OutputHost, bool) {
-	if surface == nil {
-		return nil, false
-	}
-	for _, h := range o.hosts.each() {
-		if h.surface == surface {
-			return h, true
-		}
-	}
-	return nil, false
-}
-
-// deliver hands a pointer event to one bar and invalidates it when the
-// application reports that its state changed.
-func (o *owner) deliver(h *OutputHost, e Event) {
-	if h == nil || !h.alive || h.app.Handle == nil {
-		return
-	}
-	if h.app.Handle(e) {
-		h.sched.Invalidate()
 	}
 }
 
@@ -685,11 +666,10 @@ func (o *owner) teardownSurface(h *OutputHost) error {
 	}
 	h.retiring = nil
 
-	if o.focus == h {
-		// Deliver a leave so pressed-node state does not survive into a
-		// recreated surface.
-		o.deliver(h, Event{Kind: EventPointerLeave})
-		o.focus = nil
+	// clearFocus delivers a leave, so pressed-node state does not survive into
+	// a recreated surface.
+	if o.focus.host == h {
+		o.clearFocus()
 	}
 	// Unwind viewport, fractional-scale, layer surface and wl_surface; the
 	// output step stays so the host keeps its wl_output.
@@ -826,8 +806,8 @@ func (o *owner) teardownHost(h *OutputHost) error {
 	if err := h.dropFrameCallback(); err != nil {
 		errs = append(errs, err)
 	}
-	if o.focus == h {
-		o.focus = nil
+	if o.focus.host == h {
+		o.clearFocus()
 	}
 	if _, err := h.cleanup.unwind(); err != nil {
 		errs = append(errs, err)

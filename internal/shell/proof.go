@@ -4,6 +4,7 @@ package shell
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"sync"
 
@@ -249,7 +250,10 @@ func (p *Proof) Handle(event wayland.Event) bool {
 
 	switch event.Kind {
 	case wayland.EventPointerEnter, wayland.EventPointerMotion:
-		p.hoverAt.x, p.hoverAt.y = event.X, event.Y
+		// Pointer coordinates carry sub-pixel precision; hit testing works in
+		// whole logical pixels, so they are floored here and nowhere else.
+		p.hoverAt.x = int(math.Floor(event.X))
+		p.hoverAt.y = int(math.Floor(event.Y))
 		p.inside = true
 		return false
 
