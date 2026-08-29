@@ -4,6 +4,10 @@ Date: 2026-08-26. Amended 2026-08-27 by [the plan audit](plans/2026-08-27-plan-a
 
 Each milestone ends at a working gate. Later work does not enter the branch until the current gate passes on Niri.
 
+Every design, plan and handover produced so far is registered in [`plans/README.md`](plans/README.md),
+including which branch each one lives on. Documents are written on milestone branches and only reach
+`main` when that milestone merges, so no single branch holds the whole set.
+
 ## Milestone 0: Project foundation
 
 Deliverables:

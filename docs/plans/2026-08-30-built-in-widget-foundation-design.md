@@ -1,7 +1,8 @@
 # Built-in Widget Foundation Design — Milestone 3, Tranche 3A
 
 Date: 2026-08-30
-Status: Proposed, awaiting owner approval.
+Status: Owner-approved. Audited 2026-08-30; all findings applied. Amended for the design audit's
+major finding (tabular figures) and for assumption 4, which is now verified live.
 Branch: `milestone/widget-foundation`
 Worktree: `/home/nomadx/.config/superpowers/worktrees/sysc-shell/milestone/widget-foundation`
 
