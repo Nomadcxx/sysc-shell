@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/fractionalscale"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
@@ -15,8 +16,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// namespace identifies the proof's layer surface to the compositor.
-const namespace = "sysc-shell:proof"
+// namespace identifies the shell's layer surfaces to the compositor.
+const namespace = "sysc-shell:bar"
 
 // EventKind names the pointer events the platform forwards.
 type EventKind uint8
@@ -47,7 +48,7 @@ type Options struct {
 }
 
 // Callbacks are the concrete hooks the application supplies. This is a struct
-// rather than an interface because the proof has exactly one implementation.
+// rather than an interface because there is one implementation.
 type Callbacks struct {
 	// Configure reports the logical size from zwlr_layer_surface_v1.configure
 	// and the scale as a numerator over 120; 120 means scale 1.0.
@@ -87,8 +88,7 @@ func Run(ctx context.Context, options Options, callbacks Callbacks) (err error) 
 	o := &owner{
 		options: options,
 		cb:      callbacks,
-		state:   newSurfaceState(),
-		sched:   render.NewScheduler(),
+		hosts:   newHostSet(),
 	}
 	defer func() { err = errors.Join(err, o.shutdown()) }()
 
@@ -109,32 +109,21 @@ type owner struct {
 	registry *client.Registry
 	rs       *registryState
 
-	compositor     *client.Compositor
-	shm            *client.Shm
-	seat           *client.Seat
-	layerShell     *layershell.ZwlrLayerShellV1
-	scaleMgr       *fractionalscale.WpFractionalScaleManagerV1
-	viewporter     *viewporter.WpViewporter
-	output         *client.Output
-	outputProxies  []outputProxy
-	selectedGlobal uint32
-	connector      string
-	pointer        *client.Pointer
+	compositor *client.Compositor
+	shm        *client.Shm
+	seat       *client.Seat
+	layerShell *layershell.ZwlrLayerShellV1
+	scaleMgr   *fractionalscale.WpFractionalScaleManagerV1
+	viewporter *viewporter.WpViewporter
+	pointer    *client.Pointer
 
-	surface  *client.Surface
-	layer    *layershell.ZwlrLayerSurfaceV1
-	scale    *fractionalscale.WpFractionalScaleV1
-	viewport *viewporter.WpViewport
-
-	state *surfaceState
-	sched *render.Scheduler
-
-	current  *generation
-	retiring []*generation
-	genID    int
-
-	frameCallback *client.Callback
-	pointerInside bool
+	// hosts holds every bound wl_output, keyed by registry global name. Only
+	// the selected host carries a surface until multi-output creation lands.
+	hosts    *hostSet
+	selected *OutputHost
+	// focus is the host whose surface the pointer is currently on, replacing
+	// the single boolean the proof used. Nil means the pointer is on no bar.
+	focus *OutputHost
 
 	cleanup cleanupStack
 	fatal   error
@@ -172,9 +161,9 @@ func (o *owner) connect() error {
 		o.rs.addGlobal(e.Name, e.Interface, e.Version)
 	})
 	registry.SetGlobalRemoveHandler(func(e client.RegistryGlobalRemoveEvent) {
-		if out, ok := o.rs.removeGlobal(e.Name); ok && o.output != nil && out.global == o.selectedGlobal {
+		if _, ok := o.rs.removeGlobal(e.Name); ok && o.selected != nil && o.selected.global == e.Name {
 			o.closed = true
-			o.sched.Close()
+			o.selected.sched.Close()
 		}
 	})
 
@@ -233,17 +222,21 @@ func (o *owner) bindGlobals() error {
 	o.shm.SetFormatHandler(func(e client.ShmFormatEvent) { o.rs.addFormat(e.Format) })
 	o.seat.SetCapabilitiesHandler(o.onSeatCapabilities)
 
-	// Bind every output so wl_output.name can be matched against --output.
+	// Bind every output and give each one a host, so wl_output.name can be
+	// matched against --output. Host identity is the registry global name.
 	for _, entry := range o.rs.outputs {
 		proxy := client.NewOutput(ctx)
 		if err := o.registry.Bind(entry.global, "wl_output", entry.version, proxy); err != nil {
 			return fmt.Errorf("wayland: bind wl_output %d: %w", entry.global, err)
 		}
-		global := entry.global
-		proxy.SetNameHandler(func(e client.OutputNameEvent) { o.rs.setOutputName(global, e.Name) })
-		o.outputProxies = append(o.outputProxies, outputProxy{global: global, proxy: proxy})
+		h, _ := o.hosts.add(entry.global, proxy)
+		h.cleanup.push("output", proxy.Release)
+		host := h
+		proxy.SetNameHandler(func(e client.OutputNameEvent) {
+			host.connector = e.Name
+			o.rs.setOutputName(host.global, e.Name)
+		})
 	}
-	o.cleanup.push("output", o.releaseOutputs)
 	return nil
 }
 
@@ -276,67 +269,100 @@ func (o *owner) onSeatCapabilities(e client.SeatCapabilitiesEvent) {
 		}
 		o.pointer = pointer
 		pointer.SetEnterHandler(func(e client.PointerEnterEvent) {
-			o.pointerInside = e.Surface == o.surface
-			if o.pointerInside {
-				o.deliver(Event{Kind: EventPointerEnter, X: int(e.SurfaceX), Y: int(e.SurfaceY)})
+			h, ok := o.hostBySurface(e.Surface)
+			if !ok {
+				return
 			}
+			o.focus = h
+			o.deliver(h, Event{Kind: EventPointerEnter, X: int(e.SurfaceX), Y: int(e.SurfaceY)})
 		})
-		pointer.SetLeaveHandler(func(client.PointerLeaveEvent) {
-			o.pointerInside = false
-			o.deliver(Event{Kind: EventPointerLeave})
+		pointer.SetLeaveHandler(func(e client.PointerLeaveEvent) {
+			h, ok := o.hostBySurface(e.Surface)
+			if !ok || o.focus != h {
+				return
+			}
+			o.focus = nil
+			o.deliver(h, Event{Kind: EventPointerLeave})
 		})
 		pointer.SetMotionHandler(func(e client.PointerMotionEvent) {
-			if o.pointerInside {
-				o.deliver(Event{Kind: EventPointerMotion, X: int(e.SurfaceX), Y: int(e.SurfaceY)})
+			if o.focus == nil {
+				return
 			}
+			o.deliver(o.focus, Event{Kind: EventPointerMotion, X: int(e.SurfaceX), Y: int(e.SurfaceY)})
 		})
 		pointer.SetButtonHandler(func(e client.PointerButtonEvent) {
-			if !o.pointerInside {
+			if o.focus == nil {
 				return
 			}
 			kind := EventPointerRelease
 			if e.State == uint32(client.PointerButtonStatePressed) {
 				kind = EventPointerPress
 			}
-			o.deliver(Event{Kind: kind, Button: e.Button})
+			o.deliver(o.focus, Event{Kind: kind, Button: e.Button})
 		})
 	case !hasPointer && o.pointer != nil:
+		if o.focus != nil {
+			o.deliver(o.focus, Event{Kind: EventPointerLeave})
+			o.focus = nil
+		}
 		o.fail(o.pointer.Release())
 		o.pointer = nil
-		o.pointerInside = false
 	}
 }
 
-// deliver hands a pointer event to the application and invalidates when the
+// hostBySurface resolves a wl_surface to the host that owns it.
+func (o *owner) hostBySurface(surface *client.Surface) (*OutputHost, bool) {
+	if surface == nil {
+		return nil, false
+	}
+	for _, h := range o.hosts.each() {
+		if h.surface == surface {
+			return h, true
+		}
+	}
+	return nil, false
+}
+
+// deliver hands a pointer event to one bar and invalidates it when the
 // application reports that its state changed.
-func (o *owner) deliver(e Event) {
-	if o.cb.Handle(e) {
-		o.sched.Invalidate()
+func (o *owner) deliver(h *OutputHost, e Event) {
+	if h == nil || !h.alive || h.app.Handle == nil {
+		return
+	}
+	if h.app.Handle(e) {
+		h.sched.Invalidate()
 	}
 }
 
 // createSurface builds the layer surface and its fractional-scale and viewport
-// objects, then performs the fixed initial sequence: set properties, commit
-// once without a buffer, and wait for the first configure.
+// objects for the selected host, then performs the fixed initial sequence: set
+// properties, commit once without a buffer, and wait for the first configure.
 func (o *owner) createSurface() error {
 	if err := o.chooseOutput(); err != nil {
 		return err
 	}
+	h := o.selected
+	h.app = HostCallbacks{
+		Configure: o.cb.Configure,
+		Render:    o.cb.Render,
+		Handle:    o.cb.Handle,
+	}
+	h.state = hostCreating
 
 	surface, err := o.compositor.CreateSurface()
 	if err != nil {
 		return fmt.Errorf("wayland: create surface: %w", err)
 	}
-	o.surface = surface
-	o.cleanup.push("surface", surface.Destroy)
+	h.surface = surface
+	h.cleanup.push("surface", surface.Destroy)
 
-	layer, err := o.layerShell.GetLayerSurface(surface, o.output,
+	layer, err := o.layerShell.GetLayerSurface(surface, h.proxy,
 		uint32(layershell.ZwlrLayerShellV1LayerTop), namespace)
 	if err != nil {
 		return fmt.Errorf("wayland: get layer surface: %w", err)
 	}
-	o.layer = layer
-	o.cleanup.push("layer-surface", layer.Destroy)
+	h.layer = layer
+	h.cleanup.push("layer-surface", layer.Destroy)
 
 	anchor := uint32(layershell.ZwlrLayerSurfaceV1AnchorTop |
 		layershell.ZwlrLayerSurfaceV1AnchorLeft |
@@ -359,26 +385,37 @@ func (o *owner) createSurface() error {
 		uint32(layershell.ZwlrLayerSurfaceV1KeyboardInteractivityNone)); err != nil {
 		return err
 	}
-	layer.SetConfigureHandler(o.onConfigure)
+	layer.SetConfigureHandler(func(e layershell.ZwlrLayerSurfaceV1ConfigureEvent) {
+		if h.alive {
+			o.onConfigure(h, e)
+		}
+	})
 	layer.SetClosedHandler(func(layershell.ZwlrLayerSurfaceV1ClosedEvent) {
+		if !h.alive {
+			return
+		}
 		o.closed = true
-		o.sched.Close()
+		h.sched.Close()
 	})
 
 	scale, err := o.scaleMgr.GetFractionalScale(surface)
 	if err != nil {
 		return fmt.Errorf("wayland: get fractional scale: %w", err)
 	}
-	o.scale = scale
-	o.cleanup.push("fractional-scale", scale.Destroy)
-	scale.SetPreferredScaleHandler(o.onPreferredScale)
+	h.scale = scale
+	h.cleanup.push("fractional-scale", scale.Destroy)
+	scale.SetPreferredScaleHandler(func(e fractionalscale.WpFractionalScaleV1PreferredScaleEvent) {
+		if h.alive {
+			o.onPreferredScale(h, e)
+		}
+	})
 
 	viewport, err := o.viewporter.GetViewport(surface)
 	if err != nil {
 		return fmt.Errorf("wayland: get viewport: %w", err)
 	}
-	o.viewport = viewport
-	o.cleanup.push("viewport", viewport.Destroy)
+	h.viewport = viewport
+	h.cleanup.push("viewport", viewport.Destroy)
 
 	// One commit with no buffer attached, then the compositor configures.
 	if err := surface.Commit(); err != nil {
@@ -388,145 +425,167 @@ func (o *owner) createSurface() error {
 }
 
 // onConfigure acknowledges every configure before any buffer is attached.
-func (o *owner) onConfigure(e layershell.ZwlrLayerSurfaceV1ConfigureEvent) {
-	if err := o.layer.AckConfigure(e.Serial); err != nil {
+func (o *owner) onConfigure(h *OutputHost, e layershell.ZwlrLayerSurfaceV1ConfigureEvent) {
+	if err := h.layer.AckConfigure(e.Serial); err != nil {
 		o.fail(fmt.Errorf("wayland: ack configure: %w", err))
 		return
 	}
-	changed := o.state.configure(int(e.Width), int(e.Height))
-	o.state.acknowledge()
-	if changed || o.current == nil {
-		o.fail(o.reconfigure())
+	changed := h.ss.configure(int(e.Width), int(e.Height))
+	h.ss.acknowledge()
+	h.state = hostConfiguring
+	if changed || h.current == nil {
+		o.fail(o.reconfigure(h))
 	}
 }
 
 // onPreferredScale handles wp_fractional_scale_v1.preferred_scale. It is not
 // ordered against configure and may arrive alone when the output scale changes
 // at an unchanged logical size, which still retires the physical buffers.
-func (o *owner) onPreferredScale(e fractionalscale.WpFractionalScaleV1PreferredScaleEvent) {
-	if !o.state.preferredScale(ui.Scale120(e.Scale)) {
+//
+// The event arrives on this host's own fractional-scale object, so a scale
+// change reallocates this host's buffers and touches no other host.
+func (o *owner) onPreferredScale(h *OutputHost, e fractionalscale.WpFractionalScaleV1PreferredScaleEvent) {
+	if !h.ss.preferredScale(ui.Scale120(e.Scale)) {
 		return
 	}
-	if o.state.eligible() {
-		o.fail(o.reconfigure())
+	if h.ss.eligible() {
+		o.fail(o.reconfigure(h))
 	}
 }
 
-// reconfigure retires the current buffer generation and allocates a new one at
-// the current physical size.
-func (o *owner) reconfigure() error {
-	width, height, err := o.state.bufferSize()
+// reconfigure retires the host's buffer generation and allocates a new one at
+// its current physical size.
+func (o *owner) reconfigure(h *OutputHost) error {
+	width, height, err := h.bufferSize()
 	if err != nil {
 		return err
 	}
 
 	// The viewport destination is the logical configure size. The buffer scale
 	// stays at its default of 1, and no source rectangle is set.
-	if err := o.viewport.SetDestination(int32(o.state.logicalWidth), int32(o.state.logicalHeight)); err != nil {
+	if err := h.viewport.SetDestination(int32(h.ss.logicalWidth), int32(h.ss.logicalHeight)); err != nil {
 		return fmt.Errorf("wayland: set viewport destination: %w", err)
 	}
-	if err := o.cb.Configure(o.state.logicalWidth, o.state.logicalHeight, int(o.state.scale120)); err != nil {
+	if err := h.app.Configure(h.ss.logicalWidth, h.ss.logicalHeight, int(h.ss.scale120)); err != nil {
 		return err
 	}
 
 	// The outstanding frame callback belongs to a retired generation.
-	if err := o.dropFrameCallback(); err != nil {
+	if err := h.dropFrameCallback(); err != nil {
 		return err
 	}
-	if o.current != nil {
-		o.retiring = append(o.retiring, o.current)
-		o.current = nil
+	if h.current != nil {
+		h.retiring = append(h.retiring, h.current)
+		h.current = nil
 	}
-	o.sweepRetired()
+	o.sweepRetired(h)
 
-	o.genID++
-	gen, err := newGeneration(o.shm, o.genID, width, height)
+	h.genID++
+	gen, err := newGeneration(o.shm, h.genID, width, height)
 	if err != nil {
 		return err
 	}
 	for slot := range gen.slots {
 		slot, gen := slot, gen
 		gen.slots[slot].SetReleaseHandler(func(client.BufferReleaseEvent) {
-			o.onBufferRelease(gen, slot)
+			o.onBufferRelease(h, gen, slot)
 		})
 	}
-	o.current = gen
-	o.sched.Configure(int(width), int(height))
+	h.current = gen
+	h.sched.Configure(int(width), int(height))
+	h.state = hostMapped
+	h.mappedSince = time.Now()
 	return nil
 }
 
 // onBufferRelease frees a slot. A frame callback never implies a release: Niri
 // delivers wl_callback.done while the submitted buffer is still held.
-func (o *owner) onBufferRelease(gen *generation, slot int) {
+//
+// Release accounting stays active after a host stops being alive, because a
+// retired generation must observe its releases to become unmappable.
+func (o *owner) onBufferRelease(h *OutputHost, gen *generation, slot int) {
 	o.fail(gen.retire.released())
-	if gen == o.current {
-		o.fail(o.sched.Release(slot))
+	if gen == h.current {
+		o.fail(h.sched.Release(slot))
 	}
-	o.sweepRetired()
+	o.sweepRetired(h)
 }
 
 // sweepRetired unmaps every retired generation whose buffers have all been
 // released.
-func (o *owner) sweepRetired() {
-	kept := o.retiring[:0]
-	for _, gen := range o.retiring {
+func (o *owner) sweepRetired(h *OutputHost) {
+	kept := h.retiring[:0]
+	for _, gen := range h.retiring {
 		if gen.retire.freeable() {
 			o.fail(gen.destroy())
 			continue
 		}
 		kept = append(kept, gen)
 	}
-	o.retiring = kept
+	h.retiring = kept
 }
 
-func (o *owner) dropFrameCallback() error {
-	if o.frameCallback != nil {
-		err := o.frameCallback.Destroy()
-		o.frameCallback = nil
-		return err
-	}
-	return nil
-}
-
-// renderJob paints one slot and submits it.
-func (o *owner) renderJob(job render.Job) error {
-	gen := o.current
+// renderJob paints one slot of one host and submits it.
+func (o *owner) renderJob(h *OutputHost, job render.Job) error {
+	gen := h.current
 	if gen == nil {
 		return errors.New("wayland: render requested with no buffer generation")
 	}
 
-	if err := o.cb.Render(gen.pixels(job.Slot), int(gen.width), int(gen.height), int(gen.stride)); err != nil {
+	if err := h.app.Render(gen.pixels(job.Slot), int(gen.width), int(gen.height), int(gen.stride)); err != nil {
 		return err
 	}
-	if err := o.surface.Attach(gen.slots[job.Slot], 0, 0); err != nil {
+	if err := h.surface.Attach(gen.slots[job.Slot], 0, 0); err != nil {
 		return fmt.Errorf("wayland: attach: %w", err)
 	}
 	// Damage is submitted in buffer pixels, never in surface units.
-	if err := o.surface.DamageBuffer(0, 0, gen.width, gen.height); err != nil {
+	if err := h.surface.DamageBuffer(0, 0, gen.width, gen.height); err != nil {
 		return fmt.Errorf("wayland: damage: %w", err)
 	}
 
-	callback, err := o.surface.Frame()
+	callback, err := h.surface.Frame()
 	if err != nil {
 		return fmt.Errorf("wayland: frame: %w", err)
 	}
-	o.frameCallback = callback
+	h.frameCallback = callback
 	callback.SetDoneHandler(func(client.CallbackDoneEvent) {
-		if callback != o.frameCallback {
-			return // a callback from a retired generation
+		if !h.alive || callback != h.frameCallback {
+			return // a callback from a retired generation or a dead host
 		}
-		o.frameCallback = nil
-		o.fail(o.sched.Frame())
+		h.frameCallback = nil
+		o.fail(h.sched.Frame())
 	})
 
-	if err := o.surface.Commit(); err != nil {
+	if err := h.surface.Commit(); err != nil {
 		return fmt.Errorf("wayland: commit: %w", err)
 	}
 	gen.retire.attached()
-	return o.sched.Submitted(job.Slot)
+	return h.sched.Submitted(job.Slot)
 }
 
-// loop drives the owner goroutine: render when the scheduler offers work, then
+// nextJob asks each live host for work in arrival order.
+func (o *owner) nextJob() (*OutputHost, render.Decision, render.Job) {
+	for _, h := range o.hosts.each() {
+		if !h.alive || h.surface == nil {
+			continue
+		}
+		if d, job := h.sched.Next(); d == render.DecisionRender {
+			return h, d, job
+		}
+	}
+	return nil, render.DecisionWait, render.Job{}
+}
+
+// invalidate marks every live bar dirty.
+func (o *owner) invalidate() {
+	for _, h := range o.hosts.each() {
+		if h.alive && h.surface != nil {
+			h.sched.Invalidate()
+		}
+	}
+}
+
+// loop drives the owner goroutine: render when a scheduler offers work, then
 // wait on the Wayland socket and the wake pipe.
 func (o *owner) loop(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
@@ -547,8 +606,8 @@ func (o *owner) loop(ctx context.Context) error {
 			return nil
 		}
 
-		if decision, job := o.sched.Next(); decision == render.DecisionRender {
-			if err := o.renderJob(job); err != nil {
+		if h, decision, job := o.nextJob(); decision == render.DecisionRender {
+			if err := o.renderJob(h, job); err != nil {
 				return err
 			}
 			continue
@@ -560,7 +619,7 @@ func (o *owner) loop(ctx context.Context) error {
 		}
 		if wakeReady {
 			wake.drain()
-			o.sched.Invalidate()
+			o.invalidate()
 		}
 		if !waylandReady {
 			continue
@@ -624,26 +683,51 @@ func (o *owner) poll(wakeFD, timeout int) (waylandReady, wakeReady bool, err err
 	return waylandReady, wakeReady, nil
 }
 
-// shutdown destroys everything child-to-parent, flushes the destructor
-// requests, and reports every cleanup failure.
-func (o *owner) shutdown() error {
+// teardownHost releases everything scoped to one host, child-to-parent, and
+// reports every failure. Liveness clears first so events already queued in the
+// dispatch stream are ignored.
+func (o *owner) teardownHost(h *OutputHost) error {
+	h.alive = false
 	var errs []error
-	if o.current != nil {
-		o.current.retire.destroy()
-		o.retiring = append(o.retiring, o.current)
-		o.current = nil
+
+	h.sched.Close()
+	if h.current != nil {
+		h.current.retire.destroy()
+		h.retiring = append(h.retiring, h.current)
+		h.current = nil
 	}
-	for _, gen := range o.retiring {
+	for _, gen := range h.retiring {
 		gen.retire.destroy()
 		if err := gen.destroy(); err != nil {
 			errs = append(errs, err)
 		}
 	}
-	o.retiring = nil
+	h.retiring = nil
 
-	if err := o.dropFrameCallback(); err != nil {
+	if err := h.dropFrameCallback(); err != nil {
 		errs = append(errs, err)
 	}
+	if o.focus == h {
+		o.focus = nil
+	}
+	if _, err := h.cleanup.unwind(); err != nil {
+		errs = append(errs, err)
+	}
+	h.surface, h.layer, h.scale, h.viewport = nil, nil, nil, nil
+	return errors.Join(errs...)
+}
+
+// shutdown destroys every host child-to-parent, then the shared globals, then
+// flushes the destructor requests once and closes the display.
+func (o *owner) shutdown() error {
+	var errs []error
+	for _, h := range o.hosts.each() {
+		if err := o.teardownHost(h); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	o.selected = nil
+
 	if _, err := o.cleanup.unwind(); err != nil {
 		errs = append(errs, err)
 	}

@@ -40,7 +40,13 @@ func (s *hostSet) remove(global uint32) (*OutputHost, bool) {
 	return h, true
 }
 
+// The read methods tolerate a nil set so an owner built without one — as the
+// lifecycle tests do — reads as empty rather than panicking. Mutation still
+// requires a real set.
 func (s *hostSet) get(global uint32) (*OutputHost, bool) {
+	if s == nil {
+		return nil, false
+	}
 	h, ok := s.hosts[global]
 	return h, ok
 }
@@ -48,7 +54,7 @@ func (s *hostSet) get(global uint32) (*OutputHost, bool) {
 // byConnector finds a host by its wl_output.name. Used to join Niri workspace
 // state, which is keyed by connector, to a host. Never used as identity.
 func (s *hostSet) byConnector(name string) (*OutputHost, bool) {
-	if name == "" {
+	if s == nil || name == "" {
 		return nil, false
 	}
 	for _, global := range s.arrival {
@@ -62,6 +68,9 @@ func (s *hostSet) byConnector(name string) (*OutputHost, bool) {
 // each returns hosts in arrival order, which keeps render and shutdown order
 // deterministic across runs.
 func (s *hostSet) each() []*OutputHost {
+	if s == nil {
+		return nil
+	}
 	out := make([]*OutputHost, 0, len(s.arrival))
 	for _, global := range s.arrival {
 		out = append(out, s.hosts[global])
@@ -69,4 +78,9 @@ func (s *hostSet) each() []*OutputHost {
 	return out
 }
 
-func (s *hostSet) len() int { return len(s.hosts) }
+func (s *hostSet) len() int {
+	if s == nil {
+		return 0
+	}
+	return len(s.hosts)
+}
