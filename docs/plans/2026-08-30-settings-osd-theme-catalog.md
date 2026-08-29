@@ -668,6 +668,50 @@ func TestGtkThemeNameOnlySwitchedWhenUnsetOrOurs(t *testing.T) {
 	// settings.ini gtk-theme-name=Adwaita -> untouched; =sysc-shell-Dark -> updated;
 	// absent -> set
 }
+
+// An edit to another application's configuration must be reversible by the
+// same toggle that made it. Without this, disabling the niri template leaves
+// an include pointing at a file that no longer exists and niri fails to load.
+func TestDisablingNiriTemplateRemovesIncludeAndFile(t *testing.T) {
+	cfg := writeKdl(t, "keybinds { }\n")
+	applyNiri(t, cfg, out)
+	unapplyNiri(t, cfg)
+	content := read(cfg)
+	if strings.Contains(content, `include "sysc-shell.kdl"`) {
+		t.Fatal("include line survived disable")
+	}
+	if strings.Contains(content, "keybinds") == false {
+		t.Fatal("disable damaged user content")
+	}
+	if _, err := os.Stat(generatedPath(cfg)); !os.IsNotExist(err) {
+		t.Fatal("generated kdl survived disable")
+	}
+}
+
+func TestDisableIsIdempotentAndSafeWhenNeverApplied(t *testing.T) {
+	cfg := writeKdl(t, "keybinds { }\n")
+	unapplyNiri(t, cfg) // never applied
+	unapplyNiri(t, cfg) // twice
+	if read(cfg) != "keybinds { }\n" {
+		t.Fatal("disable modified a config it never touched")
+	}
+}
+
+func TestDisableGtkRestoresOnlyOurThemeName(t *testing.T) {
+	// gtk-theme-name=sysc-shell-Dark -> restored/removed; =Adwaita -> untouched
+}
+
+// A declaratively managed config must never be fought over.
+func TestReadOnlyNiriConfigIsReportedNotRewritten(t *testing.T) {
+	cfg := writeKdl(t, "keybinds { }\n")
+	os.Chmod(cfg, 0o444)
+	if err := applyNiri(t, cfg, out); err == nil {
+		t.Fatal("read-only config must report failure")
+	}
+	if read(cfg) != "keybinds { }\n" {
+		t.Fatal("read-only config was modified")
+	}
+}
 ```
 
 **Step 2-3: Implement**
@@ -688,9 +732,13 @@ Render uses `text/template` over a data struct exposing both modes:
 `{{colors.primary.dark.hex}}` maps to this shape; templates are written fresh for our token set —
 ported structure, not ported bytes, plus the NOTICE attribution.)
 
-`apply.go` — one hook per template kind:
+`apply.go` — one hook per template kind, each with a matching `Unapply`:
 
 ```go
+// Every hook is reversible. Apply writes; Unapply removes exactly what Apply
+// wrote and nothing else, using the same ours-only line management. Disabling a
+// template in settings calls Unapply; a hook that cannot reverse cleanly (a
+// read-only or externally managed target) reports and leaves the toggle off.
 type Hook uint8
 
 const (

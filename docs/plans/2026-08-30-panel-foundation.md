@@ -5,19 +5,19 @@
 **Goal:** Ship the Milestone 4 gate surfaces: panel machinery (shield + panel layer surfaces,
 Exclusive keyboard, single instance), floating placement with clamping, shell-rendered rounding and
 shadows, the 4A control vocabulary with roving keyboard focus, matugen core theming, the
-clock/calendar, system-monitor, and session/power popouts, and the v1 IPC socket with documented
-niri hotkeys.
+clock/calendar and session/power popouts, and the v1 IPC socket with documented niri hotkeys.
 
 **Architecture:** Panels reuse the Milestone 2/3 ownership shape. `shell.Registry` (process-scoped)
 owns panel state the way it owns bars; the Wayland client gains generic auxiliary-surface support
 (create/destroy at runtime, per-surface callbacks, keyboard delivery) because today it maps exactly
 one bar surface per output — that is the one Milestone 2 modification this plan requires, and it is
-explicit. All new logic is pure-Go stdlib; the only new dependency is `github.com/Nomadcxx/sysc-metrics`
-via a local `replace`.
+explicit. All new logic is pure-Go stdlib. **This tranche adds no module dependency: `go.mod` is
+untouched.** The system-monitor popout that would have needed `sysc-metrics` is deferred to after
+Tranche 3B qualifies and tags it (design D10).
 
 **Tech Stack:** Go 1.26 stdlib, sysc-wayland v0.1.x generated bindings (layer-shell,
-fractional-scale, viewporter), sysc-metrics samplers, matugen 4.2.0 (external binary, exec),
-loginctl (external binary, exec).
+fractional-scale, viewporter), matugen 4.2.0 (external binary, exec), loginctl (external binary,
+exec).
 
 **Design:** [2026-08-30-panel-foundation-design.md](2026-08-30-panel-foundation-design.md)
 **Research:** [2026-08-30-panels-and-controls-research.md](2026-08-30-panels-and-controls-research.md)
@@ -26,8 +26,10 @@ loginctl (external binary, exec).
 
 ## Prerequisites (verify before Task 1)
 
-1. Milestone 2 has passed its live Niri gate and merged to main. Milestone 3 (widget foundation)
-   has merged to main. This plan executes from a fresh worktree of main containing both.
+1. Milestone 2 has passed its live Niri gate and merged to main. **Tranche 3A** (widget
+   foundation) has merged to main. Tranches 3B, 3C and 3D are **not** required — everything that
+   would have depended on them is deferred by design D10. This plan executes from a fresh worktree
+   of main containing both.
 2. The merged tree contains the M3 surface this plan builds on:
    - `internal/shell/registry.go` — `Registry` with `NewHost(global, connector)`,
      `DropHost(global)`, `UpdateClock(now) []uint32`, `UpdateNiri(snap) []uint32`,
@@ -39,8 +41,9 @@ loginctl (external binary, exec).
      `Callbacks{NewHost, PrepareConfig, DropHost, Invalidations, Reloads, ConfigPath}`,
      `HostCallbacks{Configure, Render, Handle}`, `Event{Kind, X, Y, Button, Serial}` (pointer kinds only).
    - `cmd/sysc-shell/main.go` — `run(ctx)` wiring Registry into `wayland.Callbacks`.
-3. `matugen` (4.2.0), `wpctl`, `brightnessctl`, `loginctl` exist at `/usr/bin`. (wpctl/brightnessctl
-   are consumed by Tranche 4B; only matugen and loginctl matter here.)
+3. `matugen` (4.2.0) and `loginctl` exist on `PATH`. Both are optional at runtime — a missing
+   matugen falls back to the compiled-in palette, and a missing loginctl hides the session actions —
+   but the live gate needs them present. (`wpctl` and `brightnessctl` are Tranche 4B's concern.)
 4. Commit messages must not contain AI-tool substrings (repo hook).
 
 ---
@@ -94,8 +97,8 @@ Pointer wire types throughout; absent fields inherit defaults.
 ```go
 func TestDefaultPanelAndSessionValues(t *testing.T) {
 	c := Default()
-	if c.Theme.Source != "wallpaper" || c.Theme.Scheme != "scheme-tonal-spot" || c.Theme.Mode != "dark" {
-		t.Fatalf("theme defaults wrong: %+v", c.Theme)
+	if c.ThemeGen.Source != "wallpaper" || c.ThemeGen.Scheme != "scheme-tonal-spot" || c.ThemeGen.Mode != "dark" {
+		t.Fatalf("theme defaults wrong: %+v", c.ThemeGen)
 	}
 	if c.Panels.Gap != 8 || c.Panels.Padding != 8 {
 		t.Fatalf("panels defaults wrong: %+v", c.Panels)
@@ -108,33 +111,42 @@ func TestDefaultPanelAndSessionValues(t *testing.T) {
 	}
 }
 
+// Validation goes through Parse, like every other field, so failures name
+// their exact path and there is only one validation entry point.
 func TestThemeSourceValidation(t *testing.T) {
-	for _, bad := range []string{"", "gradient", "auto"} {
-		c := Default()
-		c.Theme.Source = bad
-		if err := c.Valid(); err == nil {
+	for _, bad := range []string{"gradient", "auto", ""} {
+		body := []byte(`{"theme-gen":{"source":"` + bad + `"}}`)
+		if _, err := Parse(body); err == nil {
 			t.Fatalf("source %q must be rejected", bad)
+		} else if !strings.Contains(err.Error(), "theme-gen.source") {
+			t.Fatalf("error %q must name the field path", err)
 		}
 	}
 	for _, ok := range []string{"wallpaper", "hex", "stock"} {
-		c := Default()
-		c.Theme.Source = ok
-		if err := c.Valid(); err != nil {
+		body := []byte(`{"theme-gen":{"source":"` + ok + `","seed":"#3050a0"}}`)
+		if _, err := Parse(body); err != nil {
 			t.Fatalf("source %q must be accepted: %v", ok, err)
 		}
 	}
 }
 
 func TestHexSeedValidation(t *testing.T) {
-	c := Default()
-	c.Theme.Source = "hex"
-	c.Theme.Seed = "blue" // hex source needs a hex seed
-	if err := c.Valid(); err == nil {
+	if _, err := Parse([]byte(`{"theme-gen":{"source":"hex","seed":"blue"}}`)); err == nil {
 		t.Fatal("hex source with non-hex seed must fail")
 	}
-	c.Theme.Seed = "#3050a0"
-	if err := c.Valid(); err != nil {
+	if _, err := Parse([]byte(`{"theme-gen":{"source":"hex","seed":"#3050a0"}}`)); err != nil {
 		t.Fatalf("hex seed must pass: %v", err)
+	}
+}
+
+// The colour fields generation now owns must be gone from the schema, not
+// silently ignored.
+func TestRetiredThemeColourFieldsAreRejected(t *testing.T) {
+	for _, field := range []string{"background", "foreground", "accent", "muted", "error"} {
+		body := []byte(`{"theme":{"` + field + `":"#101418"}}`)
+		if _, err := Parse(body); err == nil {
+			t.Fatalf("retired theme.%s must be rejected, not ignored", field)
+		}
 	}
 }
 ```
@@ -172,13 +184,45 @@ type Panels struct {
 }
 ```
 
-Add to `Config`: `ThemeConfig ThemeConfig` (name the field `ThemeGen` if `Theme` collides with the
-existing bar `Theme` struct — keep both; they are different concerns), `Accessibility`,
-`Session`, `Panels`. Extend `Default()` with the values asserted above. Extend `Valid()` (or add it
-if M3 has not): source enum, mode enum, hex seed shape when source is hex, non-negative gap/padding.
+Add to `Config`: `ThemeGen ThemeConfig`, `Accessibility`, `Session`, `Panels`. The field is named
+`ThemeGen` because `Config.Theme` already exists and stays — it now carries only `radius` (see below).
+Extend `Default()` with the values asserted above.
+
+**Validate inside `Parse`, not through a new `Config.Valid()`.** Milestone 2 and 3 have no `Valid()`
+method: validation lives in `applyBar`/`validateBar`/`resolveItem` and every failure names its exact
+field path through `pathErr` — `config: theme.source: "gradient" is not one of wallpaper, hex, stock`.
+A second entry point would diverge from that one and would return errors with no field path. Add
+`applyThemeGen`, `applyAccessibility`, `applySession`, `applyPanels` beside the existing helpers,
+each validating as it merges: source enum, mode enum, hex-seed shape when source is `hex`,
+non-negative gap and padding.
+
+**Remove the colour fields from `Theme`** — `background`, `foreground`, `accent`, `muted`, `error` —
+and their `colorPattern` validation. Generation owns colour now (design §Theming core), so leaving
+them would make a user's edit a silent no-op, which this project's validation rule forbids. Keep
+`theme.radius`. `Theme.BackgroundOpaque()` moves to reading the generated `surface` token: opaque
+when it is six-digit hex.
 
 Mirror wire types in `load.go` with pointer fields (`*string`, `*bool`, `*int`) and merge over
 defaults exactly like the existing `wireBar` pattern.
+
+**Reject unknown fields.** `Parse` currently calls `json.Unmarshal`, which silently ignores any key
+it does not recognise — so simply deleting the retired colour fields from `wireTheme` would make a
+stale `theme.background` a silent no-op, which is the failure this change exists to remove. Replace
+the call with a decoder that refuses them:
+
+```go
+dec := json.NewDecoder(bytes.NewReader(data))
+dec.DisallowUnknownFields()
+if err := dec.Decode(&wire); err != nil {
+	return Config{}, fmt.Errorf("config: %w", err)
+}
+```
+
+This matches the vocabulary rule the project already applies to widget ids — a typo is visible rather
+than silently dropping something — and it is what makes the retired-field test above meaningful. Note
+it is a behaviour change for any existing configuration carrying stray keys: those now fail at load
+with the offending key named. There is no compatibility promise, and a named failure beats a silent
+one.
 
 **Step 4: Run to verify pass**
 
@@ -453,7 +497,7 @@ func TestRegistryGeneratesThemeAtStartup(t *testing.T) {
 	// fake matugen on PATH (reuse internal/theme test helper via export_test or
 	// duplicate the two-line stub here)
 	reg := NewRegistryWith(cfgWithWallpaperSource, deps{ThemeGen: fakeGen})
-	if reg.Tokens() == theme.Tokens{} {
+	if reg.Tokens() == (theme.Tokens{}) {
 		t.Fatal("registry must hold generated tokens after construction")
 	}
 }
@@ -485,133 +529,7 @@ git commit -m "feat(shell): render from generated Material 3 tokens"
 
 ---
 
-### Task 5: MetricsService
-
-**Files:**
-- Modify: `go.mod` (add sysc-metrics + replace)
-- Create: `internal/services/metrics.go`
-- Test: `internal/services/metrics_test.go`
-
-Design D10: lease-counted like the clock; ~1 s poll while leased; process-lifetime ring buffer
-(~2 min) so history survives close/open; `Valid == false` samples are kept and rendered as
-"collecting" by the consumer; sampling pauses at zero leases.
-
-**Step 1: Add the dependency**
-
-```bash
-go mod edit -require=github.com/Nomadcxx/sysc-metrics@v0.0.0
-go mod edit -replace=github.com/Nomadcxx/sysc-metrics=/home/nomadx/sysc-metrics
-go mod tidy
-```
-
-(The replace path is the local checkout until sysc-metrics is published; the plan executor keeps
-the absolute path used by the build machine's worktree layout — record any deviation in the
-commit body.)
-
-**Step 2: Write the failing tests**
-
-```go
-type fakeSampler struct {
-	n   int
-	err error
-}
-
-func (f *fakeSampler) Sample() (metrics.CPUSnapshot, error) {
-	f.n++
-	if f.err != nil {
-		return metrics.CPUSnapshot{}, f.err
-	}
-	return metrics.CPUSnapshot{Valid: f.n > 1, Usage: float64(f.n) / 100}, nil
-}
-
-func TestMetricsLeaseCounting(t *testing.T) {
-	m := NewMetrics(10*time.Millisecond, &fakeSampler{}, ...) // inject all samplers
-	if m.Running() {
-		t.Fatal("must not run before first lease")
-	}
-	l1, _ := m.Acquire()
-	l2, _ := m.Acquire()
-	if !m.Running() {
-		t.Fatal("must run while leased")
-	}
-	l1.Release()
-	if !m.Running() {
-		t.Fatal("must still run with one lease left")
-	}
-	l2.Release()
-	if m.Running() {
-		t.Fatal("must stop when last lease releases")
-	}
-}
-
-func TestMetricsRingBufferSurvivesLeaseGap(t *testing.T) {
-	m := NewMetrics(1*time.Millisecond, fakeSamplers...)
-	l, _ := m.Acquire()
-	waitForSamples(t, m, 3)
-	l.Release()
-	hist := m.History("cpu")
-	if len(hist) < 3 {
-		t.Fatalf("history lost across lease gap: %d", len(hist))
-	}
-}
-
-func TestMetricsReleaseIdempotent(t *testing.T) {
-	m := NewMetrics(time.Second, fakeSamplers...)
-	l, _ := m.Acquire()
-	l.Release()
-	l.Release() // must not panic or double-stop
-}
-```
-
-**Step 3: Run to verify failure** — `go test ./internal/services/ -run Metrics` → FAIL.
-
-**Step 4: Implement**
-
-Mirror the clock's structure exactly (same file's sibling, same idiom):
-
-```go
-// Metrics owns the sysc-metrics samplers behind the same lease contract as
-// Clock. Samplers want one sequential polling owner; Metrics is that owner.
-type Metrics struct {
-	mu      sync.Mutex
-	samplers map[string]Sampler // "cpu", "memory", "fs", "block", "net", "uptime"
-	ring    map[string]*ring    // capacity ~120 entries (2 min at 1 s)
-	leases  int
-	stop    chan struct{}
-	interval time.Duration
-	running bool
-}
-
-// Sampler is the shape every sysc-metrics per-resource sampler satisfies.
-// It is declared here, not in sysc-metrics, because it is this service's
-// seam, not the library's contract.
-type Sampler interface{ Sample() (any, error) }
-```
-
- ponytail: `Sampler` returns `any` because the six sysc-metrics samplers have distinct snapshot
-types and the ring stores them opaquely; consumers type-assert per resource key. If that proves
-awkward in Task 11, split into six typed getters — not before.
-
-- `Acquire() (*MetricsLease, error)`: first lease starts the poll goroutine (`time.Ticker` at
-  interval; each tick samples every sampler sequentially; append to ring; notify via the same
-  invalidation channel pattern the clock uses so the open monitor panel repaints).
-- `Release`: idempotent, nil-safe; last lease stops the ticker goroutine. Ring persists.
-- `History(key string) []Sample` returns a copy of the ring contents.
-- `Close()` releases everything and stops (Registry.Close calls it, same as the clock).
-- First/discontinuous samples keep `Valid == false` in the ring; consumers decide rendering.
-
-**Step 5: Run to verify pass** — `go test ./internal/services/` → PASS.
-
-**Step 6: Commit**
-
-```bash
-git add go.mod go.sum internal/services/
-git commit -m "feat(services): lease-counted metrics sampler with history ring"
-```
-
----
-
-### Task 6: Panel model — placement math and single-instance state
+### Task 5: Panel model — placement math and single-instance state
 
 **Files:**
 - Create: `internal/shell/panel.go`
@@ -794,7 +712,7 @@ git commit -m "feat(shell): panel placement math and single-instance state"
 
 ---
 
-### Task 7: Wayland client — auxiliary surfaces and keyboard (Milestone 2 modification)
+### Task 6: Wayland client — auxiliary surfaces and keyboard (Milestone 2 modification)
 
 This is the one M2 change the design requires: today `OutputHost` maps exactly one bar surface
 and the client binds no keyboard. Panels need runtime-created layer surfaces (shield + panel) with
@@ -810,7 +728,7 @@ the entire existing M2 test suite must stay green.
 - Test: `internal/platform/wayland/aux_test.go`
 - Test: `internal/platform/wayland/keyboard_test.go`
 
-#### Task 7a: Extract `surfaceUnit` (no behavior change)
+#### Task 6a: Extract `surfaceUnit` (no behavior change)
 
 **Step 1: Baseline**
 
@@ -867,7 +785,7 @@ git add internal/platform/wayland/
 git commit -m "refactor(wayland): extract surfaceUnit from OutputHost"
 ```
 
-#### Task 7b: Auxiliary surface open/close
+#### Task 6b: Auxiliary surface open/close
 
 **Step 1: Write the failing test** (`aux_test.go`, using the existing fake-compositor harness —
 `startFakeNiri` and the lifecycle-test patterns):
@@ -946,8 +864,12 @@ type AuxRequest struct {
   delete from map, call `DropAux`.
 - Output destruction (`destroyGlobals` / host drop) closes all aux units first, notifying
   `DropAux` for each.
-- Reload semantics: `reloadConfig` closes every aux surface before committing new bars
-  (documented ceiling: open panels do not survive a config reload; the user reopens them).
+- Reload semantics: `reloadConfig` rebuilds bars and **leaves aux surfaces mapped**. A panel
+  re-resolves its theme and content on its next frame, which is the same work a theme change already
+  does. Do not tear panels down here: Tranche 4B's settings modal is itself an aux surface and writes
+  the configuration on every change, so closing panels on reload would eject the user from settings
+  on every toggle and would kill a visible OSD. Add a test that a mapped aux surface survives a
+  reload and re-renders with the new tokens.
 
 **Step 4: Run to verify pass** — `go test ./internal/platform/wayland/` → PASS (all).
 
@@ -958,7 +880,7 @@ git add internal/platform/wayland/
 git commit -m "feat(wayland): auxiliary layer surfaces with per-surface callbacks"
 ```
 
-#### Task 7c: Keyboard binding and event routing
+#### Task 6c: Keyboard binding and event routing
 
 **Step 1: Write the failing tests** (`keyboard_test.go` + pointer additions):
 
@@ -1035,7 +957,7 @@ git commit -m "feat(wayland): keyboard binding and per-surface event routing"
 
 ---
 
-### Task 8: Control vocabulary — node kinds, layout, roving focus
+### Task 7: Control vocabulary — node kinds, layout, roving focus
 
 **Files:**
 - Modify: `internal/ui/tree.go`
@@ -1045,7 +967,8 @@ git commit -m "feat(wayland): keyboard binding and per-surface event routing"
 - Test: `internal/ui/focus_test.go`
 
 Controls shipping with 4A consumers (design D7): button (KindButton exists), label (KindText),
-separator, tabs, graphs. Every focusable node carries accessible name + role (gate item).
+separator. `tabs` and `graphs` are deferred with the system-monitor popout that was their only
+consumer (design D7, D10). Every focusable node carries accessible name + role (gate item).
 
 **Step 1: Write the failing tests**
 
@@ -1076,17 +999,9 @@ func TestRovingIndexWrapsAndClamps(t *testing.T) {
 	r.Prev()
 	if r.Index() != 2 { t.Fatal("must wrap back") }
 }
-
-func TestTabsActivateByArrow(t *testing.T) {
-	tabs := &Node{Kind: KindTabs, Children: []*Node{
-		{Kind: KindText, Text: "CPU"}, {Kind: KindText, Text: "Memory"},
-	}}
-	LayoutColumn(&Node{Children: []*Node{tabs}}, Rect{W: 400, H: 30}, measure)
-	if got := tabs.Active(); got != 0 { t.Fatal("default first tab") }
-}
 ```
 
-**Step 2: Run to verify failure** — `go test ./internal/ui/ -run 'Column|Focus|Roving|Tabs'` → FAIL.
+**Step 2: Run to verify failure** — `go test ./internal/ui/ -run 'Column|Focus|Roving'` → FAIL.
 
 **Step 3: Implement**
 
@@ -1100,14 +1015,11 @@ const (
 	KindButton
 	KindColumn
 	KindSeparator
-	KindTabs
-	KindGraph
 )
 
 type Node struct {
 	Kind     Kind
 	Text     string
-	Value    float64   // tabs: active index
 	Width    int
 	Padding  int
 	Gap      int
@@ -1121,7 +1033,6 @@ type Node struct {
 	Name      string
 	Role      string
 
-	Series []float64 // KindGraph: samples 0..1, oldest first
 }
 
 func (n *Node) Active() int { return int(n.Value) }
@@ -1129,8 +1040,7 @@ func (n *Node) Active() int { return int(n.Value) }
 
 `column.go`: `LayoutColumn(root *Node, r Rect, m MeasureText)` — vertical stack mirroring the
 existing bar row layout: padding inset, children fill width, heights from measure (text), fixed
-(KindSeparator = 1), or intrinsic (KindTabs = text height, KindGraph = node.Width as height hint
-via `Width` reuse — document that for graphs `Width` means height); gap between children; recurse
+(KindSeparator = 1); gap between children; recurse
 into KindColumn/KindRow children.
 
 `focus.go`:
@@ -1159,7 +1069,7 @@ git commit -m "feat(ui): column layout, panel node kinds, roving focus"
 
 ---
 
-### Task 9: Rounded corners and shadows in the renderer
+### Task 8: Rounded corners and shadows in the renderer
 
 **Files:**
 - Modify: `internal/render/canvas.go`
@@ -1257,7 +1167,7 @@ git commit -m "feat(render): cached rounded masks and pre-blurred shadows"
 
 ---
 
-### Task 10: Panel host — surfaces, rendering, keyboard, motion
+### Task 9: Panel host — surfaces, rendering, keyboard, motion
 
 **Files:**
 - Create: `internal/shell/panelhost.go`
@@ -1363,15 +1273,14 @@ func (r *Registry) DropAux(output uint32, surfaceID string) // wayland callback
 - HostCallbacks for the panel unit:
   - `Configure`: store logical size; `ui.LayoutColumn(root, ...)` with the fitted size.
   - `Render`: `canvas.DrawShadow` → `canvas.FillRounded(surface bg, radius 12)` → paint nodes
-    (reuse M3's paint path for text/buttons; separator = 1px line in `outline`; tabs = row of
-    labels with active underlined in `primary`; graph = filled polyline of Series scaled to
+    (reuse M3's paint path for text/buttons; separator = 1px line in `outline`;
     bounds) → focus ring: 2px `primary` outline around `focus[roving.Index()].Bounds`.
     Reveal: if animating, apply alpha + slide offset toward the bar edge
     (fade the whole frame by scaling drawn alpha; offset = `8 * (1 - t)` px).
   - `Handle`: pointer — hit-test focusables (Rect.Contains), set roving on press, activate on
     release if same node (M3 press/release matching pattern); keys — evdev codes:
     KEY_ESC 1 → close; KEY_TAB 15 (+KEY_LEFTSHIFT 42 tracked from press/release) → roving
-    Next/Prev; KEY_LEFT/RIGHT/UP/DOWN 105/106/103/108 → arrows (tabs switch active on
+    Next/Prev; KEY_LEFT/RIGHT/UP/DOWN 105/106/103/108 → arrows (composites move within on
     left/right, content repaints); KEY_SPACE 57 / KEY_ENTER 28 → activate focused.
     Activation dispatches `node.Action`: session actions run their command (Task 11), tab
     switches set `Value`. Any state change returns true (owner invalidates).
@@ -1400,7 +1309,7 @@ git commit -m "feat(shell): panel host with shield, exclusive keyboard, and reve
 
 ---
 
-### Task 11: Popout content builders
+### Task 10: Popout content builders
 
 **Files:**
 - Create: `internal/shell/popout_clock.go`
@@ -1413,7 +1322,7 @@ git commit -m "feat(shell): panel host with shield, exclusive keyboard, and reve
 Each builder produces the `*ui.Node` tree for its panel and its activation behavior. Register them
 in the `PanelHost.build` dispatch from Task 10.
 
-#### 11a: clock/calendar
+#### 10a: clock/calendar
 
 **Step 1: Failing tests**
 
@@ -1441,37 +1350,7 @@ target ~360x420 logical.
 
 **Step 4: Pass. Step 5: Commit** `feat(shell): clock and calendar popout`
 
-#### 11b: system-monitor
-
-**Step 1: Failing tests**
-
-```go
-func TestMonitorTabsPerResource(t *testing.T) {
-	h := newMonitorHost(fakeMetricsWith(history...))
-	tabNames := childTexts(h.root, KindTabs)
-	// CPU, Memory, Filesystems, Block, Network, Uptime
-}
-
-func TestMonitorGraphSeriesFromRing(t *testing.T) {
-	// graph node Series == fake ring contents, normalized 0..1
-}
-
-func TestMonitorInvalidSamplesRenderCollecting(t *testing.T) {
-	// ring with Valid==false snapshots -> label "collecting", no graph series point
-}
-```
-
-**Step 2-3: Implement** — tabs (KindTabs) over the six sysc-metrics resources; each tab body:
-current-value labels + KindGraph with `Series` from `Metrics.History(key)` normalized per
-resource (usage fractions already 0..1; fs/block/net normalized against their max in the ring).
-Snapshot access: type-assert the ring's `any` entries per resource key; `Valid == false` entries
-are skipped in Series and a "collecting" label shows when the latest is invalid. Panel size
-~640x480. Repaint: metrics tick invalidation (Task 5 notifies through the registry invalidation
-channel with the panel's SurfaceID while open).
-
-**Step 4-5: Pass. Commit** `feat(shell): system monitor popout over sysc-metrics`
-
-#### 11c: session/power
+#### 10b: session/power
 
 **Step 1: Failing tests**
 
@@ -1509,7 +1388,7 @@ confirmation row is a future knob.
 
 ---
 
-### Task 12: IPC socket, methods, CLI
+### Task 11: IPC socket, methods, CLI
 
 **Files:**
 - Create: `internal/ipc/server.go`
@@ -1579,7 +1458,7 @@ func Call(ctx context.Context, sock, method string, params any) (string, error)
 - Per connection: `bufio.Scanner` lines, `json.Unmarshal` into
   `struct{ ID json.Number; Method string; Params json.RawMessage }`, dispatch, write one line.
   Panel params decode to `{"panel": string}` validated against the known ids
-  (`clock|calendar|system-monitor|session|settings`; `settings` returns "not yet available" until
+  (`clock|session`; `system-monitor` and `settings` return "not yet available" until
   4B). Unknown method → `{"id":…,"error":"unknown method"}`. Malformed JSON → error envelope,
   connection stays up.
 - Call: dial with 2 s deadline, write request line, read one line, return it.
@@ -1606,7 +1485,7 @@ git commit -m "feat(ipc): versioned unix socket with panel verbs and cli"
 
 ---
 
-### Task 13: Process wiring and hotkey documentation
+### Task 12: Process wiring and hotkey documentation
 
 **Files:**
 - Modify: `cmd/sysc-shell/main.go`
@@ -1635,7 +1514,6 @@ owns panels — DMS pattern):
 ```kdl
 bind {
     Super+P { spawn "sysc-shell" "ipc" "panel.toggle" `{"panel":"clock"}`; }
-    Super+M { spawn "sysc-shell" "ipc" "panel.toggle" `{"panel":"system-monitor"}`; }
     Super+X { spawn "sysc-shell" "ipc" "panel.toggle" `{"panel":"session"}`; }
 }
 ```
@@ -1653,7 +1531,7 @@ git commit -m "feat(shell): wire ipc and panel requests, document hotkeys"
 
 ---
 
-### Task 14: Gate tests — integration and live verification
+### Task 13: Gate tests — integration and live verification
 
 **Files:**
 - Modify: `tests/integration/README.md` (live checklist)
@@ -1723,7 +1601,8 @@ git commit -m "test(shell): tranche 4A gate coverage and live checklist"
 
 - `go build ./...` and `go test ./...` green from a clean checkout.
 - All Task 14 fake-compositor gate tests pass; live checklist recorded.
-- `gofmt -l .` empty; no new dependencies beyond sysc-metrics (replace).
+- `gofmt -l .` empty; `git diff origin/main -- go.mod go.sum` empty — this tranche adds no
+  dependency.
 - Design doc risks updated with verification outcomes (focus fall-through, shield delivery,
   matugen color flags).
 - No panel code path touches the bar's exclusive zone; no second surface ever requests keyboard

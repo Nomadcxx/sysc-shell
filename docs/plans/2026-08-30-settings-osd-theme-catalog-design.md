@@ -67,8 +67,10 @@ Sections at M4 scope, all rendered from the registry (D2):
 
 Persistence: atomic write (temp + rename) to `$XDG_CONFIG_HOME/sysc-shell/config.json`, then the
 existing reload path (acquire-before-release, rollback on bad write) applies changes live — no
-restart. The registry validates before writing; invalid input stays in the control with an error
-state, never reaches the file.
+restart. This depends on 4A's contract that a reload leaves aux surfaces mapped: the settings modal
+is itself a panel, so a reload that tore panels down would dismiss the settings UI on every change.
+The registry validates before writing; invalid input stays in the control with an error state and
+never reaches the file.
 
 ## Controls
 
@@ -135,6 +137,12 @@ wallpaper, hex, and stock sources.
 - Per-template toggles live in settings (Appearance); defaults: niri on, everything else off.
   Apply runs single-flight with generation supersede (4A theming pipeline pattern); re-applies on
   palette change while a template is enabled.
+- **Disabling a template undoes it.** An edit to another application's configuration must be
+  reversible by the same toggle that made it. Turning a template off removes the file it generated
+  and, for niri, removes the `include "sysc-shell.kdl"` line using the same ours-only line management
+  the apply path uses; for gtk it restores `gtk-theme-name` only if the current value is still ours.
+  Without this, disabling the niri template — or uninstalling the shell — leaves an include pointing
+  at a file that no longer exists, and niri fails to load its configuration.
 
 ## IPC additions
 
@@ -175,7 +183,9 @@ New fields (pointer wire types; edited through the settings UI itself):
 3. **Zero-backlight desktop**: brightness path must be testable without hardware (fixture sysfs
    tree in tests; service reports unavailable cleanly).
 4. **Include-injection safety**: grep-before-append, ours-only line management; a corrupted or
-   missing config.kdl is reported, never rewritten.
+   missing config.kdl is reported, never rewritten. A read-only or externally managed `config.kdl`
+   (nix, home-manager, a symlink into a store path) is reported as unavailable and the template is
+   left disabled — the shell never fights a declarative configuration manager.
 5. **App reload ceilings**: kitty via SIGUSR1; other apps need manual reload — documented per
    template.
 6. **gtk theme switching** only when unset/ours — users keep their theme unless they opt in.

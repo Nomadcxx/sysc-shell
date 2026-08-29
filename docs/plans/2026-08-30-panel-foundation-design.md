@@ -8,8 +8,8 @@ Worktree: `/home/nomadx/.config/superpowers/worktrees/sysc-shell/milestone/panel
 Milestone 4 is split into two tranches. This design is the first:
 
 - **Tranche 4A (this document)** — panel machinery, placement, the control vocabulary with 4A
-  consumers, core theming, the gate popouts (clock/calendar, system-monitor, session/power), and
-  the IPC socket with panel verbs and documented hotkeys.
+  consumers, core theming, the gate popouts (clock/calendar, session/power), and the IPC socket
+  with panel verbs and documented hotkeys.
 - **Tranche 4B** — settings modal and schema registry, OSD surfaces with audio/brightness
   services, stock themes, and the enforced app-theming template catalog. See
   [the 4B design](2026-08-30-settings-osd-theme-catalog-design.md).
@@ -27,9 +27,11 @@ Research backing every decision lives in
 
 - No product code enters this branch until the Milestone 2 live Niri gate passes and Milestone 2
   merges (roadmap gate rule; milestone charter precedent).
-- 4A consumes Milestone 3 outputs: the bar, the consumer-counted clock service, the Niri
-  projection, the config/reload path, and the retained `ui.Handle` press/release matching and hit
-  testing that M3 kept inert "because Milestone 4 needs it".
+- 4A consumes **Tranche 3A** outputs specifically — not all of Milestone 3: the bar, the
+  consumer-counted clock service, the Niri projection, the config/reload path, and the retained
+  `ui.Handle` press/release matching and hit testing that 3A kept inert "because Milestone 4 needs
+  it". Tranches 3B, 3C and 3D are **not** prerequisites, because D10 defers everything that would
+  have depended on them.
 - The design and plan are written docs-only, in parallel with M2 corrections, per the orchestration
   document.
 
@@ -41,12 +43,12 @@ Tranche 4A ships:
   exclusive_zone −1; Exclusive keyboard while open; one instance per panel ID process-wide.
 - Placement: floating, anchored to the triggering bar, section-aligned, clamped inside the output.
 - Shell-rendered corner rounding and shadows (no reliance on user layer-rules).
-- Controls with 4A consumers: button, label, separator, tabs, graphs — with the roving keyboard
-  model and accessible name/role data on every interactive node.
+- Controls with 4A consumers: button, label, separator — with the roving keyboard model and
+  accessible name/role data on every interactive node.
 - Theming core: matugen-generated Material 3 tokens, dark/light, high-contrast, reduced-motion,
   fallback stock palette; `Theme` replaces `ProofStyle`.
-- Popouts: clock/calendar, system-monitor (consuming `github.com/Nomadcxx/sysc-metrics`),
-  session/power (logind via `loginctl`; lock delegates to a configured external locker).
+- Popouts: clock/calendar and session/power (logind via `loginctl`; lock delegates to a configured
+  external locker).
 - IPC: `$XDG_RUNTIME_DIR/sysc-shell/ipc.v1.sock`, newline-delimited JSON, panel verbs, `status`,
   and the `sysc-shell ipc` CLI with documented niri keybinds.
 
@@ -64,10 +66,10 @@ AT-SPI export.
 | D4 | One instance per panel ID process-wide; same-bar trigger toggles; trigger from another output closes and reopens there. | Per-output panel instances. Popouts follow user focus, not outputs; matches DMS `currentPopoutsByScreen` close-on-other-screen. |
 | D5 | Floating placement anchored off the triggering bar edge, aligned to the triggering widget's section (left/center/right), clamped fully inside the output minus padding and the bar's reserved zone. | Noctalia Attached/seamless placement (deferred, no gate need) and open-near-click pointer anchoring (future knob). |
 | D6 | The shell renders its own corner rounding and shadows: SDF rounded-rect alpha masks and pre-blurred shadow textures composited via `blendMask`. | Relying on user-configured niri layer-rules (owner decision): the shell must look right with zero user config, and layer-rules are per-user, not per-panel-instance. |
-| D7 | Controls enter only with a 4A consumer: button (session actions), label/separator (all panels), tabs (system-monitor resources), graphs (system-monitor history). | Shipping the full roadmap control list at once — toggle/slider/menu/text-field/scroll/virtual-list have only 4B consumers (roadmap: components enter only with a consumer). |
+| D7 | Controls enter only with a 4A consumer: button (session actions), label/separator (all panels). | Shipping the full roadmap control list at once. Every other control has its only consumer in 4B, or in the deferred system-monitor (D10), so none may enter here (roadmap: components enter only with a consumer). |
 | D8 | Roving focus per panel: Tab/Shift+Tab between controls, arrows inside composites, Space/Enter activate, Escape closes. | A full focus graph with universal tab stops. Noctalia's `RovingListNav` pattern; keeps keyboard model testable per panel. |
 | D9 | Theme = matugen-generated Material 3 tokens from wallpaper/hex/stock source; dark/light and high-contrast settings; compiled-in fallback palette seeded from current `ProofStyle` when matugen is absent or fails. | Hand-authored static palettes only, or the freedesktop color-scheme portal for auto dark/light (deferred; no consumer need yet). |
-| D10 | `MetricsService` owns the sysc-metrics samplers: lease-counted like the M3 clock, ~1 s poll while leased, process-lifetime ~2 min ring buffer so history survives close/open. | Sampling per-open (loses history), or letting the panel own samplers (samplers want one sequential polling owner per sysc-metrics contract). |
+| D10 | The system-monitor popout, `MetricsService`, and the `tabs` and `graphs` controls are **deferred out of Milestone 4** until Tranche 3B has qualified, tagged, and pinned `sysc-metrics`. | Shipping them in 4A behind a local `replace` on an untagged `sysc-metrics`. That is a recorded stop condition, and it would make Milestone 4 the first consumer of a library Milestone 3 owns, ahead of its qualification gate. The exit gate reads "clock/calendar **or** system-monitor", so 4A passes on clock/calendar alone. |
 | D11 | Session actions exec `loginctl` (poweroff/reboot/suspend/terminate-session). | A D-Bus client dependency (godbus). `loginctl` goes through logind with identical polkit handling, keeps the shell stdlib-only, and covers every 4A action. |
 | D12 | IPC = versioned Unix socket `ipc.v1.sock`, newline-delimited JSON `{"id","method","params"}` → `{"id","ok"|"error"}`; version in the filename. | Sharing niri's socket, or an unversioned path. The same socket is the planned seam for sysc-notify/sysc-tray; filename versioning lets a v2 coexist. |
 | D13 | Reveal/dismiss motion is shell-rendered: fade + 8 px slide off the triggering bar edge, ~150 ms ease-out, instant under reduced-motion. | Waiting for niri layer-surface animations — verified nonexistent (layer-rules expose no animation properties; Animations config has no layer entries). |
@@ -94,6 +96,13 @@ Facts that shape this (all source-verified against niri main; see research doc):
 
 Escape handling: the panel's keyboard handler closes on Escape (gate). The shield never has
 keyboard focus, so Escape always reaches the panel.
+
+**A configuration reload must not destroy open panels.** Reload rebuilds bars; panel surfaces stay
+mapped and re-resolve their theme and content in place on the next frame. This is a contract, not an
+optimisation: Tranche 4B's settings modal is itself a panel and writes the configuration on every
+change, so tearing panels down on reload would eject the user from the settings UI on every toggle,
+and would kill a visible OSD. Panel content is rebuilt per render already, so re-resolving is the
+same work a theme change does.
 
 OSD surfaces (4B) reuse none of the shield machinery: keyboard none, no shield, created on demand.
 
@@ -126,8 +135,7 @@ Controls shipping here, each with its consumer:
 |---|---|
 | button | session/power actions; tab headers reuse tab control |
 | label, separator | every panel |
-| tabs | system-monitor per-resource views |
-| graphs | system-monitor history (area chart from the ring buffer) |
+
 
 Deferred to 4B with their consumers: toggle, slider, menu/dropdown, text field (settings); scroll
 area and virtual list (settings content). Consequently the text-input-v3 and cursor-shape-v1
@@ -162,6 +170,17 @@ Pipeline (verified live end-to-end with matugen 4.2.0; see research doc):
 `surface`, accent → `primary`, muted → `on_surface_variant`; error and radius carry over. The bar
 and M3 widgets render from the same struct, so the whole shell follows the generated palette.
 
+Because generation now owns colour, the hand-set colour fields in the existing configuration —
+`theme.background`, `theme.foreground`, `theme.accent`, `theme.muted`, `theme.error` — are
+**removed from the schema**. Leaving them in place would make a user's edit a silent no-op, and this
+project's rule is that an unknown or unusable entry fails the whole candidate rather than being
+ignored. There is no compatibility promise, so a stale file fails at load with its field path named.
+`theme.radius` stays: it is geometry, not colour, and generation does not produce it.
+
+One consumer needs care. `config.Theme.BackgroundOpaque()` feeds the compositor's opaque-region
+hint and reads the configured background. It now reads the generated `surface` token instead: opaque
+when that token is six-digit hex, which is what matugen emits.
+
 Motion (D13): fade + 8 px slide off the triggering bar edge, ~150 ms ease-out, instant under
 reduced-motion. Niri does not animate layer surfaces, so reveal/dismiss is the shell's own
 frame-driven animation on the canvas.
@@ -173,14 +192,8 @@ All services follow the M3 clock exemplar: concrete types, no interfaces; consum
 
 - **Clock** — reused from M3 via lease; the clock/calendar popout is a consumer alongside the bar
   clocks. Finest boundary wins across consumers.
-- **MetricsService** (D10) — new. Owns the sysc-metrics samplers (CPU, memory, filesystem, block,
-  network, uptime; each `Sample() (XSnapshot, error)`, sequential single-owner polling, no internal
-  goroutines). Polls ~1 s while leased by the system-monitor popout. Keeps a process-lifetime ring
-  buffer (~2 min) so graphs survive close/open. Samples with `Valid == false` (first/discontinuous)
-  render as "collecting". Sampling pauses at zero leases. Ceiling: no history before the first open
-  in a session.
-- **sysc-metrics dependency** — `github.com/Nomadcxx/sysc-metrics` (go 1.26), added to go.mod with
-  a local `replace` directive until published.
+- **No new service.** `MetricsService` is deferred with the system-monitor popout (D10). Milestone 4
+  therefore adds **no** module dependency: `go.mod` is untouched by this tranche.
 
 Audio/brightness services and their change-detection polling ship in 4B with the OSD.
 
@@ -188,10 +201,6 @@ Audio/brightness services and their change-detection polling ship in 4B with the
 
 **clock/calendar** — triggered from the bar clock widget. Large clock face (leased clock service)
 plus a month calendar grid computed from stdlib `time`. Fixed content; no scrolling.
-
-**system-monitor** — triggered from bar widget or hotkey. Tabs per resource; each tab shows current
-values and a history graph drawn from the MetricsService ring buffer. This is the first consumer of
-sysc-metrics in the shell.
 
 **session/power** — triggered from bar widget or hotkey. Button grid: lock, logout, suspend,
 reboot, power off (D11):
@@ -213,7 +222,9 @@ A first-party lockscreen (ext-session-lock) is a later milestone; lock always de
 - **Envelope**: newline-delimited JSON. Request `{"id":1,"method":"panel.toggle","params":{...}}`;
   response `{"id":1,"ok":{...}}` or `{"id":1,"error":"..."}`.
 - **Methods in 4A**:
-  - `panel.toggle` / `panel.open` / `panel.close` — params `{"panel":"clock|calendar|system-monitor|session|settings"}` (`settings` accepted once 4B lands; single-instance semantics per D4).
+  - `panel.toggle` / `panel.open` / `panel.close` — params `{"panel":"clock|session|settings"}`
+    (`settings` accepted once 4B lands; `system-monitor` is reserved and rejected until it ships;
+    single-instance semantics per D4).
   - `status` — shell version, open panels, capability probes (matugen present).
   - `osd.step` is reserved for 4B.
 - **CLI**: `sysc-shell ipc <method> [params-json]` — connect, send, print, exit.
@@ -241,11 +252,11 @@ The roadmap exit gate evaluated on 4A surfaces:
 
 | Gate item | 4A evidence |
 |---|---|
-| clock/calendar or system-monitor popout works on each output | both ship; live test opens each on every output |
+| clock/calendar **or** system-monitor popout works on each output | clock/calendar ships; live test opens it on every output. The gate is a disjunction and system-monitor is deferred (D10). |
 | only the open panel requests keyboard focus | Exclusive + single instance; live test: windows keep focus until panel opens; no second instance |
 | a panel never changes the bar's exclusive zone | assert bar exclusive zone unchanged across open/close cycles |
 | placement remains within transformed and scaled output bounds | clamp tests under fractional scale + output transform |
-| keyboard-only interaction covers every shipped control | roving-focus tests: button, tabs reachable and operable without pointer |
+| keyboard-only interaction covers every shipped control | roving-focus tests: every button reachable and operable without pointer |
 | every interactive node carries an accessible name and role | node-data assertion tests |
 | reduced-motion and high-contrast preferences change behavior | reduced-motion → instant reveal; high-contrast → regenerated tokens differ (measured) |
 
@@ -282,7 +293,5 @@ recorded in [the research doc](2026-08-30-panels-and-controls-research.md). What
    acceptable for two elevations.
 4. **`loginctl` exec (D11)** gives no PrepareForSleep signals or lock inhibitors. Add a D-Bus
    dependency when the first-party lockscreen milestone needs them.
-5. **MetricsService ring buffer** holds no history before first open in a session — accepted,
-   renders "collecting".
 6. **IPC** has no subscriptions or auth beyond file perms; add when sysc-notify lands.
 7. **matugen `color` subcommand flags** assumed symmetric with `image`; first plan task verifies.
