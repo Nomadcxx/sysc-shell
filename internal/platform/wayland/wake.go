@@ -3,15 +3,23 @@ package wayland
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"golang.org/x/sys/unix"
 )
 
 // wakePipe lets other goroutines wake the owner without touching a Wayland
-// proxy. The bridge goroutine only ever writes one byte to this pipe.
+// proxy. The bridge goroutine only ever writes one byte to this pipe and
+// appends to the pending queue; the owner goroutine drains both.
 type wakePipe struct {
 	read  int
 	write int
+
+	// pending carries the invalidations that arrived since the last drain. The
+	// pipe itself has no payload, so routing a redraw to one connector needs
+	// this queue beside it.
+	mu      sync.Mutex
+	pending []Invalidation
 }
 
 func newWakePipe() (*wakePipe, error) {
@@ -24,18 +32,39 @@ func newWakePipe() (*wakePipe, error) {
 
 // bridge forwards cancellation and application invalidations to the pipe. It
 // never closes the caller-owned invalidation channel and never calls a proxy.
-func (w *wakePipe) bridge(ctx context.Context, invalidations <-chan struct{}) {
+func (w *wakePipe) bridge(ctx context.Context, invalidations <-chan Invalidation) {
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				w.signal()
 				return
-			case <-invalidations:
+			case inv, ok := <-invalidations:
+				if !ok {
+					return
+				}
+				w.push(inv)
 				w.signal()
 			}
 		}
 	}()
+}
+
+// push queues one invalidation for the owner goroutine.
+func (w *wakePipe) push(inv Invalidation) {
+	w.mu.Lock()
+	w.pending = append(w.pending, inv)
+	w.mu.Unlock()
+}
+
+// take removes and returns every queued invalidation. A cancellation wake
+// returns an empty slice, which the loop treats as no redraw request.
+func (w *wakePipe) take() []Invalidation {
+	w.mu.Lock()
+	out := w.pending
+	w.pending = nil
+	w.mu.Unlock()
+	return out
 }
 
 // signal writes one byte, ignoring a full pipe: a pending wake is enough.

@@ -112,32 +112,30 @@ func TestRegistryRequiresARGB8888(t *testing.T) {
 	}
 }
 
-func TestRegistrySelectsOutputByName(t *testing.T) {
+// Output selection is gone: every connected output receives a bar, so the
+// registry no longer picks one. What it still owns is the connector name, which
+// is a per-global attribute used for configuration matching and Niri joining,
+// never as host identity.
+func TestRegistryRecordsConnectorNamesPerGlobal(t *testing.T) {
 	t.Parallel()
 
 	rs := advertiseAll(t)
 	rs.addGlobal(8, "wl_output", 4)
+	rs.setOutputName(7, "DP-1")
 	rs.setOutputName(8, "DP-3")
 
-	got, err := rs.selectOutput("DP-3")
-	if err != nil {
-		t.Fatal(err)
+	if got := rs.outputs[7].connector; got != "DP-1" {
+		t.Fatalf("global 7 connector = %q, want DP-1", got)
 	}
-	if got.connector != "DP-3" || got.global != 8 {
-		t.Fatalf("selected %+v, want the DP-3 output at global 8", got)
-	}
-
-	if _, err := rs.selectOutput("DP-9"); err == nil {
-		t.Fatal("selectOutput accepted a connector no output reported")
+	if got := rs.outputs[8].connector; got != "DP-3" {
+		t.Fatalf("global 8 connector = %q, want DP-3", got)
 	}
 
-	// No request selects the first output that arrived.
-	first, err := rs.selectOutput("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.global != 7 {
-		t.Fatalf("default selected global %d, want the first output 7", first.global)
+	// A name for a global that is not an output is discarded rather than
+	// creating an entry.
+	rs.setOutputName(999, "DP-9")
+	if _, ok := rs.outputs[999]; ok {
+		t.Fatal("setOutputName created an output entry for an unknown global")
 	}
 }
 

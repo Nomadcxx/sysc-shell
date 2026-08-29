@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/fractionalscale"
@@ -38,38 +39,46 @@ type Event struct {
 	Button uint32
 }
 
-// Options configures the layer surface.
+// Options configures every bar.
 type Options struct {
-	// Output is the wl_output.name connector to place the surface on. Empty
-	// selects the first output the compositor advertised.
-	Output string
-	// Height is the logical height and exclusive zone of the surface.
+	// Height is the nominal bar height token in logical pixels. It is not a
+	// Wayland dimension: the surface is Gap + body, and body is Height-2*Gap.
 	Height int
+	// Gap is the outer gap between the screen edge and the painted body. It
+	// lives inside the surface, so the screen edge stays clickable.
+	Gap int
 }
+
+// Invalidation requests a redraw. An empty Connector invalidates every bar.
+type Invalidation struct{ Connector string }
 
 // Callbacks are the concrete hooks the application supplies. This is a struct
 // rather than an interface because there is one implementation.
 type Callbacks struct {
-	// Configure reports the logical size from zwlr_layer_surface_v1.configure
-	// and the scale as a numerator over 120; 120 means scale 1.0.
-	Configure func(logicalWidth, logicalHeight, scale120 int) error
-	// Render fills the physical buffer. Width and height are buffer pixels.
-	Render func(pixels []byte, width, height, stride int) error
-	// Handle consumes a pointer event and reports whether state changed.
-	Handle func(Event) bool
+	// NewHost supplies the per-bar hooks when a bar is created for a connector.
+	NewHost func(connector string) (HostCallbacks, error)
+	// DropHost releases per-bar resources after a bar is destroyed.
+	DropHost func(connector string)
 	// Invalidations is owned by the caller. Run only receives from it and
 	// never closes it.
-	Invalidations <-chan struct{}
+	Invalidations <-chan Invalidation
 }
 
 func (c Callbacks) validate() error {
+	if c.NewHost == nil {
+		return errors.New("wayland: Callbacks.NewHost is nil")
+	}
+	return nil
+}
+
+func (c HostCallbacks) validate(connector string) error {
 	switch {
 	case c.Configure == nil:
-		return errors.New("wayland: Callbacks.Configure is nil")
+		return fmt.Errorf("wayland: HostCallbacks.Configure is nil for %s", connector)
 	case c.Render == nil:
-		return errors.New("wayland: Callbacks.Render is nil")
+		return fmt.Errorf("wayland: HostCallbacks.Render is nil for %s", connector)
 	case c.Handle == nil:
-		return errors.New("wayland: Callbacks.Handle is nil")
+		return fmt.Errorf("wayland: HostCallbacks.Handle is nil for %s", connector)
 	}
 	return nil
 }
@@ -81,8 +90,12 @@ func Run(ctx context.Context, options Options, callbacks Callbacks) (err error) 
 	if err := callbacks.validate(); err != nil {
 		return err
 	}
-	if options.Height <= 0 {
-		return fmt.Errorf("wayland: height %d is not positive", options.Height)
+	if options.Gap < 0 {
+		return fmt.Errorf("wayland: gap %d is negative", options.Gap)
+	}
+	if body := options.Height - 2*options.Gap; body <= 0 {
+		return fmt.Errorf("wayland: height %d with gap %d leaves a body of %d",
+			options.Height, options.Gap, body)
 	}
 
 	o := &owner{
@@ -92,10 +105,9 @@ func Run(ctx context.Context, options Options, callbacks Callbacks) (err error) 
 	}
 	defer func() { err = errors.Join(err, o.shutdown()) }()
 
+	// Bars are created by the readiness transition, not here: an output is
+	// only ready once it has reported both a done and a connector name.
 	if err := o.connect(); err != nil {
-		return err
-	}
-	if err := o.createSurface(); err != nil {
 		return err
 	}
 	return o.loop(ctx)
@@ -117,10 +129,9 @@ type owner struct {
 	viewporter *viewporter.WpViewporter
 	pointer    *client.Pointer
 
-	// hosts holds every bound wl_output, keyed by registry global name. Only
-	// the selected host carries a surface until multi-output creation lands.
-	hosts    *hostSet
-	selected *OutputHost
+	// hosts holds every bound wl_output, keyed by registry global name. Every
+	// ready host carries its own bar.
+	hosts *hostSet
 	// focus is the host whose surface the pointer is currently on, replacing
 	// the single boolean the proof used. Nil means the pointer is on no bar.
 	focus *OutputHost
@@ -157,13 +168,22 @@ func (o *owner) connect() error {
 	o.registry = registry
 	o.rs = newRegistryState()
 
+	// Outputs are bound in the handler itself, so an output present at startup
+	// and one hotplugged later travel exactly the same path.
 	registry.SetGlobalHandler(func(e client.RegistryGlobalEvent) {
-		o.rs.addGlobal(e.Name, e.Interface, e.Version)
+		version, used := o.rs.addGlobal(e.Name, e.Interface, e.Version)
+		if !used || e.Interface != "wl_output" {
+			return
+		}
+		o.bindOutput(e.Name, version)
 	})
 	registry.SetGlobalRemoveHandler(func(e client.RegistryGlobalRemoveEvent) {
-		if _, ok := o.rs.removeGlobal(e.Name); ok && o.selected != nil && o.selected.global == e.Name {
-			o.closed = true
-			o.selected.sched.Close()
+		o.rs.removeGlobal(e.Name)
+		if h, ok := o.hosts.remove(e.Name); ok {
+			o.fail(o.teardownHost(h))
+			if o.cb.DropHost != nil {
+				o.cb.DropHost(h.connector)
+			}
 		}
 	})
 
@@ -222,23 +242,38 @@ func (o *owner) bindGlobals() error {
 	o.shm.SetFormatHandler(func(e client.ShmFormatEvent) { o.rs.addFormat(e.Format) })
 	o.seat.SetCapabilitiesHandler(o.onSeatCapabilities)
 
-	// Bind every output and give each one a host, so wl_output.name can be
-	// matched against --output. Host identity is the registry global name.
+	// Outputs advertised before this point were recorded by the registry
+	// handler but could not bind, because binding needs the display context
+	// that only exists once the globals are bound. Bind them now; outputs
+	// announced later bind directly in the handler.
 	for _, entry := range o.rs.outputs {
-		proxy := client.NewOutput(ctx)
-		if err := o.registry.Bind(entry.global, "wl_output", entry.version, proxy); err != nil {
-			return fmt.Errorf("wayland: bind wl_output %d: %w", entry.global, err)
-		}
-		h, _ := o.hosts.add(entry.global, proxy)
-		h.cleanup.push("output", proxy.Release)
-		host := h
-		proxy.SetNameHandler(func(e client.OutputNameEvent) {
-			host.connector = e.Name
-			o.rs.setOutputName(host.global, e.Name)
-		})
+		o.bindOutput(entry.global, entry.version)
 	}
 	return nil
 }
+
+// bindOutput binds one wl_output and creates its host. A bind failure is host
+// scoped: the shell keeps running with its remaining outputs.
+func (o *owner) bindOutput(global, version uint32) {
+	if o.display == nil || o.registry == nil {
+		return // globals are not bound yet; bindGlobals will revisit this one
+	}
+	h, created := o.hosts.add(global, nil)
+	if !created {
+		return
+	}
+	proxy := client.NewOutput(o.display.Context())
+	if err := o.registry.Bind(global, "wl_output", version, proxy); err != nil {
+		o.hosts.remove(global)
+		return
+	}
+	h.proxy = proxy
+	h.cleanup.push("output", proxy.Release)
+	o.attachOutputHandlers(h)
+}
+
+// hostBecameReady creates the bar for a host that just gained done and a name.
+func (o *owner) hostBecameReady(h *OutputHost) error { return o.createBar(h) }
 
 func (o *owner) destroyGlobals() error {
 	var errs []error
@@ -334,24 +369,34 @@ func (o *owner) deliver(h *OutputHost, e Event) {
 	}
 }
 
-// createSurface builds the layer surface and its fractional-scale and viewport
-// objects for the selected host, then performs the fixed initial sequence: set
-// properties, commit once without a buffer, and wait for the first configure.
-func (o *owner) createSurface() error {
-	if err := o.chooseOutput(); err != nil {
+// surfaceHeight is the layer surface height, which is also the exclusive zone.
+// The nominal Height token is not a Wayland dimension: the painted body is
+// Height-2*Gap, and the surface carries the gap plus that body.
+func (o *owner) surfaceHeight() int { return o.options.Gap + (o.options.Height - 2*o.options.Gap) }
+
+// createBar builds one host's layer surface and its fractional-scale and
+// viewport objects, then performs the fixed initial sequence: set properties,
+// commit once without a buffer, and wait for the first configure.
+func (o *owner) createBar(h *OutputHost) error {
+	switch h.state {
+	case hostReady, hostIdle, hostClosed:
+	default:
+		return nil // already creating, configuring or mapped
+	}
+
+	app, err := o.cb.NewHost(h.connector)
+	if err != nil {
 		return err
 	}
-	h := o.selected
-	h.app = HostCallbacks{
-		Configure: o.cb.Configure,
-		Render:    o.cb.Render,
-		Handle:    o.cb.Handle,
+	if err := app.validate(h.connector); err != nil {
+		return err
 	}
+	h.app = app
 	h.state = hostCreating
 
 	surface, err := o.compositor.CreateSurface()
 	if err != nil {
-		return fmt.Errorf("wayland: create surface: %w", err)
+		return fmt.Errorf("wayland: create surface for %s: %w", h.connector, err)
 	}
 	h.surface = surface
 	h.cleanup.push("surface", surface.Destroy)
@@ -359,30 +404,12 @@ func (o *owner) createSurface() error {
 	layer, err := o.layerShell.GetLayerSurface(surface, h.proxy,
 		uint32(layershell.ZwlrLayerShellV1LayerTop), namespace)
 	if err != nil {
-		return fmt.Errorf("wayland: get layer surface: %w", err)
+		return fmt.Errorf("wayland: get layer surface for %s: %w", h.connector, err)
 	}
 	h.layer = layer
 	h.cleanup.push("layer-surface", layer.Destroy)
 
-	anchor := uint32(layershell.ZwlrLayerSurfaceV1AnchorTop |
-		layershell.ZwlrLayerSurfaceV1AnchorLeft |
-		layershell.ZwlrLayerSurfaceV1AnchorRight)
-	height := o.options.Height
-	if height > math.MaxInt32 {
-		return fmt.Errorf("wayland: height %d overflows", height)
-	}
-	// Width 0 asks the compositor for the anchored width.
-	if err := layer.SetSize(0, uint32(height)); err != nil {
-		return err
-	}
-	if err := layer.SetAnchor(anchor); err != nil {
-		return err
-	}
-	if err := layer.SetExclusiveZone(int32(height)); err != nil {
-		return err
-	}
-	if err := layer.SetKeyboardInteractivity(
-		uint32(layershell.ZwlrLayerSurfaceV1KeyboardInteractivityNone)); err != nil {
+	if err := o.applyGeometryRequests(h); err != nil {
 		return err
 	}
 	layer.SetConfigureHandler(func(e layershell.ZwlrLayerSurfaceV1ConfigureEvent) {
@@ -391,11 +418,9 @@ func (o *owner) createSurface() error {
 		}
 	})
 	layer.SetClosedHandler(func(layershell.ZwlrLayerSurfaceV1ClosedEvent) {
-		if !h.alive {
-			return
+		if h.alive {
+			o.fail(o.onLayerClosed(h))
 		}
-		o.closed = true
-		h.sched.Close()
 	})
 
 	scale, err := o.scaleMgr.GetFractionalScale(surface)
@@ -419,9 +444,58 @@ func (o *owner) createSurface() error {
 
 	// One commit with no buffer attached, then the compositor configures.
 	if err := surface.Commit(); err != nil {
-		return fmt.Errorf("wayland: initial commit: %w", err)
+		return fmt.Errorf("wayland: initial commit for %s: %w", h.connector, err)
 	}
 	return nil
+}
+
+// applyGeometryRequests sets size, anchor, exclusive zone and keyboard policy.
+// The surface height equals the exclusive zone, and the gap lives inside the
+// surface with a zero layer margin, so the screen edge stays clickable.
+func (o *owner) applyGeometryRequests(h *OutputHost) error {
+	height := o.surfaceHeight()
+	if height <= 0 || height > math.MaxInt32 {
+		return fmt.Errorf("wayland: surface height %d is unusable", height)
+	}
+	anchor := uint32(layershell.ZwlrLayerSurfaceV1AnchorTop |
+		layershell.ZwlrLayerSurfaceV1AnchorLeft |
+		layershell.ZwlrLayerSurfaceV1AnchorRight)
+	// Width 0 asks the compositor for the anchored width.
+	if err := h.layer.SetSize(0, uint32(height)); err != nil {
+		return err
+	}
+	if err := h.layer.SetAnchor(anchor); err != nil {
+		return err
+	}
+	if err := h.layer.SetMargin(0, 0, 0, 0); err != nil {
+		return err
+	}
+	if err := h.layer.SetExclusiveZone(int32(height)); err != nil {
+		return err
+	}
+	return h.layer.SetKeyboardInteractivity(
+		uint32(layershell.ZwlrLayerSurfaceV1KeyboardInteractivityNone))
+}
+
+// onLayerClosed destroys the role and rebuilds it if the budget permits. The
+// wl_output survives, so the host keeps its metadata and its identity.
+//
+// The budget exists because closed has two very different causes: a transient
+// compositor reset should self-heal, while a persistent refusal must not become
+// a create/destroy livelock.
+func (o *owner) onLayerClosed(h *OutputHost) error {
+	if err := o.teardownSurface(h); err != nil {
+		return err
+	}
+	h.state = hostClosed
+	now := time.Now()
+	if !h.mayRecreate(now) {
+		fmt.Fprintf(os.Stderr,
+			"sysc-shell: bar on %s closed %d times; leaving it down\n", h.connector, h.closeAttempts)
+		return nil
+	}
+	h.recordCloseAttempt(now)
+	return o.createBar(h)
 }
 
 // onConfigure acknowledges every configure before any buffer is attached.
@@ -576,13 +650,56 @@ func (o *owner) nextJob() (*OutputHost, render.Decision, render.Job) {
 	return nil, render.DecisionWait, render.Job{}
 }
 
-// invalidate marks every live bar dirty.
-func (o *owner) invalidate() {
+// invalidate marks hosts dirty. An empty connector invalidates every bar, so
+// one output's workspace change never redraws another output's bar.
+func (o *owner) invalidate(inv Invalidation) {
 	for _, h := range o.hosts.each() {
-		if h.alive && h.surface != nil {
+		if !h.alive {
+			continue
+		}
+		if inv.Connector == "" || h.connector == inv.Connector {
 			h.sched.Invalidate()
 		}
 	}
+}
+
+// teardownSurface releases everything scoped to one bar and leaves the host and
+// its wl_output intact, so a closed bar can be rebuilt without a registry cycle.
+func (o *owner) teardownSurface(h *OutputHost) error {
+	var errs []error
+
+	h.sched.Close()
+	if err := h.dropFrameCallback(); err != nil {
+		errs = append(errs, err)
+	}
+	if h.current != nil {
+		h.current.retire.destroy()
+		h.retiring = append(h.retiring, h.current)
+		h.current = nil
+	}
+	for _, gen := range h.retiring {
+		gen.retire.destroy()
+		if err := gen.destroy(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	h.retiring = nil
+
+	if o.focus == h {
+		// Deliver a leave so pressed-node state does not survive into a
+		// recreated surface.
+		o.deliver(h, Event{Kind: EventPointerLeave})
+		o.focus = nil
+	}
+	// Unwind viewport, fractional-scale, layer surface and wl_surface; the
+	// output step stays so the host keeps its wl_output.
+	if _, err := h.cleanup.unwindTo("output"); err != nil {
+		errs = append(errs, err)
+	}
+	h.surface, h.layer, h.scale, h.viewport = nil, nil, nil, nil
+	h.ss = newSurfaceState()
+	h.sched = render.NewScheduler()
+	return errors.Join(errs...)
 }
 
 // loop drives the owner goroutine: render when a scheduler offers work, then
@@ -619,7 +736,9 @@ func (o *owner) loop(ctx context.Context) error {
 		}
 		if wakeReady {
 			wake.drain()
-			o.invalidate()
+			for _, inv := range wake.take() {
+				o.invalidate(inv)
+			}
 		}
 		if !waylandReady {
 			continue
@@ -726,8 +845,6 @@ func (o *owner) shutdown() error {
 			errs = append(errs, err)
 		}
 	}
-	o.selected = nil
-
 	if _, err := o.cleanup.unwind(); err != nil {
 		errs = append(errs, err)
 	}

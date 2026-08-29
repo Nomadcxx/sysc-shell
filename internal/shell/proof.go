@@ -14,8 +14,13 @@ import (
 	"golang.org/x/image/font/gofont/goregular"
 )
 
-// BarHeight is the logical height and exclusive zone of the proof bar.
+// BarHeight is the nominal bar height token. It is not a Wayland dimension:
+// the painted body is BarHeight-2*BarGap and the surface is BarGap + body, so
+// the exclusive zone is 44 for the default 48/4 pair.
 const BarHeight = 48
+
+// BarGap is the outer gap between the screen edge and the painted body.
+const BarGap = 4
 
 // toggleAction names the button's action.
 const toggleAction = "toggle-meter"
@@ -112,18 +117,22 @@ func (p *Proof) invalidate() {
 	}
 }
 
+// SetWorkspace records this output's workspace label and reports whether it
+// changed. The Registry owns invalidation, because it knows which connector the
+// redraw belongs to.
+func (p *Proof) SetWorkspace(label string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if label == p.workspace {
+		return false
+	}
+	p.workspace = label
+	return true
+}
+
 // UpdateNiri applies a workspace snapshot, invalidating only on a real change.
 func (p *Proof) UpdateNiri(snapshot niri.Snapshot) {
-	label := activeWorkspace(snapshot)
-
-	p.mu.Lock()
-	changed := label != p.workspace
-	if changed {
-		p.workspace = label
-	}
-	p.mu.Unlock()
-
-	if changed {
+	if p.SetWorkspace(activeWorkspace(snapshot)) {
 		p.invalidate()
 	}
 }

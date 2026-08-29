@@ -3,9 +3,7 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -15,29 +13,10 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/shell"
 )
 
-// options holds the parsed command line.
-type options struct {
-	// Output is the connector name of the Niri output to use, such as DP-1.
-	Output string
-}
-
-func parseOptions(args []string) (options, error) {
-	fs := flag.NewFlagSet("sysc-shell", flag.ContinueOnError)
-	// main reports the parse error; suppress the flag package's own output.
-	fs.SetOutput(io.Discard)
-
-	var opts options
-	fs.StringVar(&opts.Output, "output", "", "connector name of the Niri output, such as DP-1")
-
-	if err := fs.Parse(args); err != nil {
-		return options{}, err
-	}
-	return opts, nil
-}
-
-// run streams Niri workspace state into the proof model and hands the model to
-// the Wayland owner. The owner goroutine performs all Wayland work.
-func run(ctx context.Context, opts options) error {
+// run streams Niri workspace state into the bar registry and hands the registry
+// to the Wayland owner. The owner goroutine performs all Wayland work and
+// creates one bar per connected output.
+func run(ctx context.Context) error {
 	// Validated before opening Wayland so the startup error names the missing
 	// environment variable.
 	socket := os.Getenv("NIRI_SOCKET")
@@ -45,10 +24,7 @@ func run(ctx context.Context, opts options) error {
 		return fmt.Errorf("NIRI_SOCKET is not set; start sysc-shell from a Niri session")
 	}
 
-	proof, err := shell.New()
-	if err != nil {
-		return err
-	}
+	registry := shell.NewRegistry()
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -62,7 +38,7 @@ func run(ctx context.Context, opts options) error {
 				if !ok {
 					return
 				}
-				proof.UpdateNiri(snapshot)
+				registry.UpdateNiri(snapshot)
 			case err, ok := <-niriErrs:
 				if ok && err != nil {
 					select {
@@ -76,11 +52,13 @@ func run(ctx context.Context, opts options) error {
 		}
 	}()
 
-	runErr := wayland.Run(ctx, wayland.Options{Output: opts.Output, Height: shell.BarHeight}, wayland.Callbacks{
-		Configure:     proof.Configure,
-		Render:        proof.Render,
-		Handle:        proof.Handle,
-		Invalidations: proof.Invalidations(),
+	runErr := wayland.Run(ctx, wayland.Options{
+		Height: shell.BarHeight,
+		Gap:    shell.BarGap,
+	}, wayland.Callbacks{
+		NewHost:       registry.NewHost,
+		DropHost:      registry.DropHost,
+		Invalidations: registry.Invalidations(),
 	})
 	if runErr != nil {
 		return runErr
@@ -94,16 +72,10 @@ func run(ctx context.Context, opts options) error {
 }
 
 func main() {
-	opts, err := parseOptions(os.Args[1:])
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := run(ctx, opts); err != nil {
+	if err := run(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

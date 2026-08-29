@@ -1,31 +1,23 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+)
 
-func TestParseOptions(t *testing.T) {
-	t.Parallel()
+// The --output flag is gone: every connected output receives a bar, so there
+// is no command line left to parse. What remains worth asserting is that the
+// environment is validated before Wayland is opened, so the startup error names
+// the missing variable rather than surfacing as a connection failure.
+func TestRunRequiresNiriSocket(t *testing.T) {
+	t.Setenv("NIRI_SOCKET", "")
 
-	got, err := parseOptions([]string{"--output", "DP-1"})
-	if err != nil {
-		t.Fatal(err)
+	err := run(context.Background())
+	if err == nil {
+		t.Fatal("run succeeded with NIRI_SOCKET unset")
 	}
-	if got.Output != "DP-1" {
-		t.Fatalf("output = %q, want DP-1", got.Output)
-	}
-}
-
-func TestParseOptionsRejectsUnknownFlag(t *testing.T) {
-	t.Parallel()
-
-	if _, err := parseOptions([]string{"--bogus"}); err == nil {
-		t.Fatal("parseOptions accepted an unknown flag")
-	}
-}
-
-func TestParseOptionsRejectsMissingOutputValue(t *testing.T) {
-	t.Parallel()
-
-	if _, err := parseOptions([]string{"--output"}); err == nil {
-		t.Fatal("parseOptions accepted --output without a value")
+	if !strings.Contains(err.Error(), "NIRI_SOCKET") {
+		t.Fatalf("error %q does not name the missing variable", err)
 	}
 }

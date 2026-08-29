@@ -5,8 +5,6 @@
 package wayland
 
 import (
-	"errors"
-	"fmt"
 	"slices"
 
 	"github.com/Nomadcxx/sysc-wayland/client"
@@ -146,27 +144,4 @@ func (r *registryState) missingRequired() []string {
 		missing = append(missing, "wl_output")
 	}
 	return missing
-}
-
-var errNoOutput = errors.New("wayland: no output matched")
-
-// selectOutput picks the requested connector, or the first output that arrived
-// when no connector was requested.
-func (r *registryState) selectOutput(want string) (*outputEntry, error) {
-	if len(r.arrival) == 0 {
-		return nil, fmt.Errorf("%w: the compositor advertised no output", errNoOutput)
-	}
-	if want == "" {
-		return r.outputs[r.arrival[0]], nil
-	}
-	for _, global := range r.arrival {
-		if out := r.outputs[global]; out.connector == want {
-			return out, nil
-		}
-	}
-	names := make([]string, 0, len(r.arrival))
-	for _, global := range r.arrival {
-		names = append(names, r.outputs[global].connector)
-	}
-	return nil, fmt.Errorf("%w: no output is named %q; the compositor reported %v", errNoOutput, want, names)
 }

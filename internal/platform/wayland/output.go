@@ -1,6 +1,6 @@
 package wayland
 
-import "fmt"
+import "github.com/Nomadcxx/sysc-wayland/client"
 
 // applyGeometry records wl_output.geometry. Only the transform is retained;
 // physical size and subpixel layout have no consumer in this milestone.
@@ -32,21 +32,33 @@ func (h *OutputHost) applyDone() bool {
 	return true
 }
 
-// chooseOutput resolves the requested connector to the host that will carry the
-// bar, after the roundtrips that deliver wl_output.name.
-//
-// Host identity is the registry global name, never the connector string: a
-// connector can disappear and return as a different monitor, so the connector
-// is only a lookup attribute.
-func (o *owner) chooseOutput() error {
-	entry, err := o.rs.selectOutput(o.options.Output)
-	if err != nil {
-		return err
-	}
-	h, ok := o.hosts.get(entry.global)
-	if !ok {
-		return fmt.Errorf("wayland: output %q was advertised but not bound", entry.connector)
-	}
-	o.selected = h
-	return nil
+// attachOutputHandlers wires a freshly bound wl_output to its host. The
+// handlers run on the owner goroutine, because they are dispatched from its own
+// Dispatch call, so creating a bar from one needs no second goroutine.
+func (o *owner) attachOutputHandlers(h *OutputHost) {
+	h.proxy.SetGeometryHandler(func(e client.OutputGeometryEvent) {
+		if h.alive {
+			h.applyGeometry(int32(e.Transform))
+		}
+	})
+	h.proxy.SetModeHandler(func(e client.OutputModeEvent) {
+		if h.alive {
+			h.applyMode(e.Width, e.Height)
+		}
+	})
+	h.proxy.SetNameHandler(func(e client.OutputNameEvent) {
+		if !h.alive {
+			return
+		}
+		h.applyName(e.Name)
+		o.rs.setOutputName(h.global, e.Name)
+	})
+	h.proxy.SetDoneHandler(func(client.OutputDoneEvent) {
+		if !h.alive {
+			return
+		}
+		if h.applyDone() {
+			o.fail(o.hostBecameReady(h))
+		}
+	})
 }
