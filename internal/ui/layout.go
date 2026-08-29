@@ -69,15 +69,17 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 }
 
 // Hit reports the action of the topmost arranged node containing the point.
-// Children are searched in reverse source order, which is reverse paint order.
+//
+// Children are searched in reverse source order, which is reverse paint order,
+// and the search descends so a nested section resolves to its leaf rather than
+// stopping at the container.
 func Hit(root *Node, x, y int) (string, bool) {
 	if root == nil || !root.Bounds.Contains(x, y) {
 		return "", false
 	}
 	for i := len(root.Children) - 1; i >= 0; i-- {
-		child := root.Children[i]
-		if child != nil && child.Bounds.Contains(x, y) {
-			return child.Action, child.Action != ""
+		if action, ok := Hit(root.Children[i], x, y); ok {
+			return action, true
 		}
 	}
 	return root.Action, root.Action != ""
