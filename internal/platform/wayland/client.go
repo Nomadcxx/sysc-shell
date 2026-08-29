@@ -45,27 +45,25 @@ type Event struct {
 	Serial uint32
 }
 
-// Options configures every bar.
-type Options struct {
-	// Height is the nominal bar height token in logical pixels. It is not a
-	// Wayland dimension: the surface is Gap + body, and body is Height-2*Gap.
-	Height int
-	// Gap is the outer gap between the screen edge and the painted body. It
-	// lives inside the surface, so the screen edge stays clickable.
-	Gap int
-	// Radius rounds the body's corners. It shapes the opaque region, which must
-	// exclude the corners the bar does not actually fill.
-	Radius int
-}
-
 // Invalidation requests a redraw. An empty Connector invalidates every bar.
 type Invalidation struct{ Connector string }
+
+// PreparedConfig holds replacement callbacks built before a reload changes
+// live state. Commit publishes their matching shell models after the Wayland
+// owner has applied every host policy.
+type PreparedConfig struct {
+	Hosts  map[string]HostCallbacks
+	Commit func()
+}
 
 // Callbacks are the concrete hooks the application supplies. This is a struct
 // rather than an interface because there is one implementation.
 type Callbacks struct {
 	// NewHost supplies the per-bar hooks when a bar is created for a connector.
 	NewHost func(connector string) (HostCallbacks, error)
+	// PrepareConfig builds replacement bars for every enabled connector without
+	// changing live shell state.
+	PrepareConfig func(config.Config, []string) (PreparedConfig, error)
 	// DropHost releases per-bar resources after a bar is destroyed.
 	DropHost func(connector string)
 	// Invalidations is owned by the caller. Run only receives from it and
@@ -77,13 +75,14 @@ type Callbacks struct {
 	Reloads <-chan struct{}
 	// ConfigPath is the file a reload re-reads. Empty disables reloading.
 	ConfigPath string
-	// OnConfig publishes an accepted candidate to the application.
-	OnConfig func(config.Config)
 }
 
 func (c Callbacks) validate() error {
 	if c.NewHost == nil {
 		return errors.New("wayland: Callbacks.NewHost is nil")
+	}
+	if c.PrepareConfig == nil {
+		return errors.New("wayland: Callbacks.PrepareConfig is nil")
 	}
 	return nil
 }
@@ -107,20 +106,18 @@ func Run(ctx context.Context, cfg config.Config, callbacks Callbacks) (err error
 	if err := callbacks.validate(); err != nil {
 		return err
 	}
-	options := Options{Height: cfg.Bar.Height, Gap: cfg.Bar.Gap, Radius: cfg.Bar.Radius}
-	if options.Gap < 0 {
-		return fmt.Errorf("wayland: gap %d is negative", options.Gap)
+	if cfg.Bar.Gap < 0 {
+		return fmt.Errorf("wayland: gap %d is negative", cfg.Bar.Gap)
 	}
-	if body := options.Height - 2*options.Gap; body <= 0 {
+	if body := cfg.Bar.Height - 2*cfg.Bar.Gap; body <= 0 {
 		return fmt.Errorf("wayland: height %d with gap %d leaves a body of %d",
-			options.Height, options.Gap, body)
+			cfg.Bar.Height, cfg.Bar.Gap, body)
 	}
 
 	o := &owner{
-		options: options,
-		cb:      callbacks,
-		hosts:   newHostSet(),
-		cfg:     &cfg,
+		cb:    callbacks,
+		hosts: newHostSet(),
+		cfg:   &cfg,
 	}
 	defer func() { err = errors.Join(err, o.shutdown()) }()
 
@@ -133,8 +130,7 @@ func Run(ctx context.Context, cfg config.Config, callbacks Callbacks) (err error
 }
 
 type owner struct {
-	options Options
-	cb      Callbacks
+	cb Callbacks
 
 	display  *client.Display
 	registry *client.Registry
@@ -303,6 +299,14 @@ func (o *owner) hostBecameReady(h *OutputHost) error {
 		h.state = hostIdle
 		return nil
 	}
+	app, err := o.cb.NewHost(h.connector)
+	if err != nil {
+		return err
+	}
+	if err := app.validate(h.connector); err != nil {
+		return err
+	}
+	h.app = app
 	return o.createBar(h)
 }
 
@@ -386,14 +390,6 @@ func (o *owner) createBar(h *OutputHost) error {
 		return nil // already creating, configuring or mapped
 	}
 
-	app, err := o.cb.NewHost(h.connector)
-	if err != nil {
-		return err
-	}
-	if err := app.validate(h.connector); err != nil {
-		return err
-	}
-	h.app = app
 	h.state = hostCreating
 
 	surface, err := o.compositor.CreateSurface()
@@ -681,22 +677,86 @@ func (o *owner) invalidate(inv Invalidation) {
 
 // reloadConfig re-reads and applies the configuration file. A failure at any
 // stage leaves the previous configuration live and applies nothing.
-func (o *owner) reloadConfig() {
+func (o *owner) reloadConfig() error {
 	if o.cb.ConfigPath == "" {
-		return
+		return nil
 	}
 	cfg, err := config.Load(o.cb.ConfigPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "sysc-shell: reload rejected: %v\n", err)
-		return
+		return nil
 	}
-	if err := o.applyConfig(cfg); err != nil {
+	prepared, err := o.prepareConfig(cfg)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "sysc-shell: reload rejected: %v\n", err)
-		return
+		return nil
 	}
-	if o.cb.OnConfig != nil {
-		o.cb.OnConfig(cfg)
+	if err := o.applyPreparedConfig(prepared); err != nil {
+		return fmt.Errorf("wayland: apply reloaded config: %w", err)
 	}
+	return nil
+}
+
+type preparedHostConfig struct {
+	host   *OutputHost
+	policy config.Bar
+	app    HostCallbacks
+}
+
+type preparedOwnerConfig struct {
+	cfg    config.Config
+	hosts  []preparedHostConfig
+	commit func()
+}
+
+// prepareConfig resolves and builds every ready host before changing live
+// owner or shell state.
+func (o *owner) prepareConfig(cfg config.Config) (preparedOwnerConfig, error) {
+	live := o.hosts.each()
+	ready := make([]*OutputHost, 0, len(live))
+	connectors := make([]string, 0, len(live))
+	for _, h := range live {
+		if !h.alive || !h.ready() {
+			continue
+		}
+		ready = append(ready, h)
+		connectors = append(connectors, h.connector)
+	}
+	policies, err := config.Resolve(cfg, connectors)
+	if err != nil {
+		return preparedOwnerConfig{}, err
+	}
+
+	enabled := make([]string, 0, len(ready))
+	for i, h := range ready {
+		if policies[i].Enabled {
+			enabled = append(enabled, h.connector)
+		}
+	}
+	prepared, err := o.cb.PrepareConfig(cfg, enabled)
+	if err != nil {
+		return preparedOwnerConfig{}, err
+	}
+	if prepared.Commit == nil {
+		return preparedOwnerConfig{}, errors.New("wayland: prepared config has no commit function")
+	}
+
+	updates := make([]preparedHostConfig, 0, len(ready))
+	for i, h := range ready {
+		update := preparedHostConfig{host: h, policy: policies[i]}
+		if update.policy.Enabled {
+			app, ok := prepared.Hosts[h.connector]
+			if !ok {
+				return preparedOwnerConfig{}, fmt.Errorf("wayland: prepared config omitted %s", h.connector)
+			}
+			if err := app.validate(h.connector); err != nil {
+				return preparedOwnerConfig{}, err
+			}
+			update.app = app
+		}
+		updates = append(updates, update)
+	}
+	return preparedOwnerConfig{cfg: cfg, hosts: updates, commit: prepared.Commit}, nil
 }
 
 // applyConfig resolves every live host's policy before committing, then applies
@@ -706,54 +766,48 @@ func (o *owner) reloadConfig() {
 // document but unresolvable for one connected output is rejected whole, so the
 // shell can never end up with half its bars on new policy and half on old.
 func (o *owner) applyConfig(cfg config.Config) error {
-	live := o.hosts.each()
-	connectors := make([]string, 0, len(live))
-	for _, h := range live {
-		connectors = append(connectors, h.connector)
-	}
-	policies, err := config.Resolve(cfg, connectors)
+	prepared, err := o.prepareConfig(cfg)
 	if err != nil {
 		return err
 	}
+	return o.applyPreparedConfig(prepared)
+}
 
-	o.cfg = &cfg
-	var errs []error
-	for i, h := range live {
-		if !h.alive {
-			continue
-		}
-		bar := policies[i]
-		o.options.Height, o.options.Gap, o.options.Radius = bar.Height, bar.Gap, bar.Radius
-
+func (o *owner) applyPreparedConfig(prepared preparedOwnerConfig) error {
+	for _, update := range prepared.hosts {
+		h, bar := update.host, update.policy
+		h.policy = bar
 		switch {
-		case !bar.Enabled && h.surface != nil:
-			if err := o.teardownSurface(h); err != nil {
-				errs = append(errs, err)
+		case !bar.Enabled:
+			if h.surface != nil {
+				if err := o.teardownSurface(h); err != nil {
+					return err
+				}
 			}
 			h.state = hostIdle
-			if o.cb.DropHost != nil {
-				o.cb.DropHost(h.connector)
-			}
+			h.app = HostCallbacks{}
 		case bar.Enabled && h.surface == nil && h.ready():
+			h.app = update.app
 			if err := o.createBar(h); err != nil {
-				errs = append(errs, err)
+				return err
 			}
 		case bar.Enabled && h.surface != nil:
+			h.app = update.app
 			// Geometry and anchor changes are ordinary layer-surface requests
 			// followed by a configure, which is cheaper and more correct than
 			// destroying and rebuilding the role.
 			if err := o.applyGeometryRequests(h); err != nil {
-				errs = append(errs, err)
-				continue
+				return err
 			}
 			if err := h.surface.Commit(); err != nil {
-				errs = append(errs, err)
-				continue
+				return err
 			}
 			h.sched.Invalidate()
 		}
 	}
-	return errors.Join(errs...)
+	o.cfg = &prepared.cfg
+	prepared.commit()
+	return nil
 }
 
 // teardownSurface releases everything scoped to one bar and leaves the host and
@@ -829,7 +883,9 @@ func (o *owner) loop(ctx context.Context) error {
 		if wakeReady {
 			wake.drain()
 			if wake.takeReload() {
-				o.reloadConfig()
+				if err := o.reloadConfig(); err != nil {
+					return err
+				}
 			}
 			for _, inv := range wake.take() {
 				o.invalidate(inv)

@@ -60,3 +60,156 @@ func TestHostGeometryUsesItsOwnPolicy(t *testing.T) {
 		t.Fatalf("second surface height = %d, want 50", got)
 	}
 }
+
+func TestPrepareConfigDoesNotMutateLiveHosts(t *testing.T) {
+	t.Parallel()
+
+	current := config.Default()
+	h := newHost(7, nil)
+	h.connector = "DP-1"
+	h.doneSeen = true
+	h.state = hostMapped
+	h.policy = current.Bar
+	hosts := newHostSet()
+	hosts.hosts[h.global] = h
+	hosts.arrival = append(hosts.arrival, h.global)
+
+	candidate := config.Default()
+	override := candidate.Bar
+	override.Height = 56
+	override.Gap = 6
+	candidate.Outputs = []config.OutputOverride{{Connector: "DP-1", Bar: override}}
+	committed := false
+	o := owner{
+		cfg:   &current,
+		hosts: hosts,
+		cb: Callbacks{PrepareConfig: func(_ config.Config, connectors []string) (PreparedConfig, error) {
+			if len(connectors) != 1 || connectors[0] != "DP-1" {
+				t.Fatalf("connectors = %v, want [DP-1]", connectors)
+			}
+			return PreparedConfig{
+				Hosts:  map[string]HostCallbacks{"DP-1": validHostCallbacks()},
+				Commit: func() { committed = true },
+			}, nil
+		}},
+	}
+
+	prepared, err := o.prepareConfig(candidate)
+	if err != nil {
+		t.Fatalf("prepareConfig: %v", err)
+	}
+	if committed {
+		t.Fatal("prepareConfig committed shell state")
+	}
+	if h.policy.Height != current.Bar.Height || h.policy.Gap != current.Bar.Gap {
+		t.Fatalf("live policy changed to height=%d gap=%d", h.policy.Height, h.policy.Gap)
+	}
+	if o.cfg.Bar.Height != current.Bar.Height {
+		t.Fatalf("owner config height = %d, want %d", o.cfg.Bar.Height, current.Bar.Height)
+	}
+	if len(prepared.hosts) != 1 || prepared.hosts[0].policy.Height != 56 || prepared.hosts[0].policy.Gap != 6 {
+		t.Fatalf("prepared hosts = %+v, want DP-1 policy 56/6", prepared.hosts)
+	}
+}
+
+func TestApplyConfigCommitsDisabledPoliciesTogether(t *testing.T) {
+	t.Parallel()
+
+	current := config.Default()
+	hosts := newHostSet()
+	for global, connector := range map[uint32]string{7: "DP-1", 8: "HDMI-A-1"} {
+		h := newHost(global, nil)
+		h.connector = connector
+		h.doneSeen = true
+		h.state = hostIdle
+		h.policy = current.Bar
+		hosts.hosts[global] = h
+		hosts.arrival = append(hosts.arrival, global)
+	}
+	candidate := config.Default()
+	candidate.Bar.Enabled = false
+	committed := false
+	o := owner{
+		cfg:   &current,
+		hosts: hosts,
+		cb: Callbacks{PrepareConfig: func(_ config.Config, connectors []string) (PreparedConfig, error) {
+			if len(connectors) != 0 {
+				t.Fatalf("enabled connectors = %v, want none", connectors)
+			}
+			return PreparedConfig{Hosts: map[string]HostCallbacks{}, Commit: func() { committed = true }}, nil
+		}},
+	}
+
+	if err := o.applyConfig(candidate); err != nil {
+		t.Fatalf("applyConfig: %v", err)
+	}
+	if !committed {
+		t.Fatal("applyConfig did not commit the prepared shell state")
+	}
+	if o.cfg.Bar.Enabled {
+		t.Fatal("owner retained the enabled configuration")
+	}
+	for _, h := range hosts.each() {
+		if h.policy.Enabled {
+			t.Fatalf("%s retained its enabled policy", h.connector)
+		}
+		if h.state != hostIdle {
+			t.Fatalf("%s state = %v, want hostIdle", h.connector, h.state)
+		}
+	}
+}
+
+func TestHotplugUsesTheAcceptedOutputPolicy(t *testing.T) {
+	t.Parallel()
+
+	current := config.Default()
+	candidate := config.Default()
+	override := candidate.Bar
+	override.Enabled = false
+	override.Height = 56
+	override.Gap = 6
+	candidate.Outputs = []config.OutputOverride{{Connector: "DP-1", Bar: override}}
+	committed := false
+	built := false
+	o := owner{
+		cfg:   &current,
+		hosts: newHostSet(),
+		cb: Callbacks{
+			NewHost: func(string) (HostCallbacks, error) {
+				built = true
+				return validHostCallbacks(), nil
+			},
+			PrepareConfig: func(_ config.Config, _ []string) (PreparedConfig, error) {
+				return PreparedConfig{Hosts: map[string]HostCallbacks{}, Commit: func() { committed = true }}, nil
+			},
+		},
+	}
+
+	if err := o.applyConfig(candidate); err != nil {
+		t.Fatalf("applyConfig: %v", err)
+	}
+	if !committed {
+		t.Fatal("candidate was not committed")
+	}
+	h, _ := o.hosts.add(9, nil)
+	h.connector = "DP-1"
+	h.doneSeen = true
+	h.state = hostReady
+	if err := o.hostBecameReady(h); err != nil {
+		t.Fatalf("hostBecameReady: %v", err)
+	}
+	if built {
+		t.Fatal("hotplug built a bar disabled by the accepted override")
+	}
+	if h.policy.Height != 56 || h.policy.Gap != 6 || h.policy.Enabled {
+		t.Fatalf("hotplug policy = %+v, want disabled 56/6 override", h.policy)
+	}
+}
+
+func validHostCallbacks() HostCallbacks {
+	return HostCallbacks{
+		Configure: func(int, int, int) error { return nil },
+		Render:    func([]byte, int, int, int) error { return nil },
+		Handle:    func(Event) bool { return false },
+	}
+}

@@ -78,11 +78,11 @@ func run(ctx context.Context) error {
 
 	runErr := wayland.Run(ctx, cfg, wayland.Callbacks{
 		NewHost:       registry.NewHost,
+		PrepareConfig: registry.PrepareConfig,
 		DropHost:      registry.DropHost,
 		Invalidations: registry.Invalidations(),
 		Reloads:       reloads,
 		ConfigPath:    cfgPath,
-		OnConfig:      registry.SetConfig,
 	})
 	if runErr != nil {
 		return runErr

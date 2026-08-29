@@ -107,3 +107,51 @@ func TestDropHostReleasesTheBar(t *testing.T) {
 		t.Fatal("DropHost left the bar behind")
 	}
 }
+
+func TestPrepareConfigReplacesAllBarsOnCommit(t *testing.T) {
+	t.Parallel()
+
+	reg := NewRegistry(config.Default())
+	reg.UpdateNiri(niri.Snapshot{Workspaces: []niri.Workspace{
+		{Output: "DP-1", Name: "web", Focused: true},
+		{Output: "HDMI-A-1", Name: "chat", Active: true},
+	}})
+	for _, connector := range []string{"DP-1", "HDMI-A-1"} {
+		if _, err := reg.NewHost(connector); err != nil {
+			t.Fatalf("NewHost(%s): %v", connector, err)
+		}
+	}
+	beforeDP := reg.bars["DP-1"]
+	beforeHDMI := reg.bars["HDMI-A-1"]
+
+	candidate := config.Default()
+	candidate.Theme.Accent = "#ff8800"
+	candidate.Bar.Left = []string{"workspace"}
+	candidate.Bar.Center = nil
+	prepared, err := reg.PrepareConfig(candidate, []string{"DP-1", "HDMI-A-1"})
+	if err != nil {
+		t.Fatalf("PrepareConfig: %v", err)
+	}
+
+	if reg.bars["DP-1"] != beforeDP || reg.bars["HDMI-A-1"] != beforeHDMI {
+		t.Fatal("PrepareConfig changed live bars before commit")
+	}
+	if len(prepared.Hosts) != 2 {
+		t.Fatalf("prepared hosts = %d, want 2", len(prepared.Hosts))
+	}
+
+	prepared.Commit()
+	if reg.bars["DP-1"] == beforeDP || reg.bars["HDMI-A-1"] == beforeHDMI {
+		t.Fatal("commit retained an old bar")
+	}
+	if got := reg.bars["DP-1"].WorkspaceLabel(); got != "Workspace: web" {
+		t.Fatalf("DP-1 label = %q, want held workspace", got)
+	}
+	if got := reg.bars["HDMI-A-1"].WorkspaceLabel(); got != "Workspace: chat" {
+		t.Fatalf("HDMI-A-1 label = %q, want held workspace", got)
+	}
+	wantAccent := (Color{R: 0xff, G: 0x88, B: 0x00, A: 0xff})
+	if got := reg.bars["DP-1"].theme.Accent; got != wantAccent {
+		t.Fatalf("DP-1 accent = %+v, want %+v", got, wantAccent)
+	}
+}

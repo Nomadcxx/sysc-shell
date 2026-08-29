@@ -33,14 +33,6 @@ func NewRegistry(cfg config.Config) *Registry {
 	}
 }
 
-// SetConfig installs an accepted candidate. Bars created after this point use
-// it; existing bars are rebuilt by the owner when their geometry changes.
-func (r *Registry) SetConfig(cfg config.Config) {
-	r.mu.Lock()
-	r.cfg = cfg
-	r.mu.Unlock()
-}
-
 // Invalidations is the channel the Wayland owner receives from. The registry
 // owns it and never closes it.
 func (r *Registry) Invalidations() <-chan wayland.Invalidation { return r.invalidations }
@@ -51,10 +43,7 @@ func (r *Registry) NewHost(connector string) (wayland.HostCallbacks, error) {
 	cfg := r.cfg
 	r.mu.Unlock()
 
-	// The theme is resolved per connector, so a per-output geometry override
-	// reaches the bar rather than only the base policy.
-	policy := cfg.ForConnector(connector)
-	bar, err := NewWithTheme(ThemeFrom(cfg, policy), policy)
+	bar, callbacks, err := buildHost(cfg, connector)
 	if err != nil {
 		return wayland.HostCallbacks{}, err
 	}
@@ -66,7 +55,47 @@ func (r *Registry) NewHost(connector string) (wayland.HostCallbacks, error) {
 	r.bars[connector] = bar
 	r.mu.Unlock()
 
-	return wayland.HostCallbacks{
+	return callbacks, nil
+}
+
+// PrepareConfig builds every enabled connector's replacement bar before the
+// caller changes live host policy. Commit publishes the complete set under one
+// registry lock and applies the latest workspace labels at that point.
+func (r *Registry) PrepareConfig(cfg config.Config, connectors []string) (wayland.PreparedConfig, error) {
+	bars := make(map[string]*Proof, len(connectors))
+	hosts := make(map[string]wayland.HostCallbacks, len(connectors))
+	for _, connector := range connectors {
+		bar, callbacks, err := buildHost(cfg, connector)
+		if err != nil {
+			return wayland.PreparedConfig{}, err
+		}
+		bars[connector] = bar
+		hosts[connector] = callbacks
+	}
+
+	return wayland.PreparedConfig{
+		Hosts: hosts,
+		Commit: func() {
+			r.mu.Lock()
+			for connector, bar := range bars {
+				if label, ok := r.workspaces[connector]; ok {
+					bar.SetWorkspace(label)
+				}
+			}
+			r.cfg = cfg
+			r.bars = bars
+			r.mu.Unlock()
+		},
+	}, nil
+}
+
+func buildHost(cfg config.Config, connector string) (*Proof, wayland.HostCallbacks, error) {
+	policy := cfg.ForConnector(connector)
+	bar, err := NewWithTheme(ThemeFrom(cfg, policy), policy)
+	if err != nil {
+		return nil, wayland.HostCallbacks{}, err
+	}
+	return bar, wayland.HostCallbacks{
 		Configure: bar.Configure,
 		Render:    bar.Render,
 		Handle:    bar.Handle,
