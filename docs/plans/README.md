@@ -6,23 +6,30 @@ Every design, plan, and handover this project has produced, with where it lives 
 live. Add a row here in the same commit that adds a document. A document that is not in this register is
 one the project will lose.
 
+## This file indexes documents. bd tracks state.
+
+`bd ready` and `bd blocked` are authoritative for what is done, in flight, or gated. This register is
+authoritative for what documents exist and what each one is for. Do not duplicate status between them: a
+status written into a document header drifts, and one already did.
+
 ## Why this file exists
 
 Documents are written on milestone branches and only reach `main` when that milestone merges. No branch
 currently holds the whole set:
 
-| Branch | Head | Holds |
-|---|---|---|
-| `main` | `296b0eb` | Milestone 0 and 1 documents, plus the Milestone 2 commission |
-| `milestone/stable-bar` | `57b49f0` | everything on `main`, plus the three Milestone 2 documents |
-| `milestone/widget-foundation` | `9a114eb` | everything on `main`, plus the five Tranche 3A documents |
+**Resolved on 2026-08-30.** Documents now land on `main` as docs-only commits as soon as they are
+written, so every branch and worktree sees them. `main` fast-forwarded to `5512816` to bring the Tranche
+3A set across.
 
-`milestone/stable-bar` and `milestone/widget-foundation` do **not** see each other's documents. Read the
-branch column before concluding a document does not exist.
+One exception remains: the three Milestone 2 documents still exist only on `milestone/stable-bar`, because
+that branch is mid-correction and its owning agent is still working. They land when it merges.
 
-**This register is itself subject to that problem.** It lives on `milestone/widget-foundation`. Carry it
-forward on every merge and re-check it against `git ls-tree -r --name-only <branch> -- docs/` rather than
-trusting it blindly.
+| Branch | Holds |
+|---|---|
+| `main` | Every document except the three Milestone 2 ones |
+| `milestone/stable-bar` | Everything on `main` at branch time, plus the three Milestone 2 documents |
+
+Re-check with `git ls-tree -r --name-only <branch> -- docs/` rather than trusting this table blindly.
 
 ## Document kinds
 
