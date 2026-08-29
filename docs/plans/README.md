@@ -118,13 +118,30 @@ Split into four reviewed tranches by the charter. Only 3A is designed.
 | 3C | Battery and remaining time | **Blocked**: needs `sysc-metrics` M2 power and thermal gates. |
 | 3D | Weather, icons, meter/graph/tooltip nodes | Not started. Needs the icon-asset policy applied and an Open-Meteo decision. |
 
-## Milestones 4 to 8 — not yet designed
+## Milestone 4 — panels and standard controls
+
+Designed and planned on `milestone/panels-controls` (branched from `296b0eb`), reviewed 2026-08-30.
+
+| Document | Kind | Branch | State |
+|---|---|---|---|
+| `2026-08-30-panels-and-controls-prior-art.md` | assessment | `milestone/panels-controls` | Noctalia v5 and DMS v1.5.3 inventories with file:line evidence. |
+| `2026-08-30-panels-and-controls-research.md` | research | `milestone/panels-controls` | Niri capability claims, source-verified. |
+| `2026-08-30-panel-foundation-design.md` | design | `milestone/panels-controls` | Tranche 4A. Owner-approved. D1–D13. |
+| `2026-08-30-panel-foundation.md` | plan | `milestone/panels-controls` | Tranche 4A, 14 tasks. |
+| `2026-08-30-settings-osd-theme-catalog-design.md` | design | `milestone/panels-controls` | Tranche 4B. Owner-approved. D1–D10. |
+| `2026-08-30-settings-osd-theme-catalog.md` | plan | `milestone/panels-controls` | Tranche 4B, 14 tasks. |
+| `2026-08-30-milestone-4-review.md` | review | `main` | Verdict: proceed after two blocking findings. |
+
+Two blockers before 4A executes: the `sysc-metrics` local `replace` (violates a recorded stop condition
+and bypasses the qualification gate `sysc-7`), and a config reload closing the settings panel that
+triggered it. See the review.
+
+## Milestones 5 to 8 — not yet designed
 
 No design or plan exists for any of these. The roadmap is the only record.
 
 | Milestone | Scope | Note |
 |---|---|---|
-| 4 | Panels and standard controls | **The next milestone after 3.** Its rule is that candidate components enter only with a consumer. Accessibility becomes an acceptance gate here. |
 | 5 | Notifications and system tray | Depends on `sysc-notify` and `sysc-tray`, neither of which has a repository yet. |
 | 6 | External widget and plugin host | Versions the vocabulary the built-in widgets prove. |
 | 7 | Shell breadth | Launcher is item 1. It consumes Milestone 4's text field, virtual list, scroll area, keyboard focus, and popout placement, so its component demands are worth capturing while Milestone 4 is designed. |
