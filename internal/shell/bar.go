@@ -1,5 +1,5 @@
-// Package shell holds the proof application: the model, its retained tree, and
-// the projection from Niri state into that tree.
+// Package shell holds the bar model: its retained tree, its widgets, and the
+// projection from service and Niri state into that tree.
 package shell
 
 import (
@@ -23,13 +23,13 @@ const BarHeight = 48
 // BarGap is the outer gap between the screen edge and the painted body.
 const BarGap = 4
 
-// Proof owns the model, the retained tree, the text renderer and style, and one
-// buffered invalidation channel.
+// Bar owns the model, the retained tree, the text renderer and style, and one
+// buffered invalidation channel, for exactly one output.
 //
 // UpdateNiri, Handle, and rendering arrive from different goroutines. The mutex
 // is held only while copying or changing state; shaping and painting happen
 // after the state has been copied out.
-type Proof struct {
+type Bar struct {
 	mu        sync.Mutex
 	workspace string
 	pressed   string
@@ -51,12 +51,12 @@ type Proof struct {
 }
 
 // New builds a bar from the default theme and the default item set.
-func New() (*Proof, error) {
+func New() (*Bar, error) {
 	return NewWithTheme(DefaultTheme(), config.Default().Bar)
 }
 
 // NewWithTheme builds a bar from resolved theme tokens and item ids.
-func NewWithTheme(theme Theme, policy config.Bar) (*Proof, error) {
+func NewWithTheme(theme Theme, policy config.Bar) (*Bar, error) {
 	if err := theme.Valid(); err != nil {
 		return nil, err
 	}
@@ -65,7 +65,7 @@ func NewWithTheme(theme Theme, policy config.Bar) (*Proof, error) {
 		return nil, err
 	}
 
-	p := &Proof{
+	b := &Bar{
 		workspace:     "-",
 		theme:         theme,
 		text:          render.NewTextRendererWithFontMap(fonts),
@@ -81,22 +81,22 @@ func NewWithTheme(theme Theme, policy config.Bar) (*Proof, error) {
 		},
 	}
 
-	p.label = &ui.Node{Kind: ui.KindText, Text: p.workspaceLabelLocked()}
+	b.label = &ui.Node{Kind: ui.KindText, Text: b.workspaceLabelLocked()}
 
-	p.left = p.build(policy.Left)
-	p.center = p.build(policy.Center)
-	p.right = p.build(policy.Right)
-	return p, nil
+	b.left = b.build(policy.Left)
+	b.center = b.build(policy.Center)
+	b.right = b.build(policy.Right)
+	return b, nil
 }
 
 // build turns configured items into nodes. Ids are validated at load, so an
 // unknown id cannot reach here.
-func (p *Proof) build(items []config.Item) []*ui.Node {
+func (b *Bar) build(items []config.Item) []*ui.Node {
 	out := make([]*ui.Node, 0, len(items))
 	for _, item := range items {
 		switch item.ID {
 		case "workspace":
-			out = append(out, p.label)
+			out = append(out, b.label)
 		case "clock":
 			out = append(out, &ui.Node{Kind: ui.KindText})
 		case "window-title":
@@ -107,16 +107,16 @@ func (p *Proof) build(items []config.Item) []*ui.Node {
 }
 
 // sections returns the three sections in paint order.
-func (p *Proof) sections() [][]*ui.Node { return [][]*ui.Node{p.left, p.center, p.right} }
+func (b *Bar) sections() [][]*ui.Node { return [][]*ui.Node{b.left, b.center, b.right} }
 
 // Invalidations is the channel the Wayland owner receives from. The proof owns
 // it and never closes it.
-func (p *Proof) Invalidations() <-chan struct{} { return p.invalidations }
+func (b *Bar) Invalidations() <-chan struct{} { return b.invalidations }
 
 // invalidate requests one coalesced redraw.
-func (p *Proof) invalidate() {
+func (b *Bar) invalidate() {
 	select {
-	case p.invalidations <- struct{}{}:
+	case b.invalidations <- struct{}{}:
 	default:
 	}
 }
@@ -124,20 +124,20 @@ func (p *Proof) invalidate() {
 // SetWorkspace records this output's workspace label and reports whether it
 // changed. The Registry owns invalidation, because it knows which connector the
 // redraw belongs to.
-func (p *Proof) SetWorkspace(label string) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if label == p.workspace {
+func (b *Bar) SetWorkspace(label string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if label == b.workspace {
 		return false
 	}
-	p.workspace = label
+	b.workspace = label
 	return true
 }
 
 // UpdateNiri applies a workspace snapshot, invalidating only on a real change.
-func (p *Proof) UpdateNiri(snapshot niri.Snapshot) {
-	if p.SetWorkspace(activeWorkspace(snapshot)) {
-		p.invalidate()
+func (b *Bar) UpdateNiri(snapshot niri.Snapshot) {
+	if b.SetWorkspace(activeWorkspace(snapshot)) {
+		b.invalidate()
 	}
 }
 
@@ -156,79 +156,79 @@ func activeWorkspace(snapshot niri.Snapshot) string {
 	return "-"
 }
 
-func (p *Proof) workspaceLabelLocked() string { return "Workspace: " + p.workspace }
+func (b *Bar) workspaceLabelLocked() string { return "Workspace: " + b.workspace }
 
 // WorkspaceLabel reports the rendered workspace text.
-func (p *Proof) WorkspaceLabel() string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.workspaceLabelLocked()
+func (b *Bar) WorkspaceLabel() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.workspaceLabelLocked()
 }
 
 // Layout arranges the three sections at the logical configure size.
-func (p *Proof) Layout(width, height int) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.layoutLocked(width, height)
+func (b *Bar) Layout(width, height int) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.layoutLocked(width, height)
 }
 
 // contentLocked derives the content band from the theme tokens. The surface is
 // the configure size; the body is that surface inset by the gap on the anchored
 // edge and both ends; the content is the body inset by the padding.
-func (p *Proof) contentLocked(width, height int) ui.Rect {
-	body := p.bodyLocked(width, height)
-	pad := p.theme.BarPadding
+func (b *Bar) contentLocked(width, height int) ui.Rect {
+	body := b.bodyLocked(width, height)
+	pad := b.theme.BarPadding
 	return ui.Rect{
 		X: body.X + pad, Y: body.Y + pad,
 		W: max(0, body.W-2*pad), H: max(0, body.H-2*pad),
 	}
 }
 
-func (p *Proof) bodyLocked(width, height int) ui.Rect {
-	gap := p.theme.BarGap
+func (b *Bar) bodyLocked(width, height int) ui.Rect {
+	gap := b.theme.BarGap
 	return ui.Rect{X: gap, Y: gap, W: max(0, width-2*gap), H: max(0, height-gap)}
 }
 
-func (p *Proof) layoutLocked(width, height int) error {
-	p.label.Text = p.workspaceLabelLocked()
+func (b *Bar) layoutLocked(width, height int) error {
+	b.label.Text = b.workspaceLabelLocked()
 	measure := func(s string) (int, int) {
-		w, h, err := p.text.Measure(s, p.style.Size)
+		w, h, err := b.text.Measure(s, b.style.Size)
 		if err != nil {
 			return 0, 0
 		}
 		return w, h
 	}
-	return ui.ArrangeBar(p.contentLocked(width, height),
-		p.left, p.center, p.right, p.theme.Spacing, measure)
+	return ui.ArrangeBar(b.contentLocked(width, height),
+		b.left, b.center, b.right, b.theme.Spacing, measure)
 }
 
 // Configure records a new logical size and scale from the Wayland owner.
-func (p *Proof) Configure(logicalWidth, logicalHeight, scale120 int) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+func (b *Bar) Configure(logicalWidth, logicalHeight, scale120 int) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
 	scale := ui.Scale120(scale120)
 	if !scale.Valid() {
 		return fmt.Errorf("shell: scale120 %d is not usable", scale120)
 	}
-	p.style.Scale120 = scale
-	p.style.Body = p.bodyLocked(logicalWidth, logicalHeight)
-	p.style.Radius = p.theme.Radius
-	return p.layoutLocked(logicalWidth, logicalHeight)
+	b.style.Scale120 = scale
+	b.style.Body = b.bodyLocked(logicalWidth, logicalHeight)
+	b.style.Radius = b.theme.Radius
+	return b.layoutLocked(logicalWidth, logicalHeight)
 }
 
 // Render paints the arranged tree into the physical buffer.
-func (p *Proof) Render(pixels []byte, width, height, stride int) error {
+func (b *Bar) Render(pixels []byte, width, height, stride int) error {
 	canvas, err := render.NewCanvas(pixels, width, height, stride)
 	if err != nil {
 		return err
 	}
 
-	p.mu.Lock()
-	root, style := p.renderViewLocked()
-	p.mu.Unlock()
+	b.mu.Lock()
+	root, style := b.renderViewLocked()
+	b.mu.Unlock()
 
-	return render.Paint(canvas, root, p.text, style)
+	return render.Paint(canvas, root, b.text, style)
 }
 
 // renderViewLocked copies the mutable values painting reads, so the Niri
@@ -236,15 +236,15 @@ func (p *Proof) Render(pixels []byte, width, height, stride int) error {
 //
 // The three sections are already arranged into absolute bounds, so they flatten
 // into one child list: the painter walks bounds, not structure.
-func (p *Proof) renderViewLocked() (*ui.Node, render.ProofStyle) {
-	p.label.Text = p.workspaceLabelLocked()
+func (b *Bar) renderViewLocked() (*ui.Node, render.ProofStyle) {
+	b.label.Text = b.workspaceLabelLocked()
 	root := &ui.Node{Kind: ui.KindRow}
-	for _, section := range p.sections() {
+	for _, section := range b.sections() {
 		for _, n := range section {
 			root.Children = append(root.Children, copyNode(n))
 		}
 	}
-	return root, p.style
+	return root, b.style
 }
 
 // copyNode deep-copies a node so no pointer into live model state reaches the
@@ -264,8 +264,8 @@ func copyNode(n *ui.Node) *ui.Node {
 }
 
 // hitLocked searches every section in reverse paint order.
-func (p *Proof) hitLocked(x, y int) (string, bool) {
-	sections := p.sections()
+func (b *Bar) hitLocked(x, y int) (string, bool) {
+	sections := b.sections()
 	for i := len(sections) - 1; i >= 0; i-- {
 		section := sections[i]
 		for j := len(section) - 1; j >= 0; j-- {
@@ -280,45 +280,45 @@ func (p *Proof) hitLocked(x, y int) (string, bool) {
 // Handle applies a pointer event and reports whether the model changed. A click
 // counts only when the press and the release land on the same node, so the
 // press target is recorded and compared on release.
-func (p *Proof) Handle(event wayland.Event) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+func (b *Bar) Handle(event wayland.Event) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
 	switch event.Kind {
 	case wayland.EventPointerEnter, wayland.EventPointerMotion:
 		// Pointer coordinates carry sub-pixel precision; hit testing works in
 		// whole logical pixels, so they are floored here and nowhere else.
-		p.hoverAt.x = int(math.Floor(event.X))
-		p.hoverAt.y = int(math.Floor(event.Y))
-		p.inside = true
+		b.hoverAt.x = int(math.Floor(event.X))
+		b.hoverAt.y = int(math.Floor(event.Y))
+		b.inside = true
 		return false
 
 	case wayland.EventPointerLeave:
-		p.inside = false
-		p.pressed = ""
+		b.inside = false
+		b.pressed = ""
 		return false
 
 	case wayland.EventPointerPress:
-		if !p.inside {
+		if !b.inside {
 			return false
 		}
-		action, ok := p.hitLocked(p.hoverAt.x, p.hoverAt.y)
+		action, ok := b.hitLocked(b.hoverAt.x, b.hoverAt.y)
 		if ok {
-			p.pressed = action
+			b.pressed = action
 		}
 		return false
 
 	case wayland.EventPointerRelease:
-		pressed := p.pressed
-		p.pressed = ""
-		if pressed == "" || !p.inside {
+		pressed := b.pressed
+		b.pressed = ""
+		if pressed == "" || !b.inside {
 			return false
 		}
-		action, ok := p.hitLocked(p.hoverAt.x, p.hoverAt.y)
+		action, ok := b.hitLocked(b.hoverAt.x, b.hoverAt.y)
 		if !ok || action != pressed {
 			return false
 		}
-		return p.activateLocked(action)
+		return b.activateLocked(action)
 	}
 	return false
 }
@@ -326,4 +326,4 @@ func (p *Proof) Handle(event wayland.Event) bool {
 // activateLocked applies an action and reports whether state changed. No
 // Tranche 3A node carries an action, so this is inert at runtime; the pointer
 // path stays covered by tests and ready for Milestone 4 controls.
-func (p *Proof) activateLocked(action string) bool { return false }
+func (b *Bar) activateLocked(action string) bool { return false }

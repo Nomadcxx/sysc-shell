@@ -42,7 +42,7 @@ func TestProofConcurrentUpdateAndRender(t *testing.T) {
 	wg.Wait()
 }
 
-func newTestProof(t *testing.T) *Proof {
+func newTestProof(t *testing.T) *Bar {
 	t.Helper()
 	p, err := New()
 	if err != nil {
@@ -52,7 +52,7 @@ func newTestProof(t *testing.T) *Proof {
 }
 
 // drain reports how many invalidations are waiting.
-func drain(p *Proof) int {
+func drain(p *Bar) int {
 	count := 0
 	for {
 		select {
@@ -148,7 +148,7 @@ func TestProofRepeatedSnapshotRequestsNoRedraw(t *testing.T) {
 }
 
 // press and release drive a full click at one point.
-func click(p *Proof, x, y int) bool {
+func click(p *Bar, x, y int) bool {
 	p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: float64(x), Y: float64(y)})
 	pressed := p.Handle(wayland.Event{Kind: wayland.EventPointerPress})
 	released := p.Handle(wayland.Event{Kind: wayland.EventPointerRelease})
@@ -156,7 +156,7 @@ func click(p *Proof, x, y int) bool {
 }
 
 // layoutForTest arranges the tree at the proof's fixed height.
-func layoutForTest(t *testing.T, p *Proof, width int) {
+func layoutForTest(t *testing.T, p *Bar, width int) {
 	t.Helper()
 	if err := p.Layout(width, BarHeight); err != nil {
 		t.Fatal(err)
@@ -166,7 +166,7 @@ func layoutForTest(t *testing.T, p *Proof, width int) {
 // withSyntheticAction appends a node carrying an action to the right section.
 // No Tranche 3A widget carries one, so the press/release rule and hit testing
 // are exercised through this node rather than through a shipped widget.
-func withSyntheticAction(t *testing.T, p *Proof, width int) ui.Rect {
+func withSyntheticAction(t *testing.T, p *Bar, width int) ui.Rect {
 	t.Helper()
 	p.right = append(p.right, &ui.Node{
 		Kind: ui.KindButton, Text: "Synthetic", Padding: 4, Action: "synthetic-action",
@@ -180,7 +180,7 @@ func withSyntheticAction(t *testing.T, p *Proof, width int) ui.Rect {
 }
 
 // pressedAction reports the action recorded by the last press.
-func pressedAction(p *Proof) string {
+func pressedAction(p *Bar) string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.pressed

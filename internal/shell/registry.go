@@ -19,7 +19,7 @@ type Registry struct {
 	mu         sync.Mutex
 	cfg        config.Config
 	workspaces map[string]string
-	bars       map[uint32]*Proof
+	bars       map[uint32]*Bar
 	connectors map[uint32]string
 
 	invalidationMu sync.Mutex
@@ -30,7 +30,7 @@ func NewRegistry(cfg config.Config) *Registry {
 	return &Registry{
 		cfg:           cfg,
 		workspaces:    make(map[string]string),
-		bars:          make(map[uint32]*Proof),
+		bars:          make(map[uint32]*Bar),
 		connectors:    make(map[uint32]string),
 		invalidations: make(chan wayland.Invalidation, 8),
 	}
@@ -66,7 +66,7 @@ func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbac
 // caller changes live host policy. Commit publishes the complete set under one
 // registry lock and applies the latest workspace labels at that point.
 func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIdentity) (wayland.PreparedConfig, error) {
-	bars := make(map[uint32]*Proof, len(identities))
+	bars := make(map[uint32]*Bar, len(identities))
 	connectors := make(map[uint32]string, len(identities))
 	hosts := make(map[uint32]wayland.HostCallbacks, len(identities))
 	for _, identity := range identities {
@@ -97,7 +97,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 	}, nil
 }
 
-func buildHost(cfg config.Config, connector string) (*Proof, wayland.HostCallbacks, error) {
+func buildHost(cfg config.Config, connector string) (*Bar, wayland.HostCallbacks, error) {
 	policy := cfg.ForConnector(connector)
 	bar, err := NewWithTheme(ThemeFrom(cfg, policy), policy)
 	if err != nil {
