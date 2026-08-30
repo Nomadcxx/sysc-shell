@@ -201,3 +201,52 @@ func TestZeroMaxWidthIsUnbounded(t *testing.T) {
 		t.Fatalf("width = %d, want the natural 50", got)
 	}
 }
+
+// A short string in a floored node still occupies the floor, so a percentage
+// does not reflow its section as it crosses from one digit to three.
+func TestTextIsFlooredAtItsMinWidth(t *testing.T) {
+	t.Parallel()
+	measure := func(s string, _ bool) (int, int) { return 10 * len([]rune(s)), 10 }
+
+	root := &Node{Kind: KindRow, Children: []*Node{
+		{Kind: KindText, Text: "9%", MinWidth: 40},
+	}}
+	if err := Layout(root, Rect{X: 0, Y: 0, W: 200, H: 20}, measure); err != nil {
+		t.Fatalf("Layout: %v", err)
+	}
+	if got := root.Children[0].Bounds.W; got != 40 {
+		t.Fatalf("floored width = %d, want the 40 floor", got)
+	}
+}
+
+// Text wider than the floor keeps its natural width.
+func TestMinWidthDoesNotShrinkWideText(t *testing.T) {
+	t.Parallel()
+	measure := func(s string, _ bool) (int, int) { return 10 * len([]rune(s)), 10 }
+
+	root := &Node{Kind: KindRow, Children: []*Node{
+		{Kind: KindText, Text: "100%", MinWidth: 20},
+	}}
+	if err := Layout(root, Rect{X: 0, Y: 0, W: 200, H: 20}, measure); err != nil {
+		t.Fatalf("Layout: %v", err)
+	}
+	if got := root.Children[0].Bounds.W; got != 40 {
+		t.Fatalf("width = %d, want the natural 40", got)
+	}
+}
+
+// The floor and the cap compose: the cap still wins over a wider floor.
+func TestMaxWidthStillCapsAFlooredNode(t *testing.T) {
+	t.Parallel()
+	measure := func(s string, _ bool) (int, int) { return 10 * len([]rune(s)), 10 }
+
+	root := &Node{Kind: KindRow, Children: []*Node{
+		{Kind: KindText, Text: "aaaaaaaa", MinWidth: 70, MaxWidth: 50},
+	}}
+	if err := Layout(root, Rect{X: 0, Y: 0, W: 200, H: 20}, measure); err != nil {
+		t.Fatalf("Layout: %v", err)
+	}
+	if got := root.Children[0].Bounds.W; got != 50 {
+		t.Fatalf("width = %d, want the 50 cap to win over the 70 floor", got)
+	}
+}
