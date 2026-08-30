@@ -22,6 +22,12 @@ type Workspace struct {
 	Output  string
 	Active  bool
 	Focused bool
+	// ActiveWindowID is meaningful only when HasActiveWindow is set. It is the
+	// workspace's own active window, which is what makes a per-output focused
+	// title possible; Niri's global focus is a separate concept the shell does
+	// not project.
+	ActiveWindowID  uint64
+	HasActiveWindow bool
 }
 
 // Window is one Niri window. Only the fields the shell projects are decoded.
@@ -56,6 +62,8 @@ type wireWorkspace struct {
 	Output    *string `json:"output"`
 	IsActive  *bool   `json:"is_active"`
 	IsFocused *bool   `json:"is_focused"`
+
+	ActiveWindowID *uint64 `json:"active_window_id"`
 }
 
 // project validates the required fields and maps nullable ones to empty
@@ -79,6 +87,9 @@ func (w wireWorkspace) project() (Workspace, error) {
 	if w.Output != nil {
 		out.Output = *w.Output
 	}
+	if w.ActiveWindowID != nil {
+		out.ActiveWindowID, out.HasActiveWindow = *w.ActiveWindowID, true
+	}
 	return out, nil
 }
 
@@ -89,6 +100,11 @@ type wireWorkspacesChanged struct {
 type wireWorkspaceActivated struct {
 	ID      *uint64 `json:"id"`
 	Focused *bool   `json:"focused"`
+}
+
+type wireWorkspaceActiveWindowChanged struct {
+	WorkspaceID    *uint64 `json:"workspace_id"`
+	ActiveWindowID *uint64 `json:"active_window_id"`
 }
 
 // wireWindow decodes one window. Only id is required; Niri sends title,
@@ -172,6 +188,32 @@ func (s *state) apply(line []byte) (bool, error) {
 			return false, fmt.Errorf("niri: WorkspaceActivated is missing id or focused")
 		}
 		return true, s.activate(*activated.ID, *activated.Focused)
+	}
+
+	if payload, ok := envelope["WorkspaceActiveWindowChanged"]; ok {
+		var changed wireWorkspaceActiveWindowChanged
+		if err := json.Unmarshal(payload, &changed); err != nil {
+			return false, fmt.Errorf("niri: decode WorkspaceActiveWindowChanged: %w", err)
+		}
+		if changed.WorkspaceID == nil {
+			return false, fmt.Errorf("niri: WorkspaceActiveWindowChanged is missing workspace_id")
+		}
+		i := slices.IndexFunc(s.workspaces, func(w Workspace) bool { return w.ID == *changed.WorkspaceID })
+		if i < 0 {
+			// WorkspacesChanged always precedes this event, so an unknown id
+			// means the stream and this state have diverged. There is nowhere
+			// to record the active window, so the title would go stale
+			// silently.
+			return false, fmt.Errorf(
+				"niri: WorkspaceActiveWindowChanged names unknown workspace %d", *changed.WorkspaceID)
+		}
+		if changed.ActiveWindowID != nil {
+			s.workspaces[i].ActiveWindowID = *changed.ActiveWindowID
+			s.workspaces[i].HasActiveWindow = true
+		} else {
+			s.workspaces[i].ActiveWindowID, s.workspaces[i].HasActiveWindow = 0, false
+		}
+		return true, nil
 	}
 
 	if payload, ok := envelope["WindowsChanged"]; ok {

@@ -114,3 +114,82 @@ func TestWindowWithoutAnIDIsAStreamError(t *testing.T) {
 		t.Fatal("a malformed event published partial state")
 	}
 }
+
+const (
+	// Two outputs, each with its own active workspace and active window.
+	twoOutputWorkspaces = `{"WorkspacesChanged":{"workspaces":[` +
+		`{"id":5,"idx":1,"name":"code","output":"DP-9","is_urgent":false,` +
+		`"is_active":true,"is_focused":true,"active_window_id":80},` +
+		`{"id":6,"idx":1,"name":null,"output":"HDMI-A-9","is_urgent":false,` +
+		`"is_active":true,"is_focused":false,"active_window_id":81}]}}`
+
+	activeWindowChanged        = `{"WorkspaceActiveWindowChanged":{"workspace_id":5,"active_window_id":82}}`
+	activeWindowCleared        = `{"WorkspaceActiveWindowChanged":{"workspace_id":5,"active_window_id":null}}`
+	activeWindowUnknownWkspace = `{"WorkspaceActiveWindowChanged":{"workspace_id":404,"active_window_id":82}}`
+)
+
+// workspaceByID finds a workspace in a snapshot, failing the test if absent.
+func workspaceByID(t *testing.T, snap Snapshot, id uint64) Workspace {
+	t.Helper()
+	for _, w := range snap.Workspaces {
+		if w.ID == id {
+			return w
+		}
+	}
+	t.Fatalf("workspace %d not in snapshot", id)
+	return Workspace{}
+}
+
+func TestWorkspacesCarryTheirActiveWindow(t *testing.T) {
+	t.Parallel()
+	s := applyAll(t, twoOutputWorkspaces)
+	snap := s.snapshot()
+
+	five := workspaceByID(t, snap, 5)
+	if !five.HasActiveWindow || five.ActiveWindowID != 80 {
+		t.Fatalf("workspace 5 active window = %d/%v, want 80/true",
+			five.ActiveWindowID, five.HasActiveWindow)
+	}
+	six := workspaceByID(t, snap, 6)
+	if !six.HasActiveWindow || six.ActiveWindowID != 81 {
+		t.Fatalf("workspace 6 active window = %d/%v, want 81/true",
+			six.ActiveWindowID, six.HasActiveWindow)
+	}
+}
+
+func TestWorkspaceActiveWindowChangedUpdatesOneWorkspace(t *testing.T) {
+	t.Parallel()
+	s := applyAll(t, twoOutputWorkspaces, activeWindowChanged)
+	snap := s.snapshot()
+
+	if got := workspaceByID(t, snap, 5); got.ActiveWindowID != 82 {
+		t.Fatalf("workspace 5 active window = %d, want 82", got.ActiveWindowID)
+	}
+	// The other output's workspace must be untouched: this is a per-output
+	// projection, not a global focus signal.
+	if got := workspaceByID(t, snap, 6); got.ActiveWindowID != 81 {
+		t.Fatalf("workspace 6 active window = %d, want the unchanged 81", got.ActiveWindowID)
+	}
+}
+
+func TestWorkspaceActiveWindowCanBeCleared(t *testing.T) {
+	t.Parallel()
+	s := applyAll(t, twoOutputWorkspaces, activeWindowCleared)
+
+	if got := workspaceByID(t, s.snapshot(), 5); got.HasActiveWindow {
+		t.Fatalf("workspace 5 still reports active window %d after a null", got.ActiveWindowID)
+	}
+}
+
+// Unlike a close for an unknown window, this event carries state with nowhere
+// to go: the projection would keep showing a stale title with no resync path.
+func TestWorkspaceActiveWindowChangedForAnUnknownWorkspaceIsAStreamError(t *testing.T) {
+	t.Parallel()
+	var s state
+	if _, err := s.apply([]byte(twoOutputWorkspaces)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if _, err := s.apply([]byte(activeWindowUnknownWkspace)); err == nil {
+		t.Fatal("an unknown workspace id was accepted")
+	}
+}
