@@ -44,6 +44,8 @@ type HostCallbacks struct {
 	Render func(pixels []byte, width, height, stride int) error
 	// Handle consumes a pointer event and reports whether state changed.
 	Handle func(Event) bool
+	// OpaqueBackground is the resolved palette opacity for this surface.
+	OpaqueBackground bool
 }
 
 // OutputHost owns everything scoped to one wl_output. Its identity is the

@@ -308,8 +308,9 @@ func TestHotplugUsesTheAcceptedOutputPolicy(t *testing.T) {
 
 func validHostCallbacks() HostCallbacks {
 	return HostCallbacks{
-		Configure: func(int, int, int) error { return nil },
-		Render:    func([]byte, int, int, int) error { return nil },
-		Handle:    func(Event) bool { return false },
+		Configure:        func(int, int, int) error { return nil },
+		Render:           func([]byte, int, int, int) error { return nil },
+		Handle:           func(Event) bool { return false },
+		OpaqueBackground: true,
 	}
 }

@@ -313,7 +313,6 @@ func (o *owner) bindOutput(global, version uint32) {
 func (o *owner) hostBecameReady(h *OutputHost) error {
 	if o.cfg != nil {
 		h.policy = o.cfg.ForConnector(h.connector)
-		h.opaqueBackground = true // default surface is opaque; generated tokens set this later
 	}
 	if !h.policy.Enabled {
 		h.state = hostIdle
@@ -323,6 +322,7 @@ func (o *owner) hostBecameReady(h *OutputHost) error {
 	if err != nil {
 		return err
 	}
+	h.opaqueBackground = app.OpaqueBackground
 	if err := app.validate(h.connector); err != nil {
 		if o.cb.DropHost != nil {
 			o.cb.DropHost(h.global)
@@ -780,9 +780,8 @@ func (o *owner) prepareConfig(cfg config.Config) (preparedOwnerConfig, error) {
 	updates := make([]preparedHostConfig, 0, len(ready))
 	for i, h := range ready {
 		update := preparedHostConfig{
-			host:             h,
-			policy:           policies[i],
-			opaqueBackground: true, // default surface is opaque; generated tokens set this later
+			host:   h,
+			policy: policies[i],
 		}
 		if update.policy.Enabled {
 			app, ok := prepared.Hosts[h.global]
@@ -790,6 +789,7 @@ func (o *owner) prepareConfig(cfg config.Config) (preparedOwnerConfig, error) {
 				return abandon(prepared,
 					fmt.Errorf("wayland: prepared config omitted %s", h.connector))
 			}
+			update.opaqueBackground = app.OpaqueBackground
 			if err := app.validate(h.connector); err != nil {
 				return abandon(prepared, err)
 			}

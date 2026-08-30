@@ -2,9 +2,11 @@ package shell
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
 
 // Color is the painter's colour type, re-exported so components name one type.
@@ -54,20 +56,55 @@ func DefaultTheme() Theme {
 	}
 }
 
+// ThemeFromTokens maps generated Material 3 tokens onto the bar theme.
+func ThemeFromTokens(tok theme.Tokens, radius int) Theme {
+	t := DefaultTheme()
+	t.Radius = radius
+	t.Background = parseColor(tok.Surface, t.Background)
+	t.Foreground = parseColor(tok.OnSurface, t.Foreground)
+	t.Accent = parseColor(tok.Primary, t.Accent)
+	t.Muted = parseColor(tok.OnSurfaceVariant, t.Muted)
+	t.Error = parseColor(tok.Error, t.Error)
+	return t
+}
+
 // ThemeFrom maps a validated configuration onto theme tokens.
 //
 // Geometry comes from the supplied bar policy rather than the base bar, so a
 // per-output override reaches the theme the bar is actually built from.
-// Palette colours stay on DefaultTheme until generation maps tokens onto them.
+// Palette colours stay on DefaultTheme until the registry supplies generated tokens.
 func ThemeFrom(cfg config.Config, bar config.Bar) Theme {
-	t := DefaultTheme()
+	return withBarGeometry(ThemeFromTokens(theme.Fallback, cfg.Theme.Radius), bar)
+}
+
+func withBarGeometry(t Theme, bar config.Bar) Theme {
 	t.BarHeight = bar.Height
 	t.BarGap = bar.Gap
 	t.BarPadding = bar.Padding
 	t.Spacing = bar.Spacing
 	t.TextSize = bar.FontSize
-	t.Radius = cfg.Theme.Radius
 	return t
+}
+
+// BackgroundOpaque reports whether the surface token is fully opaque.
+func (t Theme) BackgroundOpaque() bool {
+	return t.Background.A == 0xff
+}
+
+// parseColor reads #RRGGBB or #RRGGBBAA, falling back when the string is not
+// one of those shapes.
+func parseColor(s string, fallback Color) Color {
+	if len(s) != 7 && len(s) != 9 {
+		return fallback
+	}
+	v, err := strconv.ParseUint(s[1:], 16, 32)
+	if err != nil {
+		return fallback
+	}
+	if len(s) == 7 {
+		return Color{R: uint8(v >> 16), G: uint8(v >> 8), B: uint8(v), A: 0xff}
+	}
+	return Color{R: uint8(v >> 24), G: uint8(v >> 16), B: uint8(v >> 8), A: uint8(v)}
 }
 
 // Geometry derives the Wayland dimensions from the tokens. The surface height

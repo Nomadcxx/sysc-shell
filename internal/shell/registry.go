@@ -8,6 +8,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
 
 // Registry owns every bar, the services they consume, and the state they read.
@@ -31,10 +32,11 @@ type Registry struct {
 	clock   *services.Clock
 	metrics *services.Metrics
 	weather *services.Weather
-	// sample is the newest sampling pass, shared by every bar.
-	sample services.Snapshot
-	// reading is the newest weather observation, shared by every bar.
+	sample  services.Snapshot
 	reading services.Reading
+
+	tokens   theme.Tokens
+	themeGen theme.Generator
 
 	// invalidations carries one entry per bar whose rendered text changed.
 	// The Wayland owner receives from it; the registry owns it and never
@@ -47,7 +49,8 @@ type Registry struct {
 }
 
 func NewRegistry(cfg config.Config) *Registry {
-	return &Registry{
+	gen := theme.Generator{}
+	r := &Registry{
 		cfg:     cfg,
 		outputs: make(map[string]outputState),
 		bars:    make(map[uint32]*Bar),
@@ -56,10 +59,39 @@ func NewRegistry(cfg config.Config) *Registry {
 		metrics: services.NewMetrics(),
 		weather: services.NewWeather(
 			cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit)),
+		themeGen:      gen,
 		invalidations: make(chan wayland.Invalidation, 8),
 		closed:        make(chan struct{}),
 		dwell:         newDwell(defaultDwell),
 	}
+	r.tokens = r.generateTheme(cfg)
+	return r
+}
+
+// Tokens is the palette the registry generated at construction or last reload.
+func (r *Registry) Tokens() theme.Tokens {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.tokens
+}
+
+// ReducedMotion reports the accessibility preference from the live config.
+func (r *Registry) ReducedMotion() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cfg.Accessibility.ReducedMotion
+}
+
+func (r *Registry) generateTheme(cfg config.Config) theme.Tokens {
+	tok, _ := r.themeGen.Generate(
+		theme.Source{Kind: cfg.ThemeGen.Source, Seed: cfg.ThemeGen.Seed},
+		theme.Options{
+			Mode:         cfg.ThemeGen.Mode,
+			Scheme:       cfg.ThemeGen.Scheme,
+			HighContrast: cfg.Accessibility.HighContrast,
+		},
+	)
+	return tok
 }
 
 // Clock is the shared clock service. The process pumps its updates into
@@ -104,9 +136,10 @@ func (r *Registry) publish(globals []uint32) {
 func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbacks, error) {
 	r.mu.Lock()
 	cfg := r.cfg
+	tok := r.tokens
 	r.mu.Unlock()
 
-	bar, leases, callbacks, err := r.buildBar(cfg, connector)
+	bar, leases, callbacks, err := r.buildBar(cfg, connector, tok)
 	if err != nil {
 		return wayland.HostCallbacks{}, err
 	}
@@ -128,12 +161,13 @@ func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbac
 // reaches zero, so it is never restarted. A failure at any point releases
 // exactly what this call acquired.
 func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIdentity) (wayland.PreparedConfig, error) {
+	tok := r.generateTheme(cfg)
 	bars := make(map[uint32]*Bar, len(identities))
 	leases := make(map[uint32][]*services.Lease, len(identities))
 	callbacks := make(map[uint32]wayland.HostCallbacks, len(identities))
 
 	for _, identity := range identities {
-		bar, held, hooks, err := r.buildBar(cfg, identity.Connector)
+		bar, held, hooks, err := r.buildBar(cfg, identity.Connector, tok)
 		if err != nil {
 			for _, acquired := range leases {
 				releaseAll(acquired)
@@ -165,6 +199,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 					bar.apply(r.viewLocked(bar.connector()))
 				}
 				r.cfg = cfg
+				r.tokens = tok
 				r.bars = bars
 				r.leases = leases
 				r.mu.Unlock()
@@ -323,11 +358,12 @@ func (r *Registry) historyLocked() map[services.Selector][]float64 {
 
 // buildBar creates one bar and acquires the services its items need. A failure
 // releases whatever was already acquired, so a rejected build leaks nothing.
-func (r *Registry) buildBar(cfg config.Config, connector string) (
+func (r *Registry) buildBar(cfg config.Config, connector string, tok theme.Tokens) (
 	*Bar, []*services.Lease, wayland.HostCallbacks, error,
 ) {
 	policy := cfg.ForConnector(connector)
-	bar, err := NewWithTheme(ThemeFrom(cfg, policy), policy, connector)
+	th := withBarGeometry(ThemeFromTokens(tok, cfg.Theme.Radius), policy)
+	bar, err := NewWithTheme(th, policy, connector)
 	if err != nil {
 		return nil, nil, wayland.HostCallbacks{}, err
 	}
@@ -366,9 +402,10 @@ func (r *Registry) buildBar(cfg config.Config, connector string) (
 	}
 
 	return bar, leases, wayland.HostCallbacks{
-		Configure: bar.Configure,
-		Render:    bar.Render,
-		Handle:    bar.Handle,
+		Configure:        bar.Configure,
+		Render:           bar.Render,
+		Handle:           bar.Handle,
+		OpaqueBackground: th.BackgroundOpaque(),
 	}, nil
 }
 
