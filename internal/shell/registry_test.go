@@ -335,14 +335,14 @@ func TestAMetricWidgetLeasesItsSource(t *testing.T) {
 	t.Cleanup(reg.Close)
 	newHosts(t, reg, map[uint32]string{1: "DP-9"})
 
-	if !reg.Metrics().Leased(services.SourceCPU) {
+	if !reg.Metrics().SourceLeased(services.SourceCPU) {
 		t.Fatal("a CPU widget did not lease the CPU source")
 	}
 	for _, src := range []services.Source{
 		services.SourceMemory, services.SourceFilesystem,
 		services.SourceBlock, services.SourceNetwork,
 	} {
-		if reg.Metrics().Leased(src) {
+		if reg.Metrics().SourceLeased(src) {
 			t.Fatalf("source %v leased with no widget", src)
 		}
 	}
@@ -413,26 +413,36 @@ func TestAConfigWithNoMetricLeavesTheServiceStopped(t *testing.T) {
 	}
 }
 
-// A graph and a meter carry no text, so text comparison cannot detect their
-// change. A bar carrying one must repaint whenever its snapshot changes.
-func TestABarWithAGraphRepaintsOnEverySample(t *testing.T) {
+// A graph repaints when its window changes, and not otherwise. Its values do
+// change on almost every real tick, so it will repaint often — but that has to
+// follow from the data rather than from the widget's kind.
+func TestAGraphRepaintsWhenItsWindowChanges(t *testing.T) {
 	t.Parallel()
 	cfg := metricConfig()
 	cfg.Bar.Left = []config.Item{{
 		ID: "cpu", Display: "graph", Interval: 2 * time.Second,
 	}}
 
-	reg := NewRegistry(cfg)
-	t.Cleanup(reg.Close)
-	newHosts(t, reg, map[uint32]string{1: "DP-9"})
+	bar, err := NewWithTheme(ThemeFrom(cfg, cfg.Bar), cfg.Bar, "DP-9")
+	if err != nil {
+		t.Fatalf("NewWithTheme: %v", err)
+	}
 
-	snap := services.Snapshot{
-		CPU: &metrics.CPUSnapshot{Usage: metrics.CPUUsage{Fraction: 0.42, Valid: true}},
+	sel := services.Selector{Source: services.SourceCPU}
+	live := services.Snapshot{CPU: &metrics.CPUSnapshot{
+		Usage: metrics.CPUUsage{Fraction: 0.42, Valid: true},
+	}}
+	view := func(samples ...float64) barView {
+		return barView{Metrics: live, History: map[services.Selector][]float64{sel: samples}}
 	}
-	if changed := reg.UpdateMetrics(snap); len(changed) != 1 {
-		t.Fatalf("first sample changed %v, want global 1", changed)
+
+	if !bar.apply(view(0.1, 0.2)) {
+		t.Fatal("the first window did not mark the bar changed")
 	}
-	if changed := reg.UpdateMetrics(snap); len(changed) != 1 {
-		t.Fatalf("a graph bar changed %v, want it repainted on every sample", changed)
+	if bar.apply(view(0.1, 0.2)) {
+		t.Fatal("an identical window marked the bar changed")
+	}
+	if !bar.apply(view(0.1, 0.9)) {
+		t.Fatal("a moved window did not mark the bar changed")
 	}
 }

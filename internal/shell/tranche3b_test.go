@@ -35,12 +35,12 @@ func TestAMixedBarLeasesEverySourceItUses(t *testing.T) {
 	for _, src := range []services.Source{
 		services.SourceCPU, services.SourceMemory, services.SourceNetwork,
 	} {
-		if !reg.Metrics().Leased(src) {
+		if !reg.Metrics().SourceLeased(src) {
 			t.Fatalf("source %v is used by a widget but not leased", src)
 		}
 	}
 	for _, src := range []services.Source{services.SourceFilesystem, services.SourceBlock} {
-		if reg.Metrics().Leased(src) {
+		if reg.Metrics().SourceLeased(src) {
 			t.Fatalf("source %v leased with no widget", src)
 		}
 	}
@@ -215,5 +215,172 @@ func TestAPercentageKeepsOneWidthFromNineToOneHundred(t *testing.T) {
 	if narrow != wide {
 		t.Fatalf("9%% laid out %d wide and 100%% laid out %d; the floor must hold the field",
 			narrow, wide)
+	}
+}
+
+// The end of finding 1: a graph must read the history of the subject its
+// widget names. The service keys rings per subject; this is the shell half —
+// that each widget looks its own key up rather than its source's.
+func TestAGraphPlotsItsOwnSubject(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Bar.Left = []config.Item{
+		{ID: "network", Display: "graph", Interval: time.Second,
+			Interface: "eth9", Direction: "rx"},
+		{ID: "network", Display: "graph", Interval: time.Second,
+			Interface: "eth8", Direction: "rx"},
+	}
+	cfg.Bar.Center, cfg.Bar.Right = nil, nil
+
+	bar, err := NewWithTheme(ThemeFrom(cfg, cfg.Bar), cfg.Bar, "DP-9")
+	if err != nil {
+		t.Fatalf("NewWithTheme: %v", err)
+	}
+
+	busy := services.Selector{Source: services.SourceNetwork, Subject: "eth9", Direction: "rx"}
+	quiet := services.Selector{Source: services.SourceNetwork, Subject: "eth8", Direction: "rx"}
+	bar.apply(barView{
+		Metrics: services.Snapshot{Network: &metrics.NetworkSnapshot{
+			Interfaces: []metrics.NetworkInterface{
+				{Name: "eth9", Rates: metrics.NetworkRates{ReceiveBytesPerSecond: 1000, Valid: true}},
+				{Name: "eth8", Rates: metrics.NetworkRates{ReceiveBytesPerSecond: 50, Valid: true}},
+			},
+		}},
+		History: map[services.Selector][]float64{
+			busy:  {1000, 1000},
+			quiet: {100, 50},
+		},
+	})
+
+	// The steady interface plots flat; the halving one falls. An aggregate
+	// ring would have given both widgets the same shape.
+	if got := bar.left[0].node.Values; len(got) != 2 || got[0] != 1 || got[1] != 1 {
+		t.Fatalf("the steady interface plotted %v, want a flat window", got)
+	}
+	if got := bar.left[1].node.Values; len(got) != 2 || got[0] != 1 || got[1] != 0.5 {
+		t.Fatalf("the halving interface plotted %v, want [1 0.5]", got)
+	}
+}
+
+// The end of finding 2: a meter with no reading must not render as a genuine
+// zero, because that is what an idle machine looks like.
+func TestAMeterWithNoReadingIsAbsentRatherThanZero(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(mixedConfig())
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9"})
+
+	meter := reg.bars[1].left[1].node
+
+	reg.UpdateMetrics(services.Snapshot{Memory: &metrics.MemorySnapshot{
+		Memory: metrics.Capacity{TotalBytes: 1000, UsedBytes: 250},
+	}})
+	if meter.Absent || meter.Value != 0.25 {
+		t.Fatalf("a read meter is absent=%v value=%v, want present at 0.25", meter.Absent, meter.Value)
+	}
+
+	// The collector fails: the source is nil this pass.
+	reg.UpdateMetrics(services.Snapshot{})
+	if !meter.Absent {
+		t.Fatal("a meter with no reading is not marked absent, so it paints as 0%")
+	}
+
+	// And it recovers.
+	reg.UpdateMetrics(services.Snapshot{Memory: &metrics.MemorySnapshot{
+		Memory: metrics.Capacity{TotalBytes: 1000, UsedBytes: 500},
+	}})
+	if meter.Absent || meter.Value != 0.5 {
+		t.Fatalf("a recovered meter is absent=%v value=%v, want present at 0.5", meter.Absent, meter.Value)
+	}
+}
+
+// A graph must stop plotting when its source stops reporting, rather than
+// showing a live line built from samples that are minutes old.
+func TestAGraphStopsPlottingWhenItsSourceFails(t *testing.T) {
+	t.Parallel()
+	cfg := mixedConfig()
+	bar, err := NewWithTheme(ThemeFrom(cfg, cfg.Bar), cfg.Bar, "DP-9")
+	if err != nil {
+		t.Fatalf("NewWithTheme: %v", err)
+	}
+
+	sel := services.Selector{Source: services.SourceNetwork, Subject: "eth9", Direction: "rx"}
+	history := map[services.Selector][]float64{sel: {500, 1000}}
+
+	bar.apply(barView{
+		Metrics: services.Snapshot{Network: &metrics.NetworkSnapshot{
+			Interfaces: []metrics.NetworkInterface{{
+				Name:  "eth9",
+				Rates: metrics.NetworkRates{ReceiveBytesPerSecond: 1000, Valid: true},
+			}},
+		}},
+		History: history,
+	})
+	graph := bar.left[2].node
+	if len(graph.Values) == 0 || graph.Absent {
+		t.Fatal("a graph with a reading plotted nothing")
+	}
+
+	// The collector fails. The ring still holds its last good window, which is
+	// exactly what must not be drawn.
+	bar.apply(barView{History: history})
+	if len(graph.Values) != 0 || !graph.Absent {
+		t.Fatalf("a failed graph plotted %v (absent=%v), want an empty plot",
+			graph.Values, graph.Absent)
+	}
+}
+
+// The end of finding 3: a meter whose fraction is unchanged must not repaint.
+// "No source change, no submitted frame" has to hold for every display mode,
+// not only the one whose state happens to be text.
+func TestAnUnchangedMeterChangesNothing(t *testing.T) {
+	t.Parallel()
+	cfg := metricConfig()
+	cfg.Bar.Left = []config.Item{{
+		ID: "memory", Display: "meter", Interval: time.Second,
+	}}
+
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9"})
+
+	snap := services.Snapshot{Memory: &metrics.MemorySnapshot{
+		Memory: metrics.Capacity{TotalBytes: 1000, UsedBytes: 250},
+	}}
+	if changed := reg.UpdateMetrics(snap); len(changed) != 1 {
+		t.Fatalf("first sample changed %v, want global 1", changed)
+	}
+	if changed := reg.UpdateMetrics(snap); len(changed) != 0 {
+		t.Fatalf("an identical meter sample changed %v, want nothing", changed)
+	}
+
+	moved := services.Snapshot{Memory: &metrics.MemorySnapshot{
+		Memory: metrics.Capacity{TotalBytes: 1000, UsedBytes: 500},
+	}}
+	if changed := reg.UpdateMetrics(moved); len(changed) != 1 {
+		t.Fatalf("a moved meter changed %v, want global 1", changed)
+	}
+}
+
+// A graph whose window is identical must not repaint either. Its values do
+// change on almost every real tick, which is why the design expects it to
+// repaint often — but "often" must follow from the data, not from its kind.
+func TestAnUnchangedGraphChangesNothing(t *testing.T) {
+	t.Parallel()
+	cfg := metricConfig()
+	cfg.Bar.Left = []config.Item{{
+		ID: "cpu", Display: "graph", Interval: time.Second,
+	}}
+
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9"})
+
+	snap := services.Snapshot{CPU: &metrics.CPUSnapshot{
+		Usage: metrics.CPUUsage{Fraction: 0.42, Valid: true},
+	}}
+	reg.UpdateMetrics(snap)
+	if changed := reg.UpdateMetrics(snap); len(changed) != 0 {
+		t.Fatalf("an identical graph window changed %v, want nothing", changed)
 	}
 }

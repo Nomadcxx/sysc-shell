@@ -153,22 +153,55 @@ func TestOnlyFractionSourcesReportAFraction(t *testing.T) {
 	}
 }
 
-func TestEveryMetricIDMapsToASource(t *testing.T) {
+func TestEveryMetricIDMapsToASelector(t *testing.T) {
 	t.Parallel()
-	want := map[string]services.Source{
-		"cpu":        services.SourceCPU,
-		"memory":     services.SourceMemory,
-		"filesystem": services.SourceFilesystem,
-		"block":      services.SourceBlock,
-		"network":    services.SourceNetwork,
+	want := map[string]services.Selector{
+		"cpu":    {Source: services.SourceCPU},
+		"memory": {Source: services.SourceMemory},
 	}
-	for id, src := range want {
-		got, ok := metricSource(config.Item{ID: id})
-		if !ok || got != src {
-			t.Fatalf("%s mapped to %v/%v, want %v", id, got, ok, src)
+	for id, sel := range want {
+		got, ok := metricSelector(config.Item{ID: id})
+		if !ok || got != sel {
+			t.Fatalf("%s mapped to %v/%v, want %v", id, got, ok, sel)
 		}
 	}
-	if _, ok := metricSource(config.Item{ID: "clock"}); ok {
-		t.Fatal("a non-metric id mapped to a source")
+	if _, ok := metricSelector(config.Item{ID: "clock"}); ok {
+		t.Fatal("a non-metric id mapped to a selector")
+	}
+}
+
+// A selector must carry the widget's subject and direction, not just its
+// source, or two widgets watching different interfaces would be one lease and
+// one history ring.
+func TestASelectorCarriesTheSubjectAndDirection(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		item config.Item
+		want services.Selector
+	}{
+		{
+			config.Item{ID: "filesystem", Path: "/fixture"},
+			services.Selector{Source: services.SourceFilesystem, Subject: "/fixture"},
+		},
+		{
+			config.Item{ID: "block", Device: "nvme9n1", Direction: "write"},
+			services.Selector{Source: services.SourceBlock, Subject: "nvme9n1", Direction: "write"},
+		},
+		{
+			config.Item{ID: "network", Interface: "eth9", Direction: "rx"},
+			services.Selector{Source: services.SourceNetwork, Subject: "eth9", Direction: "rx"},
+		},
+	}
+	for _, c := range cases {
+		got, ok := metricSelector(c.item)
+		if !ok || got != c.want {
+			t.Fatalf("%+v mapped to %v/%v, want %v", c.item, got, ok, c.want)
+		}
+	}
+
+	rx, _ := metricSelector(config.Item{ID: "network", Interface: "eth9", Direction: "rx"})
+	tx, _ := metricSelector(config.Item{ID: "network", Interface: "eth9", Direction: "tx"})
+	if rx == tx {
+		t.Fatal("the two directions of one interface share a selector")
 	}
 }

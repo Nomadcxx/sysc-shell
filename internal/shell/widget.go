@@ -20,8 +20,8 @@ type barView struct {
 	// Metrics is the newest sampling pass. Its nil fields mean unleased or
 	// failed; either renders the placeholder.
 	Metrics services.Snapshot
-	// History carries each leased source's samples for a graph to plot.
-	History map[services.Source][]float64
+	// History carries each leased selector's samples for a graph to plot.
+	History map[services.Selector][]float64
 }
 
 // textWidget is one configured widget instance: a retained node plus the pure

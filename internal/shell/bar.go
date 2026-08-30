@@ -5,6 +5,7 @@ package shell
 import (
 	"fmt"
 	"math"
+	"slices"
 	"sync"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -97,20 +98,6 @@ func (b *Bar) connector() string { return b.conn }
 func (b *Bar) widgets() [][]textWidget { return [][]textWidget{b.left, b.center, b.right} }
 
 // sections returns the retained nodes in paint order, for layout and painting.
-// hasPlottedWidget reports whether any widget renders through the node rather
-// than through text. A meter and a graph carry their value on the node, so
-// text comparison cannot detect their change.
-func (b *Bar) hasPlottedWidget() bool {
-	for _, section := range b.widgets() {
-		for _, w := range section {
-			if w.node.Kind == ui.KindMeter || w.node.Kind == ui.KindGraph {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func (b *Bar) sections() [][]*ui.Node {
 	out := make([][]*ui.Node, 0, 3)
 	for _, section := range b.widgets() {
@@ -123,7 +110,7 @@ func (b *Bar) sections() [][]*ui.Node {
 	return out
 }
 
-// apply writes each widget's text from the view and reports whether anything
+// apply writes each widget's state from the view and reports whether anything
 // changed. A false return means no layout and no redraw: no state change, no
 // submitted frame.
 func (b *Bar) apply(view barView) bool {
@@ -136,8 +123,17 @@ func (b *Bar) applyLocked(view barView) bool {
 	changed := false
 	for _, section := range b.widgets() {
 		for _, w := range section {
+			// A meter and a graph carry their state on the node rather than in
+			// text, and format writes it as a side effect. The previous state
+			// is captured first so every display mode is compared, not just
+			// the one whose state happens to be a string.
+			before := *w.node
 			if text := w.format(view); text != w.node.Text {
 				w.node.Text = text
+				changed = true
+			}
+			if w.node.Value != before.Value || w.node.Absent != before.Absent ||
+				!slices.Equal(w.node.Values, before.Values) {
 				changed = true
 			}
 		}
@@ -245,6 +241,11 @@ func copyNode(n *ui.Node) *ui.Node {
 		return nil
 	}
 	c := *n
+	// Values is cloned, not shared: the promise above is that no pointer into
+	// live model state reaches the painter, and a slice header carries one.
+	if len(n.Values) > 0 {
+		c.Values = append([]float64(nil), n.Values...)
+	}
 	if len(n.Children) > 0 {
 		c.Children = make([]*ui.Node, len(n.Children))
 		for i, child := range n.Children {

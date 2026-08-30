@@ -3,104 +3,51 @@ package shell
 import (
 	"fmt"
 
-	metrics "github.com/Nomadcxx/sysc-metrics"
-
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
-// metricSource maps a widget id to the telemetry source it leases.
-func metricSource(item config.Item) (services.Source, bool) {
+// metricSelector maps a widget to the subject it leases and plots: the source,
+// and for the sources with many subjects, which one and in which direction.
+func metricSelector(item config.Item) (services.Selector, bool) {
+	sel := services.Selector{Direction: item.Direction}
 	switch item.ID {
 	case "cpu":
-		return services.SourceCPU, true
+		sel.Source = services.SourceCPU
 	case "memory":
-		return services.SourceMemory, true
+		sel.Source = services.SourceMemory
 	case "filesystem":
-		return services.SourceFilesystem, true
+		sel.Source, sel.Subject = services.SourceFilesystem, item.Path
 	case "block":
-		return services.SourceBlock, true
+		sel.Source, sel.Subject = services.SourceBlock, item.Device
 	case "network":
-		return services.SourceNetwork, true
+		sel.Source, sel.Subject = services.SourceNetwork, item.Interface
+	default:
+		return services.Selector{}, false
 	}
-	return 0, false
+	return sel, true
 }
 
 // metricFraction reports a fraction between zero and one for the sources that
 // have one. Rate sources have no full scale and report absent; the loader
 // already rejects a meter on them, so nothing asks twice.
 func metricFraction(item config.Item, snap services.Snapshot) (float64, bool) {
-	switch item.ID {
-	case "cpu":
-		if snap.CPU == nil || !snap.CPU.Usage.Valid {
-			return 0, false
-		}
-		return snap.CPU.Usage.Fraction, true
-	case "memory":
-		if snap.Memory == nil {
-			return 0, false
-		}
-		return capacityFraction(snap.Memory.Memory)
-	case "filesystem":
-		if snap.Filesystem == nil {
-			return 0, false
-		}
-		for _, fs := range snap.Filesystem.Filesystems {
-			if fs.MountPoint == item.Path {
-				return capacityFraction(fs.Capacity)
-			}
-		}
-	}
-	return 0, false
-}
-
-// capacityFraction is used over total. A zero total means the capacity was not
-// read, which is absent rather than zero per cent.
-func capacityFraction(c metrics.Capacity) (float64, bool) {
-	if c.TotalBytes == 0 {
+	sel, ok := metricSelector(item)
+	if !ok {
 		return 0, false
 	}
-	return float64(c.UsedBytes) / float64(c.TotalBytes), true
+	return snap.Fraction(sel)
 }
 
-// metricRate reports bytes per second for the rate sources.
-func metricRate(item config.Item, snap services.Snapshot) (float64, bool) {
-	switch item.ID {
-	case "block":
-		if snap.Block == nil {
-			return 0, false
-		}
-		for _, d := range snap.Block.Devices {
-			if d.Name != item.Device {
-				continue
-			}
-			if !d.Rates.Valid {
-				return 0, false
-			}
-			if item.Direction == "write" {
-				return d.Rates.WriteBytesPerSecond, true
-			}
-			return d.Rates.ReadBytesPerSecond, true
-		}
-	case "network":
-		if snap.Network == nil {
-			return 0, false
-		}
-		for _, i := range snap.Network.Interfaces {
-			if i.Name != item.Interface {
-				continue
-			}
-			if !i.Rates.Valid {
-				return 0, false
-			}
-			if item.Direction == "tx" {
-				return i.Rates.TransmitBytesPerSecond, true
-			}
-			return i.Rates.ReceiveBytesPerSecond, true
-		}
+// metricValue reports whichever kind of number this widget's source yields, for
+// a caller that only needs to know whether there is a reading at all.
+func metricValue(item config.Item, snap services.Snapshot) (float64, bool) {
+	sel, ok := metricSelector(item)
+	if !ok {
+		return 0, false
 	}
-	return 0, false
+	return snap.Value(sel)
 }
 
 // formatMetric renders one metric. An absent source, an absent subject and an
@@ -111,10 +58,14 @@ func metricRate(item config.Item, snap services.Snapshot) (float64, bool) {
 // even accidentally: rates can only come from the library's comparison of two
 // monotonic samples.
 func formatMetric(item config.Item, snap services.Snapshot) string {
-	if fraction, ok := metricFraction(item, snap); ok {
+	sel, ok := metricSelector(item)
+	if !ok {
+		return noWorkspace
+	}
+	if fraction, ok := snap.Fraction(sel); ok {
 		return fmt.Sprintf("%.0f%%", fraction*100)
 	}
-	if rate, ok := metricRate(item, snap); ok {
+	if rate, ok := snap.Rate(sel); ok {
 		return formatRate(rate)
 	}
 	return noWorkspace
@@ -164,21 +115,34 @@ func buildMetricWidget(item config.Item) textWidget {
 				// A meter carries its value on the node, not as text. The
 				// fraction is written here because apply is the one pass that
 				// sees each view.
-				if fraction, ok := metricFraction(item, v.Metrics); ok {
-					node.Value = fraction
-				} else {
-					node.Value = 0
+				//
+				// With no reading the node is marked absent rather than set to
+				// zero. An empty track is indistinguishable from a genuine 0%,
+				// so a failed collector would otherwise render as an idle
+				// machine.
+				fraction, ok := metricFraction(item, v.Metrics)
+				if !ok {
+					fraction = 0
 				}
+				node.Value, node.Absent = fraction, !ok
 				return ""
 			},
 		}
 	case "graph":
 		node := &ui.Node{Kind: ui.KindGraph, Width: metricGraphWidth}
-		src, _ := metricSource(item)
+		sel, _ := metricSelector(item)
 		return textWidget{
 			node: node,
 			format: func(v barView) string {
-				node.Values = normalise(v.History[src])
+				// The window is plotted only while there is a current reading.
+				// The ring keeps its last good samples across a failure, and
+				// plotting those would draw a live line for a source that
+				// stopped reporting minutes ago.
+				if _, ok := metricValue(item, v.Metrics); !ok {
+					node.Values, node.Absent = nil, true
+					return ""
+				}
+				node.Values, node.Absent = normalise(v.History[sel]), false
 				return ""
 			},
 		}

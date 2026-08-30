@@ -78,6 +78,9 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 		return paintText(c, n.Text, style.Scale120.PhysicalRect(n.Bounds), text, style, size, n.Tabular)
 
 	case ui.KindMeter:
+		if n.Absent {
+			return nil
+		}
 		box := style.Scale120.PhysicalRect(n.Bounds)
 		fillRect(c, box, style.Track)
 		filled := box
@@ -110,7 +113,7 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 // Values are already normalised to zero through one by the widget, so this
 // applies no scale of its own.
 func paintGraph(c *Canvas, n *ui.Node, box ui.Rect, style ProofStyle) error {
-	if box.W <= 0 || box.H <= 0 || len(n.Values) == 0 {
+	if n.Absent || box.W <= 0 || box.H <= 0 || len(n.Values) == 0 {
 		return nil
 	}
 

@@ -402,3 +402,67 @@ func accentPixels(c *Canvas, want Color, box ui.Rect) int {
 	}
 	return count
 }
+
+// A meter with no reading paints nothing at all. An empty track would be
+// pixel-identical to a genuine zero, so a failed collector would render as an
+// idle machine.
+func TestAnAbsentMeterPaintsNothing(t *testing.T) {
+	t.Parallel()
+
+	const w, h = 40, 20
+	c := newTestCanvas(t, w, h)
+	style := testStyle
+	style.Body = ui.Rect{W: w, H: h}
+
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{{
+		Kind:   ui.KindMeter,
+		Width:  w,
+		Value:  0,
+		Absent: true,
+		Bounds: ui.Rect{X: 0, Y: 0, W: w, H: h},
+	}}}
+	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatalf("Paint: %v", err)
+	}
+
+	box := ui.Rect{X: 0, Y: 0, W: w, H: h}
+	if got := accentPixels(c, style.Track, box); got != 0 {
+		t.Errorf("an absent meter painted %d track pixels, want none", got)
+	}
+	if got := accentPixels(c, style.Accent, box); got != 0 {
+		t.Errorf("an absent meter painted %d fill pixels, want none", got)
+	}
+	// A genuine zero still paints its track, which is what makes the two
+	// distinguishable.
+	root.Children[0].Absent = false
+	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatalf("Paint: %v", err)
+	}
+	if got := accentPixels(c, style.Track, box); got == 0 {
+		t.Error("a zero meter painted no track, so absent and zero look alike")
+	}
+}
+
+// An absent graph paints nothing even when values are still attached.
+func TestAnAbsentGraphPaintsNothing(t *testing.T) {
+	t.Parallel()
+
+	const w, h = 40, 20
+	c := newTestCanvas(t, w, h)
+	style := testStyle
+	style.Body = ui.Rect{W: w, H: h}
+
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{{
+		Kind:   ui.KindGraph,
+		Width:  4,
+		Values: []float64{1, 1},
+		Absent: true,
+		Bounds: ui.Rect{X: 0, Y: 0, W: 4, H: h},
+	}}}
+	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatalf("Paint: %v", err)
+	}
+	if got := accentPixels(c, style.Accent, ui.Rect{X: 0, Y: 0, W: 4, H: h}); got != 0 {
+		t.Fatalf("an absent graph painted %d pixels, want none", got)
+	}
+}

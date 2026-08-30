@@ -45,6 +45,11 @@ type Node struct {
 	// digit to three, and tabular figures align digits but cannot fix a
 	// changing digit count.
 	MinWidthText string
+	// Absent marks a node that has no reading to show. It still measures and
+	// reserves its space, so a bar does not reflow when a source drops, but it
+	// paints nothing: an empty meter track is indistinguishable from a genuine
+	// zero, and a failed collector must not render as an idle machine.
+	Absent bool
 	// Tabular requests tabular (fixed-advance) figures when shaping this node.
 	// A clock sets it: with proportional digits the rendered width changes as
 	// the time changes, which visibly shifts a centred clock every minute.

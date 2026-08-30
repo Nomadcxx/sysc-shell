@@ -225,9 +225,7 @@ func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
 	r.sample = snap
 	var changed []uint32
 	for global, bar := range r.bars {
-		// A graph and a meter carry no text, so text comparison cannot see
-		// their change. A bar holding either repaints on every sample.
-		if bar.apply(r.viewLocked(bar.connector())) || bar.hasPlottedWidget() {
+		if bar.apply(r.viewLocked(bar.connector())) {
 			changed = append(changed, global)
 		}
 	}
@@ -276,19 +274,11 @@ func (r *Registry) viewLocked(connector string) barView {
 	}
 }
 
-// historyLocked collects the samples every leased source holds. Only leased
-// sources are asked, so an unused ring is never copied.
-func (r *Registry) historyLocked() map[services.Source][]float64 {
-	out := make(map[services.Source][]float64, 5)
-	for _, src := range []services.Source{
-		services.SourceCPU, services.SourceMemory, services.SourceFilesystem,
-		services.SourceBlock, services.SourceNetwork,
-	} {
-		if r.metrics.Leased(src) {
-			out[src] = r.metrics.History(src)
-		}
-	}
-	return out
+// historyLocked collects the samples every leased selector holds. The service
+// keeps a ring only while something leases it, so an unused ring cannot be
+// copied here.
+func (r *Registry) historyLocked() map[services.Selector][]float64 {
+	return r.metrics.Histories()
 }
 
 // buildBar creates one bar and acquires the services its items need. A failure
@@ -312,11 +302,11 @@ func (r *Registry) buildBar(cfg config.Config, connector string) (
 		leases = append(leases, lease)
 	}
 	for _, item := range allItems(policy) {
-		src, ok := metricSource(item)
+		sel, ok := metricSelector(item)
 		if !ok {
 			continue
 		}
-		lease, err := r.metrics.Acquire(src, item.Interval)
+		lease, err := r.metrics.Acquire(sel, item.Interval)
 		if err != nil {
 			releaseAll(leases)
 			return nil, nil, wayland.HostCallbacks{}, err
