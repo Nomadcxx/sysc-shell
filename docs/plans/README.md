@@ -91,9 +91,9 @@ Split into four reviewed tranches by the charter. Only 3A is designed.
 | Document | Kind | Branch | State |
 |---|---|---|---|
 | `2026-08-30-built-in-widget-foundation-execution-handover.md` | commission | `main` | Historical commission that produced the approved design and plan. |
-| `2026-08-30-live-gate-to-tranche-3a-execution-handover.md` | execution-handover | `main` | Current receiving-agent handover. Complete `sysc-5`, then execute Tranche 3A. |
+| `2026-08-30-live-gate-to-tranche-3a-execution-handover.md` | execution-handover | `main` | Current receiving-agent handover. Start Tranche 3A now; `sysc-5` remains open as deferred hardware qualification. |
 | `2026-08-30-built-in-widget-foundation-design.md` | design | `main` | Owner-approved, audited, amended. Records D1–D8 and the design-audit outcome. |
-| `2026-08-30-built-in-widget-foundation.md` | plan | `main` | Complete. 16 tasks (0–15). Audit findings applied. Execution blocked by `sysc-5`. |
+| `2026-08-30-built-in-widget-foundation.md` | plan | `main` | Complete. 16 tasks (0–15). Audit findings applied. Ready to execute. |
 | `2026-08-30-built-in-widget-foundation-audit-handover.md` | audit-handover | `main` | Closed. Commissioned the technical and design audits. |
 | `2026-08-30-built-in-widget-foundation-audit-report.md` | audit-report | `main` | Closed. Verdict: proceed with named corrections; all seven applied at `9a114eb`. Verified assumption 4 live. |
 
@@ -101,7 +101,7 @@ Split into four reviewed tranches by the charter. Only 3A is designed.
 
 | Tranche | Scope | State |
 |---|---|---|
-| 3A | Clock, date, Niri workspace, focused-window title; service lifetime; per-output widget instances | Designed, planned, audited. Blocked on the complete Milestone 2 live gate. |
+| 3A | Clock, date, Niri workspace, focused-window title; service lifetime; per-output widget instances | Designed, planned, audited, and ready to execute. |
 | 3B | CPU, memory, filesystem, block and network rates | **Blocked**: needs a reviewed, tagged `sysc-metrics` release. None exists. |
 | 3C | Battery and remaining time | **Blocked**: needs `sysc-metrics` M2 power and thermal gates. |
 | 3D | Weather, icons, meter/graph/tooltip nodes | Not started. Needs the icon-asset policy applied and an Open-Meteo decision. |
@@ -172,26 +172,28 @@ No design or plan exists for any of these. The roadmap is the only record.
 | `sysc-wayland` | `v0.1.1` | Pinned dependency. Qualified. |
 | `sysc-notify`, `sysc-tray` | — | Approved boundaries and roadmaps only. No repository yet. Milestone 5. |
 
-## Execution order once Milestone 2 clears
+## Execution order
 
 Everything below is written, reviewed, and waiting. `bd ready` is authoritative; this is the same
 graph in prose.
 
-1. **Milestone 2 corrections** (`sysc-4`) — complete and merged.
-2. **Milestone 2 live Niri gate** (`sysc-5`) — the exit gate, needs a live session with two outputs.
-3. **Tranche 3A** (`sysc-6`) — 16 tasks, plan on `main`. Its Task 0 gates on the three corrections
-   from step 1 and stops if any is absent.
-4. **Tranche 4A** (`sysc-17`) — 13 tasks, plan on `main`. Needs steps 1 and 3; explicitly does **not**
+1. **Milestone 2 corrections** (`sysc-4`): complete and merged.
+2. **Tranche 3A** (`sysc-6`): ready now. 16 tasks, plan on `main`. Its Task 0 gates on the three
+   corrections from step 1 and stops if any is absent.
+3. **Milestone 2 hardware qualification** (`sysc-5`): remains open in parallel and needs a live session
+   with two outputs. It blocks claims of full Milestone 2 hardware qualification, not development.
+4. **Tranche 4A** (`sysc-17`): 13 tasks, plan on `main`. Needs steps 1 and 2; explicitly does **not**
    need Tranches 3B, 3C or 3D.
-5. **Tranche 4B** — 14 tasks, after 4A, subject to the scope question above.
+5. **Tranche 4B**: 14 tasks, after 4A, subject to the scope question above.
 
 Off the critical path, and startable now: **`sysc-metrics` qualification** (`sysc-7`) — audit the
 public API, qualify it from a proposed consumer, tag and push. It unblocks Tranche 3B (`sysc-8`) and
 3C (`sysc-9`), and it is what would let the deferred system-monitor popout return.
 
-## What can proceed while Milestone 2 finishes
+## Parallel work
 
-The live Niri gate blocks Tranche 3A implementation. Work outside that dependency remains available:
+Start Tranche 3A now. The deferred live Niri gate can run in another session when suitable hardware is
+available. Other independent work includes:
 
 1. **`sysc-metrics` qualification** (`sysc-7`). Audit the public API, qualify it from one proposed shell
    consumer, tag and push. The single dependency unblocking Tranches 3B and 3C, and the thing that
@@ -203,4 +205,4 @@ The live Niri gate blocks Tranche 3A implementation. Work outside that dependenc
 4. **Launcher prior-art research** (`sysc-12`), scoped as input to the component vocabulary rather than
    as Milestone 7 implementation. Lower value now that Milestone 4 is designed.
 
-Do not start Tranche 3A product code, and do not edit the Milestone 2 progress handover.
+Do not edit the Milestone 2 progress handover.
