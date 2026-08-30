@@ -145,6 +145,17 @@ func blendMask(c *Canvas, mask *image.Alpha, x, y int, col Color) {
 	}
 }
 
+// FillRounded fills a rounded rectangle using the cached alpha mask.
+func (c *Canvas) FillRounded(r ui.Rect, radius int, col Color) {
+	blendMask(c, RoundedMask(radius, r.W, r.H), r.X, r.Y, col)
+}
+
+// DrawShadow composites a cached shadow around a panel rectangle.
+func (c *Canvas) DrawShadow(r ui.Rect, radius int, e Elevation, col Color) {
+	spread := shadowSpread(e)
+	blendMask(c, ShadowTexture(r.W, r.H, radius, e), r.X-spread, r.Y-spread, col)
+}
+
 // blendPixel composites a premultiplied source over a premultiplied destination.
 func blendPixel(dst []byte, src [4]byte, alpha uint32) {
 	if alpha == 255 {
