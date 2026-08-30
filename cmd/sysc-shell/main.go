@@ -3,12 +3,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/ipc"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/shell"
@@ -142,6 +146,13 @@ func run(ctx context.Context) error {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "ipc" {
+		if err := runIPC(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -149,4 +160,30 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func runIPC(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: sysc-shell ipc <method> [params-json]")
+	}
+	method := args[0]
+	params := []byte("{}")
+	if len(args) > 1 {
+		params = []byte(args[1])
+	}
+	var raw any
+	if err := json.Unmarshal(params, &raw); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := ipc.Call(ctx, ipc.DefaultSocket(), method, raw)
+	if err != nil {
+		return err
+	}
+	fmt.Println(out)
+	if strings.Contains(out, `"error"`) {
+		os.Exit(1)
+	}
+	return nil
 }
