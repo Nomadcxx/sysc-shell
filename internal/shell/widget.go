@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -16,6 +17,11 @@ type barView struct {
 	Now       time.Time
 	Workspace string
 	Title     string
+	// Metrics is the newest sampling pass. Its nil fields mean unleased or
+	// failed; either renders the placeholder.
+	Metrics services.Snapshot
+	// History carries each leased source's samples for a graph to plot.
+	History map[services.Source][]float64
 }
 
 // textWidget is one configured widget instance: a retained node plus the pure
@@ -57,6 +63,8 @@ func buildWidgets(items []config.Item) []textWidget {
 				node:   &ui.Node{Kind: ui.KindText, MaxWidth: item.MaxWidth},
 				format: func(v barView) string { return v.Title },
 			})
+		case "cpu", "memory", "filesystem", "block", "network":
+			out = append(out, buildMetricWidget(item))
 		}
 	}
 	return out
