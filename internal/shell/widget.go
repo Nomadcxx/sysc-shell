@@ -22,6 +22,8 @@ type barView struct {
 	Metrics services.Snapshot
 	// History carries each leased selector's samples for a graph to plot.
 	History map[services.Selector][]float64
+	// Weather is the newest reading. Its zero value renders the placeholder.
+	Weather services.Reading
 }
 
 // textWidget is one configured widget instance: a retained node plus the pure
@@ -65,6 +67,16 @@ func buildWidgets(items []config.Item) []textWidget {
 			})
 		case "cpu", "memory", "filesystem", "block", "network":
 			out = append(out, buildMetricWidget(item))
+		case "weather":
+			node := &ui.Node{Kind: ui.KindText, MaxWidth: item.MaxWidth}
+			out = append(out, textWidget{
+				node: node,
+				format: func(v barView) string {
+					text, tone := formatWeather(item, v.Weather)
+					node.Tone = tone
+					return text
+				},
+			})
 		}
 	}
 	return out

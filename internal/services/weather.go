@@ -220,6 +220,10 @@ func (w *Weather) requestURL() string {
 	return w.requestURLLocked()
 }
 
+// RequestURL is the current Open-Meteo request. Reload tests assert it moved
+// without restarting the service; coordinates never surface any other way.
+func (w *Weather) RequestURL() string { return w.requestURL() }
+
 func (w *Weather) requestURLLocked() string {
 	q := url.Values{}
 	q.Set("latitude", strconv.FormatFloat(w.latitude, 'f', -1, 64))

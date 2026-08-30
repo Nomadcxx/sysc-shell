@@ -475,3 +475,57 @@ func TestAGraphRepaintsWhenItsWindowChanges(t *testing.T) {
 		t.Fatal("a moved window did not mark the bar changed")
 	}
 }
+
+func weatherConfig() config.Config {
+	cfg := config.Default()
+	cfg.Weather = config.Weather{
+		Latitude: 0, Longitude: 0, Unit: "celsius",
+		Interval: 15 * time.Minute, Configured: true,
+	}
+	cfg.Bar.Left = []config.Item{{ID: "weather", MaxWidth: 160}}
+	cfg.Bar.Center, cfg.Bar.Right = nil, nil
+	return cfg
+}
+
+func TestTwoBarsShareOneWeatherServiceAndOneReading(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(weatherConfig())
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9", 2: "HDMI-A-9"})
+
+	if got := reg.Weather().Starts(); got != 1 {
+		t.Fatalf("weather starts = %d, want 1 shared start for two bars", got)
+	}
+	changed := reg.UpdateWeather(services.Reading{
+		Observed: true, Temperature: 18, Unit: services.UnitCelsius,
+	})
+	if len(changed) != 2 {
+		t.Fatalf("one reading changed %d bars, want 2", len(changed))
+	}
+}
+
+func TestAnUnchangedReadingChangesNothing(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(weatherConfig())
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9"})
+
+	reading := services.Reading{Observed: true, Temperature: 18, Unit: services.UnitCelsius}
+	if changed := reg.UpdateWeather(reading); len(changed) != 1 {
+		t.Fatalf("first reading changed %v, want global 1", changed)
+	}
+	if changed := reg.UpdateWeather(reading); len(changed) != 0 {
+		t.Fatalf("an identical reading changed %v", changed)
+	}
+}
+
+func TestAConfigWithNoWeatherWidgetLeavesTheServiceStopped(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(config.Default())
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9"})
+
+	if reg.Weather().Running() {
+		t.Fatal("a configuration with no weather widget started the service")
+	}
+}
