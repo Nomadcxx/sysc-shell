@@ -63,6 +63,7 @@ type PanelHost struct {
 	lastAction     string
 	hoverX, hoverY int
 	monthDelta     int
+	errLabel       string
 }
 
 func (r *Registry) AuxRequests() <-chan wayland.AuxRequest { return r.aux }
@@ -438,6 +439,8 @@ func (h *PanelHost) activate(r *Registry) bool {
 	case "cal-next":
 		h.monthDelta++
 		r.rebuildPanel(h)
+	case "session-lock", "session-logout", "session-suspend", "session-reboot", "session-poweroff":
+		r.runSessionAction(h, n.Action)
 	}
 	return true
 }
@@ -471,6 +474,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 			connector = bar.connector()
 		}
 		return monitorTree(monitorSelectors(r.cfg.ForConnector(connector)), r.sample, r.historyLocked(), h.roving.Index())
+	case PanelSession:
+		return sessionTree(r.cfg.Session.Locker, h.errLabel)
 	default:
 		return placeholderTree()
 	}
@@ -551,6 +556,16 @@ func (r *Registry) publishSurface(global uint32, surfaceID string) {
 	case r.invalidations <- wayland.Invalidation{Global: global, SurfaceID: surfaceID}:
 	case <-r.closed:
 	}
+}
+
+func (r *Registry) runSessionAction(h *PanelHost, action string) {
+	argv := sessionArgv(action, r.cfg.Session.Locker)
+	if err := runArgv(argv); err != nil {
+		h.errLabel = err.Error()
+		r.rebuildPanel(h)
+		return
+	}
+	r.closePanelLocked(h.id)
 }
 
 func (r *Registry) closeAllPanelsLocked() {
