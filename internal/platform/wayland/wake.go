@@ -23,6 +23,10 @@ type wakePipe struct {
 	// reload is set when a SIGHUP arrived. The owner reads and clears it, so
 	// repeated signals during one wait coalesce into a single reload.
 	reload bool
+	// tooltip is the newest hover request. Repeated hovers during one wait
+	// keep only the last, which is the pointer's current widget.
+	tooltip    TooltipRequest
+	hasTooltip bool
 }
 
 func newWakePipe() (*wakePipe, error) {
@@ -35,7 +39,7 @@ func newWakePipe() (*wakePipe, error) {
 
 // bridge forwards cancellation and application invalidations to the pipe. It
 // never closes the caller-owned invalidation channel and never calls a proxy.
-func (w *wakePipe) bridge(ctx context.Context, invalidations <-chan Invalidation, reloads <-chan struct{}) {
+func (w *wakePipe) bridge(ctx context.Context, invalidations <-chan Invalidation, reloads <-chan struct{}, tooltips <-chan TooltipRequest) {
 	go func() {
 		for {
 			select {
@@ -56,6 +60,14 @@ func (w *wakePipe) bridge(ctx context.Context, invalidations <-chan Invalidation
 				w.reload = true
 				w.mu.Unlock()
 				w.signal()
+			case req, ok := <-tooltips:
+				if !ok {
+					return
+				}
+				w.mu.Lock()
+				w.tooltip, w.hasTooltip = req, true
+				w.mu.Unlock()
+				w.signal()
 			}
 		}
 	}()
@@ -68,6 +80,18 @@ func (w *wakePipe) takeReload() bool {
 	pending := w.reload
 	w.reload = false
 	return pending
+}
+
+// takeTooltip reports and clears a pending tooltip request.
+func (w *wakePipe) takeTooltip() (TooltipRequest, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.hasTooltip {
+		return TooltipRequest{}, false
+	}
+	req := w.tooltip
+	w.tooltip, w.hasTooltip = TooltipRequest{}, false
+	return req, true
 }
 
 // push queues one invalidation for the owner goroutine.

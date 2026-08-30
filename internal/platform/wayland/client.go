@@ -86,6 +86,9 @@ type Callbacks struct {
 	// and validates the file itself, so no other goroutine parses
 	// configuration while a bar is mapped.
 	Reloads <-chan struct{}
+	// Tooltips asks the owner to show or hide a tooltip. It is owned by the
+	// caller; Run only receives from it and never closes it.
+	Tooltips <-chan TooltipRequest
 	// ConfigPath is the file a reload re-reads. Empty disables reloading.
 	ConfigPath string
 }
@@ -166,6 +169,9 @@ type owner struct {
 	// cfg is the live configuration. It is replaced only after a candidate has
 	// resolved for every connected output.
 	cfg *config.Config
+
+	tooltip         *tooltipSurface
+	tooltipRenderer *render.TextRenderer
 
 	cleanup cleanupStack
 	fatal   error
@@ -710,6 +716,9 @@ func (o *owner) reloadConfig() error {
 	if err := o.applyPreparedConfig(prepared); err != nil {
 		return fmt.Errorf("wayland: apply reloaded config: %w", err)
 	}
+	if err := o.hideTooltip(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -907,7 +916,7 @@ func (o *owner) loop(ctx context.Context) error {
 		return err
 	}
 	defer wake.close()
-	wake.bridge(runCtx, o.cb.Invalidations, o.cb.Reloads)
+	wake.bridge(runCtx, o.cb.Invalidations, o.cb.Reloads, o.cb.Tooltips)
 
 	for {
 		if o.fatal != nil {
@@ -934,6 +943,9 @@ func (o *owner) loop(ctx context.Context) error {
 				if err := o.reloadConfig(); err != nil {
 					return err
 				}
+			}
+			if req, ok := wake.takeTooltip(); ok {
+				o.handleTooltip(req)
 			}
 			for _, inv := range wake.take() {
 				o.invalidate(inv)
@@ -1008,6 +1020,12 @@ func (o *owner) teardownHost(h *OutputHost) error {
 	h.alive = false
 	var errs []error
 
+	if o.tooltip != nil && o.tooltip.host == h {
+		if err := o.hideTooltip(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
 	h.sched.Close()
 	if h.current != nil {
 		h.current.retire.destroy()
@@ -1039,6 +1057,9 @@ func (o *owner) teardownHost(h *OutputHost) error {
 // flushes the destructor requests once and closes the display.
 func (o *owner) shutdown() error {
 	var errs []error
+	if err := o.hideTooltip(); err != nil {
+		errs = append(errs, err)
+	}
 	for _, h := range o.hosts.each() {
 		if err := o.teardownHost(h); err != nil {
 			errs = append(errs, err)
