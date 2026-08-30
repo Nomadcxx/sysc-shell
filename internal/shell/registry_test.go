@@ -6,6 +6,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 )
 
 // newHosts is the common setup: one registry with hosts at the given globals.
@@ -188,4 +189,128 @@ func TestCloseReleasesEverything(t *testing.T) {
 		t.Fatal("Close left bars behind")
 	}
 	reg.Close()
+}
+
+// identities is the host set a reload prepares for, in the shape the Wayland
+// callbacks supply.
+func identities(hosts map[uint32]string) []wayland.HostIdentity {
+	out := make([]wayland.HostIdentity, 0, len(hosts))
+	for global, connector := range hosts {
+		out = append(out, wayland.HostIdentity{Global: global, Connector: connector})
+	}
+	return out
+}
+
+func TestAnAcceptedReloadDoesNotRestartAServiceStillInUse(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(config.Default())
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9", 2: "HDMI-A-9"})
+
+	before := reg.bars[1]
+	if got := reg.Clock().Starts(); got != 1 {
+		t.Fatalf("clock starts = %d before reload, want 1", got)
+	}
+
+	candidate := config.Default()
+	candidate.Theme.Accent = "#ff8800"
+	prepared, err := reg.PrepareConfig(candidate, identities(map[uint32]string{1: "DP-9", 2: "HDMI-A-9"}))
+	if err != nil {
+		t.Fatalf("PrepareConfig: %v", err)
+	}
+	// Prepare must not touch live state.
+	if reg.bars[1] != before {
+		t.Fatal("PrepareConfig replaced a live bar before commit")
+	}
+
+	prepared.Commit()
+	if reg.bars[1] == before {
+		t.Fatal("commit retained the old bar")
+	}
+	if got := reg.Clock().Starts(); got != 1 {
+		t.Fatalf("clock starts = %d after reload, want 1; the service restarted", got)
+	}
+	if !reg.Clock().Running() {
+		t.Fatal("the clock stopped across a reload that still uses it")
+	}
+}
+
+func TestARejectedReloadLeavesServicesAndWidgetsUnchanged(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(config.Default())
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9"})
+
+	reg.UpdateNiri(niri.Snapshot{Workspaces: []niri.Workspace{
+		{ID: 5, Name: "code", Output: "DP-9", Active: true},
+	}})
+	before := reg.bars[1]
+	beforeText := before.left[0].node.Text
+	beforeStarts := reg.Clock().Starts()
+
+	// A theme this bar cannot be built from: a gap that leaves no body.
+	broken := config.Default()
+	broken.Bar.Height = 4
+	broken.Bar.Gap = 4
+	if _, err := reg.PrepareConfig(broken, identities(map[uint32]string{1: "DP-9"})); err == nil {
+		t.Fatal("an unbuildable candidate was prepared")
+	}
+
+	if reg.bars[1] != before {
+		t.Fatal("a rejected reload replaced the live bar")
+	}
+	if got := reg.bars[1].left[0].node.Text; got != beforeText {
+		t.Fatalf("visible text = %q, want the unchanged %q", got, beforeText)
+	}
+	if got := reg.Clock().Starts(); got != beforeStarts {
+		t.Fatalf("clock starts = %d, want the unchanged %d", got, beforeStarts)
+	}
+	if !reg.Clock().Running() {
+		t.Fatal("a rejected reload stopped the clock")
+	}
+}
+
+// The owner may still reject after the shell prepared. Rollback must return
+// lease counts exactly where they were.
+func TestRollbackReleasesEverythingPrepareAcquired(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(config.Default())
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9"})
+
+	prepared, err := reg.PrepareConfig(config.Default(), identities(map[uint32]string{1: "DP-9"}))
+	if err != nil {
+		t.Fatalf("PrepareConfig: %v", err)
+	}
+	prepared.Rollback()
+
+	if !reg.Clock().Running() {
+		t.Fatal("rollback stopped a service the live bar still uses")
+	}
+	// The live bar must still hold exactly its own lease, so dropping it stops
+	// the clock. A leaked prepared lease would keep it running.
+	reg.DropHost(1)
+	if reg.Clock().Running() {
+		t.Fatal("rollback leaked a lease: the clock outlived its last consumer")
+	}
+}
+
+func TestCommitAppliesHeldStateToTheReplacementBars(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(config.Default())
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9"})
+	reg.UpdateNiri(niri.Snapshot{Workspaces: []niri.Workspace{
+		{ID: 5, Name: "code", Output: "DP-9", Active: true},
+	}})
+
+	prepared, err := reg.PrepareConfig(config.Default(), identities(map[uint32]string{1: "DP-9"}))
+	if err != nil {
+		t.Fatalf("PrepareConfig: %v", err)
+	}
+	prepared.Commit()
+
+	if got := reg.bars[1].left[0].node.Text; got != "code" {
+		t.Fatalf("replacement bar workspace = %q, want the held state", got)
+	}
 }

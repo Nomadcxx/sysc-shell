@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"errors"
 	"sync"
 	"time"
 
@@ -99,10 +98,64 @@ func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbac
 	return callbacks, nil
 }
 
-// PrepareConfig is replaced in the reload task. Until then it refuses, so a
-// half-migrated reload cannot run.
+// PrepareConfig builds every enabled host's replacement bar and acquires its
+// services before the caller changes live host policy.
+//
+// Acquiring here, and releasing the outgoing leases only in Commit, is what
+// keeps a service in continuous use from stopping: its consumer count never
+// reaches zero, so it is never restarted. A failure at any point releases
+// exactly what this call acquired.
 func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIdentity) (wayland.PreparedConfig, error) {
-	return wayland.PreparedConfig{}, errors.New("shell: reload staging is not wired yet")
+	bars := make(map[uint32]*Bar, len(identities))
+	leases := make(map[uint32][]*services.Lease, len(identities))
+	callbacks := make(map[uint32]wayland.HostCallbacks, len(identities))
+
+	for _, identity := range identities {
+		bar, held, hooks, err := r.buildBar(cfg, identity.Connector)
+		if err != nil {
+			for _, acquired := range leases {
+				releaseAll(acquired)
+			}
+			return wayland.PreparedConfig{}, err
+		}
+		bars[identity.Global] = bar
+		leases[identity.Global] = held
+		callbacks[identity.Global] = hooks
+	}
+
+	// once guards against Commit and Rollback each running, and against
+	// either running twice.
+	var once sync.Once
+
+	return wayland.PreparedConfig{
+		Hosts: callbacks,
+		Commit: func() {
+			once.Do(func() {
+				r.mu.Lock()
+				outgoing := r.leases
+				for _, bar := range bars {
+					bar.apply(r.viewLocked(bar.connector()))
+				}
+				r.cfg = cfg
+				r.bars = bars
+				r.leases = leases
+				r.mu.Unlock()
+
+				// Released only after the replacement set holds its own, so
+				// the count never touches zero for a service still in use.
+				for _, held := range outgoing {
+					releaseAll(held)
+				}
+			})
+		},
+		Rollback: func() {
+			once.Do(func() {
+				for _, held := range leases {
+					releaseAll(held)
+				}
+			})
+		},
+	}, nil
 }
 
 // DropHost releases a bar and its service leases after its surface is

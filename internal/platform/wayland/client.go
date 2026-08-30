@@ -56,6 +56,10 @@ type Invalidation struct{ Global uint32 }
 type PreparedConfig struct {
 	Hosts  map[uint32]HostCallbacks
 	Commit func()
+	// Rollback undoes what preparing acquired. The owner can still reject a
+	// candidate after the application prepared it, and a prepared bar may hold
+	// service leases; without this they would leak a running goroutine.
+	Rollback func()
 }
 
 // HostIdentity carries the registry global that owns a bar and the connector
@@ -712,6 +716,13 @@ type preparedOwnerConfig struct {
 	commit func()
 }
 
+// abandon releases what a prepared candidate acquired, for an owner-side
+// failure after the application already prepared it.
+func abandon(prepared PreparedConfig, err error) (preparedOwnerConfig, error) {
+	prepared.Rollback()
+	return preparedOwnerConfig{}, err
+}
+
 // prepareConfig resolves and builds every ready host before changing live
 // owner or shell state.
 func (o *owner) prepareConfig(cfg config.Config) (preparedOwnerConfig, error) {
@@ -743,6 +754,9 @@ func (o *owner) prepareConfig(cfg config.Config) (preparedOwnerConfig, error) {
 	if prepared.Commit == nil {
 		return preparedOwnerConfig{}, errors.New("wayland: prepared config has no commit function")
 	}
+	if prepared.Rollback == nil {
+		return preparedOwnerConfig{}, errors.New("wayland: prepared config has no rollback function")
+	}
 
 	updates := make([]preparedHostConfig, 0, len(ready))
 	for i, h := range ready {
@@ -754,15 +768,16 @@ func (o *owner) prepareConfig(cfg config.Config) (preparedOwnerConfig, error) {
 		if update.policy.Enabled {
 			app, ok := prepared.Hosts[h.global]
 			if !ok {
-				return preparedOwnerConfig{}, fmt.Errorf("wayland: prepared config omitted %s", h.connector)
+				return abandon(prepared,
+					fmt.Errorf("wayland: prepared config omitted %s", h.connector))
 			}
 			if err := app.validate(h.connector); err != nil {
-				return preparedOwnerConfig{}, err
+				return abandon(prepared, err)
 			}
 			if h.state == hostMapped {
 				if err := app.Configure(h.ss.logicalWidth, h.ss.logicalHeight, int(h.ss.scale120)); err != nil {
-					return preparedOwnerConfig{}, fmt.Errorf(
-						"wayland: configure prepared replacement for %s: %w", h.connector, err)
+					return abandon(prepared, fmt.Errorf(
+						"wayland: configure prepared replacement for %s: %w", h.connector, err))
 				}
 			}
 			update.app = app

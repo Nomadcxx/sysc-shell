@@ -89,8 +89,9 @@ func TestPrepareConfigDoesNotMutateLiveHosts(t *testing.T) {
 				t.Fatalf("identities = %v, want global 7 / DP-1", identities)
 			}
 			return PreparedConfig{
-				Hosts:  map[uint32]HostCallbacks{7: validHostCallbacks()},
-				Commit: func() { committed = true },
+				Hosts:    map[uint32]HostCallbacks{7: validHostCallbacks()},
+				Commit:   func() { committed = true },
+				Rollback: func() {},
 			}, nil
 		}},
 	}
@@ -147,8 +148,9 @@ func TestPrepareConfigConfiguresMappedReplacementBeforePublishing(t *testing.T) 
 				return nil
 			}
 			return PreparedConfig{
-				Hosts:  map[uint32]HostCallbacks{7: callbacks},
-				Commit: func() {},
+				Hosts:    map[uint32]HostCallbacks{7: callbacks},
+				Commit:   func() {},
+				Rollback: func() {},
 			}, nil
 		}},
 	}
@@ -200,7 +202,11 @@ func TestApplyConfigCommitsDisabledPoliciesTogether(t *testing.T) {
 			if len(identities) != 0 {
 				t.Fatalf("enabled identities = %v, want none", identities)
 			}
-			return PreparedConfig{Hosts: map[uint32]HostCallbacks{}, Commit: func() { committed = true }}, nil
+			return PreparedConfig{
+				Hosts:    map[uint32]HostCallbacks{},
+				Commit:   func() { committed = true },
+				Rollback: func() {},
+			}, nil
 		}},
 	}
 
@@ -244,7 +250,11 @@ func TestHotplugUsesTheAcceptedOutputPolicy(t *testing.T) {
 				return validHostCallbacks(), nil
 			},
 			PrepareConfig: func(_ config.Config, _ []HostIdentity) (PreparedConfig, error) {
-				return PreparedConfig{Hosts: map[uint32]HostCallbacks{}, Commit: func() { committed = true }}, nil
+				return PreparedConfig{
+					Hosts:    map[uint32]HostCallbacks{},
+					Commit:   func() { committed = true },
+					Rollback: func() {},
+				}, nil
 			},
 		},
 	}
