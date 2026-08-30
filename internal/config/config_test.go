@@ -570,3 +570,81 @@ func TestShowConditionOnTheWrongItemIsRejected(t *testing.T) {
 		t.Fatal("show-condition was accepted on a clock")
 	}
 }
+
+func TestABatteryItemResolvesItsOptions(t *testing.T) {
+	t.Parallel()
+	cfg, err := Parse([]byte(
+		`{"bar":{"items":{"right":[{"id":"battery","label":"time","warn-below":15}]}}}`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	item := cfg.Bar.Right[0]
+	if item.Label != "time" || item.WarnBelow != 15 {
+		t.Fatalf("item = %+v, want the time label and a 15 threshold", item)
+	}
+}
+
+func TestABatteryItemDefaults(t *testing.T) {
+	t.Parallel()
+	cfg, err := Parse([]byte(`{"bar":{"items":{"right":[{"id":"battery"}]}}}`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	item := cfg.Bar.Right[0]
+	if item.Label != "percent" {
+		t.Fatalf("label = %q, want the percent default", item.Label)
+	}
+	if item.WarnBelow != 20 {
+		t.Fatalf("warn-below = %d, want the default 20", item.WarnBelow)
+	}
+	// Without a positive interval the lease would be rejected and the bar
+	// would fail to build.
+	if item.Interval <= 0 {
+		t.Fatalf("interval = %v, want a positive default", item.Interval)
+	}
+}
+
+func TestABatteryIntervalIsAccepted(t *testing.T) {
+	t.Parallel()
+	cfg, err := Parse([]byte(
+		`{"bar":{"items":{"right":[{"id":"battery","interval":"45s"}]}}}`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got := cfg.Bar.Right[0].Interval; got != 45*time.Second {
+		t.Fatalf("interval = %v, want 45s", got)
+	}
+}
+
+func TestAnInvalidBatteryLabelIsRejected(t *testing.T) {
+	t.Parallel()
+	err := errFromParse(t, `{"bar":{"items":{"right":[{"id":"battery","label":"volts"}]}}}`)
+	if !strings.Contains(err.Error(), "label") {
+		t.Fatalf("error %q does not name the label field", err)
+	}
+}
+
+func TestAnOutOfRangeWarnBelowIsRejected(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{
+		`{"bar":{"items":{"right":[{"id":"battery","warn-below":0}]}}}`,
+		`{"bar":{"items":{"right":[{"id":"battery","warn-below":100}]}}}`,
+	} {
+		err := errFromParse(t, body)
+		if !strings.Contains(err.Error(), "warn-below") {
+			t.Fatalf("error %q does not name the threshold field", err)
+		}
+	}
+}
+
+func TestBatteryOptionsOnTheWrongItemAreRejected(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{
+		`{"bar":{"items":{"right":[{"id":"clock","label":"percent"}]}}}`,
+		`{"bar":{"items":{"right":[{"id":"cpu","warn-below":20}]}}}`,
+	} {
+		if _, err := Parse([]byte(body)); err == nil {
+			t.Fatalf("a battery option was accepted on another item: %s", body)
+		}
+	}
+}

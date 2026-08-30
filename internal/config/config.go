@@ -38,6 +38,11 @@ type Item struct {
 	Direction string
 	// ShowCondition appends the condition word on a weather item.
 	ShowCondition bool
+	// Label is "percent", "time", "rate" or "none" on a battery item.
+	Label string
+	// WarnBelow is the percentage at or below which a discharging battery
+	// warns. Zero on other items.
+	WarnBelow int
 }
 
 // Bar is the resolved policy for one bar.
@@ -107,7 +112,7 @@ type Config struct {
 var knownItems = map[string]struct{}{
 	"clock": {}, "workspace": {}, "window-title": {},
 	"cpu": {}, "memory": {}, "filesystem": {}, "block": {}, "network": {},
-	"weather": {},
+	"weather": {}, "battery": {},
 }
 
 // fractionSources yield a value between zero and one, which a meter can fill.
@@ -141,12 +146,23 @@ const (
 	// defaultMetricDisplay renders a value as text.
 	defaultMetricDisplay = "text"
 	// defaultWeatherInterval matches the reference shell's fifteen minutes.
-	defaultWeatherInterval = 15 * time.Minute
-	defaultWeatherUnit     = "celsius"
+	defaultWeatherInterval  = 15 * time.Minute
+	defaultWeatherUnit      = "celsius"
+	defaultBatteryLabel     = "percent"
+	defaultBatteryWarnBelow = 20
+	// defaultBatteryInterval is coarser than the metric default: a battery
+	// percentage moves a point an hour, so sampling it every two seconds would
+	// cost wake-ups for nothing.
+	defaultBatteryInterval = 30 * time.Second
 )
 
 // weatherUnits are the units the API accepts.
 var weatherUnits = map[string]bool{"celsius": true, "fahrenheit": true}
+
+// batteryLabels are the label modes a battery item accepts.
+var batteryLabels = map[string]bool{
+	"percent": true, "time": true, "rate": true, "none": true,
+}
 
 // supportedEdges names every edge the model understands and whether this
 // milestone implements it. An unimplemented edge is rejected with a named

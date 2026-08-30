@@ -35,6 +35,9 @@ type wireItem struct {
 	Direction *string `json:"direction"`
 
 	ShowCondition *bool `json:"show-condition"`
+
+	Label     *string `json:"label"`
+	WarnBelow *int    `json:"warn-below"`
 }
 
 func (i *wireItem) UnmarshalJSON(data []byte) error {
@@ -378,13 +381,20 @@ func resolveItem(w wireItem, path string) (Item, error) {
 		return Item{}, pathErr(path+".show-condition",
 			"is accepted only on a weather widget, not on %q", w.ID)
 	}
+	if w.Label != nil && w.ID != "battery" {
+		return Item{}, pathErr(path+".label",
+			"is accepted only on a battery widget, not on %q", w.ID)
+	}
+	if w.WarnBelow != nil && w.ID != "battery" {
+		return Item{}, pathErr(path+".warn-below",
+			"is accepted only on a battery widget, not on %q", w.ID)
+	}
 	if !isMetric(w.ID) {
 		for _, unwanted := range []struct {
 			name string
 			set  bool
 		}{
 			{"display", w.Display != nil},
-			{"interval", w.Interval != nil},
 			{"path", w.Path != nil},
 			{"device", w.Device != nil},
 			{"interface", w.Interface != nil},
@@ -395,6 +405,12 @@ func resolveItem(w wireItem, path string) (Item, error) {
 					"is accepted only on a metric item, not on %q", w.ID)
 			}
 		}
+	}
+	// interval is accepted on the metric items and on battery, which is also
+	// sampled. The selectors below stay rejected on battery.
+	if w.Interval != nil && !isMetric(w.ID) && w.ID != "battery" {
+		return Item{}, pathErr(path+".interval",
+			"is accepted only on a sampled item, not on %q", w.ID)
 	}
 
 	switch w.ID {
@@ -431,6 +447,39 @@ func resolveItem(w wireItem, path string) (Item, error) {
 				return Item{}, pathErr(path+".max-width", "%d is not positive", *w.MaxWidth)
 			}
 			item.MaxWidth = *w.MaxWidth
+		}
+	case "battery":
+		item.Label = defaultBatteryLabel
+		item.WarnBelow = defaultBatteryWarnBelow
+		// A battery is a sampled source, so it carries an interval like the
+		// metric items do. Without this the lease in Task 5 would be acquired
+		// at zero and rejected as non-positive, and the bar would fail to
+		// build.
+		item.Interval = defaultBatteryInterval
+		if w.Interval != nil {
+			interval, err := time.ParseDuration(*w.Interval)
+			if err != nil {
+				return Item{}, pathErr(path+".interval",
+					"%q is not a duration such as 30s", *w.Interval)
+			}
+			if interval <= 0 {
+				return Item{}, pathErr(path+".interval", "%v is not positive", interval)
+			}
+			item.Interval = interval
+		}
+		if w.Label != nil {
+			if !batteryLabels[*w.Label] {
+				return Item{}, pathErr(path+".label",
+					"%q is not one of percent, time, rate, none", *w.Label)
+			}
+			item.Label = *w.Label
+		}
+		if w.WarnBelow != nil {
+			if *w.WarnBelow < 1 || *w.WarnBelow > 99 {
+				return Item{}, pathErr(path+".warn-below",
+					"%d is outside 1 through 99", *w.WarnBelow)
+			}
+			item.WarnBelow = *w.WarnBelow
 		}
 	}
 	return item, nil
