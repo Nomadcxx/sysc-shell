@@ -16,7 +16,21 @@ matugen (reuse 4A generator), Go `text/template` + `go:embed` for the catalog.
 
 **Design:** [2026-08-30-settings-osd-theme-catalog-design.md](2026-08-30-settings-osd-theme-catalog-design.md)
 
-**Depends on:** Tranche 4A merged (panel machinery, theming core, IPC v1, MetricsService pattern).
+**Depends on:** Tranche 4A merged (panel machinery, theming core, IPC v1, and the M3 concrete-service
+lease pattern).
+
+## Required review boundaries
+
+Keep this design in one document, but land it as three reviewed slices:
+
+1. Tasks 1-8: protocol bindings, controls, settings, and persistence. Run `go test ./...`, merge,
+   and update `bd` before service work starts.
+2. Tasks 9-11: audio, brightness, OSD, and IPC. Run the service and fake-compositor checks, then
+   merge before catalog work starts.
+3. Tasks 12-14: stock themes, template catalog, and tranche acceptance.
+
+Do not carry an unreviewed 14-task branch across these boundaries. The slices change review and
+merge cadence, not the approved feature scope.
 
 ---
 
@@ -27,7 +41,7 @@ matugen (reuse 4A generator), Go `text/template` + `go:embed` for the catalog.
 - Create: `protocols/cursor-shape-v1.xml`
 - Modify: `sysc-wayland-scanner` generation inputs (follow the existing layer-shell generation
   pattern exactly)
-- Modify: `go.mod` version / tag a release
+- Tag a release after the generated packages and tests pass
 
 **Step 1: Obtain the protocol XML**
 
@@ -46,14 +60,15 @@ Generate into `textinput` and `cursorshape` packages beside `layershell`.
 go build ./... && go test ./...
 ```
 
-Write a compile-only test asserting the surface-facing types exist:
-`textinput.ZwpTextInputV3`, `cursorshape.WpCursorShapeDeviceV1` and their request/event methods
-used below (Enable, Commit, SetSurfaces; SetShape).
+Write a compile-only test asserting the generated manager/device types and the requests used below
+exist: text input `Enable`, `Disable`, `SetSurroundingText`, `SetContentType`,
+`SetCursorRectangle`, and `Commit`; cursor shape `SetShape`. Generate the manager request that
+creates a text-input object for a seat. Do not invent a `SetSurfaces` request; text-input-v3 has none.
 
 **Step 4: Release**
 
-Tag a new sysc-wayland version (v0.2.0); update sysc-shell `go.mod` to it (replace directive if
-the build machine consumes the local checkout — match however 4A pinned sysc-metrics).
+Tag a new sysc-wayland version (v0.2.0) after its release gate passes, then update sysc-shell
+`go.mod` to that tag. Do not add a local `replace`; the project consumes released dependency tags.
 
 **Step 5: Commit in sysc-wayland, then the go.mod bump in sysc-shell**
 
@@ -200,7 +215,10 @@ func TestCursorShapeSetOnFocus(t *testing.T) {
   `ItemCount int`, `ItemHeight int`)
 - Modify: `internal/ui/column.go` (viewport clipping + offset layout)
 - Modify: `internal/platform/wayland/pointer.go` (axis events to focused unit — verify 4A
-  already routes wl_pointer axis; if not, add)
+  routes the surface but does not yet expose axis events; add `EventPointerAxis` and preserve
+  the compositor's logical-axis value plus discrete/value120 data when advertised)
+- Modify: `internal/platform/wayland/client.go` (`Event` axis fields)
+- Test: `internal/platform/wayland/pointer_test.go`
 - Test: `internal/ui/scroll_test.go`
 
 Consumer: settings content. Virtual list materializes only visible items (settings entry counts
@@ -226,10 +244,13 @@ func TestVirtualListVisibleRange(t *testing.T) {
 	lo, hi = VisibleRange(v) // ~100..115
 }
 
-func TestWheelScrollsByDetents(t *testing.T) { ... } // axis event -> ScrollBy, 3 lines per detent
+func TestWheelScrollsByDetents(t *testing.T) { ... } // one pointer frame -> one ScrollBy
+func TestPointerAxisKeepsFractionalValue(t *testing.T) { ... } // touchpad delta is not rounded away
 ```
 
-**Step 2-3: Implement** — layout positions children offset by `ScrollOffset`, clips paint to the
+**Step 2-3: Implement** — the Wayland owner accumulates axis events until `wl_pointer.frame`,
+delivers one immutable event to the focused surface, and does not double-apply continuous and
+discrete forms of the same wheel movement. Layout positions children offset by `ScrollOffset`, clips paint to the
 viewport rect (canvas clip exists). Virtual list: builder callback
 `func(i int) *Node` supplied by the settings registry; layout instantiates only the visible
 range + 2 overscan each side. Keyboard: PageUp/PageDown (evdev 104/109), Home/End scroll; arrows
@@ -319,7 +340,7 @@ version, this is the boring one). Entries for the M4 set:
 - Bar: enabled, edge, height, gap, padding, spacing, radius, font-family, font-size
 - Widgets: per-widget options discovered from configured items (clock format, window-title
   max-width) — generated entries, path `widgets.<id>.<option>`
-- Appearance: theme source, seed, scheme, mode, high-contrast, per-template toggles (Task 14
+- Appearance: theme source, seed, scheme, mode, high-contrast, per-template toggles (Task 13
   registers these; the registry exposes `Register(entries ...Entry)` for that)
 - Panels: gap, padding, osd position
 - Session: locker
@@ -367,7 +388,7 @@ func TestSettingsKeyboardOnlyTraversal(t *testing.T) {
 registry Get/Set. Search field input filters: non-empty query hides sidebar, lists
 `registry.Search(q)` matches; Enter on a match opens its section and focuses the control.
 Escape in search clears the query first, then closes the panel (two-stage, matches Noctalia).
-Size ~900x620, fitted by Task 6's FittedSize.
+Size ~900x620, fitted by 4A's `Placement.FittedSize`.
 
 **Step 4-5: Pass. Commit** `feat(shell): settings modal panel`
 
@@ -393,14 +414,15 @@ func TestWriteAtomicRoundTrip(t *testing.T) {
 
 func TestWriteLeavesNoTempOnSuccess(t *testing.T) { ... }
 
-func TestWriteNeverTruncatesOnMarshalFailure(t *testing.T) {
-	// original file content intact if Write errors before rename
-}
+func TestWriteUsesPrivatePermissions(t *testing.T) { ... } // resulting file is 0600
+func TestWriteFailureKeepsOriginalAndCleansTemp(t *testing.T) { ... }
 ```
 
 **Step 2-3: Implement** — `Write(path string, c Config) error`: marshal the wire form (inverse of
-Parse; only fields that differ from defaults are written — mirror the merge semantics so a
-hand-edited file keeps its shape), write to `path + ".tmp"` (0600), `os.Rename`. Settings apply
+Parse; only fields that differ from defaults are written). Create a unique temp file with
+`os.CreateTemp(filepath.Dir(path), ".config-*.tmp")`, chmod 0600, encode, `Sync`, close, rename,
+then sync the parent directory. A deferred cleanup removes the temp on every error; rename replaces
+a symlink rather than following it. Settings apply
 path: entry.Set mutates a copy of the live config → `Write` → trigger the existing reload channel
 (the wayland client's `Reloads`; acquire-before-release applies it live). Invalid input never
 reaches the file: Set validates first (Task 6); Write failure shows an error row in the entry.
@@ -565,11 +587,11 @@ availability fields. Hotkey doc additions:
 
 ```kdl
 bind {
-    XF86AudioRaiseVolume allow-when-locked { spawn "sysc-shell" "ipc" "osd.step" `{"kind":"audio","action":"up"}`; }
-    XF86AudioLowerVolume allow-when-locked { spawn "sysc-shell" "ipc" "osd.step" `{"kind":"audio","action":"down"}`; }
-    XF86AudioMute        allow-when-locked { spawn "sysc-shell" "ipc" "osd.step" `{"kind":"audio","action":"mute"}`; }
-    XF86MonBrightnessUp  allow-when-locked { spawn "sysc-shell" "ipc" "osd.step" `{"kind":"brightness","action":"up"}`; }
-    XF86MonBrightnessDown allow-when-locked { spawn "sysc-shell" "ipc" "osd.step" `{"kind":"brightness","action":"down"}`; }
+    XF86AudioRaiseVolume allow-when-locked { spawn "sysc-shell" "ipc" "osd.step" "{\"kind\":\"audio\",\"action\":\"up\"}"; }
+    XF86AudioLowerVolume allow-when-locked { spawn "sysc-shell" "ipc" "osd.step" "{\"kind\":\"audio\",\"action\":\"down\"}"; }
+    XF86AudioMute        allow-when-locked { spawn "sysc-shell" "ipc" "osd.step" "{\"kind\":\"audio\",\"action\":\"mute\"}"; }
+    XF86MonBrightnessUp  allow-when-locked { spawn "sysc-shell" "ipc" "osd.step" "{\"kind\":\"brightness\",\"action\":\"up\"}"; }
+    XF86MonBrightnessDown allow-when-locked { spawn "sysc-shell" "ipc" "osd.step" "{\"kind\":\"brightness\",\"action\":\"down\"}"; }
 }
 ```
 
@@ -581,8 +603,11 @@ bind {
 
 **Files:**
 - Modify: `internal/theme/theme.go` (stock seeds)
+- Modify: `internal/theme/generate.go` (resolve stock name before the hex invocation)
+- Modify: `internal/config/load.go` (accept stock only with a known name)
 - Modify: `internal/settings/registry.go` (theme source enum entries)
 - Test: `internal/theme/stock_test.go`
+- Test: `internal/config/config_test.go`
 
 Design D8: ~10 curated seed hexes named as color families, run through the same matugen
 pipeline (source kind "stock" resolves the seed name to its hex, then `matugen color hex`).

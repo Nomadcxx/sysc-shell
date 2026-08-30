@@ -2,7 +2,9 @@
 
 Date: 2026-08-26. Amended 2026-08-27 by [the plan audit](plans/2026-08-27-plan-audit-report.md).
 
-Each milestone ends at a working gate. Later work does not enter the branch until the current gate passes on Niri.
+Each milestone ends at a working gate. Later work does not enter the branch until the current gate passes on Niri,
+unless the owner defers a hardware-only qualification in `bd`. A deferred gate stays open and keeps its missing
+evidence; it does not turn an unrun check into a pass.
 
 Every design, plan and handover produced so far is registered in [`plans/README.md`](plans/README.md),
 including which branch each one lives on. Documents are written on milestone branches and only reach

@@ -137,22 +137,22 @@ stays live for further work.
 | `2026-08-30-panel-foundation.md` | plan | Tranche 4A, **13 tasks**. Ready to execute once its prerequisites clear. |
 | `2026-08-30-panel-foundation-parallel-execution-handover.md` | execution-handover | Starts Tasks 1, 5 and 8 while Tranche 3A continues, then joins the remaining plan after M3 integration. |
 | `2026-08-30-settings-osd-theme-catalog-design.md` | design | Tranche 4B. Owner-approved; amended for the review. D1–D10. |
-| `2026-08-30-settings-osd-theme-catalog.md` | plan | Tranche 4B, 14 tasks. See the open scope question below. |
+| `2026-08-30-settings-osd-theme-catalog.md` | plan | Tranche 4B, 14 tasks with three mandatory review boundaries. |
 | `2026-08-30-milestone-4-review.md` | review | Closed. Both blockers fixed in `3fc026c`; findings tracked as `sysc-16`. |
+| `2026-08-31-milestone-4-post-m3-audit-report.md` | audit-report | Reconciles 4A/4B with landed M1-M3 APIs and corrects the executable plans. |
 
 ### Tranche state
 
 | Tranche | Scope | State |
 |---|---|---|
-| 4A | Panel machinery, placement, rounding and shadows, button/label/separator, matugen theming, clock/calendar and session/power popouts, IPC | Parallel prework can start under `sysc-18`; M3-coupled integration remains under `sysc-17`. |
-| 4B | Controls, settings modal and registry, OSD with audio/brightness services, stock themes, template catalog | Planned. Blocked by 4A. Scope question open — see below. |
+| 4A | Panel machinery, placement, rounding and shadows, button/label/separator/tabs, matugen theming, clock/calendar, system-monitor and session/power popouts, IPC | Plan reconciled with landed M3. |
+| 4B | Controls, settings modal and registry, OSD with audio/brightness services, stock themes, template catalog | Plan split by mandatory review boundaries after Tasks 8 and 11. |
 
-### What the review changed
+### Post-M3 reconciliation
 
-- The system-monitor popout, `MetricsService`, and the `tabs` and `graphs` controls are **deferred out
-  of Milestone 4** until Tranche 3B qualifies and tags `sysc-metrics`. 4A had reached for a local
-  `replace` on an untagged module — a recorded stop condition — and the exit gate is a disjunction, so
-  clock/calendar carries it. **Milestone 4 now adds no module dependency.**
+- The system-monitor returns because 3B qualified and pinned `sysc-metrics@v0.2.0`. It reuses
+  `services.Metrics`, selector leases, histories, and M3's `KindGraph`; M4 adds no wrapper service or
+  module dependency.
 - A configuration reload leaves panel surfaces mapped. Tearing them down would have dismissed 4B's
   settings modal on every change made inside it.
 - Colour fields that palette generation now owns are removed from the schema, and unknown keys are
@@ -160,17 +160,11 @@ stays live for further work.
 - Every template apply hook gained a reverse, so disabling one removes the include line and file it
   added to another application's configuration.
 
-### Open owner decisions
+### Resolved plan decisions
 
-- **External binary dependencies** (`sysc-16`). matugen and `loginctl` in 4A, `wpctl` and
-  `brightnessctl` in 4B are the first runtime binary dependencies in a shell that is otherwise pure Go
-  over a pinned client. Each has a clean fallback and beats its alternative, but the dependency ladder
-  in the project design stops at "new code" and does not cover execing a binary the user may not have.
-- **4B tranche size** (`sysc-16`). Six controls, the settings modal, a schema registry, persistence,
-  two services, OSD, ten themes, sixteen templates, and a cross-repository `sysc-wayland` release, in
-  fourteen tasks. Tranche 3A ships four read-only text widgets in sixteen. Splitting along the seams
-  the design already names — controls and settings, OSD and services, themes and catalog — would give
-  three reviewable pieces.
+- Runtime binaries use `exec.LookPath`, argv slices, bounded contexts, and no shell. Missing optional
+  tools hide the capability or select the documented fallback.
+- 4B remains one design and plan, executed as three reviewed slices: Tasks 1-8, 9-11, and 12-14.
 
 ## Milestone 5: notifications and system tray
 
@@ -207,39 +201,6 @@ Source worktree: `/home/nomadx/.config/superpowers/worktrees/sysc-shell/mileston
 | `/home/nomadx/sysc-notify` | `32da2b5` | Design repository. No release tag; M5 needs the persistence and socket contracts implemented and tagged. |
 | `/home/nomadx/sysc-tray` | `04ca018` | Design repository. No release tag; M5 needs the socket, item snapshot, and menu contracts implemented and tagged. |
 
-## Execution order
+## Work selection
 
-Everything below is written, reviewed, and waiting. `bd ready` is authoritative; this is the same
-graph in prose.
-
-1. **Milestone 2 corrections** (`sysc-4`): complete and merged.
-2. **Tranche 3A** (`sysc-6`): ready now. 16 tasks, plan on `main`. Its Task 0 gates on the three
-   corrections from step 1 and stops if any is absent.
-3. **Milestone 2 hardware qualification** (`sysc-5`): remains open in parallel and needs a live session
-   with two outputs. It blocks claims of full Milestone 2 hardware qualification, not development.
-4. **Tranche 4A parallel prework** (`sysc-18`): Tasks 1, 5 and 8 can run while Tranche 3A continues.
-5. **Tranche 4A integration** (`sysc-17`): remaining work joins after Tranche 3A; it does not need
-   Tranches 3B, 3C or 3D.
-6. **Tranche 4B**: 14 tasks, after 4A, subject to the scope question above.
-
-Off the critical path, and startable now: **`sysc-metrics` qualification** (`sysc-7`) — audit the
-public API, qualify it from a proposed consumer, tag and push. It unblocks Tranche 3B (`sysc-8`) and
-3C (`sysc-9`), and it is what would let the deferred system-monitor popout return.
-
-## Parallel work
-
-Start Tranche 3A now. The deferred live Niri gate can run in another session when suitable hardware is
-available. Other independent work includes:
-
-1. **Tranche 4A parallel prework** (`sysc-18`). Execute Tasks 1, 5 and 8 from the existing 4A plan.
-2. **`sysc-metrics` qualification** (`sysc-7`). Audit the public API, qualify it from one proposed shell
-   consumer, tag and push. The single dependency unblocking Tranches 3B and 3C, and the thing that
-   would let Milestone 4's system-monitor popout return.
-3. **The two open Milestone 4 owner decisions** (`sysc-16`): the external-binary dependency policy, and
-   whether Tranche 4B splits.
-4. **Icon-asset policy application** for Tranche 3D: author the SVG sources and decide the checked-in
-   raster size set after measuring the supported fractional scales.
-5. **Launcher prior-art research** (`sysc-12`), scoped as input to the component vocabulary rather than
-   as Milestone 7 implementation. Lower value now that Milestone 4 is designed.
-
-Do not edit the Milestone 2 progress handover.
+Use `bd ready` and `bd blocked`. This register does not duplicate execution order or issue status.

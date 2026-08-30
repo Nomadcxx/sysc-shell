@@ -8,8 +8,8 @@ Worktree: `/home/nomadx/.config/superpowers/worktrees/sysc-shell/milestone/panel
 Milestone 4 is split into two tranches. This design is the first:
 
 - **Tranche 4A (this document)** — panel machinery, placement, the control vocabulary with 4A
-  consumers, core theming, the gate popouts (clock/calendar, session/power), and the IPC socket
-  with panel verbs and documented hotkeys.
+  consumers, core theming, the gate popouts (clock/calendar, system-monitor, session/power), and
+  the IPC socket with panel verbs and documented hotkeys.
 - **Tranche 4B** — settings modal and schema registry, OSD surfaces with audio/brightness
   services, stock themes, and the enforced app-theming template catalog. See
   [the 4B design](2026-08-30-settings-osd-theme-catalog-design.md).
@@ -25,13 +25,13 @@ Research backing every decision lives in
 
 ## Ordering constraints
 
-- No product code enters this branch until the Milestone 2 live Niri gate passes and Milestone 2
-  merges (roadmap gate rule; milestone charter precedent).
-- 4A consumes **Tranche 3A** outputs specifically — not all of Milestone 3: the bar, the
+- Milestones 1, 2, and 3 have merged. `sysc-5` still tracks the owner-deferred Milestone 2
+  multi-output hardware qualification; it does not block this tranche and must not be reported as passed.
+- 4A consumes the landed M3 surface: the bar, the
   consumer-counted clock service, the Niri projection, the config/reload path, and the retained
   `ui.Handle` press/release matching and hit testing that 3A kept inert "because Milestone 4 needs
-  it". Tranches 3B, 3C and 3D are **not** prerequisites, because D10 defers everything that would
-  have depended on them.
+  it". The system monitor consumes 3B's metrics service and graph node. Changes to `Registry`,
+  configuration, rendering, and process wiring must keep 3C and 3D paths intact.
 - The design and plan are written docs-only, in parallel with M2 corrections, per the orchestration
   document.
 
@@ -41,14 +41,14 @@ Tranche 4A ships:
 
 - Panel machinery: per-panel dismiss shield + panel surface, both layer-shell Overlay with
   exclusive_zone −1; Exclusive keyboard while open; one instance per panel ID process-wide.
-- Placement: floating, anchored to the triggering bar, section-aligned, clamped inside the output.
+- Placement: floating, centered off the focused output's bar, clamped inside the output.
 - Shell-rendered corner rounding and shadows (no reliance on user layer-rules).
-- Controls with 4A consumers: button, label, separator — with the roving keyboard model and
-  accessible name/role data on every interactive node.
+- Controls with 4A consumers: button, label, separator, and tabs; the system monitor reuses M3's
+  graph node. The roving keyboard model and accessible name/role data cover each interactive node.
 - Theming core: matugen-generated Material 3 tokens, dark/light, high-contrast, reduced-motion,
   fallback stock palette; `Theme` replaces `ProofStyle`.
-- Popouts: clock/calendar and session/power (logind via `loginctl`; lock delegates to a configured
-  external locker).
+- Popouts: clock/calendar, system-monitor over the landed M3 metrics service, and session/power
+  (logind via `loginctl`; lock delegates to a configured external locker).
 - IPC: `$XDG_RUNTIME_DIR/sysc-shell/ipc.v1.sock`, newline-delimited JSON, panel verbs, `status`,
   and the `sysc-shell ipc` CLI with documented niri keybinds.
 
@@ -63,13 +63,13 @@ AT-SPI export.
 | D1 | Two layer-shell surfaces per panel: fullscreen dismiss shield (keyboard none) + panel surface, both Overlay, exclusive_zone −1. | A single surface with input-region tricks, or compositor-side outside-click dismissal — niri has no outside-click dismissal for layer surfaces; Noctalia's click shield and DMS's clickcatcher both implement it shell-side. |
 | D2 | Keyboard `Exclusive` for every interactive panel while open. | Per-panel OnDemand mixing (Noctalia control-center style). Exclusive makes the gate items "escape always closes" and "only the open panel requests keyboard focus" true by construction. Per-panel demotion is a future config knob. |
 | D3 | Focus restoration relies on niri's automatic layout-focus fall-through when the exclusive surface unmaps. | DMS-style explicit restore of the captured toplevel — verified redundant on niri (`update_keyboard_focus` falls through to `layout_focus()`, the last activated window). Contingency below if live testing disagrees. |
-| D4 | One instance per panel ID process-wide; same-bar trigger toggles; trigger from another output closes and reopens there. | Per-output panel instances. Popouts follow user focus, not outputs; matches DMS `currentPopoutsByScreen` close-on-other-screen. |
-| D5 | Floating placement anchored off the triggering bar edge, aligned to the triggering widget's section (left/center/right), clamped fully inside the output minus padding and the bar's reserved zone. | Noctalia Attached/seamless placement (deferred, no gate need) and open-near-click pointer anchoring (future knob). |
+| D4 | One instance per panel ID process-wide; a trigger on the same output toggles, while a trigger after focus moves closes and reopens there. | Per-output panel instances. Popouts follow user focus, not outputs; matches DMS `currentPopoutsByScreen` close-on-other-screen. |
+| D5 | Floating placement centered off the focused output's bar edge and clamped fully inside the output minus padding and the bar's reserved zone. | Noctalia Attached/seamless placement and pointer-widget anchoring. A clickable bar launcher needs keyboard parity, so 4A uses IPC and compositor hotkeys. |
 | D6 | The shell renders its own corner rounding and shadows: SDF rounded-rect alpha masks and pre-blurred shadow textures composited via `blendMask`. | Relying on user-configured niri layer-rules (owner decision): the shell must look right with zero user config, and layer-rules are per-user, not per-panel-instance. |
-| D7 | Controls enter only with a 4A consumer: button (session actions), label/separator (all panels). | Shipping the full roadmap control list at once. Every other control has its only consumer in 4B, or in the deferred system-monitor (D10), so none may enter here (roadmap: components enter only with a consumer). |
+| D7 | Controls enter only with a 4A consumer: button (session actions), label/separator (all panels), and tabs (system-monitor resources). The system monitor reuses M3's `KindGraph`; 4A does not create a second graph type. | Shipping the full roadmap control list at once. Toggle, slider, menu, text field, scroll area, and virtual list have 4B consumers. |
 | D8 | Roving focus per panel: Tab/Shift+Tab between controls, arrows inside composites, Space/Enter activate, Escape closes. | A full focus graph with universal tab stops. Noctalia's `RovingListNav` pattern; keeps keyboard model testable per panel. |
-| D9 | Theme = matugen-generated Material 3 tokens from wallpaper/hex/stock source; dark/light and high-contrast settings; compiled-in fallback palette seeded from current `ProofStyle` when matugen is absent or fails. | Hand-authored static palettes only, or the freedesktop color-scheme portal for auto dark/light (deferred; no consumer need yet). |
-| D10 | The system-monitor popout, `MetricsService`, and the `tabs` and `graphs` controls are **deferred out of Milestone 4** until Tranche 3B has qualified, tagged, and pinned `sysc-metrics`. | Shipping them in 4A behind a local `replace` on an untagged `sysc-metrics`. That is a recorded stop condition, and it would make Milestone 4 the first consumer of a library Milestone 3 owns, ahead of its qualification gate. The exit gate reads "clock/calendar **or** system-monitor", so 4A passes on clock/calendar alone. |
+| D9 | Theme = matugen-generated Material 3 tokens from wallpaper or hex source; dark/light and high-contrast settings; compiled-in fallback palette seeded from current `ProofStyle` when matugen is absent or fails. 4B adds named stock sources with its catalog. | Hand-authored static palettes only, or the freedesktop color-scheme portal for auto dark/light (deferred; no consumer need yet). |
+| D10 | The system monitor reuses M3's concrete `services.Metrics`, its `Snapshot`, selector leases, and history rings. It always leases CPU and memory at one second; it also leases the first configured filesystem, block, and network selector on the focused output, one per source. | Restoring the pre-M3 `MetricsService` wrapper or sampling `sysc-metrics` from the panel. M3 now owns sampler lifetime and sequential access, so a second owner would duplicate work and break that contract. |
 | D11 | Session actions exec `loginctl` (poweroff/reboot/suspend/terminate-session). | A D-Bus client dependency (godbus). `loginctl` goes through logind with identical polkit handling, keeps the shell stdlib-only, and covers every 4A action. |
 | D12 | IPC = versioned Unix socket `ipc.v1.sock`, newline-delimited JSON `{"id","method","params"}` → `{"id","ok"|"error"}`; version in the filename. | Sharing niri's socket, or an unversioned path. The same socket is the planned seam for sysc-notify/sysc-tray; filename versioning lets a v2 coexist. |
 | D13 | Reveal/dismiss motion is shell-rendered: fade + 8 px slide off the triggering bar edge, ~150 ms ease-out, instant under reduced-motion. | Waiting for niri layer-surface animations — verified nonexistent (layer-rules expose no animation properties; Animations config has no layer entries). |
@@ -108,15 +108,15 @@ OSD surfaces (4B) reuse none of the shield machinery: keyboard none, no shield, 
 
 ## Placement and geometry
 
-- **Trigger sources.** A bar-widget click knows the triggering widget's rectangle in output
-  coordinates at click time (the shell owns the bar; no probing). An IPC/hotkey trigger has no
-  pointer anchor and uses the focused output derived from the Niri projection (Window events carry
-  output names, verified in the M3 audit) with bar-relative default alignment.
-- **Output.** The panel opens on the triggering bar's output. One instance per panel ID (D4):
+- **Trigger source.** 4A opens panels through IPC and compositor hotkeys. The focused output comes
+  from the Niri projection (Window events carry output names, verified in the M3 audit), and the
+  panel uses centered bar-relative alignment. A clickable bar launcher waits until the bar has a
+  keyboard-focus contract; adding a pointer-only launcher would fail the M4 accessibility gate.
+- **Output.** The panel opens on the focused output's bar. One instance per panel ID (D4):
   re-trigger from another output closes and reopens there.
-- **Anchor.** Floating off the triggering bar edge, offset by a gap token. Horizontal alignment
-  follows the triggering widget's section — left/center/right (DMS `triggerSection` pattern).
-  Hotkey-triggered panels default to centered along the bar edge.
+- **Anchor.** Floating off the focused output's bar edge, offset by a gap token and centered along
+  that edge. Pointer-widget alignment can extend the same placement type after the bar gains a
+  keyboard-focus contract.
 - **Clamp.** Fully inside the output minus an 8 px padding token and the bar's reserved zone:
   `x = clamp(desired, pad, outputW − panelW − pad)`, same for y (DMS `alignedX/alignedY` pattern).
   Bar geometry comes from the shell's own config — no compositor probing.
@@ -135,6 +135,8 @@ Controls shipping here, each with its consumer:
 |---|---|
 | button | session/power actions; tab headers reuse tab control |
 | label, separator | every panel |
+| tabs | system-monitor resources |
+| graph | system-monitor history, reusing M3 `KindGraph` |
 
 
 Deferred to 4B with their consumers: toggle, slider, menu/dropdown, text field (settings); scroll
@@ -157,7 +159,7 @@ Pipeline (verified live end-to-end with matugen 4.2.0; see research doc):
 1. The shell embeds a minimal matugen config + template (~20 Material 3 tokens × dark/light,
    `{{colors.<token>.<mode>.hex}}` placeholders) via `go:embed`.
 2. Generation: `matugen image -c <config> <wallpaper> --prefer saturation` for wallpaper sources,
-   `matugen color hex <HEX>` for hex/stock seeds; high-contrast appends `--contrast 1`. Output is
+   `matugen color hex <HEX>` for hex seeds; high-contrast appends `--contrast 1`. Output is
    `$XDG_CACHE_HOME/sysc-shell/colors.json`. (Assumption: the `color` subcommand accepts the same
    config/template flags as `image` — the plan verifies in its first task.)
 3. Regenerate at startup and on theme-source change; single-flight with one queued rerun.
@@ -177,9 +179,10 @@ project's rule is that an unknown or unusable entry fails the whole candidate ra
 ignored. There is no compatibility promise, so a stale file fails at load with its field path named.
 `theme.radius` stays: it is geometry, not colour, and generation does not produce it.
 
-One consumer needs care. `config.Theme.BackgroundOpaque()` feeds the compositor's opaque-region
-hint and reads the configured background. It now reads the generated `surface` token instead: opaque
-when that token is six-digit hex, which is what matugen emits.
+One consumer needs care. The current Wayland client derives the opaque-region hint from
+`config.Theme.BackgroundOpaque()`. Palette generation moves that decision into `shell.Theme`, which
+reads the active `surface` token. `HostCallbacks` carries the resolved boolean into the Wayland layer;
+the platform package does not import theme or shell types.
 
 Motion (D13): fade + 8 px slide off the triggering bar edge, ~150 ms ease-out, instant under
 reduced-motion. Niri does not animate layer surfaces, so reveal/dismiss is the shell's own
@@ -192,17 +195,26 @@ All services follow the M3 clock exemplar: concrete types, no interfaces; consum
 
 - **Clock** — reused from M3 via lease; the clock/calendar popout is a consumer alongside the bar
   clocks. Finest boundary wins across consumers.
-- **No new service.** `MetricsService` is deferred with the system-monitor popout (D10). Milestone 4
-  therefore adds **no** module dependency: `go.mod` is untouched by this tranche.
+- **Metrics** — reused from M3 (D10). The system monitor holds selector leases only while open.
+  M3's sampler goroutine stays the single sequential owner of `sysc-metrics`; snapshots continue
+  through the existing process pump. A selector history survives panel close only when a bar still
+  leases it, matching M3's rule that a removed consumer must not bridge an unobserved time gap.
+- **No new service.** Milestone 4 therefore adds **no** module dependency: `go.mod` is untouched by
+  this tranche; M3 already pins `sysc-metrics@v0.2.0`.
 
 Audio/brightness services and their change-detection polling ship in 4B with the OSD.
 
 ## Popouts
 
-**clock/calendar** — triggered from the bar clock widget. Large clock face (leased clock service)
+**clock/calendar** — triggered through IPC or a compositor hotkey. Large clock face (leased clock service)
 plus a month calendar grid computed from stdlib `time`. Fixed content; no scrolling.
 
-**session/power** — triggered from bar widget or hotkey. Button grid: lock, logout, suspend,
+**system-monitor** — triggered through IPC or a compositor hotkey. CPU and memory tabs always
+ship. The focused bar may add one filesystem, block, and network tab from its configured metric
+selectors. Each tab shows the current value and the existing normalized history graph. This bounded
+selection avoids inventing a resource picker before 4B's list controls exist.
+
+**session/power** — triggered through IPC or a compositor hotkey. Button grid: lock, logout, suspend,
 reboot, power off (D11):
 
 | Action | Command |
@@ -215,21 +227,28 @@ reboot, power off (D11):
 
 A first-party lockscreen (ext-session-lock) is a later milestone; lock always delegates.
 
+Runtime commands use `exec.LookPath` and argv slices, never a shell. Missing `matugen` selects the
+compiled palette; missing `loginctl` hides its actions; an unset or missing locker hides Lock.
+Command errors stay in the open panel or IPC response. This accepts native or already-installed
+tools without turning them into Go module dependencies.
+
 ## IPC and hotkeys
 
-- **Socket**: `$XDG_RUNTIME_DIR/sysc-shell/ipc.v1.sock`, perms 0700, same-user. Bind failure
+- **Socket**: `$XDG_RUNTIME_DIR/sysc-shell/ipc.v1.sock` inside a 0700 directory; socket mode 0600.
+  Bind failure
   doubles as the single-instance check. Version in the filename so v2 can coexist.
 - **Envelope**: newline-delimited JSON. Request `{"id":1,"method":"panel.toggle","params":{...}}`;
   response `{"id":1,"ok":{...}}` or `{"id":1,"error":"..."}`.
 - **Methods in 4A**:
-  - `panel.toggle` / `panel.open` / `panel.close` — params `{"panel":"clock|session|settings"}`
-    (`settings` accepted once 4B lands; `system-monitor` is reserved and rejected until it ships;
+  - `panel.toggle` / `panel.open` / `panel.close` — params
+    `{"panel":"clock|system-monitor|session|settings"}` (`settings` accepted once 4B lands;
     single-instance semantics per D4).
   - `status` — shell version, open panels, capability probes (matugen present).
   - `osd.step` is reserved for 4B.
 - **CLI**: `sysc-shell ipc <method> [params-json]` — connect, send, print, exit.
 - **Hotkeys**: documented niri keybinds spawning the CLI (DMS pattern: compositor owns keys, shell
-  owns panels). 4A documents toggles for the four popouts; media/brightness keys come with 4B's OSD.
+  owns panels). 4A documents clock, system-monitor, and session toggles; media/brightness keys come
+  with 4B's OSD.
 - **Future seam**: sysc-notify and sysc-tray get their own method namespaces on this socket in
   their milestones; server-pushed `{"event":...}` lines are added when they need them, not now.
 
@@ -238,7 +257,7 @@ A first-party lockscreen (ext-session-lock) is a later milestone; lock always de
 New config fields (pointer wire types, absent inherits default; hand-edited until the 4B settings
 UI), written atomically (temp + rename) and applied through the existing reload path:
 
-- `theme`: `source` (`wallpaper` | `hex` | `stock`), `seed` (hex or stock name or image path),
+- `theme`: `source` (`wallpaper` | `hex`), `seed` (hex or image path),
   `scheme` (default `scheme-tonal-spot`), `mode` (`dark` | `light`, default dark),
   `high-contrast` (bool).
 - `accessibility`: `reduced-motion` (bool), `high-contrast` mirror of theme's for gate clarity —
@@ -252,7 +271,7 @@ The roadmap exit gate evaluated on 4A surfaces:
 
 | Gate item | 4A evidence |
 |---|---|
-| clock/calendar **or** system-monitor popout works on each output | clock/calendar ships; live test opens it on every output. The gate is a disjunction and system-monitor is deferred (D10). |
+| clock/calendar **or** system-monitor popout works on each output | both ship; live tests open each on every output. |
 | only the open panel requests keyboard focus | Exclusive + single instance; live test: windows keep focus until panel opens; no second instance |
 | a panel never changes the bar's exclusive zone | assert bar exclusive zone unchanged across open/close cycles |
 | placement remains within transformed and scaled output bounds | clamp tests under fractional scale + output transform |

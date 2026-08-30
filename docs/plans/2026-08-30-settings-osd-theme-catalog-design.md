@@ -113,6 +113,13 @@ a key keeps it visible.
 Triggers: AudioService/BrightnessService change events (including externally-induced changes
 detected by polling) and the `osd.step` IPC verb. Hotkeys per D10.
 
+Runtime tools follow one policy across both M4 tranches: resolve the binary with `exec.LookPath`,
+pass an argv slice to `exec.CommandContext`, and never invoke a shell. Missing optional tools hide
+their capability or select the documented fallback. Command failure returns a bounded error to the
+panel or IPC caller; it does not terminate the shell. `loginctl` is the native logind client,
+`wpctl` is the native PipeWire control client, and `brightnessctl` supplies the write path that
+sysfs does not standardize. The configured locker is owner-supplied and uses the same no-shell path.
+
 ## Stock themes and template catalog
 
 **Stock themes** (D8): ~10 curated seed hexes named as color families. Selecting one sets theme

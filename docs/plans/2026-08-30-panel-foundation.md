@@ -12,8 +12,8 @@ owns panel state the way it owns bars; the Wayland client gains generic auxiliar
 (create/destroy at runtime, per-surface callbacks, keyboard delivery) because today it maps exactly
 one bar surface per output — that is the one Milestone 2 modification this plan requires, and it is
 explicit. All new logic is pure-Go stdlib. **This tranche adds no module dependency: `go.mod` is
-untouched.** The system-monitor popout that would have needed `sysc-metrics` is deferred to after
-Tranche 3B qualifies and tags it (design D10).
+untouched.** M3 already pins `sysc-metrics@v0.2.0` and owns its sampler lifecycle. The
+system-monitor popout reuses `services.Metrics`; 4A adds no wrapper service or dependency (design D10).
 
 **Tech Stack:** Go 1.26 stdlib, sysc-wayland v0.1.x generated bindings (layer-shell,
 fractional-scale, viewporter), matugen 4.2.0 (external binary, exec), loginctl (external binary,
@@ -26,13 +26,15 @@ exec).
 
 ## Prerequisites (verify before Task 1)
 
-1. Milestone 2 has passed its live Niri gate and merged to main. **Tranche 3A** (widget
-   foundation) has merged to main. Tranches 3B, 3C and 3D are **not** required — everything that
-   would have depended on them is deferred by design D10. This plan executes from a fresh worktree
-   of main containing both.
+1. Milestones 1, 2, and 3 have merged to main. `sysc-5` still tracks the owner-deferred M2
+   multi-output hardware qualification; record it as unrun, not passed. Tranches 3B, 3C, and 3D
+   supply the metrics service, graph node, config fields, pumps, and invalidation paths that the
+   system monitor consumes and that every 4A edit must preserve.
+   Rebase the existing `milestone/panels-controls` worktree onto this main before Task 2.
 2. The merged tree contains the M3 surface this plan builds on:
    - `internal/shell/registry.go` — `Registry` with `NewHost(global, connector)`,
-     `DropHost(global)`, `UpdateClock(now) []uint32`, `UpdateNiri(snap) []uint32`,
+     `DropHost(global)`, `UpdateClock(now) []uint32`, `UpdateMetrics(snap) []uint32`,
+     `UpdateWeather(reading) []uint32`, `UpdateNiri(snap) []uint32`,
      `PrepareConfig(cfg, hosts)`, `Clock() *services.Clock`, `Invalidations() <-chan wayland.Invalidation`.
    - `internal/shell/bar.go` — `Bar` with `Handle(wayland.Event) bool`, `NewWithTheme(theme, policy, connector)`.
    - `internal/services/clock.go` — `NewClock()`, `Acquire(boundary) (*Lease, error)`,
@@ -122,7 +124,7 @@ func TestThemeSourceValidation(t *testing.T) {
 			t.Fatalf("error %q must name the field path", err)
 		}
 	}
-	for _, ok := range []string{"wallpaper", "hex", "stock"} {
+	for _, ok := range []string{"wallpaper", "hex"} {
 		body := []byte(`{"theme-gen":{"source":"` + ok + `","seed":"#3050a0"}}`)
 		if _, err := Parse(body); err != nil {
 			t.Fatalf("source %q must be accepted: %v", ok, err)
@@ -163,8 +165,8 @@ In `config.go`, extend the resolved model:
 ```go
 // ThemeSource selects how the Material 3 palette is seeded.
 type ThemeConfig struct {
-	Source string // wallpaper | hex | stock
-	Seed   string // image path, #RRGGBB, or stock name — meaning follows Source
+	Source string // wallpaper | hex; 4B adds stock names with its catalog
+	Seed   string // image path or #RRGGBB — meaning follows Source
 	Scheme string // matugen scheme-*, default scheme-tonal-spot
 	Mode   string // dark | light
 }
@@ -190,7 +192,7 @@ Extend `Default()` with the values asserted above.
 
 **Validate inside `Parse`, not through a new `Config.Valid()`.** Milestone 2 and 3 have no `Valid()`
 method: validation lives in `applyBar`/`validateBar`/`resolveItem` and every failure names its exact
-field path through `pathErr` — `config: theme.source: "gradient" is not one of wallpaper, hex, stock`.
+field path through `pathErr` — `config: theme.source: "gradient" is not one of wallpaper, hex`.
 A second entry point would diverge from that one and would return errors with no field path. Add
 `applyThemeGen`, `applyAccessibility`, `applySession`, `applyPanels` beside the existing helpers,
 each validating as it merges: source enum, mode enum, hex-seed shape when source is `hex`,
@@ -199,16 +201,16 @@ non-negative gap and padding.
 **Remove the colour fields from `Theme`** — `background`, `foreground`, `accent`, `muted`, `error` —
 and their `colorPattern` validation. Generation owns colour now (design §Theming core), so leaving
 them would make a user's edit a silent no-op, which this project's validation rule forbids. Keep
-`theme.radius`. `Theme.BackgroundOpaque()` moves to reading the generated `surface` token: opaque
-when it is six-digit hex.
+`theme.radius`. Remove `config.Theme.BackgroundOpaque()`: `shell.Theme.BackgroundOpaque()` reads
+the generated `surface` token, and `HostCallbacks.OpaqueBackground` carries that resolved boolean
+to the Wayland client. The platform layer must not import shell or theme types.
 
 Mirror wire types in `load.go` with pointer fields (`*string`, `*bool`, `*int`) and merge over
 defaults exactly like the existing `wireBar` pattern.
 
-**Reject unknown fields.** `Parse` currently calls `json.Unmarshal`, which silently ignores any key
-it does not recognise — so simply deleting the retired colour fields from `wireTheme` would make a
-stale `theme.background` a silent no-op, which is the failure this change exists to remove. Replace
-the call with a decoder that refuses them:
+**Keep unknown-field rejection.** Landed M3 already uses `json.Decoder.DisallowUnknownFields()`.
+Deleting the retired colour fields from `wireTheme` must keep that decoder path, including the
+second decode that rejects trailing JSON values:
 
 ```go
 dec := json.NewDecoder(bytes.NewReader(data))
@@ -218,11 +220,8 @@ if err := dec.Decode(&wire); err != nil {
 }
 ```
 
-This matches the vocabulary rule the project already applies to widget ids — a typo is visible rather
-than silently dropping something — and it is what makes the retired-field test above meaningful. Note
-it is a behaviour change for any existing configuration carrying stray keys: those now fail at load
-with the offending key named. There is no compatibility promise, and a named failure beats a silent
-one.
+The retired-field test proves that the existing rejection still covers the reduced schema. Existing
+stray keys already fail on main; Task 2 must not claim that behavior as a new M4 change.
 
 **Step 4: Run to verify pass**
 
@@ -351,7 +350,7 @@ var Fallback = Tokens{
 }
 
 type Source struct {
-	Kind string // wallpaper | hex | stock
+	Kind string // wallpaper | hex; 4B extends this with resolved stock seeds
 	Seed string
 }
 
@@ -361,9 +360,6 @@ type Options struct {
 	HighContrast bool
 }
 
-// Active returns the token set for the requested mode. Generation always
-// produces both modes; this selects.
-func (t Tokens) Active(mode string) Tokens { return t } // tokens are mode-resolved at Generate
 ```
 
 `generate.go`:
@@ -389,7 +385,9 @@ func (g Generator) Generate(src Source, opts Options) (Tokens, error) {
 	}
 	dir := g.CacheDir
 	if dir == "" {
-		dir = filepath.Join(os.Getenv("XDG_CACHE_HOME"), "sysc-shell")
+		base, err := os.UserCacheDir()
+		if err != nil { return Fallback, nil }
+		dir = filepath.Join(base, "sysc-shell")
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return Fallback, nil // ponytail: cache dir failure degrades to fallback, never blocks startup
@@ -415,13 +413,15 @@ func (g Generator) Generate(src Source, opts Options) (Tokens, error) {
 	switch src.Kind {
 	case "wallpaper":
 		args = append(args, "image", src.Seed)
-	case "hex", "stock":
+	case "hex":
 		args = append(args, "color", "hex", src.Seed)
 	default:
 		return Fallback, nil
 	}
 
-	cmd := exec.Command(g.Matugen, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, g.Matugen, args...)
 	if err := cmd.Run(); err != nil {
 		return Fallback, nil // ponytail: any matugen failure degrades to fallback
 	}
@@ -494,9 +494,8 @@ func TestTokensResolveToBarTheme(t *testing.T) {
 }
 
 func TestRegistryGeneratesThemeAtStartup(t *testing.T) {
-	// fake matugen on PATH (reuse internal/theme test helper via export_test or
-	// duplicate the two-line stub here)
-	reg := NewRegistryWith(cfgWithWallpaperSource, deps{ThemeGen: fakeGen})
+	// Put a fake matugen executable on PATH and point XDG_CACHE_HOME at t.TempDir().
+	reg := NewRegistry(cfgWithWallpaperSource)
 	if reg.Tokens() == (theme.Tokens{}) {
 		t.Fatal("registry must hold generated tokens after construction")
 	}
@@ -509,7 +508,7 @@ func TestRegistryGeneratesThemeAtStartup(t *testing.T) {
 
 - Add `ThemeFromTokens(tok theme.Tokens, radius int) Theme` in `bar.go` performing the mapping
   above (Theme is the existing M3 shell theme struct consumed by `NewWithTheme`).
-- `Registry` gains `tokens theme.Tokens` and `themeGen theme.Generator`. Construction path:
+- `Registry` gains `tokens theme.Tokens` and a concrete `themeGen theme.Generator`. Construction path:
   `NewRegistry` calls the generator with the config's `ThemeConfig` + `Accessibility.HighContrast`;
   fallback is returned by the generator itself, so startup cannot fail on theming.
 - Reload path (`PrepareConfig`): regenerate before building replacement bars; bars are rebuilt
@@ -517,6 +516,10 @@ func TestRegistryGeneratesThemeAtStartup(t *testing.T) {
   ponytail: one regeneration per reload; if generation is slow the reload blocks — acceptable,
   matugen runs in tens of ms.
 - `ReducedMotion()` accessor on Registry reads config; Task 9 consumes it.
+- Preserve the landed M3 registry state and construction: `services.Metrics`, `services.Weather`,
+  their latest snapshots, `Weather.Reconfigure`, `UpdateMetrics`, `UpdateWeather`, `Tooltips`, and
+  all three process pumps remain live. Add a regression test that a theme-only reload does not
+  restart or drop a metrics or weather lease.
 
 **Step 4: Run to verify pass** — `go test ./internal/shell/` → PASS (full suite).
 
@@ -583,7 +586,7 @@ func TestSingleInstanceToggleAndMove(t *testing.T) {
 	if ps.Toggle(PanelSession, 2) != Moved {
 		t.Fatal("other-output toggle closes+reopens there")
 	}
-	if _, where := ps.Open(PanelSession); where != 2 {
+	if where, ok := ps.Output(PanelSession); !ok || where != 2 {
 		t.Fatal("panel must now live on output 2")
 	}
 	if ps.Toggle(PanelMonitor, 1) != Opened {
@@ -600,17 +603,18 @@ func TestSingleInstanceToggleAndMove(t *testing.T) {
 type PanelID uint8
 
 const (
-	PanelClockCalendar PanelID = iota
+	PanelClock PanelID = iota
 	PanelMonitor
 	PanelSession
 	PanelSettings // accepted by IPC once Tranche 4B lands; inert here
 )
 
-func (p PanelID) String() string { ... "clock","calendar" map both clock+calendar ... }
+func (p PanelID) String() string { ... PanelClock: "clock", PanelMonitor: "system-monitor" ... }
 ```
 
-Wait — clock and calendar are one popout (design §Popouts). IPC names it `clock`; the calendar
-grid is its content. Keep `PanelClock` as the id; `panel.toggle {"panel":"clock"}`.
+Clock and calendar are one popout (design §Popouts). IPC names it `clock`; the calendar grid is
+its content. The system-monitor spelling matches the public IPC name rather than the shorter Go
+identifier.
 
 ```go
 // Placement computes layer-shell anchor + margins for one panel instance.
@@ -697,7 +701,7 @@ type PanelSet struct {
 }
 
 func (ps *PanelSet) Toggle(p PanelID, output uint32) ToggleResult { ... }
-func (ps *PanelSet) Open(p PanelID) (PanelID, uint32) { ... } // reports where open
+func (ps *PanelSet) Output(p PanelID) (uint32, bool) { ... } // ordinary map lookup
 func (ps *PanelSet) Close(p PanelID) { ... }
 ```
 
@@ -925,7 +929,7 @@ type Event struct {
 	X, Y   float64
 	Button uint32
 	Serial uint32
-	Key    uint32 // evdev code (wl_keyboard keycode minus 8), key events only
+	Key    uint32 // evdev code from wl_keyboard.key, key events only
 }
 ```
 
@@ -936,8 +940,10 @@ type Event struct {
   - Enter(surface): find the unit owning that surface across hosts; set `o.keyFocus = unit`.
   - Leave: `o.keyFocus = nil`.
   - Key(time, key, state): if `o.keyFocus != nil`, deliver
-    `Event{Kind: EventKeyPress|EventKeyRelease, Key: key - 8, Serial: serial}` to the unit's
+    `Event{Kind: EventKeyPress|EventKeyRelease, Key: key, Serial: serial}` to the unit's
     `app.Handle`; a true return triggers the same invalidation path pointer events use.
+    `wl_keyboard.key` already carries the evdev code. The `+8` offset belongs only at an XKB
+    lookup boundary; subtracting 8 here underflows Escape (`KEY_ESC == 1`).
 - `pointer.go`: wl_pointer enter/leave already carry the surface; extend routing from
   bar-only to "whichever unit owns the entered surface" (bar or aux). Motion/button/axis go to
   that unit. Leave clears.
@@ -966,9 +972,9 @@ git commit -m "feat(wayland): keyboard binding and per-surface event routing"
 - Test: `internal/ui/column_test.go`
 - Test: `internal/ui/focus_test.go`
 
-Controls shipping with 4A consumers (design D7): button (KindButton exists), label (KindText),
-separator. `tabs` and `graphs` are deferred with the system-monitor popout that was their only
-consumer (design D7, D10). Every focusable node carries accessible name + role (gate item).
+Controls shipping with 4A consumers (design D7): button (`KindButton` exists), label (`KindText`),
+separator, and tabs. The system monitor reuses landed `KindGraph`; preserve it in the enum and
+painter rather than adding another graph kind. Every focusable node carries accessible name + role.
 
 **Step 1: Write the failing tests**
 
@@ -1013,8 +1019,10 @@ const (
 	KindText
 	KindMeter
 	KindButton
+	KindGraph // landed M3 kind; preserve its numeric value
 	KindColumn
 	KindSeparator
+	KindTab
 )
 
 type Node struct {
@@ -1176,8 +1184,8 @@ git commit -m "feat(render): cached rounded masks and pre-blurred shadows"
   owner routes id-tagged invalidations to the matching aux unit's scheduler)
 - Test: `internal/shell/panelhost_test.go`
 
-This joins Task 6 (model), Task 7 (transport), Task 8 (controls), Task 9 (paint) into the open
-panel. Popout content builders come in Task 11; this task wires a placeholder builder so the
+This joins Task 5 (model), Task 6 (transport), Task 7 (controls), and Task 8 (paint) into the open
+panel. Popout content builders come in Task 10; this task wires a placeholder builder so the
 machinery is testable first.
 
 **Step 1: Write the failing tests**
@@ -1218,7 +1226,7 @@ func TestRevealAnimationInvalidatesUntilDone(t *testing.T) {
 	// with ReducedMotion: exactly one render at final state
 }
 
-func TestReloadClosesOpenPanels(t *testing.T) { ... } // documented ceiling
+func TestReloadKeepsOpenPanels(t *testing.T) { ... } // settings depends on this contract
 ```
 
 **Step 2: Run to verify failure** — FAIL.
@@ -1238,19 +1246,18 @@ type PanelHost struct {
 	root   *ui.Node
 	focus  []*ui.Node
 	roving ui.Roving
-	leases []releaser // clock/metrics leases acquired at open
+	leases []*services.Lease // clock or metrics leases acquired at open
 	animStart time.Time
-	build  func(*PanelHost) // content builder, Task 11
+	build  func(*PanelHost) // content builder, Task 10
 }
 
 type Trigger struct {
 	BarEdge string
 	BarZone int
-	Align   string // section of the triggering widget; "" = center (hotkey)
+	Align   string // empty in 4A; reserved for a future keyboard-accessible bar launcher
 	OutW, OutH int
 }
 
-type releaser interface{ Release() }
 ```
 
 Registry methods:
@@ -1267,13 +1274,18 @@ func (r *Registry) DropAux(output uint32, surfaceID string) // wayland callback
 
 - `OpenPanel`: PanelSet.Toggle decides Opened/Moved/Closed; on Moved, close first (close requests
   + lease release), then open on the new output. Placement from Task 6 with `Panels.Gap/Padding`
-  config. Build content tree (placeholder builder: column with a label; Task 11 replaces per id).
-  Acquire leases for the id (clock: `r.clock.Acquire(boundary)` finest of consumers; monitor:
-  `r.metrics.Acquire()`; session: none). Send shield AuxRequest then panel AuxRequest.
+  config. Build content tree (placeholder builder: column with a label; Task 10 replaces per id).
+  Acquire leases for the id: clock uses `r.clock.Acquire(boundary)`; system-monitor calls
+  `monitorSelectors(r.cfg.ForConnector(connector))`, then acquires each selector from
+  `r.metrics` at one second; session holds none. `monitorSelectors` returns CPU and memory plus
+  the first configured filesystem, block, and network selector on that bar, at most one per
+  source. Send shield AuxRequest then panel AuxRequest. Keep `[]*services.Lease`; do not add a
+  one-implementation release interface.
 - HostCallbacks for the panel unit:
   - `Configure`: store logical size; `ui.LayoutColumn(root, ...)` with the fitted size.
   - `Render`: `canvas.DrawShadow` → `canvas.FillRounded(surface bg, radius 12)` → paint nodes
-    (reuse M3's paint path for text/buttons; separator = 1px line in `outline`;
+    (reuse M3's paint path for text/buttons/graphs; separator = 1px line in `outline`; tabs are a
+    row of buttons with the active tab underlined in `primary`;
     bounds) → focus ring: 2px `primary` outline around `focus[roving.Index()].Bounds`.
     Reveal: if animating, apply alpha + slide offset toward the bar edge
     (fade the whole frame by scaling drawn alpha; offset = `8 * (1 - t)` px).
@@ -1282,7 +1294,7 @@ func (r *Registry) DropAux(output uint32, surfaceID string) // wayland callback
     KEY_ESC 1 → close; KEY_TAB 15 (+KEY_LEFTSHIFT 42 tracked from press/release) → roving
     Next/Prev; KEY_LEFT/RIGHT/UP/DOWN 105/106/103/108 → arrows (composites move within on
     left/right, content repaints); KEY_SPACE 57 / KEY_ENTER 28 → activate focused.
-    Activation dispatches `node.Action`: session actions run their command (Task 11), tab
+    Activation dispatches `node.Action`: session actions run their command (Task 10), tab
     switches set `Value`. Any state change returns true (owner invalidates).
 - Shield unit callbacks: Configure no-op, Render transparent frame (input region only),
   Handle: any press → `ClosePanel` + return true.
@@ -1290,13 +1302,18 @@ func (r *Registry) DropAux(output uint32, surfaceID string) // wayland callback
   ticker goroutine pushing `wayland.Invalidation{SurfaceID: panelID}` every 16 ms until
   t ≥ 1, then one final invalidation. Reduced motion: no ticker, render final state.
   ponytail: 16ms ticker per animating panel; at most one panel animates at a time by
-  single-instance, so this cannot pile up.
+  single-instance, so this cannot pile up. Give the host a cancellation channel; close, move,
+  output loss, and `Registry.Close` stop the ticker before releasing the host. Test that closing
+  during reveal produces no later invalidation.
 - `DropAux`: remove host, release leases (idempotent), update PanelSet. Covers compositor-side
   close and output loss.
+- `UpdateMetrics`: after applying the snapshot to bars, enqueue a SurfaceID invalidation for the
+  open system-monitor panel. The existing M3 process pump remains the only snapshot receiver.
 - `Registry.Close()` closes all panels (leases already released by ClosePanel path).
 
-`client.go`: `Invalidation{Connector string; SurfaceID string}` — owner routes SurfaceID-tagged
-invalidations to the matching aux unit's `sched.Invalidate()`; Connector-tagged behave as today.
+`client.go`: extend the landed type to `Invalidation{Global uint32; SurfaceID string}`. The owner
+routes SurfaceID-tagged invalidations to the matching aux unit's scheduler; Global-tagged bar
+invalidations keep the M2/M3 reconnect-safe identity. Do not rekey them to connector.
 
 **Step 4: Run to verify pass** — `go test ./internal/shell/ ./internal/platform/wayland/` → PASS.
 
@@ -1320,7 +1337,7 @@ git commit -m "feat(shell): panel host with shield, exclusive keyboard, and reve
 - Test: `internal/shell/popout_session_test.go`
 
 Each builder produces the `*ui.Node` tree for its panel and its activation behavior. Register them
-in the `PanelHost.build` dispatch from Task 10.
+in the `PanelHost.build` dispatch from Task 9.
 
 #### 10a: clock/calendar
 
@@ -1350,7 +1367,47 @@ target ~360x420 logical.
 
 **Step 4: Pass. Step 5: Commit** `feat(shell): clock and calendar popout`
 
-#### 10b: session/power
+#### 10b: system-monitor
+
+**Step 1: Failing tests**
+
+```go
+func TestMonitorSelectorsUseLandedMetricVocabulary(t *testing.T) {
+	bar := config.Default().Bar
+	bar.Right = append(bar.Right,
+		config.Item{ID: "filesystem", Path: "/"},
+		config.Item{ID: "network", Interface: "eth0", Direction: "rx"})
+	got := monitorSelectors(bar)
+	// CPU, memory, filesystem:/, network:eth0:rx; no second selector per source.
+}
+
+func TestMonitorUsesRegistrySnapshotAndHistory(t *testing.T) {
+	// open against a registry snapshot; active tab label shows the current value
+	// and its KindGraph.Values equal normalise(registry history for that selector).
+}
+
+func TestMonitorAbsentSampleShowsCollecting(t *testing.T) {
+	// latest selector value absent: label "collecting", graph marked absent.
+}
+
+func TestMonitorLeaseReusesM3Service(t *testing.T) {
+	// opening acquires CPU/memory on Registry.Metrics(); closing releases them;
+	// no second service or direct sysc-metrics sampler exists in the popout.
+}
+```
+
+**Step 2-3: Implement** — `monitorSelectors(config.Bar) []services.Selector` starts with CPU and
+memory, then walks the focused bar's items in display order and keeps the first filesystem, block,
+and network selector. Build one focusable `KindTab` per selector. The active body formats the newest
+`Registry.sample` with a small `formatMonitorMetric(sel, snap)` helper that calls `Fraction` or
+`Rate` and reuses `formatRate`; it paints a `KindGraph` from
+`normalise(Registry.metrics.History(sel))`. An absent latest value renders `collecting` and an absent
+graph. Left/Right changes the active tab through the Task 9 roving handler. Panel size target
+~640x480. Do not import `github.com/Nomadcxx/sysc-metrics` or create a sampler in this file.
+
+**Step 4-5: Pass. Commit** `feat(shell): system monitor over landed metrics service`
+
+#### 10c: session/power
 
 **Step 1: Failing tests**
 
@@ -1377,12 +1434,12 @@ func TestSessionExecMapping(t *testing.T) {
 ```
 
 **Step 2-3: Implement** — button grid (column of KindButton, each Focusable with Name/Role).
-Activation runs the command via `exec.Command` (locker string split on whitespace — ponytail:
-no shell quoting; lockers with quoted args are a documented ceiling), closes the panel first for
-logout/reboot/poweroff so the session teardown finds no stuck surface, and reports exec failure by
-leaving the panel open with an error label (rendered in `error` token). Destructive actions get no
-confirmation dialog in 4A — parity note: neither reference shell confirms by default; the
-confirmation row is a future knob.
+Resolve commands with `exec.LookPath`; use argv slices and no shell. The locker string uses
+`strings.Fields`, so quoted arguments are a documented ceiling. Start the locker, then close the
+panel if process creation succeeds. Run `loginctl` with a bounded context; close the panel after a
+successful command and leave it open with an error label on failure. Destructive actions get no
+confirmation dialog in 4A; neither reference shell confirms by default, and the confirmation row
+is a future knob.
 
 **Step 4-5: Pass. Commit** `feat(shell): session power menu with loginctl actions`
 
@@ -1453,13 +1510,13 @@ func (s *Server) Close() error
 func Call(ctx context.Context, sock, method string, params any) (string, error)
 ```
 
-- Serve: `os.MkdirAll(dir, 0o700)`; bind; on `EADDRINUSE` probe-connect — success means a live
+- Serve: `os.MkdirAll(dir, 0o700)`; bind, then `os.Chmod(sock, 0o600)`; on `EADDRINUSE` probe-connect — success means a live
   shell → return single-instance error; failure means stale file → unlink, rebind once.
 - Per connection: `bufio.Scanner` lines, `json.Unmarshal` into
   `struct{ ID json.Number; Method string; Params json.RawMessage }`, dispatch, write one line.
   Panel params decode to `{"panel": string}` validated against the known ids
-  (`clock|session`; `system-monitor` and `settings` return "not yet available" until
-  4B). Unknown method → `{"id":…,"error":"unknown method"}`. Malformed JSON → error envelope,
+  (`clock|system-monitor|session`; `settings` returns "not yet available" until 4B).
+  Unknown method → `{"id":…,"error":"unknown method"}`. Malformed JSON → error envelope,
   connection stays up.
 - Call: dial with 2 s deadline, write request line, read one line, return it.
 
@@ -1503,8 +1560,8 @@ git commit -m "feat(ipc): versioned unix socket with panel verbs and cli"
   output → first bar's output.
 - Single-instance: IPC `Serve` returning the single-instance error aborts startup with a clear
   message (design §IPC).
-- Reload path: `reloadConfig` in the wayland client already closes aux surfaces (Task 7b); the
-  registry's `DropAux` keeps PanelSet consistent — verify with the Task 10 reload test.
+- Reload path: Task 6b leaves aux surfaces mapped. The registry rebuilds their content and theme
+  in place; verify with `TestReloadKeepsOpenPanels` from Task 9.
 
 **Step 2: Hotkey docs** (`docs/niri-hotkeys.md`)
 
@@ -1513,8 +1570,9 @@ owns panels — DMS pattern):
 
 ```kdl
 bind {
-    Super+P { spawn "sysc-shell" "ipc" "panel.toggle" `{"panel":"clock"}`; }
-    Super+X { spawn "sysc-shell" "ipc" "panel.toggle" `{"panel":"session"}`; }
+    Super+P { spawn "sysc-shell" "ipc" "panel.toggle" "{\"panel\":\"clock\"}"; }
+    Super+M { spawn "sysc-shell" "ipc" "panel.toggle" "{\"panel\":\"system-monitor\"}"; }
+    Super+X { spawn "sysc-shell" "ipc" "panel.toggle" "{\"panel\":\"session\"}"; }
 }
 ```
 
@@ -1581,10 +1639,12 @@ live Niri session, record results in the commit body of the gate commit):
    it fires.
 5. **Fullscreen does not hide panels:** fullscreen a window; open the clock panel — visible
    (Overlay layer).
-6. **Hotkeys:** add the documented binds; Super+P/M/X toggle panels from anywhere.
+6. **Hotkeys:** add the documented binds; Super+P/M/X toggle clock, system-monitor, and session
+   panels from anywhere.
 7. **High contrast:** set `accessibility.high-contrast: true`, reload; tokens measurably differ
    (compare colors.json).
-8. **Multi-output:** trigger the same panel from each bar; it closes and reopens per output.
+8. **Multi-output:** focus a window on each output and trigger the same panel through IPC; it closes
+   and reopens on the newly focused output.
 
 **Step 3: Run** — `go test ./...` green; live checklist executed and recorded.
 
@@ -1600,7 +1660,7 @@ git commit -m "test(shell): tranche 4A gate coverage and live checklist"
 ## Done criteria
 
 - `go build ./...` and `go test ./...` green from a clean checkout.
-- All Task 14 fake-compositor gate tests pass; live checklist recorded.
+- All Task 13 fake-compositor gate tests pass; live checklist recorded.
 - `gofmt -l .` empty; `git diff origin/main -- go.mod go.sum` empty — this tranche adds no
   dependency.
 - Design doc risks updated with verification outcomes (focus fall-through, shield delivery,
@@ -1612,6 +1672,7 @@ git commit -m "test(shell): tranche 4A gate coverage and live checklist"
 
 - Per-panel OnDemand keyboard demotion → config knob when a pointer-first panel wants it.
 - Open-near-click pointer anchoring → when a panel's trigger position matters visually.
-- Panel state surviving config reload → if users complain; close-and-reopen is honest today.
+- Clickable bar launchers → when the bar gains a keyboard-focus contract. 4A opens panels through
+  IPC and compositor hotkeys so it does not ship a pointer-only interactive bar node.
 - Confirmation dialogs for destructive session actions → parity knob, not gate material.
 - D-Bus (PrepareForSleep, inhibitors) → the first-party lockscreen milestone.
