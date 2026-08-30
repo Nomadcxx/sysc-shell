@@ -92,6 +92,20 @@ func run(ctx context.Context) error {
 		}
 	}()
 
+	// The weather service publishes on its own goroutine; this pump turns each
+	// reading into per-bar text and hands the changed outputs to the Wayland
+	// owner. One reading serves every bar.
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case reading := <-registry.Weather().Updates():
+				registry.UpdateWeather(reading)
+			}
+		}
+	}()
+
 	// SIGHUP reloads. The handler only signals; the owner goroutine re-reads
 	// and validates the file itself, so no proxy is touched from here.
 	reloads := make(chan struct{}, 1)
