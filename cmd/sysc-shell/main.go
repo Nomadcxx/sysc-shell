@@ -126,6 +126,7 @@ func run(ctx context.Context) error {
 		PrepareConfig: registry.PrepareConfig,
 		DropHost:      registry.DropHost,
 		Invalidations: registry.Invalidations(),
+		Tooltips:      registry.Tooltips(),
 		Reloads:       reloads,
 		ConfigPath:    cfgPath,
 	})

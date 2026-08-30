@@ -196,3 +196,33 @@ Baselines to record before setting any budget:
 - submitted and skipped frame counts;
 - allocations per sampling pass;
 - binary size against the Tranche 3A binary.
+
+## Tranche 3D: weather and visual vocabulary
+
+Run after Tranche 3B's matrix. Coordinates, place names and measurements stay
+outside this repository.
+
+Build and start:
+
+    go build -o /tmp/sysc-shell-tranche3d ./cmd/sysc-shell
+    /tmp/sysc-shell-tranche3d
+
+Matrix:
+
+1. One output, then at least two, each rendering the reading independently.
+2. The icon and the temperature render, and the icon matches the condition.
+3. Disconnect the network: the reading goes stale with its age and the shell
+   keeps painting.
+4. Reconnect: the reading recovers without a restart, within one backoff step.
+5. Start with an unreachable host: the widget renders the error tone, not an
+   empty space.
+6. Confirm stderr carries one line when fetching starts failing and one when
+   it recovers, not one per attempt.
+7. Reload changing coordinates, unit and interval; the service must not
+   restart and no widget may stall.
+8. Hover a widget: the tooltip appears after the dwell and is placed fully
+   inside the output.
+9. Hover a widget at the extreme left and right of an output: the tooltip stays
+   on screen.
+10. Reload with a tooltip open: it closes and no surface leaks.
+11. Idle CPU and wakeups over 60 minutes against the Tranche 3B baseline.
