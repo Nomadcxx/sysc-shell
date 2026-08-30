@@ -10,6 +10,7 @@ const (
 	KindText
 	KindMeter
 	KindButton
+	KindGraph
 )
 
 // Rect is a logical-pixel rectangle.
@@ -27,6 +28,9 @@ type Node struct {
 	Text  string
 	Value float64
 	Width int
+	// Values are the graph's samples, oldest first, each already normalised to
+	// zero through one by the widget. The node carries no scale of its own.
+	Values []float64
 	// MaxWidth caps a text node's measured width. Zero means unbounded. It
 	// exists because a focused-window title is unbounded user text: without a
 	// cap it would take a whole section's budget before anything truncated.

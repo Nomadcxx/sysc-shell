@@ -358,3 +358,47 @@ func TestPaintRejectsInvalidInput(t *testing.T) {
 		})
 	}
 }
+
+// A graph paints a column per sample, taller for larger values, and leaves the
+// unfilled part of the box alone.
+func TestGraphPaintsTallerColumnsForLargerValues(t *testing.T) {
+	t.Parallel()
+
+	const w, h = 40, 20
+	c := newTestCanvas(t, w, h)
+	style := testStyle
+	style.Body = ui.Rect{W: w, H: h}
+
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{{
+		Kind:   ui.KindGraph,
+		Width:  4,
+		Values: []float64{0, 1},
+		Bounds: ui.Rect{X: 0, Y: 0, W: 4, H: h},
+	}}}
+
+	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatalf("Paint: %v", err)
+	}
+
+	// The zero sample paints nothing; the full one fills its column's height.
+	if got := accentPixels(c, style.Accent, ui.Rect{X: 0, Y: 0, W: 2, H: h}); got != 0 {
+		t.Errorf("the zero-valued column painted %d pixels, want none", got)
+	}
+	if got := accentPixels(c, style.Accent, ui.Rect{X: 2, Y: 0, W: 2, H: h}); got != 2*h {
+		t.Errorf("the full-height column painted %d pixels, want %d", got, 2*h)
+	}
+}
+
+// accentPixels counts the pixels in the box painted with the accent colour.
+func accentPixels(c *Canvas, want Color, box ui.Rect) int {
+	count := 0
+	for y := box.Y; y < box.Y+box.H; y++ {
+		for x := box.X; x < box.X+box.W; x++ {
+			i := y*c.Stride + x*4
+			if (Color{B: c.Pix[i], G: c.Pix[i+1], R: c.Pix[i+2], A: c.Pix[i+3]}) == want {
+				count++
+			}
+		}
+	}
+	return count
+}

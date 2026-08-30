@@ -66,6 +66,11 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 			return 0, 0, fmt.Errorf("meter value %v is outside zero through one", n.Value)
 		}
 		return n.Width, contentHeight, nil
+	case KindGraph:
+		// A graph reserves its configured width and the full content height,
+		// the way a meter does. It does not measure its data, so a bar does
+		// not reflow as samples arrive.
+		return n.Width, contentHeight, nil
 	case KindButton:
 		w, h := measure(n.Text, n.Tabular)
 		return w + 2*n.Padding, h + 2*n.Padding, nil

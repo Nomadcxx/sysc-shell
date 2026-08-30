@@ -250,3 +250,35 @@ func TestMaxWidthStillCapsAFlooredNode(t *testing.T) {
 		t.Fatalf("width = %d, want the 50 cap to win over the 70 floor", got)
 	}
 }
+
+// A graph occupies its configured width and the full content height, so it
+// reserves space the way a meter does rather than measuring its data.
+func TestAGraphMeasuresItsConfiguredWidth(t *testing.T) {
+	t.Parallel()
+	measure := func(s string, _ bool) (int, int) { return 10 * len([]rune(s)), 10 }
+
+	root := &Node{Kind: KindRow, Children: []*Node{
+		{Kind: KindGraph, Width: 60, Values: []float64{0.1, 0.9}},
+	}}
+	if err := Layout(root, Rect{X: 0, Y: 0, W: 200, H: 20}, measure); err != nil {
+		t.Fatalf("Layout: %v", err)
+	}
+	if got := root.Children[0].Bounds.W; got != 60 {
+		t.Fatalf("graph width = %d, want the configured 60", got)
+	}
+}
+
+// A graph with no samples still reserves its width, so a bar does not reflow
+// when the first sample arrives.
+func TestAnEmptyGraphStillReservesItsWidth(t *testing.T) {
+	t.Parallel()
+	measure := func(s string, _ bool) (int, int) { return 10 * len([]rune(s)), 10 }
+
+	root := &Node{Kind: KindRow, Children: []*Node{{Kind: KindGraph, Width: 60}}}
+	if err := Layout(root, Rect{X: 0, Y: 0, W: 200, H: 20}, measure); err != nil {
+		t.Fatalf("Layout: %v", err)
+	}
+	if got := root.Children[0].Bounds.W; got != 60 {
+		t.Fatalf("empty graph width = %d, want 60", got)
+	}
+}
