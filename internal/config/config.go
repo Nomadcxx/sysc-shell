@@ -36,6 +36,8 @@ type Item struct {
 	Interface string
 	// Direction is "read"/"write" on block and "rx"/"tx" on network.
 	Direction string
+	// ShowCondition appends the condition word on a weather item.
+	ShowCondition bool
 }
 
 // Bar is the resolved policy for one bar.
@@ -77,10 +79,24 @@ type OutputOverride struct {
 	Bar       Bar
 }
 
+// Weather is the process-wide weather source. Coordinates live here rather
+// than on the item because one service serves every bar.
+//
+// Configured distinguishes a supplied block from the zero value, which is what
+// lets a weather widget with no block fail with a useful message.
+type Weather struct {
+	Latitude   float64
+	Longitude  float64
+	Unit       string
+	Interval   time.Duration
+	Configured bool
+}
+
 // Config is an immutable, fully resolved configuration.
 type Config struct {
 	Bar     Bar
 	Theme   Theme
+	Weather Weather
 	Outputs []OutputOverride
 }
 
@@ -91,6 +107,7 @@ type Config struct {
 var knownItems = map[string]struct{}{
 	"clock": {}, "workspace": {}, "window-title": {},
 	"cpu": {}, "memory": {}, "filesystem": {}, "block": {}, "network": {},
+	"weather": {},
 }
 
 // fractionSources yield a value between zero and one, which a meter can fill.
@@ -123,7 +140,13 @@ const (
 	defaultMetricInterval = 2 * time.Second
 	// defaultMetricDisplay renders a value as text.
 	defaultMetricDisplay = "text"
+	// defaultWeatherInterval matches the reference shell's fifteen minutes.
+	defaultWeatherInterval = 15 * time.Minute
+	defaultWeatherUnit     = "celsius"
 )
+
+// weatherUnits are the units the API accepts.
+var weatherUnits = map[string]bool{"celsius": true, "fahrenheit": true}
 
 // supportedEdges names every edge the model understands and whether this
 // milestone implements it. An unimplemented edge is rejected with a named

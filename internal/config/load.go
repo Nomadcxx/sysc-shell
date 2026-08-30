@@ -33,6 +33,8 @@ type wireItem struct {
 	Device    *string `json:"device"`
 	Interface *string `json:"interface"`
 	Direction *string `json:"direction"`
+
+	ShowCondition *bool `json:"show-condition"`
 }
 
 func (i *wireItem) UnmarshalJSON(data []byte) error {
@@ -87,9 +89,17 @@ type wireOutput struct {
 	Bar       *wireBar `json:"bar"`
 }
 
+type wireWeather struct {
+	Latitude  *float64 `json:"latitude"`
+	Longitude *float64 `json:"longitude"`
+	Unit      *string  `json:"unit"`
+	Interval  *string  `json:"interval"`
+}
+
 type wireConfig struct {
 	Bar     *wireBar     `json:"bar"`
 	Theme   *wireTheme   `json:"theme"`
+	Weather *wireWeather `json:"weather"`
 	Outputs []wireOutput `json:"outputs"`
 }
 
@@ -155,6 +165,14 @@ func Parse(data []byte) (Config, error) {
 		cfg.Bar = bar
 	}
 
+	if wire.Weather != nil {
+		weather, err := applyWeather(*wire.Weather, "weather")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Weather = weather
+	}
+
 	seen := make(map[string]struct{}, len(wire.Outputs))
 	for i, o := range wire.Outputs {
 		path := fmt.Sprintf("outputs[%d]", i)
@@ -175,7 +193,80 @@ func Parse(data []byte) (Config, error) {
 		}
 		cfg.Outputs = append(cfg.Outputs, OutputOverride{Connector: *o.Connector, Bar: bar})
 	}
+	if err := requireWeatherWhenUsed(cfg); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+// applyWeather resolves and validates the weather block.
+func applyWeather(w wireWeather, path string) (Weather, error) {
+	out := Weather{
+		Unit:       defaultWeatherUnit,
+		Interval:   defaultWeatherInterval,
+		Configured: true,
+	}
+
+	if w.Latitude == nil {
+		return Weather{}, pathErr(path+".latitude", "is required")
+	}
+	if *w.Latitude < -90 || *w.Latitude > 90 {
+		return Weather{}, pathErr(path+".latitude", "%v is outside -90 through 90", *w.Latitude)
+	}
+	out.Latitude = *w.Latitude
+
+	if w.Longitude == nil {
+		return Weather{}, pathErr(path+".longitude", "is required")
+	}
+	if *w.Longitude < -180 || *w.Longitude > 180 {
+		return Weather{}, pathErr(path+".longitude", "%v is outside -180 through 180", *w.Longitude)
+	}
+	out.Longitude = *w.Longitude
+
+	if w.Unit != nil {
+		if !weatherUnits[*w.Unit] {
+			return Weather{}, pathErr(path+".unit", "%q is not celsius or fahrenheit", *w.Unit)
+		}
+		out.Unit = *w.Unit
+	}
+	if w.Interval != nil {
+		interval, err := time.ParseDuration(*w.Interval)
+		if err != nil {
+			return Weather{}, pathErr(path+".interval", "%q is not a duration such as 15m", *w.Interval)
+		}
+		if interval <= 0 {
+			return Weather{}, pathErr(path+".interval", "%v is not positive", interval)
+		}
+		out.Interval = interval
+	}
+	return out, nil
+}
+
+// requireWeatherWhenUsed is the configuration's one cross-section rule: a
+// weather widget needs coordinates, and they live in a different block.
+//
+// Without this the widget would render an error forever because of a block the
+// user was never told to write. Every override is checked too, because an
+// override can introduce the widget on one output alone.
+func requireWeatherWhenUsed(cfg Config) error {
+	if cfg.Weather.Configured {
+		return nil
+	}
+	bars := []Bar{cfg.Bar}
+	for _, o := range cfg.Outputs {
+		bars = append(bars, o.Bar)
+	}
+	for _, bar := range bars {
+		for _, section := range [][]Item{bar.Left, bar.Center, bar.Right} {
+			for _, item := range section {
+				if item.ID == "weather" {
+					return pathErr("weather.latitude",
+						"is required because a weather widget is configured")
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func applyBar(base Bar, w wireBar, path string) (Bar, error) {
@@ -280,8 +371,12 @@ func resolveItem(w wireItem, path string) (Item, error) {
 	if w.Format != nil && w.ID != "clock" {
 		return Item{}, pathErr(path+".format", "is accepted only on a clock, not on %q", w.ID)
 	}
-	if w.MaxWidth != nil && w.ID != "window-title" {
+	if w.MaxWidth != nil && w.ID != "window-title" && w.ID != "weather" {
 		return Item{}, pathErr(path+".max-width", "is accepted only on a window-title, not on %q", w.ID)
+	}
+	if w.ShowCondition != nil && w.ID != "weather" {
+		return Item{}, pathErr(path+".show-condition",
+			"is accepted only on a weather widget, not on %q", w.ID)
 	}
 	if !isMetric(w.ID) {
 		for _, unwanted := range []struct {
@@ -327,6 +422,16 @@ func resolveItem(w wireItem, path string) (Item, error) {
 			return Item{}, err
 		}
 		item = resolved
+	case "weather":
+		if w.ShowCondition != nil {
+			item.ShowCondition = *w.ShowCondition
+		}
+		if w.MaxWidth != nil {
+			if *w.MaxWidth <= 0 {
+				return Item{}, pathErr(path+".max-width", "%d is not positive", *w.MaxWidth)
+			}
+			item.MaxWidth = *w.MaxWidth
+		}
 	}
 	return item, nil
 }

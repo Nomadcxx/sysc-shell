@@ -464,3 +464,109 @@ func TestAWhitespaceSelectorIsRejected(t *testing.T) {
 		}
 	}
 }
+
+func TestTheWeatherBlockResolves(t *testing.T) {
+	t.Parallel()
+	cfg, err := Parse([]byte(`{
+		"weather":{"latitude":0,"longitude":0,"unit":"fahrenheit","interval":"20m"},
+		"bar":{"items":{"right":[{"id":"weather","max-width":160,"show-condition":true}]}}}`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	if !cfg.Weather.Configured {
+		t.Fatal("a supplied weather block did not resolve as configured")
+	}
+	if cfg.Weather.Unit != "fahrenheit" {
+		t.Fatalf("unit = %q, want fahrenheit", cfg.Weather.Unit)
+	}
+	if cfg.Weather.Interval != 20*time.Minute {
+		t.Fatalf("interval = %v, want 20m", cfg.Weather.Interval)
+	}
+	item := cfg.Bar.Right[0]
+	if item.ID != "weather" || item.MaxWidth != 160 || !item.ShowCondition {
+		t.Fatalf("item = %+v, want a weather widget with a cap and its condition", item)
+	}
+}
+
+func TestTheWeatherBlockDefaults(t *testing.T) {
+	t.Parallel()
+	cfg, err := Parse([]byte(`{
+		"weather":{"latitude":0,"longitude":0},
+		"bar":{"items":{"right":[{"id":"weather"}]}}}`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cfg.Weather.Unit != "celsius" {
+		t.Fatalf("unit = %q, want the celsius default", cfg.Weather.Unit)
+	}
+	if cfg.Weather.Interval != 15*time.Minute {
+		t.Fatalf("interval = %v, want the 15m default", cfg.Weather.Interval)
+	}
+	if cfg.Bar.Right[0].ShowCondition {
+		t.Fatal("show-condition defaulted true, want false")
+	}
+}
+
+// The configuration's first cross-section check. Without it the widget would
+// render an error forever because of a block the user was never told about.
+func TestAWeatherWidgetWithoutCoordinatesIsRejected(t *testing.T) {
+	t.Parallel()
+	_, err := Parse([]byte(`{"bar":{"items":{"right":[{"id":"weather"}]}}}`))
+	if err == nil {
+		t.Fatal("a weather widget with no weather block was accepted")
+	}
+	if !strings.Contains(err.Error(), "weather.latitude") {
+		t.Fatalf("error %q does not name the missing field", err)
+	}
+}
+
+// A weather block with no widget is harmless, not an error: a user may be
+// mid-edit, and nothing renders wrong.
+func TestAWeatherBlockWithoutAWidgetIsAccepted(t *testing.T) {
+	t.Parallel()
+	if _, err := Parse([]byte(`{"weather":{"latitude":0,"longitude":0}}`)); err != nil {
+		t.Fatalf("a weather block with no widget was rejected: %v", err)
+	}
+}
+
+func TestOutOfRangeCoordinatesAreRejected(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ body, want string }{
+		{`{"weather":{"latitude":91,"longitude":0}}`, "weather.latitude"},
+		{`{"weather":{"latitude":-91,"longitude":0}}`, "weather.latitude"},
+		{`{"weather":{"latitude":0,"longitude":181}}`, "weather.longitude"},
+		{`{"weather":{"latitude":0,"longitude":-181}}`, "weather.longitude"},
+	}
+	for _, c := range cases {
+		err := errFromParse(t, c.body)
+		if !strings.Contains(err.Error(), c.want) {
+			t.Fatalf("error %q does not name %q", err, c.want)
+		}
+	}
+}
+
+func TestAnInvalidWeatherUnitIsRejected(t *testing.T) {
+	t.Parallel()
+	err := errFromParse(t, `{"weather":{"latitude":0,"longitude":0,"unit":"kelvin"}}`)
+	if !strings.Contains(err.Error(), "weather.unit") {
+		t.Fatalf("error %q does not name the unit field", err)
+	}
+}
+
+func TestANonPositiveWeatherIntervalIsRejected(t *testing.T) {
+	t.Parallel()
+	err := errFromParse(t, `{"weather":{"latitude":0,"longitude":0,"interval":"0s"}}`)
+	if !strings.Contains(err.Error(), "weather.interval") {
+		t.Fatalf("error %q does not name the interval field", err)
+	}
+}
+
+// show-condition belongs to the weather widget alone.
+func TestShowConditionOnTheWrongItemIsRejected(t *testing.T) {
+	t.Parallel()
+	body := `{"bar":{"items":{"right":[{"id":"clock","show-condition":true}]}}}`
+	if _, err := Parse([]byte(body)); err == nil {
+		t.Fatal("show-condition was accepted on a clock")
+	}
+}
