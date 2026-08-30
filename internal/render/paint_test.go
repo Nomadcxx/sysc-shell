@@ -137,8 +137,8 @@ func paintTree(t *testing.T, c *Canvas, style ProofStyle) *ui.Node {
 	t.Helper()
 
 	r := NewTextRenderer(mustTestFace(t))
-	measure := func(s string) (int, int) {
-		w, h, err := r.Measure(s, style.Size)
+	measure := func(s string, tabular bool) (int, int) {
+		w, h, err := r.Measure(s, style.Size, tabular)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -237,8 +237,8 @@ func TestPaintScalesToPhysicalPixels(t *testing.T) {
 
 	c := newTestCanvas(t, canvasW*3/2, canvasH*3/2)
 	r := NewTextRenderer(mustTestFace(t))
-	measure := func(s string) (int, int) {
-		w, h, err := r.Measure(s, style.Size)
+	measure := func(s string, tabular bool) (int, int) {
+		w, h, err := r.Measure(s, style.Size, tabular)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -291,7 +291,7 @@ func TestPaintClipsGlyphsToCanvas(t *testing.T) {
 
 	c := newTestCanvas(t, canvasW, canvasH)
 	r := NewTextRenderer(mustTestFace(t))
-	mask, err := r.Raster("sysc-shell", 16)
+	mask, err := r.Raster("sysc-shell", 16, false)
 	if err != nil {
 		t.Fatal(err)
 	}

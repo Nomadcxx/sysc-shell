@@ -39,7 +39,7 @@ func buildWidgets(items []config.Item) []textWidget {
 		case "clock":
 			layout := item.Format
 			out = append(out, textWidget{
-				node: &ui.Node{Kind: ui.KindText},
+				node: &ui.Node{Kind: ui.KindText, Tabular: true},
 				format: func(v barView) string {
 					if v.Now.IsZero() {
 						return ""

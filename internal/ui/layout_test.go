@@ -3,7 +3,7 @@ package ui
 import "testing"
 
 // fakeMeasure gives every glyph a width of 8 and every line a height of 16.
-func fakeMeasure(s string) (int, int) { return len(s) * 8, 16 }
+func fakeMeasure(s string, _ bool) (int, int) { return len(s) * 8, 16 }
 
 // proofTree returns the fixed proof fixture: one row holding two text nodes, a
 // fixed-width meter, and a button.
@@ -157,7 +157,7 @@ func TestHitOutsideActionableNodes(t *testing.T) {
 func TestTextIsClampedToItsMaxWidth(t *testing.T) {
 	t.Parallel()
 	// Ten pixels per rune keeps the arithmetic obvious.
-	measure := func(s string) (int, int) { return 10 * len([]rune(s)), 10 }
+	measure := func(s string, _ bool) (int, int) { return 10 * len([]rune(s)), 10 }
 
 	root := &Node{Kind: KindRow, Children: []*Node{
 		{Kind: KindText, Text: "aaaaaaaaaa", MaxWidth: 40},
@@ -173,7 +173,7 @@ func TestTextIsClampedToItsMaxWidth(t *testing.T) {
 // A cap wider than the text must not stretch it.
 func TestMaxWidthDoesNotPadShortText(t *testing.T) {
 	t.Parallel()
-	measure := func(s string) (int, int) { return 10 * len([]rune(s)), 10 }
+	measure := func(s string, _ bool) (int, int) { return 10 * len([]rune(s)), 10 }
 
 	root := &Node{Kind: KindRow, Children: []*Node{
 		{Kind: KindText, Text: "ab", MaxWidth: 200},
@@ -189,7 +189,7 @@ func TestMaxWidthDoesNotPadShortText(t *testing.T) {
 // Zero means unbounded, so existing nodes are unaffected.
 func TestZeroMaxWidthIsUnbounded(t *testing.T) {
 	t.Parallel()
-	measure := func(s string) (int, int) { return 10 * len([]rune(s)), 10 }
+	measure := func(s string, _ bool) (int, int) { return 10 * len([]rune(s)), 10 }
 
 	root := &Node{Kind: KindRow, Children: []*Node{
 		{Kind: KindText, Text: "aaaaa"},

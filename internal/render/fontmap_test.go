@@ -101,7 +101,7 @@ func TestSystemFontMapDoesNotSelectUnsupportedFallback(t *testing.T) {
 	}
 
 	r := NewTextRendererWithFontMap(m)
-	mask, err := r.Raster("A"+string(glyph), 16)
+	mask, err := r.Raster("A"+string(glyph), 16, false)
 	if err != nil {
 		t.Fatalf("Raster failed instead of degrading unsupported fallback: %v", err)
 	}

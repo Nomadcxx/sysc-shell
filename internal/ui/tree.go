@@ -31,6 +31,10 @@ type Node struct {
 	// exists because a focused-window title is unbounded user text: without a
 	// cap it would take a whole section's budget before anything truncated.
 	MaxWidth int
+	// Tabular requests tabular (fixed-advance) figures when shaping this node.
+	// A clock sets it: with proportional digits the rendered width changes as
+	// the time changes, which visibly shifts a centred clock every minute.
+	Tabular  bool
 	Padding  int
 	Gap      int
 	Action   string
@@ -38,5 +42,6 @@ type Node struct {
 	Children []*Node
 }
 
-// MeasureText reports the logical width and height of a shaped string.
-type MeasureText func(string) (width, height int)
+// MeasureText reports the logical width and height of a shaped string. The
+// tabular flag is the node's, and reaches the shaper as an OpenType feature.
+type MeasureText func(text string, tabular bool) (width, height int)

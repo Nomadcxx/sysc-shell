@@ -168,8 +168,8 @@ func (b *Bar) bodyLocked(width, height int) ui.Rect {
 }
 
 func (b *Bar) layoutLocked(width, height int) error {
-	measure := func(s string) (int, int) {
-		w, h, err := b.text.Measure(s, b.style.Size)
+	measure := func(s string, tabular bool) (int, int) {
+		w, h, err := b.text.Measure(s, b.style.Size, tabular)
 		if err != nil {
 			return 0, 0
 		}

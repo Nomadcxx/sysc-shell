@@ -94,3 +94,20 @@ func TestABarRemembersItsConnector(t *testing.T) {
 		t.Fatalf("connector = %q, want HDMI-A-9", got)
 	}
 }
+
+// Only the clock asks for tabular figures; nothing else should.
+func TestOnlyClockWidgetsRequestTabularFigures(t *testing.T) {
+	t.Parallel()
+	widgets := buildWidgets([]config.Item{
+		{ID: "clock", Format: "15:04"},
+		{ID: "workspace"},
+		{ID: "window-title", MaxWidth: 120},
+	})
+
+	if !widgets[0].node.Tabular {
+		t.Fatal("the clock node does not request tabular figures")
+	}
+	if widgets[1].node.Tabular || widgets[2].node.Tabular {
+		t.Fatal("a non-clock widget requested tabular figures")
+	}
+}

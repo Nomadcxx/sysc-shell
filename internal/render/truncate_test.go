@@ -35,12 +35,12 @@ func TestClusterPrefixRejectsAPartialMultiGlyphCluster(t *testing.T) {
 func TestTruncateLeavesFittingTextAlone(t *testing.T) {
 	t.Parallel()
 	r := newTestRenderer(t)
-	full, _, err := r.Measure("Workspace", 16)
+	full, _, err := r.Measure("Workspace", 16, false)
 	if err != nil {
 		t.Fatalf("Measure: %v", err)
 	}
 
-	got, advance, err := r.Truncate("Workspace", 16, full+50)
+	got, advance, err := r.Truncate("Workspace", 16, full+50, false)
 	if err != nil {
 		t.Fatalf("Truncate: %v", err)
 	}
@@ -56,13 +56,13 @@ func TestTruncateAppendsAnEllipsisAndFits(t *testing.T) {
 	t.Parallel()
 	r := newTestRenderer(t)
 	const s = "a very long workspace name that will not fit"
-	full, _, err := r.Measure(s, 16)
+	full, _, err := r.Measure(s, 16, false)
 	if err != nil {
 		t.Fatalf("Measure: %v", err)
 	}
 	avail := full / 3
 
-	got, advance, err := r.Truncate(s, 16, avail)
+	got, advance, err := r.Truncate(s, 16, avail, false)
 	if err != nil {
 		t.Fatalf("Truncate: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestTruncateAppendsAnEllipsisAndFits(t *testing.T) {
 func TestTruncateRendersEmptyWhenEvenTheEllipsisDoesNotFit(t *testing.T) {
 	t.Parallel()
 	r := newTestRenderer(t)
-	got, advance, err := r.Truncate("anything at all", 16, 1)
+	got, advance, err := r.Truncate("anything at all", 16, 1, false)
 	if err != nil {
 		t.Fatalf("Truncate: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestTruncateHandlesZeroAndEmptyInput(t *testing.T) {
 		{"empty text", "", 100},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got, advance, err := r.Truncate(c.text, 16, c.avail)
+			got, advance, err := r.Truncate(c.text, 16, c.avail, false)
 			if err != nil {
 				t.Fatalf("Truncate: %v", err)
 			}
@@ -123,12 +123,12 @@ func TestTruncateIsStableAcrossScales(t *testing.T) {
 	r := newTestRenderer(t)
 	const s = "workspace name"
 
-	at1, _, err := r.Truncate(s, 16, 120)
+	at1, _, err := r.Truncate(s, 16, 120, false)
 	if err != nil {
 		t.Fatalf("Truncate at 16: %v", err)
 	}
 	// 1.5 scale: 16*180/120 = 24px shaped into 120*180/120 = 180px.
-	at15, _, err := r.Truncate(s, 24, 180)
+	at15, _, err := r.Truncate(s, 24, 180, false)
 	if err != nil {
 		t.Fatalf("Truncate at 24: %v", err)
 	}

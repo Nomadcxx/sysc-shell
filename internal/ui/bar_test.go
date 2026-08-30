@@ -3,7 +3,7 @@ package ui
 import "testing"
 
 // fixed measures each rune as ten logical pixels wide and twenty tall.
-func fixed(s string) (int, int) { return len([]rune(s)) * 10, 20 }
+func fixed(s string, _ bool) (int, int) { return len([]rune(s)) * 10, 20 }
 
 func text(s string) *Node { return &Node{Kind: KindText, Text: s} }
 
