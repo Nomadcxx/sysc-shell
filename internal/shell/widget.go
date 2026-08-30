@@ -34,8 +34,9 @@ type barView struct {
 // Change detection lives in Bar.apply rather than in each widget, because the
 // node already holds the last rendered text.
 type textWidget struct {
-	node   *ui.Node
-	format func(barView) string
+	node    *ui.Node
+	format  func(barView) string
+	tooltip string
 }
 
 // buildWidgets turns validated items into widget instances. Ids and options
@@ -70,7 +71,8 @@ func buildWidgets(items []config.Item) []textWidget {
 		case "weather":
 			node := &ui.Node{Kind: ui.KindText, MaxWidth: item.MaxWidth}
 			out = append(out, textWidget{
-				node: node,
+				node:    node,
+				tooltip: "Weather",
 				format: func(v barView) string {
 					text, tone := formatWeather(item, v.Weather)
 					node.Tone = tone
