@@ -200,6 +200,7 @@ the M4 surface vocabulary and tagged service releases.
 | `2026-08-30-tray-foundation-design.md` | design | Tranche 5B tray presentation. |
 | `2026-08-30-tray-foundation.md` | plan | Tranche 5B, 8 tasks. |
 | `2026-08-30-notifications-and-tray-audit-handover.md` | audit-handover | Commissions the cross-repository design and plan audit for Tranches 5A and 5B. |
+| `2026-08-30-notifications-and-tray-audit-report.md` | audit-report | Redesign required for both tranches; records service-contract, lifetime, release, persistence, and menu blockers. |
 
 Source worktree: `/home/nomadx/.config/superpowers/worktrees/sysc-shell/milestone/notifications-tray`.
 
