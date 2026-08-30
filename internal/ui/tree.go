@@ -53,13 +53,27 @@ type Node struct {
 	// Tabular requests tabular (fixed-advance) figures when shaping this node.
 	// A clock sets it: with proportional digits the rendered width changes as
 	// the time changes, which visibly shifts a centred clock every minute.
-	Tabular  bool
+	Tabular bool
+	// Tone selects the text colour. Zero is ToneNormal.
+	Tone     Tone
 	Padding  int
 	Gap      int
 	Action   string
 	Bounds   Rect
 	Children []*Node
 }
+
+// Tone selects which theme colour paints a text node.
+//
+// Error is for text that reports a failure instead of a value. A stale value
+// is still a value and stays normal, carrying its age in the text; the muted
+// token measures 1.47:1 against the background and cannot carry text at all.
+type Tone uint8
+
+const (
+	ToneNormal Tone = iota
+	ToneError
+)
 
 // MeasureText reports the logical width and height of a shaped string. The
 // tabular flag is the node's, and reaches the shaper as an OpenType feature.

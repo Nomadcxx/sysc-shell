@@ -23,6 +23,9 @@ type ProofStyle struct {
 	Track      Color
 	Accent     Color
 	AccentOn   Color
+	// Error paints text that reports a failure. It is a distinct field rather
+	// than reusing AccentOn, which the bar already uses for a toggled control.
+	Error Color
 
 	// Toggled swaps the accent used by the meter fill and the button.
 	Toggled bool
@@ -75,7 +78,7 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style ProofStyle) error
 func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size int) error {
 	switch n.Kind {
 	case ui.KindText:
-		return paintText(c, n.Text, style.Scale120.PhysicalRect(n.Bounds), text, style, size, n.Tabular)
+		return paintText(c, n.Text, style.Scale120.PhysicalRect(n.Bounds), text, style, size, n.Tabular, n.Tone)
 
 	case ui.KindMeter:
 		if n.Absent {
@@ -99,7 +102,7 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 			W: n.Bounds.W - 2*n.Padding,
 			H: n.Bounds.H - 2*n.Padding,
 		}
-		return paintText(c, n.Text, style.Scale120.PhysicalRect(label), text, style, size, n.Tabular)
+		return paintText(c, n.Text, style.Scale120.PhysicalRect(label), text, style, size, n.Tabular, n.Tone)
 
 	default:
 		return fmt.Errorf("unsupported kind %d", n.Kind)
@@ -154,7 +157,7 @@ func paintGraph(c *Canvas, n *ui.Node, box ui.Rect, style ProofStyle) error {
 // Truncation happens here rather than in layout because it needs cluster
 // measurement, which the text renderer owns. The box is already physical, so
 // the available width is compared in the same units the shaper reports.
-func paintText(c *Canvas, s string, box ui.Rect, text *TextRenderer, style ProofStyle, size int, tabular bool) error {
+func paintText(c *Canvas, s string, box ui.Rect, text *TextRenderer, style ProofStyle, size int, tabular bool, tone ui.Tone) error {
 	if s == "" || box.W <= 0 {
 		return nil
 	}
@@ -171,6 +174,14 @@ func paintText(c *Canvas, s string, box ui.Rect, text *TextRenderer, style Proof
 	if err != nil {
 		return err
 	}
-	blendMask(c, mask.Alpha, box.X, box.Y, style.Foreground)
+	blendMask(c, mask.Alpha, box.X, box.Y, textColor(style, tone))
 	return nil
+}
+
+// textColor picks the colour a tone paints in.
+func textColor(style ProofStyle, tone ui.Tone) Color {
+	if tone == ui.ToneError {
+		return style.Error
+	}
+	return style.Foreground
 }

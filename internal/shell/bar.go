@@ -104,6 +104,7 @@ func NewWithTheme(theme Theme, policy config.Bar, connector string) (*Bar, error
 			Track:      theme.Muted,
 			Accent:     theme.Accent,
 			AccentOn:   theme.Error,
+			Error:      theme.Error,
 		},
 	}
 
@@ -155,6 +156,7 @@ func (b *Bar) applyLocked(view barView) bool {
 				changed = true
 			}
 			if w.node.Value != before.Value || w.node.Absent != before.Absent ||
+				w.node.Tone != before.Tone ||
 				!slices.Equal(w.node.Values, before.Values) {
 				changed = true
 			}
