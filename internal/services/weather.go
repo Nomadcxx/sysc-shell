@@ -1,9 +1,13 @@
 package services
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -77,6 +81,9 @@ type Weather struct {
 	client *http.Client
 	// endpoint is overridden by tests to point at an httptest server.
 	endpoint string
+	// minInterval is the fetch floor. Zero disables it, which tests that need
+	// two fetches in one deadline use; NewWeather sets the production floor.
+	minInterval time.Duration
 }
 
 // openMeteoEndpoint is the only remote host this shell contacts.
@@ -84,13 +91,14 @@ const openMeteoEndpoint = "https://api.open-meteo.com/v1/forecast"
 
 func NewWeather(latitude, longitude float64, unit Unit) *Weather {
 	return &Weather{
-		rearm:     make(chan struct{}, 1),
-		updates:   make(chan Reading, 1),
-		latitude:  latitude,
-		longitude: longitude,
-		unit:      unit,
-		client:    &http.Client{Timeout: connectAndReadBudget},
-		endpoint:  openMeteoEndpoint,
+		rearm:       make(chan struct{}, 1),
+		updates:     make(chan Reading, 1),
+		latitude:    latitude,
+		longitude:   longitude,
+		unit:        unit,
+		client:      &http.Client{Timeout: connectAndReadBudget},
+		endpoint:    openMeteoEndpoint,
+		minInterval: minFetchInterval,
 	}
 }
 
@@ -224,4 +232,161 @@ func (w *Weather) requestURLLocked() string {
 	return w.endpoint + "?" + q.Encode()
 }
 
-func (w *Weather) run(stop, done chan struct{}) { <-stop; close(done) }
+// retryAfter is the wait before the next attempt. The first few failures
+// retry quickly; beyond that the delay doubles to a cap, so a permanently
+// unreachable API costs one request every five minutes rather than one every
+// thirty seconds forever.
+func retryAfter(consecutiveFailures int) time.Duration {
+	if consecutiveFailures < maxRetryAttempts {
+		return retryDelay
+	}
+	delay := backoffBase << (consecutiveFailures - maxRetryAttempts)
+	if delay > backoffCap || delay <= 0 {
+		return backoffCap
+	}
+	return delay
+}
+
+func (w *Weather) run(stop, done chan struct{}) {
+	defer close(done)
+
+	var (
+		reading  Reading
+		failures int
+		lastAt   time.Time
+		failing  bool
+	)
+
+	for {
+		w.mu.Lock()
+		interval := w.leases.finest()
+		floor := w.minInterval
+		w.mu.Unlock()
+		if interval <= 0 {
+			return
+		}
+
+		wait := interval
+		if failures > 0 {
+			wait = retryAfter(failures)
+		}
+		// The floor applies regardless of what asks, so a short lease interval
+		// or a reload loop cannot hammer the API.
+		if since := time.Since(lastAt); !lastAt.IsZero() && floor > 0 && since < floor {
+			if remaining := floor - since; remaining > wait {
+				wait = remaining
+			}
+		}
+
+		timer := time.NewTimer(wait)
+		select {
+		case <-stop:
+			timer.Stop()
+			return
+		case <-w.rearm:
+			timer.Stop()
+			continue
+		case <-timer.C:
+		}
+
+		lastAt = time.Now()
+		observation, err := w.fetch()
+		if err != nil {
+			failures++
+			if !failing {
+				failing = true
+				fmt.Fprintf(os.Stderr, "sysc-shell: weather unavailable: %v\n", err)
+			}
+			if reading.FailedSince.IsZero() {
+				reading.FailedSince = time.Now()
+			}
+		} else {
+			if failing {
+				failing = false
+				fmt.Fprintln(os.Stderr, "sysc-shell: weather recovered")
+			}
+			failures = 0
+			observation.FailedSince = time.Time{}
+			reading = observation
+		}
+		sendReading(w.updates, reading)
+	}
+}
+
+// wireCurrent is the subset of the Open-Meteo response the bar renders.
+type wireCurrent struct {
+	Current struct {
+		Temperature *float64 `json:"temperature_2m"`
+		Code        *int     `json:"weather_code"`
+	} `json:"current"`
+}
+
+// fetch performs one request. The client carries an overall timeout and the
+// request carries a deadline, so neither a stalled connect nor a slow body can
+// outlive the budget.
+func (w *Weather) fetch() (Reading, error) {
+	w.mu.Lock()
+	reqURL := w.requestURLLocked()
+	unit := w.unit
+	w.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), connectAndReadBudget)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return Reading{}, err
+	}
+	resp, err := w.client.Do(req)
+	if err != nil {
+		return Reading{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return Reading{}, fmt.Errorf("weather: status %s", resp.Status)
+	}
+
+	// One byte past the cap distinguishes "exactly at the cap" from "longer".
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	if err != nil {
+		return Reading{}, err
+	}
+	if len(body) > maxResponseBytes {
+		return Reading{}, fmt.Errorf("weather: response exceeds %d bytes", maxResponseBytes)
+	}
+
+	var wire wireCurrent
+	if err := json.Unmarshal(body, &wire); err != nil {
+		return Reading{}, fmt.Errorf("weather: decode: %w", err)
+	}
+	if wire.Current.Temperature == nil || wire.Current.Code == nil {
+		return Reading{}, fmt.Errorf("weather: response carries no current observation")
+	}
+
+	return Reading{
+		Observed:    true,
+		Temperature: *wire.Current.Temperature,
+		Unit:        unit,
+		Code:        *wire.Current.Code,
+		FetchedAt:   time.Now(),
+	}, nil
+}
+
+// sendReading publishes the newest reading, replacing one the consumer has not
+// read. This goroutine is the only sender, so the retry always finds room.
+func sendReading(updates chan Reading, reading Reading) {
+	select {
+	case updates <- reading:
+		return
+	default:
+	}
+	select {
+	case <-updates:
+	default:
+	}
+	select {
+	case updates <- reading:
+	default:
+	}
+}
