@@ -96,7 +96,7 @@ Split into four reviewed tranches by the charter. 3A and 3B are merged.
 | `2026-08-30-built-in-widget-foundation.md` | plan | `main` | Complete. 16 tasks (0–15). Audit findings applied. Ready to execute. |
 | `2026-08-30-built-in-widget-foundation-audit-handover.md` | audit-handover | `main` | Closed. Commissioned the technical and design audits. |
 | `2026-08-30-built-in-widget-foundation-audit-report.md` | audit-report | `main` | Closed. Verdict: proceed with named corrections; all seven applied at `9a114eb`. Verified assumption 4 live. |
-| `2026-08-31-tranche-3a-implementation-audit-report.md` | audit-report | `main` | **Open**. Implementation vs spec + Q/A. Verdict: proceed with named corrections. One major unapplied: `apply` does not re-layout. |
+| `2026-08-31-tranche-3a-implementation-audit-report.md` | audit-report | `main` | **Partly applied**. Implementation vs spec + Q/A. Finding 1 (major, `apply` does not re-layout) fixed at `b669622`. Findings 2–4 (minors) outstanding. |
 | `2026-08-30-core-metrics-design.md` | design | `main` | Owner-approved, audited, amended. D1–D8; D3, D6, D7 and D8 amended 2026-08-31. Graph node ships in 3B (charter deviation D5). |
 | `2026-08-30-core-metrics.md` | plan | `main` | Executed. 13 tasks. |
 | `2026-08-30-core-metrics-completion-handover.md` | completion-handover | `main` | Closed. Implementation complete; superseded by the audit and its corrections. |
