@@ -8,9 +8,8 @@ a font face, an error tone for failure text, and a hover tooltip on its own surf
 **Architecture:** A third concrete service, `services.Weather`, reuses the `leaseSet` Tranche 3B
 extracts and fetches on a bounded, backing-off schedule that never discards its last good reading.
 Icons resolve through the existing per-rune font fallback, so an icon is shaped, masked and tinted by
-the same path as text. The tooltip is the smaller of the two surface shapes Tranche 4A defines — one
-Overlay layer surface, keyboard none, no dismiss shield — created only ever by the Wayland owner
-goroutine.
+the same path as text. Tasks 9–11 establish the shared auxiliary-surface seam: Wayland owns surfaces and
+buffers, shell callbacks own content, and one generation-safe controller owns tooltip dwell.
 
 **Tech Stack:** Go 1.26, standard library only. `net/http` and `encoding/json` cover the fetch. No new
 module dependency.
@@ -22,8 +21,8 @@ module dependency.
 Every task's requirements implicitly include this section.
 
 - Linux and Niri are the only platform contract.
-- **One goroutine owns the Wayland connection and every proxy.** This includes the tooltip surface: the
-  dwell timer signals the owner through a channel and never calls a proxy itself.
+- **One goroutine owns the Wayland connection and every proxy.** The dwell timer sends a generation-tagged
+  message and never calls a proxy.
 - No new module dependency, no `replace` directive. `net/http` and `encoding/json` are standard library.
 - No runtime SVG decoder, CGO library, or external conversion process.
 - No geocoding, no automatic location, and no second remote host. Open-Meteo is the only one.
@@ -55,10 +54,10 @@ Every task's requirements implicitly include this section.
 | `internal/render/iconfont_test.go` | Icon runes resolve to the project face, not a system one. |
 | `internal/shell/weatherwidget.go` | Weather widget construction and formatting. |
 | `internal/shell/weatherwidget_test.go` | Formatting, staleness, error tone. |
-| `internal/platform/wayland/tooltip.go` | Tooltip surface lifecycle on the owner goroutine. |
-| `internal/platform/wayland/tooltip_test.go` | Surface creation, placement clamping, teardown. |
+| `internal/platform/wayland/aux.go` | Basic auxiliary-surface open, replace, and close path. |
+| `internal/platform/wayland/aux_test.go` | Fake-compositor creation, callbacks, empty input region, and teardown. |
 | `internal/shell/tooltip.go` | Dwell timing and tooltip content. |
-| `internal/shell/tooltip_test.go` | Dwell, cancel on leave, no proxy from the timer. |
+| `internal/shell/tooltip_test.go` | Generation-safe dwell, four-edge placement, updates, and cleanup. |
 
 **Modified**
 
@@ -2011,624 +2010,367 @@ may be cut as a unit without stranding anything above.
 
 ---
 
-### Task 9: The tooltip surface
+### Task 9: Basic auxiliary-surface host
 
 **Files:**
-- Create: `internal/platform/wayland/tooltip.go`, `internal/platform/wayland/tooltip_test.go`
-- Modify: `internal/platform/wayland/client.go`
+- Modify: `internal/platform/wayland/host.go`, `internal/platform/wayland/client.go`
+- Create: `internal/platform/wayland/aux.go`
+- Test: `internal/platform/wayland/aux_test.go`
 
 **Interfaces:**
-- Consumes: the owner's existing surface and layer-shell handling.
-- Produces: `wayland.TooltipRequest{Global uint32; Anchor ui.Rect; Text string}`;
-  `Callbacks.Tooltips <-chan TooltipRequest`; `owner.showTooltip`, `owner.hideTooltip`. Task 10 sends
-  the requests.
+- Produces: `surfaceUnit`, `AuxSpec`, `AuxRequest`, and `Callbacks.Aux`.
+- Preserves: one Wayland owner goroutine; the application still supplies `HostCallbacks`.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Record the platform baseline**
 
-Create `internal/platform/wayland/tooltip_test.go`:
+Run:
+
+```bash
+go test -count=1 ./internal/platform/wayland/
+```
+
+Expected: PASS. Record the package test count for comparison after the extraction.
+
+- [ ] **Step 2: Extract `surfaceUnit` without behavior change**
+
+Move the bar's surface, layer, scale, viewport, scheduler, buffer generations, frame callback, cleanup,
+and `HostCallbacks` fields from `OutputHost` into:
 
 ```go
-package wayland
+// surfaceUnit owns one layer surface and its render-buffer lifecycle.
+// The Wayland owner is the only goroutine that mutates it.
+type surfaceUnit struct {
+	id string
 
-import (
-	"testing"
+	surface  *client.Surface
+	layer    *layershell.ZwlrLayerSurfaceV1
+	scale    *fractionalscale.WpFractionalScaleV1
+	viewport *viewporter.WpViewport
 
-	"github.com/Nomadcxx/sysc-shell/internal/ui"
-)
+	ss    *surfaceState
+	sched *render.Scheduler
 
-// Placement follows the panel design's rule: anchored off the bar edge,
-// aligned to the triggering widget, clamped fully inside the output.
-func TestTooltipPlacementClampsInsideTheOutput(t *testing.T) {
-	t.Parallel()
-	const outputWidth, outputHeight = 1920, 1080
+	current  *generation
+	retiring []*generation
+	genID    int
 
-	cases := []struct {
-		name         string
-		anchor       ui.Rect
-		width        int
-		wantXAtLeast int
-		wantXAtMost  int
-	}{
-		{
-			name:         "centred under its widget",
-			anchor:       ui.Rect{X: 900, Y: 0, W: 40, H: 44},
-			width:        200,
-			wantXAtLeast: 0,
-			wantXAtMost:  outputWidth - 200,
-		},
-		{
-			name:         "clamped at the right edge",
-			anchor:       ui.Rect{X: 1900, Y: 0, W: 20, H: 44},
-			width:        200,
-			wantXAtLeast: 0,
-			wantXAtMost:  outputWidth - 200,
-		},
-		{
-			name:         "clamped at the left edge",
-			anchor:       ui.Rect{X: 0, Y: 0, W: 20, H: 44},
-			width:        200,
-			wantXAtLeast: 0,
-			wantXAtMost:  outputWidth - 200,
-		},
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			got := tooltipPlacement(c.anchor, c.width, 30, outputWidth, outputHeight)
-			if got.X < c.wantXAtLeast || got.X > c.wantXAtMost {
-				t.Fatalf("x = %d, want within [%d, %d]", got.X, c.wantXAtLeast, c.wantXAtMost)
-			}
-			if got.X+got.W > outputWidth {
-				t.Fatalf("tooltip right edge %d exceeds the output", got.X+got.W)
-			}
-			if got.Y < c.anchor.Y+c.anchor.H {
-				t.Fatalf("y = %d, want below the bar edge at %d", got.Y, c.anchor.Y+c.anchor.H)
-			}
-		})
-	}
-}
-
-// A tooltip wider than the output is clamped to it rather than placed off it.
-func TestATooltipWiderThanTheOutputIsClamped(t *testing.T) {
-	t.Parallel()
-	got := tooltipPlacement(ui.Rect{X: 10, Y: 0, W: 20, H: 44}, 3000, 30, 1920, 1080)
-
-	if got.X != 0 {
-		t.Fatalf("x = %d, want 0 for an over-wide tooltip", got.X)
-	}
-	if got.W > 1920 {
-		t.Fatalf("width = %d, want clamped to the output", got.W)
-	}
+	frameCallback *client.Callback
+	cleanup       cleanupStack
+	app           HostCallbacks
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+`OutputHost` retains output identity and policy and gains `bar *surfaceUnit` and
+`aux map[string]*surfaceUnit`. Route configure, scale, frame, buffer release, render, close, and
+cleanup through the unit. Keep the existing bar behavior byte-for-byte.
 
-Run: `go test ./internal/platform/wayland/ -run Tooltip -v`
-Expected: FAIL to compile — `tooltipPlacement` undefined.
+Run:
 
-- [ ] **Step 3: Write the implementation**
-
-Create `internal/platform/wayland/tooltip.go`:
-
-```go
-package wayland
-
-import (
-	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
-	"github.com/Nomadcxx/sysc-shell/internal/ui"
-)
-
-// TooltipRequest asks the owner to show a tooltip anchored to a widget, or to
-// hide the current one when Text is empty.
-//
-// The requester never touches a proxy: it sends this and the owner goroutine
-// does the Wayland work, which is what keeps the single-owner invariant.
-type TooltipRequest struct {
-	Global uint32
-	Anchor ui.Rect
-	Text   string
-}
-
-// tooltipGap is the space between the bar edge and the tooltip.
-const tooltipGap = 4
-
-// tooltipPlacement positions a tooltip below its anchor, centred on it, and
-// clamped fully inside the output.
-//
-// This is the panel design's D5 rule: anchored off the triggering bar's edge,
-// aligned to the triggering widget, clamped inside the output. Tranche 4A
-// adopts this rule rather than reconciling two.
-func tooltipPlacement(anchor ui.Rect, width, height, outputWidth, outputHeight int) ui.Rect {
-	if width > outputWidth {
-		width = outputWidth
-	}
-	x := anchor.X + anchor.W/2 - width/2
-	if x+width > outputWidth {
-		x = outputWidth - width
-	}
-	if x < 0 {
-		x = 0
-	}
-
-	y := anchor.Y + anchor.H + tooltipGap
-	if y+height > outputHeight {
-		y = outputHeight - height
-	}
-	if y < 0 {
-		y = 0
-	}
-	return ui.Rect{X: x, Y: y, W: width, H: height}
-}
-
-// tooltipLayer is the layer and interactivity a tooltip uses.
-//
-// Overlay because a fullscreen window hides Top but not Overlay. Keyboard none
-// and no dismiss shield because a tooltip is hover-driven: it takes no focus
-// and needs no outside-click dismissal, which is the panel design's OSD shape
-// rather than its panel shape.
-const (
-	tooltipLayer         = layershell.ZwlrLayerShellV1LayerOverlay
-	tooltipKeyboard      = uint32(layershell.ZwlrLayerSurfaceV1KeyboardInteractivityNone)
-	tooltipExclusiveZone = int32(-1)
-)
+```bash
+go test -count=1 ./internal/platform/wayland/ && go test -count=1 ./...
 ```
 
-In `internal/platform/wayland/client.go`, add the channel to `Callbacks`:
+Expected: PASS with the same platform test count.
 
-```go
-	// Tooltips asks the owner to show or hide a tooltip. It is owned by the
-	// caller; Run only receives from it and never closes it.
-	Tooltips <-chan TooltipRequest
+Commit:
+
+```bash
+git add internal/platform/wayland/
+BEADS_DB=/home/nomadx/sysc-shell/.beads/beads.db git commit -m "refactor(wayland): extract surface unit"
 ```
 
-Bridge it in the wake pipe beside invalidations and reloads, and handle a request on the owner goroutine
-by creating a layer surface with `tooltipLayer`, `SetExclusiveZone(tooltipExclusiveZone)` and
-`SetKeyboardInteractivity(tooltipKeyboard)`, rendering the text into its buffer at
-`tooltipPlacement(...)`, and destroying it on an empty-text request.
+- [ ] **Step 3: Write failing lifecycle tests**
 
-A `nil` `Tooltips` channel must be valid: it blocks forever in the select, so a caller that wants no
-tooltips supplies nothing and the owner does no tooltip work.
+Use the existing fake-compositor harness. Cover real protocol creation and destruction, not placement
+arithmetic alone:
 
-- [ ] **Step 4: Run the test to verify it passes**
+```go
+func TestAuxOpensConfiguresRendersAndCloses(t *testing.T) {
+	// Start one fake output and map its bar.
+	// Open an Overlay aux unit with application Configure/Render callbacks.
+	// Ack configure, release its buffer, then close it.
+	// Assert callbacks ran, layer and wl_surface were destroyed once,
+	// and the bar stayed mapped and rendered again.
+}
 
-Run: `go build ./... && go test -race ./internal/platform/wayland/ -v`
-Expected: PASS.
+func TestAuxEmptyInputRegionIsCommitted(t *testing.T) {
+	empty := []ui.Rect{}
+	// Open with InputRegion: &empty.
+	// Assert wl_surface.set_input_region receives an empty region before commit.
+}
 
-- [ ] **Step 5: Commit**
+func TestAuxReplaceDestroysOldGenerationFirst(t *testing.T) {
+	// Open the same ID twice with different callbacks and size.
+	// Assert one live unit remains and the old proxy/buffers were cleaned.
+}
+
+func TestOutputLossDropsEveryAuxUnit(t *testing.T) { /* DropAux once per id */ }
+func TestShutdownDrainsAndDestroysAuxUnits(t *testing.T) { /* no proxy leak */ }
+```
+
+Run: `go test ./internal/platform/wayland/ -run Aux -v`
+
+Expected: FAIL because the auxiliary types and owner path do not exist.
+
+- [ ] **Step 4: Implement the basic open-close path**
+
+Add:
+
+```go
+// AuxSpec describes one auxiliary layer surface. A non-nil InputRegion
+// replaces the compositor default; a pointer to an empty slice makes the
+// surface pointer-transparent.
+type AuxSpec struct {
+	ID        string
+	Namespace string
+	Layer     layershell.ZwlrLayerShellV1Layer
+	Anchor    uint32
+
+	MarginTop, MarginBottom, MarginLeft, MarginRight int32
+	Width, Height                                    int32
+	ExclusiveZone                                   int32
+	Keyboard                                        uint32
+	InputRegion                                     *[]ui.Rect
+	Callbacks                                       HostCallbacks
+}
+
+// AuxRequest opens or replaces Open when non-nil. Otherwise it closes ID.
+type AuxRequest struct {
+	Output uint32
+	ID     string
+	Open   *AuxSpec
+}
+```
+
+Add optional callbacks:
+
+```go
+type Callbacks struct {
+	// existing fields...
+	Aux     <-chan AuxRequest
+	DropAux func(output uint32, id string)
+}
+```
+
+The owner must:
+
+1. validate a non-empty bounded ID and namespace, positive fitted size, valid layer enum, margins, and
+   input rectangles before creating proxies;
+2. create the `surfaceUnit` through the same scale, viewport, scheduler, and buffer path as the bar;
+3. apply geometry, keyboard mode, and a supplied input region before the initial commit;
+4. replace an existing ID only after destroying its old unit;
+5. close unknown IDs as a no-op;
+6. call `DropAux` once on requested close, compositor close, output loss, replacement, or shutdown.
+
+A nil `Aux` channel disables the path. Reload does not destroy auxiliary units by itself; the shell
+owns transient-versus-persistent policy.
+
+Run:
+
+```bash
+go test -race -count=1 ./internal/platform/wayland/ && go test -count=1 ./...
+```
+
+Expected: PASS with no race or leaked fake-compositor object.
+
+Commit:
 
 ```bash
 gofmt -l internal/platform/wayland && go vet ./internal/platform/wayland/
 git add internal/platform/wayland/
-BEADS_DB=/home/nomadx/sysc-shell/.beads/beads.db git commit -m "feat(wayland): place and map a hover surface"
+BEADS_DB=/home/nomadx/sysc-shell/.beads/beads.db git commit -m "feat(wayland): host auxiliary surfaces"
 ```
 
 ---
 
-### Task 10: Dwell timing
+### Task 10: Shared tooltip model and process-wide dwell
 
 **Files:**
-- Create: `internal/shell/tooltip.go`, `internal/shell/tooltip_test.go`
-- Modify: `internal/shell/bar.go`
+- Modify: `internal/ui/tree.go`
+- Modify: `internal/shell/bar.go`, `internal/shell/weatherwidget.go`, `internal/shell/registry.go`
+- Create: `internal/shell/tooltip.go`
+- Test: `internal/ui/tree_test.go`, `internal/shell/tooltip_test.go`
 
 **Interfaces:**
-- Consumes: `wayland.TooltipRequest` from Task 9.
-- Produces: `(*Registry).Tooltips() <-chan wayland.TooltipRequest`; `dwell` timing on pointer events.
-  Task 11 wires it.
+- Consumes: Task 9's `AuxRequest`.
+- Produces: `ui.Node.Tooltip`, `ui.TooltipAt`, and one process-wide tooltip controller.
 
-- [ ] **Step 1: Write the failing test**
-
-Create `internal/shell/tooltip_test.go`:
+- [ ] **Step 1: Write the failing node and content tests**
 
 ```go
-package shell
-
-import (
-	"testing"
-	"time"
-
-	"github.com/Nomadcxx/sysc-shell/internal/ui"
-)
-
-// The dwell timer must not fire immediately: a tooltip on every pointer
-// crossing would flicker across the whole bar.
-func TestADwellRequestArrivesOnlyAfterTheDelay(t *testing.T) {
-	t.Parallel()
-	d := newDwell(60 * time.Millisecond)
-	t.Cleanup(d.stop)
-
-	d.enter(1, ui.Rect{X: 10, Y: 0, W: 40, H: 44}, "Fixture tooltip")
-
-	select {
-	case req := <-d.requests():
-		t.Fatalf("a request arrived immediately: %+v", req)
-	case <-time.After(20 * time.Millisecond):
-	}
-
-	select {
-	case req := <-d.requests():
-		if req.Text != "Fixture tooltip" || req.Global != 1 {
-			t.Fatalf("request = %+v, want the entered widget", req)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("no request arrived after the dwell elapsed")
+func TestTooltipAtUsesReversePaintOrderAndDeepestNode(t *testing.T) {
+	back := &Node{Bounds: Rect{W: 100, H: 40}, Tooltip: "back"}
+	frontChild := &Node{Bounds: Rect{X: 10, Y: 5, W: 20, H: 20}, Tooltip: "front child"}
+	root := &Node{Bounds: Rect{W: 100, H: 40}, Children: []*Node{
+		back,
+		{Bounds: Rect{W: 100, H: 40}, Tooltip: "front", Children: []*Node{frontChild}},
+	}}
+	got, ok := TooltipAt(root, 15, 10)
+	if !ok || got != frontChild {
+		t.Fatalf("got %#v, want deepest front node", got)
 	}
 }
 
-// Leaving before the dwell elapses must cancel it outright.
-func TestLeavingBeforeTheDwellCancelsIt(t *testing.T) {
-	t.Parallel()
-	d := newDwell(80 * time.Millisecond)
-	t.Cleanup(d.stop)
-
-	d.enter(1, ui.Rect{X: 10, Y: 0, W: 40, H: 44}, "Fixture tooltip")
-	d.leave()
-
-	select {
-	case req := <-d.requests():
-		if req.Text != "" {
-			t.Fatalf("a cancelled dwell produced a show request: %+v", req)
-		}
-	case <-time.After(300 * time.Millisecond):
-	}
-}
-
-// Leaving after the tooltip is up must ask for it to be hidden.
-func TestLeavingAfterTheDwellRequestsAHide(t *testing.T) {
-	t.Parallel()
-	d := newDwell(20 * time.Millisecond)
-	t.Cleanup(d.stop)
-
-	d.enter(1, ui.Rect{X: 10, Y: 0, W: 40, H: 44}, "Fixture tooltip")
-	<-d.requests() // the show
-	d.leave()
-
-	select {
-	case req := <-d.requests():
-		if req.Text != "" {
-			t.Fatalf("leave produced %+v, want a hide", req)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("leaving produced no hide request")
-	}
-}
-
-// Moving to another widget replaces the pending tooltip rather than queueing.
-func TestMovingToAnotherWidgetReplacesThePending(t *testing.T) {
-	t.Parallel()
-	d := newDwell(40 * time.Millisecond)
-	t.Cleanup(d.stop)
-
-	d.enter(1, ui.Rect{X: 10, Y: 0, W: 40, H: 44}, "first")
-	d.enter(1, ui.Rect{X: 60, Y: 0, W: 40, H: 44}, "second")
-
-	select {
-	case req := <-d.requests():
-		if req.Text != "second" {
-			t.Fatalf("request = %q, want the widget the pointer is on now", req.Text)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("no request arrived")
-	}
+func TestWeatherNodeHasBoundedTooltipFromExistingReading(t *testing.T) {
+	// Apply a stale reading. Assert node.Tooltip contains condition,
+	// formatted temperature, and staleness, and is no more than 2 KiB.
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+`TooltipAt` walks children from last to first, then considers the parent. It ignores nodes outside
+their bounds and nodes with empty tooltip text. Add `Tooltip string` to `ui.Node`; do not add it to
+`textWidget`.
 
-Run: `go test ./internal/shell/ -run Dwell -v`
-Expected: FAIL to compile — `newDwell` undefined.
+Run: `go test ./internal/ui/ ./internal/shell/ -run Tooltip -v`
 
-- [ ] **Step 3: Write the implementation**
+Expected: FAIL because the node field and lookup do not exist.
 
-Create `internal/shell/tooltip.go`:
+- [ ] **Step 2: Implement node-owned tooltip content**
+
+Weather builds its tooltip from data already in `services.Reading`: condition, temperature, and
+staleness or current status. Do not extend the Open-Meteo request. Normalize whitespace and truncate at
+a UTF-8 boundary to 2 KiB.
+
+Run: `go test ./internal/ui/ ./internal/shell/ -run Tooltip -v`
+
+Expected: PASS.
+
+- [ ] **Step 3: Write failing dwell, placement, and cleanup tests**
+
+Use a fake clock or injected timer function so tests do not depend on scheduler timing:
 
 ```go
-package shell
-
-import (
-	"sync"
-	"time"
-
-	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
-	"github.com/Nomadcxx/sysc-shell/internal/ui"
-)
-
-// defaultDwell is how long a pointer must rest before a tooltip appears. A
-// tooltip on every crossing would flicker across the whole bar.
-const defaultDwell = 500 * time.Millisecond
-
-// dwell turns pointer enter and leave into tooltip requests after a delay.
-//
-// The timer fires on its own goroutine and must never touch a Wayland proxy.
-// It sends on this channel instead, which the owner's wake pipe bridges; the
-// owner goroutine alone creates and destroys the surface.
-type dwell struct {
-	mu      sync.Mutex
-	delay   time.Duration
-	timer   *time.Timer
-	shown   bool
-	out     chan wayland.TooltipRequest
-	closed  bool
+func TestDwellPublishesOnlyCurrentGeneration(t *testing.T) {
+	// Enter A, capture timer A; enter B, capture timer B.
+	// Fire A then B. Only B may open.
 }
 
-func newDwell(delay time.Duration) *dwell {
-	if delay <= 0 {
-		delay = defaultDwell
-	}
-	return &dwell{delay: delay, out: make(chan wayland.TooltipRequest, 4)}
+func TestLeaveBeforeDwellCancelsWithoutOpening(t *testing.T) { /* generation advances */ }
+func TestVisibleTooltipRefreshReplacesContent(t *testing.T) { /* same source, new text */ }
+func TestPressClosesBeforeNormalBarPressHandling(t *testing.T) { /* click still delivered */ }
+func TestTooltipTerminalPathsCloseOnce(t *testing.T) {
+	// Table: leave, root opening, reload, output loss, source removal, shutdown.
 }
-
-// requests is the channel the process wires into wayland.Callbacks.Tooltips.
-func (d *dwell) requests() <-chan wayland.TooltipRequest { return d.out }
-
-// enter starts or restarts the dwell for one widget. Entering a second widget
-// replaces the pending request rather than queueing behind it.
-func (d *dwell) enter(global uint32, anchor ui.Rect, text string) {
-	if text == "" {
-		d.leave()
-		return
-	}
-
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.closed {
-		return
-	}
-	if d.timer != nil {
-		d.timer.Stop()
-	}
-	d.timer = time.AfterFunc(d.delay, func() {
-		d.mu.Lock()
-		if d.closed {
-			d.mu.Unlock()
-			return
-		}
-		d.shown = true
-		d.mu.Unlock()
-		d.send(wayland.TooltipRequest{Global: global, Anchor: anchor, Text: text})
-	})
-}
-
-// leave cancels a pending dwell, and hides a tooltip that is already up.
-func (d *dwell) leave() {
-	d.mu.Lock()
-	if d.timer != nil {
-		d.timer.Stop()
-		d.timer = nil
-	}
-	shown := d.shown
-	d.shown = false
-	closed := d.closed
-	d.mu.Unlock()
-
-	if shown && !closed {
-		d.send(wayland.TooltipRequest{})
-	}
-}
-
-// stop cancels everything. A reload and shutdown both reach it, because a
-// tooltip is transient and reappears on the next hover.
-func (d *dwell) stop() {
-	d.mu.Lock()
-	if d.timer != nil {
-		d.timer.Stop()
-		d.timer = nil
-	}
-	wasShown := d.shown
-	d.shown, d.closed = false, true
-	d.mu.Unlock()
-
-	if wasShown {
-		d.send(wayland.TooltipRequest{})
-	}
-}
-
-// send never blocks: a dropped hide would leave a tooltip on screen, so the
-// buffer is sized for the few requests a hover can produce and a full channel
-// drops the oldest rather than stalling the pointer path.
-func (d *dwell) send(req wayland.TooltipRequest) {
-	select {
-	case d.out <- req:
-		return
-	default:
-	}
-	select {
-	case <-d.out:
-	default:
-	}
-	select {
-	case d.out <- req:
-	default:
-	}
+func TestTooltipPlacementForEveryBarEdge(t *testing.T) {
+	// Table top/bottom/left/right, both output extremes, oversized content.
+	// Assert the fitted rectangle stays within logical output bounds and lies
+	// outside the bar on the expected side where space permits.
 }
 ```
 
-In `internal/shell/bar.go`, have `Handle` report the tooltip text under the pointer. Add a `Tooltip`
-field to `textWidget` set by `buildWidgets` for widgets that carry one, and a lookup beside
-`hitLocked`:
+Run: `go test ./internal/shell/ -run 'Dwell|TooltipPlacement|TooltipTerminal' -v`
 
-```go
-// tooltipAtLocked reports the tooltip text and bounds under a point.
-func (b *Bar) tooltipAtLocked(x, y int) (string, ui.Rect, bool) {
-	for _, section := range b.widgets() {
-		for _, w := range section {
-			if w.tooltip != "" && w.node.Bounds.Contains(x, y) {
-				return w.tooltip, w.node.Bounds, true
-			}
-		}
-	}
-	return "", ui.Rect{}, false
-}
-```
+Expected: FAIL.
 
-The registry exposes `Tooltips()` returning the dwell's channel, and drives `enter`/`leave` from the
-pointer events the bar already receives.
+- [ ] **Step 4: Implement one process-wide controller**
 
-- [ ] **Step 4: Run the test to verify it passes**
+Keep the controller under `Registry.mu`. It stores the current output, source node identity, anchor,
+bar edge, text, visible state, and a monotonically increasing generation. Every enter, leave, press,
+content refresh, reload, root opening, output loss, source removal, and shutdown advances generation.
+A timer callback carries the captured generation and sends a plain message; the registry ignores it
+unless it still matches.
 
-Run: `go build ./... && go test -race ./internal/shell/ -v`
-Expected: PASS with no race. The timer goroutine and the test goroutine share `dwell`, so the race
-detector is the point of this run.
+On a current dwell:
 
-- [ ] **Step 5: Commit**
+1. build a small `ui.Node` tree from the bounded text;
+2. measure and wrap it with the shell text functions at a fixed maximum width;
+3. compute logical placement from the source rectangle and bar edge;
+4. send `AuxRequest{Open: ...}` with ID `"tooltip"`, keyboard none, and a pointer to an empty input
+   region;
+5. supply `Configure` and `Render` callbacks that lay out and paint the node through the normal
+   shell renderer.
+
+Wayland owns no text measurement or paint logic. A visible content change sends a replacement
+`AuxRequest` for the same ID so size and callbacks stay current. Closing sends
+`AuxRequest{ID: "tooltip"}`; `DropAux` clears visible state without reopening it.
+
+Bar pointer handling calls `ui.TooltipAt` after layout. Enter/motion starts or replaces the candidate.
+Leave and any press close first, then preserve existing press/release behavior. Add
+`Registry.CloseTooltipForRootOpen()`; Tranche 4A's root coordinator must call it before opening a root.
+
+Run:
 
 ```bash
-gofmt -l internal/shell && go vet ./internal/shell/
-git add internal/shell/
-BEADS_DB=/home/nomadx/sysc-shell/.beads/beads.db git commit -m "feat(shell): raise a hover request after a dwell"
+go test -race -count=1 ./internal/ui/ ./internal/shell/
+```
+
+Expected: PASS with deterministic timer tests and no race.
+
+Commit:
+
+```bash
+gofmt -l internal/ui internal/shell && go vet ./internal/ui ./internal/shell/
+git add internal/ui/ internal/shell/
+BEADS_DB=/home/nomadx/sysc-shell/.beads/beads.db git commit -m "feat(shell): show node tooltips after dwell"
 ```
 
 ---
 
-### Task 11: Tooltip wiring and evidence
+### Task 11: Wiring and tranche evidence
 
 **Files:**
 - Modify: `cmd/sysc-shell/main.go`, `internal/shell/registry.go`
+- Modify: `tests/integration/README.md`
 - Create: `internal/shell/tranche3d_test.go`
 
-**Interfaces:**
-- Consumes: everything from Tasks 1–10.
-- Produces: nothing.
+- [ ] **Step 1: Wire the auxiliary channel and drop callback**
 
-- [ ] **Step 1: Wire the channel**
+Pass `Registry.AuxRequests()` and `Registry.DropAux` into `wayland.Callbacks`. The registry closes
+the tooltip during an accepted reload, before output removal, and during `Close`. Verify the owner
+still receives every request through its wake path and no shell goroutine calls a Wayland proxy.
 
-In `cmd/sysc-shell/main.go`, pass the dwell channel into the callbacks:
+- [ ] **Step 2: Add cross-cutting tests**
 
-```go
-		Tooltips: registry.Tooltips(),
-```
-
-A reload closes an open tooltip: `Registry.PrepareConfig`'s commit calls `dwell.leave()`, because unlike
-a panel a tooltip is transient and reappears on the next hover.
-
-- [ ] **Step 2: Write the cross-cutting test**
-
-Create `internal/shell/tranche3d_test.go`:
+Retain the weather lifetime, accepted-reload, and stale-reading tests. Add:
 
 ```go
-package shell
-
-import (
-	"runtime"
-	"testing"
-	"time"
-
-	"github.com/Nomadcxx/sysc-shell/internal/services"
-)
-
-// The whole tranche's goroutines must stop with the registry.
-func TestClosingTheRegistryStopsTheWeatherGoroutine(t *testing.T) {
-	before := runtime.NumGoroutine()
-
-	reg := NewRegistry(weatherConfig())
-	newHosts(t, reg, map[uint32]string{1: "DP-9", 2: "HDMI-A-9"})
-	reg.Close()
-
-	deadline := time.Now().Add(2 * time.Second)
-	for runtime.NumGoroutine() > before && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if got := runtime.NumGoroutine(); got > before {
-		t.Fatalf("goroutines = %d after Close, want at most the starting %d", got, before)
-	}
+func TestTooltipLifecycleThroughFakeCompositor(t *testing.T) {
+	// Hover a weather node, fire the injected dwell, and run the request through
+	// the fake compositor. Assert configure and shell render occur, the input
+	// region is empty, then leave and assert every aux proxy/buffer is gone.
 }
 
-// An accepted reload must not restart a weather service still in use.
-func TestAnAcceptedReloadDoesNotRestartTheWeatherService(t *testing.T) {
-	t.Parallel()
-	reg := NewRegistry(weatherConfig())
-	t.Cleanup(reg.Close)
-	newHosts(t, reg, map[uint32]string{1: "DP-9"})
-
-	if got := reg.Weather().Starts(); got != 1 {
-		t.Fatalf("starts = %d before reload, want 1", got)
-	}
-
-	prepared, err := reg.PrepareConfig(weatherConfig(), identities(map[uint32]string{1: "DP-9"}))
-	if err != nil {
-		t.Fatalf("PrepareConfig: %v", err)
-	}
-	prepared.Commit()
-
-	if got := reg.Weather().Starts(); got != 1 {
-		t.Fatalf("starts = %d after reload, want 1; the service restarted", got)
-	}
-}
-
-// A stale reading must keep rendering rather than blanking the widget.
-func TestAStaleReadingKeepsTheWidgetRendering(t *testing.T) {
-	t.Parallel()
-	reg := NewRegistry(weatherConfig())
-	t.Cleanup(reg.Close)
-	newHosts(t, reg, map[uint32]string{1: "DP-9"})
-
-	reg.UpdateWeather(services.Reading{
-		Observed: true, Temperature: 18, Unit: services.UnitCelsius,
-		FetchedAt:   time.Now().Add(-2 * time.Hour),
-		FailedSince: time.Now().Add(-time.Hour),
-	})
-
-	if got := reg.bars[1].left[0].node.Text; got == noWorkspace || got == "" {
-		t.Fatalf("a stale reading rendered %q, want the aged value", got)
-	}
-}
+func TestReloadAndOutputLossLeaveNoTooltip(t *testing.T) { /* both paths */ }
+func TestClosingRegistryStopsWeatherAndDwellWork(t *testing.T) { /* no late request */ }
 ```
 
-- [ ] **Step 3: Run the full suite with the race detector**
+Run:
 
 ```bash
-go build ./... && go test -race -count=1 ./... 2>&1 | tail -20
+go build ./... && go test -race -count=1 ./...
 ```
 
-Expected: `ok` for every package, no race report.
+Expected: every package reports `ok`; no race report.
 
-- [ ] **Step 4: Record the live matrix**
+- [ ] **Step 3: Record and execute the live matrix**
 
-Append to `tests/integration/README.md`:
+Append the Tranche 3D matrix to `tests/integration/README.md`:
 
-```markdown
-## Tranche 3D: weather and visual vocabulary
+1. Run on one output, then two; both render the same service reading independently.
+2. Disconnect and reconnect the network; the last good reading becomes stale and later recovers.
+3. Reload coordinates, units, and interval; the service remains one live instance.
+4. Hover weather on top, bottom, left, and right bars; the tooltip opens after dwell on the correct
+   side and stays inside each logical output.
+5. Move across overlapping eligible nodes; reverse paint order selects the visible front node and no
+   stale timer opens the old tooltip.
+6. Change the weather reading while open; content updates.
+7. Leave, press, reload, open an interactive root, unplug the output, and stop the shell; each closes
+   the tooltip with no flash, input capture, or leaked surface.
+8. Run the 60-minute idle CPU and wakeup comparison against Tranche 3B.
 
-Run after Tranche 3B's matrix. Coordinates, place names and measurements stay
-outside this repository.
+Record observations and defects in the completion handover. Do not put local coordinates or machine
+measurements in Git.
 
-Build and start:
-
-    go build -o /tmp/sysc-shell-tranche3d ./cmd/sysc-shell
-    /tmp/sysc-shell-tranche3d
-
-Matrix:
-
-1. One output, then at least two, each rendering the reading independently.
-2. The icon and the temperature render, and the icon matches the condition.
-3. Disconnect the network: the reading goes stale with its age and the shell
-   keeps painting.
-4. Reconnect: the reading recovers without a restart, within one backoff step.
-5. Start with an unreachable host: the widget renders the error tone, not an
-   empty space.
-6. Confirm stderr carries one line when fetching starts failing and one when
-   it recovers, not one per attempt.
-7. Reload changing coordinates, unit and interval; the service must not
-   restart and no widget may stall.
-8. Hover a widget: the tooltip appears after the dwell and is placed fully
-   inside the output.
-9. Hover a widget at the extreme left and right of an output: the tooltip stays
-   on screen.
-10. Reload with a tooltip open: it closes and no surface leaks.
-11. Idle CPU and wakeups over 60 minutes against the Tranche 3B baseline.
-```
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 gofmt -l . && go vet ./...
 git add cmd/sysc-shell/ internal/shell/ tests/integration/README.md
-BEADS_DB=/home/nomadx/sysc-shell/.beads/beads.db git commit -m "feat(shell): wire hover surfaces and record the live matrix"
+BEADS_DB=/home/nomadx/sysc-shell/.beads/beads.db git commit -m "test(shell): qualify weather tooltips"
 ```
 
-Then write `docs/plans/2026-08-30-weather-and-visual-vocabulary-completion-handover.md` with commit
-hashes, fresh gate output, live observations per matrix item, defects, and the next unblocked issue.
+Write `docs/plans/2026-08-30-weather-and-visual-vocabulary-completion-handover.md` with commit hashes,
+fresh gate output, live observations, defects, and the next unblocked bead.
 
 ---
 
@@ -2640,5 +2382,5 @@ Stop and return to the owner rather than improvising if any of these occur:
 - The dwell timer appears to need to call a Wayland proxy.
 - Open-Meteo appears to need an API key, a second host, or geocoding.
 - The icon font cannot be authored without a runtime decoder or an external conversion step.
-- Tranche 4A lands first, in which case the tooltip should adopt its aux-surface machinery rather than
-  Task 9's minimal lifecycle.
+- Tranche 4A has already introduced a conflicting auxiliary host. Reconcile ownership before either
+  tranche writes overlapping Wayland code.

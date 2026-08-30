@@ -7,13 +7,11 @@ Exclusive keyboard, single instance), floating placement with clamping, shell-re
 shadows, the 4A control vocabulary with roving keyboard focus, matugen core theming, the
 clock/calendar and session/power popouts, and the v1 IPC socket with documented niri hotkeys.
 
-**Architecture:** Panels reuse the Milestone 2/3 ownership shape. `shell.Registry` (process-scoped)
-owns panel state the way it owns bars; the Wayland client gains generic auxiliary-surface support
-(create/destroy at runtime, per-surface callbacks, keyboard delivery) because today it maps exactly
-one bar surface per output — that is the one Milestone 2 modification this plan requires, and it is
-explicit. All new logic is pure-Go stdlib. **This tranche adds no module dependency: `go.mod` is
-untouched.** The system-monitor popout that would have needed `sysc-metrics` is deferred to after
-Tranche 3B qualifies and tags it (design D10).
+**Architecture:** Tranche 3D supplies the generic auxiliary-surface lifecycle and application render
+callbacks. This tranche extends that host with keyboard routing and in-place input updates, then uses a
+process-wide root coordinator to ensure one interactive chain owns focus, serials, and leases. All new
+logic is pure-Go stdlib. **This tranche adds no module dependency: `go.mod` is untouched.** The
+system-monitor popout remains deferred under design D10.
 
 **Tech Stack:** Go 1.26 stdlib, sysc-wayland v0.1.x generated bindings (layer-shell,
 fractional-scale, viewporter), matugen 4.2.0 (external binary, exec), loginctl (external binary,
@@ -26,10 +24,9 @@ exec).
 
 ## Prerequisites (verify before Task 1)
 
-1. Milestone 2 has passed its live Niri gate and merged to main. **Tranche 3A** (widget
-   foundation) has merged to main. Tranches 3B, 3C and 3D are **not** required — everything that
-   would have depended on them is deferred by design D10. This plan executes from a fresh worktree
-   of main containing both.
+1. Milestone 2 and Tranche 3A have merged. Tranche 3D Tasks 9–11 have also merged and passed their
+   auxiliary lifecycle tests. Tranches 3B and 3C are not required. Execute from a fresh worktree that
+   contains those prerequisites.
 2. The merged tree contains the M3 surface this plan builds on:
    - `internal/shell/registry.go` — `Registry` with `NewHost(global, connector)`,
      `DropHost(global)`, `UpdateClock(now) []uint32`, `UpdateNiri(snap) []uint32`,
@@ -37,9 +34,10 @@ exec).
    - `internal/shell/bar.go` — `Bar` with `Handle(wayland.Event) bool`, `NewWithTheme(theme, policy, connector)`.
    - `internal/services/clock.go` — `NewClock()`, `Acquire(boundary) (*Lease, error)`,
      `(*Lease).Release()` (idempotent, nil-safe), `Updates() <-chan time.Time`, `Close()`.
+   - `internal/platform/wayland/host.go`, `aux.go` — `surfaceUnit`, `AuxSpec`, `AuxRequest`, empty input
+     regions, `Callbacks.Aux`, and `DropAux` with fake-compositor lifecycle coverage.
    - `internal/platform/wayland/client.go` — `Run(ctx, cfg, Callbacks)` with
-     `Callbacks{NewHost, PrepareConfig, DropHost, Invalidations, Reloads, ConfigPath}`,
-     `HostCallbacks{Configure, Render, Handle}`, `Event{Kind, X, Y, Button, Serial}` (pointer kinds only).
+     `HostCallbacks{Configure, Render, Handle}` and pointer-only `Event` values.
    - `cmd/sysc-shell/main.go` — `run(ctx)` wiring Registry into `wayland.Callbacks`.
 3. `matugen` (4.2.0) and `loginctl` exist on `PATH`. Both are optional at runtime — a missing
    matugen falls back to the compiled-in palette, and a missing loginctl hides the session actions —
@@ -529,103 +527,63 @@ git commit -m "feat(shell): render from generated Material 3 tokens"
 
 ---
 
-### Task 5: Panel model — placement math and single-instance state
+### Task 5: Placement and process-wide interactive-root state
 
 **Files:**
-- Create: `internal/shell/panel.go`
-- Test: `internal/shell/panel_test.go`
+- Create: `internal/shell/panel.go`, `internal/shell/root.go`
+- Test: `internal/shell/panel_test.go`, `internal/shell/root_test.go`
 
-Pure logic only: no Wayland imports. Placement per design §Placement; single-instance semantics
-per design D4.
+Pure logic only. The root coordinator is process-wide; it does not import Wayland.
 
-**Step 1: Write the failing tests**
+**Step 1: Write failing placement tests**
+
+Cover top, bottom, left, and right bar edges, output padding, oversized panels, and every section
+alignment. All values are logical pixels.
 
 ```go
-func TestClampKeepsPanelInsideOutput(t *testing.T) {
-	out := ui.Rect{W: 1920, H: 1080}
-	cases := []struct{ desired, size, pad, want int }{
-		{-50, 400, 8, 8},
-		{2000, 400, 8, 1512}, // 1920-400-8
-		{760, 400, 8, 760},
+func TestPanelPlacementStaysInsideOutput(t *testing.T) {
+	cases := []Placement{
+		{BarEdge: "top", Output: ui.Rect{W: 1920, H: 1080}, BarZone: 40,
+			Gap: 8, Padding: 8, Panel: ui.Rect{W: 700, H: 520}, Align: "center"},
+		{BarEdge: "right", Output: ui.Rect{W: 1080, H: 1920}, BarZone: 44,
+			Gap: 8, Padding: 8, Panel: ui.Rect{W: 500, H: 900}, Align: "end"},
 	}
 	for _, c := range cases {
-		if got := clampAxis(c.desired, c.size, out.W, c.pad); got != c.want {
-			t.Fatalf("clamp(%d,%d)=%d want %d", c.desired, c.size, got, c.want)
+		got := c.Fit()
+		if !c.Output.ContainsRect(got.Bounds) {
+			t.Fatalf("%+v placed outside %+v", got.Bounds, c.Output)
 		}
 	}
 }
 
-func TestPanelLargerThanOutputClampsToPadding(t *testing.T) {
-	if got := clampAxis(0, 2000, 1080, 8); got != 8 {
-		t.Fatalf("oversized panel must sit at padding, got %d", got)
-	}
-}
-
-func TestAnchorMarginsForTopBar(t *testing.T) {
-	g := Placement{BarEdge: "top", Output: ui.Rect{W: 1920, H: 1080},
-		BarZone: 40, Gap: 8, Padding: 8, Panel: ui.Rect{W: 700, H: 520}, Align: "center"}
-	m := g.Margins()
-	// top bar: anchor top+left; margin.top clears the reserved zone + gap.
-	if m.Top != 48 || m.Left != 610 { // (1920-700)/2
-		t.Fatalf("margins wrong: %+v", m)
-	}
-}
-
-func TestSingleInstanceToggleAndMove(t *testing.T) {
-	ps := &PanelSet{}
-	if ps.Toggle(PanelSession, 1) != Opened {
-		t.Fatal("first toggle opens")
-	}
-	if ps.Toggle(PanelSession, 1) != Closed {
-		t.Fatal("same-output toggle closes")
-	}
-	ps.Toggle(PanelSession, 1)
-	if ps.Toggle(PanelSession, 2) != Moved {
-		t.Fatal("other-output toggle closes+reopens there")
-	}
-	if _, where := ps.Open(PanelSession); where != 2 {
-		t.Fatal("panel must now live on output 2")
-	}
-	if ps.Toggle(PanelMonitor, 1) != Opened {
-		t.Fatal("different panel id is independent")
-	}
-}
+func TestOversizedPanelShrinksBeforePlacement(t *testing.T) { /* both axes */ }
+func TestPanelStartsBeyondItsBarEdge(t *testing.T) { /* four-edge table */ }
 ```
 
-**Step 2: Run to verify failure** — `go test ./internal/shell/ -run 'Clamp|Anchor|SingleInstance'` → FAIL.
+Run: `go test ./internal/shell/ -run 'PanelPlacement|OversizedPanel' -v`
 
-**Step 3: Implement**
+Expected: FAIL.
 
-```go
-type PanelID uint8
-
-const (
-	PanelClockCalendar PanelID = iota
-	PanelMonitor
-	PanelSession
-	PanelSettings // accepted by IPC once Tranche 4B lands; inert here
-)
-
-func (p PanelID) String() string { ... "clock","calendar" map both clock+calendar ... }
-```
-
-Wait — clock and calendar are one popout (design §Popouts). IPC names it `clock`; the calendar
-grid is its content. Keep `PanelClock` as the id; `panel.toggle {"panel":"clock"}`.
+**Step 2: Implement placement**
 
 ```go
-// Placement computes layer-shell anchor + margins for one panel instance.
-// All values logical px. The panel anchors the bar's edge plus left, so both
-// offsets are exact; niri never chooses placement for an anchored surface.
 type Placement struct {
-	BarEdge string // top | bottom (left/right bars: post-M2 edges)
-	Output  ui.Rect
-	BarZone int // bar reserved zone incl. gap, from our own config
-	Gap, Padding int
-	Panel   ui.Rect // W,H set; X,Y computed
-	Align   string // left | center | right
+	BarEdge       string // top | bottom | left | right
+	Output        ui.Rect
+	Trigger       ui.Rect
+	BarZone       int
+	Gap, Padding  int
+	Panel         ui.Rect
+	Align         string // start | center | end
 }
 
-type Margins struct{ Top, Bottom, Left, Right int }
+type FittedPlacement struct {
+	Bounds ui.Rect
+	Anchor uint32
+	Margins Margins
+}
+
+type Margins struct{ Top, Bottom, Left, Right int32 }
 
 func clampAxis(desired, size, extent, pad int) int {
 	if size+2*pad > extent {
@@ -634,280 +592,134 @@ func clampAxis(desired, size, extent, pad int) int {
 	if desired < pad {
 		return pad
 	}
-	if max := extent - size - pad; desired > max {
+	if max := extent-size-pad; desired > max {
 		return max
 	}
 	return desired
 }
 
-func (p Placement) Margins() Margins {
-	x := alignX(p)
-	x = clampAxis(x, p.Panel.W, p.Output.W, p.Padding)
-	y := clampAxis(p.Panel.H /*desired irrelevant*/, p.Panel.H, p.Output.H, p.Padding)
-	_ = y
-	switch p.BarEdge {
-	case "top":
-		return Margins{Top: p.BarZone + p.Gap, Left: x}
-	default: // bottom
-		return Margins{Bottom: p.BarZone + p.Gap, Left: x}
-	}
-}
-
-func alignX(p Placement) int {
-	switch p.Align {
-	case "left":
-		return p.Padding
-	case "right":
-		return p.Output.W - p.Panel.W - p.Padding
-	default:
-		return (p.Output.W - p.Panel.W) / 2
-	}
-}
+func (p Placement) Fit() FittedPlacement { /* edge-aware fit, shrink, anchor, margins */ }
 ```
 
-Vertical clamping: panels open against the bar edge; if `BarZone + Gap + Panel.H + Padding >
-Output.H`, shrink panel height to fit (the render step consumes the clamped size). Add
-`(p Placement) FittedSize() (w, h int)` implementing that and test it:
+`Fit` shrinks the panel to the output minus padding and the bar reservation, centres it on
+`Trigger` along the bar axis when a trigger exists, applies start/centre/end for hotkeys, then clamps.
+Return an error for an unknown edge or non-positive usable area.
+
+Run: `go test ./internal/shell/ -run 'PanelPlacement|OversizedPanel' -v`
+
+Expected: PASS.
+
+**Step 3: Write failing root-chain tests**
 
 ```go
-func TestFittedSizeShrinksTallPanel(t *testing.T) {
-	p := Placement{BarEdge: "top", Output: ui.Rect{W: 800, H: 600}, BarZone: 40, Gap: 8, Padding: 8, Panel: ui.Rect{W: 700, H: 900}}
-	_, h := p.FittedSize()
-	if h != 600-40-8-8 {
-		t.Fatalf("height must shrink to fit: %d", h)
+func TestOpeningUnrelatedRootReplacesCurrentChain(t *testing.T) {
+	var roots RootCoordinator
+	roots.Open(Root{ID: "panel:clock", Output: 1})
+	closed, _ := roots.Open(Root{ID: "panel:session", Output: 2})
+	if closed.Root.ID != "panel:clock" || roots.Current().Root.ID != "panel:session" {
+		t.Fatalf("replacement = %+v current = %+v", closed, roots.Current())
 	}
 }
+
+func TestSameRootTriggerTogglesClosed(t *testing.T) { /* same id and output */ }
+func TestAttachedChildMustBelongToCurrentRoot(t *testing.T) { /* reject stale parent generation */ }
+func TestClosingRootReturnsWholeChain(t *testing.T) { /* child then root cleanup order */ }
+func TestOnlyOneInteractiveRootExists(t *testing.T) { /* invariant after mixed operations */ }
 ```
 
-Single-instance state:
+Run: `go test ./internal/shell/ -run Root -v`
+
+Expected: FAIL.
+
+**Step 4: Implement the coordinator**
 
 ```go
-type ToggleResult uint8
-
-const (
-	Opened ToggleResult = iota
-	Closed
-	Moved
-)
-
-// PanelSet tracks which panel is open where. One instance per panel id,
-// process-wide (design D4). Guarded by Registry.mu; no own lock.
-type PanelSet struct {
-	open map[PanelID]uint32 // panel -> output global
+type Root struct {
+	ID         string
+	Output     uint32
+	Generation uint64
 }
 
-func (ps *PanelSet) Toggle(p PanelID, output uint32) ToggleResult { ... }
-func (ps *PanelSet) Open(p PanelID) (PanelID, uint32) { ... } // reports where open
-func (ps *PanelSet) Close(p PanelID) { ... }
+type RootChain struct {
+	Root  Root
+	Child *Root
+}
+
+type RootCoordinator struct {
+	next    uint64
+	current *RootChain
+}
+
+func (r *RootCoordinator) Open(root Root) (closed *RootChain, opened *RootChain)
+func (r *RootCoordinator) Attach(parentGeneration uint64, child Root) error
+func (r *RootCoordinator) Detach(childID string) *Root
+func (r *RootCoordinator) Close(generation uint64) *RootChain
+func (r *RootCoordinator) Current() *RootChain
 ```
 
-**Step 4: Run to verify pass** — `go test ./internal/shell/` → PASS.
+`Open` toggles the same root on the same output; every other open returns the old chain for cleanup
+and installs a new generation. `Attach` accepts one child only when the generation matches. Later tray
+popups use that path. The coordinator owns identity and ordering only; `Registry` performs surface,
+keyboard, serial, text-input, and lease cleanup in Task 9.
 
-**Step 5: Commit**
+Run: `go test -count=1 ./internal/shell/`
+
+Expected: PASS.
+
+Commit:
 
 ```bash
-git add internal/shell/panel.go internal/shell/panel_test.go
-git commit -m "feat(shell): panel placement math and single-instance state"
+git add internal/shell/panel.go internal/shell/panel_test.go internal/shell/root.go internal/shell/root_test.go
+git commit -m "feat(shell): coordinate one interactive root"
 ```
 
 ---
 
-### Task 6: Wayland client — auxiliary surfaces and keyboard (Milestone 2 modification)
+### Task 6: Extend the 3D auxiliary host with input and updates
 
-This is the one M2 change the design requires: today `OutputHost` maps exactly one bar surface
-and the client binds no keyboard. Panels need runtime-created layer surfaces (shield + panel) with
-per-surface callbacks, pointer routing, and key delivery. Split into three commits; after each,
-the entire existing M2 test suite must stay green.
+Tranche 3D already supplies `surfaceUnit`, basic `AuxSpec`/`AuxRequest` open-close, application
+render callbacks, scale-aware buffers, empty input regions, and complete unit cleanup. This task adds
+the M4 requirements. Do not duplicate or move the 3D host.
 
 **Files:**
-- Modify: `internal/platform/wayland/host.go`
-- Modify: `internal/platform/wayland/client.go`
+- Modify: `internal/platform/wayland/client.go`, `internal/platform/wayland/aux.go`
 - Modify: `internal/platform/wayland/pointer.go`
-- Create: `internal/platform/wayland/aux.go`
 - Create: `internal/platform/wayland/keyboard.go`
-- Test: `internal/platform/wayland/aux_test.go`
-- Test: `internal/platform/wayland/keyboard_test.go`
+- Test: `internal/platform/wayland/aux_test.go`, `internal/platform/wayland/keyboard_test.go`
 
-#### Task 6a: Extract `surfaceUnit` (no behavior change)
+**Step 1: Verify the supplied seam**
 
-**Step 1: Baseline**
-
-Run: `go test ./internal/platform/wayland/`
-Expected: PASS (record the count; it must match after the refactor).
-
-**Step 2: Refactor**
-
-Move the per-surface machinery out of `OutputHost` into a new struct in `host.go`:
-
-```go
-// surfaceUnit owns one layer surface and its buffer lifecycle. The bar is
-// the first unit; auxiliary panels are more.
-type surfaceUnit struct {
-	id string // "bar" or the AuxSpec id
-
-	surface  *client.Surface
-	layer    *layershell.ZwlrLayerSurfaceV1
-	scale    *fractionalscale.WpFractionalScaleV1
-	viewport *viewporter.WpViewport
-
-	ss    *surfaceState
-	sched *render.Scheduler
-
-	current  *generation
-	retiring []*generation
-	genID    int
-
-	frameCallback *client.Callback
-	cleanup cleanupStack
-
-	app HostCallbacks
-}
-```
-
-`OutputHost` keeps output identity/state (`global`, `proxy`, `connector`, transform/mode,
-`policy`, `state`, `alive`, close budget) and gains `bar *surfaceUnit` plus
-`aux map[string]*surfaceUnit` (initialized empty). Every function that took `*OutputHost` for
-surface work — `createBar`, `applyGeometryRequests`, `onConfigure`, `onPreferredScale`,
-`onBufferRelease`, `sweepRetired`, `renderJob`, `onLayerClosed` — takes the unit (plus the host
-where output-level state is needed). `nextJob` iterates the bar unit then aux units in map order.
-
-No new tests in this step; the existing suite is the test.
-
-**Step 3: Run**
-
-Run: `go test ./internal/platform/wayland/ && go test ./...`
-Expected: PASS, same test count as baseline.
-
-**Step 4: Commit**
+Run:
 
 ```bash
-git add internal/platform/wayland/
-git commit -m "refactor(wayland): extract surfaceUnit from OutputHost"
+go test -count=1 ./internal/platform/wayland/ -run Aux -v
+rg -n 'type surfaceUnit|type AuxSpec|InputRegion|DropAux' internal/platform/wayland
 ```
 
-#### Task 6b: Auxiliary surface open/close
+Expected: the 3D lifecycle tests pass and each supplied symbol has one owner. Stop if 3D did not land;
+do not recreate the seam in 4A.
 
-**Step 1: Write the failing test** (`aux_test.go`, using the existing fake-compositor harness —
-`startFakeNiri` and the lifecycle-test patterns):
+**Step 2: Write failing keyboard and routing tests**
 
 ```go
-func TestAuxSurfaceOpensConfiguresRendersAndCloses(t *testing.T) {
-	// harness: one fake output, bar mapped (reuse lifecycle_test setup)
-	reqs := make(chan AuxRequest, 4)
-	configured := make(chan struct{}, 1)
-	rendered := make(chan struct{}, 1)
-	// open a shield then a panel on the same output
-	reqs <- AuxRequest{Output: outGlobal, Open: &AuxSpec{
-		ID: "shield:session", Namespace: "sysc-shell-shield",
-		Layer: layershell.ZwlrLayerShellV1LayerOverlay,
-		Width: 0, Height: 0, // fill output
-		ExclusiveZone: -1, Keyboard: ZwlrKeyboardNone,
-		Callbacks: HostCallbacks{
-			Configure: func(w, h, s int) error { configured <- struct{}{}; return nil },
-			Render:    func(p []byte, w, h, st int) error { rendered <- struct{}{}; return nil },
-			Handle:    func(Event) bool { return false },
-		},
-	}}
-	<-configured
-	<-rendered
-	// panel above shield: opened second, same layer
-	reqs <- AuxRequest{Output: outGlobal, Open: &AuxSpec{ID: "panel:session", ...}}
-	// close both
-	reqs <- AuxRequest{Output: outGlobal, ID: "panel:session"}
-	reqs <- AuxRequest{Output: outGlobal, ID: "shield:session"}
-	// harness asserts surfaces destroyed; bar still mapped and rendering
+func TestKeyboardRoutesToEnteredAuxUnit(t *testing.T) {
+	// Open an Exclusive panel, send wl_keyboard.enter then KEY_ESC.
+	// Only that unit's HostCallbacks.Handle receives the key.
 }
 
-func TestAuxCloseUnknownIDIsNoOp(t *testing.T) { ... }
-
-func TestAuxRequestsDrainOnShutdown(t *testing.T) { ... } // Run returns cleanly with pending reqs
+func TestKeyboardLeaveClearsFocus(t *testing.T) { /* later keys go nowhere */ }
+func TestPointerRoutesByEnteredSurface(t *testing.T) { /* bar, shield, panel table */ }
+func TestBarRemainsKeyboardNone(t *testing.T) { /* no key delivery */ }
+func TestDestroyedFocusedUnitClearsSeatState(t *testing.T) { /* key and pointer */ }
 ```
 
-**Step 2: Run to verify failure** — `go test ./internal/platform/wayland/ -run Aux` → FAIL.
+Run: `go test ./internal/platform/wayland/ -run 'Keyboard|PointerRoutes' -v`
 
-**Step 3: Implement** (`aux.go`)
+Expected: FAIL.
 
-```go
-// AuxSpec describes one auxiliary layer surface. Callbacks travel with the
-// spec because the app supplies them per surface at open time.
-type AuxSpec struct {
-	ID        string
-	Namespace string
-	Layer     layershell.ZwlrLayerShellV1Layer
-	Anchor    uint32 // layershell anchor bits; 0 = none
-	MarginTop, MarginBottom, MarginLeft, MarginRight int32
-	Width, Height int32 // 0 fills that axis
-	ExclusiveZone int32
-	Keyboard  uint32 // zwlr_layer_surface_v1 keyboard_interactivity
-	Callbacks HostCallbacks
-}
+**Step 3: Bind keyboard and route events per surface**
 
-// AuxRequest opens (Open != nil) or closes (Open == nil, ID set) one aux
-// surface on the output identified by its wl_registry global.
-type AuxRequest struct {
-	Output uint32
-	ID     string
-	Open   *AuxSpec
-}
-```
-
-- `Callbacks` gains `Aux <-chan AuxRequest` (optional; nil disables) and
-  `DropAux func(output uint32, id string)` (optional; called when an aux surface dies, whether by
-  request, compositor close, or output loss).
-- `Run`'s select loop gains the `Aux` case (wake-channel pattern identical to `Invalidations`).
-- `owner.openAux(h *OutputHost, spec *AuxSpec) error`: create unit exactly like `createBar`
-  (CreateSurface → GetLayerSurface with `spec.Layer` and `spec.Namespace` → set size/anchor/
-  margins/exclusive-zone/keyboard via layer requests → fractional scale + viewport → initial
-  commit), insert into `h.aux[spec.ID]`. If the id already exists, destroy the old unit first
-  (replace semantics; single-instance is enforced app-side, this is defense).
-- `owner.closeAux(h *OutputHost, id string)`: destroy proxies via the unit's cleanup stack,
-  delete from map, call `DropAux`.
-- Output destruction (`destroyGlobals` / host drop) closes all aux units first, notifying
-  `DropAux` for each.
-- Reload semantics: `reloadConfig` rebuilds bars and **leaves aux surfaces mapped**. A panel
-  re-resolves its theme and content on its next frame, which is the same work a theme change already
-  does. Do not tear panels down here: Tranche 4B's settings modal is itself an aux surface and writes
-  the configuration on every change, so closing panels on reload would eject the user from settings
-  on every toggle and would kill a visible OSD. Add a test that a mapped aux surface survives a
-  reload and re-renders with the new tokens.
-
-**Step 4: Run to verify pass** — `go test ./internal/platform/wayland/` → PASS (all).
-
-**Step 5: Commit**
-
-```bash
-git add internal/platform/wayland/
-git commit -m "feat(wayland): auxiliary layer surfaces with per-surface callbacks"
-```
-
-#### Task 6c: Keyboard binding and event routing
-
-**Step 1: Write the failing tests** (`keyboard_test.go` + pointer additions):
-
-```go
-func TestKeyboardKeysRouteToFocusedAuxSurface(t *testing.T) {
-	// open panel with Keyboard exclusive; fake compositor sends keyboard enter
-	// for the panel surface, then key press 1 (KEY_ESC)
-	// assert panel HostCallbacks.Handle received Event{Kind: EventKeyPress, Key: 1}
-}
-
-func TestKeyboardEnterClearsOnLeave(t *testing.T) { ... }
-
-func TestPointerRoutesToAuxSurfaceUnderPointer(t *testing.T) {
-	// fake compositor sends pointer enter on shield surface id;
-	// shield Handle receives motion/button events; bar Handle receives none
-}
-
-func TestBarUnaffectedByKeyboardBinding(t *testing.T) {
-	// bar stays keyboard-none; keys never reach bar Handle
-}
-```
-
-**Step 2: Run to verify failure** — FAIL.
-
-**Step 3: Implement**
-
-- `client.go` Event: add kinds and field:
+Extend events:
 
 ```go
 const (
@@ -916,43 +728,100 @@ const (
 	EventPointerRelease
 	EventPointerLeave
 	EventPointerEnter
+	EventPointerAxis
 	EventKeyPress
 	EventKeyRelease
 )
 
 type Event struct {
-	Kind   EventKind
-	X, Y   float64
-	Button uint32
-	Serial uint32
-	Key    uint32 // evdev code (wl_keyboard keycode minus 8), key events only
+	Kind          EventKind
+	X, Y          float64
+	Button, Serial uint32
+	Key           uint32
 }
 ```
 
-- `keyboard.go`: when `onSeatCapabilities` reports keyboard, bind `wl_keyboard`. Handlers:
-  - Keymap: ignore. ponytail: 4A needs only layout-independent keys (Escape/Tab/arrows/
-    Enter/Space), so no xkbcommon; 4B's text input arrives via text-input-v3 preedit, and full
-    keymap parsing is only needed if direct character input without IME ever becomes a requirement.
-  - Enter(surface): find the unit owning that surface across hosts; set `o.keyFocus = unit`.
-  - Leave: `o.keyFocus = nil`.
-  - Key(time, key, state): if `o.keyFocus != nil`, deliver
-    `Event{Kind: EventKeyPress|EventKeyRelease, Key: key - 8, Serial: serial}` to the unit's
-    `app.Handle`; a true return triggers the same invalidation path pointer events use.
-- `pointer.go`: wl_pointer enter/leave already carry the surface; extend routing from
-  bar-only to "whichever unit owns the entered surface" (bar or aux). Motion/button/axis go to
-  that unit. Leave clears.
-- Aux units created with `Keyboard: exclusive` get `layer.SetKeyboardInteractivity(1)` in
-  `openAux`; the compositor then sends keyboard enter automatically (niri honors this — verified
-  in research).
+Bind `wl_keyboard` when the seat advertises it. Track key and pointer focus as `*surfaceUnit`, found
+from the protocol event's `wl_surface`. Route subsequent events only to that unit. Clear focus on
+leave, unit close, output loss, seat capability loss, and shutdown. A true callback result invalidates
+that unit's scheduler.
 
-**Step 4: Run to verify pass** — `go test ./internal/platform/wayland/` → PASS (all), plus full
-`go test ./...`.
+Ignore the keymap in 4A:
 
-**Step 5: Commit**
+```go
+// ponytail: 4A uses layout-independent navigation keys only. Add xkbcommon
+// when a consumer needs direct character input without text-input-v3.
+```
+
+Deliver the evdev code after the Wayland offset. Keep bar keyboard interactivity at None.
+
+Run:
+
+```bash
+go test -race -count=1 ./internal/platform/wayland/
+```
+
+Expected: PASS.
+
+**Step 4: Write failing `AuxUpdate` tests**
+
+```go
+func TestAuxUpdateChangesKeyboardWithoutRecreatingSurface(t *testing.T) {
+	// Open keyboard None; update to OnDemand.
+	// Assert one layer surface generation and a new committed keyboard request.
+}
+
+func TestAuxUpdateReplacesInputRegion(t *testing.T) {
+	// Apply a union of card rectangles, then an empty region.
+	// Assert both commits and no surface recreation.
+}
+
+func TestAuxUpdateRejectsUnknownUnitAndInvalidRect(t *testing.T) { /* typed error/log, no mutation */ }
+func TestAuxUpdateIsGenerationSafe(t *testing.T) { /* stale generation cannot update replacement */ }
+```
+
+Run: `go test ./internal/platform/wayland/ -run AuxUpdate -v`
+
+Expected: FAIL.
+
+**Step 5: Implement in-place updates**
+
+Add the current unit generation to open and update requests:
+
+```go
+type AuxUpdate struct {
+	ID         string
+	Generation uint64
+	Keyboard   *uint32
+	InputRegion *[]ui.Rect
+}
+
+type AuxRequest struct {
+	Output uint32
+	ID     string
+	Open   *AuxSpec
+	Update *AuxUpdate
+}
+```
+
+Exactly one of `Open`, `Update`, or close-by-ID is valid. The owner validates the output, ID,
+generation, keyboard enum, rectangle count, coordinates, and bounds before mutation. It applies changed
+layer properties and input region, then commits the existing surface. Unknown or stale updates leave
+the current unit unchanged. Keep the protocol owner path non-blocking.
+
+Run:
+
+```bash
+go test -race -count=1 ./internal/platform/wayland/ && go test -count=1 ./...
+```
+
+Expected: PASS; fake-compositor counts prove no recreation.
+
+Commit:
 
 ```bash
 git add internal/platform/wayland/
-git commit -m "feat(wayland): keyboard binding and per-surface event routing"
+git commit -m "feat(wayland): route input and update auxiliary surfaces"
 ```
 
 ---
@@ -1167,144 +1036,152 @@ git commit -m "feat(render): cached rounded masks and pre-blurred shadows"
 
 ---
 
-### Task 9: Panel host — surfaces, rendering, keyboard, motion
+### Task 9: Panel host and root-coordinator integration
 
 **Files:**
 - Create: `internal/shell/panelhost.go`
-- Modify: `internal/shell/registry.go` (open/close/toggle + DropAux + Invalidations routing)
-- Modify: `internal/platform/wayland/client.go` (`Invalidation` gains `SurfaceID string`;
-  owner routes id-tagged invalidations to the matching aux unit's scheduler)
+- Modify: `internal/shell/registry.go`
+- Modify: `internal/platform/wayland/client.go`
 - Test: `internal/shell/panelhost_test.go`
 
-This joins Task 6 (model), Task 7 (transport), Task 8 (controls), Task 9 (paint) into the open
-panel. Popout content builders come in Task 11; this task wires a placeholder builder so the
-machinery is testable first.
+This joins Task 5's root model, Task 6's transport, Task 7's controls, and Task 8's paint path.
+Content builders arrive in Task 10; use one labelled placeholder here.
 
-**Step 1: Write the failing tests**
+**Step 1: Write the failing ownership and lifecycle tests**
 
 ```go
-func TestOpenPanelSendsShieldThenPanel(t *testing.T) {
-	// registry with fake wayland request sink (channel recorder)
+func TestOpenPanelClosesTooltipAndOldRootBeforeMapping(t *testing.T) {
 	reg := newTestRegistry(t)
-	reg.OpenPanel(PanelSession, outGlobal, Trigger{BarEdge: "top", BarZone: 40, Align: "center"})
-	reqs := reg.drainAux()
-	if len(reqs) != 2 || !strings.HasPrefix(reqs[0].Open.ID, "shield:") ||
-		!strings.HasPrefix(reqs[1].Open.ID, "panel:") {
-		t.Fatalf("expected shield then panel, got %+v", reqs)
+	reg.showFixtureTooltip()
+	if err := reg.OpenPanel(PanelClock, 1, fixtureTrigger("top")); err != nil {
+		t.Fatal(err)
 	}
-	if reqs[0].Open.ExclusiveZone != -1 || reqs[1].Open.ExclusiveZone != -1 {
-		t.Fatal("both surfaces must use exclusive zone -1")
+	if err := reg.OpenPanel(PanelSession, 2, fixtureTrigger("bottom")); err != nil {
+		t.Fatal(err)
 	}
-	if reqs[1].Open.Keyboard != keyboardExclusive {
-		t.Fatal("panel must request exclusive keyboard")
-	}
+	// Request order: close tooltip; open clock shield+panel; close clock
+	// panel+shield; open session shield+panel. One root remains.
 }
 
-func TestEscapeClosesPanel(t *testing.T) {
-	// open panel, deliver Event{Kind: EventKeyPress, Key: 1} (KEY_ESC) to panel Handle
-	// assert close requests for both surfaces and leases released
+func TestOpenPanelSendsShieldThenExclusivePanel(t *testing.T) {
+	// Assert both use Overlay and exclusive zone -1; shield keyboard None,
+	// panel keyboard Exclusive; sizes, regions, callbacks, and output match.
 }
 
-func TestTabMovesRovingFocus(t *testing.T) {
-	// open panel with 3 focusables; Tab, Tab, Shift+Tab; assert focus index 1
+func TestSamePanelTriggerTogglesWholeRootClosed(t *testing.T) { /* releases leases */ }
+func TestEscapeClosesRootChain(t *testing.T) { /* panel then shield */ }
+func TestShieldPressClosesAndConsumes(t *testing.T) { /* one close path */ }
+func TestDropEitherPanelSurfaceClosesSiblingAndRoot(t *testing.T) { /* idempotent */ }
+func TestOutputLossReleasesRootKeyboardAndLeases(t *testing.T) { /* no stale generation */ }
+
+func TestReloadKeepsPanelMappedAndRendersNewTheme(t *testing.T) {
+	// Commit a valid theme reload. Assert no Aux close/open request, one
+	// invalidation for the mapped panel, and Render observes the new tokens.
 }
 
-func TestSpaceActivatesFocusedButton(t *testing.T) {
-	// focus session "lock" button (fake locker records exec), press Space
-}
-
-func TestRevealAnimationInvalidatesUntilDone(t *testing.T) {
-	// open panel with motion enabled; expect >= 5 invalidations within 200ms;
-	// with ReducedMotion: exactly one render at final state
-}
-
-func TestReloadClosesOpenPanels(t *testing.T) { ... } // documented ceiling
+func TestRevealTickerStopsWhenRootIsReplaced(t *testing.T) { /* no late invalidations */ }
 ```
 
-**Step 2: Run to verify failure** — FAIL.
-
-**Step 3: Implement**
-
-`panelhost.go`:
+Keep roving focus coverage:
 
 ```go
-// PanelHost is one open panel: its two surfaces' callbacks, content tree,
-// focus, leases, and reveal state. Owned by Registry; all calls under
-// Registry.mu unless noted.
+func TestTabAndShiftTabMoveFocus(t *testing.T) { /* three focusables */ }
+func TestSpaceAndEnterActivateFocusedButton(t *testing.T) { /* exact action once */ }
+func TestArrowsRouteWithinComposite(t *testing.T) { /* no root escape */ }
+```
+
+Run: `go test ./internal/shell/ -run 'Panel|Root|ReloadKeeps' -v`
+
+Expected: FAIL.
+
+**Step 2: Implement the host**
+
+```go
+// PanelHost owns one panel root generation and its two auxiliary units.
+// Registry.mu guards it; timer messages carry generation and never touch Wayland.
 type PanelHost struct {
-	id     PanelID
-	output uint32
-	place  Placement
-	root   *ui.Node
-	focus  []*ui.Node
-	roving ui.Roving
-	leases []releaser // clock/metrics leases acquired at open
-	animStart time.Time
-	build  func(*PanelHost) // content builder, Task 11
+	id         PanelID
+	generation uint64
+	output     uint32
+	place      FittedPlacement
+	tree       *ui.Node
+	focus      []*ui.Node
+	roving     ui.Roving
+	leases     []releaser
+	animStart  time.Time
+	build      func(*PanelHost)
 }
 
 type Trigger struct {
-	BarEdge string
-	BarZone int
-	Align   string // section of the triggering widget; "" = center (hotkey)
-	OutW, OutH int
+	BarEdge      string
+	BarZone      int
+	Align        string
+	Source       ui.Rect
+	OutputBounds ui.Rect
 }
 
 type releaser interface{ Release() }
 ```
 
-Registry methods:
+Registry entry points:
 
 ```go
-// OpenPanel opens (or moves) one panel instance. It acquires the panel's
-// service leases before requesting surfaces (acquire-before-release, same
-// discipline as config reload).
 func (r *Registry) OpenPanel(id PanelID, output uint32, trig Trigger) error
 func (r *Registry) ClosePanel(id PanelID)
 func (r *Registry) TogglePanel(id PanelID, output uint32, trig Trigger) error
-func (r *Registry) DropAux(output uint32, surfaceID string) // wayland callback
+func (r *Registry) DropAux(output uint32, surfaceID string)
 ```
 
-- `OpenPanel`: PanelSet.Toggle decides Opened/Moved/Closed; on Moved, close first (close requests
-  + lease release), then open on the new output. Placement from Task 6 with `Panels.Gap/Padding`
-  config. Build content tree (placeholder builder: column with a label; Task 11 replaces per id).
-  Acquire leases for the id (clock: `r.clock.Acquire(boundary)` finest of consumers; monitor:
-  `r.metrics.Acquire()`; session: none). Send shield AuxRequest then panel AuxRequest.
-- HostCallbacks for the panel unit:
-  - `Configure`: store logical size; `ui.LayoutColumn(root, ...)` with the fitted size.
-  - `Render`: `canvas.DrawShadow` → `canvas.FillRounded(surface bg, radius 12)` → paint nodes
-    (reuse M3's paint path for text/buttons; separator = 1px line in `outline`;
-    bounds) → focus ring: 2px `primary` outline around `focus[roving.Index()].Bounds`.
-    Reveal: if animating, apply alpha + slide offset toward the bar edge
-    (fade the whole frame by scaling drawn alpha; offset = `8 * (1 - t)` px).
-  - `Handle`: pointer — hit-test focusables (Rect.Contains), set roving on press, activate on
-    release if same node (M3 press/release matching pattern); keys — evdev codes:
-    KEY_ESC 1 → close; KEY_TAB 15 (+KEY_LEFTSHIFT 42 tracked from press/release) → roving
-    Next/Prev; KEY_LEFT/RIGHT/UP/DOWN 105/106/103/108 → arrows (composites move within on
-    left/right, content repaints); KEY_SPACE 57 / KEY_ENTER 28 → activate focused.
-    Activation dispatches `node.Action`: session actions run their command (Task 11), tab
-    switches set `Value`. Any state change returns true (owner invalidates).
-- Shield unit callbacks: Configure no-op, Render transparent frame (input region only),
-  Handle: any press → `ClosePanel` + return true.
-- Motion: if `!cfg.Accessibility.ReducedMotion`, set `animStart = time.Now()` and start a
-  ticker goroutine pushing `wayland.Invalidation{SurfaceID: panelID}` every 16 ms until
-  t ≥ 1, then one final invalidation. Reduced motion: no ticker, render final state.
-  ponytail: 16ms ticker per animating panel; at most one panel animates at a time by
-  single-instance, so this cannot pile up.
-- `DropAux`: remove host, release leases (idempotent), update PanelSet. Covers compositor-side
-  close and output loss.
-- `Registry.Close()` closes all panels (leases already released by ClosePanel path).
+`OpenPanel` must:
 
-`client.go`: `Invalidation{Connector string; SurfaceID string}` — owner routes SurfaceID-tagged
-invalidations to the matching aux unit's `sched.Invalidate()`; Connector-tagged behave as today.
+1. validate the output and fit geometry before changing current state;
+2. acquire the new root's leases;
+3. close any tooltip through the 3D controller;
+4. ask `RootCoordinator.Open` for replacement or toggle behavior;
+5. close the returned old chain, release its keyboard/text-input/serial state and leases, and cancel
+   its animation generation;
+6. map the new shield, then panel. If either open fails, close both, release leases, and leave no root.
 
-**Step 4: Run to verify pass** — `go test ./internal/shell/ ./internal/platform/wayland/` → PASS.
+No two interactive root generations may remain mapped after the method returns.
 
-**Step 5: Commit**
+Panel callbacks:
+
+- `Configure` stores logical size and lays out `tree`.
+- `Render` draws shadow, rounded surface, nodes, and a 2 px primary focus ring. Reveal applies the
+  150 ms fade plus 8 px edge-relative slide; reduced motion paints the final state immediately.
+- `Handle` preserves press/release matching. Escape closes the root. Tab and Shift+Tab move roving
+  focus; arrows stay inside composites; Space and Enter activate the focused node.
+- The shield renders transparent, retains a full input region, and consumes any press by closing the
+  root.
+
+A generation-tagged 16 ms ticker publishes `Invalidation{SurfaceID: panelSurfaceID}` until reveal
+ends. Stop it on close, replacement, output loss, or shutdown.
+
+`DropAux` routes by ID. Tooltip loss clears tooltip state. Loss of either panel unit closes its sibling,
+clears the root generation, releases input ownership, and releases leases once.
+
+Extend `Invalidation` with `SurfaceID string`; the Wayland owner routes an ID-tagged invalidation to
+that auxiliary unit's scheduler and preserves connector-tagged bar behavior.
+
+**Step 3: Preserve roots across accepted reload**
+
+A successful reload replaces configuration and content builders under `Registry.mu`, rebuilds the
+open panel tree, and invalidates its unit. It does not close or recreate the panel or shield. A rejected
+candidate changes nothing. Tooltips remain transient and close on an accepted reload.
+
+Run:
+
+```bash
+go test -race -count=1 ./internal/shell/ ./internal/platform/wayland/
+```
+
+Expected: PASS with one root, one keyboard owner, and no late timer work.
+
+**Step 4: Commit**
 
 ```bash
 git add internal/shell/ internal/platform/wayland/client.go
-git commit -m "feat(shell): panel host with shield, exclusive keyboard, and reveal motion"
+git commit -m "feat(shell): host panels in one root chain"
 ```
 
 ---
@@ -1313,14 +1190,12 @@ git commit -m "feat(shell): panel host with shield, exclusive keyboard, and reve
 
 **Files:**
 - Create: `internal/shell/popout_clock.go`
-- Create: `internal/shell/popout_monitor.go`
 - Create: `internal/shell/popout_session.go`
 - Test: `internal/shell/popout_clock_test.go`
-- Test: `internal/shell/popout_monitor_test.go`
 - Test: `internal/shell/popout_session_test.go`
 
 Each builder produces the `*ui.Node` tree for its panel and its activation behavior. Register them
-in the `PanelHost.build` dispatch from Task 10.
+in the `PanelHost.build` dispatch from Task 9.
 
 #### 10a: clock/calendar
 
@@ -1357,7 +1232,7 @@ target ~360x420 logical.
 ```go
 func TestSessionActionsList(t *testing.T) {
 	h := newSessionHost(configWithLocker("swaylock"))
-	names := focusableNames(h.root)
+	names := focusableNames(h.tree)
 	// Lock, Log out, Suspend, Reboot, Power off — in that order
 }
 
@@ -1503,8 +1378,8 @@ git commit -m "feat(ipc): versioned unix socket with panel verbs and cli"
   output → first bar's output.
 - Single-instance: IPC `Serve` returning the single-instance error aborts startup with a clear
   message (design §IPC).
-- Reload path: `reloadConfig` in the wayland client already closes aux surfaces (Task 7b); the
-  registry's `DropAux` keeps PanelSet consistent — verify with the Task 10 reload test.
+- Reload path: the registry closes the transient tooltip, keeps the root chain mapped, rebuilds panel
+  content, and invalidates its existing auxiliary unit. Verify this with Task 9's reload test.
 
 **Step 2: Hotkey docs** (`docs/niri-hotkeys.md`)
 
@@ -1600,7 +1475,7 @@ git commit -m "test(shell): tranche 4A gate coverage and live checklist"
 ## Done criteria
 
 - `go build ./...` and `go test ./...` green from a clean checkout.
-- All Task 14 fake-compositor gate tests pass; live checklist recorded.
+- All Task 13 fake-compositor gate tests pass; live checklist recorded.
 - `gofmt -l .` empty; `git diff origin/main -- go.mod go.sum` empty — this tranche adds no
   dependency.
 - Design doc risks updated with verification outcomes (focus fall-through, shield delivery,
@@ -1612,6 +1487,5 @@ git commit -m "test(shell): tranche 4A gate coverage and live checklist"
 
 - Per-panel OnDemand keyboard demotion → config knob when a pointer-first panel wants it.
 - Open-near-click pointer anchoring → when a panel's trigger position matters visually.
-- Panel state surviving config reload → if users complain; close-and-reopen is honest today.
 - Confirmation dialogs for destructive session actions → parity knob, not gate material.
 - D-Bus (PrepareForSleep, inhibitors) → the first-party lockscreen milestone.

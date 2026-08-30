@@ -1,7 +1,7 @@
 # Panel Foundation Design — Milestone 4, Tranche 4A
 
 Date: 2026-08-30
-Status: Owner-approved (sections validated 2026-08-30 through brainstorming).
+Status: Owner-approved; auxiliary and root ownership amended by the Milestone 5 audit on 2026-08-31.
 Branch: `milestone/panels-controls`
 Worktree: `/home/nomadx/.config/superpowers/worktrees/sysc-shell/milestone/panels-controls`
 
@@ -27,11 +27,10 @@ Research backing every decision lives in
 
 - No product code enters this branch until the Milestone 2 live Niri gate passes and Milestone 2
   merges (roadmap gate rule; milestone charter precedent).
-- 4A consumes **Tranche 3A** outputs specifically — not all of Milestone 3: the bar, the
-  consumer-counted clock service, the Niri projection, the config/reload path, and the retained
-  `ui.Handle` press/release matching and hit testing that 3A kept inert "because Milestone 4 needs
-  it". Tranches 3B, 3C and 3D are **not** prerequisites, because D10 defers everything that would
-  have depended on them.
+- 4A consumes Tranche 3A's bar, clock, Niri projection, config/reload path, and retained interaction
+  data. It also consumes Tranche 3D Tasks 9–11: `surfaceUnit`, basic `AuxSpec`/`AuxRequest` open-close,
+  application render callbacks, and `ui.Node.Tooltip`. Tranches 3B and 3C remain non-prerequisites;
+  D10 defers their possible M4 consumers.
 - The design and plan are written docs-only, in parallel with M2 corrections, per the orchestration
   document.
 
@@ -39,8 +38,11 @@ Research backing every decision lives in
 
 Tranche 4A ships:
 
-- Panel machinery: per-panel dismiss shield + panel surface, both layer-shell Overlay with
-  exclusive_zone −1; Exclusive keyboard while open; one instance per panel ID process-wide.
+- Panel machinery: extend 3D's auxiliary host with keyboard/event routing and updates; each panel uses
+  a dismiss shield plus content surface, both layer-shell Overlay with `exclusive_zone −1`.
+- One process-wide interactive-root coordinator for panels and later drawers, menus, centers, and
+  inline reply. An attached child belongs to its root chain; opening an unrelated root closes the old
+  chain and releases its focus and leases.
 - Placement: floating, anchored to the triggering bar, section-aligned, clamped inside the output.
 - Shell-rendered corner rounding and shadows (no reliance on user layer-rules).
 - Controls with 4A consumers: button, label, separator — with the roving keyboard model and
@@ -63,7 +65,7 @@ AT-SPI export.
 | D1 | Two layer-shell surfaces per panel: fullscreen dismiss shield (keyboard none) + panel surface, both Overlay, exclusive_zone −1. | A single surface with input-region tricks, or compositor-side outside-click dismissal — niri has no outside-click dismissal for layer surfaces; Noctalia's click shield and DMS's clickcatcher both implement it shell-side. |
 | D2 | Keyboard `Exclusive` for every interactive panel while open. | Per-panel OnDemand mixing (Noctalia control-center style). Exclusive makes the gate items "escape always closes" and "only the open panel requests keyboard focus" true by construction. Per-panel demotion is a future config knob. |
 | D3 | Focus restoration relies on niri's automatic layout-focus fall-through when the exclusive surface unmaps. | DMS-style explicit restore of the captured toplevel — verified redundant on niri (`update_keyboard_focus` falls through to `layout_focus()`, the last activated window). Contingency below if live testing disagrees. |
-| D4 | One instance per panel ID process-wide; same-bar trigger toggles; trigger from another output closes and reopens there. | Per-output panel instances. Popouts follow user focus, not outputs; matches DMS `currentPopoutsByScreen` close-on-other-screen. |
+| D4 | One process-wide interactive-root coordinator. In 4A every panel is a root with no child; same-root trigger toggles and any other root replaces it. Later attached tray popups join the owning root chain. | Independent per-panel or per-output instances that can compete for keyboard and dismissal ownership. |
 | D5 | Floating placement anchored off the triggering bar edge, aligned to the triggering widget's section (left/center/right), clamped fully inside the output minus padding and the bar's reserved zone. | Noctalia Attached/seamless placement (deferred, no gate need) and open-near-click pointer anchoring (future knob). |
 | D6 | The shell renders its own corner rounding and shadows: SDF rounded-rect alpha masks and pre-blurred shadow textures composited via `blendMask`. | Relying on user-configured niri layer-rules (owner decision): the shell must look right with zero user config, and layer-rules are per-user, not per-panel-instance. |
 | D7 | Controls enter only with a 4A consumer: button (session actions), label/separator (all panels). | Shipping the full roadmap control list at once. Every other control has its only consumer in 4B, or in the deferred system-monitor (D10), so none may enter here (roadmap: components enter only with a consumer). |
@@ -71,12 +73,12 @@ AT-SPI export.
 | D9 | Theme = matugen-generated Material 3 tokens from wallpaper/hex/stock source; dark/light and high-contrast settings; compiled-in fallback palette seeded from current `ProofStyle` when matugen is absent or fails. | Hand-authored static palettes only, or the freedesktop color-scheme portal for auto dark/light (deferred; no consumer need yet). |
 | D10 | The system-monitor popout, `MetricsService`, and the `tabs` and `graphs` controls are **deferred out of Milestone 4** until Tranche 3B has qualified, tagged, and pinned `sysc-metrics`. | Shipping them in 4A behind a local `replace` on an untagged `sysc-metrics`. That is a recorded stop condition, and it would make Milestone 4 the first consumer of a library Milestone 3 owns, ahead of its qualification gate. The exit gate reads "clock/calendar **or** system-monitor", so 4A passes on clock/calendar alone. |
 | D11 | Session actions exec `loginctl` (poweroff/reboot/suspend/terminate-session). | A D-Bus client dependency (godbus). `loginctl` goes through logind with identical polkit handling, keeps the shell stdlib-only, and covers every 4A action. |
-| D12 | IPC = versioned Unix socket `ipc.v1.sock`, newline-delimited JSON `{"id","method","params"}` → `{"id","ok"|"error"}`; version in the filename. | Sharing niri's socket, or an unversioned path. The same socket is the planned seam for sysc-notify/sysc-tray; filename versioning lets a v2 coexist. |
+| D12 | IPC = versioned Unix socket `ipc.v1.sock`, newline-delimited JSON `{"id","method","params"}` → `{"id","ok"|"error"}`; version in the filename. | Sharing niri's socket, an unversioned path, or proxying the separate notification and tray protocols. |
 | D13 | Reveal/dismiss motion is shell-rendered: fade + 8 px slide off the triggering bar edge, ~150 ms ease-out, instant under reduced-motion. | Waiting for niri layer-surface animations — verified nonexistent (layer-rules expose no animation properties; Animations config has no layer entries). |
 
 ## Panel surface model
 
-Every open panel is two surfaces on the triggering output:
+Every open 4A root is one panel represented by two surfaces on the triggering output:
 
 1. **Dismiss shield** — fullscreen, transparent, Overlay, exclusive_zone −1, keyboard none, input
    region covering the whole output, stacked below the panel. A click on it closes the panel and is
@@ -91,8 +93,8 @@ Facts that shape this (all source-verified against niri main; see research doc):
 - Clicking a window while a panel is open still updates niri's layout focus, so when the panel
   unmaps, focus falls through to the last activated window automatically (D3).
 - Fullscreen windows hide `Top` layer surfaces but not `Overlay` — panels must be Overlay.
-- Two exclusive surfaces on one layer resolve to the first in layer order; the single-instance
-  policy (D4) avoids ever stacking two.
+- Two exclusive surfaces on one layer resolve to the first in layer order; D4 permits one interactive
+  root chain and one keyboard owner.
 
 Escape handling: the panel's keyboard handler closes on Escape (gate). The shield never has
 keyboard focus, so Escape always reaches the panel.
@@ -104,7 +106,8 @@ change, so tearing panels down on reload would eject the user from the settings 
 and would kill a visible OSD. Panel content is rebuilt per render already, so re-resolving is the
 same work a theme change does.
 
-OSD surfaces (4B) reuse none of the shield machinery: keyboard none, no shield, created on demand.
+OSD surfaces (4B) and 3D tooltips sit outside the interactive root chain. They take no keyboard and use
+no shield. Opening a root closes a tooltip; OSDs may remain visible.
 
 ## Placement and geometry
 
@@ -230,8 +233,8 @@ A first-party lockscreen (ext-session-lock) is a later milestone; lock always de
 - **CLI**: `sysc-shell ipc <method> [params-json]` — connect, send, print, exit.
 - **Hotkeys**: documented niri keybinds spawning the CLI (DMS pattern: compositor owns keys, shell
   owns panels). 4A documents toggles for the four popouts; media/brightness keys come with 4B's OSD.
-- **Future seam**: sysc-notify and sysc-tray get their own method namespaces on this socket in
-  their milestones; server-pushed `{"event":...}` lines are added when they need them, not now.
+- **Boundary**: `sysc-notify` and `sysc-tray` use their own framed sockets and exported protocol
+  packages. The shell IPC remains a local control CLI and does not proxy service event streams.
 
 ## Configuration
 
@@ -293,5 +296,6 @@ recorded in [the research doc](2026-08-30-panels-and-controls-research.md). What
    acceptable for two elevations.
 4. **`loginctl` exec (D11)** gives no PrepareForSleep signals or lock inhibitors. Add a D-Bus
    dependency when the first-party lockscreen milestone needs them.
-6. **IPC** has no subscriptions or auth beyond file perms; add when sysc-notify lands.
+6. **IPC** has no subscriptions or auth beyond file perms; service event streams remain on their own
+   authenticated sockets.
 7. **matugen `color` subcommand flags** assumed symmetric with `image`; first plan task verifies.

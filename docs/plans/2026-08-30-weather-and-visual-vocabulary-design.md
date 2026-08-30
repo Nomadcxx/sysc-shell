@@ -1,7 +1,7 @@
 # Weather and Visual Vocabulary Design — Milestone 3, Tranche 3D
 
 Date: 2026-08-30
-Status: Owner-approved in session. Not yet audited.
+Status: Owner-approved; tooltip seam amended by the Milestone 5 audit on 2026-08-31.
 Branch: `milestone/weather-vocabulary`
 Worktree: `/home/nomadx/.config/superpowers/worktrees/sysc-shell/milestone/weather-vocabulary`
 
@@ -9,7 +9,8 @@ Implements the tranche described in
 [the Milestone 3 charter](2026-08-30-built-in-widget-foundation-execution-handover.md). Builds on
 [Tranche 3A](2026-08-30-built-in-widget-foundation-design.md) and reuses the lease bookkeeping
 [Tranche 3B](2026-08-30-core-metrics-design.md) extracts. Reads forward to
-[the Tranche 4A panel design](2026-08-30-panel-foundation-design.md) for the surface model.
+[the Tranche 4A panel design](2026-08-30-panel-foundation-design.md), which extends the auxiliary
+surface seam introduced here.
 
 ## Scope
 
@@ -32,10 +33,12 @@ keyboard interaction. The tooltip is the last task and may be cut without strand
 | D3 | Bounded network discipline: 15-minute interval, 3s connect and 6s total timeouts, a 30-second minimum fetch floor, three retries at 30s, then `min(60s × 2ⁿ, 300s)` backoff. | An unbounded retry loop, or a bare `http.Get` with no timeout. |
 | D4 | The eight icons ship as a project-owned font face injected into `FontMap`. | Baked PNG or alpha-mask assets per the charter's literal policy. **Recorded deviation**; see below. |
 | D5 | No new node kinds. `Node.Tone` carries `normal` or `error`; staleness is expressed in the text. | Separate stale-data and error node kinds, which the charter permits only if a widget needs them. Weather needs a colour and a sentence, not two kinds. |
-| D6 | The tooltip is an OSD-shaped surface: one Overlay layer surface, `exclusive_zone −1`, keyboard none, no dismiss shield. | Tranche 4A's panel shape, which pairs a panel with a fullscreen dismiss shield and keyboard `Exclusive`. |
-| D7 | Tooltip placement adopts Tranche 4A's D5 rule verbatim. | A second placement rule that 4A would later have to reconcile or replace. |
-| D8 | The dwell timer signals the owner goroutine; it never touches a proxy. | A `time.AfterFunc` creating the surface directly, which would break the one-goroutine invariant. |
+| D6 | 3D introduces `surfaceUnit` plus the basic `AuxSpec`/`AuxRequest` open-close path. A tooltip is one Overlay auxiliary surface with `exclusive_zone −1`, keyboard none, and an empty input region. | A tooltip-only Wayland lifecycle that 4A would replace. |
+| D7 | Placement uses the triggering bar edge, works for top, bottom, left, and right bars, and clamps to logical output bounds. | A top-bar-only placement rule. |
+| D8 | One process-wide dwell controller uses a generation token. Its timer signals the shell and never touches a proxy. | A stale `time.AfterFunc` opening a tooltip after leave or replacement. |
 | D9 | The tooltip is the final task and is cuttable at that boundary. | Interleaving surface work through the tranche. |
+| D10 | Tooltip content lives on `ui.Node`; generic reverse-paint-order hit testing finds the deepest eligible node. | A private field on `textWidget`, which tray and later controls cannot reuse. |
+| D11 | Shell callbacks measure, lay out, and paint tooltip content. Wayland owns surface and buffer lifecycle only. | Asking the platform package to render application text. |
 
 ## Prior art review
 
@@ -219,32 +222,30 @@ reading" was never available. Error measures 5.34:1 and is safe.
 
 ## The tooltip surface
 
-One tooltip exists process-wide, matching Tranche 4A's single-instance policy for panels. It appears
-after a hover dwell on a widget carrying tooltip text and disappears on pointer leave.
+One tooltip exists process-wide. `ui.Node.Tooltip` carries bounded text for weather and later tray or
+control nodes. Hit testing walks children in reverse paint order and returns the deepest node whose
+bounds contain the pointer and whose tooltip is non-empty. Weather derives its tooltip from the
+condition, temperature, and staleness data it already fetches.
 
-**Surface shape.** Tranche 4A defines two: a panel, which pairs a content surface with a fullscreen
-dismiss shield and takes keyboard `Exclusive`; and an OSD, which its design describes as reusing "none
-of the shield machinery: keyboard none, no shield, created on demand". A hover tooltip takes no keyboard
-and needs no outside-click dismissal, so it is the OSD shape — a single Overlay layer surface with
-`exclusive_zone −1` and keyboard none.
+3D extracts the bar's per-surface state into `surfaceUnit` and adds the basic auxiliary host used by all
+later transient surfaces. `AuxSpec` carries layer-shell geometry and application callbacks;
+`AuxRequest` opens, replaces, or closes a unit on an output. The shell measures the text, constructs the
+node tree, lays it out, and paints through those callbacks. The Wayland package creates surfaces,
+allocates buffers, schedules frames, and destroys proxies. It contains no tooltip text renderer.
 
-**Placement** adopts 4A's D5 rule unchanged: anchored off the triggering bar's edge, aligned to the
-triggering widget's section, clamped fully inside the output minus padding and the bar's reserved space.
-Writing 3D against that rule means 4A adopts it rather than reconciling two.
+The tooltip uses one Overlay surface with `exclusive_zone −1`, keyboard none, no shield, and an empty
+input region. Placement starts from the triggering bar edge: below top bars, above bottom bars, right
+of left bars, and left of right bars. It centres on the source node along the other axis and clamps the
+fitted size inside the logical output. Fractional scale and transform stay in the existing buffer path.
 
-**Not pulled forward** from 4A: D6's SDF rounded-rect masks and pre-blurred shadows, and D13's fade and
-slide motion. Both belong to the panel foundation, and a tooltip is legible without them.
+The process-wide dwell controller increments a generation on every enter, leave, press, content
+change, reload, root opening, output loss, and shutdown. A timer may publish only when its captured
+generation still matches. A visible tooltip updates in place when the source node's content changes;
+an empty result closes it. Leave, press, root opening, reload, output loss, source removal, and shutdown
+destroy the unit and cancel pending work.
 
-**The dwell timer never touches Wayland.** A `time.AfterFunc` fires on its own goroutine; if it created
-the surface it would break the invariant that one goroutine owns the connection and every proxy.
-Instead it sends on a channel the owner's existing wake pipe already bridges — the same route
-invalidations take since Tranche 3A. The owner goroutine, and only it, creates the layer surface,
-attaches a buffer, and destroys it.
-
-**Reload closes an open tooltip** rather than re-resolving it. Tranche 4A contracts that a reload must
-not destroy open panels, because its settings modal writes configuration on every change and would
-eject the user from its own UI; a tooltip is transient and reappears on the next hover, so that contract
-does not extend to it.
+3D does not pull forward panel shadows, rounded masks, motion, keyboard binding, or pointer routing to
+auxiliary surfaces. Tranche 4A adds those parts. A tooltip remains legible without them.
 
 ## Configuration
 
@@ -302,17 +303,17 @@ New:
 - `internal/shell/weatherwidget.go`, `internal/shell/weatherwidget_test.go`
 - `internal/render/icons/` — authored SVG sources, the generated font, and their licences
 - `internal/render/iconfont.go`, `internal/render/iconfont_test.go`
-- `internal/platform/wayland/tooltip.go`, `internal/platform/wayland/tooltip_test.go`
+- `internal/platform/wayland/aux.go`, `internal/platform/wayland/aux_test.go`
 - `internal/shell/tooltip.go`, `internal/shell/tooltip_test.go`
 
 Changed:
 
 - `internal/render/fontmap.go` — icon face resolution
 - `internal/render/paint.go` — tone selection
-- `internal/ui/tree.go` — `Node.Tone`
+- `internal/ui/tree.go` — `Node.Tone`, `Node.Tooltip`, generic tooltip hit testing
 - `internal/config/config.go`, `load.go` — the `weather` block, the item, the cross-section check
 - `internal/shell/widget.go`, `registry.go` — the weather widget, its lease, `UpdateWeather`
-- `internal/platform/wayland/client.go` — tooltip surface lifecycle on the owner goroutine
+- `internal/platform/wayland/host.go`, `client.go` — `surfaceUnit` and basic auxiliary lifecycle
 - `cmd/sysc-shell/main.go` — weather pump
 - `tests/integration/README.md` — the Tranche 3D live matrix
 
@@ -332,8 +333,10 @@ Changed:
 | An icon rune resolves to the project face | `SplitRuns` isolates it; the system query is not consulted |
 | A weather item with no coordinates fails at load | The error names `weather.latitude` |
 | Out-of-range coordinates fail at load | Both bounds on both fields |
-| The dwell timer touches no proxy | The timer signals a channel; the owner creates the surface |
-| A tooltip closes on pointer leave and on reload | Surface destroyed, nothing leaked |
+| A stale dwell cannot open | Generation mismatch drops the timer result |
+| Tooltip placement covers every bar edge | Table tests cover top, bottom, left, and right plus oversized content |
+| The application owns tooltip rendering | Fake compositor observes configure, render, empty input region, update, and close callbacks |
+| Every terminal path cleans up | Leave, press, reload, root open, output loss, source removal, and shutdown destroy the unit once |
 | No reading change produces no redraw | Two identical readings mark nothing dirty |
 | Cancellation stops every goroutine | `go test -race`, goroutine count before and after |
 
@@ -351,7 +354,9 @@ stay out of Git.
 - an unreachable host at startup renders the error tone rather than an empty widget;
 - reload changing coordinates, unit and interval without restarting the service;
 - hover a widget: the tooltip appears after the dwell, is placed inside the output, and closes on leave;
-- hover near an output edge: the tooltip stays fully on-screen;
+- hover near every edge on top, bottom, left, and right bars: the tooltip stays fully on-screen;
+- change weather content while the tooltip is open: its text updates without a second surface;
+- click while hovering: the tooltip closes and the click keeps its normal bar behavior;
 - reload with a tooltip open: it closes and no surface leaks;
 - idle CPU and wakeups over 60 minutes against the Tranche 3B baseline.
 
@@ -359,9 +364,8 @@ stay out of Git.
 
 1. **Tranche 3B has landed**, providing the `leaseSet` this service reuses. If 3D is executed first,
    Task 1 of the 3B plan must be executed here instead.
-2. **Tranche 4A has not landed.** This design reads its surface model but depends on none of its code.
-   If 4A lands first, the tooltip should adopt its aux-surface machinery rather than the minimal
-   lifecycle here.
+2. **Tranche 4A has not landed.** Tasks 9–11 establish the basic auxiliary seam; 4A depends on and
+   extends that seam with keyboard binding, per-surface input routing, and `AuxUpdate`.
 3. **Open-Meteo needs no API key** and is reachable over HTTPS.
 4. **The icon font is authored and committed** before the widget task. Producing it is a build-time
    step, not a runtime one.
@@ -375,5 +379,7 @@ Return to the owner rather than improvising if implementation requires:
 - geocoding, automatic location, or any second remote host;
 - an interface over `Clock`, `Metrics` and `Weather`;
 - a dismiss shield or keyboard focus for the tooltip;
+- application text rendering inside `internal/platform/wayland`;
+- a tooltip field private to one widget implementation;
 - a new dependency; `net/http` and `encoding/json` cover the fetch;
 - a forecast panel or popout, which belong to Milestone 4.
