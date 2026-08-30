@@ -313,4 +313,4 @@ recorded in [the research doc](2026-08-30-panels-and-controls-research.md). What
 4. **`loginctl` exec (D11)** gives no PrepareForSleep signals or lock inhibitors. Add a D-Bus
    dependency when the first-party lockscreen milestone needs them.
 6. **IPC** has no subscriptions or auth beyond file perms; add when sysc-notify lands.
-7. **matugen `color` subcommand flags** assumed symmetric with `image`; first plan task verifies.
+7. **matugen `color` subcommand flags** verified symmetric with `image` on matugen 4.2.0: `matugen color hex '#3050a0' -c config.toml --prefer saturation` renders templates; its config also requires an empty top-level `[config]` table.
