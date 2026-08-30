@@ -32,9 +32,9 @@ const (
 		`{"id":5,"idx":1,"name":"code","output":"DP-3","is_urgent":false,"is_active":true,"is_focused":true,"active_window_id":80},` +
 		`{"id":6,"idx":2,"name":null,"output":null,"is_urgent":false,"is_active":false,"is_focused":false,"active_window_id":null}]}}`
 
-	// Events the proof does not model and must ignore.
-	unknownEvents = `{"WindowsChanged":{"windows":[]}}` + "\n" +
-		`{"KeyboardLayoutsChanged":{"keyboard_layouts":{"names":["English (US)"],"current_idx":0}}}` + "\n" +
+	// Events the shell does not model and must ignore. WindowsChanged left this
+	// set when window state became modelled state.
+	unknownEvents = `{"KeyboardLayoutsChanged":{"keyboard_layouts":{"names":["English (US)"],"current_idx":0}}}` + "\n" +
 		`{"OverviewOpenedOrClosed":{"is_open":false}}` + "\n" +
 		`{"ConfigLoaded":{"failed":false}}`
 )

@@ -24,9 +24,24 @@ type Workspace struct {
 	Focused bool
 }
 
-// Snapshot is an immutable view of workspace state.
+// Window is one Niri window. Only the fields the shell projects are decoded.
+// Layout, focus timestamp, urgency and floating state have no consumer, so an
+// event carrying them decodes and ignores them.
+type Window struct {
+	ID    uint64
+	Title string
+	AppID string
+	// WorkspaceID is meaningful only when HasWorkspace is set. Niri sends
+	// workspace_id as null for a window on no workspace, which is distinct
+	// from workspace zero.
+	WorkspaceID  uint64
+	HasWorkspace bool
+}
+
+// Snapshot is an immutable view of workspace and window state.
 type Snapshot struct {
 	Workspaces []Workspace
+	Windows    []Window
 	// FocusedOutput is derived from the workspace whose is_focused is true.
 	// Niri has no dedicated event or field for it.
 	FocusedOutput string
@@ -76,9 +91,48 @@ type wireWorkspaceActivated struct {
 	Focused *bool   `json:"focused"`
 }
 
-// state accumulates workspace events into snapshots.
+// wireWindow decodes one window. Only id is required; Niri sends title,
+// app_id and workspace_id as null in legitimate states.
+type wireWindow struct {
+	ID          *uint64 `json:"id"`
+	Title       *string `json:"title"`
+	AppID       *string `json:"app_id"`
+	WorkspaceID *uint64 `json:"workspace_id"`
+}
+
+func (w wireWindow) project() (Window, error) {
+	if w.ID == nil {
+		return Window{}, fmt.Errorf("niri: window is missing id")
+	}
+	out := Window{ID: *w.ID}
+	if w.Title != nil {
+		out.Title = *w.Title
+	}
+	if w.AppID != nil {
+		out.AppID = *w.AppID
+	}
+	if w.WorkspaceID != nil {
+		out.WorkspaceID, out.HasWorkspace = *w.WorkspaceID, true
+	}
+	return out, nil
+}
+
+type wireWindowsChanged struct {
+	Windows []wireWindow `json:"windows"`
+}
+
+type wireWindowOpenedOrChanged struct {
+	Window wireWindow `json:"window"`
+}
+
+type wireWindowClosed struct {
+	ID *uint64 `json:"id"`
+}
+
+// state accumulates workspace and window events into snapshots.
 type state struct {
 	workspaces []Workspace
+	windows    []Window
 }
 
 // apply decodes one event line. It reports whether a new snapshot should be
@@ -118,6 +172,60 @@ func (s *state) apply(line []byte) (bool, error) {
 			return false, fmt.Errorf("niri: WorkspaceActivated is missing id or focused")
 		}
 		return true, s.activate(*activated.ID, *activated.Focused)
+	}
+
+	if payload, ok := envelope["WindowsChanged"]; ok {
+		var changed wireWindowsChanged
+		if err := json.Unmarshal(payload, &changed); err != nil {
+			return false, fmt.Errorf("niri: decode WindowsChanged: %w", err)
+		}
+		// Build the whole set before replacing state, so a malformed member
+		// cannot publish a partial snapshot.
+		next := make([]Window, 0, len(changed.Windows))
+		for _, w := range changed.Windows {
+			projected, err := w.project()
+			if err != nil {
+				return false, err
+			}
+			next = append(next, projected)
+		}
+		s.windows = next
+		return true, nil
+	}
+
+	if payload, ok := envelope["WindowOpenedOrChanged"]; ok {
+		var opened wireWindowOpenedOrChanged
+		if err := json.Unmarshal(payload, &opened); err != nil {
+			return false, fmt.Errorf("niri: decode WindowOpenedOrChanged: %w", err)
+		}
+		projected, err := opened.Window.project()
+		if err != nil {
+			return false, err
+		}
+		if i := slices.IndexFunc(s.windows, func(w Window) bool { return w.ID == projected.ID }); i >= 0 {
+			s.windows[i] = projected
+		} else {
+			s.windows = append(s.windows, projected)
+		}
+		return true, nil
+	}
+
+	if payload, ok := envelope["WindowClosed"]; ok {
+		var closed wireWindowClosed
+		if err := json.Unmarshal(payload, &closed); err != nil {
+			return false, fmt.Errorf("niri: decode WindowClosed: %w", err)
+		}
+		if closed.ID == nil {
+			return false, fmt.Errorf("niri: WindowClosed is missing id")
+		}
+		i := slices.IndexFunc(s.windows, func(w Window) bool { return w.ID == *closed.ID })
+		if i < 0 {
+			// The desired post-state — this window absent — already holds.
+			// There is nothing to diverge from, so this is not an error.
+			return false, nil
+		}
+		s.windows = slices.Delete(s.windows, i, i+1)
+		return true, nil
 	}
 
 	return false, nil
@@ -166,7 +274,18 @@ func (s *state) snapshot() Snapshot {
 		return 0
 	})
 
-	snap := Snapshot{Workspaces: workspaces}
+	windows := slices.Clone(s.windows)
+	slices.SortFunc(windows, func(a, b Window) int {
+		switch {
+		case a.ID < b.ID:
+			return -1
+		case a.ID > b.ID:
+			return 1
+		}
+		return 0
+	})
+
+	snap := Snapshot{Workspaces: workspaces, Windows: windows}
 	for _, w := range workspaces {
 		if w.Focused {
 			snap.FocusedOutput = w.Output
