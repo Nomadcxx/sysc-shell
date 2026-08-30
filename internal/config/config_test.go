@@ -449,3 +449,18 @@ func errFromParse(t *testing.T, body string) error {
 	}
 	return err
 }
+
+// A selector of whitespace is a typo, not a subject. Accepting it would load a
+// widget that renders the placeholder forever, waiting for a mount named " ".
+func TestAWhitespaceSelectorIsRejected(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{
+		`{"bar":{"items":{"right":[{"id":"filesystem","path":"  "}]}}}`,
+		`{"bar":{"items":{"right":[{"id":"block","device":"\t"}]}}}`,
+		`{"bar":{"items":{"right":[{"id":"network","interface":" "}]}}}`,
+	} {
+		if _, err := Parse([]byte(body)); err == nil {
+			t.Fatalf("a whitespace selector was accepted: %s", body)
+		}
+	}
+}

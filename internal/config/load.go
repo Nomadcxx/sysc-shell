@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -418,10 +419,13 @@ func selector(supplied *string, id, wantID, path string, dest *string) error {
 		}
 		return nil
 	}
-	if supplied == nil || *supplied == "" {
+	// Trimmed before the emptiness check: " " is a typo, not a mount point, and
+	// accepting it would load a widget that waits forever for a subject that
+	// cannot exist.
+	if supplied == nil || strings.TrimSpace(*supplied) == "" {
 		return pathErr(path, "is required on %q", wantID)
 	}
-	*dest = *supplied
+	*dest = strings.TrimSpace(*supplied)
 	return nil
 }
 
