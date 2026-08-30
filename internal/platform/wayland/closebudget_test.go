@@ -70,10 +70,10 @@ func TestUnwindToKeepsTheOutputStep(t *testing.T) {
 	var order []string
 	h := newHost(1, nil)
 	for _, name := range []string{"output", "surface", "layer-surface", "viewport"} {
-		h.cleanup.push(name, func() error { order = append(order, name); return nil })
+		h.bar.cleanup.push(name, func() error { order = append(order, name); return nil })
 	}
 
-	if _, err := h.cleanup.unwindTo("output"); err != nil {
+	if _, err := h.bar.cleanup.unwindTo("output"); err != nil {
 		t.Fatalf("unwindTo: %v", err)
 	}
 	want := []string{"viewport", "layer-surface", "surface"}
@@ -85,7 +85,7 @@ func TestUnwindToKeepsTheOutputStep(t *testing.T) {
 			t.Fatalf("order = %v, want %v", order, want)
 		}
 	}
-	if len(h.cleanup.steps) != 1 || h.cleanup.steps[0].name != "output" {
+	if len(h.bar.cleanup.steps) != 1 || h.bar.cleanup.steps[0].name != "output" {
 		t.Fatal("the output step must survive so the host keeps its wl_output")
 	}
 }
@@ -95,10 +95,10 @@ func TestUnwindRunsEveryStepChildToParent(t *testing.T) {
 	var order []string
 	h := newHost(1, nil)
 	for _, name := range []string{"output", "surface", "layer-surface", "viewport"} {
-		h.cleanup.push(name, func() error { order = append(order, name); return nil })
+		h.bar.cleanup.push(name, func() error { order = append(order, name); return nil })
 	}
 
-	if _, err := h.cleanup.unwind(); err != nil {
+	if _, err := h.bar.cleanup.unwind(); err != nil {
 		t.Fatalf("unwind: %v", err)
 	}
 	want := []string{"viewport", "layer-surface", "surface", "output"}

@@ -13,10 +13,10 @@ func mappedHost(s *hostSet, global uint32, connector string) *OutputHost {
 	h.connector = connector
 	h.doneSeen = true
 	h.state = hostMapped
-	h.sched.Configure(10, 10)
-	_ = h.sched.Submitted(0)
-	_ = h.sched.Frame()
-	_ = h.sched.Release(0)
+	h.bar.sched.Configure(10, 10)
+	_ = h.bar.sched.Submitted(0)
+	_ = h.bar.sched.Frame()
+	_ = h.bar.sched.Release(0)
 	return h
 }
 
@@ -29,10 +29,10 @@ func TestInvalidationRoutesToOneGlobal(t *testing.T) {
 	o := &owner{hosts: s}
 	o.invalidate(Invalidation{Global: 2})
 
-	if d, _ := a.sched.Next(); d == render.DecisionRender {
+	if d, _ := a.bar.sched.Next(); d == render.DecisionRender {
 		t.Fatal("global 1 was invalidated by an event addressed to global 2")
 	}
-	if d, _ := b.sched.Next(); d != render.DecisionRender {
+	if d, _ := b.bar.sched.Next(); d != render.DecisionRender {
 		t.Fatal("global 2 was not invalidated")
 	}
 }
@@ -48,10 +48,10 @@ func TestTwoGlobalsSharingAConnectorAreAddressedSeparately(t *testing.T) {
 	o := &owner{hosts: s}
 	o.invalidate(Invalidation{Global: 2})
 
-	if d, _ := old.sched.Next(); d == render.DecisionRender {
+	if d, _ := old.bar.sched.Next(); d == render.DecisionRender {
 		t.Fatal("the outgoing bar was invalidated by its replacement's global")
 	}
-	if d, _ := fresh.sched.Next(); d != render.DecisionRender {
+	if d, _ := fresh.bar.sched.Next(); d != render.DecisionRender {
 		t.Fatal("the replacement bar was not invalidated")
 	}
 }
@@ -66,7 +66,7 @@ func TestAZeroGlobalInvalidatesEveryBar(t *testing.T) {
 	o.invalidate(Invalidation{})
 
 	for name, h := range map[string]*OutputHost{"DP-1": a, "DP-3": b} {
-		if d, _ := h.sched.Next(); d != render.DecisionRender {
+		if d, _ := h.bar.sched.Next(); d != render.DecisionRender {
 			t.Fatalf("%s was not invalidated by a broadcast", name)
 		}
 	}
@@ -81,7 +81,7 @@ func TestInvalidationSkipsDeadHosts(t *testing.T) {
 	o := &owner{hosts: s}
 	o.invalidate(Invalidation{})
 
-	if d, _ := h.sched.Next(); d == render.DecisionRender {
+	if d, _ := h.bar.sched.Next(); d == render.DecisionRender {
 		t.Fatal("a dead host was invalidated")
 	}
 }

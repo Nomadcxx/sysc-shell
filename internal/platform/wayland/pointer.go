@@ -45,7 +45,7 @@ func (o *owner) hostBySurface(surface *client.Surface) (*OutputHost, bool) {
 		return nil, false
 	}
 	for _, h := range o.hosts.each() {
-		if h.surface != nil && h.surface == surface {
+		if h.bar.surface != nil && h.bar.surface == surface {
 			return h, true
 		}
 	}
@@ -55,10 +55,10 @@ func (o *owner) hostBySurface(surface *client.Surface) (*OutputHost, bool) {
 // deliver hands a pointer event to one bar and invalidates it when the
 // application reports that its state changed.
 func (o *owner) deliver(h *OutputHost, e Event) {
-	if h == nil || !h.alive || h.app.Handle == nil {
+	if h == nil || !h.alive || h.bar.app.Handle == nil {
 		return
 	}
-	if h.app.Handle(e) {
-		h.sched.Invalidate()
+	if h.bar.app.Handle(e) {
+		h.bar.sched.Invalidate()
 	}
 }

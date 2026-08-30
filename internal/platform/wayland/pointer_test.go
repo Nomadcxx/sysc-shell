@@ -9,7 +9,7 @@ func newFocusOwner() (*owner, *OutputHost, *OutputHost, *[]Event) {
 	seen := new([]Event)
 	for _, h := range []*OutputHost{a, b} {
 		h.alive = true
-		h.app = HostCallbacks{Handle: func(e Event) bool {
+		h.bar.app = HostCallbacks{Handle: func(e Event) bool {
 			*seen = append(*seen, e)
 			return false
 		}}

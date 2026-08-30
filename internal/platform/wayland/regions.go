@@ -17,7 +17,7 @@ func inputRect(surface ui.Rect) ui.Rect { return surface }
 // candidate policy. Reload uses the current configure until the compositor
 // sends a replacement configure for changed layer-surface geometry.
 func hostRegionGeometry(h *OutputHost, policy config.Bar) (surface, body ui.Rect) {
-	surface = ui.Rect{W: h.ss.logicalWidth, H: h.ss.logicalHeight}
+	surface = ui.Rect{W: h.bar.ss.logicalWidth, H: h.bar.ss.logicalHeight}
 	body = ui.Rect{
 		X: policy.Gap, Y: policy.Gap,
 		W: max(0, surface.W-2*policy.Gap),
@@ -69,7 +69,7 @@ func (o *owner) applyRegions(h *OutputHost, surface, body ui.Rect, radius int, o
 	if err := input.Add(int32(r.X), int32(r.Y), int32(r.W), int32(r.H)); err != nil {
 		return err
 	}
-	if err := h.surface.SetInputRegion(input); err != nil {
+	if err := h.bar.surface.SetInputRegion(input); err != nil {
 		return err
 	}
 	if err := input.Destroy(); err != nil {
@@ -80,7 +80,7 @@ func (o *owner) applyRegions(h *OutputHost, surface, body ui.Rect, radius int, o
 	if len(rects) == 0 {
 		// A nil region means "no opaque area", which is what a translucent bar
 		// needs; it is not the same as leaving the region unset.
-		return h.surface.SetOpaqueRegion(nil)
+		return h.bar.surface.SetOpaqueRegion(nil)
 	}
 	opaque, err := o.compositor.CreateRegion()
 	if err != nil {
@@ -91,7 +91,7 @@ func (o *owner) applyRegions(h *OutputHost, surface, body ui.Rect, radius int, o
 			return err
 		}
 	}
-	if err := h.surface.SetOpaqueRegion(opaque); err != nil {
+	if err := h.bar.surface.SetOpaqueRegion(opaque); err != nil {
 		return err
 	}
 	return opaque.Destroy()

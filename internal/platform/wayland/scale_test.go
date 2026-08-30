@@ -14,19 +14,19 @@ func TestScaleChangeTouchesOnlyItsOwnHost(t *testing.T) {
 	t.Parallel()
 	a, b := newHost(1, nil), newHost(2, nil)
 	for _, h := range []*OutputHost{a, b} {
-		h.ss.configure(1000, 44)
-		h.ss.acknowledge()
-		h.sched.Configure(1000, 44)
-		_ = h.sched.Submitted(0)
+		h.bar.ss.configure(1000, 44)
+		h.bar.ss.acknowledge()
+		h.bar.sched.Configure(1000, 44)
+		_ = h.bar.sched.Submitted(0)
 	}
-	beforeGen := b.genID
-	beforeDecision, _ := b.sched.Next()
+	beforeGen := b.bar.genID
+	beforeDecision, _ := b.bar.sched.Next()
 
-	if !a.ss.preferredScale(180) {
+	if !a.bar.ss.preferredScale(180) {
 		t.Fatal("preferredScale reported no change")
 	}
 
-	aw, _, err := a.bufferSize()
+	aw, _, err := a.bar.bufferSize()
 	if err != nil {
 		t.Fatalf("bufferSize: %v", err)
 	}
@@ -34,17 +34,17 @@ func TestScaleChangeTouchesOnlyItsOwnHost(t *testing.T) {
 		t.Fatalf("host A buffer width = %d, want 1500", aw)
 	}
 
-	bw, _, err := b.bufferSize()
+	bw, _, err := b.bar.bufferSize()
 	if err != nil {
 		t.Fatalf("bufferSize: %v", err)
 	}
 	if bw != 1000 {
 		t.Fatalf("host B buffer width = %d, want 1000 unchanged", bw)
 	}
-	if b.genID != beforeGen {
-		t.Fatalf("host B generation moved from %d to %d", beforeGen, b.genID)
+	if b.bar.genID != beforeGen {
+		t.Fatalf("host B generation moved from %d to %d", beforeGen, b.bar.genID)
 	}
-	if d, _ := b.sched.Next(); d != beforeDecision {
+	if d, _ := b.bar.sched.Next(); d != beforeDecision {
 		t.Fatal("host B scheduler state changed")
 	}
 }
@@ -52,12 +52,12 @@ func TestScaleChangeTouchesOnlyItsOwnHost(t *testing.T) {
 func TestScaleOnlyEventIsIgnoredWhenUnchanged(t *testing.T) {
 	t.Parallel()
 	h := newHost(1, nil)
-	h.ss.configure(800, 44)
-	h.ss.acknowledge()
+	h.bar.ss.configure(800, 44)
+	h.bar.ss.acknowledge()
 
 	// The default is 120, and preferred_scale is not ordered against configure,
 	// so a redundant event must not retire a generation.
-	if h.ss.preferredScale(120) {
+	if h.bar.ss.preferredScale(120) {
 		t.Fatal("preferredScale(120) reported a change from the default 120")
 	}
 }
@@ -79,11 +79,11 @@ func TestMixedScalesProduceIndependentBufferSizes(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			h := newHost(1, nil)
-			h.ss.configure(c.logical, 44)
-			h.ss.acknowledge()
-			h.ss.preferredScale(ui.Scale120(c.scale))
+			h.bar.ss.configure(c.logical, 44)
+			h.bar.ss.acknowledge()
+			h.bar.ss.preferredScale(ui.Scale120(c.scale))
 
-			got, _, err := h.bufferSize()
+			got, _, err := h.bar.bufferSize()
 			if err != nil {
 				t.Fatalf("bufferSize: %v", err)
 			}
@@ -97,13 +97,13 @@ func TestMixedScalesProduceIndependentBufferSizes(t *testing.T) {
 func TestSchedulerIsPerHost(t *testing.T) {
 	t.Parallel()
 	a, b := newHost(1, nil), newHost(2, nil)
-	a.sched.Configure(10, 10)
+	a.bar.sched.Configure(10, 10)
 
 	// b never configured, so it has no generation and offers no work.
-	if d, _ := b.sched.Next(); d == render.DecisionRender {
+	if d, _ := b.bar.sched.Next(); d == render.DecisionRender {
 		t.Fatal("an unconfigured host offered a render job")
 	}
-	if d, _ := a.sched.Next(); d != render.DecisionRender {
+	if d, _ := a.bar.sched.Next(); d != render.DecisionRender {
 		t.Fatal("a configured host offered no render job")
 	}
 }

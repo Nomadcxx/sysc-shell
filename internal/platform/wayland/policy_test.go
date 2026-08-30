@@ -152,9 +152,9 @@ func TestPrepareConfigConfiguresMappedReplacementBeforePublishing(t *testing.T) 
 	h.doneSeen = true
 	h.state = hostMapped
 	h.policy = current.Bar
-	h.ss.configure(1200, h.surfaceHeight())
-	h.ss.acknowledge()
-	h.ss.preferredScale(180)
+	h.bar.ss.configure(1200, h.surfaceHeight())
+	h.bar.ss.acknowledge()
+	h.bar.ss.preferredScale(180)
 	hosts := newHostSet()
 	hosts.hosts[h.global] = h
 	hosts.arrival = append(hosts.arrival, h.global)

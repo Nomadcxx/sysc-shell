@@ -81,8 +81,8 @@ func TestHostRegionGeometryUsesCurrentConfigureAndCandidateGap(t *testing.T) {
 	t.Parallel()
 
 	h := newHost(7, nil)
-	h.ss.configure(1200, 44)
-	h.ss.acknowledge()
+	h.bar.ss.configure(1200, 44)
+	h.bar.ss.acknowledge()
 	policy := h.policy
 	policy.Gap = 6
 

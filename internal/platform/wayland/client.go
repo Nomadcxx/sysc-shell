@@ -305,7 +305,7 @@ func (o *owner) bindOutput(global, version uint32) {
 		return
 	}
 	h.proxy = proxy
-	h.cleanup.push("output", proxy.Release)
+	h.bar.cleanup.push("output", proxy.Release)
 	o.attachOutputHandlers(h)
 }
 
@@ -329,12 +329,12 @@ func (o *owner) hostBecameReady(h *OutputHost) error {
 		}
 		return err
 	}
-	h.app = app
+	h.bar.app = app
 	if err := o.createBar(h); err != nil {
 		if o.cb.DropHost != nil {
 			o.cb.DropHost(h.global)
 		}
-		h.app = HostCallbacks{}
+		h.bar.app = HostCallbacks{}
 		return err
 	}
 	return nil
@@ -426,16 +426,16 @@ func (o *owner) createBar(h *OutputHost) error {
 	if err != nil {
 		return fmt.Errorf("wayland: create surface for %s: %w", h.connector, err)
 	}
-	h.surface = surface
-	h.cleanup.push("surface", surface.Destroy)
+	h.bar.surface = surface
+	h.bar.cleanup.push("surface", surface.Destroy)
 
 	layer, err := o.layerShell.GetLayerSurface(surface, h.proxy,
 		uint32(layershell.ZwlrLayerShellV1LayerTop), namespace)
 	if err != nil {
 		return fmt.Errorf("wayland: get layer surface for %s: %w", h.connector, err)
 	}
-	h.layer = layer
-	h.cleanup.push("layer-surface", layer.Destroy)
+	h.bar.layer = layer
+	h.bar.cleanup.push("layer-surface", layer.Destroy)
 
 	if err := o.applyGeometryRequests(h); err != nil {
 		return err
@@ -455,8 +455,8 @@ func (o *owner) createBar(h *OutputHost) error {
 	if err != nil {
 		return fmt.Errorf("wayland: get fractional scale: %w", err)
 	}
-	h.scale = scale
-	h.cleanup.push("fractional-scale", scale.Destroy)
+	h.bar.scale = scale
+	h.bar.cleanup.push("fractional-scale", scale.Destroy)
 	scale.SetPreferredScaleHandler(func(e fractionalscale.WpFractionalScaleV1PreferredScaleEvent) {
 		if h.alive {
 			o.onPreferredScale(h, e)
@@ -467,8 +467,8 @@ func (o *owner) createBar(h *OutputHost) error {
 	if err != nil {
 		return fmt.Errorf("wayland: get viewport: %w", err)
 	}
-	h.viewport = viewport
-	h.cleanup.push("viewport", viewport.Destroy)
+	h.bar.viewport = viewport
+	h.bar.cleanup.push("viewport", viewport.Destroy)
 
 	// One commit with no buffer attached, then the compositor configures.
 	if err := surface.Commit(); err != nil {
@@ -489,19 +489,19 @@ func (o *owner) applyGeometryRequests(h *OutputHost) error {
 		layershell.ZwlrLayerSurfaceV1AnchorLeft |
 		layershell.ZwlrLayerSurfaceV1AnchorRight)
 	// Width 0 asks the compositor for the anchored width.
-	if err := h.layer.SetSize(0, uint32(height)); err != nil {
+	if err := h.bar.layer.SetSize(0, uint32(height)); err != nil {
 		return err
 	}
-	if err := h.layer.SetAnchor(anchor); err != nil {
+	if err := h.bar.layer.SetAnchor(anchor); err != nil {
 		return err
 	}
-	if err := h.layer.SetMargin(0, 0, 0, 0); err != nil {
+	if err := h.bar.layer.SetMargin(0, 0, 0, 0); err != nil {
 		return err
 	}
-	if err := h.layer.SetExclusiveZone(int32(height)); err != nil {
+	if err := h.bar.layer.SetExclusiveZone(int32(height)); err != nil {
 		return err
 	}
-	return h.layer.SetKeyboardInteractivity(
+	return h.bar.layer.SetKeyboardInteractivity(
 		uint32(layershell.ZwlrLayerSurfaceV1KeyboardInteractivityNone))
 }
 
@@ -528,14 +528,14 @@ func (o *owner) onLayerClosed(h *OutputHost) error {
 
 // onConfigure acknowledges every configure before any buffer is attached.
 func (o *owner) onConfigure(h *OutputHost, e layershell.ZwlrLayerSurfaceV1ConfigureEvent) {
-	if err := h.layer.AckConfigure(e.Serial); err != nil {
+	if err := h.bar.layer.AckConfigure(e.Serial); err != nil {
 		o.fail(fmt.Errorf("wayland: ack configure: %w", err))
 		return
 	}
-	changed := h.ss.configure(int(e.Width), int(e.Height))
-	h.ss.acknowledge()
+	changed := h.bar.ss.configure(int(e.Width), int(e.Height))
+	h.bar.ss.acknowledge()
 	h.state = hostConfiguring
-	if changed || h.current == nil {
+	if changed || h.bar.current == nil {
 		o.fail(o.reconfigure(h))
 	}
 }
@@ -547,10 +547,10 @@ func (o *owner) onConfigure(h *OutputHost, e layershell.ZwlrLayerSurfaceV1Config
 // The event arrives on this host's own fractional-scale object, so a scale
 // change reallocates this host's buffers and touches no other host.
 func (o *owner) onPreferredScale(h *OutputHost, e fractionalscale.WpFractionalScaleV1PreferredScaleEvent) {
-	if !h.ss.preferredScale(ui.Scale120(e.Scale)) {
+	if !h.bar.ss.preferredScale(ui.Scale120(e.Scale)) {
 		return
 	}
-	if h.ss.eligible() {
+	if h.bar.ss.eligible() {
 		o.fail(o.reconfigure(h))
 	}
 }
@@ -558,14 +558,14 @@ func (o *owner) onPreferredScale(h *OutputHost, e fractionalscale.WpFractionalSc
 // reconfigure retires the host's buffer generation and allocates a new one at
 // its current physical size.
 func (o *owner) reconfigure(h *OutputHost) error {
-	width, height, err := h.bufferSize()
+	width, height, err := h.bar.bufferSize()
 	if err != nil {
 		return err
 	}
 
 	// The viewport destination is the logical configure size. The buffer scale
 	// stays at its default of 1, and no source rectangle is set.
-	if err := h.viewport.SetDestination(int32(h.ss.logicalWidth), int32(h.ss.logicalHeight)); err != nil {
+	if err := h.bar.viewport.SetDestination(int32(h.bar.ss.logicalWidth), int32(h.bar.ss.logicalHeight)); err != nil {
 		return fmt.Errorf("wayland: set viewport destination: %w", err)
 	}
 
@@ -573,22 +573,22 @@ func (o *owner) reconfigure(h *OutputHost) error {
 		return fmt.Errorf("wayland: set regions: %w", err)
 	}
 
-	if err := h.app.Configure(h.ss.logicalWidth, h.ss.logicalHeight, int(h.ss.scale120)); err != nil {
+	if err := h.bar.app.Configure(h.bar.ss.logicalWidth, h.bar.ss.logicalHeight, int(h.bar.ss.scale120)); err != nil {
 		return err
 	}
 
 	// The outstanding frame callback belongs to a retired generation.
-	if err := h.dropFrameCallback(); err != nil {
+	if err := h.bar.dropFrameCallback(); err != nil {
 		return err
 	}
-	if h.current != nil {
-		h.retiring = append(h.retiring, h.current)
-		h.current = nil
+	if h.bar.current != nil {
+		h.bar.retiring = append(h.bar.retiring, h.bar.current)
+		h.bar.current = nil
 	}
 	o.sweepRetired(h)
 
-	h.genID++
-	gen, err := newGeneration(o.shm, h.genID, width, height)
+	h.bar.genID++
+	gen, err := newGeneration(o.shm, h.bar.genID, width, height)
 	if err != nil {
 		return err
 	}
@@ -598,8 +598,8 @@ func (o *owner) reconfigure(h *OutputHost) error {
 			o.onBufferRelease(h, gen, slot)
 		})
 	}
-	h.current = gen
-	h.sched.Configure(int(width), int(height))
+	h.bar.current = gen
+	h.bar.sched.Configure(int(width), int(height))
 	h.state = hostMapped
 	h.mappedSince = time.Now()
 	return nil
@@ -612,8 +612,8 @@ func (o *owner) reconfigure(h *OutputHost) error {
 // retired generation must observe its releases to become unmappable.
 func (o *owner) onBufferRelease(h *OutputHost, gen *generation, slot int) {
 	o.fail(gen.retire.released())
-	if gen == h.current {
-		o.fail(h.sched.Release(slot))
+	if gen == h.bar.current {
+		o.fail(h.bar.sched.Release(slot))
 	}
 	o.sweepRetired(h)
 }
@@ -621,66 +621,70 @@ func (o *owner) onBufferRelease(h *OutputHost, gen *generation, slot int) {
 // sweepRetired unmaps every retired generation whose buffers have all been
 // released.
 func (o *owner) sweepRetired(h *OutputHost) {
-	kept := h.retiring[:0]
-	for _, gen := range h.retiring {
+	kept := h.bar.retiring[:0]
+	for _, gen := range h.bar.retiring {
 		if gen.retire.freeable() {
 			o.fail(gen.destroy())
 			continue
 		}
 		kept = append(kept, gen)
 	}
-	h.retiring = kept
+	h.bar.retiring = kept
 }
 
 // renderJob paints one slot of one host and submits it.
-func (o *owner) renderJob(h *OutputHost, job render.Job) error {
-	gen := h.current
+func (o *owner) renderJob(h *OutputHost, u *surfaceUnit, job render.Job) error {
+	gen := u.current
 	if gen == nil {
 		return errors.New("wayland: render requested with no buffer generation")
 	}
 
-	if err := h.app.Render(gen.pixels(job.Slot), int(gen.width), int(gen.height), int(gen.stride)); err != nil {
+	if err := u.app.Render(gen.pixels(job.Slot), int(gen.width), int(gen.height), int(gen.stride)); err != nil {
 		return err
 	}
-	if err := h.surface.Attach(gen.slots[job.Slot], 0, 0); err != nil {
+	if err := u.surface.Attach(gen.slots[job.Slot], 0, 0); err != nil {
 		return fmt.Errorf("wayland: attach: %w", err)
 	}
-	// Damage is submitted in buffer pixels, never in surface units.
-	if err := h.surface.DamageBuffer(0, 0, gen.width, gen.height); err != nil {
+	if err := u.surface.DamageBuffer(0, 0, gen.width, gen.height); err != nil {
 		return fmt.Errorf("wayland: damage: %w", err)
 	}
 
-	callback, err := h.surface.Frame()
+	callback, err := u.surface.Frame()
 	if err != nil {
 		return fmt.Errorf("wayland: frame: %w", err)
 	}
-	h.frameCallback = callback
+	u.frameCallback = callback
 	callback.SetDoneHandler(func(client.CallbackDoneEvent) {
-		if !h.alive || callback != h.frameCallback {
-			return // a callback from a retired generation or a dead host
+		if !h.alive || callback != u.frameCallback {
+			return
 		}
-		h.frameCallback = nil
-		o.fail(h.sched.Frame())
+		u.frameCallback = nil
+		o.fail(u.sched.Frame())
 	})
 
-	if err := h.surface.Commit(); err != nil {
+	if err := u.surface.Commit(); err != nil {
 		return fmt.Errorf("wayland: commit: %w", err)
 	}
 	gen.retire.attached()
-	return h.sched.Submitted(job.Slot)
+	return u.sched.Submitted(job.Slot)
 }
 
-// nextJob asks each live host for work in arrival order.
-func (o *owner) nextJob() (*OutputHost, render.Decision, render.Job) {
+// nextJob asks each live host for work in arrival order, bar unit then aux.
+func (o *owner) nextJob() (*OutputHost, *surfaceUnit, render.Decision, render.Job) {
 	for _, h := range o.hosts.each() {
-		if !h.alive || h.surface == nil {
+		if !h.alive {
 			continue
 		}
-		if d, job := h.sched.Next(); d == render.DecisionRender {
-			return h, d, job
+		for _, u := range h.units() {
+			if u.surface == nil {
+				continue
+			}
+			if d, job := u.sched.Next(); d == render.DecisionRender {
+				return h, u, d, job
+			}
 		}
 	}
-	return nil, render.DecisionWait, render.Job{}
+	return nil, nil, render.DecisionWait, render.Job{}
 }
 
 // invalidate marks hosts dirty. A zero global invalidates every bar, so one
@@ -692,7 +696,7 @@ func (o *owner) invalidate(inv Invalidation) {
 			continue
 		}
 		if inv.Global == 0 || h.global == inv.Global {
-			h.sched.Invalidate()
+			h.bar.sched.Invalidate()
 		}
 	}
 }
@@ -794,7 +798,7 @@ func (o *owner) prepareConfig(cfg config.Config) (preparedOwnerConfig, error) {
 				return abandon(prepared, err)
 			}
 			if h.state == hostMapped {
-				if err := app.Configure(h.ss.logicalWidth, h.ss.logicalHeight, int(h.ss.scale120)); err != nil {
+				if err := app.Configure(h.bar.ss.logicalWidth, h.bar.ss.logicalHeight, int(h.bar.ss.scale120)); err != nil {
 					return abandon(prepared, fmt.Errorf(
 						"wayland: configure prepared replacement for %s: %w", h.connector, err))
 				}
@@ -827,20 +831,20 @@ func (o *owner) applyPreparedConfig(prepared preparedOwnerConfig) error {
 		h.opaqueBackground = update.opaqueBackground
 		switch {
 		case !bar.Enabled:
-			if h.surface != nil {
+			if h.bar.surface != nil {
 				if err := o.teardownSurface(h); err != nil {
 					return err
 				}
 			}
 			h.state = hostIdle
-			h.app = HostCallbacks{}
-		case bar.Enabled && h.surface == nil && h.ready():
-			h.app = update.app
+			h.bar.app = HostCallbacks{}
+		case bar.Enabled && h.bar.surface == nil && h.ready():
+			h.bar.app = update.app
 			if err := o.createBar(h); err != nil {
 				return err
 			}
-		case bar.Enabled && h.surface != nil:
-			h.app = update.app
+		case bar.Enabled && h.bar.surface != nil:
+			h.bar.app = update.app
 			// Geometry and anchor changes are ordinary layer-surface requests
 			// followed by a configure, which is cheaper and more correct than
 			// destroying and rebuilding the role.
@@ -852,11 +856,11 @@ func (o *owner) applyPreparedConfig(prepared preparedOwnerConfig) error {
 					return fmt.Errorf("wayland: refresh regions for %s: %w", h.connector, err)
 				}
 			}
-			if err := h.surface.Commit(); err != nil {
+			if err := h.bar.surface.Commit(); err != nil {
 				return err
 			}
 			if h.state == hostMapped {
-				h.sched.Invalidate()
+				h.bar.sched.Invalidate()
 			}
 		}
 	}
@@ -872,22 +876,22 @@ func refreshRegionsOnReload(h *OutputHost) bool { return h.state == hostMapped }
 func (o *owner) teardownSurface(h *OutputHost) error {
 	var errs []error
 
-	h.sched.Close()
-	if err := h.dropFrameCallback(); err != nil {
+	h.bar.sched.Close()
+	if err := h.bar.dropFrameCallback(); err != nil {
 		errs = append(errs, err)
 	}
-	if h.current != nil {
-		h.current.retire.destroy()
-		h.retiring = append(h.retiring, h.current)
-		h.current = nil
+	if h.bar.current != nil {
+		h.bar.current.retire.destroy()
+		h.bar.retiring = append(h.bar.retiring, h.bar.current)
+		h.bar.current = nil
 	}
-	for _, gen := range h.retiring {
+	for _, gen := range h.bar.retiring {
 		gen.retire.destroy()
 		if err := gen.destroy(); err != nil {
 			errs = append(errs, err)
 		}
 	}
-	h.retiring = nil
+	h.bar.retiring = nil
 
 	// clearFocus delivers a leave, so pressed-node state does not survive into
 	// a recreated surface.
@@ -896,12 +900,12 @@ func (o *owner) teardownSurface(h *OutputHost) error {
 	}
 	// Unwind viewport, fractional-scale, layer surface and wl_surface; the
 	// output step stays so the host keeps its wl_output.
-	if _, err := h.cleanup.unwindTo("output"); err != nil {
+	if _, err := h.bar.cleanup.unwindTo("output"); err != nil {
 		errs = append(errs, err)
 	}
-	h.surface, h.layer, h.scale, h.viewport = nil, nil, nil, nil
-	h.ss = newSurfaceState()
-	h.sched = render.NewScheduler()
+	h.bar.surface, h.bar.layer, h.bar.scale, h.bar.viewport = nil, nil, nil, nil
+	h.bar.ss = newSurfaceState()
+	h.bar.sched = render.NewScheduler()
 	return errors.Join(errs...)
 }
 
@@ -926,8 +930,8 @@ func (o *owner) loop(ctx context.Context) error {
 			return nil
 		}
 
-		if h, decision, job := o.nextJob(); decision == render.DecisionRender {
-			if err := o.renderJob(h, job); err != nil {
+		if h, u, decision, job := o.nextJob(); decision == render.DecisionRender {
+			if err := o.renderJob(h, u, job); err != nil {
 				return err
 			}
 			continue
@@ -1026,30 +1030,30 @@ func (o *owner) teardownHost(h *OutputHost) error {
 		}
 	}
 
-	h.sched.Close()
-	if h.current != nil {
-		h.current.retire.destroy()
-		h.retiring = append(h.retiring, h.current)
-		h.current = nil
+	h.bar.sched.Close()
+	if h.bar.current != nil {
+		h.bar.current.retire.destroy()
+		h.bar.retiring = append(h.bar.retiring, h.bar.current)
+		h.bar.current = nil
 	}
-	for _, gen := range h.retiring {
+	for _, gen := range h.bar.retiring {
 		gen.retire.destroy()
 		if err := gen.destroy(); err != nil {
 			errs = append(errs, err)
 		}
 	}
-	h.retiring = nil
+	h.bar.retiring = nil
 
-	if err := h.dropFrameCallback(); err != nil {
+	if err := h.bar.dropFrameCallback(); err != nil {
 		errs = append(errs, err)
 	}
 	if o.focus.host == h {
 		o.clearFocus()
 	}
-	if _, err := h.cleanup.unwind(); err != nil {
+	if _, err := h.bar.cleanup.unwind(); err != nil {
 		errs = append(errs, err)
 	}
-	h.surface, h.layer, h.scale, h.viewport = nil, nil, nil, nil
+	h.bar.surface, h.bar.layer, h.bar.scale, h.bar.viewport = nil, nil, nil, nil
 	return errors.Join(errs...)
 }
 
