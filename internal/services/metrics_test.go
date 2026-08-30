@@ -178,3 +178,57 @@ func TestMetricUpdatesKeepOnlyTheNewest(t *testing.T) {
 	default:
 	}
 }
+
+func TestARingKeepsTheNewestSamplesOldestFirst(t *testing.T) {
+	t.Parallel()
+	r := newRing(3)
+
+	for _, v := range []float64{0.1, 0.2, 0.3, 0.4} {
+		r.push(v)
+	}
+	got := r.values()
+	want := []float64{0.2, 0.3, 0.4}
+	if len(got) != len(want) {
+		t.Fatalf("ring holds %d values, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("ring = %v, want %v (oldest first, newest last)", got, want)
+		}
+	}
+}
+
+func TestAPartialRingReportsOnlyWhatItHolds(t *testing.T) {
+	t.Parallel()
+	r := newRing(5)
+	r.push(0.5)
+
+	if got := r.values(); len(got) != 1 || got[0] != 0.5 {
+		t.Fatalf("partial ring = %v, want one sample", got)
+	}
+}
+
+// A returned history must not alias the ring, or a later sample would mutate
+// a slice a widget is already plotting.
+func TestHistoryDoesNotAliasTheRing(t *testing.T) {
+	t.Parallel()
+	r := newRing(3)
+	r.push(0.1)
+
+	got := r.values()
+	got[0] = 99
+	if again := r.values(); again[0] != 0.1 {
+		t.Fatal("mutating a returned history changed the ring")
+	}
+}
+
+func TestHistoryRecordsOnlyLeasedSources(t *testing.T) {
+	t.Parallel()
+	m := NewMetrics()
+	t.Cleanup(m.Close)
+
+	m.record(Snapshot{CollectedAt: time.Now()})
+	if got := m.History(SourceCPU); len(got) != 0 {
+		t.Fatalf("an empty snapshot recorded %v", got)
+	}
+}

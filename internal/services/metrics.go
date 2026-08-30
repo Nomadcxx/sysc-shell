@@ -335,11 +335,91 @@ func sendSnapshot(updates chan Snapshot, snap Snapshot) {
 	}
 }
 
-// TEMPORARY: replaced in Task 4.
+// historySize is the number of samples a graph plots. It matches the reference
+// shell's window; at the default two-second interval it is four minutes.
 const historySize = 120
 
-type ring struct{}
+// ring is a fixed-capacity sample buffer, newest last. It never allocates
+// after construction, because a graph pushes one value per source per tick for
+// the process lifetime.
+type ring struct {
+	values0 []float64
+	next    int
+	filled  bool
+}
 
-func newRing(int) *ring { return &ring{} }
+func newRing(size int) *ring { return &ring{values0: make([]float64, size)} }
 
-func (m *Metrics) record(Snapshot) {}
+func (r *ring) push(v float64) {
+	r.values0[r.next] = v
+	r.next++
+	if r.next == len(r.values0) {
+		r.next, r.filled = 0, true
+	}
+}
+
+// values returns the samples oldest first, in a slice the caller owns.
+func (r *ring) values() []float64 {
+	if !r.filled {
+		return append([]float64(nil), r.values0[:r.next]...)
+	}
+	out := make([]float64, 0, len(r.values0))
+	out = append(out, r.values0[r.next:]...)
+	return append(out, r.values0[:r.next]...)
+}
+
+// History returns one source's samples, oldest first. An unleased or
+// never-sampled source returns an empty slice, which a graph renders as an
+// empty plot rather than an error.
+func (m *Metrics) History(src Source) []float64 {
+	if src >= sourceCount {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.history[src].values()
+}
+
+// record appends each present source's headline fraction. A rate source has no
+// natural full scale, so it records the raw rate and the graph normalises
+// against its own window maximum.
+func (m *Metrics) record(snap Snapshot) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if snap.CPU != nil && snap.CPU.Usage.Valid {
+		m.history[SourceCPU].push(snap.CPU.Usage.Fraction)
+	}
+	if snap.Memory != nil {
+		m.history[SourceMemory].push(usedFraction(snap.Memory.Memory))
+	}
+	if snap.Filesystem != nil && len(snap.Filesystem.Filesystems) > 0 {
+		m.history[SourceFilesystem].push(usedFraction(snap.Filesystem.Filesystems[0].Capacity))
+	}
+	if snap.Block != nil {
+		var total float64
+		for _, d := range snap.Block.Devices {
+			if d.Rates.Valid {
+				total += d.Rates.ReadBytesPerSecond + d.Rates.WriteBytesPerSecond
+			}
+		}
+		m.history[SourceBlock].push(total)
+	}
+	if snap.Network != nil {
+		var total float64
+		for _, i := range snap.Network.Interfaces {
+			if i.Rates.Valid {
+				total += i.Rates.ReceiveBytesPerSecond + i.Rates.TransmitBytesPerSecond
+			}
+		}
+		m.history[SourceNetwork].push(total)
+	}
+}
+
+// usedFraction is used over total, or zero when the total is unknown.
+func usedFraction(c metrics.Capacity) float64 {
+	if c.TotalBytes == 0 {
+		return 0
+	}
+	return float64(c.UsedBytes) / float64(c.TotalBytes)
+}
