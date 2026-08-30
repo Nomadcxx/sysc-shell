@@ -25,9 +25,11 @@ const (
 	keyEnter     = 28
 	keyLeftShift = 42
 	keySpace     = 57
+	keyHome      = 102
 	keyUp        = 103
 	keyLeft      = 105
 	keyRight     = 106
+	keyEnd       = 107
 	keyDown      = 108
 
 	revealDuration = 200 * time.Millisecond
@@ -479,24 +481,53 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 		h.afterFocusChange(r)
 		return true
 	case keyLeft, keyUp:
+		if h.adjustSlider(keyLeft) {
+			return true
+		}
 		h.roving.Prev()
 		h.afterFocusChange(r)
 		return true
 	case keyRight, keyDown:
+		if h.adjustSlider(keyRight) {
+			return true
+		}
 		h.roving.Next()
 		h.afterFocusChange(r)
 		return true
+	case keyHome, keyEnd:
+		if h.adjustSlider(key) {
+			return true
+		}
+		return false
 	case keySpace, keyEnter:
 		return h.activate(r)
 	}
 	return false
 }
 
-func (h *PanelHost) activate(r *Registry) bool {
+func (h *PanelHost) focused() *ui.Node {
 	if h.roving.Count == 0 {
+		return nil
+	}
+	return h.focus[h.roving.Index()]
+}
+
+func (h *PanelHost) adjustSlider(key uint32) bool {
+	n := h.focused()
+	if n == nil || n.Kind != ui.KindSlider {
 		return false
 	}
-	n := h.focus[h.roving.Index()]
+	return ui.ControlKey(n, key)
+}
+
+func (h *PanelHost) activate(r *Registry) bool {
+	n := h.focused()
+	if n == nil {
+		return false
+	}
+	if n.Kind == ui.KindToggle {
+		return ui.Activate(n)
+	}
 	h.lastAction = n.Action
 	switch n.Action {
 	case "cal-prev":

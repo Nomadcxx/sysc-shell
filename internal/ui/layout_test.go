@@ -84,7 +84,7 @@ func TestLayoutRejectsInvalidInput(t *testing.T) {
 	negativeMeter.Children[2].Value = -0.1
 
 	unsupported := proofTree()
-	unsupported.Children[1].Kind = Kind(9)
+	unsupported.Children[1].Kind = Kind(99)
 
 	tests := []struct {
 		name   string

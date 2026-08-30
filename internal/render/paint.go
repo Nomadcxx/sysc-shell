@@ -104,9 +104,89 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 		}
 		return paintText(c, n.Text, style.Scale120.PhysicalRect(label), text, style, size, n.Tabular, n.Tone)
 
+	case ui.KindToggle:
+		paintToggle(c, n, style)
+		return nil
+
+	case ui.KindSlider:
+		paintSlider(c, n, style)
+		return nil
+
+	case ui.KindRow, ui.KindColumn:
+		for i, child := range n.Children {
+			if child == nil {
+				return fmt.Errorf("nil child %d", i)
+			}
+			if err := paintNode(c, child, text, style, size); err != nil {
+				return err
+			}
+		}
+		return nil
+
+	case ui.KindSeparator:
+		box := style.Scale120.PhysicalRect(n.Bounds)
+		box.H = max(box.H, 1)
+		fillRect(c, box, style.Track)
+		return nil
+
+	case ui.KindTab:
+		return paintText(c, n.Text, style.Scale120.PhysicalRect(n.Bounds), text, style, size, n.Tabular, n.Tone)
+
 	default:
 		return fmt.Errorf("unsupported kind %d", n.Kind)
 	}
+}
+
+func paintToggle(c *Canvas, n *ui.Node, style ProofStyle) {
+	box := style.Scale120.PhysicalRect(n.Bounds)
+	track := style.Track
+	knob := style.Foreground
+	if n.Value != 0 {
+		track = style.accent()
+		if style.AccentOn.A != 0 {
+			knob = style.AccentOn
+		}
+	}
+	c.FillRounded(box, min(box.H/2, style.Scale120.Physical(10)), track)
+	knobH := style.Scale120.Physical(ui.ToggleKnob)
+	if knobH > box.H {
+		knobH = box.H
+	}
+	pad := (box.H - knobH) / 2
+	x := box.X + pad
+	if n.Value != 0 {
+		x = box.X + box.W - pad - knobH
+	}
+	c.FillRounded(ui.Rect{X: x, Y: box.Y + pad, W: knobH, H: knobH}, knobH/2, knob)
+}
+
+func paintSlider(c *Canvas, n *ui.Node, style ProofStyle) {
+	box := style.Scale120.PhysicalRect(n.Bounds)
+	trackH := max(style.Scale120.Physical(ui.SliderTrack), 1)
+	y := box.Y + (box.H-trackH)/2
+	c.FillRounded(ui.Rect{X: box.X, Y: y, W: box.W, H: trackH}, trackH/2, style.Track)
+	span := n.Max - n.Min
+	frac := 0.0
+	if span > 0 {
+		frac = (n.Value - n.Min) / span
+	}
+	frac = min(max(frac, 0), 1)
+	fillW := int(float64(box.W) * frac)
+	if fillW > 0 {
+		c.FillRounded(ui.Rect{X: box.X, Y: y, W: fillW, H: trackH}, trackH/2, style.accent())
+	}
+	knob := style.Scale120.Physical(ui.SliderKnob)
+	if knob > box.H {
+		knob = box.H
+	}
+	kx := box.X + fillW - knob/2
+	if kx < box.X {
+		kx = box.X
+	}
+	if kx+knob > box.X+box.W {
+		kx = box.X + box.W - knob
+	}
+	c.FillRounded(ui.Rect{X: kx, Y: box.Y + (box.H-knob)/2, W: knob, H: knob}, knob/2, style.accent())
 }
 
 // paintGraph fills one column per sample, newest at the right, using the same

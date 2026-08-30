@@ -14,6 +14,8 @@ const (
 	KindColumn
 	KindSeparator
 	KindTab
+	KindToggle
+	KindSlider
 )
 
 // Rect is a logical-pixel rectangle.
@@ -30,6 +32,9 @@ type Node struct {
 	Kind  Kind
 	Text  string
 	Value float64
+	Min   float64
+	Max   float64
+	Step  float64
 	Width int
 	// Values are the graph's samples, oldest first, each already normalised to
 	// zero through one by the widget. The node carries no scale of its own.

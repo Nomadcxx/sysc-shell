@@ -76,6 +76,14 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 	case KindButton:
 		w, h := measure(n.Text, n.Tabular)
 		return w + 2*n.Padding, h + 2*n.Padding, nil
+	case KindToggle:
+		return ToggleWidth, ToggleHeight, nil
+	case KindSlider:
+		w := n.Width
+		if w <= 0 {
+			w = 160
+		}
+		return w, SliderKnob, nil
 	default:
 		return 0, 0, fmt.Errorf("unsupported kind %d", n.Kind)
 	}
