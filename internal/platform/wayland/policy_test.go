@@ -43,6 +43,35 @@ func TestDisabledHostDoesNotBuildABar(t *testing.T) {
 	}
 }
 
+// NewHost already acquired the bar's leases. A later validation failure must
+// still DropHost, or the clock goroutine outlives the host.
+func TestHostBecameReadyDropsAHostThatFailsValidation(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	var dropped uint32
+	o := owner{
+		cfg: &cfg,
+		cb: Callbacks{
+			NewHost: func(uint32, string) (HostCallbacks, error) {
+				return HostCallbacks{}, nil
+			},
+			DropHost: func(global uint32) { dropped = global },
+		},
+	}
+	h := newHost(7, nil)
+	h.connector = "DP-9"
+	h.doneSeen = true
+	h.state = hostReady
+
+	if err := o.hostBecameReady(h); err == nil {
+		t.Fatal("hostBecameReady accepted callbacks with no Configure")
+	}
+	if dropped != 7 {
+		t.Fatalf("DropHost(%d), want 7; NewHost succeeded and the leases leaked", dropped)
+	}
+}
+
 func TestHostGeometryUsesItsOwnPolicy(t *testing.T) {
 	t.Parallel()
 

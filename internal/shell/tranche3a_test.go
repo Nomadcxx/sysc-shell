@@ -73,6 +73,13 @@ func TestALongTitleStaysWithinItsCapAndKeepsItsNeighbour(t *testing.T) {
 	long := strings.Repeat("Fixture Title Segment ", 20) +
 		strings.Repeat("こんにちは世界 ", 10) +
 		strings.Repeat("مرحبا بالعالم ", 10)
+
+	bar := reg.bars[1]
+	// Live order: the owner configures while the title is still empty, then
+	// the first window arrives. Layout must follow the text, not the other way.
+	if err := bar.Configure(1920, 44, 120); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
 	reg.UpdateNiri(niri.Snapshot{
 		Workspaces: []niri.Workspace{
 			{ID: 5, Name: "code", Output: "DP-9", Active: true,
@@ -80,10 +87,8 @@ func TestALongTitleStaysWithinItsCapAndKeepsItsNeighbour(t *testing.T) {
 		},
 		Windows: []niri.Window{{ID: 80, Title: long}},
 	})
-
-	bar := reg.bars[1]
-	if err := bar.Configure(1920, 44, 120); err != nil {
-		t.Fatalf("Configure: %v", err)
+	if err := bar.Render(make([]byte, 1920*44*4), 1920, 44, 1920*4); err != nil {
+		t.Fatalf("Render: %v", err)
 	}
 
 	workspace := bar.left[0].node
@@ -151,6 +156,86 @@ func TestMovingAWindowInvalidatesOnlyTheOutputsItLeavesAndJoins(t *testing.T) {
 	}
 	if got := reg.bars[2].left[1].node.Text; got != "Fixture One" {
 		t.Fatalf("HDMI-A-9 title = %q, want the window it gained", got)
+	}
+}
+
+// Focus, title and close must invalidate only the bar whose text changed, the
+// same way a workspace switch and a move already do.
+func TestFocusTitleAndCloseInvalidateOnlyTheAffectedBar(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(config.Default())
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9", 2: "HDMI-A-9"})
+
+	base := niri.Snapshot{
+		Workspaces: []niri.Workspace{
+			{ID: 5, Name: "code", Output: "DP-9", Active: true,
+				ActiveWindowID: 80, HasActiveWindow: true},
+			{ID: 6, Name: "chat", Output: "HDMI-A-9", Active: true,
+				ActiveWindowID: 81, HasActiveWindow: true},
+		},
+		Windows: []niri.Window{
+			{ID: 80, Title: "Fixture One", WorkspaceID: 5, HasWorkspace: true},
+			{ID: 81, Title: "Fixture Two", WorkspaceID: 6, HasWorkspace: true},
+			{ID: 82, Title: "Fixture Three", WorkspaceID: 5, HasWorkspace: true},
+		},
+	}
+
+	cases := []struct {
+		name string
+		next niri.Snapshot
+	}{
+		{
+			name: "focus",
+			next: niri.Snapshot{
+				Workspaces: []niri.Workspace{
+					{ID: 5, Name: "code", Output: "DP-9", Active: true,
+						ActiveWindowID: 82, HasActiveWindow: true},
+					{ID: 6, Name: "chat", Output: "HDMI-A-9", Active: true,
+						ActiveWindowID: 81, HasActiveWindow: true},
+				},
+				Windows: base.Windows,
+			},
+		},
+		{
+			name: "title",
+			next: niri.Snapshot{
+				Workspaces: base.Workspaces,
+				Windows: []niri.Window{
+					{ID: 80, Title: "Fixture One renamed", WorkspaceID: 5, HasWorkspace: true},
+					base.Windows[1],
+					base.Windows[2],
+				},
+			},
+		},
+		{
+			name: "close",
+			next: niri.Snapshot{
+				Workspaces: []niri.Workspace{
+					{ID: 5, Name: "code", Output: "DP-9", Active: true},
+					{ID: 6, Name: "chat", Output: "HDMI-A-9", Active: true,
+						ActiveWindowID: 81, HasActiveWindow: true},
+				},
+				Windows: []niri.Window{base.Windows[1], base.Windows[2]},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reg.UpdateNiri(base)
+			changed := reg.UpdateNiri(tc.next)
+			seen := map[uint32]bool{}
+			for _, g := range changed {
+				seen[g] = true
+			}
+			if !seen[1] {
+				t.Fatalf("changed = %v, want global 1 for a %s on DP-9", changed, tc.name)
+			}
+			if seen[2] {
+				t.Fatalf("changed = %v, want HDMI-A-9 excluded for a %s on DP-9", changed, tc.name)
+			}
+		})
 	}
 }
 

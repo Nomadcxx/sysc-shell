@@ -318,10 +318,20 @@ func (o *owner) hostBecameReady(h *OutputHost) error {
 		return err
 	}
 	if err := app.validate(h.connector); err != nil {
+		if o.cb.DropHost != nil {
+			o.cb.DropHost(h.global)
+		}
 		return err
 	}
 	h.app = app
-	return o.createBar(h)
+	if err := o.createBar(h); err != nil {
+		if o.cb.DropHost != nil {
+			o.cb.DropHost(h.global)
+		}
+		h.app = HostCallbacks{}
+		return err
+	}
+	return nil
 }
 
 func (o *owner) destroyGlobals() error {

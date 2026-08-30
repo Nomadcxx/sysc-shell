@@ -238,6 +238,35 @@ func TestAnAcceptedReloadDoesNotRestartAServiceStillInUse(t *testing.T) {
 	}
 }
 
+// A format that coarsens or refines the tick must re-arm, not restart.
+func TestAnAcceptedReloadDoesNotRestartWhenTheClockBoundaryChanges(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(config.Default())
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9"})
+
+	if got := reg.Clock().Starts(); got != 1 {
+		t.Fatalf("clock starts = %d before reload, want 1", got)
+	}
+
+	candidate := config.Default()
+	candidate.Bar.Center = []config.Item{{
+		ID: "clock", Format: "15:04:05", Boundary: time.Second,
+	}}
+	prepared, err := reg.PrepareConfig(candidate, identities(map[uint32]string{1: "DP-9"}))
+	if err != nil {
+		t.Fatalf("PrepareConfig: %v", err)
+	}
+	prepared.Commit()
+
+	if got := reg.Clock().Starts(); got != 1 {
+		t.Fatalf("clock starts = %d after a boundary change, want 1; the service restarted", got)
+	}
+	if !reg.Clock().Running() {
+		t.Fatal("the clock stopped across a reload that still uses it")
+	}
+}
+
 func TestARejectedReloadLeavesServicesAndWidgetsUnchanged(t *testing.T) {
 	t.Parallel()
 	reg := NewRegistry(config.Default())
