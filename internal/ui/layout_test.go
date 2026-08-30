@@ -151,3 +151,53 @@ func TestHitOutsideActionableNodes(t *testing.T) {
 		})
 	}
 }
+
+// A text node with MaxWidth never measures wider than its cap, so unbounded
+// user text cannot consume a whole section.
+func TestTextIsClampedToItsMaxWidth(t *testing.T) {
+	t.Parallel()
+	// Ten pixels per rune keeps the arithmetic obvious.
+	measure := func(s string) (int, int) { return 10 * len([]rune(s)), 10 }
+
+	root := &Node{Kind: KindRow, Children: []*Node{
+		{Kind: KindText, Text: "aaaaaaaaaa", MaxWidth: 40},
+	}}
+	if err := Layout(root, Rect{X: 0, Y: 0, W: 200, H: 20}, measure); err != nil {
+		t.Fatalf("Layout: %v", err)
+	}
+	if got := root.Children[0].Bounds.W; got != 40 {
+		t.Fatalf("clamped width = %d, want the 40 cap", got)
+	}
+}
+
+// A cap wider than the text must not stretch it.
+func TestMaxWidthDoesNotPadShortText(t *testing.T) {
+	t.Parallel()
+	measure := func(s string) (int, int) { return 10 * len([]rune(s)), 10 }
+
+	root := &Node{Kind: KindRow, Children: []*Node{
+		{Kind: KindText, Text: "ab", MaxWidth: 200},
+	}}
+	if err := Layout(root, Rect{X: 0, Y: 0, W: 200, H: 20}, measure); err != nil {
+		t.Fatalf("Layout: %v", err)
+	}
+	if got := root.Children[0].Bounds.W; got != 20 {
+		t.Fatalf("width = %d, want the natural 20", got)
+	}
+}
+
+// Zero means unbounded, so existing nodes are unaffected.
+func TestZeroMaxWidthIsUnbounded(t *testing.T) {
+	t.Parallel()
+	measure := func(s string) (int, int) { return 10 * len([]rune(s)), 10 }
+
+	root := &Node{Kind: KindRow, Children: []*Node{
+		{Kind: KindText, Text: "aaaaa"},
+	}}
+	if err := Layout(root, Rect{X: 0, Y: 0, W: 200, H: 20}, measure); err != nil {
+		t.Fatalf("Layout: %v", err)
+	}
+	if got := root.Children[0].Bounds.W; got != 50 {
+		t.Fatalf("width = %d, want the natural 50", got)
+	}
+}

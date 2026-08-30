@@ -23,10 +23,14 @@ func (r Rect) Contains(x, y int) bool {
 // Node is one retained element. Layout fills Bounds; every other field is
 // supplied by the caller.
 type Node struct {
-	Kind     Kind
-	Text     string
-	Value    float64
-	Width    int
+	Kind  Kind
+	Text  string
+	Value float64
+	Width int
+	// MaxWidth caps a text node's measured width. Zero means unbounded. It
+	// exists because a focused-window title is unbounded user text: without a
+	// cap it would take a whole section's budget before anything truncated.
+	MaxWidth int
 	Padding  int
 	Gap      int
 	Action   string
