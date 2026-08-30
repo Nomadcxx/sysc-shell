@@ -45,8 +45,10 @@ type Event struct {
 	Serial uint32
 }
 
-// Invalidation requests a redraw. An empty Connector invalidates every bar.
-type Invalidation struct{ Connector string }
+// Invalidation requests a redraw of one bar, named by its wl_registry global.
+// A zero Global invalidates every bar; the compositor never assigns 0 as a
+// global name, so it is free to use as the broadcast sentinel.
+type Invalidation struct{ Global uint32 }
 
 // PreparedConfig holds replacement callbacks built before a reload changes
 // live state. Commit publishes their matching shell models after the Wayland
@@ -54,6 +56,10 @@ type Invalidation struct{ Connector string }
 type PreparedConfig struct {
 	Hosts  map[uint32]HostCallbacks
 	Commit func()
+	// Rollback undoes what preparing acquired. The owner can still reject a
+	// candidate after the application prepared it, and a prepared bar may hold
+	// service leases; without this they would leak a running goroutine.
+	Rollback func()
 }
 
 // HostIdentity carries the registry global that owns a bar and the connector
@@ -661,14 +667,15 @@ func (o *owner) nextJob() (*OutputHost, render.Decision, render.Job) {
 	return nil, render.DecisionWait, render.Job{}
 }
 
-// invalidate marks hosts dirty. An empty connector invalidates every bar, so
-// one output's workspace change never redraws another output's bar.
+// invalidate marks hosts dirty. A zero global invalidates every bar, so one
+// output's state change never redraws another output's bar. Two bars sharing a
+// connector during reconnect overlap stay separately addressable.
 func (o *owner) invalidate(inv Invalidation) {
 	for _, h := range o.hosts.each() {
 		if !h.alive {
 			continue
 		}
-		if inv.Connector == "" || h.connector == inv.Connector {
+		if inv.Global == 0 || h.global == inv.Global {
 			h.sched.Invalidate()
 		}
 	}
@@ -709,6 +716,13 @@ type preparedOwnerConfig struct {
 	commit func()
 }
 
+// abandon releases what a prepared candidate acquired, for an owner-side
+// failure after the application already prepared it.
+func abandon(prepared PreparedConfig, err error) (preparedOwnerConfig, error) {
+	prepared.Rollback()
+	return preparedOwnerConfig{}, err
+}
+
 // prepareConfig resolves and builds every ready host before changing live
 // owner or shell state.
 func (o *owner) prepareConfig(cfg config.Config) (preparedOwnerConfig, error) {
@@ -740,6 +754,9 @@ func (o *owner) prepareConfig(cfg config.Config) (preparedOwnerConfig, error) {
 	if prepared.Commit == nil {
 		return preparedOwnerConfig{}, errors.New("wayland: prepared config has no commit function")
 	}
+	if prepared.Rollback == nil {
+		return preparedOwnerConfig{}, errors.New("wayland: prepared config has no rollback function")
+	}
 
 	updates := make([]preparedHostConfig, 0, len(ready))
 	for i, h := range ready {
@@ -751,15 +768,16 @@ func (o *owner) prepareConfig(cfg config.Config) (preparedOwnerConfig, error) {
 		if update.policy.Enabled {
 			app, ok := prepared.Hosts[h.global]
 			if !ok {
-				return preparedOwnerConfig{}, fmt.Errorf("wayland: prepared config omitted %s", h.connector)
+				return abandon(prepared,
+					fmt.Errorf("wayland: prepared config omitted %s", h.connector))
 			}
 			if err := app.validate(h.connector); err != nil {
-				return preparedOwnerConfig{}, err
+				return abandon(prepared, err)
 			}
 			if h.state == hostMapped {
 				if err := app.Configure(h.ss.logicalWidth, h.ss.logicalHeight, int(h.ss.scale120)); err != nil {
-					return preparedOwnerConfig{}, fmt.Errorf(
-						"wayland: configure prepared replacement for %s: %w", h.connector, err)
+					return abandon(prepared, fmt.Errorf(
+						"wayland: configure prepared replacement for %s: %w", h.connector, err))
 				}
 			}
 			update.app = app

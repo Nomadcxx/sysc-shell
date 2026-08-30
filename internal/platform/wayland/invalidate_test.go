@@ -20,24 +20,43 @@ func mappedHost(s *hostSet, global uint32, connector string) *OutputHost {
 	return h
 }
 
-func TestInvalidationRoutesToOneConnector(t *testing.T) {
+func TestInvalidationRoutesToOneGlobal(t *testing.T) {
 	t.Parallel()
 	s := newHostSet()
 	a := mappedHost(s, 1, "DP-1")
 	b := mappedHost(s, 2, "DP-3")
 
 	o := &owner{hosts: s}
-	o.invalidate(Invalidation{Connector: "DP-3"})
+	o.invalidate(Invalidation{Global: 2})
 
 	if d, _ := a.sched.Next(); d == render.DecisionRender {
-		t.Fatal("DP-1 was invalidated by an event addressed to DP-3")
+		t.Fatal("global 1 was invalidated by an event addressed to global 2")
 	}
 	if d, _ := b.sched.Next(); d != render.DecisionRender {
-		t.Fatal("DP-3 was not invalidated")
+		t.Fatal("global 2 was not invalidated")
 	}
 }
 
-func TestEmptyConnectorInvalidatesEveryBar(t *testing.T) {
+// Reconnect overlap puts two bars on one connector. Each must stay separately
+// addressable, which connector-keyed routing could not express.
+func TestTwoGlobalsSharingAConnectorAreAddressedSeparately(t *testing.T) {
+	t.Parallel()
+	s := newHostSet()
+	old := mappedHost(s, 1, "DP-1")
+	fresh := mappedHost(s, 2, "DP-1")
+
+	o := &owner{hosts: s}
+	o.invalidate(Invalidation{Global: 2})
+
+	if d, _ := old.sched.Next(); d == render.DecisionRender {
+		t.Fatal("the outgoing bar was invalidated by its replacement's global")
+	}
+	if d, _ := fresh.sched.Next(); d != render.DecisionRender {
+		t.Fatal("the replacement bar was not invalidated")
+	}
+}
+
+func TestAZeroGlobalInvalidatesEveryBar(t *testing.T) {
 	t.Parallel()
 	s := newHostSet()
 	a := mappedHost(s, 1, "DP-1")

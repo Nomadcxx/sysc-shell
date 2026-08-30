@@ -75,7 +75,7 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style ProofStyle) error
 func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size int) error {
 	switch n.Kind {
 	case ui.KindText:
-		return paintText(c, n.Text, style.Scale120.PhysicalRect(n.Bounds), text, style, size)
+		return paintText(c, n.Text, style.Scale120.PhysicalRect(n.Bounds), text, style, size, n.Tabular)
 
 	case ui.KindMeter:
 		box := style.Scale120.PhysicalRect(n.Bounds)
@@ -93,7 +93,7 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 			W: n.Bounds.W - 2*n.Padding,
 			H: n.Bounds.H - 2*n.Padding,
 		}
-		return paintText(c, n.Text, style.Scale120.PhysicalRect(label), text, style, size)
+		return paintText(c, n.Text, style.Scale120.PhysicalRect(label), text, style, size, n.Tabular)
 
 	default:
 		return fmt.Errorf("unsupported kind %d", n.Kind)
@@ -105,18 +105,20 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 // Truncation happens here rather than in layout because it needs cluster
 // measurement, which the text renderer owns. The box is already physical, so
 // the available width is compared in the same units the shaper reports.
-func paintText(c *Canvas, s string, box ui.Rect, text *TextRenderer, style ProofStyle, size int) error {
+func paintText(c *Canvas, s string, box ui.Rect, text *TextRenderer, style ProofStyle, size int, tabular bool) error {
 	if s == "" || box.W <= 0 {
 		return nil
 	}
-	fitted, _, err := text.Truncate(s, size, box.W)
+	fitted, _, err := text.Truncate(s, size, box.W, tabular)
 	if err != nil {
 		return err
 	}
 	if fitted == "" {
 		return nil // not even an ellipsis fits
 	}
-	mask, err := text.Raster(fitted, size)
+	// Raster with the same flag measurement used, or the drawn run and the
+	// space reserved for it would disagree.
+	mask, err := text.Raster(fitted, size, tabular)
 	if err != nil {
 		return err
 	}

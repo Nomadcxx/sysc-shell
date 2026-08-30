@@ -8,7 +8,21 @@ package config
 import (
 	"fmt"
 	"strings"
+	"time"
 )
+
+// Item is one validated widget instance. Options live on the instance rather
+// than the bar, so one bar can carry two clocks with different formats.
+type Item struct {
+	ID string
+	// Format is the Go layout string for a clock. Empty on other items.
+	Format string
+	// Boundary is how often this clock's text can change, derived from Format
+	// at load. Zero on other items.
+	Boundary time.Duration
+	// MaxWidth caps a window title in logical pixels. Zero on other items.
+	MaxWidth int
+}
 
 // Bar is the resolved policy for one bar.
 type Bar struct {
@@ -21,9 +35,9 @@ type Bar struct {
 	Radius     int
 	FontFamily string
 	FontSize   int
-	Left       []string
-	Center     []string
-	Right      []string
+	Left       []Item
+	Center     []Item
+	Right      []Item
 }
 
 // Theme is the resolved visual token set. Colours are #RRGGBB or #RRGGBBAA.
@@ -56,14 +70,23 @@ type Config struct {
 	Outputs []OutputOverride
 }
 
-// knownItems is the Milestone 2 item vocabulary.
-//
-// Unknown ids are rejected rather than ignored, so Milestone 3 defines the real
-// vocabulary instead of inheriting an accidental one, and so a typo in a
-// hand-edited file is visible rather than silently dropping a widget.
+// knownItems is the Tranche 3A widget vocabulary. The Milestone 2 fixture ids
+// are deliberately absent: there is no compatibility promise, so a stale
+// configuration fails loudly instead of silently dropping a widget.
 var knownItems = map[string]struct{}{
-	"shell-name": {}, "workspace": {}, "meter": {}, "toggle": {},
+	"clock": {}, "workspace": {}, "window-title": {},
 }
+
+const (
+	// defaultClockFormat and defaultDateFormat are the two default clock
+	// instances. There is no separate date widget: a date is a clock with a
+	// coarser layout.
+	defaultClockFormat = "15:04"
+	defaultDateFormat  = "Mon 2 Jan"
+	// defaultTitleMaxWidth matches the shipped default in the reference
+	// shells, which cap the focused-window title at 250 to 260 logical pixels.
+	defaultTitleMaxWidth = 260
+)
 
 // supportedEdges names every edge the model understands and whether this
 // milestone implements it. An unimplemented edge is rejected with a named
@@ -79,9 +102,16 @@ func Default() Config {
 			Enabled: true, Edge: "top",
 			Height: 48, Gap: 4, Padding: 6, Spacing: 4, Radius: 12,
 			FontFamily: "sans-serif", FontSize: 14,
-			Left:   []string{"shell-name"},
-			Center: []string{"workspace"},
-			Right:  []string{"meter", "toggle"},
+			Left: []Item{
+				{ID: "workspace"},
+				{ID: "window-title", MaxWidth: defaultTitleMaxWidth},
+			},
+			Center: []Item{
+				{ID: "clock", Format: defaultClockFormat, Boundary: time.Minute},
+			},
+			Right: []Item{
+				{ID: "clock", Format: defaultDateFormat, Boundary: time.Minute},
+			},
 		},
 		Theme: Theme{
 			Background: "#101418", Foreground: "#e8ecf0",

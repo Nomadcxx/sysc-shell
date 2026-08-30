@@ -32,9 +32,9 @@ const (
 		`{"id":5,"idx":1,"name":"code","output":"DP-3","is_urgent":false,"is_active":true,"is_focused":true,"active_window_id":80},` +
 		`{"id":6,"idx":2,"name":null,"output":null,"is_urgent":false,"is_active":false,"is_focused":false,"active_window_id":null}]}}`
 
-	// Events the proof does not model and must ignore.
-	unknownEvents = `{"WindowsChanged":{"windows":[]}}` + "\n" +
-		`{"KeyboardLayoutsChanged":{"keyboard_layouts":{"names":["English (US)"],"current_idx":0}}}` + "\n" +
+	// Events the shell does not model and must ignore. WindowsChanged left this
+	// set when window state became modelled state.
+	unknownEvents = `{"KeyboardLayoutsChanged":{"keyboard_layouts":{"names":["English (US)"],"current_idx":0}}}` + "\n" +
 		`{"OverviewOpenedOrClosed":{"is_open":false}}` + "\n" +
 		`{"ConfigLoaded":{"failed":false}}`
 )
@@ -388,5 +388,35 @@ func TestStreamFailsOnMissingSocket(t *testing.T) {
 	snapshots, errs := Stream(ctx, "/nonexistent/niri.sock")
 	if err := nextError(t, snapshots, errs); err == nil {
 		t.Fatal("Stream accepted a socket path that does not exist")
+	}
+}
+
+// A full initial burst, as the compositor sends it: workspaces, then windows.
+const initialBurst = `{"WorkspacesChanged":{"workspaces":[` +
+	`{"id":5,"idx":1,"name":"code","output":"DP-9","is_urgent":false,` +
+	`"is_active":true,"is_focused":true,"active_window_id":80}]}}` + "\n" +
+	`{"WindowsChanged":{"windows":[` +
+	`{"id":80,"title":"Fixture One","app_id":"fixture.one","pid":1000,"workspace_id":5,` +
+	`"is_focused":true,"is_floating":false,"is_urgent":false,"layout":{},"focus_timestamp":null}]}}`
+
+func TestTheStreamDeliversWindowState(t *testing.T) {
+	t.Parallel()
+	server := startFakeNiri(t, replyOK, initialBurst)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Each event publishes once, so the workspace snapshot arrives before the
+	// window one. Draining to channel close instead would assert on the fake
+	// server hanging up, which the client correctly reports as a failure.
+	snapshots, errs := Stream(ctx, server.path)
+	nextSnapshot(t, snapshots, errs)
+	last := nextSnapshot(t, snapshots, errs)
+
+	if len(last.Windows) != 1 || last.Windows[0].Title != "Fixture One" {
+		t.Fatalf("windows = %+v, want one titled Fixture One", last.Windows)
+	}
+	if len(last.Workspaces) != 1 || !last.Workspaces[0].HasActiveWindow {
+		t.Fatalf("workspaces = %+v, want one with an active window", last.Workspaces)
 	}
 }

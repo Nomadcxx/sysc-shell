@@ -53,7 +53,10 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, error) {
 	switch n.Kind {
 	case KindText:
-		w, h := measure(n.Text)
+		w, h := measure(n.Text, n.Tabular)
+		if n.MaxWidth > 0 && w > n.MaxWidth {
+			w = n.MaxWidth
+		}
 		return w, h, nil
 	case KindMeter:
 		if n.Value < 0 || n.Value > 1 {
@@ -61,7 +64,7 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		}
 		return n.Width, contentHeight, nil
 	case KindButton:
-		w, h := measure(n.Text)
+		w, h := measure(n.Text, n.Tabular)
 		return w + 2*n.Padding, h + 2*n.Padding, nil
 	default:
 		return 0, 0, fmt.Errorf("unsupported kind %d", n.Kind)

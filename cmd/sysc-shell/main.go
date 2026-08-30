@@ -34,6 +34,9 @@ func run(ctx context.Context) error {
 	}
 
 	registry := shell.NewRegistry(cfg)
+	// Releases every service lease and stops the clock goroutine when the
+	// process unwinds, whether through cancellation or an error return.
+	defer registry.Close()
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -57,6 +60,20 @@ func run(ctx context.Context) error {
 					cancel()
 				}
 				return
+			}
+		}
+	}()
+
+	// The clock publishes on its own goroutine; this pump turns each snapshot
+	// into per-bar text and hands the changed outputs to the Wayland owner.
+	// One tick serves every bar.
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-registry.Clock().Updates():
+				registry.UpdateClock(now)
 			}
 		}
 	}()

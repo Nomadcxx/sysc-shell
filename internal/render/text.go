@@ -84,15 +84,20 @@ func NewTextRendererWithFontMap(fontMap *FontMap) *TextRenderer {
 	return &TextRenderer{face: fontMap.Primary(), fontMap: fontMap}
 }
 
-// Shape lays out one run at the given physical pixel size.
-func (r *TextRenderer) Shape(text string, size int) (shaping.Output, error) {
+// tabularFigures is the OpenType feature that gives every digit the same
+// advance. Applied per call, because only some runs want it.
+var tabularFigures = []shaping.FontFeature{{Tag: ot.MustNewTag("tnum"), Value: 1}}
+
+// Shape lays out one run at the given physical pixel size. When tabular is
+// set, digits shape with equal advances.
+func (r *TextRenderer) Shape(text string, size int, tabular bool) (shaping.Output, error) {
 	if r == nil || r.face == nil {
 		return shaping.Output{}, fmt.Errorf("render: nil face")
 	}
-	return r.shapeFace(r.face, text, size)
+	return r.shapeFace(r.face, text, size, tabular)
 }
 
-func (r *TextRenderer) shapeFace(face *font.Face, text string, size int) (shaping.Output, error) {
+func (r *TextRenderer) shapeFace(face *font.Face, text string, size int, tabular bool) (shaping.Output, error) {
 	if face == nil {
 		return shaping.Output{}, fmt.Errorf("render: nil face")
 	}
@@ -102,7 +107,7 @@ func (r *TextRenderer) shapeFace(face *font.Face, text string, size int) (shapin
 
 	runes := []rune(text)
 	script := runScript(runes)
-	return r.shaper.Shape(shaping.Input{
+	input := shaping.Input{
 		Text:      runes,
 		RunStart:  0,
 		RunEnd:    len(runes),
@@ -111,7 +116,11 @@ func (r *TextRenderer) shapeFace(face *font.Face, text string, size int) (shapin
 		Size:      fixed.I(size),
 		Script:    script,
 		Language:  language.NewLanguage("und"),
-	}), nil
+	}
+	if tabular {
+		input.FontFeatures = tabularFigures
+	}
+	return r.shaper.Shape(input), nil
 }
 
 type shapedFaceRun struct {
@@ -121,7 +130,7 @@ type shapedFaceRun struct {
 	output    shaping.Output
 }
 
-func (r *TextRenderer) shapeRuns(text string, size int) ([]shapedFaceRun, error) {
+func (r *TextRenderer) shapeRuns(text string, size int, tabular bool) ([]shapedFaceRun, error) {
 	if r == nil || r.face == nil {
 		return nil, fmt.Errorf("render: nil face")
 	}
@@ -135,7 +144,7 @@ func (r *TextRenderer) shapeRuns(text string, size int) ([]shapedFaceRun, error)
 	shaped := make([]shapedFaceRun, 0, len(fontRuns))
 	runeStart := 0
 	for _, run := range fontRuns {
-		out, err := r.shapeFace(run.Face, run.Text, size)
+		out, err := r.shapeFace(run.Face, run.Text, size, tabular)
 		if err != nil {
 			return nil, err
 		}
@@ -158,8 +167,8 @@ func shapedMetrics(runs []shapedFaceRun) (advance fixed.Int26_6, width, height, 
 }
 
 // Measure reports the advance width and line height of a run in pixels.
-func (r *TextRenderer) Measure(text string, size int) (int, int, error) {
-	runs, err := r.shapeRuns(text, size)
+func (r *TextRenderer) Measure(text string, size int, tabular bool) (int, int, error) {
+	runs, err := r.shapeRuns(text, size, tabular)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -167,9 +176,11 @@ func (r *TextRenderer) Measure(text string, size int) (int, int, error) {
 	return w, h, nil
 }
 
-// Raster shapes a run and draws its glyphs into an alpha mask.
-func (r *TextRenderer) Raster(text string, size int) (Mask, error) {
-	runs, err := r.shapeRuns(text, size)
+// Raster shapes a run and draws its glyphs into an alpha mask. The tabular
+// flag must match the one measurement used, or the drawn run and the space
+// reserved for it would disagree.
+func (r *TextRenderer) Raster(text string, size int, tabular bool) (Mask, error) {
+	runs, err := r.shapeRuns(text, size, tabular)
 	if err != nil {
 		return Mask{}, err
 	}

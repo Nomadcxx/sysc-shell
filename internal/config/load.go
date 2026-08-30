@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"time"
 )
 
 // Wire types use pointers so an absent field is distinguishable from its zero
@@ -17,10 +18,40 @@ type wireFont struct {
 	Size   *int    `json:"size"`
 }
 
+// wireItem decodes either a bare id string or an object carrying that id plus
+// its options. Both reference shells attach options per instance, and a
+// max-width has nowhere else to live.
+type wireItem struct {
+	ID       string  `json:"id"`
+	Format   *string `json:"format"`
+	MaxWidth *int    `json:"max-width"`
+}
+
+func (i *wireItem) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) > 0 && trimmed[0] == '"' {
+		var id string
+		if err := json.Unmarshal(trimmed, &id); err != nil {
+			return err
+		}
+		*i = wireItem{ID: id}
+		return nil
+	}
+	// A local type without this method, so decoding the object form does not
+	// recurse into UnmarshalJSON.
+	type plain wireItem
+	var p plain
+	if err := json.Unmarshal(trimmed, &p); err != nil {
+		return err
+	}
+	*i = wireItem(p)
+	return nil
+}
+
 type wireItems struct {
-	Left   *[]string `json:"left"`
-	Center *[]string `json:"center"`
-	Right  *[]string `json:"right"`
+	Left   *[]wireItem `json:"left"`
+	Center *[]wireItem `json:"center"`
+	Right  *[]wireItem `json:"right"`
 }
 
 type wireBar struct {
@@ -212,16 +243,99 @@ func validateBar(b Bar, path string) error {
 	return nil
 }
 
-func items(supplied *[]string, base []string, path string) ([]string, error) {
+// items resolves one section, rejecting the whole candidate on the first
+// failure and naming its exact field path.
+func items(supplied *[]wireItem, base []Item, path string) ([]Item, error) {
 	if supplied == nil {
 		return base, nil
 	}
-	for i, id := range *supplied {
-		if _, ok := knownItems[id]; !ok {
-			return nil, pathErr(fmt.Sprintf("%s[%d]", path, i), "%q is not a known item", id)
+	out := make([]Item, 0, len(*supplied))
+	for i, w := range *supplied {
+		item, err := resolveItem(w, fmt.Sprintf("%s[%d]", path, i))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+// resolveItem validates one item and fills in its defaults. An option supplied
+// on an item that does not accept it is an error rather than a silently
+// ignored field, so a misplaced setting is visible.
+func resolveItem(w wireItem, path string) (Item, error) {
+	if _, ok := knownItems[w.ID]; !ok {
+		return Item{}, pathErr(path, "%q is not a known item", w.ID)
+	}
+	item := Item{ID: w.ID}
+
+	if w.Format != nil && w.ID != "clock" {
+		return Item{}, pathErr(path+".format", "is accepted only on a clock, not on %q", w.ID)
+	}
+	if w.MaxWidth != nil && w.ID != "window-title" {
+		return Item{}, pathErr(path+".max-width", "is accepted only on a window-title, not on %q", w.ID)
+	}
+
+	switch w.ID {
+	case "clock":
+		item.Format = defaultClockFormat
+		if w.Format != nil {
+			item.Format = *w.Format
+		}
+		boundary, err := clockBoundary(item.Format)
+		if err != nil {
+			return Item{}, pathErr(path+".format", "%s", err)
+		}
+		item.Boundary = boundary
+	case "window-title":
+		item.MaxWidth = defaultTitleMaxWidth
+		if w.MaxWidth != nil {
+			if *w.MaxWidth <= 0 {
+				return Item{}, pathErr(path+".max-width", "%d is not positive", *w.MaxWidth)
+			}
+			item.MaxWidth = *w.MaxWidth
 		}
 	}
-	return append([]string(nil), *supplied...), nil
+	return item, nil
+}
+
+// clockProbeBase is a fixed instant in UTC, so boundary derivation is
+// deterministic and independent of the machine's clock and zone.
+var clockProbeBase = time.Date(2026, 8, 30, 15, 4, 5, 0, time.UTC)
+
+// clockProbes ascend, so the first one that changes the rendered text names
+// the resolution the layout displays. The long tail exists to distinguish a
+// legitimately coarse layout such as "January 2006" from a typo.
+var clockProbes = []time.Duration{
+	time.Second, time.Minute, time.Hour,
+	24 * time.Hour, 32 * 24 * time.Hour, 400 * 24 * time.Hour,
+}
+
+// clockBoundary reports how often a layout's text can change.
+//
+// time.Format never returns an error, so a layout cannot be validated by
+// parsing it; it can be validated by observing it. A layout that renders
+// identically at every probe does not depend on the time at all, which is what
+// a non-layout such as "HH:MM" does.
+//
+// The result is capped at one minute even for a daily layout. Truncating to a
+// day would truncate to UTC midnight rather than local midnight, so a date
+// would flip at the wrong moment and break across a daylight-saving change.
+// Re-rendering once a minute and detecting no change is correct and needs no
+// calendar arithmetic.
+func clockBoundary(layout string) (time.Duration, error) {
+	base := clockProbeBase.Format(layout)
+	for _, probe := range clockProbes {
+		if clockProbeBase.Add(probe).Format(layout) == base {
+			continue
+		}
+		if probe == time.Second {
+			return time.Second, nil
+		}
+		return time.Minute, nil
+	}
+	return 0, fmt.Errorf(
+		"%q does not change with time; a Go layout uses a reference instant such as 15:04", layout)
 }
 
 func applyTheme(base Theme, w wireTheme, path string) (Theme, error) {

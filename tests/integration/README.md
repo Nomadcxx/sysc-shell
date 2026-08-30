@@ -111,3 +111,48 @@ pkill -HUP sysc-shell
 
 Each bar must adopt the candidate together. Then write `{"bar": {"height": 4, "gap": 4}}`, send
 `SIGHUP`, and confirm that each bar retains its prior state and the error names `bar.height`.
+
+## Tranche 3A: built-in widget foundation
+
+Run only after Milestone 2 passes its own live matrix. Record connector names,
+window titles and measurements outside this repository.
+
+Build and start:
+
+    go build -o /tmp/sysc-shell-milestone3 ./cmd/sysc-shell
+    /tmp/sysc-shell-milestone3
+
+Matrix:
+
+1. One output, then at least two. Every configured output receives exactly one
+   bar, with clock, date, workspace and title.
+2. One clock snapshot on every bar: the minute changes on all bars together.
+3. Independent per-output text: switch workspaces on one monitor and confirm
+   the other monitor's workspace and title do not change.
+4. Focus a different window in the same workspace and confirm the title
+   updates. This is the one behavior the design could not verify offline: it
+   assumes Niri emits WorkspaceActiveWindowChanged for an in-workspace focus
+   move. If the title does not update, consume WindowFocusChanged as a second
+   trigger and re-run.
+5. Retitle a window (change a browser tab) and confirm only that output's bar
+   repaints.
+6. Unplug and replug an output. No duplicate bar, no missing widget, no leaked
+   instance.
+7. Edit the configuration to add and remove clock and Niri widgets, then
+   SIGHUP. Confirm the new set renders and the clock does not visibly stall.
+8. Write an invalid configuration and SIGHUP. Confirm the previous widgets stay
+   live and the error names its field path on stderr.
+9. Kill the Niri socket. Confirm the shell exits cleanly with a named error and
+   leaves no process or socket behind.
+10. Suspend and resume. Confirm the clock catches up within one boundary
+    (at most 60 seconds).
+
+Baselines to record before setting any budget:
+
+- idle CPU and wakeups over 60 minutes, with a minute-boundary clock;
+- CPU during clock ticks and during a burst of window title changes;
+- RSS after one hour;
+- submitted and skipped frame counts;
+- layout and paint duration per update;
+- allocations per update;
+- binary size.

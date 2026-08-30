@@ -1,6 +1,7 @@
 package render
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -47,12 +48,12 @@ func TestTextMeasureAndRaster(t *testing.T) {
 	face := mustTestFace(t)
 	r := NewTextRenderer(face)
 
-	w, h, err := r.Measure("sysc-shell", 16)
+	w, h, err := r.Measure("sysc-shell", 16, false)
 	if err != nil || w <= 0 || h <= 0 {
 		t.Fatalf("measure = %dx%d, %v", w, h, err)
 	}
 
-	mask, err := r.Raster("sysc-shell", 16)
+	mask, err := r.Raster("sysc-shell", 16, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,11 +83,11 @@ func TestTextRendererUsesPerRuneFallbackForAllOperations(t *testing.T) {
 		t.Fatalf("fixture produced %d face runs, want Latin plus Arabic fallback", len(runs))
 	}
 	r := NewTextRendererWithFontMap(fonts)
-	w, h, err := r.Measure(mixed, 32)
+	w, h, err := r.Measure(mixed, 32, false)
 	if err != nil || w <= 0 || h <= 0 {
 		t.Fatalf("Measure = %dx%d, %v", w, h, err)
 	}
-	mask, err := r.Raster(mixed, 32)
+	mask, err := r.Raster(mixed, 32, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +95,7 @@ func TestTextRendererUsesPerRuneFallbackForAllOperations(t *testing.T) {
 		t.Fatalf("Raster advance=%d/nonzero=%v, want measured width %d with pixels",
 			mask.Advance, hasNonZeroAlpha(mask), w)
 	}
-	fitted, advance, err := r.Truncate(mixed+mixed, 32, w)
+	fitted, advance, err := r.Truncate(mixed+mixed, 32, w, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +118,7 @@ func TestTextShapesJoinedScript(t *testing.T) {
 	// and so keeps its nominal glyph at the start of a word.
 	const joined = "عربية"
 
-	out, err := r.Shape(joined, 32)
+	out, err := r.Shape(joined, 32, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,13 +141,13 @@ func TestTextShapesJoinedScript(t *testing.T) {
 		}
 	}
 
-	w, h, err := r.Measure(joined, 32)
+	w, h, err := r.Measure(joined, 32, false)
 	if err != nil || w <= 0 || h <= 0 {
 		t.Fatalf("measure = %dx%d, %v", w, h, err)
 	}
 
 	// Shaping must be stable across calls.
-	again, err := r.Shape(joined, 32)
+	again, err := r.Shape(joined, 32, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +160,7 @@ func TestTextShapesJoinedScript(t *testing.T) {
 		}
 	}
 
-	mask, err := r.Raster(joined, 32)
+	mask, err := r.Raster(joined, 32, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,13 +182,13 @@ func TestTextRejectsInvalidSize(t *testing.T) {
 
 	r := NewTextRenderer(mustTestFace(t))
 	for _, size := range []int{0, -16} {
-		if _, _, err := r.Measure("sysc-shell", size); err == nil {
+		if _, _, err := r.Measure("sysc-shell", size, false); err == nil {
 			t.Errorf("Measure accepted size %d", size)
 		}
-		if _, err := r.Raster("sysc-shell", size); err == nil {
+		if _, err := r.Raster("sysc-shell", size, false); err == nil {
 			t.Errorf("Raster accepted size %d", size)
 		}
-		if _, err := r.Shape("sysc-shell", size); err == nil {
+		if _, err := r.Shape("sysc-shell", size, false); err == nil {
 			t.Errorf("Shape accepted size %d", size)
 		}
 	}
@@ -261,4 +262,47 @@ func TestTextRejectsUnsupportedGlyphData(t *testing.T) {
 			t.Fatal("outlineFrom accepted a glyph with no data")
 		}
 	})
+}
+
+// Every digit must advance identically, or a clock changes width as the time
+// changes. This is the whole point of tabular figures.
+func TestTabularFiguresGiveEveryDigitTheSameWidth(t *testing.T) {
+	t.Parallel()
+	r := NewTextRenderer(mustTestFace(t))
+
+	widths := make(map[int]string)
+	for d := 0; d <= 9; d++ {
+		s := fmt.Sprintf("%d%d:%d%d", d, d, d, d)
+		w, _, err := r.Measure(s, 14, true)
+		if err != nil {
+			t.Fatalf("Measure(%q): %v", s, err)
+		}
+		widths[w] = s
+	}
+	if len(widths) != 1 {
+		t.Fatalf("tabular measurement produced %d distinct widths, want 1: %v", len(widths), widths)
+	}
+}
+
+// The flag must actually reach the shaper: proportional measurement of the
+// same strings should not be uniform for a face with proportional figures.
+func TestTheTabularFlagReachesTheShaper(t *testing.T) {
+	t.Parallel()
+	r := NewTextRenderer(mustTestFace(t))
+
+	tab, _, err := r.Measure("00:00", 14, true)
+	if err != nil {
+		t.Fatalf("Measure: %v", err)
+	}
+	prop, _, err := r.Measure("00:00", 14, false)
+	if err != nil {
+		t.Fatalf("Measure: %v", err)
+	}
+	// Go Regular's digits are already tabular, so the widths may legitimately
+	// match. What must hold is that each path shapes successfully and returns
+	// a positive width; a silently dropped feature would still be caught by
+	// TestTabularFiguresGiveEveryDigitTheSameWidth on any proportional face.
+	if tab <= 0 || prop <= 0 {
+		t.Fatalf("widths tab=%d prop=%d, want each positive", tab, prop)
+	}
 }

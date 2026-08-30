@@ -22,11 +22,32 @@ type Workspace struct {
 	Output  string
 	Active  bool
 	Focused bool
+	// ActiveWindowID is meaningful only when HasActiveWindow is set. It is the
+	// workspace's own active window, which is what makes a per-output focused
+	// title possible; Niri's global focus is a separate concept the shell does
+	// not project.
+	ActiveWindowID  uint64
+	HasActiveWindow bool
 }
 
-// Snapshot is an immutable view of workspace state.
+// Window is one Niri window. Only the fields the shell projects are decoded.
+// Layout, focus timestamp, urgency and floating state have no consumer, so an
+// event carrying them decodes and ignores them.
+type Window struct {
+	ID    uint64
+	Title string
+	AppID string
+	// WorkspaceID is meaningful only when HasWorkspace is set. Niri sends
+	// workspace_id as null for a window on no workspace, which is distinct
+	// from workspace zero.
+	WorkspaceID  uint64
+	HasWorkspace bool
+}
+
+// Snapshot is an immutable view of workspace and window state.
 type Snapshot struct {
 	Workspaces []Workspace
+	Windows    []Window
 	// FocusedOutput is derived from the workspace whose is_focused is true.
 	// Niri has no dedicated event or field for it.
 	FocusedOutput string
@@ -41,6 +62,8 @@ type wireWorkspace struct {
 	Output    *string `json:"output"`
 	IsActive  *bool   `json:"is_active"`
 	IsFocused *bool   `json:"is_focused"`
+
+	ActiveWindowID *uint64 `json:"active_window_id"`
 }
 
 // project validates the required fields and maps nullable ones to empty
@@ -64,6 +87,9 @@ func (w wireWorkspace) project() (Workspace, error) {
 	if w.Output != nil {
 		out.Output = *w.Output
 	}
+	if w.ActiveWindowID != nil {
+		out.ActiveWindowID, out.HasActiveWindow = *w.ActiveWindowID, true
+	}
 	return out, nil
 }
 
@@ -76,9 +102,57 @@ type wireWorkspaceActivated struct {
 	Focused *bool   `json:"focused"`
 }
 
-// state accumulates workspace events into snapshots.
+type wireWorkspaceActiveWindowChanged struct {
+	WorkspaceID    *uint64 `json:"workspace_id"`
+	ActiveWindowID *uint64 `json:"active_window_id"`
+}
+
+// wireWindow decodes one window. Only id is required; Niri sends title,
+// app_id and workspace_id as null in legitimate states.
+type wireWindow struct {
+	ID          *uint64 `json:"id"`
+	Title       *string `json:"title"`
+	AppID       *string `json:"app_id"`
+	WorkspaceID *uint64 `json:"workspace_id"`
+}
+
+func (w wireWindow) project() (Window, error) {
+	if w.ID == nil {
+		return Window{}, fmt.Errorf("niri: window is missing id")
+	}
+	out := Window{ID: *w.ID}
+	if w.Title != nil {
+		out.Title = *w.Title
+	}
+	if w.AppID != nil {
+		out.AppID = *w.AppID
+	}
+	if w.WorkspaceID != nil {
+		out.WorkspaceID, out.HasWorkspace = *w.WorkspaceID, true
+	}
+	return out, nil
+}
+
+type wireWindowsChanged struct {
+	Windows []wireWindow `json:"windows"`
+}
+
+type wireWindowOpenedOrChanged struct {
+	Window wireWindow `json:"window"`
+}
+
+type wireWindowClosed struct {
+	ID *uint64 `json:"id"`
+}
+
+// state accumulates workspace and window events into snapshots.
+//
+// last is the most recently published snapshot. Comparing against it is what
+// keeps an event that changes no projected field from waking the shell.
 type state struct {
 	workspaces []Workspace
+	windows    []Window
+	last       Snapshot
 }
 
 // apply decodes one event line. It reports whether a new snapshot should be
@@ -106,7 +180,7 @@ func (s *state) apply(line []byte) (bool, error) {
 			next = append(next, projected)
 		}
 		s.workspaces = next
-		return true, nil
+		return s.publishIfChanged(), nil
 	}
 
 	if payload, ok := envelope["WorkspaceActivated"]; ok {
@@ -117,7 +191,90 @@ func (s *state) apply(line []byte) (bool, error) {
 		if activated.ID == nil || activated.Focused == nil {
 			return false, fmt.Errorf("niri: WorkspaceActivated is missing id or focused")
 		}
-		return true, s.activate(*activated.ID, *activated.Focused)
+		if err := s.activate(*activated.ID, *activated.Focused); err != nil {
+			return false, err
+		}
+		return s.publishIfChanged(), nil
+	}
+
+	if payload, ok := envelope["WorkspaceActiveWindowChanged"]; ok {
+		var changed wireWorkspaceActiveWindowChanged
+		if err := json.Unmarshal(payload, &changed); err != nil {
+			return false, fmt.Errorf("niri: decode WorkspaceActiveWindowChanged: %w", err)
+		}
+		if changed.WorkspaceID == nil {
+			return false, fmt.Errorf("niri: WorkspaceActiveWindowChanged is missing workspace_id")
+		}
+		i := slices.IndexFunc(s.workspaces, func(w Workspace) bool { return w.ID == *changed.WorkspaceID })
+		if i < 0 {
+			// WorkspacesChanged always precedes this event, so an unknown id
+			// means the stream and this state have diverged. There is nowhere
+			// to record the active window, so the title would go stale
+			// silently.
+			return false, fmt.Errorf(
+				"niri: WorkspaceActiveWindowChanged names unknown workspace %d", *changed.WorkspaceID)
+		}
+		if changed.ActiveWindowID != nil {
+			s.workspaces[i].ActiveWindowID = *changed.ActiveWindowID
+			s.workspaces[i].HasActiveWindow = true
+		} else {
+			s.workspaces[i].ActiveWindowID, s.workspaces[i].HasActiveWindow = 0, false
+		}
+		return s.publishIfChanged(), nil
+	}
+
+	if payload, ok := envelope["WindowsChanged"]; ok {
+		var changed wireWindowsChanged
+		if err := json.Unmarshal(payload, &changed); err != nil {
+			return false, fmt.Errorf("niri: decode WindowsChanged: %w", err)
+		}
+		// Build the whole set before replacing state, so a malformed member
+		// cannot publish a partial snapshot.
+		next := make([]Window, 0, len(changed.Windows))
+		for _, w := range changed.Windows {
+			projected, err := w.project()
+			if err != nil {
+				return false, err
+			}
+			next = append(next, projected)
+		}
+		s.windows = next
+		return s.publishIfChanged(), nil
+	}
+
+	if payload, ok := envelope["WindowOpenedOrChanged"]; ok {
+		var opened wireWindowOpenedOrChanged
+		if err := json.Unmarshal(payload, &opened); err != nil {
+			return false, fmt.Errorf("niri: decode WindowOpenedOrChanged: %w", err)
+		}
+		projected, err := opened.Window.project()
+		if err != nil {
+			return false, err
+		}
+		if i := slices.IndexFunc(s.windows, func(w Window) bool { return w.ID == projected.ID }); i >= 0 {
+			s.windows[i] = projected
+		} else {
+			s.windows = append(s.windows, projected)
+		}
+		return s.publishIfChanged(), nil
+	}
+
+	if payload, ok := envelope["WindowClosed"]; ok {
+		var closed wireWindowClosed
+		if err := json.Unmarshal(payload, &closed); err != nil {
+			return false, fmt.Errorf("niri: decode WindowClosed: %w", err)
+		}
+		if closed.ID == nil {
+			return false, fmt.Errorf("niri: WindowClosed is missing id")
+		}
+		i := slices.IndexFunc(s.windows, func(w Window) bool { return w.ID == *closed.ID })
+		if i < 0 {
+			// The desired post-state — this window absent — already holds.
+			// There is nothing to diverge from, so this is not an error.
+			return false, nil
+		}
+		s.windows = slices.Delete(s.windows, i, i+1)
+		return s.publishIfChanged(), nil
 	}
 
 	return false, nil
@@ -166,7 +323,18 @@ func (s *state) snapshot() Snapshot {
 		return 0
 	})
 
-	snap := Snapshot{Workspaces: workspaces}
+	windows := slices.Clone(s.windows)
+	slices.SortFunc(windows, func(a, b Window) int {
+		switch {
+		case a.ID < b.ID:
+			return -1
+		case a.ID > b.ID:
+			return 1
+		}
+		return 0
+	})
+
+	snap := Snapshot{Workspaces: workspaces, Windows: windows}
 	for _, w := range workspaces {
 		if w.Focused {
 			snap.FocusedOutput = w.Output
@@ -174,4 +342,18 @@ func (s *state) snapshot() Snapshot {
 		}
 	}
 	return snap
+}
+
+// publishIfChanged records and reports a new snapshot only when it differs
+// from the last published one. Workspace and Window contain only comparable
+// fields, so slices.Equal is an exact comparison.
+func (s *state) publishIfChanged() bool {
+	next := s.snapshot()
+	if next.FocusedOutput == s.last.FocusedOutput &&
+		slices.Equal(next.Workspaces, s.last.Workspaces) &&
+		slices.Equal(next.Windows, s.last.Windows) {
+		return false
+	}
+	s.last = next
+	return true
 }
