@@ -104,7 +104,7 @@ func TestPrepareConfigDoesNotMutateLiveHosts(t *testing.T) {
 	hosts.arrival = append(hosts.arrival, h.global)
 
 	candidate := config.Default()
-	candidate.Theme.Background = "#10141880"
+	candidate.Theme.Radius = 8
 	override := candidate.Bar
 	override.Height = 56
 	override.Gap = 6
@@ -140,9 +140,6 @@ func TestPrepareConfigDoesNotMutateLiveHosts(t *testing.T) {
 	}
 	if len(prepared.hosts) != 1 || prepared.hosts[0].policy.Height != 56 || prepared.hosts[0].policy.Gap != 6 {
 		t.Fatalf("prepared hosts = %+v, want DP-1 policy 56/6", prepared.hosts)
-	}
-	if prepared.hosts[0].opaqueBackground {
-		t.Fatal("translucent candidate prepared an opaque host")
 	}
 }
 

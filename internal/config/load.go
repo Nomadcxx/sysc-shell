@@ -79,12 +79,28 @@ type wireBar struct {
 }
 
 type wireTheme struct {
-	Background *string `json:"background"`
-	Foreground *string `json:"foreground"`
-	Accent     *string `json:"accent"`
-	Muted      *string `json:"muted"`
-	Error      *string `json:"error"`
-	Radius     *int    `json:"radius"`
+	Radius *int `json:"radius"`
+}
+
+type wireThemeGen struct {
+	Source *string `json:"source"`
+	Seed   *string `json:"seed"`
+	Scheme *string `json:"scheme"`
+	Mode   *string `json:"mode"`
+}
+
+type wireAccessibility struct {
+	ReducedMotion *bool `json:"reduced-motion"`
+	HighContrast  *bool `json:"high-contrast"`
+}
+
+type wireSession struct {
+	Locker *string `json:"locker"`
+}
+
+type wirePanels struct {
+	Gap     *int `json:"gap"`
+	Padding *int `json:"padding"`
 }
 
 type wireOutput struct {
@@ -100,10 +116,14 @@ type wireWeather struct {
 }
 
 type wireConfig struct {
-	Bar     *wireBar     `json:"bar"`
-	Theme   *wireTheme   `json:"theme"`
-	Weather *wireWeather `json:"weather"`
-	Outputs []wireOutput `json:"outputs"`
+	Bar           *wireBar           `json:"bar"`
+	Theme         *wireTheme         `json:"theme"`
+	ThemeGen      *wireThemeGen      `json:"theme-gen"`
+	Accessibility *wireAccessibility `json:"accessibility"`
+	Session       *wireSession       `json:"session"`
+	Panels        *wirePanels        `json:"panels"`
+	Weather       *wireWeather       `json:"weather"`
+	Outputs       []wireOutput       `json:"outputs"`
 }
 
 var colorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$`)
@@ -156,6 +176,26 @@ func Parse(data []byte) (Config, error) {
 			return Config{}, err
 		}
 		cfg.Theme = theme
+	}
+	if wire.ThemeGen != nil {
+		gen, err := applyThemeGen(cfg.ThemeGen, *wire.ThemeGen, "theme-gen")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.ThemeGen = gen
+	}
+	if wire.Accessibility != nil {
+		cfg.Accessibility = applyAccessibility(cfg.Accessibility, *wire.Accessibility)
+	}
+	if wire.Session != nil {
+		cfg.Session = applySession(cfg.Session, *wire.Session)
+	}
+	if wire.Panels != nil {
+		panels, err := applyPanels(cfg.Panels, *wire.Panels, "panels")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Panels = panels
 	}
 	// The bar's radius mirrors the theme's, so the opaque region and the
 	// painted body agree without a second token.
@@ -624,31 +664,74 @@ func clockBoundary(layout string) (time.Duration, error) {
 
 func applyTheme(base Theme, w wireTheme, path string) (Theme, error) {
 	out := base
-	fields := []struct {
-		name  string
-		value *string
-		dest  *string
-	}{
-		{"background", w.Background, &out.Background},
-		{"foreground", w.Foreground, &out.Foreground},
-		{"accent", w.Accent, &out.Accent},
-		{"muted", w.Muted, &out.Muted},
-		{"error", w.Error, &out.Error},
-	}
-	for _, f := range fields {
-		if f.value == nil {
-			continue
-		}
-		if !colorPattern.MatchString(*f.value) {
-			return Theme{}, pathErr(path+"."+f.name, "%q is not #RRGGBB or #RRGGBBAA", *f.value)
-		}
-		*f.dest = *f.value
-	}
 	if w.Radius != nil {
 		if *w.Radius < 0 {
 			return Theme{}, pathErr(path+".radius", "%d is negative", *w.Radius)
 		}
 		out.Radius = *w.Radius
+	}
+	return out, nil
+}
+
+var themeSources = map[string]bool{"wallpaper": true, "hex": true}
+var themeModes = map[string]bool{"dark": true, "light": true}
+
+func applyThemeGen(base ThemeConfig, w wireThemeGen, path string) (ThemeConfig, error) {
+	out := base
+	if w.Source != nil {
+		if !themeSources[*w.Source] {
+			return ThemeConfig{}, pathErr(path+".source", "%q is not one of wallpaper, hex", *w.Source)
+		}
+		out.Source = *w.Source
+	}
+	if w.Seed != nil {
+		out.Seed = *w.Seed
+	}
+	if w.Scheme != nil {
+		out.Scheme = *w.Scheme
+	}
+	if w.Mode != nil {
+		if !themeModes[*w.Mode] {
+			return ThemeConfig{}, pathErr(path+".mode", "%q is not one of dark, light", *w.Mode)
+		}
+		out.Mode = *w.Mode
+	}
+	if out.Source == "hex" && !colorPattern.MatchString(out.Seed) {
+		return ThemeConfig{}, pathErr(path+".seed", "%q is not #RRGGBB or #RRGGBBAA", out.Seed)
+	}
+	return out, nil
+}
+
+func applyAccessibility(base Accessibility, w wireAccessibility) Accessibility {
+	if w.ReducedMotion != nil {
+		base.ReducedMotion = *w.ReducedMotion
+	}
+	if w.HighContrast != nil {
+		base.HighContrast = *w.HighContrast
+	}
+	return base
+}
+
+func applySession(base Session, w wireSession) Session {
+	if w.Locker != nil {
+		base.Locker = *w.Locker
+	}
+	return base
+}
+
+func applyPanels(base Panels, w wirePanels, path string) (Panels, error) {
+	out := base
+	if w.Gap != nil {
+		out.Gap = *w.Gap
+	}
+	if w.Padding != nil {
+		out.Padding = *w.Padding
+	}
+	if out.Gap < 0 {
+		return Panels{}, pathErr(path+".gap", "%d is negative", out.Gap)
+	}
+	if out.Padding < 0 {
+		return Panels{}, pathErr(path+".padding", "%d is negative", out.Padding)
 	}
 	return out, nil
 }

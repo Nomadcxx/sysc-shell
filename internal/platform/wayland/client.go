@@ -313,7 +313,7 @@ func (o *owner) bindOutput(global, version uint32) {
 func (o *owner) hostBecameReady(h *OutputHost) error {
 	if o.cfg != nil {
 		h.policy = o.cfg.ForConnector(h.connector)
-		h.opaqueBackground = o.cfg.Theme.BackgroundOpaque()
+		h.opaqueBackground = true // default surface is opaque; generated tokens set this later
 	}
 	if !h.policy.Enabled {
 		h.state = hostIdle
@@ -782,7 +782,7 @@ func (o *owner) prepareConfig(cfg config.Config) (preparedOwnerConfig, error) {
 		update := preparedHostConfig{
 			host:             h,
 			policy:           policies[i],
-			opaqueBackground: cfg.Theme.BackgroundOpaque(),
+			opaqueBackground: true, // default surface is opaque; generated tokens set this later
 		}
 		if update.policy.Enabled {
 			app, ok := prepared.Hosts[h.global]
