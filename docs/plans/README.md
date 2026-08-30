@@ -96,13 +96,19 @@ Split into four reviewed tranches by the charter. 3A and 3B are merged.
 | `2026-08-30-built-in-widget-foundation.md` | plan | `main` | Complete. 16 tasks (0–15). Audit findings applied. Ready to execute. |
 | `2026-08-30-built-in-widget-foundation-audit-handover.md` | audit-handover | `main` | Closed. Commissioned the technical and design audits. |
 | `2026-08-30-built-in-widget-foundation-audit-report.md` | audit-report | `main` | Closed. Verdict: proceed with named corrections; all seven applied at `9a114eb`. Verified assumption 4 live. |
-| `2026-08-31-tranche-3a-implementation-audit-report.md` | audit-report | `main` | **Partly applied**. Implementation vs spec + Q/A. Finding 1 (major, `apply` does not re-layout) fixed at `b669622`. Findings 2–4 (minors) outstanding. |
+| `2026-08-31-tranche-3a-implementation-audit-report.md` | audit-report | `main` | Implementation vs spec + Q/A. Finding 1 (major, `apply` does not re-layout) fixed at `b669622`. Findings 2–4 (DropHost on failed `hostBecameReady`; reload boundary-change test; focus/title/close invalidation test) applied at `b43ace7`. Closed. |
 | `2026-08-30-core-metrics-design.md` | design | `main` | Owner-approved, audited, amended. D1–D8; D3, D6, D7 and D8 amended 2026-08-31. Graph node ships in 3B (charter deviation D5). |
 | `2026-08-30-core-metrics.md` | plan | `main` | Executed. 13 tasks. |
 | `2026-08-30-core-metrics-completion-handover.md` | completion-handover | `main` | Closed. Implementation complete; superseded by the audit and its corrections. |
 | `2026-08-31-tranche-3b-audit-brief.md` | audit-handover | `main` | Closed. Commissioned the 3B audit. |
 | `2026-08-31-core-metrics-audit-report.md` | audit-report | `main` | Closed. Verdict: proceed with named corrections. Two majors (D6 grain, D7 meter/graph); all six applied. |
 | `2026-08-31-core-metrics-audit-corrections.md` | corrections | `main` | Closed. All six findings applied and evidenced. |
+| `2026-08-30-weather-and-visual-vocabulary-design.md` | design | `main` | Owner-approved. D1–D9; D4 is a recorded charter deviation (icons as a font). Plan audit 2026-08-31: amend `Weather.Reconfigure` before execute. |
+| `2026-08-30-weather-and-visual-vocabulary.md` | plan | `main` | 11 tasks; 9–11 (tooltip) cuttable. **Do not execute** until the 2026-08-31 audit amendments land. |
+| `2026-08-31-weather-and-visual-vocabulary-audit-report.md` | audit-report | `main` | Verdict: amend before executing. Major: coordinates/unit frozen at `NewRegistry`; Task 1 `Lease` snippet reverts `selector`. |
+| `2026-08-31-power-design.md` | design | `main` | Owner-approved. D1–D6. Signatures provisional on `sysc-19`. Scope sentence vs D4 ("falling" vs "not charging") noted in the plan audit. |
+| `2026-08-31-power.md` | plan | `main` | 7 tasks. Task 0 is the library gate. **Do not execute** until `sysc-19`, 3D, and the selector-API rebase in the 2026-08-31 audit. |
+| `2026-08-31-power-audit-report.md` | audit-report | `main` | Verdict: rebase onto post-D6 `Metrics`, then wait for Task 0. Tasks 2 and 5 still call `Acquire(Source)`, `Leased(Source)`, `metricSource`. |
 
 ### Tranche state
 
@@ -110,8 +116,8 @@ Split into four reviewed tranches by the charter. 3A and 3B are merged.
 |---|---|---|
 | 3A | Clock, date, Niri workspace, focused-window title; service lifetime; per-output widget instances | Merged. |
 | 3B | CPU, memory, filesystem, block and network rates | Merged. Audited; all six findings applied. |
-| 3C | Battery and remaining time | **Blocked**: needs `sysc-metrics` M2 power and thermal gates (`sysc-19`) and 3D. |
-| 3D | Weather, icons, meter/graph/tooltip nodes | Designed and planned. Unblocked once `sysc-8` closes. |
+| 3C | Battery and remaining time | **Blocked**: `sysc-19`, 3D, and the 2026-08-31 plan rebase onto `Selector` / `SourceLeased`. |
+| 3D | Weather, icons, error tone, tooltip | Designed and planned. `sysc-8` is closed. **Do not execute** until the 2026-08-31 audit amendments (`Weather.Reconfigure`, `Lease` snippet) land. |
 
 ## Milestone 4 — panels and standard controls
 
