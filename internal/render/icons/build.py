@@ -25,6 +25,21 @@ GLYPHS = [
     ("uniE005", 0xE005, "snow"),
     ("uniE006", 0xE006, "heavy-snow"),
     ("uniE007", 0xE007, "thunderstorm"),
+    ("uniE008", 0xE008, "battery-0"),
+    ("uniE009", 0xE009, "battery-1"),
+    ("uniE00A", 0xE00A, "battery-2"),
+    ("uniE00B", 0xE00B, "battery-3"),
+    ("uniE00C", 0xE00C, "battery-4"),
+    ("uniE00D", 0xE00D, "battery-5"),
+    ("uniE00E", 0xE00E, "battery-6"),
+    ("uniE00F", 0xE00F, "battery-charging-0"),
+    ("uniE010", 0xE010, "battery-charging-1"),
+    ("uniE011", 0xE011, "battery-charging-2"),
+    ("uniE012", 0xE012, "battery-charging-3"),
+    ("uniE013", 0xE013, "battery-charging-4"),
+    ("uniE014", 0xE014, "battery-charging-5"),
+    ("uniE015", 0xE015, "battery-charging-6"),
+    ("uniE016", 0xE016, "battery-critical"),
 ]
 
 UPM = 1000

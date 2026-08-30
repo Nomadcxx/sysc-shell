@@ -71,3 +71,76 @@ func TestSplitRunsIsolatesAnIconRune(t *testing.T) {
 		t.Fatal("the icon and the text shaped with one face")
 	}
 }
+
+// Every charge in range maps to a glyph in the battery band, in both states.
+func TestEveryChargeMapsToABatteryIcon(t *testing.T) {
+	t.Parallel()
+	for _, charging := range []bool{false, true} {
+		for step := 0; step <= 100; step++ {
+			r := BatteryIconRune(float64(step)/100, charging, false)
+			if r < batteryRuneFirst || r > batteryRuneLast {
+				t.Fatalf("charge %d%% charging=%v mapped to %U, outside the battery band",
+					step, charging, r)
+			}
+		}
+	}
+}
+
+// The glyph must rise monotonically with charge: a fuller battery never shows
+// a smaller glyph than an emptier one.
+func TestBatteryGlyphsRiseWithCharge(t *testing.T) {
+	t.Parallel()
+	previous := BatteryIconRune(0, false, false)
+	for step := 1; step <= 100; step++ {
+		got := BatteryIconRune(float64(step)/100, false, false)
+		if got < previous {
+			t.Fatalf("charge %d%% mapped to %U, below the previous %U", step, got, previous)
+		}
+		previous = got
+	}
+}
+
+// Charging and discharging must never share a glyph, or the state is invisible.
+func TestChargingAndDischargingGlyphsAreDistinct(t *testing.T) {
+	t.Parallel()
+	for step := 0; step <= 100; step += 5 {
+		charge := float64(step) / 100
+		if BatteryIconRune(charge, false, false) == BatteryIconRune(charge, true, false) {
+			t.Fatalf("charge %d%% renders the same glyph charging and discharging", step)
+		}
+	}
+}
+
+// Critical overrides the level entirely, at any charge.
+func TestCriticalOverridesTheLevelGlyph(t *testing.T) {
+	t.Parallel()
+	for _, charge := range []float64{0, 0.1, 0.5, 1} {
+		if got := BatteryIconRune(charge, false, true); got != iconBatteryCritical {
+			t.Fatalf("critical at %.0f%% mapped to %U, want the critical glyph", charge*100, got)
+		}
+	}
+}
+
+// A charge outside zero through one is clamped rather than escaping the band.
+func TestOutOfRangeChargeIsClamped(t *testing.T) {
+	t.Parallel()
+	for _, charge := range []float64{-1, -0.01, 1.01, 42} {
+		r := BatteryIconRune(charge, false, false)
+		if r < batteryRuneFirst || r > batteryRuneLast {
+			t.Fatalf("charge %v mapped to %U, outside the battery band", charge, r)
+		}
+	}
+}
+
+// Battery glyphs resolve to the project face, like the weather ones.
+func TestBatteryRunesResolveToTheProjectFace(t *testing.T) {
+	t.Parallel()
+	m, err := NewSystemFontMap("sans-serif", "")
+	if err != nil {
+		t.Skipf("no system font available: %v", err)
+	}
+	face := m.Face(iconBatteryCritical)
+	if face == nil || face == m.Primary() {
+		t.Fatal("a battery rune did not resolve to the icon face")
+	}
+}

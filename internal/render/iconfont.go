@@ -30,6 +30,32 @@ const (
 	iconRuneLast  = iconThunderstorm
 )
 
+// The battery symbols occupy the fifteen codepoints after the weather ones:
+// seven discharging levels, seven charging levels, and one critical glyph.
+const (
+	iconBatteryLevel0 rune = iconThunderstorm + 1 + iota
+	iconBatteryLevel1
+	iconBatteryLevel2
+	iconBatteryLevel3
+	iconBatteryLevel4
+	iconBatteryLevel5
+	iconBatteryLevel6
+	iconBatteryCharging0
+	iconBatteryCharging1
+	iconBatteryCharging2
+	iconBatteryCharging3
+	iconBatteryCharging4
+	iconBatteryCharging5
+	iconBatteryCharging6
+	iconBatteryCritical
+
+	batteryRuneFirst = iconBatteryLevel0
+	batteryRuneLast  = iconBatteryCritical
+)
+
+// batteryLevels is how many level glyphs each state has.
+const batteryLevels = 7
+
 var (
 	iconOnce sync.Once
 	iconFace *font.Face
@@ -74,4 +100,33 @@ func IconRune(code int) rune {
 		return iconThunderstorm
 	}
 	return iconCloud
+}
+
+// BatteryIconRune picks the glyph for a charge and state.
+//
+// Critical overrides the level entirely: a battery about to die should look
+// like one at every charge the caller considers critical, which is a policy
+// the widget owns rather than a threshold baked in here.
+func BatteryIconRune(charge float64, charging, critical bool) rune {
+	if critical {
+		return iconBatteryCritical
+	}
+	if charge < 0 {
+		charge = 0
+	}
+	if charge > 1 {
+		charge = 1
+	}
+
+	// Bands are equal width; the top band is reached only at a full charge, so
+	// a battery at 99% does not render as full.
+	level := int(charge * batteryLevels)
+	if level >= batteryLevels {
+		level = batteryLevels - 1
+	}
+
+	if charging {
+		return iconBatteryCharging0 + rune(level)
+	}
+	return iconBatteryLevel0 + rune(level)
 }

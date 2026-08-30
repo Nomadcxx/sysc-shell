@@ -89,7 +89,9 @@ func (m *FontMap) Face(r rune) *font.Face {
 
 // iconFaceFor returns the project face for an icon rune, or nil.
 func iconFaceFor(r rune) *font.Face {
-	if r < iconRuneFirst || r > iconRuneLast {
+	inWeather := r >= iconRuneFirst && r <= iconRuneLast
+	inBattery := r >= batteryRuneFirst && r <= batteryRuneLast
+	if !inWeather && !inBattery {
 		return nil
 	}
 	return loadIconFace()
