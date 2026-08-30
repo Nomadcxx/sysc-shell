@@ -156,3 +156,43 @@ Baselines to record before setting any budget:
 - layout and paint duration per update;
 - allocations per update;
 - binary size.
+
+## Tranche 3B: core metrics
+
+Run after Tranche 3A's matrix. Record connector, device, interface and mount
+names and all measurements outside this repository.
+
+Build and start:
+
+    go build -o /tmp/sysc-shell-tranche3b ./cmd/sysc-shell
+    /tmp/sysc-shell-tranche3b
+
+Matrix:
+
+1. One output, then at least two. Each output renders the same metric
+   independently and updates together.
+2. A text metric, a meter and a graph on one bar simultaneously, all updating.
+3. Load the machine and confirm the CPU value and graph track the load, and
+   settle when it stops.
+4. Fill and empty a filesystem and confirm the meter follows.
+5. Down an interface, or unplug a device, and confirm its widget renders "-"
+   while every other widget keeps updating and the shell keeps running.
+6. Bring it back and confirm the widget recovers without a restart.
+7. Confirm the first sample after start renders "-" for rate widgets for one
+   interval only.
+8. Reload adding and removing metric widgets, and changing an interval, and
+   confirm the service does not restart and no widget stalls.
+9. Write an invalid metric configuration and SIGHUP; confirm the previous
+   widgets stay live and the error names its field path on stderr.
+10. Confirm stderr carries exactly one line when a source starts failing and
+    one when it recovers, not one per sample.
+
+Baselines to record before setting any budget:
+
+- idle CPU and wakeups over 60 minutes with a 2-second interval, against the
+  Tranche 3A clock-only baseline;
+- CPU during sampling and during a graph repaint;
+- RSS after one hour with a graph running;
+- submitted and skipped frame counts;
+- allocations per sampling pass;
+- binary size against the Tranche 3A binary.
