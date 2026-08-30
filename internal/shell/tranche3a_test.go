@@ -9,6 +9,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 // The initial event burst must give each output its own title.
@@ -237,4 +238,101 @@ func TestEveryChangedBarIsReportedWhenManyChangeAtOnce(t *testing.T) {
 		}
 	}
 	close(done)
+}
+
+// The live sequence is Configure first, with empty clock text and no title, and
+// the first tick only afterwards. apply must therefore re-layout: without it
+// the first clock tick and the first window title measure into a zero-width box
+// and never appear, until an unrelated output configure happens to run.
+func TestAppliedTextIsLaidOutWithoutASecondConfigure(t *testing.T) {
+	t.Parallel()
+	bar, err := New("DP-9")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// Configure while every widget is still empty, as the owner does.
+	if err := bar.Configure(600, BarHeight, int(ui.ScaleUnit)); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+	for _, w := range bar.center {
+		if got := w.node.Bounds.W; got != 0 {
+			t.Fatalf("an empty clock reserved %d, want a zero-width box", got)
+		}
+	}
+
+	// The first tick arrives, and the owner repaints. No second Configure.
+	if !bar.apply(barView{Now: time.Date(2026, 8, 31, 15, 4, 0, 0, time.UTC)}) {
+		t.Fatal("the first tick did not change the bar")
+	}
+	renderOnce(t, bar)
+	for _, w := range bar.center {
+		if w.node.Text == "" {
+			continue
+		}
+		if got := w.node.Bounds.W; got <= 0 {
+			t.Fatalf("clock %q laid out %d wide, so it paints into nothing", w.node.Text, got)
+		}
+	}
+}
+
+// A title that grows must be measured again. Without re-layout it keeps the
+// width it was given at configure time, which is the empty-state zero, so it
+// paints into nothing however long it gets.
+func TestAGrowingTitleIsMeasuredAgain(t *testing.T) {
+	t.Parallel()
+	bar, err := New("DP-9")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := bar.Configure(600, BarHeight, int(ui.ScaleUnit)); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+
+	title := bar.left[1].node
+	bar.apply(barView{Title: "short"})
+	renderOnce(t, bar)
+	short := title.Bounds.W
+	if short <= 0 {
+		t.Fatalf("a title of %q laid out %d wide", title.Text, short)
+	}
+
+	bar.apply(barView{Title: "a considerably longer focused window title than before"})
+	renderOnce(t, bar)
+	if long := title.Bounds.W; long <= short {
+		t.Fatalf("the longer title laid out %d wide, no wider than the short one at %d",
+			long, short)
+	}
+}
+
+// The centre is pinned to the band centre without reference to its neighbours,
+// so it is its own width that moves it. That only happens if apply re-lays out.
+func TestTheCentreRecentresAsItsOwnTextChanges(t *testing.T) {
+	t.Parallel()
+	bar, err := New("DP-9")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := bar.Configure(600, BarHeight, int(ui.ScaleUnit)); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+
+	empty := bar.center[0].node.Bounds.X
+	bar.apply(barView{Now: time.Date(2026, 8, 31, 15, 4, 0, 0, time.UTC)})
+	renderOnce(t, bar)
+	if filled := bar.center[0].node.Bounds.X; filled >= empty {
+		t.Fatalf("the centre sat at %d empty and %d with text; a widened centre must move left",
+			empty, filled)
+	}
+}
+
+// renderOnce drives one owner-side repaint, which is where a stale arrangement
+// is brought up to date. Reading bounds without it reads the arrangement as it
+// stood before the change, which is what the shell itself would paint.
+func renderOnce(t *testing.T, bar *Bar) {
+	t.Helper()
+	const width, height = 600, BarHeight
+	if err := bar.Render(make([]byte, width*height*4), width, height, width*4); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
 }

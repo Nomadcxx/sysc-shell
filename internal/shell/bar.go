@@ -5,6 +5,7 @@ package shell
 import (
 	"fmt"
 	"math"
+	"os"
 	"slices"
 	"sync"
 
@@ -45,6 +46,27 @@ type Bar struct {
 	conn string
 
 	theme Theme
+
+	// configured is the last size the Wayland owner gave us, and whether one
+	// has arrived. apply re-lays out at this size: the owner configures once,
+	// before any widget has text, and every later change arrives through apply
+	// alone.
+	configured struct {
+		width, height int
+		set           bool
+	}
+	// needsLayout marks the arrangement stale after a text change. It is set
+	// by apply, which runs on the clock, metrics and Niri pump goroutines, and
+	// consumed by Render, which the Wayland owner calls.
+	//
+	// The re-layout cannot happen in apply. Arranging shapes text through the
+	// font map, which is not safe for concurrent use and is owned by the
+	// Wayland goroutine; measuring from a pump would race that goroutine's
+	// painting.
+	needsLayout bool
+	// layoutFailing makes the re-layout log edge-triggered, so a bar whose
+	// content stops fitting reports once rather than on every update.
+	layoutFailing bool
 
 	text  *render.TextRenderer
 	style render.ProofStyle
@@ -138,6 +160,11 @@ func (b *Bar) applyLocked(view barView) bool {
 			}
 		}
 	}
+	// Measured widths follow the new text, so the arrangement is now stale.
+	// Render performs it, on the goroutine that owns the font map.
+	if changed {
+		b.needsLayout = true
+	}
 	return changed
 }
 
@@ -158,6 +185,38 @@ func (b *Bar) Layout(width, height int) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.layoutLocked(width, height)
+}
+
+// rememberSizeLocked records the size later applies re-lay out at.
+func (b *Bar) rememberSizeLocked(width, height int) {
+	b.configured.width, b.configured.height, b.configured.set = width, height, true
+}
+
+// relayoutLocked re-arranges at the last configured size when a change has
+// made the arrangement stale. The caller must be the Wayland owner: this
+// shapes text.
+//
+// Without it the bar is arranged exactly once, at configure time, when every
+// widget is still empty, so the first clock tick and the first window title
+// would measure into a zero-width box and never appear.
+//
+// A failure keeps the previous bounds rather than clearing them, because a
+// stale arrangement still paints something coherent while an empty one paints
+// nothing. It is reported once per transition; the next success clears it.
+func (b *Bar) relayoutLocked() {
+	if !b.needsLayout || !b.configured.set {
+		return
+	}
+	b.needsLayout = false
+	err := b.layoutLocked(b.configured.width, b.configured.height)
+	switch {
+	case err != nil && !b.layoutFailing:
+		b.layoutFailing = true
+		fmt.Fprintf(os.Stderr, "sysc-shell: bar %s cannot arrange its content: %v\n", b.conn, err)
+	case err == nil && b.layoutFailing:
+		b.layoutFailing = false
+		fmt.Fprintf(os.Stderr, "sysc-shell: bar %s arranged its content again\n", b.conn)
+	}
 }
 
 // contentLocked derives the content band from the theme tokens. The surface is
@@ -202,6 +261,8 @@ func (b *Bar) Configure(logicalWidth, logicalHeight, scale120 int) error {
 	b.style.Scale120 = scale
 	b.style.Body = b.bodyLocked(logicalWidth, logicalHeight)
 	b.style.Radius = b.theme.Radius
+	b.rememberSizeLocked(logicalWidth, logicalHeight)
+	b.needsLayout = false
 	return b.layoutLocked(logicalWidth, logicalHeight)
 }
 
@@ -213,6 +274,9 @@ func (b *Bar) Render(pixels []byte, width, height, stride int) error {
 	}
 
 	b.mu.Lock()
+	// The arrangement is brought up to date here rather than in apply, because
+	// this is the goroutine that owns the font map.
+	b.relayoutLocked()
 	root, style := b.renderViewLocked()
 	b.mu.Unlock()
 
