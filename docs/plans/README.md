@@ -117,6 +117,7 @@ stays live for further work.
 | `2026-08-30-panels-and-controls-research.md` | research | Niri capability claims, source-verified against niri main. |
 | `2026-08-30-panel-foundation-design.md` | design | Tranche 4A. Owner-approved; amended for the review. D1–D13. |
 | `2026-08-30-panel-foundation.md` | plan | Tranche 4A, **13 tasks**. Ready to execute once its prerequisites clear. |
+| `2026-08-30-panel-foundation-parallel-execution-handover.md` | execution-handover | Starts Tasks 1, 5 and 8 while Tranche 3A continues, then joins the remaining plan after M3 integration. |
 | `2026-08-30-settings-osd-theme-catalog-design.md` | design | Tranche 4B. Owner-approved; amended for the review. D1–D10. |
 | `2026-08-30-settings-osd-theme-catalog.md` | plan | Tranche 4B, 14 tasks. See the open scope question below. |
 | `2026-08-30-milestone-4-review.md` | review | Closed. Both blockers fixed in `3fc026c`; findings tracked as `sysc-16`. |
@@ -125,7 +126,7 @@ stays live for further work.
 
 | Tranche | Scope | State |
 |---|---|---|
-| 4A | Panel machinery, placement, rounding and shadows, button/label/separator, matugen theming, clock/calendar and session/power popouts, IPC | Ready. Blocked only by the M2 corrections and Tranche 3A. |
+| 4A | Panel machinery, placement, rounding and shadows, button/label/separator, matugen theming, clock/calendar and session/power popouts, IPC | Parallel prework can start under `sysc-18`; M3-coupled integration remains under `sysc-17`. |
 | 4B | Controls, settings modal and registry, OSD with audio/brightness services, stock themes, template catalog | Planned. Blocked by 4A. Scope question open — see below. |
 
 ### What the review changed
@@ -153,16 +154,30 @@ stays live for further work.
   the design already names — controls and settings, OSD and services, themes and catalog — would give
   three reviewable pieces.
 
-## Milestones 5 to 8 — not yet designed
+## Milestone 5: notifications and system tray
 
-No design or plan exists for any of these. The roadmap is the only record.
+Milestone 5 now has researched designs and executable plans for both tranches. Product work still needs
+the M4 surface vocabulary and tagged service releases.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-08-30-notifications-and-tray-prior-art.md` | assessment | Noctalia, DMS, `sysc-notify`, and `sysc-tray` inventory. |
+| `2026-08-30-notifications-and-tray-research.md` | research | Decisions D1–D14. |
+| `2026-08-30-notifications-foundation-design.md` | design | Tranche 5A notification presentation. |
+| `2026-08-30-notifications-foundation.md` | plan | Tranche 5A, 13 tasks. |
+| `2026-08-30-sysc-notify-persistence-design.md` | service design | Persistence addendum owned by `sysc-notify`. |
+| `2026-08-30-tray-foundation-design.md` | design | Tranche 5B tray presentation. |
+| `2026-08-30-tray-foundation.md` | plan | Tranche 5B, 8 tasks. |
+
+Source worktree: `/home/nomadx/.config/superpowers/worktrees/sysc-shell/milestone/notifications-tray`.
+
+## Milestones 6 to 8: not yet designed
 
 | Milestone | Scope | Note |
 |---|---|---|
-| 5 | Notifications and system tray | Depends on `sysc-notify` and `sysc-tray`, neither of which has a repository yet. |
 | 6 | External widget and plugin host | Versions the vocabulary the built-in widgets prove. |
-| 7 | Shell breadth | Launcher is item 1. It consumes Milestone 4's text field, virtual list, scroll area, keyboard focus, and popout placement, so its component demands are worth capturing while Milestone 4 is designed. |
-| 8 | Rendering qualification | Only on measured evidence against `wl_shm`. |
+| 7 | Shell breadth | Launcher consumes Milestone 4's text field, virtual list, keyboard focus, and popout placement. |
+| 8 | Rendering qualification | Requires measured evidence against `wl_shm`. |
 
 ## Sibling repositories
 
@@ -170,7 +185,8 @@ No design or plan exists for any of these. The roadmap is the only record.
 |---|---|---|
 | `/home/nomadx/sysc-metrics` | `d821afe` | Clean, pushed. **No release tag.** Its own register is `docs/plans/`: an approved design, a core-counters plan, and execution, merge and completion handovers. Blocks Tranche 3B until a tag exists. |
 | `sysc-wayland` | `v0.1.1` | Pinned dependency. Qualified. |
-| `sysc-notify`, `sysc-tray` | — | Approved boundaries and roadmaps only. No repository yet. Milestone 5. |
+| `/home/nomadx/sysc-notify` | `32da2b5` | Design repository. No release tag; M5 needs the persistence and socket contracts implemented and tagged. |
+| `/home/nomadx/sysc-tray` | `04ca018` | Design repository. No release tag; M5 needs the socket, item snapshot, and menu contracts implemented and tagged. |
 
 ## Execution order
 
@@ -182,9 +198,10 @@ graph in prose.
    corrections from step 1 and stops if any is absent.
 3. **Milestone 2 hardware qualification** (`sysc-5`): remains open in parallel and needs a live session
    with two outputs. It blocks claims of full Milestone 2 hardware qualification, not development.
-4. **Tranche 4A** (`sysc-17`): 13 tasks, plan on `main`. Needs steps 1 and 2; explicitly does **not**
-   need Tranches 3B, 3C or 3D.
-5. **Tranche 4B**: 14 tasks, after 4A, subject to the scope question above.
+4. **Tranche 4A parallel prework** (`sysc-18`): Tasks 1, 5 and 8 can run while Tranche 3A continues.
+5. **Tranche 4A integration** (`sysc-17`): remaining work joins after Tranche 3A; it does not need
+   Tranches 3B, 3C or 3D.
+6. **Tranche 4B**: 14 tasks, after 4A, subject to the scope question above.
 
 Off the critical path, and startable now: **`sysc-metrics` qualification** (`sysc-7`) — audit the
 public API, qualify it from a proposed consumer, tag and push. It unblocks Tranche 3B (`sysc-8`) and
@@ -195,14 +212,15 @@ public API, qualify it from a proposed consumer, tag and push. It unblocks Tranc
 Start Tranche 3A now. The deferred live Niri gate can run in another session when suitable hardware is
 available. Other independent work includes:
 
-1. **`sysc-metrics` qualification** (`sysc-7`). Audit the public API, qualify it from one proposed shell
+1. **Tranche 4A parallel prework** (`sysc-18`). Execute Tasks 1, 5 and 8 from the existing 4A plan.
+2. **`sysc-metrics` qualification** (`sysc-7`). Audit the public API, qualify it from one proposed shell
    consumer, tag and push. The single dependency unblocking Tranches 3B and 3C, and the thing that
    would let Milestone 4's system-monitor popout return.
-2. **The two open Milestone 4 owner decisions** (`sysc-16`): the external-binary dependency policy, and
+3. **The two open Milestone 4 owner decisions** (`sysc-16`): the external-binary dependency policy, and
    whether Tranche 4B splits.
-3. **Icon-asset policy application** for Tranche 3D: author the SVG sources and decide the checked-in
+4. **Icon-asset policy application** for Tranche 3D: author the SVG sources and decide the checked-in
    raster size set after measuring the supported fractional scales.
-4. **Launcher prior-art research** (`sysc-12`), scoped as input to the component vocabulary rather than
+5. **Launcher prior-art research** (`sysc-12`), scoped as input to the component vocabulary rather than
    as Milestone 7 implementation. Lower value now that Milestone 4 is designed.
 
 Do not edit the Milestone 2 progress handover.
