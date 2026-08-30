@@ -5,11 +5,9 @@ package shell
 import (
 	"fmt"
 	"math"
-	"strconv"
 	"sync"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
-	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -30,19 +28,22 @@ const BarGap = 4
 // is held only while copying or changing state; shaping and painting happen
 // after the state has been copied out.
 type Bar struct {
-	mu        sync.Mutex
-	workspace string
-	pressed   string
-	hover     ui.Rect
-	hoverAt   struct{ x, y int }
-	inside    bool
+	mu      sync.Mutex
+	pressed string
+	hover   ui.Rect
+	hoverAt struct{ x, y int }
+	inside  bool
 
 	// Sections are arranged by ui.ArrangeBar into absolute bounds, so painting
 	// and hit testing walk them as one flat list.
-	left, center, right []*ui.Node
+	left, center, right []textWidget
+
+	// conn is the connector this bar renders for. It selects configuration and
+	// joins Niri state; it is never this bar's identity, which is its Wayland
+	// global.
+	conn string
 
 	theme Theme
-	label *ui.Node
 
 	text  *render.TextRenderer
 	style render.ProofStyle
@@ -50,13 +51,15 @@ type Bar struct {
 	invalidations chan struct{}
 }
 
-// New builds a bar from the default theme and the default item set.
-func New() (*Bar, error) {
-	return NewWithTheme(DefaultTheme(), config.Default().Bar)
+// New builds a bar from the built-in defaults for one connector.
+func New(connector string) (*Bar, error) {
+	cfg := config.Default()
+	return NewWithTheme(ThemeFrom(cfg, cfg.Bar), cfg.Bar, connector)
 }
 
-// NewWithTheme builds a bar from resolved theme tokens and item ids.
-func NewWithTheme(theme Theme, policy config.Bar) (*Bar, error) {
+// NewWithTheme builds a bar from resolved theme tokens, a bar policy, and the
+// connector whose Niri state it reads.
+func NewWithTheme(theme Theme, policy config.Bar, connector string) (*Bar, error) {
 	if err := theme.Valid(); err != nil {
 		return nil, err
 	}
@@ -66,7 +69,7 @@ func NewWithTheme(theme Theme, policy config.Bar) (*Bar, error) {
 	}
 
 	b := &Bar{
-		workspace:     "-",
+		conn:          connector,
 		theme:         theme,
 		text:          render.NewTextRendererWithFontMap(fonts),
 		invalidations: make(chan struct{}, 1),
@@ -81,33 +84,52 @@ func NewWithTheme(theme Theme, policy config.Bar) (*Bar, error) {
 		},
 	}
 
-	b.label = &ui.Node{Kind: ui.KindText, Text: b.workspaceLabelLocked()}
-
-	b.left = b.build(policy.Left)
-	b.center = b.build(policy.Center)
-	b.right = b.build(policy.Right)
+	b.left = buildWidgets(policy.Left)
+	b.center = buildWidgets(policy.Center)
+	b.right = buildWidgets(policy.Right)
 	return b, nil
 }
 
-// build turns configured items into nodes. Ids are validated at load, so an
-// unknown id cannot reach here.
-func (b *Bar) build(items []config.Item) []*ui.Node {
-	out := make([]*ui.Node, 0, len(items))
-	for _, item := range items {
-		switch item.ID {
-		case "workspace":
-			out = append(out, b.label)
-		case "clock":
-			out = append(out, &ui.Node{Kind: ui.KindText})
-		case "window-title":
-			out = append(out, &ui.Node{Kind: ui.KindText, MaxWidth: item.MaxWidth})
+// connector reports the output this bar renders for.
+func (b *Bar) connector() string { return b.conn }
+
+// widgets returns the three sections in paint order.
+func (b *Bar) widgets() [][]textWidget { return [][]textWidget{b.left, b.center, b.right} }
+
+// sections returns the retained nodes in paint order, for layout and painting.
+func (b *Bar) sections() [][]*ui.Node {
+	out := make([][]*ui.Node, 0, 3)
+	for _, section := range b.widgets() {
+		nodes := make([]*ui.Node, 0, len(section))
+		for _, w := range section {
+			nodes = append(nodes, w.node)
 		}
+		out = append(out, nodes)
 	}
 	return out
 }
 
-// sections returns the three sections in paint order.
-func (b *Bar) sections() [][]*ui.Node { return [][]*ui.Node{b.left, b.center, b.right} }
+// apply writes each widget's text from the view and reports whether anything
+// changed. A false return means no layout and no redraw: no state change, no
+// submitted frame.
+func (b *Bar) apply(view barView) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.applyLocked(view)
+}
+
+func (b *Bar) applyLocked(view barView) bool {
+	changed := false
+	for _, section := range b.widgets() {
+		for _, w := range section {
+			if text := w.format(view); text != w.node.Text {
+				w.node.Text = text
+				changed = true
+			}
+		}
+	}
+	return changed
+}
 
 // Invalidations is the channel the Wayland owner receives from. The proof owns
 // it and never closes it.
@@ -119,50 +141,6 @@ func (b *Bar) invalidate() {
 	case b.invalidations <- struct{}{}:
 	default:
 	}
-}
-
-// SetWorkspace records this output's workspace label and reports whether it
-// changed. The Registry owns invalidation, because it knows which connector the
-// redraw belongs to.
-func (b *Bar) SetWorkspace(label string) bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if label == b.workspace {
-		return false
-	}
-	b.workspace = label
-	return true
-}
-
-// UpdateNiri applies a workspace snapshot, invalidating only on a real change.
-func (b *Bar) UpdateNiri(snapshot niri.Snapshot) {
-	if b.SetWorkspace(activeWorkspace(snapshot)) {
-		b.invalidate()
-	}
-}
-
-// activeWorkspace names the focused workspace, preferring its name over its
-// index.
-func activeWorkspace(snapshot niri.Snapshot) string {
-	for _, w := range snapshot.Workspaces {
-		if !w.Focused {
-			continue
-		}
-		if w.Name != "" {
-			return w.Name
-		}
-		return strconv.Itoa(w.Index)
-	}
-	return "-"
-}
-
-func (b *Bar) workspaceLabelLocked() string { return "Workspace: " + b.workspace }
-
-// WorkspaceLabel reports the rendered workspace text.
-func (b *Bar) WorkspaceLabel() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.workspaceLabelLocked()
 }
 
 // Layout arranges the three sections at the logical configure size.
@@ -190,7 +168,6 @@ func (b *Bar) bodyLocked(width, height int) ui.Rect {
 }
 
 func (b *Bar) layoutLocked(width, height int) error {
-	b.label.Text = b.workspaceLabelLocked()
 	measure := func(s string) (int, int) {
 		w, h, err := b.text.Measure(s, b.style.Size)
 		if err != nil {
@@ -198,8 +175,9 @@ func (b *Bar) layoutLocked(width, height int) error {
 		}
 		return w, h
 	}
+	sections := b.sections()
 	return ui.ArrangeBar(b.contentLocked(width, height),
-		b.left, b.center, b.right, b.theme.Spacing, measure)
+		sections[0], sections[1], sections[2], b.theme.Spacing, measure)
 }
 
 // Configure records a new logical size and scale from the Wayland owner.
@@ -237,7 +215,6 @@ func (b *Bar) Render(pixels []byte, width, height, stride int) error {
 // The three sections are already arranged into absolute bounds, so they flatten
 // into one child list: the painter walks bounds, not structure.
 func (b *Bar) renderViewLocked() (*ui.Node, render.ProofStyle) {
-	b.label.Text = b.workspaceLabelLocked()
 	root := &ui.Node{Kind: ui.KindRow}
 	for _, section := range b.sections() {
 		for _, n := range section {

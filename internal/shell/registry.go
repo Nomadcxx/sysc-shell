@@ -1,209 +1,224 @@
 package shell
 
 import (
-	"strconv"
+	"errors"
 	"sync"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/services"
 )
 
-// Registry owns every bar and the Niri state they read.
+// Registry owns every bar, the services they consume, and the state they read.
 //
-// Workspace state is keyed by connector and held whether or not a host exists,
+// Bars are keyed by wl_registry global name. A connector is an attribute: two
+// globals may briefly share one during a reconnect, and they must stay
+// distinct instances with distinct service leases.
+//
+// Niri state is keyed by connector and held whether or not a host exists,
 // because a Niri event may name an output whose wl_output has not been
 // announced yet or has already been removed. A host is never created or
 // destroyed from a Niri event.
 type Registry struct {
-	mu         sync.Mutex
-	cfg        config.Config
-	workspaces map[string]string
-	bars       map[uint32]*Bar
-	connectors map[uint32]string
+	mu      sync.Mutex
+	cfg     config.Config
+	outputs map[string]outputState
+	bars    map[uint32]*Bar
+	leases  map[uint32][]*services.Lease
+	now     time.Time
 
-	invalidationMu sync.Mutex
-	invalidations  chan wayland.Invalidation
+	clock *services.Clock
+
+	// invalidations carries one entry per bar whose rendered text changed.
+	// The Wayland owner receives from it; the registry owns it and never
+	// closes it.
+	invalidations chan wayland.Invalidation
+	// closed unblocks a pending publish at shutdown.
+	closed    chan struct{}
+	closeOnce sync.Once
 }
 
 func NewRegistry(cfg config.Config) *Registry {
 	return &Registry{
 		cfg:           cfg,
-		workspaces:    make(map[string]string),
+		outputs:       make(map[string]outputState),
 		bars:          make(map[uint32]*Bar),
-		connectors:    make(map[uint32]string),
+		leases:        make(map[uint32][]*services.Lease),
+		clock:         services.NewClock(),
 		invalidations: make(chan wayland.Invalidation, 8),
+		closed:        make(chan struct{}),
 	}
 }
+
+// Clock is the shared clock service. The process pumps its updates into
+// UpdateClock.
+func (r *Registry) Clock() *services.Clock { return r.clock }
 
 // Invalidations is the channel the Wayland owner receives from. The registry
 // owns it and never closes it.
 func (r *Registry) Invalidations() <-chan wayland.Invalidation { return r.invalidations }
 
-// NewHost builds the hooks for one connector's bar.
+// publish sends one invalidation per changed global.
+//
+// The send blocks rather than dropping. A dropped invalidation is a bar that
+// never repaints, which is exactly the defect this tranche must not ship. The
+// owner's bridge goroutine drains this channel continuously into an unbounded
+// queue, so blocking is bounded; Close unblocks a pending send at shutdown.
+//
+// Callers must not hold r.mu: the send can block, and the owner must stay free
+// to make progress.
+func (r *Registry) publish(globals []uint32) {
+	for _, global := range globals {
+		select {
+		case r.invalidations <- wayland.Invalidation{Global: global}:
+		case <-r.closed:
+			return
+		}
+	}
+}
+
+// NewHost builds the hooks for one output's bar and acquires its services.
 func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbacks, error) {
 	r.mu.Lock()
 	cfg := r.cfg
 	r.mu.Unlock()
 
-	bar, callbacks, err := buildHost(cfg, connector)
+	bar, leases, callbacks, err := r.buildBar(cfg, connector)
 	if err != nil {
 		return wayland.HostCallbacks{}, err
 	}
 
 	r.mu.Lock()
-	if label, ok := r.workspaces[connector]; ok {
-		bar.SetWorkspace(label)
-	}
+	bar.apply(r.viewLocked(connector))
 	r.bars[global] = bar
-	r.connectors[global] = connector
+	r.leases[global] = leases
 	r.mu.Unlock()
 
 	return callbacks, nil
 }
 
-// PrepareConfig builds every enabled connector's replacement bar before the
-// caller changes live host policy. Commit publishes the complete set under one
-// registry lock and applies the latest workspace labels at that point.
+// PrepareConfig is replaced in the reload task. Until then it refuses, so a
+// half-migrated reload cannot run.
 func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIdentity) (wayland.PreparedConfig, error) {
-	bars := make(map[uint32]*Bar, len(identities))
-	connectors := make(map[uint32]string, len(identities))
-	hosts := make(map[uint32]wayland.HostCallbacks, len(identities))
-	for _, identity := range identities {
-		bar, callbacks, err := buildHost(cfg, identity.Connector)
-		if err != nil {
-			return wayland.PreparedConfig{}, err
-		}
-		bars[identity.Global] = bar
-		connectors[identity.Global] = identity.Connector
-		hosts[identity.Global] = callbacks
-	}
-
-	return wayland.PreparedConfig{
-		Hosts: hosts,
-		Commit: func() {
-			r.mu.Lock()
-			for global, bar := range bars {
-				connector := connectors[global]
-				if label, ok := r.workspaces[connector]; ok {
-					bar.SetWorkspace(label)
-				}
-			}
-			r.cfg = cfg
-			r.bars = bars
-			r.connectors = connectors
-			r.mu.Unlock()
-		},
-	}, nil
+	return wayland.PreparedConfig{}, errors.New("shell: reload staging is not wired yet")
 }
 
-func buildHost(cfg config.Config, connector string) (*Bar, wayland.HostCallbacks, error) {
-	policy := cfg.ForConnector(connector)
-	bar, err := NewWithTheme(ThemeFrom(cfg, policy), policy)
-	if err != nil {
-		return nil, wayland.HostCallbacks{}, err
+// DropHost releases a bar and its service leases after its surface is
+// destroyed. Only the named global is affected, so a stale global sharing a
+// connector with a reconnected one cannot remove it.
+func (r *Registry) DropHost(global uint32) {
+	r.mu.Lock()
+	leases := r.leases[global]
+	delete(r.bars, global)
+	delete(r.leases, global)
+	r.mu.Unlock()
+
+	releaseAll(leases)
+}
+
+// Close releases every bar and service. It is safe to call twice.
+func (r *Registry) Close() {
+	// Unblocks any publish waiting on a full channel, so shutdown cannot hang.
+	r.closeOnce.Do(func() { close(r.closed) })
+
+	r.mu.Lock()
+	var leases []*services.Lease
+	for global, held := range r.leases {
+		leases = append(leases, held...)
+		delete(r.leases, global)
 	}
-	return bar, wayland.HostCallbacks{
+	r.bars = make(map[uint32]*Bar)
+	r.mu.Unlock()
+
+	releaseAll(leases)
+	r.clock.Close()
+}
+
+// UpdateClock applies a shared time snapshot to every bar and reports the
+// globals whose text actually changed.
+//
+// One tick reaches every bar from one snapshot; a bar whose rendered text is
+// unchanged is not reported, so no frame is submitted for it.
+func (r *Registry) UpdateClock(now time.Time) []uint32 {
+	r.mu.Lock()
+	r.now = now
+	var changed []uint32
+	for global, bar := range r.bars {
+		if bar.apply(r.viewLocked(bar.connector())) {
+			changed = append(changed, global)
+		}
+	}
+	r.mu.Unlock()
+
+	r.publish(changed)
+	return changed
+}
+
+// UpdateNiri projects a snapshot into per-connector text and reports the
+// globals whose text actually changed.
+func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
+	next := projectOutputs(s)
+
+	r.mu.Lock()
+	// Replaced wholesale, not merged: a connector absent from the projection
+	// has no workspace state any more, and keeping its last value would render
+	// a stale workspace or title on a host that reconnects under that name.
+	r.outputs = next
+
+	var changed []uint32
+	for global, bar := range r.bars {
+		if bar.apply(r.viewLocked(bar.connector())) {
+			changed = append(changed, global)
+		}
+	}
+	r.mu.Unlock()
+
+	r.publish(changed)
+	return changed
+}
+
+// viewLocked assembles one bar's immutable input: the process-wide clock
+// snapshot plus this connector's Niri projection.
+func (r *Registry) viewLocked(connector string) barView {
+	state, ok := r.outputs[connector]
+	if !ok {
+		state = outputState{Workspace: noWorkspace}
+	}
+	return barView{Now: r.now, Workspace: state.Workspace, Title: state.Title}
+}
+
+// buildBar creates one bar and acquires the services its items need. A failure
+// releases whatever was already acquired, so a rejected build leaks nothing.
+func (r *Registry) buildBar(cfg config.Config, connector string) (
+	*Bar, []*services.Lease, wayland.HostCallbacks, error,
+) {
+	policy := cfg.ForConnector(connector)
+	bar, err := NewWithTheme(ThemeFrom(cfg, policy), policy, connector)
+	if err != nil {
+		return nil, nil, wayland.HostCallbacks{}, err
+	}
+
+	var leases []*services.Lease
+	for _, boundary := range clockBoundaries(policy.Left, policy.Center, policy.Right) {
+		lease, err := r.clock.Acquire(boundary)
+		if err != nil {
+			releaseAll(leases)
+			return nil, nil, wayland.HostCallbacks{}, err
+		}
+		leases = append(leases, lease)
+	}
+
+	return bar, leases, wayland.HostCallbacks{
 		Configure: bar.Configure,
 		Render:    bar.Render,
 		Handle:    bar.Handle,
 	}, nil
 }
 
-// DropHost releases a bar after its surface is destroyed.
-func (r *Registry) DropHost(global uint32) {
-	r.mu.Lock()
-	delete(r.bars, global)
-	delete(r.connectors, global)
-	r.mu.Unlock()
-}
-
-// WorkspaceFor reports the held label for a connector, whether or not a bar
-// exists for it.
-func (r *Registry) WorkspaceFor(connector string) string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if label, ok := r.workspaces[connector]; ok {
-		return label
+func releaseAll(leases []*services.Lease) {
+	for _, lease := range leases {
+		lease.Release()
 	}
-	return "-"
-}
-
-// UpdateNiri projects a snapshot into per-connector labels and reports the
-// connectors whose label actually changed, invalidating only those bars.
-func (r *Registry) UpdateNiri(s niri.Snapshot) []string {
-	labels := projectWorkspaces(s)
-
-	r.mu.Lock()
-	var changed []string
-	var dirty []uint32
-	for connector, label := range labels {
-		if r.workspaces[connector] == label {
-			continue
-		}
-		r.workspaces[connector] = label
-		changed = append(changed, connector)
-		// ponytail: bar count is output count. Add a connector index only if
-		// this scan ever appears in a profile.
-		for global, bar := range r.bars {
-			if r.connectors[global] == connector {
-				bar.SetWorkspace(label)
-				dirty = append(dirty, global)
-			}
-		}
-	}
-	r.mu.Unlock()
-
-	// A connector whose wl_output has not been announced has no bar to redraw.
-	// NewHost applies the held label when that bar is finally built.
-	for _, global := range dirty {
-		r.queueInvalidation(global)
-	}
-	return changed
-}
-
-// queueInvalidation keeps per-bar redraws while capacity permits. On overflow
-// it replaces the pending set with one broadcast redraw, which covers every
-// state update that any removed per-bar message represented.
-func (r *Registry) queueInvalidation(global uint32) {
-	r.invalidationMu.Lock()
-	defer r.invalidationMu.Unlock()
-	select {
-	case r.invalidations <- wayland.Invalidation{Global: global}:
-		return
-	default:
-	}
-	for {
-		select {
-		case <-r.invalidations:
-			continue
-		default:
-			r.invalidations <- wayland.Invalidation{}
-			return
-		}
-	}
-}
-
-// projectWorkspaces reduces a snapshot to one label per output. A focused
-// workspace outranks a merely active one on the same output.
-func projectWorkspaces(s niri.Snapshot) map[string]string {
-	labels := make(map[string]string, len(s.Workspaces))
-	focused := make(map[string]bool, len(s.Workspaces))
-	for _, w := range s.Workspaces {
-		if w.Output == "" || !(w.Focused || w.Active) {
-			continue
-		}
-		if focused[w.Output] && !w.Focused {
-			continue
-		}
-		label := w.Name
-		if label == "" {
-			label = strconv.Itoa(w.Index)
-		}
-		labels[w.Output] = label
-		if w.Focused {
-			focused[w.Output] = true
-		}
-	}
-	return labels
 }

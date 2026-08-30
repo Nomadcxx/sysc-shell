@@ -1,16 +1,16 @@
 package shell
 
 import (
+	"strconv"
 	"sync"
 	"testing"
 
-	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
-func TestProofConcurrentUpdateAndRender(t *testing.T) {
-	p := newTestProof(t)
+func TestBarConcurrentUpdateAndRender(t *testing.T) {
+	p := newTestBar(t)
 	if err := p.Configure(600, BarHeight, 120); err != nil {
 		t.Fatal(err)
 	}
@@ -22,9 +22,7 @@ func TestProofConcurrentUpdateAndRender(t *testing.T) {
 		defer wg.Done()
 		<-start
 		for i := 0; i < 100_000; i++ {
-			p.UpdateNiri(niri.Snapshot{Workspaces: []niri.Workspace{{
-				ID: 1, Index: i, Focused: true,
-			}}})
+			p.apply(barView{Workspace: strconv.Itoa(i), Title: "Fixture One"})
 		}
 	}()
 	go func() {
@@ -42,9 +40,9 @@ func TestProofConcurrentUpdateAndRender(t *testing.T) {
 	wg.Wait()
 }
 
-func newTestProof(t *testing.T) *Bar {
+func newTestBar(t *testing.T) *Bar {
 	t.Helper()
-	p, err := New()
+	p, err := New("DP-9")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,86 +62,39 @@ func drain(p *Bar) int {
 	}
 }
 
-func TestProofFirstSnapshotSetsWorkspace(t *testing.T) {
+// A bar renders the view it is given. Which view each output gets is the
+// Registry's decision and is covered in registry_test.go; the projection
+// itself is covered in projection_test.go.
+func TestABarRendersTheWorkspaceAndTitleItIsGiven(t *testing.T) {
 	t.Parallel()
 
-	p := newTestProof(t)
-	p.UpdateNiri(niri.Snapshot{
-		FocusedOutput: "DP-1",
-		Workspaces: []niri.Workspace{
-			{ID: 1, Index: 1, Output: "DP-1", Active: true, Focused: true},
-		},
-	})
-
-	if got := p.WorkspaceLabel(); got != "Workspace: 1" {
-		t.Fatalf("label = %q, want %q", got, "Workspace: 1")
+	p := newTestBar(t)
+	if !p.apply(barView{Workspace: "code", Title: "Fixture One"}) {
+		t.Fatal("the first view reported no change")
 	}
-	if drain(p) != 1 {
-		t.Fatal("the first snapshot did not request exactly one redraw")
+
+	sections := p.sections()
+	if got := sections[0][0].Text; got != "code" {
+		t.Fatalf("workspace node = %q, want code", got)
+	}
+	if got := sections[0][1].Text; got != "Fixture One" {
+		t.Fatalf("title node = %q, want Fixture One", got)
 	}
 }
 
-func TestProofPrefersWorkspaceName(t *testing.T) {
+// An output Niri has not reported renders a stable fallback rather than an
+// empty bar.
+func TestABarRendersTheFallbackWorkspace(t *testing.T) {
 	t.Parallel()
 
-	p := newTestProof(t)
-	p.UpdateNiri(niri.Snapshot{
-		FocusedOutput: "DP-1",
-		Workspaces: []niri.Workspace{
-			{ID: 5, Index: 1, Name: "code", Output: "DP-1", Active: true, Focused: true},
-		},
-	})
+	p := newTestBar(t)
+	p.apply(barView{Workspace: noWorkspace})
 
-	if got := p.WorkspaceLabel(); got != "Workspace: code" {
-		t.Fatalf("label = %q, want the workspace name", got)
+	if got := p.sections()[0][0].Text; got != "-" {
+		t.Fatalf("workspace node = %q, want the %q fallback", got, noWorkspace)
 	}
-}
-
-func TestProofLaterSnapshotChangesTextAndInvalidatesOnce(t *testing.T) {
-	t.Parallel()
-
-	p := newTestProof(t)
-	first := niri.Snapshot{
-		FocusedOutput: "DP-1",
-		Workspaces: []niri.Workspace{
-			{ID: 1, Index: 1, Output: "DP-1", Active: true, Focused: true},
-		},
-	}
-	p.UpdateNiri(first)
-	drain(p)
-
-	second := niri.Snapshot{
-		FocusedOutput: "DP-1",
-		Workspaces: []niri.Workspace{
-			{ID: 3, Index: 2, Output: "DP-1", Active: true, Focused: true},
-		},
-	}
-	p.UpdateNiri(second)
-
-	if got := p.WorkspaceLabel(); got != "Workspace: 2" {
-		t.Fatalf("label = %q, want %q", got, "Workspace: 2")
-	}
-	if got := drain(p); got != 1 {
-		t.Fatalf("a changed snapshot requested %d redraws, want exactly 1", got)
-	}
-}
-
-func TestProofRepeatedSnapshotRequestsNoRedraw(t *testing.T) {
-	t.Parallel()
-
-	p := newTestProof(t)
-	snap := niri.Snapshot{
-		FocusedOutput: "DP-1",
-		Workspaces: []niri.Workspace{
-			{ID: 1, Index: 1, Output: "DP-1", Active: true, Focused: true},
-		},
-	}
-	p.UpdateNiri(snap)
-	drain(p)
-
-	p.UpdateNiri(snap)
-	if got := drain(p); got != 0 {
-		t.Fatalf("an unchanged snapshot requested %d redraws, want none", got)
+	if got := p.sections()[0][1].Text; got != "" {
+		t.Fatalf("title node = %q, want empty with no window", got)
 	}
 }
 
@@ -168,11 +119,14 @@ func layoutForTest(t *testing.T, p *Bar, width int) {
 // are exercised through this node rather than through a shipped widget.
 func withSyntheticAction(t *testing.T, p *Bar, width int) ui.Rect {
 	t.Helper()
-	p.right = append(p.right, &ui.Node{
-		Kind: ui.KindButton, Text: "Synthetic", Padding: 4, Action: "synthetic-action",
+	p.right = append(p.right, textWidget{
+		node: &ui.Node{
+			Kind: ui.KindButton, Text: "Synthetic", Padding: 4, Action: "synthetic-action",
+		},
+		format: func(barView) string { return "Synthetic" },
 	})
 	layoutForTest(t, p, width)
-	bounds := p.right[len(p.right)-1].Bounds
+	bounds := p.right[len(p.right)-1].node.Bounds
 	if bounds.W <= 0 || bounds.H <= 0 {
 		t.Fatalf("synthetic node was not arranged: %+v", bounds)
 	}
@@ -186,10 +140,10 @@ func pressedAction(p *Bar) string {
 	return p.pressed
 }
 
-func TestProofPressRecordsTheHitAction(t *testing.T) {
+func TestBarPressRecordsTheHitAction(t *testing.T) {
 	t.Parallel()
 
-	p := newTestProof(t)
+	p := newTestBar(t)
 	bounds := withSyntheticAction(t, p, 600)
 
 	p.Handle(wayland.Event{
@@ -203,10 +157,10 @@ func TestProofPressRecordsTheHitAction(t *testing.T) {
 	}
 }
 
-func TestProofPressOutsideEveryActionRecordsNothing(t *testing.T) {
+func TestBarPressOutsideEveryActionRecordsNothing(t *testing.T) {
 	t.Parallel()
 
-	p := newTestProof(t)
+	p := newTestBar(t)
 	withSyntheticAction(t, p, 600)
 	drain(p)
 
@@ -222,10 +176,10 @@ func TestProofPressOutsideEveryActionRecordsNothing(t *testing.T) {
 }
 
 // A click counts only when the press and the release land on the same node.
-func TestProofReleaseOutsideThePressedNodeIsNotAClick(t *testing.T) {
+func TestBarReleaseOutsideThePressedNodeIsNotAClick(t *testing.T) {
 	t.Parallel()
 
-	p := newTestProof(t)
+	p := newTestBar(t)
 	bounds := withSyntheticAction(t, p, 600)
 
 	p.Handle(wayland.Event{
@@ -243,10 +197,10 @@ func TestProofReleaseOutsideThePressedNodeIsNotAClick(t *testing.T) {
 	}
 }
 
-func TestProofPointerLeaveCancelsThePress(t *testing.T) {
+func TestBarPointerLeaveCancelsThePress(t *testing.T) {
 	t.Parallel()
 
-	p := newTestProof(t)
+	p := newTestBar(t)
 	bounds := withSyntheticAction(t, p, 600)
 	x, y := float64(bounds.X+bounds.W/2), float64(bounds.Y+bounds.H/2)
 
@@ -264,10 +218,10 @@ func TestProofPointerLeaveCancelsThePress(t *testing.T) {
 
 // The single root is gone: three sections are arranged into absolute bounds
 // inside a content band derived from the theme tokens.
-func TestProofArrangesSectionsInsideTheContentBand(t *testing.T) {
+func TestBarArrangesSectionsInsideTheContentBand(t *testing.T) {
 	t.Parallel()
 
-	p := newTestProof(t)
+	p := newTestBar(t)
 	surfaceHeight, _, _ := DefaultTheme().Geometry()
 	if err := p.Layout(3396, surfaceHeight); err != nil {
 		t.Fatal(err)
