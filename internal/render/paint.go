@@ -116,6 +116,9 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 		paintMenu(c, n, text, style, size)
 		return nil
 
+	case ui.KindTextField:
+		return paintTextField(c, n, text, style, size)
+
 	case ui.KindRow, ui.KindColumn:
 		for i, child := range n.Children {
 			if child == nil {
@@ -218,6 +221,47 @@ func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 		}
 		_ = paintText(c, child.Text, cb, text, style, size, child.Tabular, child.Tone)
 	}
+}
+
+func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size int) error {
+	box := style.Scale120.PhysicalRect(n.Bounds)
+	c.FillRounded(box, style.Scale120.Physical(6), style.Track)
+	inner := ui.Rect{
+		X: n.Bounds.X + n.Padding,
+		Y: n.Bounds.Y + n.Padding,
+		W: n.Bounds.W - 2*n.Padding,
+		H: n.Bounds.H - 2*n.Padding,
+	}
+	phys := style.Scale120.PhysicalRect(inner)
+	committed := n.Text
+	if n.Cursor >= 0 && n.Cursor <= len(n.Text) {
+		committed = n.Text[:n.Cursor]
+	}
+	if err := paintText(c, n.Text, phys, text, style, size, n.Tabular, n.Tone); err != nil {
+		return err
+	}
+	prefixW := 0
+	if text != nil && committed != "" {
+		if w, _, err := text.Measure(committed, size, n.Tabular); err == nil {
+			prefixW = w
+		}
+	}
+	if n.Preedit != "" {
+		pre := phys
+		pre.X += prefixW
+		pre.W -= prefixW
+		if err := paintText(c, n.Preedit, pre, text, style, size, n.Tabular, n.Tone); err != nil {
+			return err
+		}
+		if pw, _, err := text.Measure(n.Preedit, size, n.Tabular); err == nil {
+			underline := ui.Rect{X: pre.X, Y: pre.Y + pre.H - 1, W: pw, H: 1}
+			fillRect(c, underline, style.Foreground)
+			prefixW += pw
+		}
+	}
+	caret := ui.Rect{X: phys.X + prefixW, Y: phys.Y, W: 1, H: phys.H}
+	fillRect(c, caret, style.accent())
+	return nil
 }
 
 // paintGraph fills one column per sample, newest at the right, using the same

@@ -44,6 +44,10 @@ type HostCallbacks struct {
 	Render func(pixels []byte, width, height, stride int) error
 	// Handle consumes a pointer event and reports whether state changed.
 	Handle func(Event) bool
+	// WantIME reports whether the focused control needs text-input-v3.
+	WantIME func() bool
+	// IBeamAt reports whether the pointer is over a text field.
+	IBeamAt func(x, y float64) bool
 	// OpaqueBackground is the resolved palette opacity for this surface.
 	OpaqueBackground bool
 }

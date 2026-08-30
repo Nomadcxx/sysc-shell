@@ -15,6 +15,8 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-wayland/client"
+	"github.com/Nomadcxx/sysc-wayland/cursorshape"
+	"github.com/Nomadcxx/sysc-wayland/textinput"
 	"golang.org/x/sys/unix"
 )
 
@@ -32,6 +34,7 @@ const (
 	EventPointerEnter
 	EventKeyPress
 	EventKeyRelease
+	EventIME
 )
 
 // Event is one pointer event in logical surface coordinates, which match the
@@ -48,6 +51,11 @@ type Event struct {
 	// Key is the evdev code from wl_keyboard.key. Set on key events only.
 	// The compositor already reports evdev; do not subtract 8.
 	Key uint32
+	// IME fields are set on EventIME only, after zwp_text_input_v3.done.
+	IMEPreedit      string
+	IMECommit       string
+	IMEDeleteBefore uint32
+	IMEDeleteAfter  uint32
 }
 
 // Invalidation requests a redraw. Global names the wl_registry output; a zero
@@ -176,6 +184,13 @@ type owner struct {
 	pointer    *client.Pointer
 	keyboard   *client.Keyboard
 
+	textInputMgr *textinput.ZwpTextInputManagerV3
+	textInput    *textinput.ZwpTextInputV3
+	cursorMgr    *cursorshape.WpCursorShapeManagerV1
+	cursorDevice *cursorshape.WpCursorShapeDeviceV1
+	ime          imePending
+	imeOn        bool
+
 	// hosts holds every bound wl_output, keyed by registry global name. Every
 	// ready host carries its own bar.
 	hosts *hostSet
@@ -292,6 +307,9 @@ func (o *owner) bindGlobals() error {
 			return fmt.Errorf("wayland: bind %s: %w", s.iface, err)
 		}
 	}
+	if err := o.bindOptionalInput(ctx); err != nil {
+		return err
+	}
 	o.cleanup.push("globals", o.destroyGlobals)
 
 	o.shm.SetFormatHandler(func(e client.ShmFormatEvent) { o.rs.addFormat(e.Format) })
@@ -377,6 +395,22 @@ func (o *owner) destroyGlobals() error {
 		errs = append(errs, o.keyboard.Release())
 		o.keyboard = nil
 	}
+	if o.cursorDevice != nil {
+		errs = append(errs, o.cursorDevice.Destroy())
+		o.cursorDevice = nil
+	}
+	if o.cursorMgr != nil {
+		errs = append(errs, o.cursorMgr.Destroy())
+		o.cursorMgr = nil
+	}
+	if o.textInput != nil {
+		errs = append(errs, o.textInput.Destroy())
+		o.textInput = nil
+	}
+	if o.textInputMgr != nil {
+		errs = append(errs, o.textInputMgr.Destroy())
+		o.textInputMgr = nil
+	}
 	return errors.Join(errs...)
 }
 
@@ -390,9 +424,18 @@ func (o *owner) onSeatCapabilities(e client.SeatCapabilitiesEvent) {
 			return
 		}
 		o.pointer = pointer
+		if o.cursorMgr != nil && o.cursorDevice == nil {
+			dev, err := o.cursorMgr.GetPointer(pointer)
+			if err != nil {
+				o.fail(fmt.Errorf("wayland: cursor shape device: %w", err))
+			} else {
+				o.cursorDevice = dev
+			}
+		}
 		pointer.SetEnterHandler(func(e client.PointerEnterEvent) {
 			if h, u, ok := o.unitBySurface(e.Surface); ok {
 				o.enterUnit(h, u, e.SurfaceX, e.SurfaceY, e.Serial)
+				o.syncCursor(u, e.SurfaceX, e.SurfaceY, e.Serial)
 			}
 		})
 		pointer.SetLeaveHandler(func(e client.PointerLeaveEvent) {
@@ -408,6 +451,7 @@ func (o *owner) onSeatCapabilities(e client.SeatCapabilitiesEvent) {
 			o.deliverUnit(o.focus.host, o.focus.unit, Event{
 				Kind: EventPointerMotion, X: e.SurfaceX, Y: e.SurfaceY,
 			})
+			o.syncCursor(o.focus.unit, e.SurfaceX, e.SurfaceY, o.focus.serial)
 		})
 		pointer.SetButtonHandler(func(e client.PointerButtonEvent) {
 			if o.focus.unit == nil {
@@ -427,6 +471,10 @@ func (o *owner) onSeatCapabilities(e client.SeatCapabilitiesEvent) {
 	case !hasPointer && o.pointer != nil:
 		// Capability loss must reset focus, not merely release the proxy.
 		o.clearFocus()
+		if o.cursorDevice != nil {
+			o.fail(o.cursorDevice.Destroy())
+			o.cursorDevice = nil
+		}
 		o.fail(o.pointer.Release())
 		o.pointer = nil
 	}

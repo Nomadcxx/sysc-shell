@@ -89,4 +89,5 @@ func (o *owner) deliverUnit(h *OutputHost, u *surfaceUnit, e Event) {
 	if u.app.Handle(e) {
 		u.sched.Invalidate()
 	}
+	o.syncIME(u)
 }

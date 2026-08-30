@@ -21,6 +21,7 @@ const (
 	layerOverlay      = layershell.ZwlrLayerShellV1LayerOverlay
 
 	keyEsc       = 1
+	keyBackspace = 14
 	keyTab       = 15
 	keyEnter     = 28
 	keyLeftShift = 42
@@ -393,6 +394,14 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 			Configure:        h.configure,
 			Render:           h.render,
 			Handle:           h.handle(r),
+			WantIME: func() bool {
+				n := h.focused()
+				return n != nil && n.Kind == ui.KindTextField
+			},
+			IBeamAt: func(x, y float64) bool {
+				n := h.hitFocusable(int(math.Floor(x)), int(math.Floor(y)))
+				return n != nil && n.Kind == ui.KindTextField
+			},
 		},
 	}
 }
@@ -434,6 +443,8 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 		switch e.Kind {
 		case wayland.EventKeyPress:
 			return h.keyPress(r, e.Key)
+		case wayland.EventIME:
+			return h.applyIME(e)
 		case wayland.EventKeyRelease:
 			if e.Key == keyLeftShift {
 				h.shift = false
@@ -468,6 +479,9 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 	if h.menu != nil && h.menu.Handle(key) {
 		return true
+	}
+	if key == keyBackspace {
+		return h.editField(func(f *ui.Field) { f.Backspace() })
 	}
 	switch key {
 	case keyLeftShift:
@@ -507,6 +521,27 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 		return h.activate(r)
 	}
 	return false
+}
+
+func (h *PanelHost) applyIME(e wayland.Event) bool {
+	return h.editField(func(f *ui.Field) {
+		f.DeleteSurrounding(int(e.IMEDeleteBefore), int(e.IMEDeleteAfter))
+		if e.IMECommit != "" {
+			f.Commit(e.IMECommit)
+		}
+		f.Preedit(e.IMEPreedit)
+	})
+}
+
+func (h *PanelHost) editField(fn func(*ui.Field)) bool {
+	n := h.focused()
+	if n == nil || n.Kind != ui.KindTextField {
+		return false
+	}
+	f := &ui.Field{Text: n.Text, PreeditText: n.Preedit, Cursor: n.Cursor}
+	fn(f)
+	f.SyncTo(n)
+	return true
 }
 
 func (h *PanelHost) focused() *ui.Node {

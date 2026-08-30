@@ -17,6 +17,7 @@ const (
 	KindToggle
 	KindSlider
 	KindMenu
+	KindTextField
 )
 
 // Rect is a logical-pixel rectangle.
@@ -36,7 +37,11 @@ type Node struct {
 	Min   float64
 	Max   float64
 	Step  float64
-	Width int
+	// Preedit is composing text shown underlined; it is not committed.
+	Preedit string
+	// Cursor is a byte index into Text for KindTextField.
+	Cursor int
+	Width  int
 	// Values are the graph's samples, oldest first, each already normalised to
 	// zero through one by the widget. The node carries no scale of its own.
 	Values []float64

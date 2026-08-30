@@ -90,6 +90,16 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 			w = n.Width
 		}
 		return w, h, nil
+	case KindTextField:
+		sample := n.Text + n.Preedit
+		if sample == "" {
+			sample = " "
+		}
+		w, h := measure(sample, n.Tabular)
+		if n.Width > w {
+			w = n.Width
+		}
+		return w, h + 2*n.Padding, nil
 	default:
 		return 0, 0, fmt.Errorf("unsupported kind %d", n.Kind)
 	}

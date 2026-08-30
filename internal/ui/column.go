@@ -69,6 +69,13 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 			h += ch
 		}
 		return h, nil
+	case KindTextField:
+		sample := n.Text + n.Preedit
+		if sample == "" {
+			sample = " "
+		}
+		_, h := measure(sample, n.Tabular)
+		return h + 2*n.Padding, nil
 	case KindRow:
 		maxH := 0
 		for _, c := range n.Children {

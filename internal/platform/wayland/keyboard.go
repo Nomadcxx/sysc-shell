@@ -10,9 +10,11 @@ type keyFocus struct {
 
 func (o *owner) enterKeyboard(h *OutputHost, u *surfaceUnit) {
 	o.keyFocus = keyFocus{host: h, unit: u}
+	o.syncIME(u)
 }
 
 func (o *owner) leaveKeyboard() {
+	o.setTextInputEnabled(false)
 	o.keyFocus = keyFocus{}
 }
 
