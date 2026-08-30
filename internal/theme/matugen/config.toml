@@ -1,0 +1,5 @@
+[config]
+
+[templates.shell]
+input_path = "@TPL@"
+output_path = "@OUT@"
