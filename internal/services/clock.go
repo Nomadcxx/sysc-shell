@@ -34,9 +34,12 @@ type Clock struct {
 	updates chan time.Time
 }
 
-// Lease is one consumer's claim on the clock.
+// Lease is one consumer's claim on a service. Exactly one of clock or metrics
+// is set; the zero value is an already-released lease.
 type Lease struct {
 	clock    *Clock
+	metrics  *Metrics
+	source   Source
 	boundary time.Duration
 }
 
@@ -80,12 +83,23 @@ func (c *Clock) Acquire(boundary time.Duration) (*Lease, error) {
 // Release drops a consumer, stopping the clock when it was the last one. It is
 // idempotent and safe on a nil lease.
 func (l *Lease) Release() {
-	if l == nil || l.clock == nil {
+	switch {
+	case l == nil:
 		return
+	case l.clock != nil:
+		c := l.clock
+		l.clock = nil
+		c.releaseClock(l)
+	case l.metrics != nil:
+		m := l.metrics
+		l.metrics = nil
+		m.releaseMetric(l)
 	}
-	c := l.clock
-	l.clock = nil
+}
 
+// releaseClock drops one clock lease, stopping the goroutine when it was the
+// last one.
+func (c *Clock) releaseClock(l *Lease) {
 	c.mu.Lock()
 	if !c.leases.remove(l) {
 		c.mu.Unlock()
