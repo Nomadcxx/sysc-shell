@@ -113,6 +113,7 @@ Split into four reviewed tranches by the charter. 3A and 3B are merged.
 | `2026-08-31-power-completion-handover.md` | completion-handover | `milestone/power` | Implementation complete; live matrix owner-deferred. |
 | `2026-08-31-m3-code-quality-sweep.md` | audit-report | `milestone/power` | Ponytail pass over 3A–3D. Report only; cuts listed, not applied. |
 | `2026-08-31-m3-spec-review-sweep.md` | audit-report | `milestone/power` | Implementation vs designs, plans, charter, and 2026-08-31 audits. |
+| `2026-08-31-m3-quality-findings-review.md` | audit-handover | `milestone/power` | Classifies ponytail cuts as M4-reserved, specified M3 API, real-dead, or optional shrink. For a second agent to confirm. |
 
 ### Tranche state
 
