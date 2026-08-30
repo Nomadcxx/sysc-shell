@@ -105,7 +105,7 @@ func read(ctx context.Context, conn net.Conn, scanner *bufio.Scanner, snapshots 
 			return
 		}
 		if publish {
-			send(snapshots, s.snapshot())
+			send(snapshots, s.last)
 		}
 	}
 

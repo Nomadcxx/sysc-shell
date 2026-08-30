@@ -146,9 +146,13 @@ type wireWindowClosed struct {
 }
 
 // state accumulates workspace and window events into snapshots.
+//
+// last is the most recently published snapshot. Comparing against it is what
+// keeps an event that changes no projected field from waking the shell.
 type state struct {
 	workspaces []Workspace
 	windows    []Window
+	last       Snapshot
 }
 
 // apply decodes one event line. It reports whether a new snapshot should be
@@ -176,7 +180,7 @@ func (s *state) apply(line []byte) (bool, error) {
 			next = append(next, projected)
 		}
 		s.workspaces = next
-		return true, nil
+		return s.publishIfChanged(), nil
 	}
 
 	if payload, ok := envelope["WorkspaceActivated"]; ok {
@@ -187,7 +191,10 @@ func (s *state) apply(line []byte) (bool, error) {
 		if activated.ID == nil || activated.Focused == nil {
 			return false, fmt.Errorf("niri: WorkspaceActivated is missing id or focused")
 		}
-		return true, s.activate(*activated.ID, *activated.Focused)
+		if err := s.activate(*activated.ID, *activated.Focused); err != nil {
+			return false, err
+		}
+		return s.publishIfChanged(), nil
 	}
 
 	if payload, ok := envelope["WorkspaceActiveWindowChanged"]; ok {
@@ -213,7 +220,7 @@ func (s *state) apply(line []byte) (bool, error) {
 		} else {
 			s.workspaces[i].ActiveWindowID, s.workspaces[i].HasActiveWindow = 0, false
 		}
-		return true, nil
+		return s.publishIfChanged(), nil
 	}
 
 	if payload, ok := envelope["WindowsChanged"]; ok {
@@ -232,7 +239,7 @@ func (s *state) apply(line []byte) (bool, error) {
 			next = append(next, projected)
 		}
 		s.windows = next
-		return true, nil
+		return s.publishIfChanged(), nil
 	}
 
 	if payload, ok := envelope["WindowOpenedOrChanged"]; ok {
@@ -249,7 +256,7 @@ func (s *state) apply(line []byte) (bool, error) {
 		} else {
 			s.windows = append(s.windows, projected)
 		}
-		return true, nil
+		return s.publishIfChanged(), nil
 	}
 
 	if payload, ok := envelope["WindowClosed"]; ok {
@@ -267,7 +274,7 @@ func (s *state) apply(line []byte) (bool, error) {
 			return false, nil
 		}
 		s.windows = slices.Delete(s.windows, i, i+1)
-		return true, nil
+		return s.publishIfChanged(), nil
 	}
 
 	return false, nil
@@ -335,4 +342,18 @@ func (s *state) snapshot() Snapshot {
 		}
 	}
 	return snap
+}
+
+// publishIfChanged records and reports a new snapshot only when it differs
+// from the last published one. Workspace and Window contain only comparable
+// fields, so slices.Equal is an exact comparison.
+func (s *state) publishIfChanged() bool {
+	next := s.snapshot()
+	if next.FocusedOutput == s.last.FocusedOutput &&
+		slices.Equal(next.Workspaces, s.last.Workspaces) &&
+		slices.Equal(next.Windows, s.last.Windows) {
+		return false
+	}
+	s.last = next
+	return true
 }

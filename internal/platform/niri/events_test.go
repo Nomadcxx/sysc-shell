@@ -193,3 +193,55 @@ func TestWorkspaceActiveWindowChangedForAnUnknownWorkspaceIsAStreamError(t *test
 		t.Fatal("an unknown workspace id was accepted")
 	}
 }
+
+func TestRepeatingAnEventPublishesNothing(t *testing.T) {
+	t.Parallel()
+	var s state
+
+	publish, err := s.apply([]byte(twoOutputWorkspaces))
+	if err != nil || !publish {
+		t.Fatalf("first apply published %v, err %v; want true, nil", publish, err)
+	}
+	publish, err = s.apply([]byte(twoOutputWorkspaces))
+	if err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+	if publish {
+		t.Fatal("an identical WorkspacesChanged published a second snapshot")
+	}
+}
+
+// A window property the shell does not project must not cost a wake-up.
+func TestAWindowChangeOutsideTheProjectionPublishesNothing(t *testing.T) {
+	t.Parallel()
+	const sameWindowNowUrgent = `{"WindowOpenedOrChanged":{"window":` +
+		`{"id":80,"title":"Fixture One","app_id":"fixture.one","pid":1000,"workspace_id":5,` +
+		`"is_focused":true,"is_floating":true,"is_urgent":true,"layout":{},"focus_timestamp":7}}}`
+
+	var s state
+	if _, err := s.apply([]byte(windowsChangedFixture)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	publish, err := s.apply([]byte(sameWindowNowUrgent))
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if publish {
+		t.Fatal("a change to an unprojected field published a snapshot")
+	}
+}
+
+func TestARealTitleChangeStillPublishes(t *testing.T) {
+	t.Parallel()
+	var s state
+	if _, err := s.apply([]byte(windowsChangedFixture)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	publish, err := s.apply([]byte(windowRetitledFixture))
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if !publish {
+		t.Fatal("a title change did not publish")
+	}
+}
