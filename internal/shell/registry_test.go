@@ -4,9 +4,12 @@ import (
 	"testing"
 	"time"
 
+	metrics "github.com/Nomadcxx/sysc-metrics"
+
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/services"
 )
 
 // newHosts is the common setup: one registry with hosts at the given globals.
@@ -312,5 +315,124 @@ func TestCommitAppliesHeldStateToTheReplacementBars(t *testing.T) {
 
 	if got := reg.bars[1].left[0].node.Text; got != "code" {
 		t.Fatalf("replacement bar workspace = %q, want the held state", got)
+	}
+}
+
+// metricConfig is a bar carrying one CPU text widget.
+func metricConfig() config.Config {
+	cfg := config.Default()
+	cfg.Bar.Left = []config.Item{{
+		ID: "cpu", Display: "text", Interval: 2 * time.Second,
+	}}
+	cfg.Bar.Center = nil
+	cfg.Bar.Right = nil
+	return cfg
+}
+
+func TestAMetricWidgetLeasesItsSource(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(metricConfig())
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9"})
+
+	if !reg.Metrics().Leased(services.SourceCPU) {
+		t.Fatal("a CPU widget did not lease the CPU source")
+	}
+	for _, src := range []services.Source{
+		services.SourceMemory, services.SourceFilesystem,
+		services.SourceBlock, services.SourceNetwork,
+	} {
+		if reg.Metrics().Leased(src) {
+			t.Fatalf("source %v leased with no widget", src)
+		}
+	}
+}
+
+func TestTwoBarsShareOneMetricsServiceAndOneSample(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(metricConfig())
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9", 2: "HDMI-A-9"})
+
+	if got := reg.Metrics().Starts(); got != 1 {
+		t.Fatalf("metrics starts = %d, want 1 shared start for two bars", got)
+	}
+
+	changed := reg.UpdateMetrics(services.Snapshot{
+		CPU: &metrics.CPUSnapshot{Usage: metrics.CPUUsage{Fraction: 0.42, Valid: true}},
+	})
+	if len(changed) != 2 {
+		t.Fatalf("one sample changed %d bars, want 2", len(changed))
+	}
+}
+
+func TestDroppingTheLastMetricBarStopsTheService(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(metricConfig())
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9", 2: "HDMI-A-9"})
+
+	reg.DropHost(1)
+	if !reg.Metrics().Running() {
+		t.Fatal("dropping one of two bars stopped the metrics service")
+	}
+	reg.DropHost(2)
+	if reg.Metrics().Running() {
+		t.Fatal("dropping the last bar left the metrics service running")
+	}
+}
+
+// An unchanged sample must not repaint: no source change, no submitted frame.
+func TestAnUnchangedSampleChangesNothing(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(metricConfig())
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9"})
+
+	snap := services.Snapshot{
+		CPU: &metrics.CPUSnapshot{Usage: metrics.CPUUsage{Fraction: 0.42, Valid: true}},
+	}
+	if changed := reg.UpdateMetrics(snap); len(changed) != 1 {
+		t.Fatalf("first sample changed %v, want global 1", changed)
+	}
+	if changed := reg.UpdateMetrics(snap); len(changed) != 0 {
+		t.Fatalf("an identical sample changed %v", changed)
+	}
+}
+
+// A configuration naming no metric leaves the service stopped, so a clock-only
+// bar costs no sampling goroutine.
+func TestAConfigWithNoMetricLeavesTheServiceStopped(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(config.Default())
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9"})
+
+	if reg.Metrics().Running() {
+		t.Fatal("a configuration with no metric started the sampling service")
+	}
+}
+
+// A graph and a meter carry no text, so text comparison cannot detect their
+// change. A bar carrying one must repaint whenever its snapshot changes.
+func TestABarWithAGraphRepaintsOnEverySample(t *testing.T) {
+	t.Parallel()
+	cfg := metricConfig()
+	cfg.Bar.Left = []config.Item{{
+		ID: "cpu", Display: "graph", Interval: 2 * time.Second,
+	}}
+
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9"})
+
+	snap := services.Snapshot{
+		CPU: &metrics.CPUSnapshot{Usage: metrics.CPUUsage{Fraction: 0.42, Valid: true}},
+	}
+	if changed := reg.UpdateMetrics(snap); len(changed) != 1 {
+		t.Fatalf("first sample changed %v, want global 1", changed)
+	}
+	if changed := reg.UpdateMetrics(snap); len(changed) != 1 {
+		t.Fatalf("a graph bar changed %v, want it repainted on every sample", changed)
 	}
 }

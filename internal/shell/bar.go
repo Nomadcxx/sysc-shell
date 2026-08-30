@@ -97,6 +97,20 @@ func (b *Bar) connector() string { return b.conn }
 func (b *Bar) widgets() [][]textWidget { return [][]textWidget{b.left, b.center, b.right} }
 
 // sections returns the retained nodes in paint order, for layout and painting.
+// hasPlottedWidget reports whether any widget renders through the node rather
+// than through text. A meter and a graph carry their value on the node, so
+// text comparison cannot detect their change.
+func (b *Bar) hasPlottedWidget() bool {
+	for _, section := range b.widgets() {
+		for _, w := range section {
+			if w.node.Kind == ui.KindMeter || w.node.Kind == ui.KindGraph {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (b *Bar) sections() [][]*ui.Node {
 	out := make([][]*ui.Node, 0, 3)
 	for _, section := range b.widgets() {
