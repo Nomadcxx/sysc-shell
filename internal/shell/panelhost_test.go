@@ -111,6 +111,18 @@ func TestRevealAnimationInvalidatesUntilDone(t *testing.T) {
 	}
 }
 
+func TestTogglePanelByNameOpensSession(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.TogglePanelByName("session"); err != nil {
+		t.Fatal(err)
+	}
+	reqs := drainAux(t, reg, 2)
+	if !strings.HasPrefix(reqs[1].Open.ID, "panel:session") {
+		t.Fatalf("opened %q", reqs[1].Open.ID)
+	}
+}
+
 func TestReloadKeepsOpenPanels(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)

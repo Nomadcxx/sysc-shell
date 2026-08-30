@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"sync"
@@ -66,7 +67,72 @@ type PanelHost struct {
 	errLabel       string
 }
 
+func parsePanelName(name string) (PanelID, error) {
+	switch name {
+	case "clock":
+		return PanelClock, nil
+	case "system-monitor":
+		return PanelMonitor, nil
+	case "session":
+		return PanelSession, nil
+	case "settings":
+		return 0, fmt.Errorf("not yet available")
+	default:
+		return 0, fmt.Errorf("unknown panel")
+	}
+}
+
 func (r *Registry) AuxRequests() <-chan wayland.AuxRequest { return r.aux }
+
+func (r *Registry) TogglePanelByName(name string) error {
+	id, err := parsePanelName(name)
+	if err != nil {
+		return err
+	}
+	out, trig := r.focusedTrigger()
+	return r.TogglePanel(id, out, trig)
+}
+
+func (r *Registry) OpenPanelByName(name string) error {
+	id, err := parsePanelName(name)
+	if err != nil {
+		return err
+	}
+	out, trig := r.focusedTrigger()
+	return r.OpenPanel(id, out, trig)
+}
+
+func (r *Registry) ClosePanelByName(name string) error {
+	id, err := parsePanelName(name)
+	if err != nil {
+		return err
+	}
+	r.ClosePanel(id)
+	return nil
+}
+
+func (r *Registry) focusedTrigger() (uint32, Trigger) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var global uint32
+	var connector string
+	if r.focused != "" {
+		for g, bar := range r.bars {
+			if bar.connector() == r.focused {
+				global, connector = g, r.focused
+				break
+			}
+		}
+	}
+	if global == 0 {
+		for g, bar := range r.bars {
+			global, connector = g, bar.connector()
+			break
+		}
+	}
+	policy := r.cfg.ForConnector(connector)
+	return global, Trigger{BarEdge: policy.Edge, BarZone: policy.Height, Align: ""}
+}
 
 func (r *Registry) OpenPanel(id PanelID, output uint32, trig Trigger) error {
 	r.mu.Lock()

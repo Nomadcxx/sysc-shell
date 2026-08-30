@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -125,11 +126,45 @@ func run(ctx context.Context) error {
 		}
 	}()
 
+	ipcErr := make(chan error, 1)
+	go func() {
+		srv := ipc.NewServer(ipc.DefaultSocket(), ipc.Handlers{
+			Panel: func(action, panel string) error {
+				switch action {
+				case "toggle":
+					return registry.TogglePanelByName(panel)
+				case "open":
+					return registry.OpenPanelByName(panel)
+				case "close":
+					return registry.ClosePanelByName(panel)
+				default:
+					return fmt.Errorf("unknown panel action")
+				}
+			},
+			Status: func() map[string]any {
+				return map[string]any{"version": "sysc-shell"}
+			},
+		})
+		ipcErr <- srv.Serve(ctx)
+	}()
+	select {
+	case err := <-ipcErr:
+		if errors.Is(err, ipc.ErrSingleInstance) {
+			return fmt.Errorf("another sysc-shell is already running")
+		}
+		if err != nil {
+			return err
+		}
+	case <-time.After(50 * time.Millisecond):
+	}
+
 	runErr := wayland.Run(ctx, cfg, wayland.Callbacks{
 		NewHost:       registry.NewHost,
 		PrepareConfig: registry.PrepareConfig,
 		DropHost:      registry.DropHost,
+		DropAux:       registry.DropAux,
 		Invalidations: registry.Invalidations(),
+		Aux:           registry.AuxRequests(),
 		Tooltips:      registry.Tooltips(),
 		Reloads:       reloads,
 		ConfigPath:    cfgPath,

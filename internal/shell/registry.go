@@ -28,6 +28,7 @@ type Registry struct {
 	bars    map[uint32]*Bar
 	leases  map[uint32][]*services.Lease
 	now     time.Time
+	focused string
 
 	clock   *services.Clock
 	metrics *services.Metrics
@@ -333,6 +334,7 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	// has no workspace state any more, and keeping its last value would render
 	// a stale workspace or title on a host that reconnects under that name.
 	r.outputs = next
+	r.focused = s.FocusedOutput
 
 	var changed []uint32
 	for global, bar := range r.bars {
