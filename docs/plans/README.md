@@ -105,15 +105,15 @@ Split into four reviewed tranches by the charter. 3A and 3B are merged.
 | `2026-08-31-core-metrics-audit-corrections.md` | corrections | `main` | Closed. All six findings applied and evidenced. |
 | `2026-08-30-weather-and-visual-vocabulary-design.md` | design | `main` | Owner-approved, audited, amended. D1–D9; D4 is a recorded charter deviation (icons as a font). D3 amended and `Weather.Reconfigure` added 2026-08-31. |
 | `2026-08-30-weather-and-visual-vocabulary.md` | plan | `main` | 11 tasks; 9–11 (tooltip) were cuttable and were implemented. Audit amendments applied 2026-08-31. |
-| `2026-08-30-weather-and-visual-vocabulary-completion-handover.md` | completion-handover | `milestone/weather-vocabulary` | Implementation complete; live matrix owner-deferred. |
+| `2026-08-30-weather-and-visual-vocabulary-completion-handover.md` | completion-handover | `main` | Implementation complete; live matrix owner-deferred. |
 | `2026-08-31-weather-and-visual-vocabulary-audit-report.md` | audit-report | `main` | Closed. Verdict: amend before executing; all six amendments applied. |
 | `2026-08-31-power-design.md` | design | `main` | Owner-approved, audited. D1–D6. Signatures provisional on `sysc-19`. Scope sentence aligned with D4 2026-08-31. |
 | `2026-08-31-power.md` | plan | `main` | Executed. 7 tasks. Task 0 reconciled against `sysc-metrics@v0.2.0`. |
 | `2026-08-31-power-audit-report.md` | audit-report | `main` | Closed. Verdict: rebase onto post-D6 `Metrics`, then wait for Task 0. Findings 1, 3, 4, 5 applied; finding 6 is 3D's `Tone` comparison. |
-| `2026-08-31-power-completion-handover.md` | completion-handover | `milestone/power` | Implementation complete; live matrix owner-deferred. |
-| `2026-08-31-m3-code-quality-sweep.md` | audit-report | `milestone/power` | Ponytail pass over 3A–3D. Report only; cuts listed, not applied. |
-| `2026-08-31-m3-spec-review-sweep.md` | audit-report | `milestone/power` | Implementation vs designs, plans, charter, and 2026-08-31 audits. |
-| `2026-08-31-m3-quality-findings-review.md` | audit-handover | `milestone/power` | Classifies ponytail cuts as M4-reserved, specified M3 API, real-dead, or optional shrink. For a second agent to confirm. |
+| `2026-08-31-power-completion-handover.md` | completion-handover | `main` | Implementation complete; live matrix owner-deferred. |
+| `2026-08-31-m3-code-quality-sweep.md` | audit-report | `main` | Ponytail pass over 3A–3D. Report only; cuts listed, not applied. |
+| `2026-08-31-m3-spec-review-sweep.md` | audit-report | `main` | Implementation vs designs, plans, charter, and 2026-08-31 audits. |
+| `2026-08-31-m3-quality-findings-review.md` | audit-handover | `main` | Classifies ponytail cuts as M4-reserved, specified M3 API, real-dead, or optional shrink. For a second agent to confirm. |
 
 ### Tranche state
 
@@ -121,8 +121,8 @@ Split into four reviewed tranches by the charter. 3A and 3B are merged.
 |---|---|---|
 | 3A | Clock, date, Niri workspace, focused-window title; service lifetime; per-output widget instances | Merged. |
 | 3B | CPU, memory, filesystem, block and network rates | Merged. Audited; all six findings applied. |
-| 3C | Battery and remaining time | Implemented on `milestone/power`. Live matrix owner-deferred. |
-| 3D | Weather, icons, error tone, tooltip | Implemented on `milestone/weather-vocabulary`. Live matrix owner-deferred. |
+| 3C | Battery and remaining time | Merged. Live matrix owner-deferred. |
+| 3D | Weather, icons, error tone, tooltip | Merged. Live matrix owner-deferred. |
 
 ## Milestone 4 — panels and standard controls
 
