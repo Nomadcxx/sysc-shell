@@ -17,6 +17,18 @@ module dependency.
 
 **Spec:** `docs/plans/2026-08-30-weather-and-visual-vocabulary-design.md`
 
+**Amended 2026-08-31** after `2026-08-31-weather-and-visual-vocabulary-audit-report.md`, whose verdict
+was amend before executing. Six changes, none of which alters a decision:
+
+| Finding | Change |
+|---|---|
+| 1 (major) | Task 1 gains `Weather.Reconfigure`, Task 7 calls it from `PrepareConfig`'s commit, and both gain tests. Coordinates and unit were frozen at `NewWeather`, so a reload changing city or unit would have fetched the old URL for the life of the process while the suite stayed green. |
+| 2 (major) | Task 1's `Lease` snippet adds one field instead of retyping the struct. It named `source Source` and would have reverted Tranche 3B's `selector`. |
+| 3 | Task 4's expected failure is corrected: `FontMap.Face` already exists, so the resolution tests must fail on resolution, not on a missing method. |
+| 4 | Task 5 teaches `applyLocked` to compare `Tone`, since the field is written as a side effect exactly as value and absence are. |
+| 5 | D3's wording amended to one 6-second budget rather than adding an untested 3-second dial deadline. |
+| 6 | Task 5's paint fixture uses `newTestCanvas`, `testStyle` and `Canvas.Pix`, which are what Tranche 3B shipped. |
+
 ## Global Constraints
 
 Every task's requirements implicitly include this section.
@@ -193,12 +205,65 @@ func TestClosingTheWeatherServiceStopsTheGoroutine(t *testing.T) {
 	// Close must be safe to call twice; shutdown paths may each reach it.
 	w.Close()
 }
+
+// Coordinates and unit are the request, so a reload has to be able to change
+// them. Without this the service fetches the city it started with for the life
+// of the process, however often the configuration is reloaded.
+func TestReconfiguringChangesTheRequestWithoutRestarting(t *testing.T) {
+	t.Parallel()
+	w := NewWeather(0, 0, UnitCelsius)
+	t.Cleanup(w.Close)
+
+	lease, err := w.Acquire(time.Minute)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer lease.Release()
+
+	w.Reconfigure(51.5, -0.13, UnitFahrenheit)
+
+	if got := w.Starts(); got != 1 {
+		t.Fatalf("starts = %d after Reconfigure, want 1; the service restarted", got)
+	}
+	if !w.Running() {
+		t.Fatal("Reconfigure stopped a service that is still leased")
+	}
+	url := w.requestURL()
+	for _, want := range []string{"latitude=51.5", "longitude=-0.13", "temperature_unit=fahrenheit"} {
+		if !strings.Contains(url, want) {
+			t.Fatalf("request %q does not carry %q", url, want)
+		}
+	}
+}
+
+// An unrelated reload calls Reconfigure with what the service already has, so
+// the no-op path must not disturb a fetch that is due.
+func TestReconfiguringToTheSameRequestIsANoOp(t *testing.T) {
+	t.Parallel()
+	w := NewWeather(51.5, -0.13, UnitCelsius)
+	t.Cleanup(w.Close)
+
+	before := w.requestURL()
+	w.Reconfigure(51.5, -0.13, UnitCelsius)
+
+	if after := w.requestURL(); after != before {
+		t.Fatalf("request changed from %q to %q on an identical reconfigure", before, after)
+	}
+	select {
+	case <-w.rearm:
+		t.Fatal("an identical reconfigure re-armed the fetch")
+	default:
+	}
+}
 ```
+
+`requestURL` is the request builder Task 2 uses; hoist it out of the fetch path in this task so both
+can call it, and add `"strings"` to the test imports.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `go test ./internal/services/ -run Weather -v`
-Expected: FAIL to compile — `NewWeather`, `UnitCelsius` undefined.
+Expected: FAIL to compile — `NewWeather`, `UnitCelsius`, `Reconfigure` and `requestURL` undefined.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -385,16 +450,48 @@ func (w *Weather) releaseWeather(l *Lease) {
 }
 ```
 
-Extend `Lease` in `internal/services/clock.go` with the third owner, and add the dispatch arm:
+Also add `Reconfigure`, which the design's 2026-08-31 amendment requires:
 
 ```go
-type Lease struct {
-	clock    *Clock
-	metrics  *Metrics
-	weather  *Weather
-	source   Source
-	boundary time.Duration
+// Reconfigure points the service at a different request. Coordinates and unit
+// are the request itself, so unlike an interval they cannot be a lease
+// concern: a reload that changes city or unit has to reach the service.
+//
+// The no-op path matters because every accepted reload calls this, including
+// the overwhelming majority that change something else entirely.
+//
+// The *Weather pointer is never replaced. Live leases hold it, and swapping it
+// would strand them on a service nothing fetches for.
+func (w *Weather) Reconfigure(latitude, longitude float64, unit Unit) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if latitude == w.latitude && longitude == w.longitude && unit == w.unit {
+		return
+	}
+	w.latitude, w.longitude, w.unit = latitude, longitude, unit
+
+	// Re-arm rather than restart, so the new request is issued at the next
+	// opportunity instead of up to a full interval later, and Starts() stays
+	// at 1 for a service that is still in use.
+	select {
+	case w.rearm <- struct{}{}:
+	default:
+	}
 }
+```
+
+Extend `Lease` in `internal/services/clock.go` with the third owner, and add the dispatch arm.
+
+**Add the one field. Do not retype the struct.** `Lease` currently carries `selector Selector`, which
+Tranche 3B introduced when it keyed metric history per subject (3B D6). An earlier draft of this task
+showed the struct with `source Source`; pasting that would silently revert 3B's history keying, and
+every metrics test would still pass because the selector fields it drops are the subject and direction
+that only a graph reads.
+
+```go
+// in the existing Lease struct, alongside clock, metrics, selector and boundary:
+	weather *Weather
 ```
 
 ```go
@@ -990,6 +1087,12 @@ func TestSplitRunsIsolatesAnIconRune(t *testing.T) {
 Run: `go test ./internal/render/ -run Icon -v`
 Expected: FAIL to compile — `IconRune`, `iconClearDay` and the range constants undefined.
 
+Note what the failure is **not**. `FontMap.Face` already exists on `main` and caches per rune through
+`outlineFaceForRune`; this task changes its body rather than adding it. Once the constants compile,
+`TestIconRunesResolveToTheProjectFace` and `TestSplitRunsIsolatesAnIconRune` must fail because a
+private-use rune resolves to a system fallback or notdef, not because a method is missing. If they
+fail for any other reason, the test is not exercising resolution.
+
 - [ ] **Step 4: Write the implementation**
 
 Create `internal/render/iconfont.go`:
@@ -1123,8 +1226,9 @@ BEADS_DB=/home/nomadx/sysc-shell/.beads/beads.db git commit -m "feat(render): re
 ### Task 5: The error tone
 
 **Files:**
-- Modify: `internal/ui/tree.go`, `internal/render/paint.go`, `internal/shell/theme.go`
-- Test: `internal/render/paint_test.go:` append
+- Modify: `internal/ui/tree.go`, `internal/render/paint.go`, `internal/shell/theme.go`,
+  `internal/shell/bar.go`
+- Test: `internal/render/paint_test.go:` append, `internal/shell/bar_test.go:` append
 
 **Interfaces:**
 - Consumes: nothing.
@@ -1141,7 +1245,10 @@ Append to `internal/render/paint_test.go`:
 func TestErrorToneTextPaintsInTheErrorColour(t *testing.T) {
 	t.Parallel()
 
-	canvas, style, r := newPaintFixture(t, 80, 20)
+	canvas := newTestCanvas(t, 80, 20)
+	style := testStyle
+	style.Body = ui.Rect{W: 80, H: 20}
+	r := NewTextRenderer(mustTestFace(t))
 	style.Foreground = Color{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
 	style.Error = Color{R: 0xff, G: 0x40, B: 0x40, A: 0xff}
 
@@ -1158,8 +1265,8 @@ func TestErrorToneTextPaintsInTheErrorColour(t *testing.T) {
 	// The error colour has a low green channel; the foreground is white. Any
 	// painted pixel must therefore be redder than it is green.
 	var sawErrorPixel bool
-	for i := 0; i+3 < len(canvas.pixels); i += 4 {
-		red, green := canvas.pixels[i+2], canvas.pixels[i+1]
+	for i := 0; i+3 < len(canvas.Pix); i += 4 {
+		red, green := canvas.Pix[i+2], canvas.Pix[i+1]
 		if red > 0 && red > green {
 			sawErrorPixel = true
 			break
@@ -1172,8 +1279,9 @@ func TestErrorToneTextPaintsInTheErrorColour(t *testing.T) {
 ```
 
 If `Canvas`'s pixel field is named other than `pixels`, use the real field — the test is in package
-`render`. If `newPaintFixture` does not exist because Tranche 3B was not executed, add it as that plan's
-Task 6 defines it.
+`render`. Tranche 3B is merged, so `newTestCanvas`, `testStyle` and `mustTestFace` all exist; there is
+no `newPaintFixture` and no `Canvas.pixels`. The field is `Canvas.Pix`, and `Paint` rejects a body with
+a non-positive dimension, which is why the fixture sets `style.Body` to the canvas.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1239,6 +1347,22 @@ theme already parses `Error`:
 ```go
 			Error: theme.Error,
 ```
+
+Teach `Bar.applyLocked` to compare `Tone`, in the same task that introduces it:
+
+```go
+			if w.node.Value != before.Value || w.node.Absent != before.Absent ||
+				w.node.Tone != before.Tone ||
+				!slices.Equal(w.node.Values, before.Values) {
+				changed = true
+			}
+```
+
+`applyLocked` already captures each node before formatting, for the value and absence Tranche 3B
+added. `Tone` is written the same way, as a side effect of `format`, so without this line a change
+that alters only the colour submits no frame. Weather nearly always changes its text as well, so the
+gap would not show in this tranche; it would show in 3C, where a battery threshold can recolour a
+glyph whose text is unchanged.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1701,12 +1825,76 @@ func TestShowConditionAppendsTheConditionWord(t *testing.T) {
 		t.Fatalf("condition text %q does not name the condition", withWord)
 	}
 }
+
+// The live gate requires a reload of coordinates, unit and interval without a
+// restart. Re-acquiring leases carries the interval; nothing else reaches the
+// request, so without this the shell fetches its original city forever.
+//
+// Nothing in Tasks 1 to 6 would catch that: the suite can be green while the
+// gate item is false, which is the hole 3A's inverted Configure/apply tests
+// left and 3B's aggregate history ring left after it.
+func TestAnAcceptedReloadPicksUpNewCoordinatesWithoutRestarting(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(weatherConfig())
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9"})
+
+	before := reg.Weather().Starts()
+
+	candidate := weatherConfig()
+	candidate.Weather.Latitude, candidate.Weather.Longitude = 51.5, -0.13
+	candidate.Weather.Unit = "fahrenheit"
+	prepared, err := reg.PrepareConfig(candidate, identities(map[uint32]string{1: "DP-9"}))
+	if err != nil {
+		t.Fatalf("PrepareConfig: %v", err)
+	}
+	prepared.Commit()
+
+	if got := reg.Weather().Starts(); got != before {
+		t.Fatalf("starts = %d, want the unchanged %d; the service restarted", got, before)
+	}
+	if !reg.Weather().Running() {
+		t.Fatal("a reload stopped a service that is still leased")
+	}
+	url := reg.Weather().requestURL()
+	for _, want := range []string{"latitude=51.5", "temperature_unit=fahrenheit"} {
+		if !strings.Contains(url, want) {
+			t.Fatalf("after reload the request is %q, which does not carry %q", url, want)
+		}
+	}
+}
+
+// A rejected reload must not move the request either.
+func TestARejectedReloadLeavesTheRequestUnchanged(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(weatherConfig())
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9"})
+	before := reg.Weather().requestURL()
+
+	broken := weatherConfig()
+	broken.Weather.Latitude = 51.5
+	broken.Bar.Height, broken.Bar.Gap = 4, 4
+	if _, err := reg.PrepareConfig(broken, identities(map[uint32]string{1: "DP-9"})); err == nil {
+		t.Fatal("an unbuildable candidate was prepared")
+	}
+
+	if after := reg.Weather().requestURL(); after != before {
+		t.Fatalf("a rejected reload moved the request from %q to %q", before, after)
+	}
+}
 ```
+
+`requestURL` is unexported, so these two live in package `services`' sibling test only if the registry
+test is in `internal/shell`. It is: add a small exported accessor, or assert through the fetch the
+`httptest` server records. Prefer the latter if the accessor would exist only for tests.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `go test ./internal/shell/ -run Weather -v`
-Expected: FAIL to compile — `formatWeather` undefined.
+Expected: FAIL to compile — `formatWeather` undefined, and `Reconfigure` not yet called from
+`PrepareConfig`, so the reload tests fail on the unchanged request rather than on compilation once
+`formatWeather` exists.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -1823,6 +2011,29 @@ per weather item, and add the update path:
 			cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit)),
 	}
 ```
+
+In `PrepareConfig`'s `Commit`, point the service at the candidate's request. This is the half that
+makes the live gate's "reload changing coordinates, unit and interval" item true: re-acquiring leases
+carries the new interval, but nothing else reaches coordinates or unit.
+
+```go
+			once.Do(func() {
+				r.mu.Lock()
+				outgoing := r.leases
+				// Coordinates and unit are the request, not a lease parameter,
+				// so the service has to be told. It is a no-op unless they
+				// changed, which is the common case for an unrelated reload.
+				r.weather.Reconfigure(
+					cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit))
+				for _, bar := range bars {
+					bar.apply(r.viewLocked(bar.connector()))
+				}
+				...
+```
+
+Reconfigure inside the same critical section that swaps the bars, and before the outgoing leases are
+released, so a reload is one transition rather than a window in which the request and the widgets
+disagree.
 
 ```go
 // weatherUnit maps the validated configuration string to the service unit.

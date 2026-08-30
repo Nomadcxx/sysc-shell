@@ -1,7 +1,8 @@
 # Weather and Visual Vocabulary Design — Milestone 3, Tranche 3D
 
 Date: 2026-08-30
-Status: Owner-approved in session. Not yet audited.
+Status: Owner-approved in session. Plan audited 2026-08-31; D3 amended and the service gained
+`Reconfigure` in consequence.
 Branch: `milestone/weather-vocabulary`
 Worktree: `/home/nomadx/.config/superpowers/worktrees/sysc-shell/milestone/weather-vocabulary`
 
@@ -29,7 +30,7 @@ keyboard interaction. The tooltip is the last task and may be cut without strand
 |---|---|---|
 | D1 | Open-Meteo over `net/http` with configured coordinates. | Geocoding, or automatic location. The charter defers both pending a separate privacy and failure-policy decision, and DMS reaches a third-party reverse geocoder to do it. |
 | D2 | `services.Weather`, a third concrete service on the shared `leaseSet`. | A generic polled-remote-source abstraction over `Clock`, `Metrics` and `Weather`. Three concrete services with shared bookkeeping is not three implementations of an interface. |
-| D3 | Bounded network discipline: 15-minute interval, 3s connect and 6s total timeouts, a 30-second minimum fetch floor, three retries at 30s, then `min(60s × 2ⁿ, 300s)` backoff. | An unbounded retry loop, or a bare `http.Get` with no timeout. |
+| D3 | Bounded network discipline: 15-minute interval, a 6-second total budget that is also the connect budget, a 30-second minimum fetch floor, three retries at 30s, then `min(60s × 2ⁿ, 300s)` backoff. **Amended 2026-08-31**; see below. | An unbounded retry loop, or a bare `http.Get` with no timeout. |
 | D4 | The eight icons ship as a project-owned font face injected into `FontMap`. | Baked PNG or alpha-mask assets per the charter's literal policy. **Recorded deviation**; see below. |
 | D5 | No new node kinds. `Node.Tone` carries `normal` or `error`; staleness is expressed in the text. | Separate stale-data and error node kinds, which the charter permits only if a widget needs them. Weather needs a colour and a sentence, not two kinds. |
 | D6 | The tooltip is an OSD-shaped surface: one Overlay layer surface, `exclusive_zone −1`, keyboard none, no dismiss shield. | Tranche 4A's panel shape, which pairs a panel with a fullscreen dismiss shield and keyboard `Exclusive`. |
@@ -37,6 +38,46 @@ keyboard interaction. The tooltip is the last task and may be cut without strand
 | D8 | The dwell timer signals the owner goroutine; it never touches a proxy. | A `time.AfterFunc` creating the surface directly, which would break the one-goroutine invariant. |
 | D9 | The tooltip is the final task and is cuttable at that boundary. | Interleaving surface work through the tranche. |
 
+### D3 amendment, 2026-08-31
+
+D3 originally specified "3s connect and 6s total timeouts", copying DMS's `--connect-timeout 3
+--max-time 6`. The plan implements one `http.Client{Timeout: 6s}` plus a per-request context, and no
+3-second dial deadline (plan audit, finding 5).
+
+The wording is amended to match rather than the code: the budget is 6 seconds in total, which is also
+the connect budget. Adding a `DialContext` deadline would introduce a second bound that no test
+asserts, and the consequence it guards against is small — a stalled connect occupies the one fetch
+goroutine for six seconds instead of three, on a fifteen-minute timer, while every bar keeps painting
+the last good reading. The tranche prefers one bound it proves to two it does not.
+
+### Reconfiguration, added 2026-08-31
+
+The plan audit's finding 1: coordinates and unit were fixed at `NewWeather`, called once from
+`NewRegistry`, while the live gate requires a reload of coordinates, unit **and** interval without
+restarting the service. `PrepareConfig` rebuilds bars and re-acquires leases; it never reaches into a
+service. `Clock` can ignore this because it has no identity parameters. Weather's identity *is* the
+request, so a reload that changed city or unit would have gone on fetching the old URL for the life of
+the process, and a shell that started with no `weather` block could never pick one up.
+
+The service therefore gains one method:
+
+```go
+// Reconfigure points the service at a different request. It is a no-op when
+// nothing changed, so an unrelated reload costs nothing.
+//
+// The pointer is never replaced: live leases hold it, and replacing it would
+// strand them on a service nothing fetches for.
+func (w *Weather) Reconfigure(latitude, longitude float64, unit Unit)
+```
+
+Identity and cadence stay separate. Coordinates and unit are the request, so they live on the service
+and change through `Reconfigure`. The interval is how often a consumer needs a reading, so it stays a
+lease concern and changes through acquire and release, exactly as `Clock` and `Metrics` do.
+
+`Reconfigure` takes the same mutex as the rest of the service, writes the fields when they differ, and
+re-arms the fetch so the new request is issued at the next opportunity rather than up to fifteen
+minutes later. It does not restart the goroutine: `Starts()` stays at 1 across a reload that changes
+any of the three.
 ## Prior art review
 
 Reviewed on 2026-08-30 against local sources:
@@ -102,6 +143,7 @@ type Unit uint8 // UnitCelsius, UnitFahrenheit
 
 func NewWeather(latitude, longitude float64, unit Unit) *Weather
 func (w *Weather) Acquire(interval time.Duration) (*Lease, error)
+func (w *Weather) Reconfigure(latitude, longitude float64, unit Unit)
 func (w *Weather) Updates() <-chan Reading   // newest-wins, capacity 1
 func (w *Weather) Close()
 func (w *Weather) Running() bool
@@ -322,7 +364,9 @@ Changed:
 |---|---|
 | Two bars share one service and one fetch | Two leases yield one goroutine; one update changes both bars |
 | The last consumer stops the goroutine | `DropHost` leaves `Running()` false; goroutine count returns to baseline |
-| An accepted reload does not restart a live service | `Starts()` is still 1 across an interval change |
+| An accepted reload does not restart a live service | `Starts()` is still 1 across an interval change, and across a coordinate or unit change |
+| A reload changes the request | New coordinates or unit produce the new URL on the next fetch, with `Starts()` still 1 |
+| A tone-only change still repaints | `apply` compares `Tone` beside the text, so a glyph that keeps its text but changes colour marks the bar dirty |
 | A request cannot hang | A server that never responds fails within the timeout budget |
 | A failure preserves the last good reading | The observation survives; `FailedSince` advances |
 | A never-fetched reading renders the error tone | Distinguished from a stale reading, which renders normally |
