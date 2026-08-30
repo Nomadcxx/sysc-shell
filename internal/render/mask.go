@@ -60,6 +60,8 @@ func roundedCoverage(radius, w, h, x, y int) uint8 {
 	return uint8(coverage * 255)
 }
 
+// ShadowTexture returns a cached pre-blurred shadow texture.
+// ponytail: two elevations and cached sizes; revisit only if memory or variety demands it.
 func ShadowTexture(w, h, radius int, e Elevation) *image.Alpha {
 	key := shadowKey{w, h, radius, e}
 	maskMu.Lock()
