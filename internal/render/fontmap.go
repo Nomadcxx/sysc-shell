@@ -72,7 +72,12 @@ func (m *FontMap) Face(r rune) *font.Face {
 	if face, ok := m.cache[r]; ok {
 		return face
 	}
-	face := outlineFaceForRune(m.inner.ResolveFace(r), m.primary, r)
+	// The project face wins for its own range, so a system font that happens
+	// to cover the private-use area can never take an icon rune.
+	face := iconFaceFor(r)
+	if face == nil {
+		face = outlineFaceForRune(m.inner.ResolveFace(r), m.primary, r)
+	}
 	if len(m.order) >= faceCacheLimit {
 		delete(m.cache, m.order[0])
 		m.order = m.order[1:]
@@ -80,6 +85,16 @@ func (m *FontMap) Face(r rune) *font.Face {
 	m.cache[r] = face
 	m.order = append(m.order, r)
 	return face
+}
+
+// iconFaceFor returns the project face for an icon rune, or nil.
+func iconFaceFor(r rune) *font.Face {
+	inWeather := r >= iconRuneFirst && r <= iconRuneLast
+	inBattery := r >= batteryRuneFirst && r <= batteryRuneLast
+	if !inWeather && !inBattery {
+		return nil
+	}
+	return loadIconFace()
 }
 
 func outlineFaceForRune(candidate, primary *font.Face, r rune) *font.Face {

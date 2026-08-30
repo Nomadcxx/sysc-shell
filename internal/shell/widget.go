@@ -22,6 +22,8 @@ type barView struct {
 	Metrics services.Snapshot
 	// History carries each leased selector's samples for a graph to plot.
 	History map[services.Selector][]float64
+	// Weather is the newest reading. Its zero value renders the placeholder.
+	Weather services.Reading
 }
 
 // textWidget is one configured widget instance: a retained node plus the pure
@@ -32,8 +34,9 @@ type barView struct {
 // Change detection lives in Bar.apply rather than in each widget, because the
 // node already holds the last rendered text.
 type textWidget struct {
-	node   *ui.Node
-	format func(barView) string
+	node    *ui.Node
+	format  func(barView) string
+	tooltip string
 }
 
 // buildWidgets turns validated items into widget instances. Ids and options
@@ -65,6 +68,27 @@ func buildWidgets(items []config.Item) []textWidget {
 			})
 		case "cpu", "memory", "filesystem", "block", "network":
 			out = append(out, buildMetricWidget(item))
+		case "weather":
+			node := &ui.Node{Kind: ui.KindText, MaxWidth: item.MaxWidth}
+			out = append(out, textWidget{
+				node:    node,
+				tooltip: "Weather",
+				format: func(v barView) string {
+					text, tone := formatWeather(item, v.Weather)
+					node.Tone = tone
+					return text
+				},
+			})
+		case "battery":
+			node := &ui.Node{Kind: ui.KindText}
+			out = append(out, textWidget{
+				node: node,
+				format: func(v barView) string {
+					text, tone := formatBattery(item, v.Metrics)
+					node.Tone = tone
+					return text
+				},
+			})
 		}
 	}
 	return out

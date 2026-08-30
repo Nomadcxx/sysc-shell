@@ -36,6 +36,13 @@ type Item struct {
 	Interface string
 	// Direction is "read"/"write" on block and "rx"/"tx" on network.
 	Direction string
+	// ShowCondition appends the condition word on a weather item.
+	ShowCondition bool
+	// Label is "percent", "time", "rate" or "none" on a battery item.
+	Label string
+	// WarnBelow is the percentage at or below which a discharging battery
+	// warns. Zero on other items.
+	WarnBelow int
 }
 
 // Bar is the resolved policy for one bar.
@@ -77,10 +84,24 @@ type OutputOverride struct {
 	Bar       Bar
 }
 
+// Weather is the process-wide weather source. Coordinates live here rather
+// than on the item because one service serves every bar.
+//
+// Configured distinguishes a supplied block from the zero value, which is what
+// lets a weather widget with no block fail with a useful message.
+type Weather struct {
+	Latitude   float64
+	Longitude  float64
+	Unit       string
+	Interval   time.Duration
+	Configured bool
+}
+
 // Config is an immutable, fully resolved configuration.
 type Config struct {
 	Bar     Bar
 	Theme   Theme
+	Weather Weather
 	Outputs []OutputOverride
 }
 
@@ -91,6 +112,7 @@ type Config struct {
 var knownItems = map[string]struct{}{
 	"clock": {}, "workspace": {}, "window-title": {},
 	"cpu": {}, "memory": {}, "filesystem": {}, "block": {}, "network": {},
+	"weather": {}, "battery": {},
 }
 
 // fractionSources yield a value between zero and one, which a meter can fill.
@@ -123,7 +145,24 @@ const (
 	defaultMetricInterval = 2 * time.Second
 	// defaultMetricDisplay renders a value as text.
 	defaultMetricDisplay = "text"
+	// defaultWeatherInterval matches the reference shell's fifteen minutes.
+	defaultWeatherInterval  = 15 * time.Minute
+	defaultWeatherUnit      = "celsius"
+	defaultBatteryLabel     = "percent"
+	defaultBatteryWarnBelow = 20
+	// defaultBatteryInterval is coarser than the metric default: a battery
+	// percentage moves a point an hour, so sampling it every two seconds would
+	// cost wake-ups for nothing.
+	defaultBatteryInterval = 30 * time.Second
 )
+
+// weatherUnits are the units the API accepts.
+var weatherUnits = map[string]bool{"celsius": true, "fahrenheit": true}
+
+// batteryLabels are the label modes a battery item accepts.
+var batteryLabels = map[string]bool{
+	"percent": true, "time": true, "rate": true, "none": true,
+}
 
 // supportedEdges names every edge the model understands and whether this
 // milestone implements it. An unimplemented edge is rejected with a named

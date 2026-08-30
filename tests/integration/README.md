@@ -196,3 +196,62 @@ Baselines to record before setting any budget:
 - submitted and skipped frame counts;
 - allocations per sampling pass;
 - binary size against the Tranche 3A binary.
+
+## Tranche 3D: weather and visual vocabulary
+
+Run after Tranche 3B's matrix. Coordinates, place names and measurements stay
+outside this repository.
+
+Build and start:
+
+    go build -o /tmp/sysc-shell-tranche3d ./cmd/sysc-shell
+    /tmp/sysc-shell-tranche3d
+
+Matrix:
+
+1. One output, then at least two, each rendering the reading independently.
+2. The icon and the temperature render, and the icon matches the condition.
+3. Disconnect the network: the reading goes stale with its age and the shell
+   keeps painting.
+4. Reconnect: the reading recovers without a restart, within one backoff step.
+5. Start with an unreachable host: the widget renders the error tone, not an
+   empty space.
+6. Confirm stderr carries one line when fetching starts failing and one when
+   it recovers, not one per attempt.
+7. Reload changing coordinates, unit and interval; the service must not
+   restart and no widget may stall.
+8. Hover a widget: the tooltip appears after the dwell and is placed fully
+   inside the output.
+9. Hover a widget at the extreme left and right of an output: the tooltip stays
+   on screen.
+10. Reload with a tooltip open: it closes and no surface leaks.
+11. Idle CPU and wakeups over 60 minutes against the Tranche 3B baseline.
+
+## Tranche 3C: power
+
+Run on a laptop; item 4 additionally needs a machine with no battery. Record
+machine values outside this repository.
+
+Build and start:
+
+    go build -o /tmp/sysc-shell-tranche3c ./cmd/sysc-shell
+    /tmp/sysc-shell-tranche3c
+
+Matrix:
+
+1. On battery: the level glyph tracks discharge and the label matches the
+   system reading.
+2. Plug in: the glyph switches to a charging one within one interval.
+3. Discharge across the threshold: the warning tone appears; plugging in
+   clears it without waiting for the charge to rise.
+4. A machine with no battery, same configuration file: the widget renders
+   nothing and reserves no space.
+5. Remove a battery at runtime if the hardware allows, or stop the source:
+   the widget hides with no reload, and returns when it comes back.
+6. Each label mode renders its own field, and "none" renders the glyph alone.
+7. Just after plugging in, the time mode renders no label rather than a
+   placeholder, and recovers once the estimate settles.
+8. Reload changing the label mode and the threshold without restarting the
+   sampling service.
+9. Idle wakeups over 60 minutes against the Tranche 3B baseline: a battery at
+   a steady charge must cost no frames.

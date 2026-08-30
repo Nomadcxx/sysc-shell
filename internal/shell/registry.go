@@ -30,8 +30,11 @@ type Registry struct {
 
 	clock   *services.Clock
 	metrics *services.Metrics
+	weather *services.Weather
 	// sample is the newest sampling pass, shared by every bar.
 	sample services.Snapshot
+	// reading is the newest weather observation, shared by every bar.
+	reading services.Reading
 
 	// invalidations carries one entry per bar whose rendered text changed.
 	// The Wayland owner receives from it; the registry owns it and never
@@ -40,18 +43,22 @@ type Registry struct {
 	// closed unblocks a pending publish at shutdown.
 	closed    chan struct{}
 	closeOnce sync.Once
+	dwell     *dwell
 }
 
 func NewRegistry(cfg config.Config) *Registry {
 	return &Registry{
-		cfg:           cfg,
-		outputs:       make(map[string]outputState),
-		bars:          make(map[uint32]*Bar),
-		leases:        make(map[uint32][]*services.Lease),
-		clock:         services.NewClock(),
-		metrics:       services.NewMetrics(),
+		cfg:     cfg,
+		outputs: make(map[string]outputState),
+		bars:    make(map[uint32]*Bar),
+		leases:  make(map[uint32][]*services.Lease),
+		clock:   services.NewClock(),
+		metrics: services.NewMetrics(),
+		weather: services.NewWeather(
+			cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit)),
 		invalidations: make(chan wayland.Invalidation, 8),
 		closed:        make(chan struct{}),
+		dwell:         newDwell(defaultDwell),
 	}
 }
 
@@ -62,6 +69,13 @@ func (r *Registry) Clock() *services.Clock { return r.clock }
 // Metrics is the shared sampling service. The process pumps its updates into
 // UpdateMetrics.
 func (r *Registry) Metrics() *services.Metrics { return r.metrics }
+
+// Weather is the shared weather service. The process pumps its updates into
+// UpdateWeather.
+func (r *Registry) Weather() *services.Weather { return r.weather }
+
+// Tooltips is the channel the Wayland owner receives hover requests from.
+func (r *Registry) Tooltips() <-chan wayland.TooltipRequest { return r.dwell.requests() }
 
 // Invalidations is the channel the Wayland owner receives from. The registry
 // owns it and never closes it.
@@ -103,7 +117,7 @@ func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbac
 	r.leases[global] = leases
 	r.mu.Unlock()
 
-	return callbacks, nil
+	return r.bindHost(global, bar, callbacks), nil
 }
 
 // PrepareConfig builds every enabled host's replacement bar and acquires its
@@ -128,7 +142,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 		}
 		bars[identity.Global] = bar
 		leases[identity.Global] = held
-		callbacks[identity.Global] = hooks
+		callbacks[identity.Global] = r.bindHost(identity.Global, bar, hooks)
 	}
 
 	// once guards against Commit and Rollback each running, and against
@@ -141,6 +155,12 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 			once.Do(func() {
 				r.mu.Lock()
 				outgoing := r.leases
+				// Coordinates and unit are the request, not a lease parameter,
+				// so the service has to be told. It is a no-op unless they
+				// changed, which is the common case for an unrelated reload.
+				r.weather.Reconfigure(
+					cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit))
+				r.dwell.leave()
 				for _, bar := range bars {
 					bar.apply(r.viewLocked(bar.connector()))
 				}
@@ -194,8 +214,10 @@ func (r *Registry) Close() {
 	r.mu.Unlock()
 
 	releaseAll(leases)
+	r.dwell.stop()
 	r.clock.Close()
 	r.metrics.Close()
+	r.weather.Close()
 }
 
 // UpdateClock applies a shared time snapshot to every bar and reports the
@@ -223,6 +245,23 @@ func (r *Registry) UpdateClock(now time.Time) []uint32 {
 func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
 	r.mu.Lock()
 	r.sample = snap
+	var changed []uint32
+	for global, bar := range r.bars {
+		if bar.apply(r.viewLocked(bar.connector())) {
+			changed = append(changed, global)
+		}
+	}
+	r.mu.Unlock()
+
+	r.publish(changed)
+	return changed
+}
+
+// UpdateWeather applies a reading to every bar and reports the globals whose
+// text actually changed.
+func (r *Registry) UpdateWeather(reading services.Reading) []uint32 {
+	r.mu.Lock()
+	r.reading = reading
 	var changed []uint32
 	for global, bar := range r.bars {
 		if bar.apply(r.viewLocked(bar.connector())) {
@@ -271,6 +310,7 @@ func (r *Registry) viewLocked(connector string) barView {
 		Title:     state.Title,
 		Metrics:   r.sample,
 		History:   r.historyLocked(),
+		Weather:   r.reading,
 	}
 }
 
@@ -313,6 +353,17 @@ func (r *Registry) buildBar(cfg config.Config, connector string) (
 		}
 		leases = append(leases, lease)
 	}
+	for _, item := range allItems(policy) {
+		if item.ID != "weather" {
+			continue
+		}
+		lease, err := r.weather.Acquire(cfg.Weather.Interval)
+		if err != nil {
+			releaseAll(leases)
+			return nil, nil, wayland.HostCallbacks{}, err
+		}
+		leases = append(leases, lease)
+	}
 
 	return bar, leases, wayland.HostCallbacks{
 		Configure: bar.Configure,
@@ -327,6 +378,37 @@ func allItems(policy config.Bar) []config.Item {
 	out = append(out, policy.Left...)
 	out = append(out, policy.Center...)
 	return append(out, policy.Right...)
+}
+
+// weatherUnit maps the validated configuration string to the service unit.
+func weatherUnit(name string) services.Unit {
+	if name == "fahrenheit" {
+		return services.UnitFahrenheit
+	}
+	return services.UnitCelsius
+}
+
+func (r *Registry) bindHost(global uint32, bar *Bar, hooks wayland.HostCallbacks) wayland.HostCallbacks {
+	inner := hooks.Handle
+	hooks.Handle = func(event wayland.Event) bool {
+		changed := inner(event)
+		r.drivePointerTooltip(global, bar, event)
+		return changed
+	}
+	return hooks
+}
+
+func (r *Registry) drivePointerTooltip(global uint32, bar *Bar, event wayland.Event) {
+	switch event.Kind {
+	case wayland.EventPointerLeave:
+		r.dwell.leave()
+	case wayland.EventPointerEnter, wayland.EventPointerMotion:
+		if text, bounds, ok := bar.hoverTooltip(); ok {
+			r.dwell.enter(global, bounds, text)
+		} else {
+			r.dwell.leave()
+		}
+	}
 }
 
 func releaseAll(leases []*services.Lease) {

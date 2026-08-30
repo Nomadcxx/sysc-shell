@@ -466,3 +466,40 @@ func TestAnAbsentGraphPaintsNothing(t *testing.T) {
 		t.Fatalf("an absent graph painted %d pixels, want none", got)
 	}
 }
+
+// Text reporting a failure paints in the error colour, not the foreground, so
+// a failed reading is distinguishable at a glance.
+func TestErrorToneTextPaintsInTheErrorColour(t *testing.T) {
+	t.Parallel()
+
+	canvas := newTestCanvas(t, 80, 20)
+	style := testStyle
+	style.Body = ui.Rect{W: 80, H: 20}
+	r := NewTextRenderer(mustTestFace(t))
+	style.Foreground = Color{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
+	style.Error = Color{R: 0xff, G: 0x40, B: 0x40, A: 0xff}
+
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{{
+		Kind:   ui.KindText,
+		Text:   "-",
+		Tone:   ui.ToneError,
+		Bounds: ui.Rect{X: 0, Y: 0, W: 80, H: 20},
+	}}}
+	if err := Paint(canvas, root, r, style); err != nil {
+		t.Fatalf("Paint: %v", err)
+	}
+
+	// The error colour has a low green channel; the foreground is white. Any
+	// painted pixel must therefore be redder than it is green.
+	var sawErrorPixel bool
+	for i := 0; i+3 < len(canvas.Pix); i += 4 {
+		red, green := canvas.Pix[i+2], canvas.Pix[i+1]
+		if red > 0 && red > green {
+			sawErrorPixel = true
+			break
+		}
+	}
+	if !sawErrorPixel {
+		t.Fatal("error-tone text painted no pixel in the error colour")
+	}
+}

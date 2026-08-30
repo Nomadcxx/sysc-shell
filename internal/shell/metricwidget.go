@@ -23,6 +23,8 @@ func metricSelector(item config.Item) (services.Selector, bool) {
 		sel.Source, sel.Subject = services.SourceBlock, item.Device
 	case "network":
 		sel.Source, sel.Subject = services.SourceNetwork, item.Interface
+	case "battery":
+		sel.Source = services.SourceBattery
 	default:
 		return services.Selector{}, false
 	}

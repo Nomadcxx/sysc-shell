@@ -34,11 +34,12 @@ type Clock struct {
 	updates chan time.Time
 }
 
-// Lease is one consumer's claim on a service. Exactly one of clock or metrics
-// is set; the zero value is an already-released lease.
+// Lease is one consumer's claim on a service. Exactly one of clock, metrics,
+// or weather is set; the zero value is an already-released lease.
 type Lease struct {
 	clock    *Clock
 	metrics  *Metrics
+	weather  *Weather
 	selector Selector
 	boundary time.Duration
 }
@@ -94,6 +95,10 @@ func (l *Lease) Release() {
 		m := l.metrics
 		l.metrics = nil
 		m.releaseMetric(l)
+	case l.weather != nil:
+		w := l.weather
+		l.weather = nil
+		w.releaseWeather(l)
 	}
 }
 

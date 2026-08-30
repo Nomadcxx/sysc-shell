@@ -104,6 +104,7 @@ func NewWithTheme(theme Theme, policy config.Bar, connector string) (*Bar, error
 			Track:      theme.Muted,
 			Accent:     theme.Accent,
 			AccentOn:   theme.Error,
+			Error:      theme.Error,
 		},
 	}
 
@@ -155,6 +156,7 @@ func (b *Bar) applyLocked(view barView) bool {
 				changed = true
 			}
 			if w.node.Value != before.Value || w.node.Absent != before.Absent ||
+				w.node.Tone != before.Tone ||
 				!slices.Equal(w.node.Values, before.Values) {
 				changed = true
 			}
@@ -331,6 +333,36 @@ func (b *Bar) hitLocked(x, y int) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// tooltipAt reports the tooltip text and bounds under a point.
+func (b *Bar) tooltipAt(x, y int) (string, ui.Rect, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.tooltipAtLocked(x, y)
+}
+
+// tooltipAtLocked reports the tooltip text and bounds under a point.
+func (b *Bar) tooltipAtLocked(x, y int) (string, ui.Rect, bool) {
+	for _, section := range b.widgets() {
+		for _, w := range section {
+			if w.tooltip != "" && w.node.Bounds.Contains(x, y) {
+				return w.tooltip, w.node.Bounds, true
+			}
+		}
+	}
+	return "", ui.Rect{}, false
+}
+
+// hoverTooltip reports the tooltip under the pointer after Handle has recorded
+// the latest coordinates.
+func (b *Bar) hoverTooltip() (string, ui.Rect, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.inside {
+		return "", ui.Rect{}, false
+	}
+	return b.tooltipAtLocked(b.hoverAt.x, b.hoverAt.y)
 }
 
 // Handle applies a pointer event and reports whether the model changed. A click

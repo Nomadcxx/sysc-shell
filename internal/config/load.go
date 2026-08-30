@@ -33,6 +33,11 @@ type wireItem struct {
 	Device    *string `json:"device"`
 	Interface *string `json:"interface"`
 	Direction *string `json:"direction"`
+
+	ShowCondition *bool `json:"show-condition"`
+
+	Label     *string `json:"label"`
+	WarnBelow *int    `json:"warn-below"`
 }
 
 func (i *wireItem) UnmarshalJSON(data []byte) error {
@@ -87,9 +92,17 @@ type wireOutput struct {
 	Bar       *wireBar `json:"bar"`
 }
 
+type wireWeather struct {
+	Latitude  *float64 `json:"latitude"`
+	Longitude *float64 `json:"longitude"`
+	Unit      *string  `json:"unit"`
+	Interval  *string  `json:"interval"`
+}
+
 type wireConfig struct {
 	Bar     *wireBar     `json:"bar"`
 	Theme   *wireTheme   `json:"theme"`
+	Weather *wireWeather `json:"weather"`
 	Outputs []wireOutput `json:"outputs"`
 }
 
@@ -155,6 +168,14 @@ func Parse(data []byte) (Config, error) {
 		cfg.Bar = bar
 	}
 
+	if wire.Weather != nil {
+		weather, err := applyWeather(*wire.Weather, "weather")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Weather = weather
+	}
+
 	seen := make(map[string]struct{}, len(wire.Outputs))
 	for i, o := range wire.Outputs {
 		path := fmt.Sprintf("outputs[%d]", i)
@@ -175,7 +196,80 @@ func Parse(data []byte) (Config, error) {
 		}
 		cfg.Outputs = append(cfg.Outputs, OutputOverride{Connector: *o.Connector, Bar: bar})
 	}
+	if err := requireWeatherWhenUsed(cfg); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+// applyWeather resolves and validates the weather block.
+func applyWeather(w wireWeather, path string) (Weather, error) {
+	out := Weather{
+		Unit:       defaultWeatherUnit,
+		Interval:   defaultWeatherInterval,
+		Configured: true,
+	}
+
+	if w.Latitude == nil {
+		return Weather{}, pathErr(path+".latitude", "is required")
+	}
+	if *w.Latitude < -90 || *w.Latitude > 90 {
+		return Weather{}, pathErr(path+".latitude", "%v is outside -90 through 90", *w.Latitude)
+	}
+	out.Latitude = *w.Latitude
+
+	if w.Longitude == nil {
+		return Weather{}, pathErr(path+".longitude", "is required")
+	}
+	if *w.Longitude < -180 || *w.Longitude > 180 {
+		return Weather{}, pathErr(path+".longitude", "%v is outside -180 through 180", *w.Longitude)
+	}
+	out.Longitude = *w.Longitude
+
+	if w.Unit != nil {
+		if !weatherUnits[*w.Unit] {
+			return Weather{}, pathErr(path+".unit", "%q is not celsius or fahrenheit", *w.Unit)
+		}
+		out.Unit = *w.Unit
+	}
+	if w.Interval != nil {
+		interval, err := time.ParseDuration(*w.Interval)
+		if err != nil {
+			return Weather{}, pathErr(path+".interval", "%q is not a duration such as 15m", *w.Interval)
+		}
+		if interval <= 0 {
+			return Weather{}, pathErr(path+".interval", "%v is not positive", interval)
+		}
+		out.Interval = interval
+	}
+	return out, nil
+}
+
+// requireWeatherWhenUsed is the configuration's one cross-section rule: a
+// weather widget needs coordinates, and they live in a different block.
+//
+// Without this the widget would render an error forever because of a block the
+// user was never told to write. Every override is checked too, because an
+// override can introduce the widget on one output alone.
+func requireWeatherWhenUsed(cfg Config) error {
+	if cfg.Weather.Configured {
+		return nil
+	}
+	bars := []Bar{cfg.Bar}
+	for _, o := range cfg.Outputs {
+		bars = append(bars, o.Bar)
+	}
+	for _, bar := range bars {
+		for _, section := range [][]Item{bar.Left, bar.Center, bar.Right} {
+			for _, item := range section {
+				if item.ID == "weather" {
+					return pathErr("weather.latitude",
+						"is required because a weather widget is configured")
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func applyBar(base Bar, w wireBar, path string) (Bar, error) {
@@ -280,8 +374,20 @@ func resolveItem(w wireItem, path string) (Item, error) {
 	if w.Format != nil && w.ID != "clock" {
 		return Item{}, pathErr(path+".format", "is accepted only on a clock, not on %q", w.ID)
 	}
-	if w.MaxWidth != nil && w.ID != "window-title" {
+	if w.MaxWidth != nil && w.ID != "window-title" && w.ID != "weather" {
 		return Item{}, pathErr(path+".max-width", "is accepted only on a window-title, not on %q", w.ID)
+	}
+	if w.ShowCondition != nil && w.ID != "weather" {
+		return Item{}, pathErr(path+".show-condition",
+			"is accepted only on a weather widget, not on %q", w.ID)
+	}
+	if w.Label != nil && w.ID != "battery" {
+		return Item{}, pathErr(path+".label",
+			"is accepted only on a battery widget, not on %q", w.ID)
+	}
+	if w.WarnBelow != nil && w.ID != "battery" {
+		return Item{}, pathErr(path+".warn-below",
+			"is accepted only on a battery widget, not on %q", w.ID)
 	}
 	if !isMetric(w.ID) {
 		for _, unwanted := range []struct {
@@ -289,7 +395,6 @@ func resolveItem(w wireItem, path string) (Item, error) {
 			set  bool
 		}{
 			{"display", w.Display != nil},
-			{"interval", w.Interval != nil},
 			{"path", w.Path != nil},
 			{"device", w.Device != nil},
 			{"interface", w.Interface != nil},
@@ -300,6 +405,12 @@ func resolveItem(w wireItem, path string) (Item, error) {
 					"is accepted only on a metric item, not on %q", w.ID)
 			}
 		}
+	}
+	// interval is accepted on the metric items and on battery, which is also
+	// sampled. The selectors below stay rejected on battery.
+	if w.Interval != nil && !isMetric(w.ID) && w.ID != "battery" {
+		return Item{}, pathErr(path+".interval",
+			"is accepted only on a sampled item, not on %q", w.ID)
 	}
 
 	switch w.ID {
@@ -327,6 +438,49 @@ func resolveItem(w wireItem, path string) (Item, error) {
 			return Item{}, err
 		}
 		item = resolved
+	case "weather":
+		if w.ShowCondition != nil {
+			item.ShowCondition = *w.ShowCondition
+		}
+		if w.MaxWidth != nil {
+			if *w.MaxWidth <= 0 {
+				return Item{}, pathErr(path+".max-width", "%d is not positive", *w.MaxWidth)
+			}
+			item.MaxWidth = *w.MaxWidth
+		}
+	case "battery":
+		item.Label = defaultBatteryLabel
+		item.WarnBelow = defaultBatteryWarnBelow
+		// A battery is a sampled source, so it carries an interval like the
+		// metric items do. Without this the lease in Task 5 would be acquired
+		// at zero and rejected as non-positive, and the bar would fail to
+		// build.
+		item.Interval = defaultBatteryInterval
+		if w.Interval != nil {
+			interval, err := time.ParseDuration(*w.Interval)
+			if err != nil {
+				return Item{}, pathErr(path+".interval",
+					"%q is not a duration such as 30s", *w.Interval)
+			}
+			if interval <= 0 {
+				return Item{}, pathErr(path+".interval", "%v is not positive", interval)
+			}
+			item.Interval = interval
+		}
+		if w.Label != nil {
+			if !batteryLabels[*w.Label] {
+				return Item{}, pathErr(path+".label",
+					"%q is not one of percent, time, rate, none", *w.Label)
+			}
+			item.Label = *w.Label
+		}
+		if w.WarnBelow != nil {
+			if *w.WarnBelow < 1 || *w.WarnBelow > 99 {
+				return Item{}, pathErr(path+".warn-below",
+					"%d is outside 1 through 99", *w.WarnBelow)
+			}
+			item.WarnBelow = *w.WarnBelow
+		}
 	}
 	return item, nil
 }
