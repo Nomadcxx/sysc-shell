@@ -11,6 +11,9 @@ const (
 	KindMeter
 	KindButton
 	KindGraph
+	KindColumn
+	KindSeparator
+	KindTab
 )
 
 // Rect is a logical-pixel rectangle.
@@ -61,6 +64,18 @@ type Node struct {
 	Action   string
 	Bounds   Rect
 	Children []*Node
+
+	// Name and Role are required on every Focusable node.
+	Focusable bool
+	Name      string
+	Role      string
+}
+
+func (n *Node) Active() int {
+	if n == nil {
+		return 0
+	}
+	return int(n.Value)
 }
 
 // Tone selects which theme colour paints a text node.

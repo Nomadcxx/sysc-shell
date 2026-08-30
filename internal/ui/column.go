@@ -1,0 +1,101 @@
+package ui
+
+import "fmt"
+
+// LayoutColumn arranges a column root: padding inset, children fill the
+// content width, stacked top to bottom with Gap between them.
+func LayoutColumn(root *Node, bounds Rect, measure MeasureText) error {
+	if root == nil {
+		return fmt.Errorf("ui: nil root")
+	}
+	if root.Kind != KindColumn {
+		return fmt.Errorf("ui: root kind %d is not a column", root.Kind)
+	}
+	if bounds.W < 0 || bounds.H < 0 {
+		return fmt.Errorf("ui: negative bounds %dx%d", bounds.W, bounds.H)
+	}
+	root.Bounds = bounds
+	content := Rect{
+		X: bounds.X + root.Padding,
+		Y: bounds.Y + root.Padding,
+		W: bounds.W - 2*root.Padding,
+		H: bounds.H - 2*root.Padding,
+	}
+	y := content.Y
+	for i, child := range root.Children {
+		if child == nil {
+			return fmt.Errorf("ui: nil child %d", i)
+		}
+		if i > 0 {
+			y += root.Gap
+		}
+		h, err := columnChildHeight(child, content.W, measure)
+		if err != nil {
+			return fmt.Errorf("ui: child %d: %w", i, err)
+		}
+		box := Rect{X: content.X, Y: y, W: content.W, H: h}
+		if err := placeColumnChild(child, box, measure); err != nil {
+			return fmt.Errorf("ui: child %d: %w", i, err)
+		}
+		y += h
+	}
+	return nil
+}
+
+func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
+	switch n.Kind {
+	case KindText, KindTab:
+		_, h := measure(n.Text, n.Tabular)
+		return h, nil
+	case KindSeparator:
+		return 1, nil
+	case KindButton:
+		_, h := measure(n.Text, n.Tabular)
+		return h + 2*n.Padding, nil
+	case KindRow:
+		maxH := 0
+		for _, c := range n.Children {
+			if c == nil {
+				continue
+			}
+			_, h, err := measureNode(c, 1<<20, measure)
+			if err != nil {
+				return 0, err
+			}
+			if h > maxH {
+				maxH = h
+			}
+		}
+		return maxH + 2*n.Padding, nil
+	case KindColumn:
+		h := 2 * n.Padding
+		for i, c := range n.Children {
+			if c == nil {
+				continue
+			}
+			ch, err := columnChildHeight(c, width-2*n.Padding, measure)
+			if err != nil {
+				return 0, err
+			}
+			if i > 0 {
+				h += n.Gap
+			}
+			h += ch
+		}
+		return h, nil
+	default:
+		return 0, fmt.Errorf("unsupported kind %d", n.Kind)
+	}
+}
+
+func placeColumnChild(n *Node, box Rect, measure MeasureText) error {
+	switch n.Kind {
+	case KindRow:
+		return Layout(n, box, measure)
+	case KindColumn:
+		return LayoutColumn(n, box, measure)
+	default:
+		n.Bounds = box
+		return nil
+	}
+}
