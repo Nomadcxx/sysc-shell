@@ -45,8 +45,10 @@ type Event struct {
 	Serial uint32
 }
 
-// Invalidation requests a redraw. An empty Connector invalidates every bar.
-type Invalidation struct{ Connector string }
+// Invalidation requests a redraw of one bar, named by its wl_registry global.
+// A zero Global invalidates every bar; the compositor never assigns 0 as a
+// global name, so it is free to use as the broadcast sentinel.
+type Invalidation struct{ Global uint32 }
 
 // PreparedConfig holds replacement callbacks built before a reload changes
 // live state. Commit publishes their matching shell models after the Wayland
@@ -661,14 +663,15 @@ func (o *owner) nextJob() (*OutputHost, render.Decision, render.Job) {
 	return nil, render.DecisionWait, render.Job{}
 }
 
-// invalidate marks hosts dirty. An empty connector invalidates every bar, so
-// one output's workspace change never redraws another output's bar.
+// invalidate marks hosts dirty. A zero global invalidates every bar, so one
+// output's state change never redraws another output's bar. Two bars sharing a
+// connector during reconnect overlap stay separately addressable.
 func (o *owner) invalidate(inv Invalidation) {
 	for _, h := range o.hosts.each() {
 		if !h.alive {
 			continue
 		}
-		if inv.Connector == "" || h.connector == inv.Connector {
+		if inv.Global == 0 || h.global == inv.Global {
 			h.sched.Invalidate()
 		}
 	}

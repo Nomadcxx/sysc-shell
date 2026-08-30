@@ -136,6 +136,7 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []string {
 
 	r.mu.Lock()
 	var changed []string
+	var dirty []uint32
 	for connector, label := range labels {
 		if r.workspaces[connector] == label {
 			continue
@@ -147,25 +148,28 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []string {
 		for global, bar := range r.bars {
 			if r.connectors[global] == connector {
 				bar.SetWorkspace(label)
+				dirty = append(dirty, global)
 			}
 		}
 	}
 	r.mu.Unlock()
 
-	for _, connector := range changed {
-		r.queueInvalidation(connector)
+	// A connector whose wl_output has not been announced has no bar to redraw.
+	// NewHost applies the held label when that bar is finally built.
+	for _, global := range dirty {
+		r.queueInvalidation(global)
 	}
 	return changed
 }
 
-// queueInvalidation keeps connector-specific redraws while capacity permits.
-// On overflow it replaces the pending set with one global redraw, which covers
-// every state update that any removed connector message represented.
-func (r *Registry) queueInvalidation(connector string) {
+// queueInvalidation keeps per-bar redraws while capacity permits. On overflow
+// it replaces the pending set with one broadcast redraw, which covers every
+// state update that any removed per-bar message represented.
+func (r *Registry) queueInvalidation(global uint32) {
 	r.invalidationMu.Lock()
 	defer r.invalidationMu.Unlock()
 	select {
-	case r.invalidations <- wayland.Invalidation{Connector: connector}:
+	case r.invalidations <- wayland.Invalidation{Global: global}:
 		return
 	default:
 	}

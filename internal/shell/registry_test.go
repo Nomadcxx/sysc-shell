@@ -65,27 +65,48 @@ func TestInvalidationOverflowCoalescesToAllBars(t *testing.T) {
 	reg := NewRegistry(config.Default())
 	workspaces := make([]niri.Workspace, 0, cap(reg.invalidations)+1)
 	for i := 0; i < cap(reg.invalidations)+1; i++ {
+		connector := fmt.Sprintf("DP-%d", i+1)
+		if _, err := reg.NewHost(uint32(i+1), connector); err != nil {
+			t.Fatalf("NewHost(%s): %v", connector, err)
+		}
 		workspaces = append(workspaces, niri.Workspace{
-			ID: uint64(i + 1), Index: i + 1, Output: fmt.Sprintf("DP-%d", i+1), Active: true,
+			ID: uint64(i + 1), Index: i + 1, Output: connector, Active: true,
 		})
 	}
 	reg.UpdateNiri(niri.Snapshot{Workspaces: workspaces})
 
-	global := false
-	seen := make(map[string]bool)
+	broadcast := false
+	seen := make(map[uint32]bool)
 	for {
 		select {
 		case inv := <-reg.Invalidations():
-			if inv.Connector == "" {
-				global = true
+			if inv.Global == 0 {
+				broadcast = true
 			}
-			seen[inv.Connector] = true
+			seen[inv.Global] = true
 		default:
-			if !global && len(seen) != len(workspaces) {
-				t.Fatalf("overflow retained %d connector invalidations without a global one", len(seen))
+			if !broadcast && len(seen) != len(workspaces) {
+				t.Fatalf("overflow retained %d per-bar invalidations without a broadcast", len(seen))
 			}
 			return
 		}
+	}
+}
+
+// A workspace change for an output whose wl_output has not been announced has
+// no bar to redraw. NewHost applies the held label when that bar is built.
+func TestAConnectorWithNoBarQueuesNoInvalidation(t *testing.T) {
+	t.Parallel()
+
+	reg := NewRegistry(config.Default())
+	reg.UpdateNiri(niri.Snapshot{Workspaces: []niri.Workspace{
+		{Output: "DP-9", Name: "later", Active: true},
+	}})
+
+	select {
+	case inv := <-reg.Invalidations():
+		t.Fatalf("queued invalidation %+v for a connector with no bar", inv)
+	default:
 	}
 }
 
