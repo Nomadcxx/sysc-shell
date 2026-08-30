@@ -135,7 +135,7 @@ Designed, planned, reviewed, executed and merged to `main` at `01cae98`. Spec sh
 |---|---|---|
 | `2026-08-30-panels-and-controls-prior-art.md` | assessment | Noctalia v5 and DMS v1.5.3 inventories with file:line evidence. |
 | `2026-08-30-panels-and-controls-research.md` | research | Niri capability claims, source-verified against niri main. |
-| `2026-08-30-panel-foundation-design.md` | design | Tranche 4A. Owner-approved; amended for the review. D1–D13. |
+| `2026-08-30-panel-foundation-design.md` | design | Tranche 4A. Owner-approved; amended for M3 auxiliary ownership and one process-wide root chain. |
 | `2026-08-30-panel-foundation.md` | plan | Tranche 4A, **13 tasks**. Ready to execute once its prerequisites clear. |
 | `2026-08-30-panel-foundation-parallel-execution-handover.md` | execution-handover | Starts Tasks 1, 5 and 8 while Tranche 3A continues, then joins the remaining plan after M3 integration. |
 | `2026-08-30-settings-osd-theme-catalog-design.md` | design | Tranche 4B. Owner-approved; amended for the review. D1–D10. |
@@ -195,13 +195,15 @@ the M4 surface vocabulary and tagged service releases.
 | `2026-08-30-notifications-and-tray-prior-art.md` | assessment | Noctalia, DMS, `sysc-notify`, and `sysc-tray` inventory. |
 | `2026-08-30-notifications-and-tray-research.md` | research | Decisions D1–D14. |
 | `2026-08-30-notifications-foundation-design.md` | design | Tranche 5A notification presentation. |
-| `2026-08-30-notifications-foundation.md` | plan | Tranche 5A, 13 tasks. |
+| `2026-08-30-notifications-foundation.md` | plan | Tranche 5A, 10 tasks. |
 | `2026-08-30-sysc-notify-persistence-design.md` | service design | Persistence addendum owned by `sysc-notify`. |
 | `2026-08-30-tray-foundation-design.md` | design | Tranche 5B tray presentation. |
-| `2026-08-30-tray-foundation.md` | plan | Tranche 5B, 8 tasks. |
+| `2026-08-30-tray-foundation.md` | plan | Tranche 5B, 9 tasks. |
 | `2026-08-30-notifications-and-tray-audit-handover.md` | audit-handover | Commissions the cross-repository design and plan audit for Tranches 5A and 5B. |
 | `2026-08-30-notifications-and-tray-audit-report.md` | audit-report | Redesign required for both tranches; records service-contract, lifetime, release, persistence, and menu blockers. |
 | `2026-08-31-notifications-and-tray-integration-design.md` | design | Corrected cross-repository ownership, parity, shared M3/M4 primitives, limits, release order, and gates. |
+| `/home/nomadx/.config/superpowers/worktrees/sysc-notify/redesign/v0.1/docs/plans/2026-08-31-sysc-notify-v0.1.md` | service plan | Executable notify service and candidate/stable release gates. |
+| `/home/nomadx/.config/superpowers/worktrees/sysc-tray/redesign/v0.1/docs/plans/2026-08-31-sysc-tray-v0.1.md` | service plan | Executable tray service and candidate/stable release gates. |
 
 Original source worktree: `/home/nomadx/.config/superpowers/worktrees/sysc-shell/milestone/notifications-tray`.
 Redesign worktree: `/home/nomadx/.config/superpowers/worktrees/sysc-shell/redesign/milestone-5`.
@@ -220,8 +222,8 @@ Redesign worktree: `/home/nomadx/.config/superpowers/worktrees/sysc-shell/redesi
 |---|---|---|
 | `/home/nomadx/sysc-metrics` | `v0.2.0` (`c46fab8`) | Tagged and pushed. Core counters plus sysfs battery aggregate. Thermal omitted. |
 | `sysc-wayland` | `v0.1.1` | Pinned dependency. Qualified. |
-| `/home/nomadx/sysc-notify` | `32da2b5` | Design repository. No release tag; M5 needs the persistence and socket contracts implemented and tagged. |
-| `/home/nomadx/sysc-tray` | `04ca018` | Design repository. No release tag; M5 needs the socket, item snapshot, and menu contracts implemented and tagged. |
+| `/home/nomadx/sysc-notify` | plan branch `3e3e417` | v0.1 service plan and persistence addendum committed; no release tag. |
+| `/home/nomadx/sysc-tray` | plan branch `7e835d8` | v0.1 service plan committed; no release tag. |
 
 ## Work selection
 

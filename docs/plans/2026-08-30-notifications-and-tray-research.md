@@ -19,12 +19,12 @@ Method: niri-capability + prior-art before each decision. Inventory: `2026-08-30
 | D4 | Progress UI | **Both**: countdown bar always (Critical keeps bar with no timeout). Separate `value` hint bar when the sender sends it | Countdown only; `value` hint only |
 | D5 | Tray menu host | **xdg_popup parented to bar**. Live-test: niri must parent `xdg_popup` to a layer-shell bar; if not, fall back to M4 panel + KindMenu | Layer-shell panel + 4B KindMenu; DMS overflow window |
 | D6 | Image + icon-theme | **Inside M5** (tranche 5A). PNG/JPEG + raw `image-data` + freedesktop `index.theme` lookup. Consumers: popups + tray | Prerequisite tranche on M4; split decode vs lookup |
-| D7 | Toast stacking | **One layer surface per output**. Overflow queues off-screen, pauses expiry, resumes full duration | One surface per notification; hard cap with no queue |
+| D7 | Toast stacking | **One layer surface per output**. Overflow queues off-screen; the shell reports aggregate queued/visible/hovered/suppressed state and sysc-notify alone controls expiry | One surface per notification; shell-owned expiry |
 | D8 | Toast layer | **Overlay always**. Exclusive zone −1. No config knob | Overlay-for-Critical; Top\|Overlay setting |
 | D9 | Toast keyboard | **None**, flipped to **OnDemand only while inline-reply is focused** (owner chose 1) | None always; Exclusive while any toast visible |
 | D10 | Notification center | M4 **panel** id `notifications`, centered like settings (~400×620 fitted). No control-center tab exists. Not a bar-attached full-height popout | Noctalia control-center tab; DMS DankPopout |
-| D11 | DND | Shell-owned bool + optional until-timestamp in session/config. Suppresses **toasts only**, not history, not D-Bus `Notify` | Persist DND in sysc-notify; suppress history |
-| D12 | Tray overflow | **In 5B**: items that do not fit the bar slot go in a drawer panel (M4 panel, Exclusive). Chevron on the tray widget opens it. Hidden/pin lists deferred | Overflow later; DMS hide-id chrome |
+| D11 | DND | Shell-owned bool + optional until-timestamp in session/config. Suppresses toast presentation, not history or D-Bus `Notify`; center-open also suppresses toasts | Persist DND in sysc-notify; suppress history |
+| D12 | Tray overflow and preferences | **In 5B**: items that do not fit go in a drawer. Hidden items remain recoverable there; show/hide, pin/unpin, and order persist by collision-safe stable token | Defer preferences; DMS hide-id chrome only |
 | D13 | Persist format | `$XDG_STATE_HOME/sysc-notify/history.json` (0600) + PNG sidecars under `images/<sha256>.png`. Cap 100. Retention 7 days default. Transient excluded. Image-data downscaled to 96 px. Active notifications are not the disk file — disk is closed history only; snapshot sends `active[]` + `history[]` | WebP extra dep; persist raw pixels; world-readable paths |
 | D14 | Tranche split | **5A Notifications** (IPC client, persist in notify, image/icon, toasts, center, DND, PID). **5B Tray** (IPC client, bar widget, xdg_popup menu, scroll, overflow). Image package ships in 5A; 5B consumes it | One mega-plan; image as its own tranche |
 
@@ -40,4 +40,5 @@ Method: niri-capability + prior-art before each decision. Inventory: `2026-08-30
 
 **xdg_popup risk.** Confirm niri parents a popup to a layer-shell bar before 5B product code. Fallback is already named (D5).
 
-**SVG.** Named-icon SVG path preferred in lookup; rasterize later. First ship PNG/JPEG + raw `image-data`.
+**SVG.** Named theme icons prefer SVG. 5A supplies one bounded pure-Go raster path shared by
+notifications and tray; unsupported SVG falls back without removing the item.

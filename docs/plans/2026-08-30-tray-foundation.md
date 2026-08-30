@@ -1,186 +1,229 @@
-# Tray Foundation Implementation Plan — Milestone 5, Tranche 5B
+# Tray Foundation Implementation Plan: Milestone 5, Tranche 5B
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Ship Milestone 5 tray presentation: dial sysc-tray, render normal/attention/overlay icons in the bar, forward activate/secondary/scroll, open a keyboard-accessible DBusMenu as an xdg_popup (or D5 fallback), and an overflow drawer.
+**Goal:** Present service-owned tray items, menus, overflow, and preferences on every output.
 
-**Architecture:** Shell is a presentation client on the tray Unix socket. Items keyed by unique owner + object path. Named icons go through 5A `internal/icons`. Menus are requested on demand. Overflow uses M4 panel machinery.
+**Architecture:** The shell imports the tagged `sysc-tray/protocol` package and applies immutable
+snapshots on its Wayland owner. 5B reuses 5A's image path, M3's tooltip, and M4's auxiliary/root
+machinery. The tray service owns D-Bus items and menu revisions; the shell owns pixels and interaction.
 
-**Tech Stack:** Go 1.26 stdlib, sysc-wayland xdg-shell (already generated), tagged `sysc-tray`, 5A icons, M4 panels.
+**Tech Stack:** Go 1.26, pinned `sysc-tray v0.1.0-rc.1`, existing Wayland bindings and shell UI.
 
-**Design:** [2026-08-30-tray-foundation-design.md](2026-08-30-tray-foundation-design.md)
-**Research:** [2026-08-30-notifications-and-tray-research.md](2026-08-30-notifications-and-tray-research.md)
+**Design:** `docs/plans/2026-08-30-tray-foundation-design.md`
 
 ---
 
 ## Prerequisites
 
-1. 5A merged (at least `internal/icons` + M4 panels). Tagged `sysc-tray` with socket + item snapshot + menu on demand.
-2. Live-test D5 before writing popup product code (Task 1).
-3. No AI-tool substrings in commits.
+- 5A's protocol-client pattern, `KindImage`, cache, and worker have landed.
+- M3/M4 tooltip, auxiliary update, input routing, virtual list, and root coordinator have landed.
+- `sysc-tray v0.1.0-rc.1` exists. Start clean and reject local `replace` directives.
 
 ---
 
-### Task 1: Live-test xdg_popup parented to the bar layer surface
-
-**Files:** none in tree until the result is recorded in the 5B design Risks section.
-
-**Step 1:** On Niri, from a throwaway binary or `tests/integration`, create the bar layer surface. Create
-a separate popup `wl_surface` and `xdg_surface`, call `xdg_surface.get_popup` with a null parent, then call
-`zwlr_layer_surface_v1.get_popup` on the bar before the popup's initial commit. Use the triggering pointer
-serial for `xdg_popup.grab`. Run the probe from bars on two outputs.
-
-Expected: the popup maps at the triggering bar on each output, gets keyboard after the bar switches to
-OnDemand, unmaps on Escape or outside click, restores the bar to keyboard None, and returns focus to the
-last window. Do not commit connector names, host names, screenshots, or measurements.
-
-**Step 2:** If it fails, set a flag `popupFromLayer = false` in the design Risks (one-line amendment) and implement Task 6 as M4 panel + KindMenu. Do not invent a third host.
-
-**Commit:** `docs: record niri xdg_popup-from-layer result`
-
----
-
-### Task 2: Freeze tray snapshot types
+### Task 1: Pin and fixture the tray protocol
 
 **Files:**
-- Create: `internal/ipc/trayproto/types.go`
-- Test: `internal/ipc/trayproto/types_test.go`
+- Modify: `go.mod`, `go.sum`
+- Create: `internal/trayclient/fixtures_test.go`
 
-```go
-type Item struct {
-    Owner, Path string
-    Title, Status, IconName, AttentionName, OverlayName, IconThemePath, MenuPath string
-    NeedsAttention bool
-    Icon, Attention, Overlay *Pixmap
-}
-type Pixmap struct{ W, H int; ARGB []byte }
-type Snapshot struct {
-    Type  string `json:"type"`
-    Items []Item `json:"items"`
-}
-type Event struct {
-    Type string `json:"type"` // item-added|item-removed|item-updated|menu
-    Item *Item  `json:"item,omitempty"`
-    Menu *Menu  `json:"menu,omitempty"`
-}
-type Menu struct {
-    Revision int
-    Entries  []MenuEntry
-}
-type MenuEntry struct {
-    ID int32
-    Label, IconName string
-    Enabled, Visible, Separator, HasSubmenu, Checkmark, Radio bool
-    ToggleState int32
-    Children []MenuEntry
-}
-type Command struct {
-    Type, Owner, Path string
-    Delta int
-    Orientation string // vertical|horizontal
-    MenuID int32
-    Event string // clicked|hovered
-}
+**Step 1:** Run `go get github.com/Nomadcxx/sysc-tray@v0.1.0-rc.1`.
+
+**Step 2:** Add fixtures for hello, snapshot, every item/menu delta, normal/attention/overlay icons,
+pixmaps, tooltip, generations, revisions, commands, replies, unknown fields, and limits. Round-trip only
+through imported protocol types.
+
+**Step 3:** Run `go test ./internal/trayclient/ -run Fixture -v`. Expected: PASS.
+
+**Step 4:** Commit `build: pin tray protocol candidate`.
+
+---
+
+### Task 2: Generation-safe tray client
+
+**Files:**
+- Create: `internal/trayclient/client.go`, `internal/trayclient/socket.go`
+- Test: `internal/trayclient/client_test.go`
+
+**Step 1:** Write failing real-socket tests for path/peer validation, handshake, snapshot N plus N+1
+deltas, gap resnapshot, malformed frames, presenter replacement, reconnect, 64-command backpressure,
+request IDs, item generations, menu revisions, and unknown outcomes.
+
+**Step 2:** Implement the same one-reader/one-writer ownership pattern as notify without extracting a
+cross-service abstraction. Publish immutable generation-tagged messages. Return `busy` when full and
+never replay effects.
+
+**Step 3:** Run `go test -race -count=1 ./internal/trayclient/`.
+
+**Step 4:** Commit `feat(tray): connect to tray service`.
+
+---
+
+### Task 3: Item projection and icon composition
+
+**Files:**
+- Create: `internal/shell/tray.go`, `internal/shell/trayicon.go`
+- Test: `internal/shell/tray_test.go`, `internal/shell/trayicon_test.go`
+
+**Step 1:** Write failing tests for snapshot/deltas, owner replacement, stale generation, normal status,
+attention replacement, overlay-last half-size composition, named SVG/raster, pixmap fallback, cache
+keys, malformed candidate isolation, and output-independent projection.
+
+**Step 2:** Store imported item records under `Registry.mu`. Build one `KindImage` node per visible
+item. Reuse 5A lookup, worker, and cache. Fallback named icon to pixmap to placeholder. Project the same
+item independently on every output.
+
+**Step 3:** Run `go test -race -count=1 ./internal/shell/ -run 'Tray(Item|Icon)' -v`.
+
+**Step 4:** Commit `feat(shell): project tray items`.
+
+---
+
+### Task 4: Shared tooltip and item actions
+
+**Files:**
+- Modify: `internal/shell/tray.go`, `internal/shell/tooltip.go`
+- Test: `internal/shell/tray_test.go`, `internal/shell/tooltip_test.go`
+
+**Step 1:** Write failing tests for bounded title/description flattening, dynamic tooltip update, item
+loss close, activate, secondary activate, vertical/horizontal scroll, logical coordinates, command
+`busy`, stale reply, and no retry after unknown result.
+
+**Step 2:** Put flattened text on `ui.Node.Tooltip`; create no new tooltip host. Route input through
+retained press/release matching and imported commands. Correlate replies with request ID, item
+generation, output, and current root generation.
+
+**Step 3:** Run `go test -race -count=1 ./internal/shell/ -run 'Tray|Tooltip' -v`.
+
+**Step 4:** Commit `feat(shell): interact with tray items`.
+
+---
+
+### Task 5: Bounded menu model and back stack
+
+**Files:**
+- Create: `internal/shell/traymenu.go`
+- Test: `internal/shell/traymenu_test.go`
+
+**Step 1:** Write failing tests for depth 8, 512 nodes, duplicate IDs, malformed siblings, initial focus,
+keyboard traversal, activation, separators, disabled/checked/radio entries, submenu push/back, and
+accessible names/roles.
+
+**Step 2:** Validate imported menu trees iteratively. Build one visible list at a time; submenus replace
+it and push the parent state. Escape returns through the stack before closing. Do not create recursive
+popup surfaces.
+
+**Step 3:** Run `go test -count=1 ./internal/shell/ -run TrayMenu -v`.
+
+**Step 4:** Commit `feat(shell): build bounded tray menus`.
+
+---
+
+### Task 6: Popup surface, revisions, and root correlation
+
+**Files:**
+- Create: `internal/shell/traymenuhost.go`
+- Modify: `internal/platform/wayland/popup.go`
+- Modify: `internal/shell/root.go`
+- Test: `internal/shell/traymenuhost_test.go`, `internal/shell/root_test.go`
+- Test: `internal/platform/wayland/aux_test.go`
+
+**Step 1:** Before product code, live-test Niri with a 1x1 xdg_popup. Create its own `wl_surface` and
+`xdg_surface`, call `get_popup` with the protocol-required positioner, assign it to the triggering layer
+surface through `zwlr_layer_surface_v1.get_popup`, grab with the pointer serial, then commit. Record the
+protocol trace. If Niri rejects this valid sequence, select the documented Overlay auxiliary fallback
+and record the compositor evidence.
+
+**Step 2:** Write failing tests for protocol order, saved serial, output/item/revision/root correlation, keyboard
+OnDemand, input-region update, outside close, item/output/service loss, root replacement, property-only
+update, deferred structural update while active, focused-ID restoration, and stale selection.
+
+**Step 3:** Open one popup `surfaceUnit` in the current root chain. Parent it to the triggering bar or
+drawer layer surface, position against the relevant edge, and grab with the saved serial. It may be a
+root from a bar icon or an attached child of its drawer. Close tooltip first. Save correlation fields.
+Release keyboard, serial, requests, and root ownership on every terminal path. Use the recorded fallback
+only if Step 1 required it.
+
+**Step 4:** Apply property-only updates when focus survives. Keep only the newest structural revision
+while interaction is active; apply it on idle. A stale selection invokes nothing, requests refresh, and
+keeps the menu usable.
+
+**Step 5:** Run `go test -race -count=1 ./internal/shell/ ./internal/platform/wayland/`.
+
+**Step 6:** Commit `feat(shell): host revision-safe tray popups`.
+
+---
+
+### Task 7: Overflow and preferences
+
+**Files:**
+- Create: `internal/shell/traydrawer.go`, `internal/shell/trayprefs.go`
+- Modify: `internal/config/config.go`
+- Test: `internal/shell/traydrawer_test.go`, `internal/shell/trayprefs_test.go`
+
+**Step 1:** Write failing tests for geometry overflow, pinned-first bar order, ordinary saved order,
+hidden exclusion, recoverable hidden section, show/hide, pin/unpin, move earlier/later, atomic reload,
+stable token selection, generic IDs, token collision, and keyboard accessibility.
+
+**Step 2:** Reuse tray item nodes in a virtual-list drawer root. Persist preferences by non-generic SNI
+ID, then non-generic title. If two live items share a token, apply neither preference and show both in
+default order. Item generations never enter persisted tokens.
+
+**Step 3:** Run `go test -race -count=1 ./internal/shell/ ./internal/config/`.
+
+**Step 4:** Commit `feat(shell): add tray overflow preferences`.
+
+---
+
+### Task 8: Wiring and failure recovery
+
+**Files:**
+- Modify: `cmd/sysc-shell/main.go`, `internal/shell/registry.go`
+- Create: `tests/integration/tray_test.go`
+- Modify: `tests/integration/README.md`
+
+**Step 1:** Wire tray client messages, commands, image work, tooltips, menus, drawer, root coordinator,
+output lifecycle, reconnect, and shutdown. Service loss removes projections and closes tooltip/menu/
+drawer; item loss affects only that item's roots.
+
+**Step 2:** Add fake-service and fake-compositor tests for two outputs, hotplug, generations, stale
+replies, popup failure, malformed siblings, preference collision, root replacement, and cleanup.
+
+**Step 3:** Run:
+
+```bash
+gofmt -w .
+test -z "$(gofmt -l .)"
+go vet ./...
+go test -race -count=1 ./...
+git diff --exit-code -- go.mod go.sum
 ```
 
-**Commit:** `test: add tray snapshot types`
+Expected: PASS; module changes contain the pinned tray candidate and no replacement.
+
+**Step 4:** Execute the design's two-output Niri matrix. Record exact app fixtures and restart direction.
+Any wire change requires a new service candidate and pin.
+
+**Step 5:** Commit `test(shell): qualify tray presentation`.
 
 ---
 
-### Task 3: Tray Unix client
+### Task 9: Milestone 5 combined gate
 
 **Files:**
-- Create: `internal/ipc/trayclient/client.go`
-- Test: `internal/ipc/trayclient/client_test.go` — unix listener, snapshot, item-updated, reconnect.
+- Create: `docs/plans/2026-08-31-milestone-5-completion-handover.md`
+- Modify: `tests/integration/README.md`
 
-Same peer-cred and backoff as notifyclient. Path `$XDG_RUNTIME_DIR/sysc-tray/ipc.v1.sock`. `Send` for activate / secondary-activate / scroll / menu.open / menu.select.
+**Step 1:** Run notify and tray together for the combined live matrix: center plus drawer root
+replacement, tray menu from drawer, tooltip closure before roots, inline reply replacing a menu, both
+services restarting independently, shell restart, output hotplug, mixed scale/transform, and 60 minutes
+idle.
 
-**Commit:** `feat: dial sysc-tray snapshot socket`
+**Step 2:** Rerun `go test -race -count=1 ./...`, `go vet ./...`, and the fake-compositor suite from
+a clean checkout.
 
----
+**Step 3:** Record shell commit, service candidate tags, test output, live observations, defects, and
+stable-tag authorization in the completion handover.
 
-### Task 4: Icon compose (attention + overlay)
-
-**Files:**
-- Create: `internal/shell/trayicon.go`
-- Test: `internal/shell/trayicon_test.go`
-
-```go
-func Source(item trayproto.Item, lookup func(string, int) (image.Image, error), size int) image.Image
-```
-
-Priority: attention pixmap if NeedsAttention and non-empty, else icon pixmap, else lookup(attentionName|iconName). Overlay pixmap or lookup(overlayName) composited bottom-right at size/2. Nil lookup → 1-letter placeholder is **not** required; empty image + accessible Name is enough.
-
-**Commit:** `feat: compose tray attention and overlay icons`
-
----
-
-### Task 5: Tray bar widget
-
-**Files:**
-- Create: `internal/shell/widget_tray.go`
-- Modify: config item id `tray` allowed in bar sections
-- Test: `internal/shell/widget_tray_test.go` — N items, overflow when width insufficient, left-click sends activate, wheel sends scroll, right-click requests menu.
-
-Row of `KindButton` nodes, size = bar inner height. Chevron when `hidden > 0`. `Handle` on icon: ButtonLeft → activate, ButtonRight → menu.open, ButtonMiddle → secondary-activate, axis → scroll. Name/Role on each.
-
-**Commit:** `feat: render status notifier icons in the bar`
-
----
-
-### Task 6: DBusMenu surface
-
-**Files:**
-- Create: `internal/platform/wayland/popup.go` (if Task 1 passed) **or** `internal/shell/popout_traymenu.go` (fallback)
-- Test: protocol request order, owner-goroutine confinement, keyboard Next/Prev/Enter/Escape;
-  `menu.select` on Enter; closing on outside click, Escape, output removal, popup failure, and service loss;
-  bar keyboard restoration on every close path.
-
-xdg_popup path: queue an owner-goroutine command that creates the popup surface and positioner, calls
-`xdg_surface.get_popup(nil, positioner)`, assigns it with `barLayer.GetPopup(popup)`, grabs with the saved
-input serial, and performs the initial commit in protocol order. Positioner gravity opposes the bar edge;
-constraint adjustment is slide|flip. Switch the bar layer keyboard to OnDemand while open and restore
-None on every close path. Roving focus traverses `MenuEntry`; submenu content replaces the list (stack +
-Back), with no recursive popup in v1.
-
-Fallback path: panel id `tray-menu`, Exclusive, KindMenu, anchored to the icon (4A placement). Same command wiring.
-
-One menu process-wide (5B-3).
-
-**Commit:** `feat: open keyboard-accessible tray DBusMenu`
-
----
-
-### Task 7: Overflow drawer
-
-**Files:**
-- Create: `internal/shell/popout_traydrawer.go`
-- Test: items that did not fit appear here; activate from drawer; Escape closes.
-
-Panel `tray-drawer`, Exclusive, bar-anchored to the chevron. Grid/row of the same icon buttons as Task 5.
-
-**Commit:** `feat: add tray overflow drawer`
-
----
-
-### Task 8: Wiring + gate
-
-**Files:**
-- Modify: `cmd/sysc-shell/main.go` — trayclient goroutine
-- Test: fake-compositor — owner replacement (same path, new unique owner) drops stale menu and shows one icon; malformed pixmap omits that icon only; reconnect restores item set without duplicates; bar exclusive zone unchanged.
-
-Live checklist: real app (nm-applet or similar) registers; left-click; right-click menu; wheel; kill shell, items remain, restart shell they reappear; kill tray service, bar empties, restart service they return.
-
-**Commit:** `feat: wire sysc-tray client and tray gate tests`
-
----
-
-## Done when
-
-- Registration, property updates, activate, scroll, menus, owner replacement, shell restart, malformed pixmap isolation all have tests.
-- Live checklist ticked.
-- Shell does not import D-Bus or claim StatusNotifierWatcher.
-
-## Skipped
-
-XEmbed. Hidden/pin lists. Tooltip surfaces (Name/Role only). Watcher implementation in-process. Nested xdg_popup submenus (in-menu stack instead).
+**Step 4:** Commit `docs: record milestone 5 qualification`.
