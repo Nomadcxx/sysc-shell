@@ -187,3 +187,33 @@ func TestClosingTheRegistryStopsTheSamplingGoroutine(t *testing.T) {
 		t.Fatalf("goroutines = %d after Close, want at most the starting %d", got, before)
 	}
 }
+
+// D8's requirement, measured against the face actually in use: a percentage
+// must not change its node's width as it crosses from one digit to three. An
+// unmeasured pixel constant cannot satisfy this, because the width it has to
+// clear depends on the resolved font.
+func TestAPercentageKeepsOneWidthFromNineToOneHundred(t *testing.T) {
+	t.Parallel()
+	cfg := metricConfig()
+	bar, err := NewWithTheme(ThemeFrom(cfg, cfg.Bar), cfg.Bar, "DP-9")
+	if err != nil {
+		t.Fatalf("NewWithTheme: %v", err)
+	}
+
+	width := func(fraction float64) int {
+		t.Helper()
+		bar.apply(barView{Metrics: services.Snapshot{
+			CPU: &metrics.CPUSnapshot{Usage: metrics.CPUUsage{Fraction: fraction, Valid: true}},
+		}})
+		if err := bar.Layout(600, BarHeight); err != nil {
+			t.Fatalf("Layout: %v", err)
+		}
+		return bar.left[0].node.Bounds.W
+	}
+
+	narrow, wide := width(0.09), width(1)
+	if narrow != wide {
+		t.Fatalf("9%% laid out %d wide and 100%% laid out %d; the floor must hold the field",
+			narrow, wide)
+	}
+}

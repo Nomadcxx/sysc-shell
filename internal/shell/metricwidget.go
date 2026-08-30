@@ -145,9 +145,11 @@ const (
 	// two non-text display modes, in logical pixels.
 	metricMeterWidth = 48
 	metricGraphWidth = 48
-	// metricTextFloor reserves the width of a three-digit percentage so a bar
-	// does not reflow as a value crosses from 9% to 100%.
-	metricTextFloor = 34
+	// metricWidthSample is the widest percentage a fraction widget can render.
+	// The node floors at this string's measured width, so a bar does not
+	// reflow as a value crosses from 9% to 100%. It is a sample string rather
+	// than a pixel count because the width depends on the resolved face.
+	metricWidthSample = "100%"
 )
 
 // buildMetricWidget makes one metric instance. Display mode is fixed at build
@@ -182,7 +184,7 @@ func buildMetricWidget(item config.Item) textWidget {
 		}
 	default:
 		return textWidget{
-			node:   &ui.Node{Kind: ui.KindText, Tabular: true, MinWidth: metricTextFloor},
+			node:   &ui.Node{Kind: ui.KindText, Tabular: true, MinWidthText: metricWidthSample},
 			format: func(v barView) string { return formatMetric(item, v.Metrics) },
 		}
 	}

@@ -54,8 +54,10 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 	switch n.Kind {
 	case KindText:
 		w, h := measure(n.Text, n.Tabular)
-		if n.MinWidth > w {
-			w = n.MinWidth
+		if n.MinWidthText != "" {
+			if floor, _ := measure(n.MinWidthText, n.Tabular); floor > w {
+				w = floor
+			}
 		}
 		if n.MaxWidth > 0 && w > n.MaxWidth {
 			w = n.MaxWidth
