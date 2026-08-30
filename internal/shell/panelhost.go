@@ -90,6 +90,10 @@ func (r *Registry) OpenPanel(id PanelID, output uint32, trig Trigger) error {
 func (r *Registry) ClosePanel(id PanelID) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.closePanelLocked(id)
+}
+
+func (r *Registry) closePanelLocked(id PanelID) {
 	r.panels.Close(id)
 	r.teardownPanelLocked(id)
 }
@@ -355,6 +359,8 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 
 func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 	return func(e wayland.Event) bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
 		switch e.Kind {
 		case wayland.EventKeyPress:
 			return h.keyPress(r, e.Key)
@@ -395,7 +401,7 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 		h.shift = true
 		return false
 	case keyEsc:
-		r.ClosePanel(h.id)
+		r.closePanelLocked(h.id)
 		return true
 	case keyTab:
 		if h.shift {
@@ -403,12 +409,15 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 		} else {
 			h.roving.Next()
 		}
+		h.afterFocusChange(r)
 		return true
 	case keyLeft, keyUp:
 		h.roving.Prev()
+		h.afterFocusChange(r)
 		return true
 	case keyRight, keyDown:
 		h.roving.Next()
+		h.afterFocusChange(r)
 		return true
 	case keySpace, keyEnter:
 		return h.activate(r)
@@ -433,6 +442,12 @@ func (h *PanelHost) activate(r *Registry) bool {
 	return true
 }
 
+func (h *PanelHost) afterFocusChange(r *Registry) {
+	if h.id == PanelMonitor {
+		r.rebuildPanel(h)
+	}
+}
+
 func (r *Registry) rebuildPanel(h *PanelHost) {
 	h.root = r.panelTree(h)
 	h.focus = ui.Focusables(h.root)
@@ -450,6 +465,12 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 			now = time.Now()
 		}
 		return clockTree(now, h.monthDelta)
+	case PanelMonitor:
+		connector := ""
+		if bar, ok := r.bars[h.output]; ok {
+			connector = bar.connector()
+		}
+		return monitorTree(monitorSelectors(r.cfg.ForConnector(connector)), r.sample, r.historyLocked(), h.roving.Index())
 	default:
 		return placeholderTree()
 	}

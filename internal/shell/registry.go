@@ -292,7 +292,11 @@ func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
 			changed = append(changed, global)
 		}
 	}
-	monitorOut, monitorOK := r.panels.Output(PanelMonitor)
+	monitorOut, monitorOK := uint32(0), false
+	if h := r.panelHosts[PanelMonitor]; h != nil {
+		r.rebuildPanel(h)
+		monitorOut, monitorOK = h.output, true
+	}
 	r.mu.Unlock()
 
 	r.publish(changed)
