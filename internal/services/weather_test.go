@@ -316,3 +316,32 @@ func TestBackoffIsBounded(t *testing.T) {
 		}
 	}
 }
+
+// However short the lease interval, fetches cannot exceed the floor. Without
+// this a one-second widget interval would issue sixty requests a minute.
+func TestTheMinimumFetchFloorHolds(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		fmt.Fprint(rw, currentWeatherBody)
+	}))
+	t.Cleanup(server.Close)
+
+	w := NewWeather(0, 0, UnitCelsius)
+	w.endpoint = server.URL
+	t.Cleanup(w.Close)
+
+	lease, err := w.Acquire(time.Millisecond)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer lease.Release()
+
+	// Wait well past several lease intervals but far short of the floor.
+	time.Sleep(2 * time.Second)
+
+	if got := calls.Load(); got > 1 {
+		t.Fatalf("the server was called %d times inside the fetch floor, want at most 1", got)
+	}
+}
