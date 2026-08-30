@@ -9,4 +9,4 @@ require (
 	golang.org/x/sys v0.47.0
 )
 
-require github.com/Nomadcxx/sysc-metrics v0.1.0
+require github.com/Nomadcxx/sysc-metrics v0.2.0
