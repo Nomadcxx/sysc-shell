@@ -79,6 +79,16 @@ func buildWidgets(items []config.Item) []textWidget {
 					return text
 				},
 			})
+		case "battery":
+			node := &ui.Node{Kind: ui.KindText}
+			out = append(out, textWidget{
+				node: node,
+				format: func(v barView) string {
+					text, tone := formatBattery(item, v.Metrics)
+					node.Tone = tone
+					return text
+				},
+			})
 		}
 	}
 	return out
