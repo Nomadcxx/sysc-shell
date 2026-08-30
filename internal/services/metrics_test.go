@@ -126,3 +126,55 @@ func TestClosingTheMetricsServiceStopsTheGoroutine(t *testing.T) {
 	// Close must be safe to call twice; shutdown paths may each reach it.
 	m.Close()
 }
+
+// A leased source must appear in the snapshot; an unleased one must not, so an
+// unused collector is never called.
+func TestOnlyLeasedSourcesArePopulated(t *testing.T) {
+	t.Parallel()
+	m := NewMetrics()
+	t.Cleanup(m.Close)
+
+	lease, err := m.Acquire(SourceMemory, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer lease.Release()
+
+	select {
+	case snap := <-m.Updates():
+		if snap.Memory == nil {
+			t.Fatal("the leased memory source was not populated")
+		}
+		if snap.CPU != nil || snap.Block != nil || snap.Network != nil || snap.Filesystem != nil {
+			t.Fatalf("an unleased source was collected: %+v", snap)
+		}
+		if snap.CollectedAt.IsZero() {
+			t.Fatal("snapshot carries no collection time")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no snapshot arrived within three seconds")
+	}
+}
+
+// The channel holds only the newest snapshot, so a slow consumer coalesces
+// rather than queueing stale values.
+func TestMetricUpdatesKeepOnlyTheNewest(t *testing.T) {
+	t.Parallel()
+	m := NewMetrics()
+	t.Cleanup(m.Close)
+
+	older := Snapshot{CollectedAt: time.Date(2026, 8, 30, 15, 4, 0, 0, time.UTC)}
+	newer := Snapshot{CollectedAt: time.Date(2026, 8, 30, 15, 5, 0, 0, time.UTC)}
+	sendSnapshot(m.updates, older)
+	sendSnapshot(m.updates, newer)
+
+	got := <-m.Updates()
+	if !got.CollectedAt.Equal(newer.CollectedAt) {
+		t.Fatalf("received %v, want the newest %v", got.CollectedAt, newer.CollectedAt)
+	}
+	select {
+	case extra := <-m.Updates():
+		t.Fatalf("a second value %v was queued behind the newest", extra.CollectedAt)
+	default:
+	}
+}

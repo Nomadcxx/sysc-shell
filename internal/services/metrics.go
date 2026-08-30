@@ -2,6 +2,7 @@ package services
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -205,11 +206,140 @@ func (m *Metrics) releaseMetric(l *Lease) {
 	}
 }
 
-// TEMPORARY: replaced in Tasks 3 and 4.
+// samplers holds the stateful collectors. They are constructed once and used
+// only by the sampling goroutine, because the library documents them as owned
+// by one sequential caller: each retains previous counters, so a concurrent
+// Sample would corrupt its rate derivation.
+type samplers struct {
+	cpu     *metrics.CPUSampler
+	block   *metrics.BlockSampler
+	network *metrics.NetworkSampler
+}
+
+func (m *Metrics) run(stop, done chan struct{}) {
+	defer close(done)
+
+	s := samplers{
+		cpu:     metrics.NewCPUSampler(),
+		block:   metrics.NewBlockSampler(),
+		network: metrics.NewNetworkSampler(),
+	}
+	// failing tracks which sources are currently reporting errors, so the log
+	// is edge-triggered. A per-tick log at the default interval would emit
+	// roughly 1,800 lines an hour for one permanently absent device.
+	var failing [sourceCount]bool
+
+	for {
+		m.mu.Lock()
+		interval := m.finestLocked()
+		m.mu.Unlock()
+		if interval <= 0 {
+			return
+		}
+
+		timer := time.NewTimer(interval)
+		select {
+		case <-stop:
+			timer.Stop()
+			return
+		case <-m.rearm:
+			// A shorter interval arrived; recompute the deadline.
+			timer.Stop()
+		case <-timer.C:
+			snap := m.collect(&s, &failing)
+			m.record(snap)
+			sendSnapshot(m.updates, snap)
+		}
+	}
+}
+
+// collect samples every leased source. A source that fails is left nil, which
+// renders as unavailable; one failing source never suppresses another.
+func (m *Metrics) collect(s *samplers, failing *[sourceCount]bool) Snapshot {
+	snap := Snapshot{CollectedAt: time.Now()}
+
+	if m.Leased(SourceCPU) {
+		if v, err := s.cpu.Sample(); err != nil {
+			noteFailure(failing, SourceCPU, err)
+		} else {
+			noteRecovery(failing, SourceCPU)
+			snap.CPU = &v
+		}
+	}
+	if m.Leased(SourceMemory) {
+		if v, err := metrics.ReadMemory(); err != nil {
+			noteFailure(failing, SourceMemory, err)
+		} else {
+			noteRecovery(failing, SourceMemory)
+			snap.Memory = &v
+		}
+	}
+	if m.Leased(SourceFilesystem) {
+		if v, err := metrics.ReadFilesystems(); err != nil {
+			noteFailure(failing, SourceFilesystem, err)
+		} else {
+			noteRecovery(failing, SourceFilesystem)
+			snap.Filesystem = &v
+		}
+	}
+	if m.Leased(SourceBlock) {
+		if v, err := s.block.Sample(); err != nil {
+			noteFailure(failing, SourceBlock, err)
+		} else {
+			noteRecovery(failing, SourceBlock)
+			snap.Block = &v
+		}
+	}
+	if m.Leased(SourceNetwork) {
+		if v, err := s.network.Sample(); err != nil {
+			noteFailure(failing, SourceNetwork, err)
+		} else {
+			noteRecovery(failing, SourceNetwork)
+			snap.Network = &v
+		}
+	}
+	return snap
+}
+
+func noteFailure(failing *[sourceCount]bool, src Source, err error) {
+	if failing[src] {
+		return
+	}
+	failing[src] = true
+	fmt.Fprintf(os.Stderr, "sysc-shell: metrics source %s unavailable: %v\n", src, err)
+}
+
+func noteRecovery(failing *[sourceCount]bool, src Source) {
+	if !failing[src] {
+		return
+	}
+	failing[src] = false
+	fmt.Fprintf(os.Stderr, "sysc-shell: metrics source %s recovered\n", src)
+}
+
+// sendSnapshot publishes the newest snapshot, replacing one the consumer has
+// not read. This goroutine is the only sender, so the retry always finds room.
+func sendSnapshot(updates chan Snapshot, snap Snapshot) {
+	select {
+	case updates <- snap:
+		return
+	default:
+	}
+	select {
+	case <-updates:
+	default:
+	}
+	select {
+	case updates <- snap:
+	default:
+	}
+}
+
+// TEMPORARY: replaced in Task 4.
 const historySize = 120
 
 type ring struct{}
 
 func newRing(int) *ring { return &ring{} }
 
-func (m *Metrics) run(stop, done chan struct{}) { <-stop; close(done) }
+func (m *Metrics) record(Snapshot) {}
