@@ -1,7 +1,8 @@
 # Power Design — Milestone 3, Tranche 3C
 
 Date: 2026-08-31
-Status: Owner-approved in session. Not yet audited. **Signatures provisional — see Assumptions.**
+Status: Owner-approved in session. Plan audited 2026-08-31; scope wording aligned with D4.
+**Signatures provisional — see Assumptions.**
 Branch: `milestone/power`
 Worktree: `/home/nomadx/.config/superpowers/worktrees/sysc-shell/milestone/power`
 
@@ -36,7 +37,7 @@ Milestone 3 undesigned indefinitely, and because everything above the boundary c
 ## Scope
 
 Tranche 3C ships one `battery` widget on every configured output: a level icon, an optional label, and a
-warning tone when the charge is low and falling.
+warning tone when the charge is low and not charging.
 
 It ships no thermal, no UPS-specific display, no power profiles, no popout, no notification, and no
 suspend or shutdown action.
