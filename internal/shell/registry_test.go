@@ -529,3 +529,45 @@ func TestAConfigWithNoWeatherWidgetLeavesTheServiceStopped(t *testing.T) {
 		t.Fatal("a configuration with no weather widget started the service")
 	}
 }
+
+func batteryConfig() config.Config {
+	cfg := config.Default()
+	cfg.Bar.Left = []config.Item{{
+		ID: "battery", Label: "percent", WarnBelow: 20, Interval: 30 * time.Second,
+	}}
+	cfg.Bar.Center, cfg.Bar.Right = nil, nil
+	return cfg
+}
+
+func TestABatteryWidgetLeasesTheBatterySource(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(batteryConfig())
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9"})
+
+	if !reg.Metrics().SourceLeased(services.SourceBattery) {
+		t.Fatal("a battery widget did not lease the battery source")
+	}
+	if reg.Metrics().SourceLeased(services.SourceCPU) {
+		t.Fatal("a battery-only configuration leased the CPU source")
+	}
+}
+
+func TestTwoBarsShareOneBatteryLeaseSet(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(batteryConfig())
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9", 2: "HDMI-A-9"})
+
+	if got := reg.Metrics().Starts(); got != 1 {
+		t.Fatalf("starts = %d, want 1 shared start for two bars", got)
+	}
+	reg.DropHost(1)
+	if !reg.Metrics().Running() {
+		t.Fatal("dropping one of two bars stopped the sampling service")
+	}
+	reg.DropHost(2)
+	if reg.Metrics().Running() {
+		t.Fatal("dropping the last bar left the sampling service running")
+	}
+}

@@ -156,8 +156,9 @@ func TestOnlyFractionSourcesReportAFraction(t *testing.T) {
 func TestEveryMetricIDMapsToASelector(t *testing.T) {
 	t.Parallel()
 	want := map[string]services.Selector{
-		"cpu":    {Source: services.SourceCPU},
-		"memory": {Source: services.SourceMemory},
+		"cpu":     {Source: services.SourceCPU},
+		"memory":  {Source: services.SourceMemory},
+		"battery": {Source: services.SourceBattery},
 	}
 	for id, sel := range want {
 		got, ok := metricSelector(config.Item{ID: id})
