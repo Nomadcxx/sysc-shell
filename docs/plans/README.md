@@ -111,6 +111,8 @@ Split into four reviewed tranches by the charter. 3A and 3B are merged.
 | `2026-08-31-power.md` | plan | `main` | Executed. 7 tasks. Task 0 reconciled against `sysc-metrics@v0.2.0`. |
 | `2026-08-31-power-audit-report.md` | audit-report | `main` | Closed. Verdict: rebase onto post-D6 `Metrics`, then wait for Task 0. Findings 1, 3, 4, 5 applied; finding 6 is 3D's `Tone` comparison. |
 | `2026-08-31-power-completion-handover.md` | completion-handover | `milestone/power` | Implementation complete; live matrix owner-deferred. |
+| `2026-08-31-m3-code-quality-sweep.md` | audit-report | `milestone/power` | Ponytail pass over 3A–3D. Report only; cuts listed, not applied. |
+| `2026-08-31-m3-spec-review-sweep.md` | audit-report | `milestone/power` | Implementation vs designs, plans, charter, and 2026-08-31 audits. |
 
 ### Tranche state
 
