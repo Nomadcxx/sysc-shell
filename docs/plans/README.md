@@ -1,6 +1,6 @@
 # Design and Plan Register
 
-Last updated: 2026-08-30.
+Last updated: 2026-08-31.
 
 Every design, plan, and handover this project has produced, with where it lives and whether it is still
 live. Add a row here in the same commit that adds a document. A document that is not in this register is
@@ -86,7 +86,7 @@ that resolved defect.
 
 ## Milestone 3 — built-in widget foundation
 
-Split into four reviewed tranches by the charter. Only 3A is designed.
+Split into four reviewed tranches by the charter. 3A and 3B are merged.
 
 | Document | Kind | Branch | State |
 |---|---|---|---|
@@ -96,17 +96,22 @@ Split into four reviewed tranches by the charter. Only 3A is designed.
 | `2026-08-30-built-in-widget-foundation.md` | plan | `main` | Complete. 16 tasks (0–15). Audit findings applied. Ready to execute. |
 | `2026-08-30-built-in-widget-foundation-audit-handover.md` | audit-handover | `main` | Closed. Commissioned the technical and design audits. |
 | `2026-08-30-built-in-widget-foundation-audit-report.md` | audit-report | `main` | Closed. Verdict: proceed with named corrections; all seven applied at `9a114eb`. Verified assumption 4 live. |
-| `2026-08-31-tranche-3a-implementation-audit-report.md` | audit-report | `main` | Closed. Implementation vs spec + Q/A. Verdict: proceed with named corrections. One major: apply does not re-layout. |
-| `2026-08-31-core-metrics-audit-report.md` | audit-report | `milestone/core-metrics` | Closed. Verdict: proceed with named corrections. Two majors (D6 grain, D7 meter/graph). |
+| `2026-08-31-tranche-3a-implementation-audit-report.md` | audit-report | `main` | **Open**. Implementation vs spec + Q/A. Verdict: proceed with named corrections. One major unapplied: `apply` does not re-layout. |
+| `2026-08-30-core-metrics-design.md` | design | `main` | Owner-approved, audited, amended. D1–D8; D3, D6, D7 and D8 amended 2026-08-31. Graph node ships in 3B (charter deviation D5). |
+| `2026-08-30-core-metrics.md` | plan | `main` | Executed. 13 tasks. |
+| `2026-08-30-core-metrics-completion-handover.md` | completion-handover | `main` | Closed. Implementation complete; superseded by the audit and its corrections. |
+| `2026-08-31-tranche-3b-audit-brief.md` | audit-handover | `main` | Closed. Commissioned the 3B audit. |
+| `2026-08-31-core-metrics-audit-report.md` | audit-report | `main` | Closed. Verdict: proceed with named corrections. Two majors (D6 grain, D7 meter/graph); all six applied. |
+| `2026-08-31-core-metrics-audit-corrections.md` | corrections | `main` | Closed. All six findings applied and evidenced. |
 
 ### Tranche state
 
 | Tranche | Scope | State |
 |---|---|---|
-| 3A | Clock, date, Niri workspace, focused-window title; service lifetime; per-output widget instances | Designed, planned, audited, and ready to execute. |
-| 3B | CPU, memory, filesystem, block and network rates | **Blocked**: needs a reviewed, tagged `sysc-metrics` release. None exists. |
-| 3C | Battery and remaining time | **Blocked**: needs `sysc-metrics` M2 power and thermal gates. |
-| 3D | Weather, icons, meter/graph/tooltip nodes | Not started. Needs the icon-asset policy applied and an Open-Meteo decision. |
+| 3A | Clock, date, Niri workspace, focused-window title; service lifetime; per-output widget instances | Merged. |
+| 3B | CPU, memory, filesystem, block and network rates | Merged. Audited; all six findings applied. |
+| 3C | Battery and remaining time | **Blocked**: needs `sysc-metrics` M2 power and thermal gates (`sysc-19`) and 3D. |
+| 3D | Weather, icons, meter/graph/tooltip nodes | Designed and planned. Unblocked once `sysc-8` closes. |
 
 ## Milestone 4 — panels and standard controls
 

@@ -78,6 +78,20 @@ func run(ctx context.Context) error {
 		}
 	}()
 
+	// The sampling service publishes on its own goroutine; this pump turns
+	// each pass into per-bar text and hands the changed outputs to the Wayland
+	// owner. One pass serves every bar.
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case snapshot := <-registry.Metrics().Updates():
+				registry.UpdateMetrics(snapshot)
+			}
+		}
+	}()
+
 	// SIGHUP reloads. The handler only signals; the owner goroutine re-reads
 	// and validates the file itself, so no proxy is touched from here.
 	reloads := make(chan struct{}, 1)

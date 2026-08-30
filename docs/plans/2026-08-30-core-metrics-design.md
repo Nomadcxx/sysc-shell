@@ -1,7 +1,7 @@
 # Core Metrics Design — Milestone 3, Tranche 3B
 
 Date: 2026-08-30
-Status: Owner-approved in session. Not yet audited.
+Status: Owner-approved in session. Audited 2026-08-31; D6, D7 and D8 amended in consequence.
 Branch: `milestone/core-metrics`
 Worktree: `/home/nomadx/.config/superpowers/worktrees/sysc-shell/milestone/core-metrics`
 
@@ -31,12 +31,64 @@ no popout, no tooltip, and no icons.
 |---|---|---|
 | D1 | Separate item ids: `cpu`, `memory`, `filesystem`, `block`, `network`. | One `metric` id parameterised by a stat enum. Noctalia parameterises; DMS splits. Splitting lets each id validate only the options it accepts, so `path` on a CPU widget is impossible by construction. |
 | D2 | `services.Metrics` is a second concrete service beside `Clock`. | Generalising `Clock` into a shared ticker. That is a single-implementation abstraction, a recorded stop condition, and it couples wall-clock boundary alignment to elapsed-time sampling. |
-| D3 | Per-source leases; the service samples at the finest interval any live lease requires. | A fixed global interval, or one timer per widget instance. |
+| D3 | Per-selector leases; the service samples at the finest interval any live lease requires, and reads a collector only while some selector needs its source. | A fixed global interval, or one timer per widget instance. |
 | D4 | Display mode per instance: `text`, `meter`, `graph`. | Text only. |
 | D5 | The graph node ships in 3B. | The charter places it in 3D. Metrics are its only plausible consumer; designing it in 3D and retrofitting 3B would define it twice. **Recorded as a deliberate charter deviation.** |
-| D6 | The service owns one history ring per source. | Per-widget history. Two bars showing the same source would keep duplicate rings that must not diverge. |
-| D7 | An unavailable value renders `"-"`. | A stale or error node. Those belong to 3D; `"-"` matches 3A's fallback for an unreported connector. |
-| D8 | `ui.Node.MinWidth` reserves a stable field for percentages. | Relying on tabular figures alone. Those align digits but do not fix `9%` and `100%` differing in digit count. |
+| D6 | The service owns one history ring per **selector** — `(source, subject, direction)`. **Amended 2026-08-31**; see below. | Per-widget history. Two bars showing the same subject would keep duplicate rings that must not diverge. |
+| D7 | An unavailable value renders `"-"` as text, and a meter or graph renders **absent**: it reserves its space and paints nothing. **Amended 2026-08-31**; see below. | A stale or error node. Those belong to 3D; `"-"` matches 3A's fallback for an unreported connector, and absence carries no colour or message. |
+| D8 | `ui.Node.MinWidthText` reserves a stable field for percentages, measured from a sample string. **Amended 2026-08-31**; see below. | Relying on tabular figures alone. Those align digits but do not fix `9%` and `100%` differing in digit count. |
+
+### D6 amendment, 2026-08-31
+
+D6 originally read "one history ring per source". The 2026-08-31 audit
+(`2026-08-31-core-metrics-audit-report.md`, finding 1) judged that grain wrong for the three sources
+that have a subject, and the owner accepted the amendment.
+
+One ring per source type is right for `cpu` and `memory`, which have exactly one subject each. It is
+wrong for `filesystem`, `block` and `network`: `record` pushed the first mount the collector reported,
+and the sum of every block device and of every interface in each direction. A graph therefore plotted an
+aggregate its widget never named, while its text and meter siblings selected correctly — so the two
+disagreed on screen about what they described.
+
+This contradicted D6's own prior-art citation. Noctalia keys `diskHistory(path, windowSize)` by path,
+not by source type.
+
+Rings are now keyed by `Selector{Source, Subject, Direction}`. The rejected alternative is unchanged and
+still rejected: history stays owned by the service, not by the widget, so two bars graphing the same
+interface share one ring. A graph of the opposite direction keeps its own, because it is a different
+measurement. The cost is a map rather than a fixed array, bounded by the number of live metric widgets.
+
+A ring is created with its selector's first lease and discarded with its last. A widget removed at
+midday and restored in the evening therefore starts a fresh window rather than drawing one continuous
+line across a gap of hours.
+
+A reading absent this pass is skipped rather than recorded as zero. A failed collector is not a
+measurement of nothing, and a pushed zero would draw a trough that never happened.
+
+### D7 amendment, 2026-08-31
+
+D7 said an unavailable value renders `"-"`. That held for text and for nothing else (audit finding 2).
+
+An unavailable meter wrote `Value = 0`, which paints an empty track — pixel-identical to a genuine 0%,
+so a failed collector rendered as an idle machine. An unavailable graph kept plotting its last good
+window, so a source that had stopped reporting minutes ago still drew a live line. That is the stale
+node D7 rejected, arrived at by accident.
+
+`ui.Node` gains `Absent`. An absent node still measures and reserves its space, so nothing reflows when
+a source drops, but it paints nothing at all. A genuine zero still paints its track, which is what keeps
+the two distinguishable. This is not 3D's error tone and does not anticipate it: there is no colour and
+no message, only the absence of a mark. `Node.Tone` can refine it in 3D without rework.
+
+### D8 amendment, 2026-08-31
+
+D8 specified `Node.MinWidth int`, and the widget set 34 logical pixels. Measured against the resolved
+sans-serif face at size 14, `"100%"` is 36 (audit finding 4). The floor was two pixels short, so D8 did
+not hold: a value crossing 99 to 100 still widened its node and shoved its neighbours, which is the
+single defect D8 existed to prevent.
+
+The field is now `Node.MinWidthText string`, a sample string shaped through the same path as the node's
+own text. A pixel constant cannot be correct across faces it was not measured on; a sample string is
+correct on whichever face is resolved. The widget passes `"100%"`.
 
 ## Prior art review
 
@@ -73,7 +125,7 @@ is per widget instance and defaults to `Gauge`. D4 follows, minus `None`, which 
 via `StyledTextMetrics` and takes `Math.max(cpuBaseline.width, paintedWidth)`, exposed as a
 `minimumWidth` setting. Noctalia exposes `labelMinWidth`. Both solve the same defect: a percentage
 crossing from one digit to three reflows its section every sample. 3A's `Tabular` flag aligns digits but
-cannot fix a changing digit *count*, so D8 adds `MinWidth`. Without it, a CPU meter beside a clock would
+cannot fix a changing digit *count*, so D8 adds a width floor. Without it, a CPU meter beside a clock would
 shift the clock every few seconds — the exact defect 3A's tabular-figures work existed to prevent.
 
 **Rate sources cannot drive a meter.** `cpu`, `memory` and `filesystem` yield a fraction that fills a
@@ -239,17 +291,21 @@ Two additions, each with a shipped consumer.
 
 ```go
 // Node gains, for KindText:
-MinWidth int // 0 means natural width
+MinWidthText string // "" means natural width
+
+// for any node that can lack a reading:
+Absent bool // measures and reserves space, paints nothing
 
 // and a new kind:
 KindGraph // Values are pre-normalised to 0..1; painted right-aligned
 ```
 
-`measureNode` returns `max(natural, MinWidth)` for a text node, so a percentage reserves a stable field.
-`MinWidth` and `MaxWidth` compose: a node floors at `MinWidth` and clamps at `MaxWidth`. They cannot
-conflict in this tranche, because `MinWidth` is derived by the widget rather than configured, and the
-only node carrying `MaxWidth` is `window-title`, which sets no floor. 3B adds no `min-width` option;
-should a later tranche add one, that is where a floor-above-cap check belongs.
+`measureNode` returns `max(natural, measure(MinWidthText))` for a text node, so a percentage reserves a
+stable field on whichever face is resolved. The floor and `MaxWidth` compose: a node floors first and
+clamps second, so the cap always wins. They cannot conflict in this tranche, because the floor is
+derived by the widget rather than configured, and the only node carrying `MaxWidth` is `window-title`,
+which sets no floor. 3B adds no `min-width` option; should a later tranche add one, that is where a
+floor-above-cap check belongs.
 
 `KindGraph` paints one filled column per sample into `wl_shm`, right-aligned so the newest sample sits at
 the leading edge. It reuses the existing rectangle fill; there is no path rasteriser, no new dependency,
@@ -263,7 +319,7 @@ and no anti-aliasing. A graph with fewer samples than its width leaves the unfil
 |---|---|
 | A collector returns an error | That source is unavailable for the tick; its widgets render `"-"`. Other sources are unaffected. |
 | A snapshot carries partial `Issues` | Entities that read correctly still render; only the failing mount or device renders `"-"`. |
-| A validity flag is false | Renders `"-"`. |
+| A validity flag is false | Renders `"-"`. A meter or graph renders absent: it reserves its space and paints nothing. |
 | The first rate sample | Always invalid — there is no previous counter — so a rate widget renders `"-"` for exactly one interval, as a clock renders `""` before its first tick. |
 | A selector names something absent | Renders `"-"` until it appears. |
 
@@ -298,7 +354,7 @@ Changed:
 - `internal/config/config.go`, `load.go` — five ids, their options, validation
 - `internal/shell/widget.go` — metric widgets in `buildWidgets`; `barView` carries the snapshot
 - `internal/shell/registry.go` — metric leases, `UpdateMetrics`
-- `internal/ui/tree.go`, `layout.go` — `MinWidth`, `KindGraph`
+- `internal/ui/tree.go`, `layout.go` — `MinWidthText`, `Absent`, `KindGraph`
 - `internal/render/paint.go` — paint `KindGraph`
 - `cmd/sysc-shell/main.go` — metrics pump goroutine
 - `go.mod`, `go.sum` — `sysc-metrics` at the tag `sysc-7` produces
@@ -318,8 +374,11 @@ Changed:
 | A partial failure isolates | One bad mount renders `"-"`; its neighbour still renders |
 | A meter on a rate source is rejected | Load fails naming `bar.items.<section>[N].display` |
 | A graph auto-scales to its window | Values normalise against the ring maximum |
-| Percentage width is stable | `MinWidth` holds the field across 9% to 100% |
-| No source change produces no redraw | Two identical snapshots mark nothing dirty on the second |
+| A graph plots its own subject | Two interfaces leased; each graph plots its own, not the aggregate |
+| An absent reading is not a zero | A failed meter is absent, not 0%; a failed graph plots nothing |
+| A re-acquired selector starts fresh | The ring is discarded with its last lease |
+| Percentage width is stable | A 9% and a 100% node lay out to one width on the resolved face |
+| No source change produces no redraw | Two identical snapshots mark nothing dirty on the second, in every display mode |
 | Cancellation stops every goroutine | `go test -race`, goroutine count before and after |
 
 At each integration checkpoint:

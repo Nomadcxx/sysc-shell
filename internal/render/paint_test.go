@@ -358,3 +358,111 @@ func TestPaintRejectsInvalidInput(t *testing.T) {
 		})
 	}
 }
+
+// A graph paints a column per sample, taller for larger values, and leaves the
+// unfilled part of the box alone.
+func TestGraphPaintsTallerColumnsForLargerValues(t *testing.T) {
+	t.Parallel()
+
+	const w, h = 40, 20
+	c := newTestCanvas(t, w, h)
+	style := testStyle
+	style.Body = ui.Rect{W: w, H: h}
+
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{{
+		Kind:   ui.KindGraph,
+		Width:  4,
+		Values: []float64{0, 1},
+		Bounds: ui.Rect{X: 0, Y: 0, W: 4, H: h},
+	}}}
+
+	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatalf("Paint: %v", err)
+	}
+
+	// The zero sample paints nothing; the full one fills its column's height.
+	if got := accentPixels(c, style.Accent, ui.Rect{X: 0, Y: 0, W: 2, H: h}); got != 0 {
+		t.Errorf("the zero-valued column painted %d pixels, want none", got)
+	}
+	if got := accentPixels(c, style.Accent, ui.Rect{X: 2, Y: 0, W: 2, H: h}); got != 2*h {
+		t.Errorf("the full-height column painted %d pixels, want %d", got, 2*h)
+	}
+}
+
+// accentPixels counts the pixels in the box painted with the accent colour.
+func accentPixels(c *Canvas, want Color, box ui.Rect) int {
+	count := 0
+	for y := box.Y; y < box.Y+box.H; y++ {
+		for x := box.X; x < box.X+box.W; x++ {
+			i := y*c.Stride + x*4
+			if (Color{B: c.Pix[i], G: c.Pix[i+1], R: c.Pix[i+2], A: c.Pix[i+3]}) == want {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+// A meter with no reading paints nothing at all. An empty track would be
+// pixel-identical to a genuine zero, so a failed collector would render as an
+// idle machine.
+func TestAnAbsentMeterPaintsNothing(t *testing.T) {
+	t.Parallel()
+
+	const w, h = 40, 20
+	c := newTestCanvas(t, w, h)
+	style := testStyle
+	style.Body = ui.Rect{W: w, H: h}
+
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{{
+		Kind:   ui.KindMeter,
+		Width:  w,
+		Value:  0,
+		Absent: true,
+		Bounds: ui.Rect{X: 0, Y: 0, W: w, H: h},
+	}}}
+	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatalf("Paint: %v", err)
+	}
+
+	box := ui.Rect{X: 0, Y: 0, W: w, H: h}
+	if got := accentPixels(c, style.Track, box); got != 0 {
+		t.Errorf("an absent meter painted %d track pixels, want none", got)
+	}
+	if got := accentPixels(c, style.Accent, box); got != 0 {
+		t.Errorf("an absent meter painted %d fill pixels, want none", got)
+	}
+	// A genuine zero still paints its track, which is what makes the two
+	// distinguishable.
+	root.Children[0].Absent = false
+	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatalf("Paint: %v", err)
+	}
+	if got := accentPixels(c, style.Track, box); got == 0 {
+		t.Error("a zero meter painted no track, so absent and zero look alike")
+	}
+}
+
+// An absent graph paints nothing even when values are still attached.
+func TestAnAbsentGraphPaintsNothing(t *testing.T) {
+	t.Parallel()
+
+	const w, h = 40, 20
+	c := newTestCanvas(t, w, h)
+	style := testStyle
+	style.Body = ui.Rect{W: w, H: h}
+
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{{
+		Kind:   ui.KindGraph,
+		Width:  4,
+		Values: []float64{1, 1},
+		Absent: true,
+		Bounds: ui.Rect{X: 0, Y: 0, W: 4, H: h},
+	}}}
+	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatalf("Paint: %v", err)
+	}
+	if got := accentPixels(c, style.Accent, ui.Rect{X: 0, Y: 0, W: 4, H: h}); got != 0 {
+		t.Fatalf("an absent graph painted %d pixels, want none", got)
+	}
+}

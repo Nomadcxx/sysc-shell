@@ -10,6 +10,7 @@ const (
 	KindText
 	KindMeter
 	KindButton
+	KindGraph
 )
 
 // Rect is a logical-pixel rectangle.
@@ -27,10 +28,28 @@ type Node struct {
 	Text  string
 	Value float64
 	Width int
+	// Values are the graph's samples, oldest first, each already normalised to
+	// zero through one by the widget. The node carries no scale of its own.
+	Values []float64
 	// MaxWidth caps a text node's measured width. Zero means unbounded. It
 	// exists because a focused-window title is unbounded user text: without a
 	// cap it would take a whole section's budget before anything truncated.
 	MaxWidth int
+	// MinWidthText floors a text node's width at the measured width of this
+	// sample string, shaped through the same path as the node's own text.
+	// Empty means natural width.
+	//
+	// It is a string rather than a pixel count because the floor is only
+	// correct if it is measured on the face actually in use: a percentage sets
+	// "100%" so its section does not reflow as the value crosses from one
+	// digit to three, and tabular figures align digits but cannot fix a
+	// changing digit count.
+	MinWidthText string
+	// Absent marks a node that has no reading to show. It still measures and
+	// reserves its space, so a bar does not reflow when a source drops, but it
+	// paints nothing: an empty meter track is indistinguishable from a genuine
+	// zero, and a failed collector must not render as an idle machine.
+	Absent bool
 	// Tabular requests tabular (fixed-advance) figures when shaping this node.
 	// A clock sets it: with proportional digits the rendered width changes as
 	// the time changes, which visibly shifts a centred clock every minute.

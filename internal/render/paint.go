@@ -78,12 +78,18 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 		return paintText(c, n.Text, style.Scale120.PhysicalRect(n.Bounds), text, style, size, n.Tabular)
 
 	case ui.KindMeter:
+		if n.Absent {
+			return nil
+		}
 		box := style.Scale120.PhysicalRect(n.Bounds)
 		fillRect(c, box, style.Track)
 		filled := box
 		filled.W = style.Scale120.Physical(n.Bounds.X+int(float64(n.Bounds.W)*n.Value+0.5)) - box.X
 		fillRect(c, filled, style.accent())
 		return nil
+
+	case ui.KindGraph:
+		return paintGraph(c, n, style.Scale120.PhysicalRect(n.Bounds), style)
 
 	case ui.KindButton:
 		fillRect(c, style.Scale120.PhysicalRect(n.Bounds), style.accent())
@@ -98,6 +104,49 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 	default:
 		return fmt.Errorf("unsupported kind %d", n.Kind)
 	}
+}
+
+// paintGraph fills one column per sample, newest at the right, using the same
+// rectangle fill the meter uses. There is no path rasteriser and no
+// anti-aliasing: a bar-height sparkline needs neither.
+//
+// Values are already normalised to zero through one by the widget, so this
+// applies no scale of its own.
+func paintGraph(c *Canvas, n *ui.Node, box ui.Rect, style ProofStyle) error {
+	if n.Absent || box.W <= 0 || box.H <= 0 || len(n.Values) == 0 {
+		return nil
+	}
+
+	// Columns are laid out newest-last. When there are more samples than
+	// pixels, the oldest are dropped rather than averaged: the recent shape is
+	// what a glanceable bar graph is for.
+	values := n.Values
+	if len(values) > box.W {
+		values = values[len(values)-box.W:]
+	}
+	width := box.W / len(values)
+	if width < 1 {
+		width = 1
+	}
+
+	for i, v := range values {
+		if v < 0 {
+			v = 0
+		}
+		if v > 1 {
+			v = 1
+		}
+		height := int(float64(box.H) * v)
+		if height <= 0 {
+			continue
+		}
+		x := box.X + box.W - (len(values)-i)*width
+		if x < box.X {
+			continue
+		}
+		fillRect(c, ui.Rect{X: x, Y: box.Y + box.H - height, W: width, H: height}, style.Accent)
+	}
+	return nil
 }
 
 // paintText shapes at the physical size and blends the mask at the box origin.

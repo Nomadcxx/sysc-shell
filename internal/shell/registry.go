@@ -28,7 +28,10 @@ type Registry struct {
 	leases  map[uint32][]*services.Lease
 	now     time.Time
 
-	clock *services.Clock
+	clock   *services.Clock
+	metrics *services.Metrics
+	// sample is the newest sampling pass, shared by every bar.
+	sample services.Snapshot
 
 	// invalidations carries one entry per bar whose rendered text changed.
 	// The Wayland owner receives from it; the registry owns it and never
@@ -46,6 +49,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		bars:          make(map[uint32]*Bar),
 		leases:        make(map[uint32][]*services.Lease),
 		clock:         services.NewClock(),
+		metrics:       services.NewMetrics(),
 		invalidations: make(chan wayland.Invalidation, 8),
 		closed:        make(chan struct{}),
 	}
@@ -54,6 +58,10 @@ func NewRegistry(cfg config.Config) *Registry {
 // Clock is the shared clock service. The process pumps its updates into
 // UpdateClock.
 func (r *Registry) Clock() *services.Clock { return r.clock }
+
+// Metrics is the shared sampling service. The process pumps its updates into
+// UpdateMetrics.
+func (r *Registry) Metrics() *services.Metrics { return r.metrics }
 
 // Invalidations is the channel the Wayland owner receives from. The registry
 // owns it and never closes it.
@@ -187,6 +195,7 @@ func (r *Registry) Close() {
 
 	releaseAll(leases)
 	r.clock.Close()
+	r.metrics.Close()
 }
 
 // UpdateClock applies a shared time snapshot to every bar and reports the
@@ -197,6 +206,23 @@ func (r *Registry) Close() {
 func (r *Registry) UpdateClock(now time.Time) []uint32 {
 	r.mu.Lock()
 	r.now = now
+	var changed []uint32
+	for global, bar := range r.bars {
+		if bar.apply(r.viewLocked(bar.connector())) {
+			changed = append(changed, global)
+		}
+	}
+	r.mu.Unlock()
+
+	r.publish(changed)
+	return changed
+}
+
+// UpdateMetrics applies a sampling pass to every bar and reports the globals
+// whose rendering actually changed.
+func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
+	r.mu.Lock()
+	r.sample = snap
 	var changed []uint32
 	for global, bar := range r.bars {
 		if bar.apply(r.viewLocked(bar.connector())) {
@@ -239,7 +265,20 @@ func (r *Registry) viewLocked(connector string) barView {
 	if !ok {
 		state = outputState{Workspace: noWorkspace}
 	}
-	return barView{Now: r.now, Workspace: state.Workspace, Title: state.Title}
+	return barView{
+		Now:       r.now,
+		Workspace: state.Workspace,
+		Title:     state.Title,
+		Metrics:   r.sample,
+		History:   r.historyLocked(),
+	}
+}
+
+// historyLocked collects the samples every leased selector holds. The service
+// keeps a ring only while something leases it, so an unused ring cannot be
+// copied here.
+func (r *Registry) historyLocked() map[services.Selector][]float64 {
+	return r.metrics.Histories()
 }
 
 // buildBar creates one bar and acquires the services its items need. A failure
@@ -262,12 +301,32 @@ func (r *Registry) buildBar(cfg config.Config, connector string) (
 		}
 		leases = append(leases, lease)
 	}
+	for _, item := range allItems(policy) {
+		sel, ok := metricSelector(item)
+		if !ok {
+			continue
+		}
+		lease, err := r.metrics.Acquire(sel, item.Interval)
+		if err != nil {
+			releaseAll(leases)
+			return nil, nil, wayland.HostCallbacks{}, err
+		}
+		leases = append(leases, lease)
+	}
 
 	return bar, leases, wayland.HostCallbacks{
 		Configure: bar.Configure,
 		Render:    bar.Render,
 		Handle:    bar.Handle,
 	}, nil
+}
+
+// allItems is every configured item across the three sections.
+func allItems(policy config.Bar) []config.Item {
+	out := make([]config.Item, 0, len(policy.Left)+len(policy.Center)+len(policy.Right))
+	out = append(out, policy.Left...)
+	out = append(out, policy.Center...)
+	return append(out, policy.Right...)
 }
 
 func releaseAll(leases []*services.Lease) {
