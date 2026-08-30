@@ -8,7 +8,6 @@ package services
 
 import (
 	"fmt"
-	"slices"
 	"sync"
 	"time"
 )
@@ -20,7 +19,7 @@ import (
 // rather than sampling independently, so two outputs cost one wake-up.
 type Clock struct {
 	mu     sync.Mutex
-	leases []*Lease
+	leases leaseSet
 	// stop is closed to end the running goroutine; nil means not running.
 	stop chan struct{}
 	// done is closed by the goroutine as it exits, so a stop can wait for it.
@@ -62,14 +61,13 @@ func (c *Clock) Acquire(boundary time.Duration) (*Lease, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	previous := c.finestLocked()
 	lease := &Lease{clock: c, boundary: boundary}
-	c.leases = append(c.leases, lease)
+	previous, current := c.leases.add(lease)
 
 	switch {
 	case c.stop == nil:
 		c.startLocked()
-	case boundary < previous:
+	case previous != 0 && current < previous:
 		// The goroutine is asleep on a longer deadline; wake it to re-arm.
 		select {
 		case c.rearm <- struct{}{}:
@@ -89,12 +87,10 @@ func (l *Lease) Release() {
 	l.clock = nil
 
 	c.mu.Lock()
-	i := slices.Index(c.leases, l)
-	if i < 0 {
+	if !c.leases.remove(l) {
 		c.mu.Unlock()
 		return
 	}
-	c.leases = slices.Delete(c.leases, i, i+1)
 	done := c.stopIfUnusedLocked()
 	c.mu.Unlock()
 
@@ -107,10 +103,9 @@ func (l *Lease) Release() {
 // Close releases every lease and stops the goroutine. It is safe to call twice.
 func (c *Clock) Close() {
 	c.mu.Lock()
-	for _, l := range c.leases {
+	for _, l := range c.leases.clear() {
 		l.clock = nil
 	}
-	c.leases = nil
 	done := c.stopIfUnusedLocked()
 	c.mu.Unlock()
 
@@ -133,18 +128,6 @@ func (c *Clock) Starts() int {
 	return c.starts
 }
 
-// finestLocked is the shortest boundary any live lease requires, or zero when
-// there are none.
-func (c *Clock) finestLocked() time.Duration {
-	finest := time.Duration(0)
-	for _, l := range c.leases {
-		if finest == 0 || l.boundary < finest {
-			finest = l.boundary
-		}
-	}
-	return finest
-}
-
 func (c *Clock) startLocked() {
 	c.stop, c.done = make(chan struct{}), make(chan struct{})
 	c.starts++
@@ -154,7 +137,7 @@ func (c *Clock) startLocked() {
 // stopIfUnusedLocked ends the goroutine when no lease remains, returning the
 // channel the caller should wait on after unlocking.
 func (c *Clock) stopIfUnusedLocked() chan struct{} {
-	if len(c.leases) > 0 || c.stop == nil {
+	if c.leases.len() > 0 || c.stop == nil {
 		return nil
 	}
 	close(c.stop)
@@ -168,7 +151,7 @@ func (c *Clock) run(stop, done chan struct{}) {
 
 	for {
 		c.mu.Lock()
-		boundary := c.finestLocked()
+		boundary := c.leases.finest()
 		c.mu.Unlock()
 		if boundary <= 0 {
 			return
