@@ -140,6 +140,7 @@ stays live for further work.
 | `2026-08-30-settings-osd-theme-catalog.md` | plan | Tranche 4B, 14 tasks with three mandatory review boundaries. |
 | `2026-08-30-milestone-4-review.md` | review | Closed. Both blockers fixed in `3fc026c`; findings tracked as `sysc-16`. |
 | `2026-08-31-milestone-4-post-m3-audit-report.md` | audit-report | Reconciles 4A/4B with landed M1-M3 APIs and corrects the executable plans. |
+| `2026-08-31-milestone-4-execution-handover.md` | execution-handover | Commissions corrected 4A and the three reviewed 4B slices in the existing M4 worktree. |
 
 ### Tranche state
 
