@@ -104,7 +104,8 @@ Split into four reviewed tranches by the charter. 3A and 3B are merged.
 | `2026-08-31-core-metrics-audit-report.md` | audit-report | `main` | Closed. Verdict: proceed with named corrections. Two majors (D6 grain, D7 meter/graph); all six applied. |
 | `2026-08-31-core-metrics-audit-corrections.md` | corrections | `main` | Closed. All six findings applied and evidenced. |
 | `2026-08-30-weather-and-visual-vocabulary-design.md` | design | `main` | Owner-approved, audited, amended. D1–D9; D4 is a recorded charter deviation (icons as a font). D3 amended and `Weather.Reconfigure` added 2026-08-31. |
-| `2026-08-30-weather-and-visual-vocabulary.md` | plan | `main` | 11 tasks; 9–11 (tooltip) cuttable. Audit amendments applied 2026-08-31. Ready to execute. |
+| `2026-08-30-weather-and-visual-vocabulary.md` | plan | `main` | 11 tasks; 9–11 (tooltip) were cuttable and were implemented. Audit amendments applied 2026-08-31. |
+| `2026-08-30-weather-and-visual-vocabulary-completion-handover.md` | completion-handover | `milestone/weather-vocabulary` | Implementation complete; live matrix owner-deferred. |
 | `2026-08-31-weather-and-visual-vocabulary-audit-report.md` | audit-report | `main` | Closed. Verdict: amend before executing; all six amendments applied. |
 | `2026-08-31-power-design.md` | design | `main` | Owner-approved, audited. D1–D6. Signatures provisional on `sysc-19`. Scope sentence aligned with D4 2026-08-31. |
 | `2026-08-31-power.md` | plan | `main` | 7 tasks. Task 0 is the library gate. Selector-API rebase applied 2026-08-31. **Do not execute** until `sysc-19` and 3D. |
@@ -116,8 +117,8 @@ Split into four reviewed tranches by the charter. 3A and 3B are merged.
 |---|---|---|
 | 3A | Clock, date, Niri workspace, focused-window title; service lifetime; per-output widget instances | Merged. |
 | 3B | CPU, memory, filesystem, block and network rates | Merged. Audited; all six findings applied. |
-| 3C | Battery and remaining time | **Blocked**: `sysc-19` and 3D. Plan rebased onto `Selector` / `SourceLeased`. |
-| 3D | Weather, icons, error tone, tooltip | Designed and planned. Audit amendments applied. Ready to execute. |
+| 3C | Battery and remaining time | **Blocked**: `sysc-19`. 3D implemented on `milestone/weather-vocabulary`. |
+| 3D | Weather, icons, error tone, tooltip | Implemented on `milestone/weather-vocabulary`. Live matrix owner-deferred. |
 
 ## Milestone 4 — panels and standard controls
 
