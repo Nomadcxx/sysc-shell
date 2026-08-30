@@ -86,7 +86,7 @@ that resolved defect.
 
 ## Milestone 3 — built-in widget foundation
 
-Split into four reviewed tranches by the charter. Only 3A is designed.
+Split into four reviewed tranches by the charter.
 
 | Document | Kind | Branch | State |
 |---|---|---|---|
@@ -104,7 +104,7 @@ Split into four reviewed tranches by the charter. Only 3A is designed.
 | 3A | Clock, date, Niri workspace, focused-window title; service lifetime; per-output widget instances | Designed, planned, audited, and ready to execute. |
 | 3B | CPU, memory, filesystem, block and network rates | **Blocked**: needs a reviewed, tagged `sysc-metrics` release. None exists. |
 | 3C | Battery and remaining time | **Blocked**: needs `sysc-metrics` M2 power and thermal gates. |
-| 3D | Weather, icons, meter/graph/tooltip nodes | Not started. Needs the icon-asset policy applied and an Open-Meteo decision. |
+| 3D | Weather, icons, error tone, shared tooltip and basic auxiliary surfaces | Designed and planned. Tooltip ownership amended by the M5 audit; 4A depends on Tasks 9–11. |
 
 ## Milestone 4 — panels and standard controls
 
@@ -115,7 +115,7 @@ stays live for further work.
 |---|---|---|
 | `2026-08-30-panels-and-controls-prior-art.md` | assessment | Noctalia v5 and DMS v1.5.3 inventories with file:line evidence. |
 | `2026-08-30-panels-and-controls-research.md` | research | Niri capability claims, source-verified against niri main. |
-| `2026-08-30-panel-foundation-design.md` | design | Tranche 4A. Owner-approved; amended for the review. D1–D13. |
+| `2026-08-30-panel-foundation-design.md` | design | Tranche 4A. Owner-approved; amended for M3 auxiliary ownership and one process-wide root chain. |
 | `2026-08-30-panel-foundation.md` | plan | Tranche 4A, **13 tasks**. Ready to execute once its prerequisites clear. |
 | `2026-08-30-panel-foundation-parallel-execution-handover.md` | execution-handover | Starts Tasks 1, 5 and 8 while Tranche 3A continues, then joins the remaining plan after M3 integration. |
 | `2026-08-30-settings-osd-theme-catalog-design.md` | design | Tranche 4B. Owner-approved; amended for the review. D1–D10. |
@@ -164,13 +164,15 @@ the M4 surface vocabulary and tagged service releases.
 | `2026-08-30-notifications-and-tray-prior-art.md` | assessment | Noctalia, DMS, `sysc-notify`, and `sysc-tray` inventory. |
 | `2026-08-30-notifications-and-tray-research.md` | research | Decisions D1–D14. |
 | `2026-08-30-notifications-foundation-design.md` | design | Tranche 5A notification presentation. |
-| `2026-08-30-notifications-foundation.md` | plan | Tranche 5A, 13 tasks. |
+| `2026-08-30-notifications-foundation.md` | plan | Tranche 5A, 10 tasks. |
 | `2026-08-30-sysc-notify-persistence-design.md` | service design | Persistence addendum owned by `sysc-notify`. |
 | `2026-08-30-tray-foundation-design.md` | design | Tranche 5B tray presentation. |
-| `2026-08-30-tray-foundation.md` | plan | Tranche 5B, 8 tasks. |
+| `2026-08-30-tray-foundation.md` | plan | Tranche 5B, 9 tasks. |
 | `2026-08-30-notifications-and-tray-audit-handover.md` | audit-handover | Commissions the cross-repository design and plan audit for Tranches 5A and 5B. |
 | `2026-08-30-notifications-and-tray-audit-report.md` | audit-report | Redesign required for both tranches; records service-contract, lifetime, release, persistence, and menu blockers. |
 | `2026-08-31-notifications-and-tray-integration-design.md` | design | Corrected cross-repository ownership, parity, shared M3/M4 primitives, limits, release order, and gates. |
+| `/home/nomadx/.config/superpowers/worktrees/sysc-notify/redesign/v0.1/docs/plans/2026-08-31-sysc-notify-v0.1.md` | service plan | Executable notify service and candidate/stable release gates. |
+| `/home/nomadx/.config/superpowers/worktrees/sysc-tray/redesign/v0.1/docs/plans/2026-08-31-sysc-tray-v0.1.md` | service plan | Executable tray service and candidate/stable release gates. |
 
 Original source worktree: `/home/nomadx/.config/superpowers/worktrees/sysc-shell/milestone/notifications-tray`.
 Redesign worktree: `/home/nomadx/.config/superpowers/worktrees/sysc-shell/redesign/milestone-5`.
@@ -189,8 +191,8 @@ Redesign worktree: `/home/nomadx/.config/superpowers/worktrees/sysc-shell/redesi
 |---|---|---|
 | `/home/nomadx/sysc-metrics` | `d821afe` | Clean, pushed. **No release tag.** Its own register is `docs/plans/`: an approved design, a core-counters plan, and execution, merge and completion handovers. Blocks Tranche 3B until a tag exists. |
 | `sysc-wayland` | `v0.1.1` | Pinned dependency. Qualified. |
-| `/home/nomadx/sysc-notify` | `32da2b5` | Design repository. No release tag; M5 needs the persistence and socket contracts implemented and tagged. |
-| `/home/nomadx/sysc-tray` | `04ca018` | Design repository. No release tag; M5 needs the socket, item snapshot, and menu contracts implemented and tagged. |
+| `/home/nomadx/sysc-notify` | plan branch `3e3e417` | v0.1 service plan and persistence addendum committed; no release tag. |
+| `/home/nomadx/sysc-tray` | plan branch `7e835d8` | v0.1 service plan committed; no release tag. |
 
 ## Execution order
 
@@ -203,9 +205,12 @@ graph in prose.
 3. **Milestone 2 hardware qualification** (`sysc-5`): remains open in parallel and needs a live session
    with two outputs. It blocks claims of full Milestone 2 hardware qualification, not development.
 4. **Tranche 4A parallel prework** (`sysc-18`): Tasks 1, 5 and 8 can run while Tranche 3A continues.
-5. **Tranche 4A integration** (`sysc-17`): remaining work joins after Tranche 3A; it does not need
-   Tranches 3B, 3C or 3D.
-6. **Tranche 4B**: 14 tasks, after 4A, subject to the scope question above.
+5. **Tranche 3D tooltip seam** (`sysc-10` Tasks 9–11): supplies basic auxiliary surfaces.
+6. **Tranche 4A integration** (`sysc-17`): joins after Tranche 3A and the 3D tooltip seam; it does not
+   need Tranches 3B or 3C.
+7. **Tranche 4B**: 14 tasks, after 4A, subject to the scope question above.
+8. **Service candidates**: execute the notify and tray v0.1 plans and tag both `v0.1.0-rc.1`.
+9. **Milestone 5**: execute 5A, then 5B, qualify both services, then tag stable.
 
 Off the critical path, and startable now: **`sysc-metrics` qualification** (`sysc-7`) — audit the
 public API, qualify it from a proposed consumer, tag and push. It unblocks Tranche 3B (`sysc-8`) and

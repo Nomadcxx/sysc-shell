@@ -1,92 +1,127 @@
-# Tray Foundation Design — Milestone 5, Tranche 5B
+# Tray Foundation Design: Milestone 5, Tranche 5B
 
-Date: 2026-08-30
-Status: Owner-locked (D5, D6 consume, D12, D14).
-Branch: `milestone/notifications-tray`
-Worktree: `/home/nomadx/.config/superpowers/worktrees/sysc-shell/milestone/notifications-tray`
+Date: 2026-08-31
 
-Second tranche of Milestone 5. Builds on [5A](2026-08-30-notifications-foundation-design.md) for the image/icon package. Research: [research](2026-08-30-notifications-and-tray-research.md), [prior art](2026-08-30-notifications-and-tray-prior-art.md).
+This document applies the approved
+[notifications and tray integration design](2026-08-31-notifications-and-tray-integration-design.md)
+to the shell tray tranche.
 
 ## Ordering constraints
 
-Same gate/merge rule as 5A. Consumes tagged `sysc-tray`. Consumes 5A `internal/icons`. Consumes M4 panel machinery (overflow drawer) and M2 bar host (xdg_popup child).
+5B starts after 5A supplies the tagged-protocol client pattern, `ui.KindImage`, raster cache, and
+process-wide image worker. It pins `sysc-tray v0.1.0-rc.1` without a local replacement. M3 supplies the
+shared tooltip; M4 supplies auxiliary updates, keyboard routing, menus, virtual lists, and root chains.
 
 ## Scope
 
-Tranche 5B ships:
+5B ships:
 
-- Outbound IPC client to sysc-tray: snapshot of items, ordered property changes, on-demand menu trees, reconnect.
-- Tray bar widget: normal / attention / overlay icons, tooltip text via existing tooltip host if M4 has one, else Name/Role only until tooltips exist.
-- Pointer: left = Activate, right = open DBusMenu (or SecondaryActivate if no menu), middle = SecondaryActivate, wheel = Scroll (roadmap requires it even though neither prior art forwards wheel).
-- DBusMenu as `xdg_popup` parented to the icon rect. Keyboard-accessible. Fallback: M4 panel + KindMenu if niri cannot parent a popup to a layer-shell bar.
-- Overflow drawer panel when icons do not fit the bar slot.
+- a generation-safe tray service client;
+- bar projections on every output;
+- normal, attention, overlay, theme SVG/raster, and pixmap rendering;
+- activate, secondary activate, and both scroll orientations;
+- keyboard and pointer DBusMenu traversal with an in-menu submenu stack;
+- overflow drawer with recoverable hidden items;
+- show/hide, pin/unpin, and order preferences;
+- shared tooltips, restart recovery, hotplug, and malformed-sibling isolation.
 
-No XEmbed, no watcher implementation in the shell, no icon-theme in the service (shell owns lookup).
+It does not implement watcher or item D-Bus, XEmbed, recursive popup surfaces, new tooltip surfaces, or a
+second image pipeline.
 
-## Decisions
+## Ownership decisions
 
-| # | Decision | Rejected alternative |
-|---|---|---|
-| D5 | Menu host = xdg_popup on the bar surface. Live-test niri parenting; fallback = M4 panel + KindMenu. | DMS dedicated overflow window for every menu. |
-| D6 | Consume 5A `internal/icons` for named icons; pixmaps come on the snapshot as ARGB32 already bounded by the service. | Re-implement lookup in the tray widget. |
-| D12 | Overflow drawer in 5B: leftover items in a panel. No hidden/pin lists. | Defer overflow; DMS hide-id chrome. |
-| 5B-1 | Track items by unique owner + object path from the snapshot. Icon pixmap preferred when present; else Lookup(name). Attention pixmap/name wins when `needsAttention`. Overlay composited on top. | DMS (ignore attention/overlay). |
-| 5B-2 | Scroll events forwarded to the service (`Scroll` dx/dy). Prior art does not; the roadmap and sysc-tray design do. | Match prior art and skip scroll. |
-| 5B-3 | One menu open process-wide. Opening another closes the first. | Stacked menus. |
-
-## IPC client
-
-`$XDG_RUNTIME_DIR/sysc-tray/ipc.v1.sock` until M0 pins the path. Handshake + snapshot of items. Deltas: `item-added`, `item-removed`, `item-updated`. Menu: shell sends `menu.open` `{owner,path}`; service replies with a revisioned tree; `menu.event` `{id,event}`; `menu.about-to-show`. Menu failure must not remove the icon (service rule; shell shows the icon without a menu).
-
-Shell intents: `activate`, `secondary-activate`, `scroll` `{delta,orientation}`, `menu.open`, `menu.select`.
-
-Reconnect: full item snapshot; bar rebuilds widgets by owner+path; no duplicate icons.
-
-## Bar widget
-
-M3 item id `tray`. Options none in v1. Renders a row of icon buttons (size = bar height − 2×padding). Each node: `Focusable`, `Name` = title or id, `Role` = button.
-
-Icon source, in order: attention pixmap if `needsAttention`, else icon pixmap, else `icons.Lookup(attentionName|iconName)`. Overlay pixmap or overlay name drawn in the corner. Attention accent = theme error color on the glyph if pixmaps are empty.
-
-Fit: measure icons left-to-right. Icons that do not fit are omitted from the bar and listed in the overflow drawer. A chevron button (Name "Tray overflow") opens panel id `tray-drawer`.
-
-## xdg_popup
-
-M2 `OutputHost` / bar surface gains an owner-goroutine popup command using the existing xdg-shell and
-layer-shell bindings. Create a new `wl_surface`, create its `xdg_surface`, call
-`xdg_surface.get_popup(parent=nil, positioner)`, then assign the bar layer surface as its parent with
-`zwlr_layer_surface_v1.get_popup(popup)` before the popup's initial commit. Never create an `xdg_surface`
-for the bar's role-bound `wl_surface`. Use the triggering pointer serial for `xdg_popup.grab`. Set the bar
-layer surface to OnDemand while the menu owns focus, then restore None on every dismissal, output removal,
-popup failure, and service loss. Roving focus inside the menu: arrows, Enter activate, Escape cancel.
-Every entry carries an accessible name and role.
-
-Live-test first (plan Task 1): assign a 1×1 popup to the bar layer surface on Niri through
-`zwlr_layer_surface_v1.get_popup`. If Niri rejects it, implement D5 fallback in the same task.
-
-Clamp: compositor constraint via positioner `set_constraint_adjustment` slide/flip. Additional shell clamp to output minus padding if the compositor returns an unconstrained size.
-
-## Overflow drawer
-
-Panel `tray-drawer`, Exclusive, floating off the tray widget (D5 bar-anchored placement). Content: the overflowed items as a wrap/grid of the same icon buttons, same activate/menu/scroll handlers. Closes on activate or Escape.
-
-## Gate (tray half)
-
-| Roadmap item | 5B evidence |
+| Topic | Owner and behavior |
 |---|---|
-| Registration | snapshot items appear in the bar |
-| Property updates | `item-updated` changes icon/attention without flicker-remove |
-| Activation | left-click → `activate` |
-| Scrolling | wheel → `scroll` |
-| Menus | xdg_popup (or fallback panel), keyboard traversal, `menu.select` |
-| Owner replacement | unique owner+path; stale menu dropped |
-| Restart | shell reconnect restores the set; no duplicate ids |
-| Malformed pixmap | that item omitted or placeholder; others stay |
-| Shell absence | cannot discard tray registration (service-side) |
+| Watcher, host, items, menus | `sysc-tray` |
+| Pixels and surfaces | Shell |
+| Tooltip surface | Reuse Tranche 3D |
+| Image paint/cache | Reuse 5A `KindImage` and worker |
+| Menu state | Service owns revision; shell owns visible back stack and deferred application |
+| Roots | Menu attaches to its bar/drawer root chain; unrelated roots replace the chain |
+| Preferences | Shell persists hidden, pinned, and order state |
+| Protocol | Import the tagged service package; do not copy structs |
 
-## Risks
+## Protocol client
 
-- niri xdg_popup-from-layer-shell is the load-bearing live test. Fallback is specified.
-- Tray M0 name variants / watcher policy not pinned. Client talks only to sysc-tray's socket; the shell never claims `StatusNotifierWatcher`.
-- Tooltip host may not exist (M3 skipped tooltips). Gate does not require tooltip surfaces; Name/Role on the icon is the accessibility floor.
-- Scroll on a bar icon may fight bar-level axis handlers. The tray widget consumes the wheel when the pointer is over an icon.
+The client follows 5A's secure framed transport, handshake, sequence baseline, immutable messages,
+64-command writer queue, connection generations, and resnapshot-on-gap rules.
+
+Commands include request ID, item generation, compositor-logical coordinates, and saved Wayland serial.
+Menu commands also include the expected revision. Replies must match request ID, generation, revision,
+output, and current root generation. Owner loss, a newer request, output loss, root replacement, or
+service loss cancels the pending result. Unknown outcomes are not retried.
+
+## Item projection and images
+
+The service identifies an item by unique bus owner, object path, and service generation. The shell
+projects the same immutable item independently on each output.
+
+Status controls visibility. Attention replaces the normal icon. Overlay composites last at half size.
+Named theme SVG or raster icons and bounded pixmaps use 5A's scale-aware cache and one worker queue.
+Cache keys include item generation, icon source, destination scale, theme generation, and overlay.
+Malformed candidates fall back from named icon to pixmap to placeholder without removing siblings.
+
+SNI title and description flatten to one bounded `ui.Node.Tooltip`. Dynamic property changes update the
+node; the shared M3 controller updates or closes its existing tooltip. 5B creates no tooltip host.
+
+Pointer input invokes activate, secondary activate, vertical scroll, or horizontal scroll with
+compositor-logical coordinates. The shell waits for service replies/deltas and reports typed errors
+without guessing success.
+
+## Menu surface and revision discipline
+
+A tray menu uses D5's xdg_popup path. The Wayland owner creates a popup `surfaceUnit`, assigns it to the
+triggering bar or drawer layer surface with `zwlr_layer_surface_v1.get_popup`, and grabs with the saved
+input serial. This reuses the shared surface/buffer lifecycle; 5B adds no second host. The first task
+live-tests Niri parenting. If Niri rejects the protocol-valid path, the named fallback is one M4 Overlay
+auxiliary menu surface with the same root and revision rules.
+
+Opening saves the serial, output, item generation, menu revision, and root generation. The popup uses
+OnDemand keyboard and a bounded input region. Close restores keyboard, drops the serial, and releases
+the service request.
+
+The shell validates menu trees iteratively at depth 8 and 512 nodes. Submenus replace the visible list
+and push the parent on a back stack; Escape or Back returns before closing the root.
+
+While pointer or keyboard interaction is active, structural revisions wait. Property-only changes apply
+when the focused entry still exists. On idle, the newest structural revision replaces the tree and
+restores focus by entry ID when possible. Selection against an old revision sends nothing, reports
+`stale_revision`, refreshes, and keeps the menu usable.
+
+Popup failure leaves icon activation, secondary activation, and scroll usable.
+
+## Overflow, hidden, pinned, and order
+
+Geometry determines how many items fit. Pinned visible items take bar slots first, then ordinary visible
+items in saved order. Remaining visible items appear in the drawer. Hidden items remain recoverable in a
+separate drawer section and never consume bar slots.
+
+The drawer reuses the same tray item nodes and one M4 root. Per-item controls show/hide, pin/unpin, and
+move earlier/later. Preferences persist atomically in shell configuration.
+
+A stable preference token prefers a non-generic SNI `Id`, then a non-generic title. The shell does not
+apply a preference when two live items resolve to the same token. It shows both with default ordering and
+marks the collision in diagnostics. Service generations do not enter the persisted token.
+
+## Root behavior
+
+A popup opened from a bar icon may be the root or an attached child of its drawer. Opening an unrelated
+panel, center, drawer, menu, or inline reply closes the old chain and releases keyboard, text-input,
+serials, and pending service requests. Tooltips close before any root opens. Ordinary tray icons remain
+noninteractive surfaces until pointer events invoke an action.
+
+## Failure behavior
+
+Service loss closes tooltip, menu, and drawer and removes projections. Item loss closes only roots owned
+by that item. Output loss closes roots on that output and retains service state for other projections.
+Reconnect replaces the whole generation from a snapshot. Stale menu or command replies have no effect.
+
+## Gate
+
+Automated proof covers framing, reconnect, item generations, icon fallback and overlay order, tooltip
+updates, scroll axes, root correlation, menu bounds, submenu back stack, deferred revisions, stale
+selection, preference collisions, ordering, hidden recovery, hotplug, and cleanup.
+
+The two-output Niri gate covers representative items, attention, overlays, theme SVG, pixmaps, tooltip,
+activate, secondary activate, scroll, full keyboard menu use, pointer revision changes, overflow drawer,
+show/hide, pin/order, every restart direction, malformed siblings, and 60 minutes idle.
