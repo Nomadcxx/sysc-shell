@@ -226,3 +226,32 @@ Matrix:
    on screen.
 10. Reload with a tooltip open: it closes and no surface leaks.
 11. Idle CPU and wakeups over 60 minutes against the Tranche 3B baseline.
+
+## Tranche 3C: power
+
+Run on a laptop; item 4 additionally needs a machine with no battery. Record
+machine values outside this repository.
+
+Build and start:
+
+    go build -o /tmp/sysc-shell-tranche3c ./cmd/sysc-shell
+    /tmp/sysc-shell-tranche3c
+
+Matrix:
+
+1. On battery: the level glyph tracks discharge and the label matches the
+   system reading.
+2. Plug in: the glyph switches to a charging one within one interval.
+3. Discharge across the threshold: the warning tone appears; plugging in
+   clears it without waiting for the charge to rise.
+4. A machine with no battery, same configuration file: the widget renders
+   nothing and reserves no space.
+5. Remove a battery at runtime if the hardware allows, or stop the source:
+   the widget hides with no reload, and returns when it comes back.
+6. Each label mode renders its own field, and "none" renders the glyph alone.
+7. Just after plugging in, the time mode renders no label rather than a
+   placeholder, and recovers once the estimate settles.
+8. Reload changing the label mode and the threshold without restarting the
+   sampling service.
+9. Idle wakeups over 60 minutes against the Tranche 3B baseline: a battery at
+   a steady charge must cost no frames.
