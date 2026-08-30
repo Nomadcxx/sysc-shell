@@ -3,6 +3,7 @@ package wayland
 import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	"github.com/Nomadcxx/sysc-wayland/client"
 )
 
 // inputRect is the area the bar accepts pointer input in: the whole surface.
@@ -28,7 +29,7 @@ func hostRegionGeometry(h *OutputHost, policy config.Bar) (surface, body ui.Rect
 
 func (o *owner) applyHostRegions(h *OutputHost, policy config.Bar, opaqueBackground bool) error {
 	surface, body := hostRegionGeometry(h, policy)
-	return o.applyRegions(h, surface, body, policy.Radius, opaqueBackground)
+	return o.applyRegions(h.bar.surface, surface, body, policy.Radius, opaqueBackground)
 }
 
 // opaqueRects decomposes the painted body into rectangles the bar fills with
@@ -60,16 +61,16 @@ func opaqueRects(body ui.Rect, radius int, opaqueBackground bool) []ui.Rect {
 
 // applyRegions sets the input and opaque regions for one bar. Regions are in
 // logical surface coordinates, which is the viewport destination space.
-func (o *owner) applyRegions(h *OutputHost, surface, body ui.Rect, radius int, opaqueBackground bool) error {
+func (o *owner) applyRegions(surface *client.Surface, surfaceRect, body ui.Rect, radius int, opaqueBackground bool) error {
 	input, err := o.compositor.CreateRegion()
 	if err != nil {
 		return err
 	}
-	r := inputRect(surface)
+	r := inputRect(surfaceRect)
 	if err := input.Add(int32(r.X), int32(r.Y), int32(r.W), int32(r.H)); err != nil {
 		return err
 	}
-	if err := h.bar.surface.SetInputRegion(input); err != nil {
+	if err := surface.SetInputRegion(input); err != nil {
 		return err
 	}
 	if err := input.Destroy(); err != nil {
@@ -80,7 +81,7 @@ func (o *owner) applyRegions(h *OutputHost, surface, body ui.Rect, radius int, o
 	if len(rects) == 0 {
 		// A nil region means "no opaque area", which is what a translucent bar
 		// needs; it is not the same as leaving the region unset.
-		return h.bar.surface.SetOpaqueRegion(nil)
+		return surface.SetOpaqueRegion(nil)
 	}
 	opaque, err := o.compositor.CreateRegion()
 	if err != nil {
@@ -91,7 +92,7 @@ func (o *owner) applyRegions(h *OutputHost, surface, body ui.Rect, radius int, o
 			return err
 		}
 	}
-	if err := h.bar.surface.SetOpaqueRegion(opaque); err != nil {
+	if err := surface.SetOpaqueRegion(opaque); err != nil {
 		return err
 	}
 	return opaque.Destroy()
