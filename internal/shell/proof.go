@@ -23,15 +23,6 @@ const BarHeight = 48
 // BarGap is the outer gap between the screen edge and the painted body.
 const BarGap = 4
 
-// toggleAction names the button's action.
-const toggleAction = "toggle-meter"
-
-// Meter values the button toggles between.
-const (
-	meterLow  = 0.25
-	meterHigh = 0.75
-)
-
 // Proof owns the model, the retained tree, the text renderer and style, and one
 // buffered invalidation channel.
 //
@@ -41,7 +32,6 @@ const (
 type Proof struct {
 	mu        sync.Mutex
 	workspace string
-	toggled   bool
 	pressed   string
 	hover     ui.Rect
 	hoverAt   struct{ x, y int }
@@ -51,10 +41,8 @@ type Proof struct {
 	// and hit testing walk them as one flat list.
 	left, center, right []*ui.Node
 
-	theme  Theme
-	label  *ui.Node
-	meter  *ui.Node
-	button *ui.Node
+	theme Theme
+	label *ui.Node
 
 	text  *render.TextRenderer
 	style render.ProofStyle
@@ -62,12 +50,7 @@ type Proof struct {
 	invalidations chan struct{}
 }
 
-// New builds a bar with the Milestone 2 fixture: a static name on the left, the
-// output's workspace in the centre, and a meter plus a toggle on the right.
-//
-// The fixture reuses the proof's node kinds and adds none. It exercises
-// alignment, truncation, hit testing and redraw across all three sections
-// without a widget framework.
+// New builds a bar from the default theme and the default item set.
 func New() (*Proof, error) {
 	return NewWithTheme(DefaultTheme(), config.Default().Bar)
 }
@@ -99,8 +82,6 @@ func NewWithTheme(theme Theme, policy config.Bar) (*Proof, error) {
 	}
 
 	p.label = &ui.Node{Kind: ui.KindText, Text: p.workspaceLabelLocked()}
-	p.meter = &ui.Node{Kind: ui.KindMeter, Width: 120, Value: meterLow}
-	p.button = &ui.Node{Kind: ui.KindButton, Text: "Toggle", Padding: 4, Action: toggleAction}
 
 	p.left = p.build(policy.Left)
 	p.center = p.build(policy.Center)
@@ -108,20 +89,18 @@ func NewWithTheme(theme Theme, policy config.Bar) (*Proof, error) {
 	return p, nil
 }
 
-// build turns configured item ids into nodes. Ids are validated at load, so an
+// build turns configured items into nodes. Ids are validated at load, so an
 // unknown id cannot reach here.
-func (p *Proof) build(ids []string) []*ui.Node {
-	out := make([]*ui.Node, 0, len(ids))
-	for _, id := range ids {
-		switch id {
-		case "shell-name":
-			out = append(out, &ui.Node{Kind: ui.KindText, Text: "sysc-shell"})
+func (p *Proof) build(items []config.Item) []*ui.Node {
+	out := make([]*ui.Node, 0, len(items))
+	for _, item := range items {
+		switch item.ID {
 		case "workspace":
 			out = append(out, p.label)
-		case "meter":
-			out = append(out, p.meter)
-		case "toggle":
-			out = append(out, p.button)
+		case "clock":
+			out = append(out, &ui.Node{Kind: ui.KindText})
+		case "window-title":
+			out = append(out, &ui.Node{Kind: ui.KindText, MaxWidth: item.MaxWidth})
 		}
 	}
 	return out
@@ -184,20 +163,6 @@ func (p *Proof) WorkspaceLabel() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.workspaceLabelLocked()
-}
-
-// MeterValue reports the current meter fill.
-func (p *Proof) MeterValue() float64 {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.meter.Value
-}
-
-// ButtonBounds reports the button's arranged logical bounds.
-func (p *Proof) ButtonBounds() ui.Rect {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.button.Bounds
 }
 
 // Layout arranges the three sections at the logical configure size.
@@ -358,17 +323,7 @@ func (p *Proof) Handle(event wayland.Event) bool {
 	return false
 }
 
-// activateLocked applies an action and reports whether state changed.
-func (p *Proof) activateLocked(action string) bool {
-	if action != toggleAction {
-		return false
-	}
-	p.toggled = !p.toggled
-	p.style.Toggled = p.toggled
-	if p.toggled {
-		p.meter.Value = meterHigh
-	} else {
-		p.meter.Value = meterLow
-	}
-	return true
-}
+// activateLocked applies an action and reports whether state changed. No
+// Tranche 3A node carries an action, so this is inert at runtime; the pointer
+// path stays covered by tests and ready for Milestone 4 controls.
+func (p *Proof) activateLocked(action string) bool { return false }

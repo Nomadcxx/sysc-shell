@@ -203,7 +203,7 @@ func TestPrepareConfigReplacesAllBarsOnCommit(t *testing.T) {
 
 	candidate := config.Default()
 	candidate.Theme.Accent = "#ff8800"
-	candidate.Bar.Left = []string{"workspace"}
+	candidate.Bar.Left = []config.Item{{ID: "workspace"}}
 	candidate.Bar.Center = nil
 	prepared, err := reg.PrepareConfig(candidate, identities)
 	if err != nil {

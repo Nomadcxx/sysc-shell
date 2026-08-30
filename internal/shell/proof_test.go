@@ -6,6 +6,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 func TestProofConcurrentUpdateAndRender(t *testing.T) {
@@ -162,89 +163,83 @@ func layoutForTest(t *testing.T, p *Proof, width int) {
 	}
 }
 
-func TestProofClickTogglesMeter(t *testing.T) {
+// withSyntheticAction appends a node carrying an action to the right section.
+// No Tranche 3A widget carries one, so the press/release rule and hit testing
+// are exercised through this node rather than through a shipped widget.
+func withSyntheticAction(t *testing.T, p *Proof, width int) ui.Rect {
+	t.Helper()
+	p.right = append(p.right, &ui.Node{
+		Kind: ui.KindButton, Text: "Synthetic", Padding: 4, Action: "synthetic-action",
+	})
+	layoutForTest(t, p, width)
+	bounds := p.right[len(p.right)-1].Bounds
+	if bounds.W <= 0 || bounds.H <= 0 {
+		t.Fatalf("synthetic node was not arranged: %+v", bounds)
+	}
+	return bounds
+}
+
+// pressedAction reports the action recorded by the last press.
+func pressedAction(p *Proof) string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.pressed
+}
+
+func TestProofPressRecordsTheHitAction(t *testing.T) {
 	t.Parallel()
 
 	p := newTestProof(t)
-	layoutForTest(t, p, 600)
-	drain(p)
+	bounds := withSyntheticAction(t, p, 600)
 
-	if got := p.MeterValue(); got != 0.25 {
-		t.Fatalf("initial meter = %v, want 0.25", got)
-	}
-
-	button := p.ButtonBounds()
-	if !click(p, button.X+button.W/2, button.Y+button.H/2) {
-		t.Fatal("a click on the button reported no change")
-	}
-	if got := p.MeterValue(); got != 0.75 {
-		t.Fatalf("meter after one click = %v, want 0.75", got)
-	}
-	if got := drain(p); got != 0 {
-		t.Fatalf("the synchronous click queued %d duplicate invalidations", got)
-	}
-
-	if !click(p, button.X+button.W/2, button.Y+button.H/2) {
-		t.Fatal("a second click reported no change")
-	}
-	if got := p.MeterValue(); got != 0.25 {
-		t.Fatalf("meter after two clicks = %v, want 0.25", got)
-	}
-}
-
-func TestProofClickImmediatelyAfterPointerEnter(t *testing.T) {
-	p := newTestProof(t)
-	layoutForTest(t, p, 600)
-	button := p.ButtonBounds()
-	x, y := button.X+button.W/2, button.Y+button.H/2
-
-	p.Handle(wayland.Event{Kind: wayland.EventPointerEnter, X: float64(x), Y: float64(y)})
+	p.Handle(wayland.Event{
+		Kind: wayland.EventPointerMotion,
+		X:    float64(bounds.X + bounds.W/2), Y: float64(bounds.Y + bounds.H/2),
+	})
 	p.Handle(wayland.Event{Kind: wayland.EventPointerPress})
-	if !p.Handle(wayland.Event{Kind: wayland.EventPointerRelease}) {
-		t.Fatal("a click immediately after enter reported no change")
-	}
-	if got := p.MeterValue(); got != meterHigh {
-		t.Fatalf("meter after click = %v, want %v", got, meterHigh)
+
+	if got := pressedAction(p); got != "synthetic-action" {
+		t.Fatalf("pressed action = %q, want synthetic-action", got)
 	}
 }
 
-func TestProofClickOutsideAnActionChangesNothing(t *testing.T) {
+func TestProofPressOutsideEveryActionRecordsNothing(t *testing.T) {
 	t.Parallel()
 
 	p := newTestProof(t)
-	layoutForTest(t, p, 600)
+	withSyntheticAction(t, p, 600)
 	drain(p)
 
 	if click(p, 1, 1) {
 		t.Fatal("a click outside every action reported a change")
 	}
-	if got := p.MeterValue(); got != 0.25 {
-		t.Fatalf("meter = %v, want it unchanged at 0.25", got)
+	if got := pressedAction(p); got != "" {
+		t.Fatalf("pressed action = %q, want none", got)
 	}
 	if drain(p) != 0 {
 		t.Fatal("a click outside every action requested a redraw")
 	}
 }
 
-// TestProofReleaseOutsideThePressedNodeIsNotAClick covers the press/release
-// rule: a click counts only when both land on the same node.
+// A click counts only when the press and the release land on the same node.
 func TestProofReleaseOutsideThePressedNodeIsNotAClick(t *testing.T) {
 	t.Parallel()
 
 	p := newTestProof(t)
-	layoutForTest(t, p, 600)
-	drain(p)
+	bounds := withSyntheticAction(t, p, 600)
 
-	button := p.ButtonBounds()
-	p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: float64(button.X + button.W/2), Y: float64(button.Y + button.H/2)})
+	p.Handle(wayland.Event{
+		Kind: wayland.EventPointerMotion,
+		X:    float64(bounds.X + bounds.W/2), Y: float64(bounds.Y + bounds.H/2),
+	})
 	p.Handle(wayland.Event{Kind: wayland.EventPointerPress})
-	// Slide off the button before releasing.
+	// Slide off the node before releasing.
 	p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: 1, Y: 1})
 	if p.Handle(wayland.Event{Kind: wayland.EventPointerRelease}) {
 		t.Fatal("a release outside the pressed node counted as a click")
 	}
-	if got := p.MeterValue(); got != 0.25 {
-		t.Fatalf("meter = %v, want it unchanged", got)
+	if got := pressedAction(p); got != "" {
+		t.Fatalf("the release left %q pressed", got)
 	}
 }
 
@@ -252,13 +247,16 @@ func TestProofPointerLeaveCancelsThePress(t *testing.T) {
 	t.Parallel()
 
 	p := newTestProof(t)
-	layoutForTest(t, p, 600)
+	bounds := withSyntheticAction(t, p, 600)
+	x, y := float64(bounds.X+bounds.W/2), float64(bounds.Y+bounds.H/2)
 
-	button := p.ButtonBounds()
-	p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: float64(button.X + button.W/2), Y: float64(button.Y + button.H/2)})
+	p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: x, Y: y})
 	p.Handle(wayland.Event{Kind: wayland.EventPointerPress})
 	p.Handle(wayland.Event{Kind: wayland.EventPointerLeave})
-	p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: float64(button.X + button.W/2), Y: float64(button.Y + button.H/2)})
+	if got := pressedAction(p); got != "" {
+		t.Fatalf("a pointer leave left %q pressed", got)
+	}
+	p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: x, Y: y})
 	if p.Handle(wayland.Event{Kind: wayland.EventPointerRelease}) {
 		t.Fatal("a release after the pointer left counted as a click")
 	}
@@ -293,17 +291,6 @@ func TestProofArrangesSectionsInsideTheContentBand(t *testing.T) {
 		}
 	}
 	if arranged != 4 {
-		t.Fatalf("arranged %d items, want the fixture's four", arranged)
-	}
-	if p.ButtonBounds().W <= 0 {
-		t.Fatal("the button was not arranged")
-	}
-}
-
-func TestProofUsesDMSButtonPadding(t *testing.T) {
-	t.Parallel()
-	p := newTestProof(t)
-	if p.button.Padding != 4 {
-		t.Fatalf("button padding = %d, want the DMS reference value 4", p.button.Padding)
+		t.Fatalf("arranged %d items, want workspace, window-title and two clocks", arranged)
 	}
 }
