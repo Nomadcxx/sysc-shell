@@ -39,7 +39,7 @@ type Clock struct {
 type Lease struct {
 	clock    *Clock
 	metrics  *Metrics
-	source   Source
+	selector Selector
 	boundary time.Duration
 }
 

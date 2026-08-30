@@ -55,43 +55,161 @@ type Snapshot struct {
 	Network     *metrics.NetworkSnapshot
 }
 
+// Selector names one metric subject. CPU and memory have exactly one subject
+// each; a filesystem, block device or interface has many, and a rate has a
+// direction as well.
+//
+// It is the history ring's key as well as the lease's, so two bars graphing
+// the same interface share one ring while a graph of the opposite direction
+// keeps its own.
+type Selector struct {
+	Source Source
+	// Subject is the mount point, block device or interface name. Empty on
+	// cpu and memory.
+	Subject string
+	// Direction is "write" or "tx" to select the outbound counter. Empty, or
+	// any other value, selects the inbound one; the loader has already
+	// restricted it to that source's vocabulary.
+	Direction string
+}
+
+// String names a selector for error messages and tests.
+func (s Selector) String() string {
+	switch {
+	case s.Subject == "":
+		return s.Source.String()
+	case s.Direction == "":
+		return s.Source.String() + ":" + s.Subject
+	}
+	return s.Source.String() + ":" + s.Subject + ":" + s.Direction
+}
+
+// Fraction reports a value between zero and one for the sources that have a
+// full scale. A rate source reports absent: bytes per second has no full
+// scale, which is why the loader rejects a meter on one.
+func (s Snapshot) Fraction(sel Selector) (float64, bool) {
+	switch sel.Source {
+	case SourceCPU:
+		if s.CPU == nil || !s.CPU.Usage.Valid {
+			return 0, false
+		}
+		return s.CPU.Usage.Fraction, true
+	case SourceMemory:
+		if s.Memory == nil {
+			return 0, false
+		}
+		return capacityFraction(s.Memory.Memory)
+	case SourceFilesystem:
+		if s.Filesystem == nil {
+			return 0, false
+		}
+		for _, fs := range s.Filesystem.Filesystems {
+			if fs.MountPoint == sel.Subject {
+				return capacityFraction(fs.Capacity)
+			}
+		}
+	}
+	return 0, false
+}
+
+// Rate reports bytes per second for the rate sources, for the one subject and
+// direction the selector names.
+func (s Snapshot) Rate(sel Selector) (float64, bool) {
+	switch sel.Source {
+	case SourceBlock:
+		if s.Block == nil {
+			return 0, false
+		}
+		for _, d := range s.Block.Devices {
+			if d.Name != sel.Subject {
+				continue
+			}
+			if !d.Rates.Valid {
+				return 0, false
+			}
+			if sel.Direction == "write" {
+				return d.Rates.WriteBytesPerSecond, true
+			}
+			return d.Rates.ReadBytesPerSecond, true
+		}
+	case SourceNetwork:
+		if s.Network == nil {
+			return 0, false
+		}
+		for _, i := range s.Network.Interfaces {
+			if i.Name != sel.Subject {
+				continue
+			}
+			if !i.Rates.Valid {
+				return 0, false
+			}
+			if sel.Direction == "tx" {
+				return i.Rates.TransmitBytesPerSecond, true
+			}
+			return i.Rates.ReceiveBytesPerSecond, true
+		}
+	}
+	return 0, false
+}
+
+// Value is the number one selector describes, whichever kind its source
+// yields. Absent means the source is unleased, failed this pass, or does not
+// carry the subject the selector names.
+func (s Snapshot) Value(sel Selector) (float64, bool) {
+	if v, ok := s.Fraction(sel); ok {
+		return v, true
+	}
+	return s.Rate(sel)
+}
+
+// capacityFraction is used over total. A zero total means the capacity was not
+// read, which is absent rather than zero per cent.
+func capacityFraction(c metrics.Capacity) (float64, bool) {
+	if c.TotalBytes == 0 {
+		return 0, false
+	}
+	return float64(c.UsedBytes) / float64(c.TotalBytes), true
+}
+
 // Metrics samples the leased telemetry sources on one goroutine.
 //
 // That goroutine solely owns the three stateful samplers. The library
 // documents them as owned by one sequential caller: each retains previous
 // counters, so a concurrent Sample would corrupt the rate derivation.
 type Metrics struct {
-	mu     sync.Mutex
-	leases [sourceCount]leaseSet
-	stop   chan struct{}
-	done   chan struct{}
-	starts int
+	mu sync.Mutex
+	// leases and history are keyed by selector rather than by source, so a
+	// graph of one interface plots that interface. Both entries appear on the
+	// first lease of a selector and are deleted with its last, which is what
+	// stops a re-acquired widget from plotting samples from hours ago as
+	// though they were contiguous.
+	leases  map[Selector]*leaseSet
+	history map[Selector]*ring
+	stop    chan struct{}
+	done    chan struct{}
+	starts  int
 
 	rearm   chan struct{}
 	updates chan Snapshot
-
-	history [sourceCount]*ring
 }
 
 func NewMetrics() *Metrics {
-	m := &Metrics{
+	return &Metrics{
+		leases:  make(map[Selector]*leaseSet),
+		history: make(map[Selector]*ring),
 		rearm:   make(chan struct{}, 1),
 		updates: make(chan Snapshot, 1),
 	}
-	for i := range m.history {
-		m.history[i] = newRing(historySize)
-	}
-	return m
 }
 
 // Updates carries the newest snapshot. The channel is created once and never
 // closed, so it survives stop and start cycles.
 func (m *Metrics) Updates() <-chan Snapshot { return m.updates }
 
-// Acquire registers a consumer of one source at the interval it needs.
-func (m *Metrics) Acquire(src Source, interval time.Duration) (*Lease, error) {
-	if src >= sourceCount {
-		return nil, fmt.Errorf("services: unknown metrics source %d", uint8(src))
+// Acquire registers a consumer of one selector at the interval it needs.
+func (m *Metrics) Acquire(sel Selector, interval time.Duration) (*Lease, error) {
+	if sel.Source >= sourceCount {
+		return nil, fmt.Errorf("services: unknown metrics source %d", uint8(sel.Source))
 	}
 	if interval <= 0 {
 		return nil, fmt.Errorf("services: metrics interval %v is not positive", interval)
@@ -101,8 +219,12 @@ func (m *Metrics) Acquire(src Source, interval time.Duration) (*Lease, error) {
 	defer m.mu.Unlock()
 
 	before := m.finestLocked()
-	lease := &Lease{metrics: m, source: src, boundary: interval}
-	m.leases[src].add(lease)
+	lease := &Lease{metrics: m, selector: sel, boundary: interval}
+	if m.leases[sel] == nil {
+		m.leases[sel] = &leaseSet{}
+		m.history[sel] = newRing(historySize)
+	}
+	m.leases[sel].add(lease)
 	after := m.finestLocked()
 
 	switch {
@@ -117,23 +239,40 @@ func (m *Metrics) Acquire(src Source, interval time.Duration) (*Lease, error) {
 	return lease, nil
 }
 
-// Leased reports whether any consumer needs this source.
-func (m *Metrics) Leased(src Source) bool {
-	if src >= sourceCount {
-		return false
-	}
+// Leased reports whether any consumer needs this exact selector.
+func (m *Metrics) Leased(sel Selector) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.leases[src].len() > 0
+	return m.leases[sel].len() > 0
+}
+
+// SourceLeased reports whether any consumer needs this source, whatever its
+// subject. The sampling loop asks this: one collector serves every subject it
+// reports, so a second interface costs no second read.
+func (m *Metrics) SourceLeased(src Source) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.sourceLeasedLocked(src)
+}
+
+func (m *Metrics) sourceLeasedLocked(src Source) bool {
+	for sel, set := range m.leases {
+		if sel.Source == src && set.len() > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // Close releases every lease and stops the goroutine. It is safe to call twice.
 func (m *Metrics) Close() {
 	m.mu.Lock()
-	for i := range m.leases {
-		for _, l := range m.leases[i].clear() {
+	for sel, set := range m.leases {
+		for _, l := range set.clear() {
 			l.metrics = nil
 		}
+		delete(m.leases, sel)
+		delete(m.history, sel)
 	}
 	done := m.stopIfUnusedLocked()
 	m.mu.Unlock()
@@ -162,8 +301,8 @@ func (m *Metrics) Starts() int {
 // source, or zero when there are none.
 func (m *Metrics) finestLocked() time.Duration {
 	out := time.Duration(0)
-	for i := range m.leases {
-		if f := m.leases[i].finest(); f != 0 && (out == 0 || f < out) {
+	for _, set := range m.leases {
+		if f := set.finest(); f != 0 && (out == 0 || f < out) {
 			out = f
 		}
 	}
@@ -177,8 +316,8 @@ func (m *Metrics) startLocked() {
 }
 
 func (m *Metrics) stopIfUnusedLocked() chan struct{} {
-	for i := range m.leases {
-		if m.leases[i].len() > 0 {
+	for _, set := range m.leases {
+		if set.len() > 0 {
 			return nil
 		}
 	}
@@ -194,9 +333,17 @@ func (m *Metrics) stopIfUnusedLocked() chan struct{} {
 // releaseMetric drops one lease, stopping the goroutine when it was the last.
 func (m *Metrics) releaseMetric(l *Lease) {
 	m.mu.Lock()
-	if !m.leases[l.source].remove(l) {
+	set := m.leases[l.selector]
+	if set == nil || !set.remove(l) {
 		m.mu.Unlock()
 		return
+	}
+	// The ring goes with the last lease. Keeping it would let a widget removed
+	// at midday and restored in the evening plot the two windows as one
+	// continuous line across a gap of hours.
+	if set.len() == 0 {
+		delete(m.leases, l.selector)
+		delete(m.history, l.selector)
 	}
 	done := m.stopIfUnusedLocked()
 	m.mu.Unlock()
@@ -258,7 +405,7 @@ func (m *Metrics) run(stop, done chan struct{}) {
 func (m *Metrics) collect(s *samplers, failing *[sourceCount]bool) Snapshot {
 	snap := Snapshot{CollectedAt: time.Now()}
 
-	if m.Leased(SourceCPU) {
+	if m.SourceLeased(SourceCPU) {
 		if v, err := s.cpu.Sample(); err != nil {
 			noteFailure(failing, SourceCPU, err)
 		} else {
@@ -266,7 +413,7 @@ func (m *Metrics) collect(s *samplers, failing *[sourceCount]bool) Snapshot {
 			snap.CPU = &v
 		}
 	}
-	if m.Leased(SourceMemory) {
+	if m.SourceLeased(SourceMemory) {
 		if v, err := metrics.ReadMemory(); err != nil {
 			noteFailure(failing, SourceMemory, err)
 		} else {
@@ -274,7 +421,7 @@ func (m *Metrics) collect(s *samplers, failing *[sourceCount]bool) Snapshot {
 			snap.Memory = &v
 		}
 	}
-	if m.Leased(SourceFilesystem) {
+	if m.SourceLeased(SourceFilesystem) {
 		if v, err := metrics.ReadFilesystems(); err != nil {
 			noteFailure(failing, SourceFilesystem, err)
 		} else {
@@ -282,7 +429,7 @@ func (m *Metrics) collect(s *samplers, failing *[sourceCount]bool) Snapshot {
 			snap.Filesystem = &v
 		}
 	}
-	if m.Leased(SourceBlock) {
+	if m.SourceLeased(SourceBlock) {
 		if v, err := s.block.Sample(); err != nil {
 			noteFailure(failing, SourceBlock, err)
 		} else {
@@ -290,7 +437,7 @@ func (m *Metrics) collect(s *samplers, failing *[sourceCount]bool) Snapshot {
 			snap.Block = &v
 		}
 	}
-	if m.Leased(SourceNetwork) {
+	if m.SourceLeased(SourceNetwork) {
 		if v, err := s.network.Sample(); err != nil {
 			noteFailure(failing, SourceNetwork, err)
 		} else {
@@ -368,58 +515,44 @@ func (r *ring) values() []float64 {
 	return append(out, r.values0[:r.next]...)
 }
 
-// History returns one source's samples, oldest first. An unleased or
-// never-sampled source returns an empty slice, which a graph renders as an
-// empty plot rather than an error.
-func (m *Metrics) History(src Source) []float64 {
-	if src >= sourceCount {
-		return nil
-	}
+// History returns one selector's samples, oldest first. An unleased or
+// never-sampled selector returns nothing, which a graph renders as an empty
+// plot rather than an error.
+func (m *Metrics) History(sel Selector) []float64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.history[src].values()
+	if r := m.history[sel]; r != nil {
+		return r.values()
+	}
+	return nil
 }
 
-// record appends each present source's headline fraction. A rate source has no
-// natural full scale, so it records the raw rate and the graph normalises
-// against its own window maximum.
+// Histories returns every leased selector's samples. The registry assembles
+// one of these per update rather than asking selector by selector.
+func (m *Metrics) Histories() map[Selector][]float64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[Selector][]float64, len(m.history))
+	for sel, r := range m.history {
+		out[sel] = r.values()
+	}
+	return out
+}
+
+// record appends one sample per leased selector, so a graph plots the subject
+// its widget names rather than an aggregate of every subject the source
+// reports.
+//
+// A selector with no reading this pass is skipped rather than pushed as zero:
+// a failed collector is not a measurement of zero, and inventing one would
+// draw a trough that never happened.
 func (m *Metrics) record(snap Snapshot) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if snap.CPU != nil && snap.CPU.Usage.Valid {
-		m.history[SourceCPU].push(snap.CPU.Usage.Fraction)
-	}
-	if snap.Memory != nil {
-		m.history[SourceMemory].push(usedFraction(snap.Memory.Memory))
-	}
-	if snap.Filesystem != nil && len(snap.Filesystem.Filesystems) > 0 {
-		m.history[SourceFilesystem].push(usedFraction(snap.Filesystem.Filesystems[0].Capacity))
-	}
-	if snap.Block != nil {
-		var total float64
-		for _, d := range snap.Block.Devices {
-			if d.Rates.Valid {
-				total += d.Rates.ReadBytesPerSecond + d.Rates.WriteBytesPerSecond
-			}
+	for sel, r := range m.history {
+		if v, ok := snap.Value(sel); ok {
+			r.push(v)
 		}
-		m.history[SourceBlock].push(total)
 	}
-	if snap.Network != nil {
-		var total float64
-		for _, i := range snap.Network.Interfaces {
-			if i.Rates.Valid {
-				total += i.Rates.ReceiveBytesPerSecond + i.Rates.TransmitBytesPerSecond
-			}
-		}
-		m.history[SourceNetwork].push(total)
-	}
-}
-
-// usedFraction is used over total, or zero when the total is unknown.
-func usedFraction(c metrics.Capacity) float64 {
-	if c.TotalBytes == 0 {
-		return 0
-	}
-	return float64(c.UsedBytes) / float64(c.TotalBytes)
 }

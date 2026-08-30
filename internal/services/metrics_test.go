@@ -3,6 +3,8 @@ package services
 import (
 	"testing"
 	"time"
+
+	metrics "github.com/Nomadcxx/sysc-metrics"
 )
 
 func TestTheFirstMetricLeaseStartsAndTheLastStops(t *testing.T) {
@@ -14,7 +16,7 @@ func TestTheFirstMetricLeaseStartsAndTheLastStops(t *testing.T) {
 		t.Fatal("a service with no lease is running")
 	}
 
-	cpu, err := m.Acquire(SourceCPU, 2*time.Second)
+	cpu, err := m.Acquire(Selector{Source: SourceCPU}, 2*time.Second)
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
@@ -22,7 +24,7 @@ func TestTheFirstMetricLeaseStartsAndTheLastStops(t *testing.T) {
 		t.Fatal("the first lease did not start the service")
 	}
 
-	memory, err := m.Acquire(SourceMemory, 2*time.Second)
+	memory, err := m.Acquire(Selector{Source: SourceMemory}, 2*time.Second)
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
@@ -47,17 +49,17 @@ func TestOnlyLeasedSourcesAreReported(t *testing.T) {
 	m := NewMetrics()
 	t.Cleanup(m.Close)
 
-	lease, err := m.Acquire(SourceCPU, time.Second)
+	lease, err := m.Acquire(Selector{Source: SourceCPU}, time.Second)
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
 	defer lease.Release()
 
-	if !m.Leased(SourceCPU) {
+	if !m.SourceLeased(SourceCPU) {
 		t.Fatal("the leased source reports unleased")
 	}
 	for _, src := range []Source{SourceMemory, SourceFilesystem, SourceBlock, SourceNetwork} {
-		if m.Leased(src) {
+		if m.SourceLeased(src) {
 			t.Fatalf("source %v reports leased with no consumer", src)
 		}
 	}
@@ -70,11 +72,11 @@ func TestAcquireBeforeReleaseDoesNotRestartTheMetricsService(t *testing.T) {
 	m := NewMetrics()
 	t.Cleanup(m.Close)
 
-	outgoing, err := m.Acquire(SourceCPU, 2*time.Second)
+	outgoing, err := m.Acquire(Selector{Source: SourceCPU}, 2*time.Second)
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
-	incoming, err := m.Acquire(SourceCPU, time.Second)
+	incoming, err := m.Acquire(Selector{Source: SourceCPU}, time.Second)
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
@@ -94,7 +96,7 @@ func TestANonPositiveMetricIntervalIsRejected(t *testing.T) {
 	m := NewMetrics()
 	t.Cleanup(m.Close)
 
-	if _, err := m.Acquire(SourceCPU, 0); err == nil {
+	if _, err := m.Acquire(Selector{Source: SourceCPU}, 0); err == nil {
 		t.Fatal("a zero interval was accepted")
 	}
 	if m.Running() {
@@ -107,7 +109,7 @@ func TestAnUnknownSourceIsRejected(t *testing.T) {
 	m := NewMetrics()
 	t.Cleanup(m.Close)
 
-	if _, err := m.Acquire(Source(99), time.Second); err == nil {
+	if _, err := m.Acquire(Selector{Source: Source(99)}, time.Second); err == nil {
 		t.Fatal("an unknown source was accepted")
 	}
 }
@@ -115,7 +117,7 @@ func TestAnUnknownSourceIsRejected(t *testing.T) {
 func TestClosingTheMetricsServiceStopsTheGoroutine(t *testing.T) {
 	t.Parallel()
 	m := NewMetrics()
-	if _, err := m.Acquire(SourceCPU, time.Second); err != nil {
+	if _, err := m.Acquire(Selector{Source: SourceCPU}, time.Second); err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
 	m.Close()
@@ -134,7 +136,7 @@ func TestOnlyLeasedSourcesArePopulated(t *testing.T) {
 	m := NewMetrics()
 	t.Cleanup(m.Close)
 
-	lease, err := m.Acquire(SourceMemory, 50*time.Millisecond)
+	lease, err := m.Acquire(Selector{Source: SourceMemory}, 50*time.Millisecond)
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
@@ -228,7 +230,180 @@ func TestHistoryRecordsOnlyLeasedSources(t *testing.T) {
 	t.Cleanup(m.Close)
 
 	m.record(Snapshot{CollectedAt: time.Now()})
-	if got := m.History(SourceCPU); len(got) != 0 {
+	if got := m.History(Selector{Source: SourceCPU}); len(got) != 0 {
 		t.Fatalf("an empty snapshot recorded %v", got)
+	}
+}
+
+// Two widgets watching different subjects of one source must keep separate
+// histories, or a graph of one interface plots the whole machine.
+func TestEachSubjectKeepsItsOwnHistory(t *testing.T) {
+	t.Parallel()
+	m := NewMetrics()
+	t.Cleanup(m.Close)
+
+	fast := Selector{Source: SourceNetwork, Subject: "eth9", Direction: "rx"}
+	slow := Selector{Source: SourceNetwork, Subject: "eth8", Direction: "rx"}
+	for _, sel := range []Selector{fast, slow} {
+		lease, err := m.Acquire(sel, time.Hour)
+		if err != nil {
+			t.Fatalf("Acquire(%v): %v", sel, err)
+		}
+		defer lease.Release()
+	}
+
+	m.record(Snapshot{Network: &metrics.NetworkSnapshot{
+		Interfaces: []metrics.NetworkInterface{
+			{Name: "eth9", Rates: metrics.NetworkRates{ReceiveBytesPerSecond: 900, Valid: true}},
+			{Name: "eth8", Rates: metrics.NetworkRates{ReceiveBytesPerSecond: 100, Valid: true}},
+		},
+	}})
+
+	if got := m.History(fast); len(got) != 1 || got[0] != 900 {
+		t.Fatalf("eth9 history = %v, want its own 900", got)
+	}
+	if got := m.History(slow); len(got) != 1 || got[0] != 100 {
+		t.Fatalf("eth8 history = %v, want its own 100", got)
+	}
+}
+
+// The two directions of one interface are distinct subjects.
+func TestEachDirectionKeepsItsOwnHistory(t *testing.T) {
+	t.Parallel()
+	m := NewMetrics()
+	t.Cleanup(m.Close)
+
+	rx := Selector{Source: SourceNetwork, Subject: "eth9", Direction: "rx"}
+	tx := Selector{Source: SourceNetwork, Subject: "eth9", Direction: "tx"}
+	for _, sel := range []Selector{rx, tx} {
+		lease, err := m.Acquire(sel, time.Hour)
+		if err != nil {
+			t.Fatalf("Acquire(%v): %v", sel, err)
+		}
+		defer lease.Release()
+	}
+
+	m.record(Snapshot{Network: &metrics.NetworkSnapshot{
+		Interfaces: []metrics.NetworkInterface{{
+			Name: "eth9",
+			Rates: metrics.NetworkRates{
+				ReceiveBytesPerSecond:  10,
+				TransmitBytesPerSecond: 20,
+				Valid:                  true,
+			},
+		}},
+	}})
+
+	if got := m.History(rx); len(got) != 1 || got[0] != 10 {
+		t.Fatalf("rx history = %v, want 10", got)
+	}
+	if got := m.History(tx); len(got) != 1 || got[0] != 20 {
+		t.Fatalf("tx history = %v, want 20", got)
+	}
+}
+
+// A filesystem graph must plot the mount its widget names, not whichever mount
+// the collector happens to report first.
+func TestAFilesystemHistoryFollowsItsOwnMount(t *testing.T) {
+	t.Parallel()
+	m := NewMetrics()
+	t.Cleanup(m.Close)
+
+	sel := Selector{Source: SourceFilesystem, Subject: "/fixture"}
+	lease, err := m.Acquire(sel, time.Hour)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer lease.Release()
+
+	m.record(Snapshot{Filesystem: &metrics.FilesystemSnapshot{
+		Filesystems: []metrics.Filesystem{
+			{MountPoint: "/", Capacity: metrics.Capacity{TotalBytes: 100, UsedBytes: 90}},
+			{MountPoint: "/fixture", Capacity: metrics.Capacity{TotalBytes: 100, UsedBytes: 10}},
+		},
+	}})
+
+	if got := m.History(sel); len(got) != 1 || got[0] != 0.1 {
+		t.Fatalf("history = %v, want the named mount's 0.1, not the first mount's 0.9", got)
+	}
+}
+
+// An absent reading is skipped, not recorded as zero: a failed collector is
+// not a measurement of nothing, and a zero would draw a trough that never
+// happened.
+func TestAnAbsentReadingIsNotRecordedAsZero(t *testing.T) {
+	t.Parallel()
+	m := NewMetrics()
+	t.Cleanup(m.Close)
+
+	sel := Selector{Source: SourceCPU}
+	lease, err := m.Acquire(sel, time.Hour)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer lease.Release()
+
+	m.record(Snapshot{CPU: &metrics.CPUSnapshot{Usage: metrics.CPUUsage{Valid: false}}})
+	if got := m.History(sel); len(got) != 0 {
+		t.Fatalf("an invalid reading recorded %v, want nothing", got)
+	}
+}
+
+// The history goes with the last lease. Keeping it would let a widget removed
+// at midday and restored in the evening plot both windows as one line.
+func TestReleasingTheLastLeaseDiscardsTheHistory(t *testing.T) {
+	t.Parallel()
+	m := NewMetrics()
+	t.Cleanup(m.Close)
+
+	sel := Selector{Source: SourceCPU}
+	lease, err := m.Acquire(sel, time.Hour)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	m.record(Snapshot{CPU: &metrics.CPUSnapshot{
+		Usage: metrics.CPUUsage{Fraction: 0.42, Valid: true},
+	}})
+	if got := m.History(sel); len(got) != 1 {
+		t.Fatalf("history = %v, want one sample before release", got)
+	}
+
+	lease.Release()
+
+	again, err := m.Acquire(sel, time.Hour)
+	if err != nil {
+		t.Fatalf("re-Acquire: %v", err)
+	}
+	defer again.Release()
+	if got := m.History(sel); len(got) != 0 {
+		t.Fatalf("a re-acquired selector inherited %v, want a fresh window", got)
+	}
+}
+
+// A second consumer of the same selector shares the ring rather than resetting
+// it, which is the anti-duplication rationale per-subject keying preserves.
+func TestASecondConsumerSharesTheHistory(t *testing.T) {
+	t.Parallel()
+	m := NewMetrics()
+	t.Cleanup(m.Close)
+
+	sel := Selector{Source: SourceCPU}
+	first, err := m.Acquire(sel, time.Hour)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer first.Release()
+	m.record(Snapshot{CPU: &metrics.CPUSnapshot{
+		Usage: metrics.CPUUsage{Fraction: 0.42, Valid: true},
+	}})
+
+	second, err := m.Acquire(sel, time.Hour)
+	if err != nil {
+		t.Fatalf("second Acquire: %v", err)
+	}
+	defer second.Release()
+
+	if got := m.History(sel); len(got) != 1 || got[0] != 0.42 {
+		t.Fatalf("history = %v, want the shared 0.42 kept across a second lease", got)
 	}
 }
