@@ -112,6 +112,10 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 		paintSlider(c, n, style)
 		return nil
 
+	case ui.KindMenu:
+		paintMenu(c, n, text, style, size)
+		return nil
+
 	case ui.KindRow, ui.KindColumn:
 		for i, child := range n.Children {
 			if child == nil {
@@ -187,6 +191,33 @@ func paintSlider(c *Canvas, n *ui.Node, style ProofStyle) {
 		kx = box.X + box.W - knob
 	}
 	c.FillRounded(ui.Rect{X: kx, Y: box.Y + (box.H-knob)/2, W: knob, H: knob}, knob/2, style.accent())
+}
+
+func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size int) {
+	box := style.Scale120.PhysicalRect(n.Bounds)
+	field := box
+	if len(n.Children) > 0 {
+		first := style.Scale120.PhysicalRect(n.Children[0].Bounds)
+		if first.Y > box.Y {
+			field.H = first.Y - box.Y
+		}
+	}
+	c.FillRounded(field, style.Scale120.Physical(6), style.Track)
+	_ = paintText(c, n.Text, field, text, style, size, n.Tabular, n.Tone)
+	if len(n.Children) == 0 {
+		return
+	}
+	last := style.Scale120.PhysicalRect(n.Children[len(n.Children)-1].Bounds)
+	list := ui.Rect{X: box.X, Y: field.Y + field.H, W: box.W, H: last.Y + last.H - (field.Y + field.H)}
+	c.DrawShadow(list, style.Scale120.Physical(6), ElevMenu, Color{A: 0x73})
+	c.FillRounded(list, style.Scale120.Physical(6), style.Background)
+	for _, child := range n.Children {
+		cb := style.Scale120.PhysicalRect(child.Bounds)
+		if child.Value != 0 {
+			c.FillRounded(cb, style.Scale120.Physical(4), style.accent())
+		}
+		_ = paintText(c, child.Text, cb, text, style, size, child.Tabular, child.Tone)
+	}
 }
 
 // paintGraph fills one column per sample, newest at the right, using the same

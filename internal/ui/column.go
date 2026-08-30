@@ -56,6 +56,19 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 		return ToggleHeight, nil
 	case KindSlider:
 		return SliderKnob, nil
+	case KindMenu:
+		_, h := measure(n.Text, n.Tabular)
+		for _, c := range n.Children {
+			if c == nil {
+				continue
+			}
+			ch, err := columnChildHeight(c, width, measure)
+			if err != nil {
+				return 0, err
+			}
+			h += ch
+		}
+		return h, nil
 	case KindRow:
 		maxH := 0
 		for _, c := range n.Children {
@@ -98,6 +111,22 @@ func placeColumnChild(n *Node, box Rect, measure MeasureText) error {
 		return Layout(n, box, measure)
 	case KindColumn:
 		return LayoutColumn(n, box, measure)
+	case KindMenu:
+		n.Bounds = box
+		_, fh := measure(n.Text, n.Tabular)
+		y := box.Y + fh
+		for _, c := range n.Children {
+			if c == nil {
+				continue
+			}
+			h, err := columnChildHeight(c, box.W, measure)
+			if err != nil {
+				return err
+			}
+			c.Bounds = Rect{X: box.X, Y: y, W: box.W, H: h}
+			y += h
+		}
+		return nil
 	default:
 		n.Bounds = box
 		return nil

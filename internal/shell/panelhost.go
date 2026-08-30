@@ -67,6 +67,7 @@ type PanelHost struct {
 	hoverX, hoverY int
 	monthDelta     int
 	errLabel       string
+	menu           *Menu
 }
 
 func parsePanelName(name string) (PanelID, error) {
@@ -465,6 +466,9 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 }
 
 func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
+	if h.menu != nil && h.menu.Handle(key) {
+		return true
+	}
 	switch key {
 	case keyLeftShift:
 		h.shift = true
@@ -527,6 +531,13 @@ func (h *PanelHost) activate(r *Registry) bool {
 	}
 	if n.Kind == ui.KindToggle {
 		return ui.Activate(n)
+	}
+	if n.Kind == ui.KindMenu {
+		if h.menu != nil && !h.menu.Opened() {
+			h.menu.Open()
+			return true
+		}
+		return false
 	}
 	h.lastAction = n.Action
 	switch n.Action {

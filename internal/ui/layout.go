@@ -84,6 +84,12 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 			w = 160
 		}
 		return w, SliderKnob, nil
+	case KindMenu:
+		w, h := measure(n.Text, n.Tabular)
+		if n.Width > w {
+			w = n.Width
+		}
+		return w, h, nil
 	default:
 		return 0, 0, fmt.Errorf("unsupported kind %d", n.Kind)
 	}

@@ -16,6 +16,7 @@ const (
 	KindTab
 	KindToggle
 	KindSlider
+	KindMenu
 )
 
 // Rect is a logical-pixel rectangle.
