@@ -52,10 +52,31 @@ func TestSingleInstanceToggleAndMove(t *testing.T) {
 	if ps.Toggle(PanelSession, 2) != Moved {
 		t.Fatal("other-output toggle closes+reopens there")
 	}
-	if _, where := ps.Open(PanelSession); where != 2 {
+	if where, ok := ps.Output(PanelSession); !ok || where != 2 {
 		t.Fatal("panel must now live on output 2")
 	}
 	if ps.Toggle(PanelMonitor, 1) != Opened {
 		t.Fatal("different panel id is independent")
+	}
+}
+
+func TestMonitorPublicName(t *testing.T) {
+	if PanelMonitor.String() != "system-monitor" {
+		t.Fatalf("public name = %q, want system-monitor", PanelMonitor.String())
+	}
+}
+
+func TestFittedSizeTinyOutputNonNegative(t *testing.T) {
+	p := Placement{
+		BarEdge: "top", Output: ui.Rect{W: 20, H: 10},
+		BarZone: 40, Gap: 8, Padding: 8, Panel: ui.Rect{W: 700, H: 520},
+	}
+	w, h := p.FittedSize()
+	if w < 0 || h < 0 {
+		t.Fatalf("fitted size must stay non-negative, got %dx%d", w, h)
+	}
+	m := p.Margins()
+	if m.Top < 0 || m.Bottom < 0 || m.Left < 0 || m.Right < 0 {
+		t.Fatalf("margins must stay non-negative, got %+v", m)
 	}
 }

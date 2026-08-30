@@ -17,7 +17,7 @@ func (p PanelID) String() string {
 	case PanelClock:
 		return "clock"
 	case PanelMonitor:
-		return "monitor"
+		return "system-monitor"
 	case PanelSession:
 		return "session"
 	case PanelSettings:
@@ -75,10 +75,14 @@ func alignX(p Placement) int {
 // FittedSize returns the panel size after reserving the bar edge and output padding.
 func (p Placement) FittedSize() (w, h int) {
 	w, h = p.Panel.W, p.Panel.H
-	if max := p.Output.W - 2*p.Padding; w > max {
+	if max := p.Output.W - 2*p.Padding; max < 0 {
+		w = 0
+	} else if w > max {
 		w = max
 	}
-	if max := p.Output.H - p.BarZone - p.Gap - p.Padding; h > max {
+	if max := p.Output.H - p.BarZone - p.Gap - p.Padding; max < 0 {
+		h = 0
+	} else if h > max {
 		h = max
 	}
 	return w, h
@@ -114,8 +118,9 @@ func (ps *PanelSet) Toggle(p PanelID, output uint32) ToggleResult {
 	return Moved
 }
 
-func (ps *PanelSet) Open(p PanelID) (PanelID, uint32) {
-	return p, ps.open[p]
+func (ps *PanelSet) Output(p PanelID) (uint32, bool) {
+	where, ok := ps.open[p]
+	return where, ok
 }
 
 func (ps *PanelSet) Close(p PanelID) {
