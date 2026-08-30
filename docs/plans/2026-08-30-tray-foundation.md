@@ -25,9 +25,14 @@
 
 **Files:** none in tree until the result is recorded in the 5B design Risks section.
 
-**Step 1:** On Niri, from a throwaway binary or `tests/integration`, create the bar layer surface then `xdg_wm_base.get_popup` with that surface as parent, 64×64, pointer grab.
+**Step 1:** On Niri, from a throwaway binary or `tests/integration`, create the bar layer surface. Create
+a separate popup `wl_surface` and `xdg_surface`, call `xdg_surface.get_popup` with a null parent, then call
+`zwlr_layer_surface_v1.get_popup` on the bar before the popup's initial commit. Use the triggering pointer
+serial for `xdg_popup.grab`. Run the probe from bars on two outputs.
 
-Expected: popup maps, gets keyboard, unmaps on Escape / click outside, focus returns to the last window.
+Expected: the popup maps at the triggering bar on each output, gets keyboard after the bar switches to
+OnDemand, unmaps on Escape or outside click, restores the bar to keyboard None, and returns focus to the
+last window. Do not commit connector names, host names, screenshots, or measurements.
 
 **Step 2:** If it fails, set a flag `popupFromLayer = false` in the design Risks (one-line amendment) and implement Task 6 as M4 panel + KindMenu. Do not invent a third host.
 
@@ -127,13 +132,20 @@ Row of `KindButton` nodes, size = bar inner height. Chevron when `hidden > 0`. `
 
 **Files:**
 - Create: `internal/platform/wayland/popup.go` (if Task 1 passed) **or** `internal/shell/popout_traymenu.go` (fallback)
-- Test: keyboard Next/Prev/Enter/Escape; `menu.select` on Enter; closing on outside click / Escape.
+- Test: protocol request order, owner-goroutine confinement, keyboard Next/Prev/Enter/Escape;
+  `menu.select` on Enter; closing on outside click, Escape, output removal, popup failure, and service loss;
+  bar keyboard restoration on every close path.
 
-xdg_popup path: `OpenPopup(parent layer surface, anchor rect, size)` using generated xdg-shell. Positioner gravity opposite the bar edge. Constraint adjustment slide|flip. Roving focus over `MenuEntry` list; submenu replaces the list (stack + Back) — no recursive popups in v1.
+xdg_popup path: queue an owner-goroutine command that creates the popup surface and positioner, calls
+`xdg_surface.get_popup(nil, positioner)`, assigns it with `barLayer.GetPopup(popup)`, grabs with the saved
+input serial, and performs the initial commit in protocol order. Positioner gravity opposes the bar edge;
+constraint adjustment is slide|flip. Switch the bar layer keyboard to OnDemand while open and restore
+None on every close path. Roving focus traverses `MenuEntry`; submenu content replaces the list (stack +
+Back), with no recursive popup in v1.
 
 Fallback path: panel id `tray-menu`, Exclusive, KindMenu, anchored to the icon (4A placement). Same command wiring.
 
-One menu process-wide (D17).
+One menu process-wide (5B-3).
 
 **Commit:** `feat: open keyboard-accessible tray DBusMenu`
 

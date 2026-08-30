@@ -30,9 +30,9 @@ No XEmbed, no watcher implementation in the shell, no icon-theme in the service 
 | D5 | Menu host = xdg_popup on the bar surface. Live-test niri parenting; fallback = M4 panel + KindMenu. | DMS dedicated overflow window for every menu. |
 | D6 | Consume 5A `internal/icons` for named icons; pixmaps come on the snapshot as ARGB32 already bounded by the service. | Re-implement lookup in the tray widget. |
 | D12 | Overflow drawer in 5B: leftover items in a panel. No hidden/pin lists. | Defer overflow; DMS hide-id chrome. |
-| D15 | Track items by unique owner + object path from the snapshot. Icon pixmap preferred when present; else Lookup(name). Attention pixmap/name wins when `needsAttention`. Overlay composited on top. | DMS (ignore attention/overlay). |
-| D16 | Scroll events forwarded to the service (`Scroll` dx/dy). Prior art does not; the roadmap and sysc-tray design do. | Match prior art and skip scroll. |
-| D17 | One menu open process-wide. Opening another closes the first. | Stacked menus. |
+| 5B-1 | Track items by unique owner + object path from the snapshot. Icon pixmap preferred when present; else Lookup(name). Attention pixmap/name wins when `needsAttention`. Overlay composited on top. | DMS (ignore attention/overlay). |
+| 5B-2 | Scroll events forwarded to the service (`Scroll` dx/dy). Prior art does not; the roadmap and sysc-tray design do. | Match prior art and skip scroll. |
+| 5B-3 | One menu open process-wide. Opening another closes the first. | Stacked menus. |
 
 ## IPC client
 
@@ -52,9 +52,17 @@ Fit: measure icons left-to-right. Icons that do not fit are omitted from the bar
 
 ## xdg_popup
 
-M2 `OutputHost` / bar surface gains `OpenPopup(anchorRect, size, callbacks) (close func, error)` using existing xdg-shell bindings (`xdg_wm_base.get_xdg_surface` + `get_popup` + `xdg_positioner` with bar-edge gravity). Keyboard: the popup grab, not Exclusive overlay. Roving focus inside the menu (4A model): arrows, Enter activate, Escape cancel. Accessible name/role on every entry.
+M2 `OutputHost` / bar surface gains an owner-goroutine popup command using the existing xdg-shell and
+layer-shell bindings. Create a new `wl_surface`, create its `xdg_surface`, call
+`xdg_surface.get_popup(parent=nil, positioner)`, then assign the bar layer surface as its parent with
+`zwlr_layer_surface_v1.get_popup(popup)` before the popup's initial commit. Never create an `xdg_surface`
+for the bar's role-bound `wl_surface`. Use the triggering pointer serial for `xdg_popup.grab`. Set the bar
+layer surface to OnDemand while the menu owns focus, then restore None on every dismissal, output removal,
+popup failure, and service loss. Roving focus inside the menu: arrows, Enter activate, Escape cancel.
+Every entry carries an accessible name and role.
 
-Live-test first (plan Task 1): parent a 1×1 popup to the bar layer surface on niri. If `xdg_popup` is rejected, implement D5 fallback in the same task (panel + KindMenu, no second design cycle).
+Live-test first (plan Task 1): assign a 1×1 popup to the bar layer surface on Niri through
+`zwlr_layer_surface_v1.get_popup`. If Niri rejects it, implement D5 fallback in the same task.
 
 Clamp: compositor constraint via positioner `set_constraint_adjustment` slide/flip. Additional shell clamp to output minus padding if the compositor returns an unconstrained size.
 

@@ -18,7 +18,10 @@
 
 1. M2 live Niri gate passed and merged. M3 and M4 (4A+4B) merged. This plan executes from main containing those.
 2. Merged tree has M4 aux (`Callbacks.Aux`, `AuxSpec`, `DropAux`), panel host, 4B text field / text-input-v3, `ui.Handle`, `icons` **not** yet present.
-3. Tagged `sysc-notify` release exists with: Unix socket, snapshot+deltas, `sender_pid`, persist addendum (`active[]`+`history[]`). If persist is not in the tag yet, Task 12 degrades: center shows `active` only; do not block Tasks 2–11.
+3. A reviewed sysc-notify implementation plan has implemented the service-owned socket contract and the
+   persistence addendum. A tagged `sysc-notify` release exists with the version handshake,
+   snapshot+deltas, `sender_pid`, and D13 `active[]`+`history[]` capability. Tasks 2–3 may land before
+   that tag because they do not consume the wire contract; the completed tranche and Task 12 may not degrade.
 4. Commit messages must not contain AI-tool substrings.
 
 If the tagged socket framing differs from newline JSON, change Task 4 only.
@@ -63,10 +66,13 @@ type Notification struct {
 }
 
 type RawImage struct {
-    Width, Height, Stride int    `json:"width"`
-    HasAlpha              bool   `json:"has_alpha"`
-    Bits, Channels        int    `json:"bits"`
-    Data                  []byte `json:"data"` // bounded by service
+    Width    int    `json:"width"`
+    Height   int    `json:"height"`
+    Stride   int    `json:"stride"`
+    HasAlpha bool   `json:"has_alpha"`
+    Bits     int    `json:"bits"`
+    Channels int    `json:"channels"`
+    Data     []byte `json:"data"`
 }
 
 type HistoryEntry struct {
@@ -97,8 +103,6 @@ type Command struct {
 }
 ```
 
-Fix field tags on `RawImage` if the test wants named keys (`width`,`height`,`stride`,`has_alpha`,`bits`,`channels`,`data`).
-
 **Step 3:** `go test ./internal/ipc/notifyproto/ -count=1`
 
 **Step 4:** Commit `test: add notify snapshot types`
@@ -111,25 +115,31 @@ Fix field tags on `RawImage` if the test wants named keys (`width`,`height`,`str
 - Create: `internal/icons/decode.go`
 - Test: `internal/icons/decode_test.go`
 
-**Step 1:** Tests — 2×2 RGB, 2×2 RGBA, overflow stride×height, bits≠8, channels=2, PNG file round-trip.
+**Step 1:** Tests — 2×2 RGB, 2×2 RGBA, negative and over-limit dimensions, overflow in
+width×channels and stride×height, short and trailing raw data, inconsistent alpha/channels, bits≠8,
+channels=2, encoded file over the byte limit, image header over the dimension/pixel limit, truncated PNG,
+and a PNG file round-trip.
 
 ```go
 func DecodeRaw(width, height, stride int, hasAlpha bool, bits, channels int, data []byte) (image.Image, error) {
     if bits != 8 || (channels != 3 && channels != 4) {
         return nil, errFormat
     }
-    if width <= 0 || height <= 0 || stride < width*channels {
+    row, ok := mul(width, channels)
+    if !ok || width <= 0 || height <= 0 || overLimits(width, height) || stride < row || stride > maxStride {
         return nil, errFormat
     }
     need, ok := mul(stride, height)
-    if !ok || len(data) < need {
+    if !ok || need > maxDecodedBytes || len(data) != need {
         return nil, errFormat
     }
-    // copy into image.RGBA; ignore hasAlpha vs channels mismatch → error
+    // Reject hasAlpha/channels disagreement, then copy into image.RGBA.
 }
 ```
 
-`mul` is overflow-safe `bits.Mul`. `DecodeFile` uses `image.Decode` after `png`/`jpeg` imported for side-effect.
+Use a small checked integer multiply helper. `DecodeFile` first limits encoded bytes, then uses
+`image.DecodeConfig` to enforce dimension, pixel-work, and decoded-memory limits before `image.Decode`.
+The released service limits are the upper bound; the shell repeats the checks at its own trust boundary.
 
 **Step 2:** `go test ./internal/icons/ -count=1`
 
@@ -141,15 +151,22 @@ func DecodeRaw(width, height, stride int, hasAlpha bool, bits, channels int, dat
 
 **Files:**
 - Create: `internal/icons/lookup.go`
-- Test: `internal/icons/lookup_test.go` with a fixture dir: `index.theme` Inherits=hicolor, `apps/48x48/foo.png`.
+- Test: `internal/icons/lookup_test.go` with fixture themes covering `Inherits`, fixed/scalable/threshold
+  directory metadata, scale, hicolor fallback, traversal attempts, inheritance cycles, and a symlink escape.
 
 ```go
-func Lookup(name string, size int, roots []string, theme string) (string, error)
+func Lookup(name string, size, scale int, roots []string, theme string) (string, error)
 ```
 
-Walk Inherits, always append `hicolor`, search `apps`/`status`/`pixmaps`. Prefer `.svg` path then smallest PNG ≥ size. Absolute paths and `file://` return cleaned path if readable. Empty name → error.
+Reject empty names and traversal. For icon names, parse each theme's declared directories and size/scale
+rules, walk an acyclic `Inherits` chain, append `hicolor`, and search pixmaps last. Resolve symlinks and
+accept a candidate only when it remains under the root being searched. Explicit absolute image paths are
+handled by the notification image-path policy, not by theme-name lookup. Prefer a drawable PNG at the
+best declared size; an SVG-only match falls back until the approved rasterizer exists.
 
 Do not call gsettings in the unit test; pass `theme` in. Production wrapper reads gsettings then gtk settings.ini then `"hicolor"`.
+Cache `(source identity, size, scale, theme generation)` in a bounded LRU and invalidate it when theme or
+root state changes.
 
 **Commit:** `feat: resolve icon theme names`
 

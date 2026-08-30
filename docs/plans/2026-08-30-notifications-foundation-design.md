@@ -46,11 +46,11 @@ Research D1–D14 apply. Tranche-local restatement:
 | D10 | Center = panel `notifications`, centered, Exclusive, ~400×620 fitted. | Control-center tab; bar-attached full-height popout. |
 | D11 | DND in shell session/config. Hides toasts and skips enqueue; history and `Notify` continue. | Store DND in the service. |
 | D13 | History file is notify-owned. Shell renders `history[]` from the snapshot. | Shell-side JSON cache. |
-| D18 | Markup: strip tags except `<br>` → newline, decode XML entities (Noctalia `sanitizeMarkup`). Render as plain text. Do not advertise `body-markup` until a real HTML path exists. Owner asked for markup parity; sanitizing to text is the honest subset without a web renderer. | Qt StyledText HTML; raw HTML. |
-| D19 | Swipe: pointer drag on the card, threshold 35% of card width (DMS), dismiss with CloseReason Dismissed. Instant under reduced-motion (no swipe animation). | No swipe. |
-| D20 | Expiry: sender `expire_timeout` ≥ 0 wins; `< 0` uses shell defaults Low=5000 / Normal=5000 / Critical=0 (persistent). Hover pauses. Overflowed (queued) cards pause and resume at **full** duration when shown (Noctalia). | DMS eviction of oldest unhovered. |
-| D21 | Default action = left-click card body when not expanding/swiping. `default` key is not a button. Max 6 action buttons. Inline-reply key swaps the button row for a single-line field (4B text field) and flips OnDemand. | Body click always dismisses. |
-| D22 | PID match: service snapshot carries `sender_pid` + optional parent pids. Shell compares to cached Niri `Window.pid`. Zero or >1 match → store target as ambiguous, **do not** `focus-window`. Window ids are ephemeral; dropped on shell restart. | Focus first match; persist window ids. |
+| 5A-1 | Markup: strip tags except `<br>` → newline, decode XML entities (Noctalia `sanitizeMarkup`). Render as plain text. Do not advertise `body-markup` until a real HTML path exists. Owner asked for markup parity; sanitizing to text is the honest subset without a web renderer. | Qt StyledText HTML; raw HTML. |
+| 5A-2 | Swipe: pointer drag on the card, threshold 35% of card width (DMS), dismiss with CloseReason Dismissed. Instant under reduced-motion (no swipe animation). | No swipe. |
+| 5A-3 | Expiry: sender `expire_timeout` ≥ 0 wins; `< 0` uses shell defaults Low=5000 / Normal=5000 / Critical=0 (persistent). Hover pauses. Overflowed (queued) cards pause and resume at **full** duration when shown (Noctalia). | DMS eviction of oldest unhovered. |
+| 5A-4 | Default action = left-click card body when not expanding/swiping. `default` key is not a button. Max 6 action buttons. Inline-reply key swaps the button row for a single-line field (4B text field) and flips OnDemand. | Body click always dismisses. |
+| 5A-5 | PID match: service snapshot carries `sender_pid` + optional parent pids. Shell compares to cached Niri `Window.pid`. Zero or >1 match → store target as ambiguous, **do not** `focus-window`. Window ids are ephemeral; dropped on shell restart. | Focus first match; persist window ids. |
 
 ## Toast surface
 
@@ -64,7 +64,7 @@ Stack: `top_*` down, `bottom_*` up. Card width 360×scale. When the next card wo
 
 Icon: image-data / image-path decoded by `internal/icons` → 48 px; else `Lookup(app_icon)`; else glyph bell.
 
-Body: D18 plain text, max ~4 lines then expand-on-click (DMS). Actions row under body. Countdown bar 3 px, urgency color (critical = error, else primary). `value` hint bar only when present, 0–100, separate from countdown.
+Body: 5A-1 plain text, max ~4 lines then expand-on-click (DMS). Actions row under body. Countdown bar 3 px, urgency color (critical = error, else primary). `value` hint bar only when present, 0–100, separate from countdown.
 
 Center overlay: opening panel `notifications` hides all toasts and pauses enqueue (DMS `popupsDisabled`). Closing resumes.
 
@@ -92,9 +92,18 @@ Panel `notifications` on 4A machinery. Sidebar chips All / Today / … optional 
 
 `internal/icons`:
 
-- `DecodeFile(path) (image.Image, error)` — png/jpeg via stdlib.
-- `DecodeRaw(width,height,stride,hasAlpha,bits,channels,data []byte) (image.Image, error)` — 8-bit RGB/RGBA, overflow-safe `stride*height`, reject bits≠8 or channels∉{3,4}.
-- `Lookup(name, size) (string, error)` — gsettings `org.gnome.desktop.interface icon-theme` then gtk-3/4 settings.ini, walk `Inherits`, always append hicolor, search `$XDG_DATA_HOME/icons`, `~/.icons`, `$XDG_DATA_DIRS/icons`, pixmaps. Prefer svg path for the name, else smallest bitmap ≥ size. Cache (name,size)→path.
+- `DecodeFile(path) (image.Image, error)` — PNG/JPEG via stdlib. Limit encoded bytes before decode,
+  call `image.DecodeConfig` first, and reject dimensions, decoded bytes, and pixel work above the fixed
+  protocol limits before allocating the destination.
+- `DecodeRaw(width,height,stride,hasAlpha,bits,channels,data []byte) (image.Image, error)` — 8-bit
+  RGB/RGBA. Reject non-positive or over-limit dimensions, overflow in `width*channels` and
+  `stride*height`, invalid stride, inconsistent alpha/channel metadata, and any data length other than
+  the validated stride times height before allocating.
+- `Lookup(name, size, scale, themeState) (string, error)` — parse freedesktop `index.theme` directory
+  metadata and `Inherits`, always append hicolor, and search the XDG icon roots plus pixmaps. Reject
+  traversal in icon names and theme inheritance, and reject candidates whose resolved symlink target
+  escapes the root being searched. Cache source identity, size, scale, and theme generation in a bounded
+  LRU; invalidate it when the selected theme or roots change.
 
 No new module. SVG rasterize is a documented ceiling: if only SVG exists, pass the path through and skip drawing until a rasterizer exists, or draw the fallback glyph. First green tests use PNG fixtures.
 
@@ -115,5 +124,7 @@ No new module. SVG rasterize is a documented ceiling: if only SVG exists, pass t
 
 - Notify M0 has not pinned the byte protocol. 5A plan Task 1 is a contract freeze against the tagged release; if the release differs, the client adapter changes, not the surface model.
 - Inline-reply OnDemand on a height-0 full-output surface: input region must include the field or niri will not deliver keys. Live-test with the card's input region, not the whole output.
-- Markup "parity" without an HTML renderer: D18 is the honest subset. A future HTML path would be a new capability claim.
-- Persistence is a notify-repo gate. If that release lags, 5A can still ship toasts from `active[]` with empty history; center shows live-only. Call that out in the plan prerequisites rather than blocking the toast host.
+- Markup "parity" without an HTML renderer: 5A-1 is the honest subset. A future HTML path would be a new capability claim.
+- Persistence is a notify-repo release gate. Pure shell work that does not depend on the service contract
+  may land earlier, but Tranche 5A cannot pass its gate or ship the center until the tagged release carries
+  D13's `active[]` plus `history[]` contract and persistence capability.
