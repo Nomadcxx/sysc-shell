@@ -96,6 +96,8 @@ Split into four reviewed tranches by the charter. Only 3A is designed.
 | `2026-08-30-built-in-widget-foundation.md` | plan | `main` | Complete. 16 tasks (0–15). Audit findings applied. Ready to execute. |
 | `2026-08-30-built-in-widget-foundation-audit-handover.md` | audit-handover | `main` | Closed. Commissioned the technical and design audits. |
 | `2026-08-30-built-in-widget-foundation-audit-report.md` | audit-report | `main` | Closed. Verdict: proceed with named corrections; all seven applied at `9a114eb`. Verified assumption 4 live. |
+| `2026-08-31-tranche-3a-implementation-audit-report.md` | audit-report | `main` | Closed. Implementation vs spec + Q/A. Verdict: proceed with named corrections. One major: apply does not re-layout. |
+| `2026-08-31-core-metrics-audit-report.md` | audit-report | `milestone/core-metrics` | Closed. Verdict: proceed with named corrections. Two majors (D6 grain, D7 meter/graph). |
 
 ### Tranche state
 
