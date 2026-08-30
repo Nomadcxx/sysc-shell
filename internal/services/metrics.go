@@ -20,6 +20,7 @@ const (
 	SourceFilesystem
 	SourceBlock
 	SourceNetwork
+	SourceBattery
 	sourceCount
 )
 
@@ -36,6 +37,8 @@ func (s Source) String() string {
 		return "block"
 	case SourceNetwork:
 		return "network"
+	case SourceBattery:
+		return "battery"
 	}
 	return fmt.Sprintf("source(%d)", uint8(s))
 }
@@ -53,6 +56,7 @@ type Snapshot struct {
 	Filesystem  *metrics.FilesystemSnapshot
 	Block       *metrics.BlockSnapshot
 	Network     *metrics.NetworkSnapshot
+	Battery     *metrics.BatterySnapshot
 }
 
 // Selector names one metric subject. CPU and memory have exactly one subject
@@ -443,6 +447,14 @@ func (m *Metrics) collect(s *samplers, failing *[sourceCount]bool) Snapshot {
 		} else {
 			noteRecovery(failing, SourceNetwork)
 			snap.Network = &v
+		}
+	}
+	if m.SourceLeased(SourceBattery) {
+		if v, err := metrics.ReadBattery(); err != nil {
+			noteFailure(failing, SourceBattery, err)
+		} else {
+			noteRecovery(failing, SourceBattery)
+			snap.Battery = &v
 		}
 	}
 	return snap

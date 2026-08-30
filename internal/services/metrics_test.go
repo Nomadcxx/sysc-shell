@@ -407,3 +407,47 @@ func TestASecondConsumerSharesTheHistory(t *testing.T) {
 		t.Fatalf("history = %v, want the shared 0.42 kept across a second lease", got)
 	}
 }
+
+func TestABatteryLeaseIsIndependentOfOtherSources(t *testing.T) {
+	t.Parallel()
+	m := NewMetrics()
+	t.Cleanup(m.Close)
+
+	lease, err := m.Acquire(Selector{Source: SourceBattery}, 30*time.Second)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer lease.Release()
+
+	if !m.SourceLeased(SourceBattery) {
+		t.Fatal("the battery source reports unleased")
+	}
+	for _, src := range []Source{SourceCPU, SourceMemory, SourceFilesystem, SourceBlock, SourceNetwork} {
+		if m.SourceLeased(src) {
+			t.Fatalf("source %v reports leased with only a battery consumer", src)
+		}
+	}
+}
+
+// A battery-only configuration must never read CPU or block counters.
+func TestOnlyTheBatterySourceIsPopulated(t *testing.T) {
+	t.Parallel()
+	m := NewMetrics()
+	t.Cleanup(m.Close)
+
+	lease, err := m.Acquire(Selector{Source: SourceBattery}, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer lease.Release()
+
+	select {
+	case snap := <-m.Updates():
+		if snap.CPU != nil || snap.Block != nil || snap.Network != nil ||
+			snap.Filesystem != nil || snap.Memory != nil {
+			t.Fatalf("an unleased source was collected: %+v", snap)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no snapshot arrived within three seconds")
+	}
+}
