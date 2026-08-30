@@ -62,6 +62,7 @@ type PanelHost struct {
 	pressed        *ui.Node
 	lastAction     string
 	hoverX, hoverY int
+	monthDelta     int
 }
 
 func (r *Registry) AuxRequests() <-chan wayland.AuxRequest { return r.aux }
@@ -159,7 +160,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		BarZone: trig.BarZone,
 		Gap:     r.cfg.Panels.Gap,
 		Padding: r.cfg.Panels.Padding,
-		Panel:   ui.Rect{W: 280, H: 200},
+		Panel:   panelTargetSize(id),
 		Align:   trig.Align,
 	}
 	w, hgt := place.FittedSize()
@@ -172,8 +173,8 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		place:    place,
 		stopAnim: make(chan struct{}),
 		theme:    ThemeFromTokens(r.tokens, 12),
-		root:     placeholderTree(),
 	}
+	h.root = r.panelTree(h)
 	h.focus = ui.Focusables(h.root)
 	h.roving = ui.Roving{Count: len(h.focus)}
 	if err := r.acquirePanelLeases(h); err != nil {
@@ -380,7 +381,7 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			pressed := h.pressed
 			h.pressed = nil
 			if n != nil && n == pressed {
-				return h.activate()
+				return h.activate(r)
 			}
 			return false
 		}
@@ -410,18 +411,59 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 		h.roving.Next()
 		return true
 	case keySpace, keyEnter:
-		return h.activate()
+		return h.activate(r)
 	}
 	return false
 }
 
-func (h *PanelHost) activate() bool {
+func (h *PanelHost) activate(r *Registry) bool {
 	if h.roving.Count == 0 {
 		return false
 	}
 	n := h.focus[h.roving.Index()]
 	h.lastAction = n.Action
+	switch n.Action {
+	case "cal-prev":
+		h.monthDelta--
+		r.rebuildPanel(h)
+	case "cal-next":
+		h.monthDelta++
+		r.rebuildPanel(h)
+	}
 	return true
+}
+
+func (r *Registry) rebuildPanel(h *PanelHost) {
+	h.root = r.panelTree(h)
+	h.focus = ui.Focusables(h.root)
+	h.roving.Count = len(h.focus)
+	if h.logicalW > 0 {
+		_ = h.configure(h.logicalW, h.logicalH, h.scale120)
+	}
+}
+
+func (r *Registry) panelTree(h *PanelHost) *ui.Node {
+	switch h.id {
+	case PanelClock:
+		now := r.now
+		if now.IsZero() {
+			now = time.Now()
+		}
+		return clockTree(now, h.monthDelta)
+	default:
+		return placeholderTree()
+	}
+}
+
+func panelTargetSize(id PanelID) ui.Rect {
+	switch id {
+	case PanelClock:
+		return ui.Rect{W: 360, H: 420}
+	case PanelMonitor:
+		return ui.Rect{W: 640, H: 480}
+	default:
+		return ui.Rect{W: 280, H: 200}
+	}
 }
 
 func (h *PanelHost) setFocus(n *ui.Node) {
