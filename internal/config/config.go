@@ -12,7 +12,8 @@ import (
 )
 
 // Item is one validated widget instance. Options live on the instance rather
-// than the bar, so one bar can carry two clocks with different formats.
+// than the bar, so one bar can carry two clocks with different formats and two
+// filesystem widgets watching different mounts.
 type Item struct {
 	ID string
 	// Format is the Go layout string for a clock. Empty on other items.
@@ -22,6 +23,19 @@ type Item struct {
 	Boundary time.Duration
 	// MaxWidth caps a window title in logical pixels. Zero on other items.
 	MaxWidth int
+
+	// Display is "text", "meter" or "graph" on a metric item. Empty elsewhere.
+	Display string
+	// Interval is the sampling interval for a metric item. Zero elsewhere.
+	Interval time.Duration
+	// Path names the mount a filesystem item watches. Empty on other items.
+	Path string
+	// Device names the block device a block item watches.
+	Device string
+	// Interface names the network interface a network item watches.
+	Interface string
+	// Direction is "read"/"write" on block and "rx"/"tx" on network.
+	Direction string
 }
 
 // Bar is the resolved policy for one bar.
@@ -70,12 +84,30 @@ type Config struct {
 	Outputs []OutputOverride
 }
 
-// knownItems is the Tranche 3A widget vocabulary. The Milestone 2 fixture ids
-// are deliberately absent: there is no compatibility promise, so a stale
-// configuration fails loudly instead of silently dropping a widget.
+// knownItems is the Milestone 3 widget vocabulary through Tranche 3B. The
+// Milestone 2 fixture ids are deliberately absent: there is no compatibility
+// promise, so a stale configuration fails loudly instead of silently dropping
+// a widget.
 var knownItems = map[string]struct{}{
 	"clock": {}, "workspace": {}, "window-title": {},
+	"cpu": {}, "memory": {}, "filesystem": {}, "block": {}, "network": {},
 }
+
+// fractionSources yield a value between zero and one, which a meter can fill.
+// Rate sources yield bytes per second and have no full scale, so a meter is
+// meaningless on them and rejected at load.
+var fractionSources = map[string]bool{"cpu": true, "memory": true, "filesystem": true}
+
+// rateSources yield bytes per second.
+var rateSources = map[string]bool{"block": true, "network": true}
+
+// blockDirections and networkDirections are deliberately separate vocabularies
+// so "rx" on a block device fails rather than silently meaning "read".
+var blockDirections = map[string]bool{"read": true, "write": true}
+var networkDirections = map[string]bool{"rx": true, "tx": true}
+
+// isMetric reports whether an id names a metric widget.
+func isMetric(id string) bool { return fractionSources[id] || rateSources[id] }
 
 const (
 	// defaultClockFormat and defaultDateFormat are the two default clock
@@ -86,6 +118,11 @@ const (
 	// defaultTitleMaxWidth matches the shipped default in the reference
 	// shells, which cap the focused-window title at 250 to 260 logical pixels.
 	defaultTitleMaxWidth = 260
+	// defaultMetricInterval is the sampling period a metric item uses unless
+	// it names its own.
+	defaultMetricInterval = 2 * time.Second
+	// defaultMetricDisplay renders a value as text.
+	defaultMetricDisplay = "text"
 )
 
 // supportedEdges names every edge the model understands and whether this

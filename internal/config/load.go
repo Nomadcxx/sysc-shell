@@ -25,6 +25,13 @@ type wireItem struct {
 	ID       string  `json:"id"`
 	Format   *string `json:"format"`
 	MaxWidth *int    `json:"max-width"`
+
+	Display   *string `json:"display"`
+	Interval  *string `json:"interval"`
+	Path      *string `json:"path"`
+	Device    *string `json:"device"`
+	Interface *string `json:"interface"`
+	Direction *string `json:"direction"`
 }
 
 func (i *wireItem) UnmarshalJSON(data []byte) error {
@@ -275,6 +282,24 @@ func resolveItem(w wireItem, path string) (Item, error) {
 	if w.MaxWidth != nil && w.ID != "window-title" {
 		return Item{}, pathErr(path+".max-width", "is accepted only on a window-title, not on %q", w.ID)
 	}
+	if !isMetric(w.ID) {
+		for _, unwanted := range []struct {
+			name string
+			set  bool
+		}{
+			{"display", w.Display != nil},
+			{"interval", w.Interval != nil},
+			{"path", w.Path != nil},
+			{"device", w.Device != nil},
+			{"interface", w.Interface != nil},
+			{"direction", w.Direction != nil},
+		} {
+			if unwanted.set {
+				return Item{}, pathErr(path+"."+unwanted.name,
+					"is accepted only on a metric item, not on %q", w.ID)
+			}
+		}
+	}
 
 	switch w.ID {
 	case "clock":
@@ -295,8 +320,109 @@ func resolveItem(w wireItem, path string) (Item, error) {
 			}
 			item.MaxWidth = *w.MaxWidth
 		}
+	case "cpu", "memory", "filesystem", "block", "network":
+		resolved, err := resolveMetric(w, path)
+		if err != nil {
+			return Item{}, err
+		}
+		item = resolved
 	}
 	return item, nil
+}
+
+// resolveMetric validates one metric item and fills in its defaults.
+//
+// A selector naming an absent mount, device or interface is deliberately not
+// an error here: devices are hot-plugged and interfaces come and go, so the
+// widget validates as well-formed and renders the unavailable placeholder
+// until its subject appears.
+func resolveMetric(w wireItem, path string) (Item, error) {
+	item := Item{
+		ID:       w.ID,
+		Display:  defaultMetricDisplay,
+		Interval: defaultMetricInterval,
+	}
+
+	if w.Display != nil {
+		switch *w.Display {
+		case "text", "graph":
+		case "meter":
+			if rateSources[w.ID] {
+				return Item{}, pathErr(path+".display",
+					"a meter needs a full scale, which the rate source %q has none", w.ID)
+			}
+		default:
+			return Item{}, pathErr(path+".display",
+				"%q is not one of text, meter, graph", *w.Display)
+		}
+		item.Display = *w.Display
+	}
+
+	if w.Interval != nil {
+		interval, err := time.ParseDuration(*w.Interval)
+		if err != nil {
+			return Item{}, pathErr(path+".interval", "%q is not a duration such as 2s", *w.Interval)
+		}
+		if interval <= 0 {
+			return Item{}, pathErr(path+".interval", "%v is not positive", interval)
+		}
+		item.Interval = interval
+	}
+
+	// Each selector is required on exactly one id and rejected on the others,
+	// so a path on a CPU widget cannot be silently ignored.
+	if err := selector(w.Path, w.ID, "filesystem", path+".path", &item.Path); err != nil {
+		return Item{}, err
+	}
+	if err := selector(w.Device, w.ID, "block", path+".device", &item.Device); err != nil {
+		return Item{}, err
+	}
+	if err := selector(w.Interface, w.ID, "network", path+".interface", &item.Interface); err != nil {
+		return Item{}, err
+	}
+
+	switch w.ID {
+	case "block":
+		item.Direction = "read"
+		if w.Direction != nil {
+			if !blockDirections[*w.Direction] {
+				return Item{}, pathErr(path+".direction",
+					"%q is not one of read, write", *w.Direction)
+			}
+			item.Direction = *w.Direction
+		}
+	case "network":
+		item.Direction = "rx"
+		if w.Direction != nil {
+			if !networkDirections[*w.Direction] {
+				return Item{}, pathErr(path+".direction", "%q is not one of rx, tx", *w.Direction)
+			}
+			item.Direction = *w.Direction
+		}
+	default:
+		if w.Direction != nil {
+			return Item{}, pathErr(path+".direction",
+				"is accepted only on block and network, not on %q", w.ID)
+		}
+	}
+	return item, nil
+}
+
+// selector requires an option on the one id that needs it and rejects it
+// elsewhere. A machine has many mounts, devices and interfaces, so there is no
+// defensible default and the option cannot be optional.
+func selector(supplied *string, id, wantID, path string, dest *string) error {
+	if id != wantID {
+		if supplied != nil {
+			return pathErr(path, "is accepted only on %q, not on %q", wantID, id)
+		}
+		return nil
+	}
+	if supplied == nil || *supplied == "" {
+		return pathErr(path, "is required on %q", wantID)
+	}
+	*dest = *supplied
+	return nil
 }
 
 // clockProbeBase is a fixed instant in UTC, so boundary derivation is

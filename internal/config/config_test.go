@@ -324,3 +324,128 @@ func TestAnUnknownItemStillNamesItsFieldPath(t *testing.T) {
 		t.Fatalf("error %q does not name the failing field path", err)
 	}
 }
+
+func TestMetricItemsCarryTheirSelectorsAndDefaults(t *testing.T) {
+	t.Parallel()
+	cfg, err := Parse([]byte(`{"bar":{"items":{"right":[
+		{"id":"cpu","display":"meter"},
+		{"id":"memory"},
+		{"id":"filesystem","path":"/fixture"},
+		{"id":"block","device":"nvme9n1","direction":"read"},
+		{"id":"network","interface":"eth9","direction":"rx","display":"graph"}]}}}`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	items := cfg.Bar.Right
+	if len(items) != 5 {
+		t.Fatalf("items = %d, want 5", len(items))
+	}
+	if items[0].Display != "meter" {
+		t.Fatalf("cpu display = %q, want meter", items[0].Display)
+	}
+	if items[1].Display != "text" {
+		t.Fatalf("memory display = %q, want the text default", items[1].Display)
+	}
+	if items[2].Path != "/fixture" {
+		t.Fatalf("filesystem path = %q, want /fixture", items[2].Path)
+	}
+	if items[3].Device != "nvme9n1" || items[3].Direction != "read" {
+		t.Fatalf("block = %+v, want device nvme9n1 reading", items[3])
+	}
+	if items[4].Interface != "eth9" || items[4].Direction != "rx" {
+		t.Fatalf("network = %+v, want eth9 receiving", items[4])
+	}
+	for _, item := range items {
+		if item.Interval <= 0 {
+			t.Fatalf("item %+v has no sampling interval", item)
+		}
+	}
+}
+
+// A rate has no full scale, so a meter of "3.2 MB/s" would be meaningless.
+func TestAMeterOnARateSourceIsRejected(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{
+		`{"bar":{"items":{"right":[{"id":"block","device":"nvme9n1","display":"meter"}]}}}`,
+		`{"bar":{"items":{"right":[{"id":"network","interface":"eth9","display":"meter"}]}}}`,
+	} {
+		_, err := Parse([]byte(body))
+		if err == nil {
+			t.Fatalf("a meter on a rate source was accepted: %s", body)
+		}
+		if !strings.Contains(err.Error(), "display") {
+			t.Fatalf("error %q does not name the display field", err)
+		}
+	}
+}
+
+func TestAGraphIsAcceptedOnEverySource(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{
+		`{"bar":{"items":{"right":[{"id":"cpu","display":"graph"}]}}}`,
+		`{"bar":{"items":{"right":[{"id":"network","interface":"eth9","display":"graph"}]}}}`,
+	} {
+		if _, err := Parse([]byte(body)); err != nil {
+			t.Fatalf("a graph was rejected on %s: %v", body, err)
+		}
+	}
+}
+
+func TestAMissingSelectorIsRejected(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ body, want string }{
+		{`{"bar":{"items":{"right":[{"id":"filesystem"}]}}}`, "path"},
+		{`{"bar":{"items":{"right":[{"id":"block"}]}}}`, "device"},
+		{`{"bar":{"items":{"right":[{"id":"network"}]}}}`, "interface"},
+	}
+	for _, c := range cases {
+		err := errFromParse(t, c.body)
+		if !strings.Contains(err.Error(), c.want) {
+			t.Fatalf("error %q does not name the missing %q", err, c.want)
+		}
+	}
+}
+
+func TestASelectorOnTheWrongItemIsRejected(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{
+		`{"bar":{"items":{"right":[{"id":"cpu","path":"/fixture"}]}}}`,
+		`{"bar":{"items":{"right":[{"id":"memory","device":"nvme9n1"}]}}}`,
+		`{"bar":{"items":{"right":[{"id":"clock","interval":"2s"}]}}}`,
+	} {
+		if _, err := Parse([]byte(body)); err == nil {
+			t.Fatalf("an option on the wrong item was accepted: %s", body)
+		}
+	}
+}
+
+func TestAnInvalidDirectionIsRejected(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{
+		`{"bar":{"items":{"right":[{"id":"block","device":"nvme9n1","direction":"rx"}]}}}`,
+		`{"bar":{"items":{"right":[{"id":"network","interface":"eth9","direction":"read"}]}}}`,
+	} {
+		if _, err := Parse([]byte(body)); err == nil {
+			t.Fatalf("a direction from the wrong vocabulary was accepted: %s", body)
+		}
+	}
+}
+
+func TestANonPositiveIntervalIsRejected(t *testing.T) {
+	t.Parallel()
+	body := `{"bar":{"items":{"right":[{"id":"cpu","interval":"0s"}]}}}`
+	if _, err := Parse([]byte(body)); err == nil {
+		t.Fatal("a zero interval was accepted")
+	}
+}
+
+// errFromParse fails the test unless parsing returns an error.
+func errFromParse(t *testing.T, body string) error {
+	t.Helper()
+	_, err := Parse([]byte(body))
+	if err == nil {
+		t.Fatalf("Parse(%s) succeeded, want a validation error", body)
+	}
+	return err
+}
