@@ -42,6 +42,9 @@ type Registry struct {
 	// The Wayland owner receives from it; the registry owns it and never
 	// closes it.
 	invalidations chan wayland.Invalidation
+	aux           chan wayland.AuxRequest
+	panels        PanelSet
+	panelHosts    map[PanelID]*PanelHost
 	// closed unblocks a pending publish at shutdown.
 	closed    chan struct{}
 	closeOnce sync.Once
@@ -61,6 +64,8 @@ func NewRegistry(cfg config.Config) *Registry {
 			cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit)),
 		themeGen:      gen,
 		invalidations: make(chan wayland.Invalidation, 8),
+		aux:           make(chan wayland.AuxRequest, 8),
+		panelHosts:    make(map[PanelID]*PanelHost),
 		closed:        make(chan struct{}),
 		dwell:         newDwell(defaultDwell),
 	}
@@ -240,6 +245,7 @@ func (r *Registry) Close() {
 	r.closeOnce.Do(func() { close(r.closed) })
 
 	r.mu.Lock()
+	r.closeAllPanelsLocked()
 	var leases []*services.Lease
 	for global, held := range r.leases {
 		leases = append(leases, held...)
@@ -286,9 +292,13 @@ func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
 			changed = append(changed, global)
 		}
 	}
+	monitorOut, monitorOK := r.panels.Output(PanelMonitor)
 	r.mu.Unlock()
 
 	r.publish(changed)
+	if monitorOK {
+		r.publishSurface(monitorOut, panelSurfaceID(PanelMonitor))
+	}
 	return changed
 }
 

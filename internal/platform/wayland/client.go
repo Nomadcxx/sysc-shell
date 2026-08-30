@@ -50,10 +50,14 @@ type Event struct {
 	Key uint32
 }
 
-// Invalidation requests a redraw of one bar, named by its wl_registry global.
-// A zero Global invalidates every bar; the compositor never assigns 0 as a
-// global name, so it is free to use as the broadcast sentinel.
-type Invalidation struct{ Global uint32 }
+// Invalidation requests a redraw. Global names the wl_registry output; a zero
+// Global invalidates every bar. SurfaceID, when set, names one aux unit on
+// that output instead of the bar. The compositor never assigns 0 as a global
+// name, so it is free to use as the broadcast sentinel.
+type Invalidation struct {
+	Global    uint32
+	SurfaceID string
+}
 
 // PreparedConfig holds replacement callbacks built before a reload changes
 // live state. Commit publishes their matching shell models after the Wayland
@@ -743,6 +747,21 @@ func (o *owner) nextJob() (*OutputHost, *surfaceUnit, render.Decision, render.Jo
 // output's state change never redraws another output's bar. Two bars sharing a
 // connector during reconnect overlap stay separately addressable.
 func (o *owner) invalidate(inv Invalidation) {
+	if inv.SurfaceID != "" {
+		for _, h := range o.hosts.each() {
+			if !h.alive {
+				continue
+			}
+			if inv.Global != 0 && h.global != inv.Global {
+				continue
+			}
+			if u, ok := h.aux[inv.SurfaceID]; ok {
+				u.sched.Invalidate()
+				return
+			}
+		}
+		return
+	}
 	for _, h := range o.hosts.each() {
 		if !h.alive {
 			continue

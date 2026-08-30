@@ -85,3 +85,25 @@ func TestInvalidationSkipsDeadHosts(t *testing.T) {
 		t.Fatal("a dead host was invalidated")
 	}
 }
+
+func TestInvalidationSurfaceIDRoutesToAuxNotBar(t *testing.T) {
+	t.Parallel()
+	s := newHostSet()
+	h := mappedHost(s, 1, "DP-1")
+	u := newSurfaceUnit("panel:session")
+	u.sched.Configure(10, 10)
+	_ = u.sched.Submitted(0)
+	_ = u.sched.Frame()
+	_ = u.sched.Release(0)
+	h.aux["panel:session"] = u
+
+	o := &owner{hosts: s}
+	o.invalidate(Invalidation{Global: 1, SurfaceID: "panel:session"})
+
+	if d, _ := h.bar.sched.Next(); d == render.DecisionRender {
+		t.Fatal("a SurfaceID invalidation redrew the bar")
+	}
+	if d, _ := u.sched.Next(); d != render.DecisionRender {
+		t.Fatal("the named aux unit was not invalidated")
+	}
+}
