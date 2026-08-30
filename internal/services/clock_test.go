@@ -136,3 +136,91 @@ func TestCloseStopsTheGoroutine(t *testing.T) {
 	// Close must be safe to call twice; shutdown paths may both reach it.
 	c.Close()
 }
+
+func TestNextBoundaryAligns(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		now      time.Time
+		boundary time.Duration
+		want     time.Time
+	}{
+		{
+			name:     "mid minute rounds up to the next minute",
+			now:      time.Date(2026, 8, 30, 15, 4, 37, 500_000_000, time.UTC),
+			boundary: time.Minute,
+			want:     time.Date(2026, 8, 30, 15, 5, 0, 0, time.UTC),
+		},
+		{
+			// Exactly on a boundary must advance, never return now, or the
+			// goroutine would spin on a zero-length timer.
+			name:     "exactly on a boundary advances",
+			now:      time.Date(2026, 8, 30, 15, 4, 0, 0, time.UTC),
+			boundary: time.Minute,
+			want:     time.Date(2026, 8, 30, 15, 5, 0, 0, time.UTC),
+		},
+		{
+			name:     "sub second rounds up to the next second",
+			now:      time.Date(2026, 8, 30, 15, 4, 37, 250_000_000, time.UTC),
+			boundary: time.Second,
+			want:     time.Date(2026, 8, 30, 15, 4, 38, 0, time.UTC),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := nextBoundary(tc.now, tc.boundary); !got.Equal(tc.want) {
+				t.Fatalf("nextBoundary(%v, %v) = %v, want %v", tc.now, tc.boundary, got, tc.want)
+			}
+		})
+	}
+}
+
+// One tick reaches the consumer, aligned to the second boundary.
+func TestASecondBoundaryTickIsDelivered(t *testing.T) {
+	t.Parallel()
+	c := NewClock()
+	t.Cleanup(c.Close)
+
+	lease, err := c.Acquire(time.Second)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer lease.Release()
+
+	select {
+	case now := <-c.Updates():
+		// The publish happens just after the boundary, so the sub-second
+		// remainder is small. A generous bound keeps this stable under load
+		// while still failing an unaligned ticker.
+		if off := now.Sub(now.Truncate(time.Second)); off > 500*time.Millisecond {
+			t.Fatalf("tick landed %v past the second boundary, want it aligned", off)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no tick arrived within three seconds")
+	}
+}
+
+// The channel holds only the newest time, so a slow consumer coalesces rather
+// than queueing stale values.
+func TestUpdatesKeepOnlyTheNewestTime(t *testing.T) {
+	t.Parallel()
+	c := NewClock()
+	t.Cleanup(c.Close)
+
+	older := time.Date(2026, 8, 30, 15, 4, 0, 0, time.UTC)
+	newer := time.Date(2026, 8, 30, 15, 5, 0, 0, time.UTC)
+	send(c.updates, older)
+	send(c.updates, newer)
+
+	got := <-c.Updates()
+	if !got.Equal(newer) {
+		t.Fatalf("received %v, want the newest %v", got, newer)
+	}
+	select {
+	case extra := <-c.Updates():
+		t.Fatalf("a second value %v was queued behind the newest", extra)
+	default:
+	}
+}
