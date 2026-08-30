@@ -30,6 +30,8 @@ const (
 	EventPointerRelease
 	EventPointerLeave
 	EventPointerEnter
+	EventKeyPress
+	EventKeyRelease
 )
 
 // Event is one pointer event in logical surface coordinates, which match the
@@ -43,6 +45,9 @@ type Event struct {
 	Button uint32
 	// Serial is the input serial. Recorded now, first consumed at Milestone 4.
 	Serial uint32
+	// Key is the evdev code from wl_keyboard.key. Set on key events only.
+	// The compositor already reports evdev; do not subtract 8.
+	Key uint32
 }
 
 // Invalidation requests a redraw of one bar, named by its wl_registry global.
@@ -165,13 +170,16 @@ type owner struct {
 	scaleMgr   *fractionalscale.WpFractionalScaleManagerV1
 	viewporter *viewporter.WpViewporter
 	pointer    *client.Pointer
+	keyboard   *client.Keyboard
 
 	// hosts holds every bound wl_output, keyed by registry global name. Every
 	// ready host carries its own bar.
 	hosts *hostSet
-	// focus identifies the bar the pointer is on and the latest logical
+	// focus identifies the surface the pointer is on and the latest logical
 	// coordinates, replacing the single boolean the proof used.
 	focus pointerFocus
+	// keyFocus is the surface that currently has keyboard enter.
+	keyFocus keyFocus
 	// cfg is the live configuration. It is replaced only after a candidate has
 	// resolved for every connected output.
 	cfg *config.Config
@@ -361,6 +369,10 @@ func (o *owner) destroyGlobals() error {
 		errs = append(errs, o.pointer.Release())
 		o.pointer = nil
 	}
+	if o.keyboard != nil {
+		errs = append(errs, o.keyboard.Release())
+		o.keyboard = nil
+	}
 	return errors.Join(errs...)
 }
 
@@ -375,26 +387,26 @@ func (o *owner) onSeatCapabilities(e client.SeatCapabilitiesEvent) {
 		}
 		o.pointer = pointer
 		pointer.SetEnterHandler(func(e client.PointerEnterEvent) {
-			if h, ok := o.hostBySurface(e.Surface); ok {
-				o.enterSurface(h, e.SurfaceX, e.SurfaceY, e.Serial)
+			if h, u, ok := o.unitBySurface(e.Surface); ok {
+				o.enterUnit(h, u, e.SurfaceX, e.SurfaceY, e.Serial)
 			}
 		})
 		pointer.SetLeaveHandler(func(e client.PointerLeaveEvent) {
-			if h, ok := o.hostBySurface(e.Surface); ok {
-				o.leaveSurface(h)
+			if _, u, ok := o.unitBySurface(e.Surface); ok {
+				o.leaveUnit(u)
 			}
 		})
 		pointer.SetMotionHandler(func(e client.PointerMotionEvent) {
-			if o.focus.host == nil {
+			if o.focus.unit == nil {
 				return
 			}
 			o.focus.x, o.focus.y = e.SurfaceX, e.SurfaceY
-			o.deliver(o.focus.host, Event{
+			o.deliverUnit(o.focus.host, o.focus.unit, Event{
 				Kind: EventPointerMotion, X: e.SurfaceX, Y: e.SurfaceY,
 			})
 		})
 		pointer.SetButtonHandler(func(e client.PointerButtonEvent) {
-			if o.focus.host == nil {
+			if o.focus.unit == nil {
 				return
 			}
 			kind := EventPointerRelease
@@ -403,7 +415,7 @@ func (o *owner) onSeatCapabilities(e client.SeatCapabilitiesEvent) {
 			}
 			// A button event carries no coordinates, so the focus position is
 			// what the press acts on.
-			o.deliver(o.focus.host, Event{
+			o.deliverUnit(o.focus.host, o.focus.unit, Event{
 				Kind: kind, Button: e.Button, Serial: e.Serial,
 				X: o.focus.x, Y: o.focus.y,
 			})
@@ -413,6 +425,32 @@ func (o *owner) onSeatCapabilities(e client.SeatCapabilitiesEvent) {
 		o.clearFocus()
 		o.fail(o.pointer.Release())
 		o.pointer = nil
+	}
+
+	hasKeyboard := e.Capabilities&uint32(client.SeatCapabilityKeyboard) != 0
+	switch {
+	case hasKeyboard && o.keyboard == nil:
+		keyboard, err := o.seat.GetKeyboard()
+		if err != nil {
+			o.fail(fmt.Errorf("wayland: get keyboard: %w", err))
+			return
+		}
+		o.keyboard = keyboard
+		keyboard.SetEnterHandler(func(e client.KeyboardEnterEvent) {
+			if h, u, ok := o.unitBySurface(e.Surface); ok {
+				o.enterKeyboard(h, u)
+			}
+		})
+		keyboard.SetLeaveHandler(func(client.KeyboardLeaveEvent) {
+			o.leaveKeyboard()
+		})
+		keyboard.SetKeyHandler(func(e client.KeyboardKeyEvent) {
+			o.deliverKey(e.Serial, e.Key, e.State)
+		})
+	case !hasKeyboard && o.keyboard != nil:
+		o.leaveKeyboard()
+		o.fail(o.keyboard.Release())
+		o.keyboard = nil
 	}
 }
 
@@ -908,8 +946,9 @@ func (o *owner) teardownSurface(h *OutputHost) error {
 	h.bar.retiring = nil
 
 	// clearFocus delivers a leave, so pressed-node state does not survive into
-	// a recreated surface.
-	if o.focus.host == h {
+	// a recreated surface. Aux pointer focus is left alone so a bar rebuild
+	// during reload does not steal a mapped panel.
+	if o.focus.unit == h.bar {
 		o.clearFocus()
 	}
 	// Unwind viewport, fractional-scale, layer surface and wl_surface; the
@@ -1066,8 +1105,11 @@ func (o *owner) teardownHost(h *OutputHost) error {
 	if err := h.bar.dropFrameCallback(); err != nil {
 		errs = append(errs, err)
 	}
-	if o.focus.host == h {
+	if o.focus.unit == h.bar {
 		o.clearFocus()
+	}
+	if o.keyFocus.host == h {
+		o.leaveKeyboard()
 	}
 	if _, err := h.bar.cleanup.unwind(); err != nil {
 		errs = append(errs, err)

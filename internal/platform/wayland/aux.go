@@ -148,8 +148,11 @@ func (o *owner) closeAux(h *OutputHost, id string) {
 		return
 	}
 	delete(h.aux, id)
-	if o.focus.host == h {
+	if o.focus.unit == u {
 		o.clearFocus()
+	}
+	if o.keyFocus.unit == u {
+		o.leaveKeyboard()
 	}
 	_ = o.teardownUnit(u)
 	if o.cb.DropAux != nil {
