@@ -17,7 +17,9 @@ machinery. The tray service owns D-Bus items and menu revisions; the shell owns 
 ## Prerequisites
 
 - 5A's protocol-client pattern, `KindImage`, cache, and worker have landed.
-- M3/M4 tooltip, auxiliary update, input routing, virtual list, and root coordinator have landed.
+- M3 tooltip fixes `sysc-32`, `sysc-33`, and `sysc-34`, M4 input routing and virtual list, and the M5
+  auxiliary-update/root-coordinator prerequisite plan have landed.
+- `sysc-51` is fixed upstream and the shell pins the fixed `sysc-wayland` tag.
 - `sysc-tray v0.1.0-rc.1` exists. Start clean and reject local `replace` directives.
 
 ---

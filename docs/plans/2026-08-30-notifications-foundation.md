@@ -10,7 +10,7 @@ snapshots on the Wayland owner. One toast surface per output reports aggregate p
 the service. M3/M4 provide auxiliary surfaces and root ownership; 5A adds one shared raster node.
 
 **Tech Stack:** Go 1.26, pinned `sysc-notify v0.1.0-rc.1`, existing Wayland bindings, standard-library
-image packages, existing pure-Go SVG dependency only if already pinned.
+image packages, and one explicitly selected and pinned bounded pure-Go SVG parser if required.
 
 **Design:** `docs/plans/2026-08-30-notifications-foundation-design.md`
 
@@ -18,7 +18,9 @@ image packages, existing pure-Go SVG dependency only if already pinned.
 
 ## Prerequisites
 
-- M3 Tasks 9-11, M4 4A/4B, and their fake-compositor gates have landed.
+- M3 tooltip fixes `sysc-32`, `sysc-33`, and `sysc-34` have landed.
+- `docs/plans/2026-09-01-milestone-5-shell-prerequisites.md` has landed.
+- `sysc-51` is fixed upstream and the shell pins the fixed `sysc-wayland` tag.
 - `sysc-notify v0.1.0-rc.1` exists and its protocol package is standard-library-only.
 - Start from a clean worktree. Reject `go.mod` changes containing a local `replace`.
 
@@ -68,18 +70,22 @@ Never replay a command after an unknown outcome.
 ### Task 3: Shared raster node and bounded icon path
 
 **Files:**
-- Modify: `internal/ui/tree.go`, `internal/render/paint.go`
+- Modify: `internal/ui/tree.go`, `internal/ui/layout.go`, `internal/ui/column.go`, `internal/render/paint.go`
 - Create: `internal/render/image.go`, `internal/icons/theme.go`, `internal/icons/worker.go`
-- Test: `internal/render/image_test.go`, `internal/icons/theme_test.go`, `internal/icons/worker_test.go`
+- Test: `internal/ui/layout_test.go`, `internal/ui/column_test.go`, `internal/render/image_test.go`, `internal/icons/theme_test.go`, `internal/icons/worker_test.go`
 
-**Step 1:** Write failing tests for `KindImage` measurement, premultiplied alpha paint, scale keys,
+**Step 1:** Write failing tests for `KindImage` measurement through both row and column paths,
+premultiplied alpha paint, scale keys,
 normal/overlay composition, theme inheritance, PNG/JPEG decode, bounded SVG raster, cancellation,
 duplicate-job collapse, 32-job queue, 256-entry/32-MiB cache, and malformed fallback.
+If the exhaustive `kindCount` coverage table has landed, add `KindImage` to it; do not weaken the
+sentinel.
 
-**Step 2:** Add one image node and painter. Extend the existing icon-theme lookup instead of adding a
-notification-only resolver. Prefer SVG then raster. Enforce the integration-design SVG limits before
-the bounded pure-Go raster path. One worker decodes/rasterizes outside the Wayland owner and publishes
-immutable results.
+**Step 2:** Add one image node and painter plus one shared XDG icon-theme resolver; reuse a resolver if
+one has landed rather than adding a notification-only path. Prefer SVG then raster. No SVG parser is
+currently pinned: select and record one bounded pure-Go dependency before implementation, or stop if no
+candidate can enforce the integration-design limits. One worker decodes/rasterizes outside the Wayland
+owner and publishes immutable results.
 
 **Step 3:** Run `go test -race -count=1 ./internal/render/ ./internal/icons/`. Expected: PASS.
 

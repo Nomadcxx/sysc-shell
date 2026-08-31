@@ -202,6 +202,7 @@ the M4 surface vocabulary and tagged service releases.
 | `2026-08-30-notifications-and-tray-audit-handover.md` | audit-handover | Commissions the cross-repository design and plan audit for Tranches 5A and 5B. |
 | `2026-08-30-notifications-and-tray-audit-report.md` | audit-report | Redesign required for both tranches; records service-contract, lifetime, release, persistence, and menu blockers. |
 | `2026-08-31-notifications-and-tray-integration-design.md` | design | Corrected cross-repository ownership, parity, shared M3/M4 primitives, limits, release order, and gates. |
+| `2026-09-01-milestone-5-shell-prerequisites.md` | plan | `AuxUpdate` and process-wide interactive-root ownership required before 5A. |
 | `/home/nomadx/.config/superpowers/worktrees/sysc-notify/redesign/v0.1/docs/plans/2026-08-31-sysc-notify-v0.1.md` | service plan | Executable notify service and candidate/stable release gates. |
 | `/home/nomadx/.config/superpowers/worktrees/sysc-tray/redesign/v0.1/docs/plans/2026-08-31-sysc-tray-v0.1.md` | service plan | Executable tray service and candidate/stable release gates. |
 

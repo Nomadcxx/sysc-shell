@@ -171,9 +171,9 @@ Open-Meteo request merely to fill a tooltip.
 
 ### Tranche 4A correction
 
-M4 treats the 3D surface extraction and basic auxiliary open/close path as complete. Its Wayland task
-adds keyboard binding, per-surface input routing, and `AuxUpdate` for keyboard interactivity and input
-regions. Reload keeps panels and OSDs mapped but closes transient tooltips.
+M4 landed the 3D surface extraction, basic auxiliary open/close path, keyboard binding, and per-surface
+input routing. It did not land `AuxUpdate`. The M5 prerequisite plan adds that operation for keyboard
+interactivity and input regions. Reload keeps panels and OSDs mapped but closes transient tooltips.
 
 M5 adds no second auxiliary host. 5A uses `AuxUpdate` when inline reply changes keyboard from None to
 OnDemand and when card input regions change.
@@ -184,8 +184,9 @@ OnDemand and when card input regions change.
 notifications and tray use it. Existing meter, button, text field, virtual list, and roving-focus nodes
 remain the control vocabulary.
 
-M4's panel set grows into a process-wide root coordinator. Panels, notification center, tray drawer,
-tray menu, and inline reply participate. A drawer or panel may own an attached tray popup. Tooltips,
+The M5 prerequisite plan grows M4's panel set into a process-wide root coordinator. Panels,
+notification center, tray drawer, tray menu, and inline reply participate. A drawer or panel may own
+an attached tray popup. Tooltips,
 OSDs, and ordinary toasts remain noninteractive and sit outside the chain. Opening a root closes any
 tooltip and releases the old root's keyboard, text-input, serials, and service leases.
 
@@ -217,10 +218,16 @@ protocol errors discard the connection generation. Notify service loss closes to
 inline-reply keyboard. Tray service loss closes its tooltip, menu, and drawer and removes tray
 projections. Popup failure leaves the icon and non-menu actions usable.
 
+The currently pinned `sysc-wayland v0.2.0` still treats an unknown object-typed event argument as a
+`new_id`; a queued pointer or keyboard enter for a destroyed client surface therefore panics. M5 does
+not work around this in the shell. Fix the generator upstream, tag a later release, repin, and retain a
+dispatch regression test before transient M5 surfaces enter live qualification.
+
 ## Release and dependency order
 
-1. Amend the 3D and 4A plans before either reaches the overlapping Wayland work.
-2. Write and execute `sysc-notify` and `sysc-tray` v0.1 plans. Each freezes and tests its protocol before
+1. Merge the M3 tooltip fixes, execute the M5 shell-prerequisite plan, and repin a `sysc-wayland`
+   release that safely ignores unknown object references.
+2. Execute the committed `sysc-notify` and `sysc-tray` v0.1 plans. Each freezes and tests its protocol before
    shell code imports it.
 3. Tag both modules `v0.1.0-rc.1`.
 4. Implement shell 5A against the notify tag and shared M3/M4 primitives.
