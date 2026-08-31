@@ -90,7 +90,22 @@ func layoutCapsuleChild(n *Node, measure MeasureText) error {
 	}
 	switch child.Kind {
 	case KindRow:
-		return Layout(child, inner, measure)
+		// A section can grant a capsule less than it measured when the band is
+		// tight. The row is then laid out at its natural width and clipped by
+		// the capsule rather than failing the whole surface: a squeezed bar
+		// should degrade, not refuse to configure.
+		w, h, err := measureNode(child, inner.H, measure)
+		if err != nil {
+			return err
+		}
+		box := inner
+		if w > box.W {
+			box.W = w
+		}
+		if h > box.H {
+			box.H = h
+		}
+		return Layout(child, box, measure)
 	case KindColumn:
 		return LayoutColumn(child, inner, measure)
 	}
@@ -135,6 +150,7 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		// case exists for a row inside a capsule, which is how the workspace
 		// pill strip is built.
 		w := 2 * n.Padding
+		tallest := 0
 		for i, child := range n.Children {
 			if child == nil {
 				return 0, 0, fmt.Errorf("row child %d is nil", i)
@@ -142,13 +158,23 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 			if i > 0 {
 				w += n.Gap
 			}
-			cw, _, err := measureNode(child, max(contentHeight-2*n.Padding, 0), measure)
+			cw, ch, err := measureNode(child, max(contentHeight-2*n.Padding, 0), measure)
 			if err != nil {
 				return 0, 0, err
 			}
 			w += cw
+			if ch > tallest {
+				tallest = ch
+			}
 		}
-		return w, contentHeight, nil
+		// Report the tallest child rather than the band offered. A caller that
+		// clamps a nested row to the offered height would otherwise crop text
+		// measured at the physical size, which rounds up.
+		h := tallest + 2*n.Padding
+		if h < contentHeight {
+			h = contentHeight
+		}
+		return w, h, nil
 	case KindCapsule:
 		// An empty capsule is a dot: square, sized by Width.
 		if len(n.Children) == 0 {

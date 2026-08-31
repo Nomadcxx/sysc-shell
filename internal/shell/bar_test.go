@@ -249,7 +249,7 @@ func TestBarArrangesSectionsInsideTheContentBand(t *testing.T) {
 		}
 	}
 	// workspace, window-title, two clocks, and three status widgets.
-	if arranged != 7 {
-		t.Fatalf("arranged %d items, want the full default bar", arranged)
+	if arranged != 6 {
+		t.Fatalf("arranged %d items, want the full default bar (cpu and memory now share a group)", arranged)
 	}
 }

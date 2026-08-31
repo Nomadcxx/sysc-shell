@@ -658,11 +658,22 @@ func (r *Registry) buildBar(cfg config.Config, connector string, tok theme.Token
 }
 
 // allItems is every configured item across the three sections.
+// allItems flattens every section, descending one level into a group. A group
+// is chrome: its members are the widgets that need service leases, so a
+// selector nested in one must still be acquired or the group renders
+// placeholders forever.
 func allItems(policy config.Bar) []config.Item {
 	out := make([]config.Item, 0, len(policy.Left)+len(policy.Center)+len(policy.Right))
-	out = append(out, policy.Left...)
-	out = append(out, policy.Center...)
-	return append(out, policy.Right...)
+	for _, section := range [][]config.Item{policy.Left, policy.Center, policy.Right} {
+		for _, item := range section {
+			if item.ID == "group" {
+				out = append(out, item.Items...)
+				continue
+			}
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // weatherUnit maps the validated configuration string to the service unit.

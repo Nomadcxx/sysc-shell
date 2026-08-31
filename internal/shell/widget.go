@@ -49,6 +49,13 @@ type textWidget struct {
 	tooltip string
 }
 
+// groupGap separates members inside a group capsule. noCapsule tells
+// buildWidgets to leave a member unwrapped.
+const (
+	groupGap  = 10
+	noCapsule = -1
+)
+
 // workspacePillGap separates adjacent workspace pills, and matches the
 // measured gap in the reference bar.
 const workspacePillGap = 8
@@ -121,8 +128,10 @@ func workspacePillsMatch(row *ui.Node, pills []workspacePill) bool {
 
 // capsuled wraps one built widget in its pill. Wrapping happens in a single
 // place so no builder has to know about bar chrome.
+// A negative padding means do not wrap. Group members render flat inside their
+// group's capsule rather than each gaining one of their own.
 func capsuled(w textWidget, pad int) textWidget {
-	if w.node == nil || w.node.Kind == ui.KindCapsule {
+	if pad < 0 || w.node == nil || w.node.Kind == ui.KindCapsule {
 		return w
 	}
 	w.inner = w.node
@@ -170,6 +179,31 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 					return text
 				},
 			})
+		case "group":
+			// One capsule holding its members as a flat row. Members are not
+			// individually capsuled: two nested surfaces read as one blob at
+			// the palette contrast a bar uses.
+			row := &ui.Node{Kind: ui.KindRow, Gap: groupGap}
+			members := buildWidgets(item.Items, noCapsule)
+			g := textWidget{node: row}
+			for _, m := range members {
+				row.Children = append(row.Children, m.node)
+			}
+			g.refresh = func(v barView) bool {
+				changed := false
+				for _, m := range members {
+					if m.refresh != nil {
+						changed = m.refresh(v) || changed
+						continue
+					}
+					if text := m.format(v); text != m.node.Text {
+						m.node.Text = text
+						changed = true
+					}
+				}
+				return changed
+			}
+			out = append(out, g)
 		case "battery":
 			node := &ui.Node{Kind: ui.KindText}
 			out = append(out, textWidget{
@@ -194,6 +228,11 @@ func clockBoundaries(sections ...[]config.Item) []time.Duration {
 	var out []time.Duration
 	for _, section := range sections {
 		for _, item := range section {
+			// A clock inside a group still needs its tick lease.
+			if item.ID == "group" {
+				out = append(out, clockBoundaries(item.Items)...)
+				continue
+			}
 			if item.ID == "clock" && item.Boundary > 0 {
 				out = append(out, item.Boundary)
 			}

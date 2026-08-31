@@ -218,3 +218,48 @@ func pillIndices(n *ui.Node) []string {
 	}
 	return out
 }
+
+func TestAGroupRendersOneCapsuleHoldingFlatMembers(t *testing.T) {
+	t.Parallel()
+	widgets := buildWidgets([]config.Item{{ID: "group", Items: []config.Item{
+		{ID: "cpu", Display: "text"},
+		{ID: "memory", Display: "text"},
+	}}}, 8)
+	if len(widgets) != 1 {
+		t.Fatalf("built %d widgets, want one group", len(widgets))
+	}
+	g := widgets[0].node
+	if g.Kind != ui.KindCapsule || g.Padding != 8 {
+		t.Fatalf("group root = kind %d padding %d, want a padded capsule", g.Kind, g.Padding)
+	}
+	row := g.Children[0]
+	if row.Kind != ui.KindRow || len(row.Children) != 2 {
+		t.Fatalf("group holds %+v, want a row of two members", row)
+	}
+	for i, m := range row.Children {
+		if m.Kind == ui.KindCapsule {
+			t.Errorf("member %d is capsuled; members must be flat inside the group", i)
+		}
+	}
+	// The group drives its members rather than formatting itself.
+	if widgets[0].format != nil {
+		t.Error("a group should refresh its members, not format text")
+	}
+	if widgets[0].refresh == nil {
+		t.Error("a group has no refresh, so its members would never update")
+	}
+}
+
+// A selector nested in a group still needs its service lease, or the group
+// renders placeholders forever.
+func TestGroupedMetricsStillAcquireTheirLeases(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9"})
+
+	if !reg.Metrics().Running() {
+		t.Fatal("the default bar groups cpu and memory, and neither leased the sampler")
+	}
+}

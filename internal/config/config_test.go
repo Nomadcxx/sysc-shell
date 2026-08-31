@@ -216,8 +216,14 @@ func TestDefaultVocabularyShipsBothClocksAndBothNiriWidgets(t *testing.T) {
 		}
 	}
 	for _, item := range cfg.Bar.Right {
-		if item.Interval <= 0 {
-			t.Fatalf("default status widget %+v has no sampling interval", item)
+		members := item.Items
+		if len(members) == 0 {
+			members = []Item{item}
+		}
+		for _, m := range members {
+			if m.Interval <= 0 {
+				t.Fatalf("default status widget %q has no sampling interval", m.ID)
+			}
 		}
 	}
 }

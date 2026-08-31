@@ -23,6 +23,10 @@ type Item struct {
 	// MaxWidth caps a window title in logical pixels. Zero on other items.
 	MaxWidth int
 
+	// Items are the members of a group item, rendered inside one shared
+	// capsule. Empty on every other id, and a group may not nest.
+	Items []Item
+
 	// Display is "text", "meter" or "graph" on a metric item. Empty elsewhere.
 	Display string
 	// Interval is the sampling interval for a metric item. Zero elsewhere.
@@ -128,6 +132,9 @@ var knownItems = map[string]struct{}{
 	"clock": {}, "workspace": {}, "window-title": {},
 	"cpu": {}, "memory": {}, "filesystem": {}, "block": {}, "network": {},
 	"weather": {}, "battery": {},
+	// group holds other items inside one capsule. It carries no options of
+	// its own; every option belongs to a nested item.
+	"group": {},
 }
 
 // fractionSources yield a value between zero and one, which a meter can fill.
@@ -206,8 +213,10 @@ func Default() Config {
 				{ID: "clock", Format: defaultDateFormat, Boundary: time.Minute},
 			},
 			Right: []Item{
-				{ID: "cpu", Display: "text", Interval: defaultMetricInterval},
-				{ID: "memory", Display: "text", Interval: defaultMetricInterval},
+				{ID: "group", Items: []Item{
+					{ID: "cpu", Display: "text", Interval: defaultMetricInterval},
+					{ID: "memory", Display: "text", Interval: defaultMetricInterval},
+				}},
 				{ID: "battery", Interval: defaultMetricInterval},
 			},
 		},
