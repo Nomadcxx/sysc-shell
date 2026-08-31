@@ -58,12 +58,12 @@ func TestEscapeClosesPanel(t *testing.T) {
 func TestTabMovesRovingFocus(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
-	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
 		t.Fatal(err)
 	}
 	reqs := drainAux(t, reg, 2)
 	handle := reqs[1].Open.Callbacks.Handle
-	h := reg.panelHosts[PanelSettings]
+	h := reg.panelHosts[PanelSession]
 	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyTab})
 	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyTab})
 	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyLeftShift})
@@ -75,14 +75,17 @@ func TestTabMovesRovingFocus(t *testing.T) {
 
 func TestSpaceActivatesFocusedButton(t *testing.T) {
 	t.Parallel()
+	old := runArgv
+	t.Cleanup(func() { runArgv = old })
+	runArgv = func([]string) error { return nil }
 	reg := newPanelRegistry(t)
-	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
 		t.Fatal(err)
 	}
 	reqs := drainAux(t, reg, 2)
 	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keySpace})
-	if got := reg.panelHosts[PanelSettings].lastAction; got != "lock" {
-		t.Fatalf("activated %q, want lock", got)
+	if _, ok := reg.panelHosts[PanelSession]; ok {
+		t.Fatal("space did not activate the focused session action")
 	}
 }
 

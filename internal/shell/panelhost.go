@@ -3,6 +3,7 @@ package shell
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -71,6 +73,14 @@ type PanelHost struct {
 	monthDelta     int
 	errLabel       string
 	menu           *Menu
+	menuPath       string
+	menus          map[string]*Menu
+	set            *settings.Registry
+	draft          config.Config
+	query          string
+	section        string
+	search         *ui.Field
+	fields         map[string]*ui.Field
 }
 
 func parsePanelName(name string) (PanelID, error) {
@@ -82,7 +92,7 @@ func parsePanelName(name string) (PanelID, error) {
 	case "session":
 		return PanelSession, nil
 	case "settings":
-		return 0, fmt.Errorf("not yet available")
+		return PanelSettings, nil
 	default:
 		return 0, fmt.Errorf("unknown panel")
 	}
@@ -240,6 +250,9 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		Panel:   panelTargetSize(id),
 		Align:   trig.Align,
 	}
+	if id == PanelSettings && place.Align == "" {
+		place.Align = "center"
+	}
 	w, hgt := place.FittedSize()
 	place.Panel.W, place.Panel.H = w, hgt
 	margins := place.Margins()
@@ -250,6 +263,14 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		place:    place,
 		stopAnim: make(chan struct{}),
 		theme:    ThemeFromTokens(r.tokens, 12),
+	}
+	if id == PanelSettings {
+		h.set = settings.Default()
+		h.draft = r.cfg
+		h.section = "Bar"
+		h.search = ui.NewField("")
+		h.menus = map[string]*Menu{}
+		h.fields = map[string]*ui.Field{}
 	}
 	h.root = r.panelTree(h)
 	h.focus = ui.Focusables(h.root)
@@ -411,7 +432,11 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 func (h *PanelHost) configure(w, height, scale120 int) error {
 	h.logicalW, h.logicalH, h.scale120 = w, height, scale120
 	measure := func(s string, _ bool) (int, int) { return len(s) * 8, 16 }
-	return ui.LayoutColumn(h.root, ui.Rect{W: w, H: height}, measure)
+	box := ui.Rect{W: w, H: height}
+	if h.root != nil && h.root.Kind == ui.KindRow {
+		return ui.Layout(h.root, box, measure)
+	}
+	return ui.LayoutColumn(h.root, box, measure)
 }
 
 func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
@@ -446,7 +471,7 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 		case wayland.EventKeyPress:
 			return h.keyPress(r, e.Key)
 		case wayland.EventIME:
-			return h.applyIME(e)
+			return h.applyIME(r, e)
 		case wayland.EventPointerAxis:
 			return h.scrollAxis(e)
 		case wayland.EventKeyRelease:
@@ -481,17 +506,30 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 }
 
 func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
-	if h.menu != nil && h.menu.Handle(key) {
+	if h.menu != nil && h.menu.Opened() {
+		if !h.menu.Handle(key) {
+			return false
+		}
+		if !h.menu.Opened() && key != keyEsc {
+			h.applyMenu(h.menuPath)
+		}
+		r.rebuildPanel(h)
 		return true
 	}
 	if key == keyBackspace {
-		return h.editField(func(f *ui.Field) { f.Backspace() })
+		return h.editField(r, func(f *ui.Field) { f.Backspace() })
 	}
 	switch key {
 	case keyLeftShift:
 		h.shift = true
 		return false
 	case keyEsc:
+		if h.id == PanelSettings && h.query != "" {
+			h.query = ""
+			h.search = ui.NewField("")
+			r.rebuildPanel(h)
+			return true
+		}
 		r.closePanelLocked(h.id)
 		return true
 	case keyTab:
@@ -582,8 +620,8 @@ func findScroll(n *ui.Node) *ui.Node {
 	return nil
 }
 
-func (h *PanelHost) applyIME(e wayland.Event) bool {
-	return h.editField(func(f *ui.Field) {
+func (h *PanelHost) applyIME(r *Registry, e wayland.Event) bool {
+	return h.editField(r, func(f *ui.Field) {
 		f.DeleteSurrounding(int(e.IMEDeleteBefore), int(e.IMEDeleteAfter))
 		if e.IMECommit != "" {
 			f.Commit(e.IMECommit)
@@ -592,14 +630,41 @@ func (h *PanelHost) applyIME(e wayland.Event) bool {
 	})
 }
 
-func (h *PanelHost) editField(fn func(*ui.Field)) bool {
+func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 	n := h.focused()
 	if n == nil || n.Kind != ui.KindTextField {
 		return false
 	}
-	f := &ui.Field{Text: n.Text, PreeditText: n.Preedit, Cursor: n.Cursor}
+	var f *ui.Field
+	if n.Name == "Search" {
+		if h.search == nil {
+			h.search = ui.NewField("")
+		}
+		h.search.SyncFrom(n)
+		f = h.search
+	} else {
+		path, _ := strings.CutPrefix(n.Action, "set:")
+		if h.fields == nil {
+			h.fields = map[string]*ui.Field{}
+		}
+		f = h.fields[path]
+		if f == nil {
+			f = &ui.Field{Text: n.Text, PreeditText: n.Preedit, Cursor: n.Cursor}
+			h.fields[path] = f
+		} else {
+			f.SyncFrom(n)
+		}
+	}
 	fn(f)
 	f.SyncTo(n)
+	if n.Name == "Search" {
+		h.query = f.Text
+		idx := h.roving.Index()
+		r.rebuildPanel(h)
+		h.roving.Set(idx)
+		return true
+	}
+	h.applySetting(n)
 	return true
 }
 
@@ -615,7 +680,11 @@ func (h *PanelHost) adjustSlider(key uint32) bool {
 	if n == nil || n.Kind != ui.KindSlider {
 		return false
 	}
-	return ui.ControlKey(n, key)
+	if !ui.ControlKey(n, key) {
+		return false
+	}
+	h.applySetting(n)
+	return true
 }
 
 func (h *PanelHost) activate(r *Registry) bool {
@@ -624,14 +693,45 @@ func (h *PanelHost) activate(r *Registry) bool {
 		return false
 	}
 	if n.Kind == ui.KindToggle {
-		return ui.Activate(n)
+		changed := ui.Activate(n)
+		h.applySetting(n)
+		return changed
 	}
 	if n.Kind == ui.KindMenu {
+		path, _ := strings.CutPrefix(n.Action, "set:")
+		if m := h.menus[path]; m != nil {
+			h.menu = m
+			h.menuPath = path
+			if !m.Opened() {
+				m.Open()
+				r.rebuildPanel(h)
+				return true
+			}
+			m.Select()
+			h.applyMenu(path)
+			r.rebuildPanel(h)
+			return true
+		}
 		if h.menu != nil && !h.menu.Opened() {
 			h.menu.Open()
 			return true
 		}
 		return false
+	}
+	if strings.HasPrefix(n.Action, "section:") {
+		h.section = strings.TrimPrefix(n.Action, "section:")
+		r.rebuildPanel(h)
+		return true
+	}
+	if path, ok := strings.CutPrefix(n.Action, "goto:"); ok {
+		if e := h.set.ByPath(path); e != nil {
+			h.section = e.Section
+			h.query = ""
+			h.search = ui.NewField("")
+			r.rebuildPanel(h)
+			h.focusByName(e.Label)
+		}
+		return true
 	}
 	h.lastAction = n.Action
 	switch n.Action {
@@ -678,6 +778,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		return monitorTree(monitorSelectors(r.cfg.ForConnector(connector)), r.sample, r.historyLocked(), h.roving.Index())
 	case PanelSession:
 		return sessionTree(r.cfg.Session.Locker, h.errLabel)
+	case PanelSettings:
+		return settingsTree(h)
 	default:
 		return placeholderTree()
 	}
@@ -689,8 +791,60 @@ func panelTargetSize(id PanelID) ui.Rect {
 		return ui.Rect{W: 360, H: 420}
 	case PanelMonitor:
 		return ui.Rect{W: 640, H: 480}
+	case PanelSettings:
+		return ui.Rect{W: 900, H: 620}
 	default:
 		return ui.Rect{W: 280, H: 200}
+	}
+}
+
+func (h *PanelHost) applySetting(n *ui.Node) {
+	if h.set == nil || n == nil {
+		return
+	}
+	path, ok := strings.CutPrefix(n.Action, "set:")
+	if !ok {
+		return
+	}
+	e := h.set.ByPath(path)
+	if e == nil {
+		return
+	}
+	var v string
+	switch n.Kind {
+	case ui.KindToggle:
+		v = "false"
+		if n.Value != 0 {
+			v = "true"
+		}
+	case ui.KindSlider:
+		v = strconv.Itoa(int(n.Value))
+	case ui.KindTextField:
+		v = n.Text
+	case ui.KindMenu:
+		v = n.Text
+	}
+	_ = e.Set(&h.draft, v)
+}
+
+func (h *PanelHost) applyMenu(path string) {
+	if h.set == nil || path == "" {
+		return
+	}
+	e := h.set.ByPath(path)
+	m := h.menus[path]
+	if e == nil || m == nil {
+		return
+	}
+	_ = e.Set(&h.draft, m.Value())
+}
+
+func (h *PanelHost) focusByName(name string) {
+	for i, n := range h.focus {
+		if n != nil && n.Name == name {
+			h.roving.Set(i)
+			return
+		}
 	}
 }
 

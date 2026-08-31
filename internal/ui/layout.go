@@ -38,12 +38,27 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 		if err != nil {
 			return fmt.Errorf("ui: child %d: %w", i, err)
 		}
-		if w < 0 || h < 0 || h > content.H || x+w > content.X+content.W {
-			return fmt.Errorf("ui: child %d of kind %d does not fit in %dx%d", i, child.Kind, content.W, content.H)
+		switch child.Kind {
+		case KindColumn:
+			box := Rect{X: x, Y: content.Y, W: w, H: content.H}
+			if err := LayoutColumn(child, box, measure); err != nil {
+				return fmt.Errorf("ui: child %d: %w", i, err)
+			}
+		case KindScroll, KindVirtualList:
+			if child.Width <= 0 {
+				w = content.X + content.W - x
+			}
+			box := Rect{X: x, Y: content.Y, W: w, H: content.H}
+			if err := layoutScroll(child, box, measure); err != nil {
+				return fmt.Errorf("ui: child %d: %w", i, err)
+			}
+		default:
+			if w < 0 || h < 0 || h > content.H || x+w > content.X+content.W {
+				return fmt.Errorf("ui: child %d of kind %d does not fit in %dx%d", i, child.Kind, content.W, content.H)
+			}
+			child.Bounds = Rect{X: x, Y: content.Y + (content.H-h)/2, W: w, H: h}
 		}
-
-		child.Bounds = Rect{X: x, Y: content.Y + (content.H-h)/2, W: w, H: h}
-		x += w
+		x += child.Bounds.W
 	}
 	return nil
 }
@@ -100,6 +115,18 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 			w = n.Width
 		}
 		return w, h + 2*n.Padding, nil
+	case KindScroll, KindVirtualList:
+		w := n.Width
+		if w <= 0 {
+			w = 400
+		}
+		return w, contentHeight, nil
+	case KindColumn:
+		w := n.Width
+		if w <= 0 {
+			w = 220
+		}
+		return w, contentHeight, nil
 	default:
 		return 0, 0, fmt.Errorf("unsupported kind %d", n.Kind)
 	}

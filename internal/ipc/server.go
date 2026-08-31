@@ -22,7 +22,7 @@ var (
 		"clock":          "",
 		"system-monitor": "",
 		"session":        "",
-		"settings":       "not yet available",
+		"settings":       "",
 	}
 )
 
