@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -86,5 +87,23 @@ func TestMovingToAnotherWidgetReplacesThePending(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("no request arrived")
+	}
+}
+
+func TestStaleDwellCallbackDoesNotShowTooltip(t *testing.T) {
+	d := newDwell(time.Hour)
+	t.Cleanup(d.stop)
+	d.enter(1, ui.Rect{X: 10, Y: 0, W: 40, H: 44}, "stale")
+
+	d.mu.Lock()
+	generation := d.generation
+	d.mu.Unlock()
+	d.leave()
+	d.fire(generation, wayland.TooltipRequest{Global: 1, Text: "stale"})
+
+	select {
+	case req := <-d.requests():
+		t.Fatalf("stale callback produced request: %+v", req)
+	default:
 	}
 }
