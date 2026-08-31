@@ -9,6 +9,10 @@ const (
 	ToggleKnob   = 16
 	SliderTrack  = 4
 	SliderKnob   = 14
+	// MeterHeight is a meter's height when it is stacked in a column. In a row
+	// a meter fills the content height, but a column has no height to fill:
+	// every child there asks for what it needs.
+	MeterHeight = 8
 
 	KeyHome  = 102
 	KeyLeft  = 105

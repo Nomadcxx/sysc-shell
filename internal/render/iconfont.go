@@ -2,6 +2,7 @@ package render
 
 import (
 	_ "embed"
+	"sort"
 	"sync"
 
 	"github.com/go-text/typesetting/font"
@@ -129,4 +130,36 @@ func BatteryIconRune(charge float64, charging, critical bool) rune {
 		return iconBatteryCharging0 + rune(level)
 	}
 	return iconBatteryLevel0 + rune(level)
+}
+
+// iconNames is the catalogue a plugin addresses. A plugin names a symbol
+// rather than supplying a codepoint or a file, so the set of glyphs that can
+// appear in the shell stays the shell's to decide, and a name the font does
+// not have is a diagnosable error instead of a missing-glyph box.
+var iconNames = map[string]rune{
+	"clear-day":     iconClearDay,
+	"partly-cloudy": iconPartlyCloudy,
+	"cloud":         iconCloud,
+	"fog":           iconFog,
+	"rain":          iconRain,
+	"snow":          iconSnow,
+	"heavy-snow":    iconHeavySnow,
+	"thunderstorm":  iconThunderstorm,
+}
+
+// IconByName resolves a catalogue name to its symbol.
+func IconByName(name string) (rune, bool) {
+	r, ok := iconNames[name]
+	return r, ok
+}
+
+// IconNames lists the catalogue in a stable order, for error messages that
+// tell a plugin author what is available.
+func IconNames() []string {
+	out := make([]string, 0, len(iconNames))
+	for name := range iconNames {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }

@@ -14,7 +14,7 @@ func timerPanel() *Node {
 		Padding: 12,
 		Gap:     8,
 		Children: []*Node{
-			{Kind: KindText, Text: "05:00", Tabular: true, Size: SizeLarge},
+			{Kind: KindText, Text: "05:00", Tabular: true},
 			{Kind: KindProgress, Value: 0.4},
 			{
 				Kind: KindTextInput, ID: "duration", Key: "duration",
@@ -361,14 +361,11 @@ func TestValidateRejectsAnUnknownViewKind(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsUnknownToneAndSize(t *testing.T) {
+func TestValidateRejectsAnUnknownTone(t *testing.T) {
 	t.Parallel()
 
 	if err := Validate(&Node{Kind: KindText, Text: "x", Tone: "chartreuse"}, ViewPanel); err == nil {
 		t.Fatal("Validate accepted an unknown tone")
-	}
-	if err := Validate(&Node{Kind: KindText, Text: "x", Size: "gigantic"}, ViewPanel); err == nil {
-		t.Fatal("Validate accepted an unknown size tier")
 	}
 }
 

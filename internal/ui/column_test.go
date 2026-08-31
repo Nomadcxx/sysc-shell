@@ -41,3 +41,37 @@ func samplePanelTree() *Node {
 		}},
 	}}
 }
+
+func TestColumnStacksAMeterAtItsOwnHeight(t *testing.T) {
+	t.Parallel()
+
+	// A meter in a row fills the content height; in a column there is no
+	// height to fill, so it asks for the fixed one.
+	root := &Node{Kind: KindColumn, Padding: 4, Gap: 2, Children: []*Node{
+		{Kind: KindText, Text: "05:00"},
+		{Kind: KindMeter, Value: 0.5},
+		{Kind: KindText, Text: "remaining"},
+	}}
+	if err := LayoutColumn(root, Rect{W: 200, H: 120}, fakeMeasure); err != nil {
+		t.Fatalf("LayoutColumn: %v", err)
+	}
+	meter := root.Children[1]
+	if meter.Bounds.H != MeterHeight {
+		t.Errorf("meter height = %d, want %d", meter.Bounds.H, MeterHeight)
+	}
+	if meter.Bounds.Y != root.Children[0].Bounds.Y+16+2 {
+		t.Errorf("meter y = %d, want it stacked below the text", meter.Bounds.Y)
+	}
+	if below := root.Children[2].Bounds.Y; below != meter.Bounds.Y+MeterHeight+2 {
+		t.Errorf("text below the meter is at %d, want it after the meter", below)
+	}
+}
+
+func TestColumnRejectsAMeterOutsideItsRange(t *testing.T) {
+	t.Parallel()
+
+	root := &Node{Kind: KindColumn, Children: []*Node{{Kind: KindMeter, Value: 1.5}}}
+	if err := LayoutColumn(root, Rect{W: 200, H: 120}, fakeMeasure); err == nil {
+		t.Fatal("LayoutColumn accepted a meter value outside zero through one")
+	}
+}

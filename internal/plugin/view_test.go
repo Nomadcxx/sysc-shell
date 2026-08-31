@@ -1,0 +1,244 @@
+package plugin
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
+)
+
+// timerBar is the Timer widget as it appears on the bar.
+func timerBar() *v1.Node {
+	return &v1.Node{Kind: v1.KindRow, Gap: 6, Children: []*v1.Node{
+		{Kind: v1.KindText, Text: "04:12", Tabular: true, MaxWidth: 80},
+		{Kind: v1.KindButton, ID: "open", Text: "Timer", Name: "Open the timer", Role: "button",
+			Events: []v1.EventKind{v1.EventActivate}},
+	}}
+}
+
+func TestConvertBuildsAShellOwnedTree(t *testing.T) {
+	t.Parallel()
+
+	got, err := Convert(timerBar(), v1.ViewBar)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if got.Kind != ui.KindRow || got.Gap != 6 {
+		t.Fatalf("root = %+v", got)
+	}
+	if len(got.Children) != 2 {
+		t.Fatalf("children = %d, want 2", len(got.Children))
+	}
+
+	text := got.Children[0]
+	if text.Kind != ui.KindText || text.Text != "04:12" || !text.Tabular || text.MaxWidth != 80 {
+		t.Errorf("text = %+v", text)
+	}
+	button := got.Children[1]
+	if button.Kind != ui.KindButton || button.Text != "Timer" {
+		t.Errorf("button = %+v", button)
+	}
+	// The accessible identity the plugin declared has to survive, because the
+	// host has no other source for it.
+	if button.Name != "Open the timer" || button.Role != "button" || !button.Focusable {
+		t.Errorf("button identity = %+v", button)
+	}
+	// The node id becomes the action, which is how an event finds its way back
+	// to the node the plugin addressed.
+	if button.Action != "open" {
+		t.Errorf("action = %q, want the node id", button.Action)
+	}
+	// Nothing on the wire can supply arranged bounds.
+	if button.Bounds != (ui.Rect{}) {
+		t.Errorf("bounds = %+v, want them unset until layout runs", button.Bounds)
+	}
+}
+
+func TestConvertMapsEveryVersionOneKind(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		node *v1.Node
+		want ui.Kind
+	}{
+		{"row", &v1.Node{Kind: v1.KindRow}, ui.KindRow},
+		{"column", &v1.Node{Kind: v1.KindColumn}, ui.KindColumn},
+		{"text", &v1.Node{Kind: v1.KindText, Text: "x"}, ui.KindText},
+		{"icon", &v1.Node{Kind: v1.KindIcon, Icon: "rain"}, ui.KindText},
+		{"progress", &v1.Node{Kind: v1.KindProgress, Value: 0.5}, ui.KindMeter},
+		{"button", &v1.Node{Kind: v1.KindButton, ID: "b", Text: "x", Name: "x", Role: "button",
+			Events: []v1.EventKind{v1.EventActivate}}, ui.KindButton},
+		{"text input", &v1.Node{Kind: v1.KindTextInput, ID: "i", Name: "i", Role: "textbox",
+			Events: []v1.EventKind{v1.EventChange}}, ui.KindTextField},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{c.node}}
+			got, err := Convert(root, v1.ViewPanel)
+			if err != nil {
+				t.Fatalf("Convert: %v", err)
+			}
+			if got.Children[0].Kind != c.want {
+				t.Fatalf("kind = %v, want %v", got.Children[0].Kind, c.want)
+			}
+		})
+	}
+}
+
+func TestConvertResolvesAnIconToItsGlyph(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{{Kind: v1.KindIcon, Icon: "thunderstorm"}}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	want, ok := render.IconByName("thunderstorm")
+	if !ok {
+		t.Fatal("the catalogue lost thunderstorm")
+	}
+	if got.Children[0].Text != string(want) {
+		t.Errorf("icon text = %q, want the catalogue glyph", got.Children[0].Text)
+	}
+}
+
+func TestConvertRejectsAnIconTheShellDoesNotHave(t *testing.T) {
+	t.Parallel()
+
+	// A name the font has no glyph for must fail loudly, not paint a
+	// missing-glyph box the user has to interpret.
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{{Kind: v1.KindIcon, Icon: "unicorn"}}}
+	_, err := Convert(root, v1.ViewPanel)
+	if err == nil {
+		t.Fatal("Convert accepted an icon the shell cannot draw")
+	}
+	if !strings.Contains(err.Error(), "unicorn") {
+		t.Fatalf("err = %v, want it to name the icon", err)
+	}
+}
+
+func TestConvertMapsToneOntoTheThemeRole(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindText, Text: "ok"},
+		{Kind: v1.KindText, Text: "broken", Tone: v1.ToneError},
+	}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if got.Children[0].Tone != ui.ToneNormal {
+		t.Errorf("default tone = %v", got.Children[0].Tone)
+	}
+	if got.Children[1].Tone != ui.ToneError {
+		t.Errorf("error tone = %v", got.Children[1].Tone)
+	}
+}
+
+func TestConvertRunsTheWireValidator(t *testing.T) {
+	t.Parallel()
+
+	// Conversion is the only path from plugin JSON into a shell tree, so it
+	// cannot be reachable with a tree the validator would reject.
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindButton, ID: "b", Text: "x", Role: "button", Events: []v1.EventKind{v1.EventActivate}},
+	}}
+	if _, err := Convert(root, v1.ViewPanel); err == nil {
+		t.Fatal("Convert accepted a tree with no accessible name")
+	}
+}
+
+func TestConvertEnforcesTheRootKindEachViewCanLayOut(t *testing.T) {
+	t.Parallel()
+
+	// A bar strip is laid out as a row and a panel as a column. A root of the
+	// other kind has no layout to run, so it is refused at conversion rather
+	// than failing later with a layout error the plugin cannot act on.
+	if _, err := Convert(&v1.Node{Kind: v1.KindColumn}, v1.ViewBar); err == nil {
+		t.Error("a bar accepted a column root")
+	}
+	if _, err := Convert(&v1.Node{Kind: v1.KindRow}, v1.ViewPanel); err == nil {
+		t.Error("a panel accepted a row root")
+	}
+	if _, err := Convert(&v1.Node{Kind: v1.KindRow}, v1.ViewBar); err != nil {
+		t.Errorf("a bar rejected a row root: %v", err)
+	}
+	if _, err := Convert(&v1.Node{Kind: v1.KindColumn}, v1.ViewTooltip); err != nil {
+		t.Errorf("a tooltip rejected a column root: %v", err)
+	}
+}
+
+func TestConvertCopiesEverythingItReads(t *testing.T) {
+	t.Parallel()
+
+	// The wire tree came from a decoder and stays owned by the reader
+	// goroutine. If conversion aliased any of it, a later message could change
+	// a tree the shell had already published.
+	wire := timerBar()
+	got, err := Convert(wire, v1.ViewBar)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+
+	wire.Children[0].Text = "mutated"
+	wire.Children[1].Name = "mutated"
+	wire.Children = append(wire.Children, &v1.Node{Kind: v1.KindText, Text: "extra"})
+	wire.Gap = 999
+
+	if got.Children[0].Text != "04:12" {
+		t.Errorf("text followed a later mutation: %q", got.Children[0].Text)
+	}
+	if got.Children[1].Name != "Open the timer" {
+		t.Errorf("name followed a later mutation: %q", got.Children[1].Name)
+	}
+	if len(got.Children) != 2 {
+		t.Errorf("children followed a later append: %d", len(got.Children))
+	}
+	if got.Gap != 6 {
+		t.Errorf("gap followed a later mutation: %d", got.Gap)
+	}
+}
+
+func TestConvertRefusesToCarryFieldsTheShellCannotOwn(t *testing.T) {
+	t.Parallel()
+
+	// A converted tree must not carry anything a plugin could use to reach
+	// into shell presentation: no virtual-list item function, no scroll state,
+	// no focus index.
+	got, err := Convert(timerBar(), v1.ViewBar)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n.Item != nil {
+			t.Error("a converted node carries a virtual-list item function")
+		}
+		if n.ScrollOffset != 0 || n.ItemCount != 0 || n.ContentH != 0 {
+			t.Errorf("a converted node carries scroll state: %+v", n)
+		}
+		if len(n.Values) != 0 {
+			t.Error("a converted node carries graph samples")
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(got)
+}
+
+func TestConvertRejectsATextInputInABar(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindRow, Children: []*v1.Node{
+		{Kind: v1.KindTextInput, ID: "i", Name: "i", Role: "textbox", Events: []v1.EventKind{v1.EventChange}},
+	}}
+	if _, err := Convert(root, v1.ViewBar); err == nil {
+		t.Fatal("a bar accepted a keyboard field")
+	}
+}

@@ -77,16 +77,6 @@ const (
 	ToneError  Tone = "error"
 )
 
-// Size is a text size tier. Tiers rather than point sizes keep a plugin from
-// setting text that does not fit the bar or scale with the user's font size.
-type Size string
-
-const (
-	SizeNormal Size = ""
-	SizeSmall  Size = "small"
-	SizeLarge  Size = "large"
-)
-
 // ViewKind names where a tree is going to be shown. The same vocabulary is not
 // legal everywhere: a bar strip has no keyboard focus and a tooltip is not
 // interactive at all, so the kind is part of validation rather than a hint.
@@ -123,9 +113,10 @@ type Node struct {
 	// Value is a progress fraction from zero through one.
 	Value float64 `json:"value,omitempty"`
 
-	// Tone and Size select semantic presentation.
+	// Tone selects semantic presentation. Size tiers are deliberately absent
+	// until the shell has a measure path that can honour them; a field the
+	// host would have to ignore is worse than one that is not offered.
 	Tone Tone `json:"tone,omitempty"`
-	Size Size `json:"size,omitempty"`
 	// Tabular requests fixed-advance figures. A countdown sets it: with
 	// proportional digits the rendered width changes every second, which
 	// visibly shifts everything beside it.
@@ -176,8 +167,6 @@ var knownKinds = map[NodeKind]bool{
 var knownViews = map[ViewKind]bool{ViewBar: true, ViewTooltip: true, ViewPanel: true}
 
 var knownTones = map[Tone]bool{ToneNormal: true, ToneError: true}
-
-var knownSizes = map[Size]bool{SizeNormal: true, SizeSmall: true, SizeLarge: true}
 
 // Validate reports whether root is a legal version-one tree for the given view.
 //
@@ -285,9 +274,6 @@ func (v *validator) identity(n *Node, path string) error {
 func (v *validator) presentation(n *Node, path string) error {
 	if !knownTones[n.Tone] {
 		return fmt.Errorf("%s: unknown tone %q", path, n.Tone)
-	}
-	if !knownSizes[n.Size] {
-		return fmt.Errorf("%s: unknown size %q", path, n.Size)
 	}
 	for _, f := range []struct {
 		what string
