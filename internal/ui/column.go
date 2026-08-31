@@ -50,11 +50,15 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 	case KindText, KindTab:
 		_, h := measure(n.Text, n.Tabular)
 		return h, nil
-	case KindGraph:
-		if n.Width > 0 {
-			return n.Width, nil
+	case KindMeter:
+		if n.Value < 0 || n.Value > 1 {
+			return 0, fmt.Errorf("meter value %v is outside zero through one", n.Value)
 		}
-		return 80, nil
+		return MeterHeight, nil
+	case KindGraph:
+		// Width is the graph's measured width in a row. Reusing it as a height
+		// makes the monitor popout's 240-wide sparkline 240 tall.
+		return GraphHeight, nil
 	case KindSeparator:
 		return 1, nil
 	case KindButton:

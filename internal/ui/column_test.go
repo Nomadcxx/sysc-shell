@@ -37,8 +37,13 @@ func TestColumnLayoutAcceptsGraph(t *testing.T) {
 	if err := LayoutColumn(root, Rect{W: 300, H: 400}, fakeMeasure); err != nil {
 		t.Fatal(err)
 	}
-	if got := root.Children[0].Bounds.H; got != 240 {
-		t.Fatalf("graph height = %d, want the configured width 240", got)
+	// Width is the graph's width in a row, not a height. The monitor popout
+	// builds a 240-wide sparkline; it must not become 240 tall in a column.
+	if got := root.Children[0].Bounds.H; got != GraphHeight {
+		t.Fatalf("graph height = %d, want GraphHeight %d", got, GraphHeight)
+	}
+	if got := root.Children[0].Bounds.W; got != 300-2*12 {
+		t.Fatalf("graph width = %d, want the padded column width", got)
 	}
 }
 

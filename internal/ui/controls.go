@@ -10,6 +10,12 @@ const (
 	SliderTrack  = 4
 	SliderKnob   = 14
 
+	// MeterHeight and GraphHeight are the heights a meter and a graph take
+	// in a column. In a row each fills the content band instead and Width is
+	// the measured width, so neither dimension can be reused here.
+	MeterHeight = 8
+	GraphHeight = 32
+
 	KeyHome  = 102
 	KeyLeft  = 105
 	KeyRight = 106

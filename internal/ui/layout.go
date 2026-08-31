@@ -88,6 +88,8 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		// the way a meter does. It does not measure its data, so a bar does
 		// not reflow as samples arrive.
 		return n.Width, contentHeight, nil
+	case KindSeparator:
+		return 1, contentHeight, nil
 	case KindButton:
 		w, h := measure(n.Text, n.Tabular)
 		return w + 2*n.Padding, h + 2*n.Padding, nil
