@@ -139,3 +139,37 @@ func TestHitDescendsIntoNestedSections(t *testing.T) {
 		t.Fatal("a point outside every actionable child reported a hit")
 	}
 }
+
+// A bar section places items directly rather than through Layout, so it must
+// arrange a capsule's contents too. Without this the bar paints empty pills.
+func TestArrangeBarLaysOutCapsuleContents(t *testing.T) {
+	t.Parallel()
+	label := &Node{Kind: KindText, Text: "11:37"}
+	clock := &Node{Kind: KindCapsule, Padding: 8, Children: []*Node{label}}
+
+	pill := &Node{Kind: KindCapsule, Fill: FillAccent,
+		Children: []*Node{{Kind: KindText, Text: "1"}}}
+	row := &Node{Kind: KindRow, Gap: 8, Children: []*Node{pill}}
+	workspace := &Node{Kind: KindCapsule, Padding: 8, Children: []*Node{row}}
+
+	content := Rect{X: 6, Y: 6, W: 600, H: 36}
+	if err := ArrangeBar(content, []*Node{workspace}, []*Node{clock}, nil, 4, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+
+	if clock.Bounds.W == 0 {
+		t.Fatal("the clock capsule was not placed")
+	}
+	if label.Bounds.W == 0 || label.Bounds.H == 0 {
+		t.Fatalf("capsule label bounds = %+v; contents never laid out", label.Bounds)
+	}
+	if label.Bounds.X < clock.Bounds.X || label.Bounds.X >= clock.Bounds.X+clock.Bounds.W {
+		t.Fatalf("label at %+v sits outside its capsule %+v", label.Bounds, clock.Bounds)
+	}
+	if pill.Bounds.W == 0 {
+		t.Fatalf("workspace pill bounds = %+v; the nested row never arranged", pill.Bounds)
+	}
+	if pill.Children[0].Bounds.W == 0 {
+		t.Fatal("the pill numeral was never laid out")
+	}
+}
