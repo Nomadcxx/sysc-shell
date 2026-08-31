@@ -21,6 +21,18 @@ func (s Scale120) Physical(logical int) int {
 	return (logical*int(s) + 60) / 120
 }
 
+// Logical converts a buffer measurement back to logical pixels, rounding up.
+//
+// Rounding up matters: a width measured in physical pixels and rounded down
+// would grant the node less room than its own glyphs occupy, and the painter
+// would then ellipsize text that actually fits.
+func (s Scale120) Logical(physical int) int {
+	if !s.Valid() {
+		return physical
+	}
+	return (physical*120 + int(s) - 1) / int(s)
+}
+
 // PhysicalRect maps a rectangle by converting its edges rather than its size,
 // so rectangles that are adjacent in logical space stay adjacent in buffer
 // pixels with no gap or overlap.

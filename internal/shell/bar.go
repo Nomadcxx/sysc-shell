@@ -251,12 +251,22 @@ func (b *Bar) bodyLocked(width, height int) ui.Rect {
 }
 
 func (b *Bar) layoutLocked(width, height int) error {
+	// Shaping for paint happens at the physical size, so measuring at the
+	// logical size and scaling the result up assumes glyph advances are linear
+	// in point size. They are not: at scale 1.25 the painter shaped text wider
+	// than layout had reserved and ellipsized a clock that fits.
+	//
+	// Measure at the size the painter will actually use, then convert back up.
+	size := b.style.Scale120.Physical(b.style.Size)
+	if size <= 0 {
+		size = b.style.Size
+	}
 	measure := func(s string, tabular bool) (int, int) {
-		w, h, err := b.text.Measure(s, b.style.Size, tabular)
+		w, h, err := b.text.Measure(s, size, tabular)
 		if err != nil {
 			return 0, 0
 		}
-		return w, h
+		return b.style.Scale120.Logical(w), b.style.Scale120.Logical(h)
 	}
 	sections := b.sections()
 	return ui.ArrangeBar(b.contentLocked(width, height),
