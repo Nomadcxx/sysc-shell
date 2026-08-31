@@ -171,12 +171,52 @@ corruption as `sysc-57`.
 
 ## Milestone 5
 
-`sysc-20` is open and its plans are complete but not merged. They live on `redesign/milestone-5`,
-which is stale relative to `main` and needs rebasing. `sysc-notify` and `sysc-tray` are documentation
-only: no `go.mod`, no Go file, no tag. Both shell tranches begin with
-`go get ...@v0.1.0-rc.1` and local `replace` is forbidden, so roughly 17 service tasks across two
-repositories gate all M5 product code. That work is independent of everything above and is the long
-pole.
+The M5 documents are now on `main`: the audit report, the corrected integration design, and the
+revised 5A and 5B plans. They were cherry-picked from `redesign/milestone-5` on 2026-09-01 and that
+branch is finished with.
 
-Shell-side M5 prerequisites that do not exist yet: `AuxUpdate`, and a process-wide root coordinator.
-`OpenPanel` currently tracks panels in a map and never closes an unrelated root.
+**One commit was deliberately left behind.** `e2e3f57`, "align M3 and M4 surface ownership", rewrites
+the Tranche 3D and 4A plans with 988 deletions. Those plans have since been executed. Merging it
+would replace the plans that were actually followed with a variant that never was. Read it as history
+if the surface-ownership reasoning is wanted; do not apply it.
+
+Where the README conflicted, `main`'s milestone status was kept: the branch still described Tranche 3A
+as ready to execute and 3B and 3C as blocked on `sysc-metrics`, which stopped being true when those
+tranches merged.
+
+### The shell-side plans need an amendment pass before 5A starts
+
+Four things invalidate them, all learned after they were written. None of it touches the service
+plans.
+
+1. **Two prerequisites the design assumes exist, do not.** The integration design says M4 "adds
+   keyboard binding, per-surface input routing, and `AuxUpdate`", and that "M4's panel set grows into
+   a process-wide root coordinator". Neither happened. `AuxUpdate` is absent, and `OpenPanel` keys
+   panels into a map and never closes an unrelated root. 5A Tasks 6 and 7 need the first for inline
+   reply moving keyboard from None to OnDemand; all of 5B's root correlation needs the second.
+2. **5A Task 3 has a new constraint.** It introduces `KindImage`. Since the plan was written,
+   `internal/ui` gained a `kindCount` sentinel and a table test that measures every declared kind
+   through the row and the column path. A new kind fails the build until it has a decision in each.
+   The guard is deliberate and worth keeping; the task simply predates it.
+3. **`sysc-51` is a material risk the design never considered.** M5 adds toasts, tray menus and a
+   notification centre: short-lived surfaces appearing and vanishing under the pointer, which is
+   exactly what triggers the upstream `wl_pointer.enter` defect. The failure-behaviour section does
+   not account for it.
+4. **Smaller drift.** The design's control vocabulary predates `KindCapsule` and `Fill`. 5B's "tray
+   tooltips reuse Tranche 3D" inherits `sysc-32`, `sysc-33` and `sysc-34`, which are open defects in
+   that path.
+
+### Start here
+
+The service work is unaffected by all of the above and is the long pole, so it is the clean entry
+point. `sysc-notify` and `sysc-tray` are documentation only: no `go.mod`, no Go file, no tag. Their
+v0.1 plans live at
+
+- `/home/nomadx/.config/superpowers/worktrees/sysc-notify/redesign/v0.1/docs/plans/2026-08-31-sysc-notify-v0.1.md` (9 tasks)
+- `/home/nomadx/.config/superpowers/worktrees/sysc-tray/redesign/v0.1/docs/plans/2026-08-31-sysc-tray-v0.1.md` (8 tasks)
+
+Both shell tranches begin with `go get ...@v0.1.0-rc.1` and local `replace` is forbidden, so those
+roughly 17 tasks and two release candidates gate every line of M5 product code.
+
+`AuxUpdate` and the root coordinator are shell work that can run in parallel with the services, and
+both are prerequisites rather than part of 5A.
