@@ -47,9 +47,13 @@ GLYPHS = [
 ]
 
 UPM = 1000
-# 24px SVG -> ~800 font units, y-flipped so the icon sits on the baseline.
-SCALE = 800 / 24
-XFORM = Transform(SCALE, 0, 0, -SCALE, 100, 900)
+# 24px SVG -> font units, y-flipped so the icon sits on the baseline.
+#
+# The artwork does not fill its 24px box, so a box mapped to 800 units left the
+# ink shorter than the surrounding cap height and the icons read as too small.
+# Mapping the box to 980 puts the drawn extent at roughly cap height.
+SCALE = 980 / 24
+XFORM = Transform(SCALE, 0, 0, -SCALE, 60, 1010)
 
 
 def empty_glyph():
