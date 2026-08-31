@@ -105,7 +105,7 @@ func (r *Registry) setAudio(a *services.Audio) {
 			r.audioLease = l
 		}
 	}
-	go r.relayAudioOSD()
+	go r.relayAudioOSD(a)
 }
 
 func (r *Registry) setBrightness(b *services.Brightness) {
@@ -122,7 +122,7 @@ func (r *Registry) setBrightness(b *services.Brightness) {
 			r.brightLease = l
 		}
 	}
-	go r.relayBrightnessOSD()
+	go r.relayBrightnessOSD(b)
 }
 
 func (r *Registry) AudioAvailable() bool {
@@ -267,11 +267,14 @@ func runningAsTest() bool {
 	return strings.HasSuffix(os.Args[0], ".test")
 }
 
-func (r *Registry) relayAudioOSD() {
-	if r.audio == nil {
+// relayAudioOSD takes the service it relays as an argument. Reading r.audio
+// here instead would race the next setAudio, which writes that field while
+// this goroutine runs.
+func (r *Registry) relayAudioOSD(a *services.Audio) {
+	if a == nil {
 		return
 	}
-	ch := r.audio.Changes()
+	ch := a.Changes()
 	for {
 		select {
 		case <-r.closed:
@@ -285,11 +288,13 @@ func (r *Registry) relayAudioOSD() {
 	}
 }
 
-func (r *Registry) relayBrightnessOSD() {
-	if r.brightness == nil {
+// relayBrightnessOSD takes its service as an argument for the same reason as
+// relayAudioOSD.
+func (r *Registry) relayBrightnessOSD(b *services.Brightness) {
+	if b == nil {
 		return
 	}
-	ch := r.brightness.Changes()
+	ch := b.Changes()
 	for {
 		select {
 		case <-r.closed:
