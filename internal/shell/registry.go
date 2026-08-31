@@ -229,7 +229,7 @@ func (r *Registry) generateTheme(cfg config.Config) theme.Tokens {
 		},
 	)
 	if !runningAsTest() {
-		theming.ApplyEnabled(os.Getenv("HOME"), cfg.TemplateEnabled, tok)
+		_ = theming.ApplyEnabled(os.Getenv("HOME"), cfg.TemplateEnabled, tok)
 	}
 	return tok
 }
