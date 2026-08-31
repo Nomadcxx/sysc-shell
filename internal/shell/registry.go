@@ -47,9 +47,11 @@ type Registry struct {
 	panels        PanelSet
 	panelHosts    map[PanelID]*PanelHost
 	// closed unblocks a pending publish at shutdown.
-	closed    chan struct{}
-	closeOnce sync.Once
-	dwell     *dwell
+	closed     chan struct{}
+	closeOnce  sync.Once
+	dwell      *dwell
+	configPath string
+	reloads    chan<- struct{}
 }
 
 func NewRegistry(cfg config.Config) *Registry {
@@ -72,6 +74,16 @@ func NewRegistry(cfg config.Config) *Registry {
 	}
 	r.tokens = r.generateTheme(cfg)
 	return r
+}
+
+// BindPersist sets the file and reload signal used when settings write a
+// candidate. Empty path skips the write (tests). The channel is the same one
+// SIGHUP uses.
+func (r *Registry) BindPersist(path string, reloads chan<- struct{}) {
+	r.mu.Lock()
+	r.configPath = path
+	r.reloads = reloads
+	r.mu.Unlock()
 }
 
 // Tokens is the palette the registry generated at construction or last reload.

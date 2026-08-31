@@ -511,7 +511,7 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 			return false
 		}
 		if !h.menu.Opened() && key != keyEsc {
-			h.applyMenu(h.menuPath)
+			h.applyMenu(r, h.menuPath)
 		}
 		r.rebuildPanel(h)
 		return true
@@ -541,21 +541,21 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 		h.afterFocusChange(r)
 		return true
 	case keyLeft, keyUp:
-		if h.adjustSlider(keyLeft) {
+		if h.adjustSlider(r, keyLeft) {
 			return true
 		}
 		h.roving.Prev()
 		h.afterFocusChange(r)
 		return true
 	case keyRight, keyDown:
-		if h.adjustSlider(keyRight) {
+		if h.adjustSlider(r, keyRight) {
 			return true
 		}
 		h.roving.Next()
 		h.afterFocusChange(r)
 		return true
 	case keyHome, keyEnd:
-		if h.adjustSlider(key) {
+		if h.adjustSlider(r, key) {
 			return true
 		}
 		if key == keyHome {
@@ -664,7 +664,7 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 		h.roving.Set(idx)
 		return true
 	}
-	h.applySetting(n)
+	h.applySetting(r, n)
 	return true
 }
 
@@ -675,7 +675,7 @@ func (h *PanelHost) focused() *ui.Node {
 	return h.focus[h.roving.Index()]
 }
 
-func (h *PanelHost) adjustSlider(key uint32) bool {
+func (h *PanelHost) adjustSlider(r *Registry, key uint32) bool {
 	n := h.focused()
 	if n == nil || n.Kind != ui.KindSlider {
 		return false
@@ -683,7 +683,7 @@ func (h *PanelHost) adjustSlider(key uint32) bool {
 	if !ui.ControlKey(n, key) {
 		return false
 	}
-	h.applySetting(n)
+	h.applySetting(r, n)
 	return true
 }
 
@@ -694,7 +694,7 @@ func (h *PanelHost) activate(r *Registry) bool {
 	}
 	if n.Kind == ui.KindToggle {
 		changed := ui.Activate(n)
-		h.applySetting(n)
+		h.applySetting(r, n)
 		return changed
 	}
 	if n.Kind == ui.KindMenu {
@@ -708,7 +708,7 @@ func (h *PanelHost) activate(r *Registry) bool {
 				return true
 			}
 			m.Select()
-			h.applyMenu(path)
+			h.applyMenu(r, path)
 			r.rebuildPanel(h)
 			return true
 		}
@@ -798,7 +798,7 @@ func panelTargetSize(id PanelID) ui.Rect {
 	}
 }
 
-func (h *PanelHost) applySetting(n *ui.Node) {
+func (h *PanelHost) applySetting(r *Registry, n *ui.Node) {
 	if h.set == nil || n == nil {
 		return
 	}
@@ -824,10 +824,15 @@ func (h *PanelHost) applySetting(n *ui.Node) {
 	case ui.KindMenu:
 		v = n.Text
 	}
-	_ = e.Set(&h.draft, v)
+	if err := e.Set(&h.draft, v); err != nil {
+		h.errLabel = err.Error()
+		r.rebuildPanel(h)
+		return
+	}
+	h.persistDraft(r)
 }
 
-func (h *PanelHost) applyMenu(path string) {
+func (h *PanelHost) applyMenu(r *Registry, path string) {
 	if h.set == nil || path == "" {
 		return
 	}
@@ -836,7 +841,12 @@ func (h *PanelHost) applyMenu(path string) {
 	if e == nil || m == nil {
 		return
 	}
-	_ = e.Set(&h.draft, m.Value())
+	if err := e.Set(&h.draft, m.Value()); err != nil {
+		h.errLabel = err.Error()
+		r.rebuildPanel(h)
+		return
+	}
+	h.persistDraft(r)
 }
 
 func (h *PanelHost) focusByName(name string) {

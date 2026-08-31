@@ -125,6 +125,7 @@ func run(ctx context.Context) error {
 			}
 		}
 	}()
+	registry.BindPersist(cfgPath, reloads)
 
 	ipcErr := make(chan error, 1)
 	go func() {

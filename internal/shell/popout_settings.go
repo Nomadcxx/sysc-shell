@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -16,14 +17,18 @@ func settingsTree(h *PanelHost) *ui.Node {
 	}
 	search := h.search.Node("Search")
 	search.Width = 220
+	head := []*ui.Node{}
+	if h.errLabel != "" {
+		head = append(head, &ui.Node{Kind: ui.KindText, Text: h.errLabel, Tone: ui.ToneError})
+	}
+	head = append(head, search)
 
 	if strings.TrimSpace(h.query) != "" {
 		var hits []settings.Entry
 		if h.set != nil {
 			hits = h.set.Search(h.query)
 		}
-		rows := make([]*ui.Node, 0, len(hits)+1)
-		rows = append(rows, search)
+		rows := head
 		for _, e := range hits {
 			rows = append(rows, &ui.Node{
 				Kind: ui.KindButton, Text: e.Label, Action: "goto:" + e.Path,
@@ -33,8 +38,7 @@ func settingsTree(h *PanelHost) *ui.Node {
 		return &ui.Node{Kind: ui.KindColumn, Gap: 8, Padding: 12, Children: rows}
 	}
 
-	sidebar := make([]*ui.Node, 0, len(settingsSections)+1)
-	sidebar = append(sidebar, search)
+	sidebar := head
 	for _, name := range settingsSections {
 		sidebar = append(sidebar, &ui.Node{
 			Kind: ui.KindButton, Text: name, Action: "section:" + name,
@@ -122,4 +126,32 @@ func settingsControl(h *PanelHost, e settings.Entry) *ui.Node {
 		n.Width = 200
 		return n
 	}
+}
+
+func (h *PanelHost) persistDraft(r *Registry) {
+	if r == nil {
+		return
+	}
+	if err := r.writeConfig(h.draft); err != nil {
+		h.errLabel = err.Error()
+		r.rebuildPanel(h)
+		return
+	}
+	h.errLabel = ""
+}
+
+func (r *Registry) writeConfig(c config.Config) error {
+	if r.configPath == "" {
+		return nil
+	}
+	if err := config.Write(r.configPath, c); err != nil {
+		return err
+	}
+	if r.reloads != nil {
+		select {
+		case r.reloads <- struct{}{}:
+		default:
+		}
+	}
+	return nil
 }

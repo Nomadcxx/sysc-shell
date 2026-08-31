@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -102,6 +103,40 @@ func TestSettingsKeyboardOnlyTraversal(t *testing.T) {
 	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keySpace})
 	if h.draft.Bar.Enabled == before {
 		t.Fatal("space did not flip the focused toggle")
+	}
+}
+
+func TestSettingsApplyWritesConfig(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.json")
+	reloads := make(chan struct{}, 1)
+	reg := newPanelRegistry(t)
+	reg.BindPersist(p, reloads)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	reqs := drainAux(t, reg, 2)
+	handle := reqs[1].Open.Callbacks.Handle
+	h := reg.panelHosts[PanelSettings]
+	for i := 0; i < 20 && (h.focused() == nil || h.focused().Kind != ui.KindToggle); i++ {
+		handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyTab})
+	}
+	if h.focused() == nil || h.focused().Kind != ui.KindToggle {
+		t.Fatal("did not reach a toggle")
+	}
+	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keySpace})
+	got, err := config.Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Bar.Enabled {
+		t.Fatal("write did not persist the toggled value")
+	}
+	select {
+	case <-reloads:
+	default:
+		t.Fatal("write did not signal reload")
 	}
 }
 

@@ -15,8 +15,8 @@ import (
 // Wire types use pointers so an absent field is distinguishable from its zero
 // value and inherits the default instead of overwriting it with zero.
 type wireFont struct {
-	Family *string `json:"family"`
-	Size   *int    `json:"size"`
+	Family *string `json:"family,omitempty"`
+	Size   *int    `json:"size,omitempty"`
 }
 
 // wireItem decodes either a bare id string or an object carrying that id plus
@@ -24,20 +24,20 @@ type wireFont struct {
 // max-width has nowhere else to live.
 type wireItem struct {
 	ID       string  `json:"id"`
-	Format   *string `json:"format"`
-	MaxWidth *int    `json:"max-width"`
+	Format   *string `json:"format,omitempty"`
+	MaxWidth *int    `json:"max-width,omitempty"`
 
-	Display   *string `json:"display"`
-	Interval  *string `json:"interval"`
-	Path      *string `json:"path"`
-	Device    *string `json:"device"`
-	Interface *string `json:"interface"`
-	Direction *string `json:"direction"`
+	Display   *string `json:"display,omitempty"`
+	Interval  *string `json:"interval,omitempty"`
+	Path      *string `json:"path,omitempty"`
+	Device    *string `json:"device,omitempty"`
+	Interface *string `json:"interface,omitempty"`
+	Direction *string `json:"direction,omitempty"`
 
-	ShowCondition *bool `json:"show-condition"`
+	ShowCondition *bool `json:"show-condition,omitempty"`
 
-	Label     *string `json:"label"`
-	WarnBelow *int    `json:"warn-below"`
+	Label     *string `json:"label,omitempty"`
+	WarnBelow *int    `json:"warn-below,omitempty"`
 }
 
 func (i *wireItem) UnmarshalJSON(data []byte) error {
@@ -62,69 +62,69 @@ func (i *wireItem) UnmarshalJSON(data []byte) error {
 }
 
 type wireItems struct {
-	Left   *[]wireItem `json:"left"`
-	Center *[]wireItem `json:"center"`
-	Right  *[]wireItem `json:"right"`
+	Left   *[]wireItem `json:"left,omitempty"`
+	Center *[]wireItem `json:"center,omitempty"`
+	Right  *[]wireItem `json:"right,omitempty"`
 }
 
 type wireBar struct {
-	Enabled *bool      `json:"enabled"`
-	Edge    *string    `json:"edge"`
-	Height  *int       `json:"height"`
-	Gap     *int       `json:"gap"`
-	Padding *int       `json:"padding"`
-	Spacing *int       `json:"spacing"`
-	Font    *wireFont  `json:"font"`
-	Items   *wireItems `json:"items"`
+	Enabled *bool      `json:"enabled,omitempty"`
+	Edge    *string    `json:"edge,omitempty"`
+	Height  *int       `json:"height,omitempty"`
+	Gap     *int       `json:"gap,omitempty"`
+	Padding *int       `json:"padding,omitempty"`
+	Spacing *int       `json:"spacing,omitempty"`
+	Font    *wireFont  `json:"font,omitempty"`
+	Items   *wireItems `json:"items,omitempty"`
 }
 
 type wireTheme struct {
-	Radius *int `json:"radius"`
+	Radius *int `json:"radius,omitempty"`
 }
 
 type wireThemeGen struct {
-	Source *string `json:"source"`
-	Seed   *string `json:"seed"`
-	Scheme *string `json:"scheme"`
-	Mode   *string `json:"mode"`
+	Source *string `json:"source,omitempty"`
+	Seed   *string `json:"seed,omitempty"`
+	Scheme *string `json:"scheme,omitempty"`
+	Mode   *string `json:"mode,omitempty"`
 }
 
 type wireAccessibility struct {
-	ReducedMotion *bool `json:"reduced-motion"`
-	HighContrast  *bool `json:"high-contrast"`
+	ReducedMotion *bool `json:"reduced-motion,omitempty"`
+	HighContrast  *bool `json:"high-contrast,omitempty"`
 }
 
 type wireSession struct {
-	Locker *string `json:"locker"`
+	Locker *string `json:"locker,omitempty"`
 }
 
 type wirePanels struct {
-	Gap     *int    `json:"gap"`
-	Padding *int    `json:"padding"`
-	OSD     *string `json:"osd"`
+	Gap     *int    `json:"gap,omitempty"`
+	Padding *int    `json:"padding,omitempty"`
+	OSD     *string `json:"osd,omitempty"`
 }
 
 type wireOutput struct {
-	Connector *string  `json:"connector"`
-	Bar       *wireBar `json:"bar"`
+	Connector *string  `json:"connector,omitempty"`
+	Bar       *wireBar `json:"bar,omitempty"`
 }
 
 type wireWeather struct {
-	Latitude  *float64 `json:"latitude"`
-	Longitude *float64 `json:"longitude"`
-	Unit      *string  `json:"unit"`
-	Interval  *string  `json:"interval"`
+	Latitude  *float64 `json:"latitude,omitempty"`
+	Longitude *float64 `json:"longitude,omitempty"`
+	Unit      *string  `json:"unit,omitempty"`
+	Interval  *string  `json:"interval,omitempty"`
 }
 
 type wireConfig struct {
-	Bar           *wireBar           `json:"bar"`
-	Theme         *wireTheme         `json:"theme"`
-	ThemeGen      *wireThemeGen      `json:"theme-gen"`
-	Accessibility *wireAccessibility `json:"accessibility"`
-	Session       *wireSession       `json:"session"`
-	Panels        *wirePanels        `json:"panels"`
-	Weather       *wireWeather       `json:"weather"`
-	Outputs       []wireOutput       `json:"outputs"`
+	Bar           *wireBar           `json:"bar,omitempty"`
+	Theme         *wireTheme         `json:"theme,omitempty"`
+	ThemeGen      *wireThemeGen      `json:"theme-gen,omitempty"`
+	Accessibility *wireAccessibility `json:"accessibility,omitempty"`
+	Session       *wireSession       `json:"session,omitempty"`
+	Panels        *wirePanels        `json:"panels,omitempty"`
+	Weather       *wireWeather       `json:"weather,omitempty"`
+	Outputs       []wireOutput       `json:"outputs,omitempty"`
 }
 
 var colorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$`)
