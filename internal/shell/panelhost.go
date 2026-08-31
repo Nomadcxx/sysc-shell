@@ -265,7 +265,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		place:      place,
 		stopAnim:   make(chan struct{}),
 		theme:      ThemeFromTokens(r.tokens, 12),
-		fontFamily: r.cfg.Bar.FontFamily,
+		fontFamily: r.panelFontFamily(output),
 	}
 	if id == PanelSettings {
 		h.set = settings.DefaultFor(r.cfg)
@@ -430,6 +430,17 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 			},
 		},
 	}
+}
+
+// panelFontFamily resolves the font of the output the panel opens on. A panel
+// is per-output, so a connector with its own bar font must not open a panel in
+// the global family.
+func (r *Registry) panelFontFamily(output uint32) string {
+	connector := ""
+	if bar, ok := r.bars[output]; ok {
+		connector = bar.connector()
+	}
+	return r.cfg.ForConnector(connector).FontFamily
 }
 
 func (h *PanelHost) ensureText() error {

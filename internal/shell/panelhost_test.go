@@ -237,3 +237,23 @@ func drainInvalidations(reg *Registry) {
 		}
 	}
 }
+
+func TestPanelFontFamilyFollowsTheOutputConnector(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Bar.FontFamily = "GlobalSans"
+	cfg.Outputs = []config.OutputOverride{{Connector: "DP-2", Bar: config.Bar{FontFamily: "PerOutputSerif"}}}
+	reg := NewRegistry(cfg)
+	reg.bars[1] = &Bar{conn: "DP-1"}
+	reg.bars[2] = &Bar{conn: "DP-2"}
+
+	if got := reg.panelFontFamily(1); got != "GlobalSans" {
+		t.Errorf("DP-1 panel font = %q, want the global family", got)
+	}
+	if got := reg.panelFontFamily(2); got != "PerOutputSerif" {
+		t.Errorf("DP-2 panel font = %q, want the per-output family", got)
+	}
+	if got := reg.panelFontFamily(99); got != "GlobalSans" {
+		t.Errorf("unknown output font = %q, want the global family", got)
+	}
+}
