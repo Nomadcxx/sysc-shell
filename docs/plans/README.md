@@ -145,6 +145,7 @@ checklists remain owner-deferred. Spec shortfalls from the 2026-08-31 sweeps are
 | `2026-08-31-milestone-4-execution-handover.md` | execution-handover | Commissions corrected 4A and the three reviewed 4B slices in the existing M4 worktree. |
 | `2026-08-31-m4-spec-review-sweep.md` | audit-report | Implementation vs 4A/4B designs, post-M3 audit, charter, roadmap gate. Live matrices owner-deferred. |
 | `2026-08-31-m4-code-quality-sweep.md` | audit-report | Correctness and reliability pass over landed M4. Report only. |
+| `2026-08-31-m4-spec-shortfall-corrections.md` | plan | TDD plan for sysc-38, sysc-39, sysc-40. |
 
 ### Tranche state
 
