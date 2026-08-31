@@ -12,7 +12,7 @@ Nothing is merged to `main`. Both branches carry unmerged work.
 | `fix/live-empty-panels` | `~/.config/superpowers/worktrees/sysc-shell/fix/live-empty-panels` | 6 commits: sysc-41 and part of sysc-42 |
 | `feature/bar-visual-parity` | `~/.config/superpowers/worktrees/sysc-shell/feature/bar-visual-parity` | those 6 plus 10 more: the parity tranche |
 
-Head is `3312cd7`. `go build ./...`, `go vet ./...`, `go test ./...` and
+Head is `a458bfc`. `go build ./...`, `go vet ./...`, `go test ./...` and
 `go test -race ./internal/shell ./internal/ui ./internal/render` are all green at that commit.
 
 Run `bd` from `/home/nomadx/sysc-shell`, never from a worktree. A commit from a worktree needs
@@ -76,24 +76,44 @@ pins minimums. Note the shell was running on the fallback palette, not a generat
 amendment: focus drives width, not occupancy. A workspace rename is now invisible to the bar, so a
 test that renamed one to prove invalidation had to change its premise.
 
+## Closed after the handover was first written
+
+sysc-52, sysc-53, sysc-55 and sysc-56 were finished in the same session and are closed.
+
+- **Battery glyphs.** Every level drew the same silhouette because the window subpath wound the same
+  direction as the body, so under nonzero winding it filled instead of cutting a hole. Reversed in all
+  fifteen sources. A rasterisation test now covers each band, asserts more charge never draws less ink,
+  and checks the levels survive bar size. The old test only checked codepoint mapping, which is why an
+  asset that discarded the distinction passed.
+- **Metric icons.** cpu, memory, disk and network glyphs authored and prefixed onto each value. The
+  width floor includes the icon so a field cannot widen as its value grows, and a failed source keeps
+  its icon beside the placeholder.
+- **Icon size.** The artwork does not fill its 24 pixel box, so mapping that box to 800 font units left
+  the ink below cap height. It now maps to 980.
+- **Group centring.** A capsule grows its layout box around the inner band's centre rather than
+  downward, so members centre on the visible pill.
+- **Tooltips.** Every status widget names itself and a group exposes its members, so a hover finds the
+  member rather than the group. Tooltip labels also clipped, for the same reason the bar did: measured
+  at the logical size, shaped at the physical one.
+
+Note the icon face is a shared singleton and `font.Face` is not safe for concurrent use, so the icon
+tests do not run in parallel. This is the third time that constraint has bitten in this session; a
+shared text renderer was tried and reverted for the same reason.
+
 ## Open, in the order worth doing
 
 1. **sysc-51**, P0. Upstream `sysc-wayland` fix plus a tag, then repin. Everything live is unstable
    until this lands.
-2. **sysc-52**, battery glyphs. All seven level codepoints `0xE008`..`0xE00E` are the same solid
+2. **sysc-54**, group the sysmon widgets. The group item and the default grouping landed; what remains
+   is judging it live now that icons exist. Superseded parts of the original issue are recorded there.
+3. **sysc-52 note kept for history**, battery glyphs. All seven level codepoints `0xE008`..`0xE00E` are the same solid
    silhouette, verified by rasterising the band at 96pt and at 17px. `BatteryIconRune` correctly maps
    73% to level 5; the asset does not encode it. `iconfont_test` only checks codepoint mapping, so it
    passes. Add a test that rasterises each level and asserts they differ. Check the charging band and
    the critical glyph too, which were not verified.
 3. **sysc-53**, no icons on cpu, memory, filesystem, block, network. Same font pass as sysc-52.
-4. **sysc-55**, group members are off-centre. Caused by this session: a nested row now reports its
-   tallest child so physical-size measurement is not cropped, and the capsule grows its layout box to
-   match, so members centre against the grown box rather than the visible pill.
-5. **sysc-56**, no tooltips on status widgets, so a bare percentage does not say what it measures.
-   `textWidget.tooltip` exists and weather sets it. Fix sysc-32, sysc-33 and sysc-34 first: they are
-   open defects in that same tooltip path.
-6. **sysc-31 to sysc-35**, the M3 audit defects. sysc-32, 33 and 34 are also M5 prerequisites.
-7. **sysc-5**, the deferred M2 live gate: two outputs, hotplug, mixed scales, 60-minute idle.
+4. **sysc-31 to sysc-35**, the M3 audit defects. sysc-32, 33 and 34 are also M5 prerequisites.
+5. **sysc-5**, the deferred M2 live gate: two outputs, hotplug, mixed scales, 60-minute idle.
 
 ## Still not parity, and why
 
