@@ -1,0 +1,28 @@
+{
+  "dark": {
+    "surface": "{{colors.surface.dark.hex}}",
+    "surface_container": "{{colors.surface_container.dark.hex}}",
+    "on_surface": "{{colors.on_surface.dark.hex}}",
+    "on_surface_variant": "{{colors.on_surface_variant.dark.hex}}",
+    "primary": "{{colors.primary.dark.hex}}",
+    "on_primary": "{{colors.on_primary.dark.hex}}",
+    "primary_container": "{{colors.primary_container.dark.hex}}",
+    "on_primary_container": "{{colors.on_primary_container.dark.hex}}",
+    "outline": "{{colors.outline.dark.hex}}",
+    "error": "{{colors.error.dark.hex}}",
+    "on_error": "{{colors.on_error.dark.hex}}"
+  },
+  "light": {
+    "surface": "{{colors.surface.light.hex}}",
+    "surface_container": "{{colors.surface_container.light.hex}}",
+    "on_surface": "{{colors.on_surface.light.hex}}",
+    "on_surface_variant": "{{colors.on_surface_variant.light.hex}}",
+    "primary": "{{colors.primary.light.hex}}",
+    "on_primary": "{{colors.on_primary.light.hex}}",
+    "primary_container": "{{colors.primary_container.light.hex}}",
+    "on_primary_container": "{{colors.on_primary_container.light.hex}}",
+    "outline": "{{colors.outline.light.hex}}",
+    "error": "{{colors.error.light.hex}}",
+    "on_error": "{{colors.on_error.light.hex}}"
+  }
+}

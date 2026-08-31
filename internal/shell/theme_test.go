@@ -1,6 +1,14 @@
 package shell
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
+)
 
 func TestDefaultThemeGeometryMatchesTheBaseline(t *testing.T) {
 	t.Parallel()
@@ -74,5 +82,70 @@ func TestThemeValidation(t *testing.T) {
 
 	if err := DefaultTheme().Valid(); err != nil {
 		t.Fatalf("the default theme is invalid: %v", err)
+	}
+}
+
+func TestTokensResolveToBarTheme(t *testing.T) {
+	tok := theme.Tokens{
+		Surface: "#111318", OnSurface: "#e2e2e6", Primary: "#a8c7fa",
+		OnSurfaceVariant: "#c3c6cf", Error: "#ffb4ab",
+	}
+	th := ThemeFromTokens(tok, 12)
+	if th.Background != parseColor(tok.Surface, Color{}) || th.Foreground != parseColor(tok.OnSurface, Color{}) ||
+		th.Accent != parseColor(tok.Primary, Color{}) || th.Muted != parseColor(tok.OnSurfaceVariant, Color{}) ||
+		th.Error != parseColor(tok.Error, Color{}) || th.Radius != 12 {
+		t.Fatalf("mapping wrong: %+v", th)
+	}
+}
+
+func TestRegistryGeneratesThemeAtStartup(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", dir)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	stub := "#!/bin/sh\ncat > colors.json <<'EOF'\n" +
+		`{"dark":{"surface":"#111318","on_surface":"#e2e2e6","primary":"#a8c7fa"},"light":{"surface":"#faf9fd","on_surface":"#1a1c1e","primary":"#3b5ba9"}}` +
+		"\nEOF\n"
+	if err := os.WriteFile(filepath.Join(dir, "matugen"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.ThemeGen.Source = "wallpaper"
+	cfg.ThemeGen.Seed = "/tmp/wall.jpg"
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	if reg.Tokens() == (theme.Tokens{}) {
+		t.Fatal("registry must hold generated tokens after construction")
+	}
+}
+
+func TestAThemeOnlyReloadDoesNotRestartMetricsOrWeather(t *testing.T) {
+	cfg := weatherConfig()
+	cfg.Bar.Right = []config.Item{{ID: "cpu", Display: "text", Interval: 2 * time.Second}}
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9"})
+
+	metricsStarts := reg.Metrics().Starts()
+	weatherStarts := reg.Weather().Starts()
+	if metricsStarts == 0 || weatherStarts == 0 {
+		t.Fatalf("expected leased metrics and weather, starts %d/%d", metricsStarts, weatherStarts)
+	}
+
+	candidate := cfg
+	candidate.ThemeGen.Mode = "light"
+	prepared, err := reg.PrepareConfig(candidate, identities(map[uint32]string{1: "DP-9"}))
+	if err != nil {
+		t.Fatalf("PrepareConfig: %v", err)
+	}
+	prepared.Commit()
+
+	if got := reg.Metrics().Starts(); got != metricsStarts {
+		t.Fatalf("metrics starts = %d after theme reload, want %d", got, metricsStarts)
+	}
+	if got := reg.Weather().Starts(); got != weatherStarts {
+		t.Fatalf("weather starts = %d after theme reload, want %d", got, weatherStarts)
+	}
+	if !reg.Metrics().Running() || !reg.Weather().Running() {
+		t.Fatal("theme reload dropped a metrics or weather lease")
 	}
 }

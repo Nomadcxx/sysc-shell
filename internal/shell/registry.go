@@ -1,6 +1,9 @@
 package shell
 
 import (
+	"fmt"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -8,6 +11,8 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
+	"github.com/Nomadcxx/sysc-shell/internal/theming"
 )
 
 // Registry owns every bar, the services they consume, and the state they read.
@@ -27,27 +32,38 @@ type Registry struct {
 	bars    map[uint32]*Bar
 	leases  map[uint32][]*services.Lease
 	now     time.Time
+	focused string
 
 	clock   *services.Clock
 	metrics *services.Metrics
 	weather *services.Weather
-	// sample is the newest sampling pass, shared by every bar.
-	sample services.Snapshot
-	// reading is the newest weather observation, shared by every bar.
+	sample  services.Snapshot
 	reading services.Reading
+
+	tokens   theme.Tokens
+	themeGen theme.Generator
 
 	// invalidations carries one entry per bar whose rendered text changed.
 	// The Wayland owner receives from it; the registry owns it and never
 	// closes it.
 	invalidations chan wayland.Invalidation
+	aux           chan wayland.AuxRequest
+	panels        PanelSet
+	panelHosts    map[PanelID]*PanelHost
 	// closed unblocks a pending publish at shutdown.
-	closed    chan struct{}
-	closeOnce sync.Once
-	dwell     *dwell
+	closed     chan struct{}
+	closeOnce  sync.Once
+	dwell      *dwell
+	configPath string
+	reloads    chan<- struct{}
+	audio      *services.Audio
+	brightness *services.Brightness
+	osd        *OSDManager
 }
 
 func NewRegistry(cfg config.Config) *Registry {
-	return &Registry{
+	gen := theme.Generator{}
+	r := &Registry{
 		cfg:     cfg,
 		outputs: make(map[string]outputState),
 		bars:    make(map[uint32]*Bar),
@@ -56,9 +72,171 @@ func NewRegistry(cfg config.Config) *Registry {
 		metrics: services.NewMetrics(),
 		weather: services.NewWeather(
 			cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit)),
+		themeGen:      gen,
 		invalidations: make(chan wayland.Invalidation, 8),
+		aux:           make(chan wayland.AuxRequest, 8),
+		panelHosts:    make(map[PanelID]*PanelHost),
 		closed:        make(chan struct{}),
 		dwell:         newDwell(defaultDwell),
+		audio:         services.NewAudio(0, ""),
+		brightness:    services.NewBrightness("", "", 0),
+	}
+	r.tokens = r.generateTheme(cfg)
+	r.osd = newOSDManager(r, 0)
+	go r.relayAudioOSD()
+	go r.relayBrightnessOSD()
+	return r
+}
+
+func (r *Registry) OSD() *OSDManager { return r.osd }
+
+func (r *Registry) AudioAvailable() bool {
+	return r != nil && r.audio != nil && r.audio.Available()
+}
+
+func (r *Registry) BrightnessAvailable() bool {
+	return r != nil && r.brightness != nil && r.brightness.Available()
+}
+
+func (r *Registry) OSDStep(kind, action string) error {
+	switch kind {
+	case "audio":
+		return r.stepAudio(action)
+	case "brightness":
+		return r.stepBrightness(action)
+	default:
+		return fmt.Errorf("unknown kind")
+	}
+}
+
+func (r *Registry) stepAudio(action string) error {
+	if r.audio == nil || !r.audio.Available() {
+		return fmt.Errorf("audio unavailable")
+	}
+	lease, err := r.audio.Acquire()
+	if err != nil {
+		return err
+	}
+	defer lease.Release()
+	switch action {
+	case "up":
+		err = r.audio.Step(5)
+	case "down":
+		err = r.audio.Step(-5)
+	case "mute":
+		st := r.audio.State()
+		err = r.audio.SetMute(!st.Muted)
+	default:
+		return fmt.Errorf("unknown action")
+	}
+	if err != nil {
+		return err
+	}
+	st := r.audio.State()
+	r.OSD().Show(OSDView{Kind: "audio", Level: st.Level, Muted: st.Muted})
+	return nil
+}
+
+func (r *Registry) stepBrightness(action string) error {
+	if r.brightness == nil || !r.brightness.Available() {
+		return fmt.Errorf("brightness unavailable")
+	}
+	lease, err := r.brightness.Acquire()
+	if err != nil {
+		return err
+	}
+	defer lease.Release()
+	switch action {
+	case "up":
+		err = r.brightness.Step(5)
+	case "down":
+		err = r.brightness.Step(-5)
+	default:
+		return fmt.Errorf("unknown action")
+	}
+	if err != nil {
+		return err
+	}
+	r.OSD().Show(OSDView{Kind: "brightness", Level: r.brightness.Level()})
+	return nil
+}
+
+// BindPersist sets the file and reload signal used when settings write a
+// candidate. Empty path skips the write (tests). The channel is the same one
+// SIGHUP uses.
+func (r *Registry) BindPersist(path string, reloads chan<- struct{}) {
+	r.mu.Lock()
+	r.configPath = path
+	r.reloads = reloads
+	r.mu.Unlock()
+}
+
+// Tokens is the palette the registry generated at construction or last reload.
+func (r *Registry) Tokens() theme.Tokens {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.tokens
+}
+
+// ReducedMotion reports the accessibility preference from the live config.
+func (r *Registry) ReducedMotion() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cfg.Accessibility.ReducedMotion
+}
+
+func (r *Registry) generateTheme(cfg config.Config) theme.Tokens {
+	tok, _ := r.themeGen.Generate(
+		theme.Source{Kind: cfg.ThemeGen.Source, Seed: cfg.ThemeGen.Seed},
+		theme.Options{
+			Mode:         cfg.ThemeGen.Mode,
+			Scheme:       cfg.ThemeGen.Scheme,
+			HighContrast: cfg.Accessibility.HighContrast,
+		},
+	)
+	if !runningAsTest() {
+		theming.ApplyEnabled(os.Getenv("HOME"), cfg.TemplateEnabled, tok)
+	}
+	return tok
+}
+
+func runningAsTest() bool {
+	return strings.HasSuffix(os.Args[0], ".test")
+}
+
+func (r *Registry) relayAudioOSD() {
+	if r.audio == nil {
+		return
+	}
+	ch := r.audio.Changes()
+	for {
+		select {
+		case <-r.closed:
+			return
+		case st, ok := <-ch:
+			if !ok {
+				return
+			}
+			r.OSD().Show(OSDView{Kind: "audio", Level: st.Level, Muted: st.Muted})
+		}
+	}
+}
+
+func (r *Registry) relayBrightnessOSD() {
+	if r.brightness == nil {
+		return
+	}
+	ch := r.brightness.Changes()
+	for {
+		select {
+		case <-r.closed:
+			return
+		case st, ok := <-ch:
+			if !ok {
+				return
+			}
+			r.OSD().Show(OSDView{Kind: "brightness", Level: st.Level})
+		}
 	}
 }
 
@@ -104,9 +282,10 @@ func (r *Registry) publish(globals []uint32) {
 func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbacks, error) {
 	r.mu.Lock()
 	cfg := r.cfg
+	tok := r.tokens
 	r.mu.Unlock()
 
-	bar, leases, callbacks, err := r.buildBar(cfg, connector)
+	bar, leases, callbacks, err := r.buildBar(cfg, connector, tok)
 	if err != nil {
 		return wayland.HostCallbacks{}, err
 	}
@@ -128,12 +307,13 @@ func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbac
 // reaches zero, so it is never restarted. A failure at any point releases
 // exactly what this call acquired.
 func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIdentity) (wayland.PreparedConfig, error) {
+	tok := r.generateTheme(cfg)
 	bars := make(map[uint32]*Bar, len(identities))
 	leases := make(map[uint32][]*services.Lease, len(identities))
 	callbacks := make(map[uint32]wayland.HostCallbacks, len(identities))
 
 	for _, identity := range identities {
-		bar, held, hooks, err := r.buildBar(cfg, identity.Connector)
+		bar, held, hooks, err := r.buildBar(cfg, identity.Connector, tok)
 		if err != nil {
 			for _, acquired := range leases {
 				releaseAll(acquired)
@@ -165,6 +345,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 					bar.apply(r.viewLocked(bar.connector()))
 				}
 				r.cfg = cfg
+				r.tokens = tok
 				r.bars = bars
 				r.leases = leases
 				r.mu.Unlock()
@@ -205,6 +386,10 @@ func (r *Registry) Close() {
 	r.closeOnce.Do(func() { close(r.closed) })
 
 	r.mu.Lock()
+	if r.osd != nil {
+		r.osd.hideLocked()
+	}
+	r.closeAllPanelsLocked()
 	var leases []*services.Lease
 	for global, held := range r.leases {
 		leases = append(leases, held...)
@@ -218,6 +403,12 @@ func (r *Registry) Close() {
 	r.clock.Close()
 	r.metrics.Close()
 	r.weather.Close()
+	if r.audio != nil {
+		r.audio.Close()
+	}
+	if r.brightness != nil {
+		r.brightness.Close()
+	}
 }
 
 // UpdateClock applies a shared time snapshot to every bar and reports the
@@ -251,9 +442,17 @@ func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
 			changed = append(changed, global)
 		}
 	}
+	monitorOut, monitorOK := uint32(0), false
+	if h := r.panelHosts[PanelMonitor]; h != nil {
+		r.rebuildPanel(h)
+		monitorOut, monitorOK = h.output, true
+	}
 	r.mu.Unlock()
 
 	r.publish(changed)
+	if monitorOK {
+		r.publishSurface(monitorOut, panelSurfaceID(PanelMonitor))
+	}
 	return changed
 }
 
@@ -284,6 +483,7 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	// has no workspace state any more, and keeping its last value would render
 	// a stale workspace or title on a host that reconnects under that name.
 	r.outputs = next
+	r.focused = s.FocusedOutput
 
 	var changed []uint32
 	for global, bar := range r.bars {
@@ -323,11 +523,12 @@ func (r *Registry) historyLocked() map[services.Selector][]float64 {
 
 // buildBar creates one bar and acquires the services its items need. A failure
 // releases whatever was already acquired, so a rejected build leaks nothing.
-func (r *Registry) buildBar(cfg config.Config, connector string) (
+func (r *Registry) buildBar(cfg config.Config, connector string, tok theme.Tokens) (
 	*Bar, []*services.Lease, wayland.HostCallbacks, error,
 ) {
 	policy := cfg.ForConnector(connector)
-	bar, err := NewWithTheme(ThemeFrom(cfg, policy), policy, connector)
+	th := withBarGeometry(ThemeFromTokens(tok, cfg.Theme.Radius), policy)
+	bar, err := NewWithTheme(th, policy, connector)
 	if err != nil {
 		return nil, nil, wayland.HostCallbacks{}, err
 	}
@@ -366,9 +567,10 @@ func (r *Registry) buildBar(cfg config.Config, connector string) (
 	}
 
 	return bar, leases, wayland.HostCallbacks{
-		Configure: bar.Configure,
-		Render:    bar.Render,
-		Handle:    bar.Handle,
+		Configure:        bar.Configure,
+		Render:           bar.Render,
+		Handle:           bar.Handle,
+		OpaqueBackground: th.BackgroundOpaque(),
 	}, nil
 }
 

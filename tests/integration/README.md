@@ -255,3 +255,42 @@ Matrix:
    sampling service.
 9. Idle wakeups over 60 minutes against the Tranche 3B baseline: a battery at
    a steady charge must cost no frames.
+
+## Tranche 4A: panels
+
+Live Niri checklist. Record observations in the milestone handoff. Unrun
+hardware checks stay open; do not convert a missing session into a pass.
+
+1. **Focus fall-through:** open the session panel from a foot window, press
+   Escape; keyboard focus returns to foot without any `focus-window` call.
+2. **Shield pointer delivery:** with a panel open, click outside it; the panel
+   closes and the click does not reach the window beneath.
+3. **Exclusive beats windows:** with a panel open, click a window, press
+   Escape — the panel closes.
+4. **Compositor keybinds survive:** with a panel open, a niri keybind such as
+   Super+Return still fires.
+5. **Fullscreen does not hide panels:** fullscreen a window; open the clock
+   panel — it stays visible on the Overlay layer.
+6. **Hotkeys:** add the binds in `docs/niri-hotkeys.md`; Super+P/M/X toggle
+   clock, system-monitor, and session.
+7. **High contrast:** set `accessibility.high-contrast: true`, reload; tokens
+   differ from the default palette.
+8. **Multi-output:** focus a window on each output and trigger the same panel
+   through IPC; it closes and reopens on the newly focused output.
+
+## Tranche 4B: settings, OSD, and theme catalog
+
+Live Niri checklist. Record observations in the milestone handoff. Unrun
+hardware checks stay open; do not convert a missing session into a pass.
+
+Recorded 2026-08-31: not executed in this implementation pass.
+
+1. Settings opens centered, Escape closes, focus returns to the prior window (4A fall-through).
+2. Change bar edge/height in settings → bar updates without restart.
+3. Search "motion" → reduced-motion entry; toggle it; panel reveal becomes instant.
+4. `wpctl set-volume` from a terminal → OSD fires on every output with a bar.
+5. Brightness path on a machine with a backlight device (or record unavailable behavior here).
+6. Enable niri template → focus-ring/border colors change without restarting niri.
+7. Select each stock theme → palette regenerates; fallback intact with matugen renamed away.
+8. XF86 media keys via documented binds step volume with OSD.
+

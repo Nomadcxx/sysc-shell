@@ -216,7 +216,7 @@ func TestAnAcceptedReloadDoesNotRestartAServiceStillInUse(t *testing.T) {
 	}
 
 	candidate := config.Default()
-	candidate.Theme.Accent = "#ff8800"
+	candidate.Theme.Radius = 10
 	prepared, err := reg.PrepareConfig(candidate, identities(map[uint32]string{1: "DP-9", 2: "HDMI-A-9"}))
 	if err != nil {
 		t.Fatalf("PrepareConfig: %v", err)

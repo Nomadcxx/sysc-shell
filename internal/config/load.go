@@ -10,13 +10,15 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
 
 // Wire types use pointers so an absent field is distinguishable from its zero
 // value and inherits the default instead of overwriting it with zero.
 type wireFont struct {
-	Family *string `json:"family"`
-	Size   *int    `json:"size"`
+	Family *string `json:"family,omitempty"`
+	Size   *int    `json:"size,omitempty"`
 }
 
 // wireItem decodes either a bare id string or an object carrying that id plus
@@ -24,20 +26,20 @@ type wireFont struct {
 // max-width has nowhere else to live.
 type wireItem struct {
 	ID       string  `json:"id"`
-	Format   *string `json:"format"`
-	MaxWidth *int    `json:"max-width"`
+	Format   *string `json:"format,omitempty"`
+	MaxWidth *int    `json:"max-width,omitempty"`
 
-	Display   *string `json:"display"`
-	Interval  *string `json:"interval"`
-	Path      *string `json:"path"`
-	Device    *string `json:"device"`
-	Interface *string `json:"interface"`
-	Direction *string `json:"direction"`
+	Display   *string `json:"display,omitempty"`
+	Interval  *string `json:"interval,omitempty"`
+	Path      *string `json:"path,omitempty"`
+	Device    *string `json:"device,omitempty"`
+	Interface *string `json:"interface,omitempty"`
+	Direction *string `json:"direction,omitempty"`
 
-	ShowCondition *bool `json:"show-condition"`
+	ShowCondition *bool `json:"show-condition,omitempty"`
 
-	Label     *string `json:"label"`
-	WarnBelow *int    `json:"warn-below"`
+	Label     *string `json:"label,omitempty"`
+	WarnBelow *int    `json:"warn-below,omitempty"`
 }
 
 func (i *wireItem) UnmarshalJSON(data []byte) error {
@@ -62,48 +64,70 @@ func (i *wireItem) UnmarshalJSON(data []byte) error {
 }
 
 type wireItems struct {
-	Left   *[]wireItem `json:"left"`
-	Center *[]wireItem `json:"center"`
-	Right  *[]wireItem `json:"right"`
+	Left   *[]wireItem `json:"left,omitempty"`
+	Center *[]wireItem `json:"center,omitempty"`
+	Right  *[]wireItem `json:"right,omitempty"`
 }
 
 type wireBar struct {
-	Enabled *bool      `json:"enabled"`
-	Edge    *string    `json:"edge"`
-	Height  *int       `json:"height"`
-	Gap     *int       `json:"gap"`
-	Padding *int       `json:"padding"`
-	Spacing *int       `json:"spacing"`
-	Font    *wireFont  `json:"font"`
-	Items   *wireItems `json:"items"`
+	Enabled *bool      `json:"enabled,omitempty"`
+	Edge    *string    `json:"edge,omitempty"`
+	Height  *int       `json:"height,omitempty"`
+	Gap     *int       `json:"gap,omitempty"`
+	Padding *int       `json:"padding,omitempty"`
+	Spacing *int       `json:"spacing,omitempty"`
+	Font    *wireFont  `json:"font,omitempty"`
+	Items   *wireItems `json:"items,omitempty"`
 }
 
 type wireTheme struct {
-	Background *string `json:"background"`
-	Foreground *string `json:"foreground"`
-	Accent     *string `json:"accent"`
-	Muted      *string `json:"muted"`
-	Error      *string `json:"error"`
-	Radius     *int    `json:"radius"`
+	Radius *int `json:"radius,omitempty"`
+}
+
+type wireThemeGen struct {
+	Source *string `json:"source,omitempty"`
+	Seed   *string `json:"seed,omitempty"`
+	Scheme *string `json:"scheme,omitempty"`
+	Mode   *string `json:"mode,omitempty"`
+}
+
+type wireAccessibility struct {
+	ReducedMotion *bool `json:"reduced-motion,omitempty"`
+	HighContrast  *bool `json:"high-contrast,omitempty"`
+}
+
+type wireSession struct {
+	Locker *string `json:"locker,omitempty"`
+}
+
+type wirePanels struct {
+	Gap     *int    `json:"gap,omitempty"`
+	Padding *int    `json:"padding,omitempty"`
+	OSD     *string `json:"osd,omitempty"`
 }
 
 type wireOutput struct {
-	Connector *string  `json:"connector"`
-	Bar       *wireBar `json:"bar"`
+	Connector *string  `json:"connector,omitempty"`
+	Bar       *wireBar `json:"bar,omitempty"`
 }
 
 type wireWeather struct {
-	Latitude  *float64 `json:"latitude"`
-	Longitude *float64 `json:"longitude"`
-	Unit      *string  `json:"unit"`
-	Interval  *string  `json:"interval"`
+	Latitude  *float64 `json:"latitude,omitempty"`
+	Longitude *float64 `json:"longitude,omitempty"`
+	Unit      *string  `json:"unit,omitempty"`
+	Interval  *string  `json:"interval,omitempty"`
 }
 
 type wireConfig struct {
-	Bar     *wireBar     `json:"bar"`
-	Theme   *wireTheme   `json:"theme"`
-	Weather *wireWeather `json:"weather"`
-	Outputs []wireOutput `json:"outputs"`
+	Bar           *wireBar           `json:"bar,omitempty"`
+	Theme         *wireTheme         `json:"theme,omitempty"`
+	ThemeGen      *wireThemeGen      `json:"theme-gen,omitempty"`
+	Accessibility *wireAccessibility `json:"accessibility,omitempty"`
+	Session       *wireSession       `json:"session,omitempty"`
+	Panels        *wirePanels        `json:"panels,omitempty"`
+	Weather       *wireWeather       `json:"weather,omitempty"`
+	Outputs       []wireOutput       `json:"outputs,omitempty"`
+	Templates     map[string]bool    `json:"templates,omitempty"`
 }
 
 var colorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$`)
@@ -157,6 +181,26 @@ func Parse(data []byte) (Config, error) {
 		}
 		cfg.Theme = theme
 	}
+	if wire.ThemeGen != nil {
+		gen, err := applyThemeGen(cfg.ThemeGen, *wire.ThemeGen, "theme-gen")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.ThemeGen = gen
+	}
+	if wire.Accessibility != nil {
+		cfg.Accessibility = applyAccessibility(cfg.Accessibility, *wire.Accessibility)
+	}
+	if wire.Session != nil {
+		cfg.Session = applySession(cfg.Session, *wire.Session)
+	}
+	if wire.Panels != nil {
+		panels, err := applyPanels(cfg.Panels, *wire.Panels, "panels")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Panels = panels
+	}
 	// The bar's radius mirrors the theme's, so the opaque region and the
 	// painted body agree without a second token.
 	cfg.Bar.Radius = cfg.Theme.Radius
@@ -198,6 +242,9 @@ func Parse(data []byte) (Config, error) {
 	}
 	if err := requireWeatherWhenUsed(cfg); err != nil {
 		return Config{}, err
+	}
+	if len(wire.Templates) > 0 {
+		cfg.Templates = wire.Templates
 	}
 	return cfg, nil
 }
@@ -624,31 +671,90 @@ func clockBoundary(layout string) (time.Duration, error) {
 
 func applyTheme(base Theme, w wireTheme, path string) (Theme, error) {
 	out := base
-	fields := []struct {
-		name  string
-		value *string
-		dest  *string
-	}{
-		{"background", w.Background, &out.Background},
-		{"foreground", w.Foreground, &out.Foreground},
-		{"accent", w.Accent, &out.Accent},
-		{"muted", w.Muted, &out.Muted},
-		{"error", w.Error, &out.Error},
-	}
-	for _, f := range fields {
-		if f.value == nil {
-			continue
-		}
-		if !colorPattern.MatchString(*f.value) {
-			return Theme{}, pathErr(path+"."+f.name, "%q is not #RRGGBB or #RRGGBBAA", *f.value)
-		}
-		*f.dest = *f.value
-	}
 	if w.Radius != nil {
 		if *w.Radius < 0 {
 			return Theme{}, pathErr(path+".radius", "%d is negative", *w.Radius)
 		}
 		out.Radius = *w.Radius
+	}
+	return out, nil
+}
+
+var themeSources = map[string]bool{"wallpaper": true, "hex": true, "stock": true}
+var themeModes = map[string]bool{"dark": true, "light": true}
+var osdPositions = map[string]bool{
+	"top-left": true, "top-center": true, "top-right": true,
+	"center-left": true, "center": true, "center-right": true,
+	"bottom-left": true, "bottom-center": true, "bottom-right": true,
+}
+
+func applyThemeGen(base ThemeConfig, w wireThemeGen, path string) (ThemeConfig, error) {
+	out := base
+	if w.Source != nil {
+		if !themeSources[*w.Source] {
+			return ThemeConfig{}, pathErr(path+".source", "%q is not one of wallpaper, hex, stock", *w.Source)
+		}
+		out.Source = *w.Source
+	}
+	if w.Seed != nil {
+		out.Seed = *w.Seed
+	}
+	if w.Scheme != nil {
+		out.Scheme = *w.Scheme
+	}
+	if w.Mode != nil {
+		if !themeModes[*w.Mode] {
+			return ThemeConfig{}, pathErr(path+".mode", "%q is not one of dark, light", *w.Mode)
+		}
+		out.Mode = *w.Mode
+	}
+	if out.Source == "hex" && !colorPattern.MatchString(out.Seed) {
+		return ThemeConfig{}, pathErr(path+".seed", "%q is not #RRGGBB or #RRGGBBAA", out.Seed)
+	}
+	if out.Source == "stock" {
+		if _, ok := theme.StockSeed(out.Seed); !ok {
+			return ThemeConfig{}, pathErr(path+".seed", "%q is not a known stock theme", out.Seed)
+		}
+	}
+	return out, nil
+}
+
+func applyAccessibility(base Accessibility, w wireAccessibility) Accessibility {
+	if w.ReducedMotion != nil {
+		base.ReducedMotion = *w.ReducedMotion
+	}
+	if w.HighContrast != nil {
+		base.HighContrast = *w.HighContrast
+	}
+	return base
+}
+
+func applySession(base Session, w wireSession) Session {
+	if w.Locker != nil {
+		base.Locker = *w.Locker
+	}
+	return base
+}
+
+func applyPanels(base Panels, w wirePanels, path string) (Panels, error) {
+	out := base
+	if w.Gap != nil {
+		out.Gap = *w.Gap
+	}
+	if w.Padding != nil {
+		out.Padding = *w.Padding
+	}
+	if w.OSD != nil {
+		if !osdPositions[*w.OSD] {
+			return Panels{}, pathErr(path+".osd", "%q is not a known position", *w.OSD)
+		}
+		out.OSD = *w.OSD
+	}
+	if out.Gap < 0 {
+		return Panels{}, pathErr(path+".gap", "%d is negative", out.Gap)
+	}
+	if out.Padding < 0 {
+		return Panels{}, pathErr(path+".padding", "%d is negative", out.Padding)
 	}
 	return out, nil
 }

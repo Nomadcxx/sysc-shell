@@ -9,7 +9,7 @@ func newFocusOwner() (*owner, *OutputHost, *OutputHost, *[]Event) {
 	seen := new([]Event)
 	for _, h := range []*OutputHost{a, b} {
 		h.alive = true
-		h.app = HostCallbacks{Handle: func(e Event) bool {
+		h.bar.app = HostCallbacks{Handle: func(e Event) bool {
 			*seen = append(*seen, e)
 			return false
 		}}
@@ -91,5 +91,40 @@ func TestFocusCoordinatesArePreservedForButtons(t *testing.T) {
 	press := (*seen)[len(*seen)-1]
 	if press.X != 12.75 || press.Y != 6.25 {
 		t.Fatalf("press at %v,%v, want the enter coordinates 12.75,6.25", press.X, press.Y)
+	}
+}
+
+func TestWheelScrollsByDetents(t *testing.T) {
+	t.Parallel()
+	o, a, _, seen := newFocusOwner()
+	o.enterSurface(a, 1, 1, 1)
+	*seen = nil
+	o.addAxisValue(0, 10)
+	o.addAxisDiscrete(0, -1)
+	o.addAxisValue120(0, -120)
+	o.flushAxis()
+	if len(*seen) != 1 {
+		t.Fatalf("one frame delivered %d events, want 1", len(*seen))
+	}
+	if (*seen)[0].Kind != EventPointerAxis {
+		t.Fatalf("kind = %d, want EventPointerAxis", (*seen)[0].Kind)
+	}
+	if (*seen)[0].AxisDiscrete != -1 {
+		t.Fatalf("discrete = %d, want -1", (*seen)[0].AxisDiscrete)
+	}
+}
+
+func TestPointerAxisKeepsFractionalValue(t *testing.T) {
+	t.Parallel()
+	o, a, _, seen := newFocusOwner()
+	o.enterSurface(a, 1, 1, 1)
+	*seen = nil
+	o.addAxisValue(0, 1.25)
+	o.flushAxis()
+	if len(*seen) != 1 {
+		t.Fatal("missing axis event")
+	}
+	if (*seen)[0].AxisValue != 1.25 {
+		t.Fatalf("value = %v, want 1.25", (*seen)[0].AxisValue)
 	}
 }

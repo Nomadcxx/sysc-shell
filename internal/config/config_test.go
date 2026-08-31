@@ -24,9 +24,7 @@ func TestParseAcceptsAFullDocument(t *testing.T) {
 	          "font": {"family": "Inter", "size": 14},
 	          "items": {"left": ["workspace"], "center": [{"id": "clock"}],
 	                    "right": [{"id": "window-title", "max-width": 200}]}},
-	  "theme": {"background": "#101418", "foreground": "#e8ecf0",
-	            "accent": "#0080ff", "muted": "#303438", "error": "#ff4040",
-	            "radius": 12},
+	  "theme": {"radius": 12},
 	  "outputs": [{"connector": "DP-1", "bar": {"height": 44}}]
 	}`
 	cfg, err := Parse([]byte(doc))
@@ -68,25 +66,6 @@ func TestParseIsMissingFieldTolerant(t *testing.T) {
 	}
 }
 
-func TestThemeReportsBackgroundOpacity(t *testing.T) {
-	t.Parallel()
-
-	for _, tc := range []struct {
-		background string
-		want       bool
-	}{
-		{"#101418", true},
-		{"#101418ff", true},
-		{"#101418FF", true},
-		{"#101418fe", false},
-		{"", false},
-	} {
-		if got := (Theme{Background: tc.background}).BackgroundOpaque(); got != tc.want {
-			t.Errorf("BackgroundOpaque(%q) = %v, want %v", tc.background, got, tc.want)
-		}
-	}
-}
-
 func TestValidationReportsTheFieldPath(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -101,7 +80,6 @@ func TestValidationReportsTheFieldPath(t *testing.T) {
 		{"negative padding", `{"bar":{"padding":-3}}`, "bar.padding"},
 		{"negative spacing", `{"bar":{"spacing":-3}}`, "bar.spacing"},
 		{"zero font size", `{"bar":{"font":{"size":0}}}`, "bar.font.size"},
-		{"bad colour", `{"theme":{"accent":"0080ff"}}`, "theme.accent"},
 		{"negative radius", `{"theme":{"radius":-2}}`, "theme.radius"},
 		{"unknown item", `{"bar":{"items":{"left":["no-such-widget"]}}}`, "bar.items.left[0]"},
 		{"empty connector", `{"outputs":[{"connector":""}]}`, "outputs[0].connector"},
@@ -645,6 +623,64 @@ func TestBatteryOptionsOnTheWrongItemAreRejected(t *testing.T) {
 	} {
 		if _, err := Parse([]byte(body)); err == nil {
 			t.Fatalf("a battery option was accepted on another item: %s", body)
+		}
+	}
+}
+
+func TestDefaultPanelAndSessionValues(t *testing.T) {
+	c := Default()
+	if c.ThemeGen.Source != "wallpaper" || c.ThemeGen.Scheme != "scheme-tonal-spot" || c.ThemeGen.Mode != "dark" {
+		t.Fatalf("theme defaults wrong: %+v", c.ThemeGen)
+	}
+	if c.Panels.Gap != 8 || c.Panels.Padding != 8 {
+		t.Fatalf("panels defaults wrong: %+v", c.Panels)
+	}
+	if c.Accessibility.ReducedMotion || c.Accessibility.HighContrast {
+		t.Fatalf("accessibility must default off")
+	}
+	if c.Session.Locker != "" {
+		t.Fatalf("locker must default empty")
+	}
+}
+
+func TestThemeSourceValidation(t *testing.T) {
+	for _, bad := range []string{"gradient", "auto", ""} {
+		body := []byte(`{"theme-gen":{"source":"` + bad + `"}}`)
+		if _, err := Parse(body); err == nil {
+			t.Fatalf("source %q must be rejected", bad)
+		} else if !strings.Contains(err.Error(), "theme-gen.source") {
+			t.Fatalf("error %q must name the field path", err)
+		}
+	}
+	for _, ok := range []string{"wallpaper", "hex", "stock"} {
+		seed := "#3050a0"
+		if ok == "stock" {
+			seed = "Blue"
+		}
+		body := []byte(`{"theme-gen":{"source":"` + ok + `","seed":"` + seed + `"}}`)
+		if _, err := Parse(body); err != nil {
+			t.Fatalf("source %q must be accepted: %v", ok, err)
+		}
+	}
+	if _, err := Parse([]byte(`{"theme-gen":{"source":"stock","seed":"mauve"}}`)); err == nil {
+		t.Fatal("unknown stock name must fail")
+	}
+}
+
+func TestHexSeedValidation(t *testing.T) {
+	if _, err := Parse([]byte(`{"theme-gen":{"source":"hex","seed":"blue"}}`)); err == nil {
+		t.Fatal("hex source with non-hex seed must fail")
+	}
+	if _, err := Parse([]byte(`{"theme-gen":{"source":"hex","seed":"#3050a0"}}`)); err != nil {
+		t.Fatalf("hex seed must pass: %v", err)
+	}
+}
+
+func TestRetiredThemeColourFieldsAreRejected(t *testing.T) {
+	for _, field := range []string{"background", "foreground", "accent", "muted", "error"} {
+		body := []byte(`{"theme":{"` + field + `":"#101418"}}`)
+		if _, err := Parse(body); err == nil {
+			t.Fatalf("retired theme.%s must be rejected, not ignored", field)
 		}
 	}
 }

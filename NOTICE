@@ -1,0 +1,4 @@
+The app-theming template catalog follows the structure of Noctalia's catalog
+(which templates exist, which apply hook each uses). The template bodies in
+internal/theming/templates/ are original to sysc-shell and are not copies of
+Noctalia files.

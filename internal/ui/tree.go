@@ -11,6 +11,15 @@ const (
 	KindMeter
 	KindButton
 	KindGraph
+	KindColumn
+	KindSeparator
+	KindTab
+	KindToggle
+	KindSlider
+	KindMenu
+	KindTextField
+	KindScroll
+	KindVirtualList
 )
 
 // Rect is a logical-pixel rectangle.
@@ -27,7 +36,20 @@ type Node struct {
 	Kind  Kind
 	Text  string
 	Value float64
-	Width int
+	Min   float64
+	Max   float64
+	Step  float64
+	// Preedit is composing text shown underlined; it is not committed.
+	Preedit string
+	// Cursor is a byte index into Text for KindTextField.
+	Cursor int
+	Width  int
+	// ScrollOffset is the viewport origin in logical pixels.
+	ScrollOffset int
+	ItemCount    int
+	ItemHeight   int
+	ContentH     int
+	Item         func(int) *Node
 	// Values are the graph's samples, oldest first, each already normalised to
 	// zero through one by the widget. The node carries no scale of its own.
 	Values []float64
@@ -61,6 +83,18 @@ type Node struct {
 	Action   string
 	Bounds   Rect
 	Children []*Node
+
+	// Name and Role are required on every Focusable node.
+	Focusable bool
+	Name      string
+	Role      string
+}
+
+func (n *Node) Active() int {
+	if n == nil {
+		return 0
+	}
+	return int(n.Value)
 }
 
 // Tone selects which theme colour paints a text node.

@@ -7,7 +7,6 @@ package config
 
 import (
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -61,21 +60,32 @@ type Bar struct {
 	Right      []Item
 }
 
-// Theme is the resolved visual token set. Colours are #RRGGBB or #RRGGBBAA.
+// Theme is geometry the palette generator does not produce.
 type Theme struct {
-	Background string
-	Foreground string
-	Accent     string
-	Muted      string
-	Error      string
-	Radius     int
+	Radius int
 }
 
-// BackgroundOpaque reports whether the validated background colour has full
-// alpha. Six-digit colours imply ff.
-func (t Theme) BackgroundOpaque() bool {
-	return len(t.Background) == 7 ||
-		(len(t.Background) == 9 && strings.EqualFold(t.Background[7:], "ff"))
+// ThemeConfig selects how the Material 3 palette is seeded.
+type ThemeConfig struct {
+	Source string // wallpaper | hex | stock
+	Seed   string // image path or #RRGGBB — meaning follows Source
+	Scheme string // matugen scheme-*, default scheme-tonal-spot
+	Mode   string // dark | light
+}
+
+type Accessibility struct {
+	ReducedMotion bool
+	HighContrast  bool
+}
+
+type Session struct {
+	Locker string // external locker command; empty hides the lock action
+}
+
+type Panels struct {
+	Gap     int // offset from the bar edge, logical px
+	Padding int // output edge inset for clamping, logical px
+	OSD     string
 }
 
 // OutputOverride adjusts the bar on one connector.
@@ -99,10 +109,15 @@ type Weather struct {
 
 // Config is an immutable, fully resolved configuration.
 type Config struct {
-	Bar     Bar
-	Theme   Theme
-	Weather Weather
-	Outputs []OutputOverride
+	Bar           Bar
+	Theme         Theme
+	ThemeGen      ThemeConfig
+	Accessibility Accessibility
+	Session       Session
+	Panels        Panels
+	Weather       Weather
+	Outputs       []OutputOverride
+	Templates     map[string]bool
 }
 
 // knownItems is the Milestone 3 widget vocabulary through Tranche 3B. The
@@ -189,11 +204,13 @@ func Default() Config {
 				{ID: "clock", Format: defaultDateFormat, Boundary: time.Minute},
 			},
 		},
-		Theme: Theme{
-			Background: "#101418", Foreground: "#e8ecf0",
-			Accent: "#0080ff", Muted: "#303438", Error: "#ff4040",
-			Radius: 12,
+		Theme: Theme{Radius: 12},
+		ThemeGen: ThemeConfig{
+			Source: "wallpaper",
+			Scheme: "scheme-tonal-spot",
+			Mode:   "dark",
 		},
+		Panels: Panels{Gap: 8, Padding: 8, OSD: "bottom-center"},
 	}
 }
 
@@ -206,6 +223,15 @@ func (c Config) ForConnector(name string) Bar {
 		}
 	}
 	return c.Bar
+}
+
+func (c Config) TemplateEnabled(name string) bool {
+	if c.Templates != nil {
+		if v, ok := c.Templates[name]; ok {
+			return v
+		}
+	}
+	return name == "niri"
 }
 
 func pathErr(path, format string, args ...any) error {

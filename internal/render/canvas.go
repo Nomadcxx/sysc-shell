@@ -24,6 +24,7 @@ type Canvas struct {
 	Pix           []byte
 	Width, Height int
 	Stride        int
+	restrict      ui.Rect
 }
 
 // NewCanvas wraps shared-memory bytes after validating the geometry.
@@ -50,6 +51,13 @@ func NewCanvas(pix []byte, width, height, stride int) (*Canvas, error) {
 
 // clip intersects a rectangle with the canvas bounds.
 func (c *Canvas) clip(r ui.Rect) (x0, y0, x1, y1 int) {
+	if c.restrict.W > 0 && c.restrict.H > 0 {
+		x0n := max(r.X, c.restrict.X)
+		y0n := max(r.Y, c.restrict.Y)
+		x1n := min(r.X+r.W, c.restrict.X+c.restrict.W)
+		y1n := min(r.Y+r.H, c.restrict.Y+c.restrict.H)
+		r = ui.Rect{X: x0n, Y: y0n, W: max(x1n-x0n, 0), H: max(y1n-y0n, 0)}
+	}
 	x0, y0 = max(r.X, 0), max(r.Y, 0)
 	x1, y1 = min(r.X+r.W, c.Width), min(r.Y+r.H, c.Height)
 	return x0, y0, x1, y1
@@ -143,6 +151,17 @@ func blendMask(c *Canvas, mask *image.Alpha, x, y int, col Color) {
 			blendPixel(row[px*4:px*4+4], s, alpha)
 		}
 	}
+}
+
+// FillRounded fills a rounded rectangle using the cached alpha mask.
+func (c *Canvas) FillRounded(r ui.Rect, radius int, col Color) {
+	blendMask(c, RoundedMask(radius, r.W, r.H), r.X, r.Y, col)
+}
+
+// DrawShadow composites a cached shadow around a panel rectangle.
+func (c *Canvas) DrawShadow(r ui.Rect, radius int, e Elevation, col Color) {
+	spread := shadowSpread(e)
+	blendMask(c, ShadowTexture(r.W, r.H, radius, e), r.X-spread, r.Y-spread, col)
 }
 
 // blendPixel composites a premultiplied source over a premultiplied destination.

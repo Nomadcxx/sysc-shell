@@ -43,13 +43,13 @@ func TestTeardownFreesStorageWithAnOutstandingBuffer(t *testing.T) {
 	// pool, mapping or buffers, and fd -1 so teardown closes nothing.
 	gen := &generation{id: 1, fd: -1, width: 64, height: 44}
 	gen.retire.attached() // outstanding; its release will never arrive
-	h.current = gen
+	h.bar.current = gen
 
 	o := &owner{hosts: s}
 	if err := o.teardownHost(h); err != nil {
 		t.Fatalf("teardownHost with an outstanding buffer: %v", err)
 	}
-	if h.current != nil || len(h.retiring) != 0 {
+	if h.bar.current != nil || len(h.bar.retiring) != 0 {
 		t.Fatal("generations survived teardown")
 	}
 	if !gen.retire.freeable() {
@@ -62,13 +62,13 @@ func TestTeardownStopsTheScheduler(t *testing.T) {
 	t.Parallel()
 	s := newHostSet()
 	h := mappedHost(s, 1, "DP-1")
-	h.sched.Invalidate()
+	h.bar.sched.Invalidate()
 
 	o := &owner{hosts: s}
 	if err := o.teardownHost(h); err != nil {
 		t.Fatalf("teardownHost: %v", err)
 	}
-	if d, _ := h.sched.Next(); d == render.DecisionRender {
+	if d, _ := h.bar.sched.Next(); d == render.DecisionRender {
 		t.Fatal("a torn-down host still offers render work")
 	}
 }

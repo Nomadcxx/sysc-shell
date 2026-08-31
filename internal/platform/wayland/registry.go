@@ -26,6 +26,8 @@ var interfaceMaximum = map[string]uint32{
 	"zwlr_layer_shell_v1":            4,
 	"wp_fractional_scale_manager_v1": 1,
 	"wp_viewporter":                  1,
+	"zwp_text_input_manager_v3":      1,
+	"wp_cursor_shape_manager_v1":     1,
 }
 
 // requiredSingletons must all be present before the proof can start. The

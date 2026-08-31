@@ -104,9 +104,178 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 		}
 		return paintText(c, n.Text, style.Scale120.PhysicalRect(label), text, style, size, n.Tabular, n.Tone)
 
+	case ui.KindToggle:
+		paintToggle(c, n, style)
+		return nil
+
+	case ui.KindSlider:
+		paintSlider(c, n, style)
+		return nil
+
+	case ui.KindMenu:
+		paintMenu(c, n, text, style, size)
+		return nil
+
+	case ui.KindTextField:
+		return paintTextField(c, n, text, style, size)
+
+	case ui.KindScroll, ui.KindVirtualList:
+		prev := c.restrict
+		c.restrict = style.Scale120.PhysicalRect(n.Bounds)
+		defer func() { c.restrict = prev }()
+		for i, child := range n.Children {
+			if child == nil {
+				return fmt.Errorf("nil child %d", i)
+			}
+			if err := paintNode(c, child, text, style, size); err != nil {
+				return err
+			}
+		}
+		return nil
+
+	case ui.KindRow, ui.KindColumn:
+		for i, child := range n.Children {
+			if child == nil {
+				return fmt.Errorf("nil child %d", i)
+			}
+			if err := paintNode(c, child, text, style, size); err != nil {
+				return err
+			}
+		}
+		return nil
+
+	case ui.KindSeparator:
+		box := style.Scale120.PhysicalRect(n.Bounds)
+		box.H = max(box.H, 1)
+		fillRect(c, box, style.Track)
+		return nil
+
+	case ui.KindTab:
+		return paintText(c, n.Text, style.Scale120.PhysicalRect(n.Bounds), text, style, size, n.Tabular, n.Tone)
+
 	default:
 		return fmt.Errorf("unsupported kind %d", n.Kind)
 	}
+}
+
+func paintToggle(c *Canvas, n *ui.Node, style ProofStyle) {
+	box := style.Scale120.PhysicalRect(n.Bounds)
+	track := style.Track
+	knob := style.Foreground
+	if n.Value != 0 {
+		track = style.accent()
+		if style.AccentOn.A != 0 {
+			knob = style.AccentOn
+		}
+	}
+	c.FillRounded(box, min(box.H/2, style.Scale120.Physical(10)), track)
+	knobH := style.Scale120.Physical(ui.ToggleKnob)
+	if knobH > box.H {
+		knobH = box.H
+	}
+	pad := (box.H - knobH) / 2
+	x := box.X + pad
+	if n.Value != 0 {
+		x = box.X + box.W - pad - knobH
+	}
+	c.FillRounded(ui.Rect{X: x, Y: box.Y + pad, W: knobH, H: knobH}, knobH/2, knob)
+}
+
+func paintSlider(c *Canvas, n *ui.Node, style ProofStyle) {
+	box := style.Scale120.PhysicalRect(n.Bounds)
+	trackH := max(style.Scale120.Physical(ui.SliderTrack), 1)
+	y := box.Y + (box.H-trackH)/2
+	c.FillRounded(ui.Rect{X: box.X, Y: y, W: box.W, H: trackH}, trackH/2, style.Track)
+	span := n.Max - n.Min
+	frac := 0.0
+	if span > 0 {
+		frac = (n.Value - n.Min) / span
+	}
+	frac = min(max(frac, 0), 1)
+	fillW := int(float64(box.W) * frac)
+	if fillW > 0 {
+		c.FillRounded(ui.Rect{X: box.X, Y: y, W: fillW, H: trackH}, trackH/2, style.accent())
+	}
+	knob := style.Scale120.Physical(ui.SliderKnob)
+	if knob > box.H {
+		knob = box.H
+	}
+	kx := box.X + fillW - knob/2
+	if kx < box.X {
+		kx = box.X
+	}
+	if kx+knob > box.X+box.W {
+		kx = box.X + box.W - knob
+	}
+	c.FillRounded(ui.Rect{X: kx, Y: box.Y + (box.H-knob)/2, W: knob, H: knob}, knob/2, style.accent())
+}
+
+func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size int) {
+	box := style.Scale120.PhysicalRect(n.Bounds)
+	field := box
+	if len(n.Children) > 0 {
+		first := style.Scale120.PhysicalRect(n.Children[0].Bounds)
+		if first.Y > box.Y {
+			field.H = first.Y - box.Y
+		}
+	}
+	c.FillRounded(field, style.Scale120.Physical(6), style.Track)
+	_ = paintText(c, n.Text, field, text, style, size, n.Tabular, n.Tone)
+	if len(n.Children) == 0 {
+		return
+	}
+	last := style.Scale120.PhysicalRect(n.Children[len(n.Children)-1].Bounds)
+	list := ui.Rect{X: box.X, Y: field.Y + field.H, W: box.W, H: last.Y + last.H - (field.Y + field.H)}
+	c.DrawShadow(list, style.Scale120.Physical(6), ElevMenu, Color{A: 0x73})
+	c.FillRounded(list, style.Scale120.Physical(6), style.Background)
+	for _, child := range n.Children {
+		cb := style.Scale120.PhysicalRect(child.Bounds)
+		if child.Value != 0 {
+			c.FillRounded(cb, style.Scale120.Physical(4), style.accent())
+		}
+		_ = paintText(c, child.Text, cb, text, style, size, child.Tabular, child.Tone)
+	}
+}
+
+func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size int) error {
+	box := style.Scale120.PhysicalRect(n.Bounds)
+	c.FillRounded(box, style.Scale120.Physical(6), style.Track)
+	inner := ui.Rect{
+		X: n.Bounds.X + n.Padding,
+		Y: n.Bounds.Y + n.Padding,
+		W: n.Bounds.W - 2*n.Padding,
+		H: n.Bounds.H - 2*n.Padding,
+	}
+	phys := style.Scale120.PhysicalRect(inner)
+	committed := n.Text
+	if n.Cursor >= 0 && n.Cursor <= len(n.Text) {
+		committed = n.Text[:n.Cursor]
+	}
+	if err := paintText(c, n.Text, phys, text, style, size, n.Tabular, n.Tone); err != nil {
+		return err
+	}
+	prefixW := 0
+	if text != nil && committed != "" {
+		if w, _, err := text.Measure(committed, size, n.Tabular); err == nil {
+			prefixW = w
+		}
+	}
+	if n.Preedit != "" {
+		pre := phys
+		pre.X += prefixW
+		pre.W -= prefixW
+		if err := paintText(c, n.Preedit, pre, text, style, size, n.Tabular, n.Tone); err != nil {
+			return err
+		}
+		if pw, _, err := text.Measure(n.Preedit, size, n.Tabular); err == nil {
+			underline := ui.Rect{X: pre.X, Y: pre.Y + pre.H - 1, W: pw, H: 1}
+			fillRect(c, underline, style.Foreground)
+			prefixW += pw
+		}
+	}
+	caret := ui.Rect{X: phys.X + prefixW, Y: phys.Y, W: 1, H: phys.H}
+	fillRect(c, caret, style.accent())
+	return nil
 }
 
 // paintGraph fills one column per sample, newest at the right, using the same

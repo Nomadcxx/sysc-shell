@@ -104,7 +104,7 @@ func TestPrepareConfigDoesNotMutateLiveHosts(t *testing.T) {
 	hosts.arrival = append(hosts.arrival, h.global)
 
 	candidate := config.Default()
-	candidate.Theme.Background = "#10141880"
+	candidate.Theme.Radius = 8
 	override := candidate.Bar
 	override.Height = 56
 	override.Gap = 6
@@ -141,9 +141,6 @@ func TestPrepareConfigDoesNotMutateLiveHosts(t *testing.T) {
 	if len(prepared.hosts) != 1 || prepared.hosts[0].policy.Height != 56 || prepared.hosts[0].policy.Gap != 6 {
 		t.Fatalf("prepared hosts = %+v, want DP-1 policy 56/6", prepared.hosts)
 	}
-	if prepared.hosts[0].opaqueBackground {
-		t.Fatal("translucent candidate prepared an opaque host")
-	}
 }
 
 func TestPrepareConfigConfiguresMappedReplacementBeforePublishing(t *testing.T) {
@@ -155,9 +152,9 @@ func TestPrepareConfigConfiguresMappedReplacementBeforePublishing(t *testing.T) 
 	h.doneSeen = true
 	h.state = hostMapped
 	h.policy = current.Bar
-	h.ss.configure(1200, h.surfaceHeight())
-	h.ss.acknowledge()
-	h.ss.preferredScale(180)
+	h.bar.ss.configure(1200, h.surfaceHeight())
+	h.bar.ss.acknowledge()
+	h.bar.ss.preferredScale(180)
 	hosts := newHostSet()
 	hosts.hosts[h.global] = h
 	hosts.arrival = append(hosts.arrival, h.global)
@@ -311,8 +308,9 @@ func TestHotplugUsesTheAcceptedOutputPolicy(t *testing.T) {
 
 func validHostCallbacks() HostCallbacks {
 	return HostCallbacks{
-		Configure: func(int, int, int) error { return nil },
-		Render:    func([]byte, int, int, int) error { return nil },
-		Handle:    func(Event) bool { return false },
+		Configure:        func(int, int, int) error { return nil },
+		Render:           func([]byte, int, int, int) error { return nil },
+		Handle:           func(Event) bool { return false },
+		OpaqueBackground: true,
 	}
 }

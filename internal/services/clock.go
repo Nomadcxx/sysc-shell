@@ -37,11 +37,13 @@ type Clock struct {
 // Lease is one consumer's claim on a service. Exactly one of clock, metrics,
 // or weather is set; the zero value is an already-released lease.
 type Lease struct {
-	clock    *Clock
-	metrics  *Metrics
-	weather  *Weather
-	selector Selector
-	boundary time.Duration
+	clock      *Clock
+	metrics    *Metrics
+	weather    *Weather
+	audio      *Audio
+	brightness *Brightness
+	selector   Selector
+	boundary   time.Duration
 }
 
 func NewClock() *Clock {
@@ -99,6 +101,14 @@ func (l *Lease) Release() {
 		w := l.weather
 		l.weather = nil
 		w.releaseWeather(l)
+	case l.audio != nil:
+		a := l.audio
+		l.audio = nil
+		a.release(l)
+	case l.brightness != nil:
+		b := l.brightness
+		l.brightness = nil
+		b.release(l)
 	}
 }
 

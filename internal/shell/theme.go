@@ -6,6 +6,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
 
 // Color is the painter's colour type, re-exported so components name one type.
@@ -55,27 +56,39 @@ func DefaultTheme() Theme {
 	}
 }
 
+// ThemeFromTokens maps generated Material 3 tokens onto the bar theme.
+func ThemeFromTokens(tok theme.Tokens, radius int) Theme {
+	t := DefaultTheme()
+	t.Radius = radius
+	t.Background = parseColor(tok.Surface, t.Background)
+	t.Foreground = parseColor(tok.OnSurface, t.Foreground)
+	t.Accent = parseColor(tok.Primary, t.Accent)
+	t.Muted = parseColor(tok.OnSurfaceVariant, t.Muted)
+	t.Error = parseColor(tok.Error, t.Error)
+	return t
+}
+
 // ThemeFrom maps a validated configuration onto theme tokens.
 //
-// Colours have already passed the #RRGGBB pattern at load, so a parse failure
-// here is unreachable in practice; the fallback keeps the default rather than
-// painting with a zero colour if one ever slipped through.
 // Geometry comes from the supplied bar policy rather than the base bar, so a
 // per-output override reaches the theme the bar is actually built from.
+// Palette colours stay on DefaultTheme until the registry supplies generated tokens.
 func ThemeFrom(cfg config.Config, bar config.Bar) Theme {
-	t := DefaultTheme()
+	return withBarGeometry(ThemeFromTokens(theme.Fallback, cfg.Theme.Radius), bar)
+}
+
+func withBarGeometry(t Theme, bar config.Bar) Theme {
 	t.BarHeight = bar.Height
 	t.BarGap = bar.Gap
 	t.BarPadding = bar.Padding
 	t.Spacing = bar.Spacing
 	t.TextSize = bar.FontSize
-	t.Radius = cfg.Theme.Radius
-	t.Background = parseColor(cfg.Theme.Background, t.Background)
-	t.Foreground = parseColor(cfg.Theme.Foreground, t.Foreground)
-	t.Accent = parseColor(cfg.Theme.Accent, t.Accent)
-	t.Muted = parseColor(cfg.Theme.Muted, t.Muted)
-	t.Error = parseColor(cfg.Theme.Error, t.Error)
 	return t
+}
+
+// BackgroundOpaque reports whether the surface token is fully opaque.
+func (t Theme) BackgroundOpaque() bool {
+	return t.Background.A == 0xff
 }
 
 // parseColor reads #RRGGBB or #RRGGBBAA, falling back when the string is not

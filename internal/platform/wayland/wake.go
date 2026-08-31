@@ -20,6 +20,7 @@ type wakePipe struct {
 	// this queue beside it.
 	mu      sync.Mutex
 	pending []Invalidation
+	aux     []AuxRequest
 	// reload is set when a SIGHUP arrived. The owner reads and clears it, so
 	// repeated signals during one wait coalesce into a single reload.
 	reload bool
@@ -39,7 +40,7 @@ func newWakePipe() (*wakePipe, error) {
 
 // bridge forwards cancellation and application invalidations to the pipe. It
 // never closes the caller-owned invalidation channel and never calls a proxy.
-func (w *wakePipe) bridge(ctx context.Context, invalidations <-chan Invalidation, reloads <-chan struct{}, tooltips <-chan TooltipRequest) {
+func (w *wakePipe) bridge(ctx context.Context, invalidations <-chan Invalidation, reloads <-chan struct{}, tooltips <-chan TooltipRequest, aux <-chan AuxRequest) {
 	go func() {
 		for {
 			select {
@@ -68,6 +69,12 @@ func (w *wakePipe) bridge(ctx context.Context, invalidations <-chan Invalidation
 				w.tooltip, w.hasTooltip = req, true
 				w.mu.Unlock()
 				w.signal()
+			case req, ok := <-aux:
+				if !ok {
+					return
+				}
+				w.pushAux(req)
+				w.signal()
 			}
 		}
 	}()
@@ -92,6 +99,20 @@ func (w *wakePipe) takeTooltip() (TooltipRequest, bool) {
 	req := w.tooltip
 	w.tooltip, w.hasTooltip = TooltipRequest{}, false
 	return req, true
+}
+
+func (w *wakePipe) pushAux(req AuxRequest) {
+	w.mu.Lock()
+	w.aux = append(w.aux, req)
+	w.mu.Unlock()
+}
+
+func (w *wakePipe) takeAux() []AuxRequest {
+	w.mu.Lock()
+	out := w.aux
+	w.aux = nil
+	w.mu.Unlock()
+	return out
 }
 
 // push queues one invalidation for the owner goroutine.

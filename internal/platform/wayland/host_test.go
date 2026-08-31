@@ -27,12 +27,13 @@ func TestHostReadyRequiresDoneAndName(t *testing.T) {
 
 func TestHostBufferSizeRoundsHalfAwayFromZero(t *testing.T) {
 	t.Parallel()
-	h := &OutputHost{state: hostMapped, ss: newSurfaceState()}
-	h.ss.configure(1707, 44)
-	h.ss.acknowledge()
-	h.ss.preferredScale(180) // 1.5
+	h := newHost(0, nil)
+	h.state = hostMapped
+	h.bar.ss.configure(1707, 44)
+	h.bar.ss.acknowledge()
+	h.bar.ss.preferredScale(180) // 1.5
 
-	w, hh, err := h.bufferSize()
+	w, hh, err := h.bar.bufferSize()
 	if err != nil {
 		t.Fatalf("bufferSize: %v", err)
 	}

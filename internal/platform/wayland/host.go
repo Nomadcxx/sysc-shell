@@ -44,6 +44,54 @@ type HostCallbacks struct {
 	Render func(pixels []byte, width, height, stride int) error
 	// Handle consumes a pointer event and reports whether state changed.
 	Handle func(Event) bool
+	// WantIME reports whether the focused control needs text-input-v3.
+	WantIME func() bool
+	// IBeamAt reports whether the pointer is over a text field.
+	IBeamAt func(x, y float64) bool
+	// OpaqueBackground is the resolved palette opacity for this surface.
+	OpaqueBackground bool
+}
+
+// surfaceUnit owns one layer surface and its buffer lifecycle. The bar is
+// the first unit; auxiliary panels are more.
+type surfaceUnit struct {
+	id string // "bar" or the AuxSpec id
+
+	surface  *client.Surface
+	layer    *layershell.ZwlrLayerSurfaceV1
+	scale    *fractionalscale.WpFractionalScaleV1
+	viewport *viewporter.WpViewport
+
+	ss    *surfaceState
+	sched *render.Scheduler
+
+	current  *generation
+	retiring []*generation
+	genID    int
+
+	frameCallback *client.Callback
+	cleanup       cleanupStack
+
+	app HostCallbacks
+}
+
+func newSurfaceUnit(id string) *surfaceUnit {
+	return &surfaceUnit{
+		id:    id,
+		ss:    newSurfaceState(),
+		sched: render.NewScheduler(),
+	}
+}
+
+func (u *surfaceUnit) bufferSize() (int32, int32, error) { return u.ss.bufferSize() }
+
+func (u *surfaceUnit) dropFrameCallback() error {
+	if u.frameCallback != nil {
+		err := u.frameCallback.Destroy()
+		u.frameCallback = nil
+		return err
+	}
+	return nil
 }
 
 // OutputHost owns everything scoped to one wl_output. Its identity is the
@@ -67,27 +115,12 @@ type OutputHost struct {
 	// destroyed so events already queued in the dispatch stream are ignored.
 	alive bool
 
-	surface  *client.Surface
-	layer    *layershell.ZwlrLayerSurfaceV1
-	scale    *fractionalscale.WpFractionalScaleV1
-	viewport *viewporter.WpViewport
-
-	ss    *surfaceState
-	sched *render.Scheduler
-
-	current  *generation
-	retiring []*generation
-	genID    int
-
-	frameCallback *client.Callback
-
-	cleanup cleanupStack
+	bar *surfaceUnit
+	aux map[string]*surfaceUnit
 
 	// Bounded recreation budget for zwlr_layer_surface_v1.closed.
 	closeAttempts int
 	mappedSince   time.Time
-
-	app HostCallbacks
 }
 
 // newHost creates a host for a freshly bound wl_output.
@@ -97,8 +130,8 @@ func newHost(global uint32, proxy *client.Output) *OutputHost {
 		proxy:  proxy,
 		state:  hostBound,
 		alive:  true,
-		ss:     newSurfaceState(),
-		sched:  render.NewScheduler(),
+		bar:    newSurfaceUnit("bar"),
+		aux:    make(map[string]*surfaceUnit),
 	}
 }
 
@@ -109,20 +142,6 @@ func (h *OutputHost) ready() bool { return h.doneSeen && h.connector != "" }
 // surfaceHeight is the layer surface height and exclusive zone for this host.
 func (h *OutputHost) surfaceHeight() int {
 	return h.policy.Gap + (h.policy.Height - 2*h.policy.Gap)
-}
-
-// bufferSize converts this host's logical size and scale to buffer pixels.
-func (h *OutputHost) bufferSize() (int32, int32, error) { return h.ss.bufferSize() }
-
-// dropFrameCallback destroys any outstanding frame callback. A callback that
-// belongs to a retired generation must never deliver a done event.
-func (h *OutputHost) dropFrameCallback() error {
-	if h.frameCallback != nil {
-		err := h.frameCallback.Destroy()
-		h.frameCallback = nil
-		return err
-	}
-	return nil
 }
 
 // mayRecreate reports whether the host may rebuild its surface after a close.
@@ -140,4 +159,15 @@ func (h *OutputHost) mayRecreate(now time.Time) bool {
 func (h *OutputHost) recordCloseAttempt() {
 	h.closeAttempts++
 	h.mappedSince = time.Time{}
+}
+
+func (h *OutputHost) units() []*surfaceUnit {
+	out := make([]*surfaceUnit, 0, 1+len(h.aux))
+	if h.bar != nil {
+		out = append(out, h.bar)
+	}
+	for _, u := range h.aux {
+		out = append(out, u)
+	}
+	return out
 }

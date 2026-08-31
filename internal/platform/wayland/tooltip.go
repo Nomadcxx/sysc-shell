@@ -99,7 +99,7 @@ func (o *owner) showTooltip(req TooltipRequest) error {
 	}
 
 	width, height := o.measureTooltip(req.Text)
-	outW := h.ss.logicalWidth
+	outW := h.bar.ss.logicalWidth
 	if outW <= 0 {
 		outW = int(h.modeWidth)
 	}
@@ -162,7 +162,7 @@ func (o *owner) showTooltip(req TooltipRequest) error {
 		viewport: viewport,
 		place:    place,
 		text:     req.Text,
-		scale120: h.ss.scale120,
+		scale120: h.bar.ss.scale120,
 	}
 	if tt.scale120 == 0 {
 		tt.scale120 = ui.ScaleUnit

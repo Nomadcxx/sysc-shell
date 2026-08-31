@@ -75,6 +75,8 @@ func TestRegistryBindsAtTheLowerVersion(t *testing.T) {
 		{"zwlr_layer_shell_v1", 5, 4},
 		{"wp_fractional_scale_manager_v1", 1, 1},
 		{"wp_viewporter", 1, 1},
+		{"zwp_text_input_manager_v3", 1, 1},
+		{"wp_cursor_shape_manager_v1", 2, 1},
 		// A server older than our maximum caps us at the server's version.
 		{"wl_compositor", 4, 4},
 	}

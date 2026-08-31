@@ -52,9 +52,9 @@ func TestTransformedOutputUsesSwappedConfigureDimensions(t *testing.T) {
 
 	// A rotated output reports a configure whose width is the mode height. The
 	// surface size comes from the configure, never from the mode.
-	h.ss.configure(1440, 44)
-	h.ss.acknowledge()
-	w, hh, err := h.bufferSize()
+	h.bar.ss.configure(1440, 44)
+	h.bar.ss.acknowledge()
+	w, hh, err := h.bar.bufferSize()
 	if err != nil {
 		t.Fatalf("bufferSize: %v", err)
 	}
