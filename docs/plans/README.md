@@ -21,7 +21,7 @@ resolved on 2026-08-30. Every registered document now lives on `main`, including
 |---|---|
 | `main` | Every registered document |
 | `milestone/stable-bar` | Milestone 2 implementation branch, merged into `main` at `309f9d2` |
-| `milestone/panels-controls` | Merged into `main` on 2026-08-30; stays live for further Milestone 4 work |
+| `milestone/panels-controls` | Merged into `main` at `01cae98` (2026-08-31). Branch deleted after the local merge. |
 
 Re-check with `git ls-tree -r --name-only <branch> -- docs/` rather than trusting this table blindly.
 
@@ -128,8 +128,8 @@ Split into four reviewed tranches by the charter. 3A and 3B are merged.
 
 ## Milestone 4 — panels and standard controls
 
-Designed, planned, reviewed and corrected. All documents are on `main`; `milestone/panels-controls`
-stays live for further work.
+Designed, planned, reviewed, executed and merged to `main` at `01cae98`. Live Niri
+checklists remain owner-deferred. Spec shortfalls from the 2026-08-31 sweeps are `sysc-38`–`sysc-40`.
 
 | Document | Kind | State |
 |---|---|---|
@@ -143,13 +143,15 @@ stays live for further work.
 | `2026-08-30-milestone-4-review.md` | review | Closed. Both blockers fixed in `3fc026c`; findings tracked as `sysc-16`. |
 | `2026-08-31-milestone-4-post-m3-audit-report.md` | audit-report | Reconciles 4A/4B with landed M1-M3 APIs and corrects the executable plans. |
 | `2026-08-31-milestone-4-execution-handover.md` | execution-handover | Commissions corrected 4A and the three reviewed 4B slices in the existing M4 worktree. |
+| `2026-08-31-m4-spec-review-sweep.md` | audit-report | Implementation vs 4A/4B designs, post-M3 audit, charter, roadmap gate. Live matrices owner-deferred. |
+| `2026-08-31-m4-code-quality-sweep.md` | audit-report | Correctness and reliability pass over landed M4. Report only. |
 
 ### Tranche state
 
 | Tranche | Scope | State |
 |---|---|---|
-| 4A | Panel machinery, placement, rounding and shadows, button/label/separator/tabs, matugen theming, clock/calendar, system-monitor and session/power popouts, IPC | Plan reconciled with landed M3. |
-| 4B | Controls, settings modal and registry, OSD with audio/brightness services, stock themes, template catalog | Plan split by mandatory review boundaries after Tasks 8 and 11. |
+| 4A | Panel machinery, placement, rounding and shadows, button/label/separator/tabs, matugen theming, clock/calendar, system-monitor and session/power popouts, IPC | Merged to `main` at `01cae98`. Live checklist unrun. |
+| 4B | Controls, settings modal and registry, OSD with audio/brightness services, stock themes, template catalog | Merged to `main` at `01cae98`. Live checklist unrun. Spec shortfalls in `sysc-38`–`sysc-40`. |
 
 ### Post-M3 reconciliation
 
