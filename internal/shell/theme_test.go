@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -173,5 +174,50 @@ func TestAThemeOnlyReloadDoesNotRestartMetricsOrWeather(t *testing.T) {
 	}
 	if !reg.Metrics().Running() || !reg.Weather().Running() {
 		t.Fatal("theme reload dropped a metrics or weather lease")
+	}
+}
+
+// contrast is the WCAG ratio between two opaque colours.
+func contrast(a, b Color) float64 {
+	lum := func(c Color) float64 {
+		ch := func(v uint8) float64 {
+			f := float64(v) / 255
+			if f <= 0.03928 {
+				return f / 12.92
+			}
+			return math.Pow((f+0.055)/1.055, 2.4)
+		}
+		return 0.2126*ch(c.R) + 0.7152*ch(c.G) + 0.0722*ch(c.B)
+	}
+	hi, lo := lum(a), lum(b)
+	if hi < lo {
+		hi, lo = lo, hi
+	}
+	return (hi + 0.05) / (lo + 0.05)
+}
+
+// The capsule palette was measured against a live reference bar. These bounds
+// stop a future palette edit from silently returning the bar to the state where
+// pills were present but invisible.
+func TestDefaultPaletteKeepsCapsulesAndPillsVisible(t *testing.T) {
+	t.Parallel()
+	th := DefaultTheme()
+
+	if got := contrast(th.Background, th.Capsule); got < 1.10 {
+		t.Errorf("capsule/bar contrast = %.3f:1, want at least 1.10 (reference bar is 1.14)", got)
+	}
+	// An unfocused workspace pill has to be a surface, not a tint of the bar.
+	if got := contrast(th.Background, th.Container); got < 2.5 {
+		t.Errorf("pill/bar contrast = %.2f:1, want at least 2.5 (reference is 3.5)", got)
+	}
+	if got := contrast(th.Background, th.Accent); got < 3.0 {
+		t.Errorf("focused pill/bar contrast = %.2f:1, want at least 3.0", got)
+	}
+	// Numerals must stay legible on the fill their capsule supplies.
+	if got := contrast(th.Accent, th.OnAccent); got < 3.0 {
+		t.Errorf("numeral on the focused pill = %.2f:1, want at least 3.0", got)
+	}
+	if got := contrast(th.Container, th.OnContainer); got < 3.0 {
+		t.Errorf("numeral on an unfocused pill = %.2f:1, want at least 3.0", got)
 	}
 }
