@@ -50,15 +50,27 @@ func settingsTree(h *PanelHost) *ui.Node {
 	if section == "" {
 		section = "Bar"
 	}
-	var content []*ui.Node
+	var entries []settings.Entry
 	if h.set != nil {
-		for _, e := range h.set.Section(section) {
-			content = append(content, settingsEntryRow(h, e))
-		}
+		entries = h.set.Section(section)
+	}
+	content := &ui.Node{
+		Kind:       ui.KindVirtualList,
+		ItemCount:  len(entries),
+		ItemHeight: 36,
+		Item: func(i int) *ui.Node {
+			if i < 0 || i >= len(entries) {
+				return nil
+			}
+			return settingsEntryRow(h, entries[i])
+		},
+	}
+	for i := range entries {
+		content.Children = append(content.Children, settingsEntryRow(h, entries[i]))
 	}
 	return &ui.Node{Kind: ui.KindRow, Gap: 16, Padding: 12, Children: []*ui.Node{
 		{Kind: ui.KindColumn, Width: 220, Gap: 8, Children: sidebar},
-		{Kind: ui.KindScroll, Children: content},
+		content,
 	}}
 }
 

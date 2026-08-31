@@ -61,10 +61,36 @@ func TestSettingsEntryRendersMatchingControl(t *testing.T) {
 	for _, n := range walk(h.root) {
 		seen[n.Kind] = true
 	}
+	if s := findScroll(h.root); s != nil && s.Item != nil {
+		for i := 0; i < s.ItemCount; i++ {
+			for _, n := range walk(s.Item(i)) {
+				seen[n.Kind] = true
+			}
+		}
+	}
 	for _, k := range []ui.Kind{ui.KindToggle, ui.KindSlider, ui.KindMenu, ui.KindTextField} {
 		if !seen[k] {
 			t.Fatalf("Bar section missing kind %d", k)
 		}
+	}
+}
+
+func TestSettingsContentIsVirtualList(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	s := findScroll(h.root)
+	if s == nil {
+		t.Fatal("settings tree has no scroll area")
+	}
+	if s.Kind != ui.KindVirtualList {
+		t.Fatalf("content kind = %d, want virtual list", s.Kind)
+	}
+	if s.Item == nil || s.ItemCount == 0 {
+		t.Fatal("virtual list has no items")
+	}
+	row := s.Item(0)
+	if row == nil {
+		t.Fatal("item 0 is nil")
 	}
 }
 

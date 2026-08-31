@@ -265,7 +265,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		theme:    ThemeFromTokens(r.tokens, 12),
 	}
 	if id == PanelSettings {
-		h.set = settings.Default()
+		h.set = settings.DefaultFor(r.cfg)
 		h.draft = r.cfg
 		h.section = "Bar"
 		h.search = ui.NewField("")

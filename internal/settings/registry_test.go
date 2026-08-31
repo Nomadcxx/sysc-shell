@@ -56,3 +56,40 @@ func TestSearchMatchesLabels(t *testing.T) {
 		t.Fatalf("search motion = %+v", hits)
 	}
 }
+
+func TestRegistryWidgetsFollowConfiguredBar(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Bar.Left = []config.Item{{ID: "window-title", MaxWidth: 200}}
+	cfg.Bar.Center = nil
+	cfg.Bar.Right = nil
+	r := DefaultFor(cfg)
+	if r.ByPath("widgets.window-title.max-width") == nil {
+		t.Fatal("title option missing for configured bar")
+	}
+	if r.ByPath("widgets.clock.format") != nil {
+		t.Fatal("clock option present though clock is not on the bar")
+	}
+}
+
+func TestRegistryExposesBarItemLists(t *testing.T) {
+	t.Parallel()
+	r := Default()
+	e := r.ByPath("bar.items.left")
+	if e == nil || e.Kind != KindString {
+		t.Fatal("bar.items.left must be a string entry")
+	}
+	cfg := config.Default()
+	if got := e.Get(cfg); got != "workspace,window-title" {
+		t.Fatalf("left items = %q", got)
+	}
+	if err := e.Set(&cfg, "window-title,workspace"); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.Get(cfg); got != "window-title,workspace" {
+		t.Fatalf("after set = %q", got)
+	}
+	if cfg.Bar.Left[0].ID != "window-title" || cfg.Bar.Left[0].MaxWidth <= 0 {
+		t.Fatalf("reused title lost max width: %+v", cfg.Bar.Left[0])
+	}
+}

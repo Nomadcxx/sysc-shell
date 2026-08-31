@@ -29,6 +29,10 @@ type Entry struct {
 type Registry struct{ entries []Entry }
 
 func Default() *Registry {
+	return DefaultFor(config.Default())
+}
+
+func DefaultFor(cfg config.Config) *Registry {
 	r := &Registry{entries: []Entry{
 		{Path: "bar.enabled", Label: "Enabled", Section: "Bar", Kind: KindBool},
 		{Path: "bar.edge", Label: "Edge", Section: "Bar", Kind: KindEnum, Options: []string{"top", "bottom"}},
@@ -39,6 +43,9 @@ func Default() *Registry {
 		{Path: "bar.radius", Label: "Radius", Section: "Bar", Kind: KindInt, Min: 0, Max: 32},
 		{Path: "bar.font-family", Label: "Font family", Section: "Bar", Kind: KindString},
 		{Path: "bar.font-size", Label: "Font size", Section: "Bar", Kind: KindInt, Min: 8, Max: 32},
+		{Path: "bar.items.left", Label: "Left items", Section: "Bar", Kind: KindString},
+		{Path: "bar.items.center", Label: "Center items", Section: "Bar", Kind: KindString},
+		{Path: "bar.items.right", Label: "Right items", Section: "Bar", Kind: KindString},
 		{Path: "appearance.source", Label: "Theme source", Section: "Appearance", Kind: KindEnum, Options: []string{"wallpaper", "hex", "stock"}},
 		{Path: "appearance.seed", Label: "Seed", Section: "Appearance", Kind: KindString},
 		{Path: "appearance.scheme", Label: "Scheme", Section: "Appearance", Kind: KindString},
@@ -54,7 +61,7 @@ func Default() *Registry {
 		{Path: "accessibility.reduced-motion", Label: "Reduced motion", Section: "Accessibility", Kind: KindBool},
 		{Path: "accessibility.high-contrast", Label: "High contrast", Section: "Accessibility", Kind: KindBool},
 	}}
-	r.addWidgetEntries(config.Default())
+	r.addWidgetEntries(cfg)
 	r.addTemplateEntries()
 	return r
 }
@@ -165,6 +172,12 @@ func (e Entry) Get(c config.Config) string {
 		return c.Bar.FontFamily
 	case "bar.font-size":
 		return strconv.Itoa(c.Bar.FontSize)
+	case "bar.items.left":
+		return formatItemIDs(c.Bar.Left)
+	case "bar.items.center":
+		return formatItemIDs(c.Bar.Center)
+	case "bar.items.right":
+		return formatItemIDs(c.Bar.Right)
 	case "appearance.source":
 		return c.ThemeGen.Source
 	case "appearance.seed":
@@ -288,6 +301,12 @@ func (e Entry) setString(c *config.Config, v string) error {
 		c.Bar.Edge = v
 	case "bar.font-family":
 		c.Bar.FontFamily = v
+	case "bar.items.left":
+		c.Bar.Left = parseItemIDs(v, c.Bar.Left)
+	case "bar.items.center":
+		c.Bar.Center = parseItemIDs(v, c.Bar.Center)
+	case "bar.items.right":
+		c.Bar.Right = parseItemIDs(v, c.Bar.Right)
 	case "appearance.source":
 		c.ThemeGen.Source = v
 	case "appearance.seed":
@@ -306,6 +325,36 @@ func (e Entry) setString(c *config.Config, v string) error {
 		return fmt.Errorf("settings: %s: not a string", e.Path)
 	}
 	return nil
+}
+
+func formatItemIDs(items []config.Item) string {
+	ids := make([]string, len(items))
+	for i, it := range items {
+		ids[i] = it.ID
+	}
+	return strings.Join(ids, ",")
+}
+
+func parseItemIDs(s string, prev []config.Item) []config.Item {
+	used := make([]bool, len(prev))
+	var out []config.Item
+	for _, id := range strings.Split(s, ",") {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		it := config.Item{ID: id}
+		for i, p := range prev {
+			if used[i] || p.ID != id {
+				continue
+			}
+			it = p
+			used[i] = true
+			break
+		}
+		out = append(out, it)
+	}
+	return out
 }
 
 func firstItem(c config.Config, id string) *config.Item {

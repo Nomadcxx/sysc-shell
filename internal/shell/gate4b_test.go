@@ -104,17 +104,17 @@ func TestAcceptKeyboardOnlyAllControls(t *testing.T) {
 	if s == nil {
 		t.Fatal("settings tree has no scroll area")
 	}
-	s.Bounds.H = 80
-	s.ContentH = 800
-	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyPageDown})
-	if s.ScrollOffset == 0 {
-		t.Fatal("page down did not scroll")
+	if s.Kind != ui.KindVirtualList {
+		t.Fatal("settings content is not a virtual list")
 	}
-
-	s.Kind = ui.KindVirtualList
-	s.ItemCount = 40
-	s.ItemHeight = 20
-	s.ScrollOffset = 0
+	s.Bounds.H = 80
+	if s.ItemHeight <= 0 {
+		s.ItemHeight = 36
+	}
+	s.ContentH = s.ItemCount * s.ItemHeight
+	if s.ContentH < 800 {
+		s.ContentH = 800
+	}
 	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyPageDown})
 	if s.ScrollOffset == 0 {
 		t.Fatal("page down did not scroll the virtual list")
