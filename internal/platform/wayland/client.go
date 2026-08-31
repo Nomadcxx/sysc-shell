@@ -172,6 +172,7 @@ type owner struct {
 
 	tooltip         *tooltipSurface
 	tooltipRenderer *render.TextRenderer
+	tooltipFont     string
 
 	cleanup cleanupStack
 	fatal   error

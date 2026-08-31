@@ -3,6 +3,8 @@ package wayland
 import (
 	"testing"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -108,5 +110,36 @@ func TestTooltipBufferTeardownFreesAllGenerations(t *testing.T) {
 	}
 	if !current.retire.destroyed || !retired.retire.destroyed {
 		t.Fatal("teardown freed storage without marking every generation destroyed")
+	}
+}
+
+func TestTooltipUsesAcceptedTheme(t *testing.T) {
+	cfg := config.Default()
+	cfg.Theme.Background = "#11223344"
+	cfg.Theme.Foreground = "#aabbcc"
+	cfg.Theme.Radius = 7
+	override := cfg.Bar
+	override.FontSize = 19
+	override.FontFamily = "Fixture Sans"
+	cfg.Outputs = []config.OutputOverride{{Connector: "DP-1", Bar: override}}
+
+	o := &owner{cfg: &cfg}
+	tt := &tooltipSurface{
+		host:  &OutputHost{connector: "DP-1"},
+		place: ui.Rect{W: 120, H: 30},
+	}
+	style, family := o.tooltipStyle(tt)
+
+	if style.Background != (render.Color{R: 0x11, G: 0x22, B: 0x33, A: 0x44}) {
+		t.Fatalf("background = %#v, want accepted theme colour", style.Background)
+	}
+	if style.Foreground != (render.Color{R: 0xaa, G: 0xbb, B: 0xcc, A: 0xff}) {
+		t.Fatalf("foreground = %#v, want accepted theme colour", style.Foreground)
+	}
+	if style.Radius != 7 || style.Size != 19 {
+		t.Fatalf("radius/size = %d/%d, want 7/19", style.Radius, style.Size)
+	}
+	if family != "Fixture Sans" {
+		t.Fatalf("font family = %q, want connector override", family)
 	}
 }

@@ -2,6 +2,7 @@ package wayland
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/viewporter"
@@ -99,7 +100,7 @@ func (o *owner) showTooltip(req TooltipRequest) error {
 		return nil
 	}
 
-	width, height := o.measureTooltip(req.Text)
+	width, height := o.measureTooltip(h, req.Text)
 	outW := h.ss.logicalWidth
 	if outW <= 0 {
 		outW = int(h.modeWidth)
@@ -257,20 +258,13 @@ func (o *owner) paintTooltip(tt *tooltipSurface, pix []byte, width, height, stri
 	if err != nil {
 		return err
 	}
-	style := render.ProofStyle{
-		Size:       14,
-		Scale120:   tt.scale120,
-		Background: render.Color{R: 0x10, G: 0x14, B: 0x18, A: 0xff},
-		Foreground: render.Color{R: 0xe6, G: 0xea, B: 0xef, A: 0xff},
-		Body:       ui.Rect{X: 0, Y: 0, W: tt.place.W, H: tt.place.H},
-		Radius:     6,
-	}
+	style, family := o.tooltipStyle(tt)
 	root := &ui.Node{Kind: ui.KindRow, Bounds: style.Body, Children: []*ui.Node{{
 		Kind:   ui.KindText,
 		Text:   tt.text,
 		Bounds: ui.Rect{X: tooltipPad, Y: tooltipPad, W: tt.place.W - 2*tooltipPad, H: tt.place.H - 2*tooltipPad},
 	}}}
-	text := o.tooltipText()
+	text := o.tooltipText(family)
 	if text == nil {
 		clear(pix)
 		return nil
@@ -278,23 +272,51 @@ func (o *owner) paintTooltip(tt *tooltipSurface, pix []byte, width, height, stri
 	return render.Paint(c, root, text, style)
 }
 
-func (o *owner) tooltipText() *render.TextRenderer {
-	if o.tooltipRenderer != nil {
+func (o *owner) tooltipStyle(tt *tooltipSurface) (render.ProofStyle, string) {
+	bar := o.cfg.ForConnector(tt.host.connector)
+	return render.ProofStyle{
+		Size:       bar.FontSize,
+		Scale120:   tt.scale120,
+		Background: parseTooltipColor(o.cfg.Theme.Background, render.Color{R: 0x10, G: 0x14, B: 0x18, A: 0xff}),
+		Foreground: parseTooltipColor(o.cfg.Theme.Foreground, render.Color{R: 0xe8, G: 0xec, B: 0xf0, A: 0xff}),
+		Body:       ui.Rect{X: 0, Y: 0, W: tt.place.W, H: tt.place.H},
+		Radius:     o.cfg.Theme.Radius,
+	}, bar.FontFamily
+}
+
+func parseTooltipColor(value string, fallback render.Color) render.Color {
+	if (len(value) != 7 && len(value) != 9) || value[0] != '#' {
+		return fallback
+	}
+	v, err := strconv.ParseUint(value[1:], 16, 32)
+	if err != nil {
+		return fallback
+	}
+	if len(value) == 7 {
+		return render.Color{R: uint8(v >> 16), G: uint8(v >> 8), B: uint8(v), A: 0xff}
+	}
+	return render.Color{R: uint8(v >> 24), G: uint8(v >> 16), B: uint8(v >> 8), A: uint8(v)}
+}
+
+func (o *owner) tooltipText(family string) *render.TextRenderer {
+	if o.tooltipRenderer != nil && o.tooltipFont == family {
 		return o.tooltipRenderer
 	}
-	fonts, err := render.NewSystemFontMap("", render.DefaultFontCacheDir())
+	fonts, err := render.NewSystemFontMap(family, render.DefaultFontCacheDir())
 	if err != nil {
 		return nil
 	}
 	o.tooltipRenderer = render.NewTextRendererWithFontMap(fonts)
+	o.tooltipFont = family
 	return o.tooltipRenderer
 }
 
-func (o *owner) measureTooltip(text string) (int, int) {
-	height := 14 + 2*tooltipPad
-	width := 8*len(text) + 2*tooltipPad
-	if r := o.tooltipText(); r != nil {
-		if w, h, err := r.Measure(text, 14, false); err == nil {
+func (o *owner) measureTooltip(host *OutputHost, text string) (int, int) {
+	bar := o.cfg.ForConnector(host.connector)
+	height := bar.FontSize + 2*tooltipPad
+	width := ((bar.FontSize+1)/2)*len(text) + 2*tooltipPad
+	if r := o.tooltipText(bar.FontFamily); r != nil {
+		if w, h, err := r.Measure(text, bar.FontSize, false); err == nil {
 			width, height = w+2*tooltipPad, h+2*tooltipPad
 		}
 	}
