@@ -114,6 +114,7 @@ Split into four reviewed tranches by the charter. 3A and 3B are merged.
 | `2026-08-31-m3-code-quality-sweep.md` | audit-report | `main` | Ponytail pass over 3A–3D. Report only; cuts listed, not applied. |
 | `2026-08-31-m3-spec-review-sweep.md` | audit-report | `main` | Implementation vs designs, plans, charter, and 2026-08-31 audits. |
 | `2026-08-31-m3-quality-findings-review.md` | audit-handover | `main` | Classifies ponytail cuts as M4-reserved, specified M3 API, real-dead, or optional shrink. For a second agent to confirm. |
+| `2026-08-31-milestone-3-implementation-audit-report.md` | audit-report | `main` | Independent merged-M3 spec and correctness audit, including Grok classification corrections. |
 
 ### Tranche state
 
