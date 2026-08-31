@@ -31,11 +31,23 @@ type Theme struct {
 
 	TextSize int
 
+	// CapsulePadding insets a bar item inside its capsule. It is a theme
+	// constant this tranche, not a configuration key.
+	CapsulePadding int
+
 	Background Color
 	Foreground Color
 	Accent     Color
 	Muted      Color
 	Error      Color
+	// Capsule fills the pill around a bar widget. Container fills a workspace
+	// pill that is not focused, and is a distinct container colour rather than
+	// the capsule surface. OnAccent and OnContainer keep a pill's numeral
+	// legible on its own fill.
+	Capsule     Color
+	Container   Color
+	OnAccent    Color
+	OnContainer Color
 }
 
 // DefaultTheme is the owner-supplied baseline: nominal height 48, exclusive
@@ -48,11 +60,20 @@ func DefaultTheme() Theme {
 		Spacing:    4,
 		Radius:     12,
 		TextSize:   14,
+
+		CapsulePadding: 8,
+
 		Background: Color{R: 0x10, G: 0x14, B: 0x18, A: 0xff},
 		Foreground: Color{R: 0xe8, G: 0xec, B: 0xf0, A: 0xff},
 		Accent:     Color{R: 0x00, G: 0x80, B: 0xff, A: 0xff},
 		Muted:      Color{R: 0x30, G: 0x34, B: 0x38, A: 0xff},
 		Error:      Color{R: 0xff, G: 0x40, B: 0x40, A: 0xff},
+		// Seeded from theme.Fallback so the shell paints capsules before any
+		// generated palette arrives.
+		Capsule:     Color{R: 0x18, G: 0x1a, B: 0x1d, A: 0xff},
+		Container:   Color{R: 0x00, G: 0x3a, B: 0x75, A: 0xff},
+		OnAccent:    Color{R: 0xff, G: 0xff, B: 0xff, A: 0xff},
+		OnContainer: Color{R: 0xd6, G: 0xe3, B: 0xff, A: 0xff},
 	}
 }
 
@@ -65,6 +86,10 @@ func ThemeFromTokens(tok theme.Tokens, radius int) Theme {
 	t.Accent = parseColor(tok.Primary, t.Accent)
 	t.Muted = parseColor(tok.OnSurfaceVariant, t.Muted)
 	t.Error = parseColor(tok.Error, t.Error)
+	t.Capsule = parseColor(tok.SurfaceContainer, t.Capsule)
+	t.Container = parseColor(tok.PrimaryContainer, t.Container)
+	t.OnAccent = parseColor(tok.OnPrimary, t.OnAccent)
+	t.OnContainer = parseColor(tok.OnPrimaryContainer, t.OnContainer)
 	return t
 }
 

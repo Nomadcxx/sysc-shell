@@ -87,7 +87,9 @@ func TestThemeValidation(t *testing.T) {
 
 func TestTokensResolveToBarTheme(t *testing.T) {
 	tok := theme.Tokens{
-		Surface: "#111318", OnSurface: "#e2e2e6", Primary: "#a8c7fa",
+		Surface: "#111318", SurfaceContainer: "#181a1d", OnSurface: "#e2e2e6",
+		Primary: "#a8c7fa", OnPrimary: "#0a1f3d",
+		PrimaryContainer: "#1183a2", OnPrimaryContainer: "#d6e3ff",
 		OnSurfaceVariant: "#c3c6cf", Error: "#ffb4ab",
 	}
 	th := ThemeFromTokens(tok, 12)
@@ -95,6 +97,30 @@ func TestTokensResolveToBarTheme(t *testing.T) {
 		th.Accent != parseColor(tok.Primary, Color{}) || th.Muted != parseColor(tok.OnSurfaceVariant, Color{}) ||
 		th.Error != parseColor(tok.Error, Color{}) || th.Radius != 12 {
 		t.Fatalf("mapping wrong: %+v", th)
+	}
+	// The capsule palette. Muted stays OnSurfaceVariant, which is the meter
+	// track, so a capsule must not borrow it.
+	if th.Capsule != parseColor(tok.SurfaceContainer, Color{}) {
+		t.Errorf("Capsule = %+v, want SurfaceContainer", th.Capsule)
+	}
+	if th.Container != parseColor(tok.PrimaryContainer, Color{}) {
+		t.Errorf("Container = %+v, want PrimaryContainer", th.Container)
+	}
+	if th.OnAccent != parseColor(tok.OnPrimary, Color{}) {
+		t.Errorf("OnAccent = %+v, want OnPrimary", th.OnAccent)
+	}
+	if th.OnContainer != parseColor(tok.OnPrimaryContainer, Color{}) {
+		t.Errorf("OnContainer = %+v, want OnPrimaryContainer", th.OnContainer)
+	}
+	if th.Capsule == th.Muted {
+		t.Error("capsule fill must not be the meter track colour")
+	}
+}
+
+func TestDefaultThemeCarriesCapsulePadding(t *testing.T) {
+	t.Parallel()
+	if got := DefaultTheme().CapsulePadding; got != 8 {
+		t.Fatalf("CapsulePadding = %d, want 8", got)
 	}
 }
 
