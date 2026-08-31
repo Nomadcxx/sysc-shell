@@ -42,6 +42,56 @@ type Item struct {
 	// WarnBelow is the percentage at or below which a discharging battery
 	// warns. Zero on other items.
 	WarnBelow int
+
+	// Plugin, Entry and Instance address an external plugin widget on a
+	// "plugin" item and are empty on every built-in one. Instance namespaces
+	// this placement's settings, so two copies of one widget can differ.
+	Plugin   string
+	Entry    string
+	Instance string
+}
+
+// Plugins is the shell's record of external plugins: which are turned on and
+// what the user has configured them with.
+//
+// Nothing here is checked against what is installed. Configuration cannot know
+// that, and a plugin that is temporarily absent must not cost the user their
+// settings or their bar layout, so an entry naming an uninstalled plugin is
+// preserved and the host shows a placeholder in its place.
+type Plugins struct {
+	// Enabled lists the plugin ids the user has turned on.
+	Enabled []string
+	// Settings holds plugin-scoped values, keyed by plugin id.
+	Settings map[string]map[string]any
+	// Instances holds widget-instance-scoped values, keyed by the placement
+	// instance id.
+	Instances map[string]map[string]any
+}
+
+// clone returns a deep copy, so a candidate cannot alias live configuration.
+func (p Plugins) clone() Plugins {
+	out := Plugins{}
+	if p.Enabled != nil {
+		out.Enabled = append([]string(nil), p.Enabled...)
+	}
+	out.Settings = cloneValues(p.Settings)
+	out.Instances = cloneValues(p.Instances)
+	return out
+}
+
+func cloneValues(in map[string]map[string]any) map[string]map[string]any {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]map[string]any, len(in))
+	for k, v := range in {
+		inner := make(map[string]any, len(v))
+		for ik, iv := range v {
+			inner[ik] = iv
+		}
+		out[k] = inner
+	}
+	return out
 }
 
 // Bar is the resolved policy for one bar.
@@ -118,6 +168,7 @@ type Config struct {
 	Weather       Weather
 	Outputs       []OutputOverride
 	Templates     map[string]bool
+	Plugins       Plugins
 }
 
 // knownItems is the Milestone 3 widget vocabulary through Tranche 3B. The
@@ -128,6 +179,9 @@ var knownItems = map[string]struct{}{
 	"clock": {}, "workspace": {}, "window-title": {},
 	"cpu": {}, "memory": {}, "filesystem": {}, "block": {}, "network": {},
 	"weather": {}, "battery": {},
+	// "plugin" is a placement rather than a widget of its own: the item names
+	// which external plugin widget fills the slot.
+	"plugin": {},
 }
 
 // fractionSources yield a value between zero and one, which a meter can fill.

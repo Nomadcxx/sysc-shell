@@ -100,6 +100,7 @@ func toWire(c Config) wireConfig {
 	if len(c.Templates) > 0 {
 		w.Templates = c.Templates
 	}
+	w.Plugins = pluginsDiff(c.Plugins)
 	return w
 }
 
@@ -187,6 +188,9 @@ func encodeItems(items []Item) []wireItem {
 func encodeItem(it Item) wireItem {
 	w := wireItem{ID: it.ID}
 	switch it.ID {
+	case "plugin":
+		plugin, entry, instance := it.Plugin, it.Entry, it.Instance
+		w.Plugin, w.Entry, w.Instance = &plugin, &entry, &instance
 	case "clock":
 		if it.Format != "" {
 			v := it.Format
@@ -241,6 +245,16 @@ func encodeItem(it Item) wireItem {
 		}
 	}
 	return w
+}
+
+// pluginsDiff emits the plugin section only when it holds something, so a
+// configuration that uses no plugins is written exactly as short as before.
+func pluginsDiff(got Plugins) *wirePlugins {
+	if len(got.Enabled) == 0 && len(got.Settings) == 0 && len(got.Instances) == 0 {
+		return nil
+	}
+	c := got.clone()
+	return &wirePlugins{Enabled: c.Enabled, Settings: c.Settings, Instances: c.Instances}
 }
 
 func themeGenDiff(got, base ThemeConfig) *wireThemeGen {

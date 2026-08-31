@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
+	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
 // Wire types use pointers so an absent field is distinguishable from its zero
@@ -40,6 +41,10 @@ type wireItem struct {
 
 	Label     *string `json:"label,omitempty"`
 	WarnBelow *int    `json:"warn-below,omitempty"`
+
+	Plugin   *string `json:"plugin,omitempty"`
+	Entry    *string `json:"entry,omitempty"`
+	Instance *string `json:"instance,omitempty"`
 }
 
 func (i *wireItem) UnmarshalJSON(data []byte) error {
@@ -128,6 +133,13 @@ type wireConfig struct {
 	Weather       *wireWeather       `json:"weather,omitempty"`
 	Outputs       []wireOutput       `json:"outputs,omitempty"`
 	Templates     map[string]bool    `json:"templates,omitempty"`
+	Plugins       *wirePlugins       `json:"plugins,omitempty"`
+}
+
+type wirePlugins struct {
+	Enabled   []string                  `json:"enabled,omitempty"`
+	Settings  map[string]map[string]any `json:"settings,omitempty"`
+	Instances map[string]map[string]any `json:"instances,omitempty"`
 }
 
 var colorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$`)
@@ -246,7 +258,110 @@ func Parse(data []byte) (Config, error) {
 	if len(wire.Templates) > 0 {
 		cfg.Templates = wire.Templates
 	}
+	if wire.Plugins != nil {
+		plugins, err := applyPlugins(*wire.Plugins, "plugins")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Plugins = plugins
+	}
+	if err := consistentInstances(cfg); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+// applyPlugins validates the plugin section.
+//
+// It checks identifiers and nothing else. Which plugins exist, and what
+// settings each one declares, are the plugin host's to know; configuration
+// that tried to decide either would reject a valid document whenever a plugin
+// was uninstalled or upgraded.
+func applyPlugins(w wirePlugins, path string) (Plugins, error) {
+	out := Plugins{}
+	seen := make(map[string]struct{}, len(w.Enabled))
+	for i, id := range w.Enabled {
+		field := fmt.Sprintf("%s.enabled[%d]", path, i)
+		if !v1.ValidPluginID(id) {
+			return Plugins{}, pathErr(field, "%q is not a plugin id", id)
+		}
+		if _, dup := seen[id]; dup {
+			return Plugins{}, pathErr(field, "%q appears more than once", id)
+		}
+		seen[id] = struct{}{}
+		out.Enabled = append(out.Enabled, id)
+	}
+
+	var err error
+	if out.Settings, err = settingValues(w.Settings, path+".settings", v1.ValidPluginID, "a plugin id"); err != nil {
+		return Plugins{}, err
+	}
+	if out.Instances, err = settingValues(w.Instances, path+".instances", v1.ValidEntryID, "an instance id"); err != nil {
+		return Plugins{}, err
+	}
+	return out, nil
+}
+
+// settingValues validates one scope's map of owner to values. Values
+// themselves are opaque here: the manifest declares their types, and the host
+// validates a candidate against it before committing.
+func settingValues(in map[string]map[string]any, path string,
+	validOwner func(string) bool, ownerKind string) (map[string]map[string]any, error) {
+
+	if len(in) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]map[string]any, len(in))
+	for owner, values := range in {
+		if !validOwner(owner) {
+			return nil, pathErr(path, "%q is not %s", owner, ownerKind)
+		}
+		inner := make(map[string]any, len(values))
+		for key, value := range values {
+			if !v1.ValidEntryID(key) {
+				return nil, pathErr(path+"."+owner, "%q is not a setting key", key)
+			}
+			inner[key] = value
+		}
+		out[owner] = inner
+	}
+	return out, nil
+}
+
+// consistentInstances proves one placement instance id never names two
+// different widgets.
+//
+// Instance settings are stored once for the whole configuration, so the same
+// id on two outputs is the same placement wearing one set of values. That is
+// deliberate. Letting it name a timer on one output and a clock on another
+// would make those shared values meaningless.
+func consistentInstances(cfg Config) error {
+	owner := make(map[string]Item)
+	check := func(b Bar, path string) error {
+		for _, section := range [][]Item{b.Left, b.Center, b.Right} {
+			for _, it := range section {
+				if it.ID != "plugin" {
+					continue
+				}
+				prev, seen := owner[it.Instance]
+				if seen && (prev.Plugin != it.Plugin || prev.Entry != it.Entry) {
+					return pathErr(path, "instance %q names both %s/%s and %s/%s",
+						it.Instance, prev.Plugin, prev.Entry, it.Plugin, it.Entry)
+				}
+				owner[it.Instance] = it
+			}
+		}
+		return nil
+	}
+	if err := check(cfg.Bar, "bar"); err != nil {
+		return err
+	}
+	for i, o := range cfg.Outputs {
+		if err := check(o.Bar, fmt.Sprintf("outputs[%d].bar", i)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // applyWeather resolves and validates the weather block.
@@ -389,6 +504,21 @@ func validateBar(b Bar, path string) error {
 	if b.FontSize <= 0 {
 		return pathErr(path+".font.size", "%d is not positive", b.FontSize)
 	}
+	// An instance id namespaces one placement's settings. Two placements on
+	// one bar sharing an id would silently share values, which is the opposite
+	// of what the id exists for.
+	seen := make(map[string]struct{})
+	for _, section := range [][]Item{b.Left, b.Center, b.Right} {
+		for _, it := range section {
+			if it.ID != "plugin" {
+				continue
+			}
+			if _, dup := seen[it.Instance]; dup {
+				return pathErr(path, "plugin instance %q is placed more than once", it.Instance)
+			}
+			seen[it.Instance] = struct{}{}
+		}
+	}
 	return nil
 }
 
@@ -409,12 +539,71 @@ func items(supplied *[]wireItem, base []Item, path string) ([]Item, error) {
 	return out, nil
 }
 
+// resolvePlacement validates a "plugin" item: the slot that says which
+// external plugin widget fills this position on the bar.
+//
+// It resolves no plugin. A placement is written before the plugin starts, can
+// outlive an uninstall, and must survive both, so this checks that the three
+// identifiers are well formed and leaves existence to the host.
+func resolvePlacement(w wireItem, path string) (Item, error) {
+	for _, unwanted := range []struct {
+		name string
+		set  bool
+	}{
+		{"format", w.Format != nil}, {"max-width", w.MaxWidth != nil},
+		{"display", w.Display != nil}, {"interval", w.Interval != nil},
+		{"path", w.Path != nil}, {"device", w.Device != nil},
+		{"interface", w.Interface != nil}, {"direction", w.Direction != nil},
+		{"show-condition", w.ShowCondition != nil},
+		{"label", w.Label != nil}, {"warn-below", w.WarnBelow != nil},
+	} {
+		if unwanted.set {
+			return Item{}, pathErr(path+"."+unwanted.name,
+				"is a built-in widget option and is not accepted on a plugin placement")
+		}
+	}
+
+	item := Item{ID: "plugin"}
+	for _, f := range []struct {
+		name  string
+		value *string
+		dest  *string
+		valid func(string) bool
+		kind  string
+	}{
+		{"plugin", w.Plugin, &item.Plugin, v1.ValidPluginID, "a plugin id"},
+		{"entry", w.Entry, &item.Entry, v1.ValidEntryID, "a widget entry id"},
+		{"instance", w.Instance, &item.Instance, v1.ValidEntryID, "an instance id"},
+	} {
+		if f.value == nil {
+			return Item{}, pathErr(path+"."+f.name, "is required on a plugin placement")
+		}
+		if !f.valid(*f.value) {
+			return Item{}, pathErr(path+"."+f.name, "%q is not %s", *f.value, f.kind)
+		}
+		*f.dest = *f.value
+	}
+	return item, nil
+}
+
 // resolveItem validates one item and fills in its defaults. An option supplied
 // on an item that does not accept it is an error rather than a silently
 // ignored field, so a misplaced setting is visible.
 func resolveItem(w wireItem, path string) (Item, error) {
 	if _, ok := knownItems[w.ID]; !ok {
 		return Item{}, pathErr(path, "%q is not a known item", w.ID)
+	}
+	if w.ID == "plugin" {
+		return resolvePlacement(w, path)
+	}
+	for _, misplaced := range []struct {
+		name string
+		set  bool
+	}{{"plugin", w.Plugin != nil}, {"entry", w.Entry != nil}, {"instance", w.Instance != nil}} {
+		if misplaced.set {
+			return Item{}, pathErr(path+"."+misplaced.name,
+				"is accepted only on a plugin placement, not on %q", w.ID)
+		}
 	}
 	item := Item{ID: w.ID}
 

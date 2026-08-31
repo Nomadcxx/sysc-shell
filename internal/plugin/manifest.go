@@ -294,11 +294,6 @@ type wireVisibleWhen struct {
 }
 
 var (
-	// idPattern is reverse-DNS style: lower-case segments separated by single
-	// dots, which keeps a plugin id usable as a state directory name.
-	idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)+$`)
-	// entryPattern names widgets, panels, services, and setting keys.
-	entryPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 	// commandPattern is a bare command name; a dependency is looked up on
 	// PATH, never executed from a path the manifest chose.
 	commandPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
@@ -364,8 +359,8 @@ func validateManifest(w wireManifest) (Manifest, error) {
 	if w.Schema != 1 {
 		return Manifest{}, fmt.Errorf("schema %d is not supported; this shell reads schema 1", w.Schema)
 	}
-	if !idPattern.MatchString(w.ID) || len(w.ID) > maxIDBytes {
-		return Manifest{}, fmt.Errorf("id %q is not a reverse-domain identifier of at most %d bytes", w.ID, maxIDBytes)
+	if !v1.ValidPluginID(w.ID) {
+		return Manifest{}, fmt.Errorf("id %q is not a reverse-domain identifier of at most %d bytes", w.ID, v1.MaxPluginIDBytes)
 	}
 	if err := text("name", w.Name, maxLabelBytes, true); err != nil {
 		return Manifest{}, err
@@ -478,8 +473,8 @@ func entryIDs(field string, count int, id func(int) string) error {
 	seen := make(map[string]bool, count)
 	for i := 0; i < count; i++ {
 		v := id(i)
-		if !entryPattern.MatchString(v) || len(v) > maxIDBytes {
-			return fmt.Errorf("%s[%d]: id %q is not an identifier of at most %d bytes", field, i, v, maxIDBytes)
+		if !v1.ValidEntryID(v) {
+			return fmt.Errorf("%s[%d]: id %q is not an identifier of at most %d bytes", field, i, v, v1.MaxEntryIDBytes)
 		}
 		if seen[v] {
 			return fmt.Errorf("%s: id %q is declared twice", field, v)
@@ -588,7 +583,7 @@ func settings(w []wireSetting, field string) ([]Setting, error) {
 }
 
 func setting(e wireSetting, path string) (Setting, error) {
-	if !entryPattern.MatchString(e.Key) || len(e.Key) > maxIDBytes {
+	if !v1.ValidEntryID(e.Key) {
 		return Setting{}, fmt.Errorf("%s: key %q is not an identifier", path, e.Key)
 	}
 	t := SettingType(e.Type)
@@ -655,7 +650,7 @@ func setting(e wireSetting, path string) (Setting, error) {
 	}
 
 	if e.VisibleWhen != nil {
-		if !entryPattern.MatchString(e.VisibleWhen.Key) {
+		if !v1.ValidEntryID(e.VisibleWhen.Key) {
 			return Setting{}, fmt.Errorf("%s.visible_when.key %q is not an identifier", path, e.VisibleWhen.Key)
 		}
 		s.VisibleWhen = &VisibleWhen{Key: e.VisibleWhen.Key}
