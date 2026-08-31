@@ -84,7 +84,11 @@ type Node struct {
 	// the time changes, which visibly shifts a centred clock every minute.
 	Tabular bool
 	// Tone selects the text colour. Zero is ToneNormal.
-	Tone     Tone
+	Tone Tone
+	// Fill selects a capsule's background. Zero is the surface capsule. It is
+	// a pair, not a flag: each fill carries the foreground its own contents
+	// must use to stay legible.
+	Fill Fill
 	Padding  int
 	Gap      int
 	Action   string
@@ -104,6 +108,19 @@ func (n *Node) Active() int {
 	return int(n.Value)
 }
 
+// Fill selects which theme colour paints a capsule, and with it the
+// foreground its contents inherit.
+type Fill uint8
+
+const (
+	// FillNone is the surface capsule that wraps an ordinary bar widget.
+	FillNone Fill = iota
+	// FillAccent is the focused workspace pill.
+	FillAccent
+	// FillContainer is a workspace pill that is not focused.
+	FillContainer
+)
+
 // Tone selects which theme colour paints a text node.
 //
 // Error is for text that reports a failure instead of a value. A stale value
@@ -114,9 +131,6 @@ type Tone uint8
 const (
 	ToneNormal Tone = iota
 	ToneError
-	// ToneAccent fills a capsule with the accent colour. The focused
-	// workspace dot is its first consumer.
-	ToneAccent
 )
 
 // MeasureText reports the logical width and height of a shaped string. The

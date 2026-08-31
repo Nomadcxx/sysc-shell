@@ -503,3 +503,66 @@ func TestErrorToneTextPaintsInTheErrorColour(t *testing.T) {
 		t.Fatal("error-tone text painted no pixel in the error colour")
 	}
 }
+
+// capsuleStyle adds the three capsule fills to the shared test style, each
+// distinct so a sampled pixel names exactly one of them.
+func capsuleStyle() ProofStyle {
+	s := testStyle
+	s.Capsule = Color{R: 0x18, G: 0x1a, B: 0x1d, A: 0xff}
+	s.Container = Color{R: 0x11, G: 0x83, B: 0xa2, A: 0xff}
+	s.OnAccent = Color{R: 0x21, G: 0x23, B: 0x37, A: 0xff}
+	s.OnContainer = Color{R: 0x0a, G: 0x0b, B: 0x11, A: 0xff}
+	return s
+}
+
+func TestPaintCapsuleFill(t *testing.T) {
+	t.Parallel()
+	c := newTestCanvas(t, canvasW, canvasH)
+	style := capsuleStyle()
+	r := NewTextRenderer(mustTestFace(t))
+
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{
+		{Kind: ui.KindCapsule, Padding: 8, Bounds: ui.Rect{X: 10, Y: 8, W: 60, H: 32}},
+		{Kind: ui.KindCapsule, Fill: ui.FillAccent, Bounds: ui.Rect{X: 90, Y: 12, W: 20, H: 20}},
+		{Kind: ui.KindCapsule, Fill: ui.FillContainer, Bounds: ui.Rect{X: 130, Y: 12, W: 20, H: 20}},
+	}}
+	if err := Paint(c, root, r, style); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := pixelAt(t, c, 40, 24); got != style.Capsule {
+		t.Errorf("default capsule centre = %+v, want Capsule %+v", got, style.Capsule)
+	}
+	if got := pixelAt(t, c, 100, 22); got != style.Accent {
+		t.Errorf("accent dot centre = %+v, want Accent %+v", got, style.Accent)
+	}
+	if got := pixelAt(t, c, 140, 22); got != style.Container {
+		t.Errorf("container dot centre = %+v, want Container %+v", got, style.Container)
+	}
+	// Between the two dots is bar body, not pill.
+	if got := pixelAt(t, c, 120, 22); got != style.Background {
+		t.Errorf("gap between dots = %+v, want Background %+v", got, style.Background)
+	}
+}
+
+// A pill's numeral must be legible on its own fill, so the capsule supplies the
+// matching foreground to its subtree rather than each caller tagging a tone.
+func TestCapsuleGivesItsChildTheMatchingForeground(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		fill ui.Fill
+		want func(ProofStyle) Color
+	}{
+		{"accent", ui.FillAccent, func(s ProofStyle) Color { return s.OnAccent }},
+		{"container", ui.FillContainer, func(s ProofStyle) Color { return s.OnContainer }},
+		{"default", ui.FillNone, func(s ProofStyle) Color { return s.Foreground }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			style := capsuleStyle()
+			if got := capsuleForeground(style, tc.fill); got != tc.want(style) {
+				t.Fatalf("foreground for %v = %+v, want %+v", tc.fill, got, tc.want(style))
+			}
+		})
+	}
+}
