@@ -71,3 +71,42 @@ func TestATooltipWiderThanTheOutputIsClamped(t *testing.T) {
 		t.Fatalf("width = %d, want clamped to the output", got.W)
 	}
 }
+
+func TestTooltipBufferReconfigurationWaitsForRelease(t *testing.T) {
+	gen := &generation{fd: -1}
+	gen.retire.attached()
+	tt := &tooltipSurface{gen: gen}
+	o := &owner{}
+
+	o.retireTooltipGeneration(tt)
+	if tt.gen != nil {
+		t.Fatal("retired generation remained current")
+	}
+	if len(tt.retiring) != 1 || tt.retiring[0] != gen {
+		t.Fatal("attached generation was freed before wl_buffer.release")
+	}
+
+	o.onTooltipBufferRelease(tt, gen)
+	if len(tt.retiring) != 0 {
+		t.Fatal("released tooltip generation was not freed")
+	}
+}
+
+func TestTooltipBufferTeardownFreesAllGenerations(t *testing.T) {
+	current := &generation{fd: -1}
+	retired := &generation{fd: -1}
+	current.retire.attached()
+	retired.retire.attached()
+	tt := &tooltipSurface{gen: current, retiring: []*generation{retired}}
+	o := &owner{tooltip: tt}
+
+	if err := o.hideTooltip(); err != nil {
+		t.Fatalf("hideTooltip: %v", err)
+	}
+	if o.tooltip != nil || tt.gen != nil || len(tt.retiring) != 0 {
+		t.Fatal("tooltip generations survived teardown")
+	}
+	if !current.retire.destroyed || !retired.retire.destroyed {
+		t.Fatal("teardown freed storage without marking every generation destroyed")
+	}
+}

@@ -76,6 +76,7 @@ type tooltipSurface struct {
 	layer    *layershell.ZwlrLayerSurfaceV1
 	viewport *viewporter.WpViewport
 	gen      *generation
+	retiring []*generation
 	place    ui.Rect
 	text     string
 	scale120 ui.Scale120
@@ -205,10 +206,13 @@ func (o *owner) configureTooltip(tt *tooltipSurface, e layershell.ZwlrLayerSurfa
 	if err != nil {
 		return err
 	}
-	if tt.gen != nil {
-		_ = tt.gen.destroy()
-	}
+	o.retireTooltipGeneration(tt)
 	tt.gen = gen
+	for slot := range gen.slots {
+		gen.slots[slot].SetReleaseHandler(func(client.BufferReleaseEvent) {
+			o.onTooltipBufferRelease(tt, gen)
+		})
+	}
 
 	if err := o.paintTooltip(tt, gen.pixels(0), bufW, bufH, int(gen.stride)); err != nil {
 		return err
@@ -221,6 +225,31 @@ func (o *owner) configureTooltip(tt *tooltipSurface, e layershell.ZwlrLayerSurfa
 	}
 	gen.retire.attached()
 	return tt.surface.Commit()
+}
+
+func (o *owner) retireTooltipGeneration(tt *tooltipSurface) {
+	if tt.gen != nil {
+		tt.retiring = append(tt.retiring, tt.gen)
+		tt.gen = nil
+	}
+	o.sweepTooltipRetired(tt)
+}
+
+func (o *owner) onTooltipBufferRelease(tt *tooltipSurface, gen *generation) {
+	o.fail(gen.retire.released())
+	o.sweepTooltipRetired(tt)
+}
+
+func (o *owner) sweepTooltipRetired(tt *tooltipSurface) {
+	kept := tt.retiring[:0]
+	for _, gen := range tt.retiring {
+		if gen.retire.freeable() {
+			o.fail(gen.destroy())
+			continue
+		}
+		kept = append(kept, gen)
+	}
+	tt.retiring = kept
 }
 
 func (o *owner) paintTooltip(tt *tooltipSurface, pix []byte, width, height, stride int) error {
@@ -285,11 +314,6 @@ func (o *owner) hideTooltip() error {
 		return nil
 	}
 	var errs []error
-	if tt.gen != nil {
-		if err := tt.gen.destroy(); err != nil {
-			errs = append(errs, err)
-		}
-	}
 	if tt.viewport != nil {
 		if err := tt.viewport.Destroy(); err != nil {
 			errs = append(errs, err)
@@ -305,6 +329,17 @@ func (o *owner) hideTooltip() error {
 			errs = append(errs, err)
 		}
 	}
+	if tt.gen != nil {
+		tt.retiring = append(tt.retiring, tt.gen)
+		tt.gen = nil
+	}
+	for _, gen := range tt.retiring {
+		gen.retire.destroy()
+		if err := gen.destroy(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	tt.retiring = nil
 	if len(errs) == 0 {
 		return nil
 	}
