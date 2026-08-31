@@ -14,6 +14,32 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/shell"
 )
 
+func pumpNiri(
+	snapshots <-chan niri.Snapshot,
+	errs <-chan error,
+	update func(niri.Snapshot),
+) error {
+	for snapshots != nil || errs != nil {
+		select {
+		case snapshot, ok := <-snapshots:
+			if !ok {
+				snapshots = nil
+				continue
+			}
+			update(snapshot)
+		case err, ok := <-errs:
+			if !ok {
+				errs = nil
+				continue
+			}
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // run streams Niri workspace state into the bar registry and hands the registry
 // to the Wayland owner. The owner goroutine performs all Wayland work and
 // creates one bar per connected output.
@@ -44,23 +70,13 @@ func run(ctx context.Context) error {
 	snapshots, niriErrs := niri.Stream(ctx, socket)
 	streamFailed := make(chan error, 1)
 	go func() {
-		for {
+		update := func(snapshot niri.Snapshot) { registry.UpdateNiri(snapshot) }
+		if err := pumpNiri(snapshots, niriErrs, update); err != nil {
 			select {
-			case snapshot, ok := <-snapshots:
-				if !ok {
-					return
-				}
-				registry.UpdateNiri(snapshot)
-			case err, ok := <-niriErrs:
-				if ok && err != nil {
-					select {
-					case streamFailed <- err:
-					default:
-					}
-					cancel()
-				}
-				return
+			case streamFailed <- err:
+			default:
 			}
+			cancel()
 		}
 	}()
 
