@@ -175,6 +175,16 @@ Designed, planned, reviewed, executed and merged to `main` at `01cae98`. Spec sh
   tools hide the capability or select the documented fallback.
 - 4B remains one design and plan, executed as three reviewed slices: Tasks 1-8, 9-11, and 12-14.
 
+## Bar visual parity (post-M4 chrome)
+
+Live DMS grim on the owner's laptop vs default sysc-shell bar. Capsules, `SurfaceContainer` fill, and workspace dots. Not a widget-roster port. Epic `sysc-43`. Do not execute until the design is approved.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-08-31-bar-visual-parity-research.md` | research | Live grim of DMS on eDP-1; Noctalia from installed settings.json (package not running). Assets under `docs/plans/assets/2026-08-31-bar-visual-parity/`. |
+| `2026-08-31-bar-visual-parity-design.md` | design | D1–D9. Awaiting owner approval. |
+| `2026-08-31-bar-visual-parity.md` | plan | Six TDD tasks. Do not execute until the design is approved. |
+
 ## Milestone 5: notifications and system tray
 
 Milestone 5 now has researched designs and executable plans for both tranches. Product work still needs
