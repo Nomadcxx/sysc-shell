@@ -1,6 +1,7 @@
 package wayland
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -120,3 +121,37 @@ func TestWakePipeQueuesAuxRequests(t *testing.T) {
 }
 
 func ptrCfg(c config.Config) *config.Config { return &c }
+
+func TestFailUnitClosesTheAuxSurfaceAndSparesTheOwner(t *testing.T) {
+	t.Parallel()
+	s := newHostSet()
+	h := mappedHost(s, 7, "DP-1")
+	h.aux["panel:monitor"] = newSurfaceUnit("panel:monitor")
+	var dropped string
+	o := &owner{hosts: s, cb: Callbacks{DropAux: func(_ uint32, id string) { dropped = id }}}
+
+	o.failUnit(h, h.aux["panel:monitor"], errors.New("ui: child 0: unsupported kind 7"))
+
+	if o.fatal != nil {
+		t.Fatalf("one panel's layout error killed the owner: %v", o.fatal)
+	}
+	if dropped != "panel:monitor" {
+		t.Fatalf("DropAux id = %q, want the failing panel", dropped)
+	}
+	if _, ok := h.aux["panel:monitor"]; ok {
+		t.Fatal("the failing panel stayed mapped")
+	}
+}
+
+func TestFailUnitOnTheBarStaysFatal(t *testing.T) {
+	t.Parallel()
+	s := newHostSet()
+	h := mappedHost(s, 7, "DP-1")
+	o := &owner{hosts: s}
+
+	o.failUnit(h, h.bar, errors.New("bar cannot allocate"))
+
+	if o.fatal == nil {
+		t.Fatal("a bar failure must stay fatal; there is no shell without it")
+	}
+}
