@@ -12,7 +12,7 @@ Nothing is merged to `main`. Both branches carry unmerged work.
 | `fix/live-empty-panels` | `~/.config/superpowers/worktrees/sysc-shell/fix/live-empty-panels` | 6 commits: sysc-41 and part of sysc-42 |
 | `feature/bar-visual-parity` | `~/.config/superpowers/worktrees/sysc-shell/feature/bar-visual-parity` | those 6 plus 10 more: the parity tranche |
 
-Head is `a458bfc`. `go build ./...`, `go vet ./...`, `go test ./...` and
+Head is `2bb97e2`. `go build ./...`, `go vet ./...`, `go test ./...` and
 `go test -race ./internal/shell ./internal/ui ./internal/render` are all green at that commit.
 
 Run `bd` from `/home/nomadx/sysc-shell`, never from a worktree. A commit from a worktree needs
@@ -56,6 +56,25 @@ configure now closes itself instead of failing the owner.
 the capsule palette mapped from tokens, every bar widget wrapped, workspaces as numbered pills, and
 the bar-section arrangement fixed so capsule contents are laid out at all. Then the scale truncation
 fix, the clock grouping and status roster, the palette lift, and group items.
+
+## Read this before trusting a live capture
+
+**The bar renders corrupt output on the laptop and the cause is not established.** See `sysc-57`, P0.
+It paints scattered coloured blocks, or is absent so the window behind shows through. The process is
+alive, there is one instance, and the log is silent. Nothing reproduces in tests.
+
+The same commit and the same font rendered correctly earlier in the same session. Reverting the icon
+advance, then the window ascent, then the whole icon directory back a commit restored nothing, so the
+font is probably not the variable. The untested hypothesis is session state after roughly a dozen kill
+and restart cycles, which is `sysc-51` territory; a Niri session restart would settle it and was not
+tried. `~/.local/bin/sysc-shell.pre-fix` is the pre-session binary.
+
+Until that is understood, a screenshot from that machine cannot be used to judge any visual issue.
+
+**`Super+M` does not crash.** An earlier note in this document said it did. Retested on 2026-09-01:
+four toggles, shell alive, clean log. The claim came from a reproduction on an earlier build and was
+never retested after the layout fixes removed what triggered it. `sysc-51` is still a real upstream
+defect, but nothing is currently hitting it.
 
 ## Corrections a successor should not have to rediscover
 
@@ -102,8 +121,10 @@ shared text renderer was tried and reverted for the same reason.
 
 ## Open, in the order worth doing
 
-1. **sysc-51**, P0. Upstream `sysc-wayland` fix plus a tag, then repin. Everything live is unstable
-   until this lands.
+1. **sysc-57**, P0. Establish why the bar renders corrupt output, starting with a clean Niri session.
+   Every other visual judgement depends on it.
+2. **sysc-51**, P0. Upstream `sysc-wayland` fix plus a tag, then repin. Latent rather than currently
+   firing, but it is the leading hypothesis for `sysc-57`.
 2. **sysc-54**, group the sysmon widgets. The group item and the default grouping landed; what remains
    is judging it live now that icons exist. Superseded parts of the original issue are recorded there.
 3. **sysc-52 note kept for history**, battery glyphs. All seven level codepoints `0xE008`..`0xE00E` are the same solid
@@ -136,6 +157,17 @@ That file also holds the M5 observations worth keeping: the Noctalia notificatio
 picture of the Tranche 5A spec, normal toasts carry an accent countdown on the top edge while critical
 ones swap it for an error border and never expire, and a `value` progress hint rendered nothing, so
 5A's independent value bar is ahead of the reference rather than behind it.
+
+## Icon size is not settled
+
+`2bb97e2` commits redrawn artwork that fills its box, mapped to 1200 font units against an ascent of
+1100. It rendered correctly in one capture: readable size, legible battery levels. It is committed
+because the work is worth keeping, not because it is verified.
+
+Two things are open. The advance is still 900 while the scaled ink spans about 1150, so an icon sits
+tight against its value (`sysc-58`). Widening the advance to 1260 corrupted the whole bar, which is
+either a mask or blend path that cannot handle an advance wider than the em, or the same unexplained
+corruption as `sysc-57`.
 
 ## Milestone 5
 
