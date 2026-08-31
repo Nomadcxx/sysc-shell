@@ -63,6 +63,52 @@ Error              → Error
 
 `ProofStyle` gains `Capsule Color`. `Bar` copies it from `theme.Capsule` next to the existing fields. OSD and panels do not wrap in capsules.
 
+## Amendment 2026-08-31: numbered workspace pills
+
+The owner chose Noctalia-style numbered pills over DMS-style bare dots after seeing both live.
+This supersedes D5's "no numerals" line and the D6 fill and width table below. Everything else in
+D5 and D6 stands: pills live inside one capsule, in Niri index order, for this output only.
+
+Measured from `assets/2026-08-31-bar-visual-parity/refs/noctalia-bar-idle.png`, which is 1920x1080
+physical at scale 1.25.
+
+| Property | Focused | Not focused |
+|---|---|---|
+| Fill | `#37F499`, the palette `Primary` | `#1183A2`, the palette `PrimaryContainer` |
+| Numeral | `#212337`, `OnPrimary` | `#212337`, `OnPrimaryContainer` |
+| Physical size | 40 x 20 | 17 x 19 |
+| Shape | 2:1 stadium | 1:1 circle |
+| Gap | 9 to 10 physical, 8 logical | |
+
+The unfocused fill is a distinct container colour, not `SurfaceContainer`. D6 assumed the capsule
+fill; live pixels disagree. `theme.Tokens` already declares `Primary`, `OnPrimary`,
+`PrimaryContainer` and `OnPrimaryContainer`; `ThemeFromTokens` maps none of the last three. Mapping
+them is the whole colour change.
+
+### Sizing follows proportion, not absolute pixels
+
+Noctalia's bar is about 42 physical, 34 logical, and its pills are 20 physical, 16 logical: close to
+half the bar. Copying 16 logical into a 48-logical bar would look undersized, so the pill takes the
+capsule's inner band instead.
+
+With bar height 48 and bar padding 6 the content band is 36. A capsule at `CapsulePadding` 8 leaves
+an inner band of 20 logical. Therefore:
+
+- pill height is the capsule inner height;
+- a focused pill is twice that wide, matching the measured 2:1;
+- an unfocused pill is square, matching the measured near-1:1, and paints as a circle;
+- the radius is half the short side, so each is fully rounded;
+- the gap between pills is 8 logical.
+
+### Consequences for the plan
+
+- Task 5's expectation of widths 8, 8 and 6 no longer holds. Occupancy no longer changes width;
+  focus does. Occupied and empty differ only if a later pass gives them different fills.
+- A pill is a `KindCapsule` with a `KindText` child holding the index, not an empty capsule. The
+  empty-capsule dot from D5 keeps its measure rules and loses its only consumer.
+- `ToneAccent` alone cannot express this. A pill needs a fill and a matching numeral colour, so the
+  capsule needs a fill selector rather than a single accent flag.
+
 ## Workspace dots
 
 Per output, in Niri index order, one empty `KindCapsule` per workspace:
