@@ -652,11 +652,18 @@ func TestThemeSourceValidation(t *testing.T) {
 			t.Fatalf("error %q must name the field path", err)
 		}
 	}
-	for _, ok := range []string{"wallpaper", "hex"} {
-		body := []byte(`{"theme-gen":{"source":"` + ok + `","seed":"#3050a0"}}`)
+	for _, ok := range []string{"wallpaper", "hex", "stock"} {
+		seed := "#3050a0"
+		if ok == "stock" {
+			seed = "Blue"
+		}
+		body := []byte(`{"theme-gen":{"source":"` + ok + `","seed":"` + seed + `"}}`)
 		if _, err := Parse(body); err != nil {
 			t.Fatalf("source %q must be accepted: %v", ok, err)
 		}
+	}
+	if _, err := Parse([]byte(`{"theme-gen":{"source":"stock","seed":"mauve"}}`)); err == nil {
+		t.Fatal("unknown stock name must fail")
 	}
 }
 

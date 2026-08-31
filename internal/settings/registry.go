@@ -39,7 +39,7 @@ func Default() *Registry {
 		{Path: "bar.radius", Label: "Radius", Section: "Bar", Kind: KindInt, Min: 0, Max: 32},
 		{Path: "bar.font-family", Label: "Font family", Section: "Bar", Kind: KindString},
 		{Path: "bar.font-size", Label: "Font size", Section: "Bar", Kind: KindInt, Min: 8, Max: 32},
-		{Path: "appearance.source", Label: "Theme source", Section: "Appearance", Kind: KindEnum, Options: []string{"wallpaper", "hex"}},
+		{Path: "appearance.source", Label: "Theme source", Section: "Appearance", Kind: KindEnum, Options: []string{"wallpaper", "hex", "stock"}},
 		{Path: "appearance.seed", Label: "Seed", Section: "Appearance", Kind: KindString},
 		{Path: "appearance.scheme", Label: "Scheme", Section: "Appearance", Kind: KindString},
 		{Path: "appearance.mode", Label: "Mode", Section: "Appearance", Kind: KindEnum, Options: []string{"dark", "light"}},

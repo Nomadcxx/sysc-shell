@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
 
 // Wire types use pointers so an absent field is distinguishable from its zero
@@ -674,7 +676,7 @@ func applyTheme(base Theme, w wireTheme, path string) (Theme, error) {
 	return out, nil
 }
 
-var themeSources = map[string]bool{"wallpaper": true, "hex": true}
+var themeSources = map[string]bool{"wallpaper": true, "hex": true, "stock": true}
 var themeModes = map[string]bool{"dark": true, "light": true}
 var osdPositions = map[string]bool{
 	"top-left": true, "top-center": true, "top-right": true,
@@ -686,7 +688,7 @@ func applyThemeGen(base ThemeConfig, w wireThemeGen, path string) (ThemeConfig, 
 	out := base
 	if w.Source != nil {
 		if !themeSources[*w.Source] {
-			return ThemeConfig{}, pathErr(path+".source", "%q is not one of wallpaper, hex", *w.Source)
+			return ThemeConfig{}, pathErr(path+".source", "%q is not one of wallpaper, hex, stock", *w.Source)
 		}
 		out.Source = *w.Source
 	}
@@ -704,6 +706,11 @@ func applyThemeGen(base ThemeConfig, w wireThemeGen, path string) (ThemeConfig, 
 	}
 	if out.Source == "hex" && !colorPattern.MatchString(out.Seed) {
 		return ThemeConfig{}, pathErr(path+".seed", "%q is not #RRGGBB or #RRGGBBAA", out.Seed)
+	}
+	if out.Source == "stock" {
+		if _, ok := theme.StockSeed(out.Seed); !ok {
+			return ThemeConfig{}, pathErr(path+".seed", "%q is not a known stock theme", out.Seed)
+		}
 	}
 	return out, nil
 }

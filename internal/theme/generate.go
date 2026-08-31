@@ -52,6 +52,12 @@ func (g Generator) Generate(src Source, opts Options) (Tokens, error) {
 		args = append(args, "image", src.Seed)
 	case "hex":
 		args = append(args, "color", "hex", src.Seed)
+	case "stock":
+		hex, ok := StockSeed(src.Seed)
+		if !ok {
+			return Fallback, nil
+		}
+		args = append(args, "color", "hex", hex)
 	default:
 		return Fallback, nil
 	}

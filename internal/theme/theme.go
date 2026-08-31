@@ -29,7 +29,7 @@ var Fallback = Tokens{
 }
 
 type Source struct {
-	Kind string // wallpaper | hex; 4B extends this with resolved stock seeds
+	Kind string // wallpaper | hex | stock
 	Seed string
 }
 
