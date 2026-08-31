@@ -1,6 +1,6 @@
 # Design and Plan Register
 
-Last updated: 2026-08-31.
+Last updated: 2026-09-01.
 
 Every design, plan, and handover this project has produced, with where it lives and whether it is still
 live. Add a row here in the same commit that adds a document. A document that is not in this register is
@@ -209,11 +209,19 @@ the M4 surface vocabulary and tagged service releases.
 Original source worktree: `/home/nomadx/.config/superpowers/worktrees/sysc-shell/milestone/notifications-tray`.
 Redesign worktree: `/home/nomadx/.config/superpowers/worktrees/sysc-shell/redesign/milestone-5`.
 
-## Milestones 6 to 8: not yet designed
+## Milestone 6: external widget and plugin host
+
+Milestone 6 hosts trusted external processes and ships five reference plugins. Progress and entrance
+gates live in bd.
+
+| Document | Kind | Purpose |
+|---|---|---|
+| `2026-09-01-milestone-6-plugin-host-design.md` | design | Process model, protocol, UI vocabulary, manager, limits, reference suite, and tranche boundaries. |
+
+## Milestones 7 and 8: not yet designed
 
 | Milestone | Scope | Note |
 |---|---|---|
-| 6 | External widget and plugin host | Versions the vocabulary the built-in widgets prove. |
 | 7 | Shell breadth | Launcher consumes Milestone 4's text field, virtual list, keyboard focus, and popout placement. |
 | 8 | Rendering qualification | Requires measured evidence against `wl_shm`. |
 
