@@ -278,3 +278,19 @@ hardware checks stay open; do not convert a missing session into a pass.
 8. **Multi-output:** focus a window on each output and trigger the same panel
    through IPC; it closes and reopens on the newly focused output.
 
+## Tranche 4B: settings, OSD, and theme catalog
+
+Live Niri checklist. Record observations in the milestone handoff. Unrun
+hardware checks stay open; do not convert a missing session into a pass.
+
+Recorded 2026-08-31: not executed in this implementation pass.
+
+1. Settings opens centered, Escape closes, focus returns to the prior window (4A fall-through).
+2. Change bar edge/height in settings → bar updates without restart.
+3. Search "motion" → reduced-motion entry; toggle it; panel reveal becomes instant.
+4. `wpctl set-volume` from a terminal → OSD fires on every output with a bar.
+5. Brightness path on a machine with a backlight device (or record unavailable behavior here).
+6. Enable niri template → focus-ring/border colors change without restarting niri.
+7. Select each stock theme → palette regenerates; fallback intact with matugen renamed away.
+8. XF86 media keys via documented binds step volume with OSD.
+

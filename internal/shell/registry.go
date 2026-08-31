@@ -83,6 +83,8 @@ func NewRegistry(cfg config.Config) *Registry {
 	}
 	r.tokens = r.generateTheme(cfg)
 	r.osd = newOSDManager(r, 0)
+	go r.relayAudioOSD()
+	go r.relayBrightnessOSD()
 	return r
 }
 
@@ -200,6 +202,42 @@ func (r *Registry) generateTheme(cfg config.Config) theme.Tokens {
 
 func runningAsTest() bool {
 	return strings.HasSuffix(os.Args[0], ".test")
+}
+
+func (r *Registry) relayAudioOSD() {
+	if r.audio == nil {
+		return
+	}
+	ch := r.audio.Changes()
+	for {
+		select {
+		case <-r.closed:
+			return
+		case st, ok := <-ch:
+			if !ok {
+				return
+			}
+			r.OSD().Show(OSDView{Kind: "audio", Level: st.Level, Muted: st.Muted})
+		}
+	}
+}
+
+func (r *Registry) relayBrightnessOSD() {
+	if r.brightness == nil {
+		return
+	}
+	ch := r.brightness.Changes()
+	for {
+		select {
+		case <-r.closed:
+			return
+		case st, ok := <-ch:
+			if !ok {
+				return
+			}
+			r.OSD().Show(OSDView{Kind: "brightness", Level: st.Level})
+		}
+	}
 }
 
 // Clock is the shared clock service. The process pumps its updates into
