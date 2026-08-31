@@ -189,11 +189,11 @@ func (a *Audio) Set(level int) error {
 }
 
 func (a *Audio) SetMute(on bool) error {
-	arg := "unmute"
+	arg := "0"
 	if on {
-		arg = "mute"
+		arg = "1"
 	}
-	return a.wpctl("set-volume", "@DEFAULT_AUDIO_SINK@", arg)
+	return a.wpctl("set-mute", "@DEFAULT_AUDIO_SINK@", arg)
 }
 
 func (a *Audio) Step(delta int) error {

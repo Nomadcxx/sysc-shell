@@ -3,6 +3,7 @@ package shell
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
@@ -25,12 +26,15 @@ type OSDView struct {
 }
 
 type OSDManager struct {
-	r       *Registry
-	hideFor time.Duration
-	timer   *time.Timer
-	open    map[uint32]bool
-	view    OSDView
-	theme   Theme
+	r         *Registry
+	hideFor   time.Duration
+	timer     *time.Timer
+	open      map[uint32]bool
+	view      OSDView
+	theme     Theme
+	animStart time.Time
+	stopAnim  chan struct{}
+	stopOnce  sync.Once
 }
 
 func newOSDManager(r *Registry, hide time.Duration) *OSDManager {
@@ -52,17 +56,32 @@ func (m *OSDManager) Show(v OSDView) {
 		return
 	}
 	m.r.mu.Lock()
-	defer m.r.mu.Unlock()
-	m.showLocked(v)
+	aux, pubs, startReveal := m.prepareShow(v)
+	m.r.mu.Unlock()
+	for _, req := range aux {
+		m.r.sendAux(req)
+	}
+	for _, p := range pubs {
+		m.r.publishSurface(p.global, p.id)
+	}
+	if startReveal {
+		go m.revealLoop()
+	}
 }
 
-func (m *OSDManager) showLocked(v OSDView) {
+type osdPub struct {
+	global uint32
+	id     string
+}
+
+func (m *OSDManager) prepareShow(v OSDView) (aux []wayland.AuxRequest, pubs []osdPub, startReveal bool) {
 	if v.Level < 0 {
 		v.Level = 0
 	}
 	if v.Level > 100 {
 		v.Level = 100
 	}
+	wasHidden := len(m.open) == 0
 	m.view = v
 	m.theme = ThemeFromTokens(m.r.tokens, 12)
 	pos := m.r.cfg.Panels.OSD
@@ -77,16 +96,23 @@ func (m *OSDManager) showLocked(v OSDView) {
 		anchor, margins := osdPlace(pos, out, size, zone, pad)
 		id := osdSurfaceID(global)
 		if !m.open[global] {
-			m.r.sendAux(wayland.AuxRequest{Output: global, Open: m.spec(id, anchor, margins)})
+			aux = append(aux, wayland.AuxRequest{Output: global, Open: m.spec(id, anchor, margins)})
 			m.open[global] = true
 		}
-		m.r.publishSurface(global, id)
+		pubs = append(pubs, osdPub{global: global, id: id})
 	}
 	if m.timer == nil {
 		m.timer = time.AfterFunc(m.hideFor, m.hideAll)
 	} else {
 		m.timer.Reset(m.hideFor)
 	}
+	if wasHidden && !m.r.cfg.Accessibility.ReducedMotion {
+		m.animStart = time.Now()
+		m.stopAnim = make(chan struct{})
+		m.stopOnce = sync.Once{}
+		startReveal = true
+	}
+	return aux, pubs, startReveal
 }
 
 func (m *OSDManager) hideAll() {
@@ -102,6 +128,9 @@ func (m *OSDManager) hideLocked() {
 	if m.timer != nil {
 		m.timer.Stop()
 		m.timer = nil
+	}
+	if m.stopAnim != nil {
+		m.stopOnce.Do(func() { close(m.stopAnim) })
 	}
 	for global := range m.open {
 		m.r.sendAux(wayland.AuxRequest{Output: global, ID: osdSurfaceID(global)})
@@ -136,8 +165,17 @@ func (m *OSDManager) render(pixels []byte, width, height, stride int) error {
 	if err != nil {
 		return err
 	}
-	body := ui.Rect{X: 8, Y: 8, W: osdWidth - 16, H: osdHeight - 16}
+	slide := m.slidePx()
+	body := ui.Rect{X: 8, Y: 8 + slide, W: osdWidth - 16, H: osdHeight - 16}
 	c.FillRounded(body, 8, m.theme.Background)
+	glyph := ui.Rect{X: body.X + 8, Y: body.Y + 4, W: 20, H: 20}
+	c.FillRounded(glyph, 4, m.theme.Accent)
+	lx := glyph.X + glyph.W + 8
+	ly := body.Y + 8
+	for range osdLabel(m.view) {
+		c.FillRounded(ui.Rect{X: lx, Y: ly, W: 4, H: 8}, 1, m.theme.Foreground)
+		lx += 6
+	}
 	fill := body
 	fill.Y += body.H - 8
 	fill.H = 6
@@ -146,6 +184,52 @@ func (m *OSDManager) render(pixels []byte, width, height, stride int) error {
 		c.FillRounded(fill, 3, m.theme.Accent)
 	}
 	return nil
+}
+
+func (m *OSDManager) slidePx() int {
+	if m == nil || m.r == nil || m.r.cfg.Accessibility.ReducedMotion {
+		return 0
+	}
+	if m.animStart.IsZero() {
+		return 0
+	}
+	left := revealDuration - time.Since(m.animStart)
+	if left <= 0 {
+		return 0
+	}
+	return int(8 * left / revealDuration)
+}
+
+func (m *OSDManager) revealLoop() {
+	tick := time.NewTicker(revealTick)
+	defer tick.Stop()
+	for {
+		select {
+		case <-m.stopAnim:
+			return
+		case <-tick.C:
+			m.r.mu.Lock()
+			pubs := make([]osdPub, 0, len(m.open))
+			for global := range m.open {
+				pubs = append(pubs, osdPub{global: global, id: osdSurfaceID(global)})
+			}
+			done := time.Since(m.animStart) >= revealDuration
+			m.r.mu.Unlock()
+			for _, p := range pubs {
+				m.r.publishSurface(p.global, p.id)
+			}
+			if done {
+				return
+			}
+		}
+	}
+}
+
+func osdLabel(v OSDView) string {
+	if v.Muted {
+		return v.Kind + " muted"
+	}
+	return v.Kind
 }
 
 func osdSurfaceID(global uint32) string { return fmt.Sprintf("osd:%d", global) }

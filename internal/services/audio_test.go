@@ -57,7 +57,20 @@ func TestAudioSetInvokesWpctl(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake.expect(t, "set-volume", "@DEFAULT_AUDIO_SINK@", "30%")
-	fake.expect(t, "set-volume", "@DEFAULT_AUDIO_SINK@", "mute")
+}
+
+func TestAudioSetMuteUsesSetMute(t *testing.T) {
+	t.Parallel()
+	fake := fakeWpctl(t, "0.30")
+	a := NewAudio(time.Second, fake.path)
+	if err := a.SetMute(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetMute(false); err != nil {
+		t.Fatal(err)
+	}
+	fake.expect(t, "set-mute", "@DEFAULT_AUDIO_SINK@", "1")
+	fake.expect(t, "set-mute", "@DEFAULT_AUDIO_SINK@", "0")
 }
 
 type fakeCmd struct {

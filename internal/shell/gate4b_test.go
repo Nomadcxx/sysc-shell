@@ -150,17 +150,9 @@ if [ "$1" = get-volume ]; then printf 'Volume: %s\n' "$(cat '` + dir + `/vol')";
 		t.Fatal(err)
 	}
 	reg := newPanelRegistry(t)
-	old := reg.audio
-	reg.audio = services.NewAudio(15*time.Millisecond, bin)
-	t.Cleanup(func() { old.Close() })
-	go reg.relayAudioOSD()
+	reg.setAudio(services.NewAudio(15*time.Millisecond, bin))
 	reg.bars[1] = &Bar{conn: "DP-1"}
 	reg.bars[2] = &Bar{conn: "DP-2"}
-	lease, err := reg.audio.Acquire()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { lease.Release() })
 	time.Sleep(40 * time.Millisecond)
 	if err := os.WriteFile(filepath.Join(dir, "vol"), []byte("0.70\n"), 0o600); err != nil {
 		t.Fatal(err)

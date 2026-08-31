@@ -51,14 +51,16 @@ type Registry struct {
 	panels        PanelSet
 	panelHosts    map[PanelID]*PanelHost
 	// closed unblocks a pending publish at shutdown.
-	closed     chan struct{}
-	closeOnce  sync.Once
-	dwell      *dwell
-	configPath string
-	reloads    chan<- struct{}
-	audio      *services.Audio
-	brightness *services.Brightness
-	osd        *OSDManager
+	closed      chan struct{}
+	closeOnce   sync.Once
+	dwell       *dwell
+	configPath  string
+	reloads     chan<- struct{}
+	audio       *services.Audio
+	brightness  *services.Brightness
+	osd         *OSDManager
+	audioLease  *services.Lease
+	brightLease *services.Lease
 }
 
 func NewRegistry(cfg config.Config) *Registry {
@@ -78,17 +80,49 @@ func NewRegistry(cfg config.Config) *Registry {
 		panelHosts:    make(map[PanelID]*PanelHost),
 		closed:        make(chan struct{}),
 		dwell:         newDwell(defaultDwell),
-		audio:         services.NewAudio(0, ""),
-		brightness:    services.NewBrightness("", "", 0),
 	}
 	r.tokens = r.generateTheme(cfg)
 	r.osd = newOSDManager(r, 0)
-	go r.relayAudioOSD()
-	go r.relayBrightnessOSD()
+	r.setAudio(services.NewAudio(0, ""))
+	r.setBrightness(services.NewBrightness("", "", 0))
 	return r
 }
 
 func (r *Registry) OSD() *OSDManager { return r.osd }
+
+func (r *Registry) setAudio(a *services.Audio) {
+	if r.audioLease != nil {
+		r.audioLease.Release()
+		r.audioLease = nil
+	}
+	if r.audio != nil {
+		r.audio.Close()
+	}
+	r.audio = a
+	if a != nil && a.Available() {
+		if l, err := a.Acquire(); err == nil {
+			r.audioLease = l
+		}
+	}
+	go r.relayAudioOSD()
+}
+
+func (r *Registry) setBrightness(b *services.Brightness) {
+	if r.brightLease != nil {
+		r.brightLease.Release()
+		r.brightLease = nil
+	}
+	if r.brightness != nil {
+		r.brightness.Close()
+	}
+	r.brightness = b
+	if b != nil && b.Available() {
+		if l, err := b.Acquire(); err == nil {
+			r.brightLease = l
+		}
+	}
+	go r.relayBrightnessOSD()
+}
 
 func (r *Registry) AudioAvailable() bool {
 	return r != nil && r.audio != nil && r.audio.Available()
@@ -396,8 +430,18 @@ func (r *Registry) Close() {
 		delete(r.leases, global)
 	}
 	r.bars = make(map[uint32]*Bar)
+	audioLease := r.audioLease
+	r.audioLease = nil
+	brightLease := r.brightLease
+	r.brightLease = nil
 	r.mu.Unlock()
 
+	if audioLease != nil {
+		audioLease.Release()
+	}
+	if brightLease != nil {
+		brightLease.Release()
+	}
 	releaseAll(leases)
 	r.dwell.stop()
 	r.clock.Close()
