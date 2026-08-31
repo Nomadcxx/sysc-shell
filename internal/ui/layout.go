@@ -52,6 +52,14 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 			if err := layoutScroll(child, box, measure); err != nil {
 				return fmt.Errorf("ui: child %d: %w", i, err)
 			}
+		case KindCapsule:
+			if w < 0 || h < 0 || h > content.H || x+w > content.X+content.W {
+				return fmt.Errorf("ui: child %d of kind %d does not fit in %dx%d", i, child.Kind, content.W, content.H)
+			}
+			child.Bounds = Rect{X: x, Y: content.Y + (content.H-h)/2, W: w, H: h}
+			if err := layoutCapsuleChild(child, measure); err != nil {
+				return fmt.Errorf("ui: child %d: %w", i, err)
+			}
 		default:
 			if w < 0 || h < 0 || h > content.H || x+w > content.X+content.W {
 				return fmt.Errorf("ui: child %d of kind %d does not fit in %dx%d", i, child.Kind, content.W, content.H)
@@ -60,6 +68,37 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 		}
 		x += child.Bounds.W
 	}
+	return nil
+}
+
+// layoutCapsuleChild centres a capsule's single child inside its padded inner
+// box. A nested row or column is arranged in that box so a capsule can hold the
+// workspace dot row.
+func layoutCapsuleChild(n *Node, measure MeasureText) error {
+	if len(n.Children) == 0 {
+		return nil
+	}
+	child := n.Children[0]
+	if child == nil {
+		return fmt.Errorf("capsule has a nil child")
+	}
+	inner := Rect{
+		X: n.Bounds.X + n.Padding,
+		Y: n.Bounds.Y + n.Padding,
+		W: max(n.Bounds.W-2*n.Padding, 0),
+		H: max(n.Bounds.H-2*n.Padding, 0),
+	}
+	switch child.Kind {
+	case KindRow:
+		return Layout(child, inner, measure)
+	case KindColumn:
+		return LayoutColumn(child, inner, measure)
+	}
+	w, h, err := measureNode(child, inner.H, measure)
+	if err != nil {
+		return err
+	}
+	child.Bounds = Rect{X: inner.X, Y: inner.Y + (inner.H-h)/2, W: w, H: h}
 	return nil
 }
 
@@ -90,6 +129,28 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		return n.Width, contentHeight, nil
 	case KindSeparator:
 		return 1, contentHeight, nil
+	case KindCapsule:
+		// An empty capsule is a dot: square, sized by Width.
+		if len(n.Children) == 0 {
+			if n.Width <= 0 {
+				return 0, 0, nil
+			}
+			return n.Width, n.Width, nil
+		}
+		if len(n.Children) != 1 {
+			return 0, 0, fmt.Errorf("capsule has %d children, want one", len(n.Children))
+		}
+		inner := max(contentHeight-2*n.Padding, 0)
+		w, _, err := measureNode(n.Children[0], inner, measure)
+		if err != nil {
+			return 0, 0, err
+		}
+		// A zero-width child leaves no pill at all, so an empty window title
+		// does not paint a bare capsule.
+		if w == 0 {
+			return 0, 0, nil
+		}
+		return w + 2*n.Padding, contentHeight, nil
 	case KindButton:
 		w, h := measure(n.Text, n.Tabular)
 		return w + 2*n.Padding, h + 2*n.Padding, nil

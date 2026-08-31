@@ -20,6 +20,13 @@ const (
 	KindTextField
 	KindScroll
 	KindVirtualList
+	// KindCapsule is a padded pill around one child, or an empty coloured dot
+	// when it has no children and a Width. It is the bar's per-item chrome.
+	KindCapsule
+
+	// kindCount is one past the last kind. It exists so a test can assert that
+	// every declared kind is measurable, and it must stay last.
+	kindCount
 )
 
 // Rect is a logical-pixel rectangle.
@@ -107,6 +114,9 @@ type Tone uint8
 const (
 	ToneNormal Tone = iota
 	ToneError
+	// ToneAccent fills a capsule with the accent colour. The focused
+	// workspace dot is its first consumer.
+	ToneAccent
 )
 
 // MeasureText reports the logical width and height of a shaped string. The

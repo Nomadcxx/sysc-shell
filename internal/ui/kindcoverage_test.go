@@ -14,7 +14,7 @@ func sampleNode(k Kind) *Node {
 	case KindScroll, KindVirtualList:
 		n.ItemCount, n.ItemHeight = 3, 10
 		n.Item = func(int) *Node { return &Node{Kind: KindText, Text: "i"} }
-	case KindRow, KindColumn, KindMenu:
+	case KindRow, KindColumn, KindMenu, KindCapsule:
 		n.Children = []*Node{{Kind: KindText, Text: "c"}}
 	}
 	return n
@@ -25,7 +25,7 @@ func sampleNode(k Kind) *Node {
 var allKinds = []Kind{
 	KindRow, KindText, KindMeter, KindButton, KindGraph, KindColumn,
 	KindSeparator, KindTab, KindToggle, KindSlider, KindMenu, KindTextField,
-	KindScroll, KindVirtualList,
+	KindScroll, KindVirtualList, KindCapsule,
 }
 
 // rowUnsupported and columnUnsupported name the kinds each measure path
@@ -41,9 +41,9 @@ var (
 
 func TestAllKindsAreAccountedFor(t *testing.T) {
 	t.Parallel()
-	if len(allKinds) != int(KindVirtualList)+1 {
-		t.Fatalf("allKinds has %d entries but the iota ends at %d; add the new kind to allKinds and to both measure paths",
-			len(allKinds), int(KindVirtualList))
+	if len(allKinds) != int(kindCount) {
+		t.Fatalf("allKinds has %d entries but %d kinds are declared; add the new kind to allKinds and decide its case in each measure path",
+			len(allKinds), int(kindCount))
 	}
 	for i, k := range allKinds {
 		if int(k) != i {
