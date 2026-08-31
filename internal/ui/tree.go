@@ -18,6 +18,8 @@ const (
 	KindSlider
 	KindMenu
 	KindTextField
+	KindScroll
+	KindVirtualList
 )
 
 // Rect is a logical-pixel rectangle.
@@ -42,6 +44,12 @@ type Node struct {
 	// Cursor is a byte index into Text for KindTextField.
 	Cursor int
 	Width  int
+	// ScrollOffset is the viewport origin in logical pixels.
+	ScrollOffset int
+	ItemCount    int
+	ItemHeight   int
+	ContentH     int
+	Item         func(int) *Node
 	// Values are the graph's samples, oldest first, each already normalised to
 	// zero through one by the widget. The node carries no scale of its own.
 	Values []float64

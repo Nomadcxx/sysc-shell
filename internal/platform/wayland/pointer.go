@@ -13,6 +13,13 @@ type pointerFocus struct {
 	serial uint32
 }
 
+type axisAcc struct {
+	vert, horz           float64
+	discreteV, discreteH int32
+	v120V, v120H         int32
+	has                  bool
+}
+
 // enterSurface focuses a bar and forwards the enter coordinates, so a press
 // with no intervening motion acts at the right place.
 func (o *owner) enterSurface(h *OutputHost, x, y float64, serial uint32) {
@@ -90,4 +97,51 @@ func (o *owner) deliverUnit(h *OutputHost, u *surfaceUnit, e Event) {
 		u.sched.Invalidate()
 	}
 	o.syncIME(u)
+}
+
+func (o *owner) addAxisValue(axis uint32, v float64) {
+	o.axis.has = true
+	if axis == 0 {
+		o.axis.vert += v
+		return
+	}
+	o.axis.horz += v
+}
+
+func (o *owner) addAxisDiscrete(axis uint32, d int32) {
+	o.axis.has = true
+	if axis == 0 {
+		o.axis.discreteV += d
+		return
+	}
+	o.axis.discreteH += d
+}
+
+func (o *owner) addAxisValue120(axis uint32, v int32) {
+	o.axis.has = true
+	if axis == 0 {
+		o.axis.v120V += v
+		return
+	}
+	o.axis.v120H += v
+}
+
+func (o *owner) flushAxis() {
+	acc := o.axis
+	o.axis = axisAcc{}
+	if !acc.has || o.focus.unit == nil {
+		return
+	}
+	e := Event{Kind: EventPointerAxis, X: o.focus.x, Y: o.focus.y}
+	if acc.vert != 0 || acc.discreteV != 0 || acc.v120V != 0 {
+		e.AxisValue = acc.vert
+		e.AxisDiscrete = acc.discreteV
+		e.AxisValue120 = acc.v120V
+	} else {
+		e.Axis = 1
+		e.AxisValue = acc.horz
+		e.AxisDiscrete = acc.discreteH
+		e.AxisValue120 = acc.v120H
+	}
+	o.deliverUnit(o.focus.host, o.focus.unit, e)
 }

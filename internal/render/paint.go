@@ -119,6 +119,20 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 	case ui.KindTextField:
 		return paintTextField(c, n, text, style, size)
 
+	case ui.KindScroll, ui.KindVirtualList:
+		prev := c.restrict
+		c.restrict = style.Scale120.PhysicalRect(n.Bounds)
+		defer func() { c.restrict = prev }()
+		for i, child := range n.Children {
+			if child == nil {
+				return fmt.Errorf("nil child %d", i)
+			}
+			if err := paintNode(c, child, text, style, size); err != nil {
+				return err
+			}
+		}
+		return nil
+
 	case ui.KindRow, ui.KindColumn:
 		for i, child := range n.Children {
 			if child == nil {

@@ -28,10 +28,12 @@ const (
 	keySpace     = 57
 	keyHome      = 102
 	keyUp        = 103
+	keyPageUp    = 104
 	keyLeft      = 105
 	keyRight     = 106
 	keyEnd       = 107
 	keyDown      = 108
+	keyPageDown  = 109
 
 	revealDuration = 200 * time.Millisecond
 	revealTick     = 16 * time.Millisecond
@@ -445,6 +447,8 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			return h.keyPress(r, e.Key)
 		case wayland.EventIME:
 			return h.applyIME(e)
+		case wayland.EventPointerAxis:
+			return h.scrollAxis(e)
 		case wayland.EventKeyRelease:
 			if e.Key == keyLeftShift {
 				h.shift = false
@@ -516,11 +520,66 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 		if h.adjustSlider(key) {
 			return true
 		}
-		return false
+		if key == keyHome {
+			return h.scrollTo(0)
+		}
+		return h.scrollTo(1 << 30)
+	case keyPageUp:
+		return h.scrollBy(-max(h.logicalH, 1))
+	case keyPageDown:
+		return h.scrollBy(max(h.logicalH, 1))
 	case keySpace, keyEnter:
 		return h.activate(r)
 	}
 	return false
+}
+
+func (h *PanelHost) scrollAxis(e wayland.Event) bool {
+	delta := int(e.AxisValue)
+	if e.AxisDiscrete != 0 {
+		delta = int(e.AxisDiscrete) * 40
+	}
+	return h.scrollBy(delta)
+}
+
+func (h *PanelHost) scrollBy(delta int) bool {
+	s := findScroll(h.root)
+	if s == nil {
+		return false
+	}
+	ui.ScrollBy(s, delta)
+	if h.logicalW > 0 {
+		_ = h.configure(h.logicalW, h.logicalH, h.scale120)
+	}
+	return true
+}
+
+func (h *PanelHost) scrollTo(off int) bool {
+	s := findScroll(h.root)
+	if s == nil {
+		return false
+	}
+	s.ScrollOffset = off
+	ui.ScrollBy(s, 0)
+	if h.logicalW > 0 {
+		_ = h.configure(h.logicalW, h.logicalH, h.scale120)
+	}
+	return true
+}
+
+func findScroll(n *ui.Node) *ui.Node {
+	if n == nil {
+		return nil
+	}
+	if n.Kind == ui.KindScroll || n.Kind == ui.KindVirtualList {
+		return n
+	}
+	for _, c := range n.Children {
+		if got := findScroll(c); got != nil {
+			return got
+		}
+	}
+	return nil
 }
 
 func (h *PanelHost) applyIME(e wayland.Event) bool {

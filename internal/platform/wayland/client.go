@@ -35,6 +35,7 @@ const (
 	EventKeyPress
 	EventKeyRelease
 	EventIME
+	EventPointerAxis
 )
 
 // Event is one pointer event in logical surface coordinates, which match the
@@ -56,6 +57,11 @@ type Event struct {
 	IMECommit       string
 	IMEDeleteBefore uint32
 	IMEDeleteAfter  uint32
+	// Axis fields are set on EventPointerAxis only.
+	Axis         uint32
+	AxisValue    float64
+	AxisDiscrete int32
+	AxisValue120 int32
 }
 
 // Invalidation requests a redraw. Global names the wl_registry output; a zero
@@ -190,6 +196,7 @@ type owner struct {
 	cursorDevice *cursorshape.WpCursorShapeDeviceV1
 	ime          imePending
 	imeOn        bool
+	axis         axisAcc
 
 	// hosts holds every bound wl_output, keyed by registry global name. Every
 	// ready host carries its own bar.
@@ -467,6 +474,18 @@ func (o *owner) onSeatCapabilities(e client.SeatCapabilitiesEvent) {
 				Kind: kind, Button: e.Button, Serial: e.Serial,
 				X: o.focus.x, Y: o.focus.y,
 			})
+		})
+		pointer.SetAxisHandler(func(e client.PointerAxisEvent) {
+			o.addAxisValue(e.Axis, e.Value)
+		})
+		pointer.SetAxisDiscreteHandler(func(e client.PointerAxisDiscreteEvent) {
+			o.addAxisDiscrete(e.Axis, e.Discrete)
+		})
+		pointer.SetAxisValue120Handler(func(e client.PointerAxisValue120Event) {
+			o.addAxisValue120(e.Axis, e.Value120)
+		})
+		pointer.SetFrameHandler(func(client.PointerFrameEvent) {
+			o.flushAxis()
 		})
 	case !hasPointer && o.pointer != nil:
 		// Capability loss must reset focus, not merely release the proxy.

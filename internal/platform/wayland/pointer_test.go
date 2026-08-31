@@ -93,3 +93,38 @@ func TestFocusCoordinatesArePreservedForButtons(t *testing.T) {
 		t.Fatalf("press at %v,%v, want the enter coordinates 12.75,6.25", press.X, press.Y)
 	}
 }
+
+func TestWheelScrollsByDetents(t *testing.T) {
+	t.Parallel()
+	o, a, _, seen := newFocusOwner()
+	o.enterSurface(a, 1, 1, 1)
+	*seen = nil
+	o.addAxisValue(0, 10)
+	o.addAxisDiscrete(0, -1)
+	o.addAxisValue120(0, -120)
+	o.flushAxis()
+	if len(*seen) != 1 {
+		t.Fatalf("one frame delivered %d events, want 1", len(*seen))
+	}
+	if (*seen)[0].Kind != EventPointerAxis {
+		t.Fatalf("kind = %d, want EventPointerAxis", (*seen)[0].Kind)
+	}
+	if (*seen)[0].AxisDiscrete != -1 {
+		t.Fatalf("discrete = %d, want -1", (*seen)[0].AxisDiscrete)
+	}
+}
+
+func TestPointerAxisKeepsFractionalValue(t *testing.T) {
+	t.Parallel()
+	o, a, _, seen := newFocusOwner()
+	o.enterSurface(a, 1, 1, 1)
+	*seen = nil
+	o.addAxisValue(0, 1.25)
+	o.flushAxis()
+	if len(*seen) != 1 {
+		t.Fatal("missing axis event")
+	}
+	if (*seen)[0].AxisValue != 1.25 {
+		t.Fatalf("value = %v, want 1.25", (*seen)[0].AxisValue)
+	}
+}
