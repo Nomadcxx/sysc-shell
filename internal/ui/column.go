@@ -50,6 +50,11 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 	case KindText, KindTab:
 		_, h := measure(n.Text, n.Tabular)
 		return h, nil
+	case KindGraph:
+		if n.Width > 0 {
+			return n.Width, nil
+		}
+		return 80, nil
 	case KindSeparator:
 		return 1, nil
 	case KindButton:

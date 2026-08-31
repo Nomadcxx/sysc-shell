@@ -29,6 +29,19 @@ func TestColumnLayoutStacksAndCentersText(t *testing.T) {
 	}
 }
 
+func TestColumnLayoutAcceptsGraph(t *testing.T) {
+	t.Parallel()
+	root := &Node{Kind: KindColumn, Padding: 12, Children: []*Node{
+		{Kind: KindGraph, Width: 240, Values: []float64{0.2, 0.8}},
+	}}
+	if err := LayoutColumn(root, Rect{W: 300, H: 400}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	if got := root.Children[0].Bounds.H; got != 240 {
+		t.Fatalf("graph height = %d, want the configured width 240", got)
+	}
+}
+
 func samplePanelTree() *Node {
 	return &Node{Kind: KindColumn, Gap: 8, Padding: 12, Children: []*Node{
 		{Kind: KindText, Text: "Power"},

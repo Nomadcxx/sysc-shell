@@ -9,6 +9,34 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 )
 
+func TestPanelHostRenderPaintsClockText(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelClock, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	reqs := drainAux(t, reg, 2)
+	panel := reqs[1].Open
+	if err := panel.Callbacks.Configure(360, 420, 120); err != nil {
+		t.Fatal(err)
+	}
+	const w, hgt = 360, 420
+	pix := make([]byte, w*hgt*4)
+	if err := panel.Callbacks.Render(pix, w, hgt, w*4); err != nil {
+		t.Fatal(err)
+	}
+	fg := reg.panelHosts[PanelClock].theme.Foreground
+	n := 0
+	for i := 0; i+3 < len(pix); i += 4 {
+		if pix[i] == fg.R && pix[i+1] == fg.G && pix[i+2] == fg.B && pix[i+3] == fg.A {
+			n++
+		}
+	}
+	if n == 0 {
+		t.Fatal("clock panel painted no foreground text")
+	}
+}
+
 func TestOpenPanelSendsShieldThenPanel(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)

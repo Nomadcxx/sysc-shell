@@ -67,7 +67,7 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 // content height; a button pads its text on every side.
 func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, error) {
 	switch n.Kind {
-	case KindText:
+	case KindText, KindTab:
 		w, h := measure(n.Text, n.Tabular)
 		if n.MinWidthText != "" {
 			if floor, _ := measure(n.MinWidthText, n.Tabular); floor > w {

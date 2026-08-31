@@ -283,3 +283,20 @@ func TestAnEmptyGraphStillReservesItsWidth(t *testing.T) {
 		t.Fatalf("empty graph width = %d, want 60", got)
 	}
 }
+
+func TestLayoutArrangesTabsInARow(t *testing.T) {
+	t.Parallel()
+	root := &Node{Kind: KindRow, Gap: 8, Children: []*Node{
+		{Kind: KindTab, Text: "CPU"},
+		{Kind: KindTab, Text: "Memory"},
+	}}
+	if err := Layout(root, Rect{W: 400, H: 48}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	if got := root.Children[0].Bounds.W; got != 24 {
+		t.Fatalf("CPU tab width = %d, want 24", got)
+	}
+	if got := root.Children[1].Bounds.W; got != 48 {
+		t.Fatalf("Memory tab width = %d, want 48", got)
+	}
+}

@@ -63,6 +63,8 @@ type PanelHost struct {
 	stopAnim       chan struct{}
 	stopOnce       sync.Once
 	theme          Theme
+	text           *render.TextRenderer
+	fontFamily     string
 	logicalW       int
 	logicalH       int
 	scale120       int
@@ -258,11 +260,12 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	margins := place.Margins()
 
 	h := &PanelHost{
-		id:       id,
-		output:   output,
-		place:    place,
-		stopAnim: make(chan struct{}),
-		theme:    ThemeFromTokens(r.tokens, 12),
+		id:         id,
+		output:     output,
+		place:      place,
+		stopAnim:   make(chan struct{}),
+		theme:      ThemeFromTokens(r.tokens, 12),
+		fontFamily: r.cfg.Bar.FontFamily,
 	}
 	if id == PanelSettings {
 		h.set = settings.DefaultFor(r.cfg)
@@ -429,9 +432,47 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	}
 }
 
+func (h *PanelHost) ensureText() error {
+	if h.text != nil {
+		return nil
+	}
+	fonts, err := render.NewSystemFontMap(h.fontFamily, render.DefaultFontCacheDir())
+	if err != nil {
+		return err
+	}
+	h.text = render.NewTextRendererWithFontMap(fonts)
+	return nil
+}
+
+func logicalFromPhysical(scale ui.Scale120, phys int) int {
+	if !scale.Valid() || scale == ui.ScaleUnit {
+		return phys
+	}
+	return phys * 120 / int(scale)
+}
+
 func (h *PanelHost) configure(w, height, scale120 int) error {
 	h.logicalW, h.logicalH, h.scale120 = w, height, scale120
-	measure := func(s string, _ bool) (int, int) { return len(s) * 8, 16 }
+	if err := h.ensureText(); err != nil {
+		return err
+	}
+	scale := ui.Scale120(scale120)
+	if !scale.Valid() {
+		scale = ui.ScaleUnit
+	}
+	size := scale.Physical(h.theme.TextSize)
+	if size <= 0 {
+		size = h.theme.TextSize
+	}
+	measure := func(s string, tabular bool) (int, int) {
+		if h.text != nil && size > 0 {
+			mw, mh, err := h.text.Measure(s, size, tabular)
+			if err == nil {
+				return logicalFromPhysical(scale, mw), logicalFromPhysical(scale, mh)
+			}
+		}
+		return len(s) * 8, 16
+	}
 	box := ui.Rect{W: w, H: height}
 	if h.root != nil && h.root.Kind == ui.KindRow {
 		return ui.Layout(h.root, box, measure)
@@ -440,20 +481,40 @@ func (h *PanelHost) configure(w, height, scale120 int) error {
 }
 
 func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
+	if err := h.ensureText(); err != nil {
+		return err
+	}
 	c, err := render.NewCanvas(pixels, width, height, stride)
 	if err != nil {
 		return err
 	}
-	body := ui.Rect{X: 8, Y: 8, W: h.place.Panel.W, H: h.place.Panel.H}
-	if body.W <= 0 || body.H <= 0 {
-		body = ui.Rect{X: 0, Y: 0, W: width, H: height}
+	scale := ui.Scale120(h.scale120)
+	if !scale.Valid() {
+		scale = ui.ScaleUnit
 	}
-	c.DrawShadow(body, 12, render.ElevPanel, render.Color{A: 0x8c})
-	c.FillRounded(body, 12, h.theme.Background)
+	body := ui.Rect{W: h.logicalW, H: h.logicalH}
+	if body.W <= 0 || body.H <= 0 {
+		body = ui.Rect{W: h.place.Panel.W, H: h.place.Panel.H}
+	}
+	style := render.ProofStyle{
+		Size:       h.theme.TextSize,
+		Scale120:   scale,
+		Body:       body,
+		Radius:     12,
+		Background: h.theme.Background,
+		Foreground: h.theme.Foreground,
+		Track:      h.theme.Muted,
+		Accent:     h.theme.Accent,
+		AccentOn:   h.theme.Error,
+		Error:      h.theme.Error,
+	}
+	if err := render.Paint(c, h.root, h.text, style); err != nil {
+		return err
+	}
 	if h.roving.Count > 0 {
 		n := h.focus[h.roving.Index()]
 		if n != nil && n.Bounds.W > 0 {
-			ring := n.Bounds
+			ring := scale.PhysicalRect(n.Bounds)
 			c.FillRounded(ui.Rect{X: ring.X, Y: ring.Y, W: ring.W, H: 2}, 0, h.theme.Accent)
 			c.FillRounded(ui.Rect{X: ring.X, Y: ring.Y + ring.H - 2, W: ring.W, H: 2}, 0, h.theme.Accent)
 			c.FillRounded(ui.Rect{X: ring.X, Y: ring.Y, W: 2, H: ring.H}, 0, h.theme.Accent)

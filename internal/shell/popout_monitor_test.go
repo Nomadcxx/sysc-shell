@@ -78,6 +78,19 @@ func TestMonitorAbsentSampleShowsCollecting(t *testing.T) {
 	}
 }
 
+func TestMonitorConfigureAcceptsTabsAndGraph(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelMonitor, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelMonitor]
+	if err := h.configure(640, 480, 120); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMonitorLeaseReusesM3Service(t *testing.T) {
 	t.Parallel()
 	src, err := os.ReadFile("popout_monitor.go")
