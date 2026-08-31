@@ -13,19 +13,26 @@ import (
 
 var procRoot = "/proc"
 
+type applyJob struct {
+	home    string
+	enabled func(string) bool
+	tok     theme.Tokens
+}
+
 var (
-	applyMu   sync.Mutex
-	applyBusy bool
-	applyPend bool
+	applyMu     sync.Mutex
+	applyBusy   bool
+	applyQueued *applyJob
 )
 
 func ApplyEnabled(home string, enabled func(string) bool, tok theme.Tokens) error {
 	if home == "" || enabled == nil {
 		return nil
 	}
+	job := applyJob{home: home, enabled: enabled, tok: tok}
 	applyMu.Lock()
 	if applyBusy {
-		applyPend = true
+		applyQueued = &job
 		applyMu.Unlock()
 		return nil
 	}
@@ -33,15 +40,17 @@ func ApplyEnabled(home string, enabled func(string) bool, tok theme.Tokens) erro
 	applyMu.Unlock()
 
 	var err error
+	current := job
 	for {
-		err = applyOnce(home, enabled, tok)
+		err = applyOnce(current.home, current.enabled, current.tok)
 		applyMu.Lock()
-		if !applyPend {
+		if applyQueued == nil {
 			applyBusy = false
 			applyMu.Unlock()
 			return err
 		}
-		applyPend = false
+		current = *applyQueued
+		applyQueued = nil
 		applyMu.Unlock()
 	}
 }

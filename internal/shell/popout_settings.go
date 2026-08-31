@@ -65,9 +65,6 @@ func settingsTree(h *PanelHost) *ui.Node {
 			return settingsEntryRow(h, entries[i])
 		},
 	}
-	for i := range entries {
-		content.Children = append(content.Children, settingsEntryRow(h, entries[i]))
-	}
 	return &ui.Node{Kind: ui.KindRow, Gap: 16, Padding: 12, Children: []*ui.Node{
 		{Kind: ui.KindColumn, Width: 220, Gap: 8, Children: sidebar},
 		content,

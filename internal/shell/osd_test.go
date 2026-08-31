@@ -218,6 +218,33 @@ func TestOsdShowReleasesLockBeforeAux(t *testing.T) {
 	}
 }
 
+func TestOsdHideReleasesLockBeforeAux(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	reg.bars[1] = &Bar{conn: "eDP-1"}
+	reg.OSD().Show(OSDView{Kind: "audio", Level: 10})
+	_ = drainAux(t, reg, 1)
+	for i := 0; i < 8; i++ {
+		reg.aux <- wayland.AuxRequest{}
+	}
+	go reg.osd.hideAll()
+	time.Sleep(30 * time.Millisecond)
+	locked := make(chan struct{})
+	go func() {
+		reg.mu.Lock()
+		close(locked)
+		reg.mu.Unlock()
+	}()
+	select {
+	case <-locked:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("hideAll held mu while blocked on a full aux channel")
+	}
+	for i := 0; i < 9; i++ {
+		<-reg.aux
+	}
+}
+
 func regionHasColor(pix []byte, width, x, y, w, h int, col Color) bool {
 	stride := width * 4
 	for row := y; row < y+h; row++ {

@@ -11,6 +11,12 @@ func Focusables(root *Node) []*Node {
 		if n.Focusable {
 			out = append(out, n)
 		}
+		if n.Kind == KindVirtualList && n.Item != nil {
+			for i := 0; i < n.ItemCount; i++ {
+				walk(n.Item(i))
+			}
+			return
+		}
 		for _, c := range n.Children {
 			walk(c)
 		}

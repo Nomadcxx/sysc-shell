@@ -141,3 +141,45 @@ func TestApplyEnabledReportsFirstError(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestApplyEnabledSupersedeUsesLatestHome(t *testing.T) {
+	home1 := t.TempDir()
+	home2 := t.TempDir()
+	started := make(chan struct{})
+	block := make(chan struct{})
+	first := func(name string) bool {
+		if name != "alacritty" {
+			return false
+		}
+		select {
+		case <-started:
+		default:
+			close(started)
+		}
+		<-block
+		return true
+	}
+	done := make(chan error, 1)
+	go func() { done <- ApplyEnabled(home1, first, theme.Fallback) }()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first apply did not reach alacritty")
+	}
+	secondDone := make(chan error, 1)
+	go func() {
+		secondDone <- ApplyEnabled(home2, func(name string) bool { return name == "alacritty" }, theme.Fallback)
+	}()
+	time.Sleep(20 * time.Millisecond)
+	close(block)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-secondDone; err != nil {
+		t.Fatal(err)
+	}
+	p2 := filepath.Join(home2, ".config", "alacritty", "alacritty.toml")
+	if _, err := os.Stat(p2); err != nil {
+		t.Fatalf("latest home missing alacritty.toml: %v", err)
+	}
+}

@@ -3,6 +3,7 @@ package shell
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -130,6 +131,34 @@ func (r *Registry) AudioAvailable() bool {
 
 func (r *Registry) BrightnessAvailable() bool {
 	return r != nil && r.brightness != nil && r.brightness.Available()
+}
+
+func (r *Registry) Status() map[string]any {
+	if r == nil {
+		return map[string]any{"version": "sysc-shell"}
+	}
+	r.mu.Lock()
+	audio := r.audio != nil && r.audio.Available()
+	bright := r.brightness != nil && r.brightness.Available()
+	var panels []string
+	for id := range r.panelHosts {
+		panels = append(panels, id.String())
+	}
+	cfg := r.cfg
+	r.mu.Unlock()
+	templates := map[string]bool{}
+	for _, name := range theming.Catalog().Names() {
+		templates[name] = cfg.TemplateEnabled(name)
+	}
+	_, err := exec.LookPath("matugen")
+	return map[string]any{
+		"version":    "sysc-shell",
+		"audio":      audio,
+		"brightness": bright,
+		"panels":     panels,
+		"matugen":    err == nil,
+		"templates":  templates,
+	}
 }
 
 func (r *Registry) OSDStep(kind, action string) error {
@@ -420,8 +449,9 @@ func (r *Registry) Close() {
 	r.closeOnce.Do(func() { close(r.closed) })
 
 	r.mu.Lock()
+	var osdAux []wayland.AuxRequest
 	if r.osd != nil {
-		r.osd.hideLocked()
+		osdAux = r.osd.prepareHide()
 	}
 	r.closeAllPanelsLocked()
 	var leases []*services.Lease
@@ -436,6 +466,9 @@ func (r *Registry) Close() {
 	r.brightLease = nil
 	r.mu.Unlock()
 
+	for _, req := range osdAux {
+		r.sendAux(req)
+	}
 	if audioLease != nil {
 		audioLease.Release()
 	}

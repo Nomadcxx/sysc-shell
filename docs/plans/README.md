@@ -147,6 +147,8 @@ Designed, planned, reviewed, executed and merged to `main` at `01cae98`. Spec sh
 | `2026-08-31-m4-code-quality-sweep.md` | audit-report | Correctness and reliability pass over landed M4. Report only. |
 | `2026-08-31-m4-spec-shortfall-corrections.md` | plan | TDD plan for sysc-38, sysc-39, sysc-40. |
 | `2026-08-31-m4-post-shortfall-polish.md` | plan | Hide-lock, apply supersede, status IPC, virtual-list focus. |
+| `2026-08-31-m4-post-shortfall-spec-check.md` | audit-report | Re-check of sysc-38–40 vs 4A/4B after the shortfall merge. |
+| `2026-08-31-m4-post-shortfall-quality-polish.md` | audit-report | Leftovers applied; remaining ceilings. |
 
 ### Tranche state
 

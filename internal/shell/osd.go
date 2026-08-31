@@ -120,11 +120,14 @@ func (m *OSDManager) hideAll() {
 		return
 	}
 	m.r.mu.Lock()
-	defer m.r.mu.Unlock()
-	m.hideLocked()
+	aux := m.prepareHide()
+	m.r.mu.Unlock()
+	for _, req := range aux {
+		m.r.sendAux(req)
+	}
 }
 
-func (m *OSDManager) hideLocked() {
+func (m *OSDManager) prepareHide() []wayland.AuxRequest {
 	if m.timer != nil {
 		m.timer.Stop()
 		m.timer = nil
@@ -132,10 +135,12 @@ func (m *OSDManager) hideLocked() {
 	if m.stopAnim != nil {
 		m.stopOnce.Do(func() { close(m.stopAnim) })
 	}
+	var aux []wayland.AuxRequest
 	for global := range m.open {
-		m.r.sendAux(wayland.AuxRequest{Output: global, ID: osdSurfaceID(global)})
+		aux = append(aux, wayland.AuxRequest{Output: global, ID: osdSurfaceID(global)})
 	}
 	m.open = map[uint32]bool{}
+	return aux
 }
 
 func (m *OSDManager) spec(id string, anchor uint32, mgn Margins) *wayland.AuxSpec {

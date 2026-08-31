@@ -37,3 +37,18 @@ func TestRovingIndexWrapsAndClamps(t *testing.T) {
 		t.Fatalf("Set must clamp low, got %d", r.Index())
 	}
 }
+
+func TestFocusablesWalksVirtualListItem(t *testing.T) {
+	t.Parallel()
+	root := &Node{
+		Kind:      KindVirtualList,
+		ItemCount: 3,
+		Item: func(i int) *Node {
+			return &Node{Kind: KindButton, Text: string(rune('a' + i)), Focusable: true}
+		},
+	}
+	f := Focusables(root)
+	if len(f) != 3 || f[0].Text != "a" || f[2].Text != "c" {
+		t.Fatalf("virtual list focus = %d %+v", len(f), f)
+	}
+}

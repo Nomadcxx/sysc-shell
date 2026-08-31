@@ -142,13 +142,7 @@ func run(ctx context.Context) error {
 					return fmt.Errorf("unknown panel action")
 				}
 			},
-			Status: func() map[string]any {
-				return map[string]any{
-					"version":    "sysc-shell",
-					"audio":      registry.AudioAvailable(),
-					"brightness": registry.BrightnessAvailable(),
-				}
-			},
+			Status:  registry.Status,
 			OSDStep: registry.OSDStep,
 		})
 		ipcErr <- srv.Serve(ctx)

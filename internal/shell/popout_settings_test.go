@@ -192,6 +192,42 @@ func TestSettingsEscapeClearsQueryThenCloses(t *testing.T) {
 	}
 }
 
+func TestRegistryStatusReportsOpenPanelsAndTemplates(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	st := reg.Status()
+	if st["version"] != "sysc-shell" {
+		t.Fatalf("version = %v", st["version"])
+	}
+	if _, ok := st["audio"].(bool); !ok {
+		t.Fatal("audio missing")
+	}
+	if _, ok := st["brightness"].(bool); !ok {
+		t.Fatal("brightness missing")
+	}
+	if _, ok := st["matugen"].(bool); !ok {
+		t.Fatal("matugen missing")
+	}
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	st = reg.Status()
+	panels, _ := st["panels"].([]string)
+	found := false
+	for _, p := range panels {
+		if p == "settings" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("panels = %v, want settings", panels)
+	}
+	tm, _ := st["templates"].(map[string]bool)
+	if !tm["niri"] {
+		t.Fatalf("templates = %v, want niri on", tm)
+	}
+}
+
 func newSettingsHost() *PanelHost {
 	h := &PanelHost{
 		id:      PanelSettings,
