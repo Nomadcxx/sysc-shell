@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -17,6 +18,8 @@ type barView struct {
 	Now       time.Time
 	Workspace string
 	Title     string
+	// Pills are this output's workspaces in index order.
+	Pills []workspacePill
 	// Metrics is the newest sampling pass. Its nil fields mean unleased or
 	// failed; either renders the placeholder.
 	Metrics services.Snapshot
@@ -36,10 +39,84 @@ type barView struct {
 type textWidget struct {
 	// node is the capsule the bar lays out and hits. inner is the content it
 	// wraps, and is what format writes to.
-	node    *ui.Node
-	inner   *ui.Node
-	format  func(barView) string
+	node   *ui.Node
+	inner  *ui.Node
+	format func(barView) string
+	// refresh rebuilds a widget whose content is a subtree rather than a
+	// string. It reports whether the tree changed. Widgets with a format do
+	// not set it.
+	refresh func(barView) bool
 	tooltip string
+}
+
+// workspacePillGap separates adjacent workspace pills, and matches the
+// measured gap in the reference bar.
+const workspacePillGap = 8
+
+// refreshWorkspacePills rebuilds the pill row when the workspace set, its
+// occupancy or its focus changes, and reports whether it did. The signature is
+// compared field by field rather than stuffed into a string, so paint stays a
+// function of the tree.
+func refreshWorkspacePills(row *ui.Node, v barView) bool {
+	// With no projection yet, the widget still shows the stable fallback
+	// rather than collapsing to nothing, which is what tells an owner that
+	// Niri has not reported this output.
+	if len(v.Pills) == 0 {
+		label := v.Workspace
+		if label == "" {
+			label = noWorkspace
+		}
+		if len(row.Children) == 1 && row.Children[0] != nil &&
+			len(row.Children[0].Children) == 1 &&
+			row.Children[0].Children[0].Text == label {
+			return false
+		}
+		row.Children = append(row.Children[:0], &ui.Node{
+			Kind: ui.KindCapsule, Fill: ui.FillContainer,
+			Children: []*ui.Node{{Kind: ui.KindText, Text: label}},
+		})
+		return true
+	}
+	if workspacePillsMatch(row, v.Pills) {
+		return false
+	}
+	row.Children = row.Children[:0]
+	for _, p := range v.Pills {
+		fill := ui.FillContainer
+		if p.Focused {
+			fill = ui.FillAccent
+		}
+		row.Children = append(row.Children, &ui.Node{
+			Kind: ui.KindCapsule,
+			Fill: fill,
+			Children: []*ui.Node{{
+				Kind:    ui.KindText,
+				Text:    strconv.Itoa(p.Index),
+				Tabular: true,
+			}},
+		})
+	}
+	return true
+}
+
+func workspacePillsMatch(row *ui.Node, pills []workspacePill) bool {
+	if len(row.Children) != len(pills) {
+		return false
+	}
+	for i, p := range pills {
+		c := row.Children[i]
+		if c == nil || len(c.Children) != 1 || c.Children[0] == nil {
+			return false
+		}
+		want := ui.FillContainer
+		if p.Focused {
+			want = ui.FillAccent
+		}
+		if c.Fill != want || c.Children[0].Text != strconv.Itoa(p.Index) {
+			return false
+		}
+	}
+	return true
 }
 
 // capsuled wraps one built widget in its pill. Wrapping happens in a single
@@ -71,10 +148,10 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 				},
 			})
 		case "workspace":
-			out = append(out, textWidget{
-				node:   &ui.Node{Kind: ui.KindText},
-				format: func(v barView) string { return v.Workspace },
-			})
+			row := &ui.Node{Kind: ui.KindRow, Gap: workspacePillGap}
+			w := textWidget{node: row}
+			w.refresh = func(v barView) bool { return refreshWorkspacePills(row, v) }
+			out = append(out, w)
 		case "window-title":
 			out = append(out, textWidget{
 				node:   &ui.Node{Kind: ui.KindText, MaxWidth: item.MaxWidth},

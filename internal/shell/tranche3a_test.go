@@ -48,7 +48,7 @@ func TestUnavailableNiriStateRendersAStableFallback(t *testing.T) {
 	t.Cleanup(reg.Close)
 	newHosts(t, reg, map[uint32]string{1: "DP-9"})
 
-	if got := reg.bars[1].left[0].inner.Text; got != noWorkspace {
+	if got := nodeText(reg.bars[1].left[0].node); got != noWorkspace {
 		t.Fatalf("workspace before any snapshot = %q, want %q", got, noWorkspace)
 	}
 	if got := reg.bars[1].left[1].inner.Text; got != "" {

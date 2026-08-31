@@ -44,10 +44,24 @@ func TestNiriWidgetsReadTheirOutputsProjection(t *testing.T) {
 		{ID: "workspace"},
 		{ID: "window-title", MaxWidth: 120},
 	}, 8)
-	view := barView{Workspace: "code", Title: "Fixture One"}
+	view := barView{
+		Workspace: "code", Title: "Fixture One",
+		Pills: []workspacePill{{Index: 1, Focused: true}, {Index: 2}},
+	}
 
-	if got := widgets[0].format(view); got != "code" {
-		t.Fatalf("workspace = %q, want code", got)
+	// The workspace widget renders a pill row, so it refreshes a subtree
+	// instead of formatting a string.
+	if widgets[0].format != nil {
+		t.Fatal("the workspace widget should refresh a tree, not format text")
+	}
+	if !widgets[0].refresh(view) {
+		t.Fatal("the first refresh reported no change")
+	}
+	if got := pillIndices(widgets[0].node); len(got) != 2 || got[0] != "1" || got[1] != "2" {
+		t.Fatalf("workspace pills = %v, want 1 and 2", got)
+	}
+	if widgets[0].refresh(view) {
+		t.Fatal("an unchanged view rebuilt the pill row")
 	}
 	if got := widgets[1].format(view); got != "Fixture One" {
 		t.Fatalf("title = %q, want Fixture One", got)
@@ -185,4 +199,22 @@ func nodeText(n *ui.Node) string {
 		}
 	}
 	return ""
+}
+
+// pillIndices reports the numerals a workspace pill row renders, in order, so a
+// test can assert the projection reached the bar without depending on which
+// node carries the text.
+func pillIndices(n *ui.Node) []string {
+	var out []string
+	if n == nil {
+		return out
+	}
+	if n.Kind == ui.KindCapsule && len(n.Children) == 1 && n.Children[0] != nil &&
+		n.Children[0].Kind == ui.KindText {
+		return append(out, n.Children[0].Text)
+	}
+	for _, c := range n.Children {
+		out = append(out, pillIndices(c)...)
+	}
+	return out
 }

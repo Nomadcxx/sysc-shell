@@ -155,6 +155,12 @@ func (b *Bar) applyLocked(view barView) bool {
 			// text, and format writes it as a side effect. The previous state
 			// is captured first so every display mode is compared, not just
 			// the one whose state happens to be a string.
+			if w.refresh != nil {
+				if w.refresh(view) {
+					changed = true
+				}
+				continue
+			}
 			// State lives on the inner node; the capsule is chrome.
 			before := *w.inner
 			if text := w.format(view); text != w.inner.Text {

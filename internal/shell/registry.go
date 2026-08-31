@@ -590,6 +590,7 @@ func (r *Registry) viewLocked(connector string) barView {
 		Now:       r.now,
 		Workspace: state.Workspace,
 		Title:     state.Title,
+		Pills:     state.Pills,
 		Metrics:   r.sample,
 		History:   r.historyLocked(),
 		Weather:   r.reading,

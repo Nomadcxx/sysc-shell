@@ -129,6 +129,26 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		return n.Width, contentHeight, nil
 	case KindSeparator:
 		return 1, contentHeight, nil
+	case KindRow:
+		// A nested row is as wide as its children plus the gaps between them.
+		// The outer root is arranged by Layout and never measured here; this
+		// case exists for a row inside a capsule, which is how the workspace
+		// pill strip is built.
+		w := 2 * n.Padding
+		for i, child := range n.Children {
+			if child == nil {
+				return 0, 0, fmt.Errorf("row child %d is nil", i)
+			}
+			if i > 0 {
+				w += n.Gap
+			}
+			cw, _, err := measureNode(child, max(contentHeight-2*n.Padding, 0), measure)
+			if err != nil {
+				return 0, 0, err
+			}
+			w += cw
+		}
+		return w, contentHeight, nil
 	case KindCapsule:
 		// An empty capsule is a dot: square, sized by Width.
 		if len(n.Children) == 0 {

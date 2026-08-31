@@ -69,13 +69,17 @@ func TestABarRendersTheWorkspaceAndTitleItIsGiven(t *testing.T) {
 	t.Parallel()
 
 	p := newTestBar(t)
-	if !p.apply(barView{Workspace: "code", Title: "Fixture One"}) {
+	view := barView{
+		Workspace: "code", Title: "Fixture One",
+		Pills: []workspacePill{{Index: 1, Focused: true, Occupied: true}, {Index: 2}},
+	}
+	if !p.apply(view) {
 		t.Fatal("the first view reported no change")
 	}
 
 	sections := p.sections()
-	if got := nodeText(sections[0][0]); got != "code" {
-		t.Fatalf("workspace node = %q, want code", got)
+	if got := pillIndices(sections[0][0]); len(got) != 2 || got[0] != "1" || got[1] != "2" {
+		t.Fatalf("workspace pills = %v, want 1 and 2", got)
 	}
 	if got := nodeText(sections[0][1]); got != "Fixture One" {
 		t.Fatalf("title node = %q, want Fixture One", got)

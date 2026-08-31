@@ -35,7 +35,7 @@ var allKinds = []Kind{
 // from a measure path returns "unsupported kind N" from a live configure,
 // which fails the whole surface rather than the one node.
 var (
-	rowUnsupported    = map[Kind]bool{KindRow: true, KindColumn: true}
+	rowUnsupported    = map[Kind]bool{KindColumn: true}
 	columnUnsupported = map[Kind]bool{KindColumn: true}
 )
 
