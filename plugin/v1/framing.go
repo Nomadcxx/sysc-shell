@@ -55,6 +55,16 @@ var registry = map[Direction]map[string]func() Message{
 	},
 }
 
+// TypeOf returns a message's wire name. It exists because the interface method
+// is unexported: a host outside this package still has to be able to say which
+// message it received when reporting a protocol fault.
+func TypeOf(m Message) string {
+	if m == nil {
+		return ""
+	}
+	return m.messageType()
+}
+
 // Encoder writes framed messages to a stream.
 type Encoder struct {
 	w io.Writer
