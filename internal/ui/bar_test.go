@@ -173,3 +173,27 @@ func TestArrangeBarLaysOutCapsuleContents(t *testing.T) {
 		t.Fatal("the pill numeral was never laid out")
 	}
 }
+
+// A capsule may lay its row out in a box taller than its own inner band, so
+// that text measured at the physical size is not cropped. Members must still
+// centre on the capsule, not on that taller box.
+func TestCapsuleCentresAMemberTallerThanItsBand(t *testing.T) {
+	t.Parallel()
+	// fakeMeasure reports height 16; an 8-padded capsule in a 28-high band
+	// leaves an inner band of 12, which is shorter than the member.
+	member := &Node{Kind: KindText, Text: "12%"}
+	row := &Node{Kind: KindRow, Children: []*Node{member}}
+	group := &Node{Kind: KindCapsule, Padding: 8, Children: []*Node{row}}
+
+	content := Rect{X: 0, Y: 0, W: 400, H: 28}
+	if err := ArrangeBar(content, []*Node{group}, nil, nil, 4, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+
+	capCentre := group.Bounds.Y + group.Bounds.H/2
+	memCentre := member.Bounds.Y + member.Bounds.H/2
+	if diff := capCentre - memCentre; diff > 1 || diff < -1 {
+		t.Fatalf("member centre %d vs capsule centre %d; member bounds %+v, capsule %+v",
+			memCentre, capCentre, member.Bounds, group.Bounds)
+	}
+}

@@ -263,3 +263,40 @@ func TestGroupedMetricsStillAcquireTheirLeases(t *testing.T) {
 		t.Fatal("the default bar groups cpu and memory, and neither leased the sampler")
 	}
 }
+
+// A grouped metric must still name itself, or a bare percentage inside a shared
+// pill says nothing about what it measures.
+func TestAGroupedMetricKeepsItsOwnTooltip(t *testing.T) {
+	t.Parallel()
+	b, err := New("DP-1")
+	if err != nil {
+		t.Skipf("no system fonts: %v", err)
+	}
+	if err := b.Layout(1536, BarHeight); err != nil {
+		t.Fatal(err)
+	}
+	var group textWidget
+	for _, section := range b.widgets() {
+		for _, w := range section {
+			if len(w.members) > 0 {
+				group = w
+			}
+		}
+	}
+	if len(group.members) != 2 {
+		t.Fatalf("default bar has no two-member group; found %d members", len(group.members))
+	}
+	for _, m := range group.members {
+		if m.tooltip == "" {
+			t.Fatalf("group member %+v has no tooltip", m.node)
+		}
+		mid := m.node.Bounds
+		if mid.W == 0 {
+			continue // an empty reading measures zero and cannot be hovered
+		}
+		got, _, ok := b.tooltipAtLocked(mid.X+mid.W/2, mid.Y+mid.H/2)
+		if !ok || got != m.tooltip {
+			t.Fatalf("hover over %+v gave %q ok=%v, want %q", mid, got, ok, m.tooltip)
+		}
+	}
+}

@@ -144,3 +144,66 @@ func TestBatteryRunesResolveToTheProjectFace(t *testing.T) {
 		t.Fatal("a battery rune did not resolve to the icon face")
 	}
 }
+
+// coverage sums a rasterised glyph's alpha. Two battery levels that differ in
+// fill must differ in ink.
+func glyphCoverage(t *testing.T, r rune, size int) int {
+	t.Helper()
+	tr := NewTextRenderer(loadIconFace())
+	mask, err := tr.Raster(string(r), size, false)
+	if err != nil {
+		t.Fatalf("raster %U: %v", r, err)
+	}
+	if mask.Alpha == nil {
+		t.Fatalf("raster %U produced no coverage", r)
+	}
+	sum := 0
+	for _, a := range mask.Alpha.Pix {
+		sum += int(a)
+	}
+	return sum
+}
+
+// The level glyphs shipped identical once: every codepoint drew the same solid
+// silhouette because the window subpath wound the same way as the body, so it
+// filled instead of cutting a hole. BatteryIconRune was correct and the asset
+// discarded the distinction, and the existing tests only checked the codepoint
+// mapping, so nothing failed.
+// Not parallel: loadIconFace returns one shared face and font.Face is not safe
+// for concurrent use. The shell only ever shapes on the Wayland goroutine.
+func TestBatteryLevelGlyphsDifferFromEachOther(t *testing.T) {
+	for _, band := range []struct {
+		name  string
+		first rune
+	}{
+		{"discharging", iconBatteryLevel0},
+		{"charging", iconBatteryCharging0},
+	} {
+		t.Run(band.name, func(t *testing.T) {
+			seen := make(map[int]rune, batteryLevels)
+			prev := -1
+			for i := range batteryLevels {
+				r := band.first + rune(i)
+				got := glyphCoverage(t, r, 64)
+				if other, clash := seen[got]; clash {
+					t.Fatalf("level %d (%U) has the same ink as %U; the levels are indistinguishable", i, r, other)
+				}
+				seen[got] = r
+				// More charge must never draw less ink.
+				if got < prev {
+					t.Errorf("level %d (%U) has less ink than the level below it", i, r)
+				}
+				prev = got
+			}
+		})
+	}
+}
+
+// The bar paints at roughly this size, so the levels have to survive it.
+func TestBatteryLevelsStayDistinctAtBarSize(t *testing.T) {
+	empty := glyphCoverage(t, iconBatteryLevel0, 17)
+	full := glyphCoverage(t, iconBatteryLevel0+rune(batteryLevels-1), 17)
+	if empty == full {
+		t.Fatal("an empty and a full battery rasterise identically at bar size")
+	}
+}

@@ -2,6 +2,7 @@ package shell
 
 import (
 	"fmt"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
@@ -107,12 +108,58 @@ const (
 
 // buildMetricWidget makes one metric instance. Display mode is fixed at build
 // time, so the format function never branches on configuration at paint time.
+// metricTooltip names what a value measures. A bar shows a bare percentage, and
+// grouped values lose even the separation that hinted at distinct widgets, so
+// without this it is not possible to tell cpu from memory.
+// metricWidthFloor is the widest text the field must hold: its icon, if any,
+// plus a full-scale reading.
+func metricWidthFloor(item config.Item) string {
+	if icon := render.MetricIconRune(item.ID); icon != 0 {
+		return string(icon) + " " + metricWidthSample
+	}
+	return metricWidthSample
+}
+
+func metricTooltip(item config.Item) string {
+	switch item.ID {
+	case "cpu":
+		return "CPU usage"
+	case "memory":
+		return "Memory usage"
+	case "filesystem":
+		if item.Path != "" {
+			return "Disk usage: " + item.Path
+		}
+		return "Disk usage"
+	case "block":
+		name := item.Device
+		if name == "" {
+			name = "disk"
+		}
+		if item.Direction == "write" {
+			return "Disk write: " + name
+		}
+		return "Disk read: " + name
+	case "network":
+		name := item.Interface
+		if name == "" {
+			name = "network"
+		}
+		if item.Direction == "tx" {
+			return "Network upload: " + name
+		}
+		return "Network download: " + name
+	}
+	return ""
+}
+
 func buildMetricWidget(item config.Item) textWidget {
 	switch item.Display {
 	case "meter":
 		node := &ui.Node{Kind: ui.KindMeter, Width: metricMeterWidth}
 		return textWidget{
-			node: node,
+			node:    node,
+			tooltip: metricTooltip(item),
 			format: func(v barView) string {
 				// A meter carries its value on the node, not as text. The
 				// fraction is written here because apply is the one pass that
@@ -134,7 +181,8 @@ func buildMetricWidget(item config.Item) textWidget {
 		node := &ui.Node{Kind: ui.KindGraph, Width: metricGraphWidth}
 		sel, _ := metricSelector(item)
 		return textWidget{
-			node: node,
+			node:    node,
+			tooltip: metricTooltip(item),
 			format: func(v barView) string {
 				// The window is plotted only while there is a current reading.
 				// The ring keeps its last good samples across a failure, and
@@ -150,8 +198,17 @@ func buildMetricWidget(item config.Item) textWidget {
 		}
 	default:
 		return textWidget{
-			node:   &ui.Node{Kind: ui.KindText, Tabular: true, MinWidthText: metricWidthSample},
-			format: func(v barView) string { return formatMetric(item, v.Metrics) },
+			// The floor has to include the icon, or a widget widens when its
+			// value grows even though the field was meant to be fixed.
+			node:    &ui.Node{Kind: ui.KindText, Tabular: true, MinWidthText: metricWidthFloor(item)},
+			tooltip: metricTooltip(item),
+			format: func(v barView) string {
+				text := formatMetric(item, v.Metrics)
+				if icon := render.MetricIconRune(item.ID); icon != 0 && text != "" {
+					return string(icon) + " " + text
+				}
+				return text
+			},
 		}
 	}
 }

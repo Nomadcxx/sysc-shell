@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"runtime"
 	"testing"
 	"time"
@@ -67,11 +68,13 @@ func TestOneFailingSourceDoesNotSuppressAnother(t *testing.T) {
 	})
 
 	bar := reg.bars[1]
-	if got := bar.left[0].inner.Text; got != "42%" {
+	if got := bar.left[0].inner.Text; got != string(render.MetricIconRune("cpu"))+" 42%" {
 		t.Fatalf("healthy source rendered %q, want 42%%", got)
 	}
-	if got := bar.left[1].inner.Text; got != noWorkspace {
-		t.Fatalf("failed source rendered %q, want the placeholder", got)
+	// A failed source keeps its icon: the field holds its width and still says
+	// what it measures, while the placeholder says there is no reading.
+	if got := bar.left[1].inner.Text; got != string(render.MetricIconRune("memory"))+" "+noWorkspace {
+		t.Fatalf("failed source rendered %q, want the icon and the placeholder", got)
 	}
 }
 

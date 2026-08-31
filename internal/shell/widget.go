@@ -47,6 +47,10 @@ type textWidget struct {
 	// not set it.
 	refresh func(barView) bool
 	tooltip string
+	// members are a group's contents. They are not laid out or rendered
+	// separately, but each carries its own tooltip, so a hit test descends
+	// into them.
+	members []textWidget
 }
 
 // groupGap separates members inside a group capsule. noCapsule tells
@@ -163,8 +167,9 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 			out = append(out, w)
 		case "window-title":
 			out = append(out, textWidget{
-				node:   &ui.Node{Kind: ui.KindText, MaxWidth: item.MaxWidth},
-				format: func(v barView) string { return v.Title },
+				node:    &ui.Node{Kind: ui.KindText, MaxWidth: item.MaxWidth},
+				tooltip: "Focused window",
+				format:  func(v barView) string { return v.Title },
 			})
 		case "cpu", "memory", "filesystem", "block", "network":
 			out = append(out, buildMetricWidget(item))
@@ -185,7 +190,7 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 			// the palette contrast a bar uses.
 			row := &ui.Node{Kind: ui.KindRow, Gap: groupGap}
 			members := buildWidgets(item.Items, noCapsule)
-			g := textWidget{node: row}
+			g := textWidget{node: row, members: members}
 			for _, m := range members {
 				row.Children = append(row.Children, m.node)
 			}
@@ -207,7 +212,8 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 		case "battery":
 			node := &ui.Node{Kind: ui.KindText}
 			out = append(out, textWidget{
-				node: node,
+				node:    node,
+				tooltip: "Battery",
 				format: func(v barView) string {
 					text, tone := formatBattery(item, v.Metrics)
 					node.Tone = tone

@@ -368,6 +368,13 @@ func (b *Bar) tooltipAt(x, y int) (string, ui.Rect, bool) {
 func (b *Bar) tooltipAtLocked(x, y int) (string, ui.Rect, bool) {
 	for _, section := range b.widgets() {
 		for _, w := range section {
+			// A group's own node covers every member, so members are tried
+			// first or the group would answer for all of them.
+			for _, m := range w.members {
+				if m.tooltip != "" && m.node.Bounds.Contains(x, y) {
+					return m.tooltip, m.node.Bounds, true
+				}
+			}
 			if w.tooltip != "" && w.node.Bounds.Contains(x, y) {
 				return w.tooltip, w.node.Bounds, true
 			}

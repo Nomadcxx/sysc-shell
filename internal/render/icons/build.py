@@ -40,6 +40,10 @@ GLYPHS = [
     ("uniE014", 0xE014, "battery-charging-5"),
     ("uniE015", 0xE015, "battery-charging-6"),
     ("uniE016", 0xE016, "battery-critical"),
+    ("uniE017", 0xE017, "cpu"),
+    ("uniE018", 0xE018, "memory"),
+    ("uniE019", 0xE019, "disk"),
+    ("uniE01A", 0xE01A, "network"),
 ]
 
 UPM = 1000

@@ -103,6 +103,10 @@ func layoutCapsuleChild(n *Node, measure MeasureText) error {
 			box.W = w
 		}
 		if h > box.H {
+			// Grow around the inner band's centre rather than downward from
+			// its top, or members centre on the grown box and sit low in the
+			// visible capsule.
+			box.Y -= (h - box.H) / 2
 			box.H = h
 		}
 		return Layout(child, box, measure)
