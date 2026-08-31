@@ -158,7 +158,7 @@ func TestNiriStateForAnUnknownOutputIsHeldNotDropped(t *testing.T) {
 	}
 
 	newHosts(t, reg, map[uint32]string{1: "DP-9"})
-	if got := reg.bars[1].left[0].node.Text; got != "later" {
+	if got := nodeText(reg.bars[1].left[0].node); got != "later" {
 		t.Fatalf("new bar workspace = %q, want the held state", got)
 	}
 }
@@ -342,7 +342,7 @@ func TestCommitAppliesHeldStateToTheReplacementBars(t *testing.T) {
 	}
 	prepared.Commit()
 
-	if got := reg.bars[1].left[0].node.Text; got != "code" {
+	if got := nodeText(reg.bars[1].left[0].node); got != "code" {
 		t.Fatalf("replacement bar workspace = %q, want the held state", got)
 	}
 }

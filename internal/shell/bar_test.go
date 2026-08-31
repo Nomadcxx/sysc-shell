@@ -74,10 +74,10 @@ func TestABarRendersTheWorkspaceAndTitleItIsGiven(t *testing.T) {
 	}
 
 	sections := p.sections()
-	if got := sections[0][0].Text; got != "code" {
+	if got := nodeText(sections[0][0]); got != "code" {
 		t.Fatalf("workspace node = %q, want code", got)
 	}
-	if got := sections[0][1].Text; got != "Fixture One" {
+	if got := nodeText(sections[0][1]); got != "Fixture One" {
 		t.Fatalf("title node = %q, want Fixture One", got)
 	}
 }
@@ -90,10 +90,10 @@ func TestABarRendersTheFallbackWorkspace(t *testing.T) {
 	p := newTestBar(t)
 	p.apply(barView{Workspace: noWorkspace})
 
-	if got := p.sections()[0][0].Text; got != "-" {
+	if got := nodeText(p.sections()[0][0]); got != "-" {
 		t.Fatalf("workspace node = %q, want the %q fallback", got, noWorkspace)
 	}
-	if got := p.sections()[0][1].Text; got != "" {
+	if got := nodeText(p.sections()[0][1]); got != "" {
 		t.Fatalf("title node = %q, want empty with no window", got)
 	}
 }

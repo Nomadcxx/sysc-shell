@@ -23,15 +23,15 @@ func TestBatteryAbsenceIsReEvaluatedEverySnapshot(t *testing.T) {
 	absent := services.Snapshot{Battery: &metrics.BatterySnapshot{Present: false}}
 
 	reg.UpdateMetrics(present)
-	if got := reg.bars[1].left[0].node.Text; got == "" {
+	if got := reg.bars[1].left[0].inner.Text; got == "" {
 		t.Fatal("a present battery rendered nothing")
 	}
 	reg.UpdateMetrics(absent)
-	if got := reg.bars[1].left[0].node.Text; got != "" {
+	if got := reg.bars[1].left[0].inner.Text; got != "" {
 		t.Fatalf("an absent battery rendered %q, want nothing", got)
 	}
 	reg.UpdateMetrics(present)
-	if got := reg.bars[1].left[0].node.Text; got == "" {
+	if got := reg.bars[1].left[0].inner.Text; got == "" {
 		t.Fatal("a battery that came back rendered nothing")
 	}
 }
@@ -74,7 +74,7 @@ func TestCrossingTheWarningThresholdRepaints(t *testing.T) {
 	if changed := reg.UpdateMetrics(below); len(changed) != 1 {
 		t.Fatalf("crossing the threshold changed %v, want global 1", changed)
 	}
-	if got := reg.bars[1].left[0].node.Tone; got != 1 {
+	if got := reg.bars[1].left[0].inner.Tone; got != 1 {
 		t.Fatalf("tone = %v below the threshold, want the error tone", got)
 	}
 }

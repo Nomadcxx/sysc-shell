@@ -34,14 +34,28 @@ type barView struct {
 // Change detection lives in Bar.apply rather than in each widget, because the
 // node already holds the last rendered text.
 type textWidget struct {
+	// node is the capsule the bar lays out and hits. inner is the content it
+	// wraps, and is what format writes to.
 	node    *ui.Node
+	inner   *ui.Node
 	format  func(barView) string
 	tooltip string
 }
 
+// capsuled wraps one built widget in its pill. Wrapping happens in a single
+// place so no builder has to know about bar chrome.
+func capsuled(w textWidget, pad int) textWidget {
+	if w.node == nil || w.node.Kind == ui.KindCapsule {
+		return w
+	}
+	w.inner = w.node
+	w.node = &ui.Node{Kind: ui.KindCapsule, Padding: pad, Children: []*ui.Node{w.inner}}
+	return w
+}
+
 // buildWidgets turns validated items into widget instances. Ids and options
 // are validated at load, so an unknown id cannot reach here.
-func buildWidgets(items []config.Item) []textWidget {
+func buildWidgets(items []config.Item, pad int) []textWidget {
 	out := make([]textWidget, 0, len(items))
 	for _, item := range items {
 		switch item.ID {
@@ -90,6 +104,9 @@ func buildWidgets(items []config.Item) []textWidget {
 				},
 			})
 		}
+	}
+	for i := range out {
+		out[i] = capsuled(out[i], pad)
 	}
 	return out
 }

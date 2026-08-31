@@ -113,9 +113,9 @@ func NewWithTheme(theme Theme, policy config.Bar, connector string) (*Bar, error
 		},
 	}
 
-	b.left = buildWidgets(policy.Left)
-	b.center = buildWidgets(policy.Center)
-	b.right = buildWidgets(policy.Right)
+	b.left = buildWidgets(policy.Left, b.theme.CapsulePadding)
+	b.center = buildWidgets(policy.Center, b.theme.CapsulePadding)
+	b.right = buildWidgets(policy.Right, b.theme.CapsulePadding)
 	return b, nil
 }
 
@@ -155,14 +155,15 @@ func (b *Bar) applyLocked(view barView) bool {
 			// text, and format writes it as a side effect. The previous state
 			// is captured first so every display mode is compared, not just
 			// the one whose state happens to be a string.
-			before := *w.node
-			if text := w.format(view); text != w.node.Text {
-				w.node.Text = text
+			// State lives on the inner node; the capsule is chrome.
+			before := *w.inner
+			if text := w.format(view); text != w.inner.Text {
+				w.inner.Text = text
 				changed = true
 			}
-			if w.node.Value != before.Value || w.node.Absent != before.Absent ||
-				w.node.Tone != before.Tone ||
-				!slices.Equal(w.node.Values, before.Values) {
+			if w.inner.Value != before.Value || w.inner.Absent != before.Absent ||
+				w.inner.Tone != before.Tone ||
+				!slices.Equal(w.inner.Values, before.Values) {
 				changed = true
 			}
 		}
