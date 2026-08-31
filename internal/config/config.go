@@ -197,11 +197,18 @@ func Default() Config {
 				{ID: "workspace"},
 				{ID: "window-title", MaxWidth: defaultTitleMaxWidth},
 			},
+			// Time and date sit together, which is what each reference shell
+			// does; the right section carries status widgets. Weather is not
+			// here: it requires configured coordinates, so a default bar
+			// carrying it would fail validation out of the box.
 			Center: []Item{
 				{ID: "clock", Format: defaultClockFormat, Boundary: time.Minute},
+				{ID: "clock", Format: defaultDateFormat, Boundary: time.Minute},
 			},
 			Right: []Item{
-				{ID: "clock", Format: defaultDateFormat, Boundary: time.Minute},
+				{ID: "cpu", Display: "text", Interval: defaultMetricInterval},
+				{ID: "memory", Display: "text", Interval: defaultMetricInterval},
+				{ID: "battery", Interval: defaultMetricInterval},
 			},
 		},
 		Theme: Theme{Radius: 12},

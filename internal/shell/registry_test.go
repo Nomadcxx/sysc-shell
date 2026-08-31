@@ -435,7 +435,11 @@ func TestAnUnchangedSampleChangesNothing(t *testing.T) {
 // bar costs no sampling goroutine.
 func TestAConfigWithNoMetricLeavesTheServiceStopped(t *testing.T) {
 	t.Parallel()
-	reg := NewRegistry(config.Default())
+	// The default bar now ships status widgets, so a no-metric configuration
+	// has to be built rather than taken from the defaults.
+	cfg := config.Default()
+	cfg.Bar.Right = nil
+	reg := NewRegistry(cfg)
 	t.Cleanup(reg.Close)
 	newHosts(t, reg, map[uint32]string{1: "DP-9"})
 
