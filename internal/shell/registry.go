@@ -52,6 +52,9 @@ type Registry struct {
 	dwell      *dwell
 	configPath string
 	reloads    chan<- struct{}
+	audio      *services.Audio
+	brightness *services.Brightness
+	osd        *OSDManager
 }
 
 func NewRegistry(cfg config.Config) *Registry {
@@ -71,10 +74,15 @@ func NewRegistry(cfg config.Config) *Registry {
 		panelHosts:    make(map[PanelID]*PanelHost),
 		closed:        make(chan struct{}),
 		dwell:         newDwell(defaultDwell),
+		audio:         services.NewAudio(0, ""),
+		brightness:    services.NewBrightness("", "", 0),
 	}
 	r.tokens = r.generateTheme(cfg)
+	r.osd = newOSDManager(r, 0)
 	return r
 }
+
+func (r *Registry) OSD() *OSDManager { return r.osd }
 
 // BindPersist sets the file and reload signal used when settings write a
 // candidate. Empty path skips the write (tests). The channel is the same one
@@ -258,6 +266,9 @@ func (r *Registry) Close() {
 	r.closeOnce.Do(func() { close(r.closed) })
 
 	r.mu.Lock()
+	if r.osd != nil {
+		r.osd.hideLocked()
+	}
 	r.closeAllPanelsLocked()
 	var leases []*services.Lease
 	for global, held := range r.leases {
@@ -272,6 +283,12 @@ func (r *Registry) Close() {
 	r.clock.Close()
 	r.metrics.Close()
 	r.weather.Close()
+	if r.audio != nil {
+		r.audio.Close()
+	}
+	if r.brightness != nil {
+		r.brightness.Close()
+	}
 }
 
 // UpdateClock applies a shared time snapshot to every bar and reports the
