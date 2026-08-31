@@ -128,8 +128,8 @@ Split into four reviewed tranches by the charter. 3A and 3B are merged.
 
 ## Milestone 4 — panels and standard controls
 
-Designed, planned, reviewed, executed and merged to `main` at `01cae98`. Live Niri
-checklists remain owner-deferred. Spec shortfalls from the 2026-08-31 sweeps are `sysc-38`–`sysc-40`.
+Designed, planned, reviewed, executed and merged to `main` at `01cae98`. Spec shortfalls
+`sysc-38`–`sysc-40` closed at `b4c4bc6`. Live Niri checklists remain owner-deferred.
 
 | Document | Kind | State |
 |---|---|---|
@@ -146,13 +146,14 @@ checklists remain owner-deferred. Spec shortfalls from the 2026-08-31 sweeps are
 | `2026-08-31-m4-spec-review-sweep.md` | audit-report | Implementation vs 4A/4B designs, post-M3 audit, charter, roadmap gate. Live matrices owner-deferred. |
 | `2026-08-31-m4-code-quality-sweep.md` | audit-report | Correctness and reliability pass over landed M4. Report only. |
 | `2026-08-31-m4-spec-shortfall-corrections.md` | plan | TDD plan for sysc-38, sysc-39, sysc-40. |
+| `2026-08-31-m4-post-shortfall-polish.md` | plan | Hide-lock, apply supersede, status IPC, virtual-list focus. |
 
 ### Tranche state
 
 | Tranche | Scope | State |
 |---|---|---|
 | 4A | Panel machinery, placement, rounding and shadows, button/label/separator/tabs, matugen theming, clock/calendar, system-monitor and session/power popouts, IPC | Merged to `main` at `01cae98`. Live checklist unrun. |
-| 4B | Controls, settings modal and registry, OSD with audio/brightness services, stock themes, template catalog | Merged to `main` at `01cae98`. Live checklist unrun. Spec shortfalls in `sysc-38`–`sysc-40`. |
+| 4B | Controls, settings modal and registry, OSD with audio/brightness services, stock themes, template catalog | Merged to `main` at `01cae98`. Live checklist unrun. `sysc-38`–`sysc-40` closed at `b4c4bc6`. |
 
 ### Post-M3 reconciliation
 
