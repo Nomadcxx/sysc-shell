@@ -55,7 +55,20 @@ func Default() *Registry {
 		{Path: "accessibility.high-contrast", Label: "High contrast", Section: "Accessibility", Kind: KindBool},
 	}}
 	r.addWidgetEntries(config.Default())
+	r.addTemplateEntries()
 	return r
+}
+
+func (r *Registry) addTemplateEntries() {
+	for _, name := range []string{
+		"alacritty", "foot", "ghostty", "kitty", "wezterm", "niri",
+		"gtk3", "gtk4", "qt", "kcolorscheme", "emacs", "helix",
+		"btop", "cava", "starship", "scroll",
+	} {
+		r.entries = append(r.entries, Entry{
+			Path: "theme.templates." + name, Label: name + " theme", Section: "Appearance", Kind: KindBool,
+		})
+	}
 }
 
 func (r *Registry) addWidgetEntries(cfg config.Config) {
@@ -130,6 +143,9 @@ func (r *Registry) Search(q string) []Entry {
 }
 
 func (e Entry) Get(c config.Config) string {
+	if name, ok := strings.CutPrefix(e.Path, "theme.templates."); ok {
+		return strconv.FormatBool(c.TemplateEnabled(name))
+	}
 	switch e.Path {
 	case "bar.enabled":
 		return strconv.FormatBool(c.Bar.Enabled)
@@ -220,6 +236,13 @@ func (e Entry) Set(c *config.Config, v string) error {
 }
 
 func (e Entry) setBool(c *config.Config, b bool) error {
+	if name, ok := strings.CutPrefix(e.Path, "theme.templates."); ok {
+		if c.Templates == nil {
+			c.Templates = map[string]bool{}
+		}
+		c.Templates[name] = b
+		return nil
+	}
 	switch e.Path {
 	case "bar.enabled":
 		c.Bar.Enabled = b

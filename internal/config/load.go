@@ -127,6 +127,7 @@ type wireConfig struct {
 	Panels        *wirePanels        `json:"panels,omitempty"`
 	Weather       *wireWeather       `json:"weather,omitempty"`
 	Outputs       []wireOutput       `json:"outputs,omitempty"`
+	Templates     map[string]bool    `json:"templates,omitempty"`
 }
 
 var colorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$`)
@@ -241,6 +242,9 @@ func Parse(data []byte) (Config, error) {
 	}
 	if err := requireWeatherWhenUsed(cfg); err != nil {
 		return Config{}, err
+	}
+	if len(wire.Templates) > 0 {
+		cfg.Templates = wire.Templates
 	}
 	return cfg, nil
 }

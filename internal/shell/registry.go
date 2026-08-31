@@ -2,6 +2,8 @@ package shell
 
 import (
 	"fmt"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
+	"github.com/Nomadcxx/sysc-shell/internal/theming"
 )
 
 // Registry owns every bar, the services they consume, and the state they read.
@@ -189,7 +192,14 @@ func (r *Registry) generateTheme(cfg config.Config) theme.Tokens {
 			HighContrast: cfg.Accessibility.HighContrast,
 		},
 	)
+	if !runningAsTest() {
+		theming.ApplyEnabled(os.Getenv("HOME"), cfg.TemplateEnabled, tok)
+	}
 	return tok
+}
+
+func runningAsTest() bool {
+	return strings.HasSuffix(os.Args[0], ".test")
 }
 
 // Clock is the shared clock service. The process pumps its updates into

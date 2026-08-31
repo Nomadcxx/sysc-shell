@@ -117,6 +117,7 @@ type Config struct {
 	Panels        Panels
 	Weather       Weather
 	Outputs       []OutputOverride
+	Templates     map[string]bool
 }
 
 // knownItems is the Milestone 3 widget vocabulary through Tranche 3B. The
@@ -222,6 +223,15 @@ func (c Config) ForConnector(name string) Bar {
 		}
 	}
 	return c.Bar
+}
+
+func (c Config) TemplateEnabled(name string) bool {
+	if c.Templates != nil {
+		if v, ok := c.Templates[name]; ok {
+			return v
+		}
+	}
+	return name == "niri"
 }
 
 func pathErr(path, format string, args ...any) error {

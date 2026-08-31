@@ -97,6 +97,9 @@ func toWire(c Config) wireConfig {
 		}
 		w.Outputs = append(w.Outputs, out)
 	}
+	if len(c.Templates) > 0 {
+		w.Templates = c.Templates
+	}
 	return w
 }
 
