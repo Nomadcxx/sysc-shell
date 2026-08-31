@@ -185,6 +185,15 @@ func (o *owner) teardownUnit(u *surfaceUnit) error {
 		u.retiring = append(u.retiring, u.current)
 		u.current = nil
 	}
+
+	// The surface goes first. A wl_buffer destroyed while its wl_surface is
+	// still alive can still be sent wl_buffer.release, and dispatching an
+	// event for a destroyed id panics the client with an invalid server
+	// object ID. Destroying the surface makes the compositor drop its
+	// references, after which the generations are safe to free.
+	if _, err := u.cleanup.unwind(); err != nil {
+		errs = append(errs, err)
+	}
 	for _, gen := range u.retiring {
 		gen.retire.destroy()
 		if err := gen.destroy(); err != nil {
@@ -192,9 +201,6 @@ func (o *owner) teardownUnit(u *surfaceUnit) error {
 		}
 	}
 	u.retiring = nil
-	if _, err := u.cleanup.unwind(); err != nil {
-		errs = append(errs, err)
-	}
 	u.surface, u.layer, u.scale, u.viewport = nil, nil, nil, nil
 	return errors.Join(errs...)
 }

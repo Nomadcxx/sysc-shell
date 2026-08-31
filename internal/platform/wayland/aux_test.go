@@ -155,3 +155,44 @@ func TestFailUnitOnTheBarStaysFatal(t *testing.T) {
 		t.Fatal("a bar failure must stay fatal; there is no shell without it")
 	}
 }
+
+// A wl_buffer destroyed while its wl_surface still exists can still receive
+// wl_buffer.release, and dispatching an event for a dead id panics the client
+// with "invalid server object ID". Destroying the surface first makes the
+// compositor drop its references, so the buffers become safe to destroy.
+//
+// This is sysc-42: closing the settings panel tore down its aux surface in
+// that order and panicked the Wayland client.
+func TestTeardownUnitDestroysTheSurfaceBeforeItsBuffers(t *testing.T) {
+	t.Parallel()
+	u := newSurfaceUnit("panel:settings")
+
+	gen := &generation{id: 1, fd: -1, width: 64, height: 44}
+	gen.retire.attached() // the compositor still holds this buffer
+	u.current = gen
+
+	// The surface destructor observes how far teardown has gone. Buffers must
+	// still be attached to the unit when the surface is destroyed.
+	var currentAtSurfaceDestroy *generation
+	var retiringAtSurfaceDestroy int
+	u.cleanup.push("surface", func() error {
+		currentAtSurfaceDestroy = u.current
+		retiringAtSurfaceDestroy = len(u.retiring)
+		return nil
+	})
+
+	o := &owner{hosts: newHostSet()}
+	if err := o.teardownUnit(u); err != nil {
+		t.Fatalf("teardownUnit: %v", err)
+	}
+
+	if currentAtSurfaceDestroy == nil && retiringAtSurfaceDestroy == 0 {
+		t.Fatal("buffers were destroyed before the surface; a late wl_buffer.release then hits a dead id")
+	}
+	if u.current != nil || len(u.retiring) != 0 {
+		t.Fatal("generations survived teardown")
+	}
+	if !gen.retire.freeable() {
+		t.Fatal("the generation was not marked freeable, so its storage leaked")
+	}
+}
