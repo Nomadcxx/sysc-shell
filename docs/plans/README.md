@@ -224,11 +224,22 @@ gates live in bd.
 | `2026-09-01-milestone-6e-screen-recorder.md` | plan | Recorder configuration, exact process ownership, replay buffer, context, and live gate. |
 | `2026-09-01-milestone-6f-protocol-qualification.md` | plan | Protocol v1 fixtures, abuse and recovery gates, packaging, live qualification, and handoff. |
 
-## Milestones 7 and 8: not yet designed
+## Milestone 7: shell breadth
+
+Not designed as a whole. The first slice (launcher) has prior art and a design
+commission. Remaining M7 clusters (clipboard, session adapters, control center,
+wallpaper, desktop widgets) are still unordered.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-01-launcher-prior-art.md` | assessment | Noctalia 5 list + first-class DMS DankLauncherV2 (this machine: full/compact) + Go reuse (go-freedesktop yes, Elephant GPL no). No live grim in-tree. |
+| `2026-09-01-milestone-7-launcher-design-handover.md` | execution-handover | Commissions the launcher design and implementation plan. Do not write product code from it. |
+
+## Milestones 7 remainder and 8: not yet designed
 
 | Milestone | Scope | Note |
 |---|---|---|
-| 7 | Shell breadth | Launcher consumes Milestone 4's text field, virtual list, keyboard focus, and popout placement. |
+| 7 (after launcher) | Clipboard, network/BT/MPRIS, control center, wallpaper, desktop widgets | See handover; do not fold into the launcher slice. |
 | 8 | Rendering qualification | Requires measured evidence against `wl_shm`. |
 
 ## Sibling repositories
