@@ -1,10 +1,13 @@
 package shell
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -67,6 +70,39 @@ func TestOsdShownOnEveryOutputWithBar(t *testing.T) {
 	}
 	if !seen["osd:1"] || !seen["osd:2"] {
 		t.Fatalf("osd ids = %v", seen)
+	}
+}
+
+func TestOsdStepStepsAndShows(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "log")
+	script := `#!/bin/sh
+echo "$*" >> "` + log + `"
+if [ "$1" = get-volume ]; then
+  echo "Volume: 0.40"
+fi
+`
+	bin := filepath.Join(dir, "wpctl")
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	reg := newPanelRegistry(t)
+	reg.audio = services.NewAudio(time.Second, bin)
+	reg.bars[1] = &Bar{conn: "eDP-1"}
+	if err := reg.OSDStep("audio", "up"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "set-volume @DEFAULT_AUDIO_SINK@ +5%") {
+		t.Fatalf("wpctl log = %q", raw)
+	}
+	reqs := drainAux(t, reg, 1)
+	if reqs[0].Open == nil || reqs[0].Open.ID != "osd:1" {
+		t.Fatalf("osd aux = %+v", reqs[0])
 	}
 }
 

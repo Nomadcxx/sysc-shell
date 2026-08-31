@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -83,6 +84,77 @@ func NewRegistry(cfg config.Config) *Registry {
 }
 
 func (r *Registry) OSD() *OSDManager { return r.osd }
+
+func (r *Registry) AudioAvailable() bool {
+	return r != nil && r.audio != nil && r.audio.Available()
+}
+
+func (r *Registry) BrightnessAvailable() bool {
+	return r != nil && r.brightness != nil && r.brightness.Available()
+}
+
+func (r *Registry) OSDStep(kind, action string) error {
+	switch kind {
+	case "audio":
+		return r.stepAudio(action)
+	case "brightness":
+		return r.stepBrightness(action)
+	default:
+		return fmt.Errorf("unknown kind")
+	}
+}
+
+func (r *Registry) stepAudio(action string) error {
+	if r.audio == nil || !r.audio.Available() {
+		return fmt.Errorf("audio unavailable")
+	}
+	lease, err := r.audio.Acquire()
+	if err != nil {
+		return err
+	}
+	defer lease.Release()
+	switch action {
+	case "up":
+		err = r.audio.Step(5)
+	case "down":
+		err = r.audio.Step(-5)
+	case "mute":
+		st := r.audio.State()
+		err = r.audio.SetMute(!st.Muted)
+	default:
+		return fmt.Errorf("unknown action")
+	}
+	if err != nil {
+		return err
+	}
+	st := r.audio.State()
+	r.OSD().Show(OSDView{Kind: "audio", Level: st.Level, Muted: st.Muted})
+	return nil
+}
+
+func (r *Registry) stepBrightness(action string) error {
+	if r.brightness == nil || !r.brightness.Available() {
+		return fmt.Errorf("brightness unavailable")
+	}
+	lease, err := r.brightness.Acquire()
+	if err != nil {
+		return err
+	}
+	defer lease.Release()
+	switch action {
+	case "up":
+		err = r.brightness.Step(5)
+	case "down":
+		err = r.brightness.Step(-5)
+	default:
+		return fmt.Errorf("unknown action")
+	}
+	if err != nil {
+		return err
+	}
+	r.OSD().Show(OSDView{Kind: "brightness", Level: r.brightness.Level()})
+	return nil
+}
 
 // BindPersist sets the file and reload signal used when settings write a
 // candidate. Empty path skips the write (tests). The channel is the same one

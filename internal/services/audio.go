@@ -50,6 +50,16 @@ func NewAudio(interval time.Duration, path string) *Audio {
 
 func (a *Audio) Changes() <-chan AudioState { return a.changes }
 
+func (a *Audio) State() AudioState {
+	st, err := a.read()
+	if err != nil {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return a.last
+	}
+	return st
+}
+
 func (a *Audio) Available() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()

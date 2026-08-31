@@ -81,6 +81,22 @@ func TestLiveSocketFailsAsSingleInstance(t *testing.T) {
 	}
 }
 
+func TestOsdStepDispatches(t *testing.T) {
+	t.Parallel()
+	var kind, action string
+	sock, cancel := startServer(t, Handlers{
+		OSDStep: func(k, a string) error { kind, action = k, a; return nil },
+	})
+	defer cancel()
+	out, err := Call(context.Background(), sock, "osd.step", map[string]string{"kind": "audio", "action": "up"})
+	if err != nil || !strings.Contains(out, `"ok"`) {
+		t.Fatalf("call: %v %s", err, out)
+	}
+	if kind != "audio" || action != "up" {
+		t.Fatalf("got %s %s", kind, action)
+	}
+}
+
 func TestPanelParamValidation(t *testing.T) {
 	t.Parallel()
 	called := false

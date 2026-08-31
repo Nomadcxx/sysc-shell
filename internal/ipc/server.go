@@ -36,8 +36,9 @@ func DefaultSocket() string {
 }
 
 type Handlers struct {
-	Panel  func(action, panel string) error
-	Status func() map[string]any
+	Panel   func(action, panel string) error
+	OSDStep func(kind, action string) error
+	Status  func() map[string]any
 }
 
 type Server struct {
@@ -156,7 +157,22 @@ func (s *Server) handleLine(line string) []byte {
 		}
 		return envelope(req.ID, "ok", "")
 	case "osd.step":
-		return envelope(req.ID, "", "not yet available")
+		var params struct {
+			Kind   string `json:"kind"`
+			Action string `json:"action"`
+		}
+		if len(req.Params) > 0 {
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				return envelope(req.ID, "", "malformed params")
+			}
+		}
+		if s.h.OSDStep == nil {
+			return envelope(req.ID, "", "osd handler unset")
+		}
+		if err := s.h.OSDStep(params.Kind, params.Action); err != nil {
+			return envelope(req.ID, "", err.Error())
+		}
+		return envelope(req.ID, "ok", "")
 	default:
 		return envelope(req.ID, "", "unknown method")
 	}

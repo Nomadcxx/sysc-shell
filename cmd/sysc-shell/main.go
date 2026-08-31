@@ -143,8 +143,13 @@ func run(ctx context.Context) error {
 				}
 			},
 			Status: func() map[string]any {
-				return map[string]any{"version": "sysc-shell"}
+				return map[string]any{
+					"version":    "sysc-shell",
+					"audio":      registry.AudioAvailable(),
+					"brightness": registry.BrightnessAvailable(),
+				}
 			},
+			OSDStep: registry.OSDStep,
 		})
 		ipcErr <- srv.Serve(ctx)
 	}()
