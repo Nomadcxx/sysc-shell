@@ -217,6 +217,12 @@ gates live in bd.
 | Document | Kind | Purpose |
 |---|---|---|
 | `2026-09-01-milestone-6-plugin-host-design.md` | design | Process model, protocol, UI vocabulary, manager, limits, reference suite, and tranche boundaries. |
+| `2026-09-01-milestone-6a-plugin-host-timer.md` | plan | Host kernel, local manager, bounded draft protocol, and Timer vertical slice. |
+| `2026-09-01-milestone-6b-world-clock.md` | plan | Revisioned patches, bounded scheduling, lists, drag/reorder, and World Clock. |
+| `2026-09-01-milestone-6c-notes.md` | plan | Multiline retained editing, safe note storage, autosave, and external reconciliation. |
+| `2026-09-01-milestone-6d-weather.md` | plan | Shared Open-Meteo client, structured tooltips, Weather settings, and forecast panel. |
+| `2026-09-01-milestone-6e-screen-recorder.md` | plan | Recorder configuration, exact process ownership, replay buffer, context, and live gate. |
+| `2026-09-01-milestone-6f-protocol-qualification.md` | plan | Protocol v1 fixtures, abuse and recovery gates, packaging, live qualification, and handoff. |
 
 ## Milestones 7 and 8: not yet designed
 
