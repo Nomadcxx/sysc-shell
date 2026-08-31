@@ -99,8 +99,9 @@ type wireSession struct {
 }
 
 type wirePanels struct {
-	Gap     *int `json:"gap"`
-	Padding *int `json:"padding"`
+	Gap     *int    `json:"gap"`
+	Padding *int    `json:"padding"`
+	OSD     *string `json:"osd"`
 }
 
 type wireOutput struct {
@@ -675,6 +676,11 @@ func applyTheme(base Theme, w wireTheme, path string) (Theme, error) {
 
 var themeSources = map[string]bool{"wallpaper": true, "hex": true}
 var themeModes = map[string]bool{"dark": true, "light": true}
+var osdPositions = map[string]bool{
+	"top-left": true, "top-center": true, "top-right": true,
+	"center-left": true, "center": true, "center-right": true,
+	"bottom-left": true, "bottom-center": true, "bottom-right": true,
+}
 
 func applyThemeGen(base ThemeConfig, w wireThemeGen, path string) (ThemeConfig, error) {
 	out := base
@@ -726,6 +732,12 @@ func applyPanels(base Panels, w wirePanels, path string) (Panels, error) {
 	}
 	if w.Padding != nil {
 		out.Padding = *w.Padding
+	}
+	if w.OSD != nil {
+		if !osdPositions[*w.OSD] {
+			return Panels{}, pathErr(path+".osd", "%q is not a known position", *w.OSD)
+		}
+		out.OSD = *w.OSD
 	}
 	if out.Gap < 0 {
 		return Panels{}, pathErr(path+".gap", "%d is negative", out.Gap)

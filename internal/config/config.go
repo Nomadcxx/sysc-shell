@@ -85,6 +85,7 @@ type Session struct {
 type Panels struct {
 	Gap     int // offset from the bar edge, logical px
 	Padding int // output edge inset for clamping, logical px
+	OSD     string
 }
 
 // OutputOverride adjusts the bar on one connector.
@@ -208,7 +209,7 @@ func Default() Config {
 			Scheme: "scheme-tonal-spot",
 			Mode:   "dark",
 		},
-		Panels: Panels{Gap: 8, Padding: 8},
+		Panels: Panels{Gap: 8, Padding: 8, OSD: "bottom-center"},
 	}
 }
 
