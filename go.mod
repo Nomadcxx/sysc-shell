@@ -13,6 +13,12 @@ require (
 require github.com/Nomadcxx/sysc-metrics v0.2.0
 
 require (
+	github.com/junegunn/go-shellwords v0.0.0-20250127100254-2aa3b3277741 // indirect
+	github.com/mattn/go-isatty v0.0.24 // indirect
+	github.com/rivo/uniseg v0.4.7 // indirect
+)
+
+require (
 	github.com/adrg/xdg v0.5.3 // indirect
 	github.com/junegunn/fzf v0.74.3
 	github.com/rkoesters/xdg v0.0.1 // indirect
