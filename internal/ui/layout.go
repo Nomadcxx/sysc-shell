@@ -67,7 +67,7 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 // content height; a button pads its text on every side.
 func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, error) {
 	switch n.Kind {
-	case KindText:
+	case KindText, KindTab:
 		w, h := measure(n.Text, n.Tabular)
 		if n.MinWidthText != "" {
 			if floor, _ := measure(n.MinWidthText, n.Tabular); floor > w {
@@ -88,6 +88,8 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		// the way a meter does. It does not measure its data, so a bar does
 		// not reflow as samples arrive.
 		return n.Width, contentHeight, nil
+	case KindSeparator:
+		return 1, contentHeight, nil
 	case KindButton:
 		w, h := measure(n.Text, n.Tabular)
 		return w + 2*n.Padding, h + 2*n.Padding, nil
