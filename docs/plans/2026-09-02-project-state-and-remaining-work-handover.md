@@ -127,6 +127,71 @@ fakes and by nothing else.
 
 ---
 
+## 4b. Theming: what the design asked for and what exists
+
+Theming was designed in `docs/plans/2026-08-30-settings-osd-theme-catalog-design.md` (D8 and D9) and
+shipped with Tranche 4B. It is more complete than the rest of this document might suggest, so this
+section states what is actually there.
+
+### Implemented and working
+
+**One generation pipeline for three sources.** `config.ThemeConfig` carries `Source`
+(`wallpaper | hex | stock`), `Seed`, `Scheme` and `Mode`. `theme.Generator` runs matugen over the seed
+and produces a `theme.Tokens` set; `Registry.generateTheme` is the single entry point, and a missing
+matugen falls back to `theme.Fallback` rather than failing. `status` reports whether matugen is on
+`PATH`.
+
+**Ten stock seeds.** `internal/theme/stock.go` carries Blue, Purple, Green, Orange, Red, Cyan, Pink,
+Amber, Coral and Monochrome, exactly the "colour families" D8 asked for, and configuration validation
+rejects a stock seed that is not one of them.
+
+**Sixteen templates with real apply hooks.** `internal/theming` renders alacritty, foot, ghostty,
+kitty, wezterm, niri, gtk3, gtk4, qt, kcolorscheme, emacs, helix, btop, cava, starship and scroll.
+Per-template toggles live in settings under Appearance, defaulting to niri on.
+
+**Disabling a template undoes it**, which D9 required and is easy to get wrong: `ApplyWrite` pairs with
+`UnapplyWrite`, `ApplyNiri` with `UnapplyNiri`, and `ApplyGtkThemeName` with `UnapplyGtkThemeName`. The
+niri path manages only its own `include` line, and the gtk path restores `gtk-theme-name` only when the
+current value is still ours.
+
+**Accessibility feeds the palette.** `accessibility.high-contrast` is a generation option, not a
+post-hoc filter, and `accessibility.reduced-motion` is honoured by panel and OSD motion. Both are
+exposed in settings.
+
+**The switcher is in the settings panel**: `appearance.source`, `appearance.seed`, `appearance.scheme`
+and `appearance.mode`, plus the sixteen template toggles.
+
+### Gaps
+
+**`sysc-107` — the stock themes are not pickable.** All ten exist and validation enforces them, but the
+settings entry `appearance.seed` is a free string with no options, so a user has to type `Blue`
+exactly. `theme.StockNames` has no caller outside tests. The fix needs an entry whose options depend on
+another entry's value — `appearance.source` being `stock` — and the settings registry has no such
+dependency today. This is the one place where the shipped switcher is materially behind D8.
+
+**`sysc-108`, fixed 2026-09-02, recorded because it survived two milestones.** `ThemeFrom` resolves
+`theme.Fallback` and never reads the generated tokens, which its name does not say. The toast stack,
+the tray menu and the tray drawer each built their style through it, so notifications and the tray
+painted the built-in colours whatever the user had chosen. The bar, the panels and the OSD were always
+correct. `Registry.surfaceTheme` is now the single path, and a test in `internal/shell` fails any file
+that resolves a theme through `ThemeFrom`.
+
+**`sysc-104` — the palette itself is too flat to read.** The generated `SurfaceContainer` maps onto
+`Theme.Capsule`, and against the panel background that measures **1.17:1**. Every capsule, card and
+pill in the shell depends on that one pair, so this is a theming decision with shell-wide reach rather
+than a panel detail.
+
+### Not verified
+
+**No live capture has ever shown a non-default palette.** Every screenshot in this repository was taken
+on the fallback. The template apply paths, the niri hot-reload that D9 calls "the enforced-theming
+parity behaviour", the gtk theme-directory write and the kitty `SIGUSR1` reload have unit tests and no
+live evidence; the 4B checklist that would cover them is `sysc-106`, unrun. And because the M5 surfaces
+cannot be opened without the services, the tray and notification theming fixed above cannot be seen
+either.
+
+---
+
 ## 5. Milestone 6: in flight
 
 **Being worked on now, in another session. Do not merge `milestone/plugin-host` without checking with
@@ -269,13 +334,15 @@ doing M8.
    overlaps M7 slices 3 and 4 — decide whether it is bar work or a breadth slice before starting.
 9. **`sysc-54` — group the sysmon widgets.** The group item and default grouping landed; what remains
    is judging it live now that icons and capsules exist.
+10. **`sysc-107` — make the ten stock themes pickable.** Needs an options list that depends on
+    `appearance.source`, which the settings registry cannot express yet. Section 4b.
 
 ### Tier 3 — completion and cleanup
 
-10. **`sysc-98`** — route toast card activation to the notification service. Needs a service.
-11. **`sysc-35`** — `Metrics.Leased` has no callers and dereferences without a nil guard. Delete it
+11. **`sysc-98`** — route toast card activation to the notification service. Needs a service.
+12. **`sysc-35`** — `Metrics.Leased` has no callers and dereferences without a nil guard. Delete it
     unless a consumer appears.
-12. **`sysc-69`** — appears to duplicate `sysc-77`. Reconcile or close.
+13. **`sysc-69`** — appears to duplicate `sysc-77`. Reconcile or close.
 
 ---
 
@@ -319,6 +386,10 @@ keep that split when adding a host.
 used `len(s)*8, 16` and `render` never called `render.Paint`, so every panel mapped as empty chrome for
 the whole of M4 and M5.
 
+**A resolver named for what it takes, not what it reads.** `ThemeFrom(cfg, bar)` looks like it resolves
+the configured theme and resolves the fallback. Three surfaces used it for two milestones. When a
+helper's name does not state which source it reads, say so in its doc comment and guard it with a test.
+
 **`SyncToastOutputs` had no caller** until 2026-09-02, so toast surfaces were never opened in any
 build. Wiring the tray's output lifecycle exposed it. Check that a new exported lifecycle hook is
 actually called.
@@ -336,4 +407,5 @@ For continuity, the session that produced this document:
 - `fix/live-empty-panels` merged: panels paint.
 - `feature/bar-visual-parity` merged: capsules, workspace pills, grouped widgets, icon glyphs.
 - The system monitor panel rebuilt as titled cards with a Resources card.
-- Closed: `sysc-41`, `42`, `43`–`49`, `51`, `64`, `95`, `100`, `101`.
+- Notifications, the tray menu and the tray drawer now follow the generated palette (`sysc-108`).
+- Closed: `sysc-41`, `42`, `43`–`49`, `51`, `64`, `95`, `100`, `101`, `108`.
