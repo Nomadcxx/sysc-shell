@@ -106,5 +106,19 @@ A weather panel widens it deliberately, which is a 3D design amendment rather th
 change.
 
 The Noctalia system pane additionally needs GPU usage, CPU temperature, load averages, swap and disk
-capacity. Of those, `sysc-metrics v0.2.0` supplies none: it is core counters plus a sysfs battery
-aggregate, thermal omitted, no GPU. The visual work for that pane is cheap and the data work is not.
+capacity.
+
+Corrected 2026-09-02: `sysc-metrics v0.2.0` supplies more than this paragraph first claimed. Load
+averages are `CPUSnapshot.Load1/5/15` with a `LoadValid` flag, swap is `MemorySnapshot.Swap`, disk
+capacity is the filesystem snapshot, and uptime is its own `UptimeSnapshot`. The shell's
+`services.Snapshot` already carries the CPU, memory and filesystem snapshots whole, so load average
+and swap are reaching the shell today and are simply unprojected; uptime is the one field the shell
+does not plumb.
+
+What is genuinely absent upstream is GPU usage and CPU temperature: thermal is omitted from the
+release and there is no GPU source. The static facts on the System card — CPU and GPU model, distro,
+kernel, host — are not metrics work at all; they are a one-shot read of `/proc/cpuinfo`,
+`/etc/os-release` and `uname`.
+
+So the visual work for that pane is cheap and most of the data work is already done. Two cards of the
+six are blocked, not the pane.
