@@ -289,6 +289,7 @@ func (o *owner) tooltipStyle(tt *tooltipSurface) (render.ProofStyle, string) {
 		Scale120:   tt.scale120,
 		Background: tooltipColor(tt.style.Background, render.Color{R: 0x10, G: 0x14, B: 0x18, A: 0xff}),
 		Foreground: tooltipColor(tt.style.Foreground, render.Color{R: 0xe8, G: 0xec, B: 0xf0, A: 0xff}),
+		OnPrimary:  tooltipColor(tt.style.Foreground, render.Color{R: 0xe8, G: 0xec, B: 0xf0, A: 0xff}),
 		Body:       ui.Rect{X: 0, Y: 0, W: tt.place.W, H: tt.place.H},
 		Radius:     o.cfg.Theme.Radius,
 	}, bar.FontFamily

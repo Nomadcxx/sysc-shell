@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/launcher"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
@@ -64,6 +65,8 @@ type Registry struct {
 	osd         *OSDManager
 	audioLease  *services.Lease
 	brightLease *services.Lease
+	// launcherSvc is created on the first launcher open; nil until then.
+	launcherSvc *launcher.Service
 }
 
 func NewRegistry(cfg config.Config) *Registry {
@@ -484,6 +487,13 @@ func (r *Registry) Close() {
 		brightLease.Release()
 	}
 	releaseAll(leases)
+	r.mu.Lock()
+	launcherSvc := r.launcherSvc
+	r.launcherSvc = nil
+	r.mu.Unlock()
+	if launcherSvc != nil {
+		launcherSvc.Close()
+	}
 	r.dwell.stop()
 	r.clock.Close()
 	r.metrics.Close()
