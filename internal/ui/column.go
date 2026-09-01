@@ -151,6 +151,19 @@ func placeColumnChild(n *Node, box Rect, measure MeasureText) error {
 	switch n.Kind {
 	case KindRow:
 		return Layout(n, box, measure)
+	case KindCapsule:
+		// A capsule in a column is a card: its child fills the padded inner
+		// box. Measuring already accounted for the child, so a capsule that
+		// placed only itself painted a rounded fill with nothing inside it.
+		n.Bounds = box
+		if len(n.Children) == 0 || n.Children[0] == nil {
+			return nil
+		}
+		inner := Rect{
+			X: box.X + n.Padding, Y: box.Y + n.Padding,
+			W: max(box.W-2*n.Padding, 0), H: max(box.H-2*n.Padding, 0),
+		}
+		return placeColumnChild(n.Children[0], inner, measure)
 	case KindColumn:
 		return LayoutColumn(n, box, measure)
 	case KindScroll, KindVirtualList:

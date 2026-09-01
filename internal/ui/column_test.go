@@ -100,3 +100,37 @@ func TestImageNodeMeasuresThroughTheColumnPath(t *testing.T) {
 		t.Fatalf("column height = %d, want the line height 20", h)
 	}
 }
+
+// A capsule in a column is a card: a rounded fill around a stack of content.
+// Measuring it already accounted for its child, but placing it did not recurse,
+// so every card painted as an empty pill.
+func TestColumnPlacesACapsuleChild(t *testing.T) {
+	t.Parallel()
+	inner := &Node{Kind: KindColumn, Gap: 4, Children: []*Node{
+		{Kind: KindText, Text: "CPU"},
+		{Kind: KindGraph, Values: []float64{0.1, 0.9}},
+	}}
+	card := &Node{Kind: KindCapsule, Padding: 8, Children: []*Node{inner}}
+	root := &Node{Kind: KindColumn, Padding: 6, Children: []*Node{card}}
+
+	if err := LayoutColumn(root, Rect{W: 300, H: 200}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	if card.Bounds.W == 0 || card.Bounds.H == 0 {
+		t.Fatalf("card was not placed: %+v", card.Bounds)
+	}
+	if inner.Bounds.W == 0 || inner.Bounds.H == 0 {
+		t.Fatalf("card content was not placed: %+v", inner.Bounds)
+	}
+	if inner.Bounds.X != card.Bounds.X+card.Padding || inner.Bounds.Y != card.Bounds.Y+card.Padding {
+		t.Fatalf("content origin %+v is not inset by the card padding from %+v", inner.Bounds, card.Bounds)
+	}
+	if want := card.Bounds.W - 2*card.Padding; inner.Bounds.W != want {
+		t.Fatalf("content width = %d, want %d", inner.Bounds.W, want)
+	}
+	for i, leaf := range inner.Children {
+		if leaf.Bounds.H == 0 {
+			t.Fatalf("card leaf %d was not placed: %+v", i, leaf.Bounds)
+		}
+	}
+}

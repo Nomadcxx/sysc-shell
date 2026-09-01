@@ -94,6 +94,30 @@ func formatRate(bytesPerSecond float64) string {
 	return fmt.Sprintf("%.0f B/s", bytesPerSecond)
 }
 
+// capacityUnits are binary, unlike rateUnits: a memory or disk capacity is
+// conventionally quoted in gibibytes, and the reference panel writes
+// "2.9 GiB / 31.0 GiB".
+var capacityUnits = []struct {
+	suffix string
+	scale  float64
+}{
+	{"TiB", 1 << 40},
+	{"GiB", 1 << 30},
+	{"MiB", 1 << 20},
+	{"KiB", 1 << 10},
+}
+
+// formatBytes renders one capacity in the largest unit that leaves a figure at
+// or above one, so a total and its used part are quoted the same way.
+func formatBytes(bytes float64) string {
+	for _, u := range capacityUnits {
+		if bytes >= u.scale {
+			return fmt.Sprintf("%.1f %s", bytes/u.scale, u.suffix)
+		}
+	}
+	return fmt.Sprintf("%.0f B", bytes)
+}
+
 const (
 	// metricMeterWidth and metricGraphWidth are the reserved widths for the
 	// two non-text display modes, in logical pixels.
