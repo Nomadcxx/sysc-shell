@@ -104,6 +104,14 @@ func (s *trayState) has(key tray.ItemKey) bool {
 	return ok
 }
 
+// menuFor returns the service-owned menu for one item, when one has arrived.
+func (s *trayState) menuFor(key tray.ItemKey) (tray.Menu, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, ok := s.menus[key]
+	return m, ok
+}
+
 // tooltipText flattens the service-owned tooltip into one dwell string. The
 // service already bounded the fields; the shell clamps again at the protocol
 // bound so a compromised service cannot grow the bar's hover surface.

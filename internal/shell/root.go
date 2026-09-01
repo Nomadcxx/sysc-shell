@@ -18,6 +18,7 @@ type rootKind uint8
 const (
 	rootNone rootKind = iota
 	rootPanel
+	rootTrayMenu
 )
 
 // rootID identifies one interactive root. Two roots are the same only when
@@ -28,6 +29,13 @@ type rootID struct {
 }
 
 func panelRoot(id PanelID) rootID { return rootID{kind: rootPanel, key: uint64(id)} }
+
+// trayMenuRoot keys a tray menu root by the wl_registry global of the output
+// it is open on. One chain exists at a time, so one menu per output is enough
+// to make a replacement unambiguous.
+func trayMenuRoot(outputGlobal uint32) rootID {
+	return rootID{kind: rootTrayMenu, key: uint64(outputGlobal)}
+}
 
 // rootChain is the single interactive root and its optional attached child.
 //
