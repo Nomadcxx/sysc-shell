@@ -186,6 +186,49 @@ func TestPluginHostClosesViewsOnHotUnplug(t *testing.T) {
 	t.Fatalf("views = %v closed = %v", reg.plugins.barViewIDs("DP-1"), reg.plugins.closedViews())
 }
 
+func TestPluginHostReplugOpensAFreshView(t *testing.T) {
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	waitPluginText(t, reg.bars[1], "hello")
+	first := reg.plugins.barViewIDs("DP-1")[0]
+	reg.DropHost(1)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(reg.plugins.barViewIDs("DP-1")) == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	waitPluginText(t, reg.bars[1], "hello")
+	got := reg.plugins.barViewIDs("DP-1")
+	if len(got) != 1 || got[0] == first {
+		t.Fatalf("replug views = %v, first was %s", got, first)
+	}
+	if reg.plugins.pid("org.sysc.timer") == 0 {
+		t.Fatal("replug stopped the plugin")
+	}
+}
+
+func TestPluginHostIgnoresStaleEventsAfterClose(t *testing.T) {
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	waitPluginText(t, reg.bars[1], "hello")
+	ids := reg.plugins.barViewIDs("DP-1")
+	reg.DropHost(1)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(reg.plugins.barViewIDs("DP-1")) == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	ok := reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "go"}, v1.EventActivate, "", "")
+	if ok {
+		t.Fatal("closed view still accepted input")
+	}
+}
+
 func TestPluginHostFailurePlaceholderLeavesBuiltinsIntact(t *testing.T) {
 	reg := bindTestPlugin(t, "bad-view")
 	newHosts(t, reg, map[uint32]string{1: "DP-1"})

@@ -33,6 +33,7 @@ type hostedView struct {
 	Kind     v1.ViewKind
 	Revision uint64
 	Root     *ui.Node
+	tree     *plugin.ViewTree
 	Failed   bool
 	Label    string
 	Width    int
@@ -259,10 +260,51 @@ func (h *pluginHost) onMessage(slot *pluginSlot, msg v1.Message) {
 		if !ok {
 			return
 		}
+		h.mu.Lock()
+		if v.tree == nil {
+			v.tree = &plugin.ViewTree{View: v.Kind}
+		}
+		_ = v.tree.ApplySnapshot(m.Revision, m.Root)
+		h.mu.Unlock()
 		h.prep.Submit(plugin.Job{
 			ViewID: m.ViewID, Plugin: v.Plugin, View: v.Kind,
 			Revision: m.Revision, Root: m.Root,
 			Bounds: ui.Rect{W: v.Width, H: v.Height},
+		})
+	case *v1.ViewPatch:
+		h.mu.Lock()
+		v, ok := h.views[m.ViewID]
+		slot := (*pluginSlot)(nil)
+		if ok {
+			slot = h.slots[v.Plugin]
+		}
+		h.mu.Unlock()
+		if !ok || slot == nil {
+			return
+		}
+		h.mu.Lock()
+		if v.tree == nil {
+			h.mu.Unlock()
+			_ = slot.rt.Send(&v1.ViewResync{ViewID: m.ViewID})
+			return
+		}
+		resync, err := v.tree.ApplyPatch(m)
+		root, rev := v.tree.Root, v.tree.Revision
+		kind := v.Kind
+		pluginID := v.Plugin
+		w, ht := v.Width, v.Height
+		h.mu.Unlock()
+		if resync {
+			_ = slot.rt.Send(&v1.ViewResync{ViewID: m.ViewID})
+			return
+		}
+		if err != nil {
+			return
+		}
+		h.prep.Submit(plugin.Job{
+			ViewID: m.ViewID, Plugin: pluginID, View: kind,
+			Revision: rev, Root: root,
+			Bounds: ui.Rect{W: w, H: ht},
 		})
 	case *v1.HostCall:
 		reply := slot.disp.Handle(h.ctx, m)
