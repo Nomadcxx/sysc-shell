@@ -232,8 +232,9 @@ wallpaper, desktop widgets) are still unordered.
 
 | Document | Kind | State |
 |---|---|---|
-| `2026-09-01-launcher-prior-art.md` | assessment | Noctalia 5 list + first-class DMS DankLauncherV2 (this machine: full/compact) + Go reuse (go-freedesktop yes, Elephant GPL no). No live grim in-tree. |
+| `2026-09-01-launcher-prior-art.md` | assessment | Noctalia 5 list + first-class DMS DankLauncherV2 (this machine: full/compact) + Go reuse. §6/§9 superseded 2026-09-01: Elephant is first-class prior art, GPL-3 not a constraint (owner decision). No live grim in-tree. |
 | `2026-09-01-milestone-7-launcher-design-handover.md` | execution-handover | Commissions the launcher design and implementation plan. Do not write product code from it. |
+| `2026-09-01-launcher-design.md` | design | M7 launcher v1: Noctalia list chrome 560×500, fzf + Elephant-weighted scoring, ported usage store, pinned desktopentry, Niri argv spawn, `/` prefix registry, glyph icons behind an Icon seam. 16 numbered decisions. |
 
 ## Milestones 7 remainder and 8: not yet designed
 
