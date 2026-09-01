@@ -55,6 +55,12 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 	case KindButton:
 		_, h := measure(n.Text, n.Tabular)
 		return h + 2*n.Padding, nil
+	case KindImage:
+		if n.ImageSize > 0 {
+			return n.ImageSize, nil
+		}
+		_, h := measure("", n.Tabular)
+		return h, nil
 	case KindToggle:
 		return ToggleHeight, nil
 	case KindSlider:

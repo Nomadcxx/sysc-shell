@@ -91,6 +91,12 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 	case KindButton:
 		w, h := measure(n.Text, n.Tabular)
 		return w + 2*n.Padding, h + 2*n.Padding, nil
+	case KindImage:
+		size := n.ImageSize
+		if size <= 0 {
+			size = contentHeight
+		}
+		return size, size, nil
 	case KindToggle:
 		return ToggleWidth, ToggleHeight, nil
 	case KindSlider:

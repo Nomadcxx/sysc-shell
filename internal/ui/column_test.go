@@ -41,3 +41,23 @@ func samplePanelTree() *Node {
 		}},
 	}}
 }
+
+func TestImageNodeMeasuresThroughTheColumnPath(t *testing.T) {
+	measure := func(string, bool) (int, int) { return 7, 20 }
+	h, err := columnChildHeight(&Node{Kind: KindImage, ImageSize: 32}, 200, measure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h != 32 {
+		t.Fatalf("column height = %d, want 32", h)
+	}
+	// With no declared size the node still occupies a text line, so a card
+	// with a missing icon keeps its shape.
+	h, err = columnChildHeight(&Node{Kind: KindImage}, 200, measure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h != 20 {
+		t.Fatalf("column height = %d, want the line height 20", h)
+	}
+}

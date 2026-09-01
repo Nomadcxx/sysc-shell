@@ -94,6 +94,12 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 	case ui.KindGraph:
 		return paintGraph(c, n, style.Scale120.PhysicalRect(n.Bounds), style)
 
+	case ui.KindImage:
+		// A node whose raster has not resolved paints nothing but keeps the
+		// box it measured, so the card does not reflow when it arrives.
+		paintImage(c, style.Scale120.PhysicalRect(n.Bounds), n.Image)
+		return nil
+
 	case ui.KindButton:
 		fillRect(c, style.Scale120.PhysicalRect(n.Bounds), style.accent())
 		label := ui.Rect{
