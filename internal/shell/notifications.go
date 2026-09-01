@@ -2,6 +2,7 @@ package shell
 
 import (
 	"sync"
+	"time"
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/notifyclient"
@@ -22,6 +23,7 @@ type notifyState struct {
 	// projects to. Zero outputs means everything is suppressed.
 	outputs    []string
 	dnd        bool
+	dndUntil   time.Time
 	centerOpen bool
 }
 
