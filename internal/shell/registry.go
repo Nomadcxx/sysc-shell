@@ -64,6 +64,8 @@ type Registry struct {
 	osd         *OSDManager
 	audioLease  *services.Lease
 	brightLease *services.Lease
+	// runArgv launches a session action. Tests replace it per Registry.
+	runArgv func([]string) error
 }
 
 func NewRegistry(cfg config.Config) *Registry {
@@ -83,6 +85,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		panelHosts:    make(map[PanelID]*PanelHost),
 		closed:        make(chan struct{}),
 		dwell:         newDwell(defaultDwell),
+		runArgv:       runArgvDefault,
 	}
 	r.tokens = r.generateTheme(cfg)
 	r.osd = newOSDManager(r, 0)

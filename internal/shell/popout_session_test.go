@@ -37,9 +37,7 @@ func TestSessionExecMapping(t *testing.T) {
 	t.Parallel()
 	reg, h := newSessionHost(t, "swaylock")
 	var got [][]string
-	old := runArgv
-	t.Cleanup(func() { runArgv = old })
-	runArgv = func(argv []string) error {
+	reg.runArgv = func(argv []string) error {
 		got = append(got, append([]string(nil), argv...))
 		return nil
 	}

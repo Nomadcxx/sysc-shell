@@ -75,10 +75,8 @@ func TestTabMovesRovingFocus(t *testing.T) {
 
 func TestSpaceActivatesFocusedButton(t *testing.T) {
 	t.Parallel()
-	old := runArgv
-	t.Cleanup(func() { runArgv = old })
-	runArgv = func([]string) error { return nil }
 	reg := newPanelRegistry(t)
+	reg.runArgv = func([]string) error { return nil }
 	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
 		t.Fatal(err)
 	}
