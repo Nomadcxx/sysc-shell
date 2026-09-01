@@ -33,10 +33,11 @@ Naming is `YYYY-MM-DD-<topic>[-<kind>].md`. A topic with no kind suffix is the i
 |---|---|
 | *(none)* | The executable implementation plan. Carries the `superpowers:executing-plans` header, exact files, TDD steps, and commit boundaries. |
 | `-design` | The approved design. Fixes contracts and decisions before any plan is written. |
-| `-execution-handover` | Commissions the next tranche: scope, fixed decisions, required evidence, stop conditions. Written *for* the receiving agent. |
+| `-execution-handover` | Commissions the next tranche. When that tranche has a completion snapshot or remaining items are in bd, retire it the same way as a progress handover. |
 | `-design-handover` | Older name for the same thing. Not used for new work. |
-| `-progress-handover` | State of in-flight implementation: what is done, what is not, what is blocked. |
-| `-completion-handover` | Written after implementation: commit hashes, gate output, live observations, measurements, known defects. |
+| `-progress-handover` | In-flight only. When the work lands, or remaining items are in bd, **delete the file** and drop its register row. Do not patch it to keep it current. |
+| `-completion-handover` | Snapshot after implementation: commit hashes, gate output, live observations, measurements, known defects. **Do not edit later. Do not delete.** A later correction goes in bd or the register, not back into the snapshot. |
+| `-project-handover` | Same retirement rule as a progress handover. Remaining-work maps drift; harvest into bd, then remove. |
 | `-audit-handover` | Commissions an audit. |
 | `-audit-report` | The audit's findings and verdict. |
 
@@ -177,18 +178,19 @@ Designed, planned, reviewed, executed and merged to `main` at `01cae98`. Spec sh
 
 ## Bar visual parity (post-M4 chrome)
 
-Live DMS grim on the owner's laptop vs default sysc-shell bar. Capsules, `SurfaceContainer` fill, and workspace dots. Not a widget-roster port. Epic `sysc-43`. Do not execute until the design is approved.
+Live DMS grim on the owner's laptop vs default sysc-shell bar. Capsules, `SurfaceContainer` fill, and workspace pills. Not a widget-roster port. Epic `sysc-43`, executed and merged 2026-09-02. Remaining live judgment is `sysc-54`; card-fill contrast is `sysc-104`.
 
 | Document | Kind | State |
 |---|---|---|
 | `2026-08-31-bar-visual-parity-research.md` | research | Live grim of DMS on eDP-1; Noctalia from installed settings.json (package not running). Assets under `docs/plans/assets/2026-08-31-bar-visual-parity/`. |
-| `2026-08-31-bar-visual-parity-design.md` | design | D1–D9. Awaiting owner approval. |
-| `2026-08-31-bar-visual-parity.md` | plan | Six TDD tasks. Do not execute until the design is approved. |
+| `2026-08-31-bar-visual-parity-design.md` | design | D1–D9, including the numbered-pill amendment. Executed. |
+| `2026-08-31-bar-visual-parity.md` | plan | Six TDD tasks. Executed and merged. |
 
 ## Milestone 5: notifications and system tray
 
-Milestone 5 now has researched designs and executable plans for both tranches. Product work still needs
-the M4 surface vocabulary and tagged service releases.
+Shell presentation is on `main`. The services this milestone consumes are tagged candidates in their
+own repositories (`sysc-notify v0.1.0-rc.2`, `sysc-tray v0.1.0-rc.1`); those tags are full daemons.
+Their default branch `main` is still the original docs-only commit. The live matrix is `sysc-97`.
 
 | Document | Kind | State |
 |---|---|---|
@@ -202,10 +204,7 @@ the M4 surface vocabulary and tagged service releases.
 | `2026-08-30-notifications-and-tray-audit-handover.md` | audit-handover | Commissions the cross-repository design and plan audit for Tranches 5A and 5B. |
 | `2026-08-30-notifications-and-tray-audit-report.md` | audit-report | Redesign required for both tranches; records service-contract, lifetime, release, persistence, and menu blockers. |
 | `2026-08-31-notifications-and-tray-integration-design.md` | design | Corrected cross-repository ownership, parity, shared M3/M4 primitives, limits, release order, and gates. |
-| `2026-09-01-m5b-continuation-handover.md` | progress-handover | 5B Tasks 1-6 done on `milestone/m5a-notifications`; Tasks 7-9, two live gates, and the merge remain. |
-| `2026-09-01-m5-task8-progress-handover.md` | progress-handover | Task 7 committed at `437ef33`; Task 8 has uncommitted, non-compiling wiring work and exact continuation gates. |
-| `2026-09-02-milestone-5-completion-handover.md` | completion-handover | Milestone 5 closed at `2604d77`: automated gate, the live checks that ran on Niri and the ones the missing services blocked, defects fixed and open, and the stable-tag gate. |
-| `2026-09-02-project-state-and-remaining-work-handover.md` | project-handover | Whole-project state: milestone table M0-M8, conventions, environment, dependency and sibling-repo state, what the theme switcher and template catalog actually ship against D8 and D9, M6 in flight, M7 and M8 not started, and the remaining work in the order worth doing. |
+| `2026-09-02-milestone-5-completion-handover.md` | completion-handover | Snapshot at `2604d77`. Leave as written. Live remainder is `sysc-97`. |
 | `2026-09-01-milestone-5-shell-prerequisites.md` | plan | `AuxUpdate` and process-wide interactive-root ownership required before 5A. |
 | `/home/nomadx/.config/superpowers/worktrees/sysc-notify/redesign/v0.1/docs/plans/2026-08-31-sysc-notify-v0.1.md` | service plan | Executable notify service and candidate/stable release gates. |
 | `/home/nomadx/.config/superpowers/worktrees/sysc-tray/redesign/v0.1/docs/plans/2026-08-31-sysc-tray-v0.1.md` | service plan | Executable tray service and candidate/stable release gates. |
@@ -215,8 +214,9 @@ Redesign worktree: `/home/nomadx/.config/superpowers/worktrees/sysc-shell/redesi
 
 ## Milestone 6: external widget and plugin host
 
-Milestone 6 hosts trusted external processes and ships five reference plugins. Progress and entrance
-gates live in bd.
+Milestone 6 hosts trusted external processes and ships five reference plugins. Progress lives in bd.
+Implementation is on `milestone/plugin-host` (main already merged into it) and is expected on `main`
+from the session that holds that branch. Do not start a second M6 branch.
 
 | Document | Kind | Purpose |
 |---|---|---|
@@ -252,13 +252,17 @@ wallpaper, desktop widgets) are still unordered.
 
 ## Sibling repositories
 
-| Repository | Head | State |
-|---|---|---|
-| `/home/nomadx/sysc-metrics` | `v0.2.0` (`c46fab8`) | Tagged and pushed. Core counters plus sysfs battery aggregate. Thermal omitted. |
-| `sysc-wayland` | `v0.1.1` | Pinned dependency. Qualified. |
-| `/home/nomadx/sysc-notify` | plan branch `3e3e417` | v0.1 service plan and persistence addendum committed; no release tag. |
-| `/home/nomadx/sysc-tray` | plan branch `7e835d8` | v0.1 service plan committed; no release tag. |
-| `/home/nomadx/sysc-launch` | `v0.1.0` (`fb6f73c`) | Tagged and pushed. Library plus diagnostic CLI. |
+Verified 2026-09-02 against git, GitHub, and `go list -m`. `sysc-shell` pins the **tags**, not
+whatever is checked out on each repo's `main`. Checking out `/home/nomadx/sysc-notify` or
+`/home/nomadx/sysc-tray` on `main` shows docs only; that is not what this module compiles.
+
+| Repository | Pin in go.mod | Where the pin lives | State |
+|---|---|---|---|
+| `/home/nomadx/sysc-wayland` | `v0.2.1` | `main` (`6bef268`) | Tagged and pushed. Object-argument fix. |
+| `/home/nomadx/sysc-metrics` | `v0.2.0` | `milestone/power-collectors` (`c46fab8`), **not** `main` (`v0.1.0`) | Core counters plus sysfs battery. No GPU usage or CPU temperature. |
+| `/home/nomadx/sysc-notify` | `v0.1.0-rc.2` | `origin/redesign/v0.1` (`f0d76af`). `origin/main` is still `32da2b5` (docs only). | Full daemon (`cmd/sysc-notify`, protocol 1.1, presenter socket). Never merged to default branch. Stable `v0.1.0` waits on `sysc-97`. Not installed or running on the development machine. |
+| `/home/nomadx/sysc-tray` | `v0.1.0-rc.1` | `origin/redesign/v0.1` tag `30d266e` (branch tip one docs commit later). `origin/main` is still `04ca018` (docs only). | Full daemon (`cmd/sysc-tray`). Same merge and install gap as notify. |
+| `/home/nomadx/sysc-launch` | `v0.1.0` | `main` (`fb6f73c`) | Library plus one-shot CLI (`query` / `launch`). Not a daemon. Shell hosts `launcher.NewService` in-process. |
 
 ## Work selection
 
