@@ -134,3 +134,51 @@ func TestColumnPlacesACapsuleChild(t *testing.T) {
 		}
 	}
 }
+
+// A capsule inside a row inside a column must measure to its child plus
+// padding. The row case used to offer measureNode a sentinel band, and every
+// kind that fills the band offered reported that sentinel as its height.
+func TestColumnChildHeightCapsuleInRow(t *testing.T) {
+	row := &Node{Kind: KindRow, Gap: 6, Children: []*Node{
+		{Kind: KindCapsule, Padding: 10, Children: []*Node{
+			{Kind: KindText, Text: "cpu"},
+		}},
+		{Kind: KindCapsule, Padding: 10, Children: []*Node{
+			{Kind: KindText, Text: "memory"},
+		}},
+	}}
+	h, err := columnChildHeight(row, 400, fakeMeasure)
+	if err != nil {
+		t.Fatalf("columnChildHeight: %v", err)
+	}
+	_, text := fakeMeasure("cpu", false)
+	want := text + 2*10
+	if h != want {
+		t.Fatalf("capsule row height = %d, want %d", h, want)
+	}
+}
+
+// The same sentinel poisoned every other band-filling kind nested in a row.
+func TestColumnChildHeightBandKindsInRow(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		node *Node
+		want int
+	}{
+		{"meter", &Node{Kind: KindMeter, Value: 0.5}, MeterHeight},
+		{"graph", &Node{Kind: KindGraph, Width: 240}, GraphHeight},
+		{"separator", &Node{Kind: KindSeparator}, 1},
+		{"column", &Node{Kind: KindColumn, Children: []*Node{{Kind: KindMeter, Value: 0.5}}}, MeterHeight},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			row := &Node{Kind: KindRow, Children: []*Node{tc.node}}
+			h, err := columnChildHeight(row, 400, fakeMeasure)
+			if err != nil {
+				t.Fatalf("columnChildHeight: %v", err)
+			}
+			if h != tc.want {
+				t.Fatalf("%s in row = %d, want %d", tc.name, h, tc.want)
+			}
+		})
+	}
+}

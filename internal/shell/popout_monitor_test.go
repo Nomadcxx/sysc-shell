@@ -306,3 +306,68 @@ func TestMonitorGraphsFractionsAgainstFullScale(t *testing.T) {
 		t.Fatalf("rate graph = %v, want its own maximum at full height", got)
 	}
 }
+
+// The reference lays cards two to a row. Proving it needs a real layout at the
+// panel's own size: the tree alone cannot show that two cards share a row, sit
+// at the same height, and stay inside the panel.
+func TestMonitorCardsLayOutTwoToARow(t *testing.T) {
+	t.Parallel()
+	sels := []services.Selector{
+		{Source: services.SourceCPU},
+		{Source: services.SourceMemory},
+		{Source: services.SourceNetwork, Subject: "eth9", Direction: "rx"},
+	}
+	tree := monitorTree(sels, fixtureSnapshot(), map[services.Selector][]float64{}, 0)
+	size := panelTargetSize(PanelMonitor)
+	measure := func(s string, _ bool) (int, int) { return len([]rune(s)) * 8, 16 }
+	if err := ui.LayoutColumn(tree, ui.Rect{W: size.W, H: size.H}, measure); err != nil {
+		t.Fatalf("LayoutColumn: %v", err)
+	}
+
+	rows := 0
+	for _, child := range tree.Children {
+		if child.Kind != ui.KindRow {
+			continue
+		}
+		rows++
+		if len(child.Children) != 2 {
+			t.Fatalf("row holds %d cards, want 2", len(child.Children))
+		}
+		a, b := child.Children[0], child.Children[1]
+		if a.Bounds.W != b.Bounds.W {
+			t.Fatalf("cards in a row are %d and %d wide, want equal", a.Bounds.W, b.Bounds.W)
+		}
+		if a.Bounds.H != b.Bounds.H {
+			t.Fatalf("cards in a row are %d and %d tall, want equal", a.Bounds.H, b.Bounds.H)
+		}
+		if a.Bounds.X == b.Bounds.X {
+			t.Fatalf("both cards start at x=%d, want side by side", a.Bounds.X)
+		}
+		if right := b.Bounds.X + b.Bounds.W; right > size.W {
+			t.Fatalf("row overflows the panel: right edge %d > %d", right, size.W)
+		}
+	}
+	if rows == 0 {
+		t.Fatal("no card laid out two to a row")
+	}
+}
+
+// Every card must carry a real height. The measure path used to hand a column
+// a sentinel band, so a card in a row reported 1048576 tall.
+func TestMonitorCardsHaveSaneHeights(t *testing.T) {
+	t.Parallel()
+	tree := monitorTree([]services.Selector{
+		{Source: services.SourceCPU},
+		{Source: services.SourceMemory},
+	}, fixtureSnapshot(), map[services.Selector][]float64{}, 0)
+	size := panelTargetSize(PanelMonitor)
+	measure := func(s string, _ bool) (int, int) { return len([]rune(s)) * 8, 16 }
+	if err := ui.LayoutColumn(tree, ui.Rect{W: size.W, H: size.H}, measure); err != nil {
+		t.Fatalf("LayoutColumn: %v", err)
+	}
+	for _, card := range findAllKind(tree, ui.KindCapsule) {
+		if card.Bounds.H <= 0 || card.Bounds.H > size.H {
+			t.Fatalf("card height %d is outside the panel's %d", card.Bounds.H, size.H)
+		}
+	}
+}

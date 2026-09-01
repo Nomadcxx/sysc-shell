@@ -12,6 +12,8 @@ const (
 	// monitorCardPadding is the inset between a card's fill and its content.
 	monitorCardPadding = 10
 	monitorCardGap     = 8
+	// monitorPanelPadding insets the card grid inside the panel body.
+	monitorPanelPadding = 12
 )
 
 // monitorTree builds one titled card per metric, stacked and all visible.
@@ -22,10 +24,8 @@ const (
 // unit, and end with a resources card projecting what the metrics release
 // supplies and no bar widget shows.
 //
-// The reference lays these out two to a row. That needs a capsule inside a row
-// inside a column to measure to its content rather than the row's unbounded
-// height, which the measure path does not do yet; a single column of
-// full-width cards is the same content in the width this panel has.
+// Cards are laid two to a row, as the reference does. A lone trailing card
+// spans the full width rather than sitting in a half-empty row.
 func monitorTree(sels []services.Selector, snap services.Snapshot, history map[services.Selector][]float64, _ int) *ui.Node {
 	cards := make([]*ui.Node, 0, len(sels)+1)
 	for _, sel := range sels {
@@ -39,7 +39,33 @@ func monitorTree(sels []services.Selector, snap services.Snapshot, history map[s
 			{Kind: ui.KindText, Text: "No metrics"},
 		}}
 	}
-	return &ui.Node{Kind: ui.KindColumn, Gap: monitorCardGap, Padding: 12, Children: cards}
+	return &ui.Node{
+		Kind: ui.KindColumn, Gap: monitorCardGap, Padding: monitorPanelPadding,
+		Children: monitorRows(cards),
+	}
+}
+
+// monitorRows pairs cards into rows of two and gives each cell an explicit
+// half width, so a row's two cards are the same size whichever holds the
+// longer figure. An odd final card takes the whole content width.
+func monitorRows(cards []*ui.Node) []*ui.Node {
+	content := panelTargetSize(PanelMonitor).W - 2*monitorPanelPadding
+	cell := (content - monitorCardGap) / 2
+	rows := make([]*ui.Node, 0, (len(cards)+1)/2)
+	for i := 0; i < len(cards); i += 2 {
+		if i == len(cards)-1 {
+			cards[i].Width = content
+			rows = append(rows, cards[i])
+			continue
+		}
+		cards[i].Width = cell
+		cards[i+1].Width = cell
+		rows = append(rows, &ui.Node{
+			Kind: ui.KindRow, Gap: monitorCardGap,
+			Children: []*ui.Node{cards[i], cards[i+1]},
+		})
+	}
+	return rows
 }
 
 // monitorMetricCard is one metric: its subject, its history, and its current

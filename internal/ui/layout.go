@@ -195,6 +195,12 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		if err != nil {
 			return 0, 0, err
 		}
+		// An explicit width is a grid cell: two cards share a row evenly and
+		// neither is sized by whichever happens to hold the longer figure. A
+		// bar pill sets no width and is sized by its content, as before.
+		if n.Width > 0 {
+			return n.Width, contentHeight, nil
+		}
 		// A zero-width child leaves no pill at all, so an empty window title
 		// does not paint a bare capsule.
 		if w == 0 {
