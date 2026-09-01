@@ -62,21 +62,32 @@ func opaqueRects(body ui.Rect, radius int, opaqueBackground bool) []ui.Rect {
 // applyRegions sets the input and opaque regions for one bar. Regions are in
 // logical surface coordinates, which is the viewport destination space.
 func (o *owner) applyRegions(surface *client.Surface, surfaceRect, body ui.Rect, radius int, opaqueBackground bool) error {
+	if err := o.applyInputRects(surface, []ui.Rect{inputRect(surfaceRect)}); err != nil {
+		return err
+	}
+	return o.applyOpaqueRegion(surface, body, radius, opaqueBackground)
+}
+
+// applyInputRects sets the surface input region to exactly these rectangles.
+// An empty slice yields an empty region, which accepts no pointer input; that
+// differs from leaving the region unset, which accepts the whole surface.
+func (o *owner) applyInputRects(surface *client.Surface, rects []ui.Rect) error {
 	input, err := o.compositor.CreateRegion()
 	if err != nil {
 		return err
 	}
-	r := inputRect(surfaceRect)
-	if err := input.Add(int32(r.X), int32(r.Y), int32(r.W), int32(r.H)); err != nil {
-		return err
+	for _, r := range rects {
+		if err := input.Add(int32(r.X), int32(r.Y), int32(r.W), int32(r.H)); err != nil {
+			return err
+		}
 	}
 	if err := surface.SetInputRegion(input); err != nil {
 		return err
 	}
-	if err := input.Destroy(); err != nil {
-		return err
-	}
+	return input.Destroy()
+}
 
+func (o *owner) applyOpaqueRegion(surface *client.Surface, body ui.Rect, radius int, opaqueBackground bool) error {
 	rects := opaqueRects(body, radius, opaqueBackground)
 	if len(rects) == 0 {
 		// A nil region means "no opaque area", which is what a translucent bar
