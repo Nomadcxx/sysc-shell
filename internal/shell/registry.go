@@ -51,6 +51,8 @@ type Registry struct {
 	aux           chan wayland.AuxRequest
 	panels        PanelSet
 	panelHosts    map[PanelID]*PanelHost
+	// roots is the one interactive root the process allows at a time.
+	roots rootChain
 	// closed unblocks a pending publish at shutdown.
 	closed      chan struct{}
 	closeOnce   sync.Once

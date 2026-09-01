@@ -209,3 +209,132 @@ func drainInvalidations(reg *Registry) {
 		}
 	}
 }
+
+func TestOpeningAnUnrelatedPanelClosesTheOldRoot(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelClock, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	if _, ok := reg.panelHosts[PanelClock]; !ok {
+		t.Fatal("the first panel never opened")
+	}
+
+	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	// Closing the old root emits its panel and shield closes; the new root
+	// then emits its own two opens.
+	_ = drainAux(t, reg, 4)
+
+	if _, ok := reg.panelHosts[PanelClock]; ok {
+		t.Fatal("the replaced panel is still hosted")
+	}
+	if _, ok := reg.panels.Output(PanelClock); ok {
+		t.Fatal("the replaced panel is still recorded as open")
+	}
+	if _, ok := reg.panelHosts[PanelSession]; !ok {
+		t.Fatal("the new root did not open")
+	}
+	if !reg.roots.owns(panelRoot(PanelSession)) {
+		t.Fatal("the chain owner is not the new panel")
+	}
+}
+
+func TestMovingAPanelToAnotherOutputReplacesItsRoot(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelClock, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	_, first, _ := reg.roots.current()
+
+	if err := reg.OpenPanel(PanelClock, 8, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 4)
+
+	_, second, ok := reg.roots.current()
+	if !ok || second == first {
+		t.Fatalf("moving outputs kept generation %d", second)
+	}
+	where, ok := reg.panels.Output(PanelClock)
+	if !ok || where != 8 {
+		t.Fatalf("panel output = %d (open=%v), want 8", where, ok)
+	}
+	if host := reg.panelHosts[PanelClock]; host == nil || host.output != 8 {
+		t.Fatalf("panel host = %+v, want output 8", host)
+	}
+}
+
+func TestTogglingTheSamePanelClosesItsRoot(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.TogglePanel(PanelMonitor, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	if !reg.roots.owns(panelRoot(PanelMonitor)) {
+		t.Fatal("toggling open did not publish a root")
+	}
+
+	if err := reg.TogglePanel(PanelMonitor, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	if _, _, ok := reg.roots.current(); ok {
+		t.Fatal("toggling closed left a root open")
+	}
+	if _, ok := reg.panelHosts[PanelMonitor]; ok {
+		t.Fatal("toggling closed left the panel hosted")
+	}
+}
+
+func TestEveryPanelCloseReleasesItsChainExactlyOnce(t *testing.T) {
+	for name, closer := range map[string]func(*Registry){
+		"ClosePanel":   func(r *Registry) { r.ClosePanel(PanelClock) },
+		"TogglePanel":  func(r *Registry) { _ = r.TogglePanel(PanelClock, 7, Trigger{}) },
+		"DropAux":      func(r *Registry) { r.DropAux(7, panelSurfaceID(PanelClock)) },
+		"closeAll":     func(r *Registry) { r.mu.Lock(); r.closeAllPanelsLocked(); r.mu.Unlock() },
+		"replacedRoot": func(r *Registry) { _ = r.OpenPanel(PanelSession, 7, Trigger{}) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			reg := newPanelRegistry(t)
+			if err := reg.OpenPanel(PanelClock, 7, Trigger{}); err != nil {
+				t.Fatal(err)
+			}
+			_ = drainAux(t, reg, 2)
+
+			released := 0
+			_, generation, ok := reg.roots.current()
+			if !ok {
+				t.Fatal("no root was published")
+			}
+			reg.mu.Lock()
+			reg.roots.onClose(generation, func() { released++ })
+			reg.mu.Unlock()
+
+			closer(reg)
+			go func() {
+				for range reg.AuxRequests() {
+				}
+			}()
+
+			if released != 1 {
+				t.Fatalf("chain released %d times, want exactly 1", released)
+			}
+			if _, ok := reg.panelHosts[PanelClock]; ok {
+				t.Fatal("the panel host survived its close")
+			}
+			// A late close naming the released generation must do nothing.
+			reg.mu.Lock()
+			stale := reg.roots.closeRoot(generation)
+			reg.mu.Unlock()
+			if stale {
+				t.Fatal("a stale close released the chain again")
+			}
+			if released != 1 {
+				t.Fatalf("chain released %d times after a stale close", released)
+			}
+		})
+	}
+}
