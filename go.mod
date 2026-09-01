@@ -6,9 +6,14 @@ require (
 	github.com/Nomadcxx/sysc-wayland v0.2.0
 	github.com/go-freedesktop/desktopentry v0.1.0
 	github.com/go-text/typesetting v0.3.5-0.20260729084153-ddb7ff96ad4d
-	github.com/junegunn/fzf v0.74.3
 	golang.org/x/image v0.44.0
 	golang.org/x/sys v0.47.0
 )
 
 require github.com/Nomadcxx/sysc-metrics v0.2.0
+
+require (
+	github.com/adrg/xdg v0.5.3 // indirect
+	github.com/junegunn/fzf v0.74.3
+	github.com/rkoesters/xdg v0.0.1 // indirect
+)
