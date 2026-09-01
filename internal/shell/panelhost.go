@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
+	launcher "github.com/Nomadcxx/sysc-launch"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
-	"github.com/Nomadcxx/sysc-shell/internal/launcher"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/render"

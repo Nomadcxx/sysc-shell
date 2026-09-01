@@ -32,6 +32,9 @@ The first releases exclude a lock screen, a compositor, Noctalia configuration c
   `sysc-shell` owns its popup surfaces and Niri focus integration.
 - [`sysc-tray`](https://github.com/Nomadcxx/sysc-tray) owns StatusNotifierItem and DBusMenu behavior;
   `sysc-shell` owns tray and menu presentation.
+- [`sysc-launch`](https://github.com/Nomadcxx/sysc-launch) owns desktop-entry scan, fzf ranking, and usage
+  history. `sysc-shell` owns the launcher panel and keeps ranking history at
+  `$XDG_STATE_HOME/sysc-shell/launcher/history.gob`.
 
 ## Documentation
 
