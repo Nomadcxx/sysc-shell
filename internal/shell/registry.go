@@ -71,6 +71,9 @@ type Registry struct {
 	// notify is the service-owned notification projection.
 	notify *notifyState
 
+	// tray is the service-owned tray projection.
+	tray *trayState
+
 	// notifyCh carries client messages; main pumps it. Nil in tests that drive
 	// applyNotify directly.
 	notifyCh chan notifyclient.Message
@@ -97,6 +100,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		dwell:         newDwell(defaultDwell),
 		runArgv:       runArgvDefault,
 		notify:        newNotifyState(),
+		tray:          newTrayState(),
 		notifyCh:      make(chan notifyclient.Message, 32),
 	}
 	r.tokens = r.generateTheme(cfg)
