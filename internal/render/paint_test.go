@@ -21,6 +21,7 @@ var testStyle = ProofStyle{
 	Track:      Color{R: 0x30, G: 0x34, B: 0x38, A: 0xff},
 	Accent:     Color{R: 0x00, G: 0x80, B: 0xff, A: 0xff},
 	AccentOn:   Color{R: 0xff, G: 0x60, B: 0x00, A: 0xff},
+	OnPrimary:  Color{R: 0x11, G: 0x22, B: 0x33, A: 0xff},
 }
 
 func TestPaintFillsOnlyTheRoundedBody(t *testing.T) {
@@ -259,6 +260,25 @@ func TestPaintButtonTogglesColor(t *testing.T) {
 	if got := pixelAt(t, on, button.X+1, button.Y+1); got != testStyle.AccentOn {
 		t.Errorf("toggled button pixel = %+v, want %+v", got, testStyle.AccentOn)
 	}
+}
+
+// A button paints its label in OnPrimary: the fill is the Primary token, so
+// the text token paired with it is the only legible choice (launcher D11).
+func TestPaintButtonTextUsesOnPrimary(t *testing.T) {
+	t.Parallel()
+
+	c := newTestCanvas(t, canvasW, canvasH)
+	root := paintTree(t, c, testStyle)
+	button := root.Children[2].Bounds
+	label := ui.Rect{X: button.X + 4, Y: button.Y + 4, W: button.W - 8, H: button.H - 8}
+	for y := label.Y; y < label.Y+label.H; y++ {
+		for x := label.X; x < label.X+label.W; x++ {
+			if pixelAt(t, c, x, y) == testStyle.OnPrimary {
+				return
+			}
+		}
+	}
+	t.Fatal("button label painted no OnPrimary pixel")
 }
 
 func TestPaintDrawsTextPixels(t *testing.T) {

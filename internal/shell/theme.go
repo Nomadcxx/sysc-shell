@@ -36,6 +36,8 @@ type Theme struct {
 	Accent     Color
 	Muted      Color
 	Error      Color
+	// OnPrimary is the text colour on a Primary-filled (selected) surface.
+	OnPrimary Color
 }
 
 // DefaultTheme is the owner-supplied baseline: nominal height 48, exclusive
@@ -53,6 +55,7 @@ func DefaultTheme() Theme {
 		Accent:     Color{R: 0x00, G: 0x80, B: 0xff, A: 0xff},
 		Muted:      Color{R: 0x30, G: 0x34, B: 0x38, A: 0xff},
 		Error:      Color{R: 0xff, G: 0x40, B: 0x40, A: 0xff},
+		OnPrimary:  Color{R: 0xff, G: 0xff, B: 0xff, A: 0xff},
 	}
 }
 
@@ -65,6 +68,7 @@ func ThemeFromTokens(tok theme.Tokens, radius int) Theme {
 	t.Accent = parseColor(tok.Primary, t.Accent)
 	t.Muted = parseColor(tok.OnSurfaceVariant, t.Muted)
 	t.Error = parseColor(tok.Error, t.Error)
+	t.OnPrimary = parseColor(tok.OnPrimary, t.OnPrimary)
 	return t
 }
 

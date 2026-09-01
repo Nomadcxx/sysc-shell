@@ -27,9 +27,21 @@ type ProofStyle struct {
 	// Error paints text that reports a failure. It is a distinct field rather
 	// than reusing AccentOn, which the bar already uses for a toggled control.
 	Error Color
+	// OnPrimary paints text on a Primary-filled button: the fill is the
+	// Primary token, so its paired On token is the only legible label colour.
+	OnPrimary Color
 
 	// Toggled swaps the accent used by the meter fill and the button.
 	Toggled bool
+}
+
+// buttonText returns the label colour over a Primary fill, falling back to
+// Foreground for a style assembled before the token existed.
+func (s ProofStyle) buttonText() Color {
+	if s.OnPrimary.A == 0 {
+		return s.Foreground
+	}
+	return s.OnPrimary
 }
 
 // accent returns the colour the meter fill and button share.
@@ -109,7 +121,8 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 			W: n.Bounds.W - 2*n.Padding,
 			H: n.Bounds.H - 2*n.Padding,
 		}
-		return paintText(c, n.Text, style.Scale120.PhysicalRect(label), text, style, size, n.Tabular, n.Tone, n.Bold, n.Italic, n.Underline)
+		return paintTextColor(c, n.Text, style.Scale120.PhysicalRect(label), text, style,
+			size, n.Tabular, style.buttonText(), n.Bold, n.Italic, n.Underline)
 
 	case ui.KindToggle:
 		paintToggle(c, n, style)
@@ -334,6 +347,11 @@ func paintGraph(c *Canvas, n *ui.Node, box ui.Rect, style ProofStyle) error {
 // measurement, which the text renderer owns. The box is already physical, so
 // the available width is compared in the same units the shaper reports.
 func paintText(c *Canvas, s string, box ui.Rect, text *TextRenderer, style ProofStyle, size int, tabular bool, tone ui.Tone, bold, italic, underline bool) error {
+	return paintTextColor(c, s, box, text, style, size, tabular,
+		textColor(style, tone), bold, italic, underline)
+}
+
+func paintTextColor(c *Canvas, s string, box ui.Rect, text *TextRenderer, style ProofStyle, size int, tabular bool, fg Color, bold, italic, underline bool) error {
 	if s == "" || box.W <= 0 {
 		return nil
 	}
@@ -354,17 +372,17 @@ func paintText(c *Canvas, s string, box ui.Rect, text *TextRenderer, style Proof
 	if italic {
 		alpha = shearMask(alpha, size/7+1)
 	}
-	blendMask(c, alpha, box.X, box.Y, textColor(style, tone))
+	blendMask(c, alpha, box.X, box.Y, fg)
 	if bold {
 		// ponytail: synthetic bold by offset re-blend, no per-weight faces.
 		// Ceiling: no real bold or italic metrics, so heavy scripts can smear;
 		// upgrade path is resolving a bold/italic face per family in FontMap.
-		blendMask(c, alpha, box.X+1, box.Y, textColor(style, tone))
+		blendMask(c, alpha, box.X+1, box.Y, fg)
 	}
 	if underline {
 		th := max(size/16, 1)
 		rule := ui.Rect{X: box.X, Y: box.Y + box.H - th, W: min(mask.Advance, box.W), H: th}
-		fillRect(c, rule, textColor(style, tone))
+		fillRect(c, rule, fg)
 	}
 	return nil
 }

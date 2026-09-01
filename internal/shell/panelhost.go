@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/launcher"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
@@ -36,6 +37,8 @@ const (
 	keyEnd       = 107
 	keyDown      = 108
 	keyPageDown  = 109
+
+	btnRight = 273
 
 	revealDuration = 200 * time.Millisecond
 	revealTick     = 16 * time.Millisecond
@@ -81,6 +84,12 @@ type PanelHost struct {
 	section        string
 	search         *ui.Field
 	fields         map[string]*ui.Field
+
+	launcherResults []launcher.Result
+	launcherSel     int
+	launcherScroll  int
+	launcherMenuID  string
+	launcherActions []launcher.Action
 }
 
 func parsePanelName(name string) (PanelID, error) {
@@ -93,6 +102,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelSession, nil
 	case "settings":
 		return PanelSettings, nil
+	case "launcher":
+		return PanelLauncher, nil
 	default:
 		return 0, fmt.Errorf("unknown panel")
 	}
@@ -245,6 +256,8 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelSession, true
 	case "settings":
 		return PanelSettings, true
+	case "launcher":
+		return PanelLauncher, true
 	default:
 		return 0, false
 	}
@@ -270,6 +283,9 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	if id == PanelSettings && place.Align == "" {
 		place.Align = "center"
 	}
+	if id == PanelLauncher {
+		place.CenterY = true
+	}
 	w, hgt := place.FittedSize()
 	place.Panel.W, place.Panel.H = w, hgt
 	margins := place.Margins()
@@ -288,6 +304,12 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		h.search = ui.NewField("")
 		h.menus = map[string]*Menu{}
 		h.fields = map[string]*ui.Field{}
+	}
+	if id == PanelLauncher {
+		h.search = ui.NewField("")
+		svc := r.launcherServiceLocked()
+		svc.Open()
+		svc.Query("")
 	}
 	h.root = r.panelTree(h)
 	h.focus = ui.Focusables(h.root)
@@ -503,6 +525,9 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			h.pressed = nil
 			return false
 		case wayland.EventPointerPress:
+			if h.id == PanelLauncher && h.launcherPointerPress(r, e) {
+				return true
+			}
 			if n := h.hitFocusable(h.hoverX, h.hoverY); n != nil {
 				h.pressed = n
 				h.setFocus(n)
@@ -528,13 +553,20 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 			return false
 		}
 		if !h.menu.Opened() && key != keyEsc {
-			h.applyMenu(r, h.menuPath)
+			if h.id == PanelLauncher {
+				h.applyLauncherMenu(r)
+			} else {
+				h.applyMenu(r, h.menuPath)
+			}
 		}
 		r.rebuildPanel(h)
 		return true
 	}
 	if key == keyBackspace {
 		return h.editField(r, func(f *ui.Field) { f.Backspace() })
+	}
+	if h.id == PanelLauncher && h.launcherKeyPress(r, key) {
+		return true
 	}
 	switch key {
 	case keyLeftShift:
@@ -603,6 +635,9 @@ func (h *PanelHost) scrollBy(delta int) bool {
 		return false
 	}
 	ui.ScrollBy(s, delta)
+	if h.id == PanelLauncher {
+		h.launcherScroll = s.ScrollOffset
+	}
 	if h.logicalW > 0 {
 		_ = h.configure(h.logicalW, h.logicalH, h.scale120)
 	}
@@ -676,6 +711,11 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 	f.SyncTo(n)
 	if n.Name == "Search" {
 		h.query = f.Text
+		if h.id == PanelLauncher {
+			h.launcherSel = 0
+			h.launcherScroll = 0
+			r.launcherServiceLocked().Query(h.query)
+		}
 		idx := h.roving.Index()
 		r.rebuildPanel(h)
 		h.roving.Set(idx)
@@ -708,6 +748,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	n := h.focused()
 	if n == nil {
 		return false
+	}
+	if h.id == PanelLauncher {
+		return h.activateLauncher(r, n)
 	}
 	if n.Kind == ui.KindToggle {
 		changed := ui.Activate(n)
@@ -797,6 +840,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		return sessionTree(r.cfg.Session.Locker, h.errLabel)
 	case PanelSettings:
 		return settingsTree(h)
+	case PanelLauncher:
+		return launcherTree(h)
 	default:
 		return placeholderTree()
 	}
@@ -810,6 +855,8 @@ func panelTargetSize(id PanelID) ui.Rect {
 		return ui.Rect{W: 640, H: 480}
 	case PanelSettings:
 		return ui.Rect{W: 900, H: 620}
+	case PanelLauncher:
+		return ui.Rect{W: 560, H: 500}
 	default:
 		return ui.Rect{W: 280, H: 200}
 	}

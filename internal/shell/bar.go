@@ -118,6 +118,7 @@ func NewWithTheme(theme Theme, policy config.Bar, connector string) (*Bar, error
 			Accent:     theme.Accent,
 			AccentOn:   theme.Error,
 			Error:      theme.Error,
+			OnPrimary:  theme.OnPrimary,
 		},
 	}
 
