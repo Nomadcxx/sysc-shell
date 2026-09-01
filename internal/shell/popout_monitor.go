@@ -48,7 +48,7 @@ func monitorMetricCard(sel services.Selector, snap services.Snapshot, history []
 	label, absent := formatMonitorMetric(sel, snap)
 	rows := []*ui.Node{monitorCardTitle(selectorLabel(sel), monitorIconRune(sel))}
 	rows = append(rows,
-		&ui.Node{Kind: ui.KindGraph, Values: normalise(history), Absent: absent},
+		&ui.Node{Kind: ui.KindGraph, Values: monitorGraphValues(sel, history), Absent: absent},
 		&ui.Node{Kind: ui.KindText, Text: label, Tabular: true},
 	)
 	return monitorCard(rows)
@@ -139,6 +139,28 @@ func monitorKeyValue(label, value string) *ui.Node {
 		{Kind: ui.KindText, Text: label},
 		{Kind: ui.KindText, Text: value, Tabular: true},
 	}}
+}
+
+// monitorGraphValues scales one history against the right ceiling.
+//
+// A fraction source is already zero through one and graphs against that, so a
+// steady 31 per cent draws a flat line a third of the way up. Normalising it
+// against its own maximum instead made every sample full height, which reads
+// as a machine at its limit. A rate has no ceiling, so its own maximum is the
+// only scale there is.
+func monitorGraphValues(sel services.Selector, history []float64) []float64 {
+	if monitorSourceIsFraction(sel.Source) {
+		return append([]float64(nil), history...)
+	}
+	return normalise(history)
+}
+
+func monitorSourceIsFraction(source services.Source) bool {
+	switch source {
+	case services.SourceCPU, services.SourceMemory, services.SourceFilesystem:
+		return true
+	}
+	return false
 }
 
 func monitorIconRune(sel services.Selector) rune {

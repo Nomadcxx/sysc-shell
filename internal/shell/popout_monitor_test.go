@@ -274,3 +274,35 @@ func findAllKind(n *ui.Node, kind ui.Kind) []*ui.Node {
 	}
 	return out
 }
+
+// A fraction is already zero through one, so it graphs against that scale.
+// Normalising it against its own maximum makes a flat series fill the card:
+// steady 31% memory painted as a solid block, which reads as a machine out of
+// memory. A rate has no ceiling and still normalises.
+func TestMonitorGraphsFractionsAgainstFullScale(t *testing.T) {
+	t.Parallel()
+	steady := []float64{0.31, 0.31, 0.31, 0.31}
+	history := map[services.Selector][]float64{
+		{Source: services.SourceMemory}:                                    steady,
+		{Source: services.SourceNetwork, Subject: "eth9", Direction: "rx"}: {1000, 2000},
+	}
+	tree := monitorTree([]services.Selector{
+		{Source: services.SourceMemory},
+		{Source: services.SourceNetwork, Subject: "eth9", Direction: "rx"},
+	}, fixtureSnapshot(), history, 0)
+
+	graphs := findAllKind(tree, ui.KindGraph)
+	if len(graphs) != 2 {
+		t.Fatalf("graphs = %d, want two", len(graphs))
+	}
+	for i, v := range graphs[0].Values {
+		if v != steady[i] {
+			t.Fatalf("memory graph value %d = %v, want the fraction %v unscaled", i, v, steady[i])
+		}
+	}
+	// The rate keeps its own scaling: without a ceiling there is nothing else
+	// to draw it against.
+	if got := graphs[1].Values; len(got) != 2 || got[1] != 1 {
+		t.Fatalf("rate graph = %v, want its own maximum at full height", got)
+	}
+}
