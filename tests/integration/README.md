@@ -396,5 +396,8 @@ timeout leave the built-in clock updating. It is not a live Niri matrix.
 
 ```bash
 go test -race -count=1 ./tests/integration -run PluginHostGate
+go test -race -count=1 ./tests/integration -run PluginUpdateGate
 ```
+
+`PluginUpdateGate` covers inbound flood, patch-loss resync, depth 16/17, and the 1,024 node bound.
 
