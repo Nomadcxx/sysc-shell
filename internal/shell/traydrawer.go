@@ -233,7 +233,7 @@ func (h *trayDrawerHost) render(pixels []byte, width, height, stride int) error 
 		}
 		h.text = render.NewTextRendererWithFontMap(fonts)
 		createdText = true
-		theme := ThemeFrom(h.r.cfg, h.r.cfg.Bar)
+		theme := h.r.surfaceTheme()
 		h.style.Size = theme.TextSize
 		h.style.Radius = theme.Radius
 		h.style.Background, h.style.Foreground = theme.Background, theme.Foreground

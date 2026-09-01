@@ -301,6 +301,15 @@ func (r *Registry) generateTheme(cfg config.Config) theme.Tokens {
 	return tok
 }
 
+// surfaceTheme is the palette every auxiliary surface paints with: the
+// generated tokens, with the bar's geometry so a panel and the bar agree about
+// spacing and text size.
+//
+// Callers hold Registry.mu, because the tokens are replaced by a reload.
+func (r *Registry) surfaceTheme() Theme {
+	return withBarGeometry(ThemeFromTokens(r.tokens, r.cfg.Theme.Radius), r.cfg.Bar)
+}
+
 func runningAsTest() bool {
 	return strings.HasSuffix(os.Args[0], ".test")
 }

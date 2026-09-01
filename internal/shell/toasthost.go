@@ -177,7 +177,7 @@ func (h *toastHost) render(connector string, pixels []byte, width, height, strid
 			return err
 		}
 		h.text = render.NewTextRendererWithFontMap(fonts)
-		theme := ThemeFrom(h.r.cfg, h.r.cfg.Bar)
+		theme := h.r.surfaceTheme()
 		h.style.Size = theme.TextSize
 		h.style.Radius = theme.Radius
 		h.style.Background, h.style.Foreground = theme.Background, theme.Foreground

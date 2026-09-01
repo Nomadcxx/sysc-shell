@@ -102,6 +102,11 @@ func ThemeFromTokens(tok theme.Tokens, radius int) Theme {
 // Geometry comes from the supplied bar policy rather than the base bar, so a
 // per-output override reaches the theme the bar is actually built from.
 // Palette colours stay on DefaultTheme until the registry supplies generated tokens.
+// ThemeFrom resolves the built-in fallback palette, not the generated one. It
+// is what a surface looks like before any palette has been generated, and it
+// is only correct where no registry is in reach — a bare Bar in a test. Every
+// surface the shell actually paints must use Registry.surfaceTheme, which a
+// test in this package enforces.
 func ThemeFrom(cfg config.Config, bar config.Bar) Theme {
 	return withBarGeometry(ThemeFromTokens(theme.Fallback, cfg.Theme.Radius), bar)
 }

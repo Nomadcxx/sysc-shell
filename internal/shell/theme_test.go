@@ -1,9 +1,11 @@
 package shell
 
 import (
+	"bytes"
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -219,5 +221,62 @@ func TestDefaultPaletteKeepsCapsulesAndPillsVisible(t *testing.T) {
 	}
 	if got := contrast(th.Container, th.OnContainer); got < 3.0 {
 		t.Errorf("numeral on an unfocused pill = %.2f:1, want at least 3.0", got)
+	}
+}
+
+// Every surface the shell paints follows the generated palette. ThemeFrom
+// resolves against theme.Fallback and never reads the generated tokens, so a
+// surface built through it paints the built-in colours whatever the user chose.
+func TestSurfaceThemeFollowsTheGeneratedPalette(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	r := NewRegistry(cfg)
+	t.Cleanup(r.Close)
+
+	r.mu.Lock()
+	r.tokens = theme.Tokens{
+		Surface: "#101010", SurfaceContainer: "#202020",
+		OnSurface: "#f0f0f0", OnSurfaceVariant: "#a0a0a0",
+		Primary: "#ff00ff", OnPrimary: "#000000",
+		PrimaryContainer: "#800080", OnPrimaryContainer: "#ffffff",
+		Outline: "#303030", Error: "#ff0000", OnError: "#ffffff",
+	}
+	got := r.surfaceTheme()
+	r.mu.Unlock()
+
+	want := parseColor("#ff00ff", Color{})
+	if got.Accent != want {
+		t.Fatalf("accent = %+v, want the generated primary %+v", got.Accent, want)
+	}
+	if fallback := ThemeFrom(cfg, cfg.Bar); got.Accent == fallback.Accent {
+		t.Fatal("the surface theme resolved to the fallback palette")
+	}
+}
+
+// A surface that resolves its own theme through ThemeFrom is painting the
+// fallback whatever the user chose. The toast stack, the tray menu and the
+// tray drawer each did, so notifications and the tray ignored the theme.
+func TestNoShellSurfaceResolvesTheFallbackPalette(t *testing.T) {
+	t.Parallel()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// theme.go declares ThemeFrom; bar.go's New is the documented registry-free
+	// constructor, a bare Bar with no generated palette in reach, and has no
+	// caller outside tests. Every other file paints a real surface.
+	allowed := map[string]bool{"theme.go": true, "bar.go": true}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || allowed[name] {
+			continue
+		}
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(src, []byte("ThemeFrom(")) {
+			t.Fatalf("%s resolves a theme through ThemeFrom, which ignores the generated tokens; use Registry.surfaceTheme", name)
+		}
 	}
 }
