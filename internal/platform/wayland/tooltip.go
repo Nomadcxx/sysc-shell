@@ -19,6 +19,15 @@ type TooltipRequest struct {
 	Global uint32
 	Anchor ui.Rect
 	Text   string
+	Style  TooltipStyle
+}
+
+// TooltipStyle is the resolved appearance of one tooltip. The shell owns the
+// theme, so it sends the colours it already resolved for the bar rather than
+// the owner deriving a second theme model from configuration.
+type TooltipStyle struct {
+	Background render.Color
+	Foreground render.Color
 }
 
 // tooltipGap is the space between the bar edge and the tooltip.
@@ -76,9 +85,11 @@ type tooltipSurface struct {
 	layer    *layershell.ZwlrLayerSurfaceV1
 	viewport *viewporter.WpViewport
 	gen      *generation
+	retiring []*generation
 	place    ui.Rect
 	text     string
 	scale120 ui.Scale120
+	style    TooltipStyle
 }
 
 func (o *owner) handleTooltip(req TooltipRequest) {
@@ -98,7 +109,7 @@ func (o *owner) showTooltip(req TooltipRequest) error {
 		return nil
 	}
 
-	width, height := o.measureTooltip(req.Text)
+	width, height := o.measureTooltip(h, req.Text)
 	outW := h.bar.ss.logicalWidth
 	if outW <= 0 {
 		outW = int(h.modeWidth)
@@ -163,6 +174,7 @@ func (o *owner) showTooltip(req TooltipRequest) error {
 		place:    place,
 		text:     req.Text,
 		scale120: h.bar.ss.scale120,
+		style:    req.Style,
 	}
 	if tt.scale120 == 0 {
 		tt.scale120 = ui.ScaleUnit
@@ -205,10 +217,13 @@ func (o *owner) configureTooltip(tt *tooltipSurface, e layershell.ZwlrLayerSurfa
 	if err != nil {
 		return err
 	}
-	if tt.gen != nil {
-		_ = tt.gen.destroy()
-	}
+	o.retireTooltipGeneration(tt)
 	tt.gen = gen
+	for slot := range gen.slots {
+		gen.slots[slot].SetReleaseHandler(func(client.BufferReleaseEvent) {
+			o.onTooltipBufferRelease(tt, gen)
+		})
+	}
 
 	if err := o.paintTooltip(tt, gen.pixels(0), bufW, bufH, int(gen.stride)); err != nil {
 		return err
@@ -223,25 +238,43 @@ func (o *owner) configureTooltip(tt *tooltipSurface, e layershell.ZwlrLayerSurfa
 	return tt.surface.Commit()
 }
 
+func (o *owner) retireTooltipGeneration(tt *tooltipSurface) {
+	if tt.gen != nil {
+		tt.retiring = append(tt.retiring, tt.gen)
+		tt.gen = nil
+	}
+	o.sweepTooltipRetired(tt)
+}
+
+func (o *owner) onTooltipBufferRelease(tt *tooltipSurface, gen *generation) {
+	o.fail(gen.retire.released())
+	o.sweepTooltipRetired(tt)
+}
+
+func (o *owner) sweepTooltipRetired(tt *tooltipSurface) {
+	kept := tt.retiring[:0]
+	for _, gen := range tt.retiring {
+		if gen.retire.freeable() {
+			o.fail(gen.destroy())
+			continue
+		}
+		kept = append(kept, gen)
+	}
+	tt.retiring = kept
+}
+
 func (o *owner) paintTooltip(tt *tooltipSurface, pix []byte, width, height, stride int) error {
 	c, err := render.NewCanvas(pix, width, height, stride)
 	if err != nil {
 		return err
 	}
-	style := render.ProofStyle{
-		Size:       14,
-		Scale120:   tt.scale120,
-		Background: render.Color{R: 0x10, G: 0x14, B: 0x18, A: 0xff},
-		Foreground: render.Color{R: 0xe6, G: 0xea, B: 0xef, A: 0xff},
-		Body:       ui.Rect{X: 0, Y: 0, W: tt.place.W, H: tt.place.H},
-		Radius:     6,
-	}
+	style, family := o.tooltipStyle(tt)
 	root := &ui.Node{Kind: ui.KindRow, Bounds: style.Body, Children: []*ui.Node{{
 		Kind:   ui.KindText,
 		Text:   tt.text,
 		Bounds: ui.Rect{X: tooltipPad, Y: tooltipPad, W: tt.place.W - 2*tooltipPad, H: tt.place.H - 2*tooltipPad},
 	}}}
-	text := o.tooltipText()
+	text := o.tooltipText(family)
 	if text == nil {
 		clear(pix)
 		return nil
@@ -249,23 +282,46 @@ func (o *owner) paintTooltip(tt *tooltipSurface, pix []byte, width, height, stri
 	return render.Paint(c, root, text, style)
 }
 
-func (o *owner) tooltipText() *render.TextRenderer {
-	if o.tooltipRenderer != nil {
+func (o *owner) tooltipStyle(tt *tooltipSurface) (render.ProofStyle, string) {
+	bar := o.cfg.ForConnector(tt.host.connector)
+	return render.ProofStyle{
+		Size:       bar.FontSize,
+		Scale120:   tt.scale120,
+		Background: tooltipColor(tt.style.Background, render.Color{R: 0x10, G: 0x14, B: 0x18, A: 0xff}),
+		Foreground: tooltipColor(tt.style.Foreground, render.Color{R: 0xe8, G: 0xec, B: 0xf0, A: 0xff}),
+		Body:       ui.Rect{X: 0, Y: 0, W: tt.place.W, H: tt.place.H},
+		Radius:     o.cfg.Theme.Radius,
+	}, bar.FontFamily
+}
+
+// tooltipColor keeps the built-in appearance when the shell sent no colour,
+// which is what an early tooltip before the first theme resolve looks like.
+func tooltipColor(value, fallback render.Color) render.Color {
+	if value.A == 0 {
+		return fallback
+	}
+	return value
+}
+
+func (o *owner) tooltipText(family string) *render.TextRenderer {
+	if o.tooltipRenderer != nil && o.tooltipFont == family {
 		return o.tooltipRenderer
 	}
-	fonts, err := render.NewSystemFontMap("", render.DefaultFontCacheDir())
+	fonts, err := render.NewSystemFontMap(family, render.DefaultFontCacheDir())
 	if err != nil {
 		return nil
 	}
 	o.tooltipRenderer = render.NewTextRendererWithFontMap(fonts)
+	o.tooltipFont = family
 	return o.tooltipRenderer
 }
 
-func (o *owner) measureTooltip(text string) (int, int) {
-	height := 14 + 2*tooltipPad
-	width := 8*len(text) + 2*tooltipPad
-	if r := o.tooltipText(); r != nil {
-		if w, h, err := r.Measure(text, 14, false); err == nil {
+func (o *owner) measureTooltip(host *OutputHost, text string) (int, int) {
+	bar := o.cfg.ForConnector(host.connector)
+	height := bar.FontSize + 2*tooltipPad
+	width := ((bar.FontSize+1)/2)*len(text) + 2*tooltipPad
+	if r := o.tooltipText(bar.FontFamily); r != nil {
+		if w, h, err := r.Measure(text, bar.FontSize, false); err == nil {
 			width, height = w+2*tooltipPad, h+2*tooltipPad
 		}
 	}
@@ -285,11 +341,6 @@ func (o *owner) hideTooltip() error {
 		return nil
 	}
 	var errs []error
-	if tt.gen != nil {
-		if err := tt.gen.destroy(); err != nil {
-			errs = append(errs, err)
-		}
-	}
 	if tt.viewport != nil {
 		if err := tt.viewport.Destroy(); err != nil {
 			errs = append(errs, err)
@@ -305,6 +356,17 @@ func (o *owner) hideTooltip() error {
 			errs = append(errs, err)
 		}
 	}
+	if tt.gen != nil {
+		tt.retiring = append(tt.retiring, tt.gen)
+		tt.gen = nil
+	}
+	for _, gen := range tt.retiring {
+		gen.retire.destroy()
+		if err := gen.destroy(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	tt.retiring = nil
 	if len(errs) == 0 {
 		return nil
 	}
