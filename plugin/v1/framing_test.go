@@ -262,3 +262,29 @@ func TestSnapshotSurvivesTextThatContainsANewline(t *testing.T) {
 		t.Errorf("text = %q, want the embedded newline preserved", back.Root.Children[0].Text)
 	}
 }
+
+func TestPatchAndResyncRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	line := encodeOne(t, &ViewPatch{
+		ViewID: "v1", Base: 1, Revision: 2,
+		Replacements: []Replacement{{Key: "time", Node: &Node{Kind: KindText, Key: "time", Text: "09:00", Tabular: true}}},
+	})
+	got, err := NewDecoder(bytes.NewReader(line), ToHost).Decode()
+	if err != nil {
+		t.Fatalf("decode patch: %v", err)
+	}
+	p := got.(*ViewPatch)
+	if p.Type != TypeViewPatch || p.Base != 1 || p.Revision != 2 || p.Replacements[0].Key != "time" {
+		t.Fatalf("patch = %+v", p)
+	}
+
+	back := encodeOne(t, &ViewResync{ViewID: "v1"})
+	msg, err := NewDecoder(bytes.NewReader(back), ToPlugin).Decode()
+	if err != nil {
+		t.Fatalf("decode resync: %v", err)
+	}
+	if msg.(*ViewResync).Type != TypeViewResync || msg.(*ViewResync).ViewID != "v1" {
+		t.Fatalf("resync = %+v", msg)
+	}
+}

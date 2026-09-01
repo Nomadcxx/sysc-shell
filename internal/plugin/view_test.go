@@ -242,3 +242,165 @@ func TestConvertRejectsATextInputInABar(t *testing.T) {
 		t.Fatal("a bar accepted a keyboard field")
 	}
 }
+
+func keyedClock() *v1.Node {
+	return &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindText, Key: "time", Text: "12:00", Tabular: true},
+		{Kind: v1.KindText, Key: "date", Text: "Mon"},
+		{Kind: v1.KindButton, ID: "add", Key: "add", Text: "Add", Name: "Add a city", Role: "button",
+			Events: []v1.EventKind{v1.EventActivate}},
+	}}
+}
+
+func seededTree(t *testing.T) *ViewTree {
+	t.Helper()
+	vt := &ViewTree{View: v1.ViewPanel}
+	if err := vt.ApplySnapshot(1, keyedClock()); err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	return vt
+}
+
+func TestPatchReplacesOneKeyedSubtree(t *testing.T) {
+	t.Parallel()
+	vt := seededTree(t)
+	resync, err := vt.ApplyPatch(&v1.ViewPatch{
+		ViewID: "v1", Base: 1, Revision: 2,
+		Replacements: []v1.Replacement{{Key: "time", Node: &v1.Node{Kind: v1.KindText, Key: "time", Text: "09:41", Tabular: true}}},
+	})
+	if err != nil || resync {
+		t.Fatalf("patch: resync=%v err=%v", resync, err)
+	}
+	if vt.Revision != 2 || vt.Root.Children[0].Text != "09:41" {
+		t.Fatalf("tree = rev %d text %q", vt.Revision, vt.Root.Children[0].Text)
+	}
+	if vt.Root.Children[1].Text != "Mon" {
+		t.Fatal("unrelated node changed")
+	}
+}
+
+func TestPatchAppliesIndependentReplacements(t *testing.T) {
+	t.Parallel()
+	vt := seededTree(t)
+	_, err := vt.ApplyPatch(&v1.ViewPatch{
+		Base: 1, Revision: 2,
+		Replacements: []v1.Replacement{
+			{Key: "time", Node: &v1.Node{Kind: v1.KindText, Key: "time", Text: "01:00"}},
+			{Key: "date", Node: &v1.Node{Kind: v1.KindText, Key: "date", Text: "Tue"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vt.Root.Children[0].Text != "01:00" || vt.Root.Children[1].Text != "Tue" {
+		t.Fatalf("got %q %q", vt.Root.Children[0].Text, vt.Root.Children[1].Text)
+	}
+}
+
+func TestPatchRejectsDuplicateTarget(t *testing.T) {
+	t.Parallel()
+	vt := seededTree(t)
+	before := vt.Root
+	resync, err := vt.ApplyPatch(&v1.ViewPatch{
+		Base: 1, Revision: 2,
+		Replacements: []v1.Replacement{
+			{Key: "time", Node: &v1.Node{Kind: v1.KindText, Key: "time", Text: "a"}},
+			{Key: "time", Node: &v1.Node{Kind: v1.KindText, Key: "time", Text: "b"}},
+		},
+	})
+	if err == nil || !resync {
+		t.Fatalf("want error and resync, got err=%v resync=%v", err, resync)
+	}
+	if vt.Root != before || vt.Revision != 1 {
+		t.Fatal("failed patch mutated the tree")
+	}
+}
+
+func TestPatchRejectsMissingTarget(t *testing.T) {
+	t.Parallel()
+	vt := seededTree(t)
+	resync, err := vt.ApplyPatch(&v1.ViewPatch{
+		Base: 1, Revision: 2,
+		Replacements: []v1.Replacement{{Key: "ghost", Node: &v1.Node{Kind: v1.KindText, Key: "ghost", Text: "x"}}},
+	})
+	if err == nil || !resync || vt.Revision != 1 {
+		t.Fatalf("err=%v resync=%v rev=%d", err, resync, vt.Revision)
+	}
+}
+
+func TestPatchRejectsDuplicateKeyInReplacement(t *testing.T) {
+	t.Parallel()
+	vt := seededTree(t)
+	resync, err := vt.ApplyPatch(&v1.ViewPatch{
+		Base: 1, Revision: 2,
+		Replacements: []v1.Replacement{{
+			Key: "date",
+			Node: &v1.Node{Kind: v1.KindColumn, Key: "date", Children: []*v1.Node{
+				{Kind: v1.KindText, Key: "dup", Text: "a"},
+				{Kind: v1.KindText, Key: "dup", Text: "b"},
+			}},
+		}},
+	})
+	if err == nil || !resync || vt.Revision != 1 {
+		t.Fatalf("err=%v resync=%v rev=%d", err, resync, vt.Revision)
+	}
+}
+
+func TestPatchRejectsWrongBaseRevision(t *testing.T) {
+	t.Parallel()
+	vt := seededTree(t)
+	resync, err := vt.ApplyPatch(&v1.ViewPatch{
+		Base: 99, Revision: 100,
+		Replacements: []v1.Replacement{{Key: "time", Node: &v1.Node{Kind: v1.KindText, Key: "time", Text: "x"}}},
+	})
+	if err == nil || !resync || vt.Revision != 1 {
+		t.Fatalf("err=%v resync=%v rev=%d", err, resync, vt.Revision)
+	}
+}
+
+func TestPatchRejectsStaleRevision(t *testing.T) {
+	t.Parallel()
+	vt := seededTree(t)
+	if _, err := vt.ApplyPatch(&v1.ViewPatch{
+		Base: 1, Revision: 2,
+		Replacements: []v1.Replacement{{Key: "time", Node: &v1.Node{Kind: v1.KindText, Key: "time", Text: "09:00"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resync, err := vt.ApplyPatch(&v1.ViewPatch{
+		Base: 1, Revision: 3,
+		Replacements: []v1.Replacement{{Key: "time", Node: &v1.Node{Kind: v1.KindText, Key: "time", Text: "stale"}}},
+	})
+	if err == nil || !resync || vt.Root.Children[0].Text != "09:00" {
+		t.Fatalf("err=%v resync=%v text=%q", err, resync, vt.Root.Children[0].Text)
+	}
+}
+
+func TestResyncEmittedOnceUntilSnapshot(t *testing.T) {
+	t.Parallel()
+	vt := seededTree(t)
+	first, err := vt.ApplyPatch(&v1.ViewPatch{Base: 0, Revision: 2, Replacements: []v1.Replacement{
+		{Key: "time", Node: &v1.Node{Kind: v1.KindText, Key: "time", Text: "x"}},
+	}})
+	if err == nil || !first {
+		t.Fatalf("first: err=%v resync=%v", err, first)
+	}
+	second, err := vt.ApplyPatch(&v1.ViewPatch{Base: 0, Revision: 3, Replacements: []v1.Replacement{
+		{Key: "time", Node: &v1.Node{Kind: v1.KindText, Key: "time", Text: "y"}},
+	}})
+	if second {
+		t.Fatal("second failed patch requested another resync")
+	}
+	if err == nil {
+		t.Fatal("second failed patch returned no error")
+	}
+	if err := vt.ApplySnapshot(4, keyedClock()); err != nil {
+		t.Fatal(err)
+	}
+	again, err := vt.ApplyPatch(&v1.ViewPatch{Base: 0, Revision: 5, Replacements: []v1.Replacement{
+		{Key: "time", Node: &v1.Node{Kind: v1.KindText, Key: "time", Text: "z"}},
+	}})
+	if err == nil || !again {
+		t.Fatalf("after snapshot: err=%v resync=%v", err, again)
+	}
+}

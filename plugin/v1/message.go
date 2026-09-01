@@ -11,6 +11,7 @@ const (
 	TypeHostShutdown    = "host.shutdown"
 	TypeViewOpen        = "view.open"
 	TypeViewClose       = "view.close"
+	TypeViewResync      = "view.resync"
 	TypeInputEvent      = "input.event"
 	TypeSettingsChanged = "settings.changed"
 	TypeHostReply       = "host.reply"
@@ -18,6 +19,7 @@ const (
 	// Plugin to host.
 	TypePluginHello  = "plugin.hello"
 	TypeViewSnapshot = "view.snapshot"
+	TypeViewPatch    = "view.patch"
 	TypeHostCall     = "host.call"
 	TypePluginStatus = "plugin.status"
 )
@@ -139,6 +141,32 @@ type ViewClose struct {
 }
 
 func (*ViewClose) messageType() string { return TypeViewClose }
+
+// ViewResync asks the plugin to send a snapshot after the host dropped or
+// rejected a patch. The host emits it at most once until a snapshot arrives.
+type ViewResync struct {
+	Type   string `json:"type"`
+	ViewID string `json:"view_id"`
+}
+
+func (*ViewResync) messageType() string { return TypeViewResync }
+
+// Replacement is one keyed subtree in a ViewPatch.
+type Replacement struct {
+	Key  string `json:"key"`
+	Node *Node  `json:"node"`
+}
+
+// ViewPatch replaces independent keyed subtrees at a matching base revision.
+type ViewPatch struct {
+	Type         string        `json:"type"`
+	ViewID       string        `json:"view_id"`
+	Base         uint64        `json:"base"`
+	Revision     uint64        `json:"revision"`
+	Replacements []Replacement `json:"replacements"`
+}
+
+func (*ViewPatch) messageType() string { return TypeViewPatch }
 
 // ViewSnapshot replaces one view's whole tree at a new revision.
 type ViewSnapshot struct {

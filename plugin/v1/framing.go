@@ -41,6 +41,7 @@ var registry = map[Direction]map[string]func() Message{
 	ToHost: {
 		TypePluginHello:  func() Message { return &PluginHello{} },
 		TypeViewSnapshot: func() Message { return &ViewSnapshot{} },
+		TypeViewPatch:    func() Message { return &ViewPatch{} },
 		TypeHostCall:     func() Message { return &HostCall{} },
 		TypePluginStatus: func() Message { return &PluginStatus{} },
 	},
@@ -49,6 +50,7 @@ var registry = map[Direction]map[string]func() Message{
 		TypeHostShutdown:    func() Message { return &HostShutdown{} },
 		TypeViewOpen:        func() Message { return &ViewOpen{} },
 		TypeViewClose:       func() Message { return &ViewClose{} },
+		TypeViewResync:      func() Message { return &ViewResync{} },
 		TypeInputEvent:      func() Message { return &InputEvent{} },
 		TypeSettingsChanged: func() Message { return &SettingsChanged{} },
 		TypeHostReply:       func() Message { return &HostReply{} },
@@ -115,6 +117,8 @@ func stamp(m Message) error {
 		v.Type = name
 	case *ViewClose:
 		v.Type = name
+	case *ViewResync:
+		v.Type = name
 	case *InputEvent:
 		v.Type = name
 	case *SettingsChanged:
@@ -124,6 +128,8 @@ func stamp(m Message) error {
 	case *PluginHello:
 		v.Type = name
 	case *ViewSnapshot:
+		v.Type = name
+	case *ViewPatch:
 		v.Type = name
 	case *HostCall:
 		v.Type = name
