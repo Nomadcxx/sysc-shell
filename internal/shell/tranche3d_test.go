@@ -60,7 +60,7 @@ func TestAStaleReadingKeepsTheWidgetRendering(t *testing.T) {
 		FailedSince: time.Now().Add(-time.Hour),
 	})
 
-	if got := reg.bars[1].left[0].node.Text; got == noWorkspace || got == "" {
+	if got := reg.bars[1].left[0].inner.Text; got == noWorkspace || got == "" {
 		t.Fatalf("a stale reading rendered %q, want the aged value", got)
 	}
 }

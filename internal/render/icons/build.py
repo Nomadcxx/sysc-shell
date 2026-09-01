@@ -40,12 +40,20 @@ GLYPHS = [
     ("uniE014", 0xE014, "battery-charging-5"),
     ("uniE015", 0xE015, "battery-charging-6"),
     ("uniE016", 0xE016, "battery-critical"),
+    ("uniE017", 0xE017, "cpu"),
+    ("uniE018", 0xE018, "memory"),
+    ("uniE019", 0xE019, "disk"),
+    ("uniE01A", 0xE01A, "network"),
 ]
 
 UPM = 1000
-# 24px SVG -> ~800 font units, y-flipped so the icon sits on the baseline.
-SCALE = 800 / 24
-XFORM = Transform(SCALE, 0, 0, -SCALE, 100, 900)
+# 24px SVG -> font units, y-flipped so the icon sits on the baseline.
+#
+# The artwork does not fill its 24px box, so a box mapped to 800 units left the
+# ink shorter than the surrounding cap height and the icons read as too small.
+# Mapping the box to 980 puts the drawn extent at roughly cap height.
+SCALE = 1200 / 24
+XFORM = Transform(SCALE, 0, 0, -SCALE, 40, 1100)
 
 
 def empty_glyph():
@@ -82,7 +90,7 @@ def main():
     metrics = {name: (900, 50) for name in order}
     metrics[".notdef"] = (600, 0)
     fb.setupHorizontalMetrics(metrics)
-    fb.setupHorizontalHeader(ascent=900, descent=-100)
+    fb.setupHorizontalHeader(ascent=1100, descent=-100)
     fb.setupNameTable(
         {
             "familyName": "sysc-icons",
@@ -94,7 +102,7 @@ def main():
         }
     )
     fb.setupOS2(
-        sTypoAscender=900,
+        sTypoAscender=1100,
         sTypoDescender=-100,
         usWinAscent=900,
         usWinDescent=100,

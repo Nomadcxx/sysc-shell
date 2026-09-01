@@ -40,6 +40,8 @@ type wireItem struct {
 
 	Label     *string `json:"label,omitempty"`
 	WarnBelow *int    `json:"warn-below,omitempty"`
+
+	Items *[]wireItem `json:"items,omitempty"`
 }
 
 func (i *wireItem) UnmarshalJSON(data []byte) error {
@@ -364,7 +366,7 @@ func requireWeatherWhenUsed(cfg Config) error {
 	}
 	for _, bar := range bars {
 		for _, section := range [][]Item{bar.Left, bar.Center, bar.Right} {
-			for _, item := range section {
+			for _, item := range flattenItems(section) {
 				if item.ID == "weather" {
 					return pathErr("weather.latitude",
 						"is required because a weather widget is configured")
@@ -373,6 +375,20 @@ func requireWeatherWhenUsed(cfg Config) error {
 		}
 	}
 	return nil
+}
+
+// flattenItems yields every item in a section, descending one level into a
+// group so cross-section rules cannot be evaded by nesting.
+func flattenItems(section []Item) []Item {
+	out := make([]Item, 0, len(section))
+	for _, item := range section {
+		if item.ID == "group" {
+			out = append(out, item.Items...)
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func applyBar(base Bar, w wireBar, path string) (Bar, error) {
@@ -473,6 +489,29 @@ func resolveItem(w wireItem, path string) (Item, error) {
 		return Item{}, pathErr(path, "%q is not a known item", w.ID)
 	}
 	item := Item{ID: w.ID}
+
+	if w.Items != nil && w.ID != "group" {
+		return Item{}, pathErr(path+".items", "is accepted only on a group, not on %q", w.ID)
+	}
+	if w.ID == "group" {
+		if w.Items == nil || len(*w.Items) == 0 {
+			return Item{}, pathErr(path+".items", "a group needs at least one item")
+		}
+		for i, nested := range *w.Items {
+			// One level only. A nested group would paint a capsule inside a
+			// capsule, which the design rejected after the workspace row
+			// showed two surfaces reading as one blob.
+			if nested.ID == "group" {
+				return Item{}, pathErr(fmt.Sprintf("%s.items[%d]", path, i), "a group may not contain a group")
+			}
+			member, err := resolveItem(nested, fmt.Sprintf("%s.items[%d]", path, i))
+			if err != nil {
+				return Item{}, err
+			}
+			item.Items = append(item.Items, member)
+		}
+		return item, nil
+	}
 
 	if w.Format != nil && w.ID != "clock" {
 		return Item{}, pathErr(path+".format", "is accepted only on a clock, not on %q", w.ID)

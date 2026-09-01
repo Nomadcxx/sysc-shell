@@ -139,3 +139,61 @@ func TestHitDescendsIntoNestedSections(t *testing.T) {
 		t.Fatal("a point outside every actionable child reported a hit")
 	}
 }
+
+// A bar section places items directly rather than through Layout, so it must
+// arrange a capsule's contents too. Without this the bar paints empty pills.
+func TestArrangeBarLaysOutCapsuleContents(t *testing.T) {
+	t.Parallel()
+	label := &Node{Kind: KindText, Text: "11:37"}
+	clock := &Node{Kind: KindCapsule, Padding: 8, Children: []*Node{label}}
+
+	pill := &Node{Kind: KindCapsule, Fill: FillAccent,
+		Children: []*Node{{Kind: KindText, Text: "1"}}}
+	row := &Node{Kind: KindRow, Gap: 8, Children: []*Node{pill}}
+	workspace := &Node{Kind: KindCapsule, Padding: 8, Children: []*Node{row}}
+
+	content := Rect{X: 6, Y: 6, W: 600, H: 36}
+	if err := ArrangeBar(content, []*Node{workspace}, []*Node{clock}, nil, 4, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+
+	if clock.Bounds.W == 0 {
+		t.Fatal("the clock capsule was not placed")
+	}
+	if label.Bounds.W == 0 || label.Bounds.H == 0 {
+		t.Fatalf("capsule label bounds = %+v; contents never laid out", label.Bounds)
+	}
+	if label.Bounds.X < clock.Bounds.X || label.Bounds.X >= clock.Bounds.X+clock.Bounds.W {
+		t.Fatalf("label at %+v sits outside its capsule %+v", label.Bounds, clock.Bounds)
+	}
+	if pill.Bounds.W == 0 {
+		t.Fatalf("workspace pill bounds = %+v; the nested row never arranged", pill.Bounds)
+	}
+	if pill.Children[0].Bounds.W == 0 {
+		t.Fatal("the pill numeral was never laid out")
+	}
+}
+
+// A capsule may lay its row out in a box taller than its own inner band, so
+// that text measured at the physical size is not cropped. Members must still
+// centre on the capsule, not on that taller box.
+func TestCapsuleCentresAMemberTallerThanItsBand(t *testing.T) {
+	t.Parallel()
+	// fakeMeasure reports height 16; an 8-padded capsule in a 28-high band
+	// leaves an inner band of 12, which is shorter than the member.
+	member := &Node{Kind: KindText, Text: "12%"}
+	row := &Node{Kind: KindRow, Children: []*Node{member}}
+	group := &Node{Kind: KindCapsule, Padding: 8, Children: []*Node{row}}
+
+	content := Rect{X: 0, Y: 0, W: 400, H: 28}
+	if err := ArrangeBar(content, []*Node{group}, nil, nil, 4, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+
+	capCentre := group.Bounds.Y + group.Bounds.H/2
+	memCentre := member.Bounds.Y + member.Bounds.H/2
+	if diff := capCentre - memCentre; diff > 1 || diff < -1 {
+		t.Fatalf("member centre %d vs capsule centre %d; member bounds %+v, capsule %+v",
+			memCentre, capCentre, member.Bounds, group.Bounds)
+	}
+}

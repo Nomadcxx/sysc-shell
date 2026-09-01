@@ -55,6 +55,18 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 			return 0, fmt.Errorf("meter value %v is outside zero through one", n.Value)
 		}
 		return MeterHeight, nil
+	case KindCapsule:
+		// A capsule in a column is its child plus padding. The design does not
+		// use one here yet; the case exists so placing one cannot crash a
+		// surface the way an unmeasurable kind did.
+		if len(n.Children) == 0 {
+			return n.Width, nil
+		}
+		h, err := columnChildHeight(n.Children[0], max(width-2*n.Padding, 0), measure)
+		if err != nil {
+			return 0, err
+		}
+		return h + 2*n.Padding, nil
 	case KindGraph:
 		// Width is the graph's measured width in a row. Reusing it as a height
 		// makes the monitor popout's 240-wide sparkline 240 tall.

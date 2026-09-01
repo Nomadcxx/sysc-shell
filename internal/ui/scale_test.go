@@ -79,3 +79,17 @@ func TestScale120Valid(t *testing.T) {
 		}
 	}
 }
+
+func TestLogicalRoundsUpSoTextIsNotClipped(t *testing.T) {
+	t.Parallel()
+	const scale = Scale120(150) // Niri 1.25
+	for _, phys := range []int{1, 7, 17, 100, 101, 149, 150} {
+		got := scale.Logical(phys)
+		if back := scale.Physical(got); back < phys {
+			t.Errorf("Logical(%d)=%d converts back to %d, which is less than the measurement", phys, got, back)
+		}
+	}
+	if got := ScaleUnit.Logical(42); got != 42 {
+		t.Errorf("at scale 1 Logical(42) = %d, want 42", got)
+	}
+}

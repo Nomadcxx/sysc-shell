@@ -96,9 +96,11 @@ func TestOnlyTheAffectedOutputIsInvalidated(t *testing.T) {
 		{ID: 6, Name: "chat", Output: "HDMI-A-9", Active: true},
 	}})
 
-	// Change one output only.
+	// Change one output only. The bar draws numbered pills, so a rename is
+	// invisible to it; adding a workspace to DP-9 is what its pill row sees.
 	changed := reg.UpdateNiri(niri.Snapshot{Workspaces: []niri.Workspace{
-		{ID: 5, Name: "notes", Output: "DP-9", Active: true},
+		{ID: 5, Index: 1, Name: "code", Output: "DP-9", Active: true},
+		{ID: 7, Index: 2, Name: "notes", Output: "DP-9"},
 		{ID: 6, Name: "chat", Output: "HDMI-A-9", Active: true},
 	}})
 	if len(changed) != 1 || changed[0] != 1 {
@@ -158,8 +160,8 @@ func TestNiriStateForAnUnknownOutputIsHeldNotDropped(t *testing.T) {
 	}
 
 	newHosts(t, reg, map[uint32]string{1: "DP-9"})
-	if got := reg.bars[1].left[0].node.Text; got != "later" {
-		t.Fatalf("new bar workspace = %q, want the held state", got)
+	if got := pillIndices(reg.bars[1].left[0].node); len(got) == 0 {
+		t.Fatal("new bar shows no workspace pills, so the held state was lost")
 	}
 }
 
@@ -342,8 +344,8 @@ func TestCommitAppliesHeldStateToTheReplacementBars(t *testing.T) {
 	}
 	prepared.Commit()
 
-	if got := reg.bars[1].left[0].node.Text; got != "code" {
-		t.Fatalf("replacement bar workspace = %q, want the held state", got)
+	if got := pillIndices(reg.bars[1].left[0].node); len(got) == 0 {
+		t.Fatal("replacement bar shows no workspace pills, so the held state was lost")
 	}
 }
 
@@ -433,7 +435,11 @@ func TestAnUnchangedSampleChangesNothing(t *testing.T) {
 // bar costs no sampling goroutine.
 func TestAConfigWithNoMetricLeavesTheServiceStopped(t *testing.T) {
 	t.Parallel()
-	reg := NewRegistry(config.Default())
+	// The default bar now ships status widgets, so a no-metric configuration
+	// has to be built rather than taken from the defaults.
+	cfg := config.Default()
+	cfg.Bar.Right = nil
+	reg := NewRegistry(cfg)
 	t.Cleanup(reg.Close)
 	newHosts(t, reg, map[uint32]string{1: "DP-9"})
 

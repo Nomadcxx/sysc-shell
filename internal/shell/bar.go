@@ -110,21 +110,26 @@ func NewWithTheme(theme Theme, policy config.Bar, connector string) (*Bar, error
 		text:          render.NewTextRendererWithFontMap(fonts),
 		invalidations: make(chan struct{}, 1),
 		style: render.ProofStyle{
-			Size:       theme.TextSize,
-			Scale120:   ui.ScaleUnit,
-			Background: theme.Background,
-			Foreground: theme.Foreground,
-			Track:      theme.Muted,
-			Accent:     theme.Accent,
-			AccentOn:   theme.Error,
-			Error:      theme.Error,
-			OnPrimary:  theme.OnPrimary,
+			Size:        theme.TextSize,
+			Scale120:    ui.ScaleUnit,
+			Background:  theme.Background,
+			Foreground:  theme.Foreground,
+			Track:       theme.Muted,
+			Accent:      theme.Accent,
+			AccentOn:    theme.Error,
+			Error:       theme.Error,
+			OnPrimary:   theme.OnPrimary,
+			Radius:      theme.Radius,
+			Capsule:     theme.Capsule,
+			Container:   theme.Container,
+			OnAccent:    theme.OnAccent,
+			OnContainer: theme.OnContainer,
 		},
 	}
 
-	b.left = buildWidgets(policy.Left)
-	b.center = buildWidgets(policy.Center)
-	b.right = buildWidgets(policy.Right)
+	b.left = buildWidgets(policy.Left, b.theme.CapsulePadding)
+	b.center = buildWidgets(policy.Center, b.theme.CapsulePadding)
+	b.right = buildWidgets(policy.Right, b.theme.CapsulePadding)
 	return b, nil
 }
 
@@ -202,14 +207,21 @@ func (b *Bar) applyLocked(view barView) bool {
 			// text, and format writes it as a side effect. The previous state
 			// is captured first so every display mode is compared, not just
 			// the one whose state happens to be a string.
-			before := *w.node
-			if text := w.format(view); text != w.node.Text {
-				w.node.Text = text
+			if w.refresh != nil {
+				if w.refresh(view) {
+					changed = true
+				}
+				continue
+			}
+			// State lives on the inner node; the capsule is chrome.
+			before := *w.inner
+			if text := w.format(view); text != w.inner.Text {
+				w.inner.Text = text
 				changed = true
 			}
-			if w.node.Value != before.Value || w.node.Absent != before.Absent ||
-				w.node.Tone != before.Tone ||
-				!slices.Equal(w.node.Values, before.Values) {
+			if w.inner.Value != before.Value || w.inner.Absent != before.Absent ||
+				w.inner.Tone != before.Tone ||
+				!slices.Equal(w.inner.Values, before.Values) {
 				changed = true
 			}
 		}
@@ -291,12 +303,22 @@ func (b *Bar) bodyLocked(width, height int) ui.Rect {
 }
 
 func (b *Bar) layoutLocked(width, height int) error {
+	// Shaping for paint happens at the physical size, so measuring at the
+	// logical size and scaling the result up assumes glyph advances are linear
+	// in point size. They are not: at scale 1.25 the painter shaped text wider
+	// than layout had reserved and ellipsized a clock that fits.
+	//
+	// Measure at the size the painter will actually use, then convert back up.
+	size := b.style.Scale120.Physical(b.style.Size)
+	if size <= 0 {
+		size = b.style.Size
+	}
 	measure := func(s string, tabular bool) (int, int) {
-		w, h, err := b.text.Measure(s, b.style.Size, tabular)
+		w, h, err := b.text.Measure(s, size, tabular)
 		if err != nil {
 			return 0, 0
 		}
-		return w, h
+		return b.style.Scale120.Logical(w), b.style.Scale120.Logical(h)
 	}
 	b.trayNodes = nil
 	sections := b.sections()
@@ -468,6 +490,13 @@ func (b *Bar) tooltipAt(x, y int) (string, ui.Rect, bool) {
 func (b *Bar) tooltipAtLocked(x, y int) (string, ui.Rect, bool) {
 	for _, section := range b.widgets() {
 		for _, w := range section {
+			// A group's own node covers every member, so members are tried
+			// first or the group would answer for all of them.
+			for _, m := range w.members {
+				if m.tooltip != "" && m.node.Bounds.Contains(x, y) {
+					return m.tooltip, m.node.Bounds, true
+				}
+			}
 			if w.tooltip != "" && w.node.Bounds.Contains(x, y) {
 				return w.tooltip, w.node.Bounds, true
 			}

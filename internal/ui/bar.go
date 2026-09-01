@@ -106,6 +106,14 @@ func placeSection(items []*Node, x int, content Rect, budget, spacing int, measu
 			h = 0
 		}
 		n.Bounds = Rect{X: x, Y: content.Y + (content.H-h)/2, W: granted, H: h}
+		// A section places items itself rather than through Layout, so a
+		// capsule's contents are arranged here too. Without this a bar paints
+		// empty pills.
+		if n.Kind == KindCapsule {
+			if err := layoutCapsuleChild(n, measure); err != nil {
+				return fmt.Errorf("ui: item %d: %w", i, err)
+			}
+		}
 		x += granted
 		remaining -= granted
 	}

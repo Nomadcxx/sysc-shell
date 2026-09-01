@@ -331,3 +331,54 @@ func TestLayoutArrangesTabsInARow(t *testing.T) {
 		t.Fatalf("Memory tab width = %d, want 48", got)
 	}
 }
+
+func TestLayoutArrangesCapsuleAroundText(t *testing.T) {
+	t.Parallel()
+	root := &Node{Kind: KindRow, Padding: 4, Children: []*Node{{
+		Kind: KindCapsule, Padding: 8,
+		Children: []*Node{{Kind: KindText, Text: "11:37"}},
+	}}}
+	if err := Layout(root, Rect{W: 400, H: 40}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	cap := root.Children[0]
+	// "11:37" is 5 glyphs * 8 = 40 wide, 16 tall; plus 16 padding.
+	if cap.Bounds.W != 56 {
+		t.Fatalf("capsule width = %d, want 56", cap.Bounds.W)
+	}
+	if cap.Bounds.H != 32 { // content band = 40 - 2*row padding
+		t.Fatalf("capsule height = %d, want the content band", cap.Bounds.H)
+	}
+	child := cap.Children[0]
+	if child.Bounds.W != 40 || child.Bounds.H != 16 {
+		t.Fatalf("child bounds = %+v", child.Bounds)
+	}
+}
+
+func TestCapsuleWithZeroWidthChildMeasuresZero(t *testing.T) {
+	t.Parallel()
+	root := &Node{Kind: KindRow, Children: []*Node{{
+		Kind: KindCapsule, Padding: 8,
+		Children: []*Node{{Kind: KindText, Text: ""}},
+	}}}
+	if err := Layout(root, Rect{W: 400, H: 40}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	if root.Children[0].Bounds.W != 0 {
+		t.Fatal("empty title must not leave an empty pill")
+	}
+}
+
+func TestEmptyCapsuleWithWidthIsASquareDot(t *testing.T) {
+	t.Parallel()
+	root := &Node{Kind: KindRow, Padding: 0, Children: []*Node{{
+		Kind: KindCapsule, Width: 8,
+	}}}
+	if err := Layout(root, Rect{W: 400, H: 40}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	got := root.Children[0].Bounds
+	if got.W != 8 || got.H != 8 {
+		t.Fatalf("dot bounds = %+v, want 8x8", got)
+	}
+}

@@ -21,6 +21,13 @@ type ProofStyle struct {
 
 	Background Color
 	Foreground Color
+	// Capsule fills the pill that wraps a bar widget. Container fills a
+	// workspace pill that is not focused. OnAccent and OnContainer are the
+	// foregrounds their contents use.
+	Capsule     Color
+	Container   Color
+	OnAccent    Color
+	OnContainer Color
 	Track      Color
 	Accent     Color
 	AccentOn   Color
@@ -102,6 +109,24 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 		filled := box
 		filled.W = style.Scale120.Physical(n.Bounds.X+int(float64(n.Bounds.W)*n.Value+0.5)) - box.X
 		fillRect(c, filled, style.accent())
+		return nil
+
+	case ui.KindCapsule:
+		box := style.Scale120.PhysicalRect(n.Bounds)
+		// Fully rounded: a bar pill reads as a stadium and an empty dot as a
+		// circle, so the radius can never exceed half the short side.
+		radius := min(style.Scale120.Physical(style.Radius), min(box.W, box.H)/2)
+		fillRoundedRect(c, box, radius, capsuleFill(style, n.Fill))
+		inner := style
+		inner.Foreground = capsuleForeground(style, n.Fill)
+		for i, child := range n.Children {
+			if child == nil {
+				return fmt.Errorf("capsule child %d is nil", i)
+			}
+			if err := paintNode(c, child, text, inner, size); err != nil {
+				return err
+			}
+		}
 		return nil
 
 	case ui.KindGraph:
@@ -407,6 +432,28 @@ func shearMask(src *image.Alpha, shift int) *image.Alpha {
 }
 
 // textColor picks the colour a tone paints in.
+// capsuleFill and capsuleForeground keep a pill's background and the colour of
+// its contents defined in one place, so the two cannot drift apart.
+func capsuleFill(style ProofStyle, fill ui.Fill) Color {
+	switch fill {
+	case ui.FillAccent:
+		return style.Accent
+	case ui.FillContainer:
+		return style.Container
+	}
+	return style.Capsule
+}
+
+func capsuleForeground(style ProofStyle, fill ui.Fill) Color {
+	switch fill {
+	case ui.FillAccent:
+		return style.OnAccent
+	case ui.FillContainer:
+		return style.OnContainer
+	}
+	return style.Foreground
+}
+
 func textColor(style ProofStyle, tone ui.Tone) Color {
 	if tone == ui.ToneError {
 		return style.Error

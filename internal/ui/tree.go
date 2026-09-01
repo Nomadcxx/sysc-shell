@@ -21,6 +21,14 @@ const (
 	KindScroll
 	KindVirtualList
 	KindImage
+
+	// KindCapsule is a padded pill around one child, or an empty coloured dot
+	// when it has no children and a Width. It is the bar's per-item chrome.
+	KindCapsule
+
+	// kindCount is one past the last kind. It exists so a test can assert that
+	// every declared kind is measurable, and it must stay last.
+	kindCount
 )
 
 // Image is a decoded raster in premultiplied straight-alpha BGRA, the layout
@@ -103,7 +111,11 @@ type Node struct {
 	// arrives later cannot change the layout around it.
 	ImageSize int
 	// Tone selects the text colour. Zero is ToneNormal.
-	Tone    Tone
+	Tone Tone
+	// Fill selects a capsule's background. Zero is the surface capsule. It is
+	// a pair, not a flag: each fill carries the foreground its own contents
+	// must use to stay legible.
+	Fill    Fill
 	Padding int
 	Gap     int
 	Action  string
@@ -125,6 +137,19 @@ func (n *Node) Active() int {
 	}
 	return int(n.Value)
 }
+
+// Fill selects which theme colour paints a capsule, and with it the
+// foreground its contents inherit.
+type Fill uint8
+
+const (
+	// FillNone is the surface capsule that wraps an ordinary bar widget.
+	FillNone Fill = iota
+	// FillAccent is the focused workspace pill.
+	FillAccent
+	// FillContainer is a workspace pill that is not focused.
+	FillContainer
+)
 
 // Tone selects which theme colour paints a text node.
 //

@@ -70,8 +70,10 @@ func tooltipPlacement(anchor ui.Rect, width, height, outputWidth, outputHeight i
 // and needs no outside-click dismissal, which is the panel design's OSD shape
 // rather than its panel shape.
 const (
-	tooltipLayer         = layershell.ZwlrLayerShellV1LayerOverlay
-	tooltipKeyboard      = uint32(layershell.ZwlrLayerSurfaceV1KeyboardInteractivityNone)
+	tooltipLayer    = layershell.ZwlrLayerShellV1LayerOverlay
+	tooltipKeyboard = uint32(layershell.ZwlrLayerSurfaceV1KeyboardInteractivityNone)
+	// tooltipTextSize is the logical size the label is measured and painted at.
+	tooltipTextSize      = 14
 	tooltipExclusiveZone = int32(-1)
 )
 
@@ -109,7 +111,7 @@ func (o *owner) showTooltip(req TooltipRequest) error {
 		return nil
 	}
 
-	width, height := o.measureTooltip(h, req.Text)
+	width, height := o.measureTooltip(h, req.Text, h.bar.ss.scale120)
 	outW := h.bar.ss.logicalWidth
 	if outW <= 0 {
 		outW = int(h.modeWidth)
@@ -317,13 +319,27 @@ func (o *owner) tooltipText(family string) *render.TextRenderer {
 	return o.tooltipRenderer
 }
 
-func (o *owner) measureTooltip(host *OutputHost, text string) (int, int) {
+// measureTooltip sizes the surface for the text it will hold, in the output's
+// own font and at the output's own scale.
+//
+// Shaping for paint happens at the physical size, so measuring at the logical
+// one and trusting the result made a tooltip narrower than its own glyphs and
+// clipped the label. Measure physical, convert back.
+func (o *owner) measureTooltip(host *OutputHost, text string, scale ui.Scale120) (int, int) {
+	if !scale.Valid() {
+		scale = ui.ScaleUnit
+	}
 	bar := o.cfg.ForConnector(host.connector)
 	height := bar.FontSize + 2*tooltipPad
 	width := ((bar.FontSize+1)/2)*len(text) + 2*tooltipPad
 	if r := o.tooltipText(bar.FontFamily); r != nil {
-		if w, h, err := r.Measure(text, bar.FontSize, false); err == nil {
-			width, height = w+2*tooltipPad, h+2*tooltipPad
+		size := scale.Physical(bar.FontSize)
+		if size <= 0 {
+			size = bar.FontSize
+		}
+		if w, h, err := r.Measure(text, size, false); err == nil {
+			width = scale.Logical(w) + 2*tooltipPad
+			height = scale.Logical(h) + 2*tooltipPad
 		}
 	}
 	if width < 16 {

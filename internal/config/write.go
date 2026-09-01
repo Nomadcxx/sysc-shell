@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 )
 
 // atomicReplace is os.Rename except in tests that force a failure after the
@@ -181,7 +182,14 @@ func itemsEqual(a, b []Item) bool {
 	for i := range a {
 		x, y := a[i], b[i]
 		x.Boundary, y.Boundary = 0, 0
-		if x != y {
+		// An Item carries group members, so it is no longer comparable with
+		// ==. Members are compared recursively and then cleared so the
+		// remaining scalar fields compare as before.
+		if !itemsEqual(x.Items, y.Items) {
+			return false
+		}
+		x.Items, y.Items = nil, nil
+		if !reflect.DeepEqual(x, y) {
 			return false
 		}
 	}

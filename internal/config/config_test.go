@@ -187,20 +187,43 @@ func TestDefaultVocabularyShipsBothClocksAndBothNiriWidgets(t *testing.T) {
 	if cfg.Bar.Left[1].ID != "window-title" || cfg.Bar.Left[1].MaxWidth <= 0 {
 		t.Fatalf("left[1] = %+v, want window-title with a positive max width", cfg.Bar.Left[1])
 	}
-	if len(cfg.Bar.Center) != 1 || cfg.Bar.Center[0].ID != "clock" {
-		t.Fatalf("center = %+v, want one clock", cfg.Bar.Center)
+	// Time and date sit together in the centre, as each reference shell does.
+	if len(cfg.Bar.Center) != 2 {
+		t.Fatalf("center = %+v, want a time and a date clock", cfg.Bar.Center)
 	}
-	if len(cfg.Bar.Right) != 1 || cfg.Bar.Right[0].ID != "clock" {
-		t.Fatalf("right = %+v, want one clock", cfg.Bar.Right)
+	for i, item := range cfg.Bar.Center {
+		if item.ID != "clock" {
+			t.Fatalf("center[%d] = %q, want clock", i, item.ID)
+		}
 	}
 	// The two default clocks must differ, or the defaults do not demonstrate
 	// a date.
-	if cfg.Bar.Center[0].Format == cfg.Bar.Right[0].Format {
+	if cfg.Bar.Center[0].Format == cfg.Bar.Center[1].Format {
 		t.Fatal("the two default clocks share a format; one should show the date")
 	}
-	for _, item := range append(append([]Item{}, cfg.Bar.Center...), cfg.Bar.Right...) {
+	// The right section carries status widgets rather than a second clock.
+	if len(cfg.Bar.Right) == 0 {
+		t.Fatal("right section is empty; the default bar should ship status widgets")
+	}
+	for i, item := range cfg.Bar.Right {
+		if item.ID == "clock" {
+			t.Fatalf("right[%d] is a clock; the date moved to the centre", i)
+		}
+	}
+	for _, item := range cfg.Bar.Center {
 		if item.Boundary <= 0 {
 			t.Fatalf("default clock %+v has no tick boundary", item)
+		}
+	}
+	for _, item := range cfg.Bar.Right {
+		members := item.Items
+		if len(members) == 0 {
+			members = []Item{item}
+		}
+		for _, m := range members {
+			if m.Interval <= 0 {
+				t.Fatalf("default status widget %q has no sampling interval", m.ID)
+			}
 		}
 	}
 }
