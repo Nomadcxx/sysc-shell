@@ -9,9 +9,9 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
-var settingsSections = []string{"Bar", "Widgets", "Appearance", "Panels", "Session", "Accessibility"}
+var settingsSections = []string{"Bar", "Widgets", "Appearance", "Panels", "Session", "Accessibility", "Plugins"}
 
-func settingsTree(h *PanelHost) *ui.Node {
+func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	if h.search == nil {
 		h.search = ui.NewField("")
 	}
@@ -49,6 +49,12 @@ func settingsTree(h *PanelHost) *ui.Node {
 	section := h.section
 	if section == "" {
 		section = "Bar"
+	}
+	if section == "Plugins" {
+		return &ui.Node{Kind: ui.KindRow, Gap: 16, Padding: 12, Children: []*ui.Node{
+			{Kind: ui.KindColumn, Width: 220, Gap: 8, Children: sidebar},
+			pluginsTree(r, h),
+		}}
 	}
 	var entries []settings.Entry
 	if h.set != nil {

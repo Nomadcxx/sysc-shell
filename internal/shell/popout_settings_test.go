@@ -14,10 +14,10 @@ func TestSettingsSidebarSectionsAndFocus(t *testing.T) {
 	t.Parallel()
 	h := newSettingsHost()
 	tabs := byRole(h.root, "tab")
-	if len(tabs) != 6 {
-		t.Fatalf("sidebar tabs = %d, want 6", len(tabs))
+	if len(tabs) != 7 {
+		t.Fatalf("sidebar tabs = %d, want 7", len(tabs))
 	}
-	want := []string{"Bar", "Widgets", "Appearance", "Panels", "Session", "Accessibility"}
+	want := []string{"Bar", "Widgets", "Appearance", "Panels", "Session", "Accessibility", "Plugins"}
 	for i, name := range want {
 		if tabs[i].Text != name {
 			t.Fatalf("tab %d = %q, want %q", i, tabs[i].Text, name)
@@ -238,7 +238,7 @@ func newSettingsHost() *PanelHost {
 		menus:   map[string]*Menu{},
 		fields:  map[string]*ui.Field{},
 	}
-	h.root = settingsTree(h)
+	h.root = settingsTree(nil, h)
 	h.focus = ui.Focusables(h.root)
 	h.roving = ui.Roving{Count: len(h.focus)}
 	return h

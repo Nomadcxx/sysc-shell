@@ -713,3 +713,92 @@ func (r *Registry) deliverPluginText(action, text string, kind v1.EventKind) boo
 	}
 	return r.plugins.deliver(hit, kind, "", text)
 }
+
+func (h *pluginHost) discovered() plugin.Catalog {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.catalog
+}
+
+func (h *pluginHost) status(id string) plugin.Status {
+	h.mu.Lock()
+	slot := h.slots[id]
+	h.mu.Unlock()
+	if slot == nil {
+		return plugin.Status{State: plugin.StateDisabled}
+	}
+	return slot.rt.Status()
+}
+
+func (h *pluginHost) enable(id string, on bool) error {
+	h.r.mu.Lock()
+	cfg := h.r.cfg
+	cfg.Plugins = cfg.Plugins.Clone()
+	next := make([]string, 0, len(cfg.Plugins.Enabled)+1)
+	for _, have := range cfg.Plugins.Enabled {
+		if have != id {
+			next = append(next, have)
+		}
+	}
+	if on {
+		next = append(next, id)
+	}
+	cfg.Plugins.Enabled = next
+	h.r.cfg = cfg
+	h.r.mu.Unlock()
+	if err := h.r.writeConfig(cfg); err != nil {
+		return err
+	}
+	return h.syncEnabled()
+}
+
+func (h *pluginHost) retry(id string) error {
+	h.mu.Lock()
+	slot := h.slots[id]
+	h.mu.Unlock()
+	if slot == nil {
+		return h.enable(id, true)
+	}
+	return slot.rt.Retry(h.ctx)
+}
+
+func (h *pluginHost) rescan() error { return h.syncEnabled() }
+
+func (h *pluginHost) applySetting(pluginID, key string, value any) error {
+	h.mu.Lock()
+	slot := h.slots[pluginID]
+	var schema []plugin.Setting
+	if slot != nil {
+		schema = slot.rt.Manifest().Settings
+	} else {
+		if c, ok := h.catalog.Lookup(pluginID); ok {
+			schema = c.Manifest.Settings
+		}
+	}
+	h.mu.Unlock()
+	h.r.mu.Lock()
+	cfg := h.r.cfg
+	cfg.Plugins = cfg.Plugins.Clone()
+	if cfg.Plugins.Settings == nil {
+		cfg.Plugins.Settings = map[string]map[string]any{}
+	}
+	cur := map[string]any{}
+	for k, v := range cfg.Plugins.Settings[pluginID] {
+		cur[k] = v
+	}
+	cur[key] = value
+	if err := plugin.CheckValues(schema, cur); err != nil {
+		h.r.mu.Unlock()
+		return err
+	}
+	cfg.Plugins.Settings[pluginID] = cur
+	h.r.cfg = cfg
+	h.r.mu.Unlock()
+	if err := h.r.writeConfig(cfg); err != nil {
+		return err
+	}
+	if slot != nil {
+		_ = slot.rt.Send(&v1.SettingsChanged{Scope: v1.ScopePlugin, Values: cur})
+	}
+	return nil
+}

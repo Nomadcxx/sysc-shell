@@ -72,7 +72,9 @@ type Plugins struct {
 	Instances map[string]map[string]any
 }
 
-// clone returns a deep copy, so a candidate cannot alias live configuration.
+// Clone is a deep copy, so a candidate cannot alias live configuration.
+func (p Plugins) Clone() Plugins { return p.clone() }
+
 func (p Plugins) clone() Plugins {
 	out := Plugins{}
 	if p.Enabled != nil {

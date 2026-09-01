@@ -871,6 +871,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 		}
 		return r.handlePluginBar(n.Action, wayland.Event{Kind: wayland.EventPointerRelease, Button: 272})
 	}
+	if r.handlePluginManager(h, n.Action) {
+		return true
+	}
 	if h.id == PanelLauncher {
 		return h.activateLauncher(r, n)
 	}
@@ -961,7 +964,7 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 	case PanelSession:
 		return sessionTree(r.cfg.Session.Locker, h.errLabel)
 	case PanelSettings:
-		return settingsTree(h)
+		return settingsTree(r, h)
 	case PanelLauncher:
 		return launcherTree(h)
 	case PanelPlugin:
