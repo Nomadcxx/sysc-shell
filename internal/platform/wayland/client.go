@@ -227,6 +227,25 @@ func (o *owner) fail(err error) {
 	}
 }
 
+// failUnit contains a surface error to the surface that raised it. A bar
+// failure stays fatal: there is no shell without its bar. An auxiliary
+// surface -- a panel, OSD or tooltip -- closes instead, because one panel
+// whose tree cannot be arranged must not take the whole process down with it.
+//
+// This is the containment half of the crash where a panel holding a node kind
+// the layout could not measure failed the owner during configure.
+func (o *owner) failUnit(h *OutputHost, u *surfaceUnit, err error) {
+	if err == nil {
+		return
+	}
+	if h == nil || u == nil || u == h.bar {
+		o.fail(err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "sysc-shell: closing surface %s: %v\n", u.id, err)
+	o.closeAux(h, u.id)
+}
+
 func (o *owner) connect() error {
 	display, err := client.Connect("")
 	if err != nil {
@@ -654,7 +673,7 @@ func (o *owner) onConfigure(h *OutputHost, u *surfaceUnit, e layershell.ZwlrLaye
 		h.state = hostConfiguring
 	}
 	if changed || u.current == nil {
-		o.fail(o.reconfigure(h, u))
+		o.failUnit(h, u, o.reconfigure(h, u))
 	}
 }
 
@@ -669,7 +688,7 @@ func (o *owner) onPreferredScale(h *OutputHost, u *surfaceUnit, e fractionalscal
 		return
 	}
 	if u.ss.eligible() {
-		o.fail(o.reconfigure(h, u))
+		o.failUnit(h, u, o.reconfigure(h, u))
 	}
 }
 

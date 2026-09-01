@@ -9,6 +9,34 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 )
 
+func TestPanelHostRenderPaintsClockText(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelClock, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	reqs := drainAux(t, reg, 2)
+	panel := reqs[1].Open
+	if err := panel.Callbacks.Configure(360, 420, 120); err != nil {
+		t.Fatal(err)
+	}
+	const w, hgt = 360, 420
+	pix := make([]byte, w*hgt*4)
+	if err := panel.Callbacks.Render(pix, w, hgt, w*4); err != nil {
+		t.Fatal(err)
+	}
+	fg := reg.panelHosts[PanelClock].theme.Foreground
+	n := 0
+	for i := 0; i+3 < len(pix); i += 4 {
+		if pix[i] == fg.R && pix[i+1] == fg.G && pix[i+2] == fg.B && pix[i+3] == fg.A {
+			n++
+		}
+	}
+	if n == 0 {
+		t.Fatal("clock panel painted no foreground text")
+	}
+}
+
 func TestOpenPanelSendsShieldThenPanel(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
@@ -334,5 +362,25 @@ func TestEveryPanelCloseReleasesItsChainExactlyOnce(t *testing.T) {
 				t.Fatalf("chain released %d times after a stale close", released)
 			}
 		})
+	}
+}
+
+func TestPanelFontFamilyFollowsTheOutputConnector(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Bar.FontFamily = "GlobalSans"
+	cfg.Outputs = []config.OutputOverride{{Connector: "DP-2", Bar: config.Bar{FontFamily: "PerOutputSerif"}}}
+	reg := NewRegistry(cfg)
+	reg.bars[1] = &Bar{conn: "DP-1"}
+	reg.bars[2] = &Bar{conn: "DP-2"}
+
+	if got := reg.panelFontFamily(1); got != "GlobalSans" {
+		t.Errorf("DP-1 panel font = %q, want the global family", got)
+	}
+	if got := reg.panelFontFamily(2); got != "PerOutputSerif" {
+		t.Errorf("DP-2 panel font = %q, want the per-output family", got)
+	}
+	if got := reg.panelFontFamily(99); got != "GlobalSans" {
+		t.Errorf("unknown output font = %q, want the global family", got)
 	}
 }

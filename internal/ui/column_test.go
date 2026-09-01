@@ -50,6 +50,24 @@ func TestColumnLayoutStacksAndCentersText(t *testing.T) {
 	}
 }
 
+func TestColumnLayoutAcceptsGraph(t *testing.T) {
+	t.Parallel()
+	root := &Node{Kind: KindColumn, Padding: 12, Children: []*Node{
+		{Kind: KindGraph, Width: 240, Values: []float64{0.2, 0.8}},
+	}}
+	if err := LayoutColumn(root, Rect{W: 300, H: 400}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	// Width is the graph's width in a row, not a height. The monitor popout
+	// builds a 240-wide sparkline; it must not become 240 tall in a column.
+	if got := root.Children[0].Bounds.H; got != GraphHeight {
+		t.Fatalf("graph height = %d, want GraphHeight %d", got, GraphHeight)
+	}
+	if got := root.Children[0].Bounds.W; got != 300-2*12 {
+		t.Fatalf("graph width = %d, want the padded column width", got)
+	}
+}
+
 func samplePanelTree() *Node {
 	return &Node{Kind: KindColumn, Gap: 8, Padding: 12, Children: []*Node{
 		{Kind: KindText, Text: "Power"},
