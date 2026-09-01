@@ -106,6 +106,12 @@ type wirePanels struct {
 	OSD     *string `json:"osd,omitempty"`
 }
 
+type wireTrayPreferences struct {
+	Hidden []string `json:"hidden,omitempty"`
+	Pinned []string `json:"pinned,omitempty"`
+	Order  []string `json:"order,omitempty"`
+}
+
 type wireOutput struct {
 	Connector *string  `json:"connector,omitempty"`
 	Bar       *wireBar `json:"bar,omitempty"`
@@ -119,15 +125,16 @@ type wireWeather struct {
 }
 
 type wireConfig struct {
-	Bar           *wireBar           `json:"bar,omitempty"`
-	Theme         *wireTheme         `json:"theme,omitempty"`
-	ThemeGen      *wireThemeGen      `json:"theme-gen,omitempty"`
-	Accessibility *wireAccessibility `json:"accessibility,omitempty"`
-	Session       *wireSession       `json:"session,omitempty"`
-	Panels        *wirePanels        `json:"panels,omitempty"`
-	Weather       *wireWeather       `json:"weather,omitempty"`
-	Outputs       []wireOutput       `json:"outputs,omitempty"`
-	Templates     map[string]bool    `json:"templates,omitempty"`
+	Bar           *wireBar             `json:"bar,omitempty"`
+	Theme         *wireTheme           `json:"theme,omitempty"`
+	ThemeGen      *wireThemeGen        `json:"theme-gen,omitempty"`
+	Accessibility *wireAccessibility   `json:"accessibility,omitempty"`
+	Session       *wireSession         `json:"session,omitempty"`
+	Panels        *wirePanels          `json:"panels,omitempty"`
+	Tray          *wireTrayPreferences `json:"tray,omitempty"`
+	Weather       *wireWeather         `json:"weather,omitempty"`
+	Outputs       []wireOutput         `json:"outputs,omitempty"`
+	Templates     map[string]bool      `json:"templates,omitempty"`
 }
 
 var colorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$`)
@@ -201,6 +208,13 @@ func Parse(data []byte) (Config, error) {
 		}
 		cfg.Panels = panels
 	}
+	if wire.Tray != nil {
+		prefs, err := applyTrayPreferences(*wire.Tray)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Tray = prefs
+	}
 	// The bar's radius mirrors the theme's, so the opaque region and the
 	// painted body agree without a second token.
 	cfg.Bar.Radius = cfg.Theme.Radius
@@ -247,6 +261,48 @@ func Parse(data []byte) (Config, error) {
 		cfg.Templates = wire.Templates
 	}
 	return cfg, nil
+}
+
+const (
+	maxTrayPreferences = 128
+	maxTrayTokenBytes  = 4 << 10
+)
+
+func applyTrayPreferences(w wireTrayPreferences) (TrayPreferences, error) {
+	validate := func(path string, values []string) ([]string, error) {
+		if len(values) > maxTrayPreferences {
+			return nil, pathErr(path, "has %d entries; maximum is %d", len(values), maxTrayPreferences)
+		}
+		seen := make(map[string]struct{}, len(values))
+		out := make([]string, len(values))
+		for i, value := range values {
+			if value == "" {
+				return nil, pathErr(fmt.Sprintf("%s[%d]", path, i), "must not be empty")
+			}
+			if len(value) > maxTrayTokenBytes {
+				return nil, pathErr(fmt.Sprintf("%s[%d]", path, i), "exceeds %d bytes", maxTrayTokenBytes)
+			}
+			if _, ok := seen[value]; ok {
+				return nil, pathErr(fmt.Sprintf("%s[%d]", path, i), "%q appears more than once", value)
+			}
+			seen[value] = struct{}{}
+			out[i] = value
+		}
+		return out, nil
+	}
+	hidden, err := validate("tray.hidden", w.Hidden)
+	if err != nil {
+		return TrayPreferences{}, err
+	}
+	pinned, err := validate("tray.pinned", w.Pinned)
+	if err != nil {
+		return TrayPreferences{}, err
+	}
+	order, err := validate("tray.order", w.Order)
+	if err != nil {
+		return TrayPreferences{}, err
+	}
+	return TrayPreferences{Hidden: hidden, Pinned: pinned, Order: order}, nil
 }
 
 // applyWeather resolves and validates the weather block.

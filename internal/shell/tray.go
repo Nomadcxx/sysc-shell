@@ -15,6 +15,7 @@ type trayState struct {
 	mu         sync.Mutex
 	generation uint64
 	items      map[tray.ItemKey]tray.Item
+	order      []tray.ItemKey
 	menus      map[tray.ItemKey]tray.Menu
 }
 
@@ -31,12 +32,17 @@ func (s *trayState) applyTray(m trayclient.Message) {
 	case trayclient.KindSnapshot:
 		s.generation = m.Generation
 		s.items = make(map[tray.ItemKey]tray.Item, len(m.Snapshot.Items))
+		s.order = s.order[:0]
 		for _, it := range m.Snapshot.Items {
 			s.items[it.Key] = it
+			s.order = append(s.order, it.Key)
 		}
 	case trayclient.KindItemAdded, trayclient.KindItemChanged:
 		if m.Generation != s.generation {
 			return
+		}
+		if _, exists := s.items[m.Item.Key]; !exists {
+			s.order = append(s.order, m.Item.Key)
 		}
 		s.items[m.Item.Key] = m.Item
 	case trayclient.KindItemRemoved:
@@ -45,6 +51,12 @@ func (s *trayState) applyTray(m trayclient.Message) {
 		}
 		delete(s.items, m.Removed.Key)
 		delete(s.menus, m.Removed.Key)
+		for i, key := range s.order {
+			if key == m.Removed.Key {
+				s.order = append(s.order[:i], s.order[i+1:]...)
+				break
+			}
+		}
 	case trayclient.KindMenuUpdated:
 		if m.Generation != s.generation {
 			return
@@ -53,6 +65,7 @@ func (s *trayState) applyTray(m trayclient.Message) {
 	case trayclient.KindDisconnected:
 		s.generation = 0
 		s.items = map[tray.ItemKey]tray.Item{}
+		s.order = nil
 		s.menus = map[tray.ItemKey]tray.Menu{}
 	}
 }
@@ -90,8 +103,10 @@ func (s *trayState) itemsList() []tray.Item {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]tray.Item, 0, len(s.items))
-	for _, it := range s.items {
-		out = append(out, it)
+	for _, key := range s.order {
+		if it, ok := s.items[key]; ok {
+			out = append(out, it)
+		}
 	}
 	return out
 }

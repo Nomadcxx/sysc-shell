@@ -19,6 +19,7 @@ const (
 	rootNone rootKind = iota
 	rootPanel
 	rootTrayMenu
+	rootTrayDrawer
 )
 
 // rootID identifies one interactive root. Two roots are the same only when
@@ -35,6 +36,10 @@ func panelRoot(id PanelID) rootID { return rootID{kind: rootPanel, key: uint64(i
 // to make a replacement unambiguous.
 func trayMenuRoot(outputGlobal uint32) rootID {
 	return rootID{kind: rootTrayMenu, key: uint64(outputGlobal)}
+}
+
+func trayDrawerRoot(outputGlobal uint32) rootID {
+	return rootID{kind: rootTrayDrawer, key: uint64(outputGlobal)}
 }
 
 // rootChain is the single interactive root and its optional attached child.

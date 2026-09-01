@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -109,6 +111,22 @@ func TestTrayProjectsTheSameItemIndependentlyPerOutput(t *testing.T) {
 	for _, connector := range []string{"eDP-1", "HDMI-A-1"} {
 		if got := r.trayItemsFor(connector); len(got) != 1 {
 			t.Fatalf("%s sees %d items", connector, len(got))
+		}
+	}
+}
+
+func TestTrayProjectionPreservesServiceOrder(t *testing.T) {
+	r := NewRegistry(config.Default())
+	items := make([]tray.Item, 24)
+	want := make([]string, len(items))
+	for i := range items {
+		items[i] = trayItem(uint64(i+1), fmt.Sprintf("item-%02d", i))
+		want[i] = items[i].ID
+	}
+	r.applyTray(traySnapshot(1, items...))
+	for pass := 0; pass < 10; pass++ {
+		if got := itemIDs(r.trayItemsFor("eDP-1")); !slices.Equal(got, want) {
+			t.Fatalf("service order changed: got %v, want %v", got, want)
 		}
 	}
 }

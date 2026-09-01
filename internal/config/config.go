@@ -88,6 +88,15 @@ type Panels struct {
 	OSD     string
 }
 
+// TrayPreferences are stable service-independent item tokens. Service
+// generations deliberately never appear here: reconnecting the tray service
+// must not discard a user's placement choices.
+type TrayPreferences struct {
+	Hidden []string
+	Pinned []string
+	Order  []string
+}
+
 // OutputOverride adjusts the bar on one connector.
 type OutputOverride struct {
 	Connector string
@@ -115,6 +124,7 @@ type Config struct {
 	Accessibility Accessibility
 	Session       Session
 	Panels        Panels
+	Tray          TrayPreferences
 	Weather       Weather
 	Outputs       []OutputOverride
 	Templates     map[string]bool
