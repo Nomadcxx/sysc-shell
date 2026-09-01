@@ -238,3 +238,116 @@ func TestPreparedTreesAreNotSharedBetweenRevisions(t *testing.T) {
 		t.Errorf("bounds differ between identical layouts: %+v and %+v", first.Root.Bounds, second.Root.Bounds)
 	}
 }
+
+func TestPrepareBudgetRecordsACleanLayout(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(0, 0)
+	p := NewPreparer(1, measureFixed)
+	p.now = func() time.Time { return now }
+	defer p.Close()
+	p.Submit(barJob("v1", 1, timerBar()))
+	if got := await(t, p); got.Err != nil {
+		t.Fatal(got.Err)
+	}
+	if p.Degraded("org.sysc.timer") {
+		t.Fatal("a clean layout degraded the plugin")
+	}
+}
+
+func TestPrepareBudgetDegradesAfterThreeOverruns(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(0, 0)
+	var jump time.Duration
+	measure := func(s string, tab bool) (int, int) {
+		if jump > 0 {
+			now = now.Add(jump)
+			jump = 0
+		}
+		return measureFixed(s, tab)
+	}
+	p := NewPreparer(1, measure)
+	p.now = func() time.Time { return now }
+	defer p.Close()
+
+	for i := 0; i < 3; i++ {
+		jump = 9 * time.Millisecond
+		p.Submit(barJob("v1", uint64(i+1), timerBar()))
+		if got := await(t, p); got.Err != nil {
+			t.Fatal(got.Err)
+		}
+		now = now.Add(time.Second)
+	}
+	if !p.Degraded("org.sysc.timer") {
+		t.Fatal("three overruns in ten seconds did not degrade")
+	}
+
+	p.Submit(barJob("v1", 9, timerBar()))
+	select {
+	case r := <-p.Results():
+		t.Fatalf("degraded plugin still published %+v", r)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestPrepareBudgetRecoversAfterACleanSnapshot(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(0, 0)
+	var jump time.Duration
+	measure := func(s string, tab bool) (int, int) {
+		if jump > 0 {
+			now = now.Add(jump)
+			jump = 0
+		}
+		return measureFixed(s, tab)
+	}
+	p := NewPreparer(1, measure)
+	p.now = func() time.Time { return now }
+	defer p.Close()
+	for i := 0; i < 3; i++ {
+		jump = 9 * time.Millisecond
+		p.Submit(barJob("v1", uint64(i+1), timerBar()))
+		await(t, p)
+		now = now.Add(time.Second)
+	}
+	p.Recover("org.sysc.timer")
+	p.Submit(barJob("v1", 4, timerBar()))
+	if got := await(t, p); got.Err != nil {
+		t.Fatal(got.Err)
+	}
+	if p.Degraded("org.sysc.timer") {
+		t.Fatal("clean snapshot left the plugin degraded")
+	}
+}
+
+func TestPrepareFairnessFloodDoesNotStarve(t *testing.T) {
+	t.Parallel()
+	release := make(chan struct{})
+	slow := func(s string, tab bool) (int, int) {
+		<-release
+		return measureFixed(s, tab)
+	}
+	p := NewPreparer(1, slow)
+	defer p.Close()
+
+	blocker := barJob("hold", 1, timerBar())
+	blocker.Plugin = "org.sysc.flood"
+	p.Submit(blocker)
+	time.Sleep(50 * time.Millisecond)
+	for i := 0; i < 20; i++ {
+		j := barJob("flood-"+string(rune('a'+i)), 1, timerBar())
+		j.Plugin = "org.sysc.flood"
+		p.Submit(j)
+	}
+	quiet := barJob("quiet", 1, timerBar())
+	quiet.Plugin = "org.sysc.timer"
+	p.Submit(quiet)
+	close(release)
+
+	seen := map[string]bool{}
+	for i := 0; i < 4; i++ {
+		seen[await(t, p).ViewID] = true
+	}
+	if !seen["quiet"] {
+		t.Fatal("the quiet plugin's only job never ran among the first results")
+	}
+}

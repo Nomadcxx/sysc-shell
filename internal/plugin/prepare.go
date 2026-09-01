@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"sync"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
@@ -47,17 +48,26 @@ type Result struct {
 type Preparer struct {
 	measure ui.MeasureText
 	results chan Result
+	now     func() time.Time
+	budget  time.Duration
 
-	mu      sync.Mutex
-	cond    *sync.Cond
-	pending map[string]Job
-	// order holds the view ids waiting, oldest first, so one busy view cannot
-	// starve the others.
-	order  []string
-	closed bool
+	mu       sync.Mutex
+	cond     *sync.Cond
+	pending  map[string]Job
+	waiting  map[string][]string
+	plugins  []string
+	overruns map[string][]time.Time
+	degraded map[string]bool
+	closed   bool
 
 	wg sync.WaitGroup
 }
+
+const (
+	layoutBudget  = 8 * time.Millisecond
+	overrunWindow = 10 * time.Second
+	overrunLimit  = 3
+)
 
 // NewPreparer starts a pool of workers.
 func NewPreparer(workers int, measure ui.MeasureText) *Preparer {
@@ -65,9 +75,14 @@ func NewPreparer(workers int, measure ui.MeasureText) *Preparer {
 		workers = 1
 	}
 	p := &Preparer{
-		measure: measure,
-		results: make(chan Result, workers*4),
-		pending: make(map[string]Job),
+		measure:  measure,
+		results:  make(chan Result, workers*4),
+		now:      time.Now,
+		budget:   layoutBudget,
+		pending:  make(map[string]Job),
+		waiting:  make(map[string][]string),
+		overruns: make(map[string][]time.Time),
+		degraded: make(map[string]bool),
 	}
 	p.cond = sync.NewCond(&p.mu)
 	p.wg.Add(workers)
@@ -87,15 +102,34 @@ func (p *Preparer) Submit(j Job) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed {
-		// Closing races with a plugin still producing views. Dropping the work
-		// is the only correct answer once the pool has gone.
+		return
+	}
+	if p.degraded[j.Plugin] {
 		return
 	}
 	if _, waiting := p.pending[j.ViewID]; !waiting {
-		p.order = append(p.order, j.ViewID)
+		if len(p.waiting[j.Plugin]) == 0 {
+			p.plugins = append(p.plugins, j.Plugin)
+		}
+		p.waiting[j.Plugin] = append(p.waiting[j.Plugin], j.ViewID)
 	}
 	p.pending[j.ViewID] = j
 	p.cond.Signal()
+}
+
+// Degraded reports whether plugin's layout work is suppressed.
+func (p *Preparer) Degraded(plugin string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.degraded[plugin]
+}
+
+// Recover clears layout-budget degradation, as a clean snapshot or restart does.
+func (p *Preparer) Recover(plugin string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.degraded, plugin)
+	delete(p.overruns, plugin)
 }
 
 // Close stops the workers. It is safe to call more than once.
@@ -107,7 +141,8 @@ func (p *Preparer) Close() {
 	}
 	p.closed = true
 	p.pending = nil
-	p.order = nil
+	p.waiting = nil
+	p.plugins = nil
 	p.mu.Unlock()
 
 	p.cond.Broadcast()
@@ -134,9 +169,17 @@ func (p *Preparer) next() (Job, bool) {
 		if p.closed {
 			return Job{}, false
 		}
-		if len(p.order) > 0 {
-			id := p.order[0]
-			p.order = p.order[1:]
+		if len(p.plugins) > 0 {
+			plugin := p.plugins[0]
+			p.plugins = p.plugins[1:]
+			ids := p.waiting[plugin]
+			id := ids[0]
+			p.waiting[plugin] = ids[1:]
+			if len(p.waiting[plugin]) == 0 {
+				delete(p.waiting, plugin)
+			} else {
+				p.plugins = append(p.plugins, plugin)
+			}
 			j := p.pending[id]
 			delete(p.pending, id)
 			return j, true
@@ -150,6 +193,7 @@ func (p *Preparer) next() (Job, bool) {
 // revision of the same view.
 func (p *Preparer) prepare(j Job) Result {
 	out := Result{ViewID: j.ViewID, Plugin: j.Plugin, Revision: j.Revision}
+	start := p.now()
 
 	root, err := Convert(j.Root, j.View)
 	if err != nil {
@@ -161,10 +205,37 @@ func (p *Preparer) prepare(j Job) Result {
 	} else {
 		err = ui.LayoutColumn(root, j.Bounds, p.measure)
 	}
+	p.noteDuration(j.Plugin, start, p.now())
 	if err != nil {
 		out.Err = err
 		return out
 	}
 	out.Root = root
 	return out
+}
+
+func (p *Preparer) noteDuration(plugin string, start, end time.Time) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if plugin == "" {
+		return
+	}
+	if end.Sub(start) <= p.budget {
+		delete(p.degraded, plugin)
+		delete(p.overruns, plugin)
+		return
+	}
+	times := append(p.overruns[plugin], end)
+	cutoff := end.Add(-overrunWindow)
+	n := 0
+	for _, t := range times {
+		if !t.Before(cutoff) {
+			times[n] = t
+			n++
+		}
+	}
+	p.overruns[plugin] = times[:n]
+	if n >= overrunLimit {
+		p.degraded[plugin] = true
+	}
 }
