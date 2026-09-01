@@ -83,6 +83,11 @@ func (c *Client) Snapshot(viewID string, revision uint64, root *Node) error {
 	return c.Send(&ViewSnapshot{ViewID: viewID, Revision: revision, Root: root})
 }
 
+// Patch sends keyed subtree replacements against a base revision.
+func (c *Client) Patch(viewID string, base, revision uint64, replacements []Replacement) error {
+	return c.Send(&ViewPatch{ViewID: viewID, Base: base, Revision: revision, Replacements: replacements})
+}
+
 // Call sends a host.call and waits for the matching reply or ctx.Done.
 func (c *Client) Call(ctx context.Context, kind CallKind, params any) (HostReply, error) {
 	id := fmt.Sprintf("c%d", c.nextID.Add(1))
