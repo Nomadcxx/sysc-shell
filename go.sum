@@ -4,6 +4,8 @@ github.com/Nomadcxx/sysc-notify v0.1.0-rc.1 h1:MLkFPBuvN5rmcMU1aaWRqhRUDOZ4Jea5i
 github.com/Nomadcxx/sysc-notify v0.1.0-rc.1/go.mod h1:ZZlN0ZktmQ15uWf1VaVZ8vXFLe708R1u85dIaag7gtM=
 github.com/Nomadcxx/sysc-notify v0.1.0-rc.2 h1:NP8bIcBm60Kcpiw5pHR82P2onHN6o3FbqmipxVdpCL4=
 github.com/Nomadcxx/sysc-notify v0.1.0-rc.2/go.mod h1:ZZlN0ZktmQ15uWf1VaVZ8vXFLe708R1u85dIaag7gtM=
+github.com/Nomadcxx/sysc-tray v0.1.0-rc.1 h1:bhz3RNCBIA+v76A+q2tlg2iNaoFSSqMWLR8lz0ubc/o=
+github.com/Nomadcxx/sysc-tray v0.1.0-rc.1/go.mod h1:bXMEvkMvsvkqNXQsNrP3hZeHVq/4AVEeQhL19KdMLos=
 github.com/Nomadcxx/sysc-wayland v0.2.0 h1:e3Z5njh9UBQm8/3LxpE8TS6N1NPvL4buOPlKL/OcC9c=
 github.com/Nomadcxx/sysc-wayland v0.2.0/go.mod h1:ZNAe41EM7R5G2KA55jqMPotAvrjVWcMq21BV69gROKA=
 github.com/go-text/typesetting v0.3.5-0.20260729084153-ddb7ff96ad4d h1:eBCCzHDJ79YDC3G7fnGuBbA/o+aEl0hSgRZYVbKzYsk=
