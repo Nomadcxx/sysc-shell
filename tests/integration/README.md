@@ -387,3 +387,14 @@ root and revision rules. Before the stable tag, probe the documented primary pat
 - record whether Niri accepts a protocol-valid sequence, and the exact trace if it does not.
 
 Keep the Overlay fallback if the probe fails, and record the trace in the milestone handover.
+
+## Milestone 6A: plugin host and Timer
+
+Automated. `go test ./tests/integration -run PluginHostGate` installs a helper Timer, opens two
+output views over one process, disables it, and checks that malformed handshake, crash, garbage, and
+timeout leave the built-in clock updating. It is not a live Niri matrix.
+
+```bash
+go test -race -count=1 ./tests/integration -run PluginHostGate
+```
+

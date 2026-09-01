@@ -714,6 +714,27 @@ func (r *Registry) deliverPluginText(action, text string, kind v1.EventKind) boo
 	return r.plugins.deliver(hit, kind, "", text)
 }
 
+func (r *Registry) PluginPID(id string) int {
+	if r.plugins == nil {
+		return 0
+	}
+	return r.plugins.pid(id)
+}
+
+func (r *Registry) SetPluginEnabled(id string, on bool) error {
+	if r.plugins == nil {
+		return errors.New("plugins not bound")
+	}
+	return r.plugins.enable(id, on)
+}
+
+func (r *Registry) PluginBarViews(output string) int {
+	if r.plugins == nil {
+		return 0
+	}
+	return len(r.plugins.barViewIDs(output))
+}
+
 func (h *pluginHost) discovered() plugin.Catalog {
 	h.mu.Lock()
 	defer h.mu.Unlock()
