@@ -86,6 +86,13 @@ type Node struct {
 	// A clock sets it: with proportional digits the rendered width changes as
 	// the time changes, which visibly shifts a centred clock every minute.
 	Tabular bool
+	// Bold, Italic, and Underline mark a styled run of body text. Cards carry
+	// the notification body as separate styled runs, so the style lives on the
+	// node rather than in the text. Bold and italic are synthesized at paint
+	// time; underline draws its own rule.
+	Bold      bool
+	Italic    bool
+	Underline bool
 	// Image is the raster a KindImage node draws. It is an immutable result
 	// produced away from the Wayland owner; layout and paint only read it.
 	// A nil image still measures, so a card does not reflow when an icon

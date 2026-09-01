@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"image"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -78,7 +79,7 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style ProofStyle) error
 func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size int) error {
 	switch n.Kind {
 	case ui.KindText:
-		return paintText(c, n.Text, style.Scale120.PhysicalRect(n.Bounds), text, style, size, n.Tabular, n.Tone)
+		return paintText(c, n.Text, style.Scale120.PhysicalRect(n.Bounds), text, style, size, n.Tabular, n.Tone, n.Bold, n.Italic, n.Underline)
 
 	case ui.KindMeter:
 		if n.Absent {
@@ -108,7 +109,7 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 			W: n.Bounds.W - 2*n.Padding,
 			H: n.Bounds.H - 2*n.Padding,
 		}
-		return paintText(c, n.Text, style.Scale120.PhysicalRect(label), text, style, size, n.Tabular, n.Tone)
+		return paintText(c, n.Text, style.Scale120.PhysicalRect(label), text, style, size, n.Tabular, n.Tone, n.Bold, n.Italic, n.Underline)
 
 	case ui.KindToggle:
 		paintToggle(c, n, style)
@@ -157,7 +158,7 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 		return nil
 
 	case ui.KindTab:
-		return paintText(c, n.Text, style.Scale120.PhysicalRect(n.Bounds), text, style, size, n.Tabular, n.Tone)
+		return paintText(c, n.Text, style.Scale120.PhysicalRect(n.Bounds), text, style, size, n.Tabular, n.Tone, n.Bold, n.Italic, n.Underline)
 
 	default:
 		return fmt.Errorf("unsupported kind %d", n.Kind)
@@ -226,7 +227,7 @@ func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 		}
 	}
 	c.FillRounded(field, style.Scale120.Physical(6), style.Track)
-	_ = paintText(c, n.Text, field, text, style, size, n.Tabular, n.Tone)
+	_ = paintText(c, n.Text, field, text, style, size, n.Tabular, n.Tone, n.Bold, n.Italic, n.Underline)
 	if len(n.Children) == 0 {
 		return
 	}
@@ -239,7 +240,7 @@ func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 		if child.Value != 0 {
 			c.FillRounded(cb, style.Scale120.Physical(4), style.accent())
 		}
-		_ = paintText(c, child.Text, cb, text, style, size, child.Tabular, child.Tone)
+		_ = paintText(c, child.Text, cb, text, style, size, child.Tabular, child.Tone, child.Bold, child.Italic, child.Underline)
 	}
 }
 
@@ -257,7 +258,7 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle,
 	if n.Cursor >= 0 && n.Cursor <= len(n.Text) {
 		committed = n.Text[:n.Cursor]
 	}
-	if err := paintText(c, n.Text, phys, text, style, size, n.Tabular, n.Tone); err != nil {
+	if err := paintText(c, n.Text, phys, text, style, size, n.Tabular, n.Tone, n.Bold, n.Italic, n.Underline); err != nil {
 		return err
 	}
 	prefixW := 0
@@ -270,7 +271,7 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle,
 		pre := phys
 		pre.X += prefixW
 		pre.W -= prefixW
-		if err := paintText(c, n.Preedit, pre, text, style, size, n.Tabular, n.Tone); err != nil {
+		if err := paintText(c, n.Preedit, pre, text, style, size, n.Tabular, n.Tone, n.Bold, n.Italic, n.Underline); err != nil {
 			return err
 		}
 		if pw, _, err := text.Measure(n.Preedit, size, n.Tabular); err == nil {
@@ -332,7 +333,7 @@ func paintGraph(c *Canvas, n *ui.Node, box ui.Rect, style ProofStyle) error {
 // Truncation happens here rather than in layout because it needs cluster
 // measurement, which the text renderer owns. The box is already physical, so
 // the available width is compared in the same units the shaper reports.
-func paintText(c *Canvas, s string, box ui.Rect, text *TextRenderer, style ProofStyle, size int, tabular bool, tone ui.Tone) error {
+func paintText(c *Canvas, s string, box ui.Rect, text *TextRenderer, style ProofStyle, size int, tabular bool, tone ui.Tone, bold, italic, underline bool) error {
 	if s == "" || box.W <= 0 {
 		return nil
 	}
@@ -349,8 +350,42 @@ func paintText(c *Canvas, s string, box ui.Rect, text *TextRenderer, style Proof
 	if err != nil {
 		return err
 	}
-	blendMask(c, mask.Alpha, box.X, box.Y, textColor(style, tone))
+	alpha := mask.Alpha
+	if italic {
+		alpha = shearMask(alpha, size/7+1)
+	}
+	blendMask(c, alpha, box.X, box.Y, textColor(style, tone))
+	if bold {
+		// ponytail: synthetic bold by offset re-blend, no per-weight faces.
+		// Ceiling: no real bold or italic metrics, so heavy scripts can smear;
+		// upgrade path is resolving a bold/italic face per family in FontMap.
+		blendMask(c, alpha, box.X+1, box.Y, textColor(style, tone))
+	}
+	if underline {
+		th := max(size/16, 1)
+		rule := ui.Rect{X: box.X, Y: box.Y + box.H - th, W: min(mask.Advance, box.W), H: th}
+		fillRect(c, rule, textColor(style, tone))
+	}
 	return nil
+}
+
+// shearMask shears an alpha mask rightward toward the baseline, the cheap half
+// of synthetic italics. shift is the total horizontal displacement over the
+// mask's height.
+func shearMask(src *image.Alpha, shift int) *image.Alpha {
+	if src == nil || shift <= 0 {
+		return src
+	}
+	w := src.Bounds().Dx()
+	h := src.Bounds().Dy()
+	out := image.NewAlpha(image.Rect(0, 0, w+shift, h))
+	for y := 0; y < h; y++ {
+		dx := shift * (h - 1 - y) / max(h-1, 1)
+		for x := 0; x < w; x++ {
+			out.SetAlpha(x+dx, y, src.AlphaAt(x, y))
+		}
+	}
+	return out
 }
 
 // textColor picks the colour a tone paints in.
