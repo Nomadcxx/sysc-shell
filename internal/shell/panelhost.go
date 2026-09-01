@@ -16,6 +16,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
 const (
@@ -106,6 +107,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelSettings, nil
 	case "launcher":
 		return PanelLauncher, nil
+	case "plugin":
+		return PanelPlugin, nil
 	default:
 		return 0, fmt.Errorf("unknown panel")
 	}
@@ -191,6 +194,9 @@ func (r *Registry) openPanelRootLocked(id PanelID, output uint32, trig Trigger) 
 		r.teardownPanelLocked(id)
 		// A root that goes away takes any visible tooltip with it.
 		r.dwell.leave()
+		if id == PanelPlugin && r.plugins != nil {
+			go r.plugins.dropPanelViews()
+		}
 	})
 	return nil
 }
@@ -210,6 +216,9 @@ func (r *Registry) closePanelLocked(id PanelID) {
 	}
 	r.panels.Close(id)
 	r.teardownPanelLocked(id)
+	if id == PanelPlugin && r.plugins != nil {
+		go r.plugins.dropPanelViews()
+	}
 }
 
 func (r *Registry) TogglePanel(id PanelID, output uint32, trig Trigger) error {
@@ -260,6 +269,8 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelSettings, true
 	case "launcher":
 		return PanelLauncher, true
+	case "plugin":
+		return PanelPlugin, true
 	default:
 		return 0, false
 	}
@@ -803,6 +814,10 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 	}
 	fn(f)
 	f.SyncTo(n)
+	if _, ok := parsePluginAction(n.Action); ok {
+		r.deliverPluginText(n.Action, n.Text, v1.EventChange)
+		return true
+	}
 	if n.Name == "Search" {
 		h.query = f.Text
 		if h.id == PanelLauncher {
@@ -842,6 +857,19 @@ func (h *PanelHost) activate(r *Registry) bool {
 	n := h.focused()
 	if n == nil {
 		return false
+	}
+	switch n.Action {
+	case "plugin-close", "plugin-retry", "plugin-disable":
+		if r.plugins != nil {
+			r.plugins.retryOrDisable(n.Action)
+		}
+		return true
+	}
+	if _, ok := parsePluginAction(n.Action); ok {
+		if n.Kind == ui.KindTextField {
+			return r.deliverPluginText(n.Action, n.Text, v1.EventSubmit)
+		}
+		return r.handlePluginBar(n.Action, wayland.Event{Kind: wayland.EventPointerRelease, Button: 272})
 	}
 	if h.id == PanelLauncher {
 		return h.activateLauncher(r, n)
@@ -936,6 +964,11 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		return settingsTree(h)
 	case PanelLauncher:
 		return launcherTree(h)
+	case PanelPlugin:
+		if r.plugins != nil {
+			return r.plugins.panelTree()
+		}
+		return pluginPanelError("starting", false)
 	default:
 		return placeholderTree()
 	}
@@ -951,6 +984,9 @@ func panelTargetSize(id PanelID) ui.Rect {
 		return ui.Rect{W: 900, H: 620}
 	case PanelLauncher:
 		return ui.Rect{W: 560, H: 500}
+	case PanelPlugin:
+		// Fallback size; an open plugin view replaces this from its manifest.
+		return ui.Rect{W: 320, H: 280}
 	default:
 		return ui.Rect{W: 280, H: 200}
 	}

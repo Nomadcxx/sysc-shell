@@ -27,6 +27,8 @@ type barView struct {
 	History map[services.Selector][]float64
 	// Weather is the newest reading. Its zero value renders the placeholder.
 	Weather services.Reading
+	// Plugins is this output's prepared plugin frames, keyed by instance.
+	Plugins map[string]pluginFrame
 }
 
 // textWidget is one configured widget instance: a retained node plus the pure
@@ -220,6 +222,8 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 					return text
 				},
 			})
+		case "plugin":
+			out = append(out, buildPluginWidget(item))
 		}
 	}
 	for i := range out {

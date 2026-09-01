@@ -121,6 +121,28 @@ func NewRuntime(c Candidate, opts RuntimeOptions) *Runtime {
 // alternative to discarding a view the plugin meant the user to see.
 func (r *Runtime) Messages() <-chan v1.Message { return r.messages }
 
+// Send writes one host message to the live session.
+func (r *Runtime) Send(m v1.Message) error {
+	r.mu.Lock()
+	sess := r.session
+	r.mu.Unlock()
+	if sess == nil {
+		return errors.New("plugin: not running")
+	}
+	return sess.Send(m)
+}
+
+// Allows reports whether the live session was granted c.
+func (r *Runtime) Allows(c Capability) bool {
+	r.mu.Lock()
+	sess := r.session
+	r.mu.Unlock()
+	if sess == nil {
+		return false
+	}
+	return sess.Allows(c)
+}
+
 // Manifest is the validated declaration this runtime serves.
 func (r *Runtime) Manifest() Manifest { return r.candidate.Manifest }
 

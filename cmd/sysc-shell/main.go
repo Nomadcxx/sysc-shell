@@ -17,6 +17,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/notifyclient"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/shell"
 	"github.com/Nomadcxx/sysc-shell/internal/trayclient"
 )
@@ -67,6 +68,10 @@ func run(ctx context.Context) error {
 	}
 
 	registry := shell.NewRegistry(cfg)
+	_ = registry.BindPlugins(shell.PluginHostOptions{
+		Roots:    plugin.DefaultRoots("/usr/share/sysc-shell/plugins"),
+		StateDir: plugin.StateRoot(),
+	})
 	// Releases every service lease and stops the clock goroutine when the
 	// process unwinds, whether through cancellation or an error return.
 	defer registry.Close()

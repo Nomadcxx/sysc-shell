@@ -52,6 +52,7 @@ type Bar struct {
 	// same arrangement from it without waiting for the next frame.
 	trayAvailable int
 	onTray        func(tray.ItemKey, trayArrangement, ui.Rect, wayland.Event) bool
+	onPlugin      func(string, wayland.Event) bool
 
 	// conn is the connector this bar renders for. It selects configuration and
 	// joins Niri state; it is never this bar's identity, which is its Wayland
@@ -171,6 +172,12 @@ func (b *Bar) setTray(items []tray.Item, prefs config.TrayPreferences, images ma
 func (b *Bar) setTrayHandler(fn func(tray.ItemKey, trayArrangement, ui.Rect, wayland.Event) bool) {
 	b.mu.Lock()
 	b.onTray = fn
+	b.mu.Unlock()
+}
+
+func (b *Bar) setPluginHandler(fn func(string, wayland.Event) bool) {
+	b.mu.Lock()
+	b.onPlugin = fn
 	b.mu.Unlock()
 }
 
@@ -552,11 +559,18 @@ func (b *Bar) Handle(event wayland.Event) bool {
 		if ok {
 			b.pressed = action
 		}
+		pluginFn := b.onPlugin
 		b.mu.Unlock()
+		if ok && pluginFn != nil {
+			if _, isPlugin := parsePluginAction(action); isPlugin {
+				return pluginFn(action, event)
+			}
+		}
 		return false
 
 	case wayland.EventPointerRelease:
 		pressed := b.pressed
+		pluginFn := b.onPlugin
 		b.pressed = ""
 		if pressed == "" || !b.inside {
 			b.mu.Unlock()
@@ -566,6 +580,13 @@ func (b *Bar) Handle(event wayland.Event) bool {
 		if !ok || action != pressed {
 			b.mu.Unlock()
 			return false
+		}
+		if _, isPlugin := parsePluginAction(action); isPlugin {
+			b.mu.Unlock()
+			if pluginFn == nil {
+				return false
+			}
+			return pluginFn(action, event)
 		}
 		gesture, isTray := b.trayGestureLocked(action)
 		if !isTray {

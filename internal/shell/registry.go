@@ -88,6 +88,9 @@ type Registry struct {
 	trayIconCancel  context.CancelFunc
 	pendingTrayMenu pendingTrayMenu
 
+	// plugins hosts one process per enabled plugin. Nil until BindPlugins.
+	plugins *pluginHost
+
 	// notifyCh carries client messages; main pumps it. Nil in tests that drive
 	// applyNotify directly.
 	notifyCh chan notifyclient.Message
@@ -411,14 +414,19 @@ func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbac
 	r.bars[global] = bar
 	r.leases[global] = leases
 	r.bindBarTrayLocked(global, connector, bar)
+	r.bindBarPluginLocked(bar)
 	// Seeded, not published: the owner configures this surface next and paints
 	// it once. An invalidation here would be a second frame for a first paint,
 	// and this call is on the owner goroutine, which drains that channel.
 	r.syncTrayLocked()
 	toastOutputs := r.outputGlobalsLocked()
+	plugins := r.plugins
 	r.mu.Unlock()
 
 	r.SyncToastOutputs(toastOutputs)
+	if plugins != nil {
+		plugins.syncBars()
+	}
 	return r.bindHost(global, bar, callbacks), nil
 }
 
@@ -430,6 +438,12 @@ func (r *Registry) bindBarTrayLocked(global uint32, connector string, bar *Bar) 
 		key tray.ItemKey, arranged trayArrangement, anchor ui.Rect, event wayland.Event,
 	) bool {
 		return r.handleTrayBar(global, connector, key, arranged, anchor, event)
+	})
+}
+
+func (r *Registry) bindBarPluginLocked(bar *Bar) {
+	bar.setPluginHandler(func(action string, event wayland.Event) bool {
+		return r.handlePluginBar(action, event)
 	})
 }
 
@@ -500,14 +514,19 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				r.leases = leases
 				for global, bar := range r.bars {
 					r.bindBarTrayLocked(global, bar.connector(), bar)
+					r.bindBarPluginLocked(bar)
 				}
 				// Seeded only: every replacement bar is reconfigured and
 				// repainted by the owner as part of adopting the candidate.
 				r.syncTrayLocked()
 				toastOutputs := r.outputGlobalsLocked()
+				plugins := r.plugins
 				r.mu.Unlock()
 
 				r.SyncToastOutputs(toastOutputs)
+				if plugins != nil {
+					plugins.syncBars()
+				}
 
 				// Released only after the replacement set holds its own, so
 				// the count never touches zero for a service still in use.
@@ -536,9 +555,13 @@ func (r *Registry) DropHost(global uint32) {
 	delete(r.leases, global)
 	r.trayOutputLostLocked(global)
 	toastOutputs := r.outputGlobalsLocked()
+	plugins := r.plugins
 	r.mu.Unlock()
 
 	r.SyncToastOutputs(toastOutputs)
+	if plugins != nil {
+		plugins.syncBars()
+	}
 	releaseAll(leases)
 }
 
@@ -593,6 +616,10 @@ func (r *Registry) Close() {
 	}
 	if r.brightness != nil {
 		r.brightness.Close()
+	}
+	if r.plugins != nil {
+		r.plugins.Close()
+		r.plugins = nil
 	}
 }
 
@@ -689,7 +716,7 @@ func (r *Registry) viewLocked(connector string) barView {
 	if !ok {
 		state = outputState{Workspace: noWorkspace}
 	}
-	return barView{
+	view := barView{
 		Now:       r.now,
 		Workspace: state.Workspace,
 		Title:     state.Title,
@@ -698,6 +725,10 @@ func (r *Registry) viewLocked(connector string) barView {
 		History:   r.historyLocked(),
 		Weather:   r.reading,
 	}
+	if r.plugins != nil {
+		view.Plugins = r.plugins.frames(connector)
+	}
+	return view
 }
 
 // historyLocked collects the samples every leased selector holds. The service
