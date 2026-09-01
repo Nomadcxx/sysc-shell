@@ -152,9 +152,9 @@ in bd, not work inside this design.
   interactive root through the existing `openPanelRootLocked` path, with no
   launcher-specific coordinator code.
 - **D15 — Entrance gate: implementation may start now.** Nothing in v1 blocks
-  on M5. `KindImage` is absent on `main`, so v1 paints a fallback glyph in the
-  40×40 icon slot (one process-wide placeholder face from the existing icon
-  font), behind an `Icon` seam in the result type so the real-theme-icon slice
+  on M5. `KindImage` is absent on `main`, and the embedded icon font has no
+  application symbol, so v1 paints a text square in the 40×40 icon slot behind
+  an `Icon` seam in the result type. The real-theme-icon slice
   (`go-freedesktop/icontheme` + `KindImage`) is a swap, not a rework. The
   plan's Task 0 reconciles against landed `main` exactly as M6A's does: panel
   host surface APIs, `Trigger`/`focusedTrigger`, `ui.Field` IME path, the
