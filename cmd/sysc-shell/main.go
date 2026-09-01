@@ -14,6 +14,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/ipc"
+	"github.com/Nomadcxx/sysc-shell/internal/notifyclient"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/shell"
@@ -124,6 +125,32 @@ func run(ctx context.Context) error {
 			case reading := <-registry.Weather().Updates():
 				registry.UpdateWeather(reading)
 			}
+		}
+	}()
+
+	// The notification service publishes immutable messages on its own
+	// reconnecting client; this pump applies each to the projection and
+	// recomputes the toast surfaces. A missing service is not fatal: the
+	// client retries with backoff and toasts simply never open.
+	registry.BindNotifications()
+	notifyClient := notifyclient.New(os.Getenv("XDG_RUNTIME_DIR"), registry.NotifyMessages())
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg := <-registry.NotifyMessages():
+				registry.ApplyNotify(msg)
+			}
+		}
+	}()
+	go func() {
+		if err := notifyClient.Run(ctx); err != nil && ctx.Err() == nil {
+			select {
+			case streamFailed <- err:
+			default:
+			}
+			cancel()
 		}
 	}()
 

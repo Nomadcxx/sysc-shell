@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/notifyclient"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
@@ -69,6 +70,12 @@ type Registry struct {
 
 	// notify is the service-owned notification projection.
 	notify *notifyState
+
+	// notifyCh carries client messages; main pumps it. Nil in tests that drive
+	// applyNotify directly.
+	notifyCh chan notifyclient.Message
+	// toasts hosts one toast stack per output, created when wiring binds it.
+	toasts *toastHost
 }
 
 func NewRegistry(cfg config.Config) *Registry {
@@ -90,6 +97,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		dwell:         newDwell(defaultDwell),
 		runArgv:       runArgvDefault,
 		notify:        newNotifyState(),
+		notifyCh:      make(chan notifyclient.Message, 32),
 	}
 	r.tokens = r.generateTheme(cfg)
 	r.osd = newOSDManager(r, 0)

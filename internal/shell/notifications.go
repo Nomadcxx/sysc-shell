@@ -138,10 +138,45 @@ func (s *notifyState) historyCount() int {
 
 // Registry-facing wrappers. The registry owns one notifyState; tests reach
 // through these rather than the lock directly.
-func (r *Registry) applyNotify(m notifyclient.Message) { r.notify.applyNotify(m) }
-func (r *Registry) notifyActiveIDs() []uint32          { return r.notify.activeIDs() }
+func (r *Registry) applyNotify(m notifyclient.Message) {
+	r.notify.applyNotify(m)
+	if r.toasts != nil {
+		r.toasts.recompute()
+	}
+}
+func (r *Registry) notifyActiveIDs() []uint32 { return r.notify.activeIDs() }
 func (r *Registry) notifyLifetime(id uint32) *protocol.Lifetime {
 	return r.notify.lifetime(id)
 }
 func (r *Registry) notifySummary(id uint32) string { return r.notify.summary(id) }
 func (r *Registry) notifyHistoryCount() int        { return r.notify.historyCount() }
+
+// BindNotifications wires the toast host to the registry's aux channel. main
+// calls it once before running the client; tests leave it nil and drive
+// applyNotify directly.
+func (r *Registry) BindNotifications() {
+	r.toasts = newToastHost(r, nil)
+}
+
+// NotifyMessages returns the channel the notifyclient publishes to and main
+// drains onto applyNotify.
+func (r *Registry) NotifyMessages() chan notifyclient.Message { return r.notifyCh }
+
+// ApplyNotify applies one client message. main's pump calls it; the exported
+// form keeps applyNotify reachable for the wiring layer only.
+func (r *Registry) ApplyNotify(m notifyclient.Message) { r.applyNotify(m) }
+
+// SyncToastOutputs opens or closes toast surfaces as outputs come and go.
+// The registry calls it from its output bookkeeping.
+func (r *Registry) SyncToastOutputs(globals map[string]uint32) {
+	r.notify.mu.Lock()
+	connectors := make([]string, 0, len(globals))
+	for c := range globals {
+		connectors = append(connectors, c)
+	}
+	r.notify.outputs = connectors
+	r.notify.mu.Unlock()
+	if r.toasts != nil {
+		r.toasts.syncOutputs(globals)
+	}
+}
