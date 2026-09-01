@@ -1,6 +1,6 @@
 module github.com/Nomadcxx/sysc-shell
 
-go 1.26
+go 1.26.0
 
 require (
 	github.com/Nomadcxx/sysc-wayland v0.2.0
@@ -10,3 +10,5 @@ require (
 )
 
 require github.com/Nomadcxx/sysc-metrics v0.2.0
+
+require github.com/Nomadcxx/sysc-notify v0.1.0-rc.1 // indirect
