@@ -26,6 +26,9 @@ const (
 	// when it has no children and a Width. It is the bar's per-item chrome.
 	KindCapsule
 
+	KindDragSource
+	KindDropZone
+
 	// kindCount is one past the last kind. It exists so a test can assert that
 	// every declared kind is measurable, and it must stay last.
 	kindCount
@@ -62,6 +65,7 @@ type Node struct {
 	// Cursor is a byte index into Text for KindTextField.
 	Cursor int
 	Width  int
+	Height int
 	// ScrollOffset is the viewport origin in logical pixels.
 	ScrollOffset int
 	ItemCount    int
@@ -129,6 +133,9 @@ type Node struct {
 	Focusable bool
 	Name      string
 	Role      string
+	DragType  string
+	Payload   string
+	Accept    []string
 }
 
 func (n *Node) Active() int {

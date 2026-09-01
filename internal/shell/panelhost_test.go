@@ -7,6 +7,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 func TestPanelHostRenderPaintsClockText(t *testing.T) {
@@ -382,5 +383,20 @@ func TestPanelFontFamilyFollowsTheOutputConnector(t *testing.T) {
 	}
 	if got := reg.panelFontFamily(99); got != "GlobalSans" {
 		t.Errorf("unknown output font = %q, want the global family", got)
+	}
+}
+
+func TestHotCloseDuringDragCancels(t *testing.T) {
+	t.Parallel()
+	h := &PanelHost{}
+	src := &ui.Node{Kind: ui.KindDragSource, DragType: "zone", Payload: "tokyo", Name: "Reorder"}
+	h.drag.Begin(src, 0, 0)
+	h.drag.Move(0, 20)
+	if !h.drag.Active() {
+		t.Fatal("drag did not start")
+	}
+	h.drag.Cancel()
+	if h.drag.Active() {
+		t.Fatal("hot close left the drag active")
 	}
 }

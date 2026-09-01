@@ -14,7 +14,7 @@ func sampleNode(k Kind) *Node {
 	case KindScroll, KindVirtualList:
 		n.ItemCount, n.ItemHeight = 3, 10
 		n.Item = func(int) *Node { return &Node{Kind: KindText, Text: "i"} }
-	case KindRow, KindColumn, KindMenu, KindCapsule:
+	case KindRow, KindColumn, KindMenu, KindCapsule, KindDropZone:
 		n.Children = []*Node{{Kind: KindText, Text: "c"}}
 	}
 	return n
@@ -25,7 +25,7 @@ func sampleNode(k Kind) *Node {
 var allKinds = []Kind{
 	KindRow, KindText, KindMeter, KindButton, KindGraph, KindColumn,
 	KindSeparator, KindTab, KindToggle, KindSlider, KindMenu, KindTextField,
-	KindScroll, KindVirtualList, KindImage, KindCapsule,
+	KindScroll, KindVirtualList, KindImage, KindCapsule, KindDragSource, KindDropZone,
 }
 
 // rowUnsupported and columnUnsupported name the kinds each measure path

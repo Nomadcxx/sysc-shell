@@ -74,6 +74,7 @@ type PanelHost struct {
 	scale120       int
 	shift          bool
 	pressed        *ui.Node
+	drag           ui.Drag
 	lastAction     string
 	hoverX, hoverY int
 	monthDelta     int
@@ -625,6 +626,10 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			return false
 		case wayland.EventPointerEnter, wayland.EventPointerMotion:
 			h.hoverX, h.hoverY = int(math.Floor(e.X)), int(math.Floor(e.Y))
+			if h.drag.Source != nil {
+				h.drag.Move(e.X, e.Y)
+				return h.drag.Active()
+			}
 			return false
 		case wayland.EventPointerLeave:
 			h.pressed = nil
@@ -636,10 +641,22 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			if n := h.hitFocusable(h.hoverX, h.hoverY); n != nil {
 				h.pressed = n
 				h.setFocus(n)
+				if n.Kind == ui.KindDragSource {
+					h.drag.Begin(n, e.X, e.Y)
+				}
 				return true
 			}
 			return false
 		case wayland.EventPointerRelease:
+			if h.drag.Active() {
+				zone := ui.FindDropZone(h.root, &h.drag)
+				payload, ok := h.drag.Drop(zone)
+				h.drag.Cancel()
+				if ok && zone != nil {
+					return r.deliverPluginText(zone.Action, payload, v1.EventDrop)
+				}
+				return true
+			}
 			n := h.hitFocusable(h.hoverX, h.hoverY)
 			pressed := h.pressed
 			h.pressed = nil
@@ -1100,6 +1117,7 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 		return
 	}
 	h.stopAnimation()
+	h.drag.Cancel()
 	delete(r.panelHosts, id)
 	r.sendAux(wayland.AuxRequest{Output: h.output, ID: panelSurfaceID(id)})
 	r.sendAux(wayland.AuxRequest{Output: h.output, ID: shieldSurfaceID(id)})

@@ -46,13 +46,16 @@ const (
 type NodeKind string
 
 const (
-	KindRow       NodeKind = "row"
-	KindColumn    NodeKind = "column"
-	KindText      NodeKind = "text"
-	KindIcon      NodeKind = "icon"
-	KindProgress  NodeKind = "progress"
-	KindButton    NodeKind = "button"
-	KindTextInput NodeKind = "text_input"
+	KindRow        NodeKind = "row"
+	KindColumn     NodeKind = "column"
+	KindText       NodeKind = "text"
+	KindIcon       NodeKind = "icon"
+	KindProgress   NodeKind = "progress"
+	KindButton     NodeKind = "button"
+	KindTextInput  NodeKind = "text_input"
+	KindList       NodeKind = "list"
+	KindDragSource NodeKind = "drag_source"
+	KindDropZone   NodeKind = "drop_zone"
 )
 
 // EventKind names an input event a node declares it can emit. A node receives
@@ -65,6 +68,8 @@ const (
 	EventPointer  EventKind = "pointer"
 	EventChange   EventKind = "change"
 	EventSubmit   EventKind = "submit"
+	EventScroll   EventKind = "scroll"
+	EventDrop     EventKind = "drop"
 )
 
 // Tone selects the semantic theme role a text node paints in. Plugins name
@@ -125,9 +130,16 @@ type Node struct {
 	// Width fixes a logical width; MaxWidth caps a measured one. Padding and
 	// Gap open a container. Zero means natural in every case.
 	Width    int `json:"width,omitempty"`
+	Height   int `json:"height,omitempty"`
 	MaxWidth int `json:"max_width,omitempty"`
 	Padding  int `json:"padding,omitempty"`
 	Gap      int `json:"gap,omitempty"`
+
+	// DragType is the payload class a drag source offers. Accept is the set a
+	// drop zone will take. Payload is the value delivered on drop.
+	DragType string   `json:"drag_type,omitempty"`
+	Accept   []string `json:"accept,omitempty"`
+	Payload  string   `json:"payload,omitempty"`
 
 	// Name and Role are the accessible identity. They are required on every
 	// interactive node: the host derives the accessibility tree from the
@@ -142,11 +154,15 @@ type Node struct {
 }
 
 // container reports whether a kind holds children.
-func (k NodeKind) container() bool { return k == KindRow || k == KindColumn }
+func (k NodeKind) container() bool {
+	return k == KindRow || k == KindColumn || k == KindList || k == KindDropZone
+}
 
 // interactive reports whether a kind produces input and therefore needs an
 // address and an accessible identity.
-func (k NodeKind) interactive() bool { return k == KindButton || k == KindTextInput }
+func (k NodeKind) interactive() bool {
+	return k == KindButton || k == KindTextInput || k == KindDragSource
+}
 
 // keyboard reports whether a kind needs keyboard focus to be usable. Bar views
 // have no keyboard focus, so placing one there would render a control the user
@@ -155,13 +171,17 @@ func (k NodeKind) keyboard() bool { return k == KindTextInput }
 
 // allowedEvents is the exact event set each kind may declare.
 var allowedEvents = map[NodeKind]map[EventKind]bool{
-	KindButton:    {EventActivate: true, EventPointer: true},
-	KindTextInput: {EventChange: true, EventSubmit: true},
+	KindButton:     {EventActivate: true, EventPointer: true},
+	KindTextInput:  {EventChange: true, EventSubmit: true},
+	KindDragSource: {EventPointer: true, EventDrop: true},
+	KindDropZone:   {EventDrop: true},
+	KindList:       {EventScroll: true},
 }
 
 var knownKinds = map[NodeKind]bool{
 	KindRow: true, KindColumn: true, KindText: true, KindIcon: true,
 	KindProgress: true, KindButton: true, KindTextInput: true,
+	KindList: true, KindDragSource: true, KindDropZone: true,
 }
 
 var knownViews = map[ViewKind]bool{ViewBar: true, ViewTooltip: true, ViewPanel: true}
@@ -278,7 +298,7 @@ func (v *validator) presentation(n *Node, path string) error {
 	for _, f := range []struct {
 		what string
 		v    int
-	}{{"width", n.Width}, {"max_width", n.MaxWidth}, {"padding", n.Padding}, {"gap", n.Gap}} {
+	}{{"width", n.Width}, {"height", n.Height}, {"max_width", n.MaxWidth}, {"padding", n.Padding}, {"gap", n.Gap}} {
 		if f.v < 0 {
 			return fmt.Errorf("%s: %s is negative", path, f.what)
 		}
@@ -312,6 +332,12 @@ func (v *validator) vocabulary(n *Node, path string) error {
 	}
 	if v.view == ViewBar && n.Kind.keyboard() {
 		return fmt.Errorf("%s: a bar view has no keyboard focus and cannot hold a %s", path, n.Kind)
+	}
+	if v.view != ViewPanel && (n.Kind == KindList || n.Kind == KindDragSource || n.Kind == KindDropZone) {
+		return fmt.Errorf("%s: a %s view cannot hold a %s", path, v.view, n.Kind)
+	}
+	if n.Kind == KindDragSource && n.Name == "" {
+		return fmt.Errorf("%s: a drag handle needs an accessible name", path)
 	}
 	return nil
 }

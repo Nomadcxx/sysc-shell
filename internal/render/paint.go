@@ -138,7 +138,7 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 		paintImage(c, style.Scale120.PhysicalRect(n.Bounds), n.Image)
 		return nil
 
-	case ui.KindButton:
+	case ui.KindButton, ui.KindDragSource:
 		fillRect(c, style.Scale120.PhysicalRect(n.Bounds), style.accent())
 		label := ui.Rect{
 			X: n.Bounds.X + n.Padding,
@@ -178,7 +178,7 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 		}
 		return nil
 
-	case ui.KindRow, ui.KindColumn:
+	case ui.KindRow, ui.KindColumn, ui.KindDropZone:
 		for i, child := range n.Children {
 			if child == nil {
 				return fmt.Errorf("nil child %d", i)

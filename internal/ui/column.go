@@ -8,7 +8,7 @@ func LayoutColumn(root *Node, bounds Rect, measure MeasureText) error {
 	if root == nil {
 		return fmt.Errorf("ui: nil root")
 	}
-	if root.Kind != KindColumn && root.Kind != KindScroll && root.Kind != KindVirtualList {
+	if root.Kind != KindColumn && root.Kind != KindScroll && root.Kind != KindVirtualList && root.Kind != KindDropZone {
 		return fmt.Errorf("ui: root kind %d is not a column", root.Kind)
 	}
 	if bounds.W < 0 || bounds.H < 0 {
@@ -73,7 +73,7 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 		return GraphHeight, nil
 	case KindSeparator:
 		return 1, nil
-	case KindButton:
+	case KindButton, KindDragSource:
 		_, h := measure(n.Text, n.Tabular)
 		return h + 2*n.Padding, nil
 	case KindImage:
@@ -107,6 +107,9 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 		_, h := measure(sample, n.Tabular)
 		return h + 2*n.Padding, nil
 	case KindScroll, KindVirtualList:
+		if n.Height > 0 {
+			return n.Height, nil
+		}
 		if n.Bounds.H > 0 {
 			return n.Bounds.H, nil
 		}
@@ -126,7 +129,7 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 			}
 		}
 		return maxH + 2*n.Padding, nil
-	case KindColumn:
+	case KindColumn, KindDropZone:
 		h := 2 * n.Padding
 		for i, c := range n.Children {
 			if c == nil {
@@ -164,7 +167,7 @@ func placeColumnChild(n *Node, box Rect, measure MeasureText) error {
 			W: max(box.W-2*n.Padding, 0), H: max(box.H-2*n.Padding, 0),
 		}
 		return placeColumnChild(n.Children[0], inner, measure)
-	case KindColumn:
+	case KindColumn, KindDropZone:
 		return LayoutColumn(n, box, measure)
 	case KindScroll, KindVirtualList:
 		return layoutScroll(n, box, measure)
@@ -191,6 +194,7 @@ func placeColumnChild(n *Node, box Rect, measure MeasureText) error {
 }
 
 func layoutScroll(root *Node, bounds Rect, measure MeasureText) error {
+	root.Bounds = bounds
 	content := Rect{
 		X: bounds.X + root.Padding,
 		Y: bounds.Y + root.Padding,

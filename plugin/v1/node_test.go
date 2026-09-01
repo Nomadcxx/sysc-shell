@@ -378,3 +378,27 @@ func TestValidateRejectsAnOversizedNodeID(t *testing.T) {
 		t.Fatal("Validate accepted an oversized node ID")
 	}
 }
+
+func TestValidateRejectsListAndDragOutsideAPanel(t *testing.T) {
+	t.Parallel()
+	list := &Node{Kind: KindRow, Children: []*Node{{Kind: KindList, Height: 80, Children: []*Node{
+		{Kind: KindText, Text: "x"},
+	}}}}
+	if err := Validate(list, ViewBar); err == nil {
+		t.Fatal("a bar accepted a list")
+	}
+	drag := &Node{Kind: KindColumn, Children: []*Node{{
+		Kind: KindDragSource, ID: "h", Text: "=", Name: "Reorder", Role: "button",
+		Events: []EventKind{EventPointer},
+	}}}
+	if err := Validate(drag, ViewBar); err == nil {
+		t.Fatal("a bar accepted a drag handle")
+	}
+	unnamed := &Node{Kind: KindColumn, Children: []*Node{{
+		Kind: KindDragSource, ID: "h", Text: "=", Role: "button",
+		Events: []EventKind{EventPointer},
+	}}}
+	if err := Validate(unnamed, ViewPanel); err == nil {
+		t.Fatal("a nameless drag handle was accepted")
+	}
+}

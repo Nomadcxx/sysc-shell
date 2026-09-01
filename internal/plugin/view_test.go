@@ -73,6 +73,10 @@ func TestConvertMapsEveryVersionOneKind(t *testing.T) {
 			Events: []v1.EventKind{v1.EventActivate}}, ui.KindButton},
 		{"text input", &v1.Node{Kind: v1.KindTextInput, ID: "i", Name: "i", Role: "textbox",
 			Events: []v1.EventKind{v1.EventChange}}, ui.KindTextField},
+		{"list", &v1.Node{Kind: v1.KindList, Height: 80}, ui.KindScroll},
+		{"drag", &v1.Node{Kind: v1.KindDragSource, ID: "d", Name: "Reorder", Role: "button",
+			Events: []v1.EventKind{v1.EventPointer}}, ui.KindDragSource},
+		{"drop", &v1.Node{Kind: v1.KindDropZone, Accept: []string{"zone"}}, ui.KindDropZone},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

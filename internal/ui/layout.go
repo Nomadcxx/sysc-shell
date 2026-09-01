@@ -201,7 +201,7 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 			return 0, 0, nil
 		}
 		return w + 2*n.Padding, contentHeight, nil
-	case KindButton:
+	case KindButton, KindDragSource:
 		w, h := measure(n.Text, n.Tabular)
 		return w + 2*n.Padding, h + 2*n.Padding, nil
 	case KindImage:
@@ -240,7 +240,7 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 			w = 400
 		}
 		return w, contentHeight, nil
-	case KindColumn:
+	case KindColumn, KindDropZone:
 		w := n.Width
 		if w <= 0 {
 			w = 220

@@ -133,6 +133,9 @@ func cloneNode(n *v1.Node) *v1.Node {
 	if n.Events != nil {
 		out.Events = append([]v1.EventKind(nil), n.Events...)
 	}
+	if n.Accept != nil {
+		out.Accept = append([]string(nil), n.Accept...)
+	}
 	if len(n.Children) > 0 {
 		out.Children = make([]*v1.Node, len(n.Children))
 		for i, c := range n.Children {
@@ -251,6 +254,22 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		out.Text = n.Text
 		out.Action = n.ID
 		out.Focusable = true
+	case v1.KindList:
+		out.Kind = ui.KindScroll
+		if n.Height > 0 {
+			out.Height = n.Height
+		}
+	case v1.KindDragSource:
+		out.Kind = ui.KindDragSource
+		out.Text = n.Text
+		out.Action = n.ID
+		out.Focusable = true
+		out.DragType = n.DragType
+		out.Payload = n.Payload
+	case v1.KindDropZone:
+		out.Kind = ui.KindDropZone
+		out.Action = n.ID
+		out.Accept = append([]string(nil), n.Accept...)
 	default:
 		return nil, fmt.Errorf("plugin: %s: no shell element for %q", path, n.Kind)
 	}
