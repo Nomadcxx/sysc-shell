@@ -1,10 +1,12 @@
 package shell
 
 import (
+	"math"
 	"sort"
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -28,6 +30,22 @@ type toastHost struct {
 	visible map[string][]uint32
 	queued  map[string][]uint32
 	hovered map[string]map[uint32]bool
+
+	// geometry is the size each output's surface was configured at. Until a
+	// configure arrives an output has none, and the design default stands in.
+	geometry map[string]toastGeometry
+	scale120 map[string]int
+	// cards is the arranged stack per output, rebuilt whenever the projection
+	// or the geometry changes.
+	cards map[string][]toastCard
+	// scratch is the buffer one card is painted into before it is copied onto
+	// the surface. One goroutine paints, so one buffer serves every card.
+	scratch []byte
+	// pointer is the last pointer position per output, in surface pixels.
+	pointer map[string]ui.Rect
+
+	text  *render.TextRenderer
+	style render.ProofStyle
 }
 
 const toastNamespace = "sysc-shell-toast"
@@ -52,11 +70,15 @@ func (h *hostHarness) request(r wayland.AuxRequest) {
 
 func newToastHost(r *Registry, harness *hostHarness) *toastHost {
 	h := &toastHost{
-		r:       r,
-		outputs: map[string]uint32{},
-		visible: map[string][]uint32{},
-		queued:  map[string][]uint32{},
-		hovered: map[string]map[uint32]bool{},
+		r:        r,
+		outputs:  map[string]uint32{},
+		visible:  map[string][]uint32{},
+		queued:   map[string][]uint32{},
+		hovered:  map[string]map[uint32]bool{},
+		geometry: map[string]toastGeometry{},
+		scale120: map[string]int{},
+		cards:    map[string][]toastCard{},
+		pointer:  map[string]ui.Rect{},
 	}
 	if harness != nil {
 		h.request = harness.request
@@ -74,6 +96,8 @@ func toastSurfaceID(connector string) string { return "toast:" + connector }
 // syncOutputs opens a surface for each new output and closes surfaces whose
 // output went away. Outputs are identified by wl_registry global, matching
 // the registry's rule that a connector can change globals across a reconnect.
+//
+// Called with Registry.mu held, like every other writer of this host's state.
 func (h *toastHost) syncOutputs(globals map[string]uint32) {
 	for connector, global := range h.outputs {
 		if _, ok := globals[connector]; !ok {
@@ -82,6 +106,10 @@ func (h *toastHost) syncOutputs(globals map[string]uint32) {
 			delete(h.visible, connector)
 			delete(h.queued, connector)
 			delete(h.hovered, connector)
+			delete(h.geometry, connector)
+			delete(h.scale120, connector)
+			delete(h.cards, connector)
+			delete(h.pointer, connector)
 		}
 	}
 	for connector, global := range globals {
@@ -95,17 +123,220 @@ func (h *toastHost) syncOutputs(globals map[string]uint32) {
 	h.recompute()
 }
 
+// spec describes one output's toast surface. It is anchored to all four edges
+// so the compositor reports the output's own logical size, which is what the
+// stack lays out against; the input region is narrowed to the visible cards
+// immediately afterwards, so the rest of the output still takes clicks.
 func (h *toastHost) spec(connector string) *wayland.AuxSpec {
 	return &wayland.AuxSpec{
-		ID:            toastSurfaceID(connector),
-		Namespace:     toastNamespace,
-		Layer:         layershell.ZwlrLayerShellV1LayerOverlay,
+		ID:        toastSurfaceID(connector),
+		Namespace: toastNamespace,
+		Layer:     layershell.ZwlrLayerShellV1LayerOverlay,
+		Anchor: uint32(layershell.ZwlrLayerSurfaceV1AnchorTop |
+			layershell.ZwlrLayerSurfaceV1AnchorBottom |
+			layershell.ZwlrLayerSurfaceV1AnchorLeft |
+			layershell.ZwlrLayerSurfaceV1AnchorRight),
 		ExclusiveZone: -1,
 		Keyboard:      keyboardNone,
 		Callbacks: wayland.HostCallbacks{
-			Configure: func(int, int, int) error { h.recompute(); return nil },
+			Configure: func(width, height, scale120 int) error {
+				return h.configure(connector, width, height, scale120)
+			},
+			Render: func(pixels []byte, width, height, stride int) error {
+				return h.render(connector, pixels, width, height, stride)
+			},
+			Handle: func(event wayland.Event) bool { return h.handle(connector, event) },
 		},
 	}
+}
+
+// configure records the output's real logical size and relays out the stack
+// against it. Before it arrives the design default stands in, so a card is
+// never placed off an output whose size is not known yet.
+func (h *toastHost) configure(connector string, width, height, scale120 int) error {
+	h.r.mu.Lock()
+	defer h.r.mu.Unlock()
+	return h.configureLocked(connector, width, height, scale120)
+}
+
+func (h *toastHost) configureLocked(connector string, width, height, scale120 int) error {
+	if width > 0 && height > 0 {
+		h.geometry[connector] = toastGeometry{OutputW: width, OutputH: height, Corner: toastTopRight}
+	}
+	h.scale120[connector] = scale120
+	h.recompute()
+	return nil
+}
+
+func (h *toastHost) render(connector string, pixels []byte, width, height, stride int) error {
+	h.r.mu.Lock()
+	defer h.r.mu.Unlock()
+	if h.text == nil {
+		fonts, err := render.NewSystemFontMap(h.r.cfg.Bar.FontFamily, render.DefaultFontCacheDir())
+		if err != nil {
+			return err
+		}
+		h.text = render.NewTextRendererWithFontMap(fonts)
+		theme := ThemeFrom(h.r.cfg, h.r.cfg.Bar)
+		h.style.Size = theme.TextSize
+		h.style.Radius = theme.Radius
+		h.style.Background, h.style.Foreground = theme.Background, theme.Foreground
+		h.style.Track, h.style.Accent, h.style.AccentOn, h.style.Error =
+			theme.Muted, theme.Accent, theme.Error, theme.Error
+		h.rebuild(connector)
+	}
+	canvas, err := render.NewCanvas(pixels, width, height, stride)
+	if err != nil {
+		return err
+	}
+	style := h.style
+	style.Scale120 = ui.Scale120(max(h.scale120[connector], int(ui.ScaleUnit)))
+
+	// The surface covers the whole output and the cards are separate bodies on
+	// it, which the painter cannot express in one pass: it fills exactly one
+	// rounded body and clears everything outside it. So the surface is cleared
+	// here and each card is painted into its own buffer and copied in, which
+	// leaves the gaps and the rest of the output transparent.
+	clear(pixels)
+	for _, card := range h.cards[connector] {
+		if err := h.paintCard(canvas, card, style); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// toastCard is one placed card: its tree, arranged at the origin, and where
+// on the surface it belongs.
+type toastCard struct {
+	root *ui.Node
+	rect ui.Rect
+}
+
+// paintCard renders one card into the scratch buffer and copies it onto the
+// surface. The painter clears outside the card's rounded body, so the copy
+// carries transparent corners rather than a square patch.
+func (h *toastHost) paintCard(canvas *render.Canvas, card toastCard, style render.ProofStyle) error {
+	box := style.Scale120.PhysicalRect(card.rect)
+	if box.W <= 0 || box.H <= 0 {
+		return nil
+	}
+	stride := box.W * 4
+	if need := stride * box.H; len(h.scratch) < need {
+		h.scratch = make([]byte, need)
+	}
+	cardCanvas, err := render.NewCanvas(h.scratch, box.W, box.H, stride)
+	if err != nil {
+		return err
+	}
+	cardStyle := style
+	cardStyle.Body = ui.Rect{W: card.rect.W, H: card.rect.H}
+	if err := render.Paint(cardCanvas, card.root, h.text, cardStyle); err != nil {
+		return err
+	}
+	for y := range box.H {
+		target := box.Y + y
+		if target < 0 || target >= canvas.Height {
+			continue
+		}
+		width := min(stride, canvas.Stride-box.X*4)
+		to := target*canvas.Stride + box.X*4
+		if width <= 0 || to < 0 || to+width > len(canvas.Pix) {
+			continue
+		}
+		copy(canvas.Pix[to:to+width], h.scratch[y*stride:y*stride+width])
+	}
+	return nil
+}
+
+// handle tracks which card the pointer is over. Hover is what holds a toast
+// open, so the presentation state the shell reports depends on it.
+func (h *toastHost) handle(connector string, event wayland.Event) bool {
+	h.r.mu.Lock()
+	defer h.r.mu.Unlock()
+	switch event.Kind {
+	case wayland.EventPointerEnter, wayland.EventPointerMotion:
+		h.pointer[connector] = ui.Rect{X: int(math.Floor(event.X)), Y: int(math.Floor(event.Y))}
+	case wayland.EventPointerLeave:
+		delete(h.pointer, connector)
+	default:
+		return false
+	}
+	return h.updateHover(connector)
+}
+
+// updateHover recomputes the hovered set for one output and reports whether
+// it changed. Only a change is worth a frame.
+func (h *toastHost) updateHover(connector string) bool {
+	at, inside := h.pointer[connector]
+	hovered := map[uint32]bool{}
+	if inside {
+		ids := h.visible[connector]
+		for i, rect := range h.cardRects(connector, ids) {
+			if i < len(ids) && rect.Contains(at.X, at.Y) {
+				hovered[ids[i]] = true
+			}
+		}
+	}
+	previous := h.hovered[connector]
+	if len(previous) == len(hovered) {
+		same := true
+		for id := range hovered {
+			if !previous[id] {
+				same = false
+				break
+			}
+		}
+		if same {
+			return false
+		}
+	}
+	h.hovered[connector] = hovered
+	return true
+}
+
+// rebuild arranges one output's visible cards. Each is laid out at its own
+// origin, because each is painted into its own buffer before it is placed.
+func (h *toastHost) rebuild(connector string) {
+	ids := h.visible[connector]
+	rects := h.cardRects(connector, ids)
+	measure := func(text string, tabular bool) (int, int) {
+		if h.text != nil {
+			if w, height, err := h.text.Measure(text, h.style.Size, tabular); err == nil {
+				return w, height
+			}
+		}
+		return len([]rune(text)) * 8, 16
+	}
+	cards := make([]toastCard, 0, len(ids))
+	for i, id := range ids {
+		if i >= len(rects) {
+			break
+		}
+		root := h.cardFor(id)
+		if root == nil {
+			continue
+		}
+		if err := ui.LayoutColumn(root, ui.Rect{W: rects[i].W, H: rects[i].H}, measure); err != nil {
+			continue
+		}
+		cards = append(cards, toastCard{root: root, rect: rects[i]})
+	}
+	h.cards[connector] = cards
+}
+
+// cardFor projects one active record. A record that has gone between the
+// placement and the paint yields nothing rather than an empty card.
+func (h *toastHost) cardFor(id uint32) *ui.Node {
+	s := h.r.notify
+	s.mu.Lock()
+	notification, ok := s.active[id]
+	lifetime := cloneLifetime(s.lifetimes, id)
+	s.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	return NotificationCard(notification, lifetime, h.r.linksAllowed())
 }
 
 // recompute relayouts every open output from the current projection and
@@ -141,6 +372,8 @@ func (h *toastHost) recompute() {
 		visible, queued := placeIDs(ids, heights, geom)
 		h.visible[connector] = visible
 		h.queued[connector] = queued
+		h.rebuild(connector)
+		h.updateHover(connector)
 
 		h.request(wayland.AuxRequest{
 			Output: global,
@@ -180,9 +413,13 @@ func (h *toastHost) outputOrder() []string {
 	return out
 }
 
-// geometryFor reports the output's logical geometry. Until the owner wires
-// real configures, the design default stands in.
-func (h *toastHost) geometryFor(string) toastGeometry {
+// geometryFor reports the output's logical geometry. An output the compositor
+// has not configured yet uses the design default, so a stack computed before
+// the first configure is placed somewhere sane rather than nowhere.
+func (h *toastHost) geometryFor(connector string) toastGeometry {
+	if geometry, ok := h.geometry[connector]; ok {
+		return geometry
+	}
 	return toastGeometry{OutputW: 1920, OutputH: 1080, Corner: toastTopRight}
 }
 

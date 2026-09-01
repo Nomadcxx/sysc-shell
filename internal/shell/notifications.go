@@ -167,7 +167,9 @@ func (r *Registry) NotifyMessages() chan notifyclient.Message { return r.notifyC
 func (r *Registry) ApplyNotify(m notifyclient.Message) { r.applyNotify(m) }
 
 // SyncToastOutputs opens or closes toast surfaces as outputs come and go.
-// The registry calls it from its output bookkeeping.
+// The registry calls it from its output bookkeeping, with no lock held: the
+// toast host's own state is under Registry.mu, because the compositor drives
+// its configure, paint, and pointer callbacks on another goroutine.
 func (r *Registry) SyncToastOutputs(globals map[string]uint32) {
 	r.notify.mu.Lock()
 	connectors := make([]string, 0, len(globals))
@@ -176,6 +178,9 @@ func (r *Registry) SyncToastOutputs(globals map[string]uint32) {
 	}
 	r.notify.outputs = connectors
 	r.notify.mu.Unlock()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.toasts != nil {
 		r.toasts.syncOutputs(globals)
 	}
