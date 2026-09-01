@@ -104,6 +104,19 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 		if sample == "" {
 			sample = " "
 		}
+		if n.Multiline {
+			lines := 1
+			for i := 0; i < len(sample); i++ {
+				if sample[i] == '\n' {
+					lines++
+				}
+			}
+			_, lh := measure(" ", n.Tabular)
+			if lh <= 0 {
+				lh = 16
+			}
+			return lines*lh + 2*n.Padding, nil
+		}
 		_, h := measure(sample, n.Tabular)
 		return h + 2*n.Padding, nil
 	case KindScroll, KindVirtualList:

@@ -7,9 +7,11 @@ const KeyBackspace = 14
 // Field is a single-line text value. Preedit is IME composing text and is
 // not part of Text until Commit.
 type Field struct {
-	Text        string
-	PreeditText string
-	Cursor      int
+	Text          string
+	PreeditText   string
+	Cursor        int
+	Multiline     bool
+	SubmitOnEnter bool
 }
 
 func NewField(s string) *Field {
@@ -27,10 +29,40 @@ func (f *Field) Commit(s string) {
 	if f == nil {
 		return
 	}
+	f.Insert(s)
+}
+
+// Insert writes s at the cursor. A newline is refused when the field is
+// single-line or submit-on-enter, so Enter can mean submit instead of a break.
+func (f *Field) Insert(s string) bool {
+	if f == nil {
+		return false
+	}
+	if s == "\n" && (!f.Multiline || f.SubmitOnEnter) {
+		return false
+	}
 	f.PreeditText = ""
 	f.clamp()
 	f.Text = f.Text[:f.Cursor] + s + f.Text[f.Cursor:]
 	f.Cursor += len(s)
+	return true
+}
+
+func (f *Field) Move(runes int) {
+	if f == nil || runes == 0 {
+		return
+	}
+	f.clamp()
+	for runes < 0 && f.Cursor > 0 {
+		_, size := utf8.DecodeLastRuneInString(f.Text[:f.Cursor])
+		f.Cursor -= size
+		runes++
+	}
+	for runes > 0 && f.Cursor < len(f.Text) {
+		_, size := utf8.DecodeRuneInString(f.Text[f.Cursor:])
+		f.Cursor += size
+		runes--
+	}
 }
 
 func (f *Field) Backspace() {
@@ -84,7 +116,7 @@ func (f *Field) Node(name string) *Node {
 	}
 	return &Node{
 		Kind: KindTextField, Text: f.Text, Preedit: f.PreeditText, Cursor: f.Cursor,
-		Focusable: true, Name: name, Role: "textbox",
+		Focusable: true, Name: name, Role: "textbox", Multiline: f.Multiline,
 	}
 }
 

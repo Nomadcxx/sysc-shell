@@ -3,6 +3,7 @@ package render
 import (
 	"fmt"
 	"image"
+	"strings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -292,6 +293,12 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle,
 		H: n.Bounds.H - 2*n.Padding,
 	}
 	phys := style.Scale120.PhysicalRect(inner)
+	prev := c.restrict
+	c.restrict = phys
+	defer func() { c.restrict = prev }()
+	if n.Multiline {
+		return paintMultilineField(c, n, text, style, size, phys)
+	}
 	committed := n.Text
 	if n.Cursor >= 0 && n.Cursor <= len(n.Text) {
 		committed = n.Text[:n.Cursor]
@@ -319,6 +326,51 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle,
 		}
 	}
 	caret := ui.Rect{X: phys.X + prefixW, Y: phys.Y, W: 1, H: phys.H}
+	fillRect(c, caret, style.accent())
+	return nil
+}
+
+func paintMultilineField(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size int, phys ui.Rect) error {
+	lineH := size
+	if text != nil {
+		if _, h, err := text.Measure(" ", size, n.Tabular); err == nil && h > 0 {
+			lineH = h
+		}
+	}
+	lines := strings.Split(n.Text, "\n")
+	off := 0
+	caretLine, caretCol := 0, 0
+	cursor := n.Cursor
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor > len(n.Text) {
+		cursor = len(n.Text)
+	}
+	for i, line := range lines {
+		end := off + len(line)
+		if cursor >= off && cursor <= end {
+			caretLine, caretCol = i, cursor-off
+		}
+		box := phys
+		box.Y += i * lineH
+		box.H = lineH
+		if err := paintText(c, line, box, text, style, size, n.Tabular, n.Tone, n.Bold, n.Italic, n.Underline); err != nil {
+			return err
+		}
+		off = end + 1
+	}
+	prefixW := 0
+	if text != nil && caretCol > 0 && caretLine < len(lines) {
+		prefix := lines[caretLine]
+		if caretCol < len(prefix) {
+			prefix = prefix[:caretCol]
+		}
+		if w, _, err := text.Measure(prefix, size, n.Tabular); err == nil {
+			prefixW = w
+		}
+	}
+	caret := ui.Rect{X: phys.X + prefixW, Y: phys.Y + caretLine*lineH, W: 1, H: lineH}
 	fillRect(c, caret, style.accent())
 	return nil
 }

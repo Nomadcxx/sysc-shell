@@ -136,6 +136,8 @@ type Node struct {
 	DragType  string
 	Payload   string
 	Accept    []string
+	Multiline bool
+	Reseed    uint64
 }
 
 func (n *Node) Active() int {
