@@ -2,10 +2,12 @@ github.com/Nomadcxx/sysc-metrics v0.2.0 h1:8+qbOUU4IDtSW08Z6smvfHwvojsbaV+kemrs9
 github.com/Nomadcxx/sysc-metrics v0.2.0/go.mod h1:qIgYyJuuD0Ql7wlh3cN0kiHsSG/LEMczrq+vXA7rIQs=
 github.com/Nomadcxx/sysc-wayland v0.2.0 h1:e3Z5njh9UBQm8/3LxpE8TS6N1NPvL4buOPlKL/OcC9c=
 github.com/Nomadcxx/sysc-wayland v0.2.0/go.mod h1:ZNAe41EM7R5G2KA55jqMPotAvrjVWcMq21BV69gROKA=
+github.com/go-freedesktop/desktopentry v0.1.0/go.mod h1:iw5+/k0LMY2pvYYD3euvkjG/cUUZa37HEzLiTjaxqQE=
 github.com/go-text/typesetting v0.3.5-0.20260729084153-ddb7ff96ad4d h1:eBCCzHDJ79YDC3G7fnGuBbA/o+aEl0hSgRZYVbKzYsk=
 github.com/go-text/typesetting v0.3.5-0.20260729084153-ddb7ff96ad4d/go.mod h1:XZO1hD+nQVyvVa5IicQk7FsCa4PFQaJ2soWAP1f//68=
 github.com/go-text/typesetting-utils v0.0.0-20260419141703-4ffe8874dabc h1:8FGo2It5K75XkavhTiCKExUfVaVDS1feBnLCru5qeoY=
 github.com/go-text/typesetting-utils v0.0.0-20260419141703-4ffe8874dabc/go.mod h1:3/62I4La/HBRX9TcTpBj4eipLiwzf+vhI+7whTc9V7o=
+github.com/junegunn/fzf v0.74.3/go.mod h1:TBRY54j3mGjAm4JcpDyiUIuDq38QlHvAzrB3GLKxQXM=
 golang.org/x/image v0.44.0 h1:+tDekMZED9+LrtB3G5xzRggpVh9CARjZqROla3R3R+I=
 golang.org/x/image v0.44.0/go.mod h1:V8K3KE9KKKE+pLpQDOeN18w9oacNSvy1tDOirTu4xtY=
 golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
