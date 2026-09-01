@@ -122,11 +122,10 @@ in bd, not work inside this design.
   process.
 - **D11 — No new node kinds in v1.** The panel projects onto the landed
   vocabulary: a `KindColumn` containing one `KindTextField` and one
-  `KindVirtualList` (row height 48, `ItemCount` = result count). Selected-row
-  Primary fill is painted through the virtual-list item mechanism with a
-  per-item background, OnPrimary text. If Task 0 finds the virtual-list item
-  path cannot carry a per-item background, the plan amends — it does not
-  invent a toolkit kind.
+  `KindVirtualList` (row height 48, `ItemCount` = result count). Task 0
+  confirmed that an item can use the existing full-width `KindButton` paint
+  path when selected and the text path otherwise. Task 10 adds the missing
+  OnPrimary colour mapping to that painter; it does not add a toolkit kind.
 
 ### Integration
 
@@ -148,12 +147,10 @@ in bd, not work inside this design.
   bind is `Super+Space` in `docs/niri-hotkeys.md` (owner adjustable). No bar
   button in v1 — the M4 D5 keyboard-parity reasoning stands; the bar glyph is
   a follow-up slice.
-- **D14 — Root-chain limitation, recorded honestly.** The process-wide
-  interactive-root coordinator (`sysc-60`) is not landed. V1 therefore behaves
-  like every other M4 panel: opening the launcher does not close an open
-  settings or session panel, and the launcher's Exclusive keyboard takes input
-  while it is top-most. This is a v1 limitation, not a design hole: adopting
-  the coordinator is a follow-up slice with a bd edge to `sysc-60`.
+- **D14 — Use the landed interactive-root coordinator.** Task 0 found
+  `sysc-60` on `main`. Opening the launcher therefore closes the current
+  interactive root through the existing `openPanelRootLocked` path, with no
+  launcher-specific coordinator code.
 - **D15 — Entrance gate: implementation may start now.** Nothing in v1 blocks
   on M5. `KindImage` is absent on `main`, so v1 paints a fallback glyph in the
   40×40 icon slot (one process-wide placeholder face from the existing icon
