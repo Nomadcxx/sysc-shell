@@ -96,9 +96,41 @@ func (s *trayState) itemsList() []tray.Item {
 	return out
 }
 
+// has reports whether the exact key — owner, path, generation — is live.
+func (s *trayState) has(key tray.ItemKey) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.items[key]
+	return ok
+}
+
+// tooltipText flattens the service-owned tooltip into one dwell string. The
+// service already bounded the fields; the shell clamps again at the protocol
+// bound so a compromised service cannot grow the bar's hover surface.
+func (s *trayState) tooltipText(key tray.ItemKey) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	it, ok := s.items[key]
+	if !ok {
+		return ""
+	}
+	text := it.Tooltip.Title
+	if it.Tooltip.Description != "" {
+		if text != "" {
+			text += "\n"
+		}
+		text += it.Tooltip.Description
+	}
+	if len(text) > tray.MaxTooltipBytes {
+		text = text[:tray.MaxTooltipBytes]
+	}
+	return text
+}
+
 // Registry wrappers.
-func (r *Registry) applyTray(m trayclient.Message)            { r.tray.applyTray(m) }
-func (r *Registry) trayItemCount() int                        { return r.tray.count() }
-func (r *Registry) trayTitle(k tray.ItemKey) string           { return r.tray.title(k) }
+func (r *Registry) applyTray(m trayclient.Message)             { r.tray.applyTray(m) }
+func (r *Registry) trayItemCount() int                         { return r.tray.count() }
+func (r *Registry) trayTitle(k tray.ItemKey) string            { return r.tray.title(k) }
 func (r *Registry) trayIconName(k tray.ItemKey) (string, bool) { return r.tray.iconName(k) }
-func (r *Registry) trayItemsFor(string) []tray.Item           { return r.tray.itemsList() }
+func (r *Registry) trayItemsFor(string) []tray.Item            { return r.tray.itemsList() }
+func (r *Registry) trayTooltipText(k tray.ItemKey) string      { return r.tray.tooltipText(k) }
