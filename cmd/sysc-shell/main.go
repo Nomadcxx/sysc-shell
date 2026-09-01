@@ -18,6 +18,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/shell"
+	"github.com/Nomadcxx/sysc-shell/internal/trayclient"
 )
 
 func pumpNiri(
@@ -146,6 +147,33 @@ func run(ctx context.Context) error {
 	}()
 	go func() {
 		if err := notifyClient.Run(ctx); err != nil && ctx.Err() == nil {
+			select {
+			case streamFailed <- err:
+			default:
+			}
+			cancel()
+		}
+	}()
+
+	// The tray service owns item and menu state; the shell projects it. The
+	// client is bound before its pump starts so a snapshot arriving on the
+	// first connection already has somewhere to land. As with notifications,
+	// a missing service is not fatal: the client retries and the tray is
+	// simply empty.
+	trayClient := trayclient.New(os.Getenv("XDG_RUNTIME_DIR"), registry.TrayMessages())
+	registry.BindTray(trayClient)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg := <-registry.TrayMessages():
+				registry.ApplyTray(msg)
+			}
+		}
+	}()
+	go func() {
+		if err := trayClient.Run(ctx); err != nil && ctx.Err() == nil {
 			select {
 			case streamFailed <- err:
 			default:

@@ -103,10 +103,13 @@ type Node struct {
 	// arrives later cannot change the layout around it.
 	ImageSize int
 	// Tone selects the text colour. Zero is ToneNormal.
-	Tone     Tone
-	Padding  int
-	Gap      int
-	Action   string
+	Tone    Tone
+	Padding int
+	Gap     int
+	Action  string
+	// Tooltip is bounded hover text owned by the node's feature. The shared
+	// dwell controller decides when and where to show it.
+	Tooltip  string
 	Bounds   Rect
 	Children []*Node
 

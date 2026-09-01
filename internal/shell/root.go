@@ -119,6 +119,11 @@ func (c *rootChain) closeChild(generation uint64) bool {
 	return true
 }
 
+// gen reports the current generation, whether or not a chain is open. A
+// caller correlating a request against the chain compares this: any change
+// means the gesture it belongs to is over.
+func (c *rootChain) gen() uint64 { return c.generation }
+
 // current reports the chain owner and its generation.
 func (c *rootChain) current() (rootID, uint64, bool) {
 	if !c.open {

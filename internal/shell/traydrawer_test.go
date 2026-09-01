@@ -15,7 +15,7 @@ func TestTrayDrawerIsAVirtualListWithKeyboardAccessibleControls(t *testing.T) {
 		Overflow: []tray.Item{preferenceItem("mail", "Mail", 1)},
 		Hidden:   []tray.Item{preferenceItem("chat", "Chat", 1)},
 	}
-	tree, _ := trayDrawerTree(arranged)
+	tree, _ := trayDrawerTree(arranged, nil)
 	if tree.Kind != ui.KindVirtualList || tree.ItemCount != 4 {
 		t.Fatalf("tree = kind %d count %d, want virtual list with two headings and two items", tree.Kind, tree.ItemCount)
 	}
@@ -42,7 +42,7 @@ func TestTrayDrawerPinnedItemOffersUnpin(t *testing.T) {
 	item := preferenceItem("mail", "Mail", 1)
 	tree, _ := trayDrawerTree(trayArrangement{
 		Overflow: []tray.Item{item}, Pinned: map[tray.ItemKey]bool{item.Key: true},
-	})
+	}, nil)
 	controls := ui.Focusables(tree.Item(1))
 	if len(controls) < 3 || controls[2].Name != "Unpin Mail" || controls[2].Action != "tray-pref:unpin:id:mail" {
 		t.Fatalf("pin control = %+v", controls)
@@ -55,15 +55,16 @@ func TestTrayDrawerItemRowsRouteTheirDistinctGenerationSafeIdentity(t *testing.T
 	first := preferenceItem("mail", "Mail", 1)
 	second := preferenceItem("chat", "Chat", 2)
 	var got []tray.ItemKey
-	h.itemAction = func(item tray.Item, connector string, output, serial uint32) bool {
-		if connector != "eDP-1" || output != 7 || serial != 42 {
-			t.Fatalf("correlation = %q/%d/%d", connector, output, serial)
+	h.itemAction = func(item tray.Item, connector string, output uint32, event wayland.Event) bool {
+		if connector != "eDP-1" || output != 7 || event.Serial != 42 {
+			t.Fatalf("correlation = %q/%d/%d", connector, output, event.Serial)
 		}
 		got = append(got, item.Key)
 		return true
 	}
-	h.open(7, "eDP-1", trayArrangement{Overflow: []tray.Item{first, second}})
-	if !h.activate(h.focus[0], 42) || !h.activate(h.focus[5], 42) {
+	h.open(7, "eDP-1", trayArrangement{Overflow: []tray.Item{first, second}}, nil)
+	release := wayland.Event{Kind: wayland.EventPointerRelease, Serial: 42}
+	if !h.activate(h.focus[0], release) || !h.activate(h.focus[5], release) {
 		t.Fatal("item activation was not routed")
 	}
 	if len(got) != 2 || got[0] != first.Key || got[1] != second.Key {
@@ -75,7 +76,7 @@ func TestTrayDrawerOwnsOneRootAndClosesExactlyOnce(t *testing.T) {
 	r := NewRegistry(config.Default())
 	hh := &hostHarness{}
 	h := newTrayDrawerHost(r, hh)
-	if !h.open(7, "eDP-1", trayArrangement{}) {
+	if !h.open(7, "eDP-1", trayArrangement{}, nil) {
 		t.Fatal("open refused")
 	}
 	if !r.roots.owns(trayDrawerRoot(7)) || len(hh.opens) != 1 {
@@ -96,7 +97,7 @@ func TestTrayDrawerLayoutAndFocusShareRetainedRows(t *testing.T) {
 	h := newTrayDrawerHost(r, &hostHarness{})
 	h.open(7, "eDP-1", trayArrangement{
 		Overflow: []tray.Item{preferenceItem("mail", "Mail", 1)},
-	})
+	}, nil)
 	if err := h.configure(trayDrawerWidth, trayDrawerHeight, int(ui.ScaleUnit)); err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +109,7 @@ func TestTrayDrawerLayoutAndFocusShareRetainedRows(t *testing.T) {
 func TestTrayDrawerMenuAttachesToItsRoot(t *testing.T) {
 	r := NewRegistry(config.Default())
 	h := newTrayDrawerHost(r, &hostHarness{})
-	if !h.open(7, "eDP-1", trayArrangement{}) {
+	if !h.open(7, "eDP-1", trayArrangement{}, nil) {
 		t.Fatal("open refused")
 	}
 	if !r.roots.attach(h.rootGen, trayMenuRoot(7)) {
@@ -126,7 +127,7 @@ func TestTrayDrawerScrollAndFocusMovementRelayoutVisibleRows(t *testing.T) {
 	for i := range items {
 		items[i] = preferenceItem(string(rune('a'+i)), "Item", 1)
 	}
-	h.open(7, "eDP-1", trayArrangement{Overflow: items})
+	h.open(7, "eDP-1", trayArrangement{Overflow: items}, nil)
 	if err := h.configure(trayDrawerWidth, 120, int(ui.ScaleUnit)); err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +150,7 @@ func TestTrayDrawerEmitsPreferenceCollisionDiagnostic(t *testing.T) {
 	h := newTrayDrawerHost(r, &hostHarness{})
 	var got []string
 	h.diagnostic = func(message string) { got = append(got, message) }
-	h.open(7, "eDP-1", trayArrangement{Collisions: []string{"id:shared"}})
+	h.open(7, "eDP-1", trayArrangement{Collisions: []string{"id:shared"}}, nil)
 	if len(got) != 1 || !strings.Contains(got[0], "id:shared") {
 		t.Fatalf("diagnostics = %v", got)
 	}

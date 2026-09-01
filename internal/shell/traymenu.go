@@ -79,6 +79,42 @@ func validMenuLevel(nodes []tray.MenuNode, depth int) bool {
 
 func (m *trayMenu) top() *menuLevel { return &m.stack[len(m.stack)-1] }
 
+// widestLevel counts the visible rows of the fullest level in the tree, so a
+// fixed-size surface can hold any level the user can reach. The walk is
+// iterative and bounded by the same depth and row caps as the model itself.
+func (m *trayMenu) widestLevel() int {
+	if !m.valid || len(m.stack) == 0 {
+		return 0
+	}
+	type frame struct {
+		nodes []tray.MenuNode
+		depth int
+	}
+	work := []frame{{m.stack[0].nodes, 1}}
+	widest := 0
+	for len(work) > 0 {
+		f := work[len(work)-1]
+		work = work[:len(work)-1]
+		if f.depth > menuMaxDepth {
+			continue
+		}
+		rows := 0
+		for _, n := range f.nodes {
+			if !n.Visible {
+				continue
+			}
+			if rows++; rows >= menuMaxRows {
+				break
+			}
+			if n.ChildrenDisplay == "submenu" && len(n.Children) > 0 {
+				work = append(work, frame{n.Children, f.depth + 1})
+			}
+		}
+		widest = max(widest, rows)
+	}
+	return widest
+}
+
 // len counts the visible rows of the current level, capped.
 func (m *trayMenu) len() int {
 	return len(m.visible())

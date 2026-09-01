@@ -294,3 +294,96 @@ Recorded 2026-08-31: not executed in this implementation pass.
 7. Select each stock theme → palette regenerates; fallback intact with matugen renamed away.
 8. XF86 media keys via documented binds step volume with OSD.
 
+
+## Milestone 5: notifications and tray
+
+Run after Tranche 4B. The automated half runs anywhere; the live half needs a Niri session with two
+outputs and both services on the socket. Record connector names, application fixtures and timings
+outside this repository.
+
+### Automated
+
+```bash
+gofmt -w .
+test -z "$(gofmt -l .)"
+go vet ./...
+go test -race -count=1 ./...
+git diff --exit-code -- go.mod go.sum
+```
+
+`go test ./tests/integration` drives the tray through its exported wiring with a fake service behind
+the command sender and a fake compositor draining the aux and invalidation channels. It covers two
+outputs, output hotplug, service generations, stale and failed replies, a refused `menu.open`,
+malformed sibling IDs, a preference-token collision, root replacement, compositor-side surface close,
+and shutdown cleanup. It is not a substitute for the live matrix below: it exercises no compositor and
+no D-Bus application.
+
+### Prerequisites for the live matrix
+
+- `sysc-notifyd` and `sysc-tray` running, with `XDG_RUNTIME_DIR` set;
+- two connected outputs, one of which can be unplugged;
+- at least three real tray applications with different shapes: one with a named themed icon, one that
+  publishes pixmaps, and one that sets `ItemIsMenu`;
+- one application that changes its menu while the menu is open (a music player's queue works).
+
+Build and start:
+
+    go build -o /tmp/sysc-shell-milestone5 ./cmd/sysc-shell
+    /tmp/sysc-shell-milestone5
+
+### Notifications
+
+1. A notification appears as a toast on every output with a bar.
+2. The centre lists what the toasts showed; dismissing in one place clears it in the other.
+3. Do Not Disturb suppresses toasts and still records into the centre; clearing it does not replay.
+4. An inline reply sends and the toast closes. Opening a reply while a tray menu is open replaces it.
+5. An application that exits with a notification up leaves nothing on screen.
+
+### Tray
+
+6. Every application appears once per output, with the icon it publishes. A pixmap-only application
+   and a named-icon application both render.
+7. An application that changes its icon (a mail client with unread mail) updates without a restart.
+8. `NeedsAttention` swaps the icon; returning to `Active` swaps it back.
+9. Hovering an item shows its tooltip after the dwell, fully inside the output.
+10. Left click activates. Middle click secondary-activates. A wheel over an item scrolls it. Confirm
+    against an application whose behaviour differs per gesture.
+11. Right click opens the menu under the icon that was clicked, on that output only.
+12. An `ItemIsMenu` application opens its menu on a left click.
+13. Escape inside a submenu returns to the parent level before anything closes.
+14. Selecting an entry acts and closes the menu.
+15. A menu that changes while open updates in place for property changes, and defers a structural
+    change until the pointer and keyboard are idle.
+16. Selecting after a structural change that has not been applied acts on nothing and refreshes.
+17. Narrow the bar until items overflow: the overflow control appears and the drawer lists the rest
+    with the same icons.
+18. Hide, pin, and reorder from the drawer. The order survives a shell restart.
+19. Two applications publishing the same identity keep their preferences ignored, and stderr names
+    the colliding token once.
+20. A right click on a drawer row opens the menu beside the drawer; the drawer stays up behind it and
+    Escape returns to it.
+
+### Combined gate
+
+21. Open the notification centre, then the tray drawer: the centre closes as the drawer takes the root.
+22. Open a tray menu with a tooltip up: the tooltip goes first.
+23. An inline reply opened while a menu is up replaces the menu.
+24. Restart `sysc-notifyd` alone: tray state is untouched and notifications recover.
+25. Restart `sysc-tray` alone: notification state is untouched, every item reappears under a fresh
+    generation, and no stale click reaches an application.
+26. Restart the shell: both services reconnect and both projections come back.
+27. Unplug an output with a menu or drawer open: that surface goes, the other output keeps working.
+    Replug: one bar, no duplicate.
+28. Mixed scale and transform across the two outputs: tray icons are sharp on both, and the menu
+    hit-tests correctly on the transformed one.
+29. Sixty minutes idle with both services connected: no continuous frame loop.
+
+### Task 6 popup probe
+
+The tray menu ships on the design's named fallback: one Overlay layer surface with the menu's own
+root and revision rules. Before the stable tag, probe the documented primary path once:
+
+- create a 1x1 `xdg_popup` through `zwlr_layer_surface_v1.get_popup` on the bar surface;
+- record whether Niri accepts a protocol-valid sequence, and the exact trace if it does not.
+
+Keep the Overlay fallback if the probe fails, and record the trace in the milestone handover.

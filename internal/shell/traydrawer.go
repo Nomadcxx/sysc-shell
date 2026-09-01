@@ -18,15 +18,18 @@ const (
 	trayDrawerHeight    = 480
 	trayDrawerRowHeight = 40
 	trayItemSize        = 24
+	// trayDrawerAction is the bar's overflow control. It opens this drawer.
+	trayDrawerAction = "tray-drawer"
 )
 
-func trayDrawerTree(arranged trayArrangement) (*ui.Node, map[*ui.Node]tray.Item) {
+func trayDrawerTree(arranged trayArrangement, images map[tray.ItemKey]*ui.Image) (*ui.Node, map[*ui.Node]tray.Item) {
 	rows := make([]*ui.Node, 0, len(arranged.Overflow)+len(arranged.Hidden)+2)
 	items := make(map[*ui.Node]tray.Item, len(arranged.Overflow)+len(arranged.Hidden))
 	if len(arranged.Overflow) > 0 {
 		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: "Overflow", Bold: true})
 		for i := range arranged.Overflow {
 			row, itemNode := trayDrawerItemRow(arranged.Overflow[i], false, arranged.Pinned[arranged.Overflow[i].Key])
+			itemNode.Image = images[arranged.Overflow[i].Key]
 			rows = append(rows, row)
 			items[itemNode] = arranged.Overflow[i]
 		}
@@ -35,6 +38,7 @@ func trayDrawerTree(arranged trayArrangement) (*ui.Node, map[*ui.Node]tray.Item)
 		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: "Hidden", Bold: true})
 		for i := range arranged.Hidden {
 			row, itemNode := trayDrawerItemRow(arranged.Hidden[i], true, false)
+			itemNode.Image = images[arranged.Hidden[i].Key]
 			rows = append(rows, row)
 			items[itemNode] = arranged.Hidden[i]
 		}
@@ -99,6 +103,7 @@ type trayDrawerHost struct {
 	connector  string
 	rootGen    uint64
 	arranged   trayArrangement
+	images     map[tray.ItemKey]*ui.Image
 	root       *ui.Node
 	focus      []*ui.Node
 	roving     ui.Roving
@@ -110,7 +115,7 @@ type trayDrawerHost struct {
 	pressed    *ui.Node
 	itemNodes  map[*ui.Node]tray.Item
 	focusRows  map[*ui.Node]int
-	itemAction func(tray.Item, string, uint32, uint32) bool
+	itemAction func(tray.Item, string, uint32, wayland.Event) bool
 	diagnostic func(string)
 	text       *render.TextRenderer
 	style      render.ProofStyle
@@ -128,12 +133,12 @@ func newTrayDrawerHost(r *Registry, harness *hostHarness) *trayDrawerHost {
 	return h
 }
 
-func (h *trayDrawerHost) open(output uint32, connector string, arranged trayArrangement) bool {
+func (h *trayDrawerHost) open(output uint32, connector string, arranged trayArrangement, images map[tray.ItemKey]*ui.Image) bool {
 	if h.open_ || output == 0 {
 		return false
 	}
 	h.open_, h.closed = true, false
-	h.output, h.connector, h.arranged = output, connector, arranged
+	h.output, h.connector, h.arranged, h.images = output, connector, arranged, images
 	for _, token := range arranged.Collisions {
 		h.diagnostic("sysc-shell: tray preference collision for " + token + "; ignoring its preferences")
 	}
@@ -145,8 +150,20 @@ func (h *trayDrawerHost) open(output uint32, connector string, arranged trayArra
 	return true
 }
 
+// refresh reprojects an open drawer against new tray state. A drawer whose
+// item has gone keeps running with the rest: the row disappears, the surface
+// does not.
+func (h *trayDrawerHost) refresh(arranged trayArrangement, images map[tray.ItemKey]*ui.Image) {
+	if !h.open_ {
+		return
+	}
+	h.arranged, h.images = arranged, images
+	h.rebuild()
+	h.r.publishSurface(h.output, trayDrawerSurfaceID)
+}
+
 func (h *trayDrawerHost) rebuild() {
-	h.root, h.itemNodes = trayDrawerTree(h.arranged)
+	h.root, h.itemNodes = trayDrawerTree(h.arranged, h.images)
 	h.focus = ui.Focusables(h.root)
 	h.roving.Count = len(h.focus)
 	h.focusRows = make(map[*ui.Node]int, len(h.focus))
@@ -166,8 +183,30 @@ func (h *trayDrawerHost) spec() *wayland.AuxSpec {
 		Layer:  layershell.ZwlrLayerShellV1LayerOverlay,
 		Anchor: uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorRight),
 		Width:  trayDrawerWidth, Height: trayDrawerHeight, ExclusiveZone: -1, Keyboard: keyboardOnDemand,
-		Callbacks: wayland.HostCallbacks{Configure: h.configure, Render: h.render, Handle: h.handle},
+		Callbacks: wayland.HostCallbacks{
+			Configure: h.configureLocking, Render: h.renderLocking, Handle: h.handleLocking,
+		},
 	}
+}
+
+// The three Wayland callbacks take the registry lock, because the same host
+// state is written by the client pump through refresh.
+func (h *trayDrawerHost) configureLocking(width, height, scale120 int) error {
+	h.r.mu.Lock()
+	defer h.r.mu.Unlock()
+	return h.configure(width, height, scale120)
+}
+
+func (h *trayDrawerHost) renderLocking(pixels []byte, width, height, stride int) error {
+	h.r.mu.Lock()
+	defer h.r.mu.Unlock()
+	return h.render(pixels, width, height, stride)
+}
+
+func (h *trayDrawerHost) handleLocking(event wayland.Event) bool {
+	h.r.mu.Lock()
+	defer h.r.mu.Unlock()
+	return h.handle(event)
 }
 
 func (h *trayDrawerHost) configure(width, height, scale120 int) error {
@@ -250,7 +289,7 @@ func (h *trayDrawerHost) handle(event wayland.Event) bool {
 		pressed := h.pressed
 		h.pressed = nil
 		if n != nil && n == pressed {
-			return h.activate(n, event.Serial)
+			return h.activate(n, event)
 		}
 	case wayland.EventPointerAxis:
 		delta := int(event.AxisValue)
@@ -279,10 +318,13 @@ func (h *trayDrawerHost) activateFocused() bool {
 	if len(h.focus) == 0 {
 		return false
 	}
-	return h.activate(h.focus[h.roving.Index()], 0)
+	return h.activate(h.focus[h.roving.Index()], wayland.Event{Kind: wayland.EventPointerRelease})
 }
 
-func (h *trayDrawerHost) activate(node *ui.Node, serial uint32) bool {
+// activate runs one row control. An item row forwards the whole event, so a
+// row answers the same buttons the bar does: the drawer is another way to
+// reach an item, not a second set of gestures to learn.
+func (h *trayDrawerHost) activate(node *ui.Node, event wayland.Event) bool {
 	if node == nil {
 		return false
 	}
@@ -290,7 +332,7 @@ func (h *trayDrawerHost) activate(node *ui.Node, serial uint32) bool {
 		if h.itemAction == nil {
 			return false
 		}
-		return h.itemAction(item, h.connector, h.output, serial)
+		return h.itemAction(item, h.connector, h.output, event)
 	}
 	rest, ok := strings.CutPrefix(node.Action, "tray-pref:")
 	if !ok {

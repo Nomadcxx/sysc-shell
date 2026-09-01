@@ -212,6 +212,9 @@ func (r *Registry) TogglePanel(id PanelID, output uint32, trig Trigger) error {
 }
 
 func (r *Registry) DropAux(output uint32, surfaceID string) {
+	if r.DropTrayAux(output, surfaceID) {
+		return
+	}
 	id, ok := panelIDFromAux(surfaceID)
 	if !ok {
 		return
