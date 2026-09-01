@@ -150,3 +150,15 @@ func TestRootChainRefusesWorkWithNoOwner(t *testing.T) {
 	}
 	chain.release()
 }
+
+func TestTrayMenuRootsNeverCollideWithPanelRoots(t *testing.T) {
+	if trayMenuRoot(uint32(PanelClock)) == panelRoot(PanelClock) {
+		t.Fatal("a tray menu root collided with a panel root")
+	}
+	chain := &rootChain{}
+	gen := chain.openRoot(trayMenuRoot(7))
+	if !chain.owns(trayMenuRoot(7)) || chain.owns(panelRoot(PanelClock)) {
+		t.Fatal("the chain lost track of which kind owns it")
+	}
+	chain.closeRoot(gen)
+}

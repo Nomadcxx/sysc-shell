@@ -1,6 +1,6 @@
 # Design and Plan Register
 
-Last updated: 2026-09-01.
+Last updated: 2026-09-02.
 
 Every design, plan, and handover this project has produced, with where it lives and whether it is still
 live. Add a row here in the same commit that adds a document. A document that is not in this register is
@@ -204,6 +204,7 @@ the M4 surface vocabulary and tagged service releases.
 | `2026-08-31-notifications-and-tray-integration-design.md` | design | Corrected cross-repository ownership, parity, shared M3/M4 primitives, limits, release order, and gates. |
 | `2026-09-01-m5b-continuation-handover.md` | progress-handover | 5B Tasks 1-6 done on `milestone/m5a-notifications`; Tasks 7-9, two live gates, and the merge remain. |
 | `2026-09-01-m5-task8-progress-handover.md` | progress-handover | Task 7 committed at `437ef33`; Task 8 has uncommitted, non-compiling wiring work and exact continuation gates. |
+| `2026-09-02-milestone-5-completion-handover.md` | completion-handover | Milestone 5 closed at `2604d77`: automated gate, the live checks that ran on Niri and the ones the missing services blocked, defects fixed and open, and the stable-tag gate. |
 | `2026-09-01-milestone-5-shell-prerequisites.md` | plan | `AuxUpdate` and process-wide interactive-root ownership required before 5A. |
 | `/home/nomadx/.config/superpowers/worktrees/sysc-notify/redesign/v0.1/docs/plans/2026-08-31-sysc-notify-v0.1.md` | service plan | Executable notify service and candidate/stable release gates. |
 | `/home/nomadx/.config/superpowers/worktrees/sysc-tray/redesign/v0.1/docs/plans/2026-08-31-sysc-tray-v0.1.md` | service plan | Executable tray service and candidate/stable release gates. |

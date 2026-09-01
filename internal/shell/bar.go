@@ -7,12 +7,14 @@ import (
 	"math"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	tray "github.com/Nomadcxx/sysc-tray/protocol"
 )
 
 // BarHeight is the nominal bar height token. It is not a Wayland dimension:
@@ -39,6 +41,17 @@ type Bar struct {
 	// Sections are arranged by ui.ArrangeBar into absolute bounds, so painting
 	// and hit testing walk them as one flat list.
 	left, center, right []textWidget
+	trayNodes           []*ui.Node
+	trayItems           []tray.Item
+	trayPrefs           config.TrayPreferences
+	trayImages          map[tray.ItemKey]*ui.Image
+	trayActions         map[string]tray.ItemKey
+	trayArranged        trayArrangement
+	// trayAvailable is the logical width the last layout granted tray icons,
+	// after any reserve for the overflow control. The drawer re-derives the
+	// same arrangement from it without waiting for the next frame.
+	trayAvailable int
+	onTray        func(tray.ItemKey, trayArrangement, ui.Rect, wayland.Event) bool
 
 	// conn is the connector this bar renders for. It selects configuration and
 	// joins Niri state; it is never this bar's identity, which is its Wayland
@@ -130,7 +143,45 @@ func (b *Bar) sections() [][]*ui.Node {
 		}
 		out = append(out, nodes)
 	}
+	out[2] = append(out[2], b.trayNodes...)
 	return out
+}
+
+func (b *Bar) setTray(items []tray.Item, prefs config.TrayPreferences, images map[tray.ItemKey]*ui.Image) {
+	b.mu.Lock()
+	b.trayItems = append([]tray.Item(nil), items...)
+	b.trayPrefs = config.TrayPreferences{
+		Hidden: append([]string(nil), prefs.Hidden...), Pinned: append([]string(nil), prefs.Pinned...),
+		Order: append([]string(nil), prefs.Order...),
+	}
+	b.trayImages = make(map[tray.ItemKey]*ui.Image, len(images))
+	for key, image := range images {
+		b.trayImages[key] = image
+	}
+	b.needsLayout = true
+	b.mu.Unlock()
+}
+
+func (b *Bar) setTrayHandler(fn func(tray.ItemKey, trayArrangement, ui.Rect, wayland.Event) bool) {
+	b.mu.Lock()
+	b.onTray = fn
+	b.mu.Unlock()
+}
+
+// trayArrangement re-derives the split from the current items at the width the
+// last layout granted. The drawer reads it, so a drawer opened or refreshed
+// between frames shows the same overflow the bar will.
+func (b *Bar) trayArrangement() trayArrangement {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return arrangeTray(b.trayItems, b.trayPrefs, b.trayAvailable, trayItemSize, b.theme.Spacing)
+}
+
+// scale120 reports the output scale the bar was last configured at, in 120ths.
+func (b *Bar) scale120() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return int(b.style.Scale120)
 }
 
 // apply writes each widget's state from the view and reports whether anything
@@ -246,9 +297,79 @@ func (b *Bar) layoutLocked(width, height int) error {
 		}
 		return w, h
 	}
+	b.trayNodes = nil
 	sections := b.sections()
-	return ui.ArrangeBar(b.contentLocked(width, height),
-		sections[0], sections[1], sections[2], b.theme.Spacing, measure)
+	content := b.contentLocked(width, height)
+	if err := ui.ArrangeBar(content,
+		sections[0], sections[1], sections[2], b.theme.Spacing, measure); err != nil {
+		return err
+	}
+	available := b.trayAvailableLocked(content, sections[1], sections[2])
+	arranged := arrangeTray(b.trayItems, b.trayPrefs, available, trayItemSize, b.theme.Spacing)
+	if len(arranged.Overflow) > 0 || len(arranged.Hidden) > 0 {
+		reserve := trayItemSize
+		if len(sections[2]) > 0 || available > trayItemSize {
+			reserve += b.theme.Spacing
+		}
+		available = max(0, available-reserve)
+		arranged = arrangeTray(b.trayItems, b.trayPrefs, available, trayItemSize, b.theme.Spacing)
+	}
+	b.trayArranged, b.trayAvailable = arranged, available
+	b.rebuildTrayNodesLocked()
+	sections = b.sections()
+	return ui.ArrangeBar(content, sections[0], sections[1], sections[2], b.theme.Spacing, measure)
+}
+
+func (b *Bar) trayAvailableLocked(content ui.Rect, center, right []*ui.Node) int {
+	start := content.X + content.W/2
+	if len(center) > 0 {
+		last := center[len(center)-1].Bounds
+		start = last.X + last.W
+	}
+	if len(center) > 0 || len(right) > 0 {
+		start += b.theme.Spacing
+	}
+	used := 0
+	if len(right) > 0 {
+		used = content.X + content.W - right[0].Bounds.X
+		used += b.theme.Spacing
+	}
+	return max(0, content.X+content.W-start-used)
+}
+
+func (b *Bar) rebuildTrayNodesLocked() {
+	b.trayActions = make(map[string]tray.ItemKey, len(b.trayArranged.Bar))
+	for i, item := range b.trayArranged.Bar {
+		action := fmt.Sprintf("tray-item:%d", i)
+		b.trayActions[action] = item.Key
+		b.trayNodes = append(b.trayNodes, &ui.Node{
+			Kind: ui.KindImage, ImageSize: trayItemSize, Image: b.trayImages[item.Key],
+			Action: action, Tooltip: b.trayTooltip(item),
+		})
+	}
+	if len(b.trayArranged.Overflow) > 0 || len(b.trayArranged.Hidden) > 0 {
+		b.trayNodes = append(b.trayNodes, &ui.Node{
+			Kind: ui.KindButton, Text: "…", Padding: 3, Action: trayDrawerAction,
+			Tooltip: "Tray items", Focusable: true, Name: "Tray items", Role: "button",
+		})
+	}
+}
+
+func (b *Bar) trayTooltip(item tray.Item) string {
+	text := strings.TrimSpace(item.Tooltip.Title)
+	if description := strings.TrimSpace(item.Tooltip.Description); description != "" {
+		if text != "" {
+			text += "\n"
+		}
+		text += description
+	}
+	if text == "" {
+		text = strings.TrimSpace(item.Title)
+	}
+	if len(text) > tray.MaxTooltipBytes {
+		text = text[:tray.MaxTooltipBytes]
+	}
+	return text
 }
 
 // Configure records a new logical size and scale from the Wayland owner.
@@ -351,6 +472,11 @@ func (b *Bar) tooltipAtLocked(x, y int) (string, ui.Rect, bool) {
 			}
 		}
 	}
+	for _, node := range b.trayNodes {
+		if node.Tooltip != "" && node.Bounds.Contains(x, y) {
+			return node.Tooltip, node.Bounds, true
+		}
+	}
 	return "", ui.Rect{}, false
 }
 
@@ -370,7 +496,6 @@ func (b *Bar) hoverTooltip() (string, ui.Rect, bool) {
 // press target is recorded and compared on release.
 func (b *Bar) Handle(event wayland.Event) bool {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 
 	switch event.Kind {
 	case wayland.EventPointerEnter, wayland.EventPointerMotion:
@@ -379,39 +504,105 @@ func (b *Bar) Handle(event wayland.Event) bool {
 		b.hoverAt.x = int(math.Floor(event.X))
 		b.hoverAt.y = int(math.Floor(event.Y))
 		b.inside = true
+		b.mu.Unlock()
 		return false
 
 	case wayland.EventPointerLeave:
 		b.inside = false
 		b.pressed = ""
+		b.mu.Unlock()
 		return false
 
 	case wayland.EventPointerPress:
 		if !b.inside {
+			b.mu.Unlock()
 			return false
 		}
 		action, ok := b.hitLocked(b.hoverAt.x, b.hoverAt.y)
 		if ok {
 			b.pressed = action
 		}
+		b.mu.Unlock()
 		return false
 
 	case wayland.EventPointerRelease:
 		pressed := b.pressed
 		b.pressed = ""
 		if pressed == "" || !b.inside {
+			b.mu.Unlock()
 			return false
 		}
 		action, ok := b.hitLocked(b.hoverAt.x, b.hoverAt.y)
 		if !ok || action != pressed {
+			b.mu.Unlock()
 			return false
 		}
-		return b.activateLocked(action)
+		gesture, isTray := b.trayGestureLocked(action)
+		if !isTray {
+			changed := b.activateLocked(action)
+			b.mu.Unlock()
+			return changed
+		}
+		b.mu.Unlock()
+		return gesture.deliver(event)
+
+	case wayland.EventPointerAxis:
+		// A wheel has no press to pair with, so it acts where it lands.
+		action, ok := b.hitLocked(b.hoverAt.x, b.hoverAt.y)
+		if !ok || !b.inside {
+			b.mu.Unlock()
+			return false
+		}
+		gesture, isTray := b.trayGestureLocked(action)
+		b.mu.Unlock()
+		// The overflow control does not scroll: only an item forwards a wheel.
+		if !isTray || gesture.key.IsZero() {
+			return false
+		}
+		return gesture.deliver(event)
 	}
+	b.mu.Unlock()
 	return false
 }
 
-// activateLocked applies an action and reports whether state changed. No
-// Tranche 3A node carries an action, so this is inert at runtime; the pointer
-// path stays covered by tests and ready for Milestone 4 controls.
-func (b *Bar) activateLocked(action string) bool { return false }
+// trayGesture is one resolved tray target, copied out from under the bar lock.
+//
+// The handler takes the registry lock and the registry takes the bar lock, so
+// delivering under b.mu would invert the order and deadlock. Everything the
+// handler needs is copied out first and the lock is released before the call.
+type trayGesture struct {
+	key      tray.ItemKey
+	arranged trayArrangement
+	anchor   ui.Rect
+	fn       func(tray.ItemKey, trayArrangement, ui.Rect, wayland.Event) bool
+}
+
+func (g trayGesture) deliver(event wayland.Event) bool {
+	if g.fn == nil {
+		return false
+	}
+	return g.fn(g.key, g.arranged, g.anchor, event)
+}
+
+// trayGestureLocked resolves one action to its tray target. A zero key names
+// the overflow control; the second return distinguishes that from an action
+// this bar does not own at all.
+func (b *Bar) trayGestureLocked(action string) (trayGesture, bool) {
+	key, isItem := b.trayActions[action]
+	if !isItem && action != trayDrawerAction {
+		return trayGesture{}, false
+	}
+	gesture := trayGesture{key: key, arranged: b.trayArranged, fn: b.onTray}
+	for _, node := range b.trayNodes {
+		if node.Action == action {
+			gesture.anchor = node.Bounds
+			break
+		}
+	}
+	return gesture, true
+}
+
+// activateLocked applies a non-tray action and reports whether state changed.
+// No built-in widget carries an action, so this is inert at runtime; the
+// pointer path stays covered by tests and ready for future bar controls.
+func (b *Bar) activateLocked(string) bool { return false }

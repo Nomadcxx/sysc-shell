@@ -283,3 +283,34 @@ func TestAnEmptyGraphStillReservesItsWidth(t *testing.T) {
 		t.Fatalf("empty graph width = %d, want 60", got)
 	}
 }
+
+func TestImageNodeReservesItsBoxInARow(t *testing.T) {
+	measure := func(string, bool) (int, int) { return 7, 20 }
+	// The node reserves its box whether or not a raster has resolved, so a
+	// late decode cannot reflow the row around it.
+	for name, node := range map[string]*Node{
+		"resolved":   {Kind: KindImage, ImageSize: 24, Image: &Image{Width: 8, Height: 8, Stride: 32, Pix: make([]byte, 256)}},
+		"unresolved": {Kind: KindImage, ImageSize: 24},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w, h, err := measureNode(node, 32, measure)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if w != 24 || h != 24 {
+				t.Fatalf("measured %dx%d, want 24x24", w, h)
+			}
+		})
+	}
+}
+
+func TestImageNodeWithoutASizeFillsTheContentHeight(t *testing.T) {
+	measure := func(string, bool) (int, int) { return 7, 20 }
+	w, h, err := measureNode(&Node{Kind: KindImage}, 18, measure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w != 18 || h != 18 {
+		t.Fatalf("measured %dx%d, want 18x18", w, h)
+	}
+}

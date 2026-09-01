@@ -132,6 +132,56 @@ func pixelAt(t *testing.T, c *Canvas, x, y int) Color {
 	return Color{B: c.Pix[i], G: c.Pix[i+1], R: c.Pix[i+2], A: c.Pix[i+3]}
 }
 
+// litPixels counts pixels that took the foreground text colour.
+func litPixels(c *Canvas, fg Color) int {
+	n := 0
+	for i := 0; i+3 < len(c.Pix); i += 4 {
+		if c.Pix[i] == fg.B && c.Pix[i+1] == fg.G && c.Pix[i+2] == fg.R && c.Pix[i+3] == fg.A {
+			n++
+		}
+	}
+	return n
+}
+
+func paintSingleText(t *testing.T, bold, italic, underline bool) *Canvas {
+	t.Helper()
+	c := newTestCanvas(t, 240, 48)
+	style := testStyle
+	style.Body = ui.Rect{W: 240, H: 48}
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{{
+		Kind: ui.KindText, Text: "level", Bounds: ui.Rect{X: 4, Y: 4, W: 220, H: 40},
+		Bold: bold, Italic: italic, Underline: underline,
+	}}}
+	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func TestPaintTextStylesChangeThePaintedInk(t *testing.T) {
+	t.Parallel()
+	fg := testStyle.Foreground
+
+	plain := litPixels(paintSingleText(t, false, false, false), fg)
+	bold := litPixels(paintSingleText(t, true, false, false), fg)
+	if bold <= plain {
+		t.Fatalf("bold ink %d <= plain %d; style was not painted", bold, plain)
+	}
+
+	under := litPixels(paintSingleText(t, false, false, true), fg)
+	if under <= plain {
+		t.Fatalf("underline ink %d <= plain %d; rule was not painted", under, plain)
+	}
+
+	// Synthetic italic shears the mask rightward toward the baseline, so ink
+	// moves relative to the plain run: the two canvases must differ.
+	it := paintSingleText(t, false, true, false)
+	same := paintSingleText(t, false, false, false)
+	if string(it.Pix) == string(same.Pix) {
+		t.Fatal("italic painted identically to plain; shear was not applied")
+	}
+}
+
 // paintTree lays out and paints the proof fixture, returning the tree.
 func paintTree(t *testing.T, c *Canvas, style ProofStyle) *ui.Node {
 	t.Helper()

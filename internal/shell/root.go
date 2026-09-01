@@ -18,6 +18,8 @@ type rootKind uint8
 const (
 	rootNone rootKind = iota
 	rootPanel
+	rootTrayMenu
+	rootTrayDrawer
 )
 
 // rootID identifies one interactive root. Two roots are the same only when
@@ -28,6 +30,17 @@ type rootID struct {
 }
 
 func panelRoot(id PanelID) rootID { return rootID{kind: rootPanel, key: uint64(id)} }
+
+// trayMenuRoot keys a tray menu root by the wl_registry global of the output
+// it is open on. One chain exists at a time, so one menu per output is enough
+// to make a replacement unambiguous.
+func trayMenuRoot(outputGlobal uint32) rootID {
+	return rootID{kind: rootTrayMenu, key: uint64(outputGlobal)}
+}
+
+func trayDrawerRoot(outputGlobal uint32) rootID {
+	return rootID{kind: rootTrayDrawer, key: uint64(outputGlobal)}
+}
 
 // rootChain is the single interactive root and its optional attached child.
 //
@@ -105,6 +118,11 @@ func (c *rootChain) closeChild(generation uint64) bool {
 	c.releaseChild()
 	return true
 }
+
+// gen reports the current generation, whether or not a chain is open. A
+// caller correlating a request against the chain compares this: any change
+// means the gesture it belongs to is over.
+func (c *rootChain) gen() uint64 { return c.generation }
 
 // current reports the chain owner and its generation.
 func (c *rootChain) current() (rootID, uint64, bool) {

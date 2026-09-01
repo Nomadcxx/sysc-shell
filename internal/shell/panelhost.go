@@ -212,6 +212,9 @@ func (r *Registry) TogglePanel(id PanelID, output uint32, trig Trigger) error {
 }
 
 func (r *Registry) DropAux(output uint32, surfaceID string) {
+	if r.DropTrayAux(output, surfaceID) {
+		return
+	}
 	id, ok := panelIDFromAux(surfaceID)
 	if !ok {
 		return
@@ -940,7 +943,7 @@ func (r *Registry) publishSurface(global uint32, surfaceID string) {
 
 func (r *Registry) runSessionAction(h *PanelHost, action string) {
 	argv := sessionArgv(action, r.cfg.Session.Locker)
-	if err := runArgv(argv); err != nil {
+	if err := r.runArgv(argv); err != nil {
 		h.errLabel = err.Error()
 		r.rebuildPanel(h)
 		return

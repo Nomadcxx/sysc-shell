@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,11 +10,16 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/icons"
+	"github.com/Nomadcxx/sysc-shell/internal/notifyclient"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/theming"
+	"github.com/Nomadcxx/sysc-shell/internal/trayclient"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	tray "github.com/Nomadcxx/sysc-tray/protocol"
 )
 
 // Registry owns every bar, the services they consume, and the state they read.
@@ -64,6 +70,28 @@ type Registry struct {
 	osd         *OSDManager
 	audioLease  *services.Lease
 	brightLease *services.Lease
+	// runArgv launches a session action. Tests replace it per Registry.
+	runArgv func([]string) error
+
+	// notify is the service-owned notification projection.
+	notify *notifyState
+
+	// tray is the service-owned tray projection.
+	tray            *trayState
+	trayCh          chan trayclient.Message
+	traySender      trayCommandSender
+	trayMenu        *trayMenuHost
+	trayDrawer      *trayDrawerHost
+	trayReplies     *trayReplyTracker
+	trayIcons       *icons.Worker
+	trayIconCancel  context.CancelFunc
+	pendingTrayMenu pendingTrayMenu
+
+	// notifyCh carries client messages; main pumps it. Nil in tests that drive
+	// applyNotify directly.
+	notifyCh chan notifyclient.Message
+	// toasts hosts one toast stack per output, created when wiring binds it.
+	toasts *toastHost
 }
 
 func NewRegistry(cfg config.Config) *Registry {
@@ -83,6 +111,11 @@ func NewRegistry(cfg config.Config) *Registry {
 		panelHosts:    make(map[PanelID]*PanelHost),
 		closed:        make(chan struct{}),
 		dwell:         newDwell(defaultDwell),
+		runArgv:       runArgvDefault,
+		notify:        newNotifyState(),
+		tray:          newTrayState(),
+		trayCh:        make(chan trayclient.Message, 32),
+		notifyCh:      make(chan notifyclient.Message, 32),
 	}
 	r.tokens = r.generateTheme(cfg)
 	r.osd = newOSDManager(r, 0)
@@ -365,9 +398,40 @@ func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbac
 	bar.apply(r.viewLocked(connector))
 	r.bars[global] = bar
 	r.leases[global] = leases
+	r.bindBarTrayLocked(global, connector, bar)
+	// Seeded, not published: the owner configures this surface next and paints
+	// it once. An invalidation here would be a second frame for a first paint,
+	// and this call is on the owner goroutine, which drains that channel.
+	r.syncTrayLocked()
+	toastOutputs := r.outputGlobalsLocked()
 	r.mu.Unlock()
 
+	r.SyncToastOutputs(toastOutputs)
 	return r.bindHost(global, bar, callbacks), nil
+}
+
+// bindBarTrayLocked gives one bar its tray input seam. The global and the
+// connector are captured here rather than carried through the bar, because a
+// bar is identified by its global and a connector is only an attribute.
+func (r *Registry) bindBarTrayLocked(global uint32, connector string, bar *Bar) {
+	bar.setTrayHandler(func(
+		key tray.ItemKey, arranged trayArrangement, anchor ui.Rect, event wayland.Event,
+	) bool {
+		return r.handleTrayBar(global, connector, key, arranged, anchor, event)
+	})
+}
+
+// outputGlobalsLocked maps each live connector to its wl_registry global. Two
+// globals may briefly share a connector during a reconnect; the newest wins,
+// because that is the one whose surfaces exist.
+func (r *Registry) outputGlobalsLocked() map[string]uint32 {
+	globals := make(map[string]uint32, len(r.bars))
+	for global, bar := range r.bars {
+		if existing, ok := globals[bar.connector()]; !ok || global > existing {
+			globals[bar.connector()] = global
+		}
+	}
+	return globals
 }
 
 // PrepareConfig builds every enabled host's replacement bar and acquires its
@@ -412,6 +476,9 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				r.weather.Reconfigure(
 					cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit))
 				r.dwell.leave()
+				// The open menu and drawer were placed against the outgoing
+				// geometry and hold a root; a candidate replaces both.
+				r.closeTrayLocked()
 				for _, bar := range bars {
 					bar.apply(r.viewLocked(bar.connector()))
 				}
@@ -419,7 +486,16 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				r.tokens = tok
 				r.bars = bars
 				r.leases = leases
+				for global, bar := range r.bars {
+					r.bindBarTrayLocked(global, bar.connector(), bar)
+				}
+				// Seeded only: every replacement bar is reconfigured and
+				// repainted by the owner as part of adopting the candidate.
+				r.syncTrayLocked()
+				toastOutputs := r.outputGlobalsLocked()
 				r.mu.Unlock()
+
+				r.SyncToastOutputs(toastOutputs)
 
 				// Released only after the replacement set holds its own, so
 				// the count never touches zero for a service still in use.
@@ -446,8 +522,11 @@ func (r *Registry) DropHost(global uint32) {
 	leases := r.leases[global]
 	delete(r.bars, global)
 	delete(r.leases, global)
+	r.trayOutputLostLocked(global)
+	toastOutputs := r.outputGlobalsLocked()
 	r.mu.Unlock()
 
+	r.SyncToastOutputs(toastOutputs)
 	releaseAll(leases)
 }
 
@@ -461,6 +540,8 @@ func (r *Registry) Close() {
 	if r.osd != nil {
 		osdAux = r.osd.prepareHide()
 	}
+	r.closeTrayLocked()
+	r.stopTrayIconsLocked()
 	r.closeAllPanelsLocked()
 	var leases []*services.Lease
 	for global, held := range r.leases {
