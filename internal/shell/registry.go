@@ -66,6 +66,9 @@ type Registry struct {
 	brightLease *services.Lease
 	// runArgv launches a session action. Tests replace it per Registry.
 	runArgv func([]string) error
+
+	// notify is the service-owned notification projection.
+	notify *notifyState
 }
 
 func NewRegistry(cfg config.Config) *Registry {
@@ -86,6 +89,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		closed:        make(chan struct{}),
 		dwell:         newDwell(defaultDwell),
 		runArgv:       runArgvDefault,
+		notify:        newNotifyState(),
 	}
 	r.tokens = r.generateTheme(cfg)
 	r.osd = newOSDManager(r, 0)
