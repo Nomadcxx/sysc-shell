@@ -379,6 +379,12 @@ v1.
 
 ## 6. Go launchers and libraries (what we can actually borrow)
 
+> **Superseded 2026-09-01 by owner decision** (see
+> `2026-09-01-launcher-design.md`, Commission amendments): Elephant is
+> first-class prior art to borrow from heavily, and GPL-3 is not a constraint
+> for this project. The "do not pull GPL" stance below and §9's scoring
+> recommendation are outdated; the design supersedes them.
+
 sysc-shell is BSD-3-shaped (sibling repos are BSD-3; do not pull GPL). UI stays
 in `internal/ui`. The useful borrow is **index + Exec expansion + icon lookup**,
 not a second Wayland client.
