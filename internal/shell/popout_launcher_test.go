@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Nomadcxx/sysc-shell/internal/launcher"
+	launcher "github.com/Nomadcxx/sysc-launch"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -77,6 +77,33 @@ func openLauncherPanel(t *testing.T, entries []launcher.Entry) (*Registry, *reco
 	}
 	waitForLauncherResults(t, reg, len(entries))
 	return reg, run, reqs
+}
+
+func TestLauncherHistoryPath(t *testing.T) {
+	got := launcherHistoryPath(func(key string) string {
+		switch key {
+		case "XDG_STATE_HOME":
+			return "/tmp/xdg-state"
+		case "HOME":
+			return "/home/test"
+		default:
+			return ""
+		}
+	})
+	want := "/tmp/xdg-state/sysc-shell/launcher/history.gob"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	homeOnly := launcherHistoryPath(func(key string) string {
+		if key == "HOME" {
+			return "/home/test"
+		}
+		return ""
+	})
+	wantHome := "/home/test/.local/state/sysc-shell/launcher/history.gob"
+	if homeOnly != wantHome {
+		t.Fatalf("home fallback: got %q, want %q", homeOnly, wantHome)
+	}
 }
 
 func launcherHost(t *testing.T, reg *Registry) *PanelHost {

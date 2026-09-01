@@ -2,9 +2,11 @@ package shell
 
 import (
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 
-	"github.com/Nomadcxx/sysc-shell/internal/launcher"
+	launcher "github.com/Nomadcxx/sysc-launch"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -24,11 +26,25 @@ const (
 func (r *Registry) launcherServiceLocked() *launcher.Service {
 	if r.launcherSvc == nil {
 		r.launcherSvc = launcher.NewService(launcher.ServiceConfig{
-			History: launcher.DefaultHistory(nil),
+			History: launcher.OpenHistory(launcherHistoryPath(os.Getenv), nil),
 		})
 		go r.relayLauncher(r.launcherSvc)
 	}
 	return r.launcherSvc
+}
+
+// launcherHistoryPath is the shell's existing ranking file. sysc-launch's
+// DefaultHistory uses a separate sysc-launch directory; this keeps the two
+// consumers from merging usage data.
+func launcherHistoryPath(getenv func(string) string) string {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	base := getenv("XDG_STATE_HOME")
+	if base == "" {
+		base = filepath.Join(getenv("HOME"), ".local", "state")
+	}
+	return filepath.Join(base, "sysc-shell", "launcher", "history.gob")
 }
 
 // relayLauncher applies result snapshots to the open launcher panel. The

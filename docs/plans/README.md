@@ -257,6 +257,7 @@ wallpaper, desktop widgets) are still unordered.
 | `sysc-wayland` | `v0.1.1` | Pinned dependency. Qualified. |
 | `/home/nomadx/sysc-notify` | plan branch `3e3e417` | v0.1 service plan and persistence addendum committed; no release tag. |
 | `/home/nomadx/sysc-tray` | plan branch `7e835d8` | v0.1 service plan committed; no release tag. |
+| `/home/nomadx/sysc-launch` | `v0.1.0` (`fb6f73c`) | Tagged and pushed. Library plus diagnostic CLI. |
 
 ## Work selection
 
