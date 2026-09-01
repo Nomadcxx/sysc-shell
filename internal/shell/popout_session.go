@@ -51,9 +51,9 @@ func sessionArgv(action, locker string) []string {
 	return nil
 }
 
-// runArgv starts or runs one argv slice. Tests replace it.
-var runArgv = runArgvDefault
-
+// runArgvDefault starts or runs one argv slice. A Registry holds this in a
+// field rather than a package variable: parallel tests each replace their own
+// Registry's hook, where one shared variable raced between them.
 func runArgvDefault(argv []string) error {
 	if len(argv) == 0 {
 		return errors.New("empty command")

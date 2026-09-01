@@ -50,8 +50,17 @@ const (
 	iconBatteryCharging6
 	iconBatteryCritical
 
+	// The metric icons follow the battery block.
+	iconCPU
+	iconMemory
+	iconDisk
+	iconNetwork
+
 	batteryRuneFirst = iconBatteryLevel0
 	batteryRuneLast  = iconBatteryCritical
+
+	metricRuneFirst = iconCPU
+	metricRuneLast  = iconNetwork
 )
 
 // batteryLevels is how many level glyphs each state has.
@@ -108,6 +117,23 @@ func IconRune(code int) rune {
 // Critical overrides the level entirely: a battery about to die should look
 // like one at every charge the caller considers critical, which is a policy
 // the widget owns rather than a threshold baked in here.
+// MetricIconRune is the glyph naming what a metric measures. A bar shows a
+// bare percentage otherwise, and a grouped one loses even the separation that
+// hinted at distinct widgets. An id with no icon returns zero.
+func MetricIconRune(id string) rune {
+	switch id {
+	case "cpu":
+		return iconCPU
+	case "memory":
+		return iconMemory
+	case "filesystem", "block":
+		return iconDisk
+	case "network":
+		return iconNetwork
+	}
+	return 0
+}
+
 func BatteryIconRune(charge float64, charging, critical bool) rune {
 	if critical {
 		return iconBatteryCritical

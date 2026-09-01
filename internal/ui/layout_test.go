@@ -283,3 +283,102 @@ func TestAnEmptyGraphStillReservesItsWidth(t *testing.T) {
 		t.Fatalf("empty graph width = %d, want 60", got)
 	}
 }
+
+func TestImageNodeReservesItsBoxInARow(t *testing.T) {
+	measure := func(string, bool) (int, int) { return 7, 20 }
+	// The node reserves its box whether or not a raster has resolved, so a
+	// late decode cannot reflow the row around it.
+	for name, node := range map[string]*Node{
+		"resolved":   {Kind: KindImage, ImageSize: 24, Image: &Image{Width: 8, Height: 8, Stride: 32, Pix: make([]byte, 256)}},
+		"unresolved": {Kind: KindImage, ImageSize: 24},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w, h, err := measureNode(node, 32, measure)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if w != 24 || h != 24 {
+				t.Fatalf("measured %dx%d, want 24x24", w, h)
+			}
+		})
+	}
+}
+
+func TestImageNodeWithoutASizeFillsTheContentHeight(t *testing.T) {
+	measure := func(string, bool) (int, int) { return 7, 20 }
+	w, h, err := measureNode(&Node{Kind: KindImage}, 18, measure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w != 18 || h != 18 {
+		t.Fatalf("measured %dx%d, want 18x18", w, h)
+	}
+}
+
+func TestLayoutArrangesTabsInARow(t *testing.T) {
+	t.Parallel()
+	root := &Node{Kind: KindRow, Gap: 8, Children: []*Node{
+		{Kind: KindTab, Text: "CPU"},
+		{Kind: KindTab, Text: "Memory"},
+	}}
+	if err := Layout(root, Rect{W: 400, H: 48}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	if got := root.Children[0].Bounds.W; got != 24 {
+		t.Fatalf("CPU tab width = %d, want 24", got)
+	}
+	if got := root.Children[1].Bounds.W; got != 48 {
+		t.Fatalf("Memory tab width = %d, want 48", got)
+	}
+}
+
+func TestLayoutArrangesCapsuleAroundText(t *testing.T) {
+	t.Parallel()
+	root := &Node{Kind: KindRow, Padding: 4, Children: []*Node{{
+		Kind: KindCapsule, Padding: 8,
+		Children: []*Node{{Kind: KindText, Text: "11:37"}},
+	}}}
+	if err := Layout(root, Rect{W: 400, H: 40}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	cap := root.Children[0]
+	// "11:37" is 5 glyphs * 8 = 40 wide, 16 tall; plus 16 padding.
+	if cap.Bounds.W != 56 {
+		t.Fatalf("capsule width = %d, want 56", cap.Bounds.W)
+	}
+	if cap.Bounds.H != 32 { // content band = 40 - 2*row padding
+		t.Fatalf("capsule height = %d, want the content band", cap.Bounds.H)
+	}
+	child := cap.Children[0]
+	if child.Bounds.W != 40 || child.Bounds.H != 16 {
+		t.Fatalf("child bounds = %+v", child.Bounds)
+	}
+}
+
+func TestCapsuleWithZeroWidthChildMeasuresZero(t *testing.T) {
+	t.Parallel()
+	root := &Node{Kind: KindRow, Children: []*Node{{
+		Kind: KindCapsule, Padding: 8,
+		Children: []*Node{{Kind: KindText, Text: ""}},
+	}}}
+	if err := Layout(root, Rect{W: 400, H: 40}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	if root.Children[0].Bounds.W != 0 {
+		t.Fatal("empty title must not leave an empty pill")
+	}
+}
+
+func TestEmptyCapsuleWithWidthIsASquareDot(t *testing.T) {
+	t.Parallel()
+	root := &Node{Kind: KindRow, Padding: 0, Children: []*Node{{
+		Kind: KindCapsule, Width: 8,
+	}}}
+	if err := Layout(root, Rect{W: 400, H: 40}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	got := root.Children[0].Bounds
+	if got.W != 8 || got.H != 8 {
+		t.Fatalf("dot bounds = %+v, want 8x8", got)
+	}
+}

@@ -14,10 +14,38 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/ipc"
+	"github.com/Nomadcxx/sysc-shell/internal/notifyclient"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/shell"
+	"github.com/Nomadcxx/sysc-shell/internal/trayclient"
 )
+
+func pumpNiri(
+	snapshots <-chan niri.Snapshot,
+	errs <-chan error,
+	update func(niri.Snapshot),
+) error {
+	for snapshots != nil || errs != nil {
+		select {
+		case snapshot, ok := <-snapshots:
+			if !ok {
+				snapshots = nil
+				continue
+			}
+			update(snapshot)
+		case err, ok := <-errs:
+			if !ok {
+				errs = nil
+				continue
+			}
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
 
 // run streams Niri workspace state into the bar registry and hands the registry
 // to the Wayland owner. The owner goroutine performs all Wayland work and
@@ -49,23 +77,13 @@ func run(ctx context.Context) error {
 	snapshots, niriErrs := niri.Stream(ctx, socket)
 	streamFailed := make(chan error, 1)
 	go func() {
-		for {
+		update := func(snapshot niri.Snapshot) { registry.UpdateNiri(snapshot) }
+		if err := pumpNiri(snapshots, niriErrs, update); err != nil {
 			select {
-			case snapshot, ok := <-snapshots:
-				if !ok {
-					return
-				}
-				registry.UpdateNiri(snapshot)
-			case err, ok := <-niriErrs:
-				if ok && err != nil {
-					select {
-					case streamFailed <- err:
-					default:
-					}
-					cancel()
-				}
-				return
+			case streamFailed <- err:
+			default:
 			}
+			cancel()
 		}
 	}()
 
@@ -108,6 +126,59 @@ func run(ctx context.Context) error {
 			case reading := <-registry.Weather().Updates():
 				registry.UpdateWeather(reading)
 			}
+		}
+	}()
+
+	// The notification service publishes immutable messages on its own
+	// reconnecting client; this pump applies each to the projection and
+	// recomputes the toast surfaces. A missing service is not fatal: the
+	// client retries with backoff and toasts simply never open.
+	registry.BindNotifications()
+	notifyClient := notifyclient.New(os.Getenv("XDG_RUNTIME_DIR"), registry.NotifyMessages())
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg := <-registry.NotifyMessages():
+				registry.ApplyNotify(msg)
+			}
+		}
+	}()
+	go func() {
+		if err := notifyClient.Run(ctx); err != nil && ctx.Err() == nil {
+			select {
+			case streamFailed <- err:
+			default:
+			}
+			cancel()
+		}
+	}()
+
+	// The tray service owns item and menu state; the shell projects it. The
+	// client is bound before its pump starts so a snapshot arriving on the
+	// first connection already has somewhere to land. As with notifications,
+	// a missing service is not fatal: the client retries and the tray is
+	// simply empty.
+	trayClient := trayclient.New(os.Getenv("XDG_RUNTIME_DIR"), registry.TrayMessages())
+	registry.BindTray(trayClient)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg := <-registry.TrayMessages():
+				registry.ApplyTray(msg)
+			}
+		}
+	}()
+	go func() {
+		if err := trayClient.Run(ctx); err != nil && ctx.Err() == nil {
+			select {
+			case streamFailed <- err:
+			default:
+			}
+			cancel()
 		}
 	}()
 

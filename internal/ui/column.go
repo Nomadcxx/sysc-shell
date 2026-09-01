@@ -50,16 +50,38 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 	case KindText, KindTab:
 		_, h := measure(n.Text, n.Tabular)
 		return h, nil
-	case KindSeparator:
-		return 1, nil
-	case KindButton:
-		_, h := measure(n.Text, n.Tabular)
-		return h + 2*n.Padding, nil
 	case KindMeter:
 		if n.Value < 0 || n.Value > 1 {
 			return 0, fmt.Errorf("meter value %v is outside zero through one", n.Value)
 		}
 		return MeterHeight, nil
+	case KindCapsule:
+		// A capsule in a column is its child plus padding. The design does not
+		// use one here yet; the case exists so placing one cannot crash a
+		// surface the way an unmeasurable kind did.
+		if len(n.Children) == 0 {
+			return n.Width, nil
+		}
+		h, err := columnChildHeight(n.Children[0], max(width-2*n.Padding, 0), measure)
+		if err != nil {
+			return 0, err
+		}
+		return h + 2*n.Padding, nil
+	case KindGraph:
+		// Width is the graph's measured width in a row. Reusing it as a height
+		// makes the monitor popout's 240-wide sparkline 240 tall.
+		return GraphHeight, nil
+	case KindSeparator:
+		return 1, nil
+	case KindButton:
+		_, h := measure(n.Text, n.Tabular)
+		return h + 2*n.Padding, nil
+	case KindImage:
+		if n.ImageSize > 0 {
+			return n.ImageSize, nil
+		}
+		_, h := measure("", n.Tabular)
+		return h, nil
 	case KindToggle:
 		return ToggleHeight, nil
 	case KindSlider:
@@ -129,6 +151,19 @@ func placeColumnChild(n *Node, box Rect, measure MeasureText) error {
 	switch n.Kind {
 	case KindRow:
 		return Layout(n, box, measure)
+	case KindCapsule:
+		// A capsule in a column is a card: its child fills the padded inner
+		// box. Measuring already accounted for the child, so a capsule that
+		// placed only itself painted a rounded fill with nothing inside it.
+		n.Bounds = box
+		if len(n.Children) == 0 || n.Children[0] == nil {
+			return nil
+		}
+		inner := Rect{
+			X: box.X + n.Padding, Y: box.Y + n.Padding,
+			W: max(box.W-2*n.Padding, 0), H: max(box.H-2*n.Padding, 0),
+		}
+		return placeColumnChild(n.Children[0], inner, measure)
 	case KindColumn:
 		return LayoutColumn(n, box, measure)
 	case KindScroll, KindVirtualList:

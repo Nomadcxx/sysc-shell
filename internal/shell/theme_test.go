@@ -1,8 +1,11 @@
 package shell
 
 import (
+	"bytes"
+	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -87,7 +90,9 @@ func TestThemeValidation(t *testing.T) {
 
 func TestTokensResolveToBarTheme(t *testing.T) {
 	tok := theme.Tokens{
-		Surface: "#111318", OnSurface: "#e2e2e6", Primary: "#a8c7fa",
+		Surface: "#111318", SurfaceContainer: "#181a1d", OnSurface: "#e2e2e6",
+		Primary: "#a8c7fa", OnPrimary: "#0a1f3d",
+		PrimaryContainer: "#1183a2", OnPrimaryContainer: "#d6e3ff",
 		OnSurfaceVariant: "#c3c6cf", Error: "#ffb4ab",
 	}
 	th := ThemeFromTokens(tok, 12)
@@ -95,6 +100,30 @@ func TestTokensResolveToBarTheme(t *testing.T) {
 		th.Accent != parseColor(tok.Primary, Color{}) || th.Muted != parseColor(tok.OnSurfaceVariant, Color{}) ||
 		th.Error != parseColor(tok.Error, Color{}) || th.Radius != 12 {
 		t.Fatalf("mapping wrong: %+v", th)
+	}
+	// The capsule palette. Muted stays OnSurfaceVariant, which is the meter
+	// track, so a capsule must not borrow it.
+	if th.Capsule != parseColor(tok.SurfaceContainer, Color{}) {
+		t.Errorf("Capsule = %+v, want SurfaceContainer", th.Capsule)
+	}
+	if th.Container != parseColor(tok.PrimaryContainer, Color{}) {
+		t.Errorf("Container = %+v, want PrimaryContainer", th.Container)
+	}
+	if th.OnAccent != parseColor(tok.OnPrimary, Color{}) {
+		t.Errorf("OnAccent = %+v, want OnPrimary", th.OnAccent)
+	}
+	if th.OnContainer != parseColor(tok.OnPrimaryContainer, Color{}) {
+		t.Errorf("OnContainer = %+v, want OnPrimaryContainer", th.OnContainer)
+	}
+	if th.Capsule == th.Muted {
+		t.Error("capsule fill must not be the meter track colour")
+	}
+}
+
+func TestDefaultThemeCarriesCapsulePadding(t *testing.T) {
+	t.Parallel()
+	if got := DefaultTheme().CapsulePadding; got != 8 {
+		t.Fatalf("CapsulePadding = %d, want 8", got)
 	}
 }
 
@@ -147,5 +176,107 @@ func TestAThemeOnlyReloadDoesNotRestartMetricsOrWeather(t *testing.T) {
 	}
 	if !reg.Metrics().Running() || !reg.Weather().Running() {
 		t.Fatal("theme reload dropped a metrics or weather lease")
+	}
+}
+
+// contrast is the WCAG ratio between two opaque colours.
+func contrast(a, b Color) float64 {
+	lum := func(c Color) float64 {
+		ch := func(v uint8) float64 {
+			f := float64(v) / 255
+			if f <= 0.03928 {
+				return f / 12.92
+			}
+			return math.Pow((f+0.055)/1.055, 2.4)
+		}
+		return 0.2126*ch(c.R) + 0.7152*ch(c.G) + 0.0722*ch(c.B)
+	}
+	hi, lo := lum(a), lum(b)
+	if hi < lo {
+		hi, lo = lo, hi
+	}
+	return (hi + 0.05) / (lo + 0.05)
+}
+
+// The capsule palette was measured against a live reference bar. These bounds
+// stop a future palette edit from silently returning the bar to the state where
+// pills were present but invisible.
+func TestDefaultPaletteKeepsCapsulesAndPillsVisible(t *testing.T) {
+	t.Parallel()
+	th := DefaultTheme()
+
+	if got := contrast(th.Background, th.Capsule); got < 1.10 {
+		t.Errorf("capsule/bar contrast = %.3f:1, want at least 1.10 (reference bar is 1.14)", got)
+	}
+	// An unfocused workspace pill has to be a surface, not a tint of the bar.
+	if got := contrast(th.Background, th.Container); got < 2.5 {
+		t.Errorf("pill/bar contrast = %.2f:1, want at least 2.5 (reference is 3.5)", got)
+	}
+	if got := contrast(th.Background, th.Accent); got < 3.0 {
+		t.Errorf("focused pill/bar contrast = %.2f:1, want at least 3.0", got)
+	}
+	// Numerals must stay legible on the fill their capsule supplies.
+	if got := contrast(th.Accent, th.OnAccent); got < 3.0 {
+		t.Errorf("numeral on the focused pill = %.2f:1, want at least 3.0", got)
+	}
+	if got := contrast(th.Container, th.OnContainer); got < 3.0 {
+		t.Errorf("numeral on an unfocused pill = %.2f:1, want at least 3.0", got)
+	}
+}
+
+// Every surface the shell paints follows the generated palette. ThemeFrom
+// resolves against theme.Fallback and never reads the generated tokens, so a
+// surface built through it paints the built-in colours whatever the user chose.
+func TestSurfaceThemeFollowsTheGeneratedPalette(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	r := NewRegistry(cfg)
+	t.Cleanup(r.Close)
+
+	r.mu.Lock()
+	r.tokens = theme.Tokens{
+		Surface: "#101010", SurfaceContainer: "#202020",
+		OnSurface: "#f0f0f0", OnSurfaceVariant: "#a0a0a0",
+		Primary: "#ff00ff", OnPrimary: "#000000",
+		PrimaryContainer: "#800080", OnPrimaryContainer: "#ffffff",
+		Outline: "#303030", Error: "#ff0000", OnError: "#ffffff",
+	}
+	got := r.surfaceTheme()
+	r.mu.Unlock()
+
+	want := parseColor("#ff00ff", Color{})
+	if got.Accent != want {
+		t.Fatalf("accent = %+v, want the generated primary %+v", got.Accent, want)
+	}
+	if fallback := ThemeFrom(cfg, cfg.Bar); got.Accent == fallback.Accent {
+		t.Fatal("the surface theme resolved to the fallback palette")
+	}
+}
+
+// A surface that resolves its own theme through ThemeFrom is painting the
+// fallback whatever the user chose. The toast stack, the tray menu and the
+// tray drawer each did, so notifications and the tray ignored the theme.
+func TestNoShellSurfaceResolvesTheFallbackPalette(t *testing.T) {
+	t.Parallel()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// theme.go declares ThemeFrom; bar.go's New is the documented registry-free
+	// constructor, a bare Bar with no generated palette in reach, and has no
+	// caller outside tests. Every other file paints a real surface.
+	allowed := map[string]bool{"theme.go": true, "bar.go": true}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || allowed[name] {
+			continue
+		}
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(src, []byte("ThemeFrom(")) {
+			t.Fatalf("%s resolves a theme through ThemeFrom, which ignores the generated tokens; use Registry.surfaceTheme", name)
+		}
 	}
 }

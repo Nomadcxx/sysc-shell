@@ -69,15 +69,19 @@ func TestABarRendersTheWorkspaceAndTitleItIsGiven(t *testing.T) {
 	t.Parallel()
 
 	p := newTestBar(t)
-	if !p.apply(barView{Workspace: "code", Title: "Fixture One"}) {
+	view := barView{
+		Workspace: "code", Title: "Fixture One",
+		Pills: []workspacePill{{Index: 1, Focused: true, Occupied: true}, {Index: 2}},
+	}
+	if !p.apply(view) {
 		t.Fatal("the first view reported no change")
 	}
 
 	sections := p.sections()
-	if got := sections[0][0].Text; got != "code" {
-		t.Fatalf("workspace node = %q, want code", got)
+	if got := pillIndices(sections[0][0]); len(got) != 2 || got[0] != "1" || got[1] != "2" {
+		t.Fatalf("workspace pills = %v, want 1 and 2", got)
 	}
-	if got := sections[0][1].Text; got != "Fixture One" {
+	if got := nodeText(sections[0][1]); got != "Fixture One" {
 		t.Fatalf("title node = %q, want Fixture One", got)
 	}
 }
@@ -90,10 +94,10 @@ func TestABarRendersTheFallbackWorkspace(t *testing.T) {
 	p := newTestBar(t)
 	p.apply(barView{Workspace: noWorkspace})
 
-	if got := p.sections()[0][0].Text; got != "-" {
+	if got := nodeText(p.sections()[0][0]); got != "-" {
 		t.Fatalf("workspace node = %q, want the %q fallback", got, noWorkspace)
 	}
-	if got := p.sections()[0][1].Text; got != "" {
+	if got := nodeText(p.sections()[0][1]); got != "" {
 		t.Fatalf("title node = %q, want empty with no window", got)
 	}
 }
@@ -244,7 +248,8 @@ func TestBarArrangesSectionsInsideTheContentBand(t *testing.T) {
 			}
 		}
 	}
-	if arranged != 4 {
-		t.Fatalf("arranged %d items, want workspace, window-title and two clocks", arranged)
+	// workspace, window-title, two clocks, and three status widgets.
+	if arranged != 6 {
+		t.Fatalf("arranged %d items, want the full default bar (cpu and memory now share a group)", arranged)
 	}
 }

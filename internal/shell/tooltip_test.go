@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -14,7 +15,7 @@ func TestADwellRequestArrivesOnlyAfterTheDelay(t *testing.T) {
 	d := newDwell(60 * time.Millisecond)
 	t.Cleanup(d.stop)
 
-	d.enter(1, ui.Rect{X: 10, Y: 0, W: 40, H: 44}, "Fixture tooltip")
+	d.enter(1, ui.Rect{X: 10, Y: 0, W: 40, H: 44}, "Fixture tooltip", wayland.TooltipStyle{})
 
 	select {
 	case req := <-d.requests():
@@ -38,7 +39,7 @@ func TestLeavingBeforeTheDwellCancelsIt(t *testing.T) {
 	d := newDwell(80 * time.Millisecond)
 	t.Cleanup(d.stop)
 
-	d.enter(1, ui.Rect{X: 10, Y: 0, W: 40, H: 44}, "Fixture tooltip")
+	d.enter(1, ui.Rect{X: 10, Y: 0, W: 40, H: 44}, "Fixture tooltip", wayland.TooltipStyle{})
 	d.leave()
 
 	select {
@@ -56,7 +57,7 @@ func TestLeavingAfterTheDwellRequestsAHide(t *testing.T) {
 	d := newDwell(20 * time.Millisecond)
 	t.Cleanup(d.stop)
 
-	d.enter(1, ui.Rect{X: 10, Y: 0, W: 40, H: 44}, "Fixture tooltip")
+	d.enter(1, ui.Rect{X: 10, Y: 0, W: 40, H: 44}, "Fixture tooltip", wayland.TooltipStyle{})
 	<-d.requests() // the show
 	d.leave()
 
@@ -76,8 +77,8 @@ func TestMovingToAnotherWidgetReplacesThePending(t *testing.T) {
 	d := newDwell(40 * time.Millisecond)
 	t.Cleanup(d.stop)
 
-	d.enter(1, ui.Rect{X: 10, Y: 0, W: 40, H: 44}, "first")
-	d.enter(1, ui.Rect{X: 60, Y: 0, W: 40, H: 44}, "second")
+	d.enter(1, ui.Rect{X: 10, Y: 0, W: 40, H: 44}, "first", wayland.TooltipStyle{})
+	d.enter(1, ui.Rect{X: 60, Y: 0, W: 40, H: 44}, "second", wayland.TooltipStyle{})
 
 	select {
 	case req := <-d.requests():
@@ -86,5 +87,23 @@ func TestMovingToAnotherWidgetReplacesThePending(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("no request arrived")
+	}
+}
+
+func TestStaleDwellCallbackDoesNotShowTooltip(t *testing.T) {
+	d := newDwell(time.Hour)
+	t.Cleanup(d.stop)
+	d.enter(1, ui.Rect{X: 10, Y: 0, W: 40, H: 44}, "stale", wayland.TooltipStyle{})
+
+	d.mu.Lock()
+	generation := d.generation
+	d.mu.Unlock()
+	d.leave()
+	d.fire(generation, wayland.TooltipRequest{Global: 1, Text: "stale"})
+
+	select {
+	case req := <-d.requests():
+		t.Fatalf("stale callback produced request: %+v", req)
+	default:
 	}
 }

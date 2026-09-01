@@ -116,3 +116,49 @@ func TestAnEmptySnapshotProjectsNothing(t *testing.T) {
 		t.Fatalf("projection = %+v, want empty", got)
 	}
 }
+
+func TestProjectionEmitsWorkspacePillsPerOutput(t *testing.T) {
+	t.Parallel()
+	got := projectOutputs(niri.Snapshot{
+		Workspaces: []niri.Workspace{
+			{ID: 1, Index: 1, Output: "DP-9", Focused: true, Active: true,
+				ActiveWindowID: 80, HasActiveWindow: true},
+			{ID: 2, Index: 2, Output: "DP-9"},
+			{ID: 3, Index: 1, Output: "HDMI-A-9", Active: true},
+		},
+		Windows: []niri.Window{{ID: 80, Title: "One", WorkspaceID: 1, HasWorkspace: true}},
+	})
+
+	dp := got["DP-9"].Pills
+	if len(dp) != 2 {
+		t.Fatalf("DP-9 pills = %d, want 2", len(dp))
+	}
+	if dp[0].Index != 1 || !dp[0].Focused || !dp[0].Occupied {
+		t.Errorf("DP-9 pill 0 = %+v, want focused and occupied index 1", dp[0])
+	}
+	if dp[1].Index != 2 || dp[1].Focused || dp[1].Occupied {
+		t.Errorf("DP-9 pill 1 = %+v, want an unfocused empty index 2", dp[1])
+	}
+	if n := len(got["HDMI-A-9"].Pills); n != 1 {
+		t.Errorf("HDMI-A-9 pills = %d, want its own 1", n)
+	}
+}
+
+// Niri sends workspaces in no guaranteed order; the bar must not reshuffle.
+func TestWorkspacePillsAreOrderedByIndex(t *testing.T) {
+	t.Parallel()
+	got := projectOutputs(niri.Snapshot{Workspaces: []niri.Workspace{
+		{ID: 3, Index: 3, Output: "DP-9"},
+		{ID: 1, Index: 1, Output: "DP-9", Focused: true, Active: true},
+		{ID: 2, Index: 2, Output: "DP-9"},
+	}})
+	pills := got["DP-9"].Pills
+	if len(pills) != 3 {
+		t.Fatalf("pills = %d, want 3", len(pills))
+	}
+	for i, p := range pills {
+		if p.Index != i+1 {
+			t.Fatalf("pill %d has index %d; order is not by index", i, p.Index)
+		}
+	}
+}

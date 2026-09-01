@@ -20,7 +20,25 @@ const (
 	KindTextField
 	KindScroll
 	KindVirtualList
+	KindImage
+
+	// KindCapsule is a padded pill around one child, or an empty coloured dot
+	// when it has no children and a Width. It is the bar's per-item chrome.
+	KindCapsule
+
+	// kindCount is one past the last kind. It exists so a test can assert that
+	// every declared kind is measurable, and it must stay last.
+	kindCount
 )
+
+// Image is a decoded raster in premultiplied straight-alpha BGRA, the layout
+// the shell's buffers use. Pix is never mutated after publication.
+type Image struct {
+	Width  int
+	Height int
+	Stride int
+	Pix    []byte
+}
 
 // Rect is a logical-pixel rectangle.
 type Rect struct{ X, Y, W, H int }
@@ -76,11 +94,34 @@ type Node struct {
 	// A clock sets it: with proportional digits the rendered width changes as
 	// the time changes, which visibly shifts a centred clock every minute.
 	Tabular bool
+	// Bold, Italic, and Underline mark a styled run of body text. Cards carry
+	// the notification body as separate styled runs, so the style lives on the
+	// node rather than in the text. Bold and italic are synthesized at paint
+	// time; underline draws its own rule.
+	Bold      bool
+	Italic    bool
+	Underline bool
+	// Image is the raster a KindImage node draws. It is an immutable result
+	// produced away from the Wayland owner; layout and paint only read it.
+	// A nil image still measures, so a card does not reflow when an icon
+	// resolves late or fails.
+	Image *Image
+	// ImageSize is the logical edge length a KindImage node reserves. The node
+	// reserves its box whatever the raster turns out to be, so a decode that
+	// arrives later cannot change the layout around it.
+	ImageSize int
 	// Tone selects the text colour. Zero is ToneNormal.
-	Tone     Tone
-	Padding  int
-	Gap      int
-	Action   string
+	Tone Tone
+	// Fill selects a capsule's background. Zero is the surface capsule. It is
+	// a pair, not a flag: each fill carries the foreground its own contents
+	// must use to stay legible.
+	Fill    Fill
+	Padding int
+	Gap     int
+	Action  string
+	// Tooltip is bounded hover text owned by the node's feature. The shared
+	// dwell controller decides when and where to show it.
+	Tooltip  string
 	Bounds   Rect
 	Children []*Node
 
@@ -96,6 +137,19 @@ func (n *Node) Active() int {
 	}
 	return int(n.Value)
 }
+
+// Fill selects which theme colour paints a capsule, and with it the
+// foreground its contents inherit.
+type Fill uint8
+
+const (
+	// FillNone is the surface capsule that wraps an ordinary bar widget.
+	FillNone Fill = iota
+	// FillAccent is the focused workspace pill.
+	FillAccent
+	// FillContainer is a workspace pill that is not focused.
+	FillContainer
+)
 
 // Tone selects which theme colour paints a text node.
 //

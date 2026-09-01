@@ -42,9 +42,10 @@ type wireItem struct {
 	Label     *string `json:"label,omitempty"`
 	WarnBelow *int    `json:"warn-below,omitempty"`
 
-	Plugin   *string `json:"plugin,omitempty"`
-	Entry    *string `json:"entry,omitempty"`
-	Instance *string `json:"instance,omitempty"`
+	Plugin   *string     `json:"plugin,omitempty"`
+	Entry    *string     `json:"entry,omitempty"`
+	Instance *string     `json:"instance,omitempty"`
+	Items    *[]wireItem `json:"items,omitempty"`
 }
 
 func (i *wireItem) UnmarshalJSON(data []byte) error {
@@ -111,6 +112,12 @@ type wirePanels struct {
 	OSD     *string `json:"osd,omitempty"`
 }
 
+type wireTrayPreferences struct {
+	Hidden []string `json:"hidden,omitempty"`
+	Pinned []string `json:"pinned,omitempty"`
+	Order  []string `json:"order,omitempty"`
+}
+
 type wireOutput struct {
 	Connector *string  `json:"connector,omitempty"`
 	Bar       *wireBar `json:"bar,omitempty"`
@@ -124,16 +131,17 @@ type wireWeather struct {
 }
 
 type wireConfig struct {
-	Bar           *wireBar           `json:"bar,omitempty"`
-	Theme         *wireTheme         `json:"theme,omitempty"`
-	ThemeGen      *wireThemeGen      `json:"theme-gen,omitempty"`
-	Accessibility *wireAccessibility `json:"accessibility,omitempty"`
-	Session       *wireSession       `json:"session,omitempty"`
-	Panels        *wirePanels        `json:"panels,omitempty"`
-	Weather       *wireWeather       `json:"weather,omitempty"`
-	Outputs       []wireOutput       `json:"outputs,omitempty"`
-	Templates     map[string]bool    `json:"templates,omitempty"`
-	Plugins       *wirePlugins       `json:"plugins,omitempty"`
+	Bar           *wireBar             `json:"bar,omitempty"`
+	Theme         *wireTheme           `json:"theme,omitempty"`
+	ThemeGen      *wireThemeGen        `json:"theme-gen,omitempty"`
+	Accessibility *wireAccessibility   `json:"accessibility,omitempty"`
+	Session       *wireSession         `json:"session,omitempty"`
+	Panels        *wirePanels          `json:"panels,omitempty"`
+	Tray          *wireTrayPreferences `json:"tray,omitempty"`
+	Weather       *wireWeather         `json:"weather,omitempty"`
+	Outputs       []wireOutput         `json:"outputs,omitempty"`
+	Templates     map[string]bool      `json:"templates,omitempty"`
+	Plugins       *wirePlugins         `json:"plugins,omitempty"`
 }
 
 type wirePlugins struct {
@@ -212,6 +220,13 @@ func Parse(data []byte) (Config, error) {
 			return Config{}, err
 		}
 		cfg.Panels = panels
+	}
+	if wire.Tray != nil {
+		prefs, err := applyTrayPreferences(*wire.Tray)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Tray = prefs
 	}
 	// The bar's radius mirrors the theme's, so the opaque region and the
 	// painted body agree without a second token.
@@ -339,7 +354,7 @@ func consistentInstances(cfg Config) error {
 	owner := make(map[string]Item)
 	check := func(b Bar, path string) error {
 		for _, section := range [][]Item{b.Left, b.Center, b.Right} {
-			for _, it := range section {
+			for _, it := range flattenItems(section) {
 				if it.ID != "plugin" {
 					continue
 				}
@@ -362,6 +377,48 @@ func consistentInstances(cfg Config) error {
 		}
 	}
 	return nil
+}
+
+const (
+	maxTrayPreferences = 128
+	maxTrayTokenBytes  = 4 << 10
+)
+
+func applyTrayPreferences(w wireTrayPreferences) (TrayPreferences, error) {
+	validate := func(path string, values []string) ([]string, error) {
+		if len(values) > maxTrayPreferences {
+			return nil, pathErr(path, "has %d entries; maximum is %d", len(values), maxTrayPreferences)
+		}
+		seen := make(map[string]struct{}, len(values))
+		out := make([]string, len(values))
+		for i, value := range values {
+			if value == "" {
+				return nil, pathErr(fmt.Sprintf("%s[%d]", path, i), "must not be empty")
+			}
+			if len(value) > maxTrayTokenBytes {
+				return nil, pathErr(fmt.Sprintf("%s[%d]", path, i), "exceeds %d bytes", maxTrayTokenBytes)
+			}
+			if _, ok := seen[value]; ok {
+				return nil, pathErr(fmt.Sprintf("%s[%d]", path, i), "%q appears more than once", value)
+			}
+			seen[value] = struct{}{}
+			out[i] = value
+		}
+		return out, nil
+	}
+	hidden, err := validate("tray.hidden", w.Hidden)
+	if err != nil {
+		return TrayPreferences{}, err
+	}
+	pinned, err := validate("tray.pinned", w.Pinned)
+	if err != nil {
+		return TrayPreferences{}, err
+	}
+	order, err := validate("tray.order", w.Order)
+	if err != nil {
+		return TrayPreferences{}, err
+	}
+	return TrayPreferences{Hidden: hidden, Pinned: pinned, Order: order}, nil
 }
 
 // applyWeather resolves and validates the weather block.
@@ -423,7 +480,7 @@ func requireWeatherWhenUsed(cfg Config) error {
 	}
 	for _, bar := range bars {
 		for _, section := range [][]Item{bar.Left, bar.Center, bar.Right} {
-			for _, item := range section {
+			for _, item := range flattenItems(section) {
 				if item.ID == "weather" {
 					return pathErr("weather.latitude",
 						"is required because a weather widget is configured")
@@ -432,6 +489,20 @@ func requireWeatherWhenUsed(cfg Config) error {
 		}
 	}
 	return nil
+}
+
+// flattenItems yields every item in a section, descending one level into a
+// group so cross-section rules cannot be evaded by nesting.
+func flattenItems(section []Item) []Item {
+	out := make([]Item, 0, len(section))
+	for _, item := range section {
+		if item.ID == "group" {
+			out = append(out, item.Items...)
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func applyBar(base Bar, w wireBar, path string) (Bar, error) {
@@ -606,6 +677,29 @@ func resolveItem(w wireItem, path string) (Item, error) {
 		}
 	}
 	item := Item{ID: w.ID}
+
+	if w.Items != nil && w.ID != "group" {
+		return Item{}, pathErr(path+".items", "is accepted only on a group, not on %q", w.ID)
+	}
+	if w.ID == "group" {
+		if w.Items == nil || len(*w.Items) == 0 {
+			return Item{}, pathErr(path+".items", "a group needs at least one item")
+		}
+		for i, nested := range *w.Items {
+			// One level only. A nested group would paint a capsule inside a
+			// capsule, which the design rejected after the workspace row
+			// showed two surfaces reading as one blob.
+			if nested.ID == "group" {
+				return Item{}, pathErr(fmt.Sprintf("%s.items[%d]", path, i), "a group may not contain a group")
+			}
+			member, err := resolveItem(nested, fmt.Sprintf("%s.items[%d]", path, i))
+			if err != nil {
+				return Item{}, err
+			}
+			item.Items = append(item.Items, member)
+		}
+		return item, nil
+	}
 
 	if w.Format != nil && w.ID != "clock" {
 		return Item{}, pathErr(path+".format", "is accepted only on a clock, not on %q", w.ID)

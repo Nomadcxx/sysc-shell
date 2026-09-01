@@ -10,6 +10,7 @@ const (
 	PanelMonitor
 	PanelSession
 	PanelSettings
+	PanelLauncher
 )
 
 func (p PanelID) String() string {
@@ -22,6 +23,8 @@ func (p PanelID) String() string {
 		return "session"
 	case PanelSettings:
 		return "settings"
+	case PanelLauncher:
+		return "launcher"
 	default:
 		return "unknown"
 	}
@@ -35,6 +38,9 @@ type Placement struct {
 	Gap, Padding int
 	Panel        ui.Rect
 	Align        string
+	// CenterY centres the panel vertically inside the output minus the bar
+	// zone and padding (the launcher floats; every other panel hugs the bar).
+	CenterY bool
 }
 
 type Margins struct{ Top, Bottom, Left, Right int }
@@ -55,6 +61,16 @@ func clampAxis(desired, size, extent, pad int) int {
 func (p Placement) Margins() Margins {
 	x := clampAxis(alignX(p), p.Panel.W, p.Output.W, p.Padding)
 	anchor := p.BarZone + p.Gap
+	if p.CenterY {
+		// FittedSize has already capped Panel.H to the available extent, so
+		// avail >= Panel.H and the result stays inside the padding.
+		avail := p.Output.H - anchor - p.Padding
+		y := anchor + (avail-p.Panel.H)/2
+		if p.BarEdge == "bottom" {
+			return Margins{Bottom: y, Left: x}
+		}
+		return Margins{Top: y, Left: x}
+	}
 	if p.BarEdge == "bottom" {
 		return Margins{Bottom: anchor, Left: x}
 	}

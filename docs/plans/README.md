@@ -1,6 +1,6 @@
 # Design and Plan Register
 
-Last updated: 2026-09-01.
+Last updated: 2026-09-02.
 
 Every design, plan, and handover this project has produced, with where it lives and whether it is still
 live. Add a row here in the same commit that adds a document. A document that is not in this register is
@@ -202,6 +202,10 @@ the M4 surface vocabulary and tagged service releases.
 | `2026-08-30-notifications-and-tray-audit-handover.md` | audit-handover | Commissions the cross-repository design and plan audit for Tranches 5A and 5B. |
 | `2026-08-30-notifications-and-tray-audit-report.md` | audit-report | Redesign required for both tranches; records service-contract, lifetime, release, persistence, and menu blockers. |
 | `2026-08-31-notifications-and-tray-integration-design.md` | design | Corrected cross-repository ownership, parity, shared M3/M4 primitives, limits, release order, and gates. |
+| `2026-09-01-m5b-continuation-handover.md` | progress-handover | 5B Tasks 1-6 done on `milestone/m5a-notifications`; Tasks 7-9, two live gates, and the merge remain. |
+| `2026-09-01-m5-task8-progress-handover.md` | progress-handover | Task 7 committed at `437ef33`; Task 8 has uncommitted, non-compiling wiring work and exact continuation gates. |
+| `2026-09-02-milestone-5-completion-handover.md` | completion-handover | Milestone 5 closed at `2604d77`: automated gate, the live checks that ran on Niri and the ones the missing services blocked, defects fixed and open, and the stable-tag gate. |
+| `2026-09-02-project-state-and-remaining-work-handover.md` | project-handover | Whole-project state: milestone table M0-M8, conventions, environment, dependency and sibling-repo state, what the theme switcher and template catalog actually ship against D8 and D9, M6 in flight, M7 and M8 not started, and the remaining work in the order worth doing. |
 | `2026-09-01-milestone-5-shell-prerequisites.md` | plan | `AuxUpdate` and process-wide interactive-root ownership required before 5A. |
 | `/home/nomadx/.config/superpowers/worktrees/sysc-notify/redesign/v0.1/docs/plans/2026-08-31-sysc-notify-v0.1.md` | service plan | Executable notify service and candidate/stable release gates. |
 | `/home/nomadx/.config/superpowers/worktrees/sysc-tray/redesign/v0.1/docs/plans/2026-08-31-sysc-tray-v0.1.md` | service plan | Executable tray service and candidate/stable release gates. |
@@ -224,11 +228,26 @@ gates live in bd.
 | `2026-09-01-milestone-6e-screen-recorder.md` | plan | Recorder configuration, exact process ownership, replay buffer, context, and live gate. |
 | `2026-09-01-milestone-6f-protocol-qualification.md` | plan | Protocol v1 fixtures, abuse and recovery gates, packaging, live qualification, and handoff. |
 
-## Milestones 7 and 8: not yet designed
+## Milestone 7: shell breadth
+
+Not designed as a whole. The first slice (launcher) has prior art and a design
+commission. Remaining M7 clusters (clipboard, session adapters, control center,
+wallpaper, desktop widgets) are still unordered.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-01-launcher-prior-art.md` | assessment | Noctalia 5 list + first-class DMS DankLauncherV2 (this machine: full/compact) + Go reuse. §6/§9 superseded 2026-09-01: Elephant is first-class prior art, GPL-3 not a constraint (owner decision). No live grim in-tree. |
+| `2026-09-01-milestone-7-launcher-design-handover.md` | execution-handover | Commissions the launcher design and implementation plan. Do not write product code from it. |
+| `2026-09-01-launcher-design.md` | design | M7 launcher v1: Noctalia list chrome 560×500, fzf + Elephant-weighted scoring, ported usage store, pinned desktopentry, Niri argv spawn, `/` prefix registry, glyph icons behind an Icon seam. 16 numbered decisions. |
+| `2026-09-01-launcher.md` | plan | 13 tasks: Task 0 reconciliation, pinned deps, TDD slices for exclusions/exec/scoring/history/prefix/service/spawn, panel projection, IPC + Super+Space bind, owner-deferrable live Niri gate. |
+| `2026-09-02-sysc-launch-extraction-design.md` | design | Owner-approved boundary for history-preserving extraction into `github.com/Nomadcxx/sysc-launch`, a presentation-neutral library plus diagnostic CLI. |
+| `2026-09-02-sysc-launch-extraction.md` | plan | Nine-task history-preserving extraction, public API and CLI, local two-module gate, v0.1.0 release, and immutable shell pin. |
+
+## Milestones 7 remainder and 8: not yet designed
 
 | Milestone | Scope | Note |
 |---|---|---|
-| 7 | Shell breadth | Launcher consumes Milestone 4's text field, virtual list, keyboard focus, and popout placement. |
+| 7 (after launcher) | Clipboard, network/BT/MPRIS, control center, wallpaper, desktop widgets | See handover; do not fold into the launcher slice. |
 | 8 | Rendering qualification | Requires measured evidence against `wl_shm`. |
 
 ## Sibling repositories
@@ -239,6 +258,7 @@ gates live in bd.
 | `sysc-wayland` | `v0.1.1` | Pinned dependency. Qualified. |
 | `/home/nomadx/sysc-notify` | plan branch `3e3e417` | v0.1 service plan and persistence addendum committed; no release tag. |
 | `/home/nomadx/sysc-tray` | plan branch `7e835d8` | v0.1 service plan committed; no release tag. |
+| `/home/nomadx/sysc-launch` | `v0.1.0` (`fb6f73c`) | Tagged and pushed. Library plus diagnostic CLI. |
 
 ## Work selection
 

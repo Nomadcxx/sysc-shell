@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,12 +9,18 @@ import (
 	"sync"
 	"time"
 
+	launcher "github.com/Nomadcxx/sysc-launch"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/icons"
+	"github.com/Nomadcxx/sysc-shell/internal/notifyclient"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/theming"
+	"github.com/Nomadcxx/sysc-shell/internal/trayclient"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	tray "github.com/Nomadcxx/sysc-tray/protocol"
 )
 
 // Registry owns every bar, the services they consume, and the state they read.
@@ -51,6 +58,8 @@ type Registry struct {
 	aux           chan wayland.AuxRequest
 	panels        PanelSet
 	panelHosts    map[PanelID]*PanelHost
+	// roots is the one interactive root the process allows at a time.
+	roots rootChain
 	// closed unblocks a pending publish at shutdown.
 	closed      chan struct{}
 	closeOnce   sync.Once
@@ -62,6 +71,30 @@ type Registry struct {
 	osd         *OSDManager
 	audioLease  *services.Lease
 	brightLease *services.Lease
+	// runArgv launches a session action. Tests replace it per Registry.
+	runArgv func([]string) error
+
+	// notify is the service-owned notification projection.
+	notify *notifyState
+
+	// tray is the service-owned tray projection.
+	tray            *trayState
+	trayCh          chan trayclient.Message
+	traySender      trayCommandSender
+	trayMenu        *trayMenuHost
+	trayDrawer      *trayDrawerHost
+	trayReplies     *trayReplyTracker
+	trayIcons       *icons.Worker
+	trayIconCancel  context.CancelFunc
+	pendingTrayMenu pendingTrayMenu
+
+	// notifyCh carries client messages; main pumps it. Nil in tests that drive
+	// applyNotify directly.
+	notifyCh chan notifyclient.Message
+	// toasts hosts one toast stack per output, created when wiring binds it.
+	toasts *toastHost
+	// launcherSvc is created on the first launcher open; nil until then.
+	launcherSvc *launcher.Service
 }
 
 func NewRegistry(cfg config.Config) *Registry {
@@ -81,6 +114,11 @@ func NewRegistry(cfg config.Config) *Registry {
 		panelHosts:    make(map[PanelID]*PanelHost),
 		closed:        make(chan struct{}),
 		dwell:         newDwell(defaultDwell),
+		runArgv:       runArgvDefault,
+		notify:        newNotifyState(),
+		tray:          newTrayState(),
+		trayCh:        make(chan trayclient.Message, 32),
+		notifyCh:      make(chan notifyclient.Message, 32),
 	}
 	r.tokens = r.generateTheme(cfg)
 	r.osd = newOSDManager(r, 0)
@@ -105,7 +143,7 @@ func (r *Registry) setAudio(a *services.Audio) {
 			r.audioLease = l
 		}
 	}
-	go r.relayAudioOSD()
+	go r.relayAudioOSD(a)
 }
 
 func (r *Registry) setBrightness(b *services.Brightness) {
@@ -122,7 +160,7 @@ func (r *Registry) setBrightness(b *services.Brightness) {
 			r.brightLease = l
 		}
 	}
-	go r.relayBrightnessOSD()
+	go r.relayBrightnessOSD(b)
 }
 
 func (r *Registry) AudioAvailable() bool {
@@ -263,15 +301,28 @@ func (r *Registry) generateTheme(cfg config.Config) theme.Tokens {
 	return tok
 }
 
+// surfaceTheme is the palette every auxiliary surface paints with: the
+// generated tokens, with the bar's geometry so a panel and the bar agree about
+// spacing and text size.
+//
+// Callers hold Registry.mu, because the tokens are replaced by a reload.
+func (r *Registry) surfaceTheme() Theme {
+	return withBarGeometry(ThemeFromTokens(r.tokens, r.cfg.Theme.Radius), r.cfg.Bar)
+}
+
 func runningAsTest() bool {
 	return strings.HasSuffix(os.Args[0], ".test")
 }
 
-func (r *Registry) relayAudioOSD() {
-	if r.audio == nil {
+// relayAudioOSD takes the service as an argument rather than reading the
+// field: replacing the service writes that field, and a relay started for the
+// previous service would otherwise read it concurrently. The replaced service
+// is closed before the field changes, so its channel ends this loop.
+func (r *Registry) relayAudioOSD(audio *services.Audio) {
+	if audio == nil {
 		return
 	}
-	ch := r.audio.Changes()
+	ch := audio.Changes()
 	for {
 		select {
 		case <-r.closed:
@@ -285,11 +336,13 @@ func (r *Registry) relayAudioOSD() {
 	}
 }
 
-func (r *Registry) relayBrightnessOSD() {
-	if r.brightness == nil {
+// relayBrightnessOSD takes the service as an argument for the same reason as
+// relayAudioOSD.
+func (r *Registry) relayBrightnessOSD(brightness *services.Brightness) {
+	if brightness == nil {
 		return
 	}
-	ch := r.brightness.Changes()
+	ch := brightness.Changes()
 	for {
 		select {
 		case <-r.closed:
@@ -357,9 +410,40 @@ func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbac
 	bar.apply(r.viewLocked(connector))
 	r.bars[global] = bar
 	r.leases[global] = leases
+	r.bindBarTrayLocked(global, connector, bar)
+	// Seeded, not published: the owner configures this surface next and paints
+	// it once. An invalidation here would be a second frame for a first paint,
+	// and this call is on the owner goroutine, which drains that channel.
+	r.syncTrayLocked()
+	toastOutputs := r.outputGlobalsLocked()
 	r.mu.Unlock()
 
+	r.SyncToastOutputs(toastOutputs)
 	return r.bindHost(global, bar, callbacks), nil
+}
+
+// bindBarTrayLocked gives one bar its tray input seam. The global and the
+// connector are captured here rather than carried through the bar, because a
+// bar is identified by its global and a connector is only an attribute.
+func (r *Registry) bindBarTrayLocked(global uint32, connector string, bar *Bar) {
+	bar.setTrayHandler(func(
+		key tray.ItemKey, arranged trayArrangement, anchor ui.Rect, event wayland.Event,
+	) bool {
+		return r.handleTrayBar(global, connector, key, arranged, anchor, event)
+	})
+}
+
+// outputGlobalsLocked maps each live connector to its wl_registry global. Two
+// globals may briefly share a connector during a reconnect; the newest wins,
+// because that is the one whose surfaces exist.
+func (r *Registry) outputGlobalsLocked() map[string]uint32 {
+	globals := make(map[string]uint32, len(r.bars))
+	for global, bar := range r.bars {
+		if existing, ok := globals[bar.connector()]; !ok || global > existing {
+			globals[bar.connector()] = global
+		}
+	}
+	return globals
 }
 
 // PrepareConfig builds every enabled host's replacement bar and acquires its
@@ -404,6 +488,9 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				r.weather.Reconfigure(
 					cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit))
 				r.dwell.leave()
+				// The open menu and drawer were placed against the outgoing
+				// geometry and hold a root; a candidate replaces both.
+				r.closeTrayLocked()
 				for _, bar := range bars {
 					bar.apply(r.viewLocked(bar.connector()))
 				}
@@ -411,7 +498,16 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				r.tokens = tok
 				r.bars = bars
 				r.leases = leases
+				for global, bar := range r.bars {
+					r.bindBarTrayLocked(global, bar.connector(), bar)
+				}
+				// Seeded only: every replacement bar is reconfigured and
+				// repainted by the owner as part of adopting the candidate.
+				r.syncTrayLocked()
+				toastOutputs := r.outputGlobalsLocked()
 				r.mu.Unlock()
+
+				r.SyncToastOutputs(toastOutputs)
 
 				// Released only after the replacement set holds its own, so
 				// the count never touches zero for a service still in use.
@@ -438,8 +534,11 @@ func (r *Registry) DropHost(global uint32) {
 	leases := r.leases[global]
 	delete(r.bars, global)
 	delete(r.leases, global)
+	r.trayOutputLostLocked(global)
+	toastOutputs := r.outputGlobalsLocked()
 	r.mu.Unlock()
 
+	r.SyncToastOutputs(toastOutputs)
 	releaseAll(leases)
 }
 
@@ -453,6 +552,8 @@ func (r *Registry) Close() {
 	if r.osd != nil {
 		osdAux = r.osd.prepareHide()
 	}
+	r.closeTrayLocked()
+	r.stopTrayIconsLocked()
 	r.closeAllPanelsLocked()
 	var leases []*services.Lease
 	for global, held := range r.leases {
@@ -476,6 +577,13 @@ func (r *Registry) Close() {
 		brightLease.Release()
 	}
 	releaseAll(leases)
+	r.mu.Lock()
+	launcherSvc := r.launcherSvc
+	r.launcherSvc = nil
+	r.mu.Unlock()
+	if launcherSvc != nil {
+		launcherSvc.Close()
+	}
 	r.dwell.stop()
 	r.clock.Close()
 	r.metrics.Close()
@@ -585,6 +693,7 @@ func (r *Registry) viewLocked(connector string) barView {
 		Now:       r.now,
 		Workspace: state.Workspace,
 		Title:     state.Title,
+		Pills:     state.Pills,
 		Metrics:   r.sample,
 		History:   r.historyLocked(),
 		Weather:   r.reading,
@@ -652,11 +761,22 @@ func (r *Registry) buildBar(cfg config.Config, connector string, tok theme.Token
 }
 
 // allItems is every configured item across the three sections.
+// allItems flattens every section, descending one level into a group. A group
+// is chrome: its members are the widgets that need service leases, so a
+// selector nested in one must still be acquired or the group renders
+// placeholders forever.
 func allItems(policy config.Bar) []config.Item {
 	out := make([]config.Item, 0, len(policy.Left)+len(policy.Center)+len(policy.Right))
-	out = append(out, policy.Left...)
-	out = append(out, policy.Center...)
-	return append(out, policy.Right...)
+	for _, section := range [][]config.Item{policy.Left, policy.Center, policy.Right} {
+		for _, item := range section {
+			if item.ID == "group" {
+				out = append(out, item.Items...)
+				continue
+			}
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // weatherUnit maps the validated configuration string to the service unit.
@@ -683,7 +803,12 @@ func (r *Registry) drivePointerTooltip(global uint32, bar *Bar, event wayland.Ev
 		r.dwell.leave()
 	case wayland.EventPointerEnter, wayland.EventPointerMotion:
 		if text, bounds, ok := bar.hoverTooltip(); ok {
-			r.dwell.enter(global, bounds, text)
+			// The bar already resolved the accepted theme; the tooltip reuses
+			// it rather than deriving its own.
+			r.dwell.enter(global, bounds, text, wayland.TooltipStyle{
+				Background: bar.theme.Background,
+				Foreground: bar.theme.Foreground,
+			})
 		} else {
 			r.dwell.leave()
 		}

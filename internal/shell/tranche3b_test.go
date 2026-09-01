@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"runtime"
 	"testing"
 	"time"
@@ -67,11 +68,13 @@ func TestOneFailingSourceDoesNotSuppressAnother(t *testing.T) {
 	})
 
 	bar := reg.bars[1]
-	if got := bar.left[0].node.Text; got != "42%" {
+	if got := bar.left[0].inner.Text; got != string(render.MetricIconRune("cpu"))+" 42%" {
 		t.Fatalf("healthy source rendered %q, want 42%%", got)
 	}
-	if got := bar.left[1].node.Text; got != noWorkspace {
-		t.Fatalf("failed source rendered %q, want the placeholder", got)
+	// A failed source keeps its icon: the field holds its width and still says
+	// what it measures, while the placeholder says there is no reading.
+	if got := bar.left[1].inner.Text; got != string(render.MetricIconRune("memory"))+" "+noWorkspace {
+		t.Fatalf("failed source rendered %q, want the icon and the placeholder", got)
 	}
 }
 
@@ -88,7 +91,7 @@ func TestAMeterCarriesItsFractionOnTheNode(t *testing.T) {
 		},
 	})
 
-	if got := reg.bars[1].left[1].node.Value; got != 0.25 {
+	if got := reg.bars[1].left[1].inner.Value; got != 0.25 {
 		t.Fatalf("meter node value = %v, want 0.25", got)
 	}
 }
@@ -254,10 +257,10 @@ func TestAGraphPlotsItsOwnSubject(t *testing.T) {
 
 	// The steady interface plots flat; the halving one falls. An aggregate
 	// ring would have given both widgets the same shape.
-	if got := bar.left[0].node.Values; len(got) != 2 || got[0] != 1 || got[1] != 1 {
+	if got := bar.left[0].inner.Values; len(got) != 2 || got[0] != 1 || got[1] != 1 {
 		t.Fatalf("the steady interface plotted %v, want a flat window", got)
 	}
-	if got := bar.left[1].node.Values; len(got) != 2 || got[0] != 1 || got[1] != 0.5 {
+	if got := bar.left[1].inner.Values; len(got) != 2 || got[0] != 1 || got[1] != 0.5 {
 		t.Fatalf("the halving interface plotted %v, want [1 0.5]", got)
 	}
 }
@@ -270,7 +273,7 @@ func TestAMeterWithNoReadingIsAbsentRatherThanZero(t *testing.T) {
 	t.Cleanup(reg.Close)
 	newHosts(t, reg, map[uint32]string{1: "DP-9"})
 
-	meter := reg.bars[1].left[1].node
+	meter := reg.bars[1].left[1].inner
 
 	reg.UpdateMetrics(services.Snapshot{Memory: &metrics.MemorySnapshot{
 		Memory: metrics.Capacity{TotalBytes: 1000, UsedBytes: 250},
@@ -316,7 +319,7 @@ func TestAGraphStopsPlottingWhenItsSourceFails(t *testing.T) {
 		}},
 		History: history,
 	})
-	graph := bar.left[2].node
+	graph := bar.left[2].inner
 	if len(graph.Values) == 0 || graph.Absent {
 		t.Fatal("a graph with a reading plotted nothing")
 	}

@@ -91,7 +91,8 @@ func (m *FontMap) Face(r rune) *font.Face {
 func iconFaceFor(r rune) *font.Face {
 	inWeather := r >= iconRuneFirst && r <= iconRuneLast
 	inBattery := r >= batteryRuneFirst && r <= batteryRuneLast
-	if !inWeather && !inBattery {
+	inMetric := r >= metricRuneFirst && r <= metricRuneLast
+	if !inWeather && !inBattery && !inMetric {
 		return nil
 	}
 	return loadIconFace()

@@ -21,6 +21,7 @@ var testStyle = ProofStyle{
 	Track:      Color{R: 0x30, G: 0x34, B: 0x38, A: 0xff},
 	Accent:     Color{R: 0x00, G: 0x80, B: 0xff, A: 0xff},
 	AccentOn:   Color{R: 0xff, G: 0x60, B: 0x00, A: 0xff},
+	OnPrimary:  Color{R: 0x11, G: 0x22, B: 0x33, A: 0xff},
 }
 
 func TestPaintFillsOnlyTheRoundedBody(t *testing.T) {
@@ -132,6 +133,56 @@ func pixelAt(t *testing.T, c *Canvas, x, y int) Color {
 	return Color{B: c.Pix[i], G: c.Pix[i+1], R: c.Pix[i+2], A: c.Pix[i+3]}
 }
 
+// litPixels counts pixels that took the foreground text colour.
+func litPixels(c *Canvas, fg Color) int {
+	n := 0
+	for i := 0; i+3 < len(c.Pix); i += 4 {
+		if c.Pix[i] == fg.B && c.Pix[i+1] == fg.G && c.Pix[i+2] == fg.R && c.Pix[i+3] == fg.A {
+			n++
+		}
+	}
+	return n
+}
+
+func paintSingleText(t *testing.T, bold, italic, underline bool) *Canvas {
+	t.Helper()
+	c := newTestCanvas(t, 240, 48)
+	style := testStyle
+	style.Body = ui.Rect{W: 240, H: 48}
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{{
+		Kind: ui.KindText, Text: "level", Bounds: ui.Rect{X: 4, Y: 4, W: 220, H: 40},
+		Bold: bold, Italic: italic, Underline: underline,
+	}}}
+	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func TestPaintTextStylesChangeThePaintedInk(t *testing.T) {
+	t.Parallel()
+	fg := testStyle.Foreground
+
+	plain := litPixels(paintSingleText(t, false, false, false), fg)
+	bold := litPixels(paintSingleText(t, true, false, false), fg)
+	if bold <= plain {
+		t.Fatalf("bold ink %d <= plain %d; style was not painted", bold, plain)
+	}
+
+	under := litPixels(paintSingleText(t, false, false, true), fg)
+	if under <= plain {
+		t.Fatalf("underline ink %d <= plain %d; rule was not painted", under, plain)
+	}
+
+	// Synthetic italic shears the mask rightward toward the baseline, so ink
+	// moves relative to the plain run: the two canvases must differ.
+	it := paintSingleText(t, false, true, false)
+	same := paintSingleText(t, false, false, false)
+	if string(it.Pix) == string(same.Pix) {
+		t.Fatal("italic painted identically to plain; shear was not applied")
+	}
+}
+
 // paintTree lays out and paints the proof fixture, returning the tree.
 func paintTree(t *testing.T, c *Canvas, style ProofStyle) *ui.Node {
 	t.Helper()
@@ -209,6 +260,25 @@ func TestPaintButtonTogglesColor(t *testing.T) {
 	if got := pixelAt(t, on, button.X+1, button.Y+1); got != testStyle.AccentOn {
 		t.Errorf("toggled button pixel = %+v, want %+v", got, testStyle.AccentOn)
 	}
+}
+
+// A button paints its label in OnPrimary: the fill is the Primary token, so
+// the text token paired with it is the only legible choice (launcher D11).
+func TestPaintButtonTextUsesOnPrimary(t *testing.T) {
+	t.Parallel()
+
+	c := newTestCanvas(t, canvasW, canvasH)
+	root := paintTree(t, c, testStyle)
+	button := root.Children[2].Bounds
+	label := ui.Rect{X: button.X + 4, Y: button.Y + 4, W: button.W - 8, H: button.H - 8}
+	for y := label.Y; y < label.Y+label.H; y++ {
+		for x := label.X; x < label.X+label.W; x++ {
+			if pixelAt(t, c, x, y) == testStyle.OnPrimary {
+				return
+			}
+		}
+	}
+	t.Fatal("button label painted no OnPrimary pixel")
 }
 
 func TestPaintDrawsTextPixels(t *testing.T) {
@@ -501,5 +571,68 @@ func TestErrorToneTextPaintsInTheErrorColour(t *testing.T) {
 	}
 	if !sawErrorPixel {
 		t.Fatal("error-tone text painted no pixel in the error colour")
+	}
+}
+
+// capsuleStyle adds the three capsule fills to the shared test style, each
+// distinct so a sampled pixel names exactly one of them.
+func capsuleStyle() ProofStyle {
+	s := testStyle
+	s.Capsule = Color{R: 0x18, G: 0x1a, B: 0x1d, A: 0xff}
+	s.Container = Color{R: 0x11, G: 0x83, B: 0xa2, A: 0xff}
+	s.OnAccent = Color{R: 0x21, G: 0x23, B: 0x37, A: 0xff}
+	s.OnContainer = Color{R: 0x0a, G: 0x0b, B: 0x11, A: 0xff}
+	return s
+}
+
+func TestPaintCapsuleFill(t *testing.T) {
+	t.Parallel()
+	c := newTestCanvas(t, canvasW, canvasH)
+	style := capsuleStyle()
+	r := NewTextRenderer(mustTestFace(t))
+
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{
+		{Kind: ui.KindCapsule, Padding: 8, Bounds: ui.Rect{X: 10, Y: 8, W: 60, H: 32}},
+		{Kind: ui.KindCapsule, Fill: ui.FillAccent, Bounds: ui.Rect{X: 90, Y: 12, W: 20, H: 20}},
+		{Kind: ui.KindCapsule, Fill: ui.FillContainer, Bounds: ui.Rect{X: 130, Y: 12, W: 20, H: 20}},
+	}}
+	if err := Paint(c, root, r, style); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := pixelAt(t, c, 40, 24); got != style.Capsule {
+		t.Errorf("default capsule centre = %+v, want Capsule %+v", got, style.Capsule)
+	}
+	if got := pixelAt(t, c, 100, 22); got != style.Accent {
+		t.Errorf("accent dot centre = %+v, want Accent %+v", got, style.Accent)
+	}
+	if got := pixelAt(t, c, 140, 22); got != style.Container {
+		t.Errorf("container dot centre = %+v, want Container %+v", got, style.Container)
+	}
+	// Between the two dots is bar body, not pill.
+	if got := pixelAt(t, c, 120, 22); got != style.Background {
+		t.Errorf("gap between dots = %+v, want Background %+v", got, style.Background)
+	}
+}
+
+// A pill's numeral must be legible on its own fill, so the capsule supplies the
+// matching foreground to its subtree rather than each caller tagging a tone.
+func TestCapsuleGivesItsChildTheMatchingForeground(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		fill ui.Fill
+		want func(ProofStyle) Color
+	}{
+		{"accent", ui.FillAccent, func(s ProofStyle) Color { return s.OnAccent }},
+		{"container", ui.FillContainer, func(s ProofStyle) Color { return s.OnContainer }},
+		{"default", ui.FillNone, func(s ProofStyle) Color { return s.Foreground }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			style := capsuleStyle()
+			if got := capsuleForeground(style, tc.fill); got != tc.want(style) {
+				t.Fatalf("foreground for %v = %+v, want %+v", tc.fill, got, tc.want(style))
+			}
+		})
 	}
 }

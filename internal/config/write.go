@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 )
 
 // atomicReplace is os.Rename except in tests that force a failure after the
@@ -19,6 +20,11 @@ var atomicReplace = os.Rename
 func Write(path string, c Config) error {
 	if path == "" {
 		return fmt.Errorf("config: empty write path")
+	}
+	if _, err := applyTrayPreferences(wireTrayPreferences{
+		Hidden: c.Tray.Hidden, Pinned: c.Tray.Pinned, Order: c.Tray.Order,
+	}); err != nil {
+		return err
 	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -85,6 +91,13 @@ func toWire(c Config) wireConfig {
 	}
 	if p := panelsDiff(c.Panels, d.Panels); p != nil {
 		w.Panels = p
+	}
+	if len(c.Tray.Hidden) > 0 || len(c.Tray.Pinned) > 0 || len(c.Tray.Order) > 0 {
+		w.Tray = &wireTrayPreferences{
+			Hidden: append([]string(nil), c.Tray.Hidden...),
+			Pinned: append([]string(nil), c.Tray.Pinned...),
+			Order:  append([]string(nil), c.Tray.Order...),
+		}
 	}
 	if c.Weather.Configured {
 		w.Weather = weatherWire(c.Weather)
@@ -170,7 +183,14 @@ func itemsEqual(a, b []Item) bool {
 	for i := range a {
 		x, y := a[i], b[i]
 		x.Boundary, y.Boundary = 0, 0
-		if x != y {
+		// An Item carries group members, so it is no longer comparable with
+		// ==. Members are compared recursively and then cleared so the
+		// remaining scalar fields compare as before.
+		if !itemsEqual(x.Items, y.Items) {
+			return false
+		}
+		x.Items, y.Items = nil, nil
+		if !reflect.DeepEqual(x, y) {
 			return false
 		}
 	}

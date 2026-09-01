@@ -9,6 +9,34 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 )
 
+func TestPanelHostRenderPaintsClockText(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelClock, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	reqs := drainAux(t, reg, 2)
+	panel := reqs[1].Open
+	if err := panel.Callbacks.Configure(360, 420, 120); err != nil {
+		t.Fatal(err)
+	}
+	const w, hgt = 360, 420
+	pix := make([]byte, w*hgt*4)
+	if err := panel.Callbacks.Render(pix, w, hgt, w*4); err != nil {
+		t.Fatal(err)
+	}
+	fg := reg.panelHosts[PanelClock].theme.Foreground
+	n := 0
+	for i := 0; i+3 < len(pix); i += 4 {
+		if pix[i] == fg.R && pix[i+1] == fg.G && pix[i+2] == fg.B && pix[i+3] == fg.A {
+			n++
+		}
+	}
+	if n == 0 {
+		t.Fatal("clock panel painted no foreground text")
+	}
+}
+
 func TestOpenPanelSendsShieldThenPanel(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
@@ -75,10 +103,8 @@ func TestTabMovesRovingFocus(t *testing.T) {
 
 func TestSpaceActivatesFocusedButton(t *testing.T) {
 	t.Parallel()
-	old := runArgv
-	t.Cleanup(func() { runArgv = old })
-	runArgv = func([]string) error { return nil }
 	reg := newPanelRegistry(t)
+	reg.runArgv = func([]string) error { return nil }
 	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
 		t.Fatal(err)
 	}
@@ -207,5 +233,154 @@ func drainInvalidations(reg *Registry) {
 		default:
 			return
 		}
+	}
+}
+
+func TestOpeningAnUnrelatedPanelClosesTheOldRoot(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelClock, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	if _, ok := reg.panelHosts[PanelClock]; !ok {
+		t.Fatal("the first panel never opened")
+	}
+
+	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	// Closing the old root emits its panel and shield closes; the new root
+	// then emits its own two opens.
+	_ = drainAux(t, reg, 4)
+
+	if _, ok := reg.panelHosts[PanelClock]; ok {
+		t.Fatal("the replaced panel is still hosted")
+	}
+	if _, ok := reg.panels.Output(PanelClock); ok {
+		t.Fatal("the replaced panel is still recorded as open")
+	}
+	if _, ok := reg.panelHosts[PanelSession]; !ok {
+		t.Fatal("the new root did not open")
+	}
+	if !reg.roots.owns(panelRoot(PanelSession)) {
+		t.Fatal("the chain owner is not the new panel")
+	}
+}
+
+func TestMovingAPanelToAnotherOutputReplacesItsRoot(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelClock, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	_, first, _ := reg.roots.current()
+
+	if err := reg.OpenPanel(PanelClock, 8, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 4)
+
+	_, second, ok := reg.roots.current()
+	if !ok || second == first {
+		t.Fatalf("moving outputs kept generation %d", second)
+	}
+	where, ok := reg.panels.Output(PanelClock)
+	if !ok || where != 8 {
+		t.Fatalf("panel output = %d (open=%v), want 8", where, ok)
+	}
+	if host := reg.panelHosts[PanelClock]; host == nil || host.output != 8 {
+		t.Fatalf("panel host = %+v, want output 8", host)
+	}
+}
+
+func TestTogglingTheSamePanelClosesItsRoot(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.TogglePanel(PanelMonitor, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	if !reg.roots.owns(panelRoot(PanelMonitor)) {
+		t.Fatal("toggling open did not publish a root")
+	}
+
+	if err := reg.TogglePanel(PanelMonitor, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	if _, _, ok := reg.roots.current(); ok {
+		t.Fatal("toggling closed left a root open")
+	}
+	if _, ok := reg.panelHosts[PanelMonitor]; ok {
+		t.Fatal("toggling closed left the panel hosted")
+	}
+}
+
+func TestEveryPanelCloseReleasesItsChainExactlyOnce(t *testing.T) {
+	for name, closer := range map[string]func(*Registry){
+		"ClosePanel":   func(r *Registry) { r.ClosePanel(PanelClock) },
+		"TogglePanel":  func(r *Registry) { _ = r.TogglePanel(PanelClock, 7, Trigger{}) },
+		"DropAux":      func(r *Registry) { r.DropAux(7, panelSurfaceID(PanelClock)) },
+		"closeAll":     func(r *Registry) { r.mu.Lock(); r.closeAllPanelsLocked(); r.mu.Unlock() },
+		"replacedRoot": func(r *Registry) { _ = r.OpenPanel(PanelSession, 7, Trigger{}) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			reg := newPanelRegistry(t)
+			if err := reg.OpenPanel(PanelClock, 7, Trigger{}); err != nil {
+				t.Fatal(err)
+			}
+			_ = drainAux(t, reg, 2)
+
+			released := 0
+			_, generation, ok := reg.roots.current()
+			if !ok {
+				t.Fatal("no root was published")
+			}
+			reg.mu.Lock()
+			reg.roots.onClose(generation, func() { released++ })
+			reg.mu.Unlock()
+
+			closer(reg)
+			go func() {
+				for range reg.AuxRequests() {
+				}
+			}()
+
+			if released != 1 {
+				t.Fatalf("chain released %d times, want exactly 1", released)
+			}
+			if _, ok := reg.panelHosts[PanelClock]; ok {
+				t.Fatal("the panel host survived its close")
+			}
+			// A late close naming the released generation must do nothing.
+			reg.mu.Lock()
+			stale := reg.roots.closeRoot(generation)
+			reg.mu.Unlock()
+			if stale {
+				t.Fatal("a stale close released the chain again")
+			}
+			if released != 1 {
+				t.Fatalf("chain released %d times after a stale close", released)
+			}
+		})
+	}
+}
+
+func TestPanelFontFamilyFollowsTheOutputConnector(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Bar.FontFamily = "GlobalSans"
+	cfg.Outputs = []config.OutputOverride{{Connector: "DP-2", Bar: config.Bar{FontFamily: "PerOutputSerif"}}}
+	reg := NewRegistry(cfg)
+	reg.bars[1] = &Bar{conn: "DP-1"}
+	reg.bars[2] = &Bar{conn: "DP-2"}
+
+	if got := reg.panelFontFamily(1); got != "GlobalSans" {
+		t.Errorf("DP-1 panel font = %q, want the global family", got)
+	}
+	if got := reg.panelFontFamily(2); got != "PerOutputSerif" {
+		t.Errorf("DP-2 panel font = %q, want the per-output family", got)
+	}
+	if got := reg.panelFontFamily(99); got != "GlobalSans" {
+		t.Errorf("unknown output font = %q, want the global family", got)
 	}
 }

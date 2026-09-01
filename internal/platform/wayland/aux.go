@@ -24,12 +24,32 @@ type AuxSpec struct {
 	Callbacks                                        HostCallbacks
 }
 
-// AuxRequest opens (Open != nil) or closes (Open == nil, ID set) one aux
-// surface on the output identified by its wl_registry global.
+// AuxRequest opens (Open != nil), updates (Update != nil), or closes (both nil,
+// ID set) one aux surface on the output identified by its wl_registry global.
 type AuxRequest struct {
 	Output uint32
 	ID     string
 	Open   *AuxSpec
+	Update *AuxUpdate
+}
+
+// AuxUpdate changes policy on an already-open auxiliary surface without
+// recreating it. A nil Keyboard leaves keyboard interactivity alone; the input
+// region is replaced only when SetInputRegion is true.
+type AuxUpdate struct {
+	Keyboard *uint32
+	// SetInputRegion replaces the surface input region. An empty InputRects
+	// means the surface accepts no pointer input, which is not the same as
+	// leaving the region unset: an unset region covers the whole surface.
+	SetInputRegion bool
+	InputRects     []ui.Rect
+}
+
+// auxPolicy is the mutable policy of one open auxiliary surface.
+type auxPolicy struct {
+	keyboard       uint32
+	inputRects     []ui.Rect
+	hasInputRegion bool
 }
 
 func (o *owner) handleAux(req AuxRequest) {
@@ -37,11 +57,14 @@ func (o *owner) handleAux(req AuxRequest) {
 	if !ok || !h.alive {
 		return
 	}
-	if req.Open == nil {
+	switch {
+	case req.Open != nil:
+		o.fail(o.openAux(h, req.Open))
+	case req.Update != nil:
+		o.fail(o.updateAux(h, req.ID, req.Update))
+	default:
 		o.closeAux(h, req.ID)
-		return
 	}
-	o.fail(o.openAux(h, req.Open))
 }
 
 func (o *owner) openAux(h *OutputHost, spec *AuxSpec) error {
@@ -139,7 +162,79 @@ func (o *owner) applyAuxGeometry(u *surfaceUnit, spec *AuxSpec) error {
 
 func (o *owner) applyAuxRegions(u *surfaceUnit) error {
 	r := ui.Rect{W: u.ss.logicalWidth, H: u.ss.logicalHeight}
+	if u.policy.hasInputRegion {
+		if err := o.applyInputRects(u.surface, u.policy.inputRects); err != nil {
+			return err
+		}
+		return o.applyOpaqueRegion(u.surface, r, 0, u.app.OpaqueBackground)
+	}
 	return o.applyRegions(u.surface, r, r, 0, u.app.OpaqueBackground)
+}
+
+// updateAux changes policy on an open surface in place. The request is
+// validated before any compositor call, so a bad update disturbs nothing.
+func (o *owner) updateAux(h *OutputHost, id string, upd *AuxUpdate) error {
+	u, ok := h.aux[id]
+	if !ok {
+		return fmt.Errorf("wayland: aux %s is not open", id)
+	}
+	next, err := planAuxUpdate(u, upd)
+	if err != nil {
+		return err
+	}
+	if err := o.applyAuxPolicy(u, next); err != nil {
+		return err
+	}
+	u.policy = next
+	return nil
+}
+
+// planAuxUpdate folds an update into the surface's policy. It makes no
+// compositor calls and copies every submitted rectangle, so the caller cannot
+// mutate the region afterwards.
+func planAuxUpdate(u *surfaceUnit, upd *AuxUpdate) (auxPolicy, error) {
+	if upd == nil {
+		return auxPolicy{}, errors.New("wayland: aux update is empty")
+	}
+	next := u.policy
+	if upd.Keyboard != nil {
+		next.keyboard = *upd.Keyboard
+	}
+	if !upd.SetInputRegion {
+		return next, nil
+	}
+	bounds := ui.Rect{W: u.ss.logicalWidth, H: u.ss.logicalHeight}
+	rects := make([]ui.Rect, 0, len(upd.InputRects))
+	for _, r := range upd.InputRects {
+		if r.W <= 0 || r.H <= 0 || r.X < 0 || r.Y < 0 {
+			return auxPolicy{}, fmt.Errorf("wayland: aux %s input rect %+v is empty or negative", u.id, r)
+		}
+		if r.X+r.W > bounds.W || r.Y+r.H > bounds.H {
+			return auxPolicy{}, fmt.Errorf("wayland: aux %s input rect %+v leaves the surface", u.id, r)
+		}
+		rects = append(rects, r)
+	}
+	next.inputRects = rects
+	next.hasInputRegion = true
+	return next, nil
+}
+
+// applyAuxPolicy performs the compositor calls for one update and commits once.
+func (o *owner) applyAuxPolicy(u *surfaceUnit, next auxPolicy) error {
+	if u.layer == nil || u.surface == nil {
+		return fmt.Errorf("wayland: aux %s has no surface", u.id)
+	}
+	if next.keyboard != u.policy.keyboard {
+		if err := u.layer.SetKeyboardInteractivity(next.keyboard); err != nil {
+			return fmt.Errorf("wayland: aux %s keyboard interactivity: %w", u.id, err)
+		}
+	}
+	if next.hasInputRegion {
+		if err := o.applyInputRects(u.surface, next.inputRects); err != nil {
+			return fmt.Errorf("wayland: aux %s input region: %w", u.id, err)
+		}
+	}
+	return u.surface.Commit()
 }
 
 func (o *owner) closeAux(h *OutputHost, id string) {
@@ -185,6 +280,15 @@ func (o *owner) teardownUnit(u *surfaceUnit) error {
 		u.retiring = append(u.retiring, u.current)
 		u.current = nil
 	}
+
+	// The surface goes first. A wl_buffer destroyed while its wl_surface is
+	// still alive can still be sent wl_buffer.release, and dispatching an
+	// event for a destroyed id panics the client with an invalid server
+	// object ID. Destroying the surface makes the compositor drop its
+	// references, after which the generations are safe to free.
+	if _, err := u.cleanup.unwind(); err != nil {
+		errs = append(errs, err)
+	}
 	for _, gen := range u.retiring {
 		gen.retire.destroy()
 		if err := gen.destroy(); err != nil {
@@ -192,9 +296,6 @@ func (o *owner) teardownUnit(u *surfaceUnit) error {
 		}
 	}
 	u.retiring = nil
-	if _, err := u.cleanup.unwind(); err != nil {
-		errs = append(errs, err)
-	}
 	u.surface, u.layer, u.scale, u.viewport = nil, nil, nil, nil
 	return errors.Join(errs...)
 }

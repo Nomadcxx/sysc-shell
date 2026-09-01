@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	launcher "github.com/Nomadcxx/sysc-launch"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
@@ -37,6 +38,8 @@ const (
 	keyDown      = 108
 	keyPageDown  = 109
 
+	btnRight = 273
+
 	revealDuration = 200 * time.Millisecond
 	revealTick     = 16 * time.Millisecond
 )
@@ -63,6 +66,8 @@ type PanelHost struct {
 	stopAnim       chan struct{}
 	stopOnce       sync.Once
 	theme          Theme
+	text           *render.TextRenderer
+	fontFamily     string
 	logicalW       int
 	logicalH       int
 	scale120       int
@@ -81,6 +86,12 @@ type PanelHost struct {
 	section        string
 	search         *ui.Field
 	fields         map[string]*ui.Field
+
+	launcherResults []launcher.Result
+	launcherSel     int
+	launcherScroll  int
+	launcherMenuID  string
+	launcherActions []launcher.Action
 }
 
 func parsePanelName(name string) (PanelID, error) {
@@ -93,6 +104,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelSession, nil
 	case "settings":
 		return PanelSettings, nil
+	case "launcher":
+		return PanelLauncher, nil
 	default:
 		return 0, fmt.Errorf("unknown panel")
 	}
@@ -153,20 +166,32 @@ func (r *Registry) focusedTrigger() (uint32, Trigger) {
 func (r *Registry) OpenPanel(id PanelID, output uint32, trig Trigger) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if where, ok := r.panels.Output(id); ok {
-		if where == output {
-			return nil
-		}
-		r.teardownPanelLocked(id)
+	if where, ok := r.panels.Output(id); ok && where == output && r.roots.owns(panelRoot(id)) {
+		return nil
 	}
+	return r.openPanelRootLocked(id, output, trig)
+}
+
+// openPanelRootLocked publishes the panel as the process-wide interactive
+// root. Whatever chain was open is released first, so opening an unrelated
+// panel closes the previous one and this panel on any other output.
+func (r *Registry) openPanelRootLocked(id PanelID, output uint32, trig Trigger) error {
+	generation := r.roots.openRoot(panelRoot(id))
 	if r.panels.open == nil {
 		r.panels.open = make(map[PanelID]uint32)
 	}
 	r.panels.open[id] = output
 	if err := r.spawnPanelLocked(id, output, trig); err != nil {
 		r.panels.Close(id)
+		r.roots.closeRoot(generation)
 		return err
 	}
+	r.roots.onClose(generation, func() {
+		r.panels.Close(id)
+		r.teardownPanelLocked(id)
+		// A root that goes away takes any visible tooltip with it.
+		r.dwell.leave()
+	})
 	return nil
 }
 
@@ -176,7 +201,13 @@ func (r *Registry) ClosePanel(id PanelID) {
 	r.closePanelLocked(id)
 }
 
+// closePanelLocked closes the panel through the root chain when it owns the
+// chain, so every release runs exactly once and in one order.
 func (r *Registry) closePanelLocked(id PanelID) {
+	if _, generation, ok := r.roots.current(); ok && r.roots.owns(panelRoot(id)) {
+		r.roots.closeRoot(generation)
+		return
+	}
 	r.panels.Close(id)
 	r.teardownPanelLocked(id)
 }
@@ -184,19 +215,19 @@ func (r *Registry) closePanelLocked(id PanelID) {
 func (r *Registry) TogglePanel(id PanelID, output uint32, trig Trigger) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	switch r.panels.Toggle(id, output) {
-	case Closed:
-		r.teardownPanelLocked(id)
+	if where, ok := r.panels.Output(id); ok && where == output {
+		r.closePanelLocked(id)
 		return nil
-	case Moved:
-		r.teardownPanelLocked(id)
-		return r.spawnPanelLocked(id, output, trig)
-	default:
-		return r.spawnPanelLocked(id, output, trig)
 	}
+	// A panel asked for on a different output is a fresh root there; opening
+	// releases the chain that held the old instance.
+	return r.openPanelRootLocked(id, output, trig)
 }
 
 func (r *Registry) DropAux(output uint32, surfaceID string) {
+	if r.DropTrayAux(output, surfaceID) {
+		return
+	}
 	id, ok := panelIDFromAux(surfaceID)
 	if !ok {
 		return
@@ -207,8 +238,7 @@ func (r *Registry) DropAux(output uint32, surfaceID string) {
 	if h == nil || h.output != output {
 		return
 	}
-	r.panels.Close(id)
-	r.teardownPanelLocked(id)
+	r.closePanelLocked(id)
 }
 
 func panelIDFromAux(surfaceID string) (PanelID, bool) {
@@ -228,6 +258,8 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelSession, true
 	case "settings":
 		return PanelSettings, true
+	case "launcher":
+		return PanelLauncher, true
 	default:
 		return 0, false
 	}
@@ -253,16 +285,20 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	if id == PanelSettings && place.Align == "" {
 		place.Align = "center"
 	}
+	if id == PanelLauncher {
+		place.CenterY = true
+	}
 	w, hgt := place.FittedSize()
 	place.Panel.W, place.Panel.H = w, hgt
 	margins := place.Margins()
 
 	h := &PanelHost{
-		id:       id,
-		output:   output,
-		place:    place,
-		stopAnim: make(chan struct{}),
-		theme:    ThemeFromTokens(r.tokens, 12),
+		id:         id,
+		output:     output,
+		place:      place,
+		stopAnim:   make(chan struct{}),
+		theme:      ThemeFromTokens(r.tokens, 12),
+		fontFamily: r.panelFontFamily(output),
 	}
 	if id == PanelSettings {
 		h.set = settings.DefaultFor(r.cfg)
@@ -271,6 +307,12 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		h.search = ui.NewField("")
 		h.menus = map[string]*Menu{}
 		h.fields = map[string]*ui.Field{}
+	}
+	if id == PanelLauncher {
+		h.search = ui.NewField("")
+		svc := r.launcherServiceLocked()
+		svc.Open()
+		svc.Query("")
 	}
 	h.root = r.panelTree(h)
 	h.focus = ui.Focusables(h.root)
@@ -414,8 +456,8 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 		Keyboard:      keyboardExclusive,
 		Callbacks: wayland.HostCallbacks{
 			OpaqueBackground: h.theme.BackgroundOpaque(),
-			Configure:        h.configure,
-			Render:           h.render,
+			Configure:        h.configureLocking(r),
+			Render:           h.renderLocking(r),
 			Handle:           h.handle(r),
 			WantIME: func() bool {
 				n := h.focused()
@@ -429,9 +471,80 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	}
 }
 
+// panelFontFamily resolves the font of the output the panel opens on. A panel
+// is per-output, so a connector with its own bar font must not open a panel in
+// the global family.
+func (r *Registry) panelFontFamily(output uint32) string {
+	connector := ""
+	if bar, ok := r.bars[output]; ok {
+		connector = bar.connector()
+	}
+	return r.cfg.ForConnector(connector).FontFamily
+}
+
+func (h *PanelHost) ensureText() error {
+	if h.text != nil {
+		return nil
+	}
+	fonts, err := render.NewSystemFontMap(h.fontFamily, render.DefaultFontCacheDir())
+	if err != nil {
+		return err
+	}
+	h.text = render.NewTextRendererWithFontMap(fonts)
+	return nil
+}
+
+func logicalFromPhysical(scale ui.Scale120, phys int) int {
+	if !scale.Valid() || scale == ui.ScaleUnit {
+		return phys
+	}
+	return phys * 120 / int(scale)
+}
+
+// The configure and render callbacks take the registry lock, like handle
+// already does. Panel geometry and the panel tree are written from relay
+// goroutines — the launcher's result relay rebuilds an open panel, which
+// re-lays it out at this geometry — so the compositor's callbacks cannot read
+// or write it unlocked. rebuildPanel already runs under the lock and calls
+// configure directly, which is why the locking wrapper is separate.
+func (h *PanelHost) configureLocking(r *Registry) func(int, int, int) error {
+	return func(w, height, scale120 int) error {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return h.configure(w, height, scale120)
+	}
+}
+
+func (h *PanelHost) renderLocking(r *Registry) func([]byte, int, int, int) error {
+	return func(pixels []byte, width, height, stride int) error {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return h.render(pixels, width, height, stride)
+	}
+}
+
 func (h *PanelHost) configure(w, height, scale120 int) error {
 	h.logicalW, h.logicalH, h.scale120 = w, height, scale120
-	measure := func(s string, _ bool) (int, int) { return len(s) * 8, 16 }
+	if err := h.ensureText(); err != nil {
+		return err
+	}
+	scale := ui.Scale120(scale120)
+	if !scale.Valid() {
+		scale = ui.ScaleUnit
+	}
+	size := scale.Physical(h.theme.TextSize)
+	if size <= 0 {
+		size = h.theme.TextSize
+	}
+	measure := func(s string, tabular bool) (int, int) {
+		if h.text != nil && size > 0 {
+			mw, mh, err := h.text.Measure(s, size, tabular)
+			if err == nil {
+				return logicalFromPhysical(scale, mw), logicalFromPhysical(scale, mh)
+			}
+		}
+		return len(s) * 8, 16
+	}
 	box := ui.Rect{W: w, H: height}
 	if h.root != nil && h.root.Kind == ui.KindRow {
 		return ui.Layout(h.root, box, measure)
@@ -440,20 +553,40 @@ func (h *PanelHost) configure(w, height, scale120 int) error {
 }
 
 func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
+	if err := h.ensureText(); err != nil {
+		return err
+	}
 	c, err := render.NewCanvas(pixels, width, height, stride)
 	if err != nil {
 		return err
 	}
-	body := ui.Rect{X: 8, Y: 8, W: h.place.Panel.W, H: h.place.Panel.H}
-	if body.W <= 0 || body.H <= 0 {
-		body = ui.Rect{X: 0, Y: 0, W: width, H: height}
+	scale := ui.Scale120(h.scale120)
+	if !scale.Valid() {
+		scale = ui.ScaleUnit
 	}
-	c.DrawShadow(body, 12, render.ElevPanel, render.Color{A: 0x8c})
-	c.FillRounded(body, 12, h.theme.Background)
+	body := ui.Rect{W: h.logicalW, H: h.logicalH}
+	if body.W <= 0 || body.H <= 0 {
+		body = ui.Rect{W: h.place.Panel.W, H: h.place.Panel.H}
+	}
+	style := render.ProofStyle{
+		Size:       h.theme.TextSize,
+		Scale120:   scale,
+		Body:       body,
+		Radius:     12,
+		Background: h.theme.Background,
+		Foreground: h.theme.Foreground,
+		Track:      h.theme.Muted,
+		Accent:     h.theme.Accent,
+		AccentOn:   h.theme.Error,
+		Error:      h.theme.Error,
+	}
+	if err := render.Paint(c, h.root, h.text, style); err != nil {
+		return err
+	}
 	if h.roving.Count > 0 {
 		n := h.focus[h.roving.Index()]
 		if n != nil && n.Bounds.W > 0 {
-			ring := n.Bounds
+			ring := scale.PhysicalRect(n.Bounds)
 			c.FillRounded(ui.Rect{X: ring.X, Y: ring.Y, W: ring.W, H: 2}, 0, h.theme.Accent)
 			c.FillRounded(ui.Rect{X: ring.X, Y: ring.Y + ring.H - 2, W: ring.W, H: 2}, 0, h.theme.Accent)
 			c.FillRounded(ui.Rect{X: ring.X, Y: ring.Y, W: 2, H: ring.H}, 0, h.theme.Accent)
@@ -486,6 +619,9 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			h.pressed = nil
 			return false
 		case wayland.EventPointerPress:
+			if h.id == PanelLauncher && h.launcherPointerPress(r, e) {
+				return true
+			}
 			if n := h.hitFocusable(h.hoverX, h.hoverY); n != nil {
 				h.pressed = n
 				h.setFocus(n)
@@ -511,13 +647,20 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 			return false
 		}
 		if !h.menu.Opened() && key != keyEsc {
-			h.applyMenu(r, h.menuPath)
+			if h.id == PanelLauncher {
+				h.applyLauncherMenu(r)
+			} else {
+				h.applyMenu(r, h.menuPath)
+			}
 		}
 		r.rebuildPanel(h)
 		return true
 	}
 	if key == keyBackspace {
 		return h.editField(r, func(f *ui.Field) { f.Backspace() })
+	}
+	if h.id == PanelLauncher && h.launcherKeyPress(r, key) {
+		return true
 	}
 	switch key {
 	case keyLeftShift:
@@ -586,6 +729,9 @@ func (h *PanelHost) scrollBy(delta int) bool {
 		return false
 	}
 	ui.ScrollBy(s, delta)
+	if h.id == PanelLauncher {
+		h.launcherScroll = s.ScrollOffset
+	}
 	if h.logicalW > 0 {
 		_ = h.configure(h.logicalW, h.logicalH, h.scale120)
 	}
@@ -659,6 +805,11 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 	f.SyncTo(n)
 	if n.Name == "Search" {
 		h.query = f.Text
+		if h.id == PanelLauncher {
+			h.launcherSel = 0
+			h.launcherScroll = 0
+			r.launcherServiceLocked().Query(h.query)
+		}
 		idx := h.roving.Index()
 		r.rebuildPanel(h)
 		h.roving.Set(idx)
@@ -691,6 +842,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	n := h.focused()
 	if n == nil {
 		return false
+	}
+	if h.id == PanelLauncher {
+		return h.activateLauncher(r, n)
 	}
 	if n.Kind == ui.KindToggle {
 		changed := ui.Activate(n)
@@ -780,6 +934,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		return sessionTree(r.cfg.Session.Locker, h.errLabel)
 	case PanelSettings:
 		return settingsTree(h)
+	case PanelLauncher:
+		return launcherTree(h)
 	default:
 		return placeholderTree()
 	}
@@ -793,6 +949,8 @@ func panelTargetSize(id PanelID) ui.Rect {
 		return ui.Rect{W: 640, H: 480}
 	case PanelSettings:
 		return ui.Rect{W: 900, H: 620}
+	case PanelLauncher:
+		return ui.Rect{W: 560, H: 500}
 	default:
 		return ui.Rect{W: 280, H: 200}
 	}
@@ -926,7 +1084,7 @@ func (r *Registry) publishSurface(global uint32, surfaceID string) {
 
 func (r *Registry) runSessionAction(h *PanelHost, action string) {
 	argv := sessionArgv(action, r.cfg.Session.Locker)
-	if err := runArgv(argv); err != nil {
+	if err := r.runArgv(argv); err != nil {
 		h.errLabel = err.Error()
 		r.rebuildPanel(h)
 		return
@@ -935,6 +1093,7 @@ func (r *Registry) runSessionAction(h *PanelHost, action string) {
 }
 
 func (r *Registry) closeAllPanelsLocked() {
+	r.roots.release()
 	ids := make([]PanelID, 0, len(r.panelHosts))
 	for id := range r.panelHosts {
 		ids = append(ids, id)
