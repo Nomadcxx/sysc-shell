@@ -86,7 +86,7 @@ func TestClientRejectsServiceWithoutLifetimeCapability(t *testing.T) {
 
 	conn := service.accept(t)
 	service.handshakeCapabilities(t, conn, []string{RequiredCapability})
-	service.write(t, conn, snapshotEnvelope(1, "missing lifetime capability"))
+	service.writeRacingClose(conn, snapshotEnvelope(1, "missing lifetime capability"))
 	select {
 	case got := <-messages:
 		t.Fatalf("service without lifetime capability produced %v", got.Kind)
@@ -332,6 +332,16 @@ func (s *fakeService) write(t *testing.T, conn *net.UnixConn, frame []byte) {
 	if err := protocol.WriteFrame(conn, frame); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// writeRacingClose sends on a connection the client is entitled to have closed
+// already. A service that never advertised the lifetime capability is rejected
+// the moment its handshake lands, so this write races that close and a broken
+// pipe is one of its correct outcomes. The assertion is that no message
+// reaches the consumer either way, which holds whether the frame arrives or
+// not; failing the test on the write turned that race into a flake.
+func (s *fakeService) writeRacingClose(conn *net.UnixConn, frame []byte) {
+	_ = protocol.WriteFrame(conn, frame)
 }
 
 func (s *fakeService) read(t *testing.T, conn *net.UnixConn) protocol.Envelope {
