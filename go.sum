@@ -6,6 +6,8 @@ github.com/Nomadcxx/sysc-tray v0.1.0-rc.1 h1:bhz3RNCBIA+v76A+q2tlg2iNaoFSSqMWLR8
 github.com/Nomadcxx/sysc-tray v0.1.0-rc.1/go.mod h1:bXMEvkMvsvkqNXQsNrP3hZeHVq/4AVEeQhL19KdMLos=
 github.com/Nomadcxx/sysc-wayland v0.2.0 h1:e3Z5njh9UBQm8/3LxpE8TS6N1NPvL4buOPlKL/OcC9c=
 github.com/Nomadcxx/sysc-wayland v0.2.0/go.mod h1:ZNAe41EM7R5G2KA55jqMPotAvrjVWcMq21BV69gROKA=
+github.com/Nomadcxx/sysc-wayland v0.2.1 h1:F/TIN6p9SnEaqFByBk5DR5eYpj5QwNprWTCnjIpqiMo=
+github.com/Nomadcxx/sysc-wayland v0.2.1/go.mod h1:ZNAe41EM7R5G2KA55jqMPotAvrjVWcMq21BV69gROKA=
 github.com/adrg/xdg v0.5.3 h1:xRnxJXne7+oWDatRhR1JLnvuccuIeCoBu2rtuLqQB78=
 github.com/adrg/xdg v0.5.3/go.mod h1:nlTsY+NNiCBGCK2tpm09vRqfVzrc2fLmXGpBLF0zlTQ=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
