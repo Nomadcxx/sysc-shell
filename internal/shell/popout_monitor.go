@@ -2,6 +2,9 @@ package shell
 
 import (
 	"fmt"
+	"os"
+	"strings"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
@@ -26,8 +29,11 @@ const (
 //
 // Cards are laid two to a row, as the reference does. A lone trailing card
 // spans the full width rather than sitting in a half-empty row.
-func monitorTree(sels []services.Selector, snap services.Snapshot, history map[services.Selector][]float64, _ int) *ui.Node {
-	cards := make([]*ui.Node, 0, len(sels)+1)
+func monitorTree(sels []services.Selector, snap services.Snapshot, history map[services.Selector][]float64, facts machineFacts) *ui.Node {
+	cards := make([]*ui.Node, 0, len(sels)+2)
+	if system := monitorSystemCard(factsWithGPU(facts, snap)); system != nil {
+		cards = append(cards, system)
+	}
 	for _, sel := range sels {
 		cards = append(cards, monitorMetricCard(sel, snap, history[sel]))
 	}
@@ -77,7 +83,167 @@ func monitorMetricCard(sel services.Selector, snap services.Snapshot, history []
 		&ui.Node{Kind: ui.KindGraph, Values: monitorGraphValues(sel, history), Absent: absent},
 		&ui.Node{Kind: ui.KindText, Text: label, Tabular: true},
 	)
+	if sel.Source == services.SourceCPU && snap.Thermal != nil && snap.Thermal.Valid {
+		rows = append(rows, &ui.Node{
+			Kind: ui.KindText, Text: fmt.Sprintf("%.0f°C", snap.Thermal.Celsius), Tabular: true,
+		})
+	}
+	if sel.Source == services.SourceGPU && snap.GPU != nil {
+		for _, g := range snap.GPU.GPUs {
+			if sel.Subject != "" && g.PCIID != sel.Subject {
+				continue
+			}
+			if g.TempValid {
+				rows = append(rows, &ui.Node{
+					Kind: ui.KindText, Text: fmt.Sprintf("%.0f°C", g.Celsius), Tabular: true,
+				})
+			}
+			break
+		}
+	}
 	return monitorCard(rows)
+}
+
+// machineFacts is the System card: the six identity rows Noctalia draws on
+// the sysmon pane. GPU usage and CPU temperature live on the metric cards.
+// GPU model is filled from the GPU snapshot when a name exists.
+type machineFacts struct {
+	CPU, GPU, OS, Kernel, WM, Uptime string
+}
+
+func monitorSystemCard(facts machineFacts) *ui.Node {
+	rows := []*ui.Node{monitorCardTitle("System", 0)}
+	before := len(rows)
+	for _, kv := range [][2]string{
+		{"CPU", facts.CPU},
+		{"GPU", facts.GPU},
+		{"OS", facts.OS},
+		{"Kernel", facts.Kernel},
+		{"WM", facts.WM},
+		{"Uptime", facts.Uptime},
+	} {
+		if kv[1] != "" {
+			rows = append(rows, monitorKeyValue(kv[0], kv[1]))
+		}
+	}
+	if len(rows) == before {
+		return nil
+	}
+	return monitorCard(rows)
+}
+
+// readMachineFacts is a one-shot identity read. Uptime is the only field
+// that moves, and /proc/uptime is cheap enough to reread when the panel
+// rebuilds rather than joining the leased sample loop.
+func readMachineFacts() machineFacts {
+	cpu, _ := os.ReadFile("/proc/cpuinfo")
+	osrel, _ := os.ReadFile("/etc/os-release")
+	ostype, _ := os.ReadFile("/proc/sys/kernel/ostype")
+	osrelk, _ := os.ReadFile("/proc/sys/kernel/osrelease")
+	uptime := ""
+	if d, ok := services.ReadUptime(); ok {
+		uptime = formatUptime(d)
+	}
+	return machineFacts{
+		CPU:    parseCPUModel(string(cpu)),
+		OS:     parseOSRelease(string(osrel)),
+		Kernel: kernelLabel(strings.TrimSpace(string(ostype)), strings.TrimSpace(string(osrelk))),
+		WM:     compositorLabel(),
+		Uptime: uptime,
+	}
+}
+
+func factsWithGPU(facts machineFacts, snap services.Snapshot) machineFacts {
+	if facts.GPU != "" || snap.GPU == nil {
+		return facts
+	}
+	for _, g := range snap.GPU.GPUs {
+		if g.Name != "" {
+			facts.GPU = g.Name
+			return facts
+		}
+	}
+	return facts
+}
+
+func kernelLabel(sysname, release string) string {
+	switch {
+	case sysname != "" && release != "":
+		return sysname + " " + release
+	case release != "":
+		return release
+	default:
+		return sysname
+	}
+}
+
+func compositorLabel() string {
+	if d := strings.TrimSpace(os.Getenv("XDG_CURRENT_DESKTOP")); d != "" {
+		return d
+	}
+	return "niri"
+}
+
+func parseCPUModel(text string) string {
+	fallback := ""
+	for _, line := range strings.Split(text, "\n") {
+		key, val, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		key, val = strings.TrimSpace(key), strings.TrimSpace(val)
+		switch key {
+		case "model name":
+			return val
+		case "Hardware", "cpu model":
+			if fallback == "" {
+				fallback = val
+			}
+		}
+	}
+	return fallback
+}
+
+func parseOSRelease(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(key) == "PRETTY_NAME" {
+			return strings.Trim(strings.TrimSpace(val), `"`)
+		}
+	}
+	return ""
+}
+
+func formatUptime(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	days := int64(d / (24 * time.Hour))
+	rem := d % (24 * time.Hour)
+	hours := int64(rem / time.Hour)
+	mins := int64((rem % time.Hour) / time.Minute)
+	switch {
+	case days > 0 && hours > 0:
+		return fmt.Sprintf("%s %s", countUnit(days, "day", "days"), countUnit(hours, "hour", "hours"))
+	case days > 0:
+		return countUnit(days, "day", "days")
+	case hours > 0 && mins > 0:
+		return fmt.Sprintf("%s %s", countUnit(hours, "hour", "hours"), countUnit(mins, "minute", "minutes"))
+	case hours > 0:
+		return countUnit(hours, "hour", "hours")
+	default:
+		return countUnit(mins, "minute", "minutes")
+	}
+}
+
+func countUnit(n int64, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %s", n, many)
 }
 
 // monitorResourcesCard reports the capacities and averages the sampler already
@@ -183,7 +349,7 @@ func monitorGraphValues(sel services.Selector, history []float64) []float64 {
 
 func monitorSourceIsFraction(source services.Source) bool {
 	switch source {
-	case services.SourceCPU, services.SourceMemory, services.SourceFilesystem:
+	case services.SourceCPU, services.SourceMemory, services.SourceFilesystem, services.SourceGPU:
 		return true
 	}
 	return false
@@ -224,6 +390,8 @@ func selectorLabel(sel services.Selector) string {
 			return sel.Subject
 		}
 		return "Net"
+	case services.SourceGPU:
+		return "GPU"
 	default:
 		return sel.String()
 	}

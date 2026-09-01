@@ -259,7 +259,7 @@ whatever is checked out on each repo's `main`. Checking out `/home/nomadx/sysc-n
 | Repository | Pin in go.mod | Where the pin lives | State |
 |---|---|---|---|
 | `/home/nomadx/sysc-wayland` | `v0.2.1` | `main` (`6bef268`) | Tagged and pushed. Object-argument fix. |
-| `/home/nomadx/sysc-metrics` | `v0.2.0` | `milestone/power-collectors` (`c46fab8`), **not** `main` (`v0.1.0`) | Core counters plus sysfs battery. No GPU usage or CPU temperature. |
+| `/home/nomadx/sysc-metrics` | `v0.3.0` | `main` (`263a6f7`) | Core counters, sysfs battery, CPU package temperature, GPU usage/temperature (`nvidia-smi` for NVIDIA). |
 | `/home/nomadx/sysc-notify` | `v0.1.0-rc.2` | `origin/redesign/v0.1` (`f0d76af`). `origin/main` is still `32da2b5` (docs only). | Full daemon (`cmd/sysc-notify`, protocol 1.1, presenter socket). Never merged to default branch. Stable `v0.1.0` waits on `sysc-97`. Not installed or running on the development machine. |
 | `/home/nomadx/sysc-tray` | `v0.1.0-rc.1` | `origin/redesign/v0.1` tag `30d266e` (branch tip one docs commit later). `origin/main` is still `04ca018` (docs only). | Full daemon (`cmd/sysc-tray`). Same merge and install gap as notify. |
 | `/home/nomadx/sysc-launch` | `v0.1.0` | `main` (`fb6f73c`) | Library plus one-shot CLI (`query` / `launch`). Not a daemon. Shell hosts `launcher.NewService` in-process. |

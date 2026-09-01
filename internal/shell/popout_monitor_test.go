@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-metrics"
 
@@ -24,6 +25,7 @@ func TestMonitorSelectorsUseLandedMetricVocabulary(t *testing.T) {
 	want := []services.Selector{
 		{Source: services.SourceCPU},
 		{Source: services.SourceMemory},
+		{Source: services.SourceGPU},
 		{Source: services.SourceFilesystem, Subject: "/"},
 		{Source: services.SourceNetwork, Subject: "eth0", Direction: "rx"},
 	}
@@ -172,7 +174,7 @@ func TestMonitorBuildsOneTitledCardPerMetric(t *testing.T) {
 		{Source: services.SourceMemory},
 		{Source: services.SourceNetwork, Subject: "eth9", Direction: "rx"},
 	}
-	tree := monitorTree(sels, fixtureSnapshot(), map[services.Selector][]float64{}, 0)
+	tree := monitorTree(sels, fixtureSnapshot(), map[services.Selector][]float64{}, machineFacts{})
 
 	cards := findAllKind(tree, ui.KindCapsule)
 	if len(cards) < len(sels) {
@@ -193,6 +195,92 @@ func TestMonitorBuildsOneTitledCardPerMetric(t *testing.T) {
 	}
 }
 
+func TestMonitorSystemCardProjectsStaticFacts(t *testing.T) {
+	t.Parallel()
+	facts := machineFacts{
+		CPU:    "Intel Core i7-8665U @ 1.90GHz",
+		GPU:    "Intel UHD Graphics 620",
+		OS:     "Arch Linux",
+		Kernel: "Linux 7.1.9-arch1-2",
+		WM:     "niri",
+		Uptime: "4 hours 59 minutes",
+	}
+	tree := monitorSystemCard(facts)
+	for _, want := range []string{
+		"System",
+		"CPU", "Intel Core i7-8665U @ 1.90GHz",
+		"GPU", "Intel UHD Graphics 620",
+		"OS", "Arch Linux",
+		"Kernel", "Linux 7.1.9-arch1-2",
+		"WM", "niri",
+		"Uptime", "4 hours 59 minutes",
+	} {
+		if !treeHasText(tree, want) {
+			t.Fatalf("system card missing %q", want)
+		}
+	}
+}
+
+func TestMonitorOmitsEmptySystemCard(t *testing.T) {
+	t.Parallel()
+	if n := monitorSystemCard(machineFacts{}); n != nil {
+		t.Fatal("empty facts still built a card")
+	}
+}
+
+func TestMonitorSystemCardOmitsEmptyGPU(t *testing.T) {
+	t.Parallel()
+	tree := monitorSystemCard(machineFacts{CPU: "x"})
+	if treeHasText(tree, "GPU") {
+		t.Fatal("an empty GPU row was rendered")
+	}
+}
+
+func TestMonitorTreeLeadsWithSystemCard(t *testing.T) {
+	t.Parallel()
+	tree := monitorTree(nil, services.Snapshot{}, nil, machineFacts{CPU: "box"})
+	if !treeHasText(tree, "System") || !treeHasText(tree, "box") {
+		t.Fatal("monitor tree dropped the system card")
+	}
+}
+
+func TestParseCPUModel(t *testing.T) {
+	t.Parallel()
+	got := parseCPUModel("processor\t: 0\nvendor_id\t: AuthenticAMD\nmodel name\t: AMD Ryzen 9 9950X 16-Core Processor\n")
+	if got != "AMD Ryzen 9 9950X 16-Core Processor" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestParseOSReleasePrettyName(t *testing.T) {
+	t.Parallel()
+	got := parseOSRelease(`NAME="Arch Linux"
+PRETTY_NAME="Arch Linux"
+ID=arch
+`)
+	if got != "Arch Linux" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestFormatUptime(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		d    time.Duration
+		want string
+	}{
+		{3 * time.Minute, "3 minutes"},
+		{2*time.Hour + 15*time.Minute, "2 hours 15 minutes"},
+		{50*time.Hour + 10*time.Minute, "2 days 2 hours"},
+		{4*time.Hour + 59*time.Minute, "4 hours 59 minutes"},
+	}
+	for _, tc := range cases {
+		if got := formatUptime(tc.d); got != tc.want {
+			t.Fatalf("formatUptime(%v) = %q, want %q", tc.d, got, tc.want)
+		}
+	}
+}
+
 // A value without a unit is a number a reader has to guess at. Every card
 // states what its number measures.
 func TestMonitorCardsCarryUnits(t *testing.T) {
@@ -201,7 +289,7 @@ func TestMonitorCardsCarryUnits(t *testing.T) {
 	tree := monitorTree([]services.Selector{
 		{Source: services.SourceCPU},
 		{Source: services.SourceNetwork, Subject: "eth9", Direction: "rx"},
-	}, snap, map[services.Selector][]float64{}, 0)
+	}, snap, map[services.Selector][]float64{}, machineFacts{})
 
 	if !treeHasText(tree, "42%") {
 		t.Fatal("the cpu card does not state its percentage")
@@ -221,7 +309,7 @@ func TestMonitorResourcesCardProjectsLoadAndSwap(t *testing.T) {
 	snap.Memory.Swap = metrics.Capacity{TotalBytes: 4 << 30, UsedBytes: 1 << 30}
 
 	tree := monitorTree([]services.Selector{{Source: services.SourceCPU}}, snap,
-		map[services.Selector][]float64{}, 0)
+		map[services.Selector][]float64{}, machineFacts{})
 
 	for _, want := range []string{"Resources", "Load", "0.56 / 0.59 / 0.57", "Swap"} {
 		if !treeHasText(tree, want) {
@@ -237,9 +325,48 @@ func TestMonitorResourcesOmitsAnInvalidLoad(t *testing.T) {
 	snap := fixtureSnapshot()
 	snap.CPU.LoadValid = false
 	tree := monitorTree([]services.Selector{{Source: services.SourceCPU}}, snap,
-		map[services.Selector][]float64{}, 0)
+		map[services.Selector][]float64{}, machineFacts{})
 	if treeHasText(tree, "Load") {
 		t.Fatal("an invalid load average was rendered anyway")
+	}
+}
+
+func TestMonitorCPUCardShowsPackageTemp(t *testing.T) {
+	t.Parallel()
+	snap := fixtureSnapshot()
+	snap.Thermal = &metrics.ThermalSnapshot{Celsius: 50, Valid: true}
+	tree := monitorTree([]services.Selector{{Source: services.SourceCPU}}, snap,
+		map[services.Selector][]float64{}, machineFacts{})
+	if !treeHasText(tree, "50°C") {
+		t.Fatal("CPU card missing package temperature")
+	}
+}
+
+func TestMonitorGPUCardProjectsUsageAndTemp(t *testing.T) {
+	t.Parallel()
+	snap := fixtureSnapshot()
+	snap.GPU = &metrics.GPUSnapshot{GPUs: []metrics.GPU{{
+		PCIID: "1002:67df", Name: "AMD Radeon",
+		Usage:   metrics.GPUUsage{Fraction: 0.14, Valid: true},
+		Celsius: 45, TempValid: true,
+	}}}
+	tree := monitorTree([]services.Selector{{Source: services.SourceGPU}}, snap,
+		map[services.Selector][]float64{}, machineFacts{})
+	for _, want := range []string{"GPU", "14%", "45°C"} {
+		if !treeHasText(tree, want) {
+			t.Fatalf("GPU card missing %q", want)
+		}
+	}
+}
+
+func TestMonitorSystemCardUsesGPUNameFromSnapshot(t *testing.T) {
+	t.Parallel()
+	snap := services.Snapshot{GPU: &metrics.GPUSnapshot{GPUs: []metrics.GPU{
+		{Name: "Intel UHD Graphics 620"},
+	}}}
+	tree := monitorTree(nil, snap, nil, machineFacts{CPU: "x"})
+	if !treeHasText(tree, "Intel UHD Graphics 620") {
+		t.Fatal("system card did not take the GPU name from the snapshot")
 	}
 }
 
@@ -289,7 +416,7 @@ func TestMonitorGraphsFractionsAgainstFullScale(t *testing.T) {
 	tree := monitorTree([]services.Selector{
 		{Source: services.SourceMemory},
 		{Source: services.SourceNetwork, Subject: "eth9", Direction: "rx"},
-	}, fixtureSnapshot(), history, 0)
+	}, fixtureSnapshot(), history, machineFacts{})
 
 	graphs := findAllKind(tree, ui.KindGraph)
 	if len(graphs) != 2 {
@@ -317,7 +444,7 @@ func TestMonitorCardsLayOutTwoToARow(t *testing.T) {
 		{Source: services.SourceMemory},
 		{Source: services.SourceNetwork, Subject: "eth9", Direction: "rx"},
 	}
-	tree := monitorTree(sels, fixtureSnapshot(), map[services.Selector][]float64{}, 0)
+	tree := monitorTree(sels, fixtureSnapshot(), map[services.Selector][]float64{}, machineFacts{})
 	size := panelTargetSize(PanelMonitor)
 	measure := func(s string, _ bool) (int, int) { return len([]rune(s)) * 8, 16 }
 	if err := ui.LayoutColumn(tree, ui.Rect{W: size.W, H: size.H}, measure); err != nil {
@@ -359,7 +486,7 @@ func TestMonitorCardsHaveSaneHeights(t *testing.T) {
 	tree := monitorTree([]services.Selector{
 		{Source: services.SourceCPU},
 		{Source: services.SourceMemory},
-	}, fixtureSnapshot(), map[services.Selector][]float64{}, 0)
+	}, fixtureSnapshot(), map[services.Selector][]float64{}, machineFacts{})
 	size := panelTargetSize(PanelMonitor)
 	measure := func(s string, _ bool) (int, int) { return len([]rune(s)) * 8, 16 }
 	if err := ui.LayoutColumn(tree, ui.Rect{W: size.W, H: size.H}, measure); err != nil {

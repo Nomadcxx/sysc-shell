@@ -444,10 +444,18 @@ func TestOnlyTheBatterySourceIsPopulated(t *testing.T) {
 	select {
 	case snap := <-m.Updates():
 		if snap.CPU != nil || snap.Block != nil || snap.Network != nil ||
-			snap.Filesystem != nil || snap.Memory != nil {
+			snap.Filesystem != nil || snap.Memory != nil || snap.GPU != nil {
 			t.Fatalf("an unleased source was collected: %+v", snap)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("no snapshot arrived within three seconds")
+	}
+}
+
+func TestReadUptime(t *testing.T) {
+	t.Parallel()
+	d, ok := ReadUptime()
+	if !ok || d <= 0 {
+		t.Fatalf("ReadUptime() = %v, %v", d, ok)
 	}
 }

@@ -365,6 +365,7 @@ func monitorSelectors(bar config.Bar) []services.Selector {
 	out := []services.Selector{
 		{Source: services.SourceCPU},
 		{Source: services.SourceMemory},
+		{Source: services.SourceGPU},
 	}
 	seenFS, seenBlock, seenNet := false, false, false
 	for _, item := range append(append(append([]config.Item{}, bar.Left...), bar.Center...), bar.Right...) {
@@ -929,7 +930,7 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		if bar, ok := r.bars[h.output]; ok {
 			connector = bar.connector()
 		}
-		return monitorTree(monitorSelectors(r.cfg.ForConnector(connector)), r.sample, r.historyLocked(), h.roving.Index())
+		return monitorTree(monitorSelectors(r.cfg.ForConnector(connector)), r.sample, r.historyLocked(), readMachineFacts())
 	case PanelSession:
 		return sessionTree(r.cfg.Session.Locker, h.errLabel)
 	case PanelSettings:
