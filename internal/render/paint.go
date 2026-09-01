@@ -28,9 +28,9 @@ type ProofStyle struct {
 	Container   Color
 	OnAccent    Color
 	OnContainer Color
-	Track      Color
-	Accent     Color
-	AccentOn   Color
+	Track       Color
+	Accent      Color
+	AccentOn    Color
 	// Error paints text that reports a failure. It is a distinct field rather
 	// than reusing AccentOn, which the bar already uses for a toggled control.
 	Error Color
