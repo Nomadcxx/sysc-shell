@@ -153,20 +153,32 @@ func (r *Registry) focusedTrigger() (uint32, Trigger) {
 func (r *Registry) OpenPanel(id PanelID, output uint32, trig Trigger) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if where, ok := r.panels.Output(id); ok {
-		if where == output {
-			return nil
-		}
-		r.teardownPanelLocked(id)
+	if where, ok := r.panels.Output(id); ok && where == output && r.roots.owns(panelRoot(id)) {
+		return nil
 	}
+	return r.openPanelRootLocked(id, output, trig)
+}
+
+// openPanelRootLocked publishes the panel as the process-wide interactive
+// root. Whatever chain was open is released first, so opening an unrelated
+// panel closes the previous one and this panel on any other output.
+func (r *Registry) openPanelRootLocked(id PanelID, output uint32, trig Trigger) error {
+	generation := r.roots.openRoot(panelRoot(id))
 	if r.panels.open == nil {
 		r.panels.open = make(map[PanelID]uint32)
 	}
 	r.panels.open[id] = output
 	if err := r.spawnPanelLocked(id, output, trig); err != nil {
 		r.panels.Close(id)
+		r.roots.closeRoot(generation)
 		return err
 	}
+	r.roots.onClose(generation, func() {
+		r.panels.Close(id)
+		r.teardownPanelLocked(id)
+		// A root that goes away takes any visible tooltip with it.
+		r.dwell.leave()
+	})
 	return nil
 }
 
@@ -176,7 +188,13 @@ func (r *Registry) ClosePanel(id PanelID) {
 	r.closePanelLocked(id)
 }
 
+// closePanelLocked closes the panel through the root chain when it owns the
+// chain, so every release runs exactly once and in one order.
 func (r *Registry) closePanelLocked(id PanelID) {
+	if _, generation, ok := r.roots.current(); ok && r.roots.owns(panelRoot(id)) {
+		r.roots.closeRoot(generation)
+		return
+	}
 	r.panels.Close(id)
 	r.teardownPanelLocked(id)
 }
@@ -184,16 +202,13 @@ func (r *Registry) closePanelLocked(id PanelID) {
 func (r *Registry) TogglePanel(id PanelID, output uint32, trig Trigger) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	switch r.panels.Toggle(id, output) {
-	case Closed:
-		r.teardownPanelLocked(id)
+	if where, ok := r.panels.Output(id); ok && where == output {
+		r.closePanelLocked(id)
 		return nil
-	case Moved:
-		r.teardownPanelLocked(id)
-		return r.spawnPanelLocked(id, output, trig)
-	default:
-		return r.spawnPanelLocked(id, output, trig)
 	}
+	// A panel asked for on a different output is a fresh root there; opening
+	// releases the chain that held the old instance.
+	return r.openPanelRootLocked(id, output, trig)
 }
 
 func (r *Registry) DropAux(output uint32, surfaceID string) {
@@ -207,8 +222,7 @@ func (r *Registry) DropAux(output uint32, surfaceID string) {
 	if h == nil || h.output != output {
 		return
 	}
-	r.panels.Close(id)
-	r.teardownPanelLocked(id)
+	r.closePanelLocked(id)
 }
 
 func panelIDFromAux(surfaceID string) (PanelID, bool) {
@@ -935,6 +949,7 @@ func (r *Registry) runSessionAction(h *PanelHost, action string) {
 }
 
 func (r *Registry) closeAllPanelsLocked() {
+	r.roots.release()
 	ids := make([]PanelID, 0, len(r.panelHosts))
 	for id := range r.panelHosts {
 		ids = append(ids, id)

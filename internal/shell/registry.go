@@ -51,6 +51,8 @@ type Registry struct {
 	aux           chan wayland.AuxRequest
 	panels        PanelSet
 	panelHosts    map[PanelID]*PanelHost
+	// roots is the one interactive root the process allows at a time.
+	roots rootChain
 	// closed unblocks a pending publish at shutdown.
 	closed      chan struct{}
 	closeOnce   sync.Once
@@ -105,7 +107,7 @@ func (r *Registry) setAudio(a *services.Audio) {
 			r.audioLease = l
 		}
 	}
-	go r.relayAudioOSD()
+	go r.relayAudioOSD(a)
 }
 
 func (r *Registry) setBrightness(b *services.Brightness) {
@@ -122,7 +124,7 @@ func (r *Registry) setBrightness(b *services.Brightness) {
 			r.brightLease = l
 		}
 	}
-	go r.relayBrightnessOSD()
+	go r.relayBrightnessOSD(b)
 }
 
 func (r *Registry) AudioAvailable() bool {
@@ -267,11 +269,15 @@ func runningAsTest() bool {
 	return strings.HasSuffix(os.Args[0], ".test")
 }
 
-func (r *Registry) relayAudioOSD() {
-	if r.audio == nil {
+// relayAudioOSD takes the service as an argument rather than reading the
+// field: replacing the service writes that field, and a relay started for the
+// previous service would otherwise read it concurrently. The replaced service
+// is closed before the field changes, so its channel ends this loop.
+func (r *Registry) relayAudioOSD(audio *services.Audio) {
+	if audio == nil {
 		return
 	}
-	ch := r.audio.Changes()
+	ch := audio.Changes()
 	for {
 		select {
 		case <-r.closed:
@@ -285,11 +291,13 @@ func (r *Registry) relayAudioOSD() {
 	}
 }
 
-func (r *Registry) relayBrightnessOSD() {
-	if r.brightness == nil {
+// relayBrightnessOSD takes the service as an argument for the same reason as
+// relayAudioOSD.
+func (r *Registry) relayBrightnessOSD(brightness *services.Brightness) {
+	if brightness == nil {
 		return
 	}
-	ch := r.brightness.Changes()
+	ch := brightness.Changes()
 	for {
 		select {
 		case <-r.closed:

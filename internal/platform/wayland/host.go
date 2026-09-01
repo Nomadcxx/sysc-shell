@@ -73,6 +73,11 @@ type surfaceUnit struct {
 	cleanup       cleanupStack
 
 	app HostCallbacks
+
+	// policy holds the mutable per-surface policy an AuxUpdate can change.
+	// It is re-applied on configure so a reconfigure cannot silently restore
+	// the default full-surface input region.
+	policy auxPolicy
 }
 
 func newSurfaceUnit(id string) *surfaceUnit {
