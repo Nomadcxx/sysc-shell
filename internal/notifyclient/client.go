@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"sync"
 	"time"
 
@@ -116,7 +117,6 @@ func (c *Client) session(ctx context.Context) bool {
 	stop := make(chan struct{})
 	var once sync.Once
 	closeStop := func() { once.Do(func() { close(stop) }) }
-	defer closeStop()
 	watched := make(chan struct{})
 	go func() {
 		defer close(watched)
@@ -126,7 +126,10 @@ func (c *Client) session(ctx context.Context) bool {
 		case <-stop:
 		}
 	}()
-	defer func() { <-watched }()
+	defer func() {
+		closeStop()
+		<-watched
+	}()
 
 	if err := c.handshake(socket); err != nil {
 		return false
@@ -157,7 +160,7 @@ func (c *Client) handshake(socket *net.UnixConn) error {
 	}
 	hello, err := marshalEnvelope(protocol.Envelope{Kind: protocol.KindHello}, protocol.Hello{
 		Major: protocol.ProtocolMajor, Minor: protocol.ProtocolMinor,
-		Role: protocol.RolePresenter, Capabilities: []string{RequiredCapability},
+		Role: protocol.RolePresenter, Capabilities: []string{RequiredCapability, RequiredLifetimeCapability},
 	})
 	if err != nil {
 		return err
@@ -179,11 +182,18 @@ func (c *Client) handshake(socket *net.UnixConn) error {
 	if err := service.Validate(protocol.RolePresenter); err != nil {
 		return err
 	}
+	if !slices.Contains(service.Capabilities, RequiredCapability) ||
+		!slices.Contains(service.Capabilities, RequiredLifetimeCapability) {
+		return errors.New("notifyclient: service lacks required presenter capability")
+	}
 	return socket.SetDeadline(time.Time{})
 }
 
 // RequiredCapability is the capability the shell needs from the service.
 const RequiredCapability = "notification-state"
+
+// RequiredLifetimeCapability keeps countdown state owned by the service.
+const RequiredLifetimeCapability = "presentation-lifetime"
 
 func (c *Client) begin() uint64 {
 	c.mu.Lock()

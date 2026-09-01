@@ -48,6 +48,7 @@ func TestFixtureSnapshotCarriesActiveAndHistory(t *testing.T) {
 			},
 			SenderLineage: []protocol.Process{{PID: 42, StartTime: 991}, {PID: 1, StartTime: 2}},
 		}},
+		Lifetimes: []protocol.Lifetime{{ID: 1, DurationMS: 5000, RemainingMS: 3000, Running: true}},
 		History: []protocol.HistoryEntry{{
 			ID: 2, Seen: true, AppName: "mail", Summary: "Old",
 			Urgency: protocol.UrgencyLow, Timestamp: time.Unix(1699999000, 0).UTC(),
@@ -77,6 +78,9 @@ func TestFixtureSnapshotCarriesActiveAndHistory(t *testing.T) {
 	if len(active.Actions) != 1 || active.Actions[0].Key != "reply" {
 		t.Fatalf("actions = %+v", active.Actions)
 	}
+	if len(got.Lifetimes) != 1 || got.Lifetimes[0].RemainingMS != 3000 || !got.Lifetimes[0].Running {
+		t.Fatalf("lifetimes = %+v", got.Lifetimes)
+	}
 	if !got.History[0].Seen {
 		t.Fatal("history seen state did not survive the round trip")
 	}
@@ -87,13 +91,14 @@ func TestFixtureEveryDeltaRoundTrips(t *testing.T) {
 		ID: 3, Summary: "Delta", Urgency: protocol.UrgencyNormal,
 		Timestamp: time.Unix(1700000001, 0).UTC(),
 	}
+	lifetime := protocol.Lifetime{ID: 3, DurationMS: 5000, RemainingMS: 5000, Running: true}
 	entry := protocol.HistoryEntry{
 		ID: 4, Summary: "Filed", Urgency: protocol.UrgencyNormal,
 		Timestamp: time.Unix(1700000002, 0).UTC(),
 	}
 	for _, delta := range []protocol.Delta{
-		{Kind: protocol.DeltaAdded, Notification: &record},
-		{Kind: protocol.DeltaReplaced, Notification: &record},
+		{Kind: protocol.DeltaAdded, Notification: &record, Lifetime: &lifetime},
+		{Kind: protocol.DeltaReplaced, Notification: &record, Lifetime: &lifetime},
 		{Kind: protocol.DeltaClosed, ID: 3, CloseReason: protocol.CloseDismissed},
 		{Kind: protocol.DeltaHistoryAdded, History: &entry},
 		{Kind: protocol.DeltaHistoryRemoved, ID: 4},
@@ -163,9 +168,12 @@ func TestFixtureEveryCommandAndReplyRoundTrips(t *testing.T) {
 	}
 
 	var ok protocol.Reply
-	roundTrip(t, protocol.Reply{OK: true}, &ok)
+	roundTrip(t, protocol.Reply{OK: true, Lifetimes: []protocol.Lifetime{{ID: 7, DurationMS: 5000, RemainingMS: 2500}}}, &ok)
 	if err := ok.Validate(); err != nil || !ok.OK {
 		t.Fatalf("ok reply = %+v (%v)", ok, err)
+	}
+	if len(ok.Lifetimes) != 1 || ok.Lifetimes[0].RemainingMS != 2500 {
+		t.Fatalf("reply lifetimes = %+v", ok.Lifetimes)
 	}
 	for _, code := range []protocol.ErrorCode{
 		protocol.ErrorInvalid, protocol.ErrorNotFound,

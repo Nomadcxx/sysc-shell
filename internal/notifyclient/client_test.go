@@ -79,6 +79,28 @@ func TestClientHandshakesThenAppliesSnapshotAndOrderedDeltas(t *testing.T) {
 	}
 }
 
+func TestClientRejectsServiceWithoutLifetimeCapability(t *testing.T) {
+	service := startService(t)
+	messages := make(chan Message, 32)
+	run(t, service.dir, messages)
+
+	conn := service.accept(t)
+	service.handshakeCapabilities(t, conn, []string{RequiredCapability})
+	service.write(t, conn, snapshotEnvelope(1, "missing lifetime capability"))
+	select {
+	case got := <-messages:
+		t.Fatalf("service without lifetime capability produced %v", got.Kind)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	replacement := service.accept(t)
+	service.handshake(t, replacement)
+	service.write(t, replacement, snapshotEnvelope(2, "capable service"))
+	if got := await(t, messages, KindSnapshot); got.Snapshot.Active[0].Summary != "capable service" {
+		t.Fatalf("replacement snapshot = %+v", got.Snapshot)
+	}
+}
+
 func TestClientEndsTheGenerationOnASequenceGap(t *testing.T) {
 	service := startService(t)
 	messages := make(chan Message, 32)
@@ -271,6 +293,10 @@ func (s *fakeService) accept(t *testing.T) *net.UnixConn {
 }
 
 func (s *fakeService) handshake(t *testing.T, conn *net.UnixConn) {
+	s.handshakeCapabilities(t, conn, []string{RequiredCapability, RequiredLifetimeCapability})
+}
+
+func (s *fakeService) handshakeCapabilities(t *testing.T, conn *net.UnixConn, capabilities []string) {
 	t.Helper()
 	envelope := s.read(t, conn)
 	if envelope.Kind != protocol.KindHello {
@@ -283,13 +309,22 @@ func (s *fakeService) handshake(t *testing.T, conn *net.UnixConn) {
 	if err := hello.Validate(protocol.RolePresenter); err != nil {
 		t.Fatal(err)
 	}
-	if len(hello.Capabilities) == 0 || hello.Capabilities[0] != RequiredCapability {
+	if !contains(hello.Capabilities, RequiredCapability) || !contains(hello.Capabilities, RequiredLifetimeCapability) {
 		t.Fatalf("client capabilities = %v", hello.Capabilities)
 	}
 	s.write(t, conn, envelopeOf(t, protocol.Envelope{Kind: protocol.KindHello}, protocol.Hello{
 		Major: protocol.ProtocolMajor, Minor: protocol.ProtocolMinor,
-		Role: protocol.RolePresenter, Capabilities: []string{RequiredCapability},
+		Role: protocol.RolePresenter, Capabilities: capabilities,
 	}))
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *fakeService) write(t *testing.T, conn *net.UnixConn, frame []byte) {
@@ -408,7 +443,7 @@ func snapshotEnvelope(sequence uint64, summary string) []byte {
 	snapshot := protocol.Snapshot{Sequence: sequence, Active: []protocol.Notification{{
 		ID: 1, Summary: summary, Urgency: protocol.UrgencyNormal,
 		Timestamp: time.Unix(1700000000, 0).UTC(),
-	}}}
+	}}, Lifetimes: []protocol.Lifetime{{ID: 1, DurationMS: 5000, RemainingMS: 5000, Running: true}}}
 	payload, _ := json.Marshal(snapshot)
 	frame, _ := json.Marshal(protocol.Envelope{
 		Kind: protocol.KindSnapshot, Sequence: sequence, Payload: payload,
