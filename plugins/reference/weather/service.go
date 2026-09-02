@@ -133,22 +133,28 @@ type Service struct {
 	client      *http.Client
 	endpoint    string
 	minInterval time.Duration
+	budget      time.Duration
 }
 
 func newService(cfg Config) *Service {
 	cfg = normalize(cfg)
 	endpoint := owm.DefaultEndpoint
+	minInterval := minFetchInterval
+	budget := connectAndReadBudget
 	if v := os.Getenv("SYSC_WEATHER_ENDPOINT"); v != "" {
 		endpoint = v
+		minInterval = 0
+		budget = time.Second
 	}
 	return &Service{
 		cfg:         cfg,
 		snap:        Snapshot{Disabled: !cfg.Enabled},
 		rearm:       make(chan struct{}, 1),
 		updates:     make(chan Snapshot, 1),
-		client:      &http.Client{Timeout: connectAndReadBudget},
+		client:      &http.Client{Timeout: budget},
 		endpoint:    endpoint,
-		minInterval: minFetchInterval,
+		minInterval: minInterval,
+		budget:      budget,
 	}
 }
 
@@ -249,6 +255,9 @@ func (s *Service) run(stop, done chan struct{}) {
 		}
 		if failures > 0 {
 			wait = retryAfter(failures)
+			if floor == 0 {
+				wait = 20 * time.Millisecond
+			}
 		}
 		if since := time.Since(lastAt); !lastAt.IsZero() && floor > 0 && since < floor {
 			if remaining := floor - since; remaining > wait {
@@ -308,7 +317,7 @@ func (s *Service) fetch(stop chan struct{}) (owm.Forecast, error) {
 	}
 	s.mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(context.Background(), connectAndReadBudget)
+	ctx, cancel := context.WithTimeout(context.Background(), s.budget)
 	s.mu.Lock()
 	s.cancel = cancel
 	s.mu.Unlock()

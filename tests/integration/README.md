@@ -412,3 +412,13 @@ buffer with a visible save error.
 go test -race -count=1 ./tests/integration -run PluginNotesGate
 ```
 
+## Milestone 6D: Weather
+
+Automated. `go test ./tests/integration -run PluginWeatherGate` builds the Weather plugin against
+an `httptest` Open-Meteo stand-in, opens bar/tooltip/panel views on two outputs through one fetch
+owner, and covers timeout, HTTP failure, malformed bodies, last-good stale retention, and recovery.
+
+```bash
+go test -race -count=1 ./tests/integration -run PluginWeatherGate
+```
+

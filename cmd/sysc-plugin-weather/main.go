@@ -95,6 +95,24 @@ func run(in *os.File, out *os.File) error {
 		}
 	}
 
+	sameWeather := func(a, b weather.Snapshot) bool {
+		if a.Observed != b.Observed || a.Disabled != b.Disabled || a.FailedSince.IsZero() != b.FailedSince.IsZero() || a.Unit != b.Unit {
+			return false
+		}
+		if a.Forecast.Current != b.Forecast.Current {
+			return false
+		}
+		if len(a.Forecast.Daily) != len(b.Forecast.Daily) {
+			return false
+		}
+		for i := range a.Forecast.Daily {
+			if a.Forecast.Daily[i] != b.Forecast.Daily[i] {
+				return false
+			}
+		}
+		return true
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -103,6 +121,10 @@ func run(in *os.File, out *os.File) error {
 			}
 			return nil
 		case snap := <-updates:
+			if sameWeather(last, snap) {
+				last = snap
+				continue
+			}
 			last = snap
 			publish(false)
 		case <-ticks.C:
