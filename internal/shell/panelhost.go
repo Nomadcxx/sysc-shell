@@ -170,16 +170,32 @@ func (r *Registry) focusedTrigger() (uint32, Trigger) {
 			break
 		}
 	}
-	policy := r.cfg.ForConnector(connector)
-	trig := Trigger{BarEdge: policy.Edge, BarZone: exclusiveBarZone(r.bars[global]), Align: ""}
+	return global, r.triggerLocked(global, connector)
+}
+
+func (r *Registry) triggerFor(global uint32) (uint32, Trigger) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	connector := ""
 	if bar, ok := r.bars[global]; ok {
-		bar.mu.Lock()
-		if bar.configured.set {
-			trig.OutW = bar.configured.width
-		}
-		bar.mu.Unlock()
+		connector = bar.connector()
 	}
-	return global, trig
+	return global, r.triggerLocked(global, connector)
+}
+
+func (r *Registry) triggerLocked(global uint32, connector string) Trigger {
+	policy := r.cfg.ForConnector(connector)
+	trig := Trigger{BarEdge: policy.Edge, BarZone: policy.Height - policy.Gap, Align: "center"}
+	if bar, ok := r.bars[global]; ok {
+		w, h := bar.configuredSize()
+		if w > 0 {
+			trig.OutW = w
+		}
+		if h > 0 {
+			trig.BarZone = h
+		}
+	}
+	return trig
 }
 
 func (r *Registry) OpenPanel(id PanelID, output uint32, trig Trigger) error {
@@ -328,9 +344,6 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	if id == PanelLauncher {
 		place.CenterY = true
 	}
-	w, hgt := place.FittedSize()
-	place.Panel.W, place.Panel.H = w, hgt
-	margins := place.Margins()
 
 	h := &PanelHost{
 		id:         id,
@@ -339,6 +352,9 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		stopAnim:   make(chan struct{}),
 		theme:      ThemeFromTokens(r.tokens, 12),
 		fontFamily: r.panelFontFamily(output),
+	}
+	if bar, ok := r.bars[output]; ok {
+		h.scale120 = bar.scale120()
 	}
 	if id == PanelSettings {
 		h.set = settings.DefaultFor(r.cfg)
@@ -357,6 +373,13 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	h.root = r.panelTree(h)
 	h.focus = ui.Focusables(h.root)
 	h.roving = ui.Roving{Count: len(h.focus)}
+	if id == PanelMonitor {
+		_ = h.ensureText()
+		h.place.Panel.H = monitorSurfaceHeight(h.root, h.place.Panel.W, h.theme.Radius, h.measureText())
+	}
+	w, hgt := h.place.FittedSize()
+	h.place.Panel.W, h.place.Panel.H = w, hgt
+	margins := h.place.Margins()
 	if err := r.acquirePanelLeases(h); err != nil {
 		return err
 	}
@@ -545,13 +568,6 @@ func (h *PanelHost) ensureText() error {
 	return nil
 }
 
-func logicalFromPhysical(scale ui.Scale120, phys int) int {
-	if !scale.Valid() || scale == ui.ScaleUnit {
-		return phys
-	}
-	return phys * 120 / int(scale)
-}
-
 // The configure and render callbacks take the registry lock, like handle
 // already does. Panel geometry and the panel tree are written from relay
 // goroutines — the launcher's result relay rebuilds an open panel, which
@@ -579,7 +595,15 @@ func (h *PanelHost) configure(w, height, scale120 int) error {
 	if err := h.ensureText(); err != nil {
 		return err
 	}
-	scale := ui.Scale120(scale120)
+	box := ui.Rect{W: w, H: height}
+	if h.root != nil && h.root.Kind == ui.KindRow {
+		return ui.Layout(h.root, box, h.measureText())
+	}
+	return ui.LayoutColumn(h.root, box, h.measureText())
+}
+
+func (h *PanelHost) measureText() ui.MeasureText {
+	scale := ui.Scale120(h.scale120)
 	if !scale.Valid() {
 		scale = ui.ScaleUnit
 	}
@@ -587,20 +611,15 @@ func (h *PanelHost) configure(w, height, scale120 int) error {
 	if size <= 0 {
 		size = h.theme.TextSize
 	}
-	measure := func(s string, tabular bool) (int, int) {
+	return func(s string, tabular bool) (int, int) {
 		if h.text != nil && size > 0 {
 			mw, mh, err := h.text.Measure(s, size, tabular)
 			if err == nil {
-				return logicalFromPhysical(scale, mw), logicalFromPhysical(scale, mh)
+				return scale.Logical(mw), scale.Logical(mh)
 			}
 		}
 		return len(s) * 8, 16
 	}
-	box := ui.Rect{W: w, H: height}
-	if h.root != nil && h.root.Kind == ui.KindRow {
-		return ui.Layout(h.root, box, measure)
-	}
-	return ui.LayoutColumn(h.root, box, measure)
 }
 
 func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
@@ -620,16 +639,24 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 		body = ui.Rect{W: h.place.Panel.W, H: h.place.Panel.H}
 	}
 	style := render.ProofStyle{
-		Size:       h.theme.TextSize,
-		Scale120:   scale,
-		Body:       body,
-		Radius:     12,
-		Background: h.theme.Background,
-		Foreground: h.theme.Foreground,
-		Track:      h.theme.Muted,
-		Accent:     h.theme.Accent,
-		AccentOn:   h.theme.Error,
-		Error:      h.theme.Error,
+		Size:        h.theme.TextSize,
+		Scale120:    scale,
+		Body:        body,
+		Radius:      h.theme.Radius,
+		Background:  h.theme.Background,
+		Foreground:  h.theme.Foreground,
+		Track:       h.theme.Muted,
+		Accent:      h.theme.Accent,
+		AccentOn:    h.theme.Error,
+		Error:       h.theme.Error,
+		OnPrimary:   h.theme.OnPrimary,
+		Capsule:     h.theme.Capsule,
+		Container:   h.theme.Container,
+		OnAccent:    h.theme.OnAccent,
+		OnContainer: h.theme.OnContainer,
+	}
+	if !h.place.CenterY {
+		style.AttachEdge = h.place.BarEdge
 	}
 	if err := render.Paint(c, h.root, h.text, style); err != nil {
 		return err
@@ -1181,6 +1208,24 @@ func panelTargetSize(id PanelID) ui.Rect {
 	default:
 		return ui.Rect{W: 280, H: 200}
 	}
+}
+
+// monitorSurfaceHeight is the tree's intrinsic height plus two radii of
+// empty chrome so the rounded bottom clears the last row. One radius still
+// clipped Uptime on the 1.25 laptop.
+func monitorSurfaceHeight(root *ui.Node, width, radius int, measure ui.MeasureText) int {
+	fallback := panelTargetSize(PanelMonitor).H
+	if root == nil || measure == nil {
+		return fallback
+	}
+	ht, err := ui.ContentHeight(root, width, measure)
+	if err != nil || ht <= 0 {
+		return fallback
+	}
+	if radius < 0 {
+		radius = 0
+	}
+	return ht + 2*radius
 }
 
 func (h *PanelHost) applySetting(r *Registry, n *ui.Node) {

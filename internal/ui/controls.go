@@ -15,7 +15,7 @@ const (
 	// in a column. In a row each fills the content band instead and Width is
 	// the measured width, so neither dimension can be reused here.
 	MeterHeight = 8
-	GraphHeight = 32
+	GraphHeight = 64
 
 	KeyHome  = 102
 	KeyLeft  = 105

@@ -19,6 +19,10 @@ type ProofStyle struct {
 	// surface. Radius is its logical corner radius.
 	Body   ui.Rect
 	Radius int
+	// AttachEdge is "top" or "bottom" when a panel sits on a bar. Those
+	// corners stay square so the rounded body does not punch a wallpaper
+	// seam against the bar.
+	AttachEdge string
 
 	Background Color
 	Foreground Color
@@ -79,8 +83,10 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style ProofStyle) error
 	}
 
 	clear(c.Pix)
-	fillRoundedRect(c, style.Scale120.PhysicalRect(style.Body),
-		style.Scale120.Physical(style.Radius), style.Background)
+	box := style.Scale120.PhysicalRect(style.Body)
+	radius := style.Scale120.Physical(style.Radius)
+	fillRoundedRect(c, box, radius, style.Background)
+	squareAttachedEdge(c, box, radius, style.AttachEdge, style.Background)
 
 	size := style.Scale120.Physical(style.Size)
 	if root.Kind == ui.KindScroll || root.Kind == ui.KindVirtualList {
@@ -97,9 +103,21 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style ProofStyle) error
 			}
 		}
 	}
-	clearOutsideRoundedRect(c, style.Scale120.PhysicalRect(style.Body),
-		style.Scale120.Physical(style.Radius))
+	clearOutsideRoundedRect(c, box, radius, style.AttachEdge)
 	return nil
+}
+
+func squareAttachedEdge(c *Canvas, box ui.Rect, radius int, edge string, col Color) {
+	if radius <= 0 {
+		return
+	}
+	h := min(radius, box.H)
+	switch edge {
+	case "top":
+		fillRect(c, ui.Rect{X: box.X, Y: box.Y, W: box.W, H: h}, col)
+	case "bottom":
+		fillRect(c, ui.Rect{X: box.X, Y: box.Y + box.H - h, W: box.W, H: h}, col)
+	}
 }
 
 func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size int) error {

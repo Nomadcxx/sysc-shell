@@ -292,7 +292,7 @@ func Default() Config {
 			Scheme: "scheme-tonal-spot",
 			Mode:   "dark",
 		},
-		Panels: Panels{Gap: 8, Padding: 8, OSD: "bottom-center"},
+		Panels: Panels{Gap: 0, Padding: 8, OSD: "bottom-center"},
 	}
 }
 

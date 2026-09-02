@@ -138,6 +138,18 @@ func NewWithTheme(theme Theme, policy config.Bar, connector string) (*Bar, error
 // connector reports the output this bar renders for.
 func (b *Bar) connector() string { return b.conn }
 
+// configuredSize is the last logical configure, which is the exclusive-zone
+// band the compositor granted. IPC panels centre and flush against it; the
+// fallback 1920x1080 is only for a bar that has not mapped yet.
+func (b *Bar) configuredSize() (w, h int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.configured.set {
+		return 0, 0
+	}
+	return b.configured.width, b.configured.height
+}
+
 // widgets returns the three sections in paint order.
 func (b *Bar) widgets() [][]textWidget { return [][]textWidget{b.left, b.center, b.right} }
 

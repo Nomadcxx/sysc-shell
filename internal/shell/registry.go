@@ -459,11 +459,14 @@ func (r *Registry) bindBarPluginLocked(bar *Bar) {
 // takes the registry lock and then the bar lock.
 func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 	bar.setActionHandler(func(action string, button uint32) bool {
-		if action != panelSessionAction || button != buttonRight {
-			return false
+		out, trig := r.triggerFor(global)
+		switch {
+		case action == panelMonitorAction && (button == 0 || button == buttonLeft):
+			return r.TogglePanel(PanelMonitor, out, trig) == nil
+		case action == panelSessionAction && button == buttonRight:
+			return r.TogglePanel(PanelSession, out, trig) == nil
 		}
-		_, trig := r.focusedTrigger()
-		return r.TogglePanel(PanelSession, global, trig) == nil
+		return false
 	})
 }
 

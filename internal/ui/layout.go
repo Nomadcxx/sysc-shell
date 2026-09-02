@@ -69,7 +69,16 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 				return fmt.Errorf("ui: child %d: %w", i, err)
 			}
 		default:
-			if w < 0 || h < 0 || h > content.H || x+w > content.X+content.W {
+			if w < 0 || h < 0 || h > content.H {
+				return fmt.Errorf("ui: child %d of kind %d does not fit in %dx%d", i, child.Kind, content.W, content.H)
+			}
+			// Nested rows in a column of known width (a System card cell)
+			// must clip overflowing text rather than close the surface.
+			remain := content.X + content.W - x
+			if w > remain {
+				w = remain
+			}
+			if w < 0 {
 				return fmt.Errorf("ui: child %d of kind %d does not fit in %dx%d", i, child.Kind, content.W, content.H)
 			}
 			child.Bounds = Rect{X: x, Y: content.Y + (content.H-h)/2, W: w, H: h}

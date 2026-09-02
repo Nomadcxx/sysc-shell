@@ -153,6 +153,16 @@ func TestOnlyFractionSourcesReportAFraction(t *testing.T) {
 	}
 }
 
+func TestAMetricWidgetOpensTheSystemMonitor(t *testing.T) {
+	t.Parallel()
+	for _, id := range []string{"cpu", "memory"} {
+		w := buildMetricWidget(config.Item{ID: id})
+		if w.node.Action != panelMonitorAction {
+			t.Fatalf("%s action = %q, want %q", id, w.node.Action, panelMonitorAction)
+		}
+	}
+}
+
 func TestEveryMetricIDMapsToASelector(t *testing.T) {
 	t.Parallel()
 	want := map[string]services.Selector{

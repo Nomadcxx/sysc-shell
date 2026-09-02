@@ -2,6 +2,7 @@
   "dark": {
     "surface": "{{colors.surface.dark.hex}}",
     "surface_container": "{{colors.surface_container.dark.hex}}",
+    "surface_container_high": "{{colors.surface_container_high.dark.hex}}",
     "on_surface": "{{colors.on_surface.dark.hex}}",
     "on_surface_variant": "{{colors.on_surface_variant.dark.hex}}",
     "primary": "{{colors.primary.dark.hex}}",
@@ -15,6 +16,7 @@
   "light": {
     "surface": "{{colors.surface.light.hex}}",
     "surface_container": "{{colors.surface_container.light.hex}}",
+    "surface_container_high": "{{colors.surface_container_high.light.hex}}",
     "on_surface": "{{colors.on_surface.light.hex}}",
     "on_surface_variant": "{{colors.on_surface_variant.light.hex}}",
     "primary": "{{colors.primary.light.hex}}",

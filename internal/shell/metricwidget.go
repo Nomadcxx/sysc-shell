@@ -119,6 +119,10 @@ func formatBytes(bytes float64) string {
 }
 
 const (
+	// panelMonitorAction is the bar click that toggles the system-monitor
+	// panel. Noctalia binds the same gesture on every sysmon widget.
+	panelMonitorAction = "panel:system-monitor"
+
 	// metricMeterWidth and metricGraphWidth are the reserved widths for the
 	// two non-text display modes, in logical pixels.
 	metricMeterWidth = 48
@@ -180,7 +184,7 @@ func metricTooltip(item config.Item) string {
 func buildMetricWidget(item config.Item) textWidget {
 	switch item.Display {
 	case "meter":
-		node := &ui.Node{Kind: ui.KindMeter, Width: metricMeterWidth}
+		node := &ui.Node{Kind: ui.KindMeter, Width: metricMeterWidth, Action: panelMonitorAction}
 		return textWidget{
 			node:    node,
 			tooltip: metricTooltip(item),
@@ -202,7 +206,7 @@ func buildMetricWidget(item config.Item) textWidget {
 			},
 		}
 	case "graph":
-		node := &ui.Node{Kind: ui.KindGraph, Width: metricGraphWidth}
+		node := &ui.Node{Kind: ui.KindGraph, Width: metricGraphWidth, Action: panelMonitorAction}
 		sel, _ := metricSelector(item)
 		return textWidget{
 			node:    node,
@@ -224,7 +228,7 @@ func buildMetricWidget(item config.Item) textWidget {
 		return textWidget{
 			// The floor has to include the icon, or a widget widens when its
 			// value grows even though the field was meant to be fixed.
-			node:    &ui.Node{Kind: ui.KindText, Tabular: true, MinWidthText: metricWidthFloor(item)},
+			node:    &ui.Node{Kind: ui.KindText, Tabular: true, MinWidthText: metricWidthFloor(item), Action: panelMonitorAction},
 			tooltip: metricTooltip(item),
 			format: func(v barView) string {
 				text := formatMetric(item, v.Metrics)

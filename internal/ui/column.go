@@ -45,6 +45,13 @@ func LayoutColumn(root *Node, bounds Rect, measure MeasureText) error {
 	return nil
 }
 
+// ContentHeight is the intrinsic height of a column (or a column child) at
+// width. Panel surfaces use it so the window matches the tree instead of a
+// guessed size that clips the last card.
+func ContentHeight(n *Node, width int, measure MeasureText) (int, error) {
+	return columnChildHeight(n, width, measure)
+}
+
 func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 	switch n.Kind {
 	case KindText, KindTab:
@@ -174,10 +181,29 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 	}
 }
 
+func pinRowEnd(n *Node, box Rect) {
+	if len(n.Children) != 2 {
+		return
+	}
+	first, last := n.Children[0], n.Children[1]
+	if first == nil || last == nil || first.Kind != KindText {
+		return
+	}
+	right := box.X + box.W - n.Padding
+	if last.Bounds.X+last.Bounds.W >= right {
+		return
+	}
+	last.Bounds.X = right - last.Bounds.W
+}
+
 func placeColumnChild(n *Node, box Rect, measure MeasureText) error {
 	switch n.Kind {
 	case KindRow:
-		return Layout(n, box, measure)
+		if err := Layout(n, box, measure); err != nil {
+			return err
+		}
+		pinRowEnd(n, box)
+		return nil
 	case KindCapsule:
 		// A capsule in a column is a card: its child fills the padded inner
 		// box. Measuring already accounted for the child, so a capsule that

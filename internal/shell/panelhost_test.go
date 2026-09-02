@@ -42,6 +42,47 @@ func TestPanelHostRenderPaintsClockText(t *testing.T) {
 	}
 }
 
+// Monitor cards are KindCapsule. The panel painter used to omit Capsule from
+// ProofStyle, so fillRoundedRect skipped the A=0 fill and every card vanished
+// into the panel background.
+func TestPanelHostRenderPaintsMonitorCards(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelMonitor, 7, Trigger{BarEdge: "top", BarZone: 44}); err != nil {
+		t.Fatal(err)
+	}
+	reqs := drainAux(t, reg, 2)
+	panel := reqs[1].Open
+	const w, hgt = 640, 480
+	if err := panel.Callbacks.Configure(w, hgt, 120); err != nil {
+		t.Fatal(err)
+	}
+	pix := make([]byte, w*hgt*4)
+	if err := panel.Callbacks.Render(pix, w, hgt, w*4); err != nil {
+		t.Fatal(err)
+	}
+	h := reg.panelHosts[PanelMonitor]
+	cards := findAllKind(h.root, ui.KindCapsule)
+	if len(cards) == 0 {
+		t.Fatal("monitor tree has no capsules")
+	}
+	card := cards[0]
+	x, y := card.Bounds.X+card.Bounds.W/2, card.Bounds.Y+6
+	if x < 0 || y < 0 || x >= w || y >= hgt {
+		t.Fatalf("card sample %d,%d outside %dx%d", x, y, w, hgt)
+	}
+	i := (y*w + x) * 4
+	got := Color{B: pix[i], G: pix[i+1], R: pix[i+2], A: pix[i+3]}
+	if got != h.theme.Capsule {
+		t.Fatalf("card fill = %+v, want Capsule %+v (panel is %+v)", got, h.theme.Capsule, h.theme.Background)
+	}
+	// Attached to a top bar: the body meets the bar with a square top, so the
+	// corner at (0,0) is opaque rather than a rounded seam of wallpaper.
+	if pix[3] == 0 {
+		t.Fatal("attached panel top-left is transparent; that is the gap under the bar")
+	}
+}
+
 func TestOpenPanelSendsShieldThenPanel(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
@@ -214,6 +255,31 @@ func TestRightClickingBatteryCapsulePaddingOpensSession(t *testing.T) {
 	}
 }
 
+func TestClickingABarMetricOpensTheSystemMonitor(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	cb, err := reg.NewHost(7, "eDP-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cb.Configure(1536, 44, 120); err != nil {
+		t.Fatal(err)
+	}
+	bar := reg.bars[7]
+	target, ok := metricClickTarget(bar)
+	if !ok {
+		t.Fatal("default bar has no laid-out metric")
+	}
+	drainAuxQueue(reg)
+	if !click(bar, target.X+target.W/2, target.Y+target.H/2) {
+		t.Fatal("clicking a metric did not activate")
+	}
+	reqs := drainAux(t, reg, 2)
+	if !strings.HasPrefix(reqs[1].Open.ID, "panel:system-monitor") {
+		t.Fatalf("opened %q, want the system monitor", reqs[1].Open.ID)
+	}
+}
+
 func batteryCapsuleAndInner(b *Bar) (capsule, inner ui.Rect, ok bool) {
 	for _, section := range b.widgets() {
 		for _, w := range section {
@@ -242,6 +308,22 @@ func batteryClickTarget(b *Bar) (ui.Rect, bool) {
 			}
 			if w.node != nil && w.node.Action == panelSessionAction && w.node.Bounds.W > 0 {
 				return w.node.Bounds, true
+			}
+		}
+	}
+	return ui.Rect{}, false
+}
+
+func metricClickTarget(b *Bar) (ui.Rect, bool) {
+	for _, section := range b.widgets() {
+		for _, w := range section {
+			for _, m := range w.members {
+				if m.node != nil && m.node.Action == panelMonitorAction && m.node.Bounds.W > 0 && m.node.Bounds.H > 0 {
+					return m.node.Bounds, true
+				}
+			}
+			if w.inner != nil && w.inner.Action == panelMonitorAction && w.inner.Bounds.W > 0 {
+				return w.inner.Bounds, true
 			}
 		}
 	}
@@ -287,6 +369,70 @@ func TestTogglePanelByNamePowerOpensSession(t *testing.T) {
 	reqs := drainAux(t, reg, 2)
 	if !strings.HasPrefix(reqs[1].Open.ID, "panel:session") {
 		t.Fatalf("opened %q", reqs[1].Open.ID)
+	}
+}
+
+func TestTogglePanelByNameCentresFlushUnderTheBar(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	cb, err := reg.NewHost(7, "eDP-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cb.Configure(1536, 44, 120); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.TogglePanelByName("system-monitor"); err != nil {
+		t.Fatal(err)
+	}
+	reqs := drainAux(t, reg, 2)
+	got := reqs[1].Open
+	if got.MarginTop != 44 {
+		t.Fatalf("margin top = %d, want flush on the 44px exclusive zone", got.MarginTop)
+	}
+	if want := int32((1536 - 640) / 2); got.MarginLeft != want {
+		t.Fatalf("margin left = %d, want centred %d", got.MarginLeft, want)
+	}
+}
+
+func TestToggleMonitorOpensTallerThanTheOldGuess(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	cb, err := reg.NewHost(7, "eDP-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cb.Configure(1536, 44, 150); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.TogglePanelByName("system-monitor"); err != nil {
+		t.Fatal(err)
+	}
+	reqs := drainAux(t, reg, 2)
+	got := reqs[1].Open
+	if got.Height <= 480 {
+		t.Fatalf("monitor height %d, want taller than the 480 guess that clipped the last card", got.Height)
+	}
+	h := reg.panelHosts[PanelMonitor]
+	if err := got.Callbacks.Configure(int(got.Width), int(got.Height), 150); err != nil {
+		t.Fatal(err)
+	}
+	bottom := 0
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if b := n.Bounds.Y + n.Bounds.H; b > bottom {
+			bottom = b
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(h.root)
+	if bottom > int(got.Height) {
+		t.Fatalf("content bottom %d exceeds surface %d", bottom, got.Height)
 	}
 }
 

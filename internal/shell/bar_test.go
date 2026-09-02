@@ -123,8 +123,8 @@ func layoutForTest(t *testing.T, p *Bar, width int) {
 }
 
 // withSyntheticAction appends a node carrying an action to the right section.
-// No Tranche 3A widget carries one, so the press/release rule and hit testing
-// are exercised through this node rather than through a shipped widget.
+// Metric widgets now carry one too; this node still covers a click that must
+// not open the monitor.
 func withSyntheticAction(t *testing.T, p *Bar, width int) ui.Rect {
 	t.Helper()
 	p.right = append(p.right, textWidget{

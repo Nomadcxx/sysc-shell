@@ -54,6 +54,26 @@ func TestPaintFillsOnlyTheRoundedBody(t *testing.T) {
 	}
 }
 
+// An attached panel squares the bar edge so its rounded top does not punch a
+// wallpaper seam between the bar and the body.
+func TestPaintSquaresTheAttachedEdge(t *testing.T) {
+	t.Parallel()
+	c := newTestCanvas(t, 100, 44)
+	style := testStyle
+	style.Body = ui.Rect{X: 4, Y: 4, W: 92, H: 40}
+	style.Radius = 12
+	style.AttachEdge = "top"
+	if err := Paint(c, &ui.Node{Kind: ui.KindRow}, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatal(err)
+	}
+	if got := pixelAt(t, c, 4, 4); got != style.Background {
+		t.Fatalf("attached top-left = %+v, want opaque body %+v", got, style.Background)
+	}
+	if got := pixelAt(t, c, 4, 43); got == style.Background {
+		t.Fatal("bottom-left should stay rounded, not square")
+	}
+}
+
 func TestPaintKeepsChildrenInsideTheRoundedBody(t *testing.T) {
 	t.Parallel()
 

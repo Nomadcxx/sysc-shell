@@ -236,11 +236,36 @@ func TestMonitorSystemCardOmitsEmptyGPU(t *testing.T) {
 	}
 }
 
-func TestMonitorTreeLeadsWithSystemCard(t *testing.T) {
+func TestMonitorTreeKeepsASystemCard(t *testing.T) {
 	t.Parallel()
 	tree := monitorTree(nil, services.Snapshot{}, nil, machineFacts{CPU: "box"})
 	if !treeHasText(tree, "System") || !treeHasText(tree, "box") {
 		t.Fatal("monitor tree dropped the system card")
+	}
+}
+
+// The reference is CPU|Memory, then GPU|Network, then System|Resources.
+// Identity cards sit on the last row, not above the graphs.
+func TestMonitorPutsSystemBesideResources(t *testing.T) {
+	t.Parallel()
+	tree := monitorTree([]services.Selector{
+		{Source: services.SourceCPU},
+		{Source: services.SourceMemory},
+	}, fixtureSnapshot(), map[services.Selector][]float64{}, machineFacts{CPU: "box"})
+	var last *ui.Node
+	for _, child := range tree.Children {
+		if child.Kind == ui.KindRow {
+			last = child
+		}
+	}
+	if last == nil || len(last.Children) != 2 {
+		t.Fatal("System and Resources are not a two-up row")
+	}
+	if !treeHasName(last.Children[0], "System") {
+		t.Fatal("left of the last row is not System")
+	}
+	if !treeHasName(last.Children[1], "Resources") {
+		t.Fatal("right of the last row is not Resources")
 	}
 }
 
@@ -340,6 +365,9 @@ func TestMonitorCPUCardShowsPackageTemp(t *testing.T) {
 	if !treeHasText(tree, "50°C") {
 		t.Fatal("CPU card missing package temperature")
 	}
+	if !legendRowHolds(tree, "50°C") {
+		t.Fatal("package temperature is not in the CPU legend")
+	}
 }
 
 func TestMonitorGPUCardProjectsUsageAndTemp(t *testing.T) {
@@ -359,6 +387,22 @@ func TestMonitorGPUCardProjectsUsageAndTemp(t *testing.T) {
 	}
 }
 
+func TestMonitorGPUWithoutUsageShowsAnEmDash(t *testing.T) {
+	t.Parallel()
+	snap := fixtureSnapshot()
+	snap.GPU = &metrics.GPUSnapshot{GPUs: []metrics.GPU{{
+		Name: "Intel UHD Graphics 620",
+	}}}
+	tree := monitorTree([]services.Selector{{Source: services.SourceGPU}}, snap,
+		map[services.Selector][]float64{}, machineFacts{})
+	if !treeHasText(tree, "--") {
+		t.Fatal("an iGPU with no usage still said collecting")
+	}
+	if treeHasText(tree, "collecting") {
+		t.Fatal("known GPU still rendered collecting")
+	}
+}
+
 func TestMonitorSystemCardUsesGPUNameFromSnapshot(t *testing.T) {
 	t.Parallel()
 	snap := services.Snapshot{GPU: &metrics.GPUSnapshot{GPUs: []metrics.GPU{
@@ -368,6 +412,22 @@ func TestMonitorSystemCardUsesGPUNameFromSnapshot(t *testing.T) {
 	if !treeHasText(tree, "Intel UHD Graphics 620") {
 		t.Fatal("system card did not take the GPU name from the snapshot")
 	}
+}
+
+func legendRowHolds(n *ui.Node, text string) bool {
+	for _, row := range findAllKind(n, ui.KindRow) {
+		if len(row.Children) == 0 {
+			continue
+		}
+		// A legend sits under a graph: every child is a figure, none a card.
+		if row.Children[0].Kind == ui.KindCapsule {
+			continue
+		}
+		if treeHasText(row, text) {
+			return true
+		}
+	}
+	return false
 }
 
 func treeHasName(n *ui.Node, name string) bool {
@@ -479,6 +539,32 @@ func TestMonitorCardsLayOutTwoToARow(t *testing.T) {
 	}
 }
 
+func TestMonitorSurfaceHeightCoversATallTree(t *testing.T) {
+	t.Parallel()
+	tree := monitorTree([]services.Selector{
+		{Source: services.SourceCPU},
+		{Source: services.SourceMemory},
+		{Source: services.SourceGPU},
+	}, fixtureSnapshot(), map[services.Selector][]float64{}, machineFacts{
+		CPU: "Intel(R) Core(TM) i7-8665U CPU @ 1.90GHz",
+		GPU: "WhiskeyLake-U GT2 [UHD Graphics 620]",
+		OS:  "Arch Linux", Kernel: "Linux 7.2.2-arch1-1",
+		WM: "niri", Uptime: "1 hour 1 minute",
+	})
+	measure := func(s string, _ bool) (int, int) { return len([]rune(s)) * 8, 20 }
+	content, err := ui.ContentHeight(tree, 640, measure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content <= 480 {
+		t.Fatalf("content height %d still fits the old 480 guess, fixture is too short", content)
+	}
+	got := monitorSurfaceHeight(tree, 640, 12, measure)
+	if got < content+24 {
+		t.Fatalf("surface height %d, want at least content %d plus two radii", got, content)
+	}
+}
+
 // Every card must carry a real height. The measure path used to hand a column
 // a sentinel band, so a card in a row reported 1048576 tall.
 func TestMonitorCardsHaveSaneHeights(t *testing.T) {
@@ -496,5 +582,21 @@ func TestMonitorCardsHaveSaneHeights(t *testing.T) {
 		if card.Bounds.H <= 0 || card.Bounds.H > size.H {
 			t.Fatalf("card height %d is outside the panel's %d", card.Bounds.H, size.H)
 		}
+	}
+}
+
+// The System card sits in a two-up cell. A long CPU string used to make the
+// nested key/value row refuse layout and close the panel.
+func TestMonitorSystemCardWithLongCPUFitsPanel(t *testing.T) {
+	t.Parallel()
+	tree := monitorTree([]services.Selector{
+		{Source: services.SourceCPU},
+	}, fixtureSnapshot(), map[services.Selector][]float64{}, machineFacts{
+		CPU: "AMD Ryzen 7 8845HS w/ Radeon 780M Graphics",
+	})
+	size := panelTargetSize(PanelMonitor)
+	measure := func(s string, _ bool) (int, int) { return len([]rune(s)) * 8, 16 }
+	if err := ui.LayoutColumn(tree, ui.Rect{W: size.W, H: size.H}, measure); err != nil {
+		t.Fatalf("LayoutColumn: %v", err)
 	}
 }

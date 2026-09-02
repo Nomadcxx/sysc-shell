@@ -23,6 +23,22 @@ func TestGenerateFromImageWritesCacheFile(t *testing.T) {
 	}
 }
 
+func TestParseColorsPrefersSurfaceContainerHigh(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "colors.json")
+	body := `{"dark":{"surface":"#1d2025","surface_container":"#282c33","surface_container_high":"#3a4149"}}`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tok, err := parseColors(path, "dark")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok.SurfaceContainer != "#3a4149" {
+		t.Fatalf("SurfaceContainer = %q, want the high token so cards read as pills", tok.SurfaceContainer)
+	}
+}
+
 func TestGenerateFallbackWhenMatugenMissing(t *testing.T) {
 	g := Generator{CacheDir: t.TempDir(), Matugen: "/nonexistent/matugen"}
 	tok, err := g.Generate(Source{Kind: "wallpaper", Seed: "/tmp/wall.jpg"}, Options{Mode: "dark"})

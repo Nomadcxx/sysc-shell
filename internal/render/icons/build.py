@@ -54,11 +54,15 @@ GLYPHS = [
 UPM = 1000
 # 24px SVG -> font units, y-flipped so the icon sits on the baseline.
 #
-# The artwork does not fill its 24px box, so a box mapped to 800 units left the
-# ink shorter than the surrounding cap height and the icons read as too small.
-# Mapping the box to 980 puts the drawn extent at roughly cap height.
-SCALE = 1200 / 24
-XFORM = Transform(SCALE, 0, 0, -SCALE, 40, 1100)
+# The box is 1.2em so a filled metric glyph paints at ~17px next to 14px body
+# text, matching Noctalia's baseGlyphSize 16 vs fontSizeBody 14. Advance must
+# cover that box: a 900-unit advance clipped the 1200-unit outlines and the
+# icons read as stretched slabs.
+BOX = 1200
+SCALE = BOX / 24
+SIDE = 0
+XFORM = Transform(SCALE, 0, 0, -SCALE, SIDE, 1100)
+ADVANCE = BOX
 
 
 def empty_glyph():
@@ -92,7 +96,7 @@ def main():
     fb.setupGlyphOrder(order)
     fb.setupCharacterMap(cmap)
     fb.setupGlyf(glyf)
-    metrics = {name: (900, 50) for name in order}
+    metrics = {name: (ADVANCE, SIDE) for name in order}
     metrics[".notdef"] = (600, 0)
     fb.setupHorizontalMetrics(metrics)
     fb.setupHorizontalHeader(ascent=1100, descent=-100)
@@ -109,7 +113,7 @@ def main():
     fb.setupOS2(
         sTypoAscender=1100,
         sTypoDescender=-100,
-        usWinAscent=900,
+        usWinAscent=1100,
         usWinDescent=100,
     )
     fb.setupPost()
