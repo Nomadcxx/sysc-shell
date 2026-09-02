@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Grow the session panel into battery status, `powerprofilesctl` profiles, and the existing session actions, toggled by right-clicking the bar battery.
+**Goal:** Grow the session panel into battery status, `powerprofilesctl` profiles, and the existing session actions, toggled by right-clicking the existing 3C bar battery pill (glyph + percent in a capsule).
 
 **Architecture:** Keep `PanelSession` as the one surface. Port gamer-mode's `powerprofilesctl list`/`set` parser into `internal/shell/powerprofiles.go`. Reuse sysmon `monitorCard` chrome and intrinsic height. `Bar.Handle` starts distinguishing left vs right so the battery action fires only on right-click.
 

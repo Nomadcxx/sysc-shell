@@ -23,6 +23,9 @@ opens from Super+X and from `panel.toggle {"panel":"session"}`.
 
 In:
 
+- The bar battery **pill** already shipped in Tranche 3C: a `KindCapsule`
+  around glyph + percent (see below). This slice only gives it a right-click
+  action.
 - Battery card from the existing `sysc-metrics` aggregate (glyph, percent,
   `KindMeter`, state, time remaining, watts).
 - Power profile row from `powerprofilesctl list` / `set`, hidden when the
@@ -39,14 +42,31 @@ Out:
   That stays a Milestone 6 plugin. This panel must not grow a kill-list.
 - UPower D-Bus, godbus, brightness-on-scroll, profile OSD, a lock screen.
 
-## Prior art
+## Bar pill
+
+Checked 2026-09-02 against installed Noctalia (`battery_widget.cpp`) and DMS
+(`Modules/DankBar/Widgets/Battery.qml`).
+
+| | Bar contents | Gesture |
+|---|---|---|
+| Noctalia | Default **Glyph**: level icon + Percent/Time/Rate label. Optional **Graphic**: drawn body, terminal nub, fill = charge, overlay bolt/plug. | Left → control-center Power tab |
+| DMS | Either DankIcon + percent, or Material **BatteryPill** (body + nub, fill = charge, number inside, bolt while charging). Time can sit beside the pill. | Left → popout. Right cycles the power profile |
+| sysc-shell 3C | `KindCapsule` around `KindText`: `BatteryIconRune` + percent (default). Time or rate if configured. Empty when no pack. Charging is the charging runes in the icon font. Low + not charging is `ToneError`. | No action yet |
+
+v1 keeps the 3C Glyph capsule. That is Noctalia's default, and it is already on
+the default bar (`config.Default` right section). Do not add Noctalia Graphic or
+DMS BatteryPill geometry: those are a drawn silhouette with animated fill, which
+3C D2 rejected in favour of the icon font. Do not add a second bolt `Shape`.
+Do not cycle the profile on right-click (DMS); right-click opens the panel (D5).
+
+## Prior art (panel)
 
 | | Gesture | Contents |
 |---|---|---|
 | Noctalia | Left battery → control-center Power tab | Status, profile segmented control, health, HID |
 | DMS | Left → `BatteryPopout` (400px). Right cycles the profile | Status, Health/Capacity chips, profile group |
 | Gamer-mode | Right-click as a bar gesture; attached panel ~420px | Metrics, `powerprofilesctl` select, plus the suspend engine |
-| sysc-shell today | Battery has no action. Super+X opens session | Lock/logout/suspend/reboot/poweroff only |
+| sysc-shell today | Battery has no action. Super+X opens session | Lock/logout/suspend/reboot/poweroff only | |
 
 The owner asked for **right-click** on the battery even though Noctalia and DMS
 open their battery UI on **left**. Left-click on the battery stays inert in v1.
