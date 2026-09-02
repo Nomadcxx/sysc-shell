@@ -218,6 +218,7 @@ independent axes. Epic `sysc-142` depends on the chrome catalogue.
 | Document | Kind | State |
 |---|---|---|
 | `2026-09-02-theme-system-parity-design.md` | design | Owner-approved semantic palette, composition, type, density, shape, opacity, elevation, motion, accessibility, settings, and live-reload contract. |
+| `2026-09-02-theme-system-parity.md` | plan | Owner-directed implementation-first plan with resolver/configuration and shell-wide composition review checkpoints. |
 
 ## Milestone 5: notifications and system tray
 
