@@ -240,6 +240,8 @@ Their default branch `main` is still the original docs-only commit. The live mat
 | `2026-08-31-notifications-and-tray-integration-design.md` | design | Corrected cross-repository ownership, parity, shared M3/M4 primitives, limits, release order, and gates. |
 | `2026-09-02-milestone-5-completion-handover.md` | completion-handover | Snapshot at `2604d77`. Leave as written. Live remainder is `sysc-97`. |
 | `2026-09-01-milestone-5-shell-prerequisites.md` | plan | `AuxUpdate` and process-wide interactive-root ownership required before 5A. |
+| `2026-09-03-notification-centre-design.md` | design | Post-5A first-party centre. DMS 1.5.3 popout + toast chrome (D1–D17). Amends D10. Clipping defect is D17. |
+| `2026-09-03-notification-centre.md` | plan | TDD: unclip toasts, bar bell, `PanelNotifications`, Current/History, header commands (`sysc-150`), DMS toast chrome. |
 | `/home/nomadx/.config/superpowers/worktrees/sysc-notify/redesign/v0.1/docs/plans/2026-08-31-sysc-notify-v0.1.md` | service plan | Executable notify service and candidate/stable release gates. |
 | `/home/nomadx/.config/superpowers/worktrees/sysc-tray/redesign/v0.1/docs/plans/2026-08-31-sysc-tray-v0.1.md` | service plan | Executable tray service and candidate/stable release gates. |
 
