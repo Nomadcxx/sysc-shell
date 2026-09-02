@@ -199,6 +199,15 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 			for _, m := range members {
 				row.Children = append(row.Children, m.node)
 			}
+			if len(members) > 0 && members[0].node != nil {
+				row.Action = members[0].node.Action
+				for _, m := range members[1:] {
+					if m.node == nil || m.node.Action != row.Action {
+						row.Action = ""
+						break
+					}
+				}
+			}
 			g.refresh = func(v barView) bool {
 				changed := false
 				for _, m := range members {

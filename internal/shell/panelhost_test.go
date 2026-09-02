@@ -280,6 +280,35 @@ func TestClickingABarMetricOpensTheSystemMonitor(t *testing.T) {
 	}
 }
 
+func TestClickingGroupedMetricCapsulePaddingOpensTheSystemMonitor(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	cb, err := reg.NewHost(7, "eDP-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cb.Configure(1536, 44, 120); err != nil {
+		t.Fatal(err)
+	}
+	bar := reg.bars[7]
+	capsule, inner, ok := metricGroupCapsuleAndInner(bar)
+	if !ok {
+		t.Fatal("default bar has no laid-out metric group")
+	}
+	x, y := capsule.X, capsule.Y+capsule.H/2
+	if !capsule.Contains(x, y) || inner.Contains(x, y) {
+		t.Fatalf("no padding point: capsule=%+v inner=%+v at %d,%d", capsule, inner, x, y)
+	}
+	drainAuxQueue(reg)
+	if !click(bar, x, y) {
+		t.Fatal("clicking metric group padding did not activate")
+	}
+	reqs := drainAux(t, reg, 2)
+	if !strings.HasPrefix(reqs[1].Open.ID, "panel:system-monitor") {
+		t.Fatalf("opened %q, want the system monitor", reqs[1].Open.ID)
+	}
+}
+
 func batteryCapsuleAndInner(b *Bar) (capsule, inner ui.Rect, ok bool) {
 	for _, section := range b.widgets() {
 		for _, w := range section {
@@ -312,6 +341,23 @@ func batteryClickTarget(b *Bar) (ui.Rect, bool) {
 		}
 	}
 	return ui.Rect{}, false
+}
+
+func metricGroupCapsuleAndInner(b *Bar) (capsule, inner ui.Rect, ok bool) {
+	for _, section := range b.widgets() {
+		for _, w := range section {
+			if len(w.members) == 0 || w.node == nil || w.inner == nil {
+				continue
+			}
+			for _, m := range w.members {
+				if m.node != nil && m.node.Action == panelMonitorAction &&
+					w.node.Bounds.W > 0 && w.inner.Bounds.W > 0 {
+					return w.node.Bounds, w.inner.Bounds, true
+				}
+			}
+		}
+	}
+	return ui.Rect{}, ui.Rect{}, false
 }
 
 func metricClickTarget(b *Bar) (ui.Rect, bool) {
