@@ -186,6 +186,16 @@ Live DMS grim on the owner's laptop vs default sysc-shell bar. Capsules, `Surfac
 | `2026-08-31-bar-visual-parity-design.md` | design | D1–D9, including the numbered-pill amendment. Executed. |
 | `2026-08-31-bar-visual-parity.md` | plan | Six TDD tasks. Executed and merged. |
 
+## Power panel (battery, profiles, session)
+
+Owner-approved 2026-09-02. Grows the M4 session panel. Does not start Milestone 6.
+Gamer-mode's freeze/kill engine stays a plugin.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-02-power-panel-design.md` | design | One `session` surface: battery card, `powerprofilesctl` row, existing session actions. Right-click bar battery. IPC `power` alias. |
+| `2026-09-02-power-panel.md` | plan | Six TDD tasks: parser, LookPath gate, right-click, three-card tree, IPC alias, owner-deferred live Niri list. |
+
 ## Milestone 5: notifications and system tray
 
 Shell presentation is on `main`. The services this milestone consumes are tagged candidates in their
