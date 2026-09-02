@@ -12,6 +12,9 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
+// panelSessionAction is the bar click that toggles the session panel.
+const panelSessionAction = "panel:session"
+
 // formatBattery renders one battery and the tone it paints in.
 //
 // Absence renders nothing rather than a placeholder: empty text measures

@@ -1,12 +1,16 @@
 package shell
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
 
+	metrics "github.com/Nomadcxx/sysc-metrics"
+
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -120,6 +124,7 @@ func TestRevealAnimationInvalidatesUntilDone(t *testing.T) {
 	t.Parallel()
 	cfg := config.Default()
 	reg := NewRegistry(cfg)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
 	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
 		t.Fatal(err)
@@ -132,6 +137,7 @@ func TestRevealAnimationInvalidatesUntilDone(t *testing.T) {
 	still := config.Default()
 	still.Accessibility.ReducedMotion = true
 	quiet := NewRegistry(still)
+	quiet.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(quiet.Close)
 	if err := quiet.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
 		t.Fatal(err)
@@ -141,10 +147,141 @@ func TestRevealAnimationInvalidatesUntilDone(t *testing.T) {
 	}
 }
 
+func TestRightClickingTheBarBatteryOpensSession(t *testing.T) {
+	reg := newPanelRegistry(t)
+	cb, err := reg.NewHost(7, "eDP-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cb.Configure(1536, 44, 120); err != nil {
+		t.Fatal(err)
+	}
+	reg.UpdateMetrics(services.Snapshot{Battery: &metrics.BatterySnapshot{
+		Present: true, Charge: 0.84, ChargeValid: true, State: metrics.BatteryDischarging,
+	}})
+	bar := reg.bars[7]
+	if err := bar.Layout(1536, 44); err != nil {
+		t.Fatal(err)
+	}
+	target, ok := batteryClickTarget(bar)
+	if !ok {
+		t.Fatal("default bar has no laid-out battery")
+	}
+	drainAuxQueue(reg)
+	if click(bar, target.X+target.W/2, target.Y+target.H/2) {
+		t.Fatal("left-click on battery must stay inert")
+	}
+	if !clickButton(bar, target.X+target.W/2, target.Y+target.H/2, buttonRight) {
+		t.Fatal("right-click on battery did not activate")
+	}
+	reqs := drainAux(t, reg, 2)
+	if !strings.HasPrefix(reqs[1].Open.ID, "panel:session") {
+		t.Fatalf("opened %q, want session", reqs[1].Open.ID)
+	}
+}
+
+func TestRightClickingBatteryCapsulePaddingOpensSession(t *testing.T) {
+	reg := newPanelRegistry(t)
+	cb, err := reg.NewHost(7, "eDP-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cb.Configure(1536, 44, 120); err != nil {
+		t.Fatal(err)
+	}
+	reg.UpdateMetrics(services.Snapshot{Battery: &metrics.BatterySnapshot{
+		Present: true, Charge: 0.84, ChargeValid: true, State: metrics.BatteryDischarging,
+	}})
+	bar := reg.bars[7]
+	if err := bar.Layout(1536, 44); err != nil {
+		t.Fatal(err)
+	}
+	capsule, inner, ok := batteryCapsuleAndInner(bar)
+	if !ok {
+		t.Fatal("default bar has no laid-out battery")
+	}
+	x, y := capsule.X, capsule.Y+capsule.H/2
+	if !capsule.Contains(x, y) || inner.Contains(x, y) {
+		t.Fatalf("no padding point: capsule=%+v inner=%+v at %d,%d", capsule, inner, x, y)
+	}
+	drainAuxQueue(reg)
+	if !clickButton(bar, x, y, buttonRight) {
+		t.Fatal("right-click on battery capsule padding did not activate")
+	}
+	reqs := drainAux(t, reg, 2)
+	if !strings.HasPrefix(reqs[1].Open.ID, "panel:session") {
+		t.Fatalf("opened %q, want session", reqs[1].Open.ID)
+	}
+}
+
+func batteryCapsuleAndInner(b *Bar) (capsule, inner ui.Rect, ok bool) {
+	for _, section := range b.widgets() {
+		for _, w := range section {
+			if w.inner != nil && w.inner.Action == panelSessionAction && w.node != nil &&
+				w.node.Bounds.W > 0 && w.inner.Bounds.W > 0 {
+				return w.node.Bounds, w.inner.Bounds, true
+			}
+		}
+	}
+	return ui.Rect{}, ui.Rect{}, false
+}
+
+func batteryClickTarget(b *Bar) (ui.Rect, bool) {
+	for _, section := range b.widgets() {
+		for _, w := range section {
+			for _, m := range w.members {
+				if m.inner != nil && m.inner.Action == panelSessionAction && m.inner.Bounds.W > 0 {
+					return m.inner.Bounds, true
+				}
+				if m.node != nil && m.node.Action == panelSessionAction && m.node.Bounds.W > 0 {
+					return m.node.Bounds, true
+				}
+			}
+			if w.inner != nil && w.inner.Action == panelSessionAction && w.inner.Bounds.W > 0 {
+				return w.inner.Bounds, true
+			}
+			if w.node != nil && w.node.Action == panelSessionAction && w.node.Bounds.W > 0 {
+				return w.node.Bounds, true
+			}
+		}
+	}
+	return ui.Rect{}, false
+}
+
+func drainAuxQueue(reg *Registry) {
+	for {
+		select {
+		case <-reg.AuxRequests():
+		default:
+			return
+		}
+	}
+}
+
 func TestTogglePanelByNameOpensSession(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
 	if err := reg.TogglePanelByName("session"); err != nil {
+		t.Fatal(err)
+	}
+	reqs := drainAux(t, reg, 2)
+	if !strings.HasPrefix(reqs[1].Open.ID, "panel:session") {
+		t.Fatalf("opened %q", reqs[1].Open.ID)
+	}
+}
+
+func TestPowerIsAnAliasForSession(t *testing.T) {
+	t.Parallel()
+	id, err := parsePanelName("power")
+	if err != nil || id != PanelSession {
+		t.Fatalf("parsePanelName(power) = %v, %v", id, err)
+	}
+}
+
+func TestTogglePanelByNamePowerOpensSession(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.TogglePanelByName("power"); err != nil {
 		t.Fatal(err)
 	}
 	reqs := drainAux(t, reg, 2)
@@ -176,6 +313,7 @@ func TestReloadKeepsOpenPanels(t *testing.T) {
 func TestClosingDuringRevealStopsTicker(t *testing.T) {
 	t.Parallel()
 	reg := NewRegistry(config.Default())
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
 	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
 		t.Fatal(err)
@@ -193,6 +331,7 @@ func newPanelRegistry(t *testing.T) *Registry {
 	cfg := config.Default()
 	cfg.Accessibility.ReducedMotion = true
 	reg := NewRegistry(cfg)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
 	return reg
 }

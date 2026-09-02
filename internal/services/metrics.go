@@ -21,6 +21,7 @@ const (
 	SourceBlock
 	SourceNetwork
 	SourceBattery
+	SourceGPU
 	sourceCount
 )
 
@@ -39,6 +40,8 @@ func (s Source) String() string {
 		return "network"
 	case SourceBattery:
 		return "battery"
+	case SourceGPU:
+		return "gpu"
 	}
 	return fmt.Sprintf("source(%d)", uint8(s))
 }
@@ -57,6 +60,18 @@ type Snapshot struct {
 	Block       *metrics.BlockSnapshot
 	Network     *metrics.NetworkSnapshot
 	Battery     *metrics.BatterySnapshot
+	Thermal     *metrics.ThermalSnapshot
+	GPU         *metrics.GPUSnapshot
+}
+
+// ReadUptime is a one-shot /proc/uptime read. It is not on Snapshot: the
+// monitor System card is identity, not a leased sample.
+func ReadUptime() (time.Duration, bool) {
+	snap, err := metrics.ReadUptime()
+	if err != nil {
+		return 0, false
+	}
+	return snap.Uptime, true
 }
 
 // Selector names one metric subject. CPU and memory have exactly one subject
@@ -111,6 +126,19 @@ func (s Snapshot) Fraction(sel Selector) (float64, bool) {
 			if fs.MountPoint == sel.Subject {
 				return capacityFraction(fs.Capacity)
 			}
+		}
+	case SourceGPU:
+		if s.GPU == nil {
+			return 0, false
+		}
+		for _, g := range s.GPU.GPUs {
+			if sel.Subject != "" && g.PCIID != sel.Subject {
+				continue
+			}
+			if !g.Usage.Valid {
+				return 0, false
+			}
+			return g.Usage.Fraction, true
 		}
 	}
 	return 0, false
@@ -415,6 +443,9 @@ func (m *Metrics) collect(s *samplers, failing *[sourceCount]bool) Snapshot {
 		} else {
 			noteRecovery(failing, SourceCPU)
 			snap.CPU = &v
+			if t, err := metrics.ReadThermal(); err == nil {
+				snap.Thermal = &t
+			}
 		}
 	}
 	if m.SourceLeased(SourceMemory) {
@@ -455,6 +486,14 @@ func (m *Metrics) collect(s *samplers, failing *[sourceCount]bool) Snapshot {
 		} else {
 			noteRecovery(failing, SourceBattery)
 			snap.Battery = &v
+		}
+	}
+	if m.SourceLeased(SourceGPU) {
+		if v, err := metrics.ReadGPU(); err != nil {
+			noteFailure(failing, SourceGPU, err)
+		} else {
+			noteRecovery(failing, SourceGPU)
+			snap.GPU = &v
 		}
 	}
 	return snap

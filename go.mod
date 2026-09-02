@@ -12,7 +12,7 @@ require (
 
 require (
 	github.com/Nomadcxx/sysc-launch v0.1.0
-	github.com/Nomadcxx/sysc-metrics v0.2.0
+	github.com/Nomadcxx/sysc-metrics v0.3.0
 	github.com/Nomadcxx/sysc-notify v0.1.0-rc.2
 	github.com/Nomadcxx/sysc-tray v0.1.0-rc.1
 )

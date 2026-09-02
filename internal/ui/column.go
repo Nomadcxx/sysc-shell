@@ -62,6 +62,9 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 		if len(n.Children) == 0 {
 			return n.Width, nil
 		}
+		if n.Width > 0 {
+			width = n.Width
+		}
 		h, err := columnChildHeight(n.Children[0], max(width-2*n.Padding, 0), measure)
 		if err != nil {
 			return 0, err
@@ -128,12 +131,17 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 		}
 		return 240, nil
 	case KindRow:
+		// Ask for each child's intrinsic height, not measureNode's. That one
+		// answers "how tall is this in the band offered", and a column has no
+		// band to offer: passing a sentinel made every kind that fills its
+		// band -- capsule, meter, graph, separator, nested column -- report the
+		// sentinel itself, so a card in a two-up grid measured 1048576 tall.
 		maxH := 0
 		for _, c := range n.Children {
 			if c == nil {
 				continue
 			}
-			_, h, err := measureNode(c, 1<<20, measure)
+			h, err := columnChildHeight(c, width, measure)
 			if err != nil {
 				return 0, err
 			}

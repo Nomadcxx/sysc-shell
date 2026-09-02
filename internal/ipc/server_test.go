@@ -37,6 +37,32 @@ func TestServerRoundTrip(t *testing.T) {
 	}
 }
 
+func TestIpcPowerAliasTogglesSession(t *testing.T) {
+	t.Parallel()
+	sock := filepath.Join(t.TempDir(), "ipc.v1.sock")
+	var got string
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	srv := NewServer(sock, Handlers{
+		Panel: func(action, panel string) error {
+			got = action + ":" + panel
+			return nil
+		},
+		Status: func() map[string]any { return map[string]any{"version": "test"} },
+	})
+	errc := make(chan error, 1)
+	go func() { errc <- srv.Serve(ctx) }()
+	t.Cleanup(func() { cancel(); _ = srv.Close() })
+	waitSock(t, sock)
+	out, err := Call(ctx, sock, "panel.toggle", map[string]string{"panel": "power"})
+	if err != nil || !strings.Contains(out, `"ok"`) {
+		t.Fatalf("call: %v %s", err, out)
+	}
+	if got != "toggle:power" {
+		t.Fatalf("handler got %q", got)
+	}
+}
+
 func TestUnknownMethodErrors(t *testing.T) {
 	t.Parallel()
 	sock, cancel := startServer(t, Handlers{})

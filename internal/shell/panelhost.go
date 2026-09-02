@@ -95,6 +95,10 @@ type PanelHost struct {
 	launcherScroll  int
 	launcherMenuID  string
 	launcherActions []launcher.Action
+
+	profiles      []string
+	profileActive string
+	profilesOK    bool
 }
 
 func parsePanelName(name string) (PanelID, error) {
@@ -103,7 +107,7 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelClock, nil
 	case "system-monitor":
 		return PanelMonitor, nil
-	case "session":
+	case "session", "power":
 		return PanelSession, nil
 	case "settings":
 		return PanelSettings, nil
@@ -165,7 +169,15 @@ func (r *Registry) focusedTrigger() (uint32, Trigger) {
 		}
 	}
 	policy := r.cfg.ForConnector(connector)
-	return global, Trigger{BarEdge: policy.Edge, BarZone: policy.Height, Align: ""}
+	trig := Trigger{BarEdge: policy.Edge, BarZone: policy.Height, Align: ""}
+	if bar, ok := r.bars[global]; ok {
+		bar.mu.Lock()
+		if bar.configured.set {
+			trig.OutW = bar.configured.width
+		}
+		bar.mu.Unlock()
+	}
+	return global, trig
 }
 
 func (r *Registry) OpenPanel(id PanelID, output uint32, trig Trigger) error {
@@ -267,7 +279,7 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelClock, true
 	case "system-monitor":
 		return PanelMonitor, true
-	case "session":
+	case "session", "power":
 		return PanelSession, true
 	case "settings":
 		return PanelSettings, true
@@ -299,6 +311,9 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	}
 	if id == PanelSettings && place.Align == "" {
 		place.Align = "center"
+	}
+	if id == PanelSession {
+		place.Align = "right"
 	}
 	if id == PanelLauncher {
 		place.CenterY = true
@@ -341,6 +356,10 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	r.sendAux(wayland.AuxRequest{Output: output, Open: r.shieldSpec(h)})
 	r.sendAux(wayland.AuxRequest{Output: output, Open: r.panelSpec(h, margins)})
 
+	if id == PanelSession {
+		r.scheduleLoadProfiles(h)
+	}
+
 	if r.cfg.Accessibility.ReducedMotion {
 		r.publishSurface(output, panelSurfaceID(id))
 		return nil
@@ -372,6 +391,12 @@ func (r *Registry) acquirePanelLeases(h *PanelHost) error {
 			}
 			h.leases = append(h.leases, lease)
 		}
+	case PanelSession:
+		lease, err := r.metrics.Acquire(services.Selector{Source: services.SourceBattery}, time.Second)
+		if err != nil {
+			return err
+		}
+		h.leases = []*services.Lease{lease}
 	}
 	return nil
 }
@@ -380,6 +405,7 @@ func monitorSelectors(bar config.Bar) []services.Selector {
 	out := []services.Selector{
 		{Source: services.SourceCPU},
 		{Source: services.SourceMemory},
+		{Source: services.SourceGPU},
 	}
 	seenFS, seenBlock, seenNet := false, false, false
 	for _, item := range append(append(append([]config.Item{}, bar.Left...), bar.Center...), bar.Right...) {
@@ -998,6 +1024,10 @@ func (h *PanelHost) activate(r *Registry) bool {
 		}
 		return true
 	}
+	if name, ok := strings.CutPrefix(n.Action, "profile:"); ok {
+		r.setSessionProfile(h, name)
+		return true
+	}
 	h.lastAction = n.Action
 	switch n.Action {
 	case "cal-prev":
@@ -1046,9 +1076,9 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		if bar, ok := r.bars[h.output]; ok {
 			connector = bar.connector()
 		}
-		return monitorTree(monitorSelectors(r.cfg.ForConnector(connector)), r.sample, r.historyLocked(), h.roving.Index())
+		return monitorTree(monitorSelectors(r.cfg.ForConnector(connector)), r.sample, r.historyLocked(), readMachineFacts())
 	case PanelSession:
-		return sessionTree(r.cfg.Session.Locker, h.errLabel)
+		return sessionTree(h, r.sample, r.cfg.Session.Locker)
 	case PanelSettings:
 		return settingsTree(r, h)
 	case PanelLauncher:
@@ -1073,6 +1103,8 @@ func panelTargetSize(id PanelID) ui.Rect {
 		return ui.Rect{W: 900, H: 620}
 	case PanelLauncher:
 		return ui.Rect{W: 560, H: 500}
+	case PanelSession:
+		return ui.Rect{W: 420, H: 360}
 	case PanelPlugin:
 		// Fallback size; an open plugin view replaces this from its manifest.
 		return ui.Rect{W: 320, H: 280}

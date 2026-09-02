@@ -382,3 +382,33 @@ func TestEmptyCapsuleWithWidthIsASquareDot(t *testing.T) {
 		t.Fatalf("dot bounds = %+v, want 8x8", got)
 	}
 }
+
+// A capsule with children ignores its Width and measures to its content, which
+// is what a bar pill wants. A grid cell needs the opposite: an explicit width
+// so two cards share a row evenly.
+func TestMeasureNodeCapsuleHonoursExplicitWidth(t *testing.T) {
+	card := &Node{Kind: KindCapsule, Width: 304, Padding: 10, Children: []*Node{
+		{Kind: KindColumn, Children: []*Node{{Kind: KindText, Text: "cpu"}}},
+	}}
+	w, _, err := measureNode(card, 200, fakeMeasure)
+	if err != nil {
+		t.Fatalf("measureNode: %v", err)
+	}
+	if w != 304 {
+		t.Fatalf("explicit capsule width = %d, want 304", w)
+	}
+}
+
+// Without a Width a capsule still measures to its child plus padding.
+func TestMeasureNodeCapsuleWithoutWidthMeasuresChild(t *testing.T) {
+	pill := &Node{Kind: KindCapsule, Padding: 8, Children: []*Node{
+		{Kind: KindText, Text: "abc"},
+	}}
+	w, _, err := measureNode(pill, 200, fakeMeasure)
+	if err != nil {
+		t.Fatalf("measureNode: %v", err)
+	}
+	if want := 3*8 + 2*8; w != want {
+		t.Fatalf("measured capsule width = %d, want %d", w, want)
+	}
+}

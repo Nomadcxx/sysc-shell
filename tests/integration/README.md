@@ -320,7 +320,9 @@ no D-Bus application.
 
 ### Prerequisites for the live matrix
 
-- `sysc-notifyd` and `sysc-tray` running, with `XDG_RUNTIME_DIR` set;
+- `sysc-notify` and `sysc-tray` running (the tagged modules' `cmd/` binaries, not a daemon invented
+  in this tree), with `XDG_RUNTIME_DIR` set so `$XDG_RUNTIME_DIR/sysc-notify/presenter.v1.sock` and
+  `$XDG_RUNTIME_DIR/sysc-tray/presenter.v1.sock` exist;
 - two connected outputs, one of which can be unplugged;
 - at least three real tray applications with different shapes: one with a named themed icon, one that
   publishes pixmaps, and one that sets `ItemIsMenu`;
@@ -368,7 +370,7 @@ Build and start:
 21. Open the notification centre, then the tray drawer: the centre closes as the drawer takes the root.
 22. Open a tray menu with a tooltip up: the tooltip goes first.
 23. An inline reply opened while a menu is up replaces the menu.
-24. Restart `sysc-notifyd` alone: tray state is untouched and notifications recover.
+24. Restart `sysc-notify` alone: tray state is untouched and notifications recover.
 25. Restart `sysc-tray` alone: notification state is untouched, every item reappears under a fresh
     generation, and no stale click reaches an application.
 26. Restart the shell: both services reconnect and both projections come back.

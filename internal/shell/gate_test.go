@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"os/exec"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -14,6 +15,7 @@ func TestGateAccessibleNamesAndRoles(t *testing.T) {
 	cfg.Accessibility.ReducedMotion = true
 	cfg.Session.Locker = "swaylock"
 	reg := NewRegistry(cfg)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
 	for _, id := range []PanelID{PanelClock, PanelMonitor, PanelSession} {
 		if err := reg.OpenPanel(id, 7, Trigger{}); err != nil {
@@ -37,6 +39,7 @@ func TestGateKeyboardOnlyCoversControls(t *testing.T) {
 	cfg.Accessibility.ReducedMotion = true
 	cfg.Session.Locker = "swaylock"
 	reg := NewRegistry(cfg)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
 	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
 		t.Fatal(err)

@@ -14,7 +14,7 @@
 
 - Stop at the first working rung: existing project code, Go standard library, native Linux service, pinned dependency, then new code.
 - Keep Wayland types inside `internal/platform/wayland` and Niri wire types inside `internal/platform/niri`.
-- Pin `github.com/Nomadcxx/sysc-wayland@v0.2.0`; do not import `dankgo` from shell code.
+- Pin `github.com/Nomadcxx/sysc-wayland@v0.2.1`; do not import `dankgo` from shell code. Current pins for every consumed module are in `go.mod` and the README table.
 - Keep the Wayland dispatch loop on one goroutine. Other goroutines submit commands and receive immutable state updates through channels.
 - Draw only after invalidation. Respect frame callbacks and buffer release events.
 - Add one focused runnable check for non-trivial logic. Use table tests for pure layout and protocol code.
@@ -37,6 +37,16 @@
   work is done, in flight, or blocked. Do not duplicate status into a document header, where it drifts.
 - Cross-repository gates are modelled as issues in this repository — `sysc-metrics` needing a release tag,
   for example — so a single graph holds every blocker.
+- Run `bd` from `/home/nomadx/sysc-shell`, never from a worktree. The SQLite file is gitignored and
+  lives only in the primary checkout. Committing from a worktree needs
+  `BEADS_DB=/home/nomadx/sysc-shell/.beads/beads.db`.
+- **`bd export` overwrites the tracked JSONL with only what it thinks changed.** Recover with
+  `sqlite3 .beads/beads.db "DELETE FROM export_hashes;" && bd export -o .beads/issues.jsonl`, then
+  `wc -l` and `git diff` before committing.
+- A closed issue is not evidence the code is on `main`. Check the tree.
+- **Do not patch old handovers to keep them current.** A progress or remaining-work handover: scan for
+  anything still open, put it in bd, then delete the file and its register row. A completion handover
+  is a snapshot of gate output and live observations; leave it as written.
 
 ## Designs and plans
 
@@ -57,3 +67,28 @@
 4. Run unit checks after each task and the live Niri gate before claiming a milestone.
 5. Record measurements and unresolved hardware behavior in the milestone handoff.
 6. Stop when the milestone exit gate passes. Do not pull later roadmap work forward.
+
+Code-touching commits: `gofmt -w . && test -z "$(gofmt -l .)"`, `go vet ./...`,
+`go test -race -count=1 ./...`, `git diff --exit-code -- go.mod go.sum`.
+
+The machine `commit-msg` hook (`~/.git-hooks/commit-msg` via `core.hooksPath`) rejects ordinary
+English that matches `agent`, `cursor`, `codex`, `llm`, `both`, `Hallmark`, and similar. Screen the
+message before committing.
+
+Panel, tray, toast and drawer `configure`/`render`/`handle` take `Registry.mu`. Relays run off the
+Wayland owner. `rebuildPanel` already holds the lock and calls the unlocked form.
+
+## Live Niri
+
+The agent shell inherits none of the compositor environment:
+
+```bash
+export NIRI_SOCKET=$(ls /run/user/1000/niri.wayland-*.sock | head -1)
+export WAYLAND_DISPLAY=wayland-1
+export XDG_RUNTIME_DIR=/run/user/1000
+```
+
+This machine has one output (`DP-1`, 3440×1440, scale 1.0). Niri has no runtime virtual output, so
+every two-output check is unrunnable here. `niri msg -j layers` is the live assertion for mapped
+surfaces. Never `pkill -f` a binary name also typed in the command; that pattern matches the agent
+shell. Kill by pid from `pgrep -f 'scratchpad/<name>'`.
