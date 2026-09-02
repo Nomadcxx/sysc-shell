@@ -631,6 +631,9 @@ func (r *Registry) Close() {
 	r.closeOnce.Do(func() { close(r.closed) })
 
 	r.mu.Lock()
+	if r.toasts != nil {
+		r.toasts.stopLeaseRenew()
+	}
 	var osdAux []wayland.AuxRequest
 	if r.osd != nil {
 		osdAux = r.osd.prepareHide()

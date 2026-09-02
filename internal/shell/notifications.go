@@ -198,6 +198,7 @@ type notifyCommandSender interface {
 func (r *Registry) BindNotifications(sender notifyCommandSender) {
 	r.notifySender = sender
 	r.toasts = newToastHost(r, nil)
+	r.toasts.startLeaseRenew(presentationLeaseRenew)
 }
 
 // NotifyMessages returns the channel the notifyclient publishes to and main

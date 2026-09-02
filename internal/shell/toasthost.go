@@ -3,6 +3,8 @@ package shell
 import (
 	"math"
 	"sort"
+	"sync"
+	"time"
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
@@ -50,6 +52,9 @@ type toastHost struct {
 	// outside it.
 	press    toastCard
 	pressing bool
+
+	stopRenew chan struct{}
+	renewOnce sync.Once
 
 	text  *render.TextRenderer
 	style render.ProofStyle
@@ -458,6 +463,44 @@ func (h *toastHost) publishPresentation() {
 		})
 	}
 	h.r.sendNotify(protocol.Command{Kind: protocol.CommandPresentationRenew, Presentations: presentations})
+}
+
+const presentationLeaseRenew = 2 * time.Second
+
+// startLeaseRenew keeps presentation.renew alive while cards exist. The
+// service drops hover/queue holds after six seconds without a renew.
+func (h *toastHost) startLeaseRenew(every time.Duration) {
+	if h == nil || every <= 0 || h.stopRenew != nil {
+		return
+	}
+	h.stopRenew = make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(every)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-h.stopRenew:
+				return
+			case <-ticker.C:
+				h.r.mu.Lock()
+				if len(h.r.notify.activeIDs()) > 0 {
+					h.publishPresentation()
+				}
+				h.r.mu.Unlock()
+			}
+		}
+	}()
+}
+
+func (h *toastHost) stopLeaseRenew() {
+	if h == nil {
+		return
+	}
+	h.renewOnce.Do(func() {
+		if h.stopRenew != nil {
+			close(h.stopRenew)
+		}
+	})
 }
 
 // placeIDs is the id-carrying half of toastLayout: geometry decides which

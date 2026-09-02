@@ -3,6 +3,7 @@ package shell
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -234,15 +235,20 @@ func TestToastPaintLeavesTheGapsTransparent(t *testing.T) {
 }
 
 type fakeNotifySender struct {
+	mu   sync.Mutex
 	cmds []protocol.Command
 }
 
 func (f *fakeNotifySender) Send(c protocol.Command) (uint64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.cmds = append(f.cmds, c)
 	return uint64(len(f.cmds)), nil
 }
 
 func (f *fakeNotifySender) ofKind(kind protocol.CommandKind) []protocol.Command {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	var out []protocol.Command
 	for _, c := range f.cmds {
 		if c.Kind == kind {
@@ -398,6 +404,20 @@ func TestOpeningTheCentreHidesToasts(t *testing.T) {
 	if n := len(hh.updates); n == 0 || len(hh.updates[n-1].InputRects) == 0 {
 		t.Fatal("input region stayed empty after close")
 	}
+}
+
+func TestToastRenewsPresentationWhileCardsStayUp(t *testing.T) {
+	r, h, sender := wiredToast(t)
+	r.applyNotify(snap(1, note(1, "a")))
+	h.startLeaseRenew(15 * time.Millisecond)
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if len(sender.ofKind(protocol.CommandPresentationRenew)) >= 3 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("renews = %d, want at least 3 while a card stays up", len(sender.ofKind(protocol.CommandPresentationRenew)))
 }
 
 // The notify pump and the Wayland owner share one TextRenderer. Measuring a
