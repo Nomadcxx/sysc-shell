@@ -156,11 +156,8 @@ func TestConfigReplayArgsRequireEnableAndUseReplayDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasPair(args, "-r", "12") || !hasPair(args, "-replay-storage", "disk") || !hasPair(args, "-ro", "/tmp/replays") {
+	if !hasPair(args, "-r", "12") || !hasPair(args, "-replay-storage", "disk") || !hasPair(args, "-ro", "/tmp/replays") || !hasPair(args, "-o", "/tmp/replays") {
 		t.Fatalf("replay args = %v", args)
-	}
-	if hasPair(args, "-o", "/tmp/replays") {
-		t.Fatalf("replay used -o instead of -ro: %v", args)
 	}
 	if shellText(args) {
 		t.Fatalf("replay args look like a shell line: %v", args)

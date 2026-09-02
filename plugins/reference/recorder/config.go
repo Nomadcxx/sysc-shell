@@ -171,7 +171,7 @@ func (c Config) ReplayArgs(output, destDir string) ([]string, error) {
 		return nil, err
 	}
 	args := c.commonArgs(w)
-	args = append(args, "-c", "mp4", "-r", strconv.Itoa(c.ReplayDuration), "-replay-storage", c.ReplayStorage, "-ro", destDir)
+	args = append(args, "-c", "mp4", "-r", strconv.Itoa(c.ReplayDuration), "-replay-storage", c.ReplayStorage, "-o", destDir, "-ro", destDir)
 	return args, nil
 }
 
