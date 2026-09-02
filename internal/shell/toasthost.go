@@ -4,6 +4,7 @@ import (
 	"math"
 	"sort"
 
+	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
@@ -43,6 +44,12 @@ type toastHost struct {
 	scratch []byte
 	// pointer is the last pointer position per output, in surface pixels.
 	pointer map[string]ui.Rect
+	// resolver turns press/release over a card into notify commands.
+	resolver *notifyResolver
+	// press holds the card a button went down on, so a swipe can release
+	// outside it.
+	press    toastCard
+	pressing bool
 
 	text  *render.TextRenderer
 	style render.ProofStyle
@@ -86,6 +93,7 @@ func newToastHost(r *Registry, harness *hostHarness) *toastHost {
 	} else {
 		h.request = func(req wayland.AuxRequest) { r.sendAux(req) }
 	}
+	h.resolver = newNotifyResolver(h)
 	return h
 }
 
@@ -249,21 +257,71 @@ func (h *toastHost) paintCard(canvas *render.Canvas, card toastCard, style rende
 	return nil
 }
 
-// handle tracks which card the pointer is over. Hover is what holds a toast
-// open, so the presentation state the shell reports depends on it.
+// handle tracks hover and routes press/release through the resolver. Hover is
+// what holds a toast open; a click or swipe is what dismisses or invokes it.
 func (h *toastHost) handle(connector string, event wayland.Event) bool {
 	h.r.mu.Lock()
 	defer h.r.mu.Unlock()
+	x, y := int(math.Floor(event.X)), int(math.Floor(event.Y))
 	switch event.Kind {
 	case wayland.EventPointerEnter, wayland.EventPointerMotion:
-		h.pointer[connector] = ui.Rect{X: int(math.Floor(event.X)), Y: int(math.Floor(event.Y))}
+		h.pointer[connector] = ui.Rect{X: x, Y: y}
+		if h.updateHover(connector) {
+			h.publishPresentation()
+			return true
+		}
+		return false
 	case wayland.EventPointerLeave:
 		delete(h.pointer, connector)
+		if h.updateHover(connector) {
+			h.publishPresentation()
+			return true
+		}
+		return false
+	case wayland.EventPointerPress:
+		h.pointer[connector] = ui.Rect{X: x, Y: y}
+		card, ok := h.cardAt(connector, x, y)
+		if !ok {
+			return false
+		}
+		h.press = card
+		h.pressing = true
+		h.resolver.press(card.root, x-card.rect.X, y-card.rect.Y)
+		return true
+	case wayland.EventPointerRelease:
+		if !h.pressing {
+			return false
+		}
+		card := h.press
+		h.pressing = false
+		h.press = toastCard{}
+		h.resolver.release(card.root, x-card.rect.X, y-card.rect.Y)
+		return true
 	default:
 		return false
 	}
-	return h.updateHover(connector)
 }
+
+func (h *toastHost) cardAt(connector string, x, y int) (toastCard, bool) {
+	for _, card := range h.cards[connector] {
+		if card.rect.Contains(x, y) {
+			return card, true
+		}
+	}
+	return toastCard{}, false
+}
+
+func (h *toastHost) invoke(id uint32, key string) {
+	h.r.sendNotify(protocol.Command{Kind: protocol.CommandAction, ID: id, ActionKey: key})
+}
+func (h *toastHost) dismiss(id uint32) {
+	h.r.sendNotify(protocol.Command{Kind: protocol.CommandDismiss, ID: id})
+}
+func (h *toastHost) reply(id uint32, text string) {
+	h.r.sendNotify(protocol.Command{Kind: protocol.CommandReply, ID: id, Text: text})
+}
+func (h *toastHost) hover(uint32, bool) {}
+func (h *toastHost) openLink(string)    {}
 
 // updateHover recomputes the hovered set for one output and reports whether
 // it changed. Only a change is worth a frame.
@@ -383,7 +441,24 @@ func (h *toastHost) recompute() {
 				InputRects:     toastInputRegion(h.cardRects(connector, visible)),
 			},
 		})
+		h.r.publishSurface(global, toastSurfaceID(connector))
 	}
+	h.publishPresentation()
+}
+
+func (h *toastHost) publishPresentation() {
+	ids := h.r.notify.activeIDs()
+	if len(ids) == 0 {
+		return
+	}
+	presentations := make([]protocol.Presentation, 0, len(ids))
+	for _, id := range ids {
+		presentations = append(presentations, protocol.Presentation{
+			ID:    id,
+			State: h.r.aggregatePresentation(id, h.viewFor(id)),
+		})
+	}
+	h.r.sendNotify(protocol.Command{Kind: protocol.CommandPresentationRenew, Presentations: presentations})
 }
 
 // placeIDs is the id-carrying half of toastLayout: geometry decides which

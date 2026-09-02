@@ -101,13 +101,14 @@ func toneFor(urgency protocol.Urgency) ui.Tone {
 
 // NotificationCard builds the retained tree for one active notification.
 // lt is the service's authoritative lifetime for the record; allowLinks is
-// the shell's qualified opener capability. The card itself is inert: pointer
-// behaviour lands with Task 7.
+// the shell's qualified opener capability.
 func NotificationCard(n protocol.Notification, lt *protocol.Lifetime, allowLinks bool) *ui.Node {
 	root := notificationTree(n.ID, n.AppName, n.Summary, n.Body, n.Urgency, n.Image, n.Value, lt, allowLinks)
 
+	hasDefault := false
 	for _, a := range n.Actions {
 		if a.Key == "default" {
+			hasDefault = true
 			// The default action rides the body click; it is not a button.
 			markDefault(root, n.ID)
 			continue
@@ -117,6 +118,9 @@ func NotificationCard(n protocol.Notification, lt *protocol.Lifetime, allowLinks
 			Action: fmt.Sprintf("notify:%d:action:%s", n.ID, a.Key),
 			Name:   a.Label, Role: "button", Focusable: true,
 		})
+	}
+	if !hasDefault {
+		root.Action = fmt.Sprintf("notify:%d:dismiss", n.ID)
 	}
 
 	if n.InlineReply {

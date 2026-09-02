@@ -140,6 +140,8 @@ func (s *notifyState) historyCount() int {
 // through these rather than the lock directly.
 func (r *Registry) applyNotify(m notifyclient.Message) {
 	r.notify.applyNotify(m)
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.toasts != nil {
 		r.toasts.recompute()
 	}
@@ -151,10 +153,24 @@ func (r *Registry) notifyLifetime(id uint32) *protocol.Lifetime {
 func (r *Registry) notifySummary(id uint32) string { return r.notify.summary(id) }
 func (r *Registry) notifyHistoryCount() int        { return r.notify.historyCount() }
 
-// BindNotifications wires the toast host to the registry's aux channel. main
-// calls it once before running the client; tests leave it nil and drive
-// applyNotify directly.
-func (r *Registry) BindNotifications() {
+func (r *Registry) sendNotify(c protocol.Command) {
+	if r == nil || r.notifySender == nil {
+		return
+	}
+	_, _ = r.notifySender.Send(c)
+}
+
+// notifyCommandSender is the client's Send seam: one method, so tests can
+// record instead of dialing.
+type notifyCommandSender interface {
+	Send(protocol.Command) (uint64, error)
+}
+
+// BindNotifications wires the toast host and the command sender. main calls
+// it once before running the client; tests that drive applyNotify directly
+// leave it nil.
+func (r *Registry) BindNotifications(sender notifyCommandSender) {
+	r.notifySender = sender
 	r.toasts = newToastHost(r, nil)
 }
 

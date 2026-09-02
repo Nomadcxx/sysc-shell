@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
@@ -232,6 +233,25 @@ func TestToastPaintLeavesTheGapsTransparent(t *testing.T) {
 	}
 }
 
+type fakeNotifySender struct {
+	cmds []protocol.Command
+}
+
+func (f *fakeNotifySender) Send(c protocol.Command) (uint64, error) {
+	f.cmds = append(f.cmds, c)
+	return uint64(len(f.cmds)), nil
+}
+
+func (f *fakeNotifySender) ofKind(kind protocol.CommandKind) []protocol.Command {
+	var out []protocol.Command
+	for _, c := range f.cmds {
+		if c.Kind == kind {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // Hover is what holds a toast open, so the pointer has to reach the host.
 // Moving onto a card marks it hovered and moving away clears it.
 func TestToastHoverFollowsThePointer(t *testing.T) {
@@ -265,4 +285,116 @@ func TestToastHoverFollowsThePointer(t *testing.T) {
 	if len(h.hovered["eDP-1"]) != 0 {
 		t.Fatalf("hover survived the pointer leaving: %+v", h.hovered["eDP-1"])
 	}
+}
+
+func wiredToast(t *testing.T) (*Registry, *toastHost, *fakeNotifySender) {
+	t.Helper()
+	r := NewRegistry(config.Default())
+	t.Cleanup(r.Close)
+	sender := &fakeNotifySender{}
+	r.notifySender = sender
+	h := newToastHost(r, &hostHarness{})
+	r.toasts = h
+	r.outputsForTest([]string{"eDP-1"})
+	h.syncOutputs(map[string]uint32{"eDP-1": 5})
+	return r, h, sender
+}
+
+func TestToastClickDismissesACardWithoutADefaultAction(t *testing.T) {
+	r, h, sender := wiredToast(t)
+	r.applyNotify(snap(1, note(1, "headphones")))
+	callbacks := h.harness().opens[0].Callbacks
+	if err := callbacks.Configure(1200, 800, 120); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	rect := h.cards["eDP-1"][0].rect
+	r.mu.Unlock()
+
+	x, y := float64(rect.X+rect.W/2), float64(rect.Y+rect.H/2)
+	if !callbacks.Handle(wayland.Event{Kind: wayland.EventPointerPress, Button: buttonLeft, X: x, Y: y}) {
+		t.Fatal("press on a toast card reported no handling")
+	}
+	if !callbacks.Handle(wayland.Event{Kind: wayland.EventPointerRelease, Button: buttonLeft, X: x, Y: y}) {
+		t.Fatal("release on a toast card reported no handling")
+	}
+	got := sender.ofKind(protocol.CommandDismiss)
+	if len(got) != 1 || got[0].ID != 1 {
+		t.Fatalf("dismiss commands = %+v, want notification.dismiss of 1", sender.cmds)
+	}
+}
+
+func TestToastRecomputeInvalidatesTheSurface(t *testing.T) {
+	r, _, _ := wiredToast(t)
+	drainInvalidations(r)
+	r.applyNotify(snap(1, note(1, "a")))
+	found := false
+	for {
+		select {
+		case inv := <-r.Invalidations():
+			if inv.SurfaceID == toastSurfaceID("eDP-1") {
+				found = true
+			}
+		default:
+			if !found {
+				t.Fatal("recompute did not invalidate the toast surface")
+			}
+			return
+		}
+	}
+}
+
+func TestToastReportsVisiblePresentation(t *testing.T) {
+	r, _, sender := wiredToast(t)
+	r.applyNotify(snap(1, note(1, "a")))
+	got := sender.ofKind(protocol.CommandPresentationRenew)
+	if len(got) == 0 {
+		t.Fatal("no presentation.renew after a card became visible")
+	}
+	last := got[len(got)-1]
+	if len(last.Presentations) != 1 || last.Presentations[0].ID != 1 ||
+		last.Presentations[0].State != protocol.PresentationVisible {
+		t.Fatalf("renew = %+v, want id 1 visible", last)
+	}
+}
+
+// The notify pump and the Wayland owner share one TextRenderer. Measuring a
+// new card while a frame is painting used to trip harfbuzz.
+func TestToastApplyDoesNotRaceThePainter(t *testing.T) {
+	r, h, _ := wiredToast(t)
+	r.applyNotify(snap(1, note(1, "one")))
+	callbacks := h.harness().opens[0].Callbacks
+	const width, height = 1200, 800
+	if err := callbacks.Configure(width, height, 120); err != nil {
+		t.Fatal(err)
+	}
+	stride := width * 4
+	pixels := make([]byte, stride*height)
+	if err := callbacks.Render(pixels, width, height, stride); err != nil {
+		t.Fatal(err)
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := 0; i < 80; i++ {
+			r.applyNotify(snap(1, note(1, "one"), note(2, "two")))
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		buf := make([]byte, stride*height)
+		for i := 0; i < 40; i++ {
+			if err := callbacks.Render(buf, width, height, stride); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	}()
+	close(start)
+	wg.Wait()
 }

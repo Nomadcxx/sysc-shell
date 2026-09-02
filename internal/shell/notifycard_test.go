@@ -110,6 +110,14 @@ func TestNotifyCardBuildsSixActionPairs(t *testing.T) {
 	}
 }
 
+func TestNotifyCardStampsDismissWhenNoDefault(t *testing.T) {
+	card := NotificationCard(baseNotification(), nil, true)
+	id, rest, ok := parseCardAction(card.Action)
+	if !ok || id != 7 || len(rest) == 0 || rest[0] != "dismiss" {
+		t.Fatalf("root action = %q, want notify:7:dismiss so a body click can close it", card.Action)
+	}
+}
+
 func TestNotifyCardMarksTheDefaultActionOnTheBody(t *testing.T) {
 	n := baseNotification()
 	n.Actions = []protocol.Action{{Key: "default", Label: "Open"}}

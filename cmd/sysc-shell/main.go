@@ -138,8 +138,8 @@ func run(ctx context.Context) error {
 	// reconnecting client; this pump applies each to the projection and
 	// recomputes the toast surfaces. A missing service is not fatal: the
 	// client retries with backoff and toasts simply never open.
-	registry.BindNotifications()
 	notifyClient := notifyclient.New(os.Getenv("XDG_RUNTIME_DIR"), registry.NotifyMessages())
+	registry.BindNotifications(notifyClient)
 	go func() {
 		for {
 			select {

@@ -114,6 +114,8 @@ func (r *notifyResolver) activate(n *ui.Node) {
 		if len(rest) == 2 {
 			r.actions.invoke(id, rest[1])
 		}
+	case "dismiss":
+		r.actions.dismiss(id)
 	case "link":
 		if len(rest) == 2 {
 			r.actions.openLink(rest[1])

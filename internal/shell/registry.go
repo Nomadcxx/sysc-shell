@@ -98,6 +98,9 @@ type Registry struct {
 	// notifyCh carries client messages; main pumps it. Nil in tests that drive
 	// applyNotify directly.
 	notifyCh chan notifyclient.Message
+	// notifySender is the client's Send seam. Nil in tests that do not
+	// assert commands.
+	notifySender notifyCommandSender
 	// toasts hosts one toast stack per output, created when wiring binds it.
 	toasts *toastHost
 	// launcherSvc is created on the first launcher open; nil until then.

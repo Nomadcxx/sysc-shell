@@ -63,6 +63,22 @@ func TestResolverInvokesAButtonActionOnMatchedPressRelease(t *testing.T) {
 	}
 }
 
+func TestResolverDismissesACardWithNoDefaultOnClick(t *testing.T) {
+	hh := &resolverHarness{}
+	rv := newNotifyResolver(hh)
+	root := &ui.Node{Kind: ui.KindColumn, Action: "notify:7:dismiss", Children: []*ui.Node{
+		{Kind: ui.KindText, Text: "headphones connected"},
+	}}
+	root.Bounds = ui.Rect{X: 0, Y: 0, W: 360, H: 96}
+	root.Children[0].Bounds = ui.Rect{X: 12, Y: 12, W: 200, H: 16}
+
+	rv.press(root, 50, 20)
+	rv.release(root, 50, 20)
+	if len(hh.commands) != 1 || hh.commands[0].kind != "dismiss" || hh.commands[0].id != 7 {
+		t.Fatalf("commands = %+v, want dismiss of 7", hh.commands)
+	}
+}
+
 func TestResolverInvokesTheDefaultActionOnABodyClick(t *testing.T) {
 	hh := &resolverHarness{}
 	rv := newNotifyResolver(hh)

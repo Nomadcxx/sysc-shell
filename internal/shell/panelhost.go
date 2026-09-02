@@ -1361,6 +1361,8 @@ func (r *Registry) publishSurface(global uint32, surfaceID string) {
 	select {
 	case r.invalidations <- wayland.Invalidation{Global: global, SurfaceID: surfaceID}:
 	case <-r.closed:
+	default:
+		// Drop when the owner is behind rather than stalling the caller.
 	}
 }
 
