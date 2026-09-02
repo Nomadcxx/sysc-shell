@@ -1,6 +1,6 @@
 # Design and Plan Register
 
-Last updated: 2026-09-02.
+Last updated: 2026-09-03.
 
 Every design, plan, and handover this project has produced, with where it lives and whether it is still
 live. Add a row here in the same commit that adds a document. A document that is not in this register is
@@ -280,9 +280,9 @@ execute while `sysc-66` is open. Not QML/Luau compatibility.
 
 ## Milestone 7: shell breadth
 
-Not designed as a whole. The first slice (launcher) has prior art and a design
-commission. Remaining M7 clusters (clipboard, session adapters, control center,
-wallpaper, desktop widgets) are still unordered.
+Not designed as a whole. Launcher v1 and the wallpaper picker have designs.
+Remaining M7 clusters (clipboard, session adapters, control center, desktop
+widgets) are still unordered.
 
 | Document | Kind | State |
 |---|---|---|
@@ -292,12 +292,13 @@ wallpaper, desktop widgets) are still unordered.
 | `2026-09-01-launcher.md` | plan | 13 tasks: Task 0 reconciliation, pinned deps, TDD slices for exclusions/exec/scoring/history/prefix/service/spawn, panel projection, IPC + Super+Space bind, owner-deferrable live Niri gate. |
 | `2026-09-02-sysc-launch-extraction-design.md` | design | Owner-approved boundary for history-preserving extraction into `github.com/Nomadcxx/sysc-launch`, a presentation-neutral library plus diagnostic CLI. |
 | `2026-09-02-sysc-launch-extraction.md` | plan | Nine-task history-preserving extraction, public API and CLI, local two-module gate, v0.1.0 release, and immutable shell pin. |
+| `2026-09-03-wallpaper-design.md` | design | M7 wallpaper picker (`sysc-146`): noctalia-gslapper chrome + native virtualized grid, gSlapper-first with awww/swaybg static fallback, owned per-connector sockets, Restore exception. Overrules the roadmap socket-client-only line. |
 
 ## Milestones 7 remainder and 8: not yet designed
 
 | Milestone | Scope | Note |
 |---|---|---|
-| 7 (after launcher) | Clipboard, network/BT/MPRIS, control center, wallpaper, desktop widgets | See handover; do not fold into the launcher slice. |
+| 7 (after launcher) | Clipboard, network/BT/MPRIS, control center, desktop widgets | Wallpaper has `2026-09-03-wallpaper-design.md`. Do not fold the rest into the launcher slice. |
 | 8 | Rendering qualification | Requires measured evidence against `wl_shm`. |
 
 ## Sibling repositories
