@@ -99,6 +99,8 @@ type trayMenuHost struct {
 	pressed  *ui.Node
 	text     *render.TextRenderer
 	style    render.ProofStyle
+	// pointer is the resolved hover/press state, kept as stable keys.
+	pointer interaction
 }
 
 func newTrayMenuHost(r *Registry, harness *hostHarness) *trayMenuHost {
@@ -381,14 +383,26 @@ func (h *trayMenuHost) handle(event wayland.Event) bool {
 		return false
 	case wayland.EventPointerEnter, wayland.EventPointerMotion:
 		h.hoverX, h.hoverY = int(math.Floor(event.X)), int(math.Floor(event.Y))
+		// Only a change of resolved row repaints; motion within one row does
+		// not.
+		if h.pointer.setHover(hoverKeyAt(h.root, h.hoverX, h.hoverY)) {
+			h.pointer.apply(h.root, nil)
+			return true
+		}
 		return false
 	case wayland.EventPointerLeave:
 		h.pressed = nil
+		if h.pointer.clear() {
+			h.pointer.apply(h.root, nil)
+			return true
+		}
 		h.idle()
 		return false
 	case wayland.EventPointerPress:
 		h.noteInteraction()
 		h.pressed = h.hitFocusable(h.hoverX, h.hoverY)
+		h.pointer.setPress(h.pressed.StableKey())
+		h.pointer.apply(h.root, nil)
 		if h.pressed == nil {
 			return false
 		}
@@ -398,6 +412,8 @@ func (h *trayMenuHost) handle(event wayland.Event) bool {
 		node := h.hitFocusable(h.hoverX, h.hoverY)
 		pressed := h.pressed
 		h.pressed = nil
+		h.pointer.setPress("")
+		h.pointer.apply(h.root, nil)
 		if node == nil || node != pressed {
 			h.idle()
 			return false

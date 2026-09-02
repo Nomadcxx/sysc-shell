@@ -155,3 +155,66 @@ func TestTrayDrawerEmitsPreferenceCollisionDiagnostic(t *testing.T) {
 		t.Fatalf("diagnostics = %v", got)
 	}
 }
+
+// --- Resolved interaction state ---------------------------------------------
+
+func TestTrayDrawerHoverInvalidatesOnlyOnRowChange(t *testing.T) {
+	r := NewRegistry(config.Default())
+	h := newTrayDrawerHost(r, &hostHarness{})
+	h.open(7, "eDP-1", trayArrangement{
+		Overflow: []tray.Item{
+			preferenceItem("mail", "Mail", 1),
+			preferenceItem("chat", "Chat", 2),
+		},
+	}, nil)
+	if err := h.configure(trayDrawerWidth, trayDrawerHeight, int(ui.ScaleUnit)); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.focus) < 2 {
+		t.Fatalf("want two focusable rows, got %d", len(h.focus))
+	}
+	first, second := h.focus[0].Bounds, h.focus[1].Bounds
+
+	motion := func(b ui.Rect, dy int) bool {
+		return h.handle(wayland.Event{Kind: wayland.EventPointerMotion,
+			X: float64(b.X + b.W/2), Y: float64(b.Y + b.H/2 + dy)})
+	}
+	if !motion(first, 0) {
+		t.Error("entering the first row did not invalidate the drawer")
+	}
+	if motion(first, 1) {
+		t.Error("motion inside the hovered row invalidated the drawer")
+	}
+	if !motion(second, 0) {
+		t.Error("moving to a different row did not invalidate the drawer")
+	}
+	if !h.handle(wayland.Event{Kind: wayland.EventPointerLeave}) {
+		t.Error("leaving did not invalidate the drawer")
+	}
+	if h.pointer.hover != "" || h.pointer.press != "" {
+		t.Errorf("leave left hover %q press %q", h.pointer.hover, h.pointer.press)
+	}
+}
+
+func TestTrayDrawerPressAndReleaseTrackState(t *testing.T) {
+	r := NewRegistry(config.Default())
+	h := newTrayDrawerHost(r, &hostHarness{})
+	h.open(7, "eDP-1", trayArrangement{
+		Overflow: []tray.Item{preferenceItem("mail", "Mail", 1)},
+	}, nil)
+	if err := h.configure(trayDrawerWidth, trayDrawerHeight, int(ui.ScaleUnit)); err != nil {
+		t.Fatal(err)
+	}
+	b := h.focus[0].Bounds
+	x, y := float64(b.X+b.W/2), float64(b.Y+b.H/2)
+
+	h.handle(wayland.Event{Kind: wayland.EventPointerMotion, X: x, Y: y})
+	h.handle(wayland.Event{Kind: wayland.EventPointerPress, X: x, Y: y})
+	if h.pointer.press == "" {
+		t.Fatal("press resolved no key")
+	}
+	h.handle(wayland.Event{Kind: wayland.EventPointerRelease, X: x, Y: y})
+	if h.pointer.press != "" {
+		t.Errorf("release left press at %q", h.pointer.press)
+	}
+}

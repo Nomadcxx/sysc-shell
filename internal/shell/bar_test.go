@@ -257,3 +257,83 @@ func TestBarArrangesSectionsInsideTheContentBand(t *testing.T) {
 		t.Fatalf("arranged %d items, want the full default bar (cpu and memory now share a group)", arranged)
 	}
 }
+
+// --- Resolved interaction state ---------------------------------------------
+
+func TestBarHoverInvalidatesOnlyOnTargetChange(t *testing.T) {
+	t.Parallel()
+	p := newTestBar(t)
+	bounds := withSyntheticAction(t, p, 1920)
+	cx, cy := bounds.X+bounds.W/2, bounds.Y+bounds.H/2
+
+	if !p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: float64(cx), Y: float64(cy)}) {
+		t.Fatal("entering a clickable capsule did not invalidate the bar")
+	}
+	if got := p.pointer.hover; got != "synthetic-action" {
+		t.Fatalf("hover = %q, want synthetic-action", got)
+	}
+	// Sliding within the same pill resolves to the same action, so it costs no
+	// frame.
+	if p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: float64(cx + 1), Y: float64(cy)}) {
+		t.Error("motion inside the hovered capsule invalidated the bar")
+	}
+	if !p.Handle(wayland.Event{Kind: wayland.EventPointerLeave}) {
+		t.Error("leaving the bar did not invalidate it")
+	}
+	if p.pointer.hover != "" || p.pointer.press != "" {
+		t.Errorf("leave left hover %q press %q", p.pointer.hover, p.pointer.press)
+	}
+}
+
+func TestBarPressAndReleaseTrackState(t *testing.T) {
+	t.Parallel()
+	p := newTestBar(t)
+	bounds := withSyntheticAction(t, p, 1920)
+	cx, cy := bounds.X+bounds.W/2, bounds.Y+bounds.H/2
+
+	p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: float64(cx), Y: float64(cy)})
+	p.Handle(wayland.Event{Kind: wayland.EventPointerPress, Button: buttonLeft})
+	if got := p.pointer.press; got != "synthetic-action" {
+		t.Fatalf("press = %q, want synthetic-action", got)
+	}
+	p.Handle(wayland.Event{Kind: wayland.EventPointerRelease, Button: buttonLeft})
+	if got := p.pointer.press; got != "" {
+		t.Errorf("release left press at %q", got)
+	}
+}
+
+func TestOnlyClickableCapsulesAnimate(t *testing.T) {
+	t.Parallel()
+	// The bar's CPU and memory display groups carry no action, so they are not
+	// chrome the pointer can light up; only actionable pills animate.
+	p := newTestBar(t)
+	withSyntheticAction(t, p, 1920)
+	root, _ := p.renderViewLocked()
+
+	clickable, display := 0, 0
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n.Kind == ui.KindCapsule {
+			if ui.Animated(n) {
+				clickable++
+			} else {
+				display++
+			}
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+	if display == 0 {
+		t.Fatal("the bar has no display-only capsules to distinguish")
+	}
+	for _, n := range root.Children {
+		if n.Kind == ui.KindCapsule && n.Action == "" && ui.Animated(n) {
+			t.Errorf("display capsule %q animates", nodeText(n))
+		}
+	}
+}

@@ -84,3 +84,14 @@ func TestValidateKeysIgnoresUnanimatedDuplicates(t *testing.T) {
 		t.Fatalf("ValidateKeys = %v, want nil", err)
 	}
 }
+
+func TestFocusablesSkipDisabledNodes(t *testing.T) {
+	t.Parallel()
+	off := &Node{Kind: KindButton, Text: "Lock", Action: "session:lock",
+		Focusable: true, State: StateDisabled}
+	on := &Node{Kind: KindButton, Text: "Log out", Action: "session:logout", Focusable: true}
+	got := Focusables(&Node{Kind: KindColumn, Children: []*Node{off, on}})
+	if len(got) != 1 || got[0] != on {
+		t.Fatalf("Focusables returned %d nodes, want only the enabled one", len(got))
+	}
+}
