@@ -3,9 +3,41 @@ package recorder
 import (
 	"strings"
 	"testing"
+	"time"
 
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
+
+func TestPanelTreeIdle(t *testing.T) {
+	t.Parallel()
+	root := PanelTree(Snapshot{Mode: Idle}, Config{}, time.Time{})
+	if err := v1.Validate(root, v1.ViewPanel); err != nil {
+		t.Fatal(err)
+	}
+	body := flatten(root)
+	if !strings.Contains(body, "Screen Recorder") || !strings.Contains(body, "Record") {
+		t.Fatalf("panel = %q", body)
+	}
+	if strings.Contains(body, "Start replay") {
+		t.Fatal("replay controls shown while disabled")
+	}
+}
+
+func TestPanelTreeReplayControls(t *testing.T) {
+	t.Parallel()
+	root := PanelTree(Snapshot{Mode: Idle}, Config{ReplayEnabled: true}, time.Time{})
+	if !strings.Contains(flatten(root), "Start replay") {
+		t.Fatal("missing replay start")
+	}
+}
+
+func TestPanelTreeElapsed(t *testing.T) {
+	t.Parallel()
+	root := PanelTree(Snapshot{Mode: Recording, Elapsed: 72 * time.Second}, Config{}, time.Time{})
+	if !strings.Contains(flatten(root), "01:12") {
+		t.Fatalf("elapsed missing: %q", flatten(root))
+	}
+}
 
 func TestBarTreeStates(t *testing.T) {
 	t.Parallel()

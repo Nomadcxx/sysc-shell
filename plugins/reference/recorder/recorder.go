@@ -29,6 +29,7 @@ type Snapshot struct {
 	Artifact string
 	Err      string
 	Logs     string
+	Elapsed  time.Duration
 }
 
 type Ownership struct {
@@ -68,10 +69,11 @@ type Recorder struct {
 	opt  Options
 	path string
 
-	mu     sync.Mutex
-	snap   Snapshot
-	own    Ownership
-	closed bool
+	mu      sync.Mutex
+	snap    Snapshot
+	own     Ownership
+	closed  bool
+	started time.Time
 
 	proc      *Proc
 	dest      string
@@ -123,7 +125,11 @@ func New(cfg Config, opt Options) *Recorder {
 func (r *Recorder) Snapshot() Snapshot {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.snap
+	s := r.snap
+	if !r.started.IsZero() {
+		s.Elapsed = r.opt.Now().Sub(r.started)
+	}
+	return s
 }
 
 func (r *Recorder) Ownership() Ownership {
@@ -434,6 +440,14 @@ func (r *Recorder) mode() Mode {
 
 func (r *Recorder) set(s Snapshot) {
 	r.mu.Lock()
+	live := s.Mode == Recording || s.Mode == ReplayActive || s.Mode == Adopted
+	wasLive := r.snap.Mode == Recording || r.snap.Mode == ReplayActive || r.snap.Mode == Adopted
+	if live && !wasLive {
+		r.started = r.opt.Now()
+	} else if !live {
+		r.started = time.Time{}
+	}
+	s.Elapsed = 0
 	r.snap = s
 	r.mu.Unlock()
 	select {
