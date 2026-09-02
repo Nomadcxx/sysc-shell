@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "id": "org.sysc.weather",
+  "name": "Weather",
+  "version": "1.0.0",
+  "protocol": {"major": 1, "minor": 0},
+  "exec": "bin/sysc-plugin-weather",
+  "capabilities": ["panels", "settings"],
+  "requires": {"commands": []},
+  "services": [{"id": "weather"}],
+  "widgets": [{"id": "bar", "settings": []}],
+  "panels": [{"id": "panel", "width": 360, "height": 520, "placement": "attached"}],
+  "settings": [
+    {"key": "enabled", "type": "bool", "label": "Enabled", "default": true},
+    {"key": "latitude", "type": "float", "label": "Latitude", "min": -90, "max": 90, "default": 0,
+      "visible_when": {"key": "enabled", "equals": true}},
+    {"key": "longitude", "type": "float", "label": "Longitude", "min": -180, "max": 180, "default": 0,
+      "visible_when": {"key": "enabled", "equals": true}},
+    {"key": "unit", "type": "select", "label": "Units", "default": "celsius",
+      "options": [{"value": "celsius", "label": "Celsius"}, {"value": "fahrenheit", "label": "Fahrenheit"}]},
+    {"key": "interval", "type": "string", "label": "Refresh interval", "default": "15m"}
+  ]
+}
