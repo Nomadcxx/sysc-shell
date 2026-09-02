@@ -196,6 +196,17 @@ Gamer-mode's freeze/kill engine stays a plugin.
 | `2026-09-02-power-panel-design.md` | design | One `session` surface: battery card, `powerprofilesctl` row, existing session actions. Right-click bar battery. IPC `power` alias. |
 | `2026-09-02-power-panel.md` | plan | Six TDD tasks: parser, LookPath gate, right-click, three-card tree, IPC alias, owner-deferred live Niri list. |
 
+## Chrome catalogue (shared buttons, pills, hover)
+
+Owner-commissioned 2026-09-02 after the live session panel mapped but painted as
+accent-filled rectangles. Design-first: one reusable chrome language, original
+SVGs, DMS/Noctalia as prior art. Not a general toolkit. Do not execute product
+code from the handover.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-02-chrome-catalogue-execution-handover.md` | execution-handover | Commissions the chrome-catalogue design and implementation plan. Receiving agent: brainstorming, then writing-plans. First consumer is the session panel. |
+
 ## Milestone 5: notifications and system tray
 
 Shell presentation is on `main`. The services this milestone consumes are tagged candidates in their
