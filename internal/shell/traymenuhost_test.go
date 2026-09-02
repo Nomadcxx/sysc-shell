@@ -248,3 +248,43 @@ func TestTrayMenuRootReplacementCloses(t *testing.T) {
 }
 
 var _ = wayland.AuxRequest{} // keep the import for the harness type
+
+// --- Resolved interaction state ---------------------------------------------
+
+func TestTrayMenuHoverInvalidatesOnlyOnRowChange(t *testing.T) {
+	_, h, key := menuHostHarness(t)
+	if !h.open(key, "eDP-1", 7, 42) {
+		t.Fatal("open refused a live item with a menu")
+	}
+	if err := h.configure(240, 200, 120); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.focus) == 0 {
+		t.Fatal("menu exposes no focusable rows")
+	}
+	b := h.focus[0].Bounds
+	x, y := float64(b.X+b.W/2), float64(b.Y+b.H/2)
+
+	if !h.handle(wayland.Event{Kind: wayland.EventPointerMotion, X: x, Y: y}) {
+		t.Error("entering a row did not invalidate the menu")
+	}
+	if h.handle(wayland.Event{Kind: wayland.EventPointerMotion, X: x + 1, Y: y}) {
+		t.Error("motion inside the hovered row invalidated the menu")
+	}
+
+	h.handle(wayland.Event{Kind: wayland.EventPointerPress, X: x, Y: y})
+	if h.pointer.press == "" {
+		t.Error("press resolved no key")
+	}
+	h.handle(wayland.Event{Kind: wayland.EventPointerRelease, X: x, Y: y})
+	if h.pointer.press != "" {
+		t.Errorf("release left press at %q", h.pointer.press)
+	}
+
+	if !h.handle(wayland.Event{Kind: wayland.EventPointerLeave}) {
+		t.Error("leaving did not invalidate the menu")
+	}
+	if h.pointer.hover != "" {
+		t.Errorf("leave left hover at %q", h.pointer.hover)
+	}
+}

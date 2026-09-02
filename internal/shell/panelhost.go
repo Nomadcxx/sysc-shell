@@ -68,17 +68,20 @@ type PanelHost struct {
 	shieldQuiet time.Time
 	// anim is this surface's one clock: every transition it runs shares it, so
 	// frames are scheduled from a single place.
-	anim           *animator
-	stopAnim       chan struct{}
-	stopOnce       sync.Once
-	theme          Theme
-	text           *render.TextRenderer
-	fontFamily     string
-	logicalW       int
-	logicalH       int
-	scale120       int
-	shift          bool
-	pressed        *ui.Node
+	anim       *animator
+	stopAnim   chan struct{}
+	stopOnce   sync.Once
+	theme      Theme
+	text       *render.TextRenderer
+	fontFamily string
+	logicalW   int
+	logicalH   int
+	scale120   int
+	shift      bool
+	pressed    *ui.Node
+	// pointer is the resolved hover/press state, kept as stable keys so it
+	// survives the tree rebuilds that replace every node.
+	pointer        interaction
 	drag           ui.Drag
 	lastAction     string
 	hoverX, hoverY int
@@ -663,6 +666,10 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	if body.W <= 0 || body.H <= 0 {
 		body = ui.Rect{W: h.place.Panel.W, H: h.place.Panel.H}
 	}
+	// Resolve the pointer state onto the tree that is about to be painted. The
+	// painter consumes an immutable mask; nothing downstream mutates state.
+	h.pointer.apply(h.root, h.anim)
+
 	style := h.theme.ProofStyle()
 	style.Scale120 = scale
 	style.Body = body
@@ -720,12 +727,15 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 				}
 				return true
 			}
-			return false
+			// Only a change of resolved target repaints. Movement inside the
+			// control the pointer is already on resolves to the same key and
+			// costs nothing.
+			return h.pointerChanged(r, h.pointer.setHover(hoverKeyAt(h.root, h.hoverX, h.hoverY)))
 		case wayland.EventPointerLeave:
 			h.pressed = nil
 			h.sliderDrag = nil
 			h.scrollDrag = nil
-			return false
+			return h.pointerChanged(r, h.pointer.clear())
 		case wayland.EventPointerPress:
 			h.hoverX, h.hoverY = int(math.Floor(e.X)), int(math.Floor(e.Y))
 			if h.id == PanelLauncher && h.launcherPointerPress(r, e) {
@@ -741,6 +751,7 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			}
 			if n := h.hitFocusable(h.hoverX, h.hoverY); n != nil {
 				h.pressed = n
+				h.pointerChanged(r, h.pointer.setPress(n.StableKey()))
 				h.setFocus(n)
 				if n.Kind == ui.KindDragSource {
 					h.drag.Begin(n, e.X, e.Y)
@@ -781,10 +792,11 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			n := h.hitFocusable(h.hoverX, h.hoverY)
 			pressed := h.pressed
 			h.pressed = nil
+			cleared := h.pointerChanged(r, h.pointer.setPress(""))
 			if n != nil && n == pressed {
 				return h.activate(r)
 			}
-			return false
+			return cleared
 		}
 		return false
 	}
@@ -1441,15 +1453,34 @@ func (h *PanelHost) stopAnimation() {
 // they all are, so an idle shell schedules nothing. A loop already running is
 // left alone: a second target change joins the clock rather than starting a
 // second ticker.
-func (r *Registry) scheduleSurfaceFrames(h *PanelHost) {
+func (r *Registry) startSurfaceFrames(h *PanelHost) {
 	if h.anim == nil || h.anim.running || h.anim.Settled() {
-		if h.anim == nil || h.anim.Settled() {
-			r.publishSurface(h.output, panelSurfaceID(h.id))
-		}
 		return
 	}
 	h.anim.running = true
 	go r.surfaceFrameLoop(h)
+}
+
+// scheduleSurfaceFrames starts the clock and, when there is nothing to animate,
+// publishes the one frame the surface still needs. Reduced motion takes that
+// second path.
+func (r *Registry) scheduleSurfaceFrames(h *PanelHost) {
+	r.startSurfaceFrames(h)
+	if h.anim == nil || h.anim.Settled() {
+		r.publishSurface(h.output, panelSurfaceID(h.id))
+	}
+}
+
+// pointerChanged aims the surface clock at a newly resolved pointer state and
+// starts frames if that put anything in flight. It reports whether the caller
+// should invalidate, so an unchanged target stays silent.
+func (h *PanelHost) pointerChanged(r *Registry, changed bool) bool {
+	if !changed {
+		return false
+	}
+	h.pointer.apply(h.root, h.anim)
+	r.startSurfaceFrames(h)
+	return true
 }
 
 func (r *Registry) surfaceFrameLoop(h *PanelHost) {

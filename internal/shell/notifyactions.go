@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -37,6 +36,9 @@ type notifyResolver struct {
 	pressX    int
 	pressY    int
 	cardWidth int
+	// pointer is the resolved hover/press state as stable keys, so a card
+	// rebuild between frames cannot leave it pointing at a freed node.
+	pointer interaction
 
 	replyID uint32 // zero when no reply is open
 }
@@ -70,6 +72,8 @@ func (r *notifyResolver) press(root *ui.Node, x, y int) {
 	r.pressed = hitAt(root, x, y)
 	r.pressX, r.pressY = x, y
 	r.cardWidth = root.Bounds.W
+	r.pointer.setPress(r.pressed.StableKey())
+	r.pointer.apply(root, nil)
 }
 
 // release matches the press. A release on the pressed node activates it; a
@@ -77,6 +81,8 @@ func (r *notifyResolver) press(root *ui.Node, x, y int) {
 func (r *notifyResolver) release(root *ui.Node, x, y int) {
 	pressed := r.pressed
 	r.pressed = nil
+	r.pointer.setPress("")
+	r.pointer.apply(root, nil)
 
 	// A horizontal drag past the threshold dismisses regardless of which node
 	// the press landed on, so swiping a button never invokes it.
@@ -192,11 +198,24 @@ func (r *notifyResolver) recordClosed(id uint32) {
 
 func (r *notifyResolver) replying() bool { return r.replyID != 0 }
 
-// hoverAt feeds presentation aggregation. It never issues a command.
-func (r *notifyResolver) hoverAt(root *ui.Node, x, y int, on bool) {
+// hoverAt feeds presentation aggregation and resolves the card's own chrome
+// state. It never issues a command. It reports whether the resolved action
+// under the pointer changed, so motion inside one button costs no frame.
+//
+// Hover lives here rather than in a second entry point: the card-level hover
+// that holds a toast open and the button-level hover that lights an action are
+// the same pointer, and splitting them let the two disagree.
+func (r *notifyResolver) hoverAt(root *ui.Node, x, y int, on bool) bool {
 	if id, ok := cardID(root); ok {
 		r.actions.hover(id, on)
 	}
+	key := ""
+	if on {
+		key = hoverKeyAt(root, x, y)
+	}
+	if !r.pointer.setHover(key) {
+		return false
+	}
+	r.pointer.apply(root, nil)
+	return true
 }
-
-var _ = fmt.Sprintf

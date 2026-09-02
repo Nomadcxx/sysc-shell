@@ -86,6 +86,12 @@ type Bar struct {
 	text  *render.TextRenderer
 	style render.ProofStyle
 
+	// pointer is the bar's resolved hover/press state as stable keys, and anim
+	// is its one clock. Only clickable capsules carry either: a CPU or memory
+	// display group has no action, so it never animates.
+	pointer interaction
+	anim    *animator
+
 	invalidations chan struct{}
 }
 
@@ -452,6 +458,9 @@ func (b *Bar) renderViewLocked() (*ui.Node, render.ProofStyle) {
 			root.Children = append(root.Children, copyNode(n))
 		}
 	}
+	// The painter consumes an immutable mask, so state is resolved onto the
+	// copy that is about to be drawn rather than onto live model state.
+	b.pointer.apply(root, b.anim)
 	return root, b.style
 }
 
@@ -540,14 +549,19 @@ func (b *Bar) Handle(event wayland.Event) bool {
 		b.hoverAt.x = int(math.Floor(event.X))
 		b.hoverAt.y = int(math.Floor(event.Y))
 		b.inside = true
+		// A bar item's action is already its stable key. Only a change of
+		// resolved target repaints; sliding along one pill costs nothing.
+		action, _ := b.hitLocked(b.hoverAt.x, b.hoverAt.y)
+		changed := b.pointer.setHover(action)
 		b.mu.Unlock()
-		return false
+		return changed
 
 	case wayland.EventPointerLeave:
 		b.inside = false
 		b.pressed = ""
+		changed := b.pointer.clear()
 		b.mu.Unlock()
-		return false
+		return changed
 
 	case wayland.EventPointerPress:
 		if !b.inside {
@@ -557,6 +571,7 @@ func (b *Bar) Handle(event wayland.Event) bool {
 		action, ok := b.hitLocked(b.hoverAt.x, b.hoverAt.y)
 		if ok {
 			b.pressed = action
+			b.pointer.setPress(action)
 		}
 		pluginFn := b.onPlugin
 		b.mu.Unlock()
@@ -571,6 +586,7 @@ func (b *Bar) Handle(event wayland.Event) bool {
 		pressed := b.pressed
 		pluginFn := b.onPlugin
 		b.pressed = ""
+		b.pointer.setPress("")
 		if pressed == "" || !b.inside {
 			b.mu.Unlock()
 			return false

@@ -198,3 +198,58 @@ func TestResolverDwellSetsHoverAndRenews(t *testing.T) {
 		t.Fatalf("hover issued %+v", hh.commands)
 	}
 }
+
+// --- Resolved interaction state ---------------------------------------------
+
+func TestResolverHoverInvalidatesOnlyOnActionChange(t *testing.T) {
+	rv := newNotifyResolver(&resolverHarness{})
+	root := cardFixture()
+
+	// The action button occupies x 0..80, y 64..88 in the fixture.
+	if !rv.hoverAt(root, 20, 70, true) {
+		t.Error("entering the action did not report a change")
+	}
+	if got := rv.pointer.hover; got != "notify:7:action:a1" {
+		t.Fatalf("hover = %q, want the action key", got)
+	}
+	if !root.Children[1].State.Has(ui.StateHovered) {
+		t.Error("the resolved tree does not mark the action hovered")
+	}
+	if rv.hoverAt(root, 30, 75, true) {
+		t.Error("motion inside the hovered action reported a change")
+	}
+
+	// Off the action, onto the card body, which carries no action of its own.
+	if !rv.hoverAt(root, 20, 20, true) {
+		t.Error("leaving the action did not report a change")
+	}
+	if root.Children[1].State.Has(ui.StateHovered) {
+		t.Error("the action stayed hovered after the pointer left it")
+	}
+	if !rv.hoverAt(root, 20, 20, false) {
+		t.Error("leaving the card did not report a change")
+	}
+	if rv.pointer.hover != "" {
+		t.Errorf("leave left hover at %q", rv.pointer.hover)
+	}
+}
+
+func TestResolverPressSetsStateAndReleaseClearsIt(t *testing.T) {
+	rv := newNotifyResolver(&resolverHarness{})
+	root := cardFixture()
+
+	rv.press(root, 20, 70)
+	if got := rv.pointer.press; got != "notify:7:action:a1" {
+		t.Fatalf("press = %q, want the action key", got)
+	}
+	if !root.Children[1].State.Has(ui.StatePressed) {
+		t.Error("the resolved tree does not mark the action pressed")
+	}
+	rv.release(root, 20, 70)
+	if rv.pointer.press != "" {
+		t.Errorf("release left press at %q", rv.pointer.press)
+	}
+	if root.Children[1].State.Has(ui.StatePressed) {
+		t.Error("the action stayed pressed after release")
+	}
+}

@@ -246,3 +246,127 @@ func animateSurface(stop <-chan struct{}, settled func() bool, publish func()) {
 		}
 	}
 }
+
+// interaction is a surface's resolved pointer state, stored as stable node keys
+// rather than node pointers. A tree rebuild replaces every node, so a pointer
+// held across one is stale by definition; a key still names the same control.
+type interaction struct {
+	hover string
+	press string
+}
+
+// setHover aims at a new hovered key and reports whether anything changed.
+// Motion inside the same control returns false, which is what stops ordinary
+// pointer movement from invalidating the surface every frame.
+func (s *interaction) setHover(key string) bool {
+	if s.hover == key {
+		return false
+	}
+	s.hover = key
+	return true
+}
+
+// setPress aims at a new pressed key and reports whether anything changed.
+func (s *interaction) setPress(key string) bool {
+	if s.press == key {
+		return false
+	}
+	s.press = key
+	return true
+}
+
+// clear drops all pointer state, as when the pointer leaves the surface.
+func (s *interaction) clear() bool {
+	changed := s.hover != "" || s.press != ""
+	s.hover, s.press = "", ""
+	return changed
+}
+
+// apply writes the resolved pointer state onto the current tree and aims the
+// surface clock at it. Selection and disabled arrive from the composer and are
+// preserved: they describe what a control is, not what the pointer is doing.
+//
+// Hosts share this so every surface resolves state the same way, and so a
+// control cannot animate on one surface but not another.
+func (s interaction) apply(root *ui.Node, anim *animator) {
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if interactive(n) {
+			key := n.StableKey()
+			hovered := key != "" && key == s.hover
+			pressed := key != "" && key == s.press
+			n.State &^= ui.StateHovered | ui.StatePressed
+			if hovered {
+				n.State |= ui.StateHovered
+			}
+			if pressed {
+				n.State |= ui.StatePressed
+			}
+			// Only chrome carries a transition. A clickable tray row resolves
+			// state so the host can react, but a display group that merely
+			// reports a number never animates.
+			if anim != nil && key != "" && ui.Animated(n) {
+				anim.Target(key, animHover, boolValue(hovered))
+				anim.Target(key, animPress, boolValue(pressed))
+				anim.Target(key, animSelect, boolValue(n.State.Has(ui.StateSelected)))
+			}
+		}
+		if n.Kind == ui.KindVirtualList && n.Item != nil {
+			for i := 0; i < n.ItemCount; i++ {
+				walk(n.Item(i))
+			}
+			return
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+}
+
+func boolValue(b bool) float64 {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// interactive reports whether the pointer resolves state onto a node. Chrome
+// always does; so does anything else the user can click, such as a tray row
+// that is an image rather than a button. A node that only reports a value --
+// the bar's CPU and memory groups -- carries no action and resolves nothing.
+func interactive(n *ui.Node) bool {
+	return ui.Animated(n) || (n != nil && n.Action != "")
+}
+
+// hoverKeyAt returns the stable key of the interactive node under a point, or ""
+// when the point is over nothing that animates. A disabled control reports no
+// key: it neither highlights nor activates.
+func hoverKeyAt(root *ui.Node, x, y int) string {
+	found := ""
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil || !n.Bounds.Contains(x, y) {
+			return
+		}
+		if interactive(n) && !n.State.Has(ui.StateDisabled) {
+			if key := n.StableKey(); key != "" {
+				found = key
+			}
+		}
+		if n.Kind == ui.KindVirtualList && n.Item != nil {
+			for i := 0; i < n.ItemCount; i++ {
+				walk(n.Item(i))
+			}
+			return
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+	return found
+}

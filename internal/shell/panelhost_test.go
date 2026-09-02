@@ -1041,3 +1041,202 @@ func editorColumn(text string, reseed uint64) *ui.Node {
 		Name: "Note", Role: "textbox",
 	}}}
 }
+
+// --- Resolved interaction state ---------------------------------------------
+
+// openSessionPanel opens the session panel and returns its host plus a live
+// event handle, laid out at a real size so hit testing has bounds to work with.
+func openSessionPanel(t *testing.T) (*Registry, *PanelHost, func(wayland.Event) bool) {
+	t.Helper()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSession, 7, Trigger{BarEdge: "top", BarZone: 40, Align: "center"}); err != nil {
+		t.Fatal(err)
+	}
+	reqs := drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelSession]
+	if h == nil {
+		t.Fatal("session panel host is missing")
+	}
+	if err := h.configure(h.place.Panel.W, h.place.Panel.H, 120); err != nil {
+		t.Fatal(err)
+	}
+	return reg, h, reqs[1].Open.Callbacks.Handle
+}
+
+// centreOfKey finds the laid-out node with a stable key and returns its centre.
+func centreOfKey(t *testing.T, root *ui.Node, key string) (float64, float64) {
+	t.Helper()
+	var found *ui.Node
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil || found != nil {
+			return
+		}
+		if ui.Animated(n) && n.StableKey() == key {
+			found = n
+			return
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+	if found == nil {
+		t.Fatalf("no animated node with key %q", key)
+	}
+	return float64(found.Bounds.X + found.Bounds.W/2), float64(found.Bounds.Y + found.Bounds.H/2)
+}
+
+// animatedKeys lists every animated node key in the tree, in traversal order.
+func animatedKeys(root *ui.Node) []string {
+	var out []string
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if ui.Animated(n) {
+			if k := n.StableKey(); k != "" {
+				out = append(out, k)
+			}
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+	return out
+}
+
+func TestPointerEnteringAControlSetsHoverOnce(t *testing.T) {
+	t.Parallel()
+	reg, h, handle := openSessionPanel(t)
+	_ = reg
+	keys := animatedKeys(h.root)
+	if len(keys) == 0 {
+		t.Fatal("session panel exposes no animated controls")
+	}
+	x, y := centreOfKey(t, h.root, keys[0])
+
+	if !handle(wayland.Event{Kind: wayland.EventPointerMotion, X: x, Y: y}) {
+		t.Fatal("entering a control did not invalidate the surface")
+	}
+	if h.pointer.hover != keys[0] {
+		t.Fatalf("hover = %q, want %q", h.pointer.hover, keys[0])
+	}
+	if !h.root.Children[0].State.Has(ui.StateHovered) && !hasHovered(h.root) {
+		t.Error("the resolved tree carries no hovered control")
+	}
+
+	// Moving inside the same control resolves to the same key, so it must not
+	// ask for another frame.
+	if handle(wayland.Event{Kind: wayland.EventPointerMotion, X: x + 1, Y: y + 1}) {
+		t.Error("motion inside the hovered control invalidated the surface")
+	}
+}
+
+func hasHovered(root *ui.Node) bool {
+	found := false
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil || found {
+			return
+		}
+		if n.State.Has(ui.StateHovered) {
+			found = true
+			return
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+	return found
+}
+
+func TestPointerLeavingClearsHoverAndPress(t *testing.T) {
+	t.Parallel()
+	_, h, handle := openSessionPanel(t)
+	keys := animatedKeys(h.root)
+	x, y := centreOfKey(t, h.root, keys[0])
+
+	handle(wayland.Event{Kind: wayland.EventPointerMotion, X: x, Y: y})
+	handle(wayland.Event{Kind: wayland.EventPointerPress, X: x, Y: y})
+	if h.pointer.press == "" {
+		t.Fatal("press did not resolve a key")
+	}
+	if !handle(wayland.Event{Kind: wayland.EventPointerLeave}) {
+		t.Error("leaving the surface did not invalidate it")
+	}
+	if h.pointer.hover != "" || h.pointer.press != "" {
+		t.Errorf("leave left hover %q and press %q", h.pointer.hover, h.pointer.press)
+	}
+	if handle(wayland.Event{Kind: wayland.EventPointerLeave}) {
+		t.Error("a second leave invalidated an already-clear surface")
+	}
+}
+
+func TestPressSetsStateAndReleaseClearsIt(t *testing.T) {
+	t.Parallel()
+	_, h, handle := openSessionPanel(t)
+	keys := animatedKeys(h.root)
+	x, y := centreOfKey(t, h.root, keys[0])
+
+	handle(wayland.Event{Kind: wayland.EventPointerMotion, X: x, Y: y})
+	handle(wayland.Event{Kind: wayland.EventPointerPress, X: x, Y: y})
+	if h.pointer.press != keys[0] {
+		t.Fatalf("press = %q, want %q", h.pointer.press, keys[0])
+	}
+	handle(wayland.Event{Kind: wayland.EventPointerRelease, X: x, Y: y})
+	if h.pointer.press != "" {
+		t.Errorf("release left press at %q", h.pointer.press)
+	}
+}
+
+func TestDisabledControlsNeitherFocusNorActivate(t *testing.T) {
+	t.Parallel()
+	_, h, _ := openSessionPanel(t)
+
+	off := &ui.Node{Kind: ui.KindButton, Text: "Lock", Action: "session:lock",
+		Focusable: true, State: ui.StateDisabled, Bounds: ui.Rect{W: 100, H: 40}}
+	h.root = &ui.Node{Kind: ui.KindColumn, Bounds: ui.Rect{W: 100, H: 40},
+		Children: []*ui.Node{off}}
+	h.focus = ui.Focusables(h.root)
+	h.roving = ui.Roving{Count: len(h.focus)}
+
+	if len(h.focus) != 0 {
+		t.Errorf("a disabled control is focusable: %d entries", len(h.focus))
+	}
+	if n := h.hitFocusable(50, 20); n != nil {
+		t.Error("a disabled control was hit-tested as activatable")
+	}
+	// It still resolves no hover key, so it cannot light up either.
+	if got := hoverKeyAt(h.root, 50, 20); got != "" {
+		t.Errorf("disabled control resolved hover key %q", got)
+	}
+}
+
+func TestReducedMotionSettlesStateWithoutAnimating(t *testing.T) {
+	t.Parallel()
+	// newPanelRegistry is already reduced-motion.
+	_, h, handle := openSessionPanel(t)
+	keys := animatedKeys(h.root)
+	x, y := centreOfKey(t, h.root, keys[0])
+
+	handle(wayland.Event{Kind: wayland.EventPointerMotion, X: x, Y: y})
+
+	// Interaction state snaps: hover reaches its target on the frame it is
+	// resolved, with no transition to schedule. The panel's own fade may still
+	// be running, which is why this asserts on the channel and not the whole
+	// animator.
+	if got := h.anim.duration(animHover, true); got != 0 {
+		t.Errorf("hover duration = %v under reduced motion, want 0", got)
+	}
+	if got := h.anim.Value(keys[0], animHover); got != 1 {
+		t.Errorf("hover value = %v, want an immediate 1", got)
+	}
+	handle(wayland.Event{Kind: wayland.EventPointerLeave})
+	if got := h.anim.Value(keys[0], animHover); got != 0 {
+		t.Errorf("hover value after leave = %v, want an immediate 0", got)
+	}
+}
