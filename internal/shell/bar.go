@@ -487,43 +487,38 @@ func (b *Bar) hitLocked(x, y int) (string, bool) {
 }
 
 // tooltipAt reports the tooltip text and bounds under a point.
-func (b *Bar) tooltipAt(x, y int) (string, ui.Rect, bool) {
+func (b *Bar) tooltipAt(x, y int) (string, *ui.Node, ui.Rect, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.tooltipAtLocked(x, y)
 }
 
-// tooltipAtLocked reports the tooltip text and bounds under a point.
-func (b *Bar) tooltipAtLocked(x, y int) (string, ui.Rect, bool) {
+func (b *Bar) tooltipAtLocked(x, y int) (string, *ui.Node, ui.Rect, bool) {
 	for _, section := range b.widgets() {
 		for _, w := range section {
-			// A group's own node covers every member, so members are tried
-			// first or the group would answer for all of them.
 			for _, m := range w.members {
-				if m.tooltip != "" && m.node.Bounds.Contains(x, y) {
-					return m.tooltip, m.node.Bounds, true
+				if (m.tooltip != "" || m.tooltipTree() != nil) && m.node.Bounds.Contains(x, y) {
+					return m.tooltip, m.tooltipTree(), m.node.Bounds, true
 				}
 			}
-			if w.tooltip != "" && w.node.Bounds.Contains(x, y) {
-				return w.tooltip, w.node.Bounds, true
+			if (w.tooltip != "" || w.tooltipTree() != nil) && w.node.Bounds.Contains(x, y) {
+				return w.tooltip, w.tooltipTree(), w.node.Bounds, true
 			}
 		}
 	}
 	for _, node := range b.trayNodes {
 		if node.Tooltip != "" && node.Bounds.Contains(x, y) {
-			return node.Tooltip, node.Bounds, true
+			return node.Tooltip, nil, node.Bounds, true
 		}
 	}
-	return "", ui.Rect{}, false
+	return "", nil, ui.Rect{}, false
 }
 
-// hoverTooltip reports the tooltip under the pointer after Handle has recorded
-// the latest coordinates.
-func (b *Bar) hoverTooltip() (string, ui.Rect, bool) {
+func (b *Bar) hoverTooltip() (string, *ui.Node, ui.Rect, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if !b.inside {
-		return "", ui.Rect{}, false
+		return "", nil, ui.Rect{}, false
 	}
 	return b.tooltipAtLocked(b.hoverAt.x, b.hoverAt.y)
 }

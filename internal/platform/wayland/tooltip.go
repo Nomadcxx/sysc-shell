@@ -19,7 +19,10 @@ type TooltipRequest struct {
 	Global uint32
 	Anchor ui.Rect
 	Text   string
-	Style  TooltipStyle
+	// Root is a structured read-only tree. When it is set the owner paints it
+	// instead of Text. Hide when both Text and Root are empty.
+	Root  *ui.Node
+	Style TooltipStyle
 }
 
 // TooltipStyle is the resolved appearance of one tooltip. The shell owns the
@@ -90,12 +93,13 @@ type tooltipSurface struct {
 	retiring []*generation
 	place    ui.Rect
 	text     string
+	root     *ui.Node
 	scale120 ui.Scale120
 	style    TooltipStyle
 }
 
 func (o *owner) handleTooltip(req TooltipRequest) {
-	if req.Text == "" {
+	if req.Text == "" && req.Root == nil {
 		o.fail(o.hideTooltip())
 		return
 	}
@@ -111,7 +115,7 @@ func (o *owner) showTooltip(req TooltipRequest) error {
 		return nil
 	}
 
-	width, height := o.measureTooltip(h, req.Text, h.bar.ss.scale120)
+	width, height := o.measureTooltip(h, req, h.bar.ss.scale120)
 	outW := h.bar.ss.logicalWidth
 	if outW <= 0 {
 		outW = int(h.modeWidth)
@@ -175,6 +179,7 @@ func (o *owner) showTooltip(req TooltipRequest) error {
 		viewport: viewport,
 		place:    place,
 		text:     req.Text,
+		root:     req.Root,
 		scale120: h.bar.ss.scale120,
 		style:    req.Style,
 	}
@@ -271,15 +276,20 @@ func (o *owner) paintTooltip(tt *tooltipSurface, pix []byte, width, height, stri
 		return err
 	}
 	style, family := o.tooltipStyle(tt)
-	root := &ui.Node{Kind: ui.KindRow, Bounds: style.Body, Children: []*ui.Node{{
-		Kind:   ui.KindText,
-		Text:   tt.text,
-		Bounds: ui.Rect{X: tooltipPad, Y: tooltipPad, W: tt.place.W - 2*tooltipPad, H: tt.place.H - 2*tooltipPad},
-	}}}
 	text := o.tooltipText(family)
 	if text == nil {
 		clear(pix)
 		return nil
+	}
+	root := tt.root
+	if root == nil {
+		root = &ui.Node{Kind: ui.KindRow, Bounds: style.Body, Children: []*ui.Node{{
+			Kind:   ui.KindText,
+			Text:   tt.text,
+			Bounds: ui.Rect{X: tooltipPad, Y: tooltipPad, W: tt.place.W - 2*tooltipPad, H: tt.place.H - 2*tooltipPad},
+		}}}
+	} else {
+		_ = ui.LayoutColumn(root, style.Body, o.tooltipMeasure(family, tt.scale120, style.Size))
 	}
 	return render.Paint(c, root, text, style)
 }
@@ -325,7 +335,63 @@ func (o *owner) tooltipText(family string) *render.TextRenderer {
 // Shaping for paint happens at the physical size, so measuring at the logical
 // one and trusting the result made a tooltip narrower than its own glyphs and
 // clipped the label. Measure physical, convert back.
-func (o *owner) measureTooltip(host *OutputHost, text string, scale ui.Scale120) (int, int) {
+func (o *owner) tooltipMeasure(family string, scale ui.Scale120, fontSize int) ui.MeasureText {
+	r := o.tooltipText(family)
+	return func(text string, tabular bool) (int, int) {
+		if r == nil {
+			return ((fontSize + 1) / 2) * len(text), fontSize
+		}
+		size := scale.Physical(fontSize)
+		if size <= 0 {
+			size = fontSize
+		}
+		w, h, err := r.Measure(text, size, tabular)
+		if err != nil {
+			return ((fontSize + 1) / 2) * len(text), fontSize
+		}
+		return scale.Logical(w), scale.Logical(h)
+	}
+}
+
+const tooltipMaxWidth = 280
+
+func (o *owner) measureTooltip(host *OutputHost, req TooltipRequest, scale ui.Scale120) (int, int) {
+	if req.Root != nil {
+		return o.measureTooltipTree(host, req.Root, scale)
+	}
+	return o.measureTooltipText(host, req.Text, scale)
+}
+
+func (o *owner) measureTooltipTree(host *OutputHost, root *ui.Node, scale ui.Scale120) (int, int) {
+	if !scale.Valid() {
+		scale = ui.ScaleUnit
+	}
+	bar := o.cfg.ForConnector(host.connector)
+	width := tooltipMaxWidth
+	if root.MaxWidth > 0 && root.MaxWidth < width {
+		width = root.MaxWidth
+	}
+	_ = ui.LayoutColumn(root, ui.Rect{W: width, H: 4096}, o.tooltipMeasure(bar.FontFamily, scale, bar.FontSize))
+	bottom := root.Padding
+	for _, c := range root.Children {
+		if c == nil {
+			continue
+		}
+		if b := c.Bounds.Y + c.Bounds.H; b > bottom {
+			bottom = b
+		}
+	}
+	height := bottom + root.Padding
+	if width < 16 {
+		width = 16
+	}
+	if height < 16 {
+		height = 16
+	}
+	return width, height
+}
+
+func (o *owner) measureTooltipText(host *OutputHost, text string, scale ui.Scale120) (int, int) {
 	if !scale.Valid() {
 		scale = ui.ScaleUnit
 	}

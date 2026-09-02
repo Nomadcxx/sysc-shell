@@ -294,7 +294,7 @@ func TestAGroupedMetricKeepsItsOwnTooltip(t *testing.T) {
 		if mid.W == 0 {
 			continue // an empty reading measures zero and cannot be hovered
 		}
-		got, _, ok := b.tooltipAtLocked(mid.X+mid.W/2, mid.Y+mid.H/2)
+		got, _, _, ok := b.tooltipAtLocked(mid.X+mid.W/2, mid.Y+mid.H/2)
 		if !ok || got != m.tooltip {
 			t.Fatalf("hover over %+v gave %q ok=%v, want %q", mid, got, ok, m.tooltip)
 		}

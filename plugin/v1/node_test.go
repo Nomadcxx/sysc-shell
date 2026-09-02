@@ -348,9 +348,24 @@ func TestTooltipViewsAreReadOnly(t *testing.T) {
 	ok := &Node{Kind: KindColumn, Children: []*Node{
 		{Kind: KindText, Text: "Timer"},
 		{Kind: KindText, Text: "04:12 remaining", Tabular: true},
+		{Kind: KindRow, Children: []*Node{
+			{Kind: KindText, Text: "Humidity"},
+			{Kind: KindText, Text: "40%", Tabular: true},
+		}},
 	}}
 	if err := Validate(ok, ViewTooltip); err != nil {
 		t.Fatalf("tooltip rejected read-only content: %v", err)
+	}
+
+	for _, n := range []*Node{
+		{Kind: KindList, Height: 40},
+		{Kind: KindDragSource, ID: "d", Name: "d", Role: "button", Events: []EventKind{EventPointer}},
+		{Kind: KindDropZone, ID: "z", Accept: []string{"zone"}, Events: []EventKind{EventDrop}},
+	} {
+		root := &Node{Kind: KindColumn, Children: []*Node{n}}
+		if err := Validate(root, ViewTooltip); err == nil {
+			t.Fatalf("tooltip accepted a %s", n.Kind)
+		}
 	}
 }
 

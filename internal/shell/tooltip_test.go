@@ -90,6 +90,61 @@ func TestMovingToAnotherWidgetReplacesThePending(t *testing.T) {
 	}
 }
 
+func TestDwellEnterRootShowsAStructuredTooltip(t *testing.T) {
+	t.Parallel()
+	d := newDwell(20 * time.Millisecond)
+	t.Cleanup(d.stop)
+	root := &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: "Humidity"},
+		{Kind: ui.KindText, Text: "40%"},
+	}}
+	d.enterRoot(2, ui.Rect{X: 8, Y: 0, W: 40, H: 44}, root, wayland.TooltipStyle{})
+	select {
+	case req := <-d.requests():
+		if req.Root == nil || req.Text != "" || req.Global != 2 {
+			t.Fatalf("request = %+v", req)
+		}
+		if req.Root.Children[0].Text != "Humidity" {
+			t.Fatalf("tree = %+v", req.Root)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no structured tooltip request")
+	}
+}
+
+func TestDwellEnterRootLeaveHides(t *testing.T) {
+	t.Parallel()
+	d := newDwell(20 * time.Millisecond)
+	t.Cleanup(d.stop)
+	d.enterRoot(1, ui.Rect{W: 10, H: 10}, &ui.Node{Kind: ui.KindColumn}, wayland.TooltipStyle{})
+	<-d.requests()
+	d.leave()
+	select {
+	case req := <-d.requests():
+		if req.Text != "" || req.Root != nil {
+			t.Fatalf("leave produced %+v, want a hide", req)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("leaving produced no hide request")
+	}
+}
+
+func TestDwellEnterRootReplacesThePendingTree(t *testing.T) {
+	t.Parallel()
+	d := newDwell(40 * time.Millisecond)
+	t.Cleanup(d.stop)
+	d.enterRoot(1, ui.Rect{W: 10, H: 10}, &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{{Kind: ui.KindText, Text: "first"}}}, wayland.TooltipStyle{})
+	d.enterRoot(1, ui.Rect{W: 10, H: 10}, &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{{Kind: ui.KindText, Text: "second"}}}, wayland.TooltipStyle{})
+	select {
+	case req := <-d.requests():
+		if req.Root == nil || req.Root.Children[0].Text != "second" {
+			t.Fatalf("request = %+v", req)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no request arrived")
+	}
+}
+
 func TestStaleDwellCallbackDoesNotShowTooltip(t *testing.T) {
 	d := newDwell(time.Hour)
 	t.Cleanup(d.stop)

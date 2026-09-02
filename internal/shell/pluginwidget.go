@@ -17,6 +17,7 @@ const pluginActionPrefix = "plugin:"
 // pluginFrame is one prepared view as the bar reads it.
 type pluginFrame struct {
 	Root     *ui.Node
+	Tooltip  *ui.Node
 	Revision uint64
 	Failed   bool
 	Label    string
@@ -56,9 +57,11 @@ func buildPluginWidget(item config.Item) textWidget {
 	applyPluginPlaceholder(row, item.Plugin, "starting")
 	rev := new(uint64)
 	*rev = ^uint64(0)
+	tip := new(*ui.Node)
 	return textWidget{
 		node:    row,
 		tooltip: item.Plugin,
+		tip:     tip,
 		refresh: func(v barView) bool {
 			frame, ok := v.Plugins[item.Instance]
 			id := uint64(0)
@@ -67,6 +70,11 @@ func buildPluginWidget(item config.Item) textWidget {
 				if frame.Failed {
 					id = ^id
 				}
+			}
+			if ok && !frame.Failed {
+				*tip = frame.Tooltip
+			} else {
+				*tip = nil
 			}
 			if id == *rev {
 				return false
@@ -129,6 +137,13 @@ func clearPluginBounds(n *ui.Node) {
 	for _, c := range n.Children {
 		clearPluginBounds(c)
 	}
+}
+
+func (w textWidget) tooltipTree() *ui.Node {
+	if w.tip == nil {
+		return nil
+	}
+	return *w.tip
 }
 
 func pointerButton(button uint32) v1.PointerButton {

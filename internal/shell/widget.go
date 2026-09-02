@@ -49,6 +49,9 @@ type textWidget struct {
 	// not set it.
 	refresh func(barView) bool
 	tooltip string
+	// tip holds a structured plugin tooltip tree. It is a pointer so refresh
+	// can replace the tree without copying the widget.
+	tip **ui.Node
 	// members are a group's contents. They are not laid out or rendered
 	// separately, but each carries its own tooltip, so a hit test descends
 	// into them.

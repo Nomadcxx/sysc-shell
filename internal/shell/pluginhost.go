@@ -362,22 +362,39 @@ func (h *pluginHost) syncBars() {
 	h.r.mu.Unlock()
 
 	h.mu.Lock()
-	have := map[string]*hostedView{}
+	haveBar := map[string]*hostedView{}
+	haveTip := map[string]*hostedView{}
 	for _, v := range h.views {
-		if v.Kind == v1.ViewBar {
-			have[barKey(v.Plugin, v.Instance, v.Output)] = v
+		key := barKey(v.Plugin, v.Instance, v.Output)
+		switch v.Kind {
+		case v1.ViewBar:
+			haveBar[key] = v
+		case v1.ViewTooltip:
+			haveTip[key] = v
 		}
 	}
 	h.mu.Unlock()
 
 	want := map[string]hostedView{}
 	for _, d := range desired {
-		want[barKey(d.Plugin, d.Instance, d.Output)] = d
-		if _, ok := have[barKey(d.Plugin, d.Instance, d.Output)]; !ok {
+		key := barKey(d.Plugin, d.Instance, d.Output)
+		want[key] = d
+		if _, ok := haveBar[key]; !ok {
 			h.openView(d)
 		}
+		if _, ok := haveTip[key]; !ok {
+			tip := d
+			tip.Kind = v1.ViewTooltip
+			tip.Width, tip.Height = 280, 200
+			h.openView(tip)
+		}
 	}
-	for key, v := range have {
+	for key, v := range haveBar {
+		if _, ok := want[key]; !ok {
+			h.closeView(v.ID)
+		}
+	}
+	for key, v := range haveTip {
 		if _, ok := want[key]; !ok {
 			h.closeView(v.ID)
 		}
@@ -441,18 +458,28 @@ func (h *pluginHost) closeView(id string) {
 
 func (h *pluginHost) frames(output string) map[string]pluginFrame {
 	out := map[string]pluginFrame{}
+	tips := map[string]*hostedView{}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, v := range h.views {
-		if v.Kind != v1.ViewBar || v.Output != output {
+		if v.Output != output {
 			continue
 		}
-		out[v.Instance] = pluginFrame{
-			Root: v.Root, Revision: v.Revision, Failed: v.Failed, Label: v.Label,
+		switch v.Kind {
+		case v1.ViewBar:
+			out[v.Instance] = pluginFrame{
+				Root: v.Root, Revision: v.Revision, Failed: v.Failed, Label: v.Label,
+			}
+		case v1.ViewTooltip:
+			tips[v.Instance] = v
 		}
 	}
-	// Enabled but not yet viewed placements still need a starting frame so
-	// the widget does not stay at the unset revision forever.
+	for inst, frame := range out {
+		if tip := tips[inst]; tip != nil && !tip.Failed {
+			frame.Tooltip = tip.Root
+			out[inst] = frame
+		}
+	}
 	return out
 }
 
@@ -469,6 +496,7 @@ func (h *pluginHost) failPlugin(id, reason string) {
 	h.mu.Unlock()
 	h.r.refreshPluginBars()
 	h.refreshPanel()
+	h.r.dwell.leave()
 }
 
 func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResult, error) {

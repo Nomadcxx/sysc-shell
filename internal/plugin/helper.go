@@ -138,6 +138,10 @@ func helperSnapshot(viewID string, view v1.ViewKind) *v1.ViewSnapshot {
 			{Kind: v1.KindButton, ID: "go", Text: "hello", Name: "Start", Role: "button",
 				Events: []v1.EventKind{v1.EventActivate, v1.EventPointer}},
 		}}
+	case v1.ViewTooltip:
+		root = &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+			{Kind: v1.KindText, Text: "hello"},
+		}}
 	default:
 		root = &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
 			{Kind: v1.KindText, Text: "hello"},

@@ -285,7 +285,7 @@ func TestPluginHostTooltipReusesTheBarPath(t *testing.T) {
 	if w.node == nil {
 		t.Fatal("no plugin widget")
 	}
-	text, _, ok := reg.bars[1].tooltipAt(w.node.Bounds.X+1, w.node.Bounds.Y+1)
+	text, _, _, ok := reg.bars[1].tooltipAt(w.node.Bounds.X+1, w.node.Bounds.Y+1)
 	if !ok || text != "org.sysc.timer" {
 		t.Fatalf("tooltip = %q ok=%v", text, ok)
 	}

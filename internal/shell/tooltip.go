@@ -44,7 +44,18 @@ func (d *dwell) enter(global uint32, anchor ui.Rect, text string, style wayland.
 		d.leave()
 		return
 	}
+	d.queue(wayland.TooltipRequest{Global: global, Anchor: anchor, Text: text, Style: style})
+}
 
+func (d *dwell) enterRoot(global uint32, anchor ui.Rect, root *ui.Node, style wayland.TooltipStyle) {
+	if root == nil {
+		d.leave()
+		return
+	}
+	d.queue(wayland.TooltipRequest{Global: global, Anchor: anchor, Root: root, Style: style})
+}
+
+func (d *dwell) queue(req wayland.TooltipRequest) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.closed {
@@ -55,7 +66,6 @@ func (d *dwell) enter(global uint32, anchor ui.Rect, text string, style wayland.
 	}
 	d.generation++
 	generation := d.generation
-	req := wayland.TooltipRequest{Global: global, Anchor: anchor, Text: text, Style: style}
 	d.timer = time.AfterFunc(d.delay, func() { d.fire(generation, req) })
 }
 

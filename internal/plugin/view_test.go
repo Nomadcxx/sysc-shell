@@ -177,6 +177,53 @@ func TestConvertEnforcesTheRootKindEachViewCanLayOut(t *testing.T) {
 	}
 }
 
+func TestConvertTooltipBuildsLabelValueRowsWithoutFocus(t *testing.T) {
+	t.Parallel()
+	root := &v1.Node{Kind: v1.KindColumn, Gap: 4, Padding: 8, MaxWidth: 280, Children: []*v1.Node{
+		{Kind: v1.KindRow, Gap: 8, Children: []*v1.Node{
+			{Kind: v1.KindText, Text: "Humidity"},
+			{Kind: v1.KindText, Key: "humidity", Text: "40%", Tabular: true},
+		}},
+		{Kind: v1.KindText, Text: "stale", Tone: v1.ToneError},
+	}}
+	got, err := Convert(root, v1.ViewTooltip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Kind != ui.KindColumn || got.MaxWidth != 280 || got.Padding != 8 {
+		t.Fatalf("root = %+v", got)
+	}
+	if got.Focusable {
+		t.Fatal("tooltip root is focusable")
+	}
+	row := got.Children[0]
+	if row.Kind != ui.KindRow || len(row.Children) != 2 || row.Children[0].Text != "Humidity" || row.Children[1].Text != "40%" {
+		t.Fatalf("row = %+v", row)
+	}
+	if row.Children[0].Focusable || row.Children[1].Focusable {
+		t.Fatal("label/value row is focusable")
+	}
+	if got.Children[1].Tone != ui.ToneError {
+		t.Fatalf("tone = %v", got.Children[1].Tone)
+	}
+}
+
+func TestConvertTooltipRejectsButtonsInputsListsAndDrag(t *testing.T) {
+	t.Parallel()
+	for _, n := range []*v1.Node{
+		{Kind: v1.KindButton, ID: "b", Text: "x", Name: "x", Role: "button", Events: []v1.EventKind{v1.EventActivate}},
+		{Kind: v1.KindTextInput, ID: "i", Name: "i", Role: "textbox", Events: []v1.EventKind{v1.EventChange}},
+		{Kind: v1.KindList, Height: 40},
+		{Kind: v1.KindDragSource, ID: "d", Name: "d", Role: "button", Events: []v1.EventKind{v1.EventPointer}},
+		{Kind: v1.KindDropZone, ID: "z", Accept: []string{"zone"}, Events: []v1.EventKind{v1.EventDrop}},
+	} {
+		root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{n}}
+		if _, err := Convert(root, v1.ViewTooltip); err == nil {
+			t.Fatalf("tooltip accepted %s", n.Kind)
+		}
+	}
+}
+
 func TestConvertCopiesEverythingItReads(t *testing.T) {
 	t.Parallel()
 

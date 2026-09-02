@@ -833,13 +833,16 @@ func (r *Registry) drivePointerTooltip(global uint32, bar *Bar, event wayland.Ev
 	case wayland.EventPointerLeave:
 		r.dwell.leave()
 	case wayland.EventPointerEnter, wayland.EventPointerMotion:
-		if text, bounds, ok := bar.hoverTooltip(); ok {
-			// The bar already resolved the accepted theme; the tooltip reuses
-			// it rather than deriving its own.
-			r.dwell.enter(global, bounds, text, wayland.TooltipStyle{
+		if text, root, bounds, ok := bar.hoverTooltip(); ok {
+			style := wayland.TooltipStyle{
 				Background: bar.theme.Background,
 				Foreground: bar.theme.Foreground,
-			})
+			}
+			if root != nil {
+				r.dwell.enterRoot(global, bounds, root, style)
+			} else {
+				r.dwell.enter(global, bounds, text, style)
+			}
 		} else {
 			r.dwell.leave()
 		}
