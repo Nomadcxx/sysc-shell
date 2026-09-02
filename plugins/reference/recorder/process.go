@@ -87,6 +87,15 @@ func (p *Proc) Logs() []byte {
 	return out
 }
 
+func (p *Proc) Done() <-chan struct{} { return p.done }
+
+func (p *Proc) Save() error {
+	p.mu.Lock()
+	pid := p.pid
+	p.mu.Unlock()
+	return syscall.Kill(pid, syscall.SIGUSR1)
+}
+
 func (p *Proc) Wait() error {
 	<-p.done
 	p.mu.Lock()
@@ -101,6 +110,7 @@ func (p *Proc) Stop(wait time.Duration) error {
 		return nil
 	}
 	pid := p.pid
+	cmd := p.cmd
 	p.mu.Unlock()
 
 	proc, err := os.FindProcess(pid)
@@ -108,6 +118,23 @@ func (p *Proc) Stop(wait time.Duration) error {
 		return err
 	}
 	_ = syscall.Kill(pid, syscall.SIGINT)
+	if cmd == nil {
+		deadline := time.Now().Add(wait)
+		for time.Now().Before(deadline) {
+			if syscall.Kill(pid, 0) != nil {
+				p.mu.Lock()
+				p.running = false
+				p.mu.Unlock()
+				return nil
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		_ = proc.Kill()
+		p.mu.Lock()
+		p.running = false
+		p.mu.Unlock()
+		return nil
+	}
 	select {
 	case <-p.done:
 		return nil

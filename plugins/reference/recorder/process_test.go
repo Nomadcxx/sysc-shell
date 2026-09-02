@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
@@ -165,6 +166,9 @@ func runFakeRecorder() int {
 	switch os.Getenv("SYSC_FAKE_BEHAVIOR") {
 	case "fail":
 		return 1
+	case "crash":
+		_, _ = os.Stdout.WriteString("ready\n")
+		return 1
 	case "flood":
 		chunk := bytes.Repeat([]byte("x"), 4096)
 		for i := 0; i < 40; i++ {
@@ -177,12 +181,45 @@ func runFakeRecorder() int {
 	}
 	ch := make(chan os.Signal, 2)
 	signal.Notify(ch, syscall.SIGINT, syscall.SIGUSR1)
+	writeRecordArtifact()
 	_, _ = os.Stdout.WriteString("ready\n")
 	for sig := range ch {
 		if sig == syscall.SIGUSR1 {
+			writeReplayArtifact()
 			continue
 		}
 		return 0
 	}
 	return 0
+}
+
+func argAfter(flag string) string {
+	args := os.Args[1:]
+	for i, a := range args {
+		if a == flag && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+func writeRecordArtifact() {
+	p := argAfter("-o")
+	if p == "" {
+		return
+	}
+	var body []byte
+	if os.Getenv("SYSC_FAKE_BEHAVIOR") != "zero" {
+		body = []byte("mp4")
+	}
+	_ = os.WriteFile(p, body, 0o644)
+}
+
+func writeReplayArtifact() {
+	dir := argAfter("-ro")
+	if dir == "" {
+		return
+	}
+	_ = os.MkdirAll(dir, 0o755)
+	_ = os.WriteFile(filepath.Join(dir, "gsr.mp4"), []byte("mp4"), 0o644)
 }
