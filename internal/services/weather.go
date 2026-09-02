@@ -2,24 +2,22 @@ package services
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
 	"os"
-	"strconv"
 	"sync"
 	"time"
+
+	"github.com/Nomadcxx/sysc-shell/weather"
 )
 
 // Unit is the temperature unit the API is asked for. The shell does not
 // convert; it requests the unit the user configured.
-type Unit uint8
+type Unit = weather.Unit
 
 const (
-	UnitCelsius Unit = iota
-	UnitFahrenheit
+	UnitCelsius    = weather.UnitCelsius
+	UnitFahrenheit = weather.UnitFahrenheit
 )
 
 // Reading is the newest observation and the state of the fetch that produced
@@ -57,11 +55,9 @@ const (
 	// maxRetryAttempts is how many quick retries precede the backoff.
 	maxRetryAttempts = 3
 	// backoffBase and backoffCap bound the persistent retry schedule.
-	backoffBase = 60 * time.Second
-	backoffCap  = 300 * time.Second
-	// maxResponseBytes caps the body. The current-weather response is a few
-	// hundred bytes; anything near this is not the API answering.
-	maxResponseBytes = 64 << 10
+	backoffBase      = 60 * time.Second
+	backoffCap       = 300 * time.Second
+	maxResponseBytes = weather.MaxResponseBytes
 )
 
 // Weather fetches the current observation on one goroutine.
@@ -86,8 +82,7 @@ type Weather struct {
 	minInterval time.Duration
 }
 
-// openMeteoEndpoint is the only remote host this shell contacts.
-const openMeteoEndpoint = "https://api.open-meteo.com/v1/forecast"
+const openMeteoEndpoint = weather.DefaultEndpoint
 
 func NewWeather(latitude, longitude float64, unit Unit) *Weather {
 	return &Weather{
@@ -225,15 +220,9 @@ func (w *Weather) requestURL() string {
 func (w *Weather) RequestURL() string { return w.requestURL() }
 
 func (w *Weather) requestURLLocked() string {
-	q := url.Values{}
-	q.Set("latitude", strconv.FormatFloat(w.latitude, 'f', -1, 64))
-	q.Set("longitude", strconv.FormatFloat(w.longitude, 'f', -1, 64))
-	q.Set("current", "temperature_2m,weather_code")
-	q.Set("timezone", "auto")
-	if w.unit == UnitFahrenheit {
-		q.Set("temperature_unit", "fahrenheit")
-	}
-	return w.endpoint + "?" + q.Encode()
+	return weather.RequestURL(w.endpoint, weather.Query{
+		Latitude: w.latitude, Longitude: w.longitude, Unit: w.unit,
+	})
 }
 
 // retryAfter is the wait before the next attempt. The first few failures
@@ -317,62 +306,23 @@ func (w *Weather) run(stop, done chan struct{}) {
 	}
 }
 
-// wireCurrent is the subset of the Open-Meteo response the bar renders.
-type wireCurrent struct {
-	Current struct {
-		Temperature *float64 `json:"temperature_2m"`
-		Code        *int     `json:"weather_code"`
-	} `json:"current"`
-}
-
-// fetch performs one request. The client carries an overall timeout and the
-// request carries a deadline, so neither a stalled connect nor a slow body can
-// outlive the budget.
 func (w *Weather) fetch() (Reading, error) {
 	w.mu.Lock()
-	reqURL := w.requestURLLocked()
+	q := weather.Query{Latitude: w.latitude, Longitude: w.longitude, Unit: w.unit, Endpoint: w.endpoint}
 	unit := w.unit
 	w.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), connectAndReadBudget)
 	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	fc, err := weather.Fetch(ctx, w.client, q)
 	if err != nil {
 		return Reading{}, err
 	}
-	resp, err := w.client.Do(req)
-	if err != nil {
-		return Reading{}, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return Reading{}, fmt.Errorf("weather: status %s", resp.Status)
-	}
-
-	// One byte past the cap distinguishes "exactly at the cap" from "longer".
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
-	if err != nil {
-		return Reading{}, err
-	}
-	if len(body) > maxResponseBytes {
-		return Reading{}, fmt.Errorf("weather: response exceeds %d bytes", maxResponseBytes)
-	}
-
-	var wire wireCurrent
-	if err := json.Unmarshal(body, &wire); err != nil {
-		return Reading{}, fmt.Errorf("weather: decode: %w", err)
-	}
-	if wire.Current.Temperature == nil || wire.Current.Code == nil {
-		return Reading{}, fmt.Errorf("weather: response carries no current observation")
-	}
-
 	return Reading{
 		Observed:    true,
-		Temperature: *wire.Current.Temperature,
+		Temperature: fc.Current.Temperature,
 		Unit:        unit,
-		Code:        *wire.Current.Code,
+		Code:        fc.Current.Code,
 		FetchedAt:   time.Now(),
 	}, nil
 }
