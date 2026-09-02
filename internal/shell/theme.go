@@ -144,8 +144,9 @@ func applyTokens(t *Theme, tok theme.Tokens) {
 // surface -- scale, body, and attach edge.
 func (t Theme) ProofStyle() render.ProofStyle {
 	return render.ProofStyle{
-		Size:   t.TextSize,
-		Radius: t.Radius,
+		Size:       t.TextSize,
+		Radius:     t.Radius,
+		CardRadius: t.CardRadius,
 
 		Background: t.Surface,
 		Foreground: t.OnSurface,

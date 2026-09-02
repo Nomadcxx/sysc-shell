@@ -26,7 +26,7 @@ func sessionTree(h *PanelHost, snap services.Snapshot, locker string) *ui.Node {
 	if h.profilesOK && len(h.profiles) > 0 {
 		children = append(children, sessionProfileCard(h))
 	}
-	children = append(children, sessionActionsCard(locker))
+	children = append(children, sessionActionsCard(h.theme, locker))
 	return &ui.Node{Kind: ui.KindColumn, Gap: monitorCardGap, Padding: monitorPanelPadding, Children: children}
 }
 
@@ -40,7 +40,10 @@ func sessionBatteryCard(b *metrics.BatterySnapshot) *ui.Node {
 		monitorCardTitle("Battery", 0),
 		{Kind: ui.KindRow, Gap: 8, Children: []*ui.Node{
 			{Kind: ui.KindText, Text: glyph},
-			{Kind: ui.KindText, Text: fmt.Sprintf("%.0f%%", b.Charge*100), Tabular: true},
+			// Reserve the width of a full charge so the meter and the rows
+			// below it do not shift when the figure reaches three digits.
+			{Kind: ui.KindText, Text: fmt.Sprintf("%.0f%%", b.Charge*100),
+				Tabular: true, MinWidthText: "100%"},
 		}},
 		{Kind: ui.KindMeter, Value: b.Charge, Max: 1},
 		{Kind: ui.KindText, Text: batteryStateLabel(b.State)},
@@ -69,38 +72,115 @@ func batteryStateLabel(s metrics.BatteryState) string {
 	}
 }
 
+// Profile segments carry an 18 px glyph and session actions a 20 px one, per
+// the asset contract. The sizes differ because a segment shares its row with
+// two others and an action owns the full card width.
+const (
+	sessionProfileIconSize = 18
+	sessionActionIconSize  = 20
+	// The segmented row's budget is tight and fixed: a 420 px panel less the
+	// panel and card padding leaves 364 px for three segments. The widest
+	// label measures 88 px, so an 18 px glyph, its gap, and the label come to
+	// 110 px, and the gap and padding below are what leave room for that.
+	// TestProfileRowIsOneSegmentedControlThatFitsEveryLabel holds the line.
+	sessionSegmentGap = 2
+	// sessionSegmentContentGap separates a segment's glyph from its label.
+	sessionSegmentContentGap = 4
+	// sessionSegmentPadding is tighter than a full-width action's padding:
+	// three labels share one card and every one of them has to fit.
+	sessionSegmentPadding = 4
+)
+
+// sessionProfileIcon maps a power profile to its Material glyph. An unknown
+// profile gets no icon rather than a wrong one; its label still names it.
+func sessionProfileIcon(name string) string {
+	switch name {
+	case "performance":
+		return "speed"
+	case "balanced":
+		return "balance"
+	case "power-saver":
+		return "energy_savings_leaf"
+	}
+	return ""
+}
+
 func sessionProfileCard(h *PanelHost) *ui.Node {
-	tabs := make([]*ui.Node, 0, len(h.profiles))
+	segments := make([]*ui.Node, 0, len(h.profiles))
 	for _, name := range h.profiles {
-		tabs = append(tabs, &ui.Node{
-			Kind: ui.KindButton, Text: powerProfileLabel(name), Action: "profile:" + name,
-			Name: powerProfileLabel(name), Role: "tab", Focusable: true, Bold: name == h.profileActive,
-		})
+		label := powerProfileLabel(name)
+		selected := name == h.profileActive
+
+		// The check replaces the profile's own glyph on the active segment.
+		// The label always stays, so a segment is never identified by icon
+		// alone and the row reads the same with or without icons.
+		icon := sessionProfileIcon(name)
+		if selected {
+			icon = "check"
+		}
+		content := make([]*ui.Node, 0, 2)
+		if icon != "" {
+			content = append(content, &ui.Node{
+				Kind: ui.KindIcon, Icon: icon, IconSize: sessionProfileIconSize,
+			})
+		}
+		content = append(content, &ui.Node{Kind: ui.KindText, Text: label})
+
+		segment := &ui.Node{
+			Kind: ui.KindButton, Action: "profile:" + name,
+			Name: label, Role: "tab", Focusable: true,
+			Gap: sessionSegmentContentGap, Padding: sessionSegmentPadding,
+			Height: h.theme.ControlHeight, Children: content,
+		}
+		if selected {
+			segment.State |= ui.StateSelected
+		}
+		segments = append(segments, segment)
 	}
 	return monitorCard([]*ui.Node{
 		monitorCardTitle("Power profile", 0),
-		{Kind: ui.KindRow, Gap: 8, Children: tabs},
+		{
+			Kind: ui.KindSegmented, Key: "power-profiles", Gap: sessionSegmentGap,
+			Height: h.theme.ControlHeight, Children: segments,
+		},
 	})
 }
 
-func sessionActionsCard(locker string) *ui.Node {
-	type action struct{ name, id string }
+func sessionActionsCard(theme Theme, locker string) *ui.Node {
+	// destructive marks the two actions that end the session without warning.
+	// They take the error-toned outline from the catalogue rather than a solid
+	// red block: a permanent red slab reads as an alarm, not as a control.
+	type action struct {
+		name, id, icon string
+		destructive    bool
+	}
 	acts := []action{
-		{"Lock", "session-lock"},
-		{"Log out", "session-logout"},
-		{"Suspend", "session-suspend"},
-		{"Reboot", "session-reboot"},
-		{"Power off", "session-poweroff"},
+		{name: "Lock", id: "session-lock", icon: "lock"},
+		{name: "Log out", id: "session-logout", icon: "logout"},
+		{name: "Suspend", id: "session-suspend", icon: "bedtime"},
+		{name: "Reboot", id: "session-reboot", icon: "restart_alt", destructive: true},
+		{name: "Power off", id: "session-poweroff", icon: "power_settings_new", destructive: true},
 	}
 	if locker == "" {
 		acts = acts[1:]
 	}
 	rows := []*ui.Node{monitorCardTitle("Session", 0)}
 	for _, a := range acts {
-		rows = append(rows, &ui.Node{
-			Kind: ui.KindButton, Text: a.name, Action: a.id,
+		node := &ui.Node{
+			Kind: ui.KindButton, Action: a.id,
 			Name: a.name, Role: "button", Focusable: true,
-		})
+			Gap: theme.ButtonPadding / 2, Padding: theme.ButtonPadding,
+			Height: theme.ControlHeight,
+			Children: []*ui.Node{
+				{Kind: ui.KindIcon, Icon: a.icon, IconSize: sessionActionIconSize},
+				{Kind: ui.KindText, Text: a.name},
+			},
+		}
+		if a.destructive {
+			node.Fill = ui.FillOutline
+			node.Tone = ui.ToneError
+		}
+		rows = append(rows, node)
 	}
 	return monitorCard(rows)
 }

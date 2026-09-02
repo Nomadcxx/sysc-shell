@@ -54,6 +54,9 @@ type ProofStyle struct {
 	// quieter divider.
 	Outline        Color
 	OutlineVariant Color
+	// CardRadius is the corner a panel card keeps. Zero falls back to Radius,
+	// which is what a bar pill uses.
+	CardRadius int
 
 	// Toggled swaps the accent used by the meter fill and the button.
 	Toggled bool
@@ -191,7 +194,11 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 		// background: same fill resolution, same state layers, differing only
 		// in radius. A capsule with no explicit Radius stays a stadium, so an
 		// empty dot is a circle; a card sets the theme's card radius.
-		return paintChrome(c, n, text, style, size, style.Capsule, style.Radius)
+		radius := style.Radius
+		if n.Fill == ui.FillContainerHigh && style.CardRadius > 0 {
+			radius = style.CardRadius
+		}
+		return paintChrome(c, n, text, style, size, style.Capsule, radius)
 
 	case ui.KindGraph:
 		return paintGraph(c, n, style.Scale120.PhysicalRect(n.Bounds), style)

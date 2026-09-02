@@ -2,6 +2,7 @@ package shell
 
 import (
 	"errors"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"os/exec"
 	"reflect"
 	"slices"
@@ -297,8 +298,11 @@ func headingNamed(n *ui.Node, name string) bool {
 	return false
 }
 
+// hasToneError reports whether an error *message* is in the tree. Reboot and
+// Power off are permanently error-toned outlines, so the tone alone no longer
+// distinguishes a failure; only a text node carrying it does.
 func hasToneError(n *ui.Node) bool {
-	if n.Tone == ui.ToneError {
+	if n.Kind == ui.KindText && n.Tone == ui.ToneError {
 		return true
 	}
 	for _, c := range n.Children {
@@ -355,5 +359,312 @@ func waitProfileTabNames(t *testing.T, reg *Registry, want ...string) {
 			t.Fatalf("tabs = %v, want %v", names, want)
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// --- Catalogue composition at the real panel width --------------------------
+
+// layoutSession lays the session tree out at the real 420 px panel width, so
+// every assertion below is about the panel the user actually sees.
+func layoutSession(t *testing.T, reg *Registry, h *PanelHost) {
+	t.Helper()
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	reg.rebuildPanel(h)
+	size := panelTargetSize(PanelSession)
+	if err := h.configure(size.W, size.H, int(ui.ScaleUnit)); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.place.Panel.W; got != 420 {
+		t.Fatalf("session panel width = %d, want 420", got)
+	}
+}
+
+// findNode returns the first node matching a predicate, depth first.
+func findNode(n *ui.Node, match func(*ui.Node) bool) *ui.Node {
+	if n == nil {
+		return nil
+	}
+	if match(n) {
+		return n
+	}
+	for _, c := range n.Children {
+		if got := findNode(c, match); got != nil {
+			return got
+		}
+	}
+	return nil
+}
+
+func findByName(n *ui.Node, name string) *ui.Node {
+	return findNode(n, func(c *ui.Node) bool { return c.Name == name })
+}
+
+func sessionWithProfiles(t *testing.T) (*Registry, *PanelHost) {
+	t.Helper()
+	reg, h := newSessionHost(t, "swaylock")
+	reg.mu.Lock()
+	h.profilesOK = true
+	h.profiles = []string{"power-saver", "balanced", "performance"}
+	h.profileActive = "balanced"
+	reg.mu.Unlock()
+	layoutSession(t, reg, h)
+	return reg, h
+}
+
+func TestSessionKeepsThreeDistinctHighContainerCards(t *testing.T) {
+	t.Parallel()
+	reg, h := sessionWithProfiles(t)
+	reg.UpdateMetrics(services.Snapshot{Battery: &metrics.BatterySnapshot{
+		Present: true, ChargeValid: true, Charge: 0.42, State: metrics.BatteryDischarging,
+	}})
+	layoutSession(t, reg, h)
+
+	var cards []*ui.Node
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n.Kind == ui.KindCapsule && n.Fill == ui.FillContainerHigh {
+			cards = append(cards, n)
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(h.root)
+	if len(cards) != 3 {
+		t.Fatalf("session shows %d high-container cards, want Battery, Power profile and Session", len(cards))
+	}
+	for _, name := range []string{"Battery", "Power profile", "Session"} {
+		if !headingNamed(h.root, name) {
+			t.Errorf("card %q is missing", name)
+		}
+	}
+}
+
+func TestBatteryPercentageReservesRoomForFullCharge(t *testing.T) {
+	t.Parallel()
+	reg, h := sessionWithProfiles(t)
+	reg.UpdateMetrics(services.Snapshot{Battery: &metrics.BatterySnapshot{
+		Present: true, ChargeValid: true, Charge: 0.42, State: metrics.BatteryDischarging,
+	}})
+	layoutSession(t, reg, h)
+	low := findNode(h.root, func(n *ui.Node) bool { return n.Text == "42%" })
+	if low == nil {
+		t.Fatal("no battery percentage in the tree")
+	}
+	if low.MinWidthText != "100%" {
+		t.Errorf("percentage reserves %q, want 100%%", low.MinWidthText)
+	}
+	lowWidth := low.Bounds.W
+
+	reg.UpdateMetrics(services.Snapshot{Battery: &metrics.BatterySnapshot{
+		Present: true, ChargeValid: true, Charge: 1, State: metrics.BatteryFull,
+	}})
+	layoutSession(t, reg, h)
+	full := findNode(h.root, func(n *ui.Node) bool { return n.Text == "100%" })
+	if full == nil {
+		t.Fatal("no full-charge percentage in the tree")
+	}
+	// Reaching three digits must not widen the figure, or the rows beside it
+	// shift as the battery drains.
+	if full.Bounds.W != lowWidth {
+		t.Errorf("percentage width changed from %d to %d between 42%% and 100%%", lowWidth, full.Bounds.W)
+	}
+}
+
+func TestProfileRowIsOneSegmentedControlThatFitsEveryLabel(t *testing.T) {
+	t.Parallel()
+	_, h := sessionWithProfiles(t)
+
+	row := findNode(h.root, func(n *ui.Node) bool { return n.Kind == ui.KindSegmented })
+	if row == nil {
+		t.Fatal("the power profile row is not a segmented control")
+	}
+	if len(row.Children) != 3 {
+		t.Fatalf("segmented row has %d children, want 3", len(row.Children))
+	}
+
+	selected := 0
+	widths := map[int]bool{}
+	for _, seg := range row.Children {
+		widths[seg.Bounds.W] = true
+		if seg.State.Has(ui.StateSelected) {
+			selected++
+			if seg.Name != "Balanced" {
+				t.Errorf("selected segment is %q, want the active Balanced", seg.Name)
+			}
+		}
+		// Every label has to fit at 420 px, Balanced included.
+		label := findNode(seg, func(n *ui.Node) bool { return n.Kind == ui.KindText })
+		if label == nil {
+			t.Fatalf("segment %q lost its label", seg.Name)
+		}
+		if label.Bounds.W <= 0 || label.Bounds.X < seg.Bounds.X ||
+			label.Bounds.X+label.Bounds.W > seg.Bounds.X+seg.Bounds.W {
+			t.Errorf("segment %q label clips: label %+v in %+v", seg.Name, label.Bounds, seg.Bounds)
+		}
+	}
+	if selected != 1 {
+		t.Errorf("%d segments are selected, want exactly the active one", selected)
+	}
+	// Equal allocation: at most a one-pixel remainder separates the widths.
+	if len(widths) > 2 {
+		t.Errorf("segment widths are not equal: %v", widths)
+	}
+}
+
+func TestSelectedProfileSwapsItsIconForACheckAndKeepsItsLabel(t *testing.T) {
+	t.Parallel()
+	_, h := sessionWithProfiles(t)
+	row := findNode(h.root, func(n *ui.Node) bool { return n.Kind == ui.KindSegmented })
+
+	for _, seg := range row.Children {
+		icon := findNode(seg, func(n *ui.Node) bool { return n.Kind == ui.KindIcon })
+		if icon == nil {
+			t.Fatalf("segment %q has no icon", seg.Name)
+		}
+		if got := icon.IconSize; got != sessionProfileIconSize {
+			t.Errorf("segment %q icon is %d px, want %d", seg.Name, got, sessionProfileIconSize)
+		}
+		want := sessionProfileIcon(strings.ToLower(strings.ReplaceAll(seg.Name, " ", "-")))
+		if seg.State.Has(ui.StateSelected) {
+			want = "check"
+		}
+		if icon.Icon != want {
+			t.Errorf("segment %q icon = %q, want %q", seg.Name, icon.Icon, want)
+		}
+		// The check replaces the glyph, never the label.
+		if findNode(seg, func(n *ui.Node) bool { return n.Text == seg.Name }) == nil {
+			t.Errorf("segment %q lost its label", seg.Name)
+		}
+	}
+}
+
+func TestProfileCardIsAbsentWithoutPowerProfilesctl(t *testing.T) {
+	t.Parallel()
+	reg, h := newSessionHost(t, "swaylock")
+	layoutSession(t, reg, h)
+
+	if headingNamed(h.root, "Power profile") {
+		t.Error("the power profile card is present without powerprofilesctl")
+	}
+	if findNode(h.root, func(n *ui.Node) bool { return n.Kind == ui.KindSegmented }) != nil {
+		t.Error("a segmented control survived without any profiles")
+	}
+}
+
+func TestSessionActionsAreFullWidthIconStadiums(t *testing.T) {
+	t.Parallel()
+	_, h := sessionWithProfiles(t)
+
+	icons := map[string]string{
+		"Lock": "lock", "Log out": "logout", "Suspend": "bedtime",
+		"Reboot": "restart_alt", "Power off": "power_settings_new",
+	}
+	var width int
+	for name, want := range icons {
+		node := findByName(h.root, name)
+		if node == nil {
+			t.Fatalf("action %q is missing", name)
+		}
+		if node.Bounds.H != 40 {
+			t.Errorf("action %q is %d px high, want 40", name, node.Bounds.H)
+		}
+		icon := findNode(node, func(n *ui.Node) bool { return n.Kind == ui.KindIcon })
+		if icon == nil || icon.Icon != want {
+			t.Errorf("action %q icon = %v, want %q", name, icon, want)
+		} else if icon.IconSize != sessionActionIconSize {
+			t.Errorf("action %q icon is %d px, want %d", name, icon.IconSize, sessionActionIconSize)
+		}
+		if !render.ValidMaterialIcon(want) {
+			t.Errorf("action %q names %q, which is outside the embedded subset", name, want)
+		}
+		// Every action spans the same full card width.
+		if width == 0 {
+			width = node.Bounds.W
+		} else if node.Bounds.W != width {
+			t.Errorf("action %q is %d px wide, want the full %d", name, node.Bounds.W, width)
+		}
+	}
+}
+
+func TestLockIsAbsentWithoutALocker(t *testing.T) {
+	t.Parallel()
+	reg, h := newSessionHost(t, "")
+	layoutSession(t, reg, h)
+	if findByName(h.root, "Lock") != nil {
+		t.Error("Lock is offered with no configured locker")
+	}
+	for _, name := range []string{"Log out", "Suspend", "Reboot", "Power off"} {
+		if findByName(h.root, name) == nil {
+			t.Errorf("action %q disappeared with the locker", name)
+		}
+	}
+}
+
+func TestRebootAndPowerOffAreErrorTonedOutlines(t *testing.T) {
+	t.Parallel()
+	_, h := sessionWithProfiles(t)
+
+	for _, name := range []string{"Reboot", "Power off"} {
+		node := findByName(h.root, name)
+		if node == nil {
+			t.Fatalf("action %q is missing", name)
+		}
+		if node.Fill != ui.FillOutline {
+			t.Errorf("%q uses fill %d, want the outline treatment", name, node.Fill)
+		}
+		if node.Tone != ui.ToneError {
+			t.Errorf("%q is not error-toned", name)
+		}
+		if node.Fill == ui.FillError {
+			t.Errorf("%q is a solid red block", name)
+		}
+	}
+	// The ordinary actions stay ordinary.
+	for _, name := range []string{"Lock", "Log out", "Suspend"} {
+		node := findByName(h.root, name)
+		if node == nil {
+			t.Fatalf("action %q is missing", name)
+		}
+		if node.Fill != ui.FillNone || node.Tone == ui.ToneError {
+			t.Errorf("%q picked up destructive treatment: fill %d tone %d", name, node.Fill, node.Tone)
+		}
+	}
+}
+
+func TestSessionActionIdentityIsUnchanged(t *testing.T) {
+	t.Parallel()
+	_, h := sessionWithProfiles(t)
+
+	// The action IDs and the argv they map to are contracts with the IPC alias
+	// and the key binding. Recomposing the panel must not touch either.
+	want := map[string][]string{
+		"session-lock":     {"swaylock"},
+		"session-logout":   {"loginctl", "terminate-session", "self"},
+		"session-suspend":  {"loginctl", "suspend"},
+		"session-reboot":   {"loginctl", "reboot"},
+		"session-poweroff": {"loginctl", "poweroff"},
+	}
+	for id, argv := range want {
+		node := findNode(h.root, func(n *ui.Node) bool { return n.Action == id })
+		if node == nil {
+			t.Errorf("action id %q is no longer in the tree", id)
+			continue
+		}
+		got := sessionArgv(id, "swaylock")
+		if len(got) != len(argv) {
+			t.Errorf("%s argv = %v, want %v", id, got, argv)
+			continue
+		}
+		for i := range argv {
+			if got[i] != argv[i] {
+				t.Errorf("%s argv = %v, want %v", id, got, argv)
+				break
+			}
+		}
 	}
 }

@@ -319,9 +319,11 @@ func monitorCapacityRow(label string, used, total uint64) *ui.Node {
 
 // monitorCard wraps content in the same capsule the bar uses, so a panel card
 // and a bar widget are visibly the same surface.
+// monitorCard is a panel card: a capsule that declares the high container role
+// and keeps the theme's card radius rather than clamping to a stadium.
 func monitorCard(rows []*ui.Node) *ui.Node {
 	return &ui.Node{
-		Kind: ui.KindCapsule, Padding: monitorCardPadding,
+		Kind: ui.KindCapsule, Padding: monitorCardPadding, Fill: ui.FillContainerHigh,
 		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: 4, Children: rows}},
 	}
 }
