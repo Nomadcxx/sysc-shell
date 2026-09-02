@@ -194,7 +194,7 @@ type Config struct {
 var knownItems = map[string]struct{}{
 	"clock": {}, "workspace": {}, "window-title": {},
 	"cpu": {}, "memory": {}, "filesystem": {}, "block": {}, "network": {},
-	"weather": {}, "battery": {},
+	"weather": {}, "battery": {}, "notifications": {},
 	// group holds other items inside one capsule. It carries no options of
 	// its own; every option belongs to a nested item.
 	"group": {},
@@ -284,6 +284,7 @@ func Default() Config {
 					{ID: "memory", Display: "text", Interval: defaultMetricInterval},
 				}},
 				{ID: "battery", Interval: defaultMetricInterval},
+				{ID: "notifications"},
 			},
 		},
 		Theme: Theme{Radius: 12},
