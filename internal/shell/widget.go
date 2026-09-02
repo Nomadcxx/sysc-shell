@@ -139,7 +139,7 @@ func capsuled(w textWidget, pad int) textWidget {
 		return w
 	}
 	w.inner = w.node
-	w.node = &ui.Node{Kind: ui.KindCapsule, Padding: pad, Children: []*ui.Node{w.inner}}
+	w.node = &ui.Node{Kind: ui.KindCapsule, Padding: pad, Action: w.inner.Action, Children: []*ui.Node{w.inner}}
 	return w
 }
 

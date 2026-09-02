@@ -53,7 +53,6 @@ type Bar struct {
 	trayAvailable int
 	onTray        func(tray.ItemKey, trayArrangement, ui.Rect, wayland.Event) bool
 	onAction      func(action string, button uint32) bool
-	pressedButton uint32
 
 	// conn is the connector this bar renders for. It selects configuration and
 	// joins Niri state; it is never this bar's identity, which is its Wayland
@@ -548,7 +547,6 @@ func (b *Bar) Handle(event wayland.Event) bool {
 	case wayland.EventPointerLeave:
 		b.inside = false
 		b.pressed = ""
-		b.pressedButton = 0
 		b.mu.Unlock()
 		return false
 
@@ -560,7 +558,6 @@ func (b *Bar) Handle(event wayland.Event) bool {
 		action, ok := b.hitLocked(b.hoverAt.x, b.hoverAt.y)
 		if ok {
 			b.pressed = action
-			b.pressedButton = event.Button
 		}
 		b.mu.Unlock()
 		return false
@@ -568,7 +565,6 @@ func (b *Bar) Handle(event wayland.Event) bool {
 	case wayland.EventPointerRelease:
 		pressed := b.pressed
 		b.pressed = ""
-		b.pressedButton = 0
 		if pressed == "" || !b.inside {
 			b.mu.Unlock()
 			return false

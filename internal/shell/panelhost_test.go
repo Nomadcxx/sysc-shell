@@ -177,6 +177,52 @@ func TestRightClickingTheBarBatteryOpensSession(t *testing.T) {
 	}
 }
 
+func TestRightClickingBatteryCapsulePaddingOpensSession(t *testing.T) {
+	reg := newPanelRegistry(t)
+	cb, err := reg.NewHost(7, "eDP-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cb.Configure(1536, 44, 120); err != nil {
+		t.Fatal(err)
+	}
+	reg.UpdateMetrics(services.Snapshot{Battery: &metrics.BatterySnapshot{
+		Present: true, Charge: 0.84, ChargeValid: true, State: metrics.BatteryDischarging,
+	}})
+	bar := reg.bars[7]
+	if err := bar.Layout(1536, 44); err != nil {
+		t.Fatal(err)
+	}
+	capsule, inner, ok := batteryCapsuleAndInner(bar)
+	if !ok {
+		t.Fatal("default bar has no laid-out battery")
+	}
+	x, y := capsule.X, capsule.Y+capsule.H/2
+	if !capsule.Contains(x, y) || inner.Contains(x, y) {
+		t.Fatalf("no padding point: capsule=%+v inner=%+v at %d,%d", capsule, inner, x, y)
+	}
+	drainAuxQueue(reg)
+	if !clickButton(bar, x, y, buttonRight) {
+		t.Fatal("right-click on battery capsule padding did not activate")
+	}
+	reqs := drainAux(t, reg, 2)
+	if !strings.HasPrefix(reqs[1].Open.ID, "panel:session") {
+		t.Fatalf("opened %q, want session", reqs[1].Open.ID)
+	}
+}
+
+func batteryCapsuleAndInner(b *Bar) (capsule, inner ui.Rect, ok bool) {
+	for _, section := range b.widgets() {
+		for _, w := range section {
+			if w.inner != nil && w.inner.Action == panelSessionAction && w.node != nil &&
+				w.node.Bounds.W > 0 && w.inner.Bounds.W > 0 {
+				return w.node.Bounds, w.inner.Bounds, true
+			}
+		}
+	}
+	return ui.Rect{}, ui.Rect{}, false
+}
+
 func batteryClickTarget(b *Bar) (ui.Rect, bool) {
 	for _, section := range b.widgets() {
 		for _, w := range section {
