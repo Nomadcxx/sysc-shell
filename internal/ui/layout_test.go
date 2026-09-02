@@ -74,6 +74,66 @@ func TestLayoutSizesButtonWithHorizontalPadding(t *testing.T) {
 	}
 }
 
+func TestButtonLaysOutIconAndTextContent(t *testing.T) {
+	t.Parallel()
+	button := &Node{
+		Kind: KindButton, Height: 40, Padding: 12, Gap: 8,
+		Children: []*Node{
+			{Kind: KindIcon, Icon: "lock"},
+			{Kind: KindText, Text: "Lock"},
+		},
+	}
+	root := &Node{Kind: KindRow, Children: []*Node{button}}
+	if err := Layout(root, Rect{W: 200, H: 40}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := button.Bounds, (Rect{W: 84, H: 40}); got != want {
+		t.Fatalf("button bounds = %+v, want %+v", got, want)
+	}
+	if got, want := button.Children[0].Bounds, (Rect{X: 12, Y: 10, W: 20, H: 20}); got != want {
+		t.Errorf("icon bounds = %+v, want %+v", got, want)
+	}
+	if got, want := button.Children[1].Bounds, (Rect{X: 40, Y: 12, W: 32, H: 16}); got != want {
+		t.Errorf("label bounds = %+v, want %+v", got, want)
+	}
+}
+
+func TestCompactIconButtonIsSquare(t *testing.T) {
+	t.Parallel()
+	button := &Node{
+		Kind: KindButton, Width: 32, Height: 32, Padding: 6,
+		Children: []*Node{{Kind: KindIcon, Icon: "chevron_left"}},
+	}
+	root := &Node{Kind: KindRow, Children: []*Node{button}}
+	if err := Layout(root, Rect{W: 32, H: 32}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	if button.Bounds.W != 32 || button.Bounds.H != 32 {
+		t.Fatalf("compact button = %+v, want 32x32", button.Bounds)
+	}
+}
+
+func TestNodeStableKeyPrefersExplicitKeyThenAction(t *testing.T) {
+	t.Parallel()
+	if got := (&Node{Key: "profile", Action: "activate"}).StableKey(); got != "profile" {
+		t.Fatalf("explicit stable key = %q, want profile", got)
+	}
+	if got := (&Node{Action: "activate"}).StableKey(); got != "activate" {
+		t.Fatalf("action stable key = %q, want activate", got)
+	}
+	if got := (*Node)(nil).StableKey(); got != "" {
+		t.Fatalf("nil stable key = %q, want empty", got)
+	}
+}
+
+func TestInteractionMaskKeepsIndependentStates(t *testing.T) {
+	t.Parallel()
+	state := StateHovered | StateSelected
+	if !state.Has(StateHovered) || !state.Has(StateSelected) || state.Has(StatePressed) {
+		t.Fatalf("state mask = %08b", state)
+	}
+}
+
 func TestLayoutRejectsInvalidInput(t *testing.T) {
 	t.Parallel()
 
