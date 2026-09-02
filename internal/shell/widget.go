@@ -210,7 +210,7 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 			}
 			out = append(out, g)
 		case "battery":
-			node := &ui.Node{Kind: ui.KindText}
+			node := &ui.Node{Kind: ui.KindText, Action: panelSessionAction}
 			out = append(out, textWidget{
 				node:    node,
 				tooltip: "Battery",

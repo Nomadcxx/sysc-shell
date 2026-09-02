@@ -5,8 +5,12 @@ import (
 	"testing"
 	"time"
 
+	metrics "github.com/Nomadcxx/sysc-metrics"
+
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 func TestPanelHostRenderPaintsClockText(t *testing.T) {
@@ -137,6 +141,71 @@ func TestRevealAnimationInvalidatesUntilDone(t *testing.T) {
 	}
 	if got := countSurfaceInvalidations(quiet, 50*time.Millisecond); got != 1 {
 		t.Fatalf("reduced motion produced %d invalidations, want 1", got)
+	}
+}
+
+func TestRightClickingTheBarBatteryOpensSession(t *testing.T) {
+	reg := newPanelRegistry(t)
+	cb, err := reg.NewHost(7, "eDP-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cb.Configure(1536, 44, 120); err != nil {
+		t.Fatal(err)
+	}
+	reg.UpdateMetrics(services.Snapshot{Battery: &metrics.BatterySnapshot{
+		Present: true, Charge: 0.84, ChargeValid: true, State: metrics.BatteryDischarging,
+	}})
+	bar := reg.bars[7]
+	if err := bar.Layout(1536, 44); err != nil {
+		t.Fatal(err)
+	}
+	target, ok := batteryClickTarget(bar)
+	if !ok {
+		t.Fatal("default bar has no laid-out battery")
+	}
+	drainAuxQueue(reg)
+	if click(bar, target.X+target.W/2, target.Y+target.H/2) {
+		t.Fatal("left-click on battery must stay inert")
+	}
+	if !clickButton(bar, target.X+target.W/2, target.Y+target.H/2, buttonRight) {
+		t.Fatal("right-click on battery did not activate")
+	}
+	reqs := drainAux(t, reg, 2)
+	if !strings.HasPrefix(reqs[1].Open.ID, "panel:session") {
+		t.Fatalf("opened %q, want session", reqs[1].Open.ID)
+	}
+}
+
+func batteryClickTarget(b *Bar) (ui.Rect, bool) {
+	for _, section := range b.widgets() {
+		for _, w := range section {
+			for _, m := range w.members {
+				if m.inner != nil && m.inner.Action == panelSessionAction && m.inner.Bounds.W > 0 {
+					return m.inner.Bounds, true
+				}
+				if m.node != nil && m.node.Action == panelSessionAction && m.node.Bounds.W > 0 {
+					return m.node.Bounds, true
+				}
+			}
+			if w.inner != nil && w.inner.Action == panelSessionAction && w.inner.Bounds.W > 0 {
+				return w.inner.Bounds, true
+			}
+			if w.node != nil && w.node.Action == panelSessionAction && w.node.Bounds.W > 0 {
+				return w.node.Bounds, true
+			}
+		}
+	}
+	return ui.Rect{}, false
+}
+
+func drainAuxQueue(reg *Registry) {
+	for {
+		select {
+		case <-reg.AuxRequests():
+		default:
+			return
+		}
 	}
 }
 

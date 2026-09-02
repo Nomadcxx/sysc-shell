@@ -133,6 +133,23 @@ func TestAnInvalidChargeRendersNothing(t *testing.T) {
 	}
 }
 
+func TestABatteryWidgetOpensTheSessionPanel(t *testing.T) {
+	t.Parallel()
+	var node *ui.Node
+	for _, w := range buildWidgets(config.Default().Bar.Right, 8) {
+		if w.inner != nil && w.inner.Kind == ui.KindText && w.tooltip == "Battery" {
+			node = w.inner
+			break
+		}
+	}
+	if node == nil {
+		t.Fatal("default bar has no battery KindText")
+	}
+	if node.Action != panelSessionAction {
+		t.Fatalf("action = %q, want %q", node.Action, panelSessionAction)
+	}
+}
+
 func TestTheChargingGlyphFollowsTheState(t *testing.T) {
 	t.Parallel()
 	item := config.Item{ID: "battery", Label: "none", WarnBelow: 20}

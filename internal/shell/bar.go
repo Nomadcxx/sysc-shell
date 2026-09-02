@@ -52,6 +52,8 @@ type Bar struct {
 	// same arrangement from it without waiting for the next frame.
 	trayAvailable int
 	onTray        func(tray.ItemKey, trayArrangement, ui.Rect, wayland.Event) bool
+	onAction      func(action string, button uint32) bool
+	pressedButton uint32
 
 	// conn is the connector this bar renders for. It selects configuration and
 	// joins Niri state; it is never this bar's identity, which is its Wayland
@@ -171,6 +173,12 @@ func (b *Bar) setTray(items []tray.Item, prefs config.TrayPreferences, images ma
 func (b *Bar) setTrayHandler(fn func(tray.ItemKey, trayArrangement, ui.Rect, wayland.Event) bool) {
 	b.mu.Lock()
 	b.onTray = fn
+	b.mu.Unlock()
+}
+
+func (b *Bar) setActionHandler(fn func(action string, button uint32) bool) {
+	b.mu.Lock()
+	b.onAction = fn
 	b.mu.Unlock()
 }
 
@@ -540,6 +548,7 @@ func (b *Bar) Handle(event wayland.Event) bool {
 	case wayland.EventPointerLeave:
 		b.inside = false
 		b.pressed = ""
+		b.pressedButton = 0
 		b.mu.Unlock()
 		return false
 
@@ -551,6 +560,7 @@ func (b *Bar) Handle(event wayland.Event) bool {
 		action, ok := b.hitLocked(b.hoverAt.x, b.hoverAt.y)
 		if ok {
 			b.pressed = action
+			b.pressedButton = event.Button
 		}
 		b.mu.Unlock()
 		return false
@@ -558,6 +568,7 @@ func (b *Bar) Handle(event wayland.Event) bool {
 	case wayland.EventPointerRelease:
 		pressed := b.pressed
 		b.pressed = ""
+		b.pressedButton = 0
 		if pressed == "" || !b.inside {
 			b.mu.Unlock()
 			return false
@@ -569,9 +580,12 @@ func (b *Bar) Handle(event wayland.Event) bool {
 		}
 		gesture, isTray := b.trayGestureLocked(action)
 		if !isTray {
-			changed := b.activateLocked(action)
+			fn := b.onAction
 			b.mu.Unlock()
-			return changed
+			if fn == nil {
+				return false
+			}
+			return fn(action, event.Button)
 		}
 		b.mu.Unlock()
 		return gesture.deliver(event)
@@ -631,8 +645,3 @@ func (b *Bar) trayGestureLocked(action string) (trayGesture, bool) {
 	}
 	return gesture, true
 }
-
-// activateLocked applies a non-tray action and reports whether state changed.
-// No built-in widget carries an action, so this is inert at runtime; the
-// pointer path stays covered by tests and ready for future bar controls.
-func (b *Bar) activateLocked(string) bool { return false }
