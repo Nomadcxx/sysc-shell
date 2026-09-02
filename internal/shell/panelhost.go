@@ -1288,7 +1288,7 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		if now.IsZero() {
 			now = time.Now()
 		}
-		return clockTree(now, h.monthDelta)
+		return clockTree(now, h.monthDelta, h.theme)
 	case PanelMonitor:
 		connector := ""
 		if bar, ok := r.bars[h.output]; ok {
