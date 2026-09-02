@@ -119,6 +119,23 @@ func TestAdoptMatchesExactExecutableAndArgs(t *testing.T) {
 	}
 }
 
+func TestListProcsFindsALiveFake(t *testing.T) {
+	args := []string{"-w", "portal", "-o", filepath.Join(t.TempDir(), "a.mp4")}
+	p := startFake(t, "hang", args)
+	waitReady(t, p)
+	list, err := listProcs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Adopt(func() ([]ProcInfo, error) { return list, nil }, os.Args[0], args)
+	if err != nil {
+		t.Fatalf("live fake not listed: %v", err)
+	}
+	if got.PID() != p.PID() {
+		t.Fatalf("pid = %d, want %d", got.PID(), p.PID())
+	}
+}
+
 func TestAdoptRejectsDifferentArgsAndAmbiguousMatches(t *testing.T) {
 	t.Parallel()
 	want := []string{"-w", "portal", "-o", "/tmp/a.mp4"}

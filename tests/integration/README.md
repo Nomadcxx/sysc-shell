@@ -422,3 +422,15 @@ owner, and covers timeout, HTTP failure, malformed bodies, last-good stale reten
 go test -race -count=1 ./tests/integration -run PluginWeatherGate
 ```
 
+## Milestone 6E: Screen Recorder
+
+Automated. `go test ./tests/integration -run PluginRecorderGate` builds the Screen Recorder plugin
+against a fake `gpu-screen-recorder` on PATH. It covers focused-output argv, exact flags, two-output
+state projection, save notification, crash, hung stop, zero-byte artifact, stderr flood, rejected
+settings, exact-PID adoption, ambiguous matches, a missing dependency that stays visible, and host
+disable.
+
+```bash
+go test -race -count=1 ./tests/integration -run PluginRecorderGate
+```
+

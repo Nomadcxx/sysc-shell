@@ -12,6 +12,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if os.Getenv("SYSC_FAKE_RECORDER") == "1" {
+		os.Exit(runGateFakeRecorder())
+	}
 	if len(os.Args) > 1 && os.Args[1] == plugin.HelperFlag {
 		os.Exit(plugin.HelperServe(os.Args[2:]))
 	}

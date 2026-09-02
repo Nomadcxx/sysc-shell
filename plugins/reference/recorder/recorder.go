@@ -335,9 +335,7 @@ func (r *Recorder) recover(own Ownership) {
 	}
 	scan := r.opt.Scan
 	if scan == nil {
-		scan = func() ([]ProcInfo, error) {
-			return []ProcInfo{own.asInfo()}, nil
-		}
+		scan = listProcs
 	}
 	proc, err := Adopt(scan, own.Exe, own.Args)
 	if err != nil {
@@ -347,10 +345,6 @@ func (r *Recorder) recover(own Ownership) {
 	r.proc = proc
 	r.remember()
 	r.set(Snapshot{Mode: Adopted})
-}
-
-func (own Ownership) asInfo() ProcInfo {
-	return ProcInfo{PID: own.PID, Exe: own.Exe, Args: own.Args}
 }
 
 func (r *Recorder) halt() {

@@ -1,12 +1,15 @@
 package recorder
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -178,6 +181,40 @@ func (p *Proc) appendLog(b []byte) {
 	}
 }
 
+func listProcs() ([]ProcInfo, error) {
+	ents, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil, err
+	}
+	var out []ProcInfo
+	for _, e := range ents {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		exe, err := os.Readlink("/proc/" + e.Name() + "/exe")
+		if err != nil {
+			continue
+		}
+		exe = strings.TrimSuffix(exe, " (deleted)")
+		raw, err := os.ReadFile("/proc/" + e.Name() + "/cmdline")
+		if err != nil || len(raw) == 0 {
+			continue
+		}
+		raw = bytes.TrimRight(raw, "\x00")
+		parts := bytes.Split(raw, []byte{0})
+		args := make([]string, 0, len(parts))
+		for i, p := range parts {
+			if i == 0 {
+				continue
+			}
+			args = append(args, string(p))
+		}
+		out = append(out, ProcInfo{PID: pid, Exe: exe, Args: args})
+	}
+	return out, nil
+}
+
 func Adopt(scan Scanner, exe string, args []string) (*Proc, error) {
 	list, err := scan()
 	if err != nil {
@@ -205,7 +242,18 @@ func Adopt(scan Scanner, exe string, args []string) (*Proc, error) {
 }
 
 func sameExe(got, want string) bool {
-	return filepath.Clean(got) == filepath.Clean(want)
+	return canonPath(got) == canonPath(want)
+}
+
+func canonPath(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		abs = filepath.Clean(p)
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	return abs
 }
 
 func sameArgs(got, want []string) bool {
