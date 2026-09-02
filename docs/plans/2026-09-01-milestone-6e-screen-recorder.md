@@ -24,6 +24,16 @@
 
 **Step 3:** Commit a docs-only correction before product code if the calibrated contract changes this plan.
 
+**Calibrated backend (2026-09-02, trusted laptop `gpu-screen-recorder` 6.0.1):**
+
+The installed `--help` accepts `-w focused|portal|<monitor>`, `-f`, `-k h264|hevc|av1|vp8|vp9`, `-q`, `-bm auto|qp|vbr|cbr`, `-ac aac|opus|flac`, `-ab`, `-a`, `-s WxH`, `-cursor yes|no`, `-cr limited|full`, `-r`, `-replay-storage ram|disk`, `-o`, `-ro`, `-c`, `-restore-portal-session`, `-ffmpeg-opts`, `-v`. It does not list `-ffmpeg-video-opts`.
+
+Command construction therefore uses `-bm qp` with `-ffmpeg-opts qp=N` (codec-scaled like the Noctalia reference) rather than `-ffmpeg-video-opts`. Replay writes to `-ro <dir>`. Focused capture passes the connector name as `-w`, not the keyword `focused`. Save replay is SIGUSR1 to the owned PID; stop is SIGINT then SIGKILL after timeout, never `pkill`.
+
+Settings the backend cannot honor, or that this shell has no v1 type for, stay out: Flatpak launch, glyph overrides, clipboard copy, control-center shortcuts, HDR codec aliases, and region capture.
+
+---
+
 ### Task 1: Declare and validate recorder settings and dependency
 
 **Files:**
