@@ -11,6 +11,28 @@ import (
 // Color is a straight-alpha sRGB colour.
 type Color struct{ R, G, B, A uint8 }
 
+// LerpColor interpolates two straight-alpha colours channel by channel.
+// Alpha travels with the rest so a control can fade in and change hue in one
+// transition, which is what a theme crossfade over an appearing panel needs.
+// Progress is the eased value; it is clamped here so a reversal that overshoots
+// cannot produce a colour outside the pair.
+func LerpColor(from, to Color, progress float64) Color {
+	p := progress
+	if p <= 0 || p != p {
+		return from
+	}
+	if p >= 1 {
+		return to
+	}
+	// Round the result, not the delta, so fading a pair in either direction
+	// passes through the same channel values. Both endpoints are uint8 and p is
+	// clamped to [0,1], so the result cannot leave the range and wrap.
+	lerp := func(a, b uint8) uint8 {
+		return uint8(math.Round(float64(a) + (float64(b)-float64(a))*p))
+	}
+	return Color{R: lerp(from.R, to.R), G: lerp(from.G, to.G), B: lerp(from.B, to.B), A: lerp(from.A, to.A)}
+}
+
 // premultiply returns the colour in the canvas's memory order: B, G, R, A.
 func (c Color) premultiply() [4]byte {
 	a := uint32(c.A)
