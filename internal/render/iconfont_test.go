@@ -248,9 +248,22 @@ func TestBatteryLevelGlyphsDifferFromEachOther(t *testing.T) {
 
 func TestRecorderCatalogueNamesResolve(t *testing.T) {
 	t.Parallel()
+	m, err := NewSystemFontMap("sans-serif", "")
+	if err != nil {
+		t.Skipf("no system font available: %v", err)
+	}
+
 	for _, name := range []string{"camera", "camera-off", "record", "stop", "replay"} {
-		if _, ok := IconByName(name); !ok {
+		r, ok := IconByName(name)
+		if !ok {
 			t.Fatalf("%q is missing from the catalogue", name)
+		}
+		face := m.Face(r)
+		if face == nil {
+			t.Fatalf("%q resolved to no face", name)
+		}
+		if face == m.Primary() {
+			t.Fatalf("%q resolved to the primary text face, not the icon face", name)
 		}
 	}
 }

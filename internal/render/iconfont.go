@@ -67,6 +67,9 @@ const (
 
 	metricRuneFirst = iconCPU
 	metricRuneLast  = iconNetwork
+
+	recorderRuneFirst = iconCamera
+	recorderRuneLast  = iconReplay
 )
 
 // batteryLevels is how many level glyphs each state has.
