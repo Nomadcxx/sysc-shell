@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"time"
 
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 	"github.com/Nomadcxx/sysc-shell/plugins/reference/recorder"
@@ -52,13 +53,20 @@ func run(in io.Reader, out io.Writer, opt recorder.Options) error {
 
 	publish := func() {
 		last = rec.Snapshot()
+		now := time.Now()
+		if opt.Now != nil {
+			now = opt.Now()
+		}
 		for id, v := range views {
 			v.rev++
 			views[id] = v
 			var root *v1.Node
-			if v.kind == v1.ViewTooltip {
+			switch v.kind {
+			case v1.ViewTooltip:
 				root = recorder.TooltipTree(last)
-			} else {
+			case v1.ViewPanel:
+				root = recorder.PanelTree(last, cfg, now)
+			default:
 				root = recorder.BarTree(last, cfg)
 			}
 			_ = c.Snapshot(id, v.rev, root)
@@ -74,10 +82,17 @@ func run(in io.Reader, out io.Writer, opt recorder.Options) error {
 		saveOwnership(ctx, c, rec)
 	}
 
+	ticks := time.NewTicker(time.Second)
+	defer ticks.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-ticks.C:
+			if last.Mode != recorder.Idle {
+				publish()
+			}
 		case snap := <-rec.Updates():
 			if snap == last {
 				continue
@@ -109,8 +124,11 @@ func run(in io.Reader, out io.Writer, opt recorder.Options) error {
 						output = got.Output
 					}
 				}
-				record, replay, save := recorder.HandleInput(m)
-				if record {
+				open, record, stop, replay, save := recorder.HandleInput(m, last.Mode)
+				if open {
+					_, _ = c.Call(ctx, v1.CallPanelOpen, v1.PanelParams{Entry: "panel", Output: output, Instance: m.ViewID})
+				}
+				if record || stop {
 					rec.ToggleRecord(output)
 				}
 				if replay {

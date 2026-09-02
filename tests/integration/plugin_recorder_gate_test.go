@@ -34,8 +34,8 @@ func TestPluginRecorderGateRecordArgsNotifyAndDisable(t *testing.T) {
 	if err := h.send(&v1.InputEvent{ViewID: "bar-a", Node: "record", Event: v1.EventActivate, Output: "DP-1"}); err != nil {
 		t.Fatal(err)
 	}
-	h.waitView("bar-a", func(n *v1.Node) bool { return strings.Contains(treeText(n), "Recording") })
-	h.waitView("bar-b", func(n *v1.Node) bool { return strings.Contains(treeText(n), "Recording") })
+	h.waitView("bar-a", barCapturing)
+	h.waitView("bar-b", barCapturing)
 	args := h.waitArgs(func(a []string) bool { return hasArg(a, "-w", "DP-1") && hasArg(a, "-f", "30") })
 	if hasShell(args) {
 		t.Fatalf("args look like a shell line: %v", args)
@@ -45,12 +45,10 @@ func TestPluginRecorderGateRecordArgsNotifyAndDisable(t *testing.T) {
 		t.Fatal("recording left no backend pid")
 	}
 
-	if err := h.send(&v1.InputEvent{ViewID: "bar-a", Node: "record", Event: v1.EventActivate, Output: "DP-1"}); err != nil {
+	if err := h.send(&v1.InputEvent{ViewID: "bar-a", Node: "stop", Event: v1.EventActivate, Output: "DP-1"}); err != nil {
 		t.Fatal(err)
 	}
-	h.waitView("bar-a", func(n *v1.Node) bool {
-		return strings.Contains(treeText(n), "Record") && !strings.Contains(treeText(n), "Recording")
-	})
+	h.waitView("bar-a", barIdle)
 	h.waitNotify(func(p v1.NotifyParams) bool { return strings.Contains(p.Summary, "saved") })
 	if alive(pid) {
 		t.Fatalf("backend pid %d still running after stop", pid)
@@ -76,7 +74,7 @@ func TestPluginRecorderGateCrashHungZeroFloodAndRejectedConfig(t *testing.T) {
 		if err := h.send(&v1.InputEvent{ViewID: "bar-a", Node: "record", Event: v1.EventActivate, Output: "DP-1"}); err != nil {
 			t.Fatal(err)
 		}
-		h.waitView("bar-a", func(n *v1.Node) bool { return strings.Contains(treeText(n), "failed") })
+		h.waitView("bar-a", barFailed)
 		h.waitNotify(func(p v1.NotifyParams) bool { return p.Body != "" })
 	})
 	t.Run("zero", func(t *testing.T) {
@@ -88,11 +86,11 @@ func TestPluginRecorderGateCrashHungZeroFloodAndRejectedConfig(t *testing.T) {
 		if err := h.send(&v1.InputEvent{ViewID: "bar-a", Node: "record", Event: v1.EventActivate, Output: "DP-1"}); err != nil {
 			t.Fatal(err)
 		}
-		h.waitView("bar-a", func(n *v1.Node) bool { return strings.Contains(treeText(n), "Recording") })
-		if err := h.send(&v1.InputEvent{ViewID: "bar-a", Node: "record", Event: v1.EventActivate, Output: "DP-1"}); err != nil {
+		h.waitView("bar-a", barCapturing)
+		if err := h.send(&v1.InputEvent{ViewID: "bar-a", Node: "stop", Event: v1.EventActivate, Output: "DP-1"}); err != nil {
 			t.Fatal(err)
 		}
-		h.waitView("bar-a", func(n *v1.Node) bool { return strings.Contains(treeText(n), "failed") })
+		h.waitView("bar-a", barFailed)
 	})
 	t.Run("hung-stop", func(t *testing.T) {
 		h := startRecorder(t, "ignore-int")
@@ -103,14 +101,12 @@ func TestPluginRecorderGateCrashHungZeroFloodAndRejectedConfig(t *testing.T) {
 		if err := h.send(&v1.InputEvent{ViewID: "bar-a", Node: "record", Event: v1.EventActivate, Output: "DP-1"}); err != nil {
 			t.Fatal(err)
 		}
-		h.waitView("bar-a", func(n *v1.Node) bool { return strings.Contains(treeText(n), "Recording") })
+		h.waitView("bar-a", barCapturing)
 		pid := h.recorderPID()
-		if err := h.send(&v1.InputEvent{ViewID: "bar-a", Node: "record", Event: v1.EventActivate, Output: "DP-1"}); err != nil {
+		if err := h.send(&v1.InputEvent{ViewID: "bar-a", Node: "stop", Event: v1.EventActivate, Output: "DP-1"}); err != nil {
 			t.Fatal(err)
 		}
-		h.waitView("bar-a", func(n *v1.Node) bool {
-			return strings.Contains(treeText(n), "failed") || strings.Contains(treeText(n), "Record")
-		})
+		h.waitView("bar-a", func(n *v1.Node) bool { return barFailed(n) || barIdle(n) })
 		deadline := time.Now().Add(5 * time.Second)
 		for time.Now().Before(deadline) && alive(pid) {
 			time.Sleep(20 * time.Millisecond)
@@ -128,13 +124,11 @@ func TestPluginRecorderGateCrashHungZeroFloodAndRejectedConfig(t *testing.T) {
 		if err := h.send(&v1.InputEvent{ViewID: "bar-a", Node: "record", Event: v1.EventActivate, Output: "DP-1"}); err != nil {
 			t.Fatal(err)
 		}
-		h.waitView("bar-a", func(n *v1.Node) bool { return strings.Contains(treeText(n), "Recording") })
-		if err := h.send(&v1.InputEvent{ViewID: "bar-a", Node: "record", Event: v1.EventActivate, Output: "DP-1"}); err != nil {
+		h.waitView("bar-a", barCapturing)
+		if err := h.send(&v1.InputEvent{ViewID: "bar-a", Node: "stop", Event: v1.EventActivate, Output: "DP-1"}); err != nil {
 			t.Fatal(err)
 		}
-		h.waitView("bar-a", func(n *v1.Node) bool {
-			return strings.Contains(treeText(n), "Record") && !strings.Contains(treeText(n), "Recording")
-		})
+		h.waitView("bar-a", barIdle)
 	})
 	t.Run("rejected-config", func(t *testing.T) {
 		h := startRecorder(t, "hang")
@@ -160,7 +154,7 @@ func TestPluginRecorderGateAdoptionAndAmbiguous(t *testing.T) {
 	if err := h.send(&v1.InputEvent{ViewID: "bar-a", Node: "record", Event: v1.EventActivate, Output: "DP-1"}); err != nil {
 		t.Fatal(err)
 	}
-	h.waitView("bar-a", func(n *v1.Node) bool { return strings.Contains(treeText(n), "Recording") })
+	h.waitView("bar-a", barCapturing)
 	own := h.waitOwn(func(o recorder.Ownership) bool { return o.PID > 0 })
 	if !alive(own.PID) {
 		t.Fatal("backend died before adoption")
@@ -177,13 +171,11 @@ func TestPluginRecorderGateAdoptionAndAmbiguous(t *testing.T) {
 
 	h2 := startRecorderWithState(t, "hang", h.binDir, own)
 	h2.open("bar-a", v1.ViewBar, "DP-1")
-	h2.waitView("bar-a", func(n *v1.Node) bool { return strings.Contains(treeText(n), "Recording") })
-	if err := h2.send(&v1.InputEvent{ViewID: "bar-a", Node: "record", Event: v1.EventActivate, Output: "DP-1"}); err != nil {
+	h2.waitView("bar-a", barCapturing)
+	if err := h2.send(&v1.InputEvent{ViewID: "bar-a", Node: "stop", Event: v1.EventActivate, Output: "DP-1"}); err != nil {
 		t.Fatal(err)
 	}
-	h2.waitView("bar-a", func(n *v1.Node) bool {
-		return strings.Contains(treeText(n), "Record") && !strings.Contains(treeText(n), "Recording")
-	})
+	h2.waitView("bar-a", barIdle)
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) && alive(own.PID) {
 		time.Sleep(20 * time.Millisecond)
@@ -201,7 +193,7 @@ func TestPluginRecorderGateAdoptionAndAmbiguous(t *testing.T) {
 	})
 	h3 := startRecorderWithState(t, "hang", h.binDir, own)
 	h3.open("bar-a", v1.ViewBar, "DP-1")
-	h3.waitView("bar-a", func(n *v1.Node) bool { return strings.Contains(treeText(n), "failed") })
+	h3.waitView("bar-a", barFailed)
 }
 
 func TestPluginRecorderGateMissingDependencyAndHostDisable(t *testing.T) {
@@ -628,6 +620,36 @@ func hasArg(args []string, flag, value string) bool {
 		}
 	}
 	return false
+}
+
+func findNode(n *v1.Node, id string) *v1.Node {
+	if n == nil {
+		return nil
+	}
+	if n.ID == id || n.Key == id {
+		return n
+	}
+	for _, c := range n.Children {
+		if got := findNode(c, id); got != nil {
+			return got
+		}
+	}
+	return nil
+}
+
+func barCapturing(n *v1.Node) bool {
+	cam := findNode(n, "camera")
+	return cam != nil && cam.Icon == "camera" && cam.Tone == v1.ToneError
+}
+
+func barFailed(n *v1.Node) bool {
+	cam := findNode(n, "camera")
+	return cam != nil && cam.Icon == "camera-off"
+}
+
+func barIdle(n *v1.Node) bool {
+	cam := findNode(n, "camera")
+	return cam != nil && cam.Icon == "camera" && cam.Tone == v1.ToneNormal
 }
 
 func hasShell(args []string) bool {

@@ -54,6 +54,59 @@ func argAfter(flag string) string {
 	return ""
 }
 
+func TestPluginCameraOpensPanel(t *testing.T) {
+	h := startPlugin(t, recorder.Options{
+		Exe:      os.Args[0],
+		LookPath: func(string) (string, error) { return os.Args[0], nil },
+		Env:      append(os.Environ(), "SYSC_FAKE_RECORDER=1", "SYSC_FAKE_BEHAVIOR=hang"),
+		StopWait: 250 * time.Millisecond,
+	})
+	h.open("bar-a", v1.ViewBar, "DP-1")
+	h.wait("bar-a", func(n *v1.Node) bool { return findNode(n, "camera") != nil })
+	if err := h.send(&v1.InputEvent{ViewID: "bar-a", Node: "camera", Event: v1.EventActivate, Output: "DP-1"}); err != nil {
+		t.Fatal(err)
+	}
+	p := h.waitPanelOpen()
+	if p.Entry != "panel" {
+		t.Fatalf("panel.open entry = %q, want panel", p.Entry)
+	}
+}
+
+func TestPluginPanelViewUsesPanelTree(t *testing.T) {
+	h := startPlugin(t, recorder.Options{
+		Exe:      os.Args[0],
+		LookPath: func(string) (string, error) { return os.Args[0], nil },
+		Env:      append(os.Environ(), "SYSC_FAKE_RECORDER=1", "SYSC_FAKE_BEHAVIOR=hang"),
+		StopWait: 250 * time.Millisecond,
+	})
+	h.open("panel-a", v1.ViewPanel, "DP-1")
+	h.wait("panel-a", func(n *v1.Node) bool {
+		return n != nil && n.Kind == v1.KindColumn && strings.Contains(treeText(n), "Screen Recorder")
+	})
+}
+
+func TestPluginElapsedTicksWhileRecording(t *testing.T) {
+	h := startPlugin(t, recorder.Options{
+		Exe:      os.Args[0],
+		LookPath: func(string) (string, error) { return os.Args[0], nil },
+		Env:      append(os.Environ(), "SYSC_FAKE_RECORDER=1", "SYSC_FAKE_BEHAVIOR=hang"),
+		StopWait: 250 * time.Millisecond,
+	})
+	if err := h.send(&v1.SettingsChanged{Scope: v1.ScopePlugin, Values: map[string]any{"directory": h.dir}}); err != nil {
+		t.Fatal(err)
+	}
+	h.open("panel-a", v1.ViewPanel, "DP-1")
+	h.wait("panel-a", func(n *v1.Node) bool { return strings.Contains(treeText(n), "Screen Recorder") })
+	if err := h.send(&v1.InputEvent{ViewID: "panel-a", Node: "record", Event: v1.EventActivate, Output: "DP-1"}); err != nil {
+		t.Fatal(err)
+	}
+	h.wait("panel-a", func(n *v1.Node) bool { return strings.Contains(treeText(n), "Recording") })
+	h.wait("panel-a", func(n *v1.Node) bool {
+		el := findNode(n, "elapsed")
+		return el != nil && el.Text != "" && el.Text != "00:00"
+	})
+}
+
 func TestPluginSettingsRebuildAndNotifyAndShutdown(t *testing.T) {
 	h := startPlugin(t, recorder.Options{
 		Exe:      os.Args[0],
@@ -75,15 +128,13 @@ func TestPluginSettingsRebuildAndNotifyAndShutdown(t *testing.T) {
 	if err := h.send(&v1.InputEvent{ViewID: "bar-a", Node: "record", Event: v1.EventActivate, Output: "DP-1"}); err != nil {
 		t.Fatal(err)
 	}
-	h.wait("bar-a", func(n *v1.Node) bool { return strings.Contains(treeText(n), "Recording") })
-	h.wait("bar-b", func(n *v1.Node) bool { return strings.Contains(treeText(n), "Recording") })
+	h.wait("bar-a", barCapturing)
+	h.wait("bar-b", barCapturing)
 
-	if err := h.send(&v1.InputEvent{ViewID: "bar-a", Node: "record", Event: v1.EventActivate, Output: "DP-1"}); err != nil {
+	if err := h.send(&v1.InputEvent{ViewID: "bar-a", Node: "stop", Event: v1.EventActivate, Output: "DP-1"}); err != nil {
 		t.Fatal(err)
 	}
-	h.wait("bar-a", func(n *v1.Node) bool {
-		return strings.Contains(treeText(n), "Record") && !strings.Contains(treeText(n), "Recording")
-	})
+	h.wait("bar-a", barIdle)
 	h.waitNotify(func(p v1.NotifyParams) bool {
 		return strings.Contains(p.Summary, "saved") || strings.Contains(p.Body, h.dir)
 	})
@@ -110,7 +161,7 @@ func TestPluginFailureNotifyIncludesLogs(t *testing.T) {
 	if err := h.send(&v1.InputEvent{ViewID: "bar-a", Node: "record", Event: v1.EventActivate, Output: "DP-1"}); err != nil {
 		t.Fatal(err)
 	}
-	h.wait("bar-a", func(n *v1.Node) bool { return strings.Contains(treeText(n), "failed") })
+	h.wait("bar-a", barFailed)
 	h.waitNotify(func(p v1.NotifyParams) bool {
 		return strings.Contains(strings.ToLower(p.Body+p.Summary), "fail") || p.Body != ""
 	})
@@ -124,6 +175,7 @@ type pluginHost struct {
 	mu        sync.Mutex
 	roots     map[string]*v1.Node
 	notify    []v1.NotifyParams
+	panels    []v1.PanelParams
 	wake      chan struct{}
 	done      chan struct{}
 	snapCount atomic.Int32
@@ -172,6 +224,18 @@ func startPlugin(t *testing.T, opt recorder.Options) *pluginHost {
 					default:
 					}
 					raw, _ := json.Marshal(v1.NotifyResult{ID: 1})
+					reply.Result = raw
+				case v1.CallPanelOpen:
+					var p v1.PanelParams
+					_ = json.Unmarshal(m.Params, &p)
+					h.mu.Lock()
+					h.panels = append(h.panels, p)
+					h.mu.Unlock()
+					select {
+					case h.wake <- struct{}{}:
+					default:
+					}
+					raw, _ := json.Marshal(v1.PanelResult{})
 					reply.Result = raw
 				case v1.CallOutputContext:
 					raw, _ := json.Marshal(v1.OutputContextResult{Output: "DP-1", Generation: 1})
@@ -260,6 +324,29 @@ func (h *pluginHost) waitNotify(ok func(v1.NotifyParams) bool) {
 	h.t.Fatalf("notification never matched: %+v", h.notifies())
 }
 
+func (h *pluginHost) waitPanelOpen() v1.PanelParams {
+	h.t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		h.mu.Lock()
+		n := len(h.panels)
+		var p v1.PanelParams
+		if n > 0 {
+			p = h.panels[n-1]
+		}
+		h.mu.Unlock()
+		if n > 0 {
+			return p
+		}
+		select {
+		case <-h.wake:
+		case <-time.After(40 * time.Millisecond):
+		}
+	}
+	h.t.Fatal("panel.open never issued")
+	return v1.PanelParams{}
+}
+
 func treeText(n *v1.Node) string {
 	if n == nil {
 		return ""
@@ -269,6 +356,36 @@ func treeText(n *v1.Node) string {
 		parts = append(parts, treeText(c))
 	}
 	return strings.Join(parts, " ")
+}
+
+func findNode(n *v1.Node, id string) *v1.Node {
+	if n == nil {
+		return nil
+	}
+	if n.ID == id || n.Key == id {
+		return n
+	}
+	for _, c := range n.Children {
+		if got := findNode(c, id); got != nil {
+			return got
+		}
+	}
+	return nil
+}
+
+func barCapturing(n *v1.Node) bool {
+	cam := findNode(n, "camera")
+	return cam != nil && cam.Icon == "camera" && cam.Tone == v1.ToneError
+}
+
+func barFailed(n *v1.Node) bool {
+	cam := findNode(n, "camera")
+	return cam != nil && cam.Icon == "camera-off"
+}
+
+func barIdle(n *v1.Node) bool {
+	cam := findNode(n, "camera")
+	return cam != nil && cam.Icon == "camera" && cam.Tone == v1.ToneNormal
 }
 
 func TestPluginHideInactive(t *testing.T) {
@@ -282,5 +399,7 @@ func TestPluginHideInactive(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.open("bar-a", v1.ViewBar, "DP-1")
-	h.wait("bar-a", func(n *v1.Node) bool { return n != nil && n.Kind == v1.KindRow && len(n.Children) == 0 })
+	h.wait("bar-a", func(n *v1.Node) bool {
+		return n != nil && n.Kind == v1.KindRow && len(n.Children) == 1 && findNode(n, "camera") != nil
+	})
 }
