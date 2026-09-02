@@ -25,6 +25,7 @@ var (
 		"power":          "",
 		"settings":       "",
 		"launcher":       "",
+		"notifications":  "",
 	}
 )
 

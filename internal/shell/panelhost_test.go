@@ -7,6 +7,7 @@ import (
 	"time"
 
 	metrics "github.com/Nomadcxx/sysc-metrics"
+	"github.com/Nomadcxx/sysc-notify/protocol"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
@@ -459,6 +460,84 @@ func TestPowerIsAnAliasForSession(t *testing.T) {
 	id, err := parsePanelName("power")
 	if err != nil || id != PanelSession {
 		t.Fatalf("parsePanelName(power) = %v, %v", id, err)
+	}
+}
+
+func TestParsePanelNameNotifications(t *testing.T) {
+	t.Parallel()
+	id, err := parsePanelName("notifications")
+	if err != nil || id != PanelNotifications {
+		t.Fatalf("parsePanelName(notifications) = %v, %v", id, err)
+	}
+	got, ok := panelIDFromAux("panel:notifications")
+	if !ok || got != PanelNotifications {
+		t.Fatalf("panelIDFromAux = %v ok=%v", got, ok)
+	}
+}
+
+func TestNotificationsPanelTargetSize(t *testing.T) {
+	t.Parallel()
+	got := panelTargetSize(PanelNotifications)
+	if got.W != 416 {
+		t.Fatalf("width = %d, want 416", got.W)
+	}
+	if got.H != 300 {
+		t.Fatalf("height fallback = %d, want 300", got.H)
+	}
+}
+
+func TestOpeningNotificationsSetsCenterOpenAndMarksSeen(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	sender := &fakeNotifySender{}
+	reg.notifySender = sender
+	reg.applyNotify(snap(1))
+	reg.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
+		History: ptrH(historyEntry(7, "mail", "Mail", "old", time.Unix(1_756_000_000, 0), false))}))
+
+	if err := reg.OpenPanel(PanelNotifications, 7, Trigger{
+		BarEdge: "top", BarZone: 44, OutW: 1536, OutH: 1440,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reqs := drainAux(t, reg, 2)
+	panel := reqs[1].Open
+	if panel == nil || panel.ID != "panel:notifications" {
+		t.Fatalf("opened %+v", panel)
+	}
+	if panel.Width != 416 {
+		t.Fatalf("width = %d, want 416", panel.Width)
+	}
+	if panel.Height < 300 {
+		t.Fatalf("height = %d, want at least 300", panel.Height)
+	}
+	if want := int32(1536 - 416 - 8); panel.MarginLeft != want {
+		t.Fatalf("margin left = %d, want trailing %d", panel.MarginLeft, want)
+	}
+	if panel.MarginTop != 44 {
+		t.Fatalf("margin top = %d, want hug bar 44", panel.MarginTop)
+	}
+	if !reg.roots.owns(panelRoot(PanelNotifications)) {
+		t.Fatal("opening did not acquire the interactive root")
+	}
+	reg.notify.mu.Lock()
+	open := reg.notify.centerOpen
+	reg.notify.mu.Unlock()
+	if !open {
+		t.Fatal("opening left centerOpen false")
+	}
+	seen := sender.ofKind(protocol.CommandHistoryMarkSeen)
+	if len(seen) != 1 || len(seen[0].IDs) != 1 || seen[0].IDs[0] != 7 {
+		t.Fatalf("mark-seen = %+v", seen)
+	}
+
+	reg.ClosePanel(PanelNotifications)
+	_ = drainAux(t, reg, 2)
+	reg.notify.mu.Lock()
+	open = reg.notify.centerOpen
+	reg.notify.mu.Unlock()
+	if open {
+		t.Fatal("closing left centerOpen true")
 	}
 }
 

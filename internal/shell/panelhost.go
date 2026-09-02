@@ -9,6 +9,7 @@ import (
 	"time"
 
 	launcher "github.com/Nomadcxx/sysc-launch"
+	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
@@ -121,6 +122,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelLauncher, nil
 	case "plugin":
 		return PanelPlugin, nil
+	case "notifications":
+		return PanelNotifications, nil
 	default:
 		return 0, fmt.Errorf("unknown panel")
 	}
@@ -225,6 +228,12 @@ func (r *Registry) openPanelRootLocked(id PanelID, output uint32, trig Trigger) 
 		r.roots.closeRoot(generation)
 		return err
 	}
+	if id == PanelNotifications {
+		r.setCenterOpen(true)
+		if ids := r.markCenterSeen(); len(ids) > 0 {
+			r.sendNotify(protocol.Command{Kind: protocol.CommandHistoryMarkSeen, IDs: ids})
+		}
+	}
 	r.roots.onClose(generation, func() {
 		r.panels.Close(id)
 		r.teardownPanelLocked(id)
@@ -309,6 +318,8 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelLauncher, true
 	case "plugin":
 		return PanelPlugin, true
+	case "notifications":
+		return PanelNotifications, true
 	default:
 		return 0, false
 	}
@@ -342,7 +353,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	if id == PanelSettings && place.Align == "" {
 		place.Align = "center"
 	}
-	if id == PanelSession {
+	if id == PanelSession || id == PanelNotifications {
 		place.Align = "right"
 	}
 	if id == PanelLauncher {
@@ -378,9 +389,13 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	h.root = r.panelTree(h)
 	h.focus = ui.Focusables(h.root)
 	h.roving = ui.Roving{Count: len(h.focus)}
-	if id == PanelMonitor {
+	if id == PanelMonitor || id == PanelNotifications {
 		_ = h.ensureText()
 		h.place.Panel.H = monitorSurfaceHeight(h.root, h.place.Panel.W, h.theme.Radius, h.measureText())
+		if id == PanelNotifications {
+			maxH := min(h.place.Output.H*8/10, 648)
+			h.place.Panel.H = max(300, min(h.place.Panel.H, maxH))
+		}
 	}
 	w, hgt := h.place.FittedSize()
 	h.place.Panel.W, h.place.Panel.H = w, hgt
@@ -1193,6 +1208,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 			return r.plugins.panelTree(h)
 		}
 		return pluginPanelError("starting", false)
+	case PanelNotifications:
+		return r.centerTree()
 	default:
 		return placeholderTree()
 	}
@@ -1213,6 +1230,8 @@ func panelTargetSize(id PanelID) ui.Rect {
 	case PanelPlugin:
 		// Fallback when no plugin view has declared a size yet.
 		return ui.Rect{W: 320, H: 280}
+	case PanelNotifications:
+		return ui.Rect{W: 416, H: 300}
 	default:
 		return ui.Rect{W: 280, H: 200}
 	}
@@ -1336,6 +1355,9 @@ func (r *Registry) revealLoop(h *PanelHost) {
 }
 
 func (r *Registry) teardownPanelLocked(id PanelID) {
+	if id == PanelNotifications {
+		r.setCenterOpen(false)
+	}
 	h := r.panelHosts[id]
 	if h == nil {
 		return
