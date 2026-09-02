@@ -32,6 +32,23 @@ func TestAnchorMarginsForTopBar(t *testing.T) {
 	}
 }
 
+// Attached panels sit on the exclusive-zone edge, centred, with no extra gap.
+// The live IPC path used to centre against 1920 on a 1536 laptop, and to add
+// Height+Gap below a 44-pixel bar, so Super+M opened down and to the right.
+func TestAttachedPanelHugsTheBar(t *testing.T) {
+	p := Placement{
+		BarEdge: "top", Output: ui.Rect{W: 1536, H: 864},
+		BarZone: 44, Gap: 0, Padding: 8, Panel: ui.Rect{W: 640, H: 480}, Align: "center",
+	}
+	m := p.Margins()
+	if m.Top != 44 {
+		t.Fatalf("top = %d, want the exclusive zone with no gap", m.Top)
+	}
+	if m.Left != (1536-640)/2 {
+		t.Fatalf("left = %d, want centred on 1536", m.Left)
+	}
+}
+
 func TestFittedSizeShrinksTallPanel(t *testing.T) {
 	p := Placement{BarEdge: "top", Output: ui.Rect{W: 800, H: 600}, BarZone: 40, Gap: 8, Padding: 8, Panel: ui.Rect{W: 700, H: 900}}
 	_, h := p.FittedSize()

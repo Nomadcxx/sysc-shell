@@ -98,7 +98,6 @@ func TestLayoutRejectsInvalidInput(t *testing.T) {
 		{"unsupported kind", unsupported, Rect{W: 400, H: 48}},
 		{"meter above one", badMeter, Rect{W: 400, H: 48}},
 		{"meter below zero", negativeMeter, Rect{W: 400, H: 48}},
-		{"too narrow for children", proofTree(), Rect{W: 50, H: 48}},
 		{"too short for children", proofTree(), Rect{W: 400, H: 10}},
 	}
 	for _, tc := range tests {
@@ -410,5 +409,31 @@ func TestMeasureNodeCapsuleWithoutWidthMeasuresChild(t *testing.T) {
 	}
 	if want := 3*8 + 2*8; w != want {
 		t.Fatalf("measured capsule width = %d, want %d", w, want)
+	}
+}
+
+// A column grants a nested row a known width. The value in a key/value pair
+// can be wider than that box; clipping it keeps the surface up instead of
+// tearing it down with "does not fit".
+func TestLayoutClampsOverflowingChildToRemainingWidth(t *testing.T) {
+	t.Parallel()
+	root := &Node{
+		Kind: KindRow, Gap: 6,
+		Children: []*Node{
+			{Kind: KindText, Text: "CPU"},
+			{Kind: KindText, Text: "AMD Ryzen 7 8845HS w/ Radeon 780M Graphics"},
+		},
+	}
+	box := Rect{W: 284, H: 20}
+	if err := Layout(root, box, fakeMeasure); err != nil {
+		t.Fatalf("Layout: %v", err)
+	}
+	value := root.Children[1]
+	if right := value.Bounds.X + value.Bounds.W; right > box.W {
+		t.Fatalf("value overflows: right edge %d > %d", right, box.W)
+	}
+	natural, _ := fakeMeasure(root.Children[1].Text, false)
+	if value.Bounds.W >= natural {
+		t.Fatalf("value width %d was not clamped below natural %d", value.Bounds.W, natural)
 	}
 }

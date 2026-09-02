@@ -113,6 +113,7 @@ func parseColors(path, mode string) (Tokens, error) {
 	}
 	set(src["surface"], &tok.Surface)
 	set(src["surface_container"], &tok.SurfaceContainer)
+	set(src["surface_container_high"], &tok.SurfaceContainer)
 	set(src["on_surface"], &tok.OnSurface)
 	set(src["on_surface_variant"], &tok.OnSurfaceVariant)
 	set(src["primary"], &tok.Primary)

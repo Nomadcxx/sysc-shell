@@ -205,8 +205,8 @@ func TestDefaultPaletteKeepsCapsulesAndPillsVisible(t *testing.T) {
 	t.Parallel()
 	th := DefaultTheme()
 
-	if got := contrast(th.Background, th.Capsule); got < 1.10 {
-		t.Errorf("capsule/bar contrast = %.3f:1, want at least 1.10 (reference bar is 1.14)", got)
+	if got := contrast(th.Background, th.Capsule); got < 1.45 {
+		t.Errorf("capsule/bar contrast = %.3f:1, want at least 1.45 so cards read as pills", got)
 	}
 	// An unfocused workspace pill has to be a surface, not a tint of the bar.
 	if got := contrast(th.Background, th.Container); got < 2.5 {

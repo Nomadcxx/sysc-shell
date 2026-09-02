@@ -13,10 +13,10 @@ import (
 
 const (
 	// monitorCardPadding is the inset between a card's fill and its content.
-	monitorCardPadding = 10
+	monitorCardPadding = 12
 	monitorCardGap     = 8
 	// monitorPanelPadding insets the card grid inside the panel body.
-	monitorPanelPadding = 12
+	monitorPanelPadding = 16
 )
 
 // monitorTree builds one titled card per metric, stacked and all visible.
@@ -30,16 +30,18 @@ const (
 // Cards are laid two to a row, as the reference does. A lone trailing card
 // spans the full width rather than sitting in a half-empty row.
 func monitorTree(sels []services.Selector, snap services.Snapshot, history map[services.Selector][]float64, facts machineFacts) *ui.Node {
-	cards := make([]*ui.Node, 0, len(sels)+2)
-	if system := monitorSystemCard(factsWithGPU(facts, snap)); system != nil {
-		cards = append(cards, system)
-	}
+	var metrics []*ui.Node
 	for _, sel := range sels {
-		cards = append(cards, monitorMetricCard(sel, snap, history[sel]))
+		metrics = append(metrics, monitorMetricCard(sel, snap, history[sel]))
+	}
+	var info []*ui.Node
+	if system := monitorSystemCard(factsWithGPU(facts, snap)); system != nil {
+		info = append(info, system)
 	}
 	if resources := monitorResourcesCard(snap); resources != nil {
-		cards = append(cards, resources)
+		info = append(info, resources)
 	}
+	cards := append(metrics, info...)
 	if len(cards) == 0 {
 		return &ui.Node{Kind: ui.KindColumn, Padding: 12, Children: []*ui.Node{
 			{Kind: ui.KindText, Text: "No metrics"},
@@ -47,7 +49,7 @@ func monitorTree(sels []services.Selector, snap services.Snapshot, history map[s
 	}
 	return &ui.Node{
 		Kind: ui.KindColumn, Gap: monitorCardGap, Padding: monitorPanelPadding,
-		Children: monitorRows(cards),
+		Children: append(monitorRows(metrics), monitorRows(info)...),
 	}
 }
 
@@ -79,12 +81,15 @@ func monitorRows(cards []*ui.Node) []*ui.Node {
 func monitorMetricCard(sel services.Selector, snap services.Snapshot, history []float64) *ui.Node {
 	label, absent := formatMonitorMetric(sel, snap)
 	rows := []*ui.Node{monitorCardTitle(selectorLabel(sel), monitorIconRune(sel))}
-	rows = append(rows,
-		&ui.Node{Kind: ui.KindGraph, Values: monitorGraphValues(sel, history), Absent: absent},
-		&ui.Node{Kind: ui.KindText, Text: label, Tabular: true},
-	)
+	rows = append(rows, &ui.Node{Kind: ui.KindGraph, Values: monitorGraphValues(sel, history), Absent: absent})
+	rows = append(rows, monitorLegend(sel, snap, label))
+	return monitorCard(rows)
+}
+
+func monitorLegend(sel services.Selector, snap services.Snapshot, label string) *ui.Node {
+	chips := []*ui.Node{{Kind: ui.KindText, Text: label, Tabular: true}}
 	if sel.Source == services.SourceCPU && snap.Thermal != nil && snap.Thermal.Valid {
-		rows = append(rows, &ui.Node{
+		chips = append(chips, &ui.Node{
 			Kind: ui.KindText, Text: fmt.Sprintf("%.0f°C", snap.Thermal.Celsius), Tabular: true,
 		})
 	}
@@ -94,14 +99,27 @@ func monitorMetricCard(sel services.Selector, snap services.Snapshot, history []
 				continue
 			}
 			if g.TempValid {
-				rows = append(rows, &ui.Node{
+				chips = append(chips, &ui.Node{
 					Kind: ui.KindText, Text: fmt.Sprintf("%.0f°C", g.Celsius), Tabular: true,
 				})
 			}
 			break
 		}
 	}
-	return monitorCard(rows)
+	if sel.Source == services.SourceNetwork && sel.Direction == "rx" && snap.Network != nil {
+		for _, iface := range snap.Network.Interfaces {
+			if sel.Subject != "" && iface.Name != sel.Subject {
+				continue
+			}
+			if iface.Rates.TransmitBytesPerSecond > 0 {
+				chips = append(chips, &ui.Node{
+					Kind: ui.KindText, Text: formatRate(iface.Rates.TransmitBytesPerSecond), Tabular: true,
+				})
+			}
+			break
+		}
+	}
+	return &ui.Node{Kind: ui.KindRow, Gap: 12, Children: chips}
 }
 
 // machineFacts is the System card: the six identity rows Noctalia draws on
@@ -322,10 +340,8 @@ func monitorCardTitle(label string, icon rune) *ui.Node {
 	return &ui.Node{Kind: ui.KindText, Text: text, Bold: true, Name: label, Role: "heading"}
 }
 
-// monitorKeyValue is one labelled figure. The reference right-aligns the value
-// against the card's trailing edge; a row places its children left to right
-// and the tree has no alignment of its own, so the label and the value sit
-// together for now.
+// monitorKeyValue is one labelled figure. The value is pinned to the trailing
+// edge at layout, matching the reference's right-aligned facts.
 func monitorKeyValue(label, value string) *ui.Node {
 	return &ui.Node{Kind: ui.KindRow, Gap: 6, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: label},
@@ -398,11 +414,21 @@ func selectorLabel(sel services.Selector) string {
 }
 
 func formatMonitorMetric(sel services.Selector, snap services.Snapshot) (string, bool) {
+	if sel.Source == services.SourceMemory && snap.Memory != nil && snap.Memory.Memory.TotalBytes > 0 {
+		frac, ok := snap.Fraction(sel)
+		if !ok {
+			return "collecting", true
+		}
+		return fmt.Sprintf("%s · %.0f%%", formatBytes(float64(snap.Memory.Memory.UsedBytes)), frac*100), false
+	}
 	if fraction, ok := snap.Fraction(sel); ok {
 		return fmt.Sprintf("%.0f%%", fraction*100), false
 	}
 	if rate, ok := snap.Rate(sel); ok {
 		return formatRate(rate), false
+	}
+	if sel.Source == services.SourceGPU && snap.GPU != nil && len(snap.GPU.GPUs) > 0 {
+		return "--", true
 	}
 	return "collecting", true
 }

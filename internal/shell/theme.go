@@ -73,7 +73,7 @@ func DefaultTheme() Theme {
 		OnPrimary:  Color{R: 0xff, G: 0xff, B: 0xff, A: 0xff},
 		// Seeded from theme.Fallback so the shell paints capsules before any
 		// generated palette arrives.
-		Capsule:     Color{R: 0x28, G: 0x2c, B: 0x33, A: 0xff},
+		Capsule:     Color{R: 0x3a, G: 0x41, B: 0x49, A: 0xff},
 		Container:   Color{R: 0x1f, G: 0x7a, B: 0xb5, A: 0xff},
 		OnAccent:    Color{R: 0x0b, G: 0x10, B: 0x16, A: 0xff},
 		OnContainer: Color{R: 0x0b, G: 0x10, B: 0x16, A: 0xff},

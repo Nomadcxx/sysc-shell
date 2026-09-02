@@ -182,3 +182,23 @@ func TestColumnChildHeightBandKindsInRow(t *testing.T) {
 		})
 	}
 }
+
+// A key/value row in a column of known width parks the value on the trailing
+// edge. Packed left, "Arch Linux" sits against "OS" and the card looks empty
+// on the right.
+func TestColumnRowPinsATextValueToTheTrailingEdge(t *testing.T) {
+	t.Parallel()
+	root := &Node{Kind: KindColumn, Children: []*Node{
+		{Kind: KindRow, Gap: 6, Children: []*Node{
+			{Kind: KindText, Text: "OS"},
+			{Kind: KindText, Text: "Arch Linux"},
+		}},
+	}}
+	if err := LayoutColumn(root, Rect{W: 284, H: 40}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	value := root.Children[0].Children[1]
+	if right := value.Bounds.X + value.Bounds.W; right != 284 {
+		t.Fatalf("value right edge = %d, want 284", right)
+	}
+}

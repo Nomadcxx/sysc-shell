@@ -655,7 +655,7 @@ func TestDefaultPanelAndSessionValues(t *testing.T) {
 	if c.ThemeGen.Source != "wallpaper" || c.ThemeGen.Scheme != "scheme-tonal-spot" || c.ThemeGen.Mode != "dark" {
 		t.Fatalf("theme defaults wrong: %+v", c.ThemeGen)
 	}
-	if c.Panels.Gap != 8 || c.Panels.Padding != 8 {
+	if c.Panels.Gap != 0 || c.Panels.Padding != 8 {
 		t.Fatalf("panels defaults wrong: %+v", c.Panels)
 	}
 	if c.Accessibility.ReducedMotion || c.Accessibility.HighContrast {

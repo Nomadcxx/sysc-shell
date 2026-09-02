@@ -109,7 +109,7 @@ func roundedInset(y, height, radius int) int {
 // clearOutsideRoundedRect restores transparency after children paint. Child
 // bounds may reach a body corner when padding is zero, but the final surface
 // silhouette must remain the same rounded rectangle as its background.
-func clearOutsideRoundedRect(c *Canvas, r ui.Rect, radius int) {
+func clearOutsideRoundedRect(c *Canvas, r ui.Rect, radius int, attachEdge string) {
 	radius = min(radius, min(r.W, r.H)/2)
 	for y := 0; y < c.Height; y++ {
 		row := c.Pix[y*c.Stride : y*c.Stride+c.Width*4]
@@ -119,7 +119,11 @@ func clearOutsideRoundedRect(c *Canvas, r ui.Rect, radius int) {
 		}
 		inset := 0
 		if radius > 0 {
-			inset = roundedInset(y-r.Y, r.H, radius)
+			ly := y - r.Y
+			square := (attachEdge == "top" && ly < radius) || (attachEdge == "bottom" && ly >= r.H-radius)
+			if !square {
+				inset = roundedInset(ly, r.H, radius)
+			}
 		}
 		x0 := max(0, min(c.Width, r.X+inset))
 		x1 := max(x0, min(c.Width, r.X+r.W-inset))

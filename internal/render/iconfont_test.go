@@ -207,3 +207,42 @@ func TestBatteryLevelsStayDistinctAtBarSize(t *testing.T) {
 		t.Fatal("an empty and a full battery rasterise identically at bar size")
 	}
 }
+
+// Metric SVGs are square 24px viewBoxes. A 900-unit advance on a 1200-unit
+// outline clips the sides and the glyph reads as a stretched slab next to "8%".
+func TestMetricIconRasterIsSquareAtBarSize(t *testing.T) {
+	tr := NewTextRenderer(loadIconFace())
+	mask, err := tr.Raster(string(iconCPU), 14, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, h := mask.Advance, mask.Alpha.Bounds().Dy()
+	if abs(w-h) > 2 {
+		t.Fatalf("cpu icon at bar size is %dx%d, want a square (Noctalia glyphs are a square of baseGlyphSize)", w, h)
+	}
+	cols := make([]int, w)
+	a := mask.Alpha
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			if a.Pix[y*a.Stride+x] > 32 {
+				cols[x]++
+			}
+		}
+	}
+	empty := 0
+	for _, c := range cols {
+		if c == 0 {
+			empty++
+		}
+	}
+	if empty > w/4 {
+		t.Fatalf("cpu icon has %d empty columns of %d; the glyph is a sparse slab", empty, w)
+	}
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
