@@ -207,6 +207,7 @@ code from the handover.
 |---|---|---|
 | `2026-09-02-chrome-catalogue-execution-handover.md` | execution-handover | Commissions the chrome-catalogue design and implementation plan. Receiving agent: brainstorming, then writing-plans. First consumer is the session panel. |
 | `2026-09-02-chrome-catalogue-design.md` | design | Owner-approved native chrome, motion, Material Symbols subset, semantic theme composition, and session-panel consumer. |
+| `2026-09-02-chrome-catalogue.md` | plan | Executable TDD plan for semantic chrome, native transitions, Material subset, session composition, and inherited regressions. |
 
 ## Milestone 5: notifications and system tray
 
