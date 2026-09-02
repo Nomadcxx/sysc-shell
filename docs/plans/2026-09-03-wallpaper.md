@@ -1,0 +1,376 @@
+# Milestone 7 Wallpaper Implementation Plan
+
+> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+
+**Goal:** Ship the v1 wallpaper picker: a 980×1100 Exclusive overlay that lists images and videos, applies them through gSlapper (awww then swaybg if gSlapper is missing), and restores a still through the static fallback.
+
+**Architecture:** `internal/wallpaper` owns library, per-connector assignments, and engine argv/IPC. A service goroutine publishes immutable snapshots. The shell gains `PanelWallpaper` that projects those snapshots onto the landed M4 panel vocabulary (`KindTextField`, `KindVirtualList` of 4-tile rows, `KindImage`) with no new node kind. Apply, pause, and restore never run on the Wayland owner.
+
+**Tech Stack:** Go, existing panel host and IPC, Unix-socket gSlapper IPC, `exec` of `gslapper` / `awww` / `swaybg` / optional `gst-launch-1.0`. No new module pin.
+
+**Design:** `docs/plans/2026-09-03-wallpaper-design.md` (decisions D1–D20)
+
+---
+
+### Task 0: Reconcile the plan with landed main
+
+**Files:**
+- Read: `docs/plans/2026-09-03-wallpaper-design.md`
+- Inspect: `internal/shell/panel.go`, `internal/shell/panelhost.go`, `internal/shell/popout_launcher.go`, `internal/ui/tree.go`, `internal/ipc/server.go`, `internal/config/config.go`, `internal/config/load.go`, `internal/shell/registry.go`, `internal/theme/generate.go`, `internal/icons/worker.go`
+
+**Step 1:** Confirm `sysc-147` is in progress (`bd show sysc-147` from `/home/nomadx/sysc-shell`). `sysc-146` is the design bead.
+
+**Step 2:** Run `go test -race -count=1 ./...`. Record any pre-existing failure in bd instead of weakening a wallpaper check.
+
+**Step 3:** Verify the APIs this plan names still exist: `PanelID` / `parsePanelName` / `panelTargetSize` / `panelTree`, `Placement.CenterY`, `ui.Field`, `KindVirtualList` `ItemCount`/`ItemHeight`, `KindImage`, IPC `knownPanels`, `Registry.generateTheme`.
+
+**Step 4:** Confirm live outputs with `niri msg -j outputs` still include DP-1 and DP-3. If not, record the new connectors in bd; tests keep the `DP-1`/`DP-3` fixture names.
+
+**Step 5:** Commit only a plan correction if reconciliation changed this document. Otherwise make no commit.
+
+### Task 1: Classify media and own the socket path
+
+**Files:**
+- Create: `internal/wallpaper/media.go`
+- Test: `internal/wallpaper/media_test.go`
+
+**Step 1:** Write the failing table test:
+
+```go
+func TestClassifyName(t *testing.T) {
+	cases := []struct {
+		name string
+		kind Kind // Image, Video, or 0
+	}{
+		{"a.jpg", KindImage},
+		{"a.JPEG", KindImage},
+		{"a.png", KindImage},
+		{"a.webp", KindImage},
+		{"a.jxl", KindImage},
+		{"a.bmp", KindImage},
+		{"a.gif", KindVideo},
+		{"a.mp4", KindVideo},
+		{"a.mkv", KindVideo},
+		{"a.webm", KindVideo},
+		{"a.mov", KindVideo},
+		{"a.avi", KindVideo},
+		{"a.m4v", KindVideo},
+		{"a.txt", 0},
+		{"noext", 0},
+	}
+	// ...
+}
+
+func TestSocketPath(t *testing.T) {
+	got := socketPath("/run/user/1000/sysc-shell", "DP-1")
+	if got != "/run/user/1000/sysc-shell/gslapper-DP-1.sock" {
+		t.Fatalf("got %q", got)
+	}
+	if socketPath("/run/user/1000/sysc-shell", "HDMI-A-1") == got {
+		t.Fatal("connectors must not share a socket")
+	}
+	if socketPath("/tmp", "DP-1; rm -rf /") != "/tmp/gslapper-DP-1-rm--rf-.sock" {
+		t.Fatal("sanitize connector to [A-Za-z0-9._-]")
+	}
+}
+```
+
+**Step 2:** Run `go test -count=1 ./internal/wallpaper -run 'TestClassifyName|TestSocketPath' -v`. Expected: compile failure, package does not exist.
+
+**Step 3:** Implement `Kind`, `ClassifyName`, `SanitizeConnector`, `socketPath`. No I/O.
+
+**Step 4:** Run the same test. Expected: PASS.
+
+**Step 5:** Commit `feat(wallpaper): classify media and name owned sockets`.
+
+### Task 2: Assignment store and generations
+
+**Files:**
+- Create: `internal/wallpaper/assign.go`
+- Test: `internal/wallpaper/assign_test.go`
+
+**Step 1:** Write the failing table test that is the plugin self-check, ported:
+
+- Independent `DP-1` image and `DP-3` video
+- All expands over a fixed `[]string{"DP-1","DP-3"}` fixture
+- Stale generation ignored (`Apply` with gen 1 after gen 2 exists is a no-op)
+- Disconnect keeps the assignment, clears runtime
+- Reconnect restores the saved assignment as a desired apply
+- Partial All: DP-3 fails, DP-1 succeeds, DP-3 keeps prior assignment
+- Theme seed: image path; video with still; video without still leaves previous seed
+
+Keep the store a plain struct with methods. No engine, no goroutine.
+
+**Step 2:** Run `go test -count=1 ./internal/wallpaper -run TestAssign -v`. Expected: FAIL.
+
+**Step 3:** Implement `Store`, `Assignment`, `Runtime`, `Apply`, `Disconnect`, `Reconnect`, `SeedPath`. Generation is per connector, uint64, incremented at the start of each requested apply.
+
+**Step 4:** Run `go test -race -count=1 ./internal/wallpaper -run TestAssign -v`. Expected: PASS.
+
+**Step 5:** Commit `feat(wallpaper): per-connector assignment store`.
+
+### Task 3: gSlapper IPC client
+
+**Files:**
+- Create: `internal/wallpaper/ipc.go`
+- Test: `internal/wallpaper/ipc_test.go`
+
+**Step 1:** Write failing tests against a `net.ListenUnix` fixture (copy the Waytrogen shape, in Go):
+
+- `query` writes `query\n` and parses `STATUS: playing image /wallpapers/space name.png`
+- `STATUS: paused video /tmp/a.mp4` sets paused + video
+- `ERROR: no pipeline` returns that error
+- Empty reply is an error
+- Commands containing `\n` are rejected before dial
+- `classifyChangeError("cannot update path (use --auto-stop for video changes)")` is restart; other errors are keep
+
+Read one line. Do not wait for EOF (gSlapper keeps the socket open).
+
+**Step 2:** Run `go test -count=1 ./internal/wallpaper -run 'TestIPC|TestClassifyChange' -v`. Expected: FAIL.
+
+**Step 3:** Implement `Request(socket, command, timeout)`, `ParseStatus`, `classifyChangeError`. Timeouts: 2s default, 6s for pause/resume.
+
+**Step 4:** Run the tests. Expected: PASS.
+
+**Step 5:** Commit `feat(wallpaper): gSlapper line IPC`.
+
+### Task 4: Launch argv and capability probe
+
+**Files:**
+- Create: `internal/wallpaper/gslapper.go`
+- Test: `internal/wallpaper/gslapper_test.go`
+
+**Step 1:** Write failing tests:
+
+- `helpSupports([]byte("--ipc-socket PATH --transition-type TYPE --cache-size MB"))` true; old help without `--cache-size` false
+- `launchArgs` for DP-1, fill, loop, fps 30, fade off, socket `/run/user/1000/sysc-shell/gslapper-DP-1.sock`, path `/tmp/a.mp4` contains `-I`, that socket, `--no-save-state`, `-o` with `fill no-audio loop`, connector `DP-1`, path. No `*`. Hidden auto-pause adds `--auto-pause`; auto-stop adds `--auto-stop`; never both.
+
+**Step 2:** Run `go test -count=1 ./internal/wallpaper -run 'TestHelpSupports|TestLaunchArgs' -v`. Expected: FAIL.
+
+**Step 3:** Implement settings struct + argv builder + help probe. Do not `exec` in this task.
+
+**Step 4:** Run the tests. Expected: PASS.
+
+**Step 5:** Commit `feat(wallpaper): gSlapper launch argv`.
+
+### Task 5: Static fallback argv
+
+**Files:**
+- Create: `internal/wallpaper/fallback.go`
+- Test: `internal/wallpaper/fallback_test.go`
+
+**Step 1:** Write failing tests:
+
+- `awwwImgArgs(path, "DP-1")` is `awww img --outputs DP-1 <path>`
+- All-outputs is not a thing at this layer; the service calls once per connector
+- `swaybgArgs(path, "DP-1")` is `swaybg -o DP-1 -i <path> -m fill`
+- `pickFallback("awww", "swaybg")` prefers awww when the name is on PATH (inject a lookup func); neither → error
+
+**Step 2:** Run `go test -count=1 ./internal/wallpaper -run 'TestAwww|TestSwaybg|TestPickFallback' -v`. Expected: FAIL.
+
+**Step 3:** Implement argv + lookup. No spawn.
+
+**Step 4:** Run the tests. Expected: PASS.
+
+**Step 5:** Commit `feat(wallpaper): awww and swaybg argv`.
+
+### Task 6: Config section and assignment file
+
+**Files:**
+- Modify: `internal/config/config.go`, `internal/config/load.go`, `internal/config/write.go`, `internal/config/config_test.go`
+- Create: `internal/wallpaper/persist.go`
+- Test: `internal/wallpaper/persist_test.go`
+
+**Step 1:** Failing config test: missing `wallpaper` block inherits
+
+```
+image_directory = ~/Pictures/Wallpapers
+video_directory = ~/Videos/Wallpapers
+scale = fill
+loop = true
+fps = 30
+fade = false
+fade_duration = 0.5
+hidden = none
+```
+
+Unknown scale/fps/hidden fail load. Seed path is still `theme-gen`, not this block.
+
+Failing persist test: round-trip `assignments.json` mode 0600; reject a path with a newline.
+
+**Step 2:** Run the new tests. Expected: FAIL.
+
+**Step 3:** Add `Wallpaper` on `config.Config`, wire decode/encode, persist load/save under `$XDG_STATE_HOME/sysc-shell/wallpaper/assignments.json`.
+
+**Step 4:** `gofmt -w . && go test -race -count=1 ./internal/config ./internal/wallpaper`. Expected: PASS. `git diff --exit-code -- go.mod go.sum`.
+
+**Step 5:** Commit `feat(wallpaper): config defaults and assignment file`.
+
+### Task 7: Directory index
+
+**Files:**
+- Create: `internal/wallpaper/library.go`
+- Test: `internal/wallpaper/library_test.go`
+
+**Step 1:** Write a failing test over `t.TempDir()`:
+
+- Image root with `a.jpg`, `sub/b.png`, `c.gif`, `skip.txt` → current dir lists `a.jpg` (image), `c.gif` (video), directory `sub`; not `skip.txt`
+- Navigate into `sub` lists `b.png`; Up returns
+- Non-UTF-8 filename skipped (write a `[]byte` name if the OS allows; otherwise skip that row with a comment)
+- Unreadable root → error string, empty list
+
+Do not recurse into the grid. Child dirs are entries, not flattened files (D9).
+
+**Step 2:** Run `go test -count=1 ./internal/wallpaper -run TestLibrary -v`. Expected: FAIL.
+
+**Step 3:** Implement a stdlib walk that builds an in-memory index once; `View(root, dir, filter, search)` returns the current page of media + child dirs. Filter `all|images|videos`. Search is a case-insensitive substring on the filename.
+
+**Step 4:** Run the test. Expected: PASS.
+
+**Step 5:** Commit `feat(wallpaper): directory index`.
+
+### Task 8: Service goroutine and snapshot
+
+**Files:**
+- Create: `internal/wallpaper/service.go`
+- Test: `internal/wallpaper/service_test.go`
+
+**Step 1:** Write a failing test with a fake engine (interface, one implementation in tests):
+
+- `Apply` on DP-1 publishes a snapshot with that assignment
+- A second `Apply` with a slower fake that finishes after a newer one does not commit (generation)
+- `Disconnect("DP-3")` then `Reconnect("DP-3")` asks the fake to apply the saved path
+- Commands arrive on a channel; `Snapshot()` is immutable
+
+The fake must not touch Wayland. `exec` stays behind the engine interface so Task 9 can fill it in.
+
+**Step 2:** Run `go test -race -count=1 ./internal/wallpaper -run TestService -v`. Expected: FAIL.
+
+**Step 3:** Implement `Service` with `Updates() <-chan Snapshot`, `Enqueue(Command)`, one loop goroutine. `ponytail:` one mutex on the store is enough; per-connector locks if two-output apply latency shows contention.
+
+**Step 4:** Run the race test. Expected: PASS.
+
+**Step 5:** Commit `feat(wallpaper): service snapshots`.
+
+### Task 9: Real engines (exec + IPC wait)
+
+**Files:**
+- Modify: `internal/wallpaper/gslapper.go`, `internal/wallpaper/fallback.go`
+- Test: `internal/wallpaper/engine_test.go`
+
+**Step 1:** Write a failing test that uses a tiny `Command` stub (inject `exec` like a func field):
+
+- No socket → spawn with `launchArgs`, poll `query` until OK or 3s
+- Child exits before ready → error, process killed
+- Existing socket + `query` OK → `change`; auto-stop error → stop, spawn once
+- Restore → `stop`, wait for socket file gone, then fallback argv
+- Never builds a `pkill` argv
+
+Do not talk to a real `gslapper` in unit tests.
+
+**Step 2:** Run `go test -count=1 ./internal/wallpaper -run TestEngine -v`. Expected: FAIL.
+
+**Step 3:** Implement spawn (own process group, stdin/stdout/stderr nil), `waitForQuery`, `stopOwned`, fallback start recording pid on `Runtime`. Probe PATH for gslapper/awww/swaybg at service start for `Capabilities`.
+
+**Step 4:** Run the test. Expected: PASS.
+
+**Step 5:** Commit `feat(wallpaper): launch, change, stop, restore`.
+
+### Task 10: Panel id, size, IPC, tree
+
+**Files:**
+- Modify: `internal/shell/panel.go`, `internal/shell/panelhost.go`, `internal/ipc/server.go`, `internal/ipc/server_test.go`
+- Create: `internal/shell/popout_wallpaper.go`
+- Test: `internal/shell/popout_wallpaper_test.go`
+
+**Step 1:** Write failing tests modeled on `popout_launcher_test.go`:
+
+- `parsePanelName("wallpaper")` → `PanelWallpaper`
+- `panelTargetSize` is 980×1100
+- `OpenPanel` on 1920×1080 top bar: `CenterY` true, overlay Exclusive, shield present
+- Tree has a search field and a `KindVirtualList`
+- IPC `knownPanels` includes `wallpaper`
+
+**Step 2:** Run `go test -count=1 ./internal/shell -run TestWallpaper -v` and `./internal/ipc -run TestPanel`. Expected: FAIL.
+
+**Step 3:** Add the panel id, size, `CenterY`, `h.search`, `wallpaperTree` projecting the last snapshot (empty library is fine). Wire `parsePanelName` and IPC. Row height: 96 thumb + caption ≈ 128. ItemCount = ceil(n/4). Do not apply wallpapers yet.
+
+**Step 4:** Run the tests. Expected: PASS.
+
+**Step 5:** Commit `feat(shell): wallpaper panel chrome`.
+
+### Task 11: Project tiles, keys, apply, restore
+
+**Files:**
+- Modify: `internal/shell/popout_wallpaper.go`, `internal/shell/panelhost.go`, `internal/shell/registry.go`
+- Test: `internal/shell/popout_wallpaper_test.go`
+
+**Step 1:** Extend the panel test with a stub service:
+
+- Four image paths → one virtual-list row of four tiles; click/Enter enqueues `assign-image`
+- Arrow right moves selection inside the row; down moves a row
+- Output select All vs DP-1 changes the target on the next apply
+- Restore enqueues `restore`
+- Theme seed: after a successful image apply the registry's next `generateTheme` sees `Source=wallpaper` and that path (drive this through a fake generator, not matugen)
+
+**Step 2:** Run the test. Expected: FAIL.
+
+**Step 3:** Project tiles as `KindButton`/`KindImage` children. Handle keys next to the launcher branch in `panelhost.go` (do not fork the Exclusive path). `relayWallpaper` mirrors `relayLauncher`: receive snapshot, rebuild panel under `Registry.mu`.
+
+Thumbnails: if a cached JPEG exists, decode through the existing image path; else glyph placeholder. Do not block the Wayland owner on `gst-launch-1.0`. A background fill of the cache is enough; the next snapshot picks them up.
+
+**Step 4:** `gofmt -w . && go vet ./... && go test -race -count=1 ./internal/shell ./internal/wallpaper`. Expected: PASS.
+
+**Step 5:** Commit `feat(shell): wallpaper apply and restore`.
+
+### Task 12: Startup reconcile and bar item
+
+**Files:**
+- Modify: `internal/shell/registry.go` (or the construct path that already starts notify/tray relays), `internal/config/config.go` (`knownItems`)
+- Test: `internal/shell` or `internal/config` as appropriate
+
+**Step 1:** Failing tests:
+
+- Construct with a saved DP-1 assignment and a fake engine that records `Apply` → one apply on start
+- `knownItems` accepts `wallpaper`; default bar layout is unchanged
+
+**Step 2:** Run the tests. Expected: FAIL.
+
+**Step 3:** Start the wallpaper service when the registry starts (not lazy: D20 startup reconcile). Clicking a bar item `wallpaper` toggles the panel (same path as other panel items). Do not add it to `Default()`.
+
+**Step 4:** Run `go test -race -count=1 ./...`. Expected: PASS.
+
+**Step 5:** Commit `feat(shell): restore wallpapers at start`.
+
+### Task 13: Live Niri gate
+
+**Files:**
+- Modify: `tests/integration/README.md` (add a Milestone 7 wallpaper subsection; do not invent a second matrix file)
+
+**Step 1:** Export the compositor environment:
+
+```bash
+export NIRI_SOCKET=$(ls /run/user/1000/niri.wayland-*.sock | head -1)
+export WAYLAND_DISPLAY=wayland-1
+export XDG_RUNTIME_DIR=/run/user/1000
+```
+
+**Step 2:** Run a scratchpad `sysc-shell`. Kill by pid from `pgrep -f 'scratchpad/'`, never `pkill -f`.
+
+**Step 3:** Record:
+
+- `niri msg -j layers` shows the wallpaper panel when toggled
+- Image on DP-1, video on DP-3 (or the live connector names)
+- All applies both
+- Pause / Resume
+- Restore stops the owned gSlapper socket and shows the still via awww or swaybg
+- `theme.seed` in the written config (or the live theme) is the still or image
+- `pgrep -af gslapper` command lines contain `$XDG_RUNTIME_DIR/sysc-shell/gslapper-`
+
+**Step 4:** If a check is unrunnable, record why in bd (`sysc-146` discovered-from), keep the overlay. Do not claim the slice done.
+
+**Step 5:** Commit `docs(wallpaper): record the live Niri gate` only if the README subsection landed. No product commit that skips the gate.
+
+---
+
+Stop when Task 13's runnable checks pass. Do not pull favorites, flatten, `*` coalescing (`sysc-148`), or desktop widgets.
