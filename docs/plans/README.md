@@ -208,6 +208,17 @@ code from the handover.
 | `2026-09-02-chrome-catalogue-design.md` | design | Owner-approved native chrome, motion, Material Symbols subset, semantic theme composition, and session-panel consumer. |
 | `2026-09-02-chrome-catalogue.md` | plan | Owner-directed implementation-first plan for semantic chrome, native transitions, Material subset, session composition, and focused regression checks. |
 
+## Theme system parity
+
+Owner-approved 2026-09-02. Extends the existing native Go palette and renderer
+with one resolved composition model. Presets provide defaults; colour, density,
+typography, shape, opacity, elevation, motion, and accessibility remain
+independent axes. Epic `sysc-142` depends on the chrome catalogue.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-02-theme-system-parity-design.md` | design | Owner-approved semantic palette, composition, type, density, shape, opacity, elevation, motion, accessibility, settings, and live-reload contract. |
+
 ## Milestone 5: notifications and system tray
 
 Shell presentation is on `main`. The services this milestone consumes are tagged candidates in their
