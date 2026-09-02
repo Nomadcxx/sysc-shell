@@ -981,7 +981,7 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 		h.search.SyncFrom(n)
 		f = h.search
 	} else if _, ok := parsePluginAction(n.Action); ok {
-		k := editorKey(n)
+		k := n.StableKey()
 		if h.editors == nil {
 			h.editors = map[string]*retainedEditor{}
 		}
@@ -1530,16 +1530,6 @@ type retainedEditor struct {
 	reseed uint64
 }
 
-func editorKey(n *ui.Node) string {
-	if n == nil {
-		return ""
-	}
-	if n.Key != "" {
-		return n.Key
-	}
-	return n.Action
-}
-
 func overlayEditors(root *ui.Node, eds map[string]*retainedEditor) {
 	if eds == nil {
 		return
@@ -1551,7 +1541,7 @@ func overlayEditors(root *ui.Node, eds map[string]*retainedEditor) {
 			return
 		}
 		if n.Kind == ui.KindTextField {
-			k := editorKey(n)
+			k := n.StableKey()
 			if k != "" {
 				seen[k] = true
 				slot := eds[k]

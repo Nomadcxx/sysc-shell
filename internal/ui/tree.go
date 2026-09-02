@@ -25,6 +25,10 @@ const (
 	// KindCapsule is a padded pill around one child, or an empty coloured dot
 	// when it has no children and a Width. It is the bar's per-item chrome.
 	KindCapsule
+	// KindIcon is one named glyph from the shell's dedicated chrome icon face.
+	KindIcon
+	// KindSegmented owns equal-width, exclusive button segments.
+	KindSegmented
 
 	KindDragSource
 	KindDropZone
@@ -54,8 +58,15 @@ func (r Rect) Contains(x, y int) bool {
 // Node is one retained element. Layout fills Bounds; every other field is
 // supplied by the caller.
 type Node struct {
-	Kind  Kind
-	Text  string
+	Kind Kind
+	Text string
+	// Icon names a glyph in the dedicated chrome icon inventory.
+	Icon string
+	// Key identifies a node across tree rebuilds so host-retained state -- an
+	// editor buffer, a hover or press state, an in-flight transition -- follows
+	// the node it belongs to. Action is the fallback for actionable nodes; see
+	// StableKey.
+	Key   string
 	Value float64
 	Min   float64
 	Max   float64
@@ -66,6 +77,10 @@ type Node struct {
 	Cursor int
 	Width  int
 	Height int
+	// IconSize is the logical square reserved by KindIcon. Zero uses 20.
+	IconSize int
+	// Radius overrides the semantic radius for this node. Zero uses the theme.
+	Radius int
 	// ScrollOffset is the viewport origin in logical pixels.
 	ScrollOffset int
 	ItemCount    int
@@ -122,6 +137,7 @@ type Node struct {
 	// Stroke is a capsule's border width in logical pixels. Zero means none.
 	Stroke     int
 	StrokeFill Fill
+	State      Interaction
 	Padding    int
 	Gap        int
 	Action     string
@@ -138,11 +154,35 @@ type Node struct {
 	DragType      string
 	Payload       string
 	Accept        []string
-	Key           string
 	Multiline     bool
 	SubmitOnEnter bool
 	Reseed        uint64
 }
+
+// StableKey reports the key animation and interaction state use across tree
+// rebuilds. Actions are already unique within their owning surface.
+func (n *Node) StableKey() string {
+	if n == nil {
+		return ""
+	}
+	if n.Key != "" {
+		return n.Key
+	}
+	return n.Action
+}
+
+// Interaction is the resolved visual state supplied by the shell input host.
+type Interaction uint8
+
+const (
+	StateHovered Interaction = 1 << iota
+	StatePressed
+	StateSelected
+	StateDisabled
+)
+
+// Has reports whether a state bit is set.
+func (s Interaction) Has(flag Interaction) bool { return s&flag != 0 }
 
 func (n *Node) Active() int {
 	if n == nil {
@@ -168,6 +208,10 @@ const (
 	// FillSoft is a muted accent wash. Contents keep the surface foreground,
 	// so a selected launcher row is not a primary-on-white chip.
 	FillSoft
+	// FillContainerHigh is a panel card or nested high-emphasis container.
+	FillContainerHigh
+	// FillOutline is an idle control drawn on its parent with a boundary.
+	FillOutline
 )
 
 // Tone selects which theme colour paints a text node.

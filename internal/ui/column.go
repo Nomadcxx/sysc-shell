@@ -86,9 +86,17 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 		return GraphHeight, nil
 	case KindSeparator:
 		return 1, nil
-	case KindButton, KindDragSource:
+	case KindButton:
+		_, h, err := measureButton(n, measure)
+		return h, err
+	case KindDragSource:
 		_, h := measure(n.Text, n.Tabular)
 		return h + 2*n.Padding, nil
+	case KindIcon:
+		return iconSize(n), nil
+	case KindSegmented:
+		_, h, err := measureSegmented(n, measure)
+		return h, err
 	case KindImage:
 		if n.ImageSize > 0 {
 			return n.ImageSize, nil
@@ -223,6 +231,12 @@ func placeColumnChild(n *Node, box Rect, measure MeasureText) error {
 			W: max(box.W-2*n.Padding, 0), H: max(box.H-2*n.Padding, 0),
 		}
 		return placeColumnChild(n.Children[0], inner, measure)
+	case KindButton:
+		n.Bounds = box
+		return layoutButtonContent(n, measure, n.Height > 0)
+	case KindSegmented:
+		n.Bounds = box
+		return layoutSegmented(n, measure)
 	case KindColumn, KindDropZone:
 		return LayoutColumn(n, box, measure)
 	case KindScroll, KindVirtualList:

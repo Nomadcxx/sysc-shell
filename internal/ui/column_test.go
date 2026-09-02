@@ -75,6 +75,43 @@ func TestColumnLayoutAcceptsGraph(t *testing.T) {
 	}
 }
 
+func TestSegmentedControlSharesTheSessionWidth(t *testing.T) {
+	t.Parallel()
+	segments := &Node{Kind: KindSegmented, Height: 40, Gap: 4, Children: []*Node{
+		{Kind: KindButton, Text: "Performance", Padding: 8},
+		{Kind: KindButton, Text: "Balanced", Padding: 8, State: StateSelected},
+		{Kind: KindButton, Text: "Power saver", Padding: 8},
+	}}
+	root := &Node{Kind: KindColumn, Padding: 12, Children: []*Node{segments}}
+	if err := LayoutColumn(root, Rect{W: 420, H: 80}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	if got := segments.Bounds; got.W != 396 || got.H != 40 {
+		t.Fatalf("segmented bounds = %+v, want width 396 height 40", got)
+	}
+	for i, segment := range segments.Children {
+		if segment.Bounds.W < 129 || segment.Bounds.W > 130 {
+			t.Errorf("segment %d width = %d, want equal 129/130 allocation", i, segment.Bounds.W)
+		}
+		textW, _ := fakeMeasure(segment.Text, false)
+		if textW+2*segment.Padding > segment.Bounds.W {
+			t.Errorf("segment %d label %q clips in %+v", i, segment.Text, segment.Bounds)
+		}
+	}
+}
+
+func TestSegmentedControlRejectsMultipleSelections(t *testing.T) {
+	t.Parallel()
+	segments := &Node{Kind: KindSegmented, Height: 40, Children: []*Node{
+		{Kind: KindButton, Text: "One", State: StateSelected},
+		{Kind: KindButton, Text: "Two", State: StateSelected},
+	}}
+	root := &Node{Kind: KindColumn, Children: []*Node{segments}}
+	if err := LayoutColumn(root, Rect{W: 200, H: 40}, fakeMeasure); err == nil {
+		t.Fatal("LayoutColumn accepted two selected segments")
+	}
+}
+
 func samplePanelTree() *Node {
 	return &Node{Kind: KindColumn, Gap: 8, Padding: 12, Children: []*Node{
 		{Kind: KindText, Text: "Power"},

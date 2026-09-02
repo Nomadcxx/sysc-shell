@@ -2,6 +2,8 @@ package ui
 
 import "fmt"
 
+const defaultIconSize = 20
+
 // Layout arranges a row root and its leaf children inside bounds, writing the
 // result into each node's Bounds. Children are placed in source order from the
 // left content edge and centred vertically in the padded content box.
@@ -60,6 +62,22 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 			if err := layoutCapsuleChild(child, measure); err != nil {
 				return fmt.Errorf("ui: child %d: %w", i, err)
 			}
+		case KindButton:
+			if w < 0 || h < 0 || h > content.H || x+w > content.X+content.W {
+				return fmt.Errorf("ui: child %d of kind %d does not fit in %dx%d", i, child.Kind, content.W, content.H)
+			}
+			child.Bounds = Rect{X: x, Y: content.Y + (content.H-h)/2, W: w, H: h}
+			if err := layoutButtonContent(child, measure, child.Height > 0); err != nil {
+				return fmt.Errorf("ui: child %d: %w", i, err)
+			}
+		case KindSegmented:
+			if w < 0 || h < 0 || h > content.H || x+w > content.X+content.W {
+				return fmt.Errorf("ui: child %d of kind %d does not fit in %dx%d", i, child.Kind, content.W, content.H)
+			}
+			child.Bounds = Rect{X: x, Y: content.Y + (content.H-h)/2, W: w, H: h}
+			if err := layoutSegmented(child, measure); err != nil {
+				return fmt.Errorf("ui: child %d: %w", i, err)
+			}
 		case KindMenu:
 			if w < 0 || h < 0 || h > content.H || x+w > content.X+content.W {
 				return fmt.Errorf("ui: child %d of kind %d does not fit in %dx%d", i, child.Kind, content.W, content.H)
@@ -84,6 +102,155 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 			child.Bounds = Rect{X: x, Y: content.Y + (content.H-h)/2, W: w, H: h}
 		}
 		x += child.Bounds.W
+	}
+	return nil
+}
+
+func iconSize(n *Node) int {
+	if n.IconSize > 0 {
+		return n.IconSize
+	}
+	return defaultIconSize
+}
+
+func inlineContentSize(n *Node, measure MeasureText) (int, int, error) {
+	if len(n.Children) == 0 {
+		w, h := measure(n.Text, n.Tabular)
+		return w, h, nil
+	}
+	w, h := 0, 0
+	for i, child := range n.Children {
+		if child == nil {
+			return 0, 0, fmt.Errorf("button child %d is nil", i)
+		}
+		cw, ch, err := measureNode(child, max(n.Height-2*n.Padding, 0), measure)
+		if err != nil {
+			return 0, 0, err
+		}
+		if i > 0 {
+			w += n.Gap
+		}
+		w += cw
+		h = max(h, ch)
+	}
+	return w, h, nil
+}
+
+func measureButton(n *Node, measure MeasureText) (int, int, error) {
+	w, h, err := inlineContentSize(n, measure)
+	if err != nil {
+		return 0, 0, err
+	}
+	w += 2 * n.Padding
+	h += 2 * n.Padding
+	if n.Width > 0 {
+		w = n.Width
+	}
+	if n.Height > 0 {
+		h = n.Height
+	}
+	return w, h, nil
+}
+
+func layoutButtonContent(n *Node, measure MeasureText, fixedHeight bool) error {
+	if len(n.Children) == 0 {
+		return nil
+	}
+	w, h, err := inlineContentSize(n, measure)
+	if err != nil {
+		return err
+	}
+	verticalPadding := n.Padding
+	if fixedHeight {
+		verticalPadding = 0
+	}
+	inner := Rect{X: n.Bounds.X + n.Padding, Y: n.Bounds.Y + verticalPadding,
+		W: max(n.Bounds.W-2*n.Padding, 0), H: max(n.Bounds.H-2*verticalPadding, 0)}
+	if w > inner.W || h > inner.H {
+		return fmt.Errorf("button content %dx%d does not fit in %dx%d", w, h, inner.W, inner.H)
+	}
+	x := inner.X + (inner.W-w)/2
+	for i, child := range n.Children {
+		if i > 0 {
+			x += n.Gap
+		}
+		cw, ch, err := measureNode(child, inner.H, measure)
+		if err != nil {
+			return err
+		}
+		child.Bounds = Rect{X: x, Y: inner.Y + (inner.H-ch)/2, W: cw, H: ch}
+		x += cw
+	}
+	return nil
+}
+
+func validateSegments(n *Node) error {
+	selected := 0
+	for i, child := range n.Children {
+		if child == nil || child.Kind != KindButton {
+			return fmt.Errorf("segment %d is not a button", i)
+		}
+		if child.State.Has(StateSelected) {
+			selected++
+		}
+	}
+	if selected > 1 {
+		return fmt.Errorf("segmented control has %d selected children", selected)
+	}
+	return nil
+}
+
+func measureSegmented(n *Node, measure MeasureText) (int, int, error) {
+	if err := validateSegments(n); err != nil {
+		return 0, 0, err
+	}
+	w, h := 2*n.Padding, 0
+	for i, child := range n.Children {
+		cw, ch, err := measureButton(child, measure)
+		if err != nil {
+			return 0, 0, err
+		}
+		if i > 0 {
+			w += n.Gap
+		}
+		w += cw
+		h = max(h, ch)
+	}
+	h += 2 * n.Padding
+	if n.Width > 0 {
+		w = n.Width
+	}
+	if n.Height > 0 {
+		h = n.Height
+	}
+	return w, h, nil
+}
+
+func layoutSegmented(n *Node, measure MeasureText) error {
+	if err := validateSegments(n); err != nil {
+		return err
+	}
+	if len(n.Children) == 0 {
+		return nil
+	}
+	inner := Rect{X: n.Bounds.X + n.Padding, Y: n.Bounds.Y + n.Padding,
+		W: max(n.Bounds.W-2*n.Padding, 0), H: max(n.Bounds.H-2*n.Padding, 0)}
+	available := inner.W - n.Gap*(len(n.Children)-1)
+	if available < 0 {
+		return fmt.Errorf("segmented gaps do not fit in width %d", inner.W)
+	}
+	base, extra := available/len(n.Children), available%len(n.Children)
+	x := inner.X
+	for i, child := range n.Children {
+		w := base
+		if i < extra {
+			w++
+		}
+		child.Bounds = Rect{X: x, Y: inner.Y, W: w, H: inner.H}
+		if err := layoutButtonContent(child, measure, true); err != nil {
+			return fmt.Errorf("segment %d: %w", i, err)
+		}
+		x += w + n.Gap
 	}
 	return nil
 }
@@ -224,9 +391,16 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 			return 0, 0, nil
 		}
 		return w + 2*n.Padding, contentHeight, nil
-	case KindButton, KindDragSource:
+	case KindButton:
+		return measureButton(n, measure)
+	case KindDragSource:
 		w, h := measure(n.Text, n.Tabular)
 		return w + 2*n.Padding, h + 2*n.Padding, nil
+	case KindIcon:
+		size := iconSize(n)
+		return size, size, nil
+	case KindSegmented:
+		return measureSegmented(n, measure)
 	case KindImage:
 		size := n.ImageSize
 		if size <= 0 {
