@@ -5,10 +5,11 @@
   "version": "1.0.0",
   "protocol": {"major": 1, "minor": 0},
   "exec": "bin/sysc-plugin-screen-recorder",
-  "capabilities": ["notifications", "settings", "state"],
+  "capabilities": ["notifications", "panels", "settings", "state"],
   "requires": {"commands": ["gpu-screen-recorder"]},
   "services": [{"id": "recorder"}],
   "widgets": [{"id": "bar", "settings": []}],
+  "panels": [{"id": "panel", "width": 480, "height": 560, "placement": "attached", "include_settings": true}],
   "settings": [
     {"key": "video_source", "type": "select", "label": "Video source", "default": "portal",
       "options": [{"value": "focused", "label": "Focused output"}, {"value": "portal", "label": "Portal"}]},

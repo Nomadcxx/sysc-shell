@@ -145,11 +145,12 @@ type Widget struct {
 
 // Panel is one panel the plugin may ask the host to open.
 type Panel struct {
-	ID        string
-	Label     string
-	Width     int
-	Height    int
-	Placement Placement
+	ID              string
+	Label           string
+	Width           int
+	Height          int
+	Placement       Placement
+	IncludeSettings bool
 }
 
 // SettingOption is one choice in a select setting.
@@ -264,11 +265,12 @@ type wireWidget struct {
 }
 
 type wirePanel struct {
-	ID        string `json:"id"`
-	Label     string `json:"label,omitempty"`
-	Width     int    `json:"width"`
-	Height    int    `json:"height"`
-	Placement string `json:"placement"`
+	ID              string `json:"id"`
+	Label           string `json:"label,omitempty"`
+	Width           int    `json:"width"`
+	Height          int    `json:"height"`
+	Placement       string `json:"placement"`
+	IncludeSettings bool   `json:"include_settings,omitempty"`
 }
 
 type wireSetting struct {
@@ -537,7 +539,10 @@ func panels(w []wirePanel) ([]Panel, error) {
 					i, d.what, d.v, MinPanelExtent, MaxPanelExtent)
 			}
 		}
-		out[i] = Panel{ID: e.ID, Label: e.Label, Width: e.Width, Height: e.Height, Placement: PlacementAttached}
+		out[i] = Panel{
+			ID: e.ID, Label: e.Label, Width: e.Width, Height: e.Height,
+			Placement: PlacementAttached, IncludeSettings: e.IncludeSettings,
+		}
 	}
 	return out, nil
 }

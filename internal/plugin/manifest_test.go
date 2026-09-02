@@ -250,6 +250,55 @@ func TestLoadManifestRejectsDuplicateCapabilities(t *testing.T) {
 	}
 }
 
+func TestLoadManifestValidPanelIncludeSettings(t *testing.T) {
+	t.Parallel()
+
+	withSettings := edit(t, "panels", []any{
+		map[string]any{
+			"id": "panel", "width": 320, "height": 280,
+			"placement": "attached", "include_settings": true,
+		},
+	})
+	dir := writePlugin(t, withSettings, "bin/sysc-plugin-timer")
+	m, err := LoadManifest(dir)
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	if len(m.Panels) != 1 || !m.Panels[0].IncludeSettings {
+		t.Errorf("panels = %+v, want IncludeSettings true", m.Panels)
+	}
+
+	// Omitted include_settings stays false (Weather and the design fixture).
+	dir = writePlugin(t, timerManifest, "bin/sysc-plugin-timer")
+	m, err = LoadManifest(dir)
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	if len(m.Panels) != 1 || m.Panels[0].IncludeSettings {
+		t.Errorf("panels = %+v, want IncludeSettings false", m.Panels)
+	}
+}
+
+func TestLoadReferenceRecorderManifest(t *testing.T) {
+	t.Parallel()
+
+	manifest, err := os.ReadFile(filepath.Join("..", "..", "plugins", "reference", "recorder", "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := writePlugin(t, string(manifest), "bin/sysc-plugin-screen-recorder")
+	m, err := LoadManifest(dir)
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	if len(m.Panels) != 1 || !m.Panels[0].IncludeSettings {
+		t.Errorf("panels = %+v, want one panel with IncludeSettings true", m.Panels)
+	}
+	if !m.Grants(CapPanels) {
+		t.Errorf("capabilities = %v, want panels", m.Capabilities)
+	}
+}
+
 func TestLoadManifestRejectsInvalidPanelGeometry(t *testing.T) {
 	t.Parallel()
 
