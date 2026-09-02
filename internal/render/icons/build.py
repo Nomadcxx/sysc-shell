@@ -44,6 +44,11 @@ GLYPHS = [
     ("uniE018", 0xE018, "memory"),
     ("uniE019", 0xE019, "disk"),
     ("uniE01A", 0xE01A, "network"),
+    ("uniE01B", 0xE01B, "camera"),
+    ("uniE01C", 0xE01C, "camera-off"),
+    ("uniE01D", 0xE01D, "record"),
+    ("uniE01E", 0xE01E, "stop"),
+    ("uniE01F", 0xE01F, "replay"),
 ]
 
 UPM = 1000

@@ -246,6 +246,15 @@ func TestBatteryLevelGlyphsDifferFromEachOther(t *testing.T) {
 	}
 }
 
+func TestRecorderCatalogueNamesResolve(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"camera", "camera-off", "record", "stop", "replay"} {
+		if _, ok := IconByName(name); !ok {
+			t.Fatalf("%q is missing from the catalogue", name)
+		}
+	}
+}
+
 // The bar paints at roughly this size, so the levels have to survive it.
 func TestBatteryLevelsStayDistinctAtBarSize(t *testing.T) {
 	empty := glyphCoverage(t, iconBatteryLevel0, 17)

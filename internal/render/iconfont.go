@@ -56,6 +56,12 @@ const (
 	iconDisk
 	iconNetwork
 
+	iconCamera
+	iconCameraOff
+	iconRecord
+	iconStop
+	iconReplay
+
 	batteryRuneFirst = iconBatteryLevel0
 	batteryRuneLast  = iconBatteryCritical
 
@@ -196,6 +202,11 @@ var iconNames = map[string]rune{
 	"snow":          iconSnow,
 	"heavy-snow":    iconHeavySnow,
 	"thunderstorm":  iconThunderstorm,
+	"camera":        iconCamera,
+	"camera-off":    iconCameraOff,
+	"record":        iconRecord,
+	"stop":          iconStop,
+	"replay":        iconReplay,
 }
 
 // IconByName resolves a catalogue name to its symbol.
