@@ -228,6 +228,18 @@ from the session that holds that branch. Do not start a second M6 branch.
 | `2026-09-01-milestone-6e-screen-recorder.md` | plan | Recorder configuration, exact process ownership, replay buffer, context, and live gate. |
 | `2026-09-01-milestone-6f-protocol-qualification.md` | plan | Protocol v1 fixtures, abuse and recovery gates, packaging, live qualification, and handoff. |
 
+## Plugin visual polish (post-M6 chrome)
+
+Secondary to Milestone 6. Two tranches: prior-art IA, then Hallmark voices. Do not
+execute while `sysc-66` is open. Not QML/Luau compatibility.
+
+| Document | Kind | Purpose |
+|---|---|---|
+| `2026-09-02-plugin-visual-polish-research.md` | research | Noctalia official plugins + DMS PluginComponent/BasePill vs Timer, World Clock, manager. |
+| `2026-09-02-plugin-visual-polish-audit-report.md` | audit-report | Hallmark audit of plugin trees and host paint. 2 critical · 6 major · 2 minor. |
+| `2026-09-02-plugin-visual-polish-design.md` | design | D1–D13. Host chrome + trees. Approved 2026-09-02. |
+| `2026-09-02-plugin-visual-polish.md` | plan | T1 six tasks (`sysc-127`), T2 three tasks (`sysc-128`). Blocked on `sysc-66`. |
+
 ## Milestone 7: shell breadth
 
 Not designed as a whole. The first slice (launcher) has prior art and a design
