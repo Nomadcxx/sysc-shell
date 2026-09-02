@@ -236,6 +236,7 @@ from the session that holds that branch. Do not start a second M6 branch.
 | `2026-09-01-milestone-6c-notes.md` | plan | Multiline retained editing, safe note storage, autosave, and external reconciliation. |
 | `2026-09-01-milestone-6d-weather.md` | plan | Shared Open-Meteo client, structured tooltips, Weather settings, and forecast panel. |
 | `2026-09-01-milestone-6e-screen-recorder.md` | plan | Recorder configuration, exact process ownership, replay buffer, context, and live gate. |
+| `2026-09-02-recorder-panel-design.md` | design | Composite camera pill, sysmon-placed panel, full schema on the same store as Settings. |
 | `2026-09-01-milestone-6f-protocol-qualification.md` | plan | Protocol v1 fixtures, abuse and recovery gates, packaging, live qualification, and handoff. |
 
 ## Plugin visual polish (post-M6 chrome)
