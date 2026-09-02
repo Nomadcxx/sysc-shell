@@ -4,7 +4,7 @@ import "github.com/Nomadcxx/sysc-shell/internal/ui"
 
 // toastCardWidth is the design's card width. Cards clamp to a narrower output.
 const (
-	toastCardWidth = 360
+	toastCardWidth = 380
 	toastMargin    = 12
 	toastCardGap   = 8
 )

@@ -118,10 +118,13 @@ type Node struct {
 	Tone Tone
 	// Fill selects a capsule's background, and a button's chrome. Zero is the
 	// surface capsule / an unfilled button (the wrapping pill is the chrome).
-	Fill    Fill
-	Padding int
-	Gap     int
-	Action  string
+	Fill Fill
+	// Stroke is a capsule's border width in logical pixels. Zero means none.
+	Stroke     int
+	StrokeFill Fill
+	Padding    int
+	Gap        int
+	Action     string
 	// Tooltip is bounded hover text owned by the node's feature. The shared
 	// dwell controller decides when and where to show it.
 	Tooltip  string

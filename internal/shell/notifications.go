@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -128,6 +129,22 @@ func (s *notifyState) summary(id uint32) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.active[id].Summary
+}
+
+func (s *notifyState) idsForGroup(key string) []uint32 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var ids []uint32
+	for _, n := range s.active {
+		k := n.DesktopEntry
+		if k == "" {
+			k = n.AppName
+		}
+		if strings.ToLower(k) == key {
+			ids = append(ids, n.ID)
+		}
+	}
+	return ids
 }
 
 func (s *notifyState) historyCount() int {

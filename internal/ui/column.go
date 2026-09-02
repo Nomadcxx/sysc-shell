@@ -61,6 +61,9 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 		if n.Value < 0 || n.Value > 1 {
 			return 0, fmt.Errorf("meter value %v is outside zero through one", n.Value)
 		}
+		if n.Height > 0 {
+			return n.Height, nil
+		}
 		return MeterHeight, nil
 	case KindCapsule:
 		// A capsule in a column is its child plus padding. The design does not

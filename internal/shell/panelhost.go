@@ -103,7 +103,10 @@ type PanelHost struct {
 	launcherMenuID  string
 	launcherActions []launcher.Action
 
-	notifyTab int
+	notifyTab    int
+	notifyFilter string
+	notifyExpand string
+	notifyMenu   bool
 
 	profiles      []string
 	profileActive string
@@ -1131,13 +1134,11 @@ func (h *PanelHost) activate(r *Registry) bool {
 		}
 		return false
 	}
+	if strings.HasPrefix(n.Action, "notify:") {
+		return h.activateNotify(r, n)
+	}
 	if strings.HasPrefix(n.Action, "section:") {
 		h.section = strings.TrimPrefix(n.Action, "section:")
-		r.rebuildPanel(h)
-		return true
-	}
-	if rest, ok := strings.CutPrefix(n.Action, "notify:center:tab:"); ok {
-		h.notifyTab, _ = strconv.Atoi(rest)
 		r.rebuildPanel(h)
 		return true
 	}
@@ -1165,6 +1166,79 @@ func (h *PanelHost) activate(r *Registry) bool {
 		r.rebuildPanel(h)
 	case "session-lock", "session-logout", "session-suspend", "session-reboot", "session-poweroff":
 		r.runSessionAction(h, n.Action)
+	}
+	return true
+}
+
+func (h *PanelHost) activateNotify(r *Registry, n *ui.Node) bool {
+	action := n.Action
+	h.lastAction = action
+	if rest, ok := strings.CutPrefix(action, "notify:center:"); ok {
+		switch {
+		case rest == "dismiss-all":
+			r.sendNotify(protocol.Command{Kind: protocol.CommandDismissAll})
+		case rest == "clear-history":
+			r.sendNotify(protocol.Command{Kind: protocol.CommandHistoryClear})
+		case rest == "dnd":
+			_, on := r.notify.dndState(r.clockNow())
+			r.notify.setDND(!on)
+			if r.toasts != nil {
+				r.toasts.recompute()
+			}
+			r.rebuildPanel(h)
+		case rest == "schedule":
+			h.notifyMenu = !h.notifyMenu
+			r.rebuildPanel(h)
+		case strings.HasPrefix(rest, "tab:"):
+			h.notifyTab, _ = strconv.Atoi(strings.TrimPrefix(rest, "tab:"))
+			r.rebuildPanel(h)
+		case strings.HasPrefix(rest, "filter:"):
+			h.notifyFilter = strings.TrimPrefix(rest, "filter:")
+			r.rebuildPanel(h)
+		case strings.HasPrefix(rest, "expand:"):
+			key := strings.TrimPrefix(rest, "expand:")
+			if h.notifyExpand == key {
+				h.notifyExpand = ""
+			} else {
+				h.notifyExpand = key
+			}
+			r.rebuildPanel(h)
+		case strings.HasPrefix(rest, "dismiss-group:"):
+			key := strings.TrimPrefix(rest, "dismiss-group:")
+			for _, id := range r.notify.idsForGroup(key) {
+				r.sendNotify(protocol.Command{Kind: protocol.CommandDismiss, ID: id})
+			}
+		case strings.HasPrefix(rest, "preset:"):
+			id := strings.TrimPrefix(rest, "preset:")
+			now := r.clockNow()
+			if d, untilOff, ok := dndPresetDuration(id, now); ok {
+				if untilOff {
+					r.notify.setDND(true)
+				} else {
+					r.notify.setDNDPreset(now, d)
+				}
+				if r.toasts != nil {
+					r.toasts.recompute()
+				}
+			}
+			h.notifyMenu = false
+			r.rebuildPanel(h)
+		}
+		return true
+	}
+	id, parts, ok := parseCardAction(action)
+	if !ok || len(parts) == 0 {
+		return true
+	}
+	switch parts[0] {
+	case "dismiss":
+		r.sendNotify(protocol.Command{Kind: protocol.CommandDismiss, ID: id})
+	case "default":
+		r.sendNotify(protocol.Command{Kind: protocol.CommandAction, ID: id, ActionKey: "default"})
+	case "action":
+		if len(parts) == 2 {
+			r.sendNotify(protocol.Command{Kind: protocol.CommandAction, ID: id, ActionKey: parts[1]})
+		}
 	}
 	return true
 }

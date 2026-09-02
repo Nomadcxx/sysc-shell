@@ -133,7 +133,11 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 		fillRect(c, box, style.Track)
 		filled := box
 		filled.W = style.Scale120.Physical(n.Bounds.X+int(float64(n.Bounds.W)*n.Value+0.5)) - box.X
-		fillRect(c, filled, style.accent())
+		fill := style.accent()
+		if n.Tone == ui.ToneError {
+			fill = style.Error
+		}
+		fillRect(c, filled, fill)
 		return nil
 
 	case ui.KindCapsule:
@@ -141,7 +145,21 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 		// Fully rounded: a bar pill reads as a stadium and an empty dot as a
 		// circle, so the radius can never exceed half the short side.
 		radius := min(style.Scale120.Physical(style.Radius), min(box.W, box.H)/2)
-		fillRoundedRect(c, box, radius, capsuleFill(style, n.Fill))
+		fillCol := capsuleFill(style, n.Fill)
+		if n.Stroke > 0 {
+			strokeCol := capsuleFill(style, n.StrokeFill)
+			if n.StrokeFill == ui.FillNone {
+				strokeCol = style.Accent
+			}
+			fillRoundedRect(c, box, radius, strokeCol)
+			inset := style.Scale120.Physical(n.Stroke)
+			inner := ui.Rect{X: box.X + inset, Y: box.Y + inset, W: box.W - 2*inset, H: box.H - 2*inset}
+			if inner.W > 0 && inner.H > 0 {
+				fillRoundedRect(c, inner, max(0, radius-inset), fillCol)
+			}
+		} else {
+			fillRoundedRect(c, box, radius, fillCol)
+		}
 		inner := style
 		inner.Foreground = capsuleForeground(style, n.Fill)
 		for i, child := range n.Children {

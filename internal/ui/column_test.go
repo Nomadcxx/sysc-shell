@@ -12,6 +12,13 @@ func TestColumnMeasuresMeterAndGraph(t *testing.T) {
 	if h != MeterHeight {
 		t.Fatalf("meter height = %d, want MeterHeight %d", h, MeterHeight)
 	}
+	h, err = columnChildHeight(&Node{Kind: KindMeter, Value: 0.5, Height: 3}, 200, measure)
+	if err != nil {
+		t.Fatalf("short meter: %v", err)
+	}
+	if h != 3 {
+		t.Fatalf("meter Height 3 = %d, want 3", h)
+	}
 	h, err = columnChildHeight(&Node{Kind: KindGraph, Values: []float64{0.1, 0.9}}, 200, measure)
 	if err != nil {
 		t.Fatalf("graph: %v", err)

@@ -387,7 +387,7 @@ func (h *toastHost) cardFor(id uint32) *ui.Node {
 	if !ok {
 		return nil
 	}
-	return NotificationCard(notification, lifetime, h.r.linksAllowed())
+	return NotificationCard(notification, lifetime, h.r.lookupNotifyIcon(notification.AppIcon), h.r.linksAllowed())
 }
 
 // recompute relayouts every open output from the current projection and

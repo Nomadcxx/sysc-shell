@@ -18,7 +18,7 @@ func historyEntry(id uint32, desktop, app, summary string, ts time.Time, seen bo
 	}
 }
 
-func TestCenterGroupsHistoryNewestFirst(t *testing.T) {
+func TestCenterHistoryIsFlatNewestFirst(t *testing.T) {
 	r := NewRegistry(config.Default())
 	r.applyNotify(snap(1))
 	older := time.Unix(1_756_000_000, 0)
@@ -30,16 +30,41 @@ func TestCenterGroupsHistoryNewestFirst(t *testing.T) {
 	r.applyNotify(delta(1, 4, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
 		History: ptrH(historyEntry(3, "chat", "Chat", "ping", newer.Add(time.Minute), false))}))
 
-	groups := r.notifyGroups()
-	if len(groups) != 2 {
-		t.Fatalf("groups = %+v", groups)
+	h := &PanelHost{id: PanelNotifications, notifyTab: 1}
+	tree := r.centerTreeFor(h)
+	got := texts(tree)
+	ping, neu, old := -1, -1, -1
+	for i, s := range got {
+		switch s {
+		case "ping":
+			if ping < 0 {
+				ping = i
+			}
+		case "new":
+			if neu < 0 {
+				neu = i
+			}
+		case "old":
+			if old < 0 {
+				old = i
+			}
+		}
 	}
-	// chat's entry is newer, so its group leads.
-	if groups[0].key != "chat" {
-		t.Fatalf("first group = %q, want chat (newest entry)", groups[0].key)
+	if ping < 0 || neu < 0 || old < 0 {
+		t.Fatalf("history texts = %v", got)
 	}
-	if len(groups[1].entries) != 2 || groups[1].entries[0].Summary != "new" {
-		t.Fatalf("mail group order = %+v", groups[1].entries)
+	if !(ping < neu && neu < old) {
+		t.Fatalf("order ping=%d new=%d old=%d in %v", ping, neu, old, got)
+	}
+	if buttonByName(tree, "All") == nil || buttonByName(tree, "Today") == nil {
+		t.Fatalf("chips missing: %v", texts(tree))
+	}
+	if !historyRemoveSupported() {
+		for _, b := range buttons(tree) {
+			if b.Name == "Close" {
+				t.Fatal("history painted close before history.remove exists")
+			}
+		}
 	}
 }
 
@@ -214,6 +239,83 @@ func TestCenterActivateClearSetsLastAction(t *testing.T) {
 	}
 	if h.lastAction != "notify:center:dismiss-all" {
 		t.Fatalf("lastAction = %q", h.lastAction)
+	}
+}
+
+func TestCenterClearSendsDismissAll(t *testing.T) {
+	r := NewRegistry(config.Default())
+	sender := &fakeNotifySender{}
+	r.notifySender = sender
+	r.applyNotify(snap(1))
+	h := &PanelHost{id: PanelNotifications}
+	r.rebuildPanel(h)
+	for i, n := range h.focus {
+		if n.Name == "Clear" {
+			h.roving.Set(i)
+			h.activate(r)
+			break
+		}
+	}
+	got := sender.ofKind(protocol.CommandDismissAll)
+	if len(got) != 1 {
+		t.Fatalf("dismiss-all = %+v", sender.cmds)
+	}
+}
+
+func TestCenterClearHistorySendsHistoryClear(t *testing.T) {
+	r := NewRegistry(config.Default())
+	sender := &fakeNotifySender{}
+	r.notifySender = sender
+	r.applyNotify(snap(1))
+	h := &PanelHost{id: PanelNotifications, notifyTab: 1}
+	r.rebuildPanel(h)
+	for i, n := range h.focus {
+		if n.Name == "Clear" {
+			h.roving.Set(i)
+			h.activate(r)
+			break
+		}
+	}
+	got := sender.ofKind(protocol.CommandHistoryClear)
+	if len(got) != 1 {
+		t.Fatalf("history.clear = %+v", sender.cmds)
+	}
+}
+
+func TestCenterScheduleShowsDurationPresets(t *testing.T) {
+	r := NewRegistry(config.Default())
+	r.applyNotify(snap(1))
+	h := &PanelHost{id: PanelNotifications}
+	r.rebuildPanel(h)
+	for i, n := range h.focus {
+		if n.Name == "Schedule" {
+			h.roving.Set(i)
+			h.activate(r)
+			break
+		}
+	}
+	if buttonByName(h.root, "1 hour") == nil || buttonByName(h.root, "Until turned off") == nil {
+		t.Fatalf("presets missing: %v", texts(h.root))
+	}
+}
+
+func TestCenterPresetOneHourMatchesSetDNDPresetAt(t *testing.T) {
+	r := NewRegistry(config.Default())
+	now := time.Unix(1_756_000_000, 0)
+	r.now = now
+	r.applyNotify(snap(1))
+	h := &PanelHost{id: PanelNotifications, notifyMenu: true}
+	r.rebuildPanel(h)
+	for i, n := range h.focus {
+		if n.Action == "notify:center:preset:1h" {
+			h.roving.Set(i)
+			h.activate(r)
+			break
+		}
+	}
+	end, on := r.dndStateAt(now)
+	if !on || !end.Equal(now.Add(time.Hour)) {
+		t.Fatalf("end = %v on=%v, want now+1h", end, on)
 	}
 }
 
