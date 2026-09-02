@@ -62,6 +62,11 @@ const (
 	iconStop
 	iconReplay
 
+	iconNotifications
+	iconNotificationsOff
+	iconClose
+	iconSchedule
+
 	batteryRuneFirst = iconBatteryLevel0
 	batteryRuneLast  = iconBatteryCritical
 
@@ -70,6 +75,9 @@ const (
 
 	recorderRuneFirst = iconCamera
 	recorderRuneLast  = iconReplay
+
+	notifyRuneFirst = iconNotifications
+	notifyRuneLast  = iconSchedule
 )
 
 // batteryLevels is how many level glyphs each state has.
@@ -197,19 +205,23 @@ func BatteryIconRune(charge float64, charging, critical bool) rune {
 // appear in the shell stays the shell's to decide, and a name the font does
 // not have is a diagnosable error instead of a missing-glyph box.
 var iconNames = map[string]rune{
-	"clear-day":     iconClearDay,
-	"partly-cloudy": iconPartlyCloudy,
-	"cloud":         iconCloud,
-	"fog":           iconFog,
-	"rain":          iconRain,
-	"snow":          iconSnow,
-	"heavy-snow":    iconHeavySnow,
-	"thunderstorm":  iconThunderstorm,
-	"camera":        iconCamera,
-	"camera-off":    iconCameraOff,
-	"record":        iconRecord,
-	"stop":          iconStop,
-	"replay":        iconReplay,
+	"clear-day":         iconClearDay,
+	"partly-cloudy":     iconPartlyCloudy,
+	"cloud":             iconCloud,
+	"fog":               iconFog,
+	"rain":              iconRain,
+	"snow":              iconSnow,
+	"heavy-snow":        iconHeavySnow,
+	"thunderstorm":      iconThunderstorm,
+	"camera":            iconCamera,
+	"camera-off":        iconCameraOff,
+	"record":            iconRecord,
+	"stop":              iconStop,
+	"replay":            iconReplay,
+	"notifications":     iconNotifications,
+	"notifications-off": iconNotificationsOff,
+	"close":             iconClose,
+	"schedule":          iconSchedule,
 }
 
 // IconByName resolves a catalogue name to its symbol.
