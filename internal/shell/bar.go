@@ -111,22 +111,7 @@ func NewWithTheme(theme Theme, policy config.Bar, connector string) (*Bar, error
 		theme:         theme,
 		text:          render.NewTextRendererWithFontMap(fonts),
 		invalidations: make(chan struct{}, 1),
-		style: render.ProofStyle{
-			Size:        theme.TextSize,
-			Scale120:    ui.ScaleUnit,
-			Background:  theme.Background,
-			Foreground:  theme.Foreground,
-			Track:       theme.Muted,
-			Accent:      theme.Accent,
-			AccentOn:    theme.Error,
-			Error:       theme.Error,
-			OnPrimary:   theme.OnPrimary,
-			Radius:      theme.Radius,
-			Capsule:     theme.Capsule,
-			Container:   theme.Container,
-			OnAccent:    theme.OnAccent,
-			OnContainer: theme.OnContainer,
-		},
+		style:         barStyle(theme),
 	}
 
 	b.left = buildWidgets(policy.Left, b.theme.CapsulePadding)
@@ -668,4 +653,12 @@ func (b *Bar) trayGestureLocked(action string) (trayGesture, bool) {
 		}
 	}
 	return gesture, true
+}
+
+// barStyle is the bar's painter style: the theme's roles plus the bar's own
+// unit scale.
+func barStyle(theme Theme) render.ProofStyle {
+	style := theme.ProofStyle()
+	style.Scale120 = ui.ScaleUnit
+	return style
 }

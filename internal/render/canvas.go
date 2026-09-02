@@ -128,6 +128,46 @@ func roundedInset(y, height, radius int) int {
 	return max(0, int(math.Ceil(float64(radius)-dx-0.5)))
 }
 
+// strokeRoundedRect outlines one clipped rounded rectangle inward from its
+// bounds, so the stroke never grows the node's box. Each scanline reuses the
+// same corner inset the fill uses, then paints the band between the outer edge
+// and the inset inner edge; rows above and below the inner rectangle are solid.
+// This is the whole stroke surface the catalogue needs -- boundaries and focus
+// rings -- not a general path engine.
+func strokeRoundedRect(c *Canvas, r ui.Rect, radius, width int, col Color) {
+	if r.W <= 0 || r.H <= 0 || width <= 0 || col.A == 0 {
+		return
+	}
+	radius = min(radius, min(r.W, r.H)/2)
+	width = min(width, min(r.W, r.H)/2)
+	inner := ui.Rect{X: r.X + width, Y: r.Y + width, W: r.W - 2*width, H: r.H - 2*width}
+	innerRadius := max(0, radius-width)
+	for y := 0; y < r.H; y++ {
+		outer := 0
+		if radius > 0 {
+			outer = roundedInset(y, r.H, radius)
+		}
+		left, right := r.X+outer, r.X+r.W-outer
+		iy := y - width
+		if inner.W <= 0 || inner.H <= 0 || iy < 0 || iy >= inner.H {
+			fillRect(c, ui.Rect{X: left, Y: r.Y + y, W: right - left, H: 1}, col)
+			continue
+		}
+		gap := 0
+		if innerRadius > 0 {
+			gap = roundedInset(iy, inner.H, innerRadius)
+		}
+		il, ir := inner.X+gap, inner.X+inner.W-gap
+		fillRect(c, ui.Rect{X: left, Y: r.Y + y, W: max(0, il-left), H: 1}, col)
+		fillRect(c, ui.Rect{X: ir, Y: r.Y + y, W: max(0, right-ir), H: 1}, col)
+	}
+}
+
+// StrokeRounded outlines a rounded rectangle inward from its bounds.
+func (c *Canvas) StrokeRounded(r ui.Rect, radius, width int, col Color) {
+	strokeRoundedRect(c, r, radius, width, col)
+}
+
 // clearOutsideRoundedRect restores transparency after children paint. Child
 // bounds may reach a body corner when padding is zero, but the final surface
 // silhouette must remain the same rounded rectangle as its background.

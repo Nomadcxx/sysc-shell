@@ -234,10 +234,9 @@ func (h *trayDrawerHost) render(pixels []byte, width, height, stride int) error 
 		h.text = render.NewTextRendererWithFontMap(fonts)
 		createdText = true
 		theme := h.r.surfaceTheme()
-		h.style.Size = theme.TextSize
-		h.style.Radius = theme.Radius
-		h.style.Background, h.style.Foreground = theme.Background, theme.Foreground
-		h.style.Track, h.style.Accent, h.style.AccentOn, h.style.Error = theme.Muted, theme.Accent, theme.Error, theme.Error
+		scale, body := h.style.Scale120, h.style.Body
+		h.style = theme.ProofStyle()
+		h.style.Scale120, h.style.Body = scale, body
 	}
 	if createdText && h.logicalW > 0 {
 		if err := h.configure(h.logicalW, h.logicalH, h.scale120); err != nil {
