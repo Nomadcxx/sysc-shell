@@ -232,6 +232,12 @@ func TestToastPaintLeavesTheGapsTransparent(t *testing.T) {
 	if got := alphaAt(cardX, cardY); got == 0 {
 		t.Fatalf("card centre at %d,%d is transparent", cardX, cardY)
 	}
+	r.mu.Lock()
+	st := h.style
+	r.mu.Unlock()
+	if st.OnContainer.A == 0 || st.Capsule.A == 0 {
+		t.Fatalf("toast style dropped capsule tokens: OnContainer=%+v Capsule=%+v", st.OnContainer, st.Capsule)
+	}
 }
 
 type fakeNotifySender struct {
