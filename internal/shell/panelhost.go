@@ -329,9 +329,6 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		svc.Open()
 		svc.Query("")
 	}
-	if id == PanelSession {
-		r.loadProfiles(h)
-	}
 	h.root = r.panelTree(h)
 	h.focus = ui.Focusables(h.root)
 	h.roving = ui.Roving{Count: len(h.focus)}
@@ -343,6 +340,10 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 
 	r.sendAux(wayland.AuxRequest{Output: output, Open: r.shieldSpec(h)})
 	r.sendAux(wayland.AuxRequest{Output: output, Open: r.panelSpec(h, margins)})
+
+	if id == PanelSession {
+		r.scheduleLoadProfiles(h)
+	}
 
 	if r.cfg.Accessibility.ReducedMotion {
 		r.publishSurface(output, panelSurfaceID(id))

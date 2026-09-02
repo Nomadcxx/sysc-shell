@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	metrics "github.com/Nomadcxx/sysc-metrics"
 
@@ -102,6 +103,60 @@ func TestSessionTreeOmitsProfilesWhenUnavailable(t *testing.T) {
 	}
 }
 
+// starredPowerProfilesList is the fixture from TestParsePowerProfilesMarksTheStarredNameActive.
+const starredPowerProfilesList = "" +
+	"  performance:\n" +
+	"    Driver:     amd_pstate\n" +
+	"\n" +
+	"* balanced:\n" +
+	"    Driver:     amd_pstate\n" +
+	"\n" +
+	"  power-saver:\n" +
+	"    Driver:     amd_pstate\n"
+
+func TestOpenPanelLoadsProfileTabsFromList(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Session.Locker = "swaylock"
+	cfg.Accessibility.ReducedMotion = true
+	reg := NewRegistry(cfg)
+	listed := make(chan struct{})
+	release := make(chan struct{})
+	reg.lookPath = func(string) (string, error) { return "/usr/bin/powerprofilesctl", nil }
+	reg.runArgvOutput = func([]string) (string, error) {
+		close(listed)
+		<-release
+		return starredPowerProfilesList, nil
+	}
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+		reg.Close()
+	})
+
+	errc := make(chan error, 1)
+	go func() { errc <- reg.OpenPanel(PanelSession, 7, Trigger{}) }()
+	select {
+	case <-listed:
+	case <-time.After(time.Second):
+		t.Fatal("runArgvOutput was not called")
+	}
+	select {
+	case err := <-errc:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("OpenPanel held the lock across list")
+	}
+	_ = drainAux(t, reg, 2)
+	close(release)
+	waitProfileTabNames(t, reg, "Power saver", "Balanced", "Performance")
+}
+
 func TestSessionActionsRemain(t *testing.T) {
 	t.Parallel()
 	_, h := newSessionHost(t, "swaylock")
@@ -140,6 +195,8 @@ func TestSessionAlignsToTheTrailingEdge(t *testing.T) {
 func TestSelectingAListedProfileRunsSet(t *testing.T) {
 	t.Parallel()
 	reg, h := newSessionHost(t, "swaylock")
+	reg.lookPath = func(string) (string, error) { return "/usr/bin/powerprofilesctl", nil }
+	reg.runArgvOutput = func([]string) (string, error) { return starredPowerProfilesList, nil }
 	h.profilesOK = true
 	h.profiles = []string{"power-saver", "balanced", "performance"}
 	h.profileActive = "balanced"
@@ -153,6 +210,7 @@ func TestSelectingAListedProfileRunsSet(t *testing.T) {
 	if len(got) != 1 || !reflect.DeepEqual(got[0], []string{"powerprofilesctl", "set", "performance"}) {
 		t.Fatalf("argv = %v", got)
 	}
+	waitProfileTabNames(t, reg, "Power saver", "Balanced", "Performance")
 }
 
 func TestASuccessfulProfileSetClearsAPriorError(t *testing.T) {
@@ -268,5 +326,34 @@ func activateNamed(h *PanelHost, r *Registry, name string) {
 			h.activate(r)
 			return
 		}
+	}
+}
+
+func waitProfileTabNames(t *testing.T, reg *Registry, want ...string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	var names []string
+	for {
+		reg.mu.Lock()
+		h := reg.panelHosts[PanelSession]
+		names = nil
+		if h != nil {
+			names = focusableNames(h.root)
+		}
+		reg.mu.Unlock()
+		ok := true
+		for _, w := range want {
+			if !slices.Contains(names, w) {
+				ok = false
+				break
+			}
+		}
+		if ok && len(want) > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("tabs = %v, want %v", names, want)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }

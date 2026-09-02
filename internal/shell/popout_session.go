@@ -121,24 +121,39 @@ func sessionArgv(action, locker string) []string {
 	return nil
 }
 
-func (r *Registry) loadProfiles(h *PanelHost) {
-	if r.lookPath == nil || !powerProfilesAvailable(r.lookPath) {
-		h.profilesOK = false
-		h.profiles = nil
-		h.profileActive = ""
-		return
+func fetchProfileList(look func(string) (string, error), run func([]string) (string, error)) (names []string, active string, ok bool) {
+	if look == nil || !powerProfilesAvailable(look) || run == nil {
+		return nil, "", false
 	}
-	if r.runArgvOutput == nil {
-		h.profilesOK = false
-		return
-	}
-	out, err := r.runArgvOutput([]string{"powerprofilesctl", "list"})
+	out, err := run([]string{"powerprofilesctl", "list"})
 	if err != nil {
-		h.profilesOK = false
+		return nil, "", false
+	}
+	names, active = parsePowerProfiles(out)
+	return names, active, len(names) > 0
+}
+
+// scheduleLoadProfiles copies the exec hooks and runs list off the owner.
+// Caller holds r.mu. Output() runs without it; apply takes the lock again.
+func (r *Registry) scheduleLoadProfiles(h *PanelHost) {
+	look := r.lookPath
+	run := r.runArgvOutput
+	if look == nil || !powerProfilesAvailable(look) {
 		return
 	}
-	h.profiles, h.profileActive = parsePowerProfiles(out)
-	h.profilesOK = len(h.profiles) > 0
+	go func() {
+		names, active, ok := fetchProfileList(look, run)
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if r.panelHosts[PanelSession] != h {
+			return
+		}
+		h.profiles = names
+		h.profileActive = active
+		h.profilesOK = ok
+		r.rebuildPanel(h)
+		r.publishSurface(h.output, panelSurfaceID(h.id))
+	}()
 }
 
 func (r *Registry) setSessionProfile(h *PanelHost, name string) {
@@ -151,7 +166,7 @@ func (r *Registry) setSessionProfile(h *PanelHost, name string) {
 		return
 	}
 	h.errLabel = ""
-	r.loadProfiles(h)
+	r.scheduleLoadProfiles(h)
 	r.rebuildPanel(h)
 }
 
