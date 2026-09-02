@@ -46,3 +46,8 @@ func profileSupports(names []string, name string) bool {
 func powerProfileSetArgv(name string) []string {
 	return []string{"powerprofilesctl", "set", name}
 }
+
+func powerProfilesAvailable(look func(string) (string, error)) bool {
+	_, err := look("powerprofilesctl")
+	return err == nil
+}

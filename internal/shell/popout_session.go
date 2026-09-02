@@ -62,7 +62,7 @@ func runArgvDefault(argv []string) error {
 	if err != nil {
 		return err
 	}
-	if argv[0] == "loginctl" {
+	if argv[0] == "loginctl" || argv[0] == "powerprofilesctl" {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		return exec.CommandContext(ctx, path, argv[1:]...).Run()

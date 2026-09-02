@@ -1,6 +1,10 @@
 package shell
 
-import "testing"
+import (
+	"os/exec"
+	"reflect"
+	"testing"
+)
 
 func TestParsePowerProfilesMarksTheStarredNameActive(t *testing.T) {
 	t.Parallel()
@@ -43,5 +47,37 @@ func TestPowerProfileLabel(t *testing.T) {
 		if got := powerProfileLabel(name); got != want {
 			t.Fatalf("%s: %q, want %q", name, got, want)
 		}
+	}
+}
+
+func TestPowerProfilesUnavailableWithoutBinary(t *testing.T) {
+	t.Parallel()
+	look := func(string) (string, error) { return "", exec.ErrNotFound }
+	if powerProfilesAvailable(look) {
+		t.Fatal("missing binary still counted as available")
+	}
+}
+
+func TestPowerProfilesAvailableWhenLookSucceeds(t *testing.T) {
+	t.Parallel()
+	look := func(string) (string, error) { return "/usr/bin/powerprofilesctl", nil }
+	if !powerProfilesAvailable(look) {
+		t.Fatal("present binary counted as unavailable")
+	}
+}
+
+func TestPowerProfileSetArgv(t *testing.T) {
+	t.Parallel()
+	got := powerProfileSetArgv("performance")
+	want := []string{"powerprofilesctl", "set", "performance"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("argv = %v, want %v", got, want)
+	}
+}
+
+func TestPowerProfileSetRefusesUnknownName(t *testing.T) {
+	t.Parallel()
+	if profileSupports([]string{"balanced"}, "performance") {
+		t.Fatal("unlisted name was accepted")
 	}
 }
