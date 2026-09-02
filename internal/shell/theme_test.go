@@ -71,6 +71,11 @@ func TestThemeValidation(t *testing.T) {
 		{"negative radius", func(th *Theme) { th.Radius = -2 }},
 		{"negative padding", func(th *Theme) { th.BarPadding = -1 }},
 		{"negative spacing", func(th *Theme) { th.Spacing = -1 }},
+		{"zero control height", func(th *Theme) { th.ControlHeight = 0 }},
+		{"zero compact height", func(th *Theme) { th.CompactHeight = 0 }},
+		{"zero icon size", func(th *Theme) { th.IconSize = 0 }},
+		{"negative button padding", func(th *Theme) { th.ButtonPadding = -1 }},
+		{"negative card radius", func(th *Theme) { th.CardRadius = -1 }},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -90,10 +95,13 @@ func TestThemeValidation(t *testing.T) {
 
 func TestTokensResolveToBarTheme(t *testing.T) {
 	tok := theme.Tokens{
-		Surface: "#111318", SurfaceContainer: "#181a1d", OnSurface: "#e2e2e6",
-		Primary: "#a8c7fa", OnPrimary: "#0a1f3d",
+		Surface: "#111318", SurfaceContainer: "#181a1d",
+		SurfaceContainerHigh: "#25272b", SurfaceContainerHighest: "#303238",
+		OnSurface: "#e2e2e6",
+		Primary:   "#a8c7fa", OnPrimary: "#0a1f3d",
 		PrimaryContainer: "#1183a2", OnPrimaryContainer: "#d6e3ff",
-		OnSurfaceVariant: "#c3c6cf", Error: "#ffb4ab",
+		OnSurfaceVariant: "#c3c6cf", Outline: "#8d9199",
+		OutlineVariant: "#45484f", Error: "#ffb4ab", OnError: "#310001",
 	}
 	th := ThemeFromTokens(tok, 12)
 	if th.Background != parseColor(tok.Surface, Color{}) || th.Foreground != parseColor(tok.OnSurface, Color{}) ||
@@ -103,8 +111,25 @@ func TestTokensResolveToBarTheme(t *testing.T) {
 	}
 	// The capsule palette. Muted stays OnSurfaceVariant, which is the meter
 	// track, so a capsule must not borrow it.
-	if th.Capsule != parseColor(tok.SurfaceContainer, Color{}) {
-		t.Errorf("Capsule = %+v, want SurfaceContainer", th.Capsule)
+	if th.Capsule != parseColor(tok.SurfaceContainerHigh, Color{}) {
+		t.Errorf("Capsule = %+v, want SurfaceContainerHigh", th.Capsule)
+	}
+	// The bar and the panels share one Surface, so a capsule and a card are
+	// the same fill. They must not drift back onto separate levels.
+	if th.Capsule != th.SurfaceContainerHigh {
+		t.Errorf("Capsule = %+v, want the card fill %+v", th.Capsule, th.SurfaceContainerHigh)
+	}
+	if th.SurfaceContainerHigh != parseColor(tok.SurfaceContainerHigh, Color{}) {
+		t.Errorf("SurfaceContainerHigh = %+v, want generated token", th.SurfaceContainerHigh)
+	}
+	if th.SurfaceContainerHighest != parseColor(tok.SurfaceContainerHighest, Color{}) {
+		t.Errorf("SurfaceContainerHighest = %+v, want generated token", th.SurfaceContainerHighest)
+	}
+	if th.OutlineVariant != parseColor(tok.OutlineVariant, Color{}) {
+		t.Errorf("OutlineVariant = %+v, want generated token", th.OutlineVariant)
+	}
+	if th.OnError != parseColor(tok.OnError, Color{}) {
+		t.Errorf("OnError = %+v, want generated token", th.OnError)
 	}
 	if th.Container != parseColor(tok.PrimaryContainer, Color{}) {
 		t.Errorf("Container = %+v, want PrimaryContainer", th.Container)
@@ -124,6 +149,19 @@ func TestDefaultThemeCarriesCapsulePadding(t *testing.T) {
 	t.Parallel()
 	if got := DefaultTheme().CapsulePadding; got != 8 {
 		t.Fatalf("CapsulePadding = %d, want 8", got)
+	}
+}
+
+func TestDefaultThemeCarriesChromeMetrics(t *testing.T) {
+	t.Parallel()
+	th := DefaultTheme()
+	if th.ControlHeight != 40 || th.CompactHeight != 32 || th.ButtonPadding != 12 {
+		t.Fatalf("control metrics = %d/%d padding %d, want 40/32 padding 12",
+			th.ControlHeight, th.CompactHeight, th.ButtonPadding)
+	}
+	if th.IconSize != 20 || th.ProfileIconSize != 18 || th.OSDIconSize != 24 {
+		t.Fatalf("icon metrics = %d/%d/%d, want 20/18/24",
+			th.IconSize, th.ProfileIconSize, th.OSDIconSize)
 	}
 }
 
@@ -207,6 +245,15 @@ func TestDefaultPaletteKeepsCapsulesAndPillsVisible(t *testing.T) {
 
 	if got := contrast(th.Background, th.Capsule); got < 1.45 {
 		t.Errorf("capsule/bar contrast = %.3f:1, want at least 1.45 so cards read as pills", got)
+	}
+	if got := contrast(th.Surface, th.SurfaceContainerHigh); got < 1.45 {
+		t.Errorf("card/panel contrast = %.3f:1, want at least 1.45", got)
+	}
+	if got := contrast(th.OnSurface, th.SurfaceContainerHigh); got < 4.5 {
+		t.Errorf("text/card contrast = %.2f:1, want at least 4.5", got)
+	}
+	if got := contrast(th.Outline, th.Surface); got < 3.0 {
+		t.Errorf("outline/panel contrast = %.2f:1, want at least 3.0", got)
 	}
 	// An unfocused workspace pill has to be a surface, not a tint of the bar.
 	if got := contrast(th.Background, th.Container); got < 2.5 {

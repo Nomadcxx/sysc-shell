@@ -33,15 +33,37 @@ type Theme struct {
 
 	// CapsulePadding insets a bar item inside its capsule. It is a theme
 	// constant this tranche, not a configuration key.
-	CapsulePadding int
+	CapsulePadding  int
+	ControlHeight   int
+	CompactHeight   int
+	ButtonPadding   int
+	IconSize        int
+	ProfileIconSize int
+	OSDIconSize     int
+	CardRadius      int
 
+	// Semantic Material roles are the source of truth for chrome composition.
+	Surface                 Color
+	SurfaceContainer        Color
+	SurfaceContainerHigh    Color
+	SurfaceContainerHighest Color
+	OnSurface               Color
+	OnSurfaceVariant        Color
+	Primary                 Color
+	OnPrimary               Color
+	PrimaryContainer        Color
+	OnPrimaryContainer      Color
+	Outline                 Color
+	OutlineVariant          Color
+	Error                   Color
+	OnError                 Color
+
+	// Legacy painter names remain while existing surfaces move to semantic
+	// roles. Theme construction derives them from the fields above.
 	Background Color
 	Foreground Color
 	Accent     Color
 	Muted      Color
-	Error      Color
-	// OnPrimary is the text colour on a Primary-filled (selected) surface.
-	OnPrimary Color
 	// Capsule fills the pill around a bar widget. Container fills a workspace
 	// pill that is not focused, and is a distinct container colour rather than
 	// the capsule surface. OnAccent and OnContainer keep a pill's numeral
@@ -50,13 +72,12 @@ type Theme struct {
 	Container   Color
 	OnAccent    Color
 	OnContainer Color
-	Outline     Color
 }
 
 // DefaultTheme is the owner-supplied baseline: nominal height 48, exclusive
 // zone 44, spacing 4.
 func DefaultTheme() Theme {
-	return Theme{
+	t := Theme{
 		BarHeight:  BarHeight,
 		BarGap:     BarGap,
 		BarPadding: 6,
@@ -64,40 +85,57 @@ func DefaultTheme() Theme {
 		Radius:     12,
 		TextSize:   14,
 
-		CapsulePadding: 8,
-
-		Background: Color{R: 0x1d, G: 0x20, B: 0x25, A: 0xff},
-		Foreground: Color{R: 0xe8, G: 0xec, B: 0xf0, A: 0xff},
-		Accent:     Color{R: 0x00, G: 0x80, B: 0xff, A: 0xff},
-		Muted:      Color{R: 0x30, G: 0x34, B: 0x38, A: 0xff},
-		Error:      Color{R: 0xff, G: 0x40, B: 0x40, A: 0xff},
-		OnPrimary:  Color{R: 0xff, G: 0xff, B: 0xff, A: 0xff},
-		// Seeded from theme.Fallback so the shell paints capsules before any
-		// generated palette arrives.
-		Capsule:     Color{R: 0x3a, G: 0x41, B: 0x49, A: 0xff},
-		Container:   Color{R: 0x1f, G: 0x7a, B: 0xb5, A: 0xff},
-		OnAccent:    Color{R: 0x0b, G: 0x10, B: 0x16, A: 0xff},
-		OnContainer: Color{R: 0x0b, G: 0x10, B: 0x16, A: 0xff},
-		Outline:     Color{R: 0x4a, G: 0x4f, B: 0x55, A: 0xff},
+		CapsulePadding:  8,
+		ControlHeight:   40,
+		CompactHeight:   32,
+		ButtonPadding:   12,
+		IconSize:        20,
+		ProfileIconSize: 18,
+		OSDIconSize:     24,
+		CardRadius:      12,
 	}
+	applyTokens(&t, theme.Fallback)
+	return t
 }
 
 // ThemeFromTokens maps generated Material 3 tokens onto the bar theme.
 func ThemeFromTokens(tok theme.Tokens, radius int) Theme {
 	t := DefaultTheme()
 	t.Radius = radius
-	t.Background = parseColor(tok.Surface, t.Background)
-	t.Foreground = parseColor(tok.OnSurface, t.Foreground)
-	t.Accent = parseColor(tok.Primary, t.Accent)
-	t.Muted = parseColor(tok.OnSurfaceVariant, t.Muted)
-	t.Error = parseColor(tok.Error, t.Error)
-	t.OnPrimary = parseColor(tok.OnPrimary, t.OnPrimary)
-	t.Capsule = parseColor(tok.SurfaceContainer, t.Capsule)
-	t.Container = parseColor(tok.PrimaryContainer, t.Container)
-	t.OnAccent = parseColor(tok.OnPrimary, t.OnAccent)
-	t.OnContainer = parseColor(tok.OnPrimaryContainer, t.OnContainer)
-	t.Outline = parseColor(tok.Outline, t.Outline)
+	t.CardRadius = radius
+	applyTokens(&t, tok)
 	return t
+}
+
+func applyTokens(t *Theme, tok theme.Tokens) {
+	t.Surface = parseColor(tok.Surface, t.Surface)
+	t.SurfaceContainer = parseColor(tok.SurfaceContainer, t.SurfaceContainer)
+	t.SurfaceContainerHigh = parseColor(tok.SurfaceContainerHigh, t.SurfaceContainerHigh)
+	t.SurfaceContainerHighest = parseColor(tok.SurfaceContainerHighest, t.SurfaceContainerHighest)
+	t.OnSurface = parseColor(tok.OnSurface, t.OnSurface)
+	t.OnSurfaceVariant = parseColor(tok.OnSurfaceVariant, t.OnSurfaceVariant)
+	t.Primary = parseColor(tok.Primary, t.Primary)
+	t.OnPrimary = parseColor(tok.OnPrimary, t.OnPrimary)
+	t.PrimaryContainer = parseColor(tok.PrimaryContainer, t.PrimaryContainer)
+	t.OnPrimaryContainer = parseColor(tok.OnPrimaryContainer, t.OnPrimaryContainer)
+	t.Outline = parseColor(tok.Outline, t.Outline)
+	t.OutlineVariant = parseColor(tok.OutlineVariant, t.OutlineVariant)
+	t.Error = parseColor(tok.Error, t.Error)
+	t.OnError = parseColor(tok.OnError, t.OnError)
+
+	t.Background = t.Surface
+	t.Foreground = t.OnSurface
+	t.Accent = t.Primary
+	t.Muted = t.OnSurfaceVariant
+	// The bar and the panels are one continuous Surface with no gap between
+	// them, so a bar capsule and a panel card are the same fill on the same
+	// background. Stratifying them into mid and high put two greys inches
+	// apart on that shared surface; both resolve to the high container and
+	// Highest stays for the controls that sit on top of them.
+	t.Capsule = t.SurfaceContainerHigh
+	t.Container = t.PrimaryContainer
+	t.OnAccent = t.OnPrimary
+	t.OnContainer = t.OnPrimaryContainer
 }
 
 // ThemeFrom maps a validated configuration onto theme tokens.
@@ -169,6 +207,14 @@ func (t Theme) Valid() error {
 	if t.BarPadding < 0 || t.Spacing < 0 {
 		return fmt.Errorf("shell: padding %d and spacing %d must not be negative",
 			t.BarPadding, t.Spacing)
+	}
+	if t.ControlHeight <= 0 || t.CompactHeight <= 0 || t.IconSize <= 0 {
+		return fmt.Errorf("shell: chrome heights %d/%d and icon size %d must be positive",
+			t.ControlHeight, t.CompactHeight, t.IconSize)
+	}
+	if t.ButtonPadding < 0 || t.CardRadius < 0 {
+		return fmt.Errorf("shell: button padding %d and card radius %d must not be negative",
+			t.ButtonPadding, t.CardRadius)
 	}
 	return nil
 }
