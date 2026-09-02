@@ -401,3 +401,14 @@ go test -race -count=1 ./tests/integration -run PluginUpdateGate
 
 `PluginUpdateGate` covers inbound flood, patch-loss resync, depth 16/17, and the 1,024 node bound.
 
+## Milestone 6C: Notes
+
+Automated. `go test ./tests/integration -run PluginNotesGate` builds the Notes plugin into a
+temporary plugin directory, drives create/IME-style edit/autosave/rename/pin/reopen/delete over the
+v1 protocol, then proves clean reseed, dirty conflict, and a read-only directory that keeps the
+buffer with a visible save error.
+
+```bash
+go test -race -count=1 ./tests/integration -run PluginNotesGate
+```
+

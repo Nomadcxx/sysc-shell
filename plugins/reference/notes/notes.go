@@ -124,6 +124,9 @@ func (s *Session) Rename(next string) error {
 		return err
 	}
 	old := s.current
+	if next == old {
+		return nil
+	}
 	if err := s.store.Rename(old, next); err != nil {
 		s.saveErr = err.Error()
 		return err
