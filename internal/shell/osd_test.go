@@ -108,15 +108,26 @@ fi
 	}
 }
 
-func TestOsdReducedMotionNoAnimation(t *testing.T) {
+func TestOsdReducedMotionFadesWithoutMoving(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t) // already reduced-motion
 	reg.bars[1] = &Bar{conn: "eDP-1"}
 	drainInvalidations(reg)
 	reg.OSD().Show(OSDView{Kind: "audio", Level: 20})
 	_ = drainAux(t, reg, 1)
-	if got := countSurfaceInvalidations(reg, 50*time.Millisecond); got != 1 {
-		t.Fatalf("reduced motion produced %d invalidations, want 1", got)
+
+	// Reduced motion removes the translation, not the transition: the OSD
+	// fades in place rather than sliding from the bar edge.
+	if got := reg.OSD().slidePx(); got != 0 {
+		t.Errorf("OSD slid %d px under reduced motion, want an opacity-only change", got)
+	}
+	if got := countSurfaceInvalidations(reg, animReducedPanelDuration+50*time.Millisecond); got == 0 {
+		t.Fatal("reduced motion produced no invalidations; the OSD never appeared")
+	}
+	// The OSD shares the panel scheduling path, so it must also stop asking for
+	// frames once its value settles rather than running a timer of its own.
+	if got := countSurfaceInvalidations(reg, 100*time.Millisecond); got != 0 {
+		t.Fatalf("OSD still invalidating %d times after the fade settled", got)
 	}
 }
 

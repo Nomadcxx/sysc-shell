@@ -26,15 +26,19 @@ type OSDView struct {
 }
 
 type OSDManager struct {
-	r         *Registry
-	hideFor   time.Duration
-	timer     *time.Timer
-	open      map[uint32]bool
-	view      OSDView
-	theme     Theme
-	animStart time.Time
-	stopAnim  chan struct{}
-	stopOnce  sync.Once
+	r       *Registry
+	hideFor time.Duration
+	timer   *time.Timer
+	open    map[uint32]bool
+	view    OSDView
+	theme   Theme
+	// anim is the OSD's one clock. Its surfaces appear together and share a
+	// single visibility transition, so there is one animator here rather than
+	// a timer per output. The auto-hide timer below is a dismissal timeout,
+	// not an animation.
+	anim     *animator
+	stopAnim chan struct{}
+	stopOnce sync.Once
 }
 
 func newOSDManager(r *Registry, hide time.Duration) *OSDManager {
@@ -106,11 +110,12 @@ func (m *OSDManager) prepareShow(v OSDView) (aux []wayland.AuxRequest, pubs []os
 	} else {
 		m.timer.Reset(m.hideFor)
 	}
-	if wasHidden && !m.r.cfg.Accessibility.ReducedMotion {
-		m.animStart = time.Now()
+	if wasHidden {
+		m.anim = newAnimator(nil, m.r.cfg.Accessibility.ReducedMotion)
+		m.anim.Target(osdAnimKey, animVisible, 1)
 		m.stopAnim = make(chan struct{})
 		m.stopOnce = sync.Once{}
-		startReveal = true
+		startReveal = !m.anim.Settled()
 	}
 	return aux, pubs, startReveal
 }
@@ -192,42 +197,32 @@ func (m *OSDManager) render(pixels []byte, width, height, stride int) error {
 }
 
 func (m *OSDManager) slidePx() int {
-	if m == nil || m.r == nil || m.r.cfg.Accessibility.ReducedMotion {
+	if m == nil || m.anim == nil {
 		return 0
 	}
-	if m.animStart.IsZero() {
-		return 0
-	}
-	left := revealDuration - time.Since(m.animStart)
-	if left <= 0 {
-		return 0
-	}
-	return int(8 * left / revealDuration)
+	return m.anim.PanelSlide(osdAnimKey)
 }
 
+// osdAnimKey names the OSD's shared visibility value. Its surfaces appear
+// together, so one key covers every output.
+const osdAnimKey = "osd"
+
 func (m *OSDManager) revealLoop() {
-	tick := time.NewTicker(revealTick)
-	defer tick.Stop()
-	for {
-		select {
-		case <-m.stopAnim:
-			return
-		case <-tick.C:
-			m.r.mu.Lock()
-			pubs := make([]osdPub, 0, len(m.open))
-			for global := range m.open {
-				pubs = append(pubs, osdPub{global: global, id: osdSurfaceID(global)})
-			}
-			done := time.Since(m.animStart) >= revealDuration
-			m.r.mu.Unlock()
-			for _, p := range pubs {
-				m.r.publishSurface(p.global, p.id)
-			}
-			if done {
-				return
-			}
+	animateSurface(m.stopAnim, func() bool {
+		m.r.mu.Lock()
+		defer m.r.mu.Unlock()
+		return m.anim == nil || m.anim.Settled()
+	}, func() {
+		m.r.mu.Lock()
+		pubs := make([]osdPub, 0, len(m.open))
+		for global := range m.open {
+			pubs = append(pubs, osdPub{global: global, id: osdSurfaceID(global)})
 		}
-	}
+		m.r.mu.Unlock()
+		for _, p := range pubs {
+			m.r.publishSurface(p.global, p.id)
+		}
+	})
 }
 
 func osdLabel(v OSDView) string {

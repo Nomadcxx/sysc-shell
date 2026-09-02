@@ -42,8 +42,6 @@ const (
 
 	btnRight = 273
 
-	revealDuration = 200 * time.Millisecond
-	revealTick     = 16 * time.Millisecond
 	// shieldQuietFor drops the press that mapped the overlay, so the click
 	// that opened a panel cannot dismiss it through the fullscreen shield.
 	shieldQuietFor = 400 * time.Millisecond
@@ -60,15 +58,17 @@ type Trigger struct {
 // PanelHost is one open panel: two surfaces' callbacks, content tree, focus,
 // leases, and reveal state.
 type PanelHost struct {
-	id             PanelID
-	output         uint32
-	place          Placement
-	root           *ui.Node
-	focus          []*ui.Node
-	roving         ui.Roving
-	leases         []*services.Lease
-	animStart      time.Time
-	shieldQuiet    time.Time
+	id          PanelID
+	output      uint32
+	place       Placement
+	root        *ui.Node
+	focus       []*ui.Node
+	roving      ui.Roving
+	leases      []*services.Lease
+	shieldQuiet time.Time
+	// anim is this surface's one clock: every transition it runs shares it, so
+	// frames are scheduled from a single place.
+	anim           *animator
 	stopAnim       chan struct{}
 	stopOnce       sync.Once
 	theme          Theme
@@ -418,12 +418,9 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		r.scheduleLoadProfiles(h)
 	}
 
-	if r.cfg.Accessibility.ReducedMotion {
-		r.publishSurface(output, panelSurfaceID(id))
-		return nil
-	}
-	h.animStart = time.Now()
-	go r.revealLoop(h)
+	h.anim = newAnimator(nil, r.cfg.Accessibility.ReducedMotion)
+	h.anim.Target(panelSurfaceID(id), animVisible, 1)
+	r.scheduleSurfaceFrames(h)
 	return nil
 }
 
@@ -1439,21 +1436,35 @@ func (h *PanelHost) stopAnimation() {
 	h.stopOnce.Do(func() { close(h.stopAnim) })
 }
 
-func (r *Registry) revealLoop(h *PanelHost) {
-	tick := time.NewTicker(revealTick)
-	defer tick.Stop()
-	for {
-		select {
-		case <-h.stopAnim:
-			return
-		case <-tick.C:
-			if time.Since(h.animStart) >= revealDuration {
-				r.publishSurface(h.output, panelSurfaceID(h.id))
-				return
-			}
+// scheduleSurfaceFrames drives this surface's one clock. It publishes a frame
+// per tick while any value on the surface is unsettled and returns as soon as
+// they all are, so an idle shell schedules nothing. A loop already running is
+// left alone: a second target change joins the clock rather than starting a
+// second ticker.
+func (r *Registry) scheduleSurfaceFrames(h *PanelHost) {
+	if h.anim == nil || h.anim.running || h.anim.Settled() {
+		if h.anim == nil || h.anim.Settled() {
 			r.publishSurface(h.output, panelSurfaceID(h.id))
 		}
+		return
 	}
+	h.anim.running = true
+	go r.surfaceFrameLoop(h)
+}
+
+func (r *Registry) surfaceFrameLoop(h *PanelHost) {
+	defer func() {
+		r.mu.Lock()
+		h.anim.running = false
+		r.mu.Unlock()
+	}()
+	animateSurface(h.stopAnim, func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return h.anim.Settled()
+	}, func() {
+		r.publishSurface(h.output, panelSurfaceID(h.id))
+	})
 }
 
 func (r *Registry) teardownPanelLocked(id PanelID) {

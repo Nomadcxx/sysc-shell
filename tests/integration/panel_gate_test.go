@@ -70,19 +70,29 @@ func TestGateReducedMotionInstant(t *testing.T) {
 	}
 	<-reg.AuxRequests()
 	<-reg.AuxRequests()
-	n := 0
-	timeout := time.After(50 * time.Millisecond)
-	for {
-		select {
-		case inv := <-reg.Invalidations():
-			if inv.SurfaceID != "" {
-				n++
+
+	// Reduced motion removes the panel's translation, not its transition: the
+	// surface fades in place, briefly, rather than appearing without warning.
+	// What matters at this level is that the fade ends and the surface then
+	// stops asking for frames.
+	count := func(d time.Duration) int {
+		n := 0
+		timeout := time.After(d)
+		for {
+			select {
+			case inv := <-reg.Invalidations():
+				if inv.SurfaceID != "" {
+					n++
+				}
+			case <-timeout:
+				return n
 			}
-		case <-timeout:
-			if n != 1 {
-				t.Fatalf("reduced motion invalidations = %d, want 1", n)
-			}
-			return
 		}
+	}
+	if count(200*time.Millisecond) == 0 {
+		t.Fatal("reduced motion produced no invalidations; the panel never appeared")
+	}
+	if n := count(100 * time.Millisecond); n != 0 {
+		t.Fatalf("surface still invalidating %d times after the fade settled", n)
 	}
 }

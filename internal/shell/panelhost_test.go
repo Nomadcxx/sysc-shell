@@ -207,6 +207,10 @@ func TestRevealAnimationInvalidatesUntilDone(t *testing.T) {
 		t.Fatalf("got %d surface invalidations, want at least 5 during reveal", n)
 	}
 
+	// Reduced motion keeps a short opacity-only fade rather than snapping: the
+	// concern is vestibular motion, and the panel still must not appear without
+	// warning. It runs no longer than the catalogue's shortest transition, so
+	// the surface has to be quiet well before the full enter would have ended.
 	still := config.Default()
 	still.Accessibility.ReducedMotion = true
 	quiet := NewRegistry(still)
@@ -215,8 +219,11 @@ func TestRevealAnimationInvalidatesUntilDone(t *testing.T) {
 	if err := quiet.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
 		t.Fatal(err)
 	}
-	if got := countSurfaceInvalidations(quiet, 50*time.Millisecond); got != 1 {
-		t.Fatalf("reduced motion produced %d invalidations, want 1", got)
+	if got := countSurfaceInvalidations(quiet, animReducedPanelDuration+50*time.Millisecond); got == 0 {
+		t.Fatal("reduced motion produced no invalidations; the panel never appeared")
+	}
+	if got := countSurfaceInvalidations(quiet, 100*time.Millisecond); got != 0 {
+		t.Fatalf("surface still invalidating %d times after the fade settled", got)
 	}
 }
 
