@@ -53,8 +53,18 @@ Expected: the baseline passes, and every construction site maps to this table. I
 | `internal/shell/traymenuhost.go` menu rows | Inherit painter; retain row sizing |
 | `internal/shell/traydrawer.go` drawer rows | Inherit painter; retain row sizing |
 | `internal/shell/bar.go` overflow button | Inherit compact pill paint and bar interaction state |
+| `internal/shell/popout_plugins.go` rescan/retry | Inherit painter; retain existing row sizing |
+| `internal/shell/pluginhost.go` failure actions | Inherit painter; retain Close/Retry/Disable labels |
+| `internal/shell/pluginwidget.go` status mark | Inherit compact pill paint and bar interaction state |
 
-Do not commit from Task 0 unless a new construction site required a plan correction. Stop and update the plan if a site cannot safely inherit the global painter.
+Do not commit from Task 0 unless a new construction site required a plan correction.
+
+The last three rows were added during Task 0: plugin-host work reached `main`
+after this plan was written. Each is a plain text button carrying
+`Action`/`Name`/`Role`/`Focusable`, structurally identical to the settings and
+notification rows above, so each inherits the global painter without a
+site-specific change. `pluginwidget.go` is a bar widget and takes bar
+interaction state rather than panel state. Stop and update the plan if a site cannot safely inherit the global painter.
 
 ## Task 1: Add the semantic chrome theme roles
 
