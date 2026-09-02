@@ -39,6 +39,23 @@ func TestSliderClampsAndSteps(t *testing.T) {
 	}
 }
 
+func TestSliderAtMapsPointerX(t *testing.T) {
+	t.Parallel()
+	n := &Node{Kind: KindSlider, Min: 0, Max: 100, Step: 1, Value: 0, Bounds: Rect{X: 10, Y: 10, W: 100, H: 14}}
+	SliderAt(n, 10)
+	if n.Value != 0 {
+		t.Fatalf("left edge = %v, want 0", n.Value)
+	}
+	SliderAt(n, 110)
+	if n.Value != 100 {
+		t.Fatalf("right edge = %v, want 100", n.Value)
+	}
+	SliderAt(n, 60)
+	if n.Value != 50 {
+		t.Fatalf("mid = %v, want 50", n.Value)
+	}
+}
+
 func TestSliderArrowKeysAdjust(t *testing.T) {
 	t.Parallel()
 	n := &Node{Kind: KindSlider, Min: 24, Max: 64, Step: 1, Value: 40}

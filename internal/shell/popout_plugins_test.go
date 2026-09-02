@@ -24,9 +24,56 @@ func TestPluginSettingRowRendersSelectAsMenu(t *testing.T) {
 		Key: "video_codec", Type: plugin.SettingSelect, Label: "Video codec", Default: "h264",
 		Options: []plugin.SettingOption{{Value: "h264", Label: "H.264"}, {Value: "hevc", Label: "HEVC"}},
 	}
-	ctrl := settingRowControl(pluginSettingRow(nil, h, "org.sysc.screen-recorder", s))
+	row := pluginSettingRow(nil, h, "org.sysc.screen-recorder", s)
+	ctrl := settingRowControl(row)
 	if ctrl == nil || ctrl.Kind != ui.KindMenu {
 		t.Fatalf("select control = %+v, want KindMenu", ctrl)
+	}
+	if ctrl.Text != "H.264" {
+		t.Fatalf("menu label = %q, want H.264", ctrl.Text)
+	}
+	if row.Kind != ui.KindColumn {
+		t.Fatalf("select row kind = %d, want column so the open list can lay out", row.Kind)
+	}
+}
+
+func TestPluginSettingRowRendersBoolAsCheckbox(t *testing.T) {
+	h := &PanelHost{}
+	s := plugin.Setting{Key: "show_cursor", Type: plugin.SettingBool, Label: "Show cursor", Default: true}
+	row := pluginSettingRow(nil, h, "org.sysc.screen-recorder", s)
+	if row == nil || row.Kind != ui.KindRow || len(row.Children) < 2 {
+		t.Fatalf("bool row = %+v, want checkbox then label", row)
+	}
+	box := row.Children[0]
+	if box.Kind != ui.KindToggle || box.Role != "checkbox" {
+		t.Fatalf("bool control = kind %d role %q, want toggle checkbox", box.Kind, box.Role)
+	}
+	if row.Children[1].Text != "Show cursor" {
+		t.Fatalf("bool label = %q", row.Children[1].Text)
+	}
+	if !row.Children[1].Focusable || row.Children[1].Action != box.Action {
+		t.Fatal("checkbox label must share the toggle action")
+	}
+}
+
+func TestPluginPanelSettingsWrapsGroupsInCapsules(t *testing.T) {
+	h := &PanelHost{}
+	schema := []plugin.Setting{
+		{Key: "frame_rate", Type: plugin.SettingInt, Label: "Frame rate", Default: 60.0, Min: f64(1), Max: f64(240)},
+		{Key: "directory", Type: plugin.SettingFolder, Label: "Output directory", Default: "~/Videos"},
+	}
+	nodes := pluginPanelSettings(nil, h, "org.sysc.screen-recorder", schema)
+	if len(nodes) != 2 {
+		t.Fatalf("groups = %d, want one capsule per section", len(nodes))
+	}
+	for i, title := range []string{"Capture", "File"} {
+		n := nodes[i]
+		if n.Kind != ui.KindCapsule {
+			t.Fatalf("%s kind = %d, want KindCapsule", title, n.Kind)
+		}
+		if !strings.Contains(treeText(n), title) {
+			t.Fatalf("%s missing from %q", title, treeText(n))
+		}
 	}
 }
 

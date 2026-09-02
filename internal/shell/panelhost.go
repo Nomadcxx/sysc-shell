@@ -82,6 +82,8 @@ type PanelHost struct {
 	menu           *Menu
 	menuPath       string
 	menus          map[string]*Menu
+	sliderDrag     *ui.Node
+	scrollDrag     *ui.Node
 	set            *settings.Registry
 	draft          config.Config
 	query          string
@@ -169,7 +171,7 @@ func (r *Registry) focusedTrigger() (uint32, Trigger) {
 		}
 	}
 	policy := r.cfg.ForConnector(connector)
-	trig := Trigger{BarEdge: policy.Edge, BarZone: policy.Height, Align: ""}
+	trig := Trigger{BarEdge: policy.Edge, BarZone: exclusiveBarZone(r.bars[global]), Align: ""}
 	if bar, ok := r.bars[global]; ok {
 		bar.mu.Lock()
 		if bar.configured.set {
@@ -300,13 +302,21 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	if outH <= 0 {
 		outH = 1080
 	}
+	size := panelTargetSize(id)
+	if id == PanelPlugin && r.plugins != nil {
+		size = r.plugins.panelSize()
+	}
+	gap := r.cfg.Panels.Gap
+	if id == PanelPlugin {
+		gap = 0
+	}
 	place := Placement{
 		BarEdge: trig.BarEdge,
 		Output:  ui.Rect{W: outW, H: outH},
 		BarZone: trig.BarZone,
-		Gap:     r.cfg.Panels.Gap,
+		Gap:     gap,
 		Padding: r.cfg.Panels.Padding,
-		Panel:   panelTargetSize(id),
+		Panel:   size,
 		Align:   trig.Align,
 	}
 	if id == PanelSettings && place.Align == "" {
@@ -659,12 +669,34 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 				h.drag.Move(e.X, e.Y)
 				return h.drag.Active()
 			}
+			if h.sliderDrag != nil {
+				ui.SliderAt(h.sliderDrag, h.hoverX)
+				return true
+			}
+			if h.scrollDrag != nil {
+				ui.ScrollSetFromY(h.scrollDrag, h.hoverY)
+				if h.logicalW > 0 {
+					_ = h.configure(h.logicalW, h.logicalH, h.scale120)
+				}
+				return true
+			}
 			return false
 		case wayland.EventPointerLeave:
 			h.pressed = nil
+			h.sliderDrag = nil
+			h.scrollDrag = nil
 			return false
 		case wayland.EventPointerPress:
+			h.hoverX, h.hoverY = int(math.Floor(e.X)), int(math.Floor(e.Y))
 			if h.id == PanelLauncher && h.launcherPointerPress(r, e) {
+				return true
+			}
+			if s := findScroll(h.root); s != nil && ui.ScrollTrack(s).Contains(h.hoverX, h.hoverY) {
+				h.scrollDrag = s
+				ui.ScrollSetFromY(s, h.hoverY)
+				if h.logicalW > 0 {
+					_ = h.configure(h.logicalW, h.logicalH, h.scale120)
+				}
 				return true
 			}
 			if n := h.hitFocusable(h.hoverX, h.hoverY); n != nil {
@@ -673,10 +705,30 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 				if n.Kind == ui.KindDragSource {
 					h.drag.Begin(n, e.X, e.Y)
 				}
+				if n.Kind == ui.KindSlider {
+					ui.SliderAt(n, h.hoverX)
+					h.sliderDrag = n
+				}
 				return true
 			}
 			return false
 		case wayland.EventPointerRelease:
+			h.hoverX, h.hoverY = int(math.Floor(e.X)), int(math.Floor(e.Y))
+			if h.sliderDrag != nil {
+				n := h.sliderDrag
+				ui.SliderAt(n, h.hoverX)
+				h.sliderDrag = nil
+				h.pressed = nil
+				if strings.HasPrefix(n.Action, "plugin-set:") {
+					return r.handlePluginManager(h, n)
+				}
+				h.applySetting(r, n)
+				return true
+			}
+			if h.scrollDrag != nil {
+				h.scrollDrag = nil
+				return true
+			}
 			if h.drag.Active() {
 				zone := ui.FindDropZone(h.root, &h.drag)
 				payload, ok := h.drag.Drop(zone)
@@ -777,9 +829,17 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 }
 
 func (h *PanelHost) scrollAxis(e wayland.Event) bool {
-	delta := int(e.AxisValue)
-	if e.AxisDiscrete != 0 {
+	delta := 0
+	switch {
+	case e.AxisDiscrete != 0:
 		delta = int(e.AxisDiscrete) * 40
+	case e.AxisValue120 != 0:
+		delta = int(e.AxisValue120) * 40 / 120
+	default:
+		delta = int(e.AxisValue)
+	}
+	if delta == 0 {
+		return false
 	}
 	return h.scrollBy(delta)
 }
@@ -958,6 +1018,14 @@ func (h *PanelHost) activate(r *Registry) bool {
 		case ui.KindToggle:
 			ui.Activate(n)
 			return r.handlePluginManager(h, n)
+		case ui.KindText:
+			for _, f := range h.focus {
+				if f != nil && f.Kind == ui.KindToggle && f.Action == n.Action {
+					ui.Activate(f)
+					return r.handlePluginManager(h, f)
+				}
+			}
+			return false
 		case ui.KindMenu:
 			store := pluginSettingStoreKey(n.Action)
 			if m := h.menus[store]; m != nil {
@@ -968,6 +1036,7 @@ func (h *PanelHost) activate(r *Registry) bool {
 					r.rebuildPanel(h)
 					return true
 				}
+				m.PickAt(n, h.hoverX, h.hoverY)
 				m.Select()
 				n.Text = m.Value()
 				return r.handlePluginManager(h, n)
@@ -998,6 +1067,7 @@ func (h *PanelHost) activate(r *Registry) bool {
 				r.rebuildPanel(h)
 				return true
 			}
+			m.PickAt(n, h.hoverX, h.hoverY)
 			m.Select()
 			h.applyMenu(r, path)
 			r.rebuildPanel(h)
@@ -1106,7 +1176,7 @@ func panelTargetSize(id PanelID) ui.Rect {
 	case PanelSession:
 		return ui.Rect{W: 420, H: 360}
 	case PanelPlugin:
-		// Fallback size; an open plugin view replaces this from its manifest.
+		// Fallback when no plugin view has declared a size yet.
 		return ui.Rect{W: 320, H: 280}
 	default:
 		return ui.Rect{W: 280, H: 200}

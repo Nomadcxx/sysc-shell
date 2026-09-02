@@ -136,3 +136,36 @@ func TestWriteOmitsDefaultFields(t *testing.T) {
 		t.Fatalf("height field = %v", bar["height"])
 	}
 }
+
+func TestWriteRoundTripsGroupMembers(t *testing.T) {
+	t.Parallel()
+	p := filepath.Join(t.TempDir(), "config.json")
+	c := Default()
+	c.Bar.Right = []Item{
+		{ID: "plugin", Plugin: "org.sysc.screen-recorder", Entry: "bar", Instance: "rec-1"},
+		{ID: "group", Items: []Item{
+			{ID: "cpu", Display: "text"},
+			{ID: "memory", Display: "text"},
+		}},
+	}
+	if err := Write(p, c); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Bar.Right) != 2 || got.Bar.Right[1].ID != "group" {
+		t.Fatalf("right = %#v", got.Bar.Right)
+	}
+	if n := len(got.Bar.Right[1].Items); n != 2 {
+		t.Fatalf("group members = %d, want 2 (empty group is unloadable)", n)
+	}
+	if got.Bar.Right[1].Items[0].ID != "cpu" || got.Bar.Right[1].Items[1].ID != "memory" {
+		t.Fatalf("group members = %#v", got.Bar.Right[1].Items)
+	}
+}

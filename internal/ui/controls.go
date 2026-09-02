@@ -7,6 +7,7 @@ const (
 	ToggleWidth  = 34
 	ToggleHeight = 20
 	ToggleKnob   = 16
+	CheckboxSize = 18
 	SliderTrack  = 4
 	SliderKnob   = 14
 
@@ -50,6 +51,16 @@ func SliderSet(n *Node, v float64) {
 		return
 	}
 	n.Value = snap(v, n.Min, n.Max, n.Step)
+}
+
+// SliderAt sets the slider from a pointer x in the same space as Bounds.
+func SliderAt(n *Node, x int) {
+	if n == nil || n.Kind != KindSlider || n.Bounds.W <= 0 {
+		return
+	}
+	span := n.Max - n.Min
+	frac := float64(x-n.Bounds.X) / float64(n.Bounds.W)
+	SliderSet(n, n.Min+frac*span)
 }
 
 // ControlKey applies left/right/home/end to a slider.

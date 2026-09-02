@@ -64,6 +64,12 @@ type pluginHost struct {
 
 func pluginMeasure(s string, _ bool) (int, int) { return len(s) * 8, 16 }
 
+// pluginBarViewWidth is the prepare slot for a plugin bar tree. Camera+Record+Stop
+// with the error-fill Record chip is ~128px under pluginMeasure; 120 failed and
+// the bar showed "!" (no clicks).
+const pluginBarViewWidth = 240
+const pluginBarViewHeight = 32
+
 var hostPluginCaps = []plugin.Capability{
 	plugin.CapNotifications, plugin.CapPanels, plugin.CapSettings, plugin.CapState,
 }
@@ -398,7 +404,7 @@ func (h *pluginHost) desiredBarViewsLocked() []hostedView {
 			}
 			desired = append(desired, hostedView{
 				Plugin: item.Plugin, Entry: item.Entry, Instance: item.Instance,
-				Output: conn, Generation: global, Kind: v1.ViewBar, Width: 120, Height: 32,
+				Output: conn, Generation: global, Kind: v1.ViewBar, Width: pluginBarViewWidth, Height: pluginBarViewHeight,
 			})
 		}
 	}
@@ -519,6 +525,7 @@ func (h *pluginHost) frames(output string) map[string]pluginFrame {
 		case v1.ViewBar:
 			out[v.Instance] = pluginFrame{
 				Root: v.Root, Revision: v.Revision, Failed: v.Failed, Label: v.Label,
+				ViewID: v.ID,
 			}
 		case v1.ViewTooltip:
 			tips[v.Instance] = v
@@ -577,7 +584,7 @@ func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResul
 	if err == nil {
 		if bar, ok := h.r.bars[global]; ok {
 			policy := h.r.cfg.ForConnector(bar.connector())
-			trig = Trigger{BarEdge: policy.Edge, BarZone: policy.Height}
+			trig = Trigger{BarEdge: policy.Edge, BarZone: exclusiveBarZone(bar)}
 		}
 	}
 	h.r.mu.Unlock()
@@ -594,7 +601,27 @@ func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResul
 		return v1.PanelResult{}, err
 	}
 
+	// Size must be on h.panel before OpenPanel: spawnPanelLocked reads
+	// panelSize() for the aux surface. Opening first kept the 320×280
+	// fallback, so include_settings TextFields failed layout (sysc-139).
+	h.mu.Lock()
+	h.panel = &hostedView{
+		Plugin: pluginID, Entry: p.Entry, Instance: p.Instance,
+		Output: p.Output, Generation: global, Kind: v1.ViewPanel,
+		Width: spec.Width, Height: spec.Height,
+	}
+	h.mu.Unlock()
+
+	h.r.mu.Lock()
+	_, open := h.r.panels.Output(PanelPlugin)
+	h.r.mu.Unlock()
+	if open {
+		h.r.ClosePanel(PanelPlugin)
+	}
 	if err := h.r.OpenPanel(PanelPlugin, global, trig); err != nil {
+		h.mu.Lock()
+		h.panel = nil
+		h.mu.Unlock()
 		return v1.PanelResult{}, err
 	}
 
@@ -741,7 +768,11 @@ func (h *pluginHost) panelTree(host *PanelHost) *ui.Node {
 		return root
 	}
 	settings := pluginPanelSettings(h.r, host, pluginID, schema)
-	return &ui.Node{Kind: ui.KindColumn, Gap: 8, Children: append([]*ui.Node{root}, settings...)}
+	head := root
+	if root.Kind != ui.KindCapsule {
+		head = monitorCard([]*ui.Node{root})
+	}
+	return &ui.Node{Kind: ui.KindScroll, Gap: monitorCardGap, Padding: monitorPanelPadding, Children: append([]*ui.Node{head}, settings...)}
 }
 
 func (h *pluginHost) panelSize() ui.Rect {
@@ -969,6 +1000,12 @@ func (r *Registry) handlePluginBar(action string, event wayland.Event) bool {
 	case wayland.EventPointerPress:
 		kind = v1.EventPointer
 		button = pointerButton(event.Button)
+		// Secondary/middle fire on release only. Press+release both used to
+		// deliver, so a right-click opened the panel and the implicit grab's
+		// release toggled it closed.
+		if button != v1.ButtonPrimary {
+			return false
+		}
 	case wayland.EventPointerRelease:
 		if event.Button != 0 && event.Button != 272 {
 			kind = v1.EventPointer

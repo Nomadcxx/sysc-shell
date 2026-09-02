@@ -129,8 +129,7 @@ func pluginPanelSettings(r *Registry, h *PanelHost, pluginID string, schema []pl
 		if len(rows) == 0 {
 			continue
 		}
-		out = append(out, &ui.Node{Kind: ui.KindText, Text: g.Title, Bold: true, Name: g.Title, Role: "heading"})
-		out = append(out, rows...)
+		out = append(out, monitorCard(append([]*ui.Node{monitorCardTitle(g.Title, 0)}, rows...)))
 	}
 	return out
 }
@@ -182,7 +181,13 @@ func pluginSettingRow(r *Registry, h *PanelHost, pluginID string, s plugin.Setti
 	action := "plugin-set:" + pluginID + ":" + s.Key
 	store := pluginID + "." + s.Key
 	control := pluginSettingControl(h, s, raw, action, store)
-	return &ui.Node{Kind: ui.KindRow, Gap: 8, Children: []*ui.Node{
+	if s.Type == plugin.SettingBool {
+		return &ui.Node{Kind: ui.KindRow, Gap: 8, Children: []*ui.Node{
+			control,
+			{Kind: ui.KindText, Text: s.Label, Action: action, Focusable: true, Name: s.Label, Role: "checkbox"},
+		}}
+	}
+	return &ui.Node{Kind: ui.KindColumn, Gap: 4, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: s.Label},
 		control,
 	}}
@@ -197,7 +202,7 @@ func pluginSettingControl(h *PanelHost, s plugin.Setting, raw, action, store str
 		}
 		return &ui.Node{
 			Kind: ui.KindToggle, Value: v, Action: action,
-			Focusable: true, Name: s.Label, Role: "switch",
+			Focusable: true, Name: s.Label, Role: "checkbox",
 		}
 	case plugin.SettingInt:
 		n, _ := strconv.Atoi(raw)
@@ -213,19 +218,27 @@ func pluginSettingControl(h *PanelHost, s plugin.Setting, raw, action, store str
 			Action: action, Width: 160, Focusable: true, Name: s.Label, Role: "slider",
 		}
 	case plugin.SettingSelect:
-		opts := make([]string, 0, len(s.Options))
+		labels := make([]string, 0, len(s.Options))
+		values := make([]string, 0, len(s.Options))
 		for _, o := range s.Options {
-			opts = append(opts, o.Value)
+			label := o.Label
+			if label == "" {
+				label = o.Value
+			}
+			labels = append(labels, label)
+			values = append(values, o.Value)
 		}
 		idx := 0
-		for i, o := range opts {
-			if o == raw {
+		for i, v := range values {
+			if v == raw {
 				idx = i
 				break
 			}
 		}
 		if h == nil {
-			n := NewMenu(opts, idx).Node()
+			m := NewMenu(labels, idx)
+			m.values = values
+			n := m.Node()
 			n.Action = action
 			n.Name = s.Label
 			return n
@@ -235,7 +248,8 @@ func pluginSettingControl(h *PanelHost, s plugin.Setting, raw, action, store str
 		}
 		m := h.menus[store]
 		if m == nil || !m.Opened() {
-			m = NewMenu(opts, idx)
+			m = NewMenu(labels, idx)
+			m.values = values
 			h.menus[store] = m
 		}
 		n := m.Node()

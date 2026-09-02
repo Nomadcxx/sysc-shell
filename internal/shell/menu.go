@@ -6,6 +6,7 @@ import "github.com/Nomadcxx/sysc-shell/internal/ui"
 // is a child region of the already-mapped panel.
 type Menu struct {
 	options []string
+	values  []string
 	index   int
 	cursor  int
 	open    bool
@@ -71,10 +72,38 @@ func (m *Menu) Cancel() {
 }
 
 func (m *Menu) Value() string {
+	if m == nil {
+		return ""
+	}
+	if len(m.values) > 0 {
+		if m.index < 0 || m.index >= len(m.values) {
+			return ""
+		}
+		return m.values[m.index]
+	}
+	if m.index < 0 || m.index >= len(m.options) {
+		return ""
+	}
+	return m.options[m.index]
+}
+
+func (m *Menu) label() string {
 	if m == nil || m.index < 0 || m.index >= len(m.options) {
 		return ""
 	}
 	return m.options[m.index]
+}
+
+func (m *Menu) PickAt(n *ui.Node, x, y int) {
+	if m == nil || n == nil {
+		return
+	}
+	for i, c := range n.Children {
+		if c != nil && c.Bounds.Contains(x, y) {
+			m.cursor = i
+			return
+		}
+	}
 }
 
 func (m *Menu) Node() *ui.Node {
@@ -83,10 +112,10 @@ func (m *Menu) Node() *ui.Node {
 	}
 	n := &ui.Node{
 		Kind:      ui.KindMenu,
-		Text:      m.Value(),
+		Text:      m.label(),
 		Value:     float64(m.index),
 		Focusable: true,
-		Name:      m.Value(),
+		Name:      m.label(),
 		Role:      "combobox",
 	}
 	if m.open {

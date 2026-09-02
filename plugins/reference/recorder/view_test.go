@@ -21,6 +21,13 @@ func TestPanelTreeIdle(t *testing.T) {
 	if strings.Contains(body, "Start replay") {
 		t.Fatal("replay controls shown while disabled")
 	}
+	rec := childByID(root, nodeRecord)
+	if rec == nil || rec.Text != "Record" {
+		t.Fatalf("idle Record = %#v", rec)
+	}
+	if rec.Tone == v1.ToneError {
+		t.Fatal("idle panel Record must not use error tone")
+	}
 }
 
 func TestPanelTreeReplayControls(t *testing.T) {
@@ -77,7 +84,7 @@ func TestBarTreeStates(t *testing.T) {
 			t.Fatalf("%s camera name = %q", tc.mode, cam.Name)
 		}
 		rec := childByID(root, nodeRecord)
-		if rec == nil || rec.Text != "Record" || rec.Name != "Record" {
+		if rec == nil || rec.Text != "Record" || rec.Name != "Record" || rec.Tone != v1.ToneError {
 			t.Fatalf("%s record button missing or wrong: %#v", tc.mode, rec)
 		}
 		stop := childByID(root, nodeStop)
@@ -159,13 +166,32 @@ func TestHandleInputButtons(t *testing.T) {
 		}
 	}
 
-	open, record, stop, replay, save = HandleInput(&v1.InputEvent{Node: nodeCamera, Event: v1.EventPointer, Button: v1.ButtonSecondary}, Idle)
-	if open || record || stop || replay || save {
-		t.Fatalf("secondary = %v %v %v %v %v", open, record, stop, replay, save)
+	for _, mode := range []Mode{Idle, Unavailable, Failed, Recording} {
+		open, record, stop, replay, save = HandleInput(&v1.InputEvent{Node: nodeCamera, Event: v1.EventPointer, Button: v1.ButtonSecondary}, mode)
+		if !open || record || stop || replay || save {
+			t.Fatalf("camera secondary in %s = %v %v %v %v %v", mode, open, record, stop, replay, save)
+		}
+		open, record, stop, replay, save = HandleInput(&v1.InputEvent{Node: nodeRecord, Event: v1.EventPointer, Button: v1.ButtonSecondary}, mode)
+		if !open || record || stop || replay || save {
+			t.Fatalf("record secondary in %s = %v %v %v %v %v", mode, open, record, stop, replay, save)
+		}
 	}
 	open, record, stop, replay, save = HandleInput(&v1.InputEvent{Node: nodeRecord, Event: v1.EventPointer, Button: v1.ButtonMiddle}, Idle)
 	if open || record || stop || replay || save {
 		t.Fatalf("middle = %v %v %v %v %v", open, record, stop, replay, save)
+	}
+}
+
+func TestPanelTreeShowsFailureReason(t *testing.T) {
+	t.Parallel()
+	root := PanelTree(Snapshot{Mode: Failed, Err: "gpu-screen-recorder: process exited"}, Config{}, time.Time{})
+	body := flatten(root)
+	if !strings.Contains(body, "Recorder failed") || !strings.Contains(body, "process exited") {
+		t.Fatalf("panel = %q", body)
+	}
+	unavail := PanelTree(Snapshot{Mode: Unavailable, Err: "gpu-screen-recorder is not installed or not on PATH"}, Config{}, time.Time{})
+	if !strings.Contains(flatten(unavail), "not installed") {
+		t.Fatalf("unavailable panel = %q", flatten(unavail))
 	}
 }
 

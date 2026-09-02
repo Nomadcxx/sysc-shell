@@ -16,6 +16,9 @@ func TestRecorderUnavailableWithoutBackend(t *testing.T) {
 	if got := r.Snapshot().Mode; got != Unavailable {
 		t.Fatalf("mode = %s, want unavailable", got)
 	}
+	if r.Snapshot().Err == "" {
+		t.Fatal("unavailable snapshot has no error copy")
+	}
 	r.ToggleRecord("DP-1")
 	if got := r.Snapshot().Mode; got != Unavailable {
 		t.Fatalf("toggle moved unavailable to %s", got)

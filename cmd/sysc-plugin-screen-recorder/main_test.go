@@ -72,6 +72,28 @@ func TestPluginCameraOpensPanel(t *testing.T) {
 	}
 }
 
+func TestPluginRightClickOpensPanelWhenUnavailable(t *testing.T) {
+	h := startPlugin(t, recorder.Options{
+		LookPath: func(string) (string, error) { return "", os.ErrNotExist },
+	})
+	h.open("bar-a", v1.ViewBar, "DP-1")
+	h.wait("bar-a", func(n *v1.Node) bool { return findNode(n, "camera") != nil })
+	h.open("panel-a", v1.ViewPanel, "DP-1")
+	h.wait("panel-a", func(n *v1.Node) bool {
+		return n != nil && strings.Contains(treeText(n), "not installed")
+	})
+	if err := h.send(&v1.InputEvent{
+		ViewID: "bar-a", Node: "camera", Event: v1.EventPointer,
+		Button: v1.ButtonSecondary, Output: "DP-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	p := h.waitPanelOpen()
+	if p.Entry != "panel" {
+		t.Fatalf("panel.open entry = %q, want panel", p.Entry)
+	}
+}
+
 func TestPluginPanelViewUsesPanelTree(t *testing.T) {
 	h := startPlugin(t, recorder.Options{
 		Exe:      os.Args[0],

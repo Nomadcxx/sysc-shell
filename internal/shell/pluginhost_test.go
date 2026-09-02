@@ -13,6 +13,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
+	"github.com/Nomadcxx/sysc-shell/plugins/reference/recorder"
 )
 
 func TestMain(m *testing.M) {
@@ -321,14 +322,21 @@ func TestPluginPrimaryMiddleSecondaryButtons(t *testing.T) {
 		t.Fatalf("inputs = %+v", got)
 	}
 	kinds := map[v1.EventKind]int{}
+	var secondary int
 	for _, in := range got {
 		kinds[in.Event]++
 		if in.Node != "go" {
 			t.Fatalf("node = %q", in.Node)
 		}
+		if in.Event == v1.EventPointer && in.Button == v1.ButtonSecondary {
+			secondary++
+		}
 	}
 	if kinds[v1.EventPointer] == 0 || kinds[v1.EventActivate] == 0 {
 		t.Fatalf("kinds = %v", kinds)
+	}
+	if secondary != 1 {
+		t.Fatalf("secondary pointer events = %d, want 1 (press+release must not both fire)", secondary)
 	}
 }
 
@@ -489,7 +497,7 @@ const testRecorderPanelManifest = `{
   "requires": {"commands": []},
   "services": [{"id": "recorder"}],
   "widgets": [{"id": "bar", "settings": []}],
-  "panels": [{"id": "panel", "width": 480, "height": 560, "placement": "attached", "include_settings": true}],
+  "panels": [{"id": "panel", "width": 640, "height": 720, "placement": "attached", "include_settings": true}],
   "settings": [
     {"key": "video_source", "type": "select", "label": "Video source", "default": "portal",
       "options": [{"value": "focused", "label": "Focused output"}, {"value": "portal", "label": "Portal"}]},
@@ -795,6 +803,70 @@ func TestPluginPanelTreeIncludeSettingsComposesRows(t *testing.T) {
 	t.Fatalf("include_settings tree missing Output directory: %q", text)
 }
 
+func TestPluginPanelHostUsesManifestSize(t *testing.T) {
+	reg := bindManifestPlugin(t, "ok", "org.sysc.screen-recorder", testRecorderPanelManifest,
+		[]string{"org.sysc.screen-recorder"})
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+
+	reg.cfg.Plugins.Settings = map[string]map[string]any{
+		"org.sysc.screen-recorder": {
+			"directory": "/home/nomadx/scratchpad/recorder-panel-gate/recordings",
+		},
+	}
+	if _, err := reg.plugins.openPanel("org.sysc.screen-recorder", v1.PanelParams{
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "org.sysc.screen-recorder-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		host := reg.panelHosts[PanelPlugin]
+		reg.mu.Unlock()
+		if host == nil {
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		if !strings.Contains(treeText(reg.plugins.panelTree(host)), "Output directory") {
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		if host.place.Panel.W != 640 || host.place.Panel.H != 720 {
+			t.Fatalf("plugin panel size = %dx%d, want 640x720 from the manifest", host.place.Panel.W, host.place.Panel.H)
+		}
+		if host.place.Gap != 0 {
+			t.Fatalf("plugin panel gap = %d, want 0 (flush to the bar)", host.place.Gap)
+		}
+		zone, _, _ := DefaultTheme().Geometry()
+		if host.place.BarZone != zone {
+			t.Fatalf("plugin BarZone = %d, want exclusive zone %d", host.place.BarZone, zone)
+		}
+		if top := host.place.Margins().Top; top != zone {
+			t.Fatalf("plugin top margin = %d, want %d", top, zone)
+		}
+		if err := host.configure(host.place.Panel.W, host.place.Panel.H, 120); err != nil {
+			t.Fatal(err)
+		}
+		root := host.root
+		if root == nil || root.Kind != ui.KindScroll {
+			t.Fatalf("root = %+v, want KindScroll", root)
+		}
+		if len(root.Children) == 0 {
+			t.Fatal("plugin panel scroll has no children")
+		}
+		for i, c := range root.Children {
+			if c == nil || c.Kind != ui.KindCapsule {
+				t.Fatalf("scroll child %d = %+v, want KindCapsule", i, c)
+			}
+		}
+		return
+	}
+	t.Fatal("recorder panel never opened")
+}
+
 func TestPluginPanelTreeWithoutIncludeSettingsStaysPluginOnly(t *testing.T) {
 	reg := bindTestPlugin(t, "ok")
 	newHosts(t, reg, map[uint32]string{7: "DP-1"})
@@ -815,5 +887,16 @@ func TestPluginPanelTreeWithoutIncludeSettingsStaysPluginOnly(t *testing.T) {
 		if strings.Contains(text, heading) {
 			t.Fatalf("include_settings=false still composed %q in %q", heading, text)
 		}
+	}
+}
+
+func TestRecorderBarTreeFitsHostSlot(t *testing.T) {
+	wire := recorder.BarTree(recorder.Snapshot{Mode: recorder.Idle}, recorder.Config{})
+	root, err := plugin.Convert(wire, v1.ViewBar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ui.Layout(root, ui.Rect{W: pluginBarViewWidth, H: pluginBarViewHeight}, pluginMeasure); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -21,13 +21,13 @@ func BarTree(snap Snapshot, cfg Config) *v1.Node {
 		children = append(children,
 			&v1.Node{
 				Kind: v1.KindButton, ID: nodeRecord, Key: nodeRecord,
-				Text: "Record", Name: "Record", Role: "button",
-				Events: []v1.EventKind{v1.EventActivate},
+				Text: "Record", Name: "Record", Role: "button", Tone: v1.ToneError,
+				Events: []v1.EventKind{v1.EventActivate, v1.EventPointer},
 			},
 			&v1.Node{
 				Kind: v1.KindButton, ID: nodeStop, Key: nodeStop,
 				Text: "Stop", Name: "Stop", Role: "button",
-				Events: []v1.EventKind{v1.EventActivate},
+				Events: []v1.EventKind{v1.EventActivate, v1.EventPointer},
 			},
 		)
 	}
@@ -39,7 +39,7 @@ func cameraButton(snap Snapshot) *v1.Node {
 	return &v1.Node{
 		Kind: v1.KindButton, ID: nodeCamera, Key: nodeCamera,
 		Icon: icon, Name: "Open screen recorder", Role: "button", Tone: tone,
-		Events: []v1.EventKind{v1.EventActivate},
+		Events: []v1.EventKind{v1.EventActivate, v1.EventPointer},
 	}
 }
 
@@ -81,6 +81,9 @@ func PanelTree(snap Snapshot, cfg Config, now time.Time) *v1.Node {
 			{Kind: v1.KindText, Text: "Screen Recorder"},
 		}},
 		{Kind: v1.KindText, Text: label, Tone: tone},
+	}
+	if snap.Err != "" {
+		children = append(children, &v1.Node{Kind: v1.KindText, Text: snap.Err, Tone: v1.ToneError})
 	}
 	if snap.Mode == Recording || snap.Mode == Adopted || snap.Mode == ReplayActive {
 		children = append(children, &v1.Node{
@@ -139,7 +142,13 @@ func presentation(snap Snapshot) (string, v1.Tone) {
 }
 
 func HandleInput(ev *v1.InputEvent, mode Mode) (open, record, stop, replay, save bool) {
-	if ev == nil || ev.Event != v1.EventActivate {
+	if ev == nil {
+		return false, false, false, false, false
+	}
+	if ev.Event == v1.EventPointer && ev.Button == v1.ButtonSecondary {
+		return true, false, false, false, false
+	}
+	if ev.Event != v1.EventActivate {
 		return false, false, false, false, false
 	}
 	switch ev.Node {

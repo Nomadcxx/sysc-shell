@@ -91,6 +91,16 @@ func alignX(p Placement) int {
 	}
 }
 
+func exclusiveBarZone(bar *Bar) int {
+	if bar != nil {
+		if s, _, _ := bar.theme.Geometry(); s > 0 {
+			return s
+		}
+	}
+	s, _, _ := DefaultTheme().Geometry()
+	return s
+}
+
 // FittedSize returns the panel size after reserving the bar edge and output padding.
 func (p Placement) FittedSize() (w, h int) {
 	w, h = p.Panel.W, p.Panel.H

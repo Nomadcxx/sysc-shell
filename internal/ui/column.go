@@ -86,6 +86,9 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 		_, h := measure("", n.Tabular)
 		return h, nil
 	case KindToggle:
+		if n.Role == "checkbox" {
+			return CheckboxSize, nil
+		}
 		return ToggleHeight, nil
 	case KindSlider:
 		return SliderKnob, nil

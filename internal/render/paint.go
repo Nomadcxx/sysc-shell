@@ -83,12 +83,18 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style ProofStyle) error
 		style.Scale120.Physical(style.Radius), style.Background)
 
 	size := style.Scale120.Physical(style.Size)
-	for i, child := range root.Children {
-		if child == nil {
-			return fmt.Errorf("render: nil child %d", i)
+	if root.Kind == ui.KindScroll || root.Kind == ui.KindVirtualList {
+		if err := paintNode(c, root, text, style, size); err != nil {
+			return err
 		}
-		if err := paintNode(c, child, text, style, size); err != nil {
-			return fmt.Errorf("render: child %d: %w", i, err)
+	} else {
+		for i, child := range root.Children {
+			if child == nil {
+				return fmt.Errorf("render: nil child %d", i)
+			}
+			if err := paintNode(c, child, text, style, size); err != nil {
+				return fmt.Errorf("render: child %d: %w", i, err)
+			}
 		}
 	}
 	clearOutsideRoundedRect(c, style.Scale120.PhysicalRect(style.Body),
@@ -140,15 +146,7 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 		return nil
 
 	case ui.KindButton, ui.KindDragSource:
-		fillRect(c, style.Scale120.PhysicalRect(n.Bounds), style.accent())
-		label := ui.Rect{
-			X: n.Bounds.X + n.Padding,
-			Y: n.Bounds.Y + n.Padding,
-			W: n.Bounds.W - 2*n.Padding,
-			H: n.Bounds.H - 2*n.Padding,
-		}
-		return paintTextColor(c, n.Text, style.Scale120.PhysicalRect(label), text, style,
-			size, n.Tabular, style.buttonText(), n.Bold, n.Italic, n.Underline)
+		return paintButton(c, n, text, style, size)
 
 	case ui.KindToggle:
 		paintToggle(c, n, style)
@@ -177,6 +175,7 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 				return err
 			}
 		}
+		paintScrollThumb(c, n, style)
 		return nil
 
 	case ui.KindRow, ui.KindColumn, ui.KindDropZone:
@@ -204,7 +203,52 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 	}
 }
 
+func paintScrollThumb(c *Canvas, n *ui.Node, style ProofStyle) {
+	inner := n.Bounds.H - 2*n.Padding
+	if inner <= 0 || n.ContentH <= inner {
+		return
+	}
+	trackW := style.Scale120.Physical(4)
+	if trackW < 2 {
+		trackW = 2
+	}
+	box := style.Scale120.PhysicalRect(n.Bounds)
+	pad := style.Scale120.Physical(n.Padding)
+	if pad < 2 {
+		pad = 2
+	}
+	trackH := box.H - 2*pad
+	if trackH <= 0 {
+		return
+	}
+	track := ui.Rect{
+		X: box.X + box.W - pad - trackW,
+		Y: box.Y + pad,
+		W: trackW,
+		H: trackH,
+	}
+	fillRoundedRect(c, track, trackW/2, style.Track)
+	thumbH := track.H * inner / n.ContentH
+	minThumb := style.Scale120.Physical(16)
+	if thumbH < minThumb {
+		thumbH = minThumb
+	}
+	if thumbH > track.H {
+		thumbH = track.H
+	}
+	maxOff := n.ContentH - inner
+	thumbY := track.Y
+	if maxOff > 0 {
+		thumbY += (track.H - thumbH) * n.ScrollOffset / maxOff
+	}
+	fillRoundedRect(c, ui.Rect{X: track.X, Y: thumbY, W: trackW, H: thumbH}, trackW/2, style.Foreground)
+}
+
 func paintToggle(c *Canvas, n *ui.Node, style ProofStyle) {
+	if n.Role == "checkbox" {
+		paintCheckbox(c, n, style)
+		return
+	}
 	box := style.Scale120.PhysicalRect(n.Bounds)
 	track := style.Track
 	knob := style.Foreground
@@ -225,6 +269,21 @@ func paintToggle(c *Canvas, n *ui.Node, style ProofStyle) {
 		x = box.X + box.W - pad - knobH
 	}
 	c.FillRounded(ui.Rect{X: x, Y: box.Y + pad, W: knobH, H: knobH}, knobH/2, knob)
+}
+
+func paintCheckbox(c *Canvas, n *ui.Node, style ProofStyle) {
+	box := style.Scale120.PhysicalRect(n.Bounds)
+	radius := style.Scale120.Physical(3)
+	c.FillRounded(box, radius, style.Track)
+	if n.Value == 0 {
+		return
+	}
+	inset := style.Scale120.Physical(4)
+	if inset*2 >= box.W || inset*2 >= box.H {
+		inset = 1
+	}
+	inner := ui.Rect{X: box.X + inset, Y: box.Y + inset, W: box.W - 2*inset, H: box.H - 2*inset}
+	c.FillRounded(inner, radius, style.accent())
 }
 
 func paintSlider(c *Canvas, n *ui.Node, style ProofStyle) {
@@ -483,15 +542,39 @@ func shearMask(src *image.Alpha, shift int) *image.Alpha {
 	return out
 }
 
-// textColor picks the colour a tone paints in.
-// capsuleFill and capsuleForeground keep a pill's background and the colour of
-// its contents defined in one place, so the two cannot drift apart.
+func paintButton(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size int) error {
+	box := style.Scale120.PhysicalRect(n.Bounds)
+	label := ui.Rect{
+		X: n.Bounds.X + n.Padding,
+		Y: n.Bounds.Y + n.Padding,
+		W: n.Bounds.W - 2*n.Padding,
+		H: n.Bounds.H - 2*n.Padding,
+	}
+	switch n.Fill {
+	case ui.FillError:
+		radius := min(box.H/2, style.Scale120.Physical(6))
+		fillRoundedRect(c, box, radius, style.Error)
+		return paintTextColor(c, n.Text, style.Scale120.PhysicalRect(label), text, style,
+			size, n.Tabular, style.buttonText(), n.Bold, n.Italic, n.Underline)
+	case ui.FillAccent:
+		fillRect(c, box, style.accent())
+		return paintTextColor(c, n.Text, style.Scale120.PhysicalRect(label), text, style,
+			size, n.Tabular, style.buttonText(), n.Bold, n.Italic, n.Underline)
+	default:
+		// Default chrome is the wrapping pill, not a label highlight.
+		return paintText(c, n.Text, style.Scale120.PhysicalRect(label), text, style,
+			size, n.Tabular, n.Tone, n.Bold, n.Italic, n.Underline)
+	}
+}
+
 func capsuleFill(style ProofStyle, fill ui.Fill) Color {
 	switch fill {
 	case ui.FillAccent:
 		return style.Accent
 	case ui.FillContainer:
 		return style.Container
+	case ui.FillError:
+		return style.Error
 	}
 	return style.Capsule
 }

@@ -161,6 +161,25 @@ func TestConvertResolvesAButtonIcon(t *testing.T) {
 	if button.Text != string(want) || button.Action != "camera" {
 		t.Fatalf("button = %+v", button)
 	}
+	if button.Fill != ui.FillNone {
+		t.Fatalf("camera fill = %v, want no chrome (the pill is the fill)", button.Fill)
+	}
+}
+
+func TestConvertErrorToneTextButtonFillsAsAnErrorChip(t *testing.T) {
+	t.Parallel()
+	root := &v1.Node{Kind: v1.KindRow, Children: []*v1.Node{{
+		Kind: v1.KindButton, ID: "record", Text: "Record", Name: "Record", Role: "button",
+		Tone: v1.ToneError, Events: []v1.EventKind{v1.EventActivate},
+	}}}
+	got, err := Convert(root, v1.ViewBar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	btn := got.Children[0]
+	if btn.Fill != ui.FillError || btn.Padding != 4 {
+		t.Fatalf("record chip = fill %v padding %d", btn.Fill, btn.Padding)
+	}
 }
 
 func TestConvertMapsToneOntoTheThemeRole(t *testing.T) {

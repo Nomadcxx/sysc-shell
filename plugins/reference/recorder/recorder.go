@@ -115,6 +115,7 @@ func New(cfg Config, opt Options) *Recorder {
 	}
 	if err != nil || path == "" {
 		r.snap.Mode = Unavailable
+		r.snap.Err = "gpu-screen-recorder is not installed or not on PATH"
 	} else {
 		r.path = path
 	}

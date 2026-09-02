@@ -22,6 +22,7 @@ var testStyle = ProofStyle{
 	Accent:     Color{R: 0x00, G: 0x80, B: 0xff, A: 0xff},
 	AccentOn:   Color{R: 0xff, G: 0x60, B: 0x00, A: 0xff},
 	OnPrimary:  Color{R: 0x11, G: 0x22, B: 0x33, A: 0xff},
+	Error:      Color{R: 0xcc, G: 0x22, B: 0x22, A: 0xff},
 }
 
 func TestPaintFillsOnlyTheRoundedBody(t *testing.T) {
@@ -203,7 +204,7 @@ func paintTree(t *testing.T, c *Canvas, style ProofStyle) *ui.Node {
 		Children: []*ui.Node{
 			{Kind: ui.KindText, Text: "sysc-shell"},
 			{Kind: ui.KindMeter, Width: 60, Value: 0.5},
-			{Kind: ui.KindButton, Text: "Go", Padding: 4, Action: "toggle-meter"},
+			{Kind: ui.KindButton, Text: "Go", Padding: 4, Fill: ui.FillAccent, Action: "toggle-meter"},
 		},
 	}
 	if err := ui.Layout(root, ui.Rect{W: canvasW, H: canvasH}, measure); err != nil {
@@ -279,6 +280,42 @@ func TestPaintButtonTextUsesOnPrimary(t *testing.T) {
 		}
 	}
 	t.Fatal("button label painted no OnPrimary pixel")
+}
+
+func TestPaintDefaultButtonDoesNotFillTheLabel(t *testing.T) {
+	t.Parallel()
+
+	c := newTestCanvas(t, canvasW, canvasH)
+	style := testStyle
+	style.Body = ui.Rect{W: canvasW, H: canvasH}
+	btn := &ui.Node{Kind: ui.KindButton, Text: "", Bounds: ui.Rect{X: 20, Y: 10, W: 80, H: 24}}
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{btn}}
+	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatal(err)
+	}
+	if got := pixelAt(t, c, btn.Bounds.X+1, btn.Bounds.Y+1); got != style.Background {
+		t.Fatalf("unfilled button corner = %+v, want the body %+v", got, style.Background)
+	}
+}
+
+func TestPaintErrorFillButtonUsesTheErrorToken(t *testing.T) {
+	t.Parallel()
+
+	c := newTestCanvas(t, canvasW, canvasH)
+	style := testStyle
+	style.Body = ui.Rect{W: canvasW, H: canvasH}
+	btn := &ui.Node{
+		Kind: ui.KindButton, Text: "Record", Fill: ui.FillError, Padding: 4,
+		Bounds: ui.Rect{X: 20, Y: 10, W: 80, H: 24},
+	}
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{btn}}
+	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatal(err)
+	}
+	cx, cy := btn.Bounds.X+btn.Bounds.W/2, btn.Bounds.Y+btn.Bounds.H/2
+	if got := pixelAt(t, c, cx, cy); got != style.Error && got != style.OnPrimary {
+		t.Fatalf("error chip center = %+v, want error %+v or OnPrimary", got, style.Error)
+	}
 }
 
 func TestPaintDrawsTextPixels(t *testing.T) {
@@ -634,5 +671,42 @@ func TestCapsuleGivesItsChildTheMatchingForeground(t *testing.T) {
 				t.Fatalf("foreground for %v = %+v, want %+v", tc.fill, got, tc.want(style))
 			}
 		})
+	}
+}
+
+func TestPaintScrollDrawsAThumbWhenContentOverflows(t *testing.T) {
+	t.Parallel()
+	const w, h = 120, 80
+	c := newTestCanvas(t, w, h)
+	style := testStyle
+	style.Body = ui.Rect{W: w, H: h}
+	style.Radius = 0
+	measure := func(s string, _ bool) (int, int) {
+		if s == "tall" {
+			return 80, 400
+		}
+		return 8, 16
+	}
+	root := &ui.Node{Kind: ui.KindScroll, Padding: 8, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: "tall"},
+	}}
+	if err := ui.LayoutColumn(root, ui.Rect{W: w, H: h}, measure); err != nil {
+		t.Fatal(err)
+	}
+	if root.ContentH <= h-16 {
+		t.Fatalf("fixture ContentH = %d, want overflow", root.ContentH)
+	}
+	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for y := 8; y < h-8; y++ {
+		if pixelAt(t, c, w-10, y) == style.Foreground {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("overflowing scroll painted no foreground thumb on the right")
 	}
 }

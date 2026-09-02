@@ -211,6 +211,11 @@ func encodeItem(it Item) wireItem {
 	case "plugin":
 		plugin, entry, instance := it.Plugin, it.Entry, it.Instance
 		w.Plugin, w.Entry, w.Instance = &plugin, &entry, &instance
+	case "group":
+		if len(it.Items) > 0 {
+			nested := encodeItems(it.Items)
+			w.Items = &nested
+		}
 	case "clock":
 		if it.Format != "" {
 			v := it.Format

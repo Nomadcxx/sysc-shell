@@ -256,6 +256,12 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		// back to the node the plugin addressed.
 		out.Action = n.ID
 		out.Focusable = true
+		if n.Tone == v1.ToneError && n.Text != "" {
+			out.Fill = ui.FillError
+			if out.Padding == 0 {
+				out.Padding = 4
+			}
+		}
 	case v1.KindTextInput:
 		out.Kind = ui.KindTextField
 		out.Text = n.Text

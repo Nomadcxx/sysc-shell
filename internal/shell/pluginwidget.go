@@ -21,6 +21,7 @@ type pluginFrame struct {
 	Revision uint64
 	Failed   bool
 	Label    string
+	ViewID   string
 }
 
 type pluginHit struct {
@@ -54,7 +55,7 @@ func stampPluginActions(n *ui.Node, viewID string) {
 
 func buildPluginWidget(item config.Item) textWidget {
 	row := &ui.Node{Kind: ui.KindRow, Width: pluginPlaceholderWidth}
-	applyPluginPlaceholder(row, item.Plugin, "starting")
+	applyPluginPlaceholder(row, item.Plugin, "starting", "")
 	rev := new(uint64)
 	*rev = ^uint64(0)
 	tip := new(*ui.Node)
@@ -85,7 +86,7 @@ func buildPluginWidget(item config.Item) textWidget {
 				if frame.Label != "" {
 					label = frame.Label
 				}
-				applyPluginPlaceholder(row, label, statusFor(frame, ok))
+				applyPluginPlaceholder(row, label, statusFor(frame, ok), frame.ViewID)
 				return true
 			}
 			adoptPluginNode(row, frame.Root)
@@ -104,17 +105,24 @@ func statusFor(frame pluginFrame, ok bool) string {
 	return "failed"
 }
 
-func applyPluginPlaceholder(row *ui.Node, name, status string) {
+func applyPluginPlaceholder(row *ui.Node, name, status, viewID string) {
 	row.Kind = ui.KindRow
 	row.Width = pluginPlaceholderWidth
 	row.Gap = 0
 	row.Action = ""
 	row.Name = name
 	row.Role = "status"
-	row.Children = []*ui.Node{{
+	mark := &ui.Node{
 		Kind: ui.KindText, Text: "!", Tone: ui.ToneError,
 		Name: name, Role: "status",
-	}}
+	}
+	if viewID != "" {
+		mark.Kind = ui.KindButton
+		mark.Action = pluginActionPrefix + viewID + ":" + "camera"
+		mark.Role = "button"
+		mark.Focusable = true
+	}
+	row.Children = []*ui.Node{mark}
 	_ = status
 }
 

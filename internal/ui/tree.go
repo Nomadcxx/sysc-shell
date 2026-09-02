@@ -116,9 +116,8 @@ type Node struct {
 	ImageSize int
 	// Tone selects the text colour. Zero is ToneNormal.
 	Tone Tone
-	// Fill selects a capsule's background. Zero is the surface capsule. It is
-	// a pair, not a flag: each fill carries the foreground its own contents
-	// must use to stay legible.
+	// Fill selects a capsule's background, and a button's chrome. Zero is the
+	// surface capsule / an unfilled button (the wrapping pill is the chrome).
 	Fill    Fill
 	Padding int
 	Gap     int
@@ -154,12 +153,15 @@ func (n *Node) Active() int {
 type Fill uint8
 
 const (
-	// FillNone is the surface capsule that wraps an ordinary bar widget.
+	// FillNone is the surface capsule that wraps an ordinary bar widget, and
+	// an unfilled button: the pill is the chrome, not a highlight on the label.
 	FillNone Fill = iota
-	// FillAccent is the focused workspace pill.
+	// FillAccent is the focused workspace pill, or an explicit filled chip.
 	FillAccent
 	// FillContainer is a workspace pill that is not focused.
 	FillContainer
+	// FillError is a destructive chip (Record) inside a surface pill.
+	FillError
 )
 
 // Tone selects which theme colour paints a text node.

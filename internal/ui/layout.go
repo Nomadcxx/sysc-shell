@@ -60,6 +60,14 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 			if err := layoutCapsuleChild(child, measure); err != nil {
 				return fmt.Errorf("ui: child %d: %w", i, err)
 			}
+		case KindMenu:
+			if w < 0 || h < 0 || h > content.H || x+w > content.X+content.W {
+				return fmt.Errorf("ui: child %d of kind %d does not fit in %dx%d", i, child.Kind, content.W, content.H)
+			}
+			box := Rect{X: x, Y: content.Y, W: w, H: h}
+			if err := placeColumnChild(child, box, measure); err != nil {
+				return fmt.Errorf("ui: child %d: %w", i, err)
+			}
 		default:
 			if w < 0 || h < 0 || h > content.H || x+w > content.X+content.W {
 				return fmt.Errorf("ui: child %d of kind %d does not fit in %dx%d", i, child.Kind, content.W, content.H)
@@ -217,6 +225,9 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		}
 		return size, size, nil
 	case KindToggle:
+		if n.Role == "checkbox" {
+			return CheckboxSize, CheckboxSize, nil
+		}
 		return ToggleWidth, ToggleHeight, nil
 	case KindSlider:
 		w := n.Width
@@ -228,6 +239,13 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		w, h := measure(n.Text, n.Tabular)
 		if n.Width > w {
 			w = n.Width
+		}
+		for _, c := range n.Children {
+			if c == nil {
+				continue
+			}
+			_, ch := measure(c.Text, c.Tabular)
+			h += ch
 		}
 		return w, h, nil
 	case KindTextField:

@@ -579,6 +579,51 @@ func TestOverlayEditorsPreservesBufferUntilReseed(t *testing.T) {
 	}
 }
 
+func TestPanelHostAxisValue120Scrolls(t *testing.T) {
+	t.Parallel()
+	h := &PanelHost{root: &ui.Node{
+		Kind: ui.KindScroll, Padding: 12,
+		Bounds:   ui.Rect{W: 400, H: 200},
+		ContentH: 800,
+		Children: []*ui.Node{{Kind: ui.KindText, Text: "body"}},
+	}}
+	if !h.scrollAxis(wayland.Event{Kind: wayland.EventPointerAxis, AxisValue120: 120}) {
+		t.Fatal("value120 axis must be handled")
+	}
+	if h.root.ScrollOffset == 0 {
+		t.Fatal("value120 wheel left the viewport at 0")
+	}
+}
+
+func TestPanelHostThumbDragScrolls(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	h := &PanelHost{
+		id:     PanelClock,
+		output: 7,
+		root: &ui.Node{
+			Kind:     ui.KindScroll,
+			Padding:  12,
+			Bounds:   ui.Rect{W: 400, H: 200},
+			ContentH: 800,
+			Children: []*ui.Node{{Kind: ui.KindText, Text: "body"}},
+		},
+	}
+	track := ui.ScrollTrack(h.root)
+	if track.W == 0 {
+		t.Fatal("overflowing scroll has no track")
+	}
+	handle := h.handle(reg)
+	x, y := float64(track.X+track.W/2), float64(track.Y+track.H-4)
+	_ = handle(wayland.Event{Kind: wayland.EventPointerMotion, X: x, Y: y})
+	if !handle(wayland.Event{Kind: wayland.EventPointerPress, X: x, Y: y}) {
+		t.Fatal("press on the thumb track must be handled")
+	}
+	if h.root.ScrollOffset == 0 {
+		t.Fatal("press near the bottom of the track left offset at 0")
+	}
+}
+
 func editorColumn(text string, reseed uint64) *ui.Node {
 	return &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{{
 		Kind: ui.KindTextField, Key: "note", Action: "body", Text: text, Reseed: reseed,

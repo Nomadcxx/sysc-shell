@@ -25,6 +25,20 @@ func TestPluginWidgetPlaceholderHasFixedWidth(t *testing.T) {
 	}
 }
 
+func TestPluginWidgetFailedPlaceholderOpensCamera(t *testing.T) {
+	widgets := buildWidgets([]config.Item{
+		{ID: "plugin", Plugin: "org.sysc.screen-recorder", Entry: "bar", Instance: "rec-1"},
+	}, 8)
+	w := widgets[0]
+	w.refresh(barView{Plugins: map[string]pluginFrame{
+		"rec-1": {Failed: true, Label: "does not fit", ViewID: "v1", Revision: 1},
+	}})
+	mark := w.inner.Children[0]
+	if mark.Text != "!" || mark.Action != "plugin:v1:camera" {
+		t.Fatalf("placeholder = %+v", mark)
+	}
+}
+
 func TestPluginWidgetRefreshAdoptsPreparedTree(t *testing.T) {
 	t.Parallel()
 	widgets := buildWidgets([]config.Item{
