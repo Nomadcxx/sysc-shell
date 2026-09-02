@@ -3,6 +3,7 @@
     "surface": "{{colors.surface.dark.hex}}",
     "surface_container": "{{colors.surface_container.dark.hex}}",
     "surface_container_high": "{{colors.surface_container_high.dark.hex}}",
+    "surface_container_highest": "{{colors.surface_container_highest.dark.hex}}",
     "on_surface": "{{colors.on_surface.dark.hex}}",
     "on_surface_variant": "{{colors.on_surface_variant.dark.hex}}",
     "primary": "{{colors.primary.dark.hex}}",
@@ -10,6 +11,7 @@
     "primary_container": "{{colors.primary_container.dark.hex}}",
     "on_primary_container": "{{colors.on_primary_container.dark.hex}}",
     "outline": "{{colors.outline.dark.hex}}",
+    "outline_variant": "{{colors.outline_variant.dark.hex}}",
     "error": "{{colors.error.dark.hex}}",
     "on_error": "{{colors.on_error.dark.hex}}"
   },
@@ -17,6 +19,7 @@
     "surface": "{{colors.surface.light.hex}}",
     "surface_container": "{{colors.surface_container.light.hex}}",
     "surface_container_high": "{{colors.surface_container_high.light.hex}}",
+    "surface_container_highest": "{{colors.surface_container_highest.light.hex}}",
     "on_surface": "{{colors.on_surface.light.hex}}",
     "on_surface_variant": "{{colors.on_surface_variant.light.hex}}",
     "primary": "{{colors.primary.light.hex}}",
@@ -24,6 +27,7 @@
     "primary_container": "{{colors.primary_container.light.hex}}",
     "on_primary_container": "{{colors.on_primary_container.light.hex}}",
     "outline": "{{colors.outline.light.hex}}",
+    "outline_variant": "{{colors.outline_variant.light.hex}}",
     "error": "{{colors.error.light.hex}}",
     "on_error": "{{colors.on_error.light.hex}}"
   }

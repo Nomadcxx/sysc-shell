@@ -113,7 +113,8 @@ func parseColors(path, mode string) (Tokens, error) {
 	}
 	set(src["surface"], &tok.Surface)
 	set(src["surface_container"], &tok.SurfaceContainer)
-	set(src["surface_container_high"], &tok.SurfaceContainer)
+	set(src["surface_container_high"], &tok.SurfaceContainerHigh)
+	set(src["surface_container_highest"], &tok.SurfaceContainerHighest)
 	set(src["on_surface"], &tok.OnSurface)
 	set(src["on_surface_variant"], &tok.OnSurfaceVariant)
 	set(src["primary"], &tok.Primary)
@@ -121,6 +122,7 @@ func parseColors(path, mode string) (Tokens, error) {
 	set(src["primary_container"], &tok.PrimaryContainer)
 	set(src["on_primary_container"], &tok.OnPrimaryContainer)
 	set(src["outline"], &tok.Outline)
+	set(src["outline_variant"], &tok.OutlineVariant)
 	set(src["error"], &tok.Error)
 	set(src["on_error"], &tok.OnError)
 	return tok, nil
