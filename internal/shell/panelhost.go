@@ -666,24 +666,9 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	if body.W <= 0 || body.H <= 0 {
 		body = ui.Rect{W: h.place.Panel.W, H: h.place.Panel.H}
 	}
-	style := render.ProofStyle{
-		Size:        h.theme.TextSize,
-		Scale120:    scale,
-		Body:        body,
-		Radius:      h.theme.Radius,
-		Background:  h.theme.Background,
-		Foreground:  h.theme.Foreground,
-		Track:       h.theme.Muted,
-		Accent:      h.theme.Accent,
-		AccentOn:    h.theme.Error,
-		Error:       h.theme.Error,
-		OnPrimary:   h.theme.OnPrimary,
-		Capsule:     h.theme.Capsule,
-		Container:   h.theme.Container,
-		OnAccent:    h.theme.OnAccent,
-		OnContainer: h.theme.OnContainer,
-		Outline:     h.theme.Outline,
-	}
+	style := h.theme.ProofStyle()
+	style.Scale120 = scale
+	style.Body = body
 	if !h.place.CenterY {
 		style.AttachEdge = h.place.BarEdge
 	}
@@ -693,11 +678,13 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	if h.roving.Count > 0 {
 		n := h.focus[h.roving.Index()]
 		if n != nil && n.Bounds.W > 0 && n.Kind != ui.KindTextField {
+			// The ring follows the node's own silhouette rather than boxing a
+			// stadium in square corners, and stays independent of hover: a
+			// focused control that is not hovered still shows it. A text field
+			// is excluded because it paints its own focused well.
 			ring := scale.PhysicalRect(n.Bounds)
-			c.FillRounded(ui.Rect{X: ring.X, Y: ring.Y, W: ring.W, H: 2}, 0, h.theme.Accent)
-			c.FillRounded(ui.Rect{X: ring.X, Y: ring.Y + ring.H - 2, W: ring.W, H: 2}, 0, h.theme.Accent)
-			c.FillRounded(ui.Rect{X: ring.X, Y: ring.Y, W: 2, H: ring.H}, 0, h.theme.Accent)
-			c.FillRounded(ui.Rect{X: ring.X + ring.W - 2, Y: ring.Y, W: 2, H: ring.H}, 0, h.theme.Accent)
+			radius := min(scale.Physical(h.theme.Radius), min(ring.W, ring.H)/2)
+			c.StrokeRounded(ring, radius, 2, h.theme.Accent)
 		}
 	}
 	return nil

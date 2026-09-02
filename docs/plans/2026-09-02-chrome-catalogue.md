@@ -272,8 +272,9 @@ Using the existing `paintTree`/colour-at-point style, prove:
 - destructive outlined uses `Error`/`OnError` state layers;
 - hover overlays paired foreground at 8%; pressed at 12%; disabled is lower emphasis;
 - focus paints the existing 2 px rounded ring independently;
-- `KindCapsule` and a panel card both use `SurfaceContainerHigh`, the card
-  keeping theme radius while the capsule stays a stadium (see D4);
+- `KindCapsule` and a panel card both use `SurfaceContainerHigh` (see D4); a
+  card is a capsule with an explicit theme radius, while a button clamps to a
+  stadium;
 - an icon+text button paints children after its state layer.
 
 **Step 3: Verify the slice**

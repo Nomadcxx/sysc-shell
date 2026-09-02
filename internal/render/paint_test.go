@@ -2,6 +2,7 @@ package render
 
 import (
 	"image"
+	"math"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -24,6 +25,17 @@ var testStyle = ProofStyle{
 	AccentOn:   Color{R: 0xff, G: 0x60, B: 0x00, A: 0xff},
 	OnPrimary:  Color{R: 0x11, G: 0x22, B: 0x33, A: 0xff},
 	Error:      Color{R: 0xcc, G: 0x22, B: 0x22, A: 0xff},
+	OnError:    Color{R: 0xff, G: 0xee, B: 0xee, A: 0xff},
+	// Capsule is the high container the bar's pills and the panels' cards
+	// share; ContainerHighest is the level a control resting on one of those
+	// needs in order to separate.
+	Capsule:          Color{R: 0x3a, G: 0x41, B: 0x49, A: 0xff},
+	ContainerHighest: Color{R: 0x46, G: 0x4e, B: 0x58, A: 0xff},
+	Container:        Color{R: 0x1f, G: 0x7a, B: 0xb5, A: 0xff},
+	OnAccent:         Color{R: 0x0b, G: 0x10, B: 0x16, A: 0xff},
+	OnContainer:      Color{R: 0x0b, G: 0x10, B: 0x16, A: 0xff},
+	Outline:          Color{R: 0x73, G: 0x7d, B: 0x89, A: 0xff},
+	OutlineVariant:   Color{R: 0x59, G: 0x61, B: 0x6b, A: 0xff},
 }
 
 func TestPaintKeepsColorEmojiUntinted(t *testing.T) {
@@ -304,7 +316,10 @@ func TestPaintButtonTogglesColor(t *testing.T) {
 	off := newTestCanvas(t, canvasW, canvasH)
 	root := paintTree(t, off, testStyle)
 	button := root.Children[2].Bounds
-	if got := pixelAt(t, off, button.X+1, button.Y+1); got != testStyle.Accent {
+	// A button is a stadium, so its corners are transparent; the fill is read
+	// at the centre.
+	cx, cy := button.X+button.W/2, button.Y+button.H/2
+	if got := pixelAt(t, off, cx, cy); got != testStyle.Accent {
 		t.Errorf("untoggled button pixel = %+v, want the accent %+v", got, testStyle.Accent)
 	}
 
@@ -312,7 +327,7 @@ func TestPaintButtonTogglesColor(t *testing.T) {
 	toggled := testStyle
 	toggled.Toggled = true
 	paintTree(t, on, toggled)
-	if got := pixelAt(t, on, button.X+1, button.Y+1); got != testStyle.AccentOn {
+	if got := pixelAt(t, on, cx, cy); got != testStyle.AccentOn {
 		t.Errorf("toggled button pixel = %+v, want %+v", got, testStyle.AccentOn)
 	}
 }
@@ -878,5 +893,291 @@ func TestPaintSearchMarkHandleGoesDiagonal(t *testing.T) {
 	}
 	if got := pixelAt(t, c, cx+r+4, cy); got == style.Foreground {
 		t.Fatal("handle painted a horizontal dash")
+	}
+}
+
+// --- Catalogue chrome -------------------------------------------------------
+
+// paintChromeNode lays a single node out at a fixed box and paints it against a
+// filled background, so a test can read the resolved fill straight off the
+// canvas. The background stands in for the panel the control rests on.
+func paintChromeNode(t *testing.T, n *ui.Node, style ProofStyle) *Canvas {
+	t.Helper()
+	const w, h = 200, 60
+	c := newTestCanvas(t, w, h)
+	fillRect(c, ui.Rect{W: w, H: h}, style.Background)
+
+	r := NewTextRenderer(mustTestFace(t))
+	measure := func(s string, tabular bool) (int, int) {
+		tw, th, err := r.Measure(s, style.Size, tabular)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tw, th
+	}
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{n}}
+	if err := ui.Layout(root, ui.Rect{W: w, H: h}, measure); err != nil {
+		t.Fatal(err)
+	}
+	if err := paintNode(c, n, r, style, style.Size); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func centreOf(n *ui.Node) (int, int) {
+	return n.Bounds.X + n.Bounds.W/2, n.Bounds.Y + n.Bounds.H/2
+}
+
+// fillPointOf is a point inside the node's chrome but clear of its centred
+// label, so a test reads the resolved fill rather than an antialiased glyph.
+// At the vertical midpoint a stadium's corner inset is zero, so this sits just
+// inside the left edge and past any boundary stroke.
+func fillPointOf(n *ui.Node) (int, int) {
+	return n.Bounds.X + 4, n.Bounds.Y + n.Bounds.H/2
+}
+
+// overlay is the colour the painter must produce when it composites src over
+// dst at the given alpha, following the canvas's own blend.
+func overlay(dst, src Color, alpha float64) Color {
+	a := uint32(math.Round(float64(src.A) * alpha))
+	if a == 255 {
+		return src
+	}
+	inv := 255 - a
+	ch := func(s, d uint8) uint8 { return byte(uint32(s)*a/255 + uint32(d)*inv/255) }
+	return Color{R: ch(src.R, dst.R), G: ch(src.G, dst.G), B: ch(src.B, dst.B), A: ch(src.A, dst.A)}
+}
+
+func TestIdleButtonIsAStadiumOnTheHighestContainer(t *testing.T) {
+	t.Parallel()
+	n := &ui.Node{Kind: ui.KindButton, Text: "Lock", Height: 40, Width: 120,
+		Padding: 12, Action: "session:lock"}
+	c := paintChromeNode(t, n, testStyle)
+
+	fx, fy := fillPointOf(n)
+	if got := pixelAt(t, c, fx, fy); got != testStyle.ContainerHighest {
+		t.Errorf("idle fill = %+v, want the highest container %+v", got, testStyle.ContainerHighest)
+	}
+	if n.Bounds.H != 40 {
+		t.Errorf("button height = %d, want 40", n.Bounds.H)
+	}
+	// A stadium rounds to half its short side, so the box corner keeps whatever
+	// the panel painted rather than a square of control fill.
+	if got := pixelAt(t, c, n.Bounds.X, n.Bounds.Y); got != testStyle.Background {
+		t.Errorf("corner = %+v, want the untouched panel %+v", got, testStyle.Background)
+	}
+}
+
+func TestOutlinedButtonKeepsParentFillAndDrawsABoundary(t *testing.T) {
+	t.Parallel()
+	n := &ui.Node{Kind: ui.KindButton, Text: "Reboot", Height: 40, Width: 120,
+		Padding: 12, Fill: ui.FillOutline, Action: "session:reboot"}
+	c := paintChromeNode(t, n, testStyle)
+
+	fx, fy := fillPointOf(n)
+	if got := pixelAt(t, c, fx, fy); got != testStyle.Background {
+		t.Errorf("outlined fill = %+v, want the parent fill %+v", got, testStyle.Background)
+	}
+	if got := pixelAt(t, c, fx, fy); got == testStyle.Accent {
+		t.Error("outlined control filled with Primary; idle chrome must not read as selected")
+	}
+	_, cy := centreOf(n)
+	// The boundary sits on the left edge at the vertical midpoint, where the
+	// stadium's inset is zero.
+	if got := pixelAt(t, c, n.Bounds.X, cy); got != testStyle.Outline {
+		t.Errorf("boundary = %+v, want Outline %+v", got, testStyle.Outline)
+	}
+}
+
+func TestSelectedChromeUsesPrimaryAndItsPairedForeground(t *testing.T) {
+	t.Parallel()
+	n := &ui.Node{Kind: ui.KindButton, Text: "Balanced", Height: 40, Width: 140,
+		Padding: 12, Action: "profile:balanced", State: ui.StateSelected}
+	c := paintChromeNode(t, n, testStyle)
+
+	fx, fy := fillPointOf(n)
+	if got := pixelAt(t, c, fx, fy); got != testStyle.Accent {
+		t.Errorf("selected fill = %+v, want Primary %+v", got, testStyle.Accent)
+	}
+	// The label must be the token paired with the fill, not the panel's own
+	// foreground, or a selected segment loses contrast.
+	if litPixels(c, testStyle.OnPrimary) == 0 {
+		t.Error("selected label is not painted in OnPrimary")
+	}
+}
+
+func TestDestructiveOutlinedUsesTheErrorPair(t *testing.T) {
+	t.Parallel()
+	rest := &ui.Node{Kind: ui.KindButton, Text: "Power off", Height: 40, Width: 140,
+		Padding: 12, Fill: ui.FillOutline, Tone: ui.ToneError, Action: "session:poweroff"}
+	c := paintChromeNode(t, rest, testStyle)
+	fx, fy := fillPointOf(rest)
+	_, cy := centreOf(rest)
+
+	// Destructive controls are error-toned outlines at rest, not solid red.
+	if got := pixelAt(t, c, fx, fy); got != testStyle.Background {
+		t.Errorf("resting fill = %+v, want the parent fill, not a red block", got)
+	}
+	if got := pixelAt(t, c, rest.Bounds.X, cy); got != testStyle.Error {
+		t.Errorf("boundary = %+v, want Error %+v", got, testStyle.Error)
+	}
+
+	hovered := *rest
+	hovered.State = ui.StateHovered
+	hc := paintChromeNode(t, &hovered, testStyle)
+	hx, hy := fillPointOf(&hovered)
+	want := overlay(testStyle.Background, testStyle.Error, hoverLayerAlpha)
+	if got := pixelAt(t, hc, hx, hy); got != want {
+		t.Errorf("hovered destructive = %+v, want an Error state layer %+v", got, want)
+	}
+
+	filled := &ui.Node{Kind: ui.KindButton, Text: "Power off", Height: 40, Width: 140,
+		Padding: 12, Fill: ui.FillError, Action: "session:poweroff"}
+	fc := paintChromeNode(t, filled, testStyle)
+	if litPixels(fc, testStyle.OnError) == 0 {
+		t.Error("an Error-filled control does not label itself in OnError")
+	}
+}
+
+func TestStateLayersCompositeThePairedForeground(t *testing.T) {
+	t.Parallel()
+	base := ui.Node{Kind: ui.KindButton, Text: "Lock", Height: 40, Width: 120,
+		Padding: 12, Action: "session:lock"}
+	fill, fg := testStyle.ContainerHighest, testStyle.Foreground
+
+	for _, tc := range []struct {
+		name  string
+		state ui.Interaction
+		want  Color
+	}{
+		{"idle", 0, fill},
+		{"hover", ui.StateHovered, overlay(fill, fg, hoverLayerAlpha)},
+		{"pressed", ui.StatePressed, overlay(fill, fg, pressedLayerAlpha)},
+		// Pressed outranks hover: a pointer is always inside the node it is
+		// pressing, so the two arrive together.
+		{"pressed while hovered", ui.StatePressed | ui.StateHovered, overlay(fill, fg, pressedLayerAlpha)},
+		{"disabled", ui.StateDisabled, fill},
+	} {
+		n := base
+		n.State = tc.state
+		c := paintChromeNode(t, &n, testStyle)
+		fx, fy := fillPointOf(&n)
+		if got := pixelAt(t, c, fx, fy); got != tc.want {
+			t.Errorf("%s fill = %+v, want %+v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestDisabledLowersForegroundEmphasis(t *testing.T) {
+	t.Parallel()
+	base := ui.Node{Kind: ui.KindButton, Text: "Lock", Height: 40, Width: 120,
+		Padding: 12, Action: "session:lock"}
+	idle := base
+	c := paintChromeNode(t, &idle, testStyle)
+	full := litPixels(c, testStyle.Foreground)
+	if full == 0 {
+		t.Fatal("idle label is not painted in the foreground")
+	}
+
+	off := base
+	off.State = ui.StateDisabled
+	dc := paintChromeNode(t, &off, testStyle)
+	// Lower emphasis, not absent: the label still has to be readable.
+	if got := litPixels(dc, testStyle.Foreground); got >= full {
+		t.Errorf("disabled label paints %d full-strength pixels, want fewer than %d", got, full)
+	}
+	if litPixels(dc, testStyle.ContainerHighest) == 0 {
+		t.Error("disabled control lost its fill entirely")
+	}
+}
+
+func TestCapsuleAndCardShareTheHighContainer(t *testing.T) {
+	t.Parallel()
+	// One continuous surface carries the bar and the panels, so a pill and a
+	// card are the same fill; only the radius differs. A capsule is sized by
+	// its child, so each of these carries one label and the assertions sample
+	// the far side of the pill, clear of the glyphs.
+	style := testStyle
+	style.Radius = 12
+	label := func(s string) []*ui.Node { return []*ui.Node{{Kind: ui.KindText, Text: s}} }
+	rightOf := func(n *ui.Node) (int, int) {
+		return n.Bounds.X + n.Bounds.W - 8, n.Bounds.Y + n.Bounds.H/2
+	}
+
+	pill := &ui.Node{Kind: ui.KindCapsule, Width: 100, Children: label("CPU")}
+	pc := paintChromeNode(t, pill, style)
+	px, py := rightOf(pill)
+	if got := pixelAt(t, pc, px, py); got != style.Capsule {
+		t.Errorf("capsule fill = %+v, want the high container %+v", got, style.Capsule)
+	}
+
+	card := &ui.Node{Kind: ui.KindCapsule, Width: 160, Radius: 12,
+		Fill: ui.FillContainerHigh, Children: label("Battery")}
+	cc := paintChromeNode(t, card, style)
+	cx, cy := rightOf(card)
+	if got := pixelAt(t, cc, cx, cy); got != style.Capsule {
+		t.Errorf("card fill = %+v, want the same high container %+v", got, style.Capsule)
+	}
+
+	// A card keeps the theme's rounded-rectangle radius instead of clamping to
+	// a stadium. Four rows down from the top the card's corner inset is 3 px
+	// while a stadium of the same height has cut 14 px away, so this point
+	// separates the two shapes rather than merely proving something painted.
+	corner := func(n *ui.Node) (int, int) { return n.Bounds.X + 5, n.Bounds.Y + 4 }
+	ccx, ccy := corner(card)
+	if got := pixelAt(t, cc, ccx, ccy); got != style.Capsule {
+		t.Errorf("card corner = %+v, want the card radius, not a stadium", got)
+	}
+	// A button of the same box is the contrast: it clamps to a stadium, whose
+	// corner has cut this point away.
+	button := &ui.Node{Kind: ui.KindButton, Width: 160, Height: 60, Padding: 12,
+		Text: "Battery", Action: "battery"}
+	bc := paintChromeNode(t, button, style)
+	bcx, bcy := corner(button)
+	if got := pixelAt(t, bc, bcx, bcy); got == style.ContainerHighest {
+		t.Error("button kept a card corner; a button clamps to a stadium")
+	}
+}
+
+func TestButtonPaintsChildrenOverItsStateLayer(t *testing.T) {
+	t.Parallel()
+	label := &ui.Node{Kind: ui.KindText, Text: "Lock"}
+	n := &ui.Node{Kind: ui.KindButton, Height: 40, Width: 140, Padding: 12, Gap: 8,
+		Action: "session:lock", State: ui.StateHovered,
+		Children: []*ui.Node{label},
+	}
+	c := paintChromeNode(t, n, testStyle)
+
+	washed := overlay(testStyle.ContainerHighest, testStyle.Foreground, hoverLayerAlpha)
+	wx, wy := fillPointOf(n)
+	if got := pixelAt(t, c, wx, wy); got != washed {
+		t.Errorf("hovered fill = %+v, want the state layer %+v", got, washed)
+	}
+	// Children land on top of the layer at full strength; a label must not be
+	// dimmed by its own control's hover.
+	if litPixels(c, testStyle.Foreground) == 0 {
+		t.Error("child text was painted under the state layer, or not at all")
+	}
+}
+
+func TestStrokeRoundedLeavesTheInteriorAlone(t *testing.T) {
+	t.Parallel()
+	// The focus ring is independent of any fill or state layer: it outlines a
+	// node without repainting what is inside it.
+	c := newTestCanvas(t, 60, 40)
+	box := ui.Rect{X: 5, Y: 5, W: 50, H: 30}
+	fillRoundedRect(c, box, 12, testStyle.Capsule)
+	c.StrokeRounded(box, 12, 2, testStyle.Accent)
+
+	if got := pixelAt(t, c, box.X+box.W/2, box.Y+box.H/2); got != testStyle.Capsule {
+		t.Errorf("interior = %+v, want the untouched fill %+v", got, testStyle.Capsule)
+	}
+	if got := pixelAt(t, c, box.X, box.Y+box.H/2); got != testStyle.Accent {
+		t.Errorf("ring = %+v, want the accent %+v", got, testStyle.Accent)
+	}
+	// Two pixels wide, so the third pixel in is fill again.
+	if got := pixelAt(t, c, box.X+2, box.Y+box.H/2); got != testStyle.Capsule {
+		t.Errorf("ring is thicker than 2 px: %+v at inset 2", got)
 	}
 }

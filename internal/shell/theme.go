@@ -138,6 +138,35 @@ func applyTokens(t *Theme, tok theme.Tokens) {
 	t.OnContainer = t.OnPrimaryContainer
 }
 
+// ProofStyle projects the theme's semantic roles onto the painter's style.
+// Every surface builds its style here so a control cannot inherit a different
+// palette from the pill beside it; callers supply only geometry that varies per
+// surface -- scale, body, and attach edge.
+func (t Theme) ProofStyle() render.ProofStyle {
+	return render.ProofStyle{
+		Size:   t.TextSize,
+		Radius: t.Radius,
+
+		Background: t.Surface,
+		Foreground: t.OnSurface,
+		Track:      t.OnSurfaceVariant,
+		Accent:     t.Primary,
+		// AccentOn is the toggled accent, which the bar spends on a failure
+		// state rather than a second brand colour.
+		AccentOn:         t.Error,
+		Error:            t.Error,
+		OnPrimary:        t.OnPrimary,
+		OnError:          t.OnError,
+		Capsule:          t.SurfaceContainerHigh,
+		ContainerHighest: t.SurfaceContainerHighest,
+		Container:        t.PrimaryContainer,
+		OnAccent:         t.OnPrimary,
+		OnContainer:      t.OnPrimaryContainer,
+		Outline:          t.Outline,
+		OutlineVariant:   t.OutlineVariant,
+	}
+}
+
 // ThemeFrom maps a validated configuration onto theme tokens.
 //
 // Geometry comes from the supplied bar policy rather than the base bar, so a

@@ -191,16 +191,9 @@ func (h *toastHost) render(connector string, pixels []byte, width, height, strid
 		}
 		h.text = render.NewTextRendererWithFontMap(fonts)
 		theme := h.r.surfaceTheme()
-		h.style.Size = theme.TextSize
-		h.style.Radius = theme.Radius
-		h.style.Background, h.style.Foreground = theme.Background, theme.Foreground
-		h.style.Track, h.style.Accent, h.style.AccentOn, h.style.Error =
-			theme.Muted, theme.Accent, theme.Error, theme.Error
-		h.style.OnPrimary = theme.OnPrimary
-		h.style.Capsule = theme.Capsule
-		h.style.Container = theme.Container
-		h.style.OnAccent = theme.OnAccent
-		h.style.OnContainer = theme.OnContainer
+		scale, body := h.style.Scale120, h.style.Body
+		h.style = theme.ProofStyle()
+		h.style.Scale120, h.style.Body = scale, body
 		h.rebuild(connector)
 	}
 	canvas, err := render.NewCanvas(pixels, width, height, stride)

@@ -3,6 +3,7 @@ package render
 import (
 	"fmt"
 	"image"
+	"math"
 	"strings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -24,9 +25,6 @@ type ProofStyle struct {
 	// seam against the bar.
 	AttachEdge string
 
-	// Outline strokes the floating panel rim. Zero alpha skips the stroke.
-	Outline Color
-
 	Background Color
 	Foreground Color
 	// Capsule fills the pill that wraps a bar widget. Container fills a
@@ -45,6 +43,17 @@ type ProofStyle struct {
 	// OnPrimary paints text on a Primary-filled button: the fill is the
 	// Primary token, so its paired On token is the only legible label colour.
 	OnPrimary Color
+	// OnError is the paired foreground for an Error fill.
+	OnError Color
+	// ContainerHighest fills an idle control. Capsule above carries the high
+	// container, which the bar's pills and the panels' cards share; a control
+	// sitting on one of those needs the level above it to separate.
+	ContainerHighest Color
+	// Outline strokes the floating panel rim, where zero alpha skips the
+	// stroke, and marks a meaningful control boundary. OutlineVariant is a
+	// quieter divider.
+	Outline        Color
+	OutlineVariant Color
 
 	// Toggled swaps the accent used by the meter fill and the button.
 	Toggled bool
@@ -57,6 +66,33 @@ func (s ProofStyle) buttonText() Color {
 		return s.Foreground
 	}
 	return s.OnPrimary
+}
+
+// onError falls back to the button text colour for a style assembled before
+// the token existed.
+func (s ProofStyle) onError() Color {
+	if s.OnError.A == 0 {
+		return s.buttonText()
+	}
+	return s.OnError
+}
+
+// containerHighest falls back to the capsule level when a style predates the
+// token; a control then reads as flat rather than invisible.
+func (s ProofStyle) containerHighest() Color {
+	if s.ContainerHighest.A == 0 {
+		return s.Capsule
+	}
+	return s.ContainerHighest
+}
+
+// outline falls back to the foreground, which always separates from its own
+// paired fill.
+func (s ProofStyle) outline() Color {
+	if s.Outline.A == 0 {
+		return s.Foreground
+	}
+	return s.Outline
 }
 
 // accent returns the colour the meter fill and button share.
@@ -151,36 +187,11 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 		return nil
 
 	case ui.KindCapsule:
-		box := style.Scale120.PhysicalRect(n.Bounds)
-		// Fully rounded: a bar pill reads as a stadium and an empty dot as a
-		// circle, so the radius can never exceed half the short side.
-		radius := min(style.Scale120.Physical(style.Radius), min(box.W, box.H)/2)
-		fillCol := capsuleFill(style, n.Fill)
-		if n.Stroke > 0 {
-			strokeCol := capsuleFill(style, n.StrokeFill)
-			if n.StrokeFill == ui.FillNone {
-				strokeCol = style.Accent
-			}
-			fillRoundedRect(c, box, radius, strokeCol)
-			inset := style.Scale120.Physical(n.Stroke)
-			inner := ui.Rect{X: box.X + inset, Y: box.Y + inset, W: box.W - 2*inset, H: box.H - 2*inset}
-			if inner.W > 0 && inner.H > 0 {
-				fillRoundedRect(c, inner, max(0, radius-inset), fillCol)
-			}
-		} else {
-			fillRoundedRect(c, box, radius, fillCol)
-		}
-		inner := style
-		inner.Foreground = capsuleForeground(style, n.Fill)
-		for i, child := range n.Children {
-			if child == nil {
-				return fmt.Errorf("capsule child %d is nil", i)
-			}
-			if err := paintNode(c, child, text, inner, size); err != nil {
-				return err
-			}
-		}
-		return nil
+		// A bar pill and a panel card are the same chrome on the same
+		// background: same fill resolution, same state layers, differing only
+		// in radius. A capsule with no explicit Radius stays a stadium, so an
+		// empty dot is a circle; a card sets the theme's card radius.
+		return paintChrome(c, n, text, style, size, style.Capsule, style.Radius)
 
 	case ui.KindGraph:
 		return paintGraph(c, n, style.Scale120.PhysicalRect(n.Bounds), style)
@@ -613,29 +624,143 @@ func shearMask(src *image.Alpha, shift int) *image.Alpha {
 	return out
 }
 
-func paintButton(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size int) error {
+// State-layer opacities from the catalogue's colour recipe. The layer is the
+// resolved fill's own paired foreground, so one recipe covers every fill in
+// light and dark palettes without inventing hover RGB.
+const (
+	hoverLayerAlpha    = 0.08
+	pressedLayerAlpha  = 0.12
+	disabledForeground = 0.38
+)
+
+// chromeFill resolves what a filled node paints and the foreground its contents
+// must use to stay legible. Fill and foreground travel together: every fill
+// carries the only label colour that reads on it.
+//
+// base is the kind's resting fill, which differs by kind rather than by token:
+// a capsule or card rests on the high container, a control resting on one of
+// those needs the level above it.
+func chromeFill(style ProofStyle, n *ui.Node, base Color) (fill, fg Color) {
+	// Selection outranks the declared fill: a selected segment is Primary
+	// whatever it rests in.
+	if n.State.Has(ui.StateSelected) {
+		return style.accent(), style.buttonText()
+	}
+	switch n.Fill {
+	case ui.FillAccent:
+		return style.accent(), style.buttonText()
+	case ui.FillContainer:
+		return style.Container, style.OnContainer
+	case ui.FillContainerHigh:
+		return style.Capsule, style.Foreground
+	case ui.FillError:
+		return style.Error, style.onError()
+	case ui.FillOutline:
+		// Outlined chrome keeps whatever its parent painted; only the boundary
+		// and the label mark it. A destructive control is error-toned here
+		// rather than a solid red block.
+		if n.Tone == ui.ToneError {
+			return Color{}, style.Error
+		}
+		return Color{}, style.Foreground
+	}
+	return base, style.Foreground
+}
+
+// chromeRadius clamps a logical radius to half the node's short side, so a
+// stadium is the most any chrome can round to and a square icon button is a
+// circle. A logical radius of zero asks for that stadium outright.
+func chromeRadius(style ProofStyle, logical int, box ui.Rect) int {
+	half := min(box.W, box.H) / 2
+	if logical <= 0 {
+		return half
+	}
+	return min(style.Scale120.Physical(logical), half)
+}
+
+// stateLayer returns the overlay a node's resolved interaction state composites
+// over its fill, or a zero colour when it is at rest.
+func stateLayer(fg Color, state ui.Interaction) Color {
+	var alpha float64
+	switch {
+	case state.Has(ui.StateDisabled):
+		return Color{}
+	case state.Has(ui.StatePressed):
+		alpha = pressedLayerAlpha
+	case state.Has(ui.StateHovered):
+		alpha = hoverLayerAlpha
+	default:
+		return Color{}
+	}
+	return Color{R: fg.R, G: fg.G, B: fg.B, A: uint8(math.Round(float64(fg.A) * alpha))}
+}
+
+// paintChrome draws one filled, optionally outlined, optionally state-layered
+// rounded node and then its contents. Buttons, capsules, and cards share it so
+// a control cannot acquire chrome that differs from the pill beside it.
+// radius is the logical corner radius to use when the node does not carry one;
+// zero asks for a stadium.
+func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size int, base Color, radiusLogical int) error {
 	box := style.Scale120.PhysicalRect(n.Bounds)
+	if n.Radius > 0 {
+		radiusLogical = n.Radius
+	}
+	radius := chromeRadius(style, radiusLogical, box)
+	fill, fg := chromeFill(style, n, base)
+	fillRoundedRect(c, box, radius, fill)
+	// An explicit stroke marks a card that has to stand out from its
+	// neighbours -- a critical notification -- independently of the fill and of
+	// any interaction state.
+	if n.Stroke > 0 {
+		strokeCol := capsuleFill(style, n.StrokeFill)
+		if n.StrokeFill == ui.FillNone {
+			strokeCol = style.Accent
+		}
+		strokeRoundedRect(c, box, radius, max(1, style.Scale120.Physical(n.Stroke)), strokeCol)
+	}
+	if n.Fill == ui.FillOutline {
+		boundary := style.outline()
+		if n.Tone == ui.ToneError {
+			boundary = style.Error
+		}
+		strokeRoundedRect(c, box, radius, max(1, style.Scale120.Physical(1)), boundary)
+	}
+	// The layer sits over the resolved fill and under the contents, so a label
+	// never dims along with its own hover wash.
+	fillRoundedRect(c, box, radius, stateLayer(fg, n.State))
+	if n.State.Has(ui.StateDisabled) {
+		fg = Color{R: fg.R, G: fg.G, B: fg.B, A: uint8(math.Round(float64(fg.A) * disabledForeground))}
+	}
+
+	inner := style
+	inner.Foreground = fg
+	if len(n.Children) > 0 {
+		for i, child := range n.Children {
+			if child == nil {
+				return fmt.Errorf("chrome child %d is nil", i)
+			}
+			if err := paintNode(c, child, text, inner, size); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if n.Text == "" {
+		return nil
+	}
 	label := ui.Rect{
 		X: n.Bounds.X + n.Padding,
 		Y: n.Bounds.Y + n.Padding,
 		W: n.Bounds.W - 2*n.Padding,
 		H: n.Bounds.H - 2*n.Padding,
 	}
-	switch n.Fill {
-	case ui.FillError:
-		radius := min(box.H/2, style.Scale120.Physical(6))
-		fillRoundedRect(c, box, radius, style.Error)
-		return paintTextColor(c, n.Text, style.Scale120.PhysicalRect(label), text, style,
-			size, n.Tabular, style.buttonText(), n.Bold, n.Italic, n.Underline)
-	case ui.FillAccent:
-		fillRect(c, box, style.accent())
-		return paintTextColor(c, n.Text, style.Scale120.PhysicalRect(label), text, style,
-			size, n.Tabular, style.buttonText(), n.Bold, n.Italic, n.Underline)
-	default:
-		// Default chrome is the wrapping pill, not a label highlight.
-		return paintText(c, n.Text, style.Scale120.PhysicalRect(label), text, style,
-			size, n.Tabular, n.Tone, n.Bold, n.Italic, n.Underline)
-	}
+	return paintTextColor(c, n.Text, style.Scale120.PhysicalRect(label), text, inner,
+		size, n.Tabular, fg, n.Bold, n.Italic, n.Underline)
+}
+
+// A button is a stadium unless it carries an explicit card radius.
+func paintButton(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size int) error {
+	return paintChrome(c, n, text, style, size, style.containerHighest(), 0)
 }
 
 func capsuleFill(style ProofStyle, fill ui.Fill) Color {
