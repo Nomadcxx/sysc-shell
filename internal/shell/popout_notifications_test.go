@@ -41,6 +41,40 @@ func TestCenterGroupsHistoryNewestFirst(t *testing.T) {
 	}
 }
 
+func TestActiveGroupsMailCountAndCriticalFirst(t *testing.T) {
+	older := time.Unix(1_756_000_000, 0)
+	newer := older.Add(time.Hour)
+	chat := protocol.Notification{
+		ID: 1, AppName: "Chat", Summary: "ping",
+		Urgency: protocol.UrgencyNormal, Timestamp: newer.Add(time.Minute),
+	}
+	mailOld := protocol.Notification{
+		ID: 2, AppName: "Mail", DesktopEntry: "MAIL", Summary: "old",
+		Urgency: protocol.UrgencyNormal, Timestamp: older,
+	}
+	mailCrit := protocol.Notification{
+		ID: 3, AppName: "Mail", DesktopEntry: "mail", Summary: "crit",
+		Urgency: protocol.UrgencyCritical, Timestamp: newer,
+	}
+
+	got := activeGroups([]protocol.Notification{chat, mailOld, mailCrit})
+	if len(got) != 2 {
+		t.Fatalf("groups = %+v", got)
+	}
+	if got[0].key != "mail" {
+		t.Fatalf("first group = %q, want mail (critical)", got[0].key)
+	}
+	if len(got[0].members) != 2 {
+		t.Fatalf("mail count = %d, want 2", len(got[0].members))
+	}
+	if got[0].members[0].Summary != "crit" {
+		t.Fatalf("mail order = %+v", got[0].members)
+	}
+	if got[1].key != "chat" {
+		t.Fatalf("second group = %q, want chat (app name)", got[1].key)
+	}
+}
+
 func TestCenterEmptyStateNamesNoNotifications(t *testing.T) {
 	r := NewRegistry(config.Default())
 	r.applyNotify(snap(1))

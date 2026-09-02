@@ -3,6 +3,7 @@ package shell
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
@@ -50,6 +51,54 @@ func (s *notifyState) groups() []notifyGroup {
 		groups = append(groups, notifyGroup{key: key, entries: byKey[key]})
 	}
 	return groups
+}
+
+// activeGroup is one Current-tab group: live notifications sharing a
+// case-folded desktop entry (or app name when none is set), newest first.
+type activeGroup struct {
+	key     string
+	members []protocol.Notification
+}
+
+func activeGroups(active []protocol.Notification) []activeGroup {
+	byKey := map[string][]protocol.Notification{}
+	order := []string{}
+	for _, n := range active {
+		key := n.DesktopEntry
+		if key == "" {
+			key = n.AppName
+		}
+		key = strings.ToLower(key)
+		if _, ok := byKey[key]; !ok {
+			order = append(order, key)
+		}
+		byKey[key] = append(byKey[key], n)
+	}
+	for _, members := range byKey {
+		sort.Slice(members, func(i, j int) bool { return members[i].Timestamp.After(members[j].Timestamp) })
+	}
+	sort.Slice(order, func(i, j int) bool {
+		a, b := byKey[order[i]], byKey[order[j]]
+		aCrit, bCrit := groupCritical(a), groupCritical(b)
+		if aCrit != bCrit {
+			return aCrit
+		}
+		return a[0].Timestamp.After(b[0].Timestamp)
+	})
+	out := make([]activeGroup, 0, len(order))
+	for _, key := range order {
+		out = append(out, activeGroup{key: key, members: byKey[key]})
+	}
+	return out
+}
+
+func groupCritical(members []protocol.Notification) bool {
+	for _, n := range members {
+		if n.Urgency == protocol.UrgencyCritical {
+			return true
+		}
+	}
+	return false
 }
 
 // markCenterSeen flags every unread history entry seen and returns the ids
