@@ -104,7 +104,7 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelClock, nil
 	case "system-monitor":
 		return PanelMonitor, nil
-	case "session":
+	case "session", "power":
 		return PanelSession, nil
 	case "settings":
 		return PanelSettings, nil
@@ -266,7 +266,7 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelClock, true
 	case "system-monitor":
 		return PanelMonitor, true
-	case "session":
+	case "session", "power":
 		return PanelSession, true
 	case "settings":
 		return PanelSettings, true
