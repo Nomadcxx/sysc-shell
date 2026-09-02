@@ -1275,17 +1275,9 @@ func notificationsSurfaceHeight(h *PanelHost) int {
 
 func (r *Registry) syncNotificationsSize(h *PanelHost) {
 	_ = h.ensureText()
-	oldH := h.place.Panel.H
 	h.place.Panel.H = notificationsSurfaceHeight(h)
 	w, hgt := h.place.FittedSize()
 	h.place.Panel.W, h.place.Panel.H = w, hgt
-	if hgt == oldH {
-		return
-	}
-	if h.logicalW > 0 {
-		h.logicalH = hgt
-	}
-	r.sendAux(wayland.AuxRequest{Output: h.output, Open: r.panelSpec(h, h.place.Margins())})
 }
 
 func (h *PanelHost) applySetting(r *Registry, n *ui.Node) {

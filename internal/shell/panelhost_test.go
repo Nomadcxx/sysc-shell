@@ -555,13 +555,9 @@ func TestNotificationsTabSwitchGrowsSurfaceHeight(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	reqs := drainAux(t, reg, 2)
-	opened := reqs[1].Open.Height
-	h := reg.panelHosts[PanelNotifications]
-	if h.place.Panel.H != int(opened) {
-		t.Fatalf("place H %d, aux %d", h.place.Panel.H, opened)
-	}
+	_ = drainAux(t, reg, 2)
 
+	h := reg.panelHosts[PanelNotifications]
 	found := false
 	for i, n := range h.focus {
 		if n.Action == "notify:center:tab:1" {
@@ -574,12 +570,27 @@ func TestNotificationsTabSwitchGrowsSurfaceHeight(t *testing.T) {
 	if !found {
 		t.Fatal("history tab missing")
 	}
-	if h.place.Panel.H <= int(opened) {
-		t.Fatalf("place H %d did not grow from %d", h.place.Panel.H, opened)
+	if reg.panelHosts[PanelNotifications] == nil {
+		t.Fatal("tab switch dropped the centre")
 	}
-	resized := drainAux(t, reg, 1)
-	if resized[0].Open == nil || resized[0].Open.Height <= opened {
-		t.Fatalf("aux after tab switch = %+v, opened %d", resized[0].Open, opened)
+	for {
+		select {
+		case req := <-reg.AuxRequests():
+			if req.Open != nil && req.Open.ID == "panel:notifications" {
+				t.Fatalf("Open aux remapped the mapped centre: %+v", req.Open)
+			}
+		default:
+			h = reg.panelHosts[PanelNotifications]
+			if !containsText(h.root, "old") {
+				t.Fatalf("history missing from tree: %v", texts(h.root))
+			}
+			var scrolls []*ui.Node
+			collectByKind(h.root, ui.KindScroll, &scrolls)
+			if len(scrolls) == 0 {
+				t.Fatal("history body is not scrollable")
+			}
+			return
+		}
 	}
 }
 

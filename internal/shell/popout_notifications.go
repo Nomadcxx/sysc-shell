@@ -220,25 +220,41 @@ func (r *Registry) centerTreeFor(h *PanelHost) *ui.Node {
 		}},
 	}
 
+	body := []*ui.Node{}
 	if tab == 1 {
 		groups := r.notifyGroups()
 		if len(groups) == 0 {
-			children = append(children, &ui.Node{Kind: ui.KindText, Text: "Nothing to see here"})
+			body = append(body, &ui.Node{Kind: ui.KindText, Text: "Nothing to see here"})
 		} else {
 			for _, g := range groups {
-				children = append(children, &ui.Node{Kind: ui.KindText, Text: g.key, Bold: true})
+				body = append(body, &ui.Node{Kind: ui.KindText, Text: g.key, Bold: true})
 				for _, e := range g.entries {
-					children = append(children, HistoryCard(e, r.linksAllowed()))
+					body = append(body, HistoryCard(e, r.linksAllowed()))
 				}
 			}
 		}
 	} else if len(active) == 0 {
-		children = append(children, &ui.Node{Kind: ui.KindText, Text: "Nothing to see here"})
+		body = append(body, &ui.Node{Kind: ui.KindText, Text: "Nothing to see here"})
 	} else {
 		for _, n := range active {
-			children = append(children, NotificationCard(n, cloneLifetime(lifetimes, n.ID), r.linksAllowed()))
+			body = append(body, NotificationCard(n, cloneLifetime(lifetimes, n.ID), r.linksAllowed()))
 		}
 	}
+
+	surfaceH := 300
+	if h != nil {
+		if h.logicalH > 0 {
+			surfaceH = h.logicalH
+		} else if h.place.Panel.H > 0 {
+			surfaceH = h.place.Panel.H
+		}
+	}
+	// ponytail: header+tabs+padding ≈ 80; remainder is the list viewport until chrome is measured.
+	listH := surfaceH - 80
+	if listH < 1 {
+		listH = 1
+	}
+	children = append(children, &ui.Node{Kind: ui.KindScroll, Height: listH, Gap: cardGap, Children: body})
 
 	return &ui.Node{Kind: ui.KindColumn, Gap: cardGap, Padding: cardPadding, Children: children}
 }
