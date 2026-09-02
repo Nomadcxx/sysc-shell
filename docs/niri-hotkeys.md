@@ -3,8 +3,9 @@
 The compositor owns key bindings. The shell owns the panels. Add these to
 `~/.config/niri/config.kdl` so Super+P, Super+M, Super+X, Super+Comma, and
 Super+Space toggle the clock, system-monitor, session, settings, and launcher
-panels from anywhere. Media and brightness keys step the matching service and
-show the OSD.
+panels from anywhere. Super+X still toggles `session`; that surface now
+includes battery status and power profiles. Media and brightness keys step
+the matching service and show the OSD.
 
 ```kdl
 bind {

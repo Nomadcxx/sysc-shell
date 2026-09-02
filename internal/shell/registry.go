@@ -73,6 +73,10 @@ type Registry struct {
 	brightLease *services.Lease
 	// runArgv launches a session action. Tests replace it per Registry.
 	runArgv func([]string) error
+	// lookPath finds a binary on PATH. Tests replace it per Registry.
+	lookPath func(string) (string, error)
+	// runArgvOutput captures stdout of powerprofilesctl list. Tests replace it.
+	runArgvOutput func([]string) (string, error)
 
 	// notify is the service-owned notification projection.
 	notify *notifyState
@@ -115,6 +119,8 @@ func NewRegistry(cfg config.Config) *Registry {
 		closed:        make(chan struct{}),
 		dwell:         newDwell(defaultDwell),
 		runArgv:       runArgvDefault,
+		lookPath:      exec.LookPath,
+		runArgvOutput: runArgvOutputDefault,
 		notify:        newNotifyState(),
 		tray:          newTrayState(),
 		trayCh:        make(chan trayclient.Message, 32),
@@ -411,6 +417,7 @@ func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbac
 	r.bars[global] = bar
 	r.leases[global] = leases
 	r.bindBarTrayLocked(global, connector, bar)
+	r.bindBarPanelActionsLocked(global, bar)
 	// Seeded, not published: the owner configures this surface next and paints
 	// it once. An invalidation here would be a second frame for a first paint,
 	// and this call is on the owner goroutine, which drains that channel.
@@ -430,6 +437,19 @@ func (r *Registry) bindBarTrayLocked(global uint32, connector string, bar *Bar) 
 		key tray.ItemKey, arranged trayArrangement, anchor ui.Rect, event wayland.Event,
 	) bool {
 		return r.handleTrayBar(global, connector, key, arranged, anchor, event)
+	})
+}
+
+// bindBarPanelActionsLocked gives one bar its panel-toggle seam. The handler
+// is called without the bar lock, matching the tray path, because TogglePanel
+// takes the registry lock and then the bar lock.
+func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
+	bar.setActionHandler(func(action string, button uint32) bool {
+		if action != panelSessionAction || button != buttonRight {
+			return false
+		}
+		_, trig := r.focusedTrigger()
+		return r.TogglePanel(PanelSession, global, trig) == nil
 	})
 }
 
@@ -500,6 +520,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				r.leases = leases
 				for global, bar := range r.bars {
 					r.bindBarTrayLocked(global, bar.connector(), bar)
+					r.bindBarPanelActionsLocked(global, bar)
 				}
 				// Seeded only: every replacement bar is reconfigured and
 				// repainted by the owner as part of adopting the candidate.
@@ -632,11 +653,19 @@ func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
 		r.rebuildPanel(h)
 		monitorOut, monitorOK = h.output, true
 	}
+	sessionOut, sessionOK := uint32(0), false
+	if h := r.panelHosts[PanelSession]; h != nil {
+		r.rebuildPanel(h)
+		sessionOut, sessionOK = h.output, true
+	}
 	r.mu.Unlock()
 
 	r.publish(changed)
 	if monitorOK {
 		r.publishSurface(monitorOut, panelSurfaceID(PanelMonitor))
+	}
+	if sessionOK {
+		r.publishSurface(sessionOut, panelSurfaceID(PanelSession))
 	}
 	return changed
 }

@@ -104,9 +104,13 @@ func TestABarRendersTheFallbackWorkspace(t *testing.T) {
 
 // press and release drive a full click at one point.
 func click(p *Bar, x, y int) bool {
+	return clickButton(p, x, y, buttonLeft)
+}
+
+func clickButton(p *Bar, x, y int, button uint32) bool {
 	p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: float64(x), Y: float64(y)})
-	pressed := p.Handle(wayland.Event{Kind: wayland.EventPointerPress})
-	released := p.Handle(wayland.Event{Kind: wayland.EventPointerRelease})
+	pressed := p.Handle(wayland.Event{Kind: wayland.EventPointerPress, Button: button})
+	released := p.Handle(wayland.Event{Kind: wayland.EventPointerRelease, Button: button})
 	return pressed || released
 }
 

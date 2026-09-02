@@ -22,6 +22,7 @@ var (
 		"clock":          "",
 		"system-monitor": "",
 		"session":        "",
+		"power":          "",
 		"settings":       "",
 		"launcher":       "",
 	}

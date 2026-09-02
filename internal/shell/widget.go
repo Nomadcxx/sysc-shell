@@ -139,7 +139,7 @@ func capsuled(w textWidget, pad int) textWidget {
 		return w
 	}
 	w.inner = w.node
-	w.node = &ui.Node{Kind: ui.KindCapsule, Padding: pad, Children: []*ui.Node{w.inner}}
+	w.node = &ui.Node{Kind: ui.KindCapsule, Padding: pad, Action: w.inner.Action, Children: []*ui.Node{w.inner}}
 	return w
 }
 
@@ -210,7 +210,7 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 			}
 			out = append(out, g)
 		case "battery":
-			node := &ui.Node{Kind: ui.KindText}
+			node := &ui.Node{Kind: ui.KindText, Action: panelSessionAction}
 			out = append(out, textWidget{
 				node:    node,
 				tooltip: "Battery",

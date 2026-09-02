@@ -172,6 +172,7 @@ func (r *Registry) trayTooltipText(k tray.ItemKey) string      { return r.tray.t
 // Linux evdev pointer button codes, as wl_pointer reports them. The tray is
 // the first feature that distinguishes buttons, so they are named here.
 const (
+	buttonLeft   = 0x110
 	buttonRight  = 0x111
 	buttonMiddle = 0x112
 )
