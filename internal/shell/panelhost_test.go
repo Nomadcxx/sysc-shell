@@ -124,6 +124,7 @@ func TestRevealAnimationInvalidatesUntilDone(t *testing.T) {
 	t.Parallel()
 	cfg := config.Default()
 	reg := NewRegistry(cfg)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
 	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
 		t.Fatal(err)
@@ -136,6 +137,7 @@ func TestRevealAnimationInvalidatesUntilDone(t *testing.T) {
 	still := config.Default()
 	still.Accessibility.ReducedMotion = true
 	quiet := NewRegistry(still)
+	quiet.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(quiet.Close)
 	if err := quiet.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
 		t.Fatal(err)
@@ -311,6 +313,7 @@ func TestReloadKeepsOpenPanels(t *testing.T) {
 func TestClosingDuringRevealStopsTicker(t *testing.T) {
 	t.Parallel()
 	reg := NewRegistry(config.Default())
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
 	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
 		t.Fatal(err)
