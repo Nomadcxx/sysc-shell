@@ -835,7 +835,7 @@ func TestPanelHostAxisValue120Scrolls(t *testing.T) {
 		ContentH: 800,
 		Children: []*ui.Node{{Kind: ui.KindText, Text: "body"}},
 	}}
-	if !h.scrollAxis(wayland.Event{Kind: wayland.EventPointerAxis, AxisValue120: 120}) {
+	if !h.scrollAxis(nil, wayland.Event{Kind: wayland.EventPointerAxis, AxisValue120: 120}) {
 		t.Fatal("value120 axis must be handled")
 	}
 	if h.root.ScrollOffset == 0 {

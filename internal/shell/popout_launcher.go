@@ -5,17 +5,21 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	launcher "github.com/Nomadcxx/sysc-launch"
+	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
-// Launcher chrome constants (D2): one field above a 48px-row list. The 40px
-// icon slot is recorded so the KindImage swap (sysc-86) never changes layout.
+// Launcher chrome: pill search, 60px-row list, 8px gap between pills.
+// The 40px icon slot is a letter until a theme raster lands.
 const (
-	launcherRowHeight   = 48
-	launcherFieldHeight = 38
+	launcherRowHeight   = 60
+	launcherRowGap      = 8
+	launcherSlotHeight  = launcherRowHeight + launcherRowGap
+	launcherFieldHeight = 44
 	launcherIconSlot    = 40
 )
 
@@ -71,14 +75,16 @@ func (r *Registry) relayLauncher(svc *launcher.Service) {
 }
 
 // launcherTree projects the current snapshot: one text field above a virtual
-// list of results. The selected row is a full-width Primary-filled button;
-// every other row is plain text (D11).
-func launcherTree(h *PanelHost) *ui.Node {
+// list of result capsules. The selected row is a muted wash; every row
+// carries the 40px glyph slot, bold name, and comment.
+func launcherTree(r *Registry, h *PanelHost) *ui.Node {
 	if h.search == nil {
 		h.search = ui.NewField("")
 	}
 	field := h.search.Node("Search")
 	field.Width = max(h.place.Panel.W-24, 0)
+	field.Height = launcherFieldHeight
+	field.Padding = 8
 
 	head := []*ui.Node{}
 	if h.errLabel != "" {
@@ -93,19 +99,27 @@ func launcherTree(h *PanelHost) *ui.Node {
 	}
 	h.launcherSel = min(max(h.launcherSel, 0), len(results)-1)
 
+	listH := h.place.Panel.H - 24 - launcherFieldHeight - 8
+	if h.errLabel != "" {
+		listH -= 24
+	}
+	if listH < launcherSlotHeight {
+		listH = launcherSlotHeight
+	}
 	list := &ui.Node{
 		Kind:         ui.KindVirtualList,
+		Height:       listH,
 		ItemCount:    len(results),
-		ItemHeight:   launcherRowHeight,
+		ItemHeight:   launcherSlotHeight,
 		ScrollOffset: h.launcherVisibleOffset(len(results)),
 		Item: func(i int) *ui.Node {
-			return launcherRow(h, results, i)
+			return launcherRow(r, h, results, i)
 		},
 	}
 	return &ui.Node{Kind: ui.KindColumn, Gap: 8, Padding: 12, Children: append(head, list)}
 }
 
-func launcherRow(h *PanelHost, results []launcher.Result, i int) *ui.Node {
+func launcherRow(r *Registry, h *PanelHost, results []launcher.Result, i int) *ui.Node {
 	if i < 0 || i >= len(results) {
 		return nil
 	}
@@ -113,16 +127,71 @@ func launcherRow(h *PanelHost, results []launcher.Result, i int) *ui.Node {
 	if h.launcherMenuID == res.Entry.ID && h.menu != nil && h.menu.Opened() {
 		return h.menu.Node()
 	}
+	fill := ui.FillNone
 	if i == h.launcherSel {
-		return &ui.Node{
-			Kind: ui.KindButton, Text: res.Entry.Name, Padding: 12,
-			Action: "launch:" + res.Entry.ID,
-		}
+		fill = ui.FillSoft
+	}
+	pad := launcherRowGap / 2
+	return &ui.Node{
+		Kind: ui.KindColumn, Padding: pad,
+		Children: []*ui.Node{{
+			Kind: ui.KindCapsule, Fill: fill, Padding: 4,
+			Action:   "launch:" + res.Entry.ID,
+			Children: []*ui.Node{launcherRowBody(r, h, res.Entry)},
+		}},
+	}
+}
+
+func launcherRowBody(r *Registry, h *PanelHost, e launcher.Entry) *ui.Node {
+	labels := []*ui.Node{{Kind: ui.KindText, Text: e.Name, Bold: true}}
+	if e.Comment != "" {
+		labels = append(labels, &ui.Node{Kind: ui.KindText, Text: e.Comment})
+	}
+	// Panel pad 12×2, capsule pad 4×2, row pad 4×2, glyph, gap.
+	labelW := h.place.Panel.W - 24 - 8 - 8 - launcherIconSlot - 12
+	if labelW < 80 {
+		labelW = 80
 	}
 	return &ui.Node{
-		Kind: ui.KindText, Text: res.Entry.Name, Padding: 12,
-		Action: "launch:" + res.Entry.ID,
+		Kind: ui.KindRow, Gap: 12, Padding: 4,
+		Children: []*ui.Node{
+			launcherIconNode(r, h, e),
+			{Kind: ui.KindColumn, Gap: 2, Width: labelW, Children: labels},
+		},
 	}
+}
+
+func launcherIconNode(r *Registry, h *PanelHost, e launcher.Entry) *ui.Node {
+	if img := launcherLookupIcon(r, h, e.IconName); img != nil {
+		return &ui.Node{Kind: ui.KindImage, ImageSize: launcherIconSlot, Image: img}
+	}
+	return &ui.Node{
+		Kind: ui.KindCapsule, Width: launcherIconSlot, Fill: ui.FillContainer,
+		Children: []*ui.Node{{Kind: ui.KindText, Text: launcherGlyph(e.Name), Bold: true}},
+	}
+}
+
+func launcherLookupIcon(r *Registry, h *PanelHost, name string) *ui.Image {
+	if r == nil || r.trayIcons == nil || name == "" {
+		return nil
+	}
+	size := launcherIconSlot
+	if scale := ui.Scale120(h.scale120); scale.Valid() {
+		size = max(scale.Physical(launcherIconSlot), 1)
+	}
+	key := icons.Key{Name: name, Size: size}
+	if img, ok := r.trayIcons.Lookup(key); ok {
+		return img
+	}
+	_, _, _ = r.trayIcons.Request(key)
+	return nil
+}
+
+func launcherGlyph(name string) string {
+	for _, r := range name {
+		return string(unicode.ToUpper(r))
+	}
+	return "?"
 }
 
 // launcherVisibleOffset keeps the selected row inside the viewport across the
@@ -133,12 +202,12 @@ func launcherRow(h *PanelHost, results []launcher.Result, i int) *ui.Node {
 // than the laid-out list bounds, so an error label eats into the estimate.
 func (h *PanelHost) launcherVisibleOffset(count int) int {
 	viewH := h.place.Panel.H - 24 - launcherFieldHeight - 8
-	maxOff := max(count*launcherRowHeight-viewH, 0)
+	maxOff := max(count*launcherSlotHeight-viewH, 0)
 	off := min(max(h.launcherScroll, 0), maxOff)
-	if top := h.launcherSel * launcherRowHeight; top < off {
+	if top := h.launcherSel * launcherSlotHeight; top < off {
 		off = top
 	}
-	if bottom := (h.launcherSel + 1) * launcherRowHeight; bottom > off+viewH {
+	if bottom := (h.launcherSel + 1) * launcherSlotHeight; bottom > off+viewH {
 		off = bottom - viewH
 	}
 	h.launcherScroll = off
@@ -146,15 +215,29 @@ func (h *PanelHost) launcherVisibleOffset(count int) int {
 }
 
 func (h *PanelHost) launcherKeyPress(r *Registry, key uint32) bool {
+	n := len(h.launcherResults)
+	page := max(h.launcherPageRows(), 1)
 	switch key {
-	case keyUp, keyDown:
-		delta := 1
-		if key == keyUp {
-			delta = -1
+	case keyUp:
+		h.launcherMoveSel(r, -1)
+		return true
+	case keyDown:
+		h.launcherMoveSel(r, 1)
+		return true
+	case keyPageUp:
+		h.launcherMoveSel(r, -page)
+		return true
+	case keyPageDown:
+		h.launcherMoveSel(r, page)
+		return true
+	case keyHome:
+		if n > 0 {
+			h.launcherMoveSel(r, -h.launcherSel)
 		}
-		if n := len(h.launcherResults); n > 0 {
-			h.launcherSel = min(max(h.launcherSel+delta, 0), n-1)
-			r.rebuildPanel(h)
+		return true
+	case keyEnd:
+		if n > 0 {
+			h.launcherMoveSel(r, n-1-h.launcherSel)
 		}
 		return true
 	case keyEnter:
@@ -162,6 +245,20 @@ func (h *PanelHost) launcherKeyPress(r *Registry, key uint32) bool {
 		return true
 	}
 	return false
+}
+
+func (h *PanelHost) launcherMoveSel(r *Registry, delta int) {
+	n := len(h.launcherResults)
+	if n == 0 {
+		return
+	}
+	h.launcherSel = min(max(h.launcherSel+delta, 0), n-1)
+	r.rebuildPanel(h)
+}
+
+func (h *PanelHost) launcherPageRows() int {
+	viewH := h.place.Panel.H - 24 - launcherFieldHeight - 8
+	return max(viewH/launcherSlotHeight, 1)
 }
 
 // launcherActivateSelected activates the highlighted row. An overview row

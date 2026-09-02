@@ -50,6 +50,7 @@ type Theme struct {
 	Container   Color
 	OnAccent    Color
 	OnContainer Color
+	Outline     Color
 }
 
 // DefaultTheme is the owner-supplied baseline: nominal height 48, exclusive
@@ -77,6 +78,7 @@ func DefaultTheme() Theme {
 		Container:   Color{R: 0x1f, G: 0x7a, B: 0xb5, A: 0xff},
 		OnAccent:    Color{R: 0x0b, G: 0x10, B: 0x16, A: 0xff},
 		OnContainer: Color{R: 0x0b, G: 0x10, B: 0x16, A: 0xff},
+		Outline:     Color{R: 0x4a, G: 0x4f, B: 0x55, A: 0xff},
 	}
 }
 
@@ -94,6 +96,7 @@ func ThemeFromTokens(tok theme.Tokens, radius int) Theme {
 	t.Container = parseColor(tok.PrimaryContainer, t.Container)
 	t.OnAccent = parseColor(tok.OnPrimary, t.OnAccent)
 	t.OnContainer = parseColor(tok.OnPrimaryContainer, t.OnContainer)
+	t.Outline = parseColor(tok.Outline, t.Outline)
 	return t
 }
 

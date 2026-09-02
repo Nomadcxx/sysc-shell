@@ -12,6 +12,9 @@ func Focusables(root *Node) []*Node {
 			out = append(out, n)
 		}
 		if n.Kind == KindVirtualList && n.Item != nil {
+			if !virtualListHasFocusable(n) {
+				return
+			}
 			for i := 0; i < n.ItemCount; i++ {
 				walk(n.Item(i))
 			}
@@ -23,6 +26,36 @@ func Focusables(root *Node) []*Node {
 	}
 	walk(root)
 	return out
+}
+
+func hasFocusable(n *Node) bool {
+	if n == nil {
+		return false
+	}
+	if n.Focusable {
+		return true
+	}
+	for _, c := range n.Children {
+		if hasFocusable(c) {
+			return true
+		}
+	}
+	return false
+}
+
+// virtualListHasFocusable probes a few rows so a heading-only prefix cannot
+// hide later controls, without instantiating a thousand inert launcher rows.
+func virtualListHasFocusable(n *Node) bool {
+	if n == nil || n.Item == nil || n.ItemCount <= 0 {
+		return false
+	}
+	limit := min(n.ItemCount, 8)
+	for i := 0; i < limit; i++ {
+		if hasFocusable(n.Item(i)) {
+			return true
+		}
+	}
+	return false
 }
 
 // Roving tracks the single focus index for one panel.

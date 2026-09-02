@@ -162,6 +162,9 @@ const (
 	FillContainer
 	// FillError is a destructive chip (Record) inside a surface pill.
 	FillError
+	// FillSoft is a muted accent wash. Contents keep the surface foreground,
+	// so a selected launcher row is not a primary-on-white chip.
+	FillSoft
 )
 
 // Tone selects which theme colour paints a text node.

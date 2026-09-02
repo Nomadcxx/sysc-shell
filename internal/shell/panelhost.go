@@ -662,6 +662,7 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 		Container:   h.theme.Container,
 		OnAccent:    h.theme.OnAccent,
 		OnContainer: h.theme.OnContainer,
+		Outline:     h.theme.Outline,
 	}
 	if !h.place.CenterY {
 		style.AttachEdge = h.place.BarEdge
@@ -671,7 +672,7 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	}
 	if h.roving.Count > 0 {
 		n := h.focus[h.roving.Index()]
-		if n != nil && n.Bounds.W > 0 {
+		if n != nil && n.Bounds.W > 0 && n.Kind != ui.KindTextField {
 			ring := scale.PhysicalRect(n.Bounds)
 			c.FillRounded(ui.Rect{X: ring.X, Y: ring.Y, W: ring.W, H: 2}, 0, h.theme.Accent)
 			c.FillRounded(ui.Rect{X: ring.X, Y: ring.Y + ring.H - 2, W: ring.W, H: 2}, 0, h.theme.Accent)
@@ -692,7 +693,7 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 		case wayland.EventIME:
 			return h.applyIME(r, e)
 		case wayland.EventPointerAxis:
-			return h.scrollAxis(e)
+			return h.scrollAxis(r, e)
 		case wayland.EventKeyRelease:
 			if e.Key == keyLeftShift {
 				h.shift = false
@@ -807,6 +808,9 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 	if key == keyBackspace {
 		return h.editField(r, func(f *ui.Field) { f.Backspace() })
 	}
+	if ch, ok := ui.EvdevText(key, h.shift); ok {
+		return h.editField(r, func(f *ui.Field) { f.Insert(ch) })
+	}
 	if h.id == PanelLauncher && h.launcherKeyPress(r, key) {
 		return true
 	}
@@ -863,7 +867,7 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 	return false
 }
 
-func (h *PanelHost) scrollAxis(e wayland.Event) bool {
+func (h *PanelHost) scrollAxis(r *Registry, e wayland.Event) bool {
 	delta := 0
 	switch {
 	case e.AxisDiscrete != 0:
@@ -875,6 +879,18 @@ func (h *PanelHost) scrollAxis(e wayland.Event) bool {
 	}
 	if delta == 0 {
 		return false
+	}
+	if h.id == PanelLauncher {
+		rows := delta / launcherSlotHeight
+		if rows == 0 {
+			if delta > 0 {
+				rows = 1
+			} else {
+				rows = -1
+			}
+		}
+		h.launcherMoveSel(r, rows)
+		return true
 	}
 	return h.scrollBy(delta)
 }
@@ -1187,7 +1203,7 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 	case PanelSettings:
 		return settingsTree(r, h)
 	case PanelLauncher:
-		return launcherTree(h)
+		return launcherTree(r, h)
 	case PanelPlugin:
 		if r.plugins != nil {
 			return r.plugins.panelTree(h)

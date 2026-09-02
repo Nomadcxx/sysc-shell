@@ -24,6 +24,9 @@ type ProofStyle struct {
 	// seam against the bar.
 	AttachEdge string
 
+	// Outline strokes the floating panel rim. Zero alpha skips the stroke.
+	Outline Color
+
 	Background Color
 	Foreground Color
 	// Capsule fills the pill that wraps a bar widget. Container fills a
@@ -85,7 +88,14 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style ProofStyle) error
 	clear(c.Pix)
 	box := style.Scale120.PhysicalRect(style.Body)
 	radius := style.Scale120.Physical(style.Radius)
-	fillRoundedRect(c, box, radius, style.Background)
+	if style.Outline.A > 0 {
+		fillRoundedRect(c, box, radius, style.Outline)
+		inset := max(style.Scale120.Physical(1), 1)
+		inner := ui.Rect{X: box.X + inset, Y: box.Y + inset, W: box.W - 2*inset, H: box.H - 2*inset}
+		fillRoundedRect(c, inner, max(radius-inset, 0), style.Background)
+	} else {
+		fillRoundedRect(c, box, radius, style.Background)
+	}
 	squareAttachedEdge(c, box, radius, style.AttachEdge, style.Background)
 
 	size := style.Scale120.Physical(style.Size)
@@ -362,11 +372,28 @@ func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 
 func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size int) error {
 	box := style.Scale120.PhysicalRect(n.Bounds)
-	c.FillRounded(box, style.Scale120.Physical(6), style.Track)
+	// Stadium: a search well is a pill, not a 6px-radius box.
+	radius := box.H / 2
+	well := style.Capsule
+	if well.A == 0 {
+		well = style.Track
+	}
+	if n.Name == "Search" && style.Outline.A > 0 {
+		fillRoundedRect(c, box, radius, style.Outline)
+		inset := max(style.Scale120.Physical(1), 1)
+		fillRoundedRect(c, ui.Rect{X: box.X + inset, Y: box.Y + inset, W: box.W - 2*inset, H: box.H - 2*inset}, max(radius-inset, 0), well)
+	} else {
+		fillRoundedRect(c, box, radius, well)
+	}
+	mark := 0
+	if n.Name == "Search" && !n.Multiline {
+		mark = 26
+		paintSearchMark(c, box, style.Scale120.Physical(mark), style.Foreground, well)
+	}
 	inner := ui.Rect{
-		X: n.Bounds.X + n.Padding,
+		X: n.Bounds.X + n.Padding + mark,
 		Y: n.Bounds.Y + n.Padding,
-		W: n.Bounds.W - 2*n.Padding,
+		W: max(n.Bounds.W-2*n.Padding-mark, 0),
 		H: n.Bounds.H - 2*n.Padding,
 	}
 	phys := style.Scale120.PhysicalRect(inner)
@@ -375,6 +402,11 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle,
 	defer func() { c.restrict = prev }()
 	if n.Multiline {
 		return paintMultilineField(c, n, text, style, size, phys)
+	}
+	// A Search field's glass is the affordance; painting Name as a
+	// placeholder put bright body text in the well.
+	if n.Text == "" && n.Preedit == "" && n.Name != "" && mark == 0 {
+		_ = paintText(c, n.Name, phys, text, style, size, n.Tabular, n.Tone, false, true, false)
 	}
 	committed := n.Text
 	if n.Cursor >= 0 && n.Cursor <= len(n.Text) {
@@ -593,6 +625,8 @@ func capsuleFill(style ProofStyle, fill ui.Fill) Color {
 		return style.Container
 	case ui.FillError:
 		return style.Error
+	case ui.FillSoft:
+		return wash(style.Accent, style.Capsule)
 	}
 	return style.Capsule
 }
@@ -605,6 +639,43 @@ func capsuleForeground(style ProofStyle, fill ui.Fill) Color {
 		return style.OnContainer
 	}
 	return style.Foreground
+}
+
+// wash tints surface with accent at ~31% so a selected row stays dark with
+// ordinary text instead of a primary chip.
+func wash(accent, surface Color) Color {
+	const a uint32 = 40
+	ia := uint32(255 - a)
+	mix := func(over, under uint8) uint8 {
+		return uint8((uint32(over)*a + uint32(under)*ia) / 255)
+	}
+	return Color{R: mix(accent.R, surface.R), G: mix(accent.G, surface.G), B: mix(accent.B, surface.B), A: 0xff}
+}
+
+// paintSearchMark draws a magnifying glass in the leading well. There is no
+// SVG rasterizer on this path; the glyph is two rounded fills.
+func paintSearchMark(c *Canvas, field ui.Rect, slot int, fg, well Color) {
+	if slot <= 0 || field.H <= 0 {
+		return
+	}
+	cx := field.X + slot/2
+	// The handle hangs SE of the lens, so the midline of the field is
+	// below the visual centre of the glyph unless the lens sits a little high.
+	cy := field.Y + field.H/2 - 3
+	r := min(field.H/5, slot/3)
+	if r < 3 {
+		r = 3
+	}
+	outer := ui.Rect{X: cx - r, Y: cy - r, W: 2*r + 1, H: 2*r + 1}
+	fillRoundedRect(c, outer, r, fg)
+	hole := r - 2
+	if hole >= 2 {
+		fillRoundedRect(c, ui.Rect{X: cx - hole, Y: cy - hole, W: 2*hole + 1, H: 2*hole + 1}, hole, well)
+	}
+	handle := max(r, 5)
+	for i := 0; i < handle; i++ {
+		fillRect(c, ui.Rect{X: cx + r - 1 + i, Y: cy + r - 1 + i, W: 3, H: 3}, fg)
+	}
 }
 
 func textColor(style ProofStyle, tone ui.Tone) Color {

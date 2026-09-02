@@ -52,3 +52,28 @@ func TestFocusablesWalksVirtualListItem(t *testing.T) {
 		t.Fatalf("virtual list focus = %d %+v", len(f), f)
 	}
 }
+
+func TestFocusablesSkipsInertVirtualListItems(t *testing.T) {
+	t.Parallel()
+	calls := 0
+	root := &Node{
+		Kind: KindColumn,
+		Children: []*Node{
+			{Kind: KindTextField, Focusable: true, Name: "Search"},
+			{
+				Kind: KindVirtualList, ItemCount: 200, ItemHeight: 48,
+				Item: func(int) *Node {
+					calls++
+					return &Node{Kind: KindText, Text: "x"}
+				},
+			},
+		},
+	}
+	f := Focusables(root)
+	if len(f) != 1 || f[0].Name != "Search" {
+		t.Fatalf("focus = %d %+v, want only Search", len(f), f)
+	}
+	if calls > 8 {
+		t.Fatalf("instantiated %d inert rows, want a short probe", calls)
+	}
+}

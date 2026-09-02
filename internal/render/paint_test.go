@@ -683,6 +683,7 @@ func TestCapsuleGivesItsChildTheMatchingForeground(t *testing.T) {
 	}{
 		{"accent", ui.FillAccent, func(s ProofStyle) Color { return s.OnAccent }},
 		{"container", ui.FillContainer, func(s ProofStyle) Color { return s.OnContainer }},
+		{"soft", ui.FillSoft, func(s ProofStyle) Color { return s.Foreground }},
 		{"default", ui.FillNone, func(s ProofStyle) Color { return s.Foreground }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -728,5 +729,120 @@ func TestPaintScrollDrawsAThumbWhenContentOverflows(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("overflowing scroll painted no foreground thumb on the right")
+	}
+}
+
+func TestPaintStrokesOutlineWhenSet(t *testing.T) {
+	t.Parallel()
+	c := newTestCanvas(t, 100, 80)
+	style := testStyle
+	style.Body = ui.Rect{X: 8, Y: 8, W: 84, H: 64}
+	style.Radius = 0
+	style.Outline = Color{R: 0xaa, G: 0xbb, B: 0xcc, A: 0xff}
+	if err := Paint(c, &ui.Node{Kind: ui.KindRow}, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatal(err)
+	}
+	if got := pixelAt(t, c, 8, 40); got != style.Outline {
+		t.Fatalf("left rim = %+v, want outline %+v", got, style.Outline)
+	}
+	if got := pixelAt(t, c, 50, 40); got != style.Background {
+		t.Fatalf("interior = %+v, want body %+v", got, style.Background)
+	}
+}
+
+func TestPaintTextFieldIsAStadiumOnCapsule(t *testing.T) {
+	t.Parallel()
+	const w, h = 120, 48
+	c := newTestCanvas(t, w, h)
+	style := capsuleStyle()
+	style.Body = ui.Rect{W: w, H: h}
+	style.Track = Color{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{{
+		Kind: ui.KindTextField, Padding: 8, Bounds: ui.Rect{X: 4, Y: 8, W: 112, H: 32},
+	}}}
+	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatal(err)
+	}
+	if got := pixelAt(t, c, 60, 24); got != style.Capsule {
+		t.Fatalf("well centre = %+v, want Capsule %+v", got, style.Capsule)
+	}
+	if got := pixelAt(t, c, 4, 8); got != style.Background {
+		t.Fatalf("stadium corner = %+v, want Background %+v", got, style.Background)
+	}
+}
+
+func TestPaintSearchFieldDrawsALeadingMark(t *testing.T) {
+	t.Parallel()
+	const w, h = 120, 48
+	c := newTestCanvas(t, w, h)
+	style := capsuleStyle()
+	style.Body = ui.Rect{W: w, H: h}
+	style.Outline = Color{R: 0xaa, G: 0x99, B: 0xcc, A: 0xff}
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{{
+		Kind: ui.KindTextField, Name: "Search", Padding: 8, Bounds: ui.Rect{X: 4, Y: 8, W: 112, H: 32},
+	}}}
+	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for y := 12; y < 36; y++ {
+		for x := 6; x < 24; x++ {
+			if pixelAt(t, c, x, y) == style.Foreground {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("search field painted no leading mark")
+	}
+	if got := pixelAt(t, c, 60, 24); got != style.Capsule {
+		t.Fatalf("search well = %+v, want Capsule %+v", got, style.Capsule)
+	}
+}
+
+func TestPaintSoftCapsuleWashesAccent(t *testing.T) {
+	t.Parallel()
+	c := newTestCanvas(t, canvasW, canvasH)
+	style := capsuleStyle()
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{
+		{Kind: ui.KindCapsule, Fill: ui.FillSoft, Bounds: ui.Rect{X: 10, Y: 8, W: 60, H: 32}},
+	}}
+	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatal(err)
+	}
+	want := wash(style.Accent, style.Capsule)
+	if got := pixelAt(t, c, 40, 24); got != want {
+		t.Fatalf("soft fill = %+v, want wash %+v", got, want)
+	}
+	if got := pixelAt(t, c, 40, 24); got == style.Accent {
+		t.Fatal("soft fill used solid Accent")
+	}
+}
+
+func TestPaintSearchMarkHandleGoesDiagonal(t *testing.T) {
+	t.Parallel()
+	const w, h = 120, 48
+	c := newTestCanvas(t, w, h)
+	style := capsuleStyle()
+	style.Body = ui.Rect{W: w, H: h}
+	field := ui.Rect{X: 4, Y: 8, W: 112, H: 32}
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{{
+		Kind: ui.KindTextField, Name: "Search", Padding: 8, Bounds: field,
+	}}}
+	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatal(err)
+	}
+	box := field
+	slot := 22
+	cx, cy := box.X+slot/2, box.Y+box.H/2-3
+	r := min(box.H/5, slot/3)
+	if r < 3 {
+		r = 3
+	}
+	if got := pixelAt(t, c, cx+r+3, cy+r+3); got != style.Foreground {
+		t.Fatalf("diagonal handle = %+v, want Foreground %+v", got, style.Foreground)
+	}
+	if got := pixelAt(t, c, cx+r+4, cy); got == style.Foreground {
+		t.Fatal("handle painted a horizontal dash")
 	}
 }
