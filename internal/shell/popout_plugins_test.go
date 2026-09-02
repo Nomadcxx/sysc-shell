@@ -3,6 +3,7 @@ package shell
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -84,16 +85,19 @@ func TestPluginSettingApplyDecodedControlValue(t *testing.T) {
 		[]string{"org.sysc.screen-recorder"})
 	h := &PanelHost{id: PanelSettings, section: "Plugins", search: ui.NewField("")}
 
+	reg.mu.Lock()
 	dir := &ui.Node{
 		Kind: ui.KindTextField, Text: "/tmp/recordings",
 		Action: "plugin-set:org.sysc.screen-recorder:directory",
 		Name:   "Output directory",
 	}
 	if !reg.handlePluginManager(h, dir) {
+		reg.mu.Unlock()
 		t.Fatal("directory plugin-set not handled")
 	}
 	got := reg.cfg.Plugins.Settings["org.sysc.screen-recorder"]["directory"]
 	if got != "/tmp/recordings" {
+		reg.mu.Unlock()
 		t.Fatalf("directory = %#v, want /tmp/recordings", got)
 	}
 
@@ -103,10 +107,12 @@ func TestPluginSettingApplyDecodedControlValue(t *testing.T) {
 		Name:   "Video source",
 	}
 	if !reg.handlePluginManager(h, codec) {
+		reg.mu.Unlock()
 		t.Fatal("select plugin-set not handled")
 	}
 	got = reg.cfg.Plugins.Settings["org.sysc.screen-recorder"]["video_source"]
 	if got != "focused" {
+		reg.mu.Unlock()
 		t.Fatalf("video_source = %#v, want focused", got)
 	}
 
@@ -117,13 +123,47 @@ func TestPluginSettingApplyDecodedControlValue(t *testing.T) {
 		Name:   "Frame rate",
 	}
 	if !reg.handlePluginManager(h, bad) {
+		reg.mu.Unlock()
 		t.Fatal("rejected slider should still be handled")
 	}
 	if reg.cfg.Plugins.Settings["org.sysc.screen-recorder"]["frame_rate"] != nil {
+		reg.mu.Unlock()
 		t.Fatalf("rejected frame_rate wrote %#v", reg.cfg.Plugins.Settings["org.sysc.screen-recorder"]["frame_rate"])
 	}
 	if reg.cfg.Plugins.Settings["org.sysc.screen-recorder"]["directory"] != before {
+		reg.mu.Unlock()
 		t.Fatal("rejected apply changed sibling settings")
+	}
+	reg.mu.Unlock()
+}
+
+// PanelHost.handle holds Registry.mu; apply must not re-lock it.
+func TestPluginSettingApplyUnderRegistryLock(t *testing.T) {
+	reg := bindManifestPlugin(t, "ok", "org.sysc.screen-recorder", testRecorderPanelManifest,
+		[]string{"org.sysc.screen-recorder"})
+	h := &PanelHost{id: PanelSettings, section: "Plugins", search: ui.NewField("")}
+
+	done := make(chan bool, 1)
+	go func() {
+		reg.mu.Lock()
+		defer reg.mu.Unlock()
+		done <- reg.handlePluginManager(h, &ui.Node{
+			Kind: ui.KindTextField, Text: "/tmp/locked-apply",
+			Action: "plugin-set:org.sysc.screen-recorder:directory",
+			Name:   "Output directory",
+		})
+	}()
+	select {
+	case ok := <-done:
+		if !ok {
+			t.Fatal("plugin-set under Registry.mu not handled")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("handlePluginManager deadlocked re-locking Registry.mu")
+	}
+	got := reg.cfg.Plugins.Settings["org.sysc.screen-recorder"]["directory"]
+	if got != "/tmp/locked-apply" {
+		t.Fatalf("directory = %#v, want /tmp/locked-apply", got)
 	}
 }
 
@@ -153,15 +193,19 @@ func TestPluginsSectionShowsDirectoryAndCards(t *testing.T) {
 func TestPluginManagerEnableDisableAndRetry(t *testing.T) {
 	reg := bindTestPlugin(t, "ok")
 	h := &PanelHost{id: PanelSettings, section: "Plugins", search: ui.NewField("")}
+	reg.mu.Lock()
 	if !reg.handlePluginManager(h, &ui.Node{Action: "plugin-enable:org.sysc.timer"}) {
+		reg.mu.Unlock()
 		t.Fatal("disable toggle not handled")
 	}
 	for _, id := range reg.cfg.Plugins.Enabled {
 		if id == "org.sysc.timer" {
+			reg.mu.Unlock()
 			t.Fatal("plugin still enabled after toggle")
 		}
 	}
 	if !reg.handlePluginManager(h, &ui.Node{Action: "plugin-enable:org.sysc.timer"}) {
+		reg.mu.Unlock()
 		t.Fatal("enable not handled")
 	}
 	found := false
@@ -171,14 +215,18 @@ func TestPluginManagerEnableDisableAndRetry(t *testing.T) {
 		}
 	}
 	if !found {
+		reg.mu.Unlock()
 		t.Fatal("plugin was not enabled")
 	}
 	if !reg.handlePluginManager(h, &ui.Node{Action: "plugin-retry:org.sysc.timer"}) {
+		reg.mu.Unlock()
 		t.Fatal("retry not handled")
 	}
 	if !reg.handlePluginManager(h, &ui.Node{Action: "plugin-rescan"}) {
+		reg.mu.Unlock()
 		t.Fatal("rescan not handled")
 	}
+	reg.mu.Unlock()
 }
 
 func TestRejectedPluginSettingLeavesConfigUnchanged(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -119,11 +120,27 @@ func (h *pluginHost) syncEnabled() error {
 	h.r.mu.Lock()
 	enabled := append([]string(nil), h.r.cfg.Plugins.Enabled...)
 	h.r.mu.Unlock()
+	return h.finishSyncEnabled(enabled, cat, false)
+}
 
+// syncEnabledLocked assumes Registry.mu is held (panel handle / enableLocked).
+func (h *pluginHost) syncEnabledLocked() error {
+	cat, err := plugin.Discover(h.opts.Roots...)
+	if err != nil {
+		return err
+	}
+	h.mu.Lock()
+	h.catalog = cat
+	h.mu.Unlock()
+	enabled := append([]string(nil), h.r.cfg.Plugins.Enabled...)
+	return h.finishSyncEnabled(enabled, cat, true)
+}
+
+func (h *pluginHost) finishSyncEnabled(enabled []string, cat plugin.Catalog, registryHeld bool) error {
 	want := map[string]bool{}
 	for _, id := range enabled {
 		want[id] = true
-		if err := h.ensure(id, cat); err != nil {
+		if err := h.ensure(id, cat, registryHeld); err != nil {
 			// A plugin that cannot start still occupies its bar slot as a
 			// placeholder; the rest of the bar must stay up.
 			continue
@@ -140,11 +157,15 @@ func (h *pluginHost) syncEnabled() error {
 	for _, id := range drop {
 		h.stopPlugin(id)
 	}
-	h.syncBars()
+	if registryHeld {
+		h.syncBarsLocked()
+	} else {
+		h.syncBars()
+	}
 	return nil
 }
 
-func (h *pluginHost) ensure(id string, cat plugin.Catalog) error {
+func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) error {
 	h.mu.Lock()
 	if h.slots[id] != nil {
 		h.mu.Unlock()
@@ -190,7 +211,11 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog) error {
 	h.slots[id] = slot
 	h.mu.Unlock()
 	go h.pumpRuntime(slot)
-	h.pushSettings(id, rt)
+	if registryHeld {
+		h.pushSettingsLocked(id, rt)
+	} else {
+		h.pushSettings(id, rt)
+	}
 	return nil
 }
 
@@ -206,9 +231,12 @@ func grantedCaps(rt *plugin.Runtime) []plugin.Capability {
 
 func (h *pluginHost) pushSettings(id string, rt *plugin.Runtime) {
 	h.r.mu.Lock()
-	pluginVals := h.r.cfg.Plugins.Settings[id]
+	h.pushSettingsLocked(id, rt)
 	h.r.mu.Unlock()
-	_ = rt.Send(&v1.SettingsChanged{Scope: v1.ScopePlugin, Values: pluginVals})
+}
+
+func (h *pluginHost) pushSettingsLocked(id string, rt *plugin.Runtime) {
+	_ = rt.Send(&v1.SettingsChanged{Scope: v1.ScopePlugin, Values: h.r.cfg.Plugins.Settings[id]})
 }
 
 func (h *pluginHost) stopPlugin(id string) {
@@ -348,6 +376,17 @@ func (h *pluginHost) applyResult(res plugin.Result) {
 
 func (h *pluginHost) syncBars() {
 	h.r.mu.Lock()
+	desired := h.desiredBarViewsLocked()
+	h.r.mu.Unlock()
+	h.reconcileBarViews(desired, false)
+}
+
+// syncBarsLocked assumes Registry.mu is held.
+func (h *pluginHost) syncBarsLocked() {
+	h.reconcileBarViews(h.desiredBarViewsLocked(), true)
+}
+
+func (h *pluginHost) desiredBarViewsLocked() []hostedView {
 	cfg := h.r.cfg
 	var desired []hostedView
 	for global, bar := range h.r.bars {
@@ -363,8 +402,10 @@ func (h *pluginHost) syncBars() {
 			})
 		}
 	}
-	h.r.mu.Unlock()
+	return desired
+}
 
+func (h *pluginHost) reconcileBarViews(desired []hostedView, registryHeld bool) {
 	h.mu.Lock()
 	haveBar := map[string]*hostedView{}
 	haveTip := map[string]*hostedView{}
@@ -384,13 +425,13 @@ func (h *pluginHost) syncBars() {
 		key := barKey(d.Plugin, d.Instance, d.Output)
 		want[key] = d
 		if _, ok := haveBar[key]; !ok {
-			h.openView(d)
+			h.openView(d, registryHeld)
 		}
 		if _, ok := haveTip[key]; !ok {
 			tip := d
 			tip.Kind = v1.ViewTooltip
 			tip.Width, tip.Height = 280, 200
-			h.openView(tip)
+			h.openView(tip, registryHeld)
 		}
 	}
 	for key, v := range haveBar {
@@ -409,7 +450,7 @@ func barKey(pluginID, instance, output string) string {
 	return pluginID + "/" + instance + "/" + output
 }
 
-func (h *pluginHost) openView(spec hostedView) {
+func (h *pluginHost) openView(spec hostedView, registryHeld bool) {
 	h.mu.Lock()
 	slot := h.slots[spec.Plugin]
 	n := 0
@@ -433,9 +474,14 @@ func (h *pluginHost) openView(spec hostedView) {
 		Instance: spec.Instance, Output: spec.Output, Generation: spec.Generation,
 		Width: spec.Width, Height: spec.Height,
 	})
-	h.r.mu.Lock()
-	inst := h.r.cfg.Plugins.Instances[spec.Instance]
-	h.r.mu.Unlock()
+	var inst map[string]any
+	if registryHeld {
+		inst = h.r.cfg.Plugins.Instances[spec.Instance]
+	} else {
+		h.r.mu.Lock()
+		inst = h.r.cfg.Plugins.Instances[spec.Instance]
+		h.r.mu.Unlock()
+	}
 	if inst != nil {
 		_ = slot.rt.Send(&v1.SettingsChanged{Scope: v1.ScopeInstance, Instance: spec.Instance, Values: inst})
 	}
@@ -557,7 +603,7 @@ func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResul
 		Output: p.Output, Generation: global, Kind: v1.ViewPanel,
 		Width: spec.Width, Height: spec.Height,
 	}
-	h.openView(view)
+	h.openView(view, false)
 	h.mu.Lock()
 	// The view we just opened is the newest panel for this plugin.
 	var opened *hostedView
@@ -979,6 +1025,24 @@ func (h *pluginHost) status(id string) plugin.Status {
 
 func (h *pluginHost) enable(id string, on bool) error {
 	h.r.mu.Lock()
+	cfg := h.setEnabledConfigLocked(id, on)
+	h.r.mu.Unlock()
+	if err := h.r.writeConfig(cfg); err != nil {
+		return err
+	}
+	return h.syncEnabled()
+}
+
+// enableLocked assumes Registry.mu is held (panel handle).
+func (h *pluginHost) enableLocked(id string, on bool) error {
+	cfg := h.setEnabledConfigLocked(id, on)
+	if err := h.r.writeConfig(cfg); err != nil {
+		return err
+	}
+	return h.syncEnabledLocked()
+}
+
+func (h *pluginHost) setEnabledConfigLocked(id string, on bool) config.Config {
 	cfg := h.r.cfg
 	cfg.Plugins = cfg.Plugins.Clone()
 	next := make([]string, 0, len(cfg.Plugins.Enabled)+1)
@@ -992,11 +1056,7 @@ func (h *pluginHost) enable(id string, on bool) error {
 	}
 	cfg.Plugins.Enabled = next
 	h.r.cfg = cfg
-	h.r.mu.Unlock()
-	if err := h.r.writeConfig(cfg); err != nil {
-		return err
-	}
-	return h.syncEnabled()
+	return cfg
 }
 
 func (h *pluginHost) retry(id string) error {
@@ -1009,9 +1069,26 @@ func (h *pluginHost) retry(id string) error {
 	return slot.rt.Retry(h.ctx)
 }
 
+func (h *pluginHost) retryLocked(id string) error {
+	h.mu.Lock()
+	slot := h.slots[id]
+	h.mu.Unlock()
+	if slot == nil {
+		return h.enableLocked(id, true)
+	}
+	return slot.rt.Retry(h.ctx)
+}
+
 func (h *pluginHost) rescan() error { return h.syncEnabled() }
 
 func (h *pluginHost) applySetting(pluginID, key string, value any) error {
+	h.r.mu.Lock()
+	defer h.r.mu.Unlock()
+	return h.applySettingLocked(pluginID, key, value)
+}
+
+// applySettingLocked assumes Registry.mu is held (panel handle).
+func (h *pluginHost) applySettingLocked(pluginID, key string, value any) error {
 	h.mu.Lock()
 	slot := h.slots[pluginID]
 	var schema []plugin.Setting
@@ -1023,7 +1100,6 @@ func (h *pluginHost) applySetting(pluginID, key string, value any) error {
 		}
 	}
 	h.mu.Unlock()
-	h.r.mu.Lock()
 	cfg := h.r.cfg
 	cfg.Plugins = cfg.Plugins.Clone()
 	if cfg.Plugins.Settings == nil {
@@ -1035,12 +1111,10 @@ func (h *pluginHost) applySetting(pluginID, key string, value any) error {
 	}
 	cur[key] = value
 	if err := plugin.CheckValues(schema, cur); err != nil {
-		h.r.mu.Unlock()
 		return err
 	}
 	cfg.Plugins.Settings[pluginID] = cur
 	h.r.cfg = cfg
-	h.r.mu.Unlock()
 	if err := h.r.writeConfig(cfg); err != nil {
 		return err
 	}

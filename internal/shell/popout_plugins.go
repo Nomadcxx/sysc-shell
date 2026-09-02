@@ -264,6 +264,8 @@ func pluginSettingControl(h *PanelHost, s plugin.Setting, raw, action, store str
 	}
 }
 
+// handlePluginManager runs under Registry.mu (PanelHost.handle). It must not
+// call paths that re-lock the registry.
 func (r *Registry) handlePluginManager(h *PanelHost, n *ui.Node) bool {
 	if r.plugins == nil || n == nil {
 		return false
@@ -271,12 +273,12 @@ func (r *Registry) handlePluginManager(h *PanelHost, n *ui.Node) bool {
 	action := n.Action
 	switch {
 	case action == "plugin-rescan":
-		_ = r.plugins.rescan()
+		_ = r.plugins.syncEnabledLocked()
 		r.rebuildPanel(h)
 		return true
 	}
 	if id, ok := strings.CutPrefix(action, "plugin-retry:"); ok {
-		_ = r.plugins.retry(id)
+		_ = r.plugins.retryLocked(id)
 		r.rebuildPanel(h)
 		return true
 	}
@@ -288,7 +290,7 @@ func (r *Registry) handlePluginManager(h *PanelHost, n *ui.Node) bool {
 				break
 			}
 		}
-		_ = r.plugins.enable(id, on)
+		_ = r.plugins.enableLocked(id, on)
 		r.rebuildPanel(h)
 		return true
 	}
@@ -301,7 +303,7 @@ func (r *Registry) handlePluginManager(h *PanelHost, n *ui.Node) bool {
 		if !ok {
 			return false
 		}
-		_ = r.plugins.applySetting(pluginID, key, value)
+		_ = r.plugins.applySettingLocked(pluginID, key, value)
 		r.rebuildPanel(h)
 		return true
 	}
