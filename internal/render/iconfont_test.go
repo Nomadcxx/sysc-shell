@@ -33,6 +33,53 @@ func TestKnownCodesMapToTheExpectedSymbol(t *testing.T) {
 	}
 }
 
+// Plugins address glyphs by catalogue name. Each WMO group has to resolve to
+// a name the host already knows, or a weather view would fail Convert.
+func TestIconNameMapsWMOGroupsToCatalogueNames(t *testing.T) {
+	t.Parallel()
+	cases := map[int]string{
+		0:  "clear-day",
+		1:  "partly-cloudy",
+		2:  "partly-cloudy",
+		3:  "cloud",
+		45: "fog",
+		48: "fog",
+		61: "rain",
+		80: "rain",
+		71: "snow",
+		85: "snow",
+		75: "heavy-snow",
+		86: "heavy-snow",
+		95: "thunderstorm",
+		99: "thunderstorm",
+	}
+	for code, want := range cases {
+		got := IconName(code)
+		if got != want {
+			t.Fatalf("code %d named %q, want %q", code, got, want)
+		}
+		r, ok := IconByName(got)
+		if !ok {
+			t.Fatalf("code %d named %q, which the catalogue does not have", code, got)
+		}
+		if r != IconRune(code) {
+			t.Fatalf("code %d: IconName and IconRune picked different glyphs", code)
+		}
+	}
+}
+
+func TestIconNameFallsBackToCloudForAnUnknownCode(t *testing.T) {
+	t.Parallel()
+	for _, code := range []int{-1, 4, 20, 49, 70, 90} {
+		if got := IconName(code); got != "cloud" {
+			t.Fatalf("code %d named %q, want cloud", code, got)
+		}
+		if IconRune(code) != iconCloud {
+			t.Fatalf("code %d rune %U, want the cloud fallback", code, IconRune(code))
+		}
+	}
+}
+
 // An icon rune must resolve to the project face, never to whatever system font
 // happens to cover the private-use area.
 func TestIconRunesResolveToTheProjectFace(t *testing.T) {

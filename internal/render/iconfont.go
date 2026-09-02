@@ -112,6 +112,31 @@ func IconRune(code int) rune {
 	return iconCloud
 }
 
+// IconName is the catalogue name for a WMO weather code. A plugin addresses
+// the symbol by this name; the host maps it to a glyph. An unrecognised code
+// names the cloud, matching IconRune.
+func IconName(code int) string {
+	switch IconRune(code) {
+	case iconClearDay:
+		return "clear-day"
+	case iconPartlyCloudy:
+		return "partly-cloudy"
+	case iconCloud:
+		return "cloud"
+	case iconFog:
+		return "fog"
+	case iconRain:
+		return "rain"
+	case iconSnow:
+		return "snow"
+	case iconHeavySnow:
+		return "heavy-snow"
+	case iconThunderstorm:
+		return "thunderstorm"
+	}
+	return "cloud"
+}
+
 // BatteryIconRune picks the glyph for a charge and state.
 //
 // Critical overrides the level entirely: a battery about to die should look

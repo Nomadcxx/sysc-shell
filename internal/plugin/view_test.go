@@ -110,6 +110,22 @@ func TestConvertResolvesAnIconToItsGlyph(t *testing.T) {
 	}
 }
 
+func TestConvertMapsAWeatherIconNameToTheWMOGlyph(t *testing.T) {
+	t.Parallel()
+
+	// A plugin names the symbol; the host maps it to the same glyph the bar
+	// weather widget already paints for that WMO code.
+	name := render.IconName(61)
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{{Kind: v1.KindIcon, Icon: name}}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if got.Children[0].Text != string(render.IconRune(61)) {
+		t.Fatalf("icon = %q, want the rain glyph for WMO 61", got.Children[0].Text)
+	}
+}
+
 func TestConvertRejectsAnIconTheShellDoesNotHave(t *testing.T) {
 	t.Parallel()
 
