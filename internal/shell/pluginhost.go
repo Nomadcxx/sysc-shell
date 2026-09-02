@@ -26,19 +26,20 @@ type pluginSlot struct {
 }
 
 type hostedView struct {
-	ID       string
-	Plugin   string
-	Entry    string
-	Instance string
-	Output   string
-	Kind     v1.ViewKind
-	Revision uint64
-	Root     *ui.Node
-	tree     *plugin.ViewTree
-	Failed   bool
-	Label    string
-	Width    int
-	Height   int
+	ID         string
+	Plugin     string
+	Entry      string
+	Instance   string
+	Output     string
+	Generation uint32
+	Kind       v1.ViewKind
+	Revision   uint64
+	Root       *ui.Node
+	tree       *plugin.ViewTree
+	Failed     bool
+	Label      string
+	Width      int
+	Height     int
 }
 
 type pluginHost struct {
@@ -159,21 +160,19 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog) error {
 		Supported: hostPluginCaps,
 		Limits:    v1.DefaultLimits,
 	})
-	if err := rt.Start(h.ctx); err != nil {
-		return err
-	}
 	stateDir := h.opts.StateDir
 	if stateDir == "" {
 		stateDir = plugin.StateRoot()
 	}
 	store, err := plugin.OpenStore(stateDir, id)
 	if err != nil {
-		rt.Stop()
+		return err
+	}
+	if err := rt.Start(h.ctx); err != nil {
 		return err
 	}
 	m := rt.Manifest()
-	slot := &pluginSlot{rt: rt}
-	slot.disp = plugin.NewDispatcher(plugin.CallEnv{
+	disp := plugin.NewDispatcher(plugin.CallEnv{
 		PluginID:       id,
 		Granted:        grantedCaps(rt),
 		DeclaredPanels: m.Panels,
@@ -181,7 +180,12 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog) error {
 		OpenPanel:      func(_ context.Context, p v1.PanelParams) (v1.PanelResult, error) { return h.openPanel(id, p) },
 		ClosePanel:     func(_ context.Context, p v1.PanelParams) error { return h.closePanel(id, p) },
 		Notify:         h.opts.Notify,
+		OutputContext: func(_ context.Context, p v1.OutputContextParams) (v1.OutputContextResult, error) {
+			return h.outputContext(p)
+		},
 	})
+	rt.SetCalls(disp)
+	slot := &pluginSlot{rt: rt, disp: disp}
 	h.mu.Lock()
 	h.slots[id] = slot
 	h.mu.Unlock()
@@ -346,7 +350,7 @@ func (h *pluginHost) syncBars() {
 	h.r.mu.Lock()
 	cfg := h.r.cfg
 	var desired []hostedView
-	for _, bar := range h.r.bars {
+	for global, bar := range h.r.bars {
 		conn := bar.connector()
 		policy := cfg.ForConnector(conn)
 		for _, item := range allItems(policy) {
@@ -355,7 +359,7 @@ func (h *pluginHost) syncBars() {
 			}
 			desired = append(desired, hostedView{
 				Plugin: item.Plugin, Entry: item.Entry, Instance: item.Instance,
-				Output: conn, Kind: v1.ViewBar, Width: 120, Height: 32,
+				Output: conn, Generation: global, Kind: v1.ViewBar, Width: 120, Height: 32,
 			})
 		}
 	}
@@ -426,7 +430,7 @@ func (h *pluginHost) openView(spec hostedView) {
 
 	_ = slot.rt.Send(&v1.ViewOpen{
 		ViewID: spec.ID, View: spec.Kind, Entry: spec.Entry,
-		Instance: spec.Instance, Output: spec.Output,
+		Instance: spec.Instance, Output: spec.Output, Generation: spec.Generation,
 		Width: spec.Width, Height: spec.Height,
 	})
 	h.r.mu.Lock()
@@ -522,23 +526,26 @@ func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResul
 	}
 
 	h.r.mu.Lock()
-	global := h.r.outputGlobalLocked(p.Output)
+	conn, global, err := h.resolveOutputLocked(v1.OutputContextParams{Output: p.Output, Generation: p.Generation})
 	trig := Trigger{}
-	if bar, ok := h.r.bars[global]; ok {
-		policy := h.r.cfg.ForConnector(bar.connector())
-		trig = Trigger{BarEdge: policy.Edge, BarZone: policy.Height}
+	if err == nil {
+		if bar, ok := h.r.bars[global]; ok {
+			policy := h.r.cfg.ForConnector(bar.connector())
+			trig = Trigger{BarEdge: policy.Edge, BarZone: policy.Height}
+		}
 	}
 	h.r.mu.Unlock()
-	if global == 0 {
-		return v1.PanelResult{}, errors.New("no output for plugin panel")
+	if err != nil {
+		return v1.PanelResult{}, err
 	}
+	p.Output = conn
 	if err := h.r.OpenPanel(PanelPlugin, global, trig); err != nil {
 		return v1.PanelResult{}, err
 	}
 
 	view := hostedView{
 		Plugin: pluginID, Entry: p.Entry, Instance: p.Instance,
-		Output: p.Output, Kind: v1.ViewPanel,
+		Output: p.Output, Generation: global, Kind: v1.ViewPanel,
 		Width: spec.Width, Height: spec.Height,
 	}
 	h.openView(view)
@@ -650,7 +657,7 @@ func (h *pluginHost) deliver(hit pluginHit, event v1.EventKind, button v1.Pointe
 	if ok {
 		ev := v1.InputEvent{
 			ViewID: hit.ViewID, Revision: v.Revision, Node: hit.Node,
-			Event: event, Button: button, Text: text, Output: v.Output,
+			Event: event, Button: button, Text: text, Output: v.Output, Generation: v.Generation,
 		}
 		toSend = h.textOut.Push(ev)
 		h.inputs = append(h.inputs, toSend...)
@@ -794,6 +801,39 @@ func (r *Registry) outputGlobalLocked(connector string) uint32 {
 		return global
 	}
 	return 0
+}
+
+func (h *pluginHost) outputContext(p v1.OutputContextParams) (v1.OutputContextResult, error) {
+	h.r.mu.Lock()
+	defer h.r.mu.Unlock()
+	conn, gen, err := h.resolveOutputLocked(p)
+	if err != nil {
+		return v1.OutputContextResult{}, err
+	}
+	return v1.OutputContextResult{Output: conn, Generation: gen}, nil
+}
+
+func (h *pluginHost) resolveOutputLocked(p v1.OutputContextParams) (string, uint32, error) {
+	if p.Output != "" {
+		for global, bar := range h.r.bars {
+			if bar.connector() == p.Output {
+				if p.Generation != 0 && p.Generation != global {
+					return "", 0, fmt.Errorf("output %s generation is stale", p.Output)
+				}
+				return p.Output, global, nil
+			}
+		}
+		return "", 0, fmt.Errorf("output %s is not declared", p.Output)
+	}
+	global := h.r.outputGlobalLocked("")
+	if global == 0 {
+		return "", 0, errors.New("no output")
+	}
+	conn := h.r.bars[global].connector()
+	if p.Generation != 0 && p.Generation != global {
+		return "", 0, fmt.Errorf("output %s generation is stale", conn)
+	}
+	return conn, global, nil
 }
 
 func (r *Registry) handlePluginBar(action string, event wayland.Event) bool {

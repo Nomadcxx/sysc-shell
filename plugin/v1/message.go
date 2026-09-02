@@ -127,6 +127,9 @@ type ViewOpen struct {
 	// Output is the connector this view lives on. Views are per-output; the
 	// plugin's state is not.
 	Output string `json:"output,omitempty"`
+	// Generation is the host's current identity for Output. A later host.call
+	// that names an older generation fails rather than acting on a replug.
+	Generation uint32 `json:"generation,omitempty"`
 	// Width and Height are the space the host has reserved, in logical pixels.
 	Width  int `json:"width,omitempty"`
 	Height int `json:"height,omitempty"`
@@ -203,6 +206,8 @@ type InputEvent struct {
 	Text string `json:"text,omitempty"`
 	// Output is the connector the event came from.
 	Output string `json:"output,omitempty"`
+	// Generation is Output's host identity at the time of the event.
+	Generation uint32 `json:"generation,omitempty"`
 }
 
 func (*InputEvent) messageType() string { return TypeInputEvent }
@@ -232,12 +237,13 @@ func (*SettingsChanged) messageType() string { return TypeSettingsChanged }
 type CallKind string
 
 const (
-	CallStateGet   CallKind = "state.get"
-	CallStateSet   CallKind = "state.set"
-	CallStateList  CallKind = "state.list"
-	CallPanelOpen  CallKind = "panel.open"
-	CallPanelClose CallKind = "panel.close"
-	CallNotify     CallKind = "notify"
+	CallStateGet      CallKind = "state.get"
+	CallStateSet      CallKind = "state.set"
+	CallStateList     CallKind = "state.list"
+	CallPanelOpen     CallKind = "panel.open"
+	CallPanelClose    CallKind = "panel.close"
+	CallNotify        CallKind = "notify"
+	CallOutputContext CallKind = "output.context"
 )
 
 // HostCall is a request from the plugin. Params is left raw so that adding a
@@ -313,8 +319,24 @@ type PanelParams struct {
 	Entry string `json:"entry"`
 	// Output is the connector to open on. Empty means the focused output.
 	Output string `json:"output,omitempty"`
+	// Generation is Output's host identity. Zero means "current".
+	Generation uint32 `json:"generation,omitempty"`
 	// Instance ties the panel to the placement whose bar widget triggered it.
 	Instance string `json:"instance,omitempty"`
+}
+
+// OutputContextParams reads the live connector a command should use.
+type OutputContextParams struct {
+	// Output names one connector. Empty means Niri's focused output.
+	Output string `json:"output,omitempty"`
+	// Generation, when set, must match the host's current identity for Output.
+	Generation uint32 `json:"generation,omitempty"`
+}
+
+// OutputContextResult is the connector and generation the host currently holds.
+type OutputContextResult struct {
+	Output     string `json:"output"`
+	Generation uint32 `json:"generation"`
 }
 
 // PanelResult names the view the host opened, so the plugin can close it.
@@ -334,9 +356,17 @@ const (
 // NotifyParams sends one notification through the shell's own client, so a
 // plugin does not need session-bus access of its own to be visible.
 type NotifyParams struct {
-	Summary string  `json:"summary"`
-	Body    string  `json:"body,omitempty"`
-	Urgency Urgency `json:"urgency,omitempty"`
+	Summary   string         `json:"summary"`
+	Body      string         `json:"body,omitempty"`
+	Urgency   Urgency        `json:"urgency,omitempty"`
+	Actions   []NotifyAction `json:"actions,omitempty"`
+	TimeoutMS int32          `json:"timeout_ms,omitempty"`
+}
+
+// NotifyAction is one bounded notification button.
+type NotifyAction struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
 }
 
 // NotifyResult carries the served notification identity.

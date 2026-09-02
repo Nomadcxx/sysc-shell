@@ -100,6 +100,12 @@ func HelperServe(args []string) int {
 		return 0
 	}
 
+	if mode == "notify-then-snapshot" {
+		params, _ := json.Marshal(v1.NotifyParams{Summary: "saved"})
+		_ = out.Encode(&v1.HostCall{ID: "n1", Call: v1.CallNotify, Params: params})
+		_ = out.Encode(helperSnapshot("late", v1.ViewBar))
+	}
+
 	for {
 		msg, err := in.Decode()
 		if err != nil {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -411,4 +412,68 @@ func TestPluginPanelTextChangeSubmitAndClose(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("inputs=%+v closed=%v", reg.plugins.lastInputs(), reg.plugins.closedViews())
+}
+
+func TestOutputContextBarEventIncludesOutput(t *testing.T) {
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	waitPluginText(t, reg.bars[1], "hello")
+	bar := reg.bars[1]
+	if err := bar.Configure(800, BarHeight, 120); err != nil {
+		t.Fatal(err)
+	}
+	action, x, y := pluginHitPoint(bar)
+	if action == "" {
+		t.Fatal("plugin button was not arranged")
+	}
+	bar.Handle(wayland.Event{Kind: wayland.EventPointerEnter, X: x, Y: y})
+	bar.Handle(wayland.Event{Kind: wayland.EventPointerPress, Button: 272, X: x, Y: y})
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(reg.plugins.lastInputs()) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	got := reg.plugins.lastInputs()
+	if len(got) == 0 {
+		t.Fatal("no bar event")
+	}
+	if got[0].Output != "DP-1" || got[0].Generation != 1 {
+		t.Fatalf("event output=%q generation=%d", got[0].Output, got[0].Generation)
+	}
+}
+
+func TestOutputContextGlobalCommandUsesFocusedOutput(t *testing.T) {
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{1: "DP-1", 2: "HDMI-1"})
+	waitPluginText(t, reg.bars[1], "hello")
+	reg.UpdateNiri(niri.Snapshot{FocusedOutput: "HDMI-1"})
+	got, err := reg.plugins.outputContext(v1.OutputContextParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Output != "HDMI-1" || got.Generation != 2 {
+		t.Fatalf("focused context = %+v", got)
+	}
+}
+
+func TestOutputContextStaleGenerationFailsByName(t *testing.T) {
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	waitPluginText(t, reg.bars[1], "hello")
+	_, err := reg.plugins.outputContext(v1.OutputContextParams{Output: "DP-1", Generation: 99})
+	if err == nil || !strings.Contains(err.Error(), "DP-1") {
+		t.Fatalf("stale error = %v", err)
+	}
+}
+
+func TestOutputContextRejectsUndeclaredConnector(t *testing.T) {
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	waitPluginText(t, reg.bars[1], "hello")
+	_, err := reg.plugins.outputContext(v1.OutputContextParams{Output: "HDMI-1"})
+	if err == nil || !strings.Contains(err.Error(), "HDMI-1") {
+		t.Fatalf("undeclared error = %v", err)
+	}
 }

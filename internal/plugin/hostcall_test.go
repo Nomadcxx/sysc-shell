@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -220,6 +221,86 @@ func TestHostCallFailureReplyKeepsTheCallID(t *testing.T) {
 	})
 	if reply.OK || reply.ID != "n1" || reply.Error == "" {
 		t.Fatalf("failure reply = %+v", reply)
+	}
+}
+
+func TestHostCallNotifyBoundsFields(t *testing.T) {
+	t.Parallel()
+	var got v1.NotifyParams
+	d := NewDispatcher(CallEnv{
+		PluginID: "org.sysc.timer",
+		Granted:  []Capability{CapNotifications},
+		Notify: func(_ context.Context, p v1.NotifyParams) (v1.NotifyResult, error) {
+			got = p
+			return v1.NotifyResult{ID: 1}, nil
+		},
+	})
+	ok := d.Handle(context.Background(), &v1.HostCall{
+		ID: "1", Call: v1.CallNotify,
+		Params: jsonOf(t, v1.NotifyParams{
+			Summary:   "saved",
+			Body:      "clip.mp4",
+			Actions:   []v1.NotifyAction{{Key: "open", Label: "Open"}},
+			TimeoutMS: 4000,
+		}),
+	})
+	if !ok.OK || got.TimeoutMS != 4000 || len(got.Actions) != 1 {
+		t.Fatalf("bounded notify = %+v params=%+v", ok, got)
+	}
+	huge := d.Handle(context.Background(), &v1.HostCall{
+		ID: "2", Call: v1.CallNotify,
+		Params: jsonOf(t, v1.NotifyParams{Summary: string(make([]byte, maxNotifyText+1))}),
+	})
+	if huge.OK || huge.Error == "" {
+		t.Fatalf("oversize summary = %+v", huge)
+	}
+	tooMany := d.Handle(context.Background(), &v1.HostCall{
+		ID: "3", Call: v1.CallNotify,
+		Params: jsonOf(t, v1.NotifyParams{Summary: "x", Actions: make([]v1.NotifyAction, maxNotifyActions+1)}),
+	})
+	if tooMany.OK {
+		t.Fatal("too many actions were accepted")
+	}
+}
+
+func TestHostCallOutputContext(t *testing.T) {
+	t.Parallel()
+	d := NewDispatcher(CallEnv{
+		PluginID: "org.sysc.timer",
+		OutputContext: func(_ context.Context, p v1.OutputContextParams) (v1.OutputContextResult, error) {
+			if p.Output == "HDMI-1" {
+				return v1.OutputContextResult{}, errors.New("output HDMI-1 is not declared")
+			}
+			if p.Generation == 99 {
+				return v1.OutputContextResult{}, errors.New("output DP-1 generation is stale")
+			}
+			if p.Output == "" {
+				return v1.OutputContextResult{Output: "HDMI-1", Generation: 2}, nil
+			}
+			return v1.OutputContextResult{Output: p.Output, Generation: 1}, nil
+		},
+	})
+	focused := d.Handle(context.Background(), &v1.HostCall{ID: "1", Call: v1.CallOutputContext})
+	if !focused.OK {
+		t.Fatalf("focused = %+v", focused)
+	}
+	var result v1.OutputContextResult
+	if err := json.Unmarshal(focused.Result, &result); err != nil || result.Output != "HDMI-1" {
+		t.Fatalf("focused result = %s err=%v", focused.Result, err)
+	}
+	stale := d.Handle(context.Background(), &v1.HostCall{
+		ID: "2", Call: v1.CallOutputContext,
+		Params: jsonOf(t, v1.OutputContextParams{Output: "DP-1", Generation: 99}),
+	})
+	if stale.OK || stale.Error == "" || !strings.Contains(stale.Error, "DP-1") {
+		t.Fatalf("stale = %+v", stale)
+	}
+	unknown := d.Handle(context.Background(), &v1.HostCall{
+		ID: "3", Call: v1.CallOutputContext,
+		Params: jsonOf(t, v1.OutputContextParams{Output: "HDMI-1"}),
+	})
+	if unknown.OK || !strings.Contains(unknown.Error, "HDMI-1") {
+		t.Fatalf("undeclared = %+v", unknown)
 	}
 }
 

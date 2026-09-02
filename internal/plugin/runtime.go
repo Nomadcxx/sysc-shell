@@ -97,6 +97,7 @@ type Runtime struct {
 	starts  int
 	stderr  []byte
 	session *Session
+	disp    *Dispatcher
 	budget  *restartBudget
 	// generation rises on every deliberate stop, so a supervise goroutine
 	// belonging to a previous life cannot restart a plugin the user disabled.
@@ -120,6 +121,14 @@ func NewRuntime(c Candidate, opts RuntimeOptions) *Runtime {
 // read loop has to put what it reads somewhere, and delivering it is the only
 // alternative to discarding a view the plugin meant the user to see.
 func (r *Runtime) Messages() <-chan v1.Message { return r.messages }
+
+// SetCalls attaches the host-call dispatcher. Calls are answered off the
+// shell's message pump so a slow notify cannot stall view updates.
+func (r *Runtime) SetCalls(d *Dispatcher) {
+	r.mu.Lock()
+	r.disp = d
+	r.mu.Unlock()
+}
 
 // Send writes one host message to the live session.
 func (r *Runtime) Send(m v1.Message) error {
@@ -265,6 +274,15 @@ func (r *Runtime) supervise(ctx context.Context, sess *Session, generation int) 
 		if err != nil {
 			break
 		}
+		if call, ok := msg.(*v1.HostCall); ok {
+			r.mu.Lock()
+			d := r.disp
+			r.mu.Unlock()
+			if d != nil {
+				go r.answer(ctx, sess, d, call)
+				continue
+			}
+		}
 		select {
 		case r.messages <- msg:
 		case <-ctx.Done():
@@ -317,6 +335,17 @@ func (r *Runtime) Stop() {
 		r.mu.Unlock()
 	}
 	r.setState(StateDisabled, "")
+}
+
+func (r *Runtime) answer(ctx context.Context, sess *Session, d *Dispatcher, call *v1.HostCall) {
+	reply := d.Handle(ctx, call)
+	r.mu.Lock()
+	live := r.session == sess && !r.stopping
+	r.mu.Unlock()
+	if !live {
+		return
+	}
+	_ = sess.Send(&reply)
 }
 
 // markFailed records a fault the runtime did not produce itself.

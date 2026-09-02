@@ -230,3 +230,37 @@ func TestRuntimeExposesStderrFromAFailedStart(t *testing.T) {
 		t.Fatal("the manager has no stderr to show")
 	}
 }
+
+func TestNotificationReplyDoesNotBlockTheShell(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	d := NewDispatcher(CallEnv{
+		PluginID: "org.sysc.timer",
+		Granted:  []Capability{CapNotifications},
+		Notify: func(context.Context, v1.NotifyParams) (v1.NotifyResult, error) {
+			close(started)
+			<-release
+			return v1.NotifyResult{ID: 1}, nil
+		},
+	})
+	r := NewRuntime(Candidate{Manifest: installHelper(t, "notify-then-snapshot")}, helperOptions())
+	r.SetCalls(d)
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer r.Stop()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("notify never started")
+	}
+	select {
+	case msg := <-r.Messages():
+		if _, ok := msg.(*v1.ViewSnapshot); !ok {
+			t.Fatalf("got %T, want a snapshot while notify is still in flight", msg)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("snapshot blocked behind notify")
+	}
+	close(release)
+}

@@ -27,6 +27,7 @@ type CallEnv struct {
 	OpenPanel      func(context.Context, v1.PanelParams) (v1.PanelResult, error)
 	ClosePanel     func(context.Context, v1.PanelParams) error
 	Notify         func(context.Context, v1.NotifyParams) (v1.NotifyResult, error)
+	OutputContext  func(context.Context, v1.OutputContextParams) (v1.OutputContextResult, error)
 	MaxPending     int
 	CallTimeout    time.Duration
 }
@@ -141,6 +142,8 @@ func (d *Dispatcher) dispatch(ctx context.Context, call *v1.HostCall) v1.HostRep
 			return failReply(call.ID, "capability notifications is not granted")
 		}
 		return d.notify(ctx, call)
+	case v1.CallOutputContext:
+		return d.output(ctx, call)
 	default:
 		return failReply(call.ID, fmt.Sprintf("unknown call %q", call.Call))
 	}
@@ -205,6 +208,9 @@ func (d *Dispatcher) notify(ctx context.Context, call *v1.HostCall) v1.HostReply
 	if err := decodeParams(call.Params, &p); err != nil {
 		return failReply(call.ID, err.Error())
 	}
+	if err := boundNotify(&p); err != nil {
+		return failReply(call.ID, err.Error())
+	}
 	if d.env.Notify == nil {
 		return failReply(call.ID, "notifications are not available")
 	}
@@ -213,6 +219,47 @@ func (d *Dispatcher) notify(ctx context.Context, call *v1.HostCall) v1.HostReply
 		return failReply(call.ID, err.Error())
 	}
 	return okReply(call.ID, result)
+}
+
+func (d *Dispatcher) output(ctx context.Context, call *v1.HostCall) v1.HostReply {
+	var p v1.OutputContextParams
+	if err := decodeParams(call.Params, &p); err != nil {
+		return failReply(call.ID, err.Error())
+	}
+	if d.env.OutputContext == nil {
+		return failReply(call.ID, "output context is not available")
+	}
+	result, err := d.env.OutputContext(ctx, p)
+	if err != nil {
+		return failReply(call.ID, err.Error())
+	}
+	return okReply(call.ID, result)
+}
+
+const (
+	maxNotifyText    = 16 << 10
+	maxNotifyActions = 6
+)
+
+func boundNotify(p *v1.NotifyParams) error {
+	if len(p.Summary) > maxNotifyText {
+		return fmt.Errorf("notify summary exceeds %d bytes", maxNotifyText)
+	}
+	if len(p.Body) > maxNotifyText {
+		return fmt.Errorf("notify body exceeds %d bytes", maxNotifyText)
+	}
+	if len(p.Actions) > maxNotifyActions {
+		return fmt.Errorf("notify actions exceed %d", maxNotifyActions)
+	}
+	for _, a := range p.Actions {
+		if len(a.Key)+len(a.Label) > maxNotifyText {
+			return fmt.Errorf("notify action exceeds %d bytes", maxNotifyText)
+		}
+	}
+	if p.TimeoutMS < 0 {
+		return fmt.Errorf("notify timeout %d is negative", p.TimeoutMS)
+	}
+	return nil
 }
 
 func decodeParams(raw json.RawMessage, dest any) error {
