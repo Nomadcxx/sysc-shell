@@ -408,3 +408,20 @@ func TestResyncEmittedOnceUntilSnapshot(t *testing.T) {
 		t.Fatalf("after snapshot: err=%v resync=%v", err, again)
 	}
 }
+
+func TestConvertCopiesEditorWireFields(t *testing.T) {
+	t.Parallel()
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{{
+		Kind: v1.KindTextInput, ID: "n", Key: "note", Name: "Note", Role: "textbox",
+		Text: "hi", Multiline: true, SubmitOnEnter: true, Reseed: 3,
+		Events: []v1.EventKind{v1.EventChange},
+	}}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	field := got.Children[0]
+	if !field.Multiline || !field.SubmitOnEnter || field.Reseed != 3 || field.Text != "hi" {
+		t.Fatalf("editor fields = %+v", field)
+	}
+}

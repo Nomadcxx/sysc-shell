@@ -150,6 +150,12 @@ type Node struct {
 	// interactive node is a mistake, not a read-only element.
 	Events []EventKind `json:"events,omitempty"`
 
+	// Multiline and SubmitOnEnter apply only to text inputs. The host owns the
+	// live buffer; Reseed is the generation the plugin uses to replace it.
+	Multiline     bool   `json:"multiline,omitempty"`
+	SubmitOnEnter bool   `json:"submit_on_enter,omitempty"`
+	Reseed        uint64 `json:"reseed,omitempty"`
+
 	Children []*Node `json:"children,omitempty"`
 }
 
@@ -338,6 +344,9 @@ func (v *validator) vocabulary(n *Node, path string) error {
 	}
 	if n.Kind == KindDragSource && n.Name == "" {
 		return fmt.Errorf("%s: a drag handle needs an accessible name", path)
+	}
+	if n.Kind != KindTextInput && (n.Multiline || n.SubmitOnEnter || n.Reseed != 0) {
+		return fmt.Errorf("%s: %s cannot carry editor flags", path, n.Kind)
 	}
 	return nil
 }

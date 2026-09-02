@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"encoding/json"
 	"math"
 	"strings"
 	"testing"
@@ -400,5 +401,35 @@ func TestValidateRejectsListAndDragOutsideAPanel(t *testing.T) {
 	}}}
 	if err := Validate(unnamed, ViewPanel); err == nil {
 		t.Fatal("a nameless drag handle was accepted")
+	}
+}
+
+func TestValidateKeepsEditorFlagsOnTextInput(t *testing.T) {
+	t.Parallel()
+	ok := &Node{Kind: KindColumn, Children: []*Node{{
+		Kind: KindTextInput, ID: "n", Key: "note", Name: "Note", Role: "textbox",
+		Multiline: true, SubmitOnEnter: true, Reseed: 2,
+		Events: []EventKind{EventChange},
+	}}}
+	if err := Validate(ok, ViewPanel); err != nil {
+		t.Fatalf("text input rejected editor flags: %v", err)
+	}
+	bad := &Node{Kind: KindColumn, Children: []*Node{{
+		Kind: KindButton, ID: "b", Name: "Go", Role: "button",
+		Multiline: true, Events: []EventKind{EventActivate},
+	}}}
+	if err := Validate(bad, ViewPanel); err == nil {
+		t.Fatal("a button accepted multiline")
+	}
+}
+
+func TestInputEventJSONOmitsIME(t *testing.T) {
+	t.Parallel()
+	raw, err := json.Marshal(&InputEvent{Node: "n", Event: EventChange, Text: "typed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "preedit") {
+		t.Fatalf("IME leaked onto the wire: %s", raw)
 	}
 }

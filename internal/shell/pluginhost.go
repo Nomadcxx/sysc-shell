@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
@@ -47,14 +48,16 @@ type pluginHost struct {
 	stop context.CancelFunc
 	prep *plugin.Preparer
 
-	mu      sync.Mutex
-	slots   map[string]*pluginSlot
-	views   map[string]*hostedView
-	nextID  uint64
-	inputs  []v1.InputEvent
-	closed  []string
-	panel   *hostedView
-	catalog plugin.Catalog
+	mu           sync.Mutex
+	slots        map[string]*pluginSlot
+	views        map[string]*hostedView
+	nextID       uint64
+	inputs       []v1.InputEvent
+	textOut      plugin.TextOut
+	flushPending bool
+	closed       []string
+	panel        *hostedView
+	catalog      plugin.Catalog
 }
 
 func pluginMeasure(s string, _ bool) (int, int) { return len(s) * 8, 16 }
@@ -615,20 +618,57 @@ func (h *pluginHost) deliver(hit pluginHit, event v1.EventKind, button v1.Pointe
 	if ok {
 		slot = h.slots[v.Plugin]
 	}
-	var ev v1.InputEvent
+	var toSend []v1.InputEvent
 	if ok {
-		ev = v1.InputEvent{
+		ev := v1.InputEvent{
 			ViewID: hit.ViewID, Revision: v.Revision, Node: hit.Node,
 			Event: event, Button: button, Text: text, Output: v.Output,
 		}
-		h.inputs = append(h.inputs, ev)
+		toSend = h.textOut.Push(ev)
+		h.inputs = append(h.inputs, toSend...)
+		if event == v1.EventChange && len(toSend) == 0 {
+			h.scheduleTextFlushLocked()
+		}
 	}
 	h.mu.Unlock()
 	if !ok || slot == nil {
 		return false
 	}
-	_ = slot.rt.Send(&ev)
+	for i := range toSend {
+		_ = slot.rt.Send(&toSend[i])
+	}
 	return true
+}
+
+func (h *pluginHost) scheduleTextFlushLocked() {
+	if h.flushPending {
+		return
+	}
+	h.flushPending = true
+	time.AfterFunc(time.Second/30, h.flushText)
+}
+
+func (h *pluginHost) flushText() {
+	h.mu.Lock()
+	h.flushPending = false
+	pending := h.textOut.Flush()
+	h.inputs = append(h.inputs, pending...)
+	slots := make([]*pluginSlot, 0, len(pending))
+	for _, ev := range pending {
+		v := h.views[ev.ViewID]
+		if v == nil {
+			slots = append(slots, nil)
+			continue
+		}
+		slots = append(slots, h.slots[v.Plugin])
+	}
+	h.mu.Unlock()
+	for i, ev := range pending {
+		if slots[i] == nil {
+			continue
+		}
+		_ = slots[i].rt.Send(&ev)
+	}
 }
 
 func (h *pluginHost) lastInputs() []v1.InputEvent {

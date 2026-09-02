@@ -253,7 +253,11 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		out.Kind = ui.KindTextField
 		out.Text = n.Text
 		out.Action = n.ID
+		out.Key = n.Key
 		out.Focusable = true
+		out.Multiline = n.Multiline
+		out.SubmitOnEnter = n.SubmitOnEnter
+		out.Reseed = n.Reseed
 	case v1.KindList:
 		out.Kind = ui.KindScroll
 		if n.Height > 0 {

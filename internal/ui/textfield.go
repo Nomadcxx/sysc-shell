@@ -117,6 +117,7 @@ func (f *Field) Node(name string) *Node {
 	return &Node{
 		Kind: KindTextField, Text: f.Text, Preedit: f.PreeditText, Cursor: f.Cursor,
 		Focusable: true, Name: name, Role: "textbox", Multiline: f.Multiline,
+		SubmitOnEnter: f.SubmitOnEnter,
 	}
 }
 

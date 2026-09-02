@@ -400,3 +400,49 @@ func TestHotCloseDuringDragCancels(t *testing.T) {
 		t.Fatal("hot close left the drag active")
 	}
 }
+
+func TestOverlayEditorsPreservesBufferUntilReseed(t *testing.T) {
+	t.Parallel()
+	eds := map[string]*retainedEditor{}
+	first := editorColumn("disk", 1)
+	overlayEditors(first, eds)
+	eds["note"].field.Text = "typed"
+
+	overlayEditors(first, eds)
+	if first.Children[0].Text != "typed" {
+		t.Fatalf("same-key snapshot overwrote the buffer: %q", first.Children[0].Text)
+	}
+
+	sibling := &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{
+		{Kind: ui.KindTextField, Key: "note", Action: "body", Text: "disk", Reseed: 1},
+		{Kind: ui.KindText, Text: "count"},
+	}}
+	overlayEditors(sibling, eds)
+	if sibling.Children[0].Text != "typed" {
+		t.Fatalf("sibling patch overwrote the buffer: %q", sibling.Children[0].Text)
+	}
+
+	reseed := editorColumn("from-disk", 2)
+	overlayEditors(reseed, eds)
+	if reseed.Children[0].Text != "from-disk" {
+		t.Fatalf("reseed did not replace: %q", reseed.Children[0].Text)
+	}
+
+	stale := editorColumn("stale", 1)
+	overlayEditors(stale, eds)
+	if stale.Children[0].Text != "from-disk" {
+		t.Fatalf("stale reseed overwrote: %q", stale.Children[0].Text)
+	}
+
+	overlayEditors(&ui.Node{Kind: ui.KindColumn}, eds)
+	if len(eds) != 0 {
+		t.Fatalf("empty tree left %d editors", len(eds))
+	}
+}
+
+func editorColumn(text string, reseed uint64) *ui.Node {
+	return &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{{
+		Kind: ui.KindTextField, Key: "note", Action: "body", Text: text, Reseed: reseed,
+		Name: "Note", Role: "textbox",
+	}}}
+}

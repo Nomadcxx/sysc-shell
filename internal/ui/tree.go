@@ -130,14 +130,16 @@ type Node struct {
 	Children []*Node
 
 	// Name and Role are required on every Focusable node.
-	Focusable bool
-	Name      string
-	Role      string
-	DragType  string
-	Payload   string
-	Accept    []string
-	Multiline bool
-	Reseed    uint64
+	Focusable     bool
+	Name          string
+	Role          string
+	DragType      string
+	Payload       string
+	Accept        []string
+	Key           string
+	Multiline     bool
+	SubmitOnEnter bool
+	Reseed        uint64
 }
 
 func (n *Node) Active() int {

@@ -88,6 +88,7 @@ type PanelHost struct {
 	section        string
 	search         *ui.Field
 	fields         map[string]*ui.Field
+	editors        map[string]*retainedEditor
 
 	launcherResults []launcher.Result
 	launcherSel     int
@@ -816,6 +817,21 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 		}
 		h.search.SyncFrom(n)
 		f = h.search
+	} else if _, ok := parsePluginAction(n.Action); ok {
+		k := editorKey(n)
+		if h.editors == nil {
+			h.editors = map[string]*retainedEditor{}
+		}
+		slot := h.editors[k]
+		if slot == nil {
+			slot = &retainedEditor{field: &ui.Field{
+				Text: n.Text, PreeditText: n.Preedit, Cursor: n.Cursor,
+				Multiline: n.Multiline, SubmitOnEnter: n.SubmitOnEnter,
+			}, reseed: n.Reseed}
+			h.editors[k] = slot
+		}
+		slot.field.SyncFrom(n)
+		f = slot.field
 	} else {
 		path, _ := strings.CutPrefix(n.Action, "set:")
 		if h.fields == nil {
@@ -957,6 +973,12 @@ func (h *PanelHost) afterFocusChange(r *Registry) {
 
 func (r *Registry) rebuildPanel(h *PanelHost) {
 	h.root = r.panelTree(h)
+	if h.id == PanelPlugin {
+		if h.editors == nil {
+			h.editors = map[string]*retainedEditor{}
+		}
+		overlayEditors(h.root, h.editors)
+	}
 	h.focus = ui.Focusables(h.root)
 	h.roving.Count = len(h.focus)
 	if h.logicalW > 0 {
@@ -1123,6 +1145,7 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 	r.sendAux(wayland.AuxRequest{Output: h.output, ID: shieldSurfaceID(id)})
 	releaseAll(h.leases)
 	h.leases = nil
+	h.editors = nil
 }
 
 func (r *Registry) sendAux(req wayland.AuxRequest) {
@@ -1158,5 +1181,62 @@ func (r *Registry) closeAllPanelsLocked() {
 	for _, id := range ids {
 		r.panels.Close(id)
 		r.teardownPanelLocked(id)
+	}
+}
+
+type retainedEditor struct {
+	field  *ui.Field
+	reseed uint64
+}
+
+func editorKey(n *ui.Node) string {
+	if n == nil {
+		return ""
+	}
+	if n.Key != "" {
+		return n.Key
+	}
+	return n.Action
+}
+
+func overlayEditors(root *ui.Node, eds map[string]*retainedEditor) {
+	if eds == nil {
+		return
+	}
+	seen := map[string]bool{}
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n.Kind == ui.KindTextField {
+			k := editorKey(n)
+			if k != "" {
+				seen[k] = true
+				slot := eds[k]
+				if slot == nil || n.Reseed > slot.reseed {
+					eds[k] = &retainedEditor{
+						field: &ui.Field{
+							Text: n.Text, PreeditText: n.Preedit, Cursor: n.Cursor,
+							Multiline: n.Multiline, SubmitOnEnter: n.SubmitOnEnter,
+						},
+						reseed: n.Reseed,
+					}
+				} else {
+					slot.field.Multiline = n.Multiline
+					slot.field.SubmitOnEnter = n.SubmitOnEnter
+					slot.field.SyncTo(n)
+				}
+			}
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+	for k := range eds {
+		if !seen[k] {
+			delete(eds, k)
+		}
 	}
 }
