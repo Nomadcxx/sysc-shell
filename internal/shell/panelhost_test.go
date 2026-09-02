@@ -541,6 +541,72 @@ func TestOpeningNotificationsSetsCenterOpenAndMarksSeen(t *testing.T) {
 	}
 }
 
+func TestNotificationsTabSwitchGrowsSurfaceHeight(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	reg.applyNotify(snap(1))
+	older := time.Unix(1_756_000_000, 0)
+	for i := uint32(1); i <= 12; i++ {
+		reg.applyNotify(delta(1, uint64(i+1), protocol.Delta{Kind: protocol.DeltaHistoryAdded,
+			History: ptrH(historyEntry(i, "mail", "Mail", "old", older.Add(time.Duration(i)*time.Second), true))}))
+	}
+	if err := reg.OpenPanel(PanelNotifications, 7, Trigger{
+		BarEdge: "top", BarZone: 44, OutW: 1536, OutH: 1440,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reqs := drainAux(t, reg, 2)
+	opened := reqs[1].Open.Height
+	h := reg.panelHosts[PanelNotifications]
+	if h.place.Panel.H != int(opened) {
+		t.Fatalf("place H %d, aux %d", h.place.Panel.H, opened)
+	}
+
+	found := false
+	for i, n := range h.focus {
+		if n.Action == "notify:center:tab:1" {
+			h.roving.Set(i)
+			h.activate(reg)
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("history tab missing")
+	}
+	if h.place.Panel.H <= int(opened) {
+		t.Fatalf("place H %d did not grow from %d", h.place.Panel.H, opened)
+	}
+	resized := drainAux(t, reg, 1)
+	if resized[0].Open == nil || resized[0].Open.Height <= opened {
+		t.Fatalf("aux after tab switch = %+v, opened %d", resized[0].Open, opened)
+	}
+}
+
+func TestNotificationsRebuildOnNotifyDelta(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	reg.applyNotify(snap(1))
+	if err := reg.OpenPanel(PanelNotifications, 7, Trigger{
+		BarEdge: "top", BarZone: 44, OutW: 1536, OutH: 1440,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaAdded, Notification: ptr(note(9, "incoming")),
+		Lifetime: &protocol.Lifetime{ID: 9, DurationMS: 5000, RemainingMS: 5000, Running: true}}))
+
+	h := reg.panelHosts[PanelNotifications]
+	cur := buttonByAction(h.root, "notify:center:tab:0")
+	if cur == nil || cur.Text != "Current (1)" {
+		t.Fatalf("current tab after delta = %+v", cur)
+	}
+	if !containsText(h.root, "incoming") {
+		t.Fatalf("tree after delta = %v", texts(h.root))
+	}
+}
+
 func TestTogglePanelByNamePowerOpensSession(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)

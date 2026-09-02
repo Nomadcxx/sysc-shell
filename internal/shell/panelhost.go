@@ -393,10 +393,10 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	h.roving = ui.Roving{Count: len(h.focus)}
 	if id == PanelMonitor || id == PanelNotifications {
 		_ = h.ensureText()
-		h.place.Panel.H = monitorSurfaceHeight(h.root, h.place.Panel.W, h.theme.Radius, h.measureText())
 		if id == PanelNotifications {
-			maxH := min(h.place.Output.H*8/10, 648)
-			h.place.Panel.H = max(300, min(h.place.Panel.H, maxH))
+			h.place.Panel.H = notificationsSurfaceHeight(h)
+		} else {
+			h.place.Panel.H = monitorSurfaceHeight(h.root, h.place.Panel.W, h.theme.Radius, h.measureText())
 		}
 	}
 	w, hgt := h.place.FittedSize()
@@ -1176,6 +1176,7 @@ func (h *PanelHost) afterFocusChange(r *Registry) {
 }
 
 func (r *Registry) rebuildPanel(h *PanelHost) {
+	idx := h.roving.Index()
 	h.root = r.panelTree(h)
 	if h.id == PanelPlugin {
 		if h.editors == nil {
@@ -1185,6 +1186,10 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 	}
 	h.focus = ui.Focusables(h.root)
 	h.roving.Count = len(h.focus)
+	h.roving.Set(idx)
+	if h.id == PanelNotifications {
+		r.syncNotificationsSize(h)
+	}
 	if h.logicalW > 0 {
 		_ = h.configure(h.logicalW, h.logicalH, h.scale120)
 	}
@@ -1260,6 +1265,27 @@ func monitorSurfaceHeight(root *ui.Node, width, radius int, measure ui.MeasureTe
 		radius = 0
 	}
 	return ht + 2*radius
+}
+
+func notificationsSurfaceHeight(h *PanelHost) int {
+	ht := monitorSurfaceHeight(h.root, h.place.Panel.W, h.theme.Radius, h.measureText())
+	maxH := min(h.place.Output.H*8/10, 648)
+	return max(300, min(ht, maxH))
+}
+
+func (r *Registry) syncNotificationsSize(h *PanelHost) {
+	_ = h.ensureText()
+	oldH := h.place.Panel.H
+	h.place.Panel.H = notificationsSurfaceHeight(h)
+	w, hgt := h.place.FittedSize()
+	h.place.Panel.W, h.place.Panel.H = w, hgt
+	if hgt == oldH {
+		return
+	}
+	if h.logicalW > 0 {
+		h.logicalH = hgt
+	}
+	r.sendAux(wayland.AuxRequest{Output: h.output, Open: r.panelSpec(h, h.place.Margins())})
 }
 
 func (h *PanelHost) applySetting(r *Registry, n *ui.Node) {

@@ -141,9 +141,18 @@ func (s *notifyState) historyCount() int {
 func (r *Registry) applyNotify(m notifyclient.Message) {
 	r.notify.applyNotify(m)
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.toasts != nil {
 		r.toasts.recompute()
+	}
+	var out uint32
+	var open bool
+	if h := r.panelHosts[PanelNotifications]; h != nil {
+		r.rebuildPanel(h)
+		out, open = h.output, true
+	}
+	r.mu.Unlock()
+	if open {
+		r.publishSurface(out, panelSurfaceID(PanelNotifications))
 	}
 }
 func (r *Registry) notifyActiveIDs() []uint32 { return r.notify.activeIDs() }
