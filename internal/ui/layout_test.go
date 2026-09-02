@@ -497,3 +497,46 @@ func TestLayoutClampsOverflowingChildToRemainingWidth(t *testing.T) {
 		t.Fatalf("value width %d was not clamped below natural %d", value.Bounds.W, natural)
 	}
 }
+
+// TestMeasureSegmentedFitsItsOwnMeasurement pins the agreement between the two
+// halves of the segmented control: layoutSegmented gives every segment the same
+// width, so measureSegmented has to ask for the widest segment repeated. It
+// summed the natural widths instead, which under-measures as soon as the labels
+// differ -- the row then failed to lay out inside the very box it requested.
+func TestMeasureSegmentedFitsItsOwnMeasurement(t *testing.T) {
+	t.Parallel()
+
+	measure := func(s string, tabular bool) (int, int) { return 10 * len(s), 20 }
+	segment := func(label string) *Node {
+		return &Node{
+			Kind: KindButton, Height: 40, Padding: 4,
+			Children: []*Node{{Kind: KindText, Text: label}},
+		}
+	}
+	// Deliberately uneven: "Performance" is far wider than "Eco".
+	row := &Node{
+		Kind: KindSegmented, Gap: 2, Height: 40,
+		Children: []*Node{segment("Eco"), segment("Performance"), segment("Auto")},
+	}
+
+	w, h, err := measureSegmented(row, measure)
+	if err != nil {
+		t.Fatalf("measureSegmented: %v", err)
+	}
+
+	// The widest segment is "Performance": 110 + 2*4 padding = 118.
+	if want := 118*3 + 2*2; w != want {
+		t.Errorf("measured width = %d, want the widest segment repeated (%d)", w, want)
+	}
+
+	// Laying the row out at exactly its measured size must succeed.
+	root := &Node{Kind: KindRow, Children: []*Node{row}}
+	if err := Layout(root, Rect{W: w, H: h}, measure); err != nil {
+		t.Fatalf("laying out at the measured %dx%d failed: %v", w, h, err)
+	}
+	for i, seg := range row.Children {
+		if seg.Bounds.W < 118 {
+			t.Errorf("segment %d got width %d, too narrow for the widest label", i, seg.Bounds.W)
+		}
+	}
+}
