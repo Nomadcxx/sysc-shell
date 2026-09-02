@@ -666,7 +666,7 @@ func (h *pluginHost) refreshPanel() {
 	h.r.publishSurface(host.output, panelSurfaceID(PanelPlugin))
 }
 
-func (h *pluginHost) panelTree() *ui.Node {
+func (h *pluginHost) panelTree(host *PanelHost) *ui.Node {
 	h.mu.Lock()
 	v := h.panel
 	if v == nil {
@@ -694,7 +694,7 @@ func (h *pluginHost) panelTree() *ui.Node {
 	if !include {
 		return root
 	}
-	settings := pluginPanelSettings(h.r, pluginID, schema)
+	settings := pluginPanelSettings(h.r, host, pluginID, schema)
 	return &ui.Node{Kind: ui.KindColumn, Gap: 8, Children: append([]*ui.Node{root}, settings...)}
 }
 

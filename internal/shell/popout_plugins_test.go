@@ -4,8 +4,128 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
+
+func f64(v float64) *float64 { return &v }
+
+func settingRowControl(row *ui.Node) *ui.Node {
+	if row == nil || len(row.Children) < 2 {
+		return nil
+	}
+	return row.Children[1]
+}
+
+func TestPluginSettingRowRendersSelectAsMenu(t *testing.T) {
+	h := &PanelHost{}
+	s := plugin.Setting{
+		Key: "video_codec", Type: plugin.SettingSelect, Label: "Video codec", Default: "h264",
+		Options: []plugin.SettingOption{{Value: "h264", Label: "H.264"}, {Value: "hevc", Label: "HEVC"}},
+	}
+	ctrl := settingRowControl(pluginSettingRow(nil, h, "org.sysc.screen-recorder", s))
+	if ctrl == nil || ctrl.Kind != ui.KindMenu {
+		t.Fatalf("select control = %+v, want KindMenu", ctrl)
+	}
+}
+
+func TestPluginSettingRowRendersIntAsSlider(t *testing.T) {
+	h := &PanelHost{}
+	s := plugin.Setting{
+		Key: "frame_rate", Type: plugin.SettingInt, Label: "Frame rate", Default: 60.0,
+		Min: f64(1), Max: f64(240),
+	}
+	ctrl := settingRowControl(pluginSettingRow(nil, h, "org.sysc.screen-recorder", s))
+	if ctrl == nil || ctrl.Kind != ui.KindSlider {
+		t.Fatalf("int control = %+v, want KindSlider", ctrl)
+	}
+	if ctrl.Min != 1 || ctrl.Max != 240 {
+		t.Fatalf("slider bounds = [%v,%v], want [1,240]", ctrl.Min, ctrl.Max)
+	}
+}
+
+func TestPluginSettingRowRendersFolderAsTextField(t *testing.T) {
+	h := &PanelHost{}
+	s := plugin.Setting{
+		Key: "directory", Type: plugin.SettingFolder, Label: "Output directory",
+		Default: "~/Videos/Recordings",
+	}
+	ctrl := settingRowControl(pluginSettingRow(nil, h, "org.sysc.screen-recorder", s))
+	if ctrl == nil || ctrl.Kind != ui.KindTextField {
+		t.Fatalf("folder control = %+v, want KindTextField", ctrl)
+	}
+}
+
+func TestPluginPanelSettingsVisibleWhenReplayDuration(t *testing.T) {
+	h := &PanelHost{}
+	schema := []plugin.Setting{
+		{Key: "replay_enabled", Type: plugin.SettingBool, Label: "Replay buffer", Default: false},
+		{Key: "replay_duration", Type: plugin.SettingInt, Label: "Replay duration (s)", Default: 30.0,
+			Min: f64(5), Max: f64(3600),
+			VisibleWhen: &plugin.VisibleWhen{Key: "replay_enabled", Equals: true}},
+		{Key: "hide_inactive", Type: plugin.SettingBool, Label: "Hide when idle", Default: false},
+	}
+	reg := &Registry{}
+	hidden := pluginPanelSettings(reg, h, "org.sysc.screen-recorder", schema)
+	if strings.Contains(treeText(&ui.Node{Kind: ui.KindColumn, Children: hidden}), "Replay duration") {
+		t.Fatal("replay_duration shown while replay_enabled is false")
+	}
+	reg.cfg.Plugins.Settings = map[string]map[string]any{
+		"org.sysc.screen-recorder": {"replay_enabled": true},
+	}
+	shown := pluginPanelSettings(reg, h, "org.sysc.screen-recorder", schema)
+	if !strings.Contains(treeText(&ui.Node{Kind: ui.KindColumn, Children: shown}), "Replay duration") {
+		t.Fatal("replay_duration absent while replay_enabled is true")
+	}
+}
+
+func TestPluginSettingApplyDecodedControlValue(t *testing.T) {
+	reg := bindManifestPlugin(t, "ok", "org.sysc.screen-recorder", testRecorderPanelManifest,
+		[]string{"org.sysc.screen-recorder"})
+	h := &PanelHost{id: PanelSettings, section: "Plugins", search: ui.NewField("")}
+
+	dir := &ui.Node{
+		Kind: ui.KindTextField, Text: "/tmp/recordings",
+		Action: "plugin-set:org.sysc.screen-recorder:directory",
+		Name:   "Output directory",
+	}
+	if !reg.handlePluginManager(h, dir) {
+		t.Fatal("directory plugin-set not handled")
+	}
+	got := reg.cfg.Plugins.Settings["org.sysc.screen-recorder"]["directory"]
+	if got != "/tmp/recordings" {
+		t.Fatalf("directory = %#v, want /tmp/recordings", got)
+	}
+
+	codec := &ui.Node{
+		Kind: ui.KindMenu, Text: "focused",
+		Action: "plugin-set:org.sysc.screen-recorder:video_source",
+		Name:   "Video source",
+	}
+	if !reg.handlePluginManager(h, codec) {
+		t.Fatal("select plugin-set not handled")
+	}
+	got = reg.cfg.Plugins.Settings["org.sysc.screen-recorder"]["video_source"]
+	if got != "focused" {
+		t.Fatalf("video_source = %#v, want focused", got)
+	}
+
+	before := reg.cfg.Plugins.Settings["org.sysc.screen-recorder"]["directory"]
+	bad := &ui.Node{
+		Kind: ui.KindSlider, Value: 9999, Min: 1, Max: 240,
+		Action: "plugin-set:org.sysc.screen-recorder:frame_rate",
+		Name:   "Frame rate",
+	}
+	if !reg.handlePluginManager(h, bad) {
+		t.Fatal("rejected slider should still be handled")
+	}
+	if reg.cfg.Plugins.Settings["org.sysc.screen-recorder"]["frame_rate"] != nil {
+		t.Fatalf("rejected frame_rate wrote %#v", reg.cfg.Plugins.Settings["org.sysc.screen-recorder"]["frame_rate"])
+	}
+	if reg.cfg.Plugins.Settings["org.sysc.screen-recorder"]["directory"] != before {
+		t.Fatal("rejected apply changed sibling settings")
+	}
+}
 
 func TestPluginsSectionShowsDirectoryAndCards(t *testing.T) {
 	reg := bindTestPlugin(t, "ok")
@@ -33,7 +153,7 @@ func TestPluginsSectionShowsDirectoryAndCards(t *testing.T) {
 func TestPluginManagerEnableDisableAndRetry(t *testing.T) {
 	reg := bindTestPlugin(t, "ok")
 	h := &PanelHost{id: PanelSettings, section: "Plugins", search: ui.NewField("")}
-	if !reg.handlePluginManager(h, "plugin-enable:org.sysc.timer") {
+	if !reg.handlePluginManager(h, &ui.Node{Action: "plugin-enable:org.sysc.timer"}) {
 		t.Fatal("disable toggle not handled")
 	}
 	for _, id := range reg.cfg.Plugins.Enabled {
@@ -41,7 +161,7 @@ func TestPluginManagerEnableDisableAndRetry(t *testing.T) {
 			t.Fatal("plugin still enabled after toggle")
 		}
 	}
-	if !reg.handlePluginManager(h, "plugin-enable:org.sysc.timer") {
+	if !reg.handlePluginManager(h, &ui.Node{Action: "plugin-enable:org.sysc.timer"}) {
 		t.Fatal("enable not handled")
 	}
 	found := false
@@ -53,10 +173,10 @@ func TestPluginManagerEnableDisableAndRetry(t *testing.T) {
 	if !found {
 		t.Fatal("plugin was not enabled")
 	}
-	if !reg.handlePluginManager(h, "plugin-retry:org.sysc.timer") {
+	if !reg.handlePluginManager(h, &ui.Node{Action: "plugin-retry:org.sysc.timer"}) {
 		t.Fatal("retry not handled")
 	}
-	if !reg.handlePluginManager(h, "plugin-rescan") {
+	if !reg.handlePluginManager(h, &ui.Node{Action: "plugin-rescan"}) {
 		t.Fatal("rescan not handled")
 	}
 }

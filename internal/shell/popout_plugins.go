@@ -2,6 +2,7 @@ package shell
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
@@ -18,9 +19,8 @@ func pluginsTree(r *Registry, h *PanelHost) *ui.Node {
 		return &ui.Node{Kind: ui.KindColumn, Gap: 8, Padding: 12, Children: rows}
 	}
 	for _, c := range r.plugins.discovered().Plugins {
-		rows = append(rows, pluginCard(r, c))
+		rows = append(rows, pluginCard(r, h, c))
 	}
-	_ = h
 	return &ui.Node{Kind: ui.KindColumn, Gap: 10, Padding: 12, Children: rows}
 }
 
@@ -35,7 +35,7 @@ func pluginDirectoryLabel(r *Registry) string {
 	return strings.Join(parts, " · ")
 }
 
-func pluginCard(r *Registry, c plugin.Candidate) *ui.Node {
+func pluginCard(r *Registry, h *PanelHost, c plugin.Candidate) *ui.Node {
 	id := c.Manifest.ID
 	if id == "" {
 		id = c.Dir
@@ -86,8 +86,12 @@ func pluginCard(r *Registry, c plugin.Candidate) *ui.Node {
 	if len(st.Stderr) > 0 {
 		children = append(children, &ui.Node{Kind: ui.KindText, Text: string(st.Stderr), Tone: ui.ToneError})
 	}
+	values := pluginSettingValues(r, id, c.Manifest.Settings)
 	for _, s := range c.Manifest.Settings {
-		children = append(children, pluginSettingRow(r, id, s))
+		if !plugin.SettingVisible(s, values) {
+			continue
+		}
+		children = append(children, pluginSettingRow(r, h, id, s))
 	}
 	return &ui.Node{Kind: ui.KindColumn, Gap: 6, Children: children}
 }
@@ -106,7 +110,7 @@ var pluginPanelSettingGroups = []struct {
 	{"Bar", []string{"hide_inactive"}},
 }
 
-func pluginPanelSettings(r *Registry, pluginID string, schema []plugin.Setting) []*ui.Node {
+func pluginPanelSettings(r *Registry, h *PanelHost, pluginID string, schema []plugin.Setting) []*ui.Node {
 	byKey := make(map[string]plugin.Setting, len(schema))
 	for _, s := range schema {
 		byKey[s.Key] = s
@@ -120,7 +124,7 @@ func pluginPanelSettings(r *Registry, pluginID string, schema []plugin.Setting) 
 			if !ok || !plugin.SettingVisible(s, values) {
 				continue
 			}
-			rows = append(rows, pluginSettingRow(r, pluginID, s))
+			rows = append(rows, pluginSettingRow(r, h, pluginID, s))
 		}
 		if len(rows) == 0 {
 			continue
@@ -149,7 +153,21 @@ func pluginSettingValues(r *Registry, pluginID string, schema []plugin.Setting) 
 	return out
 }
 
-func pluginSettingRow(r *Registry, pluginID string, s plugin.Setting) *ui.Node {
+// pluginSettingStoreKey is pluginID+"."+key for menus/fields shared by Settings
+// and the recorder panel. action is "plugin-set:"+pluginID+":"+key.
+func pluginSettingStoreKey(action string) string {
+	rest, ok := strings.CutPrefix(action, "plugin-set:")
+	if !ok {
+		return ""
+	}
+	pluginID, key, ok := strings.Cut(rest, ":")
+	if !ok || pluginID == "" || key == "" {
+		return ""
+	}
+	return pluginID + "." + key
+}
+
+func pluginSettingRow(r *Registry, h *PanelHost, pluginID string, s plugin.Setting) *ui.Node {
 	raw := ""
 	if r != nil && r.cfg.Plugins.Settings != nil {
 		if m := r.cfg.Plugins.Settings[pluginID]; m != nil {
@@ -162,24 +180,95 @@ func pluginSettingRow(r *Registry, pluginID string, s plugin.Setting) *ui.Node {
 		raw = fmt.Sprint(s.Default)
 	}
 	action := "plugin-set:" + pluginID + ":" + s.Key
-	control := &ui.Node{Kind: ui.KindText, Text: raw, Action: action, Name: s.Label, Role: "textbox", Focusable: true}
-	if s.Type == plugin.SettingBool {
-		v := 0.0
-		if raw == "true" {
-			v = 1
-		}
-		control = &ui.Node{Kind: ui.KindToggle, Value: v, Action: action, Name: s.Label, Role: "switch", Focusable: true}
-	}
+	store := pluginID + "." + s.Key
+	control := pluginSettingControl(h, s, raw, action, store)
 	return &ui.Node{Kind: ui.KindRow, Gap: 8, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: s.Label},
 		control,
 	}}
 }
 
-func (r *Registry) handlePluginManager(h *PanelHost, action string) bool {
-	if r.plugins == nil {
+func pluginSettingControl(h *PanelHost, s plugin.Setting, raw, action, store string) *ui.Node {
+	switch s.Type {
+	case plugin.SettingBool:
+		v := 0.0
+		if raw == "true" {
+			v = 1
+		}
+		return &ui.Node{
+			Kind: ui.KindToggle, Value: v, Action: action,
+			Focusable: true, Name: s.Label, Role: "switch",
+		}
+	case plugin.SettingInt:
+		n, _ := strconv.Atoi(raw)
+		min, max := 0.0, 100.0
+		if s.Min != nil {
+			min = *s.Min
+		}
+		if s.Max != nil {
+			max = *s.Max
+		}
+		return &ui.Node{
+			Kind: ui.KindSlider, Value: float64(n), Min: min, Max: max, Step: 1,
+			Action: action, Width: 160, Focusable: true, Name: s.Label, Role: "slider",
+		}
+	case plugin.SettingSelect:
+		opts := make([]string, 0, len(s.Options))
+		for _, o := range s.Options {
+			opts = append(opts, o.Value)
+		}
+		idx := 0
+		for i, o := range opts {
+			if o == raw {
+				idx = i
+				break
+			}
+		}
+		if h == nil {
+			n := NewMenu(opts, idx).Node()
+			n.Action = action
+			n.Name = s.Label
+			return n
+		}
+		if h.menus == nil {
+			h.menus = map[string]*Menu{}
+		}
+		m := h.menus[store]
+		if m == nil || !m.Opened() {
+			m = NewMenu(opts, idx)
+			h.menus[store] = m
+		}
+		n := m.Node()
+		n.Action = action
+		n.Name = s.Label
+		return n
+	default:
+		if h == nil {
+			n := ui.NewField(raw).Node(s.Label)
+			n.Action = action
+			n.Width = 200
+			return n
+		}
+		if h.fields == nil {
+			h.fields = map[string]*ui.Field{}
+		}
+		f := h.fields[store]
+		if f == nil {
+			f = ui.NewField(raw)
+			h.fields[store] = f
+		}
+		n := f.Node(s.Label)
+		n.Action = action
+		n.Width = 200
+		return n
+	}
+}
+
+func (r *Registry) handlePluginManager(h *PanelHost, n *ui.Node) bool {
+	if r.plugins == nil || n == nil {
 		return false
 	}
+	action := n.Action
 	switch {
 	case action == "plugin-rescan":
 		_ = r.plugins.rescan()
@@ -208,10 +297,39 @@ func (r *Registry) handlePluginManager(h *PanelHost, action string) bool {
 		if !ok {
 			return false
 		}
-		value := true
+		value, ok := pluginSettingValueFromNode(h, n)
+		if !ok {
+			return false
+		}
 		_ = r.plugins.applySetting(pluginID, key, value)
 		r.rebuildPanel(h)
 		return true
 	}
 	return false
+}
+
+func pluginSettingValueFromNode(h *PanelHost, n *ui.Node) (any, bool) {
+	if n == nil {
+		return nil, false
+	}
+	switch n.Kind {
+	case ui.KindToggle:
+		return n.Value != 0, true
+	case ui.KindSlider:
+		return int(n.Value), true
+	case ui.KindMenu:
+		if n.Text != "" {
+			return n.Text, true
+		}
+		if store := pluginSettingStoreKey(n.Action); store != "" && h != nil {
+			if m := h.menus[store]; m != nil {
+				return m.Value(), true
+			}
+		}
+		return nil, false
+	case ui.KindTextField:
+		return n.Text, true
+	default:
+		return nil, false
+	}
 }

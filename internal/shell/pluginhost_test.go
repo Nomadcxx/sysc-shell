@@ -551,7 +551,7 @@ func waitPluginPanelRoot(t *testing.T, reg *Registry) *ui.Node {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		root := reg.plugins.panelTree()
+		root := reg.plugins.panelTree(nil)
 		text := treeText(root)
 		if text != "" && !strings.Contains(text, "starting") &&
 			(strings.Contains(text, "hello") || strings.Contains(text, "Go")) {
@@ -777,7 +777,7 @@ func TestPluginPanelTreeIncludeSettingsComposesRows(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	var text string
 	for time.Now().Before(deadline) {
-		root := reg.plugins.panelTree()
+		root := reg.plugins.panelTree(nil)
 		text = treeText(root)
 		if strings.Contains(text, "Output directory") && strings.Contains(text, "hello") {
 			for _, heading := range []string{"Capture", "File", "Video", "Audio", "Replay", "Bar"} {

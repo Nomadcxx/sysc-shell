@@ -680,6 +680,10 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 		if !h.menu.Opened() && key != keyEsc {
 			if h.id == PanelLauncher {
 				h.applyLauncherMenu(r)
+			} else if strings.HasPrefix(h.menuPath, "plugin-set:") {
+				_ = r.handlePluginManager(h, &ui.Node{
+					Kind: ui.KindMenu, Action: h.menuPath, Text: h.menu.Value(),
+				})
 			} else {
 				h.applyMenu(r, h.menuPath)
 			}
@@ -834,6 +838,17 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 		}
 		slot.field.SyncFrom(n)
 		f = slot.field
+	} else if store := pluginSettingStoreKey(n.Action); store != "" {
+		if h.fields == nil {
+			h.fields = map[string]*ui.Field{}
+		}
+		f = h.fields[store]
+		if f == nil {
+			f = &ui.Field{Text: n.Text, PreeditText: n.Preedit, Cursor: n.Cursor}
+			h.fields[store] = f
+		} else {
+			f.SyncFrom(n)
+		}
 	} else {
 		path, _ := strings.CutPrefix(n.Action, "set:")
 		if h.fields == nil {
@@ -865,6 +880,9 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 		h.roving.Set(idx)
 		return true
 	}
+	if strings.HasPrefix(n.Action, "plugin-set:") {
+		return r.handlePluginManager(h, n)
+	}
 	h.applySetting(r, n)
 	return true
 }
@@ -883,6 +901,9 @@ func (h *PanelHost) adjustSlider(r *Registry, key uint32) bool {
 	}
 	if !ui.ControlKey(n, key) {
 		return false
+	}
+	if strings.HasPrefix(n.Action, "plugin-set:") {
+		return r.handlePluginManager(h, n)
 	}
 	h.applySetting(r, n)
 	return true
@@ -906,7 +927,31 @@ func (h *PanelHost) activate(r *Registry) bool {
 		}
 		return r.handlePluginBar(n.Action, wayland.Event{Kind: wayland.EventPointerRelease, Button: 272})
 	}
-	if r.handlePluginManager(h, n.Action) {
+	if strings.HasPrefix(n.Action, "plugin-set:") {
+		switch n.Kind {
+		case ui.KindToggle:
+			ui.Activate(n)
+			return r.handlePluginManager(h, n)
+		case ui.KindMenu:
+			store := pluginSettingStoreKey(n.Action)
+			if m := h.menus[store]; m != nil {
+				h.menu = m
+				h.menuPath = n.Action
+				if !m.Opened() {
+					m.Open()
+					r.rebuildPanel(h)
+					return true
+				}
+				m.Select()
+				n.Text = m.Value()
+				return r.handlePluginManager(h, n)
+			}
+			return false
+		default:
+			return r.handlePluginManager(h, n)
+		}
+	}
+	if r.handlePluginManager(h, n) {
 		return true
 	}
 	if h.id == PanelLauncher {
@@ -1010,7 +1055,7 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		return launcherTree(h)
 	case PanelPlugin:
 		if r.plugins != nil {
-			return r.plugins.panelTree()
+			return r.plugins.panelTree(h)
 		}
 		return pluginPanelError("starting", false)
 	default:
