@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"errors"
 	"os/exec"
 	"reflect"
 	"slices"
@@ -154,6 +155,28 @@ func TestSelectingAListedProfileRunsSet(t *testing.T) {
 	}
 }
 
+func TestASuccessfulProfileSetClearsAPriorError(t *testing.T) {
+	t.Parallel()
+	reg, h := newSessionHost(t, "swaylock")
+	h.profilesOK = true
+	h.profiles = []string{"power-saver", "balanced", "performance"}
+	h.profileActive = "balanced"
+	reg.rebuildPanel(h)
+	reg.runArgv = func([]string) error { return errors.New("set failed") }
+	activateNamed(h, reg, "Performance")
+	if h.errLabel == "" {
+		t.Fatal("failed set left errLabel empty")
+	}
+	reg.runArgv = func([]string) error { return nil }
+	activateNamed(h, reg, "Performance")
+	if h.errLabel != "" {
+		t.Fatalf("errLabel = %q after a successful set", h.errLabel)
+	}
+	if hasToneError(h.root) {
+		t.Fatal("ToneError text still in the tree after a successful set")
+	}
+}
+
 func TestSessionExecMapping(t *testing.T) {
 	t.Parallel()
 	reg, h := newSessionHost(t, "swaylock")
@@ -210,6 +233,18 @@ func headingNamed(n *ui.Node, name string) bool {
 	}
 	for _, c := range n.Children {
 		if headingNamed(c, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasToneError(n *ui.Node) bool {
+	if n.Tone == ui.ToneError {
+		return true
+	}
+	for _, c := range n.Children {
+		if hasToneError(c) {
 			return true
 		}
 	}

@@ -150,6 +150,7 @@ func (r *Registry) setSessionProfile(h *PanelHost, name string) {
 		r.rebuildPanel(h)
 		return
 	}
+	h.errLabel = ""
 	r.loadProfiles(h)
 	r.rebuildPanel(h)
 }
