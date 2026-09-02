@@ -10,32 +10,50 @@ import (
 func TestBarTreeStates(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		mode Mode
-		want string
-		tone v1.Tone
+		mode     Mode
+		icon     string
+		tone     v1.Tone
+		wantText string
 	}{
-		{Idle, "Record", v1.ToneNormal},
-		{Recording, "Recording", v1.ToneNormal},
-		{ReplayActive, "Replay", v1.ToneNormal},
-		{Stopping, "Stopping", v1.ToneNormal},
-		{Unavailable, "unavailable", v1.ToneError},
-		{Failed, "failed", v1.ToneError},
-		{Adopted, "Recording", v1.ToneNormal},
+		{Idle, "camera", v1.ToneNormal, "RecordStop"},
+		{Recording, "camera", v1.ToneError, "RecordStop"},
+		{Adopted, "camera", v1.ToneError, "RecordStop"},
+		{Stopping, "camera", v1.ToneNormal, "RecordStop"},
+		{ReplayActive, "replay", v1.ToneNormal, "RecordStop"},
+		{Unavailable, "camera-off", v1.ToneError, "RecordStop"},
+		{Failed, "camera-off", v1.ToneError, "RecordStop"},
 	}
 	for _, tc := range cases {
 		root := BarTree(Snapshot{Mode: tc.mode}, Config{})
 		if err := v1.Validate(root, v1.ViewBar); err != nil {
 			t.Fatalf("%s: %v", tc.mode, err)
 		}
-		body := flatten(root)
-		if !strings.Contains(strings.ToLower(body), strings.ToLower(tc.want)) {
-			t.Fatalf("%s bar = %q, want %q", tc.mode, body, tc.want)
+		if root.Kind != v1.KindRow || root.Gap != 8 {
+			t.Fatalf("%s root = kind %q gap %d", tc.mode, root.Kind, root.Gap)
 		}
-		if tone(root) != tc.tone {
-			t.Fatalf("%s tone = %q, want %q", tc.mode, tone(root), tc.tone)
+		cam := childByID(root, nodeCamera)
+		if cam == nil {
+			t.Fatalf("%s missing camera", tc.mode)
 		}
-		if name(root) == "" {
-			t.Fatalf("%s missing accessible name", tc.mode)
+		if cam.Icon != tc.icon {
+			t.Fatalf("%s camera icon = %q, want %q", tc.mode, cam.Icon, tc.icon)
+		}
+		if cam.Tone != tc.tone {
+			t.Fatalf("%s camera tone = %q, want %q", tc.mode, cam.Tone, tc.tone)
+		}
+		if cam.Name != "Open screen recorder" {
+			t.Fatalf("%s camera name = %q", tc.mode, cam.Name)
+		}
+		rec := childByID(root, nodeRecord)
+		if rec == nil || rec.Text != "Record" || rec.Name != "Record" {
+			t.Fatalf("%s record button missing or wrong: %#v", tc.mode, rec)
+		}
+		stop := childByID(root, nodeStop)
+		if stop == nil || stop.Text != "Stop" || stop.Name != "Stop" {
+			t.Fatalf("%s stop button missing or wrong: %#v", tc.mode, stop)
+		}
+		if flatten(root) != tc.wantText {
+			t.Fatalf("%s flatten = %q, want %q", tc.mode, flatten(root), tc.wantText)
 		}
 	}
 }
@@ -46,12 +64,15 @@ func TestBarTreeHidesWhenIdleAndConfigured(t *testing.T) {
 	if err := v1.Validate(root, v1.ViewBar); err != nil {
 		t.Fatal(err)
 	}
-	if flatten(root) != "" {
-		t.Fatalf("hidden idle bar = %q", flatten(root))
+	if childByID(root, nodeCamera) == nil {
+		t.Fatal("hide_inactive idle omitted camera")
+	}
+	if childByID(root, nodeRecord) != nil || childByID(root, nodeStop) != nil {
+		t.Fatalf("hide_inactive idle still has record/stop: %q", flatten(root))
 	}
 	shown := BarTree(Snapshot{Mode: Recording}, Config{HideInactive: true})
-	if !strings.Contains(flatten(shown), "Recording") {
-		t.Fatalf("hide_inactive hid an active recorder: %q", flatten(shown))
+	if childByID(shown, nodeRecord) == nil || childByID(shown, nodeStop) == nil {
+		t.Fatalf("hide_inactive hid transport while recording: %q", flatten(shown))
 	}
 }
 
@@ -69,17 +90,50 @@ func TestTooltipTreeIncludesFailureLog(t *testing.T) {
 
 func TestHandleInputButtons(t *testing.T) {
 	t.Parallel()
-	record, replay, save := HandleInput(&v1.InputEvent{Node: nodeRecord, Event: v1.EventActivate})
-	if !record || replay || save {
-		t.Fatalf("activate = %v %v %v", record, replay, save)
+	open, record, stop, replay, save := HandleInput(&v1.InputEvent{Node: nodeCamera, Event: v1.EventActivate}, Idle)
+	if !open || record || stop || replay || save {
+		t.Fatalf("camera activate = %v %v %v %v %v", open, record, stop, replay, save)
 	}
-	record, replay, save = HandleInput(&v1.InputEvent{Node: nodeRecord, Event: v1.EventPointer, Button: v1.ButtonSecondary})
-	if record || !replay || save {
-		t.Fatalf("secondary = %v %v %v", record, replay, save)
+
+	open, record, stop, replay, save = HandleInput(&v1.InputEvent{Node: nodeRecord, Event: v1.EventActivate}, Idle)
+	if open || !record || stop || replay || save {
+		t.Fatalf("record idle = %v %v %v %v %v", open, record, stop, replay, save)
 	}
-	record, replay, save = HandleInput(&v1.InputEvent{Node: nodeRecord, Event: v1.EventPointer, Button: v1.ButtonMiddle})
-	if record || replay || !save {
-		t.Fatalf("middle = %v %v %v", record, replay, save)
+	open, record, stop, replay, save = HandleInput(&v1.InputEvent{Node: nodeRecord, Event: v1.EventActivate}, Recording)
+	if open || record || stop || replay || save {
+		t.Fatalf("record while recording = %v %v %v %v %v", open, record, stop, replay, save)
+	}
+	for _, mode := range []Mode{Unavailable, Failed, Stopping, Adopted, ReplayActive} {
+		_, record, _, _, _ = HandleInput(&v1.InputEvent{Node: nodeRecord, Event: v1.EventActivate}, mode)
+		if record {
+			t.Fatalf("record live in %s", mode)
+		}
+	}
+
+	open, record, stop, replay, save = HandleInput(&v1.InputEvent{Node: nodeStop, Event: v1.EventActivate}, Recording)
+	if open || record || !stop || replay || save {
+		t.Fatalf("stop recording = %v %v %v %v %v", open, record, stop, replay, save)
+	}
+	for _, mode := range []Mode{Adopted, Stopping} {
+		_, _, stop, _, _ = HandleInput(&v1.InputEvent{Node: nodeStop, Event: v1.EventActivate}, mode)
+		if !stop {
+			t.Fatalf("stop inert in %s", mode)
+		}
+	}
+	for _, mode := range []Mode{Idle, Unavailable, Failed, ReplayActive} {
+		_, _, stop, _, _ = HandleInput(&v1.InputEvent{Node: nodeStop, Event: v1.EventActivate}, mode)
+		if stop {
+			t.Fatalf("stop live in %s", mode)
+		}
+	}
+
+	open, record, stop, replay, save = HandleInput(&v1.InputEvent{Node: nodeCamera, Event: v1.EventPointer, Button: v1.ButtonSecondary}, Idle)
+	if open || record || stop || replay || save {
+		t.Fatalf("secondary = %v %v %v %v %v", open, record, stop, replay, save)
+	}
+	open, record, stop, replay, save = HandleInput(&v1.InputEvent{Node: nodeRecord, Event: v1.EventPointer, Button: v1.ButtonMiddle}, Idle)
+	if open || record || stop || replay || save {
+		t.Fatalf("middle = %v %v %v %v %v", open, record, stop, replay, save)
 	}
 }
 
@@ -95,32 +149,17 @@ func flatten(n *v1.Node) string {
 	return b.String()
 }
 
-func tone(n *v1.Node) v1.Tone {
+func childByID(n *v1.Node, id string) *v1.Node {
 	if n == nil {
-		return ""
+		return nil
 	}
-	if n.Tone != "" {
-		return n.Tone
+	if n.ID == id {
+		return n
 	}
 	for _, c := range n.Children {
-		if t := tone(c); t != "" {
-			return t
+		if found := childByID(c, id); found != nil {
+			return found
 		}
 	}
-	return v1.ToneNormal
-}
-
-func name(n *v1.Node) string {
-	if n == nil {
-		return ""
-	}
-	if n.Name != "" {
-		return n.Name
-	}
-	for _, c := range n.Children {
-		if s := name(c); s != "" {
-			return s
-		}
-	}
-	return ""
+	return nil
 }

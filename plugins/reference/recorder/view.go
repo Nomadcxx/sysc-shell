@@ -3,21 +3,50 @@ package recorder
 import v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 
 const (
+	nodeCamera = "camera"
 	nodeRecord = "record"
+	nodeStop   = "stop"
 )
 
 func BarTree(snap Snapshot, cfg Config) *v1.Node {
-	if snap.Mode == Idle && cfg.HideInactive {
-		return &v1.Node{Kind: v1.KindRow}
+	children := []*v1.Node{cameraButton(snap)}
+	if !(snap.Mode == Idle && cfg.HideInactive) {
+		children = append(children,
+			&v1.Node{
+				Kind: v1.KindButton, ID: nodeRecord, Key: nodeRecord,
+				Text: "Record", Name: "Record", Role: "button",
+				Events: []v1.EventKind{v1.EventActivate},
+			},
+			&v1.Node{
+				Kind: v1.KindButton, ID: nodeStop, Key: nodeStop,
+				Text: "Stop", Name: "Stop", Role: "button",
+				Events: []v1.EventKind{v1.EventActivate},
+			},
+		)
 	}
-	label, tone := presentation(snap)
-	return &v1.Node{Kind: v1.KindRow, Gap: 8, Children: []*v1.Node{
-		{
-			Kind: v1.KindButton, ID: nodeRecord, Key: "status",
-			Text: label, Name: label, Role: "button", Tone: tone,
-			Events: []v1.EventKind{v1.EventActivate, v1.EventPointer},
-		},
-	}}
+	return &v1.Node{Kind: v1.KindRow, Gap: 8, Children: children}
+}
+
+func cameraButton(snap Snapshot) *v1.Node {
+	icon, tone := cameraPresentation(snap)
+	return &v1.Node{
+		Kind: v1.KindButton, ID: nodeCamera, Key: nodeCamera,
+		Icon: icon, Name: "Open screen recorder", Role: "button", Tone: tone,
+		Events: []v1.EventKind{v1.EventActivate},
+	}
+}
+
+func cameraPresentation(snap Snapshot) (string, v1.Tone) {
+	switch snap.Mode {
+	case Unavailable, Failed:
+		return "camera-off", v1.ToneError
+	case Recording, Adopted:
+		return "camera", v1.ToneError
+	case ReplayActive:
+		return "replay", v1.ToneNormal
+	default:
+		return "camera", v1.ToneNormal
+	}
 }
 
 func TooltipTree(snap Snapshot) *v1.Node {
@@ -52,23 +81,22 @@ func presentation(snap Snapshot) (string, v1.Tone) {
 	}
 }
 
-func HandleInput(ev *v1.InputEvent) (record, replay, save bool) {
-	if ev == nil || ev.Node != nodeRecord {
-		return false, false, false
+func HandleInput(ev *v1.InputEvent, mode Mode) (open, record, stop, replay, save bool) {
+	if ev == nil || ev.Event != v1.EventActivate {
+		return false, false, false, false, false
 	}
-	if ev.Event == v1.EventActivate {
-		return true, false, false
+	switch ev.Node {
+	case nodeCamera:
+		return true, false, false, false, false
+	case nodeRecord:
+		if mode == Idle {
+			return false, true, false, false, false
+		}
+	case nodeStop:
+		switch mode {
+		case Recording, Adopted, Stopping:
+			return false, false, true, false, false
+		}
 	}
-	if ev.Event != v1.EventPointer {
-		return false, false, false
-	}
-	switch ev.Button {
-	case v1.ButtonPrimary:
-		return true, false, false
-	case v1.ButtonSecondary:
-		return false, true, false
-	case v1.ButtonMiddle:
-		return false, false, true
-	}
-	return false, false, false
+	return false, false, false, false, false
 }
