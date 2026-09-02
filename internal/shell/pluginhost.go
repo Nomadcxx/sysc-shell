@@ -540,16 +540,12 @@ func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResul
 	}
 	p.Output = conn
 
-	h.mu.Lock()
-	same := h.panel != nil && h.panel.Plugin == pluginID && h.panel.Entry == p.Entry
-	h.mu.Unlock()
-	h.r.mu.Lock()
-	where, open := h.r.panels.Output(PanelPlugin)
-	owns := open && where == global && h.r.roots.owns(panelRoot(PanelPlugin))
-	h.r.mu.Unlock()
-	if same && owns {
-		h.r.ClosePanel(PanelPlugin)
+	// Toggle close: re-validate under r.mu then h.mu. If ownership moved,
+	// errPanelNotOwned falls through to the open/replace path.
+	if err := h.closePanelOwned(pluginID, p, global, true); err == nil {
 		return v1.PanelResult{}, nil
+	} else if !errors.Is(err, errPanelNotOwned) {
+		return v1.PanelResult{}, err
 	}
 
 	if err := h.r.OpenPanel(PanelPlugin, global, trig); err != nil {
@@ -580,22 +576,32 @@ func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResul
 	return v1.PanelResult{ViewID: id}, nil
 }
 
-func (h *pluginHost) dropPanelViews() {
-	h.mu.Lock()
-	var drop []string
-	for _, v := range h.views {
-		if v.Kind == v1.ViewPanel {
-			drop = append(drop, v.ID)
-		}
-	}
-	h.mu.Unlock()
-	for _, id := range drop {
-		h.closeView(id)
-	}
+// errPanelNotOwned means this plugin+entry does not own PanelPlugin on the
+// requested output, so openPanel should open/replace instead of toggling closed.
+var errPanelNotOwned = errors.New("plugin panel not owned")
+
+// closePanel sync-drops this plugin's panel views then closes PanelPlugin.
+func (h *pluginHost) closePanel(pluginID string, p v1.PanelParams) error {
+	return h.closePanelOwned(pluginID, p, 0, false)
 }
 
-func (h *pluginHost) closePanel(pluginID string, p v1.PanelParams) error {
+// closePanelOwned drops matching panel views and closes PanelPlugin. When
+// requireOutput is set, ownership is checked under r.mu then h.mu and the close
+// runs in that same section; a mismatch returns errPanelNotOwned.
+func (h *pluginHost) closePanelOwned(pluginID string, p v1.PanelParams, global uint32, requireOutput bool) error {
+	h.r.mu.Lock()
+	where, open := h.r.panels.Output(PanelPlugin)
+	owns := open && h.r.roots.owns(panelRoot(PanelPlugin))
+	if requireOutput {
+		owns = owns && where == global
+	}
 	h.mu.Lock()
+	same := h.panel != nil && h.panel.Plugin == pluginID && (p.Entry == "" || h.panel.Entry == p.Entry)
+	if requireOutput && (!same || !owns) {
+		h.mu.Unlock()
+		h.r.mu.Unlock()
+		return errPanelNotOwned
+	}
 	var drop []string
 	for _, v := range h.views {
 		if v.Kind == v1.ViewPanel && v.Plugin == pluginID && (p.Entry == "" || v.Entry == p.Entry) {
@@ -603,11 +609,48 @@ func (h *pluginHost) closePanel(pluginID string, p v1.PanelParams) error {
 		}
 	}
 	h.mu.Unlock()
+	h.r.closePanelLocked(PanelPlugin)
+	h.r.mu.Unlock()
 	for _, id := range drop {
 		h.closeView(id)
 	}
-	h.r.ClosePanel(PanelPlugin)
 	return nil
+}
+
+// snapshotPanelViewIDs returns current panel view IDs. Called with Registry.mu
+// held from panel close cleanup so a later drop cannot race a reopen.
+func (h *pluginHost) snapshotPanelViewIDs() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var ids []string
+	for _, v := range h.views {
+		if v.Kind == v1.ViewPanel {
+			ids = append(ids, v.ID)
+		}
+	}
+	return ids
+}
+
+// dropPanelViews closes only the snapshotted panel view IDs from close time.
+// Under r.mu then h.mu it also refuses to drop the live panel view when
+// PanelPlugin is already open again, so a bad snapshot cannot wipe a reopen.
+func (h *pluginHost) dropPanelViews(ids []string) {
+	h.r.mu.Lock()
+	live := ""
+	if _, open := h.r.panels.Output(PanelPlugin); open && h.r.roots.owns(panelRoot(PanelPlugin)) {
+		h.mu.Lock()
+		if h.panel != nil {
+			live = h.panel.ID
+		}
+		h.mu.Unlock()
+	}
+	h.r.mu.Unlock()
+	for _, id := range ids {
+		if id != "" && id == live {
+			continue
+		}
+		h.closeView(id)
+	}
 }
 
 func (h *pluginHost) refreshPanel() {

@@ -197,7 +197,8 @@ func (r *Registry) openPanelRootLocked(id PanelID, output uint32, trig Trigger) 
 		// A root that goes away takes any visible tooltip with it.
 		r.dwell.leave()
 		if id == PanelPlugin && r.plugins != nil {
-			go r.plugins.dropPanelViews()
+			ids := r.plugins.snapshotPanelViewIDs()
+			go r.plugins.dropPanelViews(ids)
 		}
 	})
 	return nil
@@ -219,7 +220,8 @@ func (r *Registry) closePanelLocked(id PanelID) {
 	r.panels.Close(id)
 	r.teardownPanelLocked(id)
 	if id == PanelPlugin && r.plugins != nil {
-		go r.plugins.dropPanelViews()
+		ids := r.plugins.snapshotPanelViewIDs()
+		go r.plugins.dropPanelViews(ids)
 	}
 }
 

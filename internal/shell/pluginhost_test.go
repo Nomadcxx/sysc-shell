@@ -617,6 +617,90 @@ func TestPluginOpenPanelTogglesThisEntryClosed(t *testing.T) {
 	t.Fatal("second openPanel did not close this plugin panel")
 }
 
+// Toggle-close schedules dropPanelViews asynchronously. A quick reopen must
+// survive that deferred drop: only the views that existed at close time go away.
+func TestDropPanelViewsKeepsReopenedPanel(t *testing.T) {
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+
+	first, err := reg.plugins.openPanel("org.sysc.timer", v1.PanelParams{
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "timer-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ViewID == "" {
+		t.Fatal("open returned empty view id")
+	}
+	_ = drainAux(t, reg, 2)
+	waitPluginPanelRoot(t, reg)
+
+	stale := reg.plugins.snapshotPanelViewIDs()
+	if len(stale) == 0 {
+		t.Fatal("expected panel views after open")
+	}
+
+	if err := reg.plugins.closePanel("org.sysc.timer", v1.PanelParams{Entry: "panel"}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	closed := false
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		_, open := reg.panels.Output(PanelPlugin)
+		host := reg.panelHosts[PanelPlugin]
+		reg.mu.Unlock()
+		if !open && host == nil {
+			closed = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !closed {
+		t.Fatal("closePanel did not close the panel")
+	}
+
+	second, err := reg.plugins.openPanel("org.sysc.timer", v1.PanelParams{
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "timer-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ViewID == "" {
+		t.Fatal("reopen returned empty view id")
+	}
+	for _, id := range stale {
+		if second.ViewID == id {
+			t.Fatalf("reopen reused closed view id %q", id)
+		}
+	}
+	_ = drainAux(t, reg, 2)
+	waitPluginPanelRoot(t, reg)
+
+	// Deferred ClosePanel drop with the close-time snapshot. Must not wipe the
+	// reopened view (a wipe-all dropPanelViews would).
+	reg.plugins.dropPanelViews(stale)
+
+	reg.plugins.mu.Lock()
+	_, alive := reg.plugins.views[second.ViewID]
+	panelID := ""
+	if reg.plugins.panel != nil {
+		panelID = reg.plugins.panel.ID
+	}
+	reg.plugins.mu.Unlock()
+	if !alive || panelID != second.ViewID {
+		t.Fatalf("reopened view wiped: alive=%v panel=%q want=%q", alive, panelID, second.ViewID)
+	}
+	reg.mu.Lock()
+	where, open := reg.panels.Output(PanelPlugin)
+	owns := open && where == 7 && reg.roots.owns(panelRoot(PanelPlugin))
+	reg.mu.Unlock()
+	if !owns {
+		t.Fatal("PanelPlugin ownership lost after deferred drop")
+	}
+}
+
 func TestPluginOpenPanelReplacesAnotherPluginPanel(t *testing.T) {
 	self, err := os.Executable()
 	if err != nil {
