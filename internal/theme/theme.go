@@ -1,6 +1,8 @@
 // Package theme generates the Material 3 token set the shell renders from.
 package theme
 
+import "fmt"
+
 // Tokens is the subset of Material 3 tokens the shell consumes. Dark and
 // light variants are generated together; Mode selects which is active.
 type Tokens struct {
@@ -47,4 +49,53 @@ type Options struct {
 	Mode         string // dark | light
 	Scheme       string
 	HighContrast bool
+}
+
+// hexColor reports whether s is a colour the shell can parse: #RRGGBB or
+// #RRGGBBAA.
+func hexColor(s string) bool {
+	if len(s) != 7 && len(s) != 9 {
+		return false
+	}
+	if s[0] != '#' {
+		return false
+	}
+	for _, c := range s[1:] {
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// Complete reports whether every role the shell paints with carries a parseable
+// colour. A partial palette must never be published: with half the roles
+// updated a surface paints in two themes at once, which is worse than keeping
+// the old one, so a generator that returns an incomplete set is rejected whole.
+func (t Tokens) Complete() error {
+	for _, role := range []struct {
+		name, value string
+	}{
+		{"surface", t.Surface},
+		{"surface_container", t.SurfaceContainer},
+		{"surface_container_high", t.SurfaceContainerHigh},
+		{"surface_container_highest", t.SurfaceContainerHighest},
+		{"on_surface", t.OnSurface},
+		{"on_surface_variant", t.OnSurfaceVariant},
+		{"primary", t.Primary},
+		{"on_primary", t.OnPrimary},
+		{"primary_container", t.PrimaryContainer},
+		{"on_primary_container", t.OnPrimaryContainer},
+		{"outline", t.Outline},
+		{"outline_variant", t.OutlineVariant},
+		{"error", t.Error},
+		{"on_error", t.OnError},
+	} {
+		if !hexColor(role.value) {
+			return fmt.Errorf("theme: role %s is %q, not a #RRGGBB colour", role.name, role.value)
+		}
+	}
+	return nil
 }

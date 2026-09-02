@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -575,5 +577,162 @@ func TestTwoBarsShareOneBatteryLeaseSet(t *testing.T) {
 	reg.DropHost(2)
 	if reg.Metrics().Running() {
 		t.Fatal("dropping the last bar left the sampling service running")
+	}
+}
+
+// --- Palette transitions ----------------------------------------------------
+
+// rethemeHost opens a session panel and returns it with its registry, ready to
+// be moved onto another palette.
+func rethemeHost(t *testing.T, reduced bool) (*Registry, *PanelHost) {
+	t.Helper()
+	cfg := config.Default()
+	cfg.Accessibility.ReducedMotion = reduced
+	reg := NewRegistry(cfg)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	t.Cleanup(reg.Close)
+	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelSession]
+	if h == nil {
+		t.Fatal("session host is missing")
+	}
+	return reg, h
+}
+
+func lightTheme() Theme {
+	return ThemeFromTokens(theme.Tokens{
+		Surface: "#ffffff", SurfaceContainer: "#eeeeee",
+		SurfaceContainerHigh: "#dddddd", SurfaceContainerHighest: "#cccccc",
+		OnSurface: "#000000", OnSurfaceVariant: "#333333",
+		Primary: "#ff0000", OnPrimary: "#ffffff",
+		PrimaryContainer: "#aa0000", OnPrimaryContainer: "#ffffff",
+		Outline: "#888888", OutlineVariant: "#999999",
+		Error: "#cc0000", OnError: "#ffffff",
+	}, 12)
+}
+
+func TestPaletteTransitionStartsFromTheRenderedColours(t *testing.T) {
+	t.Parallel()
+	reg, h := rethemeHost(t, false)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	before := h.paintTheme()
+	h.retheme(lightTheme())
+
+	// The fade begins at the colours that were on screen, not at the incoming
+	// palette, so nothing jumps on the frame the reload lands.
+	if got := h.paintTheme().Surface; got != before.Surface {
+		t.Errorf("first frame after reload = %+v, want the rendered %+v", got, before.Surface)
+	}
+	if h.anim.Settled() {
+		t.Error("a palette change settled immediately without reduced motion")
+	}
+}
+
+func TestPaletteTransitionRetargetsFromMidFade(t *testing.T) {
+	t.Parallel()
+	reg, h := rethemeHost(t, false)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	clock := &fakeClock{t: time.Unix(0, 0)}
+	h.anim = newAnimator(clock.now, false)
+	h.retheme(lightTheme())
+	clock.add(animThemeDuration / 2)
+
+	mid := h.paintTheme().Surface
+	if mid == DefaultTheme().Surface || mid == lightTheme().Surface {
+		t.Fatalf("mid-fade surface = %+v, want a blend", mid)
+	}
+
+	// A second reload mid-fade continues from what is rendering rather than
+	// snapping back to the palette it was already leaving.
+	h.retheme(DefaultTheme())
+	if got := h.paintTheme().Surface; got != mid {
+		t.Errorf("second reload started at %+v, want the rendered %+v", got, mid)
+	}
+	clock.add(animThemeDuration)
+	if got := h.paintTheme().Surface; got != DefaultTheme().Surface {
+		t.Errorf("settled surface = %+v, want the newest palette", got)
+	}
+}
+
+func TestReducedMotionSnapsToTheNewPalette(t *testing.T) {
+	t.Parallel()
+	reg, h := rethemeHost(t, true)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	want := lightTheme()
+	h.retheme(want)
+	// A palette change is colour, not motion: there is nothing for reduced
+	// motion to want held.
+	if got := h.paintTheme().Surface; got != want.Surface {
+		t.Errorf("surface = %+v, want an immediate %+v", got, want.Surface)
+	}
+	if got := h.anim.duration(animTheme, true); got != 0 {
+		t.Errorf("palette duration = %v under reduced motion, want 0", got)
+	}
+}
+
+func TestAnInvalidPaletteKeepsThePreviousCompleteTheme(t *testing.T) {
+	t.Parallel()
+	reg, h := rethemeHost(t, false)
+	reg.mu.Lock()
+	before := h.paintTheme()
+	published := reg.tokens
+	reg.mu.Unlock()
+
+	// A generator that returns a partial palette must not reach a surface: the
+	// shell would paint half in one theme and half in the other.
+	reg.themeGen = theme.Generator{CacheDir: t.TempDir(), Matugen: "/nonexistent/matugen"}
+	broken := config.Default()
+	broken.ThemeGen.Source = "hex"
+	broken.ThemeGen.Seed = "not-a-colour"
+	got := reg.generateTheme(broken)
+
+	if err := got.Complete(); err != nil {
+		t.Fatalf("a rejected palette was published anyway: %v", err)
+	}
+	if got != published {
+		t.Errorf("tokens changed on a failed reload:\n got %+v\nwant %+v", got, published)
+	}
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if after := h.paintTheme(); after != before {
+		t.Error("the open surface moved off its palette on a failed reload")
+	}
+}
+
+func TestReloadMovesOpenSurfacesOntoTheNewPalette(t *testing.T) {
+	t.Parallel()
+	reg, h := rethemeHost(t, true)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	before := h.paintTheme().Surface
+	reg.tokens = theme.Tokens{
+		Surface: "#ffffff", SurfaceContainer: "#eeeeee",
+		SurfaceContainerHigh: "#dddddd", SurfaceContainerHighest: "#cccccc",
+		OnSurface: "#000000", OnSurfaceVariant: "#333333",
+		Primary: "#ff0000", OnPrimary: "#ffffff",
+		PrimaryContainer: "#aa0000", OnPrimaryContainer: "#ffffff",
+		Outline: "#888888", OutlineVariant: "#999999",
+		Error: "#cc0000", OnError: "#ffffff",
+	}
+	reg.retheThemeOpenSurfacesLocked()
+
+	// An open panel used to keep the theme it was spawned with until it was
+	// closed and reopened.
+	if after := h.paintTheme().Surface; after == before {
+		t.Errorf("open surface stayed on %+v after a reload", before)
+	}
+	// The panel's own corner radius is fixed, not themed.
+	if h.theme.Radius != 12 {
+		t.Errorf("panel radius = %d, want the fixed 12", h.theme.Radius)
 	}
 }

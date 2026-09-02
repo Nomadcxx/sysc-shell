@@ -298,6 +298,14 @@ func (r *Registry) ReducedMotion() bool {
 	return r.cfg.Accessibility.ReducedMotion
 }
 
+// generateTheme returns the palette for cfg, or the palette already published
+// when the candidate is incomplete.
+//
+// A partial palette is rejected whole rather than merged: a surface painted
+// with some new roles and some old ones is worse than one painted entirely in
+// the previous theme, and the mix is hard to attribute afterwards. Templates
+// are only written for a palette that survives that check, so an external
+// consumer never sees one the shell itself refused.
 func (r *Registry) generateTheme(cfg config.Config) theme.Tokens {
 	tok, _ := r.themeGen.Generate(
 		theme.Source{Kind: cfg.ThemeGen.Source, Seed: cfg.ThemeGen.Seed},
@@ -307,10 +315,26 @@ func (r *Registry) generateTheme(cfg config.Config) theme.Tokens {
 			HighContrast: cfg.Accessibility.HighContrast,
 		},
 	)
+	if err := tok.Complete(); err != nil {
+		return r.lastCompleteTokens()
+	}
 	if !runningAsTest() {
 		_ = theming.ApplyEnabled(os.Getenv("HOME"), cfg.TemplateEnabled, tok)
 	}
 	return tok
+}
+
+// lastCompleteTokens is the palette to fall back on when a generated one is
+// rejected: whatever is currently published, or the compiled-in fallback
+// before anything has been.
+func (r *Registry) lastCompleteTokens() theme.Tokens {
+	r.mu.Lock()
+	current := r.tokens
+	r.mu.Unlock()
+	if current.Complete() == nil {
+		return current
+	}
+	return theme.Fallback
 }
 
 // surfaceTheme is the palette every auxiliary surface paints with: the
@@ -569,6 +593,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				}
 				r.cfg = cfg
 				r.tokens = tok
+				r.retheThemeOpenSurfacesLocked()
 				r.bars = bars
 				r.leases = leases
 				for global, bar := range r.bars {
@@ -926,4 +951,29 @@ func releaseAll(leases []*services.Lease) {
 	for _, lease := range leases {
 		lease.Release()
 	}
+}
+
+// retheThemeOpenSurfacesLocked moves every open panel onto the newly published
+// palette, crossfading from what each is currently rendering. Panels used to
+// keep the theme they were spawned with, so a reload left an open surface in
+// the previous palette until it was closed and reopened.
+//
+// Caller holds r.mu.
+func (r *Registry) retheThemeOpenSurfacesLocked() {
+	next := r.surfaceTheme()
+	for _, h := range r.panelHosts {
+		if h == nil {
+			continue
+		}
+		h.retheme(withPanelRadius(next, h))
+		r.startSurfaceFrames(h)
+	}
+}
+
+// withPanelRadius keeps a panel's own corner radius, which is fixed rather than
+// themed, while everything else follows the published palette.
+func withPanelRadius(t Theme, h *PanelHost) Theme {
+	t.Radius = h.theme.Radius
+	t.CardRadius = h.theme.CardRadius
+	return t
 }

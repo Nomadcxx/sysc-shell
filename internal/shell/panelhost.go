@@ -68,10 +68,14 @@ type PanelHost struct {
 	shieldQuiet time.Time
 	// anim is this surface's one clock: every transition it runs shares it, so
 	// frames are scheduled from a single place.
-	anim       *animator
-	stopAnim   chan struct{}
-	stopOnce   sync.Once
-	theme      Theme
+	anim     *animator
+	stopAnim chan struct{}
+	stopOnce sync.Once
+	theme    Theme
+	// themeFrom is the palette this surface is fading out of. It is the theme
+	// as it was rendering when the change arrived, not the last published one,
+	// so a reload during a fade continues from what is on screen.
+	themeFrom  Theme
 	text       *render.TextRenderer
 	fontFamily string
 	logicalW   int
@@ -670,7 +674,7 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	// painter consumes an immutable mask; nothing downstream mutates state.
 	h.pointer.apply(h.root, h.anim)
 
-	style := h.theme.ProofStyle()
+	style := h.paintTheme().ProofStyle()
 	style.Scale120 = scale
 	style.Body = body
 	if !h.place.CenterY {
@@ -1442,6 +1446,39 @@ func (h *PanelHost) hitFocusable(x, y int) *ui.Node {
 		}
 	}
 	return nil
+}
+
+// paintTheme is the palette this frame paints with: the published theme once a
+// change has settled, or a blend of the outgoing and incoming palettes while
+// one is in flight.
+func (h *PanelHost) paintTheme() Theme {
+	key := panelSurfaceID(h.id)
+	if h.anim == nil || !h.anim.has(key, animTheme) {
+		return h.theme
+	}
+	p := h.anim.Value(key, animTheme)
+	if p >= 1 {
+		return h.theme
+	}
+	return h.themeFrom.LerpColors(h.theme, p)
+}
+
+// retheme moves this surface onto a new palette, crossfading from whatever it
+// is currently rendering. A reload that lands mid-fade therefore continues from
+// the colours on screen rather than snapping back to the palette it was leaving.
+func (h *PanelHost) retheme(next Theme) {
+	if h.theme == next {
+		return
+	}
+	h.themeFrom = h.paintTheme()
+	h.theme = next
+	if h.anim == nil {
+		return
+	}
+	key := panelSurfaceID(h.id)
+	// Restart from zero so the blend runs the whole way from what is rendering.
+	h.anim.Reset(key, animTheme)
+	h.anim.Target(key, animTheme, 1)
 }
 
 func (h *PanelHost) stopAnimation() {

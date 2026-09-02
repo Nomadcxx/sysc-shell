@@ -327,3 +327,39 @@ func TestNoShellSurfaceResolvesTheFallbackPalette(t *testing.T) {
 		}
 	}
 }
+
+func TestLerpColorsTravelsThePaletteButNotTheGeometry(t *testing.T) {
+	t.Parallel()
+	from := DefaultTheme()
+	to := ThemeFromTokens(theme.Tokens{
+		Surface: "#ffffff", SurfaceContainer: "#eeeeee",
+		SurfaceContainerHigh: "#dddddd", SurfaceContainerHighest: "#cccccc",
+		OnSurface: "#000000", OnSurfaceVariant: "#333333",
+		Primary: "#ff0000", OnPrimary: "#ffffff",
+		PrimaryContainer: "#aa0000", OnPrimaryContainer: "#ffffff",
+		Outline: "#888888", OutlineVariant: "#999999",
+		Error: "#cc0000", OnError: "#ffffff",
+	}, 12)
+
+	if got := from.LerpColors(to, 0); got.Surface != from.Surface {
+		t.Errorf("progress 0 surface = %+v, want the outgoing %+v", got.Surface, from.Surface)
+	}
+	if got := from.LerpColors(to, 1); got.Surface != to.Surface {
+		t.Errorf("progress 1 surface = %+v, want the incoming %+v", got.Surface, to.Surface)
+	}
+
+	mid := from.LerpColors(to, 0.5)
+	if mid.Surface == from.Surface || mid.Surface == to.Surface {
+		t.Errorf("midpoint surface = %+v, want a blend of %+v and %+v", mid.Surface, from.Surface, to.Surface)
+	}
+	// Derived names must follow the roles they alias rather than blend twice.
+	if mid.Background != mid.Surface || mid.Capsule != mid.SurfaceContainerHigh {
+		t.Error("legacy aliases drifted from the roles they derive from during the blend")
+	}
+	// Geometry arrives whole: a control that resized mid-fade would relayout
+	// on every frame.
+	if mid.ControlHeight != to.ControlHeight || mid.Radius != to.Radius {
+		t.Errorf("geometry interpolated: height %d radius %d, want %d and %d",
+			mid.ControlHeight, mid.Radius, to.ControlHeight, to.Radius)
+	}
+}

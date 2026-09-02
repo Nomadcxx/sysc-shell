@@ -35,7 +35,12 @@ func TestEveryPanelLaysOutAtItsNarrowestWidth(t *testing.T) {
 			if h == nil {
 				t.Fatalf("%s host is missing", id)
 			}
+			// The launcher relays results from a service goroutine that
+			// rebuilds the tree under r.mu, so laying out and walking it has
+			// to hold the same lock.
 			size := panelTargetSize(id)
+			reg.mu.Lock()
+			defer reg.mu.Unlock()
 			if err := h.configure(size.W, size.H, int(ui.ScaleUnit)); err != nil {
 				t.Fatalf("%s does not lay out at %dx%d: %v", id, size.W, size.H, err)
 			}

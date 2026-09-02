@@ -16,6 +16,9 @@ const (
 	animSelectDuration   = 180 * time.Millisecond
 	animPanelInDuration  = 200 * time.Millisecond
 	animPanelOutDuration = 150 * time.Millisecond
+	// A palette change is a whole-surface change, so it takes the same time a
+	// whole surface takes to arrive.
+	animThemeDuration = animPanelInDuration
 
 	// Reduced motion keeps panel visibility as a plain fade, and no longer than
 	// the shortest transition the catalogue otherwise uses.
@@ -41,6 +44,8 @@ const (
 	// animVisible is the surface's own enter/exit, keyed by the surface rather
 	// than a node.
 	animVisible
+	// animTheme crossfades a surface's palette, keyed by the surface.
+	animTheme
 )
 
 // animKey addresses one value: a stable node key plus the channel. Keys are
@@ -117,6 +122,9 @@ func (a *animator) duration(channel animChannel, rising bool) time.Duration {
 		if channel == animVisible {
 			return animReducedPanelDuration
 		}
+		// A palette change snaps: it is a colour change, not motion, and
+		// holding the old colours for any length of time is the thing reduced
+		// motion has no reason to want.
 		return 0
 	}
 	switch channel {
@@ -134,6 +142,8 @@ func (a *animator) duration(channel animChannel, rising bool) time.Duration {
 			return animPanelInDuration
 		}
 		return animPanelOutDuration
+	case animTheme:
+		return animThemeDuration
 	}
 	return 0
 }
@@ -155,6 +165,22 @@ func (a *animator) Target(node string, channel animChannel, to float64) {
 	}
 	dur := a.duration(channel, to > from)
 	a.values[key] = animValue{from: from, to: to, start: now, dur: dur, ease: easeFor(channel)}
+}
+
+// Reset drops a value so the next Target starts it from zero rather than from
+// wherever the previous transition left it. A palette crossfade needs this: its
+// endpoints are the two themes, and the progress between them always begins at
+// the start.
+func (a *animator) Reset(node string, channel animChannel) {
+	delete(a.values, animKey{node: node, channel: channel})
+}
+
+// has reports whether a channel has ever been aimed at anything. A value that
+// was never targeted is not the same as one resting at zero: the first means
+// there is nothing to resolve, the second that it resolved to zero.
+func (a *animator) has(node string, channel animChannel) bool {
+	_, ok := a.values[animKey{node: node, channel: channel}]
+	return ok
 }
 
 // Value is the resolved scalar for one channel, in [0,1].

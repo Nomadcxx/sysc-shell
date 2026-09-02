@@ -129,3 +129,33 @@ func writeMatugenStub(t *testing.T, dir string, recordArgs bool) {
 		t.Fatal(err)
 	}
 }
+
+func TestCompleteRejectsAPartialPalette(t *testing.T) {
+	t.Parallel()
+	if err := Fallback.Complete(); err != nil {
+		t.Fatalf("the compiled-in fallback is incomplete: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		mutate  func(*Tokens)
+		wantHit string
+	}{
+		{"missing role", func(t *Tokens) { t.OutlineVariant = "" }, "outline_variant"},
+		{"not a colour", func(t *Tokens) { t.Primary = "blue" }, "primary"},
+		{"truncated hex", func(t *Tokens) { t.Surface = "#fff" }, "surface"},
+		{"no hash", func(t *Tokens) { t.OnError = "ffffff" }, "on_error"},
+		{"non-hex digit", func(t *Tokens) { t.Error = "#gg0000" }, "error"},
+	} {
+		tok := Fallback
+		tc.mutate(&tok)
+		err := tok.Complete()
+		if err == nil {
+			t.Errorf("%s: Complete() = nil, want an error", tc.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.wantHit) {
+			t.Errorf("%s: error %q does not name the offending role %q", tc.name, err, tc.wantHit)
+		}
+	}
+}
