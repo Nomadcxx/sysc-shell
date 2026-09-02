@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -307,6 +308,7 @@ func newPanelRegistry(t *testing.T) *Registry {
 	cfg := config.Default()
 	cfg.Accessibility.ReducedMotion = true
 	reg := NewRegistry(cfg)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
 	return reg
 }

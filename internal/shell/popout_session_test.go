@@ -1,10 +1,16 @@
 package shell
 
 import (
+	"os/exec"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
+	metrics "github.com/Nomadcxx/sysc-metrics"
+
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -30,6 +36,121 @@ func TestLockHiddenWithoutLocker(t *testing.T) {
 		if name == "Lock" {
 			t.Fatal("Lock shown without a locker")
 		}
+	}
+}
+
+func TestSessionPanelTargetSizeIs420(t *testing.T) {
+	t.Parallel()
+	got := panelTargetSize(PanelSession)
+	if got.W != 420 {
+		t.Fatalf("width = %d, want 420", got.W)
+	}
+}
+
+func TestSessionTreeOmitsBatteryWithoutAPresentPack(t *testing.T) {
+	t.Parallel()
+	_, h := newSessionHost(t, "swaylock")
+	var meters []*ui.Node
+	collectByKind(h.root, ui.KindMeter, &meters)
+	if len(meters) != 0 {
+		t.Fatal("KindMeter shown without a present battery")
+	}
+	if headingNamed(h.root, "Battery") {
+		t.Fatal("Battery heading shown without a present pack")
+	}
+}
+
+func TestSessionTreeShowsBatteryWhenPresent(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Session.Locker = "swaylock"
+	cfg.Accessibility.ReducedMotion = true
+	reg := NewRegistry(cfg)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	t.Cleanup(reg.Close)
+	reg.UpdateMetrics(services.Snapshot{Battery: &metrics.BatterySnapshot{
+		Present: true, Charge: 0.84, ChargeValid: true, State: metrics.BatteryDischarging,
+	}})
+	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelSession]
+	if !headingNamed(h.root, "Battery") {
+		t.Fatal("present pack has no Battery heading")
+	}
+	var meters []*ui.Node
+	collectByKind(h.root, ui.KindMeter, &meters)
+	if len(meters) != 1 {
+		t.Fatalf("meters = %d, want 1", len(meters))
+	}
+	if !strings.Contains(strings.Join(texts(h.root), " "), "84%") {
+		t.Fatalf("tree %v has no percent text", texts(h.root))
+	}
+}
+
+func TestSessionTreeOmitsProfilesWhenUnavailable(t *testing.T) {
+	t.Parallel()
+	reg, h := newSessionHost(t, "swaylock")
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	reg.rebuildPanel(h)
+	for _, n := range ui.Focusables(h.root) {
+		if n.Role == "tab" {
+			t.Fatalf("profile tab %q shown without powerprofilesctl", n.Name)
+		}
+	}
+}
+
+func TestSessionActionsRemain(t *testing.T) {
+	t.Parallel()
+	_, h := newSessionHost(t, "swaylock")
+	got := focusableNames(h.root)
+	for _, name := range []string{"Lock", "Log out", "Suspend", "Reboot", "Power off"} {
+		if !slices.Contains(got, name) {
+			t.Fatalf("missing %s in %v", name, got)
+		}
+	}
+}
+
+func TestSessionAlignsToTheTrailingEdge(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	cb, err := reg.NewHost(7, "eDP-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cb.Configure(1536, 44, 120); err != nil {
+		t.Fatal(err)
+	}
+	drainAuxQueue(reg)
+	if err := reg.TogglePanelByName("session"); err != nil {
+		t.Fatal(err)
+	}
+	reqs := drainAux(t, reg, 2)
+	got := reqs[1].Open
+	if got.MarginLeft == (1536-got.Width)/2 {
+		t.Fatal("session still centred")
+	}
+	if got.MarginLeft == (1920-got.Width)/2 {
+		t.Fatal("session still centred")
+	}
+}
+
+func TestSelectingAListedProfileRunsSet(t *testing.T) {
+	t.Parallel()
+	reg, h := newSessionHost(t, "swaylock")
+	h.profilesOK = true
+	h.profiles = []string{"power-saver", "balanced", "performance"}
+	h.profileActive = "balanced"
+	reg.rebuildPanel(h)
+	var got [][]string
+	reg.runArgv = func(argv []string) error {
+		got = append(got, append([]string(nil), argv...))
+		return nil
+	}
+	activateNamed(h, reg, "Performance")
+	if len(got) != 1 || !reflect.DeepEqual(got[0], []string{"powerprofilesctl", "set", "performance"}) {
+		t.Fatalf("argv = %v", got)
 	}
 }
 
@@ -74,12 +195,25 @@ func newSessionHost(t *testing.T, locker string) (*Registry, *PanelHost) {
 	cfg.Session.Locker = locker
 	cfg.Accessibility.ReducedMotion = true
 	reg := NewRegistry(cfg)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
 	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
 		t.Fatal(err)
 	}
 	_ = drainAux(t, reg, 2)
 	return reg, reg.panelHosts[PanelSession]
+}
+
+func headingNamed(n *ui.Node, name string) bool {
+	if n.Name == name && n.Role == "heading" {
+		return true
+	}
+	for _, c := range n.Children {
+		if headingNamed(c, name) {
+			return true
+		}
+	}
+	return false
 }
 
 func focusableNames(root *ui.Node) []string {

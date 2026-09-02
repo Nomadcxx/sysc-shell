@@ -73,6 +73,10 @@ type Registry struct {
 	brightLease *services.Lease
 	// runArgv launches a session action. Tests replace it per Registry.
 	runArgv func([]string) error
+	// lookPath finds a binary on PATH. Tests replace it per Registry.
+	lookPath func(string) (string, error)
+	// runArgvOutput captures stdout of powerprofilesctl list. Tests replace it.
+	runArgvOutput func([]string) (string, error)
 
 	// notify is the service-owned notification projection.
 	notify *notifyState
@@ -115,6 +119,8 @@ func NewRegistry(cfg config.Config) *Registry {
 		closed:        make(chan struct{}),
 		dwell:         newDwell(defaultDwell),
 		runArgv:       runArgvDefault,
+		lookPath:      exec.LookPath,
+		runArgvOutput: runArgvOutputDefault,
 		notify:        newNotifyState(),
 		tray:          newTrayState(),
 		trayCh:        make(chan trayclient.Message, 32),
@@ -647,11 +653,19 @@ func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
 		r.rebuildPanel(h)
 		monitorOut, monitorOK = h.output, true
 	}
+	sessionOut, sessionOK := uint32(0), false
+	if h := r.panelHosts[PanelSession]; h != nil {
+		r.rebuildPanel(h)
+		sessionOut, sessionOK = h.output, true
+	}
 	r.mu.Unlock()
 
 	r.publish(changed)
 	if monitorOK {
 		r.publishSurface(monitorOut, panelSurfaceID(PanelMonitor))
+	}
+	if sessionOK {
+		r.publishSurface(sessionOut, panelSurfaceID(PanelSession))
 	}
 	return changed
 }
