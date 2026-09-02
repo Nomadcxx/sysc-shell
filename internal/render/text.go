@@ -75,6 +75,11 @@ type TextRenderer struct {
 	face    *font.Face
 	fontMap *FontMap
 	shaper  shaping.HarfbuzzShaper
+	// material is this renderer's own face for the embedded icon subset,
+	// parsed on first use. materialErr latches a parse failure so a broken
+	// embed is reported once rather than retried every frame.
+	material    *font.Face
+	materialErr error
 }
 
 func NewTextRenderer(face *font.Face) *TextRenderer {
@@ -195,6 +200,13 @@ func (r *TextRenderer) Raster(text string, size int, tabular bool) (Mask, error)
 		return Mask{}, err
 	}
 
+	return rasterRuns(runs, size)
+}
+
+// rasterRuns draws already-shaped runs into an alpha mask. It is separate from
+// Raster so a caller that shapes through one specific face -- an icon name
+// through the Material subset -- reuses the same rasterisation.
+func rasterRuns(runs []shapedFaceRun, size int) (Mask, error) {
 	_, w, h, baseline := shapedMetrics(runs)
 	if w <= 0 || h <= 0 {
 		return Mask{}, fmt.Errorf("render: run measures %dx%d", w, h)

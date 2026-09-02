@@ -93,7 +93,7 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 		_, h := measure(n.Text, n.Tabular)
 		return h + 2*n.Padding, nil
 	case KindIcon:
-		return iconSize(n), nil
+		return IconSize(n), nil
 	case KindSegmented:
 		_, h, err := measureSegmented(n, measure)
 		return h, err

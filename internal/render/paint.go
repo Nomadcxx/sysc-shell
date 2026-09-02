@@ -205,6 +205,9 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 	case ui.KindButton, ui.KindDragSource:
 		return paintButton(c, n, text, style, size)
 
+	case ui.KindIcon:
+		return paintIcon(c, n, text, style)
+
 	case ui.KindToggle:
 		paintToggle(c, n, style)
 		return nil
@@ -758,6 +761,31 @@ func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, si
 		size, n.Tabular, fg, n.Bold, n.Italic, n.Underline)
 }
 
+// paintIcon draws one named glyph from the embedded Material subset, centred in
+// the node's box and tinted with the foreground it inherited from the chrome it
+// sits in. An icon takes no fill of its own: the control around it already
+// resolved one.
+func paintIcon(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle) error {
+	if n.Icon == "" {
+		return nil
+	}
+	size := style.Scale120.Physical(ui.IconSize(n))
+	if size <= 0 {
+		return fmt.Errorf("render: icon %q has no size", n.Icon)
+	}
+	mask, err := text.RasterMaterialIcon(n.Icon, size)
+	if err != nil {
+		return err
+	}
+	box := style.Scale120.PhysicalRect(n.Bounds)
+	b := mask.Alpha.Bounds()
+	x := box.X + (box.W-b.Dx())/2
+	y := box.Y + (box.H-b.Dy())/2
+	blendMask(c, mask.Alpha, x, y, style.Foreground)
+	return nil
+}
+
+// A button is a stadium unless it carries an explicit card radius.
 // A button is a stadium unless it carries an explicit card radius.
 func paintButton(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size int) error {
 	return paintChrome(c, n, text, style, size, style.containerHighest(), 0)
