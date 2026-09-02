@@ -141,6 +141,28 @@ func TestConvertRejectsAnIconTheShellDoesNotHave(t *testing.T) {
 	}
 }
 
+func TestConvertResolvesAButtonIcon(t *testing.T) {
+	t.Parallel()
+	btn := &v1.Node{Kind: v1.KindButton, ID: "camera", Icon: "camera",
+		Name: "Open screen recorder", Role: "button",
+		Events: []v1.EventKind{v1.EventActivate}}
+	if err := v1.Validate(btn, v1.ViewBar); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Convert(&v1.Node{Kind: v1.KindRow, Children: []*v1.Node{btn}}, v1.ViewBar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, ok := render.IconByName("camera")
+	if !ok {
+		t.Fatal("catalogue missing camera")
+	}
+	button := got.Children[0]
+	if button.Text != string(want) || button.Action != "camera" {
+		t.Fatalf("button = %+v", button)
+	}
+}
+
 func TestConvertMapsToneOntoTheThemeRole(t *testing.T) {
 	t.Parallel()
 

@@ -245,6 +245,13 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 	case v1.KindButton:
 		out.Kind = ui.KindButton
 		out.Text = n.Text
+		if n.Icon != "" && n.Text == "" {
+			glyph, ok := render.IconByName(n.Icon)
+			if !ok {
+				return nil, fmt.Errorf("plugin: %s: no icon named %q; this shell has %v", path, n.Icon, render.IconNames())
+			}
+			out.Text = string(glyph)
+		}
 		// The node id becomes the action, which is how a hit finds its way
 		// back to the node the plugin addressed.
 		out.Action = n.ID

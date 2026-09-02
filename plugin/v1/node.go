@@ -325,6 +325,12 @@ func (v *validator) vocabulary(n *Node, path string) error {
 		if err := icon(n.Icon); err != nil {
 			return fmt.Errorf("%s: %w", path, err)
 		}
+	case KindButton:
+		if n.Icon != "" {
+			if err := icon(n.Icon); err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
+		}
 	case KindProgress:
 		if math.IsNaN(n.Value) || math.IsInf(n.Value, 0) {
 			return fmt.Errorf("%s: progress value is not finite", path)

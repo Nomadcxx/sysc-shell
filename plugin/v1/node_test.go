@@ -280,6 +280,20 @@ func TestValidateRequiresAnIconName(t *testing.T) {
 	}
 }
 
+func TestValidateButtonIcon(t *testing.T) {
+	t.Parallel()
+
+	ok := &Node{Kind: KindButton, ID: "camera", Icon: "camera",
+		Name: "Open screen recorder", Role: "button", Events: []EventKind{EventActivate}}
+	if err := Validate(ok, ViewBar); err != nil {
+		t.Fatalf("Validate rejected a button with a catalogue icon: %v", err)
+	}
+	if err := Validate(&Node{Kind: KindButton, ID: "b", Icon: "../../etc/passwd",
+		Name: "x", Role: "button", Events: []EventKind{EventActivate}}, ViewPanel); err == nil {
+		t.Fatal("Validate accepted an icon name that is not an identifier")
+	}
+}
+
 func TestValidateRejectsNegativeGeometry(t *testing.T) {
 	t.Parallel()
 
