@@ -44,7 +44,7 @@ func calendarGrid(now time.Time) Calendar {
 	return Calendar{Weeks: weeks}
 }
 
-func clockTree(now time.Time, monthDelta int) *ui.Node {
+func clockTree(now time.Time, monthDelta int, theme Theme) *ui.Node {
 	view := now.AddDate(0, monthDelta, 0)
 	g := calendarGrid(view)
 	header := view.Format("January 2006")
@@ -52,9 +52,9 @@ func clockTree(now time.Time, monthDelta int) *ui.Node {
 		{Kind: ui.KindText, Text: now.Format("15:04"), Name: "time"},
 		{Kind: ui.KindText, Text: now.Format("Mon 2 Jan 2006")},
 		{Kind: ui.KindRow, Gap: 8, Children: []*ui.Node{
-			{Kind: ui.KindButton, Text: "<", Action: "cal-prev", Name: "Previous month", Role: "button", Focusable: true},
+			calendarArrow("chevron_left", "cal-prev", "Previous month", theme),
 			{Kind: ui.KindText, Text: header},
-			{Kind: ui.KindButton, Text: ">", Action: "cal-next", Name: "Next month", Role: "button", Focusable: true},
+			calendarArrow("chevron_right", "cal-next", "Next month", theme),
 		}},
 	}}
 	weekdays := &ui.Node{Kind: ui.KindRow, Gap: 4}
@@ -79,4 +79,16 @@ func clockTree(now time.Time, monthDelta int) *ui.Node {
 		col.Children = append(col.Children, row)
 	}
 	return col
+}
+
+// calendarArrow is a compact circular icon button. A square button clamps to a
+// stadium, which at equal width and height is a circle, so month navigation
+// needs no geometry of its own. The accessible name carries the direction: the
+// glyph is a ligature and reads as nothing.
+func calendarArrow(icon, action, name string, theme Theme) *ui.Node {
+	return &ui.Node{
+		Kind: ui.KindButton, Action: action, Name: name, Role: "button", Focusable: true,
+		Width: theme.CompactHeight, Height: theme.CompactHeight,
+		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: icon, IconSize: theme.IconSize}},
+	}
 }
