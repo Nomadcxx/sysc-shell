@@ -358,6 +358,48 @@ func TestToastReportsVisiblePresentation(t *testing.T) {
 	}
 }
 
+func TestOpeningTheCentreHidesToasts(t *testing.T) {
+	r, h, sender := wiredToast(t)
+	r.cfg.Accessibility.ReducedMotion = true
+	r.applyNotify(snap(1, note(1, "a")))
+	if len(h.cards["eDP-1"]) == 0 {
+		t.Fatal("card did not land before opening the centre")
+	}
+
+	if err := r.OpenPanel(PanelNotifications, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, r, 2)
+
+	r.mu.Lock()
+	hidden := len(h.cards["eDP-1"])
+	r.mu.Unlock()
+	if hidden != 0 {
+		t.Fatalf("cards while centre open = %d, want none", hidden)
+	}
+	hh := h.harness()
+	if n := len(hh.updates); n == 0 || len(hh.updates[n-1].InputRects) != 0 {
+		t.Fatalf("input region while centre open = %+v", hh.updates)
+	}
+	renew := sender.ofKind(protocol.CommandPresentationRenew)
+	if len(renew) == 0 || renew[len(renew)-1].Presentations[0].State != protocol.PresentationSuppressed {
+		t.Fatalf("presentation while centre open = %+v", renew)
+	}
+
+	r.ClosePanel(PanelNotifications)
+	_ = drainAux(t, r, 2)
+
+	r.mu.Lock()
+	restored := len(h.cards["eDP-1"])
+	r.mu.Unlock()
+	if restored == 0 {
+		t.Fatal("cards did not return after closing the centre")
+	}
+	if n := len(hh.updates); n == 0 || len(hh.updates[n-1].InputRects) == 0 {
+		t.Fatal("input region stayed empty after close")
+	}
+}
+
 // The notify pump and the Wayland owner share one TextRenderer. Measuring a
 // new card while a frame is painting used to trip harfbuzz.
 func TestToastApplyDoesNotRaceThePainter(t *testing.T) {

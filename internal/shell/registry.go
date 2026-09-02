@@ -468,9 +468,42 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 			return r.TogglePanel(PanelMonitor, out, trig) == nil
 		case action == panelSessionAction && button == buttonRight:
 			return r.TogglePanel(PanelSession, out, trig) == nil
+		case action == panelNotificationsAction && (button == 0 || button == buttonLeft):
+			return r.TogglePanel(PanelNotifications, out, trig) == nil
+		case action == panelNotificationsAction && button == buttonMiddle:
+			r.toggleNotifyDND()
+			return true
+		case action == panelNotificationsAction && button == buttonRight:
+			if err := r.OpenPanel(PanelNotifications, out, trig); err != nil {
+				return true
+			}
+			r.mu.Lock()
+			if h := r.panelHosts[PanelNotifications]; h != nil {
+				h.notifyMenu = true
+				r.rebuildPanel(h)
+			}
+			r.mu.Unlock()
+			return true
 		}
 		return false
 	})
+}
+
+func (r *Registry) toggleNotifyDND() {
+	r.mu.Lock()
+	_, on := r.notify.dndState(r.now)
+	r.notify.setDND(!on)
+	if r.toasts != nil {
+		r.toasts.recompute()
+	}
+	var changed []uint32
+	for global, bar := range r.bars {
+		if bar.apply(r.viewLocked(bar.connector())) {
+			changed = append(changed, global)
+		}
+	}
+	r.mu.Unlock()
+	r.publish(changed)
 }
 
 // outputGlobalsLocked maps each live connector to its wl_registry global. Two
@@ -759,7 +792,9 @@ func (r *Registry) viewLocked(connector string) barView {
 		Metrics:   r.sample,
 		History:   r.historyLocked(),
 		Weather:   r.reading,
+		Unread:    r.notify.unread(),
 	}
+	_, view.DND = r.notify.dndState(r.now)
 	if r.plugins != nil {
 		view.Plugins = r.plugins.frames(connector)
 	}

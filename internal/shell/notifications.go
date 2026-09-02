@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -130,6 +131,22 @@ func (s *notifyState) summary(id uint32) string {
 	return s.active[id].Summary
 }
 
+func (s *notifyState) idsForGroup(key string) []uint32 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var ids []uint32
+	for _, n := range s.active {
+		k := n.DesktopEntry
+		if k == "" {
+			k = n.AppName
+		}
+		if strings.ToLower(k) == key {
+			ids = append(ids, n.ID)
+		}
+	}
+	return ids
+}
+
 func (s *notifyState) historyCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -141,9 +158,18 @@ func (s *notifyState) historyCount() int {
 func (r *Registry) applyNotify(m notifyclient.Message) {
 	r.notify.applyNotify(m)
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.toasts != nil {
 		r.toasts.recompute()
+	}
+	var out uint32
+	var open bool
+	if h := r.panelHosts[PanelNotifications]; h != nil {
+		r.rebuildPanel(h)
+		out, open = h.output, true
+	}
+	r.mu.Unlock()
+	if open {
+		r.publishSurface(out, panelSurfaceID(PanelNotifications))
 	}
 }
 func (r *Registry) notifyActiveIDs() []uint32 { return r.notify.activeIDs() }

@@ -268,6 +268,28 @@ func TestRecorderCatalogueNamesResolve(t *testing.T) {
 	}
 }
 
+func TestNotifyCatalogueNamesResolve(t *testing.T) {
+	t.Parallel()
+	m, err := NewSystemFontMap("sans-serif", "")
+	if err != nil {
+		t.Skipf("no system font available: %v", err)
+	}
+
+	for _, name := range []string{"notifications", "notifications-off", "close", "schedule"} {
+		r, ok := IconByName(name)
+		if !ok {
+			t.Fatalf("%q is missing from the catalogue", name)
+		}
+		face := m.Face(r)
+		if face == nil {
+			t.Fatalf("%q resolved to no face", name)
+		}
+		if face == m.Primary() {
+			t.Fatalf("%q resolved to the primary text face, not the icon face", name)
+		}
+	}
+}
+
 // The bar paints at roughly this size, so the levels have to survive it.
 func TestBatteryLevelsStayDistinctAtBarSize(t *testing.T) {
 	empty := glyphCoverage(t, iconBatteryLevel0, 17)

@@ -49,6 +49,10 @@ GLYPHS = [
     ("uniE01D", 0xE01D, "record"),
     ("uniE01E", 0xE01E, "stop"),
     ("uniE01F", 0xE01F, "replay"),
+    ("uniE020", 0xE020, "notifications"),
+    ("uniE021", 0xE021, "notifications-off"),
+    ("uniE022", 0xE022, "close"),
+    ("uniE023", 0xE023, "schedule"),
 ]
 
 UPM = 1000

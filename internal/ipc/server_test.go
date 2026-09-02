@@ -174,6 +174,32 @@ func TestPanelToggleLauncherDispatches(t *testing.T) {
 	}
 }
 
+func TestPanelToggleNotificationsDispatches(t *testing.T) {
+	t.Parallel()
+	var action, panel string
+	sock, cancel := startServer(t, Handlers{
+		Panel: func(a, p string) error { action, panel = a, p; return nil },
+	})
+	defer cancel()
+	out, err := Call(context.Background(), sock, "panel.toggle", map[string]string{"panel": "notifications"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Error != "" || !env.OK {
+		t.Fatalf("notifications toggle got %s", out)
+	}
+	if action != "toggle" || panel != "notifications" {
+		t.Fatalf("handler got %q %q", action, panel)
+	}
+}
+
 func startServer(t *testing.T, h Handlers) (string, context.CancelFunc) {
 	t.Helper()
 	sock := filepath.Join(t.TempDir(), "ipc.v1.sock")

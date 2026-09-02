@@ -14,6 +14,34 @@ func cardHeights(n int, h int) []int {
 	return out
 }
 
+func TestToastLayoutClearsTheBar(t *testing.T) {
+	geom := toastGeometry{OutputW: 1920, OutputH: 1080, Corner: toastTopRight, BarZone: 48}
+	rects, _ := toastLayout(geom, []int{80})
+	if rects[0].Y < 48+toastMargin {
+		t.Fatalf("card Y = %d, want >= %d (bar + margin)", rects[0].Y, 48+toastMargin)
+	}
+}
+
+func TestToastCardHeightFollowsContent(t *testing.T) {
+	root := &ui.Node{Kind: ui.KindColumn, Padding: 12, Gap: 6, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: "summary"},
+		{Kind: ui.KindText, Text: "a longer body line that must not be cropped"},
+		{Kind: ui.KindText, Text: "second body line so the stack clears 96"},
+		{Kind: ui.KindButton, Text: "Open", Padding: 4},
+	}}
+	measure := func(text string, _ bool) (int, int) { return len(text) * 8, 16 }
+	h, err := ui.ContentHeight(root, toastCardWidth, measure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h <= 96 {
+		t.Fatalf("content height %d still fits the 96 guess; use a taller tree", h)
+	}
+	if got := toastCardHeight(root, toastCardWidth, measure, 12); got < h {
+		t.Fatalf("placed height %d < content %d", got, h)
+	}
+}
+
 func TestToastLayoutStacksFromTopRight(t *testing.T) {
 	rects, queued := toastLayout(toastGeometry{OutputW: 1920, OutputH: 1080, Corner: toastTopRight}, cardHeights(2, 120))
 	if len(queued) != 0 {

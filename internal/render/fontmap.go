@@ -93,7 +93,8 @@ func iconFaceFor(r rune) *font.Face {
 	inBattery := r >= batteryRuneFirst && r <= batteryRuneLast
 	inMetric := r >= metricRuneFirst && r <= metricRuneLast
 	inRecorder := r >= recorderRuneFirst && r <= recorderRuneLast
-	if !inWeather && !inBattery && !inMetric && !inRecorder {
+	inNotify := r >= notifyRuneFirst && r <= notifyRuneLast
+	if !inWeather && !inBattery && !inMetric && !inRecorder && !inNotify {
 		return nil
 	}
 	return loadIconFace()

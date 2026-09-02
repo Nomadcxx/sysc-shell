@@ -9,6 +9,7 @@ import (
 	"time"
 
 	launcher "github.com/Nomadcxx/sysc-launch"
+	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
@@ -102,6 +103,11 @@ type PanelHost struct {
 	launcherMenuID  string
 	launcherActions []launcher.Action
 
+	notifyTab    int
+	notifyFilter string
+	notifyExpand string
+	notifyMenu   bool
+
 	profiles      []string
 	profileActive string
 	profilesOK    bool
@@ -121,6 +127,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelLauncher, nil
 	case "plugin":
 		return PanelPlugin, nil
+	case "notifications":
+		return PanelNotifications, nil
 	default:
 		return 0, fmt.Errorf("unknown panel")
 	}
@@ -225,6 +233,12 @@ func (r *Registry) openPanelRootLocked(id PanelID, output uint32, trig Trigger) 
 		r.roots.closeRoot(generation)
 		return err
 	}
+	if id == PanelNotifications {
+		r.setCenterOpen(true)
+		if ids := r.markCenterSeen(); len(ids) > 0 {
+			r.sendNotify(protocol.Command{Kind: protocol.CommandHistoryMarkSeen, IDs: ids})
+		}
+	}
 	r.roots.onClose(generation, func() {
 		r.panels.Close(id)
 		r.teardownPanelLocked(id)
@@ -309,6 +323,8 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelLauncher, true
 	case "plugin":
 		return PanelPlugin, true
+	case "notifications":
+		return PanelNotifications, true
 	default:
 		return 0, false
 	}
@@ -342,7 +358,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	if id == PanelSettings && place.Align == "" {
 		place.Align = "center"
 	}
-	if id == PanelSession {
+	if id == PanelSession || id == PanelNotifications {
 		place.Align = "right"
 	}
 	if id == PanelLauncher {
@@ -378,9 +394,13 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	h.root = r.panelTree(h)
 	h.focus = ui.Focusables(h.root)
 	h.roving = ui.Roving{Count: len(h.focus)}
-	if id == PanelMonitor {
+	if id == PanelMonitor || id == PanelNotifications {
 		_ = h.ensureText()
-		h.place.Panel.H = monitorSurfaceHeight(h.root, h.place.Panel.W, h.theme.Radius, h.measureText())
+		if id == PanelNotifications {
+			h.place.Panel.H = notificationsSurfaceHeight(h)
+		} else {
+			h.place.Panel.H = monitorSurfaceHeight(h.root, h.place.Panel.W, h.theme.Radius, h.measureText())
+		}
 	}
 	w, hgt := h.place.FittedSize()
 	h.place.Panel.W, h.place.Panel.H = w, hgt
@@ -1130,6 +1150,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 		}
 		return false
 	}
+	if strings.HasPrefix(n.Action, "notify:") {
+		return h.activateNotify(r, n)
+	}
 	if strings.HasPrefix(n.Action, "section:") {
 		h.section = strings.TrimPrefix(n.Action, "section:")
 		r.rebuildPanel(h)
@@ -1163,6 +1186,79 @@ func (h *PanelHost) activate(r *Registry) bool {
 	return true
 }
 
+func (h *PanelHost) activateNotify(r *Registry, n *ui.Node) bool {
+	action := n.Action
+	h.lastAction = action
+	if rest, ok := strings.CutPrefix(action, "notify:center:"); ok {
+		switch {
+		case rest == "dismiss-all":
+			r.sendNotify(protocol.Command{Kind: protocol.CommandDismissAll})
+		case rest == "clear-history":
+			r.sendNotify(protocol.Command{Kind: protocol.CommandHistoryClear})
+		case rest == "dnd":
+			_, on := r.notify.dndState(r.clockNow())
+			r.notify.setDND(!on)
+			if r.toasts != nil {
+				r.toasts.recompute()
+			}
+			r.rebuildPanel(h)
+		case rest == "schedule":
+			h.notifyMenu = !h.notifyMenu
+			r.rebuildPanel(h)
+		case strings.HasPrefix(rest, "tab:"):
+			h.notifyTab, _ = strconv.Atoi(strings.TrimPrefix(rest, "tab:"))
+			r.rebuildPanel(h)
+		case strings.HasPrefix(rest, "filter:"):
+			h.notifyFilter = strings.TrimPrefix(rest, "filter:")
+			r.rebuildPanel(h)
+		case strings.HasPrefix(rest, "expand:"):
+			key := strings.TrimPrefix(rest, "expand:")
+			if h.notifyExpand == key {
+				h.notifyExpand = ""
+			} else {
+				h.notifyExpand = key
+			}
+			r.rebuildPanel(h)
+		case strings.HasPrefix(rest, "dismiss-group:"):
+			key := strings.TrimPrefix(rest, "dismiss-group:")
+			for _, id := range r.notify.idsForGroup(key) {
+				r.sendNotify(protocol.Command{Kind: protocol.CommandDismiss, ID: id})
+			}
+		case strings.HasPrefix(rest, "preset:"):
+			id := strings.TrimPrefix(rest, "preset:")
+			now := r.clockNow()
+			if d, untilOff, ok := dndPresetDuration(id, now); ok {
+				if untilOff {
+					r.notify.setDND(true)
+				} else {
+					r.notify.setDNDPreset(now, d)
+				}
+				if r.toasts != nil {
+					r.toasts.recompute()
+				}
+			}
+			h.notifyMenu = false
+			r.rebuildPanel(h)
+		}
+		return true
+	}
+	id, parts, ok := parseCardAction(action)
+	if !ok || len(parts) == 0 {
+		return true
+	}
+	switch parts[0] {
+	case "dismiss":
+		r.sendNotify(protocol.Command{Kind: protocol.CommandDismiss, ID: id})
+	case "default":
+		r.sendNotify(protocol.Command{Kind: protocol.CommandAction, ID: id, ActionKey: "default"})
+	case "action":
+		if len(parts) == 2 {
+			r.sendNotify(protocol.Command{Kind: protocol.CommandAction, ID: id, ActionKey: parts[1]})
+		}
+	}
+	return true
+}
+
 func (h *PanelHost) afterFocusChange(r *Registry) {
 	if h.id == PanelMonitor {
 		r.rebuildPanel(h)
@@ -1170,6 +1266,7 @@ func (h *PanelHost) afterFocusChange(r *Registry) {
 }
 
 func (r *Registry) rebuildPanel(h *PanelHost) {
+	idx := h.roving.Index()
 	h.root = r.panelTree(h)
 	if h.id == PanelPlugin {
 		if h.editors == nil {
@@ -1179,6 +1276,10 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 	}
 	h.focus = ui.Focusables(h.root)
 	h.roving.Count = len(h.focus)
+	h.roving.Set(idx)
+	if h.id == PanelNotifications {
+		r.syncNotificationsSize(h)
+	}
 	if h.logicalW > 0 {
 		_ = h.configure(h.logicalW, h.logicalH, h.scale120)
 	}
@@ -1209,6 +1310,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 			return r.plugins.panelTree(h)
 		}
 		return pluginPanelError("starting", false)
+	case PanelNotifications:
+		return r.centerTreeFor(h)
 	default:
 		return placeholderTree()
 	}
@@ -1229,6 +1332,8 @@ func panelTargetSize(id PanelID) ui.Rect {
 	case PanelPlugin:
 		// Fallback when no plugin view has declared a size yet.
 		return ui.Rect{W: 320, H: 280}
+	case PanelNotifications:
+		return ui.Rect{W: 416, H: 300}
 	default:
 		return ui.Rect{W: 280, H: 200}
 	}
@@ -1250,6 +1355,19 @@ func monitorSurfaceHeight(root *ui.Node, width, radius int, measure ui.MeasureTe
 		radius = 0
 	}
 	return ht + 2*radius
+}
+
+func notificationsSurfaceHeight(h *PanelHost) int {
+	ht := monitorSurfaceHeight(h.root, h.place.Panel.W, h.theme.Radius, h.measureText())
+	maxH := min(h.place.Output.H*8/10, 648)
+	return max(300, min(ht, maxH))
+}
+
+func (r *Registry) syncNotificationsSize(h *PanelHost) {
+	_ = h.ensureText()
+	h.place.Panel.H = notificationsSurfaceHeight(h)
+	w, hgt := h.place.FittedSize()
+	h.place.Panel.W, h.place.Panel.H = w, hgt
 }
 
 func (h *PanelHost) applySetting(r *Registry, n *ui.Node) {
@@ -1352,6 +1470,9 @@ func (r *Registry) revealLoop(h *PanelHost) {
 }
 
 func (r *Registry) teardownPanelLocked(id PanelID) {
+	if id == PanelNotifications {
+		r.setCenterOpen(false)
+	}
 	h := r.panelHosts[id]
 	if h == nil {
 		return

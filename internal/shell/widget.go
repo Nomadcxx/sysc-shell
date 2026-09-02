@@ -29,6 +29,9 @@ type barView struct {
 	Weather services.Reading
 	// Plugins is this output's prepared plugin frames, keyed by instance.
 	Plugins map[string]pluginFrame
+	// Unread is unseen history. DND is do-not-disturb at this view's clock.
+	Unread int
+	DND    bool
 }
 
 // textWidget is one configured widget instance: a retained node plus the pure
@@ -234,6 +237,8 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 					return text
 				},
 			})
+		case "notifications":
+			out = append(out, buildNotifyWidget())
 		case "plugin":
 			out = append(out, buildPluginWidget(item))
 		}

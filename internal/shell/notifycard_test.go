@@ -47,7 +47,7 @@ func buttons(n *ui.Node) []*ui.Node {
 }
 
 func TestNotifyCardShowsSummaryBodyAndApp(t *testing.T) {
-	card := NotificationCard(baseNotification(), nil, true)
+	card := NotificationCard(baseNotification(), nil, nil, true)
 	joined := strings.Join(texts(card), "\n")
 	for _, want := range []string{"Mail", "Two new messages", "one", "two"} {
 		if !strings.Contains(joined, want) {
@@ -57,7 +57,7 @@ func TestNotifyCardShowsSummaryBodyAndApp(t *testing.T) {
 }
 
 func TestNotifyCardPreservesBodyStyles(t *testing.T) {
-	card := NotificationCard(baseNotification(), nil, true)
+	card := NotificationCard(baseNotification(), nil, nil, true)
 	var styled *ui.Node
 	var walk func(n *ui.Node)
 	walk = func(n *ui.Node) {
@@ -85,7 +85,7 @@ func TestNotifyCardBuildsSixActionPairs(t *testing.T) {
 		{Key: "a5", Label: "Five"},
 		{Key: "a6", Label: "Six"},
 	}
-	card := NotificationCard(n, nil, true)
+	card := NotificationCard(n, nil, nil, true)
 	got := buttons(card)
 	var keys []string
 	for _, b := range got {
@@ -111,7 +111,7 @@ func TestNotifyCardBuildsSixActionPairs(t *testing.T) {
 }
 
 func TestNotifyCardStampsDismissWhenNoDefault(t *testing.T) {
-	card := NotificationCard(baseNotification(), nil, true)
+	card := NotificationCard(baseNotification(), nil, nil, true)
 	id, rest, ok := parseCardAction(card.Action)
 	if !ok || id != 7 || len(rest) == 0 || rest[0] != "dismiss" {
 		t.Fatalf("root action = %q, want notify:7:dismiss so a body click can close it", card.Action)
@@ -121,7 +121,7 @@ func TestNotifyCardStampsDismissWhenNoDefault(t *testing.T) {
 func TestNotifyCardMarksTheDefaultActionOnTheBody(t *testing.T) {
 	n := baseNotification()
 	n.Actions = []protocol.Action{{Key: "default", Label: "Open"}}
-	card := NotificationCard(n, nil, true)
+	card := NotificationCard(n, nil, nil, true)
 	found := false
 	var walk func(n *ui.Node)
 	walk = func(n *ui.Node) {
@@ -140,7 +140,7 @@ func TestNotifyCardMarksTheDefaultActionOnTheBody(t *testing.T) {
 
 func TestNotifyCardAddsInlineReplyOnlyWhenAdvertised(t *testing.T) {
 	n := baseNotification()
-	without := NotificationCard(n, nil, true)
+	without := NotificationCard(n, nil, nil, true)
 	var fields []*ui.Node
 	collectByKind(without, ui.KindTextField, &fields)
 	if len(fields) != 0 {
@@ -148,7 +148,7 @@ func TestNotifyCardAddsInlineReplyOnlyWhenAdvertised(t *testing.T) {
 	}
 
 	n.InlineReply = true
-	with := NotificationCard(n, nil, true)
+	with := NotificationCard(n, nil, nil, true)
 	collectByKind(with, ui.KindTextField, &fields)
 	if len(fields) != 1 || !fields[0].Focusable {
 		t.Fatalf("inline reply = %+v, want one focusable field", fields)
@@ -158,7 +158,7 @@ func TestNotifyCardAddsInlineReplyOnlyWhenAdvertised(t *testing.T) {
 func TestNotifyCardRendersCriticalUrgencyAsErrorTone(t *testing.T) {
 	n := baseNotification()
 	n.Urgency = protocol.UrgencyCritical
-	card := NotificationCard(n, nil, true)
+	card := NotificationCard(n, nil, nil, true)
 	var found bool
 	var walk func(n *ui.Node)
 	walk = func(n *ui.Node) {
@@ -178,25 +178,25 @@ func TestNotifyCardRendersCriticalUrgencyAsErrorTone(t *testing.T) {
 func TestNotifyCardCountdownUsesTheAuthoritativeLifetime(t *testing.T) {
 	n := baseNotification()
 	lt := &protocol.Lifetime{ID: 7, DurationMS: 5000, RemainingMS: 3000, Running: true}
-	card := NotificationCard(n, lt, true)
-	joined := strings.Join(texts(card), "\n")
-	if !strings.Contains(joined, "3") {
-		t.Fatalf("countdown does not show the remaining seconds: %q", joined)
+	card := NotificationCard(n, lt, nil, true)
+	var meters []*ui.Node
+	collectByKind(card, ui.KindMeter, &meters)
+	if len(meters) != 1 || meters[0].Height != 3 || meters[0].Value != 0.6 {
+		t.Fatalf("timeout meter = %+v, want Height 3 Value 0.6", meters)
 	}
 
-	// A paused lifetime keeps its remaining value and reads as paused, so a
-	// hovered card does not tick down on the shell's own clock.
 	lt.Running = false
-	paused := strings.Join(texts(NotificationCard(n, lt, true)), "\n")
-	if !strings.Contains(paused, "3") {
-		t.Fatalf("paused countdown lost the remaining value: %q", paused)
+	meters = nil
+	collectByKind(NotificationCard(n, lt, nil, true), ui.KindMeter, &meters)
+	if len(meters) != 1 || meters[0].Value != 0.6 {
+		t.Fatalf("paused meter = %+v, want remaining 0.6", meters)
 	}
 
-	// A persistent notification (zero duration) shows no countdown at all.
 	n.ExpireTimeoutMS = 0
-	persist := strings.Join(texts(NotificationCard(n, &protocol.Lifetime{ID: 7}, true)), "\n")
-	if strings.Contains(persist, " 0s") {
-		t.Fatalf("persistent card shows a countdown: %q", persist)
+	meters = nil
+	collectByKind(NotificationCard(n, &protocol.Lifetime{ID: 7}, nil, true), ui.KindMeter, &meters)
+	if len(meters) != 0 {
+		t.Fatalf("persistent card has a timeout meter: %+v", meters)
 	}
 }
 
@@ -204,7 +204,7 @@ func TestNotifyCardValueBarIsIndependentOfCardState(t *testing.T) {
 	n := baseNotification()
 	v := int32(40)
 	n.Value = &v
-	card := NotificationCard(n, nil, true)
+	card := NotificationCard(n, nil, nil, true)
 	var meters []*ui.Node
 	collectByKind(card, ui.KindMeter, &meters)
 	if len(meters) != 1 {
@@ -215,7 +215,7 @@ func TestNotifyCardValueBarIsIndependentOfCardState(t *testing.T) {
 	}
 
 	v = 140
-	card = NotificationCard(n, nil, true)
+	card = NotificationCard(n, nil, nil, true)
 	meters = nil
 	collectByKind(card, ui.KindMeter, &meters)
 	if meters[0].Value != 1 {
@@ -228,7 +228,7 @@ func TestNotifyHistoryCardOmitsActionsAndReply(t *testing.T) {
 		ID: 3, AppName: "Mail", Summary: "Old", Body: "seen",
 		Timestamp: time.Unix(1_756_000_000, 0), Urgency: protocol.UrgencyLow,
 	}
-	card := HistoryCard(entry, true)
+	card := HistoryCard(entry, time.Unix(1_756_000_000, 0), nil, true)
 	if got := buttons(card); len(got) != 0 {
 		t.Fatalf("history card has action buttons: %v", got)
 	}
@@ -245,7 +245,7 @@ func TestNotifyHistoryCardOmitsActionsAndReply(t *testing.T) {
 func TestNotifyCardGatesLinksOnTheOpenerCapability(t *testing.T) {
 	n := baseNotification()
 	n.Body = `see <a href="https://example.test">the page</a>`
-	allowed := NotificationCard(n, nil, true)
+	allowed := NotificationCard(n, nil, nil, true)
 	found := false
 	for _, s := range texts(allowed) {
 		if strings.Contains(s, "the page") {
@@ -270,7 +270,7 @@ func TestNotifyCardGatesLinksOnTheOpenerCapability(t *testing.T) {
 		t.Fatal("no node carries the link href when links are allowed")
 	}
 
-	disallowed := NotificationCard(n, nil, false)
+	disallowed := NotificationCard(n, nil, nil, false)
 	linkAction = false
 	walk(disallowed)
 	if linkAction {
@@ -278,5 +278,62 @@ func TestNotifyCardGatesLinksOnTheOpenerCapability(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(texts(disallowed), "\n"), "the page") {
 		t.Fatal("disallowed link lost its anchor text")
+	}
+}
+
+func TestNotifyCardOmitsCriticalBang(t *testing.T) {
+	n := baseNotification()
+	n.Urgency = protocol.UrgencyCritical
+	card := NotificationCard(n, nil, nil, true)
+	for _, s := range texts(card) {
+		if s == "!" {
+			t.Fatal("critical toast still paints !")
+		}
+	}
+	if strokeOf(card) != 2 {
+		t.Fatalf("critical stroke = %d, want 2", strokeOf(card))
+	}
+}
+
+func strokeOf(n *ui.Node) int {
+	if n == nil {
+		return 0
+	}
+	if n.Stroke != 0 {
+		return n.Stroke
+	}
+	for _, c := range n.Children {
+		if s := strokeOf(c); s != 0 {
+			return s
+		}
+	}
+	return 0
+}
+
+func TestActiveGroupCardShowsCountDismissAndExpand(t *testing.T) {
+	now := time.Unix(1_756_000_000, 0)
+	g := activeGroup{key: "mail", members: []protocol.Notification{
+		{ID: 2, AppName: "Mail", Summary: "new", Body: "b", Timestamp: now.Add(time.Hour), Urgency: protocol.UrgencyNormal},
+		{ID: 1, AppName: "Mail", Summary: "old", Timestamp: now, Urgency: protocol.UrgencyNormal},
+	}}
+	card := ActiveGroupCard(g, now.Add(time.Hour), false, nil, false)
+	joined := strings.Join(texts(card), "\n")
+	for _, want := range []string{"Mail", "new", "b", "2"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("group text %q lacks %q", joined, want)
+		}
+	}
+	if buttonByName(card, "Dismiss") == nil {
+		t.Fatal("missing Dismiss")
+	}
+	if buttonByName(card, "Expand") == nil {
+		t.Fatal("missing Expand")
+	}
+	if containsText(card, "old") {
+		t.Fatal("collapsed group listed a member summary")
+	}
+	open := ActiveGroupCard(g, now.Add(time.Hour), true, nil, false)
+	if !containsText(open, "old") {
+		t.Fatal("expanded group hid members")
 	}
 }

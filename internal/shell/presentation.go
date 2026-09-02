@@ -74,8 +74,15 @@ func (r *Registry) setDNDForTest(dnd bool) {
 	r.notify.mu.Unlock()
 }
 
-func (r *Registry) setCenterOpenForTest(open bool) {
+func (r *Registry) setCenterOpen(open bool) {
 	r.notify.mu.Lock()
 	r.notify.centerOpen = open
 	r.notify.mu.Unlock()
+	if r.toasts != nil {
+		r.toasts.recompute()
+	}
+}
+
+func (r *Registry) setCenterOpenForTest(open bool) {
+	r.setCenterOpen(open)
 }

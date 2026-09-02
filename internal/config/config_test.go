@@ -221,6 +221,9 @@ func TestDefaultVocabularyShipsBothClocksAndBothNiriWidgets(t *testing.T) {
 			members = []Item{item}
 		}
 		for _, m := range members {
+			if m.ID == "notifications" {
+				continue
+			}
 			if m.Interval <= 0 {
 				t.Fatalf("default status widget %q has no sampling interval", m.ID)
 			}
