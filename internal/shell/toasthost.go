@@ -358,14 +358,7 @@ func (h *toastHost) updateHover(connector string) bool {
 func (h *toastHost) rebuild(connector string) {
 	ids := h.visible[connector]
 	rects := h.cardRects(connector, ids)
-	measure := func(text string, tabular bool) (int, int) {
-		if h.text != nil {
-			if w, height, err := h.text.Measure(text, h.style.Size, tabular); err == nil {
-				return w, height
-			}
-		}
-		return len([]rune(text)) * 8, 16
-	}
+	measure := h.measureText()
 	cards := make([]toastCard, 0, len(ids))
 	for i, id := range ids {
 		if i >= len(rects) {
@@ -419,6 +412,12 @@ func (h *toastHost) recompute() {
 			continue
 		}
 		geom := h.geometryFor(connector)
+		if bar, ok := h.r.bars[global]; ok {
+			geom.BarZone = exclusiveBarZone(bar)
+		} else {
+			geom.BarZone = 0
+		}
+		h.geometry[connector] = geom
 		heights := make([]int, 0, len(records))
 		ids := make([]uint32, 0, len(records))
 		if !suppressed {
@@ -498,9 +497,22 @@ func (h *toastHost) geometryFor(connector string) toastGeometry {
 	return toastGeometry{OutputW: 1920, OutputH: 1080, Corner: toastTopRight}
 }
 
-// cardHeight is the layout height of one card. The real measure happens in
-// the aux Configure callback; the stack estimate uses one line of body.
-func (h *toastHost) cardHeight(uint32) int { return 96 }
+// cardHeight is the layout height of one card, measured from its tree.
+// A missing tree or measure falls back to 96 so the card still places.
+func (h *toastHost) cardHeight(id uint32) int {
+	return toastCardHeight(h.cardFor(id), toastCardWidth, h.measureText(), h.style.Radius)
+}
+
+func (h *toastHost) measureText() ui.MeasureText {
+	return func(text string, tabular bool) (int, int) {
+		if h.text != nil {
+			if w, height, err := h.text.Measure(text, h.style.Size, tabular); err == nil {
+				return w, height
+			}
+		}
+		return len([]rune(text)) * 8, 16
+	}
+}
 
 // cardRects lays out the visible ids for one output and returns their rects.
 func (h *toastHost) cardRects(connector string, ids []uint32) []ui.Rect {

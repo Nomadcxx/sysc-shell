@@ -21,6 +21,7 @@ const (
 type toastGeometry struct {
 	OutputW, OutputH int
 	Corner           toastCorner
+	BarZone          int
 }
 
 // toastLayout places as many cards as the geometry holds, stacking away from
@@ -44,11 +45,11 @@ func toastLayout(g toastGeometry, heights []int) (rects []ui.Rect, queued []int)
 	}
 
 	top := g.Corner == toastTopRight || g.Corner == toastTopLeft
-	y := toastMargin
+	y := g.BarZone + toastMargin
 	if !top {
-		y = g.OutputH - toastMargin
+		y = g.OutputH - g.BarZone - toastMargin
 	}
-	limit := g.OutputH - 2*toastMargin
+	limit := g.OutputH - 2*toastMargin - g.BarZone
 	used := 0
 
 	for i, h := range heights {
@@ -75,6 +76,24 @@ func toastLayout(g toastGeometry, heights []int) (rects []ui.Rect, queued []int)
 		used += need
 	}
 	return rects, queued
+}
+
+// toastCardHeight is the tree's intrinsic height plus two radii of empty
+// chrome so the rounded body does not clip the last row. Same ceiling as
+// monitorSurfaceHeight. A missing tree or measure falls back to the old 96
+// guess rather than vanishing the card.
+func toastCardHeight(root *ui.Node, width int, measure ui.MeasureText, radius int) int {
+	if root == nil || measure == nil {
+		return 96
+	}
+	ht, err := ui.ContentHeight(root, width, measure)
+	if err != nil || ht <= 0 {
+		return 96
+	}
+	if radius < 0 {
+		radius = 0
+	}
+	return ht + 2*radius
 }
 
 func allIndexes(heights []int) []int {
