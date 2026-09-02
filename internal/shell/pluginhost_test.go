@@ -477,3 +477,259 @@ func TestOutputContextRejectsUndeclaredConnector(t *testing.T) {
 		t.Fatalf("undeclared error = %v", err)
 	}
 }
+
+const testRecorderPanelManifest = `{
+  "schema": 1,
+  "id": "org.sysc.screen-recorder",
+  "name": "Screen Recorder",
+  "version": "1.0.0",
+  "protocol": {"major": 1, "minor": 0},
+  "exec": "bin/sysc-plugin-timer",
+  "capabilities": ["notifications", "panels", "settings", "state"],
+  "requires": {"commands": []},
+  "services": [{"id": "recorder"}],
+  "widgets": [{"id": "bar", "settings": []}],
+  "panels": [{"id": "panel", "width": 480, "height": 560, "placement": "attached", "include_settings": true}],
+  "settings": [
+    {"key": "video_source", "type": "select", "label": "Video source", "default": "portal",
+      "options": [{"value": "focused", "label": "Focused output"}, {"value": "portal", "label": "Portal"}]},
+    {"key": "directory", "type": "folder", "label": "Output directory", "default": "~/Videos/Recordings"},
+    {"key": "filename_pattern", "type": "string", "label": "Filename pattern", "default": "recording_%Y%m%d_%H%M%S"},
+    {"key": "frame_rate", "type": "int", "label": "Frame rate", "default": 60, "min": 1, "max": 240},
+    {"key": "video_codec", "type": "select", "label": "Video codec", "default": "h264",
+      "options": [{"value": "h264", "label": "H.264"}]},
+    {"key": "video_qp", "type": "int", "label": "Quality (QP)", "default": 25, "min": 0, "max": 51},
+    {"key": "resolution", "type": "string", "label": "Resolution", "default": "original"},
+    {"key": "audio_source", "type": "select", "label": "Audio source", "default": "none",
+      "options": [{"value": "none", "label": "None"}]},
+    {"key": "audio_codec", "type": "select", "label": "Audio codec", "default": "opus",
+      "options": [{"value": "opus", "label": "Opus"}]},
+    {"key": "audio_bitrate", "type": "int", "label": "Audio bitrate (kbps)", "default": 0, "min": 0, "max": 512},
+    {"key": "show_cursor", "type": "bool", "label": "Show cursor", "default": true},
+    {"key": "color_range", "type": "select", "label": "Color range", "default": "limited",
+      "options": [{"value": "limited", "label": "Limited"}]},
+    {"key": "hide_inactive", "type": "bool", "label": "Hide when idle", "default": false},
+    {"key": "replay_enabled", "type": "bool", "label": "Replay buffer", "default": false},
+    {"key": "replay_duration", "type": "int", "label": "Replay duration (s)", "default": 30, "min": 5, "max": 3600,
+      "visible_when": {"key": "replay_enabled", "equals": true}},
+    {"key": "replay_filename_pattern", "type": "string", "label": "Replay filename pattern", "default": "replay_%Y%m%d_%H%M%S",
+      "visible_when": {"key": "replay_enabled", "equals": true}},
+    {"key": "replay_storage", "type": "select", "label": "Replay storage", "default": "ram",
+      "options": [{"value": "ram", "label": "RAM"}],
+      "visible_when": {"key": "replay_enabled", "equals": true}}
+  ]
+}`
+
+func bindManifestPlugin(t *testing.T, mode, id, manifest string, enabled []string) *Registry {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	dir := filepath.Join(root, id)
+	if _, err := plugin.WriteHelperPlugin(dir, self, mode, manifest); err != nil {
+		t.Fatal(err)
+	}
+	cfg := pluginConfig(root)
+	cfg.Plugins.Enabled = enabled
+	cfg.Bar.Right = []config.Item{{
+		ID: "plugin", Plugin: id, Entry: "bar", Instance: id + "-1",
+	}}
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	if err := reg.BindPlugins(PluginHostOptions{
+		Roots:    []plugin.Root{{Path: root, Source: plugin.SourceUser}},
+		StateDir: t.TempDir(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return reg
+}
+
+func waitPluginPanelRoot(t *testing.T, reg *Registry) *ui.Node {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		root := reg.plugins.panelTree()
+		text := treeText(root)
+		if text != "" && !strings.Contains(text, "starting") &&
+			(strings.Contains(text, "hello") || strings.Contains(text, "Go")) {
+			reg.mu.Lock()
+			host := reg.panelHosts[PanelPlugin]
+			reg.mu.Unlock()
+			if host != nil {
+				return root
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("plugin panel tree never became ready")
+	return nil
+}
+
+func openPanelPluginID(h *pluginHost) string {
+	if h == nil {
+		return ""
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.panel == nil {
+		return ""
+	}
+	return h.panel.Plugin
+}
+
+func TestPluginOpenPanelTogglesThisEntryClosed(t *testing.T) {
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+
+	res, err := reg.plugins.openPanel("org.sysc.timer", v1.PanelParams{
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "timer-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ViewID == "" {
+		t.Fatal("open returned empty view id")
+	}
+	_ = drainAux(t, reg, 2)
+	waitPluginPanelRoot(t, reg)
+
+	res, err = reg.plugins.openPanel("org.sysc.timer", v1.PanelParams{
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "timer-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		_, open := reg.panels.Output(PanelPlugin)
+		host := reg.panelHosts[PanelPlugin]
+		reg.mu.Unlock()
+		if !open && host == nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("second openPanel did not close this plugin panel")
+}
+
+func TestPluginOpenPanelReplacesAnotherPluginPanel(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if _, err := plugin.WriteHelperPlugin(filepath.Join(root, "org.sysc.timer"), self, "ok", testTimerManifest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plugin.WriteHelperPlugin(filepath.Join(root, "org.sysc.screen-recorder"), self, "ok", testRecorderPanelManifest); err != nil {
+		t.Fatal(err)
+	}
+	cfg := pluginConfig(root)
+	cfg.Plugins.Enabled = []string{"org.sysc.timer", "org.sysc.screen-recorder"}
+	cfg.Bar.Right = []config.Item{
+		{ID: "plugin", Plugin: "org.sysc.timer", Entry: "bar", Instance: "timer-1"},
+		{ID: "plugin", Plugin: "org.sysc.screen-recorder", Entry: "bar", Instance: "recorder-1"},
+	}
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	if err := reg.BindPlugins(PluginHostOptions{
+		Roots:    []plugin.Root{{Path: root, Source: plugin.SourceUser}},
+		StateDir: t.TempDir(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+
+	if _, err := reg.plugins.openPanel("org.sysc.timer", v1.PanelParams{
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "timer-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	waitPluginPanelRoot(t, reg)
+	if openPanelPluginID(reg.plugins) != "org.sysc.timer" {
+		t.Fatalf("timer panel = %q", openPanelPluginID(reg.plugins))
+	}
+
+	if _, err := reg.plugins.openPanel("org.sysc.screen-recorder", v1.PanelParams{
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "recorder-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if openPanelPluginID(reg.plugins) == "org.sysc.screen-recorder" {
+			reg.mu.Lock()
+			where, open := reg.panels.Output(PanelPlugin)
+			reg.mu.Unlock()
+			if open && where == 7 {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("recorder did not replace timer panel: panel=%q", openPanelPluginID(reg.plugins))
+}
+
+func TestPluginPanelTreeIncludeSettingsComposesRows(t *testing.T) {
+	reg := bindManifestPlugin(t, "ok", "org.sysc.screen-recorder", testRecorderPanelManifest,
+		[]string{"org.sysc.screen-recorder"})
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+
+	if _, err := reg.plugins.openPanel("org.sysc.screen-recorder", v1.PanelParams{
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "org.sysc.screen-recorder-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	deadline := time.Now().Add(5 * time.Second)
+	var text string
+	for time.Now().Before(deadline) {
+		root := reg.plugins.panelTree()
+		text = treeText(root)
+		if strings.Contains(text, "Output directory") && strings.Contains(text, "hello") {
+			for _, heading := range []string{"Capture", "File", "Video", "Audio", "Replay", "Bar"} {
+				if !strings.Contains(text, heading) {
+					t.Fatalf("missing group %q in %q", heading, text)
+				}
+			}
+			if strings.Contains(text, "Replay duration") {
+				t.Fatalf("hidden replay_duration still shown in %q", text)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("include_settings tree missing Output directory: %q", text)
+}
+
+func TestPluginPanelTreeWithoutIncludeSettingsStaysPluginOnly(t *testing.T) {
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+
+	if _, err := reg.plugins.openPanel("org.sysc.timer", v1.PanelParams{
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "timer-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	root := waitPluginPanelRoot(t, reg)
+	text := treeText(root)
+	if !strings.Contains(text, "hello") {
+		t.Fatalf("plugin root missing: %q", text)
+	}
+	for _, heading := range []string{"Capture", "File", "Output directory"} {
+		if strings.Contains(text, heading) {
+			t.Fatalf("include_settings=false still composed %q in %q", heading, text)
+		}
+	}
+}

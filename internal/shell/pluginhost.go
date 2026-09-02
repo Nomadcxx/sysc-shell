@@ -539,6 +539,19 @@ func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResul
 		return v1.PanelResult{}, err
 	}
 	p.Output = conn
+
+	h.mu.Lock()
+	same := h.panel != nil && h.panel.Plugin == pluginID && h.panel.Entry == p.Entry
+	h.mu.Unlock()
+	h.r.mu.Lock()
+	where, open := h.r.panels.Output(PanelPlugin)
+	owns := open && where == global && h.r.roots.owns(panelRoot(PanelPlugin))
+	h.r.mu.Unlock()
+	if same && owns {
+		h.r.ClosePanel(PanelPlugin)
+		return v1.PanelResult{}, nil
+	}
+
 	if err := h.r.OpenPanel(PanelPlugin, global, trig); err != nil {
 		return v1.PanelResult{}, err
 	}
@@ -563,6 +576,7 @@ func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResul
 		id = opened.ID
 	}
 	h.mu.Unlock()
+	h.refreshPanel()
 	return v1.PanelResult{ViewID: id}, nil
 }
 
@@ -612,14 +626,33 @@ func (h *pluginHost) refreshPanel() {
 func (h *pluginHost) panelTree() *ui.Node {
 	h.mu.Lock()
 	v := h.panel
-	h.mu.Unlock()
 	if v == nil {
+		h.mu.Unlock()
 		return pluginPanelError("starting", false)
 	}
-	if v.Failed || v.Root == nil {
-		return pluginPanelError(v.Label, true)
+	failed, label, root := v.Failed, v.Label, v.Root
+	pluginID, entry := v.Plugin, v.Entry
+	include := false
+	var schema []plugin.Setting
+	if slot := h.slots[pluginID]; slot != nil {
+		m := slot.rt.Manifest()
+		schema = m.Settings
+		for _, panel := range m.Panels {
+			if panel.ID == entry {
+				include = panel.IncludeSettings
+				break
+			}
+		}
 	}
-	return v.Root
+	h.mu.Unlock()
+	if failed || root == nil {
+		return pluginPanelError(label, true)
+	}
+	if !include {
+		return root
+	}
+	settings := pluginPanelSettings(h.r, pluginID, schema)
+	return &ui.Node{Kind: ui.KindColumn, Gap: 8, Children: append([]*ui.Node{root}, settings...)}
 }
 
 func (h *pluginHost) panelSize() ui.Rect {

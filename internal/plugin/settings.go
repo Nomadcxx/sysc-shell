@@ -38,6 +38,20 @@ func CheckValues(schema []Setting, values map[string]any) error {
 	return nil
 }
 
+// SettingVisible reports whether a setting's control should show for values.
+// Callers should merge schema defaults into values before checking so a
+// missing parent key uses the declared default rather than hiding everything.
+func SettingVisible(s Setting, values map[string]any) bool {
+	if s.VisibleWhen == nil {
+		return true
+	}
+	parent, ok := values[s.VisibleWhen.Key]
+	if !ok {
+		return false
+	}
+	return visibleEquals(parent, s.VisibleWhen.Equals)
+}
+
 func checkOne(s Setting, value any) error {
 	raw, err := json.Marshal(value)
 	if err != nil {

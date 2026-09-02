@@ -24,6 +24,27 @@ func TestCheckValuesAcceptsEachDeclaredType(t *testing.T) {
 	}
 }
 
+func TestSettingVisibleHonoursVisibleWhen(t *testing.T) {
+	t.Parallel()
+	s := Setting{
+		Key: "extra", Type: SettingString, Label: "Extra",
+		VisibleWhen: &VisibleWhen{Key: "on", Equals: true},
+	}
+	if SettingVisible(s, map[string]any{"on": false}) {
+		t.Fatal("visible when parent is false")
+	}
+	if !SettingVisible(s, map[string]any{"on": true}) {
+		t.Fatal("hidden when parent is true")
+	}
+	if SettingVisible(s, map[string]any{}) {
+		t.Fatal("visible when parent is missing")
+	}
+	plain := Setting{Key: "name", Type: SettingString, Label: "Name"}
+	if !SettingVisible(plain, nil) {
+		t.Fatal("plain setting hidden")
+	}
+}
+
 func TestCheckValuesRejectsBadCandidates(t *testing.T) {
 	t.Parallel()
 	min, max := 1.0, 5.0

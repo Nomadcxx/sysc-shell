@@ -92,6 +92,63 @@ func pluginCard(r *Registry, c plugin.Candidate) *ui.Node {
 	return &ui.Node{Kind: ui.KindColumn, Gap: 6, Children: children}
 }
 
+// pluginPanelSettingGroups is the recorder panel layout from the design.
+// Keys absent from a plugin's schema are skipped; headings omit empty groups.
+var pluginPanelSettingGroups = []struct {
+	Title string
+	Keys  []string
+}{
+	{"Capture", []string{"video_source", "show_cursor", "resolution", "frame_rate"}},
+	{"File", []string{"directory", "filename_pattern"}},
+	{"Video", []string{"video_codec", "video_qp", "color_range"}},
+	{"Audio", []string{"audio_source", "audio_codec", "audio_bitrate"}},
+	{"Replay", []string{"replay_enabled", "replay_duration", "replay_filename_pattern", "replay_storage"}},
+	{"Bar", []string{"hide_inactive"}},
+}
+
+func pluginPanelSettings(r *Registry, pluginID string, schema []plugin.Setting) []*ui.Node {
+	byKey := make(map[string]plugin.Setting, len(schema))
+	for _, s := range schema {
+		byKey[s.Key] = s
+	}
+	values := pluginSettingValues(r, pluginID, schema)
+	var out []*ui.Node
+	for _, g := range pluginPanelSettingGroups {
+		var rows []*ui.Node
+		for _, key := range g.Keys {
+			s, ok := byKey[key]
+			if !ok || !plugin.SettingVisible(s, values) {
+				continue
+			}
+			rows = append(rows, pluginSettingRow(r, pluginID, s))
+		}
+		if len(rows) == 0 {
+			continue
+		}
+		out = append(out, &ui.Node{Kind: ui.KindText, Text: g.Title, Bold: true, Name: g.Title, Role: "heading"})
+		out = append(out, rows...)
+	}
+	return out
+}
+
+func pluginSettingValues(r *Registry, pluginID string, schema []plugin.Setting) map[string]any {
+	out := make(map[string]any, len(schema))
+	for _, s := range schema {
+		if s.Default != nil {
+			out[s.Key] = s.Default
+		}
+	}
+	if r == nil || r.cfg.Plugins.Settings == nil {
+		return out
+	}
+	if m := r.cfg.Plugins.Settings[pluginID]; m != nil {
+		for k, v := range m {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 func pluginSettingRow(r *Registry, pluginID string, s plugin.Setting) *ui.Node {
 	raw := ""
 	if r != nil && r.cfg.Plugins.Settings != nil {
