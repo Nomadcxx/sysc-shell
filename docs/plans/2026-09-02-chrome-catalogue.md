@@ -14,7 +14,11 @@
 
 Read `docs/plans/2026-09-02-chrome-catalogue-design.md` before editing. Work in a dedicated implementation worktree, run `bd` only from `/home/nomadx/sysc-shell`, and claim `sysc-141`. Do not implement on `main`.
 
-Every production change follows a red/green cycle: add one focused test, run it and confirm the expected failure, add the smallest implementation, then rerun the focused package. Do not combine the red and green commands. Commit `.beads/issues.jsonl` with the final code state.
+The owner directed implementation-first development for this tranche. For each
+slice, trace the owning behavior, implement the smallest coherent change, add a
+focused regression check for non-trivial logic, and run the affected packages
+before committing. Do not manufacture pre-implementation failures. Commit
+`.beads/issues.jsonl` with the final code state.
 
 Preserve these invariants throughout:
 
@@ -63,29 +67,15 @@ Do not commit from Task 0 unless a new construction site required a plan correct
 - Modify: `internal/shell/theme.go`
 - Modify: `internal/shell/theme_test.go`
 
-**Step 1: Write failing token tests**
+**Step 1: Implement the token mapping**
 
-Extend the token fixtures and assertions so `Tokens` and `Fallback` must define:
+Add these fields to `Tokens`, its fallback, generator, and matugen template:
 
 ```go
 SurfaceContainerHigh    string
 SurfaceContainerHighest string
 OutlineVariant          string
 ```
-
-Add table tests proving generated light/dark tokens reach those fields, every fallback field parses, and the semantic pairs meet the design's text/icon/boundary contrast gates. Add a focused test showing a panel card resolves `SurfaceContainerHigh`, not `SurfaceContainer`.
-
-**Step 2: Verify red**
-
-Run:
-
-```bash
-go test ./internal/theme ./internal/shell -run 'Token|Theme|Contrast|SurfaceContainerHigh'
-```
-
-Expected: FAIL because the three roles and card mapping do not exist.
-
-**Step 3: Implement the smallest mapping**
 
 Add only the generated fields above. Extend `shell.Theme` with semantic colour pairs and the catalogue metrics it consumes:
 
@@ -104,11 +94,23 @@ CardRadius                     int
 
 Keep existing field names temporarily where removing them would widen this task; map them from the new semantic roles in one place. Add no configuration keys. Use the design defaults: 40/32 px heights, 12 px default horizontal padding, 20 px chrome icon, and current configured radius for cards.
 
-**Step 4: Verify green**
+**Step 2: Add focused token tests**
 
-Run the focused command from Step 2, then `go test ./internal/theme ./internal/shell`.
+Extend the token fixtures and assertions so generated light/dark tokens reach
+the new fields, every fallback field parses, and the semantic pairs meet the
+design's text/icon/boundary contrast gates. Add a focused test showing a panel
+card resolves `SurfaceContainerHigh`, not `SurfaceContainer`.
 
-**Step 5: Commit**
+**Step 3: Verify the slice**
+
+Run:
+
+```bash
+go test ./internal/theme ./internal/shell -run 'Token|Theme|Contrast|SurfaceContainerHigh'
+go test ./internal/theme ./internal/shell
+```
+
+**Step 4: Commit**
 
 ```bash
 git add internal/theme internal/shell/theme.go internal/shell/theme_test.go
@@ -126,7 +128,7 @@ git commit -m "feat(theme): add semantic chrome roles"
 - Modify: `internal/ui/column_test.go`
 - Modify: `internal/ui/kindcoverage_test.go`
 
-**Step 1: Write failing layout tests**
+**Step 1: Implement the retained-node contracts**
 
 Add tests for these public contracts:
 
@@ -145,7 +147,19 @@ const (
 )
 ```
 
-Extend `Node` with `Key`, `Icon`, `State`, and button children. Tests must show:
+Extend `Node` with `Key`, `Icon`, `State`, and button children. Keep `Text` as
+shorthand when `Children` is empty. When children are present, lay them out as
+one centered row. `KindSegmented` owns equal allocation, validates one selected
+child at most, and gives its children the parent height. Add no general flex API.
+
+Use `Action` as the default key only when non-empty; otherwise require an
+explicit `Key` for animated nodes. Disabled nodes remain measurable and
+paintable but are excluded by existing focus/hit traversal in the later host
+task.
+
+**Step 2: Add focused layout tests**
+
+Tests must show:
 
 - existing text-only buttons still measure using `Text` shorthand;
 - a 40 px icon+text button lays out icon, gap, and label inside padding;
@@ -156,25 +170,14 @@ Extend `Node` with `Key`, `Icon`, `State`, and button children. Tests must show:
 
 Use existing test measure functions; do not introduce a fixture framework.
 
-**Step 2: Verify red**
+**Step 3: Verify the slice**
 
 ```bash
 go test ./internal/ui -run 'Button|Icon|Segmented|KindCoverage'
+go test ./internal/ui
 ```
 
-Expected: compile failure for the missing kinds/fields, then assertion failures until layout exists.
-
-**Step 3: Implement layout**
-
-Keep `Text` as shorthand when `Children` is empty. When children are present, lay them out as one centered row. `KindSegmented` owns equal allocation, validates one selected child at most, and gives its children the parent height. Add no general flex API.
-
-Use `Action` as the default key only when non-empty; otherwise require an explicit `Key` for animated nodes. Disabled nodes remain measurable and paintable but are excluded by existing focus/hit traversal in the later host task.
-
-**Step 4: Verify green**
-
-Run Step 2, then `go test ./internal/ui`.
-
-**Step 5: Commit**
+**Step 4: Commit**
 
 ```bash
 git add internal/ui
@@ -190,11 +193,9 @@ git commit -m "feat(ui): add chrome content and segments"
 - Modify: `internal/render/canvas.go`
 - Create: `internal/render/canvas_test.go`
 
-**Step 1: Write failing value tests**
+**Step 1: Implement the pure helpers**
 
-Specify pure functions for clamped progress, out-cubic, out-quart, scalar interpolation, and rectangle interpolation. Table tests cover negative/over-one progress, exact endpoints, midpoint results, reverse-from-current behavior, and integer rounding. Add a render colour interpolation test that includes alpha.
-
-The wished-for geometry API is deliberately small:
+The geometry API is deliberately small:
 
 ```go
 func LerpRect(from, to Rect, progress float64) Rect
@@ -202,23 +203,22 @@ func EaseOutCubic(progress float64) float64
 func EaseOutQuart(progress float64) float64
 ```
 
-**Step 2: Verify red**
+Clamp once at the responsible helper. Keep timing and clocks out of `internal/ui`; this task only supplies deterministic values. Put colour interpolation beside the existing `render.Color` type.
+
+**Step 2: Add focused value tests**
+
+Table tests cover negative/over-one progress, exact endpoints, midpoint results,
+reverse-from-current behavior, and integer rounding. Add a render colour
+interpolation test that includes alpha.
+
+**Step 3: Verify the slice**
 
 ```bash
 go test ./internal/ui ./internal/render -run 'Lerp|Ease|Colour'
+go test ./internal/ui ./internal/render
 ```
 
-Expected: FAIL because the functions do not exist.
-
-**Step 3: Implement the pure helpers**
-
-Clamp once at the responsible helper. Keep timing and clocks out of `internal/ui`; this task only supplies deterministic values. Put colour interpolation beside the existing `render.Color` type.
-
-**Step 4: Verify green**
-
-Run Step 2, then `go test ./internal/ui ./internal/render`.
-
-**Step 5: Commit and checkpoint**
+**Step 4: Commit and checkpoint**
 
 ```bash
 git add internal/ui/transition.go internal/ui/transition_test.go internal/render/canvas.go internal/render/canvas_test.go
@@ -240,7 +240,19 @@ Checkpoint: rerun `go test ./internal/theme ./internal/ui ./internal/render ./in
 - Modify: `internal/shell/traydrawer.go`
 - Modify: `internal/shell/traymenuhost.go`
 
-**Step 1: Write failing pixel tests**
+**Step 1: Implement semantic paint**
+
+Replace the `KindButton` special-case fill with one rounded path shared with
+capsules. Resolve fill and paired foreground once, composite the state layer
+over that resolved fill, and recurse into children. Add the minimum outline
+helper to the canvas; do not add shadows or a general stroke engine.
+
+Pass every semantic colour from `shell.Theme` through existing `ProofStyle`
+construction sites. Keep compatibility aliases only where needed to avoid
+unrelated rewrites, and delete them once all construction sites use the
+semantic names.
+
+**Step 2: Add focused pixel tests**
 
 Using the existing `paintTree`/colour-at-point style, prove:
 
@@ -253,25 +265,14 @@ Using the existing `paintTree`/colour-at-point style, prove:
 - `KindCapsule` uses `SurfaceContainer`, while a high card uses `SurfaceContainerHigh` and theme radius;
 - an icon+text button paints children after its state layer.
 
-**Step 2: Verify red**
+**Step 3: Verify the slice**
 
 ```bash
 go test ./internal/render -run 'Button|Capsule|Outline|StateLayer|Focus'
+go test ./internal/render ./internal/shell
 ```
 
-Expected: FAIL on the old sharp Primary `fillRect` behavior.
-
-**Step 3: Implement semantic paint**
-
-Replace the `KindButton` special-case fill with one rounded path shared with capsules. Resolve fill and paired foreground once, composite the state layer over that resolved fill, and recurse into children. Add the minimum outline helper to the canvas; do not add shadows or a general stroke engine.
-
-Pass every semantic colour from `shell.Theme` through existing `ProofStyle` construction sites. Keep compatibility aliases only where needed to avoid unrelated rewrites, and delete them once all construction sites use the semantic names.
-
-**Step 4: Verify green**
-
-Run Step 2, then `go test ./internal/render ./internal/shell`.
-
-**Step 5: Commit**
+**Step 4: Commit**
 
 ```bash
 git add internal/render internal/shell/bar.go internal/shell/panelhost.go internal/shell/toasthost.go internal/shell/traydrawer.go internal/shell/traymenuhost.go
@@ -292,7 +293,26 @@ git commit -m "feat(render): paint semantic pill chrome"
 - Modify: `internal/render/paint.go`
 - Modify: `internal/render/paint_test.go`
 
-**Step 1: Write failing inventory tests**
+**Step 1: Write the author-time builder**
+
+Pin source commit `84ccef280841abfac506afc4ad4a2782f6d0a1d0` and verify source SHA-256 `c4416e02739ed6865e3218c19dcd62c5a88fb97b8bcc445f24ae8017d11cc2d0` before processing. Instantiate axes to `FILL=1`, `wght=400`, `GRAD=0`, `opsz=24`, subset the exact ligature inventory while retaining the required GSUB ligature feature, and emit a deterministic static TTF. `SOURCE.md` records URL, commit, hashes, axes, command, inventory, and Apache-2.0 provenance.
+
+Run:
+
+```bash
+python3 internal/render/icons/material/build.py /path/to/pinned/MaterialSymbolsRounded.ttf
+```
+
+Expected: the committed font is far smaller than the 14.6 MB source and a
+second run produces the same SHA-256.
+
+**Step 2: Embed and paint**
+
+Cache the parsed read-only font but give each `TextRenderer` its own face,
+matching the existing face-safety rule. Add one name-validation function used
+by `KindIcon`; do not route ligature text through the system font map.
+
+**Step 3: Add focused inventory tests**
 
 Table-test exactly these names:
 
@@ -306,31 +326,7 @@ volume_up volume_off brightness_high
 
 The test must reject an unknown name, prove each approved name shapes to nonzero coverage at 18/20/24 px, and prove `KindIcon` uses the embedded Material face rather than the primary text face or a system fallback.
 
-**Step 2: Verify red**
-
-```bash
-go test ./internal/render -run 'Material|KindIcon'
-```
-
-Expected: FAIL because the embedded subset and name resolver do not exist.
-
-**Step 3: Write the author-time builder**
-
-Pin source commit `84ccef280841abfac506afc4ad4a2782f6d0a1d0` and verify source SHA-256 `c4416e02739ed6865e3218c19dcd62c5a88fb97b8bcc445f24ae8017d11cc2d0` before processing. Instantiate axes to `FILL=1`, `wght=400`, `GRAD=0`, `opsz=24`, subset the exact ligature inventory while retaining the required GSUB ligature feature, and emit a deterministic static TTF. `SOURCE.md` records URL, commit, hashes, axes, command, inventory, and Apache-2.0 provenance.
-
-Run:
-
-```bash
-python3 internal/render/icons/material/build.py /path/to/pinned/MaterialSymbolsRounded.ttf
-```
-
-Expected: the committed font is far smaller than the 14.6 MB source and a second run produces the same SHA-256.
-
-**Step 4: Embed and paint**
-
-Cache the parsed read-only font but give each `TextRenderer` its own face, matching the existing face-safety rule. Add one name-validation function used by `KindIcon`; do not route ligature text through the system font map.
-
-**Step 5: Verify green**
+**Step 4: Verify the slice**
 
 ```bash
 go test ./internal/render -run 'Material|KindIcon'
@@ -342,7 +338,7 @@ go test ./internal/render
 
 Expected: all tests pass and rebuilding leaves the committed TTF unchanged.
 
-**Step 6: Commit**
+**Step 5: Commit**
 
 ```bash
 git add internal/render/icons/material internal/render/materialfont.go internal/render/materialfont_test.go internal/render/text.go internal/render/paint.go internal/render/paint_test.go
@@ -362,7 +358,18 @@ git commit -m "feat(render): embed material chrome icons"
 - Modify: `internal/render/paint.go`
 - Modify: `internal/ui/tree.go`
 
-**Step 1: Write failing clock tests**
+**Step 1: Implement the surface clock**
+
+Keep the animator concrete and package-private. It is keyed by stable node key
+and returns resolved visual values for the tree. Store no renderer objects in
+it. Replace `revealLoop` with the clock's frame scheduling and reuse the same
+scheduling path for OSD visibility.
+
+Panel enter begins 8 logical px from its anchored edge at zero opacity. Press
+scales the resolved visual rect/content to 0.98 without changing layout bounds.
+Do not schedule a ticker when all targets are settled.
+
+**Step 2: Add focused clock tests**
 
 With a fake `now` function, prove one animator per surface:
 
@@ -374,25 +381,14 @@ With a fake `now` function, prove one animator per surface:
 - uses opacity-only panel visibility of no more than 150 ms under reduced motion;
 - replaces the existing independent panel reveal ticker and does not add an OSD timer when one clock already owns that surface.
 
-**Step 2: Verify red**
+**Step 3: Verify the slice**
 
 ```bash
 go test ./internal/shell -run 'Anim|Reveal|ReducedMotion|Reverse|Settled'
+go test ./internal/shell ./internal/render ./internal/ui
 ```
 
-Expected: FAIL because only the fixed reveal ticker exists.
-
-**Step 3: Implement the clock**
-
-Keep the animator concrete and package-private. It is keyed by stable node key and returns resolved visual values for the tree. Store no renderer objects in it. Replace `revealLoop` with the clock's frame scheduling and reuse the same scheduling path for OSD visibility.
-
-Panel enter begins 8 logical px from its anchored edge at zero opacity. Press scales the resolved visual rect/content to 0.98 without changing layout bounds. Do not schedule a ticker when all targets are settled.
-
-**Step 4: Verify green**
-
-Run Step 2, then `go test ./internal/shell ./internal/render ./internal/ui`.
-
-**Step 5: Commit and checkpoint**
+**Step 4: Commit and checkpoint**
 
 ```bash
 git add internal/shell/animation.go internal/shell/animation_test.go internal/shell/panelhost.go internal/shell/panelhost_test.go internal/shell/osd.go internal/shell/osd_test.go internal/render/paint.go internal/ui/tree.go
@@ -416,27 +412,30 @@ Checkpoint: run `go test -race -count=1 ./internal/ui ./internal/render ./intern
 - Modify: `internal/shell/notifyactions.go`
 - Modify: `internal/shell/notifyactions_test.go`
 
-**Step 1: Write failing host tests**
+**Step 1: Implement host state resolution**
 
-For each host family, prove entering a new clickable node sets hover and invalidates once, motion within the same node does not invalidate, leaving clears hover/press, press sets state, release clears it, and disabled nodes neither focus nor activate. Add reduced-motion assertions for settled state without animation frames. Bar tests must prove only clickable capsules animate; CPU/memory display groups do not.
+Use existing hit testing and host locks. Store stable keys rather than stale
+node pointers across rebuilds. Resolve the state mask onto the current tree
+before paint and submit a surface invalidation only when the key/state target
+changes. Keep activation semantics unchanged.
 
-**Step 2: Verify red**
+**Step 2: Add focused host tests**
+
+For each host family, prove entering a new clickable node sets hover and
+invalidates once, motion within the same node does not invalidate, leaving
+clears hover/press, press sets state, release clears it, and disabled nodes
+neither focus nor activate. Add reduced-motion assertions for settled state
+without animation frames. Bar tests must prove only clickable capsules animate;
+CPU/memory display groups do not.
+
+**Step 3: Verify the slice**
 
 ```bash
 go test ./internal/shell -run 'Hover|Press|Disabled|PointerMotion|Invalidat'
+go test -race -count=1 ./internal/shell
 ```
 
-Expected: FAIL because pointer motion currently updates coordinates without publishing a changed visual state.
-
-**Step 3: Implement at the host boundary**
-
-Use existing hit testing and host locks. Store stable keys rather than stale node pointers across rebuilds. Resolve the state mask onto the current tree before paint and submit a surface invalidation only when the key/state target changes. Keep activation semantics unchanged.
-
-**Step 4: Verify green**
-
-Run Step 2, then `go test -race -count=1 ./internal/shell`.
-
-**Step 5: Commit**
+**Step 4: Commit**
 
 ```bash
 git add internal/shell
@@ -453,7 +452,14 @@ git commit -m "feat(shell): expose chrome interaction states"
 - Modify: `internal/shell/popout_monitor_test.go`
 - Modify: `internal/ui/layout_test.go`
 
-**Step 1: Write failing session tests**
+**Step 1: Implement the session composition**
+
+Use the theme metrics and kinds already added. Do not add session-only paint
+code. Preserve the 420 px panel and existing cards. Use 18 px profile icons,
+20 px action icons, and the exact names from D10. Keep profile labels visible
+even when the selected check replaces an icon.
+
+**Step 2: Add focused session tests**
 
 At the real 420 px panel width, assert:
 
@@ -466,23 +472,14 @@ At the real 420 px panel width, assert:
 - Reboot and Power off are error-toned outlines, not solid red;
 - session action IDs and argv remain byte-for-byte unchanged.
 
-**Step 2: Verify red**
+**Step 3: Verify the slice**
 
 ```bash
 go test ./internal/shell ./internal/ui -run 'Session|Profile|Balanced|Battery|Action'
+go test ./internal/shell ./internal/ui ./internal/render
 ```
 
-Expected: FAIL on independent profile buttons, missing icons, clipped widths, and unclassified action fills.
-
-**Step 3: Implement the composition**
-
-Use the theme metrics and kinds already added. Do not add session-only paint code. Preserve the 420 px panel and existing cards. Use 18 px profile icons, 20 px action icons, and the exact names from D10. Keep profile labels visible even when the selected check replaces an icon.
-
-**Step 4: Verify green**
-
-Run Step 2, then `go test ./internal/shell ./internal/ui ./internal/render`.
-
-**Step 5: Commit**
+**Step 4: Commit**
 
 ```bash
 git add internal/shell/popout_session.go internal/shell/popout_session_test.go internal/shell/popout_monitor.go internal/shell/popout_monitor_test.go internal/ui/layout_test.go
@@ -504,34 +501,31 @@ git commit -m "feat(shell): compose session chrome"
 - Modify as proved necessary: `internal/shell/traydrawer.go`
 - Test alongside each changed consumer in its existing `_test.go`
 
-**Step 1: Write failing regression tests**
+**Step 1: Apply the finite corrections**
 
-Replace calendar ASCII arrow expectations with `chevron_left` and
-`chevron_right` compact icon buttons. For every other Task 0 site, run its
-existing layout test at the narrowest supported width. Add a new assertion only
-when it demonstrates real clipping, lost accessible naming, or a changed hit
-target.
+Replace calendar ASCII arrows with `chevron_left` and `chevron_right` compact
+icon buttons. For every other Task 0 site, run its existing layout path at the
+narrowest supported width. Apply Material icons already in the approved
+inventory and adjust padding only when inspection or an existing check shows
+clipping, lost accessible naming, or a changed hit target.
 
-**Step 2: Verify red**
+Do not redesign settings, launcher, notifications, or tray trees. Do not add an
+icon to a control merely because one exists in the subset.
+
+**Step 2: Add focused regression tests**
+
+Update calendar expectations. For any other adjusted consumer, add an assertion
+that captures the observed clipping, naming, or hit-target regression. Do not
+add tests or edits for consumers that already fit.
+
+**Step 3: Verify the slice**
 
 ```bash
 go test ./internal/shell -run 'Clock|Settings|Launcher|Notif|Tray|Overflow'
+go test ./internal/shell
 ```
 
-Expected: the chevron test fails. Any added clipping assertion must also fail
-for the observed reason; do not manufacture changes for passing consumers.
-
-**Step 3: Make only proved corrections**
-
-Apply Material icons already in the approved inventory and adjust padding only
-at failing sites. Do not redesign settings, launcher, notifications, or tray
-trees. Do not add an icon to a control merely because one exists in the subset.
-
-**Step 4: Verify green**
-
-Run Step 2, then `go test ./internal/shell`.
-
-**Step 5: Commit and checkpoint**
+**Step 4: Commit and checkpoint**
 
 ```bash
 git add internal/shell
@@ -539,7 +533,7 @@ git commit -m "fix(shell): fit inherited pill controls"
 ```
 
 Checkpoint: inspect `git show --stat` and remove any consumer edit that is not
-backed by a failing regression test.
+backed by an observed regression and a focused check.
 
 ## Task 10: Crossfade valid theme changes
 
@@ -551,32 +545,26 @@ backed by a failing regression test.
 - Modify: `internal/shell/animation_test.go`
 - Modify: `internal/shell/theme_test.go`
 
-**Step 1: Write failing reload tests**
+**Step 1: Implement validated theme transitions**
+
+Validate one complete theme before publishing it. Retarget colour transitions
+on each active surface animator. Do not introduce settings or a theme service.
+
+**Step 2: Add focused reload tests**
 
 Prove a valid generated theme change retargets the current surface colours from
 their rendered values, reduced motion snaps to the new colours, and invalid
 tokens retain the previous complete semantic theme. A failed reload must not
 leave a mix of old and new roles.
 
-**Step 2: Verify red**
+**Step 3: Verify the slice**
 
 ```bash
 go test ./internal/shell -run 'Theme.*Reload|Palette.*Transition|InvalidTheme'
+go test -race -count=1 ./internal/shell ./internal/theme
 ```
 
-Expected: FAIL because theme application currently swaps without the catalogue
-transition contract.
-
-**Step 3: Implement through the existing registry theme path**
-
-Validate one complete theme before publishing it. Retarget colour transitions
-on each active surface animator. Do not introduce settings or a theme service.
-
-**Step 4: Verify green**
-
-Run Step 2, then `go test -race -count=1 ./internal/shell ./internal/theme`.
-
-**Step 5: Commit**
+**Step 4: Commit**
 
 ```bash
 git add internal/shell/registry.go internal/shell/registry_test.go internal/shell/animation.go internal/shell/animation_test.go internal/shell/theme_test.go
