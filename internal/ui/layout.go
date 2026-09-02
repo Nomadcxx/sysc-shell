@@ -106,7 +106,12 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 	return nil
 }
 
-func iconSize(n *Node) int {
+// IconSize is the logical square a KindIcon occupies. Layout and paint both
+// resolve it here so the glyph is rasterised at the size that was measured.
+func IconSize(n *Node) int {
+	if n == nil {
+		return 0
+	}
 	if n.IconSize > 0 {
 		return n.IconSize
 	}
@@ -397,7 +402,7 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		w, h := measure(n.Text, n.Tabular)
 		return w + 2*n.Padding, h + 2*n.Padding, nil
 	case KindIcon:
-		size := iconSize(n)
+		size := IconSize(n)
 		return size, size, nil
 	case KindSegmented:
 		return measureSegmented(n, measure)
