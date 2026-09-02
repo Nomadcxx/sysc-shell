@@ -461,7 +461,7 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 	bar.setActionHandler(func(action string, button uint32) bool {
 		out, trig := r.triggerFor(global)
 		switch {
-		case action == panelMonitorAction && (button == 0 || button == buttonLeft):
+		case action == panelMonitorAction && (button == 0 || button == buttonLeft || button == buttonRight):
 			return r.TogglePanel(PanelMonitor, out, trig) == nil
 		case action == panelSessionAction && button == buttonRight:
 			return r.TogglePanel(PanelSession, out, trig) == nil

@@ -43,6 +43,9 @@ const (
 
 	revealDuration = 200 * time.Millisecond
 	revealTick     = 16 * time.Millisecond
+	// shieldQuietFor drops the press that mapped the overlay, so the click
+	// that opened a panel cannot dismiss it through the fullscreen shield.
+	shieldQuietFor = 400 * time.Millisecond
 )
 
 // Trigger is the placement hint for opening a panel on one output.
@@ -64,6 +67,7 @@ type PanelHost struct {
 	roving         ui.Roving
 	leases         []*services.Lease
 	animStart      time.Time
+	shieldQuiet    time.Time
 	stopAnim       chan struct{}
 	stopOnce       sync.Once
 	theme          Theme
@@ -346,12 +350,13 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	}
 
 	h := &PanelHost{
-		id:         id,
-		output:     output,
-		place:      place,
-		stopAnim:   make(chan struct{}),
-		theme:      ThemeFromTokens(r.tokens, 12),
-		fontFamily: r.panelFontFamily(output),
+		id:          id,
+		output:      output,
+		place:       place,
+		stopAnim:    make(chan struct{}),
+		shieldQuiet: time.Now().Add(shieldQuietFor),
+		theme:       ThemeFromTokens(r.tokens, 12),
+		fontFamily:  r.panelFontFamily(output),
 	}
 	if bar, ok := r.bars[output]; ok {
 		h.scale120 = bar.scale120()
@@ -501,6 +506,9 @@ func (r *Registry) shieldSpec(h *PanelHost) *wayland.AuxSpec {
 			Render:    func([]byte, int, int, int) error { return nil },
 			Handle: func(e wayland.Event) bool {
 				if e.Kind == wayland.EventPointerPress {
+					if time.Now().Before(h.shieldQuiet) {
+						return false
+					}
 					r.ClosePanel(h.id)
 					return true
 				}

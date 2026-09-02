@@ -103,6 +103,37 @@ func TestOpenPanelSendsShieldThenPanel(t *testing.T) {
 	}
 }
 
+func TestShieldPressDuringOpenLeavesThePanelUp(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSession, 7, Trigger{BarEdge: "top", BarZone: 40}); err != nil {
+		t.Fatal(err)
+	}
+	reqs := drainAux(t, reg, 2)
+	if reqs[0].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventPointerPress}) {
+		t.Fatal("shield press during open reported a close")
+	}
+	if _, ok := reg.panels.Output(PanelSession); !ok {
+		t.Fatal("shield press during open closed the panel")
+	}
+}
+
+func TestShieldPressAfterQuietClosesThePanel(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSession, 7, Trigger{BarEdge: "top", BarZone: 40}); err != nil {
+		t.Fatal(err)
+	}
+	reqs := drainAux(t, reg, 2)
+	reg.panelHosts[PanelSession].shieldQuiet = time.Time{}
+	if !reqs[0].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventPointerPress}) {
+		t.Fatal("armed shield press did not close")
+	}
+	if _, ok := reg.panels.Output(PanelSession); ok {
+		t.Fatal("armed shield press left the panel open")
+	}
+}
+
 func TestEscapeClosesPanel(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
@@ -273,6 +304,31 @@ func TestClickingABarMetricOpensTheSystemMonitor(t *testing.T) {
 	drainAuxQueue(reg)
 	if !click(bar, target.X+target.W/2, target.Y+target.H/2) {
 		t.Fatal("clicking a metric did not activate")
+	}
+	reqs := drainAux(t, reg, 2)
+	if !strings.HasPrefix(reqs[1].Open.ID, "panel:system-monitor") {
+		t.Fatalf("opened %q, want the system monitor", reqs[1].Open.ID)
+	}
+}
+
+func TestRightClickingABarMetricOpensTheSystemMonitor(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	cb, err := reg.NewHost(7, "eDP-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cb.Configure(1536, 44, 120); err != nil {
+		t.Fatal(err)
+	}
+	bar := reg.bars[7]
+	target, ok := metricClickTarget(bar)
+	if !ok {
+		t.Fatal("default bar has no laid-out metric")
+	}
+	drainAuxQueue(reg)
+	if !clickButton(bar, target.X+target.W/2, target.Y+target.H/2, buttonRight) {
+		t.Fatal("right-clicking a metric did not activate")
 	}
 	reqs := drainAux(t, reg, 2)
 	if !strings.HasPrefix(reqs[1].Open.ID, "panel:system-monitor") {
