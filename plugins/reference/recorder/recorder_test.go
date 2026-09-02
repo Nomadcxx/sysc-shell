@@ -255,3 +255,19 @@ func waitMode(t *testing.T, r *Recorder, want Mode) {
 	}
 	t.Fatalf("mode = %s, want %s", last, want)
 }
+
+func TestRecorderReconfigureRebuildsNextCommand(t *testing.T) {
+	r := testRecorder(t, map[string]any{"frame_rate": 60.0}, "hang")
+	next, err := ParseConfig(map[string]any{"directory": r.cfg.Directory, "frame_rate": 24.0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Reconfigure(next)
+	time.Sleep(30 * time.Millisecond)
+	r.ToggleRecord("DP-1")
+	waitMode(t, r, Recording)
+	args := r.Ownership().Args
+	if !hasPair(args, "-f", "24") {
+		t.Fatalf("args = %v, want frame rate 24", args)
+	}
+}

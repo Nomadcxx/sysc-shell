@@ -28,6 +28,7 @@ type Snapshot struct {
 	Mode     Mode
 	Artifact string
 	Err      string
+	Logs     string
 }
 
 type Ownership struct {
@@ -50,6 +51,7 @@ type command struct {
 	kind   int
 	output string
 	own    Ownership
+	cfg    Config
 }
 
 const (
@@ -58,6 +60,7 @@ const (
 	cmdSave
 	cmdRecover
 	cmdRetry
+	cmdReconfig
 )
 
 type Recorder struct {
@@ -75,9 +78,10 @@ type Recorder struct {
 	replayDir string
 	before    map[string]struct{}
 
-	cmds chan command
-	quit chan struct{}
-	done chan struct{}
+	cmds    chan command
+	quit    chan struct{}
+	done    chan struct{}
+	updates chan Snapshot
 }
 
 func New(cfg Config, opt Options) *Recorder {
@@ -94,12 +98,13 @@ func New(cfg Config, opt Options) *Recorder {
 		opt.StopWait = 2 * time.Second
 	}
 	r := &Recorder{
-		cfg:  cfg,
-		opt:  opt,
-		cmds: make(chan command, 1),
-		quit: make(chan struct{}),
-		done: make(chan struct{}),
-		snap: Snapshot{Mode: Idle},
+		cfg:     cfg,
+		opt:     opt,
+		cmds:    make(chan command, 1),
+		quit:    make(chan struct{}),
+		done:    make(chan struct{}),
+		updates: make(chan Snapshot, 1),
+		snap:    Snapshot{Mode: Idle},
 	}
 	path, err := opt.LookPath("gpu-screen-recorder")
 	if opt.Exe != "" {
@@ -127,11 +132,14 @@ func (r *Recorder) Ownership() Ownership {
 	return r.own
 }
 
+func (r *Recorder) Updates() <-chan Snapshot { return r.updates }
+
 func (r *Recorder) ToggleRecord(output string) { r.send(command{kind: cmdRecord, output: output}) }
 func (r *Recorder) ToggleReplay(output string) { r.send(command{kind: cmdReplay, output: output}) }
 func (r *Recorder) SaveReplay()                { r.send(command{kind: cmdSave}) }
 func (r *Recorder) Recover(own Ownership)      { r.send(command{kind: cmdRecover, own: own}) }
 func (r *Recorder) Retry()                     { r.send(command{kind: cmdRetry}) }
+func (r *Recorder) Reconfigure(cfg Config)     { r.send(command{kind: cmdReconfig, cfg: cfg}) }
 
 func (r *Recorder) Close() {
 	r.mu.Lock()
@@ -149,7 +157,6 @@ func (r *Recorder) send(c command) {
 	select {
 	case r.cmds <- c:
 	case <-r.quit:
-	default:
 	}
 }
 
@@ -168,7 +175,9 @@ func (r *Recorder) loop() {
 			r.onExit()
 		case c := <-r.cmds:
 			r.handle(c)
-			r.drain()
+			if c.kind == cmdRecord || c.kind == cmdReplay {
+				r.drain()
+			}
 		}
 	}
 }
@@ -197,6 +206,8 @@ func (r *Recorder) handle(c command) {
 		if r.mode() == Failed {
 			r.set(Snapshot{Mode: Idle})
 		}
+	case cmdReconfig:
+		r.cfg = c.cfg
 	}
 }
 
@@ -399,12 +410,16 @@ func (r *Recorder) onExit() {
 }
 
 func (r *Recorder) fail(err error) {
+	logs := ""
+	if r.proc != nil {
+		logs = string(r.proc.Logs())
+	}
 	r.halt()
 	msg := ""
 	if err != nil {
 		msg = err.Error()
 	}
-	r.set(Snapshot{Mode: Failed, Err: msg})
+	r.set(Snapshot{Mode: Failed, Err: msg, Logs: logs})
 }
 
 func (r *Recorder) mode() Mode {
@@ -417,6 +432,18 @@ func (r *Recorder) set(s Snapshot) {
 	r.mu.Lock()
 	r.snap = s
 	r.mu.Unlock()
+	select {
+	case r.updates <- s:
+	default:
+		select {
+		case <-r.updates:
+		default:
+		}
+		select {
+		case r.updates <- s:
+		default:
+		}
+	}
 }
 
 func destPath(dir, pattern string, now time.Time) (string, error) {
