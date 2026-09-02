@@ -195,6 +195,13 @@ func runFakeRecorder() int {
 		signal.Ignore(syscall.SIGINT)
 		_, _ = os.Stdout.WriteString("ready\n")
 		select {}
+	case "silent-run":
+		_, _ = os.Stderr.WriteString("gsr info: using socketpair\n")
+		ch := make(chan os.Signal, 2)
+		signal.Notify(ch, syscall.SIGINT, syscall.SIGUSR1)
+		writeRecordArtifact()
+		<-ch
+		return 0
 	}
 	ch := make(chan os.Signal, 2)
 	signal.Notify(ch, syscall.SIGINT, syscall.SIGUSR1)

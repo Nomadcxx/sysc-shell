@@ -369,16 +369,23 @@ func (r *Recorder) remember() {
 
 func (r *Recorder) waitReady(p *Proc) bool {
 	deadline := time.Now().Add(2 * time.Second)
+	var runningSince time.Time
 	for time.Now().Before(deadline) {
-		if !p.Running() && !containsReady(p.Logs()) {
+		if containsReady(p.Logs()) {
+			return true
+		}
+		if !p.Running() {
 			return false
 		}
-		if containsReady(p.Logs()) {
+		if runningSince.IsZero() {
+			runningSince = time.Now()
+		}
+		if time.Since(runningSince) >= 100*time.Millisecond {
 			return true
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	return containsReady(p.Logs())
+	return p.Running()
 }
 
 func containsReady(logs []byte) bool {

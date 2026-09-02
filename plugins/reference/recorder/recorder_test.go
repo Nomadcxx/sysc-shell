@@ -85,6 +85,14 @@ func TestRecorderProcessExitFails(t *testing.T) {
 	}
 }
 
+func TestRecorderStartsWhenBackendLogsGsrInfo(t *testing.T) {
+	r := testRecorder(t, nil, "silent-run")
+	r.ToggleRecord("DP-1")
+	waitMode(t, r, Recording)
+	r.ToggleRecord("DP-1")
+	waitMode(t, r, Idle)
+}
+
 func TestRecorderZeroByteArtifactFails(t *testing.T) {
 	r := testRecorder(t, nil, "zero")
 	r.ToggleRecord("DP-1")
