@@ -253,7 +253,7 @@ widgets into this slice.
 
 ## Follow-up (bd, discovered from `sysc-146`)
 
-- Implementation plan: `sysc-147`
+- Implementation plan: `sysc-147` (`docs/plans/2026-09-03-wallpaper.md`)
 - gSlapper `*` coalescing when every output shares one video: `sysc-148`
 - Favorites, flatten, color wallpaper, theme row in the picker
 - Settings wallpaper page (directories, scale, fps, fade)

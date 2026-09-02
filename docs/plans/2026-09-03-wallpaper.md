@@ -10,6 +10,11 @@
 
 **Design:** `docs/plans/2026-09-03-wallpaper-design.md` (decisions D1–D20)
 
+**Audit:** `docs/plans/2026-09-03-wallpaper-audit.md`. Pins below are the
+accepted subset (Task 0 bead, Task 2 All token, Task 3 `SplitN`, Task 4 `-r`,
+Task 8 `cfgHook`, Task 9 spawn stub). Dirty-tree and AGENTS.md one-output
+notes stay operational, not plan text.
+
 ---
 
 ### Task 0: Reconcile the plan with landed main
@@ -18,7 +23,10 @@
 - Read: `docs/plans/2026-09-03-wallpaper-design.md`
 - Inspect: `internal/shell/panel.go`, `internal/shell/panelhost.go`, `internal/shell/popout_launcher.go`, `internal/ui/tree.go`, `internal/ipc/server.go`, `internal/config/config.go`, `internal/config/load.go`, `internal/shell/registry.go`, `internal/theme/generate.go`, `internal/icons/worker.go`
 
-**Step 1:** Confirm `sysc-147` is in progress (`bd show sysc-147` from `/home/nomadx/sysc-shell`). `sysc-146` is the design bead.
+**Step 1:** Confirm `sysc-149` is in progress (`bd show sysc-149` from
+`/home/nomadx/sysc-shell`). `sysc-146` is the closed design bead. Branch
+`milestone/wallpaper` from a clean `main`; do not carry the notification-centre
+or toast working tree into this slice.
 
 **Step 2:** Run `go test -race -count=1 ./...`. Record any pre-existing failure in bd instead of weakening a wallpaper check.
 
@@ -92,7 +100,9 @@ func TestSocketPath(t *testing.T) {
 **Step 1:** Write the failing table test that is the plugin self-check, ported:
 
 - Independent `DP-1` image and `DP-3` video
-- All expands over a fixed `[]string{"DP-1","DP-3"}` fixture
+- `Apply` takes the output-select token (`"all"` or a connector). `"all"`
+  expands over a fixed `[]string{"DP-1","DP-3"}` fixture inside the store /
+  service, not in the panel
 - Stale generation ignored (`Apply` with gen 1 after gen 2 exists is a no-op)
 - Disconnect keeps the assignment, clears runtime
 - Reconnect restores the saved assignment as a desired apply
@@ -103,7 +113,7 @@ Keep the store a plain struct with methods. No engine, no goroutine.
 
 **Step 2:** Run `go test -count=1 ./internal/wallpaper -run TestAssign -v`. Expected: FAIL.
 
-**Step 3:** Implement `Store`, `Assignment`, `Runtime`, `Apply`, `Disconnect`, `Reconnect`, `SeedPath`. Generation is per connector, uint64, incremented at the start of each requested apply.
+**Step 3:** Implement `Store`, `Assignment`, `Runtime`, `Apply`, `Disconnect`, `Reconnect`, `SeedPath`. `Apply` accepts `"all"` or one connector; expansion uses the current connector list. Generation is per connector, uint64, incremented at the start of each requested apply.
 
 **Step 4:** Run `go test -race -count=1 ./internal/wallpaper -run TestAssign -v`. Expected: PASS.
 
@@ -118,6 +128,8 @@ Keep the store a plain struct with methods. No engine, no goroutine.
 **Step 1:** Write failing tests against a `net.ListenUnix` fixture (copy the Waytrogen shape, in Go):
 
 - `query` writes `query\n` and parses `STATUS: playing image /wallpapers/space name.png`
+- `ParseStatus` splits with `strings.SplitN(line, " ", 4)` so a path with
+  spaces is the fourth field
 - `STATUS: paused video /tmp/a.mp4` sets paused + video
 - `ERROR: no pipeline` returns that error
 - Empty reply is an error
@@ -143,7 +155,7 @@ Read one line. Do not wait for EOF (gSlapper keeps the socket open).
 **Step 1:** Write failing tests:
 
 - `helpSupports([]byte("--ipc-socket PATH --transition-type TYPE --cache-size MB"))` true; old help without `--cache-size` false
-- `launchArgs` for DP-1, fill, loop, fps 30, fade off, socket `/run/user/1000/sysc-shell/gslapper-DP-1.sock`, path `/tmp/a.mp4` contains `-I`, that socket, `--no-save-state`, `-o` with `fill no-audio loop`, connector `DP-1`, path. No `*`. Hidden auto-pause adds `--auto-pause`; auto-stop adds `--auto-stop`; never both.
+- `launchArgs` for DP-1, fill, loop, fps 30, fade off, socket `/run/user/1000/sysc-shell/gslapper-DP-1.sock`, path `/tmp/a.mp4` contains `-I`, that socket, `--no-save-state`, `-o` with `fill no-audio loop`, `-r`, `30` (short form, not `--fps-cap`), connector `DP-1`, path. No `*`. Hidden auto-pause adds `--auto-pause`; auto-stop adds `--auto-stop`; never both.
 
 **Step 2:** Run `go test -count=1 ./internal/wallpaper -run 'TestHelpSupports|TestLaunchArgs' -v`. Expected: FAIL.
 
@@ -241,12 +253,15 @@ Do not recurse into the grid. Child dirs are entries, not flattened files (D9).
 - A second `Apply` with a slower fake that finishes after a newer one does not commit (generation)
 - `Disconnect("DP-3")` then `Reconnect("DP-3")` asks the fake to apply the saved path
 - Commands arrive on a channel; `Snapshot()` is immutable
+- `Service` has a `cfgHook func(source, seed string)` field. After a successful
+  image apply (or a video apply that produced a still) the test recorder sees
+  `("wallpaper", path)`. A video apply with no still does not call the hook.
 
-The fake must not touch Wayland. `exec` stays behind the engine interface so Task 9 can fill it in.
+The fake must not touch Wayland. `exec` stays behind the engine interface so Task 9 can fill it in. The registry later sets `cfgHook` to write `ThemeGen.Source`/`Seed` and call `generateTheme`.
 
 **Step 2:** Run `go test -race -count=1 ./internal/wallpaper -run TestService -v`. Expected: FAIL.
 
-**Step 3:** Implement `Service` with `Updates() <-chan Snapshot`, `Enqueue(Command)`, one loop goroutine. `ponytail:` one mutex on the store is enough; per-connector locks if two-output apply latency shows contention.
+**Step 3:** Implement `Service` with `Updates() <-chan Snapshot`, `Enqueue(Command)`, `cfgHook`, one loop goroutine. `ponytail:` one mutex on the store is enough; per-connector locks if two-output apply latency shows contention.
 
 **Step 4:** Run the race test. Expected: PASS.
 
@@ -258,12 +273,23 @@ The fake must not touch Wayland. `exec` stays behind the engine interface so Tas
 - Modify: `internal/wallpaper/gslapper.go`, `internal/wallpaper/fallback.go`
 - Test: `internal/wallpaper/engine_test.go`
 
-**Step 1:** Write a failing test that uses a tiny `Command` stub (inject `exec` like a func field):
+**Step 1:** Write a failing test that injects spawn. The engine holds:
 
-- No socket → spawn with `launchArgs`, poll `query` until OK or 3s
-- Child exits before ready → error, process killed
-- Existing socket + `query` OK → `change`; auto-stop error → stop, spawn once
-- Restore → `stop`, wait for socket file gone, then fallback argv
+```go
+spawn func(argv []string) (Process, error)
+
+type Process interface {
+	Wait() error
+	Stop() error
+}
+```
+
+Cases:
+
+- No socket → `spawn` is called with `launchArgs`, poll `query` until OK or 3s
+- Child exits before ready (`Wait` returns, `query` never succeeds) → error, `Stop` called
+- Existing socket + `query` OK → `change`; auto-stop error → `Stop`, then `spawn` once
+- Restore → `stop` IPC, wait for socket file gone, then fallback argv
 - Never builds a `pkill` argv
 
 Do not talk to a real `gslapper` in unit tests.
@@ -309,9 +335,11 @@ Do not talk to a real `gslapper` in unit tests.
 
 - Four image paths → one virtual-list row of four tiles; click/Enter enqueues `assign-image`
 - Arrow right moves selection inside the row; down moves a row
-- Output select All vs DP-1 changes the target on the next apply
+- Output select All vs DP-1 sends `Apply("all", path)` vs `Apply("DP-1", path)`
 - Restore enqueues `restore`
-- Theme seed: after a successful image apply the registry's next `generateTheme` sees `Source=wallpaper` and that path (drive this through a fake generator, not matugen)
+- Theme seed: registry installs `cfgHook`; after a successful image apply the
+  next `generateTheme` sees `Source=wallpaper` and that path (recorder hook,
+  not matugen)
 
 **Step 2:** Run the test. Expected: FAIL.
 

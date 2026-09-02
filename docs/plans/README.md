@@ -293,7 +293,8 @@ widgets) are still unordered.
 | `2026-09-02-sysc-launch-extraction-design.md` | design | Owner-approved boundary for history-preserving extraction into `github.com/Nomadcxx/sysc-launch`, a presentation-neutral library plus diagnostic CLI. |
 | `2026-09-02-sysc-launch-extraction.md` | plan | Nine-task history-preserving extraction, public API and CLI, local two-module gate, v0.1.0 release, and immutable shell pin. |
 | `2026-09-03-wallpaper-design.md` | design | M7 wallpaper picker (`sysc-146`): noctalia-gslapper chrome + native virtualized grid, gSlapper-first with awww/swaybg static fallback, owned per-connector sockets, Restore exception. Overrules the roadmap socket-client-only line. |
-| `2026-09-03-wallpaper.md` | plan | 14 tasks (`sysc-147`): assignment store, IPC, argv, config, library, service, panel chrome, apply/restore, startup reconcile, live Niri gate. |
+| `2026-09-03-wallpaper.md` | plan | 14 tasks (`sysc-149`): assignment store, IPC, argv, config, library, service, panel chrome, apply/restore, startup reconcile, live Niri gate. Audit pins applied 2026-09-03. |
+| `2026-09-03-wallpaper-audit.md` | audit-report | Pre-implementation audit. Accepted: bd claim, All token, `SplitN`, `-r`, `cfgHook`, spawn stub. Dirty `main` and AGENTS.md output line left as ops, not plan text. |
 
 ## Milestones 7 remainder and 8: not yet designed
 
