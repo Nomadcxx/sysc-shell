@@ -138,6 +138,39 @@ func applyTokens(t *Theme, tok theme.Tokens) {
 	t.OnContainer = t.OnPrimaryContainer
 }
 
+// LerpColors blends this theme's colours toward another. Geometry is not
+// interpolated: heights, padding, and radii come from the incoming theme at
+// once, because a control that changes size mid-fade would relayout every
+// frame. Only the palette travels.
+func (t Theme) LerpColors(to Theme, progress float64) Theme {
+	out := to
+	blend := func(from, dest Color) Color { return render.LerpColor(from, dest, progress) }
+	out.Surface = blend(t.Surface, to.Surface)
+	out.SurfaceContainer = blend(t.SurfaceContainer, to.SurfaceContainer)
+	out.SurfaceContainerHigh = blend(t.SurfaceContainerHigh, to.SurfaceContainerHigh)
+	out.SurfaceContainerHighest = blend(t.SurfaceContainerHighest, to.SurfaceContainerHighest)
+	out.OnSurface = blend(t.OnSurface, to.OnSurface)
+	out.OnSurfaceVariant = blend(t.OnSurfaceVariant, to.OnSurfaceVariant)
+	out.Primary = blend(t.Primary, to.Primary)
+	out.OnPrimary = blend(t.OnPrimary, to.OnPrimary)
+	out.PrimaryContainer = blend(t.PrimaryContainer, to.PrimaryContainer)
+	out.OnPrimaryContainer = blend(t.OnPrimaryContainer, to.OnPrimaryContainer)
+	out.Outline = blend(t.Outline, to.Outline)
+	out.OutlineVariant = blend(t.OutlineVariant, to.OutlineVariant)
+	out.Error = blend(t.Error, to.Error)
+	out.OnError = blend(t.OnError, to.OnError)
+	// The legacy names are derived, so they follow rather than blend twice.
+	out.Background = out.Surface
+	out.Foreground = out.OnSurface
+	out.Accent = out.Primary
+	out.Muted = out.OnSurfaceVariant
+	out.Capsule = out.SurfaceContainerHigh
+	out.Container = out.PrimaryContainer
+	out.OnAccent = out.OnPrimary
+	out.OnContainer = out.OnPrimaryContainer
+	return out
+}
+
 // ProofStyle projects the theme's semantic roles onto the painter's style.
 // Every surface builds its style here so a control cannot inherit a different
 // palette from the pill beside it; callers supply only geometry that varies per
