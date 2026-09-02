@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -168,9 +169,16 @@ func (r *Registry) setDNDPresetAt(now time.Time, d time.Duration) {
 }
 func (r *Registry) dndStateAt(now time.Time) (time.Time, bool) { return r.notify.dndState(now) }
 
-// centerTree builds the notification center: the header controls, the active
-// records, then grouped history. History rows have no actions.
-func (r *Registry) centerTree() *ui.Node {
+// centerTree builds the notification center: header, tabs, then the selected
+// list. Nil host is Current. History rows have no actions.
+func (r *Registry) centerTree() *ui.Node { return r.centerTreeFor(nil) }
+
+func (r *Registry) centerTreeFor(h *PanelHost) *ui.Node {
+	tab := 0
+	if h != nil {
+		tab = h.notifyTab
+	}
+
 	s := r.notify
 	s.mu.Lock()
 	active := make([]protocol.Notification, 0, len(s.active))
@@ -181,42 +189,59 @@ func (r *Registry) centerTree() *ui.Node {
 	for id, lt := range s.lifetimes {
 		lifetimes[id] = lt
 	}
+	historyN := len(s.history)
 	s.mu.Unlock()
 	sort.Slice(active, func(i, j int) bool { return active[i].ID > active[j].ID })
 
-	children := []*ui.Node{{
-		Kind: ui.KindRow, Gap: cardGap, Children: []*ui.Node{
-			{Kind: ui.KindButton, Text: "DND", Action: "notify:center:dnd",
+	_, dnd := r.dndStateAt(time.Now())
+	sched, _ := render.IconByName("schedule")
+	clearAction := "notify:center:dismiss-all"
+	if tab == 1 {
+		clearAction = "notify:center:clear-history"
+	}
+
+	children := []*ui.Node{
+		{Kind: ui.KindRow, Gap: cardGap, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: "Notifications"},
+			{Kind: ui.KindButton, Text: notifyGlyph(dnd), Action: "notify:center:dnd",
 				Name: "DND", Role: "button", Focusable: true},
-			{Kind: ui.KindButton, Text: "1h", Action: "notify:center:dnd:1h",
-				Name: "DND 1h", Role: "button", Focusable: true},
-			{Kind: ui.KindButton, Text: "Dismiss all", Action: "notify:center:dismiss-all",
-				Name: "Dismiss all", Role: "button", Focusable: true},
-			{Kind: ui.KindButton, Text: "Clear history", Action: "notify:center:clear-history",
-				Name: "Clear history", Role: "button", Focusable: true},
-		},
-	}}
-
-	if len(active) == 0 && r.unreadCount() == 0 && len(groups(r.notify)) == 0 {
-		children = append(children, &ui.Node{Kind: ui.KindText, Text: "No notifications"})
-		return &ui.Node{Kind: ui.KindColumn, Gap: cardGap, Padding: cardPadding, Children: children}
+			{Kind: ui.KindButton, Text: string(sched), Action: "notify:center:schedule",
+				Name: "Schedule", Role: "button", Focusable: true},
+			{Kind: ui.KindButton, Text: "Clear", Action: clearAction,
+				Name: "Clear", Role: "button", Focusable: true},
+		}},
+		{Kind: ui.KindRow, Gap: cardGap, Children: []*ui.Node{
+			{Kind: ui.KindButton, Text: fmt.Sprintf("Current (%d)", len(active)),
+				Action: "notify:center:tab:0", Name: "Current", Role: "tab",
+				Focusable: true, Bold: tab == 0},
+			{Kind: ui.KindButton, Text: fmt.Sprintf("History (%d)", historyN),
+				Action: "notify:center:tab:1", Name: "History", Role: "tab",
+				Focusable: true, Bold: tab == 1},
+		}},
 	}
 
-	for _, n := range active {
-		children = append(children, NotificationCard(n, cloneLifetime(lifetimes, n.ID), r.linksAllowed()))
-	}
-
-	for _, g := range r.notifyGroups() {
-		children = append(children, &ui.Node{Kind: ui.KindText, Text: g.key, Bold: true})
-		for _, e := range g.entries {
-			children = append(children, HistoryCard(e, r.linksAllowed()))
+	if tab == 1 {
+		groups := r.notifyGroups()
+		if len(groups) == 0 {
+			children = append(children, &ui.Node{Kind: ui.KindText, Text: "Nothing to see here"})
+		} else {
+			for _, g := range groups {
+				children = append(children, &ui.Node{Kind: ui.KindText, Text: g.key, Bold: true})
+				for _, e := range g.entries {
+					children = append(children, HistoryCard(e, r.linksAllowed()))
+				}
+			}
+		}
+	} else if len(active) == 0 {
+		children = append(children, &ui.Node{Kind: ui.KindText, Text: "Nothing to see here"})
+	} else {
+		for _, n := range active {
+			children = append(children, NotificationCard(n, cloneLifetime(lifetimes, n.ID), r.linksAllowed()))
 		}
 	}
 
 	return &ui.Node{Kind: ui.KindColumn, Gap: cardGap, Padding: cardPadding, Children: children}
 }
-
-func groups(s *notifyState) []notifyGroup { return s.groups() }
 
 // cloneLifetime copies a lifetime so a card never aliases the projection's
 // map value. A missing lifetime stays missing.
@@ -231,5 +256,3 @@ func cloneLifetime(lifetimes map[uint32]protocol.Lifetime, id uint32) *protocol.
 // linksAllowed reports the qualified opener capability. Task 10 wires the
 // real capability; the center builds with links off until then.
 func (r *Registry) linksAllowed() bool { return false }
-
-var _ = fmt.Sprintf

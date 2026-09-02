@@ -103,6 +103,8 @@ type PanelHost struct {
 	launcherMenuID  string
 	launcherActions []launcher.Action
 
+	notifyTab int
+
 	profiles      []string
 	profileActive string
 	profilesOK    bool
@@ -1134,6 +1136,11 @@ func (h *PanelHost) activate(r *Registry) bool {
 		r.rebuildPanel(h)
 		return true
 	}
+	if rest, ok := strings.CutPrefix(n.Action, "notify:center:tab:"); ok {
+		h.notifyTab, _ = strconv.Atoi(rest)
+		r.rebuildPanel(h)
+		return true
+	}
 	if path, ok := strings.CutPrefix(n.Action, "goto:"); ok {
 		if e := h.set.ByPath(path); e != nil {
 			h.section = e.Section
@@ -1209,7 +1216,7 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		}
 		return pluginPanelError("starting", false)
 	case PanelNotifications:
-		return r.centerTree()
+		return r.centerTreeFor(h)
 	default:
 		return placeholderTree()
 	}

@@ -1,11 +1,13 @@
 package shell
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -75,39 +77,153 @@ func TestActiveGroupsMailCountAndCriticalFirst(t *testing.T) {
 	}
 }
 
-func TestCenterEmptyStateNamesNoNotifications(t *testing.T) {
+func TestCenterHeaderHasTitleDNDScheduleClearAndTabs(t *testing.T) {
 	r := NewRegistry(config.Default())
 	r.applyNotify(snap(1))
 	tree := r.centerTree()
-	found := false
-	for _, s := range texts(tree) {
-		if s == "No notifications" {
-			found = true
+
+	if !containsText(tree, "Notifications") {
+		t.Fatalf("title missing: %v", texts(tree))
+	}
+	dnd := buttonByName(tree, "DND")
+	if dnd == nil || dnd.Action != "notify:center:dnd" || dnd.Text != notifyGlyph(false) {
+		t.Fatalf("DND = %+v", dnd)
+	}
+	schedRune, _ := render.IconByName("schedule")
+	sched := buttonByName(tree, "Schedule")
+	if sched == nil || sched.Text != string(schedRune) {
+		t.Fatalf("schedule = %+v", sched)
+	}
+	clear := buttonByName(tree, "Clear")
+	if clear == nil || clear.Action != "notify:center:dismiss-all" || clear.Text != "Clear" {
+		t.Fatalf("clear = %+v", clear)
+	}
+	cur := buttonByAction(tree, "notify:center:tab:0")
+	if cur == nil || cur.Role != "tab" || cur.Text != "Current (0)" {
+		t.Fatalf("current tab = %+v", cur)
+	}
+	hist := buttonByAction(tree, "notify:center:tab:1")
+	if hist == nil || hist.Role != "tab" || hist.Text != "History (0)" {
+		t.Fatalf("history tab = %+v", hist)
+	}
+	for _, b := range buttons(tree) {
+		switch b.Text {
+		case "1h", "Dismiss all", "Clear history":
+			t.Fatalf("stub header button still present: %+v", b)
+		}
+		if b.Name == "Settings" || strings.Contains(strings.ToLower(b.Name), "keyboard") {
+			t.Fatalf("unwanted header button: %+v", b)
 		}
 	}
-	if !found {
+}
+
+func TestCenterEmptyStateNamesNothingToSeeHere(t *testing.T) {
+	r := NewRegistry(config.Default())
+	r.applyNotify(snap(1))
+	tree := r.centerTree()
+	if !containsText(tree, "Nothing to see here") {
 		t.Fatalf("empty center tree lacks the empty state: %v", texts(tree))
 	}
 }
 
-func TestCenterShowsActiveRecordsAboveHistory(t *testing.T) {
+func TestCenterCurrentTabShowsLiveNotHistory(t *testing.T) {
 	r := NewRegistry(config.Default())
 	r.applyNotify(snap(1, note(1, "live")))
 	r.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
 		History: ptrH(historyEntry(2, "mail", "Mail", "old", time.Unix(1_756_000_000, 0), true))}))
 	tree := r.centerTree()
 	got := texts(tree)
-	live, old := -1, -1
-	for i, s := range got {
-		if s == "live" {
-			live = i
-		}
-		if s == "old" {
-			old = i
+	if !containsText(tree, "live") {
+		t.Fatalf("current tab lacks live: %v", got)
+	}
+	if containsText(tree, "old") {
+		t.Fatalf("current tab listed history: %v", got)
+	}
+	cur := buttonByAction(tree, "notify:center:tab:0")
+	hist := buttonByAction(tree, "notify:center:tab:1")
+	if cur == nil || cur.Text != "Current (1)" {
+		t.Fatalf("current count = %+v", cur)
+	}
+	if hist == nil || hist.Text != "History (1)" {
+		t.Fatalf("history count = %+v", hist)
+	}
+}
+
+func TestCenterClearActionFollowsTab(t *testing.T) {
+	r := NewRegistry(config.Default())
+	r.applyNotify(snap(1))
+	h := &PanelHost{id: PanelNotifications}
+	tree := r.centerTreeFor(h)
+	clear := buttonByName(tree, "Clear")
+	if clear == nil || clear.Action != "notify:center:dismiss-all" {
+		t.Fatalf("tab 0 clear = %+v", clear)
+	}
+	h.notifyTab = 1
+	tree = r.centerTreeFor(h)
+	clear = buttonByName(tree, "Clear")
+	if clear == nil || clear.Action != "notify:center:clear-history" {
+		t.Fatalf("tab 1 clear = %+v", clear)
+	}
+}
+
+func TestCenterTabActivateSelectsHistory(t *testing.T) {
+	r := NewRegistry(config.Default())
+	r.applyNotify(snap(1))
+	r.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
+		History: ptrH(historyEntry(2, "mail", "Mail", "old", time.Unix(1_756_000_000, 0), true))}))
+	h := &PanelHost{id: PanelNotifications}
+	r.rebuildPanel(h)
+	found := false
+	for i, n := range h.focus {
+		if n.Action == "notify:center:tab:1" {
+			h.roving.Set(i)
+			h.activate(r)
+			found = true
+			break
 		}
 	}
-	if live < 0 || old < 0 || live > old {
-		t.Fatalf("order = %v", got)
+	if !found {
+		t.Fatalf("history tab not focusable: %v", focusableNames(h.root))
+	}
+	if h.notifyTab != 1 {
+		t.Fatalf("notifyTab = %d, want 1", h.notifyTab)
+	}
+	if !containsText(h.root, "old") {
+		t.Fatalf("history tab lacks history: %v", texts(h.root))
+	}
+	if containsText(h.root, "Nothing to see here") {
+		t.Fatalf("history tab showed current empty copy: %v", texts(h.root))
+	}
+	clear := buttonByName(h.root, "Clear")
+	if clear == nil || clear.Action != "notify:center:clear-history" {
+		t.Fatalf("rebuilt clear = %+v", clear)
+	}
+}
+
+func TestCenterActivateClearSetsLastAction(t *testing.T) {
+	r := NewRegistry(config.Default())
+	r.applyNotify(snap(1))
+	h := &PanelHost{id: PanelNotifications}
+	r.rebuildPanel(h)
+	for i, n := range h.focus {
+		if n.Name == "Clear" {
+			h.roving.Set(i)
+			h.activate(r)
+			break
+		}
+	}
+	if h.lastAction != "notify:center:dismiss-all" {
+		t.Fatalf("lastAction = %q", h.lastAction)
+	}
+}
+
+func TestCenterDNDGlyphSwapsWhenOn(t *testing.T) {
+	r := NewRegistry(config.Default())
+	r.applyNotify(snap(1))
+	r.setDND(true)
+	dnd := buttonByName(r.centerTree(), "DND")
+	if dnd == nil || dnd.Text != notifyGlyph(true) {
+		t.Fatalf("DND on = %+v", dnd)
 	}
 }
 
@@ -179,5 +295,32 @@ func TestDNDPermanentHasNoEnd(t *testing.T) {
 }
 
 func ptrH(e protocol.HistoryEntry) *protocol.HistoryEntry { return &e }
+
+func containsText(n *ui.Node, want string) bool {
+	for _, s := range texts(n) {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+func buttonByName(tree *ui.Node, name string) *ui.Node {
+	for _, b := range buttons(tree) {
+		if b.Name == name {
+			return b
+		}
+	}
+	return nil
+}
+
+func buttonByAction(tree *ui.Node, action string) *ui.Node {
+	for _, b := range buttons(tree) {
+		if b.Action == action {
+			return b
+		}
+	}
+	return nil
+}
 
 var _ = ui.Rect{}
