@@ -381,6 +381,9 @@ func (r *Recorder) waitReady(p *Proc) bool {
 			runningSince = time.Now()
 		}
 		if time.Since(runningSince) >= 100*time.Millisecond {
+			// ponytail: gpu-screen-recorder 6.0.1 never prints ready; a live
+			// process for 100ms is the handshake. Use an explicit line if a
+			// later GSR grows one.
 			return true
 		}
 		time.Sleep(5 * time.Millisecond)
