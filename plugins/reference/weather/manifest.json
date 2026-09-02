@@ -18,6 +18,14 @@
       "visible_when": {"key": "enabled", "equals": true}},
     {"key": "unit", "type": "select", "label": "Units", "default": "celsius",
       "options": [{"value": "celsius", "label": "Celsius"}, {"value": "fahrenheit", "label": "Fahrenheit"}]},
-    {"key": "interval", "type": "string", "label": "Refresh interval", "default": "15m"}
+    {"key": "interval", "type": "string", "label": "Refresh interval", "default": "15m"},
+    {"key": "bar_temperature", "type": "bool", "label": "Show temperature", "default": true},
+    {"key": "bar_unit", "type": "bool", "label": "Show unit", "default": true,
+      "visible_when": {"key": "bar_temperature", "equals": true}},
+    {"key": "bar_icon", "type": "bool", "label": "Show icon", "default": true},
+    {"key": "bar_condition", "type": "bool", "label": "Show condition", "default": false},
+    {"key": "tooltip_mode", "type": "select", "label": "Tooltip", "default": "current",
+      "options": [{"value": "current", "label": "Current"}, {"value": "forecast", "label": "Forecast"}]},
+    {"key": "accent", "type": "color", "label": "Custom accent"}
   ]
 }

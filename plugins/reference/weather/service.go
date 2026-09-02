@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -35,6 +36,7 @@ type Snapshot struct {
 	FetchedAt   time.Time
 	FailedSince time.Time
 	Disabled    bool
+	Unit        owm.Unit
 }
 
 func (s Snapshot) Stale() bool { return s.Observed && !s.FailedSince.IsZero() }
@@ -135,13 +137,17 @@ type Service struct {
 
 func newService(cfg Config) *Service {
 	cfg = normalize(cfg)
+	endpoint := owm.DefaultEndpoint
+	if v := os.Getenv("SYSC_WEATHER_ENDPOINT"); v != "" {
+		endpoint = v
+	}
 	return &Service{
 		cfg:         cfg,
 		snap:        Snapshot{Disabled: !cfg.Enabled},
 		rearm:       make(chan struct{}, 1),
 		updates:     make(chan Snapshot, 1),
 		client:      &http.Client{Timeout: connectAndReadBudget},
-		endpoint:    owm.DefaultEndpoint,
+		endpoint:    endpoint,
 		minInterval: minFetchInterval,
 	}
 }
@@ -287,6 +293,7 @@ func (s *Service) run(stop, done chan struct{}) {
 				Forecast:  fc,
 				Observed:  true,
 				FetchedAt: time.Now(),
+				Unit:      cfg.Unit,
 			}
 		}
 		s.publish(snap)
