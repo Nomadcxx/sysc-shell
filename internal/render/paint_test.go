@@ -1181,3 +1181,38 @@ func TestStrokeRoundedLeavesTheInteriorAlone(t *testing.T) {
 		t.Errorf("ring is thicker than 2 px: %+v at inset 2", got)
 	}
 }
+
+// TestPaintSegmentedPaintsItsSegments guards the gap that shipped the segmented
+// row with layout but no paint: KindSegmented fell through paintNode's switch to
+// the default arm, so opening the power panel returned "unsupported kind 17" and
+// took the shell down with it. The container owns allocation, not chrome, so
+// each segment paints its own fill: Primary when selected, quiet container
+// otherwise.
+func TestPaintSegmentedPaintsItsSegments(t *testing.T) {
+	t.Parallel()
+
+	selected := &ui.Node{
+		Kind: ui.KindButton, Height: 40, Padding: 4,
+		State:    ui.StateSelected,
+		Children: []*ui.Node{{Kind: ui.KindText, Text: "Auto"}},
+	}
+	idle := &ui.Node{
+		Kind: ui.KindButton, Height: 40, Padding: 4,
+		Children: []*ui.Node{{Kind: ui.KindText, Text: "Eco"}},
+	}
+	row := &ui.Node{
+		Kind: ui.KindSegmented, Key: "power-profiles", Gap: 2, Height: 40,
+		Children: []*ui.Node{selected, idle},
+	}
+
+	c := paintChromeNode(t, row, testStyle)
+
+	x, y := fillPointOf(selected)
+	if got := pixelAt(t, c, x, y); got != testStyle.Accent {
+		t.Errorf("selected segment fill = %+v, want the accent %+v", got, testStyle.Accent)
+	}
+	x, y = fillPointOf(idle)
+	if got := pixelAt(t, c, x, y); got != testStyle.containerHighest() {
+		t.Errorf("idle segment fill = %+v, want the highest container %+v", got, testStyle.containerHighest())
+	}
+}

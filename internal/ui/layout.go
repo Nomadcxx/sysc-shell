@@ -209,17 +209,22 @@ func measureSegmented(n *Node, measure MeasureText) (int, int, error) {
 	if err := validateSegments(n); err != nil {
 		return 0, 0, err
 	}
-	w, h := 2*n.Padding, 0
-	for i, child := range n.Children {
+	// layoutSegmented allocates every segment the same width, so the row needs
+	// the widest segment repeated -- not the sum of natural widths. Summing
+	// under-measures whenever the labels differ, and the row then fails to lay
+	// out inside the very box it asked for.
+	widest, h := 0, 0
+	for _, child := range n.Children {
 		cw, ch, err := measureButton(child, measure)
 		if err != nil {
 			return 0, 0, err
 		}
-		if i > 0 {
-			w += n.Gap
-		}
-		w += cw
+		widest = max(widest, cw)
 		h = max(h, ch)
+	}
+	w := 2 * n.Padding
+	if len(n.Children) > 0 {
+		w += widest*len(n.Children) + n.Gap*(len(n.Children)-1)
 	}
 	h += 2 * n.Padding
 	if n.Width > 0 {

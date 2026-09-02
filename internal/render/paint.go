@@ -245,7 +245,10 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 		paintScrollThumb(c, n, style)
 		return nil
 
-	case ui.KindRow, ui.KindColumn, ui.KindDropZone:
+	// A segmented row owns allocation, not chrome: each segment paints its own
+	// fill through paintButton, Primary when selected and quiet container
+	// otherwise, so the container only dispatches to its children.
+	case ui.KindRow, ui.KindColumn, ui.KindDropZone, ui.KindSegmented:
 		for i, child := range n.Children {
 			if child == nil {
 				return fmt.Errorf("nil child %d", i)
