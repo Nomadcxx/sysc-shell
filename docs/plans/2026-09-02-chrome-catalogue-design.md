@@ -20,7 +20,7 @@ theme pipeline; it does not create a general application toolkit.
 
 | Element | First shipped consumer | Resting shape and state |
 |---|---|---|
-| Bar item pill | `widget.go` capsules | Stadium, `SurfaceContainer` |
+| Bar item pill | `widget.go` capsules | Stadium, `SurfaceContainerHigh` |
 | Grouped bar pill | CPU/memory group | Stadium around the actual shared hit target |
 | Numbered workspace pill | Existing workspace strip | Idle container; active Primary |
 | Standard button | Existing `KindButton` sites | 40 px stadium; idle high container or outline |
@@ -83,18 +83,32 @@ The shell preserves these distinct Material roles:
 
 | Role | Composition use |
 |---|---|
-| `Surface` | Panel background |
-| `SurfaceContainer` | Bar capsules |
-| `SurfaceContainerHigh` | Panel cards |
+| `Surface` | Bar and panel background |
+| `SurfaceContainerHigh` | Bar capsules and panel cards |
 | `SurfaceContainerHighest` | Idle controls and nested chips |
 | `Primary` / `OnPrimary` | Selected and on state |
 | `Outline` / `OutlineVariant` | Boundaries and focus support |
 | `Error` / `OnError` | Destructive actions and failures |
 
-This fixes the catalogue-owned part of `sysc-104`: panel cards may no longer
-collapse onto the same token as bar capsules. `sysc-110` remains linked. The
-compiled fallback defines every consumed token. Invalid generated themes keep
-the previous valid theme rather than partially applying a palette.
+The bar and the panels are one continuous background. `Panels.Gap` is 0 by
+default and both surfaces fill with `Surface`, so a panel reads as an extension
+of the bar rather than a separate slab; a panel is distinguished by its content
+and by the user having opened it, not by a seam. Noctalia and DMS compose the
+same way.
+
+Capsules and cards therefore share `SurfaceContainerHigh`. An earlier revision
+of this section gave capsules `SurfaceContainer` and cards
+`SurfaceContainerHigh`, which put two container greys inches apart on one
+uninterrupted surface -- the visual inconsistency that stratification was meant
+to avoid. `SurfaceContainer` stays a parsed token for `sysc-142` parity but no
+shipped chrome consumes it.
+
+This still fixes the catalogue-owned part of `sysc-104`. That defect was cards
+failing to read against the panel at 1.17:1, not cards sharing a level with
+capsules; the fix is the level both now use clearing the 1.45:1 floor below.
+`sysc-110` remains linked. The compiled fallback defines every consumed token.
+Invalid generated themes keep the previous valid theme rather than partially
+applying a palette.
 
 Filled surfaces must separate from their parent by at least 1.45:1; if a
 generated fill cannot meet that floor, paint the 3:1 outline as a structural
