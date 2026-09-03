@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -252,9 +253,14 @@ func TestBarArrangesSectionsInsideTheContentBand(t *testing.T) {
 			}
 		}
 	}
-	// workspace, window-title, two clocks, and three status widgets.
-	if arranged != 6 {
-		t.Fatalf("arranged %d items, want the full default bar (cpu and memory now share a group)", arranged)
+	// Every configured item reaches a bound, counted off the same default
+	// config the bar was built from. A literal here goes stale the moment the
+	// default bar gains or loses a widget, which is how it came to expect one
+	// fewer than the bar produces.
+	bar := config.Default().Bar
+	want := len(bar.Left) + len(bar.Center) + len(bar.Right)
+	if arranged != want {
+		t.Fatalf("arranged %d items, want the %d of the full default bar", arranged, want)
 	}
 }
 
