@@ -164,6 +164,37 @@ type OutputOverride struct {
 //
 // Configured distinguishes a supplied block from the zero value, which is what
 // lets a weather widget with no block fail with a useful message.
+// Wallpaper is the picker's two library roots plus the gSlapper playback
+// settings. Assignments are not here: what is on which output is state, not
+// configuration, and lives under $XDG_STATE_HOME (D19).
+//
+// The directories keep a literal leading tilde. Default() must not read the
+// environment, so expansion belongs to whoever opens the directory.
+type Wallpaper struct {
+	ImageDirectory string
+	VideoDirectory string
+	// Scale is fill, stretch, original, or panscan, forwarded to GStreamer.
+	Scale string
+	Loop  bool
+	// FPS is the frame cap: 30, 60, or 100.
+	FPS          int
+	Fade         bool
+	FadeDuration float64
+	// Hidden is none, auto-pause, or auto-stop: what gSlapper does when the
+	// wallpaper is occluded. It also decides whether a video-to-video apply can
+	// use IPC `change`, because gSlapper requires --auto-stop for that.
+	Hidden string
+}
+
+// wallpaperScales, wallpaperFPS, and wallpaperHidden are closed vocabularies:
+// an unknown value fails the load rather than silently falling back, so a typo
+// is visible instead of quietly changing what the engine does.
+var (
+	wallpaperScales = map[string]bool{"fill": true, "stretch": true, "original": true, "panscan": true}
+	wallpaperFPS    = map[int]bool{30: true, 60: true, 100: true}
+	wallpaperHidden = map[string]bool{"none": true, "auto-pause": true, "auto-stop": true}
+)
+
 type Weather struct {
 	Latitude   float64
 	Longitude  float64
@@ -182,6 +213,7 @@ type Config struct {
 	Panels        Panels
 	Tray          TrayPreferences
 	Weather       Weather
+	Wallpaper     Wallpaper
 	Outputs       []OutputOverride
 	Templates     map[string]bool
 	Plugins       Plugins
@@ -294,6 +326,15 @@ func Default() Config {
 			Mode:   "dark",
 		},
 		Panels: Panels{Gap: 0, Padding: 8, OSD: "bottom-center"},
+		Wallpaper: Wallpaper{
+			ImageDirectory: "~/Pictures/Wallpapers",
+			VideoDirectory: "~/Videos/Wallpapers",
+			Scale:          "fill",
+			Loop:           true,
+			FPS:            30,
+			FadeDuration:   0.5,
+			Hidden:         "none",
+		},
 	}
 }
 
