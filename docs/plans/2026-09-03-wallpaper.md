@@ -12,8 +12,48 @@
 
 **Audit:** `docs/plans/2026-09-03-wallpaper-audit.md`. Pins below are the
 accepted subset (Task 0 bead, Task 2 All token, Task 3 `SplitN`, Task 4 `-r`,
-Task 8 `cfgHook`, Task 9 spawn stub). Dirty-tree and AGENTS.md one-output
-notes stay operational, not plan text.
+Task 8 `cfgHook`, Task 9 spawn stub). Dirty-tree and one-output notes stay
+operational, not plan text.
+
+**Amended 2026-09-04** (Task 0 Step 5, reconciliation against landed `main`).
+Seven corrections; none reopens the design's chrome, engine split, or
+lifecycle:
+
+1. **Tasks 9a and 9b are new**, inserted before Task 10. `KindImage` measures
+   a square (`internal/ui/layout.go` `case KindImage: return size, size`) and
+   every landed user is a square icon, so the design's 210x96 landscape thumb
+   has no expression in the current node vocabulary. Task 9a adds one; Task 9b
+   gives the decoder a non-square target. Task numbering past 9 is unchanged
+   so the handover's "Task 13 gate" still names the gate.
+2. **Tile radius comes from the theme, not the literal 8** in the design's
+   geometry table. `Theme.CardRadius` is user-configurable through
+   `cfg.Theme.Radius`, and `KindCapsule` with `FillContainerHigh` already
+   resolves to it (`internal/render/paint.go` `case ui.KindCapsule`). The tile
+   is a capsule around the raster; the raster itself is not rounded, because
+   `paintImage` has no radius clip and adding one is a render change this
+   slice does not need.
+3. **Cover-crop happens in the thumbnailer, not the painter.** `paintImage`
+   scales the raster to fill its box with no aspect preservation, so the
+   cached JPEG must already be cropped to the tile aspect. The design's cache
+   (224x126, 1.78:1) and its tile (210x96, 2.19:1) disagree; the cache is
+   restated as **210x96** so one aspect governs.
+4. **Task 12 gains output hotplug.** D20's disconnect/reconnect rule was
+   tested at store level in Task 2 but nothing routed real output events to
+   the service, which left D20 implemented and dead.
+5. **Repo-wide `-race` is removed from Steps 0.2 and 12.4.** Combining
+   `./...` with `-race` hard-locked this machine twice on 2026-09-03 (zram-only
+   swap, 16-way link parallelism). Capped per-package runs replace it.
+6. **`hidden = none` keeps its default, and the cost is now explicit.**
+   gSlapper's `--auto-stop` is documented as "required for video IPC changes",
+   so the design's default makes every video-to-video swap take D15's
+   stop-and-relaunch path rather than the `change` path. That is a real
+   CPU-versus-continuity tradeoff and stays the owner's call; Task 6 records
+   it and Task 4 tests each branch.
+7. **The Pause affordance follows gSlapper's reported kind, not ours.**
+   gSlapper lists GIF under *Image* formats while D10 classifies it as video.
+   Library classification still drives the tile; the active strip's
+   Pause/Resume follows the kind `query` reports, so a GIF never shows a
+   control its pipeline cannot honour.
 
 ---
 
@@ -28,7 +68,13 @@ notes stay operational, not plan text.
 `milestone/wallpaper` from a clean `main`; do not carry the notification-centre
 or toast working tree into this slice.
 
-**Step 2:** Run `go test -race -count=1 ./...`. Record any pre-existing failure in bd instead of weakening a wallpaper check.
+**Step 2:** Run `GOMAXPROCS=4 go test -count=1 -p 2 ./...`. Record any
+pre-existing failure in bd instead of weakening a wallpaper check.
+
+Never combine `./...` with `-race`: it hard-locked this machine twice on
+2026-09-03 and there is no disk swap to absorb the spike. Race coverage comes
+from capped per-package runs (`GOMAXPROCS=4 go test -race -count=1 ./internal/wallpaper`),
+which is what every `-race` step below means.
 
 **Step 3:** Verify the APIs this plan names still exist: `PanelID` / `parsePanelName` / `panelTargetSize` / `panelTree`, `Placement.CenterY`, `ui.Field`, `KindVirtualList` `ItemCount`/`ItemHeight`, `KindImage`, IPC `knownPanels`, `Registry.generateTheme`.
 
@@ -135,6 +181,9 @@ Keep the store a plain struct with methods. No engine, no goroutine.
 - Empty reply is an error
 - Commands containing `\n` are rejected before dial
 - `classifyChangeError("cannot update path (use --auto-stop for video changes)")` is restart; other errors are keep
+- A `change` reply is accepted on the `OK` prefix: the IPC docs return bare
+  `OK` with transitions off and `OK: transition started` with them on, so an
+  exact-match accept would fail the moment the fade setting is enabled
 
 Read one line. Do not wait for EOF (gSlapper keeps the socket open).
 
@@ -155,7 +204,15 @@ Read one line. Do not wait for EOF (gSlapper keeps the socket open).
 **Step 1:** Write failing tests:
 
 - `helpSupports([]byte("--ipc-socket PATH --transition-type TYPE --cache-size MB"))` true; old help without `--cache-size` false
-- `launchArgs` for DP-1, fill, loop, fps 30, fade off, socket `/run/user/1000/sysc-shell/gslapper-DP-1.sock`, path `/tmp/a.mp4` contains `-I`, that socket, `--no-save-state`, `-o` with `fill no-audio loop`, `-r`, `30` (short form, not `--fps-cap`), connector `DP-1`, path. No `*`. Hidden auto-pause adds `--auto-pause`; auto-stop adds `--auto-stop`; never both.
+- `launchArgs` for DP-1, fill, loop, fps 30, fade off, socket `/run/user/1000/sysc-shell/gslapper-DP-1.sock`, path `/tmp/a.mp4` contains `-I`, that socket, `--no-save-state`, `-o` with `fill no-audio loop`, `-r`, `30` (short form, not `--fps-cap`), connector `DP-1`, path. No `*`. Hidden auto-pause adds `--auto-pause`; auto-stop adds `--auto-stop`;
+never each together.
+- Fade on emits `--transition-type fade` and `--transition-duration <secs>`;
+  fade off emits neither (gSlapper defaults to `none`). There is no `--fade`
+  flag on the binary.
+- `videoChangeNeedsRestart(hidden)` is true for `none` and `auto-pause`, false
+  for `auto-stop`. gSlapper documents `--auto-stop` as "required for video IPC
+  changes", so this predicate is what decides whether a video-to-video apply
+  takes the `change` path or D15's stop-and-relaunch path. Test each branch.
 
 **Step 2:** Run `go test -count=1 ./internal/wallpaper -run 'TestHelpSupports|TestLaunchArgs' -v`. Expected: FAIL.
 
@@ -206,7 +263,15 @@ fade_duration = 0.5
 hidden = none
 ```
 
-Unknown scale/fps/hidden fail load. Seed path is still `theme-gen`, not this block.
+Unknown scale/fps/hidden fail load. Seed path is still `theme-gen`, not this
+block.
+
+`hidden = none` is deliberate and keeps D19's vocabulary: playback continues
+when the wallpaper is occluded. The cost is that video-to-video swaps restart
+the process instead of using `change` (Task 4's `videoChangeNeedsRestart`).
+Changing the default to `auto-stop` buys smooth swaps and costs playback
+continuity on reveal; that is the owner's tradeoff, not this plan's. Assert
+the default is `none` so a later flip is a deliberate test edit.
 
 Failing persist test: round-trip `assignments.json` mode 0600; reject a path with a newline.
 
@@ -259,6 +324,12 @@ Do not recurse into the grid. Child dirs are entries, not flattened files (D9).
 
 The fake must not touch Wayland. `exec` stays behind the engine interface so Task 9 can fill it in. The registry later sets `cfgHook` to write `ThemeGen.Source`/`Seed` and call `generateTheme`.
 
+The hook updates the registry's in-memory `config.Config` and regenerates the
+palette; it does **not** rewrite the user's config file. Startup reconcile
+(Task 12) replays the saved assignment, which re-runs the hook, so the seed
+survives a restart without the shell editing a file the user owns. Task 13
+reads the seed off the live theme, not off disk.
+
 **Step 2:** Run `go test -race -count=1 ./internal/wallpaper -run TestService -v`. Expected: FAIL.
 
 **Step 3:** Implement `Service` with `Updates() <-chan Snapshot`, `Enqueue(Command)`, `cfgHook`, one loop goroutine. `ponytail:` one mutex on the store is enough; per-connector locks if two-output apply latency shows contention.
@@ -302,6 +373,69 @@ Do not talk to a real `gslapper` in unit tests.
 
 **Step 5:** Commit `feat(wallpaper): launch, change, stop, restore`.
 
+### Task 9a: Landscape raster boxes
+
+A wallpaper thumbnail is the first non-square raster in this tree. Every landed
+`KindImage` is a square icon (`bar.go`, `notifycard.go`, `traydrawer.go`,
+`popout_launcher.go`), and both measure paths return `size, size`. Without this
+task the design's 210x96 tile thumb can only render squashed into a square box.
+
+**Files:**
+- Modify: `internal/ui/tree.go`, `internal/ui/layout.go`, `internal/ui/column.go`
+- Test: `internal/ui/layout_test.go` (or the file that already measures kinds)
+
+**Step 1:** Write the failing test:
+
+- A `KindImage` with `ImageW: 210, ImageH: 96` measures 210x96 and reports
+  row height 96
+- A `KindImage` with only `ImageSize: 40` still measures 40x40, so the four
+  landed square users are untouched
+- `ImageW` set without `ImageH` (or the reverse) falls back to the square
+  `ImageSize` rather than measuring zero
+
+**Step 2:** Run `go test -count=1 ./internal/ui -run TestImage -v`. Expected: FAIL.
+
+**Step 3:** Add `ImageW`/`ImageH` beside `ImageSize` on `ui.Node`, documented as
+the landscape form that overrides the square edge when both are positive. Teach
+`measureNode` and the column height path to prefer them. `paintImage` already
+scales the raster into whatever box it is given, so `internal/render` needs no
+change.
+
+**Step 4:** Run `go test -count=1 ./internal/ui ./internal/render ./internal/shell`. Expected: PASS.
+
+**Step 5:** Commit `feat(ui): measure landscape image boxes`.
+
+### Task 9b: Non-square decode and a thumbnail worker
+
+`internal/icons.Worker` is the landed off-owner decode with a bounded cache,
+in-flight collapsing, and a resolver that already returns absolute paths
+verbatim. It is the right machinery and the wrong instance: its `Key.Size` is
+one int, and its caps (`MaxCacheEntries` 256, `MaxQueue` 32) are tuned for
+icons. Pointing a several-hundred-file wallpaper library at the shared
+`r.trayIcons` would evict every tray and notification icon and starve their
+decodes, so wallpaper gets its own instance of the same worker.
+
+**Files:**
+- Modify: `internal/icons/worker.go`, `internal/icons/theme.go`, `internal/icons/*_test.go`
+- Modify call sites: `internal/shell/tray.go`, `internal/shell/popout_launcher.go`, `internal/shell/popout_notifications.go`
+
+**Step 1:** Write the failing test:
+
+- `Key{Name: abs, W: 210, H: 96}` decodes to a 210x96 raster
+- A square request (`W == H`) is byte-identical to what the old `Size` form produced
+- `Request` still rejects a key with a non-positive dimension
+
+**Step 2:** Run `go test -count=1 ./internal/icons -v`. Expected: FAIL.
+
+**Step 3:** Replace `Key.Size` with `Key.W`/`Key.H`; thread each through
+`Resolve` (which uses the size only for theme-directory lookup, so pass the
+larger edge) and `decodeRaster`. Update the three shell call sites to the square
+form. This is mechanical and compiler-checked.
+
+**Step 4:** Run `go test -count=1 ./internal/icons ./internal/shell`. Expected: PASS.
+
+**Step 5:** Commit `feat(icons): decode non-square rasters`.
+
 ### Task 10: Panel id, size, IPC, tree
 
 **Files:**
@@ -337,15 +471,32 @@ Do not talk to a real `gslapper` in unit tests.
 - Arrow right moves selection inside the row; down moves a row
 - Output select All vs DP-1 sends `Apply("all", path)` vs `Apply("DP-1", path)`
 - Restore enqueues `restore`
+- The `n / m` partial caption and the active strip's mixed summary are read
+  back from the store, not composed in the panel: a two-output snapshot with
+  one video and one image renders `2 outputs - 1 video - 1 image`, and
+  changing the snapshot changes the string
 - Theme seed: registry installs `cfgHook`; after a successful image apply the
   next `generateTheme` sees `Source=wallpaper` and that path (recorder hook,
   not matugen)
 
 **Step 2:** Run the test. Expected: FAIL.
 
-**Step 3:** Project tiles as `KindButton`/`KindImage` children. Handle keys next to the launcher branch in `panelhost.go` (do not fork the Exclusive path). `relayWallpaper` mirrors `relayLauncher`: receive snapshot, rebuild panel under `Registry.mu`.
+**Step 3:** Project each tile as a `KindCapsule` (`Width: 210`,
+`Fill: FillContainerHigh`) around a column of `KindImage` (`ImageW: 210`,
+`ImageH: 96`) plus caption. The capsule supplies the tile chrome and takes its
+radius from `Theme.CardRadius`, so the tile follows the user's configured
+radius instead of the design table's literal 8. Handle keys next to the
+launcher branch in `panelhost.go` (do not fork the Exclusive path).
+`relayWallpaper` mirrors `relayLauncher`: receive snapshot, rebuild panel under
+`Registry.mu`.
 
-Thumbnails: if a cached JPEG exists, decode through the existing image path; else glyph placeholder. Do not block the Wayland owner on `gst-launch-1.0`. A background fill of the cache is enough; the next snapshot picks them up.
+Thumbnails: the tile builder runs inside `Item(i)`, which layout calls **on the
+Wayland owner**, so it may only `Lookup` an already-decoded raster and
+otherwise `Request` and fall back to a glyph. Decoding, `gst-launch-1.0`, and
+the disk cache all stay off the owner. Use a wallpaper-owned `icons.Worker`
+(Task 9b), never the shared `r.trayIcons`. Cached stills are written already
+cropped to 210x96 so `paintImage`'s stretch is a no-op; the cache key stays
+path+mtime. A late decode publishes and the next snapshot picks it up.
 
 **Step 4:** `gofmt -w . && go vet ./... && go test -race -count=1 ./internal/shell ./internal/wallpaper`. Expected: PASS.
 
@@ -360,13 +511,25 @@ Thumbnails: if a cached JPEG exists, decode through the existing image path; els
 **Step 1:** Failing tests:
 
 - Construct with a saved DP-1 assignment and a fake engine that records `Apply` → one apply on start
+- Output arrival for a connector with a saved assignment replays it; arrival
+  for an unknown connector applies nothing (D20: a newly seen output stays
+  untouched until the user assigns)
+- Output removal calls `Disconnect`, which keeps the assignment and drops the
+  runtime
 - `knownItems` accepts `wallpaper`; default bar layout is unchanged
 
 **Step 2:** Run the tests. Expected: FAIL.
 
 **Step 3:** Start the wallpaper service when the registry starts (not lazy: D20 startup reconcile). Clicking a bar item `wallpaper` toggles the panel (same path as other panel items). Do not add it to `Default()`.
 
-**Step 4:** Run `go test -race -count=1 ./...`. Expected: PASS.
+Wire real output events into the service: `Registry.NewHost(global, connector)`
+is the arrival seam and the bar-removal path is the departure seam. Both hold
+`Registry.mu`, so each one enqueues on the service rather than calling into it
+inline. Without this, D20 is tested in Task 2 and dead in the product.
+
+**Step 4:** Run `GOMAXPROCS=4 go test -count=1 -p 2 ./...`, then
+`GOMAXPROCS=4 go test -race -count=1 ./internal/wallpaper ./internal/shell`.
+Expected: PASS. Do not combine `./...` with `-race` (Step 0.2).
 
 **Step 5:** Commit `feat(shell): restore wallpapers at start`.
 
@@ -394,6 +557,14 @@ export XDG_RUNTIME_DIR=/run/user/1000
 - Restore stops the owned gSlapper socket and shows the still via awww or swaybg
 - `theme.seed` in the written config (or the live theme) is the still or image
 - `pgrep -af gslapper` command lines contain `$XDG_RUNTIME_DIR/sysc-shell/gslapper-`
+- A GIF applies, and `query` is recorded verbatim. gSlapper documents GIF as an
+  image format while D10 classifies it as video; whatever `query` reports is
+  what the active strip offers, so record whether Pause appears and whether it
+  answers `OK`
+- A video-to-video swap on one output is recorded twice: once at the default
+  `hidden = none` (expect D15's stop-and-relaunch) and once at
+  `hidden = auto-stop` (expect a plain `change`). This is the only live proof
+  of Task 4's `videoChangeNeedsRestart` branch
 
 **Step 4:** If a check is unrunnable, record why in bd (`sysc-146` discovered-from), keep the overlay. Do not claim the slice done.
 
