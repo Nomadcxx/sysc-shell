@@ -18,7 +18,7 @@ import (
 func TestWorkerDecodesAndCachesByKey(t *testing.T) {
 	worker, _ := startWorker(t)
 
-	key := Key{Name: "chat", Size: 24}
+	key := Square("chat", 24)
 	if _, cached, err := worker.Request(key); err != nil || cached {
 		t.Fatalf("first request = cached %v, err %v", cached, err)
 	}
@@ -37,7 +37,7 @@ func TestWorkerDecodesAndCachesByKey(t *testing.T) {
 	}
 
 	// Size is part of the key, so another size is another entry.
-	other := Key{Name: "chat", Size: 48}
+	other := Square("chat", 48)
 	if _, cached, _ := worker.Request(other); cached {
 		t.Fatal("a different size was served from the 24px entry")
 	}
@@ -48,7 +48,7 @@ func TestWorkerDecodesAndCachesByKey(t *testing.T) {
 
 func TestWorkerCollapsesDuplicateJobs(t *testing.T) {
 	worker, _ := startWorker(t)
-	key := Key{Name: "chat", Size: 24}
+	key := Square("chat", 24)
 
 	for range 5 {
 		if _, _, err := worker.Request(key); err != nil {
@@ -74,7 +74,7 @@ func TestWorkerRefusesWorkPastItsQueue(t *testing.T) {
 	// Nothing is running, so the queue fills and then refuses.
 	var busy error
 	for i := 0; i < MaxQueue*4 && busy == nil; i++ {
-		_, _, busy = worker.Request(Key{Name: "chat", Size: i + 1})
+		_, _, busy = worker.Request(Square("chat", i+1))
 	}
 	if !errors.Is(busy, ErrBusy) {
 		t.Fatalf("Request eventually returned %v, want ErrBusy", busy)
@@ -87,9 +87,10 @@ func TestWorkerRefusesWorkPastItsQueue(t *testing.T) {
 func TestWorkerRefusesMalformedRequests(t *testing.T) {
 	worker, _ := startWorker(t)
 	for name, key := range map[string]Key{
-		"no name":  {Size: 24},
-		"no size":  {Name: "chat"},
-		"negative": {Name: "chat", Size: -1},
+		"no name":  {W: 24, H: 24},
+		"no box":   {Name: "chat"},
+		"negative": {Name: "chat", W: -1, H: -1},
+		"half box": {Name: "chat", W: 24},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, _, err := worker.Request(key); err == nil {
@@ -109,8 +110,8 @@ func TestWorkerPublishesNilForUnreadableIcons(t *testing.T) {
 	worker, results := startWorkerAt(t, root)
 
 	for name, key := range map[string]Key{
-		"malformed": {Name: "broken", Size: 24},
-		"absent":    {Name: "missing", Size: 24},
+		"malformed": Square("broken", 24),
+		"absent":    Square("missing", 24),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, _, err := worker.Request(key); err != nil {
@@ -131,13 +132,13 @@ func TestWorkerEvictsOldestEntriesPastTheCacheBound(t *testing.T) {
 	worker, _ := startWorker(t)
 	worker.mu.Lock()
 	for i := range MaxCacheEntries + 8 {
-		worker.store(Key{Name: "icon", Size: i + 1}, &ui.Image{
+		worker.store(Square("icon", i+1), &ui.Image{
 			Width: 1, Height: 1, Stride: 4, Pix: make([]byte, 4),
 		})
 	}
 	entries := len(worker.cache)
-	_, oldestKept := worker.cache[Key{Name: "icon", Size: 1}]
-	_, newestKept := worker.cache[Key{Name: "icon", Size: MaxCacheEntries + 8}]
+	_, oldestKept := worker.cache[Square("icon", 1)]
+	_, newestKept := worker.cache[Square("icon", MaxCacheEntries+8)]
 	worker.mu.Unlock()
 
 	if entries > MaxCacheEntries {
@@ -171,7 +172,7 @@ func TestWorkerStopsWhenItsContextIsCancelled(t *testing.T) {
 
 func TestWorkerComposesAnOverlay(t *testing.T) {
 	worker, _ := startWorker(t)
-	key := Key{Name: "chat", Size: 32, Overlay: "chat"}
+	key := Key{Name: "chat", Overlay: "chat", W: 32, H: 32}
 	if _, _, err := worker.Request(key); err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +181,7 @@ func TestWorkerComposesAnOverlay(t *testing.T) {
 		t.Fatalf("composed %dx%d, want 32x32", result.Width, result.Height)
 	}
 	// A missing overlay leaves the base icon usable rather than failing.
-	fallback := Key{Name: "chat", Size: 32, Overlay: "absent"}
+	fallback := Key{Name: "chat", Overlay: "absent", W: 32, H: 32}
 	if _, _, err := worker.Request(fallback); err != nil {
 		t.Fatal(err)
 	}
@@ -275,4 +276,54 @@ func pngBytes(t *testing.T, size int) []byte {
 		t.Fatal(err)
 	}
 	return buffer.Bytes()
+}
+
+func TestWorkerDecodesANonSquareTarget(t *testing.T) {
+	// A wallpaper thumbnail is landscape. The decode target has to carry both
+	// edges, because scaling a 16:9 source into a square box is a visible
+	// stretch, not a crop.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "wall.png")
+	if err := os.WriteFile(path, pngBytes(t, 64), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	var got *ui.Image
+	done := make(chan struct{})
+	worker := NewWorker(NewResolver("", nil), func(_ Key, image *ui.Image) {
+		got = image
+		close(done)
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = worker.Run(ctx) }()
+
+	if _, _, err := worker.Request(Key{Name: path, W: 210, H: 96}); err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("decode did not publish")
+	}
+	if got == nil {
+		t.Fatal("decode published nothing")
+	}
+	if got.Width != 210 || got.Height != 96 {
+		t.Fatalf("decoded %dx%d, want 210x96", got.Width, got.Height)
+	}
+}
+
+func TestWorkerRejectsAHalfSpecifiedBox(t *testing.T) {
+	worker := NewWorker(NewResolver("", nil), func(Key, *ui.Image) {})
+	for _, key := range []Key{
+		{Name: "/tmp/a.png"},
+		{Name: "/tmp/a.png", W: 210},
+		{Name: "/tmp/a.png", H: 96},
+		{Name: "", W: 210, H: 96},
+	} {
+		if _, _, err := worker.Request(key); err == nil {
+			t.Errorf("Request(%+v) must fail", key)
+		}
+	}
 }

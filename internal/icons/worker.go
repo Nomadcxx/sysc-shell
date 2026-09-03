@@ -33,13 +33,24 @@ const (
 // ErrBusy reports a full job queue.
 var ErrBusy = errors.New("icons: decode queue is full")
 
-// Key identifies one decoded result. The size is part of the key, so the same
-// icon at two sizes is two entries rather than one rescaled badly.
+// Key identifies one decoded result. The target box is part of the key, so the
+// same image at two sizes is two entries rather than one rescaled badly.
+//
+// W and H are separate because not every consumer wants a square: an icon asks
+// for one edge twice, a wallpaper thumbnail asks for a landscape box. Both must
+// be positive.
 type Key struct {
 	Name    string
-	Size    int
+	W, H    int
 	Overlay string
 }
+
+// Square is the key for an icon: one edge, used for both.
+func Square(name string, size int) Key { return Key{Name: name, W: size, H: size} }
+
+// nominal is the size used for icon-theme directory lookup, which is indexed by
+// a single edge. The larger edge is the honest answer for a landscape box.
+func (k Key) nominal() int { return max(k.W, k.H) }
 
 // Worker decodes icons away from the Wayland owner and publishes immutable
 // results. One decode runs per job; duplicate requests for a key in flight
@@ -76,8 +87,8 @@ func (w *Worker) Lookup(key Key) (*ui.Image, bool) {
 // Request queues a decode. A cached key returns at once; a key already being
 // decoded collapses onto that job rather than queueing a second one.
 func (w *Worker) Request(key Key) (*ui.Image, bool, error) {
-	if key.Name == "" || key.Size <= 0 {
-		return nil, false, errors.New("icons: request has no name or size")
+	if key.Name == "" || key.W <= 0 || key.H <= 0 {
+		return nil, false, errors.New("icons: request has no name or no target box")
 	}
 	w.mu.Lock()
 	if cached, ok := w.cache[key]; ok {
@@ -131,25 +142,25 @@ func (w *Worker) decode(ctx context.Context, key Key) {
 }
 
 func (w *Worker) raster(ctx context.Context, key Key) *ui.Image {
-	base := w.load(ctx, key.Name, key.Size)
+	base := w.load(ctx, key.Name, key.W, key.H, key.nominal())
 	if base == nil {
 		return nil
 	}
 	if key.Overlay == "" {
 		return base
 	}
-	overlay := w.load(ctx, key.Overlay, key.Size)
+	overlay := w.load(ctx, key.Overlay, key.W, key.H, key.nominal())
 	if overlay == nil {
 		return base
 	}
 	return compose(base, overlay)
 }
 
-func (w *Worker) load(ctx context.Context, name string, size int) *ui.Image {
+func (w *Worker) load(ctx context.Context, name string, width, height, nominal int) *ui.Image {
 	if ctx.Err() != nil {
 		return nil
 	}
-	path, ok := w.resolver.Resolve(name, size)
+	path, ok := w.resolver.Resolve(name, nominal)
 	if !ok {
 		return nil
 	}
@@ -160,11 +171,14 @@ func (w *Worker) load(ctx context.Context, name string, size int) *ui.Image {
 	if ctx.Err() != nil {
 		return nil
 	}
-	return decodeRaster(data, size)
+	return decodeRaster(data, width, height)
 }
 
-// decodeRaster turns encoded bytes into a premultiplied BGRA raster at size.
-func decodeRaster(data []byte, size int) *ui.Image {
+// decodeRaster turns encoded bytes into a premultiplied BGRA raster at the
+// requested box. The source is scaled to fill it exactly, so a caller that
+// needs a crop rather than a stretch must supply a source already at this
+// aspect ratio.
+func decodeRaster(data []byte, width, height int) *ui.Image {
 	config, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return nil
@@ -179,7 +193,7 @@ func decodeRaster(data []byte, size int) *ui.Image {
 	if err != nil {
 		return nil
 	}
-	target := image.NewRGBA(image.Rect(0, 0, size, size))
+	target := image.NewRGBA(image.Rect(0, 0, width, height))
 	xdraw.ApproxBiLinear.Scale(target, target.Bounds(), source, source.Bounds(), xdraw.Src, nil)
 	return fromRGBA(target)
 }

@@ -76,7 +76,7 @@ func trayNamedIconKey(item tray.Item, size int) (icons.Key, bool) {
 	if base.Name == "" || size <= 0 {
 		return icons.Key{}, false
 	}
-	return icons.Key{Name: base.Name, Overlay: item.OverlayIcon.Name, Size: size}, true
+	return icons.Key{Name: base.Name, Overlay: item.OverlayIcon.Name, W: size, H: size}, true
 }
 
 func trayPixmapImage(item tray.Item, size int) *ui.Image {
