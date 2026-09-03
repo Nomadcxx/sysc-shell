@@ -48,10 +48,10 @@ type Runtime struct {
 	Err         string
 }
 
-// Request is one output's share of an apply. The generation is carried through
+// Job is one output's share of an apply. The generation is carried through
 // the engine work and back, so a slow apply that lands after a newer one
 // cannot commit over it.
-type Request struct {
+type Job struct {
 	Connector string
 	Gen       uint64
 	Path      string
@@ -112,7 +112,7 @@ func (s *Store) SeedPath() string { return s.seed }
 // Apply opens one generation per targeted output and returns the work to do.
 // token is either AllOutputs or a single connector name. Nothing is committed
 // here: the caller runs the engine and reports back with Commit or Fail.
-func (s *Store) Apply(token, path string, kind Kind) []Request {
+func (s *Store) Apply(token, path string, kind Kind) []Job {
 	s.ensure()
 	targets := []string{token}
 	if token == AllOutputs {
@@ -123,46 +123,46 @@ func (s *Store) Apply(token, path string, kind Kind) []Request {
 		return nil
 	}
 
-	reqs := make([]Request, 0, len(targets))
+	jobs := make([]Job, 0, len(targets))
 	for _, c := range targets {
 		s.gen[c]++
 		rt := s.runtime[c]
 		rt.State = StateStarting
 		rt.Err = ""
 		s.runtime[c] = rt
-		reqs = append(reqs, Request{Connector: c, Gen: s.gen[c], Path: path, Kind: kind})
+		jobs = append(jobs, Job{Connector: c, Gen: s.gen[c], Path: path, Kind: kind})
 	}
-	return reqs
+	return jobs
 }
 
 // current reports whether r is still the newest apply for its output.
-func (s *Store) current(r Request) bool {
+func (s *Store) current(j Job) bool {
 	s.ensure()
-	return s.gen[r.Connector] == r.Gen
+	return s.gen[j.Connector] == j.Gen
 }
 
 // Commit records a successful apply. preview is the still extracted for a
 // video, empty for an image or when extraction failed. It returns false for a
 // stale generation, which the caller treats as work to discard rather than an
 // error to show.
-func (s *Store) Commit(r Request, preview string) bool {
-	if !s.current(r) {
+func (s *Store) Commit(j Job, preview string) bool {
+	if !s.current(j) {
 		return false
 	}
-	prior := s.assigned[r.Connector]
-	a := Assignment{Kind: r.Kind, Path: r.Path, PreviewPath: preview, DesiredPlayback: StatePlaying}
-	if r.Kind == KindImage {
+	prior := s.assigned[j.Connector]
+	a := Assignment{Kind: j.Kind, Path: j.Path, PreviewPath: preview, DesiredPlayback: StatePlaying}
+	if j.Kind == KindImage {
 		a.DesiredPlayback = StateStatic
-	} else if prior.Path == r.Path && prior.DesiredPlayback == StatePaused {
+	} else if prior.Path == j.Path && prior.DesiredPlayback == StatePaused {
 		// Re-applying the file that is already there keeps a user's pause.
 		a.DesiredPlayback = StatePaused
 	}
-	s.assigned[r.Connector] = a
+	s.assigned[j.Connector] = a
 
-	rt := s.runtime[r.Connector]
+	rt := s.runtime[j.Connector]
 	rt.State = a.DesiredPlayback
 	rt.Err = ""
-	s.runtime[r.Connector] = rt
+	s.runtime[j.Connector] = rt
 
 	if seed := seedFor(a); seed != "" {
 		s.seed = seed
@@ -173,16 +173,16 @@ func (s *Store) Commit(r Request, preview string) bool {
 // Fail records a refused apply. The output keeps whatever it had: a partial
 // All leaves the outputs that worked changed and the rest exactly as they were
 // (D14), so a failure never blanks a desktop.
-func (s *Store) Fail(r Request, err error) bool {
-	if !s.current(r) {
+func (s *Store) Fail(j Job, err error) bool {
+	if !s.current(j) {
 		return false
 	}
-	rt := s.runtime[r.Connector]
+	rt := s.runtime[j.Connector]
 	rt.State = StateError
 	if err != nil {
 		rt.Err = err.Error()
 	}
-	s.runtime[r.Connector] = rt
+	s.runtime[j.Connector] = rt
 	return true
 }
 
@@ -207,7 +207,7 @@ func (s *Store) Disconnect(connector string) {
 // Reconnect returns the output to the live list and replays its saved
 // assignment. An output we have never seen assigned returns no work: a new
 // monitor stays untouched until the user picks something for it (D20).
-func (s *Store) Reconnect(connector string) []Request {
+func (s *Store) Reconnect(connector string) []Job {
 	s.ensure()
 	if !slices.Contains(s.connectors, connector) {
 		s.connectors = append(s.connectors, connector)

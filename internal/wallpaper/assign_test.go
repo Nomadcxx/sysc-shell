@@ -11,10 +11,10 @@ func newTestStore() *Store {
 	return s
 }
 
-// commitAll runs every request in reqs to success with the given preview.
-func commitAll(t *testing.T, s *Store, reqs []Request, preview string) {
+// commitAll runs every request in jobs to success with the given preview.
+func commitAll(t *testing.T, s *Store, jobs []Job, preview string) {
 	t.Helper()
-	for _, r := range reqs {
+	for _, r := range jobs {
 		if !s.Commit(r, preview) {
 			t.Fatalf("commit %s gen %d refused", r.Connector, r.Gen)
 		}
@@ -41,18 +41,18 @@ func TestAssignIndependentOutputs(t *testing.T) {
 
 func TestAssignAllExpands(t *testing.T) {
 	s := newTestStore()
-	reqs := s.Apply(AllOutputs, "/w/a.png", KindImage)
-	if len(reqs) != 2 {
-		t.Fatalf("all expanded to %d requests, want 2", len(reqs))
+	jobs := s.Apply(AllOutputs, "/w/a.png", KindImage)
+	if len(jobs) != 2 {
+		t.Fatalf("all expanded to %d requests, want 2", len(jobs))
 	}
 	seen := map[string]bool{}
-	for _, r := range reqs {
+	for _, r := range jobs {
 		seen[r.Connector] = true
 	}
 	if !seen["DP-1"] || !seen["DP-3"] {
 		t.Fatalf("all covered %v, want each connected output", seen)
 	}
-	commitAll(t, s, reqs, "")
+	commitAll(t, s, jobs, "")
 	for _, c := range []string{"DP-1", "DP-3"} {
 		if a, ok := s.Assignment(c); !ok || a.Path != "/w/a.png" {
 			t.Fatalf("%s = %+v, %v", c, a, ok)
@@ -87,8 +87,8 @@ func TestAssignDisconnectKeepsAssignment(t *testing.T) {
 	if rt := s.Runtime("DP-3"); rt.State != StateStatic || rt.Socket != "" {
 		t.Fatalf("disconnect kept runtime: %+v", rt)
 	}
-	if reqs := s.Apply(AllOutputs, "/w/a.png", KindImage); len(reqs) != 1 {
-		t.Fatalf("all covered %d outputs, want only the connected one", len(reqs))
+	if jobs := s.Apply(AllOutputs, "/w/a.png", KindImage); len(jobs) != 1 {
+		t.Fatalf("all covered %d outputs, want only the connected one", len(jobs))
 	}
 }
 
@@ -97,12 +97,12 @@ func TestAssignReconnectReplays(t *testing.T) {
 	commitAll(t, s, s.Apply("DP-3", "/w/b.mp4", KindVideo), "/c/b.jpg")
 	s.Disconnect("DP-3")
 
-	reqs := s.Reconnect("DP-3")
-	if len(reqs) != 1 || reqs[0].Path != "/w/b.mp4" || reqs[0].Kind != KindVideo {
-		t.Fatalf("reconnect = %+v, want a replay of the saved assignment", reqs)
+	jobs := s.Reconnect("DP-3")
+	if len(jobs) != 1 || jobs[0].Path != "/w/b.mp4" || jobs[0].Kind != KindVideo {
+		t.Fatalf("reconnect = %+v, want a replay of the saved assignment", jobs)
 	}
-	if reqs := s.Reconnect("HDMI-A-1"); len(reqs) != 0 {
-		t.Fatalf("an unassigned output must stay untouched, got %+v", reqs)
+	if jobs := s.Reconnect("HDMI-A-1"); len(jobs) != 0 {
+		t.Fatalf("an unassigned output must stay untouched, got %+v", jobs)
 	}
 }
 
@@ -110,8 +110,8 @@ func TestAssignPartialAll(t *testing.T) {
 	s := newTestStore()
 	commitAll(t, s, s.Apply("DP-3", "/w/prior.mp4", KindVideo), "/c/prior.jpg")
 
-	reqs := s.Apply(AllOutputs, "/w/new.png", KindImage)
-	for _, r := range reqs {
+	jobs := s.Apply(AllOutputs, "/w/new.png", KindImage)
+	for _, r := range jobs {
 		if r.Connector == "DP-3" {
 			s.Fail(r, errors.New("engine refused"))
 			continue
