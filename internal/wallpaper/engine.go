@@ -146,7 +146,7 @@ func (e *gslapperEngine) stillFor(job Job) string {
 	if job.Kind != KindVideo {
 		return ""
 	}
-	if still := cachedStillPath(job.Path); still != "" {
+	if still := CachedStillPath(job.Path); still != "" {
 		if _, err := os.Stat(still); err == nil {
 			return still
 		}

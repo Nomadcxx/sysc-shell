@@ -765,6 +765,9 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			return h.pointerChanged(r, h.pointer.clear())
 		case wayland.EventPointerPress:
 			h.hoverX, h.hoverY = int(math.Floor(e.X)), int(math.Floor(e.Y))
+			if h.id == PanelWallpaper && h.wallpaperPointerPress(r, e) {
+				return true
+			}
 			if h.id == PanelLauncher && h.launcherPointerPress(r, e) {
 				return true
 			}
@@ -859,6 +862,9 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 		if h.editField(r, func(f *ui.Field) { f.Insert(ch) }) {
 			return true
 		}
+	}
+	if h.id == PanelWallpaper && h.wallpaperKeyPress(r, key) {
+		return true
 	}
 	if h.id == PanelLauncher && h.launcherKeyPress(r, key) {
 		return true

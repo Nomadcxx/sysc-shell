@@ -1,7 +1,11 @@
 package shell
 
 import (
+	"os"
+	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -153,4 +157,234 @@ func TestWallpaperTreeShape(t *testing.T) {
 	if list.ItemHeight <= 0 {
 		t.Errorf("virtual list ItemHeight = %d, want a row height", list.ItemHeight)
 	}
+}
+
+// seedWallpaperRoot writes four images and one video into a temp root.
+func seedWallpaperRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, name := range []string{"a.png", "b.png", "c.png", "d.png", "clip.mp4"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("x"), 0o644); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+	}
+	return root
+}
+
+func wallpaperListNode(t *testing.T, h *PanelHost) *ui.Node {
+	t.Helper()
+	var found *ui.Node
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil || found != nil {
+			return
+		}
+		if n.Kind == ui.KindVirtualList {
+			found = n
+			return
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(h.root)
+	if found == nil {
+		t.Fatal("no virtual list")
+	}
+	return found
+}
+
+func TestWallpaperGridPacksFourTilesPerRow(t *testing.T) {
+	t.Parallel()
+
+	reg, _, _ := openWallpaperPanel(t, []string{seedWallpaperRoot(t)})
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	list := wallpaperListNode(t, h)
+	// Five media files over four columns is two rows.
+	if list.ItemCount != 2 {
+		t.Fatalf("ItemCount = %d, want ceil(5/4) = 2", list.ItemCount)
+	}
+	row := list.Item(0)
+	if row == nil || len(row.Children) != 4 {
+		t.Fatalf("first row has %d tiles, want 4", len(row.Children))
+	}
+	tile := row.Children[0]
+	if tile.Kind != ui.KindCapsule {
+		t.Fatalf("tile kind = %v, want a capsule so the radius comes from the theme", tile.Kind)
+	}
+	thumb := tile.Children[0].Children[0]
+	if thumb.Kind != ui.KindImage || thumb.ImageW != wallpaperTileWidth || thumb.ImageH != wallpaperThumbH {
+		t.Fatalf("thumb = %+v, want a %dx%d raster box", thumb, wallpaperTileWidth, wallpaperThumbH)
+	}
+}
+
+func TestWallpaperArrowsMoveWithinAndBetweenRows(t *testing.T) {
+	t.Parallel()
+
+	reg, _, _ := openWallpaperPanel(t, []string{seedWallpaperRoot(t)})
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	h.wallpaperSel = 0
+	h.wallpaperKeyPress(reg, keyRight)
+	if h.wallpaperSel != 1 {
+		t.Fatalf("right = %d, want 1", h.wallpaperSel)
+	}
+	h.wallpaperKeyPress(reg, keyDown)
+	if h.wallpaperSel != 5-1 && h.wallpaperSel != 1+wallpaperColumns {
+		t.Fatalf("down = %d, want a row further on, clamped to the last tile", h.wallpaperSel)
+	}
+	h.wallpaperSel = 0
+	h.wallpaperKeyPress(reg, keyLeft)
+	if h.wallpaperSel != 0 {
+		t.Fatalf("left at the start = %d, want a clamp to 0", h.wallpaperSel)
+	}
+}
+
+func TestWallpaperEnterAppliesToTheSelectedOutput(t *testing.T) {
+	t.Parallel()
+
+	root := seedWallpaperRoot(t)
+	reg, svc, _ := openWallpaperPanel(t, []string{root})
+	h := wallpaperHost(t, reg)
+
+	reg.mu.Lock()
+	h.wallpaperOutput = "DP-1"
+	h.wallpaperSel = 0
+	first := wallpaperEntries(h)[0].Path
+	h.wallpaperKeyPress(reg, keyEnter)
+	reg.mu.Unlock()
+
+	awaitAssignment(t, svc, "DP-1", first)
+}
+
+func TestWallpaperAllAppliesToEveryOutput(t *testing.T) {
+	t.Parallel()
+
+	root := seedWallpaperRoot(t)
+	reg, svc, _ := openWallpaperPanel(t, []string{root})
+	h := wallpaperHost(t, reg)
+
+	reg.mu.Lock()
+	h.wallpaperOutput = wallpaper.AllOutputs
+	h.wallpaperSel = 0
+	first := wallpaperEntries(h)[0].Path
+	h.wallpaperKeyPress(reg, keyEnter)
+	reg.mu.Unlock()
+
+	awaitAssignment(t, svc, "DP-1", first)
+	awaitAssignment(t, svc, "DP-3", first)
+}
+
+func awaitAssignment(t *testing.T, svc *wallpaper.Service, connector, path string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if svc.Snapshot().Assignments[connector].Path == path {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("%s never took %s (got %q)", connector, path, svc.Snapshot().Assignments[connector].Path)
+}
+
+func TestWallpaperSummaryIsReadBackFromTheSnapshot(t *testing.T) {
+	t.Parallel()
+
+	// The mixed summary and the n/m badge are counted off the snapshot, so a
+	// different snapshot produces a different string rather than a stale one.
+	snap := wallpaper.Snapshot{
+		Connectors: []string{"DP-1", "DP-3"},
+		Assignments: map[string]wallpaper.Assignment{
+			"DP-1": {Kind: wallpaper.KindImage, Path: "/w/a.png"},
+			"DP-3": {Kind: wallpaper.KindVideo, Path: "/w/b.mp4"},
+		},
+		Runtime: map[string]wallpaper.Runtime{},
+	}
+	if got := wallpaperSummary(snap, wallpaper.AllOutputs); got != "2 outputs · 1 video · 1 image" {
+		t.Fatalf("summary = %q", got)
+	}
+
+	snap.Assignments["DP-3"] = wallpaper.Assignment{Kind: wallpaper.KindImage, Path: "/w/a.png"}
+	if got := wallpaperSummary(snap, wallpaper.AllOutputs); got != "2 outputs · 0 video · 2 image" {
+		t.Fatalf("summary after reassign = %q", got)
+	}
+
+	h := &PanelHost{wallpaperSnap: snap, wallpaperOutput: wallpaper.AllOutputs}
+	matched, total := wallpaperMatchCount(h, "/w/a.png")
+	if matched != 2 || total != 2 {
+		t.Fatalf("match count = %d/%d, want 2/2", matched, total)
+	}
+	snap.Assignments["DP-3"] = wallpaper.Assignment{Kind: wallpaper.KindVideo, Path: "/w/b.mp4"}
+	if matched, total = wallpaperMatchCount(h, "/w/a.png"); matched != 1 || total != 2 {
+		t.Fatalf("match count = %d/%d, want 1/2", matched, total)
+	}
+}
+
+func TestWallpaperRestoreEnqueuesRestore(t *testing.T) {
+	t.Parallel()
+
+	root := seedWallpaperRoot(t)
+	reg, svc, _ := openWallpaperPanel(t, []string{root})
+	h := wallpaperHost(t, reg)
+
+	reg.mu.Lock()
+	h.wallpaperOutput = "DP-1"
+	h.wallpaperSel = 0
+	first := wallpaperEntries(h)[0].Path
+	h.wallpaperKeyPress(reg, keyEnter)
+	reg.mu.Unlock()
+	awaitAssignment(t, svc, "DP-1", first)
+
+	reg.mu.Lock()
+	h.wallpaperRestore(reg)
+	reg.mu.Unlock()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if svc.Snapshot().Runtime["DP-1"].State == wallpaper.StateStatic {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("restore never put the output back on the static fallback")
+}
+
+func TestWallpaperApplyUpdatesTheThemeSeed(t *testing.T) {
+	t.Parallel()
+
+	root := seedWallpaperRoot(t)
+	reg, svc, _ := openWallpaperPanel(t, []string{root})
+
+	var mu sync.Mutex
+	var gotSource, gotSeed string
+	reg.mu.Lock()
+	reg.wallpaperSvc.SetConfigHook(func(source, seed string) {
+		mu.Lock()
+		defer mu.Unlock()
+		gotSource, gotSeed = source, seed
+	})
+	h := reg.panelHosts[PanelWallpaper]
+	h.wallpaperOutput = "DP-1"
+	h.wallpaperSel = 0
+	first := wallpaperEntries(h)[0].Path
+	h.wallpaperKeyPress(reg, keyEnter)
+	reg.mu.Unlock()
+
+	awaitAssignment(t, svc, "DP-1", first)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		source, seed := gotSource, gotSeed
+		mu.Unlock()
+		if source == "wallpaper" && seed == first {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("theme seed hook never saw the applied image (source=%q seed=%q)", gotSource, gotSeed)
 }

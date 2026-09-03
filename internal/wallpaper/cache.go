@@ -39,9 +39,9 @@ func cacheName(path string, modUnix int64, size int64) string {
 	return hex.EncodeToString(sum[:16]) + ".jpg"
 }
 
-// cachedStillPath is where the preview for path lives, whether or not it has
+// CachedStillPath is where the preview for path lives, whether or not it has
 // been generated yet. A missing source file has no cache entry.
-func cachedStillPath(path string) string {
+func CachedStillPath(path string) string {
 	dir := CacheDir()
 	if dir == "" {
 		return ""

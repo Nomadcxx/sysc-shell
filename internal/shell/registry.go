@@ -83,16 +83,18 @@ type Registry struct {
 	notify *notifyState
 
 	// tray is the service-owned tray projection.
-	tray            *trayState
-	trayCh          chan trayclient.Message
-	traySender      trayCommandSender
-	trayMenu        *trayMenuHost
-	trayDrawer      *trayDrawerHost
-	trayReplies     *trayReplyTracker
-	trayIcons       *icons.Worker
-	wallpaperSvc    *wallpaper.Service
-	trayIconCancel  context.CancelFunc
-	pendingTrayMenu pendingTrayMenu
+	tray                 *trayState
+	trayCh               chan trayclient.Message
+	traySender           trayCommandSender
+	trayMenu             *trayMenuHost
+	trayDrawer           *trayDrawerHost
+	trayReplies          *trayReplyTracker
+	trayIcons            *icons.Worker
+	wallpaperSvc         *wallpaper.Service
+	wallpaperThumbs      *icons.Worker
+	wallpaperThumbCancel context.CancelFunc
+	trayIconCancel       context.CancelFunc
+	pendingTrayMenu      pendingTrayMenu
 
 	// plugins hosts one process per enabled plugin. Nil until BindPlugins.
 	plugins *pluginHost
