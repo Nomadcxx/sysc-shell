@@ -76,8 +76,6 @@ func batteryStateLabel(s metrics.BatteryState) string {
 // the asset contract. The sizes differ because a segment shares its row with
 // two others and an action owns the full card width.
 const (
-	sessionProfileIconSize = 18
-	sessionActionIconSize  = 20
 	// The segmented row's budget is tight and fixed: a 420 px panel less the
 	// panel and card padding leaves 364 px for three segments. The widest
 	// label measures 88 px, so an 18 px glyph, its gap, and the label come to
@@ -121,7 +119,7 @@ func sessionProfileCard(h *PanelHost) *ui.Node {
 		content := make([]*ui.Node, 0, 2)
 		if icon != "" {
 			content = append(content, &ui.Node{
-				Kind: ui.KindIcon, Icon: icon, IconSize: sessionProfileIconSize,
+				Kind: ui.KindIcon, Icon: icon, IconSize: h.theme.ProfileIconSize,
 			})
 		}
 		content = append(content, &ui.Node{Kind: ui.KindText, Text: label})
@@ -172,7 +170,7 @@ func sessionActionsCard(theme Theme, locker string) *ui.Node {
 			Gap: theme.ButtonPadding / 2, Padding: theme.ButtonPadding,
 			Height: theme.ControlHeight,
 			Children: []*ui.Node{
-				{Kind: ui.KindIcon, Icon: a.icon, IconSize: sessionActionIconSize},
+				{Kind: ui.KindIcon, Icon: a.icon, IconSize: theme.IconSize},
 				{Kind: ui.KindText, Text: a.name},
 			},
 		}

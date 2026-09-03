@@ -5,12 +5,15 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 func TestDefaultThemeGeometryMatchesTheBaseline(t *testing.T) {
@@ -570,6 +573,106 @@ func TestNoShellFileOutsideThemeAssemblesAStyle(t *testing.T) {
 			if strings.Contains(string(body), banned) {
 				t.Errorf("%s assembles %s; resolve it in theme.go instead", name, banned)
 			}
+		}
+	}
+}
+
+// densityThemes resolves the same configuration at each density, which is what
+// the layout checks below run one tree through.
+func densityThemes(t *testing.T) map[theme.Density]Theme {
+	t.Helper()
+	out := map[theme.Density]Theme{}
+	for _, d := range theme.Densities() {
+		cfg, err := config.Parse([]byte(`{"theme":{"density":"` + string(d) + `"}}`))
+		if err != nil {
+			t.Fatalf("%s: %v", d, err)
+		}
+		th, err := ResolveTheme(cfg, cfg.Bar, theme.Fallback)
+		if err != nil {
+			t.Fatalf("%s: %v", d, err)
+		}
+		out[d] = th
+	}
+	return out
+}
+
+func TestDensityMovesEveryMetricItOwns(t *testing.T) {
+	t.Parallel()
+	got := densityThemes(t)
+	compact, standard, comfortable := got[theme.DensityCompact],
+		got[theme.DensityStandard], got[theme.DensityComfortable]
+
+	if compact.BarHeight != 40 || standard.BarHeight != 48 || comfortable.BarHeight != 56 {
+		t.Errorf("bar heights = %d/%d/%d, want 40/48/56",
+			compact.BarHeight, standard.BarHeight, comfortable.BarHeight)
+	}
+	// Each metric must be monotonic across the rows: a denser theme that made
+	// one control taller would read as a mistake rather than a setting.
+	for _, m := range []struct {
+		name    string
+		c, s, r int
+	}{
+		{"bar height", compact.BarHeight, standard.BarHeight, comfortable.BarHeight},
+		{"bar padding", compact.BarPadding, standard.BarPadding, comfortable.BarPadding},
+		{"spacing", compact.Spacing, standard.Spacing, comfortable.Spacing},
+		{"control height", compact.ControlHeight, standard.ControlHeight, comfortable.ControlHeight},
+		{"panel padding", compact.Metrics.PanelPadding, standard.Metrics.PanelPadding, comfortable.Metrics.PanelPadding},
+		{"card padding", compact.Metrics.CardPadding, standard.Metrics.CardPadding, comfortable.Metrics.CardPadding},
+		{"icon", compact.IconSize, standard.IconSize, comfortable.IconSize},
+	} {
+		if m.c > m.s || m.s > m.r {
+			t.Errorf("%s is not monotonic across densities: %d/%d/%d", m.name, m.c, m.s, m.r)
+		}
+		if m.c <= 0 {
+			t.Errorf("%s is %d at compact", m.name, m.c)
+		}
+	}
+}
+
+func TestDensityLeavesEveryThemeValid(t *testing.T) {
+	t.Parallel()
+	for d, th := range densityThemes(t) {
+		if err := th.Valid(); err != nil {
+			t.Errorf("%s: %v", d, err)
+		}
+		// The painted body has to survive the gap at every row, or the bar
+		// resolves to nothing.
+		if _, body, _ := th.Geometry(); body <= 0 {
+			t.Errorf("%s: body height %d", d, body)
+		}
+	}
+}
+
+func TestShapeRolesStayIndependentOfTheBaseRadius(t *testing.T) {
+	t.Parallel()
+	for _, radius := range []int{0, 12, 32} {
+		cfg, err := config.Parse([]byte(`{"theme":{"radius":` +
+			strconv.Itoa(radius) + `}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		th, err := ResolveTheme(cfg, cfg.Bar, theme.Fallback)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// A stadium and a circle are proportions of their box, so no radius
+		// setting can square them off.
+		for _, shape := range []ui.Shape{ui.ShapeStadium, ui.ShapeCircle} {
+			if got := th.Shapes.For(shape, th.Radius); got != render.ShapeHalf {
+				t.Errorf("radius %d: %v resolved to %d, want the half sentinel",
+					radius, shape, got)
+			}
+		}
+		// The derived roles do follow the base.
+		if th.Shapes.Medium != radius {
+			t.Errorf("radius %d: medium = %d", radius, th.Shapes.Medium)
+		}
+		if th.Shapes.Large > theme.RadiusMax {
+			t.Errorf("radius %d: large = %d, above the %d ceiling",
+				radius, th.Shapes.Large, theme.RadiusMax)
+		}
+		if th.Shapes.Small > th.Shapes.Medium || th.Shapes.Medium > th.Shapes.Large {
+			t.Errorf("radius %d: shape ladder out of order: %+v", radius, th.Shapes)
 		}
 	}
 }

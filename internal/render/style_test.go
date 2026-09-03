@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 func TestStyleTypeSetResolvesEveryRole(t *testing.T) {
@@ -44,5 +45,42 @@ func TestStyleTableCoversEveryDeclaredRole(t *testing.T) {
 	var set TypeSet
 	if len(set.Roles) != textRoleCount {
 		t.Errorf("role table holds %d entries, want %d", len(set.Roles), textRoleCount)
+	}
+}
+
+func TestShapesResolveEveryRole(t *testing.T) {
+	t.Parallel()
+	s := Shapes{Small: 6, Medium: 12, Large: 18, Card: 12, Panel: 12}
+	for _, tc := range []struct {
+		shape ui.Shape
+		want  int
+	}{
+		{ui.ShapeInherit, 99},
+		{ui.ShapeSmall, 6},
+		{ui.ShapeMedium, 12},
+		{ui.ShapeLarge, 18},
+		{ui.ShapeCard, 12},
+		{ui.ShapePanel, 12},
+		{ui.ShapeStadium, ShapeHalf},
+		{ui.ShapeCircle, ShapeHalf},
+	} {
+		if got := s.For(tc.shape, 99); got != tc.want {
+			t.Errorf("shape %d = %d, want %d", tc.shape, got, tc.want)
+		}
+	}
+}
+
+func TestStadiumSurvivesAZeroBaseRadius(t *testing.T) {
+	t.Parallel()
+	// Every derived role collapses to zero, but the two geometric shapes do
+	// not: that is the whole reason they are roles rather than radii.
+	flat := Shapes{}
+	for _, shape := range []ui.Shape{ui.ShapeStadium, ui.ShapeCircle} {
+		if got := flat.For(shape, 0); got != ShapeHalf {
+			t.Errorf("shape %d = %d at radius zero, want the half sentinel", shape, got)
+		}
+	}
+	if got := flat.For(ui.ShapeCard, 0); got != 0 {
+		t.Errorf("card = %d at radius zero, want 0", got)
 	}
 }

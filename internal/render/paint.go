@@ -645,6 +645,28 @@ func chromeRadius(style Style, logical int, box ui.Rect) int {
 	return min(style.Scale120.Physical(logical), half)
 }
 
+// nodeRadius resolves the logical corner radius one node paints with, in
+// precedence order: an explicit pixel override, then the shape role it names,
+// then the radius its surface passes down.
+//
+// A shape role wins over the base radius rather than scaling with it, which is
+// what keeps a stadium a stadium at radius zero and at radius 32.
+func nodeRadius(style Style, n *ui.Node, inherit int) int {
+	if n == nil {
+		return inherit
+	}
+	if n.Radius > 0 {
+		return n.Radius
+	}
+	if r := style.Shapes.For(n.Shape, inherit); r != inherit {
+		if r == ShapeHalf {
+			return 0 // chromeRadius reads zero as "half the box"
+		}
+		return r
+	}
+	return inherit
+}
+
 // stateLayer returns the overlay a node's resolved interaction state composites
 // over its fill, or a zero colour when it is at rest.
 func stateLayer(fg Color, state ui.Interaction) Color {
@@ -669,10 +691,7 @@ func stateLayer(fg Color, state ui.Interaction) Color {
 // zero asks for a stadium.
 func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int, base Color, radiusLogical int) error {
 	box := style.Scale120.PhysicalRect(n.Bounds)
-	if n.Radius > 0 {
-		radiusLogical = n.Radius
-	}
-	radius := chromeRadius(style, radiusLogical, box)
+	radius := chromeRadius(style, nodeRadius(style, n, radiusLogical), box)
 	fill, fg := chromeFill(style, n, base)
 	fillRoundedRect(c, box, radius, fill)
 	// An explicit stroke marks a card that has to stand out from its

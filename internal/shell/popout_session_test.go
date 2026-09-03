@@ -526,8 +526,8 @@ func TestSelectedProfileSwapsItsIconForACheckAndKeepsItsLabel(t *testing.T) {
 		if icon == nil {
 			t.Fatalf("segment %q has no icon", seg.Name)
 		}
-		if got := icon.IconSize; got != sessionProfileIconSize {
-			t.Errorf("segment %q icon is %d px, want %d", seg.Name, got, sessionProfileIconSize)
+		if got := icon.IconSize; got != DefaultTheme().ProfileIconSize {
+			t.Errorf("segment %q icon is %d px, want %d", seg.Name, got, DefaultTheme().ProfileIconSize)
 		}
 		want := sessionProfileIcon(strings.ToLower(strings.ReplaceAll(seg.Name, " ", "-")))
 		if seg.State.Has(ui.StateSelected) {
@@ -576,8 +576,8 @@ func TestSessionActionsAreFullWidthIconStadiums(t *testing.T) {
 		icon := findNode(node, func(n *ui.Node) bool { return n.Kind == ui.KindIcon })
 		if icon == nil || icon.Icon != want {
 			t.Errorf("action %q icon = %v, want %q", name, icon, want)
-		} else if icon.IconSize != sessionActionIconSize {
-			t.Errorf("action %q icon is %d px, want %d", name, icon.IconSize, sessionActionIconSize)
+		} else if icon.IconSize != DefaultTheme().IconSize {
+			t.Errorf("action %q icon is %d px, want %d", name, icon.IconSize, DefaultTheme().IconSize)
 		}
 		if !render.ValidMaterialIcon(want) {
 			t.Errorf("action %q names %q, which is outside the embedded subset", name, want)

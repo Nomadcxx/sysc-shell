@@ -98,6 +98,32 @@ type Shapes struct {
 	Panel  int
 }
 
+// ShapeHalf asks the painter for half the box's shorter side. It is the value
+// stadium and circle resolve to: their geometry is a proportion, not a radius,
+// so no theme setting can square them off.
+const ShapeHalf = -1
+
+// For resolves a shape role to a logical radius. inherit is the radius the
+// surface passes down, used by a node that names no shape of its own.
+func (s Shapes) For(shape ui.Shape, inherit int) int {
+	switch shape {
+	case ui.ShapeStadium, ui.ShapeCircle:
+		return ShapeHalf
+	case ui.ShapeSmall:
+		return s.Small
+	case ui.ShapeMedium:
+		return s.Medium
+	case ui.ShapeLarge:
+		return s.Large
+	case ui.ShapeCard:
+		return s.Card
+	case ui.ShapePanel:
+		return s.Panel
+	default:
+		return inherit
+	}
+}
+
 // TypeSet resolves each semantic text role for one surface.
 type TypeSet struct {
 	Family     string

@@ -81,8 +81,13 @@ type Node struct {
 	Height int
 	// IconSize is the logical square reserved by KindIcon. Zero uses 20.
 	IconSize int
-	// Radius overrides the semantic radius for this node. Zero uses the theme.
+	// Radius overrides the semantic radius for this node in logical pixels.
+	// Zero defers to Shape, and a zero Shape defers to the surface's base.
 	Radius int
+	// Shape is the corner role this node asks for. It is the semantic form of
+	// Radius: a component names the shape it is, and the theme decides how
+	// round that is.
+	Shape Shape
 	// ScrollOffset is the viewport origin in logical pixels.
 	ScrollOffset int
 	ItemCount    int
@@ -230,6 +235,25 @@ type Tone uint8
 const (
 	ToneNormal Tone = iota
 	ToneError
+)
+
+// Shape names the corner treatment a node asks for.
+//
+// Stadium and circle are geometric invariants, not radii: they stay half the
+// box whatever the configurable base radius is, so a theme at radius zero
+// still leaves a pill a pill and an avatar a circle.
+type Shape uint8
+
+const (
+	// ShapeInherit takes the radius the surface passes down.
+	ShapeInherit Shape = iota
+	ShapeStadium
+	ShapeCircle
+	ShapeSmall
+	ShapeMedium
+	ShapeLarge
+	ShapeCard
+	ShapePanel
 )
 
 // MeasureText reports the logical width and height of a shaped string. The
