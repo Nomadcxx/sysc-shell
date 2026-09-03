@@ -8,6 +8,8 @@ package config
 import (
 	"fmt"
 	"time"
+
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
 
 // Item is one validated widget instance. Options live on the instance rather
@@ -116,9 +118,19 @@ type Bar struct {
 	Right      []Item
 }
 
-// Theme is geometry the palette generator does not produce.
+// Theme is the composition the palette generator does not produce: the
+// independent density, typography, shape, opacity, elevation, and motion axes,
+// plus the preset that seeded them.
+//
+// The composition is embedded rather than nested so every existing
+// cfg.Theme.Radius reader keeps working, and so the resolver and the settings
+// registry read one type rather than a configuration-shaped copy of it.
 type Theme struct {
-	Radius int
+	// Preset is the bundled composition this theme started from. It is not a
+	// mode: every axis below stays independently overridable, and the sparse
+	// writer records only the axes that deviate from it.
+	Preset theme.Preset
+	theme.Composition
 }
 
 // ThemeConfig selects how the Material 3 palette is seeded.
@@ -261,11 +273,9 @@ var supportedEdges = map[string]bool{
 
 // Default is the built-in configuration, used when no file exists.
 func Default() Config {
-	return Config{
+	c := Config{
 		Bar: Bar{
-			Enabled: true, Edge: "top",
-			Height: 48, Gap: 4, Padding: 6, Spacing: 4, Radius: 12,
-			FontFamily: "sans-serif", FontSize: 14,
+			Enabled: true, Edge: "top", Gap: 4,
 			Left: []Item{
 				{ID: "workspace"},
 				{ID: "window-title", MaxWidth: defaultTitleMaxWidth},
@@ -287,7 +297,7 @@ func Default() Config {
 				{ID: "notifications"},
 			},
 		},
-		Theme: Theme{Radius: 12},
+		Theme: Theme{Preset: theme.PresetStandard, Composition: standardComposition()},
 		ThemeGen: ThemeConfig{
 			Source: "wallpaper",
 			Scheme: "scheme-tonal-spot",
@@ -295,6 +305,35 @@ func Default() Config {
 		},
 		Panels: Panels{Gap: 0, Padding: 8, OSD: "bottom-center"},
 	}
+	// The bar's geometry is derived, not written twice: height, padding,
+	// spacing, radius, and text size all follow the resolved composition, and
+	// an explicit bar block overrides them afterwards.
+	c.Bar = deriveBar(c.Bar, c.Theme)
+	return c
+}
+
+// standardComposition is the standard preset, which is also the composition a
+// file with no preset key resolves to.
+func standardComposition() theme.Composition {
+	c, ok := theme.PresetComposition(theme.PresetStandard)
+	if !ok {
+		panic("config: the standard preset is missing")
+	}
+	return c
+}
+
+// deriveBar fills the bar geometry the composition owns. It leaves the bar's
+// own identity -- whether it is enabled, its edge, its gap, and its items --
+// untouched, because those are not theme axes.
+func deriveBar(b Bar, t Theme) Bar {
+	m := t.Metrics()
+	b.Height = m.BarHeight
+	b.Padding = m.BarPadding
+	b.Spacing = m.BarSpacing
+	b.Radius = t.Radius
+	b.FontFamily = t.FontFamily
+	b.FontSize = t.TextSize(theme.RoleBody)
+	return b
 }
 
 // ForConnector resolves the bar policy for one connector. The first matching

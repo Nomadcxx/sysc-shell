@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
 
 // atomicReplace is os.Rename except in tests that force a failure after the
@@ -72,12 +74,15 @@ func Write(path string, c Config) error {
 func toWire(c Config) wireConfig {
 	d := Default()
 	var w wireConfig
-	if bar := barDiff(c.Bar, d.Bar); bar != nil {
+	// The base bar is written against the bar its own resolved theme derives,
+	// not against the default bar: a compact preset moves the derived height
+	// to 40, and recording that as an explicit override would pin the bar
+	// there for every later preset change.
+	if bar := barDiff(c.Bar, deriveBar(d.Bar, c.Theme)); bar != nil {
 		w.Bar = bar
 	}
-	if c.Theme.Radius != d.Theme.Radius {
-		r := c.Theme.Radius
-		w.Theme = &wireTheme{Radius: &r}
+	if t := themeDiff(c.Theme, d.Theme.Preset); t != nil {
+		w.Theme = t
 	}
 	if tg := themeGenDiff(c.ThemeGen, d.ThemeGen); tg != nil {
 		w.ThemeGen = tg
@@ -359,4 +364,70 @@ func weatherWire(w Weather) *wireWeather {
 		out.Interval = &v
 	}
 	return out
+}
+
+// themeDiff records only the axes that deviate from the preset the theme
+// selected, so a preset change moves everything the user never touched.
+func themeDiff(got Theme, defaultPreset theme.Preset) *wireTheme {
+	base, ok := theme.PresetComposition(got.Preset)
+	if !ok {
+		base = standardComposition()
+	}
+	var w wireTheme
+	set := false
+	if got.Preset != defaultPreset {
+		v := string(got.Preset)
+		w.Preset = &v
+		set = true
+	}
+	if got.Density != base.Density {
+		v := string(got.Density)
+		w.Density = &v
+		set = true
+	}
+	if got.Motion != base.Motion {
+		v := string(got.Motion)
+		w.Motion = &v
+		set = true
+	}
+	if got.Elevation != base.Elevation {
+		v := string(got.Elevation)
+		w.Elevation = &v
+		set = true
+	}
+	for _, f := range []struct {
+		got, base string
+		dest      **string
+	}{
+		{got.FontFamily, base.FontFamily, &w.FontFamily},
+		{got.MonoFontFamily, base.MonoFontFamily, &w.MonoFontFamily},
+	} {
+		if f.got != f.base {
+			v := f.got
+			*f.dest = &v
+			set = true
+		}
+	}
+	for _, f := range []struct {
+		got, base int
+		dest      **int
+	}{
+		{got.FontScale, base.FontScale, &w.FontScale},
+		{got.FontWeight, base.FontWeight, &w.FontWeight},
+		{got.Radius, base.Radius, &w.Radius},
+		{got.MotionSpeed, base.MotionSpeed, &w.MotionSpeed},
+		{got.BarOpacity, base.BarOpacity, &w.BarOpacity},
+		{got.PanelOpacity, base.PanelOpacity, &w.PanelOpacity},
+		{got.OverlayOpacity, base.OverlayOpacity, &w.OverlayOpacity},
+	} {
+		if f.got != f.base {
+			v := f.got
+			*f.dest = &v
+			set = true
+		}
+	}
+	if !set {
+		return nil
+	}
+	return &w
 }

@@ -87,7 +87,19 @@ type wireBar struct {
 }
 
 type wireTheme struct {
-	Radius *int `json:"radius,omitempty"`
+	Preset         *string `json:"preset,omitempty"`
+	Density        *string `json:"density,omitempty"`
+	FontFamily     *string `json:"font-family,omitempty"`
+	MonoFontFamily *string `json:"mono-font-family,omitempty"`
+	FontScale      *int    `json:"font-scale,omitempty"`
+	FontWeight     *int    `json:"font-weight,omitempty"`
+	Radius         *int    `json:"radius,omitempty"`
+	Motion         *string `json:"motion,omitempty"`
+	MotionSpeed    *int    `json:"motion-speed,omitempty"`
+	BarOpacity     *int    `json:"bar-opacity,omitempty"`
+	PanelOpacity   *int    `json:"panel-opacity,omitempty"`
+	OverlayOpacity *int    `json:"overlay-opacity,omitempty"`
+	Elevation      *string `json:"elevation,omitempty"`
 }
 
 type wireThemeGen struct {
@@ -228,9 +240,10 @@ func Parse(data []byte) (Config, error) {
 		}
 		cfg.Tray = prefs
 	}
-	// The bar's radius mirrors the theme's, so the opaque region and the
-	// painted body agree without a second token.
-	cfg.Bar.Radius = cfg.Theme.Radius
+	// The base bar's geometry derives from the resolved composition before any
+	// explicit bar block is applied, so the precedence is preset, then theme
+	// axes, then the derived bar, then bar, then output.
+	cfg.Bar = deriveBar(cfg.Bar, cfg.Theme)
 	if wire.Bar != nil {
 		bar, err := applyBar(cfg.Bar, *wire.Bar, "bar")
 		if err != nil {
@@ -952,13 +965,89 @@ func clockBoundary(layout string) (time.Duration, error) {
 		"%q does not change with time; a Go layout uses a reference instant such as 15:04", layout)
 }
 
+// applyTheme resolves the composition: the named preset reseeds every axis,
+// then each explicit field overrides the one it names. A file that names no
+// preset keeps the standard one, which is what makes an existing file load
+// unchanged.
 func applyTheme(base Theme, w wireTheme, path string) (Theme, error) {
 	out := base
-	if w.Radius != nil {
-		if *w.Radius < 0 {
-			return Theme{}, pathErr(path+".radius", "%d is negative", *w.Radius)
+	if w.Preset != nil {
+		p := theme.Preset(*w.Preset)
+		comp, ok := theme.PresetComposition(p)
+		if !ok {
+			return Theme{}, pathErr(path+".preset",
+				"%q is not one of standard, compact, expressive", *w.Preset)
 		}
-		out.Radius = *w.Radius
+		out.Preset = p
+		out.Composition = comp
+	}
+	if w.Density != nil {
+		d := theme.Density(*w.Density)
+		if _, ok := theme.MetricsFor(d); !ok {
+			return Theme{}, pathErr(path+".density",
+				"%q is not one of compact, standard, comfortable", *w.Density)
+		}
+		out.Density = d
+	}
+	if w.Motion != nil {
+		m := theme.MotionStyle(*w.Motion)
+		if m != theme.MotionStandard && m != theme.MotionExpressive {
+			return Theme{}, pathErr(path+".motion",
+				"%q is not one of standard, expressive", *w.Motion)
+		}
+		out.Motion = m
+	}
+	if w.Elevation != nil {
+		e := theme.Elevation(*w.Elevation)
+		switch e {
+		case theme.ElevationNone, theme.ElevationSubtle, theme.ElevationStandard:
+		default:
+			return Theme{}, pathErr(path+".elevation",
+				"%q is not one of none, subtle, standard", *w.Elevation)
+		}
+		out.Elevation = e
+	}
+	for _, f := range []struct {
+		key      string
+		supplied *string
+		dest     *string
+	}{
+		{"font-family", w.FontFamily, &out.FontFamily},
+		{"mono-font-family", w.MonoFontFamily, &out.MonoFontFamily},
+	} {
+		if f.supplied == nil {
+			continue
+		}
+		if *f.supplied == "" {
+			return Theme{}, pathErr(path+"."+f.key, "is empty")
+		}
+		*f.dest = *f.supplied
+	}
+	for _, f := range []struct {
+		key      string
+		supplied *int
+		dest     *int
+		min, max int
+	}{
+		{"font-scale", w.FontScale, &out.FontScale, theme.FontScaleMin, theme.FontScaleMax},
+		{"font-weight", w.FontWeight, &out.FontWeight, theme.FontWeightMin, theme.FontWeightMax},
+		{"radius", w.Radius, &out.Radius, theme.RadiusMin, theme.RadiusMax},
+		{"motion-speed", w.MotionSpeed, &out.MotionSpeed, theme.SpeedMin, theme.SpeedMax},
+		{"bar-opacity", w.BarOpacity, &out.BarOpacity, theme.OpacityMin, theme.OpacityMax},
+		{"panel-opacity", w.PanelOpacity, &out.PanelOpacity, theme.OpacityMin, theme.OpacityMax},
+		{"overlay-opacity", w.OverlayOpacity, &out.OverlayOpacity, theme.OpacityMin, theme.OpacityMax},
+	} {
+		if f.supplied == nil {
+			continue
+		}
+		if *f.supplied < f.min || *f.supplied > f.max {
+			return Theme{}, pathErr(path+"."+f.key,
+				"%d is outside %d..%d", *f.supplied, f.min, f.max)
+		}
+		*f.dest = *f.supplied
+	}
+	if err := out.Composition.Valid(); err != nil {
+		return Theme{}, pathErr(path, "%v", err)
 	}
 	return out, nil
 }

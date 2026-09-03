@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
 
 func TestDefaultBarMatchesDMSContentBand(t *testing.T) {
@@ -708,5 +710,180 @@ func TestRetiredThemeColourFieldsAreRejected(t *testing.T) {
 		if _, err := Parse(body); err == nil {
 			t.Fatalf("retired theme.%s must be rejected, not ignored", field)
 		}
+	}
+}
+
+func TestThemePresetSeedsEveryAxis(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		preset  string
+		density theme.Density
+		radius  int
+		motion  theme.MotionStyle
+		speed   int
+		panel   int
+	}{
+		{"standard", theme.DensityStandard, 12, theme.MotionStandard, 100, 100},
+		{"compact", theme.DensityCompact, 8, theme.MotionStandard, 125, 100},
+		{"expressive", theme.DensityStandard, 16, theme.MotionExpressive, 100, 95},
+	} {
+		cfg, err := Parse([]byte(`{"theme":{"preset":"` + tc.preset + `"}}`))
+		if err != nil {
+			t.Errorf("%s: %v", tc.preset, err)
+			continue
+		}
+		if cfg.Theme.Preset != theme.Preset(tc.preset) {
+			t.Errorf("%s: preset = %q", tc.preset, cfg.Theme.Preset)
+		}
+		if cfg.Theme.Density != tc.density || cfg.Theme.Radius != tc.radius ||
+			cfg.Theme.Motion != tc.motion || cfg.Theme.MotionSpeed != tc.speed ||
+			cfg.Theme.PanelOpacity != tc.panel {
+			t.Errorf("%s: composition = %+v", tc.preset, cfg.Theme.Composition)
+		}
+	}
+}
+
+func TestThemeExplicitAxisOverridesThePreset(t *testing.T) {
+	t.Parallel()
+	cfg, err := Parse([]byte(`{"theme":{"preset":"compact","radius":20,"density":"comfortable"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Theme.Preset != theme.PresetCompact {
+		t.Errorf("preset = %q, want compact", cfg.Theme.Preset)
+	}
+	if cfg.Theme.Radius != 20 {
+		t.Errorf("radius = %d, want the explicit 20", cfg.Theme.Radius)
+	}
+	if cfg.Theme.Density != theme.DensityComfortable {
+		t.Errorf("density = %q, want the explicit comfortable", cfg.Theme.Density)
+	}
+	// An axis the file does not name still follows the preset.
+	if cfg.Theme.MotionSpeed != 125 {
+		t.Errorf("motion speed = %d, want compact's 125", cfg.Theme.MotionSpeed)
+	}
+}
+
+func TestThemeDerivesTheBarThenBarOverridesIt(t *testing.T) {
+	t.Parallel()
+	// The comfortable row derives a 56 px bar with 8 px padding.
+	cfg, err := Parse([]byte(`{"theme":{"density":"comfortable"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Bar.Height != 56 || cfg.Bar.Padding != 8 || cfg.Bar.Spacing != 6 {
+		t.Errorf("derived bar = %d/%d/%d, want 56/8/6",
+			cfg.Bar.Height, cfg.Bar.Padding, cfg.Bar.Spacing)
+	}
+	// An explicit bar value wins over the derived one.
+	cfg, err = Parse([]byte(`{"theme":{"density":"comfortable"},"bar":{"height":72}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Bar.Height != 72 {
+		t.Errorf("height = %d, want the explicit 72", cfg.Bar.Height)
+	}
+	if cfg.Bar.Padding != 8 {
+		t.Errorf("padding = %d, want the derived 8 to survive", cfg.Bar.Padding)
+	}
+}
+
+func TestThemeOutputOverrideBeatsTheBaseBar(t *testing.T) {
+	t.Parallel()
+	cfg, err := Parse([]byte(`{
+		"theme":{"density":"comfortable"},
+		"bar":{"height":72},
+		"outputs":[{"connector":"DP-1","bar":{"height":64}}]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.ForConnector("DP-1").Height; got != 64 {
+		t.Errorf("DP-1 height = %d, want the output override 64", got)
+	}
+	if got := cfg.ForConnector("HDMI-A-1").Height; got != 72 {
+		t.Errorf("other output height = %d, want the base bar 72", got)
+	}
+}
+
+func TestThemeRadiusReachesTheBar(t *testing.T) {
+	t.Parallel()
+	cfg, err := Parse([]byte(`{"theme":{"radius":24}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Bar.Radius != 24 {
+		t.Errorf("bar radius = %d, want the theme's 24", cfg.Bar.Radius)
+	}
+}
+
+func TestThemeRejectsEveryInvalidAxisWithItsPath(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		doc  string
+		path string
+	}{
+		{"preset", `{"theme":{"preset":"fancy"}}`, "theme.preset"},
+		{"density", `{"theme":{"density":"dense"}}`, "theme.density"},
+		{"motion", `{"theme":{"motion":"springy"}}`, "theme.motion"},
+		{"elevation", `{"theme":{"elevation":"high"}}`, "theme.elevation"},
+		{"font scale low", `{"theme":{"font-scale":74}}`, "theme.font-scale"},
+		{"font scale high", `{"theme":{"font-scale":201}}`, "theme.font-scale"},
+		{"font weight low", `{"theme":{"font-weight":99}}`, "theme.font-weight"},
+		{"font weight high", `{"theme":{"font-weight":901}}`, "theme.font-weight"},
+		{"radius negative", `{"theme":{"radius":-1}}`, "theme.radius"},
+		{"radius high", `{"theme":{"radius":33}}`, "theme.radius"},
+		{"speed low", `{"theme":{"motion-speed":24}}`, "theme.motion-speed"},
+		{"speed high", `{"theme":{"motion-speed":401}}`, "theme.motion-speed"},
+		{"bar opacity", `{"theme":{"bar-opacity":79}}`, "theme.bar-opacity"},
+		{"panel opacity", `{"theme":{"panel-opacity":101}}`, "theme.panel-opacity"},
+		{"overlay opacity", `{"theme":{"overlay-opacity":0}}`, "theme.overlay-opacity"},
+		{"empty family", `{"theme":{"font-family":""}}`, "theme.font-family"},
+		{"empty mono family", `{"theme":{"mono-font-family":""}}`, "theme.mono-font-family"},
+		{"unknown key", `{"theme":{"corner":4}}`, "corner"},
+	} {
+		_, err := Parse([]byte(tc.doc))
+		if err == nil {
+			t.Errorf("%s: Parse() = nil, want an error", tc.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.path) {
+			t.Errorf("%s: error %q does not name %q", tc.name, err, tc.path)
+		}
+	}
+}
+
+func TestThemeMigratesAnExistingFileUnchanged(t *testing.T) {
+	t.Parallel()
+	// A file written before presets existed: a theme radius and a bar block,
+	// no preset key. Its effective geometry must not move.
+	const old = `{"theme":{"radius":16},"bar":{"height":48,"padding":6,"spacing":4}}`
+	cfg, err := Parse([]byte(old))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Theme.Preset != theme.PresetStandard {
+		t.Errorf("preset = %q, want standard", cfg.Theme.Preset)
+	}
+	if cfg.Theme.Radius != 16 || cfg.Bar.Radius != 16 {
+		t.Errorf("radius = %d/%d, want 16", cfg.Theme.Radius, cfg.Bar.Radius)
+	}
+	if cfg.Bar.Height != 48 || cfg.Bar.Padding != 6 || cfg.Bar.Spacing != 4 {
+		t.Errorf("bar = %d/%d/%d, want 48/6/4",
+			cfg.Bar.Height, cfg.Bar.Padding, cfg.Bar.Spacing)
+	}
+	if cfg.Bar.FontSize != 14 {
+		t.Errorf("font size = %d, want 14", cfg.Bar.FontSize)
+	}
+}
+
+func TestThemeStandardPresetReproducesTheShippedBar(t *testing.T) {
+	t.Parallel()
+	d := Default()
+	if d.Bar.Height != 48 || d.Bar.Padding != 6 || d.Bar.Spacing != 4 ||
+		d.Bar.Radius != 12 || d.Bar.FontSize != 14 {
+		t.Errorf("default bar drifted: height %d padding %d spacing %d radius %d size %d",
+			d.Bar.Height, d.Bar.Padding, d.Bar.Spacing, d.Bar.Radius, d.Bar.FontSize)
 	}
 }
