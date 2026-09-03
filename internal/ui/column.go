@@ -98,6 +98,9 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 		_, h, err := measureSegmented(n, measure)
 		return h, err
 	case KindImage:
+		if _, h, ok := imageBox(n); ok {
+			return h, nil
+		}
 		if n.ImageSize > 0 {
 			return n.ImageSize, nil
 		}

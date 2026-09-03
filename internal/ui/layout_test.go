@@ -540,3 +540,58 @@ func TestMeasureSegmentedFitsItsOwnMeasurement(t *testing.T) {
 		}
 	}
 }
+
+func TestImageNodeMeasuresALandscapeBox(t *testing.T) {
+	measure := func(string, bool) (int, int) { return 7, 20 }
+	// A wallpaper thumbnail is the first non-square raster in the tree. Every
+	// other image node is a square icon, so the square form has to keep
+	// working unchanged beside it.
+	cases := map[string]struct {
+		node   *Node
+		w, h   int
+		reason string
+	}{
+		"landscape": {
+			node: &Node{Kind: KindImage, ImageW: 210, ImageH: 96},
+			w:    210, h: 96,
+			reason: "an explicit width and height are the box",
+		},
+		"square": {
+			node: &Node{Kind: KindImage, ImageSize: 40},
+			w:    40, h: 40,
+			reason: "the landed icon form is untouched",
+		},
+		"width only": {
+			node: &Node{Kind: KindImage, ImageW: 210, ImageSize: 40},
+			w:    40, h: 40,
+			reason: "half a landscape box is not a box; fall back to the square edge",
+		},
+		"height only": {
+			node: &Node{Kind: KindImage, ImageH: 96, ImageSize: 40},
+			w:    40, h: 40,
+			reason: "half a landscape box is not a box; fall back to the square edge",
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			w, h, err := measureNode(c.node, 32, measure)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if w != c.w || h != c.h {
+				t.Fatalf("measured %dx%d, want %dx%d: %s", w, h, c.w, c.h, c.reason)
+			}
+		})
+	}
+}
+
+func TestImageNodeLandscapeRowHeightInAColumn(t *testing.T) {
+	measure := func(string, bool) (int, int) { return 7, 20 }
+	h, err := columnChildHeight(&Node{Kind: KindImage, ImageW: 210, ImageH: 96}, 400, measure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h != 96 {
+		t.Fatalf("column height = %d, want the raster height 96", h)
+	}
+}

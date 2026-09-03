@@ -412,6 +412,9 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 	case KindSegmented:
 		return measureSegmented(n, measure)
 	case KindImage:
+		if w, h, ok := imageBox(n); ok {
+			return w, h, nil
+		}
 		size := n.ImageSize
 		if size <= 0 {
 			size = contentHeight
