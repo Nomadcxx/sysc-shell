@@ -1,6 +1,9 @@
 package wallpaper
 
-import "slices"
+import (
+	"maps"
+	"slices"
+)
 
 // AllOutputs is the output-select token the picker sends for "All". It is not
 // a connector name and never reaches an engine: the store expands it over the
@@ -67,6 +70,7 @@ type Store struct {
 	runtime    map[string]Runtime
 	gen        map[string]uint64
 	seed       string
+	err        string
 }
 
 func (s *Store) ensure() {
@@ -217,4 +221,74 @@ func (s *Store) Reconnect(connector string) []Job {
 		return nil
 	}
 	return s.Apply(connector, a.Path, a.Kind)
+}
+
+// Adopt takes the persisted assignment table at startup. Runtime stays empty:
+// nothing is running yet, and reconcile is what starts it.
+func (s *Store) Adopt(saved map[string]Assignment) {
+	s.ensure()
+	for connector, a := range saved {
+		s.assigned[connector] = a
+		if seed := seedFor(a); seed != "" && s.seed == "" {
+			s.seed = seed
+		}
+	}
+}
+
+// All returns a copy of the assignment table.
+func (s *Store) All() map[string]Assignment {
+	s.ensure()
+	return maps.Clone(s.assigned)
+}
+
+// AllRuntime returns a copy of the live state table.
+func (s *Store) AllRuntime() map[string]Runtime {
+	s.ensure()
+	return maps.Clone(s.runtime)
+}
+
+// Err is the last library or persistence failure, projected into a banner.
+func (s *Store) Err() string { return s.err }
+
+func (s *Store) noteErr(err error) {
+	if err != nil {
+		s.err = err.Error()
+	}
+}
+
+// noteRuntimeErr records a failure against one output without touching what is
+// assigned to it.
+func (s *Store) noteRuntimeErr(connector string, err error) {
+	s.ensure()
+	rt := s.runtime[connector]
+	rt.State = StateError
+	if err != nil {
+		rt.Err = err.Error()
+	}
+	s.runtime[connector] = rt
+}
+
+// SetPlayback records a pause or resume the engine has already accepted. The
+// desired playback is persisted so a paused video comes back paused (D19).
+func (s *Store) SetPlayback(connector string, paused bool) {
+	s.ensure()
+	state := StatePlaying
+	if paused {
+		state = StatePaused
+	}
+	if a, ok := s.assigned[connector]; ok {
+		a.DesiredPlayback = state
+		s.assigned[connector] = a
+	}
+	rt := s.runtime[connector]
+	rt.State = state
+	rt.Err = ""
+	s.runtime[connector] = rt
+}
+
+// SetRestored records that an output is back on the static fallback: our
+// engine is stopped, so there is no socket of ours left to talk to.
+func (s *Store) SetRestored(connector string) {
+	s.ensure()
+	s.runtime[connector] = Runtime{State: StateStatic}
 }
