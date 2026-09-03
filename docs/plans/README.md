@@ -1,6 +1,6 @@
 # Design and Plan Register
 
-Last updated: 2026-09-03.
+Last updated: 2026-09-04.
 
 Every design, plan, and handover this project has produced, with where it lives and whether it is still
 live. Add a row here in the same commit that adds a document. A document that is not in this register is
