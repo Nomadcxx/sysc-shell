@@ -46,3 +46,19 @@ func fallbackArgs(engine, path, connector string) ([]string, error) {
 	}
 	return nil, ErrNoStaticEngine
 }
+
+// awwwDaemonArgs starts the daemon that awww's client talks to.
+func awwwDaemonArgs() []string { return []string{engineAwwwDaemon} }
+
+// awwwQueryArgs asks whether the daemon is up. The client exits non-zero when
+// its socket is missing, which is what makes this a liveness check.
+func awwwQueryArgs() []string { return []string{engineAwww, "query"} }
+
+// fallbackIsOneShot reports whether the engine's argv is a client that exits
+// once it has handed the image over, rather than a process that stays up
+// holding the surface.
+//
+// awww is a client for awww-daemon: it returns immediately, so its exit status
+// is the only signal that the wallpaper was actually set, and there is no pid
+// worth recording. swaybg owns the surface itself and must keep running.
+func fallbackIsOneShot(engine string) bool { return engine == engineAwww }

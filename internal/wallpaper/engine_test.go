@@ -20,6 +20,13 @@ type fakeProcess struct {
 
 func newFakeProcess() *fakeProcess { return &fakeProcess{exit: make(chan struct{})} }
 
+// exitedProcess is a one-shot client that has already finished with err.
+func exitedProcess(err error) *fakeProcess {
+	p := &fakeProcess{exit: make(chan struct{}), err: err}
+	close(p.exit)
+	return p
+}
+
 func (p *fakeProcess) Wait() error {
 	<-p.exit
 	p.mu.Lock()
@@ -60,6 +67,8 @@ type engineHarness struct {
 	replies map[string]string
 	// ready, when set, makes the socket answer query only after spawn.
 	spawnCreatesSocket bool
+	// daemonUp models awww-daemon: the awww client only succeeds once it is up.
+	daemonUp bool
 }
 
 func newEngineHarness(t *testing.T) *engineHarness {
@@ -81,9 +90,26 @@ func newEngineHarness(t *testing.T) *engineHarness {
 		spawn: func(argv []string) (Process, error) {
 			h.mu.Lock()
 			h.spawned = append(h.spawned, slices.Clone(argv))
+			create := h.spawnCreatesSocket
+			// awww is a client for awww-daemon: it exits at once, and only
+			// succeeds while the daemon is up.
+			switch {
+			case argv[0] == engineAwwwDaemon:
+				h.daemonUp = true
+				proc := newFakeProcess()
+				h.procs = append(h.procs, proc)
+				h.mu.Unlock()
+				return proc, nil
+			case argv[0] == engineAwww:
+				up := h.daemonUp
+				h.mu.Unlock()
+				if !up {
+					return exitedProcess(errors.New("awww-daemon is not running")), nil
+				}
+				return exitedProcess(nil), nil
+			}
 			proc := newFakeProcess()
 			h.procs = append(h.procs, proc)
-			create := h.spawnCreatesSocket
 			h.mu.Unlock()
 			if create && argv[0] == "gslapper" {
 				if i := slices.Index(argv, "-I"); i >= 0 {
@@ -262,12 +288,21 @@ func TestEngineRestoreStopsThenFallsBack(t *testing.T) {
 	if _, err := os.Stat(h.socket("DP-1")); !os.IsNotExist(err) {
 		t.Fatal("restore must wait for the owned socket to go away")
 	}
-	argvs := h.argvs()
-	if len(argvs) != 1 || argvs[0][0] != engineAwww {
-		t.Fatalf("restore must hand the still to the static fallback, got %v", argvs)
+	var img []string
+	for _, argv := range h.argvs() {
+		if argv[0] == engineAwww && slices.Contains(argv, "img") {
+			img = argv
+		}
 	}
-	if !slices.Contains(argvs[0], "/c/still.jpg") {
-		t.Fatalf("fallback argv missing the still: %v", argvs[0])
+	if img == nil {
+		t.Fatalf("restore must hand the still to the static fallback, got %v", h.argvs())
+	}
+	if !slices.Contains(img, "/c/still.jpg") {
+		t.Fatalf("fallback argv missing the still: %v", img)
+	}
+	// The daemon has to be up before the client can hand anything over (D16).
+	if !slices.ContainsFunc(h.argvs(), func(a []string) bool { return a[0] == engineAwwwDaemon }) {
+		t.Fatal("awww-daemon was never started")
 	}
 }
 
@@ -317,6 +352,10 @@ func TestEngineStaticFallbackWithoutGSlapper(t *testing.T) {
 	argvs := h.argvs()
 	if len(argvs) != 1 || argvs[0][0] != engineSwaybg {
 		t.Fatalf("got %v, want a swaybg argv", argvs)
+	}
+	// swaybg owns the surface, so unlike awww its process is held onto.
+	if h.eng.fallbackProcess("DP-1") == nil {
+		t.Error("a persistent fallback must be recorded so we can stop the one we started")
 	}
 
 	video := Job{Connector: "DP-3", Gen: 1, Path: h.media("b.mp4"), Kind: KindVideo}

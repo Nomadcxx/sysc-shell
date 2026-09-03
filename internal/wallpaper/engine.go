@@ -276,8 +276,12 @@ func (e *gslapperEngine) Restore(connector, still string) error {
 	return e.startFallback(connector, still)
 }
 
-// startFallback puts one still on one output through awww or swaybg, recording
-// the process so we can stop exactly the one we started.
+// startFallback puts one still on one output through awww or swaybg.
+//
+// The two engines are shaped differently. swaybg owns the surface, so its
+// process is recorded and stopped later. awww is a client for awww-daemon: it
+// exits at once, so there is no pid worth keeping, its exit status is the only
+// evidence the wallpaper was set, and the daemon has to be up first (D16).
 func (e *gslapperEngine) startFallback(connector, path string) error {
 	caps := e.Capabilities()
 	if caps.Static == "" {
@@ -288,6 +292,14 @@ func (e *gslapperEngine) startFallback(connector, path string) error {
 		return err
 	}
 	e.stopFallback(connector)
+
+	if fallbackIsOneShot(caps.Static) {
+		if err := e.ensureAwwwDaemon(); err != nil {
+			return err
+		}
+		return e.runToCompletion(argv)
+	}
+
 	proc, err := e.spawn(argv)
 	if err != nil {
 		return fmt.Errorf("wallpaper: launch %s: %w", caps.Static, err)
@@ -296,6 +308,47 @@ func (e *gslapperEngine) startFallback(connector, path string) error {
 	e.fallbacks[connector] = proc
 	e.mu.Unlock()
 	return nil
+}
+
+// runToCompletion runs a one-shot client and reports a non-zero exit. Without
+// this a missing daemon looks like a successful restore and the user is left
+// staring at an unchanged desktop with nothing to explain it.
+func (e *gslapperEngine) runToCompletion(argv []string) error {
+	proc, err := e.spawn(argv)
+	if err != nil {
+		return fmt.Errorf("wallpaper: launch %s: %w", argv[0], err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- proc.Wait() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("wallpaper: %s: %w", argv[0], err)
+		}
+		return nil
+	case <-time.After(e.readyWait):
+		_ = proc.Stop()
+		return fmt.Errorf("wallpaper: %s did not finish", argv[0])
+	}
+}
+
+// ensureAwwwDaemon starts awww-daemon when it is not already answering. A
+// daemon someone else started is reused rather than replaced.
+func (e *gslapperEngine) ensureAwwwDaemon() error {
+	if e.runToCompletion(awwwQueryArgs()) == nil {
+		return nil
+	}
+	if _, err := e.spawn(awwwDaemonArgs()); err != nil {
+		return fmt.Errorf("wallpaper: launch %s: %w", engineAwwwDaemon, err)
+	}
+	deadline := time.Now().Add(e.readyWait)
+	for time.Now().Before(deadline) {
+		time.Sleep(e.poll)
+		if e.runToCompletion(awwwQueryArgs()) == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("wallpaper: %s did not come up", engineAwwwDaemon)
 }
 
 // stopFallback ends only a fallback this process started. A swaybg or awww the
@@ -341,4 +394,12 @@ func spawnDetached(argv []string) (Process, error) {
 		return nil, err
 	}
 	return &osProcess{cmd: cmd}, nil
+}
+
+// fallbackProcess returns the persistent fallback we started for one output,
+// or nil when there is none (a one-shot client leaves no handle).
+func (e *gslapperEngine) fallbackProcess(connector string) Process {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.fallbacks[connector]
 }
