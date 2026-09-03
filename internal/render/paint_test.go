@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	"github.com/go-text/typesetting/language"
 )
 
 const (
@@ -23,6 +24,39 @@ var testStyle = ProofStyle{
 	AccentOn:   Color{R: 0xff, G: 0x60, B: 0x00, A: 0xff},
 	OnPrimary:  Color{R: 0x11, G: 0x22, B: 0x33, A: 0xff},
 	Error:      Color{R: 0xcc, G: 0x22, B: 0x22, A: 0xff},
+}
+
+func TestPaintKeepsColorEmojiUntinted(t *testing.T) {
+	t.Parallel()
+	m := newSystemMap(t)
+	const glyph = '👋'
+	m.inner.SetScript(language.LookupScript(glyph))
+	resolved := m.inner.ResolveFace(glyph)
+	if resolved == nil {
+		t.Skip("system font set has no emoji fallback")
+	}
+	gid, ok := resolved.NominalGlyph(glyph)
+	if !ok {
+		t.Skip("resolved emoji face has no nominal glyph")
+	}
+	if _, ok := resolved.GlyphDataBitmap(gid); !ok {
+		t.Skip("resolved emoji face has no bitmap glyph")
+	}
+
+	c := newTestCanvas(t, 64, 48)
+	ink := Color{R: 0xff, G: 0x00, B: 0xff, A: 0xff}
+	err := paintTextColor(c, string(glyph), ui.Rect{X: 4, Y: 4, W: 56, H: 40},
+		NewTextRendererWithFontMap(m), testStyle, 32, false, ink, false, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Magenta notdef coverage has G≈0. A real 👋 bitmap has skin/yellow (G>0).
+	for i := 0; i+3 < len(c.Pix); i += 4 {
+		if c.Pix[i+1] > 40 && c.Pix[i+3] > 40 {
+			return
+		}
+	}
+	t.Fatal("emoji painted as tinted notdef; no un-tinted colour pixel")
 }
 
 func TestPaintFillsOnlyTheRoundedBody(t *testing.T) {

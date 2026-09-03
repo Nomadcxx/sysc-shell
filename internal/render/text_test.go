@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/go-text/typesetting/font"
+	"github.com/go-text/typesetting/language"
 	"golang.org/x/image/font/gofont/goregular"
 )
 
@@ -34,8 +35,49 @@ func mustJoinedFace(t *testing.T) *font.Face {
 }
 
 func hasNonZeroAlpha(m Mask) bool {
+	if m.Alpha == nil {
+		return false
+	}
 	for _, p := range m.Alpha.Pix {
 		if p != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRasterPaintsColorEmoji(t *testing.T) {
+	t.Parallel()
+	m := newSystemMap(t)
+	const glyph = '👋'
+	m.inner.SetScript(language.LookupScript(glyph))
+	resolved := m.inner.ResolveFace(glyph)
+	if resolved == nil {
+		t.Skip("system font set has no emoji fallback")
+	}
+	gid, ok := resolved.NominalGlyph(glyph)
+	if !ok {
+		t.Skip("resolved emoji face has no nominal glyph")
+	}
+	if _, ok := resolved.GlyphDataBitmap(gid); !ok {
+		t.Skip("resolved emoji face has no bitmap glyph")
+	}
+
+	mask, err := NewTextRendererWithFontMap(m).Raster(string(glyph), 32, false)
+	if err != nil {
+		t.Fatalf("Raster(%q): %v", string(glyph), err)
+	}
+	if !hasColorPixels(mask) {
+		t.Fatal("emoji raster has no colour pixels")
+	}
+}
+
+func hasColorPixels(m Mask) bool {
+	if m.Color == nil || m.Color.Width <= 0 || m.Color.Height <= 0 {
+		return false
+	}
+	for i := 3; i < len(m.Color.Pix); i += 4 {
+		if m.Color.Pix[i] != 0 {
 			return true
 		}
 	}

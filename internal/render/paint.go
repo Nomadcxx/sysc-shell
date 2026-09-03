@@ -577,6 +577,9 @@ func paintTextColor(c *Canvas, s string, box ui.Rect, text *TextRenderer, style 
 		alpha = shearMask(alpha, size/7+1)
 	}
 	blendMask(c, alpha, box.X, box.Y, fg)
+	if mask.Color != nil {
+		paintImage(c, ui.Rect{X: box.X, Y: box.Y, W: mask.Color.Width, H: mask.Color.Height}, mask.Color)
+	}
 	if bold {
 		// ponytail: synthetic bold by offset re-blend, no per-weight faces.
 		// Ceiling: no real bold or italic metrics, so heavy scripts can smear;

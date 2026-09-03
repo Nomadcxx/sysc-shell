@@ -8,8 +8,11 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"image"
+	"image/color"
+	"image/png"
 	"sync"
 
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/go-text/typesetting/di"
 	"github.com/go-text/typesetting/font"
 	ot "github.com/go-text/typesetting/font/opentype"
@@ -54,6 +57,9 @@ func ParseFace(data []byte) (*font.Face, error) {
 type Mask struct {
 	// Alpha is the coverage image, sized to the run's advance and line box.
 	Alpha *image.Alpha
+	// Color is an optional premultiplied B,G,R,A raster of colour glyphs
+	// (bitmap emoji). Same geometry as Alpha. Paint blits it without tinting.
+	Color *ui.Image
 	// Baseline is the distance in pixels from the mask's top edge to the baseline.
 	Baseline int
 	// Advance is the pen advance of the run in pixels. The mask is sized to
@@ -120,6 +126,9 @@ func (r *TextRenderer) shapeFace(face *font.Face, text string, size int, tabular
 	if tabular {
 		input.FontFeatures = tabularFigures
 	}
+	if size <= 0xffff {
+		face.SetPpem(uint16(size), uint16(size))
+	}
 	return r.shaper.Shape(input), nil
 }
 
@@ -176,9 +185,10 @@ func (r *TextRenderer) Measure(text string, size int, tabular bool) (int, int, e
 	return w, h, nil
 }
 
-// Raster shapes a run and draws its glyphs into an alpha mask. The tabular
-// flag must match the one measurement used, or the drawn run and the space
-// reserved for it would disagree.
+// Raster shapes a run and draws its glyphs into an alpha mask, plus a colour
+// layer when the run contains bitmap emoji. The tabular flag must match the
+// one measurement used, or the drawn run and the space reserved for it would
+// disagree.
 func (r *TextRenderer) Raster(text string, size int, tabular bool) (Mask, error) {
 	runs, err := r.shapeRuns(text, size, tabular)
 	if err != nil {
@@ -191,18 +201,27 @@ func (r *TextRenderer) Raster(text string, size int, tabular bool) (Mask, error)
 	}
 
 	rast := vector.NewRasterizer(w, h)
+	var colorImg *ui.Image
 
 	lineX := fixed.Int26_6(0)
 	for _, run := range runs {
 		scale := float32(size) / float32(run.face.Upem())
 		penX := fixed.Int26_6(0)
 		for _, g := range run.output.Glyphs {
+			originX := float32(lineX+penX+g.XOffset) / 64
+			originY := float32(baseline) - float32(g.YOffset)/64
+			if bm, ok := run.face.GlyphDataBitmap(g.GlyphID); ok {
+				if colorImg == nil {
+					colorImg = &ui.Image{Width: w, Height: h, Stride: w * 4, Pix: make([]byte, w*h*4)}
+				}
+				_ = blitGlyphBitmap(colorImg, bm, g, lineX+penX, baseline)
+				penX += g.Advance
+				continue
+			}
 			outline, err := glyphOutline(run.face, g.GlyphID)
 			if err != nil {
 				return Mask{}, err
 			}
-			originX := float32(lineX+penX+g.XOffset) / 64
-			originY := float32(baseline) - float32(g.YOffset)/64
 			addOutline(rast, outline, originX, originY, scale)
 			penX += g.Advance
 		}
@@ -212,7 +231,7 @@ func (r *TextRenderer) Raster(text string, size int, tabular bool) (Mask, error)
 	mask := image.NewAlpha(image.Rect(0, 0, w, h))
 	rast.Draw(mask, mask.Bounds(), image.Opaque, image.Point{})
 
-	return Mask{Alpha: mask, Baseline: baseline, Advance: w}, nil
+	return Mask{Alpha: mask, Color: colorImg, Baseline: baseline, Advance: w}, nil
 }
 
 // runBox reports the run's advance width, line height, and baseline offset,
@@ -232,9 +251,8 @@ func glyphOutline(face *font.Face, gid font.GID) (font.GlyphOutline, error) {
 	return outline, nil
 }
 
-// outlineFrom classifies glyph data. Only vector outlines can be rasterised
-// into a shared-memory ARGB buffer, so bitmap, SVG and colour glyphs are
-// refused rather than silently drawn as blanks.
+// outlineFrom classifies glyph data. Vector outlines still rasterise into the
+// alpha mask. Bitmap glyphs are painted separately by blitGlyphBitmap.
 func outlineFrom(data font.GlyphData, gid font.GID) (font.GlyphOutline, error) {
 	switch data := data.(type) {
 	case font.GlyphOutline:
@@ -243,6 +261,62 @@ func outlineFrom(data font.GlyphData, gid font.GID) (font.GlyphOutline, error) {
 		return font.GlyphOutline{}, fmt.Errorf("render: glyph %d has no data", gid)
 	default:
 		return font.GlyphOutline{}, fmt.Errorf("render: glyph %d has unsupported %T data", gid, data)
+	}
+}
+
+func blitGlyphBitmap(dst *ui.Image, bm font.GlyphBitmap, g shaping.Glyph, pen fixed.Int26_6, baseline int) error {
+	src, err := decodeGlyphBitmap(bm)
+	if err != nil {
+		return err
+	}
+	sb := src.Bounds()
+	sw, sh := sb.Dx(), sb.Dy()
+	if sw <= 0 || sh <= 0 {
+		return fmt.Errorf("render: empty bitmap")
+	}
+	dw := g.Width.Round()
+	dh := (-g.Height).Round()
+	if dw <= 0 {
+		dw = sw
+	}
+	if dh <= 0 {
+		dh = sh
+	}
+	left := (pen + g.XOffset + g.XBearing).Round()
+	top := baseline - (g.YOffset + g.YBearing).Round()
+	for y := 0; y < dh; y++ {
+		dy := top + y
+		if dy < 0 || dy >= dst.Height {
+			continue
+		}
+		sy := sb.Min.Y + y*sh/dh
+		for x := 0; x < dw; x++ {
+			dx := left + x
+			if dx < 0 || dx >= dst.Width {
+				continue
+			}
+			px := color.NRGBAModel.Convert(src.At(sb.Min.X+x*sw/dw, sy)).(color.NRGBA)
+			if px.A == 0 {
+				continue
+			}
+			a := uint32(px.A)
+			off := dy*dst.Stride + dx*4
+			dst.Pix[off+0] = byte(uint32(px.B) * a / 255)
+			dst.Pix[off+1] = byte(uint32(px.G) * a / 255)
+			dst.Pix[off+2] = byte(uint32(px.R) * a / 255)
+			dst.Pix[off+3] = px.A
+		}
+	}
+	return nil
+}
+
+func decodeGlyphBitmap(bm font.GlyphBitmap) (image.Image, error) {
+	switch bm.Format {
+	case font.PNG:
+		return png.Decode(bytes.NewReader(bm.Data))
+	default:
+		// ponytail: CBDT PNG is what Noto Color Emoji ships; COLR/SVG/raw bitmaps stay tofu.
+		return nil, fmt.Errorf("render: bitmap format %d", bm.Format)
 	}
 }
 

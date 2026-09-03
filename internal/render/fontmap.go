@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-text/typesetting/font"
 	"github.com/go-text/typesetting/fontscan"
+	"github.com/go-text/typesetting/language"
 )
 
 // faceCacheLimit bounds the resolved-face cache. Shell text touches a handful
@@ -67,7 +68,8 @@ func (m *FontMap) Primary() *font.Face { return m.primary }
 // Face resolves one rune, falling back per rune and caching the result.
 //
 // A rune nothing covers resolves to the primary face, which draws its notdef
-// box. Text never fails a frame because of a missing glyph.
+// box. Text never fails a frame because of a missing glyph. Bitmap (CBDT)
+// coverage is kept so colour emoji can paint; COLR/SVG still degrade to notdef.
 func (m *FontMap) Face(r rune) *font.Face {
 	if face, ok := m.cache[r]; ok {
 		return face
@@ -76,6 +78,9 @@ func (m *FontMap) Face(r rune) *font.Face {
 	// to cover the private-use area can never take an icon rune.
 	face := iconFaceFor(r)
 	if face == nil {
+		// Emoji is Common, which is not a strong script. Without this, fontscan
+		// never searches script fallbacks and Noto Color Emoji is never tried.
+		m.inner.SetScript(language.LookupScript(r))
 		face = outlineFaceForRune(m.inner.ResolveFace(r), m.primary, r)
 	}
 	if len(m.order) >= faceCacheLimit {
@@ -108,10 +113,13 @@ func outlineFaceForRune(candidate, primary *font.Face, r rune) *font.Face {
 	if !ok {
 		return primary
 	}
-	if _, ok := candidate.GlyphDataOutline(gid); !ok {
-		return primary
+	if _, ok := candidate.GlyphDataBitmap(gid); ok {
+		return candidate
 	}
-	return candidate
+	if _, ok := candidate.GlyphDataOutline(gid); ok {
+		return candidate
+	}
+	return primary
 }
 
 // Run is one span of text shaped with a single face.

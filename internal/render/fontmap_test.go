@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-text/typesetting/font"
 	"github.com/go-text/typesetting/fontscan"
+	"github.com/go-text/typesetting/language"
 	"golang.org/x/image/font/gofont/goregular"
 )
 
@@ -80,11 +81,12 @@ func TestFaceNeverReturnsNil(t *testing.T) {
 	}
 }
 
-func TestSystemFontMapDoesNotSelectUnsupportedFallback(t *testing.T) {
+func TestSystemFontMapKeepsBitmapEmojiFallback(t *testing.T) {
 	t.Parallel()
 	m := newSystemMap(t)
 
-	const glyph = '😀'
+	const glyph = '👋'
+	m.inner.SetScript(language.LookupScript(glyph))
 	resolved := m.inner.ResolveFace(glyph)
 	if resolved == nil {
 		t.Skip("system font set has no emoji fallback")
@@ -93,20 +95,14 @@ func TestSystemFontMapDoesNotSelectUnsupportedFallback(t *testing.T) {
 	if !ok {
 		t.Skip("resolved emoji face has no nominal glyph")
 	}
-	if _, ok := resolved.GlyphData(gid).(font.GlyphOutline); ok {
-		t.Skip("system emoji fallback is already an outline font")
+	if _, ok := resolved.GlyphDataBitmap(gid); !ok {
+		t.Skip("resolved emoji face has no bitmap glyph")
 	}
-	if selected := outlineFaceForRune(resolved, m.primary, glyph); selected != m.primary {
-		t.Fatal("unsupported fallback did not degrade to the primary notdef face")
+	if selected := outlineFaceForRune(resolved, m.primary, glyph); selected != resolved {
+		t.Fatal("bitmap emoji fallback degraded to the primary notdef face")
 	}
-
-	r := NewTextRendererWithFontMap(m)
-	mask, err := r.Raster("A"+string(glyph), 16, false)
-	if err != nil {
-		t.Fatalf("Raster failed instead of degrading unsupported fallback: %v", err)
-	}
-	if !hasNonZeroAlpha(mask) {
-		t.Fatal("fallback raster contains no glyph pixels")
+	if m.Face(glyph) == m.primary {
+		t.Fatal("Face resolved the emoji rune to the primary notdef face")
 	}
 }
 
