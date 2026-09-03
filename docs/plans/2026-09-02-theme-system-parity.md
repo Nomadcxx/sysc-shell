@@ -212,6 +212,7 @@ git commit -m "feat(config): resolve theme composition profiles"
 - Modify: `internal/shell/traydrawer.go`
 - Modify: `internal/shell/traymenuhost.go`
 - Modify: `internal/shell/osd.go`
+- Modify: `internal/platform/wayland/tooltip.go`
 
 ### Implementation
 
@@ -421,6 +422,7 @@ git commit -m "feat(render): paint semantic theme layers"
 - Modify: `internal/shell/popout_settings.go`
 - Modify: `internal/shell/popout_launcher.go`
 - Modify: `internal/shell/popout_notifications.go`
+- Modify: `internal/shell/popout_plugins.go`
 - Modify: `internal/shell/notifycard.go`
 - Modify alongside each file: its existing `_test.go`
 
