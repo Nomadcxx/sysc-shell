@@ -674,7 +674,7 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	// painter consumes an immutable mask; nothing downstream mutates state.
 	h.pointer.apply(h.root, h.anim)
 
-	style := h.paintTheme().ProofStyle()
+	style := h.paintTheme().Style()
 	// Only a panel draws its own rim; the bar, toasts and tray surfaces
 	// sit directly on the shared surface and leave it zero.
 	style.Rim = h.paintTheme().Outline

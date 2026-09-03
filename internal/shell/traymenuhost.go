@@ -98,7 +98,7 @@ type trayMenuHost struct {
 	hoverY   int
 	pressed  *ui.Node
 	text     *render.TextRenderer
-	style    render.ProofStyle
+	style    render.Style
 	// pointer is the resolved hover/press state, kept as stable keys.
 	pointer interaction
 }
@@ -326,7 +326,7 @@ func (h *trayMenuHost) render(pixels []byte, width, height, stride int) error {
 		createdText = true
 		theme := h.r.surfaceTheme()
 		scale, body := h.style.Scale120, h.style.Body
-		h.style = theme.ProofStyle()
+		h.style = theme.Style()
 		h.style.Scale120, h.style.Body = scale, body
 	}
 	if createdText && h.logicalW > 0 {

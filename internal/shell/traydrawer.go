@@ -118,7 +118,7 @@ type trayDrawerHost struct {
 	itemAction func(tray.Item, string, uint32, wayland.Event) bool
 	diagnostic func(string)
 	text       *render.TextRenderer
-	style      render.ProofStyle
+	style      render.Style
 	// pointer is the resolved hover/press state, kept as stable keys.
 	pointer    interaction
 	harnessRef *hostHarness
@@ -237,7 +237,7 @@ func (h *trayDrawerHost) render(pixels []byte, width, height, stride int) error 
 		createdText = true
 		theme := h.r.surfaceTheme()
 		scale, body := h.style.Scale120, h.style.Body
-		h.style = theme.ProofStyle()
+		h.style = theme.Style()
 		h.style.Scale120, h.style.Body = scale, body
 	}
 	if createdText && h.logicalW > 0 {

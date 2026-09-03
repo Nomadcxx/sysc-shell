@@ -6,6 +6,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/viewporter"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-wayland/client"
 )
@@ -294,17 +295,33 @@ func (o *owner) paintTooltip(tt *tooltipSurface, pix []byte, width, height, stri
 	return render.Paint(c, root, text, style)
 }
 
-func (o *owner) tooltipStyle(tt *tooltipSurface) (render.ProofStyle, string) {
+func (o *owner) tooltipStyle(tt *tooltipSurface) (render.Style, string) {
 	bar := o.cfg.ForConnector(tt.host.connector)
-	return render.ProofStyle{
+	fill, ink := tooltipPalette()
+	return render.Style{
 		Size:       bar.FontSize,
 		Scale120:   tt.scale120,
-		Background: tooltipColor(tt.style.Background, render.Color{R: 0x10, G: 0x14, B: 0x18, A: 0xff}),
-		Foreground: tooltipColor(tt.style.Foreground, render.Color{R: 0xe8, G: 0xec, B: 0xf0, A: 0xff}),
-		OnPrimary:  tooltipColor(tt.style.Foreground, render.Color{R: 0xe8, G: 0xec, B: 0xf0, A: 0xff}),
+		Background: tooltipColor(tt.style.Background, fill),
+		Foreground: tooltipColor(tt.style.Foreground, ink),
+		OnPrimary:  tooltipColor(tt.style.Foreground, ink),
 		Body:       ui.Rect{X: 0, Y: 0, W: tt.place.W, H: tt.place.H},
 		Radius:     o.cfg.Theme.Radius,
 	}, bar.FontFamily
+}
+
+// tooltipPalette is what a tooltip paints with before the shell has sent a
+// resolved theme. It reads the compiled fallback rather than carrying two
+// hand-written colours: those were the last theme values in the tree that no
+// palette owned, and they drifted from every generated surface around them.
+func tooltipPalette() (fill, ink render.Color) {
+	parse := func(s string) render.Color {
+		c, err := theme.ParseColor(s)
+		if err != nil {
+			return render.Color{A: 0xff}
+		}
+		return render.Color{R: c.R, G: c.G, B: c.B, A: c.A}
+	}
+	return parse(theme.Fallback.SurfaceContainerHigh), parse(theme.Fallback.OnSurface)
 }
 
 // tooltipColor keeps the built-in appearance when the shell sent no colour,

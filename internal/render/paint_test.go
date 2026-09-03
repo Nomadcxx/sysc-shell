@@ -14,7 +14,7 @@ const (
 	canvasH = 48
 )
 
-var testStyle = ProofStyle{
+var testStyle = Style{
 	Size:       16,
 	Scale120:   ui.ScaleUnit,
 	Body:       ui.Rect{W: canvasW, H: canvasH},
@@ -251,7 +251,7 @@ func TestPaintTextStylesChangeThePaintedInk(t *testing.T) {
 }
 
 // paintTree lays out and paints the proof fixture, returning the tree.
-func paintTree(t *testing.T, c *Canvas, style ProofStyle) *ui.Node {
+func paintTree(t *testing.T, c *Canvas, style Style) *ui.Node {
 	t.Helper()
 
 	r := NewTextRenderer(mustTestFace(t))
@@ -517,7 +517,7 @@ func TestPaintRejectsInvalidInput(t *testing.T) {
 		c     *Canvas
 		root  *ui.Node
 		text  *TextRenderer
-		style ProofStyle
+		style Style
 	}{
 		{"nil canvas", nil, root, r, testStyle},
 		{"nil root", c, nil, r, testStyle},
@@ -682,7 +682,7 @@ func TestErrorToneTextPaintsInTheErrorColour(t *testing.T) {
 
 // capsuleStyle adds the three capsule fills to the shared test style, each
 // distinct so a sampled pixel names exactly one of them.
-func capsuleStyle() ProofStyle {
+func capsuleStyle() Style {
 	s := testStyle
 	s.Capsule = Color{R: 0x18, G: 0x1a, B: 0x1d, A: 0xff}
 	s.Container = Color{R: 0x11, G: 0x83, B: 0xa2, A: 0xff}
@@ -728,12 +728,12 @@ func TestCapsuleGivesItsChildTheMatchingForeground(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		fill ui.Fill
-		want func(ProofStyle) Color
+		want func(Style) Color
 	}{
-		{"accent", ui.FillAccent, func(s ProofStyle) Color { return s.OnAccent }},
-		{"container", ui.FillContainer, func(s ProofStyle) Color { return s.OnContainer }},
-		{"soft", ui.FillSoft, func(s ProofStyle) Color { return s.Foreground }},
-		{"default", ui.FillNone, func(s ProofStyle) Color { return s.Foreground }},
+		{"accent", ui.FillAccent, func(s Style) Color { return s.OnAccent }},
+		{"container", ui.FillContainer, func(s Style) Color { return s.OnContainer }},
+		{"soft", ui.FillSoft, func(s Style) Color { return s.Foreground }},
+		{"default", ui.FillNone, func(s Style) Color { return s.Foreground }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			style := capsuleStyle()
@@ -903,7 +903,7 @@ func TestPaintSearchMarkHandleGoesDiagonal(t *testing.T) {
 // paintChromeNode lays a single node out at a fixed box and paints it against a
 // filled background, so a test can read the resolved fill straight off the
 // canvas. The background stands in for the panel the control rests on.
-func paintChromeNode(t *testing.T, n *ui.Node, style ProofStyle) *Canvas {
+func paintChromeNode(t *testing.T, n *ui.Node, style Style) *Canvas {
 	t.Helper()
 	const w, h = 200, 60
 	c := newTestCanvas(t, w, h)

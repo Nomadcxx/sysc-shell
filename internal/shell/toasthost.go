@@ -57,7 +57,7 @@ type toastHost struct {
 	renewOnce sync.Once
 
 	text  *render.TextRenderer
-	style render.ProofStyle
+	style render.Style
 }
 
 const toastNamespace = "sysc-shell-toast"
@@ -192,7 +192,7 @@ func (h *toastHost) render(connector string, pixels []byte, width, height, strid
 		h.text = render.NewTextRendererWithFontMap(fonts)
 		theme := h.r.surfaceTheme()
 		scale, body := h.style.Scale120, h.style.Body
-		h.style = theme.ProofStyle()
+		h.style = theme.Style()
 		h.style.Scale120, h.style.Body = scale, body
 		h.rebuild(connector)
 	}
@@ -227,7 +227,7 @@ type toastCard struct {
 // paintCard renders one card into the scratch buffer and copies it onto the
 // surface. The painter clears outside the card's rounded body, so the copy
 // carries transparent corners rather than a square patch.
-func (h *toastHost) paintCard(canvas *render.Canvas, card toastCard, style render.ProofStyle) error {
+func (h *toastHost) paintCard(canvas *render.Canvas, card toastCard, style render.Style) error {
 	box := style.Scale120.PhysicalRect(card.rect)
 	if box.W <= 0 || box.H <= 0 {
 		return nil

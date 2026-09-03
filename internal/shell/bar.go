@@ -84,7 +84,7 @@ type Bar struct {
 	layoutFailing bool
 
 	text  *render.TextRenderer
-	style render.ProofStyle
+	style render.Style
 
 	// pointer is the bar's resolved hover/press state as stable keys, and anim
 	// is its one clock. Only clickable capsules carry either: a CPU or memory
@@ -451,7 +451,7 @@ func (b *Bar) Render(pixels []byte, width, height, stride int) error {
 //
 // The three sections are already arranged into absolute bounds, so they flatten
 // into one child list: the painter walks bounds, not structure.
-func (b *Bar) renderViewLocked() (*ui.Node, render.ProofStyle) {
+func (b *Bar) renderViewLocked() (*ui.Node, render.Style) {
 	root := &ui.Node{Kind: ui.KindRow}
 	for _, section := range b.sections() {
 		for _, n := range section {
@@ -673,8 +673,8 @@ func (b *Bar) trayGestureLocked(action string) (trayGesture, bool) {
 
 // barStyle is the bar's painter style: the theme's roles plus the bar's own
 // unit scale.
-func barStyle(theme Theme) render.ProofStyle {
-	style := theme.ProofStyle()
+func barStyle(theme Theme) render.Style {
+	style := theme.Style()
 	style.Scale120 = ui.ScaleUnit
 	return style
 }

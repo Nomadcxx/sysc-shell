@@ -603,15 +603,7 @@ func rethemeHost(t *testing.T, reduced bool) (*Registry, *PanelHost) {
 }
 
 func lightTheme() Theme {
-	return ThemeFromTokens(theme.Tokens{
-		Surface: "#ffffff", SurfaceContainer: "#eeeeee",
-		SurfaceContainerHigh: "#dddddd", SurfaceContainerHighest: "#cccccc",
-		OnSurface: "#000000", OnSurfaceVariant: "#333333",
-		Primary: "#ff0000", OnPrimary: "#ffffff",
-		PrimaryContainer: "#aa0000", OnPrimaryContainer: "#ffffff",
-		Outline: "#888888", OutlineVariant: "#999999",
-		Error: "#cc0000", OnError: "#ffffff",
-	}, 12)
+	return ThemeFromTokens(lightPalette(), 12)
 }
 
 func TestPaletteTransitionStartsFromTheRenderedColours(t *testing.T) {
@@ -715,15 +707,7 @@ func TestReloadMovesOpenSurfacesOntoTheNewPalette(t *testing.T) {
 	defer reg.mu.Unlock()
 
 	before := h.paintTheme().Surface
-	reg.tokens = theme.Tokens{
-		Surface: "#ffffff", SurfaceContainer: "#eeeeee",
-		SurfaceContainerHigh: "#dddddd", SurfaceContainerHighest: "#cccccc",
-		OnSurface: "#000000", OnSurfaceVariant: "#333333",
-		Primary: "#ff0000", OnPrimary: "#ffffff",
-		PrimaryContainer: "#aa0000", OnPrimaryContainer: "#ffffff",
-		Outline: "#888888", OutlineVariant: "#999999",
-		Error: "#cc0000", OnError: "#ffffff",
-	}
+	reg.tokens = lightPalette()
 	reg.retheThemeOpenSurfacesLocked()
 
 	// An open panel used to keep the theme it was spawned with until it was

@@ -94,15 +94,18 @@ func TestThemeValidation(t *testing.T) {
 }
 
 func TestTokensResolveToBarTheme(t *testing.T) {
-	tok := theme.Tokens{
-		Surface: "#111318", SurfaceContainer: "#181a1d",
-		SurfaceContainerHigh: "#25272b", SurfaceContainerHighest: "#303238",
-		OnSurface: "#e2e2e6",
-		Primary:   "#a8c7fa", OnPrimary: "#0a1f3d",
-		PrimaryContainer: "#1183a2", OnPrimaryContainer: "#d6e3ff",
-		OnSurfaceVariant: "#c3c6cf", Outline: "#8d9199",
-		OutlineVariant: "#45484f", Error: "#ffb4ab", OnError: "#310001",
-	}
+	// The container is darker than the token this test first carried: the
+	// resolver repairs a foreground that cannot reach its floor, and this
+	// test asserts an identity mapping, so its palette has to pass on its own.
+	tok := paletteWith(func(t *theme.Tokens) {
+		t.Surface, t.SurfaceContainer = "#111318", "#181a1d"
+		t.SurfaceContainerHigh, t.SurfaceContainerHighest = "#25272b", "#303238"
+		t.OnSurface = "#e2e2e6"
+		t.Primary, t.OnPrimary = "#a8c7fa", "#0a1f3d"
+		t.PrimaryContainer, t.OnPrimaryContainer = "#0a4a5c", "#d6e3ff"
+		t.OnSurfaceVariant, t.Outline = "#c3c6cf", "#8d9199"
+		t.OutlineVariant, t.Error, t.OnError = "#45484f", "#ffb4ab", "#310001"
+	})
 	th := ThemeFromTokens(tok, 12)
 	if th.Background != parseColor(tok.Surface, Color{}) || th.Foreground != parseColor(tok.OnSurface, Color{}) ||
 		th.Accent != parseColor(tok.Primary, Color{}) || th.Muted != parseColor(tok.OnSurfaceVariant, Color{}) ||
@@ -281,13 +284,13 @@ func TestSurfaceThemeFollowsTheGeneratedPalette(t *testing.T) {
 	t.Cleanup(r.Close)
 
 	r.mu.Lock()
-	r.tokens = theme.Tokens{
-		Surface: "#101010", SurfaceContainer: "#202020",
-		OnSurface: "#f0f0f0", OnSurfaceVariant: "#a0a0a0",
-		Primary: "#ff00ff", OnPrimary: "#000000",
-		PrimaryContainer: "#800080", OnPrimaryContainer: "#ffffff",
-		Outline: "#303030", Error: "#ff0000", OnError: "#ffffff",
-	}
+	r.tokens = paletteWith(func(t *theme.Tokens) {
+		t.Surface, t.SurfaceContainer = "#101010", "#202020"
+		t.OnSurface, t.OnSurfaceVariant = "#f0f0f0", "#a0a0a0"
+		t.Primary, t.OnPrimary = "#ff00ff", "#000000"
+		t.PrimaryContainer, t.OnPrimaryContainer = "#800080", "#ffffff"
+		t.Outline, t.Error, t.OnError = "#303030", "#ff0000", "#ffffff"
+	})
 	got := r.surfaceTheme()
 	r.mu.Unlock()
 
@@ -331,15 +334,7 @@ func TestNoShellSurfaceResolvesTheFallbackPalette(t *testing.T) {
 func TestLerpColorsTravelsThePaletteButNotTheGeometry(t *testing.T) {
 	t.Parallel()
 	from := DefaultTheme()
-	to := ThemeFromTokens(theme.Tokens{
-		Surface: "#ffffff", SurfaceContainer: "#eeeeee",
-		SurfaceContainerHigh: "#dddddd", SurfaceContainerHighest: "#cccccc",
-		OnSurface: "#000000", OnSurfaceVariant: "#333333",
-		Primary: "#ff0000", OnPrimary: "#ffffff",
-		PrimaryContainer: "#aa0000", OnPrimaryContainer: "#ffffff",
-		Outline: "#888888", OutlineVariant: "#999999",
-		Error: "#cc0000", OnError: "#ffffff",
-	}, 12)
+	to := ThemeFromTokens(lightPalette(), 12)
 
 	if got := from.LerpColors(to, 0); got.Surface != from.Surface {
 		t.Errorf("progress 0 surface = %+v, want the outgoing %+v", got.Surface, from.Surface)
@@ -361,5 +356,220 @@ func TestLerpColorsTravelsThePaletteButNotTheGeometry(t *testing.T) {
 	if mid.ControlHeight != to.ControlHeight || mid.Radius != to.Radius {
 		t.Errorf("geometry interpolated: height %d radius %d, want %d and %d",
 			mid.ControlHeight, mid.Radius, to.ControlHeight, to.Radius)
+	}
+}
+
+// paletteWith returns the compiled fallback with specific roles replaced. The
+// resolver rejects an incomplete palette, so a test names the two or three
+// roles it cares about rather than hand-writing all of them.
+func paletteWith(set func(*theme.Tokens)) theme.Tokens {
+	tok := theme.Fallback
+	set(&tok)
+	return tok
+}
+
+// lightPalette is a complete light-mode palette. It is generated output
+// rather than a handful of greys: the resolver repairs a foreground that
+// cannot reach its floor, so a palette mixing light surfaces with the dark
+// fallback's untouched rungs would be repaired into something neither light
+// nor dark.
+func lightPalette() theme.Tokens {
+	return paletteWith(func(t *theme.Tokens) {
+		t.Primary = "#904b40"
+		t.OnPrimary = "#ffffff"
+		t.PrimaryContainer = "#ffdad4"
+		t.OnPrimaryContainer = "#3a0905"
+		t.Secondary = "#775651"
+		t.OnSecondary = "#ffffff"
+		t.SecondaryContainer = "#ffdad4"
+		t.OnSecondaryContainer = "#2c1512"
+		t.Tertiary = "#705c2e"
+		t.OnTertiary = "#ffffff"
+		t.TertiaryContainer = "#fbdfa6"
+		t.OnTertiaryContainer = "#251a00"
+		t.Error = "#ba1a1a"
+		t.OnError = "#ffffff"
+		t.ErrorContainer = "#ffdad6"
+		t.OnErrorContainer = "#410002"
+		t.Surface = "#fff8f6"
+		t.OnSurface = "#231918"
+		t.SurfaceVariant = "#f5ddda"
+		t.OnSurfaceVariant = "#534341"
+		t.SurfaceDim = "#e8d6d3"
+		t.SurfaceBright = "#fff8f6"
+		t.SurfaceContainerLowest = "#ffffff"
+		t.SurfaceContainerLow = "#fff0ee"
+		t.SurfaceContainer = "#fceae7"
+		t.SurfaceContainerHigh = "#f7e4e1"
+		t.SurfaceContainerHighest = "#f1dfdc"
+		t.Background = "#fff8f6"
+		t.OnBackground = "#231918"
+		t.Outline = "#857370"
+		t.OutlineVariant = "#d8c2be"
+		t.InverseSurface = "#392e2c"
+		t.InverseOnSurface = "#ffedea"
+		t.InversePrimary = "#ffb4a8"
+		t.Shadow = "#000000"
+		t.Scrim = "#000000"
+		t.SurfaceTint = "#904b40"
+		t.PrimaryFixed = "#ffdad4"
+		t.PrimaryFixedDim = "#ffb4a8"
+		t.OnPrimaryFixed = "#3a0905"
+		t.OnPrimaryFixedVariant = "#73342a"
+		t.SecondaryFixed = "#ffdad4"
+		t.SecondaryFixedDim = "#e7bdb6"
+		t.OnSecondaryFixed = "#2c1512"
+		t.OnSecondaryFixedVariant = "#5d3f3b"
+		t.TertiaryFixed = "#fbdfa6"
+		t.TertiaryFixedDim = "#dec48c"
+		t.OnTertiaryFixed = "#251a00"
+		t.OnTertiaryFixedVariant = "#564419"
+	})
+}
+
+func TestResolveThemeValidatesEveryGroup(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	got, err := ResolveTheme(cfg, cfg.Bar, theme.Fallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Metrics.BarHeight != 48 || got.Metrics.StandardControl != 40 {
+		t.Errorf("metrics = %+v, want the standard row", got.Metrics)
+	}
+	if got.Shapes.Medium != 12 || got.Shapes.Card != 12 {
+		t.Errorf("shapes = %+v, want the 12 px base", got.Shapes)
+	}
+	if got.Type.Spec(theme.RoleBody).Size != 14 || got.Type.Spec(theme.RoleTitle).Weight != 600 {
+		t.Errorf("type = %+v, want the standard ramp", got.Type)
+	}
+	if got.Surfaces != (Surfaces{Bar: 0xff, Panel: 0xff, Overlay: 0xff}) {
+		t.Errorf("surfaces = %+v, want opaque", got.Surfaces)
+	}
+	if got.Motion.Durations.Medium != 180*time.Millisecond {
+		t.Errorf("motion medium = %v, want 180ms", got.Motion.Durations.Medium)
+	}
+	if got.Motion.Spatial != theme.CurveOutCubic {
+		t.Errorf("curve = %q, want out-cubic", got.Motion.Spatial)
+	}
+	if got.Palette.Surface == (Color{}) || got.Palette.Scrim == (Color{}) {
+		t.Error("the palette did not parse")
+	}
+}
+
+func TestResolveThemeRejectsAnIncompletePalette(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	tok := theme.Fallback
+	tok.SurfaceContainerHigh = ""
+	if _, err := ResolveTheme(cfg, cfg.Bar, tok); err == nil {
+		t.Fatal("ResolveTheme accepted an incomplete palette")
+	}
+}
+
+func TestResolveThemeAppliesCompositionAndBarOverride(t *testing.T) {
+	t.Parallel()
+	doc := `{"theme":{"preset":"compact"},"bar":{"height":52}}`
+	cfg, err := config.Parse([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ResolveTheme(cfg, cfg.Bar, theme.Fallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The compact row supplies the control heights and icons.
+	if got.Metrics.StandardControl != 36 || got.Metrics.IconNormal != 18 {
+		t.Errorf("metrics = %+v, want the compact row", got.Metrics)
+	}
+	// The explicit bar height wins over the row it came from.
+	if got.Metrics.BarHeight != 52 || got.BarHeight != 52 {
+		t.Errorf("bar height = %d, want the explicit 52", got.BarHeight)
+	}
+	if got.Shapes.Medium != 8 {
+		t.Errorf("radius = %d, want compact's 8", got.Shapes.Medium)
+	}
+	if got.Motion.Durations.Medium != 144*time.Millisecond {
+		t.Errorf("medium = %v, want compact's 144ms", got.Motion.Durations.Medium)
+	}
+}
+
+func TestResolveThemeAppliesAccessibilityAfterBarOverrides(t *testing.T) {
+	t.Parallel()
+	doc := `{"theme":{"preset":"expressive"},"bar":{"height":52},"accessibility":{"high-contrast":true}}`
+	cfg, err := config.Parse([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ResolveTheme(cfg, cfg.Bar, theme.FallbackHighContrast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Expressive asks for 95 percent panels; high contrast overrides that
+	// after every other axis has been applied.
+	if got.Surfaces != (Surfaces{Bar: 0xff, Panel: 0xff, Overlay: 0xff}) {
+		t.Errorf("surfaces = %+v, want high contrast to force opaque", got.Surfaces)
+	}
+	if !got.Outlined {
+		t.Error("high contrast did not enable the structural outline")
+	}
+	// The bar override still stands.
+	if got.BarHeight != 52 {
+		t.Errorf("bar height = %d, want the explicit 52", got.BarHeight)
+	}
+}
+
+func TestResolveThemeRepairsAFailingForeground(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	tok := theme.Fallback
+	tok.OnSurface = tok.Surface // unreadable
+	got, err := ResolveTheme(cfg, cfg.Bar, tok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Palette.OnSurface == got.Palette.Surface {
+		t.Error("the resolver painted text in its own background colour")
+	}
+}
+
+func TestResolveThemeCarriesReducedMotion(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Accessibility.ReducedMotion = true
+	got, err := ResolveTheme(cfg, cfg.Bar, theme.Fallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Motion.Reduced {
+		t.Error("reduced motion did not reach the resolved theme")
+	}
+}
+
+// TestNoShellFileOutsideThemeAssemblesAStyle keeps the resolver the only place
+// a palette or a composition is put together. A second assembly site is how
+// two surfaces end up a shade apart, which is the defect this tranche exists
+// to remove.
+func TestNoShellFileOutsideThemeAssemblesAStyle(t *testing.T) {
+	t.Parallel()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") ||
+			strings.HasSuffix(name, "_test.go") || name == "theme.go" {
+			continue
+		}
+		body, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, banned := range []string{"render.Style{", "Palette{"} {
+			if strings.Contains(string(body), banned) {
+				t.Errorf("%s assembles %s; resolve it in theme.go instead", name, banned)
+			}
+		}
 	}
 }

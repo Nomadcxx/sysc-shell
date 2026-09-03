@@ -44,7 +44,7 @@ func TestPanelHostRenderPaintsClockText(t *testing.T) {
 }
 
 // Monitor cards are KindCapsule. The panel painter used to omit Capsule from
-// ProofStyle, so fillRoundedRect skipped the A=0 fill and every card vanished
+// Style, so fillRoundedRect skipped the A=0 fill and every card vanished
 // into the panel background.
 func TestPanelHostRenderPaintsMonitorCards(t *testing.T) {
 	t.Parallel()

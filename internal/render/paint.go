@@ -9,65 +9,9 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
-// ProofStyle carries the proof's colours, text size, render scale, and the one
-// piece of model state that changes colour.
-type ProofStyle struct {
-	// Size is the logical font size; shaping happens at the physical size.
-	Size int
-	// Scale120 is the fractional render scale as a numerator over 120.
-	Scale120 ui.Scale120
-	// Body is the logical painted bar body inside the transparent layer
-	// surface. Radius is its logical corner radius.
-	Body   ui.Rect
-	Radius int
-	// AttachEdge is "top" or "bottom" when a panel sits on a bar. Those
-	// corners stay square so the rounded body does not punch a wallpaper
-	// seam against the bar.
-	AttachEdge string
-
-	Background Color
-	Foreground Color
-	// Capsule fills the pill that wraps a bar widget. Container fills a
-	// workspace pill that is not focused. OnAccent and OnContainer are the
-	// foregrounds their contents use.
-	Capsule     Color
-	Container   Color
-	OnAccent    Color
-	OnContainer Color
-	Track       Color
-	Accent      Color
-	AccentOn    Color
-	// Error paints text that reports a failure. It is a distinct field rather
-	// than reusing AccentOn, which the bar already uses for a toggled control.
-	Error Color
-	// OnPrimary paints text on a Primary-filled button: the fill is the
-	// Primary token, so its paired On token is the only legible label colour.
-	OnPrimary Color
-	// OnError is the paired foreground for an Error fill.
-	OnError Color
-	// ContainerHighest fills an idle control. Capsule above carries the high
-	// container, which the bar's pills and the panels' cards share; a control
-	// sitting on one of those needs the level above it to separate.
-	ContainerHighest Color
-	// Outline marks a meaningful control boundary and OutlineVariant is a
-	// quieter divider. Both are set for every surface.
-	Outline        Color
-	OutlineVariant Color
-	// Rim strokes the floating panel's own edge. It is deliberately separate
-	// from Outline: every surface carries the outline token for its controls,
-	// but only a panel draws a rim, so a bar or a toast leaves this zero.
-	Rim Color
-	// CardRadius is the corner a panel card keeps. Zero falls back to Radius,
-	// which is what a bar pill uses.
-	CardRadius int
-
-	// Toggled swaps the accent used by the meter fill and the button.
-	Toggled bool
-}
-
 // buttonText returns the label colour over a Primary fill, falling back to
 // Foreground for a style assembled before the token existed.
-func (s ProofStyle) buttonText() Color {
+func (s Style) buttonText() Color {
 	if s.OnPrimary.A == 0 {
 		return s.Foreground
 	}
@@ -76,7 +20,7 @@ func (s ProofStyle) buttonText() Color {
 
 // onError falls back to the button text colour for a style assembled before
 // the token existed.
-func (s ProofStyle) onError() Color {
+func (s Style) onError() Color {
 	if s.OnError.A == 0 {
 		return s.buttonText()
 	}
@@ -85,7 +29,7 @@ func (s ProofStyle) onError() Color {
 
 // containerHighest falls back to the capsule level when a style predates the
 // token; a control then reads as flat rather than invisible.
-func (s ProofStyle) containerHighest() Color {
+func (s Style) containerHighest() Color {
 	if s.ContainerHighest.A == 0 {
 		return s.Capsule
 	}
@@ -94,7 +38,7 @@ func (s ProofStyle) containerHighest() Color {
 
 // outline falls back to the foreground, which always separates from its own
 // paired fill.
-func (s ProofStyle) outline() Color {
+func (s Style) outline() Color {
 	if s.Outline.A == 0 {
 		return s.Foreground
 	}
@@ -102,7 +46,7 @@ func (s ProofStyle) outline() Color {
 }
 
 // accent returns the colour the meter fill and button share.
-func (s ProofStyle) accent() Color {
+func (s Style) accent() Color {
 	if s.Toggled {
 		return s.AccentOn
 	}
@@ -111,7 +55,7 @@ func (s ProofStyle) accent() Color {
 
 // Paint draws the arranged row into the canvas. Node bounds are logical; every
 // write is converted to buffer pixels and clipped to the canvas.
-func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style ProofStyle) error {
+func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style) error {
 	switch {
 	case c == nil:
 		return fmt.Errorf("render: nil canvas")
@@ -172,7 +116,7 @@ func squareAttachedEdge(c *Canvas, box ui.Rect, radius int, edge string, col Col
 	}
 }
 
-func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size int) error {
+func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
 	switch n.Kind {
 	case ui.KindText:
 		return paintText(c, n.Text, style.Scale120.PhysicalRect(n.Bounds), text, style, size, n.Tabular, n.Tone, n.Bold, n.Italic, n.Underline)
@@ -276,7 +220,7 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 	}
 }
 
-func paintScrollThumb(c *Canvas, n *ui.Node, style ProofStyle) {
+func paintScrollThumb(c *Canvas, n *ui.Node, style Style) {
 	inner := n.Bounds.H - 2*n.Padding
 	if inner <= 0 || n.ContentH <= inner {
 		return
@@ -317,7 +261,7 @@ func paintScrollThumb(c *Canvas, n *ui.Node, style ProofStyle) {
 	fillRoundedRect(c, ui.Rect{X: track.X, Y: thumbY, W: trackW, H: thumbH}, trackW/2, style.Foreground)
 }
 
-func paintToggle(c *Canvas, n *ui.Node, style ProofStyle) {
+func paintToggle(c *Canvas, n *ui.Node, style Style) {
 	if n.Role == "checkbox" {
 		paintCheckbox(c, n, style)
 		return
@@ -344,7 +288,7 @@ func paintToggle(c *Canvas, n *ui.Node, style ProofStyle) {
 	c.FillRounded(ui.Rect{X: x, Y: box.Y + pad, W: knobH, H: knobH}, knobH/2, knob)
 }
 
-func paintCheckbox(c *Canvas, n *ui.Node, style ProofStyle) {
+func paintCheckbox(c *Canvas, n *ui.Node, style Style) {
 	box := style.Scale120.PhysicalRect(n.Bounds)
 	radius := style.Scale120.Physical(3)
 	c.FillRounded(box, radius, style.Track)
@@ -359,7 +303,7 @@ func paintCheckbox(c *Canvas, n *ui.Node, style ProofStyle) {
 	c.FillRounded(inner, radius, style.accent())
 }
 
-func paintSlider(c *Canvas, n *ui.Node, style ProofStyle) {
+func paintSlider(c *Canvas, n *ui.Node, style Style) {
 	box := style.Scale120.PhysicalRect(n.Bounds)
 	trackH := max(style.Scale120.Physical(ui.SliderTrack), 1)
 	y := box.Y + (box.H-trackH)/2
@@ -388,7 +332,7 @@ func paintSlider(c *Canvas, n *ui.Node, style ProofStyle) {
 	c.FillRounded(ui.Rect{X: kx, Y: box.Y + (box.H-knob)/2, W: knob, H: knob}, knob/2, style.accent())
 }
 
-func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size int) {
+func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) {
 	box := style.Scale120.PhysicalRect(n.Bounds)
 	field := box
 	if len(n.Children) > 0 {
@@ -415,7 +359,7 @@ func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size
 	}
 }
 
-func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size int) error {
+func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
 	box := style.Scale120.PhysicalRect(n.Bounds)
 	// Stadium: a search well is a pill, not a 6px-radius box.
 	radius := box.H / 2
@@ -484,7 +428,7 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle,
 	return nil
 }
 
-func paintMultilineField(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size int, phys ui.Rect) error {
+func paintMultilineField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int, phys ui.Rect) error {
 	lineH := size
 	if text != nil {
 		if _, h, err := text.Measure(" ", size, n.Tabular); err == nil && h > 0 {
@@ -535,7 +479,7 @@ func paintMultilineField(c *Canvas, n *ui.Node, text *TextRenderer, style ProofS
 //
 // Values are already normalised to zero through one by the widget, so this
 // applies no scale of its own.
-func paintGraph(c *Canvas, n *ui.Node, box ui.Rect, style ProofStyle) error {
+func paintGraph(c *Canvas, n *ui.Node, box ui.Rect, style Style) error {
 	if n.Absent || box.W <= 0 || box.H <= 0 || len(n.Values) == 0 {
 		return nil
 	}
@@ -577,12 +521,12 @@ func paintGraph(c *Canvas, n *ui.Node, box ui.Rect, style ProofStyle) error {
 // Truncation happens here rather than in layout because it needs cluster
 // measurement, which the text renderer owns. The box is already physical, so
 // the available width is compared in the same units the shaper reports.
-func paintText(c *Canvas, s string, box ui.Rect, text *TextRenderer, style ProofStyle, size int, tabular bool, tone ui.Tone, bold, italic, underline bool) error {
+func paintText(c *Canvas, s string, box ui.Rect, text *TextRenderer, style Style, size int, tabular bool, tone ui.Tone, bold, italic, underline bool) error {
 	return paintTextColor(c, s, box, text, style, size, tabular,
 		textColor(style, tone), bold, italic, underline)
 }
 
-func paintTextColor(c *Canvas, s string, box ui.Rect, text *TextRenderer, style ProofStyle, size int, tabular bool, fg Color, bold, italic, underline bool) error {
+func paintTextColor(c *Canvas, s string, box ui.Rect, text *TextRenderer, style Style, size int, tabular bool, fg Color, bold, italic, underline bool) error {
 	if s == "" || box.W <= 0 {
 		return nil
 	}
@@ -656,7 +600,7 @@ const (
 // base is the kind's resting fill, which differs by kind rather than by token:
 // a capsule or card rests on the high container, a control resting on one of
 // those needs the level above it.
-func chromeFill(style ProofStyle, n *ui.Node, base Color) (fill, fg Color) {
+func chromeFill(style Style, n *ui.Node, base Color) (fill, fg Color) {
 	// Selection outranks the declared fill: a selected segment is Primary
 	// whatever it rests in.
 	if n.State.Has(ui.StateSelected) {
@@ -690,7 +634,7 @@ func chromeFill(style ProofStyle, n *ui.Node, base Color) (fill, fg Color) {
 // chromeRadius clamps a logical radius to half the node's short side, so a
 // stadium is the most any chrome can round to and a square icon button is a
 // circle. A logical radius of zero asks for that stadium outright.
-func chromeRadius(style ProofStyle, logical int, box ui.Rect) int {
+func chromeRadius(style Style, logical int, box ui.Rect) int {
 	half := min(box.W, box.H) / 2
 	if logical <= 0 {
 		return half
@@ -720,7 +664,7 @@ func stateLayer(fg Color, state ui.Interaction) Color {
 // a control cannot acquire chrome that differs from the pill beside it.
 // radius is the logical corner radius to use when the node does not carry one;
 // zero asks for a stadium.
-func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size int, base Color, radiusLogical int) error {
+func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int, base Color, radiusLogical int) error {
 	box := style.Scale120.PhysicalRect(n.Bounds)
 	if n.Radius > 0 {
 		radiusLogical = n.Radius
@@ -782,7 +726,7 @@ func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, si
 // the node's box and tinted with the foreground it inherited from the chrome it
 // sits in. An icon takes no fill of its own: the control around it already
 // resolved one.
-func paintIcon(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle) error {
+func paintIcon(c *Canvas, n *ui.Node, text *TextRenderer, style Style) error {
 	if n.Icon == "" {
 		return nil
 	}
@@ -804,11 +748,11 @@ func paintIcon(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle) erro
 
 // A button is a stadium unless it carries an explicit card radius.
 // A button is a stadium unless it carries an explicit card radius.
-func paintButton(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle, size int) error {
+func paintButton(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
 	return paintChrome(c, n, text, style, size, style.containerHighest(), 0)
 }
 
-func capsuleFill(style ProofStyle, fill ui.Fill) Color {
+func capsuleFill(style Style, fill ui.Fill) Color {
 	switch fill {
 	case ui.FillAccent:
 		return style.Accent
@@ -822,7 +766,7 @@ func capsuleFill(style ProofStyle, fill ui.Fill) Color {
 	return style.Capsule
 }
 
-func capsuleForeground(style ProofStyle, fill ui.Fill) Color {
+func capsuleForeground(style Style, fill ui.Fill) Color {
 	switch fill {
 	case ui.FillAccent:
 		return style.OnAccent
@@ -869,7 +813,7 @@ func paintSearchMark(c *Canvas, field ui.Rect, slot int, fg, well Color) {
 	}
 }
 
-func textColor(style ProofStyle, tone ui.Tone) Color {
+func textColor(style Style, tone ui.Tone) Color {
 	if tone == ui.ToneError {
 		return style.Error
 	}
