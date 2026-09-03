@@ -17,6 +17,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	"github.com/Nomadcxx/sysc-shell/internal/wallpaper"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
@@ -110,6 +111,12 @@ type PanelHost struct {
 	launcherMenuID  string
 	launcherActions []launcher.Action
 
+	wallpaperSnap   wallpaper.Snapshot
+	wallpaperDir    string
+	wallpaperFilter wallpaper.Filter
+	wallpaperOutput string
+	wallpaperSel    int
+
 	notifyTab    int
 	notifyFilter string
 	notifyExpand string
@@ -136,6 +143,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelPlugin, nil
 	case "notifications":
 		return PanelNotifications, nil
+	case "wallpaper":
+		return PanelWallpaper, nil
 	default:
 		return 0, fmt.Errorf("unknown panel")
 	}
@@ -332,6 +341,8 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelPlugin, true
 	case "notifications":
 		return PanelNotifications, true
+	case "wallpaper":
+		return PanelWallpaper, true
 	default:
 		return 0, false
 	}
@@ -368,7 +379,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	if id == PanelSession || id == PanelNotifications {
 		place.Align = "right"
 	}
-	if id == PanelLauncher {
+	if id == PanelLauncher || id == PanelWallpaper {
 		place.CenterY = true
 	}
 
@@ -397,6 +408,15 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		svc := r.launcherServiceLocked()
 		svc.Open()
 		svc.Query("")
+	}
+	if id == PanelWallpaper {
+		h.search = ui.NewField("")
+		h.wallpaperFilter = wallpaper.FilterAll
+		h.wallpaperOutput = wallpaper.AllOutputs
+		if svc := r.wallpaperServiceLocked(); svc != nil {
+			h.wallpaperSnap = svc.Snapshot()
+			h.wallpaperDir = firstRoot(h.wallpaperSnap)
+		}
 	}
 	h.root = r.panelTree(h)
 	h.focus = ui.Focusables(h.root)
@@ -1314,6 +1334,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		return settingsTree(r, h)
 	case PanelLauncher:
 		return launcherTree(r, h)
+	case PanelWallpaper:
+		return wallpaperTree(r, h)
 	case PanelPlugin:
 		if r.plugins != nil {
 			return r.plugins.panelTree(h)
@@ -1343,6 +1365,10 @@ func panelTargetSize(id PanelID) ui.Rect {
 		return ui.Rect{W: 320, H: 280}
 	case PanelNotifications:
 		return ui.Rect{W: 416, H: 300}
+	case PanelWallpaper:
+		// The plugin picker's size, not native Noctalia's 980x700. A short
+		// output clamps it through Placement.FittedSize (D2).
+		return ui.Rect{W: 980, H: 1100}
 	default:
 		return ui.Rect{W: 280, H: 200}
 	}

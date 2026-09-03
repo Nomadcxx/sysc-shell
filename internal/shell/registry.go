@@ -20,6 +20,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/theming"
 	"github.com/Nomadcxx/sysc-shell/internal/trayclient"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	"github.com/Nomadcxx/sysc-shell/internal/wallpaper"
 	tray "github.com/Nomadcxx/sysc-tray/protocol"
 )
 
@@ -89,6 +90,7 @@ type Registry struct {
 	trayDrawer      *trayDrawerHost
 	trayReplies     *trayReplyTracker
 	trayIcons       *icons.Worker
+	wallpaperSvc    *wallpaper.Service
 	trayIconCancel  context.CancelFunc
 	pendingTrayMenu pendingTrayMenu
 

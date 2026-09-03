@@ -26,6 +26,7 @@ var (
 		"settings":       "",
 		"launcher":       "",
 		"notifications":  "",
+		"wallpaper":      "",
 	}
 )
 

@@ -13,6 +13,7 @@ const (
 	PanelLauncher
 	PanelPlugin
 	PanelNotifications
+	PanelWallpaper
 )
 
 func (p PanelID) String() string {
@@ -31,6 +32,8 @@ func (p PanelID) String() string {
 		return "plugin"
 	case PanelNotifications:
 		return "notifications"
+	case PanelWallpaper:
+		return "wallpaper"
 	default:
 		return "unknown"
 	}
