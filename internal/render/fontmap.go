@@ -63,6 +63,12 @@ type FontMap struct {
 	// in one face does not re-set the query for every rune.
 	query    FaceRequest
 	querySet bool
+	// icon is this map's own face for the project icon inventory, parsed on
+	// first use. It is per-map for the same reason the material subset is
+	// per-renderer: shaping mutates a face, so sharing one across surfaces
+	// makes two goroutines write to the same glyph caches.
+	icon       *font.Face
+	iconLoaded bool
 }
 
 // DefaultFontCacheDir is the fontscan disk-cache location.
@@ -146,7 +152,7 @@ func (m *FontMap) Face(r rune, req FaceRequest) *font.Face {
 	// The project face wins for its own range, so a system font that happens
 	// to cover the private-use area can never take an icon rune. Weight and
 	// style do not apply: the icon inventory has one cut.
-	face := iconFaceFor(r)
+	face := m.iconFaceFor(r)
 	if face == nil {
 		m.setQuery(req)
 		// Emoji is Common, which is not a strong script. Without this, fontscan
@@ -163,8 +169,8 @@ func (m *FontMap) Face(r rune, req FaceRequest) *font.Face {
 	return face
 }
 
-// iconFaceFor returns the project face for an icon rune, or nil.
-func iconFaceFor(r rune) *font.Face {
+// iconFaceFor returns this map's project face for an icon rune, or nil.
+func (m *FontMap) iconFaceFor(r rune) *font.Face {
 	inWeather := r >= iconRuneFirst && r <= iconRuneLast
 	inBattery := r >= batteryRuneFirst && r <= batteryRuneLast
 	inMetric := r >= metricRuneFirst && r <= metricRuneLast
@@ -173,7 +179,10 @@ func iconFaceFor(r rune) *font.Face {
 	if !inWeather && !inBattery && !inMetric && !inRecorder && !inNotify {
 		return nil
 	}
-	return loadIconFace()
+	if !m.iconLoaded {
+		m.icon, m.iconLoaded = newIconFace(), true
+	}
+	return m.icon
 }
 
 func outlineFaceForRune(candidate, primary *font.Face, r rune) *font.Face {

@@ -2,13 +2,14 @@ package render
 
 import (
 	"bytes"
+	"golang.org/x/image/font/gofont/goregular"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/go-text/typesetting/font"
 	"github.com/go-text/typesetting/fontscan"
 	"github.com/go-text/typesetting/language"
-	"golang.org/x/image/font/gofont/goregular"
 )
 
 func newFixtureFontMap(t *testing.T) *FontMap {
@@ -211,4 +212,44 @@ func TestFontMapKeepsIconFacePriorityAcrossWeights(t *testing.T) {
 	if plain == m.Primary() {
 		t.Error("the icon rune fell through to the primary face")
 	}
+}
+
+// TestIconFaceIsNotSharedBetweenFontMaps encodes the rule ParseFace already
+// follows and materialFace already documents: the parsed *font.Font is
+// read-only and may be shared, but a *font.Face carries mutable caches and
+// must not be. Shaping writes to a face through SetPpem, so two surfaces
+// holding one face corrupt each other's glyph metrics.
+func TestIconFaceIsNotSharedBetweenFontMaps(t *testing.T) {
+	t.Parallel()
+	a, b := newFixtureFontMap(t), newFixtureFontMap(t)
+	fa, fb := a.Face(metricRuneFirst, FaceRequest{}), b.Face(metricRuneFirst, FaceRequest{})
+	if fa == nil || fb == nil {
+		t.Fatal("the icon rune resolved no face")
+	}
+	if fa == fb {
+		t.Error("two font maps share one icon face; shaping in either corrupts the other")
+	}
+}
+
+// TestConcurrentShapingAcrossFontMaps is the reproduction the race detector
+// reads. Two surfaces, each with its own map, shape an icon rune at once --
+// which is exactly what two bars on two outputs do.
+func TestConcurrentShapingAcrossFontMaps(t *testing.T) {
+	t.Parallel()
+	text := string(metricRuneFirst) + " 42"
+	var wg sync.WaitGroup
+	for range 2 {
+		m := newFixtureFontMap(t)
+		r := NewTextRendererWithFontMap(m)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for size := 10; size < 26; size++ {
+				if _, _, err := r.Measure(text, TextSpec{Size: size, Weight: 400}, false); err != nil {
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
 }

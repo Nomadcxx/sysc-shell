@@ -3,7 +3,6 @@ package render
 import (
 	_ "embed"
 	"sort"
-	"sync"
 
 	"github.com/go-text/typesetting/font"
 )
@@ -83,23 +82,23 @@ const (
 // batteryLevels is how many level glyphs each state has.
 const batteryLevels = 7
 
-var (
-	iconOnce sync.Once
-	iconFace *font.Face
-)
-
-// loadIconFace parses the embedded font once. A font that fails to parse
-// leaves the face nil, which falls the rune back to the system query and draws
-// a notdef box: a broken icon must never fail a frame.
-func loadIconFace() *font.Face {
-	iconOnce.Do(func() {
-		face, err := ParseFace(iconTTF)
-		if err != nil {
-			return
-		}
-		iconFace = face
-	})
-	return iconFace
+// newIconFace returns a face for the embedded icon font.
+//
+// It returns a fresh face every call, and deliberately does not memoise one.
+// ParseFace already caches the parsed *font.Font, which is read-only and safe
+// to share; a *font.Face is not. Shaping writes to a face -- SetPpem, and the
+// glyph caches behind it -- so one face handed to two surfaces means each
+// corrupts the other's metrics. Each holder owns its own.
+//
+// A font that fails to parse yields a nil face, which falls the rune back to
+// the system query and draws a notdef box: a broken icon must never fail a
+// frame.
+func newIconFace() *font.Face {
+	face, err := ParseFace(iconTTF)
+	if err != nil {
+		return nil
+	}
+	return face
 }
 
 // IconRune maps a WMO weather code to its symbol.

@@ -196,7 +196,7 @@ func TestBatteryRunesResolveToTheProjectFace(t *testing.T) {
 // fill must differ in ink.
 func glyphCoverage(t *testing.T, r rune, size int) int {
 	t.Helper()
-	tr := NewTextRenderer(loadIconFace())
+	tr := NewTextRenderer(newIconFace())
 	mask, err := tr.Raster(string(r), TextSpec{Size: size, Weight: 400}, false)
 	if err != nil {
 		t.Fatalf("raster %U: %v", r, err)
@@ -216,9 +216,8 @@ func glyphCoverage(t *testing.T, r rune, size int) int {
 // filled instead of cutting a hole. BatteryIconRune was correct and the asset
 // discarded the distinction, and the existing tests only checked the codepoint
 // mapping, so nothing failed.
-// Not parallel: loadIconFace returns one shared face and font.Face is not safe
-// for concurrent use. The shell only ever shapes on the Wayland goroutine.
 func TestBatteryLevelGlyphsDifferFromEachOther(t *testing.T) {
+	t.Parallel()
 	for _, band := range []struct {
 		name  string
 		first rune
@@ -302,7 +301,7 @@ func TestBatteryLevelsStayDistinctAtBarSize(t *testing.T) {
 // Metric SVGs are square 24px viewBoxes. A 900-unit advance on a 1200-unit
 // outline clips the sides and the glyph reads as a stretched slab next to "8%".
 func TestMetricIconRasterIsSquareAtBarSize(t *testing.T) {
-	tr := NewTextRenderer(loadIconFace())
+	tr := NewTextRenderer(newIconFace())
 	mask, err := tr.Raster(string(iconCPU), TextSpec{Size: 14, Weight: 400}, false)
 	if err != nil {
 		t.Fatal(err)
