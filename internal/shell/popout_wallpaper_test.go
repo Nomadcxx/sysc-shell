@@ -641,3 +641,46 @@ func TestWallpaperVideoTileIsInertWithoutGSlapper(t *testing.T) {
 		t.Error("a missing engine must be explained in a banner")
 	}
 }
+
+func TestWallpaperWarnsWhenAForeignSurfaceOwnsTheOutput(t *testing.T) {
+	t.Parallel()
+
+	root := seedWallpaperRoot(t)
+	reg, _, _ := openWallpaperPanel(t, []string{root})
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	h.wallpaperOutput = "DP-1"
+	snap := h.wallpaperSnap
+	snap.Covered = map[string]string{"DP-1": "quickshell"}
+	h.wallpaperSnap = snap
+	reg.rebuildPanel(h)
+
+	var warned bool
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n.Kind == ui.KindText && strings.Contains(n.Text, "quickshell") && strings.Contains(n.Text, "not be visible") {
+			warned = true
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(h.root)
+	if !warned {
+		t.Fatal("an output already painted by another wallpaper must say so; gslapper reports playing either way")
+	}
+
+	// An output nobody else owns says nothing.
+	h.wallpaperOutput = "DP-3"
+	reg.rebuildPanel(h)
+	warned = false
+	walk(h.root)
+	if warned {
+		t.Error("an uncovered output must not warn")
+	}
+}

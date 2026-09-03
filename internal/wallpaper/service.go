@@ -64,6 +64,11 @@ type Snapshot struct {
 	Caps        Capabilities
 	Seed        string
 	Err         string
+	// Covered maps an output to the namespace of a foreign Background surface
+	// painting over it. gSlapper reports itself as playing whether or not its
+	// surface is visible, so without this an apply that nobody can see looks
+	// exactly like one that worked (D18).
+	Covered map[string]string
 }
 
 // ServiceConfig is what the registry hands the service at construction.
@@ -73,6 +78,9 @@ type ServiceConfig struct {
 	Connectors  []string
 	Roots       []string
 	PersistPath string
+	// Coverage reports which outputs a foreign wallpaper owns. It is injected
+	// so the service stays free of any compositor dependency.
+	Coverage func() (map[string]string, error)
 }
 
 type engineResult struct {
@@ -101,10 +109,13 @@ type Service struct {
 	closing sync.Once
 	work    sync.WaitGroup
 
-	// store, lib, and caps are touched only by the loop goroutine.
-	store Store
-	lib   *Library
-	caps  Capabilities
+	coverage func() (map[string]string, error)
+
+	// store, lib, caps, and covered are touched only by the loop goroutine.
+	store   Store
+	lib     *Library
+	caps    Capabilities
+	covered map[string]string
 
 	mu   sync.Mutex
 	snap Snapshot
@@ -120,6 +131,7 @@ func NewService(cfg ServiceConfig) *Service {
 		set:         cfg.Settings,
 		roots:       slices.Clone(cfg.Roots),
 		persistPath: cfg.PersistPath,
+		coverage:    cfg.Coverage,
 		cmds:        make(chan Command, 32),
 		results:     make(chan engineResult, 32),
 		// One slot, coalescing: a picker that is closed or slow must never
@@ -139,6 +151,7 @@ func NewService(cfg ServiceConfig) *Service {
 		s.store.Adopt(saved)
 	}
 	s.lib = Scan(s.roots)
+	s.refreshCoverage()
 	s.publish()
 	go s.run()
 	s.reconcile()
@@ -226,6 +239,7 @@ func (s *Service) handle(c Command) {
 		s.store.Disconnect(c.Token)
 	case OpRefresh:
 		s.lib = Scan(s.roots)
+		s.refreshCoverage()
 	}
 	s.publish()
 }
@@ -260,10 +274,22 @@ func (s *Service) finish(r engineResult) {
 		return
 	}
 	s.persist()
+	s.refreshCoverage()
 	seed := s.store.SeedPath()
 	s.publish()
 	if seed != "" && seed != before {
 		s.notifySeed(seed)
+	}
+}
+
+// refreshCoverage re-reads which outputs a foreign wallpaper owns. A probe
+// failure is not an error the user needs: it only means we cannot warn.
+func (s *Service) refreshCoverage() {
+	if s.coverage == nil {
+		return
+	}
+	if covered, err := s.coverage(); err == nil {
+		s.covered = covered
 	}
 }
 
@@ -337,6 +363,7 @@ func (s *Service) publish() {
 		Caps:        s.caps,
 		Seed:        s.store.SeedPath(),
 		Err:         s.store.Err(),
+		Covered:     maps.Clone(s.covered),
 	}
 	s.mu.Lock()
 	s.snap = snap
@@ -361,6 +388,7 @@ func cloneSnapshot(s Snapshot) Snapshot {
 	out.Connectors = slices.Clone(s.Connectors)
 	out.Assignments = maps.Clone(s.Assignments)
 	out.Runtime = maps.Clone(s.Runtime)
+	out.Covered = maps.Clone(s.Covered)
 	if out.Assignments == nil {
 		out.Assignments = map[string]Assignment{}
 	}

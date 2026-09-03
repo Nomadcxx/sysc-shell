@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -9,9 +10,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -40,6 +43,9 @@ const (
 	wallpaperIconSize        = 18
 	wallpaperPlaceholderIcon = 32
 	wallpaperSelectedStroke  = 2
+
+	// wallpaperCoverageTimeout bounds the compositor probe.
+	wallpaperCoverageTimeout = 2 * time.Second
 )
 
 // wallpaperServiceLocked returns the running service, or nil before the
@@ -408,15 +414,19 @@ func wallpaperCaption(h *PanelHost, entry wallpaper.Entry) string {
 	return name
 }
 
+// wallpaperTargets resolves the output select to the connectors it acts on.
+func wallpaperTargets(h *PanelHost) []string {
+	if h.wallpaperOutput == wallpaper.AllOutputs {
+		return h.wallpaperSnap.Connectors
+	}
+	return []string{h.wallpaperOutput}
+}
+
 // wallpaperMatchCount reports how many of the selected outputs already show
 // path. It is read back from the snapshot rather than composed here, so the
 // badge cannot drift from what is actually assigned.
 func wallpaperMatchCount(h *PanelHost, path string) (matched, total int) {
-	targets := []string{h.wallpaperOutput}
-	if h.wallpaperOutput == wallpaper.AllOutputs {
-		targets = h.wallpaperSnap.Connectors
-	}
-	for _, connector := range targets {
+	for _, connector := range wallpaperTargets(h) {
 		total++
 		if h.wallpaperSnap.Assignments[connector].Path == path {
 			matched++
@@ -446,6 +456,12 @@ func wallpaperBanners(h *PanelHost) []*ui.Node {
 		add(h.wallpaperSnap.Library.Err, ui.ToneError)
 	}
 	add(h.wallpaperSnap.Err, ui.ToneError)
+	for _, connector := range wallpaperTargets(h) {
+		if owner := h.wallpaperSnap.Covered[connector]; owner != "" {
+			add(fmt.Sprintf("%s is already painted by %s - a wallpaper set here will not be visible until that surface goes away",
+				connector, owner), ui.ToneError)
+		}
+	}
 	for _, connector := range h.wallpaperSnap.Connectors {
 		if rt := h.wallpaperSnap.Runtime[connector]; rt.Err != "" {
 			add(connector+": "+rt.Err, ui.ToneError)
@@ -485,11 +501,7 @@ func wallpaperRestoreLabel(h *PanelHost) string {
 // wallpaperPlaybackState reports whether the selected outputs hold a video and
 // whether it is paused. All outputs offers the control when any of them does.
 func wallpaperPlaybackState(h *PanelHost) (paused, ok bool) {
-	targets := []string{h.wallpaperOutput}
-	if h.wallpaperOutput == wallpaper.AllOutputs {
-		targets = h.wallpaperSnap.Connectors
-	}
-	for _, connector := range targets {
+	for _, connector := range wallpaperTargets(h) {
 		if h.wallpaperSnap.Assignments[connector].Kind != wallpaper.KindVideo {
 			continue
 		}
@@ -771,6 +783,7 @@ func (r *Registry) wallpaperStartLocked() *wallpaper.Service {
 		Connectors:  r.connectorsLocked(),
 		Roots:       []string{cfg.ImageDirectory, cfg.VideoDirectory},
 		PersistPath: wallpaper.AssignmentsPath(),
+		Coverage:    wallpaperCoverageProbe,
 	})
 	r.wallpaperSvc.SetConfigHook(r.setWallpaperSeed)
 	go r.relayWallpaper(r.wallpaperSvc)
@@ -934,4 +947,32 @@ func (h *PanelHost) wallpaperAction(r *Registry, n *ui.Node) bool {
 		return true
 	}
 	return false
+}
+
+// wallpaperCoverageProbe asks the compositor which outputs already carry a
+// foreign Background surface. It runs on the service goroutine, never on the
+// Wayland owner, and a compositor that cannot answer simply means no warning.
+func wallpaperCoverageProbe() (map[string]string, error) {
+	socket := os.Getenv("NIRI_SOCKET")
+	if socket == "" {
+		return nil, errors.New("shell: NIRI_SOCKET is unset")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), wallpaperCoverageTimeout)
+	defer cancel()
+	layers, err := niri.Layers(ctx, socket)
+	if err != nil {
+		return nil, err
+	}
+	return niri.BackgroundOwners(layers, wallpaperOurNamespace), nil
+}
+
+// wallpaperOurNamespace reports whether a layer namespace is one we put up.
+// gSlapper announces itself as "slapper"; everything else on Background
+// belongs to somebody else and is left alone (D17/D18).
+func wallpaperOurNamespace(namespace string) bool {
+	switch namespace {
+	case "slapper", "awww-daemon", "swaybg":
+		return true
+	}
+	return strings.HasPrefix(namespace, "sysc-shell")
 }
