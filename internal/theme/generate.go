@@ -3,6 +3,7 @@ package theme
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,7 +19,15 @@ type Generator struct {
 // Generate renders the palette for src. It is single-flight per process by
 // construction: callers (Registry reload path) serialize. One queued rerun is
 // the caller's concern, not the generator's.
+//
+// The error is the caller's signal, not a suggestion: a nil error means the
+// returned palette is complete and satisfies Valid for the requested mode, and
+// a non-nil error means the compiled fallback for that mode came back instead.
+// A cold start may paint the fallback and report the error; a reload must keep
+// the palette it already has rather than swapping a generated theme for the
+// compiled one.
 func (g Generator) Generate(src Source, opts Options) (Tokens, error) {
+	fallback := FallbackFor(opts.HighContrast)
 	if g.Matugen == "" {
 		g.Matugen = "matugen"
 	}
@@ -26,12 +35,12 @@ func (g Generator) Generate(src Source, opts Options) (Tokens, error) {
 	if dir == "" {
 		base, err := os.UserCacheDir()
 		if err != nil {
-			return Fallback, nil
+			return fallback, fmt.Errorf("theme: no cache directory: %w", err)
 		}
 		dir = filepath.Join(base, "sysc-shell")
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return Fallback, nil // ponytail: cache dir failure degrades to fallback, never blocks startup
+		return fallback, fmt.Errorf("theme: cache directory %s: %w", dir, err)
 	}
 
 	cfgPath := filepath.Join(dir, "matugen.toml")
@@ -40,10 +49,10 @@ func (g Generator) Generate(src Source, opts Options) (Tokens, error) {
 	cfg := strings.ReplaceAll(matugenConfig, "@TPL@", tplPath)
 	cfg = strings.ReplaceAll(cfg, "@OUT@", outPath)
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
-		return Fallback, nil
+		return fallback, fmt.Errorf("theme: write %s: %w", cfgPath, err)
 	}
 	if err := os.WriteFile(tplPath, []byte(matugenTemplate), 0o644); err != nil {
-		return Fallback, nil
+		return fallback, fmt.Errorf("theme: write %s: %w", tplPath, err)
 	}
 
 	args := make([]string, 0, 12)
@@ -55,11 +64,11 @@ func (g Generator) Generate(src Source, opts Options) (Tokens, error) {
 	case "stock":
 		hex, ok := StockSeed(src.Seed)
 		if !ok {
-			return Fallback, nil
+			return fallback, fmt.Errorf("theme: %q is not a stock seed", src.Seed)
 		}
 		args = append(args, "color", "hex", hex)
 	default:
-		return Fallback, nil
+		return fallback, fmt.Errorf("theme: unknown palette source %q", src.Kind)
 	}
 	args = append(args, "-c", cfgPath, "-t", scheme(opts), "--prefer", "saturation")
 	if opts.HighContrast {
@@ -71,11 +80,20 @@ func (g Generator) Generate(src Source, opts Options) (Tokens, error) {
 	cmd := exec.CommandContext(ctx, g.Matugen, args...)
 	cmd.Dir = dir
 	if err := cmd.Run(); err != nil {
-		return Fallback, nil // ponytail: any matugen failure degrades to fallback
+		return fallback, fmt.Errorf("theme: matugen: %w", err)
 	}
 	tok, err := parseColors(outPath, opts.Mode)
 	if err != nil {
-		return Fallback, nil
+		return fallback, err
+	}
+	// matugen's contrast level moves the accent backgrounds; the local repair
+	// only moves foregrounds. Running it after generation closes the small
+	// gaps a seed can still leave without rewriting the palette's hues.
+	if err := tok.Valid(opts.HighContrast); err != nil {
+		tok = tok.Repair(opts.HighContrast)
+		if err := tok.Valid(opts.HighContrast); err != nil {
+			return fallback, fmt.Errorf("theme: generated palette is unusable: %w", err)
+		}
 	}
 	return tok, nil
 }
@@ -92,38 +110,33 @@ type paletteFile struct {
 	Light map[string]string `json:"light"`
 }
 
+// parseColors reads the generated file for one mode. Every role must be
+// present and parseable: a role quietly kept from the compiled fallback is a
+// palette that is half generated and half not, which is the mixed state the
+// whole-palette rejection exists to prevent.
 func parseColors(path, mode string) (Tokens, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Tokens{}, err
+		return Tokens{}, fmt.Errorf("theme: read palette: %w", err)
 	}
 	var file paletteFile
 	if err := json.Unmarshal(data, &file); err != nil {
-		return Tokens{}, err
+		return Tokens{}, fmt.Errorf("theme: parse palette: %w", err)
 	}
 	src := file.Dark
 	if strings.EqualFold(mode, "light") {
 		src = file.Light
 	}
-	tok := Fallback
-	set := func(got string, dest *string) {
-		if got != "" {
-			*dest = got
+	var tok Tokens
+	for _, r := range roles {
+		v, ok := src[r.name]
+		if !ok {
+			return Tokens{}, fmt.Errorf("theme: generated palette omits role %s", r.name)
 		}
+		if _, err := ParseColor(v); err != nil {
+			return Tokens{}, fmt.Errorf("theme: role %s is %q: %w", r.name, v, err)
+		}
+		*r.get(&tok) = v
 	}
-	set(src["surface"], &tok.Surface)
-	set(src["surface_container"], &tok.SurfaceContainer)
-	set(src["surface_container_high"], &tok.SurfaceContainerHigh)
-	set(src["surface_container_highest"], &tok.SurfaceContainerHighest)
-	set(src["on_surface"], &tok.OnSurface)
-	set(src["on_surface_variant"], &tok.OnSurfaceVariant)
-	set(src["primary"], &tok.Primary)
-	set(src["on_primary"], &tok.OnPrimary)
-	set(src["primary_container"], &tok.PrimaryContainer)
-	set(src["on_primary_container"], &tok.OnPrimaryContainer)
-	set(src["outline"], &tok.Outline)
-	set(src["outline_variant"], &tok.OutlineVariant)
-	set(src["error"], &tok.Error)
-	set(src["on_error"], &tok.OnError)
 	return tok, nil
 }

@@ -307,7 +307,7 @@ func (r *Registry) ReducedMotion() bool {
 // are only written for a palette that survives that check, so an external
 // consumer never sees one the shell itself refused.
 func (r *Registry) generateTheme(cfg config.Config) theme.Tokens {
-	tok, _ := r.themeGen.Generate(
+	tok, err := r.themeGen.Generate(
 		theme.Source{Kind: cfg.ThemeGen.Source, Seed: cfg.ThemeGen.Seed},
 		theme.Options{
 			Mode:         cfg.ThemeGen.Mode,
@@ -315,8 +315,15 @@ func (r *Registry) generateTheme(cfg config.Config) theme.Tokens {
 			HighContrast: cfg.Accessibility.HighContrast,
 		},
 	)
+	// A generation failure hands back the compiled fallback, which is itself
+	// complete. Keeping the palette already published is the right answer for
+	// a reload: swapping a working generated theme for the compiled one is a
+	// visible regression the user did not ask for.
+	if err != nil {
+		return r.lastCompleteTokens(cfg.Accessibility.HighContrast)
+	}
 	if err := tok.Complete(); err != nil {
-		return r.lastCompleteTokens()
+		return r.lastCompleteTokens(cfg.Accessibility.HighContrast)
 	}
 	if !runningAsTest() {
 		_ = theming.ApplyEnabled(os.Getenv("HOME"), cfg.TemplateEnabled, tok)
@@ -327,14 +334,14 @@ func (r *Registry) generateTheme(cfg config.Config) theme.Tokens {
 // lastCompleteTokens is the palette to fall back on when a generated one is
 // rejected: whatever is currently published, or the compiled-in fallback
 // before anything has been.
-func (r *Registry) lastCompleteTokens() theme.Tokens {
+func (r *Registry) lastCompleteTokens(highContrast bool) theme.Tokens {
 	r.mu.Lock()
 	current := r.tokens
 	r.mu.Unlock()
 	if current.Complete() == nil {
 		return current
 	}
-	return theme.Fallback
+	return theme.FallbackFor(highContrast)
 }
 
 // surfaceTheme is the palette every auxiliary surface paints with: the
