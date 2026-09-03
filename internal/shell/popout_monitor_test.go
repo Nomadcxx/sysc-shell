@@ -506,7 +506,7 @@ func TestMonitorCardsLayOutTwoToARow(t *testing.T) {
 	}
 	tree := monitorTree(sels, fixtureSnapshot(), map[services.Selector][]float64{}, machineFacts{})
 	size := panelTargetSize(PanelMonitor)
-	measure := func(s string, _ bool) (int, int) { return len([]rune(s)) * 8, 16 }
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 8, 16 }
 	if err := ui.LayoutColumn(tree, ui.Rect{W: size.W, H: size.H}, measure); err != nil {
 		t.Fatalf("LayoutColumn: %v", err)
 	}
@@ -551,7 +551,7 @@ func TestMonitorSurfaceHeightCoversATallTree(t *testing.T) {
 		OS:  "Arch Linux", Kernel: "Linux 7.2.2-arch1-1",
 		WM: "niri", Uptime: "1 hour 1 minute",
 	})
-	measure := func(s string, _ bool) (int, int) { return len([]rune(s)) * 8, 20 }
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 8, 20 }
 	content, err := ui.ContentHeight(tree, 640, measure)
 	if err != nil {
 		t.Fatal(err)
@@ -574,7 +574,7 @@ func TestMonitorCardsHaveSaneHeights(t *testing.T) {
 		{Source: services.SourceMemory},
 	}, fixtureSnapshot(), map[services.Selector][]float64{}, machineFacts{})
 	size := panelTargetSize(PanelMonitor)
-	measure := func(s string, _ bool) (int, int) { return len([]rune(s)) * 8, 16 }
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 8, 16 }
 	if err := ui.LayoutColumn(tree, ui.Rect{W: size.W, H: size.H}, measure); err != nil {
 		t.Fatalf("LayoutColumn: %v", err)
 	}
@@ -595,7 +595,7 @@ func TestMonitorSystemCardWithLongCPUFitsPanel(t *testing.T) {
 		CPU: "AMD Ryzen 7 8845HS w/ Radeon 780M Graphics",
 	})
 	size := panelTargetSize(PanelMonitor)
-	measure := func(s string, _ bool) (int, int) { return len([]rune(s)) * 8, 16 }
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 8, 16 }
 	if err := ui.LayoutColumn(tree, ui.Rect{W: size.W, H: size.H}, measure); err != nil {
 		t.Fatalf("LayoutColumn: %v", err)
 	}

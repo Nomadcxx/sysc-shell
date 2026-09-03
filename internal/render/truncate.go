@@ -20,11 +20,11 @@ const ellipsis = "…"
 //
 // When even the ellipsis does not fit the result is empty: an overflowing
 // ellipsis is never drawn.
-func (r *TextRenderer) Truncate(text string, size, avail int, tabular bool) (string, int, error) {
+func (r *TextRenderer) Truncate(text string, spec TextSpec, avail int, tabular bool) (string, int, error) {
 	if avail <= 0 || text == "" {
 		return "", 0, nil
 	}
-	fullGlyphs, fullAdvance, err := r.shapedGlyphs(text, size, tabular)
+	fullGlyphs, fullAdvance, err := r.shapedGlyphs(text, spec, tabular)
 	if err != nil {
 		return "", 0, err
 	}
@@ -32,7 +32,7 @@ func (r *TextRenderer) Truncate(text string, size, avail int, tabular bool) (str
 		return text, fullAdvance.Ceil(), nil
 	}
 
-	_, dotsAdvance, err := r.shapedGlyphs(ellipsis, size, tabular)
+	_, dotsAdvance, err := r.shapedGlyphs(ellipsis, spec, tabular)
 	if err != nil {
 		return "", 0, err
 	}
@@ -54,7 +54,7 @@ func (r *TextRenderer) Truncate(text string, size, avail int, tabular bool) (str
 	clusters := logicalClusters(fullGlyphs)
 	for keep > 0 {
 		out := string(runes[:keep]) + ellipsis
-		_, advance, err := r.shapedGlyphs(out, size, tabular)
+		_, advance, err := r.shapedGlyphs(out, spec, tabular)
 		if err != nil {
 			return "", 0, err
 		}
@@ -71,8 +71,8 @@ func (r *TextRenderer) Truncate(text string, size, avail int, tabular bool) (str
 	return ellipsis, dotsWidth, nil
 }
 
-func (r *TextRenderer) shapedGlyphs(text string, size int, tabular bool) ([]shaping.Glyph, fixed.Int26_6, error) {
-	runs, err := r.shapeRuns(text, size, tabular)
+func (r *TextRenderer) shapedGlyphs(text string, spec TextSpec, tabular bool) ([]shaping.Glyph, fixed.Int26_6, error) {
+	runs, err := r.shapeRuns(text, spec, tabular)
 	if err != nil {
 		return nil, 0, err
 	}

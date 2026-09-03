@@ -120,7 +120,7 @@ func IconSize(n *Node) int {
 
 func inlineContentSize(n *Node, measure MeasureText) (int, int, error) {
 	if len(n.Children) == 0 {
-		w, h := measure(n.Text, n.Tabular)
+		w, h := measure(n.Text, TextAttrsOf(n))
 		return w, h, nil
 	}
 	w, h := 0, 0
@@ -320,9 +320,9 @@ func layoutCapsuleChild(n *Node, measure MeasureText) error {
 func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, error) {
 	switch n.Kind {
 	case KindText, KindTab:
-		w, h := measure(n.Text, n.Tabular)
+		w, h := measure(n.Text, TextAttrsOf(n))
 		if n.MinWidthText != "" {
-			if floor, _ := measure(n.MinWidthText, n.Tabular); floor > w {
+			if floor, _ := measure(n.MinWidthText, TextAttrsOf(n)); floor > w {
 				w = floor
 			}
 		}
@@ -404,7 +404,7 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 	case KindButton:
 		return measureButton(n, measure)
 	case KindDragSource:
-		w, h := measure(n.Text, n.Tabular)
+		w, h := measure(n.Text, TextAttrsOf(n))
 		return w + 2*n.Padding, h + 2*n.Padding, nil
 	case KindIcon:
 		size := IconSize(n)
@@ -429,7 +429,7 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		}
 		return w, SliderKnob, nil
 	case KindMenu:
-		w, h := measure(n.Text, n.Tabular)
+		w, h := measure(n.Text, TextAttrsOf(n))
 		if n.Width > w {
 			w = n.Width
 		}
@@ -437,7 +437,7 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 			if c == nil {
 				continue
 			}
-			_, ch := measure(c.Text, c.Tabular)
+			_, ch := measure(c.Text, TextAttrsOf(c))
 			h += ch
 		}
 		return w, h, nil
@@ -446,7 +446,7 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		if sample == "" {
 			sample = " "
 		}
-		w, h := measure(sample, n.Tabular)
+		w, h := measure(sample, TextAttrsOf(n))
 		if n.Width > w {
 			w = n.Width
 		}

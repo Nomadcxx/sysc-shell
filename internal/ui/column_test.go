@@ -4,7 +4,7 @@ import "testing"
 
 func TestColumnMeasuresMeterAndGraph(t *testing.T) {
 	t.Parallel()
-	measure := func(string, bool) (int, int) { return 7, 16 }
+	measure := func(string, TextAttrs) (int, int) { return 7, 16 }
 	h, err := columnChildHeight(&Node{Kind: KindMeter, Value: 0.5}, 200, measure)
 	if err != nil {
 		t.Fatalf("meter: %v", err)
@@ -32,7 +32,7 @@ func TestColumnMeasuresMeterAndGraph(t *testing.T) {
 
 func TestColumnLayoutStacksAndCentersText(t *testing.T) {
 	t.Parallel()
-	measure := func(s string, _ bool) (int, int) { return len(s) * 7, 16 }
+	measure := func(s string, _ TextAttrs) (int, int) { return len(s) * 7, 16 }
 	root := &Node{Kind: KindColumn, Gap: 8, Padding: 12, Children: []*Node{
 		{Kind: KindText, Text: "Power"},
 		{Kind: KindSeparator},
@@ -93,7 +93,7 @@ func TestSegmentedControlSharesTheSessionWidth(t *testing.T) {
 		if segment.Bounds.W < 129 || segment.Bounds.W > 130 {
 			t.Errorf("segment %d width = %d, want equal 129/130 allocation", i, segment.Bounds.W)
 		}
-		textW, _ := fakeMeasure(segment.Text, false)
+		textW, _ := fakeMeasure(segment.Text, TextAttrs{})
 		if textW+2*segment.Padding > segment.Bounds.W {
 			t.Errorf("segment %d label %q clips in %+v", i, segment.Text, segment.Bounds)
 		}
@@ -160,7 +160,7 @@ func TestColumnRejectsAMeterOutsideItsRange(t *testing.T) {
 }
 
 func TestImageNodeMeasuresThroughTheColumnPath(t *testing.T) {
-	measure := func(string, bool) (int, int) { return 7, 20 }
+	measure := func(string, TextAttrs) (int, int) { return 7, 20 }
 	h, err := columnChildHeight(&Node{Kind: KindImage, ImageSize: 32}, 200, measure)
 	if err != nil {
 		t.Fatal(err)
@@ -229,7 +229,7 @@ func TestColumnChildHeightCapsuleInRow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("columnChildHeight: %v", err)
 	}
-	_, text := fakeMeasure("cpu", false)
+	_, text := fakeMeasure("cpu", TextAttrs{})
 	want := text + 2*10
 	if h != want {
 		t.Fatalf("capsule row height = %d, want %d", h, want)

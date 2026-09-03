@@ -30,7 +30,7 @@ func newFixtureFontMap(t *testing.T) *FontMap {
 	if primary == nil {
 		t.Fatal("fixture font map resolved no primary face")
 	}
-	return &FontMap{inner: inner, primary: primary, cache: make(map[rune]*font.Face)}
+	return &FontMap{inner: inner, primary: primary, cache: make(map[faceKey]*font.Face)}
 }
 
 // These exercise the real system font set. A machine with no fonts installed
@@ -59,7 +59,7 @@ func TestFaceCacheIsBounded(t *testing.T) {
 
 	// Resolve more distinct runes than the cache can hold.
 	for r := rune('a'); r < rune('a')+rune(faceCacheLimit)+8; r++ {
-		m.Face(r)
+		m.Face(r, FaceRequest{})
 	}
 	if len(m.cache) > faceCacheLimit {
 		t.Fatalf("cache holds %d faces, want at most %d", len(m.cache), faceCacheLimit)
@@ -76,7 +76,7 @@ func TestFaceNeverReturnsNil(t *testing.T) {
 
 	// A private-use rune no font covers must still resolve, so a missing glyph
 	// degrades to notdef rather than failing the frame.
-	if face := m.Face(''); face == nil {
+	if face := m.Face('', FaceRequest{}); face == nil {
 		t.Fatal("Face returned nil for an uncovered rune")
 	}
 }
@@ -101,7 +101,7 @@ func TestSystemFontMapKeepsBitmapEmojiFallback(t *testing.T) {
 	if selected := outlineFaceForRune(resolved, m.primary, glyph); selected != resolved {
 		t.Fatal("bitmap emoji fallback degraded to the primary notdef face")
 	}
-	if m.Face(glyph) == m.primary {
+	if m.Face(glyph, FaceRequest{}) == m.primary {
 		t.Fatal("Face resolved the emoji rune to the primary notdef face")
 	}
 }
@@ -110,7 +110,7 @@ func TestSplitRunsGroupsAdjacentRunesSharingAFace(t *testing.T) {
 	t.Parallel()
 	m := newSystemMap(t)
 
-	runs := m.SplitRuns("hello")
+	runs := m.SplitRuns("hello", FaceRequest{})
 	if len(runs) != 1 {
 		t.Fatalf("SplitRuns produced %d runs for one-script text, want 1", len(runs))
 	}
@@ -122,7 +122,7 @@ func TestSplitRunsGroupsAdjacentRunesSharingAFace(t *testing.T) {
 func TestSplitRunsOfEmptyTextIsEmpty(t *testing.T) {
 	t.Parallel()
 	m := newSystemMap(t)
-	if runs := m.SplitRuns(""); len(runs) != 0 {
+	if runs := m.SplitRuns("", FaceRequest{}); len(runs) != 0 {
 		t.Fatalf("SplitRuns(\"\") = %v, want no runs", runs)
 	}
 }
@@ -136,5 +136,79 @@ func TestMissingCacheDirDegradesRatherThanFailing(t *testing.T) {
 	}
 	if m.Primary() == nil {
 		t.Fatal("Primary() is nil after degrading to an uncached scan")
+	}
+}
+
+func TestFontMapKeepsWeightAndStyleCacheEntriesDistinct(t *testing.T) {
+	t.Parallel()
+	m := newFixtureFontMap(t)
+	reqs := []FaceRequest{
+		{Family: "Fixture Latin", Weight: 400},
+		{Family: "Fixture Latin", Weight: 700},
+		{Family: "Fixture Latin", Weight: 400, Italic: true},
+		{Family: "Fixture Latin", Weight: 700, Italic: true},
+	}
+	for _, req := range reqs {
+		if m.Face('A', req) == nil {
+			t.Fatalf("%+v resolved no face", req)
+		}
+	}
+	// The fixture holds one cut, so every request resolves to the same face.
+	// What must not collapse is the cache: a shared entry would serve a bold
+	// run whatever face a later regular run resolved.
+	if len(m.cache) != len(reqs) {
+		t.Errorf("cache holds %d entries for %d distinct requests", len(m.cache), len(reqs))
+	}
+	for _, req := range reqs {
+		key := faceKey{r: 'A', family: req.Family, weight: req.Weight, italic: req.Italic}
+		if _, ok := m.cache[key]; !ok {
+			t.Errorf("%+v left no cache entry", req)
+		}
+	}
+}
+
+func TestFontMapCacheStaysBoundedAcrossWeights(t *testing.T) {
+	t.Parallel()
+	m := newFixtureFontMap(t)
+	for weight := 100; weight <= 900; weight += 100 {
+		for _, r := range "abcdefghijklmnop" {
+			m.Face(r, FaceRequest{Family: "Fixture Latin", Weight: weight})
+		}
+	}
+	if len(m.cache) > faceCacheLimit {
+		t.Errorf("cache holds %d entries, want at most %d", len(m.cache), faceCacheLimit)
+	}
+	if len(m.order) != len(m.cache) {
+		t.Errorf("eviction order holds %d entries for %d cached", len(m.order), len(m.cache))
+	}
+}
+
+func TestFontMapFallsBackForAnUnavailableFamily(t *testing.T) {
+	t.Parallel()
+	m := newFixtureFontMap(t)
+	// A family nothing provides must still paint: the scanner reports the
+	// closest face it has rather than failing the frame.
+	face := m.Face('A', FaceRequest{Family: "No Such Family At All", Weight: 400})
+	if face == nil {
+		t.Fatal("an unavailable family resolved no face")
+	}
+}
+
+func TestFontMapKeepsIconFacePriorityAcrossWeights(t *testing.T) {
+	t.Parallel()
+	m := newFixtureFontMap(t)
+	// An icon rune belongs to the project face whatever weight is asked for:
+	// the inventory has one cut, and a system font that happens to cover the
+	// private-use area must never take the rune.
+	plain := m.Face(iconClearDay, FaceRequest{Family: "Fixture Latin", Weight: 400})
+	heavy := m.Face(iconClearDay, FaceRequest{Family: "Fixture Latin", Weight: 900})
+	if plain == nil || heavy == nil {
+		t.Fatal("icon rune resolved no face")
+	}
+	if plain != heavy {
+		t.Error("the icon rune resolved two different faces for two weights")
+	}
+	if plain == m.Primary() {
+		t.Error("the icon rune fell through to the primary face")
 	}
 }

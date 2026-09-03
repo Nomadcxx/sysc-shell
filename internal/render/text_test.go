@@ -63,7 +63,7 @@ func TestRasterPaintsColorEmoji(t *testing.T) {
 		t.Skip("resolved emoji face has no bitmap glyph")
 	}
 
-	mask, err := NewTextRendererWithFontMap(m).Raster(string(glyph), 32, false)
+	mask, err := NewTextRendererWithFontMap(m).Raster(string(glyph), TextSpec{Size: 32, Weight: 400}, false)
 	if err != nil {
 		t.Fatalf("Raster(%q): %v", string(glyph), err)
 	}
@@ -90,12 +90,12 @@ func TestTextMeasureAndRaster(t *testing.T) {
 	face := mustTestFace(t)
 	r := NewTextRenderer(face)
 
-	w, h, err := r.Measure("sysc-shell", 16, false)
+	w, h, err := r.Measure("sysc-shell", TextSpec{Size: 16, Weight: 400}, false)
 	if err != nil || w <= 0 || h <= 0 {
 		t.Fatalf("measure = %dx%d, %v", w, h, err)
 	}
 
-	mask, err := r.Raster("sysc-shell", 16, false)
+	mask, err := r.Raster("sysc-shell", TextSpec{Size: 16, Weight: 400}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,15 +121,15 @@ func TestTextRendererUsesPerRuneFallbackForAllOperations(t *testing.T) {
 
 	fonts := newFixtureFontMap(t)
 	const mixed = "sysc عربية"
-	if runs := fonts.SplitRuns(mixed); len(runs) < 2 {
+	if runs := fonts.SplitRuns(mixed, FaceRequest{}); len(runs) < 2 {
 		t.Fatalf("fixture produced %d face runs, want Latin plus Arabic fallback", len(runs))
 	}
 	r := NewTextRendererWithFontMap(fonts)
-	w, h, err := r.Measure(mixed, 32, false)
+	w, h, err := r.Measure(mixed, TextSpec{Size: 32, Weight: 400}, false)
 	if err != nil || w <= 0 || h <= 0 {
 		t.Fatalf("Measure = %dx%d, %v", w, h, err)
 	}
-	mask, err := r.Raster(mixed, 32, false)
+	mask, err := r.Raster(mixed, TextSpec{Size: 32, Weight: 400}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestTextRendererUsesPerRuneFallbackForAllOperations(t *testing.T) {
 		t.Fatalf("Raster advance=%d/nonzero=%v, want measured width %d with pixels",
 			mask.Advance, hasNonZeroAlpha(mask), w)
 	}
-	fitted, advance, err := r.Truncate(mixed+mixed, 32, w, false)
+	fitted, advance, err := r.Truncate(mixed+mixed, TextSpec{Size: 32, Weight: 400}, w, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestTextShapesJoinedScript(t *testing.T) {
 	// and so keeps its nominal glyph at the start of a word.
 	const joined = "عربية"
 
-	out, err := r.Shape(joined, 32, false)
+	out, err := r.Shape(joined, TextSpec{Size: 32, Weight: 400}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,13 +183,13 @@ func TestTextShapesJoinedScript(t *testing.T) {
 		}
 	}
 
-	w, h, err := r.Measure(joined, 32, false)
+	w, h, err := r.Measure(joined, TextSpec{Size: 32, Weight: 400}, false)
 	if err != nil || w <= 0 || h <= 0 {
 		t.Fatalf("measure = %dx%d, %v", w, h, err)
 	}
 
 	// Shaping must be stable across calls.
-	again, err := r.Shape(joined, 32, false)
+	again, err := r.Shape(joined, TextSpec{Size: 32, Weight: 400}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestTextShapesJoinedScript(t *testing.T) {
 		}
 	}
 
-	mask, err := r.Raster(joined, 32, false)
+	mask, err := r.Raster(joined, TextSpec{Size: 32, Weight: 400}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,13 +224,13 @@ func TestTextRejectsInvalidSize(t *testing.T) {
 
 	r := NewTextRenderer(mustTestFace(t))
 	for _, size := range []int{0, -16} {
-		if _, _, err := r.Measure("sysc-shell", size, false); err == nil {
+		if _, _, err := r.Measure("sysc-shell", TextSpec{Size: size, Weight: 400}, false); err == nil {
 			t.Errorf("Measure accepted size %d", size)
 		}
-		if _, err := r.Raster("sysc-shell", size, false); err == nil {
+		if _, err := r.Raster("sysc-shell", TextSpec{Size: size, Weight: 400}, false); err == nil {
 			t.Errorf("Raster accepted size %d", size)
 		}
-		if _, err := r.Shape("sysc-shell", size, false); err == nil {
+		if _, err := r.Shape("sysc-shell", TextSpec{Size: size, Weight: 400}, false); err == nil {
 			t.Errorf("Shape accepted size %d", size)
 		}
 	}
@@ -315,7 +315,7 @@ func TestTabularFiguresGiveEveryDigitTheSameWidth(t *testing.T) {
 	widths := make(map[int]string)
 	for d := 0; d <= 9; d++ {
 		s := fmt.Sprintf("%d%d:%d%d", d, d, d, d)
-		w, _, err := r.Measure(s, 14, true)
+		w, _, err := r.Measure(s, TextSpec{Size: 14, Weight: 400}, true)
 		if err != nil {
 			t.Fatalf("Measure(%q): %v", s, err)
 		}
@@ -332,11 +332,11 @@ func TestTheTabularFlagReachesTheShaper(t *testing.T) {
 	t.Parallel()
 	r := NewTextRenderer(mustTestFace(t))
 
-	tab, _, err := r.Measure("00:00", 14, true)
+	tab, _, err := r.Measure("00:00", TextSpec{Size: 14, Weight: 400}, true)
 	if err != nil {
 		t.Fatalf("Measure: %v", err)
 	}
-	prop, _, err := r.Measure("00:00", 14, false)
+	prop, _, err := r.Measure("00:00", TextSpec{Size: 14, Weight: 400}, false)
 	if err != nil {
 		t.Fatalf("Measure: %v", err)
 	}

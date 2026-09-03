@@ -29,7 +29,7 @@ func TestToastCardHeightFollowsContent(t *testing.T) {
 		{Kind: ui.KindText, Text: "second body line so the stack clears 96"},
 		{Kind: ui.KindButton, Text: "Open", Padding: 4},
 	}}
-	measure := func(text string, _ bool) (int, int) { return len(text) * 8, 16 }
+	measure := func(text string, _ ui.TextAttrs) (int, int) { return len(text) * 8, 16 }
 	h, err := ui.ContentHeight(root, toastCardWidth, measure)
 	if err != nil {
 		t.Fatal(err)

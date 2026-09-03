@@ -101,11 +101,15 @@ var tabularFigures = []shaping.FontFeature{{Tag: ot.MustNewTag("tnum"), Value: 1
 
 // Shape lays out one run at the given physical pixel size. When tabular is
 // set, digits shape with equal advances.
-func (r *TextRenderer) Shape(text string, size int, tabular bool) (shaping.Output, error) {
+func (r *TextRenderer) Shape(text string, spec TextSpec, tabular bool) (shaping.Output, error) {
 	if r == nil || r.face == nil {
 		return shaping.Output{}, fmt.Errorf("render: nil face")
 	}
-	return r.shapeFace(r.face, text, size, tabular)
+	face := r.face
+	if r.fontMap != nil && text != "" {
+		face = r.fontMap.Face([]rune(text)[0], spec.Face())
+	}
+	return r.shapeFace(face, text, spec.Size, tabular)
 }
 
 func (r *TextRenderer) shapeFace(face *font.Face, text string, size int, tabular bool) (shaping.Output, error) {
@@ -144,13 +148,13 @@ type shapedFaceRun struct {
 	output    shaping.Output
 }
 
-func (r *TextRenderer) shapeRuns(text string, size int, tabular bool) ([]shapedFaceRun, error) {
+func (r *TextRenderer) shapeRuns(text string, spec TextSpec, tabular bool) ([]shapedFaceRun, error) {
 	if r == nil || r.face == nil {
 		return nil, fmt.Errorf("render: nil face")
 	}
 	fontRuns := []Run{{Face: r.face, Text: text}}
 	if r.fontMap != nil {
-		fontRuns = r.fontMap.SplitRuns(text)
+		fontRuns = r.fontMap.SplitRuns(text, spec.Face())
 		if text == "" {
 			fontRuns = []Run{{Face: r.face}}
 		}
@@ -158,7 +162,7 @@ func (r *TextRenderer) shapeRuns(text string, size int, tabular bool) ([]shapedF
 	shaped := make([]shapedFaceRun, 0, len(fontRuns))
 	runeStart := 0
 	for _, run := range fontRuns {
-		out, err := r.shapeFace(run.Face, run.Text, size, tabular)
+		out, err := r.shapeFace(run.Face, run.Text, spec.Size, tabular)
 		if err != nil {
 			return nil, err
 		}
@@ -181,8 +185,8 @@ func shapedMetrics(runs []shapedFaceRun) (advance fixed.Int26_6, width, height, 
 }
 
 // Measure reports the advance width and line height of a run in pixels.
-func (r *TextRenderer) Measure(text string, size int, tabular bool) (int, int, error) {
-	runs, err := r.shapeRuns(text, size, tabular)
+func (r *TextRenderer) Measure(text string, spec TextSpec, tabular bool) (int, int, error) {
+	runs, err := r.shapeRuns(text, spec, tabular)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -194,13 +198,13 @@ func (r *TextRenderer) Measure(text string, size int, tabular bool) (int, int, e
 // layer when the run contains bitmap emoji. The tabular flag must match the
 // one measurement used, or the drawn run and the space reserved for it would
 // disagree.
-func (r *TextRenderer) Raster(text string, size int, tabular bool) (Mask, error) {
-	runs, err := r.shapeRuns(text, size, tabular)
+func (r *TextRenderer) Raster(text string, spec TextSpec, tabular bool) (Mask, error) {
+	runs, err := r.shapeRuns(text, spec, tabular)
 	if err != nil {
 		return Mask{}, err
 	}
 
-	return rasterRuns(runs, size)
+	return rasterRuns(runs, spec.Size)
 }
 
 // rasterRuns draws already-shaped runs into an alpha mask. It is separate from

@@ -55,7 +55,7 @@ func ContentHeight(n *Node, width int, measure MeasureText) (int, error) {
 func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 	switch n.Kind {
 	case KindText, KindTab:
-		_, h := measure(n.Text, n.Tabular)
+		_, h := measure(n.Text, TextAttrsOf(n))
 		return h, nil
 	case KindMeter:
 		if n.Value < 0 || n.Value > 1 {
@@ -90,7 +90,7 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 		_, h, err := measureButton(n, measure)
 		return h, err
 	case KindDragSource:
-		_, h := measure(n.Text, n.Tabular)
+		_, h := measure(n.Text, TextAttrsOf(n))
 		return h + 2*n.Padding, nil
 	case KindIcon:
 		return IconSize(n), nil
@@ -101,7 +101,7 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 		if n.ImageSize > 0 {
 			return n.ImageSize, nil
 		}
-		_, h := measure("", n.Tabular)
+		_, h := measure("", TextAttrsOf(n))
 		return h, nil
 	case KindToggle:
 		if n.Role == "checkbox" {
@@ -111,7 +111,7 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 	case KindSlider:
 		return SliderKnob, nil
 	case KindMenu:
-		_, h := measure(n.Text, n.Tabular)
+		_, h := measure(n.Text, TextAttrsOf(n))
 		for _, c := range n.Children {
 			if c == nil {
 				continue
@@ -138,13 +138,13 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 					lines++
 				}
 			}
-			_, lh := measure(" ", n.Tabular)
+			_, lh := measure(" ", TextAttrsOf(n))
 			if lh <= 0 {
 				lh = 16
 			}
 			return lines*lh + 2*n.Padding, nil
 		}
-		_, h := measure(sample, n.Tabular)
+		_, h := measure(sample, TextAttrsOf(n))
 		return h + 2*n.Padding, nil
 	case KindScroll, KindVirtualList:
 		if n.Height > 0 {
@@ -243,7 +243,7 @@ func placeColumnChild(n *Node, box Rect, measure MeasureText) error {
 		return layoutScroll(n, box, measure)
 	case KindMenu:
 		n.Bounds = box
-		_, fh := measure(n.Text, n.Tabular)
+		_, fh := measure(n.Text, TextAttrsOf(n))
 		y := box.Y + fh
 		for _, c := range n.Children {
 			if c == nil {

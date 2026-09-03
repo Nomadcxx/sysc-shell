@@ -114,6 +114,39 @@ type TextSpec struct {
 	Italic bool
 }
 
+// Face is the resolution request this spec makes of the font map.
+func (s TextSpec) Face() FaceRequest {
+	return FaceRequest{Family: s.Family, Weight: s.Weight, Italic: s.Italic}
+}
+
+// AtSize returns the spec at a physical pixel size. Layout scales the logical
+// size once and hands the result to shaping, so measurement and paint cannot
+// round differently.
+func (s TextSpec) AtSize(size int) TextSpec {
+	s.Size = size
+	return s
+}
+
+// Bolder returns the spec one step heavier, for a run of body text a card
+// marks bold. It moves the requested weight rather than thickening strokes,
+// so the face the scanner returns is a real bold cut where one exists.
+func (s TextSpec) Bolder() TextSpec {
+	if s.Weight < 400 {
+		s.Weight = 400
+	}
+	s.Weight += 300
+	if s.Weight > theme.FontWeightMax {
+		s.Weight = theme.FontWeightMax
+	}
+	return s
+}
+
+// Italicised returns the spec in italic.
+func (s TextSpec) Italicised() TextSpec {
+	s.Italic = true
+	return s
+}
+
 // textRoleCount bounds the role table. It tracks theme.RoleMono, the last
 // role, so adding a role without extending the table fails to compile.
 const textRoleCount = int(theme.RoleMono) + 1

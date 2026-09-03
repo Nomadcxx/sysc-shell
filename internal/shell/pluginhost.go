@@ -62,7 +62,7 @@ type pluginHost struct {
 	catalog      plugin.Catalog
 }
 
-func pluginMeasure(s string, _ bool) (int, int) { return len(s) * 8, 16 }
+func pluginMeasure(s string, _ ui.TextAttrs) (int, int) { return len(s) * 8, 16 }
 
 // pluginBarViewWidth is the prepare slot for a plugin bar tree. Camera+Record+Stop
 // with the error-fill Record chip is ~128px under pluginMeasure; 120 failed and

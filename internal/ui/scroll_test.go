@@ -4,7 +4,7 @@ import "testing"
 
 func TestScrollClampsOffset(t *testing.T) {
 	t.Parallel()
-	measure := func(s string, _ bool) (int, int) {
+	measure := func(s string, _ TextAttrs) (int, int) {
 		if s == "tall" {
 			return 400, 2000
 		}
@@ -26,7 +26,7 @@ func TestScrollClampsOffset(t *testing.T) {
 
 func TestVirtualListVisibleRange(t *testing.T) {
 	t.Parallel()
-	measure := func(string, bool) (int, int) { return 400, 16 }
+	measure := func(string, TextAttrs) (int, int) { return 400, 16 }
 	v := &Node{Kind: KindVirtualList, ItemCount: 500, ItemHeight: 40}
 	if err := LayoutColumn(v, Rect{W: 400, H: 600}, measure); err != nil {
 		t.Fatal(err)

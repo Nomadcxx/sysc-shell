@@ -5,6 +5,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/go-text/typesetting/language"
 )
@@ -58,7 +59,7 @@ func TestPaintKeepsColorEmojiUntinted(t *testing.T) {
 	c := newTestCanvas(t, 64, 48)
 	ink := Color{R: 0xff, G: 0x00, B: 0xff, A: 0xff}
 	err := paintTextColor(c, string(glyph), ui.Rect{X: 4, Y: 4, W: 56, H: 40},
-		NewTextRendererWithFontMap(m), testStyle, 32, false, ink, false, false, false)
+		NewTextRendererWithFontMap(m), testStyle, TextSpec{Size: 32, Weight: 400}, false, ink, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,27 +227,87 @@ func paintSingleText(t *testing.T, bold, italic, underline bool) *Canvas {
 	return c
 }
 
-func TestPaintTextStylesChangeThePaintedInk(t *testing.T) {
+func TestPaintTextUnderlineAddsItsOwnRule(t *testing.T) {
 	t.Parallel()
 	fg := testStyle.Foreground
-
 	plain := litPixels(paintSingleText(t, false, false, false), fg)
-	bold := litPixels(paintSingleText(t, true, false, false), fg)
-	if bold <= plain {
-		t.Fatalf("bold ink %d <= plain %d; style was not painted", bold, plain)
-	}
-
 	under := litPixels(paintSingleText(t, false, false, true), fg)
 	if under <= plain {
 		t.Fatalf("underline ink %d <= plain %d; rule was not painted", under, plain)
 	}
+}
 
-	// Synthetic italic shears the mask rightward toward the baseline, so ink
-	// moves relative to the plain run: the two canvases must differ.
-	it := paintSingleText(t, false, true, false)
-	same := paintSingleText(t, false, false, false)
-	if string(it.Pix) == string(same.Pix) {
-		t.Fatal("italic painted identically to plain; shear was not applied")
+// TestPaintTextWeightAndSlantAskForAFace replaces an earlier check that
+// counted ink. Bold and italic used to be synthesized -- a re-blend at a
+// one-pixel offset and a sheared mask -- so they always changed the pixels
+// even when the family had no such cut. They are face requests now, so the
+// thing to assert is the request: whether the pixels differ depends on what
+// the font set actually holds, which a unit test must not depend on.
+func TestPaintTextWeightAndSlantAskForAFace(t *testing.T) {
+	t.Parallel()
+	base := SpecFor(testStyle, ui.TextAttrs{})
+	bold := SpecFor(testStyle, ui.TextAttrs{Bold: true})
+	italic := SpecFor(testStyle, ui.TextAttrs{Italic: true})
+
+	if bold.Weight <= base.Weight {
+		t.Errorf("bold weight %d, want heavier than %d", bold.Weight, base.Weight)
+	}
+	if !italic.Italic || base.Italic {
+		t.Errorf("italic = %v, plain = %v", italic.Italic, base.Italic)
+	}
+	// The request is what reaches the font map, so the three must not collapse
+	// onto one cache entry.
+	if bold.Face() == base.Face() || italic.Face() == base.Face() {
+		t.Error("bold or italic resolved the same face request as plain text")
+	}
+}
+
+func TestPaintTextRoleReachesTheSpec(t *testing.T) {
+	t.Parallel()
+	style := testStyle
+	style.Type = TypeSet{Family: "Fixture"}
+	style.Type.Roles[theme.RoleBody] = TextSpec{Family: "Fixture", Size: 14, Weight: 400}
+	style.Type.Roles[theme.RoleTitle] = TextSpec{Family: "Fixture", Size: 20, Weight: 600}
+	style.Type.Roles[theme.RoleMono] = TextSpec{Family: "Mono", Size: 13, Weight: 400}
+
+	for _, tc := range []struct {
+		role   theme.TextRole
+		size   int
+		weight int
+		family string
+	}{
+		{theme.RoleBody, 14, 400, "Fixture"},
+		{theme.RoleTitle, 20, 600, "Fixture"},
+		{theme.RoleMono, 13, 400, "Mono"},
+	} {
+		got := SpecFor(style, ui.TextAttrs{Role: tc.role})
+		if got.Size != tc.size || got.Weight != tc.weight || got.Family != tc.family {
+			t.Errorf("%s = %+v, want size %d weight %d family %q",
+				tc.role, got, tc.size, tc.weight, tc.family)
+		}
+	}
+}
+
+// TestMeasureAndPaintResolveTheSameSpec is the invariant the role table exists
+// for: a label measured as body text and painted as a medium-weight label
+// reserves the wrong width and then ellipsizes text that fits.
+func TestMeasureAndPaintResolveTheSameSpec(t *testing.T) {
+	t.Parallel()
+	style := testStyle
+	style.Type = TypeSet{Family: "Fixture"}
+	style.Type.Roles[theme.RoleBody] = TextSpec{Family: "Fixture", Size: 14, Weight: 400}
+	style.Type.Roles[theme.RoleLabel] = TextSpec{Family: "Fixture", Size: 14, Weight: 500}
+
+	button := &ui.Node{Kind: ui.KindButton, Text: "Apply"}
+	// Layout asks through TextAttrsOf; paint asks through textSpec.
+	measured := SpecFor(style, ui.TextAttrsOf(button))
+	painted := textSpec(style, button)
+	if measured != painted {
+		t.Fatalf("measure resolved %+v, paint resolved %+v", measured, painted)
+	}
+	// And a button labels itself, so it is not measured as body text.
+	if measured.Weight != 500 {
+		t.Errorf("button label weight = %d, want the label role's 500", measured.Weight)
 	}
 }
 
@@ -255,8 +316,8 @@ func paintTree(t *testing.T, c *Canvas, style Style) *ui.Node {
 	t.Helper()
 
 	r := NewTextRenderer(mustTestFace(t))
-	measure := func(s string, tabular bool) (int, int) {
-		w, h, err := r.Measure(s, style.Size, tabular)
+	measure := func(s string, tabular ui.TextAttrs) (int, int) {
+		w, h, err := r.Measure(s, TextSpec{Size: style.Size, Weight: 400}, tabular.Tabular)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -413,8 +474,8 @@ func TestPaintScalesToPhysicalPixels(t *testing.T) {
 
 	c := newTestCanvas(t, canvasW*3/2, canvasH*3/2)
 	r := NewTextRenderer(mustTestFace(t))
-	measure := func(s string, tabular bool) (int, int) {
-		w, h, err := r.Measure(s, style.Size, tabular)
+	measure := func(s string, tabular ui.TextAttrs) (int, int) {
+		w, h, err := r.Measure(s, TextSpec{Size: style.Size, Weight: 400}, tabular.Tabular)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -467,7 +528,7 @@ func TestPaintClipsGlyphsToCanvas(t *testing.T) {
 
 	c := newTestCanvas(t, canvasW, canvasH)
 	r := NewTextRenderer(mustTestFace(t))
-	mask, err := r.Raster("sysc-shell", 16, false)
+	mask, err := r.Raster("sysc-shell", TextSpec{Size: 16, Weight: 400}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -751,7 +812,7 @@ func TestPaintScrollDrawsAThumbWhenContentOverflows(t *testing.T) {
 	style := testStyle
 	style.Body = ui.Rect{W: w, H: h}
 	style.Radius = 0
-	measure := func(s string, _ bool) (int, int) {
+	measure := func(s string, _ ui.TextAttrs) (int, int) {
 		if s == "tall" {
 			return 80, 400
 		}
@@ -910,8 +971,8 @@ func paintChromeNode(t *testing.T, n *ui.Node, style Style) *Canvas {
 	fillRect(c, ui.Rect{W: w, H: h}, style.Background)
 
 	r := NewTextRenderer(mustTestFace(t))
-	measure := func(s string, tabular bool) (int, int) {
-		tw, th, err := r.Measure(s, style.Size, tabular)
+	measure := func(s string, tabular ui.TextAttrs) (int, int) {
+		tw, th, err := r.Measure(s, TextSpec{Size: style.Size, Weight: 400}, tabular.Tabular)
 		if err != nil {
 			t.Fatal(err)
 		}

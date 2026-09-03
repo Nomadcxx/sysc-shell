@@ -73,7 +73,7 @@ func TestDragDropDeliversPayloadAndCancelClears(t *testing.T) {
 
 func TestListHasFixedViewportAndKeyboardScroll(t *testing.T) {
 	t.Parallel()
-	measure := func(s string, _ bool) (int, int) { return len(s) * 8, 20 }
+	measure := func(s string, _ TextAttrs) (int, int) { return len(s) * 8, 20 }
 	list := &Node{Kind: KindScroll, Height: 80, Gap: 0}
 	for i := 0; i < 10; i++ {
 		list.Children = append(list.Children, &Node{Kind: KindText, Text: "row"})

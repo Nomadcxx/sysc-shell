@@ -2,7 +2,6 @@ package render
 
 import (
 	"fmt"
-	"image"
 	"math"
 	"strings"
 
@@ -119,7 +118,7 @@ func squareAttachedEdge(c *Canvas, box ui.Rect, radius int, edge string, col Col
 func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
 	switch n.Kind {
 	case ui.KindText:
-		return paintText(c, n.Text, style.Scale120.PhysicalRect(n.Bounds), text, style, size, n.Tabular, n.Tone, n.Bold, n.Italic, n.Underline)
+		return paintText(c, n.Text, style.Scale120.PhysicalRect(n.Bounds), text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline)
 
 	case ui.KindMeter:
 		if n.Absent {
@@ -213,7 +212,7 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 		return nil
 
 	case ui.KindTab:
-		return paintText(c, n.Text, style.Scale120.PhysicalRect(n.Bounds), text, style, size, n.Tabular, n.Tone, n.Bold, n.Italic, n.Underline)
+		return paintText(c, n.Text, style.Scale120.PhysicalRect(n.Bounds), text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline)
 
 	default:
 		return fmt.Errorf("unsupported kind %d", n.Kind)
@@ -342,7 +341,7 @@ func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 		}
 	}
 	c.FillRounded(field, style.Scale120.Physical(6), style.Track)
-	_ = paintText(c, n.Text, field, text, style, size, n.Tabular, n.Tone, n.Bold, n.Italic, n.Underline)
+	_ = paintText(c, n.Text, field, text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline)
 	if len(n.Children) == 0 {
 		return
 	}
@@ -355,7 +354,7 @@ func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 		if child.Value != 0 {
 			c.FillRounded(cb, style.Scale120.Physical(4), style.accent())
 		}
-		_ = paintText(c, child.Text, cb, text, style, size, child.Tabular, child.Tone, child.Bold, child.Italic, child.Underline)
+		_ = paintText(c, child.Text, cb, text, style, textSpec(style, child), child.Tabular, child.Tone, child.Underline)
 	}
 }
 
@@ -395,18 +394,18 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 	// A Search field's glass is the affordance; painting Name as a
 	// placeholder put bright body text in the well.
 	if n.Text == "" && n.Preedit == "" && n.Name != "" && mark == 0 {
-		_ = paintText(c, n.Name, phys, text, style, size, n.Tabular, n.Tone, false, true, false)
+		_ = paintText(c, n.Name, phys, text, style, textSpec(style, n).Italicised(), n.Tabular, n.Tone, false)
 	}
 	committed := n.Text
 	if n.Cursor >= 0 && n.Cursor <= len(n.Text) {
 		committed = n.Text[:n.Cursor]
 	}
-	if err := paintText(c, n.Text, phys, text, style, size, n.Tabular, n.Tone, n.Bold, n.Italic, n.Underline); err != nil {
+	if err := paintText(c, n.Text, phys, text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline); err != nil {
 		return err
 	}
 	prefixW := 0
 	if text != nil && committed != "" {
-		if w, _, err := text.Measure(committed, size, n.Tabular); err == nil {
+		if w, _, err := text.Measure(committed, textSpec(style, n), n.Tabular); err == nil {
 			prefixW = w
 		}
 	}
@@ -414,10 +413,10 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 		pre := phys
 		pre.X += prefixW
 		pre.W -= prefixW
-		if err := paintText(c, n.Preedit, pre, text, style, size, n.Tabular, n.Tone, n.Bold, n.Italic, n.Underline); err != nil {
+		if err := paintText(c, n.Preedit, pre, text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline); err != nil {
 			return err
 		}
-		if pw, _, err := text.Measure(n.Preedit, size, n.Tabular); err == nil {
+		if pw, _, err := text.Measure(n.Preedit, textSpec(style, n), n.Tabular); err == nil {
 			underline := ui.Rect{X: pre.X, Y: pre.Y + pre.H - 1, W: pw, H: 1}
 			fillRect(c, underline, style.Foreground)
 			prefixW += pw
@@ -431,7 +430,7 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 func paintMultilineField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int, phys ui.Rect) error {
 	lineH := size
 	if text != nil {
-		if _, h, err := text.Measure(" ", size, n.Tabular); err == nil && h > 0 {
+		if _, h, err := text.Measure(" ", textSpec(style, n), n.Tabular); err == nil && h > 0 {
 			lineH = h
 		}
 	}
@@ -453,7 +452,7 @@ func paintMultilineField(c *Canvas, n *ui.Node, text *TextRenderer, style Style,
 		box := phys
 		box.Y += i * lineH
 		box.H = lineH
-		if err := paintText(c, line, box, text, style, size, n.Tabular, n.Tone, n.Bold, n.Italic, n.Underline); err != nil {
+		if err := paintText(c, line, box, text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline); err != nil {
 			return err
 		}
 		off = end + 1
@@ -464,7 +463,7 @@ func paintMultilineField(c *Canvas, n *ui.Node, text *TextRenderer, style Style,
 		if caretCol < len(prefix) {
 			prefix = prefix[:caretCol]
 		}
-		if w, _, err := text.Measure(prefix, size, n.Tabular); err == nil {
+		if w, _, err := text.Measure(prefix, textSpec(style, n), n.Tabular); err == nil {
 			prefixW = w
 		}
 	}
@@ -521,16 +520,46 @@ func paintGraph(c *Canvas, n *ui.Node, box ui.Rect, style Style) error {
 // Truncation happens here rather than in layout because it needs cluster
 // measurement, which the text renderer owns. The box is already physical, so
 // the available width is compared in the same units the shaper reports.
-func paintText(c *Canvas, s string, box ui.Rect, text *TextRenderer, style Style, size int, tabular bool, tone ui.Tone, bold, italic, underline bool) error {
-	return paintTextColor(c, s, box, text, style, size, tabular,
-		textColor(style, tone), bold, italic, underline)
+func paintText(c *Canvas, s string, box ui.Rect, text *TextRenderer, style Style, spec TextSpec, tabular bool, tone ui.Tone, underline bool) error {
+	return paintTextColor(c, s, box, text, style, spec, tabular,
+		textColor(style, tone), underline)
 }
 
-func paintTextColor(c *Canvas, s string, box ui.Rect, text *TextRenderer, style Style, size int, tabular bool, fg Color, bold, italic, underline bool) error {
+// textSpec resolves the one spec a node's text is measured and painted with:
+// its semantic role, the weight and slant the node asks for on top of that
+// role, and the physical size for the surface's render scale.
+//
+// Measurement and paint both come through here, so a label cannot be measured
+// at one weight and drawn at another.
+func textSpec(style Style, n *ui.Node) TextSpec {
+	return SpecFor(style, ui.TextAttrsOf(n))
+}
+
+// SpecFor resolves the spec for one measurement or paint request. Layout
+// measures through it and paint resolves through it, which is what keeps a
+// medium-weight label from being measured as regular body text and then drawn
+// wider than the space reserved for it.
+func SpecFor(style Style, attrs ui.TextAttrs) TextSpec {
+	spec := style.Type.Spec(attrs.Role)
+	if spec.Size <= 0 {
+		// A style assembled without a role table -- a surface painting before
+		// its theme resolved -- still measures at the one size it carries.
+		spec = TextSpec{Family: style.Type.Family, Size: style.Size, Weight: 400}
+	}
+	if attrs.Bold {
+		spec = spec.Bolder()
+	}
+	if attrs.Italic {
+		spec = spec.Italicised()
+	}
+	return spec.AtSize(style.Scale120.Physical(spec.Size))
+}
+
+func paintTextColor(c *Canvas, s string, box ui.Rect, text *TextRenderer, style Style, spec TextSpec, tabular bool, fg Color, underline bool) error {
 	if s == "" || box.W <= 0 {
 		return nil
 	}
-	fitted, _, err := text.Truncate(s, size, box.W, tabular)
+	fitted, _, err := text.Truncate(s, spec, box.W, tabular)
 	if err != nil {
 		return err
 	}
@@ -539,49 +568,23 @@ func paintTextColor(c *Canvas, s string, box ui.Rect, text *TextRenderer, style 
 	}
 	// Raster with the same flag measurement used, or the drawn run and the
 	// space reserved for it would disagree.
-	mask, err := text.Raster(fitted, size, tabular)
+	mask, err := text.Raster(fitted, spec, tabular)
 	if err != nil {
 		return err
 	}
-	alpha := mask.Alpha
-	if italic {
-		alpha = shearMask(alpha, size/7+1)
-	}
-	blendMask(c, alpha, box.X, box.Y, fg)
+	// Weight and slant are resolved faces now, not a re-blend at an offset
+	// and a sheared mask. The scanner returns the closest cut it has, so a
+	// family with no bold degrades to its regular rather than to a smear.
+	blendMask(c, mask.Alpha, box.X, box.Y, fg)
 	if mask.Color != nil {
 		paintImage(c, ui.Rect{X: box.X, Y: box.Y, W: mask.Color.Width, H: mask.Color.Height}, mask.Color)
 	}
-	if bold {
-		// ponytail: synthetic bold by offset re-blend, no per-weight faces.
-		// Ceiling: no real bold or italic metrics, so heavy scripts can smear;
-		// upgrade path is resolving a bold/italic face per family in FontMap.
-		blendMask(c, alpha, box.X+1, box.Y, fg)
-	}
 	if underline {
-		th := max(size/16, 1)
+		th := max(spec.Size/16, 1)
 		rule := ui.Rect{X: box.X, Y: box.Y + box.H - th, W: min(mask.Advance, box.W), H: th}
 		fillRect(c, rule, fg)
 	}
 	return nil
-}
-
-// shearMask shears an alpha mask rightward toward the baseline, the cheap half
-// of synthetic italics. shift is the total horizontal displacement over the
-// mask's height.
-func shearMask(src *image.Alpha, shift int) *image.Alpha {
-	if src == nil || shift <= 0 {
-		return src
-	}
-	w := src.Bounds().Dx()
-	h := src.Bounds().Dy()
-	out := image.NewAlpha(image.Rect(0, 0, w+shift, h))
-	for y := 0; y < h; y++ {
-		dx := shift * (h - 1 - y) / max(h-1, 1)
-		for x := 0; x < w; x++ {
-			out.SetAlpha(x+dx, y, src.AlphaAt(x, y))
-		}
-	}
-	return out
 }
 
 // State-layer opacities from the catalogue's colour recipe. The layer is the
@@ -719,7 +722,7 @@ func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size in
 		H: n.Bounds.H - 2*n.Padding,
 	}
 	return paintTextColor(c, n.Text, style.Scale120.PhysicalRect(label), text, inner,
-		size, n.Tabular, fg, n.Bold, n.Italic, n.Underline)
+		textSpec(inner, n), n.Tabular, fg, n.Underline)
 }
 
 // paintIcon draws one named glyph from the embedded Material subset, centred in

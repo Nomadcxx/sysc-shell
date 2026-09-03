@@ -88,7 +88,7 @@ func TestKindIconUsesTheMaterialFaceNotTheBodyFace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, err := r.Raster("check", 24, false)
+	body, err := r.Raster("check", TextSpec{Size: 24, Weight: 400}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

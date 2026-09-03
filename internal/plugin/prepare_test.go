@@ -11,7 +11,7 @@ import (
 )
 
 // measureFixed gives every glyph a width of 8 and every line a height of 16.
-func measureFixed(s string, _ bool) (int, int) { return len(s) * 8, 16 }
+func measureFixed(s string, _ ui.TextAttrs) (int, int) { return len(s) * 8, 16 }
 
 func barJob(viewID string, revision uint64, root *v1.Node) Job {
 	return Job{
@@ -112,7 +112,7 @@ func TestSubmitDoesNotBlockWhileEveryWorkerIsBusy(t *testing.T) {
 	// shell's dispatch.
 	release := make(chan struct{})
 	var once sync.Once
-	slow := func(s string, tabular bool) (int, int) {
+	slow := func(s string, tabular ui.TextAttrs) (int, int) {
 		<-release
 		return measureFixed(s, tabular)
 	}
@@ -146,7 +146,7 @@ func TestOnePendingJobPerViewReplacesOlderWork(t *testing.T) {
 	// intermediate ones is work with no consumer.
 	release := make(chan struct{})
 	var prepared atomic.Int64
-	slow := func(s string, tabular bool) (int, int) {
+	slow := func(s string, tabular ui.TextAttrs) (int, int) {
 		<-release
 		prepared.Add(1)
 		return measureFixed(s, tabular)
@@ -258,7 +258,7 @@ func TestPrepareBudgetDegradesAfterThreeOverruns(t *testing.T) {
 	t.Parallel()
 	now := time.Unix(0, 0)
 	var jump time.Duration
-	measure := func(s string, tab bool) (int, int) {
+	measure := func(s string, tab ui.TextAttrs) (int, int) {
 		if jump > 0 {
 			now = now.Add(jump)
 			jump = 0
@@ -293,7 +293,7 @@ func TestPrepareBudgetRecoversAfterACleanSnapshot(t *testing.T) {
 	t.Parallel()
 	now := time.Unix(0, 0)
 	var jump time.Duration
-	measure := func(s string, tab bool) (int, int) {
+	measure := func(s string, tab ui.TextAttrs) (int, int) {
 		if jump > 0 {
 			now = now.Add(jump)
 			jump = 0
@@ -322,7 +322,7 @@ func TestPrepareBudgetRecoversAfterACleanSnapshot(t *testing.T) {
 func TestPrepareFairnessFloodDoesNotStarve(t *testing.T) {
 	t.Parallel()
 	release := make(chan struct{})
-	slow := func(s string, tab bool) (int, int) {
+	slow := func(s string, tab ui.TextAttrs) (int, int) {
 		<-release
 		return measureFixed(s, tab)
 	}

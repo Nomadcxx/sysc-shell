@@ -354,20 +354,35 @@ func (o *owner) tooltipText(family string) *render.TextRenderer {
 // clipped the label. Measure physical, convert back.
 func (o *owner) tooltipMeasure(family string, scale ui.Scale120, fontSize int) ui.MeasureText {
 	r := o.tooltipText(family)
-	return func(text string, tabular bool) (int, int) {
+	return func(text string, attrs ui.TextAttrs) (int, int) {
 		if r == nil {
 			return ((fontSize + 1) / 2) * len(text), fontSize
 		}
-		size := scale.Physical(fontSize)
-		if size <= 0 {
-			size = fontSize
-		}
-		w, h, err := r.Measure(text, size, tabular)
+		w, h, err := r.Measure(text, tooltipSpec(family, scale, fontSize, attrs), attrs.Tabular)
 		if err != nil {
 			return ((fontSize + 1) / 2) * len(text), fontSize
 		}
 		return scale.Logical(w), scale.Logical(h)
 	}
+}
+
+// tooltipSpec is the face a tooltip shapes with. A tooltip carries one line of
+// label text and has no resolved theme to read a role table from, so it asks
+// for the bar's family at the bar's size and follows only the weight and slant
+// the node itself sets.
+func tooltipSpec(family string, scale ui.Scale120, fontSize int, attrs ui.TextAttrs) render.TextSpec {
+	size := scale.Physical(fontSize)
+	if size <= 0 {
+		size = fontSize
+	}
+	spec := render.TextSpec{Family: family, Size: size, Weight: 400}
+	if attrs.Bold {
+		spec = spec.Bolder()
+	}
+	if attrs.Italic {
+		spec = spec.Italicised()
+	}
+	return spec
 }
 
 const tooltipMaxWidth = 280
@@ -416,11 +431,8 @@ func (o *owner) measureTooltipText(host *OutputHost, text string, scale ui.Scale
 	height := bar.FontSize + 2*tooltipPad
 	width := ((bar.FontSize+1)/2)*len(text) + 2*tooltipPad
 	if r := o.tooltipText(bar.FontFamily); r != nil {
-		size := scale.Physical(bar.FontSize)
-		if size <= 0 {
-			size = bar.FontSize
-		}
-		if w, h, err := r.Measure(text, size, false); err == nil {
+		spec := tooltipSpec(bar.FontFamily, scale, bar.FontSize, ui.TextAttrs{})
+		if w, h, err := r.Measure(text, spec, false); err == nil {
 			width = scale.Logical(w) + 2*tooltipPad
 			height = scale.Logical(h) + 2*tooltipPad
 		}

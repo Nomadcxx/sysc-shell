@@ -2,6 +2,8 @@
 // All coordinates are logical pixels; painting converts them to buffer pixels.
 package ui
 
+import "github.com/Nomadcxx/sysc-shell/internal/theme"
+
 // Kind names the node types the proof tree supports.
 type Kind uint8
 
@@ -113,10 +115,14 @@ type Node struct {
 	// A clock sets it: with proportional digits the rendered width changes as
 	// the time changes, which visibly shifts a centred clock every minute.
 	Tabular bool
+	// TextRole is the semantic type role this node's text asks for. The zero
+	// value is body text, and a button whose role is unset labels itself,
+	// which is what keeps the common cases free of an explicit role.
+	TextRole theme.TextRole
 	// Bold, Italic, and Underline mark a styled run of body text. Cards carry
 	// the notification body as separate styled runs, so the style lives on the
-	// node rather than in the text. Bold and italic are synthesized at paint
-	// time; underline draws its own rule.
+	// node rather than in the text. Bold and italic move the requested weight
+	// and slant, so shaping resolves a real face; underline draws its own rule.
 	Bold      bool
 	Italic    bool
 	Underline bool
@@ -228,4 +234,41 @@ const (
 
 // MeasureText reports the logical width and height of a shaped string. The
 // tabular flag is the node's, and reaches the shaper as an OpenType feature.
-type MeasureText func(text string, tabular bool) (width, height int)
+type MeasureText func(text string, attrs TextAttrs) (width, height int)
+
+// TextAttrs is everything shaping needs to know about one text node. Layout
+// passes it so a string is measured on the face it will be painted with: a
+// label measured as regular body text and painted as a medium-weight label
+// reserves the wrong width.
+type TextAttrs struct {
+	Role    theme.TextRole
+	Tabular bool
+	Bold    bool
+	Italic  bool
+}
+
+// EffectiveTextRole is the role a node's text resolves to. A button labels
+// itself unless it names another role, which is the one default that differs
+// from body text.
+func EffectiveTextRole(n *Node) theme.TextRole {
+	if n == nil {
+		return theme.RoleBody
+	}
+	if n.TextRole == theme.RoleBody && (n.Kind == KindButton || n.Kind == KindSegmented) {
+		return theme.RoleLabel
+	}
+	return n.TextRole
+}
+
+// TextAttrsOf is the measurement request for one node.
+func TextAttrsOf(n *Node) TextAttrs {
+	if n == nil {
+		return TextAttrs{}
+	}
+	return TextAttrs{
+		Role:    EffectiveTextRole(n),
+		Tabular: n.Tabular,
+		Bold:    n.Bold,
+		Italic:  n.Italic,
+	}
+}

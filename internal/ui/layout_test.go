@@ -3,7 +3,7 @@ package ui
 import "testing"
 
 // fakeMeasure gives every glyph a width of 8 and every line a height of 16.
-func fakeMeasure(s string, _ bool) (int, int) { return len(s) * 8, 16 }
+func fakeMeasure(s string, _ TextAttrs) (int, int) { return len(s) * 8, 16 }
 
 // proofTree returns the fixed proof fixture: one row holding two text nodes, a
 // fixed-width meter, and a button.
@@ -216,7 +216,7 @@ func TestHitOutsideActionableNodes(t *testing.T) {
 func TestTextIsClampedToItsMaxWidth(t *testing.T) {
 	t.Parallel()
 	// Ten pixels per rune keeps the arithmetic obvious.
-	measure := func(s string, _ bool) (int, int) { return 10 * len([]rune(s)), 10 }
+	measure := func(s string, _ TextAttrs) (int, int) { return 10 * len([]rune(s)), 10 }
 
 	root := &Node{Kind: KindRow, Children: []*Node{
 		{Kind: KindText, Text: "aaaaaaaaaa", MaxWidth: 40},
@@ -232,7 +232,7 @@ func TestTextIsClampedToItsMaxWidth(t *testing.T) {
 // A cap wider than the text must not stretch it.
 func TestMaxWidthDoesNotPadShortText(t *testing.T) {
 	t.Parallel()
-	measure := func(s string, _ bool) (int, int) { return 10 * len([]rune(s)), 10 }
+	measure := func(s string, _ TextAttrs) (int, int) { return 10 * len([]rune(s)), 10 }
 
 	root := &Node{Kind: KindRow, Children: []*Node{
 		{Kind: KindText, Text: "ab", MaxWidth: 200},
@@ -248,7 +248,7 @@ func TestMaxWidthDoesNotPadShortText(t *testing.T) {
 // Zero means unbounded, so existing nodes are unaffected.
 func TestZeroMaxWidthIsUnbounded(t *testing.T) {
 	t.Parallel()
-	measure := func(s string, _ bool) (int, int) { return 10 * len([]rune(s)), 10 }
+	measure := func(s string, _ TextAttrs) (int, int) { return 10 * len([]rune(s)), 10 }
 
 	root := &Node{Kind: KindRow, Children: []*Node{
 		{Kind: KindText, Text: "aaaaa"},
@@ -266,7 +266,7 @@ func TestZeroMaxWidthIsUnbounded(t *testing.T) {
 // three.
 func TestTextIsFlooredAtItsMinWidth(t *testing.T) {
 	t.Parallel()
-	measure := func(s string, _ bool) (int, int) { return 10 * len([]rune(s)), 10 }
+	measure := func(s string, _ TextAttrs) (int, int) { return 10 * len([]rune(s)), 10 }
 
 	root := &Node{Kind: KindRow, Children: []*Node{
 		{Kind: KindText, Text: "9%", MinWidthText: "1000"},
@@ -282,7 +282,7 @@ func TestTextIsFlooredAtItsMinWidth(t *testing.T) {
 // Text wider than the floor keeps its natural width.
 func TestMinWidthDoesNotShrinkWideText(t *testing.T) {
 	t.Parallel()
-	measure := func(s string, _ bool) (int, int) { return 10 * len([]rune(s)), 10 }
+	measure := func(s string, _ TextAttrs) (int, int) { return 10 * len([]rune(s)), 10 }
 
 	root := &Node{Kind: KindRow, Children: []*Node{
 		{Kind: KindText, Text: "100%", MinWidthText: "9"},
@@ -298,7 +298,7 @@ func TestMinWidthDoesNotShrinkWideText(t *testing.T) {
 // The floor and the cap compose: the cap still wins over a wider floor.
 func TestMaxWidthStillCapsAFlooredNode(t *testing.T) {
 	t.Parallel()
-	measure := func(s string, _ bool) (int, int) { return 10 * len([]rune(s)), 10 }
+	measure := func(s string, _ TextAttrs) (int, int) { return 10 * len([]rune(s)), 10 }
 
 	root := &Node{Kind: KindRow, Children: []*Node{
 		{Kind: KindText, Text: "aaaaaaaa", MinWidthText: "aaaaaaa", MaxWidth: 50},
@@ -315,7 +315,7 @@ func TestMaxWidthStillCapsAFlooredNode(t *testing.T) {
 // reserves space the way a meter does rather than measuring its data.
 func TestAGraphMeasuresItsConfiguredWidth(t *testing.T) {
 	t.Parallel()
-	measure := func(s string, _ bool) (int, int) { return 10 * len([]rune(s)), 10 }
+	measure := func(s string, _ TextAttrs) (int, int) { return 10 * len([]rune(s)), 10 }
 
 	root := &Node{Kind: KindRow, Children: []*Node{
 		{Kind: KindGraph, Width: 60, Values: []float64{0.1, 0.9}},
@@ -332,7 +332,7 @@ func TestAGraphMeasuresItsConfiguredWidth(t *testing.T) {
 // when the first sample arrives.
 func TestAnEmptyGraphStillReservesItsWidth(t *testing.T) {
 	t.Parallel()
-	measure := func(s string, _ bool) (int, int) { return 10 * len([]rune(s)), 10 }
+	measure := func(s string, _ TextAttrs) (int, int) { return 10 * len([]rune(s)), 10 }
 
 	root := &Node{Kind: KindRow, Children: []*Node{{Kind: KindGraph, Width: 60}}}
 	if err := Layout(root, Rect{X: 0, Y: 0, W: 200, H: 20}, measure); err != nil {
@@ -344,7 +344,7 @@ func TestAnEmptyGraphStillReservesItsWidth(t *testing.T) {
 }
 
 func TestImageNodeReservesItsBoxInARow(t *testing.T) {
-	measure := func(string, bool) (int, int) { return 7, 20 }
+	measure := func(string, TextAttrs) (int, int) { return 7, 20 }
 	// The node reserves its box whether or not a raster has resolved, so a
 	// late decode cannot reflow the row around it.
 	for name, node := range map[string]*Node{
@@ -364,7 +364,7 @@ func TestImageNodeReservesItsBoxInARow(t *testing.T) {
 }
 
 func TestImageNodeWithoutASizeFillsTheContentHeight(t *testing.T) {
-	measure := func(string, bool) (int, int) { return 7, 20 }
+	measure := func(string, TextAttrs) (int, int) { return 7, 20 }
 	w, h, err := measureNode(&Node{Kind: KindImage}, 18, measure)
 	if err != nil {
 		t.Fatal(err)
@@ -492,7 +492,7 @@ func TestLayoutClampsOverflowingChildToRemainingWidth(t *testing.T) {
 	if right := value.Bounds.X + value.Bounds.W; right > box.W {
 		t.Fatalf("value overflows: right edge %d > %d", right, box.W)
 	}
-	natural, _ := fakeMeasure(root.Children[1].Text, false)
+	natural, _ := fakeMeasure(root.Children[1].Text, TextAttrs{})
 	if value.Bounds.W >= natural {
 		t.Fatalf("value width %d was not clamped below natural %d", value.Bounds.W, natural)
 	}
@@ -506,7 +506,7 @@ func TestLayoutClampsOverflowingChildToRemainingWidth(t *testing.T) {
 func TestMeasureSegmentedFitsItsOwnMeasurement(t *testing.T) {
 	t.Parallel()
 
-	measure := func(s string, tabular bool) (int, int) { return 10 * len(s), 20 }
+	measure := func(s string, tabular TextAttrs) (int, int) { return 10 * len(s), 20 }
 	segment := func(label string) *Node {
 		return &Node{
 			Kind: KindButton, Height: 40, Padding: 4,

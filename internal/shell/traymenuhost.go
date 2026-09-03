@@ -304,9 +304,10 @@ func (h *trayMenuHost) configure(width, height, scale120 int) error {
 	h.logicalW, h.logicalH, h.scale120 = width, height, scale120
 	h.style.Scale120 = ui.Scale120(scale120)
 	h.style.Body = ui.Rect{W: width, H: height}
-	measure := func(text string, tabular bool) (int, int) {
+	measure := func(text string, attrs ui.TextAttrs) (int, int) {
 		if h.text != nil {
-			if w, textHeight, err := h.text.Measure(text, h.style.Size, tabular); err == nil {
+			spec := render.SpecFor(h.style, attrs)
+			if w, textHeight, err := h.text.Measure(text, spec, attrs.Tabular); err == nil {
 				return w, textHeight
 			}
 		}

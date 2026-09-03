@@ -75,7 +75,7 @@ func TestMultilineSubmitOnEnterDoesNotInsert(t *testing.T) {
 
 func TestMultilineFieldGrowsWithLineCount(t *testing.T) {
 	t.Parallel()
-	measure := func(s string, _ bool) (int, int) { return len(s) * 8, 16 }
+	measure := func(s string, _ TextAttrs) (int, int) { return len(s) * 8, 16 }
 	n := &Node{Kind: KindTextField, Text: "one\ntwo\nthree", Multiline: true, Padding: 0}
 	h, err := columnChildHeight(n, 200, measure)
 	if err != nil {

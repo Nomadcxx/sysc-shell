@@ -639,13 +639,12 @@ func (h *PanelHost) measureText() ui.MeasureText {
 	if !scale.Valid() {
 		scale = ui.ScaleUnit
 	}
-	size := scale.Physical(h.theme.TextSize)
-	if size <= 0 {
-		size = h.theme.TextSize
-	}
-	return func(s string, tabular bool) (int, int) {
-		if h.text != nil && size > 0 {
-			mw, mh, err := h.text.Measure(s, size, tabular)
+	style := h.theme.Style()
+	style.Scale120 = scale
+	return func(s string, attrs ui.TextAttrs) (int, int) {
+		spec := render.SpecFor(style, attrs)
+		if h.text != nil && spec.Size > 0 {
+			mw, mh, err := h.text.Measure(s, spec, attrs.Tabular)
 			if err == nil {
 				return scale.Logical(mw), scale.Logical(mh)
 			}

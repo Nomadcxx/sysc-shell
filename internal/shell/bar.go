@@ -326,12 +326,8 @@ func (b *Bar) layoutLocked(width, height int) error {
 	// than layout had reserved and ellipsized a clock that fits.
 	//
 	// Measure at the size the painter will actually use, then convert back up.
-	size := b.style.Scale120.Physical(b.style.Size)
-	if size <= 0 {
-		size = b.style.Size
-	}
-	measure := func(s string, tabular bool) (int, int) {
-		w, h, err := b.text.Measure(s, size, tabular)
+	measure := func(s string, attrs ui.TextAttrs) (int, int) {
+		w, h, err := b.text.Measure(s, render.SpecFor(b.style, attrs), attrs.Tabular)
 		if err != nil {
 			return 0, 0
 		}

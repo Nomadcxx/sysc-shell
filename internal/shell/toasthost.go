@@ -545,9 +545,10 @@ func (h *toastHost) cardHeight(id uint32) int {
 }
 
 func (h *toastHost) measureText() ui.MeasureText {
-	return func(text string, tabular bool) (int, int) {
+	return func(text string, attrs ui.TextAttrs) (int, int) {
 		if h.text != nil {
-			if w, height, err := h.text.Measure(text, h.style.Size, tabular); err == nil {
+			spec := render.SpecFor(h.style, attrs)
+			if w, height, err := h.text.Measure(text, spec, attrs.Tabular); err == nil {
 				return w, height
 			}
 		}

@@ -89,7 +89,7 @@ func TestIconRunesResolveToTheProjectFace(t *testing.T) {
 		t.Skipf("no system font available: %v", err)
 	}
 
-	face := m.Face(iconClearDay)
+	face := m.Face(iconClearDay, FaceRequest{})
 	if face == nil {
 		t.Fatal("an icon rune resolved to no face")
 	}
@@ -107,7 +107,7 @@ func TestSplitRunsIsolatesAnIconRune(t *testing.T) {
 		t.Skipf("no system font available: %v", err)
 	}
 
-	runs := m.SplitRuns(string(iconClearDay) + " 18")
+	runs := m.SplitRuns(string(iconClearDay)+" 18", FaceRequest{})
 	if len(runs) < 2 {
 		t.Fatalf("runs = %d, want the icon split from the text", len(runs))
 	}
@@ -186,7 +186,7 @@ func TestBatteryRunesResolveToTheProjectFace(t *testing.T) {
 	if err != nil {
 		t.Skipf("no system font available: %v", err)
 	}
-	face := m.Face(iconBatteryCritical)
+	face := m.Face(iconBatteryCritical, FaceRequest{})
 	if face == nil || face == m.Primary() {
 		t.Fatal("a battery rune did not resolve to the icon face")
 	}
@@ -197,7 +197,7 @@ func TestBatteryRunesResolveToTheProjectFace(t *testing.T) {
 func glyphCoverage(t *testing.T, r rune, size int) int {
 	t.Helper()
 	tr := NewTextRenderer(loadIconFace())
-	mask, err := tr.Raster(string(r), size, false)
+	mask, err := tr.Raster(string(r), TextSpec{Size: size, Weight: 400}, false)
 	if err != nil {
 		t.Fatalf("raster %U: %v", r, err)
 	}
@@ -258,7 +258,7 @@ func TestRecorderCatalogueNamesResolve(t *testing.T) {
 		if !ok {
 			t.Fatalf("%q is missing from the catalogue", name)
 		}
-		face := m.Face(r)
+		face := m.Face(r, FaceRequest{})
 		if face == nil {
 			t.Fatalf("%q resolved to no face", name)
 		}
@@ -280,7 +280,7 @@ func TestNotifyCatalogueNamesResolve(t *testing.T) {
 		if !ok {
 			t.Fatalf("%q is missing from the catalogue", name)
 		}
-		face := m.Face(r)
+		face := m.Face(r, FaceRequest{})
 		if face == nil {
 			t.Fatalf("%q resolved to no face", name)
 		}
@@ -303,7 +303,7 @@ func TestBatteryLevelsStayDistinctAtBarSize(t *testing.T) {
 // outline clips the sides and the glyph reads as a stretched slab next to "8%".
 func TestMetricIconRasterIsSquareAtBarSize(t *testing.T) {
 	tr := NewTextRenderer(loadIconFace())
-	mask, err := tr.Raster(string(iconCPU), 14, false)
+	mask, err := tr.Raster(string(iconCPU), TextSpec{Size: 14, Weight: 400}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
