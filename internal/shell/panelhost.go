@@ -831,8 +831,14 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 	if key == keyBackspace {
 		return h.editField(r, func(f *ui.Field) { f.Backspace() })
 	}
+	// Space is both printable text and the accept key. Only a focused text
+	// field consumes it as text, so fall through rather than return when the
+	// edit does not land -- otherwise no control is ever activatable by
+	// keyboard, because every accept press is swallowed here.
 	if ch, ok := ui.EvdevText(key, h.shift); ok {
-		return h.editField(r, func(f *ui.Field) { f.Insert(ch) })
+		if h.editField(r, func(f *ui.Field) { f.Insert(ch) }) {
+			return true
+		}
 	}
 	if h.id == PanelLauncher && h.launcherKeyPress(r, key) {
 		return true
