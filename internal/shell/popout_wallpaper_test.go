@@ -1,9 +1,11 @@
 package shell
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -217,9 +219,23 @@ func TestWallpaperGridPacksFourTilesPerRow(t *testing.T) {
 	if tile.Kind != ui.KindCapsule {
 		t.Fatalf("tile kind = %v, want a capsule so the radius comes from the theme", tile.Kind)
 	}
+	// Until a thumbnail decodes, the tile keeps the same box and shows the
+	// kind glyph rather than leaving a hole in the grid (D6).
 	thumb := tile.Children[0].Children[0]
-	if thumb.Kind != ui.KindImage || thumb.ImageW != wallpaperTileWidth || thumb.ImageH != wallpaperThumbH {
-		t.Fatalf("thumb = %+v, want a %dx%d raster box", thumb, wallpaperTileWidth, wallpaperThumbH)
+	switch thumb.Kind {
+	case ui.KindImage:
+		if thumb.ImageW != wallpaperTileWidth || thumb.ImageH != wallpaperThumbH {
+			t.Fatalf("raster box = %dx%d, want %dx%d", thumb.ImageW, thumb.ImageH, wallpaperTileWidth, wallpaperThumbH)
+		}
+	case ui.KindRow:
+		if thumb.Width != wallpaperTileWidth || thumb.Height != wallpaperThumbH {
+			t.Fatalf("placeholder box = %dx%d, want %dx%d", thumb.Width, thumb.Height, wallpaperTileWidth, wallpaperThumbH)
+		}
+		if len(thumb.Children) != 1 || thumb.Children[0].Kind != ui.KindIcon {
+			t.Fatalf("placeholder must carry the kind glyph, got %+v", thumb.Children)
+		}
+	default:
+		t.Fatalf("thumb kind = %v, want an image or its placeholder", thumb.Kind)
 	}
 }
 
@@ -257,7 +273,7 @@ func TestWallpaperEnterAppliesToTheSelectedOutput(t *testing.T) {
 	reg.mu.Lock()
 	h.wallpaperOutput = "DP-1"
 	h.wallpaperSel = 0
-	first := wallpaperEntries(h)[0].Path
+	first := wallpaperMedia(h)[0].Path
 	h.wallpaperKeyPress(reg, keyEnter)
 	reg.mu.Unlock()
 
@@ -274,7 +290,7 @@ func TestWallpaperAllAppliesToEveryOutput(t *testing.T) {
 	reg.mu.Lock()
 	h.wallpaperOutput = wallpaper.AllOutputs
 	h.wallpaperSel = 0
-	first := wallpaperEntries(h)[0].Path
+	first := wallpaperMedia(h)[0].Path
 	h.wallpaperKeyPress(reg, keyEnter)
 	reg.mu.Unlock()
 
@@ -337,7 +353,7 @@ func TestWallpaperRestoreEnqueuesRestore(t *testing.T) {
 	reg.mu.Lock()
 	h.wallpaperOutput = "DP-1"
 	h.wallpaperSel = 0
-	first := wallpaperEntries(h)[0].Path
+	first := wallpaperMedia(h)[0].Path
 	h.wallpaperKeyPress(reg, keyEnter)
 	reg.mu.Unlock()
 	awaitAssignment(t, svc, "DP-1", first)
@@ -373,7 +389,7 @@ func TestWallpaperApplyUpdatesTheThemeSeed(t *testing.T) {
 	h := reg.panelHosts[PanelWallpaper]
 	h.wallpaperOutput = "DP-1"
 	h.wallpaperSel = 0
-	first := wallpaperEntries(h)[0].Path
+	first := wallpaperMedia(h)[0].Path
 	h.wallpaperKeyPress(reg, keyEnter)
 	reg.mu.Unlock()
 
@@ -417,7 +433,7 @@ func TestWallpaperHotplugReplaysAndKeepsAssignments(t *testing.T) {
 	reg.mu.Lock()
 	h.wallpaperOutput = "DP-3"
 	h.wallpaperSel = 0
-	first := wallpaperEntries(h)[0].Path
+	first := wallpaperMedia(h)[0].Path
 	h.wallpaperKeyPress(reg, keyEnter)
 	reg.mu.Unlock()
 	awaitAssignment(t, svc, "DP-3", first)
@@ -464,5 +480,164 @@ func TestWallpaperUnknownOutputStaysUntouched(t *testing.T) {
 			t.Fatal("a newly seen output must stay untouched until the user assigns (D20)")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// findAction returns the first node carrying action.
+func findAction(n *ui.Node, action string) *ui.Node {
+	if n == nil {
+		return nil
+	}
+	if n.Action == action {
+		return n
+	}
+	for _, c := range n.Children {
+		if got := findAction(c, action); got != nil {
+			return got
+		}
+	}
+	return nil
+}
+
+func collectActions(n *ui.Node, prefix string, out *[]string) {
+	if n == nil {
+		return
+	}
+	if strings.HasPrefix(n.Action, prefix) {
+		*out = append(*out, n.Action)
+	}
+	for _, c := range n.Children {
+		collectActions(c, prefix, out)
+	}
+}
+
+func TestWallpaperChromeHasEveryControl(t *testing.T) {
+	t.Parallel()
+
+	root := seedWallpaperRoot(t)
+	if err := os.MkdirAll(filepath.Join(root, "nested"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "nested", "deep.png"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	reg, _, _ := openWallpaperPanel(t, []string{root})
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	for _, action := range []string{"wallpaper-close", "wallpaper-restore"} {
+		if findAction(h.root, action) == nil {
+			t.Errorf("chrome is missing %s", action)
+		}
+	}
+
+	var outputs []string
+	collectActions(h.root, "wallpaper-output:", &outputs)
+	if len(outputs) != 3 {
+		t.Errorf("output select = %v, want All plus each connector", outputs)
+	}
+
+	var filters []string
+	collectActions(h.root, "wallpaper-filter:", &filters)
+	if len(filters) != 3 {
+		t.Errorf("kind filter = %v, want All/Images/Videos", filters)
+	}
+
+	// The folder strip is what makes a second root reachable at all.
+	var dirs []string
+	collectActions(h.root, "wallpaper-dir:", &dirs)
+	if len(dirs) < 2 {
+		t.Errorf("folder strip = %v, want the root plus its child directory", dirs)
+	}
+
+	// Up only exists once the picker has descended out of a root.
+	if findAction(h.root, "wallpaper-up") != nil {
+		t.Error("Up must not show at a library root")
+	}
+	h.wallpaperDir = filepath.Join(root, "nested")
+	reg.rebuildPanel(h)
+	if findAction(h.root, "wallpaper-up") == nil {
+		t.Error("Up must show once nested")
+	}
+}
+
+func TestWallpaperChromeActionsDrivePanelState(t *testing.T) {
+	t.Parallel()
+
+	root := seedWallpaperRoot(t)
+	reg, _, _ := openWallpaperPanel(t, []string{root})
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	if !h.wallpaperAction(reg, findAction(h.root, "wallpaper-output:DP-1")) {
+		t.Fatal("the output select did not handle its own action")
+	}
+	if h.wallpaperOutput != "DP-1" {
+		t.Errorf("output = %q, want DP-1", h.wallpaperOutput)
+	}
+
+	videos := findAction(h.root, fmt.Sprintf("wallpaper-filter:%d", wallpaper.FilterVideos))
+	if videos == nil || !h.wallpaperAction(reg, videos) {
+		t.Fatal("the kind filter did not handle its own action")
+	}
+	if h.wallpaperFilter != wallpaper.FilterVideos {
+		t.Errorf("filter = %v, want videos", h.wallpaperFilter)
+	}
+	for _, e := range wallpaperMedia(h) {
+		if e.Kind != wallpaper.KindVideo {
+			t.Fatalf("the videos filter still shows %s", e.Name)
+		}
+	}
+}
+
+func TestWallpaperVideoTileIsInertWithoutGSlapper(t *testing.T) {
+	t.Parallel()
+
+	root := seedWallpaperRoot(t)
+	reg, _, _ := openWallpaperPanel(t, []string{root})
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	snap := h.wallpaperSnap
+	snap.Caps = wallpaper.Capabilities{GSlapper: false, Static: "awww"}
+	h.wallpaperSnap = snap
+	reg.rebuildPanel(h)
+
+	var video wallpaper.Entry
+	for _, e := range wallpaperMedia(h) {
+		if e.Kind == wallpaper.KindVideo {
+			video = e
+		}
+	}
+	if video.Path == "" {
+		t.Fatal("fixture has no video")
+	}
+	if wallpaperCanApply(h, video) {
+		t.Error("a video tile must be inert without gslapper")
+	}
+	tile := findAction(h.root, "wallpaper-tile")
+	if tile == nil {
+		t.Fatal("no tiles")
+	}
+	// The banner is what tells the user why.
+	var banner bool
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n.Kind == ui.KindText && strings.Contains(n.Text, "gslapper is not installed") {
+			banner = true
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(h.root)
+	if !banner {
+		t.Error("a missing engine must be explained in a banner")
 	}
 }

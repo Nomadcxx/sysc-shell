@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
@@ -30,6 +32,14 @@ const (
 	wallpaperCaptionH   = 22
 	wallpaperTileHeight = wallpaperThumbH + wallpaperCaptionH
 	wallpaperRowHeight  = wallpaperTileHeight + wallpaperGridGap
+
+	// Chrome controls. The output select is D4's 170px minimum.
+	wallpaperOutputWidth     = 170
+	wallpaperFilterWidth     = 220
+	wallpaperControlPad      = 8
+	wallpaperIconSize        = 18
+	wallpaperPlaceholderIcon = 32
+	wallpaperSelectedStroke  = 2
 )
 
 // wallpaperServiceLocked returns the running service, or nil before the
@@ -78,40 +88,70 @@ func firstRoot(snap wallpaper.Snapshot) string {
 	return ""
 }
 
-// wallpaperEntries is the current directory's view through the filter and the
-// search box.
-func wallpaperEntries(h *PanelHost) []wallpaper.Entry {
+// wallpaperSearch is the current search box text.
+func wallpaperSearch(h *PanelHost) string {
+	if h.search == nil {
+		return ""
+	}
+	return h.search.Text
+}
+
+// wallpaperView is the current directory through the filter and the search box.
+func wallpaperView(h *PanelHost) []wallpaper.Entry {
 	if h.wallpaperSnap.Library == nil {
 		return nil
 	}
-	search := ""
-	if h.search != nil {
-		search = h.search.Text
-	}
-	return h.wallpaperSnap.Library.View(h.wallpaperDir, h.wallpaperFilter, search)
+	return h.wallpaperSnap.Library.View(h.wallpaperDir, h.wallpaperFilter, wallpaperSearch(h))
 }
 
-// wallpaperTree projects the last snapshot. Row count is the tile count over
-// four columns, so the list virtualizes rows rather than tiles.
+// wallpaperMedia is what the grid shows. Directories are deliberately absent:
+// D4 puts navigation in the folder strip, so a tile is always something that
+// can be applied.
+func wallpaperMedia(h *PanelHost) []wallpaper.Entry {
+	view := wallpaperView(h)
+	out := make([]wallpaper.Entry, 0, len(view))
+	for _, e := range view {
+		if !e.IsDir {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// wallpaperChildDirs is what the folder strip shows below the roots.
+func wallpaperChildDirs(h *PanelHost) []wallpaper.Entry {
+	view := wallpaperView(h)
+	out := make([]wallpaper.Entry, 0, len(view))
+	for _, e := range view {
+		if e.IsDir {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// wallpaperTree projects the last snapshot as the D4 chrome: title and close,
+// search with an output select, the kind filter with Up, the folder strip,
+// banners, the active strip, the virtualized grid, and the media count.
 func wallpaperTree(r *Registry, h *PanelHost) *ui.Node {
 	if h.search == nil {
 		h.search = ui.NewField("")
 	}
 	inner := max(h.place.Panel.W-2*wallpaperPadding, 0)
 
-	field := h.search.Node("Search")
-	field.Width = inner
-	field.Height = wallpaperFieldH
-	field.Padding = 8
-
-	children := []*ui.Node{field}
-	if banner := wallpaperBanner(h); banner != nil {
-		children = append(children, banner)
+	children := []*ui.Node{
+		wallpaperTitleRow(h),
+		wallpaperSearchRow(h, inner),
+		wallpaperFilterRow(h),
 	}
+	if strip := wallpaperFolderStrip(h); strip != nil {
+		children = append(children, strip)
+	}
+	children = append(children, wallpaperBanners(h)...)
 	children = append(children, wallpaperActiveStrip(h))
 
-	entries := wallpaperEntries(h)
-	rows := (len(entries) + wallpaperColumns - 1) / wallpaperColumns
+	media := wallpaperMedia(h)
+	rows := (len(media) + wallpaperColumns - 1) / wallpaperColumns
 	used := 0
 	for _, child := range children {
 		used += childHeightFor(child)
@@ -120,13 +160,12 @@ func wallpaperTree(r *Registry, h *PanelHost) *ui.Node {
 		Kind:       ui.KindVirtualList,
 		ItemCount:  rows,
 		ItemHeight: wallpaperRowHeight,
-		Padding:    0,
-		Height:     max(h.place.Panel.H-2*wallpaperPadding-used, 0),
+		Height:     max(h.place.Panel.H-2*wallpaperPadding-used-wallpaperCaptionH-wallpaperGridGap, 0),
 		Item: func(row int) *ui.Node {
-			return wallpaperRow(r, h, entries, row)
+			return wallpaperRow(r, h, media, row)
 		},
 	}
-	children = append(children, list, wallpaperCount(entries))
+	children = append(children, list, wallpaperCount(media))
 
 	return &ui.Node{
 		Kind:     ui.KindColumn,
@@ -144,16 +183,142 @@ func childHeightFor(n *ui.Node) int {
 	if n.Height > 0 {
 		return n.Height + wallpaperGridGap
 	}
-	return wallpaperFieldH + wallpaperGridGap
+	return wallpaperCaptionH + wallpaperGridGap
+}
+
+// wallpaperTitleRow is the panel's name and its close control.
+func wallpaperTitleRow(h *PanelHost) *ui.Node {
+	return &ui.Node{
+		Kind:   ui.KindRow,
+		Gap:    wallpaperGridGap,
+		Height: h.theme.ControlHeight,
+		Children: []*ui.Node{
+			{Kind: ui.KindText, Text: "Wallpaper", Bold: true},
+			{
+				Kind: ui.KindButton, Action: "wallpaper-close", Name: "Close",
+				Role: "button", Focusable: true, Padding: wallpaperControlPad,
+				Height:   h.theme.ControlHeight,
+				Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "close", IconSize: wallpaperIconSize}},
+			},
+		},
+	}
+}
+
+// wallpaperSearchRow is the search field beside the output select. The select
+// is the fan-out control: All is two applies, not gSlapper's wildcard (D14).
+func wallpaperSearchRow(h *PanelHost, inner int) *ui.Node {
+	field := h.search.Node("Search")
+	field.Height = wallpaperFieldH
+	field.Padding = 8
+	field.Width = max(inner-wallpaperOutputWidth-wallpaperGridGap, 0)
+
+	tokens := append([]string{wallpaper.AllOutputs}, h.wallpaperSnap.Connectors...)
+	segments := make([]*ui.Node, 0, len(tokens))
+	for _, token := range tokens {
+		segments = append(segments, wallpaperSegment(h, "wallpaper-output:"+token,
+			wallpaperOutputLabel(token), token == h.wallpaperOutput))
+	}
+	return &ui.Node{
+		Kind: ui.KindRow, Gap: wallpaperGridGap, Height: wallpaperFieldH,
+		Children: []*ui.Node{field, {
+			Kind: ui.KindSegmented, Key: "wallpaper-output", Gap: 2,
+			Width: wallpaperOutputWidth, Height: h.theme.ControlHeight, Children: segments,
+		}},
+	}
+}
+
+func wallpaperOutputLabel(token string) string {
+	if token == wallpaper.AllOutputs {
+		return "All"
+	}
+	return token
+}
+
+// wallpaperFilterRow is the kind filter, plus Up once the picker has descended
+// out of a library root.
+func wallpaperFilterRow(h *PanelHost) *ui.Node {
+	filters := []struct {
+		label string
+		value wallpaper.Filter
+	}{
+		{"All", wallpaper.FilterAll},
+		{"Images", wallpaper.FilterImages},
+		{"Videos", wallpaper.FilterVideos},
+	}
+	segments := make([]*ui.Node, 0, len(filters))
+	for _, f := range filters {
+		segments = append(segments, wallpaperSegment(h,
+			fmt.Sprintf("wallpaper-filter:%d", f.value), f.label, f.value == h.wallpaperFilter))
+	}
+	row := []*ui.Node{{
+		Kind: ui.KindSegmented, Key: "wallpaper-filter", Gap: 2,
+		Width: wallpaperFilterWidth, Height: h.theme.ControlHeight, Children: segments,
+	}}
+
+	if h.wallpaperSnap.Library != nil {
+		if _, ok := h.wallpaperSnap.Library.Parent(h.wallpaperDir); ok {
+			row = append(row, wallpaperButton(h, "wallpaper-up", "Up", false))
+		}
+	}
+	return &ui.Node{Kind: ui.KindRow, Gap: wallpaperGridGap, Height: h.theme.ControlHeight, Children: row}
+}
+
+// wallpaperFolderStrip is D4's selector: every configured root, then the
+// current directory's children. Without it a second library root is
+// unreachable, which is how the video directory went missing.
+func wallpaperFolderStrip(h *PanelHost) *ui.Node {
+	if h.wallpaperSnap.Library == nil {
+		return nil
+	}
+	chips := []*ui.Node{}
+	for _, root := range h.wallpaperSnap.Library.Roots() {
+		chips = append(chips, wallpaperButton(h, "wallpaper-dir:"+root,
+			filepath.Base(root), root == h.wallpaperDir))
+	}
+	for _, dir := range wallpaperChildDirs(h) {
+		chips = append(chips, wallpaperButton(h, "wallpaper-dir:"+dir.Path, dir.Name, false))
+	}
+	if len(chips) == 0 {
+		return nil
+	}
+	return &ui.Node{Kind: ui.KindRow, Gap: 6, Height: h.theme.ControlHeight, Children: chips}
+}
+
+// wallpaperSegment is one exclusive choice inside a segmented control.
+func wallpaperSegment(h *PanelHost, action, label string, selected bool) *ui.Node {
+	n := &ui.Node{
+		Kind: ui.KindButton, Action: action, Name: label,
+		Role: "tab", Focusable: true, Padding: wallpaperControlPad,
+		Height:   h.theme.ControlHeight,
+		Children: []*ui.Node{{Kind: ui.KindText, Text: label}},
+	}
+	if selected {
+		n.State |= ui.StateSelected
+	}
+	return n
+}
+
+// wallpaperButton is a standalone chip in the chrome.
+func wallpaperButton(h *PanelHost, action, label string, selected bool) *ui.Node {
+	n := &ui.Node{
+		Kind: ui.KindButton, Action: action, Name: label,
+		Role: "button", Focusable: true, Padding: wallpaperControlPad,
+		Height:   h.theme.ControlHeight,
+		Children: []*ui.Node{{Kind: ui.KindText, Text: label}},
+	}
+	if selected {
+		n.State |= ui.StateSelected
+	}
+	return n
 }
 
 // wallpaperRow builds one row of up to four tiles. It runs inside layout, on
 // the Wayland owner, so it only ever reads already-decoded rasters.
-func wallpaperRow(r *Registry, h *PanelHost, entries []wallpaper.Entry, row int) *ui.Node {
+func wallpaperRow(r *Registry, h *PanelHost, media []wallpaper.Entry, row int) *ui.Node {
 	start := row * wallpaperColumns
 	tiles := make([]*ui.Node, 0, wallpaperColumns)
-	for i := start; i < start+wallpaperColumns && i < len(entries); i++ {
-		tiles = append(tiles, wallpaperTile(r, h, entries[i], i))
+	for i := start; i < start+wallpaperColumns && i < len(media); i++ {
+		tiles = append(tiles, wallpaperTile(r, h, media[i], i))
 	}
 	return &ui.Node{Kind: ui.KindRow, Gap: wallpaperGridGap, Children: tiles}
 }
@@ -162,46 +327,80 @@ func wallpaperRow(r *Registry, h *PanelHost, entries []wallpaper.Entry, row int)
 // supplies the tile chrome and takes its radius from the theme's CardRadius,
 // so the tile follows the user's configured radius.
 func wallpaperTile(r *Registry, h *PanelHost, entry wallpaper.Entry, index int) *ui.Node {
+	raster := wallpaperThumbFor(r, entry)
 	thumb := &ui.Node{
 		Kind:   ui.KindImage,
 		ImageW: wallpaperTileWidth,
 		ImageH: wallpaperThumbH,
-		Image:  wallpaperThumbFor(r, entry),
+		Image:  raster,
 	}
-	caption := &ui.Node{
+	// A thumbnail that has not decoded yet, or cannot be decoded at all, keeps
+	// its box and shows the kind glyph rather than a hole in the grid (D6).
+	var body []*ui.Node
+	if raster == nil {
+		body = append(body, &ui.Node{
+			Kind: ui.KindRow, Width: wallpaperTileWidth, Height: wallpaperThumbH,
+			Children: []*ui.Node{{
+				Kind: ui.KindIcon, Icon: wallpaperPlaceholderGlyph(entry),
+				IconSize: wallpaperPlaceholderIcon,
+			}},
+		})
+	} else {
+		body = append(body, thumb)
+	}
+	body = append(body, &ui.Node{
 		Kind:     ui.KindText,
 		Text:     wallpaperCaption(h, entry),
 		MaxWidth: wallpaperTileWidth,
-	}
-	body := &ui.Node{
-		Kind:     ui.KindColumn,
-		Gap:      4,
-		Children: []*ui.Node{thumb, caption},
-	}
+	})
+
 	tile := &ui.Node{
-		Kind:     ui.KindCapsule,
-		Fill:     ui.FillContainerHigh,
-		Width:    wallpaperTileWidth,
-		Padding:  4,
-		Action:   "wallpaper-tile",
-		Name:     entry.Path,
-		Children: []*ui.Node{body},
+		Kind:      ui.KindCapsule,
+		Fill:      ui.FillContainerHigh,
+		Width:     wallpaperTileWidth,
+		Padding:   4,
+		Action:    "wallpaper-tile",
+		Name:      entry.Path,
+		Focusable: true,
+		Children: []*ui.Node{{
+			Kind: ui.KindColumn, Gap: 4, Children: body,
+		}},
+	}
+	// The output's current wallpaper is outlined, so the picker says what is
+	// already applied rather than only what could be (D6).
+	if matched, _ := wallpaperMatchCount(h, entry.Path); matched > 0 {
+		tile.Stroke = wallpaperSelectedStroke
+		tile.StrokeFill = ui.FillAccent
 	}
 	if index == h.wallpaperSel {
-		tile.State = ui.StateHovered
+		tile.State |= ui.StateSelected
+	}
+	// Without gSlapper a video cannot play, so its tile says so instead of
+	// accepting a click that would do nothing (D6).
+	if !wallpaperCanApply(h, entry) {
+		tile.State |= ui.StateDisabled
 	}
 	return tile
 }
 
-// wallpaperCaption is the filename, prefixed for a video and marked when the
-// tile is what the selected output already shows.
-func wallpaperCaption(h *PanelHost, entry wallpaper.Entry) string {
-	if entry.IsDir {
-		return entry.Name
+// wallpaperCanApply reports whether a tile is activatable.
+func wallpaperCanApply(h *PanelHost, entry wallpaper.Entry) bool {
+	return entry.Kind != wallpaper.KindVideo || h.wallpaperSnap.Caps.GSlapper
+}
+
+func wallpaperPlaceholderGlyph(entry wallpaper.Entry) string {
+	if entry.Kind == wallpaper.KindVideo {
+		return "play_arrow"
 	}
+	return "photo"
+}
+
+// wallpaperCaption is the filename, prefixed for a video and marked when the
+// tile is what the selected outputs already show.
+func wallpaperCaption(h *PanelHost, entry wallpaper.Entry) string {
 	name := entry.Name
 	if entry.Kind == wallpaper.KindVideo {
-		name = "VIDEO · " + name
+		name = "VIDEO \u00b7 " + name
 	}
 	if matched, total := wallpaperMatchCount(h, entry.Path); total > 1 && matched > 0 {
 		return fmt.Sprintf("%s  %d / %d", name, matched, total)
@@ -226,33 +425,80 @@ func wallpaperMatchCount(h *PanelHost, path string) (matched, total int) {
 	return matched, total
 }
 
-// wallpaperBanner surfaces a missing engine or a scan failure, or nil when
-// there is nothing to say.
-func wallpaperBanner(h *PanelHost) *ui.Node {
-	text := ""
-	switch {
-	case !h.wallpaperSnap.Caps.GSlapper:
-		text = "gslapper is not installed — video wallpapers are unavailable"
-	case h.wallpaperSnap.Err != "":
-		text = h.wallpaperSnap.Err
-	case h.wallpaperSnap.Library != nil && h.wallpaperSnap.Library.Err != "":
-		text = h.wallpaperSnap.Library.Err
+// wallpaperBanners surfaces the capability, scan, and apply failures. They are
+// separate rows because they have separate causes: a missing engine is not a
+// bad directory is not a refused apply (D4).
+func wallpaperBanners(h *PanelHost) []*ui.Node {
+	var out []*ui.Node
+	add := func(text string, tone ui.Tone) {
+		if text == "" {
+			return
+		}
+		out = append(out, &ui.Node{Kind: ui.KindText, Text: text, Tone: tone, Height: wallpaperCaptionH})
 	}
-	if text == "" {
-		return nil
+	if !h.wallpaperSnap.Caps.GSlapper {
+		add("gslapper is not installed - video wallpapers are unavailable", ui.ToneNormal)
 	}
-	return &ui.Node{Kind: ui.KindText, Text: text, Tone: ui.ToneNormal, Height: wallpaperCaptionH}
+	if h.wallpaperSnap.Caps.Static == "" {
+		add("neither awww nor swaybg is installed - Restore has nowhere to go", ui.ToneNormal)
+	}
+	if h.wallpaperSnap.Library != nil {
+		add(h.wallpaperSnap.Library.Err, ui.ToneError)
+	}
+	add(h.wallpaperSnap.Err, ui.ToneError)
+	for _, connector := range h.wallpaperSnap.Connectors {
+		if rt := h.wallpaperSnap.Runtime[connector]; rt.Err != "" {
+			add(connector+": "+rt.Err, ui.ToneError)
+		}
+	}
+	return out
 }
 
-// wallpaperActiveStrip summarises what the selected output is showing. The
-// mixed summary is counted off the snapshot, not composed from the click that
-// produced it.
+// wallpaperActiveStrip is what the selected output is showing, with the
+// controls that act on it. Pause is video-only because an image has no
+// pipeline to hold (D7).
 func wallpaperActiveStrip(h *PanelHost) *ui.Node {
-	return &ui.Node{
-		Kind:   ui.KindText,
-		Text:   wallpaperSummary(h.wallpaperSnap, h.wallpaperOutput),
-		Height: wallpaperCaptionH,
+	children := []*ui.Node{
+		{Kind: ui.KindText, Text: wallpaperSummary(h.wallpaperSnap, h.wallpaperOutput)},
 	}
+	if paused, ok := wallpaperPlaybackState(h); ok {
+		action, label := "wallpaper-pause", "Pause"
+		if paused {
+			action, label = "wallpaper-resume", "Resume"
+		}
+		children = append(children, wallpaperButton(h, action, label, false))
+	}
+	children = append(children, wallpaperButton(h, "wallpaper-restore", wallpaperRestoreLabel(h), false))
+	return &ui.Node{
+		Kind: ui.KindRow, Gap: wallpaperGridGap,
+		Height: h.theme.ControlHeight, Children: children,
+	}
+}
+
+func wallpaperRestoreLabel(h *PanelHost) string {
+	if h.wallpaperOutput == wallpaper.AllOutputs {
+		return "Restore all"
+	}
+	return "Restore"
+}
+
+// wallpaperPlaybackState reports whether the selected outputs hold a video and
+// whether it is paused. All outputs offers the control when any of them does.
+func wallpaperPlaybackState(h *PanelHost) (paused, ok bool) {
+	targets := []string{h.wallpaperOutput}
+	if h.wallpaperOutput == wallpaper.AllOutputs {
+		targets = h.wallpaperSnap.Connectors
+	}
+	for _, connector := range targets {
+		if h.wallpaperSnap.Assignments[connector].Kind != wallpaper.KindVideo {
+			continue
+		}
+		ok = true
+		if h.wallpaperSnap.Runtime[connector].State == wallpaper.StatePaused {
+			paused = true
+		}
+	}
+	return paused, ok
 }
 
 // wallpaperSummary is the active strip's line for one output, or the mixed
@@ -261,9 +507,10 @@ func wallpaperSummary(snap wallpaper.Snapshot, output string) string {
 	if output != wallpaper.AllOutputs {
 		a, ok := snap.Assignments[output]
 		if !ok {
-			return output + " · nothing assigned"
+			return output + " \u00b7 nothing assigned"
 		}
-		return fmt.Sprintf("%s · %s · %s", output, a.Path, wallpaperStateName(snap.Runtime[output].State))
+		return fmt.Sprintf("%s \u00b7 %s \u00b7 %s", output, filepath.Base(a.Path),
+			wallpaperStateName(snap.Runtime[output].State))
 	}
 	outputs, videos, images := 0, 0, 0
 	for _, connector := range snap.Connectors {
@@ -281,7 +528,7 @@ func wallpaperSummary(snap wallpaper.Snapshot, output string) string {
 	if outputs == 0 {
 		return "nothing assigned"
 	}
-	return fmt.Sprintf("%d outputs · %d video · %d image", outputs, videos, images)
+	return fmt.Sprintf("%d outputs \u00b7 %d video \u00b7 %d image", outputs, videos, images)
 }
 
 func wallpaperStateName(s wallpaper.State) string {
@@ -299,17 +546,10 @@ func wallpaperStateName(s wallpaper.State) string {
 }
 
 // wallpaperCount is the media count under the grid.
-func wallpaperCount(entries []wallpaper.Entry) *ui.Node {
-	media := 0
-	for _, e := range entries {
-		if !e.IsDir {
-			media++
-		}
-	}
+func wallpaperCount(media []wallpaper.Entry) *ui.Node {
 	return &ui.Node{
 		Kind:   ui.KindText,
-		Text:   fmt.Sprintf("%d items", media),
-		Tone:   ui.ToneNormal,
+		Text:   fmt.Sprintf("%d items", len(media)),
 		Height: wallpaperCaptionH,
 	}
 }
@@ -317,7 +557,7 @@ func wallpaperCount(entries []wallpaper.Entry) *ui.Node {
 // wallpaperKeyPress moves the grid selection and applies. It returns false for
 // keys it does not own, so typing still reaches the search field.
 func (h *PanelHost) wallpaperKeyPress(r *Registry, key uint32) bool {
-	entries := wallpaperEntries(h)
+	entries := wallpaperMedia(h)
 	switch key {
 	case keyLeft:
 		h.wallpaperMoveSel(r, -1, len(entries))
@@ -328,6 +568,11 @@ func (h *PanelHost) wallpaperKeyPress(r *Registry, key uint32) bool {
 	case keyDown:
 		h.wallpaperMoveSel(r, wallpaperColumns, len(entries))
 	case keyEnter:
+		// A focused chrome control owns Enter; only the grid falls through to
+		// applying the selected tile.
+		if n := h.focused(); n != nil && n.Kind == ui.KindButton && n.Action != "" {
+			return false
+		}
 		h.wallpaperActivate(r)
 	default:
 		return false
@@ -349,7 +594,7 @@ func (h *PanelHost) wallpaperMoveSel(r *Registry, delta, count int) {
 // wallpaperActivate applies the selected tile, or descends into it when it is
 // a directory.
 func (h *PanelHost) wallpaperActivate(r *Registry) {
-	entries := wallpaperEntries(h)
+	entries := wallpaperMedia(h)
 	if h.wallpaperSel < 0 || h.wallpaperSel >= len(entries) {
 		return
 	}
@@ -419,7 +664,7 @@ func (h *PanelHost) wallpaperPointerPress(r *Registry, e wayland.Event) bool {
 	if path == "" {
 		return false
 	}
-	entries := wallpaperEntries(h)
+	entries := wallpaperMedia(h)
 	for i, entry := range entries {
 		if entry.Path == path {
 			h.wallpaperSel = i
@@ -635,4 +880,58 @@ func (r *Registry) connectorsSnapshot() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.connectorsLocked()
+}
+
+// wallpaperAction handles a click or Enter on one of the picker's controls.
+// It returns false for anything that is not ours, so the generic dispatch
+// keeps working for every other panel.
+func (h *PanelHost) wallpaperAction(r *Registry, n *ui.Node) bool {
+	if h.id != PanelWallpaper || n == nil {
+		return false
+	}
+	switch {
+	case n.Action == "wallpaper-close":
+		r.closePanelLocked(PanelWallpaper)
+		return true
+	case n.Action == "wallpaper-up":
+		h.wallpaperUp(r)
+		return true
+	case n.Action == "wallpaper-restore":
+		h.wallpaperRestore(r)
+		return true
+	case n.Action == "wallpaper-pause":
+		h.wallpaperSetPaused(r, true)
+		return true
+	case n.Action == "wallpaper-resume":
+		h.wallpaperSetPaused(r, false)
+		return true
+	case n.Action == "wallpaper-tile":
+		for _, entry := range wallpaperMedia(h) {
+			if entry.Path == n.Name {
+				h.wallpaperApply(r, entry)
+				return true
+			}
+		}
+		return true
+	}
+	if token, ok := strings.CutPrefix(n.Action, "wallpaper-output:"); ok {
+		h.wallpaperOutput = token
+		r.rebuildPanel(h)
+		return true
+	}
+	if value, ok := strings.CutPrefix(n.Action, "wallpaper-filter:"); ok {
+		if f, err := strconv.Atoi(value); err == nil {
+			h.wallpaperFilter = wallpaper.Filter(f)
+			h.wallpaperSel = 0
+			r.rebuildPanel(h)
+		}
+		return true
+	}
+	if dir, ok := strings.CutPrefix(n.Action, "wallpaper-dir:"); ok {
+		h.wallpaperDir = dir
+		h.wallpaperSel = 0
+		r.rebuildPanel(h)
+		return true
+	}
+	return false
 }

@@ -111,11 +111,12 @@ type PanelHost struct {
 	launcherMenuID  string
 	launcherActions []launcher.Action
 
-	wallpaperSnap   wallpaper.Snapshot
-	wallpaperDir    string
-	wallpaperFilter wallpaper.Filter
-	wallpaperOutput string
-	wallpaperSel    int
+	wallpaperSnap    wallpaper.Snapshot
+	wallpaperDir     string
+	wallpaperFilter  wallpaper.Filter
+	wallpaperOutput  string
+	wallpaperSel     int
+	wallpaperFocused bool
 
 	notifyTab    int
 	notifyFilter string
@@ -421,6 +422,12 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	h.root = r.panelTree(h)
 	h.focus = ui.Focusables(h.root)
 	h.roving = ui.Roving{Count: len(h.focus)}
+	if id == PanelWallpaper {
+		// The picker opens on its search box rather than on the Close button
+		// that happens to be first in the tree.
+		h.focusByName("Search")
+		h.wallpaperFocused = true
+	}
 	if id == PanelMonitor || id == PanelNotifications {
 		_ = h.ensureText()
 		if id == PanelNotifications {
@@ -1184,6 +1191,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 			return true
 		}
 		return false
+	}
+	if strings.HasPrefix(n.Action, "wallpaper") && h.wallpaperAction(r, n) {
+		return true
 	}
 	if strings.HasPrefix(n.Action, "notify:") {
 		return h.activateNotify(r, n)
