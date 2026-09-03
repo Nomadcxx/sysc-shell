@@ -3,10 +3,12 @@ package shell
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-shell/internal/wallpaper"
@@ -387,4 +389,80 @@ func TestWallpaperApplyUpdatesTheThemeSeed(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("theme seed hook never saw the applied image (source=%q seed=%q)", gotSource, gotSeed)
+}
+
+func TestWallpaperBarItemIsKnownButNotDefault(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	for _, zone := range [][]config.Item{cfg.Bar.Left, cfg.Bar.Center, cfg.Bar.Right} {
+		for _, item := range zone {
+			if item.ID == "wallpaper" {
+				t.Fatal("the default bar layout must not change; the glyph is opt-in")
+			}
+		}
+	}
+	if _, err := config.Parse([]byte(`{"bar":{"items":{"right":[{"id":"wallpaper"}]}}}`)); err != nil {
+		t.Fatalf("a configured wallpaper item must load: %v", err)
+	}
+}
+
+func TestWallpaperHotplugReplaysAndKeepsAssignments(t *testing.T) {
+	t.Parallel()
+
+	root := seedWallpaperRoot(t)
+	reg, svc, _ := openWallpaperPanel(t, []string{root})
+	h := wallpaperHost(t, reg)
+
+	reg.mu.Lock()
+	h.wallpaperOutput = "DP-3"
+	h.wallpaperSel = 0
+	first := wallpaperEntries(h)[0].Path
+	h.wallpaperKeyPress(reg, keyEnter)
+	reg.mu.Unlock()
+	awaitAssignment(t, svc, "DP-3", first)
+
+	// The output goes away: the assignment survives, the runtime does not.
+	reg.wallpaperOutputGone("DP-3")
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		snap := svc.Snapshot()
+		if !slices.Contains(snap.Connectors, "DP-3") {
+			if snap.Assignments["DP-3"].Path != first {
+				t.Fatalf("disconnect dropped the assignment: %q", snap.Assignments["DP-3"].Path)
+			}
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if slices.Contains(svc.Snapshot().Connectors, "DP-3") {
+		t.Fatal("disconnect never reached the service")
+	}
+
+	// It comes back: the saved assignment is replayed.
+	reg.wallpaperOutputConnected("DP-3")
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if slices.Contains(svc.Snapshot().Connectors, "DP-3") {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("reconnect never reached the service")
+}
+
+func TestWallpaperUnknownOutputStaysUntouched(t *testing.T) {
+	t.Parallel()
+
+	root := seedWallpaperRoot(t)
+	reg, svc, _ := openWallpaperPanel(t, []string{root})
+
+	reg.wallpaperOutputConnected("HDMI-A-1")
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if _, ok := svc.Snapshot().Assignments["HDMI-A-1"]; ok {
+			t.Fatal("a newly seen output must stay untouched until the user assigns (D20)")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }

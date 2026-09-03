@@ -3,6 +3,7 @@ package wallpaper
 import (
 	"errors"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -264,4 +265,37 @@ func TestServiceFailureKeepsPriorAssignment(t *testing.T) {
 	if snap.Runtime["DP-1"].Err == "" {
 		t.Error("a failed apply must carry its message into the snapshot")
 	}
+}
+
+func TestServiceReconcilesSavedAssignmentsAtStart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "assignments.json")
+	saved := map[string]Assignment{
+		"DP-1": {Kind: KindImage, Path: "/w/saved.png", DesiredPlayback: StateStatic},
+		// An output that is not connected must not be applied to.
+		"HDMI-A-1": {Kind: KindImage, Path: "/w/absent.png", DesiredPlayback: StateStatic},
+	}
+	if err := SaveAssignments(path, saved); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	engine := newFakeEngine()
+	svc := NewService(ServiceConfig{
+		Engine:      engine,
+		Connectors:  []string{"DP-1", "DP-3"},
+		PersistPath: path,
+	})
+	t.Cleanup(svc.Close)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		applied := engine.appliedPaths()
+		if slices.Contains(applied, "/w/saved.png") {
+			if slices.Contains(applied, "/w/absent.png") {
+				t.Fatal("a disconnected output must stay untouched at startup")
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("startup did not restore the saved assignment: %v", engine.appliedPaths())
 }

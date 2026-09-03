@@ -141,7 +141,21 @@ func NewService(cfg ServiceConfig) *Service {
 	s.lib = Scan(s.roots)
 	s.publish()
 	go s.run()
+	s.reconcile()
 	return s
+}
+
+// reconcile replays the saved assignment for every output that is connected
+// right now. It is what makes a wallpaper survive a restart (D20): the seed is
+// never written to the user's config file, so the theme is rebuilt from this
+// replay rather than from disk.
+func (s *Service) reconcile() {
+	for connector, a := range s.store.All() {
+		if !slices.Contains(s.store.Connectors(), connector) {
+			continue
+		}
+		s.Enqueue(Command{Op: OpApply, Token: connector, Path: a.Path, Kind: a.Kind})
+	}
 }
 
 // Updates carries published snapshots. It coalesces: a reader that misses one

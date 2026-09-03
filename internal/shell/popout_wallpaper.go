@@ -4,7 +4,11 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
+	"slices"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 
@@ -30,7 +34,12 @@ const (
 
 // wallpaperServiceLocked returns the running service, or nil before the
 // registry has started one. Registry.mu is held.
-func (r *Registry) wallpaperServiceLocked() *wallpaper.Service { return r.wallpaperSvc }
+func (r *Registry) wallpaperServiceLocked() *wallpaper.Service {
+	if r.wallpaperSvc == nil && !runningAsTest() {
+		return r.wallpaperStartLocked()
+	}
+	return r.wallpaperSvc
+}
 
 // relayWallpaper mirrors relayLauncher: snapshots arrive off the Wayland owner
 // and the panel is rebuilt under Registry.mu.
@@ -498,4 +507,132 @@ func wallpaperThumbFor(r *Registry, entry wallpaper.Entry) *ui.Image {
 	}
 	_, _, _ = worker.Request(key)
 	return nil
+}
+
+// wallpaperStartLocked starts the wallpaper service if it is not running.
+// Registry.mu is held.
+//
+// The service starts with the registry rather than with the panel: an output's
+// wallpaper has to come back at login whether or not anyone opens the picker
+// (D20).
+func (r *Registry) wallpaperStartLocked() *wallpaper.Service {
+	if r.wallpaperSvc != nil {
+		return r.wallpaperSvc
+	}
+	cfg := r.cfg.Wallpaper
+	r.wallpaperSvc = wallpaper.NewService(wallpaper.ServiceConfig{
+		Engine:      wallpaper.NewEngine(wallpaperRuntimeDir(), nil),
+		Settings:    wallpaperSettings(cfg),
+		Connectors:  r.connectorsLocked(),
+		Roots:       []string{cfg.ImageDirectory, cfg.VideoDirectory},
+		PersistPath: wallpaper.AssignmentsPath(),
+	})
+	r.wallpaperSvc.SetConfigHook(r.setWallpaperSeed)
+	go r.relayWallpaper(r.wallpaperSvc)
+	return r.wallpaperSvc
+}
+
+// wallpaperSettings projects the config block onto the engine's settings.
+func wallpaperSettings(cfg config.Wallpaper) wallpaper.Settings {
+	return wallpaper.Settings{
+		Scale:        cfg.Scale,
+		Loop:         cfg.Loop,
+		FPS:          cfg.FPS,
+		Fade:         cfg.Fade,
+		FadeDuration: cfg.FadeDuration,
+		Hidden:       cfg.Hidden,
+	}
+}
+
+// wallpaperRuntimeDir is where the owned gSlapper sockets live.
+func wallpaperRuntimeDir() string {
+	dir := os.Getenv("XDG_RUNTIME_DIR")
+	if dir == "" {
+		dir = os.TempDir()
+	}
+	return filepath.Join(dir, "sysc-shell")
+}
+
+// connectorsLocked lists the connectors that currently have a bar.
+func (r *Registry) connectorsLocked() []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(r.bars))
+	for _, bar := range r.bars {
+		name := bar.connector()
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// setWallpaperSeed points the theme at the applied image and regenerates the
+// palette.
+//
+// The config file is deliberately not rewritten: the seed follows the
+// wallpaper, and startup reconcile replays the assignment and calls this again,
+// so persisting it would only duplicate state the assignment file already owns.
+func (r *Registry) setWallpaperSeed(source, seed string) {
+	if seed == "" {
+		return
+	}
+	r.mu.Lock()
+	if r.cfg.ThemeGen.Source == source && r.cfg.ThemeGen.Seed == seed {
+		r.mu.Unlock()
+		return
+	}
+	r.cfg.ThemeGen.Source = source
+	r.cfg.ThemeGen.Seed = seed
+	cfg := r.cfg
+	r.mu.Unlock()
+
+	// generateTheme runs the generator and writes the enabled templates, so it
+	// is called outside the lock; it returns the previous palette unchanged if
+	// the new one is incomplete, which is what keeps a bad seed from blanking
+	// the shell.
+	tokens := r.generateTheme(cfg)
+
+	r.mu.Lock()
+	r.tokens = tokens
+	for _, bar := range r.bars {
+		bar.apply(r.viewLocked(bar.connector()))
+	}
+	r.retheThemeOpenSurfacesLocked()
+	outputs := r.outputGlobalsLocked()
+	r.mu.Unlock()
+
+	for _, global := range outputs {
+		r.publishSurface(global, "")
+	}
+}
+
+// wallpaperOutputConnected replays an output's saved wallpaper when it appears.
+func (r *Registry) wallpaperOutputConnected(connector string) {
+	r.mu.Lock()
+	svc := r.wallpaperSvc
+	r.mu.Unlock()
+	if svc != nil && connector != "" {
+		svc.Enqueue(wallpaper.Command{Op: wallpaper.OpConnect, Token: connector})
+	}
+}
+
+// wallpaperOutputGone drops an output's runtime while keeping its assignment,
+// so a monitor that comes back gets its wallpaper back (D20).
+func (r *Registry) wallpaperOutputGone(connector string) {
+	r.mu.Lock()
+	svc := r.wallpaperSvc
+	r.mu.Unlock()
+	if svc != nil && connector != "" {
+		svc.Enqueue(wallpaper.Command{Op: wallpaper.OpDisconnect, Token: connector})
+	}
+}
+
+// connectorsSnapshot lists the live connectors without holding Registry.mu.
+func (r *Registry) connectorsSnapshot() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.connectorsLocked()
 }
