@@ -436,3 +436,74 @@ disable.
 go test -race -count=1 ./tests/integration -run PluginRecorderGate
 ```
 
+
+## Milestone 7: Wallpaper
+
+Partly manual. The unit and panel suites cover the store, the IPC parsing, the argv, the library,
+the service generations, the engine state machine, and the panel projection:
+
+```bash
+GOMAXPROCS=4 go test -race -count=1 ./internal/wallpaper
+go test -count=1 ./internal/shell -run TestWallpaper
+```
+
+The live gate below needs a Niri session with two outputs and the real `gslapper`, `awww`, and
+`swaybg` on PATH. Never run the race detector over the whole module on this machine; check one
+package at a time.
+
+### Recorded 2026-09-04, DP-1 (3440x1440) and DP-3 (2560x1440)
+
+Run against an isolated `XDG_CONFIG_HOME` / `XDG_STATE_HOME` / `XDG_CACHE_HOME` so the live
+session's own configuration is untouched. `XDG_RUNTIME_DIR` stays real, because the socket path is
+what the gate asserts on.
+
+```bash
+export NIRI_SOCKET=$(ls /run/user/1000/niri.wayland-*.sock | head -1)
+export WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000
+```
+
+| Check | Result |
+|---|---|
+| Panel maps | pass -- `sysc-shell-panel` on Overlay with `sysc-shell-shield`, on the focused output |
+| Picker renders tiles | pass -- landscape 210x96 thumbnails with captions, grabbed with `grim` |
+| Image on DP-1 | pass -- `query` answers `STATUS: playing image <path>` |
+| Video on DP-3 | pass -- `query` answers `STATUS: playing video <path>` |
+| Fan-out, not `*` | pass -- each output ran its own process with its own file |
+| Pause | pass -- `STATUS: paused video` |
+| Resume | pass -- `STATUS: playing video` |
+| Restore | pass -- both sockets gone, `awww-daemon` took a Background layer on each output |
+| Owned sockets | pass -- see the argv below |
+| Theme seed | pass -- `~/.config/niri/sysc-shell.kdl` regenerated from the applied image |
+| Startup reconcile | pass -- a saved `DP-1` assignment relaunched at start with no picker opened |
+| Unassigned output untouched | pass -- `DP-3` had no saved assignment and nothing was applied to it |
+
+`pgrep -af gslapper` while each was up:
+
+```
+gslapper -I /run/user/1000/sysc-shell/gslapper-DP-1.sock --no-save-state \
+  -o fill no-audio loop -r 30 DP-1 <image>
+gslapper -I /run/user/1000/sysc-shell/gslapper-DP-3.sock --no-save-state \
+  -o fill no-audio loop -r 30 DP-3 <video>
+```
+
+Each command line carries `$XDG_RUNTIME_DIR/sysc-shell/gslapper-`, which is what makes the stop
+path safe: nothing is ever matched by binary name.
+
+### Found by the live gate
+
+- `awww` is a client for `awww-daemon`, not a wallpaper process. It exits immediately and does
+  nothing at all when the daemon is down, so Restore reported success while the desktop did not
+  change. Fixed: the engine starts `awww-daemon` when it is not answering (D16) and waits for a
+  one-shot client's exit status instead of only its spawn.
+- The box runs a competing `quickshell` Background layer. That is the D18 case, and gSlapper warns
+  about it on its own; nothing was killed.
+
+### Not covered here
+
+- Clicking a tile. The gate drove the engine directly; the panel's click and key paths are covered
+  by `./internal/shell -run TestWallpaper`, not live.
+- A second library root is not reachable from the chrome. D4 calls for a folder strip; the panel
+  currently navigates within the first root only, so the video root had to be applied directly.
+  Recorded in bd, not fixed here.
+- GIF. gSlapper lists GIF as an image format while the library classifies it as video, so the
+  Pause control follows what `query` reports. Not exercised live.
