@@ -675,6 +675,9 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	h.pointer.apply(h.root, h.anim)
 
 	style := h.paintTheme().ProofStyle()
+	// Only a panel draws its own rim; the bar, toasts and tray surfaces
+	// sit directly on the shared surface and leave it zero.
+	style.Rim = h.paintTheme().Outline
 	style.Scale120 = scale
 	style.Body = body
 	if !h.place.CenterY {

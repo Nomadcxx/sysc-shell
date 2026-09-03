@@ -49,11 +49,14 @@ type ProofStyle struct {
 	// container, which the bar's pills and the panels' cards share; a control
 	// sitting on one of those needs the level above it to separate.
 	ContainerHighest Color
-	// Outline strokes the floating panel rim, where zero alpha skips the
-	// stroke, and marks a meaningful control boundary. OutlineVariant is a
-	// quieter divider.
+	// Outline marks a meaningful control boundary and OutlineVariant is a
+	// quieter divider. Both are set for every surface.
 	Outline        Color
 	OutlineVariant Color
+	// Rim strokes the floating panel's own edge. It is deliberately separate
+	// from Outline: every surface carries the outline token for its controls,
+	// but only a panel draws a rim, so a bar or a toast leaves this zero.
+	Rim Color
 	// CardRadius is the corner a panel card keeps. Zero falls back to Radius,
 	// which is what a bar pill uses.
 	CardRadius int
@@ -127,8 +130,8 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style ProofStyle) error
 	clear(c.Pix)
 	box := style.Scale120.PhysicalRect(style.Body)
 	radius := style.Scale120.Physical(style.Radius)
-	if style.Outline.A > 0 {
-		fillRoundedRect(c, box, radius, style.Outline)
+	if style.Rim.A > 0 {
+		fillRoundedRect(c, box, radius, style.Rim)
 		inset := max(style.Scale120.Physical(1), 1)
 		inner := ui.Rect{X: box.X + inset, Y: box.Y + inset, W: box.W - 2*inset, H: box.H - 2*inset}
 		fillRoundedRect(c, inner, max(radius-inset, 0), style.Background)
@@ -420,8 +423,8 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style ProofStyle,
 	if well.A == 0 {
 		well = style.Track
 	}
-	if n.Name == "Search" && style.Outline.A > 0 {
-		fillRoundedRect(c, box, radius, style.Outline)
+	if n.Name == "Search" && style.Rim.A > 0 {
+		fillRoundedRect(c, box, radius, style.Rim)
 		inset := max(style.Scale120.Physical(1), 1)
 		fillRoundedRect(c, ui.Rect{X: box.X + inset, Y: box.Y + inset, W: box.W - 2*inset, H: box.H - 2*inset}, max(radius-inset, 0), well)
 	} else {
@@ -666,6 +669,10 @@ func chromeFill(style ProofStyle, n *ui.Node, base Color) (fill, fg Color) {
 		return style.Container, style.OnContainer
 	case ui.FillContainerHigh:
 		return style.Capsule, style.Foreground
+	case ui.FillSoft:
+		// A muted accent wash. Contents keep the surface foreground, so a
+		// selected launcher row does not read as a primary-on-white chip.
+		return wash(style.Accent, style.Capsule), style.Foreground
 	case ui.FillError:
 		return style.Error, style.onError()
 	case ui.FillOutline:

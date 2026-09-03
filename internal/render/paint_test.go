@@ -781,18 +781,20 @@ func TestPaintScrollDrawsAThumbWhenContentOverflows(t *testing.T) {
 	}
 }
 
-func TestPaintStrokesOutlineWhenSet(t *testing.T) {
+func TestPaintStrokesTheRimWhenSet(t *testing.T) {
 	t.Parallel()
 	c := newTestCanvas(t, 100, 80)
 	style := testStyle
 	style.Body = ui.Rect{X: 8, Y: 8, W: 84, H: 64}
 	style.Radius = 0
-	style.Outline = Color{R: 0xaa, G: 0xbb, B: 0xcc, A: 0xff}
+	// Rim, not Outline: every surface carries the outline token for its
+	// controls, so gating the panel edge on Outline would rim the bar too.
+	style.Rim = Color{R: 0xaa, G: 0xbb, B: 0xcc, A: 0xff}
 	if err := Paint(c, &ui.Node{Kind: ui.KindRow}, NewTextRenderer(mustTestFace(t)), style); err != nil {
 		t.Fatal(err)
 	}
-	if got := pixelAt(t, c, 8, 40); got != style.Outline {
-		t.Fatalf("left rim = %+v, want outline %+v", got, style.Outline)
+	if got := pixelAt(t, c, 8, 40); got != style.Rim {
+		t.Fatalf("left rim = %+v, want the rim %+v", got, style.Rim)
 	}
 	if got := pixelAt(t, c, 50, 40); got != style.Background {
 		t.Fatalf("interior = %+v, want body %+v", got, style.Background)
