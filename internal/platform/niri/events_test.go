@@ -7,9 +7,12 @@ import "testing"
 const (
 	windowsChangedFixture = `{"WindowsChanged":{"windows":[` +
 		`{"id":80,"title":"Fixture One","app_id":"fixture.one","pid":1000,"workspace_id":5,` +
-		`"is_focused":true,"is_floating":false,"is_urgent":false,"layout":{},"focus_timestamp":null},` +
+		`"is_focused":true,"is_floating":false,"is_urgent":false,"layout":{},` +
+		`"focus_timestamp":{"secs":166673,"nanos":194678785}},` +
 		`{"id":81,"title":null,"app_id":null,"pid":null,"workspace_id":null,` +
 		`"is_focused":false,"is_floating":false,"is_urgent":false,"layout":{},"focus_timestamp":null}]}}`
+
+	windowFocusChangedFixture = `{"WindowFocusChanged":{"id":81}}`
 
 	windowOpenedFixture = `{"WindowOpenedOrChanged":{"window":` +
 		`{"id":82,"title":"Fixture Two","app_id":"fixture.two","pid":1001,"workspace_id":5,` +
@@ -51,9 +54,38 @@ func TestWindowsChangedReplacesTheWholeSet(t *testing.T) {
 		t.Fatalf("first window workspace = %d/%v, want 5/true",
 			snap.Windows[0].WorkspaceID, snap.Windows[0].HasWorkspace)
 	}
+	if !snap.Windows[0].Focused {
+		t.Fatalf("window 80 focused = false, want true")
+	}
+	wantTS := int64(166673)*1e9 + 194678785
+	if snap.Windows[0].FocusTimestamp != wantTS {
+		t.Fatalf("window 80 FocusTimestamp = %d, want %d", snap.Windows[0].FocusTimestamp, wantTS)
+	}
 	// A null title, app_id and workspace_id are legal and must not fail the event.
 	if got := snap.Windows[1]; got.ID != 81 || got.Title != "" || got.HasWorkspace {
 		t.Fatalf("second window = %+v, want id 81 with empty title and no workspace", got)
+	}
+	if snap.Windows[1].Focused || snap.Windows[1].FocusTimestamp != 0 {
+		t.Fatalf("window 81 focus = %+v, want unfocused with null timestamp", snap.Windows[1])
+	}
+}
+
+func TestWindowFocusChanged(t *testing.T) {
+	t.Parallel()
+	s := applyAll(t, windowsChangedFixture, windowFocusChangedFixture)
+	snap := s.snapshot()
+	var w80, w81 Window
+	for _, w := range snap.Windows {
+		switch w.ID {
+		case 80:
+			w80 = w
+		case 81:
+			w81 = w
+		}
+	}
+	if w80.Focused || !w81.Focused {
+		t.Fatalf("after WindowFocusChanged: 80 focused=%v, 81 focused=%v; want 80 false, 81 true",
+			w80.Focused, w81.Focused)
 	}
 }
 
@@ -216,7 +248,8 @@ func TestAWindowChangeOutsideTheProjectionPublishesNothing(t *testing.T) {
 	t.Parallel()
 	const sameWindowNowUrgent = `{"WindowOpenedOrChanged":{"window":` +
 		`{"id":80,"title":"Fixture One","app_id":"fixture.one","pid":1000,"workspace_id":5,` +
-		`"is_focused":true,"is_floating":true,"is_urgent":true,"layout":{},"focus_timestamp":7}}}`
+		`"is_focused":true,"is_floating":true,"is_urgent":true,"layout":{},` +
+		`"focus_timestamp":{"secs":166673,"nanos":194678785}}}}`
 
 	var s state
 	if _, err := s.apply([]byte(windowsChangedFixture)); err != nil {

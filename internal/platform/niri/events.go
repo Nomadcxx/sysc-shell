@@ -31,8 +31,8 @@ type Workspace struct {
 }
 
 // Window is one Niri window. Only the fields the shell projects are decoded.
-// Layout, focus timestamp, urgency and floating state have no consumer, so an
-// event carrying them decodes and ignores them.
+// Layout, urgency and floating state have no consumer, so an event carrying
+// them decodes and ignores them.
 type Window struct {
 	ID    uint64
 	Title string
@@ -40,8 +40,10 @@ type Window struct {
 	// WorkspaceID is meaningful only when HasWorkspace is set. Niri sends
 	// workspace_id as null for a window on no workspace, which is distinct
 	// from workspace zero.
-	WorkspaceID  uint64
-	HasWorkspace bool
+	WorkspaceID    uint64
+	HasWorkspace   bool
+	Focused        bool
+	FocusTimestamp int64 // monotonic ns; 0 when null or omitted
 }
 
 // Snapshot is an immutable view of workspace and window state.
@@ -110,10 +112,15 @@ type wireWorkspaceActiveWindowChanged struct {
 // wireWindow decodes one window. Only id is required; Niri sends title,
 // app_id and workspace_id as null in legitimate states.
 type wireWindow struct {
-	ID          *uint64 `json:"id"`
-	Title       *string `json:"title"`
-	AppID       *string `json:"app_id"`
-	WorkspaceID *uint64 `json:"workspace_id"`
+	ID             *uint64 `json:"id"`
+	Title          *string `json:"title"`
+	AppID          *string `json:"app_id"`
+	WorkspaceID    *uint64 `json:"workspace_id"`
+	IsFocused      *bool   `json:"is_focused"`
+	FocusTimestamp *struct {
+		Secs  uint64 `json:"secs"`
+		Nanos uint64 `json:"nanos"`
+	} `json:"focus_timestamp"`
 }
 
 func (w wireWindow) project() (Window, error) {
@@ -129,6 +136,12 @@ func (w wireWindow) project() (Window, error) {
 	}
 	if w.WorkspaceID != nil {
 		out.WorkspaceID, out.HasWorkspace = *w.WorkspaceID, true
+	}
+	if w.IsFocused != nil {
+		out.Focused = *w.IsFocused
+	}
+	if w.FocusTimestamp != nil {
+		out.FocusTimestamp = int64(w.FocusTimestamp.Secs)*1e9 + int64(w.FocusTimestamp.Nanos)
 	}
 	return out, nil
 }
@@ -274,6 +287,22 @@ func (s *state) apply(line []byte) (bool, error) {
 			return false, nil
 		}
 		s.windows = slices.Delete(s.windows, i, i+1)
+		return s.publishIfChanged(), nil
+	}
+
+	if payload, ok := envelope["WindowFocusChanged"]; ok {
+		var changed struct {
+			ID *uint64 `json:"id"`
+		}
+		if err := json.Unmarshal(payload, &changed); err != nil {
+			return false, fmt.Errorf("niri: decode WindowFocusChanged: %w", err)
+		}
+		if changed.ID == nil {
+			return false, fmt.Errorf("niri: WindowFocusChanged is missing id")
+		}
+		for i := range s.windows {
+			s.windows[i].Focused = s.windows[i].ID == *changed.ID
+		}
 		return s.publishIfChanged(), nil
 	}
 
