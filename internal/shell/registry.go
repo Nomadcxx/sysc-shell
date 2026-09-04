@@ -149,6 +149,12 @@ func NewRegistry(cfg config.Config) *Registry {
 	if !runningAsTest() {
 		r.mu.Lock()
 		r.wallpaperStartLocked()
+		// The launcher scans XDG for .desktop files. Doing that when the panel
+		// first opens makes the very first Mod+D of a session the slow one, on
+		// a control whose whole job is to be instant. It is skipped under test
+		// for the same reason as the wallpaper service: it would read the
+		// developer's real applications.
+		r.launcherServiceLocked()
 		r.mu.Unlock()
 	}
 	return r
