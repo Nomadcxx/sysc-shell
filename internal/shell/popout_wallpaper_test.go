@@ -12,6 +12,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-shell/internal/wallpaper"
 )
@@ -230,11 +231,16 @@ func TestWallpaperGridPacksFourTilesPerRow(t *testing.T) {
 			t.Fatalf("raster box = %dx%d, want %dx%d", thumb.ImageW, thumb.ImageH, wallpaperTileWidth, wallpaperThumbH)
 		}
 	case ui.KindRow:
+		// The placeholder holds the tile's box so a late preview cannot reflow
+		// the grid. It carries a glyph only where the embedded icon subset has
+		// one, which for media it does not.
 		if thumb.Width != wallpaperTileWidth || thumb.Height != wallpaperThumbH {
 			t.Fatalf("placeholder box = %dx%d, want %dx%d", thumb.Width, thumb.Height, wallpaperTileWidth, wallpaperThumbH)
 		}
-		if len(thumb.Children) != 1 || thumb.Children[0].Kind != ui.KindIcon {
-			t.Fatalf("placeholder must carry the kind glyph, got %+v", thumb.Children)
+		for _, c := range thumb.Children {
+			if c.Kind == ui.KindIcon && !render.ValidMaterialIcon(c.Icon) {
+				t.Fatalf("placeholder glyph %q is not in the subset", c.Icon)
+			}
 		}
 	default:
 		t.Fatalf("thumb kind = %v, want an image or its placeholder", thumb.Kind)
@@ -546,11 +552,12 @@ func TestWallpaperChromeHasEveryControl(t *testing.T) {
 		t.Errorf("kind filter = %v, want All/Images/Videos", filters)
 	}
 
-	// The folder strip is what makes a second root reachable at all.
-	var dirs []string
-	collectActions(h.root, "wallpaper-dir:", &dirs)
-	if len(dirs) < 2 {
-		t.Errorf("folder strip = %v, want the root plus its child directory", dirs)
+	// Child directories live in their own compact band above the grid.
+	if got := len(wallpaperDirs(h)); got != 1 {
+		t.Errorf("folder band holds %d entries, want the one child directory", got)
+	}
+	if wallpaperDirBand(h) == nil {
+		t.Error("a directory with children must offer a folder band")
 	}
 
 	// Up only exists once the picker has descended out of a root.
@@ -757,5 +764,112 @@ func TestWallpaperEmptyStatesExplainThemselves(t *testing.T) {
 	h.search = ui.NewField("zzzz")
 	if text := wallpaperEmptyState(h).Text; !strings.Contains(text, "match your search") {
 		t.Errorf("a search with no hits says %q", text)
+	}
+}
+
+func TestWallpaperManyDirectoriesDoNotOverflowTheChrome(t *testing.T) {
+	t.Parallel()
+
+	// A real library has dozens of subdirectories. Laying those out as chips in
+	// one row failed layout outright and closed the panel:
+	//   ui: child 8 of kind 3 does not fit in 948x40
+	root := t.TempDir()
+	for i := range 40 {
+		if err := os.MkdirAll(filepath.Join(root, fmt.Sprintf("collection-%02d", i)), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.png"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	reg, _, _ := openWallpaperPanel(t, []string{root})
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	// The panel must lay out at its real size without erroring.
+	if err := ui.LayoutColumn(h.root, ui.Rect{W: h.place.Panel.W, H: h.place.Panel.H}, h.measureText()); err != nil {
+		t.Fatalf("layout failed with %d directories: %v", 40, err)
+	}
+	if got := len(wallpaperMedia(h)); got != 1 {
+		t.Fatalf("grid holds %d tiles, want only the image", got)
+	}
+	if got := len(wallpaperDirs(h)); got != 40 {
+		t.Fatalf("folder band holds %d entries, want 40", got)
+	}
+	// The band is capped, so folders cannot crowd the wallpapers out.
+	band := wallpaperDirBand(h)
+	if band == nil {
+		t.Fatal("no folder band")
+	}
+	if band.Height > wallpaperDirMaxRows*wallpaperDirRowHeight {
+		t.Fatalf("band is %dpx tall, want at most %d", band.Height, wallpaperDirMaxRows*wallpaperDirRowHeight)
+	}
+}
+
+func TestWallpaperFolderStripAppearsOnlyForMultipleRoots(t *testing.T) {
+	t.Parallel()
+
+	one := seedWallpaperRoot(t)
+	reg, _, _ := openWallpaperPanel(t, []string{one})
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	if strip := wallpaperFolderStrip(h); strip != nil {
+		t.Error("a single root is not a choice worth a control")
+	}
+	reg.mu.Unlock()
+
+	two := seedWallpaperRoot(t)
+	reg2, _, _ := openWallpaperPanel(t, []string{one, two})
+	h2 := wallpaperHost(t, reg2)
+	reg2.mu.Lock()
+	defer reg2.mu.Unlock()
+	strip := wallpaperFolderStrip(h2)
+	if strip == nil || len(strip.Children) != 2 {
+		t.Fatalf("two roots must give a two-chip strip, got %v", strip)
+	}
+}
+
+func TestWallpaperOnlyNamesIconsTheSubsetCarries(t *testing.T) {
+	t.Parallel()
+
+	// An icon the embedded subset does not hold fails the whole surface at
+	// render time and closes the panel. Live testing caught "folder" that way;
+	// this catches the next one here instead.
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "sub"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	for _, name := range []string{"a.png", "clip.mp4"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("x"), 0o644); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	reg, _, _ := openWallpaperPanel(t, []string{root})
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	var bad []string
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n.Kind == ui.KindIcon && n.Icon != "" && !render.ValidMaterialIcon(n.Icon) {
+			bad = append(bad, n.Icon)
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(h.root)
+	// The grid's rows are built on demand, so check the tiles too.
+	for _, entry := range wallpaperMedia(h) {
+		walk(wallpaperTile(reg, h, entry, 0))
+	}
+	if len(bad) > 0 {
+		t.Fatalf("icons not in the embedded subset: %v (have %v)", bad, render.MaterialIconNames())
 	}
 }

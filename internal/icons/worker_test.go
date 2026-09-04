@@ -327,3 +327,28 @@ func TestWorkerRejectsAHalfSpecifiedBox(t *testing.T) {
 		}
 	}
 }
+
+func TestResolverAcceptsAnyDecodableAbsolutePath(t *testing.T) {
+	// An absolute path is the caller naming an exact file; the icon-theme
+	// extension preference does not apply. Wallpaper previews are JPEG, and
+	// gating them on the theme list rejected every one of them.
+	dir := t.TempDir()
+	resolver := NewResolver("", nil)
+	for _, name := range []string{"preview.jpg", "preview.jpeg", "icon.png"} {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, pngBytes(t, 8), 0o644); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+		if got, ok := resolver.Resolve(path, 210); !ok || got != path {
+			t.Errorf("Resolve(%s) = %q, %v; want the path itself", name, got, ok)
+		}
+	}
+	// A format the decoder does not read is still refused.
+	other := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(other, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := resolver.Resolve(other, 210); ok {
+		t.Error("a non-image absolute path must not resolve")
+	}
+}

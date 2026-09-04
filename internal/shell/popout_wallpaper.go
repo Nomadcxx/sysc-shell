@@ -44,6 +44,13 @@ const (
 	wallpaperPlaceholderIcon = 32
 	wallpaperSelectedStroke  = 2
 
+	// The folder band: compact rows, capped so folders never crowd out the
+	// wallpapers they sit above.
+	wallpaperDirColumns   = 4
+	wallpaperDirMaxRows   = 2
+	wallpaperDirRowHeight = 46
+	wallpaperDirChipWidth = 210
+
 	// wallpaperCoverageTimeout bounds the compositor probe.
 	wallpaperCoverageTimeout = 2 * time.Second
 )
@@ -110,9 +117,7 @@ func wallpaperView(h *PanelHost) []wallpaper.Entry {
 	return h.wallpaperSnap.Library.View(h.wallpaperDir, h.wallpaperFilter, wallpaperSearch(h))
 }
 
-// wallpaperMedia is what the grid shows. Directories are deliberately absent:
-// D4 puts navigation in the folder strip, so a tile is always something that
-// can be applied.
+// wallpaperMedia is what the tile grid shows: playable files only.
 func wallpaperMedia(h *PanelHost) []wallpaper.Entry {
 	view := wallpaperView(h)
 	out := make([]wallpaper.Entry, 0, len(view))
@@ -124,8 +129,14 @@ func wallpaperMedia(h *PanelHost) []wallpaper.Entry {
 	return out
 }
 
-// wallpaperChildDirs is what the folder strip shows below the roots.
-func wallpaperChildDirs(h *PanelHost) []wallpaper.Entry {
+// wallpaperDirs is the current directory's children.
+//
+// They get their own short list rather than sharing the tile grid: a real
+// library has dozens of folders, and at tile height they push every wallpaper
+// off the first screen. They cannot be chips in a single row either -- that
+// overflows and fails layout outright -- so they are a compact virtualized
+// band of their own, capped to a couple of rows.
+func wallpaperDirs(h *PanelHost) []wallpaper.Entry {
 	view := wallpaperView(h)
 	out := make([]wallpaper.Entry, 0, len(view))
 	for _, e := range view {
@@ -134,6 +145,32 @@ func wallpaperChildDirs(h *PanelHost) []wallpaper.Entry {
 		}
 	}
 	return out
+}
+
+// wallpaperDirBand is the folder navigator above the grid.
+func wallpaperDirBand(h *PanelHost) *ui.Node {
+	dirs := wallpaperDirs(h)
+	if len(dirs) == 0 {
+		return nil
+	}
+	rows := (len(dirs) + wallpaperDirColumns - 1) / wallpaperDirColumns
+	visible := min(rows, wallpaperDirMaxRows)
+	return &ui.Node{
+		Kind:       ui.KindVirtualList,
+		ItemCount:  rows,
+		ItemHeight: wallpaperDirRowHeight,
+		Height:     visible * wallpaperDirRowHeight,
+		Item: func(row int) *ui.Node {
+			start := row * wallpaperDirColumns
+			chips := make([]*ui.Node, 0, wallpaperDirColumns)
+			for i := start; i < start+wallpaperDirColumns && i < len(dirs); i++ {
+				chip := wallpaperButton(h, "wallpaper-dir:"+dirs[i].Path, dirs[i].Name, false)
+				chip.Width = wallpaperDirChipWidth
+				chips = append(chips, chip)
+			}
+			return &ui.Node{Kind: ui.KindRow, Gap: 6, Children: chips}
+		},
+	}
 }
 
 // wallpaperTree projects the last snapshot as the D4 chrome: title and close,
@@ -155,6 +192,9 @@ func wallpaperTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	children = append(children, wallpaperBanners(h)...)
 	children = append(children, wallpaperActiveStrip(h))
+	if band := wallpaperDirBand(h); band != nil {
+		children = append(children, band)
+	}
 
 	media := wallpaperMedia(h)
 	rows := (len(media) + wallpaperColumns - 1) / wallpaperColumns
@@ -290,21 +330,23 @@ func wallpaperFilterRow(h *PanelHost) *ui.Node {
 
 // wallpaperFolderStrip is D4's selector: every configured root, then the
 // current directory's children. Without it a second library root is
-// unreachable, which is how the video directory went missing.
+// wallpaperFolderStrip is D4's selector, carrying the configured library roots.
+// Without it a second root is unreachable, which is how the video directory
+// went missing. It holds only the roots: that set is bounded by configuration,
+// so the row can never overflow the way a strip of subdirectories does.
 func wallpaperFolderStrip(h *PanelHost) *ui.Node {
 	if h.wallpaperSnap.Library == nil {
 		return nil
 	}
-	chips := []*ui.Node{}
-	for _, root := range h.wallpaperSnap.Library.Roots() {
+	roots := h.wallpaperSnap.Library.Roots()
+	if len(roots) < 2 {
+		// One root is not a choice worth a control.
+		return nil
+	}
+	chips := make([]*ui.Node, 0, len(roots))
+	for _, root := range roots {
 		chips = append(chips, wallpaperButton(h, "wallpaper-dir:"+root,
 			filepath.Base(root), root == h.wallpaperDir))
-	}
-	for _, dir := range wallpaperChildDirs(h) {
-		chips = append(chips, wallpaperButton(h, "wallpaper-dir:"+dir.Path, dir.Name, false))
-	}
-	if len(chips) == 0 {
-		return nil
 	}
 	return &ui.Node{Kind: ui.KindRow, Gap: 6, Height: h.theme.ControlHeight, Children: chips}
 }
@@ -363,13 +405,15 @@ func wallpaperTile(r *Registry, h *PanelHost, entry wallpaper.Entry, index int) 
 	// its box and shows the kind glyph rather than a hole in the grid (D6).
 	var body []*ui.Node
 	if raster == nil {
-		body = append(body, &ui.Node{
+		placeholder := &ui.Node{
 			Kind: ui.KindRow, Width: wallpaperTileWidth, Height: wallpaperThumbH,
-			Children: []*ui.Node{{
-				Kind: ui.KindIcon, Icon: wallpaperPlaceholderGlyph(entry),
-				IconSize: wallpaperPlaceholderIcon,
-			}},
-		})
+		}
+		if glyph := wallpaperPlaceholderGlyph(entry); glyph != "" {
+			placeholder.Children = []*ui.Node{{
+				Kind: ui.KindIcon, Icon: glyph, IconSize: wallpaperPlaceholderIcon,
+			}}
+		}
+		body = append(body, placeholder)
 	} else {
 		body = append(body, thumb)
 	}
@@ -397,8 +441,11 @@ func wallpaperTile(r *Registry, h *PanelHost, entry wallpaper.Entry, index int) 
 		tile.Stroke = wallpaperSelectedStroke
 		tile.StrokeFill = ui.FillAccent
 	}
+	// The keyboard selection is a muted wash. StateSelected on a capsule paints
+	// a solid accent slab, which reads as "applied" rather than "focused" and
+	// drowns the thumbnail it is supposed to be highlighting.
 	if index == h.wallpaperSel {
-		tile.State |= ui.StateSelected
+		tile.Fill = ui.FillSoft
 	}
 	// Without gSlapper a video cannot play, so its tile says so instead of
 	// accepting a click that would do nothing (D6).
@@ -413,16 +460,26 @@ func wallpaperCanApply(h *PanelHost, entry wallpaper.Entry) bool {
 	return entry.Kind != wallpaper.KindVideo || h.wallpaperSnap.Caps.GSlapper
 }
 
+// wallpaperPlaceholderGlyph is the tile's stand-in before a preview exists.
+//
+// Only names in the embedded Material subset may be used: an unknown name
+// fails the whole surface at render time rather than drawing nothing. The
+// subset has no folder or media glyphs, so a directory borrows the navigation
+// chevron and a pending preview shows an empty box, which the "Generating
+// previews" banner already accounts for.
 func wallpaperPlaceholderGlyph(entry wallpaper.Entry) string {
-	if entry.Kind == wallpaper.KindVideo {
-		return "play_arrow"
+	if entry.IsDir {
+		return "chevron_right"
 	}
-	return "photo"
+	return ""
 }
 
 // wallpaperCaption is the filename, prefixed for a video and marked when the
 // tile is what the selected outputs already show.
 func wallpaperCaption(h *PanelHost, entry wallpaper.Entry) string {
+	if entry.IsDir {
+		return entry.Name
+	}
 	name := entry.Name
 	if entry.Kind == wallpaper.KindVideo {
 		name = "VIDEO \u00b7 " + name
@@ -590,9 +647,15 @@ func wallpaperStateName(s wallpaper.State) string {
 
 // wallpaperCount is the media count under the grid.
 func wallpaperCount(media []wallpaper.Entry) *ui.Node {
+	files := 0
+	for _, e := range media {
+		if !e.IsDir {
+			files++
+		}
+	}
 	return &ui.Node{
 		Kind:   ui.KindText,
-		Text:   fmt.Sprintf("%d items", len(media)),
+		Text:   fmt.Sprintf("%d items", files),
 		Height: wallpaperCaptionH,
 	}
 }
