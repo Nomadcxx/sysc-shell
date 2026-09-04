@@ -1,7 +1,12 @@
 package shell
 
 import (
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/go-freedesktop/desktopentry"
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 )
@@ -75,6 +80,94 @@ func lookupRunningWindow(appID string, lookup map[string]runningAppEntry) (runni
 		}
 	}
 	return runningAppEntry{}, false
+}
+
+func lookupRunningApp(appID string, entries []runningAppEntry) (runningAppEntry, bool) {
+	for _, e := range entries {
+		if strings.EqualFold(e.ID, appID) {
+			return e, true
+		}
+	}
+	for _, e := range entries {
+		if e.StartupWMClass != "" && strings.EqualFold(e.StartupWMClass, appID) {
+			return e, true
+		}
+	}
+	if i := strings.LastIndexAny(appID, "./"); i >= 0 && i+1 < len(appID) {
+		tail := appID[i+1:]
+		for _, e := range entries {
+			if strings.EqualFold(e.ID, tail) {
+				return e, true
+			}
+		}
+	}
+	return runningAppEntry{}, false
+}
+
+// loadRunningAppEntries walks XDG application dirs. Hidden tombstones drop an
+// id; NoDisplay entries stay so a running window still has an icon.
+func loadRunningAppEntries(dirs []string) []runningAppEntry {
+	byID := map[string]runningAppEntry{}
+	for _, dir := range dirs {
+		_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(d.Name(), ".desktop") {
+				return nil
+			}
+			rel, relErr := filepath.Rel(dir, path)
+			if relErr != nil {
+				return nil
+			}
+			id := strings.ReplaceAll(strings.TrimSuffix(rel, ".desktop"), string(filepath.Separator), "-")
+			de, perr := desktopentry.ParseFile(path)
+			if perr != nil {
+				return nil
+			}
+			if de.Hidden {
+				delete(byID, id)
+				return nil
+			}
+			e := runningAppEntry{ID: id, Icon: de.Icon, StartupWMClass: de.StartupWMClass}
+			// ponytail: go-freedesktop leaves Action.ID empty; zip Actions= order.
+			ids := desktopActionIDs(path)
+			for i, a := range de.Actions {
+				aid := a.ID
+				if aid == "" && i < len(ids) {
+					aid = ids[i]
+				}
+				e.Actions = append(e.Actions, runningAppAction{ID: aid, Name: a.Name, Exec: a.Exec})
+			}
+			byID[id] = e
+			return nil
+		})
+	}
+	out := make([]runningAppEntry, 0, len(byID))
+	for _, e := range byID {
+		out = append(out, e)
+	}
+	return out
+}
+
+func desktopActionIDs(path string) []string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") && line != "[Desktop Entry]" {
+			return nil
+		}
+		if rest, ok := strings.CutPrefix(line, "Actions="); ok {
+			var ids []string
+			for _, p := range strings.Split(rest, ";") {
+				if p != "" {
+					ids = append(ids, p)
+				}
+			}
+			return ids
+		}
+	}
+	return nil
 }
 
 func mruMember(members []niri.Window) niri.Window {

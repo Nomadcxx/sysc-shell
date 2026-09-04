@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
@@ -119,5 +121,76 @@ func TestGroupRunningApps(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLookupRunningApp(t *testing.T) {
+	t.Parallel()
+	firefox := runningAppEntry{ID: "firefox"}
+	steam := runningAppEntry{ID: "steam"}
+	foo := runningAppEntry{ID: "org.foo.Bar", StartupWMClass: "Foo"}
+
+	cases := []struct {
+		name    string
+		appID   string
+		entries []runningAppEntry
+		wantID  string
+		miss    bool
+	}{
+		{name: "exact", appID: "firefox", entries: []runningAppEntry{firefox}, wantID: "firefox"},
+		{name: "fold", appID: "Firefox", entries: []runningAppEntry{firefox}, wantID: "firefox"},
+		{name: "tail", appID: "org.mozilla.firefox", entries: []runningAppEntry{firefox}, wantID: "firefox"},
+		{name: "wmclass", appID: "Foo", entries: []runningAppEntry{foo}, wantID: "org.foo.Bar"},
+		{name: "steam", appID: "steam", entries: []runningAppEntry{steam}, wantID: "steam"},
+		{name: "miss", appID: "xyz", entries: []runningAppEntry{firefox}, miss: true},
+		{name: "empty", appID: "firefox", miss: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := lookupRunningApp(tc.appID, tc.entries)
+			if tc.miss {
+				if ok {
+					t.Fatalf("hit %+v, want miss", got)
+				}
+				return
+			}
+			if !ok || got.ID != tc.wantID {
+				t.Fatalf("got %+v ok=%v, want id %q", got, ok, tc.wantID)
+			}
+		})
+	}
+}
+
+func TestLoadRunningAppEntries(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeDesktop := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeDesktop("firefox.desktop", "[Desktop Entry]\nType=Application\nName=Firefox\nIcon=firefox\nStartupWMClass=Firefox\nActions=NewWindow;\n\n[Desktop Action NewWindow]\nName=New Window\nExec=firefox --new-window\n")
+	writeDesktop("ghost.desktop", "[Desktop Entry]\nType=Application\nName=Ghost\nNoDisplay=true\nIcon=ghost\n")
+	writeDesktop("gone.desktop", "[Desktop Entry]\nType=Application\nName=Gone\nHidden=true\nIcon=gone\n")
+
+	got := loadRunningAppEntries([]string{dir})
+	byID := map[string]runningAppEntry{}
+	for _, e := range got {
+		byID[e.ID] = e
+	}
+	if _, ok := byID["gone"]; ok {
+		t.Fatal("Hidden tombstone stayed in the index")
+	}
+	ghost, ok := byID["ghost"]
+	if !ok || ghost.Icon != "ghost" {
+		t.Fatalf("NoDisplay entry = %+v ok=%v, want kept", ghost, ok)
+	}
+	ff, ok := byID["firefox"]
+	if !ok || ff.Icon != "firefox" || ff.StartupWMClass != "Firefox" {
+		t.Fatalf("firefox = %+v ok=%v", ff, ok)
+	}
+	if len(ff.Actions) != 1 || ff.Actions[0].ID != "NewWindow" || ff.Actions[0].Name != "New Window" {
+		t.Fatalf("firefox actions = %+v", ff.Actions)
 	}
 }
