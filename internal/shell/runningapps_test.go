@@ -194,3 +194,44 @@ func TestLoadRunningAppEntries(t *testing.T) {
 		t.Fatalf("firefox actions = %+v", ff.Actions)
 	}
 }
+
+func TestNextFocusID(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		slot runningAppSlot
+		want uint64
+	}{
+		{
+			name: "unfocused uses MRU",
+			slot: runningAppSlot{
+				Members: []niri.Window{{ID: 1}, {ID: 2}, {ID: 3}},
+				MRU:     niri.Window{ID: 2},
+			},
+			want: 2,
+		},
+		{
+			name: "focused advances",
+			slot: runningAppSlot{
+				Focused: true,
+				Members: []niri.Window{{ID: 1, Focused: true}, {ID: 2}, {ID: 3}},
+			},
+			want: 2,
+		},
+		{
+			name: "wrap",
+			slot: runningAppSlot{
+				Focused: true,
+				Members: []niri.Window{{ID: 1}, {ID: 2}, {ID: 3, Focused: true}},
+			},
+			want: 1,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := nextFocusID(tc.slot); got != tc.want {
+				t.Fatalf("nextFocusID = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}

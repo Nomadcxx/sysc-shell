@@ -179,3 +179,15 @@ func mruMember(members []niri.Window) niri.Window {
 	}
 	return best
 }
+
+func nextFocusID(slot runningAppSlot) uint64 {
+	if len(slot.Members) == 0 {
+		return 0
+	}
+	for i, w := range slot.Members {
+		if w.Focused {
+			return slot.Members[(i+1)%len(slot.Members)].ID
+		}
+	}
+	return slot.MRU.ID
+}
