@@ -235,3 +235,33 @@ func TestNextFocusID(t *testing.T) {
 		})
 	}
 }
+
+func TestRunningAppMenu(t *testing.T) {
+	t.Parallel()
+	steam := runningAppSlot{
+		Actions: []runningAppAction{
+			{ID: "Store", Name: "Store"},
+			{ID: "Library", Name: "Library"},
+			{ID: "Friends", Name: "Friends"},
+		},
+	}
+	got := runningAppMenu(steam)
+	want := []runningAppMenuRow{
+		{Label: "Store", ActionID: "Store"},
+		{Label: "Library", ActionID: "Library"},
+		{Label: "Friends", ActionID: "Friends"},
+		{Label: "Close all", CloseAll: true},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("menu = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("row %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	only := runningAppMenu(runningAppSlot{})
+	if len(only) != 1 || !only[0].CloseAll || only[0].Label != "Close all" {
+		t.Fatalf("empty actions = %+v, want Close all only", only)
+	}
+}

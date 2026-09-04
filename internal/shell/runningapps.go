@@ -33,6 +33,12 @@ type runningAppSlot struct {
 	Actions []runningAppAction
 }
 
+type runningAppMenuRow struct {
+	Label    string
+	ActionID string
+	CloseAll bool
+}
+
 func groupRunningApps(windows []niri.Window, lookup map[string]runningAppEntry) []runningAppSlot {
 	if len(windows) == 0 {
 		return nil
@@ -190,4 +196,12 @@ func nextFocusID(slot runningAppSlot) uint64 {
 		}
 	}
 	return slot.MRU.ID
+}
+
+func runningAppMenu(slot runningAppSlot) []runningAppMenuRow {
+	rows := make([]runningAppMenuRow, 0, len(slot.Actions)+1)
+	for _, a := range slot.Actions {
+		rows = append(rows, runningAppMenuRow{Label: a.Name, ActionID: a.ID})
+	}
+	return append(rows, runningAppMenuRow{Label: "Close all", CloseAll: true})
 }
