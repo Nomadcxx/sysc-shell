@@ -54,19 +54,31 @@ func (c *CatalogT) Template(name string) string {
 	return c.tpl[name]
 }
 
+// Render fills one template from a palette. Mode names which half of the
+// palette this is, and Source names where it came from, so a template can
+// branch on either.
 func Render(tpl string, tok theme.Tokens) string {
+	return RenderWith(tpl, tok, "dark", "")
+}
+
+// RenderWith is Render with the mode and source metadata a caller knows.
+//
+// The token map comes from the palette's own role table rather than a list
+// kept here, so a role added to the palette reaches every template without a
+// second table to update. Only palette roles are exported: density, type,
+// shape, opacity, elevation and motion are the shell's composition and mean
+// nothing in another application's colour file.
+func RenderWith(tpl string, tok theme.Tokens, mode, source string) string {
 	t, err := template.New("t").Option("missingkey=zero").Parse(tpl)
 	if err != nil {
 		return ""
 	}
-	data := map[string]string{
-		"Surface": tok.Surface, "SurfaceContainer": tok.SurfaceContainer,
-		"OnSurface": tok.OnSurface, "OnSurfaceVariant": tok.OnSurfaceVariant,
-		"Primary": tok.Primary, "OnPrimary": tok.OnPrimary,
-		"PrimaryContainer": tok.PrimaryContainer, "OnPrimaryContainer": tok.OnPrimaryContainer,
-		"Outline": tok.Outline, "Error": tok.Error, "OnError": tok.OnError,
-		"Mode": "dark",
+	data := tok.Export()
+	if mode == "" {
+		mode = "dark"
 	}
+	data["Mode"] = mode
+	data["Source"] = source
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, data); err != nil {
 		return ""

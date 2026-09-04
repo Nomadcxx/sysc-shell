@@ -4,6 +4,8 @@ package theme
 import (
 	"errors"
 	"fmt"
+	"strings"
+	"unicode"
 )
 
 // Tokens is the Material 3 role family the shell and the application template
@@ -319,4 +321,40 @@ type Options struct {
 	Mode         string // dark | light
 	Scheme       string
 	HighContrast bool
+}
+
+// Export returns every role keyed by its Go field name, which is the name a
+// template references. It walks the same ordered role list the parser,
+// Complete and Valid use, so a role added there reaches templates without a
+// second table to keep in step.
+//
+// Only palette roles appear. Density, type, shape, opacity, elevation and
+// motion are the shell's own composition and mean nothing to another
+// application's colour file.
+func (t Tokens) Export() map[string]string {
+	out := make(map[string]string, len(roles))
+	for _, r := range roles {
+		out[goName(r.name)] = *r.get(&t)
+	}
+	return out
+}
+
+// goName converts a snake_case role to the CamelCase name a template uses.
+func goName(role string) string {
+	var b strings.Builder
+	b.Grow(len(role))
+	upper := true
+	for _, c := range role {
+		if c == '_' {
+			upper = true
+			continue
+		}
+		if upper {
+			b.WriteRune(unicode.ToUpper(c))
+			upper = false
+			continue
+		}
+		b.WriteRune(c)
+	}
+	return b.String()
 }
