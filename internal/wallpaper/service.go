@@ -1,9 +1,11 @@
 package wallpaper
 
 import (
+	"context"
 	"maps"
 	"slices"
 	"sync"
+	"time"
 )
 
 // Op is one thing the panel or the registry can ask the service to do.
@@ -81,6 +83,11 @@ type ServiceConfig struct {
 	// Coverage reports which outputs a foreign wallpaper owns. It is injected
 	// so the service stays free of any compositor dependency.
 	Coverage func() (map[string]string, error)
+	// CacheDir holds the generated previews. Empty disables the generator.
+	CacheDir string
+	// ThumbPace is the gap between two generated previews. Zero uses the
+	// package default.
+	ThumbPace time.Duration
 }
 
 type engineResult struct {
@@ -110,6 +117,8 @@ type Service struct {
 	work    sync.WaitGroup
 
 	coverage func() (map[string]string, error)
+	thumbs   *Thumbnailer
+	stopWork context.CancelFunc
 
 	// store, lib, caps, and covered are touched only by the loop goroutine.
 	store   Store
@@ -153,6 +162,18 @@ func NewService(cfg ServiceConfig) *Service {
 	s.lib = Scan(s.roots)
 	s.refreshCoverage()
 	s.publish()
+
+	// Previews are generated slowly in the background rather than decoded on
+	// demand: a library of several hundred wallpapers is tens of gigabytes of
+	// pixels, and doing that work when the picker opens is what makes a
+	// wallpaper chooser hang a desktop.
+	if cfg.CacheDir != "" {
+		ctx, cancel := context.WithCancel(context.Background())
+		s.stopWork = cancel
+		s.thumbs = NewThumbnailer(cfg.CacheDir, cfg.ThumbPace)
+		go s.thumbs.Run(ctx)
+		s.enqueueThumbs()
+	}
 	go s.run()
 	s.reconcile()
 	return s
@@ -205,6 +226,9 @@ func (s *Service) Enqueue(c Command) {
 // no goroutine outlives the service.
 func (s *Service) Close() {
 	s.closing.Do(func() {
+		if s.stopWork != nil {
+			s.stopWork()
+		}
 		close(s.quit)
 		s.work.Wait()
 	})
@@ -219,8 +243,29 @@ func (s *Service) run() {
 			s.handle(c)
 		case r := <-s.results:
 			s.finish(r)
+		case <-s.thumbProgress():
+			// A preview landed on disk; the picker only picks it up on a
+			// snapshot, so publish one.
+			s.publish()
 		}
 	}
+}
+
+// thumbProgress is the generator's channel, or nil when there is no generator.
+// A nil channel blocks forever, which is what makes the select above safe.
+func (s *Service) thumbProgress() <-chan struct{} {
+	if s.thumbs == nil {
+		return nil
+	}
+	return s.thumbs.Progress()
+}
+
+// enqueueThumbs hands the current library to the generator.
+func (s *Service) enqueueThumbs() {
+	if s.thumbs == nil || s.lib == nil {
+		return
+	}
+	s.thumbs.Enqueue(s.lib.All())
 }
 
 func (s *Service) handle(c Command) {
@@ -240,6 +285,7 @@ func (s *Service) handle(c Command) {
 	case OpRefresh:
 		s.lib = Scan(s.roots)
 		s.refreshCoverage()
+		s.enqueueThumbs()
 	}
 	s.publish()
 }

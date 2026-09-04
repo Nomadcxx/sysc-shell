@@ -330,8 +330,11 @@ func Default() Config {
 		},
 		Panels: Panels{Gap: 0, Padding: 8, OSD: "bottom-center"},
 		Wallpaper: Wallpaper{
-			ImageDirectory: "~/Pictures/Wallpapers",
-			VideoDirectory: "~/Videos/Wallpapers",
+			// Stills and video share one directory by default, which D9
+			// allows: that is how the library on this machine is laid out, and
+			// a split default would hide every video behind a second root.
+			ImageDirectory: "~/Pictures/wallpapers",
+			VideoDirectory: "~/Pictures/wallpapers",
 			Scale:          "fill",
 			Loop:           true,
 			FPS:            30,

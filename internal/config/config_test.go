@@ -715,8 +715,8 @@ func TestWallpaperDefaults(t *testing.T) {
 	// The tilde is kept literal: Default() must not depend on the environment,
 	// so expansion belongs to whoever opens the directory.
 	want := Wallpaper{
-		ImageDirectory: "~/Pictures/Wallpapers",
-		VideoDirectory: "~/Videos/Wallpapers",
+		ImageDirectory: "~/Pictures/wallpapers",
+		VideoDirectory: "~/Pictures/wallpapers",
 		Scale:          "fill",
 		Loop:           true,
 		FPS:            30,

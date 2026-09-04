@@ -748,14 +748,17 @@ func wallpaperThumbFor(r *Registry, entry wallpaper.Entry) *ui.Image {
 	if r == nil || entry.IsDir {
 		return nil
 	}
-	source := entry.Path
-	if entry.Kind == wallpaper.KindVideo {
-		// A video cannot be decoded by the image path; its still is extracted
-		// into the cache off the owner, and until then the tile shows nothing.
-		source = wallpaper.CachedStillPath(entry.Path)
-		if source == "" {
-			return nil
-		}
+	// Always the generated preview, never the original. A wallpaper library is
+	// tens of gigabytes of pixels; decoding a 4K still on the tile path would
+	// stall the picker and blow the decoder's own file bound. The generator
+	// fills the cache slowly in the background, and until it reaches this file
+	// the tile keeps its kind glyph.
+	source := wallpaper.CachedStillPath(entry.Path)
+	if source == "" {
+		return nil
+	}
+	if _, err := os.Stat(source); err != nil {
+		return nil
 	}
 	key := icons.Key{Name: source, W: wallpaperTileWidth, H: wallpaperThumbH}
 	worker := r.wallpaperThumbsLocked()
@@ -784,6 +787,7 @@ func (r *Registry) wallpaperStartLocked() *wallpaper.Service {
 		Roots:       []string{cfg.ImageDirectory, cfg.VideoDirectory},
 		PersistPath: wallpaper.AssignmentsPath(),
 		Coverage:    wallpaperCoverageProbe,
+		CacheDir:    wallpaper.CacheDir(),
 	})
 	r.wallpaperSvc.SetConfigHook(r.setWallpaperSeed)
 	go r.relayWallpaper(r.wallpaperSvc)

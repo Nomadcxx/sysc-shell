@@ -2,6 +2,7 @@ package wallpaper
 
 import (
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -192,4 +193,19 @@ func expandHome(path string) string {
 		return path
 	}
 	return filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(path, "~"), "/"))
+}
+
+// All returns every indexed media file, in directory order. It is what the
+// thumbnail generator walks: previews are built for the whole library, not
+// just the directory the picker happens to be showing.
+func (l *Library) All() []Entry {
+	out := make([]Entry, 0, len(l.dirs)*8)
+	for _, dir := range slices.Sorted(maps.Keys(l.dirs)) {
+		for _, e := range l.dirs[dir] {
+			if !e.IsDir {
+				out = append(out, e)
+			}
+		}
+	}
+	return out
 }
