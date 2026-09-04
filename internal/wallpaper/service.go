@@ -104,6 +104,10 @@ type ServiceConfig struct {
 	// ThumbPace is the gap between two generated previews. Zero uses the
 	// package default.
 	ThumbPace time.Duration
+	// ConfigHook is the theme write-back, given here rather than installed
+	// afterwards so the seed that startup reconcile produces cannot be
+	// published before anyone is listening.
+	ConfigHook func(source, seed string)
 }
 
 type engineResult struct {
@@ -147,6 +151,11 @@ type Service struct {
 	// cfgHook is the theme write-back. It is never called while mu is held:
 	// it re-enters the registry, which takes its own lock.
 	cfgHook func(source, seed string)
+	// notifiedSeed is what cfgHook was last given. The store's own seed is
+	// primed by Adopt before reconcile runs, so comparing a commit against
+	// that one treats a restored assignment as already applied and leaves the
+	// palette at its defaults for the whole session.
+	notifiedSeed string
 }
 
 // NewService starts the service loop.
@@ -157,6 +166,7 @@ func NewService(cfg ServiceConfig) *Service {
 		roots:       slices.Clone(cfg.Roots),
 		persistPath: cfg.PersistPath,
 		coverage:    cfg.Coverage,
+		cfgHook:     cfg.ConfigHook,
 		cmds:        make(chan Command, 32),
 		results:     make(chan engineResult, 32),
 		// One slot, coalescing: a picker that is closed or slow must never
@@ -222,6 +232,8 @@ func (s *Service) Snapshot() Snapshot {
 
 // SetConfigHook installs the theme write-back. The registry points it at the
 // call that sets ThemeGen.Source and Seed and regenerates the palette.
+// Prefer ServiceConfig.ConfigHook: a hook installed after NewService can miss
+// the seed that startup reconcile publishes.
 func (s *Service) SetConfigHook(hook func(source, seed string)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -329,7 +341,6 @@ func (s *Service) finish(r engineResult) {
 		s.publish()
 		return
 	}
-	before := s.store.SeedPath()
 	if !s.store.Commit(r.job, r.preview) {
 		// A stale generation: a newer apply already owns this output, so the
 		// work is discarded rather than committed over it.
@@ -337,11 +348,8 @@ func (s *Service) finish(r engineResult) {
 	}
 	s.persist()
 	s.refreshCoverage()
-	seed := s.store.SeedPath()
 	s.publish()
-	if seed != "" && seed != before {
-		s.notifySeed(seed)
-	}
+	s.notifySeed(s.store.SeedPath())
 }
 
 // refreshCoverage re-reads which outputs a foreign wallpaper owns. A probe
@@ -357,7 +365,15 @@ func (s *Service) refreshCoverage() {
 
 // notifySeed calls the theme write-back outside the service lock.
 func (s *Service) notifySeed(seed string) {
+	if seed == "" {
+		return
+	}
 	s.mu.Lock()
+	if s.notifiedSeed == seed {
+		s.mu.Unlock()
+		return
+	}
+	s.notifiedSeed = seed
 	hook := s.cfgHook
 	s.mu.Unlock()
 	if hook != nil {

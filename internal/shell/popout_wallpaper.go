@@ -914,8 +914,11 @@ func (r *Registry) wallpaperStartLocked() *wallpaper.Service {
 		PersistPath: wallpaper.AssignmentsPath(),
 		Coverage:    wallpaperCoverageProbe,
 		CacheDir:    wallpaper.CacheDir(),
+		// Given at construction: startup reconcile publishes the restored
+		// wallpaper's seed before a hook installed afterwards would be there
+		// to hear it, and the palette would sit at its defaults all session.
+		ConfigHook: r.setWallpaperSeed,
 	})
-	r.wallpaperSvc.SetConfigHook(r.setWallpaperSeed)
 	go r.relayWallpaper(r.wallpaperSvc)
 	return r.wallpaperSvc
 }

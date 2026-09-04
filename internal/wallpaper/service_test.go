@@ -299,3 +299,36 @@ func TestServiceReconcilesSavedAssignmentsAtStart(t *testing.T) {
 	}
 	t.Fatalf("startup did not restore the saved assignment: %v", engine.appliedPaths())
 }
+
+// Adopt primes the store's seed from the persisted assignment so a snapshot has
+// one before reconcile finishes. That must not be mistaken for having told the
+// theme: the seed is deliberately not kept in the config file, so if startup
+// skips the hook the palette falls back to defaults on every reboot and the
+// compositor colours stop matching the wallpaper.
+func TestServiceSeedsTheThemeFromAPersistedAssignment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "assignments.json")
+	saved := map[string]Assignment{
+		"DP-1": {Kind: KindImage, Path: "/w/saved.png", DesiredPlayback: StateStatic},
+	}
+	if err := SaveAssignments(path, saved); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	seeds := make(chan string, 4)
+	svc := NewService(ServiceConfig{
+		Engine:     newFakeEngine(),
+		Connectors: []string{"DP-1"},
+		PersistPath: path,
+		ConfigHook: func(_, seed string) { seeds <- seed },
+	})
+	t.Cleanup(svc.Close)
+
+	select {
+	case got := <-seeds:
+		if got != "/w/saved.png" {
+			t.Fatalf("startup seeded the theme with %q, want the saved wallpaper", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("startup restored the wallpaper but never seeded the theme from it")
+	}
+}
