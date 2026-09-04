@@ -42,7 +42,7 @@ func iconSlot(app string, raster *ui.Image) *ui.Node {
 		return &ui.Node{Kind: ui.KindImage, Image: raster, ImageSize: cardIconSize}
 	}
 	return &ui.Node{
-		Kind: ui.KindCapsule, Fill: ui.FillContainer, Width: cardIconSize,
+		Kind: ui.KindCapsule, Fill: ui.FillContainer, Width: cardIconSize, Shape: ui.ShapeMedium,
 		Children: []*ui.Node{{Kind: ui.KindText, Text: appLetter(app)}},
 	}
 }
@@ -84,7 +84,7 @@ func wrapNotifyCard(inner *ui.Node, critical bool) *ui.Node {
 		}}
 	}
 	cap := &ui.Node{
-		Kind: ui.KindCapsule, Fill: ui.FillNone, Padding: cardPadding,
+		Kind: ui.KindCapsule, Fill: ui.FillNone, Padding: cardPadding, Shape: ui.ShapeCard,
 		Action: inner.Action, Children: []*ui.Node{body},
 	}
 	if critical {
@@ -212,7 +212,7 @@ func ActiveGroupCard(g activeGroup, now time.Time, expanded bool, raster *ui.Ima
 	root := &ui.Node{Kind: ui.KindColumn, Gap: cardGap, Children: []*ui.Node{head}}
 	if n := len(g.members); n > 1 {
 		root.Children = append(root.Children, &ui.Node{
-			Kind: ui.KindCapsule, Fill: ui.FillAccent, Padding: 4,
+			Kind: ui.KindCapsule, Fill: ui.FillAccent, Padding: 4, Shape: ui.ShapeMedium,
 			Children: []*ui.Node{{Kind: ui.KindText, Text: fmt.Sprintf("%d", n)}},
 		})
 	}

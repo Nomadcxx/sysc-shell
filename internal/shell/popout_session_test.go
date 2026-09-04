@@ -526,8 +526,8 @@ func TestSelectedProfileSwapsItsIconForACheckAndKeepsItsLabel(t *testing.T) {
 		if icon == nil {
 			t.Fatalf("segment %q has no icon", seg.Name)
 		}
-		if got := icon.IconSize; got != DefaultTheme().ProfileIconSize {
-			t.Errorf("segment %q icon is %d px, want %d", seg.Name, got, DefaultTheme().ProfileIconSize)
+		if got := icon.IconSize; got != DefaultTheme().Metrics.IconProfile {
+			t.Errorf("segment %q icon is %d px, want %d", seg.Name, got, DefaultTheme().Metrics.IconProfile)
 		}
 		want := sessionProfileIcon(strings.ToLower(strings.ReplaceAll(seg.Name, " ", "-")))
 		if seg.State.Has(ui.StateSelected) {

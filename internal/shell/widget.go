@@ -91,7 +91,7 @@ func refreshWorkspacePills(row *ui.Node, v barView) bool {
 			return false
 		}
 		row.Children = append(row.Children[:0], &ui.Node{
-			Kind: ui.KindCapsule, Fill: ui.FillContainer,
+			Kind: ui.KindCapsule, Fill: ui.FillContainer, Shape: ui.ShapeMedium,
 			Children: []*ui.Node{{Kind: ui.KindText, Text: label}},
 		})
 		return true
@@ -147,7 +147,7 @@ func capsuled(w textWidget, pad int) textWidget {
 		return w
 	}
 	w.inner = w.node
-	w.node = &ui.Node{Kind: ui.KindCapsule, Padding: pad, Action: w.inner.Action, Children: []*ui.Node{w.inner}}
+	w.node = &ui.Node{Kind: ui.KindCapsule, Padding: pad, Shape: ui.ShapeMedium, Action: w.inner.Action, Children: []*ui.Node{w.inner}}
 	return w
 }
 

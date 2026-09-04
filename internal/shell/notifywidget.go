@@ -54,7 +54,7 @@ func refreshNotifyWidget(row *ui.Node, v barView) bool {
 	children := []*ui.Node{{Kind: ui.KindText, Text: text}}
 	if wantBadge {
 		children = append(children, &ui.Node{
-			Kind: ui.KindCapsule, Fill: ui.FillError, Width: notifyBadgeSize,
+			Kind: ui.KindCapsule, Fill: ui.FillError, Width: notifyBadgeSize, Shape: ui.ShapeCircle,
 		})
 	}
 	row.Children = children

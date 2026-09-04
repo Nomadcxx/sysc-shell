@@ -102,14 +102,8 @@ type Theme struct {
 	Radius     int
 	TextSize   int
 
-	CapsulePadding  int
-	ControlHeight   int
-	CompactHeight   int
-	ButtonPadding   int
-	IconSize        int
-	ProfileIconSize int
-	OSDIconSize     int
-	CardRadius      int
+	IconSize   int
+	CardRadius int
 
 	Surface                 Color
 	SurfaceContainer        Color
@@ -281,13 +275,7 @@ func applyFlat(t *Theme) {
 	t.CardRadius = t.Shapes.Card
 	t.TextSize = t.Type.Spec(theme.RoleBody).Size
 
-	t.CapsulePadding = t.Metrics.CapsulePadding
-	t.ControlHeight = t.Metrics.StandardControl
-	t.CompactHeight = t.Metrics.CompactControl
-	t.ButtonPadding = t.Metrics.ButtonPadding
 	t.IconSize = t.Metrics.IconNormal
-	t.ProfileIconSize = t.Metrics.IconProfile
-	t.OSDIconSize = t.Metrics.IconLarge
 
 	t.Surface = p.Surface
 	t.SurfaceContainer = p.SurfaceContainer
@@ -550,13 +538,15 @@ func (t Theme) Valid() error {
 		return fmt.Errorf("shell: padding %d and spacing %d must not be negative",
 			t.BarPadding, t.Spacing)
 	}
-	if t.ControlHeight <= 0 || t.CompactHeight <= 0 || t.IconSize <= 0 {
+	// The chrome dimensions live in the metrics row now, so the check reads
+	// the row rather than the flat mirrors it used to keep.
+	if t.Metrics.StandardControl <= 0 || t.Metrics.CompactControl <= 0 || t.Metrics.IconNormal <= 0 {
 		return fmt.Errorf("shell: chrome heights %d/%d and icon size %d must be positive",
-			t.ControlHeight, t.CompactHeight, t.IconSize)
+			t.Metrics.StandardControl, t.Metrics.CompactControl, t.Metrics.IconNormal)
 	}
-	if t.ButtonPadding < 0 || t.CardRadius < 0 {
+	if t.Metrics.ButtonPadding < 0 || t.CardRadius < 0 {
 		return fmt.Errorf("shell: button padding %d and card radius %d must not be negative",
-			t.ButtonPadding, t.CardRadius)
+			t.Metrics.ButtonPadding, t.CardRadius)
 	}
 	for _, s := range []struct {
 		name  string

@@ -74,10 +74,10 @@ func TestThemeValidation(t *testing.T) {
 		{"negative radius", func(th *Theme) { th.Radius = -2 }},
 		{"negative padding", func(th *Theme) { th.BarPadding = -1 }},
 		{"negative spacing", func(th *Theme) { th.Spacing = -1 }},
-		{"zero control height", func(th *Theme) { th.ControlHeight = 0 }},
-		{"zero compact height", func(th *Theme) { th.CompactHeight = 0 }},
-		{"zero icon size", func(th *Theme) { th.IconSize = 0 }},
-		{"negative button padding", func(th *Theme) { th.ButtonPadding = -1 }},
+		{"zero control height", func(th *Theme) { th.Metrics.StandardControl = 0 }},
+		{"zero compact height", func(th *Theme) { th.Metrics.CompactControl = 0 }},
+		{"zero icon size", func(th *Theme) { th.Metrics.IconNormal = 0 }},
+		{"negative button padding", func(th *Theme) { th.Metrics.ButtonPadding = -1 }},
 		{"negative card radius", func(th *Theme) { th.CardRadius = -1 }},
 	}
 	for _, c := range cases {
@@ -153,7 +153,7 @@ func TestTokensResolveToBarTheme(t *testing.T) {
 
 func TestDefaultThemeCarriesCapsulePadding(t *testing.T) {
 	t.Parallel()
-	if got := DefaultTheme().CapsulePadding; got != 8 {
+	if got := DefaultTheme().Metrics.CapsulePadding; got != 8 {
 		t.Fatalf("CapsulePadding = %d, want 8", got)
 	}
 }
@@ -161,13 +161,13 @@ func TestDefaultThemeCarriesCapsulePadding(t *testing.T) {
 func TestDefaultThemeCarriesChromeMetrics(t *testing.T) {
 	t.Parallel()
 	th := DefaultTheme()
-	if th.ControlHeight != 40 || th.CompactHeight != 32 || th.ButtonPadding != 12 {
+	if th.Metrics.StandardControl != 40 || th.Metrics.CompactControl != 32 || th.Metrics.ButtonPadding != 12 {
 		t.Fatalf("control metrics = %d/%d padding %d, want 40/32 padding 12",
-			th.ControlHeight, th.CompactHeight, th.ButtonPadding)
+			th.Metrics.StandardControl, th.Metrics.CompactControl, th.Metrics.ButtonPadding)
 	}
-	if th.IconSize != 20 || th.ProfileIconSize != 18 || th.OSDIconSize != 24 {
+	if th.IconSize != 20 || th.Metrics.IconProfile != 18 || th.Metrics.IconLarge != 24 {
 		t.Fatalf("icon metrics = %d/%d/%d, want 20/18/24",
-			th.IconSize, th.ProfileIconSize, th.OSDIconSize)
+			th.IconSize, th.Metrics.IconProfile, th.Metrics.IconLarge)
 	}
 }
 
@@ -356,9 +356,9 @@ func TestLerpColorsTravelsThePaletteButNotTheGeometry(t *testing.T) {
 	}
 	// Geometry arrives whole: a control that resized mid-fade would relayout
 	// on every frame.
-	if mid.ControlHeight != to.ControlHeight || mid.Radius != to.Radius {
+	if mid.Metrics.StandardControl != to.Metrics.StandardControl || mid.Radius != to.Radius {
 		t.Errorf("geometry interpolated: height %d radius %d, want %d and %d",
-			mid.ControlHeight, mid.Radius, to.ControlHeight, to.Radius)
+			mid.Metrics.StandardControl, mid.Radius, to.Metrics.StandardControl, to.Radius)
 	}
 }
 
@@ -615,7 +615,7 @@ func TestDensityMovesEveryMetricItOwns(t *testing.T) {
 		{"bar height", compact.BarHeight, standard.BarHeight, comfortable.BarHeight},
 		{"bar padding", compact.BarPadding, standard.BarPadding, comfortable.BarPadding},
 		{"spacing", compact.Spacing, standard.Spacing, comfortable.Spacing},
-		{"control height", compact.ControlHeight, standard.ControlHeight, comfortable.ControlHeight},
+		{"control height", compact.Metrics.StandardControl, standard.Metrics.StandardControl, comfortable.Metrics.StandardControl},
 		{"panel padding", compact.Metrics.PanelPadding, standard.Metrics.PanelPadding, comfortable.Metrics.PanelPadding},
 		{"card padding", compact.Metrics.CardPadding, standard.Metrics.CardPadding, comfortable.Metrics.CardPadding},
 		{"icon", compact.IconSize, standard.IconSize, comfortable.IconSize},

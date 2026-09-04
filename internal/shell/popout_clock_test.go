@@ -76,9 +76,9 @@ func TestCalendarNavigatesWithCompactChevronButtons(t *testing.T) {
 		}
 		// A square compact button clamps to a circle; it needs no geometry of
 		// its own beyond being square.
-		if node.Width != node.Height || node.Width != DefaultTheme().CompactHeight {
+		if node.Width != node.Height || node.Width != DefaultTheme().Metrics.CompactControl {
 			t.Errorf("%s is %dx%d, want a square %d", tc.action, node.Width, node.Height,
-				DefaultTheme().CompactHeight)
+				DefaultTheme().Metrics.CompactControl)
 		}
 	}
 }

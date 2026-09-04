@@ -136,7 +136,7 @@ func launcherRow(r *Registry, h *PanelHost, results []launcher.Result, i int) *u
 	return &ui.Node{
 		Kind: ui.KindColumn, Padding: pad,
 		Children: []*ui.Node{{
-			Kind: ui.KindCapsule, Fill: fill, Padding: 4,
+			Kind: ui.KindCapsule, Fill: fill, Padding: 4, Shape: ui.ShapeMedium,
 			Action:   "launch:" + res.Entry.ID,
 			Children: []*ui.Node{launcherRowBody(r, h, res.Entry)},
 		}},
@@ -167,7 +167,7 @@ func launcherIconNode(r *Registry, h *PanelHost, e launcher.Entry) *ui.Node {
 		return &ui.Node{Kind: ui.KindImage, ImageSize: launcherIconSlot, Image: img}
 	}
 	return &ui.Node{
-		Kind: ui.KindCapsule, Width: launcherIconSlot, Fill: ui.FillContainer,
+		Kind: ui.KindCapsule, Width: launcherIconSlot, Fill: ui.FillContainer, Shape: ui.ShapeMedium,
 		Children: []*ui.Node{{Kind: ui.KindText, Text: launcherGlyph(e.Name), TextRole: theme.RoleTitle}},
 	}
 }
