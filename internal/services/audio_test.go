@@ -127,3 +127,25 @@ func waitForAudio(t *testing.T, a *Audio) AudioState {
 		return AudioState{}
 	}
 }
+
+// wpctl documents its relative argument as VOL%[-/+]: the sign is a suffix.
+// The shell sent "+5%" and "-5%"; wpctl rejects the first as an invalid volume
+// and reads the second as an unknown option, so every volume keypress failed
+// and then latched the whole audio service unavailable.
+func TestWpctlStepPutsTheSignAfterThePercent(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		delta int
+		want  string
+	}{
+		{5, "5%+"},
+		{-5, "5%-"},
+		{1, "1%+"},
+		{-100, "100%-"},
+	} {
+		if got := wpctlStep(c.delta); got != c.want {
+			t.Errorf("wpctlStep(%d) = %q, want %q", c.delta, got, c.want)
+		}
+	}
+}
