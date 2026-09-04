@@ -668,3 +668,26 @@ func TestSessionActionIdentityIsUnchanged(t *testing.T) {
 		}
 	}
 }
+
+// TestRunArgvDefaultRefusesToLaunchFromATestBinary is a safety gate, not a
+// behaviour check. runArgvDefault is what NewRegistry installs by default, and
+// a test that activates a session row reaches it: releasing the pointer on the
+// session panel's first control asked logind to end the developer's own login
+// session, which killed the SSH connection the suite was running over. The
+// suite still reported ok, so nothing pointed at the cause.
+//
+// The stub most tests install is reg.lookPath, which this path does not
+// consult -- it calls exec.LookPath directly. So the refusal lives here, at
+// the one place every session action is launched from.
+func TestRunArgvDefaultRefusesToLaunchFromATestBinary(t *testing.T) {
+	t.Parallel()
+	for _, argv := range [][]string{
+		{"loginctl", "terminate-session", "self"},
+		{"loginctl", "poweroff"},
+		{"swaylock"},
+	} {
+		if err := runArgvDefault(argv); err == nil {
+			t.Errorf("runArgvDefault(%v) launched from a test binary", argv)
+		}
+	}
+}

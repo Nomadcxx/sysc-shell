@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"testing"
 	"time"
 
 	metrics "github.com/Nomadcxx/sysc-metrics"
@@ -254,6 +255,19 @@ func (r *Registry) setSessionProfile(h *PanelHost, name string) {
 func runArgvDefault(argv []string) error {
 	if len(argv) == 0 {
 		return errors.New("empty command")
+	}
+	// A session action ends the session it runs in. Under `go test` that is
+	// the developer's own login session, so a test that activates a session
+	// row logs them out -- and the suite still passes, which leaves nothing
+	// pointing at the cause. Tests that mean to observe an action replace
+	// Registry.runArgv; reaching the real launcher from a test binary is
+	// always a mistake, so refuse rather than execute.
+	//
+	// The refusal belongs here rather than at the call sites: this is the one
+	// place every action is launched from, and the stub tests usually install
+	// (Registry.lookPath) is not consulted below.
+	if testing.Testing() {
+		return fmt.Errorf("refusing to run %q from a test binary: replace Registry.runArgv", argv[0])
 	}
 	path, err := exec.LookPath(argv[0])
 	if err != nil {

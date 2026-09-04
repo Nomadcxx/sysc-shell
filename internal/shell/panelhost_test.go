@@ -1049,6 +1049,10 @@ func editorColumn(text string, reseed uint64) *ui.Node {
 func openSessionPanel(t *testing.T) (*Registry, *PanelHost, func(wayland.Event) bool) {
 	t.Helper()
 	reg := newPanelRegistry(t)
+	// The session panel's rows launch real session actions, and releasing the
+	// pointer on one activates it. Record the argv instead: the default
+	// launcher would ask logind to end the session running the test.
+	reg.runArgv = func([]string) error { return nil }
 	if err := reg.OpenPanel(PanelSession, 7, Trigger{BarEdge: "top", BarZone: 40, Align: "center"}); err != nil {
 		t.Fatal(err)
 	}
