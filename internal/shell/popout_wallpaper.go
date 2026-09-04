@@ -51,6 +51,10 @@ const (
 	wallpaperDirRowHeight = 46
 	wallpaperDirChipWidth = 210
 
+	// wallpaperEnginePillH is the engine strip: shorter than a control, since
+	// the pills are read, not pressed.
+	wallpaperEnginePillH = 26
+
 	// wallpaperCoverageTimeout bounds the compositor probe.
 	wallpaperCoverageTimeout = 2 * time.Second
 )
@@ -190,6 +194,7 @@ func wallpaperTree(r *Registry, h *PanelHost) *ui.Node {
 	if strip := wallpaperFolderStrip(h); strip != nil {
 		children = append(children, strip)
 	}
+	children = append(children, wallpaperEngineRow(h))
 	children = append(children, wallpaperBanners(h)...)
 	children = append(children, wallpaperActiveStrip(h))
 	if band := wallpaperDirBand(h); band != nil {
@@ -528,17 +533,11 @@ func wallpaperBanners(h *PanelHost) []*ui.Node {
 		// looks broken.
 		add(fmt.Sprintf("Generating previews \u00b7 %d / %d", done, total), ui.ToneNormal)
 	}
-	if !h.wallpaperSnap.Caps.GSlapper {
-		add("gslapper is not installed - video wallpapers are unavailable", ui.ToneNormal)
-	}
 	for _, connector := range wallpaperTargets(h) {
 		if h.wallpaperSnap.Runtime[connector].State == wallpaper.StateStarting {
 			add("Applying wallpaper\u2026", ui.ToneNormal)
 			break
 		}
-	}
-	if h.wallpaperSnap.Caps.Static == "" {
-		add("neither awww nor swaybg is installed - Restore has nowhere to go", ui.ToneNormal)
 	}
 	if h.wallpaperSnap.Library != nil {
 		add(h.wallpaperSnap.Library.Err, ui.ToneError)
@@ -556,6 +555,39 @@ func wallpaperBanners(h *PanelHost) []*ui.Node {
 		}
 	}
 	return out
+}
+
+// wallpaperEngineRow names the wallpaper engines this machine has, one pill
+// each, in the order they are reached: gSlapper drives video and image, the
+// static fallbacks are where Restore hands off. A pill is absent when its
+// binary is not installed, which reads faster than a sentence saying so.
+func wallpaperEngineRow(h *PanelHost) *ui.Node {
+	var pills []*ui.Node
+	if h.wallpaperSnap.Caps.GSlapper {
+		pills = append(pills, wallpaperEnginePill(h, "gSlapper"))
+	}
+	for _, name := range h.wallpaperSnap.Caps.Statics {
+		pills = append(pills, wallpaperEnginePill(h, name))
+	}
+	if len(pills) == 0 {
+		// The one case prose earns its space: nothing can paint anything.
+		return &ui.Node{
+			Kind: ui.KindText, Height: wallpaperCaptionH, Tone: ui.ToneError,
+			Text: "no wallpaper engine installed",
+		}
+	}
+	return &ui.Node{
+		Kind: ui.KindRow, Gap: 6, Height: wallpaperEnginePillH, Children: pills,
+	}
+}
+
+func wallpaperEnginePill(h *PanelHost, label string) *ui.Node {
+	return &ui.Node{
+		Kind: ui.KindCapsule, Fill: ui.FillSoft, Padding: wallpaperControlPad,
+		Height:   wallpaperEnginePillH,
+		Radius:   h.theme.Radius,
+		Children: []*ui.Node{{Kind: ui.KindText, Text: label}},
+	}
 }
 
 // wallpaperActiveStrip is what the selected output is showing, with the

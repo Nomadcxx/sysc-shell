@@ -85,9 +85,7 @@ func probeCapabilities(lookup func(string) bool) Capabilities {
 			caps.GSlapper = helpSupports(help)
 		}
 	}
-	if static, err := pickFallback(lookup); err == nil {
-		caps.Static = static
-	}
+	caps.Statics = installedFallbacks(lookup)
 	return caps
 }
 
@@ -293,16 +291,17 @@ func (e *gslapperEngine) Restore(connector, still string) error {
 // evidence the wallpaper was set, and the daemon has to be up first (D16).
 func (e *gslapperEngine) startFallback(connector, path string) error {
 	caps := e.Capabilities()
-	if caps.Static == "" {
+	static := caps.Static()
+	if static == "" {
 		return ErrNoStaticEngine
 	}
-	argv, err := fallbackArgs(caps.Static, path, connector)
+	argv, err := fallbackArgs(static, path, connector)
 	if err != nil {
 		return err
 	}
 	e.stopFallback(connector)
 
-	if fallbackIsOneShot(caps.Static) {
+	if fallbackIsOneShot(static) {
 		if err := e.ensureAwwwDaemon(); err != nil {
 			return err
 		}
@@ -311,7 +310,7 @@ func (e *gslapperEngine) startFallback(connector, path string) error {
 
 	proc, err := e.spawn(argv)
 	if err != nil {
-		return fmt.Errorf("wallpaper: launch %s: %w", caps.Static, err)
+		return fmt.Errorf("wallpaper: launch %s: %w", static, err)
 	}
 	e.mu.Lock()
 	e.fallbacks[connector] = proc

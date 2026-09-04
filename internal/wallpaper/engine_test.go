@@ -82,7 +82,7 @@ func newEngineHarness(t *testing.T) *engineHarness {
 	h.mediaDir = t.TempDir()
 	h.eng = &gslapperEngine{
 		dir:       dir,
-		caps:      Capabilities{GSlapper: true, Static: engineAwww},
+		caps:      Capabilities{GSlapper: true, Statics: []string{engineAwww}},
 		readyWait: 300 * time.Millisecond,
 		poll:      5 * time.Millisecond,
 		owned:     map[string]Process{},
@@ -343,7 +343,7 @@ func TestEngineNeverBuildsAKillArgv(t *testing.T) {
 
 func TestEngineStaticFallbackWithoutGSlapper(t *testing.T) {
 	h := newEngineHarness(t)
-	h.eng.caps = Capabilities{GSlapper: false, Static: engineSwaybg}
+	h.eng.caps = Capabilities{GSlapper: false, Statics: []string{engineSwaybg}}
 
 	image := Job{Connector: "DP-1", Gen: 1, Path: h.media("a.png"), Kind: KindImage}
 	if _, err := h.eng.Apply(image, defaultSettings()); err != nil {

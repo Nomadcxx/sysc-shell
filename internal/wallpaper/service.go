@@ -40,8 +40,17 @@ type Command struct {
 // a static engine Restore has nowhere to go.
 type Capabilities struct {
 	GSlapper bool
-	// Static is the chosen fallback binary name, empty when neither is present.
-	Static string
+	// Statics are the installed static fallback binaries in preference order.
+	// The picker names every one; Restore uses the first.
+	Statics []string
+}
+
+// Static is the fallback Restore hands off to, empty when none is installed.
+func (c Capabilities) Static() string {
+	if len(c.Statics) == 0 {
+		return ""
+	}
+	return c.Statics[0]
 }
 
 // Engine is the side of the service that runs processes. It is an interface so

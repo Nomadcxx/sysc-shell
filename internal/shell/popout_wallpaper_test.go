@@ -52,7 +52,7 @@ func (stubWallpaperEngine) Apply(wallpaper.Job, wallpaper.Settings) (string, err
 func (stubWallpaperEngine) Restore(string, string) error                            { return nil }
 func (stubWallpaperEngine) SetPaused(string, bool) error                            { return nil }
 func (stubWallpaperEngine) Capabilities() wallpaper.Capabilities {
-	return wallpaper.Capabilities{GSlapper: true, Static: "awww"}
+	return wallpaper.Capabilities{GSlapper: true, Statics: []string{"awww"}}
 }
 
 func wallpaperHost(t *testing.T, reg *Registry) *PanelHost {
@@ -611,7 +611,7 @@ func TestWallpaperVideoTileIsInertWithoutGSlapper(t *testing.T) {
 	defer reg.mu.Unlock()
 
 	snap := h.wallpaperSnap
-	snap.Caps = wallpaper.Capabilities{GSlapper: false, Static: "awww"}
+	snap.Caps = wallpaper.Capabilities{GSlapper: false, Statics: []string{"awww"}}
 	h.wallpaperSnap = snap
 	reg.rebuildPanel(h)
 
@@ -631,23 +631,80 @@ func TestWallpaperVideoTileIsInertWithoutGSlapper(t *testing.T) {
 	if tile == nil {
 		t.Fatal("no tiles")
 	}
-	// The banner is what tells the user why.
-	var banner bool
+	// The engine strip is what tells the user why: gSlapper has no pill, the
+	// installed fallback still does.
+	labels := wallpaperEngineLabels(h.root)
+	if slices.Contains(labels, "gSlapper") {
+		t.Errorf("engine pills %v name gSlapper, which is not installed", labels)
+	}
+	if !slices.Contains(labels, "awww") {
+		t.Errorf("engine pills %v omit the installed awww", labels)
+	}
+}
+
+// wallpaperEngineLabels reads the engine strip's pills back out of the tree.
+func wallpaperEngineLabels(root *ui.Node) []string {
+	var out []string
 	var walk func(*ui.Node)
 	walk = func(n *ui.Node) {
 		if n == nil {
 			return
 		}
-		if n.Kind == ui.KindText && strings.Contains(n.Text, "gslapper is not installed") {
-			banner = true
+		if n.Kind == ui.KindCapsule && n.Fill == ui.FillSoft &&
+			len(n.Children) == 1 && n.Children[0].Kind == ui.KindText {
+			out = append(out, n.Children[0].Text)
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+	return out
+}
+
+// Every installed engine gets a pill, in the order they are reached.
+func TestWallpaperEngineStripNamesWhatIsInstalled(t *testing.T) {
+	t.Parallel()
+
+	root := seedWallpaperRoot(t)
+	reg, _, _ := openWallpaperPanel(t, []string{root})
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	snap := h.wallpaperSnap
+	snap.Caps = wallpaper.Capabilities{GSlapper: true, Statics: []string{"awww", "swaybg"}}
+	h.wallpaperSnap = snap
+	reg.rebuildPanel(h)
+
+	want := []string{"gSlapper", "awww", "swaybg"}
+	if got := wallpaperEngineLabels(h.root); !slices.Equal(got, want) {
+		t.Errorf("engine pills = %v, want %v", got, want)
+	}
+
+	// With nothing installed the strip says so rather than vanishing.
+	snap.Caps = wallpaper.Capabilities{}
+	h.wallpaperSnap = snap
+	reg.rebuildPanel(h)
+	if got := wallpaperEngineLabels(h.root); len(got) != 0 {
+		t.Errorf("engine pills = %v, want none", got)
+	}
+	var said bool
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n.Kind == ui.KindText && strings.Contains(n.Text, "no wallpaper engine installed") {
+			said = true
 		}
 		for _, c := range n.Children {
 			walk(c)
 		}
 	}
 	walk(h.root)
-	if !banner {
-		t.Error("a missing engine must be explained in a banner")
+	if !said {
+		t.Error("a machine with no engine must be told so")
 	}
 }
 

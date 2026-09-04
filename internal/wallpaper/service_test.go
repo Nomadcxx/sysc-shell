@@ -30,7 +30,7 @@ func newFakeEngine() *fakeEngine {
 		gate:    map[string]chan struct{}{},
 		preview: map[string]string{},
 		fail:    map[string]error{},
-		caps:    Capabilities{GSlapper: true, Static: "awww"},
+		caps:    Capabilities{GSlapper: true, Statics: []string{"awww"}},
 	}
 }
 

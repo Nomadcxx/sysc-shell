@@ -28,12 +28,23 @@ func swaybgArgs(path, connector string) []string {
 // pickFallback chooses the static engine to use. lookup reports whether a
 // binary is on PATH; it is injected so the choice is testable without one.
 func pickFallback(lookup func(name string) bool) (string, error) {
-	for _, name := range []string{engineAwww, engineSwaybg} {
-		if lookup(name) {
-			return name, nil
-		}
+	if installed := installedFallbacks(lookup); len(installed) > 0 {
+		return installed[0], nil
 	}
 	return "", ErrNoStaticEngine
+}
+
+// installedFallbacks reports every static engine present, in preference order.
+// The picker names them all so the reader can see what the machine can do; the
+// first is the one Restore uses.
+func installedFallbacks(lookup func(name string) bool) []string {
+	var out []string
+	for _, name := range []string{engineAwww, engineSwaybg} {
+		if lookup(name) {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // fallbackArgs is the argv for the chosen static engine.
