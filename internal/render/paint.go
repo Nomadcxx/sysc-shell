@@ -17,6 +17,16 @@ func (s Style) buttonText() Color {
 	return s.OnPrimary
 }
 
+// onAccent is the foreground paired with an accent fill. OnAccent and
+// OnPrimary carry the same token in every assembled style; the accessor keeps
+// a style that sets only one of them legible rather than transparent.
+func (s Style) onAccent() Color {
+	if s.OnAccent.A == 0 {
+		return s.buttonText()
+	}
+	return s.OnAccent
+}
+
 // onError falls back to the button text colour for a style assembled before
 // the token existed.
 func (s Style) onError() Color {
@@ -639,13 +649,35 @@ const (
 // those needs the level above it.
 func chromeFill(style Style, n *ui.Node, base Color) (fill, fg Color) {
 	// Selection outranks the declared fill: a selected segment is Primary
-	// whatever it rests in.
+	// whatever it rests in. D6 names OnPrimary for this row specifically, so
+	// it reads the paired token directly rather than the accent's foreground.
 	if n.State.Has(ui.StateSelected) {
 		return style.accent(), style.buttonText()
 	}
-	switch n.Fill {
+	// A destructive outline is error-toned rather than a solid red block. The
+	// tone lives on the node, so it is resolved here and not in the table.
+	if n.Fill == ui.FillOutline && n.Tone == ui.ToneError {
+		return Color{}, style.Error
+	}
+	return fillPair(style, n.Fill, base)
+}
+
+// fillPair is the fill-to-foreground table: one entry per role in design D6,
+// resolved without a node so that a caller holding only a fill gets the same
+// answer a painted node would. chromeFill layers the node's selection and
+// tone over it; capsuleFill and capsuleForeground read the two halves.
+//
+// Keeping the table in one function is what stops the halves drifting. An
+// earlier split resolved the accent's foreground two different ways, which
+// agreed only because the two fields happened to hold the same token.
+//
+// base is the kind's resting fill, which differs by kind rather than by
+// token: a capsule or card rests on the high container, a control resting on
+// one of those needs the level above it.
+func fillPair(style Style, fill ui.Fill, base Color) (Color, Color) {
+	switch fill {
 	case ui.FillAccent:
-		return style.accent(), style.buttonText()
+		return style.accent(), style.onAccent()
 	case ui.FillContainer:
 		return style.Container, style.OnContainer
 	case ui.FillContainerHigh:
@@ -668,12 +700,8 @@ func chromeFill(style Style, n *ui.Node, base Color) (fill, fg Color) {
 		dim.A = uint8(math.Round(float64(dim.A) * scrimAlpha))
 		return dim, style.Foreground
 	case ui.FillOutline:
-		// Outlined chrome keeps whatever its parent painted; only the boundary
-		// and the label mark it. A destructive control is error-toned here
-		// rather than a solid red block.
-		if n.Tone == ui.ToneError {
-			return Color{}, style.Error
-		}
+		// Outlined chrome keeps whatever its parent painted; only the
+		// boundary and the label mark it.
 		return Color{}, style.Foreground
 	}
 	return base, style.Foreground
@@ -819,27 +847,21 @@ func paintButton(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size in
 	return paintChrome(c, n, text, style, size, style.containerHighest(), 0)
 }
 
-// capsuleFill resolves the colour a named fill paints, for the one caller that
-// needs a colour without a node: an explicit stroke. Foregrounds are not its
-// business -- chromeFill is the only place a fill and its paired foreground
-// are resolved together, so a node cannot acquire a mismatched pair.
+// capsuleFill resolves the colour a named fill paints, for a caller that has a
+// fill but no node -- an explicit stroke, or a surface composing chrome ahead
+// of layout. It rests on the capsule level, which is what a bar pill and a
+// panel card share.
 func capsuleFill(style Style, fill ui.Fill) Color {
-	switch fill {
-	case ui.FillAccent:
-		return style.Accent
-	case ui.FillContainer:
-		return style.Container
-	case ui.FillError:
-		return style.Error
-	case ui.FillSoft:
-		return wash(style.Accent, style.Capsule)
-	case ui.FillContainerHighest:
-		return style.containerHighest()
-	case ui.FillErrorContainer:
-		fill, _ := style.errorContainer()
-		return fill
-	}
-	return style.Capsule
+	c, _ := fillPair(style, fill, style.Capsule)
+	return c
+}
+
+// capsuleForeground is the other half: the only label colour that reads on
+// what capsuleFill paints. The two read one table, so a caller that resolves
+// them separately still gets a matched pair.
+func capsuleForeground(style Style, fill ui.Fill) Color {
+	_, fg := fillPair(style, fill, style.Capsule)
+	return fg
 }
 
 // wash tints surface with accent at ~31% so a selected row stays dark with

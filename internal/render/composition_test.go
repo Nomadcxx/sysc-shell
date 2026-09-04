@@ -16,6 +16,7 @@ func lightStyle() Style {
 	s.Track = Color{R: 0x74, G: 0x77, B: 0x7f, A: 0xff}
 	s.Accent = Color{R: 0x00, G: 0x5c, B: 0xbb, A: 0xff}
 	s.OnPrimary = Color{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
+	s.OnAccent = Color{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
 	s.Capsule = Color{R: 0xe9, G: 0xed, B: 0xf4, A: 0xff}
 	s.ContainerHighest = Color{R: 0xe3, G: 0xe6, B: 0xed, A: 0xff}
 	s.Container = Color{R: 0xd4, G: 0xe3, B: 0xff, A: 0xff}
@@ -324,24 +325,29 @@ func TestCompositionErrorContainerFallsBackToTheErrorPair(t *testing.T) {
 	}
 }
 
-// TestCompositionCapsuleFillTracksChromeFill keeps the stroke path in step with
-// the chrome path. A stroke resolves a colour through capsuleFill; a node
-// resolves one through chromeFill. A fill that only one of them knows paints
-// differently depending on which path drew it.
-//
-// FillAccent is excluded: chromeFill honours the toggled accent, which a
-// stroke has no node to read.
+// TestCompositionCapsuleFillTracksChromeFill keeps the node-free accessors in
+// step with the painted node. A stroke resolves a colour through capsuleFill
+// and a label through capsuleForeground; a node resolves both through
+// chromeFill. All three read one table, and this is what says so.
 func TestCompositionCapsuleFillTracksChromeFill(t *testing.T) {
 	t.Parallel()
-	style := darkStyle()
-	fills := []ui.Fill{
-		ui.FillContainer, ui.FillContainerHigh, ui.FillContainerHighest,
-		ui.FillError, ui.FillErrorContainer, ui.FillSoft,
-	}
-	for _, f := range fills {
-		want, _ := chromeFill(style, &ui.Node{Fill: f}, style.Capsule)
-		if got := capsuleFill(style, f); got != want {
-			t.Errorf("capsuleFill(%d) = %+v, want %+v", f, got, want)
+	for _, mode := range compositionModes() {
+		for _, f := range []ui.Fill{
+			ui.FillNone, ui.FillAccent, ui.FillContainer, ui.FillContainerHigh,
+			ui.FillContainerHighest, ui.FillError, ui.FillErrorContainer,
+			ui.FillSoft, ui.FillOutline, ui.FillScrim,
+		} {
+			t.Run(mode.name, func(t *testing.T) {
+				t.Parallel()
+				style := mode.style
+				wantFill, wantFg := chromeFill(style, &ui.Node{Fill: f}, style.Capsule)
+				if got := capsuleFill(style, f); got != wantFill {
+					t.Errorf("capsuleFill(%d) = %+v, want %+v", f, got, wantFill)
+				}
+				if got := capsuleForeground(style, f); got != wantFg {
+					t.Errorf("capsuleForeground(%d) = %+v, want %+v", f, got, wantFg)
+				}
+			})
 		}
 	}
 }

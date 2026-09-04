@@ -503,6 +503,7 @@ func (t Theme) Style() render.Style {
 		Capsule:          p.SurfaceContainerHigh,
 		ContainerHighest: p.SurfaceContainerHighest,
 		Container:        p.PrimaryContainer,
+		OnAccent:         p.OnPrimary,
 		OnContainer:      p.OnPrimaryContainer,
 		Outline:          p.Outline,
 		OutlineVariant:   p.OutlineVariant,

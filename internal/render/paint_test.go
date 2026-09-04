@@ -33,9 +33,13 @@ var testStyle = Style{
 	Capsule:          Color{R: 0x3a, G: 0x41, B: 0x49, A: 0xff},
 	ContainerHighest: Color{R: 0x46, G: 0x4e, B: 0x58, A: 0xff},
 	Container:        Color{R: 0x1f, G: 0x7a, B: 0xb5, A: 0xff},
-	OnContainer:      Color{R: 0x0b, G: 0x10, B: 0x16, A: 0xff},
-	Outline:          Color{R: 0x73, G: 0x7d, B: 0x89, A: 0xff},
-	OutlineVariant:   Color{R: 0x59, G: 0x61, B: 0x6b, A: 0xff},
+	// OnAccent is the accent's paired foreground. ResolveTheme sets it from
+	// OnPrimary, so the fixture holds the same token rather than inventing a
+	// state no assembled style can be in.
+	OnAccent:       Color{R: 0x11, G: 0x22, B: 0x33, A: 0xff},
+	OnContainer:    Color{R: 0x0b, G: 0x10, B: 0x16, A: 0xff},
+	Outline:        Color{R: 0x73, G: 0x7d, B: 0x89, A: 0xff},
+	OutlineVariant: Color{R: 0x59, G: 0x61, B: 0x6b, A: 0xff},
 }
 
 func TestPaintKeepsColorEmojiUntinted(t *testing.T) {
@@ -747,6 +751,8 @@ func capsuleStyle() Style {
 	s.Capsule = Color{R: 0x18, G: 0x1a, B: 0x1d, A: 0xff}
 	s.Container = Color{R: 0x11, G: 0x83, B: 0xa2, A: 0xff}
 	s.OnContainer = Color{R: 0x0a, G: 0x0b, B: 0x11, A: 0xff}
+	s.ErrorContainer = Color{R: 0x93, G: 0x00, B: 0x0a, A: 0xff}
+	s.OnErrorContainer = Color{R: 0xff, G: 0xda, B: 0xd6, A: 0xff}
 	return s
 }
 
@@ -782,6 +788,30 @@ func TestPaintCapsuleFill(t *testing.T) {
 
 // A pill's numeral must be legible on its own fill, so the capsule supplies the
 // matching foreground to its subtree rather than each caller tagging a tone.
+func TestCapsuleGivesItsChildTheMatchingForeground(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		fill ui.Fill
+		want func(Style) Color
+	}{
+		{"accent", ui.FillAccent, func(s Style) Color { return s.OnAccent }},
+		{"container", ui.FillContainer, func(s Style) Color { return s.OnContainer }},
+		{"containerHighest", ui.FillContainerHighest, func(s Style) Color { return s.Foreground }},
+		{"error", ui.FillError, func(s Style) Color { return s.OnError }},
+		{"errorContainer", ui.FillErrorContainer, func(s Style) Color { return s.OnErrorContainer }},
+		{"soft", ui.FillSoft, func(s Style) Color { return s.Foreground }},
+		{"default", ui.FillNone, func(s Style) Color { return s.Foreground }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			style := capsuleStyle()
+			if got := capsuleForeground(style, tc.fill); got != tc.want(style) {
+				t.Fatalf("foreground for %v = %+v, want %+v", tc.fill, got, tc.want(style))
+			}
+		})
+	}
+}
+
 func TestPaintScrollDrawsAThumbWhenContentOverflows(t *testing.T) {
 	t.Parallel()
 	const w, h = 120, 80

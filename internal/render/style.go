@@ -28,11 +28,11 @@ type Style struct {
 	Background Color
 	Foreground Color
 	// Capsule fills the pill that wraps a bar widget. Container fills a
-	// workspace pill that is not focused, and OnContainer is the foreground
-	// its contents use. The accent's paired foreground is OnPrimary below;
-	// it is one token, so it is one field.
+	// workspace pill that is not focused. OnAccent and OnContainer are the
+	// foregrounds their contents use.
 	Capsule     Color
 	Container   Color
+	OnAccent    Color
 	OnContainer Color
 	Track       Color
 	Accent      Color
