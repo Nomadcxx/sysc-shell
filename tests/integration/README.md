@@ -498,6 +498,37 @@ which exercises startup reconcile, the service, and the engine in order.
 - The three-second start-up budget was sized against small test files and
   rejected a 22MB wallpaper outright.
 
+### Second machine, 2026-09-04
+
+Repeated on the laptop (`archThink`, eDP-1, 1920x1080 at scale 1.25, so 1536x864
+logical, single output, no DMS). 527 wallpapers, 501 images and 23 videos.
+
+Passed: picker chrome and previews; image apply visible; video playback (frames
+3s apart differ at PSNR 32 dB); pause freezes (two frames 5s apart are
+byte-identical once the bar is cropped out) and `query` reports `paused video`;
+resume returns to `playing`; the palette follows the wallpaper across a
+`systemctl restart`; the shell restarts and recovers from SIGKILL under the
+systemd user unit.
+
+Four defects found only because the output is short and scaled, all fixed:
+
+- `pinRowEnd` moved a pinned row member's own rect but not its children, so the
+  close button and Restore painted as empty pills with their glyph and label
+  left behind at the flow position.
+- `Trigger.OutH` was never assigned, so every panel was placed as if the output
+  were 1080 logical tall. The 1100-tall picker overran the screen and lost its
+  item count row.
+- The generated `sysc-shell.kdl` used unterminated one-line KDL nodes, so
+  `niri validate` rejected the user's whole config on both machines. A restart
+  would have come up on niri's defaults.
+- Startup reconcile restored the wallpaper but never seeded the theme from it,
+  because `Adopt` had already primed the store's seed and the hook was installed
+  after `NewService` had run reconcile.
+
+Not runnable there: Restore's handoff. Neither `awww` nor `swaybg` is installed
+on that machine, which the picker's engine strip reports by showing only the
+gSlapper pill. `ErrNoStaticEngine` is unit-tested.
+
 ### Not covered here
 
 - Driving the panel with synthetic input. `wtype` attaches a virtual keyboard,
