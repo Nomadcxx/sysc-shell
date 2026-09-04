@@ -205,6 +205,12 @@ func TestDefaultVocabularyShipsBothClocksAndBothNiriWidgets(t *testing.T) {
 	if len(cfg.Bar.Right) == 0 {
 		t.Fatal("right section is empty; the default bar should ship status widgets")
 	}
+	if cfg.Bar.Right[0].ID != "running-apps" {
+		t.Fatalf("right[0] = %q, want running-apps", cfg.Bar.Right[0].ID)
+	}
+	if _, err := Parse([]byte(`{"bar":{"items":{"right":["running-apps"]}}}`)); err != nil {
+		t.Fatalf("running-apps was rejected: %v", err)
+	}
 	for i, item := range cfg.Bar.Right {
 		if item.ID == "clock" {
 			t.Fatalf("right[%d] is a clock; the date moved to the centre", i)
@@ -221,7 +227,7 @@ func TestDefaultVocabularyShipsBothClocksAndBothNiriWidgets(t *testing.T) {
 			members = []Item{item}
 		}
 		for _, m := range members {
-			if m.ID == "notifications" {
+			if m.ID == "notifications" || m.ID == "running-apps" {
 				continue
 			}
 			if m.Interval <= 0 {

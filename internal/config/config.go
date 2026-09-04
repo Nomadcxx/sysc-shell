@@ -227,6 +227,7 @@ var knownItems = map[string]struct{}{
 	"clock": {}, "workspace": {}, "window-title": {},
 	"cpu": {}, "memory": {}, "filesystem": {}, "block": {}, "network": {},
 	"weather": {}, "battery": {}, "notifications": {},
+	"running-apps": {},
 	// "wallpaper" opens the picker. It is deliberately not in Default(): a
 	// user who wants the glyph adds it, and an existing bar does not change.
 	"wallpaper": {},
@@ -314,6 +315,7 @@ func Default() Config {
 				{ID: "clock", Format: defaultDateFormat, Boundary: time.Minute},
 			},
 			Right: []Item{
+				{ID: "running-apps"},
 				{ID: "group", Items: []Item{
 					{ID: "cpu", Display: "text", Interval: defaultMetricInterval},
 					{ID: "memory", Display: "text", Interval: defaultMetricInterval},
