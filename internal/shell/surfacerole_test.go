@@ -298,3 +298,54 @@ func TestSurfaceHighContrastForcesOpaqueRoots(t *testing.T) {
 		t.Error("an opaque high-contrast bar does not report an opaque background")
 	}
 }
+
+// TestSurfaceRethemeCarriesEveryAxis is the live-publication check. A reload
+// used to rebuild the default composition around the new radius, so a palette
+// change reached an open panel and nothing else did: density, motion and
+// opacity all stopped at the bar.
+func TestSurfaceRethemeCarriesEveryAxis(t *testing.T) {
+	t.Parallel()
+	reg, h := panelAtDensity(t, PanelMonitor, theme.DensityStandard)
+
+	before := h.theme.Metrics.CardPadding
+	reg.mu.Lock()
+	reg.cfg.Theme.Density = theme.DensityComfortable
+	reg.cfg.Theme.MotionSpeed = 400
+	reg.cfg.Theme.PanelOpacity = 85
+	next := reg.surfaceTheme()
+	reg.mu.Unlock()
+
+	if next.Metrics.CardPadding == before {
+		t.Errorf("card padding stayed %d; density did not reach the surface theme", before)
+	}
+	if next.Surfaces.Panel == 0xff {
+		t.Error("panel opacity did not reach the surface theme")
+	}
+	if next.Motion.Durations.Short >= theme.BaseMotion.Short {
+		t.Errorf("motion speed did not reach the surface theme: short = %v", next.Motion.Durations.Short)
+	}
+}
+
+// TestSurfaceRejectedCandidateKeepsTheOldPalette covers the failure path. A
+// palette that does not resolve must leave every axis where it was, rather
+// than half-applying and leaving surfaces mixing old and new roles.
+func TestSurfaceRejectedCandidateKeepsTheOldPalette(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	before, err := ResolveTheme(cfg, cfg.Bar, theme.Fallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An incomplete palette is rejected outright; the caller keeps what it had.
+	var broken theme.Tokens
+	if _, err := ResolveTheme(cfg, cfg.Bar, broken); err == nil {
+		t.Fatal("an empty palette resolved")
+	}
+	after, err := ResolveTheme(cfg, cfg.Bar, theme.Fallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Palette.Surface != before.Palette.Surface || after.Metrics != before.Metrics {
+		t.Error("a rejected candidate disturbed the resolved theme")
+	}
+}

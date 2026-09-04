@@ -364,8 +364,12 @@ func (r *Registry) lastCompleteTokens(highContrast bool) theme.Tokens {
 // spacing and text size.
 //
 // Callers hold Registry.mu, because the tokens are replaced by a reload.
+// surfaceTheme is the theme a non-bar surface adopts. It resolves the live
+// configuration rather than rebuilding the default composition around a
+// radius, which is what lets a density, motion or opacity change reach an
+// already-open panel, toast, tray surface or OSD on reload.
 func (r *Registry) surfaceTheme() Theme {
-	return withBarGeometry(ThemeFromTokens(r.tokens, r.cfg.Theme.Radius), r.cfg.Bar)
+	return withBarGeometry(r.panelTheme(), r.cfg.Bar)
 }
 
 func runningAsTest() bool {
