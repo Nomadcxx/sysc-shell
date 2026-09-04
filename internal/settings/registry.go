@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
 
 type Kind uint8
@@ -40,7 +41,6 @@ func DefaultFor(cfg config.Config) *Registry {
 		{Path: "bar.gap", Label: "Gap", Section: "Bar", Kind: KindInt, Min: 0, Max: 32},
 		{Path: "bar.padding", Label: "Padding", Section: "Bar", Kind: KindInt, Min: 0, Max: 32},
 		{Path: "bar.spacing", Label: "Spacing", Section: "Bar", Kind: KindInt, Min: 0, Max: 32},
-		{Path: "bar.radius", Label: "Radius", Section: "Bar", Kind: KindInt, Min: 0, Max: 32},
 		{Path: "bar.font-family", Label: "Font family", Section: "Bar", Kind: KindString},
 		{Path: "bar.font-size", Label: "Font size", Section: "Bar", Kind: KindInt, Min: 8, Max: 32},
 		{Path: "bar.items.left", Label: "Left items", Section: "Bar", Kind: KindString},
@@ -50,6 +50,29 @@ func DefaultFor(cfg config.Config) *Registry {
 		{Path: "appearance.seed", Label: "Seed", Section: "Appearance", Kind: KindString},
 		{Path: "appearance.scheme", Label: "Scheme", Section: "Appearance", Kind: KindString},
 		{Path: "appearance.mode", Label: "Mode", Section: "Appearance", Kind: KindEnum, Options: []string{"dark", "light"}},
+		// The D3 composition axes. Percent and weight fields go through the
+		// integer control, so there is no float setting kind.
+		{Path: "appearance.preset", Label: "Preset", Section: "Appearance", Kind: KindEnum, Options: []string{
+			string(theme.PresetStandard), string(theme.PresetCompact), string(theme.PresetExpressive),
+		}},
+		{Path: "appearance.density", Label: "Density", Section: "Appearance", Kind: KindEnum, Options: []string{
+			string(theme.DensityCompact), string(theme.DensityStandard), string(theme.DensityComfortable),
+		}},
+		{Path: "appearance.font-family", Label: "Font family", Section: "Appearance", Kind: KindString},
+		{Path: "appearance.mono-font-family", Label: "Mono font family", Section: "Appearance", Kind: KindString},
+		{Path: "appearance.font-scale", Label: "Font scale", Section: "Appearance", Kind: KindInt, Min: theme.FontScaleMin, Max: theme.FontScaleMax},
+		{Path: "appearance.font-weight", Label: "Font weight", Section: "Appearance", Kind: KindInt, Min: theme.FontWeightMin, Max: theme.FontWeightMax},
+		{Path: "appearance.radius", Label: "Radius", Section: "Appearance", Kind: KindInt, Min: theme.RadiusMin, Max: theme.RadiusMax},
+		{Path: "appearance.motion", Label: "Motion", Section: "Appearance", Kind: KindEnum, Options: []string{
+			string(theme.MotionStandard), string(theme.MotionExpressive),
+		}},
+		{Path: "appearance.motion-speed", Label: "Motion speed", Section: "Appearance", Kind: KindInt, Min: theme.SpeedMin, Max: theme.SpeedMax},
+		{Path: "appearance.bar-opacity", Label: "Bar opacity", Section: "Appearance", Kind: KindInt, Min: theme.OpacityMin, Max: theme.OpacityMax},
+		{Path: "appearance.panel-opacity", Label: "Panel opacity", Section: "Appearance", Kind: KindInt, Min: theme.OpacityMin, Max: theme.OpacityMax},
+		{Path: "appearance.overlay-opacity", Label: "Overlay opacity", Section: "Appearance", Kind: KindInt, Min: theme.OpacityMin, Max: theme.OpacityMax},
+		{Path: "appearance.elevation", Label: "Elevation", Section: "Appearance", Kind: KindEnum, Options: []string{
+			string(theme.ElevationNone), string(theme.ElevationSubtle), string(theme.ElevationStandard),
+		}},
 		{Path: "panels.gap", Label: "Panel gap", Section: "Panels", Kind: KindInt, Min: 0, Max: 64},
 		{Path: "panels.padding", Label: "Panel padding", Section: "Panels", Kind: KindInt, Min: 0, Max: 64},
 		{Path: "panels.osd", Label: "OSD position", Section: "Panels", Kind: KindEnum, Options: []string{
@@ -186,6 +209,32 @@ func (e Entry) Get(c config.Config) string {
 		return c.ThemeGen.Scheme
 	case "appearance.mode":
 		return c.ThemeGen.Mode
+	case "appearance.preset":
+		return string(c.Theme.Preset)
+	case "appearance.density":
+		return string(c.Theme.Density)
+	case "appearance.font-family":
+		return c.Theme.FontFamily
+	case "appearance.mono-font-family":
+		return c.Theme.MonoFontFamily
+	case "appearance.font-scale":
+		return strconv.Itoa(c.Theme.FontScale)
+	case "appearance.font-weight":
+		return strconv.Itoa(c.Theme.FontWeight)
+	case "appearance.radius":
+		return strconv.Itoa(c.Theme.Radius)
+	case "appearance.motion":
+		return string(c.Theme.Motion)
+	case "appearance.motion-speed":
+		return strconv.Itoa(c.Theme.MotionSpeed)
+	case "appearance.bar-opacity":
+		return strconv.Itoa(c.Theme.BarOpacity)
+	case "appearance.panel-opacity":
+		return strconv.Itoa(c.Theme.PanelOpacity)
+	case "appearance.overlay-opacity":
+		return strconv.Itoa(c.Theme.OverlayOpacity)
+	case "appearance.elevation":
+		return string(c.Theme.Elevation)
 	case "panels.gap":
 		return strconv.Itoa(c.Panels.Gap)
 	case "panels.padding":
@@ -279,6 +328,22 @@ func (e Entry) setInt(c *config.Config, n int) error {
 		c.Bar.Padding = n
 	case "bar.spacing":
 		c.Bar.Spacing = n
+	case "appearance.radius":
+		// The bar keeps its own radius as a local override; this is the
+		// composition axis every other surface derives from.
+		c.Theme.Radius = n
+	case "appearance.font-scale":
+		c.Theme.FontScale = n
+	case "appearance.font-weight":
+		c.Theme.FontWeight = n
+	case "appearance.motion-speed":
+		c.Theme.MotionSpeed = n
+	case "appearance.bar-opacity":
+		c.Theme.BarOpacity = n
+	case "appearance.panel-opacity":
+		c.Theme.PanelOpacity = n
+	case "appearance.overlay-opacity":
+		c.Theme.OverlayOpacity = n
 	case "bar.radius":
 		c.Bar.Radius = n
 	case "bar.font-size":
@@ -315,6 +380,28 @@ func (e Entry) setString(c *config.Config, v string) error {
 		c.ThemeGen.Scheme = v
 	case "appearance.mode":
 		c.ThemeGen.Mode = v
+	case "appearance.preset":
+		// A preset reseeds every axis, so it goes through the rebase helper
+		// rather than being written as one more field.
+		next := theme.Preset(v)
+		from, okFrom := theme.PresetComposition(c.Theme.Preset)
+		to, okTo := theme.PresetComposition(next)
+		if okFrom && okTo {
+			// Rebase carries the axes the user actually changed and reseeds
+			// the ones still sitting on the old preset's value.
+			c.Theme.Composition = theme.Rebase(c.Theme.Composition, from, to)
+		}
+		c.Theme.Preset = next
+	case "appearance.density":
+		c.Theme.Density = theme.Density(v)
+	case "appearance.font-family":
+		c.Theme.FontFamily = v
+	case "appearance.mono-font-family":
+		c.Theme.MonoFontFamily = v
+	case "appearance.motion":
+		c.Theme.Motion = theme.MotionStyle(v)
+	case "appearance.elevation":
+		c.Theme.Elevation = theme.Elevation(v)
 	case "panels.osd":
 		c.Panels.OSD = v
 	case "session.locker":
