@@ -8,15 +8,15 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 const (
-	// monitorCardPadding is the inset between a card's fill and its content.
-	monitorCardPadding = 12
-	monitorCardGap     = 8
-	// monitorPanelPadding insets the card grid inside the panel body.
-	monitorPanelPadding = 16
+	// monitorCardGap is a step on the shared spacing scale, not a component
+	// dimension, so it does not vary by density. The card inset and the panel
+	// inset do, and both come from the metrics row.
+	monitorCardGap = 8
 )
 
 // monitorTree builds one titled card per metric, stacked and all visible.
@@ -29,16 +29,16 @@ const (
 //
 // Cards are laid two to a row, as the reference does. A lone trailing card
 // spans the full width rather than sitting in a half-empty row.
-func monitorTree(sels []services.Selector, snap services.Snapshot, history map[services.Selector][]float64, facts machineFacts) *ui.Node {
+func monitorTree(m theme.Metrics, sels []services.Selector, snap services.Snapshot, history map[services.Selector][]float64, facts machineFacts) *ui.Node {
 	var metrics []*ui.Node
 	for _, sel := range sels {
-		metrics = append(metrics, monitorMetricCard(sel, snap, history[sel]))
+		metrics = append(metrics, monitorMetricCard(m, sel, snap, history[sel]))
 	}
 	var info []*ui.Node
-	if system := monitorSystemCard(factsWithGPU(facts, snap)); system != nil {
+	if system := monitorSystemCard(m, factsWithGPU(facts, snap)); system != nil {
 		info = append(info, system)
 	}
-	if resources := monitorResourcesCard(snap); resources != nil {
+	if resources := monitorResourcesCard(m, snap); resources != nil {
 		info = append(info, resources)
 	}
 	cards := append(metrics, info...)
@@ -48,16 +48,16 @@ func monitorTree(sels []services.Selector, snap services.Snapshot, history map[s
 		}}
 	}
 	return &ui.Node{
-		Kind: ui.KindColumn, Gap: monitorCardGap, Padding: monitorPanelPadding,
-		Children: append(monitorRows(metrics), monitorRows(info)...),
+		Kind: ui.KindColumn, Gap: monitorCardGap, Padding: m.PanelPadding,
+		Children: append(monitorRows(m, metrics), monitorRows(m, info)...),
 	}
 }
 
 // monitorRows pairs cards into rows of two and gives each cell an explicit
 // half width, so a row's two cards are the same size whichever holds the
 // longer figure. An odd final card takes the whole content width.
-func monitorRows(cards []*ui.Node) []*ui.Node {
-	content := panelTargetSize(PanelMonitor).W - 2*monitorPanelPadding
+func monitorRows(m theme.Metrics, cards []*ui.Node) []*ui.Node {
+	content := panelTargetSize(PanelMonitor).W - 2*m.PanelPadding
 	cell := (content - monitorCardGap) / 2
 	rows := make([]*ui.Node, 0, (len(cards)+1)/2)
 	for i := 0; i < len(cards); i += 2 {
@@ -78,12 +78,12 @@ func monitorRows(cards []*ui.Node) []*ui.Node {
 
 // monitorMetricCard is one metric: its subject, its history, and its current
 // value with the unit that value is in.
-func monitorMetricCard(sel services.Selector, snap services.Snapshot, history []float64) *ui.Node {
+func monitorMetricCard(m theme.Metrics, sel services.Selector, snap services.Snapshot, history []float64) *ui.Node {
 	label, absent := formatMonitorMetric(sel, snap)
 	rows := []*ui.Node{monitorCardTitle(selectorLabel(sel), monitorIconRune(sel))}
 	rows = append(rows, &ui.Node{Kind: ui.KindGraph, Values: monitorGraphValues(sel, history), Absent: absent})
 	rows = append(rows, monitorLegend(sel, snap, label))
-	return monitorCard(rows)
+	return monitorCard(m, rows)
 }
 
 func monitorLegend(sel services.Selector, snap services.Snapshot, label string) *ui.Node {
@@ -129,7 +129,7 @@ type machineFacts struct {
 	CPU, GPU, OS, Kernel, WM, Uptime string
 }
 
-func monitorSystemCard(facts machineFacts) *ui.Node {
+func monitorSystemCard(m theme.Metrics, facts machineFacts) *ui.Node {
 	rows := []*ui.Node{monitorCardTitle("System", 0)}
 	before := len(rows)
 	for _, kv := range [][2]string{
@@ -147,7 +147,7 @@ func monitorSystemCard(facts machineFacts) *ui.Node {
 	if len(rows) == before {
 		return nil
 	}
-	return monitorCard(rows)
+	return monitorCard(m, rows)
 }
 
 // readMachineFacts is a one-shot identity read. Uptime is the only field
@@ -270,7 +270,7 @@ func countUnit(n int64, one, many string) string {
 //
 // It is omitted entirely when none of them is available, so an unsampled
 // machine shows no empty card.
-func monitorResourcesCard(snap services.Snapshot) *ui.Node {
+func monitorResourcesCard(m theme.Metrics, snap services.Snapshot) *ui.Node {
 	rows := []*ui.Node{monitorCardTitle("Resources", 0)}
 	before := len(rows)
 
@@ -299,7 +299,7 @@ func monitorResourcesCard(snap services.Snapshot) *ui.Node {
 	if len(rows) == before {
 		return nil
 	}
-	return monitorCard(rows)
+	return monitorCard(m, rows)
 }
 
 // monitorCapacityRow renders one used-of-total pair. A zero total is a
@@ -321,9 +321,10 @@ func monitorCapacityRow(label string, used, total uint64) *ui.Node {
 // and a bar widget are visibly the same surface.
 // monitorCard is a panel card: a capsule that declares the high container role
 // and keeps the theme's card radius rather than clamping to a stadium.
-func monitorCard(rows []*ui.Node) *ui.Node {
+func monitorCard(m theme.Metrics, rows []*ui.Node) *ui.Node {
 	return &ui.Node{
-		Kind: ui.KindCapsule, Padding: monitorCardPadding, Fill: ui.FillContainerHigh,
+		Kind: ui.KindCapsule, Padding: m.CardPadding, Fill: ui.FillContainerHigh,
+		Shape:    ui.ShapeCard,
 		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: 4, Children: rows}},
 	}
 }
@@ -339,7 +340,7 @@ func monitorCardTitle(label string, icon rune) *ui.Node {
 	if icon != 0 {
 		text = string(icon) + " " + label
 	}
-	return &ui.Node{Kind: ui.KindText, Text: text, Bold: true, Name: label, Role: "heading"}
+	return &ui.Node{Kind: ui.KindText, Text: text, TextRole: theme.RoleTitle, Name: label, Role: "heading"}
 }
 
 // monitorKeyValue is one labelled figure. The value is pinned to the trailing

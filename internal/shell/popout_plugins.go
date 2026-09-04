@@ -129,7 +129,7 @@ func pluginPanelSettings(r *Registry, h *PanelHost, pluginID string, schema []pl
 		if len(rows) == 0 {
 			continue
 		}
-		out = append(out, monitorCard(append([]*ui.Node{monitorCardTitle(g.Title, 0)}, rows...)))
+		out = append(out, monitorCard(h.metrics(), append([]*ui.Node{monitorCardTitle(g.Title, 0)}, rows...)))
 	}
 	return out
 }

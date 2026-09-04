@@ -13,6 +13,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -21,17 +22,17 @@ func sessionTree(h *PanelHost, snap services.Snapshot, locker string) *ui.Node {
 	if h.errLabel != "" {
 		children = append(children, &ui.Node{Kind: ui.KindText, Text: h.errLabel, Tone: ui.ToneError})
 	}
-	if card := sessionBatteryCard(snap.Battery); card != nil {
+	if card := sessionBatteryCard(h.theme.Metrics, snap.Battery); card != nil {
 		children = append(children, card)
 	}
 	if h.profilesOK && len(h.profiles) > 0 {
 		children = append(children, sessionProfileCard(h))
 	}
 	children = append(children, sessionActionsCard(h.theme, locker))
-	return &ui.Node{Kind: ui.KindColumn, Gap: monitorCardGap, Padding: monitorPanelPadding, Children: children}
+	return &ui.Node{Kind: ui.KindColumn, Gap: monitorCardGap, Padding: h.theme.Metrics.PanelPadding, Children: children}
 }
 
-func sessionBatteryCard(b *metrics.BatterySnapshot) *ui.Node {
+func sessionBatteryCard(m theme.Metrics, b *metrics.BatterySnapshot) *ui.Node {
 	if b == nil || !b.Present || !b.ChargeValid {
 		return nil
 	}
@@ -57,7 +58,7 @@ func sessionBatteryCard(b *metrics.BatterySnapshot) *ui.Node {
 	if b.RateValid {
 		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: fmt.Sprintf("%.1f W", b.RateWatts), Tabular: true})
 	}
-	return monitorCard(rows)
+	return monitorCard(m, rows)
 }
 
 func batteryStateLabel(s metrics.BatteryState) string {
@@ -136,7 +137,7 @@ func sessionProfileCard(h *PanelHost) *ui.Node {
 		}
 		segments = append(segments, segment)
 	}
-	return monitorCard([]*ui.Node{
+	return monitorCard(h.theme.Metrics, []*ui.Node{
 		monitorCardTitle("Power profile", 0),
 		{
 			Kind: ui.KindSegmented, Key: "power-profiles", Gap: sessionSegmentGap,
@@ -145,7 +146,7 @@ func sessionProfileCard(h *PanelHost) *ui.Node {
 	})
 }
 
-func sessionActionsCard(theme Theme, locker string) *ui.Node {
+func sessionActionsCard(th Theme, locker string) *ui.Node {
 	// destructive marks the two actions that end the session without warning.
 	// They take the error-toned outline from the catalogue rather than a solid
 	// red block: a permanent red slab reads as an alarm, not as a control.
@@ -168,10 +169,10 @@ func sessionActionsCard(theme Theme, locker string) *ui.Node {
 		node := &ui.Node{
 			Kind: ui.KindButton, Action: a.id,
 			Name: a.name, Role: "button", Focusable: true,
-			Gap: theme.Metrics.ButtonPadding / 2, Padding: theme.Metrics.ButtonPadding,
-			Height: theme.Metrics.StandardControl,
+			Gap: th.Metrics.ButtonPadding / 2, Padding: th.Metrics.ButtonPadding,
+			Height: th.Metrics.StandardControl,
 			Children: []*ui.Node{
-				{Kind: ui.KindIcon, Icon: a.icon, IconSize: theme.Metrics.IconNormal},
+				{Kind: ui.KindIcon, Icon: a.icon, IconSize: th.Metrics.IconNormal},
 				{Kind: ui.KindText, Text: a.name},
 			},
 		}
@@ -181,7 +182,7 @@ func sessionActionsCard(theme Theme, locker string) *ui.Node {
 		}
 		rows = append(rows, node)
 	}
-	return monitorCard(rows)
+	return monitorCard(th.Metrics, rows)
 }
 
 func sessionArgv(action, locker string) []string {

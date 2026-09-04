@@ -67,19 +67,25 @@ func TestProfileDensityTable(t *testing.T) {
 			BarHeight: 40, BarPadding: 4, BarSpacing: 2,
 			CompactControl: 32, StandardControl: 36,
 			PanelPadding: 12, CardPadding: 10,
+			CapsulePadding: 4, ButtonPadding: 8,
 			IconSmall: 16, IconNormal: 18, IconLarge: 24,
+			IconProfile: 18,
 		}},
 		{DensityStandard, Metrics{
 			BarHeight: 48, BarPadding: 6, BarSpacing: 4,
 			CompactControl: 32, StandardControl: 40,
 			PanelPadding: 16, CardPadding: 12,
+			CapsulePadding: 8, ButtonPadding: 12,
 			IconSmall: 16, IconNormal: 20, IconLarge: 24,
+			IconProfile: 18,
 		}},
 		{DensityComfortable, Metrics{
 			BarHeight: 56, BarPadding: 8, BarSpacing: 6,
 			CompactControl: 36, StandardControl: 44,
 			PanelPadding: 20, CardPadding: 16,
+			CapsulePadding: 12, ButtonPadding: 16,
 			IconSmall: 18, IconNormal: 22, IconLarge: 28,
+			IconProfile: 20,
 		}},
 	} {
 		got, ok := MetricsFor(tc.density)

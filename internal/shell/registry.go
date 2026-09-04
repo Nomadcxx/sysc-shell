@@ -306,6 +306,21 @@ func (r *Registry) ReducedMotion() bool {
 // the previous theme, and the mix is hard to attribute afterwards. Templates
 // are only written for a palette that survives that check, so an external
 // consumer never sees one the shell itself refused.
+// panelTheme resolves a popout's theme from the live configuration and the
+// current palette.
+//
+// Panels used to build ThemeFromTokens(r.tokens, 12), which rebuilds the
+// default composition and pins the radius, so the palette was the only axis
+// that reached a popout: density, radius, font scale and preset all stopped at
+// the bar. Resolving from r.cfg is what makes one theme serve every surface.
+func (r *Registry) panelTheme() Theme {
+	t, err := ResolveTheme(r.cfg, r.cfg.Bar, r.tokens)
+	if err != nil {
+		return DefaultTheme()
+	}
+	return t
+}
+
 func (r *Registry) generateTheme(cfg config.Config) theme.Tokens {
 	tok, err := r.themeGen.Generate(
 		theme.Source{Kind: cfg.ThemeGen.Source, Seed: cfg.ThemeGen.Seed},

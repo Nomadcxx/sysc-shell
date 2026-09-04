@@ -770,9 +770,9 @@ func (h *pluginHost) panelTree(host *PanelHost) *ui.Node {
 	settings := pluginPanelSettings(h.r, host, pluginID, schema)
 	head := root
 	if root.Kind != ui.KindCapsule {
-		head = monitorCard([]*ui.Node{root})
+		head = monitorCard(host.metrics(), []*ui.Node{root})
 	}
-	return &ui.Node{Kind: ui.KindScroll, Gap: monitorCardGap, Padding: monitorPanelPadding, Children: append([]*ui.Node{head}, settings...)}
+	return &ui.Node{Kind: ui.KindScroll, Gap: monitorCardGap, Padding: host.metrics().PanelPadding, Children: append([]*ui.Node{head}, settings...)}
 }
 
 func (h *pluginHost) panelSize() ui.Rect {

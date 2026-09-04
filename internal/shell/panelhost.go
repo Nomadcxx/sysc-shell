@@ -16,6 +16,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
@@ -378,7 +379,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		place:       place,
 		stopAnim:    make(chan struct{}),
 		shieldQuiet: time.Now().Add(shieldQuietFor),
-		theme:       ThemeFromTokens(r.tokens, 12),
+		theme:       r.panelTheme(),
 		fontFamily:  r.panelFontFamily(output),
 	}
 	if bar, ok := r.bars[output]; ok {
@@ -1052,6 +1053,18 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 	return true
 }
 
+// metrics is the density row a tree builds against. The receiver may be nil:
+// a few unit tests compose a subtree without a host, and a panel that cannot
+// name its density should still lay out on the standard row rather than on
+// zeroes.
+func (h *PanelHost) metrics() theme.Metrics {
+	if h == nil {
+		m, _ := theme.MetricsFor(theme.DensityStandard)
+		return m
+	}
+	return h.theme.Metrics
+}
+
 func (h *PanelHost) focused() *ui.Node {
 	if h.roving.Count == 0 {
 		return nil
@@ -1306,7 +1319,7 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		if bar, ok := r.bars[h.output]; ok {
 			connector = bar.connector()
 		}
-		return monitorTree(monitorSelectors(r.cfg.ForConnector(connector)), r.sample, r.historyLocked(), readMachineFacts())
+		return monitorTree(h.theme.Metrics, monitorSelectors(r.cfg.ForConnector(connector)), r.sample, r.historyLocked(), readMachineFacts())
 	case PanelSession:
 		return sessionTree(h, r.sample, r.cfg.Session.Locker)
 	case PanelSettings:

@@ -174,7 +174,7 @@ func TestMonitorBuildsOneTitledCardPerMetric(t *testing.T) {
 		{Source: services.SourceMemory},
 		{Source: services.SourceNetwork, Subject: "eth9", Direction: "rx"},
 	}
-	tree := monitorTree(sels, fixtureSnapshot(), map[services.Selector][]float64{}, machineFacts{})
+	tree := monitorTree(standardMetrics(), sels, fixtureSnapshot(), map[services.Selector][]float64{}, machineFacts{})
 
 	cards := findAllKind(tree, ui.KindCapsule)
 	if len(cards) < len(sels) {
@@ -205,7 +205,7 @@ func TestMonitorSystemCardProjectsStaticFacts(t *testing.T) {
 		WM:     "niri",
 		Uptime: "4 hours 59 minutes",
 	}
-	tree := monitorSystemCard(facts)
+	tree := monitorSystemCard(standardMetrics(), facts)
 	for _, want := range []string{
 		"System",
 		"CPU", "Intel Core i7-8665U @ 1.90GHz",
@@ -223,14 +223,14 @@ func TestMonitorSystemCardProjectsStaticFacts(t *testing.T) {
 
 func TestMonitorOmitsEmptySystemCard(t *testing.T) {
 	t.Parallel()
-	if n := monitorSystemCard(machineFacts{}); n != nil {
+	if n := monitorSystemCard(standardMetrics(), machineFacts{}); n != nil {
 		t.Fatal("empty facts still built a card")
 	}
 }
 
 func TestMonitorSystemCardOmitsEmptyGPU(t *testing.T) {
 	t.Parallel()
-	tree := monitorSystemCard(machineFacts{CPU: "x"})
+	tree := monitorSystemCard(standardMetrics(), machineFacts{CPU: "x"})
 	if treeHasText(tree, "GPU") {
 		t.Fatal("an empty GPU row was rendered")
 	}
@@ -238,7 +238,7 @@ func TestMonitorSystemCardOmitsEmptyGPU(t *testing.T) {
 
 func TestMonitorTreeKeepsASystemCard(t *testing.T) {
 	t.Parallel()
-	tree := monitorTree(nil, services.Snapshot{}, nil, machineFacts{CPU: "box"})
+	tree := monitorTree(standardMetrics(), nil, services.Snapshot{}, nil, machineFacts{CPU: "box"})
 	if !treeHasText(tree, "System") || !treeHasText(tree, "box") {
 		t.Fatal("monitor tree dropped the system card")
 	}
@@ -248,7 +248,7 @@ func TestMonitorTreeKeepsASystemCard(t *testing.T) {
 // Identity cards sit on the last row, not above the graphs.
 func TestMonitorPutsSystemBesideResources(t *testing.T) {
 	t.Parallel()
-	tree := monitorTree([]services.Selector{
+	tree := monitorTree(standardMetrics(), []services.Selector{
 		{Source: services.SourceCPU},
 		{Source: services.SourceMemory},
 	}, fixtureSnapshot(), map[services.Selector][]float64{}, machineFacts{CPU: "box"})
@@ -311,7 +311,7 @@ func TestFormatUptime(t *testing.T) {
 func TestMonitorCardsCarryUnits(t *testing.T) {
 	t.Parallel()
 	snap := fixtureSnapshot()
-	tree := monitorTree([]services.Selector{
+	tree := monitorTree(standardMetrics(), []services.Selector{
 		{Source: services.SourceCPU},
 		{Source: services.SourceNetwork, Subject: "eth9", Direction: "rx"},
 	}, snap, map[services.Selector][]float64{}, machineFacts{})
@@ -333,7 +333,7 @@ func TestMonitorResourcesCardProjectsLoadAndSwap(t *testing.T) {
 	snap.CPU.Load1, snap.CPU.Load5, snap.CPU.Load15, snap.CPU.LoadValid = 0.56, 0.59, 0.57, true
 	snap.Memory.Swap = metrics.Capacity{TotalBytes: 4 << 30, UsedBytes: 1 << 30}
 
-	tree := monitorTree([]services.Selector{{Source: services.SourceCPU}}, snap,
+	tree := monitorTree(standardMetrics(), []services.Selector{{Source: services.SourceCPU}}, snap,
 		map[services.Selector][]float64{}, machineFacts{})
 
 	for _, want := range []string{"Resources", "Load", "0.56 / 0.59 / 0.57", "Swap"} {
@@ -349,7 +349,7 @@ func TestMonitorResourcesOmitsAnInvalidLoad(t *testing.T) {
 	t.Parallel()
 	snap := fixtureSnapshot()
 	snap.CPU.LoadValid = false
-	tree := monitorTree([]services.Selector{{Source: services.SourceCPU}}, snap,
+	tree := monitorTree(standardMetrics(), []services.Selector{{Source: services.SourceCPU}}, snap,
 		map[services.Selector][]float64{}, machineFacts{})
 	if treeHasText(tree, "Load") {
 		t.Fatal("an invalid load average was rendered anyway")
@@ -360,7 +360,7 @@ func TestMonitorCPUCardShowsPackageTemp(t *testing.T) {
 	t.Parallel()
 	snap := fixtureSnapshot()
 	snap.Thermal = &metrics.ThermalSnapshot{Celsius: 50, Valid: true}
-	tree := monitorTree([]services.Selector{{Source: services.SourceCPU}}, snap,
+	tree := monitorTree(standardMetrics(), []services.Selector{{Source: services.SourceCPU}}, snap,
 		map[services.Selector][]float64{}, machineFacts{})
 	if !treeHasText(tree, "50°C") {
 		t.Fatal("CPU card missing package temperature")
@@ -378,7 +378,7 @@ func TestMonitorGPUCardProjectsUsageAndTemp(t *testing.T) {
 		Usage:   metrics.GPUUsage{Fraction: 0.14, Valid: true},
 		Celsius: 45, TempValid: true,
 	}}}
-	tree := monitorTree([]services.Selector{{Source: services.SourceGPU}}, snap,
+	tree := monitorTree(standardMetrics(), []services.Selector{{Source: services.SourceGPU}}, snap,
 		map[services.Selector][]float64{}, machineFacts{})
 	for _, want := range []string{"GPU", "14%", "45°C"} {
 		if !treeHasText(tree, want) {
@@ -393,7 +393,7 @@ func TestMonitorGPUWithoutUsageShowsAnEmDash(t *testing.T) {
 	snap.GPU = &metrics.GPUSnapshot{GPUs: []metrics.GPU{{
 		Name: "Intel UHD Graphics 620",
 	}}}
-	tree := monitorTree([]services.Selector{{Source: services.SourceGPU}}, snap,
+	tree := monitorTree(standardMetrics(), []services.Selector{{Source: services.SourceGPU}}, snap,
 		map[services.Selector][]float64{}, machineFacts{})
 	if !treeHasText(tree, "--") {
 		t.Fatal("an iGPU with no usage still said collecting")
@@ -408,7 +408,7 @@ func TestMonitorSystemCardUsesGPUNameFromSnapshot(t *testing.T) {
 	snap := services.Snapshot{GPU: &metrics.GPUSnapshot{GPUs: []metrics.GPU{
 		{Name: "Intel UHD Graphics 620"},
 	}}}
-	tree := monitorTree(nil, snap, nil, machineFacts{CPU: "x"})
+	tree := monitorTree(standardMetrics(), nil, snap, nil, machineFacts{CPU: "x"})
 	if !treeHasText(tree, "Intel UHD Graphics 620") {
 		t.Fatal("system card did not take the GPU name from the snapshot")
 	}
@@ -473,7 +473,7 @@ func TestMonitorGraphsFractionsAgainstFullScale(t *testing.T) {
 		{Source: services.SourceMemory}:                                    steady,
 		{Source: services.SourceNetwork, Subject: "eth9", Direction: "rx"}: {1000, 2000},
 	}
-	tree := monitorTree([]services.Selector{
+	tree := monitorTree(standardMetrics(), []services.Selector{
 		{Source: services.SourceMemory},
 		{Source: services.SourceNetwork, Subject: "eth9", Direction: "rx"},
 	}, fixtureSnapshot(), history, machineFacts{})
@@ -504,7 +504,7 @@ func TestMonitorCardsLayOutTwoToARow(t *testing.T) {
 		{Source: services.SourceMemory},
 		{Source: services.SourceNetwork, Subject: "eth9", Direction: "rx"},
 	}
-	tree := monitorTree(sels, fixtureSnapshot(), map[services.Selector][]float64{}, machineFacts{})
+	tree := monitorTree(standardMetrics(), sels, fixtureSnapshot(), map[services.Selector][]float64{}, machineFacts{})
 	size := panelTargetSize(PanelMonitor)
 	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 8, 16 }
 	if err := ui.LayoutColumn(tree, ui.Rect{W: size.W, H: size.H}, measure); err != nil {
@@ -541,7 +541,7 @@ func TestMonitorCardsLayOutTwoToARow(t *testing.T) {
 
 func TestMonitorSurfaceHeightCoversATallTree(t *testing.T) {
 	t.Parallel()
-	tree := monitorTree([]services.Selector{
+	tree := monitorTree(standardMetrics(), []services.Selector{
 		{Source: services.SourceCPU},
 		{Source: services.SourceMemory},
 		{Source: services.SourceGPU},
@@ -569,7 +569,7 @@ func TestMonitorSurfaceHeightCoversATallTree(t *testing.T) {
 // a sentinel band, so a card in a row reported 1048576 tall.
 func TestMonitorCardsHaveSaneHeights(t *testing.T) {
 	t.Parallel()
-	tree := monitorTree([]services.Selector{
+	tree := monitorTree(standardMetrics(), []services.Selector{
 		{Source: services.SourceCPU},
 		{Source: services.SourceMemory},
 	}, fixtureSnapshot(), map[services.Selector][]float64{}, machineFacts{})
@@ -589,7 +589,7 @@ func TestMonitorCardsHaveSaneHeights(t *testing.T) {
 // nested key/value row refuse layout and close the panel.
 func TestMonitorSystemCardWithLongCPUFitsPanel(t *testing.T) {
 	t.Parallel()
-	tree := monitorTree([]services.Selector{
+	tree := monitorTree(standardMetrics(), []services.Selector{
 		{Source: services.SourceCPU},
 	}, fixtureSnapshot(), map[services.Selector][]float64{}, machineFacts{
 		CPU: "AMD Ryzen 7 8845HS w/ Radeon 780M Graphics",

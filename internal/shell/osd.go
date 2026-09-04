@@ -87,7 +87,7 @@ func (m *OSDManager) prepareShow(v OSDView) (aux []wayland.AuxRequest, pubs []os
 	}
 	wasHidden := len(m.open) == 0
 	m.view = v
-	m.theme = ThemeFromTokens(m.r.tokens, 12)
+	m.theme = m.r.panelTheme()
 	pos := m.r.cfg.Panels.OSD
 	pad := m.r.cfg.Panels.Padding
 	zone := m.r.cfg.Bar.Height
