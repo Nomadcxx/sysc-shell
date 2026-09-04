@@ -451,59 +451,59 @@ The live gate below needs a Niri session with two outputs and the real `gslapper
 `swaybg` on PATH. Never run the race detector over the whole module on this machine; check one
 package at a time.
 
-### Recorded 2026-09-04, DP-1 (3440x1440) and DP-3 (2560x1440)
+### Recorded 2026-09-04, DP-1 (3440x1440), single output, DMS stopped
 
-Run against an isolated `XDG_CONFIG_HOME` / `XDG_STATE_HOME` / `XDG_CACHE_HOME` so the live
-session's own configuration is untouched. `XDG_RUNTIME_DIR` stays real, because the socket path is
-what the gate asserts on.
+The wallpaper only becomes visible once nothing else owns the Background layer.
+On this machine DMS runs as a systemd user unit and paints one:
 
 ```bash
-export NIRI_SOCKET=$(ls /run/user/1000/niri.wayland-*.sock | head -1)
-export WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000
+systemctl --user stop dms.service     # restore: systemctl --user start dms.service
 ```
+
+Driven through the product, not a harness: an assignment written to
+`$XDG_STATE_HOME/sysc-shell/wallpaper/assignments.json` and the shell restarted,
+which exercises startup reconcile, the service, and the engine in order.
 
 | Check | Result |
 |---|---|
-| Panel maps | pass -- `sysc-shell-panel` on Overlay with `sysc-shell-shield`, on the focused output |
-| Picker renders tiles | pass -- landscape 210x96 thumbnails with captions, grabbed with `grim` |
-| Image on DP-1 | pass -- `query` answers `STATUS: playing image <path>` |
-| Video on DP-3 | pass -- `query` answers `STATUS: playing video <path>` |
-| Fan-out, not `*` | pass -- each output ran its own process with its own file |
-| Pause | pass -- `STATUS: paused video` |
+| Panel maps | pass -- `sysc-shell-panel` on Overlay with `sysc-shell-shield` |
+| Full D4 chrome renders | pass -- title+close, search, output select, All/Images/Videos, folder band, banners, active strip, grid, count |
+| Previews generated | pass -- 645 files, paced, about 2.4/s, ~11KB each, resumed from cache on restart |
+| Preview progress reported | pass -- "Generating previews - N / 645" |
+| Thumbnails, stills | pass |
+| Thumbnails, video frames | pass -- ffmpeg still extraction |
+| Image wallpaper visible | pass -- 22MB 4K PNG rendered on DP-1 |
+| Video wallpaper playing | pass -- frames two seconds apart differ (YAVG 53.0 then 36.2) |
+| Pause | pass -- frames identical across two seconds (YAVG 141.579 twice) |
 | Resume | pass -- `STATUS: playing video` |
-| Restore | pass -- both sockets gone, `awww-daemon` took a Background layer on each output |
-| Owned sockets | pass -- see the argv below |
+| Restore | pass -- owned socket gone, `awww-daemon` took Background on each output |
+| Owned sockets | pass -- `-I $XDG_RUNTIME_DIR/sysc-shell/gslapper-DP-1.sock` |
 | Theme seed | pass -- `~/.config/niri/sysc-shell.kdl` regenerated from the applied image |
-| Startup reconcile | pass -- a saved `DP-1` assignment relaunched at start with no picker opened |
-| Unassigned output untouched | pass -- `DP-3` had no saved assignment and nothing was applied to it |
-
-`pgrep -af gslapper` while each was up:
-
-```
-gslapper -I /run/user/1000/sysc-shell/gslapper-DP-1.sock --no-save-state \
-  -o fill no-audio loop -r 30 DP-1 <image>
-gslapper -I /run/user/1000/sysc-shell/gslapper-DP-3.sock --no-save-state \
-  -o fill no-audio loop -r 30 DP-3 <video>
-```
-
-Each command line carries `$XDG_RUNTIME_DIR/sysc-shell/gslapper-`, which is what makes the stop
-path safe: nothing is ever matched by binary name.
+| Startup reconcile | pass -- saved assignment replayed with no picker opened |
+| Foreign surface warning | pass -- "DP-1 is already painted by quickshell" while DMS ran |
 
 ### Found by the live gate
 
-- `awww` is a client for `awww-daemon`, not a wallpaper process. It exits immediately and does
-  nothing at all when the daemon is down, so Restore reported success while the desktop did not
-  change. Fixed: the engine starts `awww-daemon` when it is not answering (D16) and waits for a
-  one-shot client's exit status instead of only its spawn.
-- The box runs a competing `quickshell` Background layer. That is the D18 case, and gSlapper warns
-  about it on its own; nothing was killed.
+- `awww` is a client for `awww-daemon`, not a wallpaper process. It exits at
+  once and does nothing when the daemon is down, so Restore reported success
+  while the desktop did not change. The engine now starts the daemon (D16) and
+  waits on the client's exit status.
+- A row of directory chips overflowed and failed layout outright, closing the
+  panel: `child 8 of kind 3 does not fit in 948x40`. Folders moved to their own
+  capped band.
+- `"folder"` is not in the embedded icon subset, and an unknown name fails the
+  whole surface at render time. A test now walks the panel checking every icon.
+- Every preview was refused: the icon resolver gated absolute paths on the
+  icon-theme extension list (PNG/XPM), so no JPEG reached the decoder.
+- The three-second start-up budget was sized against small test files and
+  rejected a 22MB wallpaper outright.
 
 ### Not covered here
 
-- Clicking a tile. The gate drove the engine directly; the panel's click and key paths are covered
-  by `./internal/shell -run TestWallpaper`, not live.
-- A second library root is not reachable from the chrome. D4 calls for a folder strip; the panel
-  currently navigates within the first root only, so the video root had to be applied directly.
-  Recorded in bd, not fixed here.
-- GIF. gSlapper lists GIF as an image format while the library classifies it as video, so the
-  Pause control follows what `query` reports. Not exercised live.
+- Driving the panel with synthetic input. `wtype` attaches a virtual keyboard,
+  which drops the panel's exclusive grab and dismisses it; the click and key
+  paths are covered by `./internal/shell -run TestWallpaper` instead.
+- Two outputs. DP-3 was disconnected for this run; the fan-out and partial-All
+  paths are unit-tested and were live-tested on 2026-09-04 earlier in the day.
+- GIF. gSlapper lists it as an image while the library classifies it as video,
+  so the Pause control follows what `query` reports. Not exercised live.
