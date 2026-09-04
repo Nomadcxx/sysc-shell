@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 
 	// Decoders for the still formats the library names. webp and jxl have no
@@ -59,6 +60,12 @@ type Thumbnailer struct {
 
 	queue    chan []Entry
 	progress chan struct{}
+
+	// done and total report generation progress. A first run over a real
+	// library takes minutes, and without a count the picker just looks broken.
+	mu    sync.Mutex
+	done  int
+	total int
 }
 
 // NewThumbnailer builds a generator writing into dir.
@@ -73,6 +80,26 @@ func NewThumbnailer(dir string, pace time.Duration) *Thumbnailer {
 		queue:    make(chan []Entry, 4),
 		progress: make(chan struct{}, 1),
 	}
+}
+
+// Counts reports how far generation has got: previews resolved, and how many
+// the current library needs. Equal counts mean there is nothing left to say.
+func (t *Thumbnailer) Counts() (done, total int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.done, t.total
+}
+
+func (t *Thumbnailer) setTotal(n int) {
+	t.mu.Lock()
+	t.done, t.total = 0, n
+	t.mu.Unlock()
+}
+
+func (t *Thumbnailer) advance() {
+	t.mu.Lock()
+	t.done++
+	t.mu.Unlock()
 }
 
 // Progress fires when at least one new preview has landed. It coalesces: a
@@ -111,6 +138,7 @@ func (t *Thumbnailer) Run(ctx context.Context) {
 // generate walks one library, pacing between items and giving up the batch as
 // soon as a newer one arrives.
 func (t *Thumbnailer) generate(ctx context.Context, entries []Entry) {
+	t.setTotal(len(entries))
 	for _, entry := range entries {
 		select {
 		case <-ctx.Done():
@@ -122,12 +150,19 @@ func (t *Thumbnailer) generate(ctx context.Context, entries []Entry) {
 		default:
 		}
 		if entry.IsDir {
+			t.advance()
 			continue
 		}
 		made, err := t.ensure(ctx, entry)
+		t.advance()
 		if err == nil && made {
 			t.note()
 		}
+		if !made {
+			// Already cached: no work was done, so no reason to pace.
+			continue
+		}
+		t.note()
 		select {
 		case <-ctx.Done():
 			return

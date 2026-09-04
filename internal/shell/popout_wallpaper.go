@@ -171,7 +171,12 @@ func wallpaperTree(r *Registry, h *PanelHost) *ui.Node {
 			return wallpaperRow(r, h, media, row)
 		},
 	}
-	children = append(children, list, wallpaperCount(media))
+	if len(media) == 0 {
+		children = append(children, wallpaperEmptyState(h))
+	} else {
+		children = append(children, list)
+	}
+	children = append(children, wallpaperCount(media))
 
 	return &ui.Node{
 		Kind:     ui.KindColumn,
@@ -190,6 +195,20 @@ func childHeightFor(n *ui.Node) int {
 		return n.Height + wallpaperGridGap
 	}
 	return wallpaperCaptionH + wallpaperGridGap
+}
+
+// wallpaperEmptyState explains an empty grid, which otherwise reads as a
+// broken picker. A search that matches nothing is a different situation from a
+// directory that holds nothing.
+func wallpaperEmptyState(h *PanelHost) *ui.Node {
+	text := "No supported wallpapers in this directory"
+	if wallpaperSearch(h) != "" {
+		text = "No wallpapers match your search"
+	}
+	if h.wallpaperSnap.Library == nil {
+		text = "Indexing wallpaper library\u2026"
+	}
+	return &ui.Node{Kind: ui.KindText, Text: text, Height: wallpaperCaptionH}
 }
 
 // wallpaperTitleRow is the panel's name and its close control.
@@ -446,8 +465,20 @@ func wallpaperBanners(h *PanelHost) []*ui.Node {
 		}
 		out = append(out, &ui.Node{Kind: ui.KindText, Text: text, Tone: tone, Height: wallpaperCaptionH})
 	}
+	if done, total := h.wallpaperSnap.ThumbsDone, h.wallpaperSnap.ThumbsTotal; total > 0 && done < total {
+		// Previews are generated slowly on purpose. Saying so is the
+		// difference between a library that is still filling in and one that
+		// looks broken.
+		add(fmt.Sprintf("Generating previews \u00b7 %d / %d", done, total), ui.ToneNormal)
+	}
 	if !h.wallpaperSnap.Caps.GSlapper {
 		add("gslapper is not installed - video wallpapers are unavailable", ui.ToneNormal)
+	}
+	for _, connector := range wallpaperTargets(h) {
+		if h.wallpaperSnap.Runtime[connector].State == wallpaper.StateStarting {
+			add("Applying wallpaper\u2026", ui.ToneNormal)
+			break
+		}
 	}
 	if h.wallpaperSnap.Caps.Static == "" {
 		add("neither awww nor swaybg is installed - Restore has nowhere to go", ui.ToneNormal)

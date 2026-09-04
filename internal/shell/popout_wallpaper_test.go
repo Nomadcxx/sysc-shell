@@ -125,7 +125,9 @@ func TestWallpaperPanelIsAFloatingExclusiveOverlay(t *testing.T) {
 func TestWallpaperTreeShape(t *testing.T) {
 	t.Parallel()
 
-	reg, _, _ := openWallpaperPanel(t, nil)
+	// A seeded library: an empty one deliberately shows an explanation in
+	// place of the grid, which is a different shape.
+	reg, _, _ := openWallpaperPanel(t, []string{seedWallpaperRoot(t)})
 	h := wallpaperHost(t, reg)
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
@@ -682,5 +684,78 @@ func TestWallpaperWarnsWhenAForeignSurfaceOwnsTheOutput(t *testing.T) {
 	walk(h.root)
 	if warned {
 		t.Error("an uncovered output must not warn")
+	}
+}
+
+func TestWallpaperReportsPreviewGeneration(t *testing.T) {
+	t.Parallel()
+
+	root := seedWallpaperRoot(t)
+	reg, _, _ := openWallpaperPanel(t, []string{root})
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	hasText := func(want string) bool {
+		found := false
+		var walk func(*ui.Node)
+		walk = func(n *ui.Node) {
+			if n == nil {
+				return
+			}
+			if n.Kind == ui.KindText && strings.Contains(n.Text, want) {
+				found = true
+			}
+			for _, c := range n.Children {
+				walk(c)
+			}
+		}
+		walk(h.root)
+		return found
+	}
+
+	snap := h.wallpaperSnap
+	snap.ThumbsDone, snap.ThumbsTotal = 12, 645
+	h.wallpaperSnap = snap
+	reg.rebuildPanel(h)
+	if !hasText("Generating previews") || !hasText("12 / 645") {
+		t.Error("a library still generating previews must say so")
+	}
+
+	// Finished generation says nothing at all.
+	snap.ThumbsDone = 645
+	h.wallpaperSnap = snap
+	reg.rebuildPanel(h)
+	if hasText("Generating previews") {
+		t.Error("a finished library must not keep reporting progress")
+	}
+
+	// An apply in flight is visible.
+	snap.Runtime = map[string]wallpaper.Runtime{"DP-1": {State: wallpaper.StateStarting}}
+	h.wallpaperOutput = "DP-1"
+	h.wallpaperSnap = snap
+	reg.rebuildPanel(h)
+	if !hasText("Applying wallpaper") {
+		t.Error("an apply in flight must be visible")
+	}
+}
+
+func TestWallpaperEmptyStatesExplainThemselves(t *testing.T) {
+	t.Parallel()
+
+	empty := t.TempDir()
+	reg, _, _ := openWallpaperPanel(t, []string{empty})
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	text := wallpaperEmptyState(h).Text
+	if !strings.Contains(text, "No supported wallpapers") {
+		t.Errorf("empty directory says %q", text)
+	}
+
+	h.search = ui.NewField("zzzz")
+	if text := wallpaperEmptyState(h).Text; !strings.Contains(text, "match your search") {
+		t.Errorf("a search with no hits says %q", text)
 	}
 }

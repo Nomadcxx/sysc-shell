@@ -66,6 +66,13 @@ type Snapshot struct {
 	Caps        Capabilities
 	Seed        string
 	Err         string
+	// ThumbsDone and ThumbsTotal report preview generation. A first run over a
+	// real library takes minutes; without them the picker is a wall of glyphs
+	// with no explanation.
+	ThumbsDone  int
+	ThumbsTotal int
+	// Scanning is true while the library index is being built.
+	Scanning bool
 	// Covered maps an output to the namespace of a foreign Background surface
 	// painting over it. gSlapper reports itself as playing whether or not its
 	// surface is visible, so without this an apply that nobody can see looks
@@ -410,6 +417,9 @@ func (s *Service) publish() {
 		Seed:        s.store.SeedPath(),
 		Err:         s.store.Err(),
 		Covered:     maps.Clone(s.covered),
+	}
+	if s.thumbs != nil {
+		snap.ThumbsDone, snap.ThumbsTotal = s.thumbs.Counts()
 	}
 	s.mu.Lock()
 	s.snap = snap
