@@ -32,6 +32,8 @@ type barView struct {
 	// Unread is unseen history. DND is do-not-disturb at this view's clock.
 	Unread int
 	DND    bool
+	// Running is the session-wide application slot list. Every bar paints it.
+	Running []runningAppSlot
 }
 
 // textWidget is one configured widget instance: a retained node plus the pure
@@ -239,6 +241,12 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 			})
 		case "notifications":
 			out = append(out, buildNotifyWidget())
+		case "running-apps":
+			row := &ui.Node{Kind: ui.KindRow, Gap: runningAppGap}
+			cap := &ui.Node{Kind: ui.KindCapsule}
+			w := textWidget{node: cap, inner: row}
+			w.refresh = func(v barView) bool { return refreshRunningApps(cap, row, v) }
+			out = append(out, w)
 		case "plugin":
 			out = append(out, buildPluginWidget(item))
 		}

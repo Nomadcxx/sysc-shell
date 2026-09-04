@@ -17,7 +17,7 @@ func TestGroupRunningApps(t *testing.T) {
 	cases := []struct {
 		name    string
 		windows []niri.Window
-		lookup  map[string]runningAppEntry
+		lookup  []runningAppEntry
 		want    []runningAppSlot
 	}{
 		{
@@ -26,7 +26,7 @@ func TestGroupRunningApps(t *testing.T) {
 				{ID: 1, AppID: "firefox"},
 				{ID: 2, AppID: "firefox"},
 			},
-			lookup: map[string]runningAppEntry{"firefox": firefox},
+			lookup: []runningAppEntry{firefox},
 			want: []runningAppSlot{{
 				Key:     "firefox",
 				Icon:    "firefox",
@@ -39,7 +39,7 @@ func TestGroupRunningApps(t *testing.T) {
 				{ID: 1, AppID: "firefox"},
 				{ID: 2, AppID: "brave"},
 			},
-			lookup: map[string]runningAppEntry{"firefox": firefox},
+			lookup: []runningAppEntry{firefox},
 			want: []runningAppSlot{
 				{Key: "firefox", Icon: "firefox", Members: []niri.Window{{ID: 1, AppID: "firefox"}}},
 				{Key: "brave", Members: []niri.Window{{ID: 2, AppID: "brave"}}},
@@ -51,7 +51,7 @@ func TestGroupRunningApps(t *testing.T) {
 				{ID: 1, AppID: "steam_app_123"},
 				{ID: 2, AppID: "steam"},
 			},
-			lookup: map[string]runningAppEntry{"steam": steam},
+			lookup: []runningAppEntry{steam},
 			want: []runningAppSlot{{
 				Key:     "steam",
 				Icon:    "steam",
@@ -64,7 +64,7 @@ func TestGroupRunningApps(t *testing.T) {
 				{ID: 1, AppID: "steam_app_123"},
 				{ID: 2, AppID: "steam"},
 			},
-			lookup: map[string]runningAppEntry{"steam": steam, "steam_app_123": game},
+			lookup: []runningAppEntry{steam, game},
 			want: []runningAppSlot{
 				{Key: "steam_app_123", Icon: "game", Members: []niri.Window{{ID: 1, AppID: "steam_app_123"}}},
 				{Key: "steam", Icon: "steam", Members: []niri.Window{{ID: 2, AppID: "steam"}}},
@@ -84,7 +84,7 @@ func TestGroupRunningApps(t *testing.T) {
 				{ID: 1, AppID: "firefox", FocusTimestamp: 10},
 				{ID: 2, AppID: "firefox", Focused: true, FocusTimestamp: 20},
 			},
-			lookup: map[string]runningAppEntry{"firefox": firefox},
+			lookup: []runningAppEntry{firefox},
 			want: []runningAppSlot{{
 				Key:     "firefox",
 				Icon:    "firefox",

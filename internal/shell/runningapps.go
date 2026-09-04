@@ -9,6 +9,7 @@ import (
 	"github.com/go-freedesktop/desktopentry"
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 type runningAppAction struct {
@@ -31,6 +32,7 @@ type runningAppSlot struct {
 	Members []niri.Window
 	MRU     niri.Window
 	Actions []runningAppAction
+	Image   *ui.Image
 }
 
 type runningAppMenuRow struct {
@@ -39,14 +41,17 @@ type runningAppMenuRow struct {
 	CloseAll bool
 }
 
-func groupRunningApps(windows []niri.Window, lookup map[string]runningAppEntry) []runningAppSlot {
+func groupRunningApps(windows []niri.Window, entries []runningAppEntry) []runningAppSlot {
 	if len(windows) == 0 {
 		return nil
 	}
 	order := make([]string, 0)
 	byKey := map[string]*runningAppSlot{}
 	for _, w := range windows {
-		entry, ok := lookupRunningWindow(w.AppID, lookup)
+		entry, ok := lookupRunningApp(w.AppID, entries)
+		if !ok && strings.HasPrefix(strings.ToLower(w.AppID), "steam_app") {
+			entry, ok = lookupRunningApp("steam", entries)
+		}
 		key := strings.ToLower(w.AppID)
 		if ok {
 			key = strings.ToLower(entry.ID)
@@ -73,19 +78,6 @@ func groupRunningApps(windows []niri.Window, lookup map[string]runningAppEntry) 
 		out = append(out, *slot)
 	}
 	return out
-}
-
-func lookupRunningWindow(appID string, lookup map[string]runningAppEntry) (runningAppEntry, bool) {
-	lower := strings.ToLower(appID)
-	if e, ok := lookup[lower]; ok {
-		return e, true
-	}
-	if strings.HasPrefix(lower, "steam_app") {
-		if e, ok := lookup["steam"]; ok {
-			return e, true
-		}
-	}
-	return runningAppEntry{}, false
 }
 
 func lookupRunningApp(appID string, entries []runningAppEntry) (runningAppEntry, bool) {
@@ -204,4 +196,101 @@ func runningAppMenu(slot runningAppSlot) []runningAppMenuRow {
 		rows = append(rows, runningAppMenuRow{Label: a.Name, ActionID: a.ID})
 	}
 	return append(rows, runningAppMenuRow{Label: "Close all", CloseAll: true})
+}
+
+const (
+	runningAppTile     = 24
+	runningAppIconSize = 18
+	runningAppGap      = 4
+	runningAppPad      = 8
+	runningAppPrefix   = "running-app:"
+)
+
+func refreshRunningApps(cap, row *ui.Node, v barView) bool {
+	if len(v.Running) == 0 {
+		if len(cap.Children) == 0 && cap.Padding == 0 {
+			return false
+		}
+		cap.Children = nil
+		cap.Padding = 0
+		row.Children = nil
+		return true
+	}
+	if runningAppsMatch(row, v.Running) && len(cap.Children) == 1 {
+		return false
+	}
+	cap.Padding = runningAppPad
+	cap.Children = []*ui.Node{row}
+	row.Children = row.Children[:0]
+	for _, s := range v.Running {
+		row.Children = append(row.Children, runningAppTileNode(s))
+	}
+	return true
+}
+
+func runningAppsMatch(row *ui.Node, slots []runningAppSlot) bool {
+	if len(row.Children) != len(slots) {
+		return false
+	}
+	for i, s := range slots {
+		c := row.Children[i]
+		if c == nil || c.Action != runningAppPrefix+s.Key || c.Width != runningAppTile {
+			return false
+		}
+		want := ui.FillNone
+		if s.Focused {
+			want = ui.FillAccent
+		}
+		if c.Fill != want {
+			return false
+		}
+	}
+	return true
+}
+
+func runningAppTileNode(s runningAppSlot) *ui.Node {
+	fill := ui.FillNone
+	if s.Focused {
+		fill = ui.FillAccent
+	}
+	child := &ui.Node{Kind: ui.KindText, Text: runningAppLetter(s.Key)}
+	if s.Image != nil {
+		child = &ui.Node{Kind: ui.KindImage, Image: s.Image, ImageSize: runningAppIconSize}
+	}
+	return &ui.Node{
+		Kind: ui.KindCapsule, Width: runningAppTile, Height: runningAppTile, Fill: fill,
+		Action: runningAppPrefix + s.Key, Children: []*ui.Node{child},
+	}
+}
+
+func runningAppLetter(key string) string {
+	for _, r := range key {
+		return strings.ToUpper(string(r))
+	}
+	return "?"
+}
+
+func runningAppKey(action string) (string, bool) {
+	return strings.CutPrefix(action, runningAppPrefix)
+}
+
+func xdgApplicationDirs() []string {
+	dataHome := os.Getenv("XDG_DATA_HOME")
+	if dataHome == "" {
+		dataHome = filepath.Join(os.Getenv("HOME"), ".local", "share")
+	}
+	dataDirs := os.Getenv("XDG_DATA_DIRS")
+	if dataDirs == "" {
+		dataDirs = "/usr/local/share:/usr/share"
+	}
+	dirs := []string{filepath.Join(dataHome, "applications")}
+	for _, d := range strings.Split(dataDirs, ":") {
+		if d != "" {
+			dirs = append(dirs, filepath.Join(d, "applications"))
+		}
+	}
+	for i, j := 0, len(dirs)-1; i < j; i, j = i+1, j-1 {
+		dirs[i], dirs[j] = dirs[j], dirs[i]
+	}
+	return dirs
 }

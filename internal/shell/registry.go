@@ -80,6 +80,9 @@ type Registry struct {
 	// runArgvOutput captures stdout of powerprofilesctl list. Tests replace it.
 	runArgvOutput func([]string) (string, error)
 
+	running      []runningAppSlot
+	runningIndex []runningAppEntry
+
 	// notify is the service-owned notification projection.
 	notify *notifyState
 
@@ -823,6 +826,8 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	// a stale workspace or title on a host that reconnects under that name.
 	r.outputs = next
 	r.focused = s.FocusedOutput
+	r.ensureRunningIndexLocked()
+	r.running = groupRunningApps(s.Windows, r.runningIndex)
 
 	var changed []uint32
 	for global, bar := range r.bars {
@@ -852,6 +857,7 @@ func (r *Registry) viewLocked(connector string) barView {
 		History:   r.historyLocked(),
 		Weather:   r.reading,
 		Unread:    r.notify.unread(),
+		Running:   r.running,
 	}
 	_, view.DND = r.notify.dndState(r.now)
 	if r.plugins != nil {
@@ -865,6 +871,14 @@ func (r *Registry) viewLocked(connector string) barView {
 // copied here.
 func (r *Registry) historyLocked() map[services.Selector][]float64 {
 	return r.metrics.Histories()
+}
+
+func (r *Registry) ensureRunningIndexLocked() {
+	if r.runningIndex != nil || runningAsTest() {
+		return
+	}
+	// ponytail: second XDG walk vs the launcher catalogue; share the index if both stay hot.
+	r.runningIndex = loadRunningAppEntries(xdgApplicationDirs())
 }
 
 // buildBar creates one bar and acquires the services its items need. A failure
