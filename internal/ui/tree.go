@@ -129,6 +129,14 @@ type Node struct {
 	// reserves its box whatever the raster turns out to be, so a decode that
 	// arrives later cannot change the layout around it.
 	ImageSize int
+	// ImageW and ImageH are the landscape form of ImageSize, for a raster that
+	// is not square: a wallpaper thumbnail rather than an icon. Both must be
+	// positive to take effect, because half a box is not a box; otherwise the
+	// node falls back to the square ImageSize. Painting scales the raster to
+	// fill whichever box it is given, so a non-square source must already be
+	// cropped to this ratio by whoever produced it.
+	ImageW int
+	ImageH int
 	// Tone selects the text colour. Zero is ToneNormal.
 	Tone Tone
 	// Fill selects a capsule's background, and a button's chrome. Zero is the
@@ -229,3 +237,13 @@ const (
 // MeasureText reports the logical width and height of a shaped string. The
 // tabular flag is the node's, and reaches the shaper as an OpenType feature.
 type MeasureText func(text string, tabular bool) (width, height int)
+
+// imageBox returns the explicit landscape box of a KindImage node. Both edges
+// must be positive: a node carrying only one of them has not described a box,
+// and falls back to the square ImageSize rather than measuring to zero.
+func imageBox(n *Node) (w, h int, ok bool) {
+	if n.ImageW > 0 && n.ImageH > 0 {
+		return n.ImageW, n.ImageH, true
+	}
+	return 0, 0, false
+}

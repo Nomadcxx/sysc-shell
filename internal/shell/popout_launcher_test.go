@@ -343,7 +343,7 @@ func TestLauncherIconUsesACachedRaster(t *testing.T) {
 	go func() { _ = worker.Run(ctx) }()
 	reg := &Registry{trayIcons: worker}
 	h := &PanelHost{scale120: 120}
-	key := icons.Key{Name: "firefox", Size: launcherIconSlot}
+	key := icons.Square("firefox", launcherIconSlot)
 	if _, _, err := worker.Request(key); err != nil {
 		t.Fatal(err)
 	}

@@ -179,7 +179,7 @@ func launcherLookupIcon(r *Registry, h *PanelHost, name string) *ui.Image {
 	if scale := ui.Scale120(h.scale120); scale.Valid() {
 		size = max(scale.Physical(launcherIconSlot), 1)
 	}
-	key := icons.Key{Name: name, Size: size}
+	key := icons.Square(name, size)
 	if img, ok := r.trayIcons.Lookup(key); ok {
 		return img
 	}

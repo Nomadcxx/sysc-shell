@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/theming"
 	"github.com/Nomadcxx/sysc-shell/internal/trayclient"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	"github.com/Nomadcxx/sysc-shell/internal/wallpaper"
 	tray "github.com/Nomadcxx/sysc-tray/protocol"
 )
 
@@ -82,15 +84,18 @@ type Registry struct {
 	notify *notifyState
 
 	// tray is the service-owned tray projection.
-	tray            *trayState
-	trayCh          chan trayclient.Message
-	traySender      trayCommandSender
-	trayMenu        *trayMenuHost
-	trayDrawer      *trayDrawerHost
-	trayReplies     *trayReplyTracker
-	trayIcons       *icons.Worker
-	trayIconCancel  context.CancelFunc
-	pendingTrayMenu pendingTrayMenu
+	tray                 *trayState
+	trayCh               chan trayclient.Message
+	traySender           trayCommandSender
+	trayMenu             *trayMenuHost
+	trayDrawer           *trayDrawerHost
+	trayReplies          *trayReplyTracker
+	trayIcons            *icons.Worker
+	wallpaperSvc         *wallpaper.Service
+	wallpaperThumbs      *icons.Worker
+	wallpaperThumbCancel context.CancelFunc
+	trayIconCancel       context.CancelFunc
+	pendingTrayMenu      pendingTrayMenu
 
 	// plugins hosts one process per enabled plugin. Nil until BindPlugins.
 	plugins *pluginHost
@@ -136,6 +141,16 @@ func NewRegistry(cfg config.Config) *Registry {
 	r.osd = newOSDManager(r, 0)
 	r.setAudio(services.NewAudio(0, ""))
 	r.setBrightness(services.NewBrightness("", "", 0))
+	// The wallpaper service starts with the registry, not with the picker: an
+	// output's wallpaper has to come back at login whether or not anyone opens
+	// the panel (D20). It is skipped under test, where starting it would read
+	// the developer's real assignment file and launch real engines; those
+	// tests install their own service.
+	if !runningAsTest() {
+		r.mu.Lock()
+		r.wallpaperStartLocked()
+		r.mu.Unlock()
+	}
 	return r
 }
 
@@ -461,6 +476,9 @@ func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbac
 	if plugins != nil {
 		plugins.syncBars()
 	}
+	// An output that comes back gets its wallpaper back (D20). This is the
+	// arrival seam; DropHost is the departure one.
+	r.wallpaperOutputConnected(connector)
 	return r.bindHost(global, bar, callbacks), nil
 }
 
@@ -636,6 +654,10 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 func (r *Registry) DropHost(global uint32) {
 	r.mu.Lock()
 	leases := r.leases[global]
+	gone := ""
+	if bar, ok := r.bars[global]; ok {
+		gone = bar.connector()
+	}
 	delete(r.bars, global)
 	delete(r.leases, global)
 	r.trayOutputLostLocked(global)
@@ -643,6 +665,9 @@ func (r *Registry) DropHost(global uint32) {
 	plugins := r.plugins
 	r.mu.Unlock()
 
+	if gone != "" && !slices.Contains(r.connectorsSnapshot(), gone) {
+		r.wallpaperOutputGone(gone)
+	}
 	r.SyncToastOutputs(toastOutputs)
 	if plugins != nil {
 		plugins.syncBars()
