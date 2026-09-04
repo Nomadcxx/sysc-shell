@@ -120,9 +120,9 @@ func NewWithTheme(theme Theme, policy config.Bar, connector string) (*Bar, error
 		style:         barStyle(theme),
 	}
 
-	b.left = buildWidgets(policy.Left, b.theme.CapsulePadding)
-	b.center = buildWidgets(policy.Center, b.theme.CapsulePadding)
-	b.right = buildWidgets(policy.Right, b.theme.CapsulePadding)
+	b.left = buildWidgets(policy.Left, b.theme.Metrics.CapsulePadding)
+	b.center = buildWidgets(policy.Center, b.theme.Metrics.CapsulePadding)
+	b.right = buildWidgets(policy.Right, b.theme.Metrics.CapsulePadding)
 	return b, nil
 }
 
@@ -197,7 +197,7 @@ func (b *Bar) setActionHandler(fn func(action string, button uint32) bool) {
 func (b *Bar) trayArrangement() trayArrangement {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return arrangeTray(b.trayItems, b.trayPrefs, b.trayAvailable, trayItemSize, b.theme.Spacing)
+	return arrangeTray(b.trayItems, b.trayPrefs, b.trayAvailable, trayItemSize, b.theme.Metrics.BarSpacing)
 }
 
 // scale120 reports the output scale the bar was last configured at, in 120ths.
@@ -307,7 +307,7 @@ func (b *Bar) relayoutLocked() {
 // edge and both ends; the content is the body inset by the padding.
 func (b *Bar) contentLocked(width, height int) ui.Rect {
 	body := b.bodyLocked(width, height)
-	pad := b.theme.BarPadding
+	pad := b.theme.Metrics.BarPadding
 	return ui.Rect{
 		X: body.X + pad, Y: body.Y + pad,
 		W: max(0, body.W-2*pad), H: max(0, body.H-2*pad),
@@ -337,23 +337,23 @@ func (b *Bar) layoutLocked(width, height int) error {
 	sections := b.sections()
 	content := b.contentLocked(width, height)
 	if err := ui.ArrangeBar(content,
-		sections[0], sections[1], sections[2], b.theme.Spacing, measure); err != nil {
+		sections[0], sections[1], sections[2], b.theme.Metrics.BarSpacing, measure); err != nil {
 		return err
 	}
 	available := b.trayAvailableLocked(content, sections[1], sections[2])
-	arranged := arrangeTray(b.trayItems, b.trayPrefs, available, trayItemSize, b.theme.Spacing)
+	arranged := arrangeTray(b.trayItems, b.trayPrefs, available, trayItemSize, b.theme.Metrics.BarSpacing)
 	if len(arranged.Overflow) > 0 || len(arranged.Hidden) > 0 {
 		reserve := trayItemSize
 		if len(sections[2]) > 0 || available > trayItemSize {
-			reserve += b.theme.Spacing
+			reserve += b.theme.Metrics.BarSpacing
 		}
 		available = max(0, available-reserve)
-		arranged = arrangeTray(b.trayItems, b.trayPrefs, available, trayItemSize, b.theme.Spacing)
+		arranged = arrangeTray(b.trayItems, b.trayPrefs, available, trayItemSize, b.theme.Metrics.BarSpacing)
 	}
 	b.trayArranged, b.trayAvailable = arranged, available
 	b.rebuildTrayNodesLocked()
 	sections = b.sections()
-	return ui.ArrangeBar(content, sections[0], sections[1], sections[2], b.theme.Spacing, measure)
+	return ui.ArrangeBar(content, sections[0], sections[1], sections[2], b.theme.Metrics.BarSpacing, measure)
 }
 
 func (b *Bar) trayAvailableLocked(content ui.Rect, center, right []*ui.Node) int {
@@ -363,12 +363,12 @@ func (b *Bar) trayAvailableLocked(content ui.Rect, center, right []*ui.Node) int
 		start = last.X + last.W
 	}
 	if len(center) > 0 || len(right) > 0 {
-		start += b.theme.Spacing
+		start += b.theme.Metrics.BarSpacing
 	}
 	used := 0
 	if len(right) > 0 {
 		used = content.X + content.W - right[0].Bounds.X
-		used += b.theme.Spacing
+		used += b.theme.Metrics.BarSpacing
 	}
 	return max(0, content.X+content.W-start-used)
 }

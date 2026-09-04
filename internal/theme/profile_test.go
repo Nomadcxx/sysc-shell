@@ -1,6 +1,7 @@
 package theme
 
 import (
+	"slices"
 	"testing"
 	"time"
 )
@@ -328,4 +329,46 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+// TestMetricsCarryCapsuleAndButtonPadding pulls the last two fixed visual
+// constants into the density table. They lived in the shell's flat-alias layer
+// as literal 8 and 12, which meant a compact bar drew standard-sized padding
+// inside its capsules -- density moved the pill but not what sat in it.
+//
+// The standard row must keep the old literals so the default theme does not
+// shift, and every value has to land on the shared spacing scale rather than
+// being multiplied out of the row above it.
+func TestMetricsCarryCapsuleAndButtonPadding(t *testing.T) {
+	t.Parallel()
+	std, ok := MetricsFor(DensityStandard)
+	if !ok {
+		t.Fatal("no standard row")
+	}
+	if std.CapsulePadding != 8 {
+		t.Errorf("standard capsule padding = %d, want the shipped 8", std.CapsulePadding)
+	}
+	if std.ButtonPadding != 12 {
+		t.Errorf("standard button padding = %d, want the shipped 12", std.ButtonPadding)
+	}
+
+	onScale := func(v int) bool { return slices.Contains(SpacingScale, v) }
+	var last Metrics
+	for i, d := range []Density{DensityCompact, DensityStandard, DensityComfortable} {
+		m, ok := MetricsFor(d)
+		if !ok {
+			t.Fatalf("no %s row", d)
+		}
+		if !onScale(m.CapsulePadding) || !onScale(m.ButtonPadding) {
+			t.Errorf("%s padding %d/%d is off the spacing scale %v",
+				d, m.CapsulePadding, m.ButtonPadding, SpacingScale)
+		}
+		if i > 0 {
+			if m.CapsulePadding <= last.CapsulePadding || m.ButtonPadding <= last.ButtonPadding {
+				t.Errorf("%s padding %d/%d does not grow on the row above (%d/%d)",
+					d, m.CapsulePadding, m.ButtonPadding, last.CapsulePadding, last.ButtonPadding)
+			}
+		}
+		last = m
+	}
 }

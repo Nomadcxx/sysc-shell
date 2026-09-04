@@ -281,10 +281,10 @@ func applyFlat(t *Theme) {
 	t.CardRadius = t.Shapes.Card
 	t.TextSize = t.Type.Spec(theme.RoleBody).Size
 
-	t.CapsulePadding = 8
+	t.CapsulePadding = t.Metrics.CapsulePadding
 	t.ControlHeight = t.Metrics.StandardControl
 	t.CompactHeight = t.Metrics.CompactControl
-	t.ButtonPadding = 12
+	t.ButtonPadding = t.Metrics.ButtonPadding
 	t.IconSize = t.Metrics.IconNormal
 	t.ProfileIconSize = t.Metrics.IconSmall + 2
 	t.OSDIconSize = t.Metrics.IconLarge

@@ -79,9 +79,15 @@ type Metrics struct {
 	StandardControl int
 	PanelPadding    int
 	CardPadding     int
-	IconSmall       int
-	IconNormal      int
-	IconLarge       int
+	// CapsulePadding is the inset inside a bar pill; ButtonPadding is the
+	// inset inside a control. Both were fixed constants in the shell's flat
+	// alias layer, which left a compact bar drawing standard-sized padding
+	// inside its capsules -- density moved the pill but not what sat in it.
+	CapsulePadding int
+	ButtonPadding  int
+	IconSmall      int
+	IconNormal     int
+	IconLarge      int
 }
 
 var metrics = map[Density]Metrics{
@@ -89,18 +95,21 @@ var metrics = map[Density]Metrics{
 		BarHeight: 40, BarPadding: 4, BarSpacing: 2,
 		CompactControl: 32, StandardControl: 36,
 		PanelPadding: 12, CardPadding: 10,
+		CapsulePadding: 4, ButtonPadding: 8,
 		IconSmall: 16, IconNormal: 18, IconLarge: 24,
 	},
 	DensityStandard: {
 		BarHeight: 48, BarPadding: 6, BarSpacing: 4,
 		CompactControl: 32, StandardControl: 40,
 		PanelPadding: 16, CardPadding: 12,
+		CapsulePadding: 8, ButtonPadding: 12,
 		IconSmall: 16, IconNormal: 20, IconLarge: 24,
 	},
 	DensityComfortable: {
 		BarHeight: 56, BarPadding: 8, BarSpacing: 6,
 		CompactControl: 36, StandardControl: 44,
 		PanelPadding: 20, CardPadding: 16,
+		CapsulePadding: 12, ButtonPadding: 16,
 		IconSmall: 18, IconNormal: 22, IconLarge: 28,
 	},
 }
