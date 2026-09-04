@@ -1,10 +1,13 @@
 package shell
 
 import (
+	"context"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-freedesktop/desktopentry"
 
@@ -272,6 +275,74 @@ func runningAppLetter(key string) string {
 
 func runningAppKey(action string) (string, bool) {
 	return strings.CutPrefix(action, runningAppPrefix)
+}
+
+func runningSlotPresent(slots []runningAppSlot, key string) bool {
+	for _, s := range slots {
+		if s.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Registry) handleRunningAppClick(output uint32, key string, button uint32) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var slot runningAppSlot
+	found := false
+	for _, s := range r.running {
+		if s.Key == key {
+			slot, found = s, true
+			break
+		}
+	}
+	if !found {
+		return false
+	}
+	switch button {
+	case 0, buttonLeft:
+		if id := nextFocusID(slot); id != 0 {
+			r.sendNiriLocked(niri.FocusWindow{ID: id})
+		}
+		return true
+	case buttonRight:
+		if r.runningMenu == nil {
+			r.runningMenu = newRunningAppMenuHost(r)
+		}
+		r.runningMenu.openLocked(output, slot)
+		return true
+	}
+	return false
+}
+
+func (r *Registry) sendNiriLocked(body any) {
+	if r.niriSend != nil {
+		if err := r.niriSend(body); err != nil {
+			log.Print("niri action: ", err)
+		}
+		return
+	}
+	socket := os.Getenv("NIRI_SOCKET")
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := niri.Action(ctx, socket, body); err != nil {
+			log.Print("niri action: ", err)
+		}
+	}()
+}
+
+func (r *Registry) spawnDesktopExecLocked(execLine string) {
+	argv, err := desktopentry.ExpandExec(&desktopentry.Entry{Exec: execLine}, nil, "")
+	if err != nil {
+		log.Print("running-apps exec: ", err)
+		return
+	}
+	full := append([]string{"niri", "msg", "action", "spawn", "--"}, argv...)
+	if err := r.runArgv(full); err != nil {
+		log.Print("niri spawn: ", err)
+	}
 }
 
 func xdgApplicationDirs() []string {

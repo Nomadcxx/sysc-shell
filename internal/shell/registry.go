@@ -82,6 +82,10 @@ type Registry struct {
 
 	running      []runningAppSlot
 	runningIndex []runningAppEntry
+	runningMenu  *runningAppMenuHost
+	// niriSend is the FocusWindow/CloseWindow seam. Tests replace it; nil
+	// sends niri.Action on $NIRI_SOCKET off this goroutine.
+	niriSend func(any) error
 
 	// notify is the service-owned notification projection.
 	notify *notifyState
@@ -513,6 +517,9 @@ func (r *Registry) bindBarPluginLocked(bar *Bar) {
 // takes the registry lock and then the bar lock.
 func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 	bar.setActionHandler(func(action string, button uint32) bool {
+		if key, ok := runningAppKey(action); ok {
+			return r.handleRunningAppClick(global, key, button)
+		}
 		out, trig := r.triggerFor(global)
 		switch {
 		case action == panelMonitorAction && (button == 0 || button == buttonLeft || button == buttonRight):
@@ -698,6 +705,9 @@ func (r *Registry) Close() {
 		osdAux = r.osd.prepareHide()
 	}
 	r.closeTrayLocked()
+	if r.runningMenu != nil {
+		r.runningMenu.closeLocked()
+	}
 	r.stopTrayIconsLocked()
 	r.closeAllPanelsLocked()
 	var leases []*services.Lease
@@ -828,6 +838,9 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	r.focused = s.FocusedOutput
 	r.ensureRunningIndexLocked()
 	r.running = groupRunningApps(s.Windows, r.runningIndex)
+	if h := r.runningMenu; h != nil && h.open_ && !runningSlotPresent(r.running, h.slot.Key) {
+		h.closeLocked()
+	}
 
 	var changed []uint32
 	for global, bar := range r.bars {
