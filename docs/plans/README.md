@@ -298,6 +298,7 @@ widgets) are still unordered.
 | `2026-09-03-wallpaper.md` | plan | 14 tasks (`sysc-149`): assignment store, IPC, argv, config, library, service, panel chrome, apply/restore, startup reconcile, live Niri gate. Audit pins applied 2026-09-03. |
 | `2026-09-03-wallpaper-audit.md` | audit-report | Pre-implementation audit. Accepted: bd claim, All token, `SplitN`, `-r`, `cfgHook`, spawn stub. Dirty `main` and AGENTS.md output line left as ops, not plan text. |
 | `2026-09-04-wallpaper-execution-handover.md` | execution-handover | Commissions implementing `sysc-149`. Session context: chrome mix, gSlapper-first, Waytrogen sockets, fan-out All, Restore exception. Do not reopen those. |
+| `2026-09-05-launcher-ui-handover.md` | execution-handover | Commissions the launcher UI audit. Three diagnosed defects first: the 50-result cap in sysc-launch that ends the browse list in the E's, missing client-side key repeat, and frecency judged only after the cap is lifted. Then the chrome, which has never had a design pass. |
 | `2026-09-03-control-center-execution-handover.md` | execution-handover | Commissions the Noctalia-shaped control-centre design and implementation plan (`sysc-158`); DMS supplies quick-control density. |
 
 ## Milestones 7 remainder and 8: not yet designed
