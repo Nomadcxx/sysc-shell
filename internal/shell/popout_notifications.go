@@ -254,7 +254,7 @@ func (r *Registry) lookupNotifyIcon(name string) *ui.Image {
 	if r == nil || r.trayIcons == nil || name == "" {
 		return nil
 	}
-	key := icons.Key{Name: name, Size: cardIconSize}
+	key := icons.Square(name, cardIconSize)
 	if img, ok := r.trayIcons.Lookup(key); ok {
 		return img
 	}

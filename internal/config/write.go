@@ -94,6 +94,9 @@ func toWire(c Config) wireConfig {
 		v := c.Session.Locker
 		w.Session = &wireSession{Locker: &v}
 	}
+	if p := wallpaperDiff(c.Wallpaper, d.Wallpaper); p != nil {
+		w.Wallpaper = p
+	}
 	if p := panelsDiff(c.Panels, d.Panels); p != nil {
 		w.Panels = p
 	}
@@ -328,6 +331,46 @@ func accessibilityDiff(got, base Accessibility) *wireAccessibility {
 	if got.HighContrast != base.HighContrast {
 		v := got.HighContrast
 		w.HighContrast = &v
+	}
+	return &w
+}
+
+func wallpaperDiff(got, base Wallpaper) *wireWallpaper {
+	if got == base {
+		return nil
+	}
+	w := wireWallpaper{}
+	if got.ImageDirectory != base.ImageDirectory {
+		v := got.ImageDirectory
+		w.ImageDirectory = &v
+	}
+	if got.VideoDirectory != base.VideoDirectory {
+		v := got.VideoDirectory
+		w.VideoDirectory = &v
+	}
+	if got.Scale != base.Scale {
+		v := got.Scale
+		w.Scale = &v
+	}
+	if got.Loop != base.Loop {
+		v := got.Loop
+		w.Loop = &v
+	}
+	if got.FPS != base.FPS {
+		v := got.FPS
+		w.FPS = &v
+	}
+	if got.Fade != base.Fade {
+		v := got.Fade
+		w.Fade = &v
+	}
+	if got.FadeDuration != base.FadeDuration {
+		v := got.FadeDuration
+		w.FadeDuration = &v
+	}
+	if got.Hidden != base.Hidden {
+		v := got.Hidden
+		w.Hidden = &v
 	}
 	return &w
 }

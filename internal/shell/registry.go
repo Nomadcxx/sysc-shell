@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/theming"
 	"github.com/Nomadcxx/sysc-shell/internal/trayclient"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	"github.com/Nomadcxx/sysc-shell/internal/wallpaper"
 	tray "github.com/Nomadcxx/sysc-tray/protocol"
 )
 
@@ -78,19 +80,29 @@ type Registry struct {
 	// runArgvOutput captures stdout of powerprofilesctl list. Tests replace it.
 	runArgvOutput func([]string) (string, error)
 
+	running      []runningAppSlot
+	runningIndex []runningAppEntry
+	runningMenu  *runningAppMenuHost
+	// niriSend is the FocusWindow/CloseWindow seam. Tests replace it; nil
+	// sends niri.Action on $NIRI_SOCKET off this goroutine.
+	niriSend func(any) error
+
 	// notify is the service-owned notification projection.
 	notify *notifyState
 
 	// tray is the service-owned tray projection.
-	tray            *trayState
-	trayCh          chan trayclient.Message
-	traySender      trayCommandSender
-	trayMenu        *trayMenuHost
-	trayDrawer      *trayDrawerHost
-	trayReplies     *trayReplyTracker
-	trayIcons       *icons.Worker
-	trayIconCancel  context.CancelFunc
-	pendingTrayMenu pendingTrayMenu
+	tray                 *trayState
+	trayCh               chan trayclient.Message
+	traySender           trayCommandSender
+	trayMenu             *trayMenuHost
+	trayDrawer           *trayDrawerHost
+	trayReplies          *trayReplyTracker
+	trayIcons            *icons.Worker
+	wallpaperSvc         *wallpaper.Service
+	wallpaperThumbs      *icons.Worker
+	wallpaperThumbCancel context.CancelFunc
+	trayIconCancel       context.CancelFunc
+	pendingTrayMenu      pendingTrayMenu
 
 	// plugins hosts one process per enabled plugin. Nil until BindPlugins.
 	plugins *pluginHost
@@ -136,6 +148,22 @@ func NewRegistry(cfg config.Config) *Registry {
 	r.osd = newOSDManager(r, 0)
 	r.setAudio(services.NewAudio(0, ""))
 	r.setBrightness(services.NewBrightness("", "", 0))
+	// The wallpaper service starts with the registry, not with the picker: an
+	// output's wallpaper has to come back at login whether or not anyone opens
+	// the panel (D20). It is skipped under test, where starting it would read
+	// the developer's real assignment file and launch real engines; those
+	// tests install their own service.
+	if !runningAsTest() {
+		r.mu.Lock()
+		r.wallpaperStartLocked()
+		// The launcher scans XDG for .desktop files. Doing that when the panel
+		// first opens makes the very first Mod+D of a session the slow one, on
+		// a control whose whole job is to be instant. It is skipped under test
+		// for the same reason as the wallpaper service: it would read the
+		// developer's real applications.
+		r.launcherServiceLocked()
+		r.mu.Unlock()
+	}
 	return r
 }
 
@@ -487,6 +515,9 @@ func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbac
 	if plugins != nil {
 		plugins.syncBars()
 	}
+	// An output that comes back gets its wallpaper back (D20). This is the
+	// arrival seam; DropHost is the departure one.
+	r.wallpaperOutputConnected(connector)
 	return r.bindHost(global, bar, callbacks), nil
 }
 
@@ -512,6 +543,9 @@ func (r *Registry) bindBarPluginLocked(bar *Bar) {
 // takes the registry lock and then the bar lock.
 func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 	bar.setActionHandler(func(action string, button uint32) bool {
+		if key, ok := runningAppKey(action); ok {
+			return r.handleRunningAppClick(global, key, button)
+		}
 		out, trig := r.triggerFor(global)
 		switch {
 		case action == panelMonitorAction && (button == 0 || button == buttonLeft || button == buttonRight):
@@ -662,6 +696,10 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 func (r *Registry) DropHost(global uint32) {
 	r.mu.Lock()
 	leases := r.leases[global]
+	gone := ""
+	if bar, ok := r.bars[global]; ok {
+		gone = bar.connector()
+	}
 	delete(r.bars, global)
 	delete(r.leases, global)
 	r.trayOutputLostLocked(global)
@@ -669,6 +707,9 @@ func (r *Registry) DropHost(global uint32) {
 	plugins := r.plugins
 	r.mu.Unlock()
 
+	if gone != "" && !slices.Contains(r.connectorsSnapshot(), gone) {
+		r.wallpaperOutputGone(gone)
+	}
 	r.SyncToastOutputs(toastOutputs)
 	if plugins != nil {
 		plugins.syncBars()
@@ -690,6 +731,9 @@ func (r *Registry) Close() {
 		osdAux = r.osd.prepareHide()
 	}
 	r.closeTrayLocked()
+	if r.runningMenu != nil {
+		r.runningMenu.closeLocked()
+	}
 	r.stopTrayIconsLocked()
 	r.closeAllPanelsLocked()
 	var leases []*services.Lease
@@ -818,6 +862,12 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	// a stale workspace or title on a host that reconnects under that name.
 	r.outputs = next
 	r.focused = s.FocusedOutput
+	r.ensureRunningIndexLocked()
+	r.running = groupRunningApps(s.Windows, r.runningIndex)
+	r.attachRunningIconsLocked()
+	if h := r.runningMenu; h != nil && h.open_ && !runningSlotPresent(r.running, h.slot.Key) {
+		h.closeLocked()
+	}
 
 	var changed []uint32
 	for global, bar := range r.bars {
@@ -847,6 +897,7 @@ func (r *Registry) viewLocked(connector string) barView {
 		History:   r.historyLocked(),
 		Weather:   r.reading,
 		Unread:    r.notify.unread(),
+		Running:   r.running,
 	}
 	_, view.DND = r.notify.dndState(r.now)
 	if r.plugins != nil {
@@ -860,6 +911,14 @@ func (r *Registry) viewLocked(connector string) barView {
 // copied here.
 func (r *Registry) historyLocked() map[services.Selector][]float64 {
 	return r.metrics.Histories()
+}
+
+func (r *Registry) ensureRunningIndexLocked() {
+	if r.runningIndex != nil || runningAsTest() {
+		return
+	}
+	// ponytail: second XDG walk vs the launcher catalogue; share the index if both stay hot.
+	r.runningIndex = loadRunningAppEntries(xdgApplicationDirs())
 }
 
 // buildBar creates one bar and acquires the services its items need. A failure
@@ -909,6 +968,7 @@ func (r *Registry) buildBar(cfg config.Config, connector string, tok theme.Token
 
 	return bar, leases, wayland.HostCallbacks{
 		Configure:        bar.Configure,
+		OutputSize:       bar.setOutputSize,
 		Render:           bar.Render,
 		Handle:           bar.Handle,
 		OpaqueBackground: th.BackgroundOpaque(),

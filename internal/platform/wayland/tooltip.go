@@ -117,11 +117,12 @@ func (o *owner) showTooltip(req TooltipRequest) error {
 	}
 
 	width, height := o.measureTooltip(h, req, h.bar.ss.scale120)
+	modeW, modeH := h.logicalSize(h.bar.ss.scale120)
 	outW := h.bar.ss.logicalWidth
 	if outW <= 0 {
-		outW = int(h.modeWidth)
+		outW = modeW
 	}
-	outH := int(h.modeHeight)
+	outH := modeH
 	if outH <= 0 {
 		outH = 1080
 	}

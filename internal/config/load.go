@@ -142,6 +142,17 @@ type wireWeather struct {
 	Interval  *string  `json:"interval,omitempty"`
 }
 
+type wireWallpaper struct {
+	ImageDirectory *string  `json:"image_directory,omitempty"`
+	VideoDirectory *string  `json:"video_directory,omitempty"`
+	Scale          *string  `json:"scale,omitempty"`
+	Loop           *bool    `json:"loop,omitempty"`
+	FPS            *int     `json:"fps,omitempty"`
+	Fade           *bool    `json:"fade,omitempty"`
+	FadeDuration   *float64 `json:"fade_duration,omitempty"`
+	Hidden         *string  `json:"hidden,omitempty"`
+}
+
 type wireConfig struct {
 	Bar           *wireBar             `json:"bar,omitempty"`
 	Theme         *wireTheme           `json:"theme,omitempty"`
@@ -151,6 +162,7 @@ type wireConfig struct {
 	Panels        *wirePanels          `json:"panels,omitempty"`
 	Tray          *wireTrayPreferences `json:"tray,omitempty"`
 	Weather       *wireWeather         `json:"weather,omitempty"`
+	Wallpaper     *wireWallpaper       `json:"wallpaper,omitempty"`
 	Outputs       []wireOutput         `json:"outputs,omitempty"`
 	Templates     map[string]bool      `json:"templates,omitempty"`
 	Plugins       *wirePlugins         `json:"plugins,omitempty"`
@@ -240,9 +252,18 @@ func Parse(data []byte) (Config, error) {
 		}
 		cfg.Tray = prefs
 	}
+	if wire.Wallpaper != nil {
+		paper, err := applyWallpaper(cfg.Wallpaper, *wire.Wallpaper, "wallpaper")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Wallpaper = paper
+	}
 	// The base bar's geometry derives from the resolved composition before any
 	// explicit bar block is applied, so the precedence is preset, then theme
-	// axes, then the derived bar, then bar, then output.
+	// axes, then the derived bar, then bar, then output. This supersedes the
+	// radius mirror that stood here: deriveBar sets the radius along with the
+	// rest of the geometry, from one place.
 	cfg.Bar = deriveBar(cfg.Bar, cfg.Theme)
 	if wire.Bar != nil {
 		bar, err := applyBar(cfg.Bar, *wire.Bar, "bar")
@@ -1106,6 +1127,51 @@ func applySession(base Session, w wireSession) Session {
 		base.Locker = *w.Locker
 	}
 	return base
+}
+
+func applyWallpaper(base Wallpaper, w wireWallpaper, path string) (Wallpaper, error) {
+	out := base
+	if w.ImageDirectory != nil {
+		out.ImageDirectory = *w.ImageDirectory
+	}
+	if w.VideoDirectory != nil {
+		out.VideoDirectory = *w.VideoDirectory
+	}
+	if w.Scale != nil {
+		out.Scale = *w.Scale
+	}
+	if w.Loop != nil {
+		out.Loop = *w.Loop
+	}
+	if w.FPS != nil {
+		out.FPS = *w.FPS
+	}
+	if w.Fade != nil {
+		out.Fade = *w.Fade
+	}
+	if w.FadeDuration != nil {
+		out.FadeDuration = *w.FadeDuration
+	}
+	if w.Hidden != nil {
+		out.Hidden = *w.Hidden
+	}
+
+	if !wallpaperScales[out.Scale] {
+		return Wallpaper{}, pathErr(path+".scale", "%q is not a known scaling mode", out.Scale)
+	}
+	if !wallpaperFPS[out.FPS] {
+		return Wallpaper{}, pathErr(path+".fps", "%d is not 30, 60, or 100", out.FPS)
+	}
+	if !wallpaperHidden[out.Hidden] {
+		return Wallpaper{}, pathErr(path+".hidden", "%q is not a known hidden policy", out.Hidden)
+	}
+	if out.FadeDuration < 0 {
+		return Wallpaper{}, pathErr(path+".fade_duration", "%v is negative", out.FadeDuration)
+	}
+	if out.ImageDirectory == "" || out.VideoDirectory == "" {
+		return Wallpaper{}, pathErr(path, "the library directories cannot be empty")
+	}
+	return out, nil
 }
 
 func applyPanels(base Panels, w wirePanels, path string) (Panels, error) {

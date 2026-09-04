@@ -16,8 +16,17 @@ import (
 	"strings"
 )
 
-// rasterExtensions are the formats this resolver accepts, in preference order.
+// rasterExtensions are the formats searched for by name inside an icon theme,
+// in preference order. Icon themes ship PNG and XPM; looking for anything else
+// would be wasted stats on every miss.
 var rasterExtensions = []string{".png", ".xpm"}
+
+// decodableExtensions are the formats the worker can decode when it is handed
+// an exact file rather than asked to find one. A caller passing an absolute
+// path has already chosen the file, so theme-search preference does not apply:
+// the only question is whether the decoder understands it. Wallpaper previews
+// are JPEG, and gating them on the theme list rejected every one of them.
+var decodableExtensions = []string{".png", ".xpm", ".jpg", ".jpeg", ".gif", ".bmp"}
 
 // maxInheritDepth bounds theme inheritance. A cycle in index.theme files would
 // otherwise walk forever.
@@ -75,7 +84,7 @@ func (r *Resolver) Resolve(name string, size int) (string, bool) {
 		return "", false
 	}
 	if filepath.IsAbs(name) {
-		if isRasterFile(name) {
+		if isDecodableFile(name) {
 			return name, true
 		}
 		return "", false
@@ -245,14 +254,20 @@ func directorySize(name string) int {
 	return size
 }
 
-func isRasterFile(path string) bool {
+func isRasterFile(path string) bool { return hasReadableExtension(path, rasterExtensions) }
+
+// isDecodableFile reports whether an exact path names a file the decoder can
+// read.
+func isDecodableFile(path string) bool { return hasReadableExtension(path, decodableExtensions) }
+
+func hasReadableExtension(path string, allowed []string) bool {
 	info, err := os.Stat(path)
 	if err != nil || info.IsDir() || info.Size() == 0 {
 		return false
 	}
 	extension := strings.ToLower(filepath.Ext(path))
-	for _, allowed := range rasterExtensions {
-		if extension == allowed {
+	for _, candidate := range allowed {
+		if extension == candidate {
 			return true
 		}
 	}

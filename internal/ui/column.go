@@ -98,6 +98,9 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 		_, h, err := measureSegmented(n, measure)
 		return h, err
 	case KindImage:
+		if _, h, ok := imageBox(n); ok {
+			return h, nil
+		}
 		if n.ImageSize > 0 {
 			return n.ImageSize, nil
 		}
@@ -204,10 +207,24 @@ func pinRowEnd(n *Node, box Rect) {
 		return
 	}
 	right := box.X + box.W - n.Padding
-	if last.Bounds.X+last.Bounds.W >= right {
+	dx := right - (last.Bounds.X + last.Bounds.W)
+	if dx <= 0 {
 		return
 	}
-	last.Bounds.X = right - last.Bounds.W
+	// Move the whole subtree. Pinning the parent rect alone left a button's
+	// icon or label at the flow position and painted an empty pill at the edge.
+	shiftX(last, dx)
+}
+
+// shiftX translates an already laid-out subtree horizontally.
+func shiftX(n *Node, dx int) {
+	if n == nil {
+		return
+	}
+	n.Bounds.X += dx
+	for _, c := range n.Children {
+		shiftX(c, dx)
+	}
 }
 
 func placeColumnChild(n *Node, box Rect, measure MeasureText) error {

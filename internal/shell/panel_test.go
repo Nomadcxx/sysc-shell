@@ -97,3 +97,26 @@ func TestFittedSizeTinyOutputNonNegative(t *testing.T) {
 		t.Fatalf("margins must stay non-negative, got %+v", m)
 	}
 }
+
+// A panel taller than the output has to be clamped to the output, not to the
+// 1080 the placement assumed when nothing reported a height. A 1920x1080 laptop
+// at scale 1.25 is 864 logical tall, and the 1100-tall wallpaper picker overran
+// it by more than its own item count row.
+func TestFittedSizeUsesTheReportedOutputHeight(t *testing.T) {
+	t.Parallel()
+
+	p := Placement{
+		Output:  ui.Rect{W: 1536, H: 864},
+		BarZone: 46,
+		Gap:     8,
+		Padding: 8,
+		Panel:   ui.Rect{W: 980, H: 1100},
+	}
+	_, h := p.FittedSize()
+	if want := 864 - 46 - 8 - 8; h != want {
+		t.Fatalf("fitted height = %d, want %d", h, want)
+	}
+	if h > p.Output.H {
+		t.Fatalf("fitted height %d is taller than the %d output", h, p.Output.H)
+	}
+}

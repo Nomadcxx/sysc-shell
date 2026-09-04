@@ -200,8 +200,18 @@ func (a *Audio) Step(delta int) error {
 	if delta == 0 {
 		return nil
 	}
-	arg := fmt.Sprintf("%+d%%", delta)
-	return a.wpctl("set-volume", "@DEFAULT_AUDIO_SINK@", arg)
+	return a.wpctl("set-volume", "@DEFAULT_AUDIO_SINK@", wpctlStep(delta))
+}
+
+// wpctlStep formats a relative volume change. wpctl takes the sign as a
+// suffix -- "5%+", not "+5%". It rejects the prefix form outright, and reads a
+// leading "-" as an unknown option, so volume keys bound to this did nothing.
+func wpctlStep(delta int) string {
+	sign := "+"
+	if delta < 0 {
+		sign, delta = "-", -delta
+	}
+	return fmt.Sprintf("%d%%%s", delta, sign)
 }
 
 func (a *Audio) wpctl(args ...string) error {

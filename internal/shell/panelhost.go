@@ -18,6 +18,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	"github.com/Nomadcxx/sysc-shell/internal/wallpaper"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
@@ -111,6 +112,13 @@ type PanelHost struct {
 	launcherMenuID  string
 	launcherActions []launcher.Action
 
+	wallpaperSnap    wallpaper.Snapshot
+	wallpaperDir     string
+	wallpaperFilter  wallpaper.Filter
+	wallpaperOutput  string
+	wallpaperSel     int
+	wallpaperFocused bool
+
 	notifyTab    int
 	notifyFilter string
 	notifyExpand string
@@ -137,6 +145,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelPlugin, nil
 	case "notifications":
 		return PanelNotifications, nil
+	case "wallpaper":
+		return PanelWallpaper, nil
 	default:
 		return 0, fmt.Errorf("unknown panel")
 	}
@@ -213,6 +223,15 @@ func (r *Registry) triggerLocked(global uint32, connector string) Trigger {
 		}
 		if h > 0 {
 			trig.BarZone = h
+		}
+		// The screen, not the bar. Without it every panel was placed as if the
+		// output were 1080 logical tall, and a taller panel than the output
+		// could hold overran the bottom edge on a scaled laptop.
+		if ow, oh := bar.outputSize(); oh > 0 {
+			trig.OutW, trig.OutH = ow, oh
+			if w > 0 {
+				trig.OutW = w
+			}
 		}
 	}
 	return trig
@@ -297,6 +316,14 @@ func (r *Registry) DropAux(output uint32, surfaceID string) {
 	if r.DropTrayAux(output, surfaceID) {
 		return
 	}
+	if surfaceID == runningAppMenuSurfaceID || surfaceID == runningAppMenuShieldID {
+		r.mu.Lock()
+		if h := r.runningMenu; h != nil && h.open_ && h.output == output {
+			h.closeLocked()
+		}
+		r.mu.Unlock()
+		return
+	}
 	id, ok := panelIDFromAux(surfaceID)
 	if !ok {
 		return
@@ -333,6 +360,8 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelPlugin, true
 	case "notifications":
 		return PanelNotifications, true
+	case "wallpaper":
+		return PanelWallpaper, true
 	default:
 		return 0, false
 	}
@@ -369,7 +398,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	if id == PanelSession || id == PanelNotifications {
 		place.Align = "right"
 	}
-	if id == PanelLauncher {
+	if id == PanelLauncher || id == PanelWallpaper {
 		place.CenterY = true
 	}
 
@@ -399,9 +428,24 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		svc.Open()
 		svc.Query("")
 	}
+	if id == PanelWallpaper {
+		h.search = ui.NewField("")
+		h.wallpaperFilter = wallpaper.FilterAll
+		h.wallpaperOutput = wallpaper.AllOutputs
+		if svc := r.wallpaperServiceLocked(); svc != nil {
+			h.wallpaperSnap = svc.Snapshot()
+			h.wallpaperDir = firstRoot(h.wallpaperSnap)
+		}
+	}
 	h.root = r.panelTree(h)
 	h.focus = ui.Focusables(h.root)
 	h.roving = ui.Roving{Count: len(h.focus)}
+	if id == PanelWallpaper {
+		// The picker opens on its search box rather than on the Close button
+		// that happens to be first in the tree.
+		h.focusByName("Search")
+		h.wallpaperFocused = true
+	}
 	if id == PanelMonitor || id == PanelNotifications {
 		_ = h.ensureText()
 		if id == PanelNotifications {
@@ -745,6 +789,9 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			return h.pointerChanged(r, h.pointer.clear())
 		case wayland.EventPointerPress:
 			h.hoverX, h.hoverY = int(math.Floor(e.X)), int(math.Floor(e.Y))
+			if h.id == PanelWallpaper && h.wallpaperPointerPress(r, e) {
+				return true
+			}
 			if h.id == PanelLauncher && h.launcherPointerPress(r, e) {
 				return true
 			}
@@ -839,6 +886,9 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 		if h.editField(r, func(f *ui.Field) { f.Insert(ch) }) {
 			return true
 		}
+	}
+	if h.id == PanelWallpaper && h.wallpaperKeyPress(r, key) {
+		return true
 	}
 	if h.id == PanelLauncher && h.launcherKeyPress(r, key) {
 		return true
@@ -1171,6 +1221,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 		}
 		return false
 	}
+	if strings.HasPrefix(n.Action, "wallpaper") && h.wallpaperAction(r, n) {
+		return true
+	}
 	if strings.HasPrefix(n.Action, "notify:") {
 		return h.activateNotify(r, n)
 	}
@@ -1326,6 +1379,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		return settingsTree(r, h)
 	case PanelLauncher:
 		return launcherTree(r, h)
+	case PanelWallpaper:
+		return wallpaperTree(r, h)
 	case PanelPlugin:
 		if r.plugins != nil {
 			return r.plugins.panelTree(h)
@@ -1355,6 +1410,10 @@ func panelTargetSize(id PanelID) ui.Rect {
 		return ui.Rect{W: 320, H: 280}
 	case PanelNotifications:
 		return ui.Rect{W: 416, H: 300}
+	case PanelWallpaper:
+		// The plugin picker's size, not native Noctalia's 980x700. A short
+		// output clamps it through Placement.FittedSize (D2).
+		return ui.Rect{W: 980, H: 1100}
 	default:
 		return ui.Rect{W: 280, H: 200}
 	}

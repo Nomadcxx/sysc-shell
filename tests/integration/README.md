@@ -436,3 +436,118 @@ disable.
 go test -race -count=1 ./tests/integration -run PluginRecorderGate
 ```
 
+
+## Milestone 7: Wallpaper
+
+Partly manual. The unit and panel suites cover the store, the IPC parsing, the argv, the library,
+the service generations, the engine state machine, and the panel projection:
+
+```bash
+GOMAXPROCS=4 go test -race -count=1 ./internal/wallpaper
+go test -count=1 ./internal/shell -run TestWallpaper
+```
+
+The live gate below needs a Niri session with two outputs and the real `gslapper`, `awww`, and
+`swaybg` on PATH. Never run the race detector over the whole module on this machine; check one
+package at a time.
+
+### Recorded 2026-09-04, DP-1 (3440x1440), single output, DMS stopped
+
+The wallpaper only becomes visible once nothing else owns the Background layer.
+On this machine DMS runs as a systemd user unit and paints one:
+
+```bash
+systemctl --user stop dms.service     # restore: systemctl --user start dms.service
+```
+
+Driven through the product, not a harness: an assignment written to
+`$XDG_STATE_HOME/sysc-shell/wallpaper/assignments.json` and the shell restarted,
+which exercises startup reconcile, the service, and the engine in order.
+
+| Check | Result |
+|---|---|
+| Panel maps | pass -- `sysc-shell-panel` on Overlay with `sysc-shell-shield` |
+| Full D4 chrome renders | pass -- title+close, search, output select, All/Images/Videos, folder band, banners, active strip, grid, count |
+| Previews generated | pass -- 645 files, paced, about 2.4/s, ~11KB each, resumed from cache on restart |
+| Preview progress reported | pass -- "Generating previews - N / 645" |
+| Thumbnails, stills | pass |
+| Thumbnails, video frames | pass -- ffmpeg still extraction |
+| Image wallpaper visible | pass -- 22MB 4K PNG rendered on DP-1 |
+| Video wallpaper playing | pass -- frames two seconds apart differ (YAVG 53.0 then 36.2) |
+| Pause | pass -- frames identical across two seconds (YAVG 141.579 twice) |
+| Resume | pass -- `STATUS: playing video` |
+| Restore | pass -- owned socket gone, `awww-daemon` took Background on each output |
+| Owned sockets | pass -- `-I $XDG_RUNTIME_DIR/sysc-shell/gslapper-DP-1.sock` |
+| Theme seed | pass -- `~/.config/niri/sysc-shell.kdl` regenerated from the applied image |
+| Startup reconcile | pass -- saved assignment replayed with no picker opened |
+| Foreign surface warning | pass -- "DP-1 is already painted by quickshell" while DMS ran |
+
+### Found by the live gate
+
+- `awww` is a client for `awww-daemon`, not a wallpaper process. It exits at
+  once and does nothing when the daemon is down, so Restore reported success
+  while the desktop did not change. The engine now starts the daemon (D16) and
+  waits on the client's exit status.
+- A row of directory chips overflowed and failed layout outright, closing the
+  panel: `child 8 of kind 3 does not fit in 948x40`. Folders moved to their own
+  capped band.
+- `"folder"` is not in the embedded icon subset, and an unknown name fails the
+  whole surface at render time. A test now walks the panel checking every icon.
+- Every preview was refused: the icon resolver gated absolute paths on the
+  icon-theme extension list (PNG/XPM), so no JPEG reached the decoder.
+- The three-second start-up budget was sized against small test files and
+  rejected a 22MB wallpaper outright.
+
+### Second machine, 2026-09-04
+
+Repeated on the laptop (`archThink`, eDP-1, 1920x1080 at scale 1.25, so 1536x864
+logical, single output, no DMS). 527 wallpapers, 501 images and 23 videos.
+
+Passed: picker chrome and previews; image apply visible; video playback (frames
+3s apart differ at PSNR 32 dB); pause freezes (two frames 5s apart are
+byte-identical once the bar is cropped out) and `query` reports `paused video`;
+resume returns to `playing`; the palette follows the wallpaper across a
+`systemctl restart`; the shell restarts and recovers from SIGKILL under the
+systemd user unit.
+
+Four defects found only because the output is short and scaled, all fixed:
+
+- `pinRowEnd` moved a pinned row member's own rect but not its children, so the
+  close button and Restore painted as empty pills with their glyph and label
+  left behind at the flow position.
+- `Trigger.OutH` was never assigned, so every panel was placed as if the output
+  were 1080 logical tall. The 1100-tall picker overran the screen and lost its
+  item count row.
+- The generated `sysc-shell.kdl` used unterminated one-line KDL nodes, so
+  `niri validate` rejected the user's whole config on both machines. A restart
+  would have come up on niri's defaults.
+- Startup reconcile restored the wallpaper but never seeded the theme from it,
+  because `Adopt` had already primed the store's seed and the hook was installed
+  after `NewService` had run reconcile.
+
+Restore's handoff was blocked on the first pass -- neither `awww` nor `swaybg`
+was installed, which the picker reported by showing only the gSlapper pill. Both
+were installed later the same day and the path was then run end to end:
+
+- `stop` over the owned socket returns OK and the socket is released;
+- `awww query` finds the daemon down, `awww-daemon` is started, and the query
+  then succeeds (D16: the client cannot set anything before the daemon is up);
+- `awww img --outputs eDP-1 <still>` exits 0 and `awww-daemon` takes Background.
+
+With all three installed the engine strip reads `gSlapper awww swaybg`.
+
+Re-applying afterwards leaves both surfaces mapped on Background, and gSlapper's
+is the visible one: with it playing, three samples of a wallpaper-only strip all
+differ; with it paused, three samples are identical. `awww-daemon` stays running
+underneath, which is what a daemon does and what the coverage probe treats as
+ours rather than foreign.
+
+### Not covered here
+
+- Driving the panel with synthetic input. `wtype` attaches a virtual keyboard,
+  which drops the panel's exclusive grab and dismisses it; the click and key
+  paths are covered by `./internal/shell -run TestWallpaper` instead.
+- Two outputs. DP-3 was disconnected for this run; the fan-out and partial-All
+  paths are unit-tested and were live-tested on 2026-09-04 earlier in the day.
+- GIF. gSlapper lists it as an image while the library classifies it as video,
+  so the Pause control follows what `query` reports. Not exercised live.

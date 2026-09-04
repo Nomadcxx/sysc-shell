@@ -207,6 +207,12 @@ func TestDefaultVocabularyShipsBothClocksAndBothNiriWidgets(t *testing.T) {
 	if len(cfg.Bar.Right) == 0 {
 		t.Fatal("right section is empty; the default bar should ship status widgets")
 	}
+	if cfg.Bar.Right[0].ID != "running-apps" {
+		t.Fatalf("right[0] = %q, want running-apps", cfg.Bar.Right[0].ID)
+	}
+	if _, err := Parse([]byte(`{"bar":{"items":{"right":["running-apps"]}}}`)); err != nil {
+		t.Fatalf("running-apps was rejected: %v", err)
+	}
 	for i, item := range cfg.Bar.Right {
 		if item.ID == "clock" {
 			t.Fatalf("right[%d] is a clock; the date moved to the centre", i)
@@ -223,7 +229,7 @@ func TestDefaultVocabularyShipsBothClocksAndBothNiriWidgets(t *testing.T) {
 			members = []Item{item}
 		}
 		for _, m := range members {
-			if m.ID == "notifications" {
+			if m.ID == "notifications" || m.ID == "running-apps" {
 				continue
 			}
 			if m.Interval <= 0 {
@@ -743,6 +749,68 @@ func TestThemePresetSeedsEveryAxis(t *testing.T) {
 	}
 }
 
+func TestWallpaperDefaults(t *testing.T) {
+	// The tilde is kept literal: Default() must not depend on the environment,
+	// so expansion belongs to whoever opens the directory.
+	want := Wallpaper{
+		ImageDirectory: "~/Pictures/wallpapers",
+		VideoDirectory: "~/Pictures/wallpapers",
+		Scale:          "fill",
+		Loop:           true,
+		FPS:            30,
+		Fade:           false,
+		FadeDuration:   0.5,
+		Hidden:         "none",
+	}
+	if got := Default().Wallpaper; got != want {
+		t.Fatalf("Default().Wallpaper = %+v, want %+v", got, want)
+	}
+	// hidden defaults to none, which keeps playback running when the wallpaper
+	// is occluded and costs a relaunch on every video-to-video swap. Flipping
+	// it to auto-stop is a deliberate edit, not a drift.
+	if Default().Wallpaper.Hidden != "none" {
+		t.Fatal("the hidden default is load-bearing; see the plan's Task 6")
+	}
+}
+
+func TestWallpaperInheritsWhenBlockAbsent(t *testing.T) {
+	cfg, err := Parse([]byte(`{}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cfg.Wallpaper != Default().Wallpaper {
+		t.Fatalf("missing block = %+v, want the defaults", cfg.Wallpaper)
+	}
+}
+
+func TestWallpaperPartialBlockKeepsTheRest(t *testing.T) {
+	cfg, err := Parse([]byte(`{"wallpaper":{"fps":60}}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cfg.Wallpaper.FPS != 60 {
+		t.Errorf("fps = %d, want 60", cfg.Wallpaper.FPS)
+	}
+	if cfg.Wallpaper.Scale != "fill" || !cfg.Wallpaper.Loop {
+		t.Errorf("unset fields must inherit: %+v", cfg.Wallpaper)
+	}
+}
+
+func TestWallpaperRejectsUnknownValues(t *testing.T) {
+	cases := map[string]string{
+		"scale":  `{"wallpaper":{"scale":"cover"}}`,
+		"fps":    `{"wallpaper":{"fps":45}}`,
+		"hidden": `{"wallpaper":{"hidden":"auto-kill"}}`,
+		"fade":   `{"wallpaper":{"fade_duration":-1}}`,
+		"field":  `{"wallpaper":{"favorites":true}}`,
+	}
+	for name, body := range cases {
+		if _, err := Parse([]byte(body)); err == nil {
+			t.Errorf("%s: %s must fail to load", name, body)
+		}
+	}
+}
+
 func TestThemeExplicitAxisOverridesThePreset(t *testing.T) {
 	t.Parallel()
 	cfg, err := Parse([]byte(`{"theme":{"preset":"compact","radius":20,"density":"comfortable"}}`))
@@ -885,5 +953,24 @@ func TestThemeStandardPresetReproducesTheShippedBar(t *testing.T) {
 		d.Bar.Radius != 12 || d.Bar.FontSize != 14 {
 		t.Errorf("default bar drifted: height %d padding %d spacing %d radius %d size %d",
 			d.Bar.Height, d.Bar.Padding, d.Bar.Spacing, d.Bar.Radius, d.Bar.FontSize)
+	}
+}
+
+func TestWallpaperRoundTrip(t *testing.T) {
+	cfg := Default()
+	cfg.Wallpaper.FPS = 100
+	cfg.Wallpaper.Hidden = "auto-stop"
+	cfg.Wallpaper.ImageDirectory = "/srv/walls"
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Write(path, cfg); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	back, err := Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if back.Wallpaper != cfg.Wallpaper {
+		t.Fatalf("round trip = %+v, want %+v", back.Wallpaper, cfg.Wallpaper)
 	}
 }
