@@ -21,11 +21,20 @@ type Process interface {
 }
 
 const (
-	// readyWait bounds the wait for a freshly launched gSlapper to answer.
-	// The socket file appearing is not readiness: sysc-greet proved that the
-	// file can exist well before the server behind it will answer.
-	defaultReadyWait = 3 * time.Second
+	// defaultReadyWait bounds the wait for a freshly launched gSlapper to
+	// answer. The socket file appearing is not readiness: sysc-greet proved
+	// that the file can exist well before the server behind it will answer.
+	//
+	// It is generous because it has to cover the work, not just the start-up:
+	// a real wallpaper is a 4K still of twenty megabytes or more, and gSlapper
+	// decodes and uploads it before it will answer anything. Three seconds was
+	// sized against small test files and rejected genuine wallpapers. A child
+	// that dies still fails immediately, so a wrong path costs nothing.
+	defaultReadyWait = 20 * time.Second
 	defaultPoll      = 50 * time.Millisecond
+	// stopWait bounds the wait for a stopped instance to release its socket.
+	// Shutdown does no decoding, so it stays short.
+	stopWait = 3 * time.Second
 )
 
 // gslapperEngine drives one gSlapper per output over sockets we own, with awww
@@ -199,7 +208,7 @@ func (e *gslapperEngine) waitForQuery(proc Process, socket string) error {
 		case <-exited:
 			return errors.New("wallpaper: gslapper exited before it was ready")
 		case <-deadline:
-			return errors.New("wallpaper: gslapper did not answer within the startup budget")
+			return fmt.Errorf("wallpaper: gslapper did not answer within %s", e.readyWait)
 		case <-time.After(e.poll):
 		}
 	}
@@ -229,7 +238,7 @@ func (e *gslapperEngine) stopOwned(connector, socket string) error {
 	delete(e.owned, connector)
 	e.mu.Unlock()
 
-	deadline := time.Now().Add(e.readyWait)
+	deadline := time.Now().Add(stopWait)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(socket); os.IsNotExist(err) {
 			return nil
