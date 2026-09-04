@@ -8,6 +8,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	tray "github.com/Nomadcxx/sysc-tray/protocol"
 )
@@ -26,7 +27,7 @@ func trayDrawerTree(arranged trayArrangement, images map[tray.ItemKey]*ui.Image)
 	rows := make([]*ui.Node, 0, len(arranged.Overflow)+len(arranged.Hidden)+2)
 	items := make(map[*ui.Node]tray.Item, len(arranged.Overflow)+len(arranged.Hidden))
 	if len(arranged.Overflow) > 0 {
-		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: "Overflow", Bold: true})
+		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: "Overflow", TextRole: theme.RoleLabel})
 		for i := range arranged.Overflow {
 			row, itemNode := trayDrawerItemRow(arranged.Overflow[i], false, arranged.Pinned[arranged.Overflow[i].Key])
 			itemNode.Image = images[arranged.Overflow[i].Key]
@@ -35,7 +36,7 @@ func trayDrawerTree(arranged trayArrangement, images map[tray.ItemKey]*ui.Image)
 		}
 	}
 	if len(arranged.Hidden) > 0 {
-		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: "Hidden", Bold: true})
+		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: "Hidden", TextRole: theme.RoleLabel})
 		for i := range arranged.Hidden {
 			row, itemNode := trayDrawerItemRow(arranged.Hidden[i], true, false)
 			itemNode.Image = images[arranged.Hidden[i].Key]

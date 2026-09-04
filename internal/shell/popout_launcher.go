@@ -10,6 +10,7 @@ import (
 	launcher "github.com/Nomadcxx/sysc-launch"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -143,7 +144,7 @@ func launcherRow(r *Registry, h *PanelHost, results []launcher.Result, i int) *u
 }
 
 func launcherRowBody(r *Registry, h *PanelHost, e launcher.Entry) *ui.Node {
-	labels := []*ui.Node{{Kind: ui.KindText, Text: e.Name, Bold: true}}
+	labels := []*ui.Node{{Kind: ui.KindText, Text: e.Name, TextRole: theme.RoleLabel}}
 	if e.Comment != "" {
 		labels = append(labels, &ui.Node{Kind: ui.KindText, Text: e.Comment})
 	}
@@ -167,7 +168,7 @@ func launcherIconNode(r *Registry, h *PanelHost, e launcher.Entry) *ui.Node {
 	}
 	return &ui.Node{
 		Kind: ui.KindCapsule, Width: launcherIconSlot, Fill: ui.FillContainer,
-		Children: []*ui.Node{{Kind: ui.KindText, Text: launcherGlyph(e.Name), Bold: true}},
+		Children: []*ui.Node{{Kind: ui.KindText, Text: launcherGlyph(e.Name), TextRole: theme.RoleTitle}},
 	}
 }
 

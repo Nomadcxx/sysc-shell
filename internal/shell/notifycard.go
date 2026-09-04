@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -107,7 +108,7 @@ func notificationTree(id uint32, app, summary, body string, urgency protocol.Urg
 	}
 	if summary != "" {
 		text.Children = append(text.Children, &ui.Node{
-			Kind: ui.KindText, Text: summary, Bold: true, Tone: toneFor(urgency),
+			Kind: ui.KindText, Text: summary, TextRole: theme.RoleTitle, Tone: toneFor(urgency),
 		})
 	}
 	for _, run := range ParseBody(body, allowLinks) {

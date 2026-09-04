@@ -1,7 +1,10 @@
 package shell
 
 import (
+	"os"
 	"os/exec"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -147,4 +150,98 @@ func standardMetrics() theme.Metrics {
 		panic("no standard metrics row")
 	}
 	return m
+}
+
+// TestSurfaceTreesAskForNoSyntheticBold is the type half of the migration. A
+// node that sets Bold asks the painter to thicken a face it already has;
+// naming a role asks the font stack for the cut the theme chose. The renderer
+// stopped synthesising bold in this tranche, so a tree that still sets the
+// flag now silently gets regular weight.
+//
+// This is the gate that lets Node.Bold be deleted once every tree has moved.
+func TestSurfaceTreesAskForNoSyntheticBold(t *testing.T) {
+	t.Parallel()
+	for _, id := range []PanelID{PanelMonitor, PanelSession, PanelClock, PanelLauncher, PanelNotifications} {
+		t.Run(id.String(), func(t *testing.T) {
+			t.Parallel()
+			_, h := panelAtDensity(t, id, theme.DensityStandard)
+			walkNodes(h.root, func(n *ui.Node) {
+				if n.Kind == ui.KindText && n.Bold {
+					t.Errorf("%q asks for synthetic bold; name a text role instead", n.Text)
+				}
+			})
+		})
+	}
+}
+
+// TestSurfaceHeadingsCarryARole keeps the accessible heading role and the
+// painted type role in step. A node marked up as a heading that measures as
+// body text reads as a heading to a screen reader and looks like body copy.
+func TestSurfaceHeadingsCarryARole(t *testing.T) {
+	t.Parallel()
+	for _, id := range []PanelID{PanelMonitor, PanelSession} {
+		t.Run(id.String(), func(t *testing.T) {
+			t.Parallel()
+			_, h := panelAtDensity(t, id, theme.DensityStandard)
+			walkNodes(h.root, func(n *ui.Node) {
+				if n.Role == "heading" && n.TextRole == theme.RoleBody {
+					t.Errorf("heading %q measures as body text", n.Name)
+				}
+			})
+		})
+	}
+}
+
+// TestSurfaceSourcesCarryNoLegacyVisuals is the plan's scan gate. A runtime
+// walk only reaches the trees a test happens to populate -- a launcher row
+// exists only when there are results, a notification card only when there is a
+// notification -- so the surfaces most likely to keep a legacy visual are the
+// ones a walk misses. This reads the package source instead, which cannot be
+// dodged by an empty panel.
+//
+// Two things are forbidden in a first-party tree:
+//
+//   - Bold on a text node. The renderer no longer synthesises weight, so the
+//     flag now silently paints regular. Naming a role gets the real cut.
+//   - A flat geometry alias. Those names are the compatibility layer over the
+//     metrics table; a surface that reads one is not following density.
+func TestSurfaceSourcesCarryNoLegacyVisuals(t *testing.T) {
+	t.Parallel()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliases := regexp.MustCompile(`\.(BarPadding|Spacing|TextSize|CapsulePadding|ControlHeight|CompactHeight|ButtonPadding|IconSize|ProfileIconSize|OSDIconSize|CardRadius)\b`)
+	bold := regexp.MustCompile(`\bBold:\s*true\b`)
+
+	scanned := 0
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		// theme.go is the compatibility layer itself: it is where the flat
+		// names are produced, so it is the one file allowed to mention them.
+		if name == "theme.go" {
+			continue
+		}
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		scanned++
+		for i, line := range strings.Split(string(src), "\n") {
+			code, _, _ := strings.Cut(line, "//")
+			if bold.MatchString(code) {
+				t.Errorf("%s:%d asks for synthetic bold; name a text role instead", name, i+1)
+			}
+			if m := aliases.FindString(code); m != "" && !strings.Contains(code, "Metrics."+strings.TrimPrefix(m, ".")) &&
+				!strings.Contains(code, "Shapes.") && !strings.Contains(code, "st.Muted") {
+				t.Errorf("%s:%d reads the legacy alias %s; read the metrics row", name, i+1, m)
+			}
+		}
+	}
+	if scanned == 0 {
+		t.Fatal("scanned no sources; the gate is not looking at the package")
+	}
 }
