@@ -5,6 +5,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -43,6 +44,64 @@ func (s Style) containerHighest() Color {
 		return s.Capsule
 	}
 	return s.ContainerHighest
+}
+
+// rootFill is the surface's own background at the opacity the theme chose.
+// Only the root takes it: a nested card composites over the painted root, so a
+// translucent panel must not drag its cards toward the wallpaper with it.
+//
+// A zero SurfaceOpacity means the field was never set, not that the surface is
+// invisible, so it paints opaque.
+func (s Style) rootFill() Color {
+	a := s.SurfaceOpacity
+	if a == 0 || a == 0xff {
+		return s.Background
+	}
+	c := s.Background
+	c.A = uint8(uint32(c.A) * uint32(a) / 255)
+	return c
+}
+
+// Shadow strengths for the three elevation levels. They scale the palette's
+// Shadow token rather than naming a colour, so a light theme's shadow is its
+// own and not a black smear.
+const (
+	subtleShadowAlpha   = 0x59
+	standardShadowAlpha = 0x8c
+	legacyShadowAlpha   = 0x73
+)
+
+// shadowInk resolves the elevation level onto the Shadow role. The second
+// result is false when the level draws nothing, which is what separates "no
+// elevation" from "a shadow at zero strength".
+func (s Style) shadowInk() (Color, bool) {
+	base := s.Shadow
+	if base.A == 0 {
+		base = Color{A: 0xff}
+	}
+	var a uint32
+	switch s.Elevation {
+	case theme.ElevationNone:
+		return Color{}, false
+	case theme.ElevationSubtle:
+		a = subtleShadowAlpha
+	case theme.ElevationStandard:
+		a = standardShadowAlpha
+	default:
+		// An unset level keeps the strength the menu shadow already used.
+		a = legacyShadowAlpha
+	}
+	base.A = uint8(uint32(base.A) * a / 255)
+	return base, true
+}
+
+// shadowSpreadFor maps the theme level onto the mask's own spread. Standard is
+// the wider panel spread; subtle is the tighter menu one.
+func (s Style) shadowSpreadFor() Elevation {
+	if s.Elevation == theme.ElevationStandard {
+		return ElevPanel
+	}
+	return ElevMenu
 }
 
 // outline falls back to the foreground, which always separates from its own
@@ -116,11 +175,11 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style) error {
 		fillRoundedRect(c, box, radius, style.Rim)
 		inset := max(style.Scale120.Physical(1), 1)
 		inner := ui.Rect{X: box.X + inset, Y: box.Y + inset, W: box.W - 2*inset, H: box.H - 2*inset}
-		fillRoundedRect(c, inner, max(radius-inset, 0), style.Background)
+		fillRoundedRect(c, inner, max(radius-inset, 0), style.rootFill())
 	} else {
-		fillRoundedRect(c, box, radius, style.Background)
+		fillRoundedRect(c, box, radius, style.rootFill())
 	}
-	squareAttachedEdge(c, box, radius, style.AttachEdge, style.Background)
+	squareAttachedEdge(c, box, radius, style.AttachEdge, style.rootFill())
 
 	size := style.Scale120.Physical(style.Size)
 	if root.Kind == ui.KindScroll || root.Kind == ui.KindVirtualList {
@@ -388,7 +447,9 @@ func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 	}
 	last := style.Scale120.PhysicalRect(n.Children[len(n.Children)-1].Bounds)
 	list := ui.Rect{X: box.X, Y: field.Y + field.H, W: box.W, H: last.Y + last.H - (field.Y + field.H)}
-	c.DrawShadow(list, style.Scale120.Physical(6), ElevMenu, Color{A: 0x73})
+	if ink, ok := style.shadowInk(); ok {
+		c.DrawShadow(list, style.Scale120.Physical(6), style.shadowSpreadFor(), ink)
+	}
 	c.FillRounded(list, style.Scale120.Physical(6), style.Background)
 	for _, child := range n.Children {
 		cb := style.Scale120.PhysicalRect(child.Bounds)

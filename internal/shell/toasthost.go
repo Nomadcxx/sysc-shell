@@ -192,7 +192,7 @@ func (h *toastHost) render(connector string, pixels []byte, width, height, strid
 		h.text = render.NewTextRendererWithFontMap(fonts)
 		theme := h.r.surfaceTheme()
 		scale, body := h.style.Scale120, h.style.Body
-		h.style = theme.Style()
+		h.style = theme.OverlayStyle()
 		h.style.Scale120, h.style.Body = scale, body
 		h.rebuild(connector)
 	}

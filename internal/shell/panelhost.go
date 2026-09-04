@@ -640,7 +640,7 @@ func (h *PanelHost) measureText() ui.MeasureText {
 	if !scale.Valid() {
 		scale = ui.ScaleUnit
 	}
-	style := h.theme.Style()
+	style := h.theme.PanelStyle()
 	style.Scale120 = scale
 	return func(s string, attrs ui.TextAttrs) (int, int) {
 		spec := render.SpecFor(style, attrs)
@@ -674,7 +674,7 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	// painter consumes an immutable mask; nothing downstream mutates state.
 	h.pointer.apply(h.root, h.anim)
 
-	style := h.paintTheme().Style()
+	style := h.paintTheme().PanelStyle()
 	// Only a panel draws its own rim; the bar, toasts and tray surfaces
 	// sit directly on the shared surface and leave it zero.
 	style.Rim = h.paintTheme().Outline

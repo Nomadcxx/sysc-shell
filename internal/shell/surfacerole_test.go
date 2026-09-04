@@ -245,3 +245,56 @@ func TestSurfaceSourcesCarryNoLegacyVisuals(t *testing.T) {
 		t.Fatal("scanned no sources; the gate is not looking at the package")
 	}
 }
+
+// TestSurfaceOpacityReachesEachRoot checks the three axes land on the three
+// roots. The bar, the panels and the overlays each carry their own alpha, and
+// a host that reads the wrong one makes a setting look broken.
+func TestSurfaceOpacityReachesEachRoot(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Theme.BarOpacity, cfg.Theme.PanelOpacity, cfg.Theme.OverlayOpacity = 100, 90, 80
+	th, err := ResolveTheme(cfg, cfg.Bar, theme.Fallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		got  uint8
+		want uint8
+	}{
+		{"bar", th.Style().SurfaceOpacity, th.Surfaces.Bar},
+		{"panel", th.PanelStyle().SurfaceOpacity, th.Surfaces.Panel},
+		{"overlay", th.OverlayStyle().SurfaceOpacity, th.Surfaces.Overlay},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("%s alpha = %d, want %d", tc.name, tc.got, tc.want)
+		}
+	}
+	if th.Surfaces.Panel >= th.Surfaces.Bar || th.Surfaces.Overlay >= th.Surfaces.Panel {
+		t.Errorf("alphas %d/%d/%d do not track the configured 100/90/80",
+			th.Surfaces.Bar, th.Surfaces.Panel, th.Surfaces.Overlay)
+	}
+}
+
+// TestSurfaceHighContrastForcesOpaqueRoots is the accessibility override: a
+// translucent root defeats a contrast floor measured against it, so high
+// contrast pins every surface opaque and turns the structural outline on.
+func TestSurfaceHighContrastForcesOpaqueRoots(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Theme.BarOpacity, cfg.Theme.PanelOpacity, cfg.Theme.OverlayOpacity = 90, 90, 80
+	cfg.Accessibility.HighContrast = true
+	th, err := ResolveTheme(cfg, cfg.Bar, theme.FallbackHighContrast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if th.Surfaces.Bar != 0xff || th.Surfaces.Panel != 0xff || th.Surfaces.Overlay != 0xff {
+		t.Errorf("high contrast left translucent roots: %+v", th.Surfaces)
+	}
+	if !th.Outlined {
+		t.Error("high contrast did not enable the structural outline")
+	}
+	if !th.BackgroundOpaque() {
+		t.Error("an opaque high-contrast bar does not report an opaque background")
+	}
+}

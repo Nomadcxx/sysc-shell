@@ -499,13 +499,30 @@ func (t Theme) Style() render.Style {
 		Metrics:        t.Metrics,
 		Shapes:         t.Shapes,
 		Type:           t.Type,
-		SurfaceOpacity: 0xff,
+		SurfaceOpacity: t.Surfaces.Bar,
 		Elevation:      t.Elevation,
 		Shadow:         p.Shadow,
 		Scrim:          p.Scrim,
 		Motion:         t.Motion,
 	}
 }
+
+// StyleFor is the resolved style for one root surface. Style() is the bar's,
+// which is why the plain form keeps the bar alpha; a panel, a toast, a tray
+// surface and the OSD float over the wallpaper and take their own.
+//
+// Only the root fill changes. Every nested fill composites over the painted
+// root, so a card inside a 90 percent panel is still an opaque card.
+func (t Theme) StyleFor(a uint8) render.Style {
+	s := t.Style()
+	s.SurfaceOpacity = a
+	return s
+}
+
+// PanelStyle and OverlayStyle name the two non-bar roots so a host does not
+// have to remember which alpha it owns.
+func (t Theme) PanelStyle() render.Style   { return t.StyleFor(t.Surfaces.Panel) }
+func (t Theme) OverlayStyle() render.Style { return t.StyleFor(t.Surfaces.Overlay) }
 
 // BackgroundOpaque reports whether the surface token is fully opaque.
 func (t Theme) BackgroundOpaque() bool {

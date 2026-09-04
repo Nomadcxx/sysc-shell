@@ -239,7 +239,7 @@ func (h *trayDrawerHost) render(pixels []byte, width, height, stride int) error 
 		createdText = true
 		theme := h.r.surfaceTheme()
 		scale, body := h.style.Scale120, h.style.Body
-		h.style = theme.Style()
+		h.style = theme.PanelStyle()
 		h.style.Scale120, h.style.Body = scale, body
 	}
 	if createdText && h.logicalW > 0 {
