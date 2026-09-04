@@ -930,3 +930,33 @@ func TestWallpaperOnlyNamesIconsTheSubsetCarries(t *testing.T) {
 		t.Fatalf("icons not in the embedded subset: %v (have %v)", bad, render.MaterialIconNames())
 	}
 }
+
+// The picker is 1100 tall by design and a laptop panel is not. The grid takes
+// whatever the chrome leaves, so on a short output every row above it has to be
+// paid for out of the panel that was actually granted -- otherwise the grid runs
+// past the bottom edge and eats the item count. Caught live on a 1536x864
+// output, where the count row never appeared.
+func TestWallpaperColumnFitsAShortPanel(t *testing.T) {
+	t.Parallel()
+
+	root := seedWallpaperRoot(t)
+	reg, _, _ := openWallpaperPanel(t, []string{root})
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	// A 1536x864 logical output leaves roughly this much after the bar.
+	const short = 802
+	h.place.Panel.H = short
+	reg.rebuildPanel(h)
+
+	measure := h.measureText()
+	box := ui.Rect{W: h.place.Panel.W, H: short}
+	if err := ui.LayoutColumn(h.root, box, measure); err != nil {
+		t.Fatalf("layout: %v", err)
+	}
+	last := h.root.Children[len(h.root.Children)-1]
+	if bottom := last.Bounds.Y + last.Bounds.H; bottom > short {
+		t.Errorf("last row ends at %d, past the %d-tall panel", bottom, short)
+	}
+}

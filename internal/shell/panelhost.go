@@ -223,6 +223,15 @@ func (r *Registry) triggerLocked(global uint32, connector string) Trigger {
 		if h > 0 {
 			trig.BarZone = h
 		}
+		// The screen, not the bar. Without it every panel was placed as if the
+		// output were 1080 logical tall, and a taller panel than the output
+		// could hold overran the bottom edge on a scaled laptop.
+		if ow, oh := bar.outputSize(); oh > 0 {
+			trig.OutW, trig.OutH = ow, oh
+			if w > 0 {
+				trig.OutW = w
+			}
+		}
 	}
 	return trig
 }

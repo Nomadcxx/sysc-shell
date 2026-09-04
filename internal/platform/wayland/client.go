@@ -714,6 +714,11 @@ func (o *owner) reconfigure(h *OutputHost, u *surfaceUnit) error {
 		return fmt.Errorf("wayland: set aux regions: %w", err)
 	}
 
+	if u.app.OutputSize != nil {
+		if w, hgt := h.logicalSize(u.ss.scale120); w > 0 && hgt > 0 {
+			u.app.OutputSize(w, hgt)
+		}
+	}
 	if err := u.app.Configure(u.ss.logicalWidth, u.ss.logicalHeight, int(u.ss.scale120)); err != nil {
 		return err
 	}
@@ -956,6 +961,11 @@ func (o *owner) prepareConfig(cfg config.Config) (preparedOwnerConfig, error) {
 				return abandon(prepared, err)
 			}
 			if h.state == hostMapped {
+				if app.OutputSize != nil {
+					if w, hgt := h.logicalSize(h.bar.ss.scale120); w > 0 && hgt > 0 {
+						app.OutputSize(w, hgt)
+					}
+				}
 				if err := app.Configure(h.bar.ss.logicalWidth, h.bar.ss.logicalHeight, int(h.bar.ss.scale120)); err != nil {
 					return abandon(prepared, fmt.Errorf(
 						"wayland: configure prepared replacement for %s: %w", h.connector, err))

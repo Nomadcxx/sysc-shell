@@ -70,6 +70,12 @@ type Bar struct {
 		width, height int
 		set           bool
 	}
+	// output is the logical size of the screen this bar is on, which the bar's
+	// own configure cannot report: that one describes the bar strip. A panel is
+	// placed inside the output, so its height comes from here.
+	output struct {
+		width, height int
+	}
 	// needsLayout marks the arrangement stale after a text change. It is set
 	// by apply, which runs on the clock, metrics and Niri pump goroutines, and
 	// consumed by Render, which the Wayland owner calls.
@@ -198,6 +204,21 @@ func (b *Bar) trayArrangement() trayArrangement {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return arrangeTray(b.trayItems, b.trayPrefs, b.trayAvailable, trayItemSize, b.theme.Spacing)
+}
+
+// setOutputSize records the screen's logical size. The Wayland owner calls it
+// just before Configure.
+func (b *Bar) setOutputSize(width, height int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.output.width, b.output.height = width, height
+}
+
+// outputSize reports the screen's logical size, zero before the first mode.
+func (b *Bar) outputSize() (w, h int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.output.width, b.output.height
 }
 
 // scale120 reports the output scale the bar was last configured at, in 120ths.

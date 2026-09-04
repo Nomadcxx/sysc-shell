@@ -908,6 +908,7 @@ func (r *Registry) buildBar(cfg config.Config, connector string, tok theme.Token
 
 	return bar, leases, wayland.HostCallbacks{
 		Configure:        bar.Configure,
+		OutputSize:       bar.setOutputSize,
 		Render:           bar.Render,
 		Handle:           bar.Handle,
 		OpaqueBackground: th.BackgroundOpaque(),
