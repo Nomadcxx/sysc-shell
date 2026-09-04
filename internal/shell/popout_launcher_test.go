@@ -69,6 +69,7 @@ func openLauncherPanel(t *testing.T, entries []launcher.Entry) (*Registry, *reco
 	run := &recordedSpawn{}
 	svc := launcher.NewService(launcher.ServiceConfig{
 		Scan: func() []launcher.Entry { return entries },
+		Rank: launcherRank,
 		Run:  run.run,
 	})
 	reg.mu.Lock()
@@ -544,3 +545,49 @@ func writeLauncherPNG(t *testing.T, path string) {
 	}
 }
 
+// The live desktop has 482 desktop entries and the browse list used to arrive
+// capped at 50, which ends in the E's. End must reach the last of them.
+func TestLauncherBrowseListsEveryEntry(t *testing.T) {
+	t.Parallel()
+
+	entries := alphabetEntries(482)
+	reg, _, reqs := openLauncherPanel(t, entries)
+	pressLauncherKey(reqs, keyEnd)
+
+	h := launcherHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if got := len(h.launcherResults); got != len(entries) {
+		t.Fatalf("browse list holds %d of %d entries", got, len(entries))
+	}
+	last := h.launcherResults[h.launcherSel]
+	if h.launcherSel != len(entries)-1 {
+		t.Fatalf("End selected row %d, want %d", h.launcherSel, len(entries)-1)
+	}
+	if last.Entry.Name[:1] != "Z" {
+		t.Fatalf("End landed on %q, want a Z entry", last.Entry.Name)
+	}
+}
+
+// A panel clears its buffer and fills a rounded body, so its corners are
+// transparent. The opaque region is a promise to the compositor that it may
+// skip blending, so it has to exclude those corners -- claiming the whole
+// rectangle composites the cleared pixels straight out and the corners read as
+// black squares behind the border instead of wallpaper. The aux path used to
+// hardcode radius 0, which made that claim for every panel in the shell.
+func TestPanelSurfaceCarriesItsCornerRadius(t *testing.T) {
+	t.Parallel()
+
+	_, _, reqs := openLauncherPanel(t, launcherTestEntries())
+	panel := reqs[1].Open
+	if panel == nil {
+		t.Fatal("no panel surface was opened")
+	}
+	if got := panel.Callbacks.Radius; got <= 0 {
+		t.Fatalf("panel Radius = %d, want the painted corner radius so the "+
+			"opaque region can exclude the corners", got)
+	}
+	if !panel.Callbacks.OpaqueBackground {
+		t.Skip("opaque background is off, so no opaque region is set at all")
+	}
+}

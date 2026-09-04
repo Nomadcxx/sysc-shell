@@ -160,15 +160,27 @@ func (o *owner) applyAuxGeometry(u *surfaceUnit, spec *AuxSpec) error {
 	return u.layer.SetKeyboardInteractivity(spec.Keyboard)
 }
 
+// applyAuxRegions sets the input and opaque regions for one auxiliary surface.
+//
+// The radius is the surface's own painted radius, not zero: a panel clears its
+// buffer and fills a rounded body, so its corners are transparent, and claiming
+// the whole rectangle is opaque tells the compositor not to blend them. It then
+// composites the cleared pixels straight to the screen and the corners read as
+// black squares behind the border rather than as wallpaper.
+//
+// A panel attached to a bar edge squares the two corners on that edge, so
+// excluding all four corner squares gives up a little compositor optimisation
+// there. That is the safe direction to err: too small an opaque region only
+// costs blending, while too large a one is a visible artefact.
 func (o *owner) applyAuxRegions(u *surfaceUnit) error {
 	r := ui.Rect{W: u.ss.logicalWidth, H: u.ss.logicalHeight}
 	if u.policy.hasInputRegion {
 		if err := o.applyInputRects(u.surface, u.policy.inputRects); err != nil {
 			return err
 		}
-		return o.applyOpaqueRegion(u.surface, r, 0, u.app.OpaqueBackground)
+		return o.applyOpaqueRegion(u.surface, r, u.app.Radius, u.app.OpaqueBackground)
 	}
-	return o.applyRegions(u.surface, r, r, 0, u.app.OpaqueBackground)
+	return o.applyRegions(u.surface, r, r, u.app.Radius, u.app.OpaqueBackground)
 }
 
 // updateAux changes policy on an open surface in place. The request is

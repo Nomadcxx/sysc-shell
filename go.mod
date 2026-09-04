@@ -15,6 +15,7 @@ require (
 	github.com/Nomadcxx/sysc-metrics v0.3.0
 	github.com/Nomadcxx/sysc-notify v0.1.0-rc.2
 	github.com/Nomadcxx/sysc-tray v0.1.0-rc.1
+	github.com/junegunn/fzf v0.74.3
 )
 
 require (
@@ -25,6 +26,5 @@ require (
 
 require (
 	github.com/adrg/xdg v0.5.3 // indirect
-	github.com/junegunn/fzf v0.74.3 // indirect
 	github.com/rkoesters/xdg v0.0.1 // indirect
 )

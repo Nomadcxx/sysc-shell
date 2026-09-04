@@ -54,6 +54,12 @@ type HostCallbacks struct {
 	IBeamAt func(x, y float64) bool
 	// OpaqueBackground is the resolved palette opacity for this surface.
 	OpaqueBackground bool
+	// Radius is the surface's painted corner radius, in logical pixels. The
+	// painter clears the buffer and fills a *rounded* body, so the corners are
+	// genuinely transparent; the opaque region has to exclude them or the
+	// compositor skips blending there and the transparent pixels composite as
+	// black. Zero means square corners.
+	Radius int
 }
 
 // surfaceUnit owns one layer surface and its buffer lifecycle. The bar is

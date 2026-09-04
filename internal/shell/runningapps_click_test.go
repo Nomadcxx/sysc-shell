@@ -101,6 +101,49 @@ func TestRunningAppsClick(t *testing.T) {
 	}
 }
 
+func TestRunningAppsHandleClickCycles(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Bar.Left, cfg.Bar.Center = nil, nil
+	cfg.Bar.Right = []config.Item{{ID: "running-apps"}}
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	var sent []any
+	reg.niriSend = func(body any) error {
+		sent = append(sent, body)
+		return nil
+	}
+	reg.runningIndex = []runningAppEntry{{ID: "steam"}}
+	cb, err := reg.NewHost(1, "DP-9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg.UpdateNiri(niri.Snapshot{Windows: []niri.Window{
+		{ID: 80, AppID: "steam", Focused: true},
+		{ID: 81, AppID: "steam"},
+	}})
+	if err := cb.Configure(800, BarHeight, 120); err != nil {
+		t.Fatal(err)
+	}
+	bar := reg.bars[1]
+	tile := findAction(bar.right[0].node, "running-app:steam")
+	if tile == nil || tile.Bounds.W == 0 {
+		t.Fatalf("steam tile = %+v, want laid-out bounds", tile)
+	}
+	x, y := float64(tile.Bounds.X+tile.Bounds.W/2), float64(tile.Bounds.Y+tile.Bounds.H/2)
+	bar.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: x, Y: y})
+	bar.Handle(wayland.Event{Kind: wayland.EventPointerPress, Button: buttonLeft, X: x, Y: y})
+	if !bar.Handle(wayland.Event{Kind: wayland.EventPointerRelease, Button: buttonLeft, X: x, Y: y}) {
+		t.Fatal("press+release on the tile was not a click")
+	}
+	if len(sent) != 1 {
+		t.Fatalf("niri sends = %d, want 1 FocusWindow", len(sent))
+	}
+	if fw, ok := sent[0].(niri.FocusWindow); !ok || fw.ID != 81 {
+		t.Fatalf("click sent %+v, want FocusWindow 81 (cycle)", sent[0])
+	}
+}
+
 func TestRunningAppsMenuIsPlacedUnderItsIcon(t *testing.T) {
 	t.Parallel()
 	cfg := config.Default()

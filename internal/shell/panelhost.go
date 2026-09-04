@@ -606,6 +606,7 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 		Keyboard:      keyboardExclusive,
 		Callbacks: wayland.HostCallbacks{
 			OpaqueBackground: h.theme.BackgroundOpaque(),
+			Radius:           h.theme.Radius,
 			Configure:        h.configureLocking(r),
 			Render:           h.renderLocking(r),
 			Handle:           h.handle(r),

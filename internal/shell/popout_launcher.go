@@ -31,6 +31,7 @@ func (r *Registry) launcherServiceLocked() *launcher.Service {
 	if r.launcherSvc == nil {
 		r.launcherSvc = launcher.NewService(launcher.ServiceConfig{
 			History: launcher.OpenHistory(launcherHistoryPath(os.Getenv), nil),
+			Rank:    launcherRank,
 		})
 		go r.relayLauncher(r.launcherSvc)
 	}
