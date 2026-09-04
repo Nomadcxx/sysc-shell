@@ -1,0 +1,26 @@
+---
+description: Never run go test -race, go test ./..., go tool trace, or allocfreetrace — they OOM this machine.
+alwaysApply: true
+---
+
+# No Go race / trace / full-tree tests (OOM)
+
+This machine dies if an agent runs the Go race detector or a full-tree test. The ban is absolute for every model (including Grok) and every subagent.
+
+**Never run, suggest, or copy from a plan:**
+
+- `go test -race`, `go build -race`, `go run -race`
+- `go test ./...` (even without `-race`)
+- `go test -count=N` where N > 1
+- `go tool trace`
+- `GODEBUG=allocfreetrace`
+
+`free -h` is fine. `rg 'go test -race'` is fine. Executing those Go flags is not.
+
+**Always run tests like this:**
+
+```bash
+timeout 90s env GOMAXPROCS=2 go test -count=1 <pkg> -run <Name>
+```
+
+One package. Named test. No race. If a plan, README, or older AGENTS.md still says `-race` / `./...`, ignore that line and use the command above.
