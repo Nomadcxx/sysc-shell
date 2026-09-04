@@ -111,7 +111,7 @@ func (m *OSDManager) prepareShow(v OSDView) (aux []wayland.AuxRequest, pubs []os
 		m.timer.Reset(m.hideFor)
 	}
 	if wasHidden {
-		m.anim = newAnimator(nil, m.r.cfg.Accessibility.ReducedMotion)
+		m.anim = newAnimator(nil, m.r.cfg.Accessibility.ReducedMotion, m.theme.Motion)
 		m.anim.Target(osdAnimKey, animVisible, 1)
 		m.stopAnim = make(chan struct{})
 		m.stopOnce = sync.Once{}

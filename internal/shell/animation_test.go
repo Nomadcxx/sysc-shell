@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"testing"
 	"time"
 )
@@ -13,7 +15,7 @@ func (c *fakeClock) add(d time.Duration) { c.t = c.t.Add(d) }
 
 func newTestAnimator(reduced bool) (*animator, *fakeClock) {
 	clock := &fakeClock{t: time.Unix(0, 0)}
-	return newAnimator(clock.now, reduced), clock
+	return newAnimator(clock.now, reduced, render.MotionSet{}), clock
 }
 
 func TestAnimatorUsesCatalogueDurations(t *testing.T) {
@@ -30,8 +32,11 @@ func TestAnimatorUsesCatalogueDurations(t *testing.T) {
 		{"hover", animHover, true, 120 * time.Millisecond},
 		{"hover out", animHover, false, 120 * time.Millisecond},
 		{"selection", animSelect, true, 180 * time.Millisecond},
-		{"panel enter", animVisible, true, 200 * time.Millisecond},
-		{"panel exit", animVisible, false, 150 * time.Millisecond},
+		// Panel visibility used to be 200 and 150, neither of which is a token.
+		// It maps onto the table now and keeps the asymmetry: a panel leaves
+		// faster than it arrives.
+		{"panel enter", animVisible, true, 180 * time.Millisecond},
+		{"panel exit", animVisible, false, 120 * time.Millisecond},
 	} {
 		if got := a.duration(tc.channel, tc.rising); got != tc.want {
 			t.Errorf("%s = %v, want %v", tc.name, got, tc.want)
@@ -42,11 +47,11 @@ func TestAnimatorUsesCatalogueDurations(t *testing.T) {
 func TestAnimatorUsesOutQuartOnlyForSelection(t *testing.T) {
 	t.Parallel()
 	// Both curves are out-eased, so they only separate away from the endpoints.
-	if got, want := easeFor(animSelect)(0.5), 0.9375; got != want {
+	if got, want := newAnimator(nil, false, render.MotionSet{}).easeFor(animSelect)(0.5), 0.9375; got != want {
 		t.Errorf("selection ease at midpoint = %v, want out-quart %v", got, want)
 	}
 	for _, ch := range []animChannel{animHover, animPress, animVisible} {
-		if got, want := easeFor(ch)(0.5), 0.875; got != want {
+		if got, want := newAnimator(nil, false, render.MotionSet{}).easeFor(ch)(0.5), 0.875; got != want {
 			t.Errorf("channel %d ease at midpoint = %v, want out-cubic %v", ch, got, want)
 		}
 	}
@@ -67,7 +72,7 @@ func TestAnimatorReversesFromTheRenderedValue(t *testing.T) {
 	if got := a.Value("lock", animHover); got != mid {
 		t.Errorf("reversal starts at %v, want the rendered %v", got, mid)
 	}
-	clock.add(animHoverDuration)
+	clock.add(theme.BaseMotion.Short)
 	if got := a.Value("lock", animHover); got != 0 {
 		t.Errorf("reversal end = %v, want 0", got)
 	}
@@ -83,7 +88,7 @@ func TestAnimatorStopsRequestingFramesWhenSettled(t *testing.T) {
 	if a.Settled() {
 		t.Error("Settled during a transition")
 	}
-	clock.add(animHoverDuration)
+	clock.add(theme.BaseMotion.Short)
 	if !a.Settled() {
 		t.Error("still unsettled after the transition elapsed")
 	}
@@ -137,7 +142,7 @@ func TestPanelEntersFromItsAnchoredEdge(t *testing.T) {
 	if got := a.PanelOpacity("power"); got != 0 {
 		t.Errorf("panel starts at opacity %v, want 0", got)
 	}
-	clock.add(animPanelInDuration)
+	clock.add(theme.BaseMotion.Medium)
 	if got := a.PanelSlide("power"); got != 0 {
 		t.Errorf("settled panel is %d px out, want 0", got)
 	}
@@ -153,7 +158,7 @@ func TestPressScalesTheVisualRectangleOnly(t *testing.T) {
 		t.Errorf("resting scale = %v, want 1", got)
 	}
 	a.Target("lock", animPress, 1)
-	clock.add(animPressInDuration)
+	clock.add(theme.BaseMotion.Shorter)
 	if got := a.PressScale("lock"); got != pressScale {
 		t.Errorf("pressed scale = %v, want %v", got, pressScale)
 	}
@@ -191,8 +196,67 @@ func TestRetargetContinuesFromTheRenderedValue(t *testing.T) {
 	if got := a.Value("lock", animHover); got != before {
 		t.Errorf("retarget moved the rendered value from %v to %v", before, got)
 	}
-	clock.add(animHoverDuration)
+	clock.add(theme.BaseMotion.Short)
 	if got := a.Value("lock", animHover); got != 1 {
 		t.Errorf("retargeted transition ended at %v, want 1", got)
+	}
+}
+
+// TestAnimatorScalesWithMotionSpeedOnce covers the bounded speed factor at its
+// ends. The table handed to the animator is already divided, and the animator
+// must not divide it again: scaling twice is the failure this guards, and it
+// only shows at a speed that is not 100.
+func TestAnimatorScalesWithMotionSpeedOnce(t *testing.T) {
+	t.Parallel()
+	for _, speed := range []int{25, 100, 400} {
+		want := theme.BaseMotion.AtSpeed(speed)
+		a := newAnimator(nil, false, render.MotionSet{Durations: want})
+		if got := a.duration(animHover, true); got != want.Short {
+			t.Errorf("speed %d: hover = %v, want %v", speed, got, want.Short)
+		}
+		if got := a.duration(animSelect, true); got != want.Medium {
+			t.Errorf("speed %d: selection = %v, want %v", speed, got, want.Medium)
+		}
+	}
+	// A quarter speed is four times longer, and four times speed is a quarter.
+	slow := theme.BaseMotion.AtSpeed(25).Short
+	fast := theme.BaseMotion.AtSpeed(400).Short
+	if slow <= theme.BaseMotion.Short || fast >= theme.BaseMotion.Short {
+		t.Errorf("speed does not move the token: 25%%=%v 100%%=%v 400%%=%v", slow, theme.BaseMotion.Short, fast)
+	}
+}
+
+// TestAnimatorExpressiveUsesTheQuartCurve checks the motion style reaches the
+// easing. Standard settles spatial recipes with out-cubic; expressive settles
+// them harder, which is the whole difference between the two styles.
+func TestAnimatorExpressiveUsesTheQuartCurve(t *testing.T) {
+	t.Parallel()
+	std := newAnimator(nil, false, render.MotionSet{Spatial: theme.CurveOutCubic})
+	exp := newAnimator(nil, false, render.MotionSet{Spatial: theme.CurveOutQuart})
+	if got := std.easeFor(animVisible)(0.5); got != 0.875 {
+		t.Errorf("standard visibility ease = %v, want out-cubic 0.875", got)
+	}
+	if got := exp.easeFor(animVisible)(0.5); got != 0.9375 {
+		t.Errorf("expressive visibility ease = %v, want out-quart 0.9375", got)
+	}
+	// Selection settles hard in either style.
+	if got := std.easeFor(animSelect)(0.5); got != 0.9375 {
+		t.Errorf("selection ease = %v, want out-quart 0.9375", got)
+	}
+}
+
+// TestAnimatorReducedMotionCapsTheFade keeps the one surviving transition
+// bounded. The table can be slowed fourfold, and a fade that long is exactly
+// what reduced motion exists to prevent.
+func TestAnimatorReducedMotionCapsTheFade(t *testing.T) {
+	t.Parallel()
+	slow := newAnimator(nil, true, render.MotionSet{Durations: theme.BaseMotion.AtSpeed(25)})
+	if got := slow.duration(animVisible, true); got != reducedPanelCap {
+		t.Errorf("reduced fade at quarter speed = %v, want the %v cap", got, reducedPanelCap)
+	}
+	for _, ch := range []animChannel{animHover, animPress, animSelect, animTheme} {
+		if got := slow.duration(ch, true); got != 0 {
+			t.Errorf("reduced motion left channel %d running for %v", ch, got)
+		}
 	}
 }

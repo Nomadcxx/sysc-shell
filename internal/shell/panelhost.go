@@ -426,7 +426,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		r.scheduleLoadProfiles(h)
 	}
 
-	h.anim = newAnimator(nil, r.cfg.Accessibility.ReducedMotion)
+	h.anim = newAnimator(nil, r.cfg.Accessibility.ReducedMotion, h.theme.Motion)
 	h.anim.Target(panelSurfaceID(id), animVisible, 1)
 	r.scheduleSurfaceFrames(h)
 	return nil

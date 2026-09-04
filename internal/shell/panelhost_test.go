@@ -219,7 +219,7 @@ func TestRevealAnimationInvalidatesUntilDone(t *testing.T) {
 	if err := quiet.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
 		t.Fatal(err)
 	}
-	if got := countSurfaceInvalidations(quiet, animReducedPanelDuration+50*time.Millisecond); got == 0 {
+	if got := countSurfaceInvalidations(quiet, reducedPanelCap+50*time.Millisecond); got == 0 {
 		t.Fatal("reduced motion produced no invalidations; the panel never appeared")
 	}
 	if got := countSurfaceInvalidations(quiet, 100*time.Millisecond); got != 0 {

@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"os/exec"
 	"testing"
@@ -632,9 +633,9 @@ func TestPaletteTransitionRetargetsFromMidFade(t *testing.T) {
 	defer reg.mu.Unlock()
 
 	clock := &fakeClock{t: time.Unix(0, 0)}
-	h.anim = newAnimator(clock.now, false)
+	h.anim = newAnimator(clock.now, false, render.MotionSet{})
 	h.retheme(lightTheme())
-	clock.add(animThemeDuration / 2)
+	clock.add(theme.BaseMotion.Medium / 2)
 
 	mid := h.paintTheme().Surface
 	if mid == DefaultTheme().Surface || mid == lightTheme().Surface {
@@ -647,7 +648,7 @@ func TestPaletteTransitionRetargetsFromMidFade(t *testing.T) {
 	if got := h.paintTheme().Surface; got != mid {
 		t.Errorf("second reload started at %+v, want the rendered %+v", got, mid)
 	}
-	clock.add(animThemeDuration)
+	clock.add(theme.BaseMotion.Medium)
 	if got := h.paintTheme().Surface; got != DefaultTheme().Surface {
 		t.Errorf("settled surface = %+v, want the newest palette", got)
 	}

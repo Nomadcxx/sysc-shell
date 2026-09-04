@@ -121,7 +121,7 @@ func TestOsdReducedMotionFadesWithoutMoving(t *testing.T) {
 	if got := reg.OSD().slidePx(); got != 0 {
 		t.Errorf("OSD slid %d px under reduced motion, want an opacity-only change", got)
 	}
-	if got := countSurfaceInvalidations(reg, animReducedPanelDuration+50*time.Millisecond); got == 0 {
+	if got := countSurfaceInvalidations(reg, reducedPanelCap+50*time.Millisecond); got == 0 {
 		t.Fatal("reduced motion produced no invalidations; the OSD never appeared")
 	}
 	// The OSD shares the panel scheduling path, so it must also stop asking for

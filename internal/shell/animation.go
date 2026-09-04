@@ -3,6 +3,8 @@ package shell
 import (
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -10,19 +12,11 @@ import (
 // a control commits faster than it releases, and a panel leaves faster than it
 // arrives.
 const (
-	animHoverDuration    = 120 * time.Millisecond
-	animPressInDuration  = 80 * time.Millisecond
-	animPressOutDuration = 120 * time.Millisecond
-	animSelectDuration   = 180 * time.Millisecond
-	animPanelInDuration  = 200 * time.Millisecond
-	animPanelOutDuration = 150 * time.Millisecond
-	// A palette change is a whole-surface change, so it takes the same time a
-	// whole surface takes to arrive.
-	animThemeDuration = animPanelInDuration
-
-	// Reduced motion keeps panel visibility as a plain fade, and no longer than
-	// the shortest transition the catalogue otherwise uses.
-	animReducedPanelDuration = animPanelOutDuration
+	// reducedPanelCap bounds the one transition reduced motion keeps. The
+	// token table can be slowed to four times its length, and a fade that long
+	// is the thing reduced motion exists to prevent, so the cap is absolute
+	// rather than another token.
+	reducedPanelCap = 150 * time.Millisecond
 
 	// panelSlidePx is how far a panel starts from its anchored edge.
 	panelSlidePx = 8
@@ -92,23 +86,39 @@ func (v animValue) settled(now time.Time) bool {
 type animator struct {
 	now     func() time.Time
 	reduced bool
+	// motion is the resolved duration table, already divided by the speed
+	// factor. The animator never scales it again: dividing once is what keeps
+	// a recipe from being sped up twice.
+	motion  theme.MotionTokens
+	spatial theme.Curve
 	values  map[animKey]animValue
 	// running reports whether a frame loop is already ticking this surface, so
 	// a second target change does not start a second ticker.
 	running bool
 }
 
-func newAnimator(now func() time.Time, reduced bool) *animator {
+func newAnimator(now func() time.Time, reduced bool, motion render.MotionSet) *animator {
 	if now == nil {
 		now = time.Now
 	}
-	return &animator{now: now, reduced: reduced, values: map[animKey]animValue{}}
+	m := motion.Durations
+	if m == (theme.MotionTokens{}) {
+		// A surface built before the tokens reached it still has to animate.
+		m = theme.BaseMotion
+	}
+	return &animator{
+		now: now, reduced: reduced || motion.Reduced,
+		motion: m, spatial: motion.Spatial,
+		values: map[animKey]animValue{},
+	}
 }
 
-func easeFor(channel animChannel) func(float64) float64 {
+// easeFor is a method because the curve is a theme axis now: an expressive
+// motion style settles every spatial recipe harder, not just selection.
+func (a *animator) easeFor(channel animChannel) func(float64) float64 {
 	// Selection settles harder so the moving indicator arrives decisively;
-	// everything else uses the catalogue's default curve.
-	if channel == animSelect {
+	// everything else uses the curve the theme chose.
+	if channel == animSelect || a.spatial == theme.CurveOutQuart {
 		return ui.EaseOutQuart
 	}
 	return ui.EaseOutCubic
@@ -120,7 +130,7 @@ func easeFor(channel animChannel) func(float64) float64 {
 func (a *animator) duration(channel animChannel, rising bool) time.Duration {
 	if a.reduced {
 		if channel == animVisible {
-			return animReducedPanelDuration
+			return min(a.motion.Short, reducedPanelCap)
 		}
 		// A palette change snaps: it is a colour change, not motion, and
 		// holding the old colours for any length of time is the thing reduced
@@ -129,21 +139,25 @@ func (a *animator) duration(channel animChannel, rising bool) time.Duration {
 	}
 	switch channel {
 	case animHover:
-		return animHoverDuration
+		return a.motion.Short
 	case animPress:
+		// A control commits faster than it releases.
 		if rising {
-			return animPressInDuration
+			return a.motion.Shorter
 		}
-		return animPressOutDuration
+		return a.motion.Short
 	case animSelect:
-		return animSelectDuration
+		return a.motion.Medium
 	case animVisible:
+		// A panel leaves faster than it arrives.
 		if rising {
-			return animPanelInDuration
+			return a.motion.Medium
 		}
-		return animPanelOutDuration
+		return a.motion.Short
 	case animTheme:
-		return animThemeDuration
+		// A palette change is a whole-surface change, so it takes the time a
+		// whole surface takes to arrive.
+		return a.motion.Medium
 	}
 	return 0
 }
@@ -164,7 +178,7 @@ func (a *animator) Target(node string, channel animChannel, to float64) {
 		from = current.at(now)
 	}
 	dur := a.duration(channel, to > from)
-	a.values[key] = animValue{from: from, to: to, start: now, dur: dur, ease: easeFor(channel)}
+	a.values[key] = animValue{from: from, to: to, start: now, dur: dur, ease: a.easeFor(channel)}
 }
 
 // Reset drops a value so the next Target starts it from zero rather than from
@@ -225,7 +239,7 @@ func (a *animator) Retarget() {
 			continue
 		}
 		a.values[key] = animValue{from: v.at(now), to: v.to, start: now,
-			dur: a.duration(key.channel, v.to > v.at(now)), ease: easeFor(key.channel)}
+			dur: a.duration(key.channel, v.to > v.at(now)), ease: a.easeFor(key.channel)}
 	}
 }
 
