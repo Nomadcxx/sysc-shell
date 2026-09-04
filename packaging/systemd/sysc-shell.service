@@ -1,0 +1,29 @@
+[Unit]
+Description=sysc-shell Wayland shell
+Documentation=https://github.com/Nomadcxx/sysc-shell
+
+# niri --session starts graphical-session.target and puts WAYLAND_DISPLAY and
+# NIRI_SOCKET into the systemd user environment, so the shell needs no
+# Environment= of its own. Requisite makes a manual start outside a session
+# fail loudly instead of launching a shell with nothing to attach to.
+Requisite=graphical-session.target
+After=graphical-session.target
+PartOf=graphical-session.target
+
+# A shell that cannot stay up should stop trying and leave the session usable
+# rather than respawn forever.
+StartLimitIntervalSec=30
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/sysc-shell
+Restart=on-failure
+RestartSec=2
+
+# The shell releases its layer surfaces on SIGTERM; this only bounds a hang.
+TimeoutStopSec=5
+Slice=session.slice
+
+[Install]
+WantedBy=graphical-session.target
