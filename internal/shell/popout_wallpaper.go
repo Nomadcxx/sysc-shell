@@ -660,7 +660,17 @@ func wallpaperSummary(snap wallpaper.Snapshot, output string) string {
 	if outputs == 0 {
 		return "nothing assigned"
 	}
-	return fmt.Sprintf("%d outputs \u00b7 %d video \u00b7 %d image", outputs, videos, images)
+	return fmt.Sprintf("%s \u00b7 %d video \u00b7 %d image",
+		plural(outputs, "output"), videos, images)
+}
+
+// plural counts a noun. The All summary read "1 outputs" on a laptop, which is
+// where a single-output machine first saw this line.
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 func wallpaperStateName(s wallpaper.State) string {

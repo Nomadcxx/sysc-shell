@@ -525,9 +525,22 @@ Four defects found only because the output is short and scaled, all fixed:
   because `Adopt` had already primed the store's seed and the hook was installed
   after `NewService` had run reconcile.
 
-Not runnable there: Restore's handoff. Neither `awww` nor `swaybg` is installed
-on that machine, which the picker's engine strip reports by showing only the
-gSlapper pill. `ErrNoStaticEngine` is unit-tested.
+Restore's handoff was blocked on the first pass -- neither `awww` nor `swaybg`
+was installed, which the picker reported by showing only the gSlapper pill. Both
+were installed later the same day and the path was then run end to end:
+
+- `stop` over the owned socket returns OK and the socket is released;
+- `awww query` finds the daemon down, `awww-daemon` is started, and the query
+  then succeeds (D16: the client cannot set anything before the daemon is up);
+- `awww img --outputs eDP-1 <still>` exits 0 and `awww-daemon` takes Background.
+
+With all three installed the engine strip reads `gSlapper awww swaybg`.
+
+Re-applying afterwards leaves both surfaces mapped on Background, and gSlapper's
+is the visible one: with it playing, three samples of a wallpaper-only strip all
+differ; with it paused, three samples are identical. `awww-daemon` stays running
+underneath, which is what a daemon does and what the coverage probe treats as
+ours rather than foreign.
 
 ### Not covered here
 
