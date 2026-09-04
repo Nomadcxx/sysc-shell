@@ -1,6 +1,6 @@
 # Design and Plan Register
 
-Last updated: 2026-09-04.
+Last updated: 2026-09-05.
 
 Every design, plan, and handover this project has produced, with where it lives and whether it is still
 live. Add a row here in the same commit that adds a document. A document that is not in this register is
@@ -288,6 +288,10 @@ widgets) are still unordered.
 
 | Document | Kind | State |
 |---|---|---|
+| `2026-09-05-running-apps-pill-prior-art.md` | assessment | DMS RunningApps vs Dock vs FocusedApp; Noctalia Taskbar vs Dock vs ActiveWindow. Bar pill maps to RunningApps chrome; Niri windows are the model. `.desktop` Actions= are the app menu (Steam is not special; Spotify on this machine ships none). |
+| `2026-09-05-running-apps-pill-design.md` | design | Owner-approved 2026-09-05. D1–D15. D8/D11: shell-owned XDG identity and niri spawn; launcher widget is optional. Audit amendments: focus_timestamp `{secs,nanos}`, D6 drops sticky last-focused. |
+| `2026-09-05-running-apps-pill.md` | plan | Ten TDD tasks after audit: niri focus fields (`{secs,nanos}` + `WindowFocusChanged`), Action IPC, grouping, shell desktop-entry lookup (not sysc-launch), focus-or-cycle, menu rows, config, capsule, clicks/menu host, live Niri gate. |
+| `2026-09-05-running-apps-pill-audit-report.md` | audit-report | Plan audit 2026-09-05. Findings 1–8 applied to the design and plan. |
 | `2026-09-01-launcher-prior-art.md` | assessment | Noctalia 5 list + first-class DMS DankLauncherV2 (this machine: full/compact) + Go reuse. §6/§9 superseded 2026-09-01: Elephant is first-class prior art, GPL-3 not a constraint (owner decision). No live grim in-tree. |
 | `2026-09-01-milestone-7-launcher-design-handover.md` | execution-handover | Commissions the launcher design and implementation plan. Do not write product code from it. |
 | `2026-09-01-launcher-design.md` | design | M7 launcher v1: Noctalia list chrome 560×500, fzf + Elephant-weighted scoring, ported usage store, pinned desktopentry, Niri argv spawn, `/` prefix registry, glyph icons behind an Icon seam. 16 numbered decisions. |
