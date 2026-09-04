@@ -223,6 +223,16 @@ const (
 	FillContainerHigh
 	// FillOutline is an idle control drawn on its parent with a boundary.
 	FillOutline
+	// FillContainerHighest is a control or chip nested inside a capsule or a
+	// card. Those share the high container, so anything sitting on one needs
+	// the level above it to separate.
+	FillContainerHighest
+	// FillErrorContainer is a destructive control that has to hold a label
+	// rather than shout: the quiet half of the error pair.
+	FillErrorContainer
+	// FillScrim dims the live content behind a modal surface. It is a wash,
+	// not a plate; what sits underneath stays visible through it.
+	FillScrim
 )
 
 // Tone selects which theme colour paints a text node.

@@ -44,6 +44,35 @@ func (s Style) outline() Color {
 	return s.Outline
 }
 
+// outlineVariant is the quiet boundary a divider draws. It falls back to the
+// meaningful outline rather than to the foreground directly, so a style that
+// carries only one of the two tokens still draws a rule that separates.
+func (s Style) outlineVariant() Color {
+	if s.OutlineVariant.A == 0 {
+		return s.outline()
+	}
+	return s.OutlineVariant
+}
+
+// errorContainer falls back to the solid error pair. A destructive control
+// then still reads as destructive instead of painting a hole.
+func (s Style) errorContainer() (fill, fg Color) {
+	if s.ErrorContainer.A == 0 || s.OnErrorContainer.A == 0 {
+		return s.Error, s.onError()
+	}
+	return s.ErrorContainer, s.OnErrorContainer
+}
+
+// scrim is the wash a modal shield lays over live content. Shadow is the
+// nearest token when a style predates the scrim; both are the palette's
+// neutral dimming colour.
+func (s Style) scrim() Color {
+	if s.Scrim.A == 0 {
+		return s.Shadow
+	}
+	return s.Scrim
+}
+
 // accent returns the colour the meter fill and button share.
 func (s Style) accent() Color {
 	if s.Toggled {
@@ -208,7 +237,9 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 	case ui.KindSeparator:
 		box := style.Scale120.PhysicalRect(n.Bounds)
 		box.H = max(box.H, 1)
-		fillRect(c, box, style.Track)
+		// A divider is the quiet boundary role. Track is OnSurfaceVariant, a
+		// text colour, which reads too loud for a rule between rows.
+		fillRect(c, box, style.outlineVariant())
 		return nil
 
 	case ui.KindTab:
@@ -594,6 +625,9 @@ const (
 	hoverLayerAlpha    = 0.08
 	pressedLayerAlpha  = 0.12
 	disabledForeground = 0.38
+	// scrimAlpha dims the content behind a modal surface enough to push it
+	// back without hiding it, which is what separates a shield from a plate.
+	scrimAlpha = 0.32
 )
 
 // chromeFill resolves what a filled node paints and the foreground its contents
@@ -616,12 +650,23 @@ func chromeFill(style Style, n *ui.Node, base Color) (fill, fg Color) {
 		return style.Container, style.OnContainer
 	case ui.FillContainerHigh:
 		return style.Capsule, style.Foreground
+	case ui.FillContainerHighest:
+		return style.containerHighest(), style.Foreground
 	case ui.FillSoft:
 		// A muted accent wash. Contents keep the surface foreground, so a
 		// selected launcher row does not read as a primary-on-white chip.
 		return wash(style.Accent, style.Capsule), style.Foreground
 	case ui.FillError:
 		return style.Error, style.onError()
+	case ui.FillErrorContainer:
+		return style.errorContainer()
+	case ui.FillScrim:
+		// The wash is the scrim token at the shield's alpha, so the content
+		// behind it survives the composite. Contents keep the surface
+		// foreground; a shield carries none today.
+		dim := style.scrim()
+		dim.A = uint8(math.Round(float64(dim.A) * scrimAlpha))
+		return dim, style.Foreground
 	case ui.FillOutline:
 		// Outlined chrome keeps whatever its parent painted; only the boundary
 		// and the label mark it. A destructive control is error-toned here
@@ -774,6 +819,10 @@ func paintButton(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size in
 	return paintChrome(c, n, text, style, size, style.containerHighest(), 0)
 }
 
+// capsuleFill resolves the colour a named fill paints, for the one caller that
+// needs a colour without a node: an explicit stroke. Foregrounds are not its
+// business -- chromeFill is the only place a fill and its paired foreground
+// are resolved together, so a node cannot acquire a mismatched pair.
 func capsuleFill(style Style, fill ui.Fill) Color {
 	switch fill {
 	case ui.FillAccent:
@@ -784,18 +833,13 @@ func capsuleFill(style Style, fill ui.Fill) Color {
 		return style.Error
 	case ui.FillSoft:
 		return wash(style.Accent, style.Capsule)
+	case ui.FillContainerHighest:
+		return style.containerHighest()
+	case ui.FillErrorContainer:
+		fill, _ := style.errorContainer()
+		return fill
 	}
 	return style.Capsule
-}
-
-func capsuleForeground(style Style, fill ui.Fill) Color {
-	switch fill {
-	case ui.FillAccent:
-		return style.OnAccent
-	case ui.FillContainer:
-		return style.OnContainer
-	}
-	return style.Foreground
 }
 
 // wash tints surface with accent at ~31% so a selected row stays dark with

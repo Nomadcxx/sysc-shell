@@ -152,8 +152,7 @@ container level from their location.
 | Layer | Fill and foreground |
 |---|---|
 | Bar or panel root | `Surface` / `OnSurface` with the surface's opacity |
-| Bar capsule | `SurfaceContainer` / `OnSurface` |
-| Panel card | `SurfaceContainerHigh` / `OnSurface` |
+| Bar capsule or panel card | `SurfaceContainerHigh` / `OnSurface` |
 | Nested control or chip | `SurfaceContainerHighest` / `OnSurface` |
 | Selected control | `Primary` / `OnPrimary` |
 | Tonal selection | `PrimaryContainer` / `OnPrimaryContainer` |
@@ -165,8 +164,17 @@ Hover, focus, press, and drag composite the current foreground over the
 current fill at 8, 12, 12, and 16 percent. Disabled content uses 38 percent
 foreground emphasis and keeps its settled geometry.
 
-This role table resolves `sysc-104` and `sysc-110`: bar capsules and panel
-cards no longer share one container token.
+This role table resolves `sysc-104` and `sysc-110`: chrome that floats on the
+surface is one container token, and everything else on the surface is not.
+
+An earlier revision of this table gave capsules `SurfaceContainer` and cards
+`SurfaceContainerHigh`. The chrome catalogue superseded that split on
+2026-09-03 in commit `b399944`, measured against a live bar: the bar and the
+panels are one continuous `Surface` with no gap between them, so the two greys
+landed inches apart on one plane with nothing in the composition to explain
+which was which. `SurfaceContainer` stays a parsed role for palette parity but
+paints no first-party chrome, and `SurfaceContainerHighest` keeps its lift for
+a control genuinely nested inside a card.
 
 ### D7. Semantic typography and real font faces
 

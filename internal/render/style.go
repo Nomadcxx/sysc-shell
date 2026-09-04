@@ -28,11 +28,11 @@ type Style struct {
 	Background Color
 	Foreground Color
 	// Capsule fills the pill that wraps a bar widget. Container fills a
-	// workspace pill that is not focused. OnAccent and OnContainer are the
-	// foregrounds their contents use.
+	// workspace pill that is not focused, and OnContainer is the foreground
+	// its contents use. The accent's paired foreground is OnPrimary below;
+	// it is one token, so it is one field.
 	Capsule     Color
 	Container   Color
-	OnAccent    Color
 	OnContainer Color
 	Track       Color
 	Accent      Color
@@ -45,6 +45,11 @@ type Style struct {
 	OnPrimary Color
 	// OnError is the paired foreground for an Error fill.
 	OnError Color
+	// ErrorContainer fills a destructive control that carries a label instead
+	// of shouting, and OnErrorContainer is the only foreground that reads on
+	// it. Both fall back to the Error pair when a style predates them.
+	ErrorContainer   Color
+	OnErrorContainer Color
 	// ContainerHighest fills an idle control. Capsule above carries the high
 	// container, which the bar's pills and the panels' cards share; a control
 	// sitting on one of those needs the level above it to separate.
