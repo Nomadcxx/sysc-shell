@@ -280,3 +280,34 @@ func TestColumnRowPinsATextValueToTheTrailingEdge(t *testing.T) {
 		t.Fatalf("value right edge = %d, want 284", right)
 	}
 }
+
+// A label/value row pins its second member to the right edge. When that member
+// owns children -- a close button's icon, a Restore button's label -- the whole
+// subtree has to travel with it. Pinning only the parent rect left the glyph
+// behind at the flow position and painted an empty pill at the edge.
+func TestPinRowEndCarriesTheSubtree(t *testing.T) {
+	t.Parallel()
+	measure := func(s string, _ bool) (int, int) { return len(s) * 7, 16 }
+	row := &Node{Kind: KindRow, Gap: 10, Height: 40, Children: []*Node{
+		{Kind: KindText, Text: "Wallpaper"},
+		{
+			Kind: KindButton, Action: "close", Name: "Close", Padding: 8, Height: 40,
+			Children: []*Node{{Kind: KindIcon, Icon: "close", IconSize: 18}},
+		},
+	}}
+	box := Rect{X: 0, Y: 0, W: 600, H: 40}
+	if err := placeColumnChild(row, box, measure); err != nil {
+		t.Fatalf("place: %v", err)
+	}
+
+	button := row.Children[1]
+	if got, want := button.Bounds.X+button.Bounds.W, box.X+box.W; got != want {
+		t.Fatalf("button right edge = %d, want %d", got, want)
+	}
+	icon := button.Children[0]
+	if icon.Bounds.X < button.Bounds.X || icon.Bounds.X+icon.Bounds.W > button.Bounds.X+button.Bounds.W {
+		t.Fatalf("icon at %d..%d is outside its button %d..%d",
+			icon.Bounds.X, icon.Bounds.X+icon.Bounds.W,
+			button.Bounds.X, button.Bounds.X+button.Bounds.W)
+	}
+}
