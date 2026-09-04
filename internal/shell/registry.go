@@ -838,6 +838,7 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	r.focused = s.FocusedOutput
 	r.ensureRunningIndexLocked()
 	r.running = groupRunningApps(s.Windows, r.runningIndex)
+	r.attachRunningIconsLocked()
 	if h := r.runningMenu; h != nil && h.open_ && !runningSlotPresent(r.running, h.slot.Key) {
 		h.closeLocked()
 	}

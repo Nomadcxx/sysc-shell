@@ -298,7 +298,10 @@ func (s *state) apply(line []byte) (bool, error) {
 			return false, fmt.Errorf("niri: decode WindowFocusChanged: %w", err)
 		}
 		if changed.ID == nil {
-			return false, fmt.Errorf("niri: WindowFocusChanged is missing id")
+			for i := range s.windows {
+				s.windows[i].Focused = false
+			}
+			return s.publishIfChanged(), nil
 		}
 		for i := range s.windows {
 			s.windows[i].Focused = s.windows[i].ID == *changed.ID

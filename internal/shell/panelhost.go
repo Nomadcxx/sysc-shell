@@ -315,10 +315,9 @@ func (r *Registry) DropAux(output uint32, surfaceID string) {
 	if r.DropTrayAux(output, surfaceID) {
 		return
 	}
-	if surfaceID == runningAppMenuSurfaceID {
+	if surfaceID == runningAppMenuSurfaceID || surfaceID == runningAppMenuShieldID {
 		r.mu.Lock()
 		if h := r.runningMenu; h != nil && h.open_ && h.output == output {
-			h.closed = true
 			h.closeLocked()
 		}
 		r.mu.Unlock()

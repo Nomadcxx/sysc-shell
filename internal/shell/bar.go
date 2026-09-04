@@ -507,6 +507,34 @@ func copyNode(n *ui.Node) *ui.Node {
 }
 
 // hitLocked searches every section in reverse paint order.
+func (b *Bar) actionBounds(action string) ui.Rect {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, section := range b.sections() {
+		for _, n := range section {
+			if r, ok := nodeActionBounds(n, action); ok {
+				return r
+			}
+		}
+	}
+	return ui.Rect{}
+}
+
+func nodeActionBounds(n *ui.Node, action string) (ui.Rect, bool) {
+	if n == nil {
+		return ui.Rect{}, false
+	}
+	if n.Action == action {
+		return n.Bounds, true
+	}
+	for _, c := range n.Children {
+		if r, ok := nodeActionBounds(c, action); ok {
+			return r, true
+		}
+	}
+	return ui.Rect{}, false
+}
+
 func (b *Bar) hitLocked(x, y int) (string, bool) {
 	sections := b.sections()
 	for i := len(sections) - 1; i >= 0; i-- {

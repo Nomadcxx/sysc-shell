@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-freedesktop/desktopentry"
 
+	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -204,6 +205,7 @@ func runningAppMenu(slot runningAppSlot) []runningAppMenuRow {
 const (
 	runningAppTile     = 24
 	runningAppIconSize = 18
+	runningAppIconPad  = (runningAppTile - runningAppIconSize) / 2
 	runningAppGap      = 4
 	runningAppPad      = 8
 	runningAppPrefix   = "running-app:"
@@ -240,11 +242,17 @@ func runningAppsMatch(row *ui.Node, slots []runningAppSlot) bool {
 		if c == nil || c.Action != runningAppPrefix+s.Key || c.Width != runningAppTile {
 			return false
 		}
-		want := ui.FillNone
-		if s.Focused {
-			want = ui.FillAccent
+		child := (*ui.Node)(nil)
+		if len(c.Children) == 1 {
+			child = c.Children[0]
 		}
-		if c.Fill != want {
+		if s.Image != nil {
+			if child == nil || child.Kind != ui.KindImage || child.Image != s.Image {
+				return false
+			}
+			continue
+		}
+		if child == nil || child.Kind != ui.KindText {
 			return false
 		}
 	}
@@ -252,16 +260,13 @@ func runningAppsMatch(row *ui.Node, slots []runningAppSlot) bool {
 }
 
 func runningAppTileNode(s runningAppSlot) *ui.Node {
-	fill := ui.FillNone
-	if s.Focused {
-		fill = ui.FillAccent
-	}
 	child := &ui.Node{Kind: ui.KindText, Text: runningAppLetter(s.Key)}
 	if s.Image != nil {
 		child = &ui.Node{Kind: ui.KindImage, Image: s.Image, ImageSize: runningAppIconSize}
 	}
 	return &ui.Node{
-		Kind: ui.KindCapsule, Width: runningAppTile, Height: runningAppTile, Fill: fill,
+		Kind: ui.KindCapsule, Width: runningAppTile, Height: runningAppTile,
+		Padding: runningAppIconPad, Fill: ui.FillNone,
 		Action: runningAppPrefix + s.Key, Children: []*ui.Node{child},
 	}
 }
@@ -271,6 +276,51 @@ func runningAppLetter(key string) string {
 		return strings.ToUpper(string(r))
 	}
 	return "?"
+}
+
+func runningAppIconPixelSize(scale120 int) int {
+	scale := ui.Scale120(scale120)
+	if !scale.Valid() {
+		return runningAppIconSize
+	}
+	return max(scale.Physical(runningAppIconSize), 1)
+}
+
+func (r *Registry) attachRunningIconsLocked() {
+	if r.trayIcons == nil {
+		return
+	}
+	size := runningAppIconSize
+	for _, bar := range r.bars {
+		size = runningAppIconPixelSize(bar.scale120())
+		break
+	}
+	for i := range r.running {
+		name := r.running[i].Icon
+		if name == "" {
+			r.running[i].Image = nil
+			continue
+		}
+		key := icons.Square(name, size)
+		if img, ok := r.trayIcons.Lookup(key); ok {
+			r.running[i].Image = img
+			continue
+		}
+		_, _, _ = r.trayIcons.Request(key)
+	}
+}
+
+func (r *Registry) reprojectRunningApps() {
+	r.mu.Lock()
+	r.attachRunningIconsLocked()
+	changed := make([]uint32, 0, len(r.bars))
+	for global, bar := range r.bars {
+		if bar.apply(r.viewLocked(bar.connector())) {
+			changed = append(changed, global)
+		}
+	}
+	r.mu.Unlock()
+	r.publish(changed)
 }
 
 func runningAppKey(action string) (string, bool) {
@@ -307,10 +357,14 @@ func (r *Registry) handleRunningAppClick(output uint32, key string, button uint3
 		}
 		return true
 	case buttonRight:
+		anchor := ui.Rect{}
+		if bar, ok := r.bars[output]; ok {
+			anchor = bar.actionBounds(runningAppPrefix + key)
+		}
 		if r.runningMenu == nil {
 			r.runningMenu = newRunningAppMenuHost(r)
 		}
-		r.runningMenu.openLocked(output, slot)
+		r.runningMenu.openLocked(output, slot, anchor)
 		return true
 	}
 	return false

@@ -104,10 +104,11 @@ and folding this into the launcher windows provider (`sysc-81`).
 
 ### Chrome and menu host
 
-- **D12 — Focused slot uses workspace-pill accent.** Idle tiles are
-  transparent on the shared capsule. The focused application's tile takes
-  the Primary fill the focused workspace pill already uses. Hover is the
-  existing bar hover path.
+- **D12 — No per-tile focus chrome.** Idle and focused tiles look the
+  same: 18 px icon centred in a 24 px cell, transparent on the shared
+  capsule. The window-title widget already names the focused app; a
+  Primary fill on a 24 px tile reads as a stray chip and does not
+  centre the icon. Hover is the existing bar hover path.
 - **D13 — The context menu is an Overlay popup, not a bar child.** A
   `KindMenu` in the bar strip would blow the bar height. Host it as an
   Overlay auxiliary surface in the process-wide interactive-root chain,

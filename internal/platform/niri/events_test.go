@@ -13,6 +13,7 @@ const (
 		`"is_focused":false,"is_floating":false,"is_urgent":false,"layout":{},"focus_timestamp":null}]}}`
 
 	windowFocusChangedFixture = `{"WindowFocusChanged":{"id":81}}`
+	windowFocusChangedNull    = `{"WindowFocusChanged":{"id":null}}`
 
 	windowOpenedFixture = `{"WindowOpenedOrChanged":{"window":` +
 		`{"id":82,"title":"Fixture Two","app_id":"fixture.two","pid":1001,"workspace_id":5,` +
@@ -86,6 +87,16 @@ func TestWindowFocusChanged(t *testing.T) {
 	if w80.Focused || !w81.Focused {
 		t.Fatalf("after WindowFocusChanged: 80 focused=%v, 81 focused=%v; want 80 false, 81 true",
 			w80.Focused, w81.Focused)
+	}
+}
+
+func TestWindowFocusChangedNullClearsFocus(t *testing.T) {
+	t.Parallel()
+	s := applyAll(t, windowsChangedFixture, windowFocusChangedNull)
+	for _, w := range s.snapshot().Windows {
+		if w.Focused {
+			t.Fatalf("window %d still focused after id:null", w.ID)
+		}
 	}
 }
 

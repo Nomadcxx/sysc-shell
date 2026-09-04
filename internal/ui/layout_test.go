@@ -458,6 +458,20 @@ func TestMeasureNodeCapsuleHonoursExplicitWidth(t *testing.T) {
 	}
 }
 
+func TestMeasureNodeCapsuleHonoursExplicitHeight(t *testing.T) {
+	t.Parallel()
+	tile := &Node{Kind: KindCapsule, Width: 24, Height: 24, Children: []*Node{
+		{Kind: KindText, Text: "A"},
+	}}
+	w, h, err := measureNode(tile, 40, fakeMeasure)
+	if err != nil {
+		t.Fatalf("measureNode: %v", err)
+	}
+	if w != 24 || h != 24 {
+		t.Fatalf("explicit tile = %dx%d, want 24x24 not the offered band", w, h)
+	}
+}
+
 // Without a Width a capsule still measures to its child plus padding.
 func TestMeasureNodeCapsuleWithoutWidthMeasuresChild(t *testing.T) {
 	pill := &Node{Kind: KindCapsule, Padding: 8, Children: []*Node{

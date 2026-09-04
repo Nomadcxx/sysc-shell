@@ -393,7 +393,11 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		// neither is sized by whichever happens to hold the longer figure. A
 		// bar pill sets no width and is sized by its content, as before.
 		if n.Width > 0 {
-			return n.Width, contentHeight, nil
+			h := contentHeight
+			if n.Height > 0 {
+				h = n.Height
+			}
+			return n.Width, h, nil
 		}
 		// A zero-width child leaves no pill at all, so an empty window title
 		// does not paint a bare capsule.

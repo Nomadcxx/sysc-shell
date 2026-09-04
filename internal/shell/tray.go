@@ -195,6 +195,7 @@ func (r *Registry) BindTray(sender trayCommandSender) {
 	r.trayIconCancel = cancel
 	r.trayIcons = icons.NewWorker(icons.NewResolver("", nil), r.applyTrayIcon)
 	go func() { _ = r.trayIcons.Run(workerContext) }()
+	r.attachRunningIconsLocked()
 }
 
 // TrayMessages is the channel the trayclient publishes to and main drains
@@ -329,6 +330,7 @@ func (r *Registry) applyTrayIcon(_ icons.Key, image *ui.Image) {
 		return
 	}
 	r.reprojectTray()
+	r.reprojectRunningApps()
 	r.mu.Lock()
 	h := r.panelHosts[PanelLauncher]
 	if h == nil {
