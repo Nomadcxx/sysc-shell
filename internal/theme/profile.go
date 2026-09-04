@@ -88,6 +88,10 @@ type Metrics struct {
 	IconSmall      int
 	IconNormal     int
 	IconLarge      int
+	// IconProfile is the power-profile glyph in the session panel. It sits
+	// between the small and normal icons; the shell derived it as IconSmall+2,
+	// a fixed offset that was only ever checked at standard density.
+	IconProfile int
 }
 
 var metrics = map[Density]Metrics{
@@ -97,6 +101,7 @@ var metrics = map[Density]Metrics{
 		PanelPadding: 12, CardPadding: 10,
 		CapsulePadding: 4, ButtonPadding: 8,
 		IconSmall: 16, IconNormal: 18, IconLarge: 24,
+		IconProfile: 18,
 	},
 	DensityStandard: {
 		BarHeight: 48, BarPadding: 6, BarSpacing: 4,
@@ -104,6 +109,7 @@ var metrics = map[Density]Metrics{
 		PanelPadding: 16, CardPadding: 12,
 		CapsulePadding: 8, ButtonPadding: 12,
 		IconSmall: 16, IconNormal: 20, IconLarge: 24,
+		IconProfile: 18,
 	},
 	DensityComfortable: {
 		BarHeight: 56, BarPadding: 8, BarSpacing: 6,
@@ -111,6 +117,7 @@ var metrics = map[Density]Metrics{
 		PanelPadding: 20, CardPadding: 16,
 		CapsulePadding: 12, ButtonPadding: 16,
 		IconSmall: 18, IconNormal: 22, IconLarge: 28,
+		IconProfile: 20,
 	},
 }
 

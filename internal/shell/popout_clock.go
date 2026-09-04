@@ -88,7 +88,7 @@ func clockTree(now time.Time, monthDelta int, theme Theme) *ui.Node {
 func calendarArrow(icon, action, name string, theme Theme) *ui.Node {
 	return &ui.Node{
 		Kind: ui.KindButton, Action: action, Name: name, Role: "button", Focusable: true,
-		Width: theme.CompactHeight, Height: theme.CompactHeight,
-		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: icon, IconSize: theme.IconSize}},
+		Width: theme.Metrics.CompactControl, Height: theme.Metrics.CompactControl,
+		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: icon, IconSize: theme.Metrics.IconNormal}},
 	}
 }

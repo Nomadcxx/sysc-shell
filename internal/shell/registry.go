@@ -981,6 +981,6 @@ func (r *Registry) retheThemeOpenSurfacesLocked() {
 // themed, while everything else follows the published palette.
 func withPanelRadius(t Theme, h *PanelHost) Theme {
 	t.Radius = h.theme.Radius
-	t.CardRadius = h.theme.CardRadius
+	t.CardRadius = h.theme.Shapes.Card
 	return t
 }

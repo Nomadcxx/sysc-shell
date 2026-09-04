@@ -120,7 +120,7 @@ func sessionProfileCard(h *PanelHost) *ui.Node {
 		content := make([]*ui.Node, 0, 2)
 		if icon != "" {
 			content = append(content, &ui.Node{
-				Kind: ui.KindIcon, Icon: icon, IconSize: h.theme.ProfileIconSize,
+				Kind: ui.KindIcon, Icon: icon, IconSize: h.theme.Metrics.IconProfile,
 			})
 		}
 		content = append(content, &ui.Node{Kind: ui.KindText, Text: label})
@@ -129,7 +129,7 @@ func sessionProfileCard(h *PanelHost) *ui.Node {
 			Kind: ui.KindButton, Action: "profile:" + name,
 			Name: label, Role: "tab", Focusable: true,
 			Gap: sessionSegmentContentGap, Padding: sessionSegmentPadding,
-			Height: h.theme.ControlHeight, Children: content,
+			Height: h.theme.Metrics.StandardControl, Children: content,
 		}
 		if selected {
 			segment.State |= ui.StateSelected
@@ -140,7 +140,7 @@ func sessionProfileCard(h *PanelHost) *ui.Node {
 		monitorCardTitle("Power profile", 0),
 		{
 			Kind: ui.KindSegmented, Key: "power-profiles", Gap: sessionSegmentGap,
-			Height: h.theme.ControlHeight, Children: segments,
+			Height: h.theme.Metrics.StandardControl, Children: segments,
 		},
 	})
 }
@@ -168,10 +168,10 @@ func sessionActionsCard(theme Theme, locker string) *ui.Node {
 		node := &ui.Node{
 			Kind: ui.KindButton, Action: a.id,
 			Name: a.name, Role: "button", Focusable: true,
-			Gap: theme.ButtonPadding / 2, Padding: theme.ButtonPadding,
-			Height: theme.ControlHeight,
+			Gap: theme.Metrics.ButtonPadding / 2, Padding: theme.Metrics.ButtonPadding,
+			Height: theme.Metrics.StandardControl,
 			Children: []*ui.Node{
-				{Kind: ui.KindIcon, Icon: a.icon, IconSize: theme.IconSize},
+				{Kind: ui.KindIcon, Icon: a.icon, IconSize: theme.Metrics.IconNormal},
 				{Kind: ui.KindText, Text: a.name},
 			},
 		}

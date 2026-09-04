@@ -372,3 +372,33 @@ func TestMetricsCarryCapsuleAndButtonPadding(t *testing.T) {
 		last = m
 	}
 }
+
+// TestMetricsCarryTheProfileIcon removes the last derived icon constant. The
+// shell's flat layer computed the profile icon as IconSmall+2, which is a
+// fixed offset masquerading as a scale: it happened to be right at standard
+// density and was never checked at the others.
+//
+// The row keeps the values that offset produced, so nothing moves; what
+// changes is that the table now states them.
+func TestMetricsCarryTheProfileIcon(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		density Density
+		want    int
+	}{
+		{DensityCompact, 18},
+		{DensityStandard, 18},
+		{DensityComfortable, 20},
+	} {
+		m, ok := MetricsFor(tc.density)
+		if !ok {
+			t.Fatalf("no %s row", tc.density)
+		}
+		if m.IconProfile != tc.want {
+			t.Errorf("%s profile icon = %d, want %d", tc.density, m.IconProfile, tc.want)
+		}
+		if m.IconProfile < m.IconSmall {
+			t.Errorf("%s profile icon %d is below the small icon %d", tc.density, m.IconProfile, m.IconSmall)
+		}
+	}
+}

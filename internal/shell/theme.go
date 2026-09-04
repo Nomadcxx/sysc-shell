@@ -286,7 +286,7 @@ func applyFlat(t *Theme) {
 	t.CompactHeight = t.Metrics.CompactControl
 	t.ButtonPadding = t.Metrics.ButtonPadding
 	t.IconSize = t.Metrics.IconNormal
-	t.ProfileIconSize = t.Metrics.IconSmall + 2
+	t.ProfileIconSize = t.Metrics.IconProfile
 	t.OSDIconSize = t.Metrics.IconLarge
 
 	t.Surface = p.Surface
