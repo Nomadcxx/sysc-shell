@@ -21,13 +21,18 @@ const (
 // config.knownItems has accepted "wallpaper" since the picker landed, with a
 // comment saying a user who wants the glyph adds it. buildWidgets had no case
 // for it, so adding it to a bar validated at load and then produced nothing.
+// The glyph never changes, but a widget still has to write its state through
+// format: applyLocked calls it for every widget without a refresh, so a nil
+// one is not "nothing to update", it is a nil call on the first bar apply.
 func buildWallpaperWidget() textWidget {
-	node := &ui.Node{
-		Kind:   ui.KindRow,
-		Action: panelWallpaperAction,
-		Children: []*ui.Node{{
-			Kind: ui.KindText, Text: wallpaperGlyph, TextRole: theme.RoleLabel,
-		}},
+	return textWidget{
+		node: &ui.Node{
+			Kind:     ui.KindText,
+			Text:     wallpaperGlyph,
+			TextRole: theme.RoleLabel,
+			Action:   panelWallpaperAction,
+		},
+		tooltip: "Wallpaper",
+		format:  func(barView) string { return wallpaperGlyph },
 	}
-	return textWidget{node: node, tooltip: "Wallpaper"}
 }

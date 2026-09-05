@@ -99,7 +99,9 @@ fi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), "set-volume @DEFAULT_AUDIO_SINK@ +5%") {
+	// wpctl takes the sign as a suffix; see wpctlStep. This assertion still
+	// named the prefix form the fix in ff1cd5d removed.
+	if !strings.Contains(string(raw), "set-volume @DEFAULT_AUDIO_SINK@ 5%+") {
 		t.Fatalf("wpctl log = %q", raw)
 	}
 	reqs := drainAux(t, reg, 1)

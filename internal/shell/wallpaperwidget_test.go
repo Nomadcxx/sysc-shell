@@ -54,9 +54,17 @@ func TestEveryKnownBarItemBuilds(t *testing.T) {
 		}
 		t.Run(id, func(t *testing.T) {
 			t.Parallel()
-			if got := buildWidgets([]config.Item{{ID: id}}, 8); len(got) == 0 {
-				t.Errorf("%q is a known bar item but builds no widget", id)
+			got := buildWidgets([]config.Item{{ID: id}}, 8)
+			if len(got) == 0 {
+				t.Fatalf("%q is a known bar item but builds no widget", id)
 			}
+			// Building is half the contract. applyLocked reads state through
+			// refresh, or else through format and inner, so a widget missing
+			// the one it does not set panics on the first bar apply -- which
+			// happens inside the wl_output.done handler, where the panic is
+			// recovered into an error and the shell simply never appears.
+			bar := &Bar{left: got}
+			bar.apply(barView{})
 		})
 	}
 }
