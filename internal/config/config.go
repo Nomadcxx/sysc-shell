@@ -7,6 +7,7 @@ package config
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -407,4 +408,17 @@ func (c Config) TemplateEnabled(name string) bool {
 
 func pathErr(path, format string, args ...any) error {
 	return fmt.Errorf("config: %s: %s", path, fmt.Sprintf(format, args...))
+}
+
+// KnownItemIDs lists the bar widget vocabulary in a stable order. The config
+// vocabulary and the shell's widget builder are two lists that have to agree;
+// exporting this lets a test in the shell assert they do, rather than the two
+// drifting until an accepted item silently draws nothing.
+func KnownItemIDs() []string {
+	out := make([]string, 0, len(knownItems))
+	for id := range knownItems {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
 }

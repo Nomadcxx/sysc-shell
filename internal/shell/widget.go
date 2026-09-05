@@ -241,6 +241,8 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 			})
 		case "notifications":
 			out = append(out, buildNotifyWidget())
+		case "wallpaper":
+			out = append(out, buildWallpaperWidget())
 		case "running-apps":
 			row := &ui.Node{Kind: ui.KindRow, Gap: runningAppGap}
 			cap := &ui.Node{Kind: ui.KindCapsule}
