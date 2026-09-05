@@ -313,7 +313,7 @@ func (t Tokens) Repair(highContrast bool) Tokens {
 }
 
 type Source struct {
-	Kind string // wallpaper | hex | stock
+	Kind string // wallpaper | hex | stock | palette
 	Seed string
 }
 

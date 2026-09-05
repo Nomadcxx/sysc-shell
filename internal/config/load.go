@@ -1073,7 +1073,7 @@ func applyTheme(base Theme, w wireTheme, path string) (Theme, error) {
 	return out, nil
 }
 
-var themeSources = map[string]bool{"wallpaper": true, "hex": true, "stock": true}
+var themeSources = map[string]bool{"wallpaper": true, "hex": true, "stock": true, "palette": true}
 var themeModes = map[string]bool{"dark": true, "light": true}
 var osdPositions = map[string]bool{
 	"top-left": true, "top-center": true, "top-right": true,

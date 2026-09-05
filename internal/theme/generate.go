@@ -55,6 +55,20 @@ func (g Generator) Generate(src Source, opts Options) (Tokens, error) {
 		return fallback, fmt.Errorf("theme: write %s: %w", tplPath, err)
 	}
 
+	// A named palette is not generated: the scheme carries its own colours, so
+	// there is nothing for matugen to derive and no reason to spawn it. It
+	// still goes through the same validation every generated palette does.
+	if src.Kind == "palette" {
+		tok, ok := NamedPalette(src.Seed, opts.Mode, opts.HighContrast)
+		if !ok {
+			return fallback, fmt.Errorf("theme: %q is not a named palette", src.Seed)
+		}
+		if err := tok.Valid(opts.HighContrast); err != nil {
+			return fallback, fmt.Errorf("theme: palette %q is unusable: %w", src.Seed, err)
+		}
+		return tok, nil
+	}
+
 	args := make([]string, 0, 12)
 	switch src.Kind {
 	case "wallpaper":

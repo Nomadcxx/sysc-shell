@@ -46,8 +46,12 @@ func DefaultFor(cfg config.Config) *Registry {
 		{Path: "bar.items.left", Label: "Left items", Section: "Bar", Kind: KindString},
 		{Path: "bar.items.center", Label: "Center items", Section: "Bar", Kind: KindString},
 		{Path: "bar.items.right", Label: "Right items", Section: "Bar", Kind: KindString},
-		{Path: "appearance.source", Label: "Theme source", Section: "Appearance", Kind: KindEnum, Options: []string{"wallpaper", "hex", "stock"}},
+		{Path: "appearance.source", Label: "Theme source", Section: "Appearance", Kind: KindEnum, Options: []string{"wallpaper", "hex", "stock", "palette"}},
 		{Path: "appearance.seed", Label: "Seed", Section: "Appearance", Kind: KindString},
+		// The palette entry writes the same field the seed does: with source
+		// set to palette the seed names a scheme, and an enum is a kinder way
+		// to pick one than typing it.
+		{Path: "appearance.palette", Label: "Palette", Section: "Appearance", Kind: KindEnum, Options: theme.PaletteNames()},
 		{Path: "appearance.scheme", Label: "Scheme", Section: "Appearance", Kind: KindString},
 		{Path: "appearance.mode", Label: "Mode", Section: "Appearance", Kind: KindEnum, Options: []string{"dark", "light"}},
 		// The D3 composition axes. Percent and weight fields go through the
@@ -205,6 +209,11 @@ func (e Entry) Get(c config.Config) string {
 		return c.ThemeGen.Source
 	case "appearance.seed":
 		return c.ThemeGen.Seed
+	case "appearance.palette":
+		if c.ThemeGen.Source == "palette" {
+			return c.ThemeGen.Seed
+		}
+		return ""
 	case "appearance.scheme":
 		return c.ThemeGen.Scheme
 	case "appearance.mode":
@@ -375,6 +384,11 @@ func (e Entry) setString(c *config.Config, v string) error {
 	case "appearance.source":
 		c.ThemeGen.Source = v
 	case "appearance.seed":
+		c.ThemeGen.Seed = v
+	case "appearance.palette":
+		// Choosing a palette is choosing the source too; leaving the source on
+		// wallpaper would silently ignore the choice.
+		c.ThemeGen.Source = "palette"
 		c.ThemeGen.Seed = v
 	case "appearance.scheme":
 		c.ThemeGen.Scheme = v
