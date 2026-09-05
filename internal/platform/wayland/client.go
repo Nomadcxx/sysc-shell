@@ -206,6 +206,13 @@ type owner struct {
 	focus pointerFocus
 	// keyFocus is the surface that currently has keyboard enter.
 	keyFocus keyFocus
+	// repeat is the client-side key repeat timer, driven by the loop's poll
+	// deadline. The compositor sends one key event per press and leaves the
+	// rest to us.
+	repeat keyRepeat
+	// clock is the owner's time source. Nil means time.Now; tests replace it
+	// to drive the repeat deadline without sleeping.
+	clock func() time.Time
 	// cfg is the live configuration. It is replaced only after a candidate has
 	// resolved for every connected output.
 	cfg *config.Config
@@ -538,8 +545,13 @@ func (o *owner) onSeatCapabilities(e client.SeatCapabilitiesEvent) {
 		keyboard.SetKeyHandler(func(e client.KeyboardKeyEvent) {
 			o.deliverKey(e.Serial, e.Key, e.State)
 		})
+		// repeat_info arrives before any key event and can be resent later.
+		keyboard.SetRepeatInfoHandler(func(e client.KeyboardRepeatInfoEvent) {
+			o.setRepeatInfo(e.Rate, e.Delay)
+		})
 	case !hasKeyboard && o.keyboard != nil:
 		o.leaveKeyboard()
+		o.setRepeatInfo(0, 0)
 		o.fail(o.keyboard.Release())
 		o.keyboard = nil
 	}
@@ -1106,10 +1118,13 @@ func (o *owner) loop(ctx context.Context) error {
 			continue
 		}
 
-		waylandReady, wakeReady, err := o.poll(wake.read, -1)
+		waylandReady, wakeReady, err := o.poll(wake.read, o.repeatTimeout())
 		if err != nil {
 			return err
 		}
+		// A held key is a deadline on the poll above, so the synthetic press
+		// is delivered here, on the owner goroutine, exactly like a real one.
+		o.fireRepeat()
 		if wakeReady {
 			wake.drain()
 			if wake.takeReload() {
