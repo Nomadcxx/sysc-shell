@@ -607,6 +607,7 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 		Keyboard:      keyboardExclusive,
 		Callbacks: wayland.HostCallbacks{
 			OpaqueBackground: h.theme.BackgroundOpaque(),
+			Radius:           h.theme.Radius,
 			Configure:        h.configureLocking(r),
 			Render:           h.renderLocking(r),
 			Handle:           h.handle(r),
@@ -1402,7 +1403,10 @@ func panelTargetSize(id PanelID) ui.Rect {
 	case PanelSettings:
 		return ui.Rect{W: 900, H: 620}
 	case PanelLauncher:
-		return ui.Rect{W: 560, H: 500}
+		// 700 is DMS spotlight's own height. FittedSize caps this to the
+		// output before placement, so a short screen clamps rather than
+		// overflowing -- the lesson the wallpaper picker paid for.
+		return ui.Rect{W: 560, H: 700}
 	case PanelSession:
 		return ui.Rect{W: 420, H: 360}
 	case PanelPlugin:

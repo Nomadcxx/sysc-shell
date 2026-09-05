@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,6 +19,8 @@ import (
 	launcher "github.com/Nomadcxx/sysc-launch"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -69,6 +72,7 @@ func openLauncherPanel(t *testing.T, entries []launcher.Entry) (*Registry, *reco
 	run := &recordedSpawn{}
 	svc := launcher.NewService(launcher.ServiceConfig{
 		Scan: func() []launcher.Entry { return entries },
+		Rank: launcherRank,
 		Run:  run.run,
 	})
 	reg.mu.Lock()
@@ -112,6 +116,19 @@ func TestLauncherHistoryPath(t *testing.T) {
 	if homeOnly != wantHome {
 		t.Fatalf("home fallback: got %q, want %q", homeOnly, wantHome)
 	}
+}
+
+// launcherListNode finds the virtual list by kind. The tree gained a rail
+// above it and a footer below, so its index is not a stable handle.
+func launcherListNode(t *testing.T, h *PanelHost) *ui.Node {
+	t.Helper()
+	for _, c := range h.root.Children {
+		if c.Kind == ui.KindVirtualList {
+			return c
+		}
+	}
+	t.Fatal("no virtual list in the launcher tree")
+	return nil
 }
 
 func launcherHost(t *testing.T, reg *Registry) *PanelHost {
@@ -181,14 +198,14 @@ func TestParsePanelNameLauncher(t *testing.T) {
 func TestLauncherPanelGeometry(t *testing.T) {
 	t.Parallel()
 
-	if got := panelTargetSize(PanelLauncher); got.W != 560 || got.H != 500 {
-		t.Fatalf("target size = %dx%d, want 560x500", got.W, got.H)
+	if got := panelTargetSize(PanelLauncher); got.W != 560 || got.H != 700 {
+		t.Fatalf("target size = %dx%d, want 560x700", got.W, got.H)
 	}
 
 	reg, _, reqs := openLauncherPanel(t, launcherTestEntries())
 	panel := reqs[1].Open
-	if panel.Width != 560 || panel.Height != 500 {
-		t.Fatalf("surface = %dx%d, want 560x500", panel.Width, panel.Height)
+	if panel.Width != 560 || panel.Height != 700 {
+		t.Fatalf("surface = %dx%d, want 560x700", panel.Width, panel.Height)
 	}
 
 	reg.mu.Lock()
@@ -196,7 +213,7 @@ func TestLauncherPanelGeometry(t *testing.T) {
 	reg.mu.Unlock()
 	anchor := 40 + gap
 	avail := 1080 - anchor - pad
-	wantTop := anchor + (avail-500)/2
+	wantTop := anchor + (avail-700)/2
 	if int(panel.MarginTop) != wantTop {
 		t.Fatalf("margin top = %d, want vertically centred %d", panel.MarginTop, wantTop)
 	}
@@ -225,9 +242,10 @@ func TestLauncherSearchFieldHasChromeHeight(t *testing.T) {
 	h := launcherHost(t, reg)
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
-	field := h.root.Children[0]
+	// The rail is first; the field follows it.
+	field := h.root.Children[1]
 	if field.Kind != ui.KindTextField {
-		t.Fatalf("first child = %v, want KindTextField", field.Kind)
+		t.Fatalf("second child = %v, want KindTextField", field.Kind)
 	}
 	if field.Bounds.H != launcherFieldHeight {
 		t.Fatalf("search field height = %d, want %d", field.Bounds.H, launcherFieldHeight)
@@ -241,14 +259,17 @@ func TestLauncherListFillsThePanel(t *testing.T) {
 	h := launcherHost(t, reg)
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
-	list := h.root.Children[len(h.root.Children)-1]
-	if list.Kind != ui.KindVirtualList {
-		t.Fatalf("list kind = %v", list.Kind)
-	}
+	list := launcherListNode(t, h)
 	bottom := list.Bounds.Y + list.Bounds.H
-	wantBottom := 500 - 12
-	if list.Bounds.H < 400 || bottom != wantBottom {
-		t.Fatalf("list %+v, want height >= 400 ending at %d", list.Bounds, wantBottom)
+	wantBottom := 700 - 12 - h.launcherFooterHeight() - 8
+	// 700 less the padding, rail, field and gaps leaves 576, which is 8.4
+	// rows against the 6.2 the 500-tall panel showed.
+	if list.Bounds.H != h.launcherListHeight() || bottom != wantBottom {
+		t.Fatalf("list %+v, want height %d ending at %d",
+			list.Bounds, h.launcherListHeight(), wantBottom)
+	}
+	if rows := list.Bounds.H / launcherSlotHeight; rows < 8 {
+		t.Fatalf("only %d rows visible; the taller panel is the whole point", rows)
 	}
 }
 
@@ -264,13 +285,13 @@ func TestLauncherTreeShape(t *testing.T) {
 	if root.Kind != ui.KindColumn {
 		t.Fatalf("root kind = %v, want KindColumn", root.Kind)
 	}
-	if root.Children[0].Kind != ui.KindTextField {
-		t.Fatalf("first child kind = %v, want KindTextField", root.Children[0].Kind)
+	if root.Children[0].Kind != ui.KindRow {
+		t.Fatalf("first child kind = %v, want the SYSC rail row", root.Children[0].Kind)
 	}
-	list := root.Children[len(root.Children)-1]
-	if list.Kind != ui.KindVirtualList {
-		t.Fatalf("list kind = %v, want KindVirtualList", list.Kind)
+	if root.Children[1].Kind != ui.KindTextField {
+		t.Fatalf("second child kind = %v, want KindTextField", root.Children[1].Kind)
 	}
+	list := launcherListNode(t, h)
 	if list.ItemHeight != launcherSlotHeight {
 		t.Fatalf("row height = %d, want %d", list.ItemHeight, launcherSlotHeight)
 	}
@@ -541,5 +562,173 @@ func writeLauncherPNG(t *testing.T, path string) {
 	}
 	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The live desktop has 482 desktop entries and the browse list used to arrive
+// capped at 50, which ends in the E's. End must reach the last of them.
+func TestLauncherBrowseListsEveryEntry(t *testing.T) {
+	t.Parallel()
+
+	entries := alphabetEntries(482)
+	reg, _, reqs := openLauncherPanel(t, entries)
+	pressLauncherKey(reqs, keyEnd)
+
+	h := launcherHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if got := len(h.launcherResults); got != len(entries) {
+		t.Fatalf("browse list holds %d of %d entries", got, len(entries))
+	}
+	last := h.launcherResults[h.launcherSel]
+	if h.launcherSel != len(entries)-1 {
+		t.Fatalf("End selected row %d, want %d", h.launcherSel, len(entries)-1)
+	}
+	if last.Entry.Name[:1] != "Z" {
+		t.Fatalf("End landed on %q, want a Z entry", last.Entry.Name)
+	}
+}
+
+// A panel clears its buffer and fills a rounded body, so its corners are
+// transparent. The opaque region is a promise to the compositor that it may
+// skip blending, so it has to exclude those corners -- claiming the whole
+// rectangle composites the cleared pixels straight out and the corners read as
+// black squares behind the border instead of wallpaper. The aux path used to
+// hardcode radius 0, which made that claim for every panel in the shell.
+func TestPanelSurfaceCarriesItsCornerRadius(t *testing.T) {
+	t.Parallel()
+
+	_, _, reqs := openLauncherPanel(t, launcherTestEntries())
+	panel := reqs[1].Open
+	if panel == nil {
+		t.Fatal("no panel surface was opened")
+	}
+	if got := panel.Callbacks.Radius; got <= 0 {
+		t.Fatalf("panel Radius = %d, want the painted corner radius so the "+
+			"opaque region can exclude the corners", got)
+	}
+	if !panel.Callbacks.OpaqueBackground {
+		t.Skip("opaque background is off, so no opaque region is set at all")
+	}
+}
+
+// The rail is the SYSC mark between two six-slash runs, centred. It is the
+// panel's title, so the slashes take RoleTitle and the accent tone.
+func TestLauncherRailIsTheSyscMark(t *testing.T) {
+	t.Parallel()
+
+	reg, _, _ := openLauncherPanel(t, launcherTestEntries())
+	h := launcherHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	rail := h.root.Children[0]
+	if rail.Kind != ui.KindRow || !rail.CenterX {
+		t.Fatalf("rail kind = %v centred = %v, want a centred KindRow", rail.Kind, rail.CenterX)
+	}
+	if len(rail.Children) != 3 {
+		t.Fatalf("rail has %d children, want slashes, mark, slashes", len(rail.Children))
+	}
+	for _, i := range []int{0, 2} {
+		side := rail.Children[i]
+		if side.Kind != ui.KindText || side.Text != "//////" {
+			t.Fatalf("rail[%d] = %v %q, want six slashes", i, side.Kind, side.Text)
+		}
+		if side.Tone != ui.ToneAccent {
+			t.Fatalf("rail[%d] tone = %v, want ToneAccent", i, side.Tone)
+		}
+	}
+	mark := rail.Children[1]
+	if mark.Kind != ui.KindWordmark {
+		t.Fatalf("rail centre = %v, want KindWordmark", mark.Kind)
+	}
+	if mark.ImageH != launcherMarkHeight || mark.ImageW != render.WordmarkWidth(launcherMarkHeight) {
+		t.Fatalf("mark box = %dx%d, want %dx%d from the asset's aspect",
+			mark.ImageW, mark.ImageH, render.WordmarkWidth(launcherMarkHeight), launcherMarkHeight)
+	}
+
+	// Centred means centred: equal slack either side of the laid-out rail.
+	left := rail.Bounds.X - h.root.Bounds.X - 12
+	right := (h.root.Bounds.X + h.root.Bounds.W - 12) - (rail.Bounds.X + rail.Bounds.W)
+	if diff := left - right; diff > 1 || diff < -1 {
+		t.Fatalf("rail slack is %d left and %d right; it is not centred", left, right)
+	}
+}
+
+// The chrome above the list is measured, not assumed. A constant header height
+// left a dead strip along the bottom of the panel when the row laid out
+// shorter than the guess.
+func TestLauncherListReachesThePanelFloor(t *testing.T) {
+	t.Parallel()
+
+	reg, _, _ := openLauncherPanel(t, alphabetEntries(60))
+	h := launcherHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	footer := h.root.Children[len(h.root.Children)-1]
+	if got, want := footer.Bounds.Y+footer.Bounds.H, h.place.Panel.H-12; got != want {
+		t.Fatalf("footer ends at %d, want the panel floor %d; the chrome "+
+			"estimate and the laid-out chrome disagree", got, want)
+	}
+}
+
+// The footer is DMS's "keyboard hints at the bottom", carrying sysc-greet's
+// own help line so the two surfaces read as one family.
+func TestLauncherFooterCountsAndHints(t *testing.T) {
+	t.Parallel()
+
+	reg, _, _ := openLauncherPanel(t, alphabetEntries(199))
+	h := launcherHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	footer := h.root.Children[len(h.root.Children)-1]
+	if footer.Kind != ui.KindText || !footer.CenterX {
+		t.Fatalf("footer = %v centred %v, want centred text", footer.Kind, footer.CenterX)
+	}
+	if footer.TextRole != theme.RoleCaption {
+		t.Fatalf("footer role = %v, want RoleCaption", footer.TextRole)
+	}
+	if !strings.HasPrefix(footer.Text, "199 apps") {
+		t.Fatalf("footer = %q, want it to open with the browse count", footer.Text)
+	}
+	if !strings.Contains(footer.Text, launcherHints) {
+		t.Fatalf("footer = %q, want sysc-greet's help line", footer.Text)
+	}
+}
+
+// Browsing counts apps; searching counts results. The noun has to follow the
+// query or the footer states something false the moment you type.
+func TestLauncherFooterNounFollowsTheQuery(t *testing.T) {
+	t.Parallel()
+
+	reg, _, reqs := openLauncherPanel(t, launcherTestEntries())
+	handle := reqs[1].Open.Callbacks.Handle
+	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: 33}) // F
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return strings.TrimSpace(h.query) != ""
+	})
+
+	h := launcherHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	footer := h.root.Children[len(h.root.Children)-1]
+	if !strings.Contains(footer.Text, "results") {
+		t.Fatalf("footer = %q, want it to say results while searching", footer.Text)
+	}
+}
+
+// With nothing matched the hints matter most, so the footer stays.
+func TestLauncherFooterSurvivesTheEmptyState(t *testing.T) {
+	t.Parallel()
+
+	reg, _, _ := openLauncherPanel(t, nil)
+	h := launcherHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	footer := h.root.Children[len(h.root.Children)-1]
+	if footer.Kind != ui.KindText || !strings.Contains(footer.Text, launcherHints) {
+		t.Fatalf("empty state footer = %+v, want the help line", footer)
 	}
 }

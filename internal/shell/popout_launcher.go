@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -10,18 +11,34 @@ import (
 	launcher "github.com/Nomadcxx/sysc-launch"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
-// Launcher chrome: pill search, 60px-row list, 8px gap between pills.
-// The 40px icon slot is a letter until a theme raster lands.
+// Launcher chrome: SYSC rail, pill search, 60px-row list, 8px gap between
+// pills. The 40px icon slot is a letter until a theme raster lands.
+//
+// The row and icon match DMS spotlight exactly, which arrived at the same 60
+// and 40 independently. The list is shorter than DMS's only because the panel
+// was 500 tall against its 700; the row was never the constraint.
 const (
 	launcherRowHeight   = 60
 	launcherRowGap      = 8
 	launcherSlotHeight  = launcherRowHeight + launcherRowGap
-	launcherFieldHeight = 44
+	launcherFieldHeight = 56
 	launcherIconSlot    = 40
+	launcherMarkHeight  = 23
+	// launcherHints is sysc-greet's own help line, verbatim. The greeter puts
+	// the same string under every menu, so the launcher reads as the same
+	// family rather than inventing its own key legend.
+	launcherHints = "\u2191\u2193 Navigate \u2022 Enter Select \u2022 Esc Close"
+	// launcherSlashRun is one side of the rail. sysc-greet pads its own rails
+	// to a fixed width and lets the count fall where it may; this one is a
+	// fixed six each side because the mark between them is a raster, not text,
+	// so there is no width to pad to. The rail takes RoleTitle: it is the
+	// panel's title, and 16/600 carries its weight beside the mark.
+	launcherSlashRun = "//////"
 )
 
 // launcherServiceLocked returns the process-wide launcher service, creating
@@ -32,6 +49,7 @@ func (r *Registry) launcherServiceLocked() *launcher.Service {
 	if r.launcherSvc == nil {
 		r.launcherSvc = launcher.NewService(launcher.ServiceConfig{
 			History: launcher.OpenHistory(launcherHistoryPath(os.Getenv), nil),
+			Rank:    launcherRank,
 		})
 		go r.relayLauncher(r.launcherSvc)
 	}
@@ -75,9 +93,100 @@ func (r *Registry) relayLauncher(svc *launcher.Service) {
 	}
 }
 
-// launcherTree projects the current snapshot: one text field above a virtual
-// list of result capsules. The selected row is a muted wash; every row
-// carries the 40px glyph slot, bold name, and comment.
+// launcherHeader is the SYSC rail: six slashes, the brand mark, six slashes.
+//
+// The mark is KindWordmark rather than text because the surface renders one
+// face at one size -- a larger or different-faced header would mean threading
+// a size through MeasureText, which every measure path in the layout engine
+// would have to change. A tinted raster sidesteps all of it and re-colours
+// with the theme, so the mark follows the palette like the rest of the chrome.
+func launcherHeader() *ui.Node {
+	slashes := func() *ui.Node {
+		return &ui.Node{Kind: ui.KindText, Text: launcherSlashRun,
+			TextRole: theme.RoleTitle, Tone: ui.ToneAccent}
+	}
+	return &ui.Node{
+		Kind: ui.KindRow, Gap: 10, CenterX: true,
+		Children: []*ui.Node{
+			slashes(),
+			{
+				Kind:   ui.KindWordmark,
+				ImageW: render.WordmarkWidth(launcherMarkHeight),
+				ImageH: launcherMarkHeight,
+			},
+			slashes(),
+		},
+	}
+}
+
+// launcherHeaderHeight is the rail's laid-out height: a row reports its
+// tallest child, which is the mark unless the title face is taller.
+//
+// Measured rather than assumed. A constant here was five pixels out from what
+// the row actually laid out, and the list inherited the error as a dead strip
+// along the bottom of the panel.
+func (h *PanelHost) launcherHeaderHeight() int {
+	tall := launcherMarkHeight
+	if measure := h.measureText(); measure != nil {
+		if _, th := measure(launcherSlashRun, ui.TextAttrs{Role: theme.RoleTitle}); th > tall {
+			tall = th
+		}
+	}
+	return tall
+}
+
+// launcherFooter is the strip DMS calls its launcher footer -- "mode tabs and
+// keyboard hints at the bottom". There are no mode tabs to show until a grid
+// view exists, so it carries the result count and the key legend.
+//
+// The count earns its place: the browse list is 199 entries on this machine
+// and used to arrive capped at 50, which read as a list that simply stopped.
+// Saying how many there are makes that visible.
+//
+// RoleCaption rather than a muted colour. The palette deliberately has no
+// muted text tone -- it measures 1.47:1 and cannot carry text -- so the
+// footer steps back by size, not by contrast.
+func launcherFooter(h *PanelHost, count int) *ui.Node {
+	noun := "results"
+	if strings.TrimSpace(h.query) == "" {
+		noun = "apps"
+	}
+	return &ui.Node{
+		Kind: ui.KindText, CenterX: true, TextRole: theme.RoleCaption,
+		Text: fmt.Sprintf("%d %s \u2022 %s", count, noun, launcherHints),
+	}
+}
+
+// launcherFooterHeight is the footer's laid-out height, measured for the same
+// reason the rail's is: the list sizes from what is left, so a constant that
+// disagrees with the laid-out chrome shows up as a dead strip.
+func (h *PanelHost) launcherFooterHeight() int {
+	measure := h.measureText()
+	if measure == nil {
+		return 0
+	}
+	_, th := measure(launcherHints, ui.TextAttrs{Role: theme.RoleCaption})
+	return th
+}
+
+// launcherListHeight is the viewport the virtual list gets: the panel minus
+// its padding, the rail, the field, the footer, and the gaps between them.
+//
+// Selection scrolling, page steps, and the list node all size from this one
+// function. They were three copies of the same arithmetic, and an error label
+// already made them disagree.
+func (h *PanelHost) launcherListHeight() int {
+	used := 24 + h.launcherHeaderHeight() + 8 + launcherFieldHeight + 8 +
+		h.launcherFooterHeight() + 8
+	if h.errLabel != "" {
+		used += 24 + 8
+	}
+	return max(h.place.Panel.H-used, launcherSlotHeight)
+}
+
+// launcherTree projects the current snapshot: the rail and one text field
+// above a virtual list of result capsules. The selected row is a muted wash;
+// every row carries the 40px glyph slot, bold name, and comment.
 func launcherTree(r *Registry, h *PanelHost) *ui.Node {
 	if h.search == nil {
 		h.search = ui.NewField("")
@@ -87,7 +196,7 @@ func launcherTree(r *Registry, h *PanelHost) *ui.Node {
 	field.Height = launcherFieldHeight
 	field.Padding = 8
 
-	head := []*ui.Node{}
+	head := []*ui.Node{launcherHeader()}
 	if h.errLabel != "" {
 		head = append(head, &ui.Node{Kind: ui.KindText, Text: h.errLabel, Tone: ui.ToneError})
 	}
@@ -95,18 +204,14 @@ func launcherTree(r *Registry, h *PanelHost) *ui.Node {
 
 	results := h.launcherResults
 	if len(results) == 0 {
-		head = append(head, &ui.Node{Kind: ui.KindText, Text: "No results"})
+		head = append(head,
+			&ui.Node{Kind: ui.KindText, Text: "No results"},
+			launcherFooter(h, 0))
 		return &ui.Node{Kind: ui.KindColumn, Gap: 8, Padding: 12, Children: head}
 	}
 	h.launcherSel = min(max(h.launcherSel, 0), len(results)-1)
 
-	listH := h.place.Panel.H - 24 - launcherFieldHeight - 8
-	if h.errLabel != "" {
-		listH -= 24
-	}
-	if listH < launcherSlotHeight {
-		listH = launcherSlotHeight
-	}
+	listH := h.launcherListHeight()
 	list := &ui.Node{
 		Kind:         ui.KindVirtualList,
 		Height:       listH,
@@ -117,7 +222,8 @@ func launcherTree(r *Registry, h *PanelHost) *ui.Node {
 			return launcherRow(r, h, results, i)
 		},
 	}
-	return &ui.Node{Kind: ui.KindColumn, Gap: 8, Padding: 12, Children: append(head, list)}
+	return &ui.Node{Kind: ui.KindColumn, Gap: 8, Padding: 12,
+		Children: append(head, list, launcherFooter(h, len(results)))}
 }
 
 func launcherRow(r *Registry, h *PanelHost, results []launcher.Result, i int) *ui.Node {
@@ -198,11 +304,8 @@ func launcherGlyph(name string) string {
 // launcherVisibleOffset keeps the selected row inside the viewport across the
 // rebuild every keystroke triggers; the wheel offset survives via
 // h.launcherScroll until selection forces a correction.
-//
-// ponytail: the view height is derived from the fixed chrome constants rather
-// than the laid-out list bounds, so an error label eats into the estimate.
 func (h *PanelHost) launcherVisibleOffset(count int) int {
-	viewH := h.place.Panel.H - 24 - launcherFieldHeight - 8
+	viewH := h.launcherListHeight()
 	maxOff := max(count*launcherSlotHeight-viewH, 0)
 	off := min(max(h.launcherScroll, 0), maxOff)
 	if top := h.launcherSel * launcherSlotHeight; top < off {
@@ -258,8 +361,7 @@ func (h *PanelHost) launcherMoveSel(r *Registry, delta int) {
 }
 
 func (h *PanelHost) launcherPageRows() int {
-	viewH := h.place.Panel.H - 24 - launcherFieldHeight - 8
-	return max(viewH/launcherSlotHeight, 1)
+	return max(h.launcherListHeight()/launcherSlotHeight, 1)
 }
 
 // launcherActivateSelected activates the highlighted row. An overview row
