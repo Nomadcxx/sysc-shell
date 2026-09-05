@@ -20,6 +20,8 @@ func sampleNode(k Kind) *Node {
 		n.Icon = "check"
 	case KindSegmented:
 		n.Children = []*Node{{Kind: KindButton, Text: "c"}}
+	case KindWordmark:
+		n.ImageW, n.ImageH = 168, 23
 	}
 	return n
 }
@@ -30,7 +32,7 @@ var allKinds = []Kind{
 	KindRow, KindText, KindMeter, KindButton, KindGraph, KindColumn,
 	KindSeparator, KindTab, KindToggle, KindSlider, KindMenu, KindTextField,
 	KindScroll, KindVirtualList, KindImage, KindCapsule, KindIcon, KindSegmented,
-	KindDragSource, KindDropZone,
+	KindDragSource, KindDropZone, KindWordmark,
 }
 
 // rowUnsupported and columnUnsupported name the kinds each measure path

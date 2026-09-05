@@ -37,6 +37,13 @@ func LayoutColumn(root *Node, bounds Rect, measure MeasureText) error {
 			return fmt.Errorf("ui: child %d: %w", i, err)
 		}
 		box := Rect{X: content.X, Y: y, W: content.W, H: h}
+		if child.CenterX {
+			narrowed, err := centeredTrack(child, box, measure)
+			if err != nil {
+				return fmt.Errorf("ui: child %d: %w", i, err)
+			}
+			box = narrowed
+		}
 		if err := placeColumnChild(child, box, measure); err != nil {
 			return fmt.Errorf("ui: child %d: %w", i, err)
 		}
@@ -54,6 +61,11 @@ func ContentHeight(n *Node, width int, measure MeasureText) (int, error) {
 
 func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 	switch n.Kind {
+	case KindWordmark:
+		if _, h, ok := imageBox(n); ok {
+			return h, nil
+		}
+		return 0, fmt.Errorf("ui: wordmark has no box")
 	case KindText, KindTab:
 		_, h := measure(n.Text, TextAttrsOf(n))
 		return h, nil
@@ -349,4 +361,28 @@ func layoutScroll(root *Node, bounds Rect, measure MeasureText) error {
 		y += ch
 	}
 	return nil
+}
+
+// centeredTrack narrows a column child's track to the child's natural width
+// and centres that narrower box, which is how a child ends up in the middle of
+// a column that otherwise hands every child the full content width.
+//
+// Narrowing before placement rather than translating after it is what makes
+// this work for a container: a row handed the full track lays out *as* the
+// full track, so there is nothing left to shift. Measured first, the row
+// shrink-wraps its contents and the whole group centres together.
+//
+// A child at least as wide as the track keeps the full track. There is nowhere
+// to centre it, and a negative offset would push it off the panel's edge.
+func centeredTrack(child *Node, box Rect, measure MeasureText) (Rect, error) {
+	w, _, err := measureNode(child, box.H, measure)
+	if err != nil {
+		return Rect{}, err
+	}
+	if w <= 0 || w >= box.W {
+		return box, nil
+	}
+	box.X += (box.W - w) / 2
+	box.W = w
+	return box, nil
 }

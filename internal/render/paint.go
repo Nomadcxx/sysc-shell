@@ -247,6 +247,9 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 	case ui.KindGraph:
 		return paintGraph(c, n, style.Scale120.PhysicalRect(n.Bounds), style)
 
+	case ui.KindWordmark:
+		return paintWordmark(c, n, style)
+
 	case ui.KindImage:
 		// A node whose raster has not resolved paints nothing but keeps the
 		// box it measured, so the card does not reflow when it arrives.
@@ -902,6 +905,27 @@ func paintIcon(c *Canvas, n *ui.Node, text *TextRenderer, style Style) error {
 	return nil
 }
 
+// paintWordmark blends the embedded SYSC mark into its measured box, tinted
+// with the accent. It mirrors paintIcon: rasterise a mask at the physical
+// size that was measured, then blend it with one colour. The mark is scaled
+// to the box rather than centred in it, because the shell derives the box
+// from WordmarkAspect and the two agree by construction.
+func paintWordmark(c *Canvas, n *ui.Node, style Style) error {
+	box := style.Scale120.PhysicalRect(n.Bounds)
+	if box.W <= 0 || box.H <= 0 {
+		return nil
+	}
+	mask, err := Wordmark(box.W, box.H)
+	if err != nil {
+		return fmt.Errorf("render: wordmark: %w", err)
+	}
+	if mask == nil {
+		return nil
+	}
+	blendMask(c, mask, box.X, box.Y, style.accent())
+	return nil
+}
+
 // A button is a stadium unless it carries an explicit card radius.
 // A button is a stadium unless it carries an explicit card radius.
 func paintButton(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
@@ -963,8 +987,11 @@ func paintSearchMark(c *Canvas, field ui.Rect, slot int, fg, well Color) {
 }
 
 func textColor(style Style, tone ui.Tone) Color {
-	if tone == ui.ToneError {
+	switch tone {
+	case ui.ToneError:
 		return style.Error
+	case ui.ToneAccent:
+		return style.accent()
 	}
 	return style.Foreground
 }

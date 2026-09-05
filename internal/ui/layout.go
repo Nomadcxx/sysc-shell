@@ -415,6 +415,13 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		return size, size, nil
 	case KindSegmented:
 		return measureSegmented(n, measure)
+	case KindWordmark:
+		// The mark is always given an explicit box: the shell derives its
+		// width from render.WordmarkAspect so the asset owns its proportions.
+		if w, h, ok := imageBox(n); ok {
+			return w, h, nil
+		}
+		return 0, 0, fmt.Errorf("ui: wordmark has no box")
 	case KindImage:
 		if w, h, ok := imageBox(n); ok {
 			return w, h, nil

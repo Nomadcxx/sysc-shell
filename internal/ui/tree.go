@@ -34,6 +34,12 @@ const (
 
 	KindDragSource
 	KindDropZone
+	// KindWordmark paints the shell's own SYSC mark from an embedded alpha
+	// master, tinted with the accent colour. It is not KindIcon: that kind
+	// reserves a square, and the mark is a wide lockup. The node carries the
+	// box (ImageW/ImageH) so layout stays ignorant of the asset; the renderer
+	// owns the mark's pixels and its aspect ratio.
+	KindWordmark
 
 	// kindCount is one past the last kind. It exists so a test can assert that
 	// every declared kind is measurable, and it must stay last.
@@ -150,6 +156,12 @@ type Node struct {
 	ImageH int
 	// Tone selects the text colour. Zero is ToneNormal.
 	Tone Tone
+	// CenterX centres this child within its column track instead of placing
+	// it at the track's left edge. The child is measured first and its track
+	// narrowed to that width, so a container centres with its contents rather
+	// than laying out across the full width and leaving nothing to move. A
+	// child at least as wide as the track keeps the full track.
+	CenterX bool
 	// Fill selects a capsule's background, and a button's chrome. Zero is the
 	// surface capsule / an unfilled button (the wrapping pill is the chrome).
 	Fill Fill
@@ -253,6 +265,10 @@ type Tone uint8
 const (
 	ToneNormal Tone = iota
 	ToneError
+	// ToneAccent paints brand chrome -- the launcher's SYSC rail -- in the
+	// accent. It is not a muted tone: the accent is a foreground-weight token
+	// that carries text at full contrast, which the muted token cannot.
+	ToneAccent
 )
 
 // Shape names the corner treatment a node asks for.
