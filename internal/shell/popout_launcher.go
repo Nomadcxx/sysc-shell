@@ -38,7 +38,13 @@ const (
 	launcherRowGap       = 8
 	launcherSlotHeight   = launcherRowHeight + launcherRowGap
 	launcherFieldHeight  = 56
-	launcherMarkHeight   = 23
+	// launcherMarkHeight balances the raster against the slashes beside it.
+	// At 23 the mark stood taller than the RoleTitle run and the slashes read
+	// light next to it; the owner picked shrinking the mark over promoting the
+	// slashes to RoleHeadline, so the rail is lighter overall rather than
+	// heavier. The header is measured, not assumed, so the list takes back the
+	// pixels the shorter mark frees.
+	launcherMarkHeight = 19
 	// launcherHints is sysc-greet's own help line, verbatim. The greeter puts
 	// the same string under every menu, so the launcher reads as the same
 	// family rather than inventing its own key legend.
