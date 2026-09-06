@@ -78,6 +78,16 @@ func (f *Field) Backspace() {
 	f.Cursor -= size
 }
 
+// Clear empties the field. It is the pointer path's counterpart to holding
+// Backspace: a search well with a long query has no other way back to the
+// unfiltered list.
+func (f *Field) Clear() {
+	if f == nil {
+		return
+	}
+	f.Text, f.PreeditText, f.Cursor = "", "", 0
+}
+
 func (f *Field) DeleteSurrounding(before, after int) {
 	if f == nil {
 		return

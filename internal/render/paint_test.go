@@ -977,6 +977,89 @@ func TestSearchGlyphIsALensAndADiagonalHandle(t *testing.T) {
 	}
 }
 
+// A search well that holds a query grows a trailing clear glyph. Empty, it
+// must not: an affordance that does nothing is worse than none.
+func TestPaintSearchFieldDrawsATrailingClearOnlyWhenItHasText(t *testing.T) {
+	t.Parallel()
+	const w, h = 240, 48
+	style := capsuleStyle()
+	style.Body = ui.Rect{W: w, H: h}
+	field := ui.Rect{X: 4, Y: 8, W: 232, H: 32}
+
+	paint := func(t *testing.T, text string) (*Canvas, ui.Rect) {
+		t.Helper()
+		c := newTestCanvas(t, w, h)
+		n := &ui.Node{
+			Kind: ui.KindTextField, Name: "Search", Padding: 8,
+			Bounds: field, Text: text, Cursor: len(text),
+		}
+		root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{n}}
+		if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+			t.Fatal(err)
+		}
+		return c, SearchClearBox(n)
+	}
+
+	c, box := paint(t, "firefox")
+	if box.W == 0 {
+		t.Fatal("a field holding a query reserved no clear box")
+	}
+	if inked(t, c, box, style.Capsule) == 0 {
+		t.Fatalf("nothing painted in the clear box %+v", box)
+	}
+
+	empty, emptyBox := paint(t, "")
+	if emptyBox.W != 0 {
+		t.Fatalf("an empty well reserved a clear box %+v", emptyBox)
+	}
+	if got := inked(t, empty, box, style.Capsule); got != 0 {
+		t.Fatalf("%d inked pixels where the clear glyph would go; an empty well drew one", got)
+	}
+}
+
+// The glyph is a cross drawn corner to corner: ink on both diagonals, none in
+// the middle of an arm's neighbourhood off the diagonal.
+func TestClearGlyphIsACross(t *testing.T) {
+	t.Parallel()
+	const size, stroke = 24, 2
+	mask := ClearGlyphMask(size, stroke)
+	at := func(x, y int) int { return int(mask.AlphaAt(x, y).A) }
+
+	if got := at(12, 12); got == 0 {
+		t.Error("the arms do not meet at the centre")
+	}
+	for _, p := range []struct{ x, y int }{{7, 7}, {17, 17}, {17, 7}, {7, 17}} {
+		if got := at(p.x, p.y); got == 0 {
+			t.Errorf("arm end (%d,%d) painted nothing", p.x, p.y)
+		}
+	}
+	// Off both diagonals, midway along the box edge.
+	if got := at(12, 3); got != 0 {
+		t.Errorf("alpha %d above the crossing; a cross has nothing there", got)
+	}
+	partial := false
+	for y := 0; y < size && !partial; y++ {
+		for x := 0; x < size; x++ {
+			if a := at(x, y); a > 0 && a < 255 {
+				partial = true
+				break
+			}
+		}
+	}
+	if !partial {
+		t.Error("glyph has no partially covered pixels; it is not antialiased")
+	}
+}
+
+// The two glyphs share a cache. Keyed on size and stroke alone, whichever was
+// rasterised first would be handed back for both.
+func TestGlyphMasksDoNotShareACacheEntry(t *testing.T) {
+	t.Parallel()
+	if SearchGlyphMask(24, 2) == ClearGlyphMask(24, 2) {
+		t.Fatal("the magnifier and the cross came back as the same mask")
+	}
+}
+
 // --- Catalogue chrome -------------------------------------------------------
 
 // paintChromeNode lays a single node out at a fixed box and paints it against a
