@@ -89,6 +89,9 @@ type Registry struct {
 	// niriSend is the FocusWindow/CloseWindow seam. Tests replace it; nil
 	// sends niri.Action on $NIRI_SOCKET off this goroutine.
 	niriSend func(any) error
+	// killPID SIGTERMs one client pid. Tests replace it; nil uses os.FindProcess.
+	killPID func(int) error
+
 	// notify is the service-owned notification projection.
 	notify *notifyState
 
@@ -543,6 +546,7 @@ func (r *Registry) adoptBar(
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	r.attachRunningIconsAtLocked(bar.scale120())
 	bar.apply(r.viewLocked(connector))
 	r.bars[global] = bar
 	r.leases[global] = leases
@@ -905,17 +909,10 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	r.focused = s.FocusedOutput
 	r.ensureRunningIndexLocked()
 	r.running = groupRunningApps(s.Windows, r.runningIndex)
-	r.attachRunningIconsLocked()
 	if h := r.runningMenu; h != nil && h.open_ && !runningSlotPresent(r.running, h.slot.Key) {
 		h.closeLocked()
 	}
-
-	var changed []uint32
-	for global, bar := range r.bars {
-		if bar.apply(r.viewLocked(bar.connector())) {
-			changed = append(changed, global)
-		}
-	}
+	changed := r.applyRunningIconsLocked()
 	r.mu.Unlock()
 
 	r.publish(changed)
@@ -1044,11 +1041,24 @@ func weatherUnit(name string) services.Unit {
 }
 
 func (r *Registry) bindHost(global uint32, bar *Bar, hooks wayland.HostCallbacks) wayland.HostCallbacks {
-	inner := hooks.Handle
+	innerHandle := hooks.Handle
 	hooks.Handle = func(event wayland.Event) bool {
-		changed := inner(event)
+		changed := innerHandle(event)
 		r.drivePointerTooltip(global, bar, event)
 		return changed
+	}
+	innerConfigure := hooks.Configure
+	hooks.Configure = func(width, height, scale120 int) error {
+		prev := bar.scale120()
+		if err := innerConfigure(width, height, scale120); err != nil {
+			return err
+		}
+		if bar.scale120() == prev {
+			return nil
+		}
+		r.reprojectTray()
+		r.reprojectRunningApps()
+		return nil
 	}
 	return hooks
 }

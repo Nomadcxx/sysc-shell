@@ -377,7 +377,16 @@ func (h *runningAppMenuHost) chooseLocked(i int) {
 	slot := h.slot
 	h.closeLocked()
 	if row.CloseAll {
+		seen := map[int]struct{}{}
 		for _, w := range slot.Members {
+			if w.Pid > 0 {
+				if _, ok := seen[w.Pid]; ok {
+					continue
+				}
+				seen[w.Pid] = struct{}{}
+				h.r.signalPIDLocked(w.Pid)
+				continue
+			}
 			h.r.sendNiriLocked(niri.CloseWindow{ID: w.ID})
 		}
 		return

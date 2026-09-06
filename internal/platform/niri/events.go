@@ -44,6 +44,7 @@ type Window struct {
 	HasWorkspace   bool
 	Focused        bool
 	FocusTimestamp int64 // monotonic ns; 0 when null or omitted
+	Pid            int   // 0 when Niri sends null
 }
 
 // Snapshot is an immutable view of workspace and window state.
@@ -117,6 +118,7 @@ type wireWindow struct {
 	AppID          *string `json:"app_id"`
 	WorkspaceID    *uint64 `json:"workspace_id"`
 	IsFocused      *bool   `json:"is_focused"`
+	Pid            *int    `json:"pid"`
 	FocusTimestamp *struct {
 		Secs  uint64 `json:"secs"`
 		Nanos uint64 `json:"nanos"`
@@ -139,6 +141,9 @@ func (w wireWindow) project() (Window, error) {
 	}
 	if w.IsFocused != nil {
 		out.Focused = *w.IsFocused
+	}
+	if w.Pid != nil && *w.Pid > 0 {
+		out.Pid = *w.Pid
 	}
 	if w.FocusTimestamp != nil {
 		out.FocusTimestamp = int64(w.FocusTimestamp.Secs)*1e9 + int64(w.FocusTimestamp.Nanos)
