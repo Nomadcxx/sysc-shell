@@ -118,6 +118,18 @@ type PanelHost struct {
 	wallpaperOutput  string
 	wallpaperSel     int
 	wallpaperFocused bool
+	// wallpaperMenu names the open chrome dropdown ("folder" or "palette"),
+	// or is empty when none is. One field rather than a flag each keeps them
+	// mutually exclusive: two lists open at once would each claim a slice of
+	// the panel the grid was sized against.
+	wallpaperMenu string
+	// wallpaperPaletteSource and wallpaperPaletteSeed mirror cfg.ThemeGen so
+	// the theme combobox can show what is pinned. They are snapshotted when
+	// the tree is built, under Registry.mu, like wallpaperSnap.
+	wallpaperPaletteSource string
+	wallpaperPaletteSeed   string
+	// wallpaperThemeErr mirrors Registry.themeErr for the picker's banners.
+	wallpaperThemeErr string
 
 	notifyTab    int
 	notifyFilter string
@@ -802,7 +814,7 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			if h.id == PanelLauncher && h.launcherPointerPress(r, e) {
 				return true
 			}
-			if s := findScroll(h.root); s != nil && ui.ScrollTrack(s).Contains(h.hoverX, h.hoverY) {
+			if s := scrollTrackAt(h.root, h.hoverX, h.hoverY); s != nil {
 				h.scrollDrag = s
 				ui.ScrollSetFromY(s, h.hoverY)
 				if h.logicalW > 0 {
@@ -982,7 +994,7 @@ func (h *PanelHost) scrollAxis(r *Registry, e wayland.Event) bool {
 }
 
 func (h *PanelHost) scrollBy(delta int) bool {
-	s := findScroll(h.root)
+	s := scrollAt(h.root, h.hoverX, h.hoverY)
 	if s == nil {
 		return false
 	}
@@ -1020,6 +1032,65 @@ func findScroll(n *ui.Node) *ui.Node {
 		if got := findScroll(c); got != nil {
 			return got
 		}
+	}
+	return nil
+}
+
+// scrollAt is the scrollable region the wheel acts on: the deepest one under
+// the pointer, or the first in the tree when the pointer is over none.
+//
+// The fallback is what findScroll alone used to do, and on a panel with one
+// scrollable the two agree. They stop agreeing as soon as a panel has two --
+// the wallpaper picker has a folder list above its tile grid -- because tree
+// order then hands every wheel event to whichever happens to be built first,
+// and no amount of clicking in the other one can change that.
+//
+// Deepest wins because scrollables nest: a list inside a scrolled region is
+// the one the pointer is really over.
+func scrollAt(root *ui.Node, x, y int) *ui.Node {
+	if hit := deepestScrollAt(root, x, y); hit != nil {
+		return hit
+	}
+	return findScroll(root)
+}
+
+// scrollTrackAt is the scrollable whose scrollbar track the pointer is on.
+// Like scrollAt, this has to consider every scrollable rather than the first:
+// a track belongs to one region, and testing only one of two means the other
+// region's bar cannot be dragged at all.
+func scrollTrackAt(root *ui.Node, x, y int) *ui.Node {
+	var hit *ui.Node
+	forEachScroll(root, func(s *ui.Node) {
+		if hit == nil && ui.ScrollTrack(s).Contains(x, y) {
+			hit = s
+		}
+	})
+	return hit
+}
+
+func forEachScroll(n *ui.Node, fn func(*ui.Node)) {
+	if n == nil {
+		return
+	}
+	if n.Kind == ui.KindScroll || n.Kind == ui.KindVirtualList {
+		fn(n)
+	}
+	for _, c := range n.Children {
+		forEachScroll(c, fn)
+	}
+}
+
+func deepestScrollAt(n *ui.Node, x, y int) *ui.Node {
+	if n == nil || !n.Bounds.Contains(x, y) {
+		return nil
+	}
+	for _, c := range n.Children {
+		if got := deepestScrollAt(c, x, y); got != nil {
+			return got
+		}
+	}
+	if n.Kind == ui.KindScroll || n.Kind == ui.KindVirtualList {
+		return n
 	}
 	return nil
 }

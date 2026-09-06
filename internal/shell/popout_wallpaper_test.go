@@ -13,6 +13,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-shell/internal/wallpaper"
 )
@@ -552,12 +553,12 @@ func TestWallpaperChromeHasEveryControl(t *testing.T) {
 		t.Errorf("kind filter = %v, want All/Images/Videos", filters)
 	}
 
-	// Child directories live in their own compact band above the grid.
+	// Child directories are the folder dropdown's options.
 	if got := len(wallpaperDirs(h)); got != 1 {
-		t.Errorf("folder band holds %d entries, want the one child directory", got)
+		t.Errorf("folder dropdown holds %d entries, want the one child directory", got)
 	}
-	if wallpaperDirBand(h) == nil {
-		t.Error("a directory with children must offer a folder band")
+	if findAction(h.root, "wallpaper-menu:folder") == nil {
+		t.Error("the picker must offer a folder dropdown")
 	}
 
 	// Up only exists once the picker has descended out of a root.
@@ -650,8 +651,10 @@ func wallpaperEngineLabels(root *ui.Node) []string {
 		if n == nil {
 			return
 		}
-		if n.Kind == ui.KindCapsule && n.Fill == ui.FillSoft &&
-			len(n.Children) == 1 && n.Children[0].Kind == ui.KindText {
+		// Role "status" is the engine pill: a button shape so it can carry
+		// StateSelected, but not an action -- the engine is reported, not
+		// chosen.
+		if n.Role == "status" && len(n.Children) == 1 && n.Children[0].Kind == ui.KindText {
 			out = append(out, n.Children[0].Text)
 		}
 		for _, c := range n.Children {
@@ -853,38 +856,44 @@ func TestWallpaperManyDirectoriesDoNotOverflowTheChrome(t *testing.T) {
 		t.Fatalf("grid holds %d tiles, want only the image", got)
 	}
 	if got := len(wallpaperDirs(h)); got != 40 {
-		t.Fatalf("folder band holds %d entries, want 40", got)
+		t.Fatalf("folder dropdown holds %d entries, want 40", got)
 	}
-	// The band is capped, so folders cannot crowd the wallpapers out.
-	band := wallpaperDirBand(h)
-	if band == nil {
-		t.Fatal("no folder band")
+	// The open list is capped, so a large library scrolls inside its own box
+	// rather than pushing the grid off the panel.
+	h.wallpaperMenu = "folder"
+	list := wallpaperOptionList(h, wallpaperFolderOptions(h))
+	if list == nil {
+		t.Fatal("no folder option list")
 	}
-	if band.Height > wallpaperDirMaxRows*wallpaperDirRowHeight {
-		t.Fatalf("band is %dpx tall, want at most %d", band.Height, wallpaperDirMaxRows*wallpaperDirRowHeight)
+	if list.ItemCount < 40 {
+		t.Fatalf("list offers %d options, want every folder", list.ItemCount)
+	}
+	if list.Height > wallpaperOptionMaxRow*wallpaperOptionRowH {
+		t.Fatalf("list is %dpx tall, want at most %d",
+			list.Height, wallpaperOptionMaxRow*wallpaperOptionRowH)
 	}
 }
 
-func TestWallpaperFolderStripAppearsOnlyForMultipleRoots(t *testing.T) {
+func TestWallpaperFolderDropdownReachesEveryRoot(t *testing.T) {
 	t.Parallel()
 
+	// A second library root -- the video directory -- is only reachable if it
+	// is offered somewhere. It used to have a strip of its own; it is now an
+	// option in the folder dropdown alongside the current folder's children.
 	one := seedWallpaperRoot(t)
-	reg, _, _ := openWallpaperPanel(t, []string{one})
+	two := seedWallpaperRoot(t)
+	reg, _, _ := openWallpaperPanel(t, []string{one, two})
 	h := wallpaperHost(t, reg)
 	reg.mu.Lock()
-	if strip := wallpaperFolderStrip(h); strip != nil {
-		t.Error("a single root is not a choice worth a control")
-	}
-	reg.mu.Unlock()
+	defer reg.mu.Unlock()
 
-	two := seedWallpaperRoot(t)
-	reg2, _, _ := openWallpaperPanel(t, []string{one, two})
-	h2 := wallpaperHost(t, reg2)
-	reg2.mu.Lock()
-	defer reg2.mu.Unlock()
-	strip := wallpaperFolderStrip(h2)
-	if strip == nil || len(strip.Children) != 2 {
-		t.Fatalf("two roots must give a two-chip strip, got %v", strip)
+	opts := wallpaperFolderOptions(h)
+	for _, root := range []string{one, two} {
+		if !slices.ContainsFunc(opts, func(o wallpaperOption) bool {
+			return o.action == "wallpaper-dir:"+root
+		}) {
+			t.Errorf("root %s is not reachable from the folder dropdown", root)
+		}
 	}
 }
 
@@ -978,5 +987,124 @@ func TestWallpaperSummaryCountsOneOutput(t *testing.T) {
 	snap.Assignments["DP-3"] = wallpaper.Assignment{Kind: wallpaper.KindImage, Path: "/w/c.png"}
 	if got := wallpaperSummary(snap, wallpaper.AllOutputs); !strings.HasPrefix(got, "2 outputs ") {
 		t.Errorf("summary = %q, want it to start with \"2 outputs \"", got)
+	}
+}
+
+// The wheel used to go to whichever scrollable was built first, which in this
+// panel was the folder band above the grid. No amount of clicking in the grid
+// could move it, because the pointer was never consulted.
+func TestScrollGoesToTheRegionUnderThePointer(t *testing.T) {
+	t.Parallel()
+
+	first := &ui.Node{Kind: ui.KindVirtualList, Bounds: ui.Rect{X: 0, Y: 0, W: 100, H: 50}}
+	second := &ui.Node{Kind: ui.KindVirtualList, Bounds: ui.Rect{X: 0, Y: 50, W: 100, H: 200}}
+	root := &ui.Node{
+		Kind:     ui.KindColumn,
+		Bounds:   ui.Rect{X: 0, Y: 0, W: 100, H: 300},
+		Children: []*ui.Node{first, second},
+	}
+
+	if got := scrollAt(root, 10, 120); got != second {
+		t.Error("the wheel over the lower list must scroll the lower list")
+	}
+	if got := scrollAt(root, 10, 10); got != first {
+		t.Error("the wheel over the upper list must scroll the upper list")
+	}
+	// Off both, the first is still the answer: keyboard scrolling has no
+	// pointer to consult.
+	if got := scrollAt(root, 10, 275); got != first {
+		t.Error("with the pointer over neither list, the first is the fallback")
+	}
+}
+
+// The engine row listed every installed binary with nothing to say which was
+// doing the work.
+func TestWallpaperEnginePillMarksTheOneDrivingTheOutput(t *testing.T) {
+	t.Parallel()
+
+	root := seedWallpaperRoot(t)
+	reg, _, _ := openWallpaperPanel(t, []string{root})
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	h.wallpaperOutput = "DP-1"
+	h.wallpaperSnap.Connectors = []string{"DP-1"}
+	h.wallpaperSnap.Caps = wallpaper.Capabilities{GSlapper: true, Statics: []string{"awww", "swaybg"}}
+
+	// Nothing painted yet: the row still names the engine that would take it,
+	// so the strip is never three names with none marked.
+	h.wallpaperSnap.Runtime = map[string]wallpaper.Runtime{}
+	if got := wallpaperActiveEngine(h); got != wallpaper.EngineGSlapper {
+		t.Errorf("with nothing assigned, active engine = %q, want the default", got)
+	}
+
+	// Once something has painted, the recorded engine wins over the default.
+	h.wallpaperSnap.Runtime = map[string]wallpaper.Runtime{"DP-1": {Engine: "awww"}}
+	if got := wallpaperActiveEngine(h); got != "awww" {
+		t.Errorf("active engine = %q, want the engine that painted it", got)
+	}
+
+	selected := map[string]bool{}
+	walkNodes(wallpaperEngineRow(h), func(n *ui.Node) {
+		if n.Role == "status" && len(n.Children) == 1 {
+			selected[n.Children[0].Text] = n.State.Has(ui.StateSelected)
+		}
+	})
+	if !selected["awww"] {
+		t.Error("the engine painting the output is not marked selected")
+	}
+	if selected["gSlapper"] || selected["swaybg"] {
+		t.Error("an engine that is merely installed must not look selected")
+	}
+}
+
+// Choosing a scheme has to survive the next wallpaper apply, or it looks like
+// the choice was never made.
+func TestPinnedPaletteSurvivesAWallpaperApply(t *testing.T) {
+	t.Parallel()
+
+	reg := NewRegistry(config.Default())
+	t.Cleanup(reg.Close)
+
+	reg.setPalette("gruvbox")
+	reg.mu.Lock()
+	source, seed := reg.cfg.ThemeGen.Source, reg.cfg.ThemeGen.Seed
+	reg.mu.Unlock()
+	if source != "palette" || seed != "gruvbox" {
+		t.Fatalf("palette = %s/%s, want palette/gruvbox", source, seed)
+	}
+
+	reg.setWallpaperSeed("wallpaper", "/tmp/some-image.png")
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if reg.cfg.ThemeGen.Source != "palette" || reg.cfg.ThemeGen.Seed != "gruvbox" {
+		t.Errorf("a wallpaper apply un-pinned the scheme: %s/%s",
+			reg.cfg.ThemeGen.Source, reg.cfg.ThemeGen.Seed)
+	}
+}
+
+// Every named scheme has to be reachable, or the palettes added in f73f25f
+// stay unreachable without hand-editing the config.
+func TestWallpaperPaletteDropdownOffersEveryScheme(t *testing.T) {
+	t.Parallel()
+
+	root := seedWallpaperRoot(t)
+	reg, _, _ := openWallpaperPanel(t, []string{root})
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	opts := wallpaperPaletteOptions(h)
+	if opts[0].label != wallpaperAutoPalette {
+		t.Errorf("first option = %q, want Auto", opts[0].label)
+	}
+	for _, name := range theme.PaletteNames() {
+		if !slices.ContainsFunc(opts, func(o wallpaperOption) bool {
+			return o.action == "wallpaper-palette:"+name
+		}) {
+			t.Errorf("scheme %q is not offered by the picker", name)
+		}
 	}
 }

@@ -50,7 +50,10 @@ type Registry struct {
 	sample  services.Snapshot
 	reading services.Reading
 
-	tokens   theme.Tokens
+	tokens theme.Tokens
+	// themeErr is why the published palette is not the requested one, empty
+	// when it is. Surfaced by the picker; never fatal.
+	themeErr string
 	themeGen theme.Generator
 
 	// invalidations carries one entry per bar whose rendered text changed.
@@ -86,7 +89,6 @@ type Registry struct {
 	// niriSend is the FocusWindow/CloseWindow seam. Tests replace it; nil
 	// sends niri.Action on $NIRI_SOCKET off this goroutine.
 	niriSend func(any) error
-
 	// notify is the service-owned notification projection.
 	notify *notifyState
 
@@ -144,7 +146,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		trayCh:        make(chan trayclient.Message, 32),
 		notifyCh:      make(chan notifyclient.Message, 32),
 	}
-	r.tokens = r.generateTheme(cfg)
+	r.tokens, r.themeErr = tokensAndReason(r.generateTheme(cfg))
 	r.osd = newOSDManager(r, 0)
 	r.setAudio(services.NewAudio(0, ""))
 	r.setBrightness(services.NewBrightness("", "", 0))
@@ -349,7 +351,16 @@ func (r *Registry) panelTheme() Theme {
 	return t
 }
 
-func (r *Registry) generateTheme(cfg config.Config) theme.Tokens {
+// generateTheme returns the palette for cfg and why it is not the requested
+// one, when it is not.
+//
+// The error used to be dropped on both failure paths. Keeping the published
+// palette is still right -- swapping a working theme for the compiled fallback
+// is a regression nobody asked for -- but saying nothing meant a theme that
+// would not generate was indistinguishable from one that generated to the same
+// colours: the wallpaper changed, the shell did not, and there was nowhere to
+// look. Callers surface this; they must not treat it as fatal.
+func (r *Registry) generateTheme(cfg config.Config) (theme.Tokens, error) {
 	tok, err := r.themeGen.Generate(
 		theme.Source{Kind: cfg.ThemeGen.Source, Seed: cfg.ThemeGen.Seed},
 		theme.Options{
@@ -358,20 +369,28 @@ func (r *Registry) generateTheme(cfg config.Config) theme.Tokens {
 			HighContrast: cfg.Accessibility.HighContrast,
 		},
 	)
-	// A generation failure hands back the compiled fallback, which is itself
-	// complete. Keeping the palette already published is the right answer for
-	// a reload: swapping a working generated theme for the compiled one is a
-	// visible regression the user did not ask for.
 	if err != nil {
-		return r.lastCompleteTokens(cfg.Accessibility.HighContrast)
+		return r.lastCompleteTokens(cfg.Accessibility.HighContrast), err
 	}
 	if err := tok.Complete(); err != nil {
-		return r.lastCompleteTokens(cfg.Accessibility.HighContrast)
+		return r.lastCompleteTokens(cfg.Accessibility.HighContrast),
+			fmt.Errorf("theme: generated palette is incomplete: %w", err)
 	}
 	if !runningAsTest() {
-		_ = theming.ApplyEnabled(os.Getenv("HOME"), cfg.TemplateEnabled, tok)
+		if err := theming.ApplyEnabled(os.Getenv("HOME"), cfg.TemplateEnabled, tok); err != nil {
+			return tok, fmt.Errorf("theme: external templates: %w", err)
+		}
 	}
-	return tok
+	return tok, nil
+}
+
+// tokensAndReason flattens generateTheme for the construction path, which has
+// no surface to report to yet and only needs the reason recorded.
+func tokensAndReason(tok theme.Tokens, err error) (theme.Tokens, string) {
+	if err != nil {
+		return tok, err.Error()
+	}
+	return tok, ""
 }
 
 // lastCompleteTokens is the palette to fall back on when a generated one is
@@ -496,7 +515,34 @@ func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbac
 		return wayland.HostCallbacks{}, err
 	}
 
+	toastOutputs, plugins := r.adoptBar(global, connector, bar, leases)
+
+	r.SyncToastOutputs(toastOutputs)
+	if plugins != nil {
+		plugins.syncBars()
+	}
+	// An output that comes back gets its wallpaper back (D20). This is the
+	// arrival seam; DropHost is the departure one.
+	r.wallpaperOutputConnected(connector)
+	return r.bindHost(global, bar, callbacks), nil
+}
+
+// adoptBar installs a freshly built bar as the one for its output and reports
+// what the caller must then publish outside the lock.
+//
+// The unlock is deferred rather than written at the end because NewHost runs
+// inside the wl_output.done handler: the Wayland dispatch loop recovers a
+// panic raised there into an error, so a panic in bar.apply -- a widget whose
+// state seam is nil, say -- would otherwise leave this mutex held forever.
+// Registry.Close then blocks on it during shutdown and the process stops
+// responding to SIGTERM, which turns a legible startup crash into a shell
+// that never appears and has to be killed.
+func (r *Registry) adoptBar(
+	global uint32, connector string, bar *Bar, leases []*services.Lease,
+) (map[string]uint32, *pluginHost) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	bar.apply(r.viewLocked(connector))
 	r.bars[global] = bar
 	r.leases[global] = leases
@@ -507,18 +553,7 @@ func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbac
 	// it once. An invalidation here would be a second frame for a first paint,
 	// and this call is on the owner goroutine, which drains that channel.
 	r.syncTrayLocked()
-	toastOutputs := r.outputGlobalsLocked()
-	plugins := r.plugins
-	r.mu.Unlock()
-
-	r.SyncToastOutputs(toastOutputs)
-	if plugins != nil {
-		plugins.syncBars()
-	}
-	// An output that comes back gets its wallpaper back (D20). This is the
-	// arrival seam; DropHost is the departure one.
-	r.wallpaperOutputConnected(connector)
-	return r.bindHost(global, bar, callbacks), nil
+	return r.outputGlobalsLocked(), r.plugins
 }
 
 // bindBarTrayLocked gives one bar its tray input seam. The global and the
@@ -552,6 +587,8 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 			return r.TogglePanel(PanelMonitor, out, trig) == nil
 		case action == panelSessionAction && button == buttonRight:
 			return r.TogglePanel(PanelSession, out, trig) == nil
+		case action == panelWallpaperAction && (button == 0 || button == buttonLeft || button == buttonRight):
+			return r.TogglePanel(PanelWallpaper, out, trig) == nil
 		case action == panelNotificationsAction && (button == 0 || button == buttonLeft):
 			return r.TogglePanel(PanelNotifications, out, trig) == nil
 		case action == panelNotificationsAction && button == buttonMiddle:
@@ -611,7 +648,7 @@ func (r *Registry) outputGlobalsLocked() map[string]uint32 {
 // reaches zero, so it is never restarted. A failure at any point releases
 // exactly what this call acquired.
 func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIdentity) (wayland.PreparedConfig, error) {
-	tok := r.generateTheme(cfg)
+	tok, genErr := r.generateTheme(cfg)
 	bars := make(map[uint32]*Bar, len(identities))
 	leases := make(map[uint32][]*services.Lease, len(identities))
 	callbacks := make(map[uint32]wayland.HostCallbacks, len(identities))
@@ -653,6 +690,10 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				}
 				r.cfg = cfg
 				r.tokens = tok
+				r.themeErr = ""
+				if genErr != nil {
+					r.themeErr = genErr.Error()
+				}
 				r.retheThemeOpenSurfacesLocked()
 				r.bars = bars
 				r.leases = leases

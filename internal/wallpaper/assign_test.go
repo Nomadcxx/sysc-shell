@@ -15,7 +15,7 @@ func newTestStore() *Store {
 func commitAll(t *testing.T, s *Store, jobs []Job, preview string) {
 	t.Helper()
 	for _, r := range jobs {
-		if !s.Commit(r, preview) {
+		if !s.Commit(r, preview, EngineGSlapper) {
 			t.Fatalf("commit %s gen %d refused", r.Connector, r.Gen)
 		}
 	}
@@ -68,7 +68,7 @@ func TestAssignStaleGeneration(t *testing.T) {
 		t.Fatalf("generation did not advance: %d then %d", first[0].Gen, second[0].Gen)
 	}
 	commitAll(t, s, second, "")
-	if s.Commit(first[0], "") {
+	if s.Commit(first[0], "", EngineGSlapper) {
 		t.Fatal("a stale generation must not commit")
 	}
 	if a, _ := s.Assignment("DP-1"); a.Path != "/w/fast.png" {
@@ -116,7 +116,7 @@ func TestAssignPartialAll(t *testing.T) {
 			s.Fail(r, errors.New("engine refused"))
 			continue
 		}
-		s.Commit(r, "")
+		s.Commit(r, "", EngineGSlapper)
 	}
 
 	if a, _ := s.Assignment("DP-1"); a.Path != "/w/new.png" {
@@ -149,5 +149,25 @@ func TestAssignSeedPath(t *testing.T) {
 	commitAll(t, s, s.Apply("DP-1", "/w/c.mkv", KindVideo), "")
 	if s.SeedPath() != "/c/b.jpg" {
 		t.Fatalf("a video with no still must leave the seed, got %q", s.SeedPath())
+	}
+}
+
+// The picker used to read Runtime.Socket and Runtime.FallbackPID to say which
+// engine was driving an output. Nothing outside the engine's private handles
+// ever writes those, so no engine was ever named.
+func TestRuntimeRecordsTheEngineThatPainted(t *testing.T) {
+	s := newTestStore()
+
+	jobs := s.Apply("DP-1", "/w/a.png", KindImage)
+	if !s.Commit(jobs[0], "", EngineGSlapper) {
+		t.Fatal("commit refused")
+	}
+	if got := s.Runtime("DP-1").Engine; got != EngineGSlapper {
+		t.Errorf("engine after apply = %q, want %q", got, EngineGSlapper)
+	}
+
+	s.SetRestored("DP-1", "swaybg")
+	if got := s.Runtime("DP-1").Engine; got != "swaybg" {
+		t.Errorf("engine after restore = %q, want swaybg", got)
 	}
 }

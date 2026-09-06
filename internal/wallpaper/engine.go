@@ -111,7 +111,7 @@ func (e *gslapperEngine) Apply(job Job, set Settings) (string, error) {
 	}
 
 	caps := e.Capabilities()
-	if !caps.GSlapper {
+	if caps.EngineFor(job.Kind) != EngineGSlapper {
 		if job.Kind == KindVideo {
 			return "", errors.New("wallpaper: gslapper is not installed, so video cannot play")
 		}

@@ -686,8 +686,14 @@ func TestAnInvalidPaletteKeepsThePreviousCompleteTheme(t *testing.T) {
 	broken := config.Default()
 	broken.ThemeGen.Source = "hex"
 	broken.ThemeGen.Seed = "not-a-colour"
-	got := reg.generateTheme(broken)
+	got, genErr := reg.generateTheme(broken)
 
+	// The reason is the point: keeping the published palette is right, but
+	// saying nothing made a theme that would not generate look identical to
+	// one that generated to the same colours.
+	if genErr == nil {
+		t.Error("a failed generation reported no reason")
+	}
 	if err := got.Complete(); err != nil {
 		t.Fatalf("a rejected palette was published anyway: %v", err)
 	}
