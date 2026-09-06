@@ -307,6 +307,7 @@ widgets) are still unordered.
 | `2026-09-03-control-center-execution-handover.md` | execution-handover | Commissions the Noctalia-shaped control-centre design and implementation plan (`sysc-158`); DMS supplies quick-control density. |
 | `2026-09-06-control-centre-execution-handover.md` | execution-handover | Carries the 2026-09-03 control-centre commission forward. Corrects its stale reconciliation targets (chrome and theme parity landed; the named chrome worktree is gone), records that M8 is rendering qualification and not the next tranche, and commissions the beads duplicate cleanup that `sysc-154`'s gate list depends on. |
 | `2026-09-03-control-center-design.md` | design | Control centre (`sysc-158`): `PanelControlCenter` 700x520, 56 px icon rail plus one scrollable body reusing the shipped `PanelHost.section` seam (D1-D12). Its own UI, sharing services with the dedicated panels and embedding none of their trees. Seven functional pages; Media, Network and Bluetooth disabled in place. Adds nine Material ligatures. |
+| `2026-09-03-control-center.md` | plan | Fourteen slices for `sysc-154`: the `AttachedMask` concave primitive, seventeen ligatures, panel identity and flush bar-centre placement, bar trigger, IPC section addressing, rail and page dispatch, the off-owner `scheduleControl` seam, the caffeine idle inhibit released on `Registry.Close`, seven pages, the daily forecast the wire layer already decodes, focus and reveal, then the live Niri matrix. TDD waived: one focused check per slice.
 
 ## Milestones 7 remainder and 8: not yet designed
 
