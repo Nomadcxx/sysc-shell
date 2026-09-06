@@ -305,6 +305,7 @@ widgets) are still unordered.
 | `2026-09-04-wallpaper-execution-handover.md` | execution-handover | Commissions implementing `sysc-149`. Session context: chrome mix, gSlapper-first, Waytrogen sockets, fan-out All, Restore exception. Do not reopen those. |
 | `2026-09-05-launcher-ui-handover.md` | execution-handover | Commissions the launcher UI audit. Three diagnosed defects first: the 50-result cap in sysc-launch that ends the browse list in the E's, missing client-side key repeat, and frecency judged only after the cap is lifted. Then the chrome, which has never had a design pass. |
 | `2026-09-03-control-center-execution-handover.md` | execution-handover | Commissions the Noctalia-shaped control-centre design and implementation plan (`sysc-158`); DMS supplies quick-control density. |
+| `2026-09-06-control-centre-execution-handover.md` | execution-handover | Carries the 2026-09-03 control-centre commission forward. Corrects its stale reconciliation targets (chrome and theme parity landed; the named chrome worktree is gone), records that M8 is rendering qualification and not the next tranche, and commissions the beads duplicate cleanup that `sysc-154`'s gate list depends on. |
 
 ## Milestones 7 remainder and 8: not yet designed
 
