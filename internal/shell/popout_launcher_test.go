@@ -732,3 +732,47 @@ func TestLauncherFooterSurvivesTheEmptyState(t *testing.T) {
 		t.Fatalf("empty state footer = %+v, want the help line", footer)
 	}
 }
+
+// TestLauncherRowHeightSurvivesAMissingCommentAndIcon pins the row's floor.
+//
+// A .desktop file need not carry a Comment, and an icon name need not resolve
+// to a raster in the theme. When both were absent the row had nothing setting
+// its height: the label column held one line instead of two, and the letter
+// capsule standing in for the icon sized to that same single line. The row then
+// drew at about half the height of its neighbours, which is what pwvucontrol,
+// Sonusmix and the Rofi entries looked like on a real desktop.
+func TestLauncherRowHeightSurvivesAMissingCommentAndIcon(t *testing.T) {
+	t.Parallel()
+
+	reg, _, _ := openLauncherPanel(t, launcherTestEntries())
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelLauncher]
+
+	measure := h.measureText()
+	height := func(e launcher.Entry) int {
+		body := launcherRowBody(nil, h, e)
+		root := &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{body}}
+		if err := ui.LayoutColumn(root, ui.Rect{W: h.place.Panel.W - 24, H: launcherRowHeight}, measure); err != nil {
+			t.Fatalf("layout %q: %v", e.Name, err)
+		}
+		return body.Bounds.H
+	}
+
+	full := height(launcher.Entry{ID: "a.desktop", Name: "Files", Comment: "Access and organize files"})
+	bare := height(launcher.Entry{ID: "b.desktop", Name: "Sonusmix"})
+	if bare != full {
+		t.Fatalf("row without a comment or icon is %d tall, one with both is %d", bare, full)
+	}
+	if bare < launcherIconSlot {
+		t.Fatalf("row is %d tall, below the %d icon slot it must reserve", bare, launcherIconSlot)
+	}
+}
+
+func TestLauncherFallbackIconReservesTheSquare(t *testing.T) {
+	t.Parallel()
+	n := launcherIconNode(nil, &PanelHost{}, launcher.Entry{Name: "Sonusmix"})
+	if n.Width != launcherIconSlot || n.Height != launcherIconSlot {
+		t.Fatalf("fallback icon slot = %dx%d, want a %d square", n.Width, n.Height, launcherIconSlot)
+	}
+}

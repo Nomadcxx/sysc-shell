@@ -84,6 +84,14 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 		if len(n.Children) == 0 {
 			return n.Width, nil
 		}
+		// An explicit height is a reserved box, the way it is for a text field
+		// and in measureNode's own capsule case. Measuring the child instead
+		// let the two paths disagree: a capsule standing in for a fixed-size
+		// icon measured as one line of text here and as its full square there,
+		// and the row it sat in was then laid out too short to hold it.
+		if n.Height > 0 {
+			return n.Height, nil
+		}
 		if n.Width > 0 {
 			width = n.Width
 		}

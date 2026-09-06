@@ -272,8 +272,15 @@ func launcherIconNode(r *Registry, h *PanelHost, e launcher.Entry) *ui.Node {
 	if img := launcherLookupIcon(r, h, e.IconName); img != nil {
 		return &ui.Node{Kind: ui.KindImage, ImageSize: launcherIconSlot, Image: img}
 	}
+	// Height as well as width: the slot is a square whichever branch runs.
+	// Without it the capsule sized to its one line of text, and an entry whose
+	// icon missed the cache *and* carried no Comment had nothing left holding
+	// the row open -- both children were short, so the row drew at about half
+	// the height of its neighbours. .desktop files with no Comment are common
+	// enough that this was visible as soon as a few were installed.
 	return &ui.Node{
-		Kind: ui.KindCapsule, Width: launcherIconSlot, Fill: ui.FillContainer, Shape: ui.ShapeMedium,
+		Kind: ui.KindCapsule, Width: launcherIconSlot, Height: launcherIconSlot,
+		Fill: ui.FillContainer, Shape: ui.ShapeMedium,
 		Children: []*ui.Node{{Kind: ui.KindText, Text: launcherGlyph(e.Name), TextRole: theme.RoleTitle}},
 	}
 }
