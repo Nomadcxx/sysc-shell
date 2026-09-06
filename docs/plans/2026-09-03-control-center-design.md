@@ -189,11 +189,17 @@ Cached on a key like the existing `maskKey`, coverage computed analytically the
 way `roundedCoverage` already does. This is the one primitive the control
 centre adds, and it exists because an approved component consumes it.
 
-**Weather daily forecast.** `services.Reading` gains
-`Daily []DayReading` (`Date`, `Code`, `Hi`, `Lo`). The Open-Meteo request gains
-`&daily=weather_code,temperature_2m_max,temperature_2m_min&forecast_days=5` and
-`&timezone=auto`, so day boundaries are local. No new dependency, no new
-service, and `maxResponseBytes` still bounds the response.
+**Weather daily forecast.** Smaller than it first looked: the wire layer
+already carries it. `weather.Query` has a `Daily bool`, and `RequestURL`
+(`weather/client.go:21`) already emits
+`daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset`,
+`forecast_days=7` and `timezone=auto` when it is set. `weather.Day` and
+`Forecast.Daily` are modelled and decoded. `internal/services/weather.go` simply
+never asks: it builds `weather.Query` at `:223` and `:311` without `Daily`. The
+work is to set the flag at both sites and carry `Forecast.Daily` onto
+`services.Reading` as `Daily []Day` (`Day = weather.Day`, aliased the way `Unit`
+already is). No new query, no new dependency, and `maxResponseBytes` still
+bounds the response.
 
 **Idle inhibit.** Caffeine holds a `systemd-inhibit --what=idle:sleep` child
 through `scheduleControl`. `argv[0]` joins the existing allowlist beside
