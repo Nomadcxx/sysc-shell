@@ -776,3 +776,31 @@ func TestLauncherFallbackIconReservesTheSquare(t *testing.T) {
 		t.Fatalf("fallback icon slot = %dx%d, want a %d square", n.Width, n.Height, launcherIconSlot)
 	}
 }
+
+// TestLauncherRowTakesHover checks the claim, made during the plate A design
+// pass, that launcher rows have no hover state.
+func TestLauncherRowTakesHover(t *testing.T) {
+	t.Parallel()
+
+	reg, _, _ := openLauncherPanel(t, launcherTestEntries())
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelLauncher]
+
+	list := launcherListNode(t, h)
+	row := list.Item(1) // not the selected row, so FillSoft cannot mask it
+	capsule := row.Children[0]
+	key := capsule.StableKey()
+	if key == "" {
+		t.Fatal("row capsule has no stable key, so the pointer can never address it")
+	}
+
+	h.pointer.setHover(key)
+	h.pointer.apply(h.root, h.anim)
+
+	// Children, not Item: the materialised row is the one that gets painted.
+	again := launcherListNode(t, h).Children[1].Children[0]
+	if !again.State.Has(ui.StateHovered) {
+		t.Fatalf("row %q did not take hover", key)
+	}
+}

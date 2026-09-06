@@ -354,12 +354,11 @@ func (s interaction) apply(root *ui.Node, anim *animator) {
 				anim.Target(key, animSelect, boolValue(n.State.Has(ui.StateSelected)))
 			}
 		}
-		if n.Kind == ui.KindVirtualList && n.Item != nil {
-			for i := 0; i < n.ItemCount; i++ {
-				walk(n.Item(i))
-			}
-			return
-		}
+		// A virtual list is not rebuilt here. Layout materialises the visible
+		// rows into Children with their bounds; calling Item again produces
+		// fresh nodes that carry no bounds and that nothing paints, so the
+		// state written onto them was discarded. That is why a list row could
+		// never show hover.
 		for _, c := range n.Children {
 			walk(c)
 		}
@@ -397,12 +396,9 @@ func hoverKeyAt(root *ui.Node, x, y int) string {
 				found = key
 			}
 		}
-		if n.Kind == ui.KindVirtualList && n.Item != nil {
-			for i := 0; i < n.ItemCount; i++ {
-				walk(n.Item(i))
-			}
-			return
-		}
+		// Same reason as interaction.apply: the rows the pointer can be over
+		// are the ones layout placed into Children. A rebuilt item carries no
+		// bounds, so Contains never matched and no row was addressable.
 		for _, c := range n.Children {
 			walk(c)
 		}
