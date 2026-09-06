@@ -194,7 +194,7 @@ func decodeRaster(data []byte, width, height int) *ui.Image {
 		return nil
 	}
 	target := image.NewRGBA(image.Rect(0, 0, width, height))
-	xdraw.ApproxBiLinear.Scale(target, target.Bounds(), source, source.Bounds(), xdraw.Src, nil)
+	xdraw.CatmullRom.Scale(target, target.Bounds(), source, source.Bounds(), xdraw.Src, nil)
 	return fromRGBA(target)
 }
 

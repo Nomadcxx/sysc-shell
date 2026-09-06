@@ -70,6 +70,48 @@ func tileLetter(n *ui.Node) string {
 	return n.Children[0].Text
 }
 
+func TestRunningAppsIconSizeFollowsTheOutputScale(t *testing.T) {
+	if got := runningAppIconPixelSize(int(ui.ScaleUnit)); got != runningAppIconSize {
+		t.Fatalf("scale 1 size = %d, want %d", got, runningAppIconSize)
+	}
+	if got := runningAppIconPixelSize(240); got != 2*runningAppIconSize {
+		t.Fatalf("scale 2 size = %d, want %d", got, 2*runningAppIconSize)
+	}
+	if got := runningAppIconPixelSize(0); got != runningAppIconSize {
+		t.Fatalf("unconfigured scale = %d, want the logical size", got)
+	}
+}
+
+func TestRunningAppsIconFollowsConfigureScale(t *testing.T) {
+	t.Parallel()
+	small, large, worker := runningAppFirefoxIcons(t, runningAppIconSize, 2*runningAppIconSize)
+	cfg := config.Default()
+	cfg.Bar.Left, cfg.Bar.Center = nil, nil
+	cfg.Bar.Right = []config.Item{{ID: "running-apps"}}
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	reg.trayIcons = worker
+	reg.runningIndex = []runningAppEntry{{ID: "firefox", Icon: "firefox"}}
+	cb, err := reg.NewHost(1, "DP-9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg.UpdateNiri(niri.Snapshot{Windows: []niri.Window{{ID: 1, AppID: "firefox"}}})
+
+	tile := runningAppFirstTile(t, reg.bars[1])
+	if tile == nil || len(tile.Children) != 1 || tile.Children[0].Image != small {
+		t.Fatalf("before configure tile = %+v, want the logical-size raster", tile)
+	}
+
+	if err := cb.Configure(800, BarHeight, 240); err != nil {
+		t.Fatal(err)
+	}
+	tile = runningAppFirstTile(t, reg.bars[1])
+	if tile == nil || len(tile.Children) != 1 || tile.Children[0].Image != large {
+		t.Fatalf("after scale-2 configure tile = %+v, want the physical-size raster", tile)
+	}
+}
+
 func TestRunningAppsIconUsesACachedRaster(t *testing.T) {
 	t.Parallel()
 	img, worker := runningAppFirefoxIcon(t)
@@ -123,25 +165,41 @@ func TestRunningAppsIconArrivesAfterPaint(t *testing.T) {
 
 func runningAppFirefoxIcon(t *testing.T) (*ui.Image, *icons.Worker) {
 	t.Helper()
+	small, _, worker := runningAppFirefoxIcons(t, runningAppIconSize)
+	return small, worker
+}
+
+func runningAppFirefoxIcons(t *testing.T, sizes ...int) (small, large *ui.Image, worker *icons.Worker) {
+	t.Helper()
 	root := t.TempDir()
 	writeLauncherPNG(t, filepath.Join(root, "firefox.png"))
-	worker := icons.NewWorker(icons.NewResolver("hicolor", []string{root}), nil)
+	worker = icons.NewWorker(icons.NewResolver("hicolor", []string{root}), nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go func() { _ = worker.Run(ctx) }()
-	key := icons.Square("firefox", runningAppIconSize)
-	if _, _, err := worker.Request(key); err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if img, ok := worker.Lookup(key); ok && img != nil {
-			return img, worker
+	imgs := make([]*ui.Image, len(sizes))
+	for i, size := range sizes {
+		key := icons.Square("firefox", size)
+		if _, _, err := worker.Request(key); err != nil {
+			t.Fatal(err)
 		}
-		time.Sleep(5 * time.Millisecond)
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if img, ok := worker.Lookup(key); ok && img != nil {
+				imgs[i] = img
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		if imgs[i] == nil {
+			t.Fatalf("icon worker did not cache firefox at %d", size)
+		}
 	}
-	t.Fatal("icon worker did not cache firefox")
-	return nil, nil
+	small = imgs[0]
+	if len(imgs) > 1 {
+		large = imgs[1]
+	}
+	return small, large, worker
 }
 
 func runningAppFirstTile(t *testing.T, bar *Bar) *ui.Node {

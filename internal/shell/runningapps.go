@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/go-freedesktop/desktopentry"
@@ -286,15 +287,11 @@ func runningAppIconPixelSize(scale120 int) int {
 	return max(scale.Physical(runningAppIconSize), 1)
 }
 
-func (r *Registry) attachRunningIconsLocked() {
+func (r *Registry) attachRunningIconsAtLocked(scale120 int) {
 	if r.trayIcons == nil {
 		return
 	}
-	size := runningAppIconSize
-	for _, bar := range r.bars {
-		size = runningAppIconPixelSize(bar.scale120())
-		break
-	}
+	size := runningAppIconPixelSize(scale120)
 	for i := range r.running {
 		name := r.running[i].Icon
 		if name == "" {
@@ -310,15 +307,20 @@ func (r *Registry) attachRunningIconsLocked() {
 	}
 }
 
-func (r *Registry) reprojectRunningApps() {
-	r.mu.Lock()
-	r.attachRunningIconsLocked()
+func (r *Registry) applyRunningIconsLocked() []uint32 {
 	changed := make([]uint32, 0, len(r.bars))
 	for global, bar := range r.bars {
+		r.attachRunningIconsAtLocked(bar.scale120())
 		if bar.apply(r.viewLocked(bar.connector())) {
 			changed = append(changed, global)
 		}
 	}
+	return changed
+}
+
+func (r *Registry) reprojectRunningApps() {
+	r.mu.Lock()
+	changed := r.applyRunningIconsLocked()
 	r.mu.Unlock()
 	r.publish(changed)
 }
@@ -368,6 +370,26 @@ func (r *Registry) handleRunningAppClick(output uint32, key string, button uint3
 		return true
 	}
 	return false
+}
+
+func (r *Registry) signalPIDLocked(pid int) {
+	if pid <= 0 {
+		return
+	}
+	if r.killPID != nil {
+		if err := r.killPID(pid); err != nil {
+			log.Print("running-apps kill: ", err)
+		}
+		return
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		log.Print("running-apps kill: ", err)
+		return
+	}
+	if err := proc.Signal(syscall.SIGTERM); err != nil {
+		log.Print("running-apps kill: ", err)
+	}
 }
 
 func (r *Registry) sendNiriLocked(body any) {

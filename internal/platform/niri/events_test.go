@@ -48,8 +48,8 @@ func TestWindowsChangedReplacesTheWholeSet(t *testing.T) {
 	if len(snap.Windows) != 2 {
 		t.Fatalf("windows = %d, want 2", len(snap.Windows))
 	}
-	if got := snap.Windows[0]; got.ID != 80 || got.Title != "Fixture One" || got.AppID != "fixture.one" {
-		t.Fatalf("first window = %+v, want id 80 titled Fixture One", got)
+	if got := snap.Windows[0]; got.ID != 80 || got.Title != "Fixture One" || got.AppID != "fixture.one" || got.Pid != 1000 {
+		t.Fatalf("first window = %+v, want id 80 pid 1000 titled Fixture One", got)
 	}
 	if !snap.Windows[0].HasWorkspace || snap.Windows[0].WorkspaceID != 5 {
 		t.Fatalf("first window workspace = %d/%v, want 5/true",
@@ -63,8 +63,8 @@ func TestWindowsChangedReplacesTheWholeSet(t *testing.T) {
 		t.Fatalf("window 80 FocusTimestamp = %d, want %d", snap.Windows[0].FocusTimestamp, wantTS)
 	}
 	// A null title, app_id and workspace_id are legal and must not fail the event.
-	if got := snap.Windows[1]; got.ID != 81 || got.Title != "" || got.HasWorkspace {
-		t.Fatalf("second window = %+v, want id 81 with empty title and no workspace", got)
+	if got := snap.Windows[1]; got.ID != 81 || got.Title != "" || got.HasWorkspace || got.Pid != 0 {
+		t.Fatalf("second window = %+v, want id 81 with empty title, no workspace, and no pid", got)
 	}
 	if snap.Windows[1].Focused || snap.Windows[1].FocusTimestamp != 0 {
 		t.Fatalf("window 81 focus = %+v, want unfocused with null timestamp", snap.Windows[1])

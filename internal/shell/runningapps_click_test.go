@@ -39,8 +39,8 @@ func TestRunningAppsClick(t *testing.T) {
 	reg.runningMenu = newRunningAppMenuHost(reg)
 	reg.runningMenu.request = func(wayland.AuxRequest) {}
 	reg.UpdateNiri(niri.Snapshot{Windows: []niri.Window{
-		{ID: 80, AppID: "steam", Focused: true},
-		{ID: 81, AppID: "steam"},
+		{ID: 80, AppID: "steam", Focused: true, Pid: 4242},
+		{ID: 81, AppID: "steam", Pid: 4242},
 	}})
 
 	bar := reg.bars[1]
@@ -83,21 +83,70 @@ func TestRunningAppsClick(t *testing.T) {
 		t.Fatalf("spawn argv = %v, want niri msg action spawn -- …", spawned[0])
 	}
 
+	var killed []int
+	reg.killPID = func(pid int) error {
+		killed = append(killed, pid)
+		return nil
+	}
+
 	bar.onAction("running-app:steam", buttonRight)
 	reg.runningMenu.choose(len(reg.runningMenu.rows) - 1)
-	if len(sent) < 3 {
-		t.Fatalf("after Close all, sends = %d, want FocusWindow plus two CloseWindow", len(sent))
+	if len(killed) != 1 || killed[0] != 4242 {
+		t.Fatalf("Close all killed %v, want SIGTERM of pid 4242 once", killed)
 	}
-	_, ok0 := sent[len(sent)-2].(niri.CloseWindow)
-	_, ok1 := sent[len(sent)-1].(niri.CloseWindow)
-	if !ok0 || !ok1 {
-		t.Fatalf("Close all sent %+v %+v, want CloseWindow pair", sent[len(sent)-2], sent[len(sent)-1])
+	for _, body := range sent[1:] {
+		if _, ok := body.(niri.CloseWindow); ok {
+			t.Fatalf("Close all still sent CloseWindow %+v; hide-to-tray is not quit", body)
+		}
 	}
 
 	bar.onAction("running-app:steam", buttonRight)
 	reg.UpdateNiri(niri.Snapshot{})
 	if reg.runningMenu != nil && reg.runningMenu.open_ {
 		t.Fatal("menu stayed open after the slot disappeared")
+	}
+}
+
+func TestRunningAppsHandleClickCycles(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Bar.Left, cfg.Bar.Center = nil, nil
+	cfg.Bar.Right = []config.Item{{ID: "running-apps"}}
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	var sent []any
+	reg.niriSend = func(body any) error {
+		sent = append(sent, body)
+		return nil
+	}
+	reg.runningIndex = []runningAppEntry{{ID: "steam"}}
+	cb, err := reg.NewHost(1, "DP-9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg.UpdateNiri(niri.Snapshot{Windows: []niri.Window{
+		{ID: 80, AppID: "steam", Focused: true},
+		{ID: 81, AppID: "steam"},
+	}})
+	if err := cb.Configure(800, BarHeight, 120); err != nil {
+		t.Fatal(err)
+	}
+	bar := reg.bars[1]
+	tile := findAction(bar.right[0].node, "running-app:steam")
+	if tile == nil || tile.Bounds.W == 0 {
+		t.Fatalf("steam tile = %+v, want laid-out bounds", tile)
+	}
+	x, y := float64(tile.Bounds.X+tile.Bounds.W/2), float64(tile.Bounds.Y+tile.Bounds.H/2)
+	bar.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: x, Y: y})
+	bar.Handle(wayland.Event{Kind: wayland.EventPointerPress, Button: buttonLeft, X: x, Y: y})
+	if !bar.Handle(wayland.Event{Kind: wayland.EventPointerRelease, Button: buttonLeft, X: x, Y: y}) {
+		t.Fatal("press+release on the tile was not a click")
+	}
+	if len(sent) != 1 {
+		t.Fatalf("niri sends = %d, want 1 FocusWindow", len(sent))
+	}
+	if fw, ok := sent[0].(niri.FocusWindow); !ok || fw.ID != 81 {
+		t.Fatalf("click sent %+v, want FocusWindow 81 (cycle)", sent[0])
 	}
 }
 
