@@ -53,6 +53,29 @@ func (c Capabilities) Static() string {
 	return c.Statics[0]
 }
 
+// EngineGSlapper is the name gSlapper is recorded under in Runtime.Engine. The
+// static engines are recorded under their binary name, which is what Statics
+// already holds.
+const EngineGSlapper = "gslapper"
+
+// EngineFor names the engine an apply of kind will use, or "" when nothing
+// installed can paint it -- a video without gSlapper, or anything at all with
+// no engine installed.
+//
+// This is the one statement of that policy: the engine branches on it, and the
+// picker reports it. An earlier version had the picker infer the engine from
+// Runtime.Socket and Runtime.FallbackPID, which nothing outside the engine's
+// own private handles ever writes, so no engine was ever named.
+func (c Capabilities) EngineFor(kind Kind) string {
+	if c.GSlapper {
+		return EngineGSlapper
+	}
+	if kind == KindVideo {
+		return ""
+	}
+	return c.Static()
+}
+
 // Engine is the side of the service that runs processes. It is an interface so
 // the service can be tested without exec, a socket, or a compositor.
 type Engine interface {
@@ -341,7 +364,7 @@ func (s *Service) finish(r engineResult) {
 		s.publish()
 		return
 	}
-	if !s.store.Commit(r.job, r.preview) {
+	if !s.store.Commit(r.job, r.preview, s.caps.EngineFor(r.job.Kind)) {
 		// A stale generation: a newer apply already owns this output, so the
 		// work is discarded rather than committed over it.
 		return
@@ -406,7 +429,7 @@ func (s *Service) restore(token string) {
 			s.store.noteRuntimeErr(connector, err)
 			continue
 		}
-		s.store.SetRestored(connector)
+		s.store.SetRestored(connector, s.caps.Static())
 	}
 	s.persist()
 }

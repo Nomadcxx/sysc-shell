@@ -332,3 +332,26 @@ func TestServiceSeedsTheThemeFromAPersistedAssignment(t *testing.T) {
 		t.Fatal("startup restored the wallpaper but never seeded the theme from it")
 	}
 }
+
+func TestEngineForNamesTheEngineAnApplyWillUse(t *testing.T) {
+	both := Capabilities{GSlapper: true, Statics: []string{"awww", "swaybg"}}
+	if got := both.EngineFor(KindVideo); got != EngineGSlapper {
+		t.Errorf("video with gslapper = %q, want %q", got, EngineGSlapper)
+	}
+	if got := both.EngineFor(KindImage); got != EngineGSlapper {
+		t.Errorf("image with gslapper = %q, want %q", got, EngineGSlapper)
+	}
+
+	// Without gSlapper an image falls to the first static in preference order,
+	// and a video has nowhere to go at all.
+	static := Capabilities{Statics: []string{"awww", "swaybg"}}
+	if got := static.EngineFor(KindImage); got != "awww" {
+		t.Errorf("image without gslapper = %q, want awww", got)
+	}
+	if got := static.EngineFor(KindVideo); got != "" {
+		t.Errorf("video without gslapper = %q, want none", got)
+	}
+	if got := (Capabilities{}).EngineFor(KindImage); got != "" {
+		t.Errorf("image with nothing installed = %q, want none", got)
+	}
+}

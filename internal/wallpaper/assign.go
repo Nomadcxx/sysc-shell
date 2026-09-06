@@ -48,7 +48,12 @@ type Runtime struct {
 	// FallbackPID is an awww or swaybg process *we* started. A fallback we did
 	// not start is left alone (D17/D18).
 	FallbackPID int
-	Err         string
+	// Engine is the name of the engine that last painted this output:
+	// EngineGSlapper, or a static binary name. Empty means nothing of ours has
+	// painted it yet. Socket and FallbackPID are handles the engine keeps to
+	// itself, so this is the only field that answers "what is driving it".
+	Engine string
+	Err    string
 }
 
 // Job is one output's share of an apply. The generation is carried through
@@ -146,10 +151,10 @@ func (s *Store) current(j Job) bool {
 }
 
 // Commit records a successful apply. preview is the still extracted for a
-// video, empty for an image or when extraction failed. It returns false for a
-// stale generation, which the caller treats as work to discard rather than an
-// error to show.
-func (s *Store) Commit(j Job, preview string) bool {
+// video, empty for an image or when extraction failed; engine is the engine
+// that painted it. It returns false for a stale generation, which the caller
+// treats as work to discard rather than an error to show.
+func (s *Store) Commit(j Job, preview, engine string) bool {
 	if !s.current(j) {
 		return false
 	}
@@ -165,6 +170,7 @@ func (s *Store) Commit(j Job, preview string) bool {
 
 	rt := s.runtime[j.Connector]
 	rt.State = a.DesiredPlayback
+	rt.Engine = engine
 	rt.Err = ""
 	s.runtime[j.Connector] = rt
 
@@ -287,8 +293,10 @@ func (s *Store) SetPlayback(connector string, paused bool) {
 }
 
 // SetRestored records that an output is back on the static fallback: our
-// engine is stopped, so there is no socket of ours left to talk to.
-func (s *Store) SetRestored(connector string) {
+// engine is stopped, so there is no socket of ours left to talk to. engine is
+// the static binary now holding the output, empty when none is installed and
+// the output was simply left blank.
+func (s *Store) SetRestored(connector, engine string) {
 	s.ensure()
-	s.runtime[connector] = Runtime{State: StateStatic}
+	s.runtime[connector] = Runtime{State: StateStatic, Engine: engine}
 }
