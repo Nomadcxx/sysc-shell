@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"strings"
@@ -51,7 +52,7 @@ func pumpNiri(
 // run streams Niri workspace state into the bar registry and hands the registry
 // to the Wayland owner. The owner goroutine performs all Wayland work and
 // creates one bar per connected output.
-func run(ctx context.Context) error {
+func run(ctx context.Context) (err error) {
 	// Validated before opening Wayland so the startup error names the missing
 	// environment variable.
 	socket := os.Getenv("NIRI_SOCKET")
@@ -62,9 +63,9 @@ func run(ctx context.Context) error {
 	// A missing file is not an error: the built-in defaults apply. An invalid
 	// one fails startup, because there is no previous configuration to keep.
 	cfgPath := config.DefaultPath()
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		return err
+	cfg, cfgErr := config.Load(cfgPath)
+	if cfgErr != nil {
+		return cfgErr
 	}
 
 	registry := shell.NewRegistry(cfg)
@@ -75,6 +76,16 @@ func run(ctx context.Context) error {
 	// Releases every service lease and stops the clock goroutine when the
 	// process unwinds, whether through cancellation or an error return.
 	defer registry.Close()
+	// Registered after Close so it runs before it. Close is cleanup and can be
+	// slow or, if a handler panic stranded a lock, refuse to finish at all;
+	// the reason we are unwinding must not be trapped behind it. This is how a
+	// nil dereference in a bar widget presented as a shell that started, drew
+	// nothing, and logged nothing at all.
+	defer func() {
+		if err != nil {
+			log.Printf("sysc-shell: %v", err)
+		}
+	}()
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

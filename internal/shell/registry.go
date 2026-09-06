@@ -3,6 +3,7 @@ package shell
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"slices"
@@ -763,35 +764,67 @@ func (r *Registry) DropHost(global uint32) {
 }
 
 // Close releases every bar and service. It is safe to call twice.
+// closeLockGrace bounds how long Close waits for r.mu at shutdown.
+const closeLockGrace = 2 * time.Second
+
+// lockWithin acquires r.mu, giving up after d.
+//
+// sysc-wayland recovers a panic in an event handler into an error rather than
+// crashing. A handler that panicked between a manual Lock and its Unlock has
+// therefore left r.mu held for the life of the process. Shutdown must not
+// depend on an invariant a panic has already broken: Close used to block here
+// for good, so the error that caused the panic was never reported and the
+// service sat in futex_do_wait until it was killed.
+func (r *Registry) lockWithin(d time.Duration) bool {
+	deadline := time.Now().Add(d)
+	for {
+		if r.mu.TryLock() {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func (r *Registry) Close() {
 	// Unblocks any publish waiting on a full channel, so shutdown cannot hang.
 	r.closeOnce.Do(func() { close(r.closed) })
 
-	r.mu.Lock()
-	if r.toasts != nil {
-		r.toasts.stopLeaseRenew()
+	// Best effort: everything under the lock is cleanup, and giving it up is
+	// better than never reporting why we are shutting down at all.
+	locked := r.lockWithin(closeLockGrace)
+	if !locked {
+		log.Printf("shell: closing without r.mu; a handler panic left it held")
 	}
 	var osdAux []wayland.AuxRequest
-	if r.osd != nil {
-		osdAux = r.osd.prepareHide()
-	}
-	r.closeTrayLocked()
-	if r.runningMenu != nil {
-		r.runningMenu.closeLocked()
-	}
-	r.stopTrayIconsLocked()
-	r.closeAllPanelsLocked()
 	var leases []*services.Lease
-	for global, held := range r.leases {
-		leases = append(leases, held...)
-		delete(r.leases, global)
+	var audioLease, brightLease *services.Lease
+	if locked {
+		if r.toasts != nil {
+			r.toasts.stopLeaseRenew()
+		}
+		if r.osd != nil {
+			osdAux = r.osd.prepareHide()
+		}
+		r.closeTrayLocked()
+		if r.runningMenu != nil {
+			r.runningMenu.closeLocked()
+		}
+		r.stopTrayIconsLocked()
+		r.closeAllPanelsLocked()
+		for global, held := range r.leases {
+			leases = append(leases, held...)
+			delete(r.leases, global)
+		}
+		r.bars = make(map[uint32]*Bar)
+		audioLease = r.audioLease
+		r.audioLease = nil
+		brightLease = r.brightLease
+		r.brightLease = nil
+		r.mu.Unlock()
 	}
-	r.bars = make(map[uint32]*Bar)
-	audioLease := r.audioLease
-	r.audioLease = nil
-	brightLease := r.brightLease
-	r.brightLease = nil
-	r.mu.Unlock()
 
 	for _, req := range osdAux {
 		r.sendAux(req)
@@ -803,10 +836,12 @@ func (r *Registry) Close() {
 		brightLease.Release()
 	}
 	releaseAll(leases)
-	r.mu.Lock()
-	launcherSvc := r.launcherSvc
-	r.launcherSvc = nil
-	r.mu.Unlock()
+	var launcherSvc *launcher.Service
+	if r.lockWithin(closeLockGrace) {
+		launcherSvc = r.launcherSvc
+		r.launcherSvc = nil
+		r.mu.Unlock()
+	}
 	if launcherSvc != nil {
 		launcherSvc.Close()
 	}
