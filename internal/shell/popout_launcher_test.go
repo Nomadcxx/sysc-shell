@@ -262,15 +262,103 @@ func TestLauncherListFillsThePanel(t *testing.T) {
 	list := launcherListNode(t, h)
 	bottom := list.Bounds.Y + list.Bounds.H
 	wantBottom := 700 - 12 - h.launcherFooterHeight() - 8
-	// 700 less the padding, rail, field and gaps leaves 576, which is 8.4
-	// rows against the 6.2 the 500-tall panel showed.
+	// 700 less the padding, rail, field, footer and gaps leaves 558. At the
+	// 76-tall slot that is seven whole rows and a 26px cap of the eighth. It
+	// was eight and a 14px cap before the row took DMS's 12/16 padding; the
+	// row grew by 8 and the panel did not, so a row had to go.
 	if list.Bounds.H != h.launcherListHeight() || bottom != wantBottom {
 		t.Fatalf("list %+v, want height %d ending at %d",
 			list.Bounds, h.launcherListHeight(), wantBottom)
 	}
-	if rows := list.Bounds.H / launcherSlotHeight; rows < 8 {
+	if rows := list.Bounds.H / launcherSlotHeight; rows < 7 {
 		t.Fatalf("only %d rows visible; the taller panel is the whole point", rows)
 	}
+}
+
+// The list is meant to end part way through a row. There is no scrollbar, so
+// that clipped row is the only thing saying the list runs on past the panel
+// floor -- and if the viewport ever divides evenly by the slot, the affordance
+// disappears with nothing else failing.
+func TestLauncherListEndsPartWayThroughARow(t *testing.T) {
+	t.Parallel()
+
+	reg, _, _ := openLauncherPanel(t, alphabetEntries(60))
+	h := launcherHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	shown := h.launcherListHeight() % launcherSlotHeight
+	if shown == 0 {
+		t.Fatalf("the %d viewport is a whole number of %d rows; nothing says the list scrolls",
+			h.launcherListHeight(), launcherSlotHeight)
+	}
+	// Enough of the row to read as a row: past its half of the gap and its top
+	// padding, into the glyph. Less than that and the strip is bare background.
+	if floor := launcherRowGap/2 + launcherRowPadTop; shown <= floor {
+		t.Fatalf("the clipped row shows %d of %d, which is still inside its padding; want more than %d",
+			shown, launcherSlotHeight, floor)
+	}
+}
+
+// DMS's row padding: 12 above the text block and 16 below. ui carries one
+// padding scalar per node, so the asymmetry is structural -- the capsule is
+// taller than its content and a column inside it spends the difference at the
+// foot. Asserted in laid-out pixels rather than against the constants, because
+// dropping that column is an easy tidy-up and nothing else would notice.
+func TestLauncherRowPadsTwelveAboveAndSixteenBelow(t *testing.T) {
+	t.Parallel()
+
+	reg, _, _ := openLauncherPanel(t, alphabetEntries(60))
+	h := launcherHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	list := launcherListNode(t, h)
+	if len(list.Children) < 2 {
+		t.Fatal("layout produced fewer than two rows")
+	}
+	first, second := list.Children[0].Children[0], list.Children[1].Children[0]
+	body := launcherBodyRow(t, first)
+	above := body.Bounds.Y - first.Bounds.Y
+	below := first.Bounds.Y + first.Bounds.H - (body.Bounds.Y + body.Bounds.H)
+	if above != launcherRowPadTop || below != launcherRowPadBottom {
+		t.Fatalf("row padding = %d above, %d below; want %d and %d (capsule %+v, body %+v)",
+			above, below, launcherRowPadTop, launcherRowPadBottom, first.Bounds, body.Bounds)
+	}
+	// The other half of the design: the padding surrounds the text block, the
+	// gap separates the rows. Growing one at the other's expense would keep
+	// the slot height and lose the point.
+	if gap := second.Bounds.Y - (first.Bounds.Y + first.Bounds.H); gap != launcherRowGap {
+		t.Fatalf("gap between rows = %d, want %d", gap, launcherRowGap)
+	}
+}
+
+// launcherBodyRow is the icon-and-labels row inside a laid-out row capsule.
+func launcherBodyRow(t *testing.T, capsule *ui.Node) *ui.Node {
+	t.Helper()
+	if capsule.Kind != ui.KindCapsule {
+		t.Fatalf("row wrapper holds a %v, want the capsule", capsule.Kind)
+	}
+	var find func(*ui.Node) *ui.Node
+	find = func(n *ui.Node) *ui.Node {
+		if n == nil {
+			return nil
+		}
+		if n.Kind == ui.KindRow {
+			return n
+		}
+		for _, c := range n.Children {
+			if got := find(c); got != nil {
+				return got
+			}
+		}
+		return nil
+	}
+	body := find(capsule)
+	if body == nil {
+		t.Fatal("row capsule holds no body row")
+	}
+	return body
 }
 
 func TestLauncherTreeShape(t *testing.T) {
@@ -803,4 +891,129 @@ func TestLauncherRowTakesHover(t *testing.T) {
 	if !again.State.Has(ui.StateHovered) {
 		t.Fatalf("row %q did not take hover", key)
 	}
+}
+
+// With a long query the only way back to the browse list was holding
+// Backspace. The trailing glyph is the pointer's way, and because the field is
+// a leaf the target has to come from render, which is what drew it.
+func TestLauncherClearGlyphEmptiesTheQuery(t *testing.T) {
+	t.Parallel()
+
+	reg, _, reqs := openLauncherPanel(t, launcherTestEntries())
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "nautilus"})
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && len(h.launcherResults) == 1
+	})
+
+	h := launcherHost(t, reg)
+	reg.mu.Lock()
+	field := launcherSearchField(t, h)
+	box := render.SearchClearBox(field)
+	reg.mu.Unlock()
+	if box.W == 0 {
+		t.Fatalf("no clear glyph on a field holding %q at %+v", field.Text, field.Bounds)
+	}
+	if !field.Bounds.Contains(box.X, box.Y) {
+		t.Fatalf("clear box %+v is outside the field %+v", box, field.Bounds)
+	}
+
+	reqs[1].Open.Callbacks.Handle(wayland.Event{
+		Kind: wayland.EventPointerPress, Button: btnLeft,
+		X: float64(box.X + box.W/2), Y: float64(box.Y + box.H/2),
+	})
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && h.query == "" && len(h.launcherResults) == len(launcherTestEntries())
+	})
+
+	h = launcherHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if again := launcherSearchField(t, h); again.Text != "" || again.Cursor != 0 {
+		t.Fatalf("field = %q cursor %d after the clear, want empty", again.Text, again.Cursor)
+	}
+	if render.SearchClearBox(launcherSearchField(t, h)).W != 0 {
+		t.Fatal("the clear glyph is still drawn on an empty well")
+	}
+}
+
+// A press just outside the glyph is a press in the well, not a clear. The box
+// is 20 logical pixels in a 536-wide field, so an off-by-one here is a control
+// that fires when the pointer is merely near it.
+func TestLauncherClearGlyphIgnoresAPressBesideIt(t *testing.T) {
+	t.Parallel()
+
+	reg, _, reqs := openLauncherPanel(t, launcherTestEntries())
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "nautilus"})
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && len(h.launcherResults) == 1
+	})
+
+	h := launcherHost(t, reg)
+	reg.mu.Lock()
+	box := render.SearchClearBox(launcherSearchField(t, h))
+	reg.mu.Unlock()
+
+	reqs[1].Open.Callbacks.Handle(wayland.Event{
+		Kind: wayland.EventPointerPress, Button: btnLeft,
+		X: float64(box.X - 1), Y: float64(box.Y + box.H/2),
+	})
+
+	h = launcherHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if h.query != "nautilus" {
+		t.Fatalf("query = %q after a press beside the glyph, want it untouched", h.query)
+	}
+}
+
+// The glyph shortens the text box, and the caret rides that box. A query long
+// enough to fill the well must still end before the glyph rather than under it.
+func TestLauncherClearGlyphKeepsTheTextClear(t *testing.T) {
+	t.Parallel()
+
+	reg, _, reqs := openLauncherPanel(t, launcherTestEntries())
+	long := strings.Repeat("nautilus ", 12)
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: long})
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && h.query == long
+	})
+
+	h := launcherHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	field := launcherSearchField(t, h)
+	box := render.SearchClearBox(field)
+	if box.W == 0 {
+		t.Fatal("a full well lost its clear glyph")
+	}
+	if right := field.Bounds.X + field.Bounds.W; box.X+box.W > right {
+		t.Fatalf("clear glyph ends at %d, past the field's %d", box.X+box.W, right)
+	}
+	if field.Cursor != len(long) {
+		t.Fatalf("cursor = %d, want the end of a %d-byte query", field.Cursor, len(long))
+	}
+}
+
+func launcherSearchField(t *testing.T, h *PanelHost) *ui.Node {
+	t.Helper()
+	var find func(*ui.Node) *ui.Node
+	find = func(n *ui.Node) *ui.Node {
+		if n == nil {
+			return nil
+		}
+		if n.Kind == ui.KindTextField && n.Name == "Search" {
+			return n
+		}
+		for _, c := range n.Children {
+			if got := find(c); got != nil {
+				return got
+			}
+		}
+		return nil
+	}
+	field := find(h.root)
+	if field == nil {
+		t.Fatal("no Search field in the launcher tree")
+	}
+	return field
 }
