@@ -183,7 +183,20 @@ func shadowSpread(e Elevation) int {
 	return 12
 }
 
-type glyphKey struct{ size, stroke int }
+// glyphShape discriminates the drawn chrome glyphs sharing the mask cache.
+// Without it a clear cross and a magnifier of the same size and stroke would
+// answer to the same key and whichever was rasterised first would win.
+type glyphShape uint8
+
+const (
+	glyphSearch glyphShape = iota
+	glyphClear
+)
+
+type glyphKey struct {
+	shape        glyphShape
+	size, stroke int
+}
 
 var glyphs = map[glyphKey]*image.Alpha{}
 
@@ -199,7 +212,7 @@ var glyphs = map[glyphKey]*image.Alpha{}
 // Proportions follow Material's search icon in a 24-unit box: a lens of radius
 // 6.5 centred at (10.5, 10.5) and a handle running to (20.5, 20.5).
 func SearchGlyphMask(size, stroke int) *image.Alpha {
-	key := glyphKey{size, stroke}
+	key := glyphKey{glyphSearch, size, stroke}
 	maskMu.Lock()
 	defer maskMu.Unlock()
 	if mask := glyphs[key]; mask != nil {
@@ -220,6 +233,44 @@ func SearchGlyphMask(size, stroke int) *image.Alpha {
 				px, py := float64(x)+0.5, float64(y)+0.5
 				lens := math.Abs(math.Hypot(px-cx, py-cy) - r)
 				edge := math.Min(lens, segmentDistance(px, py, x0, y0, x1, y1))
+				coverage := min(max(0.5-(edge-half), 0.0), 1.0)
+				if coverage <= 0 {
+					continue
+				}
+				mask.SetAlpha(x, y, color.Alpha{A: uint8(coverage * 255)})
+			}
+		}
+	}
+	glyphs[key] = mask
+	return mask
+}
+
+// ClearGlyphMask returns a cached antialiased cross: two strokes across the
+// box, drawn as distance fields for the same reason the magnifier is. It is
+// the trailing affordance of a search well that already holds a query.
+//
+// Proportions follow Material's close icon in a 24-unit box, whose arms run
+// corner to corner between 6.5 and 17.5 on both axes. Drawn rather than
+// rasterised from close.svg: there is no SVG path on this side yet, and a
+// cross is two segments.
+func ClearGlyphMask(size, stroke int) *image.Alpha {
+	key := glyphKey{glyphClear, size, stroke}
+	maskMu.Lock()
+	defer maskMu.Unlock()
+	if mask := glyphs[key]; mask != nil {
+		return mask
+	}
+	mask := image.NewAlpha(image.Rect(0, 0, max(size, 0), max(size, 0)))
+	if size > 0 && stroke > 0 {
+		u := float64(size) / 24
+		lo, hi := 6.5*u, 17.5*u
+		half := float64(stroke) / 2
+		for y := 0; y < size; y++ {
+			for x := 0; x < size; x++ {
+				px, py := float64(x)+0.5, float64(y)+0.5
+				edge := math.Min(
+					segmentDistance(px, py, lo, lo, hi, hi),
+					segmentDistance(px, py, hi, lo, lo, hi))
 				coverage := min(max(0.5-(edge-half), 0.0), 1.0)
 				if coverage <= 0 {
 					continue

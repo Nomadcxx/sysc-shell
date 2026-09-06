@@ -42,6 +42,7 @@ const (
 	keyDown      = 108
 	keyPageDown  = 109
 
+	btnLeft  = 272
 	btnRight = 273
 
 	// shieldQuietFor drops the press that mapped the overlay, so the click
@@ -808,6 +809,11 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			return h.pointerChanged(r, h.pointer.clear())
 		case wayland.EventPointerPress:
 			h.hoverX, h.hoverY = int(math.Floor(e.X)), int(math.Floor(e.Y))
+			// The clear glyph sits inside the field's own bounds, so it is
+			// resolved before any panel's hit testing gets a look at the point.
+			if h.searchClearPress(r, e) {
+				return true
+			}
 			if h.id == PanelWallpaper && h.wallpaperPointerPress(r, e) {
 				return true
 			}
@@ -1103,6 +1109,44 @@ func (h *PanelHost) applyIME(r *Registry, e wayland.Event) bool {
 		}
 		f.Preedit(e.IMEPreedit)
 	})
+}
+
+// searchClearPress empties a search well when the press lands on the trailing
+// clear glyph paintTextField draws in it. It is here rather than in one
+// panel's own handler because the glyph is painted by shared chrome: the
+// launcher, the settings search and the wallpaper picker all name their field
+// "Search", so wiring it to one would leave a live affordance dead in the
+// other two.
+func (h *PanelHost) searchClearPress(r *Registry, e wayland.Event) bool {
+	if e.Button != btnLeft {
+		return false
+	}
+	n := searchClearAt(h.root, h.hoverX, h.hoverY)
+	if n == nil {
+		return false
+	}
+	// editField edits whatever is focused, and a press on the well is a press
+	// on the field whether or not it already held focus.
+	h.setFocus(n)
+	return h.editField(r, func(f *ui.Field) { f.Clear() })
+}
+
+// searchClearAt finds the field whose clear glyph covers the point. A text
+// field is a leaf, so the glyph leaves nothing in the tree to hit; render owns
+// where it was drawn and answers for it here too.
+func searchClearAt(n *ui.Node, x, y int) *ui.Node {
+	if n == nil {
+		return nil
+	}
+	if render.SearchClearBox(n).Contains(x, y) {
+		return n
+	}
+	for _, c := range n.Children {
+		if got := searchClearAt(c, x, y); got != nil {
+			return got
+		}
+	}
+	return nil
 }
 
 func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {

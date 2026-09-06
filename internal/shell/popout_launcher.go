@@ -16,19 +16,35 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
-// Launcher chrome: SYSC rail, pill search, 60px-row list, 8px gap between
-// pills. The 40px icon slot is a letter until a theme raster lands.
+// Launcher chrome: SYSC rail, pill search, a list of padded row pills with an
+// 8px gap between them. The 40px icon slot is a letter until a theme raster
+// lands.
 //
-// The row and icon match DMS spotlight exactly, which arrived at the same 60
-// and 40 independently. The list is shorter than DMS's only because the panel
-// was 500 tall against its 700; the row was never the constraint.
+// The icon matches DMS spotlight exactly, which arrived at 40 independently.
+// The row is DMS's too, but the figure that matters is not its height: it is
+// the 12-above/16-below padding the height is derived from.
 const (
-	launcherRowHeight   = 60
-	launcherRowGap      = 8
-	launcherSlotHeight  = launcherRowHeight + launcherRowGap
-	launcherFieldHeight = 56
-	launcherIconSlot    = 40
-	launcherMarkHeight  = 23
+	launcherIconSlot = 40
+	// launcherRowPadTop and launcherRowPadBottom are DMS's row padding: 12
+	// above the text block and 16 below. The asymmetry is the point -- the
+	// four extra pixels at the foot are what make its list breathe where our
+	// flat 4-at-every-level read tight.
+	//
+	// A ui node has one padding scalar, so the capsule takes the top figure
+	// and the difference falls out of the column inside it. See launcherRow.
+	launcherRowPadTop    = 12
+	launcherRowPadBottom = 16
+	launcherRowHeight    = launcherRowPadTop + launcherIconSlot + launcherRowPadBottom
+	launcherRowGap       = 8
+	launcherSlotHeight   = launcherRowHeight + launcherRowGap
+	launcherFieldHeight  = 56
+	// launcherMarkHeight balances the raster against the slashes beside it.
+	// At 23 the mark stood taller than the RoleTitle run and the slashes read
+	// light next to it; the owner picked shrinking the mark over promoting the
+	// slashes to RoleHeadline, so the rail is lighter overall rather than
+	// heavier. The header is measured, not assumed, so the list takes back the
+	// pixels the shorter mark frees.
+	launcherMarkHeight = 19
 	// launcherHints is sysc-greet's own help line, verbatim. The greeter puts
 	// the same string under every menu, so the launcher reads as the same
 	// family rather than inventing its own key legend.
@@ -238,13 +254,27 @@ func launcherRow(r *Registry, h *PanelHost, results []launcher.Result, i int) *u
 	if i == h.launcherSel {
 		fill = ui.FillSoft
 	}
-	pad := launcherRowGap / 2
+	// The wrapper column carries half the gap at each end, so the space
+	// between two capsules is launcherRowGap and the space inside one is the
+	// row's own padding. The two are separate on purpose: the gap separates
+	// rows from each other, the padding surrounds the text block.
+	//
+	// The capsule is taller than its padding plus its body by exactly
+	// launcherRowPadBottom-launcherRowPadTop, and the column inside it is what
+	// spends that slack. A column stacks from the top of the box it is given
+	// and leaves what it does not use at the foot; a row in the same box would
+	// centre its children and split the slack evenly, which is the symmetric
+	// padding this is trying to get away from.
 	return &ui.Node{
-		Kind: ui.KindColumn, Padding: pad,
+		Kind: ui.KindColumn, Padding: launcherRowGap / 2,
 		Children: []*ui.Node{{
-			Kind: ui.KindCapsule, Fill: fill, Padding: 4, Shape: ui.ShapeMedium,
-			Action:   "launch:" + res.Entry.ID,
-			Children: []*ui.Node{launcherRowBody(r, h, res.Entry)},
+			Kind: ui.KindCapsule, Fill: fill, Shape: ui.ShapeMedium,
+			Padding: launcherRowPadTop, Height: launcherRowHeight,
+			Action: "launch:" + res.Entry.ID,
+			Children: []*ui.Node{{
+				Kind:     ui.KindColumn,
+				Children: []*ui.Node{launcherRowBody(r, h, res.Entry)},
+			}},
 		}},
 	}
 }
@@ -254,13 +284,15 @@ func launcherRowBody(r *Registry, h *PanelHost, e launcher.Entry) *ui.Node {
 	if e.Comment != "" {
 		labels = append(labels, &ui.Node{Kind: ui.KindText, Text: e.Comment})
 	}
-	// Panel pad 12×2, capsule pad 4×2, row pad 4×2, glyph, gap.
-	labelW := h.place.Panel.W - 24 - 8 - 8 - launcherIconSlot - 12
+	// Panel pad 12×2, capsule pad launcherRowPadTop×2, glyph, gap. The row
+	// itself is unpadded: its vertical inset is the capsule's, and a second
+	// one here would put the text block back off the 12/16 figures.
+	labelW := h.place.Panel.W - 24 - 2*launcherRowPadTop - launcherIconSlot - 12
 	if labelW < 80 {
 		labelW = 80
 	}
 	return &ui.Node{
-		Kind: ui.KindRow, Gap: 12, Padding: 4,
+		Kind: ui.KindRow, Gap: 12,
 		Children: []*ui.Node{
 			launcherIconNode(r, h, e),
 			{Kind: ui.KindColumn, Gap: 2, Width: labelW, Children: labels},

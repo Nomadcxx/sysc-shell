@@ -486,10 +486,18 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 		mark = searchGlyphInset + searchGlyphSize + searchGlyphGap - n.Padding
 		paintSearchGlyph(c, box, style)
 	}
+	// The trailing clear mirrors the leading one, and only appears once there
+	// is something to clear: an empty well would otherwise carry an affordance
+	// that does nothing.
+	trail := 0
+	if clear := SearchClearBox(n); clear.W > 0 {
+		trail = clearGlyphInset + clearGlyphSize + clearGlyphGap - n.Padding
+		paintClearGlyph(c, style.Scale120.PhysicalRect(clear), style)
+	}
 	inner := ui.Rect{
 		X: n.Bounds.X + n.Padding + mark,
 		Y: n.Bounds.Y + n.Padding,
-		W: max(n.Bounds.W-2*n.Padding-mark, 0),
+		W: max(n.Bounds.W-2*n.Padding-mark-trail, 0),
 		H: n.Bounds.H - 2*n.Padding,
 	}
 	phys := style.Scale120.PhysicalRect(inner)
@@ -992,6 +1000,54 @@ func paintSearchGlyph(c *Canvas, field ui.Rect, style Style) {
 	x := field.X + style.Scale120.Physical(searchGlyphInset)
 	y := field.Y + (field.H-size)/2
 	blendMask(c, SearchGlyphMask(size, stroke), x, y, style.Foreground)
+}
+
+// clearGlyphSize, Inset and Gap mirror the magnifier's on the trailing side,
+// so the well reads as symmetric even though the two glyphs differ.
+const (
+	clearGlyphSize  = 20
+	clearGlyphInset = 18
+	clearGlyphGap   = 10
+)
+
+// SearchClearBox is the logical square a search field's trailing clear glyph
+// occupies, or the zero rect when the field shows none -- it is not a search
+// well, it is empty, or it is too narrow to hold the glyph without eating the
+// text.
+//
+// It is exported because the hit target has to be the pixels that were drawn.
+// The field is a leaf: nothing in the tree marks where the glyph landed, so a
+// host resolving a click on it derives the box from here rather than
+// reconstructing the arithmetic and drifting from it.
+func SearchClearBox(n *ui.Node) ui.Rect {
+	if n == nil || n.Kind != ui.KindTextField || n.Name != "Search" || n.Multiline {
+		return ui.Rect{}
+	}
+	if n.Text == "" {
+		return ui.Rect{}
+	}
+	// Both glyphs plus a readable run of text between them, or the well is
+	// better off carrying neither the clear nor a two-character text box.
+	span := searchGlyphInset + searchGlyphSize + searchGlyphGap +
+		clearGlyphGap + clearGlyphSize + clearGlyphInset
+	if n.Bounds.W < span+clearGlyphSize || n.Bounds.H < clearGlyphSize {
+		return ui.Rect{}
+	}
+	return ui.Rect{
+		X: n.Bounds.X + n.Bounds.W - clearGlyphInset - clearGlyphSize,
+		Y: n.Bounds.Y + (n.Bounds.H-clearGlyphSize)/2,
+		W: clearGlyphSize,
+		H: clearGlyphSize,
+	}
+}
+
+// paintClearGlyph draws the cross in the box SearchClearBox reserved.
+func paintClearGlyph(c *Canvas, box ui.Rect, style Style) {
+	if box.W <= 0 || box.H <= 0 {
+		return
+	}
+	stroke := max(style.Scale120.Physical(2), 1)
+	blendMask(c, ClearGlyphMask(box.W, stroke), box.X, box.Y, style.Foreground)
 }
 
 // centreLine puts a single line of text on the vertical midline of the box it
