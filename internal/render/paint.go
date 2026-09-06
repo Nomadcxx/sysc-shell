@@ -171,13 +171,13 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style) error {
 	clear(c.Pix)
 	box := style.Scale120.PhysicalRect(style.Body)
 	radius := style.Scale120.Physical(style.Radius)
+	// The silhouette is drawn from the antialiased mask, and the rim is a real
+	// stroke over it. Filling the rim colour and laying a smaller fill on top
+	// left the border as the difference of two quantised silhouettes, which is
+	// why it thinned and broke up around the corners.
+	c.FillRounded(box, radius, style.rootFill())
 	if style.Rim.A > 0 {
-		fillRoundedRect(c, box, radius, style.Rim)
-		inset := max(style.Scale120.Physical(1), 1)
-		inner := ui.Rect{X: box.X + inset, Y: box.Y + inset, W: box.W - 2*inset, H: box.H - 2*inset}
-		fillRoundedRect(c, inner, max(radius-inset, 0), style.rootFill())
-	} else {
-		fillRoundedRect(c, box, radius, style.rootFill())
+		c.StrokeRounded(box, radius, max(style.Scale120.Physical(1), 1), style.Rim)
 	}
 	squareAttachedEdge(c, box, radius, style.AttachEdge, style.rootFill())
 
@@ -471,17 +471,20 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 	if well.A == 0 {
 		well = style.Track
 	}
-	if n.Name == "Search" && style.Rim.A > 0 {
-		fillRoundedRect(c, box, radius, style.Rim)
-		inset := max(style.Scale120.Physical(1), 1)
-		fillRoundedRect(c, ui.Rect{X: box.X + inset, Y: box.Y + inset, W: box.W - 2*inset, H: box.H - 2*inset}, max(radius-inset, 0), well)
-	} else {
-		fillRoundedRect(c, box, radius, well)
+	c.FillRounded(box, radius, well)
+	// A field is a control, so its boundary is the outline token. It used to
+	// stroke Rim, which is the floating panel's own edge: the well and the
+	// panel it sits on drew the same colour, and neither read as deliberate.
+	if boundary := style.outline(); boundary.A > 0 {
+		c.StrokeRounded(box, radius, max(style.Scale120.Physical(1), 1), boundary)
 	}
 	mark := 0
 	if n.Name == "Search" && !n.Multiline {
-		mark = 26
-		paintSearchMark(c, box, style.Scale120.Physical(mark), style.Foreground, well)
+		// The leading inset clears the stadium cap. At 26 the glyph was
+		// centred 13 from the edge, inside the curve of a 56-tall pill, so it
+		// read as crowding the corner rather than sitting in the field.
+		mark = searchGlyphInset + searchGlyphSize + searchGlyphGap - n.Padding
+		paintSearchGlyph(c, box, style)
 	}
 	inner := ui.Rect{
 		X: n.Bounds.X + n.Padding + mark,
@@ -490,6 +493,13 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 		H: n.Bounds.H - 2*n.Padding,
 	}
 	phys := style.Scale120.PhysicalRect(inner)
+	// One line of text sits on the midline of the well, not against its top
+	// edge. paintText draws from the top of the box it is given, which is
+	// invisible while a field is only as tall as its text and obvious once it
+	// is a 56px pill.
+	if !n.Multiline {
+		phys = centreLine(phys, text, style, n)
+	}
 	prev := c.restrict
 	c.restrict = phys
 	defer func() { c.restrict = prev }()
@@ -962,28 +972,45 @@ func wash(accent, surface Color) Color {
 
 // paintSearchMark draws a magnifying glass in the leading well. There is no
 // SVG rasterizer on this path; the glyph is two rounded fills.
-func paintSearchMark(c *Canvas, field ui.Rect, slot int, fg, well Color) {
-	if slot <= 0 || field.H <= 0 {
+const (
+	// searchGlyphSize is the logical box the magnifier occupies, and Inset is
+	// the gap from the field's left edge to that box. Gap separates it from
+	// the text that follows.
+	searchGlyphSize  = 20
+	searchGlyphInset = 18
+	searchGlyphGap   = 10
+)
+
+// paintSearchGlyph draws the magnifier centred on the field's midline, inset
+// far enough from the left edge to clear the stadium cap.
+func paintSearchGlyph(c *Canvas, field ui.Rect, style Style) {
+	size := style.Scale120.Physical(searchGlyphSize)
+	if size <= 0 || field.H <= 0 {
 		return
 	}
-	cx := field.X + slot/2
-	// The handle hangs SE of the lens, so the midline of the field is
-	// below the visual centre of the glyph unless the lens sits a little high.
-	cy := field.Y + field.H/2 - 3
-	r := min(field.H/5, slot/3)
-	if r < 3 {
-		r = 3
+	stroke := max(style.Scale120.Physical(2), 1)
+	x := field.X + style.Scale120.Physical(searchGlyphInset)
+	y := field.Y + (field.H-size)/2
+	blendMask(c, SearchGlyphMask(size, stroke), x, y, style.Foreground)
+}
+
+// centreLine puts a single line of text on the vertical midline of the box it
+// was given, and returns a box that tall so the caret matches the text rather
+// than spanning the whole well.
+func centreLine(box ui.Rect, text *TextRenderer, style Style, n *ui.Node) ui.Rect {
+	if text == nil || box.H <= 0 {
+		return box
 	}
-	outer := ui.Rect{X: cx - r, Y: cy - r, W: 2*r + 1, H: 2*r + 1}
-	fillRoundedRect(c, outer, r, fg)
-	hole := r - 2
-	if hole >= 2 {
-		fillRoundedRect(c, ui.Rect{X: cx - hole, Y: cy - hole, W: 2*hole + 1, H: 2*hole + 1}, hole, well)
+	// Measured from a reference run, not the field's own text: an empty field
+	// still has a caret, and a run of digits would otherwise sit differently
+	// from one with descenders.
+	_, h, err := text.Measure("Ag", textSpec(style, n), false)
+	if err != nil || h <= 0 || h >= box.H {
+		return box
 	}
-	handle := max(r, 5)
-	for i := 0; i < handle; i++ {
-		fillRect(c, ui.Rect{X: cx + r - 1 + i, Y: cy + r - 1 + i, W: 3, H: 3}, fg)
-	}
+	box.Y += (box.H - h) / 2
+	box.H = h
+	return box
 }
 
 func textColor(style Style, tone ui.Tone) Color {

@@ -733,14 +733,20 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	}
 	if h.roving.Count > 0 {
 		n := h.focus[h.roving.Index()]
-		if n != nil && n.Bounds.W > 0 && n.Kind != ui.KindTextField {
+		if n != nil && n.Bounds.W > 0 {
 			// The ring follows the node's own silhouette rather than boxing a
 			// stadium in square corners, and stays independent of hover: a
-			// focused control that is not hovered still shows it. A text field
-			// is excluded because it paints its own focused well.
+			// focused control that is not hovered still shows it.
 			ring := scale.PhysicalRect(n.Bounds)
 			radius := min(scale.Physical(h.theme.Radius), min(ring.W, ring.H)/2)
-			c.StrokeRounded(ring, radius, 2, h.theme.Accent)
+			if n.Kind == ui.KindTextField {
+				// A field is a stadium, and it carries the focus itself: the
+				// comment here used to say it painted its own focused well,
+				// but nothing ever told the painter which field had focus, so
+				// a focused search field looked exactly like an idle one.
+				radius = min(ring.W, ring.H) / 2
+			}
+			c.StrokeRounded(ring, radius, max(scale.Physical(2), 2), h.theme.Accent)
 		}
 	}
 	return nil

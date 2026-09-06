@@ -129,43 +129,18 @@ func roundedInset(y, height, radius int) int {
 }
 
 // strokeRoundedRect outlines one clipped rounded rectangle inward from its
-// bounds, so the stroke never grows the node's box. Each scanline reuses the
-// same corner inset the fill uses, then paints the band between the outer edge
-// and the inset inner edge; rows above and below the inner rectangle are solid.
-// This is the whole stroke surface the catalogue needs -- boundaries and focus
-// rings -- not a general path engine.
+// bounds, so the stroke never grows the node's box. It draws the cached ring
+// mask, which carries the same antialiased coverage the rounded fill uses.
+//
+// This was a pair of scanline fills whose insets were rounded to whole pixels.
+// A wide band survives that, but a hairline border does not: the quantised
+// corner reads as a staircase, and the eye sees a broken line rather than a
+// thin one.
 func strokeRoundedRect(c *Canvas, r ui.Rect, radius, width int, col Color) {
 	if r.W <= 0 || r.H <= 0 || width <= 0 || col.A == 0 {
 		return
 	}
-	radius = min(radius, min(r.W, r.H)/2)
-	width = min(width, min(r.W, r.H)/2)
-	inner := ui.Rect{X: r.X + width, Y: r.Y + width, W: r.W - 2*width, H: r.H - 2*width}
-	innerRadius := max(0, radius-width)
-	for y := 0; y < r.H; y++ {
-		outer := 0
-		if radius > 0 {
-			outer = roundedInset(y, r.H, radius)
-		}
-		left, right := r.X+outer, r.X+r.W-outer
-		iy := y - width
-		if inner.W <= 0 || inner.H <= 0 || iy < 0 || iy >= inner.H {
-			fillRect(c, ui.Rect{X: left, Y: r.Y + y, W: right - left, H: 1}, col)
-			continue
-		}
-		gap := 0
-		if innerRadius > 0 {
-			gap = roundedInset(iy, inner.H, innerRadius)
-		}
-		il, ir := inner.X+gap, inner.X+inner.W-gap
-		fillRect(c, ui.Rect{X: left, Y: r.Y + y, W: max(0, il-left), H: 1}, col)
-		fillRect(c, ui.Rect{X: ir, Y: r.Y + y, W: max(0, right-ir), H: 1}, col)
-	}
-}
-
-// StrokeRounded outlines a rounded rectangle inward from its bounds.
-func (c *Canvas) StrokeRounded(r ui.Rect, radius, width int, col Color) {
-	strokeRoundedRect(c, r, radius, width, col)
+	blendMask(c, RingMask(radius, r.W, r.H, width), r.X, r.Y, col)
 }
 
 // clearOutsideRoundedRect restores transparency after children paint. Child
@@ -222,6 +197,14 @@ func blendMask(c *Canvas, mask *image.Alpha, x, y int, col Color) {
 // FillRounded fills a rounded rectangle using the cached alpha mask.
 func (c *Canvas) FillRounded(r ui.Rect, radius int, col Color) {
 	blendMask(c, RoundedMask(radius, r.W, r.H), r.X, r.Y, col)
+}
+
+// StrokeRounded outlines a rounded rectangle inward from its bounds using the
+// cached ring mask. Unlike strokeRoundedRect it antialiases both edges of the
+// band, which is what a hairline border needs: a one-pixel stroke quantised to
+// whole pixels reads as a staircase rather than a line.
+func (c *Canvas) StrokeRounded(r ui.Rect, radius, width int, col Color) {
+	blendMask(c, RingMask(radius, r.W, r.H, width), r.X, r.Y, col)
 }
 
 // DrawShadow composites a cached shadow around a panel rectangle.

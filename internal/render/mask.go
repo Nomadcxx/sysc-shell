@@ -9,6 +9,8 @@ import (
 
 type maskKey struct{ radius, w, h int }
 
+type ringKey struct{ radius, w, h, width int }
+
 type Elevation int
 
 const (
@@ -24,6 +26,7 @@ type shadowKey struct {
 var (
 	maskMu  sync.Mutex
 	masks   = map[maskKey]*image.Alpha{}
+	rings   = map[ringKey]*image.Alpha{}
 	shadows = map[shadowKey]*image.Alpha{}
 )
 
@@ -45,6 +48,52 @@ func RoundedMask(radius, w, h int) *image.Alpha {
 		}
 	}
 	masks[key] = mask
+	return mask
+}
+
+// RingMask returns a cached antialiased band of the given width, drawn inward
+// from a rounded rectangle's bounds so the stroke never grows the box.
+//
+// It is the difference of two coverage fields rather than two filled shapes.
+// Stacking one fill on another leaves the border as the arithmetic difference
+// of two independently rounded silhouettes, which thins and breaks up around
+// the corners; sampling both distances per pixel keeps the band a constant
+// width the whole way round.
+func RingMask(radius, w, h, width int) *image.Alpha {
+	key := ringKey{radius, w, h, width}
+	maskMu.Lock()
+	defer maskMu.Unlock()
+	if mask := rings[key]; mask != nil {
+		return mask
+	}
+	mask := image.NewAlpha(image.Rect(0, 0, max(w, 0), max(h, 0)))
+	if w > 0 && h > 0 && width > 0 {
+		radius = min(radius, min(w, h)/2)
+		width = min(width, min(w, h)/2)
+		iw, ih := w-2*width, h-2*width
+		ir := max(radius-width, 0)
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				outer := uint32(roundedCoverage(radius, w, h, x, y))
+				if outer == 0 {
+					continue
+				}
+				// The bounds test is the caller's job: roundedCoverage
+				// answers 255 for a zero radius without looking at the
+				// point, so a square ring would cancel itself out.
+				ix, iy := x-width, y-width
+				var inner uint32
+				if iw > 0 && ih > 0 && ix >= 0 && ix < iw && iy >= 0 && iy < ih {
+					inner = uint32(roundedCoverage(ir, iw, ih, ix, iy))
+				}
+				if inner >= outer {
+					continue
+				}
+				mask.SetAlpha(x, y, color.Alpha{A: uint8(outer - inner)})
+			}
+		}
+	}
+	rings[key] = mask
 	return mask
 }
 
@@ -132,4 +181,64 @@ func shadowSpread(e Elevation) int {
 		return 8
 	}
 	return 12
+}
+
+type glyphKey struct{ size, stroke int }
+
+var glyphs = map[glyphKey]*image.Alpha{}
+
+// SearchGlyphMask returns a cached antialiased magnifier: a lens ring and a
+// handle, both drawn as distance fields so the stroke keeps its width all the
+// way round and the diagonal does not stair-step.
+//
+// It replaces a filled square with a smaller square punched out of it in the
+// well colour, plus a staircase of 3x3 blocks for the handle. That could not
+// antialias, and the punch-out silently assumed the well was flat behind the
+// glyph, so it broke as soon as the field carried anything else.
+//
+// Proportions follow Material's search icon in a 24-unit box: a lens of radius
+// 6.5 centred at (10.5, 10.5) and a handle running to (20.5, 20.5).
+func SearchGlyphMask(size, stroke int) *image.Alpha {
+	key := glyphKey{size, stroke}
+	maskMu.Lock()
+	defer maskMu.Unlock()
+	if mask := glyphs[key]; mask != nil {
+		return mask
+	}
+	mask := image.NewAlpha(image.Rect(0, 0, max(size, 0), max(size, 0)))
+	if size > 0 && stroke > 0 {
+		u := float64(size) / 24
+		cx, cy, r := 10.5*u, 10.5*u, 6.5*u
+		// The handle starts on the lens edge so the join is solid rather than
+		// a gap the antialiasing has to bridge.
+		d := r / math.Sqrt2
+		x0, y0 := cx+d, cy+d
+		x1, y1 := 20.5*u, 20.5*u
+		half := float64(stroke) / 2
+		for y := 0; y < size; y++ {
+			for x := 0; x < size; x++ {
+				px, py := float64(x)+0.5, float64(y)+0.5
+				lens := math.Abs(math.Hypot(px-cx, py-cy) - r)
+				edge := math.Min(lens, segmentDistance(px, py, x0, y0, x1, y1))
+				coverage := min(max(0.5-(edge-half), 0.0), 1.0)
+				if coverage <= 0 {
+					continue
+				}
+				mask.SetAlpha(x, y, color.Alpha{A: uint8(coverage * 255)})
+			}
+		}
+	}
+	glyphs[key] = mask
+	return mask
+}
+
+// segmentDistance is the distance from a point to a line segment.
+func segmentDistance(px, py, x0, y0, x1, y1 float64) float64 {
+	dx, dy := x1-x0, y1-y0
+	length := dx*dx + dy*dy
+	if length == 0 {
+		return math.Hypot(px-x0, py-y0)
+	}
+	t := min(max(((px-x0)*dx+(py-y0)*dy)/length, 0), 1)
+	return math.Hypot(px-(x0+t*dx), py-(y0+t*dy))
 }

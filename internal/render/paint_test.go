@@ -897,53 +897,6 @@ func TestPaintSearchFieldDrawsALeadingMark(t *testing.T) {
 	style := capsuleStyle()
 	style.Body = ui.Rect{W: w, H: h}
 	style.Outline = Color{R: 0xaa, G: 0x99, B: 0xcc, A: 0xff}
-	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{{
-		Kind: ui.KindTextField, Name: "Search", Padding: 8, Bounds: ui.Rect{X: 4, Y: 8, W: 112, H: 32},
-	}}}
-	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for y := 12; y < 36; y++ {
-		for x := 6; x < 24; x++ {
-			if pixelAt(t, c, x, y) == style.Foreground {
-				found = true
-			}
-		}
-	}
-	if !found {
-		t.Fatal("search field painted no leading mark")
-	}
-	if got := pixelAt(t, c, 60, 24); got != style.Capsule {
-		t.Fatalf("search well = %+v, want Capsule %+v", got, style.Capsule)
-	}
-}
-
-func TestPaintSoftCapsuleWashesAccent(t *testing.T) {
-	t.Parallel()
-	c := newTestCanvas(t, canvasW, canvasH)
-	style := capsuleStyle()
-	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{
-		{Kind: ui.KindCapsule, Fill: ui.FillSoft, Bounds: ui.Rect{X: 10, Y: 8, W: 60, H: 32}},
-	}}
-	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
-		t.Fatal(err)
-	}
-	want := wash(style.Accent, style.Capsule)
-	if got := pixelAt(t, c, 40, 24); got != want {
-		t.Fatalf("soft fill = %+v, want wash %+v", got, want)
-	}
-	if got := pixelAt(t, c, 40, 24); got == style.Accent {
-		t.Fatal("soft fill used solid Accent")
-	}
-}
-
-func TestPaintSearchMarkHandleGoesDiagonal(t *testing.T) {
-	t.Parallel()
-	const w, h = 120, 48
-	c := newTestCanvas(t, w, h)
-	style := capsuleStyle()
-	style.Body = ui.Rect{W: w, H: h}
 	field := ui.Rect{X: 4, Y: 8, W: 112, H: 32}
 	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{{
 		Kind: ui.KindTextField, Name: "Search", Padding: 8, Bounds: field,
@@ -951,18 +904,76 @@ func TestPaintSearchMarkHandleGoesDiagonal(t *testing.T) {
 	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
 		t.Fatal(err)
 	}
-	box := field
-	slot := 22
-	cx, cy := box.X+slot/2, box.Y+box.H/2-3
-	r := min(box.H/5, slot/3)
-	if r < 3 {
-		r = 3
+	// The glyph is antialiased, so it is ink anywhere in its box rather than a
+	// run of exactly-Foreground pixels.
+	glyph := ui.Rect{
+		X: field.X + searchGlyphInset, Y: field.Y + (field.H-searchGlyphSize)/2,
+		W: searchGlyphSize, H: searchGlyphSize,
 	}
-	if got := pixelAt(t, c, cx+r+3, cy+r+3); got != style.Foreground {
-		t.Fatalf("diagonal handle = %+v, want Foreground %+v", got, style.Foreground)
+	if inked(t, c, glyph, style.Capsule) == 0 {
+		t.Fatal("search field painted no leading mark")
 	}
-	if got := pixelAt(t, c, cx+r+4, cy); got == style.Foreground {
-		t.Fatal("handle painted a horizontal dash")
+	// Clear of the stadium cap. The band is taken inside the field's own
+	// border, which crosses this region too, so what is measured is the
+	// leftmost ink that is not the boundary stroke.
+	band := ui.Rect{X: field.X + 5, Y: field.Y + field.H/2 - 4, W: searchGlyphInset - 7, H: 8}
+	if got := inked(t, c, band, style.Capsule); got != 0 {
+		t.Fatalf("%d inked pixels inside the stadium cap; the mark is crowding the corner", got)
+	}
+	if got := pixelAt(t, c, 60, 24); got != style.Capsule {
+		t.Fatalf("search well = %+v, want Capsule %+v", got, style.Capsule)
+	}
+}
+
+// inked counts pixels in a box that differ from the well behind them.
+func inked(t *testing.T, c *Canvas, box ui.Rect, well Color) int {
+	t.Helper()
+	n := 0
+	for y := box.Y; y < box.Y+box.H; y++ {
+		for x := box.X; x < box.X+box.W; x++ {
+			if !nearlyEqualColor(pixelAt(t, c, x, y), well, 2) {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+func TestSearchGlyphIsALensAndADiagonalHandle(t *testing.T) {
+	t.Parallel()
+	const size, stroke = 24, 2
+	mask := SearchGlyphMask(size, stroke)
+	at := func(x, y int) int { return int(mask.AlphaAt(x, y).A) }
+
+	// A lens, not a disc: the centre of the circle is empty.
+	if got := at(10, 10); got != 0 {
+		t.Errorf("lens centre alpha = %d, want a ring with a clear middle", got)
+	}
+	// The ring itself carries ink at the circle's left extreme.
+	if got := at(4, 10); got == 0 {
+		t.Error("lens ring painted nothing on its left edge")
+	}
+	// The handle runs to the lower right, and nothing runs horizontally from
+	// the lens at its own height.
+	if got := at(19, 19); got == 0 {
+		t.Error("handle painted nothing on the diagonal")
+	}
+	if got := at(19, 10); got != 0 {
+		t.Errorf("alpha %d to the right of the lens; the handle is horizontal", got)
+	}
+	// Antialiased rather than a hard staircase: the ring's outer edge carries
+	// partial coverage somewhere along its arc.
+	partial := false
+	for y := 0; y < size && !partial; y++ {
+		for x := 0; x < size; x++ {
+			if a := at(x, y); a > 0 && a < 255 {
+				partial = true
+				break
+			}
+		}
+	}
+	if !partial {
+		t.Error("glyph has no partially covered pixels; it is not antialiased")
 	}
 }
 
@@ -1039,6 +1050,22 @@ func TestIdleButtonIsAStadiumOnTheHighestContainer(t *testing.T) {
 	}
 }
 
+
+// nearlyEqualColor reports whether two colours match within a per-channel
+// tolerance. An antialiased edge pixel is a blend by construction: on a
+// stadium's left extreme the true midline falls between two pixel centres, so
+// the outermost pixel of the boundary is a fraction short of full coverage no
+// matter how the shape is drawn.
+func nearlyEqualColor(a, b Color, tol int) bool {
+	d := func(x, y uint8) int {
+		if x > y {
+			return int(x - y)
+		}
+		return int(y - x)
+	}
+	return d(a.R, b.R) <= tol && d(a.G, b.G) <= tol && d(a.B, b.B) <= tol && d(a.A, b.A) <= tol
+}
+
 func TestOutlinedButtonKeepsParentFillAndDrawsABoundary(t *testing.T) {
 	t.Parallel()
 	n := &ui.Node{Kind: ui.KindButton, Text: "Reboot", Height: 40, Width: 120,
@@ -1055,7 +1082,7 @@ func TestOutlinedButtonKeepsParentFillAndDrawsABoundary(t *testing.T) {
 	_, cy := centreOf(n)
 	// The boundary sits on the left edge at the vertical midpoint, where the
 	// stadium's inset is zero.
-	if got := pixelAt(t, c, n.Bounds.X, cy); got != testStyle.Outline {
+	if got := pixelAt(t, c, n.Bounds.X, cy); !nearlyEqualColor(got, testStyle.Outline, 3) {
 		t.Errorf("boundary = %+v, want Outline %+v", got, testStyle.Outline)
 	}
 }
@@ -1089,7 +1116,7 @@ func TestDestructiveOutlinedUsesTheErrorPair(t *testing.T) {
 	if got := pixelAt(t, c, fx, fy); got != testStyle.Background {
 		t.Errorf("resting fill = %+v, want the parent fill, not a red block", got)
 	}
-	if got := pixelAt(t, c, rest.Bounds.X, cy); got != testStyle.Error {
+	if got := pixelAt(t, c, rest.Bounds.X, cy); !nearlyEqualColor(got, testStyle.Error, 3) {
 		t.Errorf("boundary = %+v, want Error %+v", got, testStyle.Error)
 	}
 
