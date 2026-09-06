@@ -88,7 +88,10 @@ and folding this into the launcher windows provider (`sysc-81`).
   `NiriRuntime::requestAction`. Not `niri msg` argv (the launcher keeps
   argv spawn for `Exec`; compositor window actions stay in the niri
   package). Requests run off the Wayland owner, through the existing
-  command/channel pattern.
+  command/channel pattern. **Close all is SIGTERM of each unique Niri
+  window `pid`**, not `CloseWindow`: Steam (and other tray clients) treat
+  compositor close as hide. `CloseWindow` remains the fallback when `pid`
+  is null. Do not `pkill` by name.
 - **D11 — Identity lookup lives in sysc-shell.** The launcher widget is
   optional; the bar is not. Do not start `launcher.Service`, do not call
   `Query`/`Results`/`Activate`, and do not treat an empty launcher panel as
