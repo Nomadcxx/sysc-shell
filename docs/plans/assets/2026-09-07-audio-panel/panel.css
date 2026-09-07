@@ -1,0 +1,484 @@
+/* Hallmark · component: shell panel (PanelAudio) · genre: modern-minimal
+ * theme: repo-locked (internal/theme) · states: default · hover · focus · active
+ *   · disabled · loading · error · success
+ * contrast: pass -- body text 13.4:1, secondary 9.8:1, accent-on-card 8.9:1
+ *
+ * Every value below references a token from tokens.css. The only raw numbers
+ * are geometry derived in the design's pixel contract, and each is annotated
+ * with the token it comes from.
+ */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font-ui);
+  background: var(--surface);
+  color: var(--on-surface);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- stage: wallpaper + bar, so the fused joint is visible ---------- */
+
+.stage {
+  position: relative;
+  width: 1200px;
+  height: 600px;
+  background: url("backdrop.jpg") center/cover no-repeat;
+  overflow: hidden;
+}
+
+.bar {
+  position: relative;
+  z-index: 2;
+  height: var(--bar-height);
+  background: var(--surface-container-low);   /* MUST equal --panel-bg */
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  padding: 0 12px;
+}
+
+.bar-item {
+  width: var(--compact-control);
+  height: var(--compact-control);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--on-surface-variant);
+}
+.bar-item svg { width: 20px; height: 20px; fill: currentColor; }
+
+/* the audio widget: the panel's trigger, shown in its open/active state */
+.bar-item.is-trigger {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.bar-clock {
+  height: var(--compact-control);
+  padding: 0 var(--space-3);
+  border-radius: calc(var(--compact-control) / 2);
+  background: var(--surface-container);
+  color: var(--on-surface);
+  font-size: var(--text-body);
+  display: grid;
+  place-items: center;
+}
+
+/* ---------- panel: fused to the bar by concave wing-tips ---------- */
+
+.panel-anchor {
+  position: relative;
+  z-index: 1;
+  /* alignX centres the panel on its bar trigger, then clampAxis keeps it on
+   * the output. Trigger centre 886 - 560/2 = 606. Gap: 0 -- fused, not dropped. */
+  margin-left: 606px;
+  width: var(--panel-w);
+}
+
+.panel {
+  --panel-bg: var(--surface-container-low);
+  position: relative;
+  width: var(--panel-w);
+  height: var(--panel-h);
+  padding: var(--panel-padding);
+  background: var(--panel-bg);
+  /* top corners square: the bar continues through them. bottom convex. */
+  border-radius: 0 0 var(--radius) var(--radius);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* The wings. A --bulge square sits outside each top corner, filled with the
+ * panel colour everywhere EXCEPT a quarter-disc of radius --bulge centred on
+ * its outer-bottom corner -- so the wallpaper bulges in and the panel flares
+ * out into the bar. This is render.AttachedMask's coverage, in CSS. */
+.panel::before,
+.panel::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: var(--bulge);
+  height: var(--bulge);
+  pointer-events: none;
+}
+.panel::before {
+  left: calc(var(--bulge) * -1);
+  background: radial-gradient(circle at 0 100%,
+    transparent var(--bulge), var(--panel-bg) var(--bulge));
+}
+.panel::after {
+  right: calc(var(--bulge) * -1);
+  background: radial-gradient(circle at 100% 100%,
+    transparent var(--bulge), var(--panel-bg) var(--bulge));
+}
+
+/* ---------- cards ---------- */
+
+.card {
+  background: var(--surface-container-high);
+  border-radius: var(--radius);
+  padding: var(--card-padding);
+  flex: none;
+}
+
+/* ---------- header card: identity + close + tabs, one surface ---------- */
+
+.head { display: flex; flex-direction: column; gap: var(--space-3); }
+
+.head-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--standard-control);
+}
+
+.icon-well {
+  width: var(--standard-control);
+  height: var(--standard-control);
+  border-radius: var(--radius);
+  background: var(--surface-container-highest);
+  color: var(--primary);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.icon-well svg { width: 22px; height: 22px; fill: currentColor; }
+
+.head-title {
+  flex: 1;
+  font-size: var(--text-headline);
+  font-weight: var(--weight-headline);
+  font-style: normal;
+  letter-spacing: -0.01em;
+  color: var(--on-surface);
+}
+
+.btn-round {
+  width: var(--compact-control);
+  height: var(--compact-control);
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface-container-highest);
+  color: var(--on-surface-variant);
+  display: grid;
+  place-items: center;
+  flex: none;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out),
+              color var(--dur-fast) var(--ease-out);
+}
+.btn-round svg { width: 18px; height: 18px; fill: currentColor; }
+.btn-round:hover, .btn-round.is-hover {
+  background: var(--surface-bright, var(--surface-container-highest));
+  color: var(--on-surface);
+}
+.btn-round:focus-visible, .btn-round.is-focus {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.btn-round:active, .btn-round.is-active { transform: scale(0.94); }
+
+/* ---------- segmented tabs (ui.KindSegmented) ---------- */
+
+.tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-1);
+  height: var(--standard-control);
+  padding: var(--space-1);
+  border-radius: var(--radius);
+  background: var(--surface-container-lowest);
+}
+
+.tab {
+  border: 0;
+  border-radius: var(--radius-inner);
+  background: transparent;
+  color: var(--on-surface-variant);
+  font-family: var(--font-ui);
+  font-size: var(--text-label);
+  font-weight: var(--weight-label);
+  cursor: pointer;
+  transition: background var(--dur-base) var(--ease-out),
+              color var(--dur-base) var(--ease-out);
+}
+.tab[aria-selected="true"] { background: var(--primary); color: var(--on-primary); }
+.tab:hover:not([aria-selected="true"]), .tab.is-hover {
+  background: var(--surface-container);
+  color: var(--on-surface);
+}
+.tab:focus-visible, .tab.is-focus { outline: 2px solid var(--primary); outline-offset: -3px; }
+
+/* ---------- volume row: ONE archetype, three uses ---------- */
+
+.vrow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 44px;                      /* 18 label + 6 + 20 slider */
+}
+
+.vrow-id {
+  width: var(--compact-control);
+  height: var(--compact-control);
+  border-radius: 50%;
+  background: var(--surface-container-highest);
+  color: var(--primary);
+  display: grid;
+  place-items: center;
+  flex: none;
+  overflow: hidden;
+}
+.vrow-id svg { width: 18px; height: 18px; fill: currentColor; }
+.vrow-id img { width: var(--compact-control); height: var(--compact-control); }
+
+.vrow-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+
+.vrow-label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  height: 18px;
+  min-width: 0;
+}
+.vrow-role {
+  font-size: var(--text-label);
+  font-weight: var(--weight-label);
+  color: var(--primary);
+  flex: none;
+}
+.vrow-name {
+  font-size: var(--text-body);
+  font-weight: var(--weight-body);
+  color: var(--on-surface-variant);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+/* the device name routes to the Devices tab -- it is the thing you'd change */
+.vrow-name.is-link { cursor: pointer; text-decoration-color: transparent; }
+.vrow-name.is-link:hover, .vrow-name.is-link.is-hover {
+  color: var(--on-surface);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.vrow-value {
+  width: 44px;                        /* fixed: 100% must not shove the button */
+  text-align: right;
+  font-size: var(--text-label);
+  font-weight: var(--weight-label);
+  font-variant-numeric: tabular-nums;
+  color: var(--on-surface);
+  flex: none;
+}
+
+/* ---------- slider (ui.KindSlider: track 4, knob 14) ---------- */
+
+.slider {
+  position: relative;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+.slider-track {
+  position: relative;
+  width: 100%;
+  height: var(--slider-track);
+  border-radius: calc(var(--slider-track) / 2);
+  background: var(--outline-variant);
+}
+.slider-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  height: var(--slider-track);
+  border-radius: calc(var(--slider-track) / 2);
+  background: var(--primary);
+  transition: width var(--dur-fast) var(--ease-out);
+}
+.slider-knob {
+  position: absolute;
+  top: 50%;
+  width: var(--slider-knob);
+  height: var(--slider-knob);
+  margin-top: calc(var(--slider-knob) / -2);
+  margin-left: calc(var(--slider-knob) / -2);
+  border-radius: 50%;
+  background: var(--primary);
+  transition: transform var(--dur-fast) var(--ease-out),
+              box-shadow var(--dur-fast) var(--ease-out);
+}
+.slider:hover .slider-knob, .slider.is-hover .slider-knob {
+  box-shadow: 0 0 0 6px color-mix(in oklab, var(--primary) 22%, transparent);
+}
+.slider:focus-visible, .slider.is-focus { outline: none; }
+.slider:focus-visible .slider-knob, .slider.is-focus .slider-knob {
+  box-shadow: 0 0 0 3px var(--surface-container-high), 0 0 0 5px var(--primary);
+}
+.slider.is-active .slider-knob {
+  transform: scale(1.15);
+  box-shadow: 0 0 0 8px color-mix(in oklab, var(--primary) 28%, transparent);
+}
+
+/* ---------- section label ---------- */
+
+.seclabel {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  height: 20px;
+  padding: 0 var(--space-1);
+  flex: none;
+}
+.seclabel-text {
+  font-size: var(--text-label);
+  font-weight: var(--weight-label);
+  color: var(--on-surface-variant);
+}
+.seclabel-count {
+  font-size: var(--text-caption);
+  font-weight: var(--weight-caption);
+  font-variant-numeric: tabular-nums;
+  color: var(--outline);
+}
+
+.stack { display: flex; flex-direction: column; gap: var(--space-2); }
+
+/* ---------- devices tab ---------- */
+
+.dev-card { display: flex; flex-direction: column; gap: var(--space-2); }
+.dev-title {
+  font-size: var(--text-label);
+  font-weight: var(--weight-label);
+  color: var(--primary);
+  height: 18px;
+}
+.dev-list { display: flex; flex-direction: column; gap: var(--space-1); }
+
+.dev-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 44px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-inner);
+  background: transparent;
+  color: var(--on-surface);
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.dev-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dev-mark { width: 20px; height: 20px; flex: none; fill: var(--primary); opacity: 0; }
+.dev-row[aria-checked="true"] {
+  background: var(--secondary-container);
+  color: var(--on-secondary-container);
+  font-weight: var(--weight-label);
+}
+.dev-row[aria-checked="true"] .dev-mark { opacity: 1; }
+.dev-row:hover:not([aria-checked="true"]), .dev-row.is-hover {
+  background: var(--surface-container-highest);
+}
+.dev-row:focus-visible, .dev-row.is-focus { outline: 2px solid var(--primary); outline-offset: -2px; }
+.dev-row:active, .dev-row.is-active { background: var(--surface-container); }
+
+/* radio variant, for the A/B on the states sheet */
+.dev-row.variant-radio .dev-radio { width: 20px; height: 20px; flex: none; fill: var(--outline); }
+.dev-row.variant-radio[aria-checked="true"] { background: transparent; color: var(--on-surface); font-weight: var(--weight-body); }
+.dev-row.variant-radio[aria-checked="true"] .dev-radio { fill: var(--primary); }
+
+/* ---------- body scroll (ui.KindScroll) ---------- */
+
+.body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  overflow: hidden;
+  position: relative;
+}
+.body.is-scrolled::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 40px;
+  background: linear-gradient(transparent, var(--surface-container-low));
+  pointer-events: none;
+}
+
+/* ---------- states: unavailable / stale / in-flight / failure ---------- */
+
+.is-unavailable { opacity: 0.38; pointer-events: none; }
+.is-unavailable .slider-fill { background: var(--outline-variant); }
+.is-unavailable .slider-knob { background: var(--outline); }
+.is-unavailable .vrow-role, .is-unavailable .vrow-id { color: var(--on-surface-variant); }
+
+.vrow[data-state="stale"] .vrow-value { color: var(--outline); }
+.vrow[data-state="stale"] .slider-fill { width: 0 !important; }
+.vrow[data-state="stale"] .slider-knob { display: none; }
+
+.vrow[data-state="loading"] .slider-knob {
+  box-shadow: 0 0 0 5px color-mix(in oklab, var(--primary) 30%, transparent);
+}
+.vrow[data-state="loading"] .vrow-value { color: var(--primary); }
+
+.errline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-inner);
+  background: color-mix(in oklab, var(--error) 14%, var(--surface-container-high));
+  color: var(--error);
+  font-size: var(--text-caption);
+  flex: none;
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-5) var(--space-3);
+  color: var(--on-surface-variant);
+  text-align: center;
+}
+.empty-title { font-size: var(--text-body); color: var(--on-surface-variant); }
+.empty-hint  { font-size: var(--text-caption); color: var(--outline); }
+
+/* ---------- sheet chrome for the states page (not part of the panel) ---- */
+
+.sheet { padding: var(--space-5); display: flex; flex-direction: column; gap: var(--space-5); }
+.sheet h1 { font-size: var(--text-headline); font-weight: var(--weight-headline); font-style: normal; }
+.sheet h2 { font-size: var(--text-title); font-weight: var(--weight-title); color: var(--on-surface-variant); font-style: normal; }
+.sheet-note { font-size: var(--text-caption); color: var(--outline); max-width: 62ch; line-height: 1.5; }
+.specimen { display: flex; flex-direction: column; gap: var(--space-2); }
+.specimen-label {
+  font-size: var(--text-caption);
+  color: var(--outline);
+  font-variant-numeric: tabular-nums;
+}
+.specimen-body { width: 448px; background: var(--surface-container-high); border-radius: var(--radius); padding: var(--card-padding); }
+.grid2 { display: grid; grid-template-columns: repeat(2, max-content); gap: var(--space-5); }
+
+.bar-cluster {
+  height: var(--compact-control);
+  padding: 0 var(--space-3);
+  margin-right: var(--space-2);
+  border-radius: calc(var(--compact-control) / 2);
+  background: var(--surface-container);
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+  display: grid;
+  place-items: center;
+}

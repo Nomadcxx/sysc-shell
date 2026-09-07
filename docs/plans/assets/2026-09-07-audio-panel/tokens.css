@@ -1,0 +1,74 @@
+/* Hallmark · component: shell panel (PanelAudio) · genre: modern-minimal
+ * theme: repo-locked (internal/theme Material 3 + matugen) · diversification: suspended
+ * pre-emit critique: P5 H5 E4 S5 R5 V4
+ *
+ * Colour values are the LIVE generated dark palette from this machine
+ * (~/.cache/sysc-shell/colors.json, matugen from the current wallpaper).
+ * Nothing here is invented: every value is copied from that file, and every
+ * metric below is a theme.Metrics / theme.TypeSpec token at PresetStandard.
+ * The mock references tokens only -- no inline colour, no inline font.
+ */
+
+:root {
+  /* --- colour: .dark.* from colors.json, named by their Tokens field --- */
+  --primary: #e5b6f2;
+  --on-primary: #452152;
+  --primary-container: #5d386a;
+  --on-primary-container: #f9d8ff;
+  --secondary-container: #514254;
+  --on-secondary-container: #f2dcf3;
+  --surface: #161217;
+  --on-surface: #eae0e7;
+  --on-surface-variant: #cfc3cd;
+  --surface-container-lowest: #110d12;
+  --surface-container-low: #1f1a1f;
+  --surface-container: #231e23;
+  --surface-container-high: #2d282e;
+  --surface-container-highest: #383339;
+  --outline: #988e97;
+  --outline-variant: #4c444d;
+  --error: #ffb4ab;
+  --scrim: #000000;
+
+  /* --- type: theme.typeRoles, PresetStandard, fontScale 1 --- */
+  --font-ui: "Noto Sans", sans-serif;          /* fc-match sans-serif */
+  --text-caption: 12px;  --weight-caption: 400;
+  --text-label:   14px;  --weight-label:   500;
+  --text-body:    14px;  --weight-body:    400;
+  --text-title:   16px;  --weight-title:   600;
+  --text-headline:20px;  --weight-headline:600;
+
+  /* --- metric: theme.Metrics[DensityStandard] --- */
+  --bar-height: 48px;
+  --panel-padding: 16px;
+  --card-padding: 12px;
+  --standard-control: 40px;
+  --compact-control: 32px;
+
+  /* --- spacing: theme.SpacingScale --- */
+  --space-0: 2px; --space-1: 4px; --space-2: 8px;
+  --space-3: 12px; --space-4: 16px; --space-5: 24px;
+
+  /* --- shape: presets[PresetStandard].Radius = 12 --- */
+  --radius: 12px;
+  --radius-inner: 8px;
+  --bulge: 12px;               /* wing-tip concave radius, = --radius */
+
+  /* --- slider: ui.SliderTrack / ui.SliderKnob --- */
+  --slider-track: 4px;
+  --slider-knob: 14px;
+
+  /* --- panel geometry, derived in the design's pixel contract --- */
+  --panel-w: 560px;
+  --panel-h: 496px;
+
+  /* --- motion: theme MotionStandard --- */
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-fast: 0ms; --dur-base: 0ms; }
+}
