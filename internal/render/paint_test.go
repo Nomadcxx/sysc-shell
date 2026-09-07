@@ -1456,6 +1456,36 @@ func TestPaintWordmarkGradientInvalidCountFallsBackToSolid(t *testing.T) {
 	}
 }
 
+func TestPaintWordmarkGradientInvalidRecipeFallsBackToSolid(t *testing.T) {
+	t.Parallel()
+	solid := paintWordmarkAt(t, ui.GradientPaint{}, 0)
+	for _, tc := range []struct {
+		name   string
+		paint  ui.GradientPaint
+		offset float64
+	}{
+		{
+			name: "unsorted stops",
+			paint: ui.GradientPaint{Count: 2, Stops: [4]ui.GradientStop{
+				{At: 1, Role: ui.PaintPrimary},
+				{At: 0, Role: ui.PaintOnSurfaceVariant},
+			}},
+		},
+		{name: "non-finite offset", paint: d3WordmarkGradient(), offset: math.NaN()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			n := &ui.Node{Gradient: tc.paint, GradientOffset: tc.offset}
+			if got := resolveGradient(n, testStyle); got != nil {
+				t.Fatalf("resolveGradient returned %d stops for an invalid recipe", len(got))
+			}
+			if got := paintWordmarkAt(t, tc.paint, tc.offset); !bytes.Equal(solid.Pix, got.Pix) {
+				t.Fatal("invalid recipe did not paint the solid accent path")
+			}
+		})
+	}
+}
+
 func TestPaintWordmarkGradientSeparator(t *testing.T) {
 	t.Parallel()
 	paint := func(offset float64) *Canvas {

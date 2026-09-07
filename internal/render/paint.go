@@ -974,12 +974,15 @@ func resolvePaintRole(style Style, role ui.PaintRole) Color {
 
 func resolveGradient(n *ui.Node, style Style) []gradientStop {
 	count := n.Gradient.Count
-	if count < 2 || count > 4 {
+	if count < 2 || count > 4 || math.IsNaN(n.GradientOffset) || math.IsInf(n.GradientOffset, 0) {
 		return nil
 	}
 	stops := make([]gradientStop, count)
 	for i := 0; i < count; i++ {
 		s := n.Gradient.Stops[i]
+		if math.IsNaN(s.At) || math.IsInf(s.At, 0) || i > 0 && s.At < n.Gradient.Stops[i-1].At {
+			return nil
+		}
 		stops[i] = gradientStop{at: s.At, c: resolvePaintRole(style, s.Role)}
 	}
 	return stops
