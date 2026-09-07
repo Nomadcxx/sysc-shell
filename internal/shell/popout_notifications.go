@@ -269,6 +269,24 @@ var historyChips = []struct{ id, label string }{
 	{"earlier", "Earlier"},
 }
 
+// bucketCount is how many entries one filter segment would show. Active
+// notifications are counted with the closed ones because the merged list shows
+// them together: a segment whose number disagrees with its list is a defect.
+func bucketCount(bucket string, active []protocol.Notification, history []protocol.HistoryEntry, now time.Time) int {
+	n := 0
+	for _, a := range active {
+		if historyFilter(bucket, a.Timestamp, now) {
+			n++
+		}
+	}
+	for _, e := range history {
+		if historyFilter(bucket, e.Timestamp, now) {
+			n++
+		}
+	}
+	return n
+}
+
 func historyChipRow(history []protocol.HistoryEntry, filter string, now time.Time) *ui.Node {
 	showOlder := false
 	for _, e := range history {

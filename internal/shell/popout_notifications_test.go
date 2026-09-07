@@ -416,6 +416,21 @@ func buttonByName(tree *ui.Node, name string) *ui.Node {
 	return nil
 }
 
+func TestBucketCountSpansActiveAndHistory(t *testing.T) {
+	now := time.Date(2026, 9, 7, 15, 0, 0, 0, time.Local)
+	active := []protocol.Notification{{ID: 1, Timestamp: now.Add(-time.Minute)}}
+	history := []protocol.HistoryEntry{
+		{ID: 2, Timestamp: now.Add(-3 * time.Hour)},
+		{ID: 3, Timestamp: now.AddDate(0, 0, -1)},
+		{ID: 4, Timestamp: now.AddDate(0, 0, -5)},
+	}
+	for bucket, want := range map[string]int{"all": 4, "today": 2, "yesterday": 1, "earlier": 1} {
+		if got := bucketCount(bucket, active, history, now); got != want {
+			t.Fatalf("bucketCount(%q) = %d, want %d", bucket, got, want)
+		}
+	}
+}
+
 func buttonByAction(tree *ui.Node, action string) *ui.Node {
 	for _, b := range buttons(tree) {
 		if b.Action == action {
