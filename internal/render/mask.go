@@ -109,6 +109,77 @@ func roundedCoverage(radius, w, h, x, y int) uint8 {
 	return uint8(coverage * 255)
 }
 
+// concaveCoverage is the inverse of roundedCoverage for one corner: the pixel
+// is inside the shape when it is OUTSIDE the disc whose centre sits on the
+// shape's own edge. cx, cy is that centre in mask space.
+func concaveCoverage(r, cx, cy, x, y int) uint8 {
+	dx := float64(x) + 0.5 - float64(cx)
+	dy := float64(y) + 0.5 - float64(cy)
+	d := math.Hypot(dx, dy)
+	switch {
+	case d >= float64(r)+0.5:
+		return 255
+	case d <= float64(r)-0.5:
+		return 0
+	default:
+		return uint8((d - (float64(r) - 0.5)) * 255)
+	}
+}
+
+type attachedKey struct {
+	w, h, radius, bulge int
+	edge                string
+}
+
+var attachedMasks = map[attachedKey]*image.Alpha{}
+
+// AttachedMask draws a panel fused to a bar edge. The two corners on edge are
+// concave so the panel flares outward into the bar; the two away from it are
+// convex and stay rounded throughout the reveal. bulge is the concave radius,
+// animated from 0 to radius as the panel emerges, so a hidden edge draws flat.
+func AttachedMask(w, h, radius, bulge int, edge string) *image.Alpha {
+	if w <= 0 || h <= 0 {
+		return image.NewAlpha(image.Rect(0, 0, 0, 0))
+	}
+	if bulge <= 0 {
+		return RoundedMask(radius, w, h)
+	}
+	key := attachedKey{w, h, radius, bulge, edge}
+	maskMu.Lock()
+	defer maskMu.Unlock()
+	if mask := attachedMasks[key]; mask != nil {
+		return mask
+	}
+	mask := image.NewAlpha(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			mask.SetAlpha(x, y, color.Alpha{A: attachedCoverage(w, h, radius, bulge, edge, x, y)})
+		}
+	}
+	attachedMasks[key] = mask
+	return mask
+}
+
+func attachedCoverage(w, h, radius, bulge int, edge string, x, y int) uint8 {
+	switch edge {
+	case "bottom":
+		if y >= h-bulge && x < bulge {
+			return concaveCoverage(bulge, bulge, h-bulge, x, y)
+		}
+		if y >= h-bulge && x >= w-bulge {
+			return concaveCoverage(bulge, w-bulge, h-bulge, x, y)
+		}
+	default: // "top"
+		if y < bulge && x < bulge {
+			return concaveCoverage(bulge, bulge, bulge, x, y)
+		}
+		if y < bulge && x >= w-bulge {
+			return concaveCoverage(bulge, w-bulge, bulge, x, y)
+		}
+	}
+	return roundedCoverage(radius, w, h, x, y)
+}
+
 // ShadowTexture returns a cached pre-blurred shadow texture.
 // ponytail: two elevations and cached sizes; revisit only if memory or variety demands it.
 func ShadowTexture(w, h, radius int, e Elevation) *image.Alpha {

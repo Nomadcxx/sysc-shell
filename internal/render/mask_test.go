@@ -37,6 +37,30 @@ func TestShadowTextureExtendsBeyondBounds(t *testing.T) {
 	}
 }
 
+func TestAttachedMaskTopCornersAreConcave(t *testing.T) {
+	const w, h, radius, bulge = 60, 40, 12, 12
+	m := AttachedMask(w, h, radius, bulge, "top")
+
+	// The outermost top pixel is inside the shape: the panel is widest at the joint.
+	if got := m.AlphaAt(0, 0).A; got != 255 {
+		t.Errorf("top-left wing pixel = %d, want 255 (wing is filled at the bar)", got)
+	}
+	// One bulge down the left wing, inset from the disc's tangent (column 0
+	// is antialiased, never fully empty). The edge has swept inward.
+	if got := m.AlphaAt(2, bulge-1).A; got != 0 {
+		t.Errorf("pixel below the wing = %d, want 0 (edge swept inward)", got)
+	}
+	// The far corners stay convex: the very corner pixel is outside.
+	if got := m.AlphaAt(0, h-1).A; got != 0 {
+		t.Errorf("bottom-left corner = %d, want 0 (convex)", got)
+	}
+	// bulge 0 is the plain rounded rect, which is where the reveal starts.
+	flat := AttachedMask(w, h, radius, 0, "top")
+	if flat.AlphaAt(0, 0).A != RoundedMask(radius, w, h).AlphaAt(0, 0).A {
+		t.Error("bulge 0 must equal RoundedMask, so a hidden edge draws flat")
+	}
+}
+
 func TestCanvasFillRoundedMatchesMask(t *testing.T) {
 	c, err := NewCanvas(make([]byte, 40*40*4), 40, 40, 40*4)
 	if err != nil {
