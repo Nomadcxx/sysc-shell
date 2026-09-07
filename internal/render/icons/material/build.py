@@ -52,6 +52,8 @@ ICONS = [
     "volume_up",
     "volume_off",
     "brightness_high",
+    "delete",
+    "schedule",
 ]
 
 # Material Symbols addresses a glyph by typing its name, so the letters and the

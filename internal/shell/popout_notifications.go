@@ -2,13 +2,14 @@ package shell
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
-	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -126,16 +127,11 @@ func (r *Registry) setDNDPresetAt(now time.Time, d time.Duration) {
 }
 func (r *Registry) dndStateAt(now time.Time) (time.Time, bool) { return r.notify.dndState(now) }
 
-// centerTree builds the notification center: header, tabs, then the selected
-// list. Nil host is Current. History rows have no actions.
+// centerTree builds the notification centre: a header block, then one
+// scrolled list with live groups pinned above closed history.
 func (r *Registry) centerTree() *ui.Node { return r.centerTreeFor(nil) }
 
 func (r *Registry) centerTreeFor(h *PanelHost) *ui.Node {
-	tab := 0
-	if h != nil {
-		tab = h.notifyTab
-	}
-
 	s := r.notify
 	s.mu.Lock()
 	active := make([]protocol.Notification, 0, len(s.active))
@@ -147,11 +143,6 @@ func (r *Registry) centerTreeFor(h *PanelHost) *ui.Node {
 
 	now := r.clockNow()
 	_, dnd := r.dndStateAt(now)
-	sched, _ := render.IconByName("schedule")
-	clearAction := "notify:center:dismiss-all"
-	if tab == 1 {
-		clearAction = "notify:center:clear-history"
-	}
 	filter := "all"
 	expand := ""
 	showMenu := false
@@ -163,63 +154,72 @@ func (r *Registry) centerTreeFor(h *PanelHost) *ui.Node {
 		showMenu = h.notifyMenu
 	}
 
-	headerBtns := []*ui.Node{
-		{Kind: ui.KindText, Text: "Notifications"},
-		{Kind: ui.KindButton, Text: notifyGlyph(dnd), Action: "notify:center:dnd",
-			Name: "DND", Role: "button", Focusable: true},
-		{Kind: ui.KindButton, Text: string(sched), Action: "notify:center:schedule",
-			Name: "Schedule", Role: "button", Focusable: true},
-		{Kind: ui.KindButton, Text: "Clear", Action: clearAction,
-			Name: "Clear", Role: "button", Focusable: true},
-	}
-	children := []*ui.Node{
-		{Kind: ui.KindRow, Gap: cardGap, Children: headerBtns},
-	}
-	if showMenu {
-		children = append(children, dndPresetColumn())
-	}
-	children = append(children, &ui.Node{Kind: ui.KindRow, Gap: cardGap, Children: []*ui.Node{
-		{Kind: ui.KindButton, Text: fmt.Sprintf("Current (%d)", len(active)),
-			Action: "notify:center:tab:0", Name: "Current", Role: "tab",
-			Focusable: true, Bold: tab == 0},
-		{Kind: ui.KindButton, Text: fmt.Sprintf("History (%d)", len(history)),
-			Action: "notify:center:tab:1", Name: "History", Role: "tab",
-			Focusable: true, Bold: tab == 1},
-	}})
-
-	body := []*ui.Node{}
-	if tab == 1 {
-		sort.Slice(history, func(i, j int) bool { return history[i].Timestamp.After(history[j].Timestamp) })
-		children = append(children, historyChipRow(history, filter, now))
-		shown := 0
-		for _, e := range history {
-			if !historyFilter(filter, e.Timestamp, now) {
-				continue
-			}
-			shown++
-			body = append(body, HistoryCard(e, now, r.lookupNotifyIcon(e.AppIcon), r.linksAllowed()))
-		}
-		if shown == 0 {
-			body = append(body, &ui.Node{Kind: ui.KindText, Text: "Nothing to see here"})
-		}
-	} else if len(active) == 0 {
-		body = append(body, &ui.Node{Kind: ui.KindText, Text: "Nothing to see here"})
-	} else {
-		for _, g := range activeGroups(active) {
-			raster := r.lookupNotifyIcon(g.members[0].AppIcon)
-			body = append(body, ActiveGroupCard(g, now, expand == g.key, raster, r.linksAllowed()))
-		}
-	}
-
-	surfaceH := 300
+	size := panelTargetSize(PanelNotifications)
+	surfaceW, surfaceH := size.W, size.H
 	if h != nil {
+		if h.place.Panel.W > 0 {
+			surfaceW = h.place.Panel.W
+		}
 		if h.logicalH > 0 {
 			surfaceH = h.logicalH
 		} else if h.place.Panel.H > 0 {
 			surfaceH = h.place.Panel.H
 		}
 	}
-	// ponytail: header+tabs+padding ≈ 80; remainder is the list viewport until chrome is measured.
+	// Filter sits inside the header capsule, which itself sits in the root
+	// column: both carry cardPadding, so the row's box is four pads shy of the
+	// surface. Setting Width past that squeezes "Yesterday (N)" out of its slot
+	// and the compositor tears the panel down.
+	innerW := surfaceW - 4*cardPadding
+	if innerW < 1 {
+		innerW = 1
+	}
+
+	header := &ui.Node{
+		Kind: ui.KindCapsule, Fill: ui.FillContainerHigh, Shape: ui.ShapeLarge,
+		Padding: cardPadding, Children: []*ui.Node{
+			{Kind: ui.KindColumn, Gap: cardGap, Children: []*ui.Node{
+				centreHeaderRow(dnd),
+				centreFilterRow(active, history, filter, now, innerW),
+			}},
+		},
+	}
+	children := []*ui.Node{header}
+	if showMenu {
+		children = append(children, dndPresetColumn())
+	}
+
+	sort.Slice(history, func(i, j int) bool { return history[i].Timestamp.After(history[j].Timestamp) })
+
+	var live, closed []*ui.Node
+	active = slices.DeleteFunc(active, func(n protocol.Notification) bool {
+		return !historyFilter(filter, n.Timestamp, now)
+	})
+	for _, g := range activeGroups(active) {
+		raster := r.lookupNotifyIcon(g.members[0].AppIcon)
+		live = append(live, ActiveGroupCard(g, now, expand == g.key, raster, r.linksAllowed()))
+	}
+	for _, e := range history {
+		if !historyFilter(filter, e.Timestamp, now) {
+			continue
+		}
+		closed = append(closed, HistoryCard(e, now, r.lookupNotifyIcon(e.AppIcon), r.linksAllowed()))
+	}
+
+	body := []*ui.Node{}
+	if len(live) > 0 {
+		body = append(body, centreSectionLabel("LIVE"))
+		body = append(body, live...)
+	}
+	if len(closed) > 0 {
+		body = append(body, centreSectionLabel("EARLIER"))
+		body = append(body, closed...)
+	}
+	if len(body) == 0 {
+		body = append(body, &ui.Node{Kind: ui.KindText, Text: "Nothing to see here"})
+	}
+
+	// ponytail: header+filter+padding ≈ 80; remainder is the list viewport until chrome is measured.
 	listH := surfaceH - 80
 	if listH < 1 {
 		listH = 1
@@ -227,6 +227,11 @@ func (r *Registry) centerTreeFor(h *PanelHost) *ui.Node {
 	children = append(children, &ui.Node{Kind: ui.KindScroll, Height: listH, Gap: cardGap, Children: body})
 
 	return &ui.Node{Kind: ui.KindColumn, Gap: cardGap, Padding: cardPadding, Children: children}
+}
+
+func centreSectionLabel(text string) *ui.Node {
+	return &ui.Node{Kind: ui.KindText, Text: text,
+		TextRole: theme.RoleCaption, Tone: ui.ToneAccent}
 }
 
 // cloneLifetime copies a lifetime so a card never aliases the projection's
@@ -262,35 +267,80 @@ func (r *Registry) lookupNotifyIcon(name string) *ui.Image {
 	return nil
 }
 
-var historyChips = []struct{ id, label string }{
-	{"all", "All"},
-	{"1h", "Last hour"},
-	{"today", "Today"},
-	{"yesterday", "Yesterday"},
-	{"7d", "Last 7 days"},
-	{"older", "Older"},
+// centreIconButton is one circular control in the centre's header. The glyph
+// carries no fill of its own; the button around it resolves one.
+func centreIconButton(icon, action, name string) *ui.Node {
+	return &ui.Node{
+		Kind: ui.KindButton, Action: action, Name: name, Role: "button",
+		Focusable: true, Shape: ui.ShapeCircle, Fill: ui.FillContainerHighest,
+		Padding:  centreIconPad,
+		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: icon, IconSize: centreIconSize}},
+	}
 }
 
-func historyChipRow(history []protocol.HistoryEntry, filter string, now time.Time) *ui.Node {
-	showOlder := false
+func centreHeaderRow(dnd bool) *ui.Node {
+	title := &ui.Node{Kind: ui.KindRow, Gap: cardGap, Children: []*ui.Node{
+		{Kind: ui.KindIcon, Icon: "notifications", IconSize: centreIconSize, Tone: ui.ToneAccent},
+		{Kind: ui.KindText, Text: "Notifications", TextRole: theme.RoleHeadline},
+	}}
+	dndIcon := "notifications"
+	if dnd {
+		dndIcon = "do_not_disturb_on"
+	}
+	controls := &ui.Node{Kind: ui.KindRow, Gap: cardGap, Children: []*ui.Node{
+		centreIconButton(dndIcon, "notify:center:dnd", "Do not disturb"),
+		centreIconButton("schedule", "notify:center:schedule", "Schedule"),
+		centreIconButton("delete", "notify:center:clear", "Clear"),
+		centreIconButton("settings", "notify:center:settings", "Settings"),
+		centreIconButton("close", "notify:center:close", "Close"),
+	}}
+	return &ui.Node{Kind: ui.KindRow, Gap: cardGap, PinEnd: true,
+		Children: []*ui.Node{title, controls}}
+}
+
+var historyChips = []struct{ id, label string }{
+	{"all", "All"},
+	{"today", "Today"},
+	{"yesterday", "Yesterday"},
+	{"earlier", "Earlier"},
+}
+
+// bucketCount is how many entries one filter segment would show. Active
+// notifications are counted with the closed ones because the merged list shows
+// them together: a segment whose number disagrees with its list is a defect.
+func bucketCount(bucket string, active []protocol.Notification, history []protocol.HistoryEntry, now time.Time) int {
+	n := 0
+	for _, a := range active {
+		if historyFilter(bucket, a.Timestamp, now) {
+			n++
+		}
+	}
 	for _, e := range history {
-		if historyFilter("older", e.Timestamp, now) {
-			showOlder = true
-			break
+		if historyFilter(bucket, e.Timestamp, now) {
+			n++
 		}
 	}
-	row := &ui.Node{Kind: ui.KindRow, Gap: cardGap}
+	return n
+}
+
+// centreFilterRow is the one control selecting what the list shows. It replaced
+// a tab row plus a six-chip row: two controls for one question.
+func centreFilterRow(active []protocol.Notification, history []protocol.HistoryEntry, filter string, now time.Time, width int) *ui.Node {
+	segments := make([]*ui.Node, 0, len(historyChips))
 	for _, c := range historyChips {
-		if c.id == "older" && !showOlder {
-			continue
+		seg := &ui.Node{
+			Kind: ui.KindButton, Action: "notify:center:filter:" + c.id,
+			Name: c.label, Role: "tab", Focusable: true, Padding: 2,
+			Children: []*ui.Node{{Kind: ui.KindText, TextRole: theme.RoleCaption,
+				Text: fmt.Sprintf("%s %d", c.label, bucketCount(c.id, active, history, now))}},
 		}
-		row.Children = append(row.Children, &ui.Node{
-			Kind: ui.KindButton, Text: c.label, Padding: 4,
-			Action: "notify:center:filter:" + c.id, Name: c.label, Role: "button",
-			Focusable: true, Bold: filter == c.id,
-		})
+		if filter == c.id {
+			seg.State |= ui.StateSelected
+		}
+		segments = append(segments, seg)
 	}
-	return row
+	return &ui.Node{Kind: ui.KindSegmented, Key: "notify-filter", Gap: 2,
+		Width: width, Children: segments}
 }
 
 var dndPresets = []struct {

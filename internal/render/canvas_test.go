@@ -69,3 +69,30 @@ func TestLerpColorDescendsWithoutWrapping(t *testing.T) {
 		}
 	}
 }
+
+func TestFilletExtentSweepsFromBarToPanel(t *testing.T) {
+	const f = 8
+	if got := filletExtent(0, f); got != f {
+		t.Fatalf("row 0 extent = %d, want %d (flush with the bar)", got, f)
+	}
+	if got := filletExtent(f, f); got != 0 {
+		t.Fatalf("row f extent = %d, want 0 (met the panel edge)", got)
+	}
+	prev := f + 1
+	for y := 0; y <= f; y++ {
+		got := filletExtent(y, f)
+		if got > prev {
+			t.Fatalf("extent grew at row %d: %d after %d", y, got, prev)
+		}
+		prev = got
+	}
+	if got := filletExtent(f+1, f); got != 0 {
+		t.Fatalf("row past the band = %d, want 0", got)
+	}
+	if got := filletExtent(3, 0); got != 0 {
+		t.Fatalf("zero fillet = %d, want 0", got)
+	}
+	if got := filletExtent(-1, f); got != 0 {
+		t.Fatalf("negative row = %d, want 0", got)
+	}
+}

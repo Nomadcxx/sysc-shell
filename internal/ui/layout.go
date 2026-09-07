@@ -40,9 +40,25 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 		if err != nil {
 			return fmt.Errorf("ui: child %d: %w", i, err)
 		}
+		remain := content.X + content.W - x
+		if root.PinEnd && len(root.Children) == 2 && i == 0 {
+			if root.Children[1] == nil {
+				return fmt.Errorf("ui: nil child 1")
+			}
+			endW, _, err := measureNode(root.Children[1], content.H, measure)
+			if err != nil {
+				return fmt.Errorf("ui: child 1: %w", err)
+			}
+			// Reserve the control before clipping its leading content. Moving
+			// the control after layout cannot recover space already consumed.
+			remain -= root.Gap + endW
+		}
 		switch child.Kind {
 		case KindColumn:
-			box := Rect{X: x, Y: content.Y, W: w, H: content.H}
+			if child.Width <= 0 && (i == len(root.Children)-1 || root.PinEnd) {
+				w = remain
+			}
+			box := Rect{X: x, Y: content.Y, W: min(w, remain), H: content.H}
 			if err := LayoutColumn(child, box, measure); err != nil {
 				return fmt.Errorf("ui: child %d: %w", i, err)
 			}
@@ -92,7 +108,9 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 			}
 			// Nested rows in a column of known width (a System card cell)
 			// must clip overflowing text rather than close the surface.
-			remain := content.X + content.W - x
+			if child.Kind == KindRow && child.PinEnd {
+				w = remain
+			}
 			if w > remain {
 				w = remain
 			}
@@ -100,6 +118,11 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 				return fmt.Errorf("ui: child %d of kind %d does not fit in %dx%d", i, child.Kind, content.W, content.H)
 			}
 			child.Bounds = Rect{X: x, Y: content.Y + (content.H-h)/2, W: w, H: h}
+			if child.Kind == KindRow {
+				if err := placeColumnChild(child, child.Bounds, measure); err != nil {
+					return fmt.Errorf("ui: child %d: %w", i, err)
+				}
+			}
 		}
 		x += child.Bounds.W
 	}

@@ -132,7 +132,6 @@ type PanelHost struct {
 	// wallpaperThemeErr mirrors Registry.themeErr for the picker's banners.
 	wallpaperThemeErr string
 
-	notifyTab    int
 	notifyFilter string
 	notifyExpand string
 	notifyMenu   bool
@@ -605,6 +604,10 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	if h.place.BarEdge == "bottom" {
 		anchor = uint32(layershell.ZwlrLayerSurfaceV1AnchorBottom | layershell.ZwlrLayerSurfaceV1AnchorLeft)
 	}
+	fillet := h.filletMargin()
+	if fillet > 0 {
+		m.Left -= fillet
+	}
 	return &wayland.AuxSpec{
 		ID:            panelSurfaceID(h.id),
 		Namespace:     "sysc-shell-panel",
@@ -614,7 +617,7 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 		MarginBottom:  int32(m.Bottom),
 		MarginLeft:    int32(m.Left),
 		MarginRight:   int32(m.Right),
-		Width:         int32(h.place.Panel.W),
+		Width:         int32(h.place.Panel.W + 2*fillet),
 		Height:        int32(h.place.Panel.H),
 		ExclusiveZone: -1,
 		Keyboard:      keyboardExclusive,
@@ -634,6 +637,21 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 			},
 		},
 	}
+}
+
+// filletMargin is the per-side room the concave bar joint needs. It clamps to
+// the gap between this panel's edge and the bar's, because a wedge wider than
+// that margin paints past the bar it is meant to join. Floating panels
+// (CenterY) do not attach, so they take no margin.
+func (h *PanelHost) filletMargin() int {
+	if h == nil || h.place.BarEdge == "" || h.place.CenterY {
+		return 0
+	}
+	room := h.place.Padding - BarGap
+	if room < 0 {
+		return 0
+	}
+	return min(h.theme.Fillet, room)
 }
 
 // panelFontFamily resolves the font of the output the panel opens on. A panel
@@ -687,6 +705,9 @@ func (h *PanelHost) configure(w, height, scale120 int) error {
 		return err
 	}
 	box := ui.Rect{W: w, H: height}
+	if margin := h.filletMargin(); margin > 0 && w >= h.place.Panel.W+2*margin {
+		box = ui.Rect{X: margin, W: w - 2*margin, H: height}
+	}
 	if h.root != nil && h.root.Kind == ui.KindRow {
 		return ui.Layout(h.root, box, h.measureText())
 	}
@@ -727,6 +748,9 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	body := ui.Rect{W: h.logicalW, H: h.logicalH}
 	if body.W <= 0 || body.H <= 0 {
 		body = ui.Rect{W: h.place.Panel.W, H: h.place.Panel.H}
+	}
+	if margin := h.filletMargin(); margin > 0 && body.W >= h.place.Panel.W+2*margin {
+		body = ui.Rect{X: margin, W: h.place.Panel.W, H: body.H}
 	}
 	// Resolve the pointer state onto the tree that is about to be painted. The
 	// painter consumes an immutable mask; nothing downstream mutates state.
@@ -1387,10 +1411,17 @@ func (h *PanelHost) activateNotify(r *Registry, n *ui.Node) bool {
 	h.lastAction = action
 	if rest, ok := strings.CutPrefix(action, "notify:center:"); ok {
 		switch {
-		case rest == "dismiss-all":
-			r.sendNotify(protocol.Command{Kind: protocol.CommandDismissAll})
-		case rest == "clear-history":
-			r.sendNotify(protocol.Command{Kind: protocol.CommandHistoryClear})
+		case rest == "clear":
+			r.clearVisible(h)
+		case rest == "settings":
+			trig := Trigger{BarEdge: h.place.BarEdge, BarZone: h.place.BarZone, OutW: h.place.Output.W, OutH: h.place.Output.H}
+			if where, ok := r.panels.Output(PanelSettings); ok && where == h.output {
+				r.closePanelLocked(PanelSettings)
+			} else {
+				_ = r.openPanelRootLocked(PanelSettings, h.output, trig)
+			}
+		case rest == "close":
+			r.closePanelLocked(h.id)
 		case rest == "dnd":
 			_, on := r.notify.dndState(r.clockNow())
 			r.notify.setDND(!on)
@@ -1400,9 +1431,6 @@ func (h *PanelHost) activateNotify(r *Registry, n *ui.Node) bool {
 			r.rebuildPanel(h)
 		case rest == "schedule":
 			h.notifyMenu = !h.notifyMenu
-			r.rebuildPanel(h)
-		case strings.HasPrefix(rest, "tab:"):
-			h.notifyTab, _ = strconv.Atoi(strings.TrimPrefix(rest, "tab:"))
 			r.rebuildPanel(h)
 		case strings.HasPrefix(rest, "filter:"):
 			h.notifyFilter = strings.TrimPrefix(rest, "filter:")
@@ -1417,7 +1445,7 @@ func (h *PanelHost) activateNotify(r *Registry, n *ui.Node) bool {
 			r.rebuildPanel(h)
 		case strings.HasPrefix(rest, "dismiss-group:"):
 			key := strings.TrimPrefix(rest, "dismiss-group:")
-			for _, id := range r.notify.idsForGroup(key) {
+			for _, id := range r.notify.idsForGroup(key, h.notifyFilter, r.clockNow()) {
 				r.sendNotify(protocol.Command{Kind: protocol.CommandDismiss, ID: id})
 			}
 		case strings.HasPrefix(rest, "preset:"):
@@ -1445,6 +1473,8 @@ func (h *PanelHost) activateNotify(r *Registry, n *ui.Node) bool {
 	switch parts[0] {
 	case "dismiss":
 		r.sendNotify(protocol.Command{Kind: protocol.CommandDismiss, ID: id})
+	case "remove":
+		r.sendNotify(protocol.Command{Kind: protocol.CommandHistoryRemove, IDs: []uint32{id}})
 	case "default":
 		r.sendNotify(protocol.Command{Kind: protocol.CommandAction, ID: id, ActionKey: "default"})
 	case "action":
@@ -1453,6 +1483,38 @@ func (h *PanelHost) activateNotify(r *Registry, n *ui.Node) bool {
 		}
 	}
 	return true
+}
+
+// clearVisible clears exactly what the open filter shows. With the tabs gone
+// there is no other unambiguous target: a Clear that emptied the whole store
+// while the user was looking at Yesterday would delete what they cannot see.
+func (r *Registry) clearVisible(h *PanelHost) {
+	now := r.clockNow()
+	filter := "all"
+	if h != nil && h.notifyFilter != "" {
+		filter = h.notifyFilter
+	}
+
+	r.notify.mu.Lock()
+	var dismiss, remove []uint32
+	for _, n := range r.notify.active {
+		if historyFilter(filter, n.Timestamp, now) {
+			dismiss = append(dismiss, n.ID)
+		}
+	}
+	for _, e := range r.notify.history {
+		if historyFilter(filter, e.Timestamp, now) {
+			remove = append(remove, e.ID)
+		}
+	}
+	r.notify.mu.Unlock()
+
+	for _, id := range dismiss {
+		r.sendNotify(protocol.Command{Kind: protocol.CommandDismiss, ID: id})
+	}
+	if len(remove) > 0 {
+		r.sendNotify(protocol.Command{Kind: protocol.CommandHistoryRemove, IDs: remove})
+	}
 }
 
 func (h *PanelHost) afterFocusChange(r *Registry) {

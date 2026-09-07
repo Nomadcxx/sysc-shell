@@ -1133,7 +1133,6 @@ func TestIdleButtonIsAStadiumOnTheHighestContainer(t *testing.T) {
 	}
 }
 
-
 // nearlyEqualColor reports whether two colours match within a per-channel
 // tolerance. An antialiased edge pixel is a blend by construction: on a
 // stadium's left extreme the true midline falls between two pixel centres, so
@@ -1395,4 +1394,78 @@ func TestPaintSegmentedPaintsItsSegments(t *testing.T) {
 	if got := pixelAt(t, c, x, y); got != testStyle.containerHighest() {
 		t.Errorf("idle segment fill = %+v, want the highest container %+v", got, testStyle.containerHighest())
 	}
+}
+
+func TestIconTonePicksTheAccent(t *testing.T) {
+	style := testStyle
+	style.Foreground = Color{R: 255, G: 255, B: 255, A: 255}
+	style.Accent = Color{R: 255, G: 0, B: 0, A: 255}
+
+	paint := func(tone ui.Tone) Color {
+		c := newTestCanvas(t, 32, 32)
+		n := &ui.Node{Kind: ui.KindIcon, Icon: "settings", IconSize: 20, Tone: tone,
+			Bounds: ui.Rect{W: 32, H: 32}}
+		if err := paintIcon(c, n, NewTextRenderer(mustTestFace(t)), style); err != nil {
+			t.Fatalf("paint: %v", err)
+		}
+		return brightestPixel(t, c)
+	}
+
+	if got := paint(ui.ToneAccent); got.R == got.G {
+		t.Fatalf("accent icon painted neutral: %v", got)
+	}
+	if got := paint(ui.ToneNormal); got.R != got.G || got.G != got.B {
+		t.Fatalf("normal icon is no longer the foreground: %v", got)
+	}
+}
+
+func TestFilletPaintsBarColourOutsideTheBody(t *testing.T) {
+	style := testStyle
+	style.AttachEdge = "top"
+	style.Fillet = 8
+	style.FilletFill = Color{R: 0, G: 0, B: 255, A: 255}
+	style.Body = ui.Rect{X: 8, Y: 0, W: 100, H: 60}
+
+	c := newTestCanvas(t, 116, 60)
+	if err := Paint(c, &ui.Node{Kind: ui.KindColumn}, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatalf("paint: %v", err)
+	}
+
+	if got := pixelAt(t, c, 0, 0); got.B != 255 {
+		t.Fatalf("top-left corner = %v, want the fillet fill", got)
+	}
+	if got := pixelAt(t, c, 0, 8); got.A != 0 {
+		t.Fatalf("row 8 outside the body = %v, want transparent", got)
+	}
+}
+
+func TestZeroFilletLeavesTheSurfaceUnchanged(t *testing.T) {
+	style := testStyle
+	style.AttachEdge = "top"
+	style.Body = ui.Rect{X: 8, Y: 0, W: 100, H: 60}
+
+	c := newTestCanvas(t, 116, 60)
+	if err := Paint(c, &ui.Node{Kind: ui.KindColumn}, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatalf("paint: %v", err)
+	}
+	if got := pixelAt(t, c, 0, 0); got.A != 0 {
+		t.Fatalf("corner = %v, want transparent with no fillet", got)
+	}
+}
+
+func brightestPixel(t *testing.T, c *Canvas) Color {
+	t.Helper()
+	var best Color
+	var score int
+	for y := 0; y < c.Height; y++ {
+		for x := 0; x < c.Width; x++ {
+			p := pixelAt(t, c, x, y)
+			s := int(p.R) + int(p.G) + int(p.B)
+			if s > score {
+				score = s
+				best = p
+			}
+		}
+	}
+	return best
 }

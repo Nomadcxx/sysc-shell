@@ -92,6 +92,10 @@ type Theme struct {
 	// It lives inside the surface, so the screen edge stays clickable, and it
 	// is a docking choice rather than a density row.
 	BarGap int
+	// Fillet is the radius of the concave wedges joining a panel to the bar.
+	// It lives beside BarGap because it is the same kind of decision: how the
+	// shell's surfaces meet, not a density row.
+	Fillet int
 
 	// The fields below are the flat names the existing surfaces still read.
 	// They are derived from the groups above, and they go away as each tree
@@ -180,6 +184,7 @@ func ResolveTheme(cfg config.Config, bar config.Bar, tok theme.Tokens) (Theme, e
 		// a tonal step the palette may not have room for.
 		Outlined: hc,
 		BarGap:   bar.Gap,
+		Fillet:   12,
 	}
 	applyFlat(&t)
 	if err := t.Valid(); err != nil {
@@ -521,7 +526,12 @@ func (t Theme) StyleFor(a uint8) render.Style {
 
 // PanelStyle and OverlayStyle name the two non-bar roots so a host does not
 // have to remember which alpha it owns.
-func (t Theme) PanelStyle() render.Style   { return t.StyleFor(t.Surfaces.Panel) }
+func (t Theme) PanelStyle() render.Style {
+	s := t.StyleFor(t.Surfaces.Panel)
+	s.Fillet = t.Fillet
+	s.FilletFill = t.Style().RootFill()
+	return s
+}
 func (t Theme) OverlayStyle() render.Style { return t.StyleFor(t.Surfaces.Overlay) }
 
 // BackgroundOpaque reports whether the surface token is fully opaque.

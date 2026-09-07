@@ -311,3 +311,58 @@ func TestPinRowEndCarriesTheSubtree(t *testing.T) {
 			button.Bounds.X, button.Bounds.X+button.Bounds.W)
 	}
 }
+
+func TestPinEndPinsPastANonTextFirstChild(t *testing.T) {
+	trailing := &Node{Kind: KindButton, Width: 20, Height: 20}
+	row := &Node{Kind: KindRow, PinEnd: true, Height: 40, Children: []*Node{
+		{Kind: KindColumn, Width: 80, Children: []*Node{{Kind: KindText, Text: "app"}}},
+		trailing,
+	}}
+	if err := placeColumnChild(row, Rect{W: 200, H: 40}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := trailing.Bounds.X + trailing.Bounds.W; got != 200 {
+		t.Fatalf("right edge = %d, want 200", got)
+	}
+}
+
+func TestRowWithoutPinEndIsUnchanged(t *testing.T) {
+	trailing := &Node{Kind: KindButton, Width: 20, Height: 20}
+	row := &Node{Kind: KindRow, Height: 40, Children: []*Node{
+		{Kind: KindColumn, Width: 80, Children: []*Node{{Kind: KindText, Text: "app"}}},
+		trailing,
+	}}
+	if err := placeColumnChild(row, Rect{W: 200, H: 40}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := trailing.Bounds.X + trailing.Bounds.W; got == 200 {
+		t.Fatal("row pinned without opting in")
+	}
+}
+
+func TestNestedRowPinsControlWithoutOverlappingContent(t *testing.T) {
+	for i, kind := range []Kind{KindRow, KindColumn} {
+		t.Run([]string{"row", "column"}[i], func(t *testing.T) {
+			label := &Node{Kind: KindText, Text: "a label wider than the available space"}
+			content := &Node{Kind: kind, Children: []*Node{label}}
+			button := &Node{Kind: KindButton, Padding: 6, Action: "close", Children: []*Node{{Kind: KindIcon, Icon: "close"}}}
+			row := &Node{Kind: KindRow, PinEnd: true, Gap: 6, Children: []*Node{content, button}}
+			root := &Node{Kind: KindColumn, Padding: 4, Children: []*Node{row}}
+			if err := LayoutColumn(root, Rect{X: 10, Y: 20, W: 200, H: 48}, fakeMeasure); err != nil {
+				t.Fatal(err)
+			}
+			if label.Bounds.W <= 0 || label.Bounds.X+label.Bounds.W+row.Gap > button.Bounds.X {
+				t.Errorf("label %+v overlaps or has no bounds beside %+v", label.Bounds, button.Bounds)
+			}
+			if button.Bounds.X+button.Bounds.W != 206 {
+				t.Errorf("button %+v is not pinned to inner right edge 206", button.Bounds)
+			}
+			b := button.Children[0].Bounds
+			if got, _ := Hit(root, b.X+b.W/2, b.Y+b.H/2); got != "close" {
+				t.Errorf("icon hit = %q, want close", got)
+			}
+		})
+	}
+}
