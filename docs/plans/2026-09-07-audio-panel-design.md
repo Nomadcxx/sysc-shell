@@ -1,6 +1,6 @@
 # Standalone audio panel — Design
 
-Date: 2026-09-07. Status: awaiting owner approval of the mock
+Date: 2026-09-07. Status: approved 2026-09-07 (mock approved; 560 px width kept; Devices rows are selected wells with trailing `check`; `render.AttachedMask` lands in this work with `sysc-154` depending on it)
 (`docs/plans/assets/2026-09-07-audio-panel/`). Not yet registered in bd.
 
 A first-party `PanelAudio` — Volumes and Devices as two tabs on one surface,
