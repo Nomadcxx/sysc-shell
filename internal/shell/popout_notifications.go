@@ -2,6 +2,7 @@ package shell
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -191,10 +192,10 @@ func (r *Registry) centerTreeFor(h *PanelHost) *ui.Node {
 	sort.Slice(history, func(i, j int) bool { return history[i].Timestamp.After(history[j].Timestamp) })
 
 	var live, closed []*ui.Node
+	active = slices.DeleteFunc(active, func(n protocol.Notification) bool {
+		return !historyFilter(filter, n.Timestamp, now)
+	})
 	for _, g := range activeGroups(active) {
-		if !historyFilter(filter, g.members[0].Timestamp, now) {
-			continue
-		}
 		raster := r.lookupNotifyIcon(g.members[0].AppIcon)
 		live = append(live, ActiveGroupCard(g, now, expand == g.key, raster, r.linksAllowed()))
 	}
@@ -331,7 +332,7 @@ func centreFilterRow(active []protocol.Notification, history []protocol.HistoryE
 			Kind: ui.KindButton, Action: "notify:center:filter:" + c.id,
 			Name: c.label, Role: "tab", Focusable: true, Padding: 2,
 			Children: []*ui.Node{{Kind: ui.KindText, TextRole: theme.RoleCaption,
-				Text: fmt.Sprintf("%s (%d)", c.label, bucketCount(c.id, active, history, now))}},
+				Text: fmt.Sprintf("%s %d", c.label, bucketCount(c.id, active, history, now))}},
 		}
 		if filter == c.id {
 			seg.State |= ui.StateSelected

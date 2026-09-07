@@ -77,7 +77,7 @@ func valueMeter(value *int32) *ui.Node {
 	return &ui.Node{Kind: ui.KindMeter, Value: v}
 }
 
-func wrapNotifyCard(inner *ui.Node, critical bool) *ui.Node {
+func wrapNotifyCard(inner *ui.Node, critical bool, fill ui.Fill) *ui.Node {
 	body := inner
 	if critical {
 		body = &ui.Node{Kind: ui.KindRow, Gap: 0, Children: []*ui.Node{
@@ -86,7 +86,7 @@ func wrapNotifyCard(inner *ui.Node, critical bool) *ui.Node {
 		}}
 	}
 	cap := &ui.Node{
-		Kind: ui.KindCapsule, Fill: ui.FillContainerHigh, Padding: cardPadding, Shape: ui.ShapeCard,
+		Kind: ui.KindCapsule, Fill: fill, Padding: cardPadding, Shape: ui.ShapeCard,
 		Action: inner.Action, Children: []*ui.Node{body},
 	}
 	if critical {
@@ -192,7 +192,7 @@ func NotificationCard(n protocol.Notification, lt *protocol.Lifetime, raster *ui
 	if m := timeoutMeter(lt); m != nil {
 		root.Children = append(root.Children, m)
 	}
-	return cardColumn(wrapNotifyCard(root, n.Urgency == protocol.UrgencyCritical))
+	return cardColumn(wrapNotifyCard(root, n.Urgency == protocol.UrgencyCritical, ui.FillNone))
 }
 
 func markDefault(root *ui.Node, id uint32) {
@@ -214,7 +214,7 @@ func HistoryCard(e protocol.HistoryEntry, now time.Time, raster *ui.Image, allow
 			centreRemoveButton(fmt.Sprintf("notify:%d:remove", e.ID), "Remove"),
 		}}
 	}
-	return cardColumn(wrapNotifyCard(inner, e.Urgency == protocol.UrgencyCritical))
+	return cardColumn(wrapNotifyCard(inner, e.Urgency == protocol.UrgencyCritical, ui.FillContainerHigh))
 }
 
 // ActiveGroupCard is one Current-tab group. Actions come from the newest
@@ -275,7 +275,7 @@ func ActiveGroupCard(g activeGroup, now time.Time, expanded bool, raster *ui.Ima
 			root.Children = append(root.Children, &ui.Node{Kind: ui.KindText, Text: m.Summary})
 		}
 	}
-	return cardColumn(wrapNotifyCard(root, critical))
+	return cardColumn(wrapNotifyCard(root, critical, ui.FillContainerHigh))
 }
 
 func cardColumn(n *ui.Node) *ui.Node {

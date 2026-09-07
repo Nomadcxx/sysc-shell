@@ -404,7 +404,7 @@ func TestFilterRowIsOneSegmentedControl(t *testing.T) {
 	if row.Children[0].State.Has(ui.StateSelected) {
 		t.Fatal("All is selected while the filter is today")
 	}
-	if got, want := row.Children[1].Children[0].Text, "Today (1)"; got != want {
+	if got, want := row.Children[1].Children[0].Text, "Today 1"; got != want {
 		t.Fatalf("label = %q, want %q", got, want)
 	}
 }

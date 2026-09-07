@@ -1445,7 +1445,7 @@ func (h *PanelHost) activateNotify(r *Registry, n *ui.Node) bool {
 			r.rebuildPanel(h)
 		case strings.HasPrefix(rest, "dismiss-group:"):
 			key := strings.TrimPrefix(rest, "dismiss-group:")
-			for _, id := range r.notify.idsForGroup(key) {
+			for _, id := range r.notify.idsForGroup(key, h.notifyFilter, r.clockNow()) {
 				r.sendNotify(protocol.Command{Kind: protocol.CommandDismiss, ID: id})
 			}
 		case strings.HasPrefix(rest, "preset:"):

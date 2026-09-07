@@ -131,16 +131,19 @@ func (s *notifyState) summary(id uint32) string {
 	return s.active[id].Summary
 }
 
-func (s *notifyState) idsForGroup(key string) []uint32 {
+func (s *notifyState) idsForGroup(key, filter string, now time.Time) []uint32 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if filter == "" {
+		filter = "all"
+	}
 	var ids []uint32
 	for _, n := range s.active {
 		k := n.DesktopEntry
 		if k == "" {
 			k = n.AppName
 		}
-		if strings.ToLower(k) == key {
+		if strings.ToLower(k) == key && historyFilter(filter, n.Timestamp, now) {
 			ids = append(ids, n.ID)
 		}
 	}
