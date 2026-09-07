@@ -26,6 +26,7 @@ var materialIcons = map[string]struct{}{
 	"close": {}, "chevron_left": {}, "chevron_right": {},
 	"search": {}, "settings": {}, "notifications": {}, "do_not_disturb_on": {},
 	"volume_up": {}, "volume_off": {}, "brightness_high": {},
+	"delete": {}, "schedule": {},
 }
 
 // ValidMaterialIcon reports whether name is one the embedded subset can draw.
