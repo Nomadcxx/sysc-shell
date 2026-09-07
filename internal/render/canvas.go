@@ -128,6 +128,23 @@ func roundedInset(y, height, radius int) int {
 	return max(0, int(math.Ceil(float64(radius)-dx-0.5)))
 }
 
+// filletExtent is how far the bar-coloured wedge reaches outward from the panel
+// body's side edge, at row y measured from the attached edge.
+//
+// The wedge is the region inside a circle of radius fillet centred on the bar's
+// edge at the body corner, so the curve leaves the bar horizontally and meets
+// the panel side vertically: the bar appears to sweep into the panel rather
+// than to sit on top of it. The half-pixel term matches roundedInset, so a
+// fillet and a corner quantise the same way.
+func filletExtent(y, fillet int) int {
+	if fillet <= 0 || y < 0 || y > fillet {
+		return 0
+	}
+	r := float64(fillet)
+	dy := float64(y) + 0.5
+	return max(0, int(math.Ceil(math.Sqrt(max(0, r*r-dy*dy))-0.5)))
+}
+
 // strokeRoundedRect outlines one clipped rounded rectangle inward from its
 // bounds, so the stroke never grows the node's box. It draws the cached ring
 // mask, which carries the same antialiased coverage the rounded fill uses.
