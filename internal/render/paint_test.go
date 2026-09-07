@@ -1,6 +1,7 @@
 package render
 
 import (
+	"bytes"
 	"image"
 	"math"
 	"testing"
@@ -1133,7 +1134,6 @@ func TestIdleButtonIsAStadiumOnTheHighestContainer(t *testing.T) {
 	}
 }
 
-
 // nearlyEqualColor reports whether two colours match within a per-channel
 // tolerance. An antialiased edge pixel is a blend by construction: on a
 // stadium's left extreme the true midline falls between two pixel centres, so
@@ -1394,5 +1394,85 @@ func TestPaintSegmentedPaintsItsSegments(t *testing.T) {
 	x, y = fillPointOf(idle)
 	if got := pixelAt(t, c, x, y); got != testStyle.containerHighest() {
 		t.Errorf("idle segment fill = %+v, want the highest container %+v", got, testStyle.containerHighest())
+	}
+}
+
+func d3WordmarkGradient() ui.GradientPaint {
+	return ui.GradientPaint{
+		Stops: [4]ui.GradientStop{
+			{At: 0, Role: ui.PaintOnSurfaceVariant},
+			{At: 0.5, Role: ui.PaintPrimary},
+			{At: 1, Role: ui.PaintOnSurfaceVariant},
+		},
+		Count:    3,
+		AngleDeg: 0,
+		Motion:   ui.GradientPingPong,
+		From:     -0.45,
+		To:       0.45,
+	}
+}
+
+func paintWordmarkAt(t *testing.T, g ui.GradientPaint, offset float64) *Canvas {
+	t.Helper()
+	const w, h = 80, 11
+	c := newTestCanvas(t, w, h)
+	n := &ui.Node{
+		Kind:           ui.KindWordmark,
+		Bounds:         ui.Rect{W: w, H: h},
+		Gradient:       g,
+		GradientOffset: offset,
+	}
+	if err := paintNode(c, n, nil, testStyle, testStyle.Size); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func TestPaintWordmarkGradient(t *testing.T) {
+	t.Parallel()
+	a := paintWordmarkAt(t, d3WordmarkGradient(), 0)
+	b := paintWordmarkAt(t, d3WordmarkGradient(), 0.45)
+	if bytes.Equal(a.Pix, b.Pix) {
+		t.Fatal("offset 0 and 0.45 painted the same raster")
+	}
+}
+
+func TestPaintWordmarkGradientInvalidCountFallsBackToSolid(t *testing.T) {
+	t.Parallel()
+	solid := paintWordmarkAt(t, ui.GradientPaint{}, 0)
+	invalid := ui.GradientPaint{
+		Stops: [4]ui.GradientStop{{At: 0, Role: ui.PaintOnSurfaceVariant}},
+		Count: 1,
+	}
+	got := paintWordmarkAt(t, invalid, 0)
+	if !bytes.Equal(solid.Pix, got.Pix) {
+		t.Fatal("Count==1 must paint the solid accent path")
+	}
+	if litPixels(got, testStyle.Accent) == 0 {
+		t.Fatal("solid fallback painted no accent")
+	}
+	if litPixels(got, testStyle.Track) != 0 {
+		t.Fatal("Count==1 used the stop colour instead of accent")
+	}
+}
+
+func TestPaintWordmarkGradientSeparator(t *testing.T) {
+	t.Parallel()
+	paint := func(offset float64) *Canvas {
+		t.Helper()
+		c := newTestCanvas(t, 16, 1)
+		n := &ui.Node{
+			Kind:           ui.KindSeparator,
+			Bounds:         ui.Rect{W: 16, H: 1},
+			Gradient:       d3WordmarkGradient(),
+			GradientOffset: offset,
+		}
+		if err := paintNode(c, n, nil, testStyle, testStyle.Size); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	if bytes.Equal(paint(0).Pix, paint(0.45).Pix) {
+		t.Fatal("separator offset 0 and 0.45 painted the same raster")
 	}
 }

@@ -63,6 +63,37 @@ func (r Rect) Contains(x, y int) bool {
 	return x >= r.X && x < r.X+r.W && y >= r.Y && y < r.Y+r.H
 }
 
+type PaintRole uint8
+
+const (
+	PaintUnset PaintRole = iota
+	PaintPrimary
+	PaintOnSurfaceVariant
+	PaintOnSurface
+	PaintSurface
+)
+
+type GradientMotion uint8
+
+const (
+	GradientNone GradientMotion = iota
+	GradientLoop
+	GradientPingPong
+)
+
+type GradientStop struct {
+	At   float64
+	Role PaintRole
+}
+
+type GradientPaint struct {
+	Stops    [4]GradientStop
+	Count    int // 0 = solid path; else 2–4
+	AngleDeg float64
+	Motion   GradientMotion
+	From, To float64
+}
+
 // Node is one retained element. Layout fills Bounds; every other field is
 // supplied by the caller.
 type Node struct {
@@ -168,10 +199,14 @@ type Node struct {
 	// Stroke is a capsule's border width in logical pixels. Zero means none.
 	Stroke     int
 	StrokeFill Fill
-	State      Interaction
-	Padding    int
-	Gap        int
-	Action     string
+	// Gradient is a 2–4 stop token ramp. Count 0 is solid. GradientOffset is
+	// the live sample shift; it is not part of the recipe.
+	Gradient       GradientPaint
+	GradientOffset float64
+	State          Interaction
+	Padding        int
+	Gap            int
+	Action         string
 	// Tooltip is bounded hover text owned by the node's feature. The shared
 	// dwell controller decides when and where to show it.
 	Tooltip  string
