@@ -149,3 +149,39 @@ func TestWpctlStepPutsTheSignAfterThePercent(t *testing.T) {
 		}
 	}
 }
+
+func (f *fakeCmd) lines(t *testing.T) int {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(f.dir, "log"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0
+		}
+		t.Fatal(err)
+	}
+	return strings.Count(string(raw), "\n")
+}
+
+func TestCachedStateServesThePolledValueWithoutExec(t *testing.T) {
+	fake := fakeWpctl(t, "0.40")
+	a := NewAudio(time.Hour, fake.path)
+	t.Cleanup(a.Close)
+	if _, err := a.Acquire(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for fake.lines(t) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if fake.lines(t) == 0 {
+		t.Fatal("baseline poll never ran wpctl")
+	}
+	before := fake.lines(t)
+	st := a.CachedState()
+	if got := fake.lines(t); got != before {
+		t.Fatalf("CachedState exec'd wpctl: log lines %d -> %d", before, got)
+	}
+	if st.Level != 40 {
+		t.Fatalf("CachedState().Level = %d, want 40", st.Level)
+	}
+}

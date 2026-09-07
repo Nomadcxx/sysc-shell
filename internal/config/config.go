@@ -240,10 +240,11 @@ var knownItems = map[string]struct{}{
 	"clock": {}, "workspace": {}, "window-title": {},
 	"cpu": {}, "memory": {}, "filesystem": {}, "block": {}, "network": {},
 	"weather": {}, "battery": {}, "notifications": {},
-	"running-apps": {},
+	"running-apps": {}, "wordmark": {},
 	// "wallpaper" opens the picker. It is deliberately not in Default(): a
 	// user who wants the glyph adds it, and an existing bar does not change.
 	"wallpaper": {},
+	"volume":    {},
 	// group holds other items inside one capsule. It carries no options of
 	// its own; every option belongs to a nested item.
 	"group": {},
@@ -323,6 +324,7 @@ func Default() Config {
 			// carrying it would fail validation out of the box.
 			Center: []Item{
 				{ID: "clock", Format: defaultClockFormat, Boundary: time.Minute},
+				{ID: "wordmark"},
 				{ID: "clock", Format: defaultDateFormat, Boundary: time.Minute},
 			},
 			Right: []Item{

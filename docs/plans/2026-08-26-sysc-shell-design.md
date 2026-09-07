@@ -16,7 +16,7 @@ The project aims for growing capability parity with Noctalia and DMS. It will no
 - No lock-screen or session-lock client.
 - No new compositor. Niri owns DRM, input devices, workspaces, windows, layout, XWayland, and server-side layer-shell policy.
 - Go is the primary language. Mature C libraries may sit behind a narrow boundary when measurements or correctness tests reject the Go path.
-- The first renderer uses shared-memory buffers and redraws after invalidation. A continuous frame loop is out of scope.
+- The first renderer uses shared-memory buffers and redraws after invalidation. A continuous frame loop is out of scope except for a visible looping `GradientPaint` while reduced motion is off.
 
 ## Goals
 

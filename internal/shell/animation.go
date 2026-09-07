@@ -40,6 +40,8 @@ const (
 	animVisible
 	// animTheme crossfades a surface's palette, keyed by the surface.
 	animTheme
+	// animGradient shifts a looping paint recipe independently of interaction.
+	animGradient
 )
 
 // animKey addresses one value: a stable node key plus the channel. Keys are
@@ -55,6 +57,7 @@ type animValue struct {
 	start    time.Time
 	dur      time.Duration
 	ease     func(float64) float64
+	loop     ui.GradientMotion
 }
 
 func (v animValue) at(now time.Time) float64 {
@@ -65,6 +68,18 @@ func (v animValue) at(now time.Time) float64 {
 	if elapsed <= 0 {
 		return v.from
 	}
+	if v.loop != ui.GradientNone {
+		trip := elapsed % v.dur
+		if v.loop == ui.GradientPingPong {
+			cycle := 2 * v.dur
+			trip = elapsed % cycle
+			if trip > v.dur {
+				trip = cycle - trip
+			}
+		}
+		p := float64(trip) / float64(v.dur)
+		return v.from + (v.to-v.from)*p
+	}
 	if elapsed >= v.dur {
 		return v.to
 	}
@@ -73,7 +88,13 @@ func (v animValue) at(now time.Time) float64 {
 }
 
 func (v animValue) settled(now time.Time) bool {
-	return v.dur <= 0 || now.Sub(v.start) >= v.dur
+	if v.dur <= 0 {
+		return true
+	}
+	if v.loop != ui.GradientNone {
+		return false
+	}
+	return now.Sub(v.start) >= v.dur
 }
 
 // animator holds one surface's in-flight visual state. It is deliberately
@@ -181,6 +202,24 @@ func (a *animator) Target(node string, channel animChannel, to float64) {
 	a.values[key] = animValue{from: from, to: to, start: now, dur: dur, ease: a.easeFor(channel)}
 }
 
+// TargetLoop runs a linear paint offset until the node leaves the tree. An
+// unchanged recipe keeps its start time, so rebuilding the tree preserves the
+// visible phase.
+func (a *animator) TargetLoop(node string, channel animChannel, from, to float64, dur time.Duration, motion ui.GradientMotion) {
+	key := animKey{node: node, channel: channel}
+	if current, ok := a.values[key]; ok && current.from == from && current.to == to &&
+		current.dur == dur && current.loop == motion {
+		return
+	}
+	now := a.now()
+	if a.reduced {
+		mid := (from + to) / 2
+		a.values[key] = animValue{from: mid, to: mid, start: now}
+		return
+	}
+	a.values[key] = animValue{from: from, to: to, start: now, dur: dur, loop: motion}
+}
+
 // Reset drops a value so the next Target starts it from zero rather than from
 // wherever the previous transition left it. A palette crossfade needs this: its
 // endpoints are the two themes, and the progress between them always begins at
@@ -197,7 +236,7 @@ func (a *animator) has(node string, channel animChannel) bool {
 	return ok
 }
 
-// Value is the resolved scalar for one channel, in [0,1].
+// Value is the resolved scalar for one channel.
 func (a *animator) Value(node string, channel animChannel) float64 {
 	v, ok := a.values[animKey{node: node, channel: channel}]
 	if !ok {
@@ -235,6 +274,9 @@ func (a *animator) Forget(node string) {
 func (a *animator) Retarget() {
 	now := a.now()
 	for key, v := range a.values {
+		if v.loop != ui.GradientNone {
+			continue
+		}
 		if v.settled(now) {
 			continue
 		}

@@ -190,6 +190,42 @@ func (r *Registry) setAudio(a *services.Audio) {
 		}
 	}
 	go r.relayAudioOSD(a)
+	go r.relayMixer(a)
+}
+
+func (r *Registry) relayMixer(audio *services.Audio) {
+	if audio == nil {
+		return
+	}
+	ch := audio.MixerChanges()
+	if ch == nil {
+		return
+	}
+	for {
+		select {
+		case <-r.closed:
+			return
+		case _, ok := <-ch:
+			if !ok {
+				return
+			}
+			r.mu.Lock()
+			h := r.panelHosts[PanelAudio]
+			if h == nil {
+				r.mu.Unlock()
+				continue
+			}
+			if snap := audio.Mixer(); !h.pendingAt.IsZero() && snap.At.After(h.pendingAt) {
+				h.pendingVol = nil
+				h.pendingMute = nil
+				h.pendingAt = time.Time{}
+			}
+			r.rebuildPanel(h)
+			out := h.output
+			r.mu.Unlock()
+			r.publishSurface(out, panelSurfaceID(PanelAudio))
+		}
+	}
 }
 
 func (r *Registry) setBrightness(b *services.Brightness) {
@@ -254,6 +290,14 @@ func (r *Registry) OSDStep(kind, action string) error {
 	default:
 		return fmt.Errorf("unknown kind")
 	}
+}
+
+// stepAudioAsync runs stepAudio off the calling goroutine. The bar input
+// handlers run on the Wayland owner, which must never exec.
+// ponytail: wpctl volume steps commute, but concurrent mute toggles can
+// coalesce; add a serialized worker channel if ordering ever matters.
+func (r *Registry) stepAudioAsync(action string) {
+	go func() { _ = r.stepAudio(action) }()
 }
 
 func (r *Registry) stepAudio(action string) error {
@@ -610,8 +654,25 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 			}
 			r.mu.Unlock()
 			return true
+		case action == panelAudioAction && (button == 0 || button == buttonLeft):
+			trig.AnchorX = bar.actionCenterX(panelAudioAction)
+			return r.TogglePanel(PanelAudio, out, trig) == nil
+		case action == panelAudioAction && button == buttonRight:
+			r.stepAudioAsync("mute")
+			return true
 		}
 		return false
+	})
+	bar.setAxisHandler(func(action string, delta int) bool {
+		if action != panelAudioAction {
+			return false
+		}
+		if delta > 0 {
+			r.stepAudioAsync("up")
+		} else if delta < 0 {
+			r.stepAudioAsync("down")
+		}
+		return true
 	})
 }
 
@@ -681,6 +742,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 			once.Do(func() {
 				r.mu.Lock()
 				outgoing := r.leases
+				outgoingBars := r.bars
 				// Coordinates and unit are the request, not a lease parameter,
 				// so the service has to be told. It is a no-op unless they
 				// changed, which is the common case for an unrelated reload.
@@ -713,6 +775,9 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				toastOutputs := r.outputGlobalsLocked()
 				plugins := r.plugins
 				r.mu.Unlock()
+				for _, bar := range outgoingBars {
+					bar.stopAnimation()
+				}
 
 				r.SyncToastOutputs(toastOutputs)
 				if plugins != nil {
@@ -728,6 +793,9 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 		},
 		Rollback: func() {
 			once.Do(func() {
+				for _, bar := range bars {
+					bar.stopAnimation()
+				}
 				for _, held := range leases {
 					releaseAll(held)
 				}
@@ -743,7 +811,8 @@ func (r *Registry) DropHost(global uint32) {
 	r.mu.Lock()
 	leases := r.leases[global]
 	gone := ""
-	if bar, ok := r.bars[global]; ok {
+	bar := r.bars[global]
+	if bar != nil {
 		gone = bar.connector()
 	}
 	delete(r.bars, global)
@@ -752,6 +821,9 @@ func (r *Registry) DropHost(global uint32) {
 	toastOutputs := r.outputGlobalsLocked()
 	plugins := r.plugins
 	r.mu.Unlock()
+	if bar != nil {
+		bar.stopAnimation()
+	}
 
 	if gone != "" && !slices.Contains(r.connectorsSnapshot(), gone) {
 		r.wallpaperOutputGone(gone)
@@ -800,6 +872,7 @@ func (r *Registry) Close() {
 	}
 	var osdAux []wayland.AuxRequest
 	var leases []*services.Lease
+	var bars []*Bar
 	var audioLease, brightLease *services.Lease
 	if locked {
 		if r.toasts != nil {
@@ -818,12 +891,18 @@ func (r *Registry) Close() {
 			leases = append(leases, held...)
 			delete(r.leases, global)
 		}
+		for _, bar := range r.bars {
+			bars = append(bars, bar)
+		}
 		r.bars = make(map[uint32]*Bar)
 		audioLease = r.audioLease
 		r.audioLease = nil
 		brightLease = r.brightLease
 		r.brightLease = nil
 		r.mu.Unlock()
+	}
+	for _, bar := range bars {
+		bar.stopAnimation()
 	}
 
 	for _, req := range osdAux {
@@ -973,6 +1052,9 @@ func (r *Registry) viewLocked(connector string) barView {
 		Running:   r.running,
 	}
 	_, view.DND = r.notify.dndState(r.now)
+	if r.audio != nil {
+		view.Audio = r.audio.CachedState()
+	}
 	if r.plugins != nil {
 		view.Plugins = r.plugins.frames(connector)
 	}
@@ -1037,6 +1119,20 @@ func (r *Registry) buildBar(cfg config.Config, connector string, tok theme.Token
 			return nil, nil, wayland.HostCallbacks{}, err
 		}
 		leases = append(leases, lease)
+	}
+	if r.audio != nil {
+		for _, item := range allItems(policy) {
+			if item.ID != "volume" {
+				continue
+			}
+			lease, err := r.audio.Acquire()
+			if err != nil {
+				releaseAll(leases)
+				return nil, nil, wayland.HostCallbacks{}, err
+			}
+			leases = append(leases, lease)
+			break
+		}
 	}
 
 	return bar, leases, wayland.HostCallbacks{

@@ -27,6 +27,7 @@ var (
 		"launcher":       "",
 		"notifications":  "",
 		"wallpaper":      "",
+		"audio":          "",
 	}
 )
 

@@ -54,6 +54,7 @@ type Bar struct {
 	onTray        func(tray.ItemKey, trayArrangement, ui.Rect, wayland.Event) bool
 	onPlugin      func(string, wayland.Event) bool
 	onAction      func(action string, button uint32) bool
+	onAxis        func(action string, delta int) bool
 
 	// conn is the connector this bar renders for. It selects configuration and
 	// joins Niri state; it is never this bar's identity, which is its Wayland
@@ -95,8 +96,10 @@ type Bar struct {
 	// pointer is the bar's resolved hover/press state as stable keys, and anim
 	// is its one clock. Only clickable capsules carry either: a CPU or memory
 	// display group has no action, so it never animates.
-	pointer interaction
-	anim    *animator
+	pointer  interaction
+	anim     *animator
+	stopAnim chan struct{}
+	stopOnce sync.Once
 
 	invalidations chan struct{}
 }
@@ -124,6 +127,8 @@ func NewWithTheme(theme Theme, policy config.Bar, connector string) (*Bar, error
 		text:          render.NewTextRendererWithFontMap(fonts),
 		invalidations: make(chan struct{}, 1),
 		style:         barStyle(theme),
+		anim:          newAnimator(nil, false, theme.Motion),
+		stopAnim:      make(chan struct{}),
 	}
 
 	b.left = buildWidgets(policy.Left, b.theme.Metrics.CapsulePadding)
@@ -194,6 +199,12 @@ func (b *Bar) setPluginHandler(fn func(string, wayland.Event) bool) {
 func (b *Bar) setActionHandler(fn func(action string, button uint32) bool) {
 	b.mu.Lock()
 	b.onAction = fn
+	b.mu.Unlock()
+}
+
+func (b *Bar) setAxisHandler(fn func(action string, delta int) bool) {
+	b.mu.Lock()
+	b.onAxis = fn
 	b.mu.Unlock()
 }
 
@@ -478,7 +489,63 @@ func (b *Bar) renderViewLocked() (*ui.Node, render.Style) {
 	// The painter consumes an immutable mask, so state is resolved onto the
 	// copy that is about to be drawn rather than onto live model state.
 	b.pointer.apply(root, b.anim)
+	b.resolveGradientMotionLocked(root)
 	return root, b.style
+}
+
+func (b *Bar) resolveGradientMotionLocked(root *ui.Node) {
+	seen := make(map[string]bool)
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n.Gradient.Motion != ui.GradientNone {
+			if key := n.StableKey(); key != "" {
+				seen[key] = true
+				b.anim.TargetLoop(key, animGradient, n.Gradient.From, n.Gradient.To, gradientTrip, n.Gradient.Motion)
+				n.GradientOffset = b.anim.Value(key, animGradient)
+			}
+		}
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(root)
+	for key := range b.anim.values {
+		if key.channel == animGradient && !seen[key.node] {
+			delete(b.anim.values, key)
+		}
+	}
+	b.startBarFramesLocked()
+}
+
+func (b *Bar) startBarFramesLocked() {
+	if b.anim == nil || b.anim.running || b.anim.Settled() {
+		return
+	}
+	b.anim.running = true
+	go b.barFrameLoop()
+}
+
+func (b *Bar) barFrameLoop() {
+	defer func() {
+		b.mu.Lock()
+		b.anim.running = false
+		b.mu.Unlock()
+	}()
+	animateSurface(b.stopAnim, func() bool {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return b.anim.Settled()
+	}, b.invalidate)
+}
+
+func (b *Bar) stopAnimation() {
+	if b.stopAnim == nil {
+		return
+	}
+	b.stopOnce.Do(func() { close(b.stopAnim) })
 }
 
 // copyNode deep-copies a node so no pointer into live model state reaches the
@@ -667,8 +734,21 @@ func (b *Bar) Handle(event wayland.Event) bool {
 			b.mu.Unlock()
 			return false
 		}
+		axisFn := b.onAxis
 		gesture, isTray := b.trayGestureLocked(action)
 		b.mu.Unlock()
+		delta := int(event.AxisDiscrete)
+		if delta == 0 {
+			switch {
+			case event.AxisValue120 > 0:
+				delta = 1
+			case event.AxisValue120 < 0:
+				delta = -1
+			}
+		}
+		if axisFn != nil && axisFn(action, delta) {
+			return true
+		}
 		// The overflow control does not scroll: only an item forwards a wheel.
 		if !isTray || gesture.key.IsZero() {
 			return false

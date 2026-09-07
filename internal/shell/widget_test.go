@@ -1,11 +1,12 @@
 package shell
 
 import (
-	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"testing"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 // reference is a fixed instant, so format assertions do not depend on when the
@@ -35,6 +36,34 @@ func TestAClockWidgetIsEmptyBeforeTheFirstTick(t *testing.T) {
 
 	if got := widgets[0].format(barView{}); got != "" {
 		t.Fatalf("clock before the first tick = %q, want empty", got)
+	}
+}
+
+func TestWordmarkWidgetIsBareAndBalancesItsClocks(t *testing.T) {
+	t.Parallel()
+	widgets := buildWidgets([]config.Item{
+		{ID: "clock", Format: "15:04"},
+		{ID: "wordmark"},
+		{ID: "clock", Format: "Mon 2 Jan"},
+	}, 8)
+	if len(widgets) != 3 {
+		t.Fatalf("built %d widgets, want 3", len(widgets))
+	}
+	mark := widgets[1]
+	if mark.node.Kind != ui.KindWordmark || mark.inner != nil {
+		t.Fatalf("wordmark was wrapped: node kind=%d inner=%v", mark.node.Kind, mark.inner)
+	}
+	if mark.node.ImageH != launcherMarkHeight || mark.node.ImageW != render.WordmarkWidth(launcherMarkHeight) {
+		t.Fatalf("wordmark size = %dx%d, want %dx%d", mark.node.ImageW, mark.node.ImageH,
+			render.WordmarkWidth(launcherMarkHeight), launcherMarkHeight)
+	}
+	if mark.node.Gradient.Count != 3 || mark.node.Gradient.Motion != ui.GradientPingPong {
+		t.Fatalf("wordmark gradient = %+v", mark.node.Gradient)
+	}
+	for _, i := range []int{0, 2} {
+		if got := widgets[i].inner.MinWidthText; got != "Wed 30 Sep" {
+			t.Errorf("clock %d width floor = %q, want Wed 30 Sep", i, got)
+		}
 	}
 }
 
@@ -170,7 +199,7 @@ func TestApplyWritesThroughToTheInnerNode(t *testing.T) {
 	var found bool
 	for _, section := range b.widgets() {
 		for _, w := range section {
-			if w.inner.Kind == ui.KindText && w.inner.Text != "" {
+			if w.inner != nil && w.inner.Kind == ui.KindText && w.inner.Text != "" {
 				found = true
 				if w.node.Text != "" {
 					t.Errorf("text landed on the capsule, not the inner node: %q", w.node.Text)

@@ -1,6 +1,6 @@
 # Standalone audio panel — Design
 
-Date: 2026-09-07. Status: approved 2026-09-07 (mock approved; 560 px width kept; Devices rows are selected wells with trailing `check`; `render.AttachedMask` lands in this work with `sysc-154` depending on it)
+Date: 2026-09-07. Status: approved 2026-09-07 (mock approved; 560 px width kept; Devices rows are selected wells with trailing `check`; wing-tips ride main's `Style.Fillet` machinery; `render.AttachedMask` superseded — see D9)
 (`docs/plans/assets/2026-09-07-audio-panel/`). Not yet registered in bd.
 
 A first-party `PanelAudio` — Volumes and Devices as two tabs on one surface,
@@ -34,8 +34,8 @@ In:
 - Writes — set volume, set mute, set default device — through `wpctl` by node id.
 - One `volume` bar widget: glyph, scroll to step, right-click to mute,
   left-click to toggle the panel.
-- `render.AttachedMask`, the concave-corner primitive both this panel and the
-  control centre need.
+- Wing-tip joints through main's `Style.Fillet`/`FilletFill` machinery
+  (superseded `render.AttachedMask` — see D9).
 - Four Material glyphs added to the embedded subset.
 
 Out:
@@ -59,7 +59,7 @@ Out:
 | D6 | **Devices rows are selected wells, not radios.** The current device is a `SecondaryContainer` well with a trailing `check`; the rest are plain rows. `check` already ships in the glyph subset, and Material's list-selection idiom reads as "current route" rather than as a form to submit | Radio buttons, per the prior art. They cost two new glyphs, and a form control implies a pending choice that has to be confirmed — selection here is immediate |
 | D7 | **`pw-dump` reads, `wpctl` writes.** A panel-scoped lease polls `pw-dump` at 1 Hz while the panel is open and parses one typed `Snapshot` — sinks, sources, streams, defaults, volume, mute, description, `application.icon-name`. Volumes are `cbrt(channelVolumes[0])`: PipeWire stores linear, `wpctl` displays cubic, and reading the raw value would show 14 % where the rest of the shell shows 51 %. Writes stay on `wpctl set-volume` / `set-mute` / `set-default` by node id. The bar widget keeps today's cheap default-sink poll untouched | `wpctl status` text parsing — one exec and no JSON, but a human-readable format with no stability contract and no icon name. A long-lived `pw-mon` child, which is the orphan-process shape `sysc-140` already records |
 | D8 | **Application icons resolve through the shipped `icons.Resolver`,** keyed on `application.icon-name` and falling back to the lower-cased `application.name`. A stream whose icon does not resolve gets the role glyph, never a blank square | A second icon path for audio streams. Blocking the row on an icon that may never arrive |
-| D9 | **`render.AttachedMask` lands here, in its own slice, and `sysc-154` depends on it.** `mask.go` is convex-only; this panel is the primitive's first consumer, and the control centre — designed but not started — is its second. The signature is exactly the one `sysc-158` specifies, so the control centre consumes it unchanged. The bulge ramps 0 → 12 with the reveal, so the wings appear as the panel clears the bar | Blocking the audio panel on the control-centre spine, which is precisely the false dependency the 2026-09-06 slicing note argues against. A private wing mask inside the panel, extracted later |
+| D9 | **`render.AttachedMask` lands here, in its own slice, and `sysc-154` depends on it.** `mask.go` is convex-only; this panel is the primitive's first consumer, and the control centre — designed but not started — is its second. The signature is exactly the one `sysc-158` specifies, so the control centre consumes it unchanged. The bulge ramps 0 → 12 with the reveal, so the wings appear as the panel clears the bar. **Superseded at rebase:** main shipped `Style.Fillet` + `FilletFill` with the notification-centre merge — analytic concave wedges painted with the bar's fill, wired into every panel surface by the theme, alpha-seam safe. This panel consumes that machinery instead: constant fillet 12, standard slide reveal, no per-frame ramp, no `AttachedMask`; `sysc-154` consumes it too | Blocking the audio panel on the control-centre spine, which is precisely the false dependency the 2026-09-06 slicing note argues against. A private wing mask inside the panel, extracted later |
 | D10 | **Four glyphs join the embedded subset:** `mic`, `mic_off`, `graphic_eq`, `headphones`. `volume_up` and `volume_off` already ship. `build.py`'s `ICONS` and `materialfont.go`'s `materialIcons` are kept in step by hand and asserted by test — a name the subset does not hold shapes to nothing and paints an invisible control | Reusing `volume_up` for the input row, which would label the microphone a speaker. Drawing the mic as a custom mask |
 | D11 | **Writes route through one `scheduleControl(h, run)` helper,** capturing under `r.mu`, running with the lock released, re-taking and verifying the host is still current before it sets or clears `errLabel` and rebuilds. `wpctl` must never run under `Registry.mu` | Calling `r.stepAudio` from the handler — lock-free only because IPC reaches it off the owner |
 | D12 | **Five states, one vocabulary, shared with the control centre's D11.** *Unavailable*: no `pw-dump` or no `wpctl` — controls disabled at 38 % with a short reason. *Empty*: no application streams — a centred empty state under the Applications label, never an absent section. *Stale*: leased, no sample yet — dashes and an empty track, never `0%`. *In flight*: the requested value shows immediately and reconciles from the next sample. *Failure*: inline error line at the top of the affected tab, last known value restored | Painting `0%` while a sample is pending. A modal error. Hiding the Applications section when nothing is playing, which makes an empty mixer look broken |
@@ -128,9 +128,9 @@ reduced motion.
 
 Sized so each lands on its own and nothing waits on the spine.
 
-1. **`render.AttachedMask`** — concave-corner primitive, cached on `maskKey`,
-   coverage computed analytically like `roundedCoverage`. `sysc-154` gains a
-   dependency on it. *No UI consumer yet; test is coverage assertions.*
+1. **Wing-tip joint** — superseded: main's `Style.Fillet`/`FilletFill`
+   machinery (shipped, wired into every panel surface) covers the contract;
+   `AttachedMask` dropped at rebase. `sysc-154` consumes `Style.Fillet`.
 2. **Glyph subset** — four names into `build.py` and `materialfont.go`,
    regenerate, assert the two lists agree.
 3. **`services.Audio` enumeration** — `pw-dump` parse, `Snapshot` type,

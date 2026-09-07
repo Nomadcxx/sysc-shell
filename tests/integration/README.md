@@ -41,7 +41,7 @@ Run `go run ./cmd/sysc-shell` for each check. The shell creates a bar on each co
 | 10 | physical pointer on at least two bars | clicks route to the bar under the pointer |
 | 11 | validated reload with all bars present | every bar adopts the new policy together |
 | 12 | restart | one bar per output restored |
-| 13 | 60-minute idle run | no continuous frame loop |
+| 13 | 60-minute idle run | no continuous frame loop with reduced motion on or no looping paint visible |
 
 Checks 6 and 10 close the two proof checks deferred on 2026-08-28.
 
@@ -378,7 +378,7 @@ Build and start:
     Replug: one bar, no duplicate.
 28. Mixed scale and transform across the two outputs: tray icons are sharp on both, and the menu
     hit-tests correctly on the transformed one.
-29. Sixty minutes idle with both services connected: no continuous frame loop.
+29. Sixty minutes idle with both services connected: no continuous frame loop with reduced motion on or no looping paint visible.
 
 ### Task 6 popup probe
 

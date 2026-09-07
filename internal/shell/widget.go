@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -34,6 +35,7 @@ type barView struct {
 	DND    bool
 	// Running is the session-wide application slot list. Every bar paints it.
 	Running []runningAppSlot
+	Audio   services.AudioState
 }
 
 // textWidget is one configured widget instance: a retained node plus the pure
@@ -66,8 +68,10 @@ type textWidget struct {
 // groupGap separates members inside a group capsule. noCapsule tells
 // buildWidgets to leave a member unwrapped.
 const (
-	groupGap  = 10
-	noCapsule = -1
+	groupGap        = 10
+	noCapsule       = -1
+	clockWidthFloor = "Wed 30 Sep"
+	gradientTrip    = 2 * time.Second
 )
 
 // workspacePillGap separates adjacent workspace pills, and matches the
@@ -145,7 +149,7 @@ func workspacePillsMatch(row *ui.Node, pills []workspacePill) bool {
 // A negative padding means do not wrap. Group members render flat inside their
 // group's capsule rather than each gaining one of their own.
 func capsuled(w textWidget, pad int) textWidget {
-	if pad < 0 || w.node == nil || w.node.Kind == ui.KindCapsule {
+	if pad < 0 || w.node == nil || w.node.Kind == ui.KindCapsule || w.node.Kind == ui.KindWordmark {
 		return w
 	}
 	w.inner = w.node
@@ -157,18 +161,38 @@ func capsuled(w textWidget, pad int) textWidget {
 // are validated at load, so an unknown id cannot reach here.
 func buildWidgets(items []config.Item, pad int) []textWidget {
 	out := make([]textWidget, 0, len(items))
+	clocks, hasWordmark := 0, false
+	for _, item := range items {
+		if item.ID == "clock" {
+			clocks++
+		}
+		hasWordmark = hasWordmark || item.ID == "wordmark"
+	}
+	clockFloor := ""
+	if hasWordmark && clocks >= 2 {
+		clockFloor = clockWidthFloor
+	}
 	for _, item := range items {
 		switch item.ID {
 		case "clock":
 			layout := item.Format
 			out = append(out, textWidget{
-				node: &ui.Node{Kind: ui.KindText, Tabular: true},
+				node: &ui.Node{Kind: ui.KindText, Tabular: true, MinWidthText: clockFloor},
 				format: func(v barView) string {
 					if v.Now.IsZero() {
 						return ""
 					}
 					return v.Now.Format(layout)
 				},
+			})
+		case "wordmark":
+			out = append(out, textWidget{
+				node: &ui.Node{
+					Kind: ui.KindWordmark, Key: "wordmark",
+					ImageH: launcherMarkHeight, ImageW: render.WordmarkWidth(launcherMarkHeight),
+					Gradient: wordmarkGradient(),
+				},
+				refresh: func(barView) bool { return false },
 			})
 		case "workspace":
 			row := &ui.Node{Kind: ui.KindRow, Gap: workspacePillGap}
@@ -243,6 +267,8 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 			out = append(out, buildNotifyWidget())
 		case "wallpaper":
 			out = append(out, buildWallpaperWidget())
+		case "volume":
+			out = append(out, buildVolumeWidget())
 		case "running-apps":
 			row := &ui.Node{Kind: ui.KindRow, Gap: runningAppGap}
 			cap := &ui.Node{Kind: ui.KindCapsule}
@@ -257,6 +283,18 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 		out[i] = capsuled(out[i], pad)
 	}
 	return out
+}
+
+func wordmarkGradient() ui.GradientPaint {
+	return ui.GradientPaint{
+		Stops: [4]ui.GradientStop{
+			{At: 0, Role: ui.PaintOnSurfaceVariant},
+			{At: 0.5, Role: ui.PaintPrimary},
+			{At: 1, Role: ui.PaintOnSurfaceVariant},
+		},
+		Count: 3, Motion: ui.GradientPingPong,
+		From: -0.45, To: 0.45,
+	}
 }
 
 // clockBoundaries reports the distinct tick boundaries a section set needs.
