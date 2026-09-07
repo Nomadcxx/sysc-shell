@@ -162,6 +162,11 @@ type Node struct {
 	// than laying out across the full width and leaving nothing to move. A
 	// child at least as wide as the track keeps the full track.
 	CenterX bool
+	// PinEnd right-pins the last child of a two-child row to the row's inner
+	// right edge. Without it, only a row whose first child is KindText pins:
+	// that narrow case predates this flag and stays, because the callers
+	// relying on it never set one.
+	PinEnd bool
 	// Fill selects a capsule's background, and a button's chrome. Zero is the
 	// surface capsule / an unfilled button (the wrapping pill is the chrome).
 	Fill Fill

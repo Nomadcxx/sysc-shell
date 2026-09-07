@@ -311,3 +311,33 @@ func TestPinRowEndCarriesTheSubtree(t *testing.T) {
 			button.Bounds.X, button.Bounds.X+button.Bounds.W)
 	}
 }
+
+func TestPinEndPinsPastANonTextFirstChild(t *testing.T) {
+	trailing := &Node{Kind: KindButton, Width: 20, Height: 20}
+	row := &Node{Kind: KindRow, PinEnd: true, Height: 40, Children: []*Node{
+		{Kind: KindColumn, Width: 80, Children: []*Node{{Kind: KindText, Text: "app"}}},
+		trailing,
+	}}
+	if err := placeColumnChild(row, Rect{W: 200, H: 40}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := trailing.Bounds.X + trailing.Bounds.W; got != 200 {
+		t.Fatalf("right edge = %d, want 200", got)
+	}
+}
+
+func TestRowWithoutPinEndIsUnchanged(t *testing.T) {
+	trailing := &Node{Kind: KindButton, Width: 20, Height: 20}
+	row := &Node{Kind: KindRow, Height: 40, Children: []*Node{
+		{Kind: KindColumn, Width: 80, Children: []*Node{{Kind: KindText, Text: "app"}}},
+		trailing,
+	}}
+	if err := placeColumnChild(row, Rect{W: 200, H: 40}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := trailing.Bounds.X + trailing.Bounds.W; got == 200 {
+		t.Fatal("row pinned without opting in")
+	}
+}
