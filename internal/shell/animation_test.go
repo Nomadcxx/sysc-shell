@@ -1,10 +1,13 @@
 package shell
 
 import (
-	"github.com/Nomadcxx/sysc-shell/internal/render"
-	"github.com/Nomadcxx/sysc-shell/internal/theme"
+	"math"
 	"testing"
 	"time"
+
+	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 // fakeClock drives an animator without sleeping.
@@ -97,6 +100,66 @@ func TestAnimatorStopsRequestingFramesWhenSettled(t *testing.T) {
 	a.Target("lock", animHover, 1)
 	if !a.Settled() {
 		t.Error("re-aiming at the current target restarted the clock")
+	}
+}
+
+func TestAnimatorLoopPingPongsUntilForgotten(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	a.TargetLoop("wordmark", animGradient, -0.45, 0.45, 2*time.Second, ui.GradientPingPong)
+
+	if a.Settled() {
+		t.Fatal("ping-pong gradient settled at its start")
+	}
+	clock.add(time.Second)
+	if got := a.Value("wordmark", animGradient); math.Abs(got) > 1e-9 {
+		t.Fatalf("half-trip value = %v, want midpoint 0", got)
+	}
+	clock.add(time.Second)
+	if got := a.Value("wordmark", animGradient); got != 0.45 {
+		t.Fatalf("trip-end value = %v, want 0.45", got)
+	}
+	if a.Settled() {
+		t.Fatal("ping-pong gradient settled at its turn")
+	}
+	clock.add(2 * time.Second)
+	if got := a.Value("wordmark", animGradient); got != -0.45 {
+		t.Fatalf("round-trip value = %v, want -0.45", got)
+	}
+	if a.Settled() {
+		t.Fatal("ping-pong gradient settled after a full cycle")
+	}
+	a.Forget("wordmark")
+	if !a.Settled() {
+		t.Fatal("forgotten gradient kept the animator unsettled")
+	}
+}
+
+func TestAnimatorLoopTargetKeepsItsPhase(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	a.TargetLoop("wordmark", animGradient, 0, 1, 2*time.Second, ui.GradientLoop)
+	clock.add(500 * time.Millisecond)
+	a.TargetLoop("wordmark", animGradient, 0, 1, 2*time.Second, ui.GradientLoop)
+	clock.add(500 * time.Millisecond)
+	if got := a.Value("wordmark", animGradient); got != 0.5 {
+		t.Fatalf("identical target reset phase: value = %v, want 0.5", got)
+	}
+	clock.add(time.Second)
+	if got := a.Value("wordmark", animGradient); got != 0 {
+		t.Fatalf("loop did not restart at the trip boundary: value = %v", got)
+	}
+}
+
+func TestAnimatorLoopParksUnderReducedMotion(t *testing.T) {
+	t.Parallel()
+	a, _ := newTestAnimator(true)
+	a.TargetLoop("wordmark", animGradient, -0.45, 0.45, 2*time.Second, ui.GradientPingPong)
+	if got := a.Value("wordmark", animGradient); math.Abs(got) > 1e-9 {
+		t.Fatalf("reduced-motion value = %v, want midpoint 0", got)
+	}
+	if !a.Settled() {
+		t.Fatal("reduced-motion gradient requested more frames")
 	}
 }
 
