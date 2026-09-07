@@ -54,6 +54,10 @@ ICONS = [
     "brightness_high",
     "delete",
     "schedule",
+    "mic",
+    "mic_off",
+    "graphic_eq",
+    "headphones",
 ]
 
 # Material Symbols addresses a glyph by typing its name, so the letters and the

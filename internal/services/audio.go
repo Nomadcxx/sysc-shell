@@ -32,6 +32,14 @@ type Audio struct {
 	stop     chan struct{}
 	done     chan struct{}
 	changes  chan AudioState
+
+	dumpBin   string
+	mixerN    int
+	mixerStop chan struct{}
+	mixerDone chan struct{}
+	mixer     AudioSnapshot
+	hasMixer  bool
+	mixerCh   chan AudioSnapshot
 }
 
 func NewAudio(interval time.Duration, path string) *Audio {
@@ -44,6 +52,7 @@ func NewAudio(interval time.Duration, path string) *Audio {
 		bin:      bin,
 		ok:       err == nil,
 		changes:  make(chan AudioState, 1),
+		mixerCh:  make(chan AudioSnapshot, 1),
 	}
 	return a
 }
@@ -58,6 +67,15 @@ func (a *Audio) State() AudioState {
 		return a.last
 	}
 	return st
+}
+
+// CachedState returns the last polled state without running wpctl. Callers
+// holding a lock (Registry.mu, the Wayland owner) must use this; State()'s
+// fresh read is for off-lock callers only.
+func (a *Audio) CachedState() AudioState {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.last
 }
 
 func (a *Audio) Available() bool {
@@ -96,9 +114,14 @@ func (a *Audio) Close() {
 		l.audio = nil
 	}
 	done := a.stopIfUnusedLocked()
+	a.mixerN = 0
+	mixerDone := a.stopMixerLocked()
 	a.mu.Unlock()
 	if done != nil {
 		<-done
+	}
+	if mixerDone != nil {
+		<-mixerDone
 	}
 }
 

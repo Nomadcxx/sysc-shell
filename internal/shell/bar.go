@@ -54,6 +54,7 @@ type Bar struct {
 	onTray        func(tray.ItemKey, trayArrangement, ui.Rect, wayland.Event) bool
 	onPlugin      func(string, wayland.Event) bool
 	onAction      func(action string, button uint32) bool
+	onAxis        func(action string, delta int) bool
 
 	// conn is the connector this bar renders for. It selects configuration and
 	// joins Niri state; it is never this bar's identity, which is its Wayland
@@ -194,6 +195,12 @@ func (b *Bar) setPluginHandler(fn func(string, wayland.Event) bool) {
 func (b *Bar) setActionHandler(fn func(action string, button uint32) bool) {
 	b.mu.Lock()
 	b.onAction = fn
+	b.mu.Unlock()
+}
+
+func (b *Bar) setAxisHandler(fn func(action string, delta int) bool) {
+	b.mu.Lock()
+	b.onAxis = fn
 	b.mu.Unlock()
 }
 
@@ -667,8 +674,21 @@ func (b *Bar) Handle(event wayland.Event) bool {
 			b.mu.Unlock()
 			return false
 		}
+		axisFn := b.onAxis
 		gesture, isTray := b.trayGestureLocked(action)
 		b.mu.Unlock()
+		delta := int(event.AxisDiscrete)
+		if delta == 0 {
+			switch {
+			case event.AxisValue120 > 0:
+				delta = 1
+			case event.AxisValue120 < 0:
+				delta = -1
+			}
+		}
+		if axisFn != nil && axisFn(action, delta) {
+			return true
+		}
 		// The overflow control does not scroll: only an item forwards a wheel.
 		if !isTray || gesture.key.IsZero() {
 			return false

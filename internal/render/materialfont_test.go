@@ -17,6 +17,15 @@ var materialInventory = []string{
 	"search", "settings", "notifications", "do_not_disturb_on",
 	"volume_up", "volume_off", "brightness_high",
 	"delete", "schedule",
+	"mic", "mic_off", "graphic_eq", "headphones",
+}
+
+func TestAudioPanelIconsAreInTheSubset(t *testing.T) {
+	for _, name := range []string{"mic", "mic_off", "graphic_eq", "headphones"} {
+		if !ValidMaterialIcon(name) {
+			t.Errorf("%q missing from the subset: it would shape to nothing and paint an invisible control", name)
+		}
+	}
 }
 
 func TestMaterialInventoryMatchesTheSubset(t *testing.T) {

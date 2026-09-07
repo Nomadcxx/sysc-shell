@@ -10,6 +10,19 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
 
+func TestVolumeIsKnownButNotDefault(t *testing.T) {
+	if _, ok := knownItems["volume"]; !ok {
+		t.Error("config must accept the volume item")
+	}
+	for _, sec := range [][]Item{Default().Bar.Left, Default().Bar.Right} {
+		for _, it := range sec {
+			if it.ID == "volume" {
+				t.Error("volume must not join the default bar: like wallpaper, it is opt-in")
+			}
+		}
+	}
+}
+
 func TestDefaultBarMatchesDMSContentBand(t *testing.T) {
 	t.Parallel()
 	bar := Default().Bar
