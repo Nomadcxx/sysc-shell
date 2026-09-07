@@ -199,7 +199,7 @@ func TestApplyWritesThroughToTheInnerNode(t *testing.T) {
 	var found bool
 	for _, section := range b.widgets() {
 		for _, w := range section {
-			if w.inner.Kind == ui.KindText && w.inner.Text != "" {
+			if w.inner != nil && w.inner.Kind == ui.KindText && w.inner.Text != "" {
 				found = true
 				if w.node.Text != "" {
 					t.Errorf("text landed on the capsule, not the inner node: %q", w.node.Text)

@@ -331,7 +331,9 @@ func TestEveryChangedBarIsReportedWhenManyChangeAtOnce(t *testing.T) {
 // and never appear, until an unrelated output configure happens to run.
 func TestAppliedTextIsLaidOutWithoutASecondConfigure(t *testing.T) {
 	t.Parallel()
-	bar, err := New("DP-9")
+	cfg := config.Default()
+	cfg.Bar.Center = []config.Item{{ID: "clock", Format: "15:04", Boundary: time.Minute}}
+	bar, err := NewWithTheme(ThemeFrom(cfg, cfg.Bar), cfg.Bar, "DP-9")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -394,7 +396,9 @@ func TestAGrowingTitleIsMeasuredAgain(t *testing.T) {
 // so it is its own width that moves it. That only happens if apply re-lays out.
 func TestTheCentreRecentresAsItsOwnTextChanges(t *testing.T) {
 	t.Parallel()
-	bar, err := New("DP-9")
+	cfg := config.Default()
+	cfg.Bar.Center = []config.Item{{ID: "clock", Format: "15:04", Boundary: time.Minute}}
+	bar, err := NewWithTheme(ThemeFrom(cfg, cfg.Bar), cfg.Bar, "DP-9")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

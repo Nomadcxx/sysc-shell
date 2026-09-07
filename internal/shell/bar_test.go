@@ -212,7 +212,7 @@ func TestBarPressRecordsTheHitAction(t *testing.T) {
 	t.Parallel()
 
 	p := newTestBar(t)
-	bounds := withSyntheticAction(t, p, 600)
+	bounds := withSyntheticAction(t, p, 1920)
 
 	p.Handle(wayland.Event{
 		Kind: wayland.EventPointerMotion,
@@ -229,7 +229,7 @@ func TestBarPressOutsideEveryActionRecordsNothing(t *testing.T) {
 	t.Parallel()
 
 	p := newTestBar(t)
-	withSyntheticAction(t, p, 600)
+	withSyntheticAction(t, p, 1920)
 	drain(p)
 
 	if click(p, 1, 1) {
@@ -248,7 +248,7 @@ func TestBarReleaseOutsideThePressedNodeIsNotAClick(t *testing.T) {
 	t.Parallel()
 
 	p := newTestBar(t)
-	bounds := withSyntheticAction(t, p, 600)
+	bounds := withSyntheticAction(t, p, 1920)
 
 	p.Handle(wayland.Event{
 		Kind: wayland.EventPointerMotion,
@@ -269,7 +269,7 @@ func TestBarPointerLeaveCancelsThePress(t *testing.T) {
 	t.Parallel()
 
 	p := newTestBar(t)
-	bounds := withSyntheticAction(t, p, 600)
+	bounds := withSyntheticAction(t, p, 1920)
 	x, y := float64(bounds.X+bounds.W/2), float64(bounds.Y+bounds.H/2)
 
 	p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: x, Y: y})
