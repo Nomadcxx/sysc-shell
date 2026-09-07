@@ -50,6 +50,58 @@ func newTestBar(t *testing.T) *Bar {
 	return p
 }
 
+func TestBarGradientFramesFollowMotionPreference(t *testing.T) {
+	t.Parallel()
+	for _, reduced := range []bool{false, true} {
+		t.Run(strconv.FormatBool(reduced), func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Accessibility.ReducedMotion = reduced
+			bar, err := NewWithTheme(ThemeFrom(cfg, cfg.Bar), cfg.Bar, "DP-9")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(bar.stopAnimation)
+			if bar.anim == nil {
+				t.Fatal("NewWithTheme left the bar animator nil")
+			}
+			bar.mu.Lock()
+			root, _ := bar.renderViewLocked()
+			settled, running := bar.anim.Settled(), bar.anim.running
+			bar.mu.Unlock()
+			mark := findKind(root, ui.KindWordmark)
+			if mark == nil {
+				t.Fatal("default bar rendered no wordmark")
+			}
+			if reduced {
+				if !settled || running || mark.GradientOffset != 0 {
+					t.Fatalf("reduced motion: settled=%v running=%v offset=%v", settled, running, mark.GradientOffset)
+				}
+			} else if settled || !running {
+				t.Fatalf("full motion: settled=%v running=%v", settled, running)
+			}
+		})
+	}
+}
+
+func TestBarGradientSettlesWhenWordmarkLeavesTree(t *testing.T) {
+	t.Parallel()
+	bar := newTestBar(t)
+	t.Cleanup(bar.stopAnimation)
+	bar.mu.Lock()
+	bar.renderViewLocked()
+	if bar.anim.Settled() {
+		bar.mu.Unlock()
+		t.Fatal("wordmark did not start its gradient loop")
+	}
+	bar.center = nil
+	bar.renderViewLocked()
+	_, looping := bar.anim.values[animKey{node: "wordmark", channel: animGradient}]
+	bar.mu.Unlock()
+	if looping {
+		t.Fatal("removed wordmark kept its gradient target")
+	}
+}
+
 // drain reports how many invalidations are waiting.
 func drain(p *Bar) int {
 	count := 0

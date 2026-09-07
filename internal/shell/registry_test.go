@@ -58,6 +58,20 @@ func TestRemovingOneBarRetainsTheServiceForTheOther(t *testing.T) {
 	}
 }
 
+func TestDropHostStopsBarGradientFrames(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(config.Default())
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{1: "DP-9"})
+	bar := reg.bars[1]
+	reg.DropHost(1)
+	select {
+	case <-bar.stopAnim:
+	default:
+		t.Fatal("DropHost left the bar frame loop open")
+	}
+}
+
 // Reconnect overlap: two globals briefly carry the same connector. They must
 // stay distinct instances with distinct leases.
 func TestTwoGlobalsSharingAConnectorKeepDistinctInstances(t *testing.T) {

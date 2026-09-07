@@ -95,8 +95,10 @@ type Bar struct {
 	// pointer is the bar's resolved hover/press state as stable keys, and anim
 	// is its one clock. Only clickable capsules carry either: a CPU or memory
 	// display group has no action, so it never animates.
-	pointer interaction
-	anim    *animator
+	pointer  interaction
+	anim     *animator
+	stopAnim chan struct{}
+	stopOnce sync.Once
 
 	invalidations chan struct{}
 }
@@ -124,6 +126,8 @@ func NewWithTheme(theme Theme, policy config.Bar, connector string) (*Bar, error
 		text:          render.NewTextRendererWithFontMap(fonts),
 		invalidations: make(chan struct{}, 1),
 		style:         barStyle(theme),
+		anim:          newAnimator(nil, false, theme.Motion),
+		stopAnim:      make(chan struct{}),
 	}
 
 	b.left = buildWidgets(policy.Left, b.theme.Metrics.CapsulePadding)
@@ -478,7 +482,60 @@ func (b *Bar) renderViewLocked() (*ui.Node, render.Style) {
 	// The painter consumes an immutable mask, so state is resolved onto the
 	// copy that is about to be drawn rather than onto live model state.
 	b.pointer.apply(root, b.anim)
+	b.resolveGradientMotionLocked(root)
 	return root, b.style
+}
+
+func (b *Bar) resolveGradientMotionLocked(root *ui.Node) {
+	seen := make(map[string]bool)
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n.Gradient.Motion != ui.GradientNone {
+			if key := n.StableKey(); key != "" {
+				seen[key] = true
+				b.anim.TargetLoop(key, animGradient, n.Gradient.From, n.Gradient.To, gradientTrip, n.Gradient.Motion)
+				n.GradientOffset = b.anim.Value(key, animGradient)
+			}
+		}
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(root)
+	for key := range b.anim.values {
+		if key.channel == animGradient && !seen[key.node] {
+			delete(b.anim.values, key)
+		}
+	}
+	b.startBarFramesLocked()
+}
+
+func (b *Bar) startBarFramesLocked() {
+	if b.anim == nil || b.anim.running || b.anim.Settled() {
+		return
+	}
+	b.anim.running = true
+	go b.barFrameLoop()
+}
+
+func (b *Bar) barFrameLoop() {
+	defer func() {
+		b.mu.Lock()
+		b.anim.running = false
+		b.mu.Unlock()
+	}()
+	animateSurface(b.stopAnim, func() bool {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return b.anim.Settled()
+	}, b.invalidate)
+}
+
+func (b *Bar) stopAnimation() {
+	b.stopOnce.Do(func() { close(b.stopAnim) })
 }
 
 // copyNode deep-copies a node so no pointer into live model state reaches the

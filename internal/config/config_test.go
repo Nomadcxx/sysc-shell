@@ -189,18 +189,15 @@ func TestDefaultVocabularyShipsBothClocksAndBothNiriWidgets(t *testing.T) {
 	if cfg.Bar.Left[1].ID != "window-title" || cfg.Bar.Left[1].MaxWidth <= 0 {
 		t.Fatalf("left[1] = %+v, want window-title with a positive max width", cfg.Bar.Left[1])
 	}
-	// Time and date sit together in the centre, as each reference shell does.
-	if len(cfg.Bar.Center) != 2 {
-		t.Fatalf("center = %+v, want a time and a date clock", cfg.Bar.Center)
+	if len(cfg.Bar.Center) != 3 {
+		t.Fatalf("center = %+v, want time, wordmark, and date", cfg.Bar.Center)
 	}
-	for i, item := range cfg.Bar.Center {
-		if item.ID != "clock" {
-			t.Fatalf("center[%d] = %q, want clock", i, item.ID)
-		}
+	if cfg.Bar.Center[0].ID != "clock" || cfg.Bar.Center[1].ID != "wordmark" || cfg.Bar.Center[2].ID != "clock" {
+		t.Fatalf("center = %+v, want clock, wordmark, clock", cfg.Bar.Center)
 	}
 	// The two default clocks must differ, or the defaults do not demonstrate
 	// a date.
-	if cfg.Bar.Center[0].Format == cfg.Bar.Center[1].Format {
+	if cfg.Bar.Center[0].Format == cfg.Bar.Center[2].Format {
 		t.Fatal("the two default clocks share a format; one should show the date")
 	}
 	// The right section carries status widgets rather than a second clock.
@@ -219,7 +216,7 @@ func TestDefaultVocabularyShipsBothClocksAndBothNiriWidgets(t *testing.T) {
 		}
 	}
 	for _, item := range cfg.Bar.Center {
-		if item.Boundary <= 0 {
+		if item.ID == "clock" && item.Boundary <= 0 {
 			t.Fatalf("default clock %+v has no tick boundary", item)
 		}
 	}
@@ -236,6 +233,16 @@ func TestDefaultVocabularyShipsBothClocksAndBothNiriWidgets(t *testing.T) {
 				t.Fatalf("default status widget %q has no sampling interval", m.ID)
 			}
 		}
+	}
+}
+
+func TestWordmarkItemAcceptsNoClockFormat(t *testing.T) {
+	t.Parallel()
+	if _, err := Parse([]byte(`{"bar":{"items":{"center":[{"id":"wordmark"}]}}}`)); err != nil {
+		t.Fatalf("wordmark was rejected: %v", err)
+	}
+	if _, err := Parse([]byte(`{"bar":{"items":{"center":[{"id":"wordmark","format":"15:04"}]}}}`)); err == nil {
+		t.Fatal("wordmark accepted a clock format")
 	}
 }
 
