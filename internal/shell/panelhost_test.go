@@ -609,6 +609,22 @@ func TestNotificationsRebuildOnNotifyDelta(t *testing.T) {
 	}
 }
 
+func TestNotificationsCentreConfiguresAtTargetWidth(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	reg.applyNotify(snap(1))
+	if err := reg.OpenPanel(PanelNotifications, 7, Trigger{
+		BarEdge: "top", BarZone: 44, OutW: 1536, OutH: 1440,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reqs := drainAux(t, reg, 2)
+	panel := reqs[1].Open
+	if err := panel.Callbacks.Configure(int(panel.Width), int(panel.Height), 120); err != nil {
+		t.Fatalf("configure: %v", err)
+	}
+}
+
 func TestTogglePanelByNamePowerOpensSession(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)

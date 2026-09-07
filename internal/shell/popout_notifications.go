@@ -165,7 +165,11 @@ func (r *Registry) centerTreeFor(h *PanelHost) *ui.Node {
 			surfaceH = h.place.Panel.H
 		}
 	}
-	innerW := surfaceW - 2*cardPadding
+	// Filter sits inside the header capsule, which itself sits in the root
+	// column: both carry cardPadding, so the row's box is four pads shy of the
+	// surface. Setting Width past that squeezes "Yesterday (N)" out of its slot
+	// and the compositor tears the panel down.
+	innerW := surfaceW - 4*cardPadding
 	if innerW < 1 {
 		innerW = 1
 	}
@@ -325,8 +329,8 @@ func centreFilterRow(active []protocol.Notification, history []protocol.HistoryE
 	for _, c := range historyChips {
 		seg := &ui.Node{
 			Kind: ui.KindButton, Action: "notify:center:filter:" + c.id,
-			Name: c.label, Role: "tab", Focusable: true, Padding: 4,
-			Children: []*ui.Node{{Kind: ui.KindText,
+			Name: c.label, Role: "tab", Focusable: true, Padding: 2,
+			Children: []*ui.Node{{Kind: ui.KindText, TextRole: theme.RoleCaption,
 				Text: fmt.Sprintf("%s (%d)", c.label, bucketCount(c.id, active, history, now))}},
 		}
 		if filter == c.id {
