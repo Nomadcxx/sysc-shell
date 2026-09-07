@@ -337,3 +337,9 @@ func TestActiveGroupCardShowsCountDismissAndExpand(t *testing.T) {
 		t.Fatal("expanded group hid members")
 	}
 }
+
+func TestHistoryRemoveSupportedOnCurrentPin(t *testing.T) {
+	if !historyRemoveSupported() {
+		t.Fatal("pin carries history.remove but the shell reports it unsupported")
+	}
+}

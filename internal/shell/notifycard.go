@@ -261,6 +261,7 @@ func cardColumn(n *ui.Node) *ui.Node {
 	return &ui.Node{Kind: ui.KindColumn, Action: n.Action, Children: []*ui.Node{n}}
 }
 
-// historyRemoveSupported is false on sysc-notify v0.1.0-rc.2: that pin has
-// no history.remove. A later tag can flip this and paint the close control.
-func historyRemoveSupported() bool { return false }
+// historyRemoveSupported reports whether the pinned sysc-notify accepts
+// history.remove. True from v0.1.0-rc.3. The flag stays so a rollback to an
+// older pin disables the control rather than painting one the service rejects.
+func historyRemoveSupported() bool { return true }
