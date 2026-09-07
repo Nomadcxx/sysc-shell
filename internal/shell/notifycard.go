@@ -86,7 +86,7 @@ func wrapNotifyCard(inner *ui.Node, critical bool) *ui.Node {
 		}}
 	}
 	cap := &ui.Node{
-		Kind: ui.KindCapsule, Fill: ui.FillNone, Padding: cardPadding, Shape: ui.ShapeCard,
+		Kind: ui.KindCapsule, Fill: ui.FillContainerHigh, Padding: cardPadding, Shape: ui.ShapeCard,
 		Action: inner.Action, Children: []*ui.Node{body},
 	}
 	if critical {

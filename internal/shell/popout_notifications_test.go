@@ -28,7 +28,7 @@ func TestCenterHistoryIsFlatNewestFirst(t *testing.T) {
 	r.applyNotify(delta(1, 4, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
 		History: ptrH(historyEntry(3, "chat", "Chat", "ping", newer.Add(time.Minute), false))}))
 
-	h := &PanelHost{id: PanelNotifications, notifyTab: 1}
+	h := &PanelHost{id: PanelNotifications}
 	tree := r.centerTreeFor(h)
 	got := texts(tree)
 	ping, neu, old := -1, -1, -1
@@ -139,18 +139,46 @@ func TestCenterEmptyStateNamesNothingToSeeHere(t *testing.T) {
 	}
 }
 
-func TestCenterCurrentTabShowsLiveNotHistory(t *testing.T) {
+func TestMergedListPinsLiveAboveClosed(t *testing.T) {
+	now := time.Date(2026, 9, 7, 15, 0, 0, 0, time.Local)
 	r := NewRegistry(config.Default())
-	r.applyNotify(snap(1, note(1, "live")))
+	r.now = now
+	live := note(1, "live")
+	live.Timestamp = now.Add(-time.Minute)
+	r.applyNotify(snap(1, live))
 	r.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
-		History: ptrH(historyEntry(2, "mail", "Mail", "old", time.Unix(1_756_000_000, 0), true))}))
-	tree := r.centerTree()
-	got := texts(tree)
-	if !containsText(tree, "live") {
-		t.Fatalf("current tab lacks live: %v", got)
+		History: ptrH(historyEntry(2, "mail", "Mail", "old", now.Add(-2*time.Hour), true))}))
+
+	if got := sectionLabels(r.centerTreeFor(nil)); len(got) != 2 || got[0] != "LIVE" || got[1] != "EARLIER" {
+		t.Fatalf("labels = %v, want [LIVE EARLIER]", got)
 	}
-	if containsText(tree, "old") {
-		t.Fatalf("current tab listed history: %v", got)
+}
+
+func TestEmptySectionEmitsNoLabel(t *testing.T) {
+	now := time.Date(2026, 9, 7, 15, 0, 0, 0, time.Local)
+	r := NewRegistry(config.Default())
+	r.now = now
+	r.applyNotify(snap(1))
+	r.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
+		History: ptrH(historyEntry(2, "mail", "Mail", "old", now.Add(-2*time.Hour), true))}))
+
+	if got := sectionLabels(r.centerTreeFor(nil)); len(got) != 1 || got[0] != "EARLIER" {
+		t.Fatalf("labels = %v, want [EARLIER] only", got)
+	}
+}
+
+func TestCardsSitOnTheHighContainer(t *testing.T) {
+	r := NewRegistry(config.Default())
+	r.applyNotify(snap(1))
+	r.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
+		History: ptrH(historyEntry(2, "mail", "Mail", "old", r.clockNow(), true))}))
+
+	card := firstCardCapsule(r.centerTreeFor(nil))
+	if card == nil {
+		t.Fatal("no card capsule")
+	}
+	if card.Fill != ui.FillContainerHigh {
+		t.Fatalf("card fill = %v, want ContainerHigh", card.Fill)
 	}
 }
 
@@ -377,6 +405,35 @@ func buttonByAction(tree *ui.Node, action string) *ui.Node {
 	for _, b := range buttons(tree) {
 		if b.Action == action {
 			return b
+		}
+	}
+	return nil
+}
+
+func sectionLabels(n *ui.Node) []string {
+	var out []string
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n.Kind == ui.KindText && (n.Text == "LIVE" || n.Text == "EARLIER") {
+			out = append(out, n.Text)
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(n)
+	return out
+}
+
+func firstCardCapsule(n *ui.Node) *ui.Node {
+	var caps []*ui.Node
+	collectByKind(n, ui.KindCapsule, &caps)
+	for _, c := range caps {
+		if c.Shape == ui.ShapeCard {
+			return c
 		}
 	}
 	return nil

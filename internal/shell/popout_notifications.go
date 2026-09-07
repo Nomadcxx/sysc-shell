@@ -126,16 +126,11 @@ func (r *Registry) setDNDPresetAt(now time.Time, d time.Duration) {
 }
 func (r *Registry) dndStateAt(now time.Time) (time.Time, bool) { return r.notify.dndState(now) }
 
-// centerTree builds the notification center: header, tabs, then the selected
-// list. Nil host is Current. History rows have no actions.
+// centerTree builds the notification centre: a header block, then one
+// scrolled list with live groups pinned above closed history.
 func (r *Registry) centerTree() *ui.Node { return r.centerTreeFor(nil) }
 
 func (r *Registry) centerTreeFor(h *PanelHost) *ui.Node {
-	tab := 0
-	if h != nil {
-		tab = h.notifyTab
-	}
-
 	s := r.notify
 	s.mu.Lock()
 	active := make([]protocol.Notification, 0, len(s.active))
@@ -158,44 +153,68 @@ func (r *Registry) centerTreeFor(h *PanelHost) *ui.Node {
 		showMenu = h.notifyMenu
 	}
 
-	children := []*ui.Node{centreHeaderRow(dnd)}
-	if showMenu {
-		children = append(children, dndPresetColumn())
-	}
-
-	body := []*ui.Node{}
-	if tab == 1 {
-		sort.Slice(history, func(i, j int) bool { return history[i].Timestamp.After(history[j].Timestamp) })
-		children = append(children, centreFilterRow(nil, history, filter, now, 392))
-		shown := 0
-		for _, e := range history {
-			if !historyFilter(filter, e.Timestamp, now) {
-				continue
-			}
-			shown++
-			body = append(body, HistoryCard(e, now, r.lookupNotifyIcon(e.AppIcon), r.linksAllowed()))
-		}
-		if shown == 0 {
-			body = append(body, &ui.Node{Kind: ui.KindText, Text: "Nothing to see here"})
-		}
-	} else if len(active) == 0 {
-		body = append(body, &ui.Node{Kind: ui.KindText, Text: "Nothing to see here"})
-	} else {
-		for _, g := range activeGroups(active) {
-			raster := r.lookupNotifyIcon(g.members[0].AppIcon)
-			body = append(body, ActiveGroupCard(g, now, expand == g.key, raster, r.linksAllowed()))
-		}
-	}
-
-	surfaceH := 300
+	size := panelTargetSize(PanelNotifications)
+	surfaceW, surfaceH := size.W, size.H
 	if h != nil {
+		if h.place.Panel.W > 0 {
+			surfaceW = h.place.Panel.W
+		}
 		if h.logicalH > 0 {
 			surfaceH = h.logicalH
 		} else if h.place.Panel.H > 0 {
 			surfaceH = h.place.Panel.H
 		}
 	}
-	// ponytail: header+tabs+padding ≈ 80; remainder is the list viewport until chrome is measured.
+	innerW := surfaceW - 2*cardPadding
+	if innerW < 1 {
+		innerW = 1
+	}
+
+	header := &ui.Node{
+		Kind: ui.KindCapsule, Fill: ui.FillContainerHigh, Shape: ui.ShapeLarge,
+		Padding: cardPadding, Children: []*ui.Node{
+			{Kind: ui.KindColumn, Gap: cardGap, Children: []*ui.Node{
+				centreHeaderRow(dnd),
+				centreFilterRow(active, history, filter, now, innerW),
+			}},
+		},
+	}
+	children := []*ui.Node{header}
+	if showMenu {
+		children = append(children, dndPresetColumn())
+	}
+
+	sort.Slice(history, func(i, j int) bool { return history[i].Timestamp.After(history[j].Timestamp) })
+
+	var live, closed []*ui.Node
+	for _, g := range activeGroups(active) {
+		if !historyFilter(filter, g.members[0].Timestamp, now) {
+			continue
+		}
+		raster := r.lookupNotifyIcon(g.members[0].AppIcon)
+		live = append(live, ActiveGroupCard(g, now, expand == g.key, raster, r.linksAllowed()))
+	}
+	for _, e := range history {
+		if !historyFilter(filter, e.Timestamp, now) {
+			continue
+		}
+		closed = append(closed, HistoryCard(e, now, r.lookupNotifyIcon(e.AppIcon), r.linksAllowed()))
+	}
+
+	body := []*ui.Node{}
+	if len(live) > 0 {
+		body = append(body, centreSectionLabel("LIVE"))
+		body = append(body, live...)
+	}
+	if len(closed) > 0 {
+		body = append(body, centreSectionLabel("EARLIER"))
+		body = append(body, closed...)
+	}
+	if len(body) == 0 {
+		body = append(body, &ui.Node{Kind: ui.KindText, Text: "Nothing to see here"})
+	}
+
+	// ponytail: header+filter+padding ≈ 80; remainder is the list viewport until chrome is measured.
 	listH := surfaceH - 80
 	if listH < 1 {
 		listH = 1
@@ -203,6 +222,11 @@ func (r *Registry) centerTreeFor(h *PanelHost) *ui.Node {
 	children = append(children, &ui.Node{Kind: ui.KindScroll, Height: listH, Gap: cardGap, Children: body})
 
 	return &ui.Node{Kind: ui.KindColumn, Gap: cardGap, Padding: cardPadding, Children: children}
+}
+
+func centreSectionLabel(text string) *ui.Node {
+	return &ui.Node{Kind: ui.KindText, Text: text,
+		TextRole: theme.RoleCaption, Tone: ui.ToneAccent}
 }
 
 // cloneLifetime copies a lifetime so a card never aliases the projection's

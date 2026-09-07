@@ -565,10 +565,8 @@ func TestNotificationsTabSwitchGrowsSurfaceHeight(t *testing.T) {
 	_ = drainAux(t, reg, 2)
 
 	h := reg.panelHosts[PanelNotifications]
-	h.notifyTab = 1
-	reg.rebuildPanel(h)
 	if reg.panelHosts[PanelNotifications] == nil {
-		t.Fatal("history rebuild dropped the centre")
+		t.Fatal("opening dropped the centre")
 	}
 	for {
 		select {

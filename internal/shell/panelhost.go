@@ -132,7 +132,6 @@ type PanelHost struct {
 	// wallpaperThemeErr mirrors Registry.themeErr for the picker's banners.
 	wallpaperThemeErr string
 
-	notifyTab    int
 	notifyFilter string
 	notifyExpand string
 	notifyMenu   bool
