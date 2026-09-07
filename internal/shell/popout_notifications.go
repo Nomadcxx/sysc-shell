@@ -264,11 +264,9 @@ func (r *Registry) lookupNotifyIcon(name string) *ui.Image {
 
 var historyChips = []struct{ id, label string }{
 	{"all", "All"},
-	{"1h", "Last hour"},
 	{"today", "Today"},
 	{"yesterday", "Yesterday"},
-	{"7d", "Last 7 days"},
-	{"older", "Older"},
+	{"earlier", "Earlier"},
 }
 
 func historyChipRow(history []protocol.HistoryEntry, filter string, now time.Time) *ui.Node {
