@@ -229,8 +229,13 @@ func TestNotifyHistoryCardOmitsActionsAndReply(t *testing.T) {
 		Timestamp: time.Unix(1_756_000_000, 0), Urgency: protocol.UrgencyLow,
 	}
 	card := HistoryCard(entry, time.Unix(1_756_000_000, 0), nil, true)
-	if got := buttons(card); len(got) != 0 {
-		t.Fatalf("history card has action buttons: %v", got)
+	for _, b := range buttons(card) {
+		if b.Action != "notify:3:remove" {
+			t.Fatalf("history card has a non-remove action: %+v", b)
+		}
+	}
+	if findAction(card, "notify:3:remove") == nil {
+		t.Fatal("history card lacks the remove control")
 	}
 	var fields []*ui.Node
 	collectByKind(card, ui.KindTextField, &fields)
@@ -341,5 +346,33 @@ func TestActiveGroupCardShowsCountDismissAndExpand(t *testing.T) {
 func TestHistoryRemoveSupportedOnCurrentPin(t *testing.T) {
 	if !historyRemoveSupported() {
 		t.Fatal("pin carries history.remove but the shell reports it unsupported")
+	}
+}
+
+func TestHistoryCardCarriesARemoveControl(t *testing.T) {
+	now := time.Now()
+	card := HistoryCard(protocol.HistoryEntry{ID: 9, AppName: "mail", Summary: "s", Timestamp: now}, now, nil, false)
+
+	n := findAction(card, "notify:9:remove")
+	if n == nil {
+		t.Fatal("history card has no remove control")
+	}
+	if n.Shape != ui.ShapeCircle {
+		t.Fatalf("remove shape = %v, want circle", n.Shape)
+	}
+	if n.Name == "" || n.Role != "button" {
+		t.Fatalf("remove is not addressable: name=%q role=%q", n.Name, n.Role)
+	}
+}
+
+func TestActiveCardRemoveDismisses(t *testing.T) {
+	now := time.Now()
+	g := activeGroup{key: "mail", members: []protocol.Notification{
+		{ID: 4, AppName: "mail", Summary: "s", Timestamp: now},
+	}}
+	card := ActiveGroupCard(g, now, false, nil, false)
+
+	if findAction(card, "notify:4:dismiss") == nil {
+		t.Fatal("live card has no remove control")
 	}
 }

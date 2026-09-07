@@ -96,6 +96,18 @@ func wrapNotifyCard(inner *ui.Node, critical bool) *ui.Node {
 	return cap
 }
 
+// centreRemoveButton is the per-entry remove control. HistoryCard omits it
+// when the pinned service has no command behind it: a painted control the
+// service rejects is worse than an absent one.
+func centreRemoveButton(action, name string) *ui.Node {
+	return &ui.Node{
+		Kind: ui.KindButton, Action: action, Name: name, Role: "button",
+		Focusable: true, Shape: ui.ShapeCircle, Fill: ui.FillContainerHighest,
+		Padding:  centreIconPad,
+		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "delete", IconSize: centreIconSize}},
+	}
+}
+
 func notificationTree(id uint32, app, summary, body string, urgency protocol.Urgency, raster *ui.Image, value *int32, allowLinks bool, now, ts time.Time) *ui.Node {
 	text := &ui.Node{Kind: ui.KindColumn, Gap: 2, Children: []*ui.Node{}}
 	identity := &ui.Node{Kind: ui.KindRow, Gap: cardGap, Children: []*ui.Node{}}
@@ -189,13 +201,19 @@ func markDefault(root *ui.Node, id uint32) {
 	}
 }
 
-// HistoryCard builds one closed history row. No actions, no close until
-// history.remove exists on the pin.
+// HistoryCard builds one closed history row. A right-pinned remove control
+// is present when the pinned service accepts history.remove.
 func HistoryCard(e protocol.HistoryEntry, now time.Time, raster *ui.Image, allowLinks bool) *ui.Node {
 	if raster == nil {
 		raster = protocolImage(e.Image)
 	}
 	inner := notificationTree(e.ID, e.AppName, e.Summary, e.Body, e.Urgency, raster, nil, allowLinks, now, e.Timestamp)
+	if historyRemoveSupported() {
+		inner = &ui.Node{Kind: ui.KindRow, Gap: cardGap, PinEnd: true, Children: []*ui.Node{
+			inner,
+			centreRemoveButton(fmt.Sprintf("notify:%d:remove", e.ID), "Remove"),
+		}}
+	}
 	return cardColumn(wrapNotifyCard(inner, e.Urgency == protocol.UrgencyCritical))
 }
 
@@ -211,6 +229,10 @@ func ActiveGroupCard(g activeGroup, now time.Time, expanded bool, raster *ui.Ima
 	}
 	critical := groupCritical(g.members)
 	head := notificationTree(latest.ID, latest.AppName, latest.Summary, latest.Body, latest.Urgency, raster, latest.Value, allowLinks, now, latest.Timestamp)
+	head = &ui.Node{Kind: ui.KindRow, Gap: cardGap, PinEnd: true, Children: []*ui.Node{
+		head,
+		centreRemoveButton(fmt.Sprintf("notify:%d:dismiss", latest.ID), "Dismiss"),
+	}}
 	root := &ui.Node{Kind: ui.KindColumn, Gap: cardGap, Children: []*ui.Node{head}}
 	if n := len(g.members); n > 1 {
 		root.Children = append(root.Children, &ui.Node{

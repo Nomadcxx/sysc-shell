@@ -210,23 +210,31 @@ func TestCenterActivateClearSetsLastAction(t *testing.T) {
 	}
 }
 
-func TestCenterClearSendsHistoryClear(t *testing.T) {
+func TestClearVisibleSpansOnlyTheOpenFilter(t *testing.T) {
+	now := time.Date(2026, 9, 7, 15, 0, 0, 0, time.Local)
 	r := NewRegistry(config.Default())
 	sender := &fakeNotifySender{}
 	r.notifySender = sender
+	r.now = now
 	r.applyNotify(snap(1))
-	h := &PanelHost{id: PanelNotifications}
-	r.rebuildPanel(h)
-	for i, n := range h.focus {
-		if n.Name == "Clear" {
-			h.roving.Set(i)
-			h.activate(r)
-			break
+	r.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
+		History: ptrH(historyEntry(1, "mail", "Mail", "today", now.Add(-time.Hour), true))}))
+	r.applyNotify(delta(1, 3, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
+		History: ptrH(historyEntry(2, "mail", "Mail", "old", now.AddDate(0, 0, -5), true))}))
+
+	r.clearVisible(&PanelHost{notifyFilter: "today"})
+
+	got := sender.ofKind(protocol.CommandHistoryRemove)
+	if len(got) != 1 {
+		t.Fatalf("history.remove = %+v", sender.cmds)
+	}
+	for _, id := range got[0].IDs {
+		if id == 2 {
+			t.Fatal("cleared an entry outside the open filter")
 		}
 	}
-	got := sender.ofKind(protocol.CommandHistoryClear)
-	if len(got) != 1 {
-		t.Fatalf("history.clear = %+v", sender.cmds)
+	if len(got[0].IDs) != 1 || got[0].IDs[0] != 1 {
+		t.Fatalf("removed = %v, want [1]", got[0].IDs)
 	}
 }
 

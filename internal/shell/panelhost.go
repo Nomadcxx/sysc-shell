@@ -1473,6 +1473,8 @@ func (h *PanelHost) activateNotify(r *Registry, n *ui.Node) bool {
 	switch parts[0] {
 	case "dismiss":
 		r.sendNotify(protocol.Command{Kind: protocol.CommandDismiss, ID: id})
+	case "remove":
+		r.sendNotify(protocol.Command{Kind: protocol.CommandHistoryRemove, IDs: []uint32{id}})
 	case "default":
 		r.sendNotify(protocol.Command{Kind: protocol.CommandAction, ID: id, ActionKey: "default"})
 	case "action":
@@ -1483,11 +1485,36 @@ func (h *PanelHost) activateNotify(r *Registry, n *ui.Node) bool {
 	return true
 }
 
-// clearVisible is the header Clear target. Task 16 replaces this with the
-// visible-set rule; until then it clears history so the control does something
-// the service already accepts.
+// clearVisible clears exactly what the open filter shows. With the tabs gone
+// there is no other unambiguous target: a Clear that emptied the whole store
+// while the user was looking at Yesterday would delete what they cannot see.
 func (r *Registry) clearVisible(h *PanelHost) {
-	r.sendNotify(protocol.Command{Kind: protocol.CommandHistoryClear})
+	now := r.clockNow()
+	filter := "all"
+	if h != nil && h.notifyFilter != "" {
+		filter = h.notifyFilter
+	}
+
+	r.notify.mu.Lock()
+	var dismiss, remove []uint32
+	for _, n := range r.notify.active {
+		if historyFilter(filter, n.Timestamp, now) {
+			dismiss = append(dismiss, n.ID)
+		}
+	}
+	for _, e := range r.notify.history {
+		if historyFilter(filter, e.Timestamp, now) {
+			remove = append(remove, e.ID)
+		}
+	}
+	r.notify.mu.Unlock()
+
+	for _, id := range dismiss {
+		r.sendNotify(protocol.Command{Kind: protocol.CommandDismiss, ID: id})
+	}
+	if len(remove) > 0 {
+		r.sendNotify(protocol.Command{Kind: protocol.CommandHistoryRemove, IDs: remove})
+	}
 }
 
 func (h *PanelHost) afterFocusChange(r *Registry) {
