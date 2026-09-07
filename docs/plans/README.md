@@ -208,6 +208,17 @@ code from the handover.
 | `2026-09-02-chrome-catalogue-design.md` | design | Owner-approved native chrome, motion, Material Symbols subset, semantic theme composition, and session-panel consumer. |
 | `2026-09-02-chrome-catalogue.md` | plan | Owner-directed implementation-first plan for semantic chrome, native transitions, Material subset, session composition, and focused regression checks. |
 
+## Animated gradient paint
+
+Owner-approved 2026-09-07. Host-owned CPU ramp on rects and alpha masks, with
+a looping offset. First consumer is the centred bar wordmark. Not a Noctalia
+plugin API. Epic `sysc-217`.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-07-gradient-paint-design.md` | design | D1–D12. `GradientPaint` on `ui.Node`, token stops, ping-pong wordmark, named idle-frame exception. |
+| `2026-09-07-gradient-paint.md` | plan | Six TDD tasks (`sysc-218`–`sysc-223`): sampler, rect/mask fill, node field, looping animator, bar widget and default layout, architecture amendment. |
+
 ## Theme system parity
 
 Owner-approved 2026-09-02. Extends the existing native Go palette and renderer
