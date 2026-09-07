@@ -2,8 +2,11 @@ package shell
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -175,4 +178,92 @@ func renderAudioText(n *ui.Node) string {
 		}
 	})
 	return b.String()
+}
+
+func audioLogLines(t *testing.T, dir string) int {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(dir, "log"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0
+		}
+		t.Fatal(err)
+	}
+	return strings.Count(string(raw), "\n")
+}
+
+func TestViewLockedServesCachedAudio(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "vol"), []byte("0.40\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/bin/sh
+echo "$1 $*" >> '` + dir + `/log'
+if [ "$1" = get-volume ]; then printf 'Volume: %s\n' "$(cat '` + dir + `/vol')"; fi
+`
+	bin := filepath.Join(dir, "wpctl")
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	reg := newPanelRegistry(t)
+	reg.setAudio(services.NewAudio(time.Hour, bin))
+	reg.bars[1] = &Bar{conn: "DP-1"}
+	deadline := time.Now().Add(3 * time.Second)
+	for audioLogLines(t, dir) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if audioLogLines(t, dir) == 0 {
+		t.Fatal("baseline poll never ran wpctl")
+	}
+	before := audioLogLines(t, dir)
+	reg.mu.Lock()
+	view := reg.viewLocked("DP-1")
+	reg.mu.Unlock()
+	if got := audioLogLines(t, dir); got != before {
+		t.Fatalf("viewLocked exec'd wpctl: log lines %d -> %d", before, got)
+	}
+	if view.Audio.Level != 40 {
+		t.Fatalf("view.Audio.Level = %d, want 40", view.Audio.Level)
+	}
+}
+
+func TestVolumeOwnerHandlersDoNotBlockOnExec(t *testing.T) {
+	dir := t.TempDir()
+	release := filepath.Join(dir, "release")
+	script := `#!/bin/sh
+if [ "$1" = get-volume ]; then
+  while [ ! -f '` + release + `' ]; do sleep 0.01; done
+  printf 'Volume: 0.40\n'
+fi
+`
+	bin := filepath.Join(dir, "wpctl")
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	reg := newPanelRegistry(t)
+	reg.setAudio(services.NewAudio(time.Hour, bin))
+	bar := &Bar{conn: "DP-1"}
+	reg.bars[1] = bar
+	reg.mu.Lock()
+	reg.bindBarPanelActionsLocked(1, bar)
+	reg.mu.Unlock()
+
+	start := time.Now()
+	if !bar.onAction(panelAudioAction, buttonRight) {
+		t.Fatal("right-click on the volume widget was not handled")
+	}
+	if d := time.Since(start); d > 100*time.Millisecond {
+		t.Fatalf("right-click mute blocked the owner for %v", d)
+	}
+	start = time.Now()
+	if !bar.onAxis(panelAudioAction, 1) {
+		t.Fatal("wheel step on the volume widget was not handled")
+	}
+	if d := time.Since(start); d > 100*time.Millisecond {
+		t.Fatalf("wheel step blocked the owner for %v", d)
+	}
+	if err := os.WriteFile(release, []byte("go"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
 }

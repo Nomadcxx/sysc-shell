@@ -292,6 +292,14 @@ func (r *Registry) OSDStep(kind, action string) error {
 	}
 }
 
+// stepAudioAsync runs stepAudio off the calling goroutine. The bar input
+// handlers run on the Wayland owner, which must never exec.
+// ponytail: wpctl volume steps commute, but concurrent mute toggles can
+// coalesce; add a serialized worker channel if ordering ever matters.
+func (r *Registry) stepAudioAsync(action string) {
+	go func() { _ = r.stepAudio(action) }()
+}
+
 func (r *Registry) stepAudio(action string) error {
 	if r.audio == nil || !r.audio.Available() {
 		return fmt.Errorf("audio unavailable")
@@ -650,7 +658,7 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 			trig.AnchorX = bar.actionCenterX(panelAudioAction)
 			return r.TogglePanel(PanelAudio, out, trig) == nil
 		case action == panelAudioAction && button == buttonRight:
-			_ = r.stepAudio("mute")
+			r.stepAudioAsync("mute")
 			return true
 		}
 		return false
@@ -660,9 +668,9 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 			return false
 		}
 		if delta > 0 {
-			_ = r.stepAudio("up")
+			r.stepAudioAsync("up")
 		} else if delta < 0 {
-			_ = r.stepAudio("down")
+			r.stepAudioAsync("down")
 		}
 		return true
 	})
@@ -1027,7 +1035,7 @@ func (r *Registry) viewLocked(connector string) barView {
 	}
 	_, view.DND = r.notify.dndState(r.now)
 	if r.audio != nil {
-		view.Audio = r.audio.State()
+		view.Audio = r.audio.CachedState()
 	}
 	if r.plugins != nil {
 		view.Plugins = r.plugins.frames(connector)

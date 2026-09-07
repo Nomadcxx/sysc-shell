@@ -73,7 +73,7 @@ func audioSegment(h *PanelHost, action, label string, selected bool) *ui.Node {
 }
 
 func audioVolumesTree(r *Registry, h *PanelHost) *ui.Node {
-	snap, stale, unavailable := audioMixerState(r, h)
+	snap, stale, unavailable := audioMixerState(r)
 	rows := []*ui.Node{
 		audioVolumeRow(audioApplyPending(h, audioDefaultNode(snap.Sinks, "Output")), "Output", nil),
 		audioVolumeRow(audioApplyPending(h, audioDefaultNode(snap.Sources, "Input")), "Input", nil),
@@ -107,7 +107,7 @@ func audioVolumesTree(r *Registry, h *PanelHost) *ui.Node {
 }
 
 func audioDevicesTree(r *Registry, h *PanelHost) *ui.Node {
-	snap, _, unavailable := audioMixerState(r, h)
+	snap, _, unavailable := audioMixerState(r)
 	out := []*ui.Node{
 		{Kind: ui.KindText, Text: "Output device", TextRole: theme.RoleLabel},
 	}
@@ -249,7 +249,7 @@ func audioDefaultNode(nodes []services.AudioNode, role string) services.AudioNod
 	return services.AudioNode{Description: role}
 }
 
-func audioMixerState(r *Registry, h *PanelHost) (services.AudioSnapshot, bool, bool) {
+func audioMixerState(r *Registry) (services.AudioSnapshot, bool, bool) {
 	if r == nil || r.audio == nil {
 		return services.AudioSnapshot{}, true, true
 	}
@@ -258,9 +258,6 @@ func audioMixerState(r *Registry, h *PanelHost) (services.AudioSnapshot, bool, b
 	}
 	snap := r.audio.Mixer()
 	stale := !r.audio.MixerReady()
-	if h != nil && !h.pendingAt.IsZero() && (stale || snap.At.Before(h.pendingAt)) {
-		// Keep in-flight values until the next sample.
-	}
 	return snap, stale, false
 }
 
