@@ -39,6 +39,7 @@ type Audio struct {
 	mixerDone chan struct{}
 	mixer     AudioSnapshot
 	hasMixer  bool
+	mixerCh   chan AudioSnapshot
 }
 
 func NewAudio(interval time.Duration, path string) *Audio {
@@ -51,6 +52,7 @@ func NewAudio(interval time.Duration, path string) *Audio {
 		bin:      bin,
 		ok:       err == nil,
 		changes:  make(chan AudioState, 1),
+		mixerCh:  make(chan AudioSnapshot, 1),
 	}
 	return a
 }
