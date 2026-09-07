@@ -542,6 +542,9 @@ func (b *Bar) barFrameLoop() {
 }
 
 func (b *Bar) stopAnimation() {
+	if b.stopAnim == nil {
+		return
+	}
 	b.stopOnce.Do(func() { close(b.stopAnim) })
 }
 

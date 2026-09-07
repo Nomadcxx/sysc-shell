@@ -50,6 +50,13 @@ func newTestBar(t *testing.T) *Bar {
 	return p
 }
 
+func TestZeroBarStopsAnimationSafely(t *testing.T) {
+	t.Parallel()
+	bar := &Bar{}
+	bar.stopAnimation()
+	bar.stopAnimation()
+}
+
 func TestBarGradientFramesFollowMotionPreference(t *testing.T) {
 	t.Parallel()
 	for _, reduced := range []bool{false, true} {
