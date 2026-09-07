@@ -1,13 +1,11 @@
 package shell
 
 import (
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
-	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -30,7 +28,7 @@ func TestCenterHistoryIsFlatNewestFirst(t *testing.T) {
 	r.applyNotify(delta(1, 4, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
 		History: ptrH(historyEntry(3, "chat", "Chat", "ping", newer.Add(time.Minute), false))}))
 
-	h := &PanelHost{id: PanelNotifications, notifyTab: 1}
+	h := &PanelHost{id: PanelNotifications}
 	tree := r.centerTreeFor(h)
 	got := texts(tree)
 	ping, neu, old := -1, -1, -1
@@ -102,42 +100,32 @@ func TestActiveGroupsMailCountAndCriticalFirst(t *testing.T) {
 	}
 }
 
-func TestCenterHeaderHasTitleDNDScheduleClearAndTabs(t *testing.T) {
+func TestCentreHeaderCarriesFiveCircularButtons(t *testing.T) {
 	r := NewRegistry(config.Default())
 	r.applyNotify(snap(1))
-	tree := r.centerTree()
+	tree := r.centerTreeFor(nil)
 
-	if !containsText(tree, "Notifications") {
-		t.Fatalf("title missing: %v", texts(tree))
-	}
-	dnd := buttonByName(tree, "DND")
-	if dnd == nil || dnd.Action != "notify:center:dnd" || dnd.Text != notifyGlyph(false) {
-		t.Fatalf("DND = %+v", dnd)
-	}
-	schedRune, _ := render.IconByName("schedule")
-	sched := buttonByName(tree, "Schedule")
-	if sched == nil || sched.Text != string(schedRune) {
-		t.Fatalf("schedule = %+v", sched)
-	}
-	clear := buttonByName(tree, "Clear")
-	if clear == nil || clear.Action != "notify:center:dismiss-all" || clear.Text != "Clear" {
-		t.Fatalf("clear = %+v", clear)
-	}
-	cur := buttonByAction(tree, "notify:center:tab:0")
-	if cur == nil || cur.Role != "tab" || cur.Text != "Current (0)" {
-		t.Fatalf("current tab = %+v", cur)
-	}
-	hist := buttonByAction(tree, "notify:center:tab:1")
-	if hist == nil || hist.Role != "tab" || hist.Text != "History (0)" {
-		t.Fatalf("history tab = %+v", hist)
-	}
-	for _, b := range buttons(tree) {
-		switch b.Text {
-		case "1h", "Dismiss all", "Clear history":
-			t.Fatalf("stub header button still present: %+v", b)
+	for _, action := range []string{
+		"notify:center:dnd", "notify:center:schedule", "notify:center:clear",
+		"notify:center:settings", "notify:center:close",
+	} {
+		n := findAction(tree, action)
+		if n == nil {
+			t.Fatalf("missing action %s", action)
 		}
-		if b.Name == "Settings" || strings.Contains(strings.ToLower(b.Name), "keyboard") {
-			t.Fatalf("unwanted header button: %+v", b)
+		if n.Shape != ui.ShapeCircle {
+			t.Fatalf("%s shape = %v, want circle", action, n.Shape)
+		}
+		if n.Fill != ui.FillContainerHighest {
+			t.Fatalf("%s fill = %v, want ContainerHighest", action, n.Fill)
+		}
+		if n.Name == "" || n.Role != "button" {
+			t.Fatalf("%s is not addressable: name=%q role=%q", action, n.Name, n.Role)
+		}
+	}
+	for _, gone := range []string{"notify:center:tab:0", "notify:center:tab:1", "notify:center:clear-history"} {
+		if findAction(tree, gone) != nil {
+			t.Fatalf("retired action %s is still in the tree", gone)
 		}
 	}
 }
@@ -151,77 +139,57 @@ func TestCenterEmptyStateNamesNothingToSeeHere(t *testing.T) {
 	}
 }
 
-func TestCenterCurrentTabShowsLiveNotHistory(t *testing.T) {
+func TestMergedListPinsLiveAboveClosed(t *testing.T) {
+	now := time.Date(2026, 9, 7, 15, 0, 0, 0, time.Local)
 	r := NewRegistry(config.Default())
-	r.applyNotify(snap(1, note(1, "live")))
+	r.now = now
+	live := note(1, "live")
+	live.Timestamp = now.Add(-time.Minute)
+	r.applyNotify(snap(1, live))
 	r.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
-		History: ptrH(historyEntry(2, "mail", "Mail", "old", time.Unix(1_756_000_000, 0), true))}))
-	tree := r.centerTree()
-	got := texts(tree)
-	if !containsText(tree, "live") {
-		t.Fatalf("current tab lacks live: %v", got)
-	}
-	if containsText(tree, "old") {
-		t.Fatalf("current tab listed history: %v", got)
-	}
-	cur := buttonByAction(tree, "notify:center:tab:0")
-	hist := buttonByAction(tree, "notify:center:tab:1")
-	if cur == nil || cur.Text != "Current (1)" {
-		t.Fatalf("current count = %+v", cur)
-	}
-	if hist == nil || hist.Text != "History (1)" {
-		t.Fatalf("history count = %+v", hist)
+		History: ptrH(historyEntry(2, "mail", "Mail", "old", now.Add(-2*time.Hour), true))}))
+
+	if got := sectionLabels(r.centerTreeFor(nil)); len(got) != 2 || got[0] != "LIVE" || got[1] != "EARLIER" {
+		t.Fatalf("labels = %v, want [LIVE EARLIER]", got)
 	}
 }
 
-func TestCenterClearActionFollowsTab(t *testing.T) {
+func TestEmptySectionEmitsNoLabel(t *testing.T) {
+	now := time.Date(2026, 9, 7, 15, 0, 0, 0, time.Local)
+	r := NewRegistry(config.Default())
+	r.now = now
+	r.applyNotify(snap(1))
+	r.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
+		History: ptrH(historyEntry(2, "mail", "Mail", "old", now.Add(-2*time.Hour), true))}))
+
+	if got := sectionLabels(r.centerTreeFor(nil)); len(got) != 1 || got[0] != "EARLIER" {
+		t.Fatalf("labels = %v, want [EARLIER] only", got)
+	}
+}
+
+func TestCardsSitOnTheHighContainer(t *testing.T) {
+	r := NewRegistry(config.Default())
+	r.applyNotify(snap(1))
+	r.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
+		History: ptrH(historyEntry(2, "mail", "Mail", "old", r.clockNow(), true))}))
+
+	card := firstCardCapsule(r.centerTreeFor(nil))
+	if card == nil {
+		t.Fatal("no card capsule")
+	}
+	if card.Fill != ui.FillContainerHigh {
+		t.Fatalf("card fill = %v, want ContainerHigh", card.Fill)
+	}
+}
+
+func TestCenterClearActionIsAlwaysClear(t *testing.T) {
 	r := NewRegistry(config.Default())
 	r.applyNotify(snap(1))
 	h := &PanelHost{id: PanelNotifications}
 	tree := r.centerTreeFor(h)
 	clear := buttonByName(tree, "Clear")
-	if clear == nil || clear.Action != "notify:center:dismiss-all" {
-		t.Fatalf("tab 0 clear = %+v", clear)
-	}
-	h.notifyTab = 1
-	tree = r.centerTreeFor(h)
-	clear = buttonByName(tree, "Clear")
-	if clear == nil || clear.Action != "notify:center:clear-history" {
-		t.Fatalf("tab 1 clear = %+v", clear)
-	}
-}
-
-func TestCenterTabActivateSelectsHistory(t *testing.T) {
-	r := NewRegistry(config.Default())
-	r.applyNotify(snap(1))
-	r.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
-		History: ptrH(historyEntry(2, "mail", "Mail", "old", time.Unix(1_756_000_000, 0), true))}))
-	h := &PanelHost{id: PanelNotifications}
-	r.rebuildPanel(h)
-	found := false
-	for i, n := range h.focus {
-		if n.Action == "notify:center:tab:1" {
-			h.roving.Set(i)
-			h.activate(r)
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("history tab not focusable: %v", focusableNames(h.root))
-	}
-	if h.notifyTab != 1 {
-		t.Fatalf("notifyTab = %d, want 1", h.notifyTab)
-	}
-	if !containsText(h.root, "old") {
-		t.Fatalf("history tab lacks history: %v", texts(h.root))
-	}
-	if containsText(h.root, "Nothing to see here") {
-		t.Fatalf("history tab showed current empty copy: %v", texts(h.root))
-	}
-	clear := buttonByName(h.root, "Clear")
-	if clear == nil || clear.Action != "notify:center:clear-history" {
-		t.Fatalf("rebuilt clear = %+v", clear)
+	if clear == nil || clear.Action != "notify:center:clear" {
+		t.Fatalf("clear = %+v", clear)
 	}
 }
 
@@ -237,48 +205,36 @@ func TestCenterActivateClearSetsLastAction(t *testing.T) {
 			break
 		}
 	}
-	if h.lastAction != "notify:center:dismiss-all" {
+	if h.lastAction != "notify:center:clear" {
 		t.Fatalf("lastAction = %q", h.lastAction)
 	}
 }
 
-func TestCenterClearSendsDismissAll(t *testing.T) {
+func TestClearVisibleSpansOnlyTheOpenFilter(t *testing.T) {
+	now := time.Date(2026, 9, 7, 15, 0, 0, 0, time.Local)
 	r := NewRegistry(config.Default())
 	sender := &fakeNotifySender{}
 	r.notifySender = sender
+	r.now = now
 	r.applyNotify(snap(1))
-	h := &PanelHost{id: PanelNotifications}
-	r.rebuildPanel(h)
-	for i, n := range h.focus {
-		if n.Name == "Clear" {
-			h.roving.Set(i)
-			h.activate(r)
-			break
-		}
-	}
-	got := sender.ofKind(protocol.CommandDismissAll)
-	if len(got) != 1 {
-		t.Fatalf("dismiss-all = %+v", sender.cmds)
-	}
-}
+	r.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
+		History: ptrH(historyEntry(1, "mail", "Mail", "today", now.Add(-time.Hour), true))}))
+	r.applyNotify(delta(1, 3, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
+		History: ptrH(historyEntry(2, "mail", "Mail", "old", now.AddDate(0, 0, -5), true))}))
 
-func TestCenterClearHistorySendsHistoryClear(t *testing.T) {
-	r := NewRegistry(config.Default())
-	sender := &fakeNotifySender{}
-	r.notifySender = sender
-	r.applyNotify(snap(1))
-	h := &PanelHost{id: PanelNotifications, notifyTab: 1}
-	r.rebuildPanel(h)
-	for i, n := range h.focus {
-		if n.Name == "Clear" {
-			h.roving.Set(i)
-			h.activate(r)
-			break
+	r.clearVisible(&PanelHost{notifyFilter: "today"})
+
+	got := sender.ofKind(protocol.CommandHistoryRemove)
+	if len(got) != 1 {
+		t.Fatalf("history.remove = %+v", sender.cmds)
+	}
+	for _, id := range got[0].IDs {
+		if id == 2 {
+			t.Fatal("cleared an entry outside the open filter")
 		}
 	}
-	got := sender.ofKind(protocol.CommandHistoryClear)
-	if len(got) != 1 {
-		t.Fatalf("history.clear = %+v", sender.cmds)
+	if len(got[0].IDs) != 1 || got[0].IDs[0] != 1 {
+		t.Fatalf("removed = %v, want [1]", got[0].IDs)
 	}
 }
 
@@ -323,8 +279,8 @@ func TestCenterDNDGlyphSwapsWhenOn(t *testing.T) {
 	r := NewRegistry(config.Default())
 	r.applyNotify(snap(1))
 	r.setDND(true)
-	dnd := buttonByName(r.centerTree(), "DND")
-	if dnd == nil || dnd.Text != notifyGlyph(true) {
+	dnd := buttonByName(r.centerTree(), "Do not disturb")
+	if dnd == nil || len(dnd.Children) == 0 || dnd.Children[0].Icon != "do_not_disturb_on" {
 		t.Fatalf("DND on = %+v", dnd)
 	}
 }
@@ -416,10 +372,76 @@ func buttonByName(tree *ui.Node, name string) *ui.Node {
 	return nil
 }
 
+func TestBucketCountSpansActiveAndHistory(t *testing.T) {
+	now := time.Date(2026, 9, 7, 15, 0, 0, 0, time.Local)
+	active := []protocol.Notification{{ID: 1, Timestamp: now.Add(-time.Minute)}}
+	history := []protocol.HistoryEntry{
+		{ID: 2, Timestamp: now.Add(-3 * time.Hour)},
+		{ID: 3, Timestamp: now.AddDate(0, 0, -1)},
+		{ID: 4, Timestamp: now.AddDate(0, 0, -5)},
+	}
+	for bucket, want := range map[string]int{"all": 4, "today": 2, "yesterday": 1, "earlier": 1} {
+		if got := bucketCount(bucket, active, history, now); got != want {
+			t.Fatalf("bucketCount(%q) = %d, want %d", bucket, got, want)
+		}
+	}
+}
+
+func TestFilterRowIsOneSegmentedControl(t *testing.T) {
+	now := time.Date(2026, 9, 7, 15, 0, 0, 0, time.Local)
+	history := []protocol.HistoryEntry{{ID: 1, Timestamp: now.Add(-time.Hour)}}
+
+	row := centreFilterRow(nil, history, "today", now, 392)
+	if row.Kind != ui.KindSegmented {
+		t.Fatalf("kind = %v, want segmented", row.Kind)
+	}
+	if len(row.Children) != 4 {
+		t.Fatalf("segments = %d, want 4", len(row.Children))
+	}
+	if !row.Children[1].State.Has(ui.StateSelected) {
+		t.Fatal("Today is not marked selected")
+	}
+	if row.Children[0].State.Has(ui.StateSelected) {
+		t.Fatal("All is selected while the filter is today")
+	}
+	if got, want := row.Children[1].Children[0].Text, "Today 1"; got != want {
+		t.Fatalf("label = %q, want %q", got, want)
+	}
+}
+
 func buttonByAction(tree *ui.Node, action string) *ui.Node {
 	for _, b := range buttons(tree) {
 		if b.Action == action {
 			return b
+		}
+	}
+	return nil
+}
+
+func sectionLabels(n *ui.Node) []string {
+	var out []string
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n.Kind == ui.KindText && (n.Text == "LIVE" || n.Text == "EARLIER") {
+			out = append(out, n.Text)
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(n)
+	return out
+}
+
+func firstCardCapsule(n *ui.Node) *ui.Node {
+	var caps []*ui.Node
+	collectByKind(n, ui.KindCapsule, &caps)
+	for _, c := range caps {
+		if c.Shape == ui.ShapeCard {
+			return c
 		}
 	}
 	return nil

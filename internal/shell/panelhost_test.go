@@ -512,13 +512,13 @@ func TestOpeningNotificationsSetsCenterOpenAndMarksSeen(t *testing.T) {
 	if panel == nil || panel.ID != "panel:notifications" {
 		t.Fatalf("opened %+v", panel)
 	}
-	if panel.Width != 416 {
-		t.Fatalf("width = %d, want 416", panel.Width)
+	if panel.Width != 424 {
+		t.Fatalf("width = %d, want 424", panel.Width)
 	}
 	if panel.Height < 300 {
 		t.Fatalf("height = %d, want at least 300", panel.Height)
 	}
-	if want := int32(1536 - 416 - 8); panel.MarginLeft != want {
+	if want := int32(1536 - 416 - 8 - 4); panel.MarginLeft != want {
 		t.Fatalf("margin left = %d, want trailing %d", panel.MarginLeft, want)
 	}
 	if panel.MarginTop != 44 {
@@ -565,20 +565,8 @@ func TestNotificationsTabSwitchGrowsSurfaceHeight(t *testing.T) {
 	_ = drainAux(t, reg, 2)
 
 	h := reg.panelHosts[PanelNotifications]
-	found := false
-	for i, n := range h.focus {
-		if n.Action == "notify:center:tab:1" {
-			h.roving.Set(i)
-			h.activate(reg)
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatal("history tab missing")
-	}
 	if reg.panelHosts[PanelNotifications] == nil {
-		t.Fatal("tab switch dropped the centre")
+		t.Fatal("opening dropped the centre")
 	}
 	for {
 		select {
@@ -616,12 +604,24 @@ func TestNotificationsRebuildOnNotifyDelta(t *testing.T) {
 		Lifetime: &protocol.Lifetime{ID: 9, DurationMS: 5000, RemainingMS: 5000, Running: true}}))
 
 	h := reg.panelHosts[PanelNotifications]
-	cur := buttonByAction(h.root, "notify:center:tab:0")
-	if cur == nil || cur.Text != "Current (1)" {
-		t.Fatalf("current tab after delta = %+v", cur)
-	}
 	if !containsText(h.root, "incoming") {
 		t.Fatalf("tree after delta = %v", texts(h.root))
+	}
+}
+
+func TestNotificationsCentreConfiguresAtTargetWidth(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	reg.applyNotify(snap(1))
+	if err := reg.OpenPanel(PanelNotifications, 7, Trigger{
+		BarEdge: "top", BarZone: 44, OutW: 1536, OutH: 1440,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reqs := drainAux(t, reg, 2)
+	panel := reqs[1].Open
+	if err := panel.Callbacks.Configure(int(panel.Width), int(panel.Height), 120); err != nil {
+		t.Fatalf("configure: %v", err)
 	}
 }
 
@@ -655,7 +655,7 @@ func TestTogglePanelByNameCentresFlushUnderTheBar(t *testing.T) {
 	if got.MarginTop != 44 {
 		t.Fatalf("margin top = %d, want flush on the 44px exclusive zone", got.MarginTop)
 	}
-	if want := int32((1536 - 640) / 2); got.MarginLeft != want {
+	if want := int32((1536-640)/2 - 4); got.MarginLeft != want {
 		t.Fatalf("margin left = %d, want centred %d", got.MarginLeft, want)
 	}
 }

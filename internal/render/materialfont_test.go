@@ -16,6 +16,7 @@ var materialInventory = []string{
 	"close", "chevron_left", "chevron_right",
 	"search", "settings", "notifications", "do_not_disturb_on",
 	"volume_up", "volume_off", "brightness_high",
+	"delete", "schedule",
 }
 
 func TestMaterialInventoryMatchesTheSubset(t *testing.T) {
@@ -73,6 +74,29 @@ func TestMaterialIconsShapeToCoverageAtChromeSizes(t *testing.T) {
 			if w := mask.Advance; w > 2*size {
 				t.Errorf("%s at %d px advanced %d px, wide enough to be spelled out", name, size, w)
 			}
+		}
+	}
+}
+
+func TestSubsetCarriesCentreGlyphs(t *testing.T) {
+	t.Parallel()
+	r := NewTextRenderer(mustTestFace(t))
+	for _, name := range []string{"delete", "schedule"} {
+		if !ValidMaterialIcon(name) {
+			t.Fatalf("%q is not in the inventory", name)
+		}
+		mask, err := r.RasterMaterialIcon(name, 20)
+		if err != nil {
+			t.Fatalf("%s at 20 px: %v", name, err)
+		}
+		lit := 0
+		for _, a := range mask.Alpha.Pix {
+			if a > 0 {
+				lit++
+			}
+		}
+		if lit == 0 {
+			t.Fatalf("%s at 20 px rasterised nothing", name)
 		}
 	}
 }

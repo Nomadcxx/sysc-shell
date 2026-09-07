@@ -174,20 +174,16 @@ dedicated panel replaces the control centre through the current root owner.
 
 ## New primitives this design requires
 
-**Concave corner mask.** `internal/render/mask.go` carries `RoundedMask`,
-`RingMask`, `ShadowTexture` and glyph masks — every one convex — and
-`render.Shapes` is five ints. The wing-tips need a per-corner mask:
-
-```go
-// AttachedMask draws a panel fused to a bar edge: the two corners on the bar
-// side are concave, the two away from it convex. bulge is the concave radius,
-// animated from 0 to radius as the panel emerges.
-func AttachedMask(w, h, radius, bulge int, edge BarEdge) *image.Alpha
-```
-
-Cached on a key like the existing `maskKey`, coverage computed analytically the
-way `roundedCoverage` already does. This is the one primitive the control
-centre adds, and it exists because an approved component consumes it.
+**Concave corner mask.** Superseded — no new primitive needed. This design
+was written when `internal/render/mask.go` carried only convex masks and the
+wing-tips looked like a new `AttachedMask` primitive. The notification-centre
+work has since shipped `Style.Fillet` + `Style.FilletFill`
+(`render/style.go`): analytic concave wedges (`fillAttachFillets`,
+`clearOutsideRoundedRect` in `render/canvas.go`) painted with the bar's fill
+so the joint stays seamless below full opacity, wired into every panel
+surface by `shell/theme.go` and placed by `filletMargin()` in
+`shell/panelhost.go`. The control centre's wing-tips consume that machinery
+as-is; the audio panel (2026-09-07 design, D9) already does.
 
 **Weather daily forecast.** Smaller than it first looked: the wire layer
 already carries it. `weather.Query` has a `Daily bool`, and `RequestURL`

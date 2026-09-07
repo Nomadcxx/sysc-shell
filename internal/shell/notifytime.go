@@ -20,23 +20,20 @@ func formatNotifyTime(ts, now time.Time) string {
 	return ts.Weekday().String() + ", " + ts.Format("15:04")
 }
 
-func historyFilter(chip string, ts, now time.Time) bool {
+// historyFilter reports whether ts falls in the named bucket. The set is the
+// four the centre's segmented row offers; anything else answers false, so a
+// stale action string filters everything out rather than showing everything.
+func historyFilter(bucket string, ts, now time.Time) bool {
 	ts = ts.In(now.Location())
-	switch chip {
+	switch bucket {
 	case "all":
 		return true
-	case "1h":
-		d := now.Sub(ts)
-		return d >= 0 && d <= time.Hour
 	case "today":
 		return sameLocalDay(ts, now)
 	case "yesterday":
 		return sameLocalDay(ts, now.AddDate(0, 0, -1))
-	case "7d":
-		d := now.Sub(ts)
-		return d >= 0 && d <= 7*24*time.Hour
-	case "older":
-		return now.Sub(ts) > 7*24*time.Hour
+	case "earlier":
+		return !sameLocalDay(ts, now) && !sameLocalDay(ts, now.AddDate(0, 0, -1)) && ts.Before(now)
 	}
 	return false
 }

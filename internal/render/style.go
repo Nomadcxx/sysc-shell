@@ -24,6 +24,13 @@ type Style struct {
 	// corners stay square so the rounded body does not punch a wallpaper
 	// seam against the bar.
 	AttachEdge string
+	// Fillet is the radius, in logical pixels, of the concave wedges joining
+	// this surface to the bar at AttachEdge. Zero draws none.
+	Fillet int
+	// FilletFill paints those wedges. It is the *bar's* fill, not this
+	// surface's: the two carry different alphas, and painting the wedge with
+	// rootFill leaves a visible seam wherever surface opacity is below 100.
+	FilletFill Color
 
 	Background Color
 	Foreground Color

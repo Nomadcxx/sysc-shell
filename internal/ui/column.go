@@ -223,7 +223,10 @@ func pinRowEnd(n *Node, box Rect) {
 		return
 	}
 	first, last := n.Children[0], n.Children[1]
-	if first == nil || last == nil || first.Kind != KindText {
+	if first == nil || last == nil {
+		return
+	}
+	if !n.PinEnd && first.Kind != KindText {
 		return
 	}
 	right := box.X + box.W - n.Padding

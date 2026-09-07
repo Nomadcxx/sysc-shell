@@ -11,11 +11,13 @@ import (
 )
 
 const (
-	cardIconSize = 56
-	cardGap      = 6
-	cardPadding  = 12
-	cardChipW    = 8
-	toastMeterH  = 3
+	cardIconSize   = 56
+	cardGap        = 6
+	cardPadding    = 12
+	cardChipW      = 8
+	toastMeterH    = 3
+	centreIconSize = 20
+	centreIconPad  = 6
 )
 
 func protocolImage(img *protocol.Image) *ui.Image {
@@ -75,7 +77,7 @@ func valueMeter(value *int32) *ui.Node {
 	return &ui.Node{Kind: ui.KindMeter, Value: v}
 }
 
-func wrapNotifyCard(inner *ui.Node, critical bool) *ui.Node {
+func wrapNotifyCard(inner *ui.Node, critical bool, fill ui.Fill) *ui.Node {
 	body := inner
 	if critical {
 		body = &ui.Node{Kind: ui.KindRow, Gap: 0, Children: []*ui.Node{
@@ -84,7 +86,7 @@ func wrapNotifyCard(inner *ui.Node, critical bool) *ui.Node {
 		}}
 	}
 	cap := &ui.Node{
-		Kind: ui.KindCapsule, Fill: ui.FillNone, Padding: cardPadding, Shape: ui.ShapeCard,
+		Kind: ui.KindCapsule, Fill: fill, Padding: cardPadding, Shape: ui.ShapeCard,
 		Action: inner.Action, Children: []*ui.Node{body},
 	}
 	if critical {
@@ -92,6 +94,18 @@ func wrapNotifyCard(inner *ui.Node, critical bool) *ui.Node {
 		cap.StrokeFill = ui.FillAccent
 	}
 	return cap
+}
+
+// centreRemoveButton is the per-entry remove control. HistoryCard omits it
+// when the pinned service has no command behind it: a painted control the
+// service rejects is worse than an absent one.
+func centreRemoveButton(action, name string) *ui.Node {
+	return &ui.Node{
+		Kind: ui.KindButton, Action: action, Name: name, Role: "button",
+		Focusable: true, Shape: ui.ShapeCircle, Fill: ui.FillContainerHighest,
+		Padding:  centreIconPad,
+		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "delete", IconSize: centreIconSize}},
+	}
 }
 
 func notificationTree(id uint32, app, summary, body string, urgency protocol.Urgency, raster *ui.Image, value *int32, allowLinks bool, now, ts time.Time) *ui.Node {
@@ -178,7 +192,7 @@ func NotificationCard(n protocol.Notification, lt *protocol.Lifetime, raster *ui
 	if m := timeoutMeter(lt); m != nil {
 		root.Children = append(root.Children, m)
 	}
-	return cardColumn(wrapNotifyCard(root, n.Urgency == protocol.UrgencyCritical))
+	return cardColumn(wrapNotifyCard(root, n.Urgency == protocol.UrgencyCritical, ui.FillNone))
 }
 
 func markDefault(root *ui.Node, id uint32) {
@@ -187,14 +201,20 @@ func markDefault(root *ui.Node, id uint32) {
 	}
 }
 
-// HistoryCard builds one closed history row. No actions, no close until
-// history.remove exists on the pin.
+// HistoryCard builds one closed history row. A right-pinned remove control
+// is present when the pinned service accepts history.remove.
 func HistoryCard(e protocol.HistoryEntry, now time.Time, raster *ui.Image, allowLinks bool) *ui.Node {
 	if raster == nil {
 		raster = protocolImage(e.Image)
 	}
 	inner := notificationTree(e.ID, e.AppName, e.Summary, e.Body, e.Urgency, raster, nil, allowLinks, now, e.Timestamp)
-	return cardColumn(wrapNotifyCard(inner, e.Urgency == protocol.UrgencyCritical))
+	if historyRemoveSupported() {
+		inner = &ui.Node{Kind: ui.KindRow, Gap: cardGap, PinEnd: true, Children: []*ui.Node{
+			inner,
+			centreRemoveButton(fmt.Sprintf("notify:%d:remove", e.ID), "Remove"),
+		}}
+	}
+	return cardColumn(wrapNotifyCard(inner, e.Urgency == protocol.UrgencyCritical, ui.FillContainerHigh))
 }
 
 // ActiveGroupCard is one Current-tab group. Actions come from the newest
@@ -209,6 +229,10 @@ func ActiveGroupCard(g activeGroup, now time.Time, expanded bool, raster *ui.Ima
 	}
 	critical := groupCritical(g.members)
 	head := notificationTree(latest.ID, latest.AppName, latest.Summary, latest.Body, latest.Urgency, raster, latest.Value, allowLinks, now, latest.Timestamp)
+	head = &ui.Node{Kind: ui.KindRow, Gap: cardGap, PinEnd: true, Children: []*ui.Node{
+		head,
+		centreRemoveButton(fmt.Sprintf("notify:%d:dismiss", latest.ID), "Dismiss"),
+	}}
 	root := &ui.Node{Kind: ui.KindColumn, Gap: cardGap, Children: []*ui.Node{head}}
 	if n := len(g.members); n > 1 {
 		root.Children = append(root.Children, &ui.Node{
@@ -251,7 +275,7 @@ func ActiveGroupCard(g activeGroup, now time.Time, expanded bool, raster *ui.Ima
 			root.Children = append(root.Children, &ui.Node{Kind: ui.KindText, Text: m.Summary})
 		}
 	}
-	return cardColumn(wrapNotifyCard(root, critical))
+	return cardColumn(wrapNotifyCard(root, critical, ui.FillContainerHigh))
 }
 
 func cardColumn(n *ui.Node) *ui.Node {
@@ -261,6 +285,7 @@ func cardColumn(n *ui.Node) *ui.Node {
 	return &ui.Node{Kind: ui.KindColumn, Action: n.Action, Children: []*ui.Node{n}}
 }
 
-// historyRemoveSupported is false on sysc-notify v0.1.0-rc.2: that pin has
-// no history.remove. A later tag can flip this and paint the close control.
-func historyRemoveSupported() bool { return false }
+// historyRemoveSupported reports whether the pinned sysc-notify accepts
+// history.remove. True from v0.1.0-rc.3. The flag stays so a rollback to an
+// older pin disables the control rather than painting one the service rejects.
+func historyRemoveSupported() bool { return true }
