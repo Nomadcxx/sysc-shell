@@ -190,6 +190,42 @@ func (r *Registry) setAudio(a *services.Audio) {
 		}
 	}
 	go r.relayAudioOSD(a)
+	go r.relayMixer(a)
+}
+
+func (r *Registry) relayMixer(audio *services.Audio) {
+	if audio == nil {
+		return
+	}
+	ch := audio.MixerChanges()
+	if ch == nil {
+		return
+	}
+	for {
+		select {
+		case <-r.closed:
+			return
+		case _, ok := <-ch:
+			if !ok {
+				return
+			}
+			r.mu.Lock()
+			h := r.panelHosts[PanelAudio]
+			if h == nil {
+				r.mu.Unlock()
+				continue
+			}
+			if snap := audio.Mixer(); !h.pendingAt.IsZero() && snap.At.After(h.pendingAt) {
+				h.pendingVol = nil
+				h.pendingMute = nil
+				h.pendingAt = time.Time{}
+			}
+			r.rebuildPanel(h)
+			out := h.output
+			r.mu.Unlock()
+			r.publishSurface(out, panelSurfaceID(PanelAudio))
+		}
+	}
 }
 
 func (r *Registry) setBrightness(b *services.Brightness) {
@@ -610,8 +646,25 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 			}
 			r.mu.Unlock()
 			return true
+		case action == panelAudioAction && (button == 0 || button == buttonLeft):
+			trig.AnchorX = bar.actionCenterX(panelAudioAction)
+			return r.TogglePanel(PanelAudio, out, trig) == nil
+		case action == panelAudioAction && button == buttonRight:
+			_ = r.stepAudio("mute")
+			return true
 		}
 		return false
+	})
+	bar.setAxisHandler(func(action string, delta int) bool {
+		if action != panelAudioAction {
+			return false
+		}
+		if delta > 0 {
+			_ = r.stepAudio("up")
+		} else if delta < 0 {
+			_ = r.stepAudio("down")
+		}
+		return true
 	})
 }
 
@@ -973,6 +1026,9 @@ func (r *Registry) viewLocked(connector string) barView {
 		Running:   r.running,
 	}
 	_, view.DND = r.notify.dndState(r.now)
+	if r.audio != nil {
+		view.Audio = r.audio.State()
+	}
 	if r.plugins != nil {
 		view.Plugins = r.plugins.frames(connector)
 	}
@@ -1037,6 +1093,20 @@ func (r *Registry) buildBar(cfg config.Config, connector string, tok theme.Token
 			return nil, nil, wayland.HostCallbacks{}, err
 		}
 		leases = append(leases, lease)
+	}
+	if r.audio != nil {
+		for _, item := range allItems(policy) {
+			if item.ID != "volume" {
+				continue
+			}
+			lease, err := r.audio.Acquire()
+			if err != nil {
+				releaseAll(leases)
+				return nil, nil, wayland.HostCallbacks{}, err
+			}
+			leases = append(leases, lease)
+			break
+		}
 	}
 
 	return bar, leases, wayland.HostCallbacks{

@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"image"
 	"math"
 	"strings"
 
@@ -171,15 +172,17 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style) error {
 	clear(c.Pix)
 	box := style.Scale120.PhysicalRect(style.Body)
 	radius := style.Scale120.Physical(style.Radius)
-	// The silhouette is drawn from the antialiased mask, and the rim is a real
-	// stroke over it. Filling the rim colour and laying a smaller fill on top
-	// left the border as the difference of two quantised silhouettes, which is
-	// why it thinned and broke up around the corners.
-	c.FillRounded(box, radius, style.rootFill())
-	if style.Rim.A > 0 {
-		c.StrokeRounded(box, radius, max(style.Scale120.Physical(1), 1), style.Rim)
+	var attached *image.Alpha
+	if style.AttachBulge > 0 {
+		attached = AttachedMask(box.W, box.H, radius, style.Scale120.Physical(style.AttachBulge), style.AttachEdge)
+		c.FillMasked(box, attached, style.rootFill())
+	} else {
+		c.FillRounded(box, radius, style.rootFill())
+		if style.Rim.A > 0 {
+			c.StrokeRounded(box, radius, max(style.Scale120.Physical(1), 1), style.Rim)
+		}
+		squareAttachedEdge(c, box, radius, style.AttachEdge, style.rootFill())
 	}
-	squareAttachedEdge(c, box, radius, style.AttachEdge, style.rootFill())
 
 	size := style.Scale120.Physical(style.Size)
 	if root.Kind == ui.KindScroll || root.Kind == ui.KindVirtualList {
@@ -196,7 +199,11 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style) error {
 			}
 		}
 	}
-	clearOutsideRoundedRect(c, box, radius, style.AttachEdge)
+	if attached != nil {
+		clearOutsideMask(c, box, attached)
+	} else {
+		clearOutsideRoundedRect(c, box, radius, style.AttachEdge)
+	}
 	return nil
 }
 

@@ -24,6 +24,10 @@ type Style struct {
 	// corners stay square so the rounded body does not punch a wallpaper
 	// seam against the bar.
 	AttachEdge string
+	// AttachBulge is the concave wing radius in logical pixels. Zero keeps
+	// the convex rounded rect; a positive value flares the attached edge
+	// into the bar.
+	AttachBulge int
 
 	Background Color
 	Foreground Color

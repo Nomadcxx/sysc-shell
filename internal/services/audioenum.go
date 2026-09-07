@@ -177,6 +177,14 @@ func (a *Audio) Mixer() AudioSnapshot {
 	return a.mixer
 }
 
+func (a *Audio) MixerReady() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.hasMixer
+}
+
+func (a *Audio) MixerChanges() <-chan AudioSnapshot { return a.mixerCh }
+
 func (a *Audio) SetDefault(id int) error {
 	return a.wpctl("set-default", strconv.Itoa(id))
 }
@@ -260,4 +268,13 @@ func (a *Audio) pollMixer() {
 	}
 	a.mixer = snap
 	a.hasMixer = true
+	select {
+	case a.mixerCh <- snap:
+	default:
+		select {
+		case <-a.mixerCh:
+		default:
+		}
+		a.mixerCh <- snap
+	}
 }

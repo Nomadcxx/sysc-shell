@@ -14,6 +14,7 @@ const (
 	PanelPlugin
 	PanelNotifications
 	PanelWallpaper
+	PanelAudio
 )
 
 func (p PanelID) String() string {
@@ -34,6 +35,8 @@ func (p PanelID) String() string {
 		return "notifications"
 	case PanelWallpaper:
 		return "wallpaper"
+	case PanelAudio:
+		return "audio"
 	default:
 		return "unknown"
 	}
@@ -47,6 +50,9 @@ type Placement struct {
 	Gap, Padding int
 	Panel        ui.Rect
 	Align        string
+	// AnchorX is the logical centre of the triggering widget. Zero means
+	// unset; Align then centres on the output.
+	AnchorX int
 	// CenterY centres the panel vertically inside the output minus the bar
 	// zone and padding (the launcher floats; every other panel hugs the bar).
 	CenterY bool
@@ -87,6 +93,9 @@ func (p Placement) Margins() Margins {
 }
 
 func alignX(p Placement) int {
+	if p.AnchorX > 0 {
+		return p.AnchorX - p.Panel.W/2
+	}
 	switch p.Align {
 	case "left":
 		return p.Padding

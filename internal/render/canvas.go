@@ -199,6 +199,37 @@ func (c *Canvas) FillRounded(r ui.Rect, radius int, col Color) {
 	blendMask(c, RoundedMask(radius, r.W, r.H), r.X, r.Y, col)
 }
 
+// FillMasked fills r through mask, placed at r's origin.
+func (c *Canvas) FillMasked(r ui.Rect, mask *image.Alpha, col Color) {
+	blendMask(c, mask, r.X, r.Y, col)
+}
+
+func clearOutsideMask(c *Canvas, r ui.Rect, mask *image.Alpha) {
+	if mask == nil {
+		clearOutsideRoundedRect(c, r, 0, "")
+		return
+	}
+	for y := 0; y < c.Height; y++ {
+		row := c.Pix[y*c.Stride : y*c.Stride+c.Width*4]
+		if y < r.Y || y >= r.Y+r.H || r.W <= 0 || r.H <= 0 {
+			clear(row)
+			continue
+		}
+		ly := y - r.Y
+		for x := 0; x < c.Width; x++ {
+			if x < r.X || x >= r.X+r.W {
+				off := x * 4
+				clear(row[off : off+4])
+				continue
+			}
+			if mask.AlphaAt(x-r.X, ly).A == 0 {
+				off := x * 4
+				clear(row[off : off+4])
+			}
+		}
+	}
+}
+
 // StrokeRounded outlines a rounded rectangle inward from its bounds using the
 // cached ring mask. Unlike strokeRoundedRect it antialiases both edges of the
 // band, which is what a hairline border needs: a one-pixel stroke quantised to

@@ -56,6 +56,7 @@ type Trigger struct {
 	BarZone    int
 	Align      string
 	OutW, OutH int
+	AnchorX    int
 }
 
 // PanelHost is one open panel: two surfaces' callbacks, content tree, focus,
@@ -140,6 +141,13 @@ type PanelHost struct {
 	profiles      []string
 	profileActive string
 	profilesOK    bool
+
+	bulge       int
+	audioTab    string
+	mixerLease  *services.MixerLease
+	pendingVol  map[int]int
+	pendingMute map[int]bool
+	pendingAt   time.Time
 }
 
 func parsePanelName(name string) (PanelID, error) {
@@ -160,6 +168,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelNotifications, nil
 	case "wallpaper":
 		return PanelWallpaper, nil
+	case "audio":
+		return PanelAudio, nil
 	default:
 		return 0, fmt.Errorf("unknown panel")
 	}
@@ -375,6 +385,8 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelNotifications, true
 	case "wallpaper":
 		return PanelWallpaper, true
+	case "audio":
+		return PanelAudio, true
 	default:
 		return 0, false
 	}
@@ -393,7 +405,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		size = r.plugins.panelSize()
 	}
 	gap := r.cfg.Panels.Gap
-	if id == PanelPlugin {
+	if id == PanelPlugin || id == PanelAudio {
 		gap = 0
 	}
 	place := Placement{
@@ -404,6 +416,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		Padding: r.cfg.Panels.Padding,
 		Panel:   size,
 		Align:   trig.Align,
+		AnchorX: trig.AnchorX,
 	}
 	if id == PanelSettings && place.Align == "" {
 		place.Align = "center"
@@ -450,6 +463,10 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 			h.wallpaperDir = firstRoot(h.wallpaperSnap)
 		}
 	}
+	if id == PanelAudio {
+		h.bulge = 12
+		h.audioTab = "volumes"
+	}
 	h.root = r.panelTree(h)
 	h.focus = ui.Focusables(h.root)
 	h.roving = ui.Roving{Count: len(h.focus)}
@@ -458,6 +475,9 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		// that happens to be first in the tree.
 		h.focusByName("Search")
 		h.wallpaperFocused = true
+	}
+	if id == PanelAudio {
+		h.focusByName("Volumes")
 	}
 	if id == PanelMonitor || id == PanelNotifications {
 		_ = h.ensureText()
@@ -517,6 +537,17 @@ func (r *Registry) acquirePanelLeases(h *PanelHost) error {
 			return err
 		}
 		h.leases = []*services.Lease{lease}
+	case PanelAudio:
+		if r.audio == nil {
+			h.errLabel = "audio unavailable"
+			return nil
+		}
+		lease, err := r.audio.MixerAcquire()
+		if err != nil {
+			h.errLabel = err.Error()
+			return nil
+		}
+		h.mixerLease = lease
 	}
 	return nil
 }
@@ -605,6 +636,12 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	if h.place.BarEdge == "bottom" {
 		anchor = uint32(layershell.ZwlrLayerSurfaceV1AnchorBottom | layershell.ZwlrLayerSurfaceV1AnchorLeft)
 	}
+	width := h.place.Panel.W
+	left := m.Left
+	if h.bulge > 0 {
+		width += 2 * h.bulge
+		left -= h.bulge
+	}
 	return &wayland.AuxSpec{
 		ID:            panelSurfaceID(h.id),
 		Namespace:     "sysc-shell-panel",
@@ -612,9 +649,9 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 		Anchor:        anchor,
 		MarginTop:     int32(m.Top),
 		MarginBottom:  int32(m.Bottom),
-		MarginLeft:    int32(m.Left),
+		MarginLeft:    int32(left),
 		MarginRight:   int32(m.Right),
-		Width:         int32(h.place.Panel.W),
+		Width:         int32(width),
 		Height:        int32(h.place.Panel.H),
 		ExclusiveZone: -1,
 		Keyboard:      keyboardExclusive,
@@ -686,11 +723,18 @@ func (h *PanelHost) configure(w, height, scale120 int) error {
 	if err := h.ensureText(); err != nil {
 		return err
 	}
-	box := ui.Rect{W: w, H: height}
+	box := h.layoutBox()
 	if h.root != nil && h.root.Kind == ui.KindRow {
 		return ui.Layout(h.root, box, h.measureText())
 	}
 	return ui.LayoutColumn(h.root, box, h.measureText())
+}
+
+func (h *PanelHost) layoutBox() ui.Rect {
+	if h.bulge <= 0 {
+		return ui.Rect{W: h.logicalW, H: h.logicalH}
+	}
+	return ui.Rect{X: h.bulge, W: max(h.logicalW-2*h.bulge, 0), H: h.logicalH}
 }
 
 func (h *PanelHost) measureText() ui.MeasureText {
@@ -734,12 +778,23 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 
 	style := h.paintTheme().PanelStyle()
 	// Only a panel draws its own rim; the bar, toasts and tray surfaces
-	// sit directly on the shared surface and leave it zero.
-	style.Rim = h.paintTheme().Outline
+	// sit directly on the shared surface and leave it zero. A fused audio
+	// panel paints no rim: it and the bar share Style.Background, and a
+	// stroke would read as a seam.
+	if h.id != PanelAudio {
+		style.Rim = h.paintTheme().Outline
+	}
 	style.Scale120 = scale
 	style.Body = body
 	if !h.place.CenterY {
 		style.AttachEdge = h.place.BarEdge
+	}
+	if h.bulge > 0 {
+		visible := 1.0
+		if h.anim != nil {
+			visible = h.anim.Value(panelSurfaceID(h.id), animVisible)
+		}
+		style.AttachBulge = int(float64(h.bulge)*visible + 0.5)
 	}
 	if err := render.Paint(c, h.root, h.text, style); err != nil {
 		return err
@@ -851,6 +906,9 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 				h.pressed = nil
 				if strings.HasPrefix(n.Action, "plugin-set:") {
 					return r.handlePluginManager(h, n)
+				}
+				if strings.HasPrefix(n.Action, "audio-") {
+					return h.applyAudioControl(r, n)
 				}
 				h.applySetting(r, n)
 				return true
@@ -1255,6 +1313,9 @@ func (h *PanelHost) adjustSlider(r *Registry, key uint32) bool {
 	if strings.HasPrefix(n.Action, "plugin-set:") {
 		return r.handlePluginManager(h, n)
 	}
+	if strings.HasPrefix(n.Action, "audio-") {
+		return h.applyAudioControl(r, n)
+	}
 	h.applySetting(r, n)
 	return true
 }
@@ -1344,6 +1405,13 @@ func (h *PanelHost) activate(r *Registry) bool {
 		return false
 	}
 	if strings.HasPrefix(n.Action, "wallpaper") && h.wallpaperAction(r, n) {
+		return true
+	}
+	if strings.HasPrefix(n.Action, "audio-") && h.applyAudioControl(r, n) {
+		return true
+	}
+	if n.Action == "audio-close" {
+		r.closePanelLocked(h.id)
 		return true
 	}
 	if strings.HasPrefix(n.Action, "notify:") {
@@ -1510,6 +1578,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		return pluginPanelError("starting", false)
 	case PanelNotifications:
 		return r.centerTreeFor(h)
+	case PanelAudio:
+		return audioTree(r, h)
 	default:
 		return placeholderTree()
 	}
@@ -1539,6 +1609,8 @@ func panelTargetSize(id PanelID) ui.Rect {
 		// The plugin picker's size, not native Noctalia's 980x700. A short
 		// output clamps it through Placement.FittedSize (D2).
 		return ui.Rect{W: 980, H: 1100}
+	case PanelAudio:
+		return ui.Rect{W: 560, H: 496}
 	default:
 		return ui.Rect{W: 280, H: 200}
 	}
@@ -1755,6 +1827,10 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 	r.sendAux(wayland.AuxRequest{Output: h.output, ID: shieldSurfaceID(id)})
 	releaseAll(h.leases)
 	h.leases = nil
+	if h.mixerLease != nil {
+		h.mixerLease.Release()
+		h.mixerLease = nil
+	}
 	h.editors = nil
 }
 
