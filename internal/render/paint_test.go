@@ -1419,6 +1419,40 @@ func TestIconTonePicksTheAccent(t *testing.T) {
 	}
 }
 
+func TestFilletPaintsBarColourOutsideTheBody(t *testing.T) {
+	style := testStyle
+	style.AttachEdge = "top"
+	style.Fillet = 8
+	style.FilletFill = Color{R: 0, G: 0, B: 255, A: 255}
+	style.Body = ui.Rect{X: 8, Y: 0, W: 100, H: 60}
+
+	c := newTestCanvas(t, 116, 60)
+	if err := Paint(c, &ui.Node{Kind: ui.KindColumn}, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatalf("paint: %v", err)
+	}
+
+	if got := pixelAt(t, c, 0, 0); got.B != 255 {
+		t.Fatalf("top-left corner = %v, want the fillet fill", got)
+	}
+	if got := pixelAt(t, c, 0, 8); got.A != 0 {
+		t.Fatalf("row 8 outside the body = %v, want transparent", got)
+	}
+}
+
+func TestZeroFilletLeavesTheSurfaceUnchanged(t *testing.T) {
+	style := testStyle
+	style.AttachEdge = "top"
+	style.Body = ui.Rect{X: 8, Y: 0, W: 100, H: 60}
+
+	c := newTestCanvas(t, 116, 60)
+	if err := Paint(c, &ui.Node{Kind: ui.KindColumn}, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatalf("paint: %v", err)
+	}
+	if got := pixelAt(t, c, 0, 0); got.A != 0 {
+		t.Fatalf("corner = %v, want transparent with no fillet", got)
+	}
+}
+
 func brightestPixel(t *testing.T, c *Canvas) Color {
 	t.Helper()
 	var best Color

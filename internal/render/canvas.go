@@ -163,13 +163,21 @@ func strokeRoundedRect(c *Canvas, r ui.Rect, radius, width int, col Color) {
 // clearOutsideRoundedRect restores transparency after children paint. Child
 // bounds may reach a body corner when padding is zero, but the final surface
 // silhouette must remain the same rounded rectangle as its background.
-func clearOutsideRoundedRect(c *Canvas, r ui.Rect, radius int, attachEdge string) {
+func clearOutsideRoundedRect(c *Canvas, r ui.Rect, radius, fillet int, attachEdge string) {
 	radius = min(radius, min(r.W, r.H)/2)
 	for y := 0; y < c.Height; y++ {
 		row := c.Pix[y*c.Stride : y*c.Stride+c.Width*4]
 		if y < r.Y || y >= r.Y+r.H || r.W <= 0 || r.H <= 0 {
 			clear(row)
 			continue
+		}
+		ext := 0
+		if fillet > 0 {
+			ly := y - r.Y
+			if attachEdge == "bottom" {
+				ly = r.Y + r.H - 1 - y
+			}
+			ext = filletExtent(ly, fillet)
 		}
 		inset := 0
 		if radius > 0 {
@@ -179,10 +187,33 @@ func clearOutsideRoundedRect(c *Canvas, r ui.Rect, radius int, attachEdge string
 				inset = roundedInset(ly, r.H, radius)
 			}
 		}
-		x0 := max(0, min(c.Width, r.X+inset))
-		x1 := max(x0, min(c.Width, r.X+r.W-inset))
+		x0 := max(0, min(c.Width, r.X+inset-ext))
+		x1 := max(x0, min(c.Width, r.X+r.W-inset+ext))
 		clear(row[:x0*4])
 		clear(row[x1*4:])
+	}
+}
+
+// fillAttachFillets paints the two concave wedges joining a panel to the bar,
+// one outside each side edge of the body, tapering over the fillet band.
+func fillAttachFillets(c *Canvas, r ui.Rect, fillet int, attachEdge string, col Color) {
+	if fillet <= 0 || col.A == 0 || r.W <= 0 || r.H <= 0 {
+		return
+	}
+	if attachEdge != "top" && attachEdge != "bottom" {
+		return
+	}
+	for y := 0; y <= fillet && y < r.H; y++ {
+		ext := filletExtent(y, fillet)
+		if ext <= 0 {
+			continue
+		}
+		row := r.Y + y
+		if attachEdge == "bottom" {
+			row = r.Y + r.H - 1 - y
+		}
+		fillRect(c, ui.Rect{X: r.X - ext, Y: row, W: ext, H: 1}, col)
+		fillRect(c, ui.Rect{X: r.X + r.W, Y: row, W: ext, H: 1}, col)
 	}
 }
 

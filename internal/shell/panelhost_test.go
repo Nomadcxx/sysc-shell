@@ -512,13 +512,13 @@ func TestOpeningNotificationsSetsCenterOpenAndMarksSeen(t *testing.T) {
 	if panel == nil || panel.ID != "panel:notifications" {
 		t.Fatalf("opened %+v", panel)
 	}
-	if panel.Width != 416 {
-		t.Fatalf("width = %d, want 416", panel.Width)
+	if panel.Width != 424 {
+		t.Fatalf("width = %d, want 424", panel.Width)
 	}
 	if panel.Height < 300 {
 		t.Fatalf("height = %d, want at least 300", panel.Height)
 	}
-	if want := int32(1536 - 416 - 8); panel.MarginLeft != want {
+	if want := int32(1536 - 416 - 8 - 4); panel.MarginLeft != want {
 		t.Fatalf("margin left = %d, want trailing %d", panel.MarginLeft, want)
 	}
 	if panel.MarginTop != 44 {
@@ -655,7 +655,7 @@ func TestTogglePanelByNameCentresFlushUnderTheBar(t *testing.T) {
 	if got.MarginTop != 44 {
 		t.Fatalf("margin top = %d, want flush on the 44px exclusive zone", got.MarginTop)
 	}
-	if want := int32((1536 - 640) / 2); got.MarginLeft != want {
+	if want := int32((1536-640)/2 - 4); got.MarginLeft != want {
 		t.Fatalf("margin left = %d, want centred %d", got.MarginLeft, want)
 	}
 }

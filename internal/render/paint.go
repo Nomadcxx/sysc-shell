@@ -62,6 +62,9 @@ func (s Style) rootFill() Color {
 	return c
 }
 
+// RootFill is the painted background of this surface, including SurfaceOpacity.
+func (s Style) RootFill() Color { return s.rootFill() }
+
 // Shadow strengths for the three elevation levels. They scale the palette's
 // Shadow token rather than naming a colour, so a light theme's shadow is its
 // own and not a black smear.
@@ -180,6 +183,8 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style) error {
 		c.StrokeRounded(box, radius, max(style.Scale120.Physical(1), 1), style.Rim)
 	}
 	squareAttachedEdge(c, box, radius, style.AttachEdge, style.rootFill())
+	fillet := style.Scale120.Physical(style.Fillet)
+	fillAttachFillets(c, box, fillet, style.AttachEdge, style.FilletFill)
 
 	size := style.Scale120.Physical(style.Size)
 	if root.Kind == ui.KindScroll || root.Kind == ui.KindVirtualList {
@@ -196,7 +201,7 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style) error {
 			}
 		}
 	}
-	clearOutsideRoundedRect(c, box, radius, style.AttachEdge)
+	clearOutsideRoundedRect(c, box, radius, fillet, style.AttachEdge)
 	return nil
 }
 

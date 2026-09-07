@@ -605,6 +605,10 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	if h.place.BarEdge == "bottom" {
 		anchor = uint32(layershell.ZwlrLayerSurfaceV1AnchorBottom | layershell.ZwlrLayerSurfaceV1AnchorLeft)
 	}
+	fillet := h.filletMargin()
+	if fillet > 0 {
+		m.Left -= fillet
+	}
 	return &wayland.AuxSpec{
 		ID:            panelSurfaceID(h.id),
 		Namespace:     "sysc-shell-panel",
@@ -614,7 +618,7 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 		MarginBottom:  int32(m.Bottom),
 		MarginLeft:    int32(m.Left),
 		MarginRight:   int32(m.Right),
-		Width:         int32(h.place.Panel.W),
+		Width:         int32(h.place.Panel.W + 2*fillet),
 		Height:        int32(h.place.Panel.H),
 		ExclusiveZone: -1,
 		Keyboard:      keyboardExclusive,
@@ -634,6 +638,21 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 			},
 		},
 	}
+}
+
+// filletMargin is the per-side room the concave bar joint needs. It clamps to
+// the gap between this panel's edge and the bar's, because a wedge wider than
+// that margin paints past the bar it is meant to join. Floating panels
+// (CenterY) do not attach, so they take no margin.
+func (h *PanelHost) filletMargin() int {
+	if h == nil || h.place.BarEdge == "" || h.place.CenterY {
+		return 0
+	}
+	room := h.place.Padding - BarGap
+	if room < 0 {
+		return 0
+	}
+	return min(h.theme.Fillet, room)
 }
 
 // panelFontFamily resolves the font of the output the panel opens on. A panel
@@ -687,6 +706,9 @@ func (h *PanelHost) configure(w, height, scale120 int) error {
 		return err
 	}
 	box := ui.Rect{W: w, H: height}
+	if margin := h.filletMargin(); margin > 0 && w >= h.place.Panel.W+2*margin {
+		box = ui.Rect{X: margin, W: w - 2*margin, H: height}
+	}
 	if h.root != nil && h.root.Kind == ui.KindRow {
 		return ui.Layout(h.root, box, h.measureText())
 	}
@@ -727,6 +749,9 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	body := ui.Rect{W: h.logicalW, H: h.logicalH}
 	if body.W <= 0 || body.H <= 0 {
 		body = ui.Rect{W: h.place.Panel.W, H: h.place.Panel.H}
+	}
+	if margin := h.filletMargin(); margin > 0 && body.W >= h.place.Panel.W+2*margin {
+		body = ui.Rect{X: margin, W: h.place.Panel.W, H: body.H}
 	}
 	// Resolve the pointer state onto the tree that is about to be painted. The
 	// painter consumes an immutable mask; nothing downstream mutates state.
