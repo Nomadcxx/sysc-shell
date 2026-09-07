@@ -900,9 +900,9 @@ func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size in
 }
 
 // paintIcon draws one named glyph from the embedded Material subset, centred in
-// the node's box and tinted with the foreground it inherited from the chrome it
-// sits in. An icon takes no fill of its own: the control around it already
-// resolved one.
+// the node's box. The glyph takes the colour its Tone names, resolved the same
+// way text is: ToneNormal is the foreground it inherited from the chrome around
+// it, and an icon still takes no fill of its own.
 func paintIcon(c *Canvas, n *ui.Node, text *TextRenderer, style Style) error {
 	if n.Icon == "" {
 		return nil
@@ -919,7 +919,7 @@ func paintIcon(c *Canvas, n *ui.Node, text *TextRenderer, style Style) error {
 	b := mask.Alpha.Bounds()
 	x := box.X + (box.W-b.Dx())/2
 	y := box.Y + (box.H-b.Dy())/2
-	blendMask(c, mask.Alpha, x, y, style.Foreground)
+	blendMask(c, mask.Alpha, x, y, textColor(style, n.Tone))
 	return nil
 }
 
