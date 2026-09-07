@@ -32,6 +32,13 @@ type Audio struct {
 	stop     chan struct{}
 	done     chan struct{}
 	changes  chan AudioState
+
+	dumpBin   string
+	mixerN    int
+	mixerStop chan struct{}
+	mixerDone chan struct{}
+	mixer     AudioSnapshot
+	hasMixer  bool
 }
 
 func NewAudio(interval time.Duration, path string) *Audio {
@@ -96,9 +103,14 @@ func (a *Audio) Close() {
 		l.audio = nil
 	}
 	done := a.stopIfUnusedLocked()
+	a.mixerN = 0
+	mixerDone := a.stopMixerLocked()
 	a.mu.Unlock()
 	if done != nil {
 		<-done
+	}
+	if mixerDone != nil {
+		<-mixerDone
 	}
 }
 
