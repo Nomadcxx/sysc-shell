@@ -351,6 +351,28 @@ func TestBucketCountSpansActiveAndHistory(t *testing.T) {
 	}
 }
 
+func TestFilterRowIsOneSegmentedControl(t *testing.T) {
+	now := time.Date(2026, 9, 7, 15, 0, 0, 0, time.Local)
+	history := []protocol.HistoryEntry{{ID: 1, Timestamp: now.Add(-time.Hour)}}
+
+	row := centreFilterRow(nil, history, "today", now, 392)
+	if row.Kind != ui.KindSegmented {
+		t.Fatalf("kind = %v, want segmented", row.Kind)
+	}
+	if len(row.Children) != 4 {
+		t.Fatalf("segments = %d, want 4", len(row.Children))
+	}
+	if !row.Children[1].State.Has(ui.StateSelected) {
+		t.Fatal("Today is not marked selected")
+	}
+	if row.Children[0].State.Has(ui.StateSelected) {
+		t.Fatal("All is selected while the filter is today")
+	}
+	if got, want := row.Children[1].Children[0].Text, "Today (1)"; got != want {
+		t.Fatalf("label = %q, want %q", got, want)
+	}
+}
+
 func buttonByAction(tree *ui.Node, action string) *ui.Node {
 	for _, b := range buttons(tree) {
 		if b.Action == action {

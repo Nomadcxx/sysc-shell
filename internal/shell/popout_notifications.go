@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -165,7 +166,7 @@ func (r *Registry) centerTreeFor(h *PanelHost) *ui.Node {
 	body := []*ui.Node{}
 	if tab == 1 {
 		sort.Slice(history, func(i, j int) bool { return history[i].Timestamp.After(history[j].Timestamp) })
-		children = append(children, historyChipRow(history, filter, now))
+		children = append(children, centreFilterRow(nil, history, filter, now, 392))
 		shown := 0
 		for _, e := range history {
 			if !historyFilter(filter, e.Timestamp, now) {
@@ -293,26 +294,24 @@ func bucketCount(bucket string, active []protocol.Notification, history []protoc
 	return n
 }
 
-func historyChipRow(history []protocol.HistoryEntry, filter string, now time.Time) *ui.Node {
-	showOlder := false
-	for _, e := range history {
-		if historyFilter("older", e.Timestamp, now) {
-			showOlder = true
-			break
-		}
-	}
-	row := &ui.Node{Kind: ui.KindRow, Gap: cardGap}
+// centreFilterRow is the one control selecting what the list shows. It replaced
+// a tab row plus a six-chip row: two controls for one question.
+func centreFilterRow(active []protocol.Notification, history []protocol.HistoryEntry, filter string, now time.Time, width int) *ui.Node {
+	segments := make([]*ui.Node, 0, len(historyChips))
 	for _, c := range historyChips {
-		if c.id == "older" && !showOlder {
-			continue
+		seg := &ui.Node{
+			Kind: ui.KindButton, Action: "notify:center:filter:" + c.id,
+			Name: c.label, Role: "tab", Focusable: true, Padding: 4,
+			Children: []*ui.Node{{Kind: ui.KindText,
+				Text: fmt.Sprintf("%s (%d)", c.label, bucketCount(c.id, active, history, now))}},
 		}
-		row.Children = append(row.Children, &ui.Node{
-			Kind: ui.KindButton, Text: c.label, Padding: 4,
-			Action: "notify:center:filter:" + c.id, Name: c.label, Role: "button",
-			Focusable: true, Bold: filter == c.id,
-		})
+		if filter == c.id {
+			seg.State |= ui.StateSelected
+		}
+		segments = append(segments, seg)
 	}
-	return row
+	return &ui.Node{Kind: ui.KindSegmented, Key: "notify-filter", Gap: 2,
+		Width: width, Children: segments}
 }
 
 var dndPresets = []struct {
