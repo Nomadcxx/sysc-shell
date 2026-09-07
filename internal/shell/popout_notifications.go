@@ -1,14 +1,13 @@
 package shell
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
-	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -147,11 +146,6 @@ func (r *Registry) centerTreeFor(h *PanelHost) *ui.Node {
 
 	now := r.clockNow()
 	_, dnd := r.dndStateAt(now)
-	sched, _ := render.IconByName("schedule")
-	clearAction := "notify:center:dismiss-all"
-	if tab == 1 {
-		clearAction = "notify:center:clear-history"
-	}
 	filter := "all"
 	expand := ""
 	showMenu := false
@@ -163,29 +157,10 @@ func (r *Registry) centerTreeFor(h *PanelHost) *ui.Node {
 		showMenu = h.notifyMenu
 	}
 
-	headerBtns := []*ui.Node{
-		{Kind: ui.KindText, Text: "Notifications"},
-		{Kind: ui.KindButton, Text: notifyGlyph(dnd), Action: "notify:center:dnd",
-			Name: "DND", Role: "button", Focusable: true},
-		{Kind: ui.KindButton, Text: string(sched), Action: "notify:center:schedule",
-			Name: "Schedule", Role: "button", Focusable: true},
-		{Kind: ui.KindButton, Text: "Clear", Action: clearAction,
-			Name: "Clear", Role: "button", Focusable: true},
-	}
-	children := []*ui.Node{
-		{Kind: ui.KindRow, Gap: cardGap, Children: headerBtns},
-	}
+	children := []*ui.Node{centreHeaderRow(dnd)}
 	if showMenu {
 		children = append(children, dndPresetColumn())
 	}
-	children = append(children, &ui.Node{Kind: ui.KindRow, Gap: cardGap, Children: []*ui.Node{
-		{Kind: ui.KindButton, Text: fmt.Sprintf("Current (%d)", len(active)),
-			Action: "notify:center:tab:0", Name: "Current", Role: "tab",
-			Focusable: true, Bold: tab == 0},
-		{Kind: ui.KindButton, Text: fmt.Sprintf("History (%d)", len(history)),
-			Action: "notify:center:tab:1", Name: "History", Role: "tab",
-			Focusable: true, Bold: tab == 1},
-	}})
 
 	body := []*ui.Node{}
 	if tab == 1 {
@@ -260,6 +235,37 @@ func (r *Registry) lookupNotifyIcon(name string) *ui.Image {
 	}
 	_, _, _ = r.trayIcons.Request(key)
 	return nil
+}
+
+// centreIconButton is one circular control in the centre's header. The glyph
+// carries no fill of its own; the button around it resolves one.
+func centreIconButton(icon, action, name string) *ui.Node {
+	return &ui.Node{
+		Kind: ui.KindButton, Action: action, Name: name, Role: "button",
+		Focusable: true, Shape: ui.ShapeCircle, Fill: ui.FillContainerHighest,
+		Padding:  centreIconPad,
+		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: icon, IconSize: centreIconSize}},
+	}
+}
+
+func centreHeaderRow(dnd bool) *ui.Node {
+	title := &ui.Node{Kind: ui.KindRow, Gap: cardGap, Children: []*ui.Node{
+		{Kind: ui.KindIcon, Icon: "notifications", IconSize: centreIconSize, Tone: ui.ToneAccent},
+		{Kind: ui.KindText, Text: "Notifications", TextRole: theme.RoleHeadline},
+	}}
+	dndIcon := "notifications"
+	if dnd {
+		dndIcon = "do_not_disturb_on"
+	}
+	controls := &ui.Node{Kind: ui.KindRow, Gap: cardGap, Children: []*ui.Node{
+		centreIconButton(dndIcon, "notify:center:dnd", "Do not disturb"),
+		centreIconButton("schedule", "notify:center:schedule", "Schedule"),
+		centreIconButton("delete", "notify:center:clear", "Clear"),
+		centreIconButton("settings", "notify:center:settings", "Settings"),
+		centreIconButton("close", "notify:center:close", "Close"),
+	}}
+	return &ui.Node{Kind: ui.KindRow, Gap: cardGap, PinEnd: true,
+		Children: []*ui.Node{title, controls}}
 }
 
 var historyChips = []struct{ id, label string }{

@@ -565,20 +565,10 @@ func TestNotificationsTabSwitchGrowsSurfaceHeight(t *testing.T) {
 	_ = drainAux(t, reg, 2)
 
 	h := reg.panelHosts[PanelNotifications]
-	found := false
-	for i, n := range h.focus {
-		if n.Action == "notify:center:tab:1" {
-			h.roving.Set(i)
-			h.activate(reg)
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatal("history tab missing")
-	}
+	h.notifyTab = 1
+	reg.rebuildPanel(h)
 	if reg.panelHosts[PanelNotifications] == nil {
-		t.Fatal("tab switch dropped the centre")
+		t.Fatal("history rebuild dropped the centre")
 	}
 	for {
 		select {
@@ -616,10 +606,6 @@ func TestNotificationsRebuildOnNotifyDelta(t *testing.T) {
 		Lifetime: &protocol.Lifetime{ID: 9, DurationMS: 5000, RemainingMS: 5000, Running: true}}))
 
 	h := reg.panelHosts[PanelNotifications]
-	cur := buttonByAction(h.root, "notify:center:tab:0")
-	if cur == nil || cur.Text != "Current (1)" {
-		t.Fatalf("current tab after delta = %+v", cur)
-	}
 	if !containsText(h.root, "incoming") {
 		t.Fatalf("tree after delta = %v", texts(h.root))
 	}

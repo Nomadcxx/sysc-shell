@@ -11,11 +11,13 @@ import (
 )
 
 const (
-	cardIconSize = 56
-	cardGap      = 6
-	cardPadding  = 12
-	cardChipW    = 8
-	toastMeterH  = 3
+	cardIconSize   = 56
+	cardGap        = 6
+	cardPadding    = 12
+	cardChipW      = 8
+	toastMeterH    = 3
+	centreIconSize = 20
+	centreIconPad  = 6
 )
 
 func protocolImage(img *protocol.Image) *ui.Image {

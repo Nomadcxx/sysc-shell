@@ -1412,10 +1412,17 @@ func (h *PanelHost) activateNotify(r *Registry, n *ui.Node) bool {
 	h.lastAction = action
 	if rest, ok := strings.CutPrefix(action, "notify:center:"); ok {
 		switch {
-		case rest == "dismiss-all":
-			r.sendNotify(protocol.Command{Kind: protocol.CommandDismissAll})
-		case rest == "clear-history":
-			r.sendNotify(protocol.Command{Kind: protocol.CommandHistoryClear})
+		case rest == "clear":
+			r.clearVisible(h)
+		case rest == "settings":
+			trig := Trigger{BarEdge: h.place.BarEdge, BarZone: h.place.BarZone, OutW: h.place.Output.W, OutH: h.place.Output.H}
+			if where, ok := r.panels.Output(PanelSettings); ok && where == h.output {
+				r.closePanelLocked(PanelSettings)
+			} else {
+				_ = r.openPanelRootLocked(PanelSettings, h.output, trig)
+			}
+		case rest == "close":
+			r.closePanelLocked(h.id)
 		case rest == "dnd":
 			_, on := r.notify.dndState(r.clockNow())
 			r.notify.setDND(!on)
@@ -1425,9 +1432,6 @@ func (h *PanelHost) activateNotify(r *Registry, n *ui.Node) bool {
 			r.rebuildPanel(h)
 		case rest == "schedule":
 			h.notifyMenu = !h.notifyMenu
-			r.rebuildPanel(h)
-		case strings.HasPrefix(rest, "tab:"):
-			h.notifyTab, _ = strconv.Atoi(strings.TrimPrefix(rest, "tab:"))
 			r.rebuildPanel(h)
 		case strings.HasPrefix(rest, "filter:"):
 			h.notifyFilter = strings.TrimPrefix(rest, "filter:")
@@ -1478,6 +1482,13 @@ func (h *PanelHost) activateNotify(r *Registry, n *ui.Node) bool {
 		}
 	}
 	return true
+}
+
+// clearVisible is the header Clear target. Task 16 replaces this with the
+// visible-set rule; until then it clears history so the control does something
+// the service already accepts.
+func (r *Registry) clearVisible(h *PanelHost) {
+	r.sendNotify(protocol.Command{Kind: protocol.CommandHistoryClear})
 }
 
 func (h *PanelHost) afterFocusChange(r *Registry) {

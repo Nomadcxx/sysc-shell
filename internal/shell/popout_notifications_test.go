@@ -1,13 +1,11 @@
 package shell
 
 import (
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
-	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -102,42 +100,32 @@ func TestActiveGroupsMailCountAndCriticalFirst(t *testing.T) {
 	}
 }
 
-func TestCenterHeaderHasTitleDNDScheduleClearAndTabs(t *testing.T) {
+func TestCentreHeaderCarriesFiveCircularButtons(t *testing.T) {
 	r := NewRegistry(config.Default())
 	r.applyNotify(snap(1))
-	tree := r.centerTree()
+	tree := r.centerTreeFor(nil)
 
-	if !containsText(tree, "Notifications") {
-		t.Fatalf("title missing: %v", texts(tree))
-	}
-	dnd := buttonByName(tree, "DND")
-	if dnd == nil || dnd.Action != "notify:center:dnd" || dnd.Text != notifyGlyph(false) {
-		t.Fatalf("DND = %+v", dnd)
-	}
-	schedRune, _ := render.IconByName("schedule")
-	sched := buttonByName(tree, "Schedule")
-	if sched == nil || sched.Text != string(schedRune) {
-		t.Fatalf("schedule = %+v", sched)
-	}
-	clear := buttonByName(tree, "Clear")
-	if clear == nil || clear.Action != "notify:center:dismiss-all" || clear.Text != "Clear" {
-		t.Fatalf("clear = %+v", clear)
-	}
-	cur := buttonByAction(tree, "notify:center:tab:0")
-	if cur == nil || cur.Role != "tab" || cur.Text != "Current (0)" {
-		t.Fatalf("current tab = %+v", cur)
-	}
-	hist := buttonByAction(tree, "notify:center:tab:1")
-	if hist == nil || hist.Role != "tab" || hist.Text != "History (0)" {
-		t.Fatalf("history tab = %+v", hist)
-	}
-	for _, b := range buttons(tree) {
-		switch b.Text {
-		case "1h", "Dismiss all", "Clear history":
-			t.Fatalf("stub header button still present: %+v", b)
+	for _, action := range []string{
+		"notify:center:dnd", "notify:center:schedule", "notify:center:clear",
+		"notify:center:settings", "notify:center:close",
+	} {
+		n := findAction(tree, action)
+		if n == nil {
+			t.Fatalf("missing action %s", action)
 		}
-		if b.Name == "Settings" || strings.Contains(strings.ToLower(b.Name), "keyboard") {
-			t.Fatalf("unwanted header button: %+v", b)
+		if n.Shape != ui.ShapeCircle {
+			t.Fatalf("%s shape = %v, want circle", action, n.Shape)
+		}
+		if n.Fill != ui.FillContainerHighest {
+			t.Fatalf("%s fill = %v, want ContainerHighest", action, n.Fill)
+		}
+		if n.Name == "" || n.Role != "button" {
+			t.Fatalf("%s is not addressable: name=%q role=%q", action, n.Name, n.Role)
+		}
+	}
+	for _, gone := range []string{"notify:center:tab:0", "notify:center:tab:1", "notify:center:clear-history"} {
+		if findAction(tree, gone) != nil {
+			t.Fatalf("retired action %s is still in the tree", gone)
 		}
 	}
 }
@@ -164,64 +152,16 @@ func TestCenterCurrentTabShowsLiveNotHistory(t *testing.T) {
 	if containsText(tree, "old") {
 		t.Fatalf("current tab listed history: %v", got)
 	}
-	cur := buttonByAction(tree, "notify:center:tab:0")
-	hist := buttonByAction(tree, "notify:center:tab:1")
-	if cur == nil || cur.Text != "Current (1)" {
-		t.Fatalf("current count = %+v", cur)
-	}
-	if hist == nil || hist.Text != "History (1)" {
-		t.Fatalf("history count = %+v", hist)
-	}
 }
 
-func TestCenterClearActionFollowsTab(t *testing.T) {
+func TestCenterClearActionIsAlwaysClear(t *testing.T) {
 	r := NewRegistry(config.Default())
 	r.applyNotify(snap(1))
 	h := &PanelHost{id: PanelNotifications}
 	tree := r.centerTreeFor(h)
 	clear := buttonByName(tree, "Clear")
-	if clear == nil || clear.Action != "notify:center:dismiss-all" {
-		t.Fatalf("tab 0 clear = %+v", clear)
-	}
-	h.notifyTab = 1
-	tree = r.centerTreeFor(h)
-	clear = buttonByName(tree, "Clear")
-	if clear == nil || clear.Action != "notify:center:clear-history" {
-		t.Fatalf("tab 1 clear = %+v", clear)
-	}
-}
-
-func TestCenterTabActivateSelectsHistory(t *testing.T) {
-	r := NewRegistry(config.Default())
-	r.applyNotify(snap(1))
-	r.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
-		History: ptrH(historyEntry(2, "mail", "Mail", "old", time.Unix(1_756_000_000, 0), true))}))
-	h := &PanelHost{id: PanelNotifications}
-	r.rebuildPanel(h)
-	found := false
-	for i, n := range h.focus {
-		if n.Action == "notify:center:tab:1" {
-			h.roving.Set(i)
-			h.activate(r)
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("history tab not focusable: %v", focusableNames(h.root))
-	}
-	if h.notifyTab != 1 {
-		t.Fatalf("notifyTab = %d, want 1", h.notifyTab)
-	}
-	if !containsText(h.root, "old") {
-		t.Fatalf("history tab lacks history: %v", texts(h.root))
-	}
-	if containsText(h.root, "Nothing to see here") {
-		t.Fatalf("history tab showed current empty copy: %v", texts(h.root))
-	}
-	clear := buttonByName(h.root, "Clear")
-	if clear == nil || clear.Action != "notify:center:clear-history" {
-		t.Fatalf("rebuilt clear = %+v", clear)
+	if clear == nil || clear.Action != "notify:center:clear" {
+		t.Fatalf("clear = %+v", clear)
 	}
 }
 
@@ -237,37 +177,17 @@ func TestCenterActivateClearSetsLastAction(t *testing.T) {
 			break
 		}
 	}
-	if h.lastAction != "notify:center:dismiss-all" {
+	if h.lastAction != "notify:center:clear" {
 		t.Fatalf("lastAction = %q", h.lastAction)
 	}
 }
 
-func TestCenterClearSendsDismissAll(t *testing.T) {
+func TestCenterClearSendsHistoryClear(t *testing.T) {
 	r := NewRegistry(config.Default())
 	sender := &fakeNotifySender{}
 	r.notifySender = sender
 	r.applyNotify(snap(1))
 	h := &PanelHost{id: PanelNotifications}
-	r.rebuildPanel(h)
-	for i, n := range h.focus {
-		if n.Name == "Clear" {
-			h.roving.Set(i)
-			h.activate(r)
-			break
-		}
-	}
-	got := sender.ofKind(protocol.CommandDismissAll)
-	if len(got) != 1 {
-		t.Fatalf("dismiss-all = %+v", sender.cmds)
-	}
-}
-
-func TestCenterClearHistorySendsHistoryClear(t *testing.T) {
-	r := NewRegistry(config.Default())
-	sender := &fakeNotifySender{}
-	r.notifySender = sender
-	r.applyNotify(snap(1))
-	h := &PanelHost{id: PanelNotifications, notifyTab: 1}
 	r.rebuildPanel(h)
 	for i, n := range h.focus {
 		if n.Name == "Clear" {
@@ -323,8 +243,8 @@ func TestCenterDNDGlyphSwapsWhenOn(t *testing.T) {
 	r := NewRegistry(config.Default())
 	r.applyNotify(snap(1))
 	r.setDND(true)
-	dnd := buttonByName(r.centerTree(), "DND")
-	if dnd == nil || dnd.Text != notifyGlyph(true) {
+	dnd := buttonByName(r.centerTree(), "Do not disturb")
+	if dnd == nil || len(dnd.Children) == 0 || dnd.Children[0].Icon != "do_not_disturb_on" {
 		t.Fatalf("DND on = %+v", dnd)
 	}
 }
