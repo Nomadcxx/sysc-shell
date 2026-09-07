@@ -163,6 +163,15 @@ func TestAnimatorLoopParksUnderReducedMotion(t *testing.T) {
 	}
 }
 
+func TestAnimatorLoopWithNoTripDoesNotRequestFrames(t *testing.T) {
+	t.Parallel()
+	a, _ := newTestAnimator(false)
+	a.TargetLoop("wordmark", animGradient, -0.45, 0.45, 0, ui.GradientPingPong)
+	if !a.Settled() {
+		t.Fatal("zero-duration loop would request frames forever")
+	}
+}
+
 func TestAnimatorSnapsInteractionUnderReducedMotion(t *testing.T) {
 	t.Parallel()
 	a, _ := newTestAnimator(true)

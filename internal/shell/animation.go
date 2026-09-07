@@ -88,10 +88,13 @@ func (v animValue) at(now time.Time) float64 {
 }
 
 func (v animValue) settled(now time.Time) bool {
+	if v.dur <= 0 {
+		return true
+	}
 	if v.loop != ui.GradientNone {
 		return false
 	}
-	return v.dur <= 0 || now.Sub(v.start) >= v.dur
+	return now.Sub(v.start) >= v.dur
 }
 
 // animator holds one surface's in-flight visual state. It is deliberately
