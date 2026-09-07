@@ -742,6 +742,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 			once.Do(func() {
 				r.mu.Lock()
 				outgoing := r.leases
+				outgoingBars := r.bars
 				// Coordinates and unit are the request, not a lease parameter,
 				// so the service has to be told. It is a no-op unless they
 				// changed, which is the common case for an unrelated reload.
@@ -774,6 +775,9 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				toastOutputs := r.outputGlobalsLocked()
 				plugins := r.plugins
 				r.mu.Unlock()
+				for _, bar := range outgoingBars {
+					bar.stopAnimation()
+				}
 
 				r.SyncToastOutputs(toastOutputs)
 				if plugins != nil {
@@ -789,6 +793,9 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 		},
 		Rollback: func() {
 			once.Do(func() {
+				for _, bar := range bars {
+					bar.stopAnimation()
+				}
 				for _, held := range leases {
 					releaseAll(held)
 				}
@@ -804,7 +811,8 @@ func (r *Registry) DropHost(global uint32) {
 	r.mu.Lock()
 	leases := r.leases[global]
 	gone := ""
-	if bar, ok := r.bars[global]; ok {
+	bar := r.bars[global]
+	if bar != nil {
 		gone = bar.connector()
 	}
 	delete(r.bars, global)
@@ -813,6 +821,9 @@ func (r *Registry) DropHost(global uint32) {
 	toastOutputs := r.outputGlobalsLocked()
 	plugins := r.plugins
 	r.mu.Unlock()
+	if bar != nil {
+		bar.stopAnimation()
+	}
 
 	if gone != "" && !slices.Contains(r.connectorsSnapshot(), gone) {
 		r.wallpaperOutputGone(gone)
@@ -861,6 +872,7 @@ func (r *Registry) Close() {
 	}
 	var osdAux []wayland.AuxRequest
 	var leases []*services.Lease
+	var bars []*Bar
 	var audioLease, brightLease *services.Lease
 	if locked {
 		if r.toasts != nil {
@@ -879,12 +891,18 @@ func (r *Registry) Close() {
 			leases = append(leases, held...)
 			delete(r.leases, global)
 		}
+		for _, bar := range r.bars {
+			bars = append(bars, bar)
+		}
 		r.bars = make(map[uint32]*Bar)
 		audioLease = r.audioLease
 		r.audioLease = nil
 		brightLease = r.brightLease
 		r.brightLease = nil
 		r.mu.Unlock()
+	}
+	for _, bar := range bars {
+		bar.stopAnimation()
 	}
 
 	for _, req := range osdAux {

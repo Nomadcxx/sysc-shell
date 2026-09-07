@@ -90,7 +90,7 @@ Exit gate:
 - hotplug and unplug reconcile hosts without restarting the shell;
 - changing scale or mode does not leave stale buffers or wrong hit regions;
 - Niri windows respect the configured exclusive zone;
-- a 60-minute idle run shows no continuous frame loop;
+- a 60-minute idle run shows no continuous frame loop when reduced motion is on or no looping paint is visible;
 - a reconnect/restart test restores all bars.
 
 ## Milestone 3: Built-in widget foundation

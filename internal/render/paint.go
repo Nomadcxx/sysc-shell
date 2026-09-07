@@ -314,6 +314,10 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 	case ui.KindSeparator:
 		box := style.Scale120.PhysicalRect(n.Bounds)
 		box.H = max(box.H, 1)
+		if stops := resolveGradient(n, style); stops != nil {
+			fillRectGradient(c, box, stops, n.Gradient.AngleDeg, n.GradientOffset)
+			return nil
+		}
 		// A divider is the quiet boundary role. Track is OnSurfaceVariant, a
 		// text colour, which reads too loud for a rule between rows.
 		fillRect(c, box, style.outlineVariant())
@@ -945,8 +949,43 @@ func paintWordmark(c *Canvas, n *ui.Node, style Style) error {
 	if mask == nil {
 		return nil
 	}
+	if stops := resolveGradient(n, style); stops != nil {
+		blendMaskGradient(c, mask, box.X, box.Y, stops, n.Gradient.AngleDeg, n.GradientOffset)
+		return nil
+	}
 	blendMask(c, mask, box.X, box.Y, style.accent())
 	return nil
+}
+
+func resolvePaintRole(style Style, role ui.PaintRole) Color {
+	switch role {
+	case ui.PaintPrimary:
+		return style.Accent
+	case ui.PaintOnSurfaceVariant:
+		return style.Track
+	case ui.PaintOnSurface:
+		return style.Foreground
+	case ui.PaintSurface:
+		return style.Background
+	default:
+		return style.Accent
+	}
+}
+
+func resolveGradient(n *ui.Node, style Style) []gradientStop {
+	count := n.Gradient.Count
+	if count < 2 || count > 4 || math.IsNaN(n.GradientOffset) || math.IsInf(n.GradientOffset, 0) {
+		return nil
+	}
+	stops := make([]gradientStop, count)
+	for i := 0; i < count; i++ {
+		s := n.Gradient.Stops[i]
+		if math.IsNaN(s.At) || math.IsInf(s.At, 0) || i > 0 && s.At < n.Gradient.Stops[i-1].At {
+			return nil
+		}
+		stops[i] = gradientStop{at: s.At, c: resolvePaintRole(style, s.Role)}
+	}
+	return stops
 }
 
 // A button is a stadium unless it carries an explicit card radius.
