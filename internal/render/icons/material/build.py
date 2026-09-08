@@ -58,6 +58,23 @@ ICONS = [
     "mic_off",
     "graphic_eq",
     "headphones",
+    "tune",
+    "home",
+    "music_note",
+    "desktop_windows",
+    "wifi",
+    "bluetooth",
+    "cloud",
+    "calendar_month",
+    "battery_full",
+    "coffee",
+    "wallpaper",
+    "sunny",
+    "partly_cloudy_day",
+    "rainy",
+    "thunderstorm",
+    "weather_snowy",
+    "foggy",
 ]
 
 # Material Symbols addresses a glyph by typing its name, so the letters and the
