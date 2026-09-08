@@ -288,12 +288,13 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 func wordmarkGradient() ui.GradientPaint {
 	return ui.GradientPaint{
 		Stops: [4]ui.GradientStop{
-			{At: 0, Role: ui.PaintOnSurfaceVariant},
-			{At: 0.5, Role: ui.PaintPrimary},
-			{At: 1, Role: ui.PaintOnSurfaceVariant},
+			{At: 0, Role: ui.PaintPrimary},
+			{At: 0.33, Role: ui.PaintSecondary},
+			{At: 0.66, Role: ui.PaintTertiary},
+			{At: 1, Role: ui.PaintPrimary},
 		},
-		Count: 3, Motion: ui.GradientPingPong,
-		From: -0.45, To: 0.45,
+		Count: 4, Motion: ui.GradientLoop,
+		From: 0, To: 1,
 	}
 }
 

@@ -68,6 +68,8 @@ type PaintRole uint8
 const (
 	PaintUnset PaintRole = iota
 	PaintPrimary
+	PaintSecondary
+	PaintTertiary
 	PaintOnSurfaceVariant
 	PaintOnSurface
 	PaintSurface

@@ -57,8 +57,14 @@ func TestWordmarkWidgetIsBareAndBalancesItsClocks(t *testing.T) {
 		t.Fatalf("wordmark size = %dx%d, want %dx%d", mark.node.ImageW, mark.node.ImageH,
 			render.WordmarkWidth(launcherMarkHeight), launcherMarkHeight)
 	}
-	if mark.node.Gradient.Count != 3 || mark.node.Gradient.Motion != ui.GradientPingPong {
+	if mark.node.Gradient.Count != 4 || mark.node.Gradient.Motion != ui.GradientLoop ||
+		mark.node.Gradient.From != 0 || mark.node.Gradient.To != 1 {
 		t.Fatalf("wordmark gradient = %+v", mark.node.Gradient)
+	}
+	if got := mark.node.Gradient.Stops; got[0].Role != ui.PaintPrimary ||
+		got[1].Role != ui.PaintSecondary || got[2].Role != ui.PaintTertiary ||
+		got[3].Role != ui.PaintPrimary {
+		t.Fatalf("wordmark roles = %+v", got)
 	}
 	for _, i := range []int{0, 2} {
 		if got := widgets[i].inner.MinWidthText; got != "Wed 30 Sep" {

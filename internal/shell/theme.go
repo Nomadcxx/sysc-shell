@@ -485,6 +485,8 @@ func (t Theme) Style() render.Style {
 		Foreground: p.OnSurface,
 		Track:      p.OnSurfaceVariant,
 		Accent:     p.Primary,
+		Secondary:  p.Secondary,
+		Tertiary:   p.Tertiary,
 		// AccentOn is the toggled accent, which the bar spends on a failure
 		// state rather than a second brand colour.
 		AccentOn:         p.Error,

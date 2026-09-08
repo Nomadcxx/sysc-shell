@@ -315,7 +315,7 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 		box := style.Scale120.PhysicalRect(n.Bounds)
 		box.H = max(box.H, 1)
 		if stops := resolveGradient(n, style); stops != nil {
-			fillRectGradient(c, box, stops, n.Gradient.AngleDeg, n.GradientOffset)
+			fillRectGradient(c, box, stops, n.Gradient.AngleDeg, n.GradientOffset, n.Gradient.Motion == ui.GradientLoop)
 			return nil
 		}
 		// A divider is the quiet boundary role. Track is OnSurfaceVariant, a
@@ -950,7 +950,7 @@ func paintWordmark(c *Canvas, n *ui.Node, style Style) error {
 		return nil
 	}
 	if stops := resolveGradient(n, style); stops != nil {
-		blendMaskGradient(c, mask, box.X, box.Y, stops, n.Gradient.AngleDeg, n.GradientOffset)
+		blendMaskGradient(c, mask, box.X, box.Y, stops, n.Gradient.AngleDeg, n.GradientOffset, n.Gradient.Motion == ui.GradientLoop)
 		return nil
 	}
 	blendMask(c, mask, box.X, box.Y, style.accent())
@@ -961,6 +961,10 @@ func resolvePaintRole(style Style, role ui.PaintRole) Color {
 	switch role {
 	case ui.PaintPrimary:
 		return style.Accent
+	case ui.PaintSecondary:
+		return style.Secondary
+	case ui.PaintTertiary:
+		return style.Tertiary
 	case ui.PaintOnSurfaceVariant:
 		return style.Track
 	case ui.PaintOnSurface:

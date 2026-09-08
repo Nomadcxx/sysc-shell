@@ -43,6 +43,8 @@ type Style struct {
 	OnContainer Color
 	Track       Color
 	Accent      Color
+	Secondary   Color
+	Tertiary    Color
 	AccentOn    Color
 	// Error paints text that reports a failure. It is a distinct field rather
 	// than reusing AccentOn, which the bar already uses for a toggled control.
