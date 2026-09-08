@@ -5,6 +5,52 @@ import (
 	"testing"
 )
 
+func TestPwdumpIgnoresHeterogeneousUnrelatedMetadata(t *testing.T) {
+	data := []byte(`[
+		{"id":31,"props":{"metadata.name":"settings"},"metadata":[
+			{"key":"log.level","value":2},
+			{"key":"clock.force-quantum","value":false}
+		]},
+		{"id":40,"props":{"metadata.name":"default"},"metadata":[
+			{"key":"default.audio.sink","value":{"name":"sink.main"}},
+			{"key":"default.audio.source","value":{"name":"source.main"}}
+		]},
+		{"id":45,"info":{"props":{"media.class":"Audio/Sink","node.name":"sink.main","node.description":"Main output"}}},
+		{"id":46,"info":{"props":{"media.class":"Audio/Source","node.name":"source.main","node.description":"Main input"}}},
+		{"id":47,"info":{"props":{"media.class":"Stream/Output/Audio","node.name":"stream.player","application.name":"Player"}}}
+	]`)
+
+	snap, err := parsePwdump(data)
+	if err != nil {
+		t.Fatalf("parsePwdump rejected unrelated metadata: %v", err)
+	}
+	if len(snap.Sinks) != 1 || !snap.Sinks[0].Default {
+		t.Fatalf("sinks = %+v, want the default output", snap.Sinks)
+	}
+	if len(snap.Sources) != 1 || !snap.Sources[0].Default {
+		t.Fatalf("sources = %+v, want the default input", snap.Sources)
+	}
+	if len(snap.Streams) != 1 {
+		t.Fatalf("streams = %+v, want the valid playback stream", snap.Streams)
+	}
+}
+
+func TestMixerPollExposesReadFailure(t *testing.T) {
+	a := NewAudio(0, "/bin/true")
+	a.mixer = AudioSnapshot{Sinks: []AudioNode{{ID: 45, Name: "sink.main"}}}
+	a.hasMixer = true
+	a.dumpBin = "/bin/false"
+
+	a.pollMixer()
+
+	if err := a.MixerError(); err == nil {
+		t.Fatal("MixerError = nil after pw-dump failed")
+	}
+	if got := a.Mixer(); len(got.Sinks) != 1 || got.Sinks[0].ID != 45 {
+		t.Fatalf("Mixer = %+v, want the last valid snapshot with the poll error", got)
+	}
+}
+
 func TestPwdumpParsesSinksSourcesAndStreams(t *testing.T) {
 	data, err := os.ReadFile("testdata/pw-dump.json")
 	if err != nil {

@@ -402,6 +402,9 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	if id == PanelPlugin && r.plugins != nil {
 		size = r.plugins.panelSize()
 	}
+	if id == PanelAudio {
+		size = audioPanelSize(outW, outH)
+	}
 	gap := r.cfg.Panels.Gap
 	if id == PanelPlugin || id == PanelAudio {
 		gap = 0
@@ -1650,9 +1653,16 @@ func panelTargetSize(id PanelID) ui.Rect {
 		// output clamps it through Placement.FittedSize (D2).
 		return ui.Rect{W: 980, H: 1100}
 	case PanelAudio:
-		return ui.Rect{W: 560, H: 496}
+		return audioPanelSize(1920, 1080)
 	default:
 		return ui.Rect{W: 280, H: 200}
+	}
+}
+
+func audioPanelSize(outputW, outputH int) ui.Rect {
+	return ui.Rect{
+		W: min(max(outputW/3, 720), 1120),
+		H: min(max(2*outputH/3, 640), 992),
 	}
 }
 

@@ -42,6 +42,93 @@ func TestAudioPanelNameAndTriggerCentredPlacement(t *testing.T) {
 	}
 }
 
+func TestAudioPanelResponsiveSize(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		outW, outH int
+		want       ui.Rect
+	}{
+		{name: "minimum", outW: 1280, outH: 720, want: ui.Rect{W: 720, H: 640}},
+		{name: "desktop", outW: 1920, outH: 1080, want: ui.Rect{W: 720, H: 720}},
+		{name: "wide desktop", outW: 3440, outH: 1440, want: ui.Rect{W: 1120, H: 960}},
+		{name: "maximum", outW: 5120, outH: 2160, want: ui.Rect{W: 1120, H: 992}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := audioPanelSize(tc.outW, tc.outH); got != tc.want {
+				t.Fatalf("audioPanelSize(%d, %d) = %+v, want %+v", tc.outW, tc.outH, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAudioPanelOpenUsesTheOutputResponsiveSize(t *testing.T) {
+	reg := newPanelRegistry(t)
+	trig := Trigger{BarEdge: "top", BarZone: 34, OutW: 3440, OutH: 1440}
+	if err := reg.OpenPanel(PanelAudio, 7, trig); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelAudio]
+	if h == nil {
+		t.Fatal("audio panel has no host")
+	}
+	if got, want := h.place.Panel, audioPanelSize(trig.OutW, trig.OutH); got != want {
+		t.Fatalf("opened panel size = %+v, want %+v", got, want)
+	}
+}
+
+func TestAudioTreeUsesTheResponsiveWidth(t *testing.T) {
+	size := audioPanelSize(3440, 1440)
+	h := &PanelHost{
+		id: PanelAudio, audioTab: "volumes", theme: DefaultTheme(),
+		place: Placement{Panel: size},
+	}
+	root := audioTree(nil, h)
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 8, 18 }
+	if err := ui.LayoutColumn(root, size, measure); err != nil {
+		t.Fatal(err)
+	}
+
+	var close *ui.Node
+	var sliders []*ui.Node
+	walkAudio(root, func(n *ui.Node) {
+		if n.Action == "audio-close" {
+			close = n
+		}
+		if n.Kind == ui.KindSlider {
+			sliders = append(sliders, n)
+		}
+	})
+	if close == nil || close.Bounds.X+close.Bounds.W < size.W-h.theme.Metrics.PanelPadding-h.theme.Metrics.CardPadding {
+		t.Fatalf("close bounds = %+v, want it pinned to the header's right edge", close)
+	}
+	if len(sliders) < 2 {
+		t.Fatalf("sliders = %d, want output and input", len(sliders))
+	}
+	for _, slider := range sliders[:2] {
+		if slider.Bounds.W < size.W/2 {
+			t.Errorf("slider width = %d, want it to use the responsive card width", slider.Bounds.W)
+		}
+	}
+	if len(root.Children) != 2 || root.Children[1].Kind != ui.KindScroll {
+		t.Fatalf("root children = %+v, want fixed header plus the only scroll viewport", root.Children)
+	}
+	wantScrollH := size.H - 2*h.theme.Metrics.PanelPadding - 116 - root.Gap
+	if got := root.Children[1].Bounds.H; got != wantScrollH {
+		t.Fatalf("scroll height = %d, want remaining body height %d", got, wantScrollH)
+	}
+	body := root.Children[1].Children[0]
+	if len(body.Children) < 2 || body.Children[0].Kind != ui.KindCapsule || body.Children[1].Kind != ui.KindCapsule {
+		t.Fatal("output and input rows are not full-width cards")
+	}
+}
+
+func TestAudioPanelSurfacesMixerPollFailure(t *testing.T) {
+	if got := audioPanelError("", services.AudioSnapshot{Error: "services: pw-dump failed"}); got != "services: pw-dump failed" {
+		t.Fatalf("audioPanelError = %q, want the mixer failure", got)
+	}
+}
+
 func TestVolumeRowCarriesTheFullContract(t *testing.T) {
 	n := services.AudioNode{ID: 42, Name: "dev", Description: "AD106M High Definition Audio Controller", Level: 51}
 	row := audioVolumeRow(n, "Output", nil)
@@ -89,6 +176,55 @@ func TestScheduleControlDropsAStaleResult(t *testing.T) {
 	defer r.mu.Unlock()
 	if h.errLabel != "" {
 		t.Errorf("errLabel = %q, want empty: the host was stale", h.errLabel)
+	}
+}
+
+func TestAudioControlsUseTheScheduledWpctlPath(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "log")
+	bin := filepath.Join(dir, "wpctl")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" + logPath + "'\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := &Registry{audio: services.NewAudio(time.Hour, bin)}
+	h := &PanelHost{id: PanelAudio, audioTab: "volumes", theme: DefaultTheme()}
+	controls := []*ui.Node{
+		{Action: "audio-vol:42", Value: 63},
+		{Action: "audio-mute:42"},
+		{Action: "audio-dev:45"},
+	}
+	for _, control := range controls {
+		r.mu.Lock()
+		handled := h.applyAudioControl(r, control)
+		r.mu.Unlock()
+		if !handled {
+			t.Fatalf("action %q was not handled", control.Action)
+		}
+	}
+
+	deadline := time.Now().Add(time.Second)
+	var got string
+	for time.Now().Before(deadline) {
+		raw, err := os.ReadFile(logPath)
+		if err == nil {
+			got = string(raw)
+			if strings.Count(got, "\n") == len(controls) {
+				break
+			}
+		} else if !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	for _, want := range []string{
+		"set-volume 42 63%",
+		"set-mute 42 1",
+		"set-default 45",
+	} {
+		if !strings.Contains(got, want+"\n") {
+			t.Errorf("wpctl log %q does not contain %q", got, want)
+		}
 	}
 }
 
@@ -206,14 +342,15 @@ if [ "$1" = get-volume ]; then printf 'Volume: %s\n' "$(cat '` + dir + `/vol')";
 		t.Fatal(err)
 	}
 	reg := newPanelRegistry(t)
-	reg.setAudio(services.NewAudio(time.Hour, bin))
+	audio := services.NewAudio(time.Hour, bin)
+	reg.setAudio(audio)
 	reg.bars[1] = &Bar{conn: "DP-1"}
 	deadline := time.Now().Add(3 * time.Second)
-	for audioLogLines(t, dir) == 0 && time.Now().Before(deadline) {
+	for audio.CachedState().Level != 40 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
-	if audioLogLines(t, dir) == 0 {
-		t.Fatal("baseline poll never ran wpctl")
+	if got := audio.CachedState().Level; got != 40 {
+		t.Fatalf("baseline poll level = %d, want 40", got)
 	}
 	before := audioLogLines(t, dir)
 	reg.mu.Lock()
