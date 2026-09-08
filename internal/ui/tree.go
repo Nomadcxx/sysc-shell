@@ -40,6 +40,9 @@ const (
 	// box (ImageW/ImageH) so layout stays ignorant of the asset; the renderer
 	// owns the mark's pixels and its aspect ratio.
 	KindWordmark
+	// KindRadialGauge is a compact labelled circular progress indicator used
+	// by the bar's system summary.
+	KindRadialGauge
 
 	// kindCount is one past the last kind. It exists so a test can assert that
 	// every declared kind is measurable, and it must stay last.

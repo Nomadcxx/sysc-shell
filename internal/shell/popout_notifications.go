@@ -219,14 +219,34 @@ func (r *Registry) centerTreeFor(h *PanelHost) *ui.Node {
 		body = append(body, &ui.Node{Kind: ui.KindText, Text: "Nothing to see here"})
 	}
 
-	// ponytail: header+filter+padding ≈ 80; remainder is the list viewport until chrome is measured.
-	listH := surfaceH - 80
-	if listH < 1 {
-		listH = 1
-	}
-	children = append(children, &ui.Node{Kind: ui.KindScroll, Height: listH, Gap: cardGap, Children: body})
+	scroll := &ui.Node{Kind: ui.KindScroll, Height: 1, Gap: cardGap, Children: body}
+	children = append(children, scroll)
+	root := &ui.Node{Kind: ui.KindColumn, Gap: cardGap, Padding: cardPadding, Children: children}
+	fitNotificationBody(root, scroll, surfaceW, surfaceH, h)
+	return root
+}
 
-	return &ui.Node{Kind: ui.KindColumn, Gap: cardGap, Padding: cardPadding, Children: children}
+func fitNotificationBody(root, scroll *ui.Node, width, height int, h *PanelHost) {
+	if root == nil || scroll == nil {
+		return
+	}
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return len(s) * 8, 16 }
+	if h != nil {
+		measure = h.measureText()
+	}
+	fixed := 2*root.Padding + max(len(root.Children)-1, 0)*root.Gap
+	innerW := max(width-2*root.Padding, 0)
+	for _, child := range root.Children {
+		if child == nil || child == scroll {
+			continue
+		}
+		childH, err := ui.ContentHeight(child, innerW, measure)
+		if err != nil {
+			continue
+		}
+		fixed += childH
+	}
+	scroll.Height = max(height-fixed, 1)
 }
 
 func centreSectionLabel(text string) *ui.Node {

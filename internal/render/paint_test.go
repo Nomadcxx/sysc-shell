@@ -1439,6 +1439,25 @@ func TestPaintWordmarkGradient(t *testing.T) {
 	}
 }
 
+func TestRadialGaugePaintsProgressAndCentreLabel(t *testing.T) {
+	t.Parallel()
+	paint := func(value float64) *Canvas {
+		c := newTestCanvas(t, 40, 40)
+		n := &ui.Node{Kind: ui.KindRadialGauge, Text: "C", Value: value, Bounds: ui.Rect{W: 40, H: 40}}
+		if err := paintNode(c, n, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	low, high := paint(0.25), paint(0.75)
+	if litPixels(high, testStyle.Accent) <= litPixels(low, testStyle.Accent) {
+		t.Fatal("75% gauge did not paint more progress than 25%")
+	}
+	if litPixels(high, testStyle.Foreground) == 0 {
+		t.Fatal("gauge painted no centre label")
+	}
+}
+
 func TestPaintWordmarkGradientInvalidCountFallsBackToSolid(t *testing.T) {
 	t.Parallel()
 	solid := paintWordmarkAt(t, ui.GradientPaint{}, 0)

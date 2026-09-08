@@ -18,6 +18,10 @@ func metricSelector(item config.Item) (services.Selector, bool) {
 		sel.Source = services.SourceCPU
 	case "memory":
 		sel.Source = services.SourceMemory
+	case "temperature":
+		sel.Source, sel.Subject = services.SourceCPU, "temperature"
+	case "gpu":
+		sel.Source = services.SourceGPU
 	case "filesystem":
 		sel.Source, sel.Subject = services.SourceFilesystem, item.Path
 	case "block":
@@ -154,6 +158,10 @@ func metricTooltip(item config.Item) string {
 		return "CPU usage"
 	case "memory":
 		return "Memory usage"
+	case "temperature":
+		return "CPU temperature"
+	case "gpu":
+		return "GPU usage"
 	case "filesystem":
 		if item.Path != "" {
 			return "Disk usage: " + item.Path
@@ -183,6 +191,22 @@ func metricTooltip(item config.Item) string {
 
 func buildMetricWidget(item config.Item) textWidget {
 	switch item.Display {
+	case "radial":
+		node := &ui.Node{
+			Kind: ui.KindRadialGauge, Width: 32, Height: 32,
+			Text: metricGaugeLabel(item.ID), Action: panelMonitorAction,
+		}
+		return textWidget{
+			node: node, tooltip: metricTooltip(item),
+			format: func(v barView) string {
+				fraction, ok := metricFraction(item, v.Metrics)
+				if !ok {
+					fraction = 0
+				}
+				node.Value, node.Absent = fraction, !ok
+				return ""
+			},
+		}
 	case "meter":
 		node := &ui.Node{Kind: ui.KindMeter, Width: metricMeterWidth, Action: panelMonitorAction}
 		return textWidget{
@@ -239,6 +263,20 @@ func buildMetricWidget(item config.Item) textWidget {
 			},
 		}
 	}
+}
+
+func metricGaugeLabel(id string) string {
+	switch id {
+	case "cpu":
+		return "C"
+	case "memory":
+		return "M"
+	case "temperature":
+		return "T"
+	case "gpu":
+		return "G"
+	}
+	return "?"
 }
 
 // normalise scales samples against the window maximum, which is what lets a

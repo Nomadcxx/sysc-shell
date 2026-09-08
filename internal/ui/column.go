@@ -77,6 +77,14 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 			return n.Height, nil
 		}
 		return MeterHeight, nil
+	case KindRadialGauge:
+		if n.Height > 0 {
+			return n.Height, nil
+		}
+		if n.Width > 0 {
+			return n.Width, nil
+		}
+		return MeterHeight, nil
 	case KindCapsule:
 		// A capsule in a column is its child plus padding. The design does not
 		// use one here yet; the case exists so placing one cannot crash a

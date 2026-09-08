@@ -39,6 +39,26 @@ func TestDefaultBarStartsWithLauncher(t *testing.T) {
 	}
 }
 
+func TestDefaultSysmonHasFourRadialGauges(t *testing.T) {
+	t.Parallel()
+	var got []Item
+	for _, item := range Default().Bar.Right {
+		if item.ID == "group" && len(item.Items) == 4 {
+			got = item.Items
+			break
+		}
+	}
+	want := []string{"cpu", "memory", "temperature", "gpu"}
+	if len(got) != len(want) {
+		t.Fatalf("sysmon = %+v", got)
+	}
+	for i, id := range want {
+		if got[i].ID != id || got[i].Display != "radial" {
+			t.Fatalf("sysmon[%d] = %+v, want %s radial", i, got[i], id)
+		}
+	}
+}
+
 func TestParseAcceptsAFullDocument(t *testing.T) {
 	t.Parallel()
 	const doc = `{

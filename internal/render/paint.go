@@ -252,6 +252,9 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 	case ui.KindGraph:
 		return paintGraph(c, n, style.Scale120.PhysicalRect(n.Bounds), style)
 
+	case ui.KindRadialGauge:
+		return paintRadialGauge(c, n, text, style)
+
 	case ui.KindWordmark:
 		return paintWordmark(c, n, style)
 
@@ -929,6 +932,10 @@ func paintIcon(c *Canvas, n *ui.Node, text *TextRenderer, style Style) error {
 	x := box.X + (box.W-b.Dx())/2
 	y := box.Y + (box.H-b.Dy())/2
 	blendMask(c, mask.Alpha, x, y, textColor(style, n.Tone))
+	if n.Fill == ui.FillError {
+		badge := min(style.Scale120.Physical(6), min(box.W, box.H))
+		fillRoundedRect(c, ui.Rect{X: box.X + box.W - badge, Y: box.Y, W: badge, H: badge}, badge/2, style.Error)
+	}
 	return nil
 }
 

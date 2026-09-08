@@ -109,6 +109,12 @@ func (s Selector) String() string {
 func (s Snapshot) Fraction(sel Selector) (float64, bool) {
 	switch sel.Source {
 	case SourceCPU:
+		if sel.Subject == "temperature" {
+			if s.Thermal == nil || !s.Thermal.Valid {
+				return 0, false
+			}
+			return min(max(s.Thermal.Celsius/100, 0), 1), true
+		}
 		if s.CPU == nil || !s.CPU.Usage.Valid {
 			return 0, false
 		}

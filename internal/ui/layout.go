@@ -358,6 +358,16 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 			return 0, 0, fmt.Errorf("meter value %v is outside zero through one", n.Value)
 		}
 		return n.Width, contentHeight, nil
+	case KindRadialGauge:
+		size := n.Width
+		if size <= 0 {
+			size = contentHeight
+		}
+		h := n.Height
+		if h <= 0 {
+			h = size
+		}
+		return size, h, nil
 	case KindGraph:
 		// A graph reserves its configured width and the full content height,
 		// the way a meter does. It does not measure its data, so a bar does

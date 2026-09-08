@@ -215,7 +215,7 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 				tooltip: "Focused window",
 				format:  func(v barView) string { return v.Title },
 			})
-		case "cpu", "memory", "filesystem", "block", "network":
+		case "cpu", "memory", "temperature", "gpu", "filesystem", "block", "network":
 			out = append(out, buildMetricWidget(item))
 		case "weather":
 			node := &ui.Node{Kind: ui.KindText, MaxWidth: item.MaxWidth}

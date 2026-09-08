@@ -796,7 +796,7 @@ func resolveItem(w wireItem, path string) (Item, error) {
 			}
 			item.MaxWidth = *w.MaxWidth
 		}
-	case "cpu", "memory", "filesystem", "block", "network":
+	case "cpu", "memory", "temperature", "gpu", "filesystem", "block", "network":
 		resolved, err := resolveMetric(w, path)
 		if err != nil {
 			return Item{}, err
@@ -864,7 +864,7 @@ func resolveMetric(w wireItem, path string) (Item, error) {
 
 	if w.Display != nil {
 		switch *w.Display {
-		case "text", "graph":
+		case "text", "graph", "radial":
 		case "meter":
 			if rateSources[w.ID] {
 				return Item{}, pathErr(path+".display",
@@ -872,7 +872,7 @@ func resolveMetric(w wireItem, path string) (Item, error) {
 			}
 		default:
 			return Item{}, pathErr(path+".display",
-				"%q is not one of text, meter, graph", *w.Display)
+				"%q is not one of text, meter, graph, radial", *w.Display)
 		}
 		item.Display = *w.Display
 	}

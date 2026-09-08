@@ -7,7 +7,7 @@ import "testing"
 func sampleNode(k Kind) *Node {
 	n := &Node{Kind: k, Text: "x", Width: 24}
 	switch k {
-	case KindMeter, KindSlider:
+	case KindMeter, KindSlider, KindRadialGauge:
 		n.Value, n.Min, n.Max, n.Step = 0.5, 0, 1, 0.1
 	case KindGraph:
 		n.Values = []float64{0.1, 0.9}
@@ -32,7 +32,7 @@ var allKinds = []Kind{
 	KindRow, KindText, KindMeter, KindButton, KindGraph, KindColumn,
 	KindSeparator, KindTab, KindToggle, KindSlider, KindMenu, KindTextField,
 	KindScroll, KindVirtualList, KindImage, KindCapsule, KindIcon, KindSegmented,
-	KindDragSource, KindDropZone, KindWordmark,
+	KindDragSource, KindDropZone, KindWordmark, KindRadialGauge,
 }
 
 // rowUnsupported and columnUnsupported name the kinds each measure path

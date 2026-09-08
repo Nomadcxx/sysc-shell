@@ -300,6 +300,41 @@ func TestCenterOpeningMarksShownEntriesSeen(t *testing.T) {
 	}
 }
 
+func TestNotificationRebuildKeepsEveryDescendantInsideThePanel(t *testing.T) {
+	r := newPanelRegistry(t)
+	r.applyNotify(snap(1))
+	if err := r.OpenPanel(PanelNotifications, 7, Trigger{
+		BarEdge: "top", BarZone: 44, OutW: 1536, OutH: 1440,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	panel := drainAux(t, r, 2)[1].Open
+	if err := panel.Callbacks.Configure(int(panel.Width), int(panel.Height), 120); err != nil {
+		t.Fatal(err)
+	}
+
+	r.applyNotify(delta(1, 2, protocol.Delta{
+		Kind: protocol.DeltaAdded, Notification: ptr(note(9, "incoming")),
+		Lifetime: &protocol.Lifetime{ID: 9, DurationMS: 5000, RemainingMS: 5000, Running: true},
+	}))
+
+	h := r.panelHosts[PanelNotifications]
+	contentBottom := h.root.Bounds.Y + h.root.Bounds.H - h.root.Padding
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n != h.root && n.Bounds.Y+n.Bounds.H > contentBottom {
+			t.Errorf("%v bottom %d exceeds panel content bottom %d", n.Kind, n.Bounds.Y+n.Bounds.H, contentBottom)
+		}
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(h.root)
+}
+
 func TestUnreadBadgeCountsUnseenHistory(t *testing.T) {
 	r := NewRegistry(config.Default())
 	r.applyNotify(snap(1))
