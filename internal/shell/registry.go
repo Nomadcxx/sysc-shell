@@ -644,6 +644,8 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 			return r.TogglePanel(PanelSession, out, trig) == nil
 		case action == panelWallpaperAction && (button == 0 || button == buttonLeft || button == buttonRight):
 			return r.TogglePanel(PanelWallpaper, out, trig) == nil
+		case action == panelControlCenterAction && (button == 0 || button == buttonLeft):
+			return r.TogglePanel(PanelControlCenter, out, trig) == nil
 		case action == panelNotificationsAction && (button == 0 || button == buttonLeft):
 			return r.TogglePanel(PanelNotifications, out, trig) == nil
 		case action == panelNotificationsAction && button == buttonMiddle:

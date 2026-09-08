@@ -239,7 +239,7 @@ type Config struct {
 var knownItems = map[string]struct{}{
 	"clock": {}, "workspace": {}, "window-title": {},
 	"cpu": {}, "memory": {}, "temperature": {}, "gpu": {}, "filesystem": {}, "block": {}, "network": {},
-	"weather": {}, "battery": {}, "notifications": {},
+	"weather": {}, "battery": {}, "control-center": {}, "notifications": {},
 	"running-apps": {}, "wordmark": {},
 	"launcher": {},
 	// "wallpaper" opens the picker. It is deliberately not in Default(): a
@@ -340,6 +340,7 @@ func Default() Config {
 					{ID: "gpu", Display: "radial", Interval: defaultMetricInterval},
 				}},
 				{ID: "battery", Interval: defaultMetricInterval},
+				{ID: "control-center"},
 				{ID: "notifications"},
 			},
 		},

@@ -60,3 +60,44 @@ func TestControlCentreNameAndFlushPlacement(t *testing.T) {
 		t.Errorf("fillet = %d, drawn width = %d, want 12 and 724", fillet, spec.Width)
 	}
 }
+
+func TestControlCentreBarWidgetSatisfiesApply(t *testing.T) {
+	widgets := buildWidgets([]config.Item{{ID: "control-center"}}, 6)
+	if len(widgets) != 1 {
+		t.Fatalf("buildWidgets = %d widgets, want 1", len(widgets))
+	}
+	w := widgets[0]
+	if w.inner == nil || w.inner.Kind != ui.KindIcon || w.inner.Icon != "tune" {
+		t.Fatalf("inner node = %+v, want the tune icon", w.inner)
+	}
+	if w.inner.Action != "panel:control-center" || w.tooltip != "Control centre" {
+		t.Errorf("action = %q, tooltip = %q", w.inner.Action, w.tooltip)
+	}
+	(&Bar{left: widgets}).apply(barView{})
+
+	known := false
+	for _, id := range config.KnownItemIDs() {
+		known = known || id == "control-center"
+	}
+	if !known {
+		t.Error("control-center is absent from the configuration vocabulary")
+	}
+	right := config.Default().Bar.Right
+	if len(right) < 2 || right[len(right)-2].ID != "control-center" || right[len(right)-1].ID != "notifications" {
+		t.Errorf("default right section = %+v, want control-center before notifications", right)
+	}
+
+	r := NewRegistry(config.Default())
+	t.Cleanup(r.Close)
+	bar := &Bar{}
+	r.bindBarPanelActionsLocked(7, bar)
+	if !bar.onAction("panel:control-center", buttonLeft) {
+		t.Fatal("left-click did not activate the control centre")
+	}
+	r.mu.Lock()
+	_, opened := r.panelHosts[PanelControlCenter]
+	r.mu.Unlock()
+	if !opened {
+		t.Error("left-click activated without opening the control centre")
+	}
+}
