@@ -15,6 +15,7 @@ const (
 	PanelNotifications
 	PanelWallpaper
 	PanelAudio
+	PanelControlCenter
 )
 
 func (p PanelID) String() string {
@@ -37,6 +38,8 @@ func (p PanelID) String() string {
 		return "wallpaper"
 	case PanelAudio:
 		return "audio"
+	case PanelControlCenter:
+		return "control-center"
 	default:
 		return "unknown"
 	}

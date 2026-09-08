@@ -176,6 +176,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelWallpaper, nil
 	case "audio":
 		return PanelAudio, nil
+	case "control-center":
+		return PanelControlCenter, nil
 	default:
 		return 0, fmt.Errorf("unknown panel")
 	}
@@ -393,6 +395,8 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelWallpaper, true
 	case "audio":
 		return PanelAudio, true
+	case "control-center":
+		return PanelControlCenter, true
 	default:
 		return 0, false
 	}
@@ -414,7 +418,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		size = audioPanelSize(outW, outH)
 	}
 	gap := r.cfg.Panels.Gap
-	if id == PanelPlugin || id == PanelAudio {
+	if id == PanelPlugin || id == PanelAudio || id == PanelControlCenter {
 		gap = 0
 	}
 	place := Placement{
@@ -480,6 +484,9 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		h.processFilter = "all"
 		h.processSort, h.processDesc = "cpu", true
 		h.search = ui.NewField("")
+	}
+	if id == PanelControlCenter {
+		h.section = "home"
 	}
 	h.root = r.panelTree(h)
 	if id == PanelNotifications {
@@ -569,6 +576,36 @@ func (r *Registry) acquirePanelLeases(h *PanelHost) error {
 			return nil
 		}
 		h.mixerLease = lease
+	case PanelControlCenter:
+		for _, sel := range []services.Selector{
+			{Source: services.SourceCPU},
+			{Source: services.SourceMemory},
+			{Source: services.SourceBattery},
+		} {
+			lease, err := r.metrics.Acquire(sel, time.Second)
+			if err != nil {
+				releaseAll(h.leases)
+				h.leases = nil
+				return err
+			}
+			h.leases = append(h.leases, lease)
+		}
+		lease, err := r.clock.Acquire(time.Second)
+		if err != nil {
+			releaseAll(h.leases)
+			h.leases = nil
+			return err
+		}
+		h.leases = append(h.leases, lease)
+		if r.cfg.Weather.Interval > 0 {
+			lease, err := r.weather.Acquire(r.cfg.Weather.Interval)
+			if err != nil {
+				releaseAll(h.leases)
+				h.leases = nil
+				return err
+			}
+			h.leases = append(h.leases, lease)
+		}
 	}
 	return nil
 }
@@ -701,7 +738,13 @@ func (h *PanelHost) filletMargin() int {
 		return 0
 	}
 	room := h.place.Padding - BarGap
-	if room < 0 {
+	if h.id == PanelControlCenter {
+		m := h.place.Margins()
+		left := m.Left - BarGap
+		right := h.place.Output.W - BarGap - (m.Left + h.place.Panel.W)
+		room = min(left, right)
+	}
+	if room <= 0 {
 		return 0
 	}
 	return min(h.theme.Fillet, room)
@@ -1650,6 +1693,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		return r.centerTreeFor(h)
 	case PanelAudio:
 		return audioTree(r, h)
+	case PanelControlCenter:
+		return controlCentreTree(r, h)
 	default:
 		return placeholderTree()
 	}
@@ -1681,6 +1726,8 @@ func panelTargetSize(id PanelID) ui.Rect {
 		return ui.Rect{W: 980, H: 1100}
 	case PanelAudio:
 		return audioPanelSize(1920, 1080)
+	case PanelControlCenter:
+		return ui.Rect{W: 700, H: 564}
 	default:
 		return ui.Rect{W: 280, H: 200}
 	}
