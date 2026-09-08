@@ -2,6 +2,17 @@ package render
 
 import "testing"
 
+func TestGhostLauncherIconIsInProjectFace(t *testing.T) {
+	t.Parallel()
+	r, ok := IconByName("ghost")
+	if !ok || r != iconGhost {
+		t.Fatalf("ghost = %U, %v", r, ok)
+	}
+	if r < notifyRuneFirst {
+		t.Fatalf("ghost rune %U overlaps an earlier icon band", r)
+	}
+}
+
 // Every WMO code the API can return must map to one of the eight symbols. An
 // unmapped code renders the cloud rather than a missing glyph.
 func TestEveryWeatherCodeMapsToAnIcon(t *testing.T) {

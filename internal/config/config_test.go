@@ -31,6 +31,14 @@ func TestDefaultBarMatchesDMSContentBand(t *testing.T) {
 	}
 }
 
+func TestDefaultBarStartsWithLauncher(t *testing.T) {
+	t.Parallel()
+	left := Default().Bar.Left
+	if len(left) == 0 || left[0].ID != "launcher" {
+		t.Fatalf("default left = %+v, want launcher first", left)
+	}
+}
+
 func TestParseAcceptsAFullDocument(t *testing.T) {
 	t.Parallel()
 	const doc = `{
@@ -196,11 +204,11 @@ func TestDefaultVocabularyShipsBothClocksAndBothNiriWidgets(t *testing.T) {
 	if got := len(cfg.Bar.Left); got != 2 {
 		t.Fatalf("left items = %d, want workspace and window-title", got)
 	}
-	if cfg.Bar.Left[0].ID != "workspace" {
-		t.Fatalf("left[0] = %q, want workspace", cfg.Bar.Left[0].ID)
+	if cfg.Bar.Left[0].ID != "launcher" || cfg.Bar.Left[1].ID != "workspace" {
+		t.Fatalf("left = %+v, want launcher then workspace", cfg.Bar.Left)
 	}
-	if cfg.Bar.Left[1].ID != "window-title" || cfg.Bar.Left[1].MaxWidth <= 0 {
-		t.Fatalf("left[1] = %+v, want window-title with a positive max width", cfg.Bar.Left[1])
+	if cfg.Bar.Left[2].ID != "window-title" || cfg.Bar.Left[2].MaxWidth <= 0 {
+		t.Fatalf("left[2] = %+v, want window-title with a positive max width", cfg.Bar.Left[2])
 	}
 	if len(cfg.Bar.Center) != 3 {
 		t.Fatalf("center = %+v, want time, wordmark, and date", cfg.Bar.Center)

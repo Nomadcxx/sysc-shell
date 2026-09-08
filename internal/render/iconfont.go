@@ -65,6 +65,7 @@ const (
 	iconNotificationsOff
 	iconClose
 	iconSchedule
+	iconGhost
 
 	batteryRuneFirst = iconBatteryLevel0
 	batteryRuneLast  = iconBatteryCritical
@@ -221,6 +222,7 @@ var iconNames = map[string]rune{
 	"notifications-off": iconNotificationsOff,
 	"close":             iconClose,
 	"schedule":          iconSchedule,
+	"ghost":             iconGhost,
 }
 
 // IconByName resolves a catalogue name to its symbol.

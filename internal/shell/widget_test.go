@@ -73,6 +73,18 @@ func TestWordmarkWidgetIsBareAndBalancesItsClocks(t *testing.T) {
 	}
 }
 
+func TestLauncherWidgetUsesGhostAndOpensLauncher(t *testing.T) {
+	t.Parallel()
+	widgets := buildWidgets([]config.Item{{ID: "launcher"}}, 8)
+	if len(widgets) != 1 || widgets[0].inner == nil {
+		t.Fatalf("launcher widgets = %+v", widgets)
+	}
+	n := widgets[0].inner
+	if n.Kind != ui.KindIcon || n.Icon != "ghost" || n.Action != panelLauncherAction {
+		t.Fatalf("launcher node = %+v", n)
+	}
+}
+
 func TestNiriWidgetsReadTheirOutputsProjection(t *testing.T) {
 	t.Parallel()
 	widgets := buildWidgets([]config.Item{

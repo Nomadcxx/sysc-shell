@@ -68,10 +68,11 @@ type textWidget struct {
 // groupGap separates members inside a group capsule. noCapsule tells
 // buildWidgets to leave a member unwrapped.
 const (
-	groupGap        = 10
-	noCapsule       = -1
-	clockWidthFloor = "Wed 30 Sep"
-	gradientTrip    = 2 * time.Second
+	groupGap            = 10
+	noCapsule           = -1
+	clockWidthFloor     = "Wed 30 Sep"
+	gradientTrip        = 2 * time.Second
+	panelLauncherAction = "panel:launcher"
 )
 
 // workspacePillGap separates adjacent workspace pills, and matches the
@@ -174,6 +175,15 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 	}
 	for _, item := range items {
 		switch item.ID {
+		case "launcher":
+			out = append(out, textWidget{
+				node: &ui.Node{
+					Kind: ui.KindIcon, Icon: "ghost", IconSize: 22,
+					Action: panelLauncherAction, Name: "Open launcher", Role: "button",
+				},
+				tooltip: "Launcher",
+				refresh: func(barView) bool { return false },
+			})
 		case "clock":
 			layout := item.Format
 			out = append(out, textWidget{

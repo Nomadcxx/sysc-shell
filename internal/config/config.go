@@ -241,6 +241,7 @@ var knownItems = map[string]struct{}{
 	"cpu": {}, "memory": {}, "filesystem": {}, "block": {}, "network": {},
 	"weather": {}, "battery": {}, "notifications": {},
 	"running-apps": {}, "wordmark": {},
+	"launcher": {},
 	// "wallpaper" opens the picker. It is deliberately not in Default(): a
 	// user who wants the glyph adds it, and an existing bar does not change.
 	"wallpaper": {},
@@ -315,6 +316,7 @@ func Default() Config {
 		Bar: Bar{
 			Enabled: true, Edge: "top", Gap: 4,
 			Left: []Item{
+				{ID: "launcher"},
 				{ID: "workspace"},
 				{ID: "window-title", MaxWidth: defaultTitleMaxWidth},
 			},

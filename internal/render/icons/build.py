@@ -53,6 +53,7 @@ GLYPHS = [
     ("uniE021", 0xE021, "notifications-off"),
     ("uniE022", 0xE022, "close"),
     ("uniE023", 0xE023, "schedule"),
+    ("uniE024", 0xE024, "ghost"),
 ]
 
 UPM = 1000
