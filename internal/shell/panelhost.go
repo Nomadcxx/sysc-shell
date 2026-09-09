@@ -186,29 +186,96 @@ func parsePanelName(name string) (PanelID, error) {
 func (r *Registry) AuxRequests() <-chan wayland.AuxRequest { return r.aux }
 
 func (r *Registry) TogglePanelByName(name string) error {
-	id, err := parsePanelName(name)
-	if err != nil {
-		return err
-	}
-	out, trig := r.focusedTrigger()
-	return r.TogglePanel(id, out, trig)
+	return r.HandlePanelByName("toggle", name, "")
 }
 
 func (r *Registry) OpenPanelByName(name string) error {
-	id, err := parsePanelName(name)
-	if err != nil {
-		return err
-	}
-	out, trig := r.focusedTrigger()
-	return r.OpenPanel(id, out, trig)
+	return r.HandlePanelByName("open", name, "")
 }
 
 func (r *Registry) ClosePanelByName(name string) error {
+	return r.HandlePanelByName("close", name, "")
+}
+
+// HandlePanelByName validates a requested section before it changes the root.
+func (r *Registry) HandlePanelByName(action, name, section string) error {
 	id, err := parsePanelName(name)
 	if err != nil {
 		return err
 	}
-	r.ClosePanel(id)
+	section, err = panelSection(id, section)
+	if err != nil {
+		return err
+	}
+	if action == "close" {
+		r.ClosePanel(id)
+		return nil
+	}
+	if action != "open" && action != "toggle" {
+		return fmt.Errorf("unknown panel action")
+	}
+
+	out, trig := r.focusedTrigger()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if where, ok := r.panels.Output(id); ok && where == out && r.roots.owns(panelRoot(id)) {
+		if action == "toggle" {
+			r.closePanelLocked(id)
+			return nil
+		}
+		return r.selectPanelSectionLocked(id, section)
+	}
+	if err := r.openPanelRootLocked(id, out, trig); err != nil {
+		return err
+	}
+	return r.selectPanelSectionLocked(id, section)
+}
+
+func panelSection(id PanelID, requested string) (string, error) {
+	if requested == "" {
+		switch id {
+		case PanelControlCenter:
+			return "home", nil
+		case PanelSettings:
+			return "Bar", nil
+		default:
+			return "", nil
+		}
+	}
+	switch id {
+	case PanelControlCenter:
+		section, ok := ccSectionFor(requested)
+		if !ok {
+			return "", fmt.Errorf("unknown section %q", requested)
+		}
+		if !section.Enabled {
+			return "", fmt.Errorf("section %q is unavailable", requested)
+		}
+		return requested, nil
+	case PanelSettings:
+		for _, section := range settingsSections {
+			if section == requested {
+				return requested, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("unknown section %q", requested)
+}
+
+func (r *Registry) selectPanelSectionLocked(id PanelID, section string) error {
+	if section == "" {
+		return nil
+	}
+	h := r.panelHosts[id]
+	if h == nil {
+		return fmt.Errorf("panel %q is not open", id)
+	}
+	if h.section == section {
+		return nil
+	}
+	h.section = section
+	r.rebuildPanel(h)
+	r.publishSurface(h.output, panelSurfaceID(id))
 	return nil
 }
 
