@@ -1,11 +1,17 @@
 package shell
 
 import (
+	"io"
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
+
+type closerFunc func() error
+
+func (f closerFunc) Close() error { return f() }
 
 func TestControlCentreNameAndFlushPlacement(t *testing.T) {
 	id, err := parsePanelName("control-center")
@@ -218,6 +224,61 @@ func TestControlCentreHeaderRoutesPanelsAndClose(t *testing.T) {
 				t.Errorf("after %s: control open=%v target open=%v", tc.action, controlOpen, targetOpen)
 			}
 		})
+	}
+}
+
+func TestCaffeineTogglesThroughTheRegistryHook(t *testing.T) {
+	r := newPanelRegistry(t)
+	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	h := r.panelHosts[PanelControlCenter]
+	started := make(chan struct{})
+	released := make(chan struct{})
+	r.startInhibit = func() (io.Closer, error) {
+		close(started)
+		return closerFunc(func() error { close(released); return nil }), nil
+	}
+	r.setCaffeine(h, true)
+	r.mu.Unlock()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("caffeine never started the idle inhibit")
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		r.mu.Lock()
+		on := r.inhibit != nil
+		r.mu.Unlock()
+		if on {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("started inhibit was not retained")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	r.mu.Lock()
+	r.setCaffeine(h, false)
+	r.mu.Unlock()
+	select {
+	case <-released:
+	case <-time.After(time.Second):
+		t.Fatal("turning caffeine off did not release the inhibit")
+	}
+}
+
+func TestCaffeineHoldIsReleasedOnClose(t *testing.T) {
+	r := NewRegistry(config.Default())
+	released := false
+	r.mu.Lock()
+	r.inhibit = closerFunc(func() error { released = true; return nil })
+	r.mu.Unlock()
+	r.Close()
+	if !released {
+		t.Fatal("the idle inhibit outlived the shell")
 	}
 }
 

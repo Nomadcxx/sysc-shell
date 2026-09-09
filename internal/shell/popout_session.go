@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 	"testing"
@@ -280,6 +281,33 @@ func runArgvDefault(argv []string) error {
 		return exec.CommandContext(ctx, path, argv[1:]...).Run()
 	}
 	return exec.Command(path, argv[1:]...).Start()
+}
+
+func startInhibitDefault() (io.Closer, error) {
+	if testing.Testing() {
+		return nil, errors.New("refusing to start an idle inhibit from a test binary: replace Registry.startInhibit")
+	}
+	path, err := exec.LookPath("systemd-inhibit")
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(path, "--what=idle:sleep", "--who=sysc-shell",
+		"--why=Caffeine", "--mode=block", "sleep", "infinity")
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	return &processHold{cmd: cmd}, nil
+}
+
+type processHold struct{ cmd *exec.Cmd }
+
+func (p *processHold) Close() error {
+	if p == nil || p.cmd == nil || p.cmd.Process == nil {
+		return nil
+	}
+	err := p.cmd.Process.Kill()
+	_ = p.cmd.Wait()
+	return err
 }
 
 func runArgvOutputDefault(argv []string) (string, error) {
