@@ -18,7 +18,7 @@ func TestServerRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	srv := NewServer(sock, Handlers{
-		Panel: func(action, panel string) error {
+		Panel: func(action, panel, _ string) error {
 			got = action + ":" + panel
 			return nil
 		},
@@ -44,7 +44,7 @@ func TestIpcPowerAliasTogglesSession(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	srv := NewServer(sock, Handlers{
-		Panel: func(action, panel string) error {
+		Panel: func(action, panel, _ string) error {
 			got = action + ":" + panel
 			return nil
 		},
@@ -127,7 +127,7 @@ func TestPanelParamValidation(t *testing.T) {
 	t.Parallel()
 	called := false
 	sock, cancel := startServer(t, Handlers{
-		Panel: func(string, string) error { called = true; return nil },
+		Panel: func(string, string, string) error { called = true; return nil },
 	})
 	defer cancel()
 	out, err := Call(context.Background(), sock, "panel.open", map[string]string{"panel": "bogus"})
@@ -152,7 +152,7 @@ func TestPanelToggleLauncherDispatches(t *testing.T) {
 	t.Parallel()
 	var action, panel string
 	sock, cancel := startServer(t, Handlers{
-		Panel: func(a, p string) error { action, panel = a, p; return nil },
+		Panel: func(a, p, _ string) error { action, panel = a, p; return nil },
 	})
 	defer cancel()
 	out, err := Call(context.Background(), sock, "panel.toggle", map[string]string{"panel": "launcher"})
@@ -178,7 +178,7 @@ func TestPanelToggleNotificationsDispatches(t *testing.T) {
 	t.Parallel()
 	var action, panel string
 	sock, cancel := startServer(t, Handlers{
-		Panel: func(a, p string) error { action, panel = a, p; return nil },
+		Panel: func(a, p, _ string) error { action, panel = a, p; return nil },
 	})
 	defer cancel()
 	out, err := Call(context.Background(), sock, "panel.toggle", map[string]string{"panel": "notifications"})

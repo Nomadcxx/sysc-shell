@@ -101,3 +101,56 @@ func TestControlCentreBarWidgetSatisfiesApply(t *testing.T) {
 		t.Error("left-click activated without opening the control centre")
 	}
 }
+
+func TestPanelSectionValidationPrecedesMutation(t *testing.T) {
+	r := NewRegistry(config.Default())
+	t.Cleanup(r.Close)
+	call := r.HandlePanelByName
+
+	if err := r.OpenPanelByName("control-center"); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	original := r.panelHosts[PanelControlCenter]
+	r.mu.Unlock()
+	for _, section := range []string{"network", "nope"} {
+		if err := call("open", "control-center", section); err == nil {
+			t.Errorf("section %q was accepted", section)
+		}
+		r.mu.Lock()
+		got := r.panelHosts[PanelControlCenter]
+		selected := got.section
+		r.mu.Unlock()
+		if got != original || selected != "home" {
+			t.Fatalf("rejected section %q changed host or selection", section)
+		}
+	}
+	if err := call("open", "control-center", "audio"); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	selected := r.panelHosts[PanelControlCenter].section
+	r.mu.Unlock()
+	if selected != "audio" {
+		t.Errorf("selected section = %q, want audio", selected)
+	}
+	if err := call("open", "control-center", ""); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	selected = r.panelHosts[PanelControlCenter].section
+	r.mu.Unlock()
+	if selected != "home" {
+		t.Errorf("omitted section selected %q, want home", selected)
+	}
+
+	if err := call("open", "settings", "Appearance"); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	settingsSection := r.panelHosts[PanelSettings].section
+	r.mu.Unlock()
+	if settingsSection != "Appearance" {
+		t.Errorf("settings section = %q, want Appearance", settingsSection)
+	}
+}
