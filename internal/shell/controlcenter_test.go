@@ -61,44 +61,62 @@ func TestControlCentreNameAndFlushPlacement(t *testing.T) {
 	}
 }
 
-func TestControlCentreBarWidgetSatisfiesApply(t *testing.T) {
-	widgets := buildWidgets([]config.Item{{ID: "control-center"}}, 6)
+func TestWordmarkRightClickOpensControlCentre(t *testing.T) {
+	widgets := buildWidgets([]config.Item{{ID: "wordmark"}}, 6)
 	if len(widgets) != 1 {
 		t.Fatalf("buildWidgets = %d widgets, want 1", len(widgets))
 	}
-	w := widgets[0]
-	if w.inner == nil || w.inner.Kind != ui.KindIcon || w.inner.Icon != "tune" {
-		t.Fatalf("inner node = %+v, want the tune icon", w.inner)
+	mark := widgets[0].node
+	if mark.Kind != ui.KindWordmark || mark.Action != panelControlCenterAction ||
+		mark.Name != "Control centre" || mark.Role != "button" {
+		t.Fatalf("wordmark = %+v, want the accessible control-centre action", mark)
 	}
-	if w.inner.Action != "panel:control-center" || w.tooltip != "Control centre" {
-		t.Errorf("action = %q, tooltip = %q", w.inner.Action, w.tooltip)
+	if got := buildWidgets([]config.Item{{ID: "control-center"}}, 6); len(got) != 0 {
+		t.Fatalf("standalone control-center built %d widgets, want none", len(got))
 	}
-	(&Bar{left: widgets}).apply(barView{})
-
-	known := false
 	for _, id := range config.KnownItemIDs() {
-		known = known || id == "control-center"
+		if id == "control-center" {
+			t.Fatal("standalone control-center remains in the configuration vocabulary")
+		}
 	}
-	if !known {
-		t.Error("control-center is absent from the configuration vocabulary")
-	}
-	right := config.Default().Bar.Right
-	if len(right) < 2 || right[len(right)-2].ID != "control-center" || right[len(right)-1].ID != "notifications" {
-		t.Errorf("default right section = %+v, want control-center before notifications", right)
+	for _, item := range config.Default().Bar.Right {
+		if item.ID == "control-center" {
+			t.Fatal("default right section still carries the redundant trigger")
+		}
 	}
 
-	r := NewRegistry(config.Default())
-	t.Cleanup(r.Close)
-	bar := &Bar{}
-	r.bindBarPanelActionsLocked(7, bar)
-	if !bar.onAction("panel:control-center", buttonLeft) {
-		t.Fatal("left-click did not activate the control centre")
+	r := newPanelRegistry(t)
+	cb, err := r.NewHost(7, "DP-1")
+	if err != nil {
+		t.Fatal(err)
 	}
+	if err := cb.Configure(1536, 44, 120); err != nil {
+		t.Fatal(err)
+	}
+	bar := r.bars[7]
+	if err := bar.Layout(1536, 44); err != nil {
+		t.Fatal(err)
+	}
+	target := bar.actionBounds(panelControlCenterAction)
+	if target.W == 0 {
+		t.Fatal("laid-out wordmark has no control-centre action bounds")
+	}
+	drainAuxQueue(r)
+	if clickButton(bar, target.X+target.W/2, target.Y+target.H/2, buttonLeft) {
+		t.Fatal("left-click on the wordmark must stay inert")
+	}
+	if !clickButton(bar, target.X+target.W/2, target.Y+target.H/2, buttonRight) {
+		t.Fatal("right-click on the wordmark did not activate")
+	}
+	_ = drainAux(t, r, 2)
 	r.mu.Lock()
-	_, opened := r.panelHosts[PanelControlCenter]
+	h := r.panelHosts[PanelControlCenter]
 	r.mu.Unlock()
-	if !opened {
-		t.Error("left-click activated without opening the control centre")
+	if h == nil {
+		t.Fatal("right-click did not open the control centre")
+	}
+	if want := target.X + target.W/2; h.place.AnchorX != want {
+		t.Errorf("anchor = %d, want wordmark centre %d", h.place.AnchorX, want)
 	}
 }
 

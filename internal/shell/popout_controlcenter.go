@@ -4,18 +4,6 @@ import "github.com/Nomadcxx/sysc-shell/internal/ui"
 
 const panelControlCenterAction = "panel:control-center"
 
-func buildControlCenterWidget() textWidget {
-	return textWidget{
-		node: &ui.Node{
-			Kind: ui.KindIcon, Icon: "tune", Action: panelControlCenterAction,
-		},
-		tooltip: "Control centre",
-		refresh: func(barView) bool {
-			return false
-		},
-	}
-}
-
 type ccSection struct {
 	ID, Label, Icon string
 	Enabled         bool

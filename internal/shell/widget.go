@@ -202,7 +202,8 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 				node: &ui.Node{
 					Kind: ui.KindWordmark, Key: "wordmark",
 					ImageH: launcherMarkHeight, ImageW: render.WordmarkWidth(launcherMarkHeight),
-					Gradient: wordmarkGradient(),
+					Gradient: wordmarkGradient(), Action: panelControlCenterAction,
+					Name: "Control centre", Role: "button",
 				},
 				refresh: func(barView) bool { return false },
 			})
@@ -275,8 +276,6 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 					return text
 				},
 			})
-		case "control-center":
-			out = append(out, buildControlCenterWidget())
 		case "notifications":
 			out = append(out, buildNotifyWidget())
 		case "wallpaper":

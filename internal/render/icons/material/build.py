@@ -58,7 +58,6 @@ ICONS = [
     "mic_off",
     "graphic_eq",
     "headphones",
-    "tune",
     "home",
     "music_note",
     "desktop_windows",
