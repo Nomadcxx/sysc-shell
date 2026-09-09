@@ -7,6 +7,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -68,10 +69,11 @@ type textWidget struct {
 // groupGap separates members inside a group capsule. noCapsule tells
 // buildWidgets to leave a member unwrapped.
 const (
-	groupGap        = 10
-	noCapsule       = -1
-	clockWidthFloor = "Wed 30 Sep"
-	gradientTrip    = 2 * time.Second
+	groupGap            = 10
+	noCapsule           = -1
+	clockWidthFloor     = "Wed 30 Sep"
+	gradientTrip        = 2 * time.Second
+	panelLauncherAction = "panel:launcher"
 )
 
 // workspacePillGap separates adjacent workspace pills, and matches the
@@ -174,6 +176,16 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 	}
 	for _, item := range items {
 		switch item.ID {
+		case "launcher":
+			ghost, _ := render.IconByName("ghost")
+			out = append(out, textWidget{
+				node: &ui.Node{
+					Kind: ui.KindText, Text: string(ghost), TextRole: theme.RoleHeadline,
+					Action: panelLauncherAction, Name: "Open launcher", Role: "button",
+				},
+				tooltip: "Launcher",
+				refresh: func(barView) bool { return false },
+			})
 		case "clock":
 			layout := item.Format
 			out = append(out, textWidget{
@@ -205,7 +217,7 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 				tooltip: "Focused window",
 				format:  func(v barView) string { return v.Title },
 			})
-		case "cpu", "memory", "filesystem", "block", "network":
+		case "cpu", "memory", "temperature", "gpu", "filesystem", "block", "network":
 			out = append(out, buildMetricWidget(item))
 		case "weather":
 			node := &ui.Node{Kind: ui.KindText, MaxWidth: item.MaxWidth}
@@ -288,12 +300,13 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 func wordmarkGradient() ui.GradientPaint {
 	return ui.GradientPaint{
 		Stops: [4]ui.GradientStop{
-			{At: 0, Role: ui.PaintOnSurfaceVariant},
-			{At: 0.5, Role: ui.PaintPrimary},
-			{At: 1, Role: ui.PaintOnSurfaceVariant},
+			{At: 0, Role: ui.PaintPrimary},
+			{At: 0.33, Role: ui.PaintSecondary},
+			{At: 0.66, Role: ui.PaintTertiary},
+			{At: 1, Role: ui.PaintPrimary},
 		},
-		Count: 3, Motion: ui.GradientPingPong,
-		From: -0.45, To: 0.45,
+		Count: 4, Motion: ui.GradientLoop,
+		From: 0, To: 1,
 	}
 }
 

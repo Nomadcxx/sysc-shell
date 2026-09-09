@@ -238,9 +238,10 @@ type Config struct {
 // a widget.
 var knownItems = map[string]struct{}{
 	"clock": {}, "workspace": {}, "window-title": {},
-	"cpu": {}, "memory": {}, "filesystem": {}, "block": {}, "network": {},
+	"cpu": {}, "memory": {}, "temperature": {}, "gpu": {}, "filesystem": {}, "block": {}, "network": {},
 	"weather": {}, "battery": {}, "notifications": {},
 	"running-apps": {}, "wordmark": {},
+	"launcher": {},
 	// "wallpaper" opens the picker. It is deliberately not in Default(): a
 	// user who wants the glyph adds it, and an existing bar does not change.
 	"wallpaper": {},
@@ -256,7 +257,9 @@ var knownItems = map[string]struct{}{
 // fractionSources yield a value between zero and one, which a meter can fill.
 // Rate sources yield bytes per second and have no full scale, so a meter is
 // meaningless on them and rejected at load.
-var fractionSources = map[string]bool{"cpu": true, "memory": true, "filesystem": true}
+var fractionSources = map[string]bool{
+	"cpu": true, "memory": true, "temperature": true, "gpu": true, "filesystem": true,
+}
 
 // rateSources yield bytes per second.
 var rateSources = map[string]bool{"block": true, "network": true}
@@ -315,6 +318,7 @@ func Default() Config {
 		Bar: Bar{
 			Enabled: true, Edge: "top", Gap: 4,
 			Left: []Item{
+				{ID: "launcher"},
 				{ID: "workspace"},
 				{ID: "window-title", MaxWidth: defaultTitleMaxWidth},
 			},
@@ -330,8 +334,10 @@ func Default() Config {
 			Right: []Item{
 				{ID: "running-apps"},
 				{ID: "group", Items: []Item{
-					{ID: "cpu", Display: "text", Interval: defaultMetricInterval},
-					{ID: "memory", Display: "text", Interval: defaultMetricInterval},
+					{ID: "cpu", Display: "radial", Interval: defaultMetricInterval},
+					{ID: "memory", Display: "radial", Interval: defaultMetricInterval},
+					{ID: "temperature", Display: "radial", Interval: defaultMetricInterval},
+					{ID: "gpu", Display: "radial", Interval: defaultMetricInterval},
 				}},
 				{ID: "battery", Interval: defaultMetricInterval},
 				{ID: "notifications"},

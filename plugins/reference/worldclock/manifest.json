@@ -11,6 +11,6 @@
   "widgets": [{"id": "bar", "settings": []}],
   "panels": [{"id": "panel", "width": 420, "height": 360, "placement": "attached"}],
   "settings": [
-    {"key": "hour24", "type": "boolean", "label": "24-hour clock", "default": true}
+    {"key": "hour24", "type": "bool", "label": "24-hour clock", "default": true}
   ]
 }

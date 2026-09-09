@@ -24,6 +24,8 @@ var testStyle = Style{
 	Foreground: Color{R: 0xff, G: 0xff, B: 0xff, A: 0xff},
 	Track:      Color{R: 0x30, G: 0x34, B: 0x38, A: 0xff},
 	Accent:     Color{R: 0x00, G: 0x80, B: 0xff, A: 0xff},
+	Secondary:  Color{R: 0xb0, G: 0x50, B: 0xd0, A: 0xff},
+	Tertiary:   Color{R: 0x30, G: 0xc0, B: 0xb0, A: 0xff},
 	AccentOn:   Color{R: 0xff, G: 0x60, B: 0x00, A: 0xff},
 	OnPrimary:  Color{R: 0x11, G: 0x22, B: 0x33, A: 0xff},
 	Error:      Color{R: 0xcc, G: 0x22, B: 0x22, A: 0xff},
@@ -1434,6 +1436,49 @@ func TestPaintWordmarkGradient(t *testing.T) {
 	b := paintWordmarkAt(t, d3WordmarkGradient(), 0.45)
 	if bytes.Equal(a.Pix, b.Pix) {
 		t.Fatal("offset 0 and 0.45 painted the same raster")
+	}
+}
+
+func TestRadialGaugePaintsProgressAndCentreLabel(t *testing.T) {
+	t.Parallel()
+	paint := func(value float64) *Canvas {
+		c := newTestCanvas(t, 40, 40)
+		n := &ui.Node{Kind: ui.KindRadialGauge, Text: "C", Value: value, Bounds: ui.Rect{W: 40, H: 40}}
+		if err := paintNode(c, n, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	low, high := paint(0.25), paint(0.75)
+	if litPixels(high, testStyle.Accent) <= litPixels(low, testStyle.Accent) {
+		t.Fatal("75% gauge did not paint more progress than 25%")
+	}
+	if litPixels(high, testStyle.Foreground) == 0 {
+		t.Fatal("gauge painted no centre label")
+	}
+}
+
+func TestRadialGaugePaintsValueLabelRoundedCapAndUnavailableState(t *testing.T) {
+	t.Parallel()
+	paint := func(value float64, absent bool) *Canvas {
+		c := newTestCanvas(t, 60, 60)
+		n := &ui.Node{Kind: ui.KindRadialGauge, Text: "C", Value: value, Absent: absent, Bounds: ui.Rect{W: 60, H: 60}}
+		if err := paintNode(c, n, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	zero, unavailable := paint(0, false), paint(0, true)
+	if bytes.Equal(zero.Pix, unavailable.Pix) {
+		t.Fatal("unavailable gauge is indistinguishable from a real zero")
+	}
+	quarter := paint(.25, false)
+	// A rounded end cap extends just past the clockwise end of the quarter arc.
+	if got := pixelAt(t, quarter, 58, 31); got != testStyle.Accent {
+		t.Fatalf("quarter-arc cap pixel = %#v, want accent %#v", got, testStyle.Accent)
+	}
+	if litPixels(quarter, testStyle.Foreground) <= litPixels(zero, testStyle.Foreground) {
+		t.Fatal("gauge did not paint both a changing value and its fixed label")
 	}
 }
 

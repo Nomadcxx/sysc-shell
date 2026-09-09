@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
-	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -28,54 +27,50 @@ func TestNotificationsParsesAsAKnownItem(t *testing.T) {
 	}
 }
 
-func TestANotifyWidgetRendersTheBellRune(t *testing.T) {
+func TestANotifyWidgetRendersOneFixedMaterialBell(t *testing.T) {
 	t.Parallel()
 	w := notifyWidget(t)
 	w.refresh(barView{})
-	want, ok := render.IconByName("notifications")
-	if !ok {
-		t.Fatal("notifications glyph missing from the catalogue")
+	if w.inner.Kind != ui.KindIcon || w.inner.Icon != "notifications" {
+		t.Fatalf("indicator = kind %v icon %q, want one notifications icon", w.inner.Kind, w.inner.Icon)
 	}
-	if got := widgetText(w.inner); got != string(want) {
-		t.Fatalf("text = %q, want the notifications rune", got)
+	if w.inner.IconSize != 20 {
+		t.Fatalf("icon size = %d, want 20", w.inner.IconSize)
+	}
+	if len(w.inner.Children) != 0 {
+		t.Fatalf("bell has %d children, want no width-changing sibling", len(w.inner.Children))
 	}
 }
 
-func TestUnreadPaintsASixPixelErrorChild(t *testing.T) {
+func TestUnreadUsesAnErrorBadgeWithoutChangingThePillWidth(t *testing.T) {
 	t.Parallel()
-	w := notifyWidget(t)
-	w.refresh(barView{Unread: 3})
-	dot := findErrorDot(w.inner)
-	if dot == nil {
-		t.Fatal("unread > 0 painted no 6 px Error child")
+	width := func(v barView) (int, ui.Fill) {
+		w := notifyWidget(t)
+		w.refresh(v)
+		root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{w.node}}
+		if err := ui.Layout(root, ui.Rect{W: 100, H: 48}, func(string, ui.TextAttrs) (int, int) {
+			return 8, 16
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return w.node.Bounds.W, w.inner.Fill
 	}
-	if dot.Width != 6 {
-		t.Fatalf("dot width = %d, want 6", dot.Width)
+	readW, readFill := width(barView{})
+	unreadW, unreadFill := width(barView{Unread: 3})
+	if readW != unreadW {
+		t.Fatalf("pill width changed from %d to %d for unread", readW, unreadW)
 	}
-	if dot.Fill != ui.FillError {
-		t.Fatalf("dot fill = %v, want FillError", dot.Fill)
-	}
-
-	w.refresh(barView{})
-	if findErrorDot(w.inner) != nil {
-		t.Fatal("unread 0 kept the Error child")
-	}
-	want, _ := render.IconByName("notifications")
-	if got := widgetText(w.inner); got != string(want) {
-		t.Fatal("unread 0 hid the bell")
+	if readFill != ui.FillNone || unreadFill != ui.FillError {
+		t.Fatalf("badge fills = read %v unread %v, want none/error", readFill, unreadFill)
 	}
 }
 
-func TestDNDSwapsToNotificationsOff(t *testing.T) {
+func TestDNDSwapsToMaterialDoNotDisturb(t *testing.T) {
 	t.Parallel()
 	w := notifyWidget(t)
 	w.refresh(barView{DND: true})
-	want, ok := render.IconByName("notifications-off")
-	if !ok {
-		t.Fatal("notifications-off glyph missing from the catalogue")
-	}
-	if got := widgetText(w.inner); got != string(want) {
-		t.Fatalf("text = %q, want the notifications-off rune", got)
+	if w.inner.Kind != ui.KindIcon || w.inner.Icon != "do_not_disturb_on" {
+		t.Fatalf("indicator = kind %v icon %q, want material DND icon", w.inner.Kind, w.inner.Icon)
 	}
 }
 
@@ -146,34 +141,4 @@ func notifyWidget(t *testing.T) textWidget {
 	}
 	t.Fatal("default bar has no notifications widget")
 	return textWidget{}
-}
-
-func widgetText(n *ui.Node) string {
-	if n == nil {
-		return ""
-	}
-	if n.Kind == ui.KindText && n.Text != "" {
-		return n.Text
-	}
-	for _, c := range n.Children {
-		if s := widgetText(c); s != "" {
-			return s
-		}
-	}
-	return ""
-}
-
-func findErrorDot(n *ui.Node) *ui.Node {
-	if n == nil {
-		return nil
-	}
-	if n.Kind == ui.KindCapsule && n.Fill == ui.FillError && n.Width == 6 {
-		return n
-	}
-	for _, c := range n.Children {
-		if d := findErrorDot(c); d != nil {
-			return d
-		}
-	}
-	return nil
 }

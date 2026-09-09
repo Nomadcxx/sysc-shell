@@ -2,6 +2,7 @@ package services
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -27,6 +28,7 @@ type AudioSnapshot struct {
 	Sources []AudioNode
 	Streams []AudioNode
 	At      time.Time
+	Error   string
 }
 
 func cubicPercent(linear float64) int {
@@ -37,10 +39,8 @@ func cubicPercent(linear float64) int {
 }
 
 type pwMeta struct {
-	Key   string `json:"key"`
-	Value struct {
-		Name string `json:"name"`
-	} `json:"value"`
+	Key   string          `json:"key"`
+	Value json.RawMessage `json:"value"`
 }
 
 type pwDumpEntry struct {
@@ -89,9 +89,17 @@ func parsePwdump(data []byte) (AudioSnapshot, error) {
 		for _, m := range e.meta() {
 			switch m.Key {
 			case "default.audio.sink":
-				defSink = m.Value.Name
+				name, err := parseDefaultAudioName(m.Value)
+				if err != nil {
+					return AudioSnapshot{}, err
+				}
+				defSink = name
 			case "default.audio.source":
-				defSource = m.Value.Name
+				name, err := parseDefaultAudioName(m.Value)
+				if err != nil {
+					return AudioSnapshot{}, err
+				}
+				defSource = name
 			}
 		}
 	}
@@ -140,6 +148,16 @@ func parsePwdump(data []byte) (AudioSnapshot, error) {
 	return snap, nil
 }
 
+func parseDefaultAudioName(raw json.RawMessage) (string, error) {
+	var value struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", fmt.Errorf("services: pw-dump default audio metadata: %w", err)
+	}
+	return value.Name, nil
+}
+
 // MixerLease holds the pw-dump poller open. Released when PanelAudio closes;
 // the bar never takes one (D7: the cheap default-sink poll stays untouched).
 type MixerLease struct{ audio *Audio }
@@ -181,6 +199,15 @@ func (a *Audio) MixerReady() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.hasMixer
+}
+
+func (a *Audio) MixerError() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.mixer.Error == "" {
+		return nil
+	}
+	return errors.New(a.mixer.Error)
 }
 
 func (a *Audio) MixerChanges() <-chan AudioSnapshot { return a.mixerCh }
@@ -260,14 +287,26 @@ func (a *Audio) pollMixer() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if err != nil {
+		a.publishMixerLocked(err)
 		return
 	}
 	snap, err := parsePwdump([]byte(out))
 	if err != nil {
+		a.publishMixerLocked(err)
 		return
 	}
 	a.mixer = snap
 	a.hasMixer = true
+	a.publishMixerLocked(nil)
+}
+
+func (a *Audio) publishMixerLocked(err error) {
+	if err != nil {
+		a.mixer.Error = err.Error()
+	} else {
+		a.mixer.Error = ""
+	}
+	snap := a.mixer
 	select {
 	case a.mixerCh <- snap:
 	default:

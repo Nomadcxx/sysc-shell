@@ -77,6 +77,14 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 			return n.Height, nil
 		}
 		return MeterHeight, nil
+	case KindRadialGauge:
+		if n.Height > 0 {
+			return n.Height, nil
+		}
+		if n.Width > 0 {
+			return n.Width, nil
+		}
+		return MeterHeight, nil
 	case KindCapsule:
 		// A capsule in a column is its child plus padding. The design does not
 		// use one here yet; the case exists so placing one cannot crash a
@@ -319,6 +327,9 @@ func layoutScroll(root *Node, bounds Rect, measure MeasureText) error {
 		clampScroll(root)
 		lo, hi := VisibleRange(root)
 		if root.Item != nil {
+			for _, child := range root.Children {
+				clearLayoutBounds(child)
+			}
 			root.Children = root.Children[:0]
 			for i := lo; i < hi; i++ {
 				child := root.Item(i)
@@ -372,6 +383,16 @@ func layoutScroll(root *Node, bounds Rect, measure MeasureText) error {
 		y += ch
 	}
 	return nil
+}
+
+func clearLayoutBounds(n *Node) {
+	if n == nil {
+		return
+	}
+	n.Bounds = Rect{}
+	for _, child := range n.Children {
+		clearLayoutBounds(child)
+	}
 }
 
 // centeredTrack narrows a column child's track to the child's natural width

@@ -252,6 +252,9 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 	case ui.KindGraph:
 		return paintGraph(c, n, style.Scale120.PhysicalRect(n.Bounds), style)
 
+	case ui.KindRadialGauge:
+		return paintRadialGauge(c, n, text, style)
+
 	case ui.KindWordmark:
 		return paintWordmark(c, n, style)
 
@@ -315,7 +318,7 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 		box := style.Scale120.PhysicalRect(n.Bounds)
 		box.H = max(box.H, 1)
 		if stops := resolveGradient(n, style); stops != nil {
-			fillRectGradient(c, box, stops, n.Gradient.AngleDeg, n.GradientOffset)
+			fillRectGradient(c, box, stops, n.Gradient.AngleDeg, n.GradientOffset, n.Gradient.Motion == ui.GradientLoop)
 			return nil
 		}
 		// A divider is the quiet boundary role. Track is OnSurfaceVariant, a
@@ -929,6 +932,10 @@ func paintIcon(c *Canvas, n *ui.Node, text *TextRenderer, style Style) error {
 	x := box.X + (box.W-b.Dx())/2
 	y := box.Y + (box.H-b.Dy())/2
 	blendMask(c, mask.Alpha, x, y, textColor(style, n.Tone))
+	if n.Fill == ui.FillError {
+		badge := min(style.Scale120.Physical(6), min(box.W, box.H))
+		fillRoundedRect(c, ui.Rect{X: box.X + box.W - badge, Y: box.Y, W: badge, H: badge}, badge/2, style.Error)
+	}
 	return nil
 }
 
@@ -950,7 +957,7 @@ func paintWordmark(c *Canvas, n *ui.Node, style Style) error {
 		return nil
 	}
 	if stops := resolveGradient(n, style); stops != nil {
-		blendMaskGradient(c, mask, box.X, box.Y, stops, n.Gradient.AngleDeg, n.GradientOffset)
+		blendMaskGradient(c, mask, box.X, box.Y, stops, n.Gradient.AngleDeg, n.GradientOffset, n.Gradient.Motion == ui.GradientLoop)
 		return nil
 	}
 	blendMask(c, mask, box.X, box.Y, style.accent())
@@ -961,6 +968,10 @@ func resolvePaintRole(style Style, role ui.PaintRole) Color {
 	switch role {
 	case ui.PaintPrimary:
 		return style.Accent
+	case ui.PaintSecondary:
+		return style.Secondary
+	case ui.PaintTertiary:
+		return style.Tertiary
 	case ui.PaintOnSurfaceVariant:
 		return style.Track
 	case ui.PaintOnSurface:

@@ -146,6 +146,14 @@ type PanelHost struct {
 	pendingVol  map[int]int
 	pendingMute map[int]bool
 	pendingAt   time.Time
+
+	monitorPage      string
+	processFilter    string
+	processSort      string
+	processDesc      bool
+	processStatus    string
+	processStatusErr error
+	processTermed    map[services.ProcessIdentity]bool
 }
 
 func parsePanelName(name string) (PanelID, error) {
@@ -402,6 +410,9 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	if id == PanelPlugin && r.plugins != nil {
 		size = r.plugins.panelSize()
 	}
+	if id == PanelAudio {
+		size = audioPanelSize(outW, outH)
+	}
 	gap := r.cfg.Panels.Gap
 	if id == PanelPlugin || id == PanelAudio {
 		gap = 0
@@ -464,7 +475,22 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	if id == PanelAudio {
 		h.audioTab = "volumes"
 	}
+	if id == PanelMonitor {
+		h.monitorPage = monitorPageProcesses
+		h.processFilter = "all"
+		h.processSort, h.processDesc = "cpu", true
+		h.search = ui.NewField("")
+		h.processTermed = make(map[services.ProcessIdentity]bool)
+	}
 	h.root = r.panelTree(h)
+	if id == PanelNotifications {
+		_ = h.ensureText()
+		h.place.Panel.H = notificationsSurfaceHeight(h)
+		// The notification tree derives its scroll viewport from the panel
+		// height. Rebuild it after fitting the surface so the viewport does not
+		// retain the initial 300 px fallback and clip the last visible card.
+		h.root = r.panelTree(h)
+	}
 	h.focus = ui.Focusables(h.root)
 	h.roving = ui.Roving{Count: len(h.focus)}
 	if id == PanelWallpaper {
@@ -475,14 +501,6 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	}
 	if id == PanelAudio {
 		h.focusByName("Volumes")
-	}
-	if id == PanelMonitor || id == PanelNotifications {
-		_ = h.ensureText()
-		if id == PanelNotifications {
-			h.place.Panel.H = notificationsSurfaceHeight(h)
-		} else {
-			h.place.Panel.H = monitorSurfaceHeight(h.root, h.place.Panel.W, h.theme.Radius, h.measureText())
-		}
 	}
 	w, hgt := h.place.FittedSize()
 	h.place.Panel.W, h.place.Panel.H = w, hgt
@@ -528,6 +546,13 @@ func (r *Registry) acquirePanelLeases(h *PanelHost) error {
 			}
 			h.leases = append(h.leases, lease)
 		}
+		lease, err := r.metrics.Acquire(services.Selector{Source: services.SourceProcess}, time.Second)
+		if err != nil {
+			releaseAll(h.leases)
+			h.leases = nil
+			return err
+		}
+		h.leases = append(h.leases, lease)
 	case PanelSession:
 		lease, err := r.metrics.Acquire(services.Selector{Source: services.SourceBattery}, time.Second)
 		if err != nil {
@@ -1412,6 +1437,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if strings.HasPrefix(n.Action, "audio-") && h.applyAudioControl(r, n) {
 		return true
 	}
+	if h.id == PanelMonitor && h.activateMonitor(r, n) {
+		return true
+	}
 	if n.Action == "audio-close" {
 		r.closePanelLocked(h.id)
 		return true
@@ -1566,6 +1594,9 @@ func (r *Registry) clearVisible(h *PanelHost) {
 func (h *PanelHost) afterFocusChange(r *Registry) {
 	if h.id == PanelMonitor {
 		r.rebuildPanel(h)
+		if revealFocusedProcess(h) && h.logicalW > 0 {
+			_ = h.configure(h.logicalW, h.logicalH, h.scale120)
+		}
 	}
 }
 
@@ -1602,7 +1633,7 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		if bar, ok := r.bars[h.output]; ok {
 			connector = bar.connector()
 		}
-		return monitorTree(h.theme.Metrics, monitorSelectors(r.cfg.ForConnector(connector)), r.sample, r.historyLocked(), readMachineFacts())
+		return monitorPanelTree(h, monitorSelectors(r.cfg.ForConnector(connector)), r.sample, r.historyLocked(), readMachineFacts())
 	case PanelSession:
 		return sessionTree(h, r.sample, r.cfg.Session.Locker)
 	case PanelSettings:
@@ -1630,7 +1661,7 @@ func panelTargetSize(id PanelID) ui.Rect {
 	case PanelClock:
 		return ui.Rect{W: 360, H: 420}
 	case PanelMonitor:
-		return ui.Rect{W: 640, H: 480}
+		return ui.Rect{W: 640, H: 720}
 	case PanelSettings:
 		return ui.Rect{W: 900, H: 620}
 	case PanelLauncher:
@@ -1650,9 +1681,16 @@ func panelTargetSize(id PanelID) ui.Rect {
 		// output clamps it through Placement.FittedSize (D2).
 		return ui.Rect{W: 980, H: 1100}
 	case PanelAudio:
-		return ui.Rect{W: 560, H: 496}
+		return audioPanelSize(1920, 1080)
 	default:
 		return ui.Rect{W: 280, H: 200}
+	}
+}
+
+func audioPanelSize(outputW, outputH int) ui.Rect {
+	return ui.Rect{
+		W: min(max(outputW/3, 720), 1120),
+		H: min(max(2*outputH/3, 640), 992),
 	}
 }
 
@@ -1675,7 +1713,24 @@ func monitorSurfaceHeight(root *ui.Node, width, radius int, measure ui.MeasureTe
 }
 
 func notificationsSurfaceHeight(h *PanelHost) int {
-	ht := monitorSurfaceHeight(h.root, h.place.Panel.W, h.theme.Radius, h.measureText())
+	root := h.root
+	if root != nil {
+		copyRoot := *root
+		copyRoot.Children = append([]*ui.Node(nil), root.Children...)
+		for i, child := range copyRoot.Children {
+			if child == nil || child.Kind != ui.KindScroll {
+				continue
+			}
+			// Measure the body as ordinary content before assigning its viewport.
+			// A scroll node's Height is the viewport, not the height of its cards.
+			copyRoot.Children[i] = &ui.Node{
+				Kind: ui.KindColumn, Gap: child.Gap, Padding: child.Padding, Children: child.Children,
+			}
+			break
+		}
+		root = &copyRoot
+	}
+	ht := monitorSurfaceHeight(root, h.place.Panel.W, h.theme.Radius, h.measureText())
 	maxH := min(h.place.Output.H*8/10, 648)
 	return max(300, min(ht, maxH))
 }
@@ -1868,8 +1923,12 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 	releaseAll(h.leases)
 	h.leases = nil
 	if h.mixerLease != nil {
-		h.mixerLease.Release()
+		lease := h.mixerLease
 		h.mixerLease = nil
+		// ponytail: only the audio panel owns this potentially blocking poller.
+		// If more panel resources gain blocking teardown, return cleanup work
+		// from this locked method and drain it through one shared path.
+		go lease.Release()
 	}
 	h.editors = nil
 }

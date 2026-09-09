@@ -22,6 +22,7 @@ const (
 	SourceNetwork
 	SourceBattery
 	SourceGPU
+	SourceProcess
 	sourceCount
 )
 
@@ -42,6 +43,8 @@ func (s Source) String() string {
 		return "battery"
 	case SourceGPU:
 		return "gpu"
+	case SourceProcess:
+		return "process"
 	}
 	return fmt.Sprintf("source(%d)", uint8(s))
 }
@@ -62,6 +65,18 @@ type Snapshot struct {
 	Battery     *metrics.BatterySnapshot
 	Thermal     *metrics.ThermalSnapshot
 	GPU         *metrics.GPUSnapshot
+	Processes   *metrics.ProcessSnapshot
+}
+
+type Process = metrics.Process
+type ProcessCPU = metrics.CPUUsage
+type ProcessIdentity = metrics.ProcessIdentity
+type ProcessSnapshot = metrics.ProcessSnapshot
+
+var ErrProcessIdentityChanged = metrics.ErrProcessIdentityChanged
+
+func ValidateProcessIdentity(identity ProcessIdentity) error {
+	return metrics.ValidateProcessIdentity(identity)
 }
 
 // ReadUptime is a one-shot /proc/uptime read. It is not on Snapshot: the
@@ -109,6 +124,12 @@ func (s Selector) String() string {
 func (s Snapshot) Fraction(sel Selector) (float64, bool) {
 	switch sel.Source {
 	case SourceCPU:
+		if sel.Subject == "temperature" {
+			if s.Thermal == nil || !s.Thermal.Valid {
+				return 0, false
+			}
+			return min(max(s.Thermal.Celsius/100, 0), 1), true
+		}
 		if s.CPU == nil || !s.CPU.Usage.Valid {
 			return 0, false
 		}
@@ -393,6 +414,7 @@ type samplers struct {
 	cpu     *metrics.CPUSampler
 	block   *metrics.BlockSampler
 	network *metrics.NetworkSampler
+	process *metrics.ProcessSampler
 }
 
 func (m *Metrics) run(stop, done chan struct{}) {
@@ -402,6 +424,7 @@ func (m *Metrics) run(stop, done chan struct{}) {
 		cpu:     metrics.NewCPUSampler(),
 		block:   metrics.NewBlockSampler(),
 		network: metrics.NewNetworkSampler(),
+		process: metrics.NewProcessSampler(),
 	}
 	// failing tracks which sources are currently reporting errors, so the log
 	// is edge-triggered. A per-tick log at the default interval would emit
@@ -495,6 +518,19 @@ func (m *Metrics) collect(s *samplers, failing *[sourceCount]bool) Snapshot {
 			noteRecovery(failing, SourceGPU)
 			snap.GPU = &v
 		}
+	}
+	if m.SourceLeased(SourceProcess) {
+		if s.process == nil {
+			s.process = metrics.NewProcessSampler()
+		}
+		if v, err := s.process.Sample(); err != nil {
+			noteFailure(failing, SourceProcess, err)
+		} else {
+			noteRecovery(failing, SourceProcess)
+			snap.Processes = &v
+		}
+	} else {
+		s.process = nil
 	}
 	return snap
 }

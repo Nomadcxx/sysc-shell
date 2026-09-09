@@ -32,10 +32,10 @@ func TestInitialWindowStateTitlesEachOutput(t *testing.T) {
 		},
 	})
 
-	if got := reg.bars[1].left[1].inner.Text; got != "Fixture One" {
+	if got := reg.bars[1].left[2].inner.Text; got != "Fixture One" {
 		t.Fatalf("DP-9 title = %q, want its own window", got)
 	}
-	if got := reg.bars[2].left[1].inner.Text; got != "Fixture Two" {
+	if got := reg.bars[2].left[2].inner.Text; got != "Fixture Two" {
 		t.Fatalf("HDMI-A-9 title = %q, want its own window", got)
 	}
 }
@@ -48,10 +48,10 @@ func TestUnavailableNiriStateRendersAStableFallback(t *testing.T) {
 	t.Cleanup(reg.Close)
 	newHosts(t, reg, map[uint32]string{1: "DP-9"})
 
-	if got := nodeText(reg.bars[1].left[0].node); got != noWorkspace {
+	if got := nodeText(reg.bars[1].left[1].node); got != noWorkspace {
 		t.Fatalf("workspace before any snapshot = %q, want %q", got, noWorkspace)
 	}
-	if got := reg.bars[1].left[1].inner.Text; got != "" {
+	if got := reg.bars[1].left[2].inner.Text; got != "" {
 		t.Fatalf("title before any snapshot = %q, want empty", got)
 	}
 	// The bar still has its three sections and can lay out.
@@ -91,8 +91,8 @@ func TestALongTitleStaysWithinItsCapAndKeepsItsNeighbour(t *testing.T) {
 		t.Fatalf("Render: %v", err)
 	}
 
-	workspace := bar.left[0].node
-	title := bar.left[1].inner
+	workspace := bar.left[1].node
+	title := bar.left[2].inner
 	if title.Bounds.W > title.MaxWidth {
 		t.Fatalf("title width %d exceeds its cap %d", title.Bounds.W, title.MaxWidth)
 	}
@@ -151,10 +151,10 @@ func TestMovingAWindowInvalidatesOnlyTheOutputsItLeavesAndJoins(t *testing.T) {
 	if seen[3] {
 		t.Fatalf("changed = %v, want the untouched output 3 excluded", changed)
 	}
-	if got := reg.bars[1].left[1].inner.Text; got != "" {
+	if got := reg.bars[1].left[2].inner.Text; got != "" {
 		t.Fatalf("DP-9 title = %q, want empty after the window left", got)
 	}
-	if got := reg.bars[2].left[1].inner.Text; got != "Fixture One" {
+	if got := reg.bars[2].left[2].inner.Text; got != "Fixture One" {
 		t.Fatalf("HDMI-A-9 title = %q, want the window it gained", got)
 	}
 }
@@ -376,7 +376,7 @@ func TestAGrowingTitleIsMeasuredAgain(t *testing.T) {
 		t.Fatalf("Configure: %v", err)
 	}
 
-	title := bar.left[1].node
+	title := bar.left[2].inner
 	bar.apply(barView{Title: "short"})
 	renderOnce(t, bar)
 	short := title.Bounds.W

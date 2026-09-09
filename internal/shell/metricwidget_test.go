@@ -8,6 +8,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 // fixtureSnapshot carries one of every source with invented values.
@@ -18,6 +19,8 @@ func fixtureSnapshot() services.Snapshot {
 		Memory: &metrics.MemorySnapshot{
 			Memory: metrics.Capacity{TotalBytes: 1000, UsedBytes: 250},
 		},
+		Thermal: &metrics.ThermalSnapshot{Celsius: 65, Valid: true},
+		GPU:     &metrics.GPUSnapshot{GPUs: []metrics.GPU{{Usage: metrics.GPUUsage{Fraction: 0.7, Valid: true}}}},
 		Filesystem: &metrics.FilesystemSnapshot{Filesystems: []metrics.Filesystem{{
 			MountPoint: "/fixture",
 			Capacity:   metrics.Capacity{TotalBytes: 200, UsedBytes: 100},
@@ -163,12 +166,32 @@ func TestAMetricWidgetOpensTheSystemMonitor(t *testing.T) {
 	}
 }
 
+func TestRadialMetricWidgetCarriesGaugeValueAndLabel(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		id    string
+		label string
+		want  float64
+		value string
+	}{{"cpu", "C", .42, "42%"}, {"memory", "M", .25, "25%"}, {"temperature", "T", .65, "65°"}, {"gpu", "G", .7, "70%"}}
+	for _, tc := range cases {
+		w := buildMetricWidget(config.Item{ID: tc.id, Display: "radial"})
+		w.format(barView{Metrics: fixtureSnapshot()})
+		if w.node.Kind != ui.KindRadialGauge || w.node.Text != tc.label || w.node.Value != tc.want ||
+			w.node.ValueText != tc.value || w.node.Absent {
+			t.Fatalf("%s radial = %+v", tc.id, w.node)
+		}
+	}
+}
+
 func TestEveryMetricIDMapsToASelector(t *testing.T) {
 	t.Parallel()
 	want := map[string]services.Selector{
-		"cpu":     {Source: services.SourceCPU},
-		"memory":  {Source: services.SourceMemory},
-		"battery": {Source: services.SourceBattery},
+		"cpu":         {Source: services.SourceCPU},
+		"memory":      {Source: services.SourceMemory},
+		"temperature": {Source: services.SourceCPU, Subject: "temperature"},
+		"gpu":         {Source: services.SourceGPU},
+		"battery":     {Source: services.SourceBattery},
 	}
 	for id, sel := range want {
 		got, ok := metricSelector(config.Item{ID: id})

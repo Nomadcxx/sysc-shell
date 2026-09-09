@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	launcher "github.com/Nomadcxx/sysc-launch"
@@ -92,6 +93,8 @@ type Registry struct {
 	niriSend func(any) error
 	// killPID SIGTERMs one client pid. Tests replace it; nil uses os.FindProcess.
 	killPID func(int) error
+	// signalProcess validates PID identity and delivers TERM/KILL off Registry.mu.
+	signalProcess func(services.ProcessIdentity, syscall.Signal) error
 
 	// notify is the service-owned notification projection.
 	notify *notifyState
@@ -145,6 +148,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		runArgv:       runArgvDefault,
 		lookPath:      exec.LookPath,
 		runArgvOutput: runArgvOutputDefault,
+		signalProcess: signalProcessDefault,
 		notify:        newNotifyState(),
 		tray:          newTrayState(),
 		trayCh:        make(chan trayclient.Message, 32),
@@ -632,6 +636,8 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 		}
 		out, trig := r.triggerFor(global)
 		switch {
+		case action == panelLauncherAction && (button == 0 || button == buttonLeft):
+			return r.TogglePanel(PanelLauncher, out, trig) == nil
 		case action == panelMonitorAction && (button == 0 || button == buttonLeft || button == buttonRight):
 			return r.TogglePanel(PanelMonitor, out, trig) == nil
 		case action == panelSessionAction && button == buttonRight:

@@ -31,6 +31,34 @@ func TestDefaultBarMatchesDMSContentBand(t *testing.T) {
 	}
 }
 
+func TestDefaultBarStartsWithLauncher(t *testing.T) {
+	t.Parallel()
+	left := Default().Bar.Left
+	if len(left) == 0 || left[0].ID != "launcher" {
+		t.Fatalf("default left = %+v, want launcher first", left)
+	}
+}
+
+func TestDefaultSysmonHasFourRadialGauges(t *testing.T) {
+	t.Parallel()
+	var got []Item
+	for _, item := range Default().Bar.Right {
+		if item.ID == "group" && len(item.Items) == 4 {
+			got = item.Items
+			break
+		}
+	}
+	want := []string{"cpu", "memory", "temperature", "gpu"}
+	if len(got) != len(want) {
+		t.Fatalf("sysmon = %+v", got)
+	}
+	for i, id := range want {
+		if got[i].ID != id || got[i].Display != "radial" {
+			t.Fatalf("sysmon[%d] = %+v, want %s radial", i, got[i], id)
+		}
+	}
+}
+
 func TestParseAcceptsAFullDocument(t *testing.T) {
 	t.Parallel()
 	const doc = `{
@@ -193,14 +221,14 @@ func TestDefaultVocabularyShipsBothClocksAndBothNiriWidgets(t *testing.T) {
 	t.Parallel()
 	cfg := Default()
 
-	if got := len(cfg.Bar.Left); got != 2 {
-		t.Fatalf("left items = %d, want workspace and window-title", got)
+	if got := len(cfg.Bar.Left); got != 3 {
+		t.Fatalf("left items = %d, want launcher, workspace, and window-title", got)
 	}
-	if cfg.Bar.Left[0].ID != "workspace" {
-		t.Fatalf("left[0] = %q, want workspace", cfg.Bar.Left[0].ID)
+	if cfg.Bar.Left[0].ID != "launcher" || cfg.Bar.Left[1].ID != "workspace" {
+		t.Fatalf("left = %+v, want launcher then workspace", cfg.Bar.Left)
 	}
-	if cfg.Bar.Left[1].ID != "window-title" || cfg.Bar.Left[1].MaxWidth <= 0 {
-		t.Fatalf("left[1] = %+v, want window-title with a positive max width", cfg.Bar.Left[1])
+	if cfg.Bar.Left[2].ID != "window-title" || cfg.Bar.Left[2].MaxWidth <= 0 {
+		t.Fatalf("left[2] = %+v, want window-title with a positive max width", cfg.Bar.Left[2])
 	}
 	if len(cfg.Bar.Center) != 3 {
 		t.Fatalf("center = %+v, want time, wordmark, and date", cfg.Bar.Center)
@@ -405,6 +433,22 @@ func TestAMeterOnARateSourceIsRejected(t *testing.T) {
 		_, err := Parse([]byte(body))
 		if err == nil {
 			t.Fatalf("a meter on a rate source was accepted: %s", body)
+		}
+		if !strings.Contains(err.Error(), "display") {
+			t.Fatalf("error %q does not name the display field", err)
+		}
+	}
+}
+
+func TestARadialGaugeOnARateSourceIsRejected(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{
+		`{"bar":{"items":{"right":[{"id":"block","device":"nvme9n1","display":"radial"}]}}}`,
+		`{"bar":{"items":{"right":[{"id":"network","interface":"eth9","display":"radial"}]}}}`,
+	} {
+		_, err := Parse([]byte(body))
+		if err == nil {
+			t.Fatalf("a radial gauge on a rate source was accepted: %s", body)
 		}
 		if !strings.Contains(err.Error(), "display") {
 			t.Fatalf("error %q does not name the display field", err)

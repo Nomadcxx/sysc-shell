@@ -66,7 +66,13 @@ func sampleGradient(stops []gradientStop, axis gradientAxis, offset, ux, uy floa
 	return sampleStops(stops, ux*axis.x+uy*axis.y-axis.bias-offset)
 }
 
-func fillRectGradient(c *Canvas, r ui.Rect, stops []gradientStop, angle, offset float64) {
+func sampleGradientPeriodic(stops []gradientStop, axis gradientAxis, offset, ux, uy float64) Color {
+	t := ux*axis.x + uy*axis.y - axis.bias - offset
+	t -= math.Floor(t)
+	return sampleStops(stops, t)
+}
+
+func fillRectGradient(c *Canvas, r ui.Rect, stops []gradientStop, angle, offset float64, periodic bool) {
 	if len(stops) == 0 {
 		return
 	}
@@ -79,7 +85,12 @@ func fillRectGradient(c *Canvas, r ui.Rect, stops []gradientStop, angle, offset 
 		row := c.Pix[y*c.Stride:]
 		uy := (float64(y-r.Y) + 0.5) / float64(r.H)
 		for x := x0; x < x1; x++ {
-			col := sampleGradient(stops, axis, offset, (float64(x-r.X)+0.5)/float64(r.W), uy)
+			var col Color
+			if periodic {
+				col = sampleGradientPeriodic(stops, axis, offset, (float64(x-r.X)+0.5)/float64(r.W), uy)
+			} else {
+				col = sampleGradient(stops, axis, offset, (float64(x-r.X)+0.5)/float64(r.W), uy)
+			}
 			if col.A == 0 {
 				continue
 			}
@@ -88,7 +99,7 @@ func fillRectGradient(c *Canvas, r ui.Rect, stops []gradientStop, angle, offset 
 	}
 }
 
-func blendMaskGradient(c *Canvas, mask *image.Alpha, x, y int, stops []gradientStop, angle, offset float64) {
+func blendMaskGradient(c *Canvas, mask *image.Alpha, x, y int, stops []gradientStop, angle, offset float64, periodic bool) {
 	if len(stops) == 0 || mask == nil {
 		return
 	}
@@ -107,7 +118,12 @@ func blendMaskGradient(c *Canvas, mask *image.Alpha, x, y int, stops []gradientS
 			if cov == 0 {
 				continue
 			}
-			col := sampleGradient(stops, axis, offset, (float64(px-box.X)+0.5)/float64(box.W), uy)
+			var col Color
+			if periodic {
+				col = sampleGradientPeriodic(stops, axis, offset, (float64(px-box.X)+0.5)/float64(box.W), uy)
+			} else {
+				col = sampleGradient(stops, axis, offset, (float64(px-box.X)+0.5)/float64(box.W), uy)
+			}
 			src := col.premultiply()
 			alpha := uint32(col.A) * cov / 255
 			if alpha == 0 {

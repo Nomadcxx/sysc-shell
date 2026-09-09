@@ -57,13 +57,32 @@ func TestWordmarkWidgetIsBareAndBalancesItsClocks(t *testing.T) {
 		t.Fatalf("wordmark size = %dx%d, want %dx%d", mark.node.ImageW, mark.node.ImageH,
 			render.WordmarkWidth(launcherMarkHeight), launcherMarkHeight)
 	}
-	if mark.node.Gradient.Count != 3 || mark.node.Gradient.Motion != ui.GradientPingPong {
+	if mark.node.Gradient.Count != 4 || mark.node.Gradient.Motion != ui.GradientLoop ||
+		mark.node.Gradient.From != 0 || mark.node.Gradient.To != 1 {
 		t.Fatalf("wordmark gradient = %+v", mark.node.Gradient)
+	}
+	if got := mark.node.Gradient.Stops; got[0].Role != ui.PaintPrimary ||
+		got[1].Role != ui.PaintSecondary || got[2].Role != ui.PaintTertiary ||
+		got[3].Role != ui.PaintPrimary {
+		t.Fatalf("wordmark roles = %+v", got)
 	}
 	for _, i := range []int{0, 2} {
 		if got := widgets[i].inner.MinWidthText; got != "Wed 30 Sep" {
 			t.Errorf("clock %d width floor = %q, want Wed 30 Sep", i, got)
 		}
+	}
+}
+
+func TestLauncherWidgetUsesGhostAndOpensLauncher(t *testing.T) {
+	t.Parallel()
+	widgets := buildWidgets([]config.Item{{ID: "launcher"}}, 8)
+	if len(widgets) != 1 || widgets[0].inner == nil {
+		t.Fatalf("launcher widgets = %+v", widgets)
+	}
+	n := widgets[0].inner
+	ghost, _ := render.IconByName("ghost")
+	if n.Kind != ui.KindText || n.Text != string(ghost) || n.Action != panelLauncherAction {
+		t.Fatalf("launcher node = %+v", n)
 	}
 }
 
@@ -312,8 +331,8 @@ func TestAGroupedMetricKeepsItsOwnTooltip(t *testing.T) {
 			}
 		}
 	}
-	if len(group.members) != 2 {
-		t.Fatalf("default bar has no two-member group; found %d members", len(group.members))
+	if len(group.members) != 4 {
+		t.Fatalf("default bar has no four-member group; found %d members", len(group.members))
 	}
 	for _, m := range group.members {
 		if m.tooltip == "" {

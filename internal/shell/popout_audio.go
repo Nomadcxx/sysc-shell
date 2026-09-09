@@ -22,12 +22,18 @@ func audioTree(r *Registry, h *PanelHost) *ui.Node {
 	if h.audioTab == "devices" {
 		body = audioDevicesTree(r, h)
 	}
-	children := []*ui.Node{header}
-	if h.errLabel != "" {
-		children = append(children, &ui.Node{Kind: ui.KindText, Text: h.errLabel, Tone: ui.ToneError})
+	if errText := audioPanelError(h.errLabel, audioMixerSnapshot(r)); errText != "" {
+		body.Children = append([]*ui.Node{{Kind: ui.KindText, Text: errText, Tone: ui.ToneError}}, body.Children...)
 	}
-	children = append(children, &ui.Node{Kind: ui.KindScroll, Children: []*ui.Node{body}})
-	return &ui.Node{Kind: ui.KindColumn, Gap: 12, Padding: m.PanelPadding, Children: children}
+	panelH := h.place.Panel.H
+	if panelH <= 0 {
+		panelH = panelTargetSize(PanelAudio).H
+	}
+	viewportH := max(panelH-2*m.PanelPadding-header.Height-12, 0)
+	return &ui.Node{Kind: ui.KindColumn, Gap: 12, Padding: m.PanelPadding, Children: []*ui.Node{
+		header,
+		{Kind: ui.KindScroll, Height: viewportH, Children: []*ui.Node{body}},
+	}}
 }
 
 func audioHeaderCard(h *PanelHost, m theme.Metrics) *ui.Node {
@@ -44,8 +50,9 @@ func audioHeaderCard(h *PanelHost, m theme.Metrics) *ui.Node {
 		Fill:     ui.FillContainerHighest,
 		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "graphic_eq", IconSize: m.IconNormal}},
 	}
-	top := &ui.Node{Kind: ui.KindRow, Gap: 12, Height: well, Children: []*ui.Node{
-		icon, title, closeBtn,
+	leading := &ui.Node{Kind: ui.KindRow, Gap: 12, Height: well, Children: []*ui.Node{icon, title}}
+	top := &ui.Node{Kind: ui.KindRow, Gap: 12, Height: well, PinEnd: true, Children: []*ui.Node{
+		leading, closeBtn,
 	}}
 	tabs := &ui.Node{
 		Kind: ui.KindSegmented, Key: "audio-tab", Gap: 2, Height: well,
@@ -55,7 +62,8 @@ func audioHeaderCard(h *PanelHost, m theme.Metrics) *ui.Node {
 		},
 	}
 	return &ui.Node{
-		Kind: ui.KindCapsule, Padding: m.CardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard, Height: 116,
+		Kind: ui.KindCapsule, Padding: m.CardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+		Height:   2*m.CardPadding + 2*well + 12,
 		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: 12, Children: []*ui.Node{top, tabs}}},
 	}
 }
@@ -75,8 +83,8 @@ func audioSegment(h *PanelHost, action, label string, selected bool) *ui.Node {
 func audioVolumesTree(r *Registry, h *PanelHost) *ui.Node {
 	snap, stale, unavailable := audioMixerState(r)
 	rows := []*ui.Node{
-		audioVolumeRow(audioApplyPending(h, audioDefaultNode(snap.Sinks, "Output")), "Output", nil),
-		audioVolumeRow(audioApplyPending(h, audioDefaultNode(snap.Sources, "Input")), "Input", nil),
+		audioVolumeCard(audioApplyPending(h, audioDefaultNode(snap.Sinks, "Output")), "Output", nil, h),
+		audioVolumeCard(audioApplyPending(h, audioDefaultNode(snap.Sources, "Input")), "Input", nil, h),
 		{Kind: ui.KindText, Text: fmt.Sprintf("Applications %d", len(snap.Streams)), TextRole: theme.RoleLabel, Height: 28},
 	}
 	if unavailable {
@@ -96,7 +104,7 @@ func audioVolumesTree(r *Registry, h *PanelHost) *ui.Node {
 		for _, stream := range snap.Streams {
 			n := audioApplyPending(h, stream)
 			img := audioStreamImage(r, n)
-			row := audioVolumeRow(n, "Application", img)
+			row := audioVolumeCard(n, "Application", img, h)
 			if unavailable {
 				audioDisable(row)
 			}
@@ -218,9 +226,28 @@ func audioVolumeRow(n services.AudioNode, role string, icon *ui.Image) *ui.Node 
 	}
 	return &ui.Node{Kind: ui.KindRow, Gap: 12, Height: 68, Children: []*ui.Node{
 		ident, mid,
-		{Kind: ui.KindText, Text: value, Tabular: true, MinWidthText: "100%", TextRole: theme.RoleBody},
+		{Kind: ui.KindText, Text: value, Width: 44, Tabular: true, MinWidthText: "100%", TextRole: theme.RoleBody},
 		mute,
 	}}
+}
+
+func audioVolumeCard(n services.AudioNode, role string, icon *ui.Image, h *PanelHost) *ui.Node {
+	m := h.metrics()
+	row := audioVolumeRow(n, role, icon)
+	panelW := h.place.Panel.W
+	if panelW <= 0 {
+		panelW = panelTargetSize(PanelAudio).W
+	}
+	innerW := max(panelW-2*m.PanelPadding-2*m.CardPadding, 0)
+	// Identity, value and mute are fixed; the middle column receives every
+	// remaining pixel so the slider grows with the panel.
+	row.Children[1].Width = max(innerW-32-44-32-3*row.Gap, 0)
+	row.Children[2].Width = 44
+	return &ui.Node{
+		Kind: ui.KindCapsule, Height: row.Height + 2*m.CardPadding,
+		Padding: m.CardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+		Children: []*ui.Node{row},
+	}
 }
 
 func audioRoleIcon(role string, muted bool) string {
@@ -259,6 +286,20 @@ func audioMixerState(r *Registry) (services.AudioSnapshot, bool, bool) {
 	snap := r.audio.Mixer()
 	stale := !r.audio.MixerReady()
 	return snap, stale, false
+}
+
+func audioMixerSnapshot(r *Registry) services.AudioSnapshot {
+	if r == nil || r.audio == nil {
+		return services.AudioSnapshot{}
+	}
+	return r.audio.Mixer()
+}
+
+func audioPanelError(controlError string, snap services.AudioSnapshot) string {
+	if controlError != "" {
+		return controlError
+	}
+	return snap.Error
 }
 
 func audioApplyPending(h *PanelHost, n services.AudioNode) services.AudioNode {

@@ -40,6 +40,9 @@ const (
 	// box (ImageW/ImageH) so layout stays ignorant of the asset; the renderer
 	// owns the mark's pixels and its aspect ratio.
 	KindWordmark
+	// KindRadialGauge is a compact labelled circular progress indicator used
+	// by the bar's system summary.
+	KindRadialGauge
 
 	// kindCount is one past the last kind. It exists so a test can assert that
 	// every declared kind is measurable, and it must stay last.
@@ -68,6 +71,8 @@ type PaintRole uint8
 const (
 	PaintUnset PaintRole = iota
 	PaintPrimary
+	PaintSecondary
+	PaintTertiary
 	PaintOnSurfaceVariant
 	PaintOnSurface
 	PaintSurface
@@ -99,6 +104,8 @@ type GradientPaint struct {
 type Node struct {
 	Kind Kind
 	Text string
+	// ValueText is the compact formatted value painted inside a radial gauge.
+	ValueText string
 	// Icon names a glyph in the dedicated chrome icon inventory.
 	Icon string
 	// Key identifies a node across tree rebuilds so host-retained state -- an

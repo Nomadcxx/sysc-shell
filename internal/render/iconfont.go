@@ -65,6 +65,7 @@ const (
 	iconNotificationsOff
 	iconClose
 	iconSchedule
+	iconGhost
 
 	batteryRuneFirst = iconBatteryLevel0
 	batteryRuneLast  = iconBatteryCritical
@@ -76,7 +77,7 @@ const (
 	recorderRuneLast  = iconReplay
 
 	notifyRuneFirst = iconNotifications
-	notifyRuneLast  = iconSchedule
+	notifyRuneLast  = iconGhost
 )
 
 // batteryLevels is how many level glyphs each state has.
@@ -221,6 +222,7 @@ var iconNames = map[string]rune{
 	"notifications-off": iconNotificationsOff,
 	"close":             iconClose,
 	"schedule":          iconSchedule,
+	"ghost":             iconGhost,
 }
 
 // IconByName resolves a catalogue name to its symbol.

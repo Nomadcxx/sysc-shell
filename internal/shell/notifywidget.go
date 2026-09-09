@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -11,52 +10,38 @@ const (
 	panelNotificationsAction = "panel:notifications"
 	notifyDNDAction          = "notify:dnd"
 	notifyDNDMenuAction      = "notify:dnd-menu"
-	notifyBadgeSize          = 6
 )
 
 func buildNotifyWidget() textWidget {
-	row := &ui.Node{
-		Kind:     ui.KindRow,
-		Action:   panelNotificationsAction,
-		Children: []*ui.Node{{Kind: ui.KindText, Text: notifyGlyph(false)}},
+	icon := &ui.Node{
+		Kind: ui.KindIcon, Icon: "notifications", IconSize: 20,
+		Action: panelNotificationsAction,
 	}
 	return textWidget{
-		node:    row,
+		node:    icon,
 		tooltip: "Notifications",
-		refresh: func(v barView) bool { return refreshNotifyWidget(row, v) },
+		refresh: func(v barView) bool { return refreshNotifyWidget(icon, v) },
 	}
 }
 
-func notifyGlyph(dnd bool) string {
+func notifyIcon(dnd bool) string {
 	name := "notifications"
 	if dnd {
-		name = "notifications-off"
+		name = "do_not_disturb_on"
 	}
-	r, _ := render.IconByName(name)
-	return string(r)
+	return name
 }
 
-func refreshNotifyWidget(row *ui.Node, v barView) bool {
-	text := notifyGlyph(v.DND)
-	wantBadge := v.Unread > 0
-	var glyph *ui.Node
-	if len(row.Children) > 0 {
-		glyph = row.Children[0]
+func refreshNotifyWidget(icon *ui.Node, v barView) bool {
+	name := notifyIcon(v.DND)
+	fill := ui.FillNone
+	if v.Unread > 0 {
+		fill = ui.FillError
 	}
-	hasBadge := len(row.Children) > 1 &&
-		row.Children[1] != nil &&
-		row.Children[1].Kind == ui.KindCapsule &&
-		row.Children[1].Fill == ui.FillError &&
-		row.Children[1].Width == notifyBadgeSize
-	if glyph != nil && glyph.Kind == ui.KindText && glyph.Text == text && wantBadge == hasBadge {
+	if icon.Icon == name && icon.Fill == fill {
 		return false
 	}
-	children := []*ui.Node{{Kind: ui.KindText, Text: text}}
-	if wantBadge {
-		children = append(children, &ui.Node{
-			Kind: ui.KindCapsule, Fill: ui.FillError, Width: notifyBadgeSize, Shape: ui.ShapeCircle,
-		})
-	}
-	row.Children = children
+	icon.Icon = name
+	icon.Fill = fill
 	return true
 }
