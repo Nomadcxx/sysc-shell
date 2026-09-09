@@ -8,9 +8,10 @@ func Focusables(root *Node) []*Node {
 		if n == nil {
 			return
 		}
-		// A disabled control stays measurable and paintable but leaves the
-		// traversal: it must neither take keyboard focus nor be activated.
-		if n.Focusable && !n.State.Has(StateDisabled) {
+		// A disabled control normally leaves traversal. AriaDisabled is the
+		// explicit exception for inert destinations whose name explains why
+		// they are unavailable.
+		if n.Focusable && (!n.State.Has(StateDisabled) || n.AriaDisabled) {
 			out = append(out, n)
 		}
 		if n.Kind == KindVirtualList && n.Item != nil {

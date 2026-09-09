@@ -120,6 +120,107 @@ func TestWordmarkRightClickOpensControlCentre(t *testing.T) {
 	}
 }
 
+func TestControlCentreRailKeepsDisabledDestinationsAddressable(t *testing.T) {
+	root := controlCentreTree(nil, &PanelHost{section: "home"})
+	if len(root.Children) != 2 {
+		t.Fatalf("control centre has %d regions, want rail and body", len(root.Children))
+	}
+	rail := root.Children[0]
+	var entries []*ui.Node
+	for _, n := range rail.Children {
+		if n.Kind == ui.KindButton {
+			entries = append(entries, n)
+		}
+	}
+	if len(entries) != 10 {
+		t.Fatalf("rail has %d entries, want 10", len(entries))
+	}
+	if entries[0].Name != "Home" || !entries[0].State.Has(ui.StateSelected) {
+		t.Errorf("first entry = %+v, want selected Home", entries[0])
+	}
+	media := entries[1]
+	if media.Name != "Media — not available yet" || media.Action != "" ||
+		!media.Focusable || !media.State.Has(ui.StateDisabled) {
+		t.Errorf("disabled Media entry = %+v", media)
+	}
+	if got := len(ui.Focusables(rail)); got != 10 {
+		t.Errorf("focusable rail entries = %d, want all 10 including unavailable destinations", got)
+	}
+}
+
+func TestControlCentreHeaderAndBodyComposition(t *testing.T) {
+	root := controlCentreTree(nil, &PanelHost{section: "audio"})
+	if len(root.Children) != 2 || len(root.Children[1].Children) != 2 {
+		t.Fatalf("control centre composition = %+v, want rail beside header and body", root)
+	}
+	header := root.Children[1].Children[0]
+	if header.Height != 40 || len(header.Children) != 2 || header.Children[0].Text != "Audio" {
+		t.Fatalf("header = %+v, want a 40px Audio header", header)
+	}
+	want := map[string]string{
+		"Settings": "cc:settings",
+		"Power":    "cc:power",
+		"Close":    "cc:close",
+	}
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if action, ok := want[n.Name]; ok {
+			if n.Action != action || !n.Focusable {
+				t.Errorf("%s control = %+v", n.Name, n)
+			}
+			delete(want, n.Name)
+		}
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(header)
+	if len(want) != 0 {
+		t.Errorf("header is missing controls: %v", want)
+	}
+	if body := root.Children[1].Children[1]; body.Kind != ui.KindScroll || len(body.Children) != 1 {
+		t.Errorf("body = %+v, want one scroll viewport", body)
+	}
+}
+
+func TestControlCentreHeaderRoutesPanelsAndClose(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		action string
+		want   PanelID
+		closed bool
+	}{
+		{name: "settings", action: "cc:settings", want: PanelSettings},
+		{name: "power", action: "cc:power", want: PanelSession},
+		{name: "close", action: "cc:close", closed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newPanelRegistry(t)
+			if err := r.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+				t.Fatal(err)
+			}
+			r.mu.Lock()
+			h := r.panelHosts[PanelControlCenter]
+			for i, n := range h.focus {
+				if n.Action == tc.action {
+					h.roving.Set(i)
+					break
+				}
+			}
+			if !h.activate(r) {
+				r.mu.Unlock()
+				t.Fatalf("%s did not activate", tc.action)
+			}
+			_, controlOpen := r.panelHosts[PanelControlCenter]
+			_, targetOpen := r.panelHosts[tc.want]
+			r.mu.Unlock()
+			if controlOpen || (!tc.closed && !targetOpen) {
+				t.Errorf("after %s: control open=%v target open=%v", tc.action, controlOpen, targetOpen)
+			}
+		})
+	}
+}
+
 func TestPanelSectionValidationPrecedesMutation(t *testing.T) {
 	r := NewRegistry(config.Default())
 	t.Cleanup(r.Close)
