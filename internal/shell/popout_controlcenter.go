@@ -152,6 +152,56 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 	return true
 }
 
+// setCaffeine changes the one process-wide idle inhibit. Caller holds r.mu;
+// the process is started and stopped through scheduleControl off the owner.
+func (r *Registry) setCaffeine(h *PanelHost, on bool) {
+	if on {
+		if r.inhibitWanted {
+			return
+		}
+		r.inhibitWanted = true
+		if r.inhibit != nil || r.inhibitStarting {
+			return
+		}
+		r.inhibitStarting = true
+		start := r.startInhibit
+		r.scheduleControl(h, func() error {
+			hold, err := start()
+			r.mu.Lock()
+			r.inhibitStarting = false
+			if err != nil {
+				r.inhibitWanted = false
+				r.mu.Unlock()
+				return err
+			}
+			stopped := false
+			select {
+			case <-r.closed:
+				stopped = true
+			default:
+			}
+			keep := r.inhibitWanted && !stopped
+			if keep {
+				r.inhibit = hold
+			}
+			r.mu.Unlock()
+			if !keep {
+				return hold.Close()
+			}
+			return nil
+		})
+		return
+	}
+
+	r.inhibitWanted = false
+	if r.inhibit == nil {
+		return
+	}
+	hold := r.inhibit
+	r.inhibit = nil
+	r.scheduleControl(h, hold.Close)
+}
+
 func ccHome(*Registry, *PanelHost) *ui.Node          { return &ui.Node{Kind: ui.KindColumn} }
 func ccAudio(*Registry, *PanelHost) *ui.Node         { return &ui.Node{Kind: ui.KindColumn} }
 func ccMonitor(*Registry, *PanelHost) *ui.Node       { return &ui.Node{Kind: ui.KindColumn} }

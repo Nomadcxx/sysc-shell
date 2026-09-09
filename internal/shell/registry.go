@@ -3,6 +3,7 @@ package shell
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -84,6 +85,11 @@ type Registry struct {
 	lookPath func(string) (string, error)
 	// runArgvOutput captures stdout of powerprofilesctl list. Tests replace it.
 	runArgvOutput func([]string) (string, error)
+	// startInhibit creates the process-backed caffeine hold. Tests replace it.
+	startInhibit    func() (io.Closer, error)
+	inhibit         io.Closer
+	inhibitWanted   bool
+	inhibitStarting bool
 
 	running      []runningAppSlot
 	runningIndex []runningAppEntry
@@ -148,6 +154,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		runArgv:       runArgvDefault,
 		lookPath:      exec.LookPath,
 		runArgvOutput: runArgvOutputDefault,
+		startInhibit:  startInhibitDefault,
 		signalProcess: signalProcessDefault,
 		notify:        newNotifyState(),
 		tray:          newTrayState(),
@@ -883,6 +890,7 @@ func (r *Registry) Close() {
 	var leases []*services.Lease
 	var bars []*Bar
 	var audioLease, brightLease *services.Lease
+	var inhibit io.Closer
 	if locked {
 		if r.toasts != nil {
 			r.toasts.stopLeaseRenew()
@@ -908,6 +916,9 @@ func (r *Registry) Close() {
 		r.audioLease = nil
 		brightLease = r.brightLease
 		r.brightLease = nil
+		inhibit = r.inhibit
+		r.inhibit = nil
+		r.inhibitWanted = false
 		r.mu.Unlock()
 	}
 	for _, bar := range bars {
@@ -922,6 +933,9 @@ func (r *Registry) Close() {
 	}
 	if brightLease != nil {
 		brightLease.Release()
+	}
+	if inhibit != nil {
+		_ = inhibit.Close()
 	}
 	releaseAll(leases)
 	var launcherSvc *launcher.Service
