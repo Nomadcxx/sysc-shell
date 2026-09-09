@@ -18,7 +18,7 @@ var materialInventory = []string{
 	"volume_up", "volume_off", "brightness_high",
 	"delete", "schedule",
 	"mic", "mic_off", "graphic_eq", "headphones",
-	"tune", "home", "music_note", "desktop_windows",
+	"home", "music_note", "desktop_windows",
 	"wifi", "bluetooth", "cloud", "calendar_month",
 	"battery_full", "coffee", "wallpaper",
 	"sunny", "partly_cloudy_day", "rainy", "thunderstorm",
@@ -35,7 +35,7 @@ func TestAudioPanelIconsAreInTheSubset(t *testing.T) {
 
 func TestControlCentreIconsAreInTheSubset(t *testing.T) {
 	for _, name := range []string{
-		"tune", "home", "music_note", "desktop_windows", "wifi", "bluetooth",
+		"home", "music_note", "desktop_windows", "wifi", "bluetooth",
 		"cloud", "calendar_month", "battery_full", "coffee", "wallpaper",
 		"sunny", "partly_cloudy_day", "rainy", "thunderstorm", "weather_snowy", "foggy",
 	} {

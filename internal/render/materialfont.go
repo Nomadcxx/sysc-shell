@@ -28,7 +28,7 @@ var materialIcons = map[string]struct{}{
 	"volume_up": {}, "volume_off": {}, "brightness_high": {},
 	"delete": {}, "schedule": {},
 	"mic": {}, "mic_off": {}, "graphic_eq": {}, "headphones": {},
-	"tune": {}, "home": {}, "music_note": {}, "desktop_windows": {},
+	"home": {}, "music_note": {}, "desktop_windows": {},
 	"wifi": {}, "bluetooth": {}, "cloud": {}, "calendar_month": {},
 	"battery_full": {}, "coffee": {}, "wallpaper": {},
 	"sunny": {}, "partly_cloudy_day": {}, "rainy": {}, "thunderstorm": {},
