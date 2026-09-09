@@ -226,7 +226,11 @@ type Node struct {
 	Children []*Node
 
 	// Name and Role are required on every Focusable node.
-	Focusable     bool
+	Focusable bool
+	// AriaDisabled keeps a disabled destination in keyboard traversal so its
+	// accessible name can explain why it is unavailable. Activation remains
+	// blocked by StateDisabled.
+	AriaDisabled  bool
 	Name          string
 	Role          string
 	DragType      string

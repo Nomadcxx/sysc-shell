@@ -1458,7 +1458,7 @@ func (h *PanelHost) adjustSlider(r *Registry, key uint32) bool {
 
 func (h *PanelHost) activate(r *Registry) bool {
 	n := h.focused()
-	if n == nil {
+	if n == nil || n.State.Has(ui.StateDisabled) {
 		return false
 	}
 	switch n.Action {
@@ -1512,6 +1512,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	}
 	if h.id == PanelLauncher {
 		return h.activateLauncher(r, n)
+	}
+	if h.id == PanelControlCenter && h.activateControlCentre(r, n) {
+		return true
 	}
 	if n.Kind == ui.KindToggle {
 		changed := ui.Activate(n)
