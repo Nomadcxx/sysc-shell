@@ -66,8 +66,8 @@
 
 **Files:** `internal/ui/tree.go`, `internal/render/layout.go`, `internal/render/paint.go`, focused renderer tests, `internal/config/config.go`, `internal/config/config_test.go`, `internal/shell/widget.go`, and focused widget tests.
 
-1. Add a failing paint/layout test for `KindRadialGauge`: bounded circular track, proportional arc, centred value, label, unavailable state, and value clamping.
-2. Implement that one node kind with the existing theme roles and software canvas.
+1. Add a failing paint/layout test for `KindRadialGauge`: bounded 22 px circular track, proportional arc, centred project-owned CPU/memory/GPU vector glyphs, a measured centred temperature value, unavailable state, and value clamping.
+2. Implement that one node kind with the existing theme roles and software canvas. Keep exact metric names and values in tooltips instead of ring text.
 3. Add built-in metric selectors for CPU temperature and GPU usage as needed, then change the default sysmon group to CPU, memory, CPU temperature, and GPU. Put the monitor action on the group capsule so right-click on any child opens it.
 4. Run:
 
@@ -88,9 +88,9 @@
 
 **Files:** `internal/services/metrics.go` or a narrow process service peer, `internal/shell/popout_monitor.go`, `internal/shell/panelhost.go`, monitor tests, and process action tests.
 
-1. Add failing projection tests for default Processes page, Monitor switching, All/User/System filters, case-insensitive search, stable sortable columns, and virtual-list bounds.
+1. Add failing projection tests for default Processes page, outlined Monitor switching, compact aligned controls, All/User/System filters, case-insensitive search, stable sortable columns, selectable rows, one immediately usable `Kill` action, and virtual-list bounds.
 2. Acquire process sampling only while `PanelMonitor` is open. Build the top page switcher and retain the shipped monitor cards as the second page.
-3. Before TERM/KILL, revalidate PID plus start time through the library; run the signal operation off `Registry.mu`; show permission, vanished, and recycled-PID errors inline.
+3. Before `SIGTERM`, revalidate PID plus start time through the library; run the signal operation off `Registry.mu`; show permission, vanished, and recycled-PID errors inline. Do not expose `SIGKILL` in the row chrome.
 4. Run:
 
    ```bash
@@ -111,4 +111,3 @@
 ## Stop condition
 
 Stop when the focused checks and repository gate pass, the fresh binaries are active, and the two-output live matrix above has been exercised. Do not pull control-centre implementation into this pass.
-
