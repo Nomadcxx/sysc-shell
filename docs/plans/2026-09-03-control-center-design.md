@@ -80,6 +80,12 @@ Owner review, 2026-09-07, after the first mock:
    leaving slack at the bottom.
 6. **Caffeine is one toggle, not two.** Stay-awake and caffeine are the same
    idle inhibit; two buttons for one boolean would be a UI lie.
+7. **The centred wordmark is the trigger.** Right-clicking the existing
+   wordmark toggles the control centre and anchors it to the wordmark centre.
+   Its left-click behaviour is unchanged. A second `tune` widget in the right
+   section would duplicate the same entry point and pull the interaction away
+   from the centre it opens beneath, so it is removed from the widget vocabulary
+   and the icon subset.
 
 ## Decisions
 
@@ -91,7 +97,7 @@ Numbered to the twelve the commission requires.
 | D2 | Rail is a fixed 56 px column, ten entries top-to-bottom: Home, Media, Audio, Monitor, Power, Network, Bluetooth, Weather, Calendar, Notifications. A grouping step separates Home from the domain list and brackets the disabled trio, so ten identical squares do not read as one undifferentiated column. Active entry is an accent-filled rounded well; disabled entries (Media, Network, Bluetooth) render at reduced emphasis and carry no action, but stay **focusable via `aria-disabled`** with the reason in the accessible name — a `title` tooltip alone is unreachable by keyboard and touch, and keep their true rail position so the IA does not reflow when a backend lands | Hiding disabled destinations until their backend exists. Text labels in the rail. Reordering to put disabled entries last |
 | D3 | Home, top to bottom: full-width identity card (name, `user@host`, uptime); a **toggle pill** holding Caffeine and Wallpaper as segmented buttons in one capsule; a split row of a clock/date/weather card over a compact **sysmon** card on the left and a 2×2 grid on the right holding three toggles (audio mute, DND, power profile) and a battery **readout** — outlined rather than filled, because a status that cannot be pressed must not look like a toggle; then full-width volume and brightness sliders. Every value updates live from its service while Home is visible; identity facts read once at open | A disabled Media card on Home (the rail already carries Media as a disabled destination; a second dead surface only thickened the card pile). Caffeine and stay-awake as two buttons — both are one idle inhibit, so two names for one boolean is a UI lie. Painting Night Light with no backing state |
 | D4 | Each functional page is composed natively for the body width from the same services the dedicated panels read. The panel is sized to Home, its tallest page, and a shorter page lets its principal block grow to fill the body, so no page shows a dead band below its content. No dedicated panel tree is embedded, and no shared content builder is extracted | Calling `monitorTree`/`sessionTree`/`centerTreeFor` inside the body (built for wider panels, and couples the control centre to trees other sessions are editing). Refactoring shipped panels into width-parameterised builders mid-flight |
-| D5 | One bar widget, default right section, Material ligature `tune`. It supplies `inner` **and** `format`, satisfying `Bar.applyLocked`. Left-click toggles the panel | A widget with neither seam — that is the blank-shell panic recorded in the 2026-09-06 handover. A launcher-style global keybind as the only entry |
+| D5 | The existing centred wordmark is the sole bar entry. Right-click toggles the panel and placement uses the wordmark action centre as `AnchorX`; left-click remains inert. The wordmark carries the action and accessible button metadata without gaining capsule chrome | A second `tune` widget in the default right section, which duplicates the entry and anchors it away from the centre. A launcher-style global keybind as the only entry |
 | D6 | IPC gains an additive `section` param: `panel.open {"panel":"control-center","section":"audio"}`. Omitted opens Home. An unknown or disabled section returns an error and leaves the open panel unchanged. Because `PanelHost.section` already drives Settings, the same param works there for free | A compound `"control-center:audio"` name (puts grammar in the name field). A dedicated `control-center.section` method for one panel. Silently falling back to Home |
 | D7 | One flat roving ring over `ui.Focusables(h.root)`, rail first in tree order. Because the rail's length never changes, the roving index is stable across page swaps, so preserving it leaves focus on the rail entry just activated. Body scrolls; pointer-routed `scrollAt` already picks the deepest scrollable. Escape: an open menu consumes it, otherwise `closePanelLocked` | A two-region rail/body focus model with its own traversal. An Escape step that returns to Home before closing (every other panel closes on Escape) |
 | D8 | Acquire the union of leases at open (metrics CPU/memory/battery, clock, weather), release at close — the shipped `acquirePanelLeases` shape. The bar already holds most of these, so they are refcount bumps rather than new samplers | Per-section acquire/release (a new lease lifecycle on a path that runs under `Registry.mu`). A single snapshot at open, which leaves Home's CPU, memory and battery visibly stale |
@@ -225,10 +231,10 @@ and paints an invisible control. Already present and reused: `volume_up`,
 `settings`, `close`, `power_settings_new`, `speed`, `balance`,
 `energy_savings_leaf`.
 
-Seventeen ligatures must be added to both `build.py` and `materialIcons`, the font
+Sixteen ligatures must be added to both `build.py` and `materialIcons`, the font
 rebuilt, and the larger `.ttf` committed:
 
-`tune` (bar trigger), `home`, `music_note` (Media), `desktop_windows`
+`home`, `music_note` (Media), `desktop_windows`
 (Monitor), `wifi` (Network), `bluetooth`, `cloud`
 (Weather), `calendar_month` (Calendar), `battery_full` (Home battery tile),
 `coffee` (Caffeine) and `wallpaper` (Wallpaper button).

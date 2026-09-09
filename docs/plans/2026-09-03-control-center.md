@@ -263,15 +263,15 @@ git commit -m "feat(render): add a concave corner mask for bar-attached panels"
 - Test: `internal/render/materialfont_test.go`
 
 **Interfaces:**
-- Produces: seventeen further names valid for `render.ValidMaterialIcon`.
+- Produces: sixteen further names valid for `render.ValidMaterialIcon`.
 
 - [ ] **Step 1: Add the names to both lists**
 
 The subset and `build.py`'s `ICONS` are kept in step by hand and asserted by test.
-Add these seventeen to **both**:
+Add these sixteen to **both**:
 
 ```
-tune  home  music_note  desktop_windows  wifi  bluetooth  cloud
+home  music_note  desktop_windows  wifi  bluetooth  cloud
 calendar_month  battery_full  coffee  wallpaper
 sunny  partly_cloudy_day  rainy  thunderstorm  weather_snowy  foggy
 ```
@@ -295,7 +295,7 @@ In `internal/render/materialfont_test.go`:
 ```go
 func TestControlCentreIconsAreInTheSubset(t *testing.T) {
 	for _, name := range []string{
-		"tune", "home", "music_note", "desktop_windows", "wifi", "bluetooth",
+		"home", "music_note", "desktop_windows", "wifi", "bluetooth",
 		"cloud", "calendar_month", "battery_full", "coffee", "wallpaper",
 		"sunny", "partly_cloudy_day", "rainy", "thunderstorm", "weather_snowy", "foggy",
 	} {
@@ -506,58 +506,41 @@ git commit -m "feat(shell): add the control centre panel identity and placement"
 - Test: `internal/shell/controlcenter_test.go`
 
 **Interfaces:**
-- Consumes: `textWidget`, the `Bar.applyLocked` contract.
-- Produces: bar item id `control-center`.
+- Consumes: the existing `wordmark` widget and `Bar.actionCenterX`.
+- Produces: right-click control-centre toggle anchored to the wordmark centre.
 
-- [ ] **Step 1: Add the widget**
+- [ ] **Step 1: Make the wordmark the trigger**
 
-`Bar.applyLocked` requires a widget to supply `refresh` **or** (`inner` and
-`format`). A widget with neither is the blank-shell panic recorded against
-`sysc-188`. Add to the `buildWidgets` switch:
+Give the existing `wordmark` node `panelControlCenterAction`, the accessible
+name `Control centre`, and button role metadata. Keep it as `KindWordmark`, so
+`capsuled` continues to leave its visual treatment alone.
 
-```go
-case "control-center":
-    node := &ui.Node{Kind: ui.KindText, Action: panelControlCentreAction}
-    out = append(out, textWidget{
-        node:    node,
-        tooltip: "Control centre",
-        format:  func(v barView) string { return "" }, // tune
-    })
-```
+Route only right-click for this action. Before toggling, set
+`trig.AnchorX = bar.actionCenterX(panelControlCenterAction)` so the panel opens
+from the wordmark even when a custom bar layout moves it.
 
-Define `panelControlCentreAction` beside the other panel actions and route it the
-way `panelSessionAction` is routed. Use the ligature the subset now carries rather
-than a literal codepoint if the codebase names glyphs by ligature elsewhere —
-follow whichever `buildWallpaperWidget` does.
+- [ ] **Step 2: Remove the redundant widget**
 
-- [ ] **Step 2: Put it on the default bar**
-
-Add `control-center` to the default right section in `internal/config/config.go`,
-before `notifications`.
+Remove `control-center` from `knownItems`, the default right section, and the
+`buildWidgets` switch. Remove the now-unused `buildControlCenterWidget` and
+`tune` glyph from the Material subset. Existing configurations that contain the
+short-lived item fail validation instead of painting two entry points; this
+project carries no configuration compatibility promise.
 
 - [ ] **Step 3: Add the focused check**
 
 ```go
-func TestControlCentreBarWidgetSatisfiesApply(t *testing.T) {
-	ws := buildWidgets([]config.Item{{ID: "control-center"}}, 6)
-	if len(ws) != 1 {
-		t.Fatalf("buildWidgets = %d widgets, want 1", len(ws))
-	}
-	w := ws[0]
-	// applyLocked needs refresh, or inner and format. Neither is the blank-shell
-	// panic: wl_output.done runs NewHost -> buildBar -> bar.apply, and a panic
-	// there is recovered into a dispatch error, so the service reads active
-	// with nothing painted.
-	if w.refresh == nil && (w.node == nil || w.format == nil) {
-		t.Error("control-center widget satisfies neither seam of the apply contract")
-	}
+func TestWordmarkRightClickOpensControlCentre(t *testing.T) {
+	// Build the default bar, assert the wordmark carries the control-centre
+	// action, then invoke the bound action with right-click. Left-click must
+	// remain inert and the resulting trigger must use the wordmark centre.
 }
 ```
 
 - [ ] **Step 4: Run**
 
 ```bash
-PATH=~/.cache/sysc-stubs:$PATH GOMAXPROCS=4 go test -p 4 ./internal/shell ./internal/config
+PATH=~/.cache/sysc-stubs:$PATH GOMAXPROCS=4 go test -p 4 ./internal/shell ./internal/config ./internal/render
 ```
 
 Expected: `ok`.
