@@ -1458,6 +1458,30 @@ func TestRadialGaugePaintsProgressAndCentreLabel(t *testing.T) {
 	}
 }
 
+func TestRadialGaugePaintsValueLabelRoundedCapAndUnavailableState(t *testing.T) {
+	t.Parallel()
+	paint := func(value float64, absent bool) *Canvas {
+		c := newTestCanvas(t, 60, 60)
+		n := &ui.Node{Kind: ui.KindRadialGauge, Text: "C", Value: value, Absent: absent, Bounds: ui.Rect{W: 60, H: 60}}
+		if err := paintNode(c, n, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	zero, unavailable := paint(0, false), paint(0, true)
+	if bytes.Equal(zero.Pix, unavailable.Pix) {
+		t.Fatal("unavailable gauge is indistinguishable from a real zero")
+	}
+	quarter := paint(.25, false)
+	// A rounded end cap extends just past the clockwise end of the quarter arc.
+	if got := pixelAt(t, quarter, 58, 31); got != testStyle.Accent {
+		t.Fatalf("quarter-arc cap pixel = %#v, want accent %#v", got, testStyle.Accent)
+	}
+	if litPixels(quarter, testStyle.Foreground) <= litPixels(zero, testStyle.Foreground) {
+		t.Fatal("gauge did not paint both a changing value and its fixed label")
+	}
+}
+
 func TestPaintWordmarkGradientInvalidCountFallsBackToSolid(t *testing.T) {
 	t.Parallel()
 	solid := paintWordmarkAt(t, ui.GradientPaint{}, 0)

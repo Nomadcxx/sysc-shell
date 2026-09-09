@@ -54,7 +54,10 @@ func TestPanelHostRenderPaintsMonitorCards(t *testing.T) {
 	}
 	reqs := drainAux(t, reg, 2)
 	panel := reqs[1].Open
-	const w, hgt = 640, 480
+	h := reg.panelHosts[PanelMonitor]
+	h.monitorPage = monitorPageMetrics
+	reg.rebuildPanel(h)
+	const w, hgt = 640, 720
 	if err := panel.Callbacks.Configure(w, hgt, 120); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +65,6 @@ func TestPanelHostRenderPaintsMonitorCards(t *testing.T) {
 	if err := panel.Callbacks.Render(pix, w, hgt, w*4); err != nil {
 		t.Fatal(err)
 	}
-	h := reg.panelHosts[PanelMonitor]
 	cards := findAllKind(h.root, ui.KindCapsule)
 	if len(cards) == 0 {
 		t.Fatal("monitor tree has no capsules")
@@ -655,7 +657,7 @@ func TestTogglePanelByNameCentresFlushUnderTheBar(t *testing.T) {
 	if got.MarginTop != 44 {
 		t.Fatalf("margin top = %d, want flush on the 44px exclusive zone", got.MarginTop)
 	}
-	if want := int32((1536-640)/2 - 4); got.MarginLeft != want {
+	if want := int32((1536-panelTargetSize(PanelMonitor).W)/2 - 4); got.MarginLeft != want {
 		t.Fatalf("margin left = %d, want centred %d", got.MarginLeft, want)
 	}
 }

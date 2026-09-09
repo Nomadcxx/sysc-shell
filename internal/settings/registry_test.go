@@ -96,7 +96,7 @@ func TestRegistryExposesBarItemLists(t *testing.T) {
 		t.Fatal("bar.items.left must be a string entry")
 	}
 	cfg := config.Default()
-	if got := e.Get(cfg); got != "workspace,window-title" {
+	if got := e.Get(cfg); got != "launcher,workspace,window-title" {
 		t.Fatalf("left items = %q", got)
 	}
 	if err := e.Set(&cfg, "window-title,workspace"); err != nil {

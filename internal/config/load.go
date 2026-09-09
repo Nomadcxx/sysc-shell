@@ -864,7 +864,12 @@ func resolveMetric(w wireItem, path string) (Item, error) {
 
 	if w.Display != nil {
 		switch *w.Display {
-		case "text", "graph", "radial":
+		case "text", "graph":
+		case "radial":
+			if rateSources[w.ID] {
+				return Item{}, pathErr(path+".display",
+					"a radial gauge needs a full scale, which the rate source %q has none", w.ID)
+			}
 		case "meter":
 			if rateSources[w.ID] {
 				return Item{}, pathErr(path+".display",

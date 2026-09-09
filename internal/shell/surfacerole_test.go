@@ -32,6 +32,10 @@ func panelAtDensity(t *testing.T, id PanelID, d theme.Density) (*Registry, *Pane
 	if h == nil {
 		t.Fatalf("%v host is missing", id)
 	}
+	if id == PanelMonitor {
+		h.monitorPage = monitorPageMetrics
+		reg.rebuildPanel(h)
+	}
 	return reg, h
 }
 

@@ -80,7 +80,7 @@ func TestBarGradientFramesFollowMotionPreference(t *testing.T) {
 				t.Fatal("default bar rendered no wordmark")
 			}
 			if reduced {
-				if !settled || running || mark.GradientOffset != 0 {
+				if !settled || running || mark.GradientOffset != 0.5 {
 					t.Fatalf("reduced motion: settled=%v running=%v offset=%v", settled, running, mark.GradientOffset)
 				}
 			} else if settled || !running {
@@ -138,10 +138,10 @@ func TestABarRendersTheWorkspaceAndTitleItIsGiven(t *testing.T) {
 	}
 
 	sections := p.sections()
-	if got := pillIndices(sections[0][0]); len(got) != 2 || got[0] != "1" || got[1] != "2" {
+	if got := pillIndices(sections[0][1]); len(got) != 2 || got[0] != "1" || got[1] != "2" {
 		t.Fatalf("workspace pills = %v, want 1 and 2", got)
 	}
-	if got := nodeText(sections[0][1]); got != "Fixture One" {
+	if got := nodeText(sections[0][2]); got != "Fixture One" {
 		t.Fatalf("title node = %q, want Fixture One", got)
 	}
 }
@@ -154,10 +154,10 @@ func TestABarRendersTheFallbackWorkspace(t *testing.T) {
 	p := newTestBar(t)
 	p.apply(barView{Workspace: noWorkspace})
 
-	if got := nodeText(p.sections()[0][0]); got != "-" {
+	if got := nodeText(p.sections()[0][1]); got != "-" {
 		t.Fatalf("workspace node = %q, want the %q fallback", got, noWorkspace)
 	}
-	if got := nodeText(p.sections()[0][1]); got != "" {
+	if got := nodeText(p.sections()[0][2]); got != "" {
 		t.Fatalf("title node = %q, want empty with no window", got)
 	}
 }

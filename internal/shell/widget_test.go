@@ -80,7 +80,8 @@ func TestLauncherWidgetUsesGhostAndOpensLauncher(t *testing.T) {
 		t.Fatalf("launcher widgets = %+v", widgets)
 	}
 	n := widgets[0].inner
-	if n.Kind != ui.KindIcon || n.Icon != "ghost" || n.Action != panelLauncherAction {
+	ghost, _ := render.IconByName("ghost")
+	if n.Kind != ui.KindText || n.Text != string(ghost) || n.Action != panelLauncherAction {
 		t.Fatalf("launcher node = %+v", n)
 	}
 }
@@ -330,8 +331,8 @@ func TestAGroupedMetricKeepsItsOwnTooltip(t *testing.T) {
 			}
 		}
 	}
-	if len(group.members) != 2 {
-		t.Fatalf("default bar has no two-member group; found %d members", len(group.members))
+	if len(group.members) != 4 {
+		t.Fatalf("default bar has no four-member group; found %d members", len(group.members))
 	}
 	for _, m := range group.members {
 		if m.tooltip == "" {

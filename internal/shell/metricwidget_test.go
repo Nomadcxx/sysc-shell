@@ -172,11 +172,13 @@ func TestRadialMetricWidgetCarriesGaugeValueAndLabel(t *testing.T) {
 		id    string
 		label string
 		want  float64
-	}{{"cpu", "C", .42}, {"memory", "M", .25}, {"temperature", "T", .65}, {"gpu", "G", .7}}
+		value string
+	}{{"cpu", "C", .42, "42%"}, {"memory", "M", .25, "25%"}, {"temperature", "T", .65, "65°"}, {"gpu", "G", .7, "70%"}}
 	for _, tc := range cases {
 		w := buildMetricWidget(config.Item{ID: tc.id, Display: "radial"})
 		w.format(barView{Metrics: fixtureSnapshot()})
-		if w.node.Kind != ui.KindRadialGauge || w.node.Text != tc.label || w.node.Value != tc.want || w.node.Absent {
+		if w.node.Kind != ui.KindRadialGauge || w.node.Text != tc.label || w.node.Value != tc.want ||
+			w.node.ValueText != tc.value || w.node.Absent {
 			t.Fatalf("%s radial = %+v", tc.id, w.node)
 		}
 	}

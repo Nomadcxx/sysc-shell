@@ -58,9 +58,61 @@ func TestOnlyLeasedSourcesAreReported(t *testing.T) {
 	if !m.SourceLeased(SourceCPU) {
 		t.Fatal("the leased source reports unleased")
 	}
-	for _, src := range []Source{SourceMemory, SourceFilesystem, SourceBlock, SourceNetwork} {
+	for _, src := range []Source{SourceMemory, SourceFilesystem, SourceBlock, SourceNetwork, SourceProcess} {
 		if m.SourceLeased(src) {
 			t.Fatalf("source %v reports leased with no consumer", src)
+		}
+	}
+}
+
+func TestProcessSamplingRunsOnlyWhileItsSourceIsLeased(t *testing.T) {
+	m := NewMetrics()
+	t.Cleanup(m.Close)
+	lease, err := m.Acquire(Selector{Source: SourceProcess}, 10*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case snap := <-m.Updates():
+		if snap.Processes == nil {
+			t.Fatal("leased process source was not populated")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no process snapshot arrived")
+	}
+	lease.Release()
+	if m.SourceLeased(SourceProcess) {
+		t.Fatal("released process source remains leased")
+	}
+}
+
+func TestProcessSamplerResetsWhileItsSourceIsInactive(t *testing.T) {
+	m := NewMetrics()
+	process := Selector{Source: SourceProcess}
+	m.leases[process] = &leaseSet{leases: []*Lease{{boundary: time.Second}}}
+	s := samplers{process: metrics.NewProcessSampler()}
+	var failing [sourceCount]bool
+
+	first := m.collect(&s, &failing)
+	if first.Processes == nil || len(first.Processes.Processes) == 0 {
+		t.Fatal("initial process sample was empty")
+	}
+
+	delete(m.leases, process)
+	m.leases[Selector{Source: SourceMemory}] = &leaseSet{leases: []*Lease{{boundary: time.Second}}}
+	m.collect(&s, &failing)
+	if s.process != nil {
+		t.Fatal("inactive process source retained its sampler")
+	}
+
+	m.leases[process] = &leaseSet{leases: []*Lease{{boundary: time.Second}}}
+	reopened := m.collect(&s, &failing)
+	if reopened.Processes == nil || len(reopened.Processes.Processes) == 0 {
+		t.Fatal("reopened process sample was empty")
+	}
+	for _, process := range reopened.Processes.Processes {
+		if process.CPU.Valid {
+			t.Fatalf("first reopened sample for PID %d retained a CPU baseline", process.Identity.PID)
 		}
 	}
 }

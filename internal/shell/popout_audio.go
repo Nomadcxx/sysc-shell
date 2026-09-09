@@ -62,7 +62,8 @@ func audioHeaderCard(h *PanelHost, m theme.Metrics) *ui.Node {
 		},
 	}
 	return &ui.Node{
-		Kind: ui.KindCapsule, Padding: m.CardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard, Height: 116,
+		Kind: ui.KindCapsule, Padding: m.CardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+		Height:   2*m.CardPadding + 2*well + 12,
 		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: 12, Children: []*ui.Node{top, tabs}}},
 	}
 }

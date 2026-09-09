@@ -8,8 +8,8 @@ func TestGhostLauncherIconIsInProjectFace(t *testing.T) {
 	if !ok || r != iconGhost {
 		t.Fatalf("ghost = %U, %v", r, ok)
 	}
-	if r < notifyRuneFirst {
-		t.Fatalf("ghost rune %U overlaps an earlier icon band", r)
+	if r < notifyRuneFirst || r > notifyRuneLast {
+		t.Fatalf("ghost rune %U is outside the project icon band", r)
 	}
 }
 
@@ -285,7 +285,7 @@ func TestNotifyCatalogueNamesResolve(t *testing.T) {
 		t.Skipf("no system font available: %v", err)
 	}
 
-	for _, name := range []string{"notifications", "notifications-off", "close", "schedule"} {
+	for _, name := range []string{"notifications", "notifications-off", "close", "schedule", "ghost"} {
 		r, ok := IconByName(name)
 		if !ok {
 			t.Fatalf("%q is missing from the catalogue", name)

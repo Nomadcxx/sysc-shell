@@ -104,6 +104,8 @@ type GradientPaint struct {
 type Node struct {
 	Kind Kind
 	Text string
+	// ValueText is the compact formatted value painted inside a radial gauge.
+	ValueText string
 	// Icon names a glyph in the dedicated chrome icon inventory.
 	Icon string
 	// Key identifies a node across tree rebuilds so host-retained state -- an

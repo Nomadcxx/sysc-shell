@@ -77,7 +77,7 @@ const (
 	recorderRuneLast  = iconReplay
 
 	notifyRuneFirst = iconNotifications
-	notifyRuneLast  = iconSchedule
+	notifyRuneLast  = iconGhost
 )
 
 // batteryLevels is how many level glyphs each state has.

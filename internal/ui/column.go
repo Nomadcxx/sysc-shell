@@ -327,6 +327,9 @@ func layoutScroll(root *Node, bounds Rect, measure MeasureText) error {
 		clampScroll(root)
 		lo, hi := VisibleRange(root)
 		if root.Item != nil {
+			for _, child := range root.Children {
+				clearLayoutBounds(child)
+			}
 			root.Children = root.Children[:0]
 			for i := lo; i < hi; i++ {
 				child := root.Item(i)
@@ -380,6 +383,16 @@ func layoutScroll(root *Node, bounds Rect, measure MeasureText) error {
 		y += ch
 	}
 	return nil
+}
+
+func clearLayoutBounds(n *Node) {
+	if n == nil {
+		return
+	}
+	n.Bounds = Rect{}
+	for _, child := range n.Children {
+		clearLayoutBounds(child)
+	}
 }
 
 // centeredTrack narrows a column child's track to the child's natural width

@@ -7,6 +7,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -176,9 +177,10 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 	for _, item := range items {
 		switch item.ID {
 		case "launcher":
+			ghost, _ := render.IconByName("ghost")
 			out = append(out, textWidget{
 				node: &ui.Node{
-					Kind: ui.KindIcon, Icon: "ghost", IconSize: 22,
+					Kind: ui.KindText, Text: string(ghost), TextRole: theme.RoleHeadline,
 					Action: panelLauncherAction, Name: "Open launcher", Role: "button",
 				},
 				tooltip: "Launcher",

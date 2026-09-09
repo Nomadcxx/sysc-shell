@@ -113,13 +113,26 @@ func TestAudioTreeUsesTheResponsiveWidth(t *testing.T) {
 	if len(root.Children) != 2 || root.Children[1].Kind != ui.KindScroll {
 		t.Fatalf("root children = %+v, want fixed header plus the only scroll viewport", root.Children)
 	}
-	wantScrollH := size.H - 2*h.theme.Metrics.PanelPadding - 116 - root.Gap
+	wantScrollH := size.H - 2*h.theme.Metrics.PanelPadding - root.Children[0].Height - root.Gap
 	if got := root.Children[1].Bounds.H; got != wantScrollH {
 		t.Fatalf("scroll height = %d, want remaining body height %d", got, wantScrollH)
 	}
 	body := root.Children[1].Children[0]
 	if len(body.Children) < 2 || body.Children[0].Kind != ui.KindCapsule || body.Children[1].Kind != ui.KindCapsule {
 		t.Fatal("output and input rows are not full-width cards")
+	}
+}
+
+func TestAudioHeaderHeightFitsSpaciousChrome(t *testing.T) {
+	m, ok := theme.MetricsFor(theme.DensityComfortable)
+	if !ok {
+		t.Fatal("comfortable metrics missing")
+	}
+	h := &PanelHost{theme: Theme{Metrics: m}}
+	header := audioHeaderCard(h, m)
+	want := 2*m.CardPadding + 2*m.StandardControl + 12
+	if header.Height < want {
+		t.Fatalf("header height = %d, want at least %d for two controls and chrome", header.Height, want)
 	}
 }
 
@@ -225,6 +238,53 @@ func TestAudioControlsUseTheScheduledWpctlPath(t *testing.T) {
 		if !strings.Contains(got, want+"\n") {
 			t.Errorf("wpctl log %q does not contain %q", got, want)
 		}
+	}
+}
+
+func TestClosingAudioPanelDoesNotWaitForMixerPoll(t *testing.T) {
+	dir := t.TempDir()
+	started := filepath.Join(dir, "started")
+	release := filepath.Join(dir, "release")
+	script := "#!/bin/sh\n" +
+		"touch \"$SYSC_MIXER_STARTED\"\n" +
+		"while [ ! -e \"$SYSC_MIXER_RELEASE\" ]; do sleep 0.01; done\n" +
+		"printf '[]'\n"
+	if err := os.WriteFile(filepath.Join(dir, "pw-dump"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	t.Setenv("SYSC_MIXER_STARTED", started)
+	t.Setenv("SYSC_MIXER_RELEASE", release)
+	defer os.WriteFile(release, nil, 0o600) // unblock cleanup after a failing assertion
+
+	reg := newPanelRegistry(t)
+	reg.audio = services.NewAudio(time.Hour, "/bin/true")
+	if err := reg.OpenPanel(PanelAudio, 7, Trigger{OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	deadline := time.Now().Add(time.Second)
+	for {
+		if _, err := os.Stat(started); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("mixer poll did not start")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		reg.ClosePanel(PanelAudio)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		_ = os.WriteFile(release, nil, 0o600)
+		<-done
+		t.Fatal("closing the audio panel waited for the active pw-dump poll")
 	}
 }
 

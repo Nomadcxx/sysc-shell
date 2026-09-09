@@ -49,6 +49,8 @@ func TestMonitorUsesRegistrySnapshotAndHistory(t *testing.T) {
 	snap := fixtureSnapshot()
 	reg.UpdateMetrics(snap)
 	h := reg.panelHosts[PanelMonitor]
+	h.monitorPage = monitorPageMetrics
+	reg.rebuildPanel(h)
 	sel := services.Selector{Source: services.SourceCPU}
 	label, _ := formatMonitorMetric(sel, snap)
 	if !treeHasText(h.root, label) {
@@ -73,6 +75,8 @@ func TestMonitorAbsentSampleShowsCollecting(t *testing.T) {
 	_ = drainAux(t, reg, 2)
 	reg.UpdateMetrics(services.Snapshot{})
 	h := reg.panelHosts[PanelMonitor]
+	h.monitorPage = monitorPageMetrics
+	reg.rebuildPanel(h)
 	if !treeHasText(h.root, "collecting") {
 		t.Fatal("absent sample did not render collecting")
 	}

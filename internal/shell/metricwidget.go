@@ -204,6 +204,14 @@ func buildMetricWidget(item config.Item) textWidget {
 					fraction = 0
 				}
 				node.Value, node.Absent = fraction, !ok
+				node.ValueText = ""
+				if ok {
+					if item.ID == "temperature" {
+						node.ValueText = fmt.Sprintf("%.0f°", fraction*100)
+					} else {
+						node.ValueText = fmt.Sprintf("%.0f%%", fraction*100)
+					}
+				}
 				return ""
 			},
 		}

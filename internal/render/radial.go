@@ -1,6 +1,7 @@
 package render
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -40,5 +41,30 @@ func paintRadialGauge(c *Canvas, n *ui.Node, text *TextRenderer, style Style) er
 			fillRect(c, ui.Rect{X: x, Y: y, W: 1, H: 1}, col)
 		}
 	}
-	return paintText(c, n.Text, box, text, style, textSpec(style, n), true, n.Tone, false)
+	if !n.Absent && fraction > 0 {
+		radius := (outer + inner) / 2
+		capSize := max(stroke, 1)
+		paintCap := func(angle float64) {
+			x := int(math.Round(cx + math.Sin(angle)*radius))
+			y := int(math.Round(cy - math.Cos(angle)*radius))
+			fillRoundedRect(c, ui.Rect{X: x - capSize/2, Y: y - capSize/2, W: capSize, H: capSize}, capSize/2, style.accent())
+		}
+		paintCap(0)
+		paintCap(limit)
+	}
+
+	value := n.ValueText
+	if n.Absent {
+		value = "—"
+	} else if value == "" {
+		value = fmt.Sprintf("%.0f%%", fraction*100)
+	}
+	spec := textSpec(style, n)
+	lineH := max(spec.Size+1, 1)
+	valueBox := ui.Rect{X: box.X, Y: int(math.Round(cy)) - lineH, W: box.W, H: lineH}
+	labelBox := ui.Rect{X: box.X, Y: int(math.Round(cy)), W: box.W, H: lineH}
+	if err := paintText(c, value, valueBox, text, style, spec, true, n.Tone, false); err != nil {
+		return err
+	}
+	return paintText(c, n.Text, labelBox, text, style, spec.AtSize(max(spec.Size-2, 1)), false, n.Tone, false)
 }
