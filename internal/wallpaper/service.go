@@ -156,6 +156,7 @@ type Service struct {
 	results chan engineResult
 	updates chan Snapshot
 	quit    chan struct{}
+	done    chan struct{}
 	closing sync.Once
 	work    sync.WaitGroup
 
@@ -196,6 +197,7 @@ func NewService(cfg ServiceConfig) *Service {
 		// block an apply.
 		updates: make(chan Snapshot, 1),
 		quit:    make(chan struct{}),
+		done:    make(chan struct{}),
 	}
 	s.store.SetConnectors(cfg.Connectors)
 	if s.engine != nil {
@@ -281,11 +283,13 @@ func (s *Service) Close() {
 			s.stopWork()
 		}
 		close(s.quit)
+		<-s.done
 		s.work.Wait()
 	})
 }
 
 func (s *Service) run() {
+	defer close(s.done)
 	for {
 		select {
 		case <-s.quit:
