@@ -1046,6 +1046,9 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 				if strings.HasPrefix(n.Action, "audio-") {
 					return h.applyAudioControl(r, n)
 				}
+				if h.id == PanelControlCenter && h.activateControlCentre(r, n) {
+					return true
+				}
 				h.applySetting(r, n)
 				return true
 			}
@@ -1451,6 +1454,9 @@ func (h *PanelHost) adjustSlider(r *Registry, key uint32) bool {
 	}
 	if strings.HasPrefix(n.Action, "audio-") {
 		return h.applyAudioControl(r, n)
+	}
+	if h.id == PanelControlCenter && h.activateControlCentre(r, n) {
+		return true
 	}
 	h.applySetting(r, n)
 	return true

@@ -63,6 +63,14 @@ func (b *Brightness) Level() int {
 	return st.Level
 }
 
+// CachedState returns the last completed poll without touching sysfs. The
+// boolean distinguishes a real zero level from an unsampled service.
+func (b *Brightness) CachedState() (BrightnessState, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.last, b.hasLast
+}
+
 func (b *Brightness) Acquire() (*Lease, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -169,6 +177,18 @@ func (b *Brightness) Step(delta int) error {
 	}
 	arg := fmt.Sprintf("%+d%%", delta)
 	_, err := runCmd(bin, "set", arg)
+	return err
+}
+
+func (b *Brightness) Set(level int) error {
+	b.mu.Lock()
+	bin := b.bin
+	b.mu.Unlock()
+	if bin == "" {
+		return fmt.Errorf("services: brightnessctl unavailable")
+	}
+	level = min(max(level, 0), 100)
+	_, err := runCmd(bin, "set", strconv.Itoa(level)+"%")
 	return err
 }
 

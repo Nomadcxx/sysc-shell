@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"strings"
+
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -11,6 +13,7 @@ const (
 	ccRailWidth  = 56
 	ccRailItem   = 40
 	ccGap        = 16
+	ccBodyGap    = 12
 	ccPanelPad   = 16
 	ccHeaderSize = 40
 )
@@ -48,10 +51,10 @@ func controlCentreTree(r *Registry, h *PanelHost) *ui.Node {
 		panel = h.place.Panel
 	}
 	bodyWidth := max(panel.W-2*ccPanelPad-ccRailWidth-ccGap, 0)
-	bodyHeight := max(panel.H-2*ccPanelPad-ccHeaderSize-ccGap, 0)
+	bodyHeight := max(panel.H-2*ccPanelPad-ccHeaderSize-ccBodyGap, 0)
 	return &ui.Node{Kind: ui.KindRow, Gap: ccGap, Padding: ccPanelPad, Children: []*ui.Node{
 		ccRail(h),
-		{Kind: ui.KindColumn, Width: bodyWidth, Gap: ccGap, Children: []*ui.Node{
+		{Kind: ui.KindColumn, Width: bodyWidth, Gap: ccBodyGap, Children: []*ui.Node{
 			ccHeader(h),
 			{Kind: ui.KindScroll, Height: bodyHeight, Children: []*ui.Node{ccPage(r, h)}},
 		}},
@@ -129,7 +132,7 @@ func ccPage(r *Registry, h *PanelHost) *ui.Node {
 }
 
 func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
-	if n == nil {
+	if n == nil || h.id != PanelControlCenter {
 		return false
 	}
 	var target PanelID
@@ -138,11 +141,54 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 		target = PanelSettings
 	case "cc:power":
 		target = PanelSession
+	case "cc:wallpaper":
+		target = PanelWallpaper
 	case "cc:close":
 		r.closePanelLocked(h.id)
 		return true
+	case "cc:caffeine":
+		r.setCaffeine(h, !r.inhibitWanted)
+		r.rebuildPanel(h)
+		return true
+	case "cc:dnd":
+		_, on := r.notify.dndState(r.now)
+		r.setDND(!on)
+		r.rebuildPanel(h)
+		return true
+	case "cc:mute":
+		audio := r.audio
+		if audio == nil {
+			return false
+		}
+		state, ok := audio.CachedState()
+		if !ok {
+			return false
+		}
+		r.scheduleControl(h, func() error { return audio.SetMute(!state.Muted) })
+		return true
+	case "cc:volume":
+		audio := r.audio
+		if audio == nil {
+			return false
+		}
+		level := int(n.Value)
+		r.scheduleControl(h, func() error { return audio.Set(level) })
+		return true
+	case "cc:brightness":
+		brightness := r.brightness
+		if brightness == nil {
+			return false
+		}
+		level := int(n.Value)
+		r.scheduleControl(h, func() error { return brightness.Set(level) })
+		return true
 	default:
-		return false
+		name, ok := strings.CutPrefix(n.Action, "cc:profile:")
+		if !ok || !profileSupports(h.profiles, name) {
+			return false
+		}
+		r.scheduleControl(h, func() error { return r.runArgv(powerProfileSetArgv(name)) })
+		return true
 	}
 	trig := Trigger{
 		BarEdge: h.place.BarEdge, BarZone: h.place.BarZone,
@@ -202,7 +248,6 @@ func (r *Registry) setCaffeine(h *PanelHost, on bool) {
 	r.scheduleControl(h, hold.Close)
 }
 
-func ccHome(*Registry, *PanelHost) *ui.Node          { return &ui.Node{Kind: ui.KindColumn} }
 func ccAudio(*Registry, *PanelHost) *ui.Node         { return &ui.Node{Kind: ui.KindColumn} }
 func ccMonitor(*Registry, *PanelHost) *ui.Node       { return &ui.Node{Kind: ui.KindColumn} }
 func ccPower(*Registry, *PanelHost) *ui.Node         { return &ui.Node{Kind: ui.KindColumn} }

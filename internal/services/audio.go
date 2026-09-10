@@ -72,10 +72,10 @@ func (a *Audio) State() AudioState {
 // CachedState returns the last polled state without running wpctl. Callers
 // holding a lock (Registry.mu, the Wayland owner) must use this; State()'s
 // fresh read is for off-lock callers only.
-func (a *Audio) CachedState() AudioState {
+func (a *Audio) CachedState() (AudioState, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.last
+	return a.last, a.hasLast
 }
 
 func (a *Audio) Available() bool {

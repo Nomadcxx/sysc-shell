@@ -406,11 +406,13 @@ if [ "$1" = get-volume ]; then printf 'Volume: %s\n' "$(cat '` + dir + `/vol')";
 	reg.setAudio(audio)
 	reg.bars[1] = &Bar{conn: "DP-1"}
 	deadline := time.Now().Add(3 * time.Second)
-	for audio.CachedState().Level != 40 && time.Now().Before(deadline) {
+	st, _ := audio.CachedState()
+	for st.Level != 40 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
+		st, _ = audio.CachedState()
 	}
-	if got := audio.CachedState().Level; got != 40 {
-		t.Fatalf("baseline poll level = %d, want 40", got)
+	if st.Level != 40 {
+		t.Fatalf("baseline poll level = %d, want 40", st.Level)
 	}
 	before := audioLogLines(t, dir)
 	reg.mu.Lock()
