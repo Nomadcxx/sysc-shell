@@ -504,6 +504,12 @@ func (r *Registry) relayAudioOSD(audio *services.Audio) {
 				return
 			}
 			r.OSD().Show(OSDView{Kind: "audio", Level: st.Level, Muted: st.Muted})
+			r.mu.Lock()
+			out, open := r.rebuildControlCentreLocked()
+			r.mu.Unlock()
+			if open {
+				r.publishSurface(out, panelSurfaceID(PanelControlCenter))
+			}
 		}
 	}
 }
@@ -524,6 +530,12 @@ func (r *Registry) relayBrightnessOSD(brightness *services.Brightness) {
 				return
 			}
 			r.OSD().Show(OSDView{Kind: "brightness", Level: st.Level})
+			r.mu.Lock()
+			out, open := r.rebuildControlCentreLocked()
+			r.mu.Unlock()
+			if open {
+				r.publishSurface(out, panelSurfaceID(PanelControlCenter))
+			}
 		}
 	}
 }
@@ -981,9 +993,13 @@ func (r *Registry) UpdateClock(now time.Time) []uint32 {
 			changed = append(changed, global)
 		}
 	}
+	controlOut, controlOK := r.rebuildControlCentreLocked()
 	r.mu.Unlock()
 
 	r.publish(changed)
+	if controlOK {
+		r.publishSurface(controlOut, panelSurfaceID(PanelControlCenter))
+	}
 	return changed
 }
 
@@ -1008,6 +1024,7 @@ func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
 		r.rebuildPanel(h)
 		sessionOut, sessionOK = h.output, true
 	}
+	controlOut, controlOK := r.rebuildControlCentreLocked()
 	r.mu.Unlock()
 
 	r.publish(changed)
@@ -1016,6 +1033,9 @@ func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
 	}
 	if sessionOK {
 		r.publishSurface(sessionOut, panelSurfaceID(PanelSession))
+	}
+	if controlOK {
+		r.publishSurface(controlOut, panelSurfaceID(PanelControlCenter))
 	}
 	return changed
 }
@@ -1031,10 +1051,23 @@ func (r *Registry) UpdateWeather(reading services.Reading) []uint32 {
 			changed = append(changed, global)
 		}
 	}
+	controlOut, controlOK := r.rebuildControlCentreLocked()
 	r.mu.Unlock()
 
 	r.publish(changed)
+	if controlOK {
+		r.publishSurface(controlOut, panelSurfaceID(PanelControlCenter))
+	}
 	return changed
+}
+
+func (r *Registry) rebuildControlCentreLocked() (uint32, bool) {
+	h := r.panelHosts[PanelControlCenter]
+	if h == nil {
+		return 0, false
+	}
+	r.rebuildPanel(h)
+	return h.output, true
 }
 
 // UpdateNiri projects a snapshot into per-connector text and reports the

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -290,6 +291,67 @@ func TestHomeWallpaperControlOpensTheExistingPanel(t *testing.T) {
 	r.mu.Unlock()
 	if controlOpen || !wallpaperOpen {
 		t.Fatalf("after Wallpaper: control open=%v wallpaper open=%v", controlOpen, wallpaperOpen)
+	}
+}
+
+func TestWeatherPageKeepsTodayAndFourForecastSlots(t *testing.T) {
+	r := &Registry{}
+	h := &PanelHost{id: PanelControlCenter, section: "weather", theme: DefaultTheme()}
+	page := ccWeather(r, h)
+	if page.Height != 480 || page.Gap != 12 || len(page.Children) != 2 {
+		t.Fatalf("weather page = %+v, want 336px Today and 132px forecast strip", page)
+	}
+	if page.Children[0].Height != 336 || page.Children[1].Height != 132 || len(page.Children[1].Children) != 4 {
+		t.Fatalf("weather blocks = %+v, want Today plus four stable forecast cells", page.Children)
+	}
+	if got := renderText(page.Children[1]); strings.Count(got, ccDash) < 4 {
+		t.Errorf("empty forecast = %q, want a dash in every stable slot", got)
+	}
+}
+
+func TestWeatherUpdateRebuildsAnOpenControlCentre(t *testing.T) {
+	r := newPanelRegistry(t)
+	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	h := r.panelHosts[PanelControlCenter]
+	h.section = "weather"
+	r.rebuildPanel(h)
+	r.mu.Unlock()
+	r.UpdateWeather(services.Reading{Observed: true, Temperature: 23, Unit: services.UnitCelsius})
+	r.mu.Lock()
+	got := renderText(h.root)
+	r.mu.Unlock()
+	if !strings.Contains(got, "23°C") {
+		t.Fatalf("weather update left the control centre stale: %q", got)
+	}
+}
+
+func TestHomeRebuildsForClockAndMetricUpdates(t *testing.T) {
+	r := newPanelRegistry(t)
+	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	h := r.panelHosts[PanelControlCenter]
+	before := h.root
+	r.mu.Unlock()
+	now := time.Date(2026, 9, 10, 13, 45, 0, 0, time.UTC)
+	r.UpdateClock(now)
+	r.mu.Lock()
+	afterClock := h.root
+	clockText := renderText(h.root)
+	r.mu.Unlock()
+	if afterClock == before || !strings.Contains(clockText, "13:45") {
+		t.Fatalf("clock update left Home stale: %q", clockText)
+	}
+	r.UpdateMetrics(services.Snapshot{CollectedAt: now})
+	r.mu.Lock()
+	afterMetrics := h.root
+	r.mu.Unlock()
+	if afterMetrics == afterClock {
+		t.Fatal("metric update did not rebuild Home")
 	}
 }
 

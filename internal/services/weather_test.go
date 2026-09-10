@@ -14,6 +14,18 @@ import (
 // currentWeatherBody is the shape Open-Meteo returns for the requested fields.
 const currentWeatherBody = `{"current":{"temperature_2m":18.4,"weather_code":3}}`
 
+const dailyWeatherBody = `{
+  "current":{"temperature_2m":18.4,"weather_code":3},
+  "daily":{
+    "time":["2026-09-10","2026-09-11"],
+    "weather_code":[3,61],
+    "temperature_2m_max":[20,18],
+    "temperature_2m_min":[10,9],
+    "sunrise":["2026-09-10T06:10","2026-09-11T06:09"],
+    "sunset":["2026-09-10T18:02","2026-09-11T18:03"]
+  }
+}`
+
 // weatherAt points a service at a test server and leases it at a short
 // interval so one fetch happens promptly. The production fetch floor is
 // disabled here so a test that needs two fetches is not parked for 30s.
@@ -193,9 +205,9 @@ func TestASuccessfulFetchPublishesAnObservation(t *testing.T) {
 	}
 }
 
-// The request must carry the configured coordinates and unit, and ask for
-// only the fields the bar renders.
-func TestTheRequestAsksForOnlyWhatTheBarRenders(t *testing.T) {
+// The request must carry the configured coordinates, current conditions and
+// the daily block consumed by the control centre.
+func TestTheRequestAsksForTheDailyBlock(t *testing.T) {
 	t.Parallel()
 	queries := make(chan string, 1)
 	w, _ := weatherAt(t, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
@@ -218,10 +230,40 @@ func TestTheRequestAsksForOnlyWhatTheBarRenders(t *testing.T) {
 	if current.Get("latitude") == "" || current.Get("longitude") == "" {
 		t.Fatalf("query %q is missing coordinates", query)
 	}
-	for _, unwanted := range []string{"daily", "forecast_days", "relative_humidity", "wind_speed"} {
+	for _, want := range []string{"daily", "forecast_days", "timezone"} {
+		if !current.Has(want) {
+			t.Errorf("query %q is missing %q", query, want)
+		}
+	}
+	for _, unwanted := range []string{"relative_humidity", "wind_speed"} {
 		if current.Has(unwanted) {
 			t.Fatalf("query %q requests %q, which no widget renders", query, unwanted)
 		}
+	}
+}
+
+func TestRequestURLReportsTheDailyBlock(t *testing.T) {
+	w := NewWeather(-37.81, 144.96, UnitCelsius)
+	got := w.RequestURL()
+	for _, want := range []string{"daily=", "forecast_days=", "timezone=auto"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("RequestURL() = %q, missing %q", got, want)
+		}
+	}
+}
+
+func TestASuccessfulFetchCarriesTheDailyForecast(t *testing.T) {
+	t.Parallel()
+	w, _ := weatherAt(t, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(rw, dailyWeatherBody)
+	}))
+	select {
+	case reading := <-w.Updates():
+		if len(reading.Daily) != 2 || reading.Daily[1].Date != "2026-09-11" || reading.Daily[1].Code != 61 {
+			t.Fatalf("Daily = %+v, want the decoded two-day forecast", reading.Daily)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no reading arrived within three seconds")
 	}
 }
 

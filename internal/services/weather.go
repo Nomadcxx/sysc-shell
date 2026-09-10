@@ -15,6 +15,9 @@ import (
 // convert; it requests the unit the user configured.
 type Unit = weather.Unit
 
+// Day is one forecast day decoded by the wire package.
+type Day = weather.Day
+
 const (
 	UnitCelsius    = weather.UnitCelsius
 	UnitFahrenheit = weather.UnitFahrenheit
@@ -35,6 +38,7 @@ type Reading struct {
 	Temperature float64
 	Unit        Unit
 	Code        int // WMO weather code
+	Daily       []Day
 	FetchedAt   time.Time
 	FailedSince time.Time // zero while healthy
 }
@@ -221,7 +225,7 @@ func (w *Weather) RequestURL() string { return w.requestURL() }
 
 func (w *Weather) requestURLLocked() string {
 	return weather.RequestURL(w.endpoint, weather.Query{
-		Latitude: w.latitude, Longitude: w.longitude, Unit: w.unit,
+		Latitude: w.latitude, Longitude: w.longitude, Unit: w.unit, Daily: true,
 	})
 }
 
@@ -308,7 +312,7 @@ func (w *Weather) run(stop, done chan struct{}) {
 
 func (w *Weather) fetch() (Reading, error) {
 	w.mu.Lock()
-	q := weather.Query{Latitude: w.latitude, Longitude: w.longitude, Unit: w.unit, Endpoint: w.endpoint}
+	q := weather.Query{Latitude: w.latitude, Longitude: w.longitude, Unit: w.unit, Daily: true, Endpoint: w.endpoint}
 	unit := w.unit
 	w.mu.Unlock()
 
@@ -323,6 +327,7 @@ func (w *Weather) fetch() (Reading, error) {
 		Temperature: fc.Current.Temperature,
 		Unit:        unit,
 		Code:        fc.Current.Code,
+		Daily:       append([]Day(nil), fc.Daily...),
 		FetchedAt:   time.Now(),
 	}, nil
 }
