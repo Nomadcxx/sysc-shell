@@ -80,6 +80,8 @@ type TextRenderer struct {
 	// embed is reported once rather than retried every frame.
 	material    *font.Face
 	materialErr error
+	project     *font.Face
+	projectErr  error
 }
 
 func NewTextRenderer(face *font.Face) *TextRenderer {

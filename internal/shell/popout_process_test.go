@@ -98,6 +98,83 @@ func TestProcessListStaysInsideItsViewport(t *testing.T) {
 	}
 }
 
+func TestProcessTableUsesCompactChromeAndOneKillAction(t *testing.T) {
+	h := &PanelHost{
+		place: Placement{Panel: panelTargetSize(PanelMonitor)}, theme: Theme{Metrics: standardMetrics()},
+		monitorPage: monitorPageProcesses, processFilter: "all", processSort: "pid", search: ui.NewField(""),
+	}
+	tree := processMonitorTree(h, services.ProcessSnapshot{Processes: processFixture()[:1]}, 1000)
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 8, 16 }
+	if err := ui.LayoutColumn(tree, panelTargetSize(PanelMonitor), measure); err != nil {
+		t.Fatal(err)
+	}
+
+	page := findNodeKey(tree, "monitor-page")
+	if page == nil || page.Height != 32 || page.Gap != 0 {
+		t.Fatalf("page switch = %+v, want a joined 32px segmented control", page)
+	}
+	for _, segment := range page.Children {
+		if segment.Fill != ui.FillOutline {
+			t.Fatalf("page segment %q fill = %v, want outline", segment.Name, segment.Fill)
+		}
+	}
+	field := findKind(tree, ui.KindTextField)
+	if field == nil || field.Height != 32 || field.Bounds.H != 32 {
+		t.Fatalf("search field = %+v, want a laid-out 32px control", field)
+	}
+	filters := findNodeKey(tree, "process-filter")
+	if filters == nil || filters.Height != 32 {
+		t.Fatalf("filter switch = %+v, want 32px", filters)
+	}
+
+	list := findKind(tree, ui.KindVirtualList)
+	if list == nil || list.ItemHeight != 44 {
+		t.Fatalf("process list = %+v, want 44px row pitch", list)
+	}
+	row := list.Item(0)
+	if row == nil || row.Height != 40 {
+		t.Fatalf("process row = %+v, want a 40px card with a visible gap", row)
+	}
+	if selectNode := findAction(row, "monitor:select:30:300"); selectNode == nil || !selectNode.Focusable {
+		t.Fatalf("process data has no selectable row action: %+v", selectNode)
+	}
+	if end := findText(row, "End"); end != nil {
+		t.Fatalf("redundant End action remains: %+v", end)
+	}
+	kill := findAction(row, "process:term:30:300")
+	if kill == nil || kill.Text != "Kill" || kill.State.Has(ui.StateDisabled) {
+		t.Fatalf("single TERM-backed Kill action = %+v", kill)
+	}
+	if legacy := findAction(row, "process:kill:30:300"); legacy != nil {
+		t.Fatalf("SIGKILL action remains: %+v", legacy)
+	}
+}
+
+func TestSelectedProcessRowKeepsAVisibleHighlight(t *testing.T) {
+	process := processFixture()[0]
+	h := &PanelHost{
+		place: Placement{Panel: panelTargetSize(PanelMonitor)}, theme: Theme{Metrics: standardMetrics()},
+		processSelected: process.Identity,
+	}
+	row := processRow(h, process)
+	if row.Fill != ui.FillSoft || row.Stroke != 1 || row.StrokeFill != ui.FillAccent {
+		t.Fatalf("selected row chrome = fill %v stroke %d/%v, want soft accent highlight", row.Fill, row.Stroke, row.StrokeFill)
+	}
+}
+
+func TestProcessIdentityActionsAcceptSelectionAndTermOnly(t *testing.T) {
+	want := services.ProcessIdentity{PID: 30, StartTimeTicks: 300}
+	if got, ok := parseProcessIdentityAction("monitor:select:30:300", "monitor:select"); !ok || got != want {
+		t.Fatalf("selection parsed as %+v/%v, want %+v", got, ok, want)
+	}
+	if got, signal, ok := parseProcessAction("process:term:30:300"); !ok || got != want || signal != syscall.SIGTERM {
+		t.Fatalf("TERM parsed as %+v/%v/%v", got, signal, ok)
+	}
+	if _, _, ok := parseProcessAction("process:kill:30:300"); ok {
+		t.Fatal("SIGKILL action is still accepted")
+	}
+}
+
 func TestProcessRowPointerActionUsesLaidOutControl(t *testing.T) {
 	reg := newPanelRegistry(t)
 	reg.sample.Processes = &services.ProcessSnapshot{Processes: processFixture()[:1]}
@@ -119,16 +196,16 @@ func TestProcessRowPointerActionUsesLaidOutControl(t *testing.T) {
 	}
 	button := findAction(h.root, "process:term:30:300")
 	if button == nil || button.Bounds.W == 0 || button.Bounds.H == 0 {
-		t.Fatalf("laid-out End control = %+v", button)
+		t.Fatalf("laid-out Kill control = %+v", button)
 	}
 	x := float64(button.Bounds.X + button.Bounds.W/2)
 	y := float64(button.Bounds.Y + button.Bounds.H/2)
 	handle := reqs[1].Open.Callbacks.Handle
 	if !handle(wayland.Event{Kind: wayland.EventPointerPress, X: x, Y: y}) {
-		t.Fatal("pointer press did not resolve the laid-out End control")
+		t.Fatal("pointer press did not resolve the laid-out Kill control")
 	}
 	if !handle(wayland.Event{Kind: wayland.EventPointerRelease, X: x, Y: y}) {
-		t.Fatal("pointer release did not activate the laid-out End control")
+		t.Fatal("pointer release did not activate the laid-out Kill control")
 	}
 	select {
 	case id := <-signaled:
@@ -165,19 +242,19 @@ func TestScrolledOutProcessButtonCannotActivateAtItsOldPosition(t *testing.T) {
 	}
 	old := findAction(h.root, "process:term:100:1000")
 	if old == nil || old.Bounds.W == 0 || old.Bounds.H == 0 {
-		t.Fatalf("initial End control = %+v", old)
+		t.Fatalf("initial Kill control = %+v", old)
 	}
 	x := float64(old.Bounds.X + old.Bounds.W/2)
 	y := float64(old.Bounds.Y + old.Bounds.H/2)
 	list := findKind(h.root, ui.KindVirtualList)
-	ui.ScrollBy(list, 8*processRowHeight)
+	ui.ScrollBy(list, 8*processRowPitch)
 	if err := h.configure(h.place.Panel.W, h.place.Panel.H, int(ui.ScaleUnit)); err != nil {
 		t.Fatal(err)
 	}
 	handle := reqs[1].Open.Callbacks.Handle
 	if !handle(wayland.Event{Kind: wayland.EventPointerPress, X: x, Y: y}) ||
 		!handle(wayland.Event{Kind: wayland.EventPointerRelease, X: x, Y: y}) {
-		t.Fatal("old row position did not resolve the currently visible End control")
+		t.Fatal("old row position did not resolve the currently visible Kill control")
 	}
 	select {
 	case id := <-signaled:
@@ -310,4 +387,34 @@ func treeHasNameOrText(n *ui.Node, value string) bool {
 		}
 	}
 	return false
+}
+
+func findNodeKey(n *ui.Node, key string) *ui.Node {
+	if n == nil {
+		return nil
+	}
+	if n.Key == key {
+		return n
+	}
+	for _, child := range n.Children {
+		if got := findNodeKey(child, key); got != nil {
+			return got
+		}
+	}
+	return nil
+}
+
+func findText(n *ui.Node, value string) *ui.Node {
+	if n == nil {
+		return nil
+	}
+	if n.Text == value {
+		return n
+	}
+	for _, child := range n.Children {
+		if got := findText(child, value); got != nil {
+			return got
+		}
+	}
+	return nil
 }

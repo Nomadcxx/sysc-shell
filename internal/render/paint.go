@@ -907,8 +907,9 @@ func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size in
 		W: n.Bounds.W - 2*n.Padding,
 		H: n.Bounds.H - 2*n.Padding,
 	}
-	return paintTextColor(c, n.Text, style.Scale120.PhysicalRect(label), text, inner,
-		textSpec(inner, n), n.Tabular, fg, n.Underline)
+	labelBox := style.Scale120.PhysicalRect(label)
+	spec := textSpec(inner, n)
+	return paintCentredTextColor(c, n.Text, labelBox, text, spec, n.Tabular, fg, n.Underline)
 }
 
 // paintIcon draws one named glyph from the embedded Material subset, centred in
@@ -1122,6 +1123,56 @@ func centreLine(box ui.Rect, text *TextRenderer, style Style, n *ui.Node) ui.Rec
 	box.Y += (box.H - h) / 2
 	box.H = h
 	return box
+}
+
+func paintCentredTextColor(c *Canvas, value string, box ui.Rect, text *TextRenderer, spec TextSpec, tabular bool, fg Color, underline bool) error {
+	if value == "" || box.W <= 0 || box.H <= 0 {
+		return nil
+	}
+	fitted, _, err := text.Truncate(value, spec, box.W, tabular)
+	if err != nil || fitted == "" {
+		return err
+	}
+	mask, err := text.Raster(fitted, spec, tabular)
+	if err != nil {
+		return err
+	}
+	ink, ok := paintCentredMask(c, mask, box, fg)
+	if !ok {
+		return nil
+	}
+	if underline {
+		th := max(spec.Size/16, 1)
+		fillRect(c, ui.Rect{X: ink.X, Y: box.Y + box.H - th, W: ink.W, H: th}, fg)
+	}
+	return nil
+}
+
+func paintCentredMask(c *Canvas, mask Mask, box ui.Rect, fg Color) (ui.Rect, bool) {
+	if mask.Alpha == nil {
+		return ui.Rect{}, false
+	}
+	minX, minY, maxX, maxY := mask.Alpha.Rect.Dx(), mask.Alpha.Rect.Dy(), -1, -1
+	for y := 0; y < mask.Alpha.Rect.Dy(); y++ {
+		for x := 0; x < mask.Alpha.Rect.Dx(); x++ {
+			if mask.Alpha.AlphaAt(x, y).A == 0 {
+				continue
+			}
+			minX, minY = min(minX, x), min(minY, y)
+			maxX, maxY = max(maxX, x), max(maxY, y)
+		}
+	}
+	if maxX < 0 {
+		return ui.Rect{}, false
+	}
+	ink := ui.Rect{X: box.X + (box.W-(maxX-minX+1))/2, Y: box.Y + (box.H-(maxY-minY+1))/2,
+		W: maxX - minX + 1, H: maxY - minY + 1}
+	x, y := ink.X-minX, ink.Y-minY
+	blendMask(c, mask.Alpha, x, y, fg)
+	if mask.Color != nil {
+		paintImage(c, ui.Rect{X: x, Y: y, W: mask.Color.Width, H: mask.Color.Height}, mask.Color)
+	}
+	return ink, true
 }
 
 func textColor(style Style, tone ui.Tone) Color {

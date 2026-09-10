@@ -13,6 +13,39 @@ func TestGhostLauncherIconIsInProjectFace(t *testing.T) {
 	}
 }
 
+func TestGaugeIconsAreDistinctProjectGlyphs(t *testing.T) {
+	t.Parallel()
+	seen := map[rune]string{}
+	for _, id := range []string{"cpu", "memory", "gpu"} {
+		r, ok := GaugeIconRune(id)
+		if !ok {
+			t.Fatalf("%s has no gauge glyph", id)
+		}
+		if previous := seen[r]; previous != "" {
+			t.Fatalf("%s and %s share glyph %U", previous, id, r)
+		}
+		seen[r] = id
+		if got := glyphCoverage(t, r, 32); got == 0 {
+			t.Fatalf("%s glyph %U has no ink", id, r)
+		}
+	}
+	if _, ok := GaugeIconRune("temperature"); ok {
+		t.Fatal("temperature mapped to an icon instead of its numeric value")
+	}
+}
+
+func TestGaugeRunesResolveToTheProjectFace(t *testing.T) {
+	t.Parallel()
+	m, err := NewSystemFontMap("sans-serif", "")
+	if err != nil {
+		t.Skipf("no system font available: %v", err)
+	}
+	face := m.Face(gaugeRuneFirst, FaceRequest{})
+	if face == nil || face == m.Primary() {
+		t.Fatal("a gauge rune did not resolve to the project icon face")
+	}
+}
+
 // Every WMO code the API can return must map to one of the eight symbols. An
 // unmapped code renders the cloud rather than a missing glyph.
 func TestEveryWeatherCodeMapsToAnIcon(t *testing.T) {

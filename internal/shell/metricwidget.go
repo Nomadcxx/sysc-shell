@@ -192,12 +192,14 @@ func metricTooltip(item config.Item) string {
 func buildMetricWidget(item config.Item) textWidget {
 	switch item.Display {
 	case "radial":
+		icon, _ := render.GaugeIconName(item.ID)
 		node := &ui.Node{
-			Kind: ui.KindRadialGauge, Width: 32, Height: 32,
-			Text: metricGaugeLabel(item.ID), Action: panelMonitorAction,
+			Kind: ui.KindRadialGauge, Width: 22, Height: 22,
+			Icon: icon, Action: panelMonitorAction,
 		}
+		name := metricTooltip(item)
 		return textWidget{
-			node: node, tooltip: metricTooltip(item),
+			node: node, tooltip: name,
 			format: func(v barView) string {
 				fraction, ok := metricFraction(item, v.Metrics)
 				if !ok {
@@ -205,13 +207,16 @@ func buildMetricWidget(item config.Item) textWidget {
 				}
 				node.Value, node.Absent = fraction, !ok
 				node.ValueText = ""
+				value := "unavailable"
 				if ok {
 					if item.ID == "temperature" {
-						node.ValueText = fmt.Sprintf("%.0f°", fraction*100)
+						value = fmt.Sprintf("%.0f°", fraction*100)
+						node.ValueText = value
 					} else {
-						node.ValueText = fmt.Sprintf("%.0f%%", fraction*100)
+						value = fmt.Sprintf("%.0f%%", fraction*100)
 					}
 				}
+				node.Tooltip = name + ": " + value
 				return ""
 			},
 		}
@@ -271,20 +276,6 @@ func buildMetricWidget(item config.Item) textWidget {
 			},
 		}
 	}
-}
-
-func metricGaugeLabel(id string) string {
-	switch id {
-	case "cpu":
-		return "C"
-	case "memory":
-		return "M"
-	case "temperature":
-		return "T"
-	case "gpu":
-		return "G"
-	}
-	return "?"
 }
 
 // normalise scales samples against the window maximum, which is what lets a

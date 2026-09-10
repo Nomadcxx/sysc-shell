@@ -497,7 +497,7 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		if n.Width > w {
 			w = n.Width
 		}
-		return w, h + 2*n.Padding, nil
+		return w, max(n.Height, h+2*n.Padding), nil
 	case KindScroll, KindVirtualList:
 		w := n.Width
 		if w <= 0 {

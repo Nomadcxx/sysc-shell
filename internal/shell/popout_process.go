@@ -17,8 +17,10 @@ import (
 const (
 	monitorPageProcesses = "processes"
 	monitorPageMetrics   = "monitor"
-	processRowHeight     = 52
-	monitorControlHeight = 40
+	processRowHeight     = 40
+	processRowPitch      = 44
+	processHeaderHeight  = 28
+	monitorControlHeight = 32
 )
 
 func monitorPanelTree(h *PanelHost, sels []services.Selector, snap services.Snapshot, history map[services.Selector][]float64, facts machineFacts) *ui.Node {
@@ -45,7 +47,7 @@ func monitorPageSwitcher(h *PanelHost) *ui.Node {
 	segment := func(page, label string) *ui.Node {
 		n := &ui.Node{
 			Kind: ui.KindButton, Action: "monitor:page:" + page, Name: label, Role: "tab",
-			Focusable: true, Height: monitorControlHeight,
+			Focusable: true, Height: monitorControlHeight, Fill: ui.FillOutline,
 			Children: []*ui.Node{{Kind: ui.KindText, Text: label}},
 		}
 		if h.monitorPage == page || h.monitorPage == "" && page == monitorPageProcesses {
@@ -53,7 +55,7 @@ func monitorPageSwitcher(h *PanelHost) *ui.Node {
 		}
 		return n
 	}
-	return &ui.Node{Kind: ui.KindSegmented, Key: "monitor-page", Gap: 2, Height: monitorControlHeight,
+	return &ui.Node{Kind: ui.KindSegmented, Key: "monitor-page", Height: monitorControlHeight,
 		Children: []*ui.Node{
 			segment(monitorPageProcesses, "System Processes"),
 			segment(monitorPageMetrics, "System Monitor"),
@@ -79,7 +81,7 @@ func processMonitorTree(h *PanelHost, snapshot services.ProcessSnapshot, current
 	processes := projectProcesses(snapshot.Processes, h.query, h.processFilter, h.processSort, h.processDesc, currentUID)
 	header := processHeader(h)
 
-	used := 2*h.metrics().PanelPadding + monitorControlHeight + 12 + monitorControlHeight + 8 + 36 + 8
+	used := 2*h.metrics().PanelPadding + monitorControlHeight + 12 + monitorControlHeight + 8 + processHeaderHeight + 8
 	children := []*ui.Node{monitorPageSwitcher(h), tools, header}
 	if h.processStatus != "" {
 		tone := ui.ToneNormal
@@ -97,8 +99,8 @@ func processMonitorTree(h *PanelHost, snapshot services.ProcessSnapshot, current
 	}
 	rows := make([]*ui.Node, len(processes))
 	list := &ui.Node{
-		Kind: ui.KindVirtualList, Height: max(h.place.Panel.H-used, processRowHeight),
-		ItemCount: len(processes), ItemHeight: processRowHeight,
+		Kind: ui.KindVirtualList, Height: max(h.place.Panel.H-used, processRowPitch),
+		ItemCount: len(processes), ItemHeight: processRowPitch,
 		Item: func(i int) *ui.Node {
 			if i < 0 || i >= len(processes) {
 				return nil
@@ -126,7 +128,7 @@ func processFilterSwitcher(h *PanelHost) *ui.Node {
 		}
 		segments = append(segments, n)
 	}
-	return &ui.Node{Kind: ui.KindSegmented, Key: "process-filter", Gap: 2,
+	return &ui.Node{Kind: ui.KindSegmented, Key: "process-filter",
 		Height: monitorControlHeight, Children: segments}
 }
 
@@ -153,12 +155,12 @@ func processHeader(h *PanelHost) *ui.Node {
 			}
 		}
 		return &ui.Node{Kind: ui.KindButton, Text: label, Action: "monitor:sort:" + key,
-			Name: "Sort by " + label, Role: "button", Focusable: true, Width: width, Height: 36}
+			Name: "Sort by " + label, Role: "button", Focusable: true, Width: width, Height: processHeaderHeight}
 	}
-	return &ui.Node{Kind: ui.KindRow, Gap: 8, Height: 36, Children: []*ui.Node{
+	return &ui.Node{Kind: ui.KindRow, Gap: 8, Height: processHeaderHeight, Children: []*ui.Node{
 		button("name", "Name", nameW), button("cpu", "CPU", cpuW),
 		button("memory", "Memory", memoryW), button("pid", "PID", pidW),
-		button("", "", actionW), button("", "", actionW),
+		button("", "", actionW),
 	}}
 }
 
@@ -177,28 +179,31 @@ func processRow(h *PanelHost, process services.Process) *ui.Node {
 		memory = formatBytes(float64(process.ResidentBytes))
 	}
 	identity := fmt.Sprintf(":%d:%d", process.Identity.PID, process.Identity.StartTimeTicks)
-	term := &ui.Node{
-		Kind: ui.KindButton, Text: "End", Action: "process:term" + identity,
-		Name: fmt.Sprintf("End %s", process.Name), Role: "button", Focusable: true,
-		Width: actionW, Height: 32, Fill: ui.FillOutline,
+	data := &ui.Node{
+		Kind: ui.KindRow, Action: "monitor:select" + identity,
+		Name: fmt.Sprintf("Select %s", process.Name), Role: "row", Focusable: true,
+		Gap: 8, Height: 32, Children: []*ui.Node{
+			cell(process.Name, nameW, false), cell(cpu, cpuW, true), cell(memory, memoryW, true),
+			cell(strconv.Itoa(process.Identity.PID), pidW, true),
+		},
 	}
 	kill := &ui.Node{
-		Kind: ui.KindButton, Text: "Kill", Action: "process:kill" + identity,
+		Kind: ui.KindButton, Text: "Kill", Action: "process:term" + identity,
 		Name: fmt.Sprintf("Kill %s", process.Name), Role: "button", Focusable: true,
-		Width: actionW, Height: 32, Fill: ui.FillErrorContainer,
-	}
-	if !h.processTermed[process.Identity] {
-		kill.State |= ui.StateDisabled
+		Width: actionW, Height: 32, Fill: ui.FillOutline, Tone: ui.ToneError,
 	}
 	row := &ui.Node{Kind: ui.KindRow, Gap: 8, Children: []*ui.Node{
-		cell(process.Name, nameW, false), cell(cpu, cpuW, true), cell(memory, memoryW, true),
-		cell(strconv.Itoa(process.Identity.PID), pidW, true), term, kill,
+		data, kill,
 	}}
-	return &ui.Node{
+	card := &ui.Node{
 		Kind: ui.KindCapsule, Width: max(h.place.Panel.W-2*h.metrics().PanelPadding, 0),
-		Height: processRowHeight - 4, Padding: 8, Fill: ui.FillContainerHigh,
+		Height: processRowHeight, Padding: 4, Fill: ui.FillContainerHigh,
 		Shape: ui.ShapeMedium, Children: []*ui.Node{row},
 	}
+	if h.processSelected == process.Identity {
+		card.Fill, card.Stroke, card.StrokeFill = ui.FillSoft, 1, ui.FillAccent
+	}
+	return card
 }
 
 func revealFocusedProcess(h *PanelHost) bool {
@@ -315,25 +320,24 @@ func projectProcesses(processes []services.Process, query, filter, sortKey strin
 }
 
 func parseProcessAction(action string) (services.ProcessIdentity, syscall.Signal, bool) {
-	parts := strings.Split(action, ":")
-	if len(parts) != 4 || parts[0] != "process" {
-		return services.ProcessIdentity{}, 0, false
+	identity, ok := parseProcessIdentityAction(action, "process:term")
+	return identity, syscall.SIGTERM, ok
+}
+
+func parseProcessIdentityAction(action, prefix string) (services.ProcessIdentity, bool) {
+	parts := strings.Split(strings.TrimPrefix(action, prefix+":"), ":")
+	if !strings.HasPrefix(action, prefix+":") || len(parts) != 2 {
+		return services.ProcessIdentity{}, false
 	}
-	pid, err := strconv.Atoi(parts[2])
+	pid, err := strconv.Atoi(parts[0])
 	if err != nil || pid <= 0 {
-		return services.ProcessIdentity{}, 0, false
+		return services.ProcessIdentity{}, false
 	}
-	start, err := strconv.ParseUint(parts[3], 10, 64)
+	start, err := strconv.ParseUint(parts[1], 10, 64)
 	if err != nil || start == 0 {
-		return services.ProcessIdentity{}, 0, false
+		return services.ProcessIdentity{}, false
 	}
-	signal := syscall.SIGTERM
-	if parts[1] == "kill" {
-		signal = syscall.SIGKILL
-	} else if parts[1] != "term" {
-		return services.ProcessIdentity{}, 0, false
-	}
-	return services.ProcessIdentity{PID: pid, StartTimeTicks: start}, signal, true
+	return services.ProcessIdentity{PID: pid, StartTimeTicks: start}, true
 }
 
 func (h *PanelHost) activateMonitor(r *Registry, n *ui.Node) bool {
@@ -368,6 +372,11 @@ func (h *PanelHost) activateMonitor(r *Registry, n *ui.Node) bool {
 		r.rebuildPanel(h)
 		return true
 	}
+	if identity, ok := parseProcessIdentityAction(n.Action, "monitor:select"); ok {
+		h.processSelected = identity
+		r.rebuildPanel(h)
+		return true
+	}
 	identity, signal, ok := parseProcessAction(n.Action)
 	if !ok {
 		return false
@@ -399,13 +408,7 @@ func (r *Registry) scheduleProcessSignal(h *PanelHost, identity services.Process
 			return
 		}
 		if err == nil {
-			if current.processTermed == nil {
-				current.processTermed = make(map[services.ProcessIdentity]bool)
-			}
-			if signal == syscall.SIGTERM {
-				current.processTermed[identity] = true
-			}
-			current.processStatus = fmt.Sprintf("Sent %s to PID %d", processSignalName(signal), identity.PID)
+			current.processStatus = fmt.Sprintf("Sent TERM to PID %d", identity.PID)
 			current.processStatusErr = nil
 		} else {
 			current.processStatus = processSignalError(identity.PID, err)
@@ -416,13 +419,6 @@ func (r *Registry) scheduleProcessSignal(h *PanelHost, identity services.Process
 		r.mu.Unlock()
 		r.publishSurface(output, panelSurfaceID(PanelMonitor))
 	}()
-}
-
-func processSignalName(signal syscall.Signal) string {
-	if signal == syscall.SIGKILL {
-		return "KILL"
-	}
-	return "TERM"
 }
 
 func processSignalError(pid int, err error) string {

@@ -153,7 +153,7 @@ type PanelHost struct {
 	processDesc      bool
 	processStatus    string
 	processStatusErr error
-	processTermed    map[services.ProcessIdentity]bool
+	processSelected  services.ProcessIdentity
 }
 
 func parsePanelName(name string) (PanelID, error) {
@@ -480,7 +480,6 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		h.processFilter = "all"
 		h.processSort, h.processDesc = "cpu", true
 		h.search = ui.NewField("")
-		h.processTermed = make(map[services.ProcessIdentity]bool)
 	}
 	h.root = r.panelTree(h)
 	if id == PanelNotifications {

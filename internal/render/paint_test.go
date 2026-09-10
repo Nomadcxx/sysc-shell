@@ -218,6 +218,46 @@ func litPixels(c *Canvas, fg Color) int {
 	return n
 }
 
+func TestDirectButtonLabelIsCentred(t *testing.T) {
+	t.Parallel()
+	const w, h = 120, 40
+	c := newTestCanvas(t, w, h)
+	style := testStyle
+	style.Body = ui.Rect{W: w, H: h}
+	button := &ui.Node{Kind: ui.KindButton, Text: "Kill", Bounds: style.Body}
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{button}}
+	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatal(err)
+	}
+
+	minX, minY, maxX, maxY := w, h, -1, -1
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			if pixelAt(t, c, x, y).R < 0x80 {
+				continue
+			}
+			minX, minY = min(minX, x), min(minY, y)
+			maxX, maxY = max(maxX, x), max(maxY, y)
+		}
+	}
+	if maxX < 0 {
+		t.Fatal("button painted no label ink")
+	}
+	if dx := absInt((minX + maxX) - w + 1); dx > 3 {
+		t.Fatalf("label x bounds %d..%d are not centred in width %d", minX, maxX, w)
+	}
+	if dy := absInt((minY + maxY) - h + 1); dy > 3 {
+		t.Fatalf("label y bounds %d..%d are not centred in height %d", minY, maxY, h)
+	}
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
 func paintSingleText(t *testing.T, bold, italic, underline bool) *Canvas {
 	t.Helper()
 	c := newTestCanvas(t, 240, 48)
@@ -1439,30 +1479,65 @@ func TestPaintWordmarkGradient(t *testing.T) {
 	}
 }
 
-func TestRadialGaugePaintsProgressAndCentreLabel(t *testing.T) {
+func TestRadialGaugePaintsProgressAndDistinctCentreIcons(t *testing.T) {
 	t.Parallel()
-	paint := func(value float64) *Canvas {
-		c := newTestCanvas(t, 40, 40)
-		n := &ui.Node{Kind: ui.KindRadialGauge, Text: "C", Value: value, Bounds: ui.Rect{W: 40, H: 40}}
+	paint := func(icon string, value float64) *Canvas {
+		c := newTestCanvas(t, 22, 22)
+		n := &ui.Node{Kind: ui.KindRadialGauge, Icon: icon, Value: value, Bounds: ui.Rect{W: 22, H: 22}}
 		if err := paintNode(c, n, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
 			t.Fatal(err)
 		}
 		return c
 	}
-	low, high := paint(0.25), paint(0.75)
+	low, high := paint("sysmon-cpu", 0.25), paint("sysmon-cpu", 0.75)
 	if litPixels(high, testStyle.Accent) <= litPixels(low, testStyle.Accent) {
 		t.Fatal("75% gauge did not paint more progress than 25%")
 	}
 	if litPixels(high, testStyle.Foreground) == 0 {
-		t.Fatal("gauge painted no centre label")
+		t.Fatal("gauge painted no centre icon")
+	}
+	memory := paint("sysmon-memory", 0.75)
+	if bytes.Equal(high.Pix, memory.Pix) {
+		t.Fatal("CPU and memory gauges painted the same centre icon")
 	}
 }
 
-func TestRadialGaugePaintsValueLabelRoundedCapAndUnavailableState(t *testing.T) {
+func TestRadialGaugeCentreInkStaysCentredAtFractionalScale(t *testing.T) {
+	t.Parallel()
+	style := testStyle
+	style.Scale120 = 150
+	for _, tc := range []struct{ icon, value string }{
+		{icon: "sysmon-cpu"}, {icon: "sysmon-memory"}, {icon: "sysmon-gpu"}, {value: "65°"},
+	} {
+		c := newTestCanvas(t, 28, 28)
+		n := &ui.Node{Kind: ui.KindRadialGauge, Icon: tc.icon, ValueText: tc.value, Value: .65, Bounds: ui.Rect{W: 22, H: 22}}
+		if err := paintNode(c, n, NewTextRenderer(mustTestFace(t)), style, style.Size); err != nil {
+			t.Fatal(err)
+		}
+		minX, minY, maxX, maxY := 28, 28, -1, -1
+		for y := 5; y < 23; y++ {
+			for x := 5; x < 23; x++ {
+				if pixelAt(t, c, x, y).R < 0x80 {
+					continue
+				}
+				minX, minY = min(minX, x), min(minY, y)
+				maxX, maxY = max(maxX, x), max(maxY, y)
+			}
+		}
+		if maxX < 0 {
+			t.Fatalf("%q/%q painted no centre ink", tc.icon, tc.value)
+		}
+		if absInt((minX+maxX)-27) > 3 || absInt((minY+maxY)-27) > 3 {
+			t.Fatalf("%q/%q centre ink %d..%d,%d..%d is off-centre", tc.icon, tc.value, minX, maxX, minY, maxY)
+		}
+	}
+}
+
+func TestRadialGaugePaintsCentredTemperatureRoundedCapAndUnavailableState(t *testing.T) {
 	t.Parallel()
 	paint := func(value float64, absent bool) *Canvas {
 		c := newTestCanvas(t, 60, 60)
-		n := &ui.Node{Kind: ui.KindRadialGauge, Text: "C", Value: value, Absent: absent, Bounds: ui.Rect{W: 60, H: 60}}
+		n := &ui.Node{Kind: ui.KindRadialGauge, ValueText: "65°", Value: value, Absent: absent, Bounds: ui.Rect{W: 60, H: 60}}
 		if err := paintNode(c, n, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
 			t.Fatal(err)
 		}
@@ -1477,8 +1552,8 @@ func TestRadialGaugePaintsValueLabelRoundedCapAndUnavailableState(t *testing.T) 
 	if got := pixelAt(t, quarter, 58, 31); got != testStyle.Accent {
 		t.Fatalf("quarter-arc cap pixel = %#v, want accent %#v", got, testStyle.Accent)
 	}
-	if litPixels(quarter, testStyle.Foreground) <= litPixels(zero, testStyle.Foreground) {
-		t.Fatal("gauge did not paint both a changing value and its fixed label")
+	if inked(t, quarter, ui.Rect{X: 15, Y: 15, W: 30, H: 30}, Color{}) == 0 {
+		t.Fatal("temperature gauge painted no centre value")
 	}
 }
 

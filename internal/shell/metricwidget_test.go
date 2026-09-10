@@ -166,21 +166,37 @@ func TestAMetricWidgetOpensTheSystemMonitor(t *testing.T) {
 	}
 }
 
-func TestRadialMetricWidgetCarriesGaugeValueAndLabel(t *testing.T) {
+func TestRadialMetricWidgetCarriesCompactIconOrTemperatureValue(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		id    string
-		label string
-		want  float64
-		value string
-	}{{"cpu", "C", .42, "42%"}, {"memory", "M", .25, "25%"}, {"temperature", "T", .65, "65°"}, {"gpu", "G", .7, "70%"}}
+		id, icon, value, tooltip string
+		want                     float64
+	}{
+		{"cpu", "sysmon-cpu", "", "CPU usage: 42%", .42},
+		{"memory", "sysmon-memory", "", "Memory usage: 25%", .25},
+		{"temperature", "", "65°", "CPU temperature: 65°", .65},
+		{"gpu", "sysmon-gpu", "", "GPU usage: 70%", .7},
+	}
 	for _, tc := range cases {
 		w := buildMetricWidget(config.Item{ID: tc.id, Display: "radial"})
 		w.format(barView{Metrics: fixtureSnapshot()})
-		if w.node.Kind != ui.KindRadialGauge || w.node.Text != tc.label || w.node.Value != tc.want ||
-			w.node.ValueText != tc.value || w.node.Absent {
+		if w.node.Kind != ui.KindRadialGauge || w.node.Width != 22 || w.node.Height != 22 ||
+			w.node.Text != "" || w.node.Icon != tc.icon || w.node.Value != tc.want ||
+			w.node.ValueText != tc.value || w.node.Tooltip != tc.tooltip || w.node.Absent {
 			t.Fatalf("%s radial = %+v", tc.id, w.node)
 		}
+	}
+}
+
+func TestRadialMetricTooltipUsesTheCurrentValue(t *testing.T) {
+	member := buildMetricWidget(config.Item{ID: "cpu", Display: "radial"})
+	member.format(barView{Metrics: fixtureSnapshot()})
+	member.node.Bounds = ui.Rect{W: 22, H: 22}
+	bar := &Bar{right: []textWidget{{members: []textWidget{member}}}}
+
+	got, _, _, ok := bar.tooltipAtLocked(11, 11)
+	if !ok || got != "CPU usage: 42%" {
+		t.Fatalf("radial tooltip = %q, ok=%v, want current value", got, ok)
 	}
 }
 

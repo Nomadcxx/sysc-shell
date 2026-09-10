@@ -622,12 +622,12 @@ func (b *Bar) tooltipAtLocked(x, y int) (string, *ui.Node, ui.Rect, bool) {
 	for _, section := range b.widgets() {
 		for _, w := range section {
 			for _, m := range w.members {
-				if (m.tooltip != "" || m.tooltipTree() != nil) && m.node.Bounds.Contains(x, y) {
-					return m.tooltip, m.tooltipTree(), m.node.Bounds, true
+				if tip := widgetTooltip(m); (tip != "" || m.tooltipTree() != nil) && m.node.Bounds.Contains(x, y) {
+					return tip, m.tooltipTree(), m.node.Bounds, true
 				}
 			}
-			if (w.tooltip != "" || w.tooltipTree() != nil) && w.node.Bounds.Contains(x, y) {
-				return w.tooltip, w.tooltipTree(), w.node.Bounds, true
+			if tip := widgetTooltip(w); (tip != "" || w.tooltipTree() != nil) && w.node.Bounds.Contains(x, y) {
+				return tip, w.tooltipTree(), w.node.Bounds, true
 			}
 		}
 	}
@@ -637,6 +637,13 @@ func (b *Bar) tooltipAtLocked(x, y int) (string, *ui.Node, ui.Rect, bool) {
 		}
 	}
 	return "", nil, ui.Rect{}, false
+}
+
+func widgetTooltip(w textWidget) string {
+	if w.node != nil && w.node.Tooltip != "" {
+		return w.node.Tooltip
+	}
+	return w.tooltip
 }
 
 func (b *Bar) hoverTooltip() (string, *ui.Node, ui.Rect, bool) {

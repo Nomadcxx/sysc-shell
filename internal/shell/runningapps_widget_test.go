@@ -148,14 +148,24 @@ func TestRunningAppsIconArrivesAfterPaint(t *testing.T) {
 	reg.runningIndex = []runningAppEntry{{ID: "firefox", Icon: "firefox"}}
 	newHosts(t, reg, map[uint32]string{1: "DP-9"})
 	reg.UpdateNiri(niri.Snapshot{Windows: []niri.Window{{ID: 1, AppID: "firefox"}}})
-	if letter := tileLetter(runningAppFirstTile(t, reg.bars[1])); letter != "F" {
+	bar := reg.bars[1]
+	tileContent := func() (string, ui.Kind, *ui.Image) {
+		bar.mu.Lock()
+		defer bar.mu.Unlock()
+		tile := runningAppFirstTile(t, bar)
+		if tile == nil || len(tile.Children) != 1 || tile.Children[0] == nil {
+			return "", 0, nil
+		}
+		return tileLetter(tile), tile.Children[0].Kind, tile.Children[0].Image
+	}
+	if letter, _, _ := tileContent(); letter != "F" {
 		t.Fatalf("before decode letter = %q, want F", letter)
 	}
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		tile := runningAppFirstTile(t, reg.bars[1])
-		if tile != nil && len(tile.Children) == 1 && tile.Children[0].Kind == ui.KindImage && tile.Children[0].Image != nil {
+		_, kind, image := tileContent()
+		if kind == ui.KindImage && image != nil {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)

@@ -176,7 +176,8 @@ func (m *FontMap) iconFaceFor(r rune) *font.Face {
 	inMetric := r >= metricRuneFirst && r <= metricRuneLast
 	inRecorder := r >= recorderRuneFirst && r <= recorderRuneLast
 	inNotify := r >= notifyRuneFirst && r <= notifyRuneLast
-	if !inWeather && !inBattery && !inMetric && !inRecorder && !inNotify {
+	inGauge := r >= gaugeRuneFirst && r <= gaugeRuneLast
+	if !inWeather && !inBattery && !inMetric && !inRecorder && !inNotify && !inGauge {
 		return nil
 	}
 	if !m.iconLoaded {

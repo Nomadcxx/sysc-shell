@@ -53,18 +53,21 @@ func paintRadialGauge(c *Canvas, n *ui.Node, text *TextRenderer, style Style) er
 		paintCap(limit)
 	}
 
+	centre := ui.Rect{X: box.X, Y: box.Y, W: box.W, H: box.H}
+	if !n.Absent && n.Icon != "" {
+		mask, err := text.RasterProjectIcon(n.Icon, style.Scale120.Physical(11))
+		if err != nil {
+			return err
+		}
+		paintCentredMask(c, mask, centre, textColor(style, n.Tone))
+		return nil
+	}
 	value := n.ValueText
 	if n.Absent {
 		value = "—"
 	} else if value == "" {
 		value = fmt.Sprintf("%.0f%%", fraction*100)
 	}
-	spec := textSpec(style, n)
-	lineH := max(spec.Size+1, 1)
-	valueBox := ui.Rect{X: box.X, Y: int(math.Round(cy)) - lineH, W: box.W, H: lineH}
-	labelBox := ui.Rect{X: box.X, Y: int(math.Round(cy)), W: box.W, H: lineH}
-	if err := paintText(c, value, valueBox, text, style, spec, true, n.Tone, false); err != nil {
-		return err
-	}
-	return paintText(c, n.Text, labelBox, text, style, spec.AtSize(max(spec.Size-2, 1)), false, n.Tone, false)
+	spec := textSpec(style, n).AtSize(style.Scale120.Physical(8))
+	return paintCentredTextColor(c, value, centre, text, spec, true, textColor(style, n.Tone), false)
 }

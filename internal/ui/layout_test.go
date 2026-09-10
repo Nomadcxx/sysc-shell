@@ -599,6 +599,19 @@ func TestImageNodeMeasuresALandscapeBox(t *testing.T) {
 	}
 }
 
+func TestTextFieldHonoursExplicitHeight(t *testing.T) {
+	measure := func(string, TextAttrs) (int, int) { return 80, 16 }
+	field := &Node{Kind: KindTextField, Width: 300, Height: 32, Padding: 4}
+
+	w, h, err := measureNode(field, 40, measure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w != 300 || h != 32 {
+		t.Fatalf("text field measured %dx%d, want explicit 300x32", w, h)
+	}
+}
+
 func TestImageNodeLandscapeRowHeightInAColumn(t *testing.T) {
 	measure := func(string, TextAttrs) (int, int) { return 7, 20 }
 	h, err := columnChildHeight(&Node{Kind: KindImage, ImageW: 210, ImageH: 96}, 400, measure)

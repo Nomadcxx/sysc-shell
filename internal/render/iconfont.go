@@ -2,6 +2,7 @@ package render
 
 import (
 	_ "embed"
+	"fmt"
 	"sort"
 
 	"github.com/go-text/typesetting/font"
@@ -66,6 +67,9 @@ const (
 	iconClose
 	iconSchedule
 	iconGhost
+	iconGaugeCPU
+	iconGaugeMemory
+	iconGaugeGPU
 
 	batteryRuneFirst = iconBatteryLevel0
 	batteryRuneLast  = iconBatteryCritical
@@ -78,6 +82,8 @@ const (
 
 	notifyRuneFirst = iconNotifications
 	notifyRuneLast  = iconGhost
+	gaugeRuneFirst  = iconGaugeCPU
+	gaugeRuneLast   = iconGaugeGPU
 )
 
 // batteryLevels is how many level glyphs each state has.
@@ -100,6 +106,41 @@ func newIconFace() *font.Face {
 		return nil
 	}
 	return face
+}
+
+func (r *TextRenderer) projectFace() (*font.Face, error) {
+	if r == nil {
+		return nil, fmt.Errorf("render: nil renderer")
+	}
+	if r.project != nil {
+		return r.project, nil
+	}
+	if r.projectErr != nil {
+		return nil, r.projectErr
+	}
+	face, err := ParseFace(iconTTF)
+	if err != nil {
+		r.projectErr = fmt.Errorf("render: parse project icon face: %w", err)
+		return nil, r.projectErr
+	}
+	r.project = face
+	return face, nil
+}
+
+func (r *TextRenderer) RasterProjectIcon(name string, size int) (Mask, error) {
+	glyph, ok := IconByName(name)
+	if !ok {
+		return Mask{}, fmt.Errorf("render: %q is not in the project icon set", name)
+	}
+	face, err := r.projectFace()
+	if err != nil {
+		return Mask{}, err
+	}
+	out, err := r.shapeFace(face, string(glyph), size, false)
+	if err != nil {
+		return Mask{}, err
+	}
+	return rasterRuns([]shapedFaceRun{{face: face, text: string(glyph), output: out}}, size)
 }
 
 // IconRune maps a WMO weather code to its symbol.
@@ -176,6 +217,30 @@ func MetricIconRune(id string) rune {
 	return 0
 }
 
+// GaugeIconName maps the compact system-summary gauges to their project-owned
+// glyph names. These are separate from the text metric glyphs because they are
+// designed for the smaller clear space inside a 22 px progress ring.
+func GaugeIconName(id string) (string, bool) {
+	switch id {
+	case "cpu":
+		return "sysmon-cpu", true
+	case "memory":
+		return "sysmon-memory", true
+	case "gpu":
+		return "sysmon-gpu", true
+	}
+	return "", false
+}
+
+func GaugeIconRune(id string) (rune, bool) {
+	name, ok := GaugeIconName(id)
+	if !ok {
+		return 0, false
+	}
+	r, ok := IconByName(name)
+	return r, ok
+}
+
 func BatteryIconRune(charge float64, charging, critical bool) rune {
 	if critical {
 		return iconBatteryCritical
@@ -223,6 +288,9 @@ var iconNames = map[string]rune{
 	"close":             iconClose,
 	"schedule":          iconSchedule,
 	"ghost":             iconGhost,
+	"sysmon-cpu":        iconGaugeCPU,
+	"sysmon-memory":     iconGaugeMemory,
+	"sysmon-gpu":        iconGaugeGPU,
 }
 
 // IconByName resolves a catalogue name to its symbol.
