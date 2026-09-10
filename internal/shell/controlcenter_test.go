@@ -2,12 +2,24 @@ package shell
 
 import (
 	"io"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
+
+func renderText(n *ui.Node) string {
+	if n == nil {
+		return ""
+	}
+	parts := []string{n.Text}
+	for _, child := range n.Children {
+		parts = append(parts, renderText(child))
+	}
+	return strings.Join(parts, " ")
+}
 
 type closerFunc func() error
 
@@ -186,6 +198,98 @@ func TestControlCentreHeaderAndBodyComposition(t *testing.T) {
 	}
 	if body := root.Children[1].Children[1]; body.Kind != ui.KindScroll || len(body.Children) != 1 {
 		t.Errorf("body = %+v, want one scroll viewport", body)
+	}
+}
+
+func TestControlCentreHomeFillsTheBodyContract(t *testing.T) {
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	root := controlCentreTree(&Registry{}, h)
+	body := root.Children[1].Children[1]
+	if body.Height != 480 {
+		t.Fatalf("body height = %d, want 480", body.Height)
+	}
+	home := body.Children[0]
+	if home.Gap != 12 || len(home.Children) != 4 {
+		t.Fatalf("Home composition = %+v, want four blocks separated by 12px", home)
+	}
+	want := []int{96, 48, 184, 116}
+	for i, child := range home.Children {
+		if child.Height != want[i] {
+			t.Errorf("Home block %d height = %d, want %d", i, child.Height, want[i])
+		}
+	}
+}
+
+func TestHomeShowsDashesBeforeTheFirstSample(t *testing.T) {
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	got := renderText(ccHome(&Registry{}, h))
+	if strings.Contains(got, "0%") {
+		t.Error("Home rendered 0% before a sample landed: stale must read as a dash")
+	}
+	if !strings.Contains(got, "—") {
+		t.Error("Home rendered no dash for an unsampled value")
+	}
+}
+
+func TestHomeUsesTheRegistryIdentitySnapshot(t *testing.T) {
+	r := &Registry{controlIdentity: ccIdentity{
+		Name: "Nomad", Account: "nomadx@pony", Uptime: "2 hours",
+	}}
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	got := renderText(ccHome(r, h))
+	for _, want := range []string{"Nomad", "nomadx@pony", "2 hours"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Home text %q is missing cached identity %q", got, want)
+		}
+	}
+}
+
+func TestHomeUnavailableControlsAreDisabledAndBatteryIsAReadout(t *testing.T) {
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	home := ccHome(&Registry{}, h)
+	for _, name := range []string{"Mute", "Power profile", "Volume", "Brightness"} {
+		n := findByName(home, name)
+		if n == nil || !n.State.Has(ui.StateDisabled) {
+			t.Errorf("unavailable %s = %+v, want disabled", name, n)
+		}
+	}
+	battery := findNode(home, func(n *ui.Node) bool {
+		return n.Kind == ui.KindCapsule && strings.Contains(renderText(n), "Battery")
+	})
+	if battery == nil || battery.Focusable || battery.Action != "" || battery.Stroke == 0 {
+		t.Errorf("battery = %+v, want an outlined non-actionable readout", battery)
+	}
+}
+
+func TestHomeDNDControlUpdatesMemorySynchronously(t *testing.T) {
+	r := &Registry{notify: newNotifyState()}
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	n := findByName(ccHome(r, h), "Do not disturb")
+	if !h.activateControlCentre(r, n) {
+		t.Fatal("DND control was not handled")
+	}
+	if _, on := r.notify.dndState(time.Time{}); !on {
+		t.Fatal("DND control did not update the in-memory state")
+	}
+}
+
+func TestHomeWallpaperControlOpensTheExistingPanel(t *testing.T) {
+	r := newPanelRegistry(t)
+	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	h := r.panelHosts[PanelControlCenter]
+	n := findByName(h.root, "Wallpaper")
+	if !h.activateControlCentre(r, n) {
+		r.mu.Unlock()
+		t.Fatal("Wallpaper control was not handled")
+	}
+	_, controlOpen := r.panelHosts[PanelControlCenter]
+	_, wallpaperOpen := r.panelHosts[PanelWallpaper]
+	r.mu.Unlock()
+	if controlOpen || !wallpaperOpen {
+		t.Fatalf("after Wallpaper: control open=%v wallpaper open=%v", controlOpen, wallpaperOpen)
 	}
 }
 

@@ -52,6 +52,9 @@ type Registry struct {
 	weather *services.Weather
 	sample  services.Snapshot
 	reading services.Reading
+	// controlIdentity is captured outside Registry.mu so the control centre
+	// never reads /proc or user databases from the Wayland owner.
+	controlIdentity ccIdentity
 
 	tokens theme.Tokens
 	// themeErr is why the published palette is not the requested one, empty
@@ -145,21 +148,22 @@ func NewRegistry(cfg config.Config) *Registry {
 		metrics: services.NewMetrics(),
 		weather: services.NewWeather(
 			cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit)),
-		themeGen:      gen,
-		invalidations: make(chan wayland.Invalidation, 8),
-		aux:           make(chan wayland.AuxRequest, 8),
-		panelHosts:    make(map[PanelID]*PanelHost),
-		closed:        make(chan struct{}),
-		dwell:         newDwell(defaultDwell),
-		runArgv:       runArgvDefault,
-		lookPath:      exec.LookPath,
-		runArgvOutput: runArgvOutputDefault,
-		startInhibit:  startInhibitDefault,
-		signalProcess: signalProcessDefault,
-		notify:        newNotifyState(),
-		tray:          newTrayState(),
-		trayCh:        make(chan trayclient.Message, 32),
-		notifyCh:      make(chan notifyclient.Message, 32),
+		themeGen:        gen,
+		invalidations:   make(chan wayland.Invalidation, 8),
+		aux:             make(chan wayland.AuxRequest, 8),
+		panelHosts:      make(map[PanelID]*PanelHost),
+		closed:          make(chan struct{}),
+		dwell:           newDwell(defaultDwell),
+		runArgv:         runArgvDefault,
+		lookPath:        exec.LookPath,
+		runArgvOutput:   runArgvOutputDefault,
+		startInhibit:    startInhibitDefault,
+		signalProcess:   signalProcessDefault,
+		notify:          newNotifyState(),
+		tray:            newTrayState(),
+		trayCh:          make(chan trayclient.Message, 32),
+		notifyCh:        make(chan notifyclient.Message, 32),
+		controlIdentity: readCCIdentity(),
 	}
 	r.tokens, r.themeErr = tokensAndReason(r.generateTheme(cfg))
 	r.osd = newOSDManager(r, 0)
@@ -1076,7 +1080,7 @@ func (r *Registry) viewLocked(connector string) barView {
 	}
 	_, view.DND = r.notify.dndState(r.now)
 	if r.audio != nil {
-		view.Audio = r.audio.CachedState()
+		view.Audio, _ = r.audio.CachedState()
 	}
 	if r.plugins != nil {
 		view.Plugins = r.plugins.frames(connector)
