@@ -170,9 +170,13 @@ func (r *Registry) applyNotify(m notifyclient.Message) {
 		r.rebuildPanel(h)
 		out, open = h.output, true
 	}
+	controlOut, controlOpen := r.rebuildControlCentreLocked()
 	r.mu.Unlock()
 	if open {
 		r.publishSurface(out, panelSurfaceID(PanelNotifications))
+	}
+	if controlOpen {
+		r.publishSurface(controlOut, panelSurfaceID(PanelControlCenter))
 	}
 }
 func (r *Registry) notifyActiveIDs() []uint32 { return r.notify.activeIDs() }

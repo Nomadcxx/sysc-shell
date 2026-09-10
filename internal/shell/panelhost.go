@@ -587,7 +587,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	r.sendAux(wayland.AuxRequest{Output: output, Open: r.shieldSpec(h)})
 	r.sendAux(wayland.AuxRequest{Output: output, Open: r.panelSpec(h, margins)})
 
-	if id == PanelSession {
+	if id == PanelSession || id == PanelControlCenter {
 		r.scheduleLoadProfiles(h)
 	}
 

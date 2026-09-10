@@ -153,6 +153,9 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 	case "cc:dnd":
 		_, on := r.notify.dndState(r.now)
 		r.setDND(!on)
+		if r.toasts != nil {
+			r.toasts.recompute()
+		}
 		r.rebuildPanel(h)
 		return true
 	case "cc:mute":
@@ -182,12 +185,28 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 		level := int(n.Value)
 		r.scheduleControl(h, func() error { return brightness.Set(level) })
 		return true
+	case "session-lock", "session-logout", "session-suspend", "session-reboot", "session-poweroff":
+		argv := sessionArgv(n.Action, r.cfg.Session.Locker)
+		run := r.runArgv
+		r.scheduleControl(h, func() error { return run(argv) })
+		return true
 	default:
 		name, ok := strings.CutPrefix(n.Action, "cc:profile:")
 		if !ok || !profileSupports(h.profiles, name) {
 			return false
 		}
-		r.scheduleControl(h, func() error { return r.runArgv(powerProfileSetArgv(name)) })
+		run := r.runArgv
+		r.scheduleControl(h, func() error {
+			if err := run(powerProfileSetArgv(name)); err != nil {
+				return err
+			}
+			r.mu.Lock()
+			if r.panelHosts[h.id] == h {
+				h.profileActive = name
+			}
+			r.mu.Unlock()
+			return nil
+		})
 		return true
 	}
 	trig := Trigger{
@@ -247,9 +266,3 @@ func (r *Registry) setCaffeine(h *PanelHost, on bool) {
 	r.inhibit = nil
 	r.scheduleControl(h, hold.Close)
 }
-
-func ccAudio(*Registry, *PanelHost) *ui.Node         { return &ui.Node{Kind: ui.KindColumn} }
-func ccMonitor(*Registry, *PanelHost) *ui.Node       { return &ui.Node{Kind: ui.KindColumn} }
-func ccPower(*Registry, *PanelHost) *ui.Node         { return &ui.Node{Kind: ui.KindColumn} }
-func ccCalendar(*Registry, *PanelHost) *ui.Node      { return &ui.Node{Kind: ui.KindColumn} }
-func ccNotifications(*Registry, *PanelHost) *ui.Node { return &ui.Node{Kind: ui.KindColumn} }
