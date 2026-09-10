@@ -102,7 +102,8 @@ func TestLauncherRankTieBreaksDeterministically(t *testing.T) {
 // weighting, boost cap, or tie-break shows up here, including drift the
 // library introduces under a version bump.
 func TestLauncherRankMatchesLibraryForSearches(t *testing.T) {
-	t.Parallel()
+	// The library and shell guard fzf's package-global Init with separate
+	// sync.Once values. Keep their parity check ahead of parallel rank tests.
 	entries := append(launcherTestEntries(), alphabetEntries(120)...)
 	for _, query := range []string{"fi", "fox", "term", "e", "entry", "zzz", "Files"} {
 		want := rankViaService(t, entries, query, nil)
