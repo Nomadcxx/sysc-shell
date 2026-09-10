@@ -1811,7 +1811,8 @@ func (h *PanelHost) setFocus(n *ui.Node) {
 }
 
 func (h *PanelHost) hitFocusable(x, y int) *ui.Node {
-	for _, n := range h.focus {
+	for i := len(h.focus) - 1; i >= 0; i-- {
+		n := h.focus[i]
 		if n.Bounds.Contains(x, y) {
 			return n
 		}

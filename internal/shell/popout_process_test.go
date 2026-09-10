@@ -110,8 +110,8 @@ func TestProcessTableUsesCompactChromeAndOneKillAction(t *testing.T) {
 	}
 
 	page := findNodeKey(tree, "monitor-page")
-	if page == nil || page.Height != 32 || page.Gap != 0 {
-		t.Fatalf("page switch = %+v, want a joined 32px segmented control", page)
+	if page == nil || page.Height != 28 || page.Gap != 0 {
+		t.Fatalf("page switch = %+v, want a joined 28px segmented control", page)
 	}
 	for _, segment := range page.Children {
 		if segment.Fill != ui.FillOutline {
@@ -119,30 +119,36 @@ func TestProcessTableUsesCompactChromeAndOneKillAction(t *testing.T) {
 		}
 	}
 	field := findKind(tree, ui.KindTextField)
-	if field == nil || field.Height != 32 || field.Bounds.H != 32 {
-		t.Fatalf("search field = %+v, want a laid-out 32px control", field)
+	if field == nil || field.Height != 28 || field.Bounds.H != 28 {
+		t.Fatalf("search field = %+v, want a laid-out 28px control", field)
 	}
 	filters := findNodeKey(tree, "process-filter")
-	if filters == nil || filters.Height != 32 {
-		t.Fatalf("filter switch = %+v, want 32px", filters)
+	if filters == nil || filters.Height != 28 {
+		t.Fatalf("filter switch = %+v, want 28px", filters)
+	}
+	for _, key := range []string{"name", "cpu", "memory", "pid"} {
+		header := findAction(tree, "monitor:sort:"+key)
+		if header == nil || header.Kind != ui.KindText || header.Height != 22 {
+			t.Fatalf("%s header = %+v, want a text-like 22px sort action", key, header)
+		}
 	}
 
 	list := findKind(tree, ui.KindVirtualList)
-	if list == nil || list.ItemHeight != 44 {
-		t.Fatalf("process list = %+v, want 44px row pitch", list)
+	if list == nil || list.ItemHeight != 38 {
+		t.Fatalf("process list = %+v, want 38px row pitch", list)
 	}
 	row := list.Item(0)
-	if row == nil || row.Height != 40 {
-		t.Fatalf("process row = %+v, want a 40px card with a visible gap", row)
+	if row == nil || row.Height != 30 || list.ItemHeight-row.Height != 8 {
+		t.Fatalf("process row = %+v on pitch %d, want a 30px card with an 8px gap", row, list.ItemHeight)
 	}
-	if selectNode := findAction(row, "monitor:select:30:300"); selectNode == nil || !selectNode.Focusable {
-		t.Fatalf("process data has no selectable row action: %+v", selectNode)
+	if row.Action != "monitor:select:30:300" || !row.Focusable || row.Role != "row" {
+		t.Fatalf("process card does not own selection: %+v", row)
 	}
 	if end := findText(row, "End"); end != nil {
 		t.Fatalf("redundant End action remains: %+v", end)
 	}
 	kill := findAction(row, "process:term:30:300")
-	if kill == nil || kill.Text != "Kill" || kill.State.Has(ui.StateDisabled) {
+	if kill == nil || kill.Text != "Kill" || kill.Height != 24 || kill.Width >= 64 || kill.Fill != ui.FillOutline || kill.State.Has(ui.StateDisabled) {
 		t.Fatalf("single TERM-backed Kill action = %+v", kill)
 	}
 	if legacy := findAction(row, "process:kill:30:300"); legacy != nil {
@@ -157,8 +163,8 @@ func TestSelectedProcessRowKeepsAVisibleHighlight(t *testing.T) {
 		processSelected: process.Identity,
 	}
 	row := processRow(h, process)
-	if row.Fill != ui.FillSoft || row.Stroke != 1 || row.StrokeFill != ui.FillAccent {
-		t.Fatalf("selected row chrome = fill %v stroke %d/%v, want soft accent highlight", row.Fill, row.Stroke, row.StrokeFill)
+	if row.Fill != ui.FillSoft || row.Stroke != 0 {
+		t.Fatalf("selected row chrome = fill %v stroke %d, want one stroke-free soft wash", row.Fill, row.Stroke)
 	}
 }
 
