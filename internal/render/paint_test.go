@@ -1490,7 +1490,7 @@ func TestRadialGaugePaintsProgressAndDistinctCentreIcons(t *testing.T) {
 		return c
 	}
 	low, high := paint("sysmon-cpu", 0.25), paint("sysmon-cpu", 0.75)
-	if litPixels(high, testStyle.Accent) <= litPixels(low, testStyle.Accent) {
+	if activeRadialPixels(high, testStyle.Track) <= activeRadialPixels(low, testStyle.Track) {
 		t.Fatal("75% gauge did not paint more progress than 25%")
 	}
 	if litPixels(high, testStyle.Foreground) == 0 {
@@ -1499,6 +1499,87 @@ func TestRadialGaugePaintsProgressAndDistinctCentreIcons(t *testing.T) {
 	memory := paint("sysmon-memory", 0.75)
 	if bytes.Equal(high.Pix, memory.Pix) {
 		t.Fatal("CPU and memory gauges painted the same centre icon")
+	}
+}
+
+func activeRadialPixels(c *Canvas, track Color) int {
+	n := 0
+	cx, cy := float64(c.Width)/2, float64(c.Height)/2
+	for y := 0; y < c.Height; y++ {
+		for x := 0; x < c.Width; x++ {
+			if math.Hypot(float64(x)+.5-cx, float64(y)+.5-cy) < 7 {
+				continue
+			}
+			i := y*c.Stride + x*4
+			col := Color{B: c.Pix[i], G: c.Pix[i+1], R: c.Pix[i+2], A: c.Pix[i+3]}
+			if col.A == 0xff && col != track {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+func TestRadialGaugeAntialiasesRingEdges(t *testing.T) {
+	t.Parallel()
+	c := newTestCanvas(t, 22, 22)
+	n := &ui.Node{Kind: ui.KindRadialGauge, Icon: "sysmon-cpu", Value: .75, Bounds: ui.Rect{W: 22, H: 22}}
+	if err := paintNode(c, n, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
+		t.Fatal(err)
+	}
+	for y := 0; y < 22; y++ {
+		for x := 0; x < 22; x++ {
+			distance := math.Hypot(float64(x)+.5-11, float64(y)+.5-11)
+			alpha := pixelAt(t, c, x, y).A
+			if distance >= 7 && alpha > 0 && alpha < 0xff {
+				return
+			}
+		}
+	}
+	t.Fatal("radial ring has no partially covered edge pixel")
+}
+
+func TestRadialGaugeArcColorsFollowThemeAndTemperature(t *testing.T) {
+	t.Parallel()
+	metric := &ui.Node{Icon: "sysmon-cpu", Value: .75}
+	if got := radialArcColor(testStyle, metric, 0); got != testStyle.Accent {
+		t.Fatalf("metric arc start = %#v, want accent %#v", got, testStyle.Accent)
+	}
+	if got := radialArcColor(testStyle, metric, 1); got != testStyle.Secondary {
+		t.Fatalf("metric arc end = %#v, want secondary %#v", got, testStyle.Secondary)
+	}
+
+	temperature := func(celsius float64) Color {
+		return radialArcColor(testStyle, &ui.Node{Value: celsius / 100, ValueText: "temperature"}, 1)
+	}
+	low, amber, warm, hot := temperature(59), temperature(75), temperature(80), temperature(85)
+	if low != testStyle.Accent {
+		t.Fatalf("59C end = %#v, want accent %#v", low, testStyle.Accent)
+	}
+	if amber == testStyle.Accent || amber == testStyle.Error {
+		t.Fatalf("75C end = %#v, want a distinct warning amber", amber)
+	}
+	if want := LerpColor(amber, testStyle.Error, .5); warm != want {
+		t.Fatalf("80C end = %#v, want halfway %#v", warm, want)
+	}
+	if hot != testStyle.Error {
+		t.Fatalf("85C end = %#v, want error %#v", hot, testStyle.Error)
+	}
+}
+
+func TestRadialGaugeWarningAmberContrastsWithTrack(t *testing.T) {
+	t.Parallel()
+	for _, track := range []Color{{R: 0x20, G: 0x24, B: 0x28, A: 0xff}, {R: 0xee, G: 0xee, B: 0xee, A: 0xff}} {
+		style := testStyle
+		style.Track = track
+		amber := radialWarningAmber(style)
+		ratio := theme.ContrastRatio(
+			theme.Color{R: amber.R, G: amber.G, B: amber.B, A: amber.A},
+			theme.Color{R: track.R, G: track.G, B: track.B, A: track.A},
+		)
+		if ratio < 3 {
+			t.Fatalf("amber %#v contrast against track %#v = %.2f, want at least 3", amber, track, ratio)
+		}
 	}
 }
 
@@ -1517,6 +1598,9 @@ func TestRadialGaugeCentreInkStaysCentredAtFractionalScale(t *testing.T) {
 		minX, minY, maxX, maxY := 28, 28, -1, -1
 		for y := 5; y < 23; y++ {
 			for x := 5; x < 23; x++ {
+				if math.Hypot(float64(x)+.5-14, float64(y)+.5-14) > 9 {
+					continue
+				}
 				if pixelAt(t, c, x, y).R < 0x80 {
 					continue
 				}
@@ -1537,7 +1621,7 @@ func TestRadialGaugePaintsCentredTemperatureRoundedCapAndUnavailableState(t *tes
 	t.Parallel()
 	paint := func(value float64, absent bool) *Canvas {
 		c := newTestCanvas(t, 60, 60)
-		n := &ui.Node{Kind: ui.KindRadialGauge, ValueText: "65°", Value: value, Absent: absent, Bounds: ui.Rect{W: 60, H: 60}}
+		n := &ui.Node{Kind: ui.KindRadialGauge, ValueText: "°", Value: value, Absent: absent, Bounds: ui.Rect{W: 60, H: 60}}
 		if err := paintNode(c, n, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
 			t.Fatal(err)
 		}
@@ -1549,7 +1633,7 @@ func TestRadialGaugePaintsCentredTemperatureRoundedCapAndUnavailableState(t *tes
 	}
 	quarter := paint(.25, false)
 	// A rounded end cap extends just past the clockwise end of the quarter arc.
-	if got := pixelAt(t, quarter, 58, 31); got != testStyle.Accent {
+	if got := pixelAt(t, quarter, 58, 30); got != testStyle.Accent {
 		t.Fatalf("quarter-arc cap pixel = %#v, want accent %#v", got, testStyle.Accent)
 	}
 	if inked(t, quarter, ui.Rect{X: 15, Y: 15, W: 30, H: 30}, Color{}) == 0 {
