@@ -88,7 +88,7 @@
 
 **Files:** `internal/services/metrics.go` or a narrow process service peer, `internal/shell/popout_monitor.go`, `internal/shell/panelhost.go`, monitor tests, and process action tests.
 
-1. Add failing projection tests for default Processes page, outlined 28 px Monitor switching, 28 px search and filters, text-like 22 px column headers, All/User/System filters, case-insensitive search, stable sortable columns, full-card selection, 30 px cards on a 38 px pitch, one outlined 24 px `Kill` action, and virtual-list bounds.
+1. Add failing projection tests for default Processes page, outlined 28 px Monitor switching, 28 px search and filters, text-like 22 px column headers, All/User/System filters, case-insensitive search, stable sortable columns, one shared table surface, full-row selection, transparent 26 px rows on a 32 px pitch, one outlined 22 px `Kill` action, and virtual-list bounds.
 2. Acquire process sampling only while `PanelMonitor` is open. Build the top page switcher and retain the shipped monitor cards as the second page.
 3. Before `SIGTERM`, revalidate PID plus start time through the library; run the signal operation off `Registry.mu`; show permission, vanished, and recycled-PID errors inline. Do not expose `SIGKILL` in the row chrome.
 4. Run:
@@ -108,15 +108,16 @@
 4. Build current shell and plugin binaries, deploy immediately to the active user paths, restart the user services, and verify Niri layers on DP-1 and DP-3.
 5. Live-check the gradient, real sinks/sources/streams and controls, notification scrolling/badge, four gauges, Processes default and safe test-process termination, weather panel, and launcher click. Record only unresolved hardware observations in beads.
 
-### Task 8: Correct process density and radial raster quality
+### Task 8: Correct process-table rhythm and radial raster quality
 
-**Files:** `internal/shell/popout_process.go`, `internal/shell/popout_process_test.go`, `internal/render/radial.go`, `internal/render/paint_test.go`.
+**Files:** `internal/shell/popout_process.go`, `internal/shell/popout_process_test.go`, `internal/render/paint.go`, `internal/render/radial.go`, `internal/render/paint_test.go`.
 
-1. Change the process projection test first to assert 28 px controls, 22 px headers, 30 px full-row selectable cards, 38 px list pitch, an 8 px gap, a stroke-free selected wash, and a 24 px independently clickable outlined `Kill` child. Run it and confirm it fails against the current 32/28/40/44 px layout and inner-row selection.
-2. Move the selection action, accessible row name, role, and focusability to the card. Remove the inner selection action and selected outline. Apply the approved dimensions and narrow the action column only as far as the measured label permits.
-3. Add renderer tests that require partial-alpha coverage at the annulus edge, distinct Accent-to-Secondary samples along a CPU/memory/GPU arc, and temperature end colours at 59°C, 75°C, 80°C, and 85°C. Run them and confirm they fail against binary solid-colour rasterisation.
-4. Compute coverage from signed distance to the annulus and round caps, blend each covered pixel once, and sample the active arc gradient by angular progress. Keep warning amber private to the renderer and derive it with enough theme contrast; do not add configuration or a dependency.
-5. Run:
+1. Change the process projection test first to assert 28 px controls, 22 px headers, one `FillContainerHigh` table surface, transparent 26 px full-row selection targets, 32 px list pitch, a rectangular selected wash, and a 22 px independently clickable outlined `Kill` child. Run it and confirm it fails while each process still paints its own capsule.
+2. Let an actionable `KindRow` paint only its explicit fill and interaction state as a rectangular layer before painting children. Keep ordinary rows byte-for-byte unchanged when they have no fill or state.
+3. Move the table fill to one surface around the virtual list. Replace each process capsule with a flat row, retain fixed column alignment, and apply `FillSoft` only to the selected row. Keep nested hit testing so `Kill` wins over the row action.
+4. Add renderer tests that require partial-alpha coverage at the annulus edge, distinct Accent-to-Secondary samples along a CPU/memory/GPU arc, and temperature end colours at 59°C, 75°C, 80°C, and 85°C. Run them and confirm they fail against binary solid-colour rasterisation.
+5. Compute coverage from signed distance to the annulus and round caps, blend each covered pixel once, and sample the active arc gradient by angular progress. Keep warning amber private to the renderer and derive it with enough theme contrast; do not add configuration or a dependency.
+6. Run:
 
    ```bash
    timeout 90s env GOMAXPROCS=2 go test -count=1 ./internal/shell -run 'TestProcess(Table|Selected|Row|List|Keyboard)'
