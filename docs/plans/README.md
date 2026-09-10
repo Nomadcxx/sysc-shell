@@ -322,7 +322,7 @@ widgets) are still unordered.
 | `2026-09-07-audio-panel.md` | plan | Nine tasks: attached-mask primitive with concave top corners (`sysc-154` gains the dep), four Material ligatures (mic/mic_off/graphic_eq/headphones), `pw-dump` enumeration service with cubic volume and `SetDefault`, fused wing-tip panel chrome with trigger-centred `AnchorX`, Volumes/Devices tabs with off-owner `scheduleControl` writes, volume bar widget, density verification and live Niri gate. |
 | `2026-09-07-audio-panel-completion-handover.md` | completion-handover | Snapshot at `18470ab`: gate output, audit verdict (no blocking defects; four low deviations recorded), live IPC open/close and cubic-volume reconciliation. Pointer-driven matrix items owner-verified. |
 | `2026-09-08-live-shell-correction-design.md` | design | Owner-approved correction pass: seamless themed mark, functional responsive audio, notification containment/bell, four sysmon gauges plus processes, weather, and far-left launcher. |
-| `2026-09-08-live-shell-correction.md` | plan | Seven lean slices implementing and live-testing the approved correction across the existing shell owners and `sysc-metrics`. |
+| `2026-09-08-live-shell-correction.md` | plan | Eight lean slices implementing and live-testing the approved correction across the existing shell owners and `sysc-metrics`. |
 
 ## Milestones 7 remainder and 8: not yet designed
 

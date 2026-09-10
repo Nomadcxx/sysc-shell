@@ -66,8 +66,8 @@
 
 **Files:** `internal/ui/tree.go`, `internal/render/layout.go`, `internal/render/paint.go`, focused renderer tests, `internal/config/config.go`, `internal/config/config_test.go`, `internal/shell/widget.go`, and focused widget tests.
 
-1. Add a failing paint/layout test for `KindRadialGauge`: bounded 22 px circular track, proportional arc, centred project-owned CPU/memory/GPU vector glyphs, a measured centred temperature value, unavailable state, and value clamping.
-2. Implement that one node kind with the existing theme roles and software canvas. Keep exact metric names and values in tooltips instead of ring text.
+1. Add a failing paint/layout test for `KindRadialGauge`: bounded 22 px circular track, proportional light arc with partial-alpha edge pixels, centred project-owned CPU/memory/GPU vector glyphs, a measured centred temperature value, unavailable state, and value clamping.
+2. Implement that one node kind with the existing theme roles and software canvas. Use analytic annulus and cap coverage instead of binary native-pixel classification. Interpolate CPU, memory, and GPU arcs spatially from Accent to Secondary. For temperature, interpolate the arc from Accent to an end colour derived continuously from Accent below 60°C through contrast-aware amber at 75°C to Error at 85°C. Keep exact metric names and values in tooltips instead of ring text.
 3. Add built-in metric selectors for CPU temperature and GPU usage as needed, then change the default sysmon group to CPU, memory, CPU temperature, and GPU. Put the monitor action on the group capsule so right-click on any child opens it.
 4. Run:
 
@@ -88,7 +88,7 @@
 
 **Files:** `internal/services/metrics.go` or a narrow process service peer, `internal/shell/popout_monitor.go`, `internal/shell/panelhost.go`, monitor tests, and process action tests.
 
-1. Add failing projection tests for default Processes page, outlined Monitor switching, compact aligned controls, All/User/System filters, case-insensitive search, stable sortable columns, selectable rows, one immediately usable `Kill` action, and virtual-list bounds.
+1. Add failing projection tests for default Processes page, outlined 28 px Monitor switching, 28 px search and filters, text-like 22 px column headers, All/User/System filters, case-insensitive search, stable sortable columns, full-card selection, 30 px cards on a 38 px pitch, one outlined 24 px `Kill` action, and virtual-list bounds.
 2. Acquire process sampling only while `PanelMonitor` is open. Build the top page switcher and retain the shipped monitor cards as the second page.
 3. Before `SIGTERM`, revalidate PID plus start time through the library; run the signal operation off `Registry.mu`; show permission, vanished, and recycled-PID errors inline. Do not expose `SIGKILL` in the row chrome.
 4. Run:
@@ -107,6 +107,21 @@
 3. Run focused config/widget/plugin tests, then the required gofmt/vet/test/module-diff gate.
 4. Build current shell and plugin binaries, deploy immediately to the active user paths, restart the user services, and verify Niri layers on DP-1 and DP-3.
 5. Live-check the gradient, real sinks/sources/streams and controls, notification scrolling/badge, four gauges, Processes default and safe test-process termination, weather panel, and launcher click. Record only unresolved hardware observations in beads.
+
+### Task 8: Correct process density and radial raster quality
+
+**Files:** `internal/shell/popout_process.go`, `internal/shell/popout_process_test.go`, `internal/render/radial.go`, `internal/render/paint_test.go`.
+
+1. Change the process projection test first to assert 28 px controls, 22 px headers, 30 px full-row selectable cards, 38 px list pitch, an 8 px gap, a stroke-free selected wash, and a 24 px independently clickable outlined `Kill` child. Run it and confirm it fails against the current 32/28/40/44 px layout and inner-row selection.
+2. Move the selection action, accessible row name, role, and focusability to the card. Remove the inner selection action and selected outline. Apply the approved dimensions and narrow the action column only as far as the measured label permits.
+3. Add renderer tests that require partial-alpha coverage at the annulus edge, distinct Accent-to-Secondary samples along a CPU/memory/GPU arc, and temperature end colours at 59°C, 75°C, 80°C, and 85°C. Run them and confirm they fail against binary solid-colour rasterisation.
+4. Compute coverage from signed distance to the annulus and round caps, blend each covered pixel once, and sample the active arc gradient by angular progress. Keep warning amber private to the renderer and derive it with enough theme contrast; do not add configuration or a dependency.
+5. Run:
+
+   ```bash
+   timeout 90s env GOMAXPROCS=2 go test -count=1 ./internal/shell -run 'TestProcess(Table|Selected|Row|List|Keyboard)'
+   timeout 90s env GOMAXPROCS=2 go test -count=1 ./internal/render -run 'TestRadialGauge'
+   ```
 
 ## Stop condition
 
