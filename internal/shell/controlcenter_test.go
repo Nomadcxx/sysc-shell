@@ -355,6 +355,160 @@ func TestHomeRebuildsForClockAndMetricUpdates(t *testing.T) {
 	}
 }
 
+func TestAudioPageHasNoDevicePicker(t *testing.T) {
+	h := &PanelHost{id: PanelControlCenter, section: "audio", theme: DefaultTheme()}
+	got := renderText(ccAudio(&Registry{}, h))
+	for _, banned := range []string{"Output device", "Sink", "Device"} {
+		if strings.Contains(got, banned) {
+			t.Errorf("audio page drew %q: the service reports level and mute only", banned)
+		}
+	}
+	for _, want := range []string{"Volume", "Mute"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("audio page %q is missing %q", got, want)
+		}
+	}
+}
+
+func TestControlCentreNativePagesFillTheBody(t *testing.T) {
+	r := &Registry{notify: newNotifyState(), now: time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)}
+	for _, tc := range []struct {
+		section string
+		want    []string
+	}{
+		{section: "audio", want: []string{"Volume", "Mute"}},
+		{section: "monitor", want: []string{"CPU", "Memory", "Network"}},
+		{section: "power", want: []string{"Battery", "Power profile", "Session"}},
+		{section: "calendar", want: []string{"September 2026", "Previous month", "Next month"}},
+		{section: "notifications", want: []string{"Do not disturb", "Nothing to see here"}},
+	} {
+		t.Run(tc.section, func(t *testing.T) {
+			h := &PanelHost{id: PanelControlCenter, section: tc.section, theme: DefaultTheme()}
+			page := ccPage(r, h)
+			if page.Height != 480 {
+				t.Errorf("%s page height = %d, want the full 480px body", tc.section, page.Height)
+			}
+			got := renderText(page)
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) && findByName(page, want) == nil {
+					t.Errorf("%s page %q is missing %q", tc.section, got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestCalendarPageUsesTheHostMonthDelta(t *testing.T) {
+	r := &Registry{now: time.Date(2026, time.September, 10, 12, 0, 0, 0, time.UTC)}
+	h := &PanelHost{id: PanelControlCenter, section: "calendar", monthDelta: 1, theme: DefaultTheme()}
+	if got := renderText(ccCalendar(r, h)); !strings.Contains(got, "October 2026") {
+		t.Fatalf("calendar monthDelta was ignored: %q", got)
+	}
+}
+
+func TestControlCentreLoadsPowerProfilesForItsOwnHost(t *testing.T) {
+	r := newPanelRegistry(t)
+	r.lookPath = func(string) (string, error) { return "/usr/bin/powerprofilesctl", nil }
+	r.runArgvOutput = func([]string) (string, error) { return starredPowerProfilesList, nil }
+	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		r.mu.Lock()
+		h := r.panelHosts[PanelControlCenter]
+		loaded := h != nil && h.profilesOK && h.profileActive == "balanced"
+		r.mu.Unlock()
+		if loaded {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("control centre never adopted the power profile list")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestControlCentreSessionActionRunsWithoutRegistryLock(t *testing.T) {
+	r := &Registry{panelHosts: map[PanelID]*PanelHost{}, closed: make(chan struct{})}
+	h := &PanelHost{id: PanelControlCenter, section: "power", theme: DefaultTheme()}
+	r.panelHosts[PanelControlCenter] = h
+	unlocked := make(chan bool, 1)
+	r.runArgv = func([]string) error {
+		ok := r.mu.TryLock()
+		if ok {
+			r.mu.Unlock()
+		}
+		unlocked <- ok
+		return nil
+	}
+	r.mu.Lock()
+	if !h.activateControlCentre(r, &ui.Node{Action: "session-suspend"}) {
+		r.mu.Unlock()
+		t.Fatal("control centre did not handle the session action")
+	}
+	r.mu.Unlock()
+	select {
+	case ok := <-unlocked:
+		if !ok {
+			t.Fatal("session command ran while Registry.mu was held")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("session command did not run")
+	}
+}
+
+func TestNotificationUpdateRebuildsAnOpenControlCentre(t *testing.T) {
+	r := newPanelRegistry(t)
+	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	h := r.panelHosts[PanelControlCenter]
+	h.section = "notifications"
+	r.rebuildPanel(h)
+	r.mu.Unlock()
+	r.applyNotify(snap(1, note(1, "Mailbox")))
+	r.mu.Lock()
+	got := renderText(h.root)
+	r.mu.Unlock()
+	if !strings.Contains(got, "Mailbox") {
+		t.Fatalf("notification update left the control centre stale: %q", got)
+	}
+}
+
+func TestControlCentrePagesLayOutAtTheContractSize(t *testing.T) {
+	r := newPanelRegistry(t)
+	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{BarEdge: "top", BarZone: 40}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, r, 2)
+	for _, section := range []string{"home", "audio", "monitor", "power", "weather", "calendar", "notifications"} {
+		t.Run(section, func(t *testing.T) {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			h := r.panelHosts[PanelControlCenter]
+			h.section = section
+			r.rebuildPanel(h)
+			size := panelTargetSize(PanelControlCenter)
+			if err := h.configure(size.W, size.H, int(ui.ScaleUnit)); err != nil {
+				t.Fatalf("%s does not lay out at %dx%d: %v", section, size.W, size.H, err)
+			}
+			assertLaidOut(t, PanelControlCenter, h.root)
+		})
+	}
+}
+
+func TestControlCentreShowsCommandFailuresInline(t *testing.T) {
+	r := &Registry{notify: newNotifyState()}
+	for _, section := range []string{"home", "power"} {
+		h := &PanelHost{id: PanelControlCenter, section: section, theme: DefaultTheme(), errLabel: "command failed"}
+		if got := renderText(ccPage(r, h)); !strings.Contains(got, "command failed") {
+			t.Errorf("%s page hid the command failure: %q", section, got)
+		}
+	}
+}
+
 func TestControlCentreHeaderRoutesPanelsAndClose(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

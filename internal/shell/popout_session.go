@@ -226,7 +226,7 @@ func (r *Registry) scheduleLoadProfiles(h *PanelHost) {
 		names, active, ok := fetchProfileList(look, run)
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		if r.panelHosts[PanelSession] != h {
+		if r.panelHosts[h.id] != h {
 			return
 		}
 		h.profiles = names
