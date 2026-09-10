@@ -345,6 +345,10 @@ func layoutScroll(root *Node, bounds Rect, measure MeasureText) error {
 				return fmt.Errorf("ui: nil child %d", i)
 			}
 			box := Rect{X: content.X, Y: y, W: content.W, H: root.ItemHeight}
+			if child.Height > 0 && child.Height < box.H {
+				box.Y += (box.H - child.Height) / 2
+				box.H = child.Height
+			}
 			if err := placeColumnChild(child, box, measure); err != nil {
 				return err
 			}

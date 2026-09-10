@@ -300,10 +300,27 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 		paintScrollThumb(c, n, style)
 		return nil
 
-	// A segmented row owns allocation, not chrome: each segment paints its own
-	// fill through paintButton, Primary when selected and quiet container
-	// otherwise, so the container only dispatches to its children.
-	case ui.KindRow, ui.KindColumn, ui.KindDropZone, ui.KindSegmented:
+	// A process-table row may carry a flat selection or interaction wash. Its
+	// square edge is deliberate: the table surface owns the rounded outline.
+	case ui.KindRow:
+		fill, fg := fillPair(style, n.Fill, Color{})
+		box := style.Scale120.PhysicalRect(n.Bounds)
+		fillRect(c, box, fill)
+		fillRect(c, box, stateLayer(fg, n.State))
+		inner := style
+		inner.Foreground = fg
+		for i, child := range n.Children {
+			if child == nil {
+				return fmt.Errorf("nil child %d", i)
+			}
+			if err := paintNode(c, child, text, inner, size); err != nil {
+				return err
+			}
+		}
+		return nil
+
+	// Segmented rows own allocation, not chrome: each segment paints itself.
+	case ui.KindColumn, ui.KindDropZone, ui.KindSegmented:
 		for i, child := range n.Children {
 			if child == nil {
 				return fmt.Errorf("nil child %d", i)

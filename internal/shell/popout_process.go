@@ -17,10 +17,11 @@ import (
 const (
 	monitorPageProcesses = "processes"
 	monitorPageMetrics   = "monitor"
-	processRowHeight     = 30
-	processRowPitch      = 38
+	processRowHeight     = 26
+	processRowPitch      = 32
 	processHeaderHeight  = 22
 	monitorControlHeight = 28
+	processTablePadding  = 6
 )
 
 func monitorPanelTree(h *PanelHost, sels []services.Selector, snap services.Snapshot, history map[services.Selector][]float64, facts machineFacts) *ui.Node {
@@ -98,8 +99,9 @@ func processMonitorTree(h *PanelHost, snapshot services.ProcessSnapshot, current
 		used += 24 + 8
 	}
 	rows := make([]*ui.Node, len(processes))
+	tableHeight := max(h.place.Panel.H-used, processRowPitch+2*processTablePadding)
 	list := &ui.Node{
-		Kind: ui.KindVirtualList, Height: max(h.place.Panel.H-used, processRowPitch),
+		Kind: ui.KindVirtualList, Height: tableHeight - 2*processTablePadding,
 		ItemCount: len(processes), ItemHeight: processRowPitch,
 		Item: func(i int) *ui.Node {
 			if i < 0 || i >= len(processes) {
@@ -111,7 +113,10 @@ func processMonitorTree(h *PanelHost, snapshot services.ProcessSnapshot, current
 			return rows[i]
 		},
 	}
-	children = append(children, list)
+	children = append(children, &ui.Node{
+		Kind: ui.KindCapsule, Height: tableHeight, Padding: processTablePadding,
+		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard, Children: []*ui.Node{list},
+	})
 	return &ui.Node{Kind: ui.KindColumn, Gap: 8, Padding: h.metrics().PanelPadding, Children: children}
 }
 
@@ -133,7 +138,7 @@ func processFilterSwitcher(h *PanelHost) *ui.Node {
 }
 
 func processColumns(h *PanelHost) (name, cpu, memory, pid, action int) {
-	action = 52
+	action = 48
 	cpu, memory, pid = 84, 112, 72
 	// ponytail: fixed columns keep compositor downsizing safe; widen Name only
 	// when the table gains a measured-column layout.
@@ -181,7 +186,7 @@ func processRow(h *PanelHost, process services.Process) *ui.Node {
 	}
 	identity := fmt.Sprintf(":%d:%d", process.Identity.PID, process.Identity.StartTimeTicks)
 	data := &ui.Node{
-		Kind: ui.KindRow, Gap: 8, Height: 24, Children: []*ui.Node{
+		Kind: ui.KindRow, Gap: 8, Height: 22, Children: []*ui.Node{
 			cell(process.Name, nameW, false), cell(cpu, cpuW, true), cell(memory, memoryW, true),
 			cell(strconv.Itoa(process.Identity.PID), pidW, true),
 		},
@@ -189,22 +194,17 @@ func processRow(h *PanelHost, process services.Process) *ui.Node {
 	kill := &ui.Node{
 		Kind: ui.KindButton, Text: "Kill", Action: "process:term" + identity,
 		Name: fmt.Sprintf("Kill %s", process.Name), Role: "button", Focusable: true,
-		Width: actionW, Height: 24, Fill: ui.FillOutline, Tone: ui.ToneError,
+		Width: actionW, Height: 22, Padding: 4, Fill: ui.FillOutline, Tone: ui.ToneError,
 	}
-	row := &ui.Node{Kind: ui.KindRow, Gap: 8, Children: []*ui.Node{
-		data, kill,
-	}}
-	card := &ui.Node{
-		Kind: ui.KindCapsule, Width: max(h.place.Panel.W-2*h.metrics().PanelPadding, 0),
-		Height: processRowHeight, Padding: 3, Fill: ui.FillContainerHigh,
+	row := &ui.Node{
+		Kind: ui.KindRow, Height: processRowHeight, Padding: 2, Gap: 8,
 		Action: "monitor:select" + identity, Name: fmt.Sprintf("Select %s", process.Name),
-		Role: "row", Focusable: true,
-		Shape: ui.ShapeMedium, Children: []*ui.Node{row},
+		Role: "row", Focusable: true, Children: []*ui.Node{data, kill},
 	}
 	if h.processSelected == process.Identity {
-		card.Fill = ui.FillSoft
+		row.Fill = ui.FillSoft
 	}
-	return card
+	return row
 }
 
 func revealFocusedProcess(h *PanelHost) bool {

@@ -41,3 +41,25 @@ func TestVirtualListVisibleRange(t *testing.T) {
 		t.Fatalf("scrolled range %d..%d", lo, hi)
 	}
 }
+
+func TestVirtualListCentresAnExplicitlyShorterItemInItsPitch(t *testing.T) {
+	t.Parallel()
+	rows := []*Node{
+		{Kind: KindRow, Height: 26},
+		{Kind: KindRow, Height: 26},
+	}
+	v := &Node{
+		Kind: KindVirtualList, ItemCount: len(rows), ItemHeight: 32,
+		Item: func(i int) *Node { return rows[i] },
+	}
+	measure := func(string, TextAttrs) (int, int) { return 8, 16 }
+	if err := LayoutColumn(v, Rect{W: 200, H: 64}, measure); err != nil {
+		t.Fatal(err)
+	}
+	if rows[0].Bounds != (Rect{Y: 3, W: 200, H: 26}) {
+		t.Fatalf("first row bounds = %+v, want a centred 26px row", rows[0].Bounds)
+	}
+	if rows[1].Bounds != (Rect{Y: 35, W: 200, H: 26}) {
+		t.Fatalf("second row bounds = %+v, want the next 32px pitch", rows[1].Bounds)
+	}
+}

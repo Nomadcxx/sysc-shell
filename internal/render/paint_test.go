@@ -1439,6 +1439,32 @@ func TestPaintSegmentedPaintsItsSegments(t *testing.T) {
 	}
 }
 
+func TestPaintRowUsesAFlatFillAndInteractionLayer(t *testing.T) {
+	t.Parallel()
+	paint := func(fill ui.Fill, state ui.Interaction) *Canvas {
+		c := newTestCanvas(t, 24, 12)
+		n := &ui.Node{Kind: ui.KindRow, Fill: fill, State: state, Bounds: ui.Rect{W: 24, H: 12}}
+		if err := paintNode(c, n, nil, testStyle, testStyle.Size); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+
+	selected := paint(ui.FillSoft, 0)
+	want := capsuleFill(testStyle, ui.FillSoft)
+	for _, point := range [][2]int{{0, 0}, {23, 0}, {0, 11}, {23, 11}} {
+		if got := pixelAt(t, selected, point[0], point[1]); got != want {
+			t.Fatalf("selected corner %+v = %#v, want flat fill %#v", point, got, want)
+		}
+	}
+	if got := pixelAt(t, paint(ui.FillNone, ui.StateHovered), 0, 0); got.A == 0 {
+		t.Fatal("hovered row painted no interaction layer")
+	}
+	if got := pixelAt(t, paint(ui.FillNone, 0), 0, 0); got.A != 0 {
+		t.Fatalf("resting row painted %#v, want transparent", got)
+	}
+}
+
 func d3WordmarkGradient() ui.GradientPaint {
 	return ui.GradientPaint{
 		Stops: [4]ui.GradientStop{
