@@ -110,14 +110,15 @@
 
 ### Task 8: Correct process-table rhythm and radial raster quality
 
-**Files:** `internal/shell/popout_process.go`, `internal/shell/popout_process_test.go`, `internal/render/paint.go`, `internal/render/radial.go`, `internal/render/paint_test.go`.
+**Files:** `internal/ui/column.go`, `internal/ui/scroll_test.go`, `internal/shell/popout_process.go`, `internal/shell/popout_process_test.go`, `internal/render/paint.go`, `internal/render/radial.go`, `internal/render/paint_test.go`.
 
 1. Change the process projection test first to assert 28 px controls, 22 px headers, one `FillContainerHigh` table surface, transparent 26 px full-row selection targets, 32 px list pitch, a rectangular selected wash, and a 22 px independently clickable outlined `Kill` child. Run it and confirm it fails while each process still paints its own capsule.
-2. Let an actionable `KindRow` paint only its explicit fill and interaction state as a rectangular layer before painting children. Keep ordinary rows byte-for-byte unchanged when they have no fill or state.
-3. Move the table fill to one surface around the virtual list. Replace each process capsule with a flat row, retain fixed column alignment, and apply `FillSoft` only to the selected row. Keep nested hit testing so `Kill` wins over the row action.
-4. Add renderer tests that require partial-alpha coverage at the annulus edge, distinct Accent-to-Secondary samples along a CPU/memory/GPU arc, and temperature end colours at 59°C, 75°C, 80°C, and 85°C. Run them and confirm they fail against binary solid-colour rasterisation.
-5. Compute coverage from signed distance to the annulus and round caps, blend each covered pixel once, and sample the active arc gradient by angular progress. Keep warning amber private to the renderer and derive it with enough theme contrast; do not add configuration or a dependency.
-6. Run:
+2. Add a virtual-list layout test proving a child with an explicit height shorter than `ItemHeight` is centred inside that pitch. Preserve the current full-pitch behavior for children without an explicit height.
+3. Let an actionable `KindRow` paint only its explicit fill and interaction state as a rectangular layer before painting children. Keep ordinary rows byte-for-byte unchanged when they have no fill or state.
+4. Move the table fill to one existing capsule around the virtual list. Replace each process capsule with a flat row, retain fixed column alignment, and apply `FillSoft` only to the selected row. Keep nested hit testing so `Kill` wins over the row action.
+5. Add renderer tests that require partial-alpha coverage at the annulus edge, distinct Accent-to-Secondary samples along a CPU/memory/GPU arc, and temperature end colours at 59°C, 75°C, 80°C, and 85°C. Run them and confirm they fail against binary solid-colour rasterisation.
+6. Compute coverage from signed distance to the annulus and round caps, blend each covered pixel once, and sample the active arc gradient by angular progress. Keep warning amber private to the renderer and derive it with enough theme contrast; do not add configuration or a dependency.
+7. Run:
 
    ```bash
    timeout 90s env GOMAXPROCS=2 go test -count=1 ./internal/shell -run 'TestProcess(Table|Selected|Row|List|Keyboard)'
