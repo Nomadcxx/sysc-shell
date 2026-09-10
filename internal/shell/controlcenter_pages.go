@@ -266,3 +266,92 @@ func hProfileNext(h *PanelHost) string {
 	}
 	return h.profiles[0]
 }
+
+func ccWeather(r *Registry, h *PanelHost) *ui.Node {
+	m := h.metrics()
+	reading := services.Reading{}
+	location := ccDash
+	if r != nil {
+		reading = r.reading
+		location = fmt.Sprintf("%.2f°, %.2f°", r.cfg.Weather.Latitude, r.cfg.Weather.Longitude)
+	}
+	icon, temperature, condition, fetched := "cloud", ccDash, ccDash, ccDash
+	if reading.Observed {
+		icon = ccWeatherIcon(reading.Code)
+		temperature = fmt.Sprintf("%.0f%s", reading.Temperature, unitSuffix(reading.Unit))
+		condition = ccWeatherCondition(reading.Code)
+		if !reading.FetchedAt.IsZero() {
+			fetched = "Updated " + reading.FetchedAt.Format("15:04")
+		}
+	}
+	today := monitorCard(m, []*ui.Node{
+		monitorCardTitle("Today", 0),
+		{Kind: ui.KindIcon, Icon: icon, IconSize: m.IconLarge},
+		{Kind: ui.KindText, Text: temperature, TextRole: theme.RoleTitle, Tabular: true},
+		{Kind: ui.KindText, Text: condition, TextRole: theme.RoleLabel},
+		{Kind: ui.KindText, Text: location, TextRole: theme.RoleCaption},
+		{Kind: ui.KindText, Text: fetched, TextRole: theme.RoleCaption},
+	})
+	today.Height = 336
+
+	forecast := &ui.Node{Kind: ui.KindRow, Height: 132, Gap: 8}
+	for i := 0; i < 4; i++ {
+		var day *services.Day
+		if i+1 < len(reading.Daily) {
+			day = &reading.Daily[i+1]
+		}
+		forecast.Children = append(forecast.Children, ccForecastDay(m, day, reading.Unit))
+	}
+	return &ui.Node{Kind: ui.KindColumn, Height: 480, Gap: 12, Children: []*ui.Node{today, forecast}}
+}
+
+func ccForecastDay(m theme.Metrics, day *services.Day, unit services.Unit) *ui.Node {
+	label, icon, temperature := ccDash, "cloud", ccDash
+	if day != nil {
+		if date, err := time.Parse("2006-01-02", day.Date); err == nil {
+			label = date.Format("Mon")
+		} else {
+			label = ccText(day.Date)
+		}
+		icon = ccWeatherIcon(day.Code)
+		temperature = fmt.Sprintf("%.0f° / %.0f°", day.High, day.Low)
+		if unit == services.UnitFahrenheit {
+			temperature += "F"
+		} else {
+			temperature += "C"
+		}
+	}
+	card := monitorCard(m, []*ui.Node{
+		{Kind: ui.KindText, Text: label, TextRole: theme.RoleLabel},
+		{Kind: ui.KindIcon, Icon: icon, IconSize: m.IconLarge},
+		{Kind: ui.KindText, Text: temperature, TextRole: theme.RoleCaption, Tabular: true},
+	})
+	card.Width, card.Height = 143, 132
+	return card
+}
+
+func ccWeatherIcon(code int) string {
+	switch {
+	case code == 0:
+		return "sunny"
+	case code == 1 || code == 2:
+		return "partly_cloudy_day"
+	case code == 45 || code == 48:
+		return "foggy"
+	case code >= 51 && code <= 67 || code >= 80 && code <= 82:
+		return "rainy"
+	case code >= 71 && code <= 77 || code == 85 || code == 86:
+		return "weather_snowy"
+	case code >= 95 && code <= 99:
+		return "thunderstorm"
+	default:
+		return "cloud"
+	}
+}
+
+func ccWeatherCondition(code int) string {
+	if word, ok := conditionWords[render.IconRune(code)]; ok {
+		return word
+	}
+	return "Cloudy"
+}

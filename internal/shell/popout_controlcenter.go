@@ -251,6 +251,5 @@ func (r *Registry) setCaffeine(h *PanelHost, on bool) {
 func ccAudio(*Registry, *PanelHost) *ui.Node         { return &ui.Node{Kind: ui.KindColumn} }
 func ccMonitor(*Registry, *PanelHost) *ui.Node       { return &ui.Node{Kind: ui.KindColumn} }
 func ccPower(*Registry, *PanelHost) *ui.Node         { return &ui.Node{Kind: ui.KindColumn} }
-func ccWeather(*Registry, *PanelHost) *ui.Node       { return &ui.Node{Kind: ui.KindColumn} }
 func ccCalendar(*Registry, *PanelHost) *ui.Node      { return &ui.Node{Kind: ui.KindColumn} }
 func ccNotifications(*Registry, *PanelHost) *ui.Node { return &ui.Node{Kind: ui.KindColumn} }
