@@ -273,6 +273,7 @@ delivered and no issue tracked.
 | Document | Kind | State |
 |---|---|---|
 | `2026-09-11-rendering-smoothness-design.md` | design | D1–D9. Rectangle damage via a `Damaged` sibling callback on `HostCallbacks` rather than changing `Render`'s signature; dirty geometry owned by the tree, with `Scheduler.dirty` untouched; a theme-resolved pacing cap replacing the fixed 16 ms `animTick`; and coalescing the wallpaper picker, which today rebuilds its whole tree and repaints 4.1 MiB per decoded thumbnail. Full-buffer damage stays the default and the fallback — damage is an optimisation, never a correctness boundary. |
+| `2026-09-11-rendering-smoothness.md` | plan | Six TDD tasks: a pure `DamageSet` accumulating old **and** new bounds; `damageRects` submitting per-rectangle damage with a clipped full-buffer fallback, leaving every existing surface unchanged; the pacing cap in `animateSurface`, which always publishes the settling frame so no settled value is left unpainted; dropping the picker's per-raster tree rebuild; coalescing arrivals without introducing a timer, since a timer would be a recurring frame source the architecture forbids; then measure and retire `sysc-202`. No surface opts into rectangle damage within this plan — the path is built, not adopted. |
 
 ## Surface stacking
 
