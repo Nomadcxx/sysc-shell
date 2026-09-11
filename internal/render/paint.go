@@ -261,7 +261,13 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 	case ui.KindImage:
 		// A node whose raster has not resolved paints nothing but keeps the
 		// box it measured, so the card does not reflow when it arrives.
-		paintImage(c, style.Scale120.PhysicalRect(n.Bounds), n.Image)
+		box := style.Scale120.PhysicalRect(n.Bounds)
+		if n.Shape != ui.ShapeInherit || n.Radius > 0 {
+			radius := chromeRadius(style, nodeRadius(style, n, 0), box)
+			paintImageMasked(c, box, n.Image, RoundedMask(radius, box.W, box.H))
+		} else {
+			paintImage(c, box, n.Image)
+		}
 		return nil
 
 	case ui.KindButton, ui.KindDragSource:

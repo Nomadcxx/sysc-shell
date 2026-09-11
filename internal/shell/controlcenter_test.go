@@ -1,12 +1,19 @@
 package shell
 
 import (
+	"context"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -242,6 +249,79 @@ func TestHomeUsesTheRegistryIdentitySnapshot(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("Home text %q is missing cached identity %q", got, want)
 		}
+	}
+}
+
+func TestHomeIdentityIncludesCircularProfileFallback(t *testing.T) {
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	home := ccHome(&Registry{}, h)
+	avatar := findNode(home.Children[0], func(n *ui.Node) bool {
+		return n.Width == ccAvatarSize && n.Height == ccAvatarSize && n.Shape == ui.ShapeCircle
+	})
+	if avatar == nil || avatar.Kind != ui.KindCapsule {
+		t.Fatalf("identity avatar = %+v, want circular fallback", avatar)
+	}
+	icon := findNode(avatar, func(n *ui.Node) bool { return n.Kind == ui.KindIcon })
+	if icon == nil || icon.Icon != "person" {
+		t.Fatalf("fallback icon = %+v, want person", icon)
+	}
+}
+
+func TestHomeIdentityUsesDecodedProfileImage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "face.png")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	for y := range 2 {
+		for x := range 2 {
+			source.Set(x, y, color.RGBA{R: 0xff, A: 0xff})
+		}
+	}
+	if err := png.Encode(file, source); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	worker := icons.NewWorker(icons.NewResolver("", nil), nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = worker.Run(ctx) }()
+	key := icons.Square(path, ccAvatarSize)
+	if _, _, err := worker.Request(key); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		if _, ok := worker.Lookup(key); ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("profile image did not decode")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	r := &Registry{controlIdentity: ccIdentity{ImagePath: path}, trayIcons: worker}
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme(), scale120: 120}
+	avatar := findNode(ccHome(r, h).Children[0], func(n *ui.Node) bool {
+		return n.Width == ccAvatarSize && n.Height == ccAvatarSize && n.Shape == ui.ShapeCircle
+	})
+	if avatar == nil || avatar.Kind != ui.KindImage || avatar.Image == nil {
+		t.Fatalf("identity avatar = %+v, want decoded circular image", avatar)
+	}
+}
+
+func TestFailedProfileImageIsRemembered(t *testing.T) {
+	key := icons.Square("/tmp/unsupported.face", ccAvatarSize)
+	r := &Registry{controlIdentity: ccIdentity{ImagePath: key.Name}}
+	r.applyTrayIcon(key, nil)
+	if _, ok := r.controlAvatarFailed[key]; !ok {
+		t.Fatal("failed profile decode was not remembered")
 	}
 }
 
@@ -652,5 +732,68 @@ func TestPanelSectionValidationPrecedesMutation(t *testing.T) {
 	r.mu.Unlock()
 	if settingsSection != "Appearance" {
 		t.Errorf("settings section = %q, want Appearance", settingsSection)
+	}
+}
+
+func TestCCProfileImagePathUsesAccountPrecedence(t *testing.T) {
+	home := t.TempDir()
+	accounts := t.TempDir()
+	write := func(path string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte("image"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	account := filepath.Join(accounts, "nomadx")
+	write(account)
+	if got := ccProfileImagePath(home, "nomadx", accounts); got != account {
+		t.Fatalf("AccountsService fallback = %q, want %q", got, account)
+	}
+
+	face := filepath.Join(home, ".face")
+	write(face)
+	if got := ccProfileImagePath(home, "nomadx", accounts); got != face {
+		t.Fatalf(".face precedence = %q, want %q", got, face)
+	}
+
+	icon := filepath.Join(home, ".face.icon")
+	write(icon)
+	if got := ccProfileImagePath(home, "nomadx", accounts); got != icon {
+		t.Fatalf(".face.icon precedence = %q, want %q", got, icon)
+	}
+}
+
+func TestCCProfileImagePathRejectsDirectoriesAndMissingFiles(t *testing.T) {
+	home := t.TempDir()
+	if err := os.Mkdir(filepath.Join(home, ".face.icon"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := ccProfileImagePath(home, "nomadx", t.TempDir()); got != "" {
+		t.Fatalf("profile image = %q, want no regular source", got)
+	}
+}
+
+func TestCCAvatarKeepsCircularGeometryForImageAndFallback(t *testing.T) {
+	image := &ui.Image{Width: 1, Height: 1, Stride: 4, Pix: []byte{0xff, 0xff, 0xff, 0xff}}
+	for name, tc := range map[string]struct {
+		image *ui.Image
+		kind  ui.Kind
+	}{
+		"decoded":  {image: image, kind: ui.KindImage},
+		"fallback": {kind: ui.KindCapsule},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := ccAvatarNode(tc.image)
+			if got.Kind != tc.kind || got.Width != 56 || got.Height != 56 || got.Shape != ui.ShapeCircle {
+				t.Fatalf("avatar = %+v, want %v 56x56 circle", got, tc.kind)
+			}
+			if tc.image == nil {
+				icon := findNode(got, func(n *ui.Node) bool { return n.Kind == ui.KindIcon })
+				if icon == nil || icon.Icon != "person" {
+					t.Fatalf("fallback = %+v, want person glyph", icon)
+				}
+			}
+		})
 	}
 }

@@ -30,7 +30,7 @@ var materialIcons = map[string]struct{}{
 	"mic": {}, "mic_off": {}, "graphic_eq": {}, "headphones": {},
 	"home": {}, "music_note": {}, "desktop_windows": {},
 	"wifi": {}, "bluetooth": {}, "cloud": {}, "calendar_month": {},
-	"battery_full": {}, "coffee": {}, "wallpaper": {},
+	"battery_full": {}, "coffee": {}, "wallpaper": {}, "person": {},
 	"sunny": {}, "partly_cloudy_day": {}, "rainy": {}, "thunderstorm": {},
 	"weather_snowy": {}, "foggy": {},
 }

@@ -4,38 +4,91 @@ import (
 	"fmt"
 	"os"
 	"os/user"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
+	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
-const ccDash = "—"
+const (
+	ccDash            = "—"
+	ccAvatarSize      = 56
+	ccAccountsIconDir = "/var/lib/AccountsService/icons"
+)
 
 type ccIdentity struct {
-	Name, Account, Uptime string
+	Name, Account, Uptime, ImagePath string
 }
 
 func readCCIdentity() ccIdentity {
 	facts := readMachineFacts()
 	host, _ := os.Hostname()
-	name, account := "", ""
+	name, account, imagePath := "", "", ""
 	if current, err := user.Current(); err == nil {
 		name = strings.TrimSpace(current.Name)
 		if name == "" {
 			name = current.Username
 		}
 		account = current.Username
+		imagePath = ccProfileImagePath(current.HomeDir, current.Username, ccAccountsIconDir)
 	}
 	if account != "" && host != "" {
 		account += "@" + host
 	}
-	return ccIdentity{Name: name, Account: account, Uptime: facts.Uptime}
+	return ccIdentity{Name: name, Account: account, Uptime: facts.Uptime, ImagePath: imagePath}
+}
+
+func ccProfileImagePath(home, username, accountsDir string) string {
+	for _, path := range []string{
+		filepath.Join(home, ".face.icon"),
+		filepath.Join(home, ".face"),
+		filepath.Join(accountsDir, username),
+	} {
+		info, err := os.Stat(path)
+		if err == nil && info.Mode().IsRegular() {
+			return path
+		}
+	}
+	return ""
+}
+
+func ccAvatarNode(image *ui.Image) *ui.Node {
+	if image != nil {
+		return &ui.Node{
+			Kind: ui.KindImage, Width: ccAvatarSize, Height: ccAvatarSize,
+			ImageSize: ccAvatarSize, Image: image, Shape: ui.ShapeCircle,
+		}
+	}
+	return &ui.Node{
+		Kind: ui.KindCapsule, Width: ccAvatarSize, Height: ccAvatarSize,
+		Fill: ui.FillContainerHighest, Shape: ui.ShapeCircle,
+		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "person", IconSize: 28}},
+	}
+}
+
+func ccAvatar(r *Registry, h *PanelHost, identity ccIdentity) *ui.Node {
+	if r == nil || r.trayIcons == nil || identity.ImagePath == "" {
+		return ccAvatarNode(nil)
+	}
+	scale := ui.Scale120(h.scale120)
+	if !scale.Valid() {
+		scale = ui.ScaleUnit
+	}
+	key := icons.Square(identity.ImagePath, scale.Physical(ccAvatarSize))
+	if image, ok := r.trayIcons.Lookup(key); ok {
+		return ccAvatarNode(image)
+	}
+	if _, failed := r.controlAvatarFailed[key]; !failed {
+		_, _, _ = r.trayIcons.Request(key)
+	}
+	return ccAvatarNode(nil)
 }
 
 func ccHome(r *Registry, h *PanelHost) *ui.Node {
@@ -71,7 +124,12 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 	if h != nil && h.errLabel != "" {
 		identityRows = append([]*ui.Node{{Kind: ui.KindText, Text: h.errLabel, Tone: ui.ToneError}}, identityRows...)
 	}
-	identityCard := monitorCard(m, identityRows)
+	identityCard := monitorCard(m, []*ui.Node{{
+		Kind: ui.KindRow, Gap: 12, Children: []*ui.Node{
+			ccAvatar(r, h, identity),
+			{Kind: ui.KindColumn, Gap: 4, Children: identityRows},
+		},
+	}})
 	identityCard.Height = 96
 
 	togglePill := &ui.Node{

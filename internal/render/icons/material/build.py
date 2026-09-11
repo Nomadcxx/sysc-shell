@@ -68,6 +68,7 @@ ICONS = [
     "battery_full",
     "coffee",
     "wallpaper",
+    "person",
     "sunny",
     "partly_cloudy_day",
     "rainy",

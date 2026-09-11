@@ -71,3 +71,21 @@ func TestPaintImageClipsToTheCanvas(t *testing.T) {
 		t.Fatalf("in-bounds pixel = %+v, want painted", got)
 	}
 }
+
+func TestPaintImageClipsCircleShape(t *testing.T) {
+	c := newTestCanvas(t, 8, 8)
+	img := &ui.Image{Width: 1, Height: 1, Stride: 4, Pix: []byte{0xff, 0xff, 0xff, 0xff}}
+	n := &ui.Node{Kind: ui.KindImage, Shape: ui.ShapeCircle, Image: img, Bounds: ui.Rect{W: 8, H: 8}}
+
+	if err := paintNode(c, n, nil, testStyle, testStyle.Size); err != nil {
+		t.Fatal(err)
+	}
+	for _, at := range [][2]int{{0, 0}, {7, 0}, {0, 7}, {7, 7}} {
+		if got := pixelAt(t, c, at[0], at[1]); got.A != 0 {
+			t.Errorf("corner %v alpha = %d, want transparent", at, got.A)
+		}
+	}
+	if got := pixelAt(t, c, 4, 4); got.A != 0xff {
+		t.Fatalf("centre alpha = %d, want opaque", got.A)
+	}
+}
