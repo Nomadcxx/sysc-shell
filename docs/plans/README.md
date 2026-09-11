@@ -325,6 +325,8 @@ widgets) are still unordered.
 | `2026-09-07-audio-panel-completion-handover.md` | completion-handover | Snapshot at `18470ab`: gate output, audit verdict (no blocking defects; four low deviations recorded), live IPC open/close and cubic-volume reconciliation. Pointer-driven matrix items owner-verified. |
 | `2026-09-08-live-shell-correction-design.md` | design | Owner-approved correction pass: seamless themed mark, functional responsive audio, notification containment/bell, four sysmon gauges plus processes, weather, and far-left launcher. |
 | `2026-09-08-live-shell-correction.md` | plan | Eight lean slices implementing and live-testing the approved correction across the existing shell owners and `sysc-metrics`. |
+| `2026-09-06-connectivity-and-media-prior-art.md` | assessment | Noctalia and DMS division of service, bar widget and page for network, bluetooth and media (`sysc-155`/`156`/`157`). The service is a peer of the shell, not part of the control centre; the standalone widget carries no device picker; `network` is already bound to the throughput metric. |
+| `2026-09-11-network-panel-design.md` | design | `PanelNetwork` (`sysc-157`): Wi-Fi and Ethernet tabs on one 460x560 surface, event-driven NetworkManager service over `godbus/v5`, registered secret agent with single-slot prompts, `wifi` bar widget, masked password field, eight added Material glyphs. D1-D18. Three slices; the `nm-applet` collision is the one open risk. |
 
 ## Milestones 7 remainder and 8: not yet designed
 
