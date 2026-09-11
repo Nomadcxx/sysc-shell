@@ -49,7 +49,16 @@ bd, not to this file.
   ./cmd/sysc-shell`, `mv` over `~/.local/bin/sysc-shell`, `systemctl --user
   restart sysc-shell.service`. Never spawn it beside the running one. Never
   `pkill -f` your own binary name.
-- Run `bd` only from `/home/nomadx/sysc-shell`, never from a worktree.
+- Run `bd` only from `/home/nomadx/sysc-shell`, never from a worktree: the
+  SQLite database is gitignored and exists only in the primary checkout.
+- **Every commit in this plan needs
+  `BEADS_DB=/home/nomadx/sysc-shell/.beads/beads.db` in the environment.** This
+  plan is executed in a worktree under `.worktrees/`, and the beads pre-commit
+  hook runs `bd sync --flush-only`, which cannot find the database from there
+  and fails the commit.
+- Worktrees go in `.worktrees/`, which is gitignored (`.gitignore:1`), matching
+  every recent sibling branch. `.claude/worktrees/` is **not** ignored here;
+  do not put one there.
 - **The commit-msg hook rejects `agent` as a bare substring.** This feature's
   central component is a secret agent, so the natural commit message for half
   these tasks is rejected. Say "credential export", "secret export" or "the
@@ -113,11 +122,16 @@ plan runs with that `PATH`.
 
 - [ ] **Step 3: Fix the tracker (D16)**
 
+Run these from `/home/nomadx/sysc-shell`, never from the worktree.
+
 ```bash
 bd update sysc-157 --title "Network service, panel and wifi widget"
-bd dep rm sysc-157 sysc-154
-bd dep rm sysc-157 sysc-253
+bd dep remove sysc-157 sysc-154
+bd dep remove sysc-157 sysc-253
 ```
+
+The subcommand is `dep remove`, taking the issue and the dependency as two
+positional arguments. There is no `dep rm`.
 
 `sysc-157` depended on the control-centre spine through both `sysc-154` and its
 duplicate `sysc-253`. The command centre is a separate product (D17); neither
