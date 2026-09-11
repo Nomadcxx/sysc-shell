@@ -54,7 +54,8 @@ type Registry struct {
 	reading services.Reading
 	// controlIdentity is captured outside Registry.mu so the control centre
 	// never reads /proc or user databases from the Wayland owner.
-	controlIdentity ccIdentity
+	controlIdentity     ccIdentity
+	controlAvatarFailed map[icons.Key]struct{}
 
 	tokens theme.Tokens
 	// themeErr is why the published palette is not the requested one, empty
