@@ -1,9 +1,9 @@
 # Network panel — Design
 
-Date: 2026-09-11. Status: proposed. Backend and credential path approved in
-brainstorming 2026-09-11; geometry (D7) is provisional pending a mock, as the
-audio panel's was. Live probes were offered and declined — D18 records what is
-therefore unverified.
+Date: 2026-09-11. Status: approved 2026-09-11 — backend, credential path, and
+composition all settled in brainstorming. Composition is **Direction B,
+"status first"**, chosen from a three-variant study (D7). Live probes were
+offered and declined; D18 records what is therefore unverified.
 
 A first-party `PanelNetwork` — Wi-Fi and Ethernet as two tabs on one surface —
 plus the thin bar widget that owns it, over a new event-driven NetworkManager
@@ -28,6 +28,9 @@ Sources (read, not imported):
 - `noctalia/src/shell/control_center/tabs/network_tab.cpp` — password card
 - `docs/plans/2026-09-06-connectivity-and-media-prior-art.md` — the slicing note
 - `docs/plans/2026-09-07-audio-panel-design.md` — the panel this one mirrors
+- Variant study, three directions in live tokens, published 2026-09-11:
+  `https://claude.ai/code/artifact/c85bd466-d929-47bd-8c9f-ae9f41b56a49`
+  (Direction B approved; A and C retained there as the rejected alternatives)
 
 ## Goal and scope
 
@@ -215,7 +218,17 @@ case and a `panelTree` case beside `PanelAudio`.
 Geometry is a fixed `ui.Rect{W: 460, H: 560}` — the notifications panel's
 family (416×300) rather than the audio panel's computed third-of-width, because
 the content is a list of SSID rows whose comfortable width does not scale with
-the output. **Provisional pending a mock**, as the audio panel's 560 px was.
+the output. Confirmed against the variant study at those exact dimensions, so
+this is the pixel contract rather than a placeholder.
+
+Composition is **Direction B**. Two alternatives were built and rejected.
+Direction A put title, radio and tabs in one header card — closest to
+`audioHeaderCard`, and the lowest-risk option — rejected because it answers
+"what networks are near me?" before "what am I connected to?". Direction C used
+a single-row header with bar-band meters and denser rows, fitting ten networks
+where A fits six — rejected because those four extra rows do not pay for the
+lost connection detail. The study renders all three in the live palette at
+460x560 and is the reference for anything this document leaves unstated.
 
 The panel anchors under its bar glyph through the pattern already shipped for
 audio (`registry.go:663`): `trig.AnchorX = bar.actionCenterX(panelWifiAction)`
@@ -232,10 +245,23 @@ on open beside the existing `PanelSettings` seeding.
 
 ### D9 — The Wi-Fi tab
 
-Top to bottom, matching the reference:
+Top to bottom, per Direction B:
 
-- A header card: the state glyph, the SSID or a state label, a `KindToggle` for
-  the radio, and the panel's settings and close buttons.
+- A header card holding a **status block** above the tabs: the state glyph in a
+  `ShapeMedium` well, the active SSID as a title with the interface and signal
+  beneath it as a caption, a `KindToggle` for the radio, and the close button.
+  Below a one-pixel `outline-variant` rule, three labelled figures in equal
+  columns — IPv4, Down, Up — set `Tabular` so they do not jitter as rates
+  change. Every figure is a dash when absent, never a zero, per the standing
+  rule that an absent metric is not zero.
+- The tabs sit under the status block, inside the same card (D8).
+- **The connected network stays in the list, but only the status block carries
+  the filled highlight**; the active row is marked with a trailing `check`
+  alone. The status block and the list would otherwise present the same fact
+  twice with equal weight. Removing the active network from the list instead
+  was rejected: the list is a picture of what is in range, and one that omits
+  the strongest nearby network is a lie about the radio environment. Noctalia
+  fills both; we do not.
 - The access-point list in a `KindScroll`. Each row is a glyph chosen by signal
   band, the SSID, a `lock` glyph when `Secured`, and a trailing `check` when
   `Active`.
