@@ -88,6 +88,39 @@ func TestControlCentreNameAndFlushPlacement(t *testing.T) {
 	}
 }
 
+func TestControlCentrePanelOpaqueHintMatchesExpandedSilhouette(t *testing.T) {
+	r := NewRegistry(config.Default())
+	t.Cleanup(r.Close)
+
+	for _, tc := range []struct {
+		name       string
+		fillet     int
+		wantOpaque bool
+	}{
+		{name: "fillet-expanded", fillet: 12, wantOpaque: false},
+		{name: "plain opaque panel", fillet: 0, wantOpaque: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			theme := DefaultTheme()
+			theme.Fillet = tc.fillet
+			h := &PanelHost{
+				id:    PanelControlCenter,
+				theme: theme,
+				place: Placement{
+					BarEdge: "top",
+					Output:  ui.Rect{W: 1000, H: 800},
+					Padding: 16,
+					Panel:   ui.Rect{W: 700, H: 564},
+				},
+			}
+			spec := r.panelSpec(h, h.place.Margins())
+			if got := spec.Callbacks.OpaqueBackground; got != tc.wantOpaque {
+				t.Fatalf("OpaqueBackground = %t, want %t (fillet margin %d)", got, tc.wantOpaque, h.filletMargin())
+			}
+		})
+	}
+}
+
 func TestWordmarkRightClickOpensControlCentre(t *testing.T) {
 	widgets := buildWidgets([]config.Item{{ID: "wordmark"}}, 6)
 	if len(widgets) != 1 {
