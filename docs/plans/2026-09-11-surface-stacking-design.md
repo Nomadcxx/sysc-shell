@@ -8,11 +8,21 @@ pending owner review.
 Fifth document of the parity tranche. One new container kind whose children
 share its box instead of flowing, so content can sit over a background image.
 
-Noctalia v4 uses this in two places the parity work needs: the weather card,
-whose sun image bleeds to the card's edges behind the temperature and forecast,
-and the media card, whose album art sits behind the track text under a scrim.
-Only the first is buildable here — the media card is blocked on MPRIS and
-belongs to the media design.
+**Corrected 2026-09-11 — the original text here had this backwards.** It said
+the weather card was the buildable consumer and the media card was blocked.
+Reading the source at v4.7.7 shows the reverse.
+
+`Modules/Cards/MediaCard.qml` is the pattern: an `Image` at
+`anchors.fill: parent` with `fillMode: PreserveAspectCrop`, sourced from the
+track art or a cached wallpaper thumbnail, then a scrim at `opacity: 0.65`, then
+content at `0.8`.
+
+`Modules/Cards/WeatherCard.qml` is **not**. Its layering is a `Loader` holding a
+`ShaderEffect` that takes the card's own rendered content as a
+`ShaderEffectSource` and distorts it for rain and snow. That is a GPU shader,
+this shell has no shader stage, and the card needs no stack.
+
+See `2026-09-11-component-parity-design.md` D6.
 
 Behaviour and visual reference only. No QML or C++ is imported.
 
@@ -50,7 +60,9 @@ In:
 
 - One container kind whose children each receive its content box.
 - Its measurement rule.
-- One first consumer: the control-centre weather card.
+- One first consumer: the control-centre **media** card. (Corrected 2026-09-11;
+  this originally named the weather card, which uses a GPU shader over its own
+  content rather than a background image.)
 
 Out:
 
@@ -117,13 +129,24 @@ reason (its D5). Both consumers share that path; neither changes
 
 ### D5 — One consumer, or this does not ship
 
-The first and only consumer is the control-centre weather card. Weather has a
-live service and a shipped bar widget (`weatherwidget.go`), so the data exists
-and the primitive is not speculative.
+**Corrected 2026-09-11 — this named the wrong consumer.** It said the weather
+card. Reading `Modules/Cards/WeatherCard.qml` at v4.7.7 shows its layering is a
+`Loader` holding a `ShaderEffect` that takes the card's own rendered content as a
+`ShaderEffectSource` and distorts it for rain and snow. That is a GPU shader, not
+content over a background image, and this shell has no shader stage. The weather
+card does **not** need a stack.
 
-If the weather card can be built acceptably without stacking, this design should
-be dropped rather than landed for a future consumer. AGENTS.md is explicit:
-primitives arrive with an approved component, not before one.
+The real consumer is `Modules/Cards/MediaCard.qml`: an `Image` at
+`anchors.fill: parent` with `fillMode: PreserveAspectCrop`, sourced from the
+track art or — when there is none — a cached wallpaper thumbnail, so it always
+has a background; then a scrim at `opacity: 0.65`; then content at `0.8`.
+
+Two consequences. This design now sequences **after** the media slice rather than
+before it. And the gate stands unchanged in spirit: one real consumer, or this
+does not ship. AGENTS.md is explicit that primitives arrive with an approved
+component, not before one.
+
+See `2026-09-11-component-parity-design.md` D6.
 
 ### D6 — Damage and stacking
 
@@ -148,8 +171,13 @@ Per-package named tests only. **Do not run `go test ./...` or `-race`.**
 
 ### D8 — Tracker
 
-A new issue under the parity work, blocked on nothing. The weather card consumer
-depends on the control-centre spine (`sysc-253`).
+A new issue under the parity work. The primitive itself is blocked on nothing;
+its consumer is the media card, which needs the media service (`sysc-156`, split
+per that design's D8) and the control-centre spine (`sysc-253`).
+
+The dependency is real and worth filing accurately: a primitive whose consumer is
+two issues away is a primitive that sits unused, which is the condition D5 says to
+revert rather than tolerate.
 
 ### D9 — Open risks
 
@@ -159,5 +187,11 @@ depends on the control-centre spine (`sysc-253`).
 2. `kindcoverage_test.go` requires every kind to be measurable and paintable, so
    a half-added kind fails loudly — good, but it means the kind cannot land
    ahead of its paint case.
-3. If the weather card turns out not to need a full-bleed image, D5 says delete
-   this rather than keep it.
+3. If the media card turns out not to need a full-bleed image, D5 says delete
+   this rather than keep it. (Corrected 2026-09-11 — this originally reasoned
+   about the weather card.)
+4. **The consumer now sits behind the media slice.** This design's only real
+   consumer is a card that needs the media service, so landing the primitive
+   first would leave it unused for however long that slice takes. The wallpaper
+   thumbnail fallback is the one path that would let it ship earlier, and D6
+   deliberately does not treat that as sufficient on its own.

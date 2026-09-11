@@ -251,6 +251,18 @@ tranche, after the backdrop blur design it depends on for the opacity floor.
 | `2026-09-11-noctalia-parity-design.md` | design | D1–D15. Re-bases spacing, radius, type, density and motion onto measured v4.7.7 constants; adds a second radius ladder for inputs and a `Display` type role; maps v4's 16 colour roles onto all 49 without deletion. Records the resolution of open `sysc-104`: the nested-surface floor drops 1.45:1 → 1.30:1, text floors unchanged, `Outline` keeps 3:1 while `OutlineVariant` is exempt. Calibration is measured, not assumed — bar 62 px and capsule 50 px both resolve at 2×, title em confirms 16 pt at 96 DPI, so v4 constants are logical px and points convert ×4/3. |
 | `2026-09-11-noctalia-parity.md` | plan | Eleven tasks, carrying the token-conformance design as its Task 1. That task is committed **red on purpose**: 96 of the 105 literal sites are `Gap` or `Padding`, the exact ladder Task 2 re-bases underneath them, so the gate lands against an enumerated worklist and Tasks 2–9 drive it green. Two hazards are called out because each would ship a runtime fault: `textRoleCount` is *derived* (`int(theme.RoleMono)+1`), so adding `RoleDisplay` without re-deriving it indexes past a fixed-size array while the existing guard test still passes; and the 1.45 floor is **not** a constant — `derive()` carries only 4.5/3.0 and the separation emerges from ladder steps, so the change targets the two assertions at `theme_test.go:252,255`. Re-inherits the live Niri gate `sysc-142` closed without running, with clipping in the densest surfaces named as the expected failure since type and density both shrink. |
 
+## Component parity (evidence audit)
+
+Written 2026-09-11 after auditing the parity design against source. That design
+sourced the global ladders correctly and the component layer not at all: it had
+read 2 of v4.7.7's 52 components and none of its 261 composition modules, and it
+carried two constants imported from **v5**. This design covers how a control gets
+its size and how a surface gets its padding, and records the corrections.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-11-component-parity-design.md` | design | D1–D8. Every control derives from `baseWidgetSize` 33 × a per-control ratio, with odd forced on icon buttons and checkboxes and even on toggles and sliders — a *system*, not a table. Padding is a margin-ladder rung per surface (`marginM` 9 in a card, `marginL` 13 for a panel, `marginS` 6 dense, `marginXL` 18 weather); `NBox` defines none. Hero type is an inline multiplier (`fontSizeXXXL × 1.75` ≈ 42 pt), not a role. The inverted hero card is a plain `mPrimary` rectangle and needs no primitive. **Corrects two committed designs.** D8 is honest about the residual: 175 of 178 composition modules unread, and panel dimensions deliberately not reconciled. |
+
 ## Token conformance
 
 Third and last design of the parity tranche. Answers why the chrome catalogue

@@ -363,7 +363,18 @@ func TestDensityRowsMatchTheReference(t *testing.T) {
 
 Add `DensityMini` and `DensitySpacious`, rename `DensityStandard` to `DensityDefault` keeping a wire alias so existing configuration loads, and add a `CapsuleHeight` to `Metrics` computed as `toOdd(round(BarHeight * r))` with r of 0.90, 0.85, 0.82, 0.75, 0.65.
 
-Panel and card padding become 14 at every density — the reference does not vary them, and its density difference lives in the bar and controls.
+**Corrected 2026-09-11.** This step originally said padding becomes 14 at every
+density. That number came from **v5**, not v4 — `cardPadding` and `panelPadding`
+do not exist in v4's `Style.qml` at all.
+
+Padding is a margin-ladder rung chosen per surface: `marginM` (9) inside a card,
+`marginL` (13) for a panel's outer inset, `marginS` (6) for a dense card. So
+`Metrics.CardPadding` resolves to `marginM` and `PanelPadding` to `marginL`,
+rather than to a literal. Density still does not vary them.
+
+Control sizes are **not** tabulated here either — they derive from a base widget
+dimension of 33. Both belong to `2026-09-11-component-parity-design.md`; do that
+design's work before assuming this task covers the controls.
 
 Add `toOdd(n int) int { return n/2*2 + 1 }` beside the table.
 

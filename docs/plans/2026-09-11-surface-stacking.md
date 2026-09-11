@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add one container kind whose children share its box instead of flowing, so a card can put content over a background image, and build the control-centre weather card on it.
+**Goal:** Add one container kind whose children share its box instead of flowing, so a card can put content over a background image, and build the control-centre **media** card on it.
+
+**Corrected 2026-09-11:** this originally named the weather card. The reference weather card layers a GPU `ShaderEffect` over its own rendered content for rain and snow, which this shell has no stage for and which needs no stack. The media card is the full-bleed pattern. See `2026-09-11-component-parity-design.md` D6.
 
 **Architecture:** Paint already walks children forward and `Hit` already walks them in reverse, so "last child is topmost" is true in each today and needs no change. The only missing piece is a layout that hands every child the same content box, plus a measurement rule that takes the maximum where a column sums. Paint needs no new code at all — `KindStack` joins the existing container case.
 
@@ -16,7 +18,8 @@
 - `go test ./internal/shell` is safe to run directly — `runArgvDefault` (`popout_session.go:270`) refuses under `testing.Testing()`.
 - Go only. No CGO, no new module.
 - **`kindcoverage_test.go` requires every `Kind` to be measurable and paintable.** A kind that exists without both fails the package. Task 1 is therefore end-to-end by necessity, not by preference.
-- AGENTS.md: "Add UI primitives only for an approved shell component. Do not build a general application toolkit." Task 5 is the consumer gate — if the weather card does not need this, delete the kind rather than keep it.
+- AGENTS.md: "Add UI primitives only for an approved shell component. Do not build a general application toolkit." Task 5 is the consumer gate — if the **media card** does not need this, delete the kind rather than keep it. (Corrected 2026-09-11: this originally named the weather card, which uses a GPU shader over its own content and needs no stack.)
+- **Sequencing changed 2026-09-11: this slice now follows the media slice**, because its only real consumer is the media card. The blur plan's Task 4 dependency is unchanged.
 - **Depends on the blur plan's Task 4**, which adds `paintImageSmooth`. Do not start Task 4 here until that has landed on `main`.
 - **The `commit-msg` hook rejects these substrings, case-insensitively:** `claude`, `anthropic`, `chatgpt`, `openai`, `copilot`, `cursor`, `cody`, `tabnine`, `codex`, `gemini`, `bard`, `gpt-[0-9]`, `llm`, `ai assistant`, `bot`, `agent`. Ordinary words trip it — `both` contains `bot`. Screen every message:
   ```bash
@@ -33,7 +36,7 @@
 | `internal/ui/column.go` | `columnChildHeight` case (max, explicit height wins) |
 | `internal/render/paint.go:322` | `KindStack` joins the existing container case |
 | `internal/ui/kindcoverage_test.go` | `sampleNode` entry |
-| `internal/shell/popout_*.go` | The weather card, Task 5 |
+| `internal/shell/popout_*.go` | The media card, Task 5 (corrected from the weather card 2026-09-11) |
 
 ---
 
@@ -435,30 +438,62 @@ git commit -m "feat(render): sample container backgrounds bilinearly"
 
 ---
 
-### Task 5: The consumer gate — the weather card
+### Task 5: The consumer gate — the media card
 
-The design is explicit: "One consumer, or this does not ship." If the weather card can be built acceptably without a full-bleed image, **revert Tasks 1 to 4** rather than leaving an unused primitive behind.
+**Corrected 2026-09-11.** This task originally named the weather card. Reading
+`Modules/Cards/WeatherCard.qml` at v4.7.7 shows its layering is a `ShaderEffect`
+over a `ShaderEffectSource` of the card's own content, distorting it for rain and
+snow — a GPU shader this shell has no stage for, and not a background image. The
+weather card does not need a stack.
+
+The real consumer is `Modules/Cards/MediaCard.qml`: a full-bleed `Image` at
+`PreserveAspectCrop`, a scrim at `opacity: 0.65`, then content at `0.8`.
+
+**This reorders the tranche: stacking now follows the media slice.** The gate is
+otherwise unchanged — one real consumer, or **revert Tasks 1 to 4** rather than
+leaving an unused primitive behind.
+
+One nuance worth knowing before sequencing: the media card falls back to a cached
+**wallpaper thumbnail** when no track art exists, and this shell already owns
+wallpaper thumbnails. So a stacked media card is buildable before MPRIS lands.
+That is a decision for the media page's plan, not a licence to land the primitive
+without a consumer.
 
 **Files:**
-- Modify: the control-centre weather card in `internal/shell/`
+- Modify: the control-centre media card in `internal/shell/`
 - Test: `internal/shell/surfacerole_test.go`
 
-- [ ] **Step 1: Find the current weather card**
+- [ ] **Step 1: Confirm the consumer exists**
+
+The media card needs the media service. Check whether it has landed:
 
 ```bash
-grep -rn "weather" internal/shell/*.go | grep -v _test | grep -iE "card|home|control"
+ls internal/services/media.go 2>/dev/null && echo "service present" || echo "service absent"
+grep -rn "KindStack" internal/shell/*.go | grep -v _test
 ```
+
+If the service is absent, **stop here.** Tasks 1 to 4 built a primitive with no
+consumer, which AGENTS.md forbids keeping. Either the media slice lands first, or
+Step 2's fallback applies, or this slice reverts.
 
 - [ ] **Step 2: Decide, and record the decision**
 
-Build it as a `KindStack` of background image, scrim, then content. If the card has no image to show — no weather artwork is shipped and none is being added by this plan — then it does **not** need a stack, and the honest outcome is to revert.
+Build it as a `KindStack` of background image, scrim, then content — the
+reference composition is a full-bleed image at `PreserveAspectCrop`, a scrim at
+0.65 opacity, then content.
 
-Write the decision into the commit body either way. "We kept it because it might be useful later" is precisely what AGENTS.md forbids.
+There is one path that does not wait on the media service: the reference card
+falls back to a **cached wallpaper thumbnail** when no track art exists, and this
+shell already owns wallpaper thumbnails. A card built on that fallback is a real
+consumer today.
+
+Write the decision into the commit body either way. "We kept it because it might
+be useful later" is precisely what AGENTS.md forbids.
 
 - [ ] **Step 3: If building, write the failing test**
 
 ```go
-func TestWeatherCardStacksContentOverItsBackground(t *testing.T) {
+func TestMediaCardStacksContentOverItsBackground(t *testing.T) {
 	t.Parallel()
 	_, h := panelAtDensity(t, PanelControlCenter, theme.DensityStandard)
 	var stacks int
@@ -471,20 +506,20 @@ func TestWeatherCardStacksContentOverItsBackground(t *testing.T) {
 		}
 	})
 	if stacks == 0 {
-		t.Fatal("the weather card is not built on a stack")
+		t.Fatal("the media card is not built on a stack")
 	}
 }
 ```
 
 - [ ] **Step 4: Run, implement, run**
 
-Run: `go test ./internal/shell -run TestWeatherCard -v`
+Run: `go test ./internal/shell -run TestMediaCard -v`
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add internal/shell/
-git commit -m "feat(shell): build the weather card on a stacked background"
+git commit -m "feat(shell): build the media card on a stacked background"
 ```
 
 ---
@@ -495,7 +530,7 @@ git commit -m "feat(shell): build the weather card on a stacked background"
 
 ```bash
 cd /home/nomadx/sysc-shell
-bd create "Surface stacking: weather card consumer" --deps discovered-from:sysc-253
+bd create "Surface stacking: media card consumer" --deps discovered-from:sysc-156
 bd export -o .beads/issues.jsonl
 wc -l .beads/issues.jsonl
 git diff --stat .beads/issues.jsonl

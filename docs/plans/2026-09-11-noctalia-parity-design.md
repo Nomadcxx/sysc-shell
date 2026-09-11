@@ -170,9 +170,18 @@ Capsule height becomes a ratio of bar height rather than an independent
 constant, which is what keeps a capsule proportional across densities. The
 existing `CapsulePadding` stays the inset *inside* the pill.
 
-Panel and card padding move to v4's `panelPadding`/`cardPadding` of 14 each,
-replacing our density-varying 12/16/20 and 10/12/16. v4 does not vary them by
-density; the density difference lives in the bar and controls.
+**Corrected 2026-09-11 — this paragraph was wrong as first written.** It claimed
+padding moves to "v4's `panelPadding`/`cardPadding` of 14 each". Neither constant
+exists in v4: `grep -c` returns 0 for each in `Commons/Style.qml`. Both are **v5
+`style.h`** values that leaked in because v5 was read first.
+
+v4 draws padding from the margin ladder, per surface — `marginM` (9) inside a
+card, `marginL` (13) for a panel's outer inset, `marginS` (6) for a dense card,
+`marginXL` (18) for the weather card — and `NBox` defines no padding at all.
+See `2026-09-11-component-parity-design.md` D3, which sources this from all nine
+cards and three panels.
+
+Density still does not vary padding; that much was right.
 
 ### D5 — Motion re-bases onto v4's durations
 
