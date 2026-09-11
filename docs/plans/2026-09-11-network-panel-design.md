@@ -115,17 +115,47 @@ type AccessPoint struct {
 from "tap to be asked for a password" before it calls anything, and Noctalia
 answers that with a separate `hasSavedConnection(ssid)` call per row.
 
-### D2 — The backend seam is a test seam
+The implementation behind this contract is the pinned binding in D2, not
+hand-written D-Bus method calls.
 
-An **unexported** `backend` interface inside `services`, with the
-NetworkManager implementation as its only production type.
+### D2 — A pinned binding behind a test seam
 
-This is deliberately not the façade the prior art describes. Noctalia and DMS
-each grew a swappable-backend seam for iwd and wpa_supplicant; we are building
-neither, and a single-implementation interface justified by imagined backends
-would be scaffolding. It earns its place for one concrete reason: **a fake
-backend in tests beats a fake system bus** (D14). If that justification ever
-stops being true, the interface should be deleted, not populated.
+The NetworkManager client is `github.com/Wifx/gonetworkmanager/v2 v2.2.0`
+(MIT), pinned by version. It is not hand-written D-Bus code.
+
+`AGENTS.md:15` fixes the order: "existing project code, Go standard library,
+native Linux service, **pinned dependency, then new code**." Writing our own
+client is the last rung, and a maintained binding that covers the whole client
+surface sits above it. `AGENTS.md:24` requires the pin and the reason to be
+recorded, which is what this decision is.
+
+It covers everything this design asks of the client side: `GetAllAccessPoints`
+and `RequestScan` on `DeviceWireless`, `AccessPoint.GetPropertyStrength` and
+the SSID/flags properties, `Settings.ListConnections` for `Saved`,
+`ActivateConnection` and `AddAndActivateConnection`,
+`SetPropertyWirelessEnabled` for the radio, `Connection.Delete` for forget,
+and `DeviceWired` plus `IP4Config` for the Ethernet tab and D9's status block.
+
+Resolved dependency set: `gonetworkmanager/v2 v2.2.0` and
+`godbus/dbus/v5 v5.2.2`. It also pulls `golang.org/x/sys`, which this tree
+already carries at a higher version. Two facts a builder needs:
+
+- The binding's own `go.mod` names `github.com/google/uuid v1.3.0`, which is
+  **not** in the local module cache (v1.6.0 is). Because it is a `go 1.12`
+  module its full graph is loaded, so `go mod tidy` under `GOPROXY=off` fails
+  with a missing `go.sum` entry until `uuid` is required explicitly at a cached
+  version. `tidy` then prunes it again, because no compiled file imports it.
+- The binding documents testing against NetworkManager 1.40. This machine runs
+  **1.58.1**. A spike built offline and enumerated devices, states and saved
+  profiles correctly against 1.58.1, so the gap is recorded rather than feared.
+
+The **unexported** `backend` interface inside `services` survives, now wrapping
+the binding rather than raw calls. It is still not the façade the prior art
+describes — Noctalia and DMS each grew a swappable-backend seam for iwd and
+wpa_supplicant, and we are building neither. It earns its place for one
+concrete reason: **a fake backend in tests beats a fake system bus** (D14).
+If that justification ever stops being true, the interface should be deleted,
+not populated.
 
 ### D3 — Event-driven, and `Acquire` means liveness
 
@@ -152,6 +182,14 @@ We export `/org/freedesktop/NetworkManager/SecretAgent` implementing
 `AgentManager.Register("one.archpcx.sysc-shell")`. Verified present on this
 system: `.Register(s)` and `.RegisterWithCapabilities(su)`. Registration needs
 no elevated privilege; it is scoped to this user's sessions.
+
+**This is the one piece the binding does not provide**, and the only part of
+the service written against `godbus` directly. `gonetworkmanager` exports no
+agent: it carries no `AgentManager` or `SecretAgent` code and no D-Bus object
+export at all, and its `Connection.GetSecrets` is the client-side *settings*
+call, whose own documentation says the user "will never be prompted for secrets
+as a result of this request." Reading a stored secret and being asked for one
+are opposite directions; only the second is a trust boundary.
 
 Join flow:
 
@@ -400,8 +438,15 @@ and this panel does not wait on it.
   unavailable states are the ones testable as the machine stands.
 - **`settings.modify.own` for an active session is unconfirmed** (D6), so
   whether forgetting a network prompts is unknown.
-- Two saved profiles (`LukeAP`, `Orac 15A`) exist, so slice 2's activation path
-  can be tested without ever typing a passphrase.
+- **The binding is lightly maintained.** Its own documentation states that it
+  has no automated tests, that testing is manual and best-effort, and that
+  there is no active development workforce behind it. That is the standing cost
+  of D2's pin, and part of why the seam exists: a defect behind our own
+  interface can be worked around without forking. Re-read its CHANGELOG before
+  moving the pin.
+- Two **Wi-Fi** profiles (`LukeAP`, `Orac 15A`) sit among the 14 saved
+  connections on this machine, so slice 2's activation path can be tested
+  without ever typing a passphrase.
 
 ## Verified during design
 
@@ -409,3 +454,22 @@ and this panel does not wait on it.
 offline with `GOPROXY=off` and read `WirelessEnabled: false` from the system
 bus, so the dependency and the read path are proven on this machine rather than
 assumed.
+
+`gonetworkmanager/v2 v2.2.0` is in the cache too. A second spike built offline
+against NetworkManager **1.58.1** — eighteen minor versions past the 1.40 the
+binding documents — and reported the truth about this machine:
+
+```
+NM 1.58.1  wirelessEnabled=false
+  enp7s0   NmDeviceTypeEthernet NmDeviceStateActivated
+  wlan0    NmDeviceTypeWifi     NmDeviceStateUnavailable
+saved profiles: 14
+```
+
+Device enumeration, device typing, state, the radio flag and the settings list
+all work at 1.58.1. `wlan0` reporting `Unavailable` is the soft block in D18,
+not a binding defect.
+
+Searched and rejected as the client: writing our own D-Bus calls (the charter's
+last rung, D2). `BellerophonMobile/gonetworkmanager` is archived and redirects
+to the Wifx fork.
