@@ -1,8 +1,11 @@
 package render
 
 import (
+	"fmt"
 	"math"
 	"testing"
+
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 func TestLerpColorEndpointsAndClamping(t *testing.T) {
@@ -70,29 +73,64 @@ func TestLerpColorDescendsWithoutWrapping(t *testing.T) {
 	}
 }
 
-func TestFilletExtentSweepsFromBarToPanel(t *testing.T) {
-	const f = 8
-	if got := filletExtent(0, f); got != f {
-		t.Fatalf("row 0 extent = %d, want %d (flush with the bar)", got, f)
+func TestFilletCoverageSweepsSmoothlyFromBarToPanel(t *testing.T) {
+	for _, radius := range []int{12, 14, 15, 18} {
+		t.Run(fmt.Sprintf("radius_%d", radius), func(t *testing.T) {
+			c := newTestCanvas(t, radius*2+4, radius+1)
+			body := ui.Rect{X: radius, W: 4, H: radius + 1}
+			fillAttachFillets(c, body, radius, "top", Color{R: 255, A: 255})
+
+			partial := false
+			previous := radius*255 + 1
+			for y := 0; y < radius; y++ {
+				total := 0
+				for x := 0; x < radius; x++ {
+					a := int(c.Pix[y*c.Stride+x*4+3])
+					total += a
+					partial = partial || (a > 0 && a < 255)
+				}
+				if total > previous {
+					t.Fatalf("coverage grew at row %d: %d after %d", y, total, previous)
+				}
+				previous = total
+			}
+			if !partial {
+				t.Fatal("fillet has no partial-alpha boundary pixel")
+			}
+			if got := c.Pix[(radius-1)*4+3]; got == 0 {
+				t.Fatal("fillet does not reach the outside of the attached bar edge")
+			}
+			if got := c.Pix[(radius-1)*4+3]; got != 255 {
+				t.Fatalf("inner attached-edge alpha = %d, want 255", got)
+			}
+			for x := 0; x < radius; x++ {
+				if got := c.Pix[radius*c.Stride+x*4+3]; got != 0 {
+					t.Fatalf("alpha beyond curve at (%d,%d) = %d", x, radius, got)
+				}
+			}
+		})
 	}
-	if got := filletExtent(f, f); got != 0 {
-		t.Fatalf("row f extent = %d, want 0 (met the panel edge)", got)
-	}
-	prev := f + 1
-	for y := 0; y <= f; y++ {
-		got := filletExtent(y, f)
-		if got > prev {
-			t.Fatalf("extent grew at row %d: %d after %d", y, got, prev)
+}
+
+func TestFilletCoverageIsSymmetricAcrossAttachedEdges(t *testing.T) {
+	const radius = 15
+	top := newTestCanvas(t, radius*2+4, radius+1)
+	bottom := newTestCanvas(t, radius*2+4, radius+1)
+	body := ui.Rect{X: radius, W: 4, H: radius + 1}
+	fillAttachFillets(top, body, radius, "top", Color{A: 255})
+	fillAttachFillets(bottom, body, radius, "bottom", Color{A: 255})
+	for y := 0; y < top.Height; y++ {
+		for x := 0; x < top.Width; x++ {
+			got := top.Pix[y*top.Stride+x*4+3]
+			want := bottom.Pix[(bottom.Height-1-y)*bottom.Stride+x*4+3]
+			if got != want {
+				t.Fatalf("alpha at (%d,%d) = %d, mirrored bottom = %d", x, y, got, want)
+			}
 		}
-		prev = got
 	}
-	if got := filletExtent(f+1, f); got != 0 {
-		t.Fatalf("row past the band = %d, want 0", got)
-	}
-	if got := filletExtent(3, 0); got != 0 {
-		t.Fatalf("zero fillet = %d, want 0", got)
-	}
-	if got := filletExtent(-1, f); got != 0 {
-		t.Fatalf("negative row = %d, want 0", got)
-	}
+}
+
+func TestFilletCoverageClipsToCanvas(t *testing.T) {
+	c := newTestCanvas(t, 4, 4)
+	fillAttachFillets(c, ui.Rect{X: 0, Y: -2, W: 4, H: 8}, 8, "top", Color{A: 255})
 }

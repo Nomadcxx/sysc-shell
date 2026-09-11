@@ -1772,11 +1772,21 @@ func TestFilletPaintsBarColourOutsideTheBody(t *testing.T) {
 		t.Fatalf("paint: %v", err)
 	}
 
-	if got := pixelAt(t, c, 0, 0); got.B != 255 {
-		t.Fatalf("top-left corner = %v, want the fillet fill", got)
+	if got := pixelAt(t, c, 0, 0); got.B == 0 || got.R != 0 || got.G != 0 {
+		t.Fatalf("top-left corner = %v, want blue fillet coverage", got)
 	}
 	if got := pixelAt(t, c, 0, 8); got.A != 0 {
 		t.Fatalf("row 8 outside the body = %v, want transparent", got)
+	}
+	partial := false
+	for y := 0; y < style.Fillet; y++ {
+		for x := 0; x < style.Body.X; x++ {
+			a := pixelAt(t, c, x, y).A
+			partial = partial || (a > 0 && a < 255)
+		}
+	}
+	if !partial {
+		t.Fatal("final silhouette erased every partial-alpha fillet pixel")
 	}
 }
 

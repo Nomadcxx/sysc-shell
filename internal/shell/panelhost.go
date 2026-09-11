@@ -765,6 +765,12 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	if fillet > 0 {
 		m.Left -= fillet
 	}
+	opaque := h.theme.BackgroundOpaque()
+	if fillet > 0 {
+		// ponytail: omit the hint for fillet-expanded surfaces; add a body-aware
+		// opaque-region API only if compositor profiling shows this matters.
+		opaque = false
+	}
 	return &wayland.AuxSpec{
 		ID:            panelSurfaceID(h.id),
 		Namespace:     "sysc-shell-panel",
@@ -779,7 +785,7 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 		ExclusiveZone: -1,
 		Keyboard:      keyboardExclusive,
 		Callbacks: wayland.HostCallbacks{
-			OpaqueBackground: h.theme.BackgroundOpaque(),
+			OpaqueBackground: opaque,
 			Radius:           h.theme.Radius,
 			Configure:        h.configureLocking(r),
 			Render:           h.renderLocking(r),
