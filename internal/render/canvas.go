@@ -49,6 +49,39 @@ type Canvas struct {
 	restrict      ui.Rect
 }
 
+// ApplySurfaceTransform applies the final opacity and vertical translation to
+// an already-premultiplied frame. copy handles overlapping slices, so the
+// translation reuses the compositor buffer and only clears the rows it exposes.
+func (c *Canvas) ApplySurfaceTransform(opacity float64, translateY int) {
+	if c == nil || c.Width <= 0 || c.Height <= 0 || c.Stride <= 0 {
+		return
+	}
+	pix := c.Pix[:c.Stride*c.Height]
+	if translateY >= c.Height || translateY <= -c.Height {
+		clear(pix)
+	} else if translateY > 0 {
+		copy(pix[translateY*c.Stride:], pix[:(c.Height-translateY)*c.Stride])
+		clear(pix[:translateY*c.Stride])
+	} else if translateY < 0 {
+		rows := -translateY
+		copy(pix[:(c.Height-rows)*c.Stride], pix[rows*c.Stride:])
+		clear(pix[(c.Height-rows)*c.Stride:])
+	}
+	if opacity >= 1 {
+		return
+	}
+	if opacity <= 0 || math.IsNaN(opacity) {
+		clear(pix)
+		return
+	}
+	for y := 0; y < c.Height; y++ {
+		row := pix[y*c.Stride : y*c.Stride+c.Width*4]
+		for i := range row {
+			row[i] = byte(math.Round(float64(row[i]) * opacity))
+		}
+	}
+}
+
 // NewCanvas wraps shared-memory bytes after validating the geometry.
 func NewCanvas(pix []byte, width, height, stride int) (*Canvas, error) {
 	if width <= 0 || height <= 0 {

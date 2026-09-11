@@ -14,6 +14,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -121,6 +122,40 @@ func TestControlCentrePanelOpaqueHintMatchesExpandedSilhouette(t *testing.T) {
 	}
 }
 
+func TestControlCentreRevealFollowsSurfaceAnimator(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		edge    string
+		reduced bool
+		wantY   int
+	}{
+		{name: "top", edge: "top", wantY: -panelSlidePx},
+		{name: "bottom", edge: "bottom", wantY: panelSlidePx},
+		{name: "reduced", edge: "top", reduced: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Unix(0, 0)
+			h := &PanelHost{id: PanelControlCenter, place: Placement{BarEdge: tc.edge}, theme: DefaultTheme()}
+			h.anim = newAnimator(func() time.Time { return now }, tc.reduced, h.theme.Motion)
+			h.anim.Target(panelSurfaceID(h.id), animVisible, 1)
+
+			opacity, offsetY, fillet := h.panelReveal()
+			if opacity != 0 || offsetY != tc.wantY || fillet != 0 {
+				t.Fatalf("initial reveal = opacity %v offset %d fillet %d, want 0, %d, 0", opacity, offsetY, fillet, tc.wantY)
+			}
+			settle := h.theme.Motion.Durations.Medium
+			if tc.reduced {
+				settle = reducedPanelCap
+			}
+			now = now.Add(settle)
+			opacity, offsetY, fillet = h.panelReveal()
+			if opacity != 1 || offsetY != 0 || fillet != h.theme.Fillet {
+				t.Fatalf("settled reveal = opacity %v offset %d fillet %d, want 1, 0, %d", opacity, offsetY, fillet, h.theme.Fillet)
+			}
+		})
+	}
+}
+
 func TestWordmarkRightClickOpensControlCentre(t *testing.T) {
 	widgets := buildWidgets([]config.Item{{ID: "wordmark"}}, 6)
 	if len(widgets) != 1 {
@@ -205,6 +240,106 @@ func TestControlCentreRailKeepsDisabledDestinationsAddressable(t *testing.T) {
 	}
 	if got := len(ui.Focusables(rail)); got != 10 {
 		t.Errorf("focusable rail entries = %d, want all 10 including unavailable destinations", got)
+	}
+}
+
+func TestControlCentreFocusListsRailBeforeBodyControls(t *testing.T) {
+	focus := ui.Focusables(controlCentreTree(nil, &PanelHost{section: "home"}))
+	if len(focus) <= len(ccSections) {
+		t.Fatalf("focus ring has %d nodes, want the rail and body controls", len(focus))
+	}
+	for i, section := range ccSections {
+		want := section.Label
+		if !section.Enabled {
+			want += " — not available yet"
+		}
+		if got := focus[i]; got.Role != "tab" || got.Name != want {
+			t.Fatalf("focus %d = %+v, want rail section %q", i, got, section.Label)
+		}
+	}
+	if got := focus[len(ccSections)]; got.Role == "tab" {
+		t.Fatalf("first body focus = %+v, want the rail prefix to end", got)
+	}
+}
+
+func TestControlCentreRetargetKeepsOneSelectedPageAndRailFocus(t *testing.T) {
+	r := newPanelRegistry(t)
+	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{BarEdge: "top", BarZone: 40}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, r, 2)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	h := r.panelHosts[PanelControlCenter]
+	now := time.Unix(0, 0)
+	h.anim = newAnimator(func() time.Time { return now }, false, h.theme.Motion)
+
+	activateSection := func(action string) {
+		t.Helper()
+		for i, n := range h.focus {
+			if n.Action == action {
+				h.roving.Set(i)
+				if !h.activate(r) {
+					t.Fatalf("%s did not activate", action)
+				}
+				return
+			}
+		}
+		t.Fatalf("no focusable %s", action)
+	}
+	activateSection("section:audio")
+	if got := h.focused().Action; got != "section:audio" {
+		t.Fatalf("focus moved to %q after page swap", got)
+	}
+	const pageKey = "control-centre-page"
+	if page := findNode(h.root, func(n *ui.Node) bool { return n.Key == pageKey }); page == nil {
+		t.Fatal("selected page has no stable animation wrapper")
+	}
+	if !h.anim.has(pageKey, animVisible) {
+		t.Fatal("page swap did not target the surface animator")
+	}
+	now = now.Add(h.theme.Motion.Durations.Medium / 2)
+	before := h.anim.Value(pageKey, animVisible)
+	activateSection("section:monitor")
+	if got := h.anim.Value(pageKey, animVisible); got != before {
+		t.Fatalf("mid-transition retarget jumped from %v to %v", before, got)
+	}
+	pages := 0
+	var selected *ui.Node
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n.Key == pageKey {
+			pages++
+			selected = n
+		}
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(h.root)
+	if pages != 1 || selected == nil || !strings.Contains(renderText(selected), "Network") {
+		t.Fatalf("selected page count/text = %d/%q, want one Monitor page", pages, renderText(selected))
+	}
+}
+
+func TestControlCentreEscapeClosesRoot(t *testing.T) {
+	r := newPanelRegistry(t)
+	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{BarEdge: "top", BarZone: 40}); err != nil {
+		t.Fatal(err)
+	}
+	panel := drainAux(t, r, 2)[1].Open
+	if !panel.Callbacks.Handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyEsc}) {
+		t.Fatal("Escape did not report the root close")
+	}
+	r.mu.Lock()
+	_, open := r.panelHosts[PanelControlCenter]
+	r.mu.Unlock()
+	if open {
+		t.Fatal("Escape left the control centre open")
 	}
 }
 

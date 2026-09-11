@@ -104,6 +104,7 @@ type PanelHost struct {
 	draft          config.Config
 	query          string
 	section        string
+	pageDirection  int
 	search         *ui.Field
 	fields         map[string]*ui.Field
 	editors        map[string]*retainedEditor
@@ -271,6 +272,11 @@ func (r *Registry) selectPanelSectionLocked(id PanelID, section string) error {
 		return fmt.Errorf("panel %q is not open", id)
 	}
 	if h.section == section {
+		return nil
+	}
+	if id == PanelControlCenter {
+		h.selectControlCentreSection(r, section)
+		r.publishSurface(h.output, panelSurfaceID(id))
 		return nil
 	}
 	h.section = section
@@ -902,6 +908,23 @@ func (h *PanelHost) measureText() ui.MeasureText {
 	}
 }
 
+func (h *PanelHost) panelReveal() (opacity float64, offsetY, fillet int) {
+	if h == nil || h.anim == nil || !h.anim.has(panelSurfaceID(h.id), animVisible) {
+		if h == nil {
+			return 1, 0, 0
+		}
+		return 1, 0, h.theme.Fillet
+	}
+	key := panelSurfaceID(h.id)
+	opacity = h.anim.PanelOpacity(key)
+	offsetY = h.anim.PanelSlide(key)
+	if h.place.BarEdge == "top" {
+		offsetY = -offsetY
+	}
+	fillet = int(math.Round(float64(h.theme.Fillet) * opacity))
+	return opacity, offsetY, fillet
+}
+
 func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	if err := h.ensureText(); err != nil {
 		return err
@@ -935,11 +958,26 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	}
 	style.Scale120 = scale
 	style.Body = body
+	opacity, offsetY, fillet := h.panelReveal()
+	style.Fillet = fillet
 	if !h.place.CenterY {
 		style.AttachEdge = h.place.BarEdge
 	}
-	if err := render.Paint(c, h.root, h.text, style); err != nil {
+	page, viewport, pageProgress, pageOffset := h.controlCentrePageVisual()
+	if page != nil && pageOffset != 0 {
+		offsetNodeY(page, pageOffset)
+	}
+	err = render.Paint(c, h.root, h.text, style)
+	if page != nil && pageOffset != 0 {
+		offsetNodeY(page, -pageOffset)
+	}
+	if err != nil {
 		return err
+	}
+	if viewport != nil && pageProgress < 1 {
+		wash := style.RootFill()
+		wash.A = uint8(math.Round(float64(wash.A) * (1 - pageProgress)))
+		c.FillRounded(scale.PhysicalRect(viewport.Bounds), 0, wash)
 	}
 	if h.roving.Count > 0 {
 		n := h.focus[h.roving.Index()]
@@ -959,6 +997,7 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 			c.StrokeRounded(ring, radius, max(scale.Physical(2), 2), h.theme.Accent)
 		}
 	}
+	c.ApplySurfaceTransform(opacity, scale.Physical(offsetY))
 	return nil
 }
 
@@ -1572,7 +1611,11 @@ func (h *PanelHost) activate(r *Registry) bool {
 		return h.activateNotify(r, n)
 	}
 	if strings.HasPrefix(n.Action, "section:") {
-		h.section = strings.TrimPrefix(n.Action, "section:")
+		section := strings.TrimPrefix(n.Action, "section:")
+		if h.id == PanelControlCenter {
+			return h.selectControlCentreSection(r, section)
+		}
+		h.section = section
 		r.rebuildPanel(h)
 		return true
 	}

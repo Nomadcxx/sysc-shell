@@ -23,6 +23,7 @@ func TestPanelHostRenderPaintsClockText(t *testing.T) {
 	}
 	reqs := drainAux(t, reg, 2)
 	panel := reqs[1].Open
+	settleHostAnimation(reg, reg.panelHosts[PanelClock])
 	if err := panel.Callbacks.Configure(360, 420, 120); err != nil {
 		t.Fatal(err)
 	}
@@ -55,6 +56,7 @@ func TestPanelHostRenderPaintsMonitorCards(t *testing.T) {
 	reqs := drainAux(t, reg, 2)
 	panel := reqs[1].Open
 	h := reg.panelHosts[PanelMonitor]
+	settleHostAnimation(reg, h)
 	h.monitorPage = monitorPageMetrics
 	reg.rebuildPanel(h)
 	const w, hgt = 640, 720
@@ -747,6 +749,18 @@ func newPanelRegistry(t *testing.T) *Registry {
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
 	return reg
+}
+
+func settleHostAnimation(reg *Registry, h *PanelHost) {
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if h == nil || h.anim == nil {
+		return
+	}
+	for key, value := range h.anim.values {
+		value.start = time.Time{}
+		h.anim.values[key] = value
+	}
 }
 
 func drainAux(t *testing.T, reg *Registry, n int) []wayland.AuxRequest {

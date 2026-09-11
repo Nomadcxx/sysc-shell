@@ -1,6 +1,7 @@
 package render
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"testing"
@@ -133,4 +134,41 @@ func TestFilletCoverageIsSymmetricAcrossAttachedEdges(t *testing.T) {
 func TestFilletCoverageClipsToCanvas(t *testing.T) {
 	c := newTestCanvas(t, 4, 4)
 	fillAttachFillets(c, ui.Rect{X: 0, Y: -2, W: 4, H: 8}, 8, "top", Color{A: 255})
+}
+
+func TestSurfaceTransformScalesPremultipliedChannels(t *testing.T) {
+	c := newTestCanvas(t, 1, 1)
+	copy(c.Pix, []byte{80, 60, 40, 100})
+	c.ApplySurfaceTransform(0.5, 0)
+	if got, want := c.Pix[:4], []byte{40, 30, 20, 50}; !bytes.Equal(got, want) {
+		t.Fatalf("transformed pixel = %v, want %v", got, want)
+	}
+}
+
+func TestSurfaceTransformTranslatesInPlaceAndClearsExposedRows(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		dy   int
+		want []byte
+	}{
+		{name: "down", dy: 1, want: []byte{0, 10, 20, 30}},
+		{name: "up", dy: -1, want: []byte{20, 30, 40, 0}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestCanvas(t, 1, 4)
+			for y, alpha := range []byte{10, 20, 30, 40} {
+				c.Pix[y*c.Stride+3] = alpha
+			}
+			backing := &c.Pix[0]
+			c.ApplySurfaceTransform(1, tc.dy)
+			if &c.Pix[0] != backing {
+				t.Fatal("surface transform replaced the frame buffer")
+			}
+			for y, want := range tc.want {
+				if got := c.Pix[y*c.Stride+3]; got != want {
+					t.Fatalf("row %d alpha = %d, want %d", y, got, want)
+				}
+			}
+		})
+	}
 }

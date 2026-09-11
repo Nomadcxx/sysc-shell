@@ -10,6 +10,11 @@ import (
 const panelControlCenterAction = "panel:control-center"
 
 const (
+	controlCentrePageKey     = "control-centre-page"
+	controlCentreViewportKey = "control-centre-page-viewport"
+)
+
+const (
 	ccRailWidth  = 56
 	ccRailItem   = 40
 	ccGap        = 16
@@ -52,13 +57,84 @@ func controlCentreTree(r *Registry, h *PanelHost) *ui.Node {
 		panel.H = h.place.Panel.H
 	}
 	bodyHeight := max(panel.H-2*ccPanelPad-ccHeaderSize-ccBodyGap, 0)
+	page := ccPage(r, h)
+	page.Key = controlCentrePageKey
 	return &ui.Node{Kind: ui.KindRow, Gap: ccGap, Padding: ccPanelPad, Children: []*ui.Node{
 		ccRail(h),
 		{Kind: ui.KindColumn, Width: bodyWidth, Gap: ccBodyGap, Children: []*ui.Node{
 			ccHeader(h),
-			{Kind: ui.KindScroll, Height: bodyHeight, Children: []*ui.Node{ccPage(r, h)}},
+			{Kind: ui.KindScroll, Key: controlCentreViewportKey, Height: bodyHeight, Children: []*ui.Node{page}},
 		}},
 	}}
+}
+
+func (h *PanelHost) selectControlCentreSection(r *Registry, section string) bool {
+	to, ok := ccSectionFor(section)
+	if h == nil || h.id != PanelControlCenter || !ok || !to.Enabled || h.section == section {
+		return ok && to.Enabled
+	}
+	fromIndex, toIndex := ccSectionIndex(h.section), ccSectionIndex(section)
+	h.pageDirection = 0
+	if toIndex > fromIndex {
+		h.pageDirection = 1
+	} else if toIndex < fromIndex {
+		h.pageDirection = -1
+	}
+	h.section = section
+	if h.anim != nil {
+		if !h.anim.has(controlCentrePageKey, animVisible) || h.anim.Value(controlCentrePageKey, animVisible) >= 1 {
+			h.anim.Reset(controlCentrePageKey, animVisible)
+			h.anim.Target(controlCentrePageKey, animVisible, 1)
+		}
+	}
+	r.rebuildPanel(h)
+	r.startSurfaceFrames(h)
+	return true
+}
+
+func ccSectionIndex(id string) int {
+	for i, section := range ccSections {
+		if section.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func (h *PanelHost) controlCentrePageVisual() (page, viewport *ui.Node, progress float64, offset int) {
+	if h == nil || h.id != PanelControlCenter || h.root == nil || h.anim == nil ||
+		!h.anim.has(controlCentrePageKey, animVisible) {
+		return nil, nil, 1, 0
+	}
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		switch n.Key {
+		case controlCentrePageKey:
+			page = n
+		case controlCentreViewportKey:
+			viewport = n
+		}
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(h.root)
+	progress = h.anim.PanelOpacity(controlCentrePageKey)
+	offset = h.pageDirection * h.anim.PanelSlide(controlCentrePageKey)
+	return page, viewport, progress, offset
+}
+
+func offsetNodeY(n *ui.Node, dy int) {
+	if n == nil || dy == 0 {
+		return
+	}
+	n.Bounds.Y += dy
+	for _, child := range n.Children {
+		offsetNodeY(child, dy)
+	}
 }
 
 func ccBodyWidth(h *PanelHost) int {
