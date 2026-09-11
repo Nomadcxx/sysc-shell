@@ -132,16 +132,11 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 	}})
 	identityCard.Height = 96
 
-	togglePill := &ui.Node{
-		Kind: ui.KindCapsule, Height: 48, Padding: h.theme.Metrics.CapsulePadding,
-		Fill: ui.FillContainerHigh, Shape: ui.ShapeLarge,
-		Children: []*ui.Node{{
-			Kind: ui.KindSegmented, Height: m.StandardControl, Children: []*ui.Node{
-				ccSegment("coffee", "Caffeine", "cc:caffeine", caffeine),
-				ccSegment("wallpaper", "Wallpaper", "cc:wallpaper", false),
-			},
-		}},
-	}
+	quickWidth := max((ccBodyWidth(h)-8)/2, 0)
+	togglePill := &ui.Node{Kind: ui.KindRow, Height: 48, Gap: 8, Children: []*ui.Node{
+		ccQuickAccessButton(quickWidth, "coffee", "Caffeine", "cc:caffeine", caffeine),
+		ccQuickAccessButton(quickWidth, "wallpaper", "Wallpaper", "cc:wallpaper", false),
+	}}
 
 	clockWeather := monitorCard(m, []*ui.Node{
 		monitorCardTitle(ccClock(now), 0),
@@ -149,13 +144,11 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 		{Kind: ui.KindText, Text: ccWeatherSummary(reading)},
 	})
 	clockWeather.Height = 88
-	cpu := ccMetric(snap, services.Selector{Source: services.SourceCPU})
-	memory := ccMetric(snap, services.Selector{Source: services.SourceMemory})
 	sysmon := monitorCard(m, []*ui.Node{
 		monitorCardTitle("System", 0),
-		{Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{
-			{Kind: ui.KindText, Text: "CPU " + cpu, Tabular: true},
-			{Kind: ui.KindText, Text: "Memory " + memory, Tabular: true},
+		{Kind: ui.KindRow, Height: 40, Gap: 8, Children: []*ui.Node{
+			ccResourceGroup(snap, "cpu", "CPU", services.Selector{Source: services.SourceCPU}),
+			ccResourceGroup(snap, "memory", "Memory", services.Selector{Source: services.SourceMemory}),
 		}},
 	})
 	sysmon.Height = 88
@@ -230,16 +223,35 @@ func ccWeatherSummary(reading services.Reading) string {
 	return fmt.Sprintf("%c %.0f%s", render.IconRune(reading.Code), reading.Temperature, unitSuffix(reading.Unit))
 }
 
-func ccMetric(snap services.Snapshot, sel services.Selector) string {
-	value, ok := snap.Fraction(sel)
-	return ccPercent(int(value*100+0.5), ok)
-}
-
 func ccPercent(value int, ok bool) string {
 	if !ok {
 		return ccDash
 	}
 	return fmt.Sprintf("%d%%", value)
+}
+
+func ccQuickAccessButton(width int, icon, label, action string, selected bool) *ui.Node {
+	n := ccSegment(icon, label, action, selected)
+	n.Width, n.Height, n.Shape = width, 48, ui.ShapeStadium
+	if !selected {
+		n.Fill = ui.FillContainerHigh
+	}
+	return n
+}
+
+func ccResourceGroup(snap services.Snapshot, id, label string, sel services.Selector) *ui.Node {
+	value, ok := snap.Fraction(sel)
+	if !ok {
+		value = 0
+	}
+	icon, _ := render.GaugeIconName(id)
+	return &ui.Node{Kind: ui.KindRow, Height: 40, Gap: 8, Children: []*ui.Node{
+		{Kind: ui.KindRadialGauge, Width: 40, Height: 40, Icon: icon, Value: value, Absent: !ok},
+		{Kind: ui.KindColumn, Gap: 2, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: label, TextRole: theme.RoleCaption},
+			{Kind: ui.KindText, Text: ccPercent(int(value*100+0.5), ok), Tabular: true},
+		}},
+	}}
 }
 
 func ccOnOff(on bool) string {

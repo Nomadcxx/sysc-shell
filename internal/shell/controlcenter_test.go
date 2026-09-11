@@ -14,6 +14,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -236,6 +237,69 @@ func TestHomeShowsDashesBeforeTheFirstSample(t *testing.T) {
 	}
 	if !strings.Contains(got, "—") {
 		t.Error("Home rendered no dash for an unsampled value")
+	}
+}
+
+func TestControlCentreHomeQuickAccessControlsAreSeparated(t *testing.T) {
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	quick := ccHome(&Registry{}, h).Children[1]
+	if quick.Kind != ui.KindRow || quick.Gap != 8 || len(quick.Children) != 2 {
+		t.Fatalf("quick access = %+v, want two controls in an 8px-gap row", quick)
+	}
+	for _, name := range []string{"Caffeine", "Wallpaper"} {
+		n := findByName(quick, name)
+		if n == nil || n.Kind != ui.KindButton || n.Shape != ui.ShapeStadium || !n.Focusable {
+			t.Errorf("%s = %+v, want independent capsule button", name, n)
+		}
+	}
+	if segmented := findNode(quick, func(n *ui.Node) bool { return n.Kind == ui.KindSegmented }); segmented != nil {
+		t.Fatalf("quick access still uses joined segmented chrome: %+v", segmented)
+	}
+}
+
+func TestControlCentreHomeRadialResourcesPreserveSampleState(t *testing.T) {
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	r := &Registry{sample: fixtureSnapshot()}
+	home := ccHome(r, h)
+	gauges := findAllKind(home, ui.KindRadialGauge)
+	if len(gauges) != 2 {
+		t.Fatalf("radial gauges = %d, want CPU and memory", len(gauges))
+	}
+	want := map[string]float64{"sysmon-cpu": .42, "sysmon-memory": .25}
+	for _, gauge := range gauges {
+		if gauge.Width != 40 || gauge.Height != 40 || gauge.Absent || gauge.Value != want[gauge.Icon] {
+			t.Errorf("sampled gauge = %+v", gauge)
+		}
+	}
+	for _, value := range []string{"42%", "25%"} {
+		if !strings.Contains(renderText(home), value) {
+			t.Errorf("resource values %q omit %s", renderText(home), value)
+		}
+	}
+
+	absent := findAllKind(ccHome(&Registry{}, h), ui.KindRadialGauge)
+	if len(absent) != 2 || !absent[0].Absent || !absent[1].Absent {
+		t.Fatalf("unsampled gauges = %+v, want two absent gauges", absent)
+	}
+
+	zero := fixtureSnapshot()
+	zero.CPU.Usage.Fraction = 0
+	zero.Memory.Memory.UsedBytes = 0
+	zeroHome := ccHome(&Registry{sample: zero}, h)
+	for _, gauge := range findAllKind(zeroHome, ui.KindRadialGauge) {
+		if gauge.Absent || gauge.Value != 0 {
+			t.Errorf("valid zero gauge = %+v, want present zero", gauge)
+		}
+	}
+	if got := strings.Count(renderText(zeroHome), "0%"); got != 2 {
+		t.Fatalf("valid zero values = %q, want two 0%% labels", renderText(zeroHome))
+	}
+
+	for id, icon := range map[string]string{"cpu": "sysmon-cpu", "memory": "sysmon-memory"} {
+		got, ok := render.GaugeIconName(id)
+		if !ok || got != icon {
+			t.Fatalf("%s gauge icon = %q/%v, want %q", id, got, ok, icon)
+		}
 	}
 }
 
