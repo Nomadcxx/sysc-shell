@@ -19,12 +19,14 @@ require (
 )
 
 require (
+	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/junegunn/go-shellwords v0.0.0-20250127100254-2aa3b3277741 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 )
 
 require (
+	github.com/Wifx/gonetworkmanager/v2 v2.2.0
 	github.com/adrg/xdg v0.5.3 // indirect
 	github.com/rkoesters/xdg v0.0.1 // indirect
 )
