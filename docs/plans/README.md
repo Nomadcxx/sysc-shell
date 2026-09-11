@@ -285,6 +285,7 @@ already true in both.
 | Document | Kind | State |
 |---|---|---|
 | `2026-09-11-surface-stacking-design.md` | design | D1–D9. `KindStack` modelled on `layoutCapsuleChild`; measures as the **max** of its children where a column sums, honouring an explicit `Height` to avoid the disagreement the `KindCapsule` case documents; scrim as an ordinary `FillScrim` child rather than a property; bilinear background sampling shared with the blur design. One consumer — the control-centre weather card — or it does not ship. |
+| `2026-09-11-surface-stacking.md` | plan | Six tasks. Task 1 is end-to-end by necessity: `kindcoverage_test.go` fails the package for a kind that is not both measurable and paintable, so the kind cannot land half-built. Paint needs **one line** — `KindStack` joins the existing `KindColumn, KindDropZone, KindSegmented` case, because paint already walks children forward and `Hit` already walks them in reverse. Task 2 pins topmost-wins hit testing so a later refactor cannot silently break it. Task 4 depends on the blur plan's `paintImageSmooth`. Task 5 is a real consumer gate with a revert branch: if the weather card does not need a full-bleed image, delete the kind. |
 
 ## Media service, widget and page
 
