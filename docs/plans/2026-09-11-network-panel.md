@@ -138,37 +138,34 @@ duplicate `sysc-253`. The command centre is a separate product (D17); neither
 dependency is real. If `bd dep rm` rejects an edge that is not present, move on
 — the duplicate pair is being resolved separately and is not this plan's job.
 
-- [ ] **Step 4: Add the pinned dependency**
+- [ ] **Step 4: Confirm the dependency is available, but do not pin it yet**
 
 ```bash
-export GOFLAGS=-mod=mod GOPROXY=off GOSUMDB=off GOPRIVATE='*'
-go mod edit -require=github.com/Wifx/gonetworkmanager/v2@v2.2.0 \
-            -require=github.com/google/uuid@v1.6.0 \
-            -require=github.com/godbus/dbus/v5@v5.2.2
-GOMAXPROCS=4 go mod tidy
+ls ~/go/pkg/mod/cache/download/github.com/\!wifx/gonetworkmanager/v2/@v/ | grep zip
+ls ~/go/pkg/mod/cache/download/github.com/godbus/dbus/v5/@v/ | grep zip
 ```
 
-The explicit `uuid` require is load-bearing: without it `tidy` tries to reach
-`v1.3.0`, which is not in the cache, and fails with a missing `go.sum` entry.
-`tidy` then prunes `uuid` again because no compiled file imports it — that is
-expected, not a mistake.
+Expected: `v2.2.0.zip` and a `v5.2.2.zip`. Both must be present, because
+resolution runs with `GOPROXY=off`.
 
-- [ ] **Step 5: Verify it builds and reaches the bus**
+**The pin belongs to Task 3, not here.** `go mod edit -require` followed by
+`go mod tidy` reverts silently at this point: tidy prunes any require that no
+Go file imports, and nothing imports the binding until
+`internal/services/networkbackend.go` exists. Pinning early looks like it
+worked and leaves `go.mod` unchanged.
+
+- [ ] **Step 5: Verify the baseline still builds**
 
 ```bash
 GOMAXPROCS=4 go build -p 4 ./...
-grep gonetworkmanager go.mod
 ```
 
-Expected: build succeeds; `go.mod` requires `gonetworkmanager/v2 v2.2.0` and
-`godbus/dbus/v5 v5.2.2`.
+Expected: build succeeds. There is no dependency change to see yet.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Nothing to commit**
 
-```bash
-git add go.mod go.sum
-git commit -m "build: pin the NetworkManager binding"
-```
+Task 0 changes the tracker and the shell environment, neither of which is
+version-controlled here. Skip the commit rather than inventing one.
 
 ---
 
@@ -534,7 +531,25 @@ a test that needs `NetworkManager` running fails on a build machine.
 Run: `go test ./internal/services -run TestNMBackend -v`
 Expected: FAIL — `undefined: newNMBackend`.
 
-- [ ] **Step 3: Implement the backend over the binding**
+- [ ] **Step 3: Write the file first, then pin the binding**
+
+Order matters. Write `internal/services/networkbackend.go` with its
+`gonetworkmanager` import **before** running `tidy`, or `tidy` prunes the
+require and `go.mod` comes back unchanged — the trap Task 0 Step 4 describes.
+
+```bash
+export GOFLAGS=-mod=mod GOPROXY=off GOSUMDB=off GOPRIVATE='*'
+go mod edit -require=github.com/Wifx/gonetworkmanager/v2@v2.2.0 \
+            -require=github.com/google/uuid@v1.6.0
+GOMAXPROCS=4 go mod tidy
+grep gonetworkmanager go.mod
+```
+
+The explicit `uuid` require is load-bearing: the binding is a `go 1.12` module,
+so its full graph loads, and its own `go.mod` names `uuid v1.3.0`, which is not
+in the cache (v1.6.0 is). Without the override `tidy` fails with a missing
+`go.sum` entry. `tidy` then drops `uuid` from the final requires because no
+compiled file imports it — expected, not a mistake.
 
 ```go
 package services
