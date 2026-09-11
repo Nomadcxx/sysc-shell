@@ -22,6 +22,7 @@ const (
 	processHeaderHeight  = 22
 	monitorControlHeight = 28
 	processTablePadding  = 6
+	processRowPadding    = 2
 )
 
 func monitorPanelTree(h *PanelHost, sels []services.Selector, snap services.Snapshot, history map[services.Selector][]float64, facts machineFacts) *ui.Node {
@@ -149,25 +150,29 @@ func processColumns(h *PanelHost) (name, cpu, memory, pid, action int) {
 func processHeader(h *PanelHost) *ui.Node {
 	nameW, cpuW, memoryW, pidW, actionW := processColumns(h)
 	button := func(key, label string, width int) *ui.Node {
+		text := label
 		if key == "" {
-			return &ui.Node{Kind: ui.KindText, Text: label, Width: width}
+			return &ui.Node{Kind: ui.KindColumn, Width: width, Height: processHeaderHeight,
+				Children: []*ui.Node{{Kind: ui.KindText, Text: text}}}
 		}
 		if h.processSort == key {
 			if h.processDesc {
-				label += " ↓"
+				text += " ↓"
 			} else {
-				label += " ↑"
+				text += " ↑"
 			}
 		}
-		return &ui.Node{Kind: ui.KindText, Text: label, Action: "monitor:sort:" + key,
-			Name: "Sort by " + label, Role: "button", Focusable: true, CenterX: true,
-			Width: width, Height: processHeaderHeight}
+		return &ui.Node{Kind: ui.KindColumn, Action: "monitor:sort:" + key,
+			Name: "Sort by " + label, Role: "button", Focusable: true,
+			Width: width, Height: processHeaderHeight,
+			Children: []*ui.Node{{Kind: ui.KindText, Text: text}}}
 	}
-	return &ui.Node{Kind: ui.KindRow, Gap: 8, Height: processHeaderHeight, Children: []*ui.Node{
-		button("name", "Name", nameW), button("cpu", "CPU", cpuW),
-		button("memory", "Memory", memoryW), button("pid", "PID", pidW),
-		button("", "", actionW),
-	}}
+	return &ui.Node{Kind: ui.KindRow, Gap: 8, Padding: processTablePadding + processRowPadding,
+		Height: processHeaderHeight, Children: []*ui.Node{
+			button("name", "Name", nameW), button("cpu", "CPU", cpuW),
+			button("memory", "Memory", memoryW), button("pid", "PID", pidW),
+			button("", "", actionW),
+		}}
 }
 
 func processRow(h *PanelHost, process services.Process) *ui.Node {
@@ -197,7 +202,7 @@ func processRow(h *PanelHost, process services.Process) *ui.Node {
 		Width: actionW, Height: 22, Padding: 4, Fill: ui.FillOutline, Tone: ui.ToneError,
 	}
 	row := &ui.Node{
-		Kind: ui.KindRow, Height: processRowHeight, Padding: 2, Gap: 8,
+		Kind: ui.KindRow, Height: processRowHeight, Padding: processRowPadding, Gap: 8,
 		Action: "monitor:select" + identity, Name: fmt.Sprintf("Select %s", process.Name),
 		Role: "row", Focusable: true, Children: []*ui.Node{data, kill},
 	}

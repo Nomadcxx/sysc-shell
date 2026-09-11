@@ -128,7 +128,7 @@ func TestProcessTableUsesCompactChromeAndOneKillAction(t *testing.T) {
 	}
 	for _, key := range []string{"name", "cpu", "memory", "pid"} {
 		header := findAction(tree, "monitor:sort:"+key)
-		if header == nil || header.Kind != ui.KindText || header.Height != 22 {
+		if header == nil || header.Height != 22 {
 			t.Fatalf("%s header = %+v, want a text-like 22px sort action", key, header)
 		}
 	}
@@ -148,6 +148,13 @@ func TestProcessTableUsesCompactChromeAndOneKillAction(t *testing.T) {
 	}
 	if row.Action != "monitor:select:10:100" || !row.Focusable || row.Role != "row" {
 		t.Fatalf("process row does not own selection: %+v", row)
+	}
+	data := row.Children[0]
+	for i, key := range []string{"name", "cpu", "memory", "pid"} {
+		header := findAction(tree, "monitor:sort:"+key)
+		if header.Bounds.X != data.Children[i].Bounds.X || header.Bounds.W != data.Children[i].Bounds.W {
+			t.Fatalf("%s header bounds = %+v, row cell = %+v", key, header.Bounds, data.Children[i].Bounds)
+		}
 	}
 	if end := findText(row, "End"); end != nil {
 		t.Fatalf("redundant End action remains: %+v", end)
