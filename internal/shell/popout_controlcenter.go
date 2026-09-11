@@ -46,11 +46,11 @@ func ccSectionFor(id string) (ccSection, bool) {
 }
 
 func controlCentreTree(r *Registry, h *PanelHost) *ui.Node {
+	bodyWidth := ccBodyWidth(h)
 	panel := panelTargetSize(PanelControlCenter)
-	if h.place.Panel.W > 0 {
-		panel = h.place.Panel
+	if h.place.Panel.H > 0 {
+		panel.H = h.place.Panel.H
 	}
-	bodyWidth := max(panel.W-2*ccPanelPad-ccRailWidth-ccGap, 0)
 	bodyHeight := max(panel.H-2*ccPanelPad-ccHeaderSize-ccBodyGap, 0)
 	return &ui.Node{Kind: ui.KindRow, Gap: ccGap, Padding: ccPanelPad, Children: []*ui.Node{
 		ccRail(h),
@@ -59,6 +59,14 @@ func controlCentreTree(r *Registry, h *PanelHost) *ui.Node {
 			{Kind: ui.KindScroll, Height: bodyHeight, Children: []*ui.Node{ccPage(r, h)}},
 		}},
 	}}
+}
+
+func ccBodyWidth(h *PanelHost) int {
+	panelWidth := panelTargetSize(PanelControlCenter).W
+	if h != nil && h.place.Panel.W > 0 {
+		panelWidth = h.place.Panel.W
+	}
+	return max(panelWidth-2*ccPanelPad-ccRailWidth-ccGap, 0)
 }
 
 func ccRail(h *PanelHost) *ui.Node {
