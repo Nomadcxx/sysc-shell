@@ -1,5 +1,11 @@
 package services
 
+import (
+	"slices"
+	"strings"
+	"sync"
+)
+
 // Connectivity names what the active connection runs over.
 type Connectivity uint8
 
@@ -44,7 +50,7 @@ type AccessPoint struct {
 
 // SignalBand buckets 0..100 into the five bands the glyphs draw.
 //
-// Sorting and glyph choice both use the band rather than the raw percent,
+// Sorting and glyph choice each key on the band rather than the raw percent,
 // which jitters on every scan and would reorder the list under the user's
 // finger. The thresholds match the reference shell's.
 func SignalBand(signal uint8) int {
@@ -81,3 +87,168 @@ type backend interface {
 	Watch(wake chan<- struct{}, stop <-chan struct{}) error
 	Close() error
 }
+
+// Network is a peer of Audio: the same public shape, a different delivery.
+//
+// Audio polls on a lease interval. This service is pushed by D-Bus signals, so
+// leaseSet's interval is meaningless here and deliberately ignored: a lease
+// means only "somebody is watching", and it governs when the subscription
+// starts and stops. Reusing an interval-shaped helper for a non-interval
+// purpose would mislead the next reader if it were not said plainly.
+type Network struct {
+	mu      sync.Mutex
+	leases  leaseSet
+	be      backend
+	last    NetworkState
+	aps     []AccessPoint
+	ok      bool
+	stop    chan struct{}
+	wake    chan struct{}
+	changes chan NetworkState
+}
+
+func NewNetwork(b backend) *Network {
+	return &Network{
+		be:      b,
+		ok:      b != nil,
+		changes: make(chan NetworkState, 1),
+		wake:    make(chan struct{}, 1),
+	}
+}
+
+// Changes carries the newest state. The channel is created once and never
+// closed, so it survives stop and start cycles.
+func (n *Network) Changes() <-chan NetworkState { return n.changes }
+
+func (n *Network) Available() bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.ok
+}
+
+// CachedState returns the last observed state without touching the bus.
+// Callers holding Registry.mu or the Wayland owner must use this.
+func (n *Network) CachedState() NetworkState {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.last
+}
+
+// State reads through to the backend, falling back to the cache on error. It
+// performs I/O and must not be called under a lock.
+func (n *Network) State() NetworkState {
+	st, err := n.be.State()
+	if err != nil {
+		return n.CachedState()
+	}
+	n.mu.Lock()
+	n.last = st
+	n.mu.Unlock()
+	return st
+}
+
+// AccessPoints returns the scan sorted by band, then by SSID.
+//
+// Sorting here rather than in the panel keeps one ordering for every consumer,
+// and keeps the jitter argument in one place.
+func (n *Network) AccessPoints() []AccessPoint {
+	aps, err := n.be.AccessPoints()
+	if err != nil {
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		return slices.Clone(n.aps)
+	}
+	slices.SortFunc(aps, func(a, b AccessPoint) int {
+		if d := SignalBand(b.Strength) - SignalBand(a.Strength); d != 0 {
+			return d
+		}
+		return strings.Compare(a.SSID, b.SSID)
+	})
+	n.mu.Lock()
+	n.aps = aps
+	n.mu.Unlock()
+	return aps
+}
+
+// Acquire registers a consumer. The first lease subscribes; the last release
+// unsubscribes. The lease carries no interval.
+func (n *Network) Acquire() (*Lease, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	lease := &Lease{network: n}
+	n.leases.add(lease)
+	if n.stop == nil {
+		stop := make(chan struct{})
+		if err := n.be.Watch(n.wake, stop); err != nil {
+			n.leases.remove(lease)
+			return nil, err
+		}
+		n.stop = stop
+		go n.run(stop)
+	}
+	return lease, nil
+}
+
+// run coalesces a burst of signals into a cap-one channel, so a noisy scan
+// cannot outrun one paint.
+func (n *Network) run(stop <-chan struct{}) {
+	for {
+		select {
+		case <-stop:
+			return
+		case <-n.wake:
+			st, err := n.be.State()
+			if err != nil {
+				continue
+			}
+			n.mu.Lock()
+			n.last = st
+			n.mu.Unlock()
+			select {
+			case n.changes <- st:
+			default:
+			}
+		}
+	}
+}
+
+func (n *Network) release(l *Lease) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if !n.leases.remove(l) {
+		return
+	}
+	n.stopIfUnusedLocked()
+}
+
+// stopIfUnusedLocked ends the subscription when no lease remains. The caller
+// holds n.mu.
+func (n *Network) stopIfUnusedLocked() {
+	if len(n.leases.leases) > 0 || n.stop == nil {
+		return
+	}
+	close(n.stop)
+	n.stop = nil
+}
+
+// Close drops every lease and ends the subscription.
+func (n *Network) Close() {
+	n.mu.Lock()
+	for _, l := range n.leases.clear() {
+		l.network = nil
+	}
+	n.stopIfUnusedLocked()
+	be := n.be
+	n.mu.Unlock()
+	if be != nil {
+		_ = be.Close()
+	}
+}
+
+// Writes. Each performs I/O and must run off Registry.mu and off the Wayland
+// owner, through the shell's scheduleControl seam.
+
+func (n *Network) Scan() error                      { return n.be.Scan() }
+func (n *Network) SetWirelessEnabled(on bool) error { return n.be.SetWirelessEnabled(on) }
+func (n *Network) Activate(ap AccessPoint) error    { return n.be.Activate(ap) }
+func (n *Network) Forget(ssid string) error         { return n.be.Forget(ssid) }
