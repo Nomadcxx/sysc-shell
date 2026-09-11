@@ -228,8 +228,72 @@ independent axes. Epic `sysc-142` depends on the chrome catalogue.
 
 | Document | Kind | State |
 |---|---|---|
-| `2026-09-02-theme-system-parity-design.md` | design | Owner-approved semantic palette, composition, type, density, shape, opacity, elevation, motion, accessibility, settings, and live-reload contract. |
-| `2026-09-02-theme-system-parity.md` | plan | Owner-directed implementation-first plan with resolver/configuration and shell-wide composition review checkpoints. |
+**The design is superseded by `2026-09-11-noctalia-parity-design.md`.** Its
+mechanism survives and is restated there; its numeric ladders were derived from
+observation rather than measurement, and every one of them differs from Noctalia
+v4.7.7. The plan was executed, but its live Niri gate was never run and is
+re-inherited by the superseding design rather than discharged.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-02-theme-system-parity-design.md` | design | **Superseded 2026-09-11.** Owner-approved semantic palette, composition, type, density, shape, opacity, elevation, motion, accessibility, settings, and live-reload contract. D1, D3, D4, D6, D11, D13 and D15 carried forward verbatim into the superseding design. |
+| `2026-09-02-theme-system-parity.md` | plan | Owner-directed implementation-first plan with resolver/configuration and shell-wide composition review checkpoints. Executed and merged 2026-09-05 (`1e28e30..41a06bc`); Task 13's live Niri gate, ten configurations needing human confirmation, remains unrun. |
+
+## Noctalia v4 parity
+
+Owner-approved approach 2026-09-11: visual parity with Noctalia v4,
+near-indistinguishable, as the standing target for first-party surfaces.
+Supersedes the theme-system-parity design above. Second document of the parity
+tranche, after the backdrop blur design it depends on for the opacity floor.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-11-noctalia-parity-design.md` | design | D1–D15. Re-bases spacing, radius, type, density and motion onto measured v4.7.7 constants; adds a second radius ladder for inputs and a `Display` type role; maps v4's 16 colour roles onto all 49 without deletion. Records the resolution of open `sysc-104`: the nested-surface floor drops 1.45:1 → 1.30:1, text floors unchanged, `Outline` keeps 3:1 while `OutlineVariant` is exempt. Calibration is measured, not assumed — bar 62 px and capsule 50 px both resolve at 2×, title em confirms 16 pt at 96 DPI, so v4 constants are logical px and points convert ×4/3. |
+
+## Token conformance
+
+Third and last design of the parity tranche. Answers why the chrome catalogue
+and theme system parity, both approved 2026-09-02, did not stop surfaces
+re-deriving their own chrome. Enforcement is partial rather than absent: the
+existing source scan bans legacy aliases and synthetic bold but says nothing
+about a bare number.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-11-token-conformance-design.md` | design | D1–D10. Adds one regexp to the existing `TestSurfaceSourcesCarryNoLegacyVisuals` scan rather than a new gate, plus a marked `token-exempt:` idiom carrying its reason at the site, and widens three behavioural checks past `PanelMonitor`/`PanelSession`. Measured: 105 literal geometry assignments in `internal/shell`, of which 58 `Gap` and 38 `Padding`; `internal/ui` and `internal/render` are clean, so the existing scan's package scope is already right. **Revises the tranche order** — the gate lands as task one of the parity plan, red against an enumerated worklist, because 96 of the 105 are the spacing ladder that parity re-bases underneath them. |
+
+## Rendering smoothness (Milestone 8 remainder)
+
+Closes the rest of `sysc-202`. The epic names four cases — animation frame time,
+large blurred panels, image-heavy grids, CPU/power — and the blur design
+measured the second. Also keeps the architecture document's unkept L193 promise
+that "the bar milestone adds rectangle damage", which Milestone 2 never
+delivered and no issue tracked.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-11-rendering-smoothness-design.md` | design | D1–D9. Rectangle damage via a `Damaged` sibling callback on `HostCallbacks` rather than changing `Render`'s signature; dirty geometry owned by the tree, with `Scheduler.dirty` untouched; a theme-resolved pacing cap replacing the fixed 16 ms `animTick`; and coalescing the wallpaper picker, which today rebuilds its whole tree and repaints 4.1 MiB per decoded thumbnail. Full-buffer damage stays the default and the fallback — damage is an optimisation, never a correctness boundary. |
+
+## Surface stacking
+
+One container kind whose children share its box, so content can sit over a
+background image. Small because the hard parts already hold: paint walks
+children forward and `Hit` walks them in reverse, so last-child-is-topmost is
+already true in both.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-11-surface-stacking-design.md` | design | D1–D9. `KindStack` modelled on `layoutCapsuleChild`; measures as the **max** of its children where a column sums, honouring an explicit `Height` to avoid the disagreement the `KindCapsule` case documents; scrim as an ordinary `FillScrim` child rather than a property; bilinear background sampling shared with the blur design. One consumer — the control-centre weather card — or it does not ship. |
+
+## Media service, widget and page
+
+The one feature slice of the parity tranche, and the design `sysc-156` says it
+requires. Follows `2026-09-06-connectivity-and-media-prior-art.md` rather than
+repeating it.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-11-media-service-design.md` | design | D1–D11. MPRIS service as a peer of `audio.go`; hand-rolled on `godbus/dbus/v5` because no binding covers discovery — `leberKleber/go-mpris` is a client but has none and is stale since 2022, `go-music-players/mpris` is a server library — which satisfies AGENTS.md's rung order rather than bypassing it. Discovery via `NameOwnerChanged`, explicit active-player rules, art off the paint path, position interpolation in the service on the prior art's eight-consumer argument. Bar widget is `media`, verified free against `knownItems`. Re-slices `sysc-156` into service, widget and page so the service stops depending on the control-centre spine. |
 
 ## Milestone 5: notifications and system tray
 
@@ -329,12 +393,25 @@ widgets) are still unordered.
 | `2026-09-11-network-panel-design.md` | design | `PanelNetwork` (`sysc-157`): Wi-Fi and Ethernet tabs on one 460x560 surface, Direction B status-first composition, event-driven NetworkManager service over pinned `Wifx/gonetworkmanager/v2 v2.2.0` with only the secret-agent export hand-written on `godbus/v5`, single-slot credential prompts, `wifi` bar widget, masked password field, eight added Material glyphs. D1-D18. Three slices; the `nm-applet` collision is the one open risk. |
 | `2026-09-11-network-panel.md` | plan | Thirteen TDD tasks in three slices for `sysc-157`: pin the binding and fix the tracker, state types and signal bands, pushed service with lease lifecycle, backend over the binding, eight glyphs and the `wifi` widget, panel identity and bar trigger, status-first header, tabs and access-point list, off-owner writes, masked fields, single-slot credential export, password card, live gate. Records the `GOPROXY=off` resolution trap and that the commit hook rejects the substring `agent`. |
 
+## Panel backdrop blur (Milestone 8 evidence)
+
+Owner-approved approach 2026-09-11: visual parity with Noctalia v4 as the
+target, rendering before tokens. Carries the measured answer `sysc-202` asked
+for — a blurred panel backdrop costs 0.54–4.6 ms on `wl_shm`, inside one 60 Hz
+frame, so blurred panels are **not** the named failing case that would justify
+EGL/OpenGL ES. Epic `sysc-202`. The screencopy readback itself is unmeasured
+and is the first implementation task.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-11-panel-backdrop-blur-design.md` | design | D1–D16. Static per-open `zwlr_screencopy_manager_v1` region capture, CPU box blur at quarter resolution with no upsample pass, composited under `rootFill`; lifts the `OpacityMin = 80` floor that existed only because the shell could not blur. Amends the architecture document's rendering section and open gate. Panels only — not the bar, toasts, or OSD. |
+
 ## Milestones 7 remainder and 8: not yet designed
 
 | Milestone | Scope | Note |
 |---|---|---|
 | 7 (after launcher) | Clipboard, network/BT/MPRIS, control center, desktop widgets | Wallpaper has `2026-09-03-wallpaper-design.md`. Do not fold the rest into the launcher slice. |
-| 8 | Rendering qualification | Requires measured evidence against `wl_shm`. |
+| 8 | Rendering qualification | Blurred panels are measured and resolved in favour of `wl_shm` by `2026-09-11-panel-backdrop-blur-design.md`. The other named cases — animation frame time, image-heavy grids, CPU/power — still require evidence. |
 
 ## Sibling repositories
 
