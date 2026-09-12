@@ -256,6 +256,22 @@ func (r *Registry) relayMixer(audio *services.Audio) {
 // setNetwork swaps the network service, releasing any lease the old one held.
 // The lease is what starts the D-Bus subscription, so taking it here is what
 // makes the bar glyph live.
+// toggleWirelessAsync flips the radio from the bar's right-click.
+//
+// The write is I/O over D-Bus, so it runs on its own goroutine: this handler
+// is on the path that takes Registry.mu and the Wayland owner, and blocking
+// either on a bus round trip stalls every bar on the machine.
+func (r *Registry) toggleWirelessAsync() {
+	r.mu.Lock()
+	n := r.network
+	r.mu.Unlock()
+	if n == nil || !n.Available() {
+		return
+	}
+	want := !n.CachedState().WirelessEnabled
+	go func() { _ = n.SetWirelessEnabled(want) }()
+}
+
 func (r *Registry) setNetwork(n *services.Network) {
 	if r.networkLease != nil {
 		r.networkLease.Release()
@@ -734,6 +750,12 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 		case action == panelAudioAction && (button == 0 || button == buttonLeft):
 			trig.AnchorX = bar.actionCenterX(panelAudioAction)
 			return r.TogglePanel(PanelAudio, out, trig) == nil
+		case action == panelWifiAction && (button == 0 || button == buttonLeft):
+			trig.AnchorX = bar.actionCenterX(panelWifiAction)
+			return r.TogglePanel(PanelNetwork, out, trig) == nil
+		case action == panelWifiAction && button == buttonRight:
+			r.toggleWirelessAsync()
+			return true
 		case action == panelAudioAction && button == buttonRight:
 			r.stepAudioAsync("mute")
 			return true

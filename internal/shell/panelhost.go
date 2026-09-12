@@ -109,6 +109,7 @@ type PanelHost struct {
 	query          string
 	section        string
 	pageDirection  int
+	networkTab     string
 	search         *ui.Field
 	fields         map[string]*ui.Field
 	editors        map[string]*retainedEditor
@@ -183,6 +184,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelAudio, nil
 	case "control-center":
 		return PanelControlCenter, nil
+	case "network":
+		return PanelNetwork, nil
 	default:
 		return 0, fmt.Errorf("unknown panel")
 	}
@@ -474,6 +477,8 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelAudio, true
 	case "control-center":
 		return PanelControlCenter, true
+	case "network":
+		return PanelNetwork, true
 	default:
 		return 0, false
 	}
@@ -1870,6 +1875,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		return audioTree(r, h)
 	case PanelControlCenter:
 		return controlCentreTree(r, h)
+	case PanelNetwork:
+		return networkTree(r, h)
 	default:
 		return placeholderTree()
 	}
@@ -1903,6 +1910,10 @@ func panelTargetSize(id PanelID) ui.Rect {
 		return audioPanelSize(1920, 1080)
 	case PanelControlCenter:
 		return ui.Rect{W: 700, H: 564}
+	case PanelNetwork:
+		// Fixed rather than a fraction of the output: the content is a list of
+		// SSID rows, whose comfortable width does not scale with the screen.
+		return ui.Rect{W: 460, H: 560}
 	default:
 		return ui.Rect{W: 280, H: 200}
 	}
