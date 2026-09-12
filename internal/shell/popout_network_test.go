@@ -4,10 +4,31 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
+
+// Panel configure, render and handle all run with Registry.mu held. A write
+// that took a bus round trip on that path would stall every bar on the
+// machine, so every network write goes through scheduleControl, which runs it
+// on its own goroutine before re-taking the lock to publish.
+func TestNetworkWriteNeverRunsUnderRegistryLock(t *testing.T) {
+	r := &Registry{}
+	h := &PanelHost{id: PanelNetwork, networkTab: "wifi"}
+	done := make(chan struct{})
+
+	r.mu.Lock() // held exactly as the panel paths hold it
+	r.scheduleControl(h, func() error { close(done); return nil })
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		r.mu.Unlock()
+		t.Fatal("the control never ran while the lock was held; it is not off-owner")
+	}
+	r.mu.Unlock()
+}
 
 // A bare PanelHost carries the zero Metrics, so a tree test must build against
 // the package's standardMetrics() rather than h.metrics(), which would assert
