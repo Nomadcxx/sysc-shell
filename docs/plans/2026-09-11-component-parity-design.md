@@ -88,17 +88,31 @@ bar alone; it belongs to the control layer too, per shape.
 
 ### D3 — Padding comes from the margin ladder, per surface
 
-There is no padding constant. Measured across nine cards and three panels:
+There is no padding constant. Measured across nine cards, **seven panels**, a
+settings pane and the launcher delegate:
 
 | Surface | Inset | Gap between children |
 |---|---|---|
-| Panel outer column | `marginL` (13) | — |
-| Control-centre cards | `marginL` (13) | `marginL` (13) |
-| Audio panel cards | `marginL` outer | `marginM` (9) |
-| `NBox` card interior | `marginM` (9) | `marginM` (9) |
-| Dense card (`SystemMonitorCard`) | `marginS` (6) | — |
+| **Every panel's outer column** | `marginL` (13), height reserve `margin2L` (26) | — |
+| Panel inter-card gap | — | **`marginM` (9)** — Clock, SystemStats, NotificationHistory, Wallpaper, Audio |
+| Control centre inter-card gap | — | `marginL` (13) — **the lone exception** |
+| `NBox` card interior | `marginM` (9) | `marginM` (9), height reserve `margin2M` (18) |
+| Dense card (`SystemMonitorCard`, stat cards) | `marginS` (6) | `marginXS` (4) |
+| Large header card (`WallpaperPanel`) | `marginL` (13) | `marginM` (9) |
 | `WeatherCard` | `marginXL` (18) | `marginM` (9) |
-| `NTabBar` inside a panel | `marginS` (6) | — |
+| `NTabBar` inside a panel | `marginS` (6) | `marginXS` (4) |
+| **Settings pane** (`VolumesSubTab`) | column at `marginL` (13) | groups `marginS` (6), label stacks `marginXXS` (2) |
+| Launcher list delegate | `marginM` (9), or `marginXS` (4) at compact density | same |
+
+Two corrections to this design's own first draft. The `marginM` inter-card gap is
+**dominant**, not one of two equal variants — the control centre is the single
+outlier across seven panels. And the outer inset is invariant: every panel read
+uses `marginL` with a `margin2L` height reserve, without exception.
+
+One structural finding worth more than the numbers: **a settings pane uses no
+cards at all.** `VolumesSubTab` is a plain column of `NToggle` and `NLabel` rows.
+Our settings panel wraps its rows in card chrome, so matching v4 there is a
+composition change, not a padding change — and it is not in this design's scope.
 
 `NBox` itself defines **no** padding — it is a `Rectangle` with a radius, a fill
 and an optional border. Padding is the consumer's choice from the ladder.
@@ -161,17 +175,35 @@ Per-package named tests only. **Do not run `go test ./...` or `-race`.**
 
 ### D8 — Open risk: what is still unread
 
-**175 of 178 composition modules are unread**, including every settings pane,
-the launcher, notifications and the lock screen. `SettingsPanel.qml` delegates
-almost all geometry to children this design has not opened; its own file carries
-two geometry lines.
+**Updated 2026-09-12.** The first draft said "175 of 178 composition modules are
+unread". Eleven have since been read, chosen as the ones we actually build:
+`ControlCenterPanel`, `AudioPanel`, `ClockPanel`, `SystemStatsPanel`,
+`NotificationHistoryPanel`, `WallpaperPanel`, `SettingsPanel`, `SettingsContent`,
+`VolumesSubTab`, `Launcher`, `LauncherListDelegate` — plus all nine cards and
+sixteen components.
 
-Panel dimensions also diverge and are **not** reconciled here: v4's control
-centre is `round(440 × scale)` and its settings panel `840 × 910`, against our
-700×564 and 900×620. Our panel sizes are set by their own approved designs, and
-this design does not overrule them.
+What remains unread is now mostly what we **do not** build: the lock screen, the
+dock, desktop widgets, and the 130 per-widget settings dialogs. That is a
+different kind of residual from the first draft's, and a much less alarming one.
 
-So: the ladders are sourced, the control system is sourced, the card rhythms are
-sourced from all nine cards, and per-pane composition is not. Parity at the
-"near-indistinguishable" level is achievable for chrome and controls; for the
-interior of any given pane it remains inferred.
+Two gaps survive and are not closed by this design.
+
+**Panel dimensions diverge and are deliberately not reconciled.** v4's standard
+panel is `round(440 × scale)` — control centre, system stats, notification
+history all share it — against our 640, 416 and 700. Wallpaper is 800×650 against
+our 980×1100; settings 840×910 against our 900×620; the launcher is a 0.25 width
+ratio at 600 tall. Our panel sizes come from their own approved designs and this
+design does not overrule them, but anyone expecting side-by-side parity should
+know the surfaces are different sizes before they start.
+
+**Settings composition differs structurally.** A v4 settings pane uses no cards —
+`VolumesSubTab` is a plain column of `NToggle` and `NLabel` rows at `marginL`,
+grouped at `marginS`. Ours wraps rows in card chrome. Matching that is a
+composition change owned by the chrome catalogue, not a padding change, and it is
+out of scope here.
+
+So: ladders sourced, control system sourced, card rhythms sourced from all nine
+cards, panel rhythm sourced from seven panels, and the panes we build sourced.
+Near-indistinguishable is now reachable for chrome, controls, cards and panel
+rhythm. It is **not** reachable for panel dimensions or settings composition
+without separate decisions that this design deliberately leaves open.

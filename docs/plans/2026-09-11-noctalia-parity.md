@@ -8,7 +8,13 @@
 
 **Tech Stack:** Go 1.26.4, no new dependencies.
 
-**Spec:** `docs/plans/2026-09-11-noctalia-parity-design.md` and `docs/plans/2026-09-11-token-conformance-design.md`
+**Spec:** three designs execute through this one plan —
+`docs/plans/2026-09-11-noctalia-parity-design.md` (the ladders),
+`docs/plans/2026-09-11-token-conformance-design.md` (Task 1), and
+`docs/plans/2026-09-11-component-parity-design.md` (Tasks 5A and 5B). Read all
+three before starting; the component-parity design also **corrects** the parity
+design's D4, so reading only the latter will give you a padding value that does
+not exist in the reference.
 
 ## Global Constraints
 
@@ -390,6 +396,186 @@ git commit -m "feat(theme): re-base density on five odd-height rows"
 
 ---
 
+### Task 5A: One master control dimension
+
+Implements `2026-09-11-component-parity-design.md` D1 and D2. That design has no
+plan of its own; it executes here, because it changes `Metrics` and control
+sizing — the same files this plan already touches.
+
+**Files:**
+- Modify: `internal/theme/profile.go` (`Metrics`, `metrics`)
+- Test: `internal/theme/profile_test.go`
+
+**Interfaces:**
+- Produces: `Metrics.BaseWidget int`, `theme.ToOdd(int) int`, `theme.ToEven(int) int`, and control sizes derived rather than tabulated.
+
+- [ ] **Step 1: Write the failing tests**
+
+```go
+func TestControlSizesDeriveFromTheBaseWidget(t *testing.T) {
+	t.Parallel()
+	// The reference has one master control dimension and expresses every
+	// control as a ratio of it. A table of absolutes cannot stay in
+	// proportion when the base moves, which is the whole reason to derive.
+	m, _ := MetricsFor(DensityDefault)
+	if m.BaseWidget != 33 {
+		t.Fatalf("base widget = %d, want 33", m.BaseWidget)
+	}
+	for _, tc := range []struct {
+		name  string
+		got   int
+		ratio float64
+		odd   bool
+	}{
+		{"icon button", m.IconButton, 1.0, true},
+		{"checkbox", m.Checkbox, 0.7, true},
+		{"toggle base", m.ToggleBase, 0.8, false},
+		{"slider knob", m.SliderKnob, 0.7, false},
+		{"input height", m.InputHeight, 1.1, false},
+		{"tab height", m.TabHeight, 1.0, false},
+	} {
+		want := int(float64(m.BaseWidget)*tc.ratio + 0.5)
+		if tc.odd {
+			want = ToOdd(want)
+		} else {
+			want = ToEven(want)
+		}
+		if tc.got != want {
+			t.Errorf("%s = %d, want %d (base %d × %.2f)", tc.name, tc.got, want, m.BaseWidget, tc.ratio)
+		}
+	}
+}
+
+func TestOddAndEvenForcingIsPerShape(t *testing.T) {
+	t.Parallel()
+	// Icon buttons and checkboxes force odd so a centred glyph lands on a
+	// pixel row. Toggles and sliders force even so the two-sided inset stays
+	// symmetric. This is deliberate in the reference, not incidental.
+	m, _ := MetricsFor(DensityDefault)
+	for name, v := range map[string]int{"icon button": m.IconButton, "checkbox": m.Checkbox} {
+		if v%2 == 0 {
+			t.Errorf("%s = %d, want odd", name, v)
+		}
+	}
+	for name, v := range map[string]int{"toggle base": m.ToggleBase, "slider knob": m.SliderKnob} {
+		if v%2 != 0 {
+			t.Errorf("%s = %d, want even", name, v)
+		}
+	}
+}
+
+func TestControlsStayInProportionWhenTheBaseMoves(t *testing.T) {
+	t.Parallel()
+	// The property that a table of absolutes cannot hold.
+	small, _ := MetricsFor(DensityCompact)
+	large, _ := MetricsFor(DensitySpacious)
+	if !(small.IconButton < large.IconButton && small.InputHeight < large.InputHeight) {
+		t.Error("control sizes did not track the base width across densities")
+	}
+}
+```
+
+- [ ] **Step 2: Run and watch them fail**
+
+Run: `go test ./internal/theme -run 'TestControlSizes|TestOddAndEven' -v`
+Expected: FAIL — `m.BaseWidget undefined`.
+
+- [ ] **Step 3: Add the base and derive**
+
+```go
+// ToOdd and ToEven pin a dimension to a parity. An odd box has a true centre
+// row, so a centred glyph lands on a pixel; an even box gives a symmetric
+// two-sided inset. The reference chooses per shape, and so do we.
+func ToOdd(n int) int  { return n/2*2 + 1 }
+func ToEven(n int) int { return n / 2 * 2 }
+```
+
+Add `BaseWidget` to `Metrics` and derive the control fields from it in the
+`metrics` table rather than writing absolutes. Ratios, from the component design
+D1: icon button 1.0 odd, checkbox 0.7 odd, toggle base 0.8 even, slider knob 0.7
+even, input and combo height 1.1, tab height 1.0, radio 0.625.
+
+Keep `CompactControl` and `StandardControl` as derived aliases while call sites
+migrate, and delete them once nothing reads them.
+
+- [ ] **Step 4: Run and watch them pass**
+
+Run: `go test ./internal/theme -run 'TestControl|TestOddAndEven' -v`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add internal/theme/
+git commit -m "feat(theme): derive control sizes from one base dimension"
+```
+
+---
+
+### Task 5B: Padding resolves to ladder rungs
+
+Implements component-parity D3. Padding is not a constant in the reference; it is
+a rung chosen per surface.
+
+**Files:**
+- Modify: `internal/theme/profile.go` (`Metrics`)
+- Test: `internal/theme/profile_test.go`
+
+- [ ] **Step 1: Write the failing test**
+
+```go
+func TestPaddingResolvesToLadderRungs(t *testing.T) {
+	t.Parallel()
+	// Sourced from nine cards and seven panels: every panel insets at
+	// marginL with a margin2L height reserve; the inter-card gap is marginM
+	// everywhere except the control centre; card interiors are marginM.
+	m, _ := MetricsFor(DensityDefault)
+	rung := func(v int) bool {
+		for _, s := range SpacingScale {
+			if s == v {
+				return true
+			}
+		}
+		return false
+	}
+	for name, v := range map[string]int{
+		"panel padding": m.PanelPadding,
+		"card padding":  m.CardPadding,
+		"card gap":      m.CardGap,
+	} {
+		if !rung(v) {
+			t.Errorf("%s = %d, which is not a rung of %v", name, v, SpacingScale)
+		}
+	}
+	if m.PanelPadding != 13 {
+		t.Errorf("panel padding = %d, want marginL 13", m.PanelPadding)
+	}
+	if m.CardPadding != 9 || m.CardGap != 9 {
+		t.Errorf("card padding/gap = %d/%d, want marginM 9 each", m.CardPadding, m.CardGap)
+	}
+}
+```
+
+- [ ] **Step 2: Run, implement, run**
+
+`PanelPadding` becomes `marginL` (13), `CardPadding` and a new `CardGap` become
+`marginM` (9), at every density — the reference does not vary them by density.
+
+A surface needing a different rhythm names its own rung, which the conformance
+gate permits because a rung is not a literal.
+
+Run: `go test ./internal/theme -run TestPadding -v`
+Expected: PASS.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add internal/theme/
+git commit -m "feat(theme): resolve padding to spacing ladder rungs"
+```
+
+---
+
 ### Task 6: Re-base motion
 
 **Files:**
@@ -658,6 +844,22 @@ git commit -m "feat(theme): complete the reference parity re-base"
 ## Self-Review
 
 **Spec coverage.** Parity D1 spacing → Task 2. D2 two radius ladders → Task 3. D3 type ladder and `Display` → Task 4, with the derived-constant hazard called out. D4 five density rows and `toOdd` → Task 5. D5 motion and re-based chrome recipes → Task 6. D6 role mapping without deletion → Task 8. D7 contrast floor → Task 7, correctly targeting the two test assertions rather than a constant that does not exist. D8 outline split → Task 7 Step 2. D9 opacity floor → deliberately absent; the blur design owns it. D10 borders and shadows → no change, as specified. D11 chrome boundary → no tree restructuring anywhere in this plan. D12 migration → Task 11. D13 testing → every task. D15 risks → Task 11 Step 3 names clipping as the expected failure. Conformance D1–D4 → Tasks 1, 9 and 10. Conformance D5 sequencing → Task 1 is first and red by design.
+
+**Component parity coverage** (added 2026-09-12, when Tasks 5A and 5B were
+inserted). D1 one master control dimension with per-control ratios → Task 5A,
+asserted three ways: the ratios themselves, the per-shape parity, and that
+controls stay in proportion when the base moves — which is the property a table
+of absolutes cannot hold. D2 odd and even forced per shape → Task 5A Step 1's
+second test. D3 padding as ladder rungs → Task 5B, which also **supersedes Task
+5's original padding sentence**; that sentence now carries its own correction
+notice. D4 hero type as an inline multiplier → **not implemented here**: Task 4
+adds the `Display` role, which is a real rung, but the multiplier pattern has no
+consumer in this plan and would be a speculative field. D5 the inverted hero card
+needs no primitive → nothing to do, recorded so a later reader does not go
+looking for the task. D6 stacking's consumer → owned by the stacking design, not
+this plan. D7 testing → Tasks 5A and 5B. D8 residual risks → Task 11 Step 3's
+live gate is where panel-dimension divergence and settings composition will
+actually be seen; neither is reconciled by this plan, deliberately.
 
 **Placeholders.** None. Task 9 is repetitive by nature but states the mapping rule, the exemption idiom and the per-file verification rather than "fix the literals".
 
