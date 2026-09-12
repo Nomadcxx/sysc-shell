@@ -1658,7 +1658,7 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if h.id == PanelMonitor && h.activateMonitor(r, n) {
 		return true
 	}
-	if n.Action == "audio-close" {
+	if n.Action == "audio-close" || n.Action == "network-close" {
 		r.closePanelLocked(h.id)
 		return true
 	}
