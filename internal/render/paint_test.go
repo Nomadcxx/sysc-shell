@@ -389,6 +389,45 @@ func paintTree(t *testing.T, c *Canvas, style Style) *ui.Node {
 	return root
 }
 
+func TestBackdropPaintsBeneathTheRootFill(t *testing.T) {
+	t.Parallel()
+	// The root fill is translucent, so the backdrop must show through it.
+	style := testStyle
+	style.SurfaceOpacity = 0x80
+	style.Backdrop = solid(4, 4, 0xff, 0x00, 0x00, 0xff)
+
+	with := newTestCanvas(t, canvasW, canvasH)
+	paintTree(t, with, style)
+
+	style.Backdrop = nil
+	without := newTestCanvas(t, canvasW, canvasH)
+	paintTree(t, without, style)
+
+	if bytes.Equal(with.Pix, without.Pix) {
+		t.Fatal("the backdrop changed nothing; it is not being composited")
+	}
+}
+
+func TestOpaqueRootHidesTheBackdrop(t *testing.T) {
+	t.Parallel()
+	// The backdrop paints beneath the root fill, so an opaque root covers it
+	// completely. Anything of it surviving means the compositing order is wrong.
+	style := testStyle
+	style.SurfaceOpacity = 0xff
+	style.Backdrop = solid(4, 4, 0xff, 0x00, 0x00, 0xff)
+
+	with := newTestCanvas(t, canvasW, canvasH)
+	paintTree(t, with, style)
+
+	style.Backdrop = nil
+	without := newTestCanvas(t, canvasW, canvasH)
+	paintTree(t, without, style)
+
+	if !bytes.Equal(with.Pix, without.Pix) {
+		t.Error("an opaque root fill must hide the backdrop entirely")
+	}
+}
+
 func TestPaintFillsBackground(t *testing.T) {
 	t.Parallel()
 

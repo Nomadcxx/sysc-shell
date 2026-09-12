@@ -93,6 +93,10 @@ type Style struct {
 	// from 0 to 255. Nested fills composite over the painted root rather
 	// than inheriting it.
 	SurfaceOpacity uint8
+	// Backdrop is a blurred capture of what sat behind this surface when it
+	// opened, held at reduced resolution and scaled during the blit. Nil is
+	// today's paint: an opaque root over whatever the compositor shows.
+	Backdrop *ui.Image
 	// Elevation selects how much of the shadow renderer a floating surface
 	// uses, and Shadow is the colour it casts.
 	Elevation theme.Elevation

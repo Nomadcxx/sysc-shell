@@ -178,6 +178,12 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style) error {
 	// stroke over it. Filling the rim colour and laying a smaller fill on top
 	// left the border as the difference of two quantised silhouettes, which is
 	// why it thinned and broke up around the corners.
+	// The backdrop goes through the same rounded mask the fill uses, so it
+	// stops exactly where the body does and the corners stay transparent. The
+	// translucent root fill then paints over it.
+	if style.Backdrop != nil {
+		blendMaskImage(c, RoundedMask(radius, box.W, box.H), box.X, box.Y, style.Backdrop)
+	}
 	c.FillRounded(box, radius, style.rootFill())
 	if style.Rim.A > 0 {
 		c.StrokeRounded(box, radius, max(style.Scale120.Physical(1), 1), style.Rim)
