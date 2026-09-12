@@ -471,6 +471,25 @@ func TestControlCentreHomeRadialResourcesPreserveSampleState(t *testing.T) {
 	}
 }
 
+func TestControlCentreHomeResourceLabelsFitSystemCard(t *testing.T) {
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme(), place: Placement{Panel: ui.Rect{W: 700, H: 564}}}
+	root := controlCentreTree(&Registry{}, h)
+	measure := func(text string, _ ui.TextAttrs) (int, int) { return len(text) * 8, 16 }
+	if err := ui.Layout(root, ui.Rect{W: 700, H: 564}, measure); err != nil {
+		t.Fatal(err)
+	}
+	for _, label := range []string{"CPU", "Memory"} {
+		n := findNode(root, func(n *ui.Node) bool { return n.Kind == ui.KindText && n.Text == label })
+		if n == nil {
+			t.Fatalf("missing %s resource label", label)
+		}
+		want, _ := measure(label, ui.TextAttrs{})
+		if n.Bounds.W < want {
+			t.Errorf("%s label width = %d, want at least %d", label, n.Bounds.W, want)
+		}
+	}
+}
+
 func TestHomeUsesTheRegistryIdentitySnapshot(t *testing.T) {
 	r := &Registry{controlIdentity: ccIdentity{
 		Name: "Nomad", Account: "nomadx@pony", Uptime: "2 hours",

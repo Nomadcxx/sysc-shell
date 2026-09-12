@@ -20,6 +20,7 @@ import (
 const (
 	ccDash            = "—"
 	ccAvatarSize      = 56
+	ccHomeLeftWidth   = 356
 	ccAccountsIconDir = "/var/lib/AccountsService/icons"
 )
 
@@ -144,15 +145,16 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 		{Kind: ui.KindText, Text: ccWeatherSummary(reading)},
 	})
 	clockWeather.Height = 88
+	resourceWidth := max((ccHomeLeftWidth-2*m.CardPadding-8)/2, 0)
 	sysmon := monitorCard(m, []*ui.Node{
 		monitorCardTitle("System", 0),
 		{Kind: ui.KindRow, Height: 40, Gap: 8, Children: []*ui.Node{
-			ccResourceGroup(snap, "cpu", "CPU", services.Selector{Source: services.SourceCPU}),
-			ccResourceGroup(snap, "memory", "Memory", services.Selector{Source: services.SourceMemory}),
+			ccResourceGroup(snap, "cpu", "CPU", services.Selector{Source: services.SourceCPU}, resourceWidth),
+			ccResourceGroup(snap, "memory", "Memory", services.Selector{Source: services.SourceMemory}, resourceWidth),
 		}},
 	})
 	sysmon.Height = 88
-	left := &ui.Node{Kind: ui.KindColumn, Width: 356, Height: 184, Gap: 8,
+	left := &ui.Node{Kind: ui.KindColumn, Width: ccHomeLeftWidth, Height: 184, Gap: 8,
 		Children: []*ui.Node{clockWeather, sysmon}}
 
 	battery := ccDash
@@ -239,7 +241,7 @@ func ccQuickAccessButton(width int, icon, label, action string, selected bool) *
 	return n
 }
 
-func ccResourceGroup(snap services.Snapshot, id, label string, sel services.Selector) *ui.Node {
+func ccResourceGroup(snap services.Snapshot, id, label string, sel services.Selector, width int) *ui.Node {
 	value, ok := snap.Fraction(sel)
 	if !ok {
 		value = 0
@@ -247,7 +249,7 @@ func ccResourceGroup(snap services.Snapshot, id, label string, sel services.Sele
 	icon, _ := render.GaugeIconName(id)
 	return &ui.Node{Kind: ui.KindRow, Height: 40, Gap: 8, Children: []*ui.Node{
 		{Kind: ui.KindRadialGauge, Width: 40, Height: 40, Icon: icon, Value: value, Absent: !ok},
-		{Kind: ui.KindColumn, Gap: 2, Children: []*ui.Node{
+		{Kind: ui.KindColumn, Width: max(width-40-8, 0), Gap: 2, Children: []*ui.Node{
 			{Kind: ui.KindText, Text: label, TextRole: theme.RoleCaption},
 			{Kind: ui.KindText, Text: ccPercent(int(value*100+0.5), ok), Tabular: true},
 		}},
