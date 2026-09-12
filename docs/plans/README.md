@@ -430,6 +430,7 @@ and is the first implementation task.
 |---|---|---|
 | 7 (after launcher) | Clipboard, network/BT/MPRIS, control center, desktop widgets | Wallpaper has `2026-09-03-wallpaper-design.md`. Do not fold the rest into the launcher slice. |
 | 8 | Rendering qualification | Blurred panels are measured and resolved in favour of `wl_shm` by `2026-09-11-panel-backdrop-blur-design.md`. The other named cases — animation frame time, image-heavy grids, CPU/power — still require evidence. |
+| — | **Template panel** | Owner-requested 2026-09-12, to follow the parity tranche. One shipped surface composing every primitive the shell owns, setting out what a default panel looks like. **Four committed documents already name it as a planned consumer** — the stacking design D5/D8/D9, the stacking plan's Global Constraints, Task 5 and Self-Review, and the parity plan's D4 coverage note — so those gates no longer revert a primitive for want of a production consumer. It also serves Milestone 6's undertaking to version the vocabulary "proven by built-in widgets", which nothing currently proves: `internal/ui` carries 22 kinds against `plugin/v1`'s 10. Not yet designed; this row exists so the forward references do not dangle. |
 
 ## Sibling repositories
 

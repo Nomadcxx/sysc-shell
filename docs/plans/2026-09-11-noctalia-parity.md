@@ -852,9 +852,14 @@ controls stay in proportion when the base moves — which is the property a tabl
 of absolutes cannot hold. D2 odd and even forced per shape → Task 5A Step 1's
 second test. D3 padding as ladder rungs → Task 5B, which also **supersedes Task
 5's original padding sentence**; that sentence now carries its own correction
-notice. D4 hero type as an inline multiplier → **not implemented here**: Task 4
-adds the `Display` role, which is a real rung, but the multiplier pattern has no
-consumer in this plan and would be a speculative field. D5 the inverted hero card
+notice. D4 hero type as an inline multiplier → **still not implemented in this plan, but
+the reason has changed** (amended 2026-09-12). It was recorded as speculative
+because nothing consumed it. A template panel is now planned once this tranche
+lands, and a hero treatment is exactly what such a surface demonstrates — the
+reference uses `fontSizeXXXL × 1.5` for a calendar day and `× 1.75` for a
+temperature. So the multiplier is **deferred to the template slice, which owns
+it**, not rejected. Task 4 still adds only the `Display` role, which is a real
+rung and stands on its own; do not delete it for lack of a consumer. D5 the inverted hero card
 needs no primitive → nothing to do, recorded so a later reader does not go
 looking for the task. D6 stacking's consumer → owned by the stacking design, not
 this plan. D7 testing → Tasks 5A and 5B. D8 residual risks → Task 11 Step 3's

@@ -18,7 +18,7 @@
 - `go test ./internal/shell` is safe to run directly — `runArgvDefault` (`popout_session.go:270`) refuses under `testing.Testing()`.
 - Go only. No CGO, no new module.
 - **`kindcoverage_test.go` requires every `Kind` to be measurable and paintable.** A kind that exists without both fails the package. Task 1 is therefore end-to-end by necessity, not by preference.
-- AGENTS.md: "Add UI primitives only for an approved shell component. Do not build a general application toolkit." Task 5 is the consumer gate — if the **media card** does not need this, delete the kind rather than keep it. (Corrected 2026-09-11: this originally named the weather card, which uses a GPU shader over its own content and needs no stack.)
+- AGENTS.md: "Add UI primitives only for an approved shell component. Do not build a general application toolkit." Task 5 is the consumer gate. **Amended 2026-09-12:** two approved consumers are planned — the media card, and the **template panel** that follows this tranche. Revert only if neither will use it; a primitive waiting on a named, planned consumer is not an orphan. (Also corrected 2026-09-11: this originally named the weather card, which uses a GPU shader over its own content and needs no stack.)
 - **Sequencing changed 2026-09-11: this slice now follows the media slice**, because its only real consumer is the media card. The blur plan's Task 4 dependency is unchanged.
 - **Depends on the blur plan's Task 4**, which adds `paintImageSmooth`. Do not start Task 4 here until that has landed on `main`.
 - **The `commit-msg` hook rejects these substrings, case-insensitively:** `claude`, `anthropic`, `chatgpt`, `openai`, `copilot`, `cursor`, `cody`, `tabnine`, `codex`, `gemini`, `bard`, `gpt-[0-9]`, `llm`, `ai assistant`, `bot`, `agent`. Ordinary words trip it — `both` contains `bot`. Screen every message:
@@ -449,9 +449,18 @@ weather card does not need a stack.
 The real consumer is `Modules/Cards/MediaCard.qml`: a full-bleed `Image` at
 `PreserveAspectCrop`, a scrim at `opacity: 0.65`, then content at `0.8`.
 
-**This reorders the tranche: stacking now follows the media slice.** The gate is
-otherwise unchanged — one real consumer, or **revert Tasks 1 to 4** rather than
-leaving an unused primitive behind.
+**This reorders the tranche: stacking now follows the media slice.**
+
+**Gate amended 2026-09-12 — do not revert on the media card alone.** This task
+previously said to revert Tasks 1 to 4 if the media card did not need a stack.
+That instruction is now wrong and would destroy work: a **template panel** is
+planned once this tranche lands, composing every primitive the shell owns, and it
+is a second approved consumer.
+
+Revert only if **neither** the media card nor the template will use it. A
+primitive waiting on a named, planned consumer is not an orphan — and the template
+directly serves Milestone 6's undertaking to version the vocabulary "proven by
+built-in widgets", which nothing currently proves.
 
 One nuance worth knowing before sequencing: the media card falls back to a cached
 **wallpaper thumbnail** when no track art exists, and this shell already owns
@@ -472,9 +481,19 @@ ls internal/services/media.go 2>/dev/null && echo "service present" || echo "ser
 grep -rn "KindStack" internal/shell/*.go | grep -v _test
 ```
 
-If the service is absent, **stop here.** Tasks 1 to 4 built a primitive with no
-consumer, which AGENTS.md forbids keeping. Either the media slice lands first, or
-Step 2's fallback applies, or this slice reverts.
+If the service is absent, you have three live options, and **reverting is the
+last of them** (amended 2026-09-12):
+
+1. Build the card on the **wallpaper-thumbnail fallback** from Step 2. The
+   reference card does exactly this when no track art exists, and this shell
+   already owns wallpaper thumbnails, so the consumer is real today.
+2. Leave `KindStack` shipped and unconsumed until either the media slice or the
+   **template panel** lands. Both are planned; a primitive waiting on a named,
+   planned consumer is not an orphan.
+3. Revert Tasks 1 to 4 — only if neither of those will happen.
+
+The earlier version of this step said to stop and revert outright. That was
+written when production panels were the only consumers being counted.
 
 - [ ] **Step 2: Decide, and record the decision**
 
@@ -549,7 +568,7 @@ git commit -m "chore: track the stacking consumer"
 
 ## Self-Review
 
-**Spec coverage.** D1 `KindStack`, children share the content box → Task 1. D2 measure as maximum, explicit height reserved → Task 1 Step 4, asserted in two tests. D3 scrim as a child → Task 3. D4 bilinear backgrounds → Task 4, with the blur-plan dependency stated in Global Constraints and again in the task header. D5 one consumer or delete → Task 5, written as a real gate with a revert branch. D6 damage interaction → deliberately absent: rectangle damage is unadopted by any surface at the end of the smoothness plan, so a stack contributes nothing and there is nothing to implement yet. D7 testing → Tasks 1 to 4. D8 tracker → Task 6. D9 risks: the `kindcoverage` constraint is stated up front and forces Task 1 to be end-to-end; the "layout code that assumes siblings are disjoint" risk is partly answered by Task 2, which pins hit testing.
+**Spec coverage.** D1 `KindStack`, children share the content box → Task 1. D2 measure as maximum, explicit height reserved → Task 1 Step 4, asserted in two tests. D3 scrim as a child → Task 3. D4 bilinear backgrounds → Task 4, with the blur-plan dependency stated in Global Constraints and again in the task header. D5 a real consumer or delete → Task 5, written as a real gate. **Amended 2026-09-12:** the gate now counts two approved consumers, the media card and the forthcoming template panel, with reverting as the last of three options rather than the default. D6 damage interaction → deliberately absent: rectangle damage is unadopted by any surface at the end of the smoothness plan, so a stack contributes nothing and there is nothing to implement yet. D7 testing → Tasks 1 to 4. D8 tracker → Task 6. D9 risks: the `kindcoverage` constraint is stated up front and forces Task 1 to be end-to-end; the "layout code that assumes siblings are disjoint" risk is partly answered by Task 2, which pins hit testing.
 
 **Placeholders.** None. Task 5 Step 2 is a decision point with both branches specified, not a deferral. Two tasks say "use the existing helper" and name the file to read.
 

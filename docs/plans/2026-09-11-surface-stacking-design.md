@@ -127,7 +127,7 @@ The blur design already introduces a bilinear sampling path for exactly this
 reason (its D5). Both consumers share that path; neither changes
 `paintImage`'s contract for icons.
 
-### D5 — One consumer, or this does not ship
+### D5 — A real consumer, or this does not ship
 
 **Corrected 2026-09-11 — this named the wrong consumer.** It said the weather
 card. Reading `Modules/Cards/WeatherCard.qml` at v4.7.7 shows its layering is a
@@ -141,10 +141,27 @@ The real consumer is `Modules/Cards/MediaCard.qml`: an `Image` at
 track art or — when there is none — a cached wallpaper thumbnail, so it always
 has a background; then a scrim at `opacity: 0.65`; then content at `0.8`.
 
-Two consequences. This design now sequences **after** the media slice rather than
-before it. And the gate stands unchanged in spirit: one real consumer, or this
-does not ship. AGENTS.md is explicit that primitives arrive with an approved
-component, not before one.
+This design now sequences **after** the media slice rather than before it.
+
+**Gate amended 2026-09-12.** The original gate read "one real consumer, or this
+does not ship", and it would have deleted `KindStack` if the media card slipped.
+That was too strict, because it counted only production panels as consumers.
+
+A **template panel** is planned once this tranche lands: one shipped surface
+composing every primitive the shell owns, showing what a default panel looks like.
+That surface is a consumer, and an approved one — AGENTS.md requires primitives to
+arrive with an approved shell component, and a shipped template *is* such a
+component. The rule exists to stop speculative building, not to forbid a reference
+surface.
+
+It also serves a commitment the roadmap already carries. Milestone 6 undertakes to
+"version the component vocabulary **proven by built-in widgets**", and today
+nothing proves it: `internal/ui` has 22 kinds against `plugin/v1`'s 10, with no
+surface exercising the difference.
+
+So the gate becomes: **ship it, and the template consumes it.** If neither the
+media card nor the template materialises, revert — but a primitive waiting on a
+named, planned consumer is not an orphan.
 
 See `2026-09-11-component-parity-design.md` D6.
 
@@ -175,9 +192,14 @@ A new issue under the parity work. The primitive itself is blocked on nothing;
 its consumer is the media card, which needs the media service (`sysc-156`, split
 per that design's D8) and the control-centre spine (`sysc-253`).
 
-The dependency is real and worth filing accurately: a primitive whose consumer is
-two issues away is a primitive that sits unused, which is the condition D5 says to
-revert rather than tolerate.
+The dependency is real and worth filing accurately, so `bd ready` does not
+suggest work whose consumer is two issues out.
+
+**Amended 2026-09-12.** This paragraph previously ended by calling an unused
+primitive "the condition D5 says to revert rather than tolerate". D5 no longer
+says that. The template panel that follows this tranche is a second approved
+consumer, so the primitive has somewhere to land even if the media card slips —
+file the dependency accurately, but do not read it as a countdown to reverting.
 
 ### D9 — Open risks
 
@@ -187,11 +209,15 @@ revert rather than tolerate.
 2. `kindcoverage_test.go` requires every kind to be measurable and paintable, so
    a half-added kind fails loudly — good, but it means the kind cannot land
    ahead of its paint case.
-3. If the media card turns out not to need a full-bleed image, D5 says delete
-   this rather than keep it. (Corrected 2026-09-11 — this originally reasoned
-   about the weather card.)
-4. **The consumer now sits behind the media slice.** This design's only real
-   consumer is a card that needs the media service, so landing the primitive
-   first would leave it unused for however long that slice takes. The wallpaper
-   thumbnail fallback is the one path that would let it ship earlier, and D6
-   deliberately does not treat that as sufficient on its own.
+3. If **neither** the media card nor the template panel needs a full-bleed
+   image, D5 says delete this rather than keep it. (Amended 2026-09-12: D5 now
+   counts two approved consumers, so one of them slipping is not grounds on its
+   own. Corrected 2026-09-11: this originally reasoned about the weather card.)
+4. **The nearest consumer sits behind the media slice.** A card that needs the
+   media service means landing the primitive first leaves it unconsumed for
+   however long that slice takes. Two things make that tolerable rather than a
+   countdown to reverting: the wallpaper-thumbnail fallback, which the reference
+   card itself uses when no track art exists and which this shell already owns,
+   and the template panel that follows this tranche. Neither was a stated
+   consumer when this risk was first written — the original text called the
+   media card "this design's only real consumer", which is no longer true.
