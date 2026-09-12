@@ -89,3 +89,62 @@ func TestPaintImageClipsCircleShape(t *testing.T) {
 		t.Fatalf("centre alpha = %d, want opaque", got.A)
 	}
 }
+
+// twoPixelRamp is black beside white, premultiplied in the canvas's order.
+func twoPixelRamp() *ui.Image {
+	return &ui.Image{Width: 2, Height: 1, Stride: 8, Pix: []byte{
+		0, 0, 0, 0xff,
+		0xff, 0xff, 0xff, 0xff,
+	}}
+}
+
+func TestPaintImageSmoothInterpolatesBetweenPixels(t *testing.T) {
+	// A quarter-resolution backdrop scaled up 4x with nearest sampling bands
+	// visibly across a large flat panel. Two source pixels scaled up must
+	// produce intermediate values between them, not a hard step.
+	c := newTestCanvas(t, 16, 1)
+	paintImageSmooth(c, ui.Rect{W: 16, H: 1}, twoPixelRamp())
+
+	var seen int
+	for x := 0; x < 16; x++ {
+		if v := c.Pix[x*4]; v != 0x00 && v != 0xff {
+			seen++
+		}
+	}
+	if seen == 0 {
+		t.Error("no intermediate values; sampling is not bilinear")
+	}
+}
+
+func TestPaintImageKeepsNearestForIcons(t *testing.T) {
+	// paintImage must not change. The icon worker produces the exact size the
+	// node asked for, and resampling there would be a second, worse scaler.
+	c := newTestCanvas(t, 16, 1)
+	paintImage(c, ui.Rect{W: 16, H: 1}, twoPixelRamp())
+	for x := 0; x < 16; x++ {
+		if v := c.Pix[x*4]; v != 0x00 && v != 0xff {
+			t.Fatalf("paintImage interpolated at x=%d (%#x); it must stay nearest", x, v)
+		}
+	}
+}
+
+func TestPaintImageSmoothIgnoresDegenerateRasters(t *testing.T) {
+	c := newTestCanvas(t, 2, 2)
+	before := append([]byte(nil), c.Pix...)
+	for name, img := range map[string]*ui.Image{
+		"nil":        nil,
+		"no pixels":  {Width: 2, Height: 2, Stride: 8},
+		"zero width": {Width: 0, Height: 2, Stride: 8, Pix: make([]byte, 16)},
+		"short":      {Width: 4, Height: 4, Stride: 16, Pix: []byte{1, 2, 3, 4}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			paintImageSmooth(c, ui.Rect{W: 2, H: 2}, img)
+		})
+	}
+	paintImageSmooth(c, ui.Rect{W: 0, H: 0}, twoPixelRamp())
+	for i := range before {
+		if c.Pix[i] != before[i] {
+			t.Fatal("a degenerate raster changed the canvas")
+		}
+	}
+}
