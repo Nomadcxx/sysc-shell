@@ -7,6 +7,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/fractionalscale"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -21,7 +22,11 @@ type AuxSpec struct {
 	Width, Height                                    int32
 	ExclusiveZone                                    int32
 	Keyboard                                         uint32
-	Callbacks                                        HostCallbacks
+	// BlurRegion is the output-logical rect to capture behind this surface
+	// before it is created. Nil disables the backdrop and all of its cost.
+	BlurRegion *ui.Rect
+	BlurRadius int
+	Callbacks  HostCallbacks
 }
 
 // AuxRequest opens (Open != nil), updates (Update != nil), or closes (both nil,
@@ -83,6 +88,17 @@ func (o *owner) openAux(h *OutputHost, spec *AuxSpec) error {
 
 	u := newSurfaceUnit(spec.ID)
 	u.app = spec.Callbacks
+
+	// Before any surface exists. Screencopy captures the composited output, so
+	// a capture taken once this panel or its shield had mapped would blur the
+	// panel into its own backdrop. The shield opens first but paints nothing --
+	// its Render returns immediately, leaving a cleared, fully transparent
+	// buffer -- so it cannot show up in the copy either.
+	if spec.BlurRegion != nil && spec.Callbacks.Backdrop != nil {
+		if shot := o.captureRegion(h.proxy, *spec.BlurRegion); shot != nil {
+			spec.Callbacks.Backdrop(render.Blur(shot, backdropDownsample, spec.BlurRadius))
+		}
+	}
 
 	surface, err := o.compositor.CreateSurface()
 	if err != nil {

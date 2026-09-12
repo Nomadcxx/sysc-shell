@@ -82,11 +82,15 @@ type PanelHost struct {
 	themeFrom  Theme
 	text       *render.TextRenderer
 	fontFamily string
-	logicalW   int
-	logicalH   int
-	scale120   int
-	shift      bool
-	pressed    *ui.Node
+	// backdrop is the blurred capture of whatever sat behind this panel,
+	// taken before either of its surfaces existed. Nil means no blur, and the
+	// panel then paints over whatever the compositor shows, as it always has.
+	backdrop *ui.Image
+	logicalW int
+	logicalH int
+	scale120 int
+	shift    bool
+	pressed  *ui.Node
 	// pointer is the resolved hover/press state, kept as stable keys so it
 	// survives the tree rebuilds that replace every node.
 	pointer        interaction
@@ -767,6 +771,14 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	if h.place.BarEdge == "bottom" {
 		anchor = uint32(layershell.ZwlrLayerSurfaceV1AnchorBottom | layershell.ZwlrLayerSurfaceV1AnchorLeft)
 	}
+	// Where the panel's body will land on the output, in the same logical
+	// coordinates the capture takes. It is computed before the fillet shifts
+	// the surface left, because the body sits inset by exactly that much inside
+	// the surface, so the two cancel.
+	region := ui.Rect{X: m.Left, Y: m.Top, W: h.place.Panel.W, H: h.place.Panel.H}
+	if h.place.BarEdge == "bottom" {
+		region.Y = h.place.Output.H - m.Bottom - h.place.Panel.H
+	}
 	fillet := h.filletMargin()
 	if fillet > 0 {
 		m.Left -= fillet
@@ -776,6 +788,12 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 		// ponytail: omit the hint for fillet-expanded surfaces; add a body-aware
 		// opaque-region API only if compositor profiling shows this matters.
 		opaque = false
+	}
+	// Nil disables the capture entirely, so a shell with blur off pays none of
+	// its cost rather than capturing and discarding.
+	var blurRegion *ui.Rect
+	if r.cfg.Theme.BlurBehind {
+		blurRegion = &region
 	}
 	return &wayland.AuxSpec{
 		ID:            panelSurfaceID(h.id),
@@ -790,7 +808,16 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 		Height:        int32(h.place.Panel.H),
 		ExclusiveZone: -1,
 		Keyboard:      keyboardExclusive,
+		BlurRegion:    blurRegion,
+		BlurRadius:    r.cfg.Theme.BlurRadius,
 		Callbacks: wayland.HostCallbacks{
+			// Delivered from the Wayland goroutine before the surface exists,
+			// so it takes the registry lock exactly as Render does.
+			Backdrop: func(img *ui.Image) {
+				r.mu.Lock()
+				defer r.mu.Unlock()
+				h.backdrop = img
+			},
 			OpaqueBackground: opaque,
 			Radius:           h.theme.Radius,
 			Configure:        h.configureLocking(r),
@@ -967,6 +994,7 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	if !h.place.CenterY {
 		style.AttachEdge = h.place.BarEdge
 	}
+	style.Backdrop = h.backdrop
 	page, viewport, pageProgress, pageOffset := h.controlCentrePageVisual()
 	if page != nil && pageOffset != 0 {
 		offsetNodeY(page, pageOffset)
