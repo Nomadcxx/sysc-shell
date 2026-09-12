@@ -1,6 +1,6 @@
 # Design and Plan Register
 
-Last updated: 2026-09-11.
+Last updated: 2026-09-13.
 
 Every design, plan, and handover this project has produced, with where it lives and whether it is still
 live. Add a row here in the same commit that adds a document. A document that is not in this register is
@@ -415,8 +415,9 @@ widgets) are still unordered.
 | `2026-09-08-live-shell-correction.md` | plan | Eight lean slices implementing and live-testing the approved correction across the existing shell owners and `sysc-metrics`. |
 | `2026-09-11-shell-surface-polish-execution-handover.md` | execution-handover | Commissions the accepted monitor table's final visual pass: hidden process scrollbar, antialiased rounded chrome, restrained theme-derived button gradients, truthful attached-panel transparency, and one bar/panel root colour. Uses `sysc-121` and `sysc-54`. |
 | `2026-09-06-connectivity-and-media-prior-art.md` | assessment | Noctalia and DMS division of service, bar widget and page for network, bluetooth and media (`sysc-155`/`156`/`157`). The service is a peer of the shell, not part of the control centre; the standalone widget carries no device picker; `network` is already bound to the throughput metric. |
-| `2026-09-11-network-panel-design.md` | design | `PanelNetwork` (`sysc-157`): Wi-Fi and Ethernet tabs on one 460x560 surface, Direction B status-first composition, event-driven NetworkManager service over pinned `Wifx/gonetworkmanager/v2 v2.2.0` with only the secret-agent export hand-written on `godbus/v5`, single-slot credential prompts, `wifi` bar widget, masked password field, eight added Material glyphs. D1-D18. Three slices; the `nm-applet` collision is the one open risk. |
-| `2026-09-11-network-panel.md` | plan | Thirteen TDD tasks in three slices for `sysc-157`: pin the binding and fix the tracker, state types and signal bands, pushed service with lease lifecycle, backend over the binding, eight glyphs and the `wifi` widget, panel identity and bar trigger, status-first header, tabs and access-point list, off-owner writes, masked fields, single-slot credential export, password card, live gate. Records the `GOPROXY=off` resolution trap and that the commit hook rejects the substring `agent`. |
+| `2026-09-11-network-panel-design.md` | design | `PanelNetwork` (`sysc-157`): Wi-Fi and Ethernet tabs on one 460x560 surface, Direction B status-first composition, event-driven NetworkManager service over pinned `Wifx/gonetworkmanager/v2 v2.2.0` with only the secret export hand-written on `godbus/v5`, single-slot credential prompts, `wifi` bar widget, masked password field, nine added Material glyphs. D1-D18. Three slices; the `nm-applet` collision is the open risk. |
+| `2026-09-11-network-panel.md` | plan | Thirteen TDD tasks in three slices for `sysc-157`: verify the cached dependency and fix the tracker, state types and signal bands, pushed service with lease lifecycle, backend and pin, nine glyphs and the `wifi` widget, panel identity and bar trigger, status-first header, tabs and access-point list, off-owner writes, masked fields, single-slot credential export, password card, live gate. Records the `GOPROXY=off` resolution trap and that the commit hook rejects the substring `agent`. |
+| `2026-09-13-network-panel-execution-handover.md` | execution-handover | Continue `sysc-157` from branch `feature/network-panel` at `cfe692e`: Tasks 1 to 9 committed, Task 10 dirty in three credential files, then rebase onto current main before the password card and live Niri gate. Records the font-inventory merge rule, credential lifetime invariants, `nm-applet` collision, `sysc-254`, and the unresolved Down/Up figures. |
 
 ## Panel backdrop blur (Milestone 8 evidence)
 
