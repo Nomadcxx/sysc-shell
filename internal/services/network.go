@@ -106,14 +106,25 @@ type Network struct {
 	stop    chan struct{}
 	wake    chan struct{}
 	changes chan NetworkState
+
+	// secrets holds the one in-flight passphrase prompt. It is always
+	// non-nil: the panel calls CancelSecret on close whether or not a prompt
+	// was ever opened.
+	secrets    *secretSlot
+	secretReqs chan SecretRequest
+	// closeSecrets unregisters and unexports the process-wide credential
+	// holder. Close clears it before calling it so repeated shutdown is safe.
+	closeSecrets func()
 }
 
 func NewNetwork(b backend) *Network {
 	return &Network{
-		be:      b,
-		ok:      b != nil,
-		changes: make(chan NetworkState, 1),
-		wake:    make(chan struct{}, 1),
+		be:         b,
+		ok:         b != nil,
+		changes:    make(chan NetworkState, 1),
+		wake:       make(chan struct{}, 1),
+		secrets:    newSecretSlot(),
+		secretReqs: make(chan SecretRequest, 1),
 	}
 }
 
@@ -244,13 +255,19 @@ func (n *Network) stopIfUnusedLocked() {
 
 // Close drops every lease and ends the subscription.
 func (n *Network) Close() {
+	n.CancelSecret()
 	n.mu.Lock()
 	for _, l := range n.leases.clear() {
 		l.network = nil
 	}
 	n.stopIfUnusedLocked()
 	be := n.be
+	closeSecrets := n.closeSecrets
+	n.closeSecrets = nil
 	n.mu.Unlock()
+	if closeSecrets != nil {
+		closeSecrets()
+	}
 	if be != nil {
 		_ = be.Close()
 	}
@@ -273,7 +290,13 @@ func NewSystemNetwork() *Network {
 		n.ok = false
 		return n
 	}
-	return NewNetwork(be)
+	n := NewNetwork(be)
+	if err := n.startSecrets(startSystemSecretExport); err != nil {
+		// A partial service would let secured activation wait for a prompt that
+		// can never arrive. Fail closed until the export can be registered.
+		n.ok = false
+	}
+	return n
 }
 
 // unavailableBackend stands in when NetworkManager is not reachable. It is

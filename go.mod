@@ -15,11 +15,11 @@ require (
 	github.com/Nomadcxx/sysc-metrics v0.4.0
 	github.com/Nomadcxx/sysc-notify v0.1.0-rc.3
 	github.com/Nomadcxx/sysc-tray v0.1.0-rc.1
+	github.com/godbus/dbus/v5 v5.2.2
 	github.com/junegunn/fzf v0.74.3
 )
 
 require (
-	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/junegunn/go-shellwords v0.0.0-20250127100254-2aa3b3277741 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
