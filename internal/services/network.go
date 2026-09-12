@@ -135,6 +135,16 @@ func (n *Network) CachedState() NetworkState {
 	return n.last
 }
 
+// CachedAccessPoints returns the last scan without touching the bus.
+//
+// The panel tree is built under Registry.mu and on the Wayland owner, where
+// I/O is forbidden, so the tree reads this and never AccessPoints().
+func (n *Network) CachedAccessPoints() []AccessPoint {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return slices.Clone(n.aps)
+}
+
 // State reads through to the backend, falling back to the cache on error. It
 // performs I/O and must not be called under a lock.
 func (n *Network) State() NetworkState {

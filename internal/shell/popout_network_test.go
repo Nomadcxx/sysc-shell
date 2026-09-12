@@ -2,6 +2,7 @@ package shell
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/services"
@@ -67,6 +68,29 @@ func hasIcon(n *ui.Node, name string) bool {
 		}
 	}
 	return false
+}
+
+func firstOfKind(n *ui.Node, k ui.Kind) *ui.Node {
+	if n == nil {
+		return nil
+	}
+	if n.Kind == k {
+		return n
+	}
+	for _, c := range n.Children {
+		if got := firstOfKind(c, k); got != nil {
+			return got
+		}
+	}
+	return nil
+}
+
+func sampleAPs() []services.AccessPoint {
+	return []services.AccessPoint{
+		{SSID: "LukeAP", Strength: 92, Secured: true, Saved: true, Active: true},
+		{SSID: "Orac 15A", Strength: 74, Secured: true, Saved: true},
+		{SSID: "NETGEAR-Guest", Strength: 41},
+	}
 }
 
 func TestPanelNetworkTargetSizeAndDefaultTab(t *testing.T) {
@@ -146,5 +170,87 @@ func TestHeaderOmitsTheRadioToggleOnEthernet(t *testing.T) {
 	walk(card)
 	if toggles != 0 {
 		t.Errorf("ethernet header carries %d toggle(s); the wired link has no radio", toggles)
+	}
+}
+
+func TestNetworkTabsAreTwoSegmentsWithWifiSelected(t *testing.T) {
+	tabs := networkTabs(&PanelHost{networkTab: "wifi"}, standardMetrics())
+	seg := firstOfKind(tabs, ui.KindSegmented)
+	if seg == nil {
+		t.Fatal("no segmented control in the tabs row")
+	}
+	if len(seg.Children) != 2 {
+		t.Fatalf("segments = %d, want 2", len(seg.Children))
+	}
+	if seg.Children[0].State&ui.StateSelected == 0 {
+		t.Error("Wi-Fi must be the selected segment by default")
+	}
+	if seg.Children[1].State&ui.StateSelected != 0 {
+		t.Error("Ethernet must not be selected while the tab is wifi")
+	}
+}
+
+// D9: the status block owns the filled highlight. The connected row is marked
+// with a trailing check alone, so the panel has one focal point rather than
+// stating the same fact twice with equal weight.
+func TestConnectedRowCarriesCheckWithoutFilledHighlight(t *testing.T) {
+	tree := networkWifiTree(sampleAPs(), services.NetworkState{WirelessEnabled: true}, &PanelHost{networkTab: "wifi"}, standardMetrics())
+	row := findRowBySSID(t, tree, "LukeAP")
+	if !hasIcon(row, "check") {
+		t.Error("the active row must carry a trailing check")
+	}
+	if row.Fill == ui.FillAccent {
+		t.Error("the filled highlight belongs to the status block, not the row")
+	}
+}
+
+// A secured network must be visibly secured before it is tapped: that is what
+// tells the user a password prompt is coming.
+func TestSecuredRowCarriesTheLockGlyph(t *testing.T) {
+	tree := networkWifiTree(sampleAPs(), services.NetworkState{WirelessEnabled: true}, &PanelHost{networkTab: "wifi"}, standardMetrics())
+	if !hasIcon(findRowBySSID(t, tree, "Orac 15A"), "lock") {
+		t.Error("a secured network must show the lock glyph")
+	}
+	if hasIcon(findRowBySSID(t, tree, "NETGEAR-Guest"), "lock") {
+		t.Error("an open network must not show the lock glyph")
+	}
+}
+
+// Ordering is the service's job. The panel must not re-sort, or the two would
+// drift and the list would reorder under the pointer.
+func TestWifiListPreservesServiceOrder(t *testing.T) {
+	tree := networkWifiTree(sampleAPs(), services.NetworkState{WirelessEnabled: true}, &PanelHost{networkTab: "wifi"}, standardMetrics())
+	texts := collectText(tree)
+	iLuke := slices.Index(texts, "LukeAP")
+	iOrac := slices.Index(texts, "Orac 15A")
+	iGuest := slices.Index(texts, "NETGEAR-Guest")
+	if iLuke < 0 || iOrac < 0 || iGuest < 0 {
+		t.Fatalf("a row is missing: %v", texts)
+	}
+	if !(iLuke < iOrac && iOrac < iGuest) {
+		t.Errorf("rows reordered: LukeAP=%d Orac=%d Guest=%d", iLuke, iOrac, iGuest)
+	}
+}
+
+// Radio off is not an empty list: the list would say "no networks here", which
+// is a different and wrong claim.
+func TestRadioOffShowsAnOffStateNotAnEmptyList(t *testing.T) {
+	tree := networkWifiTree(nil, services.NetworkState{WirelessEnabled: false}, &PanelHost{networkTab: "wifi"}, standardMetrics())
+	texts := collectText(tree)
+	joined := strings.Join(texts, "|")
+	if !strings.Contains(strings.ToLower(joined), "off") {
+		t.Errorf("radio-off state must say so; got %v", texts)
+	}
+}
+
+func TestEthernetTabShowsTheWiredInterface(t *testing.T) {
+	st := services.NetworkState{Kind: services.ConnWired, Connected: true, Interface: "enp7s0", IPv4: "192.168.1.24"}
+	tree := networkEthernetTree(st, standardMetrics())
+	texts := collectText(tree)
+	if !slices.Contains(texts, "enp7s0") {
+		t.Errorf("ethernet tab must name the interface; got %v", texts)
+	}
+	if !hasIcon(tree, "lan") {
+		t.Error("ethernet tab must carry the lan glyph")
 	}
 }

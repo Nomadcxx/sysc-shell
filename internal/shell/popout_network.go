@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"strings"
+
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -11,25 +13,59 @@ import (
 // column's space so the row does not reflow when a value arrives.
 const absent = "—"
 
-// networkTree builds PanelNetwork.
+// networkFigureRowH is the label-over-value row under the header's rule. It is
+// named so the scroll viewport can subtract it without guessing.
+const networkFigureRowH = 34
+
+// networkTree builds PanelNetwork: the status header, the tab row, and
+// whichever tab body is selected.
 //
 // Wi-Fi is the default tab, seeded here rather than at open so every entry
 // point agrees: IPC, the bar glyph and a keybind all land on the same page.
+//
+// Every read here is a cached one. This runs under Registry.mu and on the
+// Wayland owner, where a bus round trip would stall every bar on the machine.
 func networkTree(r *Registry, h *PanelHost) *ui.Node {
 	if h.networkTab == "" {
 		h.networkTab = "wifi"
 	}
 	m := h.metrics()
+
 	st := services.NetworkState{}
+	var aps []services.AccessPoint
 	if r != nil && r.network != nil {
 		st = r.network.CachedState()
+		aps = r.network.CachedAccessPoints()
 	}
-	return &ui.Node{
-		Kind: ui.KindColumn, Gap: 12, Padding: m.PanelPadding,
-		Children: []*ui.Node{
-			networkHeaderCard(h, st, m),
-		},
+
+	body := networkWifiTree(aps, st, h, m)
+	if h.networkTab == "ethernet" {
+		body = networkEthernetTree(st, m)
 	}
+
+	panelH := h.place.Panel.H
+	if panelH <= 0 {
+		panelH = panelTargetSize(PanelNetwork).H
+	}
+	viewportH := max(panelH-2*m.PanelPadding-networkHeaderHeight(m)-m.StandardControl-24, 0)
+
+	children := []*ui.Node{
+		networkHeaderCard(h, st, m),
+		networkTabs(h, m),
+		{Kind: ui.KindScroll, Height: viewportH, Children: []*ui.Node{body}},
+	}
+	if h.errLabel != "" {
+		children = append(children, &ui.Node{
+			Kind: ui.KindText, Text: h.errLabel, Tone: ui.ToneError,
+			TextRole: theme.RoleCaption,
+		})
+	}
+	return &ui.Node{Kind: ui.KindColumn, Gap: 12, Padding: m.PanelPadding, Children: children}
+}
+
+func networkHeaderHeight(m theme.Metrics) int {
+	// card padding, the status row, two column gaps, the rule, and the figures
+	return 2*m.CardPadding + m.StandardControl + 12 + 1 + 12 + networkFigureRowH
 }
 
 // networkHeaderCard is Direction B's status block: the active connection is
@@ -77,7 +113,7 @@ func networkHeaderCard(h *PanelHost, st services.NetworkState, m theme.Metrics) 
 	}}
 
 	return &ui.Node{
-		Kind: ui.KindCapsule, Padding: m.CardPadding,
+		Kind: ui.KindCapsule, Padding: m.CardPadding, Height: networkHeaderHeight(m),
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
 		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: 12, Children: []*ui.Node{
 			top,
@@ -87,6 +123,183 @@ func networkHeaderCard(h *PanelHost, st services.NetworkState, m theme.Metrics) 
 	}
 }
 
+// networkTabs is the Wi-Fi / Ethernet segmented control, the same component
+// the audio panel's tabs use. Wi-Fi is first because it is the default.
+func networkTabs(h *PanelHost, m theme.Metrics) *ui.Node {
+	tab := h.networkTab
+	return &ui.Node{
+		Kind: ui.KindSegmented, Key: "network-tab", Gap: 2, Height: m.StandardControl,
+		Children: []*ui.Node{
+			networkSegment(m, "network-tab:wifi", "Wi-Fi", tab != "ethernet"),
+			networkSegment(m, "network-tab:ethernet", "Ethernet", tab == "ethernet"),
+		},
+	}
+}
+
+func networkSegment(m theme.Metrics, action, label string, selected bool) *ui.Node {
+	n := &ui.Node{
+		Kind: ui.KindButton, Action: action, Name: label, Role: "tab",
+		Focusable: true, Height: m.CompactControl,
+		Children: []*ui.Node{{Kind: ui.KindText, Text: label}},
+	}
+	if selected {
+		n.State |= ui.StateSelected
+	}
+	return n
+}
+
+// networkWifiTree is the access-point list, or the one state that explains why
+// there is no list.
+//
+// Rows arrive already sorted by band from the service. The panel does not
+// re-sort: two orderings would drift, and the list would reshuffle under the
+// pointer.
+func networkWifiTree(aps []services.AccessPoint, st services.NetworkState, h *PanelHost, m theme.Metrics) *ui.Node {
+	switch {
+	case !st.WirelessEnabled:
+		// Not an empty list: an empty list claims "no networks here", which is
+		// a different and wrong statement.
+		return networkNotice("Wi-Fi is off", "Turn the radio on to scan for networks.", m)
+	case st.Scanning && len(aps) == 0:
+		return networkNotice("Searching for networks…", orAbsent(st.Interface), m)
+	case len(aps) == 0:
+		return networkNotice("No networks found", "Nothing is in range on this adapter.", m)
+	}
+
+	rows := make([]*ui.Node, 0, len(aps))
+	for _, ap := range aps {
+		rows = append(rows, networkAPRow(ap, m))
+	}
+	return &ui.Node{Kind: ui.KindCapsule, Padding: m.CardPadding,
+		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: 4, Children: rows}},
+	}
+}
+
+// networkAPRow is one access point.
+//
+// The connected row carries a trailing check and no fill: the status block
+// above owns the filled highlight, and two primary-filled elements would
+// state the same fact twice and fight for the same focal point.
+func networkAPRow(ap services.AccessPoint, m theme.Metrics) *ui.Node {
+	children := []*ui.Node{
+		{Kind: ui.KindIcon, Icon: wifiBandGlyph(ap.Strength), IconSize: m.IconNormal},
+		{Kind: ui.KindColumn, Gap: 2, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: ap.SSID},
+			{Kind: ui.KindText, Text: apDetail(ap), TextRole: theme.RoleCaption, Tabular: true},
+		}},
+	}
+	if ap.Secured {
+		children = append(children, &ui.Node{Kind: ui.KindIcon, Icon: "lock", IconSize: m.IconSmall})
+	}
+	if ap.Active {
+		children = append(children, &ui.Node{Kind: ui.KindIcon, Icon: "check", IconSize: m.IconNormal})
+	}
+	return &ui.Node{
+		Kind: ui.KindButton, Action: "network-ap:" + ap.SSID, Name: ap.SSID,
+		Role: "button", Focusable: true, Gap: 12, PinEnd: true,
+		Children: children,
+	}
+}
+
+// apDetail says what tapping the row will do, which is the question the user
+// is actually asking: connect, reconnect, or be asked for a password.
+func apDetail(ap services.AccessPoint) string {
+	state := "Open"
+	switch {
+	case ap.Active:
+		state = "Connected"
+	case ap.Saved:
+		state = "Saved"
+	case ap.Secured:
+		state = "Secured"
+	}
+	return state + "  " + itoa(int(ap.Strength)) + "%"
+}
+
+// networkEthernetTree is the wired tab: one interface, or the absence of one.
+func networkEthernetTree(st services.NetworkState, m theme.Metrics) *ui.Node {
+	if st.Kind != services.ConnWired || !st.Connected {
+		return networkNotice("No wired connection", "Plug in a cable to use this tab.", m)
+	}
+	row := &ui.Node{
+		Kind: ui.KindRow, Gap: 12, PinEnd: true, Padding: m.CardPadding,
+		Children: []*ui.Node{
+			{Kind: ui.KindIcon, Icon: "lan", IconSize: m.IconLarge},
+			{Kind: ui.KindColumn, Gap: 2, Children: []*ui.Node{
+				{Kind: ui.KindText, Text: orAbsent(st.Interface)},
+				{Kind: ui.KindText, Text: "Connected  " + orAbsent(st.IPv4),
+					TextRole: theme.RoleCaption, Tabular: true},
+			}},
+			{Kind: ui.KindIcon, Icon: "check", IconSize: m.IconNormal},
+		},
+	}
+	return &ui.Node{Kind: ui.KindCapsule, Padding: m.CardPadding,
+		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+		Children: []*ui.Node{row},
+	}
+}
+
+// networkNotice is the shared empty state: a title that names the situation
+// and a line that says what to do about it.
+func networkNotice(title, hint string, m theme.Metrics) *ui.Node {
+	return &ui.Node{Kind: ui.KindCapsule, Padding: m.CardPadding,
+		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: 4, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: title, TextRole: theme.RoleLabel},
+			{Kind: ui.KindText, Text: hint, TextRole: theme.RoleCaption},
+		}}},
+	}
+}
+
+// applyNetworkControl consumes the panel's own actions. It returns false for
+// anything it does not own, including "network-close", which the shared close
+// path handles.
+//
+// Every write goes through scheduleControl: this runs under Registry.mu, and a
+// bus round trip taken here would stall the owner.
+func (h *PanelHost) applyNetworkControl(r *Registry, n *ui.Node) bool {
+	switch {
+	case n.Action == "network-tab:wifi":
+		h.networkTab = "wifi"
+		r.rebuildPanel(h)
+		return true
+	case n.Action == "network-tab:ethernet":
+		h.networkTab = "ethernet"
+		r.rebuildPanel(h)
+		return true
+	case n.Action == "network-radio":
+		svc := r.network
+		if svc == nil {
+			return true
+		}
+		want := !svc.CachedState().WirelessEnabled
+		r.scheduleControl(h, func() error { return svc.SetWirelessEnabled(want) })
+		return true
+	}
+
+	ssid, ok := strings.CutPrefix(n.Action, "network-ap:")
+	if !ok {
+		return false
+	}
+	svc := r.network
+	if svc == nil {
+		return true
+	}
+	var target services.AccessPoint
+	for _, ap := range svc.CachedAccessPoints() {
+		if ap.SSID == ssid {
+			target = ap
+			break
+		}
+	}
+	if target.SSID == "" {
+		return true
+	}
+	r.scheduleControl(h, func() error { return svc.Activate(target) })
+	return true
+}
+
 // networkFigures is the three-column row under the separator. Every value is
 // tabular so the row does not jitter as figures change.
 //
@@ -94,7 +307,7 @@ func networkHeaderCard(h *PanelHost, st services.NetworkState, m theme.Metrics) 
 // and inventing a number here would be worse than admitting there is none.
 // Wiring them to the rate source is its own slice.
 func networkFigures(st services.NetworkState) *ui.Node {
-	return &ui.Node{Kind: ui.KindRow, Gap: 8, Children: []*ui.Node{
+	return &ui.Node{Kind: ui.KindRow, Gap: 8, Height: networkFigureRowH, Children: []*ui.Node{
 		networkFigure("IPv4", orAbsent(st.IPv4)),
 		networkFigure("Down", absent),
 		networkFigure("Up", absent),
@@ -161,7 +374,7 @@ func orAbsent(s string) string {
 	return s
 }
 
-// itoa avoids pulling strconv in for one call site.
+// itoa avoids pulling strconv in for two call sites.
 func itoa(v int) string {
 	if v == 0 {
 		return "0"

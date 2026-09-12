@@ -1655,6 +1655,11 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if strings.HasPrefix(n.Action, "audio-") && h.applyAudioControl(r, n) {
 		return true
 	}
+	// applyNetworkControl returns false for "network-close", which the shared
+	// close path below handles.
+	if strings.HasPrefix(n.Action, "network-") && h.applyNetworkControl(r, n) {
+		return true
+	}
 	if h.id == PanelMonitor && h.activateMonitor(r, n) {
 		return true
 	}
