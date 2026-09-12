@@ -248,6 +248,8 @@ process-supervision subsystem.
 
 Keep `wl_shm` when it meets the measured budgets. Add EGL/OpenGL ES only for a named failing case such as animation frame time, large blurred panels, image-heavy grids, or unacceptable CPU/power use.
 
+"Large blurred panels" is measured and resolved in favour of `wl_shm`. On this machine's 3440x1440 output the screencopy readback is 5.7 ms and the reduced-resolution blur 5.3 ms for the worst regular panel: about 11 ms for one open, against a 16.67 ms frame, and paid once per open rather than per frame. The other named cases remain unmeasured.
+
 If GPU work starts:
 
 - retain the UI tree and layout engine;

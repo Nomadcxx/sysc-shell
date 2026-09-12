@@ -192,6 +192,14 @@ Damage is submitted with `wl_surface.damage_buffer` in buffer pixels. `wl_surfac
 units, which are ambiguous under a viewport. The proof starts with full-surface damage. The bar milestone
 adds rectangle damage after tests cover old and new bounds. The project will add EGL/OpenGL ES only when profiling shows that shared-memory rendering misses an agreed frame, CPU, or power budget.
 
+A floating panel may paint over a blurred backdrop. It is captured once, as the panel opens, through
+`zwlr_screencopy_manager_v1`, blurred on the CPU at quarter resolution, and composited beneath the panel's
+root fill through the same rounded mask that fill uses, so the panel's transparent corners stay
+transparent. The cost is paid per open rather than per frame: no timer, no frame loop, and full-buffer
+damage is unchanged. Measured on this machine's 3440x1440 output, the copy takes 5.7 ms and the blur
+5.3 ms for the worst regular panel, about 11 ms for one open against a 16.67 ms frame. It ships off until
+the live gate has run.
+
 No renderer interface will exist while `wl_shm` is the only implementation. The second renderer, if required, will justify the shared contract.
 
 ## Text
@@ -369,7 +377,10 @@ accessibility, popouts, and plugin UI still require deliberate runtime work.
 - Prove that the pinned `sysc-wayland` release handles the required Niri registry, buffer, input, and
   shutdown paths under this long-running workload.
 - Prove that `go-text/typesetting` meets the bar's shaping, font fallback, and memory needs.
-- Measure shared-memory rendering before deciding whether to add EGL/OpenGL ES.
+- Measure shared-memory rendering before deciding whether to add EGL/OpenGL ES. Satisfied **for blurred
+  panels** by `2026-09-11-panel-backdrop-blur-design.md` and the figures measured against it: the copy and
+  the blur together cost about 11 ms per open, inside one 60 Hz frame, so `wl_shm` does not miss the
+  budget there. The gate stays open for animation frame time, image-heavy grids, and CPU/power.
 - Derive the plugin node vocabulary from built-in widgets before versioning it.
 - Choose an SVG strategy for icons. Neither the standard library nor `golang.org/x/image` decodes SVG, and
   freedesktop icon themes are predominantly SVG.
