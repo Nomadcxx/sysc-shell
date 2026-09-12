@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -638,6 +639,9 @@ func TestWeatherPageKeepsTodayAndFourForecastSlots(t *testing.T) {
 	if got := renderText(page.Children[1]); strings.Count(got, ccDash) < 4 {
 		t.Errorf("empty forecast = %q, want a dash in every stable slot", got)
 	}
+	if got := renderText(page.Children[0]); strings.Contains(got, "0.00°") {
+		t.Errorf("unconfigured weather location = %q, want the dash treatment", got)
+	}
 }
 
 func TestWeatherUpdateRebuildsAnOpenControlCentre(t *testing.T) {
@@ -703,6 +707,7 @@ func TestAudioPageHasNoDevicePicker(t *testing.T) {
 
 func TestControlCentreNativePagesFillTheBody(t *testing.T) {
 	r := &Registry{notify: newNotifyState(), now: time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)}
+	r.notify.applyNotify(snap(1))
 	for _, tc := range []struct {
 		section string
 		want    []string
@@ -765,13 +770,13 @@ func TestControlCentreSessionActionRunsWithoutRegistryLock(t *testing.T) {
 	h := &PanelHost{id: PanelControlCenter, section: "power", theme: DefaultTheme()}
 	r.panelHosts[PanelControlCenter] = h
 	unlocked := make(chan bool, 1)
-	r.runArgv = func([]string) error {
+	r.runArgvOutput = func([]string) (string, error) {
 		ok := r.mu.TryLock()
 		if ok {
 			r.mu.Unlock()
 		}
 		unlocked <- ok
-		return nil
+		return "", nil
 	}
 	r.mu.Lock()
 	if !h.activateControlCentre(r, &ui.Node{Action: "session-suspend"}) {
@@ -786,6 +791,123 @@ func TestControlCentreSessionActionRunsWithoutRegistryLock(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("session command did not run")
+	}
+}
+
+func TestControlCentrePowerButtonsDispatchFromPointerInput(t *testing.T) {
+	for _, tc := range []struct {
+		name, action string
+		want         []string
+	}{
+		{name: "session", action: "session-logout", want: []string{"niri", "msg", "action", "spawn", "--", "loginctl", "terminate-session", "self"}},
+		{name: "profile", action: "cc:profile:performance", want: []string{"niri", "msg", "action", "spawn", "--", "powerprofilesctl", "set", "performance"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newPanelRegistry(t)
+			r.lookPath = func(string) (string, error) { return "/usr/bin/powerprofilesctl", nil }
+			run := make(chan []string, 1)
+			var profileSet atomic.Bool
+			var postSpawnReads atomic.Int32
+			r.runArgvOutput = func(argv []string) (string, error) {
+				if len(argv) > 0 && argv[0] == "niri" {
+					run <- append([]string(nil), argv...)
+					profileSet.Store(tc.name == "profile")
+					return "", nil
+				}
+				if profileSet.Load() && postSpawnReads.Add(1) >= 2 {
+					out := strings.Replace(starredPowerProfilesList, "  performance:", "* performance:", 1)
+					return strings.Replace(out, "* balanced:", "  balanced:", 1), nil
+				}
+				return starredPowerProfilesList, nil
+			}
+			r.runArgv = func([]string) error { t.Fatal("Power controls used the fire-and-forget command seam"); return nil }
+			if err := r.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+				t.Fatal(err)
+			}
+			panel := drainAux(t, r, 2)[1].Open
+			deadline := time.Now().Add(time.Second)
+			for {
+				r.mu.Lock()
+				h := r.panelHosts[PanelControlCenter]
+				loaded := h != nil && h.profilesOK && h.profileActive == "balanced"
+				r.mu.Unlock()
+				if loaded {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("power profiles did not finish loading")
+				}
+				time.Sleep(time.Millisecond)
+			}
+			r.mu.Lock()
+			h := r.panelHosts[PanelControlCenter]
+			h.section = "power"
+			r.rebuildPanel(h)
+			r.mu.Unlock()
+			if err := panel.Callbacks.Configure(int(panel.Width), int(panel.Height), 120); err != nil {
+				t.Fatal(err)
+			}
+
+			r.mu.Lock()
+			target := findNode(h.root, func(n *ui.Node) bool { return n.Action == tc.action })
+			if target == nil {
+				r.mu.Unlock()
+				t.Fatalf("power page has no %q button", tc.action)
+			}
+			bounds := target.Bounds
+			r.mu.Unlock()
+			if bounds.W <= 0 || bounds.H <= 0 {
+				t.Fatalf("%s bounds = %+v, want a laid-out button", tc.action, bounds)
+			}
+			x, y := float64(bounds.X+bounds.W/2), float64(bounds.Y+bounds.H/2)
+			if !panel.Callbacks.Handle(wayland.Event{Kind: wayland.EventPointerPress, Button: buttonLeft, X: x, Y: y}) {
+				t.Fatalf("pointer press missed %s at %+v", tc.action, bounds)
+			}
+			if !panel.Callbacks.Handle(wayland.Event{Kind: wayland.EventPointerRelease, Button: buttonLeft, X: x, Y: y}) {
+				t.Fatalf("pointer release missed %s at %+v", tc.action, bounds)
+			}
+			select {
+			case got := <-run:
+				if strings.Join(got, "\x00") != strings.Join(tc.want, "\x00") {
+					t.Fatalf("command = %q, want %q", got, tc.want)
+				}
+			case <-time.After(time.Second):
+				t.Fatalf("%s click did not dispatch a command", tc.action)
+			}
+			if tc.name == "profile" {
+				deadline := time.Now().Add(time.Second)
+				for {
+					r.mu.Lock()
+					active := h.profileActive
+					r.mu.Unlock()
+					if active == "performance" && postSpawnReads.Load() >= 2 {
+						break
+					}
+					if time.Now().After(deadline) {
+						t.Fatalf("profile was marked active without confirmation: active=%q reads=%d", active, postSpawnReads.Load())
+					}
+					time.Sleep(time.Millisecond)
+				}
+			}
+		})
+	}
+}
+
+func TestNotificationsPageDistinguishesDisconnectedFromEmpty(t *testing.T) {
+	r := &Registry{notify: newNotifyState()}
+	h := &PanelHost{id: PanelControlCenter, section: "notifications", theme: DefaultTheme()}
+	disconnected := ccNotifications(r, h)
+	if got := renderText(disconnected); !strings.Contains(got, "Notification service unavailable") || strings.Contains(got, "Nothing to see here") {
+		t.Fatalf("disconnected notifications = %q, want an unavailable state", got)
+	}
+	clear := findByName(disconnected, "Clear")
+	if clear == nil || clear.Action != "" || !clear.State.Has(ui.StateDisabled) {
+		t.Fatalf("disconnected Clear = %+v, want disabled", clear)
+	}
+
+	r.notify.applyNotify(snap(1))
+	if got := renderText(ccNotifications(r, h)); !strings.Contains(got, "Nothing to see here") {
+		t.Fatalf("connected empty notifications = %q, want the empty state", got)
 	}
 }
 

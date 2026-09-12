@@ -1,7 +1,9 @@
 package shell
 
 import (
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -21,6 +23,9 @@ const (
 	ccBodyGap    = 12
 	ccPanelPad   = 16
 	ccHeaderSize = 40
+
+	controlProfilePollAttempts = 20
+	controlProfilePollInterval = 50 * time.Millisecond
 )
 
 type ccSection struct {
@@ -270,26 +275,46 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 		r.scheduleControl(h, func() error { return brightness.Set(level) })
 		return true
 	case "session-lock", "session-logout", "session-suspend", "session-reboot", "session-poweroff":
-		argv := sessionArgv(n.Action, r.cfg.Session.Locker)
-		run := r.runArgv
-		r.scheduleControl(h, func() error { return run(argv) })
+		argv := niriSpawnArgv(sessionArgv(n.Action, r.cfg.Session.Locker))
+		run := r.runArgvOutput
+		r.scheduleControl(h, func() error {
+			_, err := run(argv)
+			return err
+		})
 		return true
 	default:
 		name, ok := strings.CutPrefix(n.Action, "cc:profile:")
 		if !ok || !profileSupports(h.profiles, name) {
 			return false
 		}
-		run := r.runArgv
+		run := r.runArgvOutput
 		r.scheduleControl(h, func() error {
-			if err := run(powerProfileSetArgv(name)); err != nil {
+			if _, err := run(niriSpawnArgv(powerProfileSetArgv(name))); err != nil {
 				return err
 			}
-			r.mu.Lock()
-			if r.panelHosts[h.id] == h {
-				h.profileActive = name
+			// ponytail: wait at most one second for the spawned command; replace
+			// this poll if power-profiles-daemon gains an event-backed client here.
+			for attempt := 0; attempt < controlProfilePollAttempts; attempt++ {
+				out, err := run([]string{"powerprofilesctl", "list"})
+				if err != nil {
+					return err
+				}
+				names, active := parsePowerProfiles(out)
+				if active == name {
+					r.mu.Lock()
+					if r.panelHosts[h.id] == h {
+						h.profiles = names
+						h.profileActive = active
+						h.profilesOK = len(names) > 0
+					}
+					r.mu.Unlock()
+					return nil
+				}
+				if attempt+1 < controlProfilePollAttempts {
+					time.Sleep(controlProfilePollInterval)
+				}
 			}
-			r.mu.Unlock()
-			return nil
+			return fmt.Errorf("power profile %q was not activated", name)
 		})
 		return true
 	}
@@ -299,6 +324,13 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 	}
 	_ = r.openPanelRootLocked(target, h.output, trig)
 	return true
+}
+
+// niriSpawnArgv makes the compositor spawn desktop controls inside the active
+// logind session. sysc-shell itself is a user service, which PolicyKit treats
+// as inactive and therefore refuses for power-profile and login1 actions.
+func niriSpawnArgv(argv []string) []string {
+	return append([]string{"niri", "msg", "action", "spawn", "--"}, argv...)
 }
 
 // setCaffeine changes the one process-wide idle inhibit. Caller holds r.mu;

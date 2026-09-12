@@ -205,6 +205,72 @@ func TestASuccessfulFetchPublishesAnObservation(t *testing.T) {
 	}
 }
 
+func TestTheFirstWeatherFetchDoesNotWaitForTheLeaseInterval(t *testing.T) {
+	t.Parallel()
+	requested := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		requested <- struct{}{}
+		fmt.Fprint(rw, currentWeatherBody)
+	}))
+	t.Cleanup(server.Close)
+
+	w := NewWeather(0, 0, UnitCelsius)
+	w.endpoint = server.URL
+	t.Cleanup(w.Close)
+	lease, err := w.Acquire(time.Hour)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	t.Cleanup(lease.Release)
+
+	select {
+	case <-requested:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the first weather fetch waited for the one-hour refresh interval")
+	}
+}
+
+func TestReacquireStillRespectsTheWeatherFetchFloor(t *testing.T) {
+	t.Parallel()
+	requested := make(chan struct{}, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		requested <- struct{}{}
+		fmt.Fprint(rw, currentWeatherBody)
+	}))
+	t.Cleanup(server.Close)
+
+	w := NewWeather(0, 0, UnitCelsius)
+	w.endpoint = server.URL
+	w.minInterval = 200 * time.Millisecond
+	t.Cleanup(w.Close)
+	first, err := w.Acquire(time.Hour)
+	if err != nil {
+		t.Fatalf("first Acquire: %v", err)
+	}
+	select {
+	case <-requested:
+	case <-time.After(time.Second):
+		t.Fatal("the initial fetch did not start")
+	}
+	first.Release()
+
+	second, err := w.Acquire(time.Hour)
+	if err != nil {
+		t.Fatalf("second Acquire: %v", err)
+	}
+	defer second.Release()
+	select {
+	case <-requested:
+		t.Fatal("release and reacquire bypassed the fetch floor")
+	case <-time.After(50 * time.Millisecond):
+	}
+	select {
+	case <-requested:
+	case <-time.After(time.Second):
+		t.Fatal("the reacquired service did not fetch after the floor elapsed")
+	}
+}
+
 // The request must carry the configured coordinates, current conditions and
 // the daily block consumed by the control centre.
 func TestTheRequestAsksForTheDailyBlock(t *testing.T) {

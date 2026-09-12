@@ -16,6 +16,7 @@ import (
 type notifyState struct {
 	mu         sync.Mutex
 	generation uint64
+	connected  bool
 	active     map[uint32]protocol.Notification
 	lifetimes  map[uint32]protocol.Lifetime
 	history    []protocol.HistoryEntry
@@ -45,6 +46,7 @@ func (s *notifyState) applyNotify(m notifyclient.Message) {
 	switch m.Kind {
 	case notifyclient.KindSnapshot:
 		s.generation = m.Generation
+		s.connected = true
 		s.active = make(map[uint32]protocol.Notification, len(m.Snapshot.Active))
 		s.lifetimes = make(map[uint32]protocol.Lifetime, len(m.Snapshot.Lifetimes))
 		for _, n := range m.Snapshot.Active {
@@ -99,6 +101,7 @@ func (s *notifyState) applyNotify(m notifyclient.Message) {
 
 	case notifyclient.KindDisconnected:
 		s.generation = 0
+		s.connected = false
 		s.active = make(map[uint32]protocol.Notification)
 		s.lifetimes = make(map[uint32]protocol.Lifetime)
 		s.history = s.history[:0]

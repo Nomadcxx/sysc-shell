@@ -354,7 +354,9 @@ func ccWeather(r *Registry, h *PanelHost) *ui.Node {
 	location := ccDash
 	if r != nil {
 		reading = r.reading
-		location = fmt.Sprintf("%.2f°, %.2f°", r.cfg.Weather.Latitude, r.cfg.Weather.Longitude)
+		if r.cfg.Weather.Configured {
+			location = fmt.Sprintf("%.2f°, %.2f°", r.cfg.Weather.Latitude, r.cfg.Weather.Longitude)
+		}
 	}
 	icon, temperature, condition, fetched := "cloud", ccDash, ccDash, ccDash
 	if reading.Observed {
@@ -669,7 +671,7 @@ func ccCalendar(r *Registry, h *PanelHost) *ui.Node {
 
 func ccNotifications(r *Registry, h *PanelHost) *ui.Node {
 	m := h.metrics()
-	now, dnd := time.Now(), false
+	now, dnd, connected := time.Now(), false, false
 	var active []protocol.Notification
 	var history []protocol.HistoryEntry
 	if r != nil {
@@ -677,6 +679,7 @@ func ccNotifications(r *Registry, h *PanelHost) *ui.Node {
 		_, dnd = r.dndStateAt(now)
 		if r.notify != nil {
 			r.notify.mu.Lock()
+			connected = r.notify.connected
 			for _, notification := range r.notify.active {
 				active = append(active, notification)
 			}
@@ -685,12 +688,16 @@ func ccNotifications(r *Registry, h *PanelHost) *ui.Node {
 		}
 	}
 	sort.Slice(history, func(i, j int) bool { return history[i].Timestamp.After(history[j].Timestamp) })
+	clear := ccSegment("delete", "Clear", "notify:center:clear", false)
+	if !connected {
+		ccDisable(clear)
+	}
 	controls := &ui.Node{
 		Kind: ui.KindCapsule, Height: 52, Padding: m.CardPadding,
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
 		Children: []*ui.Node{{Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{
 			ccSegment("do_not_disturb_on", "Do not disturb", "cc:dnd", dnd),
-			ccSegment("delete", "Clear", "notify:center:clear", false),
+			clear,
 		}}},
 	}
 	var cards []*ui.Node
@@ -701,9 +708,13 @@ func ccNotifications(r *Registry, h *PanelHost) *ui.Node {
 		cards = append(cards, HistoryCard(entry, now, nil, false))
 	}
 	if len(cards) == 0 {
+		label := "Nothing to see here"
+		if !connected {
+			label = "Notification service unavailable"
+		}
 		empty := monitorCard(m, []*ui.Node{
 			{Kind: ui.KindIcon, Icon: "notifications", IconSize: m.IconLarge},
-			{Kind: ui.KindText, Text: "Nothing to see here", TextRole: theme.RoleLabel, CenterX: true},
+			{Kind: ui.KindText, Text: label, TextRole: theme.RoleLabel, CenterX: true},
 		})
 		empty.Height = 416
 		cards = append(cards, empty)

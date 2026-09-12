@@ -71,6 +71,9 @@ type Weather struct {
 	stop   chan struct{}
 	done   chan struct{}
 	starts int
+	// lastAttempt survives lease stop/start cycles so reopening a consumer
+	// cannot bypass the global fetch floor.
+	lastAttempt time.Time
 
 	rearm   chan struct{}
 	updates chan Reading
@@ -248,16 +251,17 @@ func (w *Weather) run(stop, done chan struct{}) {
 	defer close(done)
 
 	var (
-		reading  Reading
-		failures int
-		lastAt   time.Time
-		failing  bool
+		reading   Reading
+		failures  int
+		failing   bool
+		attempted bool
 	)
 
 	for {
 		w.mu.Lock()
 		interval := w.leases.finest()
 		floor := w.minInterval
+		lastAttempt := w.lastAttempt
 		w.mu.Unlock()
 		if interval <= 0 {
 			return
@@ -267,9 +271,12 @@ func (w *Weather) run(stop, done chan struct{}) {
 		if failures > 0 {
 			wait = retryAfter(failures)
 		}
+		if !attempted {
+			wait = 0
+		}
 		// The floor applies regardless of what asks, so a short lease interval
 		// or a reload loop cannot hammer the API.
-		if since := time.Since(lastAt); !lastAt.IsZero() && floor > 0 && since < floor {
+		if since := time.Since(lastAttempt); !lastAttempt.IsZero() && floor > 0 && since < floor {
 			if remaining := floor - since; remaining > wait {
 				wait = remaining
 			}
@@ -286,7 +293,10 @@ func (w *Weather) run(stop, done chan struct{}) {
 		case <-timer.C:
 		}
 
-		lastAt = time.Now()
+		w.mu.Lock()
+		w.lastAttempt = time.Now()
+		w.mu.Unlock()
+		attempted = true
 		observation, err := w.fetch()
 		if err != nil {
 			failures++
