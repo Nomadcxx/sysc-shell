@@ -8,6 +8,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/viewporter"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-wayland/client"
 )
 
@@ -46,6 +47,12 @@ type HostCallbacks struct {
 	OutputSize func(logicalWidth, logicalHeight int)
 	// Render fills the physical buffer. Width and height are buffer pixels.
 	Render func(pixels []byte, width, height, stride int) error
+	// Backdrop delivers the blurred capture taken before this surface existed,
+	// once, from the Wayland goroutine. The shell assembles the Style for its
+	// own surfaces, so the image has to travel back to it rather than being
+	// handed to a painter here. Nil leaves the surface without a backdrop,
+	// which is how every surface painted before this existed.
+	Backdrop func(*ui.Image)
 	// Handle consumes a pointer event and reports whether state changed.
 	Handle func(Event) bool
 	// WantIME reports whether the focused control needs text-input-v3.

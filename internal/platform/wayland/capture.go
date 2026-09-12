@@ -14,6 +14,12 @@ import (
 // geometry while leaving room for a much larger display.
 const maxCaptureBytes = 64 << 20
 
+// backdropDownsample is the factor a backdrop is reduced by before blurring,
+// and kept at afterwards. Design D4: a blur is a low-pass filter, so the detail
+// dropped by downsampling is detail the blur would have destroyed anyway, and
+// keeping the result reduced is what turns a 2.6x saving into 8.8x.
+const backdropDownsample = 4
+
 // captureBuffer is one wl_shm buffer in a pool sized exactly for it.
 //
 // newGeneration cannot serve a capture. It always builds slotCount buffers, so
