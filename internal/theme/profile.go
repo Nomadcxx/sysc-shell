@@ -64,6 +64,17 @@ const (
 	// behind text; below that, wallpaper detail reads through a label.
 	OpacityMin = 80
 	OpacityMax = 100
+	// OpacityMinBlurred is the floor for a surface painting over a blurred
+	// backdrop. The 80 above exists only because wallpaper detail reads through
+	// a label, and a blurred ground removes that detail, so the limit becomes
+	// taste rather than legibility. Panels only: the bar is docked and its text
+	// sits directly over the wallpaper, which is a different problem.
+	OpacityMinBlurred = 60
+	// BlurRadius bounds the backdrop blur, in logical pixels at full
+	// resolution. Kernel cost does not grow with radius -- the window slides --
+	// so the ceiling is a matter of taste rather than budget.
+	BlurRadiusMin = 0
+	BlurRadiusMax = 64
 )
 
 // Metrics is one row of the density table from design D8.
@@ -262,7 +273,12 @@ type Composition struct {
 	BarOpacity     int
 	PanelOpacity   int
 	OverlayOpacity int
-	Elevation      Elevation
+	// BlurBehind paints floating panels over a blurred capture of whatever sat
+	// behind them when they opened, which is what allows PanelOpacity to fall
+	// below OpacityMin. BlurRadius is that blur's radius.
+	BlurBehind bool
+	BlurRadius int
+	Elevation  Elevation
 }
 
 // presets are the three bundled compositions from design D2.
@@ -452,7 +468,12 @@ func (c Composition) Valid() error {
 		{"radius", c.Radius, RadiusMin, RadiusMax},
 		{"motion-speed", c.MotionSpeed, SpeedMin, SpeedMax},
 		{"bar-opacity", c.BarOpacity, OpacityMin, OpacityMax},
-		{"panel-opacity", c.PanelOpacity, OpacityMin, OpacityMax},
+		// Panels take the lower blurred floor here so the axis can be set at
+		// all; opacityAlpha then clamps back to OpacityMin unless a backdrop is
+		// actually present. Bounding it at 80 would make the blurred floor
+		// unreachable, since the value would be rejected before anything asked
+		// whether blur was on.
+		{"panel-opacity", c.PanelOpacity, OpacityMinBlurred, OpacityMax},
 		{"overlay-opacity", c.OverlayOpacity, OpacityMin, OpacityMax},
 	} {
 		if b.got < b.min || b.got > b.max {
