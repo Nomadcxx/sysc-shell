@@ -46,7 +46,7 @@ In:
   right-click toggles the radio.
 - Password entry: a masked `ui.Field`, a reveal toggle, and the renderer
   support both require.
-- Eight Material glyphs added to the embedded subset.
+- Nine Material glyphs added to the embedded subset.
 
 Out:
 
@@ -337,17 +337,23 @@ for radio-off and for enabled-but-disconnected. `barView` gains a
 
 The embedded subset is an exact 25-name inventory
 (`materialfont.go:23`); a name the font does not carry "would shape to nothing
-and paint an invisible control". Eight names are added and the subset re-cut:
+and paint an invisible control". Nine names are added and the subset re-cut:
 
 `signal_wifi_0_bar`, `network_wifi_1_bar`, `network_wifi_2_bar`,
-`network_wifi_3_bar`, `signal_wifi_4_bar`, `lan`, `visibility` /
-`visibility_off` for the reveal toggle.
+`network_wifi_3_bar`, `signal_wifi_4_bar`, `wifi_off`, `lan`, and
+`visibility` / `visibility_off` for the reveal toggle.
+
+`wifi_off` is the ninth and was added during implementation. The five bands
+describe signal strength, and none of them can say "the radio is off" — which
+D10 requires to read differently from "on with no association". Eight names
+could not express the widget this design asks for.
 
 `build.py` verifies the pinned upstream SHA-256 before reading it. The pinned
-file — 15,090,976 bytes, `c4416e02…` — is present at
-`/tmp/MaterialSymbolsRounded.ttf`, so the re-cut is offline today; `/tmp` is
-volatile, so it must be copied somewhere durable first. The copy in
-`~/.local/share/fonts` is a **different** cut and does not match the pin.
+file — 15,090,976 bytes, `c4416e02…` — was found in `/tmp`, which is volatile,
+and has been copied to
+`~/.cache/sysc-shell/fonts/MaterialSymbolsRounded-upstream.ttf`. The re-cut is
+therefore offline. The copy in `~/.local/share/fonts` is a **different** cut
+and fails the hash check.
 
 `materialIcons` and `build.py`'s `ICONS` are kept in step by hand and asserted
 by test; both change in the same commit.

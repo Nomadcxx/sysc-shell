@@ -16,7 +16,7 @@ primitives (`KindSegmented`, `KindToggle`, `KindScroll`, `KindIcon`,
 exists so tests use a fake rather than a live system bus. Only the credential
 export is hand-written on `godbus`, because the binding has none. Reads arrive
 by D-Bus signal, not polling; writes go off-owner through a `scheduleControl`
-seam. One new `ui` node field (`Masked`), eight new Material glyphs, no new
+seam. One new `ui` node field (`Masked`), nine new Material glyphs, no new
 node kinds.
 
 **Tech Stack:** Go, the native retained renderer, `internal/ui` nodes,
@@ -42,9 +42,12 @@ bd, not to this file.
 - **Never `go build` or `go test ./...` with `-race`.** This box is zram-only
   swap with 16-way linking; a repo-wide race build hard-locks it. Cap `-p 4`
   and `GOMAXPROCS=4`, and test per package.
-- **`go test ./internal/shell` really runs `loginctl terminate-session self`.**
-  Shadow `loginctl` and `systemctl` with stubs earlier on `PATH` (Task 0) or it
-  logs the owner out.
+- `go test ./internal/shell` used to run `loginctl terminate-session self` for
+  real and log the owner out. **Fixed 2026-09-11**: `runArgvDefault`
+  (`popout_session.go:256`) refuses under `testing.Testing()`. Run the package
+  normally; no `PATH` shadowing is needed. Later tasks still show
+  `PATH=/tmp/shellstubs:$PATH` on their test commands — that prefix is now
+  vestigial and harmless, and can be dropped.
 - `sysc-shell` runs from systemd. Redeploy is `go build -o <tmp>
   ./cmd/sysc-shell`, `mv` over `~/.local/bin/sysc-shell`, `systemctl --user
   restart sysc-shell.service`. Never spawn it beside the running one. Never
@@ -106,19 +109,16 @@ git log --oneline -3
 
 Expect `.beads/issues.jsonl` to be dirty or recently swept. Leave it alone.
 
-- [ ] **Step 2: Arm the session stubs**
+- [ ] **Step 2: Confirm the session guard is in the tree**
 
 ```bash
-mkdir -p /tmp/shellstubs
-printf '#!/bin/sh\nexit 0\n' > /tmp/shellstubs/loginctl
-printf '#!/bin/sh\nexit 0\n' > /tmp/shellstubs/systemctl
-chmod +x /tmp/shellstubs/loginctl /tmp/shellstubs/systemctl
-export PATH=/tmp/shellstubs:$PATH
-which loginctl
+grep -n "testing.Testing()" internal/shell/popout_session.go
 ```
 
-Expected: `/tmp/shellstubs/loginctl`. Every `go test ./internal/shell` in this
-plan runs with that `PATH`.
+Expected: a hit around line 270. `runArgvDefault` refuses to launch a session
+action from a test binary, so `go test ./internal/shell` no longer terminates
+the developer's login session. Stubs on `PATH` are no longer needed; if that
+grep finds nothing, stop and ask rather than running the package.
 
 - [ ] **Step 3: Fix the tracker (D16)**
 
@@ -616,7 +616,7 @@ git commit -m "feat(services): network backend over the pinned binding"
 
 ---
 
-### Task 4: Eight glyphs, the `wifi` widget, and the registry wiring
+### Task 4: Nine glyphs, the `wifi` widget, and the registry wiring
 
 **Files:**
 - Modify: `internal/render/icons/material/build.py`
@@ -634,22 +634,28 @@ git commit -m "feat(services): network backend over the pinned binding"
 
 - [ ] **Step 1: Re-cut the glyph subset**
 
-The upstream pinned font is **not** vendored. It is present at
-`/tmp/MaterialSymbolsRounded.ttf` — 15,090,976 bytes, SHA-256
-`c4416e02739ed6865e3218c19dcd62c5a88fb97b8bcc445f24ae8017d11cc2d0`, matching
-`SOURCE.md`. `/tmp` is volatile; copy it somewhere durable first. The copy in
+The upstream pinned font is **not** vendored. It was found in `/tmp`, which is
+volatile, and has been copied to
+`~/.cache/sysc-shell/fonts/MaterialSymbolsRounded-upstream.ttf` — 15,090,976
+bytes, SHA-256 `c4416e02739ed6865e3218c19dcd62c5a88fb97b8bcc445f24ae8017d11cc2d0`,
+matching `SOURCE.md`. Pass that path to the script. The copy in
 `~/.local/share/fonts` is a **different** cut and will fail the hash check.
 
 Add to `ICONS` in `build.py`: `signal_wifi_0_bar`, `network_wifi_1_bar`,
-`network_wifi_2_bar`, `network_wifi_3_bar`, `signal_wifi_4_bar`, `lan`,
-`visibility`, `visibility_off`. Then run the script and add the same eight
-names to `materialIcons` and to the test's inventory list. The two lists are
-kept in step by hand and asserted by test; they change in the same commit.
+`network_wifi_2_bar`, `network_wifi_3_bar`, `signal_wifi_4_bar`, `wifi_off`,
+`lan`, `visibility`, `visibility_off`. Then run the script and add the same
+nine names to `materialIcons` and to the test's inventory list. The two lists
+are kept in step by hand and asserted by test; they change in the same commit.
+
+`wifi_off` is the ninth: the bands cover signal strength, and none of them can
+say the radio is off, which D10 requires to read differently from on-with-no-
+association. All nine were verified present in the pinned upstream font before
+the re-cut, with `fontTools` reading its glyph order.
 
 - [ ] **Step 2: Run the font test to verify the subset carries them**
 
 Run: `go test ./internal/render -run Material -v`
-Expected: PASS, with the inventory assertion covering 33 names.
+Expected: PASS, with the inventory assertion covering 34 names.
 
 - [ ] **Step 3: Write the failing widget test**
 
@@ -705,7 +711,7 @@ Expected: PASS.
 ```bash
 git add internal/render internal/shell/wifiwidget.go internal/shell/widget.go \
         internal/config/config.go internal/shell/registry.go
-git commit -m "feat(shell): wifi bar widget and eight glyphs"
+git commit -m "feat(shell): wifi bar widget and nine glyphs"
 ```
 
 ---
