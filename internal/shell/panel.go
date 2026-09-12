@@ -15,6 +15,7 @@ const (
 	PanelNotifications
 	PanelWallpaper
 	PanelAudio
+	PanelControlCenter
 )
 
 func (p PanelID) String() string {
@@ -37,6 +38,8 @@ func (p PanelID) String() string {
 		return "wallpaper"
 	case PanelAudio:
 		return "audio"
+	case PanelControlCenter:
+		return "control-center"
 	default:
 		return "unknown"
 	}
@@ -108,7 +111,7 @@ func alignX(p Placement) int {
 
 func exclusiveBarZone(bar *Bar) int {
 	if bar != nil {
-		if s, _, _ := bar.theme.Geometry(); s > 0 {
+		if s, _, _ := bar.themeSnapshot().Geometry(); s > 0 {
 			return s
 		}
 	}

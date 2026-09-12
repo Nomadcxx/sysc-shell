@@ -49,6 +49,39 @@ type Canvas struct {
 	restrict      ui.Rect
 }
 
+// ApplySurfaceTransform applies the final opacity and vertical translation to
+// an already-premultiplied frame. copy handles overlapping slices, so the
+// translation reuses the compositor buffer and only clears the rows it exposes.
+func (c *Canvas) ApplySurfaceTransform(opacity float64, translateY int) {
+	if c == nil || c.Width <= 0 || c.Height <= 0 || c.Stride <= 0 {
+		return
+	}
+	pix := c.Pix[:c.Stride*c.Height]
+	if translateY >= c.Height || translateY <= -c.Height {
+		clear(pix)
+	} else if translateY > 0 {
+		copy(pix[translateY*c.Stride:], pix[:(c.Height-translateY)*c.Stride])
+		clear(pix[:translateY*c.Stride])
+	} else if translateY < 0 {
+		rows := -translateY
+		copy(pix[:(c.Height-rows)*c.Stride], pix[rows*c.Stride:])
+		clear(pix[(c.Height-rows)*c.Stride:])
+	}
+	if opacity >= 1 {
+		return
+	}
+	if opacity <= 0 || math.IsNaN(opacity) {
+		clear(pix)
+		return
+	}
+	for y := 0; y < c.Height; y++ {
+		row := pix[y*c.Stride : y*c.Stride+c.Width*4]
+		for i := range row {
+			row[i] = byte(math.Round(float64(row[i]) * opacity))
+		}
+	}
+}
+
 // NewCanvas wraps shared-memory bytes after validating the geometry.
 func NewCanvas(pix []byte, width, height, stride int) (*Canvas, error) {
 	if width <= 0 || height <= 0 {
@@ -128,21 +161,26 @@ func roundedInset(y, height, radius int) int {
 	return max(0, int(math.Ceil(float64(radius)-dx-0.5)))
 }
 
-// filletExtent is how far the bar-coloured wedge reaches outward from the panel
-// body's side edge, at row y measured from the attached edge.
-//
-// The wedge is the region inside a circle of radius fillet centred on the bar's
-// edge at the body corner, so the curve leaves the bar horizontally and meets
-// the panel side vertically: the bar appears to sweep into the panel rather
-// than to sit on top of it. The half-pixel term matches roundedInset, so a
-// fillet and a corner quantise the same way.
-func filletExtent(y, fillet int) int {
-	if fillet <= 0 || y < 0 || y > fillet {
+// filletCoverage returns the coverage of one wedge pixel. x is its distance
+// from the panel body's edge and y is its distance from the attached bar edge.
+// The circle is centred on their intersection; a one-pixel distance band
+// antialiases the outer arc without softening the solid interior.
+func filletCoverage(x, y, fillet int) uint8 {
+	if fillet <= 0 || x < 0 || y < 0 || x >= fillet || y >= fillet {
 		return 0
 	}
-	r := float64(fillet)
-	dy := float64(y) + 0.5
-	return max(0, int(math.Ceil(math.Sqrt(max(0, r*r-dy*dy))-0.5)))
+	distance := math.Hypot(float64(x)+0.5, float64(y)+0.5)
+	coverage := min(max(float64(fillet)+0.5-distance, 0.0), 1.0)
+	return uint8(coverage * 255)
+}
+
+func filletExtent(y, fillet int) int {
+	for x := fillet - 1; x >= 0; x-- {
+		if filletCoverage(x, y, fillet) > 0 {
+			return x + 1
+		}
+	}
+	return 0
 }
 
 // strokeRoundedRect outlines one clipped rounded rectangle inward from its
@@ -203,17 +241,27 @@ func fillAttachFillets(c *Canvas, r ui.Rect, fillet int, attachEdge string, col 
 	if attachEdge != "top" && attachEdge != "bottom" {
 		return
 	}
-	for y := 0; y <= fillet && y < r.H; y++ {
-		ext := filletExtent(y, fillet)
-		if ext <= 0 {
-			continue
-		}
+	for y := 0; y < fillet && y < r.H; y++ {
 		row := r.Y + y
 		if attachEdge == "bottom" {
 			row = r.Y + r.H - 1 - y
 		}
-		fillRect(c, ui.Rect{X: r.X - ext, Y: row, W: ext, H: 1}, col)
-		fillRect(c, ui.Rect{X: r.X + r.W, Y: row, W: ext, H: 1}, col)
+		if row < 0 || row >= c.Height {
+			continue
+		}
+		for x := 0; x < fillet; x++ {
+			coverage := filletCoverage(x, y, fillet)
+			if coverage == 0 {
+				continue
+			}
+			alpha := float64(coverage) / 255
+			if left := r.X - 1 - x; left >= 0 && left < c.Width {
+				blendCoverage(c, left, row, col, alpha)
+			}
+			if right := r.X + r.W + x; right >= 0 && right < c.Width {
+				blendCoverage(c, right, row, col, alpha)
+			}
+		}
 	}
 }
 

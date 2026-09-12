@@ -18,10 +18,27 @@ var materialInventory = []string{
 	"volume_up", "volume_off", "brightness_high",
 	"delete", "schedule",
 	"mic", "mic_off", "graphic_eq", "headphones",
+	"home", "music_note", "desktop_windows",
+	"wifi", "bluetooth", "cloud", "calendar_month",
+	"battery_full", "coffee", "wallpaper", "person",
+	"sunny", "partly_cloudy_day", "rainy", "thunderstorm",
+	"weather_snowy", "foggy",
 }
 
 func TestAudioPanelIconsAreInTheSubset(t *testing.T) {
 	for _, name := range []string{"mic", "mic_off", "graphic_eq", "headphones"} {
+		if !ValidMaterialIcon(name) {
+			t.Errorf("%q missing from the subset: it would shape to nothing and paint an invisible control", name)
+		}
+	}
+}
+
+func TestControlCentreIconsAreInTheSubset(t *testing.T) {
+	for _, name := range []string{
+		"home", "music_note", "desktop_windows", "wifi", "bluetooth", "person",
+		"cloud", "calendar_month", "battery_full", "coffee", "wallpaper",
+		"sunny", "partly_cloudy_day", "rainy", "thunderstorm", "weather_snowy", "foggy",
+	} {
 		if !ValidMaterialIcon(name) {
 			t.Errorf("%q missing from the subset: it would shape to nothing and paint an invisible control", name)
 		}

@@ -17,6 +17,7 @@ func TestScale120Physical(t *testing.T) {
 		{"1.5 scales the bar height", 180, 48, 72},
 		{"1.5 rounds a half pixel up", 180, 1, 2},
 		{"1.25 scales the bar height", 150, 48, 60},
+		{"1.25 scales a negative reveal offset", 150, -8, -10},
 		{"1.25 scales the output width", 150, 3440, 4300},
 		{"1.3 rounds 62.4 down", 156, 48, 62},
 		{"1.75 scales the bar height", 210, 48, 84},

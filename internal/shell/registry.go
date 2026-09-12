@@ -3,6 +3,7 @@ package shell
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -51,6 +52,10 @@ type Registry struct {
 	weather *services.Weather
 	sample  services.Snapshot
 	reading services.Reading
+	// controlIdentity is captured outside Registry.mu so the control centre
+	// never reads /proc or user databases from the Wayland owner.
+	controlIdentity     ccIdentity
+	controlAvatarFailed map[icons.Key]struct{}
 
 	tokens theme.Tokens
 	// themeErr is why the published palette is not the requested one, empty
@@ -84,6 +89,11 @@ type Registry struct {
 	lookPath func(string) (string, error)
 	// runArgvOutput captures stdout of powerprofilesctl list. Tests replace it.
 	runArgvOutput func([]string) (string, error)
+	// startInhibit creates the process-backed caffeine hold. Tests replace it.
+	startInhibit    func() (io.Closer, error)
+	inhibit         io.Closer
+	inhibitWanted   bool
+	inhibitStarting bool
 
 	running      []runningAppSlot
 	runningIndex []runningAppEntry
@@ -139,20 +149,22 @@ func NewRegistry(cfg config.Config) *Registry {
 		metrics: services.NewMetrics(),
 		weather: services.NewWeather(
 			cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit)),
-		themeGen:      gen,
-		invalidations: make(chan wayland.Invalidation, 8),
-		aux:           make(chan wayland.AuxRequest, 8),
-		panelHosts:    make(map[PanelID]*PanelHost),
-		closed:        make(chan struct{}),
-		dwell:         newDwell(defaultDwell),
-		runArgv:       runArgvDefault,
-		lookPath:      exec.LookPath,
-		runArgvOutput: runArgvOutputDefault,
-		signalProcess: signalProcessDefault,
-		notify:        newNotifyState(),
-		tray:          newTrayState(),
-		trayCh:        make(chan trayclient.Message, 32),
-		notifyCh:      make(chan notifyclient.Message, 32),
+		themeGen:        gen,
+		invalidations:   make(chan wayland.Invalidation, 8),
+		aux:             make(chan wayland.AuxRequest, 8),
+		panelHosts:      make(map[PanelID]*PanelHost),
+		closed:          make(chan struct{}),
+		dwell:           newDwell(defaultDwell),
+		runArgv:         runArgvDefault,
+		lookPath:        exec.LookPath,
+		runArgvOutput:   runArgvOutputDefault,
+		startInhibit:    startInhibitDefault,
+		signalProcess:   signalProcessDefault,
+		notify:          newNotifyState(),
+		tray:            newTrayState(),
+		trayCh:          make(chan trayclient.Message, 32),
+		notifyCh:        make(chan notifyclient.Message, 32),
+		controlIdentity: readCCIdentity(),
 	}
 	r.tokens, r.themeErr = tokensAndReason(r.generateTheme(cfg))
 	r.osd = newOSDManager(r, 0)
@@ -403,6 +415,22 @@ func (r *Registry) panelTheme() Theme {
 	return t
 }
 
+func resolveOutputTheme(cfg config.Config, connector string, tok theme.Tokens) (Theme, error) {
+	return ResolveTheme(cfg, cfg.ForConnector(connector), tok)
+}
+
+func (r *Registry) panelThemeFor(output uint32) Theme {
+	connector := ""
+	if bar, ok := r.bars[output]; ok {
+		connector = bar.connector()
+	}
+	t, err := resolveOutputTheme(r.cfg, connector, r.tokens)
+	if err != nil {
+		return DefaultTheme()
+	}
+	return t
+}
+
 // generateTheme returns the palette for cfg and why it is not the requested
 // one, when it is not.
 //
@@ -493,6 +521,12 @@ func (r *Registry) relayAudioOSD(audio *services.Audio) {
 				return
 			}
 			r.OSD().Show(OSDView{Kind: "audio", Level: st.Level, Muted: st.Muted})
+			r.mu.Lock()
+			out, open := r.rebuildControlCentreLocked()
+			r.mu.Unlock()
+			if open {
+				r.publishSurface(out, panelSurfaceID(PanelControlCenter))
+			}
 		}
 	}
 }
@@ -513,6 +547,12 @@ func (r *Registry) relayBrightnessOSD(brightness *services.Brightness) {
 				return
 			}
 			r.OSD().Show(OSDView{Kind: "brightness", Level: st.Level})
+			r.mu.Lock()
+			out, open := r.rebuildControlCentreLocked()
+			r.mu.Unlock()
+			if open {
+				r.publishSurface(out, panelSurfaceID(PanelControlCenter))
+			}
 		}
 	}
 }
@@ -644,6 +684,9 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 			return r.TogglePanel(PanelSession, out, trig) == nil
 		case action == panelWallpaperAction && (button == 0 || button == buttonLeft || button == buttonRight):
 			return r.TogglePanel(PanelWallpaper, out, trig) == nil
+		case action == panelControlCenterAction && button == buttonRight:
+			trig.AnchorX = bar.actionCenterX(panelControlCenterAction)
+			return r.TogglePanel(PanelControlCenter, out, trig) == nil
 		case action == panelNotificationsAction && (button == 0 || button == buttonLeft):
 			return r.TogglePanel(PanelNotifications, out, trig) == nil
 		case action == panelNotificationsAction && button == buttonMiddle:
@@ -880,6 +923,7 @@ func (r *Registry) Close() {
 	var leases []*services.Lease
 	var bars []*Bar
 	var audioLease, brightLease *services.Lease
+	var inhibit io.Closer
 	if locked {
 		if r.toasts != nil {
 			r.toasts.stopLeaseRenew()
@@ -905,6 +949,9 @@ func (r *Registry) Close() {
 		r.audioLease = nil
 		brightLease = r.brightLease
 		r.brightLease = nil
+		inhibit = r.inhibit
+		r.inhibit = nil
+		r.inhibitWanted = false
 		r.mu.Unlock()
 	}
 	for _, bar := range bars {
@@ -919,6 +966,9 @@ func (r *Registry) Close() {
 	}
 	if brightLease != nil {
 		brightLease.Release()
+	}
+	if inhibit != nil {
+		_ = inhibit.Close()
 	}
 	releaseAll(leases)
 	var launcherSvc *launcher.Service
@@ -960,9 +1010,13 @@ func (r *Registry) UpdateClock(now time.Time) []uint32 {
 			changed = append(changed, global)
 		}
 	}
+	controlOut, controlOK := r.rebuildControlCentreLocked()
 	r.mu.Unlock()
 
 	r.publish(changed)
+	if controlOK {
+		r.publishSurface(controlOut, panelSurfaceID(PanelControlCenter))
+	}
 	return changed
 }
 
@@ -987,6 +1041,7 @@ func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
 		r.rebuildPanel(h)
 		sessionOut, sessionOK = h.output, true
 	}
+	controlOut, controlOK := r.rebuildControlCentreLocked()
 	r.mu.Unlock()
 
 	r.publish(changed)
@@ -995,6 +1050,9 @@ func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
 	}
 	if sessionOK {
 		r.publishSurface(sessionOut, panelSurfaceID(PanelSession))
+	}
+	if controlOK {
+		r.publishSurface(controlOut, panelSurfaceID(PanelControlCenter))
 	}
 	return changed
 }
@@ -1010,10 +1068,23 @@ func (r *Registry) UpdateWeather(reading services.Reading) []uint32 {
 			changed = append(changed, global)
 		}
 	}
+	controlOut, controlOK := r.rebuildControlCentreLocked()
 	r.mu.Unlock()
 
 	r.publish(changed)
+	if controlOK {
+		r.publishSurface(controlOut, panelSurfaceID(PanelControlCenter))
+	}
 	return changed
+}
+
+func (r *Registry) rebuildControlCentreLocked() (uint32, bool) {
+	h := r.panelHosts[PanelControlCenter]
+	if h == nil {
+		return 0, false
+	}
+	r.rebuildPanel(h)
+	return h.output, true
 }
 
 // UpdateNiri projects a snapshot into per-connector text and reports the
@@ -1059,7 +1130,7 @@ func (r *Registry) viewLocked(connector string) barView {
 	}
 	_, view.DND = r.notify.dndState(r.now)
 	if r.audio != nil {
-		view.Audio = r.audio.CachedState()
+		view.Audio, _ = r.audio.CachedState()
 	}
 	if r.plugins != nil {
 		view.Plugins = r.plugins.frames(connector)
@@ -1088,7 +1159,10 @@ func (r *Registry) buildBar(cfg config.Config, connector string, tok theme.Token
 	*Bar, []*services.Lease, wayland.HostCallbacks, error,
 ) {
 	policy := cfg.ForConnector(connector)
-	th := withBarGeometry(ThemeFromTokens(tok, cfg.Theme.Radius), policy)
+	th, err := resolveOutputTheme(cfg, connector, tok)
+	if err != nil {
+		return nil, nil, wayland.HostCallbacks{}, err
+	}
 	bar, err := NewWithTheme(th, policy, connector)
 	if err != nil {
 		return nil, nil, wayland.HostCallbacks{}, err
@@ -1206,9 +1280,10 @@ func (r *Registry) drivePointerTooltip(global uint32, bar *Bar, event wayland.Ev
 		r.dwell.leave()
 	case wayland.EventPointerEnter, wayland.EventPointerMotion:
 		if text, root, bounds, ok := bar.hoverTooltip(); ok {
+			theme := bar.themeSnapshot()
 			style := wayland.TooltipStyle{
-				Background: bar.theme.Background,
-				Foreground: bar.theme.Foreground,
+				Background: theme.Background,
+				Foreground: theme.Foreground,
 			}
 			if root != nil {
 				r.dwell.enterRoot(global, bounds, root, style)
@@ -1234,11 +1309,11 @@ func releaseAll(leases []*services.Lease) {
 //
 // Caller holds r.mu.
 func (r *Registry) retheThemeOpenSurfacesLocked() {
-	next := r.surfaceTheme()
 	for _, h := range r.panelHosts {
 		if h == nil {
 			continue
 		}
+		next := r.panelThemeFor(h.output)
 		h.retheme(withPanelRadius(next, h))
 		r.startSurfaceFrames(h)
 	}

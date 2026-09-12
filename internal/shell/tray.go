@@ -327,7 +327,28 @@ func (r *Registry) trayImagesLocked(items []tray.Item, size int) map[tray.ItemKe
 
 // applyTrayIcon runs on the icon worker. A failed decode publishes nil, which
 // leaves the item's box reserved and empty rather than reflowing the bar.
-func (r *Registry) applyTrayIcon(_ icons.Key, image *ui.Image) {
+func (r *Registry) applyTrayIcon(key icons.Key, image *ui.Image) {
+	if key.Name != "" && key.Name == r.controlIdentity.ImagePath {
+		if image == nil {
+			r.mu.Lock()
+			if r.controlAvatarFailed == nil {
+				r.controlAvatarFailed = make(map[icons.Key]struct{})
+			}
+			r.controlAvatarFailed[key] = struct{}{}
+			r.mu.Unlock()
+			return
+		}
+		r.mu.Lock()
+		h := r.panelHosts[PanelControlCenter]
+		if h != nil {
+			r.rebuildPanel(h)
+		}
+		r.mu.Unlock()
+		if h != nil {
+			r.publishSurface(h.output, panelSurfaceID(PanelControlCenter))
+		}
+		return
+	}
 	if image == nil {
 		return
 	}

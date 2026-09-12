@@ -1144,6 +1144,138 @@ func fillPointOf(n *ui.Node) (int, int) {
 	return n.Bounds.X + 4, n.Bounds.Y + n.Bounds.H/2
 }
 
+func TestRoundedButtonFillAndHoverHavePartialCoverageAtFractionalScale(t *testing.T) {
+	t.Parallel()
+	paint := func(state ui.Interaction) *Canvas {
+		c := newTestCanvas(t, 80, 48)
+		style := testStyle
+		style.Scale120 = 150
+		n := &ui.Node{
+			Kind: ui.KindButton, Bounds: ui.Rect{X: 4, Y: 4, W: 32, H: 24},
+			State: state,
+		}
+		if err := paintNode(c, n, NewTextRenderer(mustTestFace(t)), style, style.Size); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	for _, tc := range []struct {
+		name  string
+		state ui.Interaction
+	}{
+		{"fill", 0},
+		{"hover", ui.StateHovered},
+	} {
+		c := paint(tc.state)
+		partial := 0
+		for i := 3; i < len(c.Pix); i += 4 {
+			if c.Pix[i] > 0 && c.Pix[i] < 0xff {
+				partial++
+			}
+		}
+		if partial == 0 {
+			t.Errorf("%s has no partial-alpha edge pixels", tc.name)
+		}
+	}
+}
+
+func TestButtonGradientUsesAQuietSemanticRampInsideTheRoundedMask(t *testing.T) {
+	t.Parallel()
+	n := &ui.Node{
+		Kind: ui.KindButton, Bounds: ui.Rect{X: 4, Y: 4, W: 48, H: 24},
+		Gradient: ui.GradientPaint{
+			Stops: [4]ui.GradientStop{
+				{At: 0, Role: ui.PaintSecondary},
+				{At: 1, Role: ui.PaintPrimary},
+			},
+			Count: 2,
+		},
+	}
+	style := testStyle
+	style.Scale120 = 150
+	c := newTestCanvas(t, 96, 48)
+	if err := paintNode(c, n, NewTextRenderer(mustTestFace(t)), style, style.Size); err != nil {
+		t.Fatal(err)
+	}
+	box := style.Scale120.PhysicalRect(n.Bounds)
+	if got := pixelAt(t, c, box.X, box.Y); got.A != 0 {
+		t.Fatalf("gradient escaped rounded corner: %+v", got)
+	}
+	left := pixelAt(t, c, box.X+box.H/2, box.Y+box.H/2)
+	right := pixelAt(t, c, box.X+box.W-box.H/2-1, box.Y+box.H/2)
+	if left == right {
+		t.Fatalf("gradient collapsed to one colour: %+v", left)
+	}
+	if colorDistance(left, style.ContainerHighest) >= colorDistance(style.Secondary, style.ContainerHighest) {
+		t.Fatalf("secondary end is not restrained: fill %+v, secondary %+v, got %+v", style.ContainerHighest, style.Secondary, left)
+	}
+	if colorDistance(right, style.ContainerHighest) >= colorDistance(style.Accent, style.ContainerHighest) {
+		t.Fatalf("primary end is not restrained: fill %+v, primary %+v, got %+v", style.ContainerHighest, style.Accent, right)
+	}
+}
+
+func TestSelectedButtonForegroundContrastsAcrossTheGradient(t *testing.T) {
+	t.Parallel()
+	parse := func(s string) Color {
+		t.Helper()
+		c, err := theme.ParseColor(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return Color{R: c.R, G: c.G, B: c.B, A: c.A}
+	}
+	style := testStyle
+	style.Accent = parse(theme.Fallback.Primary)
+	style.Secondary = parse(theme.Fallback.Secondary)
+	style.OnPrimary = parse(theme.Fallback.OnPrimary)
+	n := &ui.Node{Gradient: ui.GradientPaint{
+		Stops: [4]ui.GradientStop{
+			{At: 0, Role: ui.PaintSecondary},
+			{At: 1, Role: ui.PaintPrimary},
+		},
+		Count: 2,
+	}}
+	stops := quietChromeGradient(resolveGradient(n, style), style.Accent)
+	toTheme := func(c Color) theme.Color { return theme.Color{R: c.R, G: c.G, B: c.B, A: c.A} }
+	for i := 0; i <= 100; i++ {
+		fill := sampleStops(stops, float64(i)/100)
+		if got := theme.ContrastRatio(toTheme(style.OnPrimary), toTheme(fill)); got < theme.TextRatio(false) {
+			t.Fatalf("gradient sample %d contrast = %.2f:1, want at least %.1f:1", i, got, theme.TextRatio(false))
+		}
+	}
+}
+
+func TestZeroGradientKeepsTheSolidChromePath(t *testing.T) {
+	t.Parallel()
+	n := &ui.Node{Kind: ui.KindButton, Text: "Lock", Height: 40, Width: 120, Padding: 12}
+	c := paintChromeNode(t, n, testStyle)
+	fx, fy := fillPointOf(n)
+	if got := pixelAt(t, c, fx, fy); got != testStyle.ContainerHighest {
+		t.Fatalf("zero gradient fill = %+v, want %+v", got, testStyle.ContainerHighest)
+	}
+}
+
+func TestHiddenScrollbarPaintsNoPixels(t *testing.T) {
+	t.Parallel()
+	paint := func(hidden bool) *Canvas {
+		c := newTestCanvas(t, 80, 80)
+		n := &ui.Node{
+			Kind: ui.KindVirtualList, HideScrollbar: hidden,
+			Bounds: ui.Rect{X: 4, Y: 4, W: 48, H: 48}, ContentH: 400,
+		}
+		if err := paintNode(c, n, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	if got := litPixels(paint(true), testStyle.Track); got != 0 {
+		t.Fatalf("hidden scrollbar painted %d track pixels", got)
+	}
+	if got := litPixels(paint(false), testStyle.Track); got == 0 {
+		t.Fatal("visible overflowing scrollbar painted no track pixels")
+	}
+}
+
 // overlay is the colour the painter must produce when it composites src over
 // dst at the given alpha, following the canvas's own blend.
 func overlay(dst, src Color, alpha float64) Color {
@@ -1189,6 +1321,16 @@ func nearlyEqualColor(a, b Color, tol int) bool {
 		return int(y - x)
 	}
 	return d(a.R, b.R) <= tol && d(a.G, b.G) <= tol && d(a.B, b.B) <= tol && d(a.A, b.A) <= tol
+}
+
+func colorDistance(a, b Color) int {
+	d := func(x, y uint8) int {
+		if x > y {
+			return int(x - y)
+		}
+		return int(y - x)
+	}
+	return d(a.R, b.R) + d(a.G, b.G) + d(a.B, b.B) + d(a.A, b.A)
 }
 
 func TestOutlinedButtonKeepsParentFillAndDrawsABoundary(t *testing.T) {
@@ -1772,11 +1914,21 @@ func TestFilletPaintsBarColourOutsideTheBody(t *testing.T) {
 		t.Fatalf("paint: %v", err)
 	}
 
-	if got := pixelAt(t, c, 0, 0); got.B != 255 {
-		t.Fatalf("top-left corner = %v, want the fillet fill", got)
+	if got := pixelAt(t, c, 0, 0); got.B == 0 || got.R != 0 || got.G != 0 {
+		t.Fatalf("top-left corner = %v, want blue fillet coverage", got)
 	}
 	if got := pixelAt(t, c, 0, 8); got.A != 0 {
 		t.Fatalf("row 8 outside the body = %v, want transparent", got)
+	}
+	partial := false
+	for y := 0; y < style.Fillet; y++ {
+		for x := 0; x < style.Body.X; x++ {
+			a := pixelAt(t, c, x, y).A
+			partial = partial || (a > 0 && a < 255)
+		}
+	}
+	if !partial {
+		t.Fatal("final silhouette erased every partial-alpha fillet pixel")
 	}
 }
 

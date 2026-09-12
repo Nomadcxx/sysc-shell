@@ -18,6 +18,9 @@ func (s Scale120) Valid() bool { return s > 0 }
 
 // Physical converts a logical length to buffer pixels, rounding half up.
 func (s Scale120) Physical(logical int) int {
+	if logical < 0 {
+		return (logical*int(s) - 60) / 120
+	}
 	return (logical*int(s) + 60) / 120
 }
 

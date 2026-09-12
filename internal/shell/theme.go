@@ -534,6 +534,16 @@ func (t Theme) PanelStyle() render.Style {
 	s.FilletFill = t.Style().RootFill()
 	return s
 }
+
+// AttachedPanelStyle keeps the semantic panel roles but resolves its root at
+// the bar opacity. Without a captured backdrop the two surfaces are one joined
+// ground; using the detached panel alpha would composite a different colour.
+func (t Theme) AttachedPanelStyle() render.Style {
+	s := t.StyleFor(t.Surfaces.Bar)
+	s.Fillet = t.Fillet
+	s.FilletFill = t.Style().RootFill()
+	return s
+}
 func (t Theme) OverlayStyle() render.Style { return t.StyleFor(t.Surfaces.Overlay) }
 
 // BackgroundOpaque reports whether the surface token is fully opaque.

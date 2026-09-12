@@ -50,6 +50,7 @@ func monitorPageSwitcher(h *PanelHost) *ui.Node {
 		n := &ui.Node{
 			Kind: ui.KindButton, Action: "monitor:page:" + page, Name: label, Role: "tab",
 			Focusable: true, Height: monitorControlHeight, Fill: ui.FillOutline,
+			Gradient: quietButtonGradient(),
 			Children: []*ui.Node{{Kind: ui.KindText, Text: label}},
 		}
 		if h.monitorPage == page || h.monitorPage == "" && page == monitorPageProcesses {
@@ -62,6 +63,16 @@ func monitorPageSwitcher(h *PanelHost) *ui.Node {
 			segment(monitorPageProcesses, "System Processes"),
 			segment(monitorPageMetrics, "System Monitor"),
 		}}
+}
+
+func quietButtonGradient() ui.GradientPaint {
+	return ui.GradientPaint{
+		Stops: [4]ui.GradientStop{
+			{At: 0, Role: ui.PaintSecondary},
+			{At: 1, Role: ui.PaintPrimary},
+		},
+		Count: 2, AngleDeg: 0,
+	}
 }
 
 func processMonitorTree(h *PanelHost, snapshot services.ProcessSnapshot, currentUID uint32) *ui.Node {
@@ -103,7 +114,7 @@ func processMonitorTree(h *PanelHost, snapshot services.ProcessSnapshot, current
 	tableHeight := max(h.place.Panel.H-used, processRowPitch+2*processTablePadding)
 	list := &ui.Node{
 		Kind: ui.KindVirtualList, Height: tableHeight - 2*processTablePadding,
-		ItemCount: len(processes), ItemHeight: processRowPitch,
+		ItemCount: len(processes), ItemHeight: processRowPitch, HideScrollbar: true,
 		Item: func(i int) *ui.Node {
 			if i < 0 || i >= len(processes) {
 				return nil
@@ -131,6 +142,7 @@ func processFilterSwitcher(h *PanelHost) *ui.Node {
 		}
 		if h.processFilter == filter.id {
 			n.State |= ui.StateSelected
+			n.Gradient = quietButtonGradient()
 		}
 		segments = append(segments, n)
 	}

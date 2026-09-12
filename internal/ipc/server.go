@@ -28,6 +28,7 @@ var (
 		"notifications":  "",
 		"wallpaper":      "",
 		"audio":          "",
+		"control-center": "",
 	}
 )
 
@@ -41,7 +42,7 @@ func DefaultSocket() string {
 }
 
 type Handlers struct {
-	Panel   func(action, panel string) error
+	Panel   func(action, panel, section string) error
 	OSDStep func(kind, action string) error
 	Status  func() map[string]any
 }
@@ -140,7 +141,8 @@ func (s *Server) handleLine(line string) []byte {
 	case "panel.toggle", "panel.open", "panel.close":
 		action := strings.TrimPrefix(req.Method, "panel.")
 		var params struct {
-			Panel string `json:"panel"`
+			Panel   string `json:"panel"`
+			Section string `json:"section"`
 		}
 		if len(req.Params) > 0 {
 			if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -157,7 +159,7 @@ func (s *Server) handleLine(line string) []byte {
 		if s.h.Panel == nil {
 			return envelope(req.ID, "", "panel handler unset")
 		}
-		if err := s.h.Panel(action, params.Panel); err != nil {
+		if err := s.h.Panel(action, params.Panel, params.Section); err != nil {
 			return envelope(req.ID, "", err.Error())
 		}
 		return envelope(req.ID, "ok", "")

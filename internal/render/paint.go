@@ -261,7 +261,13 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 	case ui.KindImage:
 		// A node whose raster has not resolved paints nothing but keeps the
 		// box it measured, so the card does not reflow when it arrives.
-		paintImage(c, style.Scale120.PhysicalRect(n.Bounds), n.Image)
+		box := style.Scale120.PhysicalRect(n.Bounds)
+		if n.Shape != ui.ShapeInherit || n.Radius > 0 {
+			radius := chromeRadius(style, nodeRadius(style, n, 0), box)
+			paintImageMasked(c, box, n.Image, RoundedMask(radius, box.W, box.H))
+		} else {
+			paintImage(c, box, n.Image)
+		}
 		return nil
 
 	case ui.KindButton, ui.KindDragSource:
@@ -352,6 +358,9 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 }
 
 func paintScrollThumb(c *Canvas, n *ui.Node, style Style) {
+	if n.HideScrollbar {
+		return
+	}
 	inner := n.Bounds.H - 2*n.Padding
 	if inner <= 0 || n.ContentH <= inner {
 		return
@@ -375,7 +384,7 @@ func paintScrollThumb(c *Canvas, n *ui.Node, style Style) {
 		W: trackW,
 		H: trackH,
 	}
-	fillRoundedRect(c, track, trackW/2, style.Track)
+	c.FillRounded(track, trackW/2, style.Track)
 	thumbH := track.H * inner / n.ContentH
 	minThumb := style.Scale120.Physical(16)
 	if thumbH < minThumb {
@@ -389,7 +398,7 @@ func paintScrollThumb(c *Canvas, n *ui.Node, style Style) {
 	if maxOff > 0 {
 		thumbY += (track.H - thumbH) * n.ScrollOffset / maxOff
 	}
-	fillRoundedRect(c, ui.Rect{X: track.X, Y: thumbY, W: trackW, H: thumbH}, trackW/2, style.Foreground)
+	c.FillRounded(ui.Rect{X: track.X, Y: thumbY, W: trackW, H: thumbH}, trackW/2, style.Foreground)
 }
 
 func paintToggle(c *Canvas, n *ui.Node, style Style) {
@@ -877,7 +886,13 @@ func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size in
 	box := style.Scale120.PhysicalRect(n.Bounds)
 	radius := chromeRadius(style, nodeRadius(style, n, radiusLogical), box)
 	fill, fg := chromeFill(style, n, base)
-	fillRoundedRect(c, box, radius, fill)
+	mask := RoundedMask(radius, box.W, box.H)
+	if stops := resolveGradient(n, style); fill.A > 0 && stops != nil {
+		blendMaskGradient(c, mask, box.X, box.Y, quietChromeGradient(stops, fill),
+			n.Gradient.AngleDeg, n.GradientOffset, false)
+	} else {
+		blendMask(c, mask, box.X, box.Y, fill)
+	}
 	// An explicit stroke marks a card that has to stand out from its
 	// neighbours -- a critical notification -- independently of the fill and of
 	// any interaction state.
@@ -886,18 +901,18 @@ func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size in
 		if n.StrokeFill == ui.FillNone {
 			strokeCol = style.Accent
 		}
-		strokeRoundedRect(c, box, radius, max(1, style.Scale120.Physical(n.Stroke)), strokeCol)
+		c.StrokeRounded(box, radius, max(1, style.Scale120.Physical(n.Stroke)), strokeCol)
 	}
 	if n.Fill == ui.FillOutline {
 		boundary := style.outline()
 		if n.Tone == ui.ToneError {
 			boundary = style.Error
 		}
-		strokeRoundedRect(c, box, radius, max(1, style.Scale120.Physical(1)), boundary)
+		c.StrokeRounded(box, radius, max(1, style.Scale120.Physical(1)), boundary)
 	}
 	// The layer sits over the resolved fill and under the contents, so a label
 	// never dims along with its own hover wash.
-	fillRoundedRect(c, box, radius, stateLayer(fg, n.State))
+	blendMask(c, mask, box.X, box.Y, stateLayer(fg, n.State))
 	if n.State.Has(ui.StateDisabled) {
 		fg = Color{R: fg.R, G: fg.G, B: fg.B, A: uint8(math.Round(float64(fg.A) * disabledForeground))}
 	}
@@ -927,6 +942,22 @@ func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size in
 	labelBox := style.Scale120.PhysicalRect(label)
 	spec := textSpec(inner, n)
 	return paintCentredTextColor(c, n.Text, labelBox, text, spec, n.Tabular, fg, n.Underline)
+}
+
+// quietChromeGradient keeps declared semantic stops close to the resolved
+// solid fill. Buttons gain depth without turning the theme's accent roles into
+// a second, louder palette.
+func quietChromeGradient(stops []gradientStop, fill Color) []gradientStop {
+	const firstTint, lastTint = 0.10, 0.06
+	last := len(stops) - 1
+	for i := range stops {
+		strength := firstTint
+		if last > 0 {
+			strength += (lastTint - firstTint) * float64(i) / float64(last)
+		}
+		stops[i].c = LerpColor(fill, stops[i].c, strength)
+	}
+	return stops
 }
 
 // paintIcon draws one named glyph from the embedded Material subset, centred in

@@ -1,6 +1,8 @@
 package render
 
 import (
+	"image"
+
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -12,6 +14,10 @@ import (
 // worker produces the size the node asked for, and resampling here would be a
 // second, worse scaler.
 func paintImage(c *Canvas, box ui.Rect, img *ui.Image) {
+	paintImageMasked(c, box, img, nil)
+}
+
+func paintImageMasked(c *Canvas, box ui.Rect, img *ui.Image, mask *image.Alpha) {
 	if img == nil || img.Width <= 0 || img.Height <= 0 {
 		return
 	}
@@ -39,7 +45,11 @@ func paintImage(c *Canvas, box ui.Rect, img *ui.Image) {
 			if offset+4 > len(img.Pix) {
 				continue
 			}
-			alpha := uint32(img.Pix[offset+3])
+			coverage := uint32(255)
+			if mask != nil {
+				coverage = uint32(mask.AlphaAt(x-box.X, y-box.Y).A)
+			}
+			alpha := uint32(img.Pix[offset+3]) * coverage / 255
 			if alpha == 0 {
 				continue
 			}
@@ -47,7 +57,11 @@ func paintImage(c *Canvas, box ui.Rect, img *ui.Image) {
 			if dst+4 > len(c.Pix) {
 				continue
 			}
-			blendPixel(c.Pix[dst:dst+4], [4]byte(img.Pix[offset:offset+4]), alpha)
+			var src [4]byte
+			for i, channel := range img.Pix[offset : offset+4] {
+				src[i] = byte(uint32(channel) * coverage / 255)
+			}
+			blendPixel(c.Pix[dst:dst+4], src, alpha)
 		}
 	}
 }

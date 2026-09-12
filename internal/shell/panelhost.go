@@ -104,6 +104,7 @@ type PanelHost struct {
 	draft          config.Config
 	query          string
 	section        string
+	pageDirection  int
 	search         *ui.Field
 	fields         map[string]*ui.Field
 	editors        map[string]*retainedEditor
@@ -176,6 +177,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelWallpaper, nil
 	case "audio":
 		return PanelAudio, nil
+	case "control-center":
+		return PanelControlCenter, nil
 	default:
 		return 0, fmt.Errorf("unknown panel")
 	}
@@ -184,29 +187,101 @@ func parsePanelName(name string) (PanelID, error) {
 func (r *Registry) AuxRequests() <-chan wayland.AuxRequest { return r.aux }
 
 func (r *Registry) TogglePanelByName(name string) error {
-	id, err := parsePanelName(name)
-	if err != nil {
-		return err
-	}
-	out, trig := r.focusedTrigger()
-	return r.TogglePanel(id, out, trig)
+	return r.HandlePanelByName("toggle", name, "")
 }
 
 func (r *Registry) OpenPanelByName(name string) error {
-	id, err := parsePanelName(name)
-	if err != nil {
-		return err
-	}
-	out, trig := r.focusedTrigger()
-	return r.OpenPanel(id, out, trig)
+	return r.HandlePanelByName("open", name, "")
 }
 
 func (r *Registry) ClosePanelByName(name string) error {
+	return r.HandlePanelByName("close", name, "")
+}
+
+// HandlePanelByName validates a requested section before it changes the root.
+func (r *Registry) HandlePanelByName(action, name, section string) error {
 	id, err := parsePanelName(name)
 	if err != nil {
 		return err
 	}
-	r.ClosePanel(id)
+	section, err = panelSection(id, section)
+	if err != nil {
+		return err
+	}
+	if action == "close" {
+		r.ClosePanel(id)
+		return nil
+	}
+	if action != "open" && action != "toggle" {
+		return fmt.Errorf("unknown panel action")
+	}
+
+	out, trig := r.focusedTrigger()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if where, ok := r.panels.Output(id); ok && where == out && r.roots.owns(panelRoot(id)) {
+		if action == "toggle" {
+			r.closePanelLocked(id)
+			return nil
+		}
+		return r.selectPanelSectionLocked(id, section)
+	}
+	if err := r.openPanelRootLocked(id, out, trig); err != nil {
+		return err
+	}
+	return r.selectPanelSectionLocked(id, section)
+}
+
+func panelSection(id PanelID, requested string) (string, error) {
+	if requested == "" {
+		switch id {
+		case PanelControlCenter:
+			return "home", nil
+		case PanelSettings:
+			return "Bar", nil
+		default:
+			return "", nil
+		}
+	}
+	switch id {
+	case PanelControlCenter:
+		section, ok := ccSectionFor(requested)
+		if !ok {
+			return "", fmt.Errorf("unknown section %q", requested)
+		}
+		if !section.Enabled {
+			return "", fmt.Errorf("section %q is unavailable", requested)
+		}
+		return requested, nil
+	case PanelSettings:
+		for _, section := range settingsSections {
+			if section == requested {
+				return requested, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("unknown section %q", requested)
+}
+
+func (r *Registry) selectPanelSectionLocked(id PanelID, section string) error {
+	if section == "" {
+		return nil
+	}
+	h := r.panelHosts[id]
+	if h == nil {
+		return fmt.Errorf("panel %q is not open", id)
+	}
+	if h.section == section {
+		return nil
+	}
+	if id == PanelControlCenter {
+		h.selectControlCentreSection(r, section)
+		r.publishSurface(h.output, panelSurfaceID(id))
+		return nil
+	}
+	h.section = section
+	r.rebuildPanel(h)
+	r.publishSurface(h.output, panelSurfaceID(id))
 	return nil
 }
 
@@ -393,6 +468,8 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelWallpaper, true
 	case "audio":
 		return PanelAudio, true
+	case "control-center":
+		return PanelControlCenter, true
 	default:
 		return 0, false
 	}
@@ -414,7 +491,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		size = audioPanelSize(outW, outH)
 	}
 	gap := r.cfg.Panels.Gap
-	if id == PanelPlugin || id == PanelAudio {
+	if id == PanelPlugin || id == PanelAudio || id == PanelControlCenter {
 		gap = 0
 	}
 	place := Placement{
@@ -443,7 +520,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		place:       place,
 		stopAnim:    make(chan struct{}),
 		shieldQuiet: time.Now().Add(shieldQuietFor),
-		theme:       r.panelTheme(),
+		theme:       r.panelThemeFor(output),
 		fontFamily:  r.panelFontFamily(output),
 	}
 	if bar, ok := r.bars[output]; ok {
@@ -481,6 +558,9 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		h.processSort, h.processDesc = "cpu", true
 		h.search = ui.NewField("")
 	}
+	if id == PanelControlCenter {
+		h.section = "home"
+	}
 	h.root = r.panelTree(h)
 	if id == PanelNotifications {
 		_ = h.ensureText()
@@ -513,7 +593,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	r.sendAux(wayland.AuxRequest{Output: output, Open: r.shieldSpec(h)})
 	r.sendAux(wayland.AuxRequest{Output: output, Open: r.panelSpec(h, margins)})
 
-	if id == PanelSession {
+	if id == PanelSession || id == PanelControlCenter {
 		r.scheduleLoadProfiles(h)
 	}
 
@@ -569,6 +649,36 @@ func (r *Registry) acquirePanelLeases(h *PanelHost) error {
 			return nil
 		}
 		h.mixerLease = lease
+	case PanelControlCenter:
+		for _, sel := range []services.Selector{
+			{Source: services.SourceCPU},
+			{Source: services.SourceMemory},
+			{Source: services.SourceBattery},
+		} {
+			lease, err := r.metrics.Acquire(sel, time.Second)
+			if err != nil {
+				releaseAll(h.leases)
+				h.leases = nil
+				return err
+			}
+			h.leases = append(h.leases, lease)
+		}
+		lease, err := r.clock.Acquire(time.Second)
+		if err != nil {
+			releaseAll(h.leases)
+			h.leases = nil
+			return err
+		}
+		h.leases = append(h.leases, lease)
+		if r.cfg.Weather.Interval > 0 {
+			lease, err := r.weather.Acquire(r.cfg.Weather.Interval)
+			if err != nil {
+				releaseAll(h.leases)
+				h.leases = nil
+				return err
+			}
+			h.leases = append(h.leases, lease)
+		}
 	}
 	return nil
 }
@@ -661,6 +771,12 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	if fillet > 0 {
 		m.Left -= fillet
 	}
+	opaque := h.theme.BackgroundOpaque()
+	if fillet > 0 {
+		// ponytail: omit the hint for fillet-expanded surfaces; add a body-aware
+		// opaque-region API only if compositor profiling shows this matters.
+		opaque = false
+	}
 	return &wayland.AuxSpec{
 		ID:            panelSurfaceID(h.id),
 		Namespace:     "sysc-shell-panel",
@@ -675,7 +791,7 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 		ExclusiveZone: -1,
 		Keyboard:      keyboardExclusive,
 		Callbacks: wayland.HostCallbacks{
-			OpaqueBackground: h.theme.BackgroundOpaque(),
+			OpaqueBackground: opaque,
 			Radius:           h.theme.Radius,
 			Configure:        h.configureLocking(r),
 			Render:           h.renderLocking(r),
@@ -701,7 +817,13 @@ func (h *PanelHost) filletMargin() int {
 		return 0
 	}
 	room := h.place.Padding - BarGap
-	if room < 0 {
+	if h.id == PanelControlCenter {
+		m := h.place.Margins()
+		left := m.Left - BarGap
+		right := h.place.Output.W - BarGap - (m.Left + h.place.Panel.W)
+		room = min(left, right)
+	}
+	if room <= 0 {
 		return 0
 	}
 	return min(h.theme.Fillet, room)
@@ -786,6 +908,23 @@ func (h *PanelHost) measureText() ui.MeasureText {
 	}
 }
 
+func (h *PanelHost) panelReveal() (opacity float64, offsetY, fillet int) {
+	if h == nil || h.anim == nil || !h.anim.has(panelSurfaceID(h.id), animVisible) {
+		if h == nil {
+			return 1, 0, 0
+		}
+		return 1, 0, h.theme.Fillet
+	}
+	key := panelSurfaceID(h.id)
+	opacity = h.anim.PanelOpacity(key)
+	offsetY = h.anim.PanelSlide(key)
+	if h.place.BarEdge == "top" {
+		offsetY = -offsetY
+	}
+	fillet = int(math.Round(float64(h.theme.Fillet) * opacity))
+	return opacity, offsetY, fillet
+}
+
 func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	if err := h.ensureText(); err != nil {
 		return err
@@ -809,21 +948,40 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	// painter consumes an immutable mask; nothing downstream mutates state.
 	h.pointer.apply(h.root, h.anim)
 
-	style := h.paintTheme().PanelStyle()
+	paintTheme := h.paintTheme()
+	style := paintTheme.PanelStyle()
+	if !h.place.CenterY {
+		style = paintTheme.AttachedPanelStyle()
+	}
 	// Only a panel draws its own rim; the bar, toasts and tray surfaces
 	// sit directly on the shared surface and leave it zero. A fused audio
 	// panel paints no rim: it and the bar share Style.Background, and a
 	// stroke would read as a seam.
 	if h.id != PanelAudio {
-		style.Rim = h.paintTheme().Outline
+		style.Rim = paintTheme.Outline
 	}
 	style.Scale120 = scale
 	style.Body = body
+	opacity, offsetY, fillet := h.panelReveal()
+	style.Fillet = fillet
 	if !h.place.CenterY {
 		style.AttachEdge = h.place.BarEdge
 	}
-	if err := render.Paint(c, h.root, h.text, style); err != nil {
+	page, viewport, pageProgress, pageOffset := h.controlCentrePageVisual()
+	if page != nil && pageOffset != 0 {
+		offsetNodeY(page, pageOffset)
+	}
+	err = render.Paint(c, h.root, h.text, style)
+	if page != nil && pageOffset != 0 {
+		offsetNodeY(page, -pageOffset)
+	}
+	if err != nil {
 		return err
+	}
+	if viewport != nil && pageProgress < 1 {
+		wash := style.RootFill()
+		wash.A = uint8(math.Round(float64(wash.A) * (1 - pageProgress)))
+		c.FillRounded(scale.PhysicalRect(viewport.Bounds), 0, wash)
 	}
 	if h.roving.Count > 0 {
 		n := h.focus[h.roving.Index()]
@@ -843,6 +1001,7 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 			c.StrokeRounded(ring, radius, max(scale.Physical(2), 2), h.theme.Accent)
 		}
 	}
+	c.ApplySurfaceTransform(opacity, scale.Physical(offsetY))
 	return nil
 }
 
@@ -935,6 +1094,9 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 				}
 				if strings.HasPrefix(n.Action, "audio-") {
 					return h.applyAudioControl(r, n)
+				}
+				if h.id == PanelControlCenter && h.activateControlCentre(r, n) {
+					return true
 				}
 				h.applySetting(r, n)
 				return true
@@ -1342,13 +1504,16 @@ func (h *PanelHost) adjustSlider(r *Registry, key uint32) bool {
 	if strings.HasPrefix(n.Action, "audio-") {
 		return h.applyAudioControl(r, n)
 	}
+	if h.id == PanelControlCenter && h.activateControlCentre(r, n) {
+		return true
+	}
 	h.applySetting(r, n)
 	return true
 }
 
 func (h *PanelHost) activate(r *Registry) bool {
 	n := h.focused()
-	if n == nil {
+	if n == nil || n.State.Has(ui.StateDisabled) {
 		return false
 	}
 	switch n.Action {
@@ -1403,6 +1568,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if h.id == PanelLauncher {
 		return h.activateLauncher(r, n)
 	}
+	if h.id == PanelControlCenter && h.activateControlCentre(r, n) {
+		return true
+	}
 	if n.Kind == ui.KindToggle {
 		changed := ui.Activate(n)
 		h.applySetting(r, n)
@@ -1447,7 +1615,11 @@ func (h *PanelHost) activate(r *Registry) bool {
 		return h.activateNotify(r, n)
 	}
 	if strings.HasPrefix(n.Action, "section:") {
-		h.section = strings.TrimPrefix(n.Action, "section:")
+		section := strings.TrimPrefix(n.Action, "section:")
+		if h.id == PanelControlCenter {
+			return h.selectControlCentreSection(r, section)
+		}
+		h.section = section
 		r.rebuildPanel(h)
 		return true
 	}
@@ -1650,6 +1822,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		return r.centerTreeFor(h)
 	case PanelAudio:
 		return audioTree(r, h)
+	case PanelControlCenter:
+		return controlCentreTree(r, h)
 	default:
 		return placeholderTree()
 	}
@@ -1681,6 +1855,8 @@ func panelTargetSize(id PanelID) ui.Rect {
 		return ui.Rect{W: 980, H: 1100}
 	case PanelAudio:
 		return audioPanelSize(1920, 1080)
+	case PanelControlCenter:
+		return ui.Rect{W: 700, H: 564}
 	default:
 		return ui.Rect{W: 280, H: 200}
 	}

@@ -25,6 +25,60 @@ func newHosts(t *testing.T, reg *Registry, hosts map[uint32]string) {
 	}
 }
 
+func TestAttachedPanelAndOutputBarShareRootBeforeAndAfterThemeReload(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Accessibility.ReducedMotion = true
+	cfg.Theme.BarOpacity = 80
+	cfg.Theme.PanelOpacity = 95
+	cfg.Bar.Left, cfg.Bar.Center, cfg.Bar.Right = nil, nil, nil
+	policy := cfg.Bar
+	policy.Radius = 7
+	cfg.Outputs = []config.OutputOverride{{Connector: "DP-2", Bar: policy}}
+
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	reg.tokens = theme.Fallback
+	bar, leases, _, err := reg.buildBar(cfg, "DP-2", reg.tokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { releaseAll(leases) })
+	reg.bars[7] = bar
+	if err := reg.OpenPanel(PanelMonitor, 7, Trigger{BarEdge: "top"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	panel := reg.panelHosts[PanelMonitor]
+	check := func(bar *Bar) {
+		t.Helper()
+		barTheme := bar.themeSnapshot()
+		barRoot := barTheme.Style().RootFill()
+		if got := panel.paintTheme().AttachedPanelStyle().RootFill(); got != barRoot {
+			t.Fatalf("attached panel root = %+v, output bar root = %+v", got, barRoot)
+		}
+		if panel.paintTheme().PanelStyle().RootFill() == barRoot {
+			t.Fatal("detached panel lost its separate panel-opacity axis")
+		}
+		if panel.theme.Radius != 7 || barTheme.Radius != panel.theme.Radius || barTheme.Type.Family != panel.theme.Type.Family {
+			t.Fatalf("output projection = panel radius/font %d/%q bar %d/%q", panel.theme.Radius, panel.theme.Type.Family, barTheme.Radius, barTheme.Type.Family)
+		}
+	}
+	check(bar)
+
+	before := bar.themeSnapshot().Style().RootFill()
+	reg.setPalette("catppuccin")
+	select {
+	case <-bar.Invalidations():
+	default:
+		t.Fatal("theme reload did not invalidate the bar")
+	}
+	if got := bar.themeSnapshot().Style().RootFill(); got == before {
+		t.Fatalf("bar root stayed on %+v after palette reload", got)
+	}
+	check(bar)
+}
+
 func TestTwoBarsShareOneClockServiceAndOneUpdate(t *testing.T) {
 	t.Parallel()
 	reg := NewRegistry(config.Default())

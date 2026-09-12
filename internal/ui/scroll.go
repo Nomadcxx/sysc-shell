@@ -28,7 +28,7 @@ const scrollHitWidth = 8
 
 // ScrollTrack is the logical-pixel strip on the right of an overflowing scroll view.
 func ScrollTrack(n *Node) Rect {
-	if n == nil {
+	if n == nil || n.HideScrollbar {
 		return Rect{}
 	}
 	inner := n.Bounds.H - 2*n.Padding

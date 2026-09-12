@@ -134,10 +134,13 @@ type Node struct {
 	Shape Shape
 	// ScrollOffset is the viewport origin in logical pixels.
 	ScrollOffset int
-	ItemCount    int
-	ItemHeight   int
-	ContentH     int
-	Item         func(int) *Node
+	// HideScrollbar keeps wheel, keyboard, and programmatic scrolling while
+	// removing both the painted thumb and its pointer track.
+	HideScrollbar bool
+	ItemCount     int
+	ItemHeight    int
+	ContentH      int
+	Item          func(int) *Node
 	// Values are the graph's samples, oldest first, each already normalised to
 	// zero through one by the widget. The node carries no scale of its own.
 	Values []float64
@@ -226,7 +229,11 @@ type Node struct {
 	Children []*Node
 
 	// Name and Role are required on every Focusable node.
-	Focusable     bool
+	Focusable bool
+	// AriaDisabled keeps a disabled destination in keyboard traversal so its
+	// accessible name can explain why it is unavailable. Activation remains
+	// blocked by StateDisabled.
+	AriaDisabled  bool
 	Name          string
 	Role          string
 	DragType      string

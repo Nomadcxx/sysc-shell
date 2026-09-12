@@ -177,11 +177,11 @@ func TestCachedStateServesThePolledValueWithoutExec(t *testing.T) {
 		t.Fatal("baseline poll never ran wpctl")
 	}
 	before := fake.lines(t)
-	st := a.CachedState()
+	st, ok := a.CachedState()
 	if got := fake.lines(t); got != before {
 		t.Fatalf("CachedState exec'd wpctl: log lines %d -> %d", before, got)
 	}
-	if st.Level != 40 {
-		t.Fatalf("CachedState().Level = %d, want 40", st.Level)
+	if !ok || st.Level != 40 {
+		t.Fatalf("CachedState() = %+v, %v, want level 40 from the completed poll", st, ok)
 	}
 }
