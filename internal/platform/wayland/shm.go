@@ -31,6 +31,10 @@ type generation struct {
 var errAllocate = errors.New("wayland: cannot allocate buffers")
 
 // newGeneration creates the memfd, maps it, and creates one buffer per slot.
+//
+// This serves surfaces the shell paints. It cannot serve a screencopy capture:
+// the pool spans slotCount buffers, and a capture target's pool must be exactly
+// one buffer. See newCaptureBuffer.
 func newGeneration(shm *client.Shm, id int, width, height int32) (*generation, error) {
 	if width <= 0 || height <= 0 {
 		return nil, fmt.Errorf("%w: size is %dx%d", errAllocate, width, height)
