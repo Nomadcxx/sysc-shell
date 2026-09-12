@@ -252,15 +252,24 @@ func resolveSurfaces(comp theme.Composition, highContrast bool) Surfaces {
 		return Surfaces{Bar: 0xff, Panel: 0xff, Overlay: 0xff}
 	}
 	return Surfaces{
-		Bar:     opacityAlpha(comp.BarOpacity),
-		Panel:   opacityAlpha(comp.PanelOpacity),
-		Overlay: opacityAlpha(comp.OverlayOpacity),
+		Bar:     opacityAlpha(comp.BarOpacity, false),
+		Panel:   opacityAlpha(comp.PanelOpacity, comp.BlurBehind),
+		Overlay: opacityAlpha(comp.OverlayOpacity, false),
 	}
 }
 
-func opacityAlpha(percent int) uint8 {
-	if percent < theme.OpacityMin {
-		percent = theme.OpacityMin
+// opacityAlpha converts a percentage to alpha, clamped to whichever floor
+// applies. The blurred floor is the lower of the two because the reason for the
+// higher one -- wallpaper detail reading through a label -- stops holding once
+// the ground behind the text has been blurred. Only panels can pass true: the
+// bar is docked and the overlay does not carry a backdrop.
+func opacityAlpha(percent int, blurred bool) uint8 {
+	floor := theme.OpacityMin
+	if blurred {
+		floor = theme.OpacityMinBlurred
+	}
+	if percent < floor {
+		percent = floor
 	}
 	if percent > theme.OpacityMax {
 		percent = theme.OpacityMax
