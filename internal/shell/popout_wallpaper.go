@@ -1231,12 +1231,23 @@ func (r *Registry) republishTheme(cfg config.Config) {
 	tokens, genErr := r.generateTheme(cfg)
 
 	r.mu.Lock()
+	nextBars := make(map[*Bar]Theme, len(r.bars))
+	for _, bar := range r.bars {
+		next, err := resolveOutputTheme(cfg, bar.connector(), tokens)
+		if err != nil {
+			r.themeErr = err.Error()
+			r.mu.Unlock()
+			return
+		}
+		nextBars[bar] = next
+	}
 	r.tokens = tokens
 	r.themeErr = ""
 	if genErr != nil {
 		r.themeErr = genErr.Error()
 	}
 	for _, bar := range r.bars {
+		bar.retheme(nextBars[bar])
 		bar.apply(r.viewLocked(bar.connector()))
 	}
 	r.retheThemeOpenSurfacesLocked()

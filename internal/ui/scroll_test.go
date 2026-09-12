@@ -24,6 +24,21 @@ func TestScrollClampsOffset(t *testing.T) {
 	}
 }
 
+func TestHiddenScrollbarExposesNoPointerTrack(t *testing.T) {
+	t.Parallel()
+	n := &Node{
+		Kind: KindVirtualList, HideScrollbar: true,
+		Bounds: Rect{W: 400, H: 200}, ContentH: 800,
+	}
+	if got := ScrollTrack(n); got != (Rect{}) {
+		t.Fatalf("hidden scrollbar track = %+v, want none", got)
+	}
+	ScrollBy(n, 40)
+	if n.ScrollOffset != 40 {
+		t.Fatalf("hidden scrollbar disabled scrolling: offset = %d, want 40", n.ScrollOffset)
+	}
+}
+
 func TestVirtualListVisibleRange(t *testing.T) {
 	t.Parallel()
 	measure := func(string, TextAttrs) (int, int) { return 400, 16 }

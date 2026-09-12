@@ -111,7 +111,7 @@ func alignX(p Placement) int {
 
 func exclusiveBarZone(bar *Bar) int {
 	if bar != nil {
-		if s, _, _ := bar.theme.Geometry(); s > 0 {
+		if s, _, _ := bar.themeSnapshot().Geometry(); s > 0 {
 			return s
 		}
 	}

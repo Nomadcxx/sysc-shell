@@ -415,6 +415,22 @@ func (r *Registry) panelTheme() Theme {
 	return t
 }
 
+func resolveOutputTheme(cfg config.Config, connector string, tok theme.Tokens) (Theme, error) {
+	return ResolveTheme(cfg, cfg.ForConnector(connector), tok)
+}
+
+func (r *Registry) panelThemeFor(output uint32) Theme {
+	connector := ""
+	if bar, ok := r.bars[output]; ok {
+		connector = bar.connector()
+	}
+	t, err := resolveOutputTheme(r.cfg, connector, r.tokens)
+	if err != nil {
+		return DefaultTheme()
+	}
+	return t
+}
+
 // generateTheme returns the palette for cfg and why it is not the requested
 // one, when it is not.
 //
@@ -1143,7 +1159,10 @@ func (r *Registry) buildBar(cfg config.Config, connector string, tok theme.Token
 	*Bar, []*services.Lease, wayland.HostCallbacks, error,
 ) {
 	policy := cfg.ForConnector(connector)
-	th := withBarGeometry(ThemeFromTokens(tok, cfg.Theme.Radius), policy)
+	th, err := resolveOutputTheme(cfg, connector, tok)
+	if err != nil {
+		return nil, nil, wayland.HostCallbacks{}, err
+	}
 	bar, err := NewWithTheme(th, policy, connector)
 	if err != nil {
 		return nil, nil, wayland.HostCallbacks{}, err
@@ -1261,9 +1280,10 @@ func (r *Registry) drivePointerTooltip(global uint32, bar *Bar, event wayland.Ev
 		r.dwell.leave()
 	case wayland.EventPointerEnter, wayland.EventPointerMotion:
 		if text, root, bounds, ok := bar.hoverTooltip(); ok {
+			theme := bar.themeSnapshot()
 			style := wayland.TooltipStyle{
-				Background: bar.theme.Background,
-				Foreground: bar.theme.Foreground,
+				Background: theme.Background,
+				Foreground: theme.Foreground,
 			}
 			if root != nil {
 				r.dwell.enterRoot(global, bounds, root, style)
@@ -1289,11 +1309,11 @@ func releaseAll(leases []*services.Lease) {
 //
 // Caller holds r.mu.
 func (r *Registry) retheThemeOpenSurfacesLocked() {
-	next := r.surfaceTheme()
 	for _, h := range r.panelHosts {
 		if h == nil {
 			continue
 		}
+		next := r.panelThemeFor(h.output)
 		h.retheme(withPanelRadius(next, h))
 		r.startSurfaceFrames(h)
 	}

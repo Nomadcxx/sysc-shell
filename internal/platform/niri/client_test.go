@@ -217,8 +217,6 @@ func TestStreamAppliesWorkspaceActivated(t *testing.T) {
 	defer cancel()
 
 	snapshots, errs := Stream(ctx, f.path)
-	nextSnapshot(t, snapshots, errs) // the initial snapshot
-
 	deadline := time.After(2 * time.Second)
 	for {
 		snap := nextSnapshot(t, snapshots, errs)
@@ -406,17 +404,19 @@ func TestTheStreamDeliversWindowState(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Each event publishes once, so the workspace snapshot arrives before the
-	// window one. Draining to channel close instead would assert on the fake
-	// server hanging up, which the client correctly reports as a failure.
+	// The stream may coalesce the burst to its newest snapshot.
 	snapshots, errs := Stream(ctx, server.path)
-	nextSnapshot(t, snapshots, errs)
-	last := nextSnapshot(t, snapshots, errs)
-
-	if len(last.Windows) != 1 || last.Windows[0].Title != "Fixture One" {
-		t.Fatalf("windows = %+v, want one titled Fixture One", last.Windows)
-	}
-	if len(last.Workspaces) != 1 || !last.Workspaces[0].HasActiveWindow {
-		t.Fatalf("workspaces = %+v, want one with an active window", last.Workspaces)
+	for {
+		last := nextSnapshot(t, snapshots, errs)
+		if len(last.Windows) == 0 {
+			continue
+		}
+		if len(last.Windows) != 1 || last.Windows[0].Title != "Fixture One" {
+			t.Fatalf("windows = %+v, want one titled Fixture One", last.Windows)
+		}
+		if len(last.Workspaces) != 1 || !last.Workspaces[0].HasActiveWindow {
+			t.Fatalf("workspaces = %+v, want one with an active window", last.Workspaces)
+		}
+		return
 	}
 }

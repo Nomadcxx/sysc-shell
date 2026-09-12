@@ -239,6 +239,24 @@ func (b *Bar) scale120() int {
 	return int(b.style.Scale120)
 }
 
+func (b *Bar) themeSnapshot() Theme {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.theme
+}
+
+// retheme replaces the resolved paint roles without discarding the output
+// geometry already supplied by the Wayland configure path.
+func (b *Bar) retheme(theme Theme) {
+	b.mu.Lock()
+	scale, body := b.style.Scale120, b.style.Body
+	b.theme = theme
+	b.style = barStyle(theme)
+	b.style.Scale120, b.style.Body = scale, body
+	b.mu.Unlock()
+	b.invalidate()
+}
+
 // apply writes each widget's state from the view and reports whether anything
 // changed. A false return means no layout and no redraw: no state change, no
 // submitted frame.

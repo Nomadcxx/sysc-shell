@@ -520,7 +520,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		place:       place,
 		stopAnim:    make(chan struct{}),
 		shieldQuiet: time.Now().Add(shieldQuietFor),
-		theme:       r.panelTheme(),
+		theme:       r.panelThemeFor(output),
 		fontFamily:  r.panelFontFamily(output),
 	}
 	if bar, ok := r.bars[output]; ok {
@@ -948,13 +948,17 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	// painter consumes an immutable mask; nothing downstream mutates state.
 	h.pointer.apply(h.root, h.anim)
 
-	style := h.paintTheme().PanelStyle()
+	paintTheme := h.paintTheme()
+	style := paintTheme.PanelStyle()
+	if !h.place.CenterY {
+		style = paintTheme.AttachedPanelStyle()
+	}
 	// Only a panel draws its own rim; the bar, toasts and tray surfaces
 	// sit directly on the shared surface and leave it zero. A fused audio
 	// panel paints no rim: it and the bar share Style.Background, and a
 	// stroke would read as a seam.
 	if h.id != PanelAudio {
-		style.Rim = h.paintTheme().Outline
+		style.Rim = paintTheme.Outline
 	}
 	style.Scale120 = scale
 	style.Body = body

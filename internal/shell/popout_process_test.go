@@ -117,6 +117,9 @@ func TestProcessTableUsesCompactChromeAndOneKillAction(t *testing.T) {
 		if segment.Fill != ui.FillOutline {
 			t.Fatalf("page segment %q fill = %v, want outline", segment.Name, segment.Fill)
 		}
+		if segment.Gradient.Count != 2 || segment.Gradient.Stops[0].Role != ui.PaintSecondary || segment.Gradient.Stops[1].Role != ui.PaintPrimary || segment.Gradient.Motion != ui.GradientNone {
+			t.Fatalf("page segment %q gradient = %+v, want a static semantic ramp", segment.Name, segment.Gradient)
+		}
 	}
 	field := findKind(tree, ui.KindTextField)
 	if field == nil || field.Height != 28 || field.Bounds.H != 28 {
@@ -125,6 +128,14 @@ func TestProcessTableUsesCompactChromeAndOneKillAction(t *testing.T) {
 	filters := findNodeKey(tree, "process-filter")
 	if filters == nil || filters.Height != 28 {
 		t.Fatalf("filter switch = %+v, want 28px", filters)
+	}
+	for _, filter := range filters.Children {
+		if filter.State.Has(ui.StateSelected) && filter.Gradient.Count != 2 {
+			t.Fatalf("selected filter %q gradient = %+v, want quiet ramp", filter.Name, filter.Gradient)
+		}
+		if !filter.State.Has(ui.StateSelected) && filter.Gradient.Count != 0 {
+			t.Fatalf("resting filter %q gradient = %+v, want solid zero-value path", filter.Name, filter.Gradient)
+		}
 	}
 	for _, key := range []string{"name", "cpu", "memory", "pid"} {
 		header := findAction(tree, "monitor:sort:"+key)
@@ -136,6 +147,9 @@ func TestProcessTableUsesCompactChromeAndOneKillAction(t *testing.T) {
 	list := findKind(tree, ui.KindVirtualList)
 	if list == nil || list.ItemHeight != 32 {
 		t.Fatalf("process list = %+v, want 32px row pitch", list)
+	}
+	if !list.HideScrollbar || ui.ScrollTrack(list) != (ui.Rect{}) {
+		t.Fatalf("process list scrollbar = hidden %t track %+v, want hidden with no hit strip", list.HideScrollbar, ui.ScrollTrack(list))
 	}
 	table := tree.Children[len(tree.Children)-1]
 	if table.Kind != ui.KindCapsule || table.Fill != ui.FillContainerHigh || table.Shape != ui.ShapeCard || len(table.Children) != 1 || table.Children[0] != list {
@@ -165,6 +179,38 @@ func TestProcessTableUsesCompactChromeAndOneKillAction(t *testing.T) {
 	}
 	if legacy := findAction(row, "process:kill:10:100"); legacy != nil {
 		t.Fatalf("SIGKILL action remains: %+v", legacy)
+	}
+}
+
+func TestHiddenProcessScrollbarKeepsWheelAndKeyboardPaging(t *testing.T) {
+	reg := newPanelRegistry(t)
+	processes := make([]services.Process, 80)
+	for i := range processes {
+		processes[i] = services.Process{
+			Identity: services.ProcessIdentity{PID: 100 + i, StartTimeTicks: uint64(1000 + i)},
+			Name:     "worker",
+		}
+	}
+	reg.sample.Processes = &services.ProcessSnapshot{Processes: processes}
+	if err := reg.OpenPanel(PanelMonitor, 7, Trigger{OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelMonitor]
+	if err := h.configure(h.place.Panel.W, h.place.Panel.H, int(ui.ScaleUnit)); err != nil {
+		t.Fatal(err)
+	}
+	list := findKind(h.root, ui.KindVirtualList)
+	if list == nil || !list.HideScrollbar {
+		t.Fatalf("process list = %+v, want hidden scrollbar", list)
+	}
+	h.hoverX, h.hoverY = list.Bounds.X+1, list.Bounds.Y+1
+	if !h.scrollAxis(reg, wayland.Event{Kind: wayland.EventPointerAxis, AxisValue120: 120}) || list.ScrollOffset == 0 {
+		t.Fatalf("wheel left hidden-scrollbar list at offset %d", list.ScrollOffset)
+	}
+	list.ScrollOffset = 0
+	if !h.keyPress(reg, keyPageDown) || list.ScrollOffset == 0 {
+		t.Fatalf("Page Down left hidden-scrollbar list at offset %d", list.ScrollOffset)
 	}
 }
 
