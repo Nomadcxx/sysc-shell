@@ -98,12 +98,13 @@ func twoPixelRamp() *ui.Image {
 	}}
 }
 
-func TestPaintImageSmoothInterpolatesBetweenPixels(t *testing.T) {
+func TestBlendMaskImageInterpolatesBetweenPixels(t *testing.T) {
 	// A quarter-resolution backdrop scaled up 4x with nearest sampling bands
 	// visibly across a large flat panel. Two source pixels scaled up must
-	// produce intermediate values between them, not a hard step.
+	// produce intermediate values between them, not a hard step. A zero radius
+	// makes the mask full coverage, isolating the sampling from the clipping.
 	c := newTestCanvas(t, 16, 1)
-	paintImageSmooth(c, ui.Rect{W: 16, H: 1}, twoPixelRamp())
+	blendMaskImage(c, RoundedMask(0, 16, 1), 0, 0, twoPixelRamp())
 
 	var seen int
 	for x := 0; x < 16; x++ {
@@ -113,6 +114,22 @@ func TestPaintImageSmoothInterpolatesBetweenPixels(t *testing.T) {
 	}
 	if seen == 0 {
 		t.Error("no intermediate values; sampling is not bilinear")
+	}
+}
+
+func TestBlendMaskImageClipsToTheMask(t *testing.T) {
+	// A panel's corners are genuinely transparent: the painter clears the
+	// buffer and fills a rounded body, so the compositor shows what is behind
+	// them. A backdrop blitted into the raw rectangle would fill those corners
+	// with blurred pixels and the panel would read as a square.
+	c := newTestCanvas(t, 16, 16)
+	blendMaskImage(c, RoundedMask(8, 16, 16), 0, 0, solid(4, 4, 0xff, 0xff, 0xff, 0xff))
+
+	if got := pixelAt(t, c, 0, 0); got.A != 0 {
+		t.Errorf("corner = %+v, want left transparent by the mask", got)
+	}
+	if got := pixelAt(t, c, 8, 8); got.A == 0 {
+		t.Error("the centre was not painted at all")
 	}
 }
 
@@ -128,7 +145,7 @@ func TestPaintImageKeepsNearestForIcons(t *testing.T) {
 	}
 }
 
-func TestPaintImageSmoothIgnoresDegenerateRasters(t *testing.T) {
+func TestBlendMaskImageIgnoresDegenerateRasters(t *testing.T) {
 	c := newTestCanvas(t, 2, 2)
 	before := append([]byte(nil), c.Pix...)
 	for name, img := range map[string]*ui.Image{
@@ -138,10 +155,10 @@ func TestPaintImageSmoothIgnoresDegenerateRasters(t *testing.T) {
 		"short":      {Width: 4, Height: 4, Stride: 16, Pix: []byte{1, 2, 3, 4}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			paintImageSmooth(c, ui.Rect{W: 2, H: 2}, img)
+			blendMaskImage(c, RoundedMask(0, 2, 2), 0, 0, img)
 		})
 	}
-	paintImageSmooth(c, ui.Rect{W: 0, H: 0}, twoPixelRamp())
+	blendMaskImage(c, nil, 0, 0, twoPixelRamp())
 	for i := range before {
 		if c.Pix[i] != before[i] {
 			t.Fatal("a degenerate raster changed the canvas")
