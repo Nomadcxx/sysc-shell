@@ -489,7 +489,9 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		}
 		return w, h, nil
 	case KindTextField:
-		sample := n.Text + n.Preedit
+		// Measured on the displayed runes, not the stored ones: a masked field
+		// draws bullets, whose advance differs from the letters behind them.
+		sample := DisplayText(n) + DisplayPreedit(n)
 		if sample == "" {
 			sample = " "
 		}
