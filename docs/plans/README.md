@@ -251,6 +251,14 @@ tranche, after the backdrop blur design it depends on for the opacity floor.
 | `2026-09-11-noctalia-parity-design.md` | design | D1–D15. Re-bases spacing, radius, type, density and motion onto measured v4.7.7 constants; adds a second radius ladder for inputs and a `Display` type role; maps v4's 16 colour roles onto all 49 without deletion. Records the resolution of open `sysc-104`: the nested-surface floor drops 1.45:1 → 1.30:1, text floors unchanged, `Outline` keeps 3:1 while `OutlineVariant` is exempt. Calibration is measured, not assumed — bar 62 px and capsule 50 px both resolve at 2×, title em confirms 16 pt at 96 DPI, so v4 constants are logical px and points convert ×4/3. |
 | `2026-09-11-noctalia-parity.md` | plan | Thirteen tasks, executing **three** designs: the parity ladders, the token-conformance gate as Task 1, and component parity as Tasks 5A and 5B (one master control dimension with per-shape odd/even forcing; padding resolved to ladder rungs). Carries the token-conformance design as its Task 1. That task is committed **red on purpose**: 96 of the 105 literal sites are `Gap` or `Padding`, the exact ladder Task 2 re-bases underneath them, so the gate lands against an enumerated worklist and Tasks 2–9 drive it green. Two hazards are called out because each would ship a runtime fault: `textRoleCount` is *derived* (`int(theme.RoleMono)+1`), so adding `RoleDisplay` without re-deriving it indexes past a fixed-size array while the existing guard test still passes; and the 1.45 floor is **not** a constant — `derive()` carries only 4.5/3.0 and the separation emerges from ladder steps, so the change targets the two assertions at `theme_test.go:252,255`. Re-inherits the live Niri gate `sysc-142` closed without running, with clipping in the densest surfaces named as the expected failure since type and density both shrink. |
 
+## Parity tranche execution handover
+
+Commissions execution of the whole 2026-09-11 tranche. Seven designs, five plans, none started.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-12-parity-tranche-execution-handover.md` | execution-handover | Live. Recommends starting at backdrop blur Tasks 1–3 and stopping at the Task 3 measurement gate: it resolves the tranche's largest unknown first, unblocks parity's opacity floor, is mostly new files from a cold start, and stays clear of the concurrent surface-polish pass working in `internal/shell`. Records the hazards, the two corrections not to re-introduce (padding is not 14; stacking's consumer is the media card), the five unverified claims, and that **no bd issue yet names any tranche work**. |
+
 ## Component parity (evidence audit)
 
 Written 2026-09-11 after auditing the parity design against source. That design
