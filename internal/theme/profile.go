@@ -294,21 +294,24 @@ var presets = map[Preset]Composition{
 		Radius:  12,
 		Motion:  MotionStandard, MotionSpeed: 100,
 		BarOpacity: 100, PanelOpacity: 100, OverlayOpacity: 100,
-		Elevation: ElevationSubtle,
+		BlurRadius: 24,
+		Elevation:  ElevationSubtle,
 	},
 	PresetCompact: {
 		Density: DensityCompact,
 		Radius:  8,
 		Motion:  MotionStandard, MotionSpeed: 125,
 		BarOpacity: 100, PanelOpacity: 100, OverlayOpacity: 100,
-		Elevation: ElevationSubtle,
+		BlurRadius: 24,
+		Elevation:  ElevationSubtle,
 	},
 	PresetExpressive: {
 		Density: DensityStandard,
 		Radius:  16,
 		Motion:  MotionExpressive, MotionSpeed: 100,
 		BarOpacity: 100, PanelOpacity: 95, OverlayOpacity: 95,
-		Elevation: ElevationStandard,
+		BlurRadius: 24,
+		Elevation:  ElevationStandard,
 	},
 }
 
