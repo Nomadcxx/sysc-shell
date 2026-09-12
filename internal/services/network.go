@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"sync"
@@ -247,6 +248,40 @@ func (n *Network) Close() {
 
 // Writes. Each performs I/O and must run off Registry.mu and off the Wayland
 // owner, through the shell's scheduleControl seam.
+
+// NewSystemNetwork builds the service over the real NetworkManager backend.
+//
+// A machine with no reachable NetworkManager yields a service that reports
+// Available false and does nothing, rather than an error the caller must
+// handle: the bar still paints and the glyph stays off. The backend is never
+// nil, because every method here dereferences it and a nil one would panic
+// inside a widget refresh, which presents as a shell that paints nothing.
+func NewSystemNetwork() *Network {
+	be, err := newNMBackend()
+	if err != nil {
+		n := NewNetwork(unavailableBackend{})
+		n.ok = false
+		return n
+	}
+	return NewNetwork(be)
+}
+
+// unavailableBackend stands in when NetworkManager is not reachable. It is
+// inert: no state, no access points, and every write refuses.
+type unavailableBackend struct{}
+
+func (unavailableBackend) State() (NetworkState, error) {
+	return NetworkState{Kind: ConnUnknown}, nil
+}
+func (unavailableBackend) AccessPoints() ([]AccessPoint, error)         { return nil, nil }
+func (unavailableBackend) Scan() error                                  { return errNoNetworkManager }
+func (unavailableBackend) SetWirelessEnabled(bool) error                { return errNoNetworkManager }
+func (unavailableBackend) Activate(AccessPoint) error                   { return errNoNetworkManager }
+func (unavailableBackend) Forget(string) error                          { return errNoNetworkManager }
+func (unavailableBackend) Watch(chan<- struct{}, <-chan struct{}) error { return nil }
+func (unavailableBackend) Close() error                                 { return nil }
+
+var errNoNetworkManager = errors.New("services: NetworkManager is not available")
 
 func (n *Network) Scan() error                      { return n.be.Scan() }
 func (n *Network) SetWirelessEnabled(on bool) error { return n.be.SetWirelessEnabled(on) }

@@ -73,16 +73,18 @@ type Registry struct {
 	// roots is the one interactive root the process allows at a time.
 	roots rootChain
 	// closed unblocks a pending publish at shutdown.
-	closed      chan struct{}
-	closeOnce   sync.Once
-	dwell       *dwell
-	configPath  string
-	reloads     chan<- struct{}
-	audio       *services.Audio
-	brightness  *services.Brightness
-	osd         *OSDManager
-	audioLease  *services.Lease
-	brightLease *services.Lease
+	closed       chan struct{}
+	closeOnce    sync.Once
+	dwell        *dwell
+	configPath   string
+	reloads      chan<- struct{}
+	audio        *services.Audio
+	brightness   *services.Brightness
+	network      *services.Network
+	osd          *OSDManager
+	audioLease   *services.Lease
+	brightLease  *services.Lease
+	networkLease *services.Lease
 	// runArgv launches a session action. Tests replace it per Registry.
 	runArgv func([]string) error
 	// lookPath finds a binary on PATH. Tests replace it per Registry.
@@ -170,6 +172,13 @@ func NewRegistry(cfg config.Config) *Registry {
 	r.osd = newOSDManager(r, 0)
 	r.setAudio(services.NewAudio(0, ""))
 	r.setBrightness(services.NewBrightness("", "", 0))
+	// The network service opens a system-bus connection, which no unit test
+	// should need. It is skipped under test for the same reason the wallpaper
+	// service below is: a test that reaches the developer's real session is a
+	// test that fails on a build machine. Tests install their own service.
+	if !runningAsTest() {
+		r.setNetwork(services.NewSystemNetwork())
+	}
 	// The wallpaper service starts with the registry, not with the picker: an
 	// output's wallpaper has to come back at login whether or not anyone opens
 	// the panel (D20). It is skipped under test, where starting it would read
@@ -240,6 +249,25 @@ func (r *Registry) relayMixer(audio *services.Audio) {
 			out := h.output
 			r.mu.Unlock()
 			r.publishSurface(out, panelSurfaceID(PanelAudio))
+		}
+	}
+}
+
+// setNetwork swaps the network service, releasing any lease the old one held.
+// The lease is what starts the D-Bus subscription, so taking it here is what
+// makes the bar glyph live.
+func (r *Registry) setNetwork(n *services.Network) {
+	if r.networkLease != nil {
+		r.networkLease.Release()
+		r.networkLease = nil
+	}
+	if r.network != nil {
+		r.network.Close()
+	}
+	r.network = n
+	if n != nil && n.Available() {
+		if l, err := n.Acquire(); err == nil {
+			r.networkLease = l
 		}
 	}
 }
@@ -1131,6 +1159,9 @@ func (r *Registry) viewLocked(connector string) barView {
 	_, view.DND = r.notify.dndState(r.now)
 	if r.audio != nil {
 		view.Audio, _ = r.audio.CachedState()
+	}
+	if r.network != nil {
+		view.Network = r.network.CachedState()
 	}
 	if r.plugins != nil {
 		view.Plugins = r.plugins.frames(connector)

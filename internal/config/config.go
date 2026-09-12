@@ -246,6 +246,11 @@ var knownItems = map[string]struct{}{
 	// user who wants the glyph adds it, and an existing bar does not change.
 	"wallpaper": {},
 	"volume":    {},
+	// "wifi" is connectivity: the signal glyph that opens the network panel.
+	// It is deliberately not "network", which is already bound above as the
+	// throughput rate source with rx/tx directions. Naming it "network" would
+	// have meant a configuration migration later.
+	"wifi": {},
 	// group holds other items inside one capsule. It carries no options of
 	// its own; every option belongs to a nested item.
 	"group": {},
