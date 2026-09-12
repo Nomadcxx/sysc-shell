@@ -72,8 +72,12 @@ func DefaultFor(cfg config.Config) *Registry {
 		}},
 		{Path: "appearance.motion-speed", Label: "Motion speed", Section: "Appearance", Kind: KindInt, Min: theme.SpeedMin, Max: theme.SpeedMax},
 		{Path: "appearance.bar-opacity", Label: "Bar opacity", Section: "Appearance", Kind: KindInt, Min: theme.OpacityMin, Max: theme.OpacityMax},
-		{Path: "appearance.panel-opacity", Label: "Panel opacity", Section: "Appearance", Kind: KindInt, Min: theme.OpacityMin, Max: theme.OpacityMax},
+		// Panels take the blurred floor so the axis can reach it at all; the
+		// effective floor is still 80 unless a backdrop is present.
+		{Path: "appearance.panel-opacity", Label: "Panel opacity", Section: "Appearance", Kind: KindInt, Min: theme.OpacityMinBlurred, Max: theme.OpacityMax},
 		{Path: "appearance.overlay-opacity", Label: "Overlay opacity", Section: "Appearance", Kind: KindInt, Min: theme.OpacityMin, Max: theme.OpacityMax},
+		{Path: "appearance.blur-behind", Label: "Blur behind panels", Section: "Appearance", Kind: KindBool},
+		{Path: "appearance.blur-radius", Label: "Blur radius", Section: "Appearance", Kind: KindInt, Min: theme.BlurRadiusMin, Max: theme.BlurRadiusMax},
 		{Path: "appearance.elevation", Label: "Elevation", Section: "Appearance", Kind: KindEnum, Options: []string{
 			string(theme.ElevationNone), string(theme.ElevationSubtle), string(theme.ElevationStandard),
 		}},
@@ -242,6 +246,10 @@ func (e Entry) Get(c config.Config) string {
 		return strconv.Itoa(c.Theme.PanelOpacity)
 	case "appearance.overlay-opacity":
 		return strconv.Itoa(c.Theme.OverlayOpacity)
+	case "appearance.blur-behind":
+		return strconv.FormatBool(c.Theme.BlurBehind)
+	case "appearance.blur-radius":
+		return strconv.Itoa(c.Theme.BlurRadius)
 	case "appearance.elevation":
 		return string(c.Theme.Elevation)
 	case "panels.gap":
@@ -321,6 +329,8 @@ func (e Entry) setBool(c *config.Config, b bool) error {
 		c.Accessibility.ReducedMotion = b
 	case "accessibility.high-contrast":
 		c.Accessibility.HighContrast = b
+	case "appearance.blur-behind":
+		c.Theme.BlurBehind = b
 	default:
 		return fmt.Errorf("settings: %s: not a boolean", e.Path)
 	}
@@ -353,6 +363,8 @@ func (e Entry) setInt(c *config.Config, n int) error {
 		c.Theme.PanelOpacity = n
 	case "appearance.overlay-opacity":
 		c.Theme.OverlayOpacity = n
+	case "appearance.blur-radius":
+		c.Theme.BlurRadius = n
 	case "bar.radius":
 		c.Bar.Radius = n
 	case "bar.font-size":
