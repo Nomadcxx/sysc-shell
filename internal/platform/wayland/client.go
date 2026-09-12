@@ -11,6 +11,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/fractionalscale"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/screencopy"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/viewporter"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -187,6 +188,9 @@ type owner struct {
 	layerShell *layershell.ZwlrLayerShellV1
 	scaleMgr   *fractionalscale.WpFractionalScaleManagerV1
 	viewporter *viewporter.WpViewporter
+	// screencopy is nil when the compositor does not advertise it. Blur is
+	// decoration; its absence is not an error.
+	screencopy *screencopy.ZwlrScreencopyManagerV1
 	pointer    *client.Pointer
 	keyboard   *client.Keyboard
 
@@ -336,9 +340,17 @@ func (o *owner) bindGlobals() error {
 		{"wp_viewporter", o.viewporter},
 	}
 	for _, s := range singletons {
-		entry := o.rs.singletons[s.iface]
-		if err := o.registry.Bind(entry.global, s.iface, entry.version, s.proxy); err != nil {
-			return fmt.Errorf("wayland: bind %s: %w", s.iface, err)
+		if err := o.bindSingleton(s.iface, s.proxy); err != nil {
+			return err
+		}
+	}
+	// screencopy is deliberately not in the table above: every entry there is
+	// required and gated by missingRequired. Blur is decoration, so a
+	// compositor that does not advertise it must still start.
+	if _, ok := o.rs.singletons["zwlr_screencopy_manager_v1"]; ok {
+		o.screencopy = screencopy.NewZwlrScreencopyManagerV1(ctx)
+		if err := o.bindSingleton("zwlr_screencopy_manager_v1", o.screencopy); err != nil {
+			return err
 		}
 	}
 	if err := o.bindOptionalInput(ctx); err != nil {
@@ -355,6 +367,18 @@ func (o *owner) bindGlobals() error {
 	// announced later bind directly in the handler.
 	for _, entry := range o.rs.outputs {
 		o.bindOutput(entry.global, entry.version)
+	}
+	return nil
+}
+
+// bindSingleton binds one advertised singleton at the version the registry
+// recorded for it. Required interfaces are gated by missingRequired before this
+// runs; optional ones check r.singletons themselves, so absence is the caller's
+// decision rather than this helper's.
+func (o *owner) bindSingleton(iface string, proxy client.Proxy) error {
+	entry := o.rs.singletons[iface]
+	if err := o.registry.Bind(entry.global, iface, entry.version, proxy); err != nil {
+		return fmt.Errorf("wayland: bind %s: %w", iface, err)
 	}
 	return nil
 }
@@ -420,6 +444,10 @@ func (o *owner) destroyGlobals() error {
 	}
 	if o.layerShell != nil {
 		errs = append(errs, o.layerShell.Destroy())
+	}
+	if o.screencopy != nil {
+		errs = append(errs, o.screencopy.Destroy())
+		o.screencopy = nil
 	}
 	if o.pointer != nil {
 		errs = append(errs, o.pointer.Release())

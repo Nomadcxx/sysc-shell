@@ -28,6 +28,7 @@ var interfaceMaximum = map[string]uint32{
 	"wp_viewporter":                  1,
 	"zwp_text_input_manager_v3":      1,
 	"wp_cursor_shape_manager_v1":     1,
+	"zwlr_screencopy_manager_v1":     3,
 }
 
 // requiredSingletons must all be present before the proof can start. The
