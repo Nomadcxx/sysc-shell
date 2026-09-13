@@ -120,12 +120,15 @@ func TestProfileTypeRoles(t *testing.T) {
 		mono       bool
 		roleString string
 	}{
-		{RoleCaption, 12, 400, false, "caption"},
-		{RoleLabel, 14, 500, false, "label"},
-		{RoleBody, 14, 400, false, "body"},
-		{RoleTitle, 16, 600, false, "title"},
-		{RoleHeadline, 20, 600, false, "headline"},
-		{RoleMono, 13, 400, true, "mono"},
+		// Sizes are the reference ladder in logical pixels; points convert at
+		// four thirds, so the pt source is given beside each rung.
+		{RoleCaption, 12, 400, false, "caption"},   // 9 pt
+		{RoleLabel, 15, 500, false, "label"},       // 11 pt -> 14.67
+		{RoleBody, 15, 400, false, "body"},         // 11 pt
+		{RoleTitle, 17, 600, false, "title"},       // 13 pt -> 17.33
+		{RoleHeadline, 21, 600, false, "headline"}, // 16 pt -> 21.33
+		{RoleDisplay, 24, 600, false, "display"},   // 18 pt
+		{RoleMono, 13, 400, true, "mono"},          // 10 pt -> 13.33
 	} {
 		got := TypeFor(tc.role)
 		if got.Size != tc.size || got.Weight != tc.weight || got.Mono != tc.mono {
@@ -146,17 +149,17 @@ func TestProfileTypeRoles(t *testing.T) {
 func TestProfileTextSizeScales(t *testing.T) {
 	t.Parallel()
 	c, _ := PresetComposition(PresetStandard)
-	if got := c.TextSize(RoleBody); got != 14 {
-		t.Errorf("body at 100%% = %d, want 14", got)
+	if got := c.TextSize(RoleBody); got != 15 {
+		t.Errorf("body at 100%% = %d, want 15", got)
 	}
 	for _, tc := range []struct {
 		scale int
 		body  int
 	}{
-		{75, 11}, // 10.5 rounds up
-		{100, 14},
-		{150, 21},
-		{200, 28},
+		{75, 11}, // 11.25 truncates after the half-up rounding term
+		{100, 15},
+		{150, 23}, // 22.5 rounds up
+		{200, 30},
 	} {
 		c.FontScale = tc.scale
 		if got := c.TextSize(RoleBody); got != tc.body {
@@ -169,8 +172,8 @@ func TestProfileTextSizeScales(t *testing.T) {
 		t.Errorf("clamped low scale = %d, want the 75%% size 11", got)
 	}
 	c.FontScale = 10000
-	if got := c.TextSize(RoleBody); got != 28 {
-		t.Errorf("clamped high scale = %d, want the 200%% size 28", got)
+	if got := c.TextSize(RoleBody); got != 30 {
+		t.Errorf("clamped high scale = %d, want the 200%% size 30", got)
 	}
 }
 

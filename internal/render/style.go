@@ -197,9 +197,11 @@ func (s TextSpec) Italicised() TextSpec {
 	return s
 }
 
-// textRoleCount bounds the role table. It tracks theme.RoleMono, the last
-// role, so adding a role without extending the table fails to compile.
-const textRoleCount = int(theme.RoleMono) + 1
+// textRoleCount bounds the role table. It tracks the last role in the enum, so
+// adding one past it without changing this line leaves the array a slot short
+// and indexes out of range at paint -- silently, because the table is a
+// fixed-size array and the guard below would still have passed.
+const textRoleCount = int(theme.RoleDisplay) + 1
 
 // Spec returns the resolved spec for a role, falling back to body text for a
 // role outside the table so a frame still paints.

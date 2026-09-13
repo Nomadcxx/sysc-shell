@@ -443,7 +443,7 @@ func TestResolveThemeValidatesEveryGroup(t *testing.T) {
 	if got.Shapes.Medium != 12 || got.Shapes.Card != 12 {
 		t.Errorf("shapes = %+v, want the 12 px base", got.Shapes)
 	}
-	if got.Type.Spec(theme.RoleBody).Size != 14 || got.Type.Spec(theme.RoleTitle).Weight != 600 {
+	if got.Type.Spec(theme.RoleBody).Size != 15 || got.Type.Spec(theme.RoleTitle).Weight != 600 {
 		t.Errorf("type = %+v, want the standard ramp", got.Type)
 	}
 	if got.Surfaces != (Surfaces{Bar: 0xff, Panel: 0xff, Overlay: 0xff}) {

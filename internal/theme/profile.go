@@ -160,6 +160,11 @@ const (
 	RoleTitle
 	RoleHeadline
 	RoleMono
+	// RoleDisplay is the hero rung the ladder used to top out below: the
+	// reference uses it for the calendar date header and similar treatments.
+	// It is appended rather than inserted, so every role above keeps its iota
+	// value, and textRoleCount in internal/render tracks it as the last role.
+	RoleDisplay
 )
 
 // TypeSpec is one row of the type table from design D7, before font scaling.
@@ -169,12 +174,21 @@ type TypeSpec struct {
 	Mono   bool
 }
 
+// typeRoles is the measured reference ladder. Its point sizes convert to
+// logical pixels at four thirds, established by measuring the reference capture
+// rather than assumed: 9 pt caption, 11 pt body and label, 13 pt title, 16 pt
+// headline, 18 pt display, 10 pt mono.
+//
+// The visible consequence is that titles are now larger and no heavier: the
+// reference reads lighter and larger than the ladder this replaces, and that
+// single axis accounts for much of the tonal difference.
 var typeRoles = map[TextRole]TypeSpec{
 	RoleCaption:  {Size: 12, Weight: 400},
-	RoleLabel:    {Size: 14, Weight: 500},
-	RoleBody:     {Size: 14, Weight: 400},
-	RoleTitle:    {Size: 16, Weight: 600},
-	RoleHeadline: {Size: 20, Weight: 600},
+	RoleLabel:    {Size: 15, Weight: 500},
+	RoleBody:     {Size: 15, Weight: 400},
+	RoleTitle:    {Size: 17, Weight: 600},
+	RoleHeadline: {Size: 21, Weight: 600},
+	RoleDisplay:  {Size: 24, Weight: 600},
 	RoleMono:     {Size: 13, Weight: 400, Mono: true},
 }
 
@@ -199,6 +213,8 @@ func (r TextRole) String() string {
 		return "headline"
 	case RoleMono:
 		return "mono"
+	case RoleDisplay:
+		return "display"
 	default:
 		return "body"
 	}

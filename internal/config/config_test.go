@@ -1036,7 +1036,13 @@ func TestThemeRejectsEveryInvalidAxisWithItsPath(t *testing.T) {
 func TestThemeMigratesAnExistingFileUnchanged(t *testing.T) {
 	t.Parallel()
 	// A file written before presets existed: a theme radius and a bar block,
-	// no preset key. Its effective geometry must not move.
+	// no preset key. The geometry it states explicitly must not move.
+	//
+	// The font size is not stated, and it is derived rather than stored: the
+	// bar takes it from the body type role. Re-basing the type ladder onto the
+	// reference therefore moves it, which is the intended migration -- a value
+	// the file never set follows the new default, while every value it did set
+	// is kept.
 	const old = `{"theme":{"radius":16},"bar":{"height":48,"padding":6,"spacing":4}}`
 	cfg, err := Parse([]byte(old))
 	if err != nil {
@@ -1052,16 +1058,18 @@ func TestThemeMigratesAnExistingFileUnchanged(t *testing.T) {
 		t.Errorf("bar = %d/%d/%d, want 48/6/4",
 			cfg.Bar.Height, cfg.Bar.Padding, cfg.Bar.Spacing)
 	}
-	if cfg.Bar.FontSize != 14 {
-		t.Errorf("font size = %d, want 14", cfg.Bar.FontSize)
+	if cfg.Bar.FontSize != 15 {
+		t.Errorf("font size = %d, want the re-based body size 15", cfg.Bar.FontSize)
 	}
 }
 
 func TestThemeStandardPresetReproducesTheShippedBar(t *testing.T) {
 	t.Parallel()
 	d := Default()
+	// FontSize follows the body type role, so it moved with the ladder re-base;
+	// the rest of the shipped bar is unchanged.
 	if d.Bar.Height != 48 || d.Bar.Padding != 6 || d.Bar.Spacing != 4 ||
-		d.Bar.Radius != 12 || d.Bar.FontSize != 14 {
+		d.Bar.Radius != 12 || d.Bar.FontSize != 15 {
 		t.Errorf("default bar drifted: height %d padding %d spacing %d radius %d size %d",
 			d.Bar.Height, d.Bar.Padding, d.Bar.Spacing, d.Bar.Radius, d.Bar.FontSize)
 	}
