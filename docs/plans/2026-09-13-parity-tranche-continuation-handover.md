@@ -10,7 +10,7 @@ earlier handover for the tranche's origin and its two standing corrections; do n
 
 Branch `feature/panel-backdrop-blur` in
 `/home/nomadx/.config/superpowers/worktrees/sysc-shell/feature/panel-backdrop-blur`, rebased onto `main`
-at `79e9899`, **twelve commits, unmerged and unpushed**, tree clean, all affected packages green.
+at `79e9899`, **fourteen commits, unmerged and unpushed**, tree clean, all affected packages green.
 
 | Commit | Contents |
 |---|---|
@@ -26,6 +26,8 @@ at `79e9899`, **twelve commits, unmerged and unpushed**, tree clean, all affecte
 | `95ad950` | Architecture and roadmap amendments |
 | `876ca72` | **Post-rebase defect fix**: keep a panel's own alpha once it has a backdrop |
 | `169dea8` | Tracker state |
+| `43a7137` | This handover and its register row |
+| `9537440` | **The coverage gate**: every panel blurs, including panels not written yet |
 
 Tracker: `sysc-255` (in_progress, carries the figures and every correction), `sysc-256` (open, the live
 gate). Both hang off `sysc-202`.
@@ -90,7 +92,24 @@ receives a backdrop when `blur-behind` is on.
 D13 is **silent** on three floating overlay surfaces that are not panels and not in its exclusion list:
 the running-apps menu (`runningapps_menu.go`), the tray menu (`traymenuhost.go`) and the tray drawer
 (`traydrawer.go`). They are visually panel-like. Decide whether they blur before the parity slice
-re-bases their chrome; the wiring is three fields on their specs, not a design change.
+re-bases their chrome; the wiring is two fields on their specs, not a design change.
+
+`9537440` makes this a decision the source records rather than an omission. Two gates in
+`internal/shell/blurcoverage_test.go` hold it:
+
+- `TestEveryPanelRequestsABackdrop` walks the whole `PanelID` enum and fails if any panel does not ask
+  for a backdrop with blur on, asks for a degenerate region, has no way to receive one, or captures with
+  blur off. It also fails if the enum grows past the end it knows about, so **a panel added later cannot
+  slip past the walk** — which is the point: blur belongs to being a panel, not to the panels that
+  existed when it was written.
+- `TestEveryAuxSurfaceDecidesAboutBlur` scans package sources in the shape of the existing
+  `TestSurfaceSourcesCarryNoLegacyVisuals`: every `wayland.AuxSpec` literal either sets `BlurRegion` or
+  carries a `blur-exempt:` comment giving its reason. A new kind of surface therefore cannot quietly
+  arrive without a backdrop.
+
+Seven surfaces carry a reason today: the two shields paint nothing; the OSD and toasts are named out by
+D13; and the three above say only that D13 does not name them, which is the open question rather than a
+settled no. **Answering it means changing those three markers to `BlurRegion`, not editing the gate.**
 
 ## Hazards this session paid for
 
