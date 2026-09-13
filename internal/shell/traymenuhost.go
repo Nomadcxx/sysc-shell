@@ -218,6 +218,9 @@ func (h *trayMenuHost) spec() *wayland.AuxSpec {
 	if place.anchor == 0 {
 		place = trayMenuUnderBar(ui.Rect{})
 	}
+	// blur-exempt: a menu, not a panel, and one this comment already notes may
+	// become an xdg_popup parented to the bar. D13 does not name it either way;
+	// see docs/plans/2026-09-13-parity-tranche-continuation-handover.md.
 	return &wayland.AuxSpec{
 		ID:            trayMenuSurfaceID,
 		Namespace:     trayMenuNamespace,

@@ -89,6 +89,10 @@ func (h *runningAppMenuHost) spec() *wayland.AuxSpec {
 	if place.anchor == 0 {
 		place = trayMenuUnderBar(ui.Rect{})
 	}
+	// blur-exempt: a menu, not a panel. Design D13 scopes the backdrop to panels
+	// and does not name this surface either way, so it keeps today's paint until
+	// the owner rules on the menu and drawer surfaces; see
+	// docs/plans/2026-09-13-parity-tranche-continuation-handover.md.
 	return &wayland.AuxSpec{
 		ID: runningAppMenuSurfaceID, Namespace: runningAppMenuNamespace,
 		Layer:       layershell.ZwlrLayerShellV1LayerOverlay,
@@ -176,6 +180,7 @@ func (h *runningAppMenuHost) relayout() error {
 	return ui.LayoutColumn(h.root, ui.Rect{W: h.logicalW, H: h.logicalH}, measure)
 }
 
+// blur-exempt: the shield paints nothing, exactly as the panel shield does.
 func (h *runningAppMenuHost) shieldSpec() *wayland.AuxSpec {
 	return &wayland.AuxSpec{
 		ID:        runningAppMenuShieldID,

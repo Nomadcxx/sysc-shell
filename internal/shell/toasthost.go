@@ -140,6 +140,9 @@ func (h *toastHost) syncOutputs(globals map[string]uint32) {
 // so the compositor reports the output's own logical size, which is what the
 // stack lays out against; the input region is narrowed to the visible cards
 // immediately afterwards, so the rest of the output still takes clicks.
+// blur-exempt: design D13 names toasts as out of scope. This surface spans the
+// whole output while the cards occupy a corner of it, so a backdrop would
+// capture and blur an entire screen to sit behind a notification card.
 func (h *toastHost) spec(connector string) *wayland.AuxSpec {
 	return &wayland.AuxSpec{
 		ID:        toastSurfaceID(connector),

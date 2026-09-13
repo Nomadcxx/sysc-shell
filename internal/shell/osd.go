@@ -148,6 +148,9 @@ func (m *OSDManager) prepareHide() []wayland.AuxRequest {
 	return aux
 }
 
+// blur-exempt: design D13 names the OSD as out of scope. It is a brief,
+// transient readout rather than a surface the eye rests on, and it would pay a
+// capture and a blur on every volume or brightness step.
 func (m *OSDManager) spec(id string, anchor uint32, mgn Margins) *wayland.AuxSpec {
 	return &wayland.AuxSpec{
 		ID:            id,

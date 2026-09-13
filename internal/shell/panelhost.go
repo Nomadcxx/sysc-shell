@@ -741,6 +741,10 @@ func placeholderTree() *ui.Node {
 func panelSurfaceID(id PanelID) string  { return "panel:" + id.String() }
 func shieldSurfaceID(id PanelID) string { return "shield:" + id.String() }
 
+// blur-exempt: the shield paints nothing. It is a transparent, fullscreen input
+// catcher, so it has no ground for a backdrop to sit under, and it opens before
+// the panel it guards -- a capture here would photograph the screen a second
+// time for no one to look at.
 func (r *Registry) shieldSpec(h *PanelHost) *wayland.AuxSpec {
 	return &wayland.AuxSpec{
 		ID:            shieldSurfaceID(h.id),
