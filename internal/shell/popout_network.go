@@ -32,10 +32,14 @@ func networkTree(r *Registry, h *PanelHost) *ui.Node {
 	m := h.metrics()
 
 	st := services.NetworkState{}
+	snap := services.Snapshot{}
 	var aps []services.AccessPoint
 	if r != nil && r.network != nil {
 		st = r.network.CachedState()
 		aps = r.network.CachedAccessPoints()
+	}
+	if r != nil {
+		snap = r.sample
 	}
 
 	body := networkWifiTree(aps, st, h, m)
@@ -50,7 +54,7 @@ func networkTree(r *Registry, h *PanelHost) *ui.Node {
 	viewportH := max(panelH-2*m.PanelPadding-networkHeaderHeight(m)-m.StandardControl-24, 0)
 
 	children := []*ui.Node{
-		networkHeaderCard(h, st, m),
+		networkHeaderCard(h, st, snap, m),
 		networkTabs(h, m),
 		{Kind: ui.KindScroll, Height: viewportH, Children: []*ui.Node{body}},
 	}
@@ -71,7 +75,7 @@ func networkHeaderHeight(m theme.Metrics) int {
 // networkHeaderCard is Direction B's status block: the active connection is
 // promoted above the tabs, so "what am I on?" is answered without reading the
 // list below it.
-func networkHeaderCard(h *PanelHost, st services.NetworkState, m theme.Metrics) *ui.Node {
+func networkHeaderCard(h *PanelHost, st services.NetworkState, snap services.Snapshot, m theme.Metrics) *ui.Node {
 	well := m.StandardControl
 	closeSz := m.CompactControl
 	wired := h != nil && h.networkTab == "ethernet"
@@ -118,7 +122,7 @@ func networkHeaderCard(h *PanelHost, st services.NetworkState, m theme.Metrics) 
 		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: 12, Children: []*ui.Node{
 			top,
 			{Kind: ui.KindSeparator},
-			networkFigures(st),
+			networkFigures(st, snap),
 		}}},
 	}
 }
@@ -155,6 +159,9 @@ func networkSegment(m theme.Metrics, action, label string, selected bool) *ui.No
 // re-sort: two orderings would drift, and the list would reshuffle under the
 // pointer.
 func networkWifiTree(aps []services.AccessPoint, st services.NetworkState, h *PanelHost, m theme.Metrics) *ui.Node {
+	if h != nil && h.pendingSSID != "" {
+		return networkPasswordCard(h)
+	}
 	switch {
 	case !st.WirelessEnabled:
 		// Not an empty list: an empty list claims "no networks here", which is
@@ -173,6 +180,40 @@ func networkWifiTree(aps []services.AccessPoint, st services.NetworkState, h *Pa
 	return &ui.Node{Kind: ui.KindCapsule, Padding: m.CardPadding,
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
 		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: 4, Children: rows}},
+	}
+}
+
+func networkPasswordCard(h *PanelHost) *ui.Node {
+	m := h.metrics()
+	if h.password == nil {
+		h.password = ui.NewField("")
+		h.password.Masked = true
+	}
+	field := h.password.Node("Password")
+	field.Key = "network-password"
+	field.Height = m.StandardControl
+	revealIcon, revealName := "visibility", "Show password"
+	if !h.password.Masked {
+		revealIcon, revealName = "visibility_off", "Hide password"
+	}
+	reveal := &ui.Node{
+		Kind: ui.KindButton, Action: "network-password-reveal", Name: revealName,
+		Role: "button", Focusable: true, Width: m.StandardControl, Height: m.StandardControl,
+		Shape:    ui.ShapeCircle,
+		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: revealIcon, IconSize: m.IconNormal}},
+	}
+	buttons := &ui.Node{Kind: ui.KindRow, Gap: 8, PinEnd: true, Children: []*ui.Node{
+		{Kind: ui.KindButton, Action: "network-password-cancel", Name: "Cancel", Role: "button", Focusable: true,
+			Height: m.StandardControl, Children: []*ui.Node{{Kind: ui.KindText, Text: "Cancel"}}},
+		{Kind: ui.KindButton, Action: "network-password-submit", Name: "Connect", Role: "button", Focusable: true,
+			Height: m.StandardControl, Fill: ui.FillAccent, Children: []*ui.Node{{Kind: ui.KindText, Text: "Connect"}}},
+	}}
+	return &ui.Node{Kind: ui.KindCapsule, Padding: m.CardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: 12, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: "Join " + h.pendingSSID, TextRole: theme.RoleTitle},
+			{Kind: ui.KindRow, Gap: 8, PinEnd: true, Children: []*ui.Node{field, reveal}},
+			buttons,
+		}}},
 	}
 }
 
@@ -260,6 +301,34 @@ func networkNotice(title, hint string, m theme.Metrics) *ui.Node {
 // bus round trip taken here would stall the owner.
 func (h *PanelHost) applyNetworkControl(r *Registry, n *ui.Node) bool {
 	switch {
+	case n.Action == "network-password-reveal":
+		if h.password == nil {
+			h.password = ui.NewField("")
+			h.password.Masked = true
+		} else {
+			h.password.Masked = !h.password.Masked
+		}
+		r.rebuildPanel(h)
+		return true
+	case n.Action == "network-password-submit":
+		psk := ""
+		if h.password != nil {
+			psk = h.password.Text
+		}
+		h.clearNetworkSecret()
+		if r.network != nil {
+			r.network.SubmitSecret(psk)
+		}
+		psk = ""
+		r.rebuildPanel(h)
+		return true
+	case n.Action == "network-password-cancel":
+		h.clearNetworkSecret()
+		if r.network != nil {
+			r.network.CancelSecret()
+		}
+		r.rebuildPanel(h)
+		return true
 	case n.Action == "network-tab:wifi":
 		h.networkTab = "wifi"
 		r.rebuildPanel(h)
@@ -300,17 +369,32 @@ func (h *PanelHost) applyNetworkControl(r *Registry, n *ui.Node) bool {
 	return true
 }
 
+func (h *PanelHost) clearNetworkSecret() {
+	if h.password != nil {
+		h.password.Clear()
+		h.password.Masked = true
+	}
+	h.pendingSSID = ""
+}
+
 // networkFigures is the three-column row under the separator. Every value is
 // tabular so the row does not jitter as figures change.
 //
-// Down and Up are dashes today: services.NetworkState carries no throughput,
-// and inventing a number here would be worse than admitting there is none.
-// Wiring them to the rate source is its own slice.
-func networkFigures(st services.NetworkState) *ui.Node {
+// Throughput stays with the existing metrics owner rather than expanding
+// NetworkState. A missing sample or interface is an absent figure, not zero.
+
+func networkFigures(st services.NetworkState, snap services.Snapshot) *ui.Node {
+	down, up := absent, absent
+	if rate, ok := snap.Rate(services.Selector{Source: services.SourceNetwork, Subject: st.Interface, Direction: "rx"}); ok {
+		down = formatRate(rate)
+	}
+	if rate, ok := snap.Rate(services.Selector{Source: services.SourceNetwork, Subject: st.Interface, Direction: "tx"}); ok {
+		up = formatRate(rate)
+	}
 	return &ui.Node{Kind: ui.KindRow, Gap: 8, Height: networkFigureRowH, Children: []*ui.Node{
 		networkFigure("IPv4", orAbsent(st.IPv4)),
-		networkFigure("Down", absent),
-		networkFigure("Up", absent),
+		networkFigure("Down", down),
+		networkFigure("Up", up),
 	}}
 }
 

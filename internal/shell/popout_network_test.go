@@ -3,12 +3,51 @@ package shell
 import (
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	metrics "github.com/Nomadcxx/sysc-metrics"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
+
+type shellNetworkBackend struct {
+	mu     sync.Mutex
+	state  services.NetworkState
+	aps    []services.AccessPoint
+	wake   chan<- struct{}
+	closed int
+}
+
+func (b *shellNetworkBackend) State() (services.NetworkState, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.state, nil
+}
+
+func (b *shellNetworkBackend) AccessPoints() ([]services.AccessPoint, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return slices.Clone(b.aps), nil
+}
+
+func (b *shellNetworkBackend) Scan() error                         { return nil }
+func (b *shellNetworkBackend) SetWirelessEnabled(bool) error       { return nil }
+func (b *shellNetworkBackend) Activate(services.AccessPoint) error { return nil }
+func (b *shellNetworkBackend) Forget(string) error                 { return nil }
+func (b *shellNetworkBackend) Close() error {
+	b.mu.Lock()
+	b.closed++
+	b.mu.Unlock()
+	return nil
+}
+func (b *shellNetworkBackend) Watch(wake chan<- struct{}, _ <-chan struct{}) error {
+	b.mu.Lock()
+	b.wake = wake
+	b.mu.Unlock()
+	return nil
+}
 
 // Panel configure, render and handle all run with Registry.mu held. A write
 // that took a bus round trip on that path would stall every bar on the
@@ -137,7 +176,7 @@ func TestNetworkTreeToleratesAnAbsentService(t *testing.T) {
 
 func TestHeaderShowsDashForAbsentFiguresNotZero(t *testing.T) {
 	st := services.NetworkState{WirelessEnabled: false}
-	card := networkHeaderCard(&PanelHost{networkTab: "wifi"}, st, standardMetrics())
+	card := networkHeaderCard(&PanelHost{networkTab: "wifi"}, st, services.Snapshot{}, standardMetrics())
 	texts := collectText(card)
 	for _, want := range []string{"IPv4", "Down", "Up", "—"} {
 		if !slices.Contains(texts, want) {
@@ -159,7 +198,7 @@ func TestHeaderShowsTheActiveConnection(t *testing.T) {
 		Interface:       "wlan0",
 		Strength:        92,
 	}
-	card := networkHeaderCard(&PanelHost{networkTab: "wifi"}, st, standardMetrics())
+	card := networkHeaderCard(&PanelHost{networkTab: "wifi"}, st, services.Snapshot{}, standardMetrics())
 	texts := collectText(card)
 	for _, want := range []string{"LukeAP", "192.168.1.37"} {
 		if !slices.Contains(texts, want) {
@@ -174,7 +213,7 @@ func TestHeaderShowsTheActiveConnection(t *testing.T) {
 // The Ethernet tab has no radio to switch, so the toggle must not appear on it.
 func TestHeaderOmitsTheRadioToggleOnEthernet(t *testing.T) {
 	st := services.NetworkState{Kind: services.ConnWired, Connected: true, Interface: "enp7s0"}
-	card := networkHeaderCard(&PanelHost{networkTab: "ethernet"}, st, standardMetrics())
+	card := networkHeaderCard(&PanelHost{networkTab: "ethernet"}, st, services.Snapshot{}, standardMetrics())
 	var toggles int
 	var walk func(*ui.Node)
 	walk = func(n *ui.Node) {
@@ -274,4 +313,176 @@ func TestEthernetTabShowsTheWiredInterface(t *testing.T) {
 	if !hasIcon(tree, "lan") {
 		t.Error("ethernet tab must carry the lan glyph")
 	}
+}
+
+func TestPasswordCardMasksAndNeverLeaksToTheErrorLabel(t *testing.T) {
+	h := &PanelHost{id: PanelNetwork, pendingSSID: "Orac 15A"}
+	h.password = ui.NewField("hunter2")
+	h.password.Masked = true
+	card := networkPasswordCard(h)
+	if !slices.Contains(collectText(card), "Join Orac 15A") {
+		t.Error("the prompt must name the network being joined")
+	}
+	h.errLabel = "activation failed"
+	for _, s := range collectText(card) {
+		if strings.Contains(s, "hunter2") {
+			t.Fatal("the passphrase reached the painted tree")
+		}
+	}
+}
+
+func TestPasswordFieldEditsTheCredentialHolder(t *testing.T) {
+	h := &PanelHost{id: PanelNetwork, pendingSSID: "Orac 15A", password: ui.NewField("")}
+	h.password.Masked = true
+	h.root = networkPasswordCard(h)
+	h.focus = ui.Focusables(h.root)
+	h.roving.Count = len(h.focus)
+	h.focusByName("Password")
+
+	if !h.editField(&Registry{}, func(f *ui.Field) { f.Insert("secret") }) {
+		t.Fatal("password field did not accept input")
+	}
+	if got := h.password.Text; got != "secret" {
+		t.Fatalf("credential holder = %q, want secret", got)
+	}
+}
+
+func TestPasswordActionsClearTheCredential(t *testing.T) {
+	for _, action := range []string{"network-password-submit", "network-password-cancel"} {
+		t.Run(action, func(t *testing.T) {
+			h := &PanelHost{id: PanelNetwork, pendingSSID: "Orac 15A", password: ui.NewField("hunter2")}
+			r := &Registry{}
+			if !h.applyNetworkControl(r, &ui.Node{Action: action}) {
+				t.Fatalf("%s was not handled", action)
+			}
+			if h.password.Text != "" || h.pendingSSID != "" {
+				t.Fatalf("%s retained credential state: password=%q ssid=%q", action, h.password.Text, h.pendingSSID)
+			}
+		})
+	}
+}
+
+func TestPasswordRevealChangesMaskAndAccessibleName(t *testing.T) {
+	h := &PanelHost{id: PanelNetwork, pendingSSID: "Orac 15A", password: ui.NewField("hunter2")}
+	h.password.Masked = true
+	if !h.applyNetworkControl(&Registry{}, &ui.Node{Action: "network-password-reveal"}) {
+		t.Fatal("reveal action was not handled")
+	}
+	if h.password.Masked {
+		t.Fatal("reveal action left the password masked")
+	}
+	card := networkPasswordCard(h)
+	if !hasNamedNode(card, "Hide password") {
+		t.Fatal("revealed card must expose a Hide password control")
+	}
+}
+
+func TestNetworkPanelTeardownClearsCredential(t *testing.T) {
+	r := newPanelRegistry(t)
+	h := &PanelHost{
+		id: PanelNetwork, stopAnim: make(chan struct{}), pendingSSID: "Orac 15A",
+		password: ui.NewField("hunter2"),
+	}
+	r.panelHosts[PanelNetwork] = h
+	r.mu.Lock()
+	r.teardownPanelLocked(PanelNetwork)
+	r.mu.Unlock()
+	if h.password.Text != "" || h.pendingSSID != "" {
+		t.Fatalf("teardown retained credential state: password=%q ssid=%q", h.password.Text, h.pendingSSID)
+	}
+}
+
+func TestNetworkRelayPrimesCachedPanelState(t *testing.T) {
+	r := newPanelRegistry(t)
+	b := &shellNetworkBackend{
+		state: services.NetworkState{WirelessEnabled: true, SSID: "LukeAP"},
+		aps:   []services.AccessPoint{{SSID: "LukeAP", Strength: 92}},
+	}
+	r.setNetwork(services.NewNetwork(b))
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if st := r.network.CachedState(); st.SSID == "LukeAP" && len(r.network.CachedAccessPoints()) == 1 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("network relay did not prime state: state=%+v aps=%+v", r.network.CachedState(), r.network.CachedAccessPoints())
+}
+
+func TestRegistryCloseClosesNetworkService(t *testing.T) {
+	r := newPanelRegistry(t)
+	b := &shellNetworkBackend{}
+	r.setNetwork(services.NewNetwork(b))
+
+	r.Close()
+
+	b.mu.Lock()
+	closed := b.closed
+	b.mu.Unlock()
+	if closed == 0 {
+		t.Fatal("registry shutdown left the network service open")
+	}
+}
+
+func TestNetworkFiguresUseCachedMetricRates(t *testing.T) {
+	st := services.NetworkState{Interface: "wlan0"}
+	snap := services.Snapshot{Network: &metrics.NetworkSnapshot{Interfaces: []metrics.NetworkInterface{{
+		Name: "wlan0",
+		Rates: metrics.NetworkRates{
+			ReceiveBytesPerSecond:  1_500_000,
+			TransmitBytesPerSecond: 250_000,
+			Valid:                  true,
+		},
+	}}}}
+	texts := collectText(networkFigures(st, snap))
+	for _, want := range []string{"1.5 MB/s", "250.0 kB/s"} {
+		if !slices.Contains(texts, want) {
+			t.Fatalf("network figures missing %q: %v", want, texts)
+		}
+	}
+}
+
+func TestNetworkPanelLeasesTheExistingMetricSource(t *testing.T) {
+	r := newPanelRegistry(t)
+	if err := r.OpenPanel(PanelNetwork, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	if !r.metrics.SourceLeased(services.SourceNetwork) {
+		t.Fatal("network panel did not lease the existing network-rate sampler")
+	}
+}
+
+func TestSecretPromptReturnsPanelToWifiTab(t *testing.T) {
+	r := newPanelRegistry(t)
+	network := services.NewNetwork(&shellNetworkBackend{})
+	r.network = network
+	h := &PanelHost{id: PanelNetwork, output: 7, networkTab: "ethernet", stopAnim: make(chan struct{})}
+	r.panelHosts[PanelNetwork] = h
+
+	r.presentNetworkSecret(network, services.SecretRequest{SSID: "Orac 15A"})
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if h.networkTab != "wifi" {
+		t.Fatalf("secret prompt stayed on %q tab, want wifi", h.networkTab)
+	}
+	if h.pendingSSID != "Orac 15A" || h.password == nil || !h.password.Masked {
+		t.Fatalf("secret prompt was not installed: ssid=%q password=%+v", h.pendingSSID, h.password)
+	}
+}
+
+func hasNamedNode(n *ui.Node, name string) bool {
+	if n == nil {
+		return false
+	}
+	if n.Name == name {
+		return true
+	}
+	for _, child := range n.Children {
+		if hasNamedNode(child, name) {
+			return true
+		}
+	}
+	return false
 }

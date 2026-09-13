@@ -3,6 +3,8 @@ package services
 import (
 	"testing"
 	"time"
+
+	"github.com/godbus/dbus/v5"
 )
 
 // The slot is pure state with no D-Bus in it, which is why the whole
@@ -162,5 +164,30 @@ func TestStartSecretsWiresServiceSlotAndLifetime(t *testing.T) {
 	n.Close()
 	if closed != 1 {
 		t.Fatalf("credential export released %d times, want once", closed)
+	}
+}
+
+func TestFullRequestChannelNeverLeavesGetSecretsHanging(t *testing.T) {
+	requests := make(chan SecretRequest, 1)
+	requests <- SecretRequest{SSID: "stale"}
+	export := &secretExport{slot: newSecretSlot(), requests: requests}
+	done := make(chan *dbus.Error, 1)
+	go func() {
+		_, err := export.GetSecrets(
+			map[string]map[string]dbus.Variant{
+				"802-11-wireless": {"ssid": dbus.MakeVariant([]byte("Orac 15A"))},
+			},
+			"/connection", wirelessSecuritySetting, nil, flagAllowInteraction,
+		)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil || err.Name != errUserCanceled {
+			t.Fatalf("full request channel returned %v, want UserCanceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("full request channel left GetSecrets hanging")
 	}
 }

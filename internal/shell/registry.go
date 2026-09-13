@@ -285,7 +285,90 @@ func (r *Registry) setNetwork(n *services.Network) {
 		if l, err := n.Acquire(); err == nil {
 			r.networkLease = l
 		}
+		go r.relayNetwork(n)
 	}
+}
+
+// relayNetwork is the one bridge from the pushed service into retained shell
+// state. Bus reads stay off Registry.mu; the lock only applies cached state to
+// bars and the open panel.
+func (r *Registry) relayNetwork(network *services.Network) {
+	if network == nil {
+		return
+	}
+	network.State()
+	network.AccessPoints()
+	r.publishNetworkSnapshot(network)
+
+	for {
+		select {
+		case <-r.closed:
+			return
+		case _, ok := <-network.Changes():
+			if !ok {
+				return
+			}
+			network.AccessPoints()
+			r.publishNetworkSnapshot(network)
+		case req, ok := <-network.SecretRequests():
+			if !ok {
+				return
+			}
+			r.presentNetworkSecret(network, req)
+		}
+	}
+}
+
+func (r *Registry) publishNetworkSnapshot(network *services.Network) {
+	r.mu.Lock()
+	if r.network != network {
+		r.mu.Unlock()
+		return
+	}
+	changed := make([]uint32, 0, len(r.bars))
+	for global, bar := range r.bars {
+		if bar.apply(r.viewLocked(bar.connector())) {
+			changed = append(changed, global)
+		}
+	}
+	h := r.panelHosts[PanelNetwork]
+	var panelOut uint32
+	if h != nil {
+		r.rebuildPanel(h)
+		panelOut = h.output
+	}
+	r.mu.Unlock()
+
+	r.publish(changed)
+	if h != nil {
+		r.publishSurface(panelOut, panelSurfaceID(PanelNetwork))
+	}
+}
+
+func (r *Registry) presentNetworkSecret(network *services.Network, req services.SecretRequest) {
+	r.mu.Lock()
+	if r.network != network {
+		r.mu.Unlock()
+		network.CancelSecret()
+		return
+	}
+	h := r.panelHosts[PanelNetwork]
+	if h == nil {
+		r.mu.Unlock()
+		network.CancelSecret()
+		return
+	}
+	h.clearNetworkSecret()
+	h.networkTab = "wifi"
+	h.pendingSSID = req.SSID
+	h.password = ui.NewField("")
+	h.password.Masked = true
+	h.errLabel = ""
+	r.rebuildPanel(h)
+	h.focusByName("Password")
+	out := h.output
+	r.mu.Unlock()
+	r.publishSurface(out, panelSurfaceID(PanelNetwork))
 }
 
 func (r *Registry) setBrightness(b *services.Brightness) {
@@ -972,7 +1055,7 @@ func (r *Registry) Close() {
 	var osdAux []wayland.AuxRequest
 	var leases []*services.Lease
 	var bars []*Bar
-	var audioLease, brightLease *services.Lease
+	var audioLease, brightLease, networkLease *services.Lease
 	var inhibit io.Closer
 	if locked {
 		if r.toasts != nil {
@@ -999,6 +1082,8 @@ func (r *Registry) Close() {
 		r.audioLease = nil
 		brightLease = r.brightLease
 		r.brightLease = nil
+		networkLease = r.networkLease
+		r.networkLease = nil
 		inhibit = r.inhibit
 		r.inhibit = nil
 		r.inhibitWanted = false
@@ -1016,6 +1101,9 @@ func (r *Registry) Close() {
 	}
 	if brightLease != nil {
 		brightLease.Release()
+	}
+	if networkLease != nil {
+		networkLease.Release()
 	}
 	if inhibit != nil {
 		_ = inhibit.Close()
@@ -1039,6 +1127,9 @@ func (r *Registry) Close() {
 	}
 	if r.brightness != nil {
 		r.brightness.Close()
+	}
+	if r.network != nil {
+		r.network.Close()
 	}
 	if r.plugins != nil {
 		r.plugins.Close()
@@ -1091,6 +1182,11 @@ func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
 		r.rebuildPanel(h)
 		sessionOut, sessionOK = h.output, true
 	}
+	networkOut, networkOK := uint32(0), false
+	if h := r.panelHosts[PanelNetwork]; h != nil {
+		r.rebuildPanel(h)
+		networkOut, networkOK = h.output, true
+	}
 	controlOut, controlOK := r.rebuildControlCentreLocked()
 	r.mu.Unlock()
 
@@ -1100,6 +1196,9 @@ func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
 	}
 	if sessionOK {
 		r.publishSurface(sessionOut, panelSurfaceID(PanelSession))
+	}
+	if networkOK {
+		r.publishSurface(networkOut, panelSurfaceID(PanelNetwork))
 	}
 	if controlOK {
 		r.publishSurface(controlOut, panelSurfaceID(PanelControlCenter))

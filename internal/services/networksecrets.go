@@ -118,9 +118,8 @@ func sendReply(ch chan<- secretReply, r secretReply) {
 	}
 }
 
-// SecretRequests carries each prompt the panel must show. It is buffered and
-// lossy by design: a prompt the panel missed is still answered by the slot's
-// own timeout path, and a blocked send here would hold a bus method open.
+// SecretRequests carries each prompt the panel must show. It is buffered so
+// the bus method never waits for the shell relay to be scheduled.
 func (n *Network) SecretRequests() <-chan SecretRequest { return n.secretReqs }
 
 // SubmitSecret answers the open prompt with a passphrase.
@@ -181,7 +180,10 @@ func (e *secretExport) GetSecrets(
 	}
 	select {
 	case e.requests <- req:
-	default: // the panel reads the slot directly; a full channel is not fatal
+	default:
+		// A stale notification must not strand this call. There is no timeout
+		// above us; answer once with UserCanceled and let NetworkManager stop.
+		e.slot.cancel()
 	}
 
 	switch r := <-ch; {

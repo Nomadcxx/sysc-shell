@@ -110,6 +110,8 @@ type PanelHost struct {
 	section        string
 	pageDirection  int
 	networkTab     string
+	pendingSSID    string
+	password       *ui.Field
 	search         *ui.Field
 	fields         map[string]*ui.Field
 	editors        map[string]*retainedEditor
@@ -658,6 +660,12 @@ func (r *Registry) acquirePanelLeases(h *PanelHost) error {
 			return nil
 		}
 		h.mixerLease = lease
+	case PanelNetwork:
+		lease, err := r.metrics.Acquire(services.Selector{Source: services.SourceNetwork}, time.Second)
+		if err != nil {
+			return err
+		}
+		h.leases = []*services.Lease{lease}
 	case PanelControlCenter:
 		for _, sel := range []services.Selector{
 			{Source: services.SourceCPU},
@@ -1452,7 +1460,14 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 		return false
 	}
 	var f *ui.Field
-	if n.Name == "Search" {
+	if h.id == PanelNetwork && n.Name == "Password" {
+		if h.password == nil {
+			h.password = ui.NewField("")
+			h.password.Masked = true
+		}
+		h.password.SyncFrom(n)
+		f = h.password
+	} else if n.Name == "Search" {
 		if h.search == nil {
 			h.search = ui.NewField("")
 		}
@@ -2154,12 +2169,18 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 	if id == PanelNotifications {
 		r.setCenterOpen(false)
 	}
+	if id == PanelNetwork && r.network != nil {
+		r.network.CancelSecret()
+	}
 	h := r.panelHosts[id]
 	if h == nil {
 		return
 	}
 	h.stopAnimation()
 	h.drag.Cancel()
+	if id == PanelNetwork {
+		h.clearNetworkSecret()
+	}
 	delete(r.panelHosts, id)
 	r.sendAux(wayland.AuxRequest{Output: h.output, ID: panelSurfaceID(id)})
 	r.sendAux(wayland.AuxRequest{Output: h.output, ID: shieldSurfaceID(id)})
