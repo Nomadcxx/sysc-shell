@@ -184,16 +184,32 @@ func layoutButtonContent(n *Node, measure MeasureText, fixedHeight bool) error {
 	if len(n.Children) == 0 {
 		return nil
 	}
-	w, h, err := inlineContentSize(n, measure)
-	if err != nil {
-		return err
-	}
 	verticalPadding := n.Padding
 	if fixedHeight {
 		verticalPadding = 0
 	}
 	inner := Rect{X: n.Bounds.X + n.Padding, Y: n.Bounds.Y + verticalPadding,
 		W: max(n.Bounds.W-2*n.Padding, 0), H: max(n.Bounds.H-2*verticalPadding, 0)}
+	if len(n.Children) == 1 {
+		child := n.Children[0]
+		if child == nil {
+			return fmt.Errorf("button child 0 is nil")
+		}
+		switch child.Kind {
+		case KindRow:
+			if err := Layout(child, inner, measure); err != nil {
+				return err
+			}
+			pinRowEnd(child, inner)
+			return nil
+		case KindColumn:
+			return LayoutColumn(child, inner, measure)
+		}
+	}
+	w, h, err := inlineContentSize(n, measure)
+	if err != nil {
+		return err
+	}
 	if w > inner.W || h > inner.H {
 		return fmt.Errorf("button content %dx%d does not fit in %dx%d", w, h, inner.W, inner.H)
 	}
@@ -334,7 +350,7 @@ func layoutCapsuleChild(n *Node, measure MeasureText) error {
 	if err != nil {
 		return err
 	}
-	child.Bounds = Rect{X: inner.X, Y: inner.Y + (inner.H-h)/2, W: w, H: h}
+	child.Bounds = Rect{X: inner.X + max((inner.W-w)/2, 0), Y: inner.Y + (inner.H-h)/2, W: w, H: h}
 	return nil
 }
 

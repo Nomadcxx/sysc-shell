@@ -17,6 +17,7 @@ type shellNetworkBackend struct {
 	state  services.NetworkState
 	aps    []services.AccessPoint
 	wake   chan<- struct{}
+	scan   func() error
 	closed int
 }
 
@@ -32,7 +33,15 @@ func (b *shellNetworkBackend) AccessPoints() ([]services.AccessPoint, error) {
 	return slices.Clone(b.aps), nil
 }
 
-func (b *shellNetworkBackend) Scan() error                         { return nil }
+func (b *shellNetworkBackend) Scan() error {
+	b.mu.Lock()
+	run := b.scan
+	b.mu.Unlock()
+	if run != nil {
+		return run()
+	}
+	return nil
+}
 func (b *shellNetworkBackend) SetWirelessEnabled(bool) error       { return nil }
 func (b *shellNetworkBackend) Activate(services.AccessPoint) error { return nil }
 func (b *shellNetworkBackend) Forget(string) error                 { return nil }
@@ -288,6 +297,63 @@ func TestSecuredRowCarriesTheLockGlyph(t *testing.T) {
 	}
 }
 
+func TestAccessPointRowsKeepLeadingAndTrailingIconsAligned(t *testing.T) {
+	t.Parallel()
+	m := standardMetrics()
+	aps := []services.AccessPoint{
+		{SSID: "Open", Strength: 41},
+		{SSID: "Saved", Strength: 74, Secured: true, Saved: true},
+		{SSID: "Active", Strength: 92, Secured: true, Saved: true, Active: true},
+	}
+	wantLeadingX := -1
+	for _, ap := range aps {
+		row := networkAPRow(ap, m)
+		root := &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{row}}
+		if err := ui.LayoutColumn(root, ui.Rect{X: 8, W: 400, H: 64}, func(s string, _ ui.TextAttrs) (int, int) {
+			return len(s) * 8, 16
+		}); err != nil {
+			t.Fatalf("%s: %v", ap.SSID, err)
+		}
+		signal := findIconNode(row, wifiBandGlyph(ap.Strength))
+		if signal == nil {
+			t.Fatalf("%s: no signal icon", ap.SSID)
+		}
+		if wantLeadingX < 0 {
+			wantLeadingX = signal.Bounds.X
+		} else if signal.Bounds.X != wantLeadingX {
+			t.Errorf("%s: signal X = %d, want stable X %d", ap.SSID, signal.Bounds.X, wantLeadingX)
+		}
+		if ap.Secured || ap.Active {
+			name := "lock"
+			if ap.Active {
+				name = "check"
+			}
+			trailing := findIconNode(row, name)
+			if trailing == nil {
+				t.Fatalf("%s: no trailing %s icon", ap.SSID, name)
+			}
+			if got, want := trailing.Bounds.X+trailing.Bounds.W, row.Bounds.X+row.Bounds.W; got != want {
+				t.Errorf("%s: trailing right edge = %d, want %d", ap.SSID, got, want)
+			}
+		}
+	}
+}
+
+func findIconNode(n *ui.Node, name string) *ui.Node {
+	if n == nil {
+		return nil
+	}
+	if n.Kind == ui.KindIcon && n.Icon == name {
+		return n
+	}
+	for _, child := range n.Children {
+		if got := findIconNode(child, name); got != nil {
+			return got
+		}
+	}
+	return nil
+}
+
 // Ordering is the service's job. The panel must not re-sort, or the two would
 // drift and the list would reorder under the pointer.
 func TestWifiListPreservesServiceOrder(t *testing.T) {
@@ -462,6 +528,35 @@ func TestNetworkPanelLeasesTheExistingMetricSource(t *testing.T) {
 	}
 	if !r.metrics.SourceLeased(services.SourceNetwork) {
 		t.Fatal("network panel did not lease the existing network-rate sampler")
+	}
+}
+
+func TestNetworkPanelRequestsScanOffRegistryLock(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+	b := &shellNetworkBackend{scan: func() error {
+		close(started)
+		<-release
+		return nil
+	}}
+	r := newPanelRegistry(t)
+	r.setNetwork(services.NewNetwork(b))
+	opened := make(chan error, 1)
+	go func() { opened <- r.OpenPanel(PanelNetwork, 7, Trigger{}) }()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("opening the network panel did not request a scan")
+	}
+	select {
+	case err := <-opened:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("opening the panel waited for the scan under Registry.mu")
 	}
 }
 

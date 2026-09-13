@@ -226,23 +226,28 @@ func networkPasswordCard(h *PanelHost) *ui.Node {
 // above owns the filled highlight, and two primary-filled elements would
 // state the same fact twice and fight for the same focal point.
 func networkAPRow(ap services.AccessPoint, m theme.Metrics) *ui.Node {
-	children := []*ui.Node{
+	leading := &ui.Node{Kind: ui.KindRow, Gap: 12, Children: []*ui.Node{
 		{Kind: ui.KindIcon, Icon: wifiBandGlyph(ap.Strength), IconSize: m.IconNormal},
 		{Kind: ui.KindColumn, Gap: 2, Children: []*ui.Node{
 			{Kind: ui.KindText, Text: ap.SSID},
 			{Kind: ui.KindText, Text: apDetail(ap), TextRole: theme.RoleCaption, Tabular: true},
 		}},
-	}
+	}}
+	trailing := &ui.Node{Kind: ui.KindRow, Gap: 8}
 	if ap.Secured {
-		children = append(children, &ui.Node{Kind: ui.KindIcon, Icon: "lock", IconSize: m.IconSmall})
+		trailing.Children = append(trailing.Children, &ui.Node{Kind: ui.KindIcon, Icon: "lock", IconSize: m.IconSmall})
 	}
 	if ap.Active {
-		children = append(children, &ui.Node{Kind: ui.KindIcon, Icon: "check", IconSize: m.IconNormal})
+		trailing.Children = append(trailing.Children, &ui.Node{Kind: ui.KindIcon, Icon: "check", IconSize: m.IconNormal})
+	}
+	content := &ui.Node{Kind: ui.KindRow, Gap: 12, PinEnd: true, Children: []*ui.Node{leading}}
+	if len(trailing.Children) > 0 {
+		content.Children = append(content.Children, trailing)
 	}
 	return &ui.Node{
 		Kind: ui.KindButton, Action: "network-ap:" + ap.SSID, Name: ap.SSID,
-		Role: "button", Focusable: true, Gap: 12, PinEnd: true,
-		Children: children,
+		Role: "button", Focusable: true, Height: m.StandardControl,
+		Children: []*ui.Node{content},
 	}
 }
 

@@ -607,6 +607,10 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	if id == PanelSession || id == PanelControlCenter {
 		r.scheduleLoadProfiles(h)
 	}
+	if id == PanelNetwork && r.network != nil && r.network.Available() {
+		network := r.network
+		r.scheduleControl(h, network.Scan)
+	}
 
 	h.anim = newAnimator(nil, r.cfg.Accessibility.ReducedMotion, h.theme.Motion)
 	h.anim.Target(panelSurfaceID(id), animVisible, 1)
