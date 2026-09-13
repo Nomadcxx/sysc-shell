@@ -169,8 +169,10 @@ func TestDefaultThemeCarriesCapsulePadding(t *testing.T) {
 func TestDefaultThemeCarriesChromeMetrics(t *testing.T) {
 	t.Parallel()
 	th := DefaultTheme()
-	if th.Metrics.StandardControl != 40 || th.Metrics.CompactControl != 32 || th.Metrics.ButtonPadding != 9 {
-		t.Fatalf("control metrics = %d/%d padding %d, want 40/32 padding 9",
+	// Both control heights are derived now: the standard one is the input
+	// height, base x 1.1 forced even, and the compact one is the tab height.
+	if th.Metrics.StandardControl != 36 || th.Metrics.CompactControl != 32 || th.Metrics.ButtonPadding != 9 {
+		t.Fatalf("control metrics = %d/%d padding %d, want 36/32 padding 9",
 			th.Metrics.StandardControl, th.Metrics.CompactControl, th.Metrics.ButtonPadding)
 	}
 	if th.IconSize != 20 || th.Metrics.IconProfile != 18 || th.Metrics.IconLarge != 24 {
@@ -445,7 +447,7 @@ func TestResolveThemeValidatesEveryGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Metrics.BarHeight != 31 || got.Metrics.StandardControl != 40 {
+	if got.Metrics.BarHeight != 31 || got.Metrics.StandardControl != 36 {
 		t.Errorf("metrics = %+v, want the default row", got.Metrics)
 	}
 	if got.Shapes.Medium != 12 || got.Shapes.Card != 12 {
@@ -534,8 +536,11 @@ func TestResolveThemeAppliesCompositionAndBarOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The compact row supplies the control heights and icons.
-	if got.Metrics.StandardControl != 36 || got.Metrics.IconNormal != 18 {
+	// The compact row supplies the control heights and icons. Its standard
+	// control is the derived input height for a base of 27, which is 30 -- not
+	// to be confused with the default row's 36, which is what this row's own
+	// absolute used to be.
+	if got.Metrics.StandardControl != 30 || got.Metrics.IconNormal != 18 {
 		t.Errorf("metrics = %+v, want the compact row", got.Metrics)
 	}
 	// The explicit bar height wins over the row it came from.

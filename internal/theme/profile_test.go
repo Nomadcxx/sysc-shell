@@ -68,7 +68,10 @@ func TestProfileDensityTable(t *testing.T) {
 	}{
 		{DensityMini, Metrics{
 			BarHeight: 21, CapsuleHeight: 19, BarPadding: 1, BarSpacing: 1,
-			CompactControl: 28, StandardControl: 32,
+			BaseWidget: 22,
+			IconButton: 23, Checkbox: 15, ToggleBase: 18, SliderKnob: 14,
+			InputHeight: 24, TabHeight: 22,
+			CompactControl: 22, StandardControl: 24,
 			PanelPadding: 13, CardPadding: 9,
 			CapsulePadding: 2, ButtonPadding: 4,
 			IconSmall: 14, IconNormal: 16, IconLarge: 20,
@@ -76,7 +79,10 @@ func TestProfileDensityTable(t *testing.T) {
 		}},
 		{DensityCompact, Metrics{
 			BarHeight: 25, CapsuleHeight: 21, BarPadding: 2, BarSpacing: 2,
-			CompactControl: 30, StandardControl: 36,
+			BaseWidget: 27,
+			IconButton: 27, Checkbox: 19, ToggleBase: 22, SliderKnob: 18,
+			InputHeight: 30, TabHeight: 26,
+			CompactControl: 26, StandardControl: 30,
 			PanelPadding: 13, CardPadding: 9,
 			CapsulePadding: 4, ButtonPadding: 6,
 			IconSmall: 16, IconNormal: 18, IconLarge: 24,
@@ -84,7 +90,10 @@ func TestProfileDensityTable(t *testing.T) {
 		}},
 		{DensityDefault, Metrics{
 			BarHeight: 31, CapsuleHeight: 25, BarPadding: 2, BarSpacing: 4,
-			CompactControl: 32, StandardControl: 40,
+			BaseWidget: 33,
+			IconButton: 33, Checkbox: 23, ToggleBase: 26, SliderKnob: 22,
+			InputHeight: 36, TabHeight: 32,
+			CompactControl: 32, StandardControl: 36,
 			PanelPadding: 13, CardPadding: 9,
 			CapsulePadding: 6, ButtonPadding: 9,
 			IconSmall: 16, IconNormal: 20, IconLarge: 24,
@@ -92,7 +101,10 @@ func TestProfileDensityTable(t *testing.T) {
 		}},
 		{DensityComfortable, Metrics{
 			BarHeight: 37, CapsuleHeight: 29, BarPadding: 4, BarSpacing: 6,
-			CompactControl: 36, StandardControl: 44,
+			BaseWidget: 39,
+			IconButton: 39, Checkbox: 27, ToggleBase: 30, SliderKnob: 26,
+			InputHeight: 42, TabHeight: 38,
+			CompactControl: 38, StandardControl: 42,
 			PanelPadding: 13, CardPadding: 9,
 			CapsulePadding: 9, ButtonPadding: 13,
 			IconSmall: 18, IconNormal: 22, IconLarge: 28,
@@ -100,7 +112,10 @@ func TestProfileDensityTable(t *testing.T) {
 		}},
 		{DensitySpacious, Metrics{
 			BarHeight: 47, CapsuleHeight: 31, BarPadding: 6, BarSpacing: 9,
-			CompactControl: 40, StandardControl: 48,
+			BaseWidget: 50,
+			IconButton: 51, Checkbox: 35, ToggleBase: 40, SliderKnob: 34,
+			InputHeight: 54, TabHeight: 50,
+			CompactControl: 50, StandardControl: 54,
 			PanelPadding: 13, CardPadding: 9,
 			CapsulePadding: 13, ButtonPadding: 18,
 			IconSmall: 20, IconNormal: 24, IconLarge: 32,
@@ -488,6 +503,90 @@ func TestLegacyDensityNameStillResolves(t *testing.T) {
 	for _, d := range Densities() {
 		if d == DensityStandard {
 			t.Error("the legacy name is still listed as a choice")
+		}
+	}
+}
+
+func TestControlSizesDeriveFromTheBaseWidget(t *testing.T) {
+	t.Parallel()
+	// The reference has one master control dimension and expresses every
+	// control as a ratio of it. A table of absolutes cannot stay in proportion
+	// when the base moves, which is the whole reason to derive.
+	m, _ := MetricsFor(DensityDefault)
+	if m.BaseWidget != 33 {
+		t.Fatalf("base widget = %d, want 33", m.BaseWidget)
+	}
+	for _, tc := range []struct {
+		name  string
+		got   int
+		ratio float64
+		odd   bool
+	}{
+		{"icon button", m.IconButton, 1.0, true},
+		{"checkbox", m.Checkbox, 0.7, true},
+		{"toggle base", m.ToggleBase, 0.8, false},
+		{"slider knob", m.SliderKnob, 0.7, false},
+		{"input height", m.InputHeight, 1.1, false},
+		{"tab height", m.TabHeight, 1.0, false},
+	} {
+		want := int(float64(m.BaseWidget)*tc.ratio + 0.5)
+		if tc.odd {
+			want = ToOdd(want)
+		} else {
+			want = ToEven(want)
+		}
+		if tc.got != want {
+			t.Errorf("%s = %d, want %d (base %d x %.2f)", tc.name, tc.got, want, m.BaseWidget, tc.ratio)
+		}
+	}
+}
+
+func TestOddAndEvenForcingIsPerShape(t *testing.T) {
+	t.Parallel()
+	// Icon buttons and checkboxes force odd so a centred glyph lands on a pixel
+	// row. Toggles and sliders force even so the two-sided inset stays
+	// symmetric. This is deliberate in the reference, not incidental.
+	for _, d := range Densities() {
+		m, _ := MetricsFor(d)
+		for name, v := range map[string]int{"icon button": m.IconButton, "checkbox": m.Checkbox} {
+			if v%2 == 0 {
+				t.Errorf("%v %s = %d, want odd", d, name, v)
+			}
+		}
+		for name, v := range map[string]int{"toggle base": m.ToggleBase, "slider knob": m.SliderKnob} {
+			if v%2 != 0 {
+				t.Errorf("%v %s = %d, want even", d, name, v)
+			}
+		}
+	}
+}
+
+func TestControlsStayInProportionWhenTheBaseMoves(t *testing.T) {
+	t.Parallel()
+	// The property a table of absolutes cannot hold.
+	small, _ := MetricsFor(DensityCompact)
+	large, _ := MetricsFor(DensitySpacious)
+	if !(small.IconButton < large.IconButton && small.InputHeight < large.InputHeight) {
+		t.Error("control sizes did not track the base width across densities")
+	}
+	if small.BaseWidget >= large.BaseWidget {
+		t.Errorf("base width %d at compact is not below %d at spacious", small.BaseWidget, large.BaseWidget)
+	}
+}
+
+// TestTheControlAliasesCarryTheDerivedValues holds the migration honest. The
+// two older names are kept only so call sites can move gradually; if they ever
+// stopped tracking what they alias, a surface reading the old name would size
+// itself from a stale absolute while its neighbour used the derived one.
+func TestTheControlAliasesCarryTheDerivedValues(t *testing.T) {
+	t.Parallel()
+	for _, d := range Densities() {
+		m, _ := MetricsFor(d)
+		if m.CompactControl != m.TabHeight {
+			t.Errorf("%v compact control = %d, want the derived tab height %d", d, m.CompactControl, m.TabHeight)
+		}
+		if m.StandardControl != m.InputHeight {
+			t.Errorf("%v standard control = %d, want the derived input height %d", d, m.StandardControl, m.InputHeight)
 		}
 	}
 }

@@ -570,8 +570,10 @@ func TestSessionActionsAreFullWidthIconStadiums(t *testing.T) {
 		if node == nil {
 			t.Fatalf("action %q is missing", name)
 		}
-		if node.Bounds.H != 40 {
-			t.Errorf("action %q is %d px high, want 40", name, node.Bounds.H)
+		// The action stadium is the derived standard control, base x 1.1 forced
+		// even, which is 36 at the default row rather than the old absolute 40.
+		if node.Bounds.H != 36 {
+			t.Errorf("action %q is %d px high, want 36", name, node.Bounds.H)
 		}
 		icon := findNode(node, func(n *ui.Node) bool { return n.Kind == ui.KindIcon })
 		if icon == nil || icon.Icon != want {

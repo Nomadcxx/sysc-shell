@@ -97,9 +97,26 @@ type Metrics struct {
 	// moves. Derived as toOdd(round(BarHeight * r)) with r of 0.90, 0.85, 0.82,
 	// 0.75 and 0.65 down the rows. Odd for the same reason the bar is: a shape
 	// centred in an odd box lands on a pixel row instead of straddling two.
-	CapsuleHeight   int
-	BarPadding      int
-	BarSpacing      int
+	CapsuleHeight int
+	BarPadding    int
+	BarSpacing    int
+	// BaseWidget is the one master control dimension. Every control below is a
+	// ratio of it rather than an absolute, because a table of absolutes cannot
+	// stay in proportion when the base moves. It is 33 on the default row --
+	// the reference's own figure -- and scales with the band on the others.
+	BaseWidget int
+	// The derived controls. Parity is forced per shape, not globally: an icon
+	// button and a checkbox centre a glyph, so they are odd; a toggle and a
+	// slider carry a two-sided inset, so they are even.
+	IconButton  int // base x 1.0, odd
+	Checkbox    int // base x 0.7, odd
+	ToggleBase  int // base x 0.8, even
+	SliderKnob  int // base x 0.7, even
+	InputHeight int // base x 1.1, even
+	TabHeight   int // base x 1.0, even
+	// CompactControl and StandardControl are the names call sites still use.
+	// They now carry the derived TabHeight and InputHeight rather than their
+	// own absolutes, and go away once nothing reads them.
 	CompactControl  int
 	StandardControl int
 	PanelPadding    int
@@ -136,7 +153,10 @@ type Metrics struct {
 var metrics = map[Density]Metrics{
 	DensityMini: {
 		BarHeight: 21, CapsuleHeight: 19, BarPadding: 1, BarSpacing: 1,
-		CompactControl: 28, StandardControl: 32,
+		BaseWidget: 22,
+		IconButton: 23, Checkbox: 15, ToggleBase: 18, SliderKnob: 14,
+		InputHeight: 24, TabHeight: 22,
+		CompactControl: 22, StandardControl: 24,
 		PanelPadding: 13, CardPadding: 9,
 		CapsulePadding: 2, ButtonPadding: 4,
 		IconSmall: 14, IconNormal: 16, IconLarge: 20,
@@ -144,7 +164,10 @@ var metrics = map[Density]Metrics{
 	},
 	DensityCompact: {
 		BarHeight: 25, CapsuleHeight: 21, BarPadding: 2, BarSpacing: 2,
-		CompactControl: 30, StandardControl: 36,
+		BaseWidget: 27,
+		IconButton: 27, Checkbox: 19, ToggleBase: 22, SliderKnob: 18,
+		InputHeight: 30, TabHeight: 26,
+		CompactControl: 26, StandardControl: 30,
 		PanelPadding: 13, CardPadding: 9,
 		CapsulePadding: 4, ButtonPadding: 6,
 		IconSmall: 16, IconNormal: 18, IconLarge: 24,
@@ -152,7 +175,10 @@ var metrics = map[Density]Metrics{
 	},
 	DensityDefault: {
 		BarHeight: 31, CapsuleHeight: 25, BarPadding: 2, BarSpacing: 4,
-		CompactControl: 32, StandardControl: 40,
+		BaseWidget: 33,
+		IconButton: 33, Checkbox: 23, ToggleBase: 26, SliderKnob: 22,
+		InputHeight: 36, TabHeight: 32,
+		CompactControl: 32, StandardControl: 36,
 		PanelPadding: 13, CardPadding: 9,
 		CapsulePadding: 6, ButtonPadding: 9,
 		IconSmall: 16, IconNormal: 20, IconLarge: 24,
@@ -160,7 +186,10 @@ var metrics = map[Density]Metrics{
 	},
 	DensityComfortable: {
 		BarHeight: 37, CapsuleHeight: 29, BarPadding: 4, BarSpacing: 6,
-		CompactControl: 36, StandardControl: 44,
+		BaseWidget: 39,
+		IconButton: 39, Checkbox: 27, ToggleBase: 30, SliderKnob: 26,
+		InputHeight: 42, TabHeight: 38,
+		CompactControl: 38, StandardControl: 42,
 		PanelPadding: 13, CardPadding: 9,
 		CapsulePadding: 9, ButtonPadding: 13,
 		IconSmall: 18, IconNormal: 22, IconLarge: 28,
@@ -168,13 +197,23 @@ var metrics = map[Density]Metrics{
 	},
 	DensitySpacious: {
 		BarHeight: 47, CapsuleHeight: 31, BarPadding: 6, BarSpacing: 9,
-		CompactControl: 40, StandardControl: 48,
+		BaseWidget: 50,
+		IconButton: 51, Checkbox: 35, ToggleBase: 40, SliderKnob: 34,
+		InputHeight: 54, TabHeight: 50,
+		CompactControl: 50, StandardControl: 54,
 		PanelPadding: 13, CardPadding: 9,
 		CapsulePadding: 13, ButtonPadding: 18,
 		IconSmall: 20, IconNormal: 24, IconLarge: 32,
 		IconProfile: 22,
 	},
 }
+
+// ToOdd and ToEven pin a dimension to a parity. An odd box has a true centre
+// row, so a centred glyph lands on a pixel; an even box gives a symmetric
+// two-sided inset. The reference chooses per shape rather than globally, and a
+// control that picks the wrong one needs subpixel compensation to look centred.
+func ToOdd(n int) int  { return n/2*2 + 1 }
+func ToEven(n int) int { return n / 2 * 2 }
 
 // MetricsFor returns the row for a density.
 //
