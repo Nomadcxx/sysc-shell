@@ -41,7 +41,7 @@ func sessionBatteryCard(m theme.Metrics, b *metrics.BatterySnapshot) *ui.Node {
 	glyph := string(render.BatteryIconRune(b.Charge, charging, false))
 	rows := []*ui.Node{
 		monitorCardTitle("Battery", 0),
-		{Kind: ui.KindRow, Gap: 8, Children: []*ui.Node{
+		{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
 			{Kind: ui.KindText, Text: glyph},
 			// Reserve the width of a full charge so the meter and the rows
 			// below it do not shift when the figure reaches three digits.

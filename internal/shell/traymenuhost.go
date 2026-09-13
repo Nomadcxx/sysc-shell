@@ -8,6 +8,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	tray "github.com/Nomadcxx/sysc-tray/protocol"
 )
@@ -601,11 +602,11 @@ func trayMenuRowNode(row trayMenuRow) *ui.Node {
 		name = label + " (submenu)"
 	}
 	entry := &ui.Node{
-		Kind: ui.KindButton, Text: trayMenuRowText(row, label), Padding: 4,
+		Kind: ui.KindButton, Text: trayMenuRowText(row, label), Padding: theme.MarginXS,
 		Action: trayMenuAction(row.id), Name: name, Role: row.role,
 		Focusable: row.enabled,
 	}
-	return &ui.Node{Kind: ui.KindRow, Gap: 6, Children: []*ui.Node{entry}}
+	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{entry}}
 }
 
 // trayMenuRowText folds toggle and submenu state into the text. The fallback

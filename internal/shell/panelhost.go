@@ -747,7 +747,7 @@ func placeholderTree() *ui.Node {
 			Name: text, Role: "button", Focusable: true,
 		}
 	}
-	return &ui.Node{Kind: ui.KindColumn, Gap: 8, Padding: 12, Children: []*ui.Node{
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: theme.MarginL, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: "Panel"},
 		btn("Lock", "lock"),
 		btn("Two", "two"),
