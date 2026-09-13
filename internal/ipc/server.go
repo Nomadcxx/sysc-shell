@@ -29,6 +29,7 @@ var (
 		"wallpaper":      "",
 		"audio":          "",
 		"control-center": "",
+		"network":        "",
 	}
 )
 
