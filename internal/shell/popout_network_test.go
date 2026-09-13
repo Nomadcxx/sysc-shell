@@ -164,6 +164,18 @@ func TestPanelNetworkTargetSizeAndDefaultTab(t *testing.T) {
 	}
 }
 
+func TestNetworkPanelConfiguresAtTargetSize(t *testing.T) {
+	size := panelTargetSize(PanelNetwork)
+	h := &PanelHost{
+		id: PanelNetwork, place: Placement{Panel: size}, theme: DefaultTheme(),
+	}
+	tree := networkTree(&Registry{}, h)
+	measure := func(string, ui.TextAttrs) (int, int) { return 10, 16 }
+	if err := ui.LayoutColumn(tree, size, measure); err != nil {
+		t.Fatalf("network panel does not lay out at %dx%d: %v", size.W, size.H, err)
+	}
+}
+
 // The panel must survive a registry with no network service at all: that is
 // the state on a machine without NetworkManager, and a nil dereference here
 // paints nothing while the service still reads active.
@@ -435,7 +447,7 @@ func TestNetworkFiguresUseCachedMetricRates(t *testing.T) {
 			Valid:                  true,
 		},
 	}}}}
-	texts := collectText(networkFigures(st, snap))
+	texts := collectText(networkFigures(st, snap, 120))
 	for _, want := range []string{"1.5 MB/s", "250.0 kB/s"} {
 		if !slices.Contains(texts, want) {
 			t.Fatalf("network figures missing %q: %v", want, texts)

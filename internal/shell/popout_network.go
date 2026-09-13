@@ -15,7 +15,10 @@ const absent = "—"
 
 // networkFigureRowH is the label-over-value row under the header's rule. It is
 // named so the scroll viewport can subtract it without guessing.
-const networkFigureRowH = 34
+const (
+	networkFigureRowH = 34
+	networkFigureGap  = 8
+)
 
 // networkTree builds PanelNetwork: the status header, the tab row, and
 // whichever tab body is selected.
@@ -122,7 +125,7 @@ func networkHeaderCard(h *PanelHost, st services.NetworkState, snap services.Sna
 		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: 12, Children: []*ui.Node{
 			top,
 			{Kind: ui.KindSeparator},
-			networkFigures(st, snap),
+			networkFigures(st, snap, (panelTargetSize(PanelNetwork).W-2*m.PanelPadding-2*m.CardPadding-2*networkFigureGap)/3),
 		}}},
 	}
 }
@@ -383,7 +386,7 @@ func (h *PanelHost) clearNetworkSecret() {
 // Throughput stays with the existing metrics owner rather than expanding
 // NetworkState. A missing sample or interface is an absent figure, not zero.
 
-func networkFigures(st services.NetworkState, snap services.Snapshot) *ui.Node {
+func networkFigures(st services.NetworkState, snap services.Snapshot, columnW int) *ui.Node {
 	down, up := absent, absent
 	if rate, ok := snap.Rate(services.Selector{Source: services.SourceNetwork, Subject: st.Interface, Direction: "rx"}); ok {
 		down = formatRate(rate)
@@ -391,15 +394,15 @@ func networkFigures(st services.NetworkState, snap services.Snapshot) *ui.Node {
 	if rate, ok := snap.Rate(services.Selector{Source: services.SourceNetwork, Subject: st.Interface, Direction: "tx"}); ok {
 		up = formatRate(rate)
 	}
-	return &ui.Node{Kind: ui.KindRow, Gap: 8, Height: networkFigureRowH, Children: []*ui.Node{
-		networkFigure("IPv4", orAbsent(st.IPv4)),
-		networkFigure("Down", down),
-		networkFigure("Up", up),
+	return &ui.Node{Kind: ui.KindRow, Gap: networkFigureGap, Height: networkFigureRowH, Children: []*ui.Node{
+		networkFigure("IPv4", orAbsent(st.IPv4), columnW),
+		networkFigure("Down", down, columnW),
+		networkFigure("Up", up, columnW),
 	}}
 }
 
-func networkFigure(label, value string) *ui.Node {
-	return &ui.Node{Kind: ui.KindColumn, Gap: 2, Children: []*ui.Node{
+func networkFigure(label, value string, width int) *ui.Node {
+	return &ui.Node{Kind: ui.KindColumn, Gap: 2, Width: width, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: label, TextRole: theme.RoleCaption},
 		{Kind: ui.KindText, Text: value, TextRole: theme.RoleLabel, Tabular: true},
 	}}
