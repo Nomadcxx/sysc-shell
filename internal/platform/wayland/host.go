@@ -47,6 +47,11 @@ type HostCallbacks struct {
 	OutputSize func(logicalWidth, logicalHeight int)
 	// Render fills the physical buffer. Width and height are buffer pixels.
 	Render func(pixels []byte, width, height, stride int) error
+	// Damaged reports the buffer rectangles the last Render touched, in buffer
+	// pixels. Nil, or an empty result, means the whole buffer — which is what
+	// every surface reports until it tracks its own regions. Damage is an
+	// optimisation; the fallback is always correct.
+	Damaged func() []ui.Rect
 	// Backdrop delivers the blurred capture taken before this surface existed,
 	// once, from the Wayland goroutine. The shell assembles the Style for its
 	// own surfaces, so the image has to travel back to it rather than being
