@@ -189,8 +189,27 @@ hit testing work in logical units; painting works in buffer pixels.
 A state change marks affected nodes dirty. Layout changes expand damage to old and new bounds. The surface requests one frame callback, submits accumulated damage, commits, and waits. A later invalidation sets a pending flag instead of issuing another frame.
 
 Damage is submitted with `wl_surface.damage_buffer` in buffer pixels. `wl_surface.damage` takes surface
-units, which are ambiguous under a viewport. The proof starts with full-surface damage. The bar milestone
-adds rectangle damage after tests cover old and new bounds. The project will add EGL/OpenGL ES only when profiling shows that shared-memory rendering misses an agreed frame, CPU, or power budget.
+units, which are ambiguous under a viewport. The proof started with full-surface damage, and rectangle
+damage now exists beside it: `HostCallbacks.Damaged` reports the buffer rectangles a render touched,
+`renderJob` submits one `damage_buffer` per rectangle clipped to the buffer, and a rectangle falling
+wholly outside is dropped rather than sent. `internal/render.DamageSet` accumulates a moved node's old
+**and** new bounds, which is the condition this document attached to the promise in the first place.
+
+**No surface opts in yet.** Every surface still reports a nil `Damaged`, and a nil callback or an empty
+result means the whole buffer, so every surface still damages fully and nothing about today's output
+changed. The path is built, not adopted; full-surface damage remains both the default and the fallback,
+because damage is an optimisation and never a correctness boundary. A missed rectangle shows as stale
+pixels, which reads as corrupted state rather than as a paint fault, so a surface adopts rectangle damage
+only once its own tests cover its bounds.
+
+An animating surface publishes no more often than `MotionTokens.FrameCap`, 33 ms. The 16 ms tick is
+unchanged and still drives the animation's value from the clock, so pacing changes how often the surface
+is blitted and never where the animation gets to; the settling frame always publishes, so no settled
+value is left unpainted. Measured on this machine, one unsettled surface publishes 21 times a second
+against 62 uncapped. The cap is deliberately not scaled by the motion speed: scaled, it fell below the
+tick at 400 percent and paced nothing, and rose to about two frames per transition at 25 percent.
+
+The project will add EGL/OpenGL ES only when profiling shows that shared-memory rendering misses an agreed frame, CPU, or power budget.
 
 A floating panel may paint over a blurred backdrop. It is captured once, as the panel opens, through
 `zwlr_screencopy_manager_v1`, blurred on the CPU at quarter resolution, and composited beneath the panel's
@@ -380,7 +399,13 @@ accessibility, popouts, and plugin UI still require deliberate runtime work.
 - Measure shared-memory rendering before deciding whether to add EGL/OpenGL ES. Satisfied **for blurred
   panels** by `2026-09-11-panel-backdrop-blur-design.md` and the figures measured against it: the copy and
   the blur together cost about 11 ms per open, inside one 60 Hz frame, so `wl_shm` does not miss the
-  budget there. The gate stays open for animation frame time, image-heavy grids, and CPU/power.
+  budget there. Satisfied **for animation frame time** and **image-heavy grids** by
+  `2026-09-11-rendering-smoothness-design.md` and the figures measured 2026-09-13: one unsettled surface
+  publishes 21 times a second at the 33 ms cap against 62 uncapped, and the wallpaper picker no longer
+  rebuilds its panel tree for each decoded thumbnail — a rebuild that measured 0.53 to 0.65 ms over five
+  runs on a five-entry root, and grows with the number of visible tiles. The gate **stays open for CPU and
+  power**: that case needs the 60-minute idle observation, which no run has yet produced, so `sysc-202`
+  remains open.
 - Derive the plugin node vocabulary from built-in widgets before versioning it.
 - Choose an SVG strategy for icons. Neither the standard library nor `golang.org/x/image` decodes SVG, and
   freedesktop icon themes are predominantly SVG.
