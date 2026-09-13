@@ -245,10 +245,15 @@ func (m MotionTokens) AtSpeed(percent int) MotionTokens {
 		Medium:    scale(m.Medium),
 		Long:      scale(m.Long),
 		ExtraLong: scale(m.ExtraLong),
-		// The cap scales with everything else, so it stays proportionally
-		// below the shortest token at every speed: 8 ms against a 20 ms
-		// Shorter at 400 percent, 132 ms against 320 ms at 25.
-		FrameCap: scale(m.FrameCap),
+		// FrameCap is deliberately NOT scaled. It bounds how often a surface is
+		// blitted, which is a cost of the machine rather than a property of the
+		// animation, and measurement showed scaling defeats it at both ends: at
+		// 400 percent it became 8.25 ms, below the 16 ms tick, and paced nothing
+		// (62 publishes a second, identical to uncapped); at 25 percent it
+		// became 132 ms, giving 7 a second, which is about two frames across a
+		// 320 ms transition and visibly steppy. Held at one value it paces every
+		// speed: roughly 30 a second.
+		FrameCap: m.FrameCap,
 	}
 }
 

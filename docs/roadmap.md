@@ -248,7 +248,11 @@ process-supervision subsystem.
 
 Keep `wl_shm` when it meets the measured budgets. Add EGL/OpenGL ES only for a named failing case such as animation frame time, large blurred panels, image-heavy grids, or unacceptable CPU/power use.
 
-"Large blurred panels" is measured and resolved in favour of `wl_shm`. On this machine's 3440x1440 output the screencopy readback is 5.7 ms and the reduced-resolution blur 5.3 ms for the worst regular panel: about 11 ms for one open, against a 16.67 ms frame, and paid once per open rather than per frame. The other named cases remain unmeasured.
+"Large blurred panels" is measured and resolved in favour of `wl_shm`. On this machine's 3440x1440 output the screencopy readback is 5.7 ms and the reduced-resolution blur 5.3 ms for the worst regular panel: about 11 ms for one open, against a 16.67 ms frame, and paid once per open rather than per frame.
+
+"Animation frame time" and "image-heavy grids" are measured too, on 2026-09-13. An animating surface publishes 21 times a second at the 33 ms frame cap against 62 uncapped, while the 16 ms tick still advances the animation from the clock and the settling frame always paints. The wallpaper picker stopped rebuilding its panel tree for every decoded thumbnail; that rebuild measured 0.53 to 0.65 ms over five runs on a five-entry root and grows with the visible tile count. Rectangle damage exists but no surface has adopted it, so every surface still damages its whole buffer.
+
+Only "unacceptable CPU/power use" is still unmeasured. It needs the 60-minute idle observation, so `sysc-202` stays open rather than being retired on four cases of which three are answered.
 
 If GPU work starts:
 
