@@ -9,7 +9,7 @@ tranche's origin; do not re-derive it here.
 
 ## Receiving state
 
-`main` is `493ac6b`, pushed, and contains both merged slices:
+`main` is `43da674`, pushed. It carries both merged slices:
 
 | Commit | Contents |
 |---|---|
@@ -17,7 +17,17 @@ tranche's origin; do not re-derive it here.
 | `49c6a92` | Merge of rendering smoothness Tasks 1–4 and its plan amendment |
 | `493ac6b` | Merge of rendering smoothness Task 6 |
 
-`feature/noctalia-parity` is **pushed** at `30b5f06`, branched from `493ac6b`:
+**A concurrent session is committing to `main`.** Four documentation commits landed there while this
+slice was being worked — `d121923`, `d4b6ab7`, `cd895b0`, `7b2f138` — defining a panel list row shape,
+its insets, and a bluetooth panel and service, with their register rows. They touch `docs/` only and add
+no code, so **the 169-site census below is unaffected**. But those documents design new panels, and a
+new panel carries new literal geometry: expect the gate's count to grow once they are built, exactly as
+the unmerged `feature/network-panel` branch already adds 18 sites to it. Re-take the census before
+trusting the number, with the rule the gate itself uses.
+
+`feature/noctalia-parity` is **pushed** at `30b5f06`, branched from `493ac6b`. It is 6 ahead of `main`
+and 5 behind it, those five being the documentation commits above and this handover. Rebasing is
+optional: none of them touches a file this slice edits.
 
 | Commit | Task | Contents |
 |---|---|---|
