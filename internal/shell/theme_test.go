@@ -459,8 +459,8 @@ func TestResolveThemeValidatesEveryGroup(t *testing.T) {
 	if got.Surfaces != (Surfaces{Bar: 0xff, Panel: 0xff, Overlay: 0xff}) {
 		t.Errorf("surfaces = %+v, want opaque", got.Surfaces)
 	}
-	if got.Motion.Durations.Medium != 180*time.Millisecond {
-		t.Errorf("motion medium = %v, want 180ms", got.Motion.Durations.Medium)
+	if got.Motion.Durations.Medium != 300*time.Millisecond {
+		t.Errorf("motion medium = %v, want 300ms", got.Motion.Durations.Medium)
 	}
 	if got.Motion.Spatial != theme.CurveOutCubic {
 		t.Errorf("curve = %q, want out-cubic", got.Motion.Spatial)
@@ -550,8 +550,8 @@ func TestResolveThemeAppliesCompositionAndBarOverride(t *testing.T) {
 	if got.Shapes.Medium != 8 {
 		t.Errorf("radius = %d, want compact's 8", got.Shapes.Medium)
 	}
-	if got.Motion.Durations.Medium != 144*time.Millisecond {
-		t.Errorf("medium = %v, want compact's 144ms", got.Motion.Durations.Medium)
+	if got.Motion.Durations.Medium != 240*time.Millisecond {
+		t.Errorf("medium = %v, want compact's 240ms", got.Motion.Durations.Medium)
 	}
 }
 

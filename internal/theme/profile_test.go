@@ -249,10 +249,10 @@ func TestProfileMotionSpeedDividesDurations(t *testing.T) {
 		speed  int
 		medium time.Duration
 	}{
-		{25, 720 * time.Millisecond},
-		{100, 180 * time.Millisecond},
-		{125, 144 * time.Millisecond},
-		{400, 45 * time.Millisecond},
+		{25, 1200 * time.Millisecond},
+		{100, 300 * time.Millisecond},
+		{125, 240 * time.Millisecond},
+		{400, 75 * time.Millisecond},
 	} {
 		got := BaseMotion.AtSpeed(tc.speed)
 		if got.Medium != tc.medium {
@@ -588,6 +588,45 @@ func TestTheControlAliasesCarryTheDerivedValues(t *testing.T) {
 		if m.StandardControl != m.InputHeight {
 			t.Errorf("%v standard control = %d, want the derived input height %d", d, m.StandardControl, m.InputHeight)
 		}
+	}
+}
+
+func TestMotionDurationsMatchTheReference(t *testing.T) {
+	t.Parallel()
+	// The reference runs calmer, most visibly at the long end: 750 ms against
+	// the 400 this replaces. Every token is checked, not a sample of them: a
+	// table test that ignores four of its six values passes with them wrong.
+	want := MotionTokens{
+		Instant: 0, Shorter: 75 * time.Millisecond, Short: 150 * time.Millisecond,
+		Medium: 300 * time.Millisecond, Long: 450 * time.Millisecond,
+		ExtraLong: 750 * time.Millisecond,
+	}
+	for _, tc := range []struct {
+		name      string
+		got, want time.Duration
+	}{
+		{"instant", BaseMotion.Instant, want.Instant},
+		{"shorter", BaseMotion.Shorter, want.Shorter},
+		{"short", BaseMotion.Short, want.Short},
+		{"medium", BaseMotion.Medium, want.Medium},
+		{"long", BaseMotion.Long, want.Long},
+		{"extra long", BaseMotion.ExtraLong, want.ExtraLong},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("%s = %v, want %v", tc.name, tc.got, tc.want)
+		}
+	}
+}
+
+// TestFrameCapStaysBelowTheShortestToken carries the smoothness design's
+// constraint across this re-base: a cap at or above the shortest duration makes
+// a short transition visibly steppy, because the surface would be allowed to
+// paint only once while the value travels.
+func TestFrameCapStaysBelowTheShortestToken(t *testing.T) {
+	t.Parallel()
+	if BaseMotion.FrameCap >= BaseMotion.Shorter {
+		t.Errorf("frame cap %v is not below the shortest token %v",
+			BaseMotion.FrameCap, BaseMotion.Shorter)
 	}
 }
 

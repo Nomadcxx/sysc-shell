@@ -327,14 +327,21 @@ type MotionTokens struct {
 	FrameCap time.Duration
 }
 
-// BaseMotion is the unscaled duration table.
+// BaseMotion is the unscaled duration table, re-based onto the reference's
+// durations. It runs calmer than the table it replaces, most visibly at the
+// long end: 750 ms against 400.
+//
+// FrameCap is not one of the reference's durations and does not move with them.
+// It bounds how often a surface is blitted rather than how long a transition
+// takes, and it has to stay below the shortest token or a short transition
+// becomes visibly steppy.
 var BaseMotion = MotionTokens{
 	Instant:   0,
-	Shorter:   80 * time.Millisecond,
-	Short:     120 * time.Millisecond,
-	Medium:    180 * time.Millisecond,
-	Long:      250 * time.Millisecond,
-	ExtraLong: 400 * time.Millisecond,
+	Shorter:   75 * time.Millisecond,
+	Short:     150 * time.Millisecond,
+	Medium:    300 * time.Millisecond,
+	Long:      450 * time.Millisecond,
+	ExtraLong: 750 * time.Millisecond,
 	FrameCap:  33 * time.Millisecond,
 }
 
