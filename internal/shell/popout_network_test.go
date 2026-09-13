@@ -297,6 +297,13 @@ func TestSecuredRowCarriesTheLockGlyph(t *testing.T) {
 	}
 }
 
+func TestAccessPointRowUsesSmallCornerShape(t *testing.T) {
+	row := networkAPRow(services.AccessPoint{SSID: "Test AP", Strength: 50}, standardMetrics())
+	if row.Shape != ui.ShapeSmall {
+		t.Fatalf("access-point row shape = %v, want ShapeSmall", row.Shape)
+	}
+}
+
 func TestAccessPointRowsKeepLeadingAndTrailingIconsAligned(t *testing.T) {
 	t.Parallel()
 	m := standardMetrics()

@@ -246,7 +246,7 @@ func networkAPRow(ap services.AccessPoint, m theme.Metrics) *ui.Node {
 	}
 	return &ui.Node{
 		Kind: ui.KindButton, Action: "network-ap:" + ap.SSID, Name: ap.SSID,
-		Role: "button", Focusable: true, Height: m.StandardControl,
+		Role: "button", Focusable: true, Height: m.StandardControl, Shape: ui.ShapeSmall,
 		Children: []*ui.Node{content},
 	}
 }
