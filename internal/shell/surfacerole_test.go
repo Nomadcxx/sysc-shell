@@ -224,7 +224,9 @@ func TestSurfaceSourcesCarryNoLegacyVisuals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	aliases := regexp.MustCompile(`\.(BarPadding|Spacing|TextSize|CapsulePadding|ControlHeight|CompactHeight|ButtonPadding|IconSize|ProfileIconSize|OSDIconSize|CardRadius)\b`)
+	// ButtonPadding is a grouped density metric, not a flat compatibility alias;
+	// surfaces may receive a Metrics value directly when composing a subtree.
+	aliases := regexp.MustCompile(`\.(BarPadding|Spacing|TextSize|CapsulePadding|ControlHeight|CompactHeight|IconSize|ProfileIconSize|OSDIconSize|CardRadius)\b`)
 	bold := regexp.MustCompile(`\bBold:\s*true\b`)
 	// The thirteen geometry fields of ui.Node. Verified against the struct:
 	// every other numeric field is slider or scroll state (Min, Max, Step,

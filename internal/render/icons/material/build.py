@@ -75,6 +75,21 @@ ICONS = [
     "thunderstorm",
     "weather_snowy",
     "foggy",
+    # Network panel and wifi bar widget. The five signal bands are the glyphs
+    # services.SignalBand buckets into; lan is the wired tab and the wired
+    # widget state; visibility pairs reveal the password field.
+    "signal_wifi_0_bar",
+    "network_wifi_1_bar",
+    "network_wifi_2_bar",
+    "network_wifi_3_bar",
+    "signal_wifi_4_bar",
+    # wifi_off is the radio being off, which is a different fact from being on
+    # with no signal (signal_wifi_0_bar). The reference shell draws them apart
+    # and so do we.
+    "wifi_off",
+    "lan",
+    "visibility",
+    "visibility_off",
 ]
 
 # Material Symbols addresses a glyph by typing its name, so the letters and the

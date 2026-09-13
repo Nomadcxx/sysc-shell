@@ -158,7 +158,7 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 		if n.Height > 0 {
 			return n.Height, nil
 		}
-		sample := n.Text + n.Preedit
+		sample := DisplayText(n) + DisplayPreedit(n)
 		if sample == "" {
 			sample = " "
 		}

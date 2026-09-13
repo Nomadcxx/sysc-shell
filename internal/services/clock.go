@@ -42,6 +42,7 @@ type Lease struct {
 	weather    *Weather
 	audio      *Audio
 	brightness *Brightness
+	network    *Network
 	selector   Selector
 	boundary   time.Duration
 }
@@ -109,6 +110,10 @@ func (l *Lease) Release() {
 		b := l.brightness
 		l.brightness = nil
 		b.release(l)
+	case l.network != nil:
+		n := l.network
+		l.network = nil
+		n.release(l)
 	}
 }
 

@@ -73,16 +73,18 @@ type Registry struct {
 	// roots is the one interactive root the process allows at a time.
 	roots rootChain
 	// closed unblocks a pending publish at shutdown.
-	closed      chan struct{}
-	closeOnce   sync.Once
-	dwell       *dwell
-	configPath  string
-	reloads     chan<- struct{}
-	audio       *services.Audio
-	brightness  *services.Brightness
-	osd         *OSDManager
-	audioLease  *services.Lease
-	brightLease *services.Lease
+	closed       chan struct{}
+	closeOnce    sync.Once
+	dwell        *dwell
+	configPath   string
+	reloads      chan<- struct{}
+	audio        *services.Audio
+	brightness   *services.Brightness
+	network      *services.Network
+	osd          *OSDManager
+	audioLease   *services.Lease
+	brightLease  *services.Lease
+	networkLease *services.Lease
 	// runArgv launches a session action. Tests replace it per Registry.
 	runArgv func([]string) error
 	// lookPath finds a binary on PATH. Tests replace it per Registry.
@@ -170,6 +172,13 @@ func NewRegistry(cfg config.Config) *Registry {
 	r.osd = newOSDManager(r, 0)
 	r.setAudio(services.NewAudio(0, ""))
 	r.setBrightness(services.NewBrightness("", "", 0))
+	// The network service opens a system-bus connection, which no unit test
+	// should need. It is skipped under test for the same reason the wallpaper
+	// service below is: a test that reaches the developer's real session is a
+	// test that fails on a build machine. Tests install their own service.
+	if !runningAsTest() {
+		r.setNetwork(services.NewSystemNetwork())
+	}
 	// The wallpaper service starts with the registry, not with the picker: an
 	// output's wallpaper has to come back at login whether or not anyone opens
 	// the panel (D20). It is skipped under test, where starting it would read
@@ -242,6 +251,124 @@ func (r *Registry) relayMixer(audio *services.Audio) {
 			r.publishSurface(out, panelSurfaceID(PanelAudio))
 		}
 	}
+}
+
+// setNetwork swaps the network service, releasing any lease the old one held.
+// The lease is what starts the D-Bus subscription, so taking it here is what
+// makes the bar glyph live.
+// toggleWirelessAsync flips the radio from the bar's right-click.
+//
+// The write is I/O over D-Bus, so it runs on its own goroutine: this handler
+// is on the path that takes Registry.mu and the Wayland owner, and blocking
+// either on a bus round trip stalls every bar on the machine.
+func (r *Registry) toggleWirelessAsync() {
+	r.mu.Lock()
+	n := r.network
+	r.mu.Unlock()
+	if n == nil || !n.Available() {
+		return
+	}
+	want := !n.CachedState().WirelessEnabled
+	go func() { _ = n.SetWirelessEnabled(want) }()
+}
+
+func (r *Registry) setNetwork(n *services.Network) {
+	if r.networkLease != nil {
+		r.networkLease.Release()
+		r.networkLease = nil
+	}
+	if r.network != nil {
+		r.network.Close()
+	}
+	r.network = n
+	if n != nil && n.Available() {
+		if l, err := n.Acquire(); err == nil {
+			r.networkLease = l
+		}
+		go r.relayNetwork(n)
+	}
+}
+
+// relayNetwork is the one bridge from the pushed service into retained shell
+// state. Bus reads stay off Registry.mu; the lock only applies cached state to
+// bars and the open panel.
+func (r *Registry) relayNetwork(network *services.Network) {
+	if network == nil {
+		return
+	}
+	network.State()
+	network.AccessPoints()
+	r.publishNetworkSnapshot(network)
+
+	for {
+		select {
+		case <-r.closed:
+			return
+		case _, ok := <-network.Changes():
+			if !ok {
+				return
+			}
+			network.AccessPoints()
+			r.publishNetworkSnapshot(network)
+		case req, ok := <-network.SecretRequests():
+			if !ok {
+				return
+			}
+			r.presentNetworkSecret(network, req)
+		}
+	}
+}
+
+func (r *Registry) publishNetworkSnapshot(network *services.Network) {
+	r.mu.Lock()
+	if r.network != network {
+		r.mu.Unlock()
+		return
+	}
+	changed := make([]uint32, 0, len(r.bars))
+	for global, bar := range r.bars {
+		if bar.apply(r.viewLocked(bar.connector())) {
+			changed = append(changed, global)
+		}
+	}
+	h := r.panelHosts[PanelNetwork]
+	var panelOut uint32
+	if h != nil {
+		r.rebuildPanel(h)
+		panelOut = h.output
+	}
+	r.mu.Unlock()
+
+	r.publish(changed)
+	if h != nil {
+		r.publishSurface(panelOut, panelSurfaceID(PanelNetwork))
+	}
+}
+
+func (r *Registry) presentNetworkSecret(network *services.Network, req services.SecretRequest) {
+	r.mu.Lock()
+	if r.network != network {
+		r.mu.Unlock()
+		network.CancelSecret()
+		return
+	}
+	h := r.panelHosts[PanelNetwork]
+	if h == nil {
+		r.mu.Unlock()
+		network.CancelSecret()
+		return
+	}
+	h.clearNetworkSecret()
+	h.networkTab = "wifi"
+	h.pendingSSID = req.SSID
+	h.password = ui.NewField("")
+	h.password.Masked = true
+	h.errLabel = ""
+	r.rebuildPanel(h)
+	h.focusByName("Password")
+	out := h.output
+	r.mu.Unlock()
+	r.publishSurface(out, panelSurfaceID(PanelNetwork))
 }
 
 func (r *Registry) setBrightness(b *services.Brightness) {
@@ -706,6 +833,12 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 		case action == panelAudioAction && (button == 0 || button == buttonLeft):
 			trig.AnchorX = bar.actionCenterX(panelAudioAction)
 			return r.TogglePanel(PanelAudio, out, trig) == nil
+		case action == panelWifiAction && (button == 0 || button == buttonLeft):
+			trig.AnchorX = bar.actionCenterX(panelWifiAction)
+			return r.TogglePanel(PanelNetwork, out, trig) == nil
+		case action == panelWifiAction && button == buttonRight:
+			r.toggleWirelessAsync()
+			return true
 		case action == panelAudioAction && button == buttonRight:
 			r.stepAudioAsync("mute")
 			return true
@@ -922,7 +1055,7 @@ func (r *Registry) Close() {
 	var osdAux []wayland.AuxRequest
 	var leases []*services.Lease
 	var bars []*Bar
-	var audioLease, brightLease *services.Lease
+	var audioLease, brightLease, networkLease *services.Lease
 	var inhibit io.Closer
 	if locked {
 		if r.toasts != nil {
@@ -949,6 +1082,8 @@ func (r *Registry) Close() {
 		r.audioLease = nil
 		brightLease = r.brightLease
 		r.brightLease = nil
+		networkLease = r.networkLease
+		r.networkLease = nil
 		inhibit = r.inhibit
 		r.inhibit = nil
 		r.inhibitWanted = false
@@ -966,6 +1101,9 @@ func (r *Registry) Close() {
 	}
 	if brightLease != nil {
 		brightLease.Release()
+	}
+	if networkLease != nil {
+		networkLease.Release()
 	}
 	if inhibit != nil {
 		_ = inhibit.Close()
@@ -989,6 +1127,9 @@ func (r *Registry) Close() {
 	}
 	if r.brightness != nil {
 		r.brightness.Close()
+	}
+	if r.network != nil {
+		r.network.Close()
 	}
 	if r.plugins != nil {
 		r.plugins.Close()
@@ -1041,6 +1182,11 @@ func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
 		r.rebuildPanel(h)
 		sessionOut, sessionOK = h.output, true
 	}
+	networkOut, networkOK := uint32(0), false
+	if h := r.panelHosts[PanelNetwork]; h != nil {
+		r.rebuildPanel(h)
+		networkOut, networkOK = h.output, true
+	}
 	controlOut, controlOK := r.rebuildControlCentreLocked()
 	r.mu.Unlock()
 
@@ -1050,6 +1196,9 @@ func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
 	}
 	if sessionOK {
 		r.publishSurface(sessionOut, panelSurfaceID(PanelSession))
+	}
+	if networkOK {
+		r.publishSurface(networkOut, panelSurfaceID(PanelNetwork))
 	}
 	if controlOK {
 		r.publishSurface(controlOut, panelSurfaceID(PanelControlCenter))
@@ -1131,6 +1280,9 @@ func (r *Registry) viewLocked(connector string) barView {
 	_, view.DND = r.notify.dndState(r.now)
 	if r.audio != nil {
 		view.Audio, _ = r.audio.CachedState()
+	}
+	if r.network != nil {
+		view.Network = r.network.CachedState()
 	}
 	if r.plugins != nil {
 		view.Plugins = r.plugins.frames(connector)

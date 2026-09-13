@@ -1,6 +1,6 @@
 # Design and Plan Register
 
-Last updated: 2026-09-13.
+Last updated: 2026-09-14.
 
 Every design, plan, and handover this project has produced, with where it lives and whether it is still
 live. Add a row here in the same commit that adds a document. A document that is not in this register is
@@ -419,6 +419,13 @@ widgets) are still unordered.
 | `2026-09-11-network-panel-design.md` | design | `PanelNetwork` (`sysc-157`): Wi-Fi and Ethernet tabs on one 460x560 surface, Direction B status-first composition, event-driven NetworkManager service over pinned `Wifx/gonetworkmanager/v2 v2.2.0` with only the secret export hand-written on `godbus/v5`, single-slot credential prompts, `wifi` bar widget, masked password field, nine added Material glyphs. D1-D18. Three slices; the `nm-applet` collision is the open risk. |
 | `2026-09-11-network-panel.md` | plan | Thirteen TDD tasks in three slices for `sysc-157`: verify the cached dependency and fix the tracker, state types and signal bands, pushed service with lease lifecycle, backend and pin, nine glyphs and the `wifi` widget, panel identity and bar trigger, status-first header, tabs and access-point list, off-owner writes, masked fields, single-slot credential export, password card, live gate. Records the `GOPROXY=off` resolution trap and that the commit hook rejects the substring `agent`. |
 | `2026-09-13-network-panel-execution-handover.md` | execution-handover | Continue `sysc-157` from branch `feature/network-panel` at `cfe692e`: Tasks 1 to 9 committed, Task 10 dirty in three credential files, then rebase onto current main before the password card and live Niri gate. Records the font-inventory merge rule, credential lifetime invariants, `nm-applet` collision, `sysc-254`, and the unresolved Down/Up figures. |
+| `2026-09-13-panel-list-row-shape-design.md` | design | Wi-Fi access-point rows opt into `ShapeSmall` for a slightly rounded rectangular field. The global button default, surrounding card, tabs, header well, content layout, and interaction behaviour stay unchanged. Future panel lists adopt the role at their construction site when their design calls for it. |
+| `2026-09-14-panel-list-row-inset-design.md` | design | AP rows keep `ShapeSmall` and add density-aware `ButtonPadding` so leading and trailing glyphs sit inside the surface. A reusable `panelListRow` constructor waits for a second matching panel consumer. |
+| `2026-09-13-bluetooth-panel-design.md` | design | `sysc-155`: one Registry-owned, signal-driven BlueZ service over `godbus/v5`; full `KeyboardDisplay` pairing and authorization; `bluetooth` bar widget; standalone panel and control-centre page sharing one body; explicit scan, connect, trust, and Forget controls. One-adapter ceiling and Blueman default-agent collision recorded. |
+| `2026-09-13-bluetooth-panel.md` | plan | `sysc-155`: preflight plus ten implementation slices covering the BlueZ reducer, single-slot pairing, Registry relay, glyphs/widget, shared body, standalone panel, and the mandatory functional control-centre page. The issue cannot close on standalone work alone. |
+| `2026-09-14-bluetooth-panel-execution-handover.md` | execution-handover | Commissions `sysc-155` after `sysc-157` lands. Records the live network-worktree collision, one-service/shared-body boundary, complete pairing-agent invariants, and the control-centre page as a required consumer and completion gate. |
+| `2026-09-13-panel-list-row-shape.md` | plan | One TDD code change for `sysc-157`: assert and set `ShapeSmall` on Wi-Fi access-point buttons, run focused and repository gates, then deploy the exact build to the laptop for visual confirmation without toggling Wi-Fi. |
+| `2026-09-14-panel-list-row-inset.md` | plan | TDD update to assert both AP-row edge insets, apply `ButtonPadding`, run repository gates, and deploy the exact build for laptop visual confirmation. |
 
 ## Panel backdrop blur (Milestone 8 evidence)
 
