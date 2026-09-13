@@ -563,11 +563,13 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 	if n.Text == "" && n.Preedit == "" && n.Name != "" && mark == 0 {
 		_ = paintText(c, n.Name, phys, text, style, textSpec(style, n).Italicised(), n.Tabular, n.Tone, false)
 	}
-	committed := n.Text
-	if n.Cursor >= 0 && n.Cursor <= len(n.Text) {
-		committed = n.Text[:n.Cursor]
-	}
-	if err := paintText(c, n.Text, phys, text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline); err != nil {
+	// A masked field draws one bullet per rune. The value, the committed
+	// prefix and the preedit all go through the same substitution, or the
+	// caret is placed by one string while another is drawn.
+	shown := ui.DisplayText(n)
+	shownPreedit := ui.DisplayPreedit(n)
+	committed := ui.DisplayPrefix(n, n.Cursor)
+	if err := paintText(c, shown, phys, text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline); err != nil {
 		return err
 	}
 	prefixW := 0
@@ -576,14 +578,14 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 			prefixW = w
 		}
 	}
-	if n.Preedit != "" {
+	if shownPreedit != "" {
 		pre := phys
 		pre.X += prefixW
 		pre.W -= prefixW
-		if err := paintText(c, n.Preedit, pre, text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline); err != nil {
+		if err := paintText(c, shownPreedit, pre, text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline); err != nil {
 			return err
 		}
-		if pw, _, err := text.Measure(n.Preedit, textSpec(style, n), n.Tabular); err == nil {
+		if pw, _, err := text.Measure(shownPreedit, textSpec(style, n), n.Tabular); err == nil {
 			underline := ui.Rect{X: pre.X, Y: pre.Y + pre.H - 1, W: pw, H: 1}
 			fillRect(c, underline, style.Foreground)
 			prefixW += pw

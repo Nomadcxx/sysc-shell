@@ -98,6 +98,61 @@ func TestButtonLaysOutIconAndTextContent(t *testing.T) {
 	}
 }
 
+func TestButtonLaysOutNestedRowAndColumn(t *testing.T) {
+	t.Parallel()
+	label := &Node{Kind: KindText, Text: "LukeAP"}
+	content := &Node{Kind: KindRow, PinEnd: true, Children: []*Node{
+		{Kind: KindRow, Gap: 8, Children: []*Node{
+			{Kind: KindIcon, Icon: "signal_wifi_4_bar"},
+			{Kind: KindColumn, Gap: 2, Children: []*Node{
+				label,
+				{Kind: KindText, Text: "Connected  92%"},
+			}},
+		}},
+		{Kind: KindIcon, Icon: "check"},
+	}}
+	button := &Node{Kind: KindButton, Height: 40, Children: []*Node{content}}
+	root := &Node{Kind: KindColumn, Children: []*Node{button}}
+
+	if err := LayoutColumn(root, Rect{W: 320, H: 40}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	if label.Bounds.W == 0 || label.Bounds.H == 0 {
+		t.Fatalf("nested label was not laid out: %+v", label.Bounds)
+	}
+	if got := content.Children[1].Bounds.X + content.Children[1].Bounds.W; got != 320 {
+		t.Fatalf("trailing icon right edge = %d, want 320", got)
+	}
+}
+
+func TestCapsuleCentersLeafChild(t *testing.T) {
+	t.Parallel()
+	icon := &Node{Kind: KindIcon, Icon: "wifi", IconSize: 20}
+	capsule := &Node{Kind: KindCapsule, Width: 40, Height: 40, Children: []*Node{icon}}
+	root := &Node{Kind: KindRow, Children: []*Node{capsule}}
+
+	if err := Layout(root, Rect{W: 40, H: 40}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := icon.Bounds, (Rect{X: 10, Y: 10, W: 20, H: 20}); got != want {
+		t.Fatalf("icon bounds = %+v, want %+v", got, want)
+	}
+}
+
+func TestCapsuleDoesNotShiftOversizedLeafPastItsLeftEdge(t *testing.T) {
+	t.Parallel()
+	icon := &Node{Kind: KindIcon, Icon: "wifi", IconSize: 24}
+	capsule := &Node{Kind: KindCapsule, Width: 20, Height: 24, Children: []*Node{icon}}
+	root := &Node{Kind: KindRow, Children: []*Node{capsule}}
+
+	if err := Layout(root, Rect{X: 7, W: 20, H: 24}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	if icon.Bounds.X < capsule.Bounds.X {
+		t.Fatalf("oversized icon starts at %d, left of capsule edge %d", icon.Bounds.X, capsule.Bounds.X)
+	}
+}
+
 func TestCompactIconButtonIsSquare(t *testing.T) {
 	t.Parallel()
 	button := &Node{

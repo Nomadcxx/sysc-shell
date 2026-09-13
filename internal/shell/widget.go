@@ -37,6 +37,9 @@ type barView struct {
 	// Running is the session-wide application slot list. Every bar paints it.
 	Running []runningAppSlot
 	Audio   services.AudioState
+	// Network is the newest connectivity state. Its zero value is Unknown with
+	// the radio off, which the wifi widget paints as the no-signal glyph.
+	Network services.NetworkState
 }
 
 // textWidget is one configured widget instance: a retained node plus the pure
@@ -282,6 +285,8 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 			out = append(out, buildWallpaperWidget())
 		case "volume":
 			out = append(out, buildVolumeWidget())
+		case "wifi":
+			out = append(out, buildWifiWidget())
 		case "running-apps":
 			row := &ui.Node{Kind: ui.KindRow, Gap: runningAppGap}
 			cap := &ui.Node{Kind: ui.KindCapsule}

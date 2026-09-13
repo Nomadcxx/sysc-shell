@@ -12,10 +12,67 @@ type Field struct {
 	Cursor        int
 	Multiline     bool
 	SubmitOnEnter bool
+	// Masked disguises the value at render time only. Text keeps the real
+	// runes, so editing, cursor motion and submit are unchanged and exactly
+	// one code path knows about the disguise.
+	Masked bool
 }
 
 func NewField(s string) *Field {
 	return &Field{Text: s, Cursor: len(s)}
+}
+
+// MaskRune is drawn in place of each rune of a masked field.
+const MaskRune = '•'
+
+// DisplayText is what a field should draw and be measured by: the real value,
+// or one bullet per rune when it is masked.
+//
+// Every site that derives geometry from a field's text must go through this.
+// Measuring the real runes while drawing bullets, or the reverse, drifts the
+// caret away from the glyphs, and a bullet's advance is not a letter's.
+func DisplayText(n *Node) string {
+	if n == nil {
+		return ""
+	}
+	return maskIf(n.Text, n.Masked)
+}
+
+// DisplayPreedit is the composing text under the same disguise.
+func DisplayPreedit(n *Node) string {
+	if n == nil {
+		return ""
+	}
+	return maskIf(n.Preedit, n.Masked)
+}
+
+// DisplayPrefix is the masked form of the text before the cursor, which is
+// what positions the caret.
+func DisplayPrefix(n *Node, cursor int) string {
+	if n == nil {
+		return ""
+	}
+	if cursor < 0 || cursor > len(n.Text) {
+		cursor = len(n.Text)
+	}
+	return maskIf(n.Text[:cursor], n.Masked)
+}
+
+// maskIf preserves newlines so a masked multiline field still breaks where it
+// should, rather than collapsing into one long row of bullets.
+func maskIf(s string, masked bool) string {
+	if !masked || s == "" {
+		return s
+	}
+	out := make([]rune, 0, len(s))
+	for _, r := range s {
+		if r == '\n' {
+			out = append(out, r)
+			continue
+		}
+		out = append(out, MaskRune)
+	}
+	return string(out)
 }
 
 func (f *Field) Preedit(s string) {
@@ -127,7 +184,7 @@ func (f *Field) Node(name string) *Node {
 	return &Node{
 		Kind: KindTextField, Text: f.Text, Preedit: f.PreeditText, Cursor: f.Cursor,
 		Focusable: true, Name: name, Role: "textbox", Multiline: f.Multiline,
-		SubmitOnEnter: f.SubmitOnEnter,
+		SubmitOnEnter: f.SubmitOnEnter, Masked: f.Masked,
 	}
 }
 

@@ -241,7 +241,11 @@ type Node struct {
 	Accept        []string
 	Multiline     bool
 	SubmitOnEnter bool
-	Reseed        uint64
+	// Masked asks the renderer to draw one bullet per rune instead of the
+	// rune. Text still carries the real value: the disguise is applied when
+	// the field is measured and painted, nowhere else.
+	Masked bool
+	Reseed uint64
 }
 
 // StableKey reports the key animation and interaction state use across tree

@@ -109,6 +109,9 @@ type PanelHost struct {
 	query          string
 	section        string
 	pageDirection  int
+	networkTab     string
+	pendingSSID    string
+	password       *ui.Field
 	search         *ui.Field
 	fields         map[string]*ui.Field
 	editors        map[string]*retainedEditor
@@ -183,6 +186,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelAudio, nil
 	case "control-center":
 		return PanelControlCenter, nil
+	case "network":
+		return PanelNetwork, nil
 	default:
 		return 0, fmt.Errorf("unknown panel")
 	}
@@ -474,6 +479,8 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelAudio, true
 	case "control-center":
 		return PanelControlCenter, true
+	case "network":
+		return PanelNetwork, true
 	default:
 		return 0, false
 	}
@@ -600,6 +607,10 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	if id == PanelSession || id == PanelControlCenter {
 		r.scheduleLoadProfiles(h)
 	}
+	if id == PanelNetwork && r.network != nil && r.network.Available() {
+		network := r.network
+		r.scheduleControl(h, network.Scan)
+	}
 
 	h.anim = newAnimator(nil, r.cfg.Accessibility.ReducedMotion, h.theme.Motion)
 	h.anim.Target(panelSurfaceID(id), animVisible, 1)
@@ -653,6 +664,12 @@ func (r *Registry) acquirePanelLeases(h *PanelHost) error {
 			return nil
 		}
 		h.mixerLease = lease
+	case PanelNetwork:
+		lease, err := r.metrics.Acquire(services.Selector{Source: services.SourceNetwork}, time.Second)
+		if err != nil {
+			return err
+		}
+		h.leases = []*services.Lease{lease}
 	case PanelControlCenter:
 		for _, sel := range []services.Selector{
 			{Source: services.SourceCPU},
@@ -1447,7 +1464,14 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 		return false
 	}
 	var f *ui.Field
-	if n.Name == "Search" {
+	if h.id == PanelNetwork && n.Name == "Password" {
+		if h.password == nil {
+			h.password = ui.NewField("")
+			h.password.Masked = true
+		}
+		h.password.SyncFrom(n)
+		f = h.password
+	} else if n.Name == "Search" {
 		if h.search == nil {
 			h.search = ui.NewField("")
 		}
@@ -1650,10 +1674,15 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if strings.HasPrefix(n.Action, "audio-") && h.applyAudioControl(r, n) {
 		return true
 	}
+	// applyNetworkControl returns false for "network-close", which the shared
+	// close path below handles.
+	if strings.HasPrefix(n.Action, "network-") && h.applyNetworkControl(r, n) {
+		return true
+	}
 	if h.id == PanelMonitor && h.activateMonitor(r, n) {
 		return true
 	}
-	if n.Action == "audio-close" {
+	if n.Action == "audio-close" || n.Action == "network-close" {
 		r.closePanelLocked(h.id)
 		return true
 	}
@@ -1870,6 +1899,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		return audioTree(r, h)
 	case PanelControlCenter:
 		return controlCentreTree(r, h)
+	case PanelNetwork:
+		return networkTree(r, h)
 	default:
 		return placeholderTree()
 	}
@@ -1903,6 +1934,10 @@ func panelTargetSize(id PanelID) ui.Rect {
 		return audioPanelSize(1920, 1080)
 	case PanelControlCenter:
 		return ui.Rect{W: 700, H: 564}
+	case PanelNetwork:
+		// Fixed rather than a fraction of the output: the content is a list of
+		// SSID rows, whose comfortable width does not scale with the screen.
+		return ui.Rect{W: 460, H: 560}
 	default:
 		return ui.Rect{W: 280, H: 200}
 	}
@@ -2138,12 +2173,18 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 	if id == PanelNotifications {
 		r.setCenterOpen(false)
 	}
+	if id == PanelNetwork && r.network != nil {
+		r.network.CancelSecret()
+	}
 	h := r.panelHosts[id]
 	if h == nil {
 		return
 	}
 	h.stopAnimation()
 	h.drag.Cancel()
+	if id == PanelNetwork {
+		h.clearNetworkSecret()
+	}
 	delete(r.panelHosts, id)
 	r.sendAux(wayland.AuxRequest{Output: h.output, ID: panelSurfaceID(id)})
 	r.sendAux(wayland.AuxRequest{Output: h.output, ID: shieldSurfaceID(id)})
