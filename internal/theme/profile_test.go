@@ -596,6 +596,19 @@ func TestTheControlAliasesCarryTheDerivedValues(t *testing.T) {
 // walked rather than the default alone, because the claim these three fields
 // make is that they do not vary by row, and a test that reads one row cannot
 // see that claim break.
+// TestNamedRungsMatchTheSpacingScale keeps the named rungs and the ladder one
+// fact rather than two. Call sites read the names, while MetricsFor and the
+// conformance gate read the slice, so a rung renamed or re-based in one place
+// and not the other would leave surfaces asking for a spacing the ladder no
+// longer contains -- and nothing else would notice.
+func TestNamedRungsMatchTheSpacingScale(t *testing.T) {
+	t.Parallel()
+	named := []int{MarginXXXS, MarginXXS, MarginXS, MarginS, MarginM, MarginL, MarginXL}
+	if !slices.Equal(named, SpacingScale) {
+		t.Errorf("named rungs = %v, want the ladder %v", named, SpacingScale)
+	}
+}
+
 func TestPaddingResolvesToLadderRungs(t *testing.T) {
 	t.Parallel()
 	// Sourced from nine cards and seven panels: every panel insets at marginL

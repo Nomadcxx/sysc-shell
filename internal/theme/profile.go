@@ -246,6 +246,24 @@ func MetricsFor(d Density) (Metrics, bool) {
 // two pixels out, compounding across nested containers.
 var SpacingScale = []int{1, 2, 4, 6, 9, 13, 18}
 
+// The rungs, named. A surface asks for one by name rather than by index or by
+// the number itself: SpacingScale[4] says nothing about why a gap is that wide,
+// and a bare 9 at the call site is exactly what the conformance gate exists to
+// reject. The names are the reference's own, so a margin measured off it maps
+// across without arithmetic and without a rounding decision at each site.
+//
+// TestNamedRungsMatchTheSpacingScale pins these to the ladder, so the two
+// cannot drift apart.
+const (
+	MarginXXXS = 1
+	MarginXXS  = 2
+	MarginXS   = 4
+	MarginS    = 6
+	MarginM    = 9
+	MarginL    = 13
+	MarginXL   = 18
+)
+
 // TextRole is the semantic type role a node asks for. Components name a role;
 // they do not carry a point size.
 type TextRole int
