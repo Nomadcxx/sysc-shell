@@ -217,6 +217,23 @@ func TestSurfaceSourcesCarryNoLegacyVisuals(t *testing.T) {
 	}
 	aliases := regexp.MustCompile(`\.(BarPadding|Spacing|TextSize|CapsulePadding|ControlHeight|CompactHeight|ButtonPadding|IconSize|ProfileIconSize|OSDIconSize|CardRadius)\b`)
 	bold := regexp.MustCompile(`\bBold:\s*true\b`)
+	// The thirteen geometry fields of ui.Node. Verified against the struct:
+	// every other numeric field is slider or scroll state (Min, Max, Step,
+	// Value, Cursor, ScrollOffset, ItemCount) or a gradient parameter, none of
+	// which a spacing ladder governs. The semantic fields -- TextRole, Fill,
+	// Tone, Shape, Kind -- cannot be written as a number and need no rule.
+	//
+	// The value is captured so that a zero is exempted per match rather than
+	// per line: "Min: 0, Max: 100, Step: 5, Width: 360" must still report the
+	// Width, and a line in this package really does look like that.
+	//
+	// ui.Rect{W:, H:} is deliberately unmatched. A panel's surface size is a
+	// measured dimension rather than node geometry, and Rect names its fields
+	// W and H, which are not in this list.
+	literals := regexp.MustCompile(`\b(Width|Height|IconSize|Radius|ItemHeight|ContentH|MaxWidth|ImageSize|ImageW|ImageH|Stroke|Padding|Gap):\s*([0-9]+)`)
+	// An exemption is the marker followed by a reason. A bare marker exempts
+	// nothing, so a literal cannot be waved through without saying why.
+	exempt := regexp.MustCompile(`token-exempt:\s*\S`)
 
 	scanned := 0
 	for _, e := range entries {
@@ -235,7 +252,7 @@ func TestSurfaceSourcesCarryNoLegacyVisuals(t *testing.T) {
 		}
 		scanned++
 		for i, line := range strings.Split(string(src), "\n") {
-			code, _, _ := strings.Cut(line, "//")
+			code, comment, _ := strings.Cut(line, "//")
 			if bold.MatchString(code) {
 				t.Errorf("%s:%d asks for synthetic bold; name a text role instead", name, i+1)
 			}
@@ -243,10 +260,92 @@ func TestSurfaceSourcesCarryNoLegacyVisuals(t *testing.T) {
 				!strings.Contains(code, "Shapes.") && !strings.Contains(code, "st.Muted") {
 				t.Errorf("%s:%d reads the legacy alias %s; read the metrics row", name, i+1, m)
 			}
+			// The comment half of the split is kept so an exemption can be read
+			// at the site it applies to, and grepped as a census.
+			if exempt.MatchString(comment) {
+				continue
+			}
+			// Every match on the line, not the first. Lines here commonly carry
+			// two -- "Height: 48, Gap: 8" -- and reporting one would hide the
+			// other from the worklist this gate exists to enumerate.
+			for _, m := range literals.FindAllStringSubmatch(code, -1) {
+				// Zero means "none", which is a composition choice rather than
+				// a measurement. No spacing ladder has a rung meaning absence.
+				if m[2] == "0" {
+					continue
+				}
+				t.Errorf("%s:%d hardcodes %s: %s; read the spacing ladder for Gap and Padding, "+
+					"the density row for Height and control sizes, the icon scale for IconSize, "+
+					"or the shape role for Radius", name, i+1, m[1], m[2])
+			}
 		}
 	}
 	if scanned == 0 {
 		t.Fatal("scanned no sources; the gate is not looking at the package")
+	}
+}
+
+// TestLiteralRuleDetectsAndExempts pins the literal rule's own behaviour, so a
+// later tightening of the regexp cannot quietly stop detecting things. The two
+// shared-line cases are here because the obvious implementation -- FindString
+// plus a whole-line zero test -- gets each of them wrong.
+func TestLiteralRuleDetectsAndExempts(t *testing.T) {
+	t.Parallel()
+	literals := regexp.MustCompile(`\b(Width|Height|IconSize|Radius|ItemHeight|ContentH|MaxWidth|ImageSize|ImageW|ImageH|Stroke|Padding|Gap):\s*([0-9]+)`)
+	exempt := regexp.MustCompile(`token-exempt:\s*\S`)
+
+	// violations reports what the gate would report for one line of code.
+	violations := func(code string) []string {
+		var out []string
+		for _, m := range literals.FindAllStringSubmatch(code, -1) {
+			if m[2] == "0" {
+				continue
+			}
+			out = append(out, m[1]+": "+m[2])
+		}
+		return out
+	}
+
+	for _, s := range []string{"Gap: 12", "Padding: 4", "IconSize: 20", "Radius: 8", "Stroke: 2"} {
+		if len(violations(s)) != 1 {
+			t.Errorf("%q was not detected", s)
+		}
+	}
+
+	// Both literals on a shared line are reported. Stopping at the first would
+	// hide the second, and lines like this are common in this package.
+	if got := violations("Kind: ui.KindRow, Height: 48, Gap: 8,"); len(got) != 2 {
+		t.Errorf("shared line reported %v, want both Height and Gap", got)
+	}
+
+	// A zero elsewhere on the line must not exempt a real literal beside it.
+	if got := violations("Min: 0, Max: 100, Step: 5, Width: 360,"); len(got) != 1 || got[0] != "Width: 360" {
+		t.Errorf("mixed line reported %v, want exactly [Width: 360]", got)
+	}
+
+	// Zero means "none".
+	for _, s := range []string{"Gap: 0", "Padding: 0"} {
+		if got := violations(s); len(got) != 0 {
+			t.Errorf("%q was wrongly detected as %v", s, got)
+		}
+	}
+
+	// A panel's measured surface size is not node geometry, and Rect names its
+	// fields W and H.
+	if got := violations("ui.Rect{W: 420, H: 360}"); len(got) != 0 {
+		t.Errorf("ui.Rect was wrongly detected as %v", got)
+	}
+
+	// Slider and scroll state are not geometry.
+	if got := violations("Min: 0, Max: 100, Step: 5, Value: 40"); len(got) != 0 {
+		t.Errorf("slider state was wrongly detected as %v", got)
+	}
+
+	if !exempt.MatchString(" token-exempt: measured against the reference capture") {
+		t.Error("a marked exemption carrying a reason was not honoured")
+	}
+	if exempt.MatchString(" token-exempt:") {
+		t.Error("a bare marker exempted a literal without giving a reason")
 	}
 }
 
