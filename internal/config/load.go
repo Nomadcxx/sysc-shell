@@ -1013,7 +1013,7 @@ func applyTheme(base Theme, w wireTheme, path string) (Theme, error) {
 		d := theme.Density(*w.Density)
 		if _, ok := theme.MetricsFor(d); !ok {
 			return Theme{}, pathErr(path+".density",
-				"%q is not one of compact, standard, comfortable", *w.Density)
+				"%q is not one of mini, compact, default, comfortable, spacious", *w.Density)
 		}
 		out.Density = d
 	}

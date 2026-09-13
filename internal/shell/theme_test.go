@@ -22,24 +22,32 @@ func TestDefaultThemeGeometryMatchesTheBaseline(t *testing.T) {
 	if gap != 4 {
 		t.Fatalf("gap = %d, want 4", gap)
 	}
-	if body != 40 {
-		t.Fatalf("body = %d, want 40, which is height 48 minus twice the gap", body)
+	if body != 23 {
+		t.Fatalf("body = %d, want 23, which is height 31 minus twice the gap", body)
 	}
-	// The surface height is also the exclusive zone, so Niri windows begin 44
+	// The surface height is also the exclusive zone, so Niri windows begin 27
 	// logical pixels from the screen edge.
-	if surface != 44 {
-		t.Fatalf("surface = %d, want 44, which is gap plus body", surface)
+	if surface != 27 {
+		t.Fatalf("surface = %d, want 27, which is gap plus body", surface)
 	}
 }
 
-func TestDefaultThemeMatchesDMSContentBand(t *testing.T) {
+// TestDefaultThemeCarriesTheBarInsets pins the bar's own insets. It was named
+// for a DMS content band and asserted that reference's observed 6 px padding.
+// Architecture decision 8 makes DMS a behaviour reference rather than a
+// compatibility contract, and the parity re-base supersedes constants that were
+// observed rather than measured, so the name went with the values.
+//
+// The padding shrank with the band: a 31 px bar holding a 25 px capsule has
+// 6 px to spend on both insets, so 2 is what fits.
+func TestDefaultThemeCarriesTheBarInsets(t *testing.T) {
 	t.Parallel()
 	th := DefaultTheme()
-	if th.BarPadding != 6 {
-		t.Fatalf("bar padding = %d, want 6 for a 28px item band inside the 40px body", th.BarPadding)
+	if th.BarPadding != 2 {
+		t.Fatalf("bar padding = %d, want 2 for a 25 px capsule inside the 31 px band", th.BarPadding)
 	}
 	if th.Spacing != 4 {
-		t.Fatalf("item spacing = %d, want the DMS reference value 4", th.Spacing)
+		t.Fatalf("item spacing = %d, want 4", th.Spacing)
 	}
 }
 
@@ -153,16 +161,16 @@ func TestTokensResolveToBarTheme(t *testing.T) {
 
 func TestDefaultThemeCarriesCapsulePadding(t *testing.T) {
 	t.Parallel()
-	if got := DefaultTheme().Metrics.CapsulePadding; got != 8 {
-		t.Fatalf("CapsulePadding = %d, want 8", got)
+	if got := DefaultTheme().Metrics.CapsulePadding; got != 6 {
+		t.Fatalf("CapsulePadding = %d, want the re-based 6", got)
 	}
 }
 
 func TestDefaultThemeCarriesChromeMetrics(t *testing.T) {
 	t.Parallel()
 	th := DefaultTheme()
-	if th.Metrics.StandardControl != 40 || th.Metrics.CompactControl != 32 || th.Metrics.ButtonPadding != 12 {
-		t.Fatalf("control metrics = %d/%d padding %d, want 40/32 padding 12",
+	if th.Metrics.StandardControl != 40 || th.Metrics.CompactControl != 32 || th.Metrics.ButtonPadding != 9 {
+		t.Fatalf("control metrics = %d/%d padding %d, want 40/32 padding 9",
 			th.Metrics.StandardControl, th.Metrics.CompactControl, th.Metrics.ButtonPadding)
 	}
 	if th.IconSize != 20 || th.Metrics.IconProfile != 18 || th.Metrics.IconLarge != 24 {
@@ -437,8 +445,8 @@ func TestResolveThemeValidatesEveryGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Metrics.BarHeight != 48 || got.Metrics.StandardControl != 40 {
-		t.Errorf("metrics = %+v, want the standard row", got.Metrics)
+	if got.Metrics.BarHeight != 31 || got.Metrics.StandardControl != 40 {
+		t.Errorf("metrics = %+v, want the default row", got.Metrics)
 	}
 	if got.Shapes.Medium != 12 || got.Shapes.Card != 12 {
 		t.Errorf("shapes = %+v, want the 12 px base", got.Shapes)
@@ -644,11 +652,14 @@ func densityThemes(t *testing.T) map[theme.Density]Theme {
 func TestDensityMovesEveryMetricItOwns(t *testing.T) {
 	t.Parallel()
 	got := densityThemes(t)
+	// densityThemes keys by the rows Densities() offers, so this samples the
+	// current names. Asking for the superseded one would find no entry and
+	// silently compare against a zero Theme.
 	compact, standard, comfortable := got[theme.DensityCompact],
-		got[theme.DensityStandard], got[theme.DensityComfortable]
+		got[theme.DensityDefault], got[theme.DensityComfortable]
 
-	if compact.BarHeight != 40 || standard.BarHeight != 48 || comfortable.BarHeight != 56 {
-		t.Errorf("bar heights = %d/%d/%d, want 40/48/56",
+	if compact.BarHeight != 25 || standard.BarHeight != 31 || comfortable.BarHeight != 37 {
+		t.Errorf("bar heights = %d/%d/%d, want 25/31/37",
 			compact.BarHeight, standard.BarHeight, comfortable.BarHeight)
 	}
 	// Each metric must be monotonic across the rows: a denser theme that made

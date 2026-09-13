@@ -1519,11 +1519,11 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 
 // metrics is the density row a tree builds against. The receiver may be nil:
 // a few unit tests compose a subtree without a host, and a panel that cannot
-// name its density should still lay out on the standard row rather than on
+// name its density should still lay out on the default row rather than on
 // zeroes.
 func (h *PanelHost) metrics() theme.Metrics {
 	if h == nil {
-		m, _ := theme.MetricsFor(theme.DensityStandard)
+		m, _ := theme.MetricsFor(theme.DensityDefault)
 		return m
 	}
 	return h.theme.Metrics

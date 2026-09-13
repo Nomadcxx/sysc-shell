@@ -13,7 +13,7 @@ func TestPresetTablesMatchTheDesign(t *testing.T) {
 		want   Composition
 	}{
 		{PresetStandard, Composition{
-			Density: DensityStandard, Radius: 12, InputRadius: 12,
+			Density: DensityDefault, Radius: 12, InputRadius: 12,
 			Motion: MotionStandard, MotionSpeed: 100,
 			BarOpacity: 100, PanelOpacity: 100, OverlayOpacity: 100,
 			BlurRadius: 24,
@@ -31,7 +31,7 @@ func TestPresetTablesMatchTheDesign(t *testing.T) {
 			FontScale: 100, FontWeight: 400,
 		}},
 		{PresetExpressive, Composition{
-			Density: DensityStandard, Radius: 16, InputRadius: 16,
+			Density: DensityDefault, Radius: 16, InputRadius: 16,
 			Motion: MotionExpressive, MotionSpeed: 100,
 			BarOpacity: 100, PanelOpacity: 95, OverlayOpacity: 95,
 			BlurRadius: 24,
@@ -66,29 +66,45 @@ func TestProfileDensityTable(t *testing.T) {
 		density Density
 		want    Metrics
 	}{
+		{DensityMini, Metrics{
+			BarHeight: 21, CapsuleHeight: 19, BarPadding: 1, BarSpacing: 1,
+			CompactControl: 28, StandardControl: 32,
+			PanelPadding: 13, CardPadding: 9,
+			CapsulePadding: 2, ButtonPadding: 4,
+			IconSmall: 14, IconNormal: 16, IconLarge: 20,
+			IconProfile: 16,
+		}},
 		{DensityCompact, Metrics{
-			BarHeight: 40, BarPadding: 4, BarSpacing: 2,
-			CompactControl: 32, StandardControl: 36,
-			PanelPadding: 12, CardPadding: 10,
-			CapsulePadding: 4, ButtonPadding: 8,
+			BarHeight: 25, CapsuleHeight: 21, BarPadding: 2, BarSpacing: 2,
+			CompactControl: 30, StandardControl: 36,
+			PanelPadding: 13, CardPadding: 9,
+			CapsulePadding: 4, ButtonPadding: 6,
 			IconSmall: 16, IconNormal: 18, IconLarge: 24,
 			IconProfile: 18,
 		}},
-		{DensityStandard, Metrics{
-			BarHeight: 48, BarPadding: 6, BarSpacing: 4,
+		{DensityDefault, Metrics{
+			BarHeight: 31, CapsuleHeight: 25, BarPadding: 2, BarSpacing: 4,
 			CompactControl: 32, StandardControl: 40,
-			PanelPadding: 16, CardPadding: 12,
-			CapsulePadding: 8, ButtonPadding: 12,
+			PanelPadding: 13, CardPadding: 9,
+			CapsulePadding: 6, ButtonPadding: 9,
 			IconSmall: 16, IconNormal: 20, IconLarge: 24,
 			IconProfile: 18,
 		}},
 		{DensityComfortable, Metrics{
-			BarHeight: 56, BarPadding: 8, BarSpacing: 6,
+			BarHeight: 37, CapsuleHeight: 29, BarPadding: 4, BarSpacing: 6,
 			CompactControl: 36, StandardControl: 44,
-			PanelPadding: 20, CardPadding: 16,
-			CapsulePadding: 12, ButtonPadding: 16,
+			PanelPadding: 13, CardPadding: 9,
+			CapsulePadding: 9, ButtonPadding: 13,
 			IconSmall: 18, IconNormal: 22, IconLarge: 28,
 			IconProfile: 20,
+		}},
+		{DensitySpacious, Metrics{
+			BarHeight: 47, CapsuleHeight: 31, BarPadding: 6, BarSpacing: 9,
+			CompactControl: 40, StandardControl: 48,
+			PanelPadding: 13, CardPadding: 9,
+			CapsulePadding: 13, ButtonPadding: 18,
+			IconSmall: 20, IconNormal: 24, IconLarge: 32,
+			IconProfile: 22,
 		}},
 	} {
 		got, ok := MetricsFor(tc.density)
@@ -103,11 +119,14 @@ func TestProfileDensityTable(t *testing.T) {
 	if _, ok := MetricsFor("dense"); ok {
 		t.Error("an unknown density resolved")
 	}
-	// The standard row has to reproduce the shipped bar exactly, or an
-	// existing file changes size the moment it is reloaded.
-	std, _ := MetricsFor(DensityStandard)
-	if std.BarHeight != 48 || std.BarPadding != 6 || std.BarSpacing != 4 {
-		t.Errorf("standard row drifted from the shipped bar: %+v", std)
+	// The default row is the shipped bar, and it moved with the re-base: 48 to
+	// 31, with the inset shrinking to fit a 25 px pill in the narrower band.
+	// That is the intended parity change rather than drift. A file that never
+	// set a height follows the new default; one that set a height keeps it,
+	// which is what the migration relies on.
+	std, _ := MetricsFor(DensityDefault)
+	if std.BarHeight != 31 || std.BarPadding != 2 || std.BarSpacing != 4 {
+		t.Errorf("default row drifted from the shipped bar: %+v", std)
 	}
 }
 
@@ -353,20 +372,23 @@ func indexOf(s, sub string) int {
 // being multiplied out of the row above it.
 func TestMetricsCarryCapsuleAndButtonPadding(t *testing.T) {
 	t.Parallel()
-	std, ok := MetricsFor(DensityStandard)
+	std, ok := MetricsFor(DensityDefault)
 	if !ok {
-		t.Fatal("no standard row")
+		t.Fatal("no default row")
 	}
-	if std.CapsulePadding != 8 {
-		t.Errorf("standard capsule padding = %d, want the shipped 8", std.CapsulePadding)
+	if std.CapsulePadding != 6 {
+		t.Errorf("default capsule padding = %d, want the re-based 6", std.CapsulePadding)
 	}
-	if std.ButtonPadding != 12 {
-		t.Errorf("standard button padding = %d, want the shipped 12", std.ButtonPadding)
+	if std.ButtonPadding != 9 {
+		t.Errorf("default button padding = %d, want the re-based 9", std.ButtonPadding)
 	}
 
+	// Every row's insets are rungs of the shared ladder and grow down the
+	// table. Card and panel padding deliberately do not: the reference draws
+	// those per surface rather than scaling them per density.
 	onScale := func(v int) bool { return slices.Contains(SpacingScale, v) }
 	var last Metrics
-	for i, d := range []Density{DensityCompact, DensityStandard, DensityComfortable} {
+	for i, d := range Densities() {
 		m, ok := MetricsFor(d)
 		if !ok {
 			t.Fatalf("no %s row", d)
@@ -399,6 +421,77 @@ func TestSpacingLadderMatchesTheReference(t *testing.T) {
 	}
 }
 
+func TestBarHeightsAreOddAtEveryDensity(t *testing.T) {
+	t.Parallel()
+	// An odd band has a true centre row, so a centred glyph lands on a pixel
+	// instead of straddling two.
+	for _, d := range Densities() {
+		m, ok := MetricsFor(d)
+		if !ok {
+			t.Fatalf("no row for %v", d)
+		}
+		if m.BarHeight%2 == 0 {
+			t.Errorf("%v bar height %d is even", d, m.BarHeight)
+		}
+		if m.CapsuleHeight >= m.BarHeight {
+			t.Errorf("%v capsule %d is not smaller than the bar %d", d, m.CapsuleHeight, m.BarHeight)
+		}
+		if m.CapsuleHeight%2 == 0 {
+			t.Errorf("%v capsule height %d is even", d, m.CapsuleHeight)
+		}
+		// The capsule also has to fit between the bar's own insets, or the pill
+		// is taller than the band that holds it.
+		if room := m.BarHeight - 2*m.BarPadding; m.CapsuleHeight > room {
+			t.Errorf("%v capsule %d does not fit in %d of content (bar %d less padding %d twice)",
+				d, m.CapsuleHeight, room, m.BarHeight, m.BarPadding)
+		}
+	}
+}
+
+func TestDensityRowsMatchTheReference(t *testing.T) {
+	t.Parallel()
+	want := map[Density]int{
+		DensityMini: 21, DensityCompact: 25, DensityDefault: 31,
+		DensityComfortable: 37, DensitySpacious: 47,
+	}
+	for d, h := range want {
+		m, ok := MetricsFor(d)
+		if !ok {
+			t.Errorf("%v is not a density", d)
+			continue
+		}
+		if m.BarHeight != h {
+			t.Errorf("%v bar height = %d, want %d", d, m.BarHeight, h)
+		}
+	}
+	if len(Densities()) != len(want) {
+		t.Errorf("Densities() lists %d rows, want %d", len(Densities()), len(want))
+	}
+}
+
+// TestLegacyDensityNameStillResolves keeps existing configuration loading. The
+// wire value is the constant, so renaming the row would otherwise reject every
+// file that names the old one -- and the loader validates a density by looking
+// it up here.
+func TestLegacyDensityNameStillResolves(t *testing.T) {
+	t.Parallel()
+	legacy, ok := MetricsFor(DensityStandard)
+	if !ok {
+		t.Fatal("the legacy density name no longer resolves; existing files would be rejected")
+	}
+	current, _ := MetricsFor(DensityDefault)
+	if legacy != current {
+		t.Errorf("legacy row = %+v, want the default row %+v", legacy, current)
+	}
+	// It resolves, but it is not offered: the settings list and error messages
+	// name the five current rows.
+	for _, d := range Densities() {
+		if d == DensityStandard {
+			t.Error("the legacy name is still listed as a choice")
+		}
+	}
+}
+
 // TestMetricsCarryTheProfileIcon removes the last derived icon constant. The
 // shell's flat layer computed the profile icon as IconSmall+2, which is a
 // fixed offset masquerading as a scale: it happened to be right at standard
@@ -412,9 +505,11 @@ func TestMetricsCarryTheProfileIcon(t *testing.T) {
 		density Density
 		want    int
 	}{
+		{DensityMini, 16},
 		{DensityCompact, 18},
-		{DensityStandard, 18},
+		{DensityDefault, 18},
 		{DensityComfortable, 20},
+		{DensitySpacious, 22},
 	} {
 		m, ok := MetricsFor(tc.density)
 		if !ok {

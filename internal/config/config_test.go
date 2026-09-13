@@ -23,11 +23,15 @@ func TestVolumeIsKnownButNotDefault(t *testing.T) {
 	}
 }
 
-func TestDefaultBarMatchesDMSContentBand(t *testing.T) {
+// TestDefaultBarCarriesItsInsets was named for a DMS content band and asserted
+// that reference's observed padding. DMS is a behaviour reference rather than a
+// compatibility contract, and the parity re-base supersedes observed constants
+// with measured ones, so the name went with the value.
+func TestDefaultBarCarriesItsInsets(t *testing.T) {
 	t.Parallel()
 	bar := Default().Bar
-	if bar.Padding != 6 || bar.Spacing != 4 {
-		t.Fatalf("default padding/spacing = %d/%d, want 6/4", bar.Padding, bar.Spacing)
+	if bar.Padding != 2 || bar.Spacing != 4 {
+		t.Fatalf("default padding/spacing = %d/%d, want 2/4", bar.Padding, bar.Spacing)
 	}
 }
 
@@ -840,9 +844,9 @@ func TestThemePresetSeedsEveryAxis(t *testing.T) {
 		speed   int
 		panel   int
 	}{
-		{"standard", theme.DensityStandard, 12, theme.MotionStandard, 100, 100},
+		{"standard", theme.DensityDefault, 12, theme.MotionStandard, 100, 100},
 		{"compact", theme.DensityCompact, 8, theme.MotionStandard, 125, 100},
-		{"expressive", theme.DensityStandard, 16, theme.MotionExpressive, 100, 95},
+		{"expressive", theme.DensityDefault, 16, theme.MotionExpressive, 100, 95},
 	} {
 		cfg, err := Parse([]byte(`{"theme":{"preset":"` + tc.preset + `"}}`))
 		if err != nil {
@@ -945,13 +949,13 @@ func TestThemeExplicitAxisOverridesThePreset(t *testing.T) {
 
 func TestThemeDerivesTheBarThenBarOverridesIt(t *testing.T) {
 	t.Parallel()
-	// The comfortable row derives a 56 px bar with 8 px padding.
+	// The comfortable row derives a 37 px bar with 4 px padding.
 	cfg, err := Parse([]byte(`{"theme":{"density":"comfortable"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Bar.Height != 56 || cfg.Bar.Padding != 8 || cfg.Bar.Spacing != 6 {
-		t.Errorf("derived bar = %d/%d/%d, want 56/8/6",
+	if cfg.Bar.Height != 37 || cfg.Bar.Padding != 4 || cfg.Bar.Spacing != 6 {
+		t.Errorf("derived bar = %d/%d/%d, want 37/4/6",
 			cfg.Bar.Height, cfg.Bar.Padding, cfg.Bar.Spacing)
 	}
 	// An explicit bar value wins over the derived one.
@@ -962,8 +966,8 @@ func TestThemeDerivesTheBarThenBarOverridesIt(t *testing.T) {
 	if cfg.Bar.Height != 72 {
 		t.Errorf("height = %d, want the explicit 72", cfg.Bar.Height)
 	}
-	if cfg.Bar.Padding != 8 {
-		t.Errorf("padding = %d, want the derived 8 to survive", cfg.Bar.Padding)
+	if cfg.Bar.Padding != 4 {
+		t.Errorf("padding = %d, want the derived 4 to survive", cfg.Bar.Padding)
 	}
 }
 
@@ -1068,7 +1072,7 @@ func TestThemeStandardPresetReproducesTheShippedBar(t *testing.T) {
 	d := Default()
 	// FontSize follows the body type role, so it moved with the ladder re-base;
 	// the rest of the shipped bar is unchanged.
-	if d.Bar.Height != 48 || d.Bar.Padding != 6 || d.Bar.Spacing != 4 ||
+	if d.Bar.Height != 31 || d.Bar.Padding != 2 || d.Bar.Spacing != 4 ||
 		d.Bar.Radius != 12 || d.Bar.FontSize != 15 {
 		t.Errorf("default bar drifted: height %d padding %d spacing %d radius %d size %d",
 			d.Bar.Height, d.Bar.Padding, d.Bar.Spacing, d.Bar.Radius, d.Bar.FontSize)

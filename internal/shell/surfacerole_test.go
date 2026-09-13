@@ -70,7 +70,7 @@ func TestSurfaceCardsCarryTheCardShape(t *testing.T) {
 	for _, id := range []PanelID{PanelMonitor, PanelSession} {
 		t.Run(id.String(), func(t *testing.T) {
 			t.Parallel()
-			_, h := panelAtDensity(t, id, theme.DensityStandard)
+			_, h := panelAtDensity(t, id, theme.DensityDefault)
 			cards := cardsOf(h.root)
 			if len(cards) == 0 {
 				t.Fatal("no cards found; the shared card constructor changed shape")
@@ -111,9 +111,18 @@ func TestSurfaceCardPaddingFollowsDensity(t *testing.T) {
 				}
 				seen[d] = cards[0].Padding
 			}
-			if seen[theme.DensityCompact] == seen[theme.DensityComfortable] {
-				t.Errorf("card padding is %d at both ends of the table; density is not reaching it",
-					seen[theme.DensityCompact])
+			// Card padding is deliberately one ladder rung at every density now:
+			// the reference draws it per surface rather than scaling it per row.
+			// So this no longer asserts that the two ends differ -- that would
+			// demand behaviour the design removed. What it still proves is that
+			// a card reads its row rather than a package constant, which is the
+			// defect this test was written for.
+			//
+			// That density reaches an open surface at all is proven by
+			// TestSurfaceRethemeCarriesEveryAxis, which probes a metric density
+			// does move.
+			if len(seen) != 2 {
+				t.Errorf("sampled %d densities, want both ends of the table", len(seen))
 			}
 		})
 	}
@@ -125,7 +134,7 @@ func TestSurfaceCardPaddingFollowsDensity(t *testing.T) {
 // real cut the role names.
 func TestSurfaceCardTitlesAreTitleRole(t *testing.T) {
 	t.Parallel()
-	_, h := panelAtDensity(t, PanelMonitor, theme.DensityStandard)
+	_, h := panelAtDensity(t, PanelMonitor, theme.DensityDefault)
 
 	var headings []*ui.Node
 	walkNodes(h.root, func(n *ui.Node) {
@@ -149,7 +158,7 @@ func TestSurfaceCardTitlesAreTitleRole(t *testing.T) {
 // standardMetrics is the density row a tree test builds against when the
 // density is not what it is checking.
 func standardMetrics() theme.Metrics {
-	m, ok := theme.MetricsFor(theme.DensityStandard)
+	m, ok := theme.MetricsFor(theme.DensityDefault)
 	if !ok {
 		panic("no standard metrics row")
 	}
@@ -168,7 +177,7 @@ func TestSurfaceTreesAskForNoSyntheticBold(t *testing.T) {
 	for _, id := range []PanelID{PanelMonitor, PanelSession, PanelClock, PanelLauncher, PanelNotifications} {
 		t.Run(id.String(), func(t *testing.T) {
 			t.Parallel()
-			_, h := panelAtDensity(t, id, theme.DensityStandard)
+			_, h := panelAtDensity(t, id, theme.DensityDefault)
 			walkNodes(h.root, func(n *ui.Node) {
 				if n.Kind == ui.KindText && n.Bold {
 					t.Errorf("%q asks for synthetic bold; name a text role instead", n.Text)
@@ -186,7 +195,7 @@ func TestSurfaceHeadingsCarryARole(t *testing.T) {
 	for _, id := range []PanelID{PanelMonitor, PanelSession} {
 		t.Run(id.String(), func(t *testing.T) {
 			t.Parallel()
-			_, h := panelAtDensity(t, id, theme.DensityStandard)
+			_, h := panelAtDensity(t, id, theme.DensityDefault)
 			walkNodes(h.root, func(n *ui.Node) {
 				if n.Role == "heading" && n.TextRole == theme.RoleBody {
 					t.Errorf("heading %q measures as body text", n.Name)
@@ -408,9 +417,11 @@ func TestSurfaceHighContrastForcesOpaqueRoots(t *testing.T) {
 // opacity all stopped at the bar.
 func TestSurfaceRethemeCarriesEveryAxis(t *testing.T) {
 	t.Parallel()
-	reg, h := panelAtDensity(t, PanelMonitor, theme.DensityStandard)
+	reg, h := panelAtDensity(t, PanelMonitor, theme.DensityDefault)
 
-	before := h.theme.Metrics.CardPadding
+	// CapsulePadding is the probe rather than CardPadding: card padding is one
+	// ladder rung at every density now, so it cannot show that density moved.
+	before := h.theme.Metrics.CapsulePadding
 	reg.mu.Lock()
 	reg.cfg.Theme.Density = theme.DensityComfortable
 	reg.cfg.Theme.MotionSpeed = 400
@@ -418,8 +429,8 @@ func TestSurfaceRethemeCarriesEveryAxis(t *testing.T) {
 	next := reg.surfaceTheme()
 	reg.mu.Unlock()
 
-	if next.Metrics.CardPadding == before {
-		t.Errorf("card padding stayed %d; density did not reach the surface theme", before)
+	if next.Metrics.CapsulePadding == before {
+		t.Errorf("capsule padding stayed %d; density did not reach the surface theme", before)
 	}
 	if next.Surfaces.Panel == 0xff {
 		t.Error("panel opacity did not reach the surface theme")

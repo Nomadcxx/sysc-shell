@@ -60,7 +60,8 @@ func DefaultFor(cfg config.Config) *Registry {
 			string(theme.PresetStandard), string(theme.PresetCompact), string(theme.PresetExpressive),
 		}},
 		{Path: "appearance.density", Label: "Density", Section: "Appearance", Kind: KindEnum, Options: []string{
-			string(theme.DensityCompact), string(theme.DensityStandard), string(theme.DensityComfortable),
+			string(theme.DensityMini), string(theme.DensityCompact), string(theme.DensityDefault),
+			string(theme.DensityComfortable), string(theme.DensitySpacious),
 		}},
 		{Path: "appearance.font-family", Label: "Font family", Section: "Appearance", Kind: KindString},
 		{Path: "appearance.mono-font-family", Label: "Mono font family", Section: "Appearance", Kind: KindString},

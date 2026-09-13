@@ -17,9 +17,17 @@ import (
 type Density string
 
 const (
+	DensityMini        Density = "mini"
 	DensityCompact     Density = "compact"
-	DensityStandard    Density = "standard"
+	DensityDefault     Density = "default"
 	DensityComfortable Density = "comfortable"
+	DensitySpacious    Density = "spacious"
+	// DensityStandard is the name this row carried before it was re-based onto
+	// the reference. The constant is the wire value, so dropping it would
+	// reject every configuration file that names it. MetricsFor folds it onto
+	// DensityDefault; Densities does not offer it, and the settings list and
+	// the loader's error message name only the five current rows.
+	DensityStandard Density = "standard"
 )
 
 // MotionStyle selects the easing family. Expressive changes the curve for
@@ -83,7 +91,13 @@ const (
 // shared spacing scale: the standard row has to reproduce the shipped bar
 // exactly, and its 6 px padding is not a step on that scale.
 type Metrics struct {
-	BarHeight       int
+	BarHeight int
+	// CapsuleHeight is the pill inside the bar, a ratio of the band rather than
+	// an independent constant, which is what keeps it proportional as density
+	// moves. Derived as toOdd(round(BarHeight * r)) with r of 0.90, 0.85, 0.82,
+	// 0.75 and 0.65 down the rows. Odd for the same reason the bar is: a shape
+	// centred in an odd box lands on a pixel row instead of straddling two.
+	CapsuleHeight   int
 	BarPadding      int
 	BarSpacing      int
 	CompactControl  int
@@ -105,35 +119,73 @@ type Metrics struct {
 	IconProfile int
 }
 
+// metrics is the density table, re-based onto the reference's five rows.
+//
+// Bar heights are the reference's own toOdd() results: 21, 25, 31, 37, 47. The
+// capsule column is toOdd(round(bar * r)) with r of 0.90, 0.85, 0.82, 0.75 and
+// 0.65, which puts the default row's pill at 25 -- the height measured off the
+// reference capture.
+//
+// BarPadding shrinks with the band. A 31 px bar holding a 25 px pill has only
+// 6 px to spend on both insets, so the old 6 px padding would leave the pill
+// taller than the space it sits in.
+//
+// PanelPadding and CardPadding are ladder rungs and do not vary by density:
+// the reference draws them per surface, marginL inside a panel and marginM
+// inside a card, rather than scaling them per row.
 var metrics = map[Density]Metrics{
+	DensityMini: {
+		BarHeight: 21, CapsuleHeight: 19, BarPadding: 1, BarSpacing: 1,
+		CompactControl: 28, StandardControl: 32,
+		PanelPadding: 13, CardPadding: 9,
+		CapsulePadding: 2, ButtonPadding: 4,
+		IconSmall: 14, IconNormal: 16, IconLarge: 20,
+		IconProfile: 16,
+	},
 	DensityCompact: {
-		BarHeight: 40, BarPadding: 4, BarSpacing: 2,
-		CompactControl: 32, StandardControl: 36,
-		PanelPadding: 12, CardPadding: 10,
-		CapsulePadding: 4, ButtonPadding: 8,
+		BarHeight: 25, CapsuleHeight: 21, BarPadding: 2, BarSpacing: 2,
+		CompactControl: 30, StandardControl: 36,
+		PanelPadding: 13, CardPadding: 9,
+		CapsulePadding: 4, ButtonPadding: 6,
 		IconSmall: 16, IconNormal: 18, IconLarge: 24,
 		IconProfile: 18,
 	},
-	DensityStandard: {
-		BarHeight: 48, BarPadding: 6, BarSpacing: 4,
+	DensityDefault: {
+		BarHeight: 31, CapsuleHeight: 25, BarPadding: 2, BarSpacing: 4,
 		CompactControl: 32, StandardControl: 40,
-		PanelPadding: 16, CardPadding: 12,
-		CapsulePadding: 8, ButtonPadding: 12,
+		PanelPadding: 13, CardPadding: 9,
+		CapsulePadding: 6, ButtonPadding: 9,
 		IconSmall: 16, IconNormal: 20, IconLarge: 24,
 		IconProfile: 18,
 	},
 	DensityComfortable: {
-		BarHeight: 56, BarPadding: 8, BarSpacing: 6,
+		BarHeight: 37, CapsuleHeight: 29, BarPadding: 4, BarSpacing: 6,
 		CompactControl: 36, StandardControl: 44,
-		PanelPadding: 20, CardPadding: 16,
-		CapsulePadding: 12, ButtonPadding: 16,
+		PanelPadding: 13, CardPadding: 9,
+		CapsulePadding: 9, ButtonPadding: 13,
 		IconSmall: 18, IconNormal: 22, IconLarge: 28,
 		IconProfile: 20,
+	},
+	DensitySpacious: {
+		BarHeight: 47, CapsuleHeight: 31, BarPadding: 6, BarSpacing: 9,
+		CompactControl: 40, StandardControl: 48,
+		PanelPadding: 13, CardPadding: 9,
+		CapsulePadding: 13, ButtonPadding: 18,
+		IconSmall: 20, IconNormal: 24, IconLarge: 32,
+		IconProfile: 22,
 	},
 }
 
 // MetricsFor returns the row for a density.
+//
+// The superseded name folds onto the row that replaced it, so a configuration
+// file written against the old table still resolves. The loader validates a
+// density by looking it up here, so the fold is what keeps such a file loading
+// rather than being rejected outright.
 func MetricsFor(d Density) (Metrics, bool) {
+	if d == DensityStandard {
+		d = DensityDefault
+	}
 	m, ok := metrics[d]
 	return m, ok
 }
@@ -334,7 +386,7 @@ type Composition struct {
 // over the wallpaper.
 var presets = map[Preset]Composition{
 	PresetStandard: {
-		Density:     DensityStandard,
+		Density:     DensityDefault,
 		Radius:      12,
 		InputRadius: 12,
 		Motion:      MotionStandard, MotionSpeed: 100,
@@ -352,7 +404,7 @@ var presets = map[Preset]Composition{
 		Elevation:  ElevationSubtle,
 	},
 	PresetExpressive: {
-		Density:     DensityStandard,
+		Density:     DensityDefault,
 		Radius:      16,
 		InputRadius: 16,
 		Motion:      MotionExpressive, MotionSpeed: 100,
@@ -390,8 +442,10 @@ func Presets() []Preset {
 
 // Densities, MotionStyles, and Elevations list each closed set in a stable
 // order, for the settings registry and for error messages.
+// Densities lists the rows a user may choose. The superseded name still
+// resolves through MetricsFor, but it is deliberately not offered here.
 func Densities() []Density {
-	return []Density{DensityCompact, DensityStandard, DensityComfortable}
+	return []Density{DensityMini, DensityCompact, DensityDefault, DensityComfortable, DensitySpacious}
 }
 
 func MotionStyles() []MotionStyle {
@@ -447,7 +501,7 @@ func (c Composition) Metrics() Metrics {
 	if m, ok := MetricsFor(c.Density); ok {
 		return m
 	}
-	return metrics[DensityStandard]
+	return metrics[DensityDefault]
 }
 
 // TextSize is the physical size for a role once font scaling applies.
@@ -499,7 +553,7 @@ func (c Composition) Durations() MotionTokens {
 // this reports the axis and the bound it missed.
 func (c Composition) Valid() error {
 	if _, ok := MetricsFor(c.Density); !ok {
-		return fmt.Errorf("density %q is not one of compact, standard, comfortable", c.Density)
+		return fmt.Errorf("density %q is not one of mini, compact, default, comfortable, spacious", c.Density)
 	}
 	if c.Motion != MotionStandard && c.Motion != MotionExpressive {
 		return fmt.Errorf("motion %q is not one of standard, expressive", c.Motion)
