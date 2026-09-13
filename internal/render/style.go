@@ -114,6 +114,12 @@ type Shapes struct {
 	Large  int
 	Card   int
 	Panel  int
+	// Input is the radius for interactive elements -- buttons, toggles, text
+	// fields -- and is resolved from its own axis rather than from the
+	// container radius. The reference carries two parallel ladders for this
+	// reason: one axis cannot express rounded cards with square-ish inputs,
+	// which is a composition it ships and a user can set.
+	Input int
 }
 
 // ShapeHalf asks the painter for half the box's shorter side. It is the value

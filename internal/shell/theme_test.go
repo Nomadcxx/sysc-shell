@@ -721,3 +721,47 @@ func TestShapeRolesStayIndependentOfTheBaseRadius(t *testing.T) {
 		}
 	}
 }
+
+func TestInputRadiusIsIndependentOfContainerRadius(t *testing.T) {
+	t.Parallel()
+	// The reference carries container radii scaled by radiusRatio and a
+	// parallel input ladder scaled by iRadiusRatio. One axis cannot express
+	// rounded cards with square-ish inputs, which is a composition it ships.
+	s := resolveShapes(16, 4)
+	if s.Card != 16 {
+		t.Errorf("card radius = %d, want 16", s.Card)
+	}
+	if s.Input != 4 {
+		t.Errorf("input radius = %d, want 4", s.Input)
+	}
+}
+
+func TestStadiumAndCircleStayGeometricAtZeroRadius(t *testing.T) {
+	t.Parallel()
+	// Carried from the superseded D8: a pill stays a pill at radius zero.
+	s := resolveShapes(0, 0)
+	if s.For(ui.ShapeStadium, 0) != render.ShapeHalf {
+		t.Error("stadium stopped being a proportion at radius zero")
+	}
+}
+
+// TestInputRadiusDefaultsToTheContainerLadder pins the wiring rather than the
+// arithmetic. Each preset seeds InputRadius with its own Radius, and the loader
+// applies configuration sparsely over a preset base, so a default theme has to
+// arrive with the axis populated. If that ever stopped happening every input
+// would quietly square off to zero, and no other test here would notice.
+func TestInputRadiusDefaultsToTheContainerLadder(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	th, err := ResolveTheme(cfg, cfg.Bar, theme.Fallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if th.Shapes.Input != 12 {
+		t.Errorf("default input radius = %d, want the standard preset's 12", th.Shapes.Input)
+	}
+	if th.Shapes.Input != th.Shapes.Card {
+		t.Errorf("default input %d and card %d differ; the presets seed them equal",
+			th.Shapes.Input, th.Shapes.Card)
+	}
+}

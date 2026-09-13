@@ -13,7 +13,7 @@ func TestPresetTablesMatchTheDesign(t *testing.T) {
 		want   Composition
 	}{
 		{PresetStandard, Composition{
-			Density: DensityStandard, Radius: 12,
+			Density: DensityStandard, Radius: 12, InputRadius: 12,
 			Motion: MotionStandard, MotionSpeed: 100,
 			BarOpacity: 100, PanelOpacity: 100, OverlayOpacity: 100,
 			BlurRadius: 24,
@@ -22,7 +22,7 @@ func TestPresetTablesMatchTheDesign(t *testing.T) {
 			FontScale: 100, FontWeight: 400,
 		}},
 		{PresetCompact, Composition{
-			Density: DensityCompact, Radius: 8,
+			Density: DensityCompact, Radius: 8, InputRadius: 8,
 			Motion: MotionStandard, MotionSpeed: 125,
 			BarOpacity: 100, PanelOpacity: 100, OverlayOpacity: 100,
 			BlurRadius: 24,
@@ -31,7 +31,7 @@ func TestPresetTablesMatchTheDesign(t *testing.T) {
 			FontScale: 100, FontWeight: 400,
 		}},
 		{PresetExpressive, Composition{
-			Density: DensityStandard, Radius: 16,
+			Density: DensityStandard, Radius: 16, InputRadius: 16,
 			Motion: MotionExpressive, MotionSpeed: 100,
 			BarOpacity: 100, PanelOpacity: 95, OverlayOpacity: 95,
 			BlurRadius: 24,

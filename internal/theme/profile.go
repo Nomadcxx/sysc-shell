@@ -291,6 +291,11 @@ type Composition struct {
 	FontScale      int
 	FontWeight     int
 	Radius         int
+	// InputRadius is the parallel ladder for interactive elements, scaled
+	// independently of Radius. It is bounded like its sibling, and each preset
+	// seeds it with that preset's Radius, so inputs keep their current shape
+	// until someone sets the axis.
+	InputRadius    int
 	Motion         MotionStyle
 	MotionSpeed    int
 	BarOpacity     int
@@ -313,25 +318,28 @@ type Composition struct {
 // over the wallpaper.
 var presets = map[Preset]Composition{
 	PresetStandard: {
-		Density: DensityStandard,
-		Radius:  12,
-		Motion:  MotionStandard, MotionSpeed: 100,
+		Density:     DensityStandard,
+		Radius:      12,
+		InputRadius: 12,
+		Motion:      MotionStandard, MotionSpeed: 100,
 		BarOpacity: 100, PanelOpacity: 100, OverlayOpacity: 100,
 		BlurRadius: 24,
 		Elevation:  ElevationSubtle,
 	},
 	PresetCompact: {
-		Density: DensityCompact,
-		Radius:  8,
-		Motion:  MotionStandard, MotionSpeed: 125,
+		Density:     DensityCompact,
+		Radius:      8,
+		InputRadius: 8,
+		Motion:      MotionStandard, MotionSpeed: 125,
 		BarOpacity: 100, PanelOpacity: 100, OverlayOpacity: 100,
 		BlurRadius: 24,
 		Elevation:  ElevationSubtle,
 	},
 	PresetExpressive: {
-		Density: DensityStandard,
-		Radius:  16,
-		Motion:  MotionExpressive, MotionSpeed: 100,
+		Density:     DensityStandard,
+		Radius:      16,
+		InputRadius: 16,
+		Motion:      MotionExpressive, MotionSpeed: 100,
 		BarOpacity: 100, PanelOpacity: 95, OverlayOpacity: 95,
 		BlurRadius: 24,
 		Elevation:  ElevationStandard,
@@ -410,6 +418,7 @@ func Rebase(current, from, to Composition) Composition {
 	rebaseInt(current.FontScale, from.FontScale, to.FontScale, &out.FontScale)
 	rebaseInt(current.FontWeight, from.FontWeight, to.FontWeight, &out.FontWeight)
 	rebaseInt(current.Radius, from.Radius, to.Radius, &out.Radius)
+	rebaseInt(current.InputRadius, from.InputRadius, to.InputRadius, &out.InputRadius)
 	rebaseInt(current.MotionSpeed, from.MotionSpeed, to.MotionSpeed, &out.MotionSpeed)
 	rebaseInt(current.BarOpacity, from.BarOpacity, to.BarOpacity, &out.BarOpacity)
 	rebaseInt(current.PanelOpacity, from.PanelOpacity, to.PanelOpacity, &out.PanelOpacity)
@@ -492,6 +501,7 @@ func (c Composition) Valid() error {
 		{"font-scale", c.FontScale, FontScaleMin, FontScaleMax},
 		{"font-weight", c.FontWeight, FontWeightMin, FontWeightMax},
 		{"radius", c.Radius, RadiusMin, RadiusMax},
+		{"input-radius", c.InputRadius, RadiusMin, RadiusMax},
 		{"motion-speed", c.MotionSpeed, SpeedMin, SpeedMax},
 		{"bar-opacity", c.BarOpacity, OpacityMin, OpacityMax},
 		// Panels take the lower blurred floor here so the axis can be set at
