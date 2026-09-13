@@ -205,6 +205,12 @@ type MotionTokens struct {
 	Medium    time.Duration
 	Long      time.Duration
 	ExtraLong time.Duration
+	// FrameCap is the shortest interval between repaints of an animating
+	// surface. The ticker still runs at the frame cadence; this bounds how
+	// often the surface is actually blitted, which is the expensive half. It
+	// must stay below the shortest duration token, or a short transition
+	// becomes visibly steppy.
+	FrameCap time.Duration
 }
 
 // BaseMotion is the unscaled duration table.
@@ -215,6 +221,7 @@ var BaseMotion = MotionTokens{
 	Medium:    180 * time.Millisecond,
 	Long:      250 * time.Millisecond,
 	ExtraLong: 400 * time.Millisecond,
+	FrameCap:  33 * time.Millisecond,
 }
 
 // AtSpeed divides every duration by the speed factor, so 400 percent is four
@@ -238,6 +245,10 @@ func (m MotionTokens) AtSpeed(percent int) MotionTokens {
 		Medium:    scale(m.Medium),
 		Long:      scale(m.Long),
 		ExtraLong: scale(m.ExtraLong),
+		// The cap scales with everything else, so it stays proportionally
+		// below the shortest token at every speed: 8 ms against a 20 ms
+		// Shorter at 400 percent, 132 ms against 320 ms at 25.
+		FrameCap: scale(m.FrameCap),
 	}
 }
 

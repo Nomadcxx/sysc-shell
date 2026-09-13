@@ -2120,13 +2120,18 @@ func (r *Registry) surfaceFrameLoop(h *PanelHost) {
 		h.anim.running = false
 		r.mu.Unlock()
 	}()
+	// Resolve the cap once, under the lock: a theme reload can replace the
+	// animator, and the call expression below runs unlocked.
+	r.mu.Lock()
+	frameCap := h.anim.frameCap()
+	r.mu.Unlock()
 	animateSurface(h.stopAnim, func() bool {
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		return h.anim.Settled()
 	}, func() {
 		r.publishSurface(h.output, panelSurfaceID(h.id))
-	})
+	}, frameCap)
 }
 
 func (r *Registry) teardownPanelLocked(id PanelID) {

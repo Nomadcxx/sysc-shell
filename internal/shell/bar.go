@@ -552,11 +552,16 @@ func (b *Bar) barFrameLoop() {
 		b.anim.running = false
 		b.mu.Unlock()
 	}()
+	// Resolve the cap once, under the lock: a theme reload can replace the
+	// animator, and the call expression below runs unlocked.
+	b.mu.Lock()
+	frameCap := b.anim.frameCap()
+	b.mu.Unlock()
 	animateSurface(b.stopAnim, func() bool {
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		return b.anim.Settled()
-	}, b.invalidate)
+	}, b.invalidate, frameCap)
 }
 
 func (b *Bar) stopAnimation() {

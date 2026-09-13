@@ -332,3 +332,64 @@ func TestAnimatorReducedMotionCapsTheFade(t *testing.T) {
 		}
 	}
 }
+
+func TestAnimateSurfacePacesPublishes(t *testing.T) {
+	t.Parallel()
+	// The ticker runs at 16 ms. With a 50 ms cap, a run of unsettled frames
+	// must publish far fewer times than it ticks.
+	stop := make(chan struct{})
+	var published int
+	done := make(chan struct{})
+	go func() {
+		animateSurface(stop, func() bool { return false }, func() { published++ }, 50*time.Millisecond)
+		close(done)
+	}()
+	time.Sleep(200 * time.Millisecond)
+	close(stop)
+	<-done
+
+	if published == 0 {
+		t.Fatal("pacing suppressed every frame; the animation would never paint")
+	}
+	if published > 8 {
+		t.Errorf("published %d times in 200ms with a 50ms cap; pacing is not applied", published)
+	}
+}
+
+func TestAnimateSurfaceAlwaysPublishesTheSettlingFrame(t *testing.T) {
+	t.Parallel()
+	// The last frame must paint even if it lands inside the cap window, or a
+	// settled value is left unpainted and the surface keeps a stale pixel.
+	stop := make(chan struct{})
+	defer close(stop)
+	var published int
+	done := make(chan struct{})
+	go func() {
+		animateSurface(stop, func() bool { return true }, func() { published++ }, time.Hour)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("animateSurface did not return after settling")
+	}
+	if published != 1 {
+		t.Errorf("published %d times, want exactly 1 settling frame despite the hour-long cap", published)
+	}
+}
+
+func TestAnimateSurfaceStopsOnStop(t *testing.T) {
+	t.Parallel()
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		animateSurface(stop, func() bool { return false }, func() {}, time.Millisecond)
+		close(done)
+	}()
+	close(stop)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("animateSurface ignored stop")
+	}
+}

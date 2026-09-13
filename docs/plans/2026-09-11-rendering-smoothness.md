@@ -25,6 +25,17 @@
   No `Co-Authored-By` trailer. Never `--no-verify`.
 - Every commit also carries `.beads/issues.jsonl`, staged by the repository's own `pre-commit` hook. That is intended.
 
+## Amendments
+
+**2026-09-13, applied while executing.** Three defects in this document were found by executing it. Each is corrected where it sits; this section is the index.
+
+- **Every line number here is stale.** The backdrop blur merge moved the call sites this plan cites: `client.go:796`/`:808` is past `:830`, `osd.go:211` is `:214`, `panelhost.go:2077` is `:2123`, and the wallpaper fixture has a different signature from the one Task 4 assumed. Locate every anchor by symbol with `grep -n`; never trust a line number in this file.
+- **Task 1's reset test contradicted its own empty-set test.** `Reset` restores the zero value, so the two assertions described one state and demanded opposite answers — no implementation could pass the pair. Corrected in Step 1.
+- **Task 3 Step 7 staged three files while Step 4 changed three more callers.** Its list would have produced a tree that does not compile. Corrected to all six.
+- **Task 5 is dropped.** See its heading for why.
+
+Tasks 1 to 4 are complete: `71ae0df`, `a0d28c8`, `98858d8`, `6a65808`. Task 6 is outstanding, and it cannot retire `sysc-202` as written: `sysc-256`'s live gates are unrun, and its two-output case is unrunnable on either machine here.
+
 ## File Structure
 
 | Path | Responsibility |
@@ -132,12 +143,25 @@ func TestDamageIgnoresEmptyRects(t *testing.T) {
 
 func TestDamageResetClears(t *testing.T) {
 	t.Parallel()
+	// Reset must clear both the rectangles and the full flag. The flag is only
+	// observable through behaviour: Add drops every rectangle while a set is
+	// full, so a set that accepts one again is a set that was genuinely reset.
+	//
+	// This deliberately does not assert !Full(). A reset set holds no
+	// rectangles, and an empty set reports Full by design so that "tracked
+	// nothing" still damages everything. Asserting otherwise would contradict
+	// TestDamageEmptyMeansWholeBuffer, which pins that invariant: Reset
+	// restores the zero value, and the zero value is Full.
 	var d DamageSet
 	d.Add(ui.Rect{W: 4, H: 4})
 	d.MarkFull()
 	d.Reset()
-	if d.Full() || len(d.Rects()) != 0 {
-		t.Error("Reset left state behind; the next frame would over-damage")
+	if len(d.Rects()) != 0 {
+		t.Errorf("Reset left rectangles behind: %v", d.Rects())
+	}
+	d.Add(ui.Rect{W: 2, H: 2})
+	if len(d.Rects()) != 1 {
+		t.Error("Reset did not clear the full flag; Add is still dropping rectangles")
 	}
 }
 ```
@@ -543,7 +567,8 @@ Expected: PASS.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add internal/theme/profile.go internal/shell/animation.go internal/shell/animation_test.go
+git add internal/theme/profile.go internal/shell/animation.go internal/shell/animation_test.go \
+        internal/shell/bar.go internal/shell/osd.go internal/shell/panelhost.go
 git commit -m "feat(shell): cap how often an animating surface repaints"
 ```
 
@@ -627,11 +652,18 @@ git commit -m "perf(shell): repaint rather than relayout when a thumbnail decode
 
 ---
 
-### Task 5: Coalesce thumbnail arrivals
+### Task 5: Coalesce thumbnail arrivals — DROPPED 2026-09-13
 
-**Files:**
-- Modify: `internal/shell/popout_wallpaper.go`
-- Test: `internal/shell/popout_wallpaper_test.go`
+**Do not execute this task.** Nothing in it was implemented. The steps below are kept for the record and are unsound as written.
+
+Two reasons, either sufficient:
+
+1. **Its flush mechanism does not exist.** Step 3 ends "The worker's `Progress()` channel already signals completion; flush any pending publish there". `icons.Worker` has no such channel — it exposes `Lookup`, `Request`, `Run` and unexported internals, and `inFlight` is not visible from `internal/shell`. Without a completion signal the final arrival of a burst stays pending forever, so that tile keeps its kind glyph until some unrelated event repaints the picker. Step 3 also rules out the obvious alternative, correctly: a timer here would be a recurring frame source the architecture forbids.
+2. **Its premise no longer holds.** The burst it coalesces is already coalesced twice over. `publishSurface` sends to `make(chan wayland.Invalidation, 8)` and drops when the owner is behind, and `render.Scheduler.Invalidate` sets a single bool whose own comment reads "Repeated calls coalesce into one redraw", with work offered only when `dirty && !framePending`. Ten arrivals therefore already cost one blit, not ten.
+
+The expensive half of D4 was the per-raster tree rebuild, and Task 4 removed it. What remains here is a test seam (`publishHook`) and two `Registry` fields in service of a problem the render path already solves.
+
+**Files:** none.
 
 **Interfaces:**
 - Consumes: Task 4's publish-only path.
@@ -712,7 +744,7 @@ git commit -m "perf(shell): coalesce thumbnail repaints into one window"
 
 Record, on this machine:
 
-1. Wallpaper picker: wall time from opening the picker to a settled grid, before and after Tasks 4 and 5. The design's arithmetic predicts roughly 40 ms of blit per thumbnail beforehand.
+1. Wallpaper picker: wall time from opening the picker to a settled grid, before and after Task 4. The design's arithmetic predicts roughly 40 ms of blit per thumbnail beforehand.
 2. Animation: repaints per second for an open panel with a running transition, before and after Task 3. Expect roughly 60 to fall to roughly 30 at the 33 ms cap.
 3. A 60-minute idle run showing no continuous redraw.
 
@@ -724,7 +756,7 @@ At L193, record that rectangle damage exists, that `HostCallbacks.Damaged` carri
 
 - [ ] **Step 3: Close the open gate**
 
-At L372, "Measure shared-memory rendering before deciding whether to add EGL/OpenGL ES" is satisfied. Together with the blur design, every case `sysc-202` names now has a measurement: animation frame time (Task 3), large blurred panels (the blur slice), image-heavy grids (Tasks 4 and 5), and CPU/power (the idle run). Cite both designs.
+At L372, "Measure shared-memory rendering before deciding whether to add EGL/OpenGL ES" is satisfied. Together with the blur design, every case `sysc-202` names now has a measurement: animation frame time (Task 3), large blurred panels (the blur slice), image-heavy grids (Task 4), and CPU/power (the idle run). Cite both designs.
 
 - [ ] **Step 4: Retire the epic**
 
@@ -749,8 +781,8 @@ git commit -m "docs: record the measured rendering outcome and retire the qualif
 
 ## Self-Review
 
-**Spec coverage.** D1 damage through a sibling callback → Task 2. D2 dirty geometry owned by the tree, `Scheduler.dirty` untouched → Task 1 builds the accumulator; `Scheduler` is not modified anywhere in this plan. D3 pacing cap, theme-resolved → Task 3. D4 coalesce and stop rebuilding → Tasks 4 and 5, staged in the order the design permits. D5 damage as an optimisation with a full fallback → Tasks 1 and 2 both default to Full, and Task 2 Step 6 verifies no surface changed behaviour. D6 amendment → Task 6. D7 testing → every task. D8 tracker → Task 6 Step 4. D9 risks: stale pixels are contained because no surface opts in within this plan; the blur interaction is untouched since no panel reports rectangles; the `wallpaperThumbFor` hazard comment is preserved by Task 4's edit, which removes a call rather than rewriting the function; the pacing cap is asserted to sit below the shortest token in Task 3 Step 3's comment.
+**Spec coverage.** D1 damage through a sibling callback → Task 2. D2 dirty geometry owned by the tree, `Scheduler.dirty` untouched → Task 1 builds the accumulator; `Scheduler` is not modified anywhere in this plan. D3 pacing cap, theme-resolved → Task 3. D4 coalesce and stop rebuilding → Task 4 stops the rebuild, which is the expensive half; Task 5's coalescing is dropped because the render path already coalesces (see its heading). D5 damage as an optimisation with a full fallback → Tasks 1 and 2 both default to Full, and Task 2 Step 6 verifies no surface changed behaviour. D6 amendment → Task 6. D7 testing → every task. D8 tracker → Task 6 Step 4. D9 risks: stale pixels are contained because no surface opts in within this plan; the blur interaction is untouched since no panel reports rectangles; the `wallpaperThumbFor` hazard comment is preserved by Task 4's edit, which removes a call rather than rewriting the function; the pacing cap is asserted to sit below the shortest token in Task 3 Step 3's comment.
 
-**Placeholders.** None. Tasks 4 and 5 say "use the existing fixture" — an instruction to read a named neighbouring file, not a deferred decision. Task 4 Step 4 names a specific, checkable contingency rather than "handle edge cases".
+**Placeholders.** None, but Task 4's "use the existing fixture" proved thinner in practice than it reads here: the helper it points at is `openWallpaperPanel(t, roots []string)` returning three values, not the two its sample code assumed, and the sample also calls `icons.Key{}` without noting that the test file does not import `icons`. Neither compiled as written. Task 4 Step 4 does name a specific, checkable contingency rather than "handle edge cases", and it did not fire — the wallpaper suite stayed green without keeping the rebuild.
 
 **Type consistency.** `DamageSet` methods in Task 1 are used nowhere else yet, by design — Task 2 consumes `[]ui.Rect`, which `Rects()` returns. `damageRects(reported func() []ui.Rect, width, height int32) []ui.Rect` in Task 2 matches both its test and its `renderJob` call site, where `gen.width`/`gen.height` are already `int32`. `animateSurface`'s fourth parameter is `time.Duration` in the signature, the tests, and the `FrameCap` token.

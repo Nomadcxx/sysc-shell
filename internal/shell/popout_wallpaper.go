@@ -1051,9 +1051,12 @@ func (r *Registry) applyWallpaperThumb(_ icons.Key, image *ui.Image) {
 		r.mu.Unlock()
 		return
 	}
-	r.rebuildPanel(h)
 	out := h.output
 	r.mu.Unlock()
+	// No rebuild: wallpaperThumbFor runs inside the virtual list's Item builder
+	// at layout time, so the next paint picks the raster up. Rebuilding the tree
+	// for a raster relaid out the whole picker once per decoded file, which on a
+	// library of hundreds is a full relayout and blit per thumbnail.
 	r.publishSurface(out, panelSurfaceID(PanelWallpaper))
 }
 

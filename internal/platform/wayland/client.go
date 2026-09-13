@@ -820,6 +820,45 @@ func (o *owner) sweepRetired(u *surfaceUnit) {
 	u.retiring = kept
 }
 
+// damageRects resolves a surface's reported damage into buffer rectangles.
+//
+// A nil callback or an empty result means the whole buffer. Every rectangle is
+// clipped to the buffer, and one that falls entirely outside is dropped: a
+// damage call that names pixels the buffer does not have is a protocol error,
+// and silently over-damaging is the safe direction to err.
+func damageRects(reported func() []ui.Rect, width, height int32) []ui.Rect {
+	full := []ui.Rect{{X: 0, Y: 0, W: int(width), H: int(height)}}
+	if reported == nil {
+		return full
+	}
+	raw := reported()
+	if len(raw) == 0 {
+		return full
+	}
+	out := make([]ui.Rect, 0, len(raw))
+	for _, r := range raw {
+		if r.X < 0 {
+			r.W += r.X
+			r.X = 0
+		}
+		if r.Y < 0 {
+			r.H += r.Y
+			r.Y = 0
+		}
+		if r.X+r.W > int(width) {
+			r.W = int(width) - r.X
+		}
+		if r.Y+r.H > int(height) {
+			r.H = int(height) - r.Y
+		}
+		if r.W <= 0 || r.H <= 0 {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
 // renderJob paints one slot of one host and submits it.
 func (o *owner) renderJob(h *OutputHost, u *surfaceUnit, job render.Job) error {
 	gen := u.current
@@ -833,8 +872,10 @@ func (o *owner) renderJob(h *OutputHost, u *surfaceUnit, job render.Job) error {
 	if err := u.surface.Attach(gen.slots[job.Slot], 0, 0); err != nil {
 		return fmt.Errorf("wayland: attach: %w", err)
 	}
-	if err := u.surface.DamageBuffer(0, 0, gen.width, gen.height); err != nil {
-		return fmt.Errorf("wayland: damage: %w", err)
+	for _, r := range damageRects(u.app.Damaged, gen.width, gen.height) {
+		if err := u.surface.DamageBuffer(int32(r.X), int32(r.Y), int32(r.W), int32(r.H)); err != nil {
+			return fmt.Errorf("wayland: damage: %w", err)
+		}
 	}
 
 	callback, err := u.surface.Frame()

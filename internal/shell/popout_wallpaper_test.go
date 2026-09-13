@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -1106,5 +1107,32 @@ func TestWallpaperPaletteDropdownOffersEveryScheme(t *testing.T) {
 		}) {
 			t.Errorf("scheme %q is not offered by the picker", name)
 		}
+	}
+}
+
+func TestThumbArrivalDoesNotRebuildTheTree(t *testing.T) {
+	t.Parallel()
+	// The virtual list's Item builder looks the raster up at layout time
+	// (wallpaperThumbFor), so a decoded thumbnail needs the surface repainted,
+	// not the tree rebuilt. On a 980x1100 picker a rebuild plus a full repaint
+	// is roughly 40 ms of blit per thumbnail, paid once per file in a library
+	// of hundreds.
+	root := seedWallpaperRoot(t)
+	reg, _, _ := openWallpaperPanel(t, []string{root})
+	h := wallpaperHost(t, reg)
+
+	reg.mu.Lock()
+	before := h.root
+	reg.mu.Unlock()
+
+	// applyWallpaperThumb takes reg.mu itself, so nothing may hold it across
+	// this call.
+	reg.applyWallpaperThumb(icons.Key{}, &ui.Image{Width: 2, Height: 2, Stride: 8, Pix: make([]byte, 16)})
+
+	reg.mu.Lock()
+	after := h.root
+	reg.mu.Unlock()
+	if after != before {
+		t.Error("the tree was rebuilt for a raster arrival")
 	}
 }
