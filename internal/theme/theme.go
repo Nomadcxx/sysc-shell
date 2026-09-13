@@ -37,6 +37,20 @@ type Tokens struct {
 	OnErrorContainer string
 
 	// Surface, the container ladder, and the paired surface foregrounds.
+	//
+	// The reference's surface mapping lands here. It fills a bar capsule and a
+	// panel card from one role, its surface-variant, and that role maps onto
+	// SurfaceContainerHigh: shell chrome reads SurfaceContainerHigh for its
+	// Capsule slot, and derive() resolves SurfaceVariant to the same container
+	// level. The two names stay separate because the template catalogue exports
+	// each of them, but they name one level -- which independently confirms the
+	// 2026-09-03 amendment that put capsules and cards on a single level, since
+	// the reference's clock capsule samples its surface-variant token.
+	//
+	// The reference's hover role is deliberately not adopted. State layers
+	// composite the paired foreground at 8/12/12/16 percent, which is
+	// palette-independent; an explicit hover colour would put a fixed RGB back
+	// into the contract every generated palette has to satisfy.
 	Surface                 string
 	OnSurface               string
 	SurfaceVariant          string
