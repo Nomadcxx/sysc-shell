@@ -215,7 +215,9 @@ func TestSurfaceSourcesCarryNoLegacyVisuals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	aliases := regexp.MustCompile(`\.(BarPadding|Spacing|TextSize|CapsulePadding|ControlHeight|CompactHeight|ButtonPadding|IconSize|ProfileIconSize|OSDIconSize|CardRadius)\b`)
+	// ButtonPadding is a grouped density metric, not a flat compatibility alias;
+	// surfaces may receive a Metrics value directly when composing a subtree.
+	aliases := regexp.MustCompile(`\.(BarPadding|Spacing|TextSize|CapsulePadding|ControlHeight|CompactHeight|IconSize|ProfileIconSize|OSDIconSize|CardRadius)\b`)
 	bold := regexp.MustCompile(`\bBold:\s*true\b`)
 
 	scanned := 0

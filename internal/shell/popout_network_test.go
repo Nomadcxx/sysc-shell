@@ -330,6 +330,9 @@ func TestAccessPointRowsKeepLeadingAndTrailingIconsAligned(t *testing.T) {
 		} else if signal.Bounds.X != wantLeadingX {
 			t.Errorf("%s: signal X = %d, want stable X %d", ap.SSID, signal.Bounds.X, wantLeadingX)
 		}
+		if want := row.Bounds.X + m.ButtonPadding; signal.Bounds.X != want {
+			t.Errorf("%s: signal X = %d, want row inset X %d", ap.SSID, signal.Bounds.X, want)
+		}
 		if ap.Secured || ap.Active {
 			name := "lock"
 			if ap.Active {
@@ -339,7 +342,7 @@ func TestAccessPointRowsKeepLeadingAndTrailingIconsAligned(t *testing.T) {
 			if trailing == nil {
 				t.Fatalf("%s: no trailing %s icon", ap.SSID, name)
 			}
-			if got, want := trailing.Bounds.X+trailing.Bounds.W, row.Bounds.X+row.Bounds.W; got != want {
+			if got, want := trailing.Bounds.X+trailing.Bounds.W, row.Bounds.X+row.Bounds.W-m.ButtonPadding; got != want {
 				t.Errorf("%s: trailing right edge = %d, want %d", ap.SSID, got, want)
 			}
 		}
