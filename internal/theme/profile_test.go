@@ -382,6 +382,20 @@ func TestMetricsCarryCapsuleAndButtonPadding(t *testing.T) {
 	}
 }
 
+func TestSpacingLadderMatchesTheReference(t *testing.T) {
+	t.Parallel()
+	// v4 Commons/Style.qml: marginXXXS..marginXL, logical px at scale 1.
+	want := []int{1, 2, 4, 6, 9, 13, 18}
+	if len(SpacingScale) != len(want) {
+		t.Fatalf("ladder has %d rungs, want %d", len(SpacingScale), len(want))
+	}
+	for i, v := range want {
+		if SpacingScale[i] != v {
+			t.Errorf("rung %d = %d, want %d", i, SpacingScale[i], v)
+		}
+	}
+}
+
 // TestMetricsCarryTheProfileIcon removes the last derived icon constant. The
 // shell's flat layer computed the profile icon as IconSmall+2, which is a
 // fixed offset masquerading as a scale: it happened to be right at standard

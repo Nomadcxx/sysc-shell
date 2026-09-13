@@ -140,7 +140,14 @@ func MetricsFor(d Density) (Metrics, bool) {
 
 // SpacingScale is the shared gap ladder. Semantic gaps pick a step; nothing
 // multiplies a component dimension by an arbitrary factor.
-var SpacingScale = []int{2, 4, 8, 12, 16, 24}
+//
+// The rungs are the reference's margin ladder, marginXXXS through marginXL, in
+// logical pixels at scale 1. They are deliberately not a rescaling of the
+// previous {2, 4, 8, 12, 16, 24}: this ladder is denser in the middle, and that
+// is what produces the reference's tighter grouping inside a card. Rounding the
+// reference's geometry onto the old ladder would have put every padding one or
+// two pixels out, compounding across nested containers.
+var SpacingScale = []int{1, 2, 4, 6, 9, 13, 18}
 
 // TextRole is the semantic type role a node asks for. Components name a role;
 // they do not carry a point size.
