@@ -211,6 +211,11 @@ func (m *OSDManager) slidePx() int {
 const osdAnimKey = "osd"
 
 func (m *OSDManager) revealLoop() {
+	// Resolve the cap once, under the lock. m.anim may be nil here, which
+	// frameCap answers with zero: no pacing, one publish per tick.
+	m.r.mu.Lock()
+	frameCap := m.anim.frameCap()
+	m.r.mu.Unlock()
 	animateSurface(m.stopAnim, func() bool {
 		m.r.mu.Lock()
 		defer m.r.mu.Unlock()
@@ -225,7 +230,7 @@ func (m *OSDManager) revealLoop() {
 		for _, p := range pubs {
 			m.r.publishSurface(p.global, p.id)
 		}
-	})
+	}, frameCap)
 }
 
 func osdLabel(v OSDView) string {

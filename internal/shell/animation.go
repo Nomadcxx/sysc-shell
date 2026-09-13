@@ -305,23 +305,49 @@ func (a *animator) PanelOpacity(node string) float64 {
 	return a.Value(node, animVisible)
 }
 
+// frameCap is the resolved shortest interval between repaints of this surface.
+// A nil animator has no resolved table and returns zero, which means "do not
+// pace" and leaves the pre-cap behaviour of one publish per tick — the safe
+// direction, since pacing is an optimisation and never a correctness boundary.
+func (a *animator) frameCap() time.Duration {
+	if a == nil {
+		return 0
+	}
+	return a.motion.FrameCap
+}
+
 // animateSurface is the shell's only animation scheduling path. It publishes a
 // frame per tick while the surface has a value in flight and returns as soon as
 // everything settles, so an idle shell schedules nothing. Panels and the OSD
 // both drive their frames through it rather than keeping timers of their own.
 //
+// minInterval bounds how often it publishes. The ticker cadence is unchanged:
+// this reduces blits, never frame requests, so it cannot add a frame source.
+//
 // settled and publish do their own locking: the surfaces they touch differ, and
 // holding a lock across a publish would put the frame request under it.
-func animateSurface(stop <-chan struct{}, settled func() bool, publish func()) {
+func animateSurface(stop <-chan struct{}, settled func() bool, publish func(), minInterval time.Duration) {
 	tick := time.NewTicker(animTick)
 	defer tick.Stop()
+	var last time.Time
 	for {
 		select {
 		case <-stop:
 			return
-		case <-tick.C:
+		case now := <-tick.C:
 			done := settled()
-			publish()
+			// A skipped frame still advances the animation: values are
+			// computed from the clock, not from how many times the surface was
+			// published. Pacing changes how often we blit, never where the
+			// animation gets to.
+			//
+			// The settling frame always publishes, even inside the cap window,
+			// or a settled value is left unpainted and the surface keeps a
+			// stale pixel.
+			if done || last.IsZero() || now.Sub(last) >= minInterval {
+				publish()
+				last = now
+			}
 			if done {
 				return
 			}
