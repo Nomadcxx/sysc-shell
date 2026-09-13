@@ -121,6 +121,11 @@ type Metrics struct {
 	StandardControl int
 	PanelPadding    int
 	CardPadding     int
+	// CardGap is the space between sibling cards on a surface. It is the same
+	// rung as a card's own interior inset, which is what makes a column of
+	// cards read as evenly spaced rather than as cards separated by a seam
+	// wider than their own padding.
+	CardGap int
 	// CapsulePadding is the inset inside a bar pill; ButtonPadding is the
 	// inset inside a control. Both were fixed constants in the shell's flat
 	// alias layer, which left a compact bar drawing standard-sized padding
@@ -147,9 +152,10 @@ type Metrics struct {
 // 6 px to spend on both insets, so the old 6 px padding would leave the pill
 // taller than the space it sits in.
 //
-// PanelPadding and CardPadding are ladder rungs and do not vary by density:
-// the reference draws them per surface, marginL inside a panel and marginM
-// inside a card, rather than scaling them per row.
+// PanelPadding, CardPadding and CardGap are ladder rungs and do not vary by
+// density: the reference draws them per surface, marginL inside a panel and
+// marginM both inside a card and between cards, rather than scaling them per
+// row.
 var metrics = map[Density]Metrics{
 	DensityMini: {
 		BarHeight: 21, CapsuleHeight: 19, BarPadding: 1, BarSpacing: 1,
@@ -157,7 +163,7 @@ var metrics = map[Density]Metrics{
 		IconButton: 23, Checkbox: 15, ToggleBase: 18, SliderKnob: 14,
 		InputHeight: 24, TabHeight: 22,
 		CompactControl: 22, StandardControl: 24,
-		PanelPadding: 13, CardPadding: 9,
+		PanelPadding: 13, CardPadding: 9, CardGap: 9,
 		CapsulePadding: 2, ButtonPadding: 4,
 		IconSmall: 14, IconNormal: 16, IconLarge: 20,
 		IconProfile: 16,
@@ -168,7 +174,7 @@ var metrics = map[Density]Metrics{
 		IconButton: 27, Checkbox: 19, ToggleBase: 22, SliderKnob: 18,
 		InputHeight: 30, TabHeight: 26,
 		CompactControl: 26, StandardControl: 30,
-		PanelPadding: 13, CardPadding: 9,
+		PanelPadding: 13, CardPadding: 9, CardGap: 9,
 		CapsulePadding: 4, ButtonPadding: 6,
 		IconSmall: 16, IconNormal: 18, IconLarge: 24,
 		IconProfile: 18,
@@ -179,7 +185,7 @@ var metrics = map[Density]Metrics{
 		IconButton: 33, Checkbox: 23, ToggleBase: 26, SliderKnob: 22,
 		InputHeight: 36, TabHeight: 32,
 		CompactControl: 32, StandardControl: 36,
-		PanelPadding: 13, CardPadding: 9,
+		PanelPadding: 13, CardPadding: 9, CardGap: 9,
 		CapsulePadding: 6, ButtonPadding: 9,
 		IconSmall: 16, IconNormal: 20, IconLarge: 24,
 		IconProfile: 18,
@@ -190,7 +196,7 @@ var metrics = map[Density]Metrics{
 		IconButton: 39, Checkbox: 27, ToggleBase: 30, SliderKnob: 26,
 		InputHeight: 42, TabHeight: 38,
 		CompactControl: 38, StandardControl: 42,
-		PanelPadding: 13, CardPadding: 9,
+		PanelPadding: 13, CardPadding: 9, CardGap: 9,
 		CapsulePadding: 9, ButtonPadding: 13,
 		IconSmall: 18, IconNormal: 22, IconLarge: 28,
 		IconProfile: 20,
@@ -201,7 +207,7 @@ var metrics = map[Density]Metrics{
 		IconButton: 51, Checkbox: 35, ToggleBase: 40, SliderKnob: 34,
 		InputHeight: 54, TabHeight: 50,
 		CompactControl: 50, StandardControl: 54,
-		PanelPadding: 13, CardPadding: 9,
+		PanelPadding: 13, CardPadding: 9, CardGap: 9,
 		CapsulePadding: 13, ButtonPadding: 18,
 		IconSmall: 20, IconNormal: 24, IconLarge: 32,
 		IconProfile: 22,

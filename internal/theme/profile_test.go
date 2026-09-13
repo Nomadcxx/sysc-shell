@@ -72,7 +72,7 @@ func TestProfileDensityTable(t *testing.T) {
 			IconButton: 23, Checkbox: 15, ToggleBase: 18, SliderKnob: 14,
 			InputHeight: 24, TabHeight: 22,
 			CompactControl: 22, StandardControl: 24,
-			PanelPadding: 13, CardPadding: 9,
+			PanelPadding: 13, CardPadding: 9, CardGap: 9,
 			CapsulePadding: 2, ButtonPadding: 4,
 			IconSmall: 14, IconNormal: 16, IconLarge: 20,
 			IconProfile: 16,
@@ -83,7 +83,7 @@ func TestProfileDensityTable(t *testing.T) {
 			IconButton: 27, Checkbox: 19, ToggleBase: 22, SliderKnob: 18,
 			InputHeight: 30, TabHeight: 26,
 			CompactControl: 26, StandardControl: 30,
-			PanelPadding: 13, CardPadding: 9,
+			PanelPadding: 13, CardPadding: 9, CardGap: 9,
 			CapsulePadding: 4, ButtonPadding: 6,
 			IconSmall: 16, IconNormal: 18, IconLarge: 24,
 			IconProfile: 18,
@@ -94,7 +94,7 @@ func TestProfileDensityTable(t *testing.T) {
 			IconButton: 33, Checkbox: 23, ToggleBase: 26, SliderKnob: 22,
 			InputHeight: 36, TabHeight: 32,
 			CompactControl: 32, StandardControl: 36,
-			PanelPadding: 13, CardPadding: 9,
+			PanelPadding: 13, CardPadding: 9, CardGap: 9,
 			CapsulePadding: 6, ButtonPadding: 9,
 			IconSmall: 16, IconNormal: 20, IconLarge: 24,
 			IconProfile: 18,
@@ -105,7 +105,7 @@ func TestProfileDensityTable(t *testing.T) {
 			IconButton: 39, Checkbox: 27, ToggleBase: 30, SliderKnob: 26,
 			InputHeight: 42, TabHeight: 38,
 			CompactControl: 38, StandardControl: 42,
-			PanelPadding: 13, CardPadding: 9,
+			PanelPadding: 13, CardPadding: 9, CardGap: 9,
 			CapsulePadding: 9, ButtonPadding: 13,
 			IconSmall: 18, IconNormal: 22, IconLarge: 28,
 			IconProfile: 20,
@@ -116,7 +116,7 @@ func TestProfileDensityTable(t *testing.T) {
 			IconButton: 51, Checkbox: 35, ToggleBase: 40, SliderKnob: 34,
 			InputHeight: 54, TabHeight: 50,
 			CompactControl: 50, StandardControl: 54,
-			PanelPadding: 13, CardPadding: 9,
+			PanelPadding: 13, CardPadding: 9, CardGap: 9,
 			CapsulePadding: 13, ButtonPadding: 18,
 			IconSmall: 20, IconNormal: 24, IconLarge: 32,
 			IconProfile: 22,
@@ -587,6 +587,41 @@ func TestTheControlAliasesCarryTheDerivedValues(t *testing.T) {
 		}
 		if m.StandardControl != m.InputHeight {
 			t.Errorf("%v standard control = %d, want the derived input height %d", d, m.StandardControl, m.InputHeight)
+		}
+	}
+}
+
+// TestPaddingResolvesToLadderRungs carries component parity D3: padding is not
+// a constant in the reference, it is a rung chosen per surface. Every density is
+// walked rather than the default alone, because the claim these three fields
+// make is that they do not vary by row, and a test that reads one row cannot
+// see that claim break.
+func TestPaddingResolvesToLadderRungs(t *testing.T) {
+	t.Parallel()
+	// Sourced from nine cards and seven panels: every panel insets at marginL
+	// with a margin2L height reserve; the inter-card gap is marginM everywhere
+	// except the control centre; card interiors are marginM.
+	for _, density := range Densities() {
+		m, ok := MetricsFor(density)
+		if !ok {
+			t.Fatalf("%s is not a density", density)
+		}
+		for name, v := range map[string]int{
+			"panel padding": m.PanelPadding,
+			"card padding":  m.CardPadding,
+			"card gap":      m.CardGap,
+		} {
+			if !slices.Contains(SpacingScale, v) {
+				t.Errorf("%s at %s = %d, which is not a rung of %v",
+					name, density, v, SpacingScale)
+			}
+		}
+		if m.PanelPadding != 13 {
+			t.Errorf("panel padding at %s = %d, want marginL 13", density, m.PanelPadding)
+		}
+		if m.CardPadding != 9 || m.CardGap != 9 {
+			t.Errorf("card padding/gap at %s = %d/%d, want marginM 9 each",
+				density, m.CardPadding, m.CardGap)
 		}
 	}
 }
