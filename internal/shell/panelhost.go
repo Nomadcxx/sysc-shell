@@ -766,6 +766,23 @@ func (r *Registry) shieldSpec(h *PanelHost) *wayland.AuxSpec {
 	}
 }
 
+// rootStyle picks the alpha this panel's root fill paints at.
+//
+// An attached panel normally resolves its root at the *bar's* opacity, because
+// with nothing captured behind it the panel and the bar read as one joined
+// ground and the detached panel alpha would composite a different colour.
+//
+// A backdrop makes them separate grounds again. The bar's alpha is fully opaque
+// whenever the bar is, so keeping it would paint straight over the blur and
+// throw the capture away -- which is exactly what the renderer's
+// TestOpaqueRootHidesTheBackdrop asserts an opaque root does.
+func (h *PanelHost) rootStyle(t Theme) render.Style {
+	if !h.place.CenterY && h.backdrop == nil {
+		return t.AttachedPanelStyle()
+	}
+	return t.PanelStyle()
+}
+
 func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	anchor := uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorLeft)
 	if h.place.BarEdge == "bottom" {
@@ -976,10 +993,7 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	h.pointer.apply(h.root, h.anim)
 
 	paintTheme := h.paintTheme()
-	style := paintTheme.PanelStyle()
-	if !h.place.CenterY {
-		style = paintTheme.AttachedPanelStyle()
-	}
+	style := h.rootStyle(paintTheme)
 	// Only a panel draws its own rim; the bar, toasts and tray surfaces
 	// sit directly on the shared surface and leave it zero. A fused audio
 	// panel paints no rim: it and the bar share Style.Background, and a
