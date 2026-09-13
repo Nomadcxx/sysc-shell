@@ -180,6 +180,8 @@ func (h *trayDrawerHost) rebuild() {
 	}
 }
 
+// blur-exempt: a drawer, not a panel. D13 does not name it either way; see
+// docs/plans/2026-09-13-parity-tranche-continuation-handover.md.
 func (h *trayDrawerHost) spec() *wayland.AuxSpec {
 	return &wayland.AuxSpec{
 		ID: trayDrawerSurfaceID, Namespace: "sysc-shell-tray-drawer",

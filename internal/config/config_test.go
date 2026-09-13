@@ -31,6 +31,53 @@ func TestDefaultBarMatchesDMSContentBand(t *testing.T) {
 	}
 }
 
+func TestBlurAxesRoundTrip(t *testing.T) {
+	t.Parallel()
+	cfg, err := Parse([]byte(`{"theme":{"blur-behind":true,"blur-radius":32}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Theme.BlurBehind {
+		t.Error("blur-behind did not load")
+	}
+	if cfg.Theme.BlurRadius != 32 {
+		t.Errorf("blur-radius = %d, want 32", cfg.Theme.BlurRadius)
+	}
+}
+
+func TestBlurRadiusOutsideItsBoundsIsRejected(t *testing.T) {
+	t.Parallel()
+	if _, err := Parse([]byte(`{"theme":{"blur-radius":999}}`)); err == nil {
+		t.Errorf("blur-radius 999 was accepted; the ceiling is %d", theme.BlurRadiusMax)
+	}
+}
+
+func TestBlurDefaultsOffWithAUsableRadius(t *testing.T) {
+	t.Parallel()
+	// It ships off: the live gate flips the default, not this slice.
+	if Default().Theme.BlurBehind {
+		t.Error("blur is on by default; it must ship off until the live gate has run")
+	}
+	// The radius is ready even so, or turning blur on alone would downsample
+	// the backdrop without ever blurring it.
+	if Default().Theme.BlurRadius <= 0 {
+		t.Errorf("default blur radius = %d, want a usable one", Default().Theme.BlurRadius)
+	}
+}
+
+func TestPanelOpacityReachesTheBlurredFloor(t *testing.T) {
+	t.Parallel()
+	// The lower floor is unreachable unless configuration accepts the value in
+	// the first place; it used to be rejected against the unblurred 80.
+	cfg, err := Parse([]byte(`{"theme":{"blur-behind":true,"panel-opacity":65}}`))
+	if err != nil {
+		t.Fatalf("panel-opacity 65 was rejected: %v", err)
+	}
+	if cfg.Theme.PanelOpacity != 65 {
+		t.Errorf("panel-opacity = %d, want 65", cfg.Theme.PanelOpacity)
+	}
+}
+
 func TestDefaultBarStartsWithLauncher(t *testing.T) {
 	t.Parallel()
 	left := Default().Bar.Left

@@ -89,3 +89,79 @@ func TestPaintImageClipsCircleShape(t *testing.T) {
 		t.Fatalf("centre alpha = %d, want opaque", got.A)
 	}
 }
+
+// twoPixelRamp is black beside white, premultiplied in the canvas's order.
+func twoPixelRamp() *ui.Image {
+	return &ui.Image{Width: 2, Height: 1, Stride: 8, Pix: []byte{
+		0, 0, 0, 0xff,
+		0xff, 0xff, 0xff, 0xff,
+	}}
+}
+
+func TestBlendMaskImageInterpolatesBetweenPixels(t *testing.T) {
+	// A quarter-resolution backdrop scaled up 4x with nearest sampling bands
+	// visibly across a large flat panel. Two source pixels scaled up must
+	// produce intermediate values between them, not a hard step. A zero radius
+	// makes the mask full coverage, isolating the sampling from the clipping.
+	c := newTestCanvas(t, 16, 1)
+	blendMaskImage(c, RoundedMask(0, 16, 1), 0, 0, twoPixelRamp())
+
+	var seen int
+	for x := 0; x < 16; x++ {
+		if v := c.Pix[x*4]; v != 0x00 && v != 0xff {
+			seen++
+		}
+	}
+	if seen == 0 {
+		t.Error("no intermediate values; sampling is not bilinear")
+	}
+}
+
+func TestBlendMaskImageClipsToTheMask(t *testing.T) {
+	// A panel's corners are genuinely transparent: the painter clears the
+	// buffer and fills a rounded body, so the compositor shows what is behind
+	// them. A backdrop blitted into the raw rectangle would fill those corners
+	// with blurred pixels and the panel would read as a square.
+	c := newTestCanvas(t, 16, 16)
+	blendMaskImage(c, RoundedMask(8, 16, 16), 0, 0, solid(4, 4, 0xff, 0xff, 0xff, 0xff))
+
+	if got := pixelAt(t, c, 0, 0); got.A != 0 {
+		t.Errorf("corner = %+v, want left transparent by the mask", got)
+	}
+	if got := pixelAt(t, c, 8, 8); got.A == 0 {
+		t.Error("the centre was not painted at all")
+	}
+}
+
+func TestPaintImageKeepsNearestForIcons(t *testing.T) {
+	// paintImage must not change. The icon worker produces the exact size the
+	// node asked for, and resampling there would be a second, worse scaler.
+	c := newTestCanvas(t, 16, 1)
+	paintImage(c, ui.Rect{W: 16, H: 1}, twoPixelRamp())
+	for x := 0; x < 16; x++ {
+		if v := c.Pix[x*4]; v != 0x00 && v != 0xff {
+			t.Fatalf("paintImage interpolated at x=%d (%#x); it must stay nearest", x, v)
+		}
+	}
+}
+
+func TestBlendMaskImageIgnoresDegenerateRasters(t *testing.T) {
+	c := newTestCanvas(t, 2, 2)
+	before := append([]byte(nil), c.Pix...)
+	for name, img := range map[string]*ui.Image{
+		"nil":        nil,
+		"no pixels":  {Width: 2, Height: 2, Stride: 8},
+		"zero width": {Width: 0, Height: 2, Stride: 8, Pix: make([]byte, 16)},
+		"short":      {Width: 4, Height: 4, Stride: 16, Pix: []byte{1, 2, 3, 4}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			blendMaskImage(c, RoundedMask(0, 2, 2), 0, 0, img)
+		})
+	}
+	blendMaskImage(c, nil, 0, 0, twoPixelRamp())
+	for i := range before {
+		if c.Pix[i] != before[i] {
+			t.Fatal("a degenerate raster changed the canvas")
+		}
+	}
+}

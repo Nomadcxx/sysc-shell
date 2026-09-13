@@ -99,6 +99,8 @@ type wireTheme struct {
 	BarOpacity     *int    `json:"bar-opacity,omitempty"`
 	PanelOpacity   *int    `json:"panel-opacity,omitempty"`
 	OverlayOpacity *int    `json:"overlay-opacity,omitempty"`
+	BlurBehind     *bool   `json:"blur-behind,omitempty"`
+	BlurRadius     *int    `json:"blur-radius,omitempty"`
 	Elevation      *string `json:"elevation,omitempty"`
 }
 
@@ -1033,6 +1035,10 @@ func applyTheme(base Theme, w wireTheme, path string) (Theme, error) {
 		}
 		out.Elevation = e
 	}
+	// A bool has no range to check, so it takes no row in the table below.
+	if w.BlurBehind != nil {
+		out.BlurBehind = *w.BlurBehind
+	}
 	for _, f := range []struct {
 		key      string
 		supplied *string
@@ -1060,8 +1066,11 @@ func applyTheme(base Theme, w wireTheme, path string) (Theme, error) {
 		{"radius", w.Radius, &out.Radius, theme.RadiusMin, theme.RadiusMax},
 		{"motion-speed", w.MotionSpeed, &out.MotionSpeed, theme.SpeedMin, theme.SpeedMax},
 		{"bar-opacity", w.BarOpacity, &out.BarOpacity, theme.OpacityMin, theme.OpacityMax},
-		{"panel-opacity", w.PanelOpacity, &out.PanelOpacity, theme.OpacityMin, theme.OpacityMax},
+		// Panels take the blurred floor so the axis can reach it at all;
+		// opacityAlpha still clamps back to OpacityMin without a backdrop.
+		{"panel-opacity", w.PanelOpacity, &out.PanelOpacity, theme.OpacityMinBlurred, theme.OpacityMax},
 		{"overlay-opacity", w.OverlayOpacity, &out.OverlayOpacity, theme.OpacityMin, theme.OpacityMax},
+		{"blur-radius", w.BlurRadius, &out.BlurRadius, theme.BlurRadiusMin, theme.BlurRadiusMax},
 	} {
 		if f.supplied == nil {
 			continue

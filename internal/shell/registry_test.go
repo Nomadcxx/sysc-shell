@@ -13,6 +13,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 // newHosts is the common setup: one registry with hosts at the given globals.
@@ -22,6 +23,48 @@ func newHosts(t *testing.T, reg *Registry, hosts map[uint32]string) {
 		if _, err := reg.NewHost(global, connector); err != nil {
 			t.Fatalf("NewHost(%d, %s): %v", global, connector, err)
 		}
+	}
+}
+
+func TestAttachedPanelKeepsItsOwnAlphaOnceItHasABackdrop(t *testing.T) {
+	t.Parallel()
+	// An attached panel borrows the bar's opacity so the two read as one
+	// ground. The bar is opaque, so once a backdrop exists that borrowed alpha
+	// paints straight over the blur: measured on a live shell, the panel body
+	// came back pixel-identical to the bar, a single flat colour.
+	cfg := config.Default()
+	cfg.Accessibility.ReducedMotion = true
+	cfg.Theme.BlurBehind = true
+	cfg.Theme.PanelOpacity = 65
+	cfg.Bar.Left, cfg.Bar.Center, cfg.Bar.Right = nil, nil, nil
+
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	reg.tokens = theme.Fallback
+	bar, leases, _, err := reg.buildBar(cfg, "DP-2", reg.tokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { releaseAll(leases) })
+	reg.bars[7] = bar
+	if err := reg.OpenPanel(PanelMonitor, 7, Trigger{BarEdge: "top"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	panel := reg.panelHosts[PanelMonitor]
+	if panel.place.CenterY {
+		t.Fatal("the monitor panel is meant to be bar-attached; pick another for this test")
+	}
+	th := panel.paintTheme()
+	barRoot := th.Style().RootFill()
+
+	if got := panel.rootStyle(th).RootFill(); got != barRoot {
+		t.Errorf("without a backdrop an attached panel must share the bar root: got %+v want %+v", got, barRoot)
+	}
+
+	panel.backdrop = &ui.Image{Width: 1, Height: 1, Stride: 4, Pix: []byte{0, 0, 0, 0xff}}
+	if got := panel.rootStyle(th).RootFill(); got == barRoot {
+		t.Errorf("with a backdrop the panel kept the bar's opaque root %+v; the blur would be painted over", got)
 	}
 }
 

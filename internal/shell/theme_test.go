@@ -460,6 +460,51 @@ func TestResolveThemeValidatesEveryGroup(t *testing.T) {
 	}
 }
 
+func TestOpacityFloorLiftsOnlyWithABackdrop(t *testing.T) {
+	t.Parallel()
+	// The 80 floor exists only because the shell had no blur behind text. With
+	// a backdrop it may go lower; without one the original reason still holds.
+	if got, want := opacityAlpha(50, false), opacityAlpha(theme.OpacityMin, false); got != want {
+		t.Errorf("without a backdrop, 50%% gave %#x, want the %d%% floor %#x",
+			got, theme.OpacityMin, want)
+	}
+	if opacityAlpha(50, true) == opacityAlpha(theme.OpacityMin, true) {
+		t.Error("with a backdrop, 50% must not clamp to the unblurred floor")
+	}
+	if theme.OpacityMinBlurred >= theme.OpacityMin {
+		t.Errorf("blurred floor %d must sit below the unblurred %d",
+			theme.OpacityMinBlurred, theme.OpacityMin)
+	}
+}
+
+func TestBlurLowersOnlyThePanelFloor(t *testing.T) {
+	t.Parallel()
+	// Design D13 scopes blur to panels. The bar is docked and its text sits
+	// directly over the wallpaper, so its floor must not move with it.
+	comp := theme.Composition{BarOpacity: 50, PanelOpacity: 50, OverlayOpacity: 50}
+	plain := resolveSurfaces(comp, false)
+	comp.BlurBehind = true
+	blurred := resolveSurfaces(comp, false)
+
+	if blurred.Panel >= plain.Panel {
+		t.Errorf("panel alpha %#x did not drop below %#x once blur was on",
+			blurred.Panel, plain.Panel)
+	}
+	if blurred.Bar != plain.Bar || blurred.Overlay != plain.Overlay {
+		t.Errorf("blur moved a floor that is not a panel's: %+v against %+v", blurred, plain)
+	}
+}
+
+func TestHighContrastStaysOpaqueEvenWithABackdrop(t *testing.T) {
+	t.Parallel()
+	// High contrast forces full opacity. Blur does not change that: it exists
+	// to make text unambiguous, and a backdrop is still content behind text.
+	s := resolveSurfaces(theme.Composition{PanelOpacity: 50, BlurBehind: true}, true)
+	if s.Panel != 0xff {
+		t.Errorf("panel alpha under high contrast = %#x, want 0xff", s.Panel)
+	}
+}
+
 func TestResolveThemeRejectsAnIncompletePalette(t *testing.T) {
 	t.Parallel()
 	cfg := config.Default()
