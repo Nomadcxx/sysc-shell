@@ -13,10 +13,11 @@ import (
 // exec, or a socket. A path listed in gate blocks until the test releases it,
 // which is how a slow apply is made to land after a newer one.
 type fakeEngine struct {
-	mu       sync.Mutex
-	applied  []Job
-	restored []string
-	paused   map[string]bool
+	mu         sync.Mutex
+	applied    []Job
+	restored   []string
+	paused     map[string]bool
+	closeCalls int
 
 	gate    map[string]chan struct{}
 	preview map[string]string
@@ -68,6 +69,12 @@ func (f *fakeEngine) Capabilities() Capabilities {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.caps
+}
+
+func (f *fakeEngine) Close() {
+	f.mu.Lock()
+	f.closeCalls++
+	f.mu.Unlock()
 }
 
 func (f *fakeEngine) appliedPaths() []string {
@@ -127,10 +134,10 @@ func TestServiceApplyPublishes(t *testing.T) {
 func TestServiceStaleApplyDoesNotCommit(t *testing.T) {
 	engine := newFakeEngine()
 	release := make(chan struct{})
-	engine.gate["/w/slow.png"] = release
+	engine.gate["/w/slow.mp4"] = release
 	svc := newTestService(t, engine)
 
-	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: "/w/slow.png", Kind: KindImage})
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: "/w/slow.mp4", Kind: KindVideo})
 	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: "/w/fast.png", Kind: KindImage})
 	awaitSnapshot(t, svc, func(s Snapshot) bool {
 		return s.Assignments["DP-1"].Path == "/w/fast.png"
@@ -183,6 +190,63 @@ func TestServiceReconnectReplays(t *testing.T) {
 			t.Fatalf("reconnect did not replay the saved assignment: %v", applied)
 		case <-time.After(10 * time.Millisecond):
 		}
+	}
+}
+
+func TestServiceDisconnectStopsEngine(t *testing.T) {
+	engine := newFakeEngine()
+	svc := newTestService(t, engine)
+
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: "/w/a.png", Kind: KindImage})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Path == "/w/a.png" })
+
+	svc.Enqueue(Command{Op: OpDisconnect, Token: "DP-1"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return !slices.Contains(s.Connectors, "DP-1") })
+
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if !slices.Contains(engine.restored, "DP-1") {
+		t.Fatalf("disconnect did not stop the engine: restored=%v", engine.restored)
+	}
+}
+
+func TestServiceCloseClosesEngine(t *testing.T) {
+	engine := newFakeEngine()
+	svc := NewService(ServiceConfig{Engine: engine, Connectors: []string{"DP-1"}})
+
+	svc.Close()
+	svc.Close()
+
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if engine.closeCalls != 1 {
+		t.Fatalf("engine close calls = %d, want 1", engine.closeCalls)
+	}
+}
+
+func TestServiceRestoreSupersedesInFlightApply(t *testing.T) {
+	engine := newFakeEngine()
+	release := make(chan struct{})
+	engine.gate["/w/slow.mp4"] = release
+	svc := newTestService(t, engine)
+
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: "/w/slow.mp4", Kind: KindVideo})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Runtime["DP-1"].State == StateStarting })
+	svc.Enqueue(Command{Op: OpRestore, Token: "DP-1"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Runtime["DP-1"].State == StateStatic })
+
+	close(release)
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && len(engine.appliedPaths()) == 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(engine.appliedPaths()) == 0 {
+		t.Fatal("the gated apply never finished")
+	}
+	time.Sleep(20 * time.Millisecond)
+	snap := svc.Snapshot()
+	if snap.Assignments["DP-1"].Path == "/w/slow.mp4" || snap.Runtime["DP-1"].State != StateStatic {
+		t.Fatalf("restore did not remain final: snapshot=%+v", snap)
 	}
 }
 

@@ -1057,6 +1057,8 @@ func (r *Registry) Close() {
 	var bars []*Bar
 	var audioLease, brightLease, networkLease *services.Lease
 	var inhibit io.Closer
+	var wallpaperSvc *wallpaper.Service
+	var wallpaperThumbCancel context.CancelFunc
 	if locked {
 		if r.toasts != nil {
 			r.toasts.stopLeaseRenew()
@@ -1084,6 +1086,10 @@ func (r *Registry) Close() {
 		r.brightLease = nil
 		networkLease = r.networkLease
 		r.networkLease = nil
+		wallpaperSvc = r.wallpaperSvc
+		r.wallpaperSvc = nil
+		wallpaperThumbCancel = r.wallpaperThumbCancel
+		r.wallpaperThumbCancel = nil
 		inhibit = r.inhibit
 		r.inhibit = nil
 		r.inhibitWanted = false
@@ -1117,6 +1123,12 @@ func (r *Registry) Close() {
 	}
 	if launcherSvc != nil {
 		launcherSvc.Close()
+	}
+	if wallpaperThumbCancel != nil {
+		wallpaperThumbCancel()
+	}
+	if wallpaperSvc != nil {
+		wallpaperSvc.Close()
 	}
 	r.dwell.stop()
 	r.clock.Close()

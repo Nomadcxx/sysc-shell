@@ -603,6 +603,56 @@ func TestWallpaperChromeActionsDrivePanelState(t *testing.T) {
 	}
 }
 
+func TestWallpaperTitleOffersRefresh(t *testing.T) {
+	if findAction(wallpaperTitleRow(&PanelHost{}), "wallpaper-refresh") == nil {
+		t.Fatal("wallpaper title has no refresh action")
+	}
+}
+
+func TestWallpaperRefreshActionRescansLibrary(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "before.png"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	reg := newPanelRegistry(t)
+	svc := wallpaper.NewService(wallpaper.ServiceConfig{
+		Engine:     stubWallpaperEngine{},
+		Connectors: []string{"DP-1"},
+		Roots:      []string{root},
+	})
+	t.Cleanup(svc.Close)
+	reg.mu.Lock()
+	reg.wallpaperSvc = svc
+	h := &PanelHost{id: PanelWallpaper}
+	if err := os.WriteFile(filepath.Join(root, "after.png"), []byte("x"), 0o644); err != nil {
+		reg.mu.Unlock()
+		t.Fatalf("add wallpaper: %v", err)
+	}
+	if !h.wallpaperAction(reg, &ui.Node{Action: "wallpaper-refresh"}) {
+		reg.mu.Unlock()
+		t.Fatal("refresh action was not handled")
+	}
+	reg.mu.Unlock()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		snap := svc.Snapshot()
+		if slices.ContainsFunc(snap.Library.View(root, wallpaper.FilterAll, ""), func(e wallpaper.Entry) bool {
+			return e.Name == "after.png"
+		}) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("refresh did not rescan the library")
+}
+
+func TestWallpaperSelectionFallsBackWhenOutputDisconnects(t *testing.T) {
+	snap := wallpaper.Snapshot{Connectors: []string{"DP-1"}}
+	if got := wallpaperOutputSelection(snap, "DP-3"); got != wallpaper.AllOutputs {
+		t.Fatalf("stale output selection = %q, want %q", got, wallpaper.AllOutputs)
+	}
+}
+
 func TestWallpaperVideoTileIsInertWithoutGSlapper(t *testing.T) {
 	t.Parallel()
 

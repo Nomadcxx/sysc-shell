@@ -154,6 +154,10 @@ func (h *engineHarness) socket(connector string) string {
 	return socketPath(h.eng.dir, connector)
 }
 
+func (h *engineHarness) ownSocket(connector string) {
+	h.eng.owned[connector] = newFakeProcess()
+}
+
 func (h *engineHarness) argvs() [][]string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -226,6 +230,7 @@ func TestEngineChangeOnLiveSocket(t *testing.T) {
 	if err := os.WriteFile(h.socket("DP-1"), nil, 0o600); err != nil {
 		t.Fatalf("seed socket: %v", err)
 	}
+	h.ownSocket("DP-1")
 	h.replies["query"] = "STATUS: playing image /w/old.png"
 
 	job := Job{Connector: "DP-1", Gen: 1, Path: h.media("new.png"), Kind: KindImage}
@@ -237,11 +242,190 @@ func TestEngineChangeOnLiveSocket(t *testing.T) {
 	}
 }
 
+func TestEngineSerializesSameOutputChanges(t *testing.T) {
+	h := newEngineHarness(t)
+	if err := os.WriteFile(h.socket("DP-1"), nil, 0o600); err != nil {
+		t.Fatalf("seed socket: %v", err)
+	}
+	h.ownSocket("DP-1")
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	h.eng.request = func(socket, command string, _ time.Duration) (string, error) {
+		if _, err := os.Stat(socket); err != nil {
+			return "", err
+		}
+		verb, _, _ := strings.Cut(command, " ")
+		if verb == "query" {
+			return "STATUS: playing image /w/old.png", nil
+		}
+		if verb == "change" {
+			started <- command
+			<-release
+		}
+		return "OK", nil
+	}
+
+	first := make(chan error, 1)
+	go func() {
+		_, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Path: h.media("first.png"), Kind: KindImage}, defaultSettings())
+		first <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first change did not reach the engine")
+	}
+
+	second := make(chan error, 1)
+	go func() {
+		_, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 2, Path: h.media("second.png"), Kind: KindImage}, defaultSettings())
+		second <- err
+	}()
+	select {
+	case command := <-started:
+		close(release)
+		<-first
+		<-second
+		t.Fatalf("same-output change started concurrently: %q", command)
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+	if err := <-second; err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+}
+
+func TestEngineKeepsOwnedProcessOnChangeErrorReply(t *testing.T) {
+	h := newEngineHarness(t)
+	if err := os.WriteFile(h.socket("DP-1"), nil, 0o600); err != nil {
+		t.Fatalf("seed socket: %v", err)
+	}
+	h.ownSocket("DP-1")
+	h.eng.request = func(socket, command string, _ time.Duration) (string, error) {
+		if _, err := os.Stat(socket); err != nil {
+			return "", err
+		}
+		verb, _, _ := strings.Cut(command, " ")
+		if verb == "query" {
+			return "STATUS: playing image /w/old.png", nil
+		}
+		if verb == "change" {
+			return "ERROR: no such file", nil
+		}
+		return "OK", nil
+	}
+
+	_, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Path: h.media("new.png"), Kind: KindImage}, defaultSettings())
+	if err == nil || !strings.Contains(err.Error(), "no such file") {
+		t.Fatalf("change error = %v, want the wire error", err)
+	}
+	if argvs := h.argvs(); len(argvs) != 0 {
+		t.Fatalf("an unrelated change error must not relaunch, spawned %v", argvs)
+	}
+}
+
+func TestEngineLeavesForeignLiveSocketAlone(t *testing.T) {
+	h := newEngineHarness(t)
+	if err := os.WriteFile(h.socket("DP-1"), nil, 0o600); err != nil {
+		t.Fatalf("seed socket: %v", err)
+	}
+	h.replies["query"] = "STATUS: playing image /w/foreign.png"
+
+	_, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Path: h.media("new.png"), Kind: KindImage}, defaultSettings())
+	if err == nil || !strings.Contains(err.Error(), "not owned") {
+		t.Fatalf("foreign socket apply error = %v, want ownership error", err)
+	}
+	if argvs := h.argvs(); len(argvs) != 0 {
+		t.Fatalf("foreign socket must not be relaunched, spawned %v", argvs)
+	}
+}
+
+func TestEngineLeavesForeignErrorSocketAlone(t *testing.T) {
+	h := newEngineHarness(t)
+	if err := os.WriteFile(h.socket("DP-1"), nil, 0o600); err != nil {
+		t.Fatalf("seed socket: %v", err)
+	}
+	h.eng.request = func(socket, command string, _ time.Duration) (string, error) {
+		if _, err := os.Stat(socket); err != nil {
+			return "", err
+		}
+		if verb, _, _ := strings.Cut(command, " "); verb == "query" {
+			return "ERROR: no pipeline", nil
+		}
+		return "OK", nil
+	}
+
+	_, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Path: h.media("new.png"), Kind: KindImage}, defaultSettings())
+	if err == nil || !strings.Contains(err.Error(), "not owned") {
+		t.Fatalf("foreign error socket apply error = %v, want ownership error", err)
+	}
+	if argvs := h.argvs(); len(argvs) != 0 {
+		t.Fatalf("foreign error socket must not be relaunched, spawned %v", argvs)
+	}
+}
+
+func TestEngineTreatsQueryErrorAsNotReady(t *testing.T) {
+	h := newEngineHarness(t)
+	if err := os.WriteFile(h.socket("DP-1"), nil, 0o600); err != nil {
+		t.Fatalf("seed socket: %v", err)
+	}
+	h.ownSocket("DP-1")
+	firstQuery := true
+	h.eng.request = func(socket, command string, _ time.Duration) (string, error) {
+		verb, _, _ := strings.Cut(command, " ")
+		if verb == "query" {
+			if firstQuery {
+				firstQuery = false
+				return "ERROR: no pipeline", nil
+			}
+			return "STATUS: playing image /w/old.png", nil
+		}
+		if verb == "stop" {
+			_ = os.Remove(socket)
+		}
+		return "OK", nil
+	}
+
+	if _, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Path: h.media("new.png"), Kind: KindImage}, defaultSettings()); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if argvs := h.argvs(); len(argvs) != 1 {
+		t.Fatalf("a query error must restart the owned process, spawned %v", argvs)
+	}
+}
+
+func TestEngineCloseStopsOwnedProcess(t *testing.T) {
+	h := newEngineHarness(t)
+	if _, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Path: h.media("a.png"), Kind: KindImage}, defaultSettings()); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	h.mu.Lock()
+	proc := h.procs[0]
+	h.mu.Unlock()
+
+	closer, ok := any(h.eng).(interface{ Close() })
+	if !ok {
+		t.Fatal("engine does not expose shutdown")
+	}
+	closer.Close()
+
+	if !proc.wasStopped() {
+		t.Fatal("engine close did not stop the owned process")
+	}
+	if h.eng.ownedProcess("DP-1") != nil {
+		t.Fatal("engine close left an owned process registered")
+	}
+}
+
 func TestEngineAutoStopErrorRelaunchesOnce(t *testing.T) {
 	h := newEngineHarness(t)
 	if err := os.WriteFile(h.socket("DP-1"), nil, 0o600); err != nil {
 		t.Fatalf("seed socket: %v", err)
 	}
+	h.ownSocket("DP-1")
 	h.replies["query"] = "STATUS: playing image /w/old.png"
 	h.replies["change"] = "ERROR: cannot update path (use --auto-stop for video changes)"
 
@@ -262,6 +446,7 @@ func TestEngineVideoSwapRestartsWithoutAutoStop(t *testing.T) {
 	if err := os.WriteFile(h.socket("DP-1"), nil, 0o600); err != nil {
 		t.Fatalf("seed socket: %v", err)
 	}
+	h.ownSocket("DP-1")
 	h.replies["query"] = "STATUS: playing video /w/old.mp4"
 
 	// hidden=none cannot change a video path, so the engine must not even try.
@@ -279,6 +464,7 @@ func TestEngineRestoreStopsThenFallsBack(t *testing.T) {
 	if err := os.WriteFile(h.socket("DP-1"), nil, 0o600); err != nil {
 		t.Fatalf("seed socket: %v", err)
 	}
+	h.ownSocket("DP-1")
 	h.replies["query"] = "STATUS: playing video /w/b.mp4"
 	h.replies["stop"] = "OK"
 
@@ -311,6 +497,7 @@ func TestEngineRestoreWithNoStillLeavesEmpty(t *testing.T) {
 	if err := os.WriteFile(h.socket("DP-1"), nil, 0o600); err != nil {
 		t.Fatalf("seed socket: %v", err)
 	}
+	h.ownSocket("DP-1")
 	h.replies["stop"] = "OK"
 
 	if err := h.eng.Restore("DP-1", ""); err != nil {

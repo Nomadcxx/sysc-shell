@@ -284,6 +284,9 @@ func (s *Service) Close() {
 		}
 		close(s.quit)
 		<-s.done
+		if closer, ok := s.engine.(interface{ Close() }); ok {
+			closer.Close()
+		}
 		s.work.Wait()
 	})
 }
@@ -336,6 +339,9 @@ func (s *Service) handle(c Command) {
 		s.dispatch(s.store.Reconnect(c.Token))
 		return
 	case OpDisconnect:
+		if s.engine != nil {
+			_ = s.engine.Restore(c.Token, "")
+		}
 		s.store.Disconnect(c.Token)
 	case OpRefresh:
 		s.lib = Scan(s.roots)

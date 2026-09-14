@@ -210,6 +210,7 @@ func seedFor(a Assignment) string {
 // rather than an empty desktop (D20).
 func (s *Store) Disconnect(connector string) {
 	s.ensure()
+	s.gen[connector]++
 	s.connectors = slices.DeleteFunc(s.connectors, func(c string) bool { return c == connector })
 	delete(s.runtime, connector)
 }
@@ -278,6 +279,7 @@ func (s *Store) noteRuntimeErr(connector string, err error) {
 // desired playback is persisted so a paused video comes back paused (D19).
 func (s *Store) SetPlayback(connector string, paused bool) {
 	s.ensure()
+	s.gen[connector]++
 	state := StatePlaying
 	if paused {
 		state = StatePaused
@@ -298,5 +300,6 @@ func (s *Store) SetPlayback(connector string, paused bool) {
 // the output was simply left blank.
 func (s *Store) SetRestored(connector, engine string) {
 	s.ensure()
+	s.gen[connector]++
 	s.runtime[connector] = Runtime{State: StateStatic, Engine: engine}
 }
