@@ -16,6 +16,7 @@ func TestStyleTypeSetResolvesEveryRole(t *testing.T) {
 	for _, role := range []theme.TextRole{
 		theme.RoleBody, theme.RoleCaption, theme.RoleLabel,
 		theme.RoleTitle, theme.RoleHeadline, theme.RoleMono,
+		theme.RoleDisplay,
 	} {
 		if got := set.Spec(role).Size; got != 10+int(role) {
 			t.Errorf("%s size = %d, want %d", role, got, 10+int(role))
@@ -37,14 +38,35 @@ func TestStyleTypeSetFallsBackForAnUnknownRole(t *testing.T) {
 
 func TestStyleTableCoversEveryDeclaredRole(t *testing.T) {
 	t.Parallel()
-	// The table is sized off RoleMono. If a role is added past it, this is
-	// the check that says so before a frame indexes out of range.
-	if textRoleCount != int(theme.RoleMono)+1 {
-		t.Fatalf("textRoleCount = %d, want %d", textRoleCount, int(theme.RoleMono)+1)
+	// The table is sized off the last role. If a role is added past it, this
+	// is the check that says so before a frame indexes out of range.
+	if textRoleCount != int(theme.RoleDisplay)+1 {
+		t.Fatalf("textRoleCount = %d, want %d", textRoleCount, int(theme.RoleDisplay)+1)
 	}
 	var set TypeSet
 	if len(set.Roles) != textRoleCount {
 		t.Errorf("role table holds %d entries, want %d", len(set.Roles), textRoleCount)
+	}
+}
+
+// TestDisplayRoleIsAddressable indexes the table at the last role. The table is
+// a fixed-size array derived from that role, so if the constant were ever left
+// tracking an earlier one this would be an out-of-range panic at paint -- and
+// the count guard above would still have passed, because it would agree with
+// the stale constant.
+//
+// It lives here rather than beside the role definition: internal/render imports
+// internal/theme, so a test in theme naming render.TypeSet would be an import
+// cycle and could never compile.
+func TestDisplayRoleIsAddressable(t *testing.T) {
+	t.Parallel()
+	var set TypeSet
+	set.Roles[theme.RoleDisplay] = TextSpec{Size: 24}
+	if set.Roles[theme.RoleDisplay].Size != 24 {
+		t.Error("the display role did not round-trip through the table")
+	}
+	if got := set.Spec(theme.RoleDisplay).Size; got != 24 {
+		t.Errorf("Spec(display) = %d, want 24; the role is inside the table but Spec disagrees", got)
 	}
 }
 

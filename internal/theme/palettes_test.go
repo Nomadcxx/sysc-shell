@@ -96,6 +96,50 @@ func TestNamedPaletteLadderSeparates(t *testing.T) {
 }
 
 // TestUnknownPaletteIsRejected keeps a typo from silently painting something.
+// TestOutlineFloorsSplitByFunction records why the two outline roles carry
+// different floors. WCAG 2.1 SC 1.4.11 covers user-interface components and
+// focus indication, so Outline stays at 3:1 and derive() floors it there by
+// resolving it through on(surface, ..., nonText). A decorative divider carries
+// no state and loses no information by being quieter, so OutlineVariant is left
+// a plain mix with no floor applied.
+func TestOutlineFloorsSplitByFunction(t *testing.T) {
+	t.Parallel()
+	tk := FallbackFor(false)
+	surface := mustColor(tk.Surface)
+	if got := ContrastRatio(mustColor(tk.Outline), surface); got < 3.0 {
+		t.Errorf("Outline = %.3f:1 against the surface, want at least 3.0: focus rings stay at 3:1", got)
+	}
+	// Deliberately not asserted in the other direction. The variant clearing
+	// 3:1 is allowed, just not required, so this records the value rather than
+	// fencing it in.
+	t.Logf("OutlineVariant = %.3f:1 against the surface",
+		ContrastRatio(mustColor(tk.OutlineVariant), surface))
+}
+
+// TestTextFloorsAreUnchanged separates the two questions the nested-surface
+// relaxation could be read as conflating. Lowering that floor is about how far
+// apart two backgrounds sit; it says nothing about how far text sits from the
+// background it is painted on, and derive() still resolves body text against
+// every surface level at 4.5 -- 7.0 under high contrast, which the relaxation
+// is exempt from.
+func TestTextFloorsAreUnchanged(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		hc   bool
+		want float64
+	}{
+		{false, 4.5},
+		{true, 7.0},
+	} {
+		tk := FallbackFor(tc.hc)
+		got := ContrastRatio(mustColor(tk.OnSurface), mustColor(tk.Surface))
+		if got < tc.want {
+			t.Errorf("body text%s = %.3f:1, want at least %.1f",
+				contrastLabel(tc.hc), got, tc.want)
+		}
+	}
+}
+
 func TestUnknownPaletteIsRejected(t *testing.T) {
 	t.Parallel()
 	if _, ok := NamedPalette("solarised", "dark", false); ok {

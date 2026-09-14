@@ -10,6 +10,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
@@ -796,7 +797,7 @@ func pluginPanelError(reason string, actions bool) *ui.Node {
 			&ui.Node{Kind: ui.KindButton, Text: "Disable", Action: "plugin-disable", Name: "Disable", Role: "button", Focusable: true},
 		)
 	}
-	return &ui.Node{Kind: ui.KindColumn, Gap: 8, Padding: 12, Children: rows}
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: theme.MarginL, Children: rows}
 }
 
 func (h *pluginHost) deliver(hit pluginHit, event v1.EventKind, button v1.PointerButton, text string) bool {

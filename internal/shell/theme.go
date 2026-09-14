@@ -171,7 +171,7 @@ func ResolveTheme(cfg config.Config, bar config.Bar, tok theme.Tokens) (Theme, e
 	t := Theme{
 		Palette:   pal,
 		Metrics:   m,
-		Shapes:    resolveShapes(radius),
+		Shapes:    resolveShapes(radius, comp.InputRadius),
 		Type:      resolveType(comp, bar),
 		Surfaces:  resolveSurfaces(comp, hc),
 		Elevation: comp.Elevation,
@@ -196,9 +196,12 @@ func ResolveTheme(cfg config.Config, bar config.Bar, tok theme.Tokens) (Theme, e
 // resolveShapes derives the shape roles from the base radius. Stadium and
 // circle geometry is not here: those stay geometric invariants the painter
 // applies, so a zero radius still leaves a pill a pill.
-func resolveShapes(radius int) render.Shapes {
+func resolveShapes(radius, inputRadius int) render.Shapes {
 	if radius < 0 {
 		radius = 0
+	}
+	if inputRadius < 0 {
+		inputRadius = 0
 	}
 	large := radius * 3 / 2
 	if large > theme.RadiusMax {
@@ -210,6 +213,9 @@ func resolveShapes(radius int) render.Shapes {
 		Large:  large,
 		Card:   radius,
 		Panel:  radius,
+		// Interactive elements take the second ladder, so a composition can
+		// round its cards without rounding its buttons to match.
+		Input: inputRadius,
 	}
 }
 

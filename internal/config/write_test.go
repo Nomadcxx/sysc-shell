@@ -287,15 +287,15 @@ func TestThemeDefaultWritesNoThemeBlock(t *testing.T) {
 
 func TestThemePresetChangeDoesNotPinTheDerivedBar(t *testing.T) {
 	t.Parallel()
-	// Switching to compact moves the derived bar to 40 px. That derived value
+	// Switching to compact moves the derived bar to 25 px. That derived value
 	// must not be recorded as an explicit override, or a later preset change
 	// would leave the bar stuck at the old height.
 	c, err := Parse([]byte(`{"theme":{"preset":"compact"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Bar.Height != 40 {
-		t.Fatalf("derived height = %d, want compact's 40", c.Bar.Height)
+	if c.Bar.Height != 25 {
+		t.Fatalf("derived height = %d, want compact's 25", c.Bar.Height)
 	}
 	if w := toWire(c); w.Bar != nil {
 		t.Errorf("bar block = %+v, want nothing: the height is derived", w.Bar)

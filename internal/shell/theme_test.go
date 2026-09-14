@@ -22,24 +22,32 @@ func TestDefaultThemeGeometryMatchesTheBaseline(t *testing.T) {
 	if gap != 4 {
 		t.Fatalf("gap = %d, want 4", gap)
 	}
-	if body != 40 {
-		t.Fatalf("body = %d, want 40, which is height 48 minus twice the gap", body)
+	if body != 23 {
+		t.Fatalf("body = %d, want 23, which is height 31 minus twice the gap", body)
 	}
-	// The surface height is also the exclusive zone, so Niri windows begin 44
+	// The surface height is also the exclusive zone, so Niri windows begin 27
 	// logical pixels from the screen edge.
-	if surface != 44 {
-		t.Fatalf("surface = %d, want 44, which is gap plus body", surface)
+	if surface != 27 {
+		t.Fatalf("surface = %d, want 27, which is gap plus body", surface)
 	}
 }
 
-func TestDefaultThemeMatchesDMSContentBand(t *testing.T) {
+// TestDefaultThemeCarriesTheBarInsets pins the bar's own insets. It was named
+// for a DMS content band and asserted that reference's observed 6 px padding.
+// Architecture decision 8 makes DMS a behaviour reference rather than a
+// compatibility contract, and the parity re-base supersedes constants that were
+// observed rather than measured, so the name went with the values.
+//
+// The padding shrank with the band: a 31 px bar holding a 25 px capsule has
+// 6 px to spend on both insets, so 2 is what fits.
+func TestDefaultThemeCarriesTheBarInsets(t *testing.T) {
 	t.Parallel()
 	th := DefaultTheme()
-	if th.BarPadding != 6 {
-		t.Fatalf("bar padding = %d, want 6 for a 28px item band inside the 40px body", th.BarPadding)
+	if th.BarPadding != 2 {
+		t.Fatalf("bar padding = %d, want 2 for a 25 px capsule inside the 31 px band", th.BarPadding)
 	}
 	if th.Spacing != 4 {
-		t.Fatalf("item spacing = %d, want the DMS reference value 4", th.Spacing)
+		t.Fatalf("item spacing = %d, want 4", th.Spacing)
 	}
 }
 
@@ -153,16 +161,18 @@ func TestTokensResolveToBarTheme(t *testing.T) {
 
 func TestDefaultThemeCarriesCapsulePadding(t *testing.T) {
 	t.Parallel()
-	if got := DefaultTheme().Metrics.CapsulePadding; got != 8 {
-		t.Fatalf("CapsulePadding = %d, want 8", got)
+	if got := DefaultTheme().Metrics.CapsulePadding; got != 6 {
+		t.Fatalf("CapsulePadding = %d, want the re-based 6", got)
 	}
 }
 
 func TestDefaultThemeCarriesChromeMetrics(t *testing.T) {
 	t.Parallel()
 	th := DefaultTheme()
-	if th.Metrics.StandardControl != 40 || th.Metrics.CompactControl != 32 || th.Metrics.ButtonPadding != 12 {
-		t.Fatalf("control metrics = %d/%d padding %d, want 40/32 padding 12",
+	// Both control heights are derived now: the standard one is the input
+	// height, base x 1.1 forced even, and the compact one is the tab height.
+	if th.Metrics.StandardControl != 36 || th.Metrics.CompactControl != 32 || th.Metrics.ButtonPadding != 9 {
+		t.Fatalf("control metrics = %d/%d padding %d, want 36/32 padding 9",
 			th.Metrics.StandardControl, th.Metrics.CompactControl, th.Metrics.ButtonPadding)
 	}
 	if th.IconSize != 20 || th.Metrics.IconProfile != 18 || th.Metrics.IconLarge != 24 {
@@ -249,11 +259,16 @@ func TestDefaultPaletteKeepsCapsulesAndPillsVisible(t *testing.T) {
 	t.Parallel()
 	th := DefaultTheme()
 
-	if got := contrast(th.Background, th.Capsule); got < 1.45 {
-		t.Errorf("capsule/bar contrast = %.3f:1, want at least 1.45 so cards read as pills", got)
+	// 1.30 is the separation measured off the reference, and it is the floor a
+	// nested surface has to clear rather than a target it should sit at. It is
+	// well clear of the 1.17:1 that sysc-104 and sysc-110 were filed at, where
+	// pills were painted but invisible, so this is a relaxation to a measured
+	// value and not a return to that defect.
+	if got := contrast(th.Background, th.Capsule); got < 1.30 {
+		t.Errorf("capsule/bar contrast = %.3f:1, want at least 1.30 so cards read as pills", got)
 	}
-	if got := contrast(th.Surface, th.SurfaceContainerHigh); got < 1.45 {
-		t.Errorf("card/panel contrast = %.3f:1, want at least 1.45", got)
+	if got := contrast(th.Surface, th.SurfaceContainerHigh); got < 1.30 {
+		t.Errorf("card/panel contrast = %.3f:1, want at least 1.30", got)
 	}
 	if got := contrast(th.OnSurface, th.SurfaceContainerHigh); got < 4.5 {
 		t.Errorf("text/card contrast = %.2f:1, want at least 4.5", got)
@@ -437,20 +452,20 @@ func TestResolveThemeValidatesEveryGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Metrics.BarHeight != 48 || got.Metrics.StandardControl != 40 {
-		t.Errorf("metrics = %+v, want the standard row", got.Metrics)
+	if got.Metrics.BarHeight != 31 || got.Metrics.StandardControl != 36 {
+		t.Errorf("metrics = %+v, want the default row", got.Metrics)
 	}
 	if got.Shapes.Medium != 12 || got.Shapes.Card != 12 {
 		t.Errorf("shapes = %+v, want the 12 px base", got.Shapes)
 	}
-	if got.Type.Spec(theme.RoleBody).Size != 14 || got.Type.Spec(theme.RoleTitle).Weight != 600 {
+	if got.Type.Spec(theme.RoleBody).Size != 15 || got.Type.Spec(theme.RoleTitle).Weight != 600 {
 		t.Errorf("type = %+v, want the standard ramp", got.Type)
 	}
 	if got.Surfaces != (Surfaces{Bar: 0xff, Panel: 0xff, Overlay: 0xff}) {
 		t.Errorf("surfaces = %+v, want opaque", got.Surfaces)
 	}
-	if got.Motion.Durations.Medium != 180*time.Millisecond {
-		t.Errorf("motion medium = %v, want 180ms", got.Motion.Durations.Medium)
+	if got.Motion.Durations.Medium != 300*time.Millisecond {
+		t.Errorf("motion medium = %v, want 300ms", got.Motion.Durations.Medium)
 	}
 	if got.Motion.Spatial != theme.CurveOutCubic {
 		t.Errorf("curve = %q, want out-cubic", got.Motion.Spatial)
@@ -526,8 +541,11 @@ func TestResolveThemeAppliesCompositionAndBarOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The compact row supplies the control heights and icons.
-	if got.Metrics.StandardControl != 36 || got.Metrics.IconNormal != 18 {
+	// The compact row supplies the control heights and icons. Its standard
+	// control is the derived input height for a base of 27, which is 30 -- not
+	// to be confused with the default row's 36, which is what this row's own
+	// absolute used to be.
+	if got.Metrics.StandardControl != 30 || got.Metrics.IconNormal != 18 {
 		t.Errorf("metrics = %+v, want the compact row", got.Metrics)
 	}
 	// The explicit bar height wins over the row it came from.
@@ -537,8 +555,8 @@ func TestResolveThemeAppliesCompositionAndBarOverride(t *testing.T) {
 	if got.Shapes.Medium != 8 {
 		t.Errorf("radius = %d, want compact's 8", got.Shapes.Medium)
 	}
-	if got.Motion.Durations.Medium != 144*time.Millisecond {
-		t.Errorf("medium = %v, want compact's 144ms", got.Motion.Durations.Medium)
+	if got.Motion.Durations.Medium != 240*time.Millisecond {
+		t.Errorf("medium = %v, want compact's 240ms", got.Motion.Durations.Medium)
 	}
 }
 
@@ -644,11 +662,14 @@ func densityThemes(t *testing.T) map[theme.Density]Theme {
 func TestDensityMovesEveryMetricItOwns(t *testing.T) {
 	t.Parallel()
 	got := densityThemes(t)
+	// densityThemes keys by the rows Densities() offers, so this samples the
+	// current names. Asking for the superseded one would find no entry and
+	// silently compare against a zero Theme.
 	compact, standard, comfortable := got[theme.DensityCompact],
-		got[theme.DensityStandard], got[theme.DensityComfortable]
+		got[theme.DensityDefault], got[theme.DensityComfortable]
 
-	if compact.BarHeight != 40 || standard.BarHeight != 48 || comfortable.BarHeight != 56 {
-		t.Errorf("bar heights = %d/%d/%d, want 40/48/56",
+	if compact.BarHeight != 25 || standard.BarHeight != 31 || comfortable.BarHeight != 37 {
+		t.Errorf("bar heights = %d/%d/%d, want 25/31/37",
 			compact.BarHeight, standard.BarHeight, comfortable.BarHeight)
 	}
 	// Each metric must be monotonic across the rows: a denser theme that made
@@ -719,5 +740,49 @@ func TestShapeRolesStayIndependentOfTheBaseRadius(t *testing.T) {
 		if th.Shapes.Small > th.Shapes.Medium || th.Shapes.Medium > th.Shapes.Large {
 			t.Errorf("radius %d: shape ladder out of order: %+v", radius, th.Shapes)
 		}
+	}
+}
+
+func TestInputRadiusIsIndependentOfContainerRadius(t *testing.T) {
+	t.Parallel()
+	// The reference carries container radii scaled by radiusRatio and a
+	// parallel input ladder scaled by iRadiusRatio. One axis cannot express
+	// rounded cards with square-ish inputs, which is a composition it ships.
+	s := resolveShapes(16, 4)
+	if s.Card != 16 {
+		t.Errorf("card radius = %d, want 16", s.Card)
+	}
+	if s.Input != 4 {
+		t.Errorf("input radius = %d, want 4", s.Input)
+	}
+}
+
+func TestStadiumAndCircleStayGeometricAtZeroRadius(t *testing.T) {
+	t.Parallel()
+	// Carried from the superseded D8: a pill stays a pill at radius zero.
+	s := resolveShapes(0, 0)
+	if s.For(ui.ShapeStadium, 0) != render.ShapeHalf {
+		t.Error("stadium stopped being a proportion at radius zero")
+	}
+}
+
+// TestInputRadiusDefaultsToTheContainerLadder pins the wiring rather than the
+// arithmetic. Each preset seeds InputRadius with its own Radius, and the loader
+// applies configuration sparsely over a preset base, so a default theme has to
+// arrive with the axis populated. If that ever stopped happening every input
+// would quietly square off to zero, and no other test here would notice.
+func TestInputRadiusDefaultsToTheContainerLadder(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	th, err := ResolveTheme(cfg, cfg.Bar, theme.Fallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if th.Shapes.Input != 12 {
+		t.Errorf("default input radius = %d, want the standard preset's 12", th.Shapes.Input)
+	}
+	if th.Shapes.Input != th.Shapes.Card {
+		t.Errorf("default input %d and card %d differ; the presets seed them equal",
+			th.Shapes.Input, th.Shapes.Card)
 	}
 }

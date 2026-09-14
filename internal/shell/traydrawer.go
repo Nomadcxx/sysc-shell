@@ -45,7 +45,7 @@ func trayDrawerTree(arranged trayArrangement, images map[tray.ItemKey]*ui.Image)
 		}
 	}
 	root := &ui.Node{
-		Kind: ui.KindVirtualList, ItemCount: len(rows), ItemHeight: trayDrawerRowHeight, Padding: 8,
+		Kind: ui.KindVirtualList, ItemCount: len(rows), ItemHeight: trayDrawerRowHeight, Padding: theme.MarginM,
 		Item: func(i int) *ui.Node {
 			if i < 0 || i >= len(rows) {
 				return nil
@@ -68,16 +68,16 @@ func trayDrawerItemRow(item tray.Item, hidden, pinned bool) (*ui.Node, *ui.Node)
 		Kind: ui.KindImage, ImageSize: trayItemSize, Action: "tray-item",
 		Focusable: true, Name: name, Role: "button",
 	}
-	row := &ui.Node{Kind: ui.KindRow, Gap: 6, Children: []*ui.Node{
+	row := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
 		itemNode,
-		{Kind: ui.KindText, Text: name, MaxWidth: 140},
+		{Kind: ui.KindText, Text: name, MaxWidth: 140}, // token-exempt: the tray name column, a text measure rather than a ladder value
 	}}
 	token, ok := stableTrayToken(item)
 	if !ok {
 		return row, itemNode
 	}
 	button := func(label, action string) *ui.Node {
-		return &ui.Node{Kind: ui.KindButton, Text: label, Padding: 4,
+		return &ui.Node{Kind: ui.KindButton, Text: label, Padding: theme.MarginXS,
 			Action:    "tray-pref:" + action + ":" + token,
 			Focusable: true, Name: label + " " + name, Role: "button"}
 	}

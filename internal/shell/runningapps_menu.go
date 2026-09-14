@@ -7,6 +7,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -343,7 +344,7 @@ func (h *runningAppMenuHost) rebuild() {
 		for i, opt := range h.menu.options {
 			if i > 0 && i == len(h.rows)-1 && h.rows[i].CloseAll {
 				col.Children = append(col.Children, &ui.Node{
-					Kind: ui.KindRow, Padding: 4,
+					Kind: ui.KindRow, Padding: theme.MarginXS,
 					Children: []*ui.Node{{Kind: ui.KindSeparator}},
 				})
 			}
@@ -356,7 +357,7 @@ func (h *runningAppMenuHost) rebuild() {
 				label.Tone = ui.ToneError
 			}
 			col.Children = append(col.Children, &ui.Node{
-				Kind: ui.KindCapsule, Radius: runningAppMenuRadius, Padding: 6,
+				Kind: ui.KindCapsule, Radius: runningAppMenuRadius, Padding: theme.MarginS,
 				Fill: fill, Focusable: true, Role: "menuitem",
 				Children: []*ui.Node{label},
 			})

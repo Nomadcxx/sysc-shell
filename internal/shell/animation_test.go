@@ -30,16 +30,16 @@ func TestAnimatorUsesCatalogueDurations(t *testing.T) {
 		rising  bool
 		want    time.Duration
 	}{
-		{"press in", animPress, true, 80 * time.Millisecond},
-		{"press out", animPress, false, 120 * time.Millisecond},
-		{"hover", animHover, true, 120 * time.Millisecond},
-		{"hover out", animHover, false, 120 * time.Millisecond},
-		{"selection", animSelect, true, 180 * time.Millisecond},
+		{"press in", animPress, true, 75 * time.Millisecond},
+		{"press out", animPress, false, 150 * time.Millisecond},
+		{"hover", animHover, true, 150 * time.Millisecond},
+		{"hover out", animHover, false, 150 * time.Millisecond},
+		{"selection", animSelect, true, 300 * time.Millisecond},
 		// Panel visibility used to be 200 and 150, neither of which is a token.
 		// It maps onto the table now and keeps the asymmetry: a panel leaves
 		// faster than it arrives.
-		{"panel enter", animVisible, true, 180 * time.Millisecond},
-		{"panel exit", animVisible, false, 120 * time.Millisecond},
+		{"panel enter", animVisible, true, 300 * time.Millisecond},
+		{"panel exit", animVisible, false, 150 * time.Millisecond},
 	} {
 		if got := a.duration(tc.channel, tc.rising); got != tc.want {
 			t.Errorf("%s = %v, want %v", tc.name, got, tc.want)

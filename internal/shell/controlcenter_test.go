@@ -299,7 +299,13 @@ func TestControlCentreRetargetKeepsOneSelectedPageAndRailFocus(t *testing.T) {
 	if !h.anim.has(pageKey, animVisible) {
 		t.Fatal("page swap did not target the surface animator")
 	}
-	now = now.Add(h.theme.Motion.Durations.Medium / 2)
+	// Half of the transition actually under test, not half of Medium. This
+	// fixture turns reduced motion on, so the page fade resolves to the capped
+	// Short rather than to Medium; once Medium reached 300 ms, Medium/2 landed
+	// exactly on that fade's final instant, the value read a settled 1, and the
+	// next swap legitimately restarted it from 0. Asking the animator keeps the
+	// probe mid-flight whatever the tokens underneath are re-based to.
+	now = now.Add(h.anim.duration(animVisible, true) / 2)
 	before := h.anim.Value(pageKey, animVisible)
 	activateSection("section:monitor")
 	if got := h.anim.Value(pageKey, animVisible); got != before {

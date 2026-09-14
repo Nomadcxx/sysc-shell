@@ -17,9 +17,17 @@ import (
 type Density string
 
 const (
+	DensityMini        Density = "mini"
 	DensityCompact     Density = "compact"
-	DensityStandard    Density = "standard"
+	DensityDefault     Density = "default"
 	DensityComfortable Density = "comfortable"
+	DensitySpacious    Density = "spacious"
+	// DensityStandard is the name this row carried before it was re-based onto
+	// the reference. The constant is the wire value, so dropping it would
+	// reject every configuration file that names it. MetricsFor folds it onto
+	// DensityDefault; Densities does not offer it, and the settings list and
+	// the loader's error message name only the five current rows.
+	DensityStandard Density = "standard"
 )
 
 // MotionStyle selects the easing family. Expressive changes the curve for
@@ -83,13 +91,41 @@ const (
 // shared spacing scale: the standard row has to reproduce the shipped bar
 // exactly, and its 6 px padding is not a step on that scale.
 type Metrics struct {
-	BarHeight       int
-	BarPadding      int
-	BarSpacing      int
+	BarHeight int
+	// CapsuleHeight is the pill inside the bar, a ratio of the band rather than
+	// an independent constant, which is what keeps it proportional as density
+	// moves. Derived as toOdd(round(BarHeight * r)) with r of 0.90, 0.85, 0.82,
+	// 0.75 and 0.65 down the rows. Odd for the same reason the bar is: a shape
+	// centred in an odd box lands on a pixel row instead of straddling two.
+	CapsuleHeight int
+	BarPadding    int
+	BarSpacing    int
+	// BaseWidget is the one master control dimension. Every control below is a
+	// ratio of it rather than an absolute, because a table of absolutes cannot
+	// stay in proportion when the base moves. It is 33 on the default row --
+	// the reference's own figure -- and scales with the band on the others.
+	BaseWidget int
+	// The derived controls. Parity is forced per shape, not globally: an icon
+	// button and a checkbox centre a glyph, so they are odd; a toggle and a
+	// slider carry a two-sided inset, so they are even.
+	IconButton  int // base x 1.0, odd
+	Checkbox    int // base x 0.7, odd
+	ToggleBase  int // base x 0.8, even
+	SliderKnob  int // base x 0.7, even
+	InputHeight int // base x 1.1, even
+	TabHeight   int // base x 1.0, even
+	// CompactControl and StandardControl are the names call sites still use.
+	// They now carry the derived TabHeight and InputHeight rather than their
+	// own absolutes, and go away once nothing reads them.
 	CompactControl  int
 	StandardControl int
 	PanelPadding    int
 	CardPadding     int
+	// CardGap is the space between sibling cards on a surface. It is the same
+	// rung as a card's own interior inset, which is what makes a column of
+	// cards read as evenly spaced rather than as cards separated by a seam
+	// wider than their own padding.
+	CardGap int
 	// CapsulePadding is the inset inside a bar pill; ButtonPadding is the
 	// inset inside a control. Both were fixed constants in the shell's flat
 	// alias layer, which left a compact bar drawing standard-sized padding
@@ -105,42 +141,128 @@ type Metrics struct {
 	IconProfile int
 }
 
+// metrics is the density table, re-based onto the reference's five rows.
+//
+// Bar heights are the reference's own toOdd() results: 21, 25, 31, 37, 47. The
+// capsule column is toOdd(round(bar * r)) with r of 0.90, 0.85, 0.82, 0.75 and
+// 0.65, which puts the default row's pill at 25 -- the height measured off the
+// reference capture.
+//
+// BarPadding shrinks with the band. A 31 px bar holding a 25 px pill has only
+// 6 px to spend on both insets, so the old 6 px padding would leave the pill
+// taller than the space it sits in.
+//
+// PanelPadding, CardPadding and CardGap are ladder rungs and do not vary by
+// density: the reference draws them per surface, marginL inside a panel and
+// marginM both inside a card and between cards, rather than scaling them per
+// row.
 var metrics = map[Density]Metrics{
+	DensityMini: {
+		BarHeight: 21, CapsuleHeight: 19, BarPadding: 1, BarSpacing: 1,
+		BaseWidget: 22,
+		IconButton: 23, Checkbox: 15, ToggleBase: 18, SliderKnob: 14,
+		InputHeight: 24, TabHeight: 22,
+		CompactControl: 22, StandardControl: 24,
+		PanelPadding: 13, CardPadding: 9, CardGap: 9,
+		CapsulePadding: 2, ButtonPadding: 4,
+		IconSmall: 14, IconNormal: 16, IconLarge: 20,
+		IconProfile: 16,
+	},
 	DensityCompact: {
-		BarHeight: 40, BarPadding: 4, BarSpacing: 2,
-		CompactControl: 32, StandardControl: 36,
-		PanelPadding: 12, CardPadding: 10,
-		CapsulePadding: 4, ButtonPadding: 8,
+		BarHeight: 25, CapsuleHeight: 21, BarPadding: 2, BarSpacing: 2,
+		BaseWidget: 27,
+		IconButton: 27, Checkbox: 19, ToggleBase: 22, SliderKnob: 18,
+		InputHeight: 30, TabHeight: 26,
+		CompactControl: 26, StandardControl: 30,
+		PanelPadding: 13, CardPadding: 9, CardGap: 9,
+		CapsulePadding: 4, ButtonPadding: 6,
 		IconSmall: 16, IconNormal: 18, IconLarge: 24,
 		IconProfile: 18,
 	},
-	DensityStandard: {
-		BarHeight: 48, BarPadding: 6, BarSpacing: 4,
-		CompactControl: 32, StandardControl: 40,
-		PanelPadding: 16, CardPadding: 12,
-		CapsulePadding: 8, ButtonPadding: 12,
+	DensityDefault: {
+		BarHeight: 31, CapsuleHeight: 25, BarPadding: 2, BarSpacing: 4,
+		BaseWidget: 33,
+		IconButton: 33, Checkbox: 23, ToggleBase: 26, SliderKnob: 22,
+		InputHeight: 36, TabHeight: 32,
+		CompactControl: 32, StandardControl: 36,
+		PanelPadding: 13, CardPadding: 9, CardGap: 9,
+		CapsulePadding: 6, ButtonPadding: 9,
 		IconSmall: 16, IconNormal: 20, IconLarge: 24,
 		IconProfile: 18,
 	},
 	DensityComfortable: {
-		BarHeight: 56, BarPadding: 8, BarSpacing: 6,
-		CompactControl: 36, StandardControl: 44,
-		PanelPadding: 20, CardPadding: 16,
-		CapsulePadding: 12, ButtonPadding: 16,
+		BarHeight: 37, CapsuleHeight: 29, BarPadding: 4, BarSpacing: 6,
+		BaseWidget: 39,
+		IconButton: 39, Checkbox: 27, ToggleBase: 30, SliderKnob: 26,
+		InputHeight: 42, TabHeight: 38,
+		CompactControl: 38, StandardControl: 42,
+		PanelPadding: 13, CardPadding: 9, CardGap: 9,
+		CapsulePadding: 9, ButtonPadding: 13,
 		IconSmall: 18, IconNormal: 22, IconLarge: 28,
 		IconProfile: 20,
 	},
+	DensitySpacious: {
+		BarHeight: 47, CapsuleHeight: 31, BarPadding: 6, BarSpacing: 9,
+		BaseWidget: 50,
+		IconButton: 51, Checkbox: 35, ToggleBase: 40, SliderKnob: 34,
+		InputHeight: 54, TabHeight: 50,
+		CompactControl: 50, StandardControl: 54,
+		PanelPadding: 13, CardPadding: 9, CardGap: 9,
+		CapsulePadding: 13, ButtonPadding: 18,
+		IconSmall: 20, IconNormal: 24, IconLarge: 32,
+		IconProfile: 22,
+	},
 }
 
+// ToOdd and ToEven pin a dimension to a parity. An odd box has a true centre
+// row, so a centred glyph lands on a pixel; an even box gives a symmetric
+// two-sided inset. The reference chooses per shape rather than globally, and a
+// control that picks the wrong one needs subpixel compensation to look centred.
+func ToOdd(n int) int  { return n/2*2 + 1 }
+func ToEven(n int) int { return n / 2 * 2 }
+
 // MetricsFor returns the row for a density.
+//
+// The superseded name folds onto the row that replaced it, so a configuration
+// file written against the old table still resolves. The loader validates a
+// density by looking it up here, so the fold is what keeps such a file loading
+// rather than being rejected outright.
 func MetricsFor(d Density) (Metrics, bool) {
+	if d == DensityStandard {
+		d = DensityDefault
+	}
 	m, ok := metrics[d]
 	return m, ok
 }
 
 // SpacingScale is the shared gap ladder. Semantic gaps pick a step; nothing
 // multiplies a component dimension by an arbitrary factor.
-var SpacingScale = []int{2, 4, 8, 12, 16, 24}
+//
+// The rungs are the reference's margin ladder, marginXXXS through marginXL, in
+// logical pixels at scale 1. They are deliberately not a rescaling of the
+// previous {2, 4, 8, 12, 16, 24}: this ladder is denser in the middle, and that
+// is what produces the reference's tighter grouping inside a card. Rounding the
+// reference's geometry onto the old ladder would have put every padding one or
+// two pixels out, compounding across nested containers.
+var SpacingScale = []int{1, 2, 4, 6, 9, 13, 18}
+
+// The rungs, named. A surface asks for one by name rather than by index or by
+// the number itself: SpacingScale[4] says nothing about why a gap is that wide,
+// and a bare 9 at the call site is exactly what the conformance gate exists to
+// reject. The names are the reference's own, so a margin measured off it maps
+// across without arithmetic and without a rounding decision at each site.
+//
+// TestNamedRungsMatchTheSpacingScale pins these to the ladder, so the two
+// cannot drift apart.
+const (
+	MarginXXXS = 1
+	MarginXXS  = 2
+	MarginXS   = 4
+	MarginS    = 6
+	MarginM    = 9
+	MarginL    = 13
+	MarginXL   = 18
+)
 
 // TextRole is the semantic type role a node asks for. Components name a role;
 // they do not carry a point size.
@@ -153,6 +275,11 @@ const (
 	RoleTitle
 	RoleHeadline
 	RoleMono
+	// RoleDisplay is the hero rung the ladder used to top out below: the
+	// reference uses it for the calendar date header and similar treatments.
+	// It is appended rather than inserted, so every role above keeps its iota
+	// value, and textRoleCount in internal/render tracks it as the last role.
+	RoleDisplay
 )
 
 // TypeSpec is one row of the type table from design D7, before font scaling.
@@ -162,12 +289,21 @@ type TypeSpec struct {
 	Mono   bool
 }
 
+// typeRoles is the measured reference ladder. Its point sizes convert to
+// logical pixels at four thirds, established by measuring the reference capture
+// rather than assumed: 9 pt caption, 11 pt body and label, 13 pt title, 16 pt
+// headline, 18 pt display, 10 pt mono.
+//
+// The visible consequence is that titles are now larger and no heavier: the
+// reference reads lighter and larger than the ladder this replaces, and that
+// single axis accounts for much of the tonal difference.
 var typeRoles = map[TextRole]TypeSpec{
 	RoleCaption:  {Size: 12, Weight: 400},
-	RoleLabel:    {Size: 14, Weight: 500},
-	RoleBody:     {Size: 14, Weight: 400},
-	RoleTitle:    {Size: 16, Weight: 600},
-	RoleHeadline: {Size: 20, Weight: 600},
+	RoleLabel:    {Size: 15, Weight: 500},
+	RoleBody:     {Size: 15, Weight: 400},
+	RoleTitle:    {Size: 17, Weight: 600},
+	RoleHeadline: {Size: 21, Weight: 600},
+	RoleDisplay:  {Size: 24, Weight: 600},
 	RoleMono:     {Size: 13, Weight: 400, Mono: true},
 }
 
@@ -192,6 +328,8 @@ func (r TextRole) String() string {
 		return "headline"
 	case RoleMono:
 		return "mono"
+	case RoleDisplay:
+		return "display"
 	default:
 		return "body"
 	}
@@ -213,14 +351,21 @@ type MotionTokens struct {
 	FrameCap time.Duration
 }
 
-// BaseMotion is the unscaled duration table.
+// BaseMotion is the unscaled duration table, re-based onto the reference's
+// durations. It runs calmer than the table it replaces, most visibly at the
+// long end: 750 ms against 400.
+//
+// FrameCap is not one of the reference's durations and does not move with them.
+// It bounds how often a surface is blitted rather than how long a transition
+// takes, and it has to stay below the shortest token or a short transition
+// becomes visibly steppy.
 var BaseMotion = MotionTokens{
 	Instant:   0,
-	Shorter:   80 * time.Millisecond,
-	Short:     120 * time.Millisecond,
-	Medium:    180 * time.Millisecond,
-	Long:      250 * time.Millisecond,
-	ExtraLong: 400 * time.Millisecond,
+	Shorter:   75 * time.Millisecond,
+	Short:     150 * time.Millisecond,
+	Medium:    300 * time.Millisecond,
+	Long:      450 * time.Millisecond,
+	ExtraLong: 750 * time.Millisecond,
 	FrameCap:  33 * time.Millisecond,
 }
 
@@ -284,6 +429,11 @@ type Composition struct {
 	FontScale      int
 	FontWeight     int
 	Radius         int
+	// InputRadius is the parallel ladder for interactive elements, scaled
+	// independently of Radius. It is bounded like its sibling, and each preset
+	// seeds it with that preset's Radius, so inputs keep their current shape
+	// until someone sets the axis.
+	InputRadius    int
 	Motion         MotionStyle
 	MotionSpeed    int
 	BarOpacity     int
@@ -306,25 +456,28 @@ type Composition struct {
 // over the wallpaper.
 var presets = map[Preset]Composition{
 	PresetStandard: {
-		Density: DensityStandard,
-		Radius:  12,
-		Motion:  MotionStandard, MotionSpeed: 100,
+		Density:     DensityDefault,
+		Radius:      12,
+		InputRadius: 12,
+		Motion:      MotionStandard, MotionSpeed: 100,
 		BarOpacity: 100, PanelOpacity: 100, OverlayOpacity: 100,
 		BlurRadius: 24,
 		Elevation:  ElevationSubtle,
 	},
 	PresetCompact: {
-		Density: DensityCompact,
-		Radius:  8,
-		Motion:  MotionStandard, MotionSpeed: 125,
+		Density:     DensityCompact,
+		Radius:      8,
+		InputRadius: 8,
+		Motion:      MotionStandard, MotionSpeed: 125,
 		BarOpacity: 100, PanelOpacity: 100, OverlayOpacity: 100,
 		BlurRadius: 24,
 		Elevation:  ElevationSubtle,
 	},
 	PresetExpressive: {
-		Density: DensityStandard,
-		Radius:  16,
-		Motion:  MotionExpressive, MotionSpeed: 100,
+		Density:     DensityDefault,
+		Radius:      16,
+		InputRadius: 16,
+		Motion:      MotionExpressive, MotionSpeed: 100,
 		BarOpacity: 100, PanelOpacity: 95, OverlayOpacity: 95,
 		BlurRadius: 24,
 		Elevation:  ElevationStandard,
@@ -359,8 +512,10 @@ func Presets() []Preset {
 
 // Densities, MotionStyles, and Elevations list each closed set in a stable
 // order, for the settings registry and for error messages.
+// Densities lists the rows a user may choose. The superseded name still
+// resolves through MetricsFor, but it is deliberately not offered here.
 func Densities() []Density {
-	return []Density{DensityCompact, DensityStandard, DensityComfortable}
+	return []Density{DensityMini, DensityCompact, DensityDefault, DensityComfortable, DensitySpacious}
 }
 
 func MotionStyles() []MotionStyle {
@@ -403,6 +558,7 @@ func Rebase(current, from, to Composition) Composition {
 	rebaseInt(current.FontScale, from.FontScale, to.FontScale, &out.FontScale)
 	rebaseInt(current.FontWeight, from.FontWeight, to.FontWeight, &out.FontWeight)
 	rebaseInt(current.Radius, from.Radius, to.Radius, &out.Radius)
+	rebaseInt(current.InputRadius, from.InputRadius, to.InputRadius, &out.InputRadius)
 	rebaseInt(current.MotionSpeed, from.MotionSpeed, to.MotionSpeed, &out.MotionSpeed)
 	rebaseInt(current.BarOpacity, from.BarOpacity, to.BarOpacity, &out.BarOpacity)
 	rebaseInt(current.PanelOpacity, from.PanelOpacity, to.PanelOpacity, &out.PanelOpacity)
@@ -415,7 +571,7 @@ func (c Composition) Metrics() Metrics {
 	if m, ok := MetricsFor(c.Density); ok {
 		return m
 	}
-	return metrics[DensityStandard]
+	return metrics[DensityDefault]
 }
 
 // TextSize is the physical size for a role once font scaling applies.
@@ -467,7 +623,7 @@ func (c Composition) Durations() MotionTokens {
 // this reports the axis and the bound it missed.
 func (c Composition) Valid() error {
 	if _, ok := MetricsFor(c.Density); !ok {
-		return fmt.Errorf("density %q is not one of compact, standard, comfortable", c.Density)
+		return fmt.Errorf("density %q is not one of mini, compact, default, comfortable, spacious", c.Density)
 	}
 	if c.Motion != MotionStandard && c.Motion != MotionExpressive {
 		return fmt.Errorf("motion %q is not one of standard, expressive", c.Motion)
@@ -485,6 +641,7 @@ func (c Composition) Valid() error {
 		{"font-scale", c.FontScale, FontScaleMin, FontScaleMax},
 		{"font-weight", c.FontWeight, FontWeightMin, FontWeightMax},
 		{"radius", c.Radius, RadiusMin, RadiusMax},
+		{"input-radius", c.InputRadius, RadiusMin, RadiusMax},
 		{"motion-speed", c.MotionSpeed, SpeedMin, SpeedMax},
 		{"bar-opacity", c.BarOpacity, OpacityMin, OpacityMax},
 		// Panels take the lower blurred floor here so the axis can be set at
