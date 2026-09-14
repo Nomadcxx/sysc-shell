@@ -838,3 +838,28 @@ func TestReloadMovesOpenSurfacesOntoTheNewPalette(t *testing.T) {
 		t.Errorf("panel radius = %d, want the fixed 12", h.theme.Radius)
 	}
 }
+
+func TestRegistryOwnsTheMediaService(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(config.Default())
+	t.Cleanup(reg.Close)
+	if reg.media == nil {
+		t.Fatal("the registry did not construct a media service")
+	}
+}
+
+func TestMediaServiceStopsWhenItsLastLeaseGoes(t *testing.T) {
+	t.Parallel()
+	// Consumer-counted lifetime, exactly as audio has. A service nobody is
+	// watching must not keep a bus connection open.
+	reg := NewRegistry(config.Default())
+	t.Cleanup(reg.Close)
+	l, err := reg.media.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Release()
+	if reg.media.Available() && reg.media.Running() {
+		t.Error("the service kept running with no leases")
+	}
+}

@@ -81,6 +81,7 @@ type Registry struct {
 	audio                *services.Audio
 	brightness           *services.Brightness
 	network              *services.Network
+	media                *services.Media
 	bluetooth            *services.Bluetooth
 	bluetoothState       services.BluetoothState
 	bluetoothRelayCancel chan struct{}
@@ -179,6 +180,14 @@ func NewRegistry(cfg config.Config) *Registry {
 	r.osd = newOSDManager(r, 0)
 	r.setAudio(services.NewAudio(0, ""))
 	r.setBrightness(services.NewBrightness("", "", 0))
+	// The media service opens a session-bus connection, which no unit test
+	// should need. Tests get the inert service and install their own over the
+	// fake, the same way the network service below is skipped.
+	if runningAsTest() {
+		r.setMedia(services.NewUnavailableMedia())
+	} else {
+		r.setMedia(services.NewSessionMedia())
+	}
 	// The network service opens a system-bus connection, which no unit test
 	// should need. It is skipped under test for the same reason the wallpaper
 	// service below is: a test that reaches the developer's real session is a
@@ -224,6 +233,17 @@ func (r *Registry) setAudio(a *services.Audio) {
 	}
 	go r.relayAudioOSD(a)
 	go r.relayMixer(a)
+}
+
+// setMedia installs the media service. It holds no registry lease and runs no
+// relay: audio takes one because its volume relays are permanent consumers,
+// and the design approved no OSD for a track change. The widget and the page
+// acquire for themselves, and the service stops while nothing watches.
+func (r *Registry) setMedia(m *services.Media) {
+	if r.media != nil {
+		r.media.Close()
+	}
+	r.media = m
 }
 
 func (r *Registry) relayMixer(audio *services.Audio) {
@@ -1254,6 +1274,9 @@ func (r *Registry) Close() {
 	}
 	if r.network != nil {
 		r.network.Close()
+	}
+	if r.media != nil {
+		r.media.Close()
 	}
 	if bluetooth != nil {
 		_ = bluetooth.Close()
