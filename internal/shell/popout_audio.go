@@ -85,7 +85,7 @@ func audioVolumesTree(r *Registry, h *PanelHost) *ui.Node {
 	rows := []*ui.Node{
 		audioVolumeCard(audioApplyPending(h, audioDefaultNode(snap.Sinks, "Output")), "Output", nil, h),
 		audioVolumeCard(audioApplyPending(h, audioDefaultNode(snap.Sources, "Input")), "Input", nil, h),
-		{Kind: ui.KindText, Text: fmt.Sprintf("Applications %d", len(snap.Streams)), TextRole: theme.RoleLabel, Height: 28},
+		{Kind: ui.KindText, Text: fmt.Sprintf("Applications %d", len(snap.Streams)), TextRole: theme.RoleLabel, Height: 28}, // token-exempt: the applications label band, a measured text row with no counterpart in the density row
 	}
 	if unavailable {
 		audioDisable(rows[0])
@@ -115,6 +115,7 @@ func audioVolumesTree(r *Registry, h *PanelHost) *ui.Node {
 }
 
 func audioDevicesTree(r *Registry, h *PanelHost) *ui.Node {
+	m := h.metrics()
 	snap, _, unavailable := audioMixerState(r)
 	out := []*ui.Node{
 		{Kind: ui.KindText, Text: "Output device", TextRole: theme.RoleLabel},
@@ -127,7 +128,7 @@ func audioDevicesTree(r *Registry, h *PanelHost) *ui.Node {
 		out = append(out, &ui.Node{Kind: ui.KindText, Text: reason, TextRole: theme.RoleBody})
 	} else {
 		for _, n := range snap.Sinks {
-			out = append(out, audioDeviceRow(n))
+			out = append(out, audioDeviceRow(n, m))
 		}
 	}
 	out = append(out, &ui.Node{Kind: ui.KindText, Text: "Input device", TextRole: theme.RoleLabel})
@@ -139,24 +140,24 @@ func audioDevicesTree(r *Registry, h *PanelHost) *ui.Node {
 		out = append(out, &ui.Node{Kind: ui.KindText, Text: reason, TextRole: theme.RoleBody})
 	} else {
 		for _, n := range snap.Sources {
-			out = append(out, audioDeviceRow(n))
+			out = append(out, audioDeviceRow(n, m))
 		}
 	}
 	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Children: out}
 }
 
-func audioDeviceRow(n services.AudioNode) *ui.Node {
+func audioDeviceRow(n services.AudioNode, m theme.Metrics) *ui.Node {
 	// KindRow paints no fill; KindButton centres its children. A capsule
 	// around a two-child row gets the selected well and pinRowEnd puts the
 	// check on the trailing edge (D6).
 	inner := []*ui.Node{{Kind: ui.KindText, Text: n.Description, TextRole: theme.RoleBody}}
 	if n.Default {
-		inner = append(inner, &ui.Node{Kind: ui.KindIcon, Icon: "check", IconSize: 20})
+		inner = append(inner, &ui.Node{Kind: ui.KindIcon, Icon: "check", IconSize: m.IconNormal})
 	}
 	cap := &ui.Node{
 		Kind: ui.KindCapsule, Action: fmt.Sprintf("audio-dev:%d", n.ID),
 		Name: n.Description, Role: "button", Focusable: true,
-		Height: 44, Padding: theme.MarginL, Shape: ui.ShapeMedium,
+		Height: 44, Padding: theme.MarginL, Shape: ui.ShapeMedium, // token-exempt: the device row band, a measured height that no density-row field equals
 		Children: []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginL, Children: inner}},
 	}
 	if n.Default {
@@ -165,15 +166,22 @@ func audioDeviceRow(n services.AudioNode) *ui.Node {
 	return cap
 }
 
-func audioVolumeRow(n services.AudioNode, role string, icon *ui.Image) *ui.Node {
+// audioValueColumnW is the trailing percentage column. It is named because
+// three places share it: the node below, the width the card assigns it, and
+// the subtraction that leaves the middle column its remaining pixels. Only
+// the first is visible to the conformance scan, so a number here would drift
+// out of step with the other two on the first edit that missed them.
+const audioValueColumnW = 44
+
+func audioVolumeRow(n services.AudioNode, role string, icon *ui.Image, m theme.Metrics) *ui.Node {
 	identIcon := audioRoleIcon(role, n.Muted)
 	ident := &ui.Node{
-		Kind: ui.KindCapsule, Width: 32, Height: 32, Shape: ui.ShapeCircle,
+		Kind: ui.KindCapsule, Width: m.CompactControl, Height: m.CompactControl, Shape: ui.ShapeCircle,
 		Fill:     ui.FillContainerHighest,
-		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: identIcon, IconSize: 20}},
+		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: identIcon, IconSize: m.IconNormal}},
 	}
 	if icon != nil {
-		ident.Children = []*ui.Node{{Kind: ui.KindImage, Image: icon, ImageSize: 32}}
+		ident.Children = []*ui.Node{{Kind: ui.KindImage, Image: icon, ImageSize: m.CompactControl}}
 	}
 	name := n.Description
 	if name == "" {
@@ -215,8 +223,8 @@ func audioVolumeRow(n services.AudioNode, role string, icon *ui.Image) *ui.Node 
 	mute := &ui.Node{
 		Kind: ui.KindButton, Action: fmt.Sprintf("audio-mute:%d", n.ID),
 		Name: "Mute " + role, Role: "button", Focusable: n.ID != 0,
-		Width: 32, Height: 32, Shape: ui.ShapeCircle,
-		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: muteIcon, IconSize: 20}},
+		Width: m.CompactControl, Height: m.CompactControl, Shape: ui.ShapeCircle,
+		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: muteIcon, IconSize: m.IconNormal}},
 	}
 	if n.Muted {
 		mute.State |= ui.StateSelected
@@ -224,16 +232,16 @@ func audioVolumeRow(n services.AudioNode, role string, icon *ui.Image) *ui.Node 
 	if n.ID == 0 {
 		mute.State |= ui.StateDisabled
 	}
-	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Height: 68, Children: []*ui.Node{
+	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Height: 68, Children: []*ui.Node{ // token-exempt: TestAudioDensityContract pins this band at 68 so a compact row still holds the role, the name and the slider
 		ident, mid,
-		{Kind: ui.KindText, Text: value, Width: 44, Tabular: true, MinWidthText: "100%", TextRole: theme.RoleBody},
+		{Kind: ui.KindText, Text: value, Width: audioValueColumnW, Tabular: true, MinWidthText: "100%", TextRole: theme.RoleBody},
 		mute,
 	}}
 }
 
 func audioVolumeCard(n services.AudioNode, role string, icon *ui.Image, h *PanelHost) *ui.Node {
 	m := h.metrics()
-	row := audioVolumeRow(n, role, icon)
+	row := audioVolumeRow(n, role, icon, m)
 	panelW := h.place.Panel.W
 	if panelW <= 0 {
 		panelW = panelTargetSize(PanelAudio).W
@@ -241,8 +249,8 @@ func audioVolumeCard(n services.AudioNode, role string, icon *ui.Image, h *Panel
 	innerW := max(panelW-2*m.PanelPadding-2*m.CardPadding, 0)
 	// Identity, value and mute are fixed; the middle column receives every
 	// remaining pixel so the slider grows with the panel.
-	row.Children[1].Width = max(innerW-32-44-32-3*row.Gap, 0)
-	row.Children[2].Width = 44
+	row.Children[1].Width = max(innerW-m.CompactControl-audioValueColumnW-m.CompactControl-3*row.Gap, 0)
+	row.Children[2].Width = audioValueColumnW
 	return &ui.Node{
 		Kind: ui.KindCapsule, Height: row.Height + 2*m.CardPadding,
 		Padding: m.CardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
