@@ -136,7 +136,7 @@ func TestAnInvalidChargeRendersNothing(t *testing.T) {
 func TestABatteryWidgetOpensTheSessionPanel(t *testing.T) {
 	t.Parallel()
 	var node *ui.Node
-	for _, w := range buildWidgets(config.Default().Bar.Right, 8) {
+	for _, w := range buildWidgets(config.Default().Bar.Right, 8, standardMetrics()) {
 		if w.inner != nil && w.inner.Kind == ui.KindText && w.tooltip == "Battery" {
 			node = w.inner
 			break

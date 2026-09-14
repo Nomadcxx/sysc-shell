@@ -131,9 +131,9 @@ func NewWithTheme(theme Theme, policy config.Bar, connector string) (*Bar, error
 		stopAnim:      make(chan struct{}),
 	}
 
-	b.left = buildWidgets(policy.Left, b.theme.Metrics.CapsulePadding)
-	b.center = buildWidgets(policy.Center, b.theme.Metrics.CapsulePadding)
-	b.right = buildWidgets(policy.Right, b.theme.Metrics.CapsulePadding)
+	b.left = buildWidgets(policy.Left, b.theme.Metrics.CapsulePadding, b.theme.Metrics)
+	b.center = buildWidgets(policy.Center, b.theme.Metrics.CapsulePadding, b.theme.Metrics)
+	b.right = buildWidgets(policy.Right, b.theme.Metrics.CapsulePadding, b.theme.Metrics)
 	return b, nil
 }
 

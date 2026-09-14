@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -23,6 +24,12 @@ const (
 	monitorControlHeight = 28
 	processTablePadding  = 6
 	processRowPadding    = 2
+	// processStatusHeight is the inline status or issue line above the table,
+	// and processCellHeight is one row's text band. Each is named because it
+	// appears twice: once on the node and once in the height the panel
+	// subtracts for it, and the scan can only see the first of those.
+	processStatusHeight = 24
+	processCellHeight   = 22
 )
 
 func monitorPanelTree(h *PanelHost, sels []services.Selector, snap services.Snapshot, history map[services.Selector][]float64, facts machineFacts) *ui.Node {
@@ -30,10 +37,10 @@ func monitorPanelTree(h *PanelHost, sels []services.Selector, snap services.Snap
 		h.monitorPage = monitorPageProcesses
 	}
 	if h.monitorPage == monitorPageMetrics {
-		bodyH := max(h.place.Panel.H-2*h.metrics().PanelPadding-monitorControlHeight-12, processRowHeight)
+		bodyH := max(h.place.Panel.H-2*h.metrics().PanelPadding-monitorControlHeight-theme.MarginL, processRowHeight)
 		body := monitorTree(h.metrics(), sels, snap, history, facts)
 		body.Padding = 0
-		return &ui.Node{Kind: ui.KindColumn, Gap: 12, Padding: h.metrics().PanelPadding, Children: []*ui.Node{
+		return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Padding: h.metrics().PanelPadding, Children: []*ui.Node{
 			monitorPageSwitcher(h),
 			{Kind: ui.KindScroll, Height: bodyH, Children: []*ui.Node{body}},
 		}}
@@ -89,26 +96,34 @@ func processMonitorTree(h *PanelHost, snapshot services.ProcessSnapshot, current
 	field.Width, field.Height = 300, monitorControlHeight
 	filters := processFilterSwitcher(h)
 	filters.Width = 264
-	tools := &ui.Node{Kind: ui.KindRow, Gap: 12, Height: monitorControlHeight, PinEnd: true,
+	tools := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Height: monitorControlHeight, PinEnd: true,
 		Children: []*ui.Node{field, filters}}
 	processes := projectProcesses(snapshot.Processes, h.query, h.processFilter, h.processSort, h.processDesc, currentUID)
 	header := processHeader(h)
 
-	used := 2*h.metrics().PanelPadding + monitorControlHeight + 12 + monitorControlHeight + 8 + processHeaderHeight + 8
+	// The column below stacks the switcher, the tools row, the header and the
+	// table, so it spends three gaps -- yet the first term is 12 where the
+	// column itself uses MarginM. That extra pixel is load-bearing: reconciling
+	// it to the column's gap grows the table by one and pushes the measured
+	// content past the surface, which TestToggleMonitorOpensTallerThanTheOldGuess
+	// catches. Something in the stack measures one taller than these terms say,
+	// and until that is found this reserve stays as it is.
+	used := 2*h.metrics().PanelPadding + monitorControlHeight + 12 +
+		monitorControlHeight + theme.MarginM + processHeaderHeight + theme.MarginM
 	children := []*ui.Node{monitorPageSwitcher(h), tools, header}
 	if h.processStatus != "" {
 		tone := ui.ToneNormal
 		if h.processStatusErr != nil {
 			tone = ui.ToneError
 		}
-		children = append(children, &ui.Node{Kind: ui.KindText, Text: h.processStatus, Tone: tone, Height: 24})
-		used += 24 + 8
+		children = append(children, &ui.Node{Kind: ui.KindText, Text: h.processStatus, Tone: tone, Height: processStatusHeight})
+		used += processStatusHeight + theme.MarginM
 	} else if len(snapshot.Issues) > 0 {
 		children = append(children, &ui.Node{
 			Kind: ui.KindText, Text: fmt.Sprintf("%d processes could not be read", len(snapshot.Issues)),
-			Tone: ui.ToneError, Height: 24,
+			Tone: ui.ToneError, Height: processStatusHeight,
 		})
-		used += 24 + 8
+		used += processStatusHeight + theme.MarginM
 	}
 	rows := make([]*ui.Node, len(processes))
 	tableHeight := max(h.place.Panel.H-used, processRowPitch+2*processTablePadding)
@@ -129,7 +144,7 @@ func processMonitorTree(h *PanelHost, snapshot services.ProcessSnapshot, current
 		Kind: ui.KindCapsule, Height: tableHeight, Padding: processTablePadding,
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard, Children: []*ui.Node{list},
 	})
-	return &ui.Node{Kind: ui.KindColumn, Gap: 8, Padding: h.metrics().PanelPadding, Children: children}
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: h.metrics().PanelPadding, Children: children}
 }
 
 func processFilterSwitcher(h *PanelHost) *ui.Node {
@@ -179,7 +194,7 @@ func processHeader(h *PanelHost) *ui.Node {
 			Width: width, Height: processHeaderHeight,
 			Children: []*ui.Node{{Kind: ui.KindText, Text: text}}}
 	}
-	return &ui.Node{Kind: ui.KindRow, Gap: 8, Padding: processTablePadding + processRowPadding,
+	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Padding: processTablePadding + processRowPadding,
 		Height: processHeaderHeight, Children: []*ui.Node{
 			button("name", "Name", nameW), button("cpu", "CPU", cpuW),
 			button("memory", "Memory", memoryW), button("pid", "PID", pidW),
@@ -203,7 +218,7 @@ func processRow(h *PanelHost, process services.Process) *ui.Node {
 	}
 	identity := fmt.Sprintf(":%d:%d", process.Identity.PID, process.Identity.StartTimeTicks)
 	data := &ui.Node{
-		Kind: ui.KindRow, Gap: 8, Height: 22, Children: []*ui.Node{
+		Kind: ui.KindRow, Gap: theme.MarginM, Height: processCellHeight, Children: []*ui.Node{
 			cell(process.Name, nameW, false), cell(cpu, cpuW, true), cell(memory, memoryW, true),
 			cell(strconv.Itoa(process.Identity.PID), pidW, true),
 		},
@@ -211,10 +226,10 @@ func processRow(h *PanelHost, process services.Process) *ui.Node {
 	kill := &ui.Node{
 		Kind: ui.KindButton, Text: "Kill", Action: "process:term" + identity,
 		Name: fmt.Sprintf("Kill %s", process.Name), Role: "button", Focusable: true,
-		Width: actionW, Height: 22, Padding: 4, Fill: ui.FillOutline, Tone: ui.ToneError,
+		Width: actionW, Height: processCellHeight, Padding: theme.MarginXS, Fill: ui.FillOutline, Tone: ui.ToneError,
 	}
 	row := &ui.Node{
-		Kind: ui.KindRow, Height: processRowHeight, Padding: processRowPadding, Gap: 8,
+		Kind: ui.KindRow, Height: processRowHeight, Padding: processRowPadding, Gap: theme.MarginM,
 		Action: "monitor:select" + identity, Name: fmt.Sprintf("Select %s", process.Name),
 		Role: "row", Focusable: true, Children: []*ui.Node{data, kill},
 	}

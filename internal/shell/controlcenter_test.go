@@ -17,6 +17,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -157,7 +158,7 @@ func TestControlCentreRevealFollowsSurfaceAnimator(t *testing.T) {
 }
 
 func TestWordmarkRightClickOpensControlCentre(t *testing.T) {
-	widgets := buildWidgets([]config.Item{{ID: "wordmark"}}, 6)
+	widgets := buildWidgets([]config.Item{{ID: "wordmark"}}, 6, standardMetrics())
 	if len(widgets) != 1 {
 		t.Fatalf("buildWidgets = %d widgets, want 1", len(widgets))
 	}
@@ -166,7 +167,7 @@ func TestWordmarkRightClickOpensControlCentre(t *testing.T) {
 		mark.Name != "Control centre" || mark.Role != "button" {
 		t.Fatalf("wordmark = %+v, want the accessible control-centre action", mark)
 	}
-	if got := buildWidgets([]config.Item{{ID: "control-center"}}, 6); len(got) != 0 {
+	if got := buildWidgets([]config.Item{{ID: "control-center"}}, 6, standardMetrics()); len(got) != 0 {
 		t.Fatalf("standalone control-center built %d widgets, want none", len(got))
 	}
 	for _, id := range config.KnownItemIDs() {
@@ -392,10 +393,10 @@ func TestControlCentreHomeFillsTheBodyContract(t *testing.T) {
 		t.Fatalf("body height = %d, want 480", body.Height)
 	}
 	home := body.Children[0]
-	if home.Gap != 12 || len(home.Children) != 4 {
-		t.Fatalf("Home composition = %+v, want four blocks separated by 12px", home)
+	if home.Gap != theme.MarginL || len(home.Children) != 4 {
+		t.Fatalf("Home composition = %+v, want four blocks separated by one MarginL", home)
 	}
-	want := []int{96, 48, 184, 116}
+	want := []int{ccIdentityCardH, ccTogglePillH, ccSplitH, ccSlidersH}
 	for i, child := range home.Children {
 		if child.Height != want[i] {
 			t.Errorf("Home block %d height = %d, want %d", i, child.Height, want[i])
@@ -417,8 +418,8 @@ func TestHomeShowsDashesBeforeTheFirstSample(t *testing.T) {
 func TestControlCentreHomeQuickAccessControlsAreSeparated(t *testing.T) {
 	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
 	quick := ccHome(&Registry{}, h).Children[1]
-	if quick.Kind != ui.KindRow || quick.Gap != 8 || len(quick.Children) != 2 {
-		t.Fatalf("quick access = %+v, want two controls in an 8px-gap row", quick)
+	if quick.Kind != ui.KindRow || quick.Gap != theme.MarginM || len(quick.Children) != 2 {
+		t.Fatalf("quick access = %+v, want two controls in a MarginM-gap row", quick)
 	}
 	for _, name := range []string{"Caffeine", "Wallpaper"} {
 		n := findByName(quick, name)
@@ -616,10 +617,10 @@ func TestWeatherPageKeepsTodayAndFourForecastSlots(t *testing.T) {
 	r := &Registry{}
 	h := &PanelHost{id: PanelControlCenter, section: "weather", theme: DefaultTheme()}
 	page := ccWeather(r, h)
-	if page.Height != 480 || page.Gap != 12 || len(page.Children) != 2 {
-		t.Fatalf("weather page = %+v, want 336px Today and 132px forecast strip", page)
+	if page.Height != ccPageH || page.Gap != theme.MarginL || len(page.Children) != 2 {
+		t.Fatalf("weather page = %+v, want a Today block above the forecast strip", page)
 	}
-	if page.Children[0].Height != 336 || page.Children[1].Height != 132 || len(page.Children[1].Children) != 4 {
+	if page.Children[0].Height != ccTodayH || page.Children[1].Height != ccForecastH || len(page.Children[1].Children) != 4 {
 		t.Fatalf("weather blocks = %+v, want Today plus four stable forecast cells", page.Children)
 	}
 	if got := renderText(page.Children[1]); strings.Count(got, ccDash) < 4 {

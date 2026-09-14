@@ -134,7 +134,7 @@ func TestPanelNotificationsPublicName(t *testing.T) {
 
 func notifyWidget(t *testing.T) textWidget {
 	t.Helper()
-	for _, w := range buildWidgets(config.Default().Bar.Right, 8) {
+	for _, w := range buildWidgets(config.Default().Bar.Right, 8, standardMetrics()) {
 		if w.inner != nil && w.inner.Action == panelNotificationsAction {
 			return w
 		}
