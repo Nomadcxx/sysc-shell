@@ -43,6 +43,7 @@ type Lease struct {
 	audio      *Audio
 	brightness *Brightness
 	network    *Network
+	media      *Media
 	selector   Selector
 	boundary   time.Duration
 }
@@ -114,6 +115,10 @@ func (l *Lease) Release() {
 		n := l.network
 		l.network = nil
 		n.release(l)
+	case l.media != nil:
+		md := l.media
+		l.media = nil
+		md.release(l)
 	}
 }
 
