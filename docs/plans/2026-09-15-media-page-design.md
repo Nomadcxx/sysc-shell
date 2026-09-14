@@ -68,6 +68,11 @@ sysc-253's spine owns the section seam this page needs, and the seam exists
 on `main`. Whether sysc-253 closes is a bd judgement for the owner; this
 design records no status.
 
+The Registry consumes `Media.Changes()` in one relay. The relay retains the
+latest snapshot, reapplies configured bars, and rebuilds an open control
+centre. Bar and page leases still own the service watch; the relay does not
+keep a bus subscription alive.
+
 ### D2 — Page composition, on the ladder
 
 The page is a column at `theme.MarginL` inside the existing CC viewport
@@ -137,6 +142,13 @@ Blacklisted names never enter the player set at all: discovery skips them,
 name events ignore them, and re-`Configure` reconciles the live set, so the
 picker hides what the user rejected. With no configuration, behaviour is
 exactly what shipped.
+
+The JSON `media` block carries `preferred` and `blacklist` as full MPRIS
+well-known names. The config package validates those names before a reload can
+replace live state. `Configure` applies the in-memory filter, then asks the
+service goroutine to enumerate the current bus names so removing a blacklist
+entry can restore a player. The Registry calls it after releasing
+`Registry.mu`.
 
 ### D6 — Art worker
 

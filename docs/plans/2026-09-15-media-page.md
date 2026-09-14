@@ -16,6 +16,7 @@
 - **Tests use a fake bus, never a real session bus.** The registry tests install `services.NewUnavailableMedia()` or a fake-backed service; nothing reaches the developer's desktop.
 - **Docs land on `main` before code.** Task 0 commits the design and this plan as docs-only commits with register rows. The sixteen-task Milestone 2 plan died uncommitted; do not repeat it.
 - Work in `.worktrees/feature/media-page` off `main`. bd runs from `/home/nomadx/sysc-shell` (primary checkout) with `BEADS_DB=/home/nomadx/sysc-shell/.beads/beads.db` when exporting into the worktree; reset `export_hashes` before any export that must contain the full graph.
+- The docs and tracker claim from Task 0 already landed on `main` (`0b148a4`, `9fb1765`, `c996e9f`). Start execution at Task 1; do not copy or recommit the documents.
 - Go only, no CGO, no new modules. `go.mod`/`go.sum` must not change; every commit verifies `git diff --exit-code -- go.mod go.sum`.
 - **The `commit-msg` hook rejects these substrings case-insensitively:** `claude`, `anthropic`, `chatgpt`, `openai`, `copilot`, `cursor`, `cody`, `tabnine`, `codex`, `gemini`, `bard`, `gpt-[0-9]`, `llm`, `ai assistant`, `bot`, `agent`. Ordinary words trip it — `both` contains `bot`. Screen every message:
   ```bash
@@ -30,6 +31,7 @@
 | Path | Responsibility |
 |---|---|
 | `internal/services/media.go` | `CanSeek`, `Configure`, selection order, blacklist filter |
+| `internal/config/config.go`, `internal/config/load.go`, `internal/config/write.go` | strict `media.preferred` and `media.blacklist` configuration |
 | `internal/render/paint.go` | `paintTextMarquee` |
 | `internal/ui/tree.go` | `Marquee`, `TextOffset` node fields |
 | `internal/shell/animation.go` | `animSweep` linear wrap mode |
@@ -54,7 +56,7 @@
 
 ### Task 1: Service — `CanSeek`, `Configure`, selection order (sysc-283)
 
-**Files:** Modify `internal/services/media.go`; Test `internal/services/media_test.go`.
+**Files:** Modify `internal/services/media.go`, `internal/config/config.go`, `internal/config/load.go`, and `internal/config/write.go`; test `internal/services/media_test.go` and `internal/config/config_test.go`.
 
 **Interfaces:** Produces `MediaState.CanSeek bool`, `func (m *Media) Configure(preferred string, blacklist []string)`.
 
@@ -76,10 +78,12 @@ func TestMediaConfiguredPreferredBeatsHistory(t *testing.T) // configured prefer
                                                             // Prefer still beats configuration
 func TestMediaUnconfiguredSelectionIsUnchanged(t *testing.T) // zero config: the three existing
                                                              // selection tests' outcomes hold
+func TestMediaConfigRoundTrips(t *testing.T)                 // preferred and blacklist survive
+                                                             // strict parse and sparse write
 ```
 
 - [ ] **Step 2:** Run `go test ./internal/services -run TestMedia -v`; expect failures (`CanSeek` false, `Configure` undefined).
-- [ ] **Step 3:** Implement: `mediaPlayer.gains canSeek bool, lastPlaying time.Time`; decode `CanSeek` in `probePlayer`; record `lastPlaying = m.now()` when a refresh reads `Playing`; `reselectLocked` gains the configured-preferred rung between `preferred` and the playing scan, with the candidate set filtered by the blacklist; `Configure` stores, re-probes nothing (bus is event-driven), reconciles the set, re-selects and republishes.
+- [ ] **Step 3:** Implement: add the strict `config.Media` block; decode `CanSeek` in `probePlayer`; record `lastPlaying` only when a refresh crosses into `Playing`; `reselectLocked` gains the configured-preferred rung between the runtime preference and the most-recently-playing scan, with the candidate set filtered by the blacklist; `Configure` filters the retained set, republishes, and starts a service-owned enumeration to reconcile names that were previously blacklisted. Apply configuration at construction and after a committed reload, after `Registry.mu` is released.
 - [ ] **Step 4:** `go test ./internal/services -run TestMedia -v` green; `go vet ./internal/services`; commit:
   `feat(services): gate media selection with configuration and play history`
 
@@ -147,7 +151,7 @@ func TestMediaSeekWritesOnRelease(t *testing.T)    // slider release -> SetPosit
 ```
 
 - [ ] **Step 2:** Run `go test ./internal/shell -run TestMedia -v`; expect fail (`mediaBody` undefined, section still disabled).
-- [ ] **Step 3:** Implement per design D2/D3/D4/D10: `Enabled: true` on the `ccSections` media entry; `ccPage` case; the three cards; `h.mediaLease` hooks called from `selectControlCentreSection` (enter/leave) and the CC branch of `closeAllPanelsLocked`; `media:` prefix dispatch beside the `audio-` handlers; position row `KindMeter` normally, `KindSlider` when `CanSeek && LengthUS > 0`, animated by the surface frame loop reading `CachedState()` at paint (frames wanted while `Status == PlaybackPlaying` or a seek drag is pending). Art node requests through the Task 4 wrapper and `Lookup`s at build, never decodes.
+- [ ] **Step 3:** Implement per design D2/D3/D4/D10: `Enabled: true` on the `ccSections` media entry; `ccPage` case; the three cards; `h.mediaLease` hooks called from `selectControlCentreSection` (enter/leave) and the CC branch of `closeAllPanelsLocked`; `media:` prefix dispatch beside the `audio-` handlers; position row `KindMeter` normally, `KindSlider` when `CanSeek && LengthUS > 0`, animated by the surface frame loop reading `CachedState()` at paint (frames wanted while `Status == PlaybackPlaying` or a seek drag is pending). Art node requests through the Task 4 wrapper and `Lookup`s at build, never decodes. Keep `publishMediaSnapshot` as the only service-to-retained-tree bridge.
 - [ ] **Step 4:** `go test ./internal/shell -run TestMedia -v` green; full `internal/shell` package. Commit: `feat(shell): replace the disabled media destination with a live page`
 
 ---
@@ -173,7 +177,7 @@ func TestMediaSeekWritesOnRelease(t *testing.T)    // slider release -> SetPosit
 
 ## Self-Review
 
-**Spec coverage.** D1 → Task 5 (Enabled, ccPage case, no second tree). D2 → Task 5 (three cards, rungs, dash-not-zero, disabled-without-player card). D3 → Task 5 (cached reads, scheduleControl writes, Prefer under the lock). D4 → Task 5 (hooks + close path + lease test). D5 → Task 1. D6 → Task 4 (worker, decode, timeout, negative cache; KindStack explicitly out). D7 → Task 3 (fields, primitive, sweep mode, resolve, MaxWidth/Key, fallback). D8 → Task 3 (glyph swap). D9 → Task 6. D10 → Task 5 (dispatch, seek drag, keyboard path). D11 → Task 7 Step 3. D12 → Task 7 Step 2.
+**Spec coverage.** D1 → Task 5 (Enabled, ccPage case, no second tree, and the retained-state relay). D2 → Task 5 (three cards, rungs, dash-not-zero, disabled-without-player card). D3 → Task 5 (cached reads, scheduleControl writes, Prefer under the lock). D4 → Task 5 (hooks + close path + lease test). D5 → Task 1. D6 → Task 4 (worker, decode, timeout, negative cache; KindStack explicitly out). D7 → Task 3 (fields, primitive, sweep mode, resolve, MaxWidth/Key, fallback). D8 → Task 3 (glyph swap). D9 → Task 6. D10 → Task 5 (dispatch, seek drag, keyboard path). D11 → Task 7 Step 3. D12 → Task 7 Step 2.
 
 **Placeholders.** Two measured tunables are deliberately open: the art box size and the marquee trip speed (30 px·s⁻¹ is the initial value). Both are measured against the reference capture in Task 7 and recorded in the completion handover; neither can be invented from a document.
 
