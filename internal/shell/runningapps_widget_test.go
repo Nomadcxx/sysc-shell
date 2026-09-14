@@ -14,7 +14,7 @@ import (
 
 func TestRunningAppsCapsule(t *testing.T) {
 	t.Parallel()
-	widgets := buildWidgets([]config.Item{{ID: "running-apps"}}, 8)
+	widgets := buildWidgets([]config.Item{{ID: "running-apps"}}, 8, standardMetrics())
 	if len(widgets) != 1 {
 		t.Fatalf("built %d widgets, want 1", len(widgets))
 	}

@@ -2,6 +2,7 @@ package shell
 
 import (
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -13,9 +14,9 @@ import (
 // to them.
 const panelWifiAction = "panel:wifi"
 
-func buildWifiWidget() textWidget {
+func buildWifiWidget(m theme.Metrics) textWidget {
 	icon := &ui.Node{
-		Kind: ui.KindIcon, Icon: "wifi_off", IconSize: 20,
+		Kind: ui.KindIcon, Icon: "wifi_off", IconSize: m.IconNormal,
 		Action: panelWifiAction,
 	}
 	return textWidget{

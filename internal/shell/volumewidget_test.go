@@ -9,7 +9,7 @@ import (
 )
 
 func TestVolumeWidgetSatisfiesTheApplyContract(t *testing.T) {
-	ws := buildWidgets([]config.Item{{ID: "volume"}}, 6)
+	ws := buildWidgets([]config.Item{{ID: "volume"}}, 6, standardMetrics())
 	if len(ws) != 1 {
 		t.Fatalf("buildWidgets = %d widgets, want 1", len(ws))
 	}

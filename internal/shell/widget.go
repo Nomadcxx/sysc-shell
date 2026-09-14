@@ -164,7 +164,7 @@ func capsuled(w textWidget, pad int) textWidget {
 
 // buildWidgets turns validated items into widget instances. Ids and options
 // are validated at load, so an unknown id cannot reach here.
-func buildWidgets(items []config.Item, pad int) []textWidget {
+func buildWidgets(items []config.Item, pad int, m theme.Metrics) []textWidget {
 	out := make([]textWidget, 0, len(items))
 	clocks, hasWordmark := 0, false
 	for _, item := range items {
@@ -239,7 +239,7 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 			// individually capsuled: two nested surfaces read as one blob at
 			// the palette contrast a bar uses.
 			row := &ui.Node{Kind: ui.KindRow, Gap: groupGap}
-			members := buildWidgets(item.Items, noCapsule)
+			members := buildWidgets(item.Items, noCapsule, m)
 			g := textWidget{node: row, members: members}
 			for _, m := range members {
 				row.Children = append(row.Children, m.node)
@@ -280,13 +280,13 @@ func buildWidgets(items []config.Item, pad int) []textWidget {
 				},
 			})
 		case "notifications":
-			out = append(out, buildNotifyWidget())
+			out = append(out, buildNotifyWidget(m))
 		case "wallpaper":
 			out = append(out, buildWallpaperWidget())
 		case "volume":
 			out = append(out, buildVolumeWidget())
 		case "wifi":
-			out = append(out, buildWifiWidget())
+			out = append(out, buildWifiWidget(m))
 		case "running-apps":
 			row := &ui.Node{Kind: ui.KindRow, Gap: runningAppGap}
 			cap := &ui.Node{Kind: ui.KindCapsule}

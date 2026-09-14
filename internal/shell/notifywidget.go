@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -12,9 +13,9 @@ const (
 	notifyDNDMenuAction      = "notify:dnd-menu"
 )
 
-func buildNotifyWidget() textWidget {
+func buildNotifyWidget(m theme.Metrics) textWidget {
 	icon := &ui.Node{
-		Kind: ui.KindIcon, Icon: "notifications", IconSize: 20,
+		Kind: ui.KindIcon, Icon: "notifications", IconSize: m.IconNormal,
 		Action: panelNotificationsAction,
 	}
 	return textWidget{

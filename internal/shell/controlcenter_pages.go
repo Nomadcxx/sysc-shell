@@ -21,6 +21,38 @@ const (
 	ccDash            = "—"
 	ccAvatarSize      = 56
 	ccAccountsIconDir = "/var/lib/AccountsService/icons"
+
+	// The control centre's measured composition. These are one grid rather
+	// than a ladder: the page is a fixed 480 tall, the split beneath it 184,
+	// and the two columns 356 and 228 wide. The tile and forecast widths are
+	// not listed because they are derived from these and the gap between
+	// them -- the two were sized to fit the old gap exactly, so a literal
+	// would silently overflow the moment the ladder moved.
+	ccPageH         = 480
+	ccIdentityCardH = 96
+	ccTogglePillH   = 48
+	ccSplitH        = 184
+	ccCardH         = 88
+	ccLeftColumnW   = 356
+	ccRightColumnW  = 228
+	// ccTileW is one quick tile: the right column holds two of them with a
+	// gap between, and it was written as 110 for a gap of 8. Derived once
+	// here because two pages build tiles, and a repeated expression is the
+	// same drift as a repeated number.
+	ccTileW          = (ccRightColumnW - theme.MarginM) / 2
+	ccResourceRowH   = 40
+	ccGaugeSize      = 40
+	ccSlidersH       = 116
+	ccSliderCapsuleH = 52
+	ccSliderW        = 360
+	ccValueW         = 44
+	ccAvatarIconSize = 28
+	ccTodayH         = 336
+	ccForecastH      = 132
+	ccSessionCardH   = 232
+	ccCalendarCellW  = 74
+	ccCalendarRowMin = 32
+	ccNotifyListH    = 416
 )
 
 type ccIdentity struct {
@@ -69,7 +101,7 @@ func ccAvatarNode(image *ui.Image) *ui.Node {
 	return &ui.Node{
 		Kind: ui.KindCapsule, Width: ccAvatarSize, Height: ccAvatarSize,
 		Fill: ui.FillContainerHighest, Shape: ui.ShapeCircle,
-		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "person", IconSize: 28}},
+		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "person", IconSize: ccAvatarIconSize}},
 	}
 }
 
@@ -125,15 +157,16 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 		identityRows = append([]*ui.Node{{Kind: ui.KindText, Text: h.errLabel, Tone: ui.ToneError}}, identityRows...)
 	}
 	identityCard := monitorCard(m, []*ui.Node{{
-		Kind: ui.KindRow, Gap: 12, Children: []*ui.Node{
+		Kind: ui.KindRow, Gap: theme.MarginL, Children: []*ui.Node{
 			ccAvatar(r, h, identity),
-			{Kind: ui.KindColumn, Gap: 4, Children: identityRows},
+			{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: identityRows},
 		},
 	}})
-	identityCard.Height = 96
+	identityCard.Height = ccIdentityCardH
 
-	quickWidth := max((ccBodyWidth(h)-8)/2, 0)
-	togglePill := &ui.Node{Kind: ui.KindRow, Height: 48, Gap: 8, Children: []*ui.Node{
+	quickWidth := max((ccBodyWidth(h)-theme.MarginM)/2, 0)
+	tileW := ccTileW
+	togglePill := &ui.Node{Kind: ui.KindRow, Height: ccTogglePillH, Gap: theme.MarginM, Children: []*ui.Node{
 		ccQuickAccessButton(quickWidth, "coffee", "Caffeine", "cc:caffeine", caffeine),
 		ccQuickAccessButton(quickWidth, "wallpaper", "Wallpaper", "cc:wallpaper", false),
 	}}
@@ -143,16 +176,16 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 		{Kind: ui.KindText, Text: ccDate(now), TextRole: theme.RoleCaption},
 		{Kind: ui.KindText, Text: ccWeatherSummary(reading)},
 	})
-	clockWeather.Height = 88
+	clockWeather.Height = ccCardH
 	sysmon := monitorCard(m, []*ui.Node{
 		monitorCardTitle("System", 0),
-		{Kind: ui.KindRow, Height: 40, Gap: 8, Children: []*ui.Node{
+		{Kind: ui.KindRow, Height: ccResourceRowH, Gap: theme.MarginM, Children: []*ui.Node{
 			ccResourceGroup(snap, "cpu", "CPU", services.Selector{Source: services.SourceCPU}),
 			ccResourceGroup(snap, "memory", "Memory", services.Selector{Source: services.SourceMemory}),
 		}},
 	})
-	sysmon.Height = 88
-	left := &ui.Node{Kind: ui.KindColumn, Width: 356, Height: 184, Gap: 8,
+	sysmon.Height = ccCardH
+	left := &ui.Node{Kind: ui.KindColumn, Width: ccLeftColumnW, Height: ccSplitH, Gap: theme.MarginM,
 		Children: []*ui.Node{clockWeather, sysmon}}
 
 	battery := ccDash
@@ -163,35 +196,35 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 	if h != nil && h.profileActive != "" {
 		profile = powerProfileLabel(h.profileActive)
 	}
-	mute := ccQuickTile("volume_off", "Mute", ccPercent(audio.Level, audioOK), "cc:mute", audio.Muted)
+	mute := ccQuickTile(tileW, "volume_off", "Mute", ccPercent(audio.Level, audioOK), "cc:mute", audio.Muted)
 	if !audioOK {
 		ccDisable(mute)
 	}
 	nextProfile := hProfileNext(h)
-	profileTile := ccQuickTile("balance", "Profile", profile, "cc:profile:"+nextProfile, false)
+	profileTile := ccQuickTile(tileW, "balance", "Profile", profile, "cc:profile:"+nextProfile, false)
 	profileTile.Name = "Power profile"
 	if nextProfile == "" {
 		ccDisable(profileTile)
 	}
-	dndTile := ccQuickTile("do_not_disturb_on", "DND", ccOnOff(dnd), "cc:dnd", dnd)
+	dndTile := ccQuickTile(tileW, "do_not_disturb_on", "DND", ccOnOff(dnd), "cc:dnd", dnd)
 	dndTile.Name = "Do not disturb"
-	right := &ui.Node{Kind: ui.KindColumn, Width: 228, Height: 184, Gap: 8, Children: []*ui.Node{
-		{Kind: ui.KindRow, Height: 88, Gap: 8, Children: []*ui.Node{
+	right := &ui.Node{Kind: ui.KindColumn, Width: ccRightColumnW, Height: ccSplitH, Gap: theme.MarginM, Children: []*ui.Node{
+		{Kind: ui.KindRow, Height: ccCardH, Gap: theme.MarginM, Children: []*ui.Node{
 			mute,
 			dndTile,
 		}},
-		{Kind: ui.KindRow, Height: 88, Gap: 8, Children: []*ui.Node{
+		{Kind: ui.KindRow, Height: ccCardH, Gap: theme.MarginM, Children: []*ui.Node{
 			profileTile,
-			ccBatteryTile(battery),
+			ccBatteryTile(tileW, battery),
 		}},
 	}}
-	split := &ui.Node{Kind: ui.KindRow, Height: 184, Gap: 12, Children: []*ui.Node{left, right}}
+	split := &ui.Node{Kind: ui.KindRow, Height: ccSplitH, Gap: theme.MarginL, Children: []*ui.Node{left, right}}
 
-	sliders := &ui.Node{Kind: ui.KindColumn, Height: 116, Gap: 12, Children: []*ui.Node{
+	sliders := &ui.Node{Kind: ui.KindColumn, Height: ccSlidersH, Gap: theme.MarginL, Children: []*ui.Node{
 		ccSlider(m, "volume_up", "Volume", "cc:volume", audio.Level, audioOK),
 		ccSlider(m, "brightness_high", "Brightness", "cc:brightness", brightness.Level, brightnessOK),
 	}}
-	return &ui.Node{Kind: ui.KindColumn, Height: 480, Gap: 12,
+	return &ui.Node{Kind: ui.KindColumn, Height: ccPageH, Gap: theme.MarginL,
 		Children: []*ui.Node{identityCard, togglePill, split, sliders}}
 }
 
@@ -245,9 +278,9 @@ func ccResourceGroup(snap services.Snapshot, id, label string, sel services.Sele
 		value = 0
 	}
 	icon, _ := render.GaugeIconName(id)
-	return &ui.Node{Kind: ui.KindRow, Height: 40, Gap: 8, Children: []*ui.Node{
-		{Kind: ui.KindRadialGauge, Width: 40, Height: 40, Icon: icon, Value: value, Absent: !ok},
-		{Kind: ui.KindColumn, Gap: 2, Children: []*ui.Node{
+	return &ui.Node{Kind: ui.KindRow, Height: ccResourceRowH, Gap: theme.MarginM, Children: []*ui.Node{
+		{Kind: ui.KindRadialGauge, Width: ccGaugeSize, Height: ccGaugeSize, Icon: icon, Value: value, Absent: !ok},
+		{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
 			{Kind: ui.KindText, Text: label, TextRole: theme.RoleCaption},
 			{Kind: ui.KindText, Text: ccPercent(int(value*100+0.5), ok), Tabular: true},
 		}},
@@ -264,7 +297,7 @@ func ccOnOff(on bool) string {
 func ccSegment(icon, label, action string, selected bool) *ui.Node {
 	n := &ui.Node{
 		Kind: ui.KindButton, Action: action, Name: label, Role: "button", Focusable: true,
-		Gap: 6, Children: []*ui.Node{
+		Gap: theme.MarginS, Children: []*ui.Node{
 			{Kind: ui.KindIcon, Icon: icon},
 			{Kind: ui.KindText, Text: label, TextRole: theme.RoleLabel},
 		},
@@ -276,12 +309,12 @@ func ccSegment(icon, label, action string, selected bool) *ui.Node {
 	return n
 }
 
-func ccQuickTile(icon, label, value, action string, selected bool) *ui.Node {
+func ccQuickTile(width int, icon, label, value, action string, selected bool) *ui.Node {
 	n := &ui.Node{
-		Kind: ui.KindCapsule, Width: 110, Height: 88, Padding: 12,
+		Kind: ui.KindCapsule, Width: width, Height: ccCardH, Padding: theme.MarginL,
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
 		Action: action, Name: label, Role: "button", Focusable: true,
-		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: 4, Children: []*ui.Node{
+		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{
 			{Kind: ui.KindIcon, Icon: icon},
 			{Kind: ui.KindText, Text: label, TextRole: theme.RoleLabel},
 			{Kind: ui.KindText, Text: value, TextRole: theme.RoleCaption, Tabular: true},
@@ -294,11 +327,11 @@ func ccQuickTile(icon, label, value, action string, selected bool) *ui.Node {
 	return n
 }
 
-func ccBatteryTile(value string) *ui.Node {
+func ccBatteryTile(width int, value string) *ui.Node {
 	return &ui.Node{
-		Kind: ui.KindCapsule, Width: 110, Height: 88, Padding: 12,
-		Shape: ui.ShapeCard, Stroke: 1, StrokeFill: ui.FillOutline,
-		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: 4, Children: []*ui.Node{
+		Kind: ui.KindCapsule, Width: width, Height: ccCardH, Padding: theme.MarginL,
+		Shape: ui.ShapeCard, Stroke: 1, StrokeFill: ui.FillOutline, // token-exempt: a hairline border, not a ladder value
+		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{
 			{Kind: ui.KindIcon, Icon: "battery_full"},
 			{Kind: ui.KindText, Text: "Battery", TextRole: theme.RoleLabel},
 			{Kind: ui.KindText, Text: value, TextRole: theme.RoleCaption, Tabular: true},
@@ -317,19 +350,19 @@ func ccDisable(n *ui.Node) {
 func ccSlider(m theme.Metrics, icon, label, action string, value int, ok bool) *ui.Node {
 	control := &ui.Node{
 		Kind: ui.KindSlider, Action: action, Name: label, Role: "slider", Focusable: true,
-		Value: float64(value), Min: 0, Max: 100, Step: 5, Width: 360, Absent: !ok,
+		Value: float64(value), Min: 0, Max: 100, Step: 5, Width: ccSliderW, Absent: !ok,
 	}
 	if !ok {
 		control.State |= ui.StateDisabled
 	}
 	return &ui.Node{
-		Kind: ui.KindCapsule, Height: 52, Padding: m.CardPadding,
+		Kind: ui.KindCapsule, Height: ccSliderCapsuleH, Padding: m.CardPadding,
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
-		Children: []*ui.Node{{Kind: ui.KindRow, Gap: 8, Children: []*ui.Node{
+		Children: []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
 			{Kind: ui.KindIcon, Icon: icon},
 			{Kind: ui.KindText, Text: label, TextRole: theme.RoleLabel},
 			control,
-			{Kind: ui.KindText, Text: ccPercent(value, ok), Width: 44, MinWidthText: "100%", Tabular: true},
+			{Kind: ui.KindText, Text: ccPercent(value, ok), Width: ccValueW, MinWidthText: "100%", Tabular: true},
 		}}},
 	}
 }
@@ -371,20 +404,25 @@ func ccWeather(r *Registry, h *PanelHost) *ui.Node {
 		{Kind: ui.KindText, Text: location, TextRole: theme.RoleCaption},
 		{Kind: ui.KindText, Text: fetched, TextRole: theme.RoleCaption},
 	})
-	today.Height = 336
+	today.Height = ccTodayH
 
-	forecast := &ui.Node{Kind: ui.KindRow, Height: 132, Gap: 8}
-	for i := 0; i < 4; i++ {
+	// Four slots share the body width and the three gaps between them. The
+	// width is derived rather than written down: it was 143 for a gap of 8,
+	// and a literal would overflow the row the moment the ladder moved.
+	const forecastSlots = 4
+	slotW := max((ccBodyWidth(h)-(forecastSlots-1)*theme.MarginM)/forecastSlots, 0)
+	forecast := &ui.Node{Kind: ui.KindRow, Height: ccForecastH, Gap: theme.MarginM}
+	for i := 0; i < forecastSlots; i++ {
 		var day *services.Day
 		if i+1 < len(reading.Daily) {
 			day = &reading.Daily[i+1]
 		}
-		forecast.Children = append(forecast.Children, ccForecastDay(m, day, reading.Unit))
+		forecast.Children = append(forecast.Children, ccForecastDay(m, slotW, day, reading.Unit))
 	}
-	return &ui.Node{Kind: ui.KindColumn, Height: 480, Gap: 12, Children: []*ui.Node{today, forecast}}
+	return &ui.Node{Kind: ui.KindColumn, Height: ccPageH, Gap: theme.MarginL, Children: []*ui.Node{today, forecast}}
 }
 
-func ccForecastDay(m theme.Metrics, day *services.Day, unit services.Unit) *ui.Node {
+func ccForecastDay(m theme.Metrics, width int, day *services.Day, unit services.Unit) *ui.Node {
 	label, icon, temperature := ccDash, "cloud", ccDash
 	if day != nil {
 		if date, err := time.Parse("2006-01-02", day.Date); err == nil {
@@ -405,7 +443,7 @@ func ccForecastDay(m theme.Metrics, day *services.Day, unit services.Unit) *ui.N
 		{Kind: ui.KindIcon, Icon: icon, IconSize: m.IconLarge},
 		{Kind: ui.KindText, Text: temperature, TextRole: theme.RoleCaption, Tabular: true},
 	})
-	card.Width, card.Height = 143, 132
+	card.Width, card.Height = width, ccForecastH
 	return card
 }
 
@@ -442,7 +480,7 @@ func ccAudio(r *Registry, h *PanelHost) *ui.Node {
 	if r != nil && r.audio != nil {
 		state, ok = r.audio.CachedState()
 	}
-	mute := ccQuickTile("volume_off", "Mute", ccOnOff(state.Muted), "cc:mute", state.Muted)
+	mute := ccQuickTile(ccTileW, "volume_off", "Mute", ccOnOff(state.Muted), "cc:mute", state.Muted)
 	if !ok {
 		ccDisable(mute)
 	}
@@ -455,8 +493,8 @@ func ccAudio(r *Registry, h *PanelHost) *ui.Node {
 		rows = append([]*ui.Node{{Kind: ui.KindText, Text: h.errLabel, Tone: ui.ToneError}}, rows...)
 	}
 	card := monitorCard(m, rows)
-	card.Height = 480
-	return &ui.Node{Kind: ui.KindColumn, Height: 480, Children: []*ui.Node{card}}
+	card.Height = ccPageH
+	return &ui.Node{Kind: ui.KindColumn, Height: ccPageH, Children: []*ui.Node{card}}
 }
 
 func ccMonitor(r *Registry, h *PanelHost) *ui.Node {
@@ -479,7 +517,7 @@ func ccMonitor(r *Registry, h *PanelHost) *ui.Node {
 		{services.Selector{Source: services.SourceMemory}, "Memory", 154},
 		{network, "Network", 156},
 	}
-	page := &ui.Node{Kind: ui.KindColumn, Height: 480, Gap: 8}
+	page := &ui.Node{Kind: ui.KindColumn, Height: ccPageH, Gap: theme.MarginM}
 	for _, item := range selectors {
 		card := ccMonitorMetricCard(m, item.label, item.selector, snap, history[item.selector])
 		card.Height = item.height
@@ -534,7 +572,7 @@ func ccPower(r *Registry, h *PanelHost) *ui.Node {
 	battery := ccPowerBattery(m, snap, errLabel)
 	profiles := ccPowerProfiles(m, h)
 	actions := ccSessionActions(m, locker)
-	return &ui.Node{Kind: ui.KindColumn, Height: 480, Gap: 8,
+	return &ui.Node{Kind: ui.KindColumn, Height: ccPageH, Gap: theme.MarginM,
 		Children: []*ui.Node{battery, profiles, actions}}
 }
 
@@ -609,7 +647,7 @@ func ccSessionActions(m theme.Metrics, locker string) *ui.Node {
 	for _, action := range actions {
 		n := &ui.Node{
 			Kind: ui.KindButton, Action: action.action, Name: action.name, Role: "button", Focusable: true,
-			Height: m.CompactControl, Gap: 8, Padding: m.CardPadding,
+			Height: m.CompactControl, Gap: theme.MarginM, Padding: m.CardPadding,
 			Children: []*ui.Node{
 				{Kind: ui.KindIcon, Icon: action.icon, IconSize: m.IconNormal},
 				{Kind: ui.KindText, Text: action.name},
@@ -621,7 +659,7 @@ func ccSessionActions(m theme.Metrics, locker string) *ui.Node {
 		rows = append(rows, n)
 	}
 	card := monitorCard(m, rows)
-	card.Height = 232
+	card.Height = ccSessionCardH
 	return card
 }
 
@@ -643,16 +681,16 @@ func ccCalendar(r *Registry, h *PanelHost) *ui.Node {
 			calendarArrow("chevron_right", "cal-next", "Next month", h.theme),
 		},
 	}}
-	weekdays := &ui.Node{Kind: ui.KindRow, Gap: 4}
+	weekdays := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS}
 	for _, day := range []string{"S", "M", "T", "W", "T", "F", "S"} {
-		weekdays.Children = append(weekdays.Children, &ui.Node{Kind: ui.KindText, Text: day, Width: 74, CenterX: true})
+		weekdays.Children = append(weekdays.Children, &ui.Node{Kind: ui.KindText, Text: day, Width: ccCalendarCellW, CenterX: true})
 	}
 	rows = append(rows, weekdays)
-	rowHeight := max((480-2*m.CardPadding-m.StandardControl-28)/max(len(grid.Weeks), 1), 32)
+	rowHeight := max((ccPageH-2*m.CardPadding-m.StandardControl-28)/max(len(grid.Weeks), 1), ccCalendarRowMin)
 	for _, week := range grid.Weeks {
-		row := &ui.Node{Kind: ui.KindRow, Height: rowHeight, Gap: 4}
+		row := &ui.Node{Kind: ui.KindRow, Height: rowHeight, Gap: theme.MarginXS}
 		for _, cell := range week {
-			day := &ui.Node{Kind: ui.KindText, Text: fmt.Sprintf("%d", cell.Day), Width: 74, CenterX: true, Tabular: true}
+			day := &ui.Node{Kind: ui.KindText, Text: fmt.Sprintf("%d", cell.Day), Width: ccCalendarCellW, CenterX: true, Tabular: true}
 			if cell.Today {
 				day.Tone = ui.ToneAccent
 			}
@@ -661,8 +699,8 @@ func ccCalendar(r *Registry, h *PanelHost) *ui.Node {
 		rows = append(rows, row)
 	}
 	card := monitorCard(m, rows)
-	card.Height = 480
-	return &ui.Node{Kind: ui.KindColumn, Height: 480, Children: []*ui.Node{card}}
+	card.Height = ccPageH
+	return &ui.Node{Kind: ui.KindColumn, Height: ccPageH, Children: []*ui.Node{card}}
 }
 
 func ccNotifications(r *Registry, h *PanelHost) *ui.Node {
@@ -684,7 +722,7 @@ func ccNotifications(r *Registry, h *PanelHost) *ui.Node {
 	}
 	sort.Slice(history, func(i, j int) bool { return history[i].Timestamp.After(history[j].Timestamp) })
 	controls := &ui.Node{
-		Kind: ui.KindCapsule, Height: 52, Padding: m.CardPadding,
+		Kind: ui.KindCapsule, Height: ccSliderCapsuleH, Padding: m.CardPadding,
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
 		Children: []*ui.Node{{Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{
 			ccSegment("do_not_disturb_on", "Do not disturb", "cc:dnd", dnd),
@@ -706,6 +744,6 @@ func ccNotifications(r *Registry, h *PanelHost) *ui.Node {
 		empty.Height = 416
 		cards = append(cards, empty)
 	}
-	list := &ui.Node{Kind: ui.KindScroll, Height: 416, Gap: 8, Children: cards}
-	return &ui.Node{Kind: ui.KindColumn, Height: 480, Gap: 12, Children: []*ui.Node{controls, list}}
+	list := &ui.Node{Kind: ui.KindScroll, Height: ccNotifyListH, Gap: theme.MarginM, Children: cards}
+	return &ui.Node{Kind: ui.KindColumn, Height: ccPageH, Gap: theme.MarginL, Children: []*ui.Node{controls, list}}
 }

@@ -14,7 +14,7 @@ import (
 // works nor tells you why.
 func TestWallpaperItemBuildsAWidget(t *testing.T) {
 	t.Parallel()
-	got := buildWidgets([]config.Item{{ID: "wallpaper"}}, 8)
+	got := buildWidgets([]config.Item{{ID: "wallpaper"}}, 8, standardMetrics())
 	if len(got) != 1 {
 		t.Fatalf("built %d widgets for the wallpaper item, want 1", len(got))
 	}
@@ -54,7 +54,7 @@ func TestEveryKnownBarItemBuilds(t *testing.T) {
 		}
 		t.Run(id, func(t *testing.T) {
 			t.Parallel()
-			got := buildWidgets([]config.Item{{ID: id}}, 8)
+			got := buildWidgets([]config.Item{{ID: id}}, 8, standardMetrics())
 			if len(got) == 0 {
 				t.Fatalf("%q is a known bar item but builds no widget", id)
 			}
