@@ -431,6 +431,8 @@ widgets) are still unordered.
 | `2026-09-13-bluetooth-panel-completion-handover.md` | completion-handover | Snapshot of `sysc-155` implementation, automated gates, live Niri/BlueZ observations, and hardware-limited device-action coverage. |
 | `2026-09-13-panel-list-row-shape.md` | plan | One TDD code change for `sysc-157`: assert and set `ShapeSmall` on Wi-Fi access-point buttons, run focused and repository gates, then deploy the exact build to the laptop for visual confirmation without toggling Wi-Fi. |
 | `2026-09-14-panel-list-row-inset.md` | plan | TDD update to assert both AP-row edge insets, apply `ButtonPadding`, run repository gates, and deploy the exact build for laptop visual confirmation. |
+| `2026-09-15-weather-panel-design.md` | design | Owner-directed 2026-09-15 after the `sysc-277` audit. D1–D12: enriched Open-Meteo wire model (apparent, is_day, wind, humidity, UV, precipitation, root elevation/timezone), night glyphs in the custom weather font, one condition-word table and one glyph mapping shared by bar, panel and control-centre page, a structured bar tooltip, `PanelWeather` 460×560 on `panel:weather`, the three-state stale/error rule everywhere, a config location label, and Hourly deferred. |
+| `2026-09-15-weather-panel.md` | plan | Ten TDD tasks for `sysc-277` in `.worktrees/feature/weather-panel` off `41eaf68`: wire model, Reading passthrough, night glyphs and vocabulary, config location, bar widget, panel identity, hero and details, forecast list, cc page restyle, gates and handover. |
 
 ## Panel backdrop blur (Milestone 8 evidence)
 
