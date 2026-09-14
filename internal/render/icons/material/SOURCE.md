@@ -45,8 +45,8 @@ that join them. Layout closure is disabled during subsetting: leaving it on lets
 the retained letters reach every ligature they could begin, which is all
 6,605 glyphs and a 1.4 MB file.
 
-Result: **10,116 bytes, 50 glyphs** (25 icons, the letters and underscore that
-spell them, and `.notdef`).
+Result: **20,360 bytes, 88 glyphs** (58 shell names, the letters and underscore
+that spell them, and `.notdef`).
 
 ### Inventory
 
@@ -58,11 +58,20 @@ search settings notifications do_not_disturb_on
 volume_up volume_off brightness_high
 delete schedule
 mic mic_off graphic_eq headphones
+home music_note desktop_windows wifi bluetooth cloud calendar_month
+battery_full coffee wallpaper person
+sunny partly_cloudy_day rainy thunderstorm weather_snowy foggy
+signal_wifi_0_bar network_wifi_1_bar network_wifi_2_bar
+network_wifi_3_bar signal_wifi_4_bar wifi_off lan visibility visibility_off
+bluetooth_disabled bluetooth_connected keyboard mouse smartphone speaker
+devices_other
 ```
 
 `materialfont.go` accepts exactly these names and rejects anything else. Adding
 one means editing `ICONS` in `build.py`, rebuilding, and committing the larger
-font deliberately.
+font deliberately. The pinned source renamed `smartphone`; the builder retains
+`phone_bluetooth_speaker` for that public shell name and the Go renderer uses
+the same alias.
 
 ## Reproducing
 
@@ -76,7 +85,7 @@ The head table's creation and modification timestamps are pinned, so a rebuild
 from the same source reproduces the committed file byte for byte:
 
 ```
-3f7d096b9595c1b81bf95830bda121b269d480a7885a2b3013f4d52209750beb
+fc258a5a58dea148e776c43d99c8241a7194841dd957efd3cc1523c5969ce337
 ```
 
 Built with fontTools 4.64.0.

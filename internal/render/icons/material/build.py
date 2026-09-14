@@ -90,7 +90,20 @@ ICONS = [
     "lan",
     "visibility",
     "visibility_off",
+    # Bluetooth bar and device-row glyphs.
+    "bluetooth_disabled",
+    "bluetooth_connected",
+    "keyboard",
+    "mouse",
+    "smartphone",
+    "speaker",
+    "devices_other",
 ]
+
+# The pinned source renamed the older smartphone ligature. Keep the shell's
+# stable public name while retaining the closest phone glyph available in the
+# source font.
+GLYPH_ALIASES = {"smartphone": "phone_bluetooth_speaker"}
 
 # Material Symbols addresses a glyph by typing its name, so the letters and the
 # underscore have to survive subsetting for the ligature to have inputs.
@@ -126,12 +139,13 @@ def build(source: Path) -> None:
     options.drop_tables += ["DSIG"]
     options.recalc_timestamp = False
 
-    text = "".join(sorted({c for name in ICONS for c in name}))
+    source_glyphs = [GLYPH_ALIASES.get(name, name) for name in ICONS]
+    text = "".join(sorted({c for name in ICONS + source_glyphs for c in name}))
     subsetter = subset.Subsetter(options=options)
-    subsetter.populate(glyphs=ICONS, text=text)
+    subsetter.populate(glyphs=source_glyphs, text=text)
     subsetter.subset(font)
 
-    for name in ICONS:
+    for name in source_glyphs:
         if name not in font.getGlyphOrder():
             raise SystemExit(f"subset dropped {name!r}")
     if "GSUB" not in font:

@@ -251,6 +251,9 @@ var knownItems = map[string]struct{}{
 	// throughput rate source with rx/tx directions. Naming it "network" would
 	// have meant a configuration migration later.
 	"wifi": {},
+	// Bluetooth is opt-in: its bar glyph is useful when requested, but adding
+	// it to the default would change existing layouts.
+	"bluetooth": {},
 	// group holds other items inside one capsule. It carries no options of
 	// its own; every option belongs to a nested item.
 	"group": {},

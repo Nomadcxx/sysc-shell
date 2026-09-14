@@ -30,6 +30,7 @@ var (
 		"audio":          "",
 		"control-center": "",
 		"network":        "",
+		"bluetooth":      "",
 	}
 )
 

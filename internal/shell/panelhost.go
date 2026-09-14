@@ -93,28 +93,34 @@ type PanelHost struct {
 	pressed  *ui.Node
 	// pointer is the resolved hover/press state, kept as stable keys so it
 	// survives the tree rebuilds that replace every node.
-	pointer        interaction
-	drag           ui.Drag
-	lastAction     string
-	hoverX, hoverY int
-	monthDelta     int
-	errLabel       string
-	menu           *Menu
-	menuPath       string
-	menus          map[string]*Menu
-	sliderDrag     *ui.Node
-	scrollDrag     *ui.Node
-	set            *settings.Registry
-	draft          config.Config
-	query          string
-	section        string
-	pageDirection  int
-	networkTab     string
-	pendingSSID    string
-	password       *ui.Field
-	search         *ui.Field
-	fields         map[string]*ui.Field
-	editors        map[string]*retainedEditor
+	pointer            interaction
+	drag               ui.Drag
+	lastAction         string
+	hoverX, hoverY     int
+	monthDelta         int
+	errLabel           string
+	menu               *Menu
+	menuPath           string
+	menus              map[string]*Menu
+	sliderDrag         *ui.Node
+	scrollDrag         *ui.Node
+	set                *settings.Registry
+	draft              config.Config
+	query              string
+	section            string
+	pageDirection      int
+	networkTab         string
+	pendingSSID        string
+	password           *ui.Field
+	bluetoothInput     *ui.Field
+	bluetoothPromptID  services.PromptID
+	bluetoothDetails   services.DeviceID
+	bluetoothForget    services.DeviceID
+	bluetoothRetry     string
+	bluetoothDiscovery bool
+	search             *ui.Field
+	fields             map[string]*ui.Field
+	editors            map[string]*retainedEditor
 
 	launcherResults []launcher.Result
 	launcherSel     int
@@ -188,6 +194,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelControlCenter, nil
 	case "network":
 		return PanelNetwork, nil
+	case "bluetooth":
+		return PanelBluetooth, nil
 	default:
 		return 0, fmt.Errorf("unknown panel")
 	}
@@ -297,6 +305,10 @@ func (r *Registry) selectPanelSectionLocked(id PanelID, section string) error {
 func (r *Registry) focusedTrigger() (uint32, Trigger) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.focusedTriggerLocked()
+}
+
+func (r *Registry) focusedTriggerLocked() (uint32, Trigger) {
 	var global uint32
 	var connector string
 	if r.focused != "" {
@@ -481,6 +493,8 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelControlCenter, true
 	case "network":
 		return PanelNetwork, true
+	case "bluetooth":
+		return PanelBluetooth, true
 	default:
 		return 0, false
 	}
@@ -610,6 +624,9 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	if id == PanelNetwork && r.network != nil && r.network.Available() {
 		network := r.network
 		r.scheduleControl(h, network.Scan)
+	}
+	if id == PanelBluetooth {
+		r.startBluetoothDiscoveryLocked(h)
 	}
 
 	h.anim = newAnimator(nil, r.cfg.Accessibility.ReducedMotion, h.theme.Motion)
@@ -1464,7 +1481,14 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 		return false
 	}
 	var f *ui.Field
-	if h.id == PanelNetwork && n.Name == "Password" {
+	if n.Action == "bluetooth-prompt-input" && bluetoothBodyVisible(h) {
+		if h.bluetoothInput == nil {
+			h.bluetoothInput = ui.NewField("")
+			h.bluetoothInput.Masked = true
+		}
+		h.bluetoothInput.SyncFrom(n)
+		f = h.bluetoothInput
+	} else if h.id == PanelNetwork && n.Name == "Password" {
 		if h.password == nil {
 			h.password = ui.NewField("")
 			h.password.Masked = true
@@ -1520,6 +1544,10 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 	f.SyncTo(n)
 	if _, ok := parsePluginAction(n.Action); ok {
 		r.deliverPluginText(n.Action, n.Text, v1.EventChange)
+		return true
+	}
+	if n.Action == "bluetooth-prompt-input" {
+		r.rebuildPanel(h)
 		return true
 	}
 	if n.Name == "Search" {
@@ -1634,6 +1662,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	}
 	if r.handlePluginManager(h, n) {
 		return true
+	}
+	if strings.HasPrefix(n.Action, "bluetooth-") && bluetoothBodyVisible(h) {
+		return h.activateBluetooth(r, n)
 	}
 	if h.id == PanelLauncher {
 		return h.activateLauncher(r, n)
@@ -1901,6 +1932,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		return controlCentreTree(r, h)
 	case PanelNetwork:
 		return networkTree(r, h)
+	case PanelBluetooth:
+		return bluetoothTree(r, h)
 	default:
 		return placeholderTree()
 	}
@@ -1937,6 +1970,8 @@ func panelTargetSize(id PanelID) ui.Rect {
 	case PanelNetwork:
 		// Fixed rather than a fraction of the output: the content is a list of
 		// SSID rows, whose comfortable width does not scale with the screen.
+		return ui.Rect{W: 460, H: 560}
+	case PanelBluetooth:
 		return ui.Rect{W: 460, H: 560}
 	default:
 		return ui.Rect{W: 280, H: 200}
@@ -2179,6 +2214,10 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 	h := r.panelHosts[id]
 	if h == nil {
 		return
+	}
+	if bluetoothBodyVisible(h) {
+		r.stopBluetoothDiscoveryLocked(h)
+		r.cancelBluetoothPromptLocked(h)
 	}
 	h.stopAnimation()
 	h.drag.Cancel()

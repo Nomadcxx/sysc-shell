@@ -26,6 +26,8 @@ var materialInventory = []string{
 	"signal_wifi_0_bar", "network_wifi_1_bar", "network_wifi_2_bar",
 	"network_wifi_3_bar", "signal_wifi_4_bar", "wifi_off",
 	"lan", "visibility", "visibility_off",
+	"bluetooth_disabled", "bluetooth_connected", "keyboard", "mouse",
+	"smartphone", "speaker", "devices_other",
 }
 
 func TestAudioPanelIconsAreInTheSubset(t *testing.T) {
