@@ -29,8 +29,8 @@ func audioTree(r *Registry, h *PanelHost) *ui.Node {
 	if panelH <= 0 {
 		panelH = panelTargetSize(PanelAudio).H
 	}
-	viewportH := max(panelH-2*m.PanelPadding-header.Height-12, 0)
-	return &ui.Node{Kind: ui.KindColumn, Gap: 12, Padding: m.PanelPadding, Children: []*ui.Node{
+	viewportH := max(panelH-2*m.PanelPadding-header.Height-theme.MarginL, 0)
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Padding: m.PanelPadding, Children: []*ui.Node{
 		header,
 		{Kind: ui.KindScroll, Height: viewportH, Children: []*ui.Node{body}},
 	}}
@@ -50,12 +50,12 @@ func audioHeaderCard(h *PanelHost, m theme.Metrics) *ui.Node {
 		Fill:     ui.FillContainerHighest,
 		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "graphic_eq", IconSize: m.IconNormal}},
 	}
-	leading := &ui.Node{Kind: ui.KindRow, Gap: 12, Height: well, Children: []*ui.Node{icon, title}}
-	top := &ui.Node{Kind: ui.KindRow, Gap: 12, Height: well, PinEnd: true, Children: []*ui.Node{
+	leading := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Height: well, Children: []*ui.Node{icon, title}}
+	top := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Height: well, PinEnd: true, Children: []*ui.Node{
 		leading, closeBtn,
 	}}
 	tabs := &ui.Node{
-		Kind: ui.KindSegmented, Key: "audio-tab", Gap: 2, Height: well,
+		Kind: ui.KindSegmented, Key: "audio-tab", Gap: theme.MarginXXS, Height: well,
 		Children: []*ui.Node{
 			audioSegment(h, "audio-tab:volumes", "Volumes", h.audioTab != "devices"),
 			audioSegment(h, "audio-tab:devices", "Devices", h.audioTab == "devices"),
@@ -63,8 +63,8 @@ func audioHeaderCard(h *PanelHost, m theme.Metrics) *ui.Node {
 	}
 	return &ui.Node{
 		Kind: ui.KindCapsule, Padding: m.CardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
-		Height:   2*m.CardPadding + 2*well + 12,
-		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: 12, Children: []*ui.Node{top, tabs}}},
+		Height:   2*m.CardPadding + 2*well + theme.MarginL, // token-exempt: derived from the card inset, the well and the column gap below; the scan matches the leading 2 of this expression, not a hardcoded height
+		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginL, Children: []*ui.Node{top, tabs}}},
 	}
 }
 
@@ -111,7 +111,7 @@ func audioVolumesTree(r *Registry, h *PanelHost) *ui.Node {
 			rows = append(rows, row)
 		}
 	}
-	return &ui.Node{Kind: ui.KindColumn, Gap: 12, Children: rows}
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Children: rows}
 }
 
 func audioDevicesTree(r *Registry, h *PanelHost) *ui.Node {
@@ -142,7 +142,7 @@ func audioDevicesTree(r *Registry, h *PanelHost) *ui.Node {
 			out = append(out, audioDeviceRow(n))
 		}
 	}
-	return &ui.Node{Kind: ui.KindColumn, Gap: 8, Children: out}
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Children: out}
 }
 
 func audioDeviceRow(n services.AudioNode) *ui.Node {
@@ -156,8 +156,8 @@ func audioDeviceRow(n services.AudioNode) *ui.Node {
 	cap := &ui.Node{
 		Kind: ui.KindCapsule, Action: fmt.Sprintf("audio-dev:%d", n.ID),
 		Name: n.Description, Role: "button", Focusable: true,
-		Height: 44, Padding: 12, Shape: ui.ShapeMedium,
-		Children: []*ui.Node{{Kind: ui.KindRow, Gap: 12, Children: inner}},
+		Height: 44, Padding: theme.MarginL, Shape: ui.ShapeMedium,
+		Children: []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginL, Children: inner}},
 	}
 	if n.Default {
 		cap.Fill = ui.FillSoft
@@ -200,7 +200,7 @@ func audioVolumeRow(n services.AudioNode, role string, icon *ui.Image) *ui.Node 
 		slider.State |= ui.StateDisabled
 		slider.Absent = true
 	}
-	mid := &ui.Node{Kind: ui.KindColumn, Gap: 6, Children: []*ui.Node{
+	mid := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: role, TextRole: theme.RoleLabel},
 		nameNode,
 		slider,
@@ -224,7 +224,7 @@ func audioVolumeRow(n services.AudioNode, role string, icon *ui.Image) *ui.Node 
 	if n.ID == 0 {
 		mute.State |= ui.StateDisabled
 	}
-	return &ui.Node{Kind: ui.KindRow, Gap: 12, Height: 68, Children: []*ui.Node{
+	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Height: 68, Children: []*ui.Node{
 		ident, mid,
 		{Kind: ui.KindText, Text: value, Width: 44, Tabular: true, MinWidthText: "100%", TextRole: theme.RoleBody},
 		mute,
