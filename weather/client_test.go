@@ -13,6 +13,17 @@ import (
 
 const currentBody = `{"current":{"temperature_2m":18.4,"weather_code":3}}`
 
+const enrichedCurrentBody = `{
+  "elevation":64.0,
+  "timezone":"Australia/Sydney",
+  "timezone_abbreviation":"GMT+10",
+  "current":{
+    "temperature_2m":18.4,"weather_code":3,"apparent_temperature":17.1,
+    "is_day":false,"relative_humidity_2m":62,"wind_speed_10m":10.4,
+    "wind_direction_10m":45,"uv_index":0.0
+  }
+}`
+
 const forecastBody = `{
   "current":{"temperature_2m":18.4,"weather_code":3},
   "daily":{
@@ -21,7 +32,10 @@ const forecastBody = `{
     "temperature_2m_max":[22.1,19.0,8.5,17.0,24.0,21.0,16.0],
     "temperature_2m_min":[12.0,11.0,-1.5,9.0,13.0,12.5,10.0],
     "sunrise":["2026-09-02T06:12","2026-09-03T06:14","2026-09-04T06:16","2026-09-05T06:18","2026-09-06T06:20","2026-09-07T06:22","2026-09-08T06:24"],
-    "sunset":["2026-09-02T18:44","2026-09-03T18:42","2026-09-04T18:40","2026-09-05T18:38","2026-09-06T18:36","2026-09-07T18:34","2026-09-08T18:32"]
+    "sunset":["2026-09-02T18:44","2026-09-03T18:42","2026-09-04T18:40","2026-09-05T18:38","2026-09-06T18:36","2026-09-07T18:34","2026-09-08T18:32"],
+    "uv_index_max":[4.0,3.5,2.0,3.0,5.5,4.5,3.0],
+    "precipitation_probability_max":[10,80,55,90,5,20,40],
+    "precipitation_sum":[0.0,4.2,1.1,8.8,0.0,0.3,0.9]
   }
 }`
 
@@ -38,7 +52,7 @@ func TestRequestURLCarriesCoordinatesCurrentFieldsAndTimezone(t *testing.T) {
 	if q.Get("latitude") != "51.5" || q.Get("longitude") != "-0.13" {
 		t.Fatalf("coords = %q", raw)
 	}
-	if q.Get("current") != "temperature_2m,weather_code" {
+	if want := "temperature_2m,weather_code,apparent_temperature,is_day,relative_humidity_2m,wind_speed_10m,wind_direction_10m,uv_index"; q.Get("current") != want {
 		t.Fatalf("current = %q", q.Get("current"))
 	}
 	if q.Get("timezone") != "auto" {
@@ -67,6 +81,11 @@ func TestRequestURLAsksFahrenheitAndSevenDailyWhenConfigured(t *testing.T) {
 	if got := q.Get("daily"); !strings.Contains(got, "weather_code") || !strings.Contains(got, "temperature_2m_max") {
 		t.Fatalf("daily = %q", got)
 	}
+	for _, want := range []string{"uv_index_max", "precipitation_probability_max", "precipitation_sum"} {
+		if !strings.Contains(q.Get("daily"), want) {
+			t.Fatalf("daily %q is missing %q", q.Get("daily"), want)
+		}
+	}
 }
 
 func TestDecodeCurrentPreservesWMOCode(t *testing.T) {
@@ -80,6 +99,39 @@ func TestDecodeCurrentPreservesWMOCode(t *testing.T) {
 	}
 	if len(fc.Daily) != 0 {
 		t.Fatalf("daily = %d", len(fc.Daily))
+	}
+}
+
+func TestDecodeCarriesTheEnrichedCurrentAndRootFields(t *testing.T) {
+	t.Parallel()
+	fc, err := Decode([]byte(enrichedCurrentBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := fc.Current
+	if c.Apparent == nil || *c.Apparent != 17.1 {
+		t.Fatalf("apparent = %v", c.Apparent)
+	}
+	if c.IsDay == nil || *c.IsDay {
+		t.Fatalf("is_day = %v", c.IsDay)
+	}
+	if c.Humidity == nil || *c.Humidity != 62 {
+		t.Fatalf("humidity = %v", c.Humidity)
+	}
+	if c.WindSpeed == nil || *c.WindSpeed != 10.4 {
+		t.Fatalf("wind speed = %v", c.WindSpeed)
+	}
+	if c.WindDirection == nil || *c.WindDirection != 45 {
+		t.Fatalf("wind direction = %v", c.WindDirection)
+	}
+	if c.UVIndex == nil || *c.UVIndex != 0.0 {
+		t.Fatalf("uv index = %v", c.UVIndex)
+	}
+	if fc.Elevation == nil || *fc.Elevation != 64.0 {
+		t.Fatalf("elevation = %v", fc.Elevation)
+	}
+	if fc.Timezone != "Australia/Sydney" || fc.TimezoneAbbreviation != "GMT+10" {
+		t.Fatalf("timezone = %q / %q", fc.Timezone, fc.TimezoneAbbreviation)
 	}
 }
 
@@ -101,6 +153,70 @@ func TestDecodeSevenDailyValues(t *testing.T) {
 	}
 	if d.Sunrise != "2026-09-04T06:16" || d.Sunset != "2026-09-04T18:40" {
 		t.Fatalf("sun = %+v", d)
+	}
+	if d.UVIndexMax == nil || *d.UVIndexMax != 2.0 {
+		t.Fatalf("uv max = %v", d.UVIndexMax)
+	}
+	if d.PrecipitationProbability == nil || *d.PrecipitationProbability != 55 {
+		t.Fatalf("precip probability = %v", d.PrecipitationProbability)
+	}
+	if d.Precipitation == nil || *d.Precipitation != 1.1 {
+		t.Fatalf("precip sum = %v", d.Precipitation)
+	}
+}
+
+func TestDecodeTreatsAbsentOptionalFieldsAsAbsent(t *testing.T) {
+	t.Parallel()
+	fc, err := Decode([]byte(currentBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := fc.Current
+	if c.Apparent != nil || c.IsDay != nil || c.Humidity != nil || c.WindSpeed != nil || c.WindDirection != nil || c.UVIndex != nil {
+		t.Fatalf("optional current fields survived an absent body: %+v", c)
+	}
+	if fc.Elevation != nil || fc.Timezone != "" || fc.TimezoneAbbreviation != "" {
+		t.Fatalf("root fields survived an absent body: %+v", fc)
+	}
+	if len(fc.Daily) != 0 {
+		t.Fatalf("daily = %d", len(fc.Daily))
+	}
+}
+
+func TestDecodeTreatsNullOptionalFieldsAsAbsent(t *testing.T) {
+	t.Parallel()
+	body := `{"current":{"temperature_2m":1,"weather_code":0,"apparent_temperature":null,"is_day":null,"uv_index":null}}`
+	fc, err := Decode([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fc.Current.Apparent != nil || fc.Current.IsDay != nil || fc.Current.UVIndex != nil {
+		t.Fatalf("nulls decoded as present: %+v", fc.Current)
+	}
+}
+
+func TestDecodeKeepsDaysWhenAnOptionalDailyArrayIsMissing(t *testing.T) {
+	t.Parallel()
+	body := `{
+	  "current":{"temperature_2m":1,"weather_code":0},
+	  "daily":{
+	    "time":["2026-09-02","2026-09-03"],
+	    "weather_code":[0,3],
+	    "temperature_2m_max":[5,6],
+	    "temperature_2m_min":[-1,0],
+	    "sunrise":["2026-09-02T06:12","2026-09-03T06:14"],
+	    "sunset":["2026-09-02T18:44","2026-09-03T18:42"]
+	  }
+	}`
+	fc, err := Decode([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fc.Daily) != 2 {
+		t.Fatalf("days = %d", len(fc.Daily))
+	}
+	if fc.Daily[0].UVIndexMax != nil || fc.Daily[0].PrecipitationProbability != nil || fc.Daily[0].Precipitation != nil {
+		t.Fatalf("optional daily fields decoded from a missing array: %+v", fc.Daily[0])
 	}
 }
 
