@@ -47,11 +47,12 @@ type Registry struct {
 	now     time.Time
 	focused string
 
-	clock   *services.Clock
-	metrics *services.Metrics
-	weather *services.Weather
-	sample  services.Snapshot
-	reading services.Reading
+	clock      *services.Clock
+	metrics    *services.Metrics
+	weather    *services.Weather
+	sample     services.Snapshot
+	reading    services.Reading
+	mediaState services.MediaState
 	// controlIdentity is captured outside Registry.mu so the control centre
 	// never reads /proc or user databases from the Wayland owner.
 	controlIdentity     ccIdentity
@@ -82,6 +83,7 @@ type Registry struct {
 	brightness           *services.Brightness
 	network              *services.Network
 	media                *services.Media
+	mediaRelayCancel     chan struct{}
 	bluetooth            *services.Bluetooth
 	bluetoothState       services.BluetoothState
 	bluetoothRelayCancel chan struct{}
@@ -235,15 +237,68 @@ func (r *Registry) setAudio(a *services.Audio) {
 	go r.relayMixer(a)
 }
 
-// setMedia installs the media service. It holds no registry lease and runs no
-// relay: audio takes one because its volume relays are permanent consumers,
-// and the design approved no OSD for a track change. The widget and the page
-// acquire for themselves, and the service stops while nothing watches.
+// setMedia installs the media service and relays its cached snapshots into the
+// retained bar and control-centre trees. The widget and page acquire leases
+// for the service's bus watch; the relay itself never keeps the service alive.
 func (r *Registry) setMedia(m *services.Media) {
+	if r.media == m {
+		return
+	}
+	if r.mediaRelayCancel != nil {
+		close(r.mediaRelayCancel)
+		r.mediaRelayCancel = nil
+	}
 	if r.media != nil {
 		r.media.Close()
 	}
 	r.media = m
+	if m == nil {
+		r.mediaState = services.MediaState{}
+		return
+	}
+	r.mediaState = m.CachedState()
+	cancel := make(chan struct{})
+	r.mediaRelayCancel = cancel
+	go r.relayMedia(m, cancel)
+}
+
+func (r *Registry) relayMedia(media *services.Media, cancel <-chan struct{}) {
+	if media == nil {
+		return
+	}
+	r.publishMediaSnapshot(media, media.CachedState())
+	for {
+		select {
+		case <-r.closed:
+			return
+		case <-cancel:
+			return
+		case state := <-media.Changes():
+			r.publishMediaSnapshot(media, state)
+		}
+	}
+}
+
+func (r *Registry) publishMediaSnapshot(media *services.Media, state services.MediaState) {
+	r.mu.Lock()
+	if r.media != media {
+		r.mu.Unlock()
+		return
+	}
+	r.mediaState = state
+	changed := make([]uint32, 0, len(r.bars))
+	for global, bar := range r.bars {
+		if bar.apply(r.viewLocked(bar.connector())) {
+			changed = append(changed, global)
+		}
+	}
+	out, open := r.rebuildControlCentreLocked()
+	r.mu.Unlock()
+
+	r.publish(changed)
+	if open {
+		r.publishSurface(out, panelSurfaceID(PanelControlCenter))
+	}
 }
 
 func (r *Registry) relayMixer(audio *services.Audio) {
@@ -1471,7 +1526,7 @@ func (r *Registry) viewLocked(connector string) barView {
 		view.Network = r.network.CachedState()
 	}
 	if r.media != nil {
-		view.Media = r.media.CachedState()
+		view.Media = r.mediaState
 	}
 	view.Bluetooth = r.bluetoothState
 	if r.plugins != nil {

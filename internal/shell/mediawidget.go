@@ -18,9 +18,10 @@ func buildMediaWidget() textWidget {
 			{Kind: ui.KindText},
 		}}
 	return textWidget{
-		node:    row,
-		tooltip: "Media",
-		refresh: func(v barView) bool { return refreshMediaWidget(row, v) },
+		node:           row,
+		hideWhenAbsent: true,
+		tooltip:        "Media",
+		refresh:        func(v barView) bool { return refreshMediaWidget(row, v) },
 	}
 }
 

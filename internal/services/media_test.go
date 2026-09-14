@@ -13,6 +13,7 @@ type fakeBus struct {
 	names  []string
 	props  map[string]map[string]any
 	calls  []string
+	closes int
 	nameCh chan nameChange
 }
 
@@ -35,7 +36,7 @@ func (f *fakeBus) Call(busName, method string, args ...any) error {
 	return nil
 }
 
-func (f *fakeBus) Close() {}
+func (f *fakeBus) Close() { f.closes++ }
 
 // waitFor polls a predicate with a bounded deadline and fails the test when it
 // does not hold in time. The service's watch loop is asynchronous, so tests
@@ -61,6 +62,38 @@ func TestMediaWithNoPlayersIsUnavailable(t *testing.T) {
 	}
 	if got := m.State(); got.Title != "" {
 		t.Errorf("state = %+v, want zero", got)
+	}
+}
+
+func TestMediaWatchStartsWithItsFirstLease(t *testing.T) {
+	t.Parallel()
+	m := NewMedia(newFakeBus())
+	t.Cleanup(m.Close)
+	if m.Running() {
+		t.Fatal("the service started watching before a consumer acquired a lease")
+	}
+
+	lease, err := m.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.Running() {
+		t.Fatal("the first lease did not start the watcher")
+	}
+	lease.Release()
+	if m.Running() {
+		t.Fatal("the watcher stayed live after its last lease was released")
+	}
+}
+
+func TestMediaCloseIsIdempotent(t *testing.T) {
+	t.Parallel()
+	b := newFakeBus()
+	m := NewMedia(b)
+	m.Close()
+	m.Close()
+	if b.closes != 1 {
+		t.Fatalf("bus close count = %d, want 1", b.closes)
 	}
 }
 
@@ -109,6 +142,11 @@ func TestMediaAddsAndDropsPlayersOnNameChanges(t *testing.T) {
 	b := newFakeBus()
 	m := NewMedia(b)
 	t.Cleanup(m.Close)
+	lease, err := m.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(lease.Release)
 
 	b.nameCh <- nameChange{Name: "org.mpris.MediaPlayer2.vlc", Acquired: true}
 	waitFor(t, func() bool { return len(m.Players()) == 1 })
@@ -147,6 +185,11 @@ func TestMediaReleasesSelectionWhenThePlayerVanishes(t *testing.T) {
 	b := newFakeBus("org.mpris.MediaPlayer2.gone")
 	m := NewMedia(b)
 	t.Cleanup(m.Close)
+	lease, err := m.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(lease.Release)
 	m.Prefer("org.mpris.MediaPlayer2.gone")
 	b.nameCh <- nameChange{Name: "org.mpris.MediaPlayer2.gone", Acquired: false}
 	waitFor(t, func() bool { return m.State().Player == "" })

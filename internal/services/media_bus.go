@@ -3,6 +3,7 @@ package services
 import (
 	"errors"
 	"strings"
+	"sync"
 
 	"github.com/godbus/dbus/v5"
 )
@@ -41,10 +42,12 @@ type sessionBus struct {
 	// owners maps a sender's unique name, like ":1.42", to the well-known
 	// MPRIS name it currently owns. PropertiesChanged and Seeked carry only
 	// the unique name, so this is how their events find their player. pump
-	// owns it; no other goroutine touches it.
-	owners map[string]string
-	stop   chan struct{}
-	done   chan struct{}
+	// and initial ListNames lookup share it under ownersMu.
+	owners    map[string]string
+	ownersMu  sync.Mutex
+	stop      chan struct{}
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 // newSessionBus connects to the session bus and subscribes to the signals the
@@ -98,26 +101,25 @@ func (b *sessionBus) pump(signals <-chan *dbus.Signal) {
 		case <-b.stop:
 			return
 		case sig := <-signals:
+			if sig == nil {
+				return
+			}
 			switch {
 			case sig.Name == "org.freedesktop.DBus.NameOwnerChanged" && len(sig.Body) >= 3:
 				name, _ := sig.Body[0].(string)
 				oldOwner, _ := sig.Body[1].(string)
 				newOwner, _ := sig.Body[2].(string)
-				delete(b.owners, oldOwner)
-				if newOwner != "" && strings.HasPrefix(name, mprisPrefix) {
-					b.owners[newOwner] = name
-				}
-				b.emit(nameChange{Name: name, Acquired: newOwner != ""})
+				b.handleNameOwnerChanged(name, oldOwner, newOwner)
 			case sig.Name == "org.freedesktop.DBus.Properties.PropertiesChanged" && len(sig.Body) >= 2:
 				iface, _ := sig.Body[0].(string)
 				if iface != mprisPlayerIface || positionOnly(sig.Body[1]) {
 					continue
 				}
-				if name, ok := b.owners[sig.Sender]; ok {
+				if name := b.ownerFor(sig.Sender); name != "" {
 					b.emit(nameChange{Name: name, Acquired: true})
 				}
 			case sig.Name == mprisPlayerIface+".Seeked" && len(sig.Body) >= 1:
-				if name, ok := b.owners[sig.Sender]; ok {
+				if name := b.ownerFor(sig.Sender); name != "" {
 					b.emit(nameChange{Name: name, Acquired: true})
 				}
 			}
@@ -160,6 +162,18 @@ func positionOnly(changed any) bool {
 func (b *sessionBus) ListNames() ([]string, error) {
 	var names []string
 	err := b.conn.BusObject().Call("org.freedesktop.DBus.ListNames", 0).Store(&names)
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range names {
+		if !strings.HasPrefix(name, mprisPrefix) {
+			continue
+		}
+		var owner string
+		if err := b.conn.BusObject().Call("org.freedesktop.DBus.GetNameOwner", 0, name).Store(&owner); err == nil {
+			b.rememberOwner(name, owner)
+		}
+	}
 	return names, err
 }
 
@@ -179,9 +193,41 @@ func (b *sessionBus) Call(busName, method string, args ...any) error {
 }
 
 func (b *sessionBus) Close() {
-	close(b.stop)
-	<-b.done
-	b.conn.Close()
+	b.closeOnce.Do(func() {
+		close(b.stop)
+		<-b.done
+		b.conn.Close()
+	})
+}
+
+func (b *sessionBus) handleNameOwnerChanged(name, oldOwner, newOwner string) {
+	if !strings.HasPrefix(name, mprisPrefix) {
+		return
+	}
+	b.ownersMu.Lock()
+	if oldOwner != "" && b.owners[oldOwner] == name {
+		delete(b.owners, oldOwner)
+	}
+	if newOwner != "" {
+		b.owners[newOwner] = name
+	}
+	b.ownersMu.Unlock()
+	b.emit(nameChange{Name: name, Acquired: newOwner != ""})
+}
+
+func (b *sessionBus) rememberOwner(name, owner string) {
+	if owner == "" {
+		return
+	}
+	b.ownersMu.Lock()
+	b.owners[owner] = name
+	b.ownersMu.Unlock()
+}
+
+func (b *sessionBus) ownerFor(owner string) string {
+	b.ownersMu.Lock()
+	defer b.ownersMu.Unlock()
+	return b.owners[owner]
 }
 
 // unavailableBus stands in when there is no session bus. It is inert: no

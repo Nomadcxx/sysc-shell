@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -95,13 +96,16 @@ type Media struct {
 	changes   chan MediaState
 	stop      chan struct{}
 	done      chan struct{}
+	closed    bool
 	// now is the clock position interpolates against. It is a field so tests
 	// can move time instead of sleeping; it defaults to time.Now.
 	now func() time.Time
 }
 
-// NewMedia builds the service over b, enumerates the players already on it,
-// and begins watching for changes.
+var errMediaClosed = errors.New("services: media service is closed")
+
+// NewMedia builds the service over b and enumerates the players already on it.
+// The watch starts when the first consumer acquires a lease.
 func NewMedia(b bus) *Media {
 	m := &Media{
 		b:       b,
@@ -110,7 +114,6 @@ func NewMedia(b bus) *Media {
 		now:     time.Now,
 	}
 	m.enumerate()
-	m.startLocked(false)
 	return m
 }
 
@@ -192,6 +195,9 @@ func (m *Media) Prefer(busName string) {
 func (m *Media) Acquire() (*Lease, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.closed {
+		return nil, errMediaClosed
+	}
 	lease := &Lease{media: m}
 	m.leases.add(lease)
 	if m.stop == nil {
@@ -217,6 +223,11 @@ func (m *Media) release(l *Lease) {
 // call twice.
 func (m *Media) Close() {
 	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return
+	}
+	m.closed = true
 	for _, l := range m.leases.clear() {
 		l.media = nil
 	}
