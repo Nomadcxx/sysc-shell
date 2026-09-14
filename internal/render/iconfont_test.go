@@ -441,7 +441,7 @@ func TestWeatherConditionNamesTheWMOCategories(t *testing.T) {
 		95:  "Thunderstorm",
 		99:  "Thunderstorm",
 		100: "Thunderstorm", // above the documented domain; follows the glyph
-		44:  "Cloudy",      // the unmapped range falls back to the cloud
+		44:  "Cloudy",       // the unmapped range falls back to the cloud
 	}
 	for code, want := range cases {
 		if got := WeatherCondition(code); got != want {
