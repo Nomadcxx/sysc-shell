@@ -219,7 +219,9 @@ func (r *Registry) centerTreeFor(h *PanelHost) *ui.Node {
 		body = append(body, &ui.Node{Kind: ui.KindText, Text: "Nothing to see here"})
 	}
 
-	scroll := &ui.Node{Kind: ui.KindScroll, Height: 1, Gap: cardGap, Children: body}
+	// fitNotificationBody below resolves the real height from the surface this
+	// has to fit inside, so the value here is only a non-zero starting point.
+	scroll := &ui.Node{Kind: ui.KindScroll, Height: 1, Gap: cardGap, Children: body} // token-exempt: a placeholder fitNotificationBody overwrites, not a measured height
 	children = append(children, scroll)
 	root := &ui.Node{Kind: ui.KindColumn, Gap: cardGap, Padding: cardPadding, Children: children}
 	fitNotificationBody(root, scroll, surfaceW, surfaceH, h)
@@ -350,7 +352,7 @@ func centreFilterRow(active []protocol.Notification, history []protocol.HistoryE
 	for _, c := range historyChips {
 		seg := &ui.Node{
 			Kind: ui.KindButton, Action: "notify:center:filter:" + c.id,
-			Name: c.label, Role: "tab", Focusable: true, Padding: 2,
+			Name: c.label, Role: "tab", Focusable: true, Padding: theme.MarginXXS,
 			Children: []*ui.Node{{Kind: ui.KindText, TextRole: theme.RoleCaption,
 				Text: fmt.Sprintf("%s %d", c.label, bucketCount(c.id, active, history, now))}},
 		}
@@ -359,7 +361,7 @@ func centreFilterRow(active []protocol.Notification, history []protocol.HistoryE
 		}
 		segments = append(segments, seg)
 	}
-	return &ui.Node{Kind: ui.KindSegmented, Key: "notify-filter", Gap: 2,
+	return &ui.Node{Kind: ui.KindSegmented, Key: "notify-filter", Gap: theme.MarginXXS,
 		Width: width, Children: segments}
 }
 
@@ -380,7 +382,7 @@ func dndPresetColumn() *ui.Node {
 	col := &ui.Node{Kind: ui.KindColumn, Gap: cardGap}
 	for _, p := range dndPresets {
 		col.Children = append(col.Children, &ui.Node{
-			Kind: ui.KindButton, Text: p.label, Padding: 4,
+			Kind: ui.KindButton, Text: p.label, Padding: theme.MarginXS,
 			Action: "notify:center:preset:" + p.id, Name: p.label, Role: "button",
 			Focusable: true,
 		})
