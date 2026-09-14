@@ -335,6 +335,7 @@ the D3 configuration surface (sysc-283).
 | Document | Kind | State |
 |---|---|---|
 | `2026-09-15-media-page-design.md` | design | D1–D12. One shared CC body over cached media state; three ladder-rung cards; bounded rounded art on a third worker with the read timeout D11.2 mandates and a negative cache; a marquee text cell behind one render primitive and a new linear sweep animator mode; state-swapped bar glyph; `Configure(preferred, blacklist)` with the most-recently-playing middle rule; lease lifecycle hooks beside the Bluetooth pair; live Niri gate with two measured tunables. |
+| `2026-09-15-media-page.md` | plan | Eight tasks (0–7): docs land on `main` first, service configuration, four transport glyphs via the two-list TTF procedure, marquee render/animator/bar wiring, art worker, the page, Home tile + IPC route, then gates, tracker closes and live evidence. Carries the no `-race`/`go test ./...` constraint and the fake-bus rule forward from the service slice. |
 
 ## Milestone 5: notifications and system tray
 
