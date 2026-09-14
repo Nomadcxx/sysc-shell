@@ -407,6 +407,10 @@ func weatherWire(w Weather) *wireWeather {
 		v := w.Interval.String()
 		out.Interval = &v
 	}
+	if w.Location != "" {
+		v := w.Location
+		out.Location = &v
+	}
 	return out
 }
 

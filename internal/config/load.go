@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
@@ -142,6 +143,7 @@ type wireWeather struct {
 	Longitude *float64 `json:"longitude,omitempty"`
 	Unit      *string  `json:"unit,omitempty"`
 	Interval  *string  `json:"interval,omitempty"`
+	Location  *string  `json:"location,omitempty"`
 }
 
 type wireWallpaper struct {
@@ -499,6 +501,18 @@ func applyWeather(w wireWeather, path string) (Weather, error) {
 			return Weather{}, pathErr(path+".interval", "%v is not positive", interval)
 		}
 		out.Interval = interval
+	}
+	if w.Location != nil {
+		label := *w.Location
+		if len(label) > maxWeatherLocationBytes {
+			return Weather{}, pathErr(path+".location", "is %d bytes, over the %d-byte limit", len(label), maxWeatherLocationBytes)
+		}
+		for _, r := range label {
+			if unicode.IsControl(r) {
+				return Weather{}, pathErr(path+".location", "carries a control character")
+			}
+		}
+		out.Location = label
 	}
 	return out, nil
 }
