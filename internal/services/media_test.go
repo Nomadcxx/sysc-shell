@@ -1,6 +1,9 @@
 package services
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // fakeBus is the seam. A fake bus beats a fake session bus: it is
 // deterministic, needs no running player, and cannot be affected by whatever
@@ -32,6 +35,21 @@ func (f *fakeBus) Call(busName, method string, args ...any) error {
 }
 
 func (f *fakeBus) Close() {}
+
+// waitFor polls a predicate with a bounded deadline and fails the test when it
+// does not hold in time. The service's watch loop is asynchronous, so tests
+// that drive it through the fake's channel need this instead of a sleep.
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatal("condition did not hold in time")
+}
 
 func TestMediaWithNoPlayersIsUnavailable(t *testing.T) {
 	t.Parallel()
@@ -68,4 +86,32 @@ func TestMediaIgnoresNonPlayerNames(t *testing.T) {
 	if len(m.Players()) != 0 {
 		t.Errorf("players = %v, want none", m.Players())
 	}
+}
+
+func TestMediaDiscoversPlayersAtStart(t *testing.T) {
+	t.Parallel()
+	m := NewMedia(newFakeBus(
+		"org.mpris.MediaPlayer2.spotify",
+		"org.freedesktop.Notifications",
+		"org.mpris.MediaPlayer2.firefox.instance_1_5",
+	))
+	t.Cleanup(m.Close)
+	if got := len(m.Players()); got != 2 {
+		t.Fatalf("players = %d, want 2", got)
+	}
+}
+
+func TestMediaAddsAndDropsPlayersOnNameChanges(t *testing.T) {
+	t.Parallel()
+	// No polling: the session bus tells us. A player that vanishes must go
+	// immediately, or commands point at a dead name.
+	b := newFakeBus()
+	m := NewMedia(b)
+	t.Cleanup(m.Close)
+
+	b.nameCh <- nameChange{Name: "org.mpris.MediaPlayer2.vlc", Acquired: true}
+	waitFor(t, func() bool { return len(m.Players()) == 1 })
+
+	b.nameCh <- nameChange{Name: "org.mpris.MediaPlayer2.vlc", Acquired: false}
+	waitFor(t, func() bool { return len(m.Players()) == 0 })
 }
