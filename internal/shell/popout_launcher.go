@@ -122,7 +122,7 @@ func launcherHeader() *ui.Node {
 			TextRole: theme.RoleTitle, Tone: ui.ToneAccent}
 	}
 	return &ui.Node{
-		Kind: ui.KindRow, Gap: 10, CenterX: true,
+		Kind: ui.KindRow, Gap: theme.MarginM, CenterX: true,
 		Children: []*ui.Node{
 			slashes(),
 			{
@@ -192,10 +192,10 @@ func (h *PanelHost) launcherFooterHeight() int {
 // function. They were three copies of the same arithmetic, and an error label
 // already made them disagree.
 func (h *PanelHost) launcherListHeight() int {
-	used := 24 + h.launcherHeaderHeight() + 8 + launcherFieldHeight + 8 +
-		h.launcherFooterHeight() + 8
+	used := 2*theme.MarginL + h.launcherHeaderHeight() + theme.MarginM +
+		launcherFieldHeight + theme.MarginM + h.launcherFooterHeight() + theme.MarginM
 	if h.errLabel != "" {
-		used += 24 + 8
+		used += 24 + theme.MarginM
 	}
 	return max(h.place.Panel.H-used, launcherSlotHeight)
 }
@@ -208,9 +208,9 @@ func launcherTree(r *Registry, h *PanelHost) *ui.Node {
 		h.search = ui.NewField("")
 	}
 	field := h.search.Node("Search")
-	field.Width = max(h.place.Panel.W-24, 0)
+	field.Width = max(h.place.Panel.W-2*theme.MarginL, 0)
 	field.Height = launcherFieldHeight
-	field.Padding = 8
+	field.Padding = theme.MarginM
 
 	head := []*ui.Node{launcherHeader()}
 	if h.errLabel != "" {
@@ -223,7 +223,7 @@ func launcherTree(r *Registry, h *PanelHost) *ui.Node {
 		head = append(head,
 			&ui.Node{Kind: ui.KindText, Text: "No results"},
 			launcherFooter(h, 0))
-		return &ui.Node{Kind: ui.KindColumn, Gap: 8, Padding: 12, Children: head}
+		return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: theme.MarginL, Children: head}
 	}
 	h.launcherSel = min(max(h.launcherSel, 0), len(results)-1)
 
@@ -238,7 +238,7 @@ func launcherTree(r *Registry, h *PanelHost) *ui.Node {
 			return launcherRow(r, h, results, i)
 		},
 	}
-	return &ui.Node{Kind: ui.KindColumn, Gap: 8, Padding: 12,
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: theme.MarginL,
 		Children: append(head, list, launcherFooter(h, len(results)))}
 }
 
@@ -287,15 +287,15 @@ func launcherRowBody(r *Registry, h *PanelHost, e launcher.Entry) *ui.Node {
 	// Panel pad 12×2, capsule pad launcherRowPadTop×2, glyph, gap. The row
 	// itself is unpadded: its vertical inset is the capsule's, and a second
 	// one here would put the text block back off the 12/16 figures.
-	labelW := h.place.Panel.W - 24 - 2*launcherRowPadTop - launcherIconSlot - 12
+	labelW := h.place.Panel.W - 2*theme.MarginL - 2*launcherRowPadTop - launcherIconSlot - theme.MarginL
 	if labelW < 80 {
 		labelW = 80
 	}
 	return &ui.Node{
-		Kind: ui.KindRow, Gap: 12,
+		Kind: ui.KindRow, Gap: theme.MarginL,
 		Children: []*ui.Node{
 			launcherIconNode(r, h, e),
-			{Kind: ui.KindColumn, Gap: 2, Width: labelW, Children: labels},
+			{Kind: ui.KindColumn, Gap: theme.MarginXXS, Width: labelW, Children: labels},
 		},
 	}
 }

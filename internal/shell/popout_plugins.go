@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -16,12 +17,12 @@ func pluginsTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	if r == nil || r.plugins == nil {
 		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: "No plugin host"})
-		return &ui.Node{Kind: ui.KindColumn, Gap: 8, Padding: 12, Children: rows}
+		return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: theme.MarginL, Children: rows}
 	}
 	for _, c := range r.plugins.discovered().Plugins {
 		rows = append(rows, pluginCard(r, h, c))
 	}
-	return &ui.Node{Kind: ui.KindColumn, Gap: 10, Padding: 12, Children: rows}
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: theme.MarginL, Children: rows}
 }
 
 func pluginDirectoryLabel(r *Registry) string {
@@ -93,7 +94,7 @@ func pluginCard(r *Registry, h *PanelHost, c plugin.Candidate) *ui.Node {
 		}
 		children = append(children, pluginSettingRow(r, h, id, s))
 	}
-	return &ui.Node{Kind: ui.KindColumn, Gap: 6, Children: children}
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: children}
 }
 
 // pluginPanelSettingGroups is the recorder panel layout from the design.
@@ -182,12 +183,12 @@ func pluginSettingRow(r *Registry, h *PanelHost, pluginID string, s plugin.Setti
 	store := pluginID + "." + s.Key
 	control := pluginSettingControl(h, s, raw, action, store)
 	if s.Type == plugin.SettingBool {
-		return &ui.Node{Kind: ui.KindRow, Gap: 8, Children: []*ui.Node{
+		return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
 			control,
 			{Kind: ui.KindText, Text: s.Label, Action: action, Focusable: true, Name: s.Label, Role: "checkbox"},
 		}}
 	}
-	return &ui.Node{Kind: ui.KindColumn, Gap: 4, Children: []*ui.Node{
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: s.Label},
 		control,
 	}}
@@ -215,7 +216,7 @@ func pluginSettingControl(h *PanelHost, s plugin.Setting, raw, action, store str
 		}
 		return &ui.Node{
 			Kind: ui.KindSlider, Value: float64(n), Min: min, Max: max, Step: 1,
-			Action: action, Width: 160, Focusable: true, Name: s.Label, Role: "slider",
+			Action: action, Width: 160, Focusable: true, Name: s.Label, Role: "slider", // token-exempt: a plugin slider's track width, a measured control dimension rather than a ladder value
 		}
 	case plugin.SettingSelect:
 		labels := make([]string, 0, len(s.Options))
