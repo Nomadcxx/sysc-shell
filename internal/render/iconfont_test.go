@@ -462,3 +462,16 @@ func TestNightGlyphsCarryInk(t *testing.T) {
 		}
 	}
 }
+
+func TestWeatherDetailGlyphsCarryInk(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"thermometer", "wind", "humidity", "sunrise", "sunset", "elevation"} {
+		r, ok := IconByName(name)
+		if !ok {
+			t.Fatalf("the catalogue does not carry %q", name)
+		}
+		if got := glyphCoverage(t, r, 32); got == 0 {
+			t.Fatalf("%s glyph %U has no ink", name, r)
+		}
+	}
+}

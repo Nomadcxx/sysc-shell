@@ -1,0 +1,200 @@
+package shell
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
+)
+
+// weatherTree builds PanelWeather: the header, the hero card, and the details
+// card over the day list. Every read here is a cached one; this runs under
+// Registry.mu and on the Wayland owner, where a fetch would stall every bar.
+func weatherTree(r *Registry, h *PanelHost) *ui.Node {
+	m := h.metrics()
+	reading := services.Reading{}
+	location := ""
+	if r != nil {
+		reading = r.reading
+		location = weatherLocation(r.cfg.Weather)
+	}
+	children := []*ui.Node{
+		weatherHeader(m),
+		weatherHero(reading, location, m),
+		weatherDetails(reading, m),
+	}
+	if h.errLabel != "" {
+		children = append(children, &ui.Node{
+			Kind: ui.KindText, Text: h.errLabel, Tone: ui.ToneError,
+			TextRole: theme.RoleCaption,
+		})
+	}
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Padding: m.PanelPadding, Children: children}
+}
+
+// weatherLocation is the configured label, or the coordinates it stands in
+// for. An unconfigured block has no place to name.
+func weatherLocation(w config.Weather) string {
+	if w.Location != "" {
+		return w.Location
+	}
+	if w.Configured {
+		return fmt.Sprintf("%.2f°, %.2f°", w.Latitude, w.Longitude)
+	}
+	return absent
+}
+
+func weatherHeader(m theme.Metrics) *ui.Node {
+	well := m.StandardControl
+	title := &ui.Node{
+		Kind: ui.KindText, Text: "Weather",
+		TextRole: theme.RoleTitle, Name: "Weather", Role: "heading",
+	}
+	close := &ui.Node{
+		Kind: ui.KindButton, Action: "weather-close", Name: "Close", Role: "button",
+		Focusable: true, Width: m.CompactControl, Height: m.CompactControl, Shape: ui.ShapeCircle,
+		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "close", IconSize: m.IconNormal}},
+	}
+	top := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Height: well, PinEnd: true, Children: []*ui.Node{title, close}}
+	return &ui.Node{
+		Kind: ui.KindCapsule, Padding: m.CardPadding, Height: well + 2*m.CardPadding,
+		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+		Children: []*ui.Node{top},
+	}
+}
+
+// weatherHero is the panel's headline card: the condition glyph beside the
+// temperature, then the day's range, the place, and how fresh the reading is.
+func weatherHero(reading services.Reading, location string, m theme.Metrics) *ui.Node {
+	if !reading.Observed {
+		text, tone := "-", ui.ToneNormal
+		if !reading.FailedSince.IsZero() {
+			text, tone = "weather unavailable", ui.ToneError
+		}
+		return &ui.Node{
+			Kind: ui.KindCapsule, Padding: m.CardPadding,
+			Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+			Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginM, Children: []*ui.Node{
+				{Kind: ui.KindText, Text: text, Tone: tone},
+			}}},
+		}
+	}
+
+	isDay := reading.IsDay == nil || *reading.IsDay
+	headline := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Children: []*ui.Node{
+		{Kind: ui.KindIcon, Icon: render.WeatherIconName(reading.Code, isDay), IconSize: m.IconLarge},
+		{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: fmt.Sprintf("%.0f%s", reading.Temperature, unitSuffix(reading.Unit)), TextRole: theme.RoleTitle, Tabular: true},
+			{Kind: ui.KindText, Text: render.WeatherCondition(reading.Code), TextRole: theme.RoleLabel},
+		}},
+	}}
+	lines := []*ui.Node{headline}
+	if len(reading.Daily) > 0 {
+		today := reading.Daily[0]
+		lines = append(lines, &ui.Node{Kind: ui.KindText, TextRole: theme.RoleLabel, Tabular: true,
+			Text: fmt.Sprintf("Low %.0f°  High %.0f°", today.Low, today.High)})
+	}
+	lines = append(lines, &ui.Node{Kind: ui.KindText, TextRole: theme.RoleCaption, Text: location})
+	if !reading.FetchedAt.IsZero() {
+		lines = append(lines, &ui.Node{Kind: ui.KindText, TextRole: theme.RoleCaption, Tabular: true,
+			Text: "Updated " + reading.FetchedAt.Format("15:04")})
+	}
+	if reading.Stale() {
+		lines = append(lines, &ui.Node{Kind: ui.KindText, TextRole: theme.RoleCaption,
+			Text: "Age " + humaniseAge(time.Since(reading.FetchedAt))})
+	}
+	return &ui.Node{
+		Kind: ui.KindCapsule, Padding: m.CardPadding,
+		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginM, Children: lines}},
+	}
+}
+
+// weatherDetails is the labelled figure card the reference shows under the
+// hero: one row per fact, the value pinned right so the labels align.
+func weatherDetails(reading services.Reading, m theme.Metrics) *ui.Node {
+	var today services.Day
+	if len(reading.Daily) > 0 {
+		today = reading.Daily[0]
+	}
+	rows := []*ui.Node{
+		weatherRow(m, "thermometer", "Feels like", weatherOptional(reading.Apparent, func(v float64) string {
+			return fmt.Sprintf("%.1f%s", v, unitSuffix(reading.Unit))
+		})),
+		weatherRow(m, "wind", "Wind", weatherWind(reading)),
+		weatherRow(m, "humidity", "Humidity", weatherOptional(reading.Humidity, func(v float64) string {
+			return fmt.Sprintf("%.0f%%", v)
+		})),
+		weatherRow(m, "clear-day", "UV index", weatherOptional(reading.UVIndex, func(v float64) string {
+			return fmt.Sprintf("%.1f", v)
+		})),
+		weatherRow(m, "humidity", "Precip chance", weatherOptional(today.PrecipitationProbability, func(v float64) string {
+			return fmt.Sprintf("%.0f%%", v)
+		})),
+		weatherRow(m, "sunrise", "Sunrise", weatherClock(today.Sunrise)),
+		weatherRow(m, "sunset", "Sunset", weatherClock(today.Sunset)),
+		weatherRow(m, "elevation", "Elevation", weatherOptional(reading.Elevation, func(v float64) string {
+			return fmt.Sprintf("%.0f m", v)
+		})),
+		weatherRow(m, "schedule", "Timezone", weatherTimezone(reading)),
+	}
+	return &ui.Node{
+		Kind: ui.KindCapsule, Padding: m.CardPadding,
+		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: rows}},
+	}
+}
+
+func weatherRow(m theme.Metrics, icon, label, value string) *ui.Node {
+	return &ui.Node{Kind: ui.KindRow, Height: m.CompactControl, Gap: theme.MarginM, Children: []*ui.Node{
+		{Kind: ui.KindIcon, Icon: icon, IconSize: m.IconSmall},
+		{Kind: ui.KindText, Text: label, TextRole: theme.RoleLabel},
+		{Kind: ui.KindText, Text: value, TextRole: theme.RoleBody, Tabular: true, PinEnd: true},
+	}}
+}
+
+func weatherWind(reading services.Reading) string {
+	if reading.WindSpeed == nil {
+		return absent
+	}
+	wind := fmt.Sprintf("%.1f km/h", *reading.WindSpeed)
+	if reading.WindDirection != nil {
+		wind += " " + windCompass(*reading.WindDirection)
+	}
+	return wind
+}
+
+func weatherTimezone(reading services.Reading) string {
+	if reading.Timezone == "" {
+		return absent
+	}
+	if reading.TimezoneAbbreviation == "" {
+		return reading.Timezone
+	}
+	return reading.Timezone + " (" + reading.TimezoneAbbreviation + ")"
+}
+
+// weatherOptional renders a present figure through format and an absent one
+// as the dash, so a missing field keeps its row's space.
+func weatherOptional(value *float64, format func(float64) string) string {
+	if value == nil {
+		return absent
+	}
+	return format(*value)
+}
+
+// weatherClock trims an ISO instant to its local clock time.
+func weatherClock(iso string) string {
+	if i := strings.LastIndex(iso, "T"); i >= 0 && i+1 < len(iso) {
+		return iso[i+1:]
+	}
+	if iso == "" {
+		return absent
+	}
+	return iso
+}

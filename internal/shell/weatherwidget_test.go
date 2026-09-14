@@ -164,9 +164,11 @@ func observedWeather() services.Reading {
 	return services.Reading{
 		Observed: true, Temperature: 18.4, Unit: services.UnitCelsius,
 		Code: 0, FetchedAt: time.Now(),
-		Humidity: ptrF(62), WindSpeed: ptrF(10.4), WindDirection: ptrF(45),
+		Apparent: ptrF(9.5), Humidity: ptrF(62), UVIndex: ptrF(0.0),
+		WindSpeed: ptrF(10.4), WindDirection: ptrF(45),
+		Elevation: ptrF(64), Timezone: "Australia/Sydney", TimezoneAbbreviation: "GMT+10",
 		Daily: []services.Day{
-			{Date: "2026-09-15", Code: 0, High: 22, Low: 6, Sunrise: "2026-09-15T06:12", Sunset: "2026-09-15T18:44"},
+			{Date: "2026-09-15", Code: 0, High: 22, Low: 6, Sunrise: "2026-09-15T06:12", Sunset: "2026-09-15T18:44", PrecipitationProbability: ptrF(10)},
 			{Date: "2026-09-16", Code: 61, High: 19, Low: 11, Sunrise: "2026-09-16T06:14", Sunset: "2026-09-16T18:42"},
 		},
 	}

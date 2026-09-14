@@ -94,6 +94,17 @@ const (
 	iconPartlyCloudyNight
 )
 
+// The weather detail glyphs extend the font after the night pair. They label
+// the panel's detail rows: feels-like, wind, humidity, sun times, elevation.
+const (
+	iconThermometer rune = iconPartlyCloudyNight + 1 + iota
+	iconWind
+	iconHumidity
+	iconSunrise
+	iconSunset
+	iconElevation
+)
+
 // batteryLevels is how many level glyphs each state has.
 const batteryLevels = 7
 
@@ -355,6 +366,12 @@ var iconNames = map[string]rune{
 	"snow":                iconSnow,
 	"heavy-snow":          iconHeavySnow,
 	"thunderstorm":        iconThunderstorm,
+	"thermometer":         iconThermometer,
+	"wind":                iconWind,
+	"humidity":            iconHumidity,
+	"sunrise":             iconSunrise,
+	"sunset":              iconSunset,
+	"elevation":           iconElevation,
 	"camera":              iconCamera,
 	"camera-off":          iconCameraOff,
 	"record":              iconRecord,
