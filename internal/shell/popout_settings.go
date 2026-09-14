@@ -6,17 +6,25 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 var settingsSections = []string{"Bar", "Widgets", "Appearance", "Panels", "Session", "Accessibility", "Plugins"}
+
+// settingsSidebarWidth is the measured width of the section rail. The search
+// field takes it too, so the field and the tabs below it read as one column
+// rather than two that happen to line up. It is named once because three
+// sites share it: a number repeated three times drifts apart on the first
+// edit that reaches only two of them.
+const settingsSidebarWidth = 220
 
 func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	if h.search == nil {
 		h.search = ui.NewField("")
 	}
 	search := h.search.Node("Search")
-	search.Width = 220
+	search.Width = settingsSidebarWidth
 	head := []*ui.Node{}
 	if h.errLabel != "" {
 		head = append(head, &ui.Node{Kind: ui.KindText, Text: h.errLabel, Tone: ui.ToneError})
@@ -35,7 +43,7 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 				Name: e.Label, Role: "button", Focusable: true,
 			})
 		}
-		return &ui.Node{Kind: ui.KindColumn, Gap: 8, Padding: 12, Children: rows}
+		return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: h.metrics().PanelPadding, Children: rows}
 	}
 
 	sidebar := head
@@ -51,8 +59,8 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 		section = "Bar"
 	}
 	if section == "Plugins" {
-		return &ui.Node{Kind: ui.KindRow, Gap: 16, Padding: 12, Children: []*ui.Node{
-			{Kind: ui.KindColumn, Width: 220, Gap: 8, Children: sidebar},
+		return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXL, Padding: h.metrics().PanelPadding, Children: []*ui.Node{
+			{Kind: ui.KindColumn, Width: settingsSidebarWidth, Gap: theme.MarginM, Children: sidebar},
 			pluginsTree(r, h),
 		}}
 	}
@@ -63,7 +71,7 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	content := &ui.Node{
 		Kind:       ui.KindVirtualList,
 		ItemCount:  len(entries),
-		ItemHeight: 36,
+		ItemHeight: h.metrics().StandardControl,
 		Item: func(i int) *ui.Node {
 			if i < 0 || i >= len(entries) {
 				return nil
@@ -71,15 +79,15 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 			return settingsEntryRow(h, entries[i])
 		},
 	}
-	return &ui.Node{Kind: ui.KindRow, Gap: 16, Padding: 12, Children: []*ui.Node{
-		{Kind: ui.KindColumn, Width: 220, Gap: 8, Children: sidebar},
+	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXL, Padding: h.metrics().PanelPadding, Children: []*ui.Node{
+		{Kind: ui.KindColumn, Width: settingsSidebarWidth, Gap: theme.MarginM, Children: sidebar},
 		content,
 	}}
 }
 
 func settingsEntryRow(h *PanelHost, e settings.Entry) *ui.Node {
 	control := settingsControl(h, e)
-	return &ui.Node{Kind: ui.KindRow, Gap: 8, Children: []*ui.Node{
+	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: e.Label},
 		control,
 	}}
@@ -105,7 +113,7 @@ func settingsControl(h *PanelHost, e settings.Entry) *ui.Node {
 		n, _ := strconv.Atoi(raw)
 		return &ui.Node{
 			Kind: ui.KindSlider, Value: float64(n), Min: float64(e.Min), Max: float64(e.Max), Step: 1,
-			Action: action, Width: 160, Focusable: true, Name: e.Label, Role: "slider",
+			Action: action, Width: 160, Focusable: true, Name: e.Label, Role: "slider", // token-exempt: a slider's track width, a measured control dimension rather than a ladder value
 		}
 	case settings.KindEnum:
 		idx := 0
