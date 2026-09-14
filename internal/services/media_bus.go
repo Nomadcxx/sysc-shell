@@ -1,6 +1,8 @@
 package services
 
 import (
+	"strings"
+
 	"github.com/godbus/dbus/v5"
 )
 
@@ -32,13 +34,20 @@ const mprisRoot = "/org/mpris/MediaPlayer2"
 type sessionBus struct {
 	conn    *dbus.Conn
 	changes chan nameChange
-	stop    chan struct{}
-	done    chan struct{}
+	// owners maps a sender's unique name, like ":1.42", to the well-known
+	// MPRIS name it currently owns. PropertiesChanged and Seeked carry only
+	// the unique name, so this is how their events find their player. pump
+	// owns it; no other goroutine touches it.
+	owners map[string]string
+	stop   chan struct{}
+	done   chan struct{}
 }
 
-// newSessionBus connects to the session bus and subscribes to
-// NameOwnerChanged, the one signal discovery needs. A machine without a
-// session bus returns an error and the caller builds the inert service.
+// newSessionBus connects to the session bus and subscribes to the signals the
+// service needs: NameOwnerChanged for discovery, and PropertiesChanged and
+// Seeked on the player interface so metadata and position stay live. A
+// machine without a session bus returns an error and the caller builds the
+// inert service.
 func newSessionBus() (bus, error) {
 	conn, err := dbus.ConnectSessionBus()
 	if err != nil {
@@ -51,9 +60,24 @@ func newSessionBus() (bus, error) {
 		conn.Close()
 		return nil, err
 	}
+	if err := conn.AddMatchSignal(
+		dbus.WithMatchInterface("org.freedesktop.DBus.Properties"),
+		dbus.WithMatchMember("PropertiesChanged"),
+	); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if err := conn.AddMatchSignal(
+		dbus.WithMatchInterface(mprisPlayerIface),
+		dbus.WithMatchMember("Seeked"),
+	); err != nil {
+		conn.Close()
+		return nil, err
+	}
 	b := &sessionBus{
 		conn:    conn,
 		changes: make(chan nameChange, 32),
+		owners:  map[string]string{},
 		stop:    make(chan struct{}),
 		done:    make(chan struct{}),
 	}
@@ -70,18 +94,63 @@ func (b *sessionBus) pump(signals <-chan *dbus.Signal) {
 		case <-b.stop:
 			return
 		case sig := <-signals:
-			if sig.Name != "org.freedesktop.DBus.NameOwnerChanged" || len(sig.Body) < 3 {
-				continue
-			}
-			name, _ := sig.Body[0].(string)
-			newOwner, _ := sig.Body[2].(string)
-			select {
-			case b.changes <- nameChange{Name: name, Acquired: newOwner != ""}:
-			case <-b.stop:
-				return
+			switch {
+			case sig.Name == "org.freedesktop.DBus.NameOwnerChanged" && len(sig.Body) >= 3:
+				name, _ := sig.Body[0].(string)
+				oldOwner, _ := sig.Body[1].(string)
+				newOwner, _ := sig.Body[2].(string)
+				delete(b.owners, oldOwner)
+				if newOwner != "" && strings.HasPrefix(name, mprisPrefix) {
+					b.owners[newOwner] = name
+				}
+				b.emit(nameChange{Name: name, Acquired: newOwner != ""})
+			case sig.Name == "org.freedesktop.DBus.Properties.PropertiesChanged" && len(sig.Body) >= 2:
+				iface, _ := sig.Body[0].(string)
+				if iface != mprisPlayerIface || positionOnly(sig.Body[1]) {
+					continue
+				}
+				if name, ok := b.owners[sig.Sender]; ok {
+					b.emit(nameChange{Name: name, Acquired: true})
+				}
+			case sig.Name == mprisPlayerIface+".Seeked" && len(sig.Body) >= 1:
+				if name, ok := b.owners[sig.Sender]; ok {
+					b.emit(nameChange{Name: name, Acquired: true})
+				}
 			}
 		}
 	}
+}
+
+// emit forwards one event, giving up if the bus closes first.
+func (b *sessionBus) emit(ch nameChange) {
+	select {
+	case b.changes <- ch:
+	case <-b.stop:
+	}
+}
+
+// positionOnly reports whether a PropertiesChanged payload carried nothing
+// but Position. Interpolation answers position between reads, so a player
+// that announces every second of progress would otherwise trigger a full
+// property re-read for each one.
+func positionOnly(changed any) bool {
+	switch props := changed.(type) {
+	case map[string]dbus.Variant:
+		for k := range props {
+			if k != "Position" {
+				return false
+			}
+		}
+		return true
+	case map[string]any:
+		for k := range props {
+			if k != "Position" {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func (b *sessionBus) ListNames() ([]string, error) {
