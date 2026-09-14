@@ -859,7 +859,32 @@ func TestMediaServiceStopsWhenItsLastLeaseGoes(t *testing.T) {
 		t.Fatal(err)
 	}
 	l.Release()
-	if reg.media.Available() && reg.media.Running() {
+	if reg.media.Running() {
 		t.Error("the service kept running with no leases")
+	}
+}
+
+func TestMediaSnapshotUpdatesTheRetainedRegistryView(t *testing.T) {
+	t.Parallel()
+	media := services.NewUnavailableMedia()
+	r := &Registry{
+		closed:     make(chan struct{}),
+		media:      media,
+		bars:       make(map[uint32]*Bar),
+		panelHosts: make(map[PanelID]*PanelHost),
+	}
+	t.Cleanup(func() {
+		close(r.closed)
+		media.Close()
+	})
+
+	want := services.MediaState{
+		Available: true,
+		Player:    "org.mpris.MediaPlayer2.player",
+		Title:     "Track",
+	}
+	r.publishMediaSnapshot(media, want)
+	if got := r.mediaState; got != want {
+		t.Fatalf("retained media state = %+v, want %+v", got, want)
 	}
 }

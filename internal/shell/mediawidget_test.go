@@ -34,9 +34,14 @@ func TestMediaWidgetCarriesNoPlayerPicker(t *testing.T) {
 
 func TestMediaWidgetIsAbsentWithNoPlayer(t *testing.T) {
 	t.Parallel()
-	// A bar with nothing playing should not reserve a gap.
-	w := buildMediaWidget()
-	if !w.refresh(barView{}) && !w.node.Absent {
-		t.Error("the widget did not mark itself absent with no player")
+	// A bar with nothing playing should not reserve a gap. Test the wrapped
+	// widget, because the capsule is what the bar lays out and paints.
+	metrics := DefaultTheme().Metrics
+	w := buildWidgets([]config.Item{{ID: "media"}}, metrics.CapsulePadding, metrics)[0]
+	if !w.refresh(barView{}) {
+		t.Fatal("the widget refresh did not report its absence")
+	}
+	if !w.node.Absent {
+		t.Error("the media capsule remained visible with no player")
 	}
 }
