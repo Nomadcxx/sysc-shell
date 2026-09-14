@@ -150,3 +150,62 @@ func TestMediaReleasesSelectionWhenThePlayerVanishes(t *testing.T) {
 	b.nameCh <- nameChange{Name: "org.mpris.MediaPlayer2.gone", Acquired: false}
 	waitFor(t, func() bool { return m.State().Player == "" })
 }
+
+func TestMediaDecodesMetadata(t *testing.T) {
+	t.Parallel()
+	b := newFakeBus("org.mpris.MediaPlayer2.x")
+	b.props["org.mpris.MediaPlayer2.x"] = map[string]any{
+		"Metadata": map[string]any{
+			"xesam:title":  "Ambush",
+			"xesam:artist": []string{"Sepultura"},
+			"xesam:album":  "Roots",
+			"mpris:artUrl": "file:///tmp/art.png",
+			"mpris:length": int64(215_000_000),
+		},
+	}
+	m := NewMedia(b)
+	t.Cleanup(m.Close)
+	st := m.State()
+	if st.Title != "Ambush" || st.Artist != "Sepultura" || st.Album != "Roots" {
+		t.Errorf("metadata = %+v", st)
+	}
+	if st.LengthUS != 215_000_000 {
+		t.Errorf("length = %d", st.LengthUS)
+	}
+}
+
+func TestMediaSnapshotCarriesNoDecodedImage(t *testing.T) {
+	t.Parallel()
+	// Fetching or decoding art on the paint path stalls a frame. The snapshot
+	// carries an identifier; the async worker produces the raster later. The
+	// wallpaper picker already documents having paid for this mistake.
+	b := newFakeBus("org.mpris.MediaPlayer2.x")
+	b.props["org.mpris.MediaPlayer2.x"] = map[string]any{
+		"Metadata": map[string]any{"mpris:artUrl": "file:///tmp/art.png"},
+	}
+	m := NewMedia(b)
+	t.Cleanup(m.Close)
+	if m.State().ArtKey == "" {
+		t.Error("no art key recorded")
+	}
+}
+
+func TestMediaSurvivesMalformedMetadata(t *testing.T) {
+	t.Parallel()
+	// A player is free to send nonsense. A partial map must degrade to a
+	// usable snapshot, never fail the service.
+	b := newFakeBus("org.mpris.MediaPlayer2.x")
+	b.props["org.mpris.MediaPlayer2.x"] = map[string]any{
+		"Metadata": map[string]any{
+			"xesam:title":  42,
+			"xesam:artist": "not a list",
+			"mpris:length": "not a number",
+		},
+	}
+	m := NewMedia(b)
+	t.Cleanup(m.Close)
+	st := m.State() // must not panic
+	if st.LengthUS != 0 {
+		t.Errorf("garbage length produced %d", st.LengthUS)
+	}
+}

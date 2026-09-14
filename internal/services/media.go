@@ -3,6 +3,8 @@ package services
 import (
 	"strings"
 	"sync"
+
+	"github.com/godbus/dbus/v5"
 )
 
 // PlaybackStatus is the player's transport state.
@@ -21,7 +23,25 @@ const (
 	// mprisIface is the root player interface, whose Identity property names
 	// the player for humans.
 	mprisIface = "org.mpris.MediaPlayer2"
+	// mprisPlayerIface carries transport state: metadata, status, rate.
+	mprisPlayerIface = "org.mpris.MediaPlayer2.Player"
 )
+
+// mediaPlayer is one discovered player's decoded state. The exported Player
+// inside it is what Players() hands out; the rest feeds the active snapshot.
+type mediaPlayer struct {
+	Player
+	status   PlaybackStatus
+	title    string
+	artist   string
+	album    string
+	artKey   string
+	lengthUS int64
+	rate     float64
+	canNext  bool
+	canPrev  bool
+	canPlay  bool
+}
 
 // MediaState is one immutable snapshot. Consumers never see a D-Bus type.
 type MediaState struct {
@@ -60,7 +80,7 @@ type Media struct {
 	mu        sync.Mutex
 	leases    leaseSet
 	b         bus
-	players   map[string]Player
+	players   map[string]*mediaPlayer
 	active    string
 	preferred string
 	changes   chan MediaState
@@ -73,7 +93,7 @@ type Media struct {
 func NewMedia(b bus) *Media {
 	m := &Media{
 		b:       b,
-		players: map[string]Player{},
+		players: map[string]*mediaPlayer{},
 		changes: make(chan MediaState, 1),
 	}
 	m.enumerate()
@@ -116,8 +136,9 @@ func (m *Media) Players() []Player {
 	defer m.mu.Unlock()
 	out := make([]Player, 0, len(m.players))
 	for _, p := range m.players {
-		p.Active = p.Bus == m.active
-		out = append(out, p)
+		q := p.Player
+		q.Active = q.Bus == m.active
+		out = append(out, q)
 	}
 	sortPlayers(out)
 	return out
@@ -233,38 +254,30 @@ func (m *Media) run(stop, done chan struct{}, reenumerate bool) {
 }
 
 // enumerate lists the bus and reconciles the player set against it. The
-// identity lookups run without the mutex; only the apply takes it, so a paint
+// property lookups run without the mutex; only the apply takes it, so a paint
 // path reader never waits on bus I/O.
 func (m *Media) enumerate() {
 	names, err := m.b.ListNames()
 	if err != nil {
 		return
 	}
-	type discovered struct {
-		name     string
-		identity string
-	}
-	var found []discovered
+	var found []*mediaPlayer
 	for _, name := range names {
 		if !strings.HasPrefix(name, mprisPrefix) {
 			continue
 		}
-		v, err := m.b.Get(name, mprisIface, "Identity")
-		if err != nil {
-			continue
+		if p := m.probePlayer(name); p != nil {
+			found = append(found, p)
 		}
-		identity, _ := v.(string)
-		found = append(found, discovered{name: name, identity: identity})
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	next := make(map[string]Player, len(found))
-	for _, d := range found {
-		p := Player{Bus: d.name, Identity: d.identity}
-		if old, ok := m.players[d.name]; ok && p.Identity == "" {
+	next := make(map[string]*mediaPlayer, len(found))
+	for _, p := range found {
+		if old, ok := m.players[p.Bus]; ok && p.Identity == "" {
 			p.Identity = old.Identity
 		}
-		next[d.name] = p
+		next[p.Bus] = p
 	}
 	m.players = next
 	m.reselectLocked()
@@ -272,33 +285,145 @@ func (m *Media) enumerate() {
 }
 
 // handleNameChange adds or drops one player. A known name arriving again is
-// only interesting once its properties change, which a later slice handles.
+// the refresh path: the real bus turns a PropertiesChanged that touches
+// anything beyond Position, and every Seeked, into one of these events, and
+// the re-read picks up the new metadata or resets the position baseline.
 func (m *Media) handleNameChange(ch nameChange) {
 	if !strings.HasPrefix(ch.Name, mprisPrefix) {
 		return
 	}
-	if ch.Acquired {
-		v, err := m.b.Get(ch.Name, mprisIface, "Identity")
-		if err != nil {
-			return
-		}
-		identity, _ := v.(string)
+	if !ch.Acquired {
 		m.mu.Lock()
-		m.players[ch.Name] = Player{Bus: ch.Name, Identity: identity}
-		m.reselectLocked()
-		m.publishLocked()
+		if _, ok := m.players[ch.Name]; ok {
+			delete(m.players, ch.Name)
+			m.reselectLocked()
+			m.publishLocked()
+		}
 		m.mu.Unlock()
+		return
+	}
+	p := m.probePlayer(ch.Name)
+	if p == nil {
 		return
 	}
 	m.mu.Lock()
-	if _, ok := m.players[ch.Name]; !ok {
-		m.mu.Unlock()
-		return
-	}
-	delete(m.players, ch.Name)
+	m.players[ch.Name] = p
 	m.reselectLocked()
 	m.publishLocked()
 	m.mu.Unlock()
+}
+
+// probePlayer reads one player's properties off the bus. It performs I/O and
+// must not run under m.mu. A player that vanished between listing and reading
+// yields nil and stays unknown until its next event.
+func (m *Media) probePlayer(name string) *mediaPlayer {
+	v, err := m.b.Get(name, mprisIface, "Identity")
+	if err != nil {
+		return nil
+	}
+	p := &mediaPlayer{}
+	p.Bus = name
+	p.Identity, _ = v.(string)
+
+	if v, err := m.b.Get(name, mprisPlayerIface, "Metadata"); err == nil {
+		p.title, p.artist, p.album, p.artKey, p.lengthUS = decodeMetadata(v)
+	}
+	if v, err := m.b.Get(name, mprisPlayerIface, "PlaybackStatus"); err == nil {
+		p.status = decodeStatus(v)
+	}
+	if v, err := m.b.Get(name, mprisPlayerIface, "Rate"); err == nil {
+		p.rate = decodeRate(v)
+	}
+	if v, err := m.b.Get(name, mprisPlayerIface, "CanGoNext"); err == nil {
+		p.canNext, _ = v.(bool)
+	}
+	if v, err := m.b.Get(name, mprisPlayerIface, "CanGoPrevious"); err == nil {
+		p.canPrev, _ = v.(bool)
+	}
+	if v, err := m.b.Get(name, mprisPlayerIface, "CanPlay"); err == nil {
+		p.canPlay, _ = v.(bool)
+	}
+	return p
+}
+
+// decodeMetadata flattens one player's Metadata property into snapshot fields.
+// Every read is a checked assertion with a zero-value fallback: a player is
+// free to send nonsense, and a partial map must degrade to a usable snapshot
+// rather than fail the service. xesam:artist is a list in the specification
+// and a bare string in practice, so both shapes are accepted.
+//
+// Art stays an identifier, never a decoded image. Only file:// URLs survive:
+// a player names a path this shell would then read, so a remote URL is
+// refused outright in this first slice and the eventual consumer bounds the
+// size and time of the read.
+func decodeMetadata(v any) (title, artist, album, artKey string, lengthUS int64) {
+	meta := flattenMetadata(v)
+	if meta == nil {
+		return
+	}
+	title, _ = meta["xesam:title"].(string)
+	switch a := meta["xesam:artist"].(type) {
+	case []string:
+		artist = strings.Join(a, ", ")
+	case []any:
+		parts := make([]string, 0, len(a))
+		for _, item := range a {
+			if s, ok := item.(string); ok {
+				parts = append(parts, s)
+			}
+		}
+		artist = strings.Join(parts, ", ")
+	case string:
+		artist = a
+	}
+	album, _ = meta["xesam:album"].(string)
+	switch l := meta["mpris:length"].(type) {
+	case int64:
+		lengthUS = l
+	case int:
+		lengthUS = int64(l)
+	}
+	if u, ok := meta["mpris:artUrl"].(string); ok && strings.HasPrefix(u, "file://") {
+		artKey = u
+	}
+	return
+}
+
+// flattenMetadata normalizes the two shapes a Metadata property arrives in:
+// the godbus variant map the real bus produces and the plain map the fake
+// does.
+func flattenMetadata(v any) map[string]any {
+	switch meta := v.(type) {
+	case map[string]any:
+		return meta
+	case map[string]dbus.Variant:
+		out := make(map[string]any, len(meta))
+		for k, val := range meta {
+			out[k] = val.Value()
+		}
+		return out
+	}
+	return nil
+}
+
+func decodeStatus(v any) PlaybackStatus {
+	switch s, _ := v.(string); s {
+	case "Playing":
+		return PlaybackPlaying
+	case "Paused":
+		return PlaybackPaused
+	default:
+		return PlaybackStopped
+	}
+}
+
+// decodeRate reads the playback rate, defaulting to the specification's 1.0
+// when the property is absent or nonsense.
+func decodeRate(v any) float64 {
+	if r, ok := v.(float64); ok && r > 0 {
+		return r
+	}
+	return 1.0
 }
 
 // reselectLocked keeps the active player pointing at something that exists.
@@ -347,8 +472,20 @@ func (m *Media) snapshotLocked() MediaState {
 	var st MediaState
 	st.Available = len(m.players) > 0
 	st.Player = m.active
-	if p, ok := m.players[m.active]; ok {
-		st.Identity = p.Identity
+	p, ok := m.players[m.active]
+	if !ok {
+		return st
 	}
+	st.Identity = p.Identity
+	st.Title = p.title
+	st.Artist = p.artist
+	st.Album = p.album
+	st.ArtKey = p.artKey
+	st.Status = p.status
+	st.LengthUS = p.lengthUS
+	st.Rate = p.rate
+	st.CanNext = p.canNext
+	st.CanPrev = p.canPrev
+	st.CanPlay = p.canPlay
 	return st
 }
