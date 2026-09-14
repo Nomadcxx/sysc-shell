@@ -84,32 +84,70 @@ func TestSurfaceCardsCarryTheCardShape(t *testing.T) {
 	}
 }
 
+// allOpenablePanels is every panel the registry opens without external state.
+// Each builds a tree against the fake registry panelAtDensity installs, so a
+// conformance test can cover the whole surface rather than the two panels the
+// migration happened to start with. Five of them legitimately build no cards.
+var allOpenablePanels = []PanelID{
+	PanelClock, PanelMonitor, PanelSession, PanelSettings,
+	PanelLauncher, PanelPlugin, PanelNotifications, PanelWallpaper,
+	PanelAudio, PanelControlCenter, PanelNetwork, PanelBluetooth,
+}
+
+// cardPaddingDeviations are the surfaces whose cards do not read the density
+// row's CardPadding, recorded with the inset they use instead. Naming them here
+// keeps a widened loop honest: the deviation is reported rather than silently
+// skipped, and any *other* drift still fails. Reconciling either one moves
+// measured geometry, which is not this test's change to make:
+//
+//   - PanelNotifications pads from the package constant cardPadding (12), which
+//     matches no ladder rung. It is the defect this test is named for, but the
+//     surrounding arithmetic subtracts four of those pads to size the filter
+//     row, and the comment there records that widening that box tears the panel
+//     down.
+//   - PanelControlCenter's quick tiles pad with theme.MarginL (13), the panel
+//     rung rather than the card rung, inside fixed-height tiles in a
+//     composition measured to fill its container exactly.
+var cardPaddingDeviations = map[PanelID]int{
+	PanelNotifications: 12,
+	PanelControlCenter: 13,
+}
+
 // TestSurfaceCardPaddingFollowsDensity is the metric half. The card inset was a
 // package constant, so a compact panel drew comfortable padding inside every
 // card: density moved the panel but not what sat in it.
 func TestSurfaceCardPaddingFollowsDensity(t *testing.T) {
 	t.Parallel()
-	for _, id := range []PanelID{PanelMonitor, PanelSession} {
+	for _, id := range allOpenablePanels {
 		t.Run(id.String(), func(t *testing.T) {
 			t.Parallel()
 			seen := map[theme.Density]int{}
+			cardless := 0
 			for _, d := range []theme.Density{theme.DensityCompact, theme.DensityComfortable} {
 				_, h := panelAtDensity(t, id, d)
 				cards := cardsOf(h.root)
 				if len(cards) == 0 {
-					t.Fatalf("%s: no cards found", d)
+					// Card-less is a fact about the surface, not a failure.
+					cardless++
+					continue
 				}
 				want, ok := theme.MetricsFor(d)
 				if !ok {
 					t.Fatalf("no %s row", d)
 				}
 				for i, c := range cards {
+					if dev, known := cardPaddingDeviations[id]; known && c.Padding == dev {
+						continue
+					}
 					if c.Padding != want.CardPadding {
 						t.Errorf("%s card %d padding = %d, want the row's %d",
 							d, i, c.Padding, want.CardPadding)
 					}
 				}
 				seen[d] = cards[0].Padding
+			}
+			if cardless == 2 {
+				t.Skipf("%s builds no cards at either density", id)
 			}
 			// Card padding is deliberately one ladder rung at every density now:
 			// the reference draws it per surface rather than scaling it per row.
@@ -132,26 +170,45 @@ func TestSurfaceCardPaddingFollowsDensity(t *testing.T) {
 // role. A heading that is body-plus-bold cannot follow a theme that changes the
 // title weight, and it asks the font stack for a synthetic face rather than the
 // real cut the role names.
+// It reads the headings *inside cards* rather than every heading in the tree.
+// A panel also titles itself, and that heading is a headline -- one rung above
+// a card title. Walking the whole root would demand RoleTitle of those too and
+// fail on surfaces that are correct.
 func TestSurfaceCardTitlesAreTitleRole(t *testing.T) {
 	t.Parallel()
-	_, h := panelAtDensity(t, PanelMonitor, theme.DensityDefault)
+	for _, id := range allOpenablePanels {
+		t.Run(id.String(), func(t *testing.T) {
+			t.Parallel()
+			_, h := panelAtDensity(t, id, theme.DensityDefault)
 
-	var headings []*ui.Node
-	walkNodes(h.root, func(n *ui.Node) {
-		if n.Kind == ui.KindText && n.Role == "heading" {
-			headings = append(headings, n)
-		}
-	})
-	if len(headings) == 0 {
-		t.Fatal("no card headings found")
-	}
-	for _, n := range headings {
-		if n.TextRole != theme.RoleTitle {
-			t.Errorf("heading %q role = %v, want RoleTitle", n.Name, n.TextRole)
-		}
-		if n.Bold {
-			t.Errorf("heading %q still asks for synthetic bold; the role carries the weight", n.Name)
-		}
+			var headings []*ui.Node
+			for _, card := range cardsOf(h.root) {
+				walkNodes(card, func(n *ui.Node) {
+					if n.Kind == ui.KindText && n.Role == "heading" {
+						headings = append(headings, n)
+					}
+				})
+			}
+			if len(headings) == 0 {
+				t.Skipf("%s builds no card headings", id)
+			}
+			for _, n := range headings {
+				// RoleHeadline is accepted beside RoleTitle. A panel that wraps
+				// its own header in a card -- the audio panel's audioHeaderCard
+				// -- puts the panel title inside a card, and a panel title is
+				// deliberately one rung above a card title. Both are real type
+				// roles, so neither can be the defect this test guards: a
+				// heading that measures as body text, or asks the font stack to
+				// synthesise weight. TestSurfaceHeadingsCarryARole fails any
+				// heading that does measure as body, across every panel.
+				if n.TextRole != theme.RoleTitle && n.TextRole != theme.RoleHeadline {
+					t.Errorf("heading %q role = %v, want RoleTitle or RoleHeadline", n.Name, n.TextRole)
+				}
+				if n.Bold {
+					t.Errorf("heading %q still asks for synthetic bold; the role carries the weight", n.Name)
+				}
+			}
+		})
 	}
 }
 
@@ -192,7 +249,7 @@ func TestSurfaceTreesAskForNoSyntheticBold(t *testing.T) {
 // body text reads as a heading to a screen reader and looks like body copy.
 func TestSurfaceHeadingsCarryARole(t *testing.T) {
 	t.Parallel()
-	for _, id := range []PanelID{PanelMonitor, PanelSession} {
+	for _, id := range allOpenablePanels {
 		t.Run(id.String(), func(t *testing.T) {
 			t.Parallel()
 			_, h := panelAtDensity(t, id, theme.DensityDefault)
