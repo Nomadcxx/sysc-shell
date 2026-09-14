@@ -18,7 +18,7 @@ var materialInventory = []string{
 	"volume_up", "volume_off", "brightness_high",
 	"delete", "schedule",
 	"mic", "mic_off", "graphic_eq", "headphones",
-	"home", "music_note", "desktop_windows",
+	"home", "music_note", "play_arrow", "pause", "skip_next", "skip_previous", "desktop_windows",
 	"wifi", "bluetooth", "cloud", "calendar_month",
 	"battery_full", "coffee", "wallpaper", "person",
 	"sunny", "partly_cloudy_day", "rainy", "thunderstorm",
