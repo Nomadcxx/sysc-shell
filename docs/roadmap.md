@@ -264,6 +264,34 @@ If GPU work starts:
 
 The renderer milestone does not expand shell features.
 
+## Milestone 9: User control of the shell
+
+Give the user direct control over what the shell does and how it is arranged. This milestone is a
+programme of five sub-projects, each with its own design, plan, and implementation cycle. Sub-projects
+do not merge into one another.
+
+| | Sub-project | State |
+|---|---|---|
+| A | Settings foundation: schema, controls, surface, apply contract | Designed — `plans/2026-09-15-settings-foundation-design.md` |
+| B | Bar composition: widget add, remove, reorder, per-widget options | Not designed |
+| C | Bar geometry and placement: edge, auto-hide, exclusive zone, per-output overrides | Not designed |
+| D | Surfaces and behaviour: notification, OSD, launcher, and panel settings | Not designed |
+| E | New subsystems: night light, idle behaviour, screenshot, hooks, keybinds, dock | Not designed |
+
+Clipboard history is tracked separately as `sysc-205` and is not part of sub-project E.
+
+Driver: the shell models twelve configuration domains and exposes five. Bar widget arrangement is
+reachable only as a comma-separated string in a single settings field, and `top` is the only
+implemented bar edge — `bottom`, `left`, and `right` are rejected at load.
+
+Exit gate:
+
+- every `config.Config` domain is reachable from the settings surface;
+- a user can add, remove, and reorder bar widgets without editing a file;
+- a change made in the user interface survives a configuration reload that arrives from outside it;
+- a setting reset returns the value its own writer rule treats as the default;
+- the live Niri check passes for the settings surface and the bar editor.
+
 ## Deferred work
 
 - compositor support beyond Niri;

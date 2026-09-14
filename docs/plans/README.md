@@ -470,6 +470,17 @@ and is the first implementation task.
 | 8 | Rendering qualification | Blurred panels are measured and resolved in favour of `wl_shm` by `2026-09-11-panel-backdrop-blur-design.md`. The other named cases — animation frame time, image-heavy grids, CPU/power — still require evidence. |
 | — | **Template panel** | Owner-requested 2026-09-12, to follow the parity tranche. One shipped surface composing every primitive the shell owns, setting out what a default panel looks like. **Four committed documents already name it as a planned consumer** — the stacking design D5/D8/D9, the stacking plan's Global Constraints, Task 5 and Self-Review, and the parity plan's D4 coverage note — so those gates no longer revert a primitive for want of a production consumer. It also serves Milestone 6's undertaking to version the vocabulary "proven by built-in widgets", which nothing currently proves: `internal/ui` carries 22 kinds against `plugin/v1`'s 10. Not yet designed; this row exists so the forward references do not dangle. |
 
+## Milestone 9: user control of the shell
+
+Owner-approved 2026-09-15. A programme of five sub-projects — settings foundation, bar composition,
+bar geometry, surfaces and behaviour, and new subsystems — each taking its own design, plan, and
+implementation cycle. Only sub-project A is designed. Roadmap: `../roadmap.md` Milestone 9.
+Clipboard history stays `sysc-205` and is not part of this milestone.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-15-settings-foundation-design.md` | design | Sub-project A, satisfying `sysc-204`. D1–D11: typed accessor entries replacing the `Get`/`Set` switch pair, entries carrying description and group, a plain grouped column that drops `KindVirtualList` because it is strictly uniform-stride, no cards, live apply debounced through `scheduleControl`, per-entry reset resolved by the writer's own rule (preset-relative for theme axes, `Default()`-relative elsewhere), the stale-draft reload defect closed in `PrepareConfig`, one full panel plus a control-centre shortcut riding the existing `panelSection` addressing, a validated hex field instead of a colour picker because `internal/ui` carries no colour type, `fontscan.SystemFonts` for a real font picker, and the five unreachable config domains exposed. **Supersedes D1–D4 of `2026-08-30-settings-osd-theme-catalog-design.md`** and settles the settings-composition question `2026-09-11-component-parity-design.md` left open. |
+
 ## Sibling repositories
 
 Verified 2026-09-02 against git, GitHub, and `go list -m`. `sysc-shell` pins the **tags**, not
