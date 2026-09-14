@@ -311,3 +311,28 @@ func (m *Media) advance(d time.Duration) {
 	mediaClocksMu.Unlock()
 	clock.move(d)
 }
+
+func TestMediaCommandsTargetTheActivePlayer(t *testing.T) {
+	t.Parallel()
+	b := newFakeBus("org.mpris.MediaPlayer2.a", "org.mpris.MediaPlayer2.b")
+	m := NewMedia(b)
+	t.Cleanup(m.Close)
+	m.Prefer("org.mpris.MediaPlayer2.b")
+	if err := m.Next(); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.calls) != 1 || b.calls[0] != "org.mpris.MediaPlayer2.b.Next" {
+		t.Errorf("calls = %v", b.calls)
+	}
+}
+
+func TestMediaCommandWithNoPlayerIsQuiet(t *testing.T) {
+	t.Parallel()
+	// The user pressed next on something that stopped existing. The repair is
+	// to update the display, not to raise a toast.
+	m := NewMedia(newFakeBus())
+	t.Cleanup(m.Close)
+	if err := m.Next(); err != nil {
+		t.Errorf("command with no player returned %v, want nil", err)
+	}
+}
