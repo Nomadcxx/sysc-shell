@@ -51,6 +51,10 @@ type mediaPlayer struct {
 	canNext bool
 	canPrev bool
 	canPlay bool
+	canSeek bool
+	// lastPlaying records the transition into Playing, not every refresh while
+	// a player remains there.
+	lastPlaying time.Time
 }
 
 // MediaState is one immutable snapshot. Consumers never see a D-Bus type.
@@ -69,6 +73,7 @@ type MediaState struct {
 	CanNext    bool
 	CanPrev    bool
 	CanPlay    bool
+	CanSeek    bool
 }
 
 // Player is one discovered player.
@@ -87,16 +92,18 @@ type Player struct {
 // until some unrelated event. The lease still governs the subscription: the
 // last release stops the loop and the next Acquire starts it again.
 type Media struct {
-	mu        sync.Mutex
-	leases    leaseSet
-	b         bus
-	players   map[string]*mediaPlayer
-	active    string
-	preferred string
-	changes   chan MediaState
-	stop      chan struct{}
-	done      chan struct{}
-	closed    bool
+	mu         sync.Mutex
+	leases     leaseSet
+	b          bus
+	players    map[string]*mediaPlayer
+	active     string
+	preferred  string
+	configured string
+	blacklist  map[string]struct{}
+	changes    chan MediaState
+	stop       chan struct{}
+	done       chan struct{}
+	closed     bool
 	// now is the clock position interpolates against. It is a field so tests
 	// can move time instead of sleeping; it defaults to time.Now.
 	now func() time.Time
@@ -108,10 +115,11 @@ var errMediaClosed = errors.New("services: media service is closed")
 // The watch starts when the first consumer acquires a lease.
 func NewMedia(b bus) *Media {
 	m := &Media{
-		b:       b,
-		players: map[string]*mediaPlayer{},
-		changes: make(chan MediaState, 1),
-		now:     time.Now,
+		b:         b,
+		players:   map[string]*mediaPlayer{},
+		blacklist: map[string]struct{}{},
+		changes:   make(chan MediaState, 1),
+		now:       time.Now,
 	}
 	m.enumerate()
 	return m
@@ -187,6 +195,32 @@ func (m *Media) Prefer(busName string) {
 	if m.active != before {
 		m.publishLocked()
 	}
+}
+
+// Configure changes the service-owned selection policy. The current set is
+// filtered immediately; a one-shot enumeration then restores names that were
+// already present when a blacklist entry is removed.
+func (m *Media) Configure(preferred string, blacklist []string) {
+	blocked := make(map[string]struct{}, len(blacklist))
+	for _, name := range blacklist {
+		blocked[name] = struct{}{}
+	}
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return
+	}
+	m.configured = preferred
+	m.blacklist = blocked
+	for name := range m.players {
+		if _, ok := blocked[name]; ok {
+			delete(m.players, name)
+		}
+	}
+	m.reselectLocked()
+	m.publishLocked()
+	m.mu.Unlock()
+	go m.enumerate()
 }
 
 // Acquire registers a consumer. The first lease starts the watch; the last
@@ -298,10 +332,17 @@ func (m *Media) enumerate() {
 	defer m.mu.Unlock()
 	next := make(map[string]*mediaPlayer, len(found))
 	for _, p := range found {
+		if _, blocked := m.blacklist[p.Bus]; blocked {
+			continue
+		}
 		if old, ok := m.players[p.Bus]; ok && p.Identity == "" {
 			p.Identity = old.Identity
 		}
+		m.mergePlayerLocked(p)
 		next[p.Bus] = p
+	}
+	if m.closed {
+		return
 	}
 	m.players = next
 	m.reselectLocked()
@@ -314,6 +355,12 @@ func (m *Media) enumerate() {
 // the re-read picks up the new metadata or resets the position baseline.
 func (m *Media) handleNameChange(ch nameChange) {
 	if !strings.HasPrefix(ch.Name, mprisPrefix) {
+		return
+	}
+	m.mu.Lock()
+	_, blocked := m.blacklist[ch.Name]
+	m.mu.Unlock()
+	if blocked {
 		return
 	}
 	if !ch.Acquired {
@@ -331,6 +378,15 @@ func (m *Media) handleNameChange(ch nameChange) {
 		return
 	}
 	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return
+	}
+	if _, blocked := m.blacklist[ch.Name]; blocked {
+		m.mu.Unlock()
+		return
+	}
+	m.mergePlayerLocked(p)
 	m.players[ch.Name] = p
 	m.reselectLocked()
 	m.publishLocked()
@@ -370,6 +426,9 @@ func (m *Media) probePlayer(name string) *mediaPlayer {
 	}
 	if v, err := m.b.Get(name, mprisPlayerIface, "CanPlay"); err == nil {
 		p.canPlay, _ = v.(bool)
+	}
+	if v, err := m.b.Get(name, mprisPlayerIface, "CanSeek"); err == nil {
+		p.canSeek, _ = v.(bool)
 	}
 	return p
 }
@@ -554,6 +613,7 @@ func (m *Media) repairAfterCommand(name string) {
 	if p == nil {
 		delete(m.players, name)
 	} else {
+		m.mergePlayerLocked(p)
 		m.players[name] = p
 	}
 	m.reselectLocked()
@@ -561,10 +621,9 @@ func (m *Media) repairAfterCommand(name string) {
 }
 
 // reselectLocked keeps the active player pointing at something that exists.
-// The design's selection order: the preferred player when it is present; else
-// the current choice while it survives; else the first player by bus name, so
-// the fallback is stable. The "most recently playing" middle rule needs
-// transport status, which arrives with metadata decoding. Callers hold m.mu.
+// The design's selection order: runtime preference, configured preference,
+// most recent transition into Playing, then the first player by bus name.
+// Callers hold m.mu.
 func (m *Media) reselectLocked() {
 	if m.preferred != "" {
 		if _, ok := m.players[m.preferred]; ok {
@@ -572,10 +631,26 @@ func (m *Media) reselectLocked() {
 			return
 		}
 	}
-	if m.active != "" {
-		if _, ok := m.players[m.active]; ok {
+	if m.configured != "" {
+		if _, ok := m.players[m.configured]; ok {
+			m.active = m.configured
 			return
 		}
+	}
+	var recent string
+	var at time.Time
+	for name, p := range m.players {
+		if p.lastPlaying.IsZero() {
+			continue
+		}
+		if recent == "" || p.lastPlaying.After(at) ||
+			(p.lastPlaying.Equal(at) && name < recent) {
+			recent, at = name, p.lastPlaying
+		}
+	}
+	if recent != "" {
+		m.active = recent
+		return
 	}
 	m.active = ""
 	for name := range m.players {
@@ -621,6 +696,7 @@ func (m *Media) snapshotLocked() MediaState {
 	st.CanNext = p.canNext
 	st.CanPrev = p.canPrev
 	st.CanPlay = p.canPlay
+	st.CanSeek = p.canSeek
 	st.PositionUS = p.positionUS
 	if p.status == PlaybackPlaying {
 		// Baseline plus rate times elapsed, in microseconds. No timer: a
@@ -635,4 +711,20 @@ func (m *Media) snapshotLocked() MediaState {
 		st.PositionUS = position
 	}
 	return st
+}
+
+// mergePlayerLocked carries selection history across a refresh. A new player
+// that is already playing counts as a transition at discovery time.
+func (m *Media) mergePlayerLocked(p *mediaPlayer) {
+	old, ok := m.players[p.Bus]
+	if ok {
+		p.lastPlaying = old.lastPlaying
+		if p.status == PlaybackPlaying && old.status != PlaybackPlaying {
+			p.lastPlaying = m.now()
+		}
+		return
+	}
+	if p.status == PlaybackPlaying {
+		p.lastPlaying = m.now()
+	}
 }

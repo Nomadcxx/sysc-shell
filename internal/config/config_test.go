@@ -1146,3 +1146,42 @@ func TestWallpaperRoundTrip(t *testing.T) {
 		t.Fatalf("round trip = %+v, want %+v", back.Wallpaper, cfg.Wallpaper)
 	}
 }
+
+func TestMediaConfigRoundTrips(t *testing.T) {
+	t.Parallel()
+	cfg, err := Parse([]byte(`{"media":{"preferred":"org.mpris.MediaPlayer2.spotify","blacklist":["org.mpris.MediaPlayer2.firefox"]}}`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cfg.Media.Preferred != "org.mpris.MediaPlayer2.spotify" ||
+		len(cfg.Media.Blacklist) != 1 || cfg.Media.Blacklist[0] != "org.mpris.MediaPlayer2.firefox" {
+		t.Fatalf("media = %+v", cfg.Media)
+	}
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Write(path, cfg); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	back, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if back.Media.Preferred != cfg.Media.Preferred ||
+		len(back.Media.Blacklist) != 1 || back.Media.Blacklist[0] != cfg.Media.Blacklist[0] {
+		t.Fatalf("round trip media = %+v, want %+v", back.Media, cfg.Media)
+	}
+}
+
+func TestMediaConfigRejectsNonMPRISNames(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{
+		`{"media":{"preferred":"spotify"}}`,
+		`{"media":{"blacklist":["firefox"]}}`,
+		`{"media":{"preferred":"org.mpris.MediaPlayer2."}}`,
+		`{"media":{"blacklist":["org.mpris.MediaPlayer2.fire-fox"]}}`,
+	} {
+		if _, err := Parse([]byte(body)); err == nil {
+			t.Fatalf("accepted non-MPRIS media name: %s", body)
+		}
+	}
+}

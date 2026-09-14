@@ -218,6 +218,95 @@ func TestMediaDecodesMetadata(t *testing.T) {
 	}
 }
 
+func TestMediaDecodesCanSeek(t *testing.T) {
+	t.Parallel()
+	b := newFakeBus("org.mpris.MediaPlayer2.x")
+	b.props["org.mpris.MediaPlayer2.x"] = map[string]any{"CanSeek": true}
+	m := NewMedia(b)
+	t.Cleanup(m.Close)
+	if !m.State().CanSeek {
+		t.Fatal("CanSeek was not decoded")
+	}
+}
+
+func TestMediaBlacklistedNamesNeverJoin(t *testing.T) {
+	t.Parallel()
+	blacklisted := "org.mpris.MediaPlayer2.browser"
+	b := newFakeBus("org.mpris.MediaPlayer2.player", blacklisted)
+	m := NewMedia(b)
+	t.Cleanup(m.Close)
+	m.Configure("", []string{blacklisted})
+	waitFor(t, func() bool {
+		for _, player := range m.Players() {
+			if player.Bus == blacklisted {
+				return false
+			}
+		}
+		return len(m.Players()) == 1
+	})
+}
+
+func TestMediaConfigureReconcilesTheLiveSet(t *testing.T) {
+	t.Parallel()
+	blacklisted := "org.mpris.MediaPlayer2.browser"
+	b := newFakeBus("org.mpris.MediaPlayer2.player", blacklisted)
+	m := NewMedia(b)
+	t.Cleanup(m.Close)
+
+	m.Configure("", []string{blacklisted})
+	waitFor(t, func() bool { return len(m.Players()) == 1 })
+	m.Configure("", nil)
+	waitFor(t, func() bool { return len(m.Players()) == 2 })
+}
+
+func TestMediaMostRecentlyPlayingWinsTheMiddleRule(t *testing.T) {
+	t.Parallel()
+	b := newFakeBus("org.mpris.MediaPlayer2.a", "org.mpris.MediaPlayer2.b")
+	b.props["org.mpris.MediaPlayer2.a"] = map[string]any{"PlaybackStatus": "Paused"}
+	b.props["org.mpris.MediaPlayer2.b"] = map[string]any{"PlaybackStatus": "Paused"}
+	m := NewMedia(b)
+	t.Cleanup(m.Close)
+	lease, err := m.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(lease.Release)
+
+	b.props["org.mpris.MediaPlayer2.b"]["PlaybackStatus"] = "Playing"
+	b.nameCh <- nameChange{Name: "org.mpris.MediaPlayer2.b", Acquired: true}
+	waitFor(t, func() bool { return m.State().Player == "org.mpris.MediaPlayer2.b" })
+
+	b.props["org.mpris.MediaPlayer2.b"]["PlaybackStatus"] = "Paused"
+	b.nameCh <- nameChange{Name: "org.mpris.MediaPlayer2.b", Acquired: true}
+	waitFor(t, func() bool { return m.State().Player == "org.mpris.MediaPlayer2.b" })
+
+	b.props["org.mpris.MediaPlayer2.a"]["PlaybackStatus"] = "Playing"
+	b.nameCh <- nameChange{Name: "org.mpris.MediaPlayer2.a", Acquired: true}
+	waitFor(t, func() bool { return m.State().Player == "org.mpris.MediaPlayer2.a" })
+}
+
+func TestMediaConfiguredPreferredBeatsHistory(t *testing.T) {
+	t.Parallel()
+	b := newFakeBus("org.mpris.MediaPlayer2.a", "org.mpris.MediaPlayer2.b")
+	b.props["org.mpris.MediaPlayer2.a"] = map[string]any{"PlaybackStatus": "Paused"}
+	b.props["org.mpris.MediaPlayer2.b"] = map[string]any{"PlaybackStatus": "Playing"}
+	m := NewMedia(b)
+	t.Cleanup(m.Close)
+	lease, err := m.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(lease.Release)
+	waitFor(t, func() bool { return m.State().Player == "org.mpris.MediaPlayer2.b" })
+
+	m.Configure("org.mpris.MediaPlayer2.a", nil)
+	waitFor(t, func() bool { return m.State().Player == "org.mpris.MediaPlayer2.a" })
+	m.Prefer("org.mpris.MediaPlayer2.b")
+	if got := m.State().Player; got != "org.mpris.MediaPlayer2.b" {
+		t.Fatalf("runtime preference = %q, want player b", got)
+	}
+}
+
 func TestMediaSnapshotCarriesNoDecodedImage(t *testing.T) {
 	t.Parallel()
 	// Fetching or decoding art on the paint path stalls a frame. The snapshot

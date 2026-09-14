@@ -190,6 +190,9 @@ func NewRegistry(cfg config.Config) *Registry {
 	} else {
 		r.setMedia(services.NewSessionMedia())
 	}
+	if r.media != nil && (cfg.Media.Preferred != "" || len(cfg.Media.Blacklist) > 0) {
+		r.media.Configure(cfg.Media.Preferred, cfg.Media.Blacklist)
+	}
 	// The network service opens a system-bus connection, which no unit test
 	// should need. It is skipped under test for the same reason the wallpaper
 	// service below is: a test that reaches the developer's real session is a
@@ -1141,6 +1144,9 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				r.mu.Lock()
 				outgoing := r.leases
 				outgoingBars := r.bars
+				mediaConfigChanged := r.cfg.Media.Preferred != cfg.Media.Preferred ||
+					!slices.Equal(r.cfg.Media.Blacklist, cfg.Media.Blacklist)
+				var media *services.Media
 				// Coordinates and unit are the request, not a lease parameter,
 				// so the service has to be told. It is a no-op unless they
 				// changed, which is the common case for an unrelated reload.
@@ -1154,6 +1160,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 					bar.apply(r.viewLocked(bar.connector()))
 				}
 				r.cfg = cfg
+				media = r.media
 				r.tokens = tok
 				r.themeErr = ""
 				if genErr != nil {
@@ -1173,6 +1180,9 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				toastOutputs := r.outputGlobalsLocked()
 				plugins := r.plugins
 				r.mu.Unlock()
+				if mediaConfigChanged && media != nil {
+					media.Configure(cfg.Media.Preferred, cfg.Media.Blacklist)
+				}
 				for _, bar := range outgoingBars {
 					bar.stopAnimation()
 				}

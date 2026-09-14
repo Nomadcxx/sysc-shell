@@ -216,6 +216,13 @@ type Weather struct {
 	Configured bool
 }
 
+// Media selects the active MPRIS player. Names are full well-known bus names,
+// so a browser tab can be blacklisted without hiding an unrelated player.
+type Media struct {
+	Preferred string
+	Blacklist []string
+}
+
 // Config is an immutable, fully resolved configuration.
 type Config struct {
 	Bar           Bar
@@ -226,6 +233,7 @@ type Config struct {
 	Panels        Panels
 	Tray          TrayPreferences
 	Weather       Weather
+	Media         Media
 	Wallpaper     Wallpaper
 	Outputs       []OutputOverride
 	Templates     map[string]bool
