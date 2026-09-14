@@ -22,6 +22,9 @@ Restart=on-failure
 RestartSec=2
 
 # The shell releases its layer surfaces on SIGTERM; this only bounds a hang.
+# Let the shell stop its owned wallpaper processes before systemd escalates.
+# gSlapper's SIGTERM cleanup is unsafe while its render thread is active.
+KillMode=mixed
 TimeoutStopSec=5
 Slice=session.slice
 

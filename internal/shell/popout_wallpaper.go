@@ -95,6 +95,7 @@ func (r *Registry) relayWallpaper(svc *wallpaper.Service) {
 			h := r.panelHosts[PanelWallpaper]
 			if h != nil {
 				h.wallpaperSnap = snap
+				h.wallpaperOutput = wallpaperOutputSelection(snap, h.wallpaperOutput)
 				if h.wallpaperDir == "" {
 					h.wallpaperDir = firstRoot(snap)
 				}
@@ -365,7 +366,7 @@ func wallpaperEmptyState(h *PanelHost) *ui.Node {
 	return &ui.Node{Kind: ui.KindText, Text: text, Height: wallpaperCaptionH}
 }
 
-// wallpaperTitleRow is the panel's name and its close control.
+// wallpaperTitleRow is the panel's name and its controls.
 func wallpaperTitleRow(h *PanelHost) *ui.Node {
 	return &ui.Node{
 		Kind:   ui.KindRow,
@@ -373,6 +374,7 @@ func wallpaperTitleRow(h *PanelHost) *ui.Node {
 		Height: h.theme.Metrics.StandardControl,
 		Children: []*ui.Node{
 			{Kind: ui.KindText, Text: "Wallpaper", TextRole: theme.RoleTitle},
+			wallpaperButton(h, "wallpaper-refresh", "Refresh", false),
 			{
 				Kind: ui.KindButton, Action: "wallpaper-close", Name: "Close",
 				Role: "button", Focusable: true, Padding: wallpaperControlPad,
@@ -627,10 +629,18 @@ func wallpaperCaption(h *PanelHost, entry wallpaper.Entry) string {
 
 // wallpaperTargets resolves the output select to the connectors it acts on.
 func wallpaperTargets(h *PanelHost) []string {
-	if h.wallpaperOutput == wallpaper.AllOutputs {
+	output := wallpaperOutputSelection(h.wallpaperSnap, h.wallpaperOutput)
+	if output == wallpaper.AllOutputs {
 		return h.wallpaperSnap.Connectors
 	}
-	return []string{h.wallpaperOutput}
+	return []string{output}
+}
+
+func wallpaperOutputSelection(snap wallpaper.Snapshot, selected string) string {
+	if selected == wallpaper.AllOutputs || slices.Contains(snap.Connectors, selected) {
+		return selected
+	}
+	return wallpaper.AllOutputs
 }
 
 // wallpaperMatchCount reports how many of the selected outputs already show
@@ -945,6 +955,7 @@ func (h *PanelHost) wallpaperApply(r *Registry, entry wallpaper.Entry) {
 	if entry.Kind == wallpaper.KindVideo && !h.wallpaperSnap.Caps.GSlapper {
 		return
 	}
+	h.wallpaperOutput = wallpaperOutputSelection(h.wallpaperSnap, h.wallpaperOutput)
 	svc := r.wallpaperServiceLocked()
 	if svc == nil {
 		return
@@ -959,6 +970,7 @@ func (h *PanelHost) wallpaperApply(r *Registry, entry wallpaper.Entry) {
 
 // wallpaperRestore hands the selected output back to the static fallback.
 func (h *PanelHost) wallpaperRestore(r *Registry) {
+	h.wallpaperOutput = wallpaperOutputSelection(h.wallpaperSnap, h.wallpaperOutput)
 	if svc := r.wallpaperServiceLocked(); svc != nil {
 		svc.Enqueue(wallpaper.Command{Op: wallpaper.OpRestore, Token: h.wallpaperOutput})
 	}
@@ -966,6 +978,7 @@ func (h *PanelHost) wallpaperRestore(r *Registry) {
 
 // wallpaperSetPaused holds or releases playback on the selected output.
 func (h *PanelHost) wallpaperSetPaused(r *Registry, paused bool) {
+	h.wallpaperOutput = wallpaperOutputSelection(h.wallpaperSnap, h.wallpaperOutput)
 	svc := r.wallpaperServiceLocked()
 	if svc == nil {
 		return
@@ -1301,6 +1314,11 @@ func (h *PanelHost) wallpaperAction(r *Registry, n *ui.Node) bool {
 	case n.Action == "wallpaper-close":
 		r.closePanelLocked(PanelWallpaper)
 		return true
+	case n.Action == "wallpaper-refresh":
+		if svc := r.wallpaperServiceLocked(); svc != nil {
+			svc.Enqueue(wallpaper.Command{Op: wallpaper.OpRefresh})
+		}
+		return true
 	case strings.HasPrefix(n.Action, "wallpaper-menu:"):
 		name := strings.TrimPrefix(n.Action, "wallpaper-menu:")
 		if h.wallpaperMenu == name {
@@ -1337,6 +1355,17 @@ func (h *PanelHost) wallpaperAction(r *Registry, n *ui.Node) bool {
 		return true
 	}
 	if token, ok := strings.CutPrefix(n.Action, "wallpaper-output:"); ok {
+		// The node may have been built before a hot-unplug snapshot arrived.
+		// Validate against the service's current connector list before letting a
+		// stale action become the selected target.
+		if svc := r.wallpaperServiceLocked(); svc != nil {
+			h.wallpaperSnap = svc.Snapshot()
+		}
+		if token != wallpaper.AllOutputs && !slices.Contains(h.wallpaperSnap.Connectors, token) {
+			h.wallpaperOutput = wallpaper.AllOutputs
+			r.rebuildPanel(h)
+			return true
+		}
 		h.wallpaperOutput = token
 		r.rebuildPanel(h)
 		return true

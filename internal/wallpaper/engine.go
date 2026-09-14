@@ -1,6 +1,7 @@
 package wallpaper
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -20,6 +21,68 @@ type Process interface {
 	Stop() error
 }
 
+type processPIDer interface{ PID() int }
+type processHardStopper interface{ ForceStop() error }
+
+// processWatch owns the one Wait call for a process. The engine needs to reap
+// children during shutdown, while waitForQuery also needs to notice a child
+// that exits before its socket becomes ready.
+type processWatch struct {
+	Process
+	done chan error
+}
+
+func (w *processWatch) PID() int {
+	if p, ok := w.Process.(processPIDer); ok {
+		return p.PID()
+	}
+	return 0
+}
+
+func (w *processWatch) ForceStop() error {
+	if p, ok := w.Process.(processHardStopper); ok {
+		return p.ForceStop()
+	}
+	return w.Process.Stop()
+}
+
+func watchProcess(proc Process) *processWatch {
+	w := &processWatch{Process: proc, done: make(chan error, 1)}
+	go func() {
+		w.done <- proc.Wait()
+		close(w.done)
+	}()
+	return w
+}
+
+func waitProcess(proc Process, timeout time.Duration) bool {
+	w, ok := proc.(*processWatch)
+	if !ok {
+		return false
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-w.done:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
+func processExited(proc Process) bool {
+	w, ok := proc.(*processWatch)
+	if !ok {
+		return false
+	}
+	select {
+	case <-w.done:
+		return true
+	default:
+		return false
+	}
+}
+
 const (
 	// defaultReadyWait bounds the wait for a freshly launched gSlapper to
 	// answer. The socket file appearing is not readiness: sysc-greet proved
@@ -35,6 +98,9 @@ const (
 	// stopWait bounds the wait for a stopped instance to release its socket.
 	// Shutdown does no decoding, so it stays short.
 	stopWait = 3 * time.Second
+	// closeWait keeps service shutdown below the systemd stop budget while the
+	// process watcher reaps a child after its process group is stopped.
+	closeWait = time.Second
 )
 
 // gslapperEngine drives one gSlapper per output over sockets we own, with awww
@@ -50,25 +116,39 @@ type gslapperEngine struct {
 	readyWait time.Duration
 	poll      time.Duration
 
-	spawn   func(argv []string) (Process, error)
-	request func(socket, command string, timeout time.Duration) (string, error)
+	spawn        func(argv []string) (Process, error)
+	request      func(socket, command string, timeout time.Duration) (string, error)
+	requestOwned func(context.Context, string, string, time.Duration, int) (string, error)
+	ctx          context.Context
+	cancel       context.CancelFunc
 
-	mu        sync.Mutex
-	owned     map[string]Process
-	fallbacks map[string]Process
+	mu          sync.Mutex
+	owned       map[string]Process
+	socketFiles map[string]os.FileInfo
+	fallbacks   map[string]Process
+	locks       map[string]*sync.Mutex
+	closed      bool
+	awww        Process
+	awwwMu      sync.Mutex
 }
 
 // NewEngine builds the real engine: exec for spawn, unix sockets for IPC.
 func NewEngine(dir string, lookup func(string) bool) *gslapperEngine {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &gslapperEngine{
-		dir:       dir,
-		caps:      probeCapabilities(lookup),
-		readyWait: defaultReadyWait,
-		poll:      defaultPoll,
-		spawn:     spawnDetached,
-		request:   Request,
-		owned:     map[string]Process{},
-		fallbacks: map[string]Process{},
+		dir:          dir,
+		caps:         probeCapabilities(lookup),
+		readyWait:    defaultReadyWait,
+		poll:         defaultPoll,
+		spawn:        spawnDetached,
+		request:      Request,
+		requestOwned: requestWithPeer,
+		ctx:          ctx,
+		cancel:       cancel,
+		owned:        map[string]Process{},
+		socketFiles:  map[string]os.FileInfo{},
+		fallbacks:    map[string]Process{},
+		locks:        map[string]*sync.Mutex{},
 	}
 }
 
@@ -101,6 +181,120 @@ func (e *gslapperEngine) ownedProcess(connector string) Process {
 	return e.owned[connector]
 }
 
+func (e *gslapperEngine) lockConnector(connector string) func() {
+	e.mu.Lock()
+	if e.locks == nil {
+		e.locks = map[string]*sync.Mutex{}
+	}
+	lock := e.locks[connector]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		e.locks[connector] = lock
+	}
+	e.mu.Unlock()
+	lock.Lock()
+	return lock.Unlock
+}
+
+func (e *gslapperEngine) isClosed() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.closed
+}
+
+func processPID(proc Process) int {
+	if proc == nil {
+		return 0
+	}
+	if p, ok := proc.(processPIDer); ok {
+		return p.PID()
+	}
+	return 0
+}
+
+func forceStop(proc Process) error {
+	if p, ok := proc.(processHardStopper); ok {
+		return p.ForceStop()
+	}
+	return proc.Stop()
+}
+
+func (e *gslapperEngine) requestSocket(proc Process, socket, command string, timeout time.Duration) (string, error) {
+	if e.requestOwned != nil {
+		ctx := e.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		return e.requestOwned(ctx, socket, command, timeout, processPID(proc))
+	}
+	if e.request == nil {
+		return "", errors.New("wallpaper: no IPC requester")
+	}
+	return e.request(socket, command, timeout)
+}
+
+func socketFileIfOwned(path string, proc Process) (os.FileInfo, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("wallpaper: socket path %s is a symlink", path)
+	}
+	if pid := processPID(proc); pid > 0 {
+		peer, err := socketPeerPID(path)
+		if err != nil {
+			return nil, err
+		}
+		if peer != pid {
+			return nil, fmt.Errorf("wallpaper: socket %s is served by pid %d, want %d", path, peer, pid)
+		}
+	}
+	return info, nil
+}
+
+func removeSocketIfSame(path string, expected os.FileInfo) error {
+	current, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if expected == nil {
+		return fmt.Errorf("wallpaper: cannot verify ownership of socket %s", path)
+	}
+	if !os.SameFile(expected, current) {
+		return fmt.Errorf("wallpaper: socket path %s changed while it was stopped", path)
+	}
+	return os.Remove(path)
+}
+
+func (e *gslapperEngine) socketFile(connector string) os.FileInfo {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.socketFiles[connector]
+}
+
+func (e *gslapperEngine) rememberSocket(connector string, proc Process, path string) error {
+	info, err := socketFileIfOwned(path, proc)
+	if err != nil {
+		return err
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.owned[connector] != proc {
+		return errors.New("wallpaper: gSlapper ownership changed while it became ready")
+	}
+	if e.socketFiles == nil {
+		e.socketFiles = map[string]os.FileInfo{}
+	}
+	e.socketFiles[connector] = info
+	return nil
+}
+
+var errEngineClosed = errors.New("wallpaper: engine is closed")
+
 // Apply puts one path on one output.
 func (e *gslapperEngine) Apply(job Job, set Settings) (string, error) {
 	if err := checkPath(job.Path); err != nil {
@@ -108,6 +302,11 @@ func (e *gslapperEngine) Apply(job Job, set Settings) (string, error) {
 	}
 	if _, err := os.Stat(job.Path); err != nil {
 		return "", fmt.Errorf("wallpaper: %w", err)
+	}
+	unlock := e.lockConnector(job.Connector)
+	defer unlock()
+	if e.isClosed() {
+		return "", errEngineClosed
 	}
 
 	caps := e.Capabilities()
@@ -120,22 +319,43 @@ func (e *gslapperEngine) Apply(job Job, set Settings) (string, error) {
 
 	// A fallback we started is stopped before gSlapper takes the output, so
 	// the two never fight over the same surface (D15).
-	e.stopFallback(job.Connector)
+	if err := e.stopFallback(job.Connector); err != nil {
+		return "", err
+	}
 
 	socket := socketPath(e.dir, job.Connector)
-	if e.liveSocket(socket) {
-		// gSlapper needs --auto-stop to change a video path, so at any other
-		// hidden setting the change is known to fail and is not attempted.
-		attemptChange := job.Kind != KindVideo || !videoChangeNeedsRestart(set.Hidden)
-		if attemptChange {
-			reply, err := e.request(socket, "change "+job.Path, ipcTimeout)
-			if err == nil && checkOK(reply) == nil {
-				return e.stillFor(job), nil
-			}
-			if err != nil && classifyChangeError(err.Error()) == changeKeep {
-				return "", fmt.Errorf("wallpaper: change refused: %w", err)
+	owned := e.ownedProcess(job.Connector)
+	_, socketErr := os.Stat(socket)
+	switch {
+	case socketErr == nil:
+		if owned == nil {
+			return "", fmt.Errorf("wallpaper: %s socket is not owned by this shell", job.Connector)
+		}
+		if e.liveSocket(owned, socket) {
+			// gSlapper needs --auto-stop to change a video path, so at any other
+			// hidden setting the change is known to fail and is not attempted.
+			// ponytail: gSlapper 1.5.1 can acknowledge non-fading image
+			// changes without repainting. Relaunch until upstream fixes invalidation.
+			attemptChange := (job.Kind == KindImage && set.Fade) || (job.Kind == KindVideo && !videoChangeNeedsRestart(set.Hidden))
+			if attemptChange {
+				reply, err := e.requestSocket(owned, socket, "change "+job.Path, ipcTimeout)
+				if err == nil {
+					err = checkOK(reply)
+					if err == nil {
+						return e.stillFor(job), nil
+					}
+				}
+				if classifyChangeError(err.Error()) == changeKeep {
+					return "", fmt.Errorf("wallpaper: change refused: %w", err)
+				}
 			}
 		}
+		if err := e.stopOwned(job.Connector, socket); err != nil {
+			return "", err
+		}
+	case !os.IsNotExist(socketErr):
+		return "", fmt.Errorf("wallpaper: stat %s: %w", socket, socketErr)
+	case owned != nil:
 		if err := e.stopOwned(job.Connector, socket); err != nil {
 			return "", err
 		}
@@ -166,24 +386,63 @@ func (e *gslapperEngine) launch(job Job, set Settings, socket string) error {
 	if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
 		return fmt.Errorf("wallpaper: mkdir socket dir: %w", err)
 	}
-	// A leftover socket file from a previous run would make the readiness
-	// check pass against nothing.
-	_ = os.Remove(socket)
+	// A leftover socket from a previous run is not ours to unlink. Apply has
+	// already dealt with the normal owned case; this second check closes the
+	// race where another process creates the path between that check and spawn.
+	if _, err := os.Lstat(socket); err == nil {
+		return fmt.Errorf("wallpaper: %s socket already exists and is not ours", job.Connector)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("wallpaper: stat %s: %w", socket, err)
+	}
 
 	proc, err := e.spawn(launchArgs(set, socket, job.Connector, job.Path))
 	if err != nil {
 		return fmt.Errorf("wallpaper: launch gslapper: %w", err)
 	}
+	tracked := watchProcess(proc)
 	e.mu.Lock()
-	e.owned[job.Connector] = proc
+	if e.closed {
+		e.mu.Unlock()
+		info, _ := socketFileIfOwned(socket, tracked)
+		_ = forceStop(tracked)
+		_ = waitProcess(tracked, stopWait)
+		_ = removeSocketIfSame(socket, info)
+		return errEngineClosed
+	}
+	e.owned[job.Connector] = tracked
 	e.mu.Unlock()
 
-	if err := e.waitForQuery(proc, socket); err != nil {
-		_ = proc.Stop()
+	if err := e.waitForQuery(tracked, socket); err != nil {
+		info := e.socketFile(job.Connector)
+		if info == nil {
+			info, _ = socketFileIfOwned(socket, tracked)
+		}
+		_ = forceStop(tracked)
+		_ = waitProcess(tracked, stopWait)
+		_ = removeSocketIfSame(socket, info)
 		e.mu.Lock()
-		delete(e.owned, job.Connector)
+		if e.owned[job.Connector] == tracked {
+			delete(e.owned, job.Connector)
+			delete(e.socketFiles, job.Connector)
+		}
 		e.mu.Unlock()
 		return err
+	}
+	if err := e.rememberSocket(job.Connector, tracked, socket); err != nil {
+		info := e.socketFile(job.Connector)
+		if info == nil {
+			info, _ = socketFileIfOwned(socket, tracked)
+		}
+		_ = forceStop(tracked)
+		_ = waitProcess(tracked, stopWait)
+		_ = removeSocketIfSame(socket, info)
+		e.mu.Lock()
+		if e.owned[job.Connector] == tracked {
+			delete(e.owned, job.Connector)
+			delete(e.socketFiles, job.Connector)
+		}
+		e.mu.Unlock()
+		return fmt.Errorf("wallpaper: record gslapper socket: %w", err)
 	}
 	return nil
 }
@@ -191,18 +450,25 @@ func (e *gslapperEngine) launch(job Job, set Settings, socket string) error {
 // waitForQuery polls until the new instance answers, the child dies, or the
 // budget runs out. The socket file existing is not readiness.
 func (e *gslapperEngine) waitForQuery(proc Process, socket string) error {
-	exited := make(chan struct{})
-	go func() {
-		_ = proc.Wait()
-		close(exited)
-	}()
-
+	var exited <-chan error
+	if tracked, ok := proc.(*processWatch); ok {
+		exited = tracked.done
+	}
+	ctx := e.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	deadline := time.After(e.readyWait)
 	for {
-		if _, err := e.request(socket, "query", ipcTimeout); err == nil {
+		if ctx.Err() != nil {
+			return errEngineClosed
+		}
+		if reply, err := e.requestSocket(proc, socket, "query", ipcTimeout); err == nil && checkOK(reply) == nil {
 			return nil
 		}
 		select {
+		case <-ctx.Done():
+			return errEngineClosed
 		case <-exited:
 			return errors.New("wallpaper: gslapper exited before it was ready")
 		case <-deadline:
@@ -213,12 +479,12 @@ func (e *gslapperEngine) waitForQuery(proc Process, socket string) error {
 }
 
 // liveSocket reports whether our socket for this output answers.
-func (e *gslapperEngine) liveSocket(socket string) bool {
+func (e *gslapperEngine) liveSocket(proc Process, socket string) bool {
 	if _, err := os.Stat(socket); err != nil {
 		return false
 	}
-	_, err := e.request(socket, "query", ipcTimeout)
-	return err == nil
+	reply, err := e.requestSocket(proc, socket, "query", ipcTimeout)
+	return err == nil && checkOK(reply) == nil
 }
 
 // stopOwned ends the gSlapper on one output: IPC first, then the handle we
@@ -228,39 +494,77 @@ func (e *gslapperEngine) liveSocket(socket string) bool {
 // we hold no handle for it, that is reported rather than resolved by killing
 // something that merely looks like ours.
 func (e *gslapperEngine) stopOwned(connector, socket string) error {
-	if _, err := os.Stat(socket); err == nil {
-		_, _ = e.request(socket, "stop", ipcTimeout)
-	}
 	e.mu.Lock()
 	proc := e.owned[connector]
-	delete(e.owned, connector)
 	e.mu.Unlock()
-
-	deadline := time.Now().Add(stopWait)
-	for time.Now().Before(deadline) {
+	if proc == nil {
 		if _, err := os.Stat(socket); os.IsNotExist(err) {
 			return nil
 		}
-		time.Sleep(e.poll)
+		return fmt.Errorf("wallpaper: %s still holds %s and is not ours to stop", connector, socket)
 	}
-	if proc != nil {
-		if err := proc.Stop(); err != nil {
-			return fmt.Errorf("wallpaper: stop gslapper on %s: %w", connector, err)
+	if _, err := os.Stat(socket); err == nil {
+		// A socket path can be replaced after the original process starts. Only
+		// send lifecycle traffic to the identity we recorded for that process.
+		info := e.socketFile(connector)
+		current, statErr := os.Lstat(socket)
+		if info == nil || (statErr == nil && os.SameFile(info, current)) {
+			_, _ = e.requestSocket(proc, socket, "stop", ipcTimeout)
 		}
-		_ = os.Remove(socket)
+	}
+
+	if waitProcess(proc, 100*time.Millisecond) {
+		if err := removeSocketIfSame(socket, e.socketFile(connector)); err != nil {
+			e.clearOwned(connector, proc)
+			return err
+		}
+		e.clearOwned(connector, proc)
 		return nil
 	}
-	return fmt.Errorf("wallpaper: %s still holds %s and is not ours to stop", connector, socket)
+	if err := forceStop(proc); err != nil {
+		return fmt.Errorf("wallpaper: stop gslapper on %s: %w", connector, err)
+	}
+	if !waitProcess(proc, stopWait) {
+		if _, err := os.Stat(socket); os.IsNotExist(err) {
+			e.clearOwned(connector, proc)
+			return nil
+		}
+		return fmt.Errorf("wallpaper: gslapper on %s did not exit", connector)
+	}
+	if err := removeSocketIfSame(socket, e.socketFile(connector)); err != nil {
+		e.clearOwned(connector, proc)
+		return err
+	}
+	e.clearOwned(connector, proc)
+	return nil
+}
+
+func (e *gslapperEngine) clearOwned(connector string, proc Process) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.owned[connector] == proc {
+		delete(e.owned, connector)
+		delete(e.socketFiles, connector)
+	}
 }
 
 // SetPaused holds or releases playback through IPC.
 func (e *gslapperEngine) SetPaused(connector string, paused bool) error {
+	unlock := e.lockConnector(connector)
+	defer unlock()
+	if e.isClosed() {
+		return errEngineClosed
+	}
+	if e.ownedProcess(connector) == nil {
+		return fmt.Errorf("wallpaper: %s socket is not owned by this shell", connector)
+	}
 	command := "resume"
 	if paused {
 		command = "pause"
 	}
 	socket := socketPath(e.dir, connector)
-	reply, err := e.request(socket, command, ipcPlaybackTimeout)
+	proc := e.ownedProcess(connector)
+	reply, err := e.requestSocket(proc, socket, command, ipcPlaybackTimeout)
 	if err != nil {
 		return err
 	}
@@ -271,11 +575,17 @@ func (e *gslapperEngine) SetPaused(connector string, paused bool) error {
 // static fallback. This is the one place gSlapper-first is deliberately given
 // up (D16); with no still the output is simply left empty.
 func (e *gslapperEngine) Restore(connector, still string) error {
+	unlock := e.lockConnector(connector)
+	defer unlock()
+	if e.isClosed() {
+		return errEngineClosed
+	}
 	socket := socketPath(e.dir, connector)
-	if _, err := os.Stat(socket); err == nil {
-		if err := e.stopOwned(connector, socket); err != nil {
-			return err
-		}
+	if err := e.stopOwned(connector, socket); err != nil {
+		return err
+	}
+	if err := e.stopFallback(connector); err != nil {
+		return err
 	}
 	if still == "" {
 		return nil
@@ -299,7 +609,9 @@ func (e *gslapperEngine) startFallback(connector, path string) error {
 	if err != nil {
 		return err
 	}
-	e.stopFallback(connector)
+	if err := e.stopFallback(connector); err != nil {
+		return err
+	}
 
 	if fallbackIsOneShot(static) {
 		if err := e.ensureAwwwDaemon(); err != nil {
@@ -312,8 +624,15 @@ func (e *gslapperEngine) startFallback(connector, path string) error {
 	if err != nil {
 		return fmt.Errorf("wallpaper: launch %s: %w", static, err)
 	}
+	tracked := watchProcess(proc)
 	e.mu.Lock()
-	e.fallbacks[connector] = proc
+	if e.closed {
+		e.mu.Unlock()
+		_ = tracked.Stop()
+		_ = waitProcess(tracked, stopWait)
+		return errEngineClosed
+	}
+	e.fallbacks[connector] = tracked
 	e.mu.Unlock()
 	return nil
 }
@@ -328,14 +647,31 @@ func (e *gslapperEngine) runToCompletion(argv []string) error {
 	}
 	done := make(chan error, 1)
 	go func() { done <- proc.Wait() }()
+	ctx := e.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	timer := time.NewTimer(e.readyWait)
+	defer timer.Stop()
 	select {
 	case err := <-done:
 		if err != nil {
 			return fmt.Errorf("wallpaper: %s: %w", argv[0], err)
 		}
 		return nil
-	case <-time.After(e.readyWait):
+	case <-ctx.Done():
 		_ = proc.Stop()
+		select {
+		case <-done:
+		case <-time.After(closeWait):
+		}
+		return errEngineClosed
+	case <-timer.C:
+		_ = proc.Stop()
+		select {
+		case <-done:
+		case <-time.After(stopWait):
+		}
 		return fmt.Errorf("wallpaper: %s did not finish", argv[0])
 	}
 }
@@ -343,38 +679,178 @@ func (e *gslapperEngine) runToCompletion(argv []string) error {
 // ensureAwwwDaemon starts awww-daemon when it is not already answering. A
 // daemon someone else started is reused rather than replaced.
 func (e *gslapperEngine) ensureAwwwDaemon() error {
+	e.awwwMu.Lock()
+	defer e.awwwMu.Unlock()
+	if e.isClosed() {
+		return errEngineClosed
+	}
 	if e.runToCompletion(awwwQueryArgs()) == nil {
 		return nil
 	}
-	if _, err := e.spawn(awwwDaemonArgs()); err != nil {
+	if e.isClosed() {
+		return errEngineClosed
+	}
+	e.mu.Lock()
+	previous := e.awww
+	e.awww = nil
+	e.mu.Unlock()
+	stopTracked(previous)
+	proc, err := e.spawn(awwwDaemonArgs())
+	if err != nil {
 		return fmt.Errorf("wallpaper: launch %s: %w", engineAwwwDaemon, err)
 	}
+	tracked := watchProcess(proc)
+	e.mu.Lock()
+	if e.closed {
+		e.mu.Unlock()
+		stopTracked(tracked)
+		return errEngineClosed
+	}
+	e.awww = tracked
+	e.mu.Unlock()
 	deadline := time.Now().Add(e.readyWait)
 	for time.Now().Before(deadline) {
+		if e.isClosed() {
+			e.clearAwww(tracked)
+			stopTracked(tracked)
+			return errEngineClosed
+		}
+		if processExited(tracked) {
+			e.clearAwww(tracked)
+			return errors.New("wallpaper: awww-daemon exited before it was ready")
+		}
 		time.Sleep(e.poll)
 		if e.runToCompletion(awwwQueryArgs()) == nil {
 			return nil
 		}
 	}
+	e.clearAwww(tracked)
+	stopTracked(tracked)
 	return fmt.Errorf("wallpaper: %s did not come up", engineAwwwDaemon)
+}
+
+func stopTracked(proc Process) {
+	if proc == nil {
+		return
+	}
+	if !processExited(proc) {
+		_ = proc.Stop()
+	}
+	_ = waitProcess(proc, stopWait)
+}
+
+func (e *gslapperEngine) clearAwww(proc Process) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.awww == proc {
+		e.awww = nil
+	}
 }
 
 // stopFallback ends only a fallback this process started. A swaybg or awww the
 // user is running is left alone.
-func (e *gslapperEngine) stopFallback(connector string) {
+func (e *gslapperEngine) stopFallback(connector string) error {
 	e.mu.Lock()
 	proc := e.fallbacks[connector]
-	delete(e.fallbacks, connector)
 	e.mu.Unlock()
-	if proc != nil {
-		_ = proc.Stop()
+	if proc == nil {
+		return nil
 	}
+	if processExited(proc) {
+		e.mu.Lock()
+		if e.fallbacks[connector] == proc {
+			delete(e.fallbacks, connector)
+		}
+		e.mu.Unlock()
+		return nil
+	}
+	if err := proc.Stop(); err != nil {
+		return fmt.Errorf("wallpaper: stop fallback on %s: %w", connector, err)
+	}
+	if !waitProcess(proc, stopWait) {
+		return fmt.Errorf("wallpaper: fallback on %s did not exit", connector)
+	}
+	e.mu.Lock()
+	if e.fallbacks[connector] == proc {
+		delete(e.fallbacks, connector)
+	}
+	e.mu.Unlock()
+	return nil
+}
+
+// Close stops only wallpaper processes this engine started and waits for their
+// Wait calls to finish. The service invokes it during shutdown before waiting
+// on in-flight applies, so a readiness wait cannot keep the unit alive.
+func (e *gslapperEngine) Close() {
+	e.mu.Lock()
+	if e.closed {
+		e.mu.Unlock()
+		return
+	}
+	e.closed = true
+	cancel := e.cancel
+	owned := make(map[string]Process, len(e.owned))
+	sockets := make(map[string]os.FileInfo, len(e.socketFiles))
+	for connector, proc := range e.owned {
+		owned[connector] = proc
+		sockets[connector] = e.socketFiles[connector]
+	}
+	fallbacks := make([]Process, 0, len(e.fallbacks))
+	for connector, proc := range e.fallbacks {
+		fallbacks = append(fallbacks, proc)
+		delete(e.fallbacks, connector)
+	}
+	awww := e.awww
+	e.awww = nil
+	e.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+
+	var wg sync.WaitGroup
+	for connector, proc := range owned {
+		wg.Add(1)
+		go func(connector string, proc Process) {
+			defer wg.Done()
+			socket := socketPath(e.dir, connector)
+			_ = forceStop(proc)
+			_ = waitProcess(proc, closeWait)
+			_ = removeSocketIfSame(socket, sockets[connector])
+		}(connector, proc)
+	}
+	for _, proc := range fallbacks {
+		wg.Add(1)
+		go func(proc Process) {
+			defer wg.Done()
+			_ = proc.Stop()
+			_ = waitProcess(proc, closeWait)
+		}(proc)
+	}
+	if awww != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = awww.Stop()
+			_ = waitProcess(awww, closeWait)
+		}()
+	}
+	wg.Wait()
+	e.mu.Lock()
+	e.owned = map[string]Process{}
+	e.mu.Unlock()
 }
 
 // osProcess adapts exec.Cmd to Process.
 type osProcess struct{ cmd *exec.Cmd }
 
 func (p *osProcess) Wait() error { return p.cmd.Wait() }
+
+func (p *osProcess) PID() int {
+	if p == nil || p.cmd == nil || p.cmd.Process == nil {
+		return 0
+	}
+	return p.cmd.Process.Pid
+}
 
 // Stop signals the process group we created, so a wallpaper engine that forked
 // helpers takes them with it.
@@ -383,6 +859,19 @@ func (p *osProcess) Stop() error {
 		return nil
 	}
 	if err := syscall.Kill(-p.cmd.Process.Pid, syscall.SIGTERM); err != nil {
+		return p.cmd.Process.Kill()
+	}
+	return nil
+}
+
+// ForceStop avoids gSlapper's signal-handler cleanup, which crashed on the
+// laptop during service shutdown. Assignments belong to the shell and
+// gSlapper runs with --no-save-state, so there is no child state to flush.
+func (p *osProcess) ForceStop() error {
+	if p == nil || p.cmd == nil || p.cmd.Process == nil {
+		return nil
+	}
+	if err := syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL); err != nil {
 		return p.cmd.Process.Kill()
 	}
 	return nil

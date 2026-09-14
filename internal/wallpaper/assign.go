@@ -60,22 +60,25 @@ type Runtime struct {
 // the engine work and back, so a slow apply that lands after a newer one
 // cannot commit over it.
 type Job struct {
-	Connector string
-	Gen       uint64
-	Path      string
-	Kind      Kind
+	Connector   string
+	Gen         uint64
+	PlaybackGen uint64
+	Path        string
+	Kind        Kind
 }
 
 // Store holds the assignments, the live runtime, and the per-connector
 // generation counter. It is a plain value with methods: the service owns the
 // only instance and serialises access, so the store takes no lock of its own.
 type Store struct {
-	connectors []string
-	assigned   map[string]Assignment
-	runtime    map[string]Runtime
-	gen        map[string]uint64
-	seed       string
-	err        string
+	connectors  []string
+	assigned    map[string]Assignment
+	runtime     map[string]Runtime
+	gen         map[string]uint64
+	playback    map[string]State
+	playbackGen map[string]uint64
+	seed        string
+	err         string
 }
 
 func (s *Store) ensure() {
@@ -83,6 +86,8 @@ func (s *Store) ensure() {
 		s.assigned = make(map[string]Assignment)
 		s.runtime = make(map[string]Runtime)
 		s.gen = make(map[string]uint64)
+		s.playback = make(map[string]State)
+		s.playbackGen = make(map[string]uint64)
 	}
 }
 
@@ -139,7 +144,7 @@ func (s *Store) Apply(token, path string, kind Kind) []Job {
 		rt.State = StateStarting
 		rt.Err = ""
 		s.runtime[c] = rt
-		jobs = append(jobs, Job{Connector: c, Gen: s.gen[c], Path: path, Kind: kind})
+		jobs = append(jobs, Job{Connector: c, Gen: s.gen[c], PlaybackGen: s.playbackGen[c], Path: path, Kind: kind})
 	}
 	return jobs
 }
@@ -159,13 +164,15 @@ func (s *Store) Commit(j Job, preview, engine string) bool {
 		return false
 	}
 	prior := s.assigned[j.Connector]
-	a := Assignment{Kind: j.Kind, Path: j.Path, PreviewPath: preview, DesiredPlayback: StatePlaying}
+	desired := StatePlaying
 	if j.Kind == KindImage {
-		a.DesiredPlayback = StateStatic
+		desired = StateStatic
+	} else if s.playbackGen[j.Connector] != j.PlaybackGen {
+		desired = s.playback[j.Connector]
 	} else if prior.Path == j.Path && prior.DesiredPlayback == StatePaused {
-		// Re-applying the file that is already there keeps a user's pause.
-		a.DesiredPlayback = StatePaused
+		desired = StatePaused
 	}
+	a := Assignment{Kind: j.Kind, Path: j.Path, PreviewPath: preview, DesiredPlayback: desired}
 	s.assigned[j.Connector] = a
 
 	rt := s.runtime[j.Connector]
@@ -210,6 +217,7 @@ func seedFor(a Assignment) string {
 // rather than an empty desktop (D20).
 func (s *Store) Disconnect(connector string) {
 	s.ensure()
+	s.gen[connector]++
 	s.connectors = slices.DeleteFunc(s.connectors, func(c string) bool { return c == connector })
 	delete(s.runtime, connector)
 }
@@ -278,10 +286,12 @@ func (s *Store) noteRuntimeErr(connector string, err error) {
 // desired playback is persisted so a paused video comes back paused (D19).
 func (s *Store) SetPlayback(connector string, paused bool) {
 	s.ensure()
+	s.playbackGen[connector]++
 	state := StatePlaying
 	if paused {
 		state = StatePaused
 	}
+	s.playback[connector] = state
 	if a, ok := s.assigned[connector]; ok {
 		a.DesiredPlayback = state
 		s.assigned[connector] = a
@@ -298,5 +308,6 @@ func (s *Store) SetPlayback(connector string, paused bool) {
 // the output was simply left blank.
 func (s *Store) SetRestored(connector, engine string) {
 	s.ensure()
+	s.gen[connector]++
 	s.runtime[connector] = Runtime{State: StateStatic, Engine: engine}
 }

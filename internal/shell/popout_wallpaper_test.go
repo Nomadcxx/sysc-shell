@@ -603,6 +603,78 @@ func TestWallpaperChromeActionsDrivePanelState(t *testing.T) {
 	}
 }
 
+func TestWallpaperTitleOffersRefresh(t *testing.T) {
+	if findAction(wallpaperTitleRow(&PanelHost{}), "wallpaper-refresh") == nil {
+		t.Fatal("wallpaper title has no refresh action")
+	}
+}
+
+func TestWallpaperRefreshActionRescansLibrary(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "before.png"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	reg := newPanelRegistry(t)
+	svc := wallpaper.NewService(wallpaper.ServiceConfig{
+		Engine:     stubWallpaperEngine{},
+		Connectors: []string{"DP-1"},
+		Roots:      []string{root},
+	})
+	t.Cleanup(svc.Close)
+	reg.mu.Lock()
+	reg.wallpaperSvc = svc
+	h := &PanelHost{id: PanelWallpaper}
+	if err := os.WriteFile(filepath.Join(root, "after.png"), []byte("x"), 0o644); err != nil {
+		reg.mu.Unlock()
+		t.Fatalf("add wallpaper: %v", err)
+	}
+	if !h.wallpaperAction(reg, &ui.Node{Action: "wallpaper-refresh"}) {
+		reg.mu.Unlock()
+		t.Fatal("refresh action was not handled")
+	}
+	reg.mu.Unlock()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		snap := svc.Snapshot()
+		if slices.ContainsFunc(snap.Library.View(root, wallpaper.FilterAll, ""), func(e wallpaper.Entry) bool {
+			return e.Name == "after.png"
+		}) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("refresh did not rescan the library")
+}
+
+func TestWallpaperSelectionFallsBackWhenOutputDisconnects(t *testing.T) {
+	snap := wallpaper.Snapshot{Connectors: []string{"DP-1"}}
+	if got := wallpaperOutputSelection(snap, "DP-3"); got != wallpaper.AllOutputs {
+		t.Fatalf("stale output selection = %q, want %q", got, wallpaper.AllOutputs)
+	}
+}
+
+func TestWallpaperRejectsStaleOutputAction(t *testing.T) {
+	reg, svc, _ := openWallpaperPanel(t, nil)
+	h := wallpaperHost(t, reg)
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpDisconnect, Token: "DP-3"})
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && slices.Contains(svc.Snapshot().Connectors, "DP-3") {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if slices.Contains(svc.Snapshot().Connectors, "DP-3") {
+		t.Fatal("test output did not disconnect")
+	}
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if !h.wallpaperAction(reg, &ui.Node{Action: "wallpaper-output:DP-3"}) {
+		t.Fatal("stale output action was not consumed")
+	}
+	if h.wallpaperOutput != wallpaper.AllOutputs {
+		t.Fatalf("stale output action selected %q, want all", h.wallpaperOutput)
+	}
+}
+
 func TestWallpaperVideoTileIsInertWithoutGSlapper(t *testing.T) {
 	t.Parallel()
 

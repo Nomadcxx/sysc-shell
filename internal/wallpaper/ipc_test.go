@@ -2,8 +2,10 @@ package wallpaper
 
 import (
 	"bufio"
+	"context"
 	"io"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -111,6 +113,13 @@ func TestIPCRejectsNewlineBeforeDial(t *testing.T) {
 	}
 	if received() != "" {
 		t.Fatalf("refused command still reached the socket: %q", received())
+	}
+}
+
+func TestIPCRejectsUnexpectedPeer(t *testing.T) {
+	socket, _ := fakeGSlapper(t, "OK\n")
+	if _, err := requestWithPeer(context.Background(), socket, "query", time.Second, os.Getpid()+1); err == nil {
+		t.Fatal("an IPC peer with the wrong PID was accepted")
 	}
 }
 
