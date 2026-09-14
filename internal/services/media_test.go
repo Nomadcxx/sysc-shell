@@ -1,6 +1,7 @@
 package services
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
@@ -208,4 +209,105 @@ func TestMediaSurvivesMalformedMetadata(t *testing.T) {
 	if st.LengthUS != 0 {
 		t.Errorf("garbage length produced %d", st.LengthUS)
 	}
+}
+
+func TestMediaInterpolatesPositionWhilePlaying(t *testing.T) {
+	t.Parallel()
+	// MPRIS reports Position on request and emits Seeked only on
+	// discontinuities. Interpolation lives here, not in each consumer:
+	// Noctalia's service has eight, and eight timers would give eight
+	// slightly different answers.
+	m := newMediaAt(t, PlaybackPlaying, 1_000_000, 1.0)
+	m.advance(2 * time.Second)
+	if got := m.State().PositionUS; got < 2_900_000 || got > 3_100_000 {
+		t.Errorf("position = %d, want about 3000000", got)
+	}
+}
+
+func TestMediaPausedPositionDoesNotAdvance(t *testing.T) {
+	t.Parallel()
+	m := newMediaAt(t, PlaybackPaused, 1_000_000, 1.0)
+	m.advance(5 * time.Second)
+	if got := m.State().PositionUS; got != 1_000_000 {
+		t.Errorf("paused position moved to %d", got)
+	}
+}
+
+func TestMediaSeekedResetsTheBaseline(t *testing.T) {
+	t.Parallel()
+	m := newMediaAt(t, PlaybackPlaying, 1_000_000, 1.0)
+	m.advance(2 * time.Second)
+	m.onSeeked(10_000_000)
+	if got := m.State().PositionUS; got < 9_900_000 || got > 10_100_000 {
+		t.Errorf("position after seek = %d, want about 10000000", got)
+	}
+}
+
+func TestMediaRunningSlowTrackRate(t *testing.T) {
+	t.Parallel()
+	m := newMediaAt(t, PlaybackPlaying, 0, 0.5)
+	m.advance(4 * time.Second)
+	if got := m.State().PositionUS; got < 1_900_000 || got > 2_100_000 {
+		t.Errorf("position at half rate = %d, want about 2000000", got)
+	}
+}
+
+// fakeClock is the injected clock. A sleeping test is slow and flaky; moving a
+// clock is neither.
+type fakeClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *fakeClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *fakeClock) move(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
+
+// mediaClocks tracks the injected clock of each service a test built through
+// newMediaAt, so advance can be a method on Media as the plan writes it.
+var (
+	mediaClocksMu sync.Mutex
+	mediaClocks   = map[*Media]*fakeClock{}
+)
+
+func newMediaAt(t *testing.T, status PlaybackStatus, positionUS int64, rate float64) *Media {
+	t.Helper()
+	m := NewMedia(newFakeBus("org.mpris.MediaPlayer2.x"))
+	t.Cleanup(func() {
+		mediaClocksMu.Lock()
+		delete(mediaClocks, m)
+		mediaClocksMu.Unlock()
+		m.Close()
+	})
+	clock := &fakeClock{now: time.Unix(0, 0)}
+	m.now = clock.Now
+	mediaClocksMu.Lock()
+	mediaClocks[m] = clock
+	mediaClocksMu.Unlock()
+
+	m.mu.Lock()
+	p := &mediaPlayer{Player: Player{Bus: "org.mpris.MediaPlayer2.x"}}
+	p.status = status
+	p.rate = rate
+	p.positionUS = positionUS
+	p.positionAt = clock.Now()
+	m.players[p.Bus] = p
+	m.reselectLocked()
+	m.mu.Unlock()
+	return m
+}
+
+func (m *Media) advance(d time.Duration) {
+	mediaClocksMu.Lock()
+	clock := mediaClocks[m]
+	mediaClocksMu.Unlock()
+	clock.move(d)
 }

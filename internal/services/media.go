@@ -3,6 +3,7 @@ package services
 import (
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/godbus/dbus/v5"
 )
@@ -38,9 +39,14 @@ type mediaPlayer struct {
 	artKey   string
 	lengthUS int64
 	rate     float64
-	canNext  bool
-	canPrev  bool
-	canPlay  bool
+	// positionUS is the last position the bus reported, positionAt the clock
+	// reading it was reported at. Together they are the interpolation
+	// baseline; nothing ticks to advance them.
+	positionUS int64
+	positionAt time.Time
+	canNext    bool
+	canPrev    bool
+	canPlay    bool
 }
 
 // MediaState is one immutable snapshot. Consumers never see a D-Bus type.
@@ -86,6 +92,9 @@ type Media struct {
 	changes   chan MediaState
 	stop      chan struct{}
 	done      chan struct{}
+	// now is the clock position interpolates against. It is a field so tests
+	// can move time instead of sleeping; it defaults to time.Now.
+	now func() time.Time
 }
 
 // NewMedia builds the service over b, enumerates the players already on it,
@@ -95,6 +104,7 @@ func NewMedia(b bus) *Media {
 		b:       b,
 		players: map[string]*mediaPlayer{},
 		changes: make(chan MediaState, 1),
+		now:     time.Now,
 	}
 	m.enumerate()
 	m.startLocked(false)
@@ -334,6 +344,10 @@ func (m *Media) probePlayer(name string) *mediaPlayer {
 	if v, err := m.b.Get(name, mprisPlayerIface, "Rate"); err == nil {
 		p.rate = decodeRate(v)
 	}
+	if v, err := m.b.Get(name, mprisPlayerIface, "Position"); err == nil {
+		p.positionUS = decodePosition(v)
+		p.positionAt = m.now()
+	}
 	if v, err := m.b.Get(name, mprisPlayerIface, "CanGoNext"); err == nil {
 		p.canNext, _ = v.(bool)
 	}
@@ -426,6 +440,31 @@ func decodeRate(v any) float64 {
 	return 1.0
 }
 
+func decodePosition(v any) int64 {
+	switch p := v.(type) {
+	case int64:
+		return p
+	case int:
+		return int64(p)
+	}
+	return 0
+}
+
+// onSeeked resets the position baseline after a discontinuity. The real bus
+// delivers a seek as a refresh event whose Position re-read lands in
+// probePlayer; this direct form is what that path and future consumers share.
+func (m *Media) onSeeked(positionUS int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.players[m.active]
+	if !ok {
+		return
+	}
+	p.positionUS = positionUS
+	p.positionAt = m.now()
+	m.publishLocked()
+}
+
 // reselectLocked keeps the active player pointing at something that exists.
 // The design's selection order: the preferred player when it is present; else
 // the current choice while it survives; else the first player by bus name, so
@@ -487,5 +526,18 @@ func (m *Media) snapshotLocked() MediaState {
 	st.CanNext = p.canNext
 	st.CanPrev = p.canPrev
 	st.CanPlay = p.canPlay
+	st.PositionUS = p.positionUS
+	if p.status == PlaybackPlaying {
+		// Baseline plus rate times elapsed, in microseconds. No timer: a
+		// consumer wanting a moving bar drives it from the per-surface
+		// animator and asks again. The clamp keeps the bar from running past
+		// the track while a player lags behind announcing the change.
+		elapsedUS := m.now().Sub(p.positionAt).Nanoseconds() / 1000
+		position := p.positionUS + int64(float64(elapsedUS)*p.rate)
+		if p.lengthUS > 0 && position > p.lengthUS {
+			position = p.lengthUS
+		}
+		st.PositionUS = position
+	}
 	return st
 }
