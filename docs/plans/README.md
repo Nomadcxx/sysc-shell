@@ -474,12 +474,13 @@ and is the first implementation task.
 
 Owner-approved 2026-09-15. A programme of five sub-projects — settings foundation, bar composition,
 bar geometry, surfaces and behaviour, and new subsystems — each taking its own design, plan, and
-implementation cycle. Only sub-project A is designed. Roadmap: `../roadmap.md` Milestone 9.
+implementation cycle. Sub-projects A and B are designed. Roadmap: `../roadmap.md` Milestone 9.
 Clipboard history stays `sysc-205` and is not part of this milestone.
 
 | Document | Kind | State |
 |---|---|---|
 | `2026-09-15-settings-foundation-design.md` | design | Sub-project A, satisfying `sysc-204`. D1–D11: typed accessor entries replacing the `Get`/`Set` switch pair, entries carrying description and group, a plain grouped column that drops `KindVirtualList` because it is strictly uniform-stride, no cards, live apply debounced through `scheduleControl`, per-entry reset resolved by the writer's own rule (preset-relative for theme axes, `Default()`-relative elsewhere), the stale-draft reload defect closed in `PrepareConfig`, one full panel plus a control-centre shortcut riding the existing `panelSection` addressing, a validated hex field instead of a colour picker because `internal/ui` carries no colour type, `fontscan.SystemFonts` for a real font picker, and the five unreachable config domains exposed. **Supersedes D1–D4 of `2026-08-30-settings-osd-theme-catalog-design.md`** and settles the settings-composition question `2026-09-11-component-parity-design.md` left open. |
+| `2026-09-15-bar-composition-design.md` | design | Sub-project B, consuming A's schema and chrome. D1–D9: lane mutations as pure functions in `internal/config` called by both the pointer and keyboard paths; instance ids extended to built-in widgets **and groups**, minted lazily, which also fixes `eachItem` writing one widget's option to every widget of that type; typed options kept on `config.Item` so `resolveItem`'s per-id validation survives; full group editing with the one-level cap enforced at the drop and empty groups pruned; per-output lanes at **lane** granularity, because `applyBar` inherits or replaces a lane whole and no per-item override exists; `flattenItems` stops hiding the group wrapper so `consistentInstances` can see group ids; and the three `bar.items.*` string entries removed. Records that groups cannot be drop zones — `FindDropZone` tests a node before descending, so an outer lane always wins — and that `Bar.Handle` has no drag state, which is why editing lives in the settings surface. |
 
 ## Sibling repositories
 
