@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/godbus/dbus/v5"
@@ -181,4 +182,34 @@ func (b *sessionBus) Close() {
 	close(b.stop)
 	<-b.done
 	b.conn.Close()
+}
+
+// unavailableBus stands in when there is no session bus. It is inert: no
+// names, no events, and every command refuses.
+type unavailableBus struct{}
+
+func (unavailableBus) ListNames() ([]string, error)            { return nil, nil }
+func (unavailableBus) NameChanges() <-chan nameChange          { return nil }
+func (unavailableBus) Get(string, string, string) (any, error) { return nil, nil }
+func (unavailableBus) Call(string, string, ...any) error       { return errNoMediaBus }
+func (unavailableBus) Close()                                  {}
+
+var errNoMediaBus = errors.New("services: session bus is not available")
+
+// NewSessionMedia builds the service over the real session bus. A machine
+// without one yields the inert service rather than an error the caller must
+// handle: the bar still paints and the glyph stays off, exactly as the
+// network service does without NetworkManager.
+func NewSessionMedia() *Media {
+	b, err := newSessionBus()
+	if err != nil {
+		return NewUnavailableMedia()
+	}
+	return NewMedia(b)
+}
+
+// NewUnavailableMedia builds the inert service a bus-less machine gets and
+// the one a test installs: no players, nothing to command.
+func NewUnavailableMedia() *Media {
+	return NewMedia(unavailableBus{})
 }
