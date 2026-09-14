@@ -132,6 +132,7 @@ type Registry struct {
 	wallpaperSvc         *wallpaper.Service
 	wallpaperThumbs      *icons.Worker
 	wallpaperThumbCancel context.CancelFunc
+	mediaArt             *mediaArtWorker
 	trayIconCancel       context.CancelFunc
 	pendingTrayMenu      pendingTrayMenu
 
@@ -280,6 +281,32 @@ func (r *Registry) relayMedia(media *services.Media, cancel <-chan struct{}) {
 			r.publishMediaSnapshot(media, state)
 		}
 	}
+}
+
+// mediaArtFor returns the page's own bounded art worker. Registry.mu is held.
+func (r *Registry) mediaArtFor() *mediaArtWorker {
+	if r.mediaArt == nil {
+		r.mediaArt = newMediaArtWorker(r.applyMediaArt)
+	}
+	return r.mediaArt
+}
+
+// applyMediaArt rebuilds the retained page once a decoded cover arrives. The
+// page asks only for Lookup results while building; decoding stays off-owner.
+func (r *Registry) applyMediaArt(_ icons.Key, image *ui.Image) {
+	if image == nil {
+		return
+	}
+	r.mu.Lock()
+	h := r.panelHosts[PanelControlCenter]
+	if h == nil || h.section != "media" {
+		r.mu.Unlock()
+		return
+	}
+	out := h.output
+	r.rebuildPanel(h)
+	r.mu.Unlock()
+	r.publishSurface(out, panelSurfaceID(PanelControlCenter))
 }
 
 func (r *Registry) publishMediaSnapshot(media *services.Media, state services.MediaState) {
@@ -1286,6 +1313,7 @@ func (r *Registry) Close() {
 	var inhibit io.Closer
 	var wallpaperSvc *wallpaper.Service
 	var wallpaperThumbCancel context.CancelFunc
+	var mediaArt *mediaArtWorker
 	if locked {
 		if r.toasts != nil {
 			r.toasts.stopLeaseRenew()
@@ -1317,6 +1345,8 @@ func (r *Registry) Close() {
 		r.wallpaperSvc = nil
 		wallpaperThumbCancel = r.wallpaperThumbCancel
 		r.wallpaperThumbCancel = nil
+		mediaArt = r.mediaArt
+		r.mediaArt = nil
 		bluetooth = r.bluetooth
 		r.bluetooth = nil
 		if r.bluetoothRelayCancel != nil {
@@ -1359,6 +1389,9 @@ func (r *Registry) Close() {
 	}
 	if wallpaperThumbCancel != nil {
 		wallpaperThumbCancel()
+	}
+	if mediaArt != nil {
+		mediaArt.Close()
 	}
 	if wallpaperSvc != nil {
 		wallpaperSvc.Close()
