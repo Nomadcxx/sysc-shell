@@ -220,6 +220,9 @@ func Parse(data []byte) (Config, error) {
 	}
 
 	cfg := Default()
+	if wire.Theme == nil || (wire.Theme.Preset == nil && wire.Theme.Density == nil) {
+		cfg.Theme.Density = theme.DensityStandard
+	}
 	if wire.Theme != nil {
 		theme, err := applyTheme(cfg.Theme, *wire.Theme, "theme")
 		if err != nil {

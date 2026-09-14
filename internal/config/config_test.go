@@ -233,8 +233,41 @@ func TestLoadTreatsAMissingFileAsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Bar.Height != Default().Bar.Height {
-		t.Fatal("a missing file did not fall back to the defaults")
+	if cfg.Theme.Density != theme.DensityDefault || cfg.Bar.Height != 31 ||
+		cfg.Bar.Padding != 2 || cfg.Bar.Spacing != 4 {
+		t.Fatalf("missing-file density/bar = %q %d/%d/%d, want %q 31/2/4",
+			cfg.Theme.Density, cfg.Bar.Height, cfg.Bar.Padding, cfg.Bar.Spacing,
+			theme.DensityDefault)
+	}
+}
+
+func TestThemeDensityGenerationMigration(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		doc     string
+		want    theme.Density
+		height  int
+		padding int
+		spacing int
+	}{
+		{"selector-free document", `{}`, theme.DensityStandard, 48, 6, 4},
+		{"empty theme block", `{"theme":{}}`, theme.DensityStandard, 48, 6, 4},
+		{"current standard preset", `{"theme":{"preset":"standard"}}`, theme.DensityDefault, 31, 2, 4},
+		{"explicit legacy density", `{"theme":{"density":"standard"}}`, theme.DensityStandard, 48, 6, 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := Parse([]byte(tc.doc))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Theme.Density != tc.want || cfg.Bar.Height != tc.height ||
+				cfg.Bar.Padding != tc.padding || cfg.Bar.Spacing != tc.spacing {
+				t.Fatalf("density/bar = %q %d/%d/%d, want %q %d/%d/%d",
+					cfg.Theme.Density, cfg.Bar.Height, cfg.Bar.Padding, cfg.Bar.Spacing,
+					tc.want, tc.height, tc.padding, tc.spacing)
+			}
+		})
 	}
 }
 
