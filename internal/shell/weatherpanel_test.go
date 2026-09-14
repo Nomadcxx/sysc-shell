@@ -36,6 +36,16 @@ func TestPanelWeatherAnswersItsIPCName(t *testing.T) {
 	}
 }
 
+func TestPanelWeatherDispatchesTheWeatherTree(t *testing.T) {
+	t.Parallel()
+	r := &Registry{cfg: config.Default(), reading: observedWeather()}
+	h := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
+
+	if !hasLine(collectTooltipLines(r.panelTree(h)), "Clear") {
+		t.Fatal("PanelWeather still dispatches the placeholder tree")
+	}
+}
+
 func TestWeatherBarActionTogglesTheStandalonePanel(t *testing.T) {
 	r := newPanelRegistry(t)
 	bar := &Bar{conn: "DP-1"}

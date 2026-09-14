@@ -1948,7 +1948,7 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 	case PanelBluetooth:
 		return bluetoothTree(r, h)
 	case PanelWeather:
-		return placeholderTree()
+		return weatherTree(r, h)
 	default:
 		return placeholderTree()
 	}
