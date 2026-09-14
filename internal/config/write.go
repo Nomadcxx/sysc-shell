@@ -14,11 +14,12 @@ import (
 // temp file exists.
 var atomicReplace = os.Rename
 
-// Write encodes c as the sparse wire document (only fields that differ from
-// Default) and replaces path atomically: unique temp in the destination
-// directory, mode 0600, file and directory sync, then rename. A deferred
-// cleanup removes the temp on every error. Rename replaces a symlink at path
-// rather than following it.
+// Write encodes c as a wire document sparse relative to its selected preset.
+// The preset itself is always recorded so a current default is distinguishable
+// from a selector-free legacy document. Write replaces path atomically: unique
+// temp in the destination directory, mode 0600, file and directory sync, then
+// rename. A deferred cleanup removes the temp on every error. Rename replaces
+// a symlink at path rather than following it.
 func Write(path string, c Config) error {
 	if path == "" {
 		return fmt.Errorf("config: empty write path")
@@ -81,7 +82,7 @@ func toWire(c Config) wireConfig {
 	if bar := barDiff(c.Bar, deriveBar(d.Bar, c.Theme)); bar != nil {
 		w.Bar = bar
 	}
-	if t := themeDiff(c.Theme, d.Theme.Preset); t != nil {
+	if t := themeDiff(c.Theme); t != nil {
 		w.Theme = t
 	}
 	if tg := themeGenDiff(c.ThemeGen, d.ThemeGen); tg != nil {
@@ -409,34 +410,27 @@ func weatherWire(w Weather) *wireWeather {
 	return out
 }
 
-// themeDiff records only the axes that deviate from the preset the theme
-// selected, so a preset change moves everything the user never touched.
-func themeDiff(got Theme, defaultPreset theme.Preset) *wireTheme {
+// themeDiff records the selected preset and only the axes that deviate from
+// it, so a preset change moves everything the user never touched. The preset
+// is generation provenance for the selector-free legacy migration.
+func themeDiff(got Theme) *wireTheme {
 	base, ok := theme.PresetComposition(got.Preset)
 	if !ok {
 		base = standardComposition()
 	}
-	var w wireTheme
-	set := false
-	if got.Preset != defaultPreset {
-		v := string(got.Preset)
-		w.Preset = &v
-		set = true
-	}
+	v := string(got.Preset)
+	w := wireTheme{Preset: &v}
 	if got.Density != base.Density {
 		v := string(got.Density)
 		w.Density = &v
-		set = true
 	}
 	if got.Motion != base.Motion {
 		v := string(got.Motion)
 		w.Motion = &v
-		set = true
 	}
 	if got.Elevation != base.Elevation {
 		v := string(got.Elevation)
 		w.Elevation = &v
-		set = true
 	}
 	for _, f := range []struct {
 		got, base string
@@ -448,7 +442,6 @@ func themeDiff(got Theme, defaultPreset theme.Preset) *wireTheme {
 		if f.got != f.base {
 			v := f.got
 			*f.dest = &v
-			set = true
 		}
 	}
 	for _, f := range []struct {
@@ -466,11 +459,7 @@ func themeDiff(got Theme, defaultPreset theme.Preset) *wireTheme {
 		if f.got != f.base {
 			v := f.got
 			*f.dest = &v
-			set = true
 		}
-	}
-	if !set {
-		return nil
 	}
 	return &w
 }
