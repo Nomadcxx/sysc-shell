@@ -18,9 +18,13 @@ would reject or turning bar geometry into permanent explicit overrides.
 ## Decision
 
 The theme package keeps `default` as the current 31 px reference row and
-restores `standard` as a recognized, hidden compatibility row with the complete
-pre-rebase metrics. `Densities` and the settings registry continue to expose
-only `mini`, `compact`, `default`, `comfortable`, and `spacious`.
+restores `standard` as a recognized, hidden compatibility row. That row keeps
+the current default control and surface metrics while restoring only the
+pre-rebase bar height, padding, and spacing `48/6/4`. The later proportional
+control-size model did not exist in the old row, so carrying its obsolete panel
+and control values forward would invent a compatibility promise. `Densities`
+and the settings registry continue to expose only `mini`, `compact`, `default`,
+`comfortable`, and `spacious`.
 
 The `standard` preset continues to select `default`; it does not become the
 compatibility mechanism. Consequently `Default()` and a missing configuration
@@ -50,8 +54,10 @@ by old binaries, but they pin geometry and stop later density changes from
 deriving the bar.
 
 Using the existing preset and density vocabulary keeps ownership coherent:
-theme owns the two metric rows, config owns wire-generation provenance, and
-the shell continues to consume one resolved composition.
+theme owns the metric rows, config owns wire-generation provenance, and the
+shell continues to consume one resolved composition. The compatibility row is
+the current default row with one historical bar-geometry override, not a
+second obsolete component system.
 
 ## Compatibility and rollback
 
@@ -72,7 +78,8 @@ Focused configuration and theme tests cover:
 - `Default()` and a missing file resolving to `31/2/4`;
 - an existing selector-free document resolving to `48/6/4`;
 - explicit `preset: "standard"` resolving to the current row;
-- explicit `density: "standard"` resolving to the compatibility row;
+- explicit `density: "standard"` resolving to legacy bar geometry while its
+  non-bar metrics match `default`;
 - writing and reloading both current and compatibility configurations without
   changing geometry; and
 - the settings density list containing only the five current rows.
