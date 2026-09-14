@@ -432,6 +432,44 @@ func TestControlCentreHomeQuickAccessControlsAreSeparated(t *testing.T) {
 	}
 }
 
+// TestControlCentreMeasuredRowsFitTheirContainers guards the fit rather than
+// the heights. The quick tiles and the forecast slots were each sized to fill
+// their container exactly at the old gap, so moving the ladder overflows the
+// row and configure() refuses the child. TestControlCentreHomeFillsTheBodyContract
+// proves the bands are the right height; nothing proved they still fit across.
+//
+// Every term is derived here. A literal width would be the same drift this
+// guards against.
+func TestControlCentreMeasuredRowsFitTheirContainers(t *testing.T) {
+	t.Parallel()
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	body := ccBodyWidth(h)
+
+	home := ccHome(&Registry{}, h)
+	split := home.Children[2]
+	left, right := split.Children[0], split.Children[1]
+	if used := left.Width + split.Gap + right.Width; used > body {
+		t.Errorf("Home split uses %dpx across a %dpx body", used, body)
+	}
+	for i, row := range right.Children {
+		if len(row.Children) != 2 {
+			t.Fatalf("quick tile row %d holds %d tiles, want 2", i, len(row.Children))
+		}
+		if used := row.Children[0].Width + row.Gap + row.Children[1].Width; used > right.Width {
+			t.Errorf("quick tile row %d uses %dpx in a %dpx column", i, used, right.Width)
+		}
+	}
+
+	forecast := ccWeather(&Registry{}, h).Children[1]
+	used := max(len(forecast.Children)-1, 0) * forecast.Gap
+	for _, day := range forecast.Children {
+		used += day.Width
+	}
+	if used > body {
+		t.Errorf("forecast uses %dpx across a %dpx body", used, body)
+	}
+}
+
 func TestControlCentreHomeRadialResourcesPreserveSampleState(t *testing.T) {
 	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
 	r := &Registry{sample: fixtureSnapshot()}

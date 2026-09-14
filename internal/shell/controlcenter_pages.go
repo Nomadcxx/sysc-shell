@@ -24,7 +24,7 @@ const (
 
 	// The control centre's measured composition. These are one grid rather
 	// than a ladder: the page is a fixed 480 tall, the split beneath it 184,
-	// and the two columns 356 and 228 wide. The tile and forecast widths are
+	// and the two columns 355 and 228 wide. The tile and forecast widths are
 	// not listed because they are derived from these and the gap between
 	// them -- the two were sized to fit the old gap exactly, so a literal
 	// would silently overflow the moment the ladder moved.
@@ -33,8 +33,14 @@ const (
 	ccTogglePillH   = 48
 	ccSplitH        = 184
 	ccCardH         = 88
-	ccLeftColumnW   = 356
-	ccRightColumnW  = 228
+	// The left column is what the body has left after the right column and the
+	// gap between them: ccBodyWidth() resolves to 596 at the standard 700px
+	// panel, and 356 + MarginL + 228 came to 597 -- one pixel wider than the
+	// row it sits in, which is how a composition sized to fill its container
+	// exactly starts refusing a child. TestControlCentreMeasuredRowsFitTheirContainers
+	// guards the fit now.
+	ccLeftColumnW  = 355
+	ccRightColumnW = 228
 	// ccTileW is one quick tile: the right column holds two of them with a
 	// gap between, and it was written as 110 for a gap of 8. Derived once
 	// here because two pages build tiles, and a repeated expression is the

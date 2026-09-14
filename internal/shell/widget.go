@@ -289,7 +289,7 @@ func buildWidgets(items []config.Item, pad int, m theme.Metrics) []textWidget {
 		case "wifi":
 			out = append(out, buildWifiWidget(m))
 		case "bluetooth":
-			out = append(out, buildBluetoothWidget())
+			out = append(out, buildBluetoothWidget(m))
 		case "running-apps":
 			row := &ui.Node{Kind: ui.KindRow, Gap: runningAppGap}
 			cap := &ui.Node{Kind: ui.KindCapsule}

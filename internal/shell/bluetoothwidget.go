@@ -2,6 +2,7 @@ package shell
 
 import (
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -9,9 +10,13 @@ const panelBluetoothAction = "panel:bluetooth"
 
 // buildBluetoothWidget is only a route to the shared Bluetooth body. It does
 // not retain adapter or device state of its own.
-func buildBluetoothWidget() textWidget {
+//
+// It takes the density row like its neighbours rather than reading
+// DefaultTheme(): a widget that resolves its own default ignores the configured
+// density, which is the whole defect the metrics row was threaded to fix.
+func buildBluetoothWidget(m theme.Metrics) textWidget {
 	icon := &ui.Node{
-		Kind: ui.KindIcon, Icon: "bluetooth_disabled", IconSize: DefaultTheme().Metrics.IconNormal,
+		Kind: ui.KindIcon, Icon: "bluetooth_disabled", IconSize: m.IconNormal,
 		Action: panelBluetoothAction, Name: "Bluetooth", Role: "button",
 	}
 	return textWidget{

@@ -6,12 +6,41 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 // reference is a fixed instant, so format assertions do not depend on when the
 // test runs.
 var reference = time.Date(2026, 8, 30, 15, 4, 5, 0, time.UTC)
+
+// TestStatusWidgetIconSizeFollowsActiveDensity proves the icon widgets size
+// their glyph from the row the bar was built with rather than resolving a
+// default of their own. A widget that reads DefaultTheme() paints the same
+// glyph at every density, which is invisible until someone changes it.
+func TestStatusWidgetIconSizeFollowsActiveDensity(t *testing.T) {
+	t.Parallel()
+	for _, d := range []theme.Density{theme.DensityMini, theme.DensitySpacious} {
+		m, ok := theme.MetricsFor(d)
+		if !ok {
+			t.Fatalf("no %s row", d)
+		}
+		for _, id := range []string{"notifications", "wifi", "bluetooth"} {
+			widgets := buildWidgets([]config.Item{{ID: id}}, 8, m)
+			if len(widgets) != 1 {
+				t.Fatalf("%s widgets = %d, want 1", id, len(widgets))
+			}
+			icon := widgets[0].inner
+			if icon == nil {
+				icon = widgets[0].node
+			}
+			if icon.IconSize != m.IconNormal {
+				t.Errorf("%s icon size at %s = %d, want the row's %d",
+					id, d, icon.IconSize, m.IconNormal)
+			}
+		}
+	}
+}
 
 func TestAClockWidgetFormatsTheSharedSnapshot(t *testing.T) {
 	t.Parallel()
