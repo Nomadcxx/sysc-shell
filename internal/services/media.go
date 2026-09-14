@@ -44,9 +44,12 @@ type mediaPlayer struct {
 	// baseline; nothing ticks to advance them.
 	positionUS int64
 	positionAt time.Time
-	canNext    bool
-	canPrev    bool
-	canPlay    bool
+	// trackID is the mpris:trackid the player announced, required by
+	// SetPosition. Empty means the player never announced one.
+	trackID string
+	canNext bool
+	canPrev bool
+	canPlay bool
 }
 
 // MediaState is one immutable snapshot. Consumers never see a D-Bus type.
@@ -336,7 +339,7 @@ func (m *Media) probePlayer(name string) *mediaPlayer {
 	p.Identity, _ = v.(string)
 
 	if v, err := m.b.Get(name, mprisPlayerIface, "Metadata"); err == nil {
-		p.title, p.artist, p.album, p.artKey, p.lengthUS = decodeMetadata(v)
+		p.title, p.artist, p.album, p.artKey, p.lengthUS, p.trackID = decodeMetadata(v)
 	}
 	if v, err := m.b.Get(name, mprisPlayerIface, "PlaybackStatus"); err == nil {
 		p.status = decodeStatus(v)
@@ -370,7 +373,7 @@ func (m *Media) probePlayer(name string) *mediaPlayer {
 // a player names a path this shell would then read, so a remote URL is
 // refused outright in this first slice and the eventual consumer bounds the
 // size and time of the read.
-func decodeMetadata(v any) (title, artist, album, artKey string, lengthUS int64) {
+func decodeMetadata(v any) (title, artist, album, artKey string, lengthUS int64, trackID string) {
 	meta := flattenMetadata(v)
 	if meta == nil {
 		return
@@ -396,6 +399,12 @@ func decodeMetadata(v any) (title, artist, album, artKey string, lengthUS int64)
 		lengthUS = l
 	case int:
 		lengthUS = int64(l)
+	}
+	switch t := meta["mpris:trackid"].(type) {
+	case string:
+		trackID = t
+	case dbus.ObjectPath:
+		trackID = string(t)
 	}
 	if u, ok := meta["mpris:artUrl"].(string); ok && strings.HasPrefix(u, "file://") {
 		artKey = u
@@ -462,6 +471,81 @@ func (m *Media) onSeeked(positionUS int64) {
 	}
 	p.positionUS = positionUS
 	p.positionAt = m.now()
+	m.publishLocked()
+}
+
+// Transport commands. Each targets the active player and performs bus I/O, so
+// the shell issues them off the Wayland owner through its scheduleControl
+// seam. A command against a player that vanished mid-flight fails quietly and
+// repairs the display instead: the service re-probes, and a confirmed-vanished
+// player drops and re-selection publishes. Per the design, no error surfaces
+// to the click handler; the error return exists for the house service
+// contract.
+
+// PlayPause toggles the active player's transport state.
+func (m *Media) PlayPause() error { return m.command("PlayPause") }
+
+// Next skips to the next track on the active player.
+func (m *Media) Next() error { return m.command("Next") }
+
+// Previous skips to the previous track on the active player.
+func (m *Media) Previous() error { return m.command("Previous") }
+
+// Stop stops the active player.
+func (m *Media) Stop() error { return m.command("Stop") }
+
+// SetPosition seeks the active player to us microseconds into the current
+// track. The specification requires the track id alongside the position, so
+// this is a quiet no-op against a player that did not announce one.
+func (m *Media) SetPosition(us int64) error {
+	m.mu.Lock()
+	name := m.active
+	trackID := ""
+	if p, ok := m.players[name]; ok {
+		trackID = p.trackID
+	}
+	m.mu.Unlock()
+	if name == "" || trackID == "" {
+		return nil
+	}
+	if err := m.b.Call(name, "SetPosition", dbus.ObjectPath(trackID), us); err != nil {
+		m.repairAfterCommand(name)
+	}
+	return nil
+}
+
+func (m *Media) command(method string) error {
+	m.mu.Lock()
+	name := m.active
+	m.mu.Unlock()
+	if name == "" {
+		return nil
+	}
+	if err := m.b.Call(name, method); err != nil {
+		m.repairAfterCommand(name)
+	}
+	return nil
+}
+
+// repairAfterCommand answers a failed command by re-probing the target: an
+// alive player keeps its refreshed record, a confirmed-dead one drops and
+// re-selection publishes. Callers hold no lock; the probe performs I/O.
+func (m *Media) repairAfterCommand(name string) {
+	m.mu.Lock()
+	_, alive := m.players[name]
+	m.mu.Unlock()
+	if !alive {
+		return
+	}
+	p := m.probePlayer(name)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if p == nil {
+		delete(m.players, name)
+	} else {
+		m.players[name] = p
+	}
+	m.reselectLocked()
 	m.publishLocked()
 }
 

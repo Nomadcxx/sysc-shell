@@ -16,6 +16,9 @@ type bus interface {
 	ListNames() ([]string, error)
 	NameChanges() <-chan nameChange
 	Get(busName, iface, prop string) (any, error)
+	// Call issues one org.mpris.MediaPlayer2.Player method on busName, named
+	// bare — "Next", not the full interface path. Every command this service
+	// sends lives on that interface.
 	Call(busName, method string, args ...any) error
 	Close()
 }
@@ -170,7 +173,7 @@ func (b *sessionBus) Get(busName, iface, prop string) (any, error) {
 }
 
 func (b *sessionBus) Call(busName, method string, args ...any) error {
-	call := b.conn.Object(busName, mprisRoot).Call(method, 0, args...)
+	call := b.conn.Object(busName, mprisRoot).Call(mprisPlayerIface+"."+method, 0, args...)
 	return call.Err
 }
 
