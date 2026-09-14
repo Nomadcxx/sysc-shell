@@ -60,7 +60,10 @@ func TestAStaleReadingKeepsTheWidgetRendering(t *testing.T) {
 		FailedSince: time.Now().Add(-time.Hour),
 	})
 
-	if got := reg.bars[1].left[0].inner.Text; got == noWorkspace || got == "" {
+	// The weather item is a capsule around an icon-and-text row; the text
+	// carries the aged value.
+	row := reg.bars[1].left[0].inner
+	if got := row.Children[1].Text; got == noWorkspace || got == "" {
 		t.Fatalf("a stale reading rendered %q, want the aged value", got)
 	}
 }

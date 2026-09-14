@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
-	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -18,12 +17,9 @@ func TestAnObservedReadingRendersIconAndTemperature(t *testing.T) {
 		Code: 0, FetchedAt: time.Now(),
 	}
 
-	text, tone := formatWeather(config.Item{ID: "weather"}, reading)
+	text, tone := weatherText(config.Item{ID: "weather"}, reading)
 	if tone != ui.ToneNormal {
 		t.Fatalf("tone = %v, want normal for an observed reading", tone)
-	}
-	if !strings.ContainsRune(text, render.IconRune(0)) {
-		t.Fatalf("text %q carries no icon rune", text)
 	}
 	if !strings.Contains(text, "18") {
 		t.Fatalf("text %q carries no temperature", text)
@@ -35,7 +31,7 @@ func TestAnUnobservedReadingRendersTheErrorTone(t *testing.T) {
 	t.Parallel()
 	reading := services.Reading{FailedSince: time.Now().Add(-time.Minute)}
 
-	text, tone := formatWeather(config.Item{ID: "weather"}, reading)
+	text, tone := weatherText(config.Item{ID: "weather"}, reading)
 	if tone != ui.ToneError {
 		t.Fatalf("tone = %v, want error for a reading that never arrived", tone)
 	}
@@ -54,7 +50,7 @@ func TestAStaleReadingKeepsItsValueAndTone(t *testing.T) {
 		FailedSince: time.Now().Add(-30 * time.Minute),
 	}
 
-	text, tone := formatWeather(config.Item{ID: "weather"}, reading)
+	text, tone := weatherText(config.Item{ID: "weather"}, reading)
 	if tone != ui.ToneNormal {
 		t.Fatalf("tone = %v, want normal; a stale value is still a value", tone)
 	}
@@ -69,7 +65,7 @@ func TestAStaleReadingKeepsItsValueAndTone(t *testing.T) {
 // Before the first fetch there is nothing to report and nothing has failed.
 func TestAReadingBeforeTheFirstFetchRendersThePlaceholder(t *testing.T) {
 	t.Parallel()
-	text, tone := formatWeather(config.Item{ID: "weather"}, services.Reading{})
+	text, tone := weatherText(config.Item{ID: "weather"}, services.Reading{})
 	if tone != ui.ToneNormal {
 		t.Fatalf("tone = %v, want normal before the first fetch", tone)
 	}
@@ -83,10 +79,10 @@ func TestTheUnitSuffixFollowsTheReading(t *testing.T) {
 	celsius := services.Reading{Observed: true, Temperature: 18, Unit: services.UnitCelsius}
 	fahrenheit := services.Reading{Observed: true, Temperature: 65, Unit: services.UnitFahrenheit}
 
-	if text, _ := formatWeather(config.Item{ID: "weather"}, celsius); !strings.Contains(text, "°C") {
+	if text, _ := weatherText(config.Item{ID: "weather"}, celsius); !strings.Contains(text, "°C") {
 		t.Fatalf("celsius reading rendered %q", text)
 	}
-	if text, _ := formatWeather(config.Item{ID: "weather"}, fahrenheit); !strings.Contains(text, "°F") {
+	if text, _ := weatherText(config.Item{ID: "weather"}, fahrenheit); !strings.Contains(text, "°F") {
 		t.Fatalf("fahrenheit reading rendered %q", text)
 	}
 }
@@ -95,8 +91,8 @@ func TestShowConditionAppendsTheConditionWord(t *testing.T) {
 	t.Parallel()
 	reading := services.Reading{Observed: true, Temperature: 18, Unit: services.UnitCelsius, Code: 95}
 
-	plain, _ := formatWeather(config.Item{ID: "weather"}, reading)
-	withWord, _ := formatWeather(config.Item{ID: "weather", ShowCondition: true}, reading)
+	plain, _ := weatherText(config.Item{ID: "weather"}, reading)
+	withWord, _ := weatherText(config.Item{ID: "weather", ShowCondition: true}, reading)
 
 	if len(withWord) <= len(plain) {
 		t.Fatalf("show-condition rendered %q, no longer than %q", withWord, plain)
@@ -161,5 +157,144 @@ func TestARejectedReloadLeavesTheRequestUnchanged(t *testing.T) {
 
 	if after := reg.Weather().RequestURL(); after != before {
 		t.Fatalf("a rejected reload moved the request from %q to %q", before, after)
+	}
+}
+
+func observedWeather() services.Reading {
+	return services.Reading{
+		Observed: true, Temperature: 18.4, Unit: services.UnitCelsius,
+		Code: 0, FetchedAt: time.Now(),
+		Humidity: ptrF(62), WindSpeed: ptrF(10.4), WindDirection: ptrF(45),
+		Daily: []services.Day{
+			{Date: "2026-09-15", Code: 0, High: 22, Low: 6, Sunrise: "2026-09-15T06:12", Sunset: "2026-09-15T18:44"},
+			{Date: "2026-09-16", Code: 61, High: 19, Low: 11, Sunrise: "2026-09-16T06:14", Sunset: "2026-09-16T18:42"},
+		},
+	}
+}
+
+func ptrF(v float64) *float64 { return &v }
+func ptrB(v bool) *bool       { return &v }
+
+func TestTheWeatherWidgetBuildsAnIconRowWithThePanelAction(t *testing.T) {
+	t.Parallel()
+	w := buildWeatherWidget(config.Item{ID: "weather"}, DefaultTheme().Metrics)
+	row := w.node
+	if row.Kind != ui.KindRow {
+		t.Fatalf("kind = %v, want a row", row.Kind)
+	}
+	if row.Action != panelWeatherAction {
+		t.Fatalf("action = %q, want %q", row.Action, panelWeatherAction)
+	}
+	if len(row.Children) != 2 || row.Children[0].Kind != ui.KindIcon || row.Children[1].Kind != ui.KindText {
+		t.Fatalf("children = %+v, want an icon beside a text node", row.Children)
+	}
+}
+
+func TestTheWeatherWidgetRefreshPaintsTheGlyphAndTemperature(t *testing.T) {
+	t.Parallel()
+	w := buildWeatherWidget(config.Item{ID: "weather"}, DefaultTheme().Metrics)
+	icon, text := w.node.Children[0], w.node.Children[1]
+	view := barView{Weather: observedWeather()}
+	if !w.refresh(view) {
+		t.Fatal("the first refresh reported no change")
+	}
+	if icon.Icon != "clear-day" {
+		t.Fatalf("icon = %q, want clear-day", icon.Icon)
+	}
+	if text.Text != "18°C" {
+		t.Fatalf("text = %q, want 18°C", text.Text)
+	}
+
+	night := observedWeather()
+	night.IsDay = ptrB(false)
+	if !w.refresh(barView{Weather: night}) {
+		t.Fatal("a changed reading reported no change")
+	}
+	if icon.Icon != "clear-night" {
+		t.Fatalf("icon = %q, want clear-night", icon.Icon)
+	}
+}
+
+func TestTheWeatherWidgetRefreshIsStableForAnUnchangedReading(t *testing.T) {
+	t.Parallel()
+	w := buildWeatherWidget(config.Item{ID: "weather"}, DefaultTheme().Metrics)
+	view := barView{Weather: observedWeather()}
+	w.refresh(view)
+	if w.refresh(view) {
+		t.Fatal("an unchanged reading reported a change")
+	}
+}
+
+func collectTooltipLines(n *ui.Node) []string {
+	if n == nil {
+		return nil
+	}
+	var out []string
+	if n.Text != "" {
+		out = append(out, n.Text)
+	}
+	for _, child := range n.Children {
+		out = append(out, collectTooltipLines(child)...)
+	}
+	return out
+}
+
+func tooltipHasLine(lines []string, substr string) bool {
+	for _, line := range lines {
+		if strings.Contains(line, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestTheWeatherWidgetTooltipCarriesFacts(t *testing.T) {
+	t.Parallel()
+	w := buildWeatherWidget(config.Item{ID: "weather"}, DefaultTheme().Metrics)
+	if !w.refresh(barView{Weather: observedWeather()}) {
+		t.Fatal("the first refresh reported no change")
+	}
+	lines := collectTooltipLines(w.tooltipTree())
+	if lines == nil {
+		t.Fatal("the observed reading built no tooltip tree")
+	}
+	for _, want := range []string{"Clear", "6", "22", "10.4", "NE", "Updated"} {
+		if !tooltipHasLine(lines, want) {
+			t.Fatalf("tooltip lines %q are missing %q", lines, want)
+		}
+	}
+	for _, line := range lines {
+		if line == "Weather" {
+			t.Fatal("the tooltip still says the literal word Weather")
+		}
+	}
+}
+
+func TestTheWeatherWidgetTooltipShowsTheAgeWhenStale(t *testing.T) {
+	t.Parallel()
+	w := buildWeatherWidget(config.Item{ID: "weather"}, DefaultTheme().Metrics)
+	reading := observedWeather()
+	reading.FetchedAt = time.Now().Add(-12 * time.Minute)
+	reading.FailedSince = time.Now()
+	w.refresh(barView{Weather: reading})
+	lines := collectTooltipLines(w.tooltipTree())
+	if !tooltipHasLine(lines, "12m") {
+		t.Fatalf("tooltip lines %q do not carry the age", lines)
+	}
+}
+
+func TestTheWeatherWidgetTooltipStates(t *testing.T) {
+	t.Parallel()
+	w := buildWeatherWidget(config.Item{ID: "weather"}, DefaultTheme().Metrics)
+	w.refresh(barView{})
+	if w.tooltipTree() != nil {
+		t.Fatalf("the placeholder built a tooltip: %+v", w.tooltipTree())
+	}
+
+	failed := services.Reading{FailedSince: time.Now()}
+	w.refresh(barView{Weather: failed})
+	lines := collectTooltipLines(w.tooltipTree())
+	if !tooltipHasLine(lines, "weather unavailable") {
+		t.Fatalf("tooltip lines %q do not carry the failure", lines)
 	}
 }

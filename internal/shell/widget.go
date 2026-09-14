@@ -225,16 +225,7 @@ func buildWidgets(items []config.Item, pad int, m theme.Metrics) []textWidget {
 		case "cpu", "memory", "temperature", "gpu", "filesystem", "block", "network":
 			out = append(out, buildMetricWidget(item))
 		case "weather":
-			node := &ui.Node{Kind: ui.KindText, MaxWidth: item.MaxWidth}
-			out = append(out, textWidget{
-				node:    node,
-				tooltip: "Weather",
-				format: func(v barView) string {
-					text, tone := formatWeather(item, v.Weather)
-					node.Tone = tone
-					return text
-				},
-			})
+			out = append(out, buildWeatherWidget(item, m))
 		case "group":
 			// One capsule holding its members as a flat row. Members are not
 			// individually capsuled: two nested surfaces read as one blob at
