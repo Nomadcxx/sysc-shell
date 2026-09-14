@@ -47,11 +47,12 @@ type Registry struct {
 	now     time.Time
 	focused string
 
-	clock   *services.Clock
-	metrics *services.Metrics
-	weather *services.Weather
-	sample  services.Snapshot
-	reading services.Reading
+	clock      *services.Clock
+	metrics    *services.Metrics
+	weather    *services.Weather
+	sample     services.Snapshot
+	reading    services.Reading
+	mediaState services.MediaState
 	// controlIdentity is captured outside Registry.mu so the control centre
 	// never reads /proc or user databases from the Wayland owner.
 	controlIdentity     ccIdentity
@@ -81,6 +82,8 @@ type Registry struct {
 	audio                *services.Audio
 	brightness           *services.Brightness
 	network              *services.Network
+	media                *services.Media
+	mediaRelayCancel     chan struct{}
 	bluetooth            *services.Bluetooth
 	bluetoothState       services.BluetoothState
 	bluetoothRelayCancel chan struct{}
@@ -179,6 +182,14 @@ func NewRegistry(cfg config.Config) *Registry {
 	r.osd = newOSDManager(r, 0)
 	r.setAudio(services.NewAudio(0, ""))
 	r.setBrightness(services.NewBrightness("", "", 0))
+	// The media service opens a session-bus connection, which no unit test
+	// should need. Tests get the inert service and install their own over the
+	// fake, the same way the network service below is skipped.
+	if runningAsTest() {
+		r.setMedia(services.NewUnavailableMedia())
+	} else {
+		r.setMedia(services.NewSessionMedia())
+	}
 	// The network service opens a system-bus connection, which no unit test
 	// should need. It is skipped under test for the same reason the wallpaper
 	// service below is: a test that reaches the developer's real session is a
@@ -224,6 +235,70 @@ func (r *Registry) setAudio(a *services.Audio) {
 	}
 	go r.relayAudioOSD(a)
 	go r.relayMixer(a)
+}
+
+// setMedia installs the media service and relays its cached snapshots into the
+// retained bar and control-centre trees. The widget and page acquire leases
+// for the service's bus watch; the relay itself never keeps the service alive.
+func (r *Registry) setMedia(m *services.Media) {
+	if r.media == m {
+		return
+	}
+	if r.mediaRelayCancel != nil {
+		close(r.mediaRelayCancel)
+		r.mediaRelayCancel = nil
+	}
+	if r.media != nil {
+		r.media.Close()
+	}
+	r.media = m
+	if m == nil {
+		r.mediaState = services.MediaState{}
+		return
+	}
+	r.mediaState = m.CachedState()
+	cancel := make(chan struct{})
+	r.mediaRelayCancel = cancel
+	go r.relayMedia(m, cancel)
+}
+
+func (r *Registry) relayMedia(media *services.Media, cancel <-chan struct{}) {
+	if media == nil {
+		return
+	}
+	r.publishMediaSnapshot(media, media.CachedState())
+	for {
+		select {
+		case <-r.closed:
+			return
+		case <-cancel:
+			return
+		case state := <-media.Changes():
+			r.publishMediaSnapshot(media, state)
+		}
+	}
+}
+
+func (r *Registry) publishMediaSnapshot(media *services.Media, state services.MediaState) {
+	r.mu.Lock()
+	if r.media != media {
+		r.mu.Unlock()
+		return
+	}
+	r.mediaState = state
+	changed := make([]uint32, 0, len(r.bars))
+	for global, bar := range r.bars {
+		if bar.apply(r.viewLocked(bar.connector())) {
+			changed = append(changed, global)
+		}
+	}
+	out, open := r.rebuildControlCentreLocked()
+	r.mu.Unlock()
+
+	r.publish(changed)
+	if open {
+		r.publishSurface(out, panelSurfaceID(PanelControlCenter))
+	}
 }
 
 func (r *Registry) relayMixer(audio *services.Audio) {
@@ -947,19 +1022,55 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 		case action == panelAudioAction && button == buttonRight:
 			r.stepAudioAsync("mute")
 			return true
+		case action == panelMediaAction && (button == 0 || button == buttonLeft):
+			// The control centre is the one player picker (D7): the widget
+			// routes there and the spine lands on the Media section.
+			trig.AnchorX = bar.actionCenterX(panelMediaAction)
+			if err := r.OpenPanel(PanelControlCenter, out, trig); err != nil {
+				return false
+			}
+			r.mu.Lock()
+			err := r.selectPanelSectionLocked(PanelControlCenter, "media")
+			r.mu.Unlock()
+			return err == nil
+		case action == panelMediaAction && (button == buttonMiddle || button == buttonRight):
+			r.mu.Lock()
+			m := r.media
+			r.mu.Unlock()
+			if m != nil {
+				// Bus I/O, so off the handler path entirely.
+				go func() { _ = m.PlayPause() }()
+			}
+			return true
 		}
 		return false
 	})
 	bar.setAxisHandler(func(action string, delta int) bool {
-		if action != panelAudioAction {
-			return false
+		switch action {
+		case panelAudioAction:
+			if delta > 0 {
+				r.stepAudioAsync("up")
+			} else if delta < 0 {
+				r.stepAudioAsync("down")
+			}
+			return true
+		case panelMediaAction:
+			// Scroll moves next and previous (D7): up is forward.
+			r.mu.Lock()
+			m := r.media
+			r.mu.Unlock()
+			if m == nil {
+				return true
+			}
+			switch {
+			case delta > 0:
+				go func() { _ = m.Next() }()
+			case delta < 0:
+				go func() { _ = m.Previous() }()
+			}
+			return true
 		}
-		if delta > 0 {
-			r.stepAudioAsync("up")
-		} else if delta < 0 {
-			r.stepAudioAsync("down")
-		}
-		return true
+		return false
 	})
 }
 
@@ -1255,6 +1366,9 @@ func (r *Registry) Close() {
 	if r.network != nil {
 		r.network.Close()
 	}
+	if r.media != nil {
+		r.media.Close()
+	}
 	if bluetooth != nil {
 		_ = bluetooth.Close()
 	}
@@ -1411,6 +1525,9 @@ func (r *Registry) viewLocked(connector string) barView {
 	if r.network != nil {
 		view.Network = r.network.CachedState()
 	}
+	if r.media != nil {
+		view.Media = r.mediaState
+	}
 	view.Bluetooth = r.bluetoothState
 	if r.plugins != nil {
 		view.Plugins = r.plugins.frames(connector)
@@ -1486,6 +1603,20 @@ func (r *Registry) buildBar(cfg config.Config, connector string, tok theme.Token
 				continue
 			}
 			lease, err := r.audio.Acquire()
+			if err != nil {
+				releaseAll(leases)
+				return nil, nil, wayland.HostCallbacks{}, err
+			}
+			leases = append(leases, lease)
+			break
+		}
+	}
+	if r.media != nil {
+		for _, item := range allItems(policy) {
+			if item.ID != "media" {
+				continue
+			}
+			lease, err := r.media.Acquire()
 			if err != nil {
 				releaseAll(leases)
 				return nil, nil, wayland.HostCallbacks{}, err

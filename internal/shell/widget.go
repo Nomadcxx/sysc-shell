@@ -41,6 +41,9 @@ type barView struct {
 	// the radio off, which the wifi widget paints as the no-signal glyph.
 	Network   services.NetworkState
 	Bluetooth services.BluetoothState
+	// Media is the active player's snapshot. Its zero value renders the widget
+	// absent: a bar with nothing playing reserves no gap.
+	Media services.MediaState
 }
 
 // textWidget is one configured widget instance: a retained node plus the pure
@@ -60,7 +63,11 @@ type textWidget struct {
 	// string. It reports whether the tree changed. Widgets with a format do
 	// not set it.
 	refresh func(barView) bool
-	tooltip string
+	// hideWhenAbsent hides the outer capsule when this widget has no source.
+	// Most absent nodes intentionally reserve their slot; a media widget is the
+	// exception because no player means no bar item.
+	hideWhenAbsent bool
+	tooltip        string
 	// tip holds a structured plugin tooltip tree. It is a pointer so refresh
 	// can replace the tree without copying the widget.
 	tip **ui.Node
@@ -159,7 +166,20 @@ func capsuled(w textWidget, pad int) textWidget {
 		return w
 	}
 	w.inner = w.node
-	w.node = &ui.Node{Kind: ui.KindCapsule, Padding: pad, Shape: ui.ShapeMedium, Action: w.inner.Action, Children: []*ui.Node{w.inner}}
+	inner := w.inner
+	outer := &ui.Node{Kind: ui.KindCapsule, Padding: pad, Shape: ui.ShapeMedium, Action: inner.Action, Children: []*ui.Node{inner}}
+	w.node = outer
+	if w.hideWhenAbsent && w.refresh != nil {
+		refresh := w.refresh
+		w.refresh = func(v barView) bool {
+			changed := refresh(v)
+			if outer.Absent != inner.Absent {
+				outer.Absent = inner.Absent
+				changed = true
+			}
+			return changed
+		}
+	}
 	return w
 }
 
@@ -286,6 +306,8 @@ func buildWidgets(items []config.Item, pad int, m theme.Metrics) []textWidget {
 			out = append(out, buildWallpaperWidget())
 		case "volume":
 			out = append(out, buildVolumeWidget())
+		case "media":
+			out = append(out, buildMediaWidget())
 		case "wifi":
 			out = append(out, buildWifiWidget(m))
 		case "bluetooth":

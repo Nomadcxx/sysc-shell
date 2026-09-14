@@ -254,6 +254,10 @@ var knownItems = map[string]struct{}{
 	// Bluetooth is opt-in: its bar glyph is useful when requested, but adding
 	// it to the default would change existing layouts.
 	"bluetooth": {},
+	// Media is opt-in like Bluetooth: the glyph and title appear only while a
+	// player is on the session bus, and the design carries no player picker
+	// here — the control centre's Media page is the one picker.
+	"media": {},
 	// group holds other items inside one capsule. It carries no options of
 	// its own; every option belongs to a nested item.
 	"group": {},
