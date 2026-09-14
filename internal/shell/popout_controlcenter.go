@@ -146,10 +146,10 @@ func ccBodyWidth(h *PanelHost) int {
 }
 
 func ccRail(h *PanelHost) *ui.Node {
-	rail := &ui.Node{Kind: ui.KindColumn, Width: ccRailWidth, Gap: 8}
+	rail := &ui.Node{Kind: ui.KindColumn, Width: ccRailWidth, Gap: theme.MarginM}
 	for _, section := range ccSections {
 		if section.ID == "media" || section.ID == "network" || section.ID == "weather" {
-			rail.Children = append(rail.Children, &ui.Node{Kind: ui.KindColumn, Height: 8})
+			rail.Children = append(rail.Children, &ui.Node{Kind: ui.KindColumn, Height: theme.MarginM})
 		}
 		name := section.Label
 		action := "section:" + section.ID
@@ -188,7 +188,7 @@ func ccHeader(h *PanelHost) *ui.Node {
 	}
 	return &ui.Node{Kind: ui.KindRow, Height: ccHeaderSize, PinEnd: true, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: label, TextRole: theme.RoleHeadline, Name: label, Role: "heading"},
-		{Kind: ui.KindRow, Gap: 8, Children: []*ui.Node{
+		{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
 			button("settings", "cc:settings", "Settings"),
 			button("power_settings_new", "cc:power", "Power"),
 			button("close", "cc:close", "Close"),

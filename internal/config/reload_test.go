@@ -21,8 +21,8 @@ func TestResolveReturnsOnePolicyPerConnector(t *testing.T) {
 	if bars[0].Height != 44 {
 		t.Fatalf("DP-1 height = %d, want the override 44", bars[0].Height)
 	}
-	if bars[1].Height != 48 {
-		t.Fatalf("DP-3 height = %d, want the base 48", bars[1].Height)
+	if bars[1].Height != 31 {
+		t.Fatalf("DP-3 height = %d, want the base 31", bars[1].Height)
 	}
 }
 

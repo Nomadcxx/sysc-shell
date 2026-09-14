@@ -114,6 +114,12 @@ type Shapes struct {
 	Large  int
 	Card   int
 	Panel  int
+	// Input is the radius for interactive elements -- buttons, toggles, text
+	// fields -- and is resolved from its own axis rather than from the
+	// container radius. The reference carries two parallel ladders for this
+	// reason: one axis cannot express rounded cards with square-ish inputs,
+	// which is a composition it ships and a user can set.
+	Input int
 }
 
 // ShapeHalf asks the painter for half the box's shorter side. It is the value
@@ -191,9 +197,11 @@ func (s TextSpec) Italicised() TextSpec {
 	return s
 }
 
-// textRoleCount bounds the role table. It tracks theme.RoleMono, the last
-// role, so adding a role without extending the table fails to compile.
-const textRoleCount = int(theme.RoleMono) + 1
+// textRoleCount bounds the role table. It tracks the last role in the enum, so
+// adding one past it without changing this line leaves the array a slot short
+// and indexes out of range at paint -- silently, because the table is a
+// fixed-size array and the guard below would still have passed.
+const textRoleCount = int(theme.RoleDisplay) + 1
 
 // Spec returns the resolved spec for a role, falling back to body text for a
 // role outside the table so a frame still paints.

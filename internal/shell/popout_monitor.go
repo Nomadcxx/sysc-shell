@@ -43,7 +43,7 @@ func monitorTree(m theme.Metrics, sels []services.Selector, snap services.Snapsh
 	}
 	cards := append(metrics, info...)
 	if len(cards) == 0 {
-		return &ui.Node{Kind: ui.KindColumn, Padding: 12, Children: []*ui.Node{
+		return &ui.Node{Kind: ui.KindColumn, Padding: m.PanelPadding, Children: []*ui.Node{
 			{Kind: ui.KindText, Text: "No metrics"},
 		}}
 	}
@@ -119,7 +119,7 @@ func monitorLegend(sel services.Selector, snap services.Snapshot, label string) 
 			break
 		}
 	}
-	return &ui.Node{Kind: ui.KindRow, Gap: 12, Children: chips}
+	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Children: chips}
 }
 
 // machineFacts is the System card: the six identity rows Noctalia draws on
@@ -325,7 +325,7 @@ func monitorCard(m theme.Metrics, rows []*ui.Node) *ui.Node {
 	return &ui.Node{
 		Kind: ui.KindCapsule, Padding: m.CardPadding, Fill: ui.FillContainerHigh,
 		Shape:    ui.ShapeCard,
-		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: 4, Children: rows}},
+		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: rows}},
 	}
 }
 
@@ -346,7 +346,7 @@ func monitorCardTitle(label string, icon rune) *ui.Node {
 // monitorKeyValue is one labelled figure. The value is pinned to the trailing
 // edge at layout, matching the reference's right-aligned facts.
 func monitorKeyValue(label, value string) *ui.Node {
-	return &ui.Node{Kind: ui.KindRow, Gap: 6, Children: []*ui.Node{
+	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: label},
 		{Kind: ui.KindText, Text: value, Tabular: true},
 	}}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -44,26 +45,26 @@ func calendarGrid(now time.Time) Calendar {
 	return Calendar{Weeks: weeks}
 }
 
-func clockTree(now time.Time, monthDelta int, theme Theme) *ui.Node {
+func clockTree(now time.Time, monthDelta int, th Theme) *ui.Node {
 	view := now.AddDate(0, monthDelta, 0)
 	g := calendarGrid(view)
 	header := view.Format("January 2006")
-	col := &ui.Node{Kind: ui.KindColumn, Gap: 8, Padding: 12, Children: []*ui.Node{
+	col := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: th.Metrics.PanelPadding, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: now.Format("15:04"), Name: "time"},
 		{Kind: ui.KindText, Text: now.Format("Mon 2 Jan 2006")},
-		{Kind: ui.KindRow, Gap: 8, Children: []*ui.Node{
-			calendarArrow("chevron_left", "cal-prev", "Previous month", theme),
+		{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
+			calendarArrow("chevron_left", "cal-prev", "Previous month", th),
 			{Kind: ui.KindText, Text: header},
-			calendarArrow("chevron_right", "cal-next", "Next month", theme),
+			calendarArrow("chevron_right", "cal-next", "Next month", th),
 		}},
 	}}
-	weekdays := &ui.Node{Kind: ui.KindRow, Gap: 4}
+	weekdays := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS}
 	for _, d := range []string{"S", "M", "T", "W", "T", "F", "S"} {
 		weekdays.Children = append(weekdays.Children, &ui.Node{Kind: ui.KindText, Text: d})
 	}
 	col.Children = append(col.Children, weekdays)
 	for _, week := range g.Weeks {
-		row := &ui.Node{Kind: ui.KindRow, Gap: 4}
+		row := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS}
 		for _, cell := range week {
 			label := ""
 			if cell.Day != 0 {
@@ -85,10 +86,10 @@ func clockTree(now time.Time, monthDelta int, theme Theme) *ui.Node {
 // stadium, which at equal width and height is a circle, so month navigation
 // needs no geometry of its own. The accessible name carries the direction: the
 // glyph is a ligature and reads as nothing.
-func calendarArrow(icon, action, name string, theme Theme) *ui.Node {
+func calendarArrow(icon, action, name string, th Theme) *ui.Node {
 	return &ui.Node{
 		Kind: ui.KindButton, Action: action, Name: name, Role: "button", Focusable: true,
-		Width: theme.Metrics.CompactControl, Height: theme.Metrics.CompactControl,
-		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: icon, IconSize: theme.Metrics.IconNormal}},
+		Width: th.Metrics.CompactControl, Height: th.Metrics.CompactControl,
+		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: icon, IconSize: th.Metrics.IconNormal}},
 	}
 }

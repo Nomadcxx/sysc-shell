@@ -194,7 +194,7 @@ func buildMetricWidget(item config.Item) textWidget {
 	case "radial":
 		icon, _ := render.GaugeIconName(item.ID)
 		node := &ui.Node{
-			Kind: ui.KindRadialGauge, Width: 22, Height: 22,
+			Kind: ui.KindRadialGauge, Width: 22, Height: 22, // token-exempt: the bar gauge diameter, measured against the capsule band. SliderKnob equals 22 at the default row but names a different control, and borrowing it would misdescribe this one.
 			Icon: icon, Action: panelMonitorAction,
 		}
 		name := metricTooltip(item)

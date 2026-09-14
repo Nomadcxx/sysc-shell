@@ -222,6 +222,23 @@ func TestCompleteRejectsAPartialPalette(t *testing.T) {
 	}
 }
 
+// TestEveryRoleStillExportsAfterTheMapping guards the direction of this
+// re-base. The reference ships sixteen colour roles; this tree carries 49, and
+// parity maps onto them rather than trimming down to them. The template
+// catalogue exports the complete set, and a consumer keeps its role names
+// whether or not any first-party chrome paints them, so a role nothing draws
+// is still not a role that can be dropped.
+func TestEveryRoleStillExportsAfterTheMapping(t *testing.T) {
+	t.Parallel()
+	tk := FallbackFor(false)
+	if err := tk.Complete(); err != nil {
+		t.Fatalf("the fallback no longer defines every role: %v", err)
+	}
+	if len(roles) != 49 {
+		t.Errorf("role count = %d, want 49; parity maps roles and never removes them", len(roles))
+	}
+}
+
 func TestValidNamesEveryFailingPair(t *testing.T) {
 	t.Parallel()
 	tok := Fallback

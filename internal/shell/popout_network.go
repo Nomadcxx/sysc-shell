@@ -54,7 +54,7 @@ func networkTree(r *Registry, h *PanelHost) *ui.Node {
 	if panelH <= 0 {
 		panelH = panelTargetSize(PanelNetwork).H
 	}
-	viewportH := max(panelH-2*m.PanelPadding-networkHeaderHeight(m)-m.StandardControl-24, 0)
+	viewportH := max(panelH-2*m.PanelPadding-networkHeaderHeight(m)-m.StandardControl-2*theme.MarginL, 0)
 
 	children := []*ui.Node{
 		networkHeaderCard(h, st, snap, m),
@@ -67,12 +67,12 @@ func networkTree(r *Registry, h *PanelHost) *ui.Node {
 			TextRole: theme.RoleCaption,
 		})
 	}
-	return &ui.Node{Kind: ui.KindColumn, Gap: 12, Padding: m.PanelPadding, Children: children}
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Padding: m.PanelPadding, Children: children}
 }
 
 func networkHeaderHeight(m theme.Metrics) int {
 	// card padding, the status row, two column gaps, the rule, and the figures
-	return 2*m.CardPadding + m.StandardControl + 12 + 1 + 12 + networkFigureRowH
+	return 2*m.CardPadding + m.StandardControl + theme.MarginL + 1 + theme.MarginL + networkFigureRowH
 }
 
 // networkHeaderCard is Direction B's status block: the active connection is
@@ -89,7 +89,7 @@ func networkHeaderCard(h *PanelHost, st services.NetworkState, snap services.Sna
 		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: wifiGlyph(st), IconSize: m.IconNormal}},
 	}
 
-	title := &ui.Node{Kind: ui.KindColumn, Gap: 2, Children: []*ui.Node{
+	title := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
 		{
 			Kind: ui.KindText, Text: headerTitle(st, wired),
 			TextRole: theme.RoleTitle, Name: "Network", Role: "heading",
@@ -103,7 +103,7 @@ func networkHeaderCard(h *PanelHost, st services.NetworkState, snap services.Sna
 		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "close", IconSize: m.IconNormal}},
 	}
 
-	trailing := &ui.Node{Kind: ui.KindRow, Gap: 8, Height: well}
+	trailing := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Height: well}
 	if !wired {
 		// The wired link has no radio to switch, so the toggle belongs to the
 		// Wi-Fi tab alone.
@@ -114,15 +114,15 @@ func networkHeaderCard(h *PanelHost, st services.NetworkState, snap services.Sna
 	}
 	trailing.Children = append(trailing.Children, closeBtn)
 
-	top := &ui.Node{Kind: ui.KindRow, Gap: 12, Height: well, PinEnd: true, Children: []*ui.Node{
-		{Kind: ui.KindRow, Gap: 12, Height: well, Children: []*ui.Node{icon, title}},
+	top := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Height: well, PinEnd: true, Children: []*ui.Node{
+		{Kind: ui.KindRow, Gap: theme.MarginL, Height: well, Children: []*ui.Node{icon, title}},
 		trailing,
 	}}
 
 	return &ui.Node{
 		Kind: ui.KindCapsule, Padding: m.CardPadding, Height: networkHeaderHeight(m),
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
-		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: 12, Children: []*ui.Node{
+		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginL, Children: []*ui.Node{
 			top,
 			{Kind: ui.KindSeparator},
 			networkFigures(st, snap, (panelTargetSize(PanelNetwork).W-2*m.PanelPadding-2*m.CardPadding-2*networkFigureGap)/3),
@@ -135,7 +135,7 @@ func networkHeaderCard(h *PanelHost, st services.NetworkState, snap services.Sna
 func networkTabs(h *PanelHost, m theme.Metrics) *ui.Node {
 	tab := h.networkTab
 	return &ui.Node{
-		Kind: ui.KindSegmented, Key: "network-tab", Gap: 2, Height: m.StandardControl,
+		Kind: ui.KindSegmented, Key: "network-tab", Gap: theme.MarginXXS, Height: m.StandardControl,
 		Children: []*ui.Node{
 			networkSegment(m, "network-tab:wifi", "Wi-Fi", tab != "ethernet"),
 			networkSegment(m, "network-tab:ethernet", "Ethernet", tab == "ethernet"),
@@ -182,7 +182,7 @@ func networkWifiTree(aps []services.AccessPoint, st services.NetworkState, h *Pa
 	}
 	return &ui.Node{Kind: ui.KindCapsule, Padding: m.CardPadding,
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
-		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: 4, Children: rows}},
+		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: rows}},
 	}
 }
 
@@ -205,16 +205,16 @@ func networkPasswordCard(h *PanelHost) *ui.Node {
 		Shape:    ui.ShapeCircle,
 		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: revealIcon, IconSize: m.IconNormal}},
 	}
-	buttons := &ui.Node{Kind: ui.KindRow, Gap: 8, PinEnd: true, Children: []*ui.Node{
+	buttons := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, PinEnd: true, Children: []*ui.Node{
 		{Kind: ui.KindButton, Action: "network-password-cancel", Name: "Cancel", Role: "button", Focusable: true,
 			Height: m.StandardControl, Children: []*ui.Node{{Kind: ui.KindText, Text: "Cancel"}}},
 		{Kind: ui.KindButton, Action: "network-password-submit", Name: "Connect", Role: "button", Focusable: true,
 			Height: m.StandardControl, Fill: ui.FillAccent, Children: []*ui.Node{{Kind: ui.KindText, Text: "Connect"}}},
 	}}
 	return &ui.Node{Kind: ui.KindCapsule, Padding: m.CardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
-		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: 12, Children: []*ui.Node{
+		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginL, Children: []*ui.Node{
 			{Kind: ui.KindText, Text: "Join " + h.pendingSSID, TextRole: theme.RoleTitle},
-			{Kind: ui.KindRow, Gap: 8, PinEnd: true, Children: []*ui.Node{field, reveal}},
+			{Kind: ui.KindRow, Gap: theme.MarginM, PinEnd: true, Children: []*ui.Node{field, reveal}},
 			buttons,
 		}}},
 	}
@@ -226,21 +226,21 @@ func networkPasswordCard(h *PanelHost) *ui.Node {
 // above owns the filled highlight, and two primary-filled elements would
 // state the same fact twice and fight for the same focal point.
 func networkAPRow(ap services.AccessPoint, m theme.Metrics) *ui.Node {
-	leading := &ui.Node{Kind: ui.KindRow, Gap: 12, Children: []*ui.Node{
+	leading := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Children: []*ui.Node{
 		{Kind: ui.KindIcon, Icon: wifiBandGlyph(ap.Strength), IconSize: m.IconNormal},
-		{Kind: ui.KindColumn, Gap: 2, Children: []*ui.Node{
+		{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
 			{Kind: ui.KindText, Text: ap.SSID},
 			{Kind: ui.KindText, Text: apDetail(ap), TextRole: theme.RoleCaption, Tabular: true},
 		}},
 	}}
-	trailing := &ui.Node{Kind: ui.KindRow, Gap: 8}
+	trailing := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM}
 	if ap.Secured {
 		trailing.Children = append(trailing.Children, &ui.Node{Kind: ui.KindIcon, Icon: "lock", IconSize: m.IconSmall})
 	}
 	if ap.Active {
 		trailing.Children = append(trailing.Children, &ui.Node{Kind: ui.KindIcon, Icon: "check", IconSize: m.IconNormal})
 	}
-	content := &ui.Node{Kind: ui.KindRow, Gap: 12, PinEnd: true, Children: []*ui.Node{leading}}
+	content := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, PinEnd: true, Children: []*ui.Node{leading}}
 	if len(trailing.Children) > 0 {
 		content.Children = append(content.Children, trailing)
 	}
@@ -272,10 +272,10 @@ func networkEthernetTree(st services.NetworkState, m theme.Metrics) *ui.Node {
 		return networkNotice("No wired connection", "Plug in a cable to use this tab.", m)
 	}
 	row := &ui.Node{
-		Kind: ui.KindRow, Gap: 12, PinEnd: true, Padding: m.CardPadding,
+		Kind: ui.KindRow, Gap: theme.MarginL, PinEnd: true, Padding: m.CardPadding,
 		Children: []*ui.Node{
 			{Kind: ui.KindIcon, Icon: "lan", IconSize: m.IconLarge},
-			{Kind: ui.KindColumn, Gap: 2, Children: []*ui.Node{
+			{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
 				{Kind: ui.KindText, Text: orAbsent(st.Interface)},
 				{Kind: ui.KindText, Text: "Connected  " + orAbsent(st.IPv4),
 					TextRole: theme.RoleCaption, Tabular: true},
@@ -294,7 +294,7 @@ func networkEthernetTree(st services.NetworkState, m theme.Metrics) *ui.Node {
 func networkNotice(title, hint string, m theme.Metrics) *ui.Node {
 	return &ui.Node{Kind: ui.KindCapsule, Padding: m.CardPadding,
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
-		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: 4, Children: []*ui.Node{
+		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{
 			{Kind: ui.KindText, Text: title, TextRole: theme.RoleLabel},
 			{Kind: ui.KindText, Text: hint, TextRole: theme.RoleCaption},
 		}}},
@@ -407,7 +407,7 @@ func networkFigures(st services.NetworkState, snap services.Snapshot, columnW in
 }
 
 func networkFigure(label, value string, width int) *ui.Node {
-	return &ui.Node{Kind: ui.KindColumn, Gap: 2, Width: width, Children: []*ui.Node{
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Width: width, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: label, TextRole: theme.RoleCaption},
 		{Kind: ui.KindText, Text: value, TextRole: theme.RoleLabel, Tabular: true},
 	}}

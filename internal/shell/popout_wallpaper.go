@@ -402,7 +402,7 @@ func wallpaperSearchRow(h *PanelHost, inner int) *ui.Node {
 			wallpaperOutputLabel(token), token == h.wallpaperOutput))
 	}
 	sel := &ui.Node{
-		Kind: ui.KindSegmented, Key: "wallpaper-output", Gap: 2,
+		Kind: ui.KindSegmented, Key: "wallpaper-output", Gap: theme.MarginXXS,
 		Width: wallpaperOutputWidth, Height: ch, Children: segments,
 	}
 	return &ui.Node{
@@ -443,7 +443,7 @@ func wallpaperNavRow(h *PanelHost, inner int) *ui.Node {
 			fmt.Sprintf("wallpaper-filter:%d", f.value), f.label, f.value == h.wallpaperFilter))
 	}
 	show := &ui.Node{
-		Kind: ui.KindSegmented, Key: "wallpaper-filter", Gap: 2,
+		Kind: ui.KindSegmented, Key: "wallpaper-filter", Gap: theme.MarginXXS,
 		Width: wallpaperFilterWidth, Height: ch, Children: segments,
 	}
 
@@ -564,12 +564,12 @@ func wallpaperTile(r *Registry, h *PanelHost, entry wallpaper.Entry, index int) 
 		Kind:      ui.KindCapsule,
 		Fill:      ui.FillContainerHigh,
 		Width:     wallpaperTileWidth,
-		Padding:   4,
+		Padding:   theme.MarginXS,
 		Action:    "wallpaper-tile",
 		Name:      entry.Path,
 		Focusable: true,
 		Children: []*ui.Node{{
-			Kind: ui.KindColumn, Gap: 4, Children: body,
+			Kind: ui.KindColumn, Gap: theme.MarginXS, Children: body,
 		}},
 	}
 	// The output's current wallpaper is outlined, so the picker says what is
@@ -738,7 +738,7 @@ func wallpaperEngineRow(h *PanelHost) *ui.Node {
 		}
 	}
 	return &ui.Node{
-		Kind: ui.KindRow, Gap: 6, Height: wallpaperChromeH(h), Children: pills,
+		Kind: ui.KindRow, Gap: theme.MarginS, Height: wallpaperChromeH(h), Children: pills,
 	}
 }
 

@@ -144,7 +144,7 @@ func TestAudioPanelSurfacesMixerPollFailure(t *testing.T) {
 
 func TestVolumeRowCarriesTheFullContract(t *testing.T) {
 	n := services.AudioNode{ID: 42, Name: "dev", Description: "AD106M High Definition Audio Controller", Level: 51}
-	row := audioVolumeRow(n, "Output", nil)
+	row := audioVolumeRow(n, "Output", nil, standardMetrics())
 	if len(row.Children) != 4 {
 		t.Fatalf("row has %d regions, want 4 (per D4)", len(row.Children))
 	}
@@ -298,7 +298,7 @@ func TestDevicesRowsAreSelectedWellsNotRadios(t *testing.T) {
 	}
 	current := audioDeviceRow(services.AudioNode{
 		ID: 7, Description: "AD106M High Definition Audio Controller Digital Stereo (HDMI)", Default: true,
-	})
+	}, standardMetrics())
 	if current.Kind != ui.KindCapsule || current.Fill != ui.FillSoft {
 		t.Fatalf("current device = kind %v fill %v, want KindCapsule FillSoft", current.Kind, current.Fill)
 	}
@@ -311,7 +311,7 @@ func TestDevicesRowsAreSelectedWellsNotRadios(t *testing.T) {
 	if check == nil {
 		t.Fatal("current device well carries no trailing check")
 	}
-	plain := audioDeviceRow(services.AudioNode{ID: 8, Description: "other"})
+	plain := audioDeviceRow(services.AudioNode{ID: 8, Description: "other"}, standardMetrics())
 	if plain.Fill != ui.FillNone {
 		t.Errorf("sibling fill = %v, want a plain row", plain.Fill)
 	}
@@ -319,7 +319,7 @@ func TestDevicesRowsAreSelectedWellsNotRadios(t *testing.T) {
 
 func TestAudioDensityContract(t *testing.T) {
 	long := "AD106M High Definition Audio Controller Digital Stereo (HDMI)"
-	row := audioVolumeRow(services.AudioNode{ID: 1, Description: long, Level: 100}, "Output", nil)
+	row := audioVolumeRow(services.AudioNode{ID: 1, Description: long, Level: 100}, "Output", nil, standardMetrics())
 	if row.Height != 68 {
 		t.Errorf("volume row height = %d, want 68 so compact still holds role+name+slider", row.Height)
 	}

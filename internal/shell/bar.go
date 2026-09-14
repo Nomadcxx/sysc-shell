@@ -435,7 +435,7 @@ func (b *Bar) rebuildTrayNodesLocked() {
 	}
 	if len(b.trayArranged.Overflow) > 0 || len(b.trayArranged.Hidden) > 0 {
 		b.trayNodes = append(b.trayNodes, &ui.Node{
-			Kind: ui.KindButton, Text: "…", Padding: 3, Action: trayDrawerAction,
+			Kind: ui.KindButton, Text: "…", Padding: b.theme.Metrics.CapsulePadding, Action: trayDrawerAction,
 			Tooltip: "Tray items", Focusable: true, Name: "Tray items", Role: "button",
 		})
 	}

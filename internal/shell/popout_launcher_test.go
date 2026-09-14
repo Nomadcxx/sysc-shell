@@ -261,11 +261,15 @@ func TestLauncherListFillsThePanel(t *testing.T) {
 	defer reg.mu.Unlock()
 	list := launcherListNode(t, h)
 	bottom := list.Bounds.Y + list.Bounds.H
-	wantBottom := 700 - 12 - h.launcherFooterHeight() - 8
-	// 700 less the padding, rail, field, footer and gaps leaves 558. At the
-	// 76-tall slot that is seven whole rows and a 26px cap of the eighth. It
-	// was eight and a 14px cap before the row took DMS's 12/16 padding; the
-	// row grew by 8 and the panel did not, so a row had to go.
+	wantBottom := 700 - theme.MarginL - h.launcherFooterHeight() - theme.MarginM
+	// The floor is the panel less its bottom inset, the footer, and the gap
+	// above it, named rather than spelled: this test exists to catch the
+	// chrome estimate and the laid-out chrome disagreeing, so writing either
+	// side as a number is what lets them drift apart unnoticed.
+	//
+	// At the 76-tall slot the remainder is seven whole rows and a cap of the
+	// eighth. It was eight rows before the row took DMS's 12/16 padding; the
+	// row grew and the panel did not, so a row had to go.
 	if list.Bounds.H != h.launcherListHeight() || bottom != wantBottom {
 		t.Fatalf("list %+v, want height %d ending at %d",
 			list.Bounds, h.launcherListHeight(), wantBottom)
@@ -755,7 +759,7 @@ func TestLauncherListReachesThePanelFloor(t *testing.T) {
 	defer reg.mu.Unlock()
 
 	footer := h.root.Children[len(h.root.Children)-1]
-	if got, want := footer.Bounds.Y+footer.Bounds.H, h.place.Panel.H-12; got != want {
+	if got, want := footer.Bounds.Y+footer.Bounds.H, h.place.Panel.H-theme.MarginL; got != want {
 		t.Fatalf("footer ends at %d, want the panel floor %d; the chrome "+
 			"estimate and the laid-out chrome disagree", got, want)
 	}

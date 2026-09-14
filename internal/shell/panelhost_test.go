@@ -206,7 +206,15 @@ func TestRevealAnimationInvalidatesUntilDone(t *testing.T) {
 	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
 		t.Fatal(err)
 	}
-	n := countSurfaceInvalidations(reg, 200*time.Millisecond)
+	// The window follows the transition it observes, the way the reduced-motion
+	// half below already does. Frames are paced by the frame cap, so a fixed
+	// 200 ms saw four of them plus, while the enter happened to run 180 ms, the
+	// settling publish that lands exempt from the cap. That fifth frame was an
+	// accident of the old duration, not a property of the reveal.
+	reg.mu.Lock()
+	enter := reg.panelHosts[PanelSession].anim.duration(animVisible, true)
+	reg.mu.Unlock()
+	n := countSurfaceInvalidations(reg, enter+50*time.Millisecond)
 	if n < 5 {
 		t.Fatalf("got %d surface invalidations, want at least 5 during reveal", n)
 	}
