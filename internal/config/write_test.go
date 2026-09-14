@@ -184,6 +184,7 @@ func TestThemeRoundTripIsStable(t *testing.T) {
 		{"axes without a preset", `{"theme":{"density":"comfortable","elevation":"none"}}`},
 		{"bar override", `{"theme":{"density":"compact"},"bar":{"height":52}}`},
 		{"old file", `{"theme":{"radius":16},"bar":{"padding":10}}`},
+		{"input radius", `{"theme":{"input-radius":16}}`},
 		{"output override", `{"bar":{"height":52},"outputs":[{"connector":"DP-1","bar":{"height":60}}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

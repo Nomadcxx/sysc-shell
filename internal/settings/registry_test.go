@@ -127,6 +127,7 @@ func TestAppearanceAxesRoundTrip(t *testing.T) {
 		{"appearance.font-scale", "125", func(c config.Config) string { return strconv.Itoa(c.Theme.FontScale) }},
 		{"appearance.font-weight", "500", func(c config.Config) string { return strconv.Itoa(c.Theme.FontWeight) }},
 		{"appearance.radius", "20", func(c config.Config) string { return strconv.Itoa(c.Theme.Radius) }},
+		{"appearance.input-radius", "18", func(c config.Config) string { return strconv.Itoa(c.Theme.InputRadius) }},
 		{"appearance.motion", "expressive", func(c config.Config) string { return string(c.Theme.Motion) }},
 		{"appearance.motion-speed", "200", func(c config.Config) string { return strconv.Itoa(c.Theme.MotionSpeed) }},
 		{"appearance.bar-opacity", "90", func(c config.Config) string { return strconv.Itoa(c.Theme.BarOpacity) }},
@@ -169,6 +170,7 @@ func TestAppearanceIntegerAxesAreBounded(t *testing.T) {
 		{"appearance.font-scale", theme.FontScaleMin, theme.FontScaleMax},
 		{"appearance.font-weight", theme.FontWeightMin, theme.FontWeightMax},
 		{"appearance.radius", theme.RadiusMin, theme.RadiusMax},
+		{"appearance.input-radius", theme.RadiusMin, theme.RadiusMax},
 		{"appearance.motion-speed", theme.SpeedMin, theme.SpeedMax},
 		{"appearance.bar-opacity", theme.OpacityMin, theme.OpacityMax},
 	} {

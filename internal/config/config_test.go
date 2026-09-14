@@ -1066,6 +1066,8 @@ func TestThemeRejectsEveryInvalidAxisWithItsPath(t *testing.T) {
 		{"font weight high", `{"theme":{"font-weight":901}}`, "theme.font-weight"},
 		{"radius negative", `{"theme":{"radius":-1}}`, "theme.radius"},
 		{"radius high", `{"theme":{"radius":33}}`, "theme.radius"},
+		{"input radius negative", `{"theme":{"input-radius":-1}}`, "theme.input-radius"},
+		{"input radius high", `{"theme":{"input-radius":33}}`, "theme.input-radius"},
 		{"speed low", `{"theme":{"motion-speed":24}}`, "theme.motion-speed"},
 		{"speed high", `{"theme":{"motion-speed":401}}`, "theme.motion-speed"},
 		{"bar opacity", `{"theme":{"bar-opacity":79}}`, "theme.bar-opacity"},

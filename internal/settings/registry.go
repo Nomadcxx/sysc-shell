@@ -68,6 +68,11 @@ func DefaultFor(cfg config.Config) *Registry {
 		{Path: "appearance.font-scale", Label: "Font scale", Section: "Appearance", Kind: KindInt, Min: theme.FontScaleMin, Max: theme.FontScaleMax},
 		{Path: "appearance.font-weight", Label: "Font weight", Section: "Appearance", Kind: KindInt, Min: theme.FontWeightMin, Max: theme.FontWeightMax},
 		{Path: "appearance.radius", Label: "Radius", Section: "Appearance", Kind: KindInt, Min: theme.RadiusMin, Max: theme.RadiusMax},
+		// The parallel shape ladder for interactive elements. It shares the
+		// radius bounds because it is the same axis applied to controls, and
+		// each preset seeds it from that preset's Radius, so inputs keep their
+		// current shape until someone sets this.
+		{Path: "appearance.input-radius", Label: "Input radius", Section: "Appearance", Kind: KindInt, Min: theme.RadiusMin, Max: theme.RadiusMax},
 		{Path: "appearance.motion", Label: "Motion", Section: "Appearance", Kind: KindEnum, Options: []string{
 			string(theme.MotionStandard), string(theme.MotionExpressive),
 		}},
@@ -237,6 +242,8 @@ func (e Entry) Get(c config.Config) string {
 		return strconv.Itoa(c.Theme.FontWeight)
 	case "appearance.radius":
 		return strconv.Itoa(c.Theme.Radius)
+	case "appearance.input-radius":
+		return strconv.Itoa(c.Theme.InputRadius)
 	case "appearance.motion":
 		return string(c.Theme.Motion)
 	case "appearance.motion-speed":
@@ -352,6 +359,8 @@ func (e Entry) setInt(c *config.Config, n int) error {
 		// The bar keeps its own radius as a local override; this is the
 		// composition axis every other surface derives from.
 		c.Theme.Radius = n
+	case "appearance.input-radius":
+		c.Theme.InputRadius = n
 	case "appearance.font-scale":
 		c.Theme.FontScale = n
 	case "appearance.font-weight":
