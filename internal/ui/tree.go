@@ -148,6 +148,12 @@ type Node struct {
 	// exists because a focused-window title is unbounded user text: without a
 	// cap it would take a whole section's budget before anything truncated.
 	MaxWidth int
+	// Marquee asks the bar resolver to replace truncation with a clipped,
+	// wrapping text run when the measured text overflows this node's cell.
+	Marquee bool
+	// TextOffset is the resolved physical-pixel phase for a marquee copy. It
+	// lives on the render copy, not the retained widget tree.
+	TextOffset int
 	// MinWidthText floors a text node's width at the measured width of this
 	// sample string, shaped through the same path as the node's own text.
 	// Empty means natural width.

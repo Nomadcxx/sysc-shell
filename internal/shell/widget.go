@@ -80,11 +80,12 @@ type textWidget struct {
 // groupGap separates members inside a group capsule. noCapsule tells
 // buildWidgets to leave a member unwrapped.
 const (
-	groupGap            = 10
-	noCapsule           = -1
-	clockWidthFloor     = "Wed 30 Sep"
-	gradientTrip        = 2 * time.Second
-	panelLauncherAction = "panel:launcher"
+	groupGap               = 10
+	noCapsule              = -1
+	clockWidthFloor        = "Wed 30 Sep"
+	gradientTrip           = 2 * time.Second
+	marqueePixelsPerSecond = 30
+	panelLauncherAction    = "panel:launcher"
 )
 
 // workspacePillGap separates adjacent workspace pills, and matches the
@@ -307,7 +308,7 @@ func buildWidgets(items []config.Item, pad int, m theme.Metrics) []textWidget {
 		case "volume":
 			out = append(out, buildVolumeWidget())
 		case "media":
-			out = append(out, buildMediaWidget())
+			out = append(out, buildMediaWidget(item))
 		case "wifi":
 			out = append(out, buildWifiWidget(m))
 		case "bluetooth":

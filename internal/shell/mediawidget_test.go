@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -43,5 +44,35 @@ func TestMediaWidgetIsAbsentWithNoPlayer(t *testing.T) {
 	}
 	if !w.node.Absent {
 		t.Error("the media capsule remained visible with no player")
+	}
+}
+
+func TestMediaWidgetSwapsGlyphWithStatus(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		status services.PlaybackStatus
+		icon   string
+	}{
+		{services.PlaybackPlaying, "pause"},
+		{services.PlaybackPaused, "play_arrow"},
+		{services.PlaybackStopped, "music_note"},
+	} {
+		row := buildMediaWidget().node
+		refreshMediaWidget(row, barView{Media: services.MediaState{Available: true, Status: tc.status}})
+		if got := row.Children[0].Icon; got != tc.icon {
+			t.Errorf("status %d icon = %q, want %q", tc.status, got, tc.icon)
+		}
+	}
+}
+
+func TestMediaWidgetSetsMarqueeConfig(t *testing.T) {
+	t.Parallel()
+	widgets := buildWidgets([]config.Item{{ID: "media", MaxWidth: 120}}, 8, standardMetrics())
+	if len(widgets) != 1 || widgets[0].inner == nil || len(widgets[0].inner.Children) != 2 {
+		t.Fatalf("media widget = %+v", widgets)
+	}
+	title := widgets[0].inner.Children[1]
+	if !title.Marquee || title.MaxWidth != 120 || title.Key != "media-title" {
+		t.Fatalf("media title = %+v, want marquee, max width 120, stable key", title)
 	}
 }

@@ -227,6 +227,10 @@ func squareAttachedEdge(c *Canvas, box ui.Rect, radius int, edge string, col Col
 func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
 	switch n.Kind {
 	case ui.KindText:
+		if n.Marquee {
+			return paintTextMarquee(c, n.Text, style.Scale120.PhysicalRect(n.Bounds), text,
+				style, textSpec(style, n), n.Tabular, textColor(style, n.Tone), n.Underline, n.TextOffset)
+		}
 		return paintText(c, n.Text, style.Scale120.PhysicalRect(n.Bounds), text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline)
 
 	case ui.KindMeter:
@@ -752,6 +756,70 @@ func paintTextColor(c *Canvas, s string, box ui.Rect, text *TextRenderer, style 
 		th := max(spec.Size/16, 1)
 		rule := ui.Rect{X: box.X, Y: box.Y + box.H - th, W: min(mask.Advance, box.W), H: th}
 		fillRect(c, rule, fg)
+	}
+	return nil
+}
+
+func marqueeMetrics(text *TextRenderer, s string, spec TextSpec, tabular bool) (advance, gap, cycle int, err error) {
+	advance, _, err = text.Measure(s, spec, tabular)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	gap, _, err = text.Measure(strings.Repeat(" ", 8), spec, tabular)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	return advance, gap, advance + gap, nil
+}
+
+// paintTextMarquee draws an overflowing text run in a clipped cell. The
+// second copy makes the transition seamless at the cycle boundary; a run that
+// fits uses the ordinary truncation path so the resolver can safely leave this
+// flag set as intent on the retained node.
+func paintTextMarquee(c *Canvas, s string, box ui.Rect, text *TextRenderer, style Style, spec TextSpec, tabular bool, fg Color, underline bool, offset int) error {
+	if s == "" || box.W <= 0 || box.H <= 0 {
+		return nil
+	}
+	advance, _, cycle, err := marqueeMetrics(text, s, spec, tabular)
+	if err != nil {
+		return err
+	}
+	if advance <= box.W || cycle <= 0 {
+		return paintTextColor(c, s, box, text, style, spec, tabular, fg, underline)
+	}
+
+	mask, err := text.Raster(s, spec, tabular)
+	if err != nil {
+		return err
+	}
+	offset %= cycle
+	if offset < 0 {
+		offset += cycle
+	}
+	old := c.restrict
+	clip := box
+	if old.W > 0 && old.H > 0 {
+		x0 := max(old.X, box.X)
+		y0 := max(old.Y, box.Y)
+		x1 := min(old.X+old.W, box.X+box.W)
+		y1 := min(old.Y+old.H, box.Y+box.H)
+		clip = ui.Rect{X: x0, Y: y0, W: max(x1-x0, 0), H: max(y1-y0, 0)}
+	}
+	if clip.W <= 0 || clip.H <= 0 {
+		return nil
+	}
+	c.restrict = clip
+	defer func() { c.restrict = old }()
+
+	for x := box.X - offset; x < box.X+box.W; x += cycle {
+		blendMask(c, mask.Alpha, x, box.Y, fg)
+		if mask.Color != nil {
+			paintImage(c, ui.Rect{X: x, Y: box.Y, W: mask.Color.Width, H: mask.Color.Height}, mask.Color)
+		}
+		if underline {
+			th := max(spec.Size/16, 1)
+			fillRect(c, ui.Rect{X: x, Y: box.Y + box.H - th, W: mask.Advance, H: th}, fg)
+		}
 	}
 	return nil
 }

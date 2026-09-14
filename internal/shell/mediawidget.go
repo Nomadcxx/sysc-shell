@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -10,12 +12,16 @@ const panelMediaAction = "panel:media"
 // player is on the bus. The design's D7 scope: no player picker, no seek bar,
 // no volume — the control centre's Media page is the one picker, and volume
 // is already its own widget.
-func buildMediaWidget() textWidget {
+func buildMediaWidget(items ...config.Item) textWidget {
+	maxWidth := 0
+	if len(items) > 0 {
+		maxWidth = items[0].MaxWidth
+	}
 	row := &ui.Node{Kind: ui.KindRow, Gap: groupGap, Action: panelMediaAction,
 		Name: "Media", Role: "button",
 		Children: []*ui.Node{
 			{Kind: ui.KindIcon, Icon: "music_note", IconSize: DefaultTheme().Metrics.IconNormal},
-			{Kind: ui.KindText},
+			{Kind: ui.KindText, Key: "media-title", MaxWidth: maxWidth, Marquee: true},
 		}}
 	return textWidget{
 		node:           row,
@@ -25,11 +31,21 @@ func buildMediaWidget() textWidget {
 	}
 }
 
-// refreshMediaWidget marks the widget absent with no player and swaps the
-// title as tracks change. The glyph is deliberately constant: the font subset
-// carries one media glyph, and the design asks for one.
+// refreshMediaWidget marks the widget absent with no player, swaps the state
+// glyph, and updates the title as tracks change.
 func refreshMediaWidget(row *ui.Node, v barView) bool {
 	changed := false
+	icon := "music_note"
+	switch v.Media.Status {
+	case services.PlaybackPlaying:
+		icon = "pause"
+	case services.PlaybackPaused:
+		icon = "play_arrow"
+	}
+	if row.Children[0].Icon != icon {
+		row.Children[0].Icon = icon
+		changed = true
+	}
 	if absent := !v.Media.Available; row.Absent != absent {
 		row.Absent = absent
 		changed = true

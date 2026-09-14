@@ -172,6 +172,38 @@ func TestAnimatorLoopWithNoTripDoesNotRequestFrames(t *testing.T) {
 	}
 }
 
+func TestAnimatorSweepWrapsLinearly(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	a.TargetSweep("media-title", animSweep, 2*time.Second)
+	if a.Settled() {
+		t.Fatal("sweep settled at its start")
+	}
+	clock.add(500 * time.Millisecond)
+	if got := a.Value("media-title", animSweep); got != 0.25 {
+		t.Fatalf("quarter sweep = %v, want 0.25", got)
+	}
+	clock.add(1500 * time.Millisecond)
+	if got := a.Value("media-title", animSweep); got != 0 {
+		t.Fatalf("sweep did not wrap at its trip: %v", got)
+	}
+	if a.Settled() {
+		t.Fatal("sweep settled after wrapping")
+	}
+}
+
+func TestAnimatorSweepParksUnderReducedMotion(t *testing.T) {
+	t.Parallel()
+	a, _ := newTestAnimator(true)
+	a.TargetSweep("media-title", animSweep, 2*time.Second)
+	if got := a.Value("media-title", animSweep); got != 0 {
+		t.Fatalf("reduced-motion sweep = %v, want 0", got)
+	}
+	if !a.Settled() {
+		t.Fatal("reduced-motion sweep requested frames")
+	}
+}
+
 func TestAnimatorSnapsInteractionUnderReducedMotion(t *testing.T) {
 	t.Parallel()
 	a, _ := newTestAnimator(true)
