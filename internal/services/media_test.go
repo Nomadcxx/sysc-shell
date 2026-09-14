@@ -115,3 +115,38 @@ func TestMediaAddsAndDropsPlayersOnNameChanges(t *testing.T) {
 	b.nameCh <- nameChange{Name: "org.mpris.MediaPlayer2.vlc", Acquired: false}
 	waitFor(t, func() bool { return len(m.Players()) == 0 })
 }
+
+func TestMediaPrefersTheLastInteractedPlayer(t *testing.T) {
+	t.Parallel()
+	m := NewMedia(newFakeBus("org.mpris.MediaPlayer2.a", "org.mpris.MediaPlayer2.b"))
+	t.Cleanup(m.Close)
+	m.Prefer("org.mpris.MediaPlayer2.b")
+	if got := m.State().Player; got != "org.mpris.MediaPlayer2.b" {
+		t.Errorf("active = %q, want the preferred player", got)
+	}
+}
+
+func TestMediaSelectionIsStableWithoutAPreference(t *testing.T) {
+	t.Parallel()
+	// With nothing else to go on, the fallback must be deterministic, or the
+	// bar widget flips between players between snapshots.
+	b := newFakeBus("org.mpris.MediaPlayer2.z", "org.mpris.MediaPlayer2.a")
+	m := NewMedia(b)
+	t.Cleanup(m.Close)
+	first := m.State().Player
+	for i := 0; i < 5; i++ {
+		if got := m.State().Player; got != first {
+			t.Fatalf("selection changed between reads: %q then %q", first, got)
+		}
+	}
+}
+
+func TestMediaReleasesSelectionWhenThePlayerVanishes(t *testing.T) {
+	t.Parallel()
+	b := newFakeBus("org.mpris.MediaPlayer2.gone")
+	m := NewMedia(b)
+	t.Cleanup(m.Close)
+	m.Prefer("org.mpris.MediaPlayer2.gone")
+	b.nameCh <- nameChange{Name: "org.mpris.MediaPlayer2.gone", Acquired: false}
+	waitFor(t, func() bool { return m.State().Player == "" })
+}

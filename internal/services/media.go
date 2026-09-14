@@ -57,14 +57,15 @@ type Player struct {
 // until some unrelated event. The lease still governs the subscription: the
 // last release stops the loop and the next Acquire starts it again.
 type Media struct {
-	mu      sync.Mutex
-	leases  leaseSet
-	b       bus
-	players map[string]Player
-	active  string
-	changes chan MediaState
-	stop    chan struct{}
-	done    chan struct{}
+	mu        sync.Mutex
+	leases    leaseSet
+	b         bus
+	players   map[string]Player
+	active    string
+	preferred string
+	changes   chan MediaState
+	stop      chan struct{}
+	done      chan struct{}
 }
 
 // NewMedia builds the service over b, enumerates the players already on it,
@@ -129,6 +130,25 @@ func sortPlayers(ps []Player) {
 		for j := i; j > 0 && ps[j].Bus < ps[j-1].Bus; j-- {
 			ps[j], ps[j-1] = ps[j-1], ps[j]
 		}
+	}
+}
+
+// Prefer asks the service to make busName the active player whenever it is
+// present. It is the design's "last interacted through this shell" rule: the
+// bar widget and the page call it from their click handlers. A preference for
+// a vanished name is remembered, so a player that re-registers under the same
+// name regains the selection.
+func (m *Media) Prefer(busName string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.preferred == busName {
+		return
+	}
+	before := m.active
+	m.preferred = busName
+	m.reselectLocked()
+	if m.active != before {
+		m.publishLocked()
 	}
 }
 
@@ -281,12 +301,22 @@ func (m *Media) handleNameChange(ch nameChange) {
 	m.mu.Unlock()
 }
 
-// reselectLocked keeps the active player pointing at something that exists,
-// falling back to the first player by bus name so the choice is at least
-// stable. Callers hold m.mu.
+// reselectLocked keeps the active player pointing at something that exists.
+// The design's selection order: the preferred player when it is present; else
+// the current choice while it survives; else the first player by bus name, so
+// the fallback is stable. The "most recently playing" middle rule needs
+// transport status, which arrives with metadata decoding. Callers hold m.mu.
 func (m *Media) reselectLocked() {
-	if _, ok := m.players[m.active]; ok {
-		return
+	if m.preferred != "" {
+		if _, ok := m.players[m.preferred]; ok {
+			m.active = m.preferred
+			return
+		}
+	}
+	if m.active != "" {
+		if _, ok := m.players[m.active]; ok {
+			return
+		}
 	}
 	m.active = ""
 	for name := range m.players {
