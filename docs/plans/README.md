@@ -324,6 +324,18 @@ repeating it.
 | `2026-09-11-media-service-design.md` | design | D1–D11. MPRIS service as a peer of `audio.go`; hand-rolled on `godbus/dbus/v5` because no binding covers discovery — `leberKleber/go-mpris` is a client but has none and is stale since 2022, `go-music-players/mpris` is a server library — which satisfies AGENTS.md's rung order rather than bypassing it. Discovery via `NameOwnerChanged`, explicit active-player rules, art off the paint path, position interpolation in the service on the prior art's eight-consumer argument. Bar widget is `media`, verified free against `knownItems`. Re-slices `sysc-156` into service, widget and page so the service stops depending on the control-centre spine. |
 | `2026-09-11-media-service.md` | plan | Ten TDD tasks against a `bus` seam and a fake bus — never a real session bus. Service skeleton and dependency (`godbus/dbus/v5 v5.2.2`, verified present in the local module cache so `GOPROXY=off` resolves); discovery; deterministic active-player selection; metadata decode where every field is a checked assertion and `file://` art only; position interpolated in the service with an injected clock and no timer; commands that fail quietly and re-select; registry ownership with a consumer-counted lifetime and deliberately **no** OSD relay; the `media` widget with a test that fails if a player picker appears in it; the page, left light because it waits on `sysc-253`; then the tracker split. |
 
+## Media page and bar parity
+
+Owner-commissioned 2026-09-15 after the media service and bar widget landed
+(sysc-281, sysc-282) and the owner's review named what was missing for full
+functionality and Noctalia v4/DMS parity: the CC page and Home summary
+(sysc-156), the bar's state-swapped glyph and scrolling title (sysc-284), and
+the D3 configuration surface (sysc-283).
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-15-media-page-design.md` | design | D1–D12. One shared CC body over cached media state; three ladder-rung cards; bounded rounded art on a third worker with the read timeout D11.2 mandates and a negative cache; a marquee text cell behind one render primitive and a new linear sweep animator mode; state-swapped bar glyph; `Configure(preferred, blacklist)` with the most-recently-playing middle rule; lease lifecycle hooks beside the Bluetooth pair; live Niri gate with two measured tunables. |
+
 ## Milestone 5: notifications and system tray
 
 Shell presentation is on `main`. The services this milestone consumes are tagged candidates in their
