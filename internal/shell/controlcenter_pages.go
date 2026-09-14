@@ -385,22 +385,29 @@ func ccWeather(r *Registry, h *PanelHost) *ui.Node {
 	location := ccDash
 	if r != nil {
 		reading = r.reading
-		location = fmt.Sprintf("%.2f°, %.2f°", r.cfg.Weather.Latitude, r.cfg.Weather.Longitude)
+		location = weatherLocation(r.cfg.Weather)
 	}
-	icon, temperature, condition, fetched := "cloud", ccDash, ccDash, ccDash
+	icon, temperature, condition, conditionTone, fetched := "cloud", ccDash, ccDash, ui.ToneNormal, ccDash
 	if reading.Observed {
-		icon = render.WeatherIconName(reading.Code, true)
+		isDay := reading.IsDay == nil || *reading.IsDay
+		icon = render.WeatherIconName(reading.Code, isDay)
 		temperature = fmt.Sprintf("%.0f%s", reading.Temperature, unitSuffix(reading.Unit))
 		condition = render.WeatherCondition(reading.Code)
 		if !reading.FetchedAt.IsZero() {
 			fetched = "Updated " + reading.FetchedAt.Format("15:04")
+			if reading.Stale() {
+				fetched += " · Age " + humaniseAge(time.Since(reading.FetchedAt))
+			}
 		}
+	} else if !reading.FailedSince.IsZero() {
+		condition, conditionTone = "weather unavailable", ui.ToneError
 	}
 	today := monitorCard(m, []*ui.Node{
 		monitorCardTitle("Today", 0),
 		{Kind: ui.KindIcon, Icon: icon, IconSize: m.IconLarge},
 		{Kind: ui.KindText, Text: temperature, TextRole: theme.RoleTitle, Tabular: true},
-		{Kind: ui.KindText, Text: condition, TextRole: theme.RoleLabel},
+		{Kind: ui.KindText, Text: condition, TextRole: theme.RoleLabel, Tone: conditionTone},
+		{Kind: ui.KindText, Text: weatherDayRange(reading), TextRole: theme.RoleCaption, Tabular: true},
 		{Kind: ui.KindText, Text: location, TextRole: theme.RoleCaption},
 		{Kind: ui.KindText, Text: fetched, TextRole: theme.RoleCaption},
 	})

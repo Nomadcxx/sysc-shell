@@ -93,6 +93,15 @@ func weatherHeader(m theme.Metrics) *ui.Node {
 	}
 }
 
+// weatherDayRange is today's low/high line, or the dash before a body.
+func weatherDayRange(reading services.Reading) string {
+	if len(reading.Daily) == 0 {
+		return absent
+	}
+	today := reading.Daily[0]
+	return fmt.Sprintf("Low %.0f°  High %.0f°", today.Low, today.High)
+}
+
 // weatherHero is the headline card: the condition glyph beside the
 // temperature, then the day's range, the place, and how fresh the reading is.
 func weatherHero(reading services.Reading, location string, m theme.Metrics) *ui.Node {
@@ -120,9 +129,8 @@ func weatherHero(reading services.Reading, location string, m theme.Metrics) *ui
 	}}
 	lines := []*ui.Node{headline}
 	if len(reading.Daily) > 0 {
-		today := reading.Daily[0]
 		lines = append(lines, &ui.Node{Kind: ui.KindText, TextRole: theme.RoleLabel, Tabular: true,
-			Text: fmt.Sprintf("Low %.0f°  High %.0f°", today.Low, today.High)})
+			Text: weatherDayRange(reading)})
 	}
 	lines = append(lines, &ui.Node{Kind: ui.KindText, TextRole: theme.RoleCaption, Text: location})
 	if !reading.FetchedAt.IsZero() {
