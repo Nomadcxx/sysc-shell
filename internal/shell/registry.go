@@ -967,19 +967,55 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 		case action == panelAudioAction && button == buttonRight:
 			r.stepAudioAsync("mute")
 			return true
+		case action == panelMediaAction && (button == 0 || button == buttonLeft):
+			// The control centre is the one player picker (D7): the widget
+			// routes there and the spine lands on the Media section.
+			trig.AnchorX = bar.actionCenterX(panelMediaAction)
+			if err := r.OpenPanel(PanelControlCenter, out, trig); err != nil {
+				return false
+			}
+			r.mu.Lock()
+			err := r.selectPanelSectionLocked(PanelControlCenter, "media")
+			r.mu.Unlock()
+			return err == nil
+		case action == panelMediaAction && (button == buttonMiddle || button == buttonRight):
+			r.mu.Lock()
+			m := r.media
+			r.mu.Unlock()
+			if m != nil {
+				// Bus I/O, so off the handler path entirely.
+				go func() { _ = m.PlayPause() }()
+			}
+			return true
 		}
 		return false
 	})
 	bar.setAxisHandler(func(action string, delta int) bool {
-		if action != panelAudioAction {
-			return false
+		switch action {
+		case panelAudioAction:
+			if delta > 0 {
+				r.stepAudioAsync("up")
+			} else if delta < 0 {
+				r.stepAudioAsync("down")
+			}
+			return true
+		case panelMediaAction:
+			// Scroll moves next and previous (D7): up is forward.
+			r.mu.Lock()
+			m := r.media
+			r.mu.Unlock()
+			if m == nil {
+				return true
+			}
+			switch {
+			case delta > 0:
+				go func() { _ = m.Next() }()
+			case delta < 0:
+				go func() { _ = m.Previous() }()
+			}
+			return true
 		}
-		if delta > 0 {
-			r.stepAudioAsync("up")
-		} else if delta < 0 {
-			r.stepAudioAsync("down")
-		}
-		return true
+		return false
 	})
 }
 
@@ -1434,6 +1470,9 @@ func (r *Registry) viewLocked(connector string) barView {
 	if r.network != nil {
 		view.Network = r.network.CachedState()
 	}
+	if r.media != nil {
+		view.Media = r.media.CachedState()
+	}
 	view.Bluetooth = r.bluetoothState
 	if r.plugins != nil {
 		view.Plugins = r.plugins.frames(connector)
@@ -1509,6 +1548,20 @@ func (r *Registry) buildBar(cfg config.Config, connector string, tok theme.Token
 				continue
 			}
 			lease, err := r.audio.Acquire()
+			if err != nil {
+				releaseAll(leases)
+				return nil, nil, wayland.HostCallbacks{}, err
+			}
+			leases = append(leases, lease)
+			break
+		}
+	}
+	if r.media != nil {
+		for _, item := range allItems(policy) {
+			if item.ID != "media" {
+				continue
+			}
+			lease, err := r.media.Acquire()
 			if err != nil {
 				releaseAll(leases)
 				return nil, nil, wayland.HostCallbacks{}, err
