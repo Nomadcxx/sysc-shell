@@ -10,18 +10,6 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
-// conditionWords name the eight symbols for the optional condition text.
-var conditionWords = map[rune]string{
-	render.IconRune(0):  "Clear",
-	render.IconRune(2):  "Partly cloudy",
-	render.IconRune(3):  "Cloudy",
-	render.IconRune(45): "Fog",
-	render.IconRune(61): "Rain",
-	render.IconRune(71): "Snow",
-	render.IconRune(75): "Heavy snow",
-	render.IconRune(95): "Thunderstorm",
-}
-
 // formatWeather renders one reading and the tone it should paint in.
 //
 // The three states are deliberately distinct. Nothing fetched yet renders the
@@ -40,9 +28,7 @@ func formatWeather(item config.Item, reading services.Reading) (string, ui.Tone)
 	icon := render.IconRune(reading.Code)
 	text := fmt.Sprintf("%c %.0f%s", icon, reading.Temperature, unitSuffix(reading.Unit))
 	if item.ShowCondition {
-		if word, ok := conditionWords[icon]; ok {
-			text += " " + word
-		}
+		text += " " + render.WeatherCondition(reading.Code)
 	}
 	if reading.Stale() {
 		text += " (" + humaniseAge(time.Since(reading.FetchedAt)) + ")"

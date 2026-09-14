@@ -380,3 +380,85 @@ func abs(n int) int {
 	}
 	return n
 }
+
+// The night variants extend the weather set: a clear or partly-cloudy sky at
+// night shows the moon, and every other category reads the same by night.
+func TestWeatherIconSelectsNightVariants(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		code  int
+		isDay bool
+		want  rune
+	}{
+		{0, true, iconClearDay},
+		{0, false, iconClearNight},
+		{1, true, iconPartlyCloudy},
+		{1, false, iconPartlyCloudyNight},
+		{2, false, iconPartlyCloudyNight},
+		{3, false, iconCloud},
+		{45, false, iconFog},
+		{61, false, iconRain},
+		{71, false, iconSnow},
+		{95, false, iconThunderstorm},
+	}
+	for _, tc := range cases {
+		if got := WeatherIcon(tc.code, tc.isDay); got != tc.want {
+			t.Fatalf("WeatherIcon(%d, %v) = %U, want %U", tc.code, tc.isDay, got, tc.want)
+		}
+	}
+}
+
+func TestWeatherIconNameSelectsNightVariants(t *testing.T) {
+	t.Parallel()
+	if got := WeatherIconName(0, false); got != "clear-night" {
+		t.Fatalf("night clear = %q, want clear-night", got)
+	}
+	if got := WeatherIconName(2, false); got != "partly-cloudy-night" {
+		t.Fatalf("night partly cloudy = %q, want partly-cloudy-night", got)
+	}
+	for _, name := range []string{"clear-night", "partly-cloudy-night"} {
+		if _, ok := IconByName(name); !ok {
+			t.Fatalf("the catalogue does not carry %q", name)
+		}
+	}
+}
+
+func TestWeatherConditionNamesTheWMOCategories(t *testing.T) {
+	t.Parallel()
+	cases := map[int]string{
+		0:   "Clear",
+		1:   "Partly cloudy",
+		2:   "Partly cloudy",
+		3:   "Cloudy",
+		45:  "Fog",
+		48:  "Fog",
+		51:  "Rain",
+		61:  "Rain",
+		80:  "Rain",
+		71:  "Snow",
+		75:  "Heavy snow",
+		86:  "Heavy snow",
+		95:  "Thunderstorm",
+		99:  "Thunderstorm",
+		100: "Thunderstorm", // above the documented domain; follows the glyph
+		44:  "Cloudy",      // the unmapped range falls back to the cloud
+	}
+	for code, want := range cases {
+		if got := WeatherCondition(code); got != want {
+			t.Fatalf("WeatherCondition(%d) = %q, want %q", code, got, want)
+		}
+	}
+}
+
+func TestNightGlyphsCarryInk(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"clear-night", "partly-cloudy-night"} {
+		r, ok := IconByName(name)
+		if !ok {
+			t.Fatalf("the catalogue does not carry %q", name)
+		}
+		if got := glyphCoverage(t, r, 32); got == 0 {
+			t.Fatalf("%s glyph %U has no ink", name, r)
+		}
+	}
+}

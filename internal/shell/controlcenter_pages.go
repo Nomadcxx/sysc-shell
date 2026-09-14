@@ -389,9 +389,9 @@ func ccWeather(r *Registry, h *PanelHost) *ui.Node {
 	}
 	icon, temperature, condition, fetched := "cloud", ccDash, ccDash, ccDash
 	if reading.Observed {
-		icon = ccWeatherIcon(reading.Code)
+		icon = render.WeatherIconName(reading.Code, true)
 		temperature = fmt.Sprintf("%.0f%s", reading.Temperature, unitSuffix(reading.Unit))
-		condition = ccWeatherCondition(reading.Code)
+		condition = render.WeatherCondition(reading.Code)
 		if !reading.FetchedAt.IsZero() {
 			fetched = "Updated " + reading.FetchedAt.Format("15:04")
 		}
@@ -430,7 +430,7 @@ func ccForecastDay(m theme.Metrics, width int, day *services.Day, unit services.
 		} else {
 			label = ccText(day.Date)
 		}
-		icon = ccWeatherIcon(day.Code)
+		icon = render.WeatherIconName(day.Code, true)
 		temperature = fmt.Sprintf("%.0f° / %.0f°", day.High, day.Low)
 		if unit == services.UnitFahrenheit {
 			temperature += "F"
@@ -445,32 +445,6 @@ func ccForecastDay(m theme.Metrics, width int, day *services.Day, unit services.
 	})
 	card.Width, card.Height = width, ccForecastH
 	return card
-}
-
-func ccWeatherIcon(code int) string {
-	switch {
-	case code == 0:
-		return "sunny"
-	case code == 1 || code == 2:
-		return "partly_cloudy_day"
-	case code == 45 || code == 48:
-		return "foggy"
-	case code >= 51 && code <= 67 || code >= 80 && code <= 82:
-		return "rainy"
-	case code >= 71 && code <= 77 || code == 85 || code == 86:
-		return "weather_snowy"
-	case code >= 95 && code <= 99:
-		return "thunderstorm"
-	default:
-		return "cloud"
-	}
-}
-
-func ccWeatherCondition(code int) string {
-	if word, ok := conditionWords[render.IconRune(code)]; ok {
-		return word
-	}
-	return "Cloudy"
 }
 
 func ccAudio(r *Registry, h *PanelHost) *ui.Node {

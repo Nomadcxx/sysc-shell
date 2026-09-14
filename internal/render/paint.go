@@ -968,10 +968,11 @@ func quietChromeGradient(stops []gradientStop, fill Color) []gradientStop {
 	return stops
 }
 
-// paintIcon draws one named glyph from the embedded Material subset, centred in
-// the node's box. The glyph takes the colour its Tone names, resolved the same
-// way text is: ToneNormal is the foreground it inherited from the chrome around
-// it, and an icon still takes no fill of its own.
+// paintIcon draws one named glyph, centred in the node's box. The glyph takes
+// the colour its Tone names, resolved the same way text is: ToneNormal is the
+// foreground it inherited from the chrome around it, and an icon still takes
+// no fill of its own. A name the Material subset does not carry falls back to
+// the project catalogue, which is where the weather glyphs live.
 func paintIcon(c *Canvas, n *ui.Node, text *TextRenderer, style Style) error {
 	if n.Icon == "" {
 		return nil
@@ -981,6 +982,9 @@ func paintIcon(c *Canvas, n *ui.Node, text *TextRenderer, style Style) error {
 		return fmt.Errorf("render: icon %q has no size", n.Icon)
 	}
 	mask, err := text.RasterMaterialIcon(n.Icon, size)
+	if err != nil && !ValidMaterialIcon(n.Icon) {
+		mask, err = text.RasterProjectIcon(n.Icon, size)
+	}
 	if err != nil {
 		return err
 	}

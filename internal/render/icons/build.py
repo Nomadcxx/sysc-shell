@@ -57,6 +57,8 @@ GLYPHS = [
     ("uniE025", 0xE025, "sysmon-cpu"),
     ("uniE026", 0xE026, "sysmon-memory"),
     ("uniE027", 0xE027, "sysmon-gpu"),
+    ("uniE028", 0xE028, "clear-night"),
+    ("uniE029", 0xE029, "partly-cloudy-night"),
 ]
 
 UPM = 1000
