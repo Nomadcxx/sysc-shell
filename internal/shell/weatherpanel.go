@@ -12,9 +12,11 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
-// weatherTree builds PanelWeather: the header, the hero card, and the details
-// card over the day list. Every read here is a cached one; this runs under
-// Registry.mu and on the Wayland owner, where a fetch would stall every bar.
+// weatherTree builds PanelWeather: the header over a two-column body, the
+// reference's arrangement. The hero and details cards share the left column;
+// the day list scrolls on the right. Every read here is a cached one; this
+// runs under Registry.mu and on the Wayland owner, where a fetch would stall
+// every bar on the machine.
 func weatherTree(r *Registry, h *PanelHost) *ui.Node {
 	m := h.metrics()
 	reading := services.Reading{}
@@ -23,10 +25,27 @@ func weatherTree(r *Registry, h *PanelHost) *ui.Node {
 		reading = r.reading
 		location = weatherLocation(r.cfg.Weather)
 	}
+
+	panelH := h.place.Panel.H
+	if panelH <= 0 {
+		panelH = panelTargetSize(PanelWeather).H
+	}
+	bodyH := max(panelH-2*m.PanelPadding-weatherHeaderHeight(m)-theme.MarginL, 0)
+	bodyW := panelTargetSize(PanelWeather).W - 2*m.PanelPadding
+	leftW := max((bodyW-theme.MarginL)*2/5, 0)
+	rightW := max(bodyW-theme.MarginL-leftW, 0)
+
 	children := []*ui.Node{
 		weatherHeader(m),
-		weatherHero(reading, location, m),
-		weatherDetails(reading, m),
+		{Kind: ui.KindRow, Gap: theme.MarginL, Height: bodyH, Children: []*ui.Node{
+			{Kind: ui.KindColumn, Width: leftW, Gap: theme.MarginL, Children: []*ui.Node{
+				weatherHero(reading, location, m),
+				weatherDetails(reading, m),
+			}},
+			{Kind: ui.KindColumn, Width: rightW, Children: []*ui.Node{
+				{Kind: ui.KindScroll, Height: bodyH, Children: []*ui.Node{weatherForecast(reading, m)}},
+			}},
+		}},
 	}
 	if h.errLabel != "" {
 		children = append(children, &ui.Node{
@@ -49,6 +68,12 @@ func weatherLocation(w config.Weather) string {
 	return absent
 }
 
+// weatherHeaderHeight is the header capsule's height, named so the body can
+// size against it without guessing.
+func weatherHeaderHeight(m theme.Metrics) int {
+	return m.StandardControl + 2*m.CardPadding
+}
+
 func weatherHeader(m theme.Metrics) *ui.Node {
 	well := m.StandardControl
 	title := &ui.Node{
@@ -62,13 +87,13 @@ func weatherHeader(m theme.Metrics) *ui.Node {
 	}
 	top := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Height: well, PinEnd: true, Children: []*ui.Node{title, close}}
 	return &ui.Node{
-		Kind: ui.KindCapsule, Padding: m.CardPadding, Height: well + 2*m.CardPadding,
+		Kind: ui.KindCapsule, Padding: m.CardPadding, Height: weatherHeaderHeight(m),
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
 		Children: []*ui.Node{top},
 	}
 }
 
-// weatherHero is the panel's headline card: the condition glyph beside the
+// weatherHero is the headline card: the condition glyph beside the
 // temperature, then the day's range, the place, and how fresh the reading is.
 func weatherHero(reading services.Reading, location string, m theme.Metrics) *ui.Node {
 	if !reading.Observed {
@@ -86,7 +111,7 @@ func weatherHero(reading services.Reading, location string, m theme.Metrics) *ui
 	}
 
 	isDay := reading.IsDay == nil || *reading.IsDay
-	headline := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Children: []*ui.Node{
+	headline := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Height: m.StandardControl, Children: []*ui.Node{
 		{Kind: ui.KindIcon, Icon: render.WeatherIconName(reading.Code, isDay), IconSize: m.IconLarge},
 		{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
 			{Kind: ui.KindText, Text: fmt.Sprintf("%.0f%s", reading.Temperature, unitSuffix(reading.Unit)), TextRole: theme.RoleTitle, Tabular: true},
@@ -115,8 +140,8 @@ func weatherHero(reading services.Reading, location string, m theme.Metrics) *ui
 	}
 }
 
-// weatherDetails is the labelled figure card the reference shows under the
-// hero: one row per fact, the value pinned right so the labels align.
+// weatherDetails is the labelled figure card under the hero: one row per
+// fact, the value pinned right so the labels align.
 func weatherDetails(reading services.Reading, m theme.Metrics) *ui.Node {
 	var today services.Day
 	if len(reading.Daily) > 0 {
@@ -150,11 +175,56 @@ func weatherDetails(reading services.Reading, m theme.Metrics) *ui.Node {
 	}
 }
 
+// weatherRowHeight keeps a detail row compact: the row is a label, not a
+// control, so it sizes to its glyph rather than to a control rung.
+func weatherRowHeight(m theme.Metrics) int {
+	return m.IconSmall + 2*theme.MarginS
+}
+
 func weatherRow(m theme.Metrics, icon, label, value string) *ui.Node {
-	return &ui.Node{Kind: ui.KindRow, Height: m.CompactControl, Gap: theme.MarginM, Children: []*ui.Node{
+	return &ui.Node{Kind: ui.KindRow, Height: weatherRowHeight(m), Gap: theme.MarginM, Children: []*ui.Node{
 		{Kind: ui.KindIcon, Icon: icon, IconSize: m.IconSmall},
 		{Kind: ui.KindText, Text: label, TextRole: theme.RoleLabel},
 		{Kind: ui.KindText, Text: value, TextRole: theme.RoleBody, Tabular: true, PinEnd: true},
+	}}
+}
+
+// weatherForecast is the day list on the right: today first and marked, then
+// the days the body carried, each with its glyph, range and condition word.
+func weatherForecast(reading services.Reading, m theme.Metrics) *ui.Node {
+	if len(reading.Daily) == 0 {
+		return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: "No forecast yet", TextRole: theme.RoleLabel},
+		}}
+	}
+	rows := make([]*ui.Node, 0, len(reading.Daily))
+	for i, day := range reading.Daily {
+		rows = append(rows, weatherDayRow(m, i, day, reading.Unit))
+	}
+	return &ui.Node{
+		Kind: ui.KindCapsule, Padding: m.CardPadding,
+		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: rows}},
+	}
+}
+
+func weatherDayRow(m theme.Metrics, index int, day services.Day, unit services.Unit) *ui.Node {
+	label := day.Date
+	if parsed, err := time.Parse("2006-01-02", day.Date); err == nil {
+		label = parsed.Format("Mon")
+	}
+	if index == 0 {
+		label = "Today"
+	}
+	unitLetter := "C"
+	if unit == services.UnitFahrenheit {
+		unitLetter = "F"
+	}
+	return &ui.Node{Kind: ui.KindRow, Height: m.CompactControl, Gap: theme.MarginM, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: label, TextRole: theme.RoleLabel},
+		{Kind: ui.KindIcon, Icon: render.WeatherIconName(day.Code, true), IconSize: m.IconSmall},
+		{Kind: ui.KindText, Text: fmt.Sprintf("%.0f° / %.0f°%s", day.Low, day.High, unitLetter), TextRole: theme.RoleBody, Tabular: true},
+		{Kind: ui.KindText, Text: render.WeatherCondition(day.Code), TextRole: theme.RoleCaption, PinEnd: true},
 	}}
 }
 

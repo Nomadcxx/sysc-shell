@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -195,5 +196,76 @@ func TestWeatherPanelStaleReadingShowsItsAge(t *testing.T) {
 
 	if !hasLine(collectTooltipLines(weatherTree(r, h)), "1h") {
 		t.Fatal("a stale reading does not show its age on the panel")
+	}
+}
+
+func weekReading() services.Reading {
+	reading := observedWeather()
+	codes := []int{0, 61, 71, 95, 3, 2, 45}
+	hours := []string{"06:12", "06:14", "06:16", "06:18", "06:20", "06:22", "06:24"}
+	reading.Daily = nil
+	for i, code := range codes {
+		reading.Daily = append(reading.Daily, services.Day{
+			Date: fmt.Sprintf("2026-09-%02d", 15+i), Code: code,
+			High: 20 + float64(i), Low: 8 + float64(i),
+			Sunrise: fmt.Sprintf("2026-09-%02dT%s", 15+i, hours[i]),
+			Sunset:  fmt.Sprintf("2026-09-%02dT18:30", 15+i),
+		})
+	}
+	return reading
+}
+
+func TestWeatherPanelForecastCarriesTheWeek(t *testing.T) {
+	t.Parallel()
+	r := &Registry{reading: weekReading()}
+	h := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
+
+	tree := weatherTree(r, h)
+	texts := collectTooltipLines(tree)
+	icons := treeIcons(tree)
+
+	if !hasLine(texts, "Today") {
+		t.Fatalf("forecast texts %q do not mark today", texts)
+	}
+	for _, want := range []string{"Wed", "Thu", "9° / 21°C", "Clear", "Rain", "Snow", "Thunderstorm"} {
+		if !hasLine(texts, want) {
+			t.Fatalf("forecast texts %q are missing %q", texts, want)
+		}
+	}
+	scrolls := 0
+	var walk func(n *ui.Node)
+	walk = func(n *ui.Node) {
+		if n.Kind == ui.KindScroll {
+			scrolls++
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(tree)
+	if scrolls != 1 {
+		t.Fatalf("the forecast list is not in a scroll: %d scrolls", scrolls)
+	}
+	_ = icons
+}
+
+func TestWeatherPanelForecastRendersWhatExists(t *testing.T) {
+	t.Parallel()
+	r := &Registry{reading: observedWeather()}
+	h := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
+
+	texts := collectTooltipLines(weatherTree(r, h))
+	if !hasLine(texts, "Today") || !hasLine(texts, "Wed") {
+		t.Fatalf("a two-day body rendered %q, want today and one more day", texts)
+	}
+}
+
+func TestWeatherPanelForecastWithoutDataIsAPlaceholder(t *testing.T) {
+	t.Parallel()
+	r := &Registry{reading: services.Reading{Observed: true, Temperature: 18, Unit: services.UnitCelsius, Code: 3, FetchedAt: time.Now()}}
+	h := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
+
+	if !hasLine(collectTooltipLines(weatherTree(r, h)), "No forecast yet") {
+		t.Fatal("an empty forecast rendered no placeholder")
 	}
 }
