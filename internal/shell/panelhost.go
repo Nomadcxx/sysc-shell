@@ -196,6 +196,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelNetwork, nil
 	case "bluetooth":
 		return PanelBluetooth, nil
+	case "weather":
+		return PanelWeather, nil
 	default:
 		return 0, fmt.Errorf("unknown panel")
 	}
@@ -495,6 +497,8 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelNetwork, true
 	case "bluetooth":
 		return PanelBluetooth, true
+	case "weather":
+		return PanelWeather, true
 	default:
 		return 0, false
 	}
@@ -685,6 +689,15 @@ func (r *Registry) acquirePanelLeases(h *PanelHost) error {
 		lease, err := r.metrics.Acquire(services.Selector{Source: services.SourceNetwork}, time.Second)
 		if err != nil {
 			return err
+		}
+		h.leases = []*services.Lease{lease}
+	case PanelWeather:
+		lease, err := r.weather.Acquire(r.cfg.Weather.Interval)
+		if err != nil {
+			// An unconfigured weather block has no interval to lease at; the
+			// panel still opens and renders its placeholder.
+			h.errLabel = "weather unavailable"
+			return nil
 		}
 		h.leases = []*services.Lease{lease}
 	case PanelControlCenter:
@@ -1934,6 +1947,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		return networkTree(r, h)
 	case PanelBluetooth:
 		return bluetoothTree(r, h)
+	case PanelWeather:
+		return placeholderTree()
 	default:
 		return placeholderTree()
 	}
@@ -1972,6 +1987,10 @@ func panelTargetSize(id PanelID) ui.Rect {
 		// SSID rows, whose comfortable width does not scale with the screen.
 		return ui.Rect{W: 460, H: 560}
 	case PanelBluetooth:
+		return ui.Rect{W: 460, H: 560}
+	case PanelWeather:
+		// The network and Bluetooth sibling size: a fixed panel whose content
+		// does not scale with the screen.
 		return ui.Rect{W: 460, H: 560}
 	default:
 		return ui.Rect{W: 280, H: 200}

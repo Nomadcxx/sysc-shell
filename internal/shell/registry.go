@@ -935,6 +935,9 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 		case action == panelBluetoothAction && (button == 0 || button == buttonLeft):
 			trig.AnchorX = bar.actionCenterX(panelBluetoothAction)
 			return r.TogglePanel(PanelBluetooth, out, trig) == nil
+		case action == panelWeatherAction && (button == 0 || button == buttonLeft):
+			trig.AnchorX = bar.actionCenterX(panelWeatherAction)
+			return r.TogglePanel(PanelWeather, out, trig) == nil
 		case action == panelBluetoothAction && button == buttonRight:
 			trig.AnchorX = bar.actionCenterX(panelBluetoothAction)
 			if err := r.OpenPanel(PanelControlCenter, out, trig); err != nil {
@@ -1345,13 +1348,26 @@ func (r *Registry) UpdateWeather(reading services.Reading) []uint32 {
 		}
 	}
 	controlOut, controlOK := r.rebuildControlCentreLocked()
+	weatherOut, weatherOK := r.rebuildWeatherPanelLocked()
 	r.mu.Unlock()
 
 	r.publish(changed)
 	if controlOK {
 		r.publishSurface(controlOut, panelSurfaceID(PanelControlCenter))
 	}
+	if weatherOK {
+		r.publishSurface(weatherOut, panelSurfaceID(PanelWeather))
+	}
 	return changed
+}
+
+func (r *Registry) rebuildWeatherPanelLocked() (uint32, bool) {
+	h := r.panelHosts[PanelWeather]
+	if h == nil {
+		return 0, false
+	}
+	r.rebuildPanel(h)
+	return h.output, true
 }
 
 func (r *Registry) rebuildControlCentreLocked() (uint32, bool) {
