@@ -38,7 +38,22 @@ type Reading struct {
 	Temperature float64
 	Unit        Unit
 	Code        int // WMO weather code
-	Daily       []Day
+	// Apparent through Elevation mirror the wire model's optional fields and
+	// are nil when the body did not carry them; the timezone names are empty
+	// for the same reason. The UI renders a dash, never a silent zero.
+	Apparent      *float64
+	IsDay         *bool
+	Humidity      *float64
+	WindSpeed     *float64
+	WindDirection *float64
+	UVIndex       *float64
+	Elevation     *float64
+	Timezone      string
+	// TimezoneAbbreviation is the one long name Open-Meteo uses; it mirrors
+	// the wire field rather than abbreviating it.
+	TimezoneAbbreviation string
+	Daily                []Day
+
 	FetchedAt   time.Time
 	FailedSince time.Time // zero while healthy
 }
@@ -323,12 +338,21 @@ func (w *Weather) fetch() (Reading, error) {
 		return Reading{}, err
 	}
 	return Reading{
-		Observed:    true,
-		Temperature: fc.Current.Temperature,
-		Unit:        unit,
-		Code:        fc.Current.Code,
-		Daily:       append([]Day(nil), fc.Daily...),
-		FetchedAt:   time.Now(),
+		Observed:             true,
+		Temperature:          fc.Current.Temperature,
+		Unit:                 unit,
+		Code:                 fc.Current.Code,
+		Apparent:             fc.Current.Apparent,
+		IsDay:                fc.Current.IsDay,
+		Humidity:             fc.Current.Humidity,
+		WindSpeed:            fc.Current.WindSpeed,
+		WindDirection:        fc.Current.WindDirection,
+		UVIndex:              fc.Current.UVIndex,
+		Elevation:            fc.Elevation,
+		Timezone:             fc.Timezone,
+		TimezoneAbbreviation: fc.TimezoneAbbreviation,
+		Daily:                append([]Day(nil), fc.Daily...),
+		FetchedAt:            time.Now(),
 	}, nil
 }
 

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// currentWeatherBody is the shape Open-Meteo returns for the requested fields.
+// currentWeatherBody is the shape Open-Meteo returns for the required fields.
 const currentWeatherBody = `{"current":{"temperature_2m":18.4,"weather_code":3}}`
 
 const dailyWeatherBody = `{
@@ -22,7 +22,10 @@ const dailyWeatherBody = `{
     "temperature_2m_max":[20,18],
     "temperature_2m_min":[10,9],
     "sunrise":["2026-09-10T06:10","2026-09-11T06:09"],
-    "sunset":["2026-09-10T18:02","2026-09-11T18:03"]
+    "sunset":["2026-09-10T18:02","2026-09-11T18:03"],
+    "uv_index_max":[4.0,3.5],
+    "precipitation_probability_max":[10,80],
+    "precipitation_sum":[0.0,4.2]
   }
 }`
 
@@ -224,8 +227,8 @@ func TestTheRequestAsksForTheDailyBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query %q: %v", query, err)
 	}
-	if got := current.Get("current"); got != "temperature_2m,weather_code" {
-		t.Fatalf("current = %q, want temperature_2m,weather_code", got)
+	if got := current.Get("current"); got != "temperature_2m,weather_code,apparent_temperature,is_day,relative_humidity_2m,wind_speed_10m,wind_direction_10m,uv_index" {
+		t.Fatalf("current = %q, want the enriched field set", got)
 	}
 	if current.Get("latitude") == "" || current.Get("longitude") == "" {
 		t.Fatalf("query %q is missing coordinates", query)
@@ -235,9 +238,9 @@ func TestTheRequestAsksForTheDailyBlock(t *testing.T) {
 			t.Errorf("query %q is missing %q", query, want)
 		}
 	}
-	for _, unwanted := range []string{"relative_humidity", "wind_speed"} {
-		if current.Has(unwanted) {
-			t.Fatalf("query %q requests %q, which no widget renders", query, unwanted)
+	for _, want := range []string{"uv_index_max", "precipitation_probability_max", "precipitation_sum"} {
+		if !strings.Contains(current.Get("daily"), want) {
+			t.Errorf("daily %q is missing %q", current.Get("daily"), want)
 		}
 	}
 }
@@ -261,6 +264,66 @@ func TestASuccessfulFetchCarriesTheDailyForecast(t *testing.T) {
 	case reading := <-w.Updates():
 		if len(reading.Daily) != 2 || reading.Daily[1].Date != "2026-09-11" || reading.Daily[1].Code != 61 {
 			t.Fatalf("Daily = %+v, want the decoded two-day forecast", reading.Daily)
+		}
+		day := reading.Daily[1]
+		if day.UVIndexMax == nil || *day.UVIndexMax != 3.5 {
+			t.Fatalf("UVIndexMax = %v, want 3.5 carried through", day.UVIndexMax)
+		}
+		if day.PrecipitationProbability == nil || *day.PrecipitationProbability != 80 {
+			t.Fatalf("PrecipitationProbability = %v, want 80 carried through", day.PrecipitationProbability)
+		}
+		if day.Precipitation == nil || *day.Precipitation != 4.2 {
+			t.Fatalf("Precipitation = %v, want 4.2 carried through", day.Precipitation)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no reading arrived within three seconds")
+	}
+}
+
+func TestASuccessfulFetchCarriesTheEnrichedCurrentFields(t *testing.T) {
+	t.Parallel()
+	body := `{
+	  "elevation":64.0,"timezone":"Australia/Sydney","timezone_abbreviation":"GMT+10",
+	  "current":{"temperature_2m":11.0,"weather_code":0,"apparent_temperature":9.5,
+	    "is_day":false,"relative_humidity_2m":62,"wind_speed_10m":10.4,
+	    "wind_direction_10m":45,"uv_index":0.0}
+	}`
+	w, _ := weatherAt(t, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(rw, body)
+	}))
+	select {
+	case reading := <-w.Updates():
+		if reading.Apparent == nil || *reading.Apparent != 9.5 {
+			t.Fatalf("Apparent = %v, want 9.5 carried through", reading.Apparent)
+		}
+		if reading.IsDay == nil || *reading.IsDay {
+			t.Fatalf("IsDay = %v, want false carried through", reading.IsDay)
+		}
+		if reading.Humidity == nil || *reading.Humidity != 62 || reading.WindSpeed == nil || *reading.WindSpeed != 10.4 {
+			t.Fatalf("humidity/wind = %v/%v, want 62/10.4 carried through", reading.Humidity, reading.WindSpeed)
+		}
+		if reading.WindDirection == nil || *reading.WindDirection != 45 || reading.UVIndex == nil || *reading.UVIndex != 0.0 {
+			t.Fatalf("direction/uv = %v/%v, want 45/0 carried through", reading.WindDirection, reading.UVIndex)
+		}
+		if reading.Elevation == nil || *reading.Elevation != 64.0 || reading.Timezone != "Australia/Sydney" || reading.TimezoneAbbreviation != "GMT+10" {
+			t.Fatalf("root = %+v, want elevation and timezone carried through", reading)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no reading arrived within three seconds")
+	}
+}
+
+func TestASuccessfulFetchLeavesAbsentOptionalFieldsAbsent(t *testing.T) {
+	t.Parallel()
+	w, _ := weatherAt(t, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(rw, currentWeatherBody)
+	}))
+	select {
+	case reading := <-w.Updates():
+		if reading.Apparent != nil || reading.IsDay != nil || reading.Humidity != nil ||
+			reading.WindSpeed != nil || reading.WindDirection != nil || reading.UVIndex != nil ||
+			reading.Elevation != nil || reading.Timezone != "" || reading.TimezoneAbbreviation != "" {
+			t.Fatalf("absent fields decoded as present: %+v", reading)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("no reading arrived within three seconds")
