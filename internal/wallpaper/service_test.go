@@ -19,19 +19,21 @@ type fakeEngine struct {
 	paused     map[string]bool
 	closeCalls int
 
-	gate    map[string]chan struct{}
-	preview map[string]string
-	fail    map[string]error
-	caps    Capabilities
+	gate        map[string]chan struct{}
+	restoreGate map[string]chan struct{}
+	preview     map[string]string
+	fail        map[string]error
+	caps        Capabilities
 }
 
 func newFakeEngine() *fakeEngine {
 	return &fakeEngine{
-		paused:  map[string]bool{},
-		gate:    map[string]chan struct{}{},
-		preview: map[string]string{},
-		fail:    map[string]error{},
-		caps:    Capabilities{GSlapper: true, Statics: []string{"awww"}},
+		paused:      map[string]bool{},
+		gate:        map[string]chan struct{}{},
+		restoreGate: map[string]chan struct{}{},
+		preview:     map[string]string{},
+		fail:        map[string]error{},
+		caps:        Capabilities{GSlapper: true, Statics: []string{"awww"}},
 	}
 }
 
@@ -52,6 +54,12 @@ func (f *fakeEngine) Apply(job Job, _ Settings) (string, error) {
 }
 
 func (f *fakeEngine) Restore(connector, _ string) error {
+	f.mu.Lock()
+	gate := f.restoreGate[connector]
+	f.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.restored = append(f.restored, connector)
@@ -203,11 +211,24 @@ func TestServiceDisconnectStopsEngine(t *testing.T) {
 	svc.Enqueue(Command{Op: OpDisconnect, Token: "DP-1"})
 	awaitSnapshot(t, svc, func(s Snapshot) bool { return !slices.Contains(s.Connectors, "DP-1") })
 
+	svc.Close()
+
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
 	if !slices.Contains(engine.restored, "DP-1") {
 		t.Fatalf("disconnect did not stop the engine: restored=%v", engine.restored)
 	}
+}
+
+func TestServiceDisconnectPublishesBeforeEngineStops(t *testing.T) {
+	engine := newFakeEngine()
+	restoreGate := make(chan struct{})
+	engine.restoreGate["DP-1"] = restoreGate
+	svc := newTestService(t, engine)
+	defer close(restoreGate)
+
+	svc.Enqueue(Command{Op: OpDisconnect, Token: "DP-1"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return !slices.Contains(s.Connectors, "DP-1") })
 }
 
 func TestServiceCloseClosesEngine(t *testing.T) {
@@ -247,6 +268,27 @@ func TestServiceRestoreSupersedesInFlightApply(t *testing.T) {
 	snap := svc.Snapshot()
 	if snap.Assignments["DP-1"].Path == "/w/slow.mp4" || snap.Runtime["DP-1"].State != StateStatic {
 		t.Fatalf("restore did not remain final: snapshot=%+v", snap)
+	}
+}
+
+func TestServicePausePreservesInFlightApply(t *testing.T) {
+	engine := newFakeEngine()
+	svc := newTestService(t, engine)
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: "/w/current.mp4", Kind: KindVideo})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Path == "/w/current.mp4" })
+
+	release := make(chan struct{})
+	engine.gate["/w/new.mp4"] = release
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: "/w/new.mp4", Kind: KindVideo})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Runtime["DP-1"].State == StateStarting })
+	svc.Enqueue(Command{Op: OpPause, Token: "DP-1"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Runtime["DP-1"].State == StatePaused })
+
+	close(release)
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Path == "/w/new.mp4" })
+	snap := svc.Snapshot()
+	if snap.Assignments["DP-1"].DesiredPlayback != StatePaused || snap.Runtime["DP-1"].State != StatePaused {
+		t.Fatalf("pause was lost when apply completed: %+v", snap)
 	}
 }
 
@@ -417,5 +459,24 @@ func TestEngineForNamesTheEngineAnApplyWillUse(t *testing.T) {
 	}
 	if got := (Capabilities{}).EngineFor(KindImage); got != "" {
 		t.Errorf("image with nothing installed = %q, want none", got)
+	}
+}
+
+func TestServiceReconnectWaitsForDisconnectCleanup(t *testing.T) {
+	engine := newFakeEngine()
+	svc := newTestService(t, engine)
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: "/w/a.png", Kind: KindImage})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Path == "/w/a.png" })
+	gate := make(chan struct{})
+	defer close(gate)
+	engine.mu.Lock()
+	engine.restoreGate["DP-1"] = gate
+	engine.mu.Unlock()
+	svc.Enqueue(Command{Op: OpDisconnect, Token: "DP-1"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return !slices.Contains(s.Connectors, "DP-1") })
+	svc.Enqueue(Command{Op: OpConnect, Token: "DP-1"})
+	time.Sleep(30 * time.Millisecond)
+	if len(engine.appliedPaths()) != 1 {
+		t.Fatal("reconnect applied before disconnect cleanup finished")
 	}
 }

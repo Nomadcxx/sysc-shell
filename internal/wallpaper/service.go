@@ -283,10 +283,10 @@ func (s *Service) Close() {
 			s.stopWork()
 		}
 		close(s.quit)
-		<-s.done
 		if closer, ok := s.engine.(interface{ Close() }); ok {
 			closer.Close()
 		}
+		<-s.done
 		s.work.Wait()
 	})
 }
@@ -339,10 +339,12 @@ func (s *Service) handle(c Command) {
 		s.dispatch(s.store.Reconnect(c.Token))
 		return
 	case OpDisconnect:
+		s.store.Disconnect(c.Token)
+		s.publish()
 		if s.engine != nil {
 			_ = s.engine.Restore(c.Token, "")
 		}
-		s.store.Disconnect(c.Token)
+		return
 	case OpRefresh:
 		s.lib = Scan(s.roots)
 		s.refreshCoverage()

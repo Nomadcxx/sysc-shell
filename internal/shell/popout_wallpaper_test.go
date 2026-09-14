@@ -653,6 +653,28 @@ func TestWallpaperSelectionFallsBackWhenOutputDisconnects(t *testing.T) {
 	}
 }
 
+func TestWallpaperRejectsStaleOutputAction(t *testing.T) {
+	reg, svc, _ := openWallpaperPanel(t, nil)
+	h := wallpaperHost(t, reg)
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpDisconnect, Token: "DP-3"})
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && slices.Contains(svc.Snapshot().Connectors, "DP-3") {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if slices.Contains(svc.Snapshot().Connectors, "DP-3") {
+		t.Fatal("test output did not disconnect")
+	}
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if !h.wallpaperAction(reg, &ui.Node{Action: "wallpaper-output:DP-3"}) {
+		t.Fatal("stale output action was not consumed")
+	}
+	if h.wallpaperOutput != wallpaper.AllOutputs {
+		t.Fatalf("stale output action selected %q, want all", h.wallpaperOutput)
+	}
+}
+
 func TestWallpaperVideoTileIsInertWithoutGSlapper(t *testing.T) {
 	t.Parallel()
 

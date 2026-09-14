@@ -1355,6 +1355,17 @@ func (h *PanelHost) wallpaperAction(r *Registry, n *ui.Node) bool {
 		return true
 	}
 	if token, ok := strings.CutPrefix(n.Action, "wallpaper-output:"); ok {
+		// The node may have been built before a hot-unplug snapshot arrived.
+		// Validate against the service's current connector list before letting a
+		// stale action become the selected target.
+		if svc := r.wallpaperServiceLocked(); svc != nil {
+			h.wallpaperSnap = svc.Snapshot()
+		}
+		if token != wallpaper.AllOutputs && !slices.Contains(h.wallpaperSnap.Connectors, token) {
+			h.wallpaperOutput = wallpaper.AllOutputs
+			r.rebuildPanel(h)
+			return true
+		}
 		h.wallpaperOutput = token
 		r.rebuildPanel(h)
 		return true
