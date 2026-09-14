@@ -1,6 +1,7 @@
 package services
 
 import (
+	"strings"
 	"sync"
 )
 
@@ -11,6 +12,15 @@ const (
 	PlaybackStopped PlaybackStatus = iota
 	PlaybackPaused
 	PlaybackPlaying
+)
+
+const (
+	// mprisPrefix marks the bus names that are players. A session bus carries
+	// hundreds of unrelated names.
+	mprisPrefix = "org.mpris.MediaPlayer2."
+	// mprisIface is the root player interface, whose Identity property names
+	// the player for humans.
+	mprisIface = "org.mpris.MediaPlayer2"
 )
 
 // MediaState is one immutable snapshot. Consumers never see a D-Bus type.
@@ -57,14 +67,16 @@ type Media struct {
 	done    chan struct{}
 }
 
-// NewMedia builds the service over b and begins watching it.
+// NewMedia builds the service over b, enumerates the players already on it,
+// and begins watching for changes.
 func NewMedia(b bus) *Media {
 	m := &Media{
 		b:       b,
 		players: map[string]Player{},
 		changes: make(chan MediaState, 1),
 	}
-	m.startLocked()
+	m.enumerate()
+	m.startLocked(false)
 	return m
 }
 
@@ -121,14 +133,15 @@ func sortPlayers(ps []Player) {
 }
 
 // Acquire registers a consumer. The first lease starts the watch; the last
-// release stops it.
+// release stops it. A start after a stop re-enumerates, because names may have
+// come and gone while nobody was watching.
 func (m *Media) Acquire() (*Lease, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	lease := &Lease{media: m}
 	m.leases.add(lease)
 	if m.stop == nil {
-		m.startLocked()
+		m.startLocked(true)
 	}
 	return lease, nil
 }
@@ -168,9 +181,9 @@ func (m *Media) Running() bool {
 	return m.stop != nil
 }
 
-func (m *Media) startLocked() {
+func (m *Media) startLocked(reenumerate bool) {
 	m.stop, m.done = make(chan struct{}), make(chan struct{})
-	go m.run(m.stop, m.done)
+	go m.run(m.stop, m.done, reenumerate)
 }
 
 func (m *Media) stopIfUnusedLocked() chan struct{} {
@@ -183,16 +196,118 @@ func (m *Media) stopIfUnusedLocked() chan struct{} {
 	return done
 }
 
-func (m *Media) run(stop, done chan struct{}) {
+func (m *Media) run(stop, done chan struct{}, reenumerate bool) {
 	defer close(done)
+	if reenumerate {
+		m.enumerate()
+	}
 	changes := m.b.NameChanges()
 	for {
 		select {
 		case <-stop:
 			return
-		case <-changes:
-			// Discovery and refresh decode in the next slice.
+		case ch := <-changes:
+			m.handleNameChange(ch)
 		}
+	}
+}
+
+// enumerate lists the bus and reconciles the player set against it. The
+// identity lookups run without the mutex; only the apply takes it, so a paint
+// path reader never waits on bus I/O.
+func (m *Media) enumerate() {
+	names, err := m.b.ListNames()
+	if err != nil {
+		return
+	}
+	type discovered struct {
+		name     string
+		identity string
+	}
+	var found []discovered
+	for _, name := range names {
+		if !strings.HasPrefix(name, mprisPrefix) {
+			continue
+		}
+		v, err := m.b.Get(name, mprisIface, "Identity")
+		if err != nil {
+			continue
+		}
+		identity, _ := v.(string)
+		found = append(found, discovered{name: name, identity: identity})
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	next := make(map[string]Player, len(found))
+	for _, d := range found {
+		p := Player{Bus: d.name, Identity: d.identity}
+		if old, ok := m.players[d.name]; ok && p.Identity == "" {
+			p.Identity = old.Identity
+		}
+		next[d.name] = p
+	}
+	m.players = next
+	m.reselectLocked()
+	m.publishLocked()
+}
+
+// handleNameChange adds or drops one player. A known name arriving again is
+// only interesting once its properties change, which a later slice handles.
+func (m *Media) handleNameChange(ch nameChange) {
+	if !strings.HasPrefix(ch.Name, mprisPrefix) {
+		return
+	}
+	if ch.Acquired {
+		v, err := m.b.Get(ch.Name, mprisIface, "Identity")
+		if err != nil {
+			return
+		}
+		identity, _ := v.(string)
+		m.mu.Lock()
+		m.players[ch.Name] = Player{Bus: ch.Name, Identity: identity}
+		m.reselectLocked()
+		m.publishLocked()
+		m.mu.Unlock()
+		return
+	}
+	m.mu.Lock()
+	if _, ok := m.players[ch.Name]; !ok {
+		m.mu.Unlock()
+		return
+	}
+	delete(m.players, ch.Name)
+	m.reselectLocked()
+	m.publishLocked()
+	m.mu.Unlock()
+}
+
+// reselectLocked keeps the active player pointing at something that exists,
+// falling back to the first player by bus name so the choice is at least
+// stable. Callers hold m.mu.
+func (m *Media) reselectLocked() {
+	if _, ok := m.players[m.active]; ok {
+		return
+	}
+	m.active = ""
+	for name := range m.players {
+		if m.active == "" || name < m.active {
+			m.active = name
+		}
+	}
+}
+
+// publishLocked republishes the snapshot, dropping the oldest unread one the
+// way audio's poll does. Callers hold m.mu.
+func (m *Media) publishLocked() {
+	st := m.snapshotLocked()
+	select {
+	case m.changes <- st:
+	default:
+		select {
+		case <-m.changes:
+		default:
+		}
+		m.changes <- st
 	}
 }
 
