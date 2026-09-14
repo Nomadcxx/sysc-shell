@@ -264,6 +264,8 @@ func TestEngineRemovesSocketAfterFailedReady(t *testing.T) {
 
 func TestEngineChangeOnLiveSocket(t *testing.T) {
 	h := newEngineHarness(t)
+	set := defaultSettings()
+	set.Fade = true
 	// An instance is already up and answering.
 	if err := os.WriteFile(h.socket("DP-1"), nil, 0o600); err != nil {
 		t.Fatalf("seed socket: %v", err)
@@ -272,7 +274,7 @@ func TestEngineChangeOnLiveSocket(t *testing.T) {
 	h.replies["query"] = "STATUS: playing image /w/old.png"
 
 	job := Job{Connector: "DP-1", Gen: 1, Path: h.media("new.png"), Kind: KindImage}
-	if _, err := h.eng.Apply(job, defaultSettings()); err != nil {
+	if _, err := h.eng.Apply(job, set); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	if argvs := h.argvs(); len(argvs) != 0 {
@@ -282,6 +284,8 @@ func TestEngineChangeOnLiveSocket(t *testing.T) {
 
 func TestEngineSerializesSameOutputChanges(t *testing.T) {
 	h := newEngineHarness(t)
+	set := defaultSettings()
+	set.Fade = true
 	if err := os.WriteFile(h.socket("DP-1"), nil, 0o600); err != nil {
 		t.Fatalf("seed socket: %v", err)
 	}
@@ -305,7 +309,7 @@ func TestEngineSerializesSameOutputChanges(t *testing.T) {
 
 	first := make(chan error, 1)
 	go func() {
-		_, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Path: h.media("first.png"), Kind: KindImage}, defaultSettings())
+		_, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Path: h.media("first.png"), Kind: KindImage}, set)
 		first <- err
 	}()
 	select {
@@ -316,7 +320,7 @@ func TestEngineSerializesSameOutputChanges(t *testing.T) {
 
 	second := make(chan error, 1)
 	go func() {
-		_, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 2, Path: h.media("second.png"), Kind: KindImage}, defaultSettings())
+		_, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 2, Path: h.media("second.png"), Kind: KindImage}, set)
 		second <- err
 	}()
 	select {
@@ -338,6 +342,8 @@ func TestEngineSerializesSameOutputChanges(t *testing.T) {
 
 func TestEngineKeepsOwnedProcessOnChangeErrorReply(t *testing.T) {
 	h := newEngineHarness(t)
+	set := defaultSettings()
+	set.Fade = true
 	if err := os.WriteFile(h.socket("DP-1"), nil, 0o600); err != nil {
 		t.Fatalf("seed socket: %v", err)
 	}
@@ -356,7 +362,7 @@ func TestEngineKeepsOwnedProcessOnChangeErrorReply(t *testing.T) {
 		return "OK", nil
 	}
 
-	_, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Path: h.media("new.png"), Kind: KindImage}, defaultSettings())
+	_, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Path: h.media("new.png"), Kind: KindImage}, set)
 	if err == nil || !strings.Contains(err.Error(), "no such file") {
 		t.Fatalf("change error = %v, want the wire error", err)
 	}
@@ -703,5 +709,18 @@ func TestEngineReadinessCancellation(t *testing.T) {
 	}
 	if time.Since(started) > 100*time.Millisecond {
 		t.Fatal("cancelled readiness waited")
+	}
+}
+
+func TestEngineStillWithoutFadeRestartsForEveryApply(t *testing.T) {
+	h := newEngineHarness(t)
+	for i, name := range []string{"a.png", "b.png", "a.png"} {
+		if _, err := h.eng.Apply(Job{Connector: "DP-1", Gen: uint64(i + 1), Path: h.media(name), Kind: KindImage}, defaultSettings()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer h.eng.Close()
+	if got := len(h.argvs()); got != 3 {
+		t.Fatalf("launched %d processes; non-fading stills require a fresh render on each apply", got)
 	}
 }

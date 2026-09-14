@@ -334,7 +334,9 @@ func (e *gslapperEngine) Apply(job Job, set Settings) (string, error) {
 		if e.liveSocket(owned, socket) {
 			// gSlapper needs --auto-stop to change a video path, so at any other
 			// hidden setting the change is known to fail and is not attempted.
-			attemptChange := job.Kind != KindVideo || !videoChangeNeedsRestart(set.Hidden)
+			// ponytail: gSlapper 1.5.1 can acknowledge non-fading image
+			// changes without repainting. Relaunch until upstream fixes invalidation.
+			attemptChange := (job.Kind == KindImage && set.Fade) || (job.Kind == KindVideo && !videoChangeNeedsRestart(set.Hidden))
 			if attemptChange {
 				reply, err := e.requestSocket(owned, socket, "change "+job.Path, ipcTimeout)
 				if err == nil {
