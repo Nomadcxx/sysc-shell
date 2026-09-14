@@ -495,8 +495,15 @@ func TestLegacyDensityNameStillResolves(t *testing.T) {
 		t.Fatal("the legacy density name no longer resolves; existing files would be rejected")
 	}
 	current, _ := MetricsFor(DensityDefault)
+	if legacy.BarHeight != 48 || legacy.BarPadding != 6 || legacy.BarSpacing != 4 {
+		t.Errorf("legacy bar = %d/%d/%d, want 48/6/4",
+			legacy.BarHeight, legacy.BarPadding, legacy.BarSpacing)
+	}
+	legacy.BarHeight = current.BarHeight
+	legacy.BarPadding = current.BarPadding
+	legacy.BarSpacing = current.BarSpacing
 	if legacy != current {
-		t.Errorf("legacy row = %+v, want the default row %+v", legacy, current)
+		t.Errorf("legacy non-bar metrics = %+v, want default %+v", legacy, current)
 	}
 	// It resolves, but it is not offered: the settings list and error messages
 	// name the five current rows.

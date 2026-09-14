@@ -22,11 +22,10 @@ const (
 	DensityDefault     Density = "default"
 	DensityComfortable Density = "comfortable"
 	DensitySpacious    Density = "spacious"
-	// DensityStandard is the name this row carried before it was re-based onto
-	// the reference. The constant is the wire value, so dropping it would
-	// reject every configuration file that names it. MetricsFor folds it onto
-	// DensityDefault; Densities does not offer it, and the settings list and
-	// the loader's error message name only the five current rows.
+	// DensityStandard is the hidden compatibility value for configurations
+	// written before the density re-base. It keeps the current default control
+	// metrics but restores that bar's 48/6/4 geometry. Densities does not offer
+	// it, and the settings list names only the five current rows.
 	DensityStandard Density = "standard"
 )
 
@@ -223,13 +222,16 @@ func ToEven(n int) int { return n / 2 * 2 }
 
 // MetricsFor returns the row for a density.
 //
-// The superseded name folds onto the row that replaced it, so a configuration
-// file written against the old table still resolves. The loader validates a
-// density by looking it up here, so the fold is what keeps such a file loading
-// rather than being rejected outright.
+// The superseded name projects the old bar geometry onto the current default
+// row. Only the bar geometry is a compatibility contract; deriving the rest
+// avoids keeping a second obsolete control system in sync.
 func MetricsFor(d Density) (Metrics, bool) {
 	if d == DensityStandard {
-		d = DensityDefault
+		m := metrics[DensityDefault]
+		m.BarHeight = 48
+		m.BarPadding = 6
+		m.BarSpacing = 4
+		return m, true
 	}
 	m, ok := metrics[d]
 	return m, ok
