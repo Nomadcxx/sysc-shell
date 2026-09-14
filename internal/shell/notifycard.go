@@ -109,7 +109,7 @@ func centreRemoveButton(action, name string) *ui.Node {
 }
 
 func notificationTree(id uint32, app, summary, body string, urgency protocol.Urgency, raster *ui.Image, value *int32, allowLinks bool, now, ts time.Time) *ui.Node {
-	text := &ui.Node{Kind: ui.KindColumn, Gap: 2, Children: []*ui.Node{}}
+	text := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{}}
 	identity := &ui.Node{Kind: ui.KindRow, Gap: cardGap, Children: []*ui.Node{}}
 	if app != "" {
 		identity.Children = append(identity.Children, &ui.Node{Kind: ui.KindText, Text: app})
@@ -174,7 +174,7 @@ func NotificationCard(n protocol.Notification, lt *protocol.Lifetime, raster *ui
 			continue
 		}
 		root.Children = append(root.Children, &ui.Node{
-			Kind: ui.KindButton, Text: a.Label, Padding: 4,
+			Kind: ui.KindButton, Text: a.Label, Padding: theme.MarginXS,
 			Action: fmt.Sprintf("notify:%d:action:%s", n.ID, a.Key),
 			Name:   a.Label, Role: "button", Focusable: true,
 		})
@@ -236,12 +236,12 @@ func ActiveGroupCard(g activeGroup, now time.Time, expanded bool, raster *ui.Ima
 	root := &ui.Node{Kind: ui.KindColumn, Gap: cardGap, Children: []*ui.Node{head}}
 	if n := len(g.members); n > 1 {
 		root.Children = append(root.Children, &ui.Node{
-			Kind: ui.KindCapsule, Fill: ui.FillAccent, Padding: 4, Shape: ui.ShapeMedium,
+			Kind: ui.KindCapsule, Fill: ui.FillAccent, Padding: theme.MarginXS, Shape: ui.ShapeMedium,
 			Children: []*ui.Node{{Kind: ui.KindText, Text: fmt.Sprintf("%d", n)}},
 		})
 	}
 	actions := &ui.Node{Kind: ui.KindRow, Gap: cardGap, Children: []*ui.Node{
-		{Kind: ui.KindButton, Text: "Dismiss", Padding: 4, Name: "Dismiss", Role: "button", Focusable: true,
+		{Kind: ui.KindButton, Text: "Dismiss", Padding: theme.MarginXS, Name: "Dismiss", Role: "button", Focusable: true,
 			Action: "notify:center:dismiss-group:" + g.key},
 	}}
 	if len(g.members) > 1 {
@@ -250,7 +250,7 @@ func ActiveGroupCard(g activeGroup, now time.Time, expanded bool, raster *ui.Ima
 			label = "Collapse"
 		}
 		actions.Children = append(actions.Children, &ui.Node{
-			Kind: ui.KindButton, Text: label, Padding: 4, Name: label, Role: "button", Focusable: true,
+			Kind: ui.KindButton, Text: label, Padding: theme.MarginXS, Name: label, Role: "button", Focusable: true,
 			Action: "notify:center:expand:" + g.key,
 		})
 	}
@@ -260,7 +260,7 @@ func ActiveGroupCard(g activeGroup, now time.Time, expanded bool, raster *ui.Ima
 			continue
 		}
 		actions.Children = append(actions.Children, &ui.Node{
-			Kind: ui.KindButton, Text: a.Label, Padding: 4,
+			Kind: ui.KindButton, Text: a.Label, Padding: theme.MarginXS,
 			Action: fmt.Sprintf("notify:%d:action:%s", latest.ID, a.Key),
 			Name:   a.Label, Role: "button", Focusable: true,
 		})
