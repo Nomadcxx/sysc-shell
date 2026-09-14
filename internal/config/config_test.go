@@ -23,11 +23,27 @@ func TestVolumeIsKnownButNotDefault(t *testing.T) {
 	}
 }
 
-// TestDefaultBarCarriesItsInsets was named for a DMS content band and asserted
-// that reference's observed padding. DMS is a behaviour reference rather than a
-// compatibility contract, and the parity re-base supersedes observed constants
-// with measured ones, so the name went with the value.
-func TestDefaultBarCarriesItsInsets(t *testing.T) {
+func TestBluetoothIsKnownButNotDefault(t *testing.T) {
+	if _, ok := knownItems["bluetooth"]; !ok {
+		t.Fatal("config must accept the bluetooth item")
+	}
+	for _, section := range [][]Item{Default().Bar.Left, Default().Bar.Center, Default().Bar.Right} {
+		for _, item := range section {
+			if item.ID == "bluetooth" {
+				t.Fatal("bluetooth must remain opt-in so the default bar does not change")
+			}
+		}
+	}
+	parsed, err := Parse([]byte(`{"bar":{"items":{"right":["bluetooth"]}}}`))
+	if err != nil {
+		t.Fatalf("bluetooth config: %v", err)
+	}
+	if len(parsed.Bar.Right) != 1 || parsed.Bar.Right[0].ID != "bluetooth" {
+		t.Fatalf("parsed Bluetooth item = %+v", parsed.Bar.Right)
+	}
+}
+
+func TestDefaultBarMatchesDMSContentBand(t *testing.T) {
 	t.Parallel()
 	bar := Default().Bar
 	if bar.Padding != 2 || bar.Spacing != 4 {

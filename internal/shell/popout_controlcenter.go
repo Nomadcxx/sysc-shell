@@ -35,7 +35,7 @@ var ccSections = []ccSection{
 	{ID: "monitor", Label: "Monitor", Icon: "desktop_windows", Enabled: true},
 	{ID: "power", Label: "Power", Icon: "power_settings_new", Enabled: true},
 	{ID: "network", Label: "Network", Icon: "wifi"},
-	{ID: "bluetooth", Label: "Bluetooth", Icon: "bluetooth"},
+	{ID: "bluetooth", Label: "Bluetooth", Icon: "bluetooth", Enabled: true},
 	{ID: "weather", Label: "Weather", Icon: "cloud", Enabled: true},
 	{ID: "calendar", Label: "Calendar", Icon: "calendar_month", Enabled: true},
 	{ID: "notifications", Label: "Notifications", Icon: "notifications", Enabled: true},
@@ -73,6 +73,9 @@ func (h *PanelHost) selectControlCentreSection(r *Registry, section string) bool
 	if h == nil || h.id != PanelControlCenter || !ok || !to.Enabled || h.section == section {
 		return ok && to.Enabled
 	}
+	if h.section == "bluetooth" {
+		r.leaveBluetoothBodyLocked(h)
+	}
 	fromIndex, toIndex := ccSectionIndex(h.section), ccSectionIndex(section)
 	h.pageDirection = 0
 	if toIndex > fromIndex {
@@ -88,6 +91,9 @@ func (h *PanelHost) selectControlCentreSection(r *Registry, section string) bool
 		}
 	}
 	r.rebuildPanel(h)
+	if h.section == "bluetooth" {
+		r.startBluetoothDiscoveryLocked(h)
+	}
 	r.startSurfaceFrames(h)
 	return true
 }
@@ -208,6 +214,8 @@ func ccPage(r *Registry, h *PanelHost) *ui.Node {
 		return ccWeather(r, h)
 	case "calendar":
 		return ccCalendar(r, h)
+	case "bluetooth":
+		return bluetoothBody(r, h)
 	case "notifications":
 		return ccNotifications(r, h)
 	default:

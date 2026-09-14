@@ -39,7 +39,8 @@ type barView struct {
 	Audio   services.AudioState
 	// Network is the newest connectivity state. Its zero value is Unknown with
 	// the radio off, which the wifi widget paints as the no-signal glyph.
-	Network services.NetworkState
+	Network   services.NetworkState
+	Bluetooth services.BluetoothState
 }
 
 // textWidget is one configured widget instance: a retained node plus the pure
@@ -287,6 +288,8 @@ func buildWidgets(items []config.Item, pad int, m theme.Metrics) []textWidget {
 			out = append(out, buildVolumeWidget())
 		case "wifi":
 			out = append(out, buildWifiWidget(m))
+		case "bluetooth":
+			out = append(out, buildBluetoothWidget())
 		case "running-apps":
 			row := &ui.Node{Kind: ui.KindRow, Gap: runningAppGap}
 			cap := &ui.Node{Kind: ui.KindCapsule}

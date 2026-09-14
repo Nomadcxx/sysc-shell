@@ -36,6 +36,15 @@ var materialIcons = map[string]struct{}{
 	"signal_wifi_0_bar": {}, "network_wifi_1_bar": {}, "network_wifi_2_bar": {},
 	"network_wifi_3_bar": {}, "signal_wifi_4_bar": {}, "wifi_off": {},
 	"lan": {}, "visibility": {}, "visibility_off": {},
+	"bluetooth_disabled": {}, "bluetooth_connected": {}, "keyboard": {},
+	"mouse": {}, "smartphone": {}, "speaker": {}, "devices_other": {},
+}
+
+// The pinned Material Symbols source no longer carries the older
+// "smartphone" ligature name. Keep the public shell vocabulary stable and
+// shape that one name through the source's phone-with-speaker glyph.
+var materialIconShapeNames = map[string]string{
+	"smartphone": "phone_bluetooth_speaker",
 }
 
 // ValidMaterialIcon reports whether name is one the embedded subset can draw.
@@ -91,9 +100,13 @@ func (r *TextRenderer) RasterMaterialIcon(name string, size int) (Mask, error) {
 	if err != nil {
 		return Mask{}, err
 	}
-	out, err := r.shapeFace(face, name, size, false)
+	shapeName := name
+	if alias, ok := materialIconShapeNames[name]; ok {
+		shapeName = alias
+	}
+	out, err := r.shapeFace(face, shapeName, size, false)
 	if err != nil {
 		return Mask{}, err
 	}
-	return rasterRuns([]shapedFaceRun{{face: face, text: name, output: out}}, size)
+	return rasterRuns([]shapedFaceRun{{face: face, text: shapeName, output: out}}, size)
 }

@@ -73,18 +73,25 @@ type Registry struct {
 	// roots is the one interactive root the process allows at a time.
 	roots rootChain
 	// closed unblocks a pending publish at shutdown.
-	closed       chan struct{}
-	closeOnce    sync.Once
-	dwell        *dwell
-	configPath   string
-	reloads      chan<- struct{}
-	audio        *services.Audio
-	brightness   *services.Brightness
-	network      *services.Network
-	osd          *OSDManager
-	audioLease   *services.Lease
-	brightLease  *services.Lease
-	networkLease *services.Lease
+	closed               chan struct{}
+	closeOnce            sync.Once
+	dwell                *dwell
+	configPath           string
+	reloads              chan<- struct{}
+	audio                *services.Audio
+	brightness           *services.Brightness
+	network              *services.Network
+	bluetooth            *services.Bluetooth
+	bluetoothState       services.BluetoothState
+	bluetoothRelayCancel chan struct{}
+	// Bluetooth discovery operations are serialized off the owner so a root
+	// replacement cannot race its stop with the next body's start.
+	bluetoothOpsMu   sync.Mutex
+	bluetoothOpsTail chan struct{}
+	osd              *OSDManager
+	audioLease       *services.Lease
+	brightLease      *services.Lease
+	networkLease     *services.Lease
 	// runArgv launches a session action. Tests replace it per Registry.
 	runArgv func([]string) error
 	// lookPath finds a binary on PATH. Tests replace it per Registry.
@@ -178,6 +185,7 @@ func NewRegistry(cfg config.Config) *Registry {
 	// test that fails on a build machine. Tests install their own service.
 	if !runningAsTest() {
 		r.setNetwork(services.NewSystemNetwork())
+		r.setBluetooth(services.NewSystemBluetooth())
 	}
 	// The wallpaper service starts with the registry, not with the picker: an
 	// output's wallpaper has to come back at login whether or not anyone opens
@@ -286,6 +294,91 @@ func (r *Registry) setNetwork(n *services.Network) {
 			r.networkLease = l
 		}
 		go r.relayNetwork(n)
+	}
+}
+
+// setBluetooth installs the one process-wide BlueZ service. It has no lease:
+// Bluetooth state is useful to the bar even while no panel is open, so the
+// service subscribes for the Registry lifetime.
+func (r *Registry) setBluetooth(bluetooth *services.Bluetooth) {
+	if r.bluetooth == bluetooth {
+		return
+	}
+	if r.bluetoothRelayCancel != nil {
+		close(r.bluetoothRelayCancel)
+		r.bluetoothRelayCancel = nil
+	}
+	if r.bluetooth != nil && r.bluetooth != bluetooth {
+		_ = r.bluetooth.Close()
+	}
+	r.bluetooth = bluetooth
+	if bluetooth == nil {
+		r.bluetoothState = services.BluetoothState{}
+		return
+	}
+	r.bluetoothState = bluetooth.CachedState()
+	cancel := make(chan struct{})
+	r.bluetoothRelayCancel = cancel
+	go r.relayBluetooth(bluetooth, cancel)
+}
+
+func (r *Registry) relayBluetooth(bluetooth *services.Bluetooth, cancel <-chan struct{}) {
+	if bluetooth == nil {
+		return
+	}
+	r.publishBluetoothSnapshot(bluetooth, bluetooth.CachedState())
+	for {
+		select {
+		case <-r.closed:
+			return
+		case <-cancel:
+			return
+		case state := <-bluetooth.Changes():
+			r.publishBluetoothSnapshot(bluetooth, state)
+		}
+	}
+}
+
+// publishBluetoothSnapshot is the only bridge from the service into retained
+// shell state. Cached snapshots are copied before any host is rebuilt; the bus
+// is never touched while Registry.mu is held.
+func (r *Registry) publishBluetoothSnapshot(bluetooth *services.Bluetooth, state services.BluetoothState) {
+	r.mu.Lock()
+	if r.bluetooth != bluetooth {
+		r.mu.Unlock()
+		return
+	}
+	r.bluetoothState = state
+	if !state.Available || !state.Adapter.Powered {
+		for _, id := range []PanelID{PanelBluetooth, PanelControlCenter} {
+			if h := r.panelHosts[id]; h != nil {
+				h.bluetoothDiscovery = false
+			}
+		}
+	}
+	if state.Prompt != nil && !r.bluetoothHostVisibleLocked() {
+		if output, trigger := r.focusedTriggerLocked(); output != 0 {
+			_ = r.openPanelRootLocked(PanelBluetooth, output, trigger)
+		}
+	}
+	changed := make([]uint32, 0, len(r.bars))
+	for global, bar := range r.bars {
+		if bar.apply(r.viewLocked(bar.connector())) {
+			changed = append(changed, global)
+		}
+	}
+	var surfaces []wayland.Invalidation
+	for _, id := range []PanelID{PanelBluetooth, PanelControlCenter} {
+		if h := r.panelHosts[id]; h != nil {
+			r.rebuildPanel(h)
+			surfaces = append(surfaces, wayland.Invalidation{Global: h.output, SurfaceID: panelSurfaceID(id)})
+		}
+	}
+	r.mu.Unlock()
+
+	r.publish(changed)
+	for _, invalidation := range surfaces {
+		r.publishSurface(invalidation.Global, invalidation.SurfaceID)
 	}
 }
 
@@ -839,6 +932,18 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 		case action == panelWifiAction && button == buttonRight:
 			r.toggleWirelessAsync()
 			return true
+		case action == panelBluetoothAction && (button == 0 || button == buttonLeft):
+			trig.AnchorX = bar.actionCenterX(panelBluetoothAction)
+			return r.TogglePanel(PanelBluetooth, out, trig) == nil
+		case action == panelBluetoothAction && button == buttonRight:
+			trig.AnchorX = bar.actionCenterX(panelBluetoothAction)
+			if err := r.OpenPanel(PanelControlCenter, out, trig); err != nil {
+				return false
+			}
+			r.mu.Lock()
+			err := r.selectPanelSectionLocked(PanelControlCenter, "bluetooth")
+			r.mu.Unlock()
+			return err == nil
 		case action == panelAudioAction && button == buttonRight:
 			r.stepAudioAsync("mute")
 			return true
@@ -1056,6 +1161,7 @@ func (r *Registry) Close() {
 	var leases []*services.Lease
 	var bars []*Bar
 	var audioLease, brightLease, networkLease *services.Lease
+	var bluetooth *services.Bluetooth
 	var inhibit io.Closer
 	var wallpaperSvc *wallpaper.Service
 	var wallpaperThumbCancel context.CancelFunc
@@ -1090,6 +1196,12 @@ func (r *Registry) Close() {
 		r.wallpaperSvc = nil
 		wallpaperThumbCancel = r.wallpaperThumbCancel
 		r.wallpaperThumbCancel = nil
+		bluetooth = r.bluetooth
+		r.bluetooth = nil
+		if r.bluetoothRelayCancel != nil {
+			close(r.bluetoothRelayCancel)
+			r.bluetoothRelayCancel = nil
+		}
 		inhibit = r.inhibit
 		r.inhibit = nil
 		r.inhibitWanted = false
@@ -1142,6 +1254,9 @@ func (r *Registry) Close() {
 	}
 	if r.network != nil {
 		r.network.Close()
+	}
+	if bluetooth != nil {
+		_ = bluetooth.Close()
 	}
 	if r.plugins != nil {
 		r.plugins.Close()
@@ -1296,6 +1411,7 @@ func (r *Registry) viewLocked(connector string) barView {
 	if r.network != nil {
 		view.Network = r.network.CachedState()
 	}
+	view.Bluetooth = r.bluetoothState
 	if r.plugins != nil {
 		view.Plugins = r.plugins.frames(connector)
 	}
