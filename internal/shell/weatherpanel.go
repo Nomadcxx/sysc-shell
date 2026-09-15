@@ -130,8 +130,12 @@ func weatherHero(reading services.Reading, location string, m theme.Metrics) *ui
 	}
 
 	isDay := reading.IsDay == nil || *reading.IsDay
+	heroTone := ui.ToneAccent
+	if !isDay {
+		heroTone = ui.ToneNormal
+	}
 	headline := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Height: m.StandardControl, Children: []*ui.Node{
-		{Kind: ui.KindIcon, Icon: render.WeatherIconName(reading.Code, isDay), IconSize: m.IconLarge},
+		{Kind: ui.KindIcon, Icon: render.WeatherIconName(reading.Code, isDay), IconSize: m.IconHero, Tone: heroTone},
 		{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
 			{Kind: ui.KindText, Text: fmt.Sprintf("%.0f%s", reading.Temperature, unitSuffix(reading.Unit)), TextRole: theme.RoleTitle, Tabular: true},
 			{Kind: ui.KindText, Text: render.WeatherCondition(reading.Code), TextRole: theme.RoleLabel},
@@ -139,7 +143,7 @@ func weatherHero(reading services.Reading, location string, m theme.Metrics) *ui
 	}}
 	lines := []*ui.Node{headline}
 	if len(reading.Daily) > 0 {
-		lines = append(lines, &ui.Node{Kind: ui.KindText, TextRole: theme.RoleLabel, Tabular: true,
+		lines = append(lines, &ui.Node{Kind: ui.KindText, TextRole: theme.RoleLabel, Tabular: true, Tone: ui.ToneAccent,
 			Text: weatherDayRange(reading)})
 	}
 	lines = append(lines, &ui.Node{Kind: ui.KindText, TextRole: theme.RoleCaption, Text: location})
@@ -158,33 +162,36 @@ func weatherHero(reading services.Reading, location string, m theme.Metrics) *ui
 	}
 }
 
-// weatherDetails is the labelled figure card under the hero: one row per
-// fact, the value pinned right so the labels align.
+// weatherDetails is the labelled figure card under the hero: the reference's
+// row set and order first, then the shell's extra figures, each value pinned
+// right and painted in the accent tone the reference uses.
 func weatherDetails(reading services.Reading, m theme.Metrics) *ui.Node {
 	var today services.Day
 	if len(reading.Daily) > 0 {
 		today = reading.Daily[0]
 	}
 	rows := []*ui.Node{
-		weatherRow(m, "thermometer", "Feels like", weatherOptional(reading.Apparent, func(v float64) string {
-			return fmt.Sprintf("%.1f%s", v, unitSuffix(reading.Unit))
-		})),
+		weatherRow(m, "thermometer", "Temperature min", weatherDayTemp(reading, today.Low)),
+		weatherRow(m, "thermometer", "Temperature max", weatherDayTemp(reading, today.High)),
 		weatherRow(m, "wind", "Wind", weatherWind(reading)),
-		weatherRow(m, "humidity", "Humidity", weatherOptional(reading.Humidity, func(v float64) string {
-			return fmt.Sprintf("%.0f%%", v)
-		})),
-		weatherRow(m, "clear-day", "UV index", weatherOptional(reading.UVIndex, func(v float64) string {
-			return fmt.Sprintf("%.1f", v)
-		})),
-		weatherRow(m, "humidity", "Precip chance", weatherOptional(today.PrecipitationProbability, func(v float64) string {
-			return fmt.Sprintf("%.0f%%", v)
-		})),
 		weatherRow(m, "sunrise", "Sunrise", weatherClock(today.Sunrise)),
 		weatherRow(m, "sunset", "Sunset", weatherClock(today.Sunset)),
 		weatherRow(m, "elevation", "Elevation", weatherOptional(reading.Elevation, func(v float64) string {
 			return fmt.Sprintf("%.0f m", v)
 		})),
+		weatherRow(m, "clear-day", "UV index", weatherOptional(reading.UVIndex, func(v float64) string {
+			return fmt.Sprintf("%.1f", v)
+		})),
 		weatherRow(m, "schedule", "Timezone", weatherTimezone(reading)),
+		weatherRow(m, "thermometer", "Feels like", weatherOptional(reading.Apparent, func(v float64) string {
+			return fmt.Sprintf("%.1f%s", v, unitSuffix(reading.Unit))
+		})),
+		weatherRow(m, "humidity", "Humidity", weatherOptional(reading.Humidity, func(v float64) string {
+			return fmt.Sprintf("%.0f%%", v)
+		})),
+		weatherRow(m, "humidity", "Precip chance", weatherOptional(today.PrecipitationProbability, func(v float64) string {
+			return fmt.Sprintf("%.0f%%", v)
+		})),
 	}
 	return &ui.Node{
 		Kind: ui.KindCapsule, Padding: m.CardPadding,
@@ -203,8 +210,28 @@ func weatherRow(m theme.Metrics, icon, label, value string) *ui.Node {
 	return &ui.Node{Kind: ui.KindRow, Height: weatherRowHeight(m), Gap: theme.MarginM, Children: []*ui.Node{
 		{Kind: ui.KindIcon, Icon: icon, IconSize: m.IconSmall},
 		{Kind: ui.KindText, Text: label, TextRole: theme.RoleLabel},
-		{Kind: ui.KindText, Text: value, TextRole: theme.RoleBody, Tabular: true, PinEnd: true},
+		{Kind: ui.KindText, Text: value, TextRole: theme.RoleBody, Tabular: true, Tone: ui.ToneAccent, PinEnd: true},
 	}}
+}
+
+// weatherDayTemp renders a today figure, or the dash before a body.
+func weatherDayTemp(reading services.Reading, value float64) string {
+	if len(reading.Daily) == 0 {
+		return absent
+	}
+	return fmt.Sprintf("%.0f%s", value, unitSuffix(reading.Unit))
+}
+
+// weatherIsToday reports whether a daily date is the machine's current day;
+// the forecast starts at the location's midnight, which is the machine's
+// whenever the owner is in the configured place.
+func weatherIsToday(date string) bool {
+	parsed, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return false
+	}
+	today := time.Now()
+	return parsed.Year() == today.Year() && parsed.YearDay() == today.YearDay()
 }
 
 // weatherViewTabs is the Daily/Hourly segmented control, the component the
@@ -262,18 +289,25 @@ func weatherHourlyList(reading services.Reading, m theme.Metrics) *ui.Node {
 
 func weatherHourRow(m theme.Metrics, hour services.Hour, unit services.Unit) *ui.Node {
 	isDay := hour.IsDay == nil || *hour.IsDay
+	hourTone := ui.ToneAccent
+	if !isDay {
+		hourTone = ui.ToneNormal
+	}
 	summary := render.WeatherCondition(hour.Code)
 	if hour.PrecipProbability != nil {
 		summary = fmt.Sprintf("%s, %.0f%%", summary, *hour.PrecipProbability)
 	}
 	return &ui.Node{Kind: ui.KindRow, Height: m.CompactControl, Gap: theme.MarginM, Children: []*ui.Node{
-		{Kind: ui.KindIcon, Icon: render.WeatherIconName(hour.Code, isDay), IconSize: m.IconSmall},
+		{Kind: ui.KindIcon, Icon: render.WeatherIconName(hour.Code, isDay), IconSize: m.IconSmall, Tone: hourTone},
 		{Kind: ui.KindText, Text: weatherClock(hour.Time), TextRole: theme.RoleLabel, Tabular: true},
 		{Kind: ui.KindText, Text: fmt.Sprintf("%.0f%s", hour.Temperature, unitSuffix(unit)), TextRole: theme.RoleBody, Tabular: true},
 		{Kind: ui.KindText, Text: summary, TextRole: theme.RoleCaption, PinEnd: true},
 	}}
 }
 
+// weatherForecast is the day list on the right: today excluded — the hero
+// owns today, as the reference renders it — then the days the body carried,
+// each with its glyph, high/low range and condition word.
 func weatherForecast(reading services.Reading, m theme.Metrics) *ui.Node {
 	if len(reading.Daily) == 0 {
 		return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Children: []*ui.Node{
@@ -281,8 +315,11 @@ func weatherForecast(reading services.Reading, m theme.Metrics) *ui.Node {
 		}}
 	}
 	rows := make([]*ui.Node, 0, len(reading.Daily))
-	for i, day := range reading.Daily {
-		rows = append(rows, weatherDayRow(m, i, day, reading.Unit))
+	for _, day := range reading.Daily {
+		if weatherIsToday(day.Date) {
+			continue
+		}
+		rows = append(rows, weatherDayRow(m, day, reading.Unit))
 	}
 	return &ui.Node{
 		Kind: ui.KindCapsule, Padding: m.CardPadding,
@@ -291,22 +328,15 @@ func weatherForecast(reading services.Reading, m theme.Metrics) *ui.Node {
 	}
 }
 
-func weatherDayRow(m theme.Metrics, index int, day services.Day, unit services.Unit) *ui.Node {
+func weatherDayRow(m theme.Metrics, day services.Day, unit services.Unit) *ui.Node {
 	label := day.Date
 	if parsed, err := time.Parse("2006-01-02", day.Date); err == nil {
 		label = parsed.Format("Mon")
 	}
-	if index == 0 {
-		label = "Today"
-	}
-	unitLetter := "C"
-	if unit == services.UnitFahrenheit {
-		unitLetter = "F"
-	}
 	return &ui.Node{Kind: ui.KindRow, Height: m.CompactControl, Gap: theme.MarginM, Children: []*ui.Node{
+		{Kind: ui.KindIcon, Icon: render.WeatherIconName(day.Code, true), IconSize: m.IconSmall, Tone: ui.ToneAccent},
 		{Kind: ui.KindText, Text: label, TextRole: theme.RoleLabel},
-		{Kind: ui.KindIcon, Icon: render.WeatherIconName(day.Code, true), IconSize: m.IconSmall},
-		{Kind: ui.KindText, Text: fmt.Sprintf("%.0f° / %.0f°%s", day.Low, day.High, unitLetter), TextRole: theme.RoleBody, Tabular: true},
+		{Kind: ui.KindText, Text: fmt.Sprintf("%.0f%s / %.0f%s", day.High, unitSuffix(unit), day.Low, unitSuffix(unit)), TextRole: theme.RoleBody, Tabular: true},
 		{Kind: ui.KindText, Text: render.WeatherCondition(day.Code), TextRole: theme.RoleCaption, PinEnd: true},
 	}}
 }

@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -157,7 +156,7 @@ func TestWeatherPanelDetailsCarryTheRows(t *testing.T) {
 	texts := collectTooltipLines(tree)
 	icons := treeIcons(tree)
 
-	for _, want := range []string{"Feels like", "9.5°C", "Wind", "10.4 km/h NE", "Humidity", "62%", "UV index", "0.0", "Precip chance", "10%", "Sunrise", "06:12", "Sunset", "18:44", "Elevation", "64 m", "Timezone", "Australia/Sydney"} {
+	for _, want := range []string{"Temperature min", "6°C", "Temperature max", "22°C", "Feels like", "9.5°C", "Wind", "10.4 km/h NE", "Humidity", "62%", "UV index", "0.0", "Precip chance", "10%", "Sunrise", "06:12", "Sunset", "18:44", "Elevation", "64 m", "Timezone", "Australia/Sydney"} {
 		if !hasLine(texts, want) {
 			t.Fatalf("detail texts %q are missing %q", texts, want)
 		}
@@ -215,11 +214,12 @@ func weekReading() services.Reading {
 	hours := []string{"06:12", "06:14", "06:16", "06:18", "06:20", "06:22", "06:24"}
 	reading.Daily = nil
 	for i, code := range codes {
+		date := time.Now().AddDate(0, 0, i).Format("2006-01-02")
 		reading.Daily = append(reading.Daily, services.Day{
-			Date: fmt.Sprintf("2026-09-%02d", 15+i), Code: code,
+			Date: date, Code: code,
 			High: 20 + float64(i), Low: 8 + float64(i),
-			Sunrise: fmt.Sprintf("2026-09-%02dT%s", 15+i, hours[i]),
-			Sunset:  fmt.Sprintf("2026-09-%02dT18:30", 15+i),
+			Sunrise: date + "T" + hours[i],
+			Sunset:  date + "T18:30",
 		})
 	}
 	return reading
@@ -234,10 +234,12 @@ func TestWeatherPanelForecastCarriesTheWeek(t *testing.T) {
 	texts := collectTooltipLines(tree)
 	icons := treeIcons(tree)
 
-	if !hasLine(texts, "Today") {
-		t.Fatalf("forecast texts %q do not mark today", texts)
+	tomorrow := time.Now().AddDate(0, 0, 1).Format("Mon")
+	afterTomorrow := time.Now().AddDate(0, 0, 2).Format("Mon")
+	if hasLine(texts, "Today") {
+		t.Fatalf("forecast texts %q still mark today", texts)
 	}
-	for _, want := range []string{"Wed", "Thu", "9° / 21°C", "Clear", "Rain", "Snow", "Thunderstorm"} {
+	for _, want := range []string{tomorrow, afterTomorrow, "21°C / 9°C", "Clear", "Rain", "Snow", "Thunderstorm"} {
 		if !hasLine(texts, want) {
 			t.Fatalf("forecast texts %q are missing %q", texts, want)
 		}
@@ -265,8 +267,9 @@ func TestWeatherPanelForecastRendersWhatExists(t *testing.T) {
 	h := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
 
 	texts := collectTooltipLines(weatherTree(r, h))
-	if !hasLine(texts, "Today") || !hasLine(texts, "Wed") {
-		t.Fatalf("a two-day body rendered %q, want today and one more day", texts)
+	tomorrow := time.Now().AddDate(0, 0, 1).Format("Mon")
+	if !hasLine(texts, tomorrow) {
+		t.Fatalf("a two-day body rendered %q, want tomorrow's row", texts)
 	}
 }
 
@@ -298,8 +301,8 @@ func TestTheWeatherPanelSeedsTheDailyView(t *testing.T) {
 	if h.weatherView != "daily" {
 		t.Fatalf("seeded view = %q, want daily", h.weatherView)
 	}
-	if !hasLine(collectTooltipLines(tree), "Today") {
-		t.Fatal("the daily view lost the day list")
+	if hasLine(collectTooltipLines(tree), "Today") {
+		t.Fatal("the daily view still marks today, which the hero owns")
 	}
 }
 
@@ -354,7 +357,8 @@ func TestTheWeatherPanelSwitchesViewsThroughTheSegmentedAction(t *testing.T) {
 	if !h.activate(r) {
 		t.Fatal("the daily segment was not handled")
 	}
-	if !hasLine(collectTooltipLines(h.root), "Today") {
+	tomorrow := time.Now().AddDate(0, 0, 1).Format("Mon")
+	if !hasLine(collectTooltipLines(h.root), tomorrow) {
 		t.Fatal("the rebuilt tree did not return to the daily view")
 	}
 }
@@ -378,5 +382,52 @@ func TestTheWeatherLocationPrefersTheLabelThenTheResolvedName(t *testing.T) {
 
 	if got := weatherLocation(cfg.Weather, services.Reading{}); got != "27.47°, 153.02°" {
 		t.Fatalf("location = %q, want the coordinates fallback", got)
+	}
+}
+
+func TestTheWeatherPanelTonesFollowTheReference(t *testing.T) {
+	t.Parallel()
+	r := &Registry{reading: hourlyReading()}
+	h := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
+
+	day := weatherTree(r, h)
+	var heroTone ui.Tone
+	var found bool
+	var walk func(n *ui.Node)
+	walk = func(n *ui.Node) {
+		if !found && n.Kind == ui.KindIcon && n.Icon == "clear-day" {
+			heroTone, found = n.Tone, true
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(day)
+	if !found || heroTone != ui.ToneAccent {
+		t.Fatalf("the day hero glyph tone = %v (found %v), want accent", heroTone, found)
+	}
+
+	night := hourlyReading()
+	falseValue := false
+	night.IsDay = &falseValue
+	for i := range night.Hourly {
+		night.Hourly[i].IsDay = &falseValue
+	}
+	n := &Registry{reading: night}
+	h2 := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
+	h2.weatherView = "hourly"
+	toneSeen := map[ui.Tone]bool{}
+	var walk2 func(n *ui.Node)
+	walk2 = func(n *ui.Node) {
+		if n.Kind == ui.KindIcon && n.Tone != ui.ToneNormal {
+			toneSeen[n.Tone] = true
+		}
+		for _, c := range n.Children {
+			walk2(c)
+		}
+	}
+	walk2(weatherTree(n, h2))
+	if toneSeen[ui.ToneAccent] {
+		t.Fatal("an all-night hourly view painted an accent glyph")
 	}
 }

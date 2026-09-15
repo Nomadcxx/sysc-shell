@@ -134,6 +134,9 @@ type Metrics struct {
 	IconSmall      int
 	IconNormal     int
 	IconLarge      int
+	// IconHero is the weather panel's headline glyph, sized from the
+	// reference's hero proportion (about 2.2x a large control).
+	IconHero int
 	// IconProfile is the power-profile glyph in the session panel. It sits
 	// between the small and normal icons; the shell derived it as IconSmall+2,
 	// a fixed offset that was only ever checked at standard density.
@@ -165,6 +168,7 @@ var metrics = map[Density]Metrics{
 		PanelPadding: 13, CardPadding: 9, CardGap: 9,
 		CapsulePadding: 2, ButtonPadding: 4,
 		IconSmall: 14, IconNormal: 16, IconLarge: 20,
+		IconHero:    56,
 		IconProfile: 16,
 	},
 	DensityCompact: {
@@ -176,6 +180,7 @@ var metrics = map[Density]Metrics{
 		PanelPadding: 13, CardPadding: 9, CardGap: 9,
 		CapsulePadding: 4, ButtonPadding: 6,
 		IconSmall: 16, IconNormal: 18, IconLarge: 24,
+		IconHero:    64,
 		IconProfile: 18,
 	},
 	DensityDefault: {
@@ -187,6 +192,7 @@ var metrics = map[Density]Metrics{
 		PanelPadding: 13, CardPadding: 9, CardGap: 9,
 		CapsulePadding: 6, ButtonPadding: 9,
 		IconSmall: 16, IconNormal: 20, IconLarge: 24,
+		IconHero:    80,
 		IconProfile: 18,
 	},
 	DensityComfortable: {
@@ -198,6 +204,7 @@ var metrics = map[Density]Metrics{
 		PanelPadding: 13, CardPadding: 9, CardGap: 9,
 		CapsulePadding: 9, ButtonPadding: 13,
 		IconSmall: 18, IconNormal: 22, IconLarge: 28,
+		IconHero:    92,
 		IconProfile: 20,
 	},
 	DensitySpacious: {
@@ -209,6 +216,7 @@ var metrics = map[Density]Metrics{
 		PanelPadding: 13, CardPadding: 9, CardGap: 9,
 		CapsulePadding: 13, ButtonPadding: 18,
 		IconSmall: 20, IconNormal: 24, IconLarge: 32,
+		IconHero:    104,
 		IconProfile: 22,
 	},
 }

@@ -55,11 +55,11 @@ func TestGeocodeWithNoResultsIsAnError(t *testing.T) {
 func TestGeocodeRejectsMalformedAndIncompleteResults(t *testing.T) {
 	t.Parallel()
 	cases := map[string]string{
-		"malformed":          `{not json`,
-		"no coordinates":     `{"results":[{"name":"Brisbane"}]}`,
-		"incomplete result":  `{"results":[{"latitude":-27.47,"longitude":153.02}]}`,
-		"null latitude":      `{"results":[{"name":"B","latitude":null,"longitude":1.0}]}`,
-		"results not array":  `{"results":"many"}`,
+		"malformed":         `{not json`,
+		"no coordinates":    `{"results":[{"name":"Brisbane"}]}`,
+		"incomplete result": `{"results":[{"latitude":-27.47,"longitude":153.02}]}`,
+		"null latitude":     `{"results":[{"name":"B","latitude":null,"longitude":1.0}]}`,
+		"results not array": `{"results":"many"}`,
 	}
 	for name, body := range cases {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
