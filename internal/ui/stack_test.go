@@ -80,3 +80,22 @@ func TestStackRejectsANilChild(t *testing.T) {
 		t.Error("a nil child was accepted")
 	}
 }
+
+func TestStackHitReturnsTheTopmostChild(t *testing.T) {
+	t.Parallel()
+	// Hit walks children in reverse, so the last child -- the one painted on
+	// top -- must win.
+	under := &Node{Kind: KindButton, Text: "under", Action: "under", Bounds: Rect{W: 50, H: 50}}
+	over := &Node{Kind: KindButton, Text: "over", Action: "over", Bounds: Rect{W: 50, H: 50}}
+	root := &Node{Kind: KindRow, Bounds: Rect{W: 50, H: 50}, Children: []*Node{
+		{Kind: KindStack, Bounds: Rect{W: 50, H: 50}, Children: []*Node{under, over}},
+	}}
+
+	action, ok := Hit(root, 25, 25)
+	if !ok {
+		t.Fatal("no hit inside the stack")
+	}
+	if action != "over" {
+		t.Errorf("hit = %q, want the topmost child %q", action, "over")
+	}
+}
