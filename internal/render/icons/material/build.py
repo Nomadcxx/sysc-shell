@@ -43,6 +43,7 @@ ICONS = [
     "energy_savings_leaf",
     "check",
     "content_paste",
+    "content_copy",
     "close",
     "chevron_left",
     "chevron_right",

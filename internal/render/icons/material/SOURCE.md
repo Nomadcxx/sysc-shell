@@ -45,7 +45,7 @@ that join them. Layout closure is disabled during subsetting: leaving it on lets
 the retained letters reach every ligature they could begin, which is all
 6,605 glyphs and a 1.4 MB file.
 
-Result: **22,092 bytes, 97 glyphs** (66 shell names, the letters and underscore
+Result: **22,308 bytes, 98 glyphs** (67 shell names, the letters and underscore
 that spell them, and `.notdef`).
 
 ### Inventory
@@ -53,7 +53,7 @@ that spell them, and `.notdef`).
 ```
 lock logout bedtime restart_alt power_settings_new
 speed balance energy_savings_leaf check
-content_paste
+content_paste content_copy
 close chevron_left chevron_right
 search settings notifications do_not_disturb_on
 volume_up volume_off brightness_high
@@ -87,7 +87,7 @@ The head table's creation and modification timestamps are pinned, so a rebuild
 from the same source reproduces the committed file byte for byte:
 
 ```
-1ac424bc09ffb9d632c3353a322baf7ba821f0de337c7194f9c9d5d8bdd4fdcb
+032a4b3c238449bdfa2ce7cab7dd14a608397db7e1c58bca4cc02f47f5807781
 ```
 
 Built with fontTools 4.65.0.

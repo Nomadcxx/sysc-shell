@@ -13,7 +13,7 @@ import (
 var materialInventory = []string{
 	"lock", "logout", "bedtime", "restart_alt", "power_settings_new",
 	"speed", "balance", "energy_savings_leaf", "check",
-	"content_paste",
+	"content_paste", "content_copy",
 	"close", "chevron_left", "chevron_right",
 	"search", "settings", "notifications", "do_not_disturb_on",
 	"volume_up", "volume_off", "brightness_high",

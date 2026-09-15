@@ -31,6 +31,7 @@ var (
 		"control-center": "",
 		"network":        "",
 		"bluetooth":      "",
+		"clipboard":      "",
 	}
 )
 

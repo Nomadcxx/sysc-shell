@@ -13,6 +13,7 @@ import (
 	clipboardprotocol "github.com/Nomadcxx/sysc-clipboard/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -185,6 +186,12 @@ func TestClipboardTreeRendersImagePlaceholderAndStateMessages(t *testing.T) {
 	tree = laidOutClipboardTree(r, h)
 	if !strings.Contains(strings.Join(texts(tree), "\n"), "volatile") {
 		t.Fatalf("volatile tree = %v", texts(tree))
+	}
+}
+
+func TestClipboardTextRowIconIsInMaterialSubset(t *testing.T) {
+	if !render.ValidMaterialIcon("content_copy") {
+		t.Fatal("content_copy is not in the material icon subset")
 	}
 }
 
