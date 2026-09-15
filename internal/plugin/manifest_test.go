@@ -282,9 +282,16 @@ func TestLoadManifestValidPanelIncludeSettings(t *testing.T) {
 func TestLoadReferenceRecorderManifest(t *testing.T) {
 	t.Parallel()
 
-	manifest, err := os.ReadFile(filepath.Join("..", "..", "plugins", "reference", "recorder", "manifest.json"))
+	// The recorder manifest lives in the sysc-plugins repository now; this
+	// test pins the parser against the real shipped file. SYSC_PLUGINS_DIR
+	// overrides the sibling checkout location.
+	root := os.Getenv("SYSC_PLUGINS_DIR")
+	if root == "" {
+		root = filepath.Join("..", "..", "..", "sysc-plugins")
+	}
+	manifest, err := os.ReadFile(filepath.Join(root, "plugins", "screen-recorder", "manifest.json"))
 	if err != nil {
-		t.Fatal(err)
+		t.Skipf("sysc-plugins checkout not found at %s (set SYSC_PLUGINS_DIR): %v", root, err)
 	}
 	dir := writePlugin(t, string(manifest), "bin/sysc-plugin-screen-recorder")
 	m, err := LoadManifest(dir)
