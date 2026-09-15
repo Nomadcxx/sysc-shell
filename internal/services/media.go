@@ -2,6 +2,8 @@ package services
 
 import (
 	"errors"
+	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -47,11 +49,16 @@ type mediaPlayer struct {
 	positionAt time.Time
 	// trackID is the mpris:trackid the player announced, required by
 	// SetPosition. Empty means the player never announced one.
-	trackID string
-	canNext bool
-	canPrev bool
-	canPlay bool
-	canSeek bool
+	trackID    string
+	canNext    bool
+	canPrev    bool
+	canPlay    bool
+	canPause   bool
+	canSeek    bool
+	canLoop    bool
+	loopStatus string
+	canShuffle bool
+	shuffle    bool
 	// lastPlaying records the transition into Playing, not every refresh while
 	// a player remains there.
 	lastPlaying time.Time
@@ -73,7 +80,12 @@ type MediaState struct {
 	CanNext    bool
 	CanPrev    bool
 	CanPlay    bool
+	CanPause   bool
 	CanSeek    bool
+	CanLoop    bool
+	LoopStatus string
+	CanShuffle bool
+	Shuffle    bool
 }
 
 // Player is one discovered player.
@@ -427,8 +439,17 @@ func (m *Media) probePlayer(name string) *mediaPlayer {
 	if v, err := m.b.Get(name, mprisPlayerIface, "CanPlay"); err == nil {
 		p.canPlay, _ = v.(bool)
 	}
+	if v, err := m.b.Get(name, mprisPlayerIface, "CanPause"); err == nil {
+		p.canPause, _ = v.(bool)
+	}
 	if v, err := m.b.Get(name, mprisPlayerIface, "CanSeek"); err == nil {
 		p.canSeek, _ = v.(bool)
+	}
+	if v, err := m.b.Get(name, mprisPlayerIface, "LoopStatus"); err == nil {
+		p.loopStatus, p.canLoop = decodeLoopStatus(v)
+	}
+	if v, err := m.b.Get(name, mprisPlayerIface, "Shuffle"); err == nil {
+		p.shuffle, p.canShuffle = v.(bool)
 	}
 	return p
 }
@@ -439,10 +460,9 @@ func (m *Media) probePlayer(name string) *mediaPlayer {
 // rather than fail the service. xesam:artist is a list in the specification
 // and a bare string in practice, so both shapes are accepted.
 //
-// Art stays an identifier, never a decoded image. Only file:// URLs survive:
-// a player names a path this shell would then read, so a remote URL is
-// refused outright in this first slice and the eventual consumer bounds the
-// size and time of the read.
+// Art stays an identifier, never a decoded image. Local file URLs and remote
+// HTTP(S) URLs survive; the shell consumer validates and bounds the eventual
+// read.
 func decodeMetadata(v any) (title, artist, album, artKey string, lengthUS int64, trackID string) {
 	meta := flattenMetadata(v)
 	if meta == nil {
@@ -476,10 +496,25 @@ func decodeMetadata(v any) (title, artist, album, artKey string, lengthUS int64,
 	case dbus.ObjectPath:
 		trackID = string(t)
 	}
-	if u, ok := meta["mpris:artUrl"].(string); ok && strings.HasPrefix(u, "file://") {
+	if u, ok := meta["mpris:artUrl"].(string); ok && acceptedArtURL(u) {
 		artKey = u
 	}
 	return
+}
+
+func acceptedArtURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Fragment != "" {
+		return false
+	}
+	switch u.Scheme {
+	case "file":
+		return u.Host == "" && u.RawQuery == "" && u.Path != "" && filepath.IsAbs(u.Path)
+	case "http", "https":
+		return u.Hostname() != ""
+	default:
+		return false
+	}
 }
 
 // flattenMetadata normalizes the two shapes a Metadata property arrives in:
@@ -517,6 +552,16 @@ func decodeRate(v any) float64 {
 		return r
 	}
 	return 1.0
+}
+
+func decodeLoopStatus(v any) (string, bool) {
+	s, ok := v.(string)
+	switch s {
+	case "None", "Track", "Playlist":
+		return s, ok
+	default:
+		return "", false
+	}
 }
 
 func decodePosition(v any) int64 {
@@ -563,6 +608,51 @@ func (m *Media) Previous() error { return m.command("Previous") }
 
 // Stop stops the active player.
 func (m *Media) Stop() error { return m.command("Stop") }
+
+// ToggleLoop advances the MPRIS LoopStatus cycle exposed by a player.
+func (m *Media) ToggleLoop() error {
+	m.mu.Lock()
+	name := m.active
+	next := ""
+	if p, ok := m.players[name]; ok && p.canLoop {
+		switch p.loopStatus {
+		case "None":
+			next = "Playlist"
+		case "Playlist":
+			next = "Track"
+		case "Track":
+			next = "None"
+		}
+	}
+	m.mu.Unlock()
+	if name == "" || next == "" {
+		return nil
+	}
+	if err := m.b.Set(name, mprisPlayerIface, "LoopStatus", next); err != nil {
+		m.repairAfterCommand(name)
+	}
+	return nil
+}
+
+// ToggleShuffle inverts the MPRIS Shuffle property when the player exposes it.
+func (m *Media) ToggleShuffle() error {
+	m.mu.Lock()
+	name := m.active
+	value := false
+	canShuffle := false
+	if p, ok := m.players[name]; ok {
+		value = !p.shuffle
+		canShuffle = p.canShuffle
+	}
+	m.mu.Unlock()
+	if name == "" || !canShuffle {
+		return nil
+	}
+	if err := m.b.Set(name, mprisPlayerIface, "Shuffle", value); err != nil {
+		m.repairAfterCommand(name)
+	}
+	return nil
+}
 
 // SetPosition seeks the active player to us microseconds into the current
 // track. The specification requires the track id alongside the position, so
@@ -696,7 +786,12 @@ func (m *Media) snapshotLocked() MediaState {
 	st.CanNext = p.canNext
 	st.CanPrev = p.canPrev
 	st.CanPlay = p.canPlay
+	st.CanPause = p.canPause
 	st.CanSeek = p.canSeek
+	st.CanLoop = p.canLoop
+	st.LoopStatus = p.loopStatus
+	st.CanShuffle = p.canShuffle
+	st.Shuffle = p.shuffle
 	st.PositionUS = p.positionUS
 	if p.status == PlaybackPlaying {
 		// Baseline plus rate times elapsed, in microseconds. No timer: a

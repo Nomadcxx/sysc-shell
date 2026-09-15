@@ -43,7 +43,8 @@ type barView struct {
 	Bluetooth services.BluetoothState
 	// Media is the active player's snapshot. Its zero value renders the widget
 	// absent: a bar with nothing playing reserves no gap.
-	Media services.MediaState
+	Media    services.MediaState
+	MediaArt *ui.Image
 }
 
 // textWidget is one configured widget instance: a retained node plus the pure

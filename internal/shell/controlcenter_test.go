@@ -401,10 +401,25 @@ func TestControlCentreHomeFillsTheBodyContract(t *testing.T) {
 	if home.Gap != theme.MarginL || len(home.Children) != 4 {
 		t.Fatalf("Home composition = %+v, want four blocks separated by one MarginL", home)
 	}
-	want := []int{ccIdentityCardH, ccTogglePillH, ccHomeSplitH, ccSlidersH}
+	want := []int{ccIdentityCardH, ccTogglePillH, ccSplitH, ccSlidersH}
 	for i, child := range home.Children {
 		if child.Height != want[i] {
 			t.Errorf("Home block %d height = %d, want %d", i, child.Height, want[i])
+		}
+	}
+}
+
+func TestControlCentreHomeChildrenFitItsViewport(t *testing.T) {
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	home := ccHome(&Registry{}, h)
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return len(s) * 8, 16 }
+	if err := ui.LayoutColumn(home, ui.Rect{W: 596, H: ccPageH}, measure); err != nil {
+		t.Fatal(err)
+	}
+	bottom := home.Bounds.Y + home.Bounds.H
+	for i, child := range home.Children {
+		if got := child.Bounds.Y + child.Bounds.H; got > bottom {
+			t.Errorf("Home block %d ends at %d, beyond viewport bottom %d: %+v", i, got, bottom, child.Bounds)
 		}
 	}
 }

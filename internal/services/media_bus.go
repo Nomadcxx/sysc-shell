@@ -22,6 +22,9 @@ type bus interface {
 	// bare — "Next", not the full interface path. Every command this service
 	// sends lives on that interface.
 	Call(busName, method string, args ...any) error
+	// Set writes one org.mpris.MediaPlayer2.Player property through the
+	// standard D-Bus Properties interface.
+	Set(busName, iface, prop string, value any) error
 	Close()
 }
 
@@ -192,6 +195,13 @@ func (b *sessionBus) Call(busName, method string, args ...any) error {
 	return call.Err
 }
 
+func (b *sessionBus) Set(busName, iface, prop string, value any) error {
+	call := b.conn.Object(busName, mprisRoot).Call(
+		"org.freedesktop.DBus.Properties.Set", 0, iface, prop, dbus.MakeVariant(value),
+	)
+	return call.Err
+}
+
 func (b *sessionBus) Close() {
 	b.closeOnce.Do(func() {
 		close(b.stop)
@@ -238,6 +248,7 @@ func (unavailableBus) ListNames() ([]string, error)            { return nil, nil
 func (unavailableBus) NameChanges() <-chan nameChange          { return nil }
 func (unavailableBus) Get(string, string, string) (any, error) { return nil, nil }
 func (unavailableBus) Call(string, string, ...any) error       { return errNoMediaBus }
+func (unavailableBus) Set(string, string, string, any) error   { return errNoMediaBus }
 func (unavailableBus) Close()                                  {}
 
 var errNoMediaBus = errors.New("services: session bus is not available")

@@ -103,6 +103,7 @@ type Bar struct {
 	stopOnce sync.Once
 
 	invalidations chan struct{}
+	mediaWidget   bool
 }
 
 // New builds a bar from the built-in defaults for one connector.
@@ -125,6 +126,7 @@ func NewWithTheme(theme Theme, policy config.Bar, connector string) (*Bar, error
 	b := &Bar{
 		conn:          connector,
 		theme:         theme,
+		mediaWidget:   hasMediaItem(policy.Left) || hasMediaItem(policy.Center) || hasMediaItem(policy.Right),
 		text:          render.NewTextRendererWithFontMap(fonts),
 		invalidations: make(chan struct{}, 1),
 		style:         barStyle(theme),

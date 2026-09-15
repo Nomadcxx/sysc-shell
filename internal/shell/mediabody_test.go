@@ -80,6 +80,29 @@ func TestControlCentreMediaPageIsNoLongerDisabled(t *testing.T) {
 	}
 }
 
+func TestMediaTransportShowsSupportedRepeatAndShuffle(t *testing.T) {
+	state := services.MediaState{
+		Available: true, CanPrev: true, CanPlay: true, CanNext: true,
+		CanLoop: true, LoopStatus: "Track", CanShuffle: true, Shuffle: true,
+	}
+	r, h := mediaTestRegistry(t, state, nil)
+	r.mu.Lock()
+	h.section = "media"
+	transport := mediaBody(r, h).Children[1]
+	r.mu.Unlock()
+	loop := findAction(transport, "media:loop")
+	shuffle := findAction(transport, "media:shuffle")
+	if loop == nil || shuffle == nil {
+		t.Fatalf("transport = %#v, want repeat and shuffle controls", transport)
+	}
+	if findNode(loop, func(n *ui.Node) bool { return n.Kind == ui.KindIcon && n.Icon == "repeat_one" }) == nil {
+		t.Fatalf("loop control = %#v, want repeat_one for Track", loop)
+	}
+	if !shuffle.State.Has(ui.StateSelected) {
+		t.Fatal("shuffle control did not reflect its active state")
+	}
+}
+
 func TestMediaPageFramesWhilePlayingOrSeeking(t *testing.T) {
 	playing := &Registry{mediaState: services.MediaState{Status: services.PlaybackPlaying}}
 	h := &PanelHost{id: PanelControlCenter, section: "media"}
@@ -159,6 +182,42 @@ func TestMediaBodyTransportWritesThroughTheControlSeam(t *testing.T) {
 	}
 }
 
+func TestMediaControlReleaseSurvivesSnapshotTreeRebuild(t *testing.T) {
+	r, h := mediaTestRegistry(t, services.MediaState{Available: true, CanPlay: true}, nil)
+	h.section = "media"
+
+	makeTree := func() (*ui.Node, *ui.Node) {
+		button := &ui.Node{
+			Kind: ui.KindButton, Action: "media:playpause", Name: "Play or pause",
+			Role: "button", Focusable: true, Bounds: ui.Rect{X: 10, Y: 10, W: 80, H: 40},
+		}
+		return &ui.Node{Kind: ui.KindColumn, Bounds: ui.Rect{W: 120, H: 80}, Children: []*ui.Node{button}}, button
+	}
+
+	root, button := makeTree()
+	h.root, h.focus, h.roving.Count = root, []*ui.Node{button}, 1
+	h.roving.Set(0)
+	handle := h.handle(r)
+	if !handle(wayland.Event{Kind: wayland.EventPointerPress, X: 20, Y: 20}) {
+		t.Fatal("media press was not handled")
+	}
+
+	// Media snapshots rebuild the retained tree while the pointer is down.
+	// The replacement is an equivalent control at the same location, not the
+	// same Go pointer.
+	root, button = makeTree()
+	h.root, h.focus, h.roving.Count = root, []*ui.Node{button}, 1
+	h.roving.Set(0)
+	if !handle(wayland.Event{Kind: wayland.EventPointerRelease, X: 20, Y: 20}) {
+		t.Fatal("media release was not handled")
+	}
+	select {
+	case <-r.invalidations:
+	case <-time.After(time.Second):
+		t.Fatal("release on a rebuilt media control did not dispatch the command")
+	}
+}
+
 func TestMediaBodyPlayerClickPrefers(t *testing.T) {
 	const bus = "org.mpris.MediaPlayer2.player"
 	state := services.MediaState{Available: true, Player: bus, Identity: "Player"}
@@ -170,6 +229,37 @@ func TestMediaBodyPlayerClickPrefers(t *testing.T) {
 	r.mu.Unlock()
 	if row == nil || !row.State.Has(ui.StateSelected) {
 		t.Fatalf("active player row = %#v, want selected", row)
+	}
+}
+
+func TestMediaPlayerRowsMarkOnlyTheActivePlayer(t *testing.T) {
+	const activeBus = "org.mpris.MediaPlayer2.active"
+	const idleBus = "org.mpris.MediaPlayer2.idle"
+	state := services.MediaState{Available: true, Player: activeBus, Identity: "Active"}
+	players := []services.Player{
+		{Bus: activeBus, Identity: "Active", Active: true},
+		{Bus: idleBus, Identity: "Idle"},
+	}
+	r, h := mediaTestRegistry(t, state, players)
+	r.mu.Lock()
+	h.section = "media"
+	page := ccPage(r, h)
+	r.mu.Unlock()
+	for _, tc := range []struct {
+		bus  string
+		want bool
+	}{
+		{activeBus, true},
+		{idleBus, false},
+	} {
+		row := findAction(page, "media:player:"+tc.bus)
+		if row == nil {
+			t.Fatalf("missing player row for %s", tc.bus)
+		}
+		got := findNode(row, func(n *ui.Node) bool { return n.Kind == ui.KindIcon && n.Icon == "check" }) != nil
+		if got != tc.want {
+			t.Errorf("player %s checkmark = %v, want %v", tc.bus, got, tc.want)
+		}
 	}
 }
 

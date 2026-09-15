@@ -286,7 +286,7 @@ func (r *Registry) relayMedia(media *services.Media, cancel <-chan struct{}) {
 	}
 }
 
-// mediaArtFor returns the page's own bounded art worker. Registry.mu is held.
+// mediaArtFor returns the shared bounded art worker. Registry.mu is held.
 func (r *Registry) mediaArtFor() *mediaArtWorker {
 	if r.mediaArt == nil {
 		r.mediaArt = newMediaArtWorker(r.applyMediaArt)
@@ -294,22 +294,37 @@ func (r *Registry) mediaArtFor() *mediaArtWorker {
 	return r.mediaArt
 }
 
-// applyMediaArt rebuilds the retained page once a decoded cover arrives. The
-// page asks only for Lookup results while building; decoding stays off-owner.
-func (r *Registry) applyMediaArt(_ icons.Key, image *ui.Image) {
+// applyMediaArt reapplies the retained bar and page once a decoded cover
+// arrives. Consumers ask only for Lookup results while building; decoding
+// stays off-owner.
+func (r *Registry) applyMediaArt(key icons.Key, image *ui.Image) {
 	if image == nil {
 		return
 	}
 	r.mu.Lock()
-	h := r.panelHosts[PanelControlCenter]
-	if h == nil || h.section != "media" {
+	keyName, ok := mediaArtRequestName(r.mediaState.ArtKey)
+	if !ok || keyName == "" || key.Name != keyName {
 		r.mu.Unlock()
 		return
 	}
-	out := h.output
-	r.rebuildPanel(h)
+	changed := make([]uint32, 0, len(r.bars))
+	for global, bar := range r.bars {
+		if bar.apply(r.viewLocked(bar.connector())) {
+			changed = append(changed, global)
+		}
+	}
+	h := r.panelHosts[PanelControlCenter]
+	open := h != nil && h.section == "media"
+	var out uint32
+	if open {
+		out = h.output
+		r.rebuildPanel(h)
+	}
 	r.mu.Unlock()
-	r.publishSurface(out, panelSurfaceID(PanelControlCenter))
+	r.publish(changed)
+	if open {
+		r.publishSurface(out, panelSurfaceID(PanelControlCenter))
+	}
 }
 
 func (r *Registry) publishMediaSnapshot(media *services.Media, state services.MediaState) {
@@ -969,6 +984,9 @@ func (r *Registry) adoptBar(
 	defer r.mu.Unlock()
 
 	r.attachRunningIconsAtLocked(bar.scale120())
+	if bar.mediaWidget {
+		r.mediaArtFor()
+	}
 	bar.apply(r.viewLocked(connector))
 	r.bars[global] = bar
 	r.leases[global] = leases
@@ -1578,6 +1596,16 @@ func (r *Registry) viewLocked(connector string) barView {
 	}
 	if r.media != nil {
 		view.Media = r.mediaState
+		if r.mediaArt != nil && r.mediaState.ArtKey != "" {
+			if name, ok := mediaArtRequestName(r.mediaState.ArtKey); ok {
+				key := icons.Key{Name: name, W: mediaArtBox, H: mediaArtBox}
+				if image, cached := r.mediaArt.Lookup(key); cached {
+					view.MediaArt = image
+				} else {
+					_, _ = r.mediaArt.Request(r.mediaState.ArtKey, mediaArtBox)
+				}
+			}
+		}
 	}
 	view.Bluetooth = r.bluetoothState
 	if r.plugins != nil {

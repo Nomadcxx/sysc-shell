@@ -1,6 +1,15 @@
 package shell
 
 import (
+	"bytes"
+	"fmt"
+	"image"
+	"image/color"
+	"image/png"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -35,6 +44,123 @@ func TestMediaArtKeyParsesToAPath(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMediaArtKeyAcceptsRemoteSources(t *testing.T) {
+	for _, source := range []string{
+		"http://example.test/cover.jpg",
+		"https://example.test/cover.jpg?size=large",
+	} {
+		if got, ok := mediaArtRequestName(source); !ok || got != source {
+			t.Errorf("mediaArtRequestName(%q) = %q, %v; want the source URL, true", source, got, ok)
+		}
+	}
+}
+
+func TestMediaArtRemoteDecode(t *testing.T) {
+	data := testMediaArtPNG(t)
+	server := newMediaArtTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(data)
+	}))
+	defer server.Close()
+
+	url := server.URL + "/cover.png"
+	results := make(chan *ui.Image, 1)
+	art := newMediaArtWorker(func(_ icons.Key, image *ui.Image) { results <- image })
+	defer art.Close()
+	if _, queued := art.Request(url, 16); !queued {
+		t.Fatal("remote art request did not queue")
+	}
+	select {
+	case image := <-results:
+		if image == nil || image.Width != 16 || image.Height != 16 {
+			t.Fatalf("remote image = %+v, want a decoded 16x16 raster", image)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("remote art did not publish")
+	}
+}
+
+func TestMediaArtRemoteBoundsAndErrors(t *testing.T) {
+	data := testMediaArtPNG(t)
+	paths := []string{"/status", "/invalid", "/oversized"}
+	server := newMediaArtTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/status":
+			w.WriteHeader(http.StatusBadGateway)
+		case "/invalid":
+			_, _ = io.WriteString(w, "not an image")
+		case "/oversized":
+			w.Header().Set("Content-Length", "8388609")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(make([]byte, icons.MaxFileBytes+1))
+		default:
+			_, _ = w.Write(data)
+		}
+	}))
+	defer server.Close()
+
+	results := make(chan *ui.Image, len(paths))
+	art := newMediaArtWorker(func(_ icons.Key, image *ui.Image) { results <- image })
+	defer art.Close()
+	for _, path := range paths {
+		if _, queued := art.Request(server.URL+path, 16); !queued {
+			t.Fatalf("request for %s did not queue", path)
+		}
+	}
+	for range paths {
+		select {
+		case image := <-results:
+			if image != nil {
+				t.Fatalf("invalid remote art published %+v", image)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("invalid remote art did not publish")
+		}
+	}
+	for _, path := range paths {
+		if _, queued := art.Request(server.URL+path, 16); queued {
+			t.Fatalf("negative cache allowed retry for %s", path)
+		}
+	}
+}
+
+func TestMediaArtCacheStaysBounded(t *testing.T) {
+	art := newMediaArtWorker(nil)
+	defer art.Close()
+	image := &ui.Image{Width: 1, Height: 1, Stride: 4, Pix: make([]byte, 4)}
+	art.mu.Lock()
+	for i := 0; i < icons.MaxCacheEntries+1; i++ {
+		art.storeImageLocked(icons.Key{Name: fmt.Sprintf("art-%d", i), W: 1, H: 1}, image)
+	}
+	got := len(art.cache)
+	art.mu.Unlock()
+	if got > icons.MaxCacheEntries {
+		t.Fatalf("media art cache entries = %d, want at most %d", got, icons.MaxCacheEntries)
+	}
+}
+
+func testMediaArtPNG(t *testing.T) []byte {
+	t.Helper()
+	image := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	image.Set(0, 0, color.RGBA{R: 0xff, A: 0xff})
+	var data bytes.Buffer
+	if err := png.Encode(&data, image); err != nil {
+		t.Fatal(err)
+	}
+	return data.Bytes()
+}
+
+func newMediaArtTestServer(t *testing.T, handler http.Handler) *httptest.Server {
+	t.Helper()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewUnstartedServer(handler)
+	server.Listener = listener
+	server.Start()
+	return server
 }
 
 func TestMediaArtTimeoutPublishesNilOnce(t *testing.T) {

@@ -13,8 +13,14 @@ type fakeBus struct {
 	names  []string
 	props  map[string]map[string]any
 	calls  []string
+	sets   []fakeSet
 	closes int
 	nameCh chan nameChange
+}
+
+type fakeSet struct {
+	bus, iface, prop string
+	value            any
 }
 
 func newFakeBus(names ...string) *fakeBus {
@@ -33,6 +39,11 @@ func (f *fakeBus) Get(busName, iface, prop string) (any, error) {
 
 func (f *fakeBus) Call(busName, method string, args ...any) error {
 	f.calls = append(f.calls, busName+"."+method)
+	return nil
+}
+
+func (f *fakeBus) Set(busName, iface, prop string, value any) error {
+	f.sets = append(f.sets, fakeSet{bus: busName, iface: iface, prop: prop, value: value})
 	return nil
 }
 
@@ -218,6 +229,21 @@ func TestMediaDecodesMetadata(t *testing.T) {
 	}
 }
 
+func TestMediaRetainsRemoteArtURL(t *testing.T) {
+	t.Parallel()
+	b := newFakeBus("org.mpris.MediaPlayer2.x")
+	b.props["org.mpris.MediaPlayer2.x"] = map[string]any{
+		"Metadata": map[string]any{
+			"mpris:artUrl": "https://example.test/cover.jpg?size=large",
+		},
+	}
+	m := NewMedia(b)
+	t.Cleanup(m.Close)
+	if got := m.State().ArtKey; got != "https://example.test/cover.jpg?size=large" {
+		t.Fatalf("remote art key = %q, want the advertised URL", got)
+	}
+}
+
 func TestMediaDecodesCanSeek(t *testing.T) {
 	t.Parallel()
 	b := newFakeBus("org.mpris.MediaPlayer2.x")
@@ -226,6 +252,43 @@ func TestMediaDecodesCanSeek(t *testing.T) {
 	t.Cleanup(m.Close)
 	if !m.State().CanSeek {
 		t.Fatal("CanSeek was not decoded")
+	}
+}
+
+func TestMediaDecodesOptionalPlaybackControls(t *testing.T) {
+	t.Parallel()
+	b := newFakeBus("org.mpris.MediaPlayer2.x")
+	b.props["org.mpris.MediaPlayer2.x"] = map[string]any{
+		"CanPause":   true,
+		"LoopStatus": "Playlist",
+		"Shuffle":    true,
+	}
+	m := NewMedia(b)
+	t.Cleanup(m.Close)
+	state := m.State()
+	if !state.CanPause || !state.CanLoop || state.LoopStatus != "Playlist" || !state.CanShuffle || !state.Shuffle {
+		t.Fatalf("optional controls = %+v", state)
+	}
+}
+
+func TestMediaTogglesLoopAndShuffleThroughMprisProperties(t *testing.T) {
+	t.Parallel()
+	b := newFakeBus("org.mpris.MediaPlayer2.x")
+	b.props["org.mpris.MediaPlayer2.x"] = map[string]any{
+		"LoopStatus": "None",
+		"Shuffle":    false,
+	}
+	m := NewMedia(b)
+	t.Cleanup(m.Close)
+	if err := m.ToggleLoop(); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ToggleShuffle(); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.sets) != 2 || b.sets[0].prop != "LoopStatus" || b.sets[0].value != "Playlist" ||
+		b.sets[1].prop != "Shuffle" || b.sets[1].value != true {
+		t.Fatalf("property writes = %+v, want Playlist then true", b.sets)
 	}
 }
 

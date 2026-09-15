@@ -65,9 +65,9 @@ func mediaNotice(m theme.Metrics, title, detail string) *ui.Node {
 func mediaNowPlaying(r *Registry, h *PanelHost, state services.MediaState, m theme.Metrics) *ui.Node {
 	var art *ui.Image
 	if r != nil && state.ArtKey != "" {
-		if path, ok := mediaArtRequestPath(state.ArtKey); ok {
+		if name, ok := mediaArtRequestName(state.ArtKey); ok {
 			worker := r.mediaArtFor()
-			key := icons.Key{Name: path, W: mediaArtBox, H: mediaArtBox}
+			key := icons.Key{Name: name, W: mediaArtBox, H: mediaArtBox}
 			if image, ok := worker.Lookup(key); ok {
 				art = image
 			} else {
@@ -108,8 +108,28 @@ func mediaTransport(state services.MediaState, m theme.Metrics) *ui.Node {
 	}
 	buttons := []*ui.Node{
 		mediaButton("skip_previous", "media:prev", "Previous", state.CanPrev),
-		mediaButton(playIcon, "media:playpause", "Play or pause", state.CanPlay),
+		mediaButton(playIcon, "media:playpause", "Play or pause", state.CanPlay || state.CanPause),
 		mediaButton("skip_next", "media:next", "Next", state.CanNext),
+	}
+	if state.CanLoop {
+		loopIcon := "repeat"
+		if state.LoopStatus == "Track" {
+			loopIcon = "repeat_one"
+		}
+		loop := mediaButton(loopIcon, "media:loop", "Repeat", true)
+		if state.LoopStatus != "None" {
+			loop.State |= ui.StateSelected
+			loop.Fill = ui.FillAccent
+		}
+		buttons = append(buttons, loop)
+	}
+	if state.CanShuffle {
+		shuffle := mediaButton("shuffle", "media:shuffle", "Shuffle", true)
+		if state.Shuffle {
+			shuffle.State |= ui.StateSelected
+			shuffle.Fill = ui.FillAccent
+		}
+		buttons = append(buttons, shuffle)
 	}
 	return monitorCard(m, []*ui.Node{
 		monitorCardTitle("Transport", 0),
@@ -160,15 +180,19 @@ func mediaPlayerRows(state services.MediaState, players []services.Player, m the
 		if name == "" {
 			name = player.Bus
 		}
+		selected := player.Active || player.Bus == state.Player
+		rowChildren := []*ui.Node{{Kind: ui.KindText, Text: name}}
+		if selected {
+			rowChildren = append(rowChildren, &ui.Node{Kind: ui.KindIcon, Icon: "check", IconSize: m.IconNormal})
+		}
 		row := &ui.Node{
 			Kind: ui.KindButton, Action: "media:player:" + player.Bus, Name: name,
 			Role: "button", Focusable: true, Height: m.StandardControl,
 			Shape: ui.ShapeSmall, PinEnd: true,
 			Children: []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginM, PinEnd: true,
-				Children: []*ui.Node{{Kind: ui.KindText, Text: name},
-					{Kind: ui.KindIcon, Icon: "check", IconSize: m.IconNormal}}}},
+				Children: rowChildren}},
 		}
-		if player.Active || player.Bus == state.Player {
+		if selected {
 			row.State |= ui.StateSelected
 		}
 		rows = append(rows, row)
@@ -267,6 +291,10 @@ func (h *PanelHost) activateMedia(r *Registry, n *ui.Node) bool {
 		r.scheduleControl(h, media.Next)
 	case n.Action == "media:prev":
 		r.scheduleControl(h, media.Previous)
+	case n.Action == "media:loop":
+		r.scheduleControl(h, media.ToggleLoop)
+	case n.Action == "media:shuffle":
+		r.scheduleControl(h, media.ToggleShuffle)
 	case strings.HasPrefix(n.Action, mediaSeekAction):
 		value := int64(n.Value)
 		if rest := strings.TrimPrefix(n.Action, mediaSeekAction); rest != "" {

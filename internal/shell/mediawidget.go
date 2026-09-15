@@ -6,7 +6,19 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
-const panelMediaAction = "panel:media"
+const (
+	panelMediaAction = "panel:media"
+	mediaBarArtSize  = 20
+)
+
+func hasMediaItem(items []config.Item) bool {
+	for _, item := range items {
+		if item.ID == "media" || (item.ID == "group" && hasMediaItem(item.Items)) {
+			return true
+		}
+	}
+	return false
+}
 
 // buildMediaWidget is one glyph and the active track's title, absent while no
 // player is on the bus. The design's D7 scope: no player picker, no seek bar,
@@ -20,7 +32,7 @@ func buildMediaWidget(items ...config.Item) textWidget {
 	row := &ui.Node{Kind: ui.KindRow, Gap: groupGap, Action: panelMediaAction,
 		Name: "Media", Role: "button",
 		Children: []*ui.Node{
-			{Kind: ui.KindIcon, Icon: "music_note", IconSize: DefaultTheme().Metrics.IconNormal},
+			{Kind: ui.KindIcon, Key: "media-art", Icon: "music_note", IconSize: DefaultTheme().Metrics.IconNormal},
 			{Kind: ui.KindText, Key: "media-title", MaxWidth: maxWidth, Marquee: true},
 		}}
 	return textWidget{
@@ -42,9 +54,25 @@ func refreshMediaWidget(row *ui.Node, v barView) bool {
 	case services.PlaybackPaused:
 		icon = "play_arrow"
 	}
-	if row.Children[0].Icon != icon {
-		row.Children[0].Icon = icon
-		changed = true
+	leading := row.Children[0]
+	if v.Media.Available && v.MediaArt != nil {
+		if leading.Kind != ui.KindImage || leading.Image != v.MediaArt {
+			leading.Kind = ui.KindImage
+			leading.Image = v.MediaArt
+			leading.ImageSize = mediaBarArtSize
+			leading.Shape = ui.ShapeSmall
+			leading.Icon = ""
+			changed = true
+		}
+	} else {
+		if leading.Kind != ui.KindIcon || leading.Icon != icon || leading.Image != nil {
+			leading.Kind = ui.KindIcon
+			leading.Image = nil
+			leading.ImageSize = 0
+			leading.Shape = ui.ShapeInherit
+			leading.Icon = icon
+			changed = true
+		}
 	}
 	if absent := !v.Media.Available; row.Absent != absent {
 		row.Absent = absent
