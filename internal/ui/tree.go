@@ -43,6 +43,11 @@ const (
 	// KindRadialGauge is a compact labelled circular progress indicator used
 	// by the bar's system summary.
 	KindRadialGauge
+	// KindStack lays every child into its own content box rather than flowing
+	// them. Children paint in order, so the last is on top, and Hit already
+	// walks children in reverse, so the topmost is hit first. It exists for a
+	// card with a background image behind its content.
+	KindStack
 
 	// kindCount is one past the last kind. It exists so a test can assert that
 	// every declared kind is measurable, and it must stay last.

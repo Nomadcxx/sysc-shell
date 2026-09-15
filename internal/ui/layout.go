@@ -62,6 +62,15 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 			if err := LayoutColumn(child, box, measure); err != nil {
 				return fmt.Errorf("ui: child %d: %w", i, err)
 			}
+		case KindStack:
+			if child.Width <= 0 && (i == len(root.Children)-1 || root.PinEnd) {
+				w = remain
+			}
+			box := Rect{X: x, Y: content.Y, W: min(w, remain), H: content.H}
+			child.Bounds = box
+			if err := layoutStackChildren(child, measure); err != nil {
+				return fmt.Errorf("ui: child %d: %w", i, err)
+			}
 		case KindScroll, KindVirtualList:
 			if child.Width <= 0 {
 				w = content.X + content.W - x
@@ -345,6 +354,9 @@ func layoutCapsuleChild(n *Node, measure MeasureText) error {
 		return Layout(child, box, measure)
 	case KindColumn:
 		return LayoutColumn(child, inner, measure)
+	case KindStack:
+		child.Bounds = inner
+		return layoutStackChildren(child, measure)
 	}
 	w, h, err := measureNode(child, inner.H, measure)
 	if err != nil {
@@ -528,9 +540,65 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 			w = 220
 		}
 		return w, contentHeight, nil
+	case KindStack:
+		// A stack shares one box, so its intrinsic size is the maximum of its
+		// children rather than their sum. Explicit dimensions reserve that
+		// dimension, keeping measurement and placement in agreement.
+		w, h := 2*n.Padding, 2*n.Padding
+		for i, child := range n.Children {
+			if child == nil {
+				return 0, 0, fmt.Errorf("stack child %d is nil", i)
+			}
+			cw, ch, err := measureNode(child, contentHeight, measure)
+			if err != nil {
+				return 0, 0, err
+			}
+			w = max(w, cw+2*n.Padding)
+			h = max(h, ch+2*n.Padding)
+		}
+		if n.Width > 0 {
+			w = n.Width
+		}
+		if n.Height > 0 {
+			h = n.Height
+		}
+		return w, h, nil
 	default:
 		return 0, 0, fmt.Errorf("unsupported kind %d", n.Kind)
 	}
+}
+
+// layoutStackChildren lays every child into the stack's content box. They
+// overlap by design; paint order decides what is visible and Hit's reverse
+// walk decides what is clicked.
+func layoutStackChildren(n *Node, measure MeasureText) error {
+	if len(n.Children) == 0 {
+		return nil
+	}
+	inner := Rect{
+		X: n.Bounds.X + n.Padding,
+		Y: n.Bounds.Y + n.Padding,
+		W: max(n.Bounds.W-2*n.Padding, 0),
+		H: max(n.Bounds.H-2*n.Padding, 0),
+	}
+	for i, child := range n.Children {
+		if child == nil {
+			return fmt.Errorf("ui: stack child %d is nil", i)
+		}
+		switch child.Kind {
+		case KindColumn:
+			if err := LayoutColumn(child, inner, measure); err != nil {
+				return err
+			}
+		case KindRow:
+			if err := Layout(child, inner, measure); err != nil {
+				return err
+			}
+		default:
+			child.Bounds = inner
+		}
+	}
+	return nil
 }
 
 // Hit reports the action of the topmost arranged node containing the point.

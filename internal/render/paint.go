@@ -336,7 +336,7 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 		return nil
 
 	// Segmented rows own allocation, not chrome: each segment paints itself.
-	case ui.KindColumn, ui.KindDropZone, ui.KindSegmented:
+	case ui.KindColumn, ui.KindDropZone, ui.KindSegmented, ui.KindStack:
 		for i, child := range n.Children {
 			if child == nil {
 				return fmt.Errorf("nil child %d", i)
