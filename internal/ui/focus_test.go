@@ -15,6 +15,18 @@ func TestFocusOrderIsTreeOrder(t *testing.T) {
 	}
 }
 
+func TestFocusablesSkipsEffectLayers(t *testing.T) {
+	t.Parallel()
+	effect := &Node{Kind: KindEffect, Focusable: true, Name: "effect"}
+	button := &Node{Kind: KindButton, Focusable: true, Name: "Continue"}
+	root := &Node{Kind: KindColumn, Children: []*Node{effect, button}}
+
+	f := Focusables(root)
+	if len(f) != 1 || f[0] != button {
+		t.Fatalf("focus = %+v, want only the button", f)
+	}
+}
+
 func TestRovingIndexWrapsAndClamps(t *testing.T) {
 	t.Parallel()
 	r := &Roving{Count: 3}
