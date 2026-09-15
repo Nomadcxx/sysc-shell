@@ -1146,3 +1146,117 @@ func TestWallpaperRoundTrip(t *testing.T) {
 		t.Fatalf("round trip = %+v, want %+v", back.Wallpaper, cfg.Wallpaper)
 	}
 }
+
+func TestTheWeatherLocationLabelLoads(t *testing.T) {
+	t.Parallel()
+	body := `{"weather":{"latitude":0,"longitude":0,"location":"Brisbane"}}`
+	cfg, err := Parse([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Weather.Location != "Brisbane" {
+		t.Fatalf("location = %q, want Brisbane", cfg.Weather.Location)
+	}
+}
+
+func TestTheWeatherLocationLabelIsOptional(t *testing.T) {
+	t.Parallel()
+	cfg, err := Parse([]byte(`{"weather":{"latitude":0,"longitude":0}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Weather.Location != "" {
+		t.Fatalf("location = %q, want empty", cfg.Weather.Location)
+	}
+}
+
+func TestAnOversizedWeatherLocationIsRejected(t *testing.T) {
+	t.Parallel()
+	body := `{"weather":{"latitude":0,"longitude":0,"location":"` + strings.Repeat("x", 81) + `"}}`
+	if _, err := Parse([]byte(body)); err == nil {
+		t.Fatal("an 81-byte location was accepted")
+	}
+}
+
+func TestWeatherLocationControlCharactersAreRejected(t *testing.T) {
+	t.Parallel()
+	for _, label := range []string{"a\nb", "a\tb", "a\x00b"} {
+		body := `{"weather":{"latitude":0,"longitude":0,"location":"` + label + `"}}`
+		if _, err := Parse([]byte(body)); err == nil {
+			t.Fatalf("a control character in the location was accepted: %q", label)
+		}
+	}
+}
+
+func TestTheWeatherLocationLabelRoundTripsThroughWrite(t *testing.T) {
+	t.Parallel()
+	body := `{"weather":{"latitude":27.47,"longitude":153.02,"location":"Brisbane"}}`
+	cfg, err := Parse([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(t.TempDir(), "config.json")
+	if err := Write(p, cfg); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Weather.Location != "Brisbane" || got.Weather.Latitude != 27.47 {
+		t.Fatalf("location = %q/%v, want Brisbane/27.47", got.Weather.Location, got.Weather.Latitude)
+	}
+}
+
+func TestTheWeatherCityLoads(t *testing.T) {
+	t.Parallel()
+	cfg, err := Parse([]byte(`{"weather":{"city":"Brisbane"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Weather.Configured || cfg.Weather.City != "Brisbane" {
+		t.Fatalf("city = %q configured = %v, want Brisbane/true", cfg.Weather.City, cfg.Weather.Configured)
+	}
+}
+
+func TestTheWeatherCityAndCoordinatesAreMutuallyExclusive(t *testing.T) {
+	t.Parallel()
+	body := `{"weather":{"city":"Brisbane","latitude":27.47,"longitude":153.02}}`
+	if _, err := Parse([]byte(body)); err == nil {
+		t.Fatal("a city together with coordinates was accepted")
+	}
+}
+
+func TestTheWeatherStillNeedsCityOrCoordinates(t *testing.T) {
+	t.Parallel()
+	if _, err := Parse([]byte(`{"weather":{}}`)); err == nil {
+		t.Fatal("a weather block with neither city nor coordinates was accepted")
+	}
+}
+
+func TestTheWeatherCityRoundTripsThroughWrite(t *testing.T) {
+	t.Parallel()
+	cfg, err := Parse([]byte(`{"weather":{"city":"Brisbane"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(t.TempDir(), "config.json")
+	if err := Write(p, cfg); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Weather.City != "Brisbane" {
+		t.Fatalf("city = %q after the round trip", got.Weather.City)
+	}
+}

@@ -171,10 +171,11 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 		ccQuickAccessButton(quickWidth, "wallpaper", "Wallpaper", "cc:wallpaper", false),
 	}}
 
+	weatherSummary, weatherTone := ccWeatherSummary(reading)
 	clockWeather := monitorCard(m, []*ui.Node{
 		monitorCardTitle(ccClock(now), 0),
 		{Kind: ui.KindText, Text: ccDate(now), TextRole: theme.RoleCaption},
-		{Kind: ui.KindText, Text: ccWeatherSummary(reading)},
+		{Kind: ui.KindText, Text: weatherSummary, Tone: weatherTone},
 	})
 	clockWeather.Height = ccCardH
 	sysmon := monitorCard(m, []*ui.Node{
@@ -249,11 +250,19 @@ func ccDate(now time.Time) string {
 	return now.Format("Monday, 2 January")
 }
 
-func ccWeatherSummary(reading services.Reading) string {
+func ccWeatherSummary(reading services.Reading) (string, ui.Tone) {
 	if !reading.Observed {
-		return ccDash
+		if !reading.FailedSince.IsZero() {
+			return "weather unavailable", ui.ToneError
+		}
+		return ccDash, ui.ToneNormal
 	}
-	return fmt.Sprintf("%c %.0f%s", render.IconRune(reading.Code), reading.Temperature, unitSuffix(reading.Unit))
+	isDay := reading.IsDay == nil || *reading.IsDay
+	text := fmt.Sprintf("%c %.0f%s", render.WeatherIcon(reading.Code, isDay), reading.Temperature, unitSuffix(reading.Unit))
+	if reading.Stale() {
+		text += " (" + humaniseAge(time.Since(reading.FetchedAt)) + ")"
+	}
+	return text, ui.ToneNormal
 }
 
 func ccPercent(value int, ok bool) string {
@@ -385,22 +394,29 @@ func ccWeather(r *Registry, h *PanelHost) *ui.Node {
 	location := ccDash
 	if r != nil {
 		reading = r.reading
-		location = fmt.Sprintf("%.2f°, %.2f°", r.cfg.Weather.Latitude, r.cfg.Weather.Longitude)
+		location = weatherLocation(r.cfg.Weather, reading)
 	}
-	icon, temperature, condition, fetched := "cloud", ccDash, ccDash, ccDash
+	icon, temperature, condition, conditionTone, fetched := "cloud", ccDash, ccDash, ui.ToneNormal, ccDash
 	if reading.Observed {
-		icon = ccWeatherIcon(reading.Code)
+		isDay := reading.IsDay == nil || *reading.IsDay
+		icon = render.WeatherIconName(reading.Code, isDay)
 		temperature = fmt.Sprintf("%.0f%s", reading.Temperature, unitSuffix(reading.Unit))
-		condition = ccWeatherCondition(reading.Code)
+		condition = render.WeatherCondition(reading.Code)
 		if !reading.FetchedAt.IsZero() {
 			fetched = "Updated " + reading.FetchedAt.Format("15:04")
+			if reading.Stale() {
+				fetched += " · Age " + humaniseAge(time.Since(reading.FetchedAt))
+			}
 		}
+	} else if !reading.FailedSince.IsZero() {
+		condition, conditionTone = "weather unavailable", ui.ToneError
 	}
 	today := monitorCard(m, []*ui.Node{
 		monitorCardTitle("Today", 0),
 		{Kind: ui.KindIcon, Icon: icon, IconSize: m.IconLarge},
 		{Kind: ui.KindText, Text: temperature, TextRole: theme.RoleTitle, Tabular: true},
-		{Kind: ui.KindText, Text: condition, TextRole: theme.RoleLabel},
+		{Kind: ui.KindText, Text: condition, TextRole: theme.RoleLabel, Tone: conditionTone},
+		{Kind: ui.KindText, Text: weatherDayRange(reading), TextRole: theme.RoleCaption, Tabular: true},
 		{Kind: ui.KindText, Text: location, TextRole: theme.RoleCaption},
 		{Kind: ui.KindText, Text: fetched, TextRole: theme.RoleCaption},
 	})
@@ -430,13 +446,8 @@ func ccForecastDay(m theme.Metrics, width int, day *services.Day, unit services.
 		} else {
 			label = ccText(day.Date)
 		}
-		icon = ccWeatherIcon(day.Code)
-		temperature = fmt.Sprintf("%.0f° / %.0f°", day.High, day.Low)
-		if unit == services.UnitFahrenheit {
-			temperature += "F"
-		} else {
-			temperature += "C"
-		}
+		icon = render.WeatherIconName(day.Code, true)
+		temperature = fmt.Sprintf("%.0f%s / %.0f%s", day.High, unitSuffix(unit), day.Low, unitSuffix(unit))
 	}
 	card := monitorCard(m, []*ui.Node{
 		{Kind: ui.KindText, Text: label, TextRole: theme.RoleLabel},
@@ -445,32 +456,6 @@ func ccForecastDay(m theme.Metrics, width int, day *services.Day, unit services.
 	})
 	card.Width, card.Height = width, ccForecastH
 	return card
-}
-
-func ccWeatherIcon(code int) string {
-	switch {
-	case code == 0:
-		return "sunny"
-	case code == 1 || code == 2:
-		return "partly_cloudy_day"
-	case code == 45 || code == 48:
-		return "foggy"
-	case code >= 51 && code <= 67 || code >= 80 && code <= 82:
-		return "rainy"
-	case code >= 71 && code <= 77 || code == 85 || code == 86:
-		return "weather_snowy"
-	case code >= 95 && code <= 99:
-		return "thunderstorm"
-	default:
-		return "cloud"
-	}
-}
-
-func ccWeatherCondition(code int) string {
-	if word, ok := conditionWords[render.IconRune(code)]; ok {
-		return word
-	}
-	return "Cloudy"
 }
 
 func ccAudio(r *Registry, h *PanelHost) *ui.Node {

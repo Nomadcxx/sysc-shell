@@ -57,6 +57,14 @@ GLYPHS = [
     ("uniE025", 0xE025, "sysmon-cpu"),
     ("uniE026", 0xE026, "sysmon-memory"),
     ("uniE027", 0xE027, "sysmon-gpu"),
+    ("uniE028", 0xE028, "clear-night"),
+    ("uniE029", 0xE029, "partly-cloudy-night"),
+    ("uniE02A", 0xE02A, "thermometer"),
+    ("uniE02B", 0xE02B, "wind"),
+    ("uniE02C", 0xE02C, "humidity"),
+    ("uniE02D", 0xE02D, "sunrise"),
+    ("uniE02E", 0xE02E, "sunset"),
+    ("uniE02F", 0xE02F, "elevation"),
 ]
 
 UPM = 1000

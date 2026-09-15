@@ -86,6 +86,25 @@ const (
 	gaugeRuneLast   = iconGaugeGPU
 )
 
+// The night weather glyphs extend the font after the sysmon gauges, so they
+// sit outside the contiguous weather run they belong to conceptually; the
+// font map routes them as their own band.
+const (
+	iconClearNight rune = gaugeRuneLast + 1 + iota
+	iconPartlyCloudyNight
+)
+
+// The weather detail glyphs extend the font after the night pair. They label
+// the panel's detail rows: feels-like, wind, humidity, sun times, elevation.
+const (
+	iconThermometer rune = iconPartlyCloudyNight + 1 + iota
+	iconWind
+	iconHumidity
+	iconSunrise
+	iconSunset
+	iconElevation
+)
+
 // batteryLevels is how many level glyphs each state has.
 const batteryLevels = 7
 
@@ -195,6 +214,73 @@ func IconName(code int) string {
 	return "cloud"
 }
 
+// WeatherIcon is the symbol for a WMO code at a time of day. Only the clear
+// and partly-cloudy categories change by night, as the reference renders
+// them; an absent is_day reading passes true and sees the day glyph.
+func WeatherIcon(code int, isDay bool) rune {
+	if !isDay {
+		switch {
+		case code == 0:
+			return iconClearNight
+		case code >= 1 && code <= 2:
+			return iconPartlyCloudyNight
+		}
+	}
+	return IconRune(code)
+}
+
+// WeatherIconName is the catalogue name for WeatherIcon.
+func WeatherIconName(code int, isDay bool) string {
+	switch WeatherIcon(code, isDay) {
+	case iconClearDay:
+		return "clear-day"
+	case iconClearNight:
+		return "clear-night"
+	case iconPartlyCloudy:
+		return "partly-cloudy"
+	case iconPartlyCloudyNight:
+		return "partly-cloudy-night"
+	case iconCloud:
+		return "cloud"
+	case iconFog:
+		return "fog"
+	case iconRain:
+		return "rain"
+	case iconSnow:
+		return "snow"
+	case iconHeavySnow:
+		return "heavy-snow"
+	case iconThunderstorm:
+		return "thunderstorm"
+	}
+	return "cloud"
+}
+
+// WeatherCondition is the one condition-word table. Every surface names a
+// WMO code through this rather than keeping its own list; an unrecognised
+// code reads as cloudy, matching the glyph fallback.
+func WeatherCondition(code int) string {
+	switch IconRune(code) {
+	case iconClearDay:
+		return "Clear"
+	case iconPartlyCloudy:
+		return "Partly cloudy"
+	case iconCloud:
+		return "Cloudy"
+	case iconFog:
+		return "Fog"
+	case iconRain:
+		return "Rain"
+	case iconSnow:
+		return "Snow"
+	case iconHeavySnow:
+		return "Heavy snow"
+	case iconThunderstorm:
+		return "Thunderstorm"
+	}
+	return "Cloudy"
+}
+
 // BatteryIconRune picks the glyph for a charge and state.
 //
 // Critical overrides the level entirely: a battery about to die should look
@@ -270,27 +356,35 @@ func BatteryIconRune(charge float64, charging, critical bool) rune {
 // appear in the shell stays the shell's to decide, and a name the font does
 // not have is a diagnosable error instead of a missing-glyph box.
 var iconNames = map[string]rune{
-	"clear-day":         iconClearDay,
-	"partly-cloudy":     iconPartlyCloudy,
-	"cloud":             iconCloud,
-	"fog":               iconFog,
-	"rain":              iconRain,
-	"snow":              iconSnow,
-	"heavy-snow":        iconHeavySnow,
-	"thunderstorm":      iconThunderstorm,
-	"camera":            iconCamera,
-	"camera-off":        iconCameraOff,
-	"record":            iconRecord,
-	"stop":              iconStop,
-	"replay":            iconReplay,
-	"notifications":     iconNotifications,
-	"notifications-off": iconNotificationsOff,
-	"close":             iconClose,
-	"schedule":          iconSchedule,
-	"ghost":             iconGhost,
-	"sysmon-cpu":        iconGaugeCPU,
-	"sysmon-memory":     iconGaugeMemory,
-	"sysmon-gpu":        iconGaugeGPU,
+	"clear-day":           iconClearDay,
+	"clear-night":         iconClearNight,
+	"partly-cloudy":       iconPartlyCloudy,
+	"partly-cloudy-night": iconPartlyCloudyNight,
+	"cloud":               iconCloud,
+	"fog":                 iconFog,
+	"rain":                iconRain,
+	"snow":                iconSnow,
+	"heavy-snow":          iconHeavySnow,
+	"thunderstorm":        iconThunderstorm,
+	"thermometer":         iconThermometer,
+	"wind":                iconWind,
+	"humidity":            iconHumidity,
+	"sunrise":             iconSunrise,
+	"sunset":              iconSunset,
+	"elevation":           iconElevation,
+	"camera":              iconCamera,
+	"camera-off":          iconCameraOff,
+	"record":              iconRecord,
+	"stop":                iconStop,
+	"replay":              iconReplay,
+	"notifications":       iconNotifications,
+	"notifications-off":   iconNotificationsOff,
+	"close":               iconClose,
+	"schedule":            iconSchedule,
+	"ghost":               iconGhost,
+	"sysmon-cpu":          iconGaugeCPU,
+	"sysmon-memory":       iconGaugeMemory,
+	"sysmon-gpu":          iconGaugeGPU,
 }
 
 // IconByName resolves a catalogue name to its symbol.

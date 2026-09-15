@@ -415,6 +415,30 @@ func TestHomeShowsDashesBeforeTheFirstSample(t *testing.T) {
 	}
 }
 
+func TestHomeWeatherSummaryFollowsNightAndFailureStates(t *testing.T) {
+	falseValue := false
+	night := services.Reading{
+		Observed: true, Temperature: 18, Unit: services.UnitCelsius, Code: 0,
+		IsDay: &falseValue, FetchedAt: time.Now().Add(-90 * time.Minute),
+		FailedSince: time.Now().Add(-30 * time.Minute),
+	}
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	summary := findNode(ccHome(&Registry{reading: night}, h), func(n *ui.Node) bool {
+		return n.Kind == ui.KindText && strings.Contains(n.Text, "18")
+	})
+	if summary == nil || !strings.Contains(summary.Text, string(render.WeatherIcon(0, false))) ||
+		summary.Tone != ui.ToneNormal || !strings.Contains(summary.Text, "1h") {
+		t.Fatalf("night stale summary = %+v, want night glyph, normal tone and age", summary)
+	}
+
+	failed := findNode(ccHome(&Registry{reading: services.Reading{FailedSince: time.Now()}}, h), func(n *ui.Node) bool {
+		return n.Kind == ui.KindText && n.Text == "weather unavailable"
+	})
+	if failed == nil || failed.Tone != ui.ToneError {
+		t.Fatalf("failed summary = %+v, want error tone", failed)
+	}
+}
+
 func TestControlCentreHomeQuickAccessControlsAreSeparated(t *testing.T) {
 	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
 	quick := ccHome(&Registry{}, h).Children[1]
@@ -1034,5 +1058,105 @@ func TestCCAvatarKeepsCircularGeometryForImageAndFallback(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestTheWeatherPageCarriesTheDayRange(t *testing.T) {
+	r := &Registry{reading: services.Reading{
+		Observed: true, Temperature: 18, Unit: services.UnitCelsius, Code: 0,
+		FetchedAt: time.Now(),
+		Daily: []services.Day{
+			{Date: "2026-09-15", Code: 0, High: 22, Low: 6, Sunrise: "2026-09-15T06:12", Sunset: "2026-09-15T18:44"},
+		},
+	}}
+	h := &PanelHost{id: PanelControlCenter, section: "weather", theme: DefaultTheme()}
+	page := ccWeather(r, h)
+	var texts []string
+	var walk func(n *ui.Node)
+	walk = func(n *ui.Node) {
+		if n.Text != "" {
+			texts = append(texts, n.Text)
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(page)
+	joined := strings.Join(texts, "\n")
+	if !strings.Contains(joined, "Low 6°") || !strings.Contains(joined, "High 22°") {
+		t.Fatalf("the Today card lost the day range: %q", texts)
+	}
+}
+
+func TestTheWeatherPageNamesAFailedReading(t *testing.T) {
+	r := &Registry{reading: services.Reading{FailedSince: time.Now()}}
+	h := &PanelHost{id: PanelControlCenter, section: "weather", theme: DefaultTheme()}
+	page := ccWeather(r, h)
+	var texts []string
+	var walk func(n *ui.Node)
+	walk = func(n *ui.Node) {
+		if n.Text != "" {
+			texts = append(texts, n.Text)
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(page)
+	if !strings.Contains(strings.Join(texts, "\n"), "weather unavailable") {
+		t.Fatalf("a failed reading rendered dashes instead of the failure: %q", texts)
+	}
+}
+
+func TestTheWeatherPageMarksAStaleReading(t *testing.T) {
+	r := &Registry{reading: services.Reading{
+		Observed: true, Temperature: 18, Unit: services.UnitCelsius, Code: 0,
+		FetchedAt: time.Now().Add(-90 * time.Minute), FailedSince: time.Now().Add(-30 * time.Minute),
+	}}
+	h := &PanelHost{id: PanelControlCenter, section: "weather", theme: DefaultTheme()}
+	page := ccWeather(r, h)
+	var texts []string
+	var walk func(n *ui.Node)
+	walk = func(n *ui.Node) {
+		if n.Text != "" {
+			texts = append(texts, n.Text)
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(page)
+	if !strings.Contains(strings.Join(texts, "\n"), "1h") {
+		t.Fatalf("a stale reading does not show its age: %q", texts)
+	}
+}
+
+func TestTheWeatherPageUsesTheNightGlyph(t *testing.T) {
+	night := false
+	r := &Registry{reading: services.Reading{
+		Observed: true, Temperature: 18, Unit: services.UnitCelsius, Code: 0,
+		IsDay: &night, FetchedAt: time.Now(),
+	}}
+	h := &PanelHost{id: PanelControlCenter, section: "weather", theme: DefaultTheme()}
+	page := ccWeather(r, h)
+	var icons []string
+	var walk func(n *ui.Node)
+	walk = func(n *ui.Node) {
+		if n.Kind == ui.KindIcon && n.Icon != "" {
+			icons = append(icons, n.Icon)
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(page)
+	found := false
+	for _, icon := range icons {
+		if icon == "clear-night" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("a night reading rendered %q, want clear-night", icons)
 	}
 }

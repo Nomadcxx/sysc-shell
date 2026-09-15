@@ -397,8 +397,14 @@ func panelsDiff(got, base Panels) *wirePanels {
 }
 
 func weatherWire(w Weather) *wireWeather {
-	lat, lon := w.Latitude, w.Longitude
-	out := &wireWeather{Latitude: &lat, Longitude: &lon}
+	out := &wireWeather{}
+	if w.City != "" {
+		v := w.City
+		out.City = &v
+	} else {
+		lat, lon := w.Latitude, w.Longitude
+		out.Latitude, out.Longitude = &lat, &lon
+	}
 	if w.Unit != "" {
 		v := w.Unit
 		out.Unit = &v
@@ -406,6 +412,10 @@ func weatherWire(w Weather) *wireWeather {
 	if w.Interval > 0 {
 		v := w.Interval.String()
 		out.Interval = &v
+	}
+	if w.Location != "" {
+		v := w.Location
+		out.Location = &v
 	}
 	return out
 }

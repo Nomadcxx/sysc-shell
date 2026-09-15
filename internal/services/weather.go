@@ -18,6 +18,9 @@ type Unit = weather.Unit
 // Day is one forecast day decoded by the wire package.
 type Day = weather.Day
 
+// Hour is one forecast hour decoded by the wire package.
+type Hour = weather.Hour
+
 const (
 	UnitCelsius    = weather.UnitCelsius
 	UnitFahrenheit = weather.UnitFahrenheit
@@ -38,7 +41,26 @@ type Reading struct {
 	Temperature float64
 	Unit        Unit
 	Code        int // WMO weather code
-	Daily       []Day
+	// Apparent through Elevation mirror the wire model's optional fields and
+	// are nil when the body did not carry them; the timezone names are nil for
+	// the same reason. The UI renders a dash, never a silent zero.
+	Apparent      *float64
+	IsDay         *bool
+	Humidity      *float64
+	WindSpeed     *float64
+	WindDirection *float64
+	UVIndex       *float64
+	Elevation     *float64
+	Timezone      *string
+	// TimezoneAbbreviation is the one long name Open-Meteo uses; it mirrors
+	// the wire field rather than abbreviating it.
+	TimezoneAbbreviation *string
+	// Location is the geocoded display name for a configured city; empty on
+	// the coordinates path, where the configuration carries the label.
+	Location string
+	Daily    []Day
+	Hourly   []weather.Hour
+
 	FetchedAt   time.Time
 	FailedSince time.Time // zero while healthy
 }
@@ -81,6 +103,17 @@ type Weather struct {
 	client *http.Client
 	// endpoint is overridden by tests to point at an httptest server.
 	endpoint string
+	// geocodingEndpoint resolves a configured city; overridden by tests the
+	// same way.
+	geocodingEndpoint string
+	// city, when set, names the place to geocode. The resolution is cached:
+	// a stable address is stable coordinates, so one geocode serves every
+	// later fetch until the city changes.
+	city                     string
+	cityVersion              uint64
+	placeName                string
+	resolvedLat, resolvedLon float64
+	resolved                 bool
 	// minInterval is the fetch floor. Zero disables it, which tests that need
 	// two fetches in one deadline use; NewWeather sets the production floor.
 	minInterval time.Duration
@@ -90,14 +123,33 @@ const openMeteoEndpoint = weather.DefaultEndpoint
 
 func NewWeather(latitude, longitude float64, unit Unit) *Weather {
 	return &Weather{
-		rearm:       make(chan struct{}, 1),
-		updates:     make(chan Reading, 1),
-		latitude:    latitude,
-		longitude:   longitude,
-		unit:        unit,
-		client:      &http.Client{Timeout: connectAndReadBudget},
-		endpoint:    openMeteoEndpoint,
-		minInterval: minFetchInterval,
+		rearm:             make(chan struct{}, 1),
+		updates:           make(chan Reading, 1),
+		latitude:          latitude,
+		longitude:         longitude,
+		unit:              unit,
+		client:            &http.Client{Timeout: connectAndReadBudget},
+		endpoint:          openMeteoEndpoint,
+		geocodingEndpoint: weather.DefaultGeocodingEndpoint,
+		minInterval:       minFetchInterval,
+	}
+}
+
+// SetCity points the service at a place name to geocode. A change clears the
+// cached resolution and re-arms the fetch; the coordinates path resumes when
+// the name is empty.
+func (w *Weather) SetCity(city string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if city == w.city {
+		return
+	}
+	w.city = city
+	w.cityVersion++
+	w.placeName, w.resolved = "", false
+	select {
+	case w.rearm <- struct{}{}:
+	default:
 	}
 }
 
@@ -225,7 +277,7 @@ func (w *Weather) RequestURL() string { return w.requestURL() }
 
 func (w *Weather) requestURLLocked() string {
 	return weather.RequestURL(w.endpoint, weather.Query{
-		Latitude: w.latitude, Longitude: w.longitude, Unit: w.unit, Daily: true,
+		Latitude: w.latitude, Longitude: w.longitude, Unit: w.unit, Daily: true, Hourly: true,
 	})
 }
 
@@ -311,25 +363,80 @@ func (w *Weather) run(stop, done chan struct{}) {
 }
 
 func (w *Weather) fetch() (Reading, error) {
-	w.mu.Lock()
-	q := weather.Query{Latitude: w.latitude, Longitude: w.longitude, Unit: w.unit, Daily: true, Endpoint: w.endpoint}
-	unit := w.unit
-	w.mu.Unlock()
-
 	ctx, cancel := context.WithTimeout(context.Background(), connectAndReadBudget)
 	defer cancel()
-	fc, err := weather.Fetch(ctx, w.client, q)
-	if err != nil {
-		return Reading{}, err
+
+	for {
+		w.mu.Lock()
+		q := weather.Query{Latitude: w.latitude, Longitude: w.longitude, Unit: w.unit, Daily: true, Hourly: true, Endpoint: w.endpoint}
+		city, cityVersion := w.city, w.cityVersion
+		name, lat, lon, resolved := w.placeName, w.resolvedLat, w.resolvedLon, w.resolved
+		w.mu.Unlock()
+
+		location := ""
+		if city != "" {
+			if !resolved {
+				place, err := weather.Geocode(ctx, w.client, w.geocodingEndpoint, city)
+				if err != nil {
+					w.mu.Lock()
+					changed := w.cityVersion != cityVersion
+					w.mu.Unlock()
+					if changed {
+						continue
+					}
+					return Reading{}, err
+				}
+				name, lat, lon, resolved = place.Name, place.Latitude, place.Longitude, true
+				w.mu.Lock()
+				if w.city != city || w.cityVersion != cityVersion {
+					w.mu.Unlock()
+					continue
+				}
+				w.placeName, w.resolvedLat, w.resolvedLon, w.resolved = name, lat, lon, true
+				w.mu.Unlock()
+			}
+			q.Latitude, q.Longitude = lat, lon
+			location = name
+		}
+
+		fc, err := weather.Fetch(ctx, w.client, q)
+		if err != nil {
+			w.mu.Lock()
+			changed := w.cityVersion != cityVersion
+			w.mu.Unlock()
+			if changed {
+				continue
+			}
+			return Reading{}, err
+		}
+		w.mu.Lock()
+		if w.cityVersion != cityVersion {
+			w.mu.Unlock()
+			continue
+		}
+		unit := w.unit
+		w.mu.Unlock()
+		return Reading{
+			Observed:             true,
+			Temperature:          fc.Current.Temperature,
+			Unit:                 unit,
+			Code:                 fc.Current.Code,
+			Apparent:             fc.Current.Apparent,
+			IsDay:                fc.Current.IsDay,
+			Humidity:             fc.Current.Humidity,
+			WindSpeed:            fc.Current.WindSpeed,
+			WindDirection:        fc.Current.WindDirection,
+			UVIndex:              fc.Current.UVIndex,
+			Elevation:            fc.Elevation,
+			Timezone:             fc.Timezone,
+			TimezoneAbbreviation: fc.TimezoneAbbreviation,
+			Daily:                append([]Day(nil), fc.Daily...),
+			Hourly:               append([]weather.Hour(nil), fc.Hourly...),
+			Location:             location,
+			FetchedAt:            time.Now(),
+		}, nil
 	}
-	return Reading{
-		Observed:    true,
-		Temperature: fc.Current.Temperature,
-		Unit:        unit,
-		Code:        fc.Current.Code,
-		Daily:       append([]Day(nil), fc.Daily...),
-		FetchedAt:   time.Now(),
-	}, nil
+
 }
 
 // sendReading publishes the newest reading, replacing one the consumer has not

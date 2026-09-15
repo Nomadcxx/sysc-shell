@@ -209,10 +209,17 @@ var (
 )
 
 type Weather struct {
-	Latitude   float64
-	Longitude  float64
-	Unit       string
-	Interval   time.Duration
+	Latitude  float64
+	Longitude float64
+	Unit      string
+	Interval  time.Duration
+	// City is an optional place name the shell resolves to coordinates
+	// through the forecast provider's geocoding. Exactly one of city or
+	// latitude+longitude is accepted.
+	City string
+	// Location is an optional display label for the place the coordinates
+	// name. It never feeds the request; the coordinates do that alone.
+	Location   string
 	Configured bool
 }
 
@@ -297,6 +304,7 @@ const (
 	// defaultWeatherInterval matches the reference shell's fifteen minutes.
 	defaultWeatherInterval  = 15 * time.Minute
 	defaultWeatherUnit      = "celsius"
+	maxWeatherLocationBytes = 80
 	defaultBatteryLabel     = "percent"
 	defaultBatteryWarnBelow = 20
 	// defaultBatteryInterval is coarser than the metric default: a battery

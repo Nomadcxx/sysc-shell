@@ -18,6 +18,7 @@ const (
 	PanelControlCenter
 	PanelNetwork
 	PanelBluetooth
+	PanelWeather
 )
 
 func (p PanelID) String() string {
@@ -46,6 +47,8 @@ func (p PanelID) String() string {
 		return "network"
 	case PanelBluetooth:
 		return "bluetooth"
+	case PanelWeather:
+		return "weather"
 	default:
 		return "unknown"
 	}
