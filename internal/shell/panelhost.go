@@ -202,6 +202,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelBluetooth, nil
 	case "weather":
 		return PanelWeather, nil
+	case "clipboard":
+		return PanelClipboard, nil
 	default:
 		return 0, fmt.Errorf("unknown panel")
 	}

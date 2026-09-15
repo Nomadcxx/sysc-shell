@@ -273,6 +273,10 @@ var knownItems = map[string]struct{}{
 	// player is on the session bus, and the design carries no player picker
 	// here — the control centre's Media page is the one picker.
 	"media": {},
+	// Clipboard is a daemon-backed metadata projection. Its bar glyph is
+	// useful even when the per-user daemon is unavailable, so it ships in the
+	// default layout and reports that state through its tooltip.
+	"clipboard": {},
 	// group holds other items inside one capsule. It carries no options of
 	// its own; every option belongs to a nested item.
 	"group": {},
@@ -368,6 +372,7 @@ func Default() Config {
 					{ID: "gpu", Display: "radial", Interval: defaultMetricInterval},
 				}},
 				{ID: "battery", Interval: defaultMetricInterval},
+				{ID: "clipboard"},
 				{ID: "notifications"},
 			},
 		},

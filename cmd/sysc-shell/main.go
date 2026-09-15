@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	clipboardclient "github.com/Nomadcxx/sysc-clipboard/client"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/ipc"
 	"github.com/Nomadcxx/sysc-shell/internal/notifyclient"
@@ -197,6 +198,33 @@ func run(ctx context.Context) (err error) {
 			cancel()
 		}
 	}()
+
+	// Clipboard history is an optional per-user daemon. A missing runtime
+	// socket is normal during startup; the projection remains unavailable and
+	// the rest of the shell continues to start.
+	if socket, socketErr := clipboardclient.DefaultSocketPath(); socketErr == nil {
+		if clipboardClient, clientErr := clipboardclient.New(socket); clientErr == nil {
+			registry.BindClipboard(clipboardClient)
+			go func() {
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case update, ok := <-clipboardClient.Updates():
+						if !ok {
+							return
+						}
+						registry.ApplyClipboard(update)
+					}
+				}
+			}()
+			go func() {
+				if err := clipboardClient.Run(ctx); err != nil && ctx.Err() == nil {
+					log.Printf("clipboard client: %v", err)
+				}
+			}()
+		}
+	}
 
 	// SIGHUP reloads. The handler only signals; the owner goroutine re-reads
 	// and validates the file itself, so no proxy is touched from here.

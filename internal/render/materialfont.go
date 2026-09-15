@@ -23,7 +23,8 @@ var materialTTF []byte
 var materialIcons = map[string]struct{}{
 	"lock": {}, "logout": {}, "bedtime": {}, "restart_alt": {}, "power_settings_new": {},
 	"speed": {}, "balance": {}, "energy_savings_leaf": {}, "check": {},
-	"close": {}, "chevron_left": {}, "chevron_right": {},
+	"content_paste": {},
+	"close":         {}, "chevron_left": {}, "chevron_right": {},
 	"search": {}, "settings": {}, "notifications": {}, "do_not_disturb_on": {},
 	"volume_up": {}, "volume_off": {}, "brightness_high": {},
 	"delete": {}, "schedule": {},

@@ -367,7 +367,7 @@ func TestDefaultVocabularyShipsBothClocksAndBothNiriWidgets(t *testing.T) {
 			members = []Item{item}
 		}
 		for _, m := range members {
-			if m.ID == "notifications" || m.ID == "running-apps" {
+			if m.ID == "notifications" || m.ID == "running-apps" || m.ID == "clipboard" {
 				continue
 			}
 			if m.Interval <= 0 {

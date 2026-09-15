@@ -13,6 +13,7 @@ import (
 var materialInventory = []string{
 	"lock", "logout", "bedtime", "restart_alt", "power_settings_new",
 	"speed", "balance", "energy_savings_leaf", "check",
+	"content_paste",
 	"close", "chevron_left", "chevron_right",
 	"search", "settings", "notifications", "do_not_disturb_on",
 	"volume_up", "volume_off", "brightness_high",
@@ -131,6 +132,23 @@ func TestSubsetCarriesCentreGlyphs(t *testing.T) {
 			t.Fatalf("%s at 20 px rasterised nothing", name)
 		}
 	}
+}
+
+func TestClipboardGlyphIsInTheSubsetAndRasterises(t *testing.T) {
+	t.Parallel()
+	if !ValidMaterialIcon("content_paste") {
+		t.Fatal("content_paste is not in the material icon subset")
+	}
+	mask, err := NewTextRenderer(mustTestFace(t)).RasterMaterialIcon("content_paste", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, alpha := range mask.Alpha.Pix {
+		if alpha > 0 {
+			return
+		}
+	}
+	t.Fatal("content_paste rasterised with no ink")
 }
 
 func TestKindIconUsesTheMaterialFaceNotTheBodyFace(t *testing.T) {
