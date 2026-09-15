@@ -141,6 +141,7 @@ type wireOutput struct {
 type wireWeather struct {
 	Latitude  *float64 `json:"latitude,omitempty"`
 	Longitude *float64 `json:"longitude,omitempty"`
+	City      *string  `json:"city,omitempty"`
 	Unit      *string  `json:"unit,omitempty"`
 	Interval  *string  `json:"interval,omitempty"`
 	Location  *string  `json:"location,omitempty"`
@@ -462,7 +463,8 @@ func applyTrayPreferences(w wireTrayPreferences) (TrayPreferences, error) {
 	return TrayPreferences{Hidden: hidden, Pinned: pinned, Order: order}, nil
 }
 
-// applyWeather resolves and validates the weather block.
+// applyWeather resolves and validates the weather block. A block names its
+// place exactly one way: a city the shell geocodes, or explicit coordinates.
 func applyWeather(w wireWeather, path string) (Weather, error) {
 	out := Weather{
 		Unit:       defaultWeatherUnit,
@@ -470,21 +472,32 @@ func applyWeather(w wireWeather, path string) (Weather, error) {
 		Configured: true,
 	}
 
-	if w.Latitude == nil {
-		return Weather{}, pathErr(path+".latitude", "is required")
-	}
-	if *w.Latitude < -90 || *w.Latitude > 90 {
-		return Weather{}, pathErr(path+".latitude", "%v is outside -90 through 90", *w.Latitude)
-	}
-	out.Latitude = *w.Latitude
+	if w.City != nil && *w.City != "" {
+		label, err := weatherPlaceLabel(*w.City, path+".city")
+		if err != nil {
+			return Weather{}, err
+		}
+		out.City = label
+		if w.Latitude != nil || w.Longitude != nil {
+			return Weather{}, pathErr(path+".city", "cannot be set together with latitude and longitude")
+		}
+	} else {
+		if w.Latitude == nil {
+			return Weather{}, pathErr(path+".latitude", "is required")
+		}
+		if *w.Latitude < -90 || *w.Latitude > 90 {
+			return Weather{}, pathErr(path+".latitude", "%v is outside -90 through 90", *w.Latitude)
+		}
+		out.Latitude = *w.Latitude
 
-	if w.Longitude == nil {
-		return Weather{}, pathErr(path+".longitude", "is required")
+		if w.Longitude == nil {
+			return Weather{}, pathErr(path+".longitude", "is required")
+		}
+		if *w.Longitude < -180 || *w.Longitude > 180 {
+			return Weather{}, pathErr(path+".longitude", "%v is outside -180 through 180", *w.Longitude)
+		}
+		out.Longitude = *w.Longitude
 	}
-	if *w.Longitude < -180 || *w.Longitude > 180 {
-		return Weather{}, pathErr(path+".longitude", "%v is outside -180 through 180", *w.Longitude)
-	}
-	out.Longitude = *w.Longitude
 
 	if w.Unit != nil {
 		if !weatherUnits[*w.Unit] {
@@ -503,18 +516,27 @@ func applyWeather(w wireWeather, path string) (Weather, error) {
 		out.Interval = interval
 	}
 	if w.Location != nil {
-		label := *w.Location
-		if len(label) > maxWeatherLocationBytes {
-			return Weather{}, pathErr(path+".location", "is %d bytes, over the %d-byte limit", len(label), maxWeatherLocationBytes)
-		}
-		for _, r := range label {
-			if unicode.IsControl(r) {
-				return Weather{}, pathErr(path+".location", "carries a control character")
-			}
+		label, err := weatherPlaceLabel(*w.Location, path+".location")
+		if err != nil {
+			return Weather{}, err
 		}
 		out.Location = label
 	}
 	return out, nil
+}
+
+// weatherPlaceLabel validates a free-text place label: bounded, and free of
+// control characters, so a stray newline cannot reach a rendered surface.
+func weatherPlaceLabel(value, path string) (string, error) {
+	if len(value) > maxWeatherLocationBytes {
+		return "", pathErr(path, "is %d bytes, over the %d-byte limit", len(value), maxWeatherLocationBytes)
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return "", pathErr(path, "carries a control character")
+		}
+	}
+	return value, nil
 }
 
 // requireWeatherWhenUsed is the configuration's one cross-section rule: a
