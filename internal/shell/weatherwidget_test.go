@@ -161,21 +161,25 @@ func TestARejectedReloadLeavesTheRequestUnchanged(t *testing.T) {
 }
 
 func observedWeather() services.Reading {
+	today := time.Now()
+	todayDate := today.Format("2006-01-02")
+	tomorrowDate := today.AddDate(0, 0, 1).Format("2006-01-02")
 	return services.Reading{
 		Observed: true, Temperature: 18.4, Unit: services.UnitCelsius,
 		Code: 0, FetchedAt: time.Now(),
 		Apparent: ptrF(9.5), Humidity: ptrF(62), UVIndex: ptrF(0.0),
 		WindSpeed: ptrF(10.4), WindDirection: ptrF(45),
-		Elevation: ptrF(64), Timezone: "Australia/Sydney", TimezoneAbbreviation: "GMT+10",
+		Elevation: ptrF(64), Timezone: ptrS("Australia/Sydney"), TimezoneAbbreviation: ptrS("GMT+10"),
 		Daily: []services.Day{
-			{Date: "2026-09-15", Code: 0, High: 22, Low: 6, Sunrise: "2026-09-15T06:12", Sunset: "2026-09-15T18:44", PrecipitationProbability: ptrF(10)},
-			{Date: "2026-09-16", Code: 61, High: 19, Low: 11, Sunrise: "2026-09-16T06:14", Sunset: "2026-09-16T18:42"},
+			{Date: todayDate, Code: 0, High: 22, Low: 6, Sunrise: todayDate + "T06:12", Sunset: todayDate + "T18:44", PrecipitationProbability: ptrF(10)},
+			{Date: tomorrowDate, Code: 61, High: 19, Low: 11, Sunrise: tomorrowDate + "T06:14", Sunset: tomorrowDate + "T18:42"},
 		},
 	}
 }
 
 func ptrF(v float64) *float64 { return &v }
 func ptrB(v bool) *bool       { return &v }
+func ptrS(v string) *string   { return &v }
 
 func TestTheWeatherWidgetBuildsAnIconRowWithThePanelAction(t *testing.T) {
 	t.Parallel()
@@ -207,7 +211,7 @@ func TestTheWeatherWidgetRefreshPaintsTheGlyphAndTemperature(t *testing.T) {
 		t.Fatalf("text = %q, want 18°C", text.Text)
 	}
 
-	night := observedWeather()
+	night := view.Weather
 	night.IsDay = ptrB(false)
 	if !w.refresh(barView{Weather: night}) {
 		t.Fatal("a changed reading reported no change")

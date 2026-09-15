@@ -130,8 +130,9 @@ func TestDecodeCarriesTheEnrichedCurrentAndRootFields(t *testing.T) {
 	if fc.Elevation == nil || *fc.Elevation != 64.0 {
 		t.Fatalf("elevation = %v", fc.Elevation)
 	}
-	if fc.Timezone != "Australia/Sydney" || fc.TimezoneAbbreviation != "GMT+10" {
-		t.Fatalf("timezone = %q / %q", fc.Timezone, fc.TimezoneAbbreviation)
+	if fc.Timezone == nil || *fc.Timezone != "Australia/Sydney" ||
+		fc.TimezoneAbbreviation == nil || *fc.TimezoneAbbreviation != "GMT+10" {
+		t.Fatalf("timezone = %q / %q", optionalString(fc.Timezone), optionalString(fc.TimezoneAbbreviation))
 	}
 }
 
@@ -175,12 +176,19 @@ func TestDecodeTreatsAbsentOptionalFieldsAsAbsent(t *testing.T) {
 	if c.Apparent != nil || c.IsDay != nil || c.Humidity != nil || c.WindSpeed != nil || c.WindDirection != nil || c.UVIndex != nil {
 		t.Fatalf("optional current fields survived an absent body: %+v", c)
 	}
-	if fc.Elevation != nil || fc.Timezone != "" || fc.TimezoneAbbreviation != "" {
+	if fc.Elevation != nil || fc.Timezone != nil || fc.TimezoneAbbreviation != nil {
 		t.Fatalf("root fields survived an absent body: %+v", fc)
 	}
 	if len(fc.Daily) != 0 {
 		t.Fatalf("daily = %d", len(fc.Daily))
 	}
+}
+
+func optionalString(value *string) string {
+	if value == nil {
+		return "<nil>"
+	}
+	return *value
 }
 
 func TestDecodeTreatsNullOptionalFieldsAsAbsent(t *testing.T) {
@@ -192,6 +200,39 @@ func TestDecodeTreatsNullOptionalFieldsAsAbsent(t *testing.T) {
 	}
 	if fc.Current.Apparent != nil || fc.Current.IsDay != nil || fc.Current.UVIndex != nil {
 		t.Fatalf("nulls decoded as present: %+v", fc.Current)
+	}
+}
+
+func TestDecodeTreatsNullOptionalArraysAndRootNamesAsAbsent(t *testing.T) {
+	t.Parallel()
+	body := `{
+	  "timezone":null,"timezone_abbreviation":null,
+	  "current":{"temperature_2m":1,"weather_code":0},
+	  "daily":{
+	    "time":["2026-09-02"],"weather_code":[0],
+	    "temperature_2m_max":[5],"temperature_2m_min":[-1],
+	    "sunrise":["2026-09-02T06:12"],"sunset":["2026-09-02T18:44"],
+	    "uv_index_max":[null],"precipitation_probability_max":[null],"precipitation_sum":[null]
+	  },
+	  "hourly":{
+	    "time":["2026-09-02T06:00"],"weather_code":[0],"temperature_2m":[1],
+	    "relative_humidity_2m":[null],"precipitation_probability":[null],"wind_speed_10m":[null]
+	  }
+	}`
+	fc, err := Decode([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fc.Daily) != 1 || fc.Daily[0].UVIndexMax != nil ||
+		fc.Daily[0].PrecipitationProbability != nil || fc.Daily[0].Precipitation != nil {
+		t.Fatalf("null daily values decoded as present: %+v", fc.Daily)
+	}
+	if len(fc.Hourly) != 1 || fc.Hourly[0].Humidity != nil ||
+		fc.Hourly[0].PrecipProbability != nil || fc.Hourly[0].WindSpeed != nil {
+		t.Fatalf("null hourly values decoded as present: %+v", fc.Hourly)
+	}
+	if fc.Timezone != nil || fc.TimezoneAbbreviation != nil {
+		t.Fatalf("null root names decoded as present: %q / %q", optionalString(fc.Timezone), optionalString(fc.TimezoneAbbreviation))
 	}
 }
 
@@ -217,6 +258,36 @@ func TestDecodeKeepsDaysWhenAnOptionalDailyArrayIsMissing(t *testing.T) {
 	}
 	if fc.Daily[0].UVIndexMax != nil || fc.Daily[0].PrecipitationProbability != nil || fc.Daily[0].Precipitation != nil {
 		t.Fatalf("optional daily fields decoded from a missing array: %+v", fc.Daily[0])
+	}
+}
+
+func TestDecodeOptionalArraysPadRequiredRowsWithoutTruncating(t *testing.T) {
+	t.Parallel()
+	body := `{
+	  "current":{"temperature_2m":1,"weather_code":0},
+	  "daily":{
+	    "time":["2026-09-02","2026-09-03"],"weather_code":[0,3],
+	    "temperature_2m_max":[5,6],"temperature_2m_min":[-1,0],
+	    "sunrise":["2026-09-02T06:12","2026-09-03T06:14"],
+	    "sunset":["2026-09-02T18:44","2026-09-03T18:42"],
+	    "uv_index_max":[4],"precipitation_probability_max":[10],"precipitation_sum":[0]
+	  },
+	  "hourly":{
+	    "time":["2026-09-02T06:00","2026-09-02T07:00"],"weather_code":[0,3],"temperature_2m":[1,2],
+	    "relative_humidity_2m":[60],"precipitation_probability":[10],"wind_speed_10m":[5]
+	  }
+	}`
+	fc, err := Decode([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fc.Daily) != 2 || fc.Daily[0].UVIndexMax == nil || *fc.Daily[0].UVIndexMax != 4 ||
+		fc.Daily[1].UVIndexMax != nil || fc.Daily[1].PrecipitationProbability != nil || fc.Daily[1].Precipitation != nil {
+		t.Fatalf("daily optional padding = %+v", fc.Daily)
+	}
+	if len(fc.Hourly) != 2 || fc.Hourly[0].Humidity == nil || *fc.Hourly[0].Humidity != 60 ||
+		fc.Hourly[1].Humidity != nil || fc.Hourly[1].PrecipProbability != nil || fc.Hourly[1].WindSpeed != nil {
+		t.Fatalf("hourly optional padding = %+v", fc.Hourly)
 	}
 }
 

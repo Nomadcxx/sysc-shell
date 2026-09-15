@@ -305,7 +305,9 @@ func TestASuccessfulFetchCarriesTheEnrichedCurrentFields(t *testing.T) {
 		if reading.WindDirection == nil || *reading.WindDirection != 45 || reading.UVIndex == nil || *reading.UVIndex != 0.0 {
 			t.Fatalf("direction/uv = %v/%v, want 45/0 carried through", reading.WindDirection, reading.UVIndex)
 		}
-		if reading.Elevation == nil || *reading.Elevation != 64.0 || reading.Timezone != "Australia/Sydney" || reading.TimezoneAbbreviation != "GMT+10" {
+		if reading.Elevation == nil || *reading.Elevation != 64.0 ||
+			reading.Timezone == nil || *reading.Timezone != "Australia/Sydney" ||
+			reading.TimezoneAbbreviation == nil || *reading.TimezoneAbbreviation != "GMT+10" {
 			t.Fatalf("root = %+v, want elevation and timezone carried through", reading)
 		}
 	case <-time.After(3 * time.Second):
@@ -394,6 +396,122 @@ func TestAGeocodeFailureLeavesTheReadingFailed(t *testing.T) {
 	}
 }
 
+func TestCityResolutionIsCachedAcrossForecastRetriesUntilTheCityChanges(t *testing.T) {
+	t.Parallel()
+	var geoCalls, forecastCalls atomic.Int32
+	geo := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		geoCalls.Add(1)
+		if r.URL.Query().Get("name") == "Beta" {
+			fmt.Fprint(rw, `{"results":[{"name":"Beta","latitude":2,"longitude":3}]}`)
+			return
+		}
+		fmt.Fprint(rw, `{"results":[{"name":"Alpha","latitude":-1,"longitude":1}]}`)
+	}))
+	t.Cleanup(geo.Close)
+	forecast := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		if forecastCalls.Add(1) == 2 {
+			http.Error(rw, "temporary failure", http.StatusServiceUnavailable)
+			return
+		}
+		fmt.Fprint(rw, currentWeatherBody)
+	}))
+	t.Cleanup(forecast.Close)
+
+	w := NewWeather(0, 0, UnitCelsius)
+	w.endpoint = forecast.URL
+	w.geocodingEndpoint = geo.URL
+	w.minInterval = 0
+	t.Cleanup(w.Close)
+	w.SetCity("Alpha")
+
+	first, err := w.fetch()
+	if err != nil || first.Location != "Alpha" {
+		t.Fatalf("first fetch = %+v, %v", first, err)
+	}
+	if _, err := w.fetch(); err == nil {
+		t.Fatal("the simulated forecast failure succeeded")
+	}
+	third, err := w.fetch()
+	if err != nil || third.Location != "Alpha" {
+		t.Fatalf("cached retry = %+v, %v", third, err)
+	}
+	if got := geoCalls.Load(); got != 1 {
+		t.Fatalf("geocode calls after a forecast retry = %d, want 1", got)
+	}
+
+	w.SetCity("Beta")
+	fourth, err := w.fetch()
+	if err != nil || fourth.Location != "Beta" {
+		t.Fatalf("city change fetch = %+v, %v", fourth, err)
+	}
+	if got := geoCalls.Load(); got != 2 {
+		t.Fatalf("geocode calls after city change = %d, want 2", got)
+	}
+}
+
+func TestCityChangeDuringGeocodeCannotReuseTheOldResolution(t *testing.T) {
+	var geoCalls atomic.Int32
+	var alphaStarted atomic.Bool
+	started := make(chan struct{})
+	releaseAlpha := make(chan struct{})
+	geo := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("name")
+		geoCalls.Add(1)
+		if name == "Alpha" && alphaStarted.CompareAndSwap(false, true) {
+			close(started)
+			<-releaseAlpha
+		}
+		if name == "Beta" {
+			fmt.Fprint(rw, `{"results":[{"name":"Beta","latitude":2,"longitude":3}]}`)
+			return
+		}
+		fmt.Fprint(rw, `{"results":[{"name":"Alpha","latitude":-1,"longitude":1}]}`)
+	}))
+	t.Cleanup(geo.Close)
+	forecast := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(rw, currentWeatherBody)
+	}))
+	t.Cleanup(forecast.Close)
+
+	w := NewWeather(0, 0, UnitCelsius)
+	w.endpoint = forecast.URL
+	w.geocodingEndpoint = geo.URL
+	w.minInterval = 0
+	t.Cleanup(w.Close)
+	w.SetCity("Alpha")
+
+	result := make(chan struct {
+		reading Reading
+		err     error
+	}, 1)
+	go func() {
+		reading, err := w.fetch()
+		result <- struct {
+			reading Reading
+			err     error
+		}{reading, err}
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("the first geocode did not start")
+	}
+	w.SetCity("Beta")
+	close(releaseAlpha)
+
+	select {
+	case got := <-result:
+		if got.err != nil || got.reading.Location != "Beta" {
+			t.Fatalf("fetch after city change = %+v, %v; want Beta", got.reading, got.err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("fetch did not restart after the city changed")
+	}
+	if got := geoCalls.Load(); got != 2 {
+		t.Fatalf("geocode calls = %d, want Alpha then Beta", got)
+	}
+}
+
 func TestASuccessfulFetchCarriesTheHourlyForecast(t *testing.T) {
 	t.Parallel()
 	w, _ := weatherAt(t, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
@@ -453,7 +571,7 @@ func TestASuccessfulFetchLeavesAbsentOptionalFieldsAbsent(t *testing.T) {
 	case reading := <-w.Updates():
 		if reading.Apparent != nil || reading.IsDay != nil || reading.Humidity != nil ||
 			reading.WindSpeed != nil || reading.WindDirection != nil || reading.UVIndex != nil ||
-			reading.Elevation != nil || reading.Timezone != "" || reading.TimezoneAbbreviation != "" {
+			reading.Elevation != nil || reading.Timezone != nil || reading.TimezoneAbbreviation != nil {
 			t.Fatalf("absent fields decoded as present: %+v", reading)
 		}
 	case <-time.After(3 * time.Second):

@@ -415,6 +415,30 @@ func TestHomeShowsDashesBeforeTheFirstSample(t *testing.T) {
 	}
 }
 
+func TestHomeWeatherSummaryFollowsNightAndFailureStates(t *testing.T) {
+	falseValue := false
+	night := services.Reading{
+		Observed: true, Temperature: 18, Unit: services.UnitCelsius, Code: 0,
+		IsDay: &falseValue, FetchedAt: time.Now().Add(-90 * time.Minute),
+		FailedSince: time.Now().Add(-30 * time.Minute),
+	}
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	summary := findNode(ccHome(&Registry{reading: night}, h), func(n *ui.Node) bool {
+		return n.Kind == ui.KindText && strings.Contains(n.Text, "18")
+	})
+	if summary == nil || !strings.Contains(summary.Text, string(render.WeatherIcon(0, false))) ||
+		summary.Tone != ui.ToneNormal || !strings.Contains(summary.Text, "1h") {
+		t.Fatalf("night stale summary = %+v, want night glyph, normal tone and age", summary)
+	}
+
+	failed := findNode(ccHome(&Registry{reading: services.Reading{FailedSince: time.Now()}}, h), func(n *ui.Node) bool {
+		return n.Kind == ui.KindText && n.Text == "weather unavailable"
+	})
+	if failed == nil || failed.Tone != ui.ToneError {
+		t.Fatalf("failed summary = %+v, want error tone", failed)
+	}
+}
+
 func TestControlCentreHomeQuickAccessControlsAreSeparated(t *testing.T) {
 	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
 	quick := ccHome(&Registry{}, h).Children[1]

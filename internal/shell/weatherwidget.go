@@ -76,6 +76,17 @@ type weatherRenderKey struct {
 	showCondition bool
 	fetchedAt     time.Time
 	failedSince   time.Time
+	isDaySet      bool
+	isDay         bool
+	todaySet      bool
+	todayLow      float64
+	todayHigh     float64
+	windSet       bool
+	wind          float64
+	windDirSet    bool
+	windDir       float64
+	humiditySet   bool
+	humidity      float64
 }
 
 func refreshWeatherWidget(icon, text *ui.Node, tip **ui.Node, item config.Item, reading services.Reading, prev *weatherRenderKey) bool {
@@ -87,6 +98,21 @@ func refreshWeatherWidget(icon, text *ui.Node, tip **ui.Node, item config.Item, 
 		showCondition: item.ShowCondition,
 		fetchedAt:     reading.FetchedAt,
 		failedSince:   reading.FailedSince,
+	}
+	if reading.IsDay != nil {
+		key.isDaySet, key.isDay = true, *reading.IsDay
+	}
+	if len(reading.Daily) > 0 {
+		key.todaySet, key.todayLow, key.todayHigh = true, reading.Daily[0].Low, reading.Daily[0].High
+	}
+	if reading.WindSpeed != nil {
+		key.windSet, key.wind = true, *reading.WindSpeed
+	}
+	if reading.WindDirection != nil {
+		key.windDirSet, key.windDir = true, *reading.WindDirection
+	}
+	if reading.Humidity != nil {
+		key.humiditySet, key.humidity = true, *reading.Humidity
 	}
 	if *prev == key {
 		return false
@@ -120,8 +146,7 @@ func weatherTooltipTree(reading services.Reading) *ui.Node {
 		{Kind: ui.KindText, Text: render.WeatherCondition(reading.Code)},
 	}
 	if len(reading.Daily) > 0 {
-		today := reading.Daily[0]
-		lines = append(lines, &ui.Node{Kind: ui.KindText, Tabular: true, Text: fmt.Sprintf("Low %.0f°  High %.0f°", today.Low, today.High)})
+		lines = append(lines, &ui.Node{Kind: ui.KindText, Tabular: true, Text: weatherDayRange(reading)})
 	}
 	if reading.WindSpeed != nil {
 		wind := fmt.Sprintf("Wind %.1f km/h", *reading.WindSpeed)

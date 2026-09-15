@@ -171,10 +171,11 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 		ccQuickAccessButton(quickWidth, "wallpaper", "Wallpaper", "cc:wallpaper", false),
 	}}
 
+	weatherSummary, weatherTone := ccWeatherSummary(reading)
 	clockWeather := monitorCard(m, []*ui.Node{
 		monitorCardTitle(ccClock(now), 0),
 		{Kind: ui.KindText, Text: ccDate(now), TextRole: theme.RoleCaption},
-		{Kind: ui.KindText, Text: ccWeatherSummary(reading)},
+		{Kind: ui.KindText, Text: weatherSummary, Tone: weatherTone},
 	})
 	clockWeather.Height = ccCardH
 	sysmon := monitorCard(m, []*ui.Node{
@@ -249,11 +250,19 @@ func ccDate(now time.Time) string {
 	return now.Format("Monday, 2 January")
 }
 
-func ccWeatherSummary(reading services.Reading) string {
+func ccWeatherSummary(reading services.Reading) (string, ui.Tone) {
 	if !reading.Observed {
-		return ccDash
+		if !reading.FailedSince.IsZero() {
+			return "weather unavailable", ui.ToneError
+		}
+		return ccDash, ui.ToneNormal
 	}
-	return fmt.Sprintf("%c %.0f%s", render.IconRune(reading.Code), reading.Temperature, unitSuffix(reading.Unit))
+	isDay := reading.IsDay == nil || *reading.IsDay
+	text := fmt.Sprintf("%c %.0f%s", render.WeatherIcon(reading.Code, isDay), reading.Temperature, unitSuffix(reading.Unit))
+	if reading.Stale() {
+		text += " (" + humaniseAge(time.Since(reading.FetchedAt)) + ")"
+	}
+	return text, ui.ToneNormal
 }
 
 func ccPercent(value int, ok bool) string {
@@ -438,12 +447,7 @@ func ccForecastDay(m theme.Metrics, width int, day *services.Day, unit services.
 			label = ccText(day.Date)
 		}
 		icon = render.WeatherIconName(day.Code, true)
-		temperature = fmt.Sprintf("%.0f° / %.0f°", day.High, day.Low)
-		if unit == services.UnitFahrenheit {
-			temperature += "F"
-		} else {
-			temperature += "C"
-		}
+		temperature = fmt.Sprintf("%.0f%s / %.0f%s", day.High, unitSuffix(unit), day.Low, unitSuffix(unit))
 	}
 	card := monitorCard(m, []*ui.Node{
 		{Kind: ui.KindText, Text: label, TextRole: theme.RoleLabel},

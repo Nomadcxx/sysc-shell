@@ -54,28 +54,28 @@ func Decode(body []byte) (Forecast, error) {
 			UVIndex     *float64 `json:"uv_index"`
 		} `json:"current"`
 		Daily *struct {
-			Time    []string  `json:"time"`
-			Code    []int     `json:"weather_code"`
-			High    []float64 `json:"temperature_2m_max"`
-			Low     []float64 `json:"temperature_2m_min"`
-			Sunrise []string  `json:"sunrise"`
-			Sunset  []string  `json:"sunset"`
-			UVMax   []float64 `json:"uv_index_max"`
-			PrecipP []float64 `json:"precipitation_probability_max"`
-			PrecipS []float64 `json:"precipitation_sum"`
+			Time    []string   `json:"time"`
+			Code    []int      `json:"weather_code"`
+			High    []float64  `json:"temperature_2m_max"`
+			Low     []float64  `json:"temperature_2m_min"`
+			Sunrise []string   `json:"sunrise"`
+			Sunset  []string   `json:"sunset"`
+			UVMax   []*float64 `json:"uv_index_max"`
+			PrecipP []*float64 `json:"precipitation_probability_max"`
+			PrecipS []*float64 `json:"precipitation_sum"`
 		} `json:"daily"`
 		Hourly *struct {
-			Time    []string  `json:"time"`
-			Code    []int     `json:"weather_code"`
-			Temp    []float64 `json:"temperature_2m"`
-			IsDay   []*bool   `json:"is_day"`
-			Hum     []float64 `json:"relative_humidity_2m"`
-			PrecipP []float64 `json:"precipitation_probability"`
-			Wind    []float64 `json:"wind_speed_10m"`
+			Time    []string   `json:"time"`
+			Code    []int      `json:"weather_code"`
+			Temp    []float64  `json:"temperature_2m"`
+			IsDay   []*bool    `json:"is_day"`
+			Hum     []*float64 `json:"relative_humidity_2m"`
+			PrecipP []*float64 `json:"precipitation_probability"`
+			Wind    []*float64 `json:"wind_speed_10m"`
 		} `json:"hourly"`
 		Elevation            *float64 `json:"elevation"`
-		Timezone             string   `json:"timezone"`
-		TimezoneAbbreviation string   `json:"timezone_abbreviation"`
+		Timezone             *string  `json:"timezone"`
+		TimezoneAbbreviation *string  `json:"timezone_abbreviation"`
 	}
 	if err := json.Unmarshal(body, &wire); err != nil {
 		return Forecast{}, fmt.Errorf("weather: decode: %w", err)
@@ -112,9 +112,9 @@ func Decode(body []byte) (Forecast, error) {
 		// The optional daily arrays pad the required six rather than truncating
 		// them: a body without uv_index_max still carries seven days, each with
 		// a nil UV figure. A present but short array covers the days it has.
-		fillDaily(fc.Daily, wire.Daily.UVMax, func(d *Day, v float64) { d.UVIndexMax = &v })
-		fillDaily(fc.Daily, wire.Daily.PrecipP, func(d *Day, v float64) { d.PrecipitationProbability = &v })
-		fillDaily(fc.Daily, wire.Daily.PrecipS, func(d *Day, v float64) { d.Precipitation = &v })
+		fillDaily(fc.Daily, wire.Daily.UVMax, func(d *Day, v *float64) { d.UVIndexMax = v })
+		fillDaily(fc.Daily, wire.Daily.PrecipP, func(d *Day, v *float64) { d.PrecipitationProbability = v })
+		fillDaily(fc.Daily, wire.Daily.PrecipS, func(d *Day, v *float64) { d.Precipitation = v })
 	}
 	if wire.Hourly == nil {
 		return fc, nil
@@ -129,16 +129,16 @@ func Decode(body []byte) (Forecast, error) {
 		}
 		fc.Hourly[i] = h
 	}
-	fillHourly(fc.Hourly, wire.Hourly.Hum, func(h *Hour, v float64) { h.Humidity = &v })
-	fillHourly(fc.Hourly, wire.Hourly.PrecipP, func(h *Hour, v float64) { h.PrecipProbability = &v })
-	fillHourly(fc.Hourly, wire.Hourly.Wind, func(h *Hour, v float64) { h.WindSpeed = &v })
+	fillHourly(fc.Hourly, wire.Hourly.Hum, func(h *Hour, v *float64) { h.Humidity = v })
+	fillHourly(fc.Hourly, wire.Hourly.PrecipP, func(h *Hour, v *float64) { h.PrecipProbability = v })
+	fillHourly(fc.Hourly, wire.Hourly.Wind, func(h *Hour, v *float64) { h.WindSpeed = v })
 	return fc, nil
 }
 
 // fillHourly copies one optional hourly array onto the hours it covers, the
 // daily pattern: a missing array leaves every hour nil, a short one covers
 // the hours it has.
-func fillHourly(hours []Hour, values []float64, set func(*Hour, float64)) {
+func fillHourly(hours []Hour, values []*float64, set func(*Hour, *float64)) {
 	for i := 0; i < min(len(hours), len(values)); i++ {
 		set(&hours[i], values[i])
 	}
@@ -146,7 +146,7 @@ func fillHourly(hours []Hour, values []float64, set func(*Hour, float64)) {
 
 // fillDaily copies one optional daily array onto the days it covers. A
 // missing array leaves every day nil; a short array covers the days it has.
-func fillDaily(days []Day, values []float64, set func(*Day, float64)) {
+func fillDaily(days []Day, values []*float64, set func(*Day, *float64)) {
 	for i := 0; i < min(len(days), len(values)); i++ {
 		set(&days[i], values[i])
 	}

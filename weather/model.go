@@ -58,12 +58,12 @@ type Hour struct {
 
 // Forecast is a decoded Open-Meteo body. Daily and Hourly are empty when they
 // were not requested or the body carried none. Elevation and the timezone
-// names come from the response root; both are optional.
+// names come from the response root; all three are optional pointers.
 type Forecast struct {
 	Current              Current
 	Daily                []Day
 	Hourly               []Hour
 	Elevation            *float64
-	Timezone             string
-	TimezoneAbbreviation string
+	Timezone             *string
+	TimezoneAbbreviation *string
 }

@@ -73,6 +73,9 @@ func weatherLocation(w config.Weather, reading services.Reading) string {
 		return reading.Location
 	}
 	if w.Configured {
+		if w.City != "" {
+			return w.City
+		}
 		return fmt.Sprintf("%.2f°, %.2f°", w.Latitude, w.Longitude)
 	}
 	return absent
@@ -109,7 +112,8 @@ func weatherDayRange(reading services.Reading) string {
 		return absent
 	}
 	today := reading.Daily[0]
-	return fmt.Sprintf("Low %.0f°  High %.0f°", today.Low, today.High)
+	suffix := unitSuffix(reading.Unit)
+	return fmt.Sprintf("Low %.0f%s  High %.0f%s", today.Low, suffix, today.High, suffix)
 }
 
 // weatherHero is the headline card: the condition glyph beside the
@@ -171,8 +175,8 @@ func weatherDetails(reading services.Reading, m theme.Metrics) *ui.Node {
 		today = reading.Daily[0]
 	}
 	rows := []*ui.Node{
-		weatherRow(m, "thermometer", "Temperature min", weatherDayTemp(reading, today.Low)),
 		weatherRow(m, "thermometer", "Temperature max", weatherDayTemp(reading, today.High)),
+		weatherRow(m, "thermometer", "Temperature min", weatherDayTemp(reading, today.Low)),
 		weatherRow(m, "wind", "Wind", weatherWind(reading)),
 		weatherRow(m, "sunrise", "Sunrise", weatherClock(today.Sunrise)),
 		weatherRow(m, "sunset", "Sunset", weatherClock(today.Sunset)),
@@ -276,8 +280,12 @@ func weatherHourlyList(reading services.Reading, m theme.Metrics) *ui.Node {
 			{Kind: ui.KindText, Text: "No hourly forecast yet", TextRole: theme.RoleLabel},
 		}}
 	}
-	rows := make([]*ui.Node, 0, len(reading.Hourly))
-	for _, hour := range reading.Hourly {
+	// The reference fixes the hourly view at seven rows; the wire may carry a
+	// full 168-hour window, but the panel must stay a compact forecast surface.
+	const weatherHourlyRowLimit = 7
+	rowCount := min(len(reading.Hourly), weatherHourlyRowLimit)
+	rows := make([]*ui.Node, 0, rowCount)
+	for _, hour := range reading.Hourly[:rowCount] {
 		rows = append(rows, weatherHourRow(m, hour, reading.Unit))
 	}
 	return &ui.Node{
@@ -353,13 +361,13 @@ func weatherWind(reading services.Reading) string {
 }
 
 func weatherTimezone(reading services.Reading) string {
-	if reading.Timezone == "" {
+	if reading.Timezone == nil {
 		return absent
 	}
-	if reading.TimezoneAbbreviation == "" {
-		return reading.Timezone
+	if reading.TimezoneAbbreviation == nil {
+		return *reading.Timezone
 	}
-	return reading.Timezone + " (" + reading.TimezoneAbbreviation + ")"
+	return *reading.Timezone + " (" + *reading.TimezoneAbbreviation + ")"
 }
 
 // weatherOptional renders a present figure through format and an absent one

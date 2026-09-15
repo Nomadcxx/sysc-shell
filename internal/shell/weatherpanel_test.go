@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -168,6 +169,40 @@ func TestWeatherPanelDetailsCarryTheRows(t *testing.T) {
 	}
 }
 
+func TestWeatherPanelDetailsPutMaximumBeforeMinimum(t *testing.T) {
+	t.Parallel()
+	r := &Registry{cfg: config.Default(), reading: observedWeather()}
+	h := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
+	texts := collectTooltipLines(weatherTree(r, h))
+	minIndex, maxIndex := -1, -1
+	for i, text := range texts {
+		if text == "Temperature min" {
+			minIndex = i
+		}
+		if text == "Temperature max" {
+			maxIndex = i
+		}
+	}
+	if maxIndex < 0 || minIndex < 0 || maxIndex > minIndex {
+		t.Fatalf("detail order = %q, want Temperature max before Temperature min", texts)
+	}
+}
+
+func TestWeatherRangesCarryTheReadingUnit(t *testing.T) {
+	t.Parallel()
+	reading := services.Reading{
+		Unit:  services.UnitFahrenheit,
+		Daily: []services.Day{{Low: 10, High: 20}},
+	}
+	if got := weatherDayRange(reading); got != "Low 10°F  High 20°F" {
+		t.Fatalf("day range = %q, want Fahrenheit on both values", got)
+	}
+	forecast := ccForecastDay(DefaultTheme().Metrics, 200, &reading.Daily[0], reading.Unit)
+	if !hasLine(collectTooltipLines(forecast), "20°F / 10°F") {
+		t.Fatalf("forecast range = %q, want Fahrenheit on both values", collectTooltipLines(forecast))
+	}
+}
+
 func TestWeatherPanelRendersDashesForAbsentFields(t *testing.T) {
 	t.Parallel()
 	r := &Registry{reading: services.Reading{Observed: true, Temperature: 18, Unit: services.UnitCelsius, Code: 3, FetchedAt: time.Now()}}
@@ -326,6 +361,20 @@ func TestTheWeatherPanelHourlyViewCarriesTheHours(t *testing.T) {
 	}
 }
 
+func TestWeatherPanelHourlyViewCapsAtTheReferenceRowCount(t *testing.T) {
+	t.Parallel()
+	reading := hourlyReading()
+	for i := len(reading.Hourly); i < 8; i++ {
+		reading.Hourly = append(reading.Hourly, services.Hour{
+			Time: fmt.Sprintf("2026-09-15T%02d:00", 14+i), Code: 0, Temperature: 10,
+		})
+	}
+	list := weatherHourlyList(reading, DefaultTheme().Metrics)
+	if len(list.Children) != 1 || len(list.Children[0].Children) != 7 {
+		t.Fatalf("hourly rows = %d, want 7", len(list.Children[0].Children))
+	}
+}
+
 func TestTheWeatherPanelSwitchesViewsThroughTheSegmentedAction(t *testing.T) {
 	r := &Registry{reading: hourlyReading(), panelHosts: make(map[PanelID]*PanelHost)}
 	h := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
@@ -382,6 +431,16 @@ func TestTheWeatherLocationPrefersTheLabelThenTheResolvedName(t *testing.T) {
 
 	if got := weatherLocation(cfg.Weather, services.Reading{}); got != "27.47°, 153.02°" {
 		t.Fatalf("location = %q, want the coordinates fallback", got)
+	}
+}
+
+func TestTheWeatherLocationDoesNotInventCoordinatesForAnUnresolvedCity(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Weather.Configured = true
+	cfg.Weather.City = "Brisbane"
+	if got := weatherLocation(cfg.Weather, services.Reading{}); got != "Brisbane" {
+		t.Fatalf("location = %q, want the configured city while geocoding is unresolved", got)
 	}
 }
 
