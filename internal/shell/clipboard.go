@@ -117,20 +117,51 @@ func (r *Registry) BindClipboard(sender clipboardCommandSender) {
 // metadata projection changed.
 func (r *Registry) ApplyClipboard(update clipboardUpdate) []uint32 {
 	next := clipboardProjection{Snapshot: cloneClipboardSnapshot(update.Snapshot), Connected: update.Connected}
-	r.mu.Lock()
-	if sameClipboardProjection(r.clipboard, next) {
-		r.mu.Unlock()
-		return nil
+	var thumbnail *ui.Image
+	if update.Message.Type == clipboardprotocol.TypeThumbnail && update.Message.Thumbnail != nil {
+		if err := clipboardprotocol.ValidateThumbnail(*update.Message.Thumbnail); err == nil {
+			thumbnail = decodeClipboardThumbnail(update.Message.Thumbnail)
+		}
 	}
-	r.clipboard = next
+	r.mu.Lock()
+	projectionChanged := !sameClipboardProjection(r.clipboard, next)
+	if projectionChanged {
+		r.clipboard = next
+	}
 	changed := make([]uint32, 0, len(r.bars))
-	for global, bar := range r.bars {
-		if bar.apply(r.viewLocked(bar.connector())) {
-			changed = append(changed, global)
+	if projectionChanged {
+		for global, bar := range r.bars {
+			if bar.apply(r.viewLocked(bar.connector())) {
+				changed = append(changed, global)
+			}
+		}
+	}
+	panelChanged := false
+	panelOutput := uint32(0)
+	if h := r.panelHosts[PanelClipboard]; h != nil {
+		if projectionChanged {
+			h.errLabel = ""
+			pruneClipboardImages(h, r.clipboard.Snapshot.Entries)
+			panelChanged = true
+		}
+		if thumbnail != nil && update.Message.Thumbnail != nil && clipboardImageEntry(r.clipboard.Snapshot.Entries, update.Message.Thumbnail.ID) {
+			if h.clipboardThumbnails == nil {
+				h.clipboardThumbnails = make(map[string]*ui.Image)
+			}
+			h.clipboardThumbnails[update.Message.Thumbnail.ID] = thumbnail
+			delete(h.clipboardThumbnailRequest, update.Message.Thumbnail.ID)
+			panelChanged = true
+		}
+		if panelChanged {
+			r.rebuildPanel(h)
+			panelOutput = h.output
 		}
 	}
 	r.mu.Unlock()
 	r.publish(changed)
+	if panelChanged {
+		r.publishSurface(panelOutput, panelSurfaceID(PanelClipboard))
+	}
 	return changed
 }
 
