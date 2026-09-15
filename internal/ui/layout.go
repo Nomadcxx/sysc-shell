@@ -370,6 +370,11 @@ func layoutCapsuleChild(n *Node, measure MeasureText) error {
 // content height; a button pads its text on every side.
 func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, error) {
 	switch n.Kind {
+	case KindEffect:
+		if err := n.Effect.Validate(); err != nil {
+			return 0, 0, err
+		}
+		return 0, 0, nil
 	case KindText, KindTab:
 		w, h := measure(n.Text, TextAttrsOf(n))
 		if n.MinWidthText != "" {
@@ -597,6 +602,11 @@ func layoutStackChildren(n *Node, measure MeasureText) error {
 			if err := Layout(child, inner, measure); err != nil {
 				return err
 			}
+		case KindEffect:
+			if err := child.Effect.Validate(); err != nil {
+				return fmt.Errorf("ui: stack child %d: %w", i, err)
+			}
+			child.Bounds = inner
 		default:
 			child.Bounds = inner
 		}
@@ -610,7 +620,7 @@ func layoutStackChildren(n *Node, measure MeasureText) error {
 // and the search descends so a nested section resolves to its leaf rather than
 // stopping at the container.
 func Hit(root *Node, x, y int) (string, bool) {
-	if root == nil || !root.Bounds.Contains(x, y) {
+	if root == nil || root.Kind == KindEffect || !root.Bounds.Contains(x, y) {
 		return "", false
 	}
 	for i := len(root.Children) - 1; i >= 0; i-- {

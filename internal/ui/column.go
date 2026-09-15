@@ -61,6 +61,11 @@ func ContentHeight(n *Node, width int, measure MeasureText) (int, error) {
 
 func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 	switch n.Kind {
+	case KindEffect:
+		if err := n.Effect.Validate(); err != nil {
+			return 0, err
+		}
+		return 0, nil
 	case KindWordmark:
 		if _, h, ok := imageBox(n); ok {
 			return h, nil
