@@ -98,25 +98,24 @@ func Decode(body []byte) (Forecast, error) {
 		Timezone:             wire.Timezone,
 		TimezoneAbbreviation: wire.TimezoneAbbreviation,
 	}
-	if wire.Daily == nil {
-		return fc, nil
-	}
-	n := len(wire.Daily.Time)
-	n = min(n, len(wire.Daily.Code), len(wire.Daily.High), len(wire.Daily.Low), len(wire.Daily.Sunrise), len(wire.Daily.Sunset))
-	fc.Daily = make([]Day, n)
-	for i := 0; i < n; i++ {
-		fc.Daily[i] = Day{
-			Date: wire.Daily.Time[i], Code: wire.Daily.Code[i],
-			High: wire.Daily.High[i], Low: wire.Daily.Low[i],
-			Sunrise: wire.Daily.Sunrise[i], Sunset: wire.Daily.Sunset[i],
+	if wire.Daily != nil {
+		n := len(wire.Daily.Time)
+		n = min(n, len(wire.Daily.Code), len(wire.Daily.High), len(wire.Daily.Low), len(wire.Daily.Sunrise), len(wire.Daily.Sunset))
+		fc.Daily = make([]Day, n)
+		for i := 0; i < n; i++ {
+			fc.Daily[i] = Day{
+				Date: wire.Daily.Time[i], Code: wire.Daily.Code[i],
+				High: wire.Daily.High[i], Low: wire.Daily.Low[i],
+				Sunrise: wire.Daily.Sunrise[i], Sunset: wire.Daily.Sunset[i],
+			}
 		}
+		// The optional daily arrays pad the required six rather than truncating
+		// them: a body without uv_index_max still carries seven days, each with
+		// a nil UV figure. A present but short array covers the days it has.
+		fillDaily(fc.Daily, wire.Daily.UVMax, func(d *Day, v float64) { d.UVIndexMax = &v })
+		fillDaily(fc.Daily, wire.Daily.PrecipP, func(d *Day, v float64) { d.PrecipitationProbability = &v })
+		fillDaily(fc.Daily, wire.Daily.PrecipS, func(d *Day, v float64) { d.Precipitation = &v })
 	}
-	// The optional daily arrays pad the required six rather than truncating
-	// them: a body without uv_index_max still carries seven days, each with a
-	// nil UV figure. A present but short array covers the days it has.
-	fillDaily(fc.Daily, wire.Daily.UVMax, func(d *Day, v float64) { d.UVIndexMax = &v })
-	fillDaily(fc.Daily, wire.Daily.PrecipP, func(d *Day, v float64) { d.PrecipitationProbability = &v })
-	fillDaily(fc.Daily, wire.Daily.PrecipS, func(d *Day, v float64) { d.Precipitation = &v })
 	if wire.Hourly == nil {
 		return fc, nil
 	}
