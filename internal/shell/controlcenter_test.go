@@ -404,6 +404,21 @@ func TestControlCentreHomeFillsTheBodyContract(t *testing.T) {
 	}
 }
 
+func TestControlCentreHomeChildrenFitItsViewport(t *testing.T) {
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	home := ccHome(&Registry{}, h)
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return len(s) * 8, 16 }
+	if err := ui.LayoutColumn(home, ui.Rect{W: 596, H: ccPageH}, measure); err != nil {
+		t.Fatal(err)
+	}
+	bottom := home.Bounds.Y + home.Bounds.H
+	for i, child := range home.Children {
+		if got := child.Bounds.Y + child.Bounds.H; got > bottom {
+			t.Errorf("Home block %d ends at %d, beyond viewport bottom %d: %+v", i, got, bottom, child.Bounds)
+		}
+	}
+}
+
 func TestHomeShowsDashesBeforeTheFirstSample(t *testing.T) {
 	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
 	got := renderText(ccHome(&Registry{}, h))
