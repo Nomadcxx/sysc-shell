@@ -58,9 +58,19 @@ internal/theming/              template catalog and apply/unapply
 internal/settings/             settings registry
 internal/config/               JSON configuration
 internal/ipc/                  local IPC
+plugins/reference/             in-tree reference plugin (weather)
 tests/integration/             Niri and Wayland integration checks
 docs/                          architecture, roadmap, designs and plans
 ```
+
+## Official plugins
+
+The official plugins (screen recorder, notes, timer, world clock, calendar,
+GitHub notifications, mini docker, wallpaper depth) live in the companion
+repository [`sysc-plugins`](https://github.com/Nomadcxx/sysc-plugins). Build and
+install them from there (`make install` symlinks each plugin directory into
+`$XDG_CONFIG_HOME/sysc-shell/plugins`); the shell discovers them at startup and
+manages enable/disable, settings, and state through the plugin host.
 
 ## Documentation
 

@@ -13,7 +13,6 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
-	"github.com/Nomadcxx/sysc-shell/plugins/reference/recorder"
 )
 
 func TestMain(m *testing.M) {
@@ -890,8 +889,13 @@ func TestPluginPanelTreeWithoutIncludeSettingsStaysPluginOnly(t *testing.T) {
 	}
 }
 
-func TestRecorderBarTreeFitsHostSlot(t *testing.T) {
-	wire := recorder.BarTree(recorder.Snapshot{Mode: recorder.Idle}, recorder.Config{})
+func TestPluginBarTreeFitsHostSlot(t *testing.T) {
+	// Representative plugin bar tree (icon + label row); the live recorder
+	// tree is exercised by the sysc-plugins repository's gate tests.
+	wire := &v1.Node{
+		Kind:     v1.KindRow,
+		Children: []*v1.Node{{Kind: v1.KindIcon, Icon: "camera"}, {Kind: v1.KindText, Text: "Record"}},
+	}
 	root, err := plugin.Convert(wire, v1.ViewBar)
 	if err != nil {
 		t.Fatal(err)
