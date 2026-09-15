@@ -75,30 +75,37 @@ func mediaNowPlaying(r *Registry, h *PanelHost, state services.MediaState, m the
 			}
 		}
 	}
-	var artNode *ui.Node
-	if art != nil {
-		artNode = &ui.Node{
-			Kind: ui.KindImage, Width: mediaArtBox, Height: mediaArtBox,
-			ImageSize: mediaArtBox, Image: art, Shape: ui.ShapeMedium,
-		}
-	} else {
-		artNode = &ui.Node{
+	background := &ui.Node{
+		Kind: ui.KindImage, Width: mediaArtBox, Height: mediaArtBox,
+		ImageSize: mediaArtBox, Image: art, Background: true, Shape: ui.ShapeCard,
+	}
+	foregroundChildren := []*ui.Node{
+		{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: ccText(state.Title), TextRole: theme.RoleTitle},
+			{Kind: ui.KindText, Text: ccText(state.Artist), TextRole: theme.RoleCaption},
+			{Kind: ui.KindText, Text: ccText(state.Album), TextRole: theme.RoleCaption},
+			{Kind: ui.KindText, Text: ccText(state.Identity), TextRole: theme.RoleLabel},
+		}},
+	}
+	if art == nil {
+		foregroundChildren = append([]*ui.Node{{
 			Kind: ui.KindCapsule, Width: mediaArtBox, Height: mediaArtBox,
 			Fill: ui.FillContainerHighest, Shape: ui.ShapeMedium,
 			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "music_note", IconSize: m.IconNormal}},
-		}
+		}}, foregroundChildren...)
 	}
-	return monitorCard(m, []*ui.Node{{
-		Kind: ui.KindRow, Gap: theme.MarginL, Children: []*ui.Node{
-			artNode,
-			{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
-				{Kind: ui.KindText, Text: ccText(state.Title), TextRole: theme.RoleTitle},
-				{Kind: ui.KindText, Text: ccText(state.Artist), TextRole: theme.RoleCaption},
-				{Kind: ui.KindText, Text: ccText(state.Album), TextRole: theme.RoleCaption},
-				{Kind: ui.KindText, Text: ccText(state.Identity), TextRole: theme.RoleLabel},
-			}},
-		},
-	}})
+	return &ui.Node{
+		// The card chrome stays outside the stack; its padding moves into the
+		// foreground layer so the background can fill the card edge to edge.
+		Kind: ui.KindCapsule, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+		Children: []*ui.Node{{Kind: ui.KindStack, Children: []*ui.Node{
+			background,
+			{Kind: ui.KindCapsule, Fill: ui.FillScrim, Shape: ui.ShapeCard},
+			{Kind: ui.KindColumn, Padding: m.CardPadding, Children: []*ui.Node{{
+				Kind: ui.KindRow, Gap: theme.MarginL, Children: foregroundChildren,
+			}}},
+		}}},
+	}
 }
 
 func mediaTransport(state services.MediaState, m theme.Metrics) *ui.Node {
