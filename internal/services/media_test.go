@@ -10,6 +10,10 @@ import (
 // deterministic, needs no running player, and cannot be affected by whatever
 // happens to be playing on the developer's desktop.
 type fakeBus struct {
+	// mu guards every field below except names and nameCh: the service's
+	// watch goroutine calls Get/Call/Set while tests mutate property tables
+	// and read recorded calls, so unguarded access is a data race.
+	mu     sync.Mutex
 	names  []string
 	props  map[string]map[string]any
 	calls  []string
@@ -31,6 +35,8 @@ func (f *fakeBus) ListNames() ([]string, error)   { return f.names, nil }
 func (f *fakeBus) NameChanges() <-chan nameChange { return f.nameCh }
 
 func (f *fakeBus) Get(busName, iface, prop string) (any, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if m, ok := f.props[busName]; ok {
 		return m[prop], nil
 	}
@@ -38,16 +44,63 @@ func (f *fakeBus) Get(busName, iface, prop string) (any, error) {
 }
 
 func (f *fakeBus) Call(busName, method string, args ...any) error {
+	f.mu.Lock()
 	f.calls = append(f.calls, busName+"."+method)
+	f.mu.Unlock()
 	return nil
 }
 
 func (f *fakeBus) Set(busName, iface, prop string, value any) error {
+	f.mu.Lock()
 	f.sets = append(f.sets, fakeSet{bus: busName, iface: iface, prop: prop, value: value})
+	f.mu.Unlock()
 	return nil
 }
 
-func (f *fakeBus) Close() { f.closes++ }
+func (f *fakeBus) Close() {
+	f.mu.Lock()
+	f.closes++
+	f.mu.Unlock()
+}
+
+// setProps installs one bus name's property table while the service may be
+// probing it.
+func (f *fakeBus) setProps(busName string, props map[string]any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.props[busName] = props
+}
+
+// setProp mutates one property of a bus name that already has a table.
+func (f *fakeBus) setProp(busName, prop string, value any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.props[busName][prop] = value
+}
+
+func (f *fakeBus) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
+}
+
+func (f *fakeBus) callsSnapshot() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.calls...)
+}
+
+func (f *fakeBus) setsSnapshot() []fakeSet {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]fakeSet(nil), f.sets...)
+}
+
+func (f *fakeBus) closeCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.closes
+}
 
 // waitFor polls a predicate with a bounded deadline and fails the test when it
 // does not hold in time. The service's watch loop is asynchronous, so tests
@@ -103,8 +156,8 @@ func TestMediaCloseIsIdempotent(t *testing.T) {
 	m := NewMedia(b)
 	m.Close()
 	m.Close()
-	if b.closes != 1 {
-		t.Fatalf("bus close count = %d, want 1", b.closes)
+	if b.closeCount() != 1 {
+		t.Fatalf("bus close count = %d, want 1", b.closeCount())
 	}
 }
 
@@ -115,9 +168,9 @@ func TestMediaCachedStateNeverTouchesTheBus(t *testing.T) {
 	b := newFakeBus("org.mpris.MediaPlayer2.spotify")
 	m := NewMedia(b)
 	t.Cleanup(m.Close)
-	before := len(b.calls)
+	before := b.callCount()
 	_ = m.CachedState()
-	if len(b.calls) != before {
+	if b.callCount() != before {
 		t.Error("CachedState issued a bus call")
 	}
 }
@@ -209,7 +262,7 @@ func TestMediaReleasesSelectionWhenThePlayerVanishes(t *testing.T) {
 func TestMediaDecodesMetadata(t *testing.T) {
 	t.Parallel()
 	b := newFakeBus("org.mpris.MediaPlayer2.x")
-	b.props["org.mpris.MediaPlayer2.x"] = map[string]any{
+	b.setProps("org.mpris.MediaPlayer2.x", map[string]any{
 		"Metadata": map[string]any{
 			"xesam:title":  "Ambush",
 			"xesam:artist": []string{"Sepultura"},
@@ -217,7 +270,7 @@ func TestMediaDecodesMetadata(t *testing.T) {
 			"mpris:artUrl": "file:///tmp/art.png",
 			"mpris:length": int64(215_000_000),
 		},
-	}
+	})
 	m := NewMedia(b)
 	t.Cleanup(m.Close)
 	st := m.State()
@@ -232,11 +285,11 @@ func TestMediaDecodesMetadata(t *testing.T) {
 func TestMediaRetainsRemoteArtURL(t *testing.T) {
 	t.Parallel()
 	b := newFakeBus("org.mpris.MediaPlayer2.x")
-	b.props["org.mpris.MediaPlayer2.x"] = map[string]any{
+	b.setProps("org.mpris.MediaPlayer2.x", map[string]any{
 		"Metadata": map[string]any{
 			"mpris:artUrl": "https://example.test/cover.jpg?size=large",
 		},
-	}
+	})
 	m := NewMedia(b)
 	t.Cleanup(m.Close)
 	if got := m.State().ArtKey; got != "https://example.test/cover.jpg?size=large" {
@@ -247,7 +300,7 @@ func TestMediaRetainsRemoteArtURL(t *testing.T) {
 func TestMediaDecodesCanSeek(t *testing.T) {
 	t.Parallel()
 	b := newFakeBus("org.mpris.MediaPlayer2.x")
-	b.props["org.mpris.MediaPlayer2.x"] = map[string]any{"CanSeek": true}
+	b.setProps("org.mpris.MediaPlayer2.x", map[string]any{"CanSeek": true})
 	m := NewMedia(b)
 	t.Cleanup(m.Close)
 	if !m.State().CanSeek {
@@ -258,11 +311,11 @@ func TestMediaDecodesCanSeek(t *testing.T) {
 func TestMediaDecodesOptionalPlaybackControls(t *testing.T) {
 	t.Parallel()
 	b := newFakeBus("org.mpris.MediaPlayer2.x")
-	b.props["org.mpris.MediaPlayer2.x"] = map[string]any{
+	b.setProps("org.mpris.MediaPlayer2.x", map[string]any{
 		"CanPause":   true,
 		"LoopStatus": "Playlist",
 		"Shuffle":    true,
-	}
+	})
 	m := NewMedia(b)
 	t.Cleanup(m.Close)
 	state := m.State()
@@ -274,10 +327,10 @@ func TestMediaDecodesOptionalPlaybackControls(t *testing.T) {
 func TestMediaTogglesLoopAndShuffleThroughMprisProperties(t *testing.T) {
 	t.Parallel()
 	b := newFakeBus("org.mpris.MediaPlayer2.x")
-	b.props["org.mpris.MediaPlayer2.x"] = map[string]any{
+	b.setProps("org.mpris.MediaPlayer2.x", map[string]any{
 		"LoopStatus": "None",
 		"Shuffle":    false,
-	}
+	})
 	m := NewMedia(b)
 	t.Cleanup(m.Close)
 	if err := m.ToggleLoop(); err != nil {
@@ -286,9 +339,10 @@ func TestMediaTogglesLoopAndShuffleThroughMprisProperties(t *testing.T) {
 	if err := m.ToggleShuffle(); err != nil {
 		t.Fatal(err)
 	}
-	if len(b.sets) != 2 || b.sets[0].prop != "LoopStatus" || b.sets[0].value != "Playlist" ||
-		b.sets[1].prop != "Shuffle" || b.sets[1].value != true {
-		t.Fatalf("property writes = %+v, want Playlist then true", b.sets)
+	sets := b.setsSnapshot()
+	if len(sets) != 2 || sets[0].prop != "LoopStatus" || sets[0].value != "Playlist" ||
+		sets[1].prop != "Shuffle" || sets[1].value != true {
+		t.Fatalf("property writes = %+v, want Playlist then true", sets)
 	}
 }
 
@@ -325,8 +379,8 @@ func TestMediaConfigureReconcilesTheLiveSet(t *testing.T) {
 func TestMediaMostRecentlyPlayingWinsTheMiddleRule(t *testing.T) {
 	t.Parallel()
 	b := newFakeBus("org.mpris.MediaPlayer2.a", "org.mpris.MediaPlayer2.b")
-	b.props["org.mpris.MediaPlayer2.a"] = map[string]any{"PlaybackStatus": "Paused"}
-	b.props["org.mpris.MediaPlayer2.b"] = map[string]any{"PlaybackStatus": "Paused"}
+	b.setProps("org.mpris.MediaPlayer2.a", map[string]any{"PlaybackStatus": "Paused"})
+	b.setProps("org.mpris.MediaPlayer2.b", map[string]any{"PlaybackStatus": "Paused"})
 	m := NewMedia(b)
 	t.Cleanup(m.Close)
 	lease, err := m.Acquire()
@@ -335,15 +389,15 @@ func TestMediaMostRecentlyPlayingWinsTheMiddleRule(t *testing.T) {
 	}
 	t.Cleanup(lease.Release)
 
-	b.props["org.mpris.MediaPlayer2.b"]["PlaybackStatus"] = "Playing"
+	b.setProp("org.mpris.MediaPlayer2.b", "PlaybackStatus", "Playing")
 	b.nameCh <- nameChange{Name: "org.mpris.MediaPlayer2.b", Acquired: true}
 	waitFor(t, func() bool { return m.State().Player == "org.mpris.MediaPlayer2.b" })
 
-	b.props["org.mpris.MediaPlayer2.b"]["PlaybackStatus"] = "Paused"
+	b.setProp("org.mpris.MediaPlayer2.b", "PlaybackStatus", "Paused")
 	b.nameCh <- nameChange{Name: "org.mpris.MediaPlayer2.b", Acquired: true}
 	waitFor(t, func() bool { return m.State().Player == "org.mpris.MediaPlayer2.b" })
 
-	b.props["org.mpris.MediaPlayer2.a"]["PlaybackStatus"] = "Playing"
+	b.setProp("org.mpris.MediaPlayer2.a", "PlaybackStatus", "Playing")
 	b.nameCh <- nameChange{Name: "org.mpris.MediaPlayer2.a", Acquired: true}
 	waitFor(t, func() bool { return m.State().Player == "org.mpris.MediaPlayer2.a" })
 }
@@ -351,8 +405,8 @@ func TestMediaMostRecentlyPlayingWinsTheMiddleRule(t *testing.T) {
 func TestMediaConfiguredPreferredBeatsHistory(t *testing.T) {
 	t.Parallel()
 	b := newFakeBus("org.mpris.MediaPlayer2.a", "org.mpris.MediaPlayer2.b")
-	b.props["org.mpris.MediaPlayer2.a"] = map[string]any{"PlaybackStatus": "Paused"}
-	b.props["org.mpris.MediaPlayer2.b"] = map[string]any{"PlaybackStatus": "Playing"}
+	b.setProps("org.mpris.MediaPlayer2.a", map[string]any{"PlaybackStatus": "Paused"})
+	b.setProps("org.mpris.MediaPlayer2.b", map[string]any{"PlaybackStatus": "Playing"})
 	m := NewMedia(b)
 	t.Cleanup(m.Close)
 	lease, err := m.Acquire()
@@ -376,9 +430,9 @@ func TestMediaSnapshotCarriesNoDecodedImage(t *testing.T) {
 	// carries an identifier; the async worker produces the raster later. The
 	// wallpaper picker already documents having paid for this mistake.
 	b := newFakeBus("org.mpris.MediaPlayer2.x")
-	b.props["org.mpris.MediaPlayer2.x"] = map[string]any{
+	b.setProps("org.mpris.MediaPlayer2.x", map[string]any{
 		"Metadata": map[string]any{"mpris:artUrl": "file:///tmp/art.png"},
-	}
+	})
 	m := NewMedia(b)
 	t.Cleanup(m.Close)
 	if m.State().ArtKey == "" {
@@ -391,13 +445,13 @@ func TestMediaSurvivesMalformedMetadata(t *testing.T) {
 	// A player is free to send nonsense. A partial map must degrade to a
 	// usable snapshot, never fail the service.
 	b := newFakeBus("org.mpris.MediaPlayer2.x")
-	b.props["org.mpris.MediaPlayer2.x"] = map[string]any{
+	b.setProps("org.mpris.MediaPlayer2.x", map[string]any{
 		"Metadata": map[string]any{
 			"xesam:title":  42,
 			"xesam:artist": "not a list",
 			"mpris:length": "not a number",
 		},
-	}
+	})
 	m := NewMedia(b)
 	t.Cleanup(m.Close)
 	st := m.State() // must not panic
@@ -516,8 +570,9 @@ func TestMediaCommandsTargetTheActivePlayer(t *testing.T) {
 	if err := m.Next(); err != nil {
 		t.Fatal(err)
 	}
-	if len(b.calls) != 1 || b.calls[0] != "org.mpris.MediaPlayer2.b.Next" {
-		t.Errorf("calls = %v", b.calls)
+	calls := b.callsSnapshot()
+	if len(calls) != 1 || calls[0] != "org.mpris.MediaPlayer2.b.Next" {
+		t.Errorf("calls = %v", calls)
 	}
 }
 
