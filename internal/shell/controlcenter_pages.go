@@ -40,6 +40,7 @@ const (
 	// here because two pages build tiles, and a repeated expression is the
 	// same drift as a repeated number.
 	ccTileW          = (ccRightColumnW - theme.MarginM) / 2
+	ccHomeSplitH     = ccSplitH + theme.MarginM + ccCardH
 	ccResourceRowH   = 40
 	ccGaugeSize      = 40
 	ccSlidersH       = 116
@@ -132,6 +133,7 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 	caffeine, dnd := false, false
 	var audio services.AudioState
 	var brightness services.BrightnessState
+	var media services.MediaState
 	audioOK, brightnessOK := false, false
 	if r != nil {
 		identity = r.controlIdentity
@@ -146,6 +148,7 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 		if r.brightness != nil {
 			brightness, brightnessOK = r.brightness.CachedState()
 		}
+		media = r.mediaState
 	}
 
 	identityRows := []*ui.Node{
@@ -185,7 +188,7 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 		}},
 	})
 	sysmon.Height = ccCardH
-	left := &ui.Node{Kind: ui.KindColumn, Width: ccLeftColumnW, Height: ccSplitH, Gap: theme.MarginM,
+	left := &ui.Node{Kind: ui.KindColumn, Width: ccLeftColumnW, Height: ccHomeSplitH, Gap: theme.MarginM,
 		Children: []*ui.Node{clockWeather, sysmon}}
 
 	battery := ccDash
@@ -208,7 +211,16 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 	}
 	dndTile := ccQuickTile(tileW, "do_not_disturb_on", "DND", ccOnOff(dnd), "cc:dnd", dnd)
 	dndTile.Name = "Do not disturb"
-	right := &ui.Node{Kind: ui.KindColumn, Width: ccRightColumnW, Height: ccSplitH, Gap: theme.MarginM, Children: []*ui.Node{
+	mediaTitle := "Nothing playing"
+	if media.Available {
+		mediaTitle = ccText(media.Title)
+	}
+	mediaTile := ccQuickTile(tileW, mediaGlyph(media.Status), "Now playing", mediaTitle, "section:media", media.Available)
+	mediaTile.Name = "Now playing"
+	if !media.Available {
+		ccDisable(mediaTile)
+	}
+	right := &ui.Node{Kind: ui.KindColumn, Width: ccRightColumnW, Height: ccHomeSplitH, Gap: theme.MarginM, Children: []*ui.Node{
 		{Kind: ui.KindRow, Height: ccCardH, Gap: theme.MarginM, Children: []*ui.Node{
 			mute,
 			dndTile,
@@ -217,8 +229,9 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 			profileTile,
 			ccBatteryTile(tileW, battery),
 		}},
+		{Kind: ui.KindRow, Height: ccCardH, Gap: theme.MarginM, Children: []*ui.Node{mediaTile}},
 	}}
-	split := &ui.Node{Kind: ui.KindRow, Height: ccSplitH, Gap: theme.MarginL, Children: []*ui.Node{left, right}}
+	split := &ui.Node{Kind: ui.KindRow, Height: ccHomeSplitH, Gap: theme.MarginL, Children: []*ui.Node{left, right}}
 
 	sliders := &ui.Node{Kind: ui.KindColumn, Height: ccSlidersH, Gap: theme.MarginL, Children: []*ui.Node{
 		ccSlider(m, "volume_up", "Volume", "cc:volume", audio.Level, audioOK),

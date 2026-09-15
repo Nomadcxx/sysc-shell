@@ -47,12 +47,13 @@ type Registry struct {
 	now     time.Time
 	focused string
 
-	clock      *services.Clock
-	metrics    *services.Metrics
-	weather    *services.Weather
-	sample     services.Snapshot
-	reading    services.Reading
-	mediaState services.MediaState
+	clock        *services.Clock
+	metrics      *services.Metrics
+	weather      *services.Weather
+	sample       services.Snapshot
+	reading      services.Reading
+	mediaState   services.MediaState
+	mediaPlayers []services.Player
 	// controlIdentity is captured outside Registry.mu so the control centre
 	// never reads /proc or user databases from the Wayland owner.
 	controlIdentity     ccIdentity
@@ -258,9 +259,11 @@ func (r *Registry) setMedia(m *services.Media) {
 	r.media = m
 	if m == nil {
 		r.mediaState = services.MediaState{}
+		r.mediaPlayers = nil
 		return
 	}
 	r.mediaState = m.CachedState()
+	r.mediaPlayers = m.Players()
 	cancel := make(chan struct{})
 	r.mediaRelayCancel = cancel
 	go r.relayMedia(m, cancel)
@@ -310,12 +313,14 @@ func (r *Registry) applyMediaArt(_ icons.Key, image *ui.Image) {
 }
 
 func (r *Registry) publishMediaSnapshot(media *services.Media, state services.MediaState) {
+	players := media.Players()
 	r.mu.Lock()
 	if r.media != media {
 		r.mu.Unlock()
 		return
 	}
 	r.mediaState = state
+	r.mediaPlayers = players
 	changed := make([]uint32, 0, len(r.bars))
 	for global, bar := range r.bars {
 		if bar.apply(r.viewLocked(bar.connector())) {
@@ -323,6 +328,9 @@ func (r *Registry) publishMediaSnapshot(media *services.Media, state services.Me
 		}
 	}
 	out, open := r.rebuildControlCentreLocked()
+	if h := r.panelHosts[PanelControlCenter]; h != nil && mediaBodyVisible(h) {
+		r.startSurfaceFrames(h)
+	}
 	r.mu.Unlock()
 
 	r.publish(changed)

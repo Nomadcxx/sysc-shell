@@ -109,6 +109,9 @@ type PanelHost struct {
 	query              string
 	section            string
 	pageDirection      int
+	mediaLease         *services.Lease
+	mediaSeekPending   *int64
+	mediaSeekTrack     string
 	networkTab         string
 	pendingSSID        string
 	password           *ui.Field
@@ -2155,7 +2158,8 @@ func (h *PanelHost) stopAnimation() {
 // left alone: a second target change joins the clock rather than starting a
 // second ticker.
 func (r *Registry) startSurfaceFrames(h *PanelHost) {
-	if h.anim == nil || h.anim.running || h.anim.Settled() {
+	if h.anim == nil || h.anim.running ||
+		(h.anim.Settled() && !mediaPageFramesWantedLocked(r, h)) {
 		return
 	}
 	h.anim.running = true
@@ -2198,9 +2202,15 @@ func (r *Registry) surfaceFrameLoop(h *PanelHost) {
 	animateSurface(h.stopAnim, func() bool {
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		return h.anim.Settled()
+		return h.anim.Settled() && !mediaPageFramesWantedLocked(r, h)
 	}, func() {
-		r.publishSurface(h.output, panelSurfaceID(h.id))
+		r.mu.Lock()
+		if r.panelHosts[h.id] == h && mediaBodyVisible(h) {
+			r.rebuildPanel(h)
+		}
+		out := h.output
+		r.mu.Unlock()
+		r.publishSurface(out, panelSurfaceID(h.id))
 	}, frameCap)
 }
 
@@ -2218,6 +2228,9 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 	if bluetoothBodyVisible(h) {
 		r.stopBluetoothDiscoveryLocked(h)
 		r.cancelBluetoothPromptLocked(h)
+	}
+	if h.mediaLease != nil {
+		r.leaveMediaBodyLocked(h)
 	}
 	h.stopAnimation()
 	h.drag.Cancel()

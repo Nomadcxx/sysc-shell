@@ -235,9 +235,14 @@ func TestControlCentreRailKeepsDisabledDestinationsAddressable(t *testing.T) {
 		t.Errorf("first entry = %+v, want selected Home", entries[0])
 	}
 	media := entries[1]
-	if media.Name != "Media — not available yet" || media.Action != "" ||
-		!media.Focusable || !media.State.Has(ui.StateDisabled) {
-		t.Errorf("disabled Media entry = %+v", media)
+	if media.Name != "Media" || media.Action != "section:media" ||
+		!media.Focusable || media.State.Has(ui.StateDisabled) {
+		t.Errorf("enabled Media entry = %+v", media)
+	}
+	network := entries[5]
+	if network.Name != "Network — not available yet" || network.Action != "" ||
+		!network.Focusable || !network.State.Has(ui.StateDisabled) {
+		t.Errorf("disabled Network entry = %+v", network)
 	}
 	if got := len(ui.Focusables(rail)); got != 10 {
 		t.Errorf("focusable rail entries = %d, want all 10 including unavailable destinations", got)
@@ -396,7 +401,7 @@ func TestControlCentreHomeFillsTheBodyContract(t *testing.T) {
 	if home.Gap != theme.MarginL || len(home.Children) != 4 {
 		t.Fatalf("Home composition = %+v, want four blocks separated by one MarginL", home)
 	}
-	want := []int{ccIdentityCardH, ccTogglePillH, ccSplitH, ccSlidersH}
+	want := []int{ccIdentityCardH, ccTogglePillH, ccHomeSplitH, ccSlidersH}
 	for i, child := range home.Children {
 		if child.Height != want[i] {
 			t.Errorf("Home block %d height = %d, want %d", i, child.Height, want[i])
