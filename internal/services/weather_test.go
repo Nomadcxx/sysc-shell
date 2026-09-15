@@ -313,6 +313,56 @@ func TestASuccessfulFetchCarriesTheEnrichedCurrentFields(t *testing.T) {
 	}
 }
 
+func TestASuccessfulFetchCarriesTheHourlyForecast(t *testing.T) {
+	t.Parallel()
+	w, _ := weatherAt(t, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(rw, hourlyWeatherBody)
+	}))
+	select {
+	case reading := <-w.Updates():
+		if len(reading.Hourly) != 3 {
+			t.Fatalf("Hourly = %d rows, want 3", len(reading.Hourly))
+		}
+		h := reading.Hourly[2]
+		if h.Code != 61 || h.Temperature != 12.5 {
+			t.Fatalf("hour = %+v, want code 61 at 12.5 carried through", h)
+		}
+		if h.IsDay == nil || *h.IsDay {
+			t.Fatalf("IsDay = %v, want false carried through", h.IsDay)
+		}
+		if h.PrecipProbability == nil || *h.PrecipProbability != 80 {
+			t.Fatalf("PrecipProbability = %v, want 80 carried through", h.PrecipProbability)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no reading arrived within three seconds")
+	}
+}
+
+func TestTheRequestAsksForTheHourlyBlock(t *testing.T) {
+	t.Parallel()
+	queries := make(chan string, 1)
+	w, _ := weatherAt(t, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		select {
+		case queries <- r.URL.RawQuery:
+		default:
+		}
+		fmt.Fprint(rw, currentWeatherBody)
+	}))
+	<-w.Updates()
+
+	query := <-queries
+	q, err := url.ParseQuery(query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "temperature_2m,relative_humidity_2m,precipitation_probability,weather_code,is_day,wind_speed_10m"; q.Get("hourly") != want {
+		t.Fatalf("hourly = %q", q.Get("hourly"))
+	}
+	if q.Get("forecast_hours") != "168" {
+		t.Fatalf("forecast_hours = %q, want 168", q.Get("forecast_hours"))
+	}
+}
+
 func TestASuccessfulFetchLeavesAbsentOptionalFieldsAbsent(t *testing.T) {
 	t.Parallel()
 	w, _ := weatherAt(t, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
@@ -450,3 +500,14 @@ func TestTheMinimumFetchFloorHolds(t *testing.T) {
 		t.Fatalf("the server was called %d times inside the fetch floor, want at most 1", got)
 	}
 }
+
+const hourlyWeatherBody = `{
+  "current":{"temperature_2m":11.0,"weather_code":0},
+  "hourly":{
+    "time":["2026-09-15T14:00","2026-09-15T15:00","2026-09-15T16:00"],
+    "weather_code":[0,2,61],
+    "temperature_2m":[14.2,13.8,12.5],
+    "is_day":[true,true,false],
+    "precipitation_probability":[10,20,80]
+  }
+}`

@@ -120,10 +120,10 @@ func Decode(body []byte) (Forecast, error) {
 	if wire.Hourly == nil {
 		return fc, nil
 	}
-	n := len(wire.Hourly.Time)
-	n = min(n, len(wire.Hourly.Code), len(wire.Hourly.Temp))
-	fc.Hourly = make([]Hour, n)
-	for i := 0; i < n; i++ {
+	hn := len(wire.Hourly.Time)
+	hn = min(hn, len(wire.Hourly.Code), len(wire.Hourly.Temp))
+	fc.Hourly = make([]Hour, hn)
+	for i := 0; i < hn; i++ {
 		h := Hour{Time: wire.Hourly.Time[i], Code: wire.Hourly.Code[i], Temperature: wire.Hourly.Temp[i]}
 		if i < len(wire.Hourly.IsDay) {
 			h.IsDay = wire.Hourly.IsDay[i]

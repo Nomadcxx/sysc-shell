@@ -53,6 +53,7 @@ type Reading struct {
 	// the wire field rather than abbreviating it.
 	TimezoneAbbreviation string
 	Daily                []Day
+	Hourly               []weather.Hour
 
 	FetchedAt   time.Time
 	FailedSince time.Time // zero while healthy
@@ -240,7 +241,7 @@ func (w *Weather) RequestURL() string { return w.requestURL() }
 
 func (w *Weather) requestURLLocked() string {
 	return weather.RequestURL(w.endpoint, weather.Query{
-		Latitude: w.latitude, Longitude: w.longitude, Unit: w.unit, Daily: true,
+		Latitude: w.latitude, Longitude: w.longitude, Unit: w.unit, Daily: true, Hourly: true,
 	})
 }
 
@@ -327,7 +328,7 @@ func (w *Weather) run(stop, done chan struct{}) {
 
 func (w *Weather) fetch() (Reading, error) {
 	w.mu.Lock()
-	q := weather.Query{Latitude: w.latitude, Longitude: w.longitude, Unit: w.unit, Daily: true, Endpoint: w.endpoint}
+	q := weather.Query{Latitude: w.latitude, Longitude: w.longitude, Unit: w.unit, Daily: true, Hourly: true, Endpoint: w.endpoint}
 	unit := w.unit
 	w.mu.Unlock()
 
@@ -352,6 +353,7 @@ func (w *Weather) fetch() (Reading, error) {
 		Timezone:             fc.Timezone,
 		TimezoneAbbreviation: fc.TimezoneAbbreviation,
 		Daily:                append([]Day(nil), fc.Daily...),
+		Hourly:               append([]weather.Hour(nil), fc.Hourly...),
 		FetchedAt:            time.Now(),
 	}, nil
 }
