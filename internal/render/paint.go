@@ -272,6 +272,14 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 		// A node whose raster has not resolved paints nothing but keeps the
 		// box it measured, so the card does not reflow when it arrives.
 		box := style.Scale120.PhysicalRect(n.Bounds)
+		if n.Background {
+			radius := 0
+			if n.Shape != ui.ShapeInherit || n.Radius > 0 {
+				radius = chromeRadius(style, nodeRadius(style, n, 0), box)
+			}
+			blendMaskImage(c, RoundedMask(radius, box.W, box.H), box.X, box.Y, n.Image)
+			return nil
+		}
 		if n.Shape != ui.ShapeInherit || n.Radius > 0 {
 			radius := chromeRadius(style, nodeRadius(style, n, 0), box)
 			paintImageMasked(c, box, n.Image, RoundedMask(radius, box.W, box.H))

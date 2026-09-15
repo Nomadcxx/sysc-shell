@@ -198,6 +198,11 @@ type Node struct {
 	// reserves its box whatever the raster turns out to be, so a decode that
 	// arrives later cannot change the layout around it.
 	ImageSize int
+	// Background marks an image that fills a container rather than standing in
+	// for an icon. It selects bilinear sampling: an icon is produced at the
+	// size the node asked for, a background is scaled to whatever the card
+	// measures.
+	Background bool
 	// ImageW and ImageH are the landscape form of ImageSize, for a raster that
 	// is not square: a wallpaper thumbnail rather than an icon. Both must be
 	// positive to take effect, because half a box is not a box; otherwise the

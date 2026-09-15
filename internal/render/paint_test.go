@@ -221,6 +221,17 @@ func paintStackToStyle(t *testing.T, style Style, children ...*ui.Node) []byte {
 	return append([]byte(nil), c.Pix...)
 }
 
+func hasIntermediateValues(pix []byte) bool {
+	for i := 0; i+3 < len(pix); i += 4 {
+		for _, value := range pix[i : i+3] {
+			if value != 0 && value != 0xff {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func TestStackScrimDarkensWhatIsBeneathIt(t *testing.T) {
 	t.Parallel()
 	// The scrim is an ordinary child rather than a property, so its presence,
@@ -235,6 +246,21 @@ func TestStackScrimDarkensWhatIsBeneathIt(t *testing.T) {
 
 	if bytes.Equal(withScrim, without) {
 		t.Fatal("the scrim child changed nothing")
+	}
+}
+
+func TestBackgroundImageInAStackSamplesSmoothly(t *testing.T) {
+	t.Parallel()
+	// A card background is one decoded image scaled to whatever the card
+	// measures. Nearest sampling bands visibly across a large flat area.
+	src := &ui.Image{Width: 2, Height: 1, Stride: 8, Pix: []byte{
+		0, 0, 0, 0xff,
+		0xff, 0xff, 0xff, 0xff,
+	}}
+	img := &ui.Node{Kind: ui.KindImage, Image: src, Background: true, Bounds: ui.Rect{W: 32, H: 4}}
+	out := paintStackTo(t, img)
+	if !hasIntermediateValues(out) {
+		t.Error("the background banded; it is not using the smooth path")
 	}
 }
 
