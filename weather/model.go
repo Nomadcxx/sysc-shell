@@ -8,11 +8,13 @@ const (
 	UnitFahrenheit
 )
 
-// Query is one Open-Meteo forecast request.
+// Query is one Open-Meteo forecast request. Daily and Hourly are independent:
+// the control centre consumes days, the panel consumes both.
 type Query struct {
 	Latitude, Longitude float64
 	Unit                Unit
 	Daily               bool
+	Hourly              bool
 	Endpoint            string
 }
 
@@ -42,12 +44,25 @@ type Day struct {
 	Precipitation            *float64
 }
 
-// Forecast is a decoded Open-Meteo body. Daily is empty when it was not requested
-// or the body carried none. Elevation and the timezone names come from the
-// response root; both are optional.
+// Hour is one forecast hour. The optional fields are nil when the body did
+// not carry them.
+type Hour struct {
+	Time              string
+	Code              int
+	Temperature       float64
+	IsDay             *bool
+	Humidity          *float64
+	PrecipProbability *float64
+	WindSpeed         *float64
+}
+
+// Forecast is a decoded Open-Meteo body. Daily and Hourly are empty when they
+// were not requested or the body carried none. Elevation and the timezone
+// names come from the response root; both are optional.
 type Forecast struct {
 	Current              Current
 	Daily                []Day
+	Hourly               []Hour
 	Elevation            *float64
 	Timezone             string
 	TimezoneAbbreviation string

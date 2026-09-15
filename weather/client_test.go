@@ -269,3 +269,94 @@ func TestFetchTimeout(t *testing.T) {
 		t.Fatal("stalled fetch succeeded")
 	}
 }
+
+const hourlyBody = `{
+  "current":{"temperature_2m":11.0,"weather_code":0},
+  "hourly":{
+    "time":["2026-09-15T14:00","2026-09-15T15:00","2026-09-15T16:00"],
+    "weather_code":[0,2,61],
+    "temperature_2m":[14.2,13.8,12.5],
+    "is_day":[true,true,false],
+    "relative_humidity_2m":[62,65,71],
+    "precipitation_probability":[10,20,80],
+    "wind_speed_10m":[10.4,11.0,9.2]
+  }
+}`
+
+func TestRequestURLCarriesTheHourlyFieldSetWhenAsked(t *testing.T) {
+	t.Parallel()
+	raw := RequestURL("https://example.test/forecast", Query{Latitude: 1, Longitude: 2, Hourly: true})
+	q, err := url.ParseQuery(strings.TrimPrefix(raw, "https://example.test/forecast?"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "temperature_2m,relative_humidity_2m,precipitation_probability,weather_code,is_day,wind_speed_10m"; q.Get("hourly") != want {
+		t.Fatalf("hourly = %q", q.Get("hourly"))
+	}
+	if q.Get("forecast_hours") != "168" {
+		t.Fatalf("forecast_hours = %q, want 168", q.Get("forecast_hours"))
+	}
+	if q.Has("daily") {
+		t.Fatal("an hourly request leaked a daily block")
+	}
+}
+
+func TestRequestURLLeavesHourlyOffUnlessAsked(t *testing.T) {
+	t.Parallel()
+	raw := RequestURL("", Query{Latitude: 1, Longitude: 2, Daily: true})
+	if strings.Contains(raw, "hourly") || strings.Contains(raw, "forecast_hours") {
+		t.Fatalf("an hourly-less request grew hourly fields: %q", raw)
+	}
+}
+
+func TestDecodeCarriesTheHourlyRows(t *testing.T) {
+	t.Parallel()
+	fc, err := Decode([]byte(hourlyBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fc.Hourly) != 3 {
+		t.Fatalf("hours = %d, want 3", len(fc.Hourly))
+	}
+	h := fc.Hourly[2]
+	if h.Time != "2026-09-15T16:00" || h.Code != 61 || h.Temperature != 12.5 {
+		t.Fatalf("hour = %+v", h)
+	}
+	if h.IsDay == nil || *h.IsDay {
+		t.Fatalf("is_day = %v, want false carried through", h.IsDay)
+	}
+	if h.Humidity == nil || *h.Humidity != 71 || h.PrecipProbability == nil || *h.PrecipProbability != 80 {
+		t.Fatalf("humidity/precip = %v/%v, want 71/80", h.Humidity, h.PrecipProbability)
+	}
+	if h.WindSpeed == nil || *h.WindSpeed != 9.2 {
+		t.Fatalf("wind = %v, want 9.2", h.WindSpeed)
+	}
+}
+
+func TestDecodeTreatsAbsentHourlyFieldsAsAbsent(t *testing.T) {
+	t.Parallel()
+	body := `{"current":{"temperature_2m":1,"weather_code":0},"hourly":{"time":["2026-09-15T14:00"],"weather_code":[0],"temperature_2m":[9.0]}}`
+	fc, err := Decode([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fc.Hourly) != 1 {
+		t.Fatalf("hours = %d, want 1", len(fc.Hourly))
+	}
+	h := fc.Hourly[0]
+	if h.IsDay != nil || h.Humidity != nil || h.PrecipProbability != nil || h.WindSpeed != nil {
+		t.Fatalf("optional hourly fields survived an absent body: %+v", h)
+	}
+}
+
+func TestDecodeTreatsNullHourlyFieldsAsAbsent(t *testing.T) {
+	t.Parallel()
+	body := `{"current":{"temperature_2m":1,"weather_code":0},"hourly":{"time":["2026-09-15T14:00"],"weather_code":[0],"temperature_2m":[9.0],"is_day":null,"precipitation_probability":null}}`
+	fc, err := Decode([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fc.Hourly[0].IsDay != nil || fc.Hourly[0].PrecipProbability != nil {
+		t.Fatalf("nulls decoded as present: %+v", fc.Hourly[0])
+	}
+}
