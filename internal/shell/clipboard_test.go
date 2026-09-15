@@ -130,3 +130,35 @@ func TestClipboardLeftAndRightClicksToggleTheSamePanel(t *testing.T) {
 		})
 	}
 }
+
+func TestClipboardProjectionShowsDaemonErrorsUntilNextState(t *testing.T) {
+	r := clipboardOnlyRegistry([]clipboardprotocol.Entry{testClipboardEntry("one", clipboardprotocol.KindText, "one", false)})
+	t.Cleanup(func() { close(r.closed) })
+	h := &PanelHost{
+		id: PanelClipboard, output: 7, stopAnim: make(chan struct{}),
+		place: Placement{Panel: panelTargetSize(PanelClipboard)}, theme: DefaultTheme(), search: ui.NewField(""),
+	}
+	r.panelHosts[PanelClipboard] = h
+	h.root = laidOutClipboardTree(r, h)
+	h.focus = ui.Focusables(h.root)
+	h.roving = ui.Roving{Count: len(h.focus)}
+
+	r.ApplyClipboard(clipboardclient.Update{
+		Connected: true, Snapshot: r.clipboard.Snapshot,
+		Message: clipboardprotocol.Message{Version: clipboardprotocol.Version, Type: clipboardprotocol.TypeError,
+			Error: &clipboardprotocol.ErrorBody{Code: clipboardprotocol.ErrorUnavailable, Message: "restore failed"}},
+	})
+	if !treeHasText(h.root, "restore failed") {
+		t.Fatalf("error tree = %v, want daemon error", texts(h.root))
+	}
+
+	next := r.clipboard.Snapshot
+	next.Revision++
+	r.ApplyClipboard(clipboardclient.Update{
+		Connected: true, Snapshot: next,
+		Message: clipboardprotocol.Message{Version: clipboardprotocol.Version, Type: clipboardprotocol.TypeSnapshot, Snapshot: &next},
+	})
+	if treeHasText(h.root, "restore failed") {
+		t.Fatalf("error survived the next state: %v", texts(h.root))
+	}
+}

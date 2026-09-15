@@ -144,6 +144,10 @@ func (r *Registry) ApplyClipboard(update clipboardUpdate) []uint32 {
 			pruneClipboardImages(h, r.clipboard.Snapshot.Entries)
 			panelChanged = true
 		}
+		if update.Message.Type == clipboardprotocol.TypeError && update.Message.Error != nil && h.errLabel != update.Message.Error.Message {
+			h.errLabel = update.Message.Error.Message
+			panelChanged = true
+		}
 		if thumbnail != nil && update.Message.Thumbnail != nil && clipboardImageEntry(r.clipboard.Snapshot.Entries, update.Message.Thumbnail.ID) {
 			if h.clipboardThumbnails == nil {
 				h.clipboardThumbnails = make(map[string]*ui.Image)

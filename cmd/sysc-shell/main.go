@@ -50,6 +50,20 @@ func pumpNiri(
 	return nil
 }
 
+func pumpClipboard(ctx context.Context, updates <-chan clipboardclient.Update, apply func(clipboardclient.Update)) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case update, ok := <-updates:
+			if !ok {
+				return
+			}
+			apply(update)
+		}
+	}
+}
+
 // run streams Niri workspace state into the bar registry and hands the registry
 // to the Wayland owner. The owner goroutine performs all Wayland work and
 // creates one bar per connected output.
@@ -206,17 +220,9 @@ func run(ctx context.Context) (err error) {
 		if clipboardClient, clientErr := clipboardclient.New(socket); clientErr == nil {
 			registry.BindClipboard(clipboardClient)
 			go func() {
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case update, ok := <-clipboardClient.Updates():
-						if !ok {
-							return
-						}
-						registry.ApplyClipboard(update)
-					}
-				}
+				pumpClipboard(ctx, clipboardClient.Updates(), func(update clipboardclient.Update) {
+					registry.ApplyClipboard(update)
+				})
 			}()
 			go func() {
 				if err := clipboardClient.Run(ctx); err != nil && ctx.Err() == nil {
