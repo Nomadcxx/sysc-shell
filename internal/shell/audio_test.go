@@ -404,7 +404,7 @@ if [ "$1" = get-volume ]; then printf 'Volume: %s\n' "$(cat '` + dir + `/vol')";
 	reg := newPanelRegistry(t)
 	audio := services.NewAudio(time.Hour, bin)
 	reg.setAudio(audio)
-	reg.bars[1] = &Bar{conn: "DP-1"}
+	reg.setTestBar(1, &Bar{conn: "DP-1"})
 	deadline := time.Now().Add(3 * time.Second)
 	st, _ := audio.CachedState()
 	for st.Level != 40 && time.Now().Before(deadline) {
@@ -442,7 +442,7 @@ fi
 	reg := newPanelRegistry(t)
 	reg.setAudio(services.NewAudio(time.Hour, bin))
 	bar := &Bar{conn: "DP-1"}
-	reg.bars[1] = bar
+	reg.setTestBar(1, bar)
 	reg.mu.Lock()
 	reg.bindBarPanelActionsLocked(1, bar)
 	reg.mu.Unlock()

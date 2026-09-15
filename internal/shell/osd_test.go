@@ -46,7 +46,7 @@ func TestOsdTimerResetsOnRepeat(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
 	reg.osd.hideFor = 50 * time.Millisecond
-	reg.bars[1] = &Bar{conn: "eDP-1"}
+	reg.setTestBar(1, &Bar{conn: "eDP-1"})
 	reg.OSD().Show(OSDView{Kind: "audio", Level: 40})
 	_ = drainAux(t, reg, 1)
 	time.Sleep(30 * time.Millisecond)
@@ -59,8 +59,8 @@ func TestOsdTimerResetsOnRepeat(t *testing.T) {
 func TestOsdShownOnEveryOutputWithBar(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
-	reg.bars[1] = &Bar{conn: "DP-1"}
-	reg.bars[2] = &Bar{conn: "DP-2"}
+	reg.setTestBar(1, &Bar{conn: "DP-1"})
+	reg.setTestBar(2, &Bar{conn: "DP-2"})
 	reg.OSD().Show(OSDView{Kind: "audio", Level: 50})
 	reqs := drainAux(t, reg, 2)
 	seen := map[string]bool{}
@@ -91,7 +91,7 @@ fi
 	}
 	reg := newPanelRegistry(t)
 	reg.setAudio(services.NewAudio(time.Second, bin))
-	reg.bars[1] = &Bar{conn: "eDP-1"}
+	reg.setTestBar(1, &Bar{conn: "eDP-1"})
 	if err := reg.OSDStep("audio", "up"); err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ fi
 func TestOsdReducedMotionFadesWithoutMoving(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t) // already reduced-motion
-	reg.bars[1] = &Bar{conn: "eDP-1"}
+	reg.setTestBar(1, &Bar{conn: "eDP-1"})
 	drainInvalidations(reg)
 	reg.OSD().Show(OSDView{Kind: "audio", Level: 20})
 	_ = drainAux(t, reg, 1)
@@ -148,8 +148,8 @@ if [ "$1" = get-volume ]; then printf 'Volume: %s\n' "$(cat '` + dir + `/vol')";
 	}
 	reg := newPanelRegistry(t)
 	reg.setAudio(services.NewAudio(15*time.Millisecond, bin))
-	reg.bars[1] = &Bar{conn: "DP-1"}
-	reg.bars[2] = &Bar{conn: "DP-2"}
+	reg.setTestBar(1, &Bar{conn: "DP-1"})
+	reg.setTestBar(2, &Bar{conn: "DP-2"})
 	time.Sleep(40 * time.Millisecond)
 	if err := os.WriteFile(filepath.Join(dir, "vol"), []byte("0.70\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -171,7 +171,7 @@ if [ "$1" = get-volume ]; then printf 'Volume: %s\n' "$(cat '` + dir + `/vol')";
 func TestOsdRenderHasGlyphLabelAndBar(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
-	reg.bars[1] = &Bar{conn: "eDP-1"}
+	reg.setTestBar(1, &Bar{conn: "eDP-1"})
 	reg.OSD().Show(OSDView{Kind: "audio", Level: 40, Muted: true})
 	if got := osdLabel(reg.osd.view); got != "audio muted" {
 		t.Fatalf("label = %q, want audio muted", got)
@@ -197,7 +197,7 @@ func TestOsdRevealPublishesMultipleFrames(t *testing.T) {
 	cfg.Accessibility.ReducedMotion = false
 	reg := NewRegistry(cfg)
 	t.Cleanup(reg.Close)
-	reg.bars[1] = &Bar{conn: "eDP-1"}
+	reg.setTestBar(1, &Bar{conn: "eDP-1"})
 	drainInvalidations(reg)
 	reg.OSD().Show(OSDView{Kind: "audio", Level: 20})
 	_ = drainAux(t, reg, 1)
@@ -209,7 +209,7 @@ func TestOsdRevealPublishesMultipleFrames(t *testing.T) {
 func TestOsdShowReleasesLockBeforeAux(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
-	reg.bars[1] = &Bar{conn: "eDP-1"}
+	reg.setTestBar(1, &Bar{conn: "eDP-1"})
 	for i := 0; i < 8; i++ {
 		reg.aux <- wayland.AuxRequest{}
 	}
@@ -234,7 +234,7 @@ func TestOsdShowReleasesLockBeforeAux(t *testing.T) {
 func TestOsdHideReleasesLockBeforeAux(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
-	reg.bars[1] = &Bar{conn: "eDP-1"}
+	reg.setTestBar(1, &Bar{conn: "eDP-1"})
 	reg.OSD().Show(OSDView{Kind: "audio", Level: 10})
 	_ = drainAux(t, reg, 1)
 	for i := 0; i < 8; i++ {

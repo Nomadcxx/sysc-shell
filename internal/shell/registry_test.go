@@ -46,7 +46,7 @@ func TestAttachedPanelKeepsItsOwnAlphaOnceItHasABackdrop(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { releaseAll(leases) })
-	reg.bars[7] = bar
+	reg.setTestBar(7, bar)
 	if err := reg.OpenPanel(PanelMonitor, 7, Trigger{BarEdge: "top"}); err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestAttachedPanelAndOutputBarShareRootBeforeAndAfterThemeReload(t *testing.
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { releaseAll(leases) })
-	reg.bars[7] = bar
+	reg.setTestBar(7, bar)
 	if err := reg.OpenPanel(PanelMonitor, 7, Trigger{BarEdge: "top"}); err != nil {
 		t.Fatal(err)
 	}
@@ -887,4 +887,13 @@ func TestMediaSnapshotUpdatesTheRetainedRegistryView(t *testing.T) {
 	if got := r.mediaState; got != want {
 		t.Fatalf("retained media state = %+v, want %+v", got, want)
 	}
+}
+
+// setTestBar installs a bar under the registry lock. Tests run beside live
+// goroutines (the media relay walks r.bars under the same lock), so a bare
+// map write from the test goroutine is a data race.
+func (r *Registry) setTestBar(global uint32, bar *Bar) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.bars[global] = bar
 }

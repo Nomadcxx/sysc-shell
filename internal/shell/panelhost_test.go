@@ -946,8 +946,8 @@ func TestPanelFontFamilyFollowsTheOutputConnector(t *testing.T) {
 	cfg.Bar.FontFamily = "GlobalSans"
 	cfg.Outputs = []config.OutputOverride{{Connector: "DP-2", Bar: config.Bar{FontFamily: "PerOutputSerif"}}}
 	reg := NewRegistry(cfg)
-	reg.bars[1] = &Bar{conn: "DP-1"}
-	reg.bars[2] = &Bar{conn: "DP-2"}
+	reg.setTestBar(1, &Bar{conn: "DP-1"})
+	reg.setTestBar(2, &Bar{conn: "DP-2"})
 
 	if got := reg.panelFontFamily(1); got != "GlobalSans" {
 		t.Errorf("DP-1 panel font = %q, want the global family", got)
