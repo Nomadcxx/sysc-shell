@@ -1,13 +1,17 @@
 package shell
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	"github.com/Nomadcxx/sysc-shell/internal/wallpaper"
 )
 
 func mediaTestRegistry(t *testing.T, state services.MediaState, players []services.Player) (*Registry, *PanelHost) {
@@ -78,6 +82,125 @@ func TestControlCentreMediaPageIsNoLongerDisabled(t *testing.T) {
 	if art == nil || art.Kind != ui.KindCapsule {
 		t.Fatalf("missing-art node = %+v, want a painted placeholder capsule", art)
 	}
+}
+
+func TestMediaCardUsesTheOutputWallpaperThumbnailWithoutCoverArt(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	source := filepath.Join(t.TempDir(), "wall.png")
+	data := testMediaArtPNG(t)
+	if err := os.WriteFile(source, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	preview := wallpaper.CachedStillPath(source)
+	if preview == "" {
+		t.Fatal("wallpaper preview path was empty")
+	}
+	if err := os.MkdirAll(filepath.Dir(preview), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(preview, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r, h := mediaTestRegistry(t, services.MediaState{Available: true, Title: "Track"}, nil)
+	r.bars = map[uint32]*Bar{1: {conn: "DP-1"}}
+	svc := wallpaper.NewService(wallpaper.ServiceConfig{
+		Engine:     mediaWallpaperEngine{},
+		Connectors: []string{"DP-1"},
+	})
+	t.Cleanup(svc.Close)
+	r.wallpaperSvc = svc
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-1", Path: source, Kind: wallpaper.KindImage})
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case snap := <-svc.Updates():
+			if _, ok := snap.Assignments["DP-1"]; ok {
+				goto assigned
+			}
+		case <-deadline:
+			t.Fatal("wallpaper assignment did not arrive")
+		}
+	}
+
+assigned:
+	r.mu.Lock()
+	h.section = "media"
+	page := mediaBody(r, h)
+	worker := r.wallpaperThumbs
+	r.mu.Unlock()
+	if worker == nil {
+		t.Fatal("media page did not start the wallpaper thumbnail worker")
+	}
+	key := icons.Key{Name: preview, W: mediaArtBox, H: mediaArtBox}
+	var art *ui.Image
+	deadline = time.After(time.Second)
+	for art == nil {
+		if got, ok := worker.Lookup(key); ok {
+			art = got
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("wallpaper thumbnail did not decode")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if bg := findNode(page, func(n *ui.Node) bool { return n.Kind == ui.KindImage && n.Background }); bg == nil {
+		t.Fatal("media card has no background image node")
+	}
+
+	r.mu.Lock()
+	page = mediaBody(r, h)
+	r.mu.Unlock()
+	bg := findNode(page, func(n *ui.Node) bool { return n.Kind == ui.KindImage && n.Background })
+	if bg == nil || bg.Image != art {
+		t.Fatalf("wallpaper fallback image = %p, want decoded thumbnail %p", bgImage(bg), art)
+	}
+}
+
+func TestWallpaperThumbnailRebuildsAndPublishesTheOpenMediaPage(t *testing.T) {
+	r, h := mediaTestRegistry(t, services.MediaState{Available: true, Title: "Track"}, nil)
+	r.mu.Lock()
+	h.section = "media"
+	h.root = &ui.Node{Kind: ui.KindText, Text: "old"}
+	r.mu.Unlock()
+
+	r.applyWallpaperThumb(icons.Key{Name: "preview"}, &ui.Image{Width: 1, Height: 1, Stride: 4, Pix: []byte{0, 0, 0, 0xff}})
+	r.mu.Lock()
+	root := h.root
+	r.mu.Unlock()
+	if root == nil || root.Text == "old" {
+		t.Fatal("open Media page was not rebuilt when a thumbnail arrived")
+	}
+	select {
+	case inv := <-r.invalidations:
+		if inv.SurfaceID != panelSurfaceID(PanelControlCenter) {
+			t.Fatalf("thumbnail invalidation = %+v, want the Media page", inv)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("thumbnail arrival did not publish a Media page invalidation")
+	}
+}
+
+type mediaWallpaperEngine struct{}
+
+func (mediaWallpaperEngine) Apply(wallpaper.Job, wallpaper.Settings) (string, error) {
+	return "", nil
+}
+func (mediaWallpaperEngine) Restore(string, string) error { return nil }
+func (mediaWallpaperEngine) SetPaused(string, bool) error { return nil }
+func (mediaWallpaperEngine) Capabilities() wallpaper.Capabilities {
+	return wallpaper.Capabilities{Statics: []string{"stub"}}
+}
+
+func bgImage(n *ui.Node) *ui.Image {
+	if n == nil {
+		return nil
+	}
+	return n.Image
 }
 
 func TestMediaTransportShowsSupportedRepeatAndShuffle(t *testing.T) {

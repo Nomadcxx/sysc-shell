@@ -2,6 +2,7 @@ package shell
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	"github.com/Nomadcxx/sysc-shell/internal/wallpaper"
 )
 
 const mediaSeekAction = "media:seek:"
@@ -75,6 +77,9 @@ func mediaNowPlaying(r *Registry, h *PanelHost, state services.MediaState, m the
 			}
 		}
 	}
+	if art == nil && r != nil && h != nil {
+		art = mediaWallpaperArtLocked(r, h)
+	}
 	background := &ui.Node{
 		Kind: ui.KindImage, Width: mediaArtBox, Height: mediaArtBox,
 		ImageSize: mediaArtBox, Image: art, Background: true, Shape: ui.ShapeCard,
@@ -101,11 +106,39 @@ func mediaNowPlaying(r *Registry, h *PanelHost, state services.MediaState, m the
 		Children: []*ui.Node{{Kind: ui.KindStack, Children: []*ui.Node{
 			background,
 			{Kind: ui.KindCapsule, Fill: ui.FillScrim, Shape: ui.ShapeCard},
-			{Kind: ui.KindColumn, Padding: m.CardPadding, Children: []*ui.Node{{
+			{Kind: ui.KindColumn, Padding: m.CardPadding, Opacity: 80, Children: []*ui.Node{{
 				Kind: ui.KindRow, Gap: theme.MarginL, Children: foregroundChildren,
 			}}},
 		}}},
 	}
+}
+
+// mediaWallpaperArtLocked supplies the cached still assigned to the bar's
+// output when the player has no cover art. Registry.mu is held by the media
+// page builder; decoding remains on the thumbnail worker.
+func mediaWallpaperArtLocked(r *Registry, h *PanelHost) *ui.Image {
+	bar := r.bars[h.output]
+	if bar == nil || r.wallpaperSvc == nil {
+		return nil
+	}
+	assignment, ok := r.wallpaperSvc.Snapshot().Assignments[bar.connector()]
+	if !ok || assignment.Path == "" {
+		return nil
+	}
+	source := wallpaper.CachedStillPath(assignment.Path)
+	if source == "" {
+		return nil
+	}
+	if _, err := os.Stat(source); err != nil {
+		return nil
+	}
+	key := icons.Key{Name: source, W: mediaArtBox, H: mediaArtBox}
+	worker := r.wallpaperThumbsLocked()
+	if image, ok := worker.Lookup(key); ok {
+		return image
+	}
+	_, _, _ = worker.Request(key)
+	return nil
 }
 
 func mediaTransport(state services.MediaState, m theme.Metrics) *ui.Node {

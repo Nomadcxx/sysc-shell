@@ -1059,18 +1059,28 @@ func (r *Registry) applyWallpaperThumb(_ icons.Key, image *ui.Image) {
 		return
 	}
 	r.mu.Lock()
-	h := r.panelHosts[PanelWallpaper]
-	if h == nil {
-		r.mu.Unlock()
-		return
+	picker := r.panelHosts[PanelWallpaper]
+	media := r.panelHosts[PanelControlCenter]
+	var pickerOut, mediaOut uint32
+	mediaOpen := false
+	if picker != nil {
+		pickerOut = picker.output
 	}
-	out := h.output
+	if media != nil && media.section == "media" {
+		mediaOut = media.output
+		mediaOpen = true
+		r.rebuildPanel(media)
+	}
 	r.mu.Unlock()
-	// No rebuild: wallpaperThumbFor runs inside the virtual list's Item builder
-	// at layout time, so the next paint picks the raster up. Rebuilding the tree
-	// for a raster relaid out the whole picker once per decoded file, which on a
-	// library of hundreds is a full relayout and blit per thumbnail.
-	r.publishSurface(out, panelSurfaceID(PanelWallpaper))
+	// The picker only needs a repaint: its virtual-list item builder looks up
+	// the newly decoded raster during the next frame. The Media page must
+	// rebuild because its fallback art is retained in the tree itself.
+	if picker != nil {
+		r.publishSurface(pickerOut, panelSurfaceID(PanelWallpaper))
+	}
+	if mediaOpen {
+		r.publishSurface(mediaOut, panelSurfaceID(PanelControlCenter))
+	}
 }
 
 // wallpaperThumbFor returns an already-decoded thumbnail, queueing a decode

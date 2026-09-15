@@ -203,6 +203,10 @@ type Node struct {
 	// size the node asked for, a background is scaled to whatever the card
 	// measures.
 	Background bool
+	// Opacity is group opacity in percent. Zero means unset/full opacity; a
+	// non-zero value composites the complete subtree once, so overlapping
+	// children do not multiply their alpha.
+	Opacity uint8
 	// ImageW and ImageH are the landscape form of ImageSize, for a raster that
 	// is not square: a wallpaper thumbnail rather than an icon. Both must be
 	// positive to take effect, because half a box is not a box; otherwise the

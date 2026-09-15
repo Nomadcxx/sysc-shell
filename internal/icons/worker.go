@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"image"
+	stdDraw "image/draw"
 	_ "image/jpeg"
 	_ "image/png"
 	"os"
@@ -184,9 +185,8 @@ func DecodeRaster(data []byte, width, height int) *ui.Image {
 }
 
 // decodeRaster turns encoded bytes into a premultiplied BGRA raster at the
-// requested box. The source is scaled to fill it exactly, so a caller that
-// needs a crop rather than a stretch must supply a source already at this
-// aspect ratio.
+// requested box. The source is scaled to cover the box and cropped around its
+// centre, matching PreserveAspectCrop rather than stretching the source.
 func decodeRaster(data []byte, width, height int) *ui.Image {
 	config, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
@@ -203,8 +203,37 @@ func decodeRaster(data []byte, width, height int) *ui.Image {
 		return nil
 	}
 	target := image.NewRGBA(image.Rect(0, 0, width, height))
-	xdraw.CatmullRom.Scale(target, target.Bounds(), source, source.Bounds(), xdraw.Src, nil)
+	scaleCrop(target, source)
 	return fromRGBA(target)
+}
+
+// scaleCrop covers dst with src at one uniform scale, then takes the centred
+// target-sized window. Scaling first keeps fractional crop edges correct even
+// when the target is much wider or taller than one source pixel.
+func scaleCrop(dst *image.RGBA, src image.Image) {
+	if dst == nil || src == nil || dst.Bounds().Dx() <= 0 || dst.Bounds().Dy() <= 0 {
+		return
+	}
+	sb := src.Bounds()
+	sw, sh := sb.Dx(), sb.Dy()
+	dw, dh := dst.Bounds().Dx(), dst.Bounds().Dy()
+	if sw <= 0 || sh <= 0 {
+		return
+	}
+
+	scaledW, scaledH := dw, dh
+	if int64(sw)*int64(dh) > int64(sh)*int64(dw) {
+		// The source is wider: match the target height and crop its sides.
+		scaledW = (sw*dh + sh - 1) / sh
+	} else {
+		// The source is taller or equal: match the target width and crop top
+		// and bottom.
+		scaledH = (sh*dw + sw - 1) / sw
+	}
+	scaled := image.NewRGBA(image.Rect(0, 0, scaledW, scaledH))
+	xdraw.CatmullRom.Scale(scaled, scaled.Bounds(), src, sb, xdraw.Src, nil)
+	stdDraw.Draw(dst, dst.Bounds(), scaled,
+		image.Point{X: (scaledW - dw) / 2, Y: (scaledH - dh) / 2}, stdDraw.Src)
 }
 
 // fromRGBA converts Go's premultiplied RGBA into the canvas's B, G, R, A order.

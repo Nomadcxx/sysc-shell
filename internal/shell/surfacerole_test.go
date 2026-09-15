@@ -91,6 +91,9 @@ func TestMediaCardStacksContentOverItsBackground(t *testing.T) {
 	if stack.Children[1].Kind != ui.KindCapsule || stack.Children[1].Fill != ui.FillScrim {
 		t.Fatalf("stack scrim = %+v, want a scrim child", stack.Children[1])
 	}
+	if stack.Children[2].Kind != ui.KindColumn || stack.Children[2].Opacity != 80 {
+		t.Fatalf("stack foreground = %+v, want one 80%% opacity group", stack.Children[2])
+	}
 }
 
 // TestSurfaceCardsCarryTheCardShape is the shape half of the migration. A card

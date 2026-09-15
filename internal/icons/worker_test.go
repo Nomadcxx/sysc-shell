@@ -278,6 +278,25 @@ func pngBytes(t *testing.T, size int) []byte {
 	return buffer.Bytes()
 }
 
+func TestDecodeRasterPreservesAspectByCroppingTheCentre(t *testing.T) {
+	src := image.NewRGBA(image.Rect(0, 0, 3, 1))
+	src.SetRGBA(0, 0, color.RGBA{R: 0xff, A: 0xff})
+	src.SetRGBA(1, 0, color.RGBA{G: 0xff, A: 0xff})
+	src.SetRGBA(2, 0, color.RGBA{B: 0xff, A: 0xff})
+	var data bytes.Buffer
+	if err := png.Encode(&data, src); err != nil {
+		t.Fatal(err)
+	}
+
+	got := DecodeRaster(data.Bytes(), 1, 1)
+	if got == nil {
+		t.Fatal("decode returned no raster")
+	}
+	if got.Pix[0] != 0 || got.Pix[1] != 0xff || got.Pix[2] != 0 || got.Pix[3] != 0xff {
+		t.Fatalf("cropped pixel in BGRA = %v, want the centred green pixel", got.Pix[:4])
+	}
+}
+
 func TestWorkerDecodesANonSquareTarget(t *testing.T) {
 	// A wallpaper thumbnail is landscape. The decode target has to carry both
 	// edges, because scaling a 16:9 source into a square box is a visible

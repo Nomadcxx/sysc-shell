@@ -206,6 +206,9 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 		}
 		return maxH + 2*n.Padding, nil
 	case KindStack:
+		if len(n.Children) == 0 {
+			return 0, nil
+		}
 		if n.Height > 0 {
 			return n.Height, nil
 		}

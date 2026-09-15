@@ -2,6 +2,7 @@ package render
 
 import (
 	"image"
+	"math"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -68,12 +69,13 @@ func paintImageMasked(c *Canvas, box ui.Rect, img *ui.Image, mask *image.Alpha) 
 
 // blendMaskImage composites a raster through an alpha mask with bilinear
 // sampling, in the same shape as blendMask and blendMaskGradient: the mask
-// supplies both the geometry and the per-pixel coverage.
+// supplies both the geometry and the per-pixel coverage. Its source mapping is
+// kept for backdrop captures, whose capture region already matches the panel.
 //
 // paintImage stays nearest-neighbour on purpose: the icon worker produces the
-// size the node asked for. A backdrop is the opposite case -- one capture scaled
-// to whatever the panel measures -- and nearest banding is visible across a
-// large flat ground.
+// size the node asked for. A background image is the opposite case -- one
+// decoded image scaled to whatever the card measures -- and nearest banding is
+// visible across a large flat ground.
 //
 // The mask is what keeps a panel's corners honest. The painter clears the buffer
 // and fills a *rounded* body, so those corners are genuinely transparent and the
@@ -85,6 +87,17 @@ func paintImageMasked(c *Canvas, box ui.Rect, img *ui.Image, mask *image.Alpha) 
 // clamps at the edges, so no read leaves the source. The source is already
 // premultiplied, so scaling all four channels by coverage keeps it that way.
 func blendMaskImage(c *Canvas, mask *image.Alpha, x, y int, img *ui.Image) {
+	blendMaskImageMode(c, mask, x, y, img, false)
+}
+
+// blendBackgroundImage uses the same bilinear compositor with centred
+// PreserveAspectCrop mapping for a card background. It is separate from
+// blendMaskImage so changing card artwork cannot change the panel blur capture.
+func blendBackgroundImage(c *Canvas, mask *image.Alpha, x, y int, img *ui.Image) {
+	blendMaskImageMode(c, mask, x, y, img, true)
+}
+
+func blendMaskImageMode(c *Canvas, mask *image.Alpha, x, y int, img *ui.Image, crop bool) {
 	if mask == nil || img == nil || img.Width <= 0 || img.Height <= 0 {
 		return
 	}
@@ -96,27 +109,29 @@ func blendMaskImage(c *Canvas, mask *image.Alpha, x, y int, img *ui.Image) {
 	if box.W <= 0 || box.H <= 0 {
 		return
 	}
+	var cropX, cropY, cropW, cropH float64
+	if crop {
+		cropX, cropY, cropW, cropH = aspectCrop(float64(img.Width), float64(img.Height), float64(box.W), float64(box.H))
+	}
 	x0, y0, x1, y1 := c.clip(box)
 	for py := y0; py < y1; py++ {
 		row := c.Pix[py*c.Stride:]
-		fy := ((py-box.Y)*img.Height*256)/box.H - 128
-		sy0 := clampInt(fy>>8, 0, img.Height-1)
-		sy1 := clampInt(sy0+1, 0, img.Height-1)
-		wy := fy & 255
-		if fy < 0 {
-			wy = 0
+		var sy0, sy1, wy int
+		if crop {
+			sy0, sy1, wy = cropSample(float64(py-box.Y), float64(box.H), cropY, cropH, img.Height)
+		} else {
+			sy0, sy1, wy = stretchSample(py-box.Y, box.H, img.Height)
 		}
 		for px := x0; px < x1; px++ {
 			cov := uint32(mask.AlphaAt(b.Min.X+px-x, b.Min.Y+py-y).A)
 			if cov == 0 {
 				continue
 			}
-			fx := ((px-box.X)*img.Width*256)/box.W - 128
-			sx0 := clampInt(fx>>8, 0, img.Width-1)
-			sx1 := clampInt(sx0+1, 0, img.Width-1)
-			wx := fx & 255
-			if fx < 0 {
-				wx = 0
+			var sx0, sx1, wx int
+			if crop {
+				sx0, sx1, wx = cropSample(float64(px-box.X), float64(box.W), cropX, cropW, img.Width)
+			} else {
+				sx0, sx1, wx = stretchSample(px-box.X, box.W, img.Width)
 			}
 			o00 := sy0*img.Stride + sx0*4
 			o01 := sy0*img.Stride + sx1*4
@@ -135,4 +150,45 @@ func blendMaskImage(c *Canvas, mask *image.Alpha, x, y int, img *ui.Image) {
 			blendPixel(row[px*4:px*4+4], s, alpha)
 		}
 	}
+}
+
+func stretchSample(dst, dstSize, sourceSize int) (int, int, int) {
+	position := dst*sourceSize*256/dstSize - 128
+	base := clampInt(position>>8, 0, sourceSize-1)
+	weight := position & 255
+	if position < 0 {
+		weight = 0
+	}
+	return base, clampInt(base+1, 0, sourceSize-1), weight
+}
+
+// aspectCrop returns the centred source window whose aspect matches the
+// destination. The window may have fractional edges; the renderer keeps those
+// edges instead of rounding them before bilinear sampling.
+func aspectCrop(srcW, srcH, dstW, dstH float64) (x, y, w, h float64) {
+	if srcW <= 0 || srcH <= 0 || dstW <= 0 || dstH <= 0 {
+		return
+	}
+	w, h = srcW, srcH
+	if srcW*dstH > srcH*dstW {
+		w = srcH * dstW / dstH
+		x = (srcW - w) / 2
+	} else {
+		h = srcW * dstH / dstW
+		y = (srcH - h) / 2
+	}
+	return
+}
+
+// cropSample maps one destination pixel to a bilinear source coordinate. The
+// half-pixel offset keeps the sampling convention used by the uncropped path.
+func cropSample(dst, dstSize, start, size float64, sourceSize int) (int, int, int) {
+	coord := start + (dst+0.5)*size/dstSize - 0.5
+	base := int(math.Floor(coord))
+	weight := int(math.Round((coord - float64(base)) * 256))
+	if weight >= 256 {
+		base++
+		weight = 0
+	}
+	return clampInt(base, 0, sourceSize-1), clampInt(base+1, 0, sourceSize-1), weight
 }

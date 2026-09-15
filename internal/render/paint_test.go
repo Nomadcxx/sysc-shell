@@ -264,6 +264,25 @@ func TestBackgroundImageInAStackSamplesSmoothly(t *testing.T) {
 	}
 }
 
+func TestNodeOpacityCompositesOverlappingChildrenAsOneGroup(t *testing.T) {
+	t.Parallel()
+	style := testStyle
+	c := newTestCanvas(t, 20, 20)
+	fillRect(c, ui.Rect{W: 20, H: 20}, style.Background)
+	stack := &ui.Node{Kind: ui.KindStack, Opacity: 50, Bounds: ui.Rect{W: 20, H: 20}, Children: []*ui.Node{
+		{Kind: ui.KindRow, Fill: ui.FillAccent, Bounds: ui.Rect{W: 20, H: 20}},
+		{Kind: ui.KindRow, Fill: ui.FillError, Bounds: ui.Rect{W: 20, H: 20}},
+	}}
+	if err := paintNode(c, stack, NewTextRenderer(mustTestFace(t)), style, style.Size); err != nil {
+		t.Fatal(err)
+	}
+	got := pixelAt(t, c, 10, 10)
+	want := overlay(style.Background, style.Error, 0.5)
+	if got != want {
+		t.Fatalf("group opacity pixel = %+v, want one 50%% composite %+v", got, want)
+	}
+}
+
 // litPixels counts pixels that took the foreground text colour.
 func litPixels(c *Canvas, fg Color) int {
 	n := 0

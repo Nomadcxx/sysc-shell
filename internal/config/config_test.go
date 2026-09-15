@@ -72,14 +72,11 @@ func TestBlurRadiusOutsideItsBoundsIsRejected(t *testing.T) {
 	}
 }
 
-func TestBlurDefaultsOffWithAUsableRadius(t *testing.T) {
+func TestBlurDefaultsOnWithAUsableRadius(t *testing.T) {
 	t.Parallel()
-	// It ships off: the live gate flips the default, not this slice.
-	if Default().Theme.BlurBehind {
-		t.Error("blur is on by default; it must ship off until the live gate has run")
+	if !Default().Theme.BlurBehind {
+		t.Error("blur is off by default; panels should request their backdrop without opt-in")
 	}
-	// The radius is ready even so, or turning blur on alone would downsample
-	// the backdrop without ever blurring it.
 	if Default().Theme.BlurRadius <= 0 {
 		t.Errorf("default blur radius = %d, want a usable one", Default().Theme.BlurRadius)
 	}
@@ -892,10 +889,11 @@ func TestThemePresetSeedsEveryAxis(t *testing.T) {
 		motion  theme.MotionStyle
 		speed   int
 		panel   int
+		blur    bool
 	}{
-		{"standard", theme.DensityDefault, 12, theme.MotionStandard, 100, 100},
-		{"compact", theme.DensityCompact, 8, theme.MotionStandard, 125, 100},
-		{"expressive", theme.DensityDefault, 16, theme.MotionExpressive, 100, 95},
+		{"standard", theme.DensityDefault, 12, theme.MotionStandard, 100, 100, true},
+		{"compact", theme.DensityCompact, 8, theme.MotionStandard, 125, 100, true},
+		{"expressive", theme.DensityDefault, 16, theme.MotionExpressive, 100, 95, true},
 	} {
 		cfg, err := Parse([]byte(`{"theme":{"preset":"` + tc.preset + `"}}`))
 		if err != nil {
@@ -907,7 +905,7 @@ func TestThemePresetSeedsEveryAxis(t *testing.T) {
 		}
 		if cfg.Theme.Density != tc.density || cfg.Theme.Radius != tc.radius ||
 			cfg.Theme.Motion != tc.motion || cfg.Theme.MotionSpeed != tc.speed ||
-			cfg.Theme.PanelOpacity != tc.panel {
+			cfg.Theme.PanelOpacity != tc.panel || cfg.Theme.BlurBehind != tc.blur {
 			t.Errorf("%s: composition = %+v", tc.preset, cfg.Theme.Composition)
 		}
 	}

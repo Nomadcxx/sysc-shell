@@ -117,6 +117,32 @@ func TestBlendMaskImageInterpolatesBetweenPixels(t *testing.T) {
 	}
 }
 
+func TestBlendMaskImageKeepsBackdropMapping(t *testing.T) {
+	c := newTestCanvas(t, 1, 1)
+	img := &ui.Image{Width: 3, Height: 1, Stride: 12, Pix: []byte{
+		0x00, 0x00, 0xff, 0xff,
+		0x00, 0xff, 0x00, 0xff,
+		0xff, 0x00, 0x00, 0xff,
+	}}
+	blendMaskImage(c, RoundedMask(0, 1, 1), 0, 0, img)
+	if got := pixelAt(t, c, 0, 0); got != (Color{R: 0xff, A: 0xff}) {
+		t.Fatalf("backdrop mapping = %+v, want the source edge pixel", got)
+	}
+}
+
+func TestBlendBackgroundImageCropsAroundTheSourceCentre(t *testing.T) {
+	c := newTestCanvas(t, 1, 1)
+	img := &ui.Image{Width: 3, Height: 1, Stride: 12, Pix: []byte{
+		0x00, 0x00, 0xff, 0xff,
+		0x00, 0xff, 0x00, 0xff,
+		0xff, 0x00, 0x00, 0xff,
+	}}
+	blendBackgroundImage(c, RoundedMask(0, 1, 1), 0, 0, img)
+	if got := pixelAt(t, c, 0, 0); got != (Color{R: 0x00, G: 0xff, B: 0x00, A: 0xff}) {
+		t.Fatalf("cropped centre = %+v, want the source centre pixel", got)
+	}
+}
+
 func TestBlendMaskImageClipsToTheMask(t *testing.T) {
 	// A panel's corners are genuinely transparent: the painter clears the
 	// buffer and fills a rounded body, so the compositor shows what is behind

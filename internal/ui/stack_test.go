@@ -64,11 +64,21 @@ func TestStackWithNoChildrenIsHarmless(t *testing.T) {
 	t.Parallel()
 	// The other containers degrade rather than error on an empty child list.
 	n := stackOf()
+	n.Padding = 4
+	n.Width = 80
+	n.Height = 40
 	if err := layoutStackChildren(n, fakeMeasure); err != nil {
 		t.Errorf("empty stack errored: %v", err)
 	}
-	if _, err := columnChildHeight(n, 100, fakeMeasure); err != nil {
+	if h, err := columnChildHeight(n, 100, fakeMeasure); err != nil {
 		t.Errorf("empty stack failed to measure: %v", err)
+	} else if h != 0 {
+		t.Errorf("empty stack height = %d, want zero", h)
+	}
+	if _, h, err := measureNode(n, 100, fakeMeasure); err != nil {
+		t.Errorf("empty stack failed to measure width: %v", err)
+	} else if h != 0 {
+		t.Errorf("empty stack measured height = %d, want zero", h)
 	}
 }
 

@@ -541,6 +541,9 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		}
 		return w, contentHeight, nil
 	case KindStack:
+		if len(n.Children) == 0 {
+			return 0, 0, nil
+		}
 		// A stack shares one box, so its intrinsic size is the maximum of its
 		// children rather than their sum. Explicit dimensions reserve that
 		// dimension, keeping measurement and placement in agreement.
