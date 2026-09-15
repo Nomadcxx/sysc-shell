@@ -110,6 +110,7 @@ type PanelHost struct {
 	section            string
 	pageDirection      int
 	networkTab         string
+	weatherView        string
 	pendingSSID        string
 	password           *ui.Field
 	bluetoothInput     *ui.Field
@@ -1724,6 +1725,11 @@ func (h *PanelHost) activate(r *Registry) bool {
 		return true
 	}
 	if h.id == PanelMonitor && h.activateMonitor(r, n) {
+		return true
+	}
+	if strings.HasPrefix(n.Action, "weather-view:") {
+		h.weatherView = strings.TrimPrefix(n.Action, "weather-view:")
+		r.rebuildPanel(h)
 		return true
 	}
 	if n.Action == "audio-close" || n.Action == "network-close" || n.Action == "weather-close" {

@@ -30,6 +30,9 @@ func weatherTree(r *Registry, h *PanelHost) *ui.Node {
 	if panelH <= 0 {
 		panelH = panelTargetSize(PanelWeather).H
 	}
+	if h.weatherView == "" {
+		h.weatherView = "daily"
+	}
 	bodyH := max(panelH-2*m.PanelPadding-weatherHeaderHeight(m)-theme.MarginL, 0)
 	bodyW := panelTargetSize(PanelWeather).W - 2*m.PanelPadding
 	leftW := max((bodyW-theme.MarginL)*2/5, 0)
@@ -43,7 +46,10 @@ func weatherTree(r *Registry, h *PanelHost) *ui.Node {
 				weatherDetails(reading, m),
 			}},
 			{Kind: ui.KindColumn, Width: rightW, Children: []*ui.Node{
-				{Kind: ui.KindScroll, Height: bodyH, Children: []*ui.Node{weatherForecast(reading, m)}},
+				weatherViewTabs(h, m),
+				{Kind: ui.KindScroll, Height: max(bodyH-m.StandardControl-theme.MarginM, 0), Children: []*ui.Node{
+					weatherForecastList(reading, h, m),
+				}},
 			}},
 		}},
 	}
@@ -197,8 +203,73 @@ func weatherRow(m theme.Metrics, icon, label, value string) *ui.Node {
 	}}
 }
 
-// weatherForecast is the day list on the right: today first and marked, then
-// the days the body carried, each with its glyph, range and condition word.
+// weatherViewTabs is the Daily/Hourly segmented control, the component the
+// network panel's tabs use.
+func weatherViewTabs(h *PanelHost, m theme.Metrics) *ui.Node {
+	view := h.weatherView
+	return &ui.Node{
+		Kind: ui.KindSegmented, Key: "weather-view", Gap: theme.MarginXXS, Height: m.StandardControl,
+		Children: []*ui.Node{
+			weatherSegment(m, "weather-view:daily", "Daily", view != "hourly"),
+			weatherSegment(m, "weather-view:hourly", "Hourly", view == "hourly"),
+		},
+	}
+}
+
+func weatherSegment(m theme.Metrics, action, label string, selected bool) *ui.Node {
+	n := &ui.Node{
+		Kind: ui.KindButton, Action: action, Name: label, Role: "tab",
+		Focusable: true, Height: m.CompactControl,
+		Children: []*ui.Node{{Kind: ui.KindText, Text: label}},
+	}
+	if selected {
+		n.State |= ui.StateSelected
+	}
+	return n
+}
+
+// weatherForecastList renders whichever view the segmented control selected.
+func weatherForecastList(reading services.Reading, h *PanelHost, m theme.Metrics) *ui.Node {
+	if h.weatherView == "hourly" {
+		return weatherHourlyList(reading, m)
+	}
+	return weatherForecast(reading, m)
+}
+
+// weatherHourlyList is the hourly view: the hours the wire carried, each with
+// its glyph, clock label, temperature and condition summary, in the day
+// list's row grammar.
+func weatherHourlyList(reading services.Reading, m theme.Metrics) *ui.Node {
+	if len(reading.Hourly) == 0 {
+		return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: "No hourly forecast yet", TextRole: theme.RoleLabel},
+		}}
+	}
+	rows := make([]*ui.Node, 0, len(reading.Hourly))
+	for _, hour := range reading.Hourly {
+		rows = append(rows, weatherHourRow(m, hour, reading.Unit))
+	}
+	return &ui.Node{
+		Kind: ui.KindCapsule, Padding: m.CardPadding,
+		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: rows}},
+	}
+}
+
+func weatherHourRow(m theme.Metrics, hour services.Hour, unit services.Unit) *ui.Node {
+	isDay := hour.IsDay == nil || *hour.IsDay
+	summary := render.WeatherCondition(hour.Code)
+	if hour.PrecipProbability != nil {
+		summary = fmt.Sprintf("%s, %.0f%%", summary, *hour.PrecipProbability)
+	}
+	return &ui.Node{Kind: ui.KindRow, Height: m.CompactControl, Gap: theme.MarginM, Children: []*ui.Node{
+		{Kind: ui.KindIcon, Icon: render.WeatherIconName(hour.Code, isDay), IconSize: m.IconSmall},
+		{Kind: ui.KindText, Text: weatherClock(hour.Time), TextRole: theme.RoleLabel, Tabular: true},
+		{Kind: ui.KindText, Text: fmt.Sprintf("%.0f%s", hour.Temperature, unitSuffix(unit)), TextRole: theme.RoleBody, Tabular: true},
+		{Kind: ui.KindText, Text: summary, TextRole: theme.RoleCaption, PinEnd: true},
+	}}
+}
+
 func weatherForecast(reading services.Reading, m theme.Metrics) *ui.Node {
 	if len(reading.Daily) == 0 {
 		return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Children: []*ui.Node{

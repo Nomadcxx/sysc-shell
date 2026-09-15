@@ -279,3 +279,82 @@ func TestWeatherPanelForecastWithoutDataIsAPlaceholder(t *testing.T) {
 		t.Fatal("an empty forecast rendered no placeholder")
 	}
 }
+
+func hourlyReading() services.Reading {
+	reading := observedWeather()
+	reading.Hourly = []services.Hour{
+		{Time: "2026-09-15T14:00", Code: 0, Temperature: 14.2, IsDay: ptrB(true), PrecipProbability: ptrF(10)},
+		{Time: "2026-09-15T15:00", Code: 2, Temperature: 13.8, IsDay: ptrB(true), PrecipProbability: ptrF(20)},
+		{Time: "2026-09-15T16:00", Code: 61, Temperature: 12.5, IsDay: ptrB(false), PrecipProbability: ptrF(80)},
+	}
+	return reading
+}
+
+func TestTheWeatherPanelSeedsTheDailyView(t *testing.T) {
+	t.Parallel()
+	r := &Registry{reading: observedWeather()}
+	h := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
+	tree := weatherTree(r, h)
+	if h.weatherView != "daily" {
+		t.Fatalf("seeded view = %q, want daily", h.weatherView)
+	}
+	if !hasLine(collectTooltipLines(tree), "Today") {
+		t.Fatal("the daily view lost the day list")
+	}
+}
+
+func TestTheWeatherPanelHourlyViewCarriesTheHours(t *testing.T) {
+	t.Parallel()
+	r := &Registry{reading: hourlyReading()}
+	h := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
+	h.weatherView = "hourly"
+	tree := weatherTree(r, h)
+	texts := collectTooltipLines(tree)
+	icons := treeIcons(tree)
+	for _, want := range []string{"14:00", "16:00", "14°C", "12°C"} {
+		if !hasLine(texts, want) {
+			t.Fatalf("hourly texts %q are missing %q", texts, want)
+		}
+	}
+	for _, want := range []string{"clear-day", "partly-cloudy", "rain"} {
+		if !hasValue(icons, want) {
+			t.Fatalf("hourly icons %q are missing %q", icons, want)
+		}
+	}
+}
+
+func TestTheWeatherPanelSwitchesViewsThroughTheSegmentedAction(t *testing.T) {
+	r := &Registry{reading: hourlyReading(), panelHosts: make(map[PanelID]*PanelHost)}
+	h := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
+	h.root = weatherTree(r, h)
+	h.focus = ui.Focusables(h.root)
+	h.roving.Count = len(h.focus)
+	r.panelHosts[PanelWeather] = h
+
+	seg := findAction(h.root, "weather-view:hourly")
+	if seg == nil {
+		t.Fatal("the hourly segment is missing")
+	}
+	h.setFocus(seg)
+	if !h.activate(r) {
+		t.Fatal("the hourly segment was not handled")
+	}
+	if h.weatherView != "hourly" {
+		t.Fatalf("view = %q, want hourly", h.weatherView)
+	}
+	if !hasLine(collectTooltipLines(h.root), "14:00") {
+		t.Fatal("the rebuilt tree still shows the daily view")
+	}
+
+	back := findAction(h.root, "weather-view:daily")
+	if back == nil {
+		t.Fatal("the daily segment is missing after switching")
+	}
+	h.setFocus(back)
+	if !h.activate(r) {
+		t.Fatal("the daily segment was not handled")
+	}
+	if !hasLine(collectTooltipLines(h.root), "Today") {
+		t.Fatal("the rebuilt tree did not return to the daily view")
+	}
+}

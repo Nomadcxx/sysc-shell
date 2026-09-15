@@ -18,6 +18,9 @@ type Unit = weather.Unit
 // Day is one forecast day decoded by the wire package.
 type Day = weather.Day
 
+// Hour is one forecast hour decoded by the wire package.
+type Hour = weather.Hour
+
 const (
 	UnitCelsius    = weather.UnitCelsius
 	UnitFahrenheit = weather.UnitFahrenheit
