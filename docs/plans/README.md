@@ -1,6 +1,6 @@
 # Design and Plan Register
 
-Last updated: 2026-09-15.
+Last updated: 2026-09-16.
 
 Every design, plan, and handover this project has produced, with where it lives and whether it is still
 live. Add a row here in the same commit that adds a document. A document that is not in this register is
@@ -310,8 +310,9 @@ already true in both.
 
 | Document | Kind | State |
 |---|---|---|
-| `2026-09-11-surface-stacking-design.md` | design | D1–D9. `KindStack` modelled on `layoutCapsuleChild`; measures as the **max** of its children where a column sums, honouring an explicit `Height` to avoid the disagreement the `KindCapsule` case documents; scrim as an ordinary `FillScrim` child rather than a property; bilinear background sampling shared with the blur design. One consumer — the control-centre weather card — or it does not ship. |
-| `2026-09-11-surface-stacking.md` | plan | Six tasks. Task 1 is end-to-end by necessity: `kindcoverage_test.go` fails the package for a kind that is not both measurable and paintable, so the kind cannot land half-built. Paint needs **one line** — `KindStack` joins the existing `KindColumn, KindDropZone, KindSegmented` case, because paint already walks children forward and `Hit` already walks them in reverse. Task 2 pins topmost-wins hit testing so a later refactor cannot silently break it. Task 4 depends on the blur plan's `paintImageSmooth`. Task 5 is a real consumer gate with a revert branch: if the weather card does not need a full-bleed image, delete the kind. |
+| `2026-09-11-surface-stacking-design.md` | design | D1–D9. `KindStack` modelled on `layoutCapsuleChild`; measures as the **max** of its children where a column sums, honouring an explicit `Height` to avoid the disagreement the `KindCapsule` case documents; scrim as an ordinary `FillScrim` child rather than a property; bilinear background sampling shared with the blur design. The approved consumers are the control-centre media card and the planned template panel. |
+| `2026-09-11-surface-stacking.md` | plan | Six tasks. Task 1 is end-to-end by necessity: `kindcoverage_test.go` fails the package for a kind that is not both measurable and paintable, so the kind cannot land half-built. Paint needs **one line** — `KindStack` joins the existing `KindColumn, KindDropZone, KindSegmented` case, because paint already walks children forward and `Hit` already walks them in reverse. Task 2 pins topmost-wins hit testing so a later refactor cannot silently break it. Task 4 consumes the blur merge's bilinear image compositor. Task 5 is the real media-card consumer gate; the template panel is the second approved consumer. |
+| `2026-09-16-surface-stacking-execution-handover.md` | execution-handover | Receiving handover after the media page landed on `main` at `d1f82c5`; the six-task stacking plan is ready to start. No stacking bd issue is created until the plan's Task 6. |
 
 ## Media service, widget and page
 
