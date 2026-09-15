@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
@@ -102,6 +103,7 @@ type Bar struct {
 	stopOnce sync.Once
 
 	invalidations chan struct{}
+	mediaWidget   bool
 }
 
 // New builds a bar from the built-in defaults for one connector.
@@ -124,6 +126,7 @@ func NewWithTheme(theme Theme, policy config.Bar, connector string) (*Bar, error
 	b := &Bar{
 		conn:          connector,
 		theme:         theme,
+		mediaWidget:   hasMediaItem(policy.Left) || hasMediaItem(policy.Center) || hasMediaItem(policy.Right),
 		text:          render.NewTextRendererWithFontMap(fonts),
 		invalidations: make(chan struct{}, 1),
 		style:         barStyle(theme),
@@ -508,6 +511,7 @@ func (b *Bar) renderViewLocked() (*ui.Node, render.Style) {
 	// copy that is about to be drawn rather than onto live model state.
 	b.pointer.apply(root, b.anim)
 	b.resolveGradientMotionLocked(root)
+	b.resolveMediaMotionLocked(root)
 	return root, b.style
 }
 
@@ -532,6 +536,45 @@ func (b *Bar) resolveGradientMotionLocked(root *ui.Node) {
 	walk(root)
 	for key := range b.anim.values {
 		if key.channel == animGradient && !seen[key.node] {
+			delete(b.anim.values, key)
+		}
+	}
+	b.startBarFramesLocked()
+}
+
+func (b *Bar) resolveMediaMotionLocked(root *ui.Node) {
+	seen := make(map[string]bool)
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n.Marquee {
+			key := n.StableKey()
+			if key != "" && b.anim != nil {
+				spec := render.SpecFor(b.style, ui.TextAttrsOf(n))
+				advance, _, err := b.text.Measure(n.Text, spec, n.Tabular)
+				cell := b.style.Scale120.Physical(n.Bounds.W)
+				gap, _, gapErr := b.text.Measure(strings.Repeat(" ", 8), spec, n.Tabular)
+				cycle := advance + gap
+				if err == nil && gapErr == nil && advance > cell && cycle > 0 && !b.anim.reduced {
+					seen[key] = true
+					trip := time.Duration(math.Ceil(float64(cycle) / marqueePixelsPerSecond * float64(time.Second)))
+					b.anim.TargetSweep(key, animSweep, trip)
+					n.TextOffset = int(math.Round(b.anim.Value(key, animSweep) * float64(cycle)))
+					return
+				}
+			}
+			n.Marquee = false
+			n.TextOffset = 0
+		}
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(root)
+	for key := range b.anim.values {
+		if key.channel == animSweep && !seen[key.node] {
 			delete(b.anim.values, key)
 		}
 	}

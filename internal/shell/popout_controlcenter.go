@@ -30,7 +30,7 @@ type ccSection struct {
 
 var ccSections = []ccSection{
 	{ID: "home", Label: "Home", Icon: "home", Enabled: true},
-	{ID: "media", Label: "Media", Icon: "music_note"},
+	{ID: "media", Label: "Media", Icon: "music_note", Enabled: true},
 	{ID: "audio", Label: "Audio", Icon: "volume_up", Enabled: true},
 	{ID: "monitor", Label: "Monitor", Icon: "desktop_windows", Enabled: true},
 	{ID: "power", Label: "Power", Icon: "power_settings_new", Enabled: true},
@@ -76,6 +76,9 @@ func (h *PanelHost) selectControlCentreSection(r *Registry, section string) bool
 	if h.section == "bluetooth" {
 		r.leaveBluetoothBodyLocked(h)
 	}
+	if h.section == "media" {
+		r.leaveMediaBodyLocked(h)
+	}
 	fromIndex, toIndex := ccSectionIndex(h.section), ccSectionIndex(section)
 	h.pageDirection = 0
 	if toIndex > fromIndex {
@@ -93,6 +96,9 @@ func (h *PanelHost) selectControlCentreSection(r *Registry, section string) bool
 	r.rebuildPanel(h)
 	if h.section == "bluetooth" {
 		r.startBluetoothDiscoveryLocked(h)
+	}
+	if h.section == "media" {
+		r.startMediaBodyLocked(h)
 	}
 	r.startSurfaceFrames(h)
 	return true
@@ -206,6 +212,8 @@ func ccPage(r *Registry, h *PanelHost) *ui.Node {
 	switch h.section {
 	case "audio":
 		return ccAudio(r, h)
+	case "media":
+		return mediaBody(r, h)
 	case "monitor":
 		return ccMonitor(r, h)
 	case "power":
@@ -226,6 +234,9 @@ func ccPage(r *Registry, h *PanelHost) *ui.Node {
 func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 	if n == nil || h.id != PanelControlCenter {
 		return false
+	}
+	if strings.HasPrefix(n.Action, "media:") {
+		return h.activateMedia(r, n)
 	}
 	var target PanelID
 	switch n.Action {

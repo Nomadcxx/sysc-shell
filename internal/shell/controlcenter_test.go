@@ -235,9 +235,14 @@ func TestControlCentreRailKeepsDisabledDestinationsAddressable(t *testing.T) {
 		t.Errorf("first entry = %+v, want selected Home", entries[0])
 	}
 	media := entries[1]
-	if media.Name != "Media — not available yet" || media.Action != "" ||
-		!media.Focusable || !media.State.Has(ui.StateDisabled) {
-		t.Errorf("disabled Media entry = %+v", media)
+	if media.Name != "Media" || media.Action != "section:media" ||
+		!media.Focusable || media.State.Has(ui.StateDisabled) {
+		t.Errorf("enabled Media entry = %+v", media)
+	}
+	network := entries[5]
+	if network.Name != "Network — not available yet" || network.Action != "" ||
+		!network.Focusable || !network.State.Has(ui.StateDisabled) {
+		t.Errorf("disabled Network entry = %+v", network)
 	}
 	if got := len(ui.Focusables(rail)); got != 10 {
 		t.Errorf("focusable rail entries = %d, want all 10 including unavailable destinations", got)
@@ -400,6 +405,21 @@ func TestControlCentreHomeFillsTheBodyContract(t *testing.T) {
 	for i, child := range home.Children {
 		if child.Height != want[i] {
 			t.Errorf("Home block %d height = %d, want %d", i, child.Height, want[i])
+		}
+	}
+}
+
+func TestControlCentreHomeChildrenFitItsViewport(t *testing.T) {
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	home := ccHome(&Registry{}, h)
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return len(s) * 8, 16 }
+	if err := ui.LayoutColumn(home, ui.Rect{W: 596, H: ccPageH}, measure); err != nil {
+		t.Fatal(err)
+	}
+	bottom := home.Bounds.Y + home.Bounds.H
+	for i, child := range home.Children {
+		if got := child.Bounds.Y + child.Bounds.H; got > bottom {
+			t.Errorf("Home block %d ends at %d, beyond viewport bottom %d: %+v", i, got, bottom, child.Bounds)
 		}
 	}
 }

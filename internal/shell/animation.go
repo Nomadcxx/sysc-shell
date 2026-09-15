@@ -42,6 +42,8 @@ const (
 	animTheme
 	// animGradient shifts a looping paint recipe independently of interaction.
 	animGradient
+	// animSweep is a linear wrapping paint offset, such as a marquee title.
+	animSweep
 )
 
 // animKey addresses one value: a stable node key plus the channel. Keys are
@@ -218,6 +220,23 @@ func (a *animator) TargetLoop(node string, channel animChannel, from, to float64
 		return
 	}
 	a.values[key] = animValue{from: from, to: to, start: now, dur: dur, loop: motion}
+}
+
+// TargetSweep runs a linear 0-to-1 phase until the node leaves the tree. It
+// deliberately uses the linear loop path rather than the gradient's ping-pong
+// mode: a marquee must never scroll backward at the seam.
+func (a *animator) TargetSweep(node string, channel animChannel, dur time.Duration) {
+	key := animKey{node: node, channel: channel}
+	if current, ok := a.values[key]; ok && current.from == 0 && current.to == 1 &&
+		current.dur == dur && current.loop == ui.GradientLoop {
+		return
+	}
+	now := a.now()
+	if a.reduced || dur <= 0 {
+		a.values[key] = animValue{from: 0, to: 0, start: now}
+		return
+	}
+	a.values[key] = animValue{from: 0, to: 1, start: now, dur: dur, loop: ui.GradientLoop}
 }
 
 // Reset drops a value so the next Target starts it from zero rather than from

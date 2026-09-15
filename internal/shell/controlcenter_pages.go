@@ -23,16 +23,16 @@ const (
 	ccAccountsIconDir = "/var/lib/AccountsService/icons"
 
 	// The control centre's measured composition. These are one grid rather
-	// than a ladder: the page is a fixed 480 tall, the split beneath it 184,
-	// and the two columns 356 and 228 wide. The tile and forecast widths are
+	// than a ladder: the page is a fixed 480 tall, and the two columns 356 and
+	// 228 wide. The tile and forecast widths are
 	// not listed because they are derived from these and the gap between
 	// them -- the two were sized to fit the old gap exactly, so a literal
 	// would silently overflow the moment the ladder moved.
 	ccPageH         = 480
 	ccIdentityCardH = 96
 	ccTogglePillH   = 48
-	ccSplitH        = 184
 	ccCardH         = 88
+	ccSplitH        = 2*ccCardH + theme.MarginS
 	ccLeftColumnW   = 356
 	ccRightColumnW  = 228
 	// ccTileW is one quick tile: the right column holds two of them with a
@@ -42,8 +42,8 @@ const (
 	ccTileW          = (ccRightColumnW - theme.MarginM) / 2
 	ccResourceRowH   = 40
 	ccGaugeSize      = 40
-	ccSlidersH       = 116
 	ccSliderCapsuleH = 52
+	ccSlidersH       = 2*ccSliderCapsuleH + theme.MarginM
 	ccSliderW        = 360
 	ccValueW         = 44
 	ccAvatarIconSize = 28
@@ -132,6 +132,7 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 	caffeine, dnd := false, false
 	var audio services.AudioState
 	var brightness services.BrightnessState
+	var media services.MediaState
 	audioOK, brightnessOK := false, false
 	if r != nil {
 		identity = r.controlIdentity
@@ -146,6 +147,7 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 		if r.brightness != nil {
 			brightness, brightnessOK = r.brightness.CachedState()
 		}
+		media = r.mediaState
 	}
 
 	identityRows := []*ui.Node{
@@ -156,10 +158,22 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 	if h != nil && h.errLabel != "" {
 		identityRows = append([]*ui.Node{{Kind: ui.KindText, Text: h.errLabel, Tone: ui.ToneError}}, identityRows...)
 	}
+	mediaTitle := "Nothing playing"
+	if media.Available {
+		mediaTitle = ccText(media.Title)
+	}
+	mediaTile := ccQuickTile(ccRightColumnW, mediaGlyph(media.Status), "Now playing", mediaTitle, "section:media", media.Available)
+	mediaTile.Name = "Now playing"
+	mediaTile.Height = ccIdentityCardH - 2*m.CardPadding
+	mediaTile.Padding = m.CardPadding
+	if !media.Available {
+		ccDisable(mediaTile)
+	}
 	identityCard := monitorCard(m, []*ui.Node{{
 		Kind: ui.KindRow, Gap: theme.MarginL, Children: []*ui.Node{
 			ccAvatar(r, h, identity),
 			{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: identityRows},
+			mediaTile,
 		},
 	}})
 	identityCard.Height = ccIdentityCardH
@@ -186,7 +200,7 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 		}},
 	})
 	sysmon.Height = ccCardH
-	left := &ui.Node{Kind: ui.KindColumn, Width: ccLeftColumnW, Height: ccSplitH, Gap: theme.MarginM,
+	left := &ui.Node{Kind: ui.KindColumn, Width: ccLeftColumnW, Height: ccSplitH, Gap: theme.MarginS,
 		Children: []*ui.Node{clockWeather, sysmon}}
 
 	battery := ccDash
@@ -209,7 +223,7 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 	}
 	dndTile := ccQuickTile(tileW, "do_not_disturb_on", "DND", ccOnOff(dnd), "cc:dnd", dnd)
 	dndTile.Name = "Do not disturb"
-	right := &ui.Node{Kind: ui.KindColumn, Width: ccRightColumnW, Height: ccSplitH, Gap: theme.MarginM, Children: []*ui.Node{
+	right := &ui.Node{Kind: ui.KindColumn, Width: ccRightColumnW, Height: ccSplitH, Gap: theme.MarginS, Children: []*ui.Node{
 		{Kind: ui.KindRow, Height: ccCardH, Gap: theme.MarginM, Children: []*ui.Node{
 			mute,
 			dndTile,
@@ -221,7 +235,7 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 	}}
 	split := &ui.Node{Kind: ui.KindRow, Height: ccSplitH, Gap: theme.MarginL, Children: []*ui.Node{left, right}}
 
-	sliders := &ui.Node{Kind: ui.KindColumn, Height: ccSlidersH, Gap: theme.MarginL, Children: []*ui.Node{
+	sliders := &ui.Node{Kind: ui.KindColumn, Height: ccSlidersH, Gap: theme.MarginM, Children: []*ui.Node{
 		ccSlider(m, "volume_up", "Volume", "cc:volume", audio.Level, audioOK),
 		ccSlider(m, "brightness_high", "Brightness", "cc:brightness", brightness.Level, brightnessOK),
 	}}

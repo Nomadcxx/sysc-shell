@@ -29,6 +29,9 @@ func Write(path string, c Config) error {
 	}); err != nil {
 		return err
 	}
+	if _, err := applyMedia(wireMedia{Preferred: &c.Media.Preferred, Blacklist: c.Media.Blacklist}, "media"); err != nil {
+		return err
+	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("config: mkdir %s: %w", dir, err)
@@ -110,6 +113,13 @@ func toWire(c Config) wireConfig {
 	}
 	if c.Weather.Configured {
 		w.Weather = weatherWire(c.Weather)
+	}
+	if c.Media.Preferred != "" || len(c.Media.Blacklist) > 0 {
+		w.Media = &wireMedia{Blacklist: append([]string(nil), c.Media.Blacklist...)}
+		if c.Media.Preferred != "" {
+			preferred := c.Media.Preferred
+			w.Media.Preferred = &preferred
+		}
 	}
 	for i := range c.Outputs {
 		conn := c.Outputs[i].Connector

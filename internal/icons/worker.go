@@ -174,6 +174,15 @@ func (w *Worker) load(ctx context.Context, name string, width, height, nominal i
 	return decodeRaster(data, width, height)
 }
 
+// DecodeRaster applies the same image-header and source-dimension checks as
+// Worker to bytes obtained by a caller-owned transport.
+func DecodeRaster(data []byte, width, height int) *ui.Image {
+	if width <= 0 || height <= 0 {
+		return nil
+	}
+	return decodeRaster(data, width, height)
+}
+
 // decodeRaster turns encoded bytes into a premultiplied BGRA raster at the
 // requested box. The source is scaled to fill it exactly, so a caller that
 // needs a crop rather than a stretch must supply a source already at this

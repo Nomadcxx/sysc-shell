@@ -223,6 +223,13 @@ type Weather struct {
 	Configured bool
 }
 
+// Media selects the active MPRIS player. Names are full well-known bus names,
+// so a browser tab can be blacklisted without hiding an unrelated player.
+type Media struct {
+	Preferred string
+	Blacklist []string
+}
+
 // Config is an immutable, fully resolved configuration.
 type Config struct {
 	Bar           Bar
@@ -233,6 +240,7 @@ type Config struct {
 	Panels        Panels
 	Tray          TrayPreferences
 	Weather       Weather
+	Media         Media
 	Wallpaper     Wallpaper
 	Outputs       []OutputOverride
 	Templates     map[string]bool
@@ -261,6 +269,10 @@ var knownItems = map[string]struct{}{
 	// Bluetooth is opt-in: its bar glyph is useful when requested, but adding
 	// it to the default would change existing layouts.
 	"bluetooth": {},
+	// Media is opt-in like Bluetooth: the glyph and title appear only while a
+	// player is on the session bus, and the design carries no player picker
+	// here — the control centre's Media page is the one picker.
+	"media": {},
 	// group holds other items inside one capsule. It carries no options of
 	// its own; every option belongs to a nested item.
 	"group": {},

@@ -90,7 +90,7 @@ type PanelHost struct {
 	logicalH int
 	scale120 int
 	shift    bool
-	pressed  *ui.Node
+	pressed  string
 	// pointer is the resolved hover/press state, kept as stable keys so it
 	// survives the tree rebuilds that replace every node.
 	pointer            interaction
@@ -109,6 +109,9 @@ type PanelHost struct {
 	query              string
 	section            string
 	pageDirection      int
+	mediaLease         *services.Lease
+	mediaSeekPending   *int64
+	mediaSeekTrack     string
 	networkTab         string
 	weatherView        string
 	pendingSSID        string
@@ -1137,7 +1140,7 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			// costs nothing.
 			return h.pointerChanged(r, h.pointer.setHover(hoverKeyAt(h.root, h.hoverX, h.hoverY)))
 		case wayland.EventPointerLeave:
-			h.pressed = nil
+			h.pressed = ""
 			h.sliderDrag = nil
 			h.scrollDrag = nil
 			return h.pointerChanged(r, h.pointer.clear())
@@ -1163,7 +1166,7 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 				return true
 			}
 			if n := h.hitFocusable(h.hoverX, h.hoverY); n != nil {
-				h.pressed = n
+				h.pressed = n.StableKey()
 				h.pointerChanged(r, h.pointer.setPress(n.StableKey()))
 				h.setFocus(n)
 				if n.Kind == ui.KindDragSource {
@@ -1182,7 +1185,7 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 				n := h.sliderDrag
 				ui.SliderAt(n, h.hoverX)
 				h.sliderDrag = nil
-				h.pressed = nil
+				h.pressed = ""
 				if strings.HasPrefix(n.Action, "plugin-set:") {
 					return r.handlePluginManager(h, n)
 				}
@@ -1210,9 +1213,9 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			}
 			n := h.hitFocusable(h.hoverX, h.hoverY)
 			pressed := h.pressed
-			h.pressed = nil
+			h.pressed = ""
 			cleared := h.pointerChanged(r, h.pointer.setPress(""))
-			if n != nil && n == pressed {
+			if n != nil && pressed != "" && n.StableKey() == pressed {
 				return h.activate(r)
 			}
 			return cleared
@@ -2180,7 +2183,8 @@ func (h *PanelHost) stopAnimation() {
 // left alone: a second target change joins the clock rather than starting a
 // second ticker.
 func (r *Registry) startSurfaceFrames(h *PanelHost) {
-	if h.anim == nil || h.anim.running || h.anim.Settled() {
+	if h.anim == nil || h.anim.running ||
+		(h.anim.Settled() && !mediaPageFramesWantedLocked(r, h)) {
 		return
 	}
 	h.anim.running = true
@@ -2223,9 +2227,15 @@ func (r *Registry) surfaceFrameLoop(h *PanelHost) {
 	animateSurface(h.stopAnim, func() bool {
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		return h.anim.Settled()
+		return h.anim.Settled() && !mediaPageFramesWantedLocked(r, h)
 	}, func() {
-		r.publishSurface(h.output, panelSurfaceID(h.id))
+		r.mu.Lock()
+		if r.panelHosts[h.id] == h && mediaBodyVisible(h) {
+			r.rebuildPanel(h)
+		}
+		out := h.output
+		r.mu.Unlock()
+		r.publishSurface(out, panelSurfaceID(h.id))
 	}, frameCap)
 }
 
@@ -2243,6 +2253,9 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 	if bluetoothBodyVisible(h) {
 		r.stopBluetoothDiscoveryLocked(h)
 		r.cancelBluetoothPromptLocked(h)
+	}
+	if h.mediaLease != nil {
+		r.leaveMediaBodyLocked(h)
 	}
 	h.stopAnimation()
 	h.drag.Cancel()

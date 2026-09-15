@@ -147,6 +147,11 @@ type wireWeather struct {
 	Location  *string  `json:"location,omitempty"`
 }
 
+type wireMedia struct {
+	Preferred *string  `json:"preferred,omitempty"`
+	Blacklist []string `json:"blacklist,omitempty"`
+}
+
 type wireWallpaper struct {
 	ImageDirectory *string  `json:"image_directory,omitempty"`
 	VideoDirectory *string  `json:"video_directory,omitempty"`
@@ -167,6 +172,7 @@ type wireConfig struct {
 	Panels        *wirePanels          `json:"panels,omitempty"`
 	Tray          *wireTrayPreferences `json:"tray,omitempty"`
 	Weather       *wireWeather         `json:"weather,omitempty"`
+	Media         *wireMedia           `json:"media,omitempty"`
 	Wallpaper     *wireWallpaper       `json:"wallpaper,omitempty"`
 	Outputs       []wireOutput         `json:"outputs,omitempty"`
 	Templates     map[string]bool      `json:"templates,omitempty"`
@@ -287,6 +293,13 @@ func Parse(data []byte) (Config, error) {
 			return Config{}, err
 		}
 		cfg.Weather = weather
+	}
+	if wire.Media != nil {
+		media, err := applyMedia(*wire.Media, "media")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Media = media
 	}
 
 	seen := make(map[string]struct{}, len(wire.Outputs))
@@ -537,6 +550,71 @@ func weatherPlaceLabel(value, path string) (string, error) {
 		}
 	}
 	return value, nil
+}
+
+const mprisNamePrefix = "org.mpris.MediaPlayer2."
+
+func isMPRISName(name string) bool {
+	if len(name) > 255 || !strings.HasPrefix(name, mprisNamePrefix) {
+		return false
+	}
+	suffix := name[len(mprisNamePrefix):]
+	if suffix == "" {
+		return false
+	}
+	start := true
+	for i := 0; i < len(suffix); i++ {
+		c := suffix[i]
+		if c == '.' {
+			if start {
+				return false
+			}
+			start = true
+			continue
+		}
+		if start {
+			if !isBusNameStart(c) {
+				return false
+			}
+			start = false
+			continue
+		}
+		if !isBusNameChar(c) {
+			return false
+		}
+	}
+	return !start
+}
+
+func isBusNameStart(c byte) bool {
+	return c == '_' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z'
+}
+
+func isBusNameChar(c byte) bool {
+	return isBusNameStart(c) || c >= '0' && c <= '9'
+}
+
+func applyMedia(w wireMedia, path string) (Media, error) {
+	out := Media{}
+	if w.Preferred != nil {
+		if *w.Preferred != "" && !isMPRISName(*w.Preferred) {
+			return Media{}, pathErr(path+".preferred", "%q is not an MPRIS well-known name", *w.Preferred)
+		}
+		out.Preferred = *w.Preferred
+	}
+	seen := make(map[string]struct{}, len(w.Blacklist))
+	for i, name := range w.Blacklist {
+		field := fmt.Sprintf("%s.blacklist[%d]", path, i)
+		if !isMPRISName(name) {
+			return Media{}, pathErr(field, "%q is not an MPRIS well-known name", name)
+		}
+		if _, ok := seen[name]; ok {
+			return Media{}, pathErr(field, "%q appears more than once", name)
+		}
+		seen[name] = struct{}{}
+		out.Blacklist = append(out.Blacklist, name)
+	}
+	return out, nil
 }
 
 // requireWeatherWhenUsed is the configuration's one cross-section rule: a
