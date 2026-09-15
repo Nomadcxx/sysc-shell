@@ -175,6 +175,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		notifyCh:        make(chan notifyclient.Message, 32),
 		controlIdentity: readCCIdentity(),
 	}
+	r.weather.SetCity(cfg.Weather.City)
 	r.tokens, r.themeErr = tokensAndReason(r.generateTheme(cfg))
 	r.osd = newOSDManager(r, 0)
 	r.setAudio(services.NewAudio(0, ""))
@@ -1033,11 +1034,13 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				r.mu.Lock()
 				outgoing := r.leases
 				outgoingBars := r.bars
-				// Coordinates and unit are the request, not a lease parameter,
-				// so the service has to be told. It is a no-op unless they
-				// changed, which is the common case for an unrelated reload.
+				// Coordinates, unit and city are the request, not a lease
+				// parameter, so the service has to be told. Each call is a
+				// no-op unless its value changed, which is the common case
+				// for an unrelated reload.
 				r.weather.Reconfigure(
 					cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit))
+				r.weather.SetCity(cfg.Weather.City)
 				r.dwell.leave()
 				// The open menu and drawer were placed against the outgoing
 				// geometry and hold a root; a candidate replaces both.

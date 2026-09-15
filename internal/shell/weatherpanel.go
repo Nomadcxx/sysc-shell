@@ -23,7 +23,7 @@ func weatherTree(r *Registry, h *PanelHost) *ui.Node {
 	location := ""
 	if r != nil {
 		reading = r.reading
-		location = weatherLocation(r.cfg.Weather)
+		location = weatherLocation(r.cfg.Weather, reading)
 	}
 
 	panelH := h.place.Panel.H
@@ -62,11 +62,15 @@ func weatherTree(r *Registry, h *PanelHost) *ui.Node {
 	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Padding: m.PanelPadding, Children: children}
 }
 
-// weatherLocation is the configured label, or the coordinates it stands in
-// for. An unconfigured block has no place to name.
-func weatherLocation(w config.Weather) string {
+// weatherLocation names the place the reading describes: the configured
+// label wins, then the geocoded city name, then the coordinates an
+// unconfigured block falls back to.
+func weatherLocation(w config.Weather, reading services.Reading) string {
 	if w.Location != "" {
 		return w.Location
+	}
+	if reading.Location != "" {
+		return reading.Location
 	}
 	if w.Configured {
 		return fmt.Sprintf("%.2f°, %.2f°", w.Latitude, w.Longitude)

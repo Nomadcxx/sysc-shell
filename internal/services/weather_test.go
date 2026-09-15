@@ -313,6 +313,87 @@ func TestASuccessfulFetchCarriesTheEnrichedCurrentFields(t *testing.T) {
 	}
 }
 
+func TestACityResolvesThroughGeocodingBeforeTheForecast(t *testing.T) {
+	t.Parallel()
+	var geoCalls, forecastCalls atomic.Int32
+	geo := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		geoCalls.Add(1)
+		_, _ = rw.Write([]byte(`{"results":[{"name":"Brisbane","latitude":-27.47,"longitude":153.02,"country":"Australia"}]}`))
+	}))
+	t.Cleanup(geo.Close)
+	var forecastQuery atomic.Value
+	forecast := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		forecastCalls.Add(1)
+		forecastQuery.Store(r.URL.RawQuery)
+		fmt.Fprint(rw, currentWeatherBody)
+	}))
+	t.Cleanup(forecast.Close)
+
+	w := NewWeather(0, 0, UnitCelsius)
+	w.endpoint = forecast.URL
+	w.geocodingEndpoint = geo.URL
+	w.minInterval = 0
+	t.Cleanup(w.Close)
+	w.SetCity("Brisbane")
+	lease, err := w.Acquire(time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { w.releaseWeather(lease) })
+
+	select {
+	case reading := <-w.Updates():
+		if !reading.Observed {
+			t.Fatal("the city never resolved into an observation")
+		}
+		if reading.Location != "Brisbane" {
+			t.Fatalf("location = %q, want the resolved name", reading.Location)
+		}
+		query, _ := forecastQuery.Load().(string)
+		if !strings.Contains(query, "latitude=-27.47") || !strings.Contains(query, "longitude=153.02") {
+			t.Fatalf("the forecast used the configured coordinates, not the resolved ones: %s", query)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no reading arrived within three seconds")
+	}
+}
+
+func TestAGeocodeFailureLeavesTheReadingFailed(t *testing.T) {
+	t.Parallel()
+	geo := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		http.Error(rw, "nope", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(geo.Close)
+	forecast := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(rw, currentWeatherBody)
+	}))
+	t.Cleanup(forecast.Close)
+
+	w := NewWeather(0, 0, UnitCelsius)
+	w.endpoint = forecast.URL
+	w.geocodingEndpoint = geo.URL
+	w.minInterval = 0
+	t.Cleanup(w.Close)
+	w.SetCity("Nowhere")
+	lease, err := w.Acquire(time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { w.releaseWeather(lease) })
+
+	select {
+	case reading := <-w.Updates():
+		if reading.Observed || reading.FailedSince.IsZero() {
+			t.Fatalf("reading = %+v, want the failure state", reading)
+		}
+		if reading.Location != "" {
+			t.Fatalf("location = %q, want empty while unresolved", reading.Location)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no reading arrived within three seconds")
+	}
+}
+
 func TestASuccessfulFetchCarriesTheHourlyForecast(t *testing.T) {
 	t.Parallel()
 	w, _ := weatherAt(t, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {

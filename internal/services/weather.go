@@ -55,8 +55,11 @@ type Reading struct {
 	// TimezoneAbbreviation is the one long name Open-Meteo uses; it mirrors
 	// the wire field rather than abbreviating it.
 	TimezoneAbbreviation string
-	Daily                []Day
-	Hourly               []weather.Hour
+	// Location is the geocoded display name for a configured city; empty on
+	// the coordinates path, where the configuration carries the label.
+	Location string
+	Daily    []Day
+	Hourly   []weather.Hour
 
 	FetchedAt   time.Time
 	FailedSince time.Time // zero while healthy
@@ -100,6 +103,16 @@ type Weather struct {
 	client *http.Client
 	// endpoint is overridden by tests to point at an httptest server.
 	endpoint string
+	// geocodingEndpoint resolves a configured city; overridden by tests the
+	// same way.
+	geocodingEndpoint string
+	// city, when set, names the place to geocode. The resolution is cached:
+	// a stable address is stable coordinates, so one geocode serves every
+	// later fetch until the city changes.
+	city                     string
+	placeName                string
+	resolvedLat, resolvedLon float64
+	resolved                 bool
 	// minInterval is the fetch floor. Zero disables it, which tests that need
 	// two fetches in one deadline use; NewWeather sets the production floor.
 	minInterval time.Duration
@@ -109,14 +122,32 @@ const openMeteoEndpoint = weather.DefaultEndpoint
 
 func NewWeather(latitude, longitude float64, unit Unit) *Weather {
 	return &Weather{
-		rearm:       make(chan struct{}, 1),
-		updates:     make(chan Reading, 1),
-		latitude:    latitude,
-		longitude:   longitude,
-		unit:        unit,
-		client:      &http.Client{Timeout: connectAndReadBudget},
-		endpoint:    openMeteoEndpoint,
-		minInterval: minFetchInterval,
+		rearm:             make(chan struct{}, 1),
+		updates:           make(chan Reading, 1),
+		latitude:          latitude,
+		longitude:         longitude,
+		unit:              unit,
+		client:            &http.Client{Timeout: connectAndReadBudget},
+		endpoint:          openMeteoEndpoint,
+		geocodingEndpoint: weather.DefaultGeocodingEndpoint,
+		minInterval:       minFetchInterval,
+	}
+}
+
+// SetCity points the service at a place name to geocode. A change clears the
+// cached resolution and re-arms the fetch; the coordinates path resumes when
+// the name is empty.
+func (w *Weather) SetCity(city string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if city == w.city {
+		return
+	}
+	w.city = city
+	w.placeName, w.resolved = "", false
+	select {
+	case w.rearm <- struct{}{}:
+	default:
 	}
 }
 
@@ -332,15 +363,38 @@ func (w *Weather) run(stop, done chan struct{}) {
 func (w *Weather) fetch() (Reading, error) {
 	w.mu.Lock()
 	q := weather.Query{Latitude: w.latitude, Longitude: w.longitude, Unit: w.unit, Daily: true, Hourly: true, Endpoint: w.endpoint}
-	unit := w.unit
+	city := w.city
 	w.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), connectAndReadBudget)
 	defer cancel()
+
+	location := ""
+	if city != "" {
+		w.mu.Lock()
+		name, lat, lon, ok := w.placeName, w.resolvedLat, w.resolvedLon, w.resolved
+		w.mu.Unlock()
+		if !ok {
+			place, err := weather.Geocode(ctx, w.client, w.geocodingEndpoint, city)
+			if err != nil {
+				return Reading{}, err
+			}
+			name, lat, lon, ok = place.Name, place.Latitude, place.Longitude, true
+			w.mu.Lock()
+			w.placeName, w.resolvedLat, w.resolvedLon, w.resolved = name, lat, lon, true
+			w.mu.Unlock()
+		}
+		q.Latitude, q.Longitude = lat, lon
+		location = name
+	}
+
 	fc, err := weather.Fetch(ctx, w.client, q)
 	if err != nil {
 		return Reading{}, err
 	}
+	w.mu.Lock()
+	unit := w.unit
+	w.mu.Unlock()
 	return Reading{
 		Observed:             true,
 		Temperature:          fc.Current.Temperature,
@@ -357,6 +411,7 @@ func (w *Weather) fetch() (Reading, error) {
 		TimezoneAbbreviation: fc.TimezoneAbbreviation,
 		Daily:                append([]Day(nil), fc.Daily...),
 		Hourly:               append([]weather.Hour(nil), fc.Hourly...),
+		Location:             location,
 		FetchedAt:            time.Now(),
 	}, nil
 }

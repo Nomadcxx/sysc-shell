@@ -358,3 +358,25 @@ func TestTheWeatherPanelSwitchesViewsThroughTheSegmentedAction(t *testing.T) {
 		t.Fatal("the rebuilt tree did not return to the daily view")
 	}
 }
+
+func TestTheWeatherLocationPrefersTheLabelThenTheResolvedName(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Weather.Configured = true
+	cfg.Weather.Latitude, cfg.Weather.Longitude = 27.47, 153.02
+
+	resolved := services.Reading{Location: "Brisbane"}
+	if got := weatherLocation(cfg.Weather, resolved); got != "Brisbane" {
+		t.Fatalf("location = %q, want the resolved name", got)
+	}
+
+	labelled := cfg.Weather
+	labelled.Location = "Home"
+	if got := weatherLocation(labelled, resolved); got != "Home" {
+		t.Fatalf("location = %q, want the configured label to win", got)
+	}
+
+	if got := weatherLocation(cfg.Weather, services.Reading{}); got != "27.47°, 153.02°" {
+		t.Fatalf("location = %q, want the coordinates fallback", got)
+	}
+}

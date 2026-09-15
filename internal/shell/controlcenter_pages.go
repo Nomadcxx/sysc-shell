@@ -385,7 +385,7 @@ func ccWeather(r *Registry, h *PanelHost) *ui.Node {
 	location := ccDash
 	if r != nil {
 		reading = r.reading
-		location = weatherLocation(r.cfg.Weather)
+		location = weatherLocation(r.cfg.Weather, reading)
 	}
 	icon, temperature, condition, conditionTone, fetched := "cloud", ccDash, ccDash, ui.ToneNormal, ccDash
 	if reading.Observed {
