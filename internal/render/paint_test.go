@@ -207,6 +207,82 @@ func pixelAt(t *testing.T, c *Canvas, x, y int) Color {
 	return Color{B: c.Pix[i], G: c.Pix[i+1], R: c.Pix[i+2], A: c.Pix[i+3]}
 }
 
+func paintStackTo(t *testing.T, children ...*ui.Node) []byte {
+	return paintStackToStyle(t, testStyle, children...)
+}
+
+func paintStackToStyle(t *testing.T, style Style, children ...*ui.Node) []byte {
+	t.Helper()
+	c := newTestCanvas(t, 20, 20)
+	stack := &ui.Node{Kind: ui.KindStack, Bounds: ui.Rect{W: 20, H: 20}, Children: children}
+	if err := paintNode(c, stack, NewTextRenderer(mustTestFace(t)), style, style.Size); err != nil {
+		t.Fatal(err)
+	}
+	return append([]byte(nil), c.Pix...)
+}
+
+func hasIntermediateValues(pix []byte) bool {
+	for i := 0; i+3 < len(pix); i += 4 {
+		for _, value := range pix[i : i+3] {
+			if value != 0 && value != 0xff {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func TestStackScrimDarkensWhatIsBeneathIt(t *testing.T) {
+	t.Parallel()
+	// The scrim is an ordinary child rather than a property, so its presence,
+	// extent and order are visible in the tree.
+	bright := &ui.Node{Kind: ui.KindCapsule, Fill: ui.FillContainerHighest, Bounds: ui.Rect{W: 20, H: 20}}
+	scrim := &ui.Node{Kind: ui.KindCapsule, Fill: ui.FillScrim, Bounds: ui.Rect{W: 20, H: 20}}
+	style := testStyle
+	style.Scrim = Color{A: 0xff}
+
+	withScrim := paintStackToStyle(t, style, bright, scrim)
+	without := paintStackToStyle(t, style, bright)
+
+	if bytes.Equal(withScrim, without) {
+		t.Fatal("the scrim child changed nothing")
+	}
+}
+
+func TestBackgroundImageInAStackSamplesSmoothly(t *testing.T) {
+	t.Parallel()
+	// A card background is one decoded image scaled to whatever the card
+	// measures. Nearest sampling bands visibly across a large flat area.
+	src := &ui.Image{Width: 2, Height: 1, Stride: 8, Pix: []byte{
+		0, 0, 0, 0xff,
+		0xff, 0xff, 0xff, 0xff,
+	}}
+	img := &ui.Node{Kind: ui.KindImage, Image: src, Background: true, Bounds: ui.Rect{W: 32, H: 4}}
+	out := paintStackTo(t, img)
+	if !hasIntermediateValues(out) {
+		t.Error("the background banded; it is not using the smooth path")
+	}
+}
+
+func TestNodeOpacityCompositesOverlappingChildrenAsOneGroup(t *testing.T) {
+	t.Parallel()
+	style := testStyle
+	c := newTestCanvas(t, 20, 20)
+	fillRect(c, ui.Rect{W: 20, H: 20}, style.Background)
+	stack := &ui.Node{Kind: ui.KindStack, Opacity: 50, Bounds: ui.Rect{W: 20, H: 20}, Children: []*ui.Node{
+		{Kind: ui.KindRow, Fill: ui.FillAccent, Bounds: ui.Rect{W: 20, H: 20}},
+		{Kind: ui.KindRow, Fill: ui.FillError, Bounds: ui.Rect{W: 20, H: 20}},
+	}}
+	if err := paintNode(c, stack, NewTextRenderer(mustTestFace(t)), style, style.Size); err != nil {
+		t.Fatal(err)
+	}
+	got := pixelAt(t, c, 10, 10)
+	want := overlay(style.Background, style.Error, 0.5)
+	if got != want {
+		t.Fatalf("group opacity pixel = %+v, want one 50%% composite %+v", got, want)
+	}
+}
+
 // litPixels counts pixels that took the foreground text colour.
 func litPixels(c *Canvas, fg Color) int {
 	n := 0

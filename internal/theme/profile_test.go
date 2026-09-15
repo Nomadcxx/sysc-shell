@@ -16,6 +16,7 @@ func TestPresetTablesMatchTheDesign(t *testing.T) {
 			Density: DensityDefault, Radius: 12, InputRadius: 12,
 			Motion: MotionStandard, MotionSpeed: 100,
 			BarOpacity: 100, PanelOpacity: 100, OverlayOpacity: 100,
+			BlurBehind: true,
 			BlurRadius: 24,
 			Elevation:  ElevationSubtle,
 			FontFamily: DefaultFontFamily, MonoFontFamily: DefaultMonoFamily,
@@ -25,6 +26,7 @@ func TestPresetTablesMatchTheDesign(t *testing.T) {
 			Density: DensityCompact, Radius: 8, InputRadius: 8,
 			Motion: MotionStandard, MotionSpeed: 125,
 			BarOpacity: 100, PanelOpacity: 100, OverlayOpacity: 100,
+			BlurBehind: true,
 			BlurRadius: 24,
 			Elevation:  ElevationSubtle,
 			FontFamily: DefaultFontFamily, MonoFontFamily: DefaultMonoFamily,
@@ -34,6 +36,7 @@ func TestPresetTablesMatchTheDesign(t *testing.T) {
 			Density: DensityDefault, Radius: 16, InputRadius: 16,
 			Motion: MotionExpressive, MotionSpeed: 100,
 			BarOpacity: 100, PanelOpacity: 95, OverlayOpacity: 95,
+			BlurBehind: true,
 			BlurRadius: 24,
 			Elevation:  ElevationStandard,
 			FontFamily: DefaultFontFamily, MonoFontFamily: DefaultMonoFamily,
@@ -300,6 +303,7 @@ func TestRebaseMovesUntouchedAxesAndKeepsDeviations(t *testing.T) {
 	current := std
 	current.Density = DensityComfortable
 	current.FontScale = 125
+	current.BlurBehind = false
 	got := Rebase(current, std, exp)
 	if got.Density != DensityComfortable {
 		t.Errorf("density = %q, want the user's comfortable to survive", got.Density)
@@ -315,6 +319,9 @@ func TestRebaseMovesUntouchedAxesAndKeepsDeviations(t *testing.T) {
 	}
 	if got.PanelOpacity != exp.PanelOpacity {
 		t.Errorf("panel opacity = %d, want the new preset's %d", got.PanelOpacity, exp.PanelOpacity)
+	}
+	if got.BlurBehind {
+		t.Error("an explicit blur opt-out was not preserved")
 	}
 }
 
@@ -353,6 +360,8 @@ func TestProfileValidRejectsEveryOutOfRangeAxis(t *testing.T) {
 		{"bar opacity", func(c *Composition) { c.BarOpacity = 79 }, "bar-opacity"},
 		{"panel opacity", func(c *Composition) { c.PanelOpacity = 101 }, "panel-opacity"},
 		{"overlay opacity", func(c *Composition) { c.OverlayOpacity = 0 }, "overlay-opacity"},
+		{"blur radius low", func(c *Composition) { c.BlurRadius = BlurRadiusMin - 1 }, "blur-radius"},
+		{"blur radius high", func(c *Composition) { c.BlurRadius = BlurRadiusMax + 1 }, "blur-radius"},
 		{"empty family", func(c *Composition) { c.FontFamily = "" }, "font-family"},
 		{"empty mono family", func(c *Composition) { c.MonoFontFamily = "" }, "mono-font-family"},
 	} {

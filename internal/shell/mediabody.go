@@ -2,6 +2,7 @@ package shell
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	"github.com/Nomadcxx/sysc-shell/internal/wallpaper"
 )
 
 const mediaSeekAction = "media:seek:"
@@ -75,30 +77,68 @@ func mediaNowPlaying(r *Registry, h *PanelHost, state services.MediaState, m the
 			}
 		}
 	}
-	var artNode *ui.Node
-	if art != nil {
-		artNode = &ui.Node{
-			Kind: ui.KindImage, Width: mediaArtBox, Height: mediaArtBox,
-			ImageSize: mediaArtBox, Image: art, Shape: ui.ShapeMedium,
-		}
-	} else {
-		artNode = &ui.Node{
+	if art == nil && r != nil && h != nil {
+		art = mediaWallpaperArtLocked(r, h)
+	}
+	background := &ui.Node{
+		Kind: ui.KindImage, Width: mediaArtBox, Height: mediaArtBox,
+		ImageSize: mediaArtBox, Image: art, Background: true, Shape: ui.ShapeCard,
+	}
+	foregroundChildren := []*ui.Node{
+		{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: ccText(state.Title), TextRole: theme.RoleTitle},
+			{Kind: ui.KindText, Text: ccText(state.Artist), TextRole: theme.RoleCaption},
+			{Kind: ui.KindText, Text: ccText(state.Album), TextRole: theme.RoleCaption},
+			{Kind: ui.KindText, Text: ccText(state.Identity), TextRole: theme.RoleLabel},
+		}},
+	}
+	if art == nil {
+		foregroundChildren = append([]*ui.Node{{
 			Kind: ui.KindCapsule, Width: mediaArtBox, Height: mediaArtBox,
 			Fill: ui.FillContainerHighest, Shape: ui.ShapeMedium,
 			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "music_note", IconSize: m.IconNormal}},
-		}
+		}}, foregroundChildren...)
 	}
-	return monitorCard(m, []*ui.Node{{
-		Kind: ui.KindRow, Gap: theme.MarginL, Children: []*ui.Node{
-			artNode,
-			{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
-				{Kind: ui.KindText, Text: ccText(state.Title), TextRole: theme.RoleTitle},
-				{Kind: ui.KindText, Text: ccText(state.Artist), TextRole: theme.RoleCaption},
-				{Kind: ui.KindText, Text: ccText(state.Album), TextRole: theme.RoleCaption},
-				{Kind: ui.KindText, Text: ccText(state.Identity), TextRole: theme.RoleLabel},
-			}},
-		},
-	}})
+	return &ui.Node{
+		// The card chrome stays outside the stack; its padding moves into the
+		// foreground layer so the background can fill the card edge to edge.
+		Kind: ui.KindCapsule, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+		Children: []*ui.Node{{Kind: ui.KindStack, Children: []*ui.Node{
+			background,
+			{Kind: ui.KindCapsule, Fill: ui.FillScrim, Shape: ui.ShapeCard},
+			{Kind: ui.KindColumn, Padding: m.CardPadding, Opacity: 80, Children: []*ui.Node{{
+				Kind: ui.KindRow, Gap: theme.MarginL, Children: foregroundChildren,
+			}}},
+		}}},
+	}
+}
+
+// mediaWallpaperArtLocked supplies the cached still assigned to the bar's
+// output when the player has no cover art. Registry.mu is held by the media
+// page builder; decoding remains on the thumbnail worker.
+func mediaWallpaperArtLocked(r *Registry, h *PanelHost) *ui.Image {
+	bar := r.bars[h.output]
+	if bar == nil || r.wallpaperSvc == nil {
+		return nil
+	}
+	assignment, ok := r.wallpaperSvc.Snapshot().Assignments[bar.connector()]
+	if !ok || assignment.Path == "" {
+		return nil
+	}
+	source := wallpaper.CachedStillPath(assignment.Path)
+	if source == "" {
+		return nil
+	}
+	if _, err := os.Stat(source); err != nil {
+		return nil
+	}
+	key := icons.Key{Name: source, W: mediaArtBox, H: mediaArtBox}
+	worker := r.wallpaperThumbsLocked()
+	if image, ok := worker.Lookup(key); ok {
+		return image
+	}
+	_, _, _ = worker.Request(key)
+	return nil
 }
 
 func mediaTransport(state services.MediaState, m theme.Metrics) *ui.Node {

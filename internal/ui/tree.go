@@ -43,6 +43,11 @@ const (
 	// KindRadialGauge is a compact labelled circular progress indicator used
 	// by the bar's system summary.
 	KindRadialGauge
+	// KindStack lays every child into its own content box rather than flowing
+	// them. Children paint in order, so the last is on top, and Hit already
+	// walks children in reverse, so the topmost is hit first. It exists for a
+	// card with a background image behind its content.
+	KindStack
 
 	// kindCount is one past the last kind. It exists so a test can assert that
 	// every declared kind is measurable, and it must stay last.
@@ -193,6 +198,15 @@ type Node struct {
 	// reserves its box whatever the raster turns out to be, so a decode that
 	// arrives later cannot change the layout around it.
 	ImageSize int
+	// Background marks an image that fills a container rather than standing in
+	// for an icon. It selects bilinear sampling: an icon is produced at the
+	// size the node asked for, a background is scaled to whatever the card
+	// measures.
+	Background bool
+	// Opacity is group opacity in percent. Zero means unset/full opacity; a
+	// non-zero value composites the complete subtree once, so overlapping
+	// children do not multiply their alpha.
+	Opacity uint8
 	// ImageW and ImageH are the landscape form of ImageSize, for a raster that
 	// is not square: a wallpaper thumbnail rather than an icon. Both must be
 	// positive to take effect, because half a box is not a box; otherwise the

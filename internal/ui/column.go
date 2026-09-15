@@ -205,6 +205,25 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 			}
 		}
 		return maxH + 2*n.Padding, nil
+	case KindStack:
+		if len(n.Children) == 0 {
+			return 0, nil
+		}
+		if n.Height > 0 {
+			return n.Height, nil
+		}
+		tallest := 0
+		for i, child := range n.Children {
+			if child == nil {
+				return 0, fmt.Errorf("stack child %d is nil", i)
+			}
+			h, err := columnChildHeight(child, max(width-2*n.Padding, 0), measure)
+			if err != nil {
+				return 0, err
+			}
+			tallest = max(tallest, h)
+		}
+		return tallest + 2*n.Padding, nil
 	case KindColumn, KindDropZone:
 		h := 2 * n.Padding
 		for i, c := range n.Children {
@@ -287,6 +306,9 @@ func placeColumnChild(n *Node, box Rect, measure MeasureText) error {
 		return layoutSegmented(n, measure)
 	case KindColumn, KindDropZone:
 		return LayoutColumn(n, box, measure)
+	case KindStack:
+		n.Bounds = box
+		return layoutStackChildren(n, measure)
 	case KindScroll, KindVirtualList:
 		return layoutScroll(n, box, measure)
 	case KindMenu:

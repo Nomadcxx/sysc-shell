@@ -225,6 +225,54 @@ func squareAttachedEdge(c *Canvas, box ui.Rect, radius int, edge string, col Col
 }
 
 func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
+	if n == nil {
+		return fmt.Errorf("nil node")
+	}
+	if n.Opacity > 0 && n.Opacity < 100 {
+		return paintNodeOpacity(c, n, text, style, size)
+	}
+	return paintNodeContent(c, n, text, style, size)
+}
+
+// paintNodeOpacity renders one subtree into a transparent frame and applies
+// its alpha once. Group compositing keeps overlapping foreground children from
+// multiplying opacity against one another.
+func paintNodeOpacity(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
+	offscreen, err := NewCanvas(make([]byte, len(c.Pix)), c.Width, c.Height, c.Stride)
+	if err != nil {
+		return err
+	}
+	offscreen.restrict = c.restrict
+	if err := paintNodeContent(offscreen, n, text, style, size); err != nil {
+		return err
+	}
+	box := style.Scale120.PhysicalRect(n.Bounds)
+	x0, y0, x1, y1 := c.clip(box)
+	opacity := uint32(n.Opacity)
+	for y := y0; y < y1; y++ {
+		for x := x0; x < x1; x++ {
+			srcAt := y*offscreen.Stride + x*4
+			if srcAt+4 > len(offscreen.Pix) {
+				continue
+			}
+			alpha := (uint32(offscreen.Pix[srcAt+3])*opacity + 50) / 100
+			if alpha == 0 {
+				continue
+			}
+			var src [4]byte
+			for i := range src {
+				src[i] = byte((uint32(offscreen.Pix[srcAt+i])*opacity + 50) / 100)
+			}
+			dstAt := y*c.Stride + x*4
+			if dstAt+4 <= len(c.Pix) {
+				blendPixel(c.Pix[dstAt:dstAt+4], src, alpha)
+			}
+		}
+	}
+	return nil
+}
+
+func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
 	switch n.Kind {
 	case ui.KindText:
 		if n.Marquee {
@@ -272,6 +320,14 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 		// A node whose raster has not resolved paints nothing but keeps the
 		// box it measured, so the card does not reflow when it arrives.
 		box := style.Scale120.PhysicalRect(n.Bounds)
+		if n.Background {
+			radius := 0
+			if n.Shape != ui.ShapeInherit || n.Radius > 0 {
+				radius = chromeRadius(style, nodeRadius(style, n, 0), box)
+			}
+			blendBackgroundImage(c, RoundedMask(radius, box.W, box.H), box.X, box.Y, n.Image)
+			return nil
+		}
 		if n.Shape != ui.ShapeInherit || n.Radius > 0 {
 			radius := chromeRadius(style, nodeRadius(style, n, 0), box)
 			paintImageMasked(c, box, n.Image, RoundedMask(radius, box.W, box.H))
@@ -336,7 +392,7 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 		return nil
 
 	// Segmented rows own allocation, not chrome: each segment paints itself.
-	case ui.KindColumn, ui.KindDropZone, ui.KindSegmented:
+	case ui.KindColumn, ui.KindDropZone, ui.KindSegmented, ui.KindStack:
 		for i, child := range n.Children {
 			if child == nil {
 				return fmt.Errorf("nil child %d", i)

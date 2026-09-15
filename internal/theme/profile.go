@@ -67,8 +67,8 @@ const (
 	RadiusMax     = 32
 	SpeedMin      = 25
 	SpeedMax      = 400
-	// Opacity stops at 80 because the shell has no portable compositor blur
-	// behind text; below that, wallpaper detail reads through a label.
+	// OpacityMin is the floor for surfaces without a backdrop. The bar and
+	// overlay stay on this floor because they do not own a blur capture.
 	OpacityMin = 80
 	OpacityMax = 100
 	// OpacityMinBlurred is the floor for a surface painting over a blurred
@@ -463,7 +463,7 @@ type Composition struct {
 // second duration table, so one table stays the source of every duration.
 // Expressive makes the floating surfaces lightly translucent and leaves the
 // bar opaque: the bar is docked, not floating, and text on it sits directly
-// over the wallpaper.
+// over the wallpaper. Every preset enables the panel backdrop by default.
 var presets = map[Preset]Composition{
 	PresetStandard: {
 		Density:     DensityDefault,
@@ -471,6 +471,7 @@ var presets = map[Preset]Composition{
 		InputRadius: 12,
 		Motion:      MotionStandard, MotionSpeed: 100,
 		BarOpacity: 100, PanelOpacity: 100, OverlayOpacity: 100,
+		BlurBehind: true,
 		BlurRadius: 24,
 		Elevation:  ElevationSubtle,
 	},
@@ -480,6 +481,7 @@ var presets = map[Preset]Composition{
 		InputRadius: 8,
 		Motion:      MotionStandard, MotionSpeed: 125,
 		BarOpacity: 100, PanelOpacity: 100, OverlayOpacity: 100,
+		BlurBehind: true,
 		BlurRadius: 24,
 		Elevation:  ElevationSubtle,
 	},
@@ -489,6 +491,7 @@ var presets = map[Preset]Composition{
 		InputRadius: 16,
 		Motion:      MotionExpressive, MotionSpeed: 100,
 		BarOpacity: 100, PanelOpacity: 95, OverlayOpacity: 95,
+		BlurBehind: true,
 		BlurRadius: 24,
 		Elevation:  ElevationStandard,
 	},
@@ -573,6 +576,10 @@ func Rebase(current, from, to Composition) Composition {
 	rebaseInt(current.BarOpacity, from.BarOpacity, to.BarOpacity, &out.BarOpacity)
 	rebaseInt(current.PanelOpacity, from.PanelOpacity, to.PanelOpacity, &out.PanelOpacity)
 	rebaseInt(current.OverlayOpacity, from.OverlayOpacity, to.OverlayOpacity, &out.OverlayOpacity)
+	if current.BlurBehind == from.BlurBehind {
+		out.BlurBehind = to.BlurBehind
+	}
+	rebaseInt(current.BlurRadius, from.BlurRadius, to.BlurRadius, &out.BlurRadius)
 	return out
 }
 
@@ -661,6 +668,7 @@ func (c Composition) Valid() error {
 		// whether blur was on.
 		{"panel-opacity", c.PanelOpacity, OpacityMinBlurred, OpacityMax},
 		{"overlay-opacity", c.OverlayOpacity, OpacityMin, OpacityMax},
+		{"blur-radius", c.BlurRadius, BlurRadiusMin, BlurRadiusMax},
 	} {
 		if b.got < b.min || b.got > b.max {
 			return fmt.Errorf("%s %d is outside %d..%d", b.name, b.got, b.min, b.max)

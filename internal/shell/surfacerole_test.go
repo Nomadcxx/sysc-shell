@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -59,6 +60,40 @@ func cardsOf(root *ui.Node) []*ui.Node {
 		}
 	})
 	return out
+}
+
+func TestMediaCardStacksContentOverItsBackground(t *testing.T) {
+	state := services.MediaState{Available: true, Player: "player", Title: "Track"}
+	r, h := mediaTestRegistry(t, state, nil)
+	r.mu.Lock()
+	h.section = "media"
+	page := mediaBody(r, h)
+	r.mu.Unlock()
+
+	if page == nil || len(page.Children) == 0 {
+		t.Fatal("media page has no now-playing card")
+	}
+	var stack *ui.Node
+	walkNodes(page.Children[0], func(n *ui.Node) {
+		if stack == nil && n.Kind == ui.KindStack {
+			stack = n
+		}
+	})
+	if stack == nil {
+		t.Fatal("the media card is not built on a stack")
+	}
+	if len(stack.Children) < 3 {
+		t.Fatalf("media stack has %d children, want background, scrim, and content", len(stack.Children))
+	}
+	if stack.Children[0].Kind != ui.KindImage || !stack.Children[0].Background {
+		t.Fatalf("stack background = %+v, want a background image", stack.Children[0])
+	}
+	if stack.Children[1].Kind != ui.KindCapsule || stack.Children[1].Fill != ui.FillScrim {
+		t.Fatalf("stack scrim = %+v, want a scrim child", stack.Children[1])
+	}
+	if stack.Children[2].Kind != ui.KindColumn || stack.Children[2].Opacity != 80 {
+		t.Fatalf("stack foreground = %+v, want one 80%% opacity group", stack.Children[2])
+	}
 }
 
 // TestSurfaceCardsCarryTheCardShape is the shape half of the migration. A card

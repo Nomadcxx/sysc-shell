@@ -278,6 +278,32 @@ func TestThemeSparseWriteRecordsADeviation(t *testing.T) {
 	}
 }
 
+func TestThemeExplicitBlurOptOutRoundTripsThroughWrite(t *testing.T) {
+	t.Parallel()
+	c := Default()
+	c.Theme.BlurBehind = false
+	c.Theme.BlurRadius = 32
+	c.Theme.PanelOpacity = 65
+	p := filepath.Join(t.TempDir(), "config.json")
+	if err := Write(p, c); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := toWire(c)
+	if w.Theme == nil || w.Theme.BlurBehind == nil || *w.Theme.BlurBehind {
+		t.Fatalf("blur opt-out was not written explicitly: %+v", w.Theme)
+	}
+	if got.Theme.BlurBehind {
+		t.Fatal("explicit blur opt-out was lost across a config write")
+	}
+	if got.Theme.BlurRadius != 32 {
+		t.Fatalf("blur-radius = %d, want 32", got.Theme.BlurRadius)
+	}
+}
+
 func TestThemeDefaultWritesPresetGeneration(t *testing.T) {
 	t.Parallel()
 	w := toWire(Default())
