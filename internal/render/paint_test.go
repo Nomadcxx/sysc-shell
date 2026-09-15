@@ -207,6 +207,37 @@ func pixelAt(t *testing.T, c *Canvas, x, y int) Color {
 	return Color{B: c.Pix[i], G: c.Pix[i+1], R: c.Pix[i+2], A: c.Pix[i+3]}
 }
 
+func paintStackTo(t *testing.T, children ...*ui.Node) []byte {
+	return paintStackToStyle(t, testStyle, children...)
+}
+
+func paintStackToStyle(t *testing.T, style Style, children ...*ui.Node) []byte {
+	t.Helper()
+	c := newTestCanvas(t, 20, 20)
+	stack := &ui.Node{Kind: ui.KindStack, Bounds: ui.Rect{W: 20, H: 20}, Children: children}
+	if err := paintNode(c, stack, NewTextRenderer(mustTestFace(t)), style, style.Size); err != nil {
+		t.Fatal(err)
+	}
+	return append([]byte(nil), c.Pix...)
+}
+
+func TestStackScrimDarkensWhatIsBeneathIt(t *testing.T) {
+	t.Parallel()
+	// The scrim is an ordinary child rather than a property, so its presence,
+	// extent and order are visible in the tree.
+	bright := &ui.Node{Kind: ui.KindCapsule, Fill: ui.FillContainerHighest, Bounds: ui.Rect{W: 20, H: 20}}
+	scrim := &ui.Node{Kind: ui.KindCapsule, Fill: ui.FillScrim, Bounds: ui.Rect{W: 20, H: 20}}
+	style := testStyle
+	style.Scrim = Color{A: 0xff}
+
+	withScrim := paintStackToStyle(t, style, bright, scrim)
+	without := paintStackToStyle(t, style, bright)
+
+	if bytes.Equal(withScrim, without) {
+		t.Fatal("the scrim child changed nothing")
+	}
+}
+
 // litPixels counts pixels that took the foreground text colour.
 func litPixels(c *Canvas, fg Color) int {
 	n := 0
