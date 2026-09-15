@@ -45,7 +45,7 @@ Out:
 - Exposing this shell as an MPRIS source. We remain a controller.
 - Full-bleed album art. `KindStack` is unlanded and its design reserves the
   consumer gate for the weather card; art renders as a bounded rounded image
-  until stacking arrives.
+  in the page and a compact rounded image in the bar until stacking arrives.
 - The audio spectrum and lyric views. Different services, different designs.
 
 ## Decisions
@@ -150,21 +150,27 @@ service goroutine to enumerate the current bus names so removing a blacklist
 entry can restore a player. The Registry calls it after releasing
 `Registry.mu`.
 
-### D6 — Art worker
+### D6 — Shared, bounded art worker
 
-A third small `icons.Worker` (`r.mediaArt`, lazily started like
-`wallpaperThumbsLocked`, own cancel context) so track art can never evict
-tray or notification icons. The request key is the `ArtKey` — a `file://`
-URL — parsed with `net/url`: non-`file` schemes and non-empty hosts are
-refused (the service already refuses them; the worker re-checks), and
-`URL.Path` supplies the percent-decoded path, which `icons.Resolve` takes
-as-given. Per-job bounds: the worker's own 8 MiB `readBounded` cap and
-4096 px dimension check, plus the timeout D11.2 mandates — a five-second
-watchdog per job (the session-operations precedent); a timed-out job
-publishes nil and negative-caches the key until the snapshot's `ArtKey`
-changes, so a stuck path costs one attempt per track, never a repaint stall.
-The theoretical abandoned-reader goroutine is bounded by the worker's
-in-flight collapse and is recorded here rather than hidden.
+A small `r.mediaArt` worker, lazily started like `wallpaperThumbsLocked`,
+owns one bounded art cache shared by the Media page and the bar widget. Track
+art is still an identifier in `MediaState`; the worker publishes immutable
+rasters and never lets either paint path decode or fetch.
+
+The request key is the `ArtKey`, parsed with `net/url`. `file://` URLs must be
+local absolute paths. `http://` and `https://` URLs must have a host and are
+fetched with the standard library; all other schemes are refused. Local reads
+and remote response bodies are capped at 8 MiB, decoded sources at 4096 px per
+edge, and each job has the five-second watchdog from D11.2. Non-2xx responses,
+invalid images and oversized bodies publish nil and negative-cache the key
+until the player announces another key. The theoretical abandoned-reader
+goroutine is bounded by the worker's in-flight collapse and is recorded here
+rather than hidden.
+
+The page's 72 px square and the bar's compact art slot use the same resolved
+source/cache entry; the bar falls back to its state glyph while art is pending
+or unavailable. A successful decode invalidates both consumers, so a track
+change cannot leave stale art on either surface.
 
 ### D7 — Marquee
 
@@ -189,10 +195,10 @@ default) and a stable `Key` so animator identity survives rebuilds.
 
 ### D8 — Bar state glyph
 
-`refreshMediaWidget` swaps the glyph with transport state: playing →
-`pause`, paused → `play_arrow`, stopped or unknown → `music_note`. The
-widget's gestures are unchanged (approved D7 of the landed design): left
-click routes to the CC Media section, middle/right toggles play, scroll
+`refreshMediaWidget` uses the same decoded `ArtKey` as the page when available
+and keeps the state glyph as its compact fallback while art is pending or
+unavailable. Its gestures are unchanged (approved D7 of the landed design):
+left click routes to the CC Media section, middle/right toggles play, scroll
 steps next/previous.
 
 ### D9 — Home tile
@@ -222,9 +228,9 @@ session's `~/.local/bin/sysc-shell`, and kill by pid from
 surfaces with `niri msg -j layers`. Exercise: one real player plus a
 browser's per-tab players; selection under interaction; the blacklist
 hiding a named player; marquee only on overflow; seek on a seekable track;
-art decode on a local cover; the tile and page agreeing with the bar. One
-output (DP-1) is enough. Unrunnable items are recorded in the completion
-handover, never assumed away.
+art decode from both a local cover and a remote `http(s)` URL; the tile and
+page agreeing with the bar's compact art. One output (DP-1) is enough.
+Unrunnable items are recorded in the completion handover, never assumed away.
 
 ### D12 — Tracker
 

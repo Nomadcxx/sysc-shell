@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax; bd, not this file, tracks state.
 
-**Goal:** Replace the control-centre Media disabled destination with a live page and Home tile, close the bar widget's parity gaps (state glyph, marquee), and give the service its configuration surface — the remainder of sysc-156 plus sysc-283 and sysc-284.
+**Goal:** Replace the control-centre Media disabled destination with a live page and Home tile, close the bar widget's parity gaps (state glyph, marquee, compact cover art), and give the service its configuration surface — the remainder of sysc-156 plus sysc-283 and sysc-284.
 
-**Architecture:** One shared body (`mediaBody`) over cached service state, writes through `scheduleControl`, a third small `icons.Worker` for art, one new render primitive (`paintTextMarquee`) behind a linear sweep animator mode. Everything rides machinery that already holds: the CC spine, the animator, the worker bounds, the slider cycle.
+**Architecture:** One shared body (`mediaBody`) over cached service state, writes through `scheduleControl`, one bounded art worker shared by the page and bar, and one new render primitive (`paintTextMarquee`) behind a linear sweep animator mode. Everything rides machinery that already holds: the CC spine, the animator, the worker bounds, the slider cycle.
 
 **Tech Stack:** Go 1.26.4; no new module dependencies. The only new asset is four glyphs subset into the existing embedded Material Symbols TTF by the existing `build.py`.
 
@@ -117,10 +117,10 @@ func TestMediaConfigRoundTrips(t *testing.T)                 // preferred and bl
 
 **Files:** `internal/shell/registry.go` (`mediaArt` field, lazy starter, cancel in `Close`), new `internal/shell/mediaart.go`; Test `internal/shell/mediaart_test.go`.
 
-**Interfaces:** `func (r *Registry) mediaArtFor() *icons.Worker`; `func mediaArtRequestPath(artKey string) (string, bool)`; per-job timeout + negative cache live in a small wrapper around the worker, not in `internal/icons`.
+**Interfaces:** `func (r *Registry) mediaArtFor() *mediaArtWorker`; `func mediaArtRequestName(artKey string) (string, bool)`; the worker accepts local `file://` URLs and bounded `http(s)` downloads, with per-job timeout and negative cache in `internal/shell`, not in `internal/icons`.
 
-- [ ] **Step 1 (failing):** `TestMediaArtKeyParsesToAPath` — `file:///tmp/a%20b.png` → `/tmp/a b.png`; `https://…`, `file://host/p`, and garbage → `false`. `TestMediaArtTimeoutPublishesNilOnce` — a job pointed at a path that never satisfies the read (a FIFO or a slow fake) publishes nil within the watchdog and the negative cache suppresses retries until the key changes. Expect fail.
-- [ ] **Step 2:** Implement: key = `icons.Key{Name: path, W: artBox, H: artBox}`; watchdog five seconds per job (session-ops precedent); negative cache `map[string]struct{}` keyed by `ArtKey`; the wrapper documents the bounded abandoned-reader. Lazy start mirrors `wallpaperThumbsLocked`; cancelled where `wallpaperThumbCancel` is.
+- [ ] **Step 1 (failing):** `TestMediaArtKeyParsesToAPath` — `file:///tmp/a%20b.png` → `/tmp/a b.png`; valid `http(s)` URLs are accepted as source keys; `file://host/p`, unsupported schemes, and garbage are refused. `TestMediaArtRemoteDecode` uses a local `httptest.Server` and expects a decoded raster. `TestMediaArtRemoteBoundsAndErrors` covers non-2xx, invalid image data, and a response over 8 MiB; each publishes nil and negative-caches the URL. `TestMediaArtTimeoutPublishesNilOnce` keeps the FIFO watchdog check. Expect fail.
+- [ ] **Step 2:** Implement: key = `icons.Key{Name: source, W: artBox, H: artBox}`; use the standard library HTTP client with the five-second per-job watchdog; cap `Content-Length` and the read at `icons.MaxFileBytes`; expose the existing bounded raster decoder through one small `icons.DecodeRaster` wrapper; negative-cache `map[string]struct{}` keyed by `ArtKey`. Lazy start mirrors `wallpaperThumbsLocked`; cancelled where `wallpaperThumbCancel` is.
 - [ ] **Step 3:** `go test ./internal/shell -run TestMediaArt -v` green; full `internal/shell` run. Commit: `feat(shell): resolve album art off the paint path with bounded reads`
 
 ---
@@ -151,7 +151,7 @@ func TestMediaSeekWritesOnRelease(t *testing.T)    // slider release -> SetPosit
 ```
 
 - [ ] **Step 2:** Run `go test ./internal/shell -run TestMedia -v`; expect fail (`mediaBody` undefined, section still disabled).
-- [ ] **Step 3:** Implement per design D2/D3/D4/D10: `Enabled: true` on the `ccSections` media entry; `ccPage` case; the three cards; `h.mediaLease` hooks called from `selectControlCentreSection` (enter/leave) and the CC branch of `closeAllPanelsLocked`; `media:` prefix dispatch beside the `audio-` handlers; position row `KindMeter` normally, `KindSlider` when `CanSeek && LengthUS > 0`, animated by the surface frame loop reading `CachedState()` at paint (frames wanted while `Status == PlaybackPlaying` or a seek drag is pending). Art node requests through the Task 4 wrapper and `Lookup`s at build, never decodes. Keep `publishMediaSnapshot` as the only service-to-retained-tree bridge.
+- [ ] **Step 3:** Implement per design D2/D3/D4/D10: `Enabled: true` on the `ccSections` media entry; `ccPage` case; the three cards; `h.mediaLease` hooks called from `selectControlCentreSection` (enter/leave) and the CC branch of `closeAllPanelsLocked`; `media:` prefix dispatch beside the `audio-` handlers; position row `KindMeter` normally, `KindSlider` when `CanSeek && LengthUS > 0`, animated by the surface frame loop reading `CachedState()` at paint (frames wanted while `Status == PlaybackPlaying` or a seek drag is pending). The page art node and bar media widget request through the shared Task 4 wrapper and `Lookup` at build, never decode. A successful decode invalidates both retained consumers. Keep `publishMediaSnapshot` as the only service-to-retained-tree bridge.
 - [ ] **Step 4:** `go test ./internal/shell -run TestMedia -v` green; full `internal/shell` package. Commit: `feat(shell): replace the disabled media destination with a live page`
 
 ---
@@ -170,14 +170,14 @@ func TestMediaSeekWritesOnRelease(t *testing.T)    // slider release -> SetPosit
 
 - [ ] **Step 1:** `gofmt -w . && test -z "$(gofmt -l .)"`, `go vet ./...`, `go build ./...`, full `services`/`shell`/`config` packages, `git diff --exit-code -- go.mod go.sum`.
 - [ ] **Step 2:** Close sysc-156, sysc-283, sysc-284 in bd with commit hashes; export (reset first) and commit the JSONL: `chore: close the media page slice in the tracker`.
-- [ ] **Step 3:** Rebase onto current `main`; run the live gate (design D11) with a real player and a browser's per-tab players on the laptop; record the marquee trip-speed measurement and every unrun item.
+- [ ] **Step 3:** Rebase onto current `main`; run the live gate (design D11) with a real player and a browser's per-tab players on the laptop; record the marquee trip-speed measurement, local and remote art results, bar/page agreement, and every unrun item.
 - [ ] **Step 4:** Land `docs/plans/2026-09-15-media-page-completion-handover.md` + register row as docs-only commits on `main`: gate output, live observations, the measured tunables, known defects.
 
 ---
 
 ## Self-Review
 
-**Spec coverage.** D1 → Task 5 (Enabled, ccPage case, no second tree, and the retained-state relay). D2 → Task 5 (three cards, rungs, dash-not-zero, disabled-without-player card). D3 → Task 5 (cached reads, scheduleControl writes, Prefer under the lock). D4 → Task 5 (hooks + close path + lease test). D5 → Task 1. D6 → Task 4 (worker, decode, timeout, negative cache; KindStack explicitly out). D7 → Task 3 (fields, primitive, sweep mode, resolve, MaxWidth/Key, fallback). D8 → Task 3 (glyph swap). D9 → Task 6. D10 → Task 5 (dispatch, seek drag, keyboard path). D11 → Task 7 Step 3. D12 → Task 7 Step 2.
+**Spec coverage.** D1 → Task 5 (Enabled, ccPage case, no second tree, and the retained-state relay). D2 → Task 5 (three cards, rungs, dash-not-zero, disabled-without-player card). D3 → Task 5 (cached reads, scheduleControl writes, Prefer under the lock). D4 → Task 5 (hooks + close path + lease test). D5 → Task 1. D6 → Task 4 (shared worker, local/remote decode, bounds, timeout, negative cache; KindStack explicitly out). D7 → Task 3 (fields, primitive, sweep mode, resolve, MaxWidth/Key, fallback). D8 → Task 3 (glyph swap and compact art). D9 → Task 6. D10 → Task 5 (dispatch, seek drag, keyboard path). D11 → Task 7 Step 3. D12 → Task 7 Step 2.
 
 **Placeholders.** Two measured tunables are deliberately open: the art box size and the marquee trip speed (30 px·s⁻¹ is the initial value). Both are measured against the reference capture in Task 7 and recorded in the completion handover; neither can be invented from a document.
 
