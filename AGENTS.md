@@ -14,7 +14,7 @@
 
 - Stop at the first working rung: existing project code, Go standard library, native Linux service, pinned dependency, then new code.
 - Keep Wayland types inside `internal/platform/wayland` and Niri wire types inside `internal/platform/niri`.
-- Pin `github.com/Nomadcxx/sysc-wayland@v0.2.1`; do not import `dankgo` from shell code. Current pins for every consumed module are in `go.mod` and the README table.
+- Pin `github.com/Nomadcxx/sysc-wayland@v0.2.2`; do not import `dankgo` from shell code. Current pins for every consumed module are in `go.mod` and the README table.
 - Keep the Wayland dispatch loop on one goroutine. Other goroutines submit commands and receive immutable state updates through channels.
 - Draw only after invalidation. Respect frame callbacks and buffer release events.
 - Add one focused runnable check for non-trivial logic. Use table tests for pure layout and protocol code.

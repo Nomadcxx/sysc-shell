@@ -427,6 +427,35 @@ func deriveBar(b Bar, t Theme) Bar {
 	return b
 }
 
+// RebaseDerivedBar updates only bar fields that still followed the previous
+// theme. Explicit bar overrides remain untouched when a settings edit changes
+// the theme axes that own those fields.
+func RebaseDerivedBar(c *Config, from Theme) {
+	if c == nil {
+		return
+	}
+	before := deriveBar(c.Bar, from)
+	after := deriveBar(c.Bar, c.Theme)
+	if c.Bar.Height == before.Height {
+		c.Bar.Height = after.Height
+	}
+	if c.Bar.Padding == before.Padding {
+		c.Bar.Padding = after.Padding
+	}
+	if c.Bar.Spacing == before.Spacing {
+		c.Bar.Spacing = after.Spacing
+	}
+	if c.Bar.Radius == before.Radius {
+		c.Bar.Radius = after.Radius
+	}
+	if c.Bar.FontFamily == before.FontFamily {
+		c.Bar.FontFamily = after.FontFamily
+	}
+	if c.Bar.FontSize == before.FontSize {
+		c.Bar.FontSize = after.FontSize
+	}
+}
+
 // ForConnector resolves the bar policy for one connector. The first matching
 // override wins; unset override fields keep the base value.
 func (c Config) ForConnector(name string) Bar {

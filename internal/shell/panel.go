@@ -92,8 +92,17 @@ func (p Placement) Margins() Margins {
 	x := clampAxis(alignX(p), p.Panel.W, p.Output.W, p.Padding)
 	anchor := p.BarZone + p.Gap
 	if p.CenterY {
-		// FittedSize has already capped Panel.H to the available extent, so
-		// avail >= Panel.H and the result stays inside the padding.
+		// A zero anchor is a true modal: centre it in the whole output while
+		// retaining the output padding on both sides. Other floating panels
+		// centre in the region below the bar.
+		if anchor == 0 {
+			avail := p.Output.H - 2*p.Padding
+			y := p.Padding + (avail-p.Panel.H)/2
+			if p.BarEdge == "bottom" {
+				return Margins{Bottom: y, Left: x}
+			}
+			return Margins{Top: y, Left: x}
+		}
 		avail := p.Output.H - anchor - p.Padding
 		y := anchor + (avail-p.Panel.H)/2
 		if p.BarEdge == "bottom" {

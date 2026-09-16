@@ -14,6 +14,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -189,6 +190,73 @@ func TestClipboardTreeRendersImagePlaceholderAndStateMessages(t *testing.T) {
 	}
 }
 
+func TestClipboardStatusNoticeCentersBothLinesWithoutClipping(t *testing.T) {
+	r := clipboardTestRegistry(nil)
+	r.clipboard.Snapshot.Persistence = clipboardprotocol.PersistenceUnavailable
+	h := &PanelHost{id: PanelClipboard, place: Placement{Panel: panelTargetSize(PanelClipboard)}, theme: DefaultTheme(), search: ui.NewField("")}
+	tree := r.panelTree(h)
+	measure := func(s string, attrs ui.TextAttrs) (int, int) {
+		height := 16
+		if attrs.Role == theme.RoleLabel {
+			height = 20
+		}
+		return len([]rune(s)) * 8, height
+	}
+	if err := ui.LayoutColumn(tree, panelTargetSize(PanelClipboard), measure); err != nil {
+		t.Fatal(err)
+	}
+
+	var notice *ui.Node
+	for _, capsule := range findAllKind(tree, ui.KindCapsule) {
+		if findText(capsule, "Clipboard persistence unavailable") != nil {
+			notice = capsule
+			break
+		}
+	}
+	if notice == nil {
+		t.Fatal("clipboard persistence notice is missing")
+	}
+	title := findText(notice, "Clipboard persistence unavailable")
+	detail := findText(notice, "History remains available in memory")
+	if title == nil || detail == nil {
+		t.Fatal("clipboard persistence notice is missing one of its text lines")
+	}
+	topInset := title.Bounds.Y - notice.Bounds.Y
+	bottomInset := notice.Bounds.Y + notice.Bounds.H - (detail.Bounds.Y + detail.Bounds.H)
+	if topInset != bottomInset {
+		t.Fatalf("notice insets = top %d, bottom %d; title/detail are not centred in %+v", topInset, bottomInset, notice.Bounds)
+	}
+}
+
+func TestClipboardSearchSelectsOnlyVisibleRows(t *testing.T) {
+	entries := []clipboardprotocol.Entry{
+		testClipboardEntry("alpha", clipboardprotocol.KindText, "alpha text", false),
+		testClipboardEntry("beta", clipboardprotocol.KindText, "beta text", false),
+	}
+	r := clipboardTestRegistry(entries)
+	h := &PanelHost{id: PanelClipboard, place: Placement{Panel: panelTargetSize(PanelClipboard)}, theme: DefaultTheme(), search: ui.NewField("")}
+	_ = laidOutClipboardTree(r, h)
+
+	h.query = "beta"
+	tree := laidOutClipboardTree(r, h)
+	row := findClipboardRowAction(tree, "clipboard:restore:beta")
+	if row == nil || !row.State.Has(ui.StateSelected) {
+		t.Fatalf("filtered selected row = %+v, want beta selected", row)
+	}
+	if treeHasText(tree, "alpha text") || !treeHasText(tree, "beta text") {
+		t.Fatalf("filtered tree = %v, want only beta metadata", texts(tree))
+	}
+
+	h.query = "missing"
+	tree = laidOutClipboardTree(r, h)
+	if h.clipboardSelectedID != "" {
+		t.Fatalf("selection after no-match query = %q, want empty", h.clipboardSelectedID)
+	}
+	if treeHasText(tree, "Selected item") {
+		t.Fatalf("no-match tree retained selected detail: %v", texts(tree))
+	}
+}
+
 func TestClipboardTextRowIconIsInMaterialSubset(t *testing.T) {
 	if !render.ValidMaterialIcon("content_copy") {
 		t.Fatal("content_copy is not in the material icon subset")
@@ -315,8 +383,9 @@ func TestClipboardPanelUsesFloatingCenteredExclusiveSurface(t *testing.T) {
 		t.Fatalf("clipboard surface = %+v, want 720x560 exclusive", panel)
 	}
 	want := h.place.Margins()
-	if panel.MarginLeft != int32(want.Left) || panel.MarginTop != int32(want.Top) {
-		t.Fatalf("clipboard margins = %d,%d, want %d,%d", panel.MarginLeft, panel.MarginTop, want.Left, want.Top)
+	wantTop := (h.place.Output.H - h.place.Panel.H) / 2
+	if panel.MarginLeft != int32(want.Left) || panel.MarginTop != int32(wantTop) {
+		t.Fatalf("clipboard margins = %d,%d, want %d,%d", panel.MarginLeft, panel.MarginTop, want.Left, wantTop)
 	}
 }
 

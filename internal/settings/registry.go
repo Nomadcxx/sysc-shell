@@ -316,6 +316,7 @@ func (e Entry) Set(c *config.Config, v string) error {
 }
 
 func (e Entry) setBool(c *config.Config, b bool) error {
+	from := c.Theme
 	if name, ok := strings.CutPrefix(e.Path, "theme.templates."); ok {
 		if c.Templates == nil {
 			c.Templates = map[string]bool{}
@@ -335,10 +336,12 @@ func (e Entry) setBool(c *config.Config, b bool) error {
 	default:
 		return fmt.Errorf("settings: %s: not a boolean", e.Path)
 	}
+	config.RebaseDerivedBar(c, from)
 	return nil
 }
 
 func (e Entry) setInt(c *config.Config, n int) error {
+	from := c.Theme
 	switch e.Path {
 	case "bar.height":
 		c.Bar.Height = n
@@ -379,10 +382,12 @@ func (e Entry) setInt(c *config.Config, n int) error {
 	default:
 		return fmt.Errorf("settings: %s: not an integer", e.Path)
 	}
+	config.RebaseDerivedBar(c, from)
 	return nil
 }
 
 func (e Entry) setString(c *config.Config, v string) error {
+	from := c.Theme
 	switch e.Path {
 	case "bar.edge":
 		c.Bar.Edge = v
@@ -438,6 +443,7 @@ func (e Entry) setString(c *config.Config, v string) error {
 	default:
 		return fmt.Errorf("settings: %s: not a string", e.Path)
 	}
+	config.RebaseDerivedBar(c, from)
 	return nil
 }
 

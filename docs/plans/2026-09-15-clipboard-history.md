@@ -6,7 +6,7 @@
 
 **Architecture:** sysc-clipboard owns the Wayland data-control connection, bounded history reducer, encrypted state, and private versioned Unix-socket protocol. sysc-shell imports only the daemon client package, keeps a metadata projection in Registry, and renders the existing PanelHost and ui.Node tree. The daemon Wayland owner is one goroutine; socket readers, persistence, thumbnail decoding, and source/offer FD transfers are bounded ordinary-I/O workers.
 
-**Tech Stack:** Go 1.26+, standard-library crypto, encoding/json, image, net, and os packages; pinned github.com/Nomadcxx/sysc-wayland v0.2.1; pinned github.com/godbus/dbus/v5 for Secret Service; existing sysc-shell bar, panel, theme, focus, scrolling, and image primitives.
+**Tech Stack:** Go 1.26+, standard-library crypto, encoding/json, image, net, and os packages; pinned github.com/Nomadcxx/sysc-wayland v0.2.2; pinned github.com/godbus/dbus/v5 for Secret Service; existing sysc-shell bar, panel, theme, focus, scrolling, and image primitives.
 
 ---
 
@@ -35,7 +35,7 @@ Frames use a four-byte big-endian length followed by JSON. MaxFrame is 1 MiB. Ze
 
 **Steps:**
 
-1. Write go.mod with Go 1.26, sysc-wayland v0.2.1, godbus/dbus/v5 at a pinned version, and no other runtime dependency.
+1. Write go.mod with Go 1.26, sysc-wayland v0.2.2, godbus/dbus/v5 at a pinned version, and no other runtime dependency.
 2. Copy the exact upstream XML sources named by the approved design, preserve copyright blocks, and record their provenance in NOTICE.
 3. Write a failing compile check for both generated packages and their interface-name constants.
 4. Run go test ./internal/wayland and observe failure because generated bindings are absent.

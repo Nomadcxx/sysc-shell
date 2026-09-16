@@ -558,6 +558,10 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		place.CenterY = true
 	}
 	if id == PanelClipboard {
+		// Clipboard history is a true modal: centre it against the whole output,
+		// not the bar-free region used by attached/floating pickers.
+		place.BarZone = 0
+		place.Gap = 0
 		place.CenterY = true
 		place.Align = "center"
 	}

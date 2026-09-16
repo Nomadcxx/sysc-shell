@@ -2,6 +2,7 @@ package settings
 
 import (
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -205,5 +206,39 @@ func TestAppearancePresetRebasesTheAxes(t *testing.T) {
 	}
 	if cfg.Theme.Radius == before {
 		t.Errorf("radius stayed %d; an axis still on the old preset was not reseeded", before)
+	}
+}
+
+func TestDensitySettingDoesNotPersistAStaleDerivedBar(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name       string
+		explicit   bool
+		wantHeight int
+	}{
+		{name: "derived", wantHeight: 31},
+		{name: "explicit bar override", explicit: true, wantHeight: 52},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Default()
+			if tc.explicit {
+				cfg.Bar.Height = 52
+			}
+			if err := Default().ByPath("appearance.density").Set(&cfg, string(theme.DensityDefault)); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := config.Write(path, cfg); err != nil {
+				t.Fatal(err)
+			}
+			back, err := config.Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if back.Bar.Height != tc.wantHeight {
+				t.Fatalf("reloaded bar height = %d, want %d", back.Bar.Height, tc.wantHeight)
+			}
+		})
 	}
 }

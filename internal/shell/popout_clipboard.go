@@ -12,10 +12,13 @@ import (
 )
 
 const (
-	clipboardRowHeight      = 64
-	clipboardThumbnailSize  = 48
-	clipboardDetailHeight   = 124
-	clipboardStatusHeight   = 42
+	clipboardRowHeight     = 64
+	clipboardThumbnailSize = 48
+	clipboardDetailHeight  = 124
+	// Two text lines plus the card inset and their inter-line gap. Keeping the
+	// full stack inside the capsule prevents the detail line from being clipped
+	// by a fixed-height notice.
+	clipboardStatusHeight   = 56
 	clipboardConfirmHeight  = 96
 	clipboardThumbnailMaxPX = 96
 )
@@ -45,8 +48,8 @@ func clipboardTree(r *Registry, h *PanelHost) *ui.Node {
 		view = r.clipboard
 	}
 	entries := view.Snapshot.Entries
-	selected, selectedOK := clipboardSelection(h, entries)
 	filtered := filterClipboardEntries(entries, h.query)
+	selected, selectedOK := clipboardSelection(h, filtered)
 
 	field := h.search.Node("Search")
 	field.Width = max(panelW-2*m.PanelPadding, 1)

@@ -82,8 +82,8 @@ func TestHostGeometryUsesItsOwnPolicy(t *testing.T) {
 	second.policy.Height = 56
 	second.policy.Gap = 6
 
-	if got := first.surfaceHeight(); got != 27 {
-		t.Fatalf("first surface height = %d, want 27", got)
+	if got := first.surfaceHeight(); got != 44 {
+		t.Fatalf("first surface height = %d, want 44", got)
 	}
 	if got := second.surfaceHeight(); got != 50 {
 		t.Fatalf("second surface height = %d, want 50", got)
@@ -167,8 +167,8 @@ func TestPrepareConfigConfiguresMappedReplacementBeforePublishing(t *testing.T) 
 			callbacks := validHostCallbacks()
 			callbacks.Configure = func(width, height, scale120 int) error {
 				configured = true
-				if width != 1200 || height != 27 || scale120 != 180 {
-					t.Fatalf("Configure(%d, %d, %d), want (1200, 27, 180)",
+				if width != 1200 || height != 44 || scale120 != 180 {
+					t.Fatalf("Configure(%d, %d, %d), want (1200, 44, 180)",
 						width, height, scale120)
 				}
 				return nil
