@@ -588,7 +588,7 @@ func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResul
 	if err == nil {
 		if bar, ok := h.r.bars[global]; ok {
 			policy := h.r.cfg.ForConnector(bar.connector())
-			trig = Trigger{BarEdge: policy.Edge, BarZone: exclusiveBarZone(bar)}
+			trig = Trigger{BarEdge: policy.Edge, BarZone: exclusiveBarZone(bar), Align: "center"}
 		}
 	}
 	h.r.mu.Unlock()
