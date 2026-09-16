@@ -435,6 +435,7 @@ func ccWeather(r *Registry, h *PanelHost) *ui.Node {
 		{Kind: ui.KindText, Text: fetched, TextRole: theme.RoleCaption},
 	})
 	today.Height = ccTodayH
+	today = weatherCardWithEffect(today, reading, weatherTodayEffectKey)
 
 	// Four slots share the body width and the three gaps between them. The
 	// width is derived rather than written down: it was 143 for a gap of 8,

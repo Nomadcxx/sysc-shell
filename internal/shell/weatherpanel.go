@@ -159,11 +159,12 @@ func weatherHero(reading services.Reading, location string, m theme.Metrics) *ui
 		lines = append(lines, &ui.Node{Kind: ui.KindText, TextRole: theme.RoleCaption,
 			Text: "Age " + humaniseAge(time.Since(reading.FetchedAt))})
 	}
-	return &ui.Node{
+	card := &ui.Node{
 		Kind: ui.KindCapsule, Padding: m.CardPadding,
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
 		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginM, Children: lines}},
 	}
+	return weatherCardWithEffect(card, reading, weatherHeroEffectKey)
 }
 
 // weatherDetails is the labelled figure card under the hero: the reference's
