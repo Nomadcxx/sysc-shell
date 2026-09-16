@@ -25,9 +25,20 @@ func TestWeatherEffectPhaseChangesAnimatedPixels(t *testing.T) {
 
 func TestWeatherEffectRejectsInvalidSpec(t *testing.T) {
 	c := newTestCanvas(t, 64, 64)
-	n := &ui.Node{Kind: ui.KindEffect, Effect: ui.EffectSpec{Program: ui.EffectProgram(99)}}
+	for i := range c.Pix {
+		c.Pix[i] = byte(i%251 + 1)
+	}
+	before := append([]byte(nil), c.Pix...)
+	n := &ui.Node{
+		Kind:   ui.KindEffect,
+		Bounds: ui.Rect{W: 64, H: 64},
+		Effect: ui.EffectSpec{Program: ui.EffectProgram(99)},
+	}
 	if err := paintEffect(c, n, testStyle); err == nil {
 		t.Fatal("invalid effect spec was painted")
+	}
+	if !bytes.Equal(c.Pix, before) {
+		t.Fatal("invalid effect spec modified the canvas")
 	}
 }
 
