@@ -24,6 +24,32 @@ func TestWeatherEffectPhaseChangesAnimatedPixels(t *testing.T) {
 	}
 }
 
+func TestWeatherLightningPulseIsDeterministicAndPhaseDependent(t *testing.T) {
+	const seed uint64 = 7
+	var previous float64
+	positive, changed := false, false
+	for i := 0; i <= 100; i++ {
+		phase := float64(i) / 100
+		pulse := lightningPulse(phase, 1, seed)
+		if pulse > 0 {
+			positive = true
+		}
+		if i > 0 && pulse != previous {
+			changed = true
+		}
+		if pulse != lightningPulse(phase, 1, seed) {
+			t.Fatalf("lightning pulse at phase %.2f was not deterministic", phase)
+		}
+		previous = pulse
+	}
+	if !positive {
+		t.Fatal("lightning pulse never produced a flash")
+	}
+	if !changed {
+		t.Fatal("lightning pulse did not respond to phase")
+	}
+}
+
 func TestWeatherEffectRejectsInvalidSpec(t *testing.T) {
 	c := newTestCanvas(t, 64, 64)
 	for i := range c.Pix {
