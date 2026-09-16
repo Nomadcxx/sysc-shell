@@ -336,6 +336,9 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 		}
 		return nil
 
+	case ui.KindEffect:
+		return paintEffect(c, n, style)
+
 	case ui.KindButton, ui.KindDragSource:
 		return paintButton(c, n, text, style, size)
 

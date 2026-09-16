@@ -51,6 +51,17 @@ func TestStackPlacesEffectLayerWithoutHitAction(t *testing.T) {
 	}
 }
 
+func TestStackHitSkipsEffectAction(t *testing.T) {
+	t.Parallel()
+	effect := &Node{Kind: KindEffect, Action: "effect", Bounds: Rect{W: 50, H: 50}, Effect: EffectSpec{Program: EffectWeather}}
+	content := &Node{Kind: KindButton, Action: "content", Bounds: Rect{W: 50, H: 50}}
+	root := &Node{Kind: KindStack, Bounds: Rect{W: 50, H: 50}, Children: []*Node{content, effect}}
+
+	if action, ok := Hit(root, 25, 25); !ok || action != "content" {
+		t.Fatalf("stack hit = %q, %v; want content action, never effect action", action, ok)
+	}
+}
+
 func TestStackMeasuresAsTheMaximumNotTheSum(t *testing.T) {
 	t.Parallel()
 	// A column sums its children. A stack must not, or every stacked card
