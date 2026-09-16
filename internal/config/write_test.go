@@ -295,23 +295,23 @@ func TestThemeDefaultWritesPresetGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if back.Theme.Density != theme.DensityDefault || back.Bar.Height != 31 ||
-		back.Bar.Padding != 2 || back.Bar.Spacing != 4 {
-		t.Fatalf("reloaded default = %q %d/%d/%d, want %q 31/2/4",
+	if back.Theme.Density != theme.DensityStandard || back.Bar.Height != 48 ||
+		back.Bar.Padding != 6 || back.Bar.Spacing != 4 {
+		t.Fatalf("reloaded default = %q %d/%d/%d, want %q 48/6/4",
 			back.Theme.Density, back.Bar.Height, back.Bar.Padding, back.Bar.Spacing,
-			theme.DensityDefault)
+			theme.DensityStandard)
 	}
 }
 
-func TestThemeLegacyDensityRoundTrip(t *testing.T) {
+func TestThemeSelectorFreeRoundTripKeepsLegacyDensity(t *testing.T) {
 	t.Parallel()
 	c, err := Parse([]byte(`{}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	w := toWire(c)
-	if w.Theme == nil || w.Theme.Density == nil || *w.Theme.Density != "standard" {
-		t.Fatalf("theme block = %+v, want the legacy density recorded", w.Theme)
+	if w.Theme == nil || w.Theme.Density != nil {
+		t.Fatalf("theme block = %+v, want standard preset to own legacy density", w.Theme)
 	}
 	p := filepath.Join(t.TempDir(), "config.json")
 	if err := Write(p, c); err != nil {

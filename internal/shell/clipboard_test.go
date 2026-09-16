@@ -131,6 +131,41 @@ func TestClipboardLeftAndRightClicksToggleTheSamePanel(t *testing.T) {
 	}
 }
 
+func TestClipboardBarClickCentersPanelOnOutput(t *testing.T) {
+	reg := newPanelRegistry(t)
+	bar := &Bar{right: []textWidget{{node: &ui.Node{
+		Action: panelClipboardAction, Bounds: ui.Rect{X: 1200, Y: 0, W: 40, H: 44},
+	}}}}
+	bar.setOutputSize(1536, 864)
+	reg.mu.Lock()
+	reg.bars[7] = bar
+	reg.mu.Unlock()
+	reg.bindBarPanelActionsLocked(7, bar)
+	target := bar.actionBounds(panelClipboardAction)
+	if target.W == 0 || target.H == 0 {
+		t.Fatal("default bar has no laid-out clipboard action")
+	}
+	if target.X+target.W/2 == 1536/2 {
+		t.Fatal("clipboard action unexpectedly sits at the output centre")
+	}
+	drainAuxQueue(reg)
+	if !clickButton(bar, target.X+target.W/2, target.Y+target.H/2, buttonLeft) {
+		t.Fatal("left-click on clipboard did not activate")
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelClipboard]
+	if h == nil {
+		t.Fatal("clipboard panel host is missing")
+	}
+	if h.place.AnchorX != 0 {
+		t.Fatalf("clipboard panel anchor = %d, want no trigger anchor", h.place.AnchorX)
+	}
+	want := (h.place.Output.W - h.place.Panel.W) / 2
+	if got := h.place.Margins().Left; got != want {
+		t.Fatalf("clipboard panel left = %d, want output centre %d", got, want)
+	}
+}
+
 func TestClipboardProjectionShowsDaemonErrorsUntilNextState(t *testing.T) {
 	r := clipboardOnlyRegistry([]clipboardprotocol.Entry{testClipboardEntry("one", clipboardprotocol.KindText, "one", false)})
 	t.Cleanup(func() { close(r.closed) })

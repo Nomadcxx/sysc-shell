@@ -1048,7 +1048,6 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 		case action == panelNotificationsAction && (button == 0 || button == buttonLeft):
 			return r.TogglePanel(PanelNotifications, out, trig) == nil
 		case action == panelClipboardAction && (button == 0 || button == buttonLeft || button == buttonRight):
-			trig.AnchorX = bar.actionCenterX(panelClipboardAction)
 			return r.TogglePanel(PanelClipboard, out, trig) == nil
 		case action == panelNotificationsAction && button == buttonMiddle:
 			r.toggleNotifyDND()
