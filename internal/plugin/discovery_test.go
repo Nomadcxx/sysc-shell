@@ -244,3 +244,36 @@ func TestDefaultRootsNameTheUserAndSystemDirectories(t *testing.T) {
 		t.Errorf("system root = %+v", roots[1])
 	}
 }
+
+func TestDiscoverFollowsSymlinkedPluginDirectories(t *testing.T) {
+	t.Parallel()
+
+	// make install links a checkout's plugin directories into the user root;
+	// discovery must resolve the link or every installed plugin vanishes.
+	user := t.TempDir()
+	checkout := t.TempDir()
+	real := install(t, checkout, "org.example.notes", idOf(t, "org.example.notes"))
+	if err := os.Symlink(real, filepath.Join(user, "org.example.notes")); err != nil {
+		t.Fatal(err)
+	}
+	// A broken link is skipped rather than failing the scan.
+	if err := os.Symlink(filepath.Join(user, "gone"), filepath.Join(user, "org.example.broken")); err != nil {
+		t.Fatal(err)
+	}
+	// A symlink to a file is not a plugin directory.
+	file := filepath.Join(user, "plain")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(file, filepath.Join(user, "org.example.file")); err != nil {
+		t.Fatal(err)
+	}
+
+	cat, err := Discover(Root{Path: user, Source: SourceUser})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(cat.Plugins) != 1 || cat.Plugins[0].Manifest.ID != "org.example.notes" {
+		t.Fatalf("plugins = %+v", cat.Plugins)
+	}
+}

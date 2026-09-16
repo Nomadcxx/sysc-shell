@@ -43,11 +43,11 @@ func TestBluetoothIsKnownButNotDefault(t *testing.T) {
 	}
 }
 
-func TestDefaultBarMatchesDMSContentBand(t *testing.T) {
+func TestDefaultBarMatchesLegacyContentBand(t *testing.T) {
 	t.Parallel()
 	bar := Default().Bar
-	if bar.Padding != 2 || bar.Spacing != 4 {
-		t.Fatalf("default padding/spacing = %d/%d, want 2/4", bar.Padding, bar.Spacing)
+	if bar.Padding != 6 || bar.Spacing != 4 {
+		t.Fatalf("default padding/spacing = %d/%d, want 6/4", bar.Padding, bar.Spacing)
 	}
 }
 
@@ -246,11 +246,11 @@ func TestLoadTreatsAMissingFileAsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Theme.Density != theme.DensityDefault || cfg.Bar.Height != 31 ||
-		cfg.Bar.Padding != 2 || cfg.Bar.Spacing != 4 {
-		t.Fatalf("missing-file density/bar = %q %d/%d/%d, want %q 31/2/4",
+	if cfg.Theme.Density != theme.DensityStandard || cfg.Bar.Height != 48 ||
+		cfg.Bar.Padding != 6 || cfg.Bar.Spacing != 4 {
+		t.Fatalf("missing-file density/bar = %q %d/%d/%d, want %q 48/6/4",
 			cfg.Theme.Density, cfg.Bar.Height, cfg.Bar.Padding, cfg.Bar.Spacing,
-			theme.DensityDefault)
+			theme.DensityStandard)
 	}
 }
 
@@ -266,7 +266,7 @@ func TestThemeDensityGenerationMigration(t *testing.T) {
 	}{
 		{"selector-free document", `{}`, theme.DensityStandard, 48, 6, 4},
 		{"empty theme block", `{"theme":{}}`, theme.DensityStandard, 48, 6, 4},
-		{"current standard preset", `{"theme":{"preset":"standard"}}`, theme.DensityDefault, 31, 2, 4},
+		{"standard preset", `{"theme":{"preset":"standard"}}`, theme.DensityStandard, 48, 6, 4},
 		{"explicit legacy density", `{"theme":{"density":"standard"}}`, theme.DensityStandard, 48, 6, 4},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -364,7 +364,7 @@ func TestDefaultVocabularyShipsBothClocksAndBothNiriWidgets(t *testing.T) {
 			members = []Item{item}
 		}
 		for _, m := range members {
-			if m.ID == "notifications" || m.ID == "running-apps" {
+			if m.ID == "notifications" || m.ID == "running-apps" || m.ID == "clipboard" {
 				continue
 			}
 			if m.Interval <= 0 {
@@ -891,7 +891,7 @@ func TestThemePresetSeedsEveryAxis(t *testing.T) {
 		panel   int
 		blur    bool
 	}{
-		{"standard", theme.DensityDefault, 12, theme.MotionStandard, 100, 100, true},
+		{"standard", theme.DensityStandard, 12, theme.MotionStandard, 100, 100, true},
 		{"compact", theme.DensityCompact, 8, theme.MotionStandard, 125, 100, true},
 		{"expressive", theme.DensityDefault, 16, theme.MotionExpressive, 100, 95, true},
 	} {
@@ -1118,8 +1118,8 @@ func TestThemeStandardPresetReproducesTheShippedBar(t *testing.T) {
 	t.Parallel()
 	d := Default()
 	// FontSize follows the body type role, so it moved with the ladder re-base;
-	// the rest of the shipped bar is unchanged.
-	if d.Bar.Height != 31 || d.Bar.Padding != 2 || d.Bar.Spacing != 4 ||
+	// the legacy bar geometry remains unchanged.
+	if d.Bar.Height != 48 || d.Bar.Padding != 6 || d.Bar.Spacing != 4 ||
 		d.Bar.Radius != 12 || d.Bar.FontSize != 15 {
 		t.Errorf("default bar drifted: height %d padding %d spacing %d radius %d size %d",
 			d.Bar.Height, d.Bar.Padding, d.Bar.Spacing, d.Bar.Radius, d.Bar.FontSize)

@@ -5,7 +5,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
+	clipboardclient "github.com/Nomadcxx/sysc-clipboard/client"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 )
 
@@ -52,5 +54,36 @@ func TestPumpNiriForwardsSnapshotsBeforeClosure(t *testing.T) {
 	}
 	if updates != 1 {
 		t.Fatalf("updates = %d, want 1", updates)
+	}
+}
+
+func TestPumpClipboardForwardsDisconnectAndReconnectBeforeClosure(t *testing.T) {
+	updates := make(chan clipboardclient.Update, 2)
+	updates <- clipboardclient.Update{Connected: false}
+	updates <- clipboardclient.Update{Connected: true}
+	close(updates)
+
+	var states []bool
+	pumpClipboard(context.Background(), updates, func(update clipboardclient.Update) {
+		states = append(states, update.Connected)
+	})
+	if len(states) != 2 || states[0] || !states[1] {
+		t.Fatalf("clipboard connection states = %v, want [false true]", states)
+	}
+}
+
+func TestPumpClipboardStopsWhenRegistryContextCloses(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	updates := make(chan clipboardclient.Update)
+	done := make(chan struct{})
+	go func() {
+		pumpClipboard(ctx, updates, func(clipboardclient.Update) {})
+		close(done)
+	}()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("clipboard pump did not stop after context cancellation")
 	}
 }

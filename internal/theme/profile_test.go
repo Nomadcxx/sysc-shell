@@ -13,7 +13,7 @@ func TestPresetTablesMatchTheDesign(t *testing.T) {
 		want   Composition
 	}{
 		{PresetStandard, Composition{
-			Density: DensityDefault, Radius: 12, InputRadius: 12,
+			Density: DensityStandard, Radius: 12, InputRadius: 12,
 			Motion: MotionStandard, MotionSpeed: 100,
 			BarOpacity: 100, PanelOpacity: 100, OverlayOpacity: 100,
 			BlurBehind: true,
@@ -60,6 +60,19 @@ func TestPresetTablesMatchTheDesign(t *testing.T) {
 	}
 	if len(Presets()) != 3 {
 		t.Errorf("Presets() = %v, want three", Presets())
+	}
+}
+
+func TestStandardPresetKeepsLegacyBarGeometry(t *testing.T) {
+	t.Parallel()
+
+	standard, ok := PresetComposition(PresetStandard)
+	if !ok {
+		t.Fatal("standard preset is missing")
+	}
+	m := standard.Metrics()
+	if m.BarHeight != 48 || m.BarPadding != 6 || m.BarSpacing != 4 {
+		t.Fatalf("standard bar metrics = %d/%d/%d, want 48/6/4", m.BarHeight, m.BarPadding, m.BarSpacing)
 	}
 }
 
@@ -142,14 +155,11 @@ func TestProfileDensityTable(t *testing.T) {
 	if _, ok := MetricsFor("dense"); ok {
 		t.Error("an unknown density resolved")
 	}
-	// The default row is the shipped bar, and it moved with the re-base: 48 to
-	// 31, with the inset shrinking to fit a 25 px pill in the narrower band.
-	// That is the intended parity change rather than drift. A file that never
-	// set a height follows the new default; one that set a height keeps it,
-	// which is what the migration relies on.
+	// DensityDefault remains the smaller selectable row. The standard preset
+	// uses DensityStandard so a fresh shell keeps the legacy bar geometry.
 	std, _ := MetricsFor(DensityDefault)
 	if std.BarHeight != 31 || std.BarPadding != 2 || std.BarSpacing != 4 {
-		t.Errorf("default row drifted from the shipped bar: %+v", std)
+		t.Errorf("smaller default row drifted: %+v", std)
 	}
 }
 

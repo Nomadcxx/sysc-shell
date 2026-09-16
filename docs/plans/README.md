@@ -407,6 +407,7 @@ widgets) are still unordered.
 | Document | Kind | State |
 |---|---|---|
 | 2026-09-15-clipboard-history.md | plan | Executable two-repository TDD plan: initialize and release sysc-clipboard, pin its public client, add the default bar item, add the 720x560 panel, run automated gates, and qualify the live Niri path. |
+| 2026-09-15-clipboard-history-completion-handover.md | completion-handover | Implementation, automated-gate, and live-Niri snapshot for the sysc-clipboard daemon and sysc-shell presenter. |
 | `2026-09-05-running-apps-pill-prior-art.md` | assessment | DMS RunningApps vs Dock vs FocusedApp; Noctalia Taskbar vs Dock vs ActiveWindow. Bar pill maps to RunningApps chrome; Niri windows are the model. `.desktop` Actions= are the app menu (Steam is not special; Spotify on this machine ships none). |
 | `2026-09-05-running-apps-pill-design.md` | design | Owner-approved 2026-09-05. D1–D15. D8/D11: shell-owned XDG identity and niri spawn; launcher widget is optional. Audit amendments: focus_timestamp `{secs,nanos}`, D6 drops sticky last-focused. |
 | `2026-09-05-running-apps-pill.md` | plan | Ten TDD tasks after audit: niri focus fields (`{secs,nanos}` + `WindowFocusChanged`), Action IPC, grouping, shell desktop-entry lookup (not sysc-launch), focus-or-cycle, menu rows, config, capsule, clicks/menu host, live Niri gate. |

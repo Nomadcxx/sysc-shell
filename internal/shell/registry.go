@@ -122,6 +122,11 @@ type Registry struct {
 	// notify is the service-owned notification projection.
 	notify *notifyState
 
+	// clipboard is the daemon-owned metadata projection. Payload bytes never
+	// enter Registry or a bar view.
+	clipboard       clipboardProjection
+	clipboardSender clipboardCommandSender
+
 	// tray is the service-owned tray projection.
 	tray                 *trayState
 	trayCh               chan trayclient.Message
@@ -175,6 +180,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		startInhibit:    startInhibitDefault,
 		signalProcess:   signalProcessDefault,
 		notify:          newNotifyState(),
+		clipboard:       newClipboardProjection(),
 		tray:            newTrayState(),
 		trayCh:          make(chan trayclient.Message, 32),
 		notifyCh:        make(chan notifyclient.Message, 32),
@@ -1041,6 +1047,8 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 			return r.TogglePanel(PanelControlCenter, out, trig) == nil
 		case action == panelNotificationsAction && (button == 0 || button == buttonLeft):
 			return r.TogglePanel(PanelNotifications, out, trig) == nil
+		case action == panelClipboardAction && (button == 0 || button == buttonLeft || button == buttonRight):
+			return r.TogglePanel(PanelClipboard, out, trig) == nil
 		case action == panelNotificationsAction && button == buttonMiddle:
 			r.toggleNotifyDND()
 			return true
@@ -1603,6 +1611,7 @@ func (r *Registry) viewLocked(connector string) barView {
 		Metrics:   r.sample,
 		History:   r.historyLocked(),
 		Weather:   r.reading,
+		Clipboard: r.clipboard.clone(),
 		Unread:    r.notify.unread(),
 		Running:   r.running,
 	}

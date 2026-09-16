@@ -41,6 +41,7 @@ const (
 	keyEnd       = 107
 	keyDown      = 108
 	keyPageDown  = 109
+	keyDelete    = 111
 
 	btnLeft  = 272
 	btnRight = 273
@@ -172,6 +173,12 @@ type PanelHost struct {
 	processStatus    string
 	processStatusErr error
 	processSelected  services.ProcessIdentity
+
+	clipboardSelectedID       string
+	clipboardConfirmScope     string
+	clipboardDeleteConfirmID  string
+	clipboardThumbnails       map[string]*ui.Image
+	clipboardThumbnailRequest map[string]struct{}
 }
 
 func parsePanelName(name string) (PanelID, error) {
@@ -202,6 +209,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelBluetooth, nil
 	case "weather":
 		return PanelWeather, nil
+	case "clipboard":
+		return PanelClipboard, nil
 	default:
 		return 0, fmt.Errorf("unknown panel")
 	}
@@ -503,6 +512,8 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelBluetooth, true
 	case "weather":
 		return PanelWeather, true
+	case "clipboard":
+		return PanelClipboard, true
 	default:
 		return 0, false
 	}
@@ -545,6 +556,10 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	}
 	if id == PanelLauncher || id == PanelWallpaper {
 		place.CenterY = true
+	}
+	if id == PanelClipboard {
+		place.CenterY = true
+		place.Align = "center"
 	}
 
 	h := &PanelHost{
@@ -594,6 +609,11 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	if id == PanelControlCenter {
 		h.section = "home"
 	}
+	if id == PanelClipboard {
+		h.search = ui.NewField("")
+		h.clipboardThumbnails = make(map[string]*ui.Image)
+		h.clipboardThumbnailRequest = make(map[string]struct{})
+	}
 	h.root = r.panelTree(h)
 	if id == PanelNotifications {
 		_ = h.ensureText()
@@ -613,6 +633,9 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	}
 	if id == PanelAudio {
 		h.focusByName("Volumes")
+	}
+	if id == PanelClipboard {
+		h.focusByName("Search")
 	}
 	w, hgt := h.place.FittedSize()
 	h.place.Panel.W, h.place.Panel.H = w, hgt
@@ -1261,6 +1284,9 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 	if h.id == PanelLauncher && h.launcherKeyPress(r, key) {
 		return true
 	}
+	if h.id == PanelClipboard && h.clipboardKeyPress(r, key) {
+		return true
+	}
 	switch key {
 	case keyLeftShift:
 		h.shift = true
@@ -1631,6 +1657,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if n == nil || n.State.Has(ui.StateDisabled) {
 		return false
 	}
+	if h.id == PanelClipboard {
+		return h.activateClipboard(r, n)
+	}
 	switch n.Action {
 	case "plugin-close", "plugin-retry", "plugin-disable":
 		if r.plugins != nil {
@@ -1897,10 +1926,18 @@ func (h *PanelHost) afterFocusChange(r *Registry) {
 			_ = h.configure(h.logicalW, h.logicalH, h.scale120)
 		}
 	}
+	if h.id == PanelClipboard {
+		h.clipboardSelectionFromFocus()
+		r.rebuildPanel(h)
+	}
 }
 
 func (r *Registry) rebuildPanel(h *PanelHost) {
 	idx := h.roving.Index()
+	focusedKey := ""
+	if h.id == PanelClipboard {
+		focusedKey = h.focused().StableKey()
+	}
 	h.root = r.panelTree(h)
 	if h.id == PanelPlugin {
 		if h.editors == nil {
@@ -1911,6 +1948,14 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 	h.focus = ui.Focusables(h.root)
 	h.roving.Count = len(h.focus)
 	h.roving.Set(idx)
+	if focusedKey != "" {
+		for i, n := range h.focus {
+			if n != nil && n.StableKey() == focusedKey {
+				h.roving.Set(i)
+				break
+			}
+		}
+	}
 	if h.id == PanelNotifications {
 		r.syncNotificationsSize(h)
 	}
@@ -1958,6 +2003,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		return bluetoothTree(r, h)
 	case PanelWeather:
 		return weatherTree(r, h)
+	case PanelClipboard:
+		return clipboardTree(r, h)
 	default:
 		return placeholderTree()
 	}
@@ -2001,6 +2048,8 @@ func panelTargetSize(id PanelID) ui.Rect {
 		// The network and Bluetooth sibling size: a fixed panel whose content
 		// does not scale with the screen.
 		return ui.Rect{W: 460, H: 560}
+	case PanelClipboard:
+		return ui.Rect{W: 720, H: 560}
 	default:
 		return ui.Rect{W: 280, H: 200}
 	}
@@ -2261,6 +2310,13 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 	h.drag.Cancel()
 	if id == PanelNetwork {
 		h.clearNetworkSecret()
+	}
+	if id == PanelClipboard {
+		h.clipboardThumbnails = nil
+		h.clipboardThumbnailRequest = nil
+		h.clipboardSelectedID = ""
+		h.clipboardConfirmScope = ""
+		h.clipboardDeleteConfirmID = ""
 	}
 	delete(r.panelHosts, id)
 	r.sendAux(wayland.AuxRequest{Output: h.output, ID: panelSurfaceID(id)})

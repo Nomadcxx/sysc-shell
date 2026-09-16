@@ -22,10 +22,11 @@ const (
 	DensityDefault     Density = "default"
 	DensityComfortable Density = "comfortable"
 	DensitySpacious    Density = "spacious"
-	// DensityStandard is the hidden compatibility value for configurations
-	// written before the density re-base. It keeps the current default control
-	// metrics but restores that bar's 48/6/4 geometry. Densities does not offer
-	// it, and the settings list names only the five current rows.
+	// DensityStandard is the legacy standard row used by the standard preset and
+	// retained for configurations written before the density re-base. It keeps
+	// the current default control metrics but restores the bar's 48/6/4 geometry.
+	// Densities does not offer it; the smaller DensityDefault row remains the
+	// selectable compact option.
 	DensityStandard Density = "standard"
 )
 
@@ -466,7 +467,7 @@ type Composition struct {
 // over the wallpaper. Every preset enables the panel backdrop by default.
 var presets = map[Preset]Composition{
 	PresetStandard: {
-		Density:     DensityDefault,
+		Density:     DensityStandard,
 		Radius:      12,
 		InputRadius: 12,
 		Motion:      MotionStandard, MotionSpeed: 100,

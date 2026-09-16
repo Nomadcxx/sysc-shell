@@ -1,3 +1,5 @@
+github.com/Nomadcxx/sysc-clipboard v0.1.0 h1:vSA4juJjLMtQ7tQxgrkCzBLniNAXvxH+3TmDeEDPsOk=
+github.com/Nomadcxx/sysc-clipboard v0.1.0/go.mod h1:7cmxzqX/qI30j30Yd0aVh1aOmIE9Z0lUjmBgkT1fe9w=
 github.com/Nomadcxx/sysc-launch v0.1.0 h1:SOHFtzq0pn3HREA1MVI6uxaCT7W21nuhgG4xL6dhGlM=
 github.com/Nomadcxx/sysc-launch v0.1.0/go.mod h1:h6MRp4JrFbkPX2oJ230IWEZtsk50ahDOjW6TNmaBf80=
 github.com/Nomadcxx/sysc-metrics v0.4.0 h1:Vcbiivj50630ilTtgV1ttwqTnHMN9Y0eDWqs32e9A+k=
@@ -6,8 +8,8 @@ github.com/Nomadcxx/sysc-notify v0.1.0-rc.3 h1:dK5owqVCQsXu+0Z9VJ40j2+YHji6Nhg48
 github.com/Nomadcxx/sysc-notify v0.1.0-rc.3/go.mod h1:ZZlN0ZktmQ15uWf1VaVZ8vXFLe708R1u85dIaag7gtM=
 github.com/Nomadcxx/sysc-tray v0.1.0-rc.1 h1:bhz3RNCBIA+v76A+q2tlg2iNaoFSSqMWLR8lz0ubc/o=
 github.com/Nomadcxx/sysc-tray v0.1.0-rc.1/go.mod h1:bXMEvkMvsvkqNXQsNrP3hZeHVq/4AVEeQhL19KdMLos=
-github.com/Nomadcxx/sysc-wayland v0.2.1 h1:F/TIN6p9SnEaqFByBk5DR5eYpj5QwNprWTCnjIpqiMo=
-github.com/Nomadcxx/sysc-wayland v0.2.1/go.mod h1:ZNAe41EM7R5G2KA55jqMPotAvrjVWcMq21BV69gROKA=
+github.com/Nomadcxx/sysc-wayland v0.2.2 h1:NvoacqTDvUNX40qHOaD3PzGhi/Tn10a1ctRvRrnxvLE=
+github.com/Nomadcxx/sysc-wayland v0.2.2/go.mod h1:ZNAe41EM7R5G2KA55jqMPotAvrjVWcMq21BV69gROKA=
 github.com/Wifx/gonetworkmanager/v2 v2.2.0 h1:kPstgsQtY8CmDOOFZd81ytM9Gi3f6ImzPCKF7nNhQ2U=
 github.com/Wifx/gonetworkmanager/v2 v2.2.0/go.mod h1:fMDb//SHsKWxyDUAwXvCqurV3npbIyyaQWenGpZ/uXg=
 github.com/adrg/xdg v0.5.3 h1:xRnxJXne7+oWDatRhR1JLnvuccuIeCoBu2rtuLqQB78=

@@ -35,8 +35,9 @@ type barView struct {
 	Unread int
 	DND    bool
 	// Running is the session-wide application slot list. Every bar paints it.
-	Running []runningAppSlot
-	Audio   services.AudioState
+	Running   []runningAppSlot
+	Audio     services.AudioState
+	Clipboard clipboardProjection
 	// Network is the newest connectivity state. Its zero value is Unknown with
 	// the radio off, which the wifi widget paints as the no-signal glyph.
 	Network   services.NetworkState
@@ -301,6 +302,8 @@ func buildWidgets(items []config.Item, pad int, m theme.Metrics) []textWidget {
 			out = append(out, buildVolumeWidget())
 		case "media":
 			out = append(out, buildMediaWidget(item))
+		case "clipboard":
+			out = append(out, buildClipboardWidget(m))
 		case "wifi":
 			out = append(out, buildWifiWidget(m))
 		case "bluetooth":
