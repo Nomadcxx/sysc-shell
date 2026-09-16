@@ -97,9 +97,15 @@ func Discover(roots ...Root) (Catalog, error) {
 		}
 		var dirs []os.DirEntry
 		for _, e := range entries {
-			if e.IsDir() {
-				dirs = append(dirs, e)
+			// Stat rather than DirEntry.IsDir: a symlinked plugin directory
+			// is a supported install (make install links a checkout into the
+			// user root), and the dirent type of a symlink is not a dir. A
+			// broken symlink fails Stat and is skipped.
+			info, err := os.Stat(filepath.Join(root.Path, e.Name()))
+			if err != nil || !info.IsDir() {
+				continue
 			}
+			dirs = append(dirs, e)
 		}
 		if len(dirs) > MaxPluginDirs {
 			return Catalog{}, fmt.Errorf("plugin: %s holds %d directories, more than the %d this shell scans",
