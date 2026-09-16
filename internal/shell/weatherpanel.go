@@ -212,10 +212,13 @@ func weatherRowHeight(m theme.Metrics) int {
 }
 
 func weatherRow(m theme.Metrics, icon, label, value string) *ui.Node {
-	return &ui.Node{Kind: ui.KindRow, Height: weatherRowHeight(m), Gap: theme.MarginM, Children: []*ui.Node{
+	leading := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
 		{Kind: ui.KindIcon, Icon: icon, IconSize: m.IconSmall},
 		{Kind: ui.KindText, Text: label, TextRole: theme.RoleLabel},
-		{Kind: ui.KindText, Text: value, TextRole: theme.RoleBody, Tabular: true, Tone: ui.ToneAccent, PinEnd: true},
+	}}
+	return &ui.Node{Kind: ui.KindRow, Height: weatherRowHeight(m), Gap: theme.MarginM, PinEnd: true, Children: []*ui.Node{
+		leading,
+		{Kind: ui.KindText, Text: value, TextRole: theme.RoleBody, Tabular: true, Tone: ui.ToneAccent},
 	}}
 }
 

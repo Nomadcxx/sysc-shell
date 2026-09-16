@@ -136,3 +136,12 @@ func firstWeatherEffect(root *ui.Node) *ui.Node {
 	})
 	return effect
 }
+
+func TestWeatherPanelFitsLaptopScale(t *testing.T) {
+	r := &Registry{reading: observedWeather()}
+	h := &PanelHost{id: PanelWeather, scale120: 150, theme: DefaultTheme()}
+	root := weatherTree(r, h)
+	if err := ui.LayoutColumn(root, ui.Rect{W: 460, H: 560}, h.measureText()); err != nil {
+		t.Fatalf("weather panel does not fit 460x560 at scale 1.25: %v", err)
+	}
+}

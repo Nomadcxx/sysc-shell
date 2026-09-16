@@ -41,17 +41,32 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 			return fmt.Errorf("ui: child %d: %w", i, err)
 		}
 		remain := content.X + content.W - x
+		if remain < 0 && (child.Kind == KindText || child.Kind == KindTab) {
+			// Text may be clipped after a fixed leading child already consumed
+			// the row. Controls keep the error so an invisible action cannot be
+			// laid out as if it were usable.
+			remain = 0
+		}
 		if root.PinEnd && len(root.Children) == 2 && i == 0 {
 			if root.Children[1] == nil {
 				return fmt.Errorf("ui: nil child 1")
 			}
-			endW, _, err := measureNode(root.Children[1], content.H, measure)
+			end := root.Children[1]
+			endW, _, err := measureNode(end, content.H, measure)
 			if err != nil {
 				return fmt.Errorf("ui: child 1: %w", err)
 			}
-			// Reserve the control before clipping its leading content. Moving
-			// the control after layout cannot recover space already consumed.
+			// Reserve the trailing child before clipping its leading content.
+			// Text may be clipped when it is wider than the row; controls keep
+			// their natural width so an invisible action still fails layout.
+			if end.Kind == KindText || end.Kind == KindTab {
+				available := max(remain-root.Gap, 0)
+				endW = min(endW, available)
+			}
 			remain -= root.Gap + endW
+			if remain < 0 && (end.Kind == KindText || end.Kind == KindTab) {
+				remain = 0
+			}
 		}
 		switch child.Kind {
 		case KindColumn:
