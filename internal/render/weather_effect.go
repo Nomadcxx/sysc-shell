@@ -271,21 +271,44 @@ func localWeatherPixel(c *Canvas, box ui.Rect, mask *image.Alpha, x, y int, col 
 	// range check above keeps off-card particles from being folded onto an edge.
 	x = clampInt(x, 0, box.W-1)
 	y = clampInt(y, 0, box.H-1)
-	blendWeatherPixel(c, box, mask, box.X+x, box.Y+y, Color{R: col.R, G: col.G, B: col.B, A: alpha}, weatherCoverage(coverage))
+	absoluteX, xOK := checkedEffectAdd(box.X, x)
+	absoluteY, yOK := checkedEffectAdd(box.Y, y)
+	if !xOK || !yOK {
+		return
+	}
+	blendWeatherPixel(c, box, mask, absoluteX, absoluteY,
+		Color{R: col.R, G: col.G, B: col.B, A: alpha}, weatherCoverage(coverage))
 }
 
 func blendWeatherPixel(c *Canvas, box ui.Rect, mask *image.Alpha, x, y int, col Color, coverage uint8) {
 	if c == nil || mask == nil || col.A == 0 || coverage == 0 ||
-		x < box.X || y < box.Y || x >= box.X+box.W || y >= box.Y+box.H ||
+		box.W <= 0 || box.H <= 0 || box.W > maxEffectDimension || box.H > maxEffectDimension ||
+		box.W > maxEffectPixels/box.H {
+		return
+	}
+	boxRight, ok := checkedEffectAdd(box.X, box.W)
+	if !ok {
+		return
+	}
+	boxBottom, ok := checkedEffectAdd(box.Y, box.H)
+	if !ok {
+		return
+	}
+	if x < box.X || y < box.Y || x >= boxRight || y >= boxBottom ||
 		x < 0 || y < 0 || x >= c.Width || y >= c.Height {
 		return
 	}
-	if c.restrict.W > 0 && c.restrict.H > 0 && !c.restrict.Contains(x, y) {
-		return
+	if c.restrict.W > 0 && c.restrict.H > 0 {
+		restrictRight, rightOK := checkedEffectAdd(c.restrict.X, c.restrict.W)
+		restrictBottom, bottomOK := checkedEffectAdd(c.restrict.Y, c.restrict.H)
+		if !rightOK || !bottomOK || x < c.restrict.X || y < c.restrict.Y || x >= restrictRight || y >= restrictBottom {
+			return
+		}
 	}
 	b := mask.Bounds()
-	mx, my := b.Min.X+x-box.X, b.Min.Y+y-box.Y
-	if !image.Pt(mx, my).In(b) {
+	mx, xOK := checkedEffectAdd(b.Min.X, x-box.X)
+	my, yOK := checkedEffectAdd(b.Min.Y, y-box.Y)
+	if !xOK || !yOK || !image.Pt(mx, my).In(b) {
 		return
 	}
 	maskCoverage := uint32(mask.AlphaAt(mx, my).A)
@@ -298,10 +321,14 @@ func blendWeatherPixel(c *Canvas, box ui.Rect, mask *image.Alpha, x, y int, col 
 	for i := range src {
 		src[i] = byte(uint32(src[i]) * combined / 255)
 	}
-	offset := y*c.Stride + x*4
-	if offset < 0 || offset+4 > len(c.Pix) {
+	if c.Stride <= 0 || len(c.Pix) < 4 || y > (len(c.Pix)-4)/c.Stride {
 		return
 	}
+	rowOffset := y * c.Stride
+	if x > (len(c.Pix)-rowOffset-4)/4 {
+		return
+	}
+	offset := rowOffset + x*4
 	blendPixel(c.Pix[offset:offset+4], src, alpha)
 }
 
