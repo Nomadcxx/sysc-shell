@@ -87,3 +87,22 @@ Focused configuration and theme tests cover:
 Wayland surface tests then assert the derived current and compatibility bar
 heights. Existing preset-change tests continue to prove that the migration does
 not pin bar geometry.
+
+## Amendment: owner clarification, 2026-09-16
+
+During clipboard integration the owner clarified the product default: the
+standard preset must keep the legacy bar geometry `48/6/4`. The smaller
+`DensityDefault` row (`31/2/4`) remains a selectable density for the settings
+surface when that surface is ready; it is not the fresh-install default.
+
+This supersedes the parts of this design that say the standard preset,
+`Default()`, or a missing file resolve to `31/2/4`. `PresetStandard` now selects
+the hidden `DensityStandard` row, so selector-free documents and an explicit
+`preset: "standard"` both resolve to `48/6/4`. The compatibility row still
+inherits the current control and surface metrics, remains absent from
+`Densities()`, and accepts the existing `density: "standard"` wire value.
+
+The migration boundary and sparse writer stay otherwise unchanged: explicit
+`density: "default"` (or another listed density) is the opt-in path to the
+smaller rows, and the selected preset remains the generation marker in sparse
+files.

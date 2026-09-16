@@ -257,3 +257,14 @@ merge `feature/bluetooth-panel` according to its committed plan and completion
 handover. Resolve `internal/shell/registry.go` by preserving both wallpaper and
 Bluetooth shutdown lifecycles. Run the repository-wide gates only after the
 combined tree is assembled.
+
+## Amendment: owner clarification, 2026-09-16
+
+The owner confirmed that the standard preset and fresh/default configuration
+must retain the legacy `48/6/4` bar. The smaller `DensityDefault` row at
+`31/2/4` is an opt-in settings choice for the later settings pass. Therefore
+the plan's original “fresh defaults and standard preset on 31 px” wording and
+its `31/2/4` expectations for missing files and `preset: "standard"` are
+superseded. The executed theme/config tests now assert `DensityStandard` and
+`48/6/4` for those cases; no second migration or explicit bar override is
+needed.
