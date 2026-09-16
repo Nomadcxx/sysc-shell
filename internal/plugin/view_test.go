@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
@@ -586,5 +587,38 @@ func TestConvertCopiesEditorWireFields(t *testing.T) {
 	field := got.Children[0]
 	if !field.Multiline || !field.SubmitOnEnter || field.Reseed != 3 || field.Text != "hi" {
 		t.Fatalf("editor fields = %+v", field)
+	}
+}
+
+func TestConvertMapsMinorTwoFields(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Fill: "card", Radius: 12, Children: []*v1.Node{
+		{Kind: v1.KindText, Text: "big", Size: "display", Bold: true, CenterX: true},
+		{Kind: v1.KindTextInput, ID: "dur", Text: "5m", Name: "Duration", Role: "textbox",
+			Disabled: true, Events: []v1.EventKind{v1.EventChange}},
+	}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if got.Fill != ui.FillContainerHigh || got.Radius != 12 {
+		t.Fatalf("card = fill %v radius %d", got.Fill, got.Radius)
+	}
+	title := got.Children[0]
+	if !title.Bold || title.TextRole != theme.RoleDisplay || !title.CenterX {
+		t.Fatalf("title = %+v", title)
+	}
+	input := got.Children[1]
+	if !input.AriaDisabled || input.Action != "" {
+		t.Fatalf("disabled input = %+v", input)
+	}
+}
+
+func TestConvertRejectsAnUnknownFill(t *testing.T) {
+	t.Parallel()
+	root := &v1.Node{Kind: v1.KindColumn, Fill: "neon"}
+	if _, err := Convert(root, v1.ViewPanel); err == nil {
+		t.Fatal("unknown fill accepted")
 	}
 }
