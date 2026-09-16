@@ -472,3 +472,38 @@ func TestInputEventJSONOmitsIME(t *testing.T) {
 		t.Fatalf("IME leaked onto the wire: %s", raw)
 	}
 }
+
+func TestValidateAcceptsMinorTwoFields(t *testing.T) {
+	t.Parallel()
+
+	root := &Node{Kind: KindColumn, Fill: "card", Radius: 12, Children: []*Node{
+		{Kind: KindText, Text: "title", Size: "title", Bold: true, CenterX: true},
+		{Kind: KindButton, ID: "go", Text: "Go", Name: "Go", Role: "button",
+			Fill: "accent", Disabled: true, Events: []EventKind{EventActivate}},
+	}}
+	if err := Validate(root, ViewPanel); err != nil {
+		t.Fatalf("minor-2 fields rejected: %v", err)
+	}
+}
+
+func TestValidateRejectsBadMinorTwoValues(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		node *Node
+	}{
+		{"unknown fill", &Node{Kind: KindColumn, Fill: "neon"}},
+		{"fill on text", &Node{Kind: KindText, Text: "x", Fill: "card"}},
+		{"unknown size", &Node{Kind: KindText, Text: "x", Size: "giant"}},
+		{"size on button", &Node{Kind: KindButton, ID: "b", Text: "x", Name: "b", Role: "button", Size: "title", Events: []EventKind{EventActivate}}},
+		{"radius negative", &Node{Kind: KindColumn, Radius: -1}},
+		{"radius over limit", &Node{Kind: KindColumn, Radius: 257}},
+		{"disabled on text", &Node{Kind: KindText, Text: "x", Disabled: true}},
+	}
+	for _, tc := range cases {
+		if err := Validate(tc.node, ViewPanel); err == nil {
+			t.Errorf("%s: Validate accepted", tc.name)
+		}
+	}
+}
