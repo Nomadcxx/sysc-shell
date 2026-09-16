@@ -85,6 +85,9 @@ const (
 	// from on_surface_variant. It is a hierarchy signal, never a state: a
 	// failure stays ToneError.
 	ToneSubtle Tone = "subtle"
+	// ToneAccent paints emphasized text -- a running countdown, the active
+	// player's name -- in the theme accent at full contrast.
+	ToneAccent Tone = "accent"
 )
 
 // ViewKind names where a tree is going to be shown. The same vocabulary is not
@@ -197,7 +200,7 @@ var knownKinds = map[NodeKind]bool{
 
 var knownViews = map[ViewKind]bool{ViewBar: true, ViewTooltip: true, ViewPanel: true}
 
-var knownTones = map[Tone]bool{ToneNormal: true, ToneError: true, ToneSubtle: true}
+var knownTones = map[Tone]bool{ToneNormal: true, ToneError: true, ToneSubtle: true, ToneAccent: true}
 
 // Validate reports whether root is a legal version-one tree for the given view.
 //

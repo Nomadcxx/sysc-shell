@@ -399,11 +399,13 @@ func TestValidateRejectsAnUnknownTone(t *testing.T) {
 	}
 }
 
-func TestValidateAcceptsTheSubtleTone(t *testing.T) {
+func TestValidateAcceptsTheSubtleAndAccentTones(t *testing.T) {
 	t.Parallel()
 
-	if err := Validate(&Node{Kind: KindText, Text: "caption", Tone: ToneSubtle}, ViewPanel); err != nil {
-		t.Fatalf("Validate rejected the subtle tone: %v", err)
+	for _, tone := range []Tone{ToneSubtle, ToneAccent} {
+		if err := Validate(&Node{Kind: KindText, Text: "x", Tone: tone}, ViewPanel); err != nil {
+			t.Fatalf("Validate rejected tone %q: %v", tone, err)
+		}
 	}
 }
 

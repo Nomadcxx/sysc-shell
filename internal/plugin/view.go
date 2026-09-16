@@ -223,6 +223,8 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		out.Tone = ui.ToneError
 	case v1.ToneSubtle:
 		out.Tone = ui.ToneSubtle
+	case v1.ToneAccent:
+		out.Tone = ui.ToneAccent
 	}
 
 	switch n.Kind {
@@ -255,6 +257,20 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 				return nil, fmt.Errorf("plugin: %s: no icon named %q; this shell has %v", path, n.Icon, render.IconNames())
 			}
 			out.Text = string(glyph)
+		}
+		// An icon beside a label is the noctalia bar-widget shape: one
+		// control, glyph and text together. The button carries them as
+		// children so both paint inside the control's own hit target.
+		if n.Icon != "" && n.Text != "" {
+			glyph, ok := render.IconByName(n.Icon)
+			if !ok {
+				return nil, fmt.Errorf("plugin: %s: no icon named %q; this shell has %v", path, n.Icon, render.IconNames())
+			}
+			out.Children = []*ui.Node{
+				{Kind: ui.KindText, Text: string(glyph)},
+				{Kind: ui.KindText, Text: n.Text, Tabular: n.Tabular},
+			}
+			out.Text = ""
 		}
 		// The node id becomes the action, which is how a hit finds its way
 		// back to the node the plugin addressed.

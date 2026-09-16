@@ -166,6 +166,41 @@ func TestConvertResolvesAButtonIcon(t *testing.T) {
 	}
 }
 
+func TestConvertButtonWithIconAndLabelCarriesBoth(t *testing.T) {
+	t.Parallel()
+	// The noctalia bar-widget shape: one control, glyph and text together.
+	btn := &v1.Node{Kind: v1.KindButton, ID: "open", Icon: "schedule", Text: "5:00",
+		Name: "Open timer", Role: "button", Tabular: true,
+		Events: []v1.EventKind{v1.EventActivate}}
+	if err := v1.Validate(btn, v1.ViewBar); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Convert(&v1.Node{Kind: v1.KindRow, Children: []*v1.Node{btn}}, v1.ViewBar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	button := got.Children[0]
+	if button.Text != "" {
+		t.Fatalf("button text = %q, want the label moved into children", button.Text)
+	}
+	if len(button.Children) != 2 {
+		t.Fatalf("button children = %d, want glyph and label", len(button.Children))
+	}
+	want, ok := render.IconByName("schedule")
+	if !ok {
+		t.Fatal("catalogue missing schedule")
+	}
+	if button.Children[0].Text != string(want) {
+		t.Fatalf("glyph child = %q", button.Children[0].Text)
+	}
+	if button.Children[1].Text != "5:00" || !button.Children[1].Tabular {
+		t.Fatalf("label child = %+v", button.Children[1])
+	}
+	if button.Action != "open" {
+		t.Fatalf("action = %q", button.Action)
+	}
+}
+
 func TestConvertErrorToneTextButtonFillsAsAnErrorChip(t *testing.T) {
 	t.Parallel()
 	root := &v1.Node{Kind: v1.KindRow, Children: []*v1.Node{{
