@@ -188,6 +188,7 @@ func TestConvertMapsToneOntoTheThemeRole(t *testing.T) {
 	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
 		{Kind: v1.KindText, Text: "ok"},
 		{Kind: v1.KindText, Text: "broken", Tone: v1.ToneError},
+		{Kind: v1.KindText, Text: "caption", Tone: v1.ToneSubtle},
 	}}
 	got, err := Convert(root, v1.ViewPanel)
 	if err != nil {
@@ -198,6 +199,29 @@ func TestConvertMapsToneOntoTheThemeRole(t *testing.T) {
 	}
 	if got.Children[1].Tone != ui.ToneError {
 		t.Errorf("error tone = %v", got.Children[1].Tone)
+	}
+	if got.Children[2].Tone != ui.ToneSubtle {
+		t.Errorf("subtle tone = %v", got.Children[2].Tone)
+	}
+}
+
+func TestConvertCarriesHeightIntoTheShellTree(t *testing.T) {
+	t.Parallel()
+
+	// The wire carries Height on every node; the host honours it for any
+	// kind so a plugin can draw fixed-height rows and status dots.
+	root := &v1.Node{Kind: v1.KindRow, Height: 12, Children: []*v1.Node{
+		{Kind: v1.KindText, Text: "7", Height: 8},
+	}}
+	got, err := Convert(root, v1.ViewBar)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if got.Height != 12 {
+		t.Errorf("root height = %d, want 12", got.Height)
+	}
+	if got.Children[0].Height != 8 {
+		t.Errorf("text height = %d, want 8", got.Children[0].Height)
 	}
 }
 

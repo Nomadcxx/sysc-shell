@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [
+      {
+        "command": ".cursor/hooks/deny-go-race.py",
+        "failClosed": false
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": ".cursor/hooks/deny-go-race.py",
+        "matcher": "Shell",
+        "failClosed": false
+      }
+    ]
+  }
+}

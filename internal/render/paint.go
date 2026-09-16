@@ -1365,6 +1365,8 @@ func textColor(style Style, tone ui.Tone) Color {
 		return style.Error
 	case ui.ToneAccent:
 		return style.accent()
+	case ui.ToneSubtle:
+		return style.Subtle
 	}
 	return style.Foreground
 }

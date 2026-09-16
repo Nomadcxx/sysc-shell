@@ -399,6 +399,14 @@ func TestValidateRejectsAnUnknownTone(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsTheSubtleTone(t *testing.T) {
+	t.Parallel()
+
+	if err := Validate(&Node{Kind: KindText, Text: "caption", Tone: ToneSubtle}, ViewPanel); err != nil {
+		t.Fatalf("Validate rejected the subtle tone: %v", err)
+	}
+}
+
 func TestValidateRejectsAnOversizedNodeID(t *testing.T) {
 	t.Parallel()
 

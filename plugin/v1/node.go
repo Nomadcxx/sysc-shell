@@ -80,6 +80,11 @@ type Tone string
 const (
 	ToneNormal Tone = ""
 	ToneError  Tone = "error"
+	// ToneSubtle paints secondary text -- labels beside a value, captions,
+	// out-of-month calendar days -- in the muted foreground the theme derives
+	// from on_surface_variant. It is a hierarchy signal, never a state: a
+	// failure stays ToneError.
+	ToneSubtle Tone = "subtle"
 )
 
 // ViewKind names where a tree is going to be shown. The same vocabulary is not
@@ -192,7 +197,7 @@ var knownKinds = map[NodeKind]bool{
 
 var knownViews = map[ViewKind]bool{ViewBar: true, ViewTooltip: true, ViewPanel: true}
 
-var knownTones = map[Tone]bool{ToneNormal: true, ToneError: true}
+var knownTones = map[Tone]bool{ToneNormal: true, ToneError: true, ToneSubtle: true}
 
 // Validate reports whether root is a legal version-one tree for the given view.
 //

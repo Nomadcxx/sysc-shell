@@ -515,6 +515,7 @@ func (t Theme) Style() render.Style {
 		Container:        p.PrimaryContainer,
 		OnAccent:         p.OnPrimary,
 		OnContainer:      p.OnPrimaryContainer,
+		Subtle:           t.Muted,
 		Outline:          p.Outline,
 		OutlineVariant:   p.OutlineVariant,
 

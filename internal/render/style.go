@@ -67,6 +67,10 @@ type Style struct {
 	// quieter divider. Both are set for every surface.
 	Outline        Color
 	OutlineVariant Color
+	// Subtle paints secondary text: labels beside a value, captions, dates
+	// outside the viewed month. It is the theme's muted foreground (Material's
+	// on_surface_variant), which carries text at full contrast.
+	Subtle Color
 	// Rim strokes the floating panel's own edge. It is deliberately separate
 	// from Outline: every surface carries the outline token for its controls,
 	// but only a panel draws a rim, so a bar or a toast leaves this zero.

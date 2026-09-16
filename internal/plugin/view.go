@@ -212,13 +212,17 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		Padding:  n.Padding,
 		Gap:      n.Gap,
 		Width:    n.Width,
+		Height:   n.Height,
 		MaxWidth: n.MaxWidth,
 		Tabular:  n.Tabular,
 		Name:     n.Name,
 		Role:     n.Role,
 	}
-	if n.Tone == v1.ToneError {
+	switch n.Tone {
+	case v1.ToneError:
 		out.Tone = ui.ToneError
+	case v1.ToneSubtle:
+		out.Tone = ui.ToneSubtle
 	}
 
 	switch n.Kind {

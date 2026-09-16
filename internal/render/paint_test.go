@@ -2077,3 +2077,17 @@ func brightestPixel(t *testing.T, c *Canvas) Color {
 	}
 	return best
 }
+
+func TestTextColorResolvesTheSubtleToken(t *testing.T) {
+	style := Style{
+		Foreground: Color{R: 1},
+		Subtle:     Color{R: 2},
+		Error:      Color{R: 3},
+	}
+	if got := textColor(style, ui.ToneSubtle); got != style.Subtle {
+		t.Fatalf("subtle text colour = %v, want the muted token", got)
+	}
+	if got := textColor(style, ui.ToneNormal); got != style.Foreground {
+		t.Fatalf("normal text colour = %v, want the foreground", got)
+	}
+}

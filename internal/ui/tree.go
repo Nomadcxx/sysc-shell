@@ -347,6 +347,11 @@ const (
 	// accent. It is not a muted tone: the accent is a foreground-weight token
 	// that carries text at full contrast, which the muted token cannot.
 	ToneAccent
+	// ToneSubtle paints secondary text in the theme's muted foreground. The
+	// theme's own Muted token is legible here: it is derived from Material's
+	// on_surface_variant, which carries text at full contrast, unlike the
+	// low-contrast muted token the Tone doc rules out.
+	ToneSubtle
 )
 
 // Shape names the corner treatment a node asks for.
