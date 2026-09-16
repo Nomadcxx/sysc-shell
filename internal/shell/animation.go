@@ -26,6 +26,9 @@ const (
 
 	// animTick is the frame cadence while a value is unsettled.
 	animTick = 16 * time.Millisecond
+	// effectTrip bounds one effect phase cycle. The surface frame cap controls
+	// how often it is painted; this duration only controls the phase itself.
+	effectTrip = 2 * time.Second
 )
 
 // animChannel is one animated property of one keyed node.
@@ -44,6 +47,8 @@ const (
 	animGradient
 	// animSweep is a linear wrapping paint offset, such as a marquee title.
 	animSweep
+	// animEffect is the phase of a host-owned effect layer.
+	animEffect
 )
 
 // animKey addresses one value: a stable node key plus the channel. Keys are
