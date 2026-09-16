@@ -470,13 +470,22 @@ and is the first implementation task.
 | `2026-09-11-panel-backdrop-blur-design.md` | design | D1–D16. Static per-open `zwlr_screencopy_manager_v1` region capture, CPU box blur at quarter resolution with no upsample pass, composited under `rootFill`; lifts the `OpacityMin = 80` floor that existed only because the shell could not blur. Amends the architecture document's rendering section and open gate. Panels only — not the bar, toasts, or OSD. |
 | `2026-09-11-panel-backdrop-blur.md` | plan | Ten TDD tasks: vendor and generate the screencopy binding; bind it as an **optional** global (added to `interfaceMaximum`, deliberately absent from `requiredSingletons`, which is what makes a compositor without it degrade rather than fail); the pure blur kernel; a bilinear path beside `paintImage` that leaves the icon contract alone; `Style.Backdrop` composited beneath `rootFill`; the region capture; capture at the top of `openAux` before any surface exists; the opacity floor; config and settings; the architecture amendment and live gate. Two explicit stop-and-re-review gates on measured cost — the blur kernel against the predicted 4.6 ms, and the unmeasured screencopy readback. |
 
-## Shell surface polish follow-up
+## Milestone 10: shell surface polish
 
-Owner-requested follow-on after the surface-stacking merge. Epic sysc-309.
+Owner-approved 2026-09-16 as a seven-design follow-up after the
+surface-stacking merge. Epic `sysc-309`; the four execution owners are
+`sysc-314`–`sysc-317`.
 
 | Document | Kind | Purpose |
 |---|---|---|
-| 2026-09-16-shell-polish-execution-handover.md | execution-handover | Commissions the CC four-gauge/GPU correction, weather and launcher bar chrome, Noctalia-style workspaces, unified clock/date/media composition with a fixed wordmark, urgency and battery notifications, owned tray termination, and the existing Wi-Fi panel in the CC. Bare-metal Niri is the only live target in this tranche. |
+| `2026-09-16-shell-polish-design.md` | design | Umbrella M10 design: slice boundaries, shared ownership, sequencing, and the integration/exit gate. |
+| `2026-09-16-metrics-control-centre-gpu-design.md` | design | Four truthful Control Centre gauges and one shared GPU snapshot for the bar, System Monitor, and Control Centre. Existing metrics ownership remains under `sysc-121`. |
+| `2026-09-16-bar-weather-launcher-workspaces-design.md` | design | Weather icon/value chrome, the supplied nested-gates launcher PNG, and number-free Niri workspace shapes. Existing weather and launcher owners remain under `sysc-277`/`sysc-293` and `sysc-82`. |
+| `2026-09-16-centre-clock-media-wordmark-design.md` | design | One time/date composition, optional media at its right edge, and a fixed-centre SYSC wordmark. Executed by `sysc-314`. |
+| `2026-09-16-notifications-battery-urgency-design.md` | design | Theme-derived urgency treatment and a qualified, deduplicated battery-warning producer. Executed by `sysc-315`. |
+| `2026-09-16-owned-tray-termination-design.md` | design | Service-owned tray termination, identity validation, and shell acknowledgement after the real item delta. Executed by `sysc-316`. |
+| `2026-09-16-control-centre-network-design.md` | design | Enable the existing Network rail and reuse the NetworkManager-backed body and service under `sysc-157`, `sysc-254`, and `sysc-268`. |
+| `2026-09-16-shell-polish-execution-handover.md` | execution-handover | Historical receiving-state commission for the M10 work. Leave unchanged; current state belongs in Beads and the completion handover. |
 
 ## Milestones 7 remainder and 8: not yet designed
 

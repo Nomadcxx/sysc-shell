@@ -292,6 +292,44 @@ Exit gate:
 - a setting reset returns the value its own writer rule treats as the default;
 - the live Niri check passes for the settings surface and the bar editor.
 
+## Milestone 10: Shell surface polish
+
+Make the existing Niri shell read as one coherent product at bar and control-centre size while keeping
+state, I/O, and protocol ownership in the services that already provide them. M10 follows the
+surface-stacking integration and is split into seven registered designs with four execution owners:
+`sysc-314` for the centre composition, `sysc-315` for notifications and battery, `sysc-316` for
+service-owned tray termination and its upstream qualification, and `sysc-317` for integration and the
+exit gate. Existing owners remain responsible for metrics, weather, launcher, and Network defects.
+
+Deliverables:
+
+- four truthful Home system gauges and one shared, diagnosable GPU snapshot for the bar and System
+  Monitor;
+- the weather icon/value row, the supplied nested-gates PNG launcher mark, and number-free Niri
+  workspace shapes;
+- one time/date composition with optional media at its right edge and a fixed-centre SYSC wordmark;
+- theme-derived low, normal, and critical notification treatment plus one hysteretic battery warning;
+- service-owned tray termination with current-identity validation and state-arrival acknowledgement;
+- the existing NetworkManager-backed page as a functional Control Centre destination;
+- affected-package checks, upstream protocol qualification where required, and a bare-metal Niri
+  completion snapshot.
+
+Exit gate:
+
+- all seven designs have executable plans and their focused checks pass;
+- displayed metrics and weather values come from valid service state, with truthful unavailable and
+  failure states and no fabricated zeroes or duplicate collectors;
+- the launcher uses `/home/nomadx/Pictures/sysc-aperture-c-nested-gates.png` as the project-owned asset,
+  and the workspace tree paints no workspace number;
+- the wordmark remains at the content-band centre when clock/date widths, media presence, titles, and
+  side-section widths vary;
+- battery and tray operations use qualified service releases, and tray Close success follows the
+  matching service delta rather than a hidden-only row removal;
+- the Network rail routes to the existing service/body without a second connection or credential path;
+- `gofmt`, `go vet ./...`, the required race checks, module-diff and whitespace checks are recorded;
+- the live Niri result on DP-1 at 3440×1440, scale 1.0, plus every unavailable second-output,
+  laptop, hardware, or disposable-fixture check is recorded in the completion handover.
+
 ## Deferred work
 
 - compositor support beyond Niri;
