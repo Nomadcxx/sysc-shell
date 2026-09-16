@@ -370,6 +370,10 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		out.Text = n.Text
 		out.Action = n.ID
 		out.Focusable = true
+		if n.Disabled {
+			out.AriaDisabled = true
+			out.Action = "" // no action route: activation is blocked
+		}
 		out.DragType = n.DragType
 		out.Payload = n.Payload
 	case v1.KindDropZone:

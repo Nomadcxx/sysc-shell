@@ -597,6 +597,8 @@ func TestConvertMapsMinorTwoFields(t *testing.T) {
 		{Kind: v1.KindText, Text: "big", Size: "display", Bold: true, CenterX: true},
 		{Kind: v1.KindTextInput, ID: "dur", Text: "5m", Name: "Duration", Role: "textbox",
 			Disabled: true, Events: []v1.EventKind{v1.EventChange}},
+		{Kind: v1.KindDragSource, ID: "dz", Name: "drag", Role: "button", DragType: "zone", Disabled: true,
+			Events: []v1.EventKind{v1.EventPointer}},
 	}}
 	got, err := Convert(root, v1.ViewPanel)
 	if err != nil {
@@ -612,6 +614,10 @@ func TestConvertMapsMinorTwoFields(t *testing.T) {
 	input := got.Children[1]
 	if !input.AriaDisabled || input.Action != "" {
 		t.Fatalf("disabled input = %+v", input)
+	}
+	drag := got.Children[2]
+	if !drag.AriaDisabled || drag.Action != "" {
+		t.Fatalf("disabled drag source = %+v", drag)
 	}
 }
 
