@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"bytes"
 	"encoding/json"
 	"math"
 	"strings"
@@ -505,5 +506,74 @@ func TestValidateRejectsBadMinorTwoValues(t *testing.T) {
 		if err := Validate(tc.node, ViewPanel); err == nil {
 			t.Errorf("%s: Validate accepted", tc.name)
 		}
+	}
+}
+
+func TestMinorTwoFieldsRoundTripOnTheWire(t *testing.T) {
+	t.Parallel()
+
+	n := &Node{Kind: KindColumn, Fill: "card", Radius: 12, Children: []*Node{
+		{Kind: KindText, Text: "t", Size: "title", Bold: true, CenterX: true},
+		{Kind: KindButton, ID: "go", Text: "Go", Name: "Go", Role: "button",
+			Fill: "accent", Disabled: true, Events: []EventKind{EventActivate}},
+	}}
+	raw, err := json.Marshal(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{`"fill":"card"`, `"radius":12`, `"bold":true`, `"size":"title"`, `"center_x":true`, `"disabled":true`} {
+		if !bytes.Contains(raw, []byte(name)) {
+			t.Errorf("wire missing %s: %s", name, raw)
+		}
+	}
+	// Zero values must be omitted: a bare node carries none of the new names.
+	bare, err := json.Marshal(&Node{Kind: KindText, Text: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{`"fill"`, `"radius"`, `"bold"`, `"size"`, `"disabled"`, `"center_x"`, `"pin_end"`} {
+		if bytes.Contains(bare, []byte(name)) {
+			t.Errorf("zero value leaked %s: %s", name, bare)
+		}
+	}
+	var back Node
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.Fill != "card" || back.Radius != 12 {
+		t.Fatalf("round trip = %+v", back)
+	}
+	// Bold, Size, and CenterX ride on the text child; Fill and Disabled on
+	// the button child. The root carries only what it declared.
+	if !back.Children[0].Bold || back.Children[0].Size != "title" || !back.Children[0].CenterX ||
+		back.Children[1].Fill != "accent" || !back.Children[1].Disabled {
+		t.Fatalf("round trip children = %+v %+v", back.Children[0], back.Children[1])
+	}
+}
+
+func TestValidateAcceptsEveryFillAndSizeName(t *testing.T) {
+	t.Parallel()
+
+	for fill := range knownFills {
+		if err := Validate(&Node{Kind: KindColumn, Fill: fill}, ViewPanel); err != nil {
+			t.Errorf("fill %q rejected: %v", fill, err)
+		}
+	}
+	for size := range knownSizes {
+		if err := Validate(&Node{Kind: KindText, Text: "x", Size: size}, ViewPanel); err != nil {
+			t.Errorf("size %q rejected: %v", size, err)
+		}
+	}
+	// The boundary radius is legal; one past it is not.
+	if err := Validate(&Node{Kind: KindColumn, Radius: MaxRadius}, ViewPanel); err != nil {
+		t.Errorf("MaxRadius rejected: %v", err)
+	}
+	if err := Validate(&Node{Kind: KindColumn, Radius: MaxRadius + 1}, ViewPanel); err == nil {
+		t.Error("MaxRadius + 1 accepted")
+	}
+	// DragSource is interactive and may be disabled like buttons and inputs.
+	// It still needs the accessible identity every interactive node carries.
+	if err := Validate(&Node{Kind: KindDragSource, ID: "d", Name: "d", Role: "button", DragType: "zone", Disabled: true, Events: []EventKind{EventPointer}}, ViewPanel); err != nil {
+		t.Errorf("disabled drag source rejected: %v", err)
 	}
 }

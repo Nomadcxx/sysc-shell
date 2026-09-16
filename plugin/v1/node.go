@@ -38,6 +38,10 @@ const (
 	// this shell supports is wider than this, so a larger number is a mistake
 	// or an attempt to make layout expensive.
 	MaxExtent = 8192
+	// MaxRadius bounds the corner-radius override. Cards and chips live in
+	// the low double digits; anything larger is a mistake or an attack on
+	// the rasteriser.
+	MaxRadius = 256
 )
 
 // NodeKind names a view element. Kinds are strings so that a plugin written in
@@ -432,8 +436,8 @@ func (v *validator) minorTwo(n *Node, path string) error {
 			return fmt.Errorf("%s: %s cannot carry a fill", path, n.Kind)
 		}
 	}
-	if n.Radius < 0 || n.Radius > 256 {
-		return fmt.Errorf("%s: radius %d outside 0..256", path, n.Radius)
+	if n.Radius < 0 || n.Radius > MaxRadius {
+		return fmt.Errorf("%s: radius is %d, past the %d limit", path, n.Radius, MaxRadius)
 	}
 	if n.Size != "" {
 		if !knownSizes[n.Size] {
