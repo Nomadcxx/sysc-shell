@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"log/slog"
+
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
@@ -150,6 +152,7 @@ func (h *pluginHost) finishSyncEnabled(enabled []string, cat plugin.Catalog, reg
 		if err := h.ensure(id, cat, registryHeld); err != nil {
 			// A plugin that cannot start still occupies its bar slot as a
 			// placeholder; the rest of the bar must stay up.
+			slog.Error("plugin start failed", "plugin", id, "err", err)
 			continue
 		}
 	}
@@ -585,7 +588,7 @@ func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResul
 	if err == nil {
 		if bar, ok := h.r.bars[global]; ok {
 			policy := h.r.cfg.ForConnector(bar.connector())
-			trig = Trigger{BarEdge: policy.Edge, BarZone: exclusiveBarZone(bar)}
+			trig = Trigger{BarEdge: policy.Edge, BarZone: exclusiveBarZone(bar), Align: "center"}
 		}
 	}
 	h.r.mu.Unlock()
