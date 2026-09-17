@@ -186,6 +186,33 @@ func TestReconfiguringToTheSameRequestIsANoOp(t *testing.T) {
 	}
 }
 
+func TestTheFirstWeatherLeaseFetchesImmediately(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(rw, currentWeatherBody)
+	}))
+	t.Cleanup(server.Close)
+
+	w := NewWeather(0, 0, UnitCelsius)
+	w.endpoint = server.URL
+	w.minInterval = 0
+	t.Cleanup(w.Close)
+	lease, err := w.Acquire(15 * time.Minute)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	t.Cleanup(lease.Release)
+
+	select {
+	case reading := <-w.Updates():
+		if !reading.Observed || reading.Temperature != 18.4 {
+			t.Fatalf("reading = %+v, want the first observation", reading)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the first fetch waited for the lease interval")
+	}
+}
+
 func TestASuccessfulFetchPublishesAnObservation(t *testing.T) {
 	t.Parallel()
 	w, _ := weatherAt(t, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {

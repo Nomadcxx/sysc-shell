@@ -1,6 +1,7 @@
 package weather
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,30 @@ import (
 	"net/url"
 	"strconv"
 )
+
+// dayFlag is Open-Meteo's wire representation of is_day. The API returns 0
+// or 1, while older fixtures and compatible endpoints may use JSON booleans.
+type dayFlag bool
+
+func (f *dayFlag) UnmarshalJSON(data []byte) error {
+	switch string(bytes.TrimSpace(data)) {
+	case "0", "false":
+		*f = false
+	case "1", "true":
+		*f = true
+	default:
+		return fmt.Errorf("weather: is_day must be boolean or 0/1")
+	}
+	return nil
+}
+
+func boolFromDayFlag(f *dayFlag) *bool {
+	if f == nil {
+		return nil
+	}
+	v := bool(*f)
+	return &v
+}
 
 const (
 	// DefaultEndpoint is the only remote host this shell contacts for weather.
@@ -47,7 +72,7 @@ func Decode(body []byte) (Forecast, error) {
 			Temperature *float64 `json:"temperature_2m"`
 			Code        *int     `json:"weather_code"`
 			Apparent    *float64 `json:"apparent_temperature"`
-			IsDay       *bool    `json:"is_day"`
+			IsDay       *dayFlag `json:"is_day"`
 			Humidity    *float64 `json:"relative_humidity_2m"`
 			WindSpeed   *float64 `json:"wind_speed_10m"`
 			WindDir     *float64 `json:"wind_direction_10m"`
@@ -68,7 +93,7 @@ func Decode(body []byte) (Forecast, error) {
 			Time    []string   `json:"time"`
 			Code    []int      `json:"weather_code"`
 			Temp    []float64  `json:"temperature_2m"`
-			IsDay   []*bool    `json:"is_day"`
+			IsDay   []*dayFlag `json:"is_day"`
 			Hum     []*float64 `json:"relative_humidity_2m"`
 			PrecipP []*float64 `json:"precipitation_probability"`
 			Wind    []*float64 `json:"wind_speed_10m"`
@@ -88,7 +113,7 @@ func Decode(body []byte) (Forecast, error) {
 			Temperature:   *wire.Current.Temperature,
 			Code:          *wire.Current.Code,
 			Apparent:      wire.Current.Apparent,
-			IsDay:         wire.Current.IsDay,
+			IsDay:         boolFromDayFlag(wire.Current.IsDay),
 			Humidity:      wire.Current.Humidity,
 			WindSpeed:     wire.Current.WindSpeed,
 			WindDirection: wire.Current.WindDir,
@@ -125,7 +150,7 @@ func Decode(body []byte) (Forecast, error) {
 	for i := 0; i < hn; i++ {
 		h := Hour{Time: wire.Hourly.Time[i], Code: wire.Hourly.Code[i], Temperature: wire.Hourly.Temp[i]}
 		if i < len(wire.Hourly.IsDay) {
-			h.IsDay = wire.Hourly.IsDay[i]
+			h.IsDay = boolFromDayFlag(wire.Hourly.IsDay[i])
 		}
 		fc.Hourly[i] = h
 	}
