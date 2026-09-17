@@ -39,9 +39,12 @@ const (
 	// gap between, and it was written as 110 for a gap of 8. Derived once
 	// here because two pages build tiles, and a repeated expression is the
 	// same drift as a repeated number.
-	ccTileW          = (ccRightColumnW - theme.MarginM) / 2
-	ccResourceRowH   = 40
-	ccGaugeSize      = 40
+	ccTileW = (ccRightColumnW - theme.MarginM) / 2
+	// The fixed System card leaves 70px after its 9px insets. Its title plus two
+	// rows and the 4px card gap need 16+4+22+4+22 = 68px, so the 40px Home
+	// gauge cannot fit. The compact 22px size is already used by the bar radial.
+	ccResourceRowH   = 22
+	ccGaugeSize      = 22
 	ccSliderCapsuleH = 52
 	ccSlidersH       = 2*ccSliderCapsuleH + theme.MarginM
 	ccSliderW        = 360
@@ -192,11 +195,16 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 		{Kind: ui.KindText, Text: weatherSummary, Tone: weatherTone},
 	})
 	clockWeather.Height = ccCardH
+	gpuSelector, gpuOK := selectGPU(snap)
 	sysmon := monitorCard(m, []*ui.Node{
 		monitorCardTitle("System", 0),
 		{Kind: ui.KindRow, Height: ccResourceRowH, Gap: theme.MarginM, Children: []*ui.Node{
-			ccResourceGroup(snap, "cpu", "CPU", services.Selector{Source: services.SourceCPU}),
-			ccResourceGroup(snap, "memory", "Memory", services.Selector{Source: services.SourceMemory}),
+			ccResourceGroup(snap, "cpu", "CPU", services.Selector{Source: services.SourceCPU}, true),
+			ccResourceGroup(snap, "memory", "Memory", services.Selector{Source: services.SourceMemory}, true),
+		}},
+		{Kind: ui.KindRow, Height: ccResourceRowH, Gap: theme.MarginM, Children: []*ui.Node{
+			ccResourceGroup(snap, "temperature", "CPU temperature", services.Selector{Source: services.SourceCPU, Subject: "temperature"}, true),
+			ccResourceGroup(snap, "gpu", "GPU", gpuSelector, gpuOK),
 		}},
 	})
 	sysmon.Height = ccCardH
@@ -295,19 +303,37 @@ func ccQuickAccessButton(width int, icon, label, action string, selected bool) *
 	return n
 }
 
-func ccResourceGroup(snap services.Snapshot, id, label string, sel services.Selector) *ui.Node {
-	value, ok := snap.Fraction(sel)
-	if !ok {
-		value = 0
-	}
+func ccResourceGroup(snap services.Snapshot, id, label string, sel services.Selector, selected bool) *ui.Node {
+	value, valueText, ok := ccResourceValue(snap, sel, selected)
 	icon, _ := render.GaugeIconName(id)
+	gaugeValueText := ""
+	if sel.Source == services.SourceCPU && sel.Subject == "temperature" {
+		gaugeValueText = valueText
+	}
 	return &ui.Node{Kind: ui.KindRow, Height: ccResourceRowH, Gap: theme.MarginM, Children: []*ui.Node{
-		{Kind: ui.KindRadialGauge, Width: ccGaugeSize, Height: ccGaugeSize, Icon: icon, Value: value, Absent: !ok},
-		{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
+		{Kind: ui.KindRadialGauge, Width: ccGaugeSize, Height: ccGaugeSize, Icon: icon, Value: value, ValueText: gaugeValueText, Absent: !ok},
+		{Kind: ui.KindRow, Gap: theme.MarginXXS, Children: []*ui.Node{
 			{Kind: ui.KindText, Text: label, TextRole: theme.RoleCaption},
-			{Kind: ui.KindText, Text: ccPercent(int(value*100+0.5), ok), Tabular: true},
+			{Kind: ui.KindText, Text: valueText, Tabular: true},
 		}},
 	}}
+}
+
+func ccResourceValue(snap services.Snapshot, sel services.Selector, selected bool) (float64, string, bool) {
+	if !selected {
+		return 0, ccDash, false
+	}
+	value, ok := snap.Fraction(sel)
+	if !ok {
+		return 0, ccDash, false
+	}
+	if sel.Source == services.SourceCPU && sel.Subject == "temperature" {
+		if snap.Thermal == nil || !snap.Thermal.Valid {
+			return 0, ccDash, false
+		}
+		return value, fmt.Sprintf("%.0f°C", snap.Thermal.Celsius), true
+	}
+	return value, ccPercent(int(value*100+0.5), true), true
 }
 
 func ccOnOff(on bool) string {

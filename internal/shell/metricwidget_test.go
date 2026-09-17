@@ -200,6 +200,89 @@ func TestRadialMetricTooltipUsesTheCurrentValue(t *testing.T) {
 	}
 }
 
+func TestBarGPUProjectionUsesTheSelectedIdentity(t *testing.T) {
+	t.Parallel()
+	snap := services.Snapshot{GPU: &metrics.GPUSnapshot{GPUs: []metrics.GPU{
+		{Usage: metrics.GPUUsage{Fraction: 0.9, Valid: true}},
+		{PCIID: "0000:01:00.0", Usage: metrics.GPUUsage{Fraction: 0.2, Valid: true}},
+	}}}
+
+	textWidget := buildMetricWidget(config.Item{ID: "gpu"})
+	if got := textWidget.format(barView{Metrics: snap}); got != "20%" {
+		t.Fatalf("GPU text = %q, want selected device value 20%%", got)
+	}
+	radialWidget := buildMetricWidget(config.Item{ID: "gpu", Display: "radial"})
+	radialWidget.format(barView{Metrics: snap})
+	if radialWidget.node.Value != 0.2 || radialWidget.node.Absent {
+		t.Fatalf("GPU radial = %+v, want selected device value 0.2 present", radialWidget.node)
+	}
+}
+
+func TestBarGPUProjectionRejectsAmbiguousIdentity(t *testing.T) {
+	t.Parallel()
+	snap := services.Snapshot{GPU: &metrics.GPUSnapshot{GPUs: []metrics.GPU{
+		{Usage: metrics.GPUUsage{Fraction: 0.8, Valid: true}},
+		{Usage: metrics.GPUUsage{Fraction: 0.2, Valid: true}},
+	}}}
+
+	textWidget := buildMetricWidget(config.Item{ID: "gpu"})
+	if got := textWidget.format(barView{Metrics: snap}); got != noWorkspace {
+		t.Fatalf("ambiguous GPU text = %q, want %q", got, noWorkspace)
+	}
+	radialWidget := buildMetricWidget(config.Item{ID: "gpu", Display: "radial"})
+	radialWidget.format(barView{Metrics: snap})
+	if radialWidget.node.Value != 0 || !radialWidget.node.Absent {
+		t.Fatalf("ambiguous GPU radial = %+v, want unavailable zero", radialWidget.node)
+	}
+}
+
+func TestBarGPUProjectionPreservesValidZero(t *testing.T) {
+	t.Parallel()
+	snap := services.Snapshot{GPU: &metrics.GPUSnapshot{GPUs: []metrics.GPU{
+		{PCIID: "0000:01:00.0", Usage: metrics.GPUUsage{Fraction: 0, Valid: true}},
+	}}}
+
+	textWidget := buildMetricWidget(config.Item{ID: "gpu"})
+	if got := textWidget.format(barView{Metrics: snap}); got != "0%" {
+		t.Fatalf("zero GPU text = %q, want 0%%", got)
+	}
+	radialWidget := buildMetricWidget(config.Item{ID: "gpu", Display: "radial"})
+	radialWidget.format(barView{Metrics: snap})
+	if radialWidget.node.Value != 0 || radialWidget.node.Absent {
+		t.Fatalf("zero GPU radial = %+v, want present zero", radialWidget.node)
+	}
+}
+
+func TestBarGPUGraphUsesOnlySelectedHistory(t *testing.T) {
+	t.Parallel()
+	snap := services.Snapshot{GPU: &metrics.GPUSnapshot{GPUs: []metrics.GPU{
+		{Usage: metrics.GPUUsage{Fraction: 0.9, Valid: true}},
+		{PCIID: "0000:01:00.0", Usage: metrics.GPUUsage{Fraction: 0.2, Valid: true}},
+	}}}
+	wildcard := services.Selector{Source: services.SourceGPU}
+	selected := services.Selector{Source: services.SourceGPU, Subject: "0000:01:00.0"}
+
+	withExact := buildMetricWidget(config.Item{ID: "gpu", Display: "graph"})
+	withExact.format(barView{
+		Metrics: snap,
+		History: map[services.Selector][]float64{
+			wildcard: {0.9, 0.9}, selected: {0.1, 0.2},
+		},
+	})
+	if got := withExact.node.Values; len(got) != 2 || got[0] != 0.5 || got[1] != 1 || withExact.node.Absent {
+		t.Fatalf("selected GPU graph = %+v absent=%v, want exact history", got, withExact.node.Absent)
+	}
+
+	wildcardOnly := buildMetricWidget(config.Item{ID: "gpu", Display: "graph"})
+	wildcardOnly.format(barView{
+		Metrics: snap,
+		History: map[services.Selector][]float64{wildcard: {0.9, 0.9}},
+	})
+	if len(wildcardOnly.node.Values) != 0 || !wildcardOnly.node.Absent {
+		t.Fatalf("wildcard-only GPU graph = %+v absent=%v, want unavailable", wildcardOnly.node.Values, wildcardOnly.node.Absent)
+	}
+}
+
 func TestEveryMetricIDMapsToASelector(t *testing.T) {
 	t.Parallel()
 	want := map[string]services.Selector{

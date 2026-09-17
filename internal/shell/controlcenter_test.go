@@ -82,8 +82,8 @@ func TestControlCentreNameAndFlushPlacement(t *testing.T) {
 	if rootKind != ui.KindRow {
 		t.Errorf("root kind = %v, want row", rootKind)
 	}
-	if leaseCount != 4 {
-		t.Errorf("leases = %d, want CPU, memory, battery and clock", leaseCount)
+	if leaseCount != 6 {
+		t.Errorf("leases = %d, want CPU, memory, temperature, GPU, battery and clock", leaseCount)
 	}
 	if fillet != 12 || spec.Width != 724 {
 		t.Errorf("fillet = %d, drawn width = %d, want 12 and 724", fillet, spec.Width)
@@ -481,37 +481,52 @@ func TestControlCentreHomeRadialResourcesPreserveSampleState(t *testing.T) {
 	r := &Registry{sample: fixtureSnapshot()}
 	home := ccHome(r, h)
 	gauges := findAllKind(home, ui.KindRadialGauge)
-	if len(gauges) != 2 {
-		t.Fatalf("radial gauges = %d, want CPU and memory", len(gauges))
+	if len(gauges) != 4 {
+		t.Fatalf("radial gauges = %d, want CPU, memory, temperature and GPU", len(gauges))
 	}
-	want := map[string]float64{"sysmon-cpu": .42, "sysmon-memory": .25}
-	for _, gauge := range gauges {
-		if gauge.Width != 40 || gauge.Height != 40 || gauge.Absent || gauge.Value != want[gauge.Icon] {
-			t.Errorf("sampled gauge = %+v", gauge)
+	want := []struct {
+		icon  string
+		value float64
+	}{
+		{icon: "sysmon-cpu", value: .42},
+		{icon: "sysmon-memory", value: .25},
+		{value: .65},
+		{icon: "sysmon-gpu", value: .7},
+	}
+	for i, gauge := range gauges {
+		if gauge.Width != ccGaugeSize || gauge.Height != ccGaugeSize || gauge.Absent || gauge.Value != want[i].value || gauge.Icon != want[i].icon {
+			t.Errorf("sampled gauge %d = %+v, want %+v", i, gauge, want[i])
 		}
 	}
-	for _, value := range []string{"42%", "25%"} {
+	for _, value := range []string{"42%", "25%", "65°C", "70%"} {
 		if !strings.Contains(renderText(home), value) {
 			t.Errorf("resource values %q omit %s", renderText(home), value)
 		}
 	}
 
 	absent := findAllKind(ccHome(&Registry{}, h), ui.KindRadialGauge)
-	if len(absent) != 2 || !absent[0].Absent || !absent[1].Absent {
-		t.Fatalf("unsampled gauges = %+v, want two absent gauges", absent)
+	if len(absent) != 4 {
+		t.Fatalf("unsampled gauges = %d, want four absent gauges", len(absent))
+	}
+	for i, gauge := range absent {
+		if !gauge.Absent || gauge.Value != 0 {
+			t.Errorf("unsampled gauge %d = %+v, want absent zero", i, gauge)
+		}
 	}
 
 	zero := fixtureSnapshot()
 	zero.CPU.Usage.Fraction = 0
 	zero.Memory.Memory.UsedBytes = 0
+	zero.Thermal.Celsius = 0
+	zero.GPU.GPUs[0].Usage.Fraction = 0
 	zeroHome := ccHome(&Registry{sample: zero}, h)
 	for _, gauge := range findAllKind(zeroHome, ui.KindRadialGauge) {
 		if gauge.Absent || gauge.Value != 0 {
 			t.Errorf("valid zero gauge = %+v, want present zero", gauge)
 		}
 	}
-	if got := strings.Count(renderText(zeroHome), "0%"); got != 2 {
-		t.Fatalf("valid zero values = %q, want two 0%% labels", renderText(zeroHome))
+	if got := strings.Count(renderText(zeroHome), "0%"); got != 3 {
+		t.Fatalf("valid zero values = %q, want three 0%% labels", renderText(zeroHome))
 	}
 
 	for id, icon := range map[string]string{"cpu": "sysmon-cpu", "memory": "sysmon-memory"} {
@@ -519,6 +534,80 @@ func TestControlCentreHomeRadialResourcesPreserveSampleState(t *testing.T) {
 		if !ok || got != icon {
 			t.Fatalf("%s gauge icon = %q/%v, want %q", id, got, ok, icon)
 		}
+	}
+}
+
+func TestControlCentreHomeTemperatureGaugeCarriesCelsiusValueText(t *testing.T) {
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	gauges := findAllKind(ccHome(&Registry{sample: fixtureSnapshot()}, h), ui.KindRadialGauge)
+	if len(gauges) != 4 {
+		t.Fatalf("radial gauges = %d, want CPU, memory, temperature and GPU", len(gauges))
+	}
+	if got := gauges[2].ValueText; got != "65°C" {
+		t.Fatalf("temperature gauge ValueText = %q, want 65°C", got)
+	}
+}
+
+func TestControlCentreHomeSystemGaugesFitInsideCardBounds(t *testing.T) {
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	home := ccHome(&Registry{sample: fixtureSnapshot()}, h)
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return len(s) * 8, 16 }
+	if err := ui.LayoutColumn(home, ui.Rect{W: 596, H: ccPageH}, measure); err != nil {
+		t.Fatal(err)
+	}
+
+	system := home.Children[2].Children[0].Children[1]
+	if system.Kind != ui.KindCapsule || system.Bounds.H != ccCardH {
+		t.Fatalf("system card = %+v, want fixed %dpx card", system, ccCardH)
+	}
+	inner := ui.Rect{
+		X: system.Bounds.X + system.Padding,
+		Y: system.Bounds.Y + system.Padding,
+		W: system.Bounds.W - 2*system.Padding,
+		H: system.Bounds.H - 2*system.Padding,
+	}
+	content := system.Children[0]
+	contentHeight, err := ui.ContentHeight(content, inner.W, measure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contentHeight > inner.H {
+		t.Errorf("system content height = %d, outside padded card height %d", contentHeight, inner.H)
+	}
+	var checkBounds func(*ui.Node)
+	checkBounds = func(node *ui.Node) {
+		if node == nil {
+			return
+		}
+		if node.Bounds.X < inner.X || node.Bounds.Y < inner.Y ||
+			node.Bounds.X+node.Bounds.W > inner.X+inner.W ||
+			node.Bounds.Y+node.Bounds.H > inner.Y+inner.H {
+			t.Errorf("system descendant bounds = %+v, outside padded card content %+v", node.Bounds, inner)
+		}
+		for _, child := range node.Children {
+			checkBounds(child)
+		}
+	}
+	checkBounds(content)
+}
+
+func TestControlCentreHomeMarksInvalidThermalAndGPUUnavailable(t *testing.T) {
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	snap := fixtureSnapshot()
+	snap.Thermal.Valid = false
+	snap.GPU.GPUs[0].Usage.Valid = false
+	gauges := findAllKind(ccHome(&Registry{sample: snap}, h), ui.KindRadialGauge)
+	if len(gauges) != 4 {
+		t.Fatalf("radial gauges = %d, want four", len(gauges))
+	}
+	if gauges[0].Absent || gauges[1].Absent {
+		t.Fatal("valid CPU and memory readings became unavailable")
+	}
+	if !gauges[2].Absent || !gauges[3].Absent {
+		t.Fatalf("invalid thermal/GPU readings = %+v, want absent", gauges[2:])
+	}
+	if got := renderText(ccHome(&Registry{sample: snap}, h)); strings.Contains(got, "65°C") || strings.Contains(got, "70%") {
+		t.Fatalf("invalid thermal/GPU values remained visible: %q", got)
 	}
 }
 

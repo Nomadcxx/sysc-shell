@@ -488,6 +488,7 @@ surface-stacking merge. Epic `sysc-309`; the four execution owners are
 | `2026-09-16-notifications-battery-urgency-design.md` | design | Theme-derived urgency treatment and a qualified, deduplicated battery-warning producer. Executed by `sysc-315`. |
 | `2026-09-16-owned-tray-termination-design.md` | design | Service-owned tray termination, identity validation, and shell acknowledgement after the real item delta. Executed by `sysc-316`. |
 | `2026-09-16-control-centre-network-design.md` | design | Enable the existing Network rail and reuse the NetworkManager-backed body and service under `sysc-157`, `sysc-254`, and `sysc-268`. |
+| `2026-09-17-metrics-control-centre-gpu-execution-handover.md` | execution-handover | Focused M10 planning session: governing GPU design, provisional local work, pinned reader and live hardware evidence, exact-PCI history blocker, and instructions for the next agent to write the executable plan. |
 | `2026-09-16-shell-polish-execution-handover.md` | execution-handover | Historical receiving-state commission for the M10 work. Leave unchanged; current state belongs in Beads and the completion handover. |
 | `2026-09-16-m10-shell-polish-execution-handover.md` | execution-handover | Current receiving handover for M10: commissions seven executable plans, preserves existing owners, qualifies notify/tray releases, and defines the integration and bare-metal completion gate. |
 
