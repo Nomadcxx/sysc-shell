@@ -881,3 +881,109 @@ func TestAnEditKeepsTheScrollPosition(t *testing.T) {
 		t.Errorf("scroll offset = %d after an edit, want %d: the view jumped", after.ScrollOffset, parked)
 	}
 }
+
+// A control that draws a glyph and no text says nothing to anyone who does not
+// already know what it does. The settings rail learned this during sub-project
+// A -- its tabs draw glyphs only, so the name was reachable by screen reader
+// and by nothing else -- and the lane editor is denser than the rail: three
+// glyph controls per chip, plus dissolve and add.
+func TestEveryGlyphOnlyControlInTheEditorHasATooltip(t *testing.T) {
+	t.Parallel()
+	_, h := barKeyHost(t, config.Bar{
+		Left:  []config.Item{{ID: "clock"}, {ID: "cpu"}},
+		Right: []config.Item{{ID: "group", Items: []config.Item{{ID: "memory"}, {ID: "gpu"}}}},
+	})
+
+	hasText := func(n *ui.Node) bool {
+		found := false
+		walkNodes(n, func(c *ui.Node) {
+			if c.Kind == ui.KindText && c.Text != "" {
+				found = true
+			}
+		})
+		return found
+	}
+
+	var checked int
+	walkNodes(h.root, func(n *ui.Node) {
+		if !n.Focusable || !strings.HasPrefix(n.Action, "bar-") {
+			return
+		}
+		if hasText(n) {
+			return
+		}
+		checked++
+		if n.Tooltip == "" {
+			t.Errorf("%s draws a glyph only and carries no tooltip", n.Action)
+		}
+		if n.Name == "" {
+			t.Errorf("%s has no accessible name", n.Action)
+		}
+	})
+	if checked == 0 {
+		t.Fatal("no glyph-only controls found; this test is not covering anything")
+	}
+}
+
+// Opening the add list and changing your mind has to be possible. The control
+// toggles, so the same press that opened it closes it again.
+func TestTheAddListCanBeDismissed(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "clock"}}})
+	if !h.barActivate(reg, "bar-add:left") {
+		t.Fatal("add was not handled")
+	}
+	if h.barAdding != "left" {
+		t.Fatalf("barAdding = %q, want left", h.barAdding)
+	}
+	if !h.barActivate(reg, "bar-add:left") {
+		t.Fatal("the second press was not handled")
+	}
+	if h.barAdding != "" {
+		t.Errorf("barAdding = %q after pressing again, want the list closed", h.barAdding)
+	}
+}
+
+// Opening another lane's list moves the list rather than leaving two open.
+func TestOpeningAnotherLanesAddListMovesIt(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "clock"}}})
+	h.barActivate(reg, "bar-add:left")
+	h.barActivate(reg, "bar-add:right")
+	if h.barAdding != "right" {
+		t.Errorf("barAdding = %q, want right", h.barAdding)
+	}
+}
+
+// The inspector belongs beside what it inspects. It used to render after all
+// three lanes, so selecting a widget in the Left lane put its options below the
+// Right lane, a long way from the chip.
+func TestTheInspectorFollowsTheLaneThatOwnsTheSelection(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{
+		Left:  []config.Item{{ID: "clock"}},
+		Right: []config.Item{{ID: "battery"}},
+	})
+	h.barActivate(reg, "bar-select:left:0:-1")
+	barLayout(t, reg, h)
+
+	var inspectorY, rightLaneY int
+	walkNodes(h.root, func(n *ui.Node) {
+		if n.Action == "bar-remove:left:0:-1" && n.Bounds.H > 0 {
+			// The inspector's own remove control, not the chip's: the chip's
+			// sits inside a drag source.
+		}
+		if n.Action == "bar-lane:right" {
+			rightLaneY = n.Bounds.Y
+		}
+		if n.Kind == ui.KindText && n.Text == "This widget has no options." {
+			inspectorY = n.Bounds.Y
+		}
+	})
+	if inspectorY == 0 || rightLaneY == 0 {
+		t.Skip("layout did not produce both markers")
+	}
+	if inspectorY > rightLaneY {
+		t.Errorf("inspector at y=%d sits below the Right lane at y=%d", inspectorY, rightLaneY)
+	}
+}

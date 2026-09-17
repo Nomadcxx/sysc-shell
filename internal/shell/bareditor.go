@@ -127,10 +127,14 @@ func barChip(h *PanelHost, ref config.ItemRef, it config.Item, selected bool, wi
 	// lands hundreds of pixels below the scroll viewport and remove and group
 	// were reachable from nowhere at all. A control belongs next to the thing
 	// it acts on.
+	// Each of these draws a glyph and no text, so the name has to be reachable
+	// by hover as well as by screen reader. Three per chip is dense enough
+	// that guessing is not a reasonable thing to ask of anyone.
 	glyph := func(icon, action, label string) *ui.Node {
 		return &ui.Node{
 			Kind: ui.KindButton, Action: action, Name: label, Role: "button", Focusable: true,
-			Width: m.IconNormal, Height: m.IconNormal,
+			Tooltip: label,
+			Width:   m.IconNormal, Height: m.IconNormal,
 			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: icon, IconSize: m.IconSmall}},
 		}
 	}
@@ -139,10 +143,10 @@ func barChip(h *PanelHost, ref config.ItemRef, it config.Item, selected bool, wi
 		// Only offered where there is something after this chip to fold it
 		// together with, rather than offering a control that would fail.
 		trailing.Children = append(trailing.Children,
-			glyph("link", "bar-group:"+addr, "Group "+name+" with the widget after it"))
+			glyph("link", "bar-group:"+addr, "Group with the widget below"))
 	}
 	trailing.Children = append(trailing.Children,
-		glyph("tune", "bar-inspect:"+addr, "Configure "+name),
+		glyph("tune", "bar-inspect:"+addr, "Options for "+name),
 		glyph("close", "bar-remove:"+addr, "Remove "+name+" from the bar"),
 	)
 
@@ -195,8 +199,9 @@ func barGroupChip(h *PanelHost, ref config.ItemRef, it config.Item, selected str
 			handle,
 			{
 				Kind: ui.KindButton, Action: "bar-ungroup:" + addr,
-				Name: "Dissolve group", Role: "button", Focusable: true,
-				Width: m.StandardControl, Height: m.StandardControl,
+				Name: "Ungroup these widgets", Role: "button", Focusable: true,
+				Tooltip: "Ungroup these widgets",
+				Width:   m.StandardControl, Height: m.StandardControl,
 				Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "link_off", IconSize: m.IconSmall}},
 			},
 		},
@@ -240,12 +245,18 @@ func barLane(h *PanelHost, bar config.Bar, name string, width int) *ui.Node {
 			TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
 		})
 	}
+	// A bare plus is a guess. The control says what it adds and where, which
+	// also makes the three lanes' controls tell each other apart.
+	add := "Add a widget to the " + barLaneLabels[name] + " lane"
 	zone.Children = append(zone.Children, &ui.Node{
 		Kind: ui.KindButton, Action: "bar-add:" + name,
-		Name: "Add a widget to the " + barLaneLabels[name] + " lane",
-		Role: "button", Focusable: true,
+		Name: add, Role: "button", Focusable: true, Tooltip: add,
 		Width: inner, Height: m.StandardControl, Shape: ui.ShapeMedium,
-		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "add", IconSize: m.IconSmall}},
+		Gap: theme.MarginS,
+		Children: []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
+			{Kind: ui.KindIcon, Icon: "add", IconSize: m.IconSmall},
+			{Kind: ui.KindText, Text: "Add widget", TextRole: theme.RoleCaption},
+		}}},
 	})
 
 	// D7 in the interface. A lane is inherited whole or overridden whole,
@@ -256,6 +267,7 @@ func barLane(h *PanelHost, bar config.Bar, name string, width int) *ui.Node {
 	header := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Width: width, PinEnd: true, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: label, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
 	}}
+
 	if h.barOutput != "" {
 		state := "Inherited"
 		trailing := &ui.Node{Kind: ui.KindText, Text: state,
@@ -320,8 +332,16 @@ func barLaneStrip(h *PanelHost) *ui.Node {
 
 func (h *PanelHost) barLaneStripFor(r *Registry) *ui.Node {
 	width := settingsBodyWidth(h)
+	// One line of orientation. Nothing else on this surface says that the rows
+	// are draggable or what the three lanes correspond to, and a pane whose
+	// central gesture is undiscoverable is a pane most people will not use.
 	strip := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Width: width, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: "Layout", TextRole: theme.RoleLabel},
+		{
+			Kind: ui.KindText, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
+			Text: "Drag a widget to reorder it or to move it between lanes. " +
+				"Drop one onto another to group them.",
+		},
 	}}
 	if r != nil {
 		if sel := barOutputSelector(h, r, width); sel != nil {
@@ -329,14 +349,20 @@ func (h *PanelHost) barLaneStripFor(r *Registry) *ui.Node {
 		}
 	}
 	bar := h.barEditedBar()
+	selected, hasSelection := barParseRef(h.barSelected)
 	for _, name := range config.LaneNames() {
 		strip.Children = append(strip.Children, barLane(h, bar, name, width))
 		if h.barAdding == name {
 			strip.Children = append(strip.Children, barAddList(h, name, width))
 		}
-	}
-	if inspector := barInspector(h, width); inspector != nil {
-		strip.Children = append(strip.Children, inspector)
+		// The options sit directly under the lane that owns the selection
+		// rather than after all three, so a widget in the Left lane does not
+		// put its options below the Right one.
+		if hasSelection && selected.Lane == name {
+			if inspector := barInspector(h, width); inspector != nil {
+				strip.Children = append(strip.Children, inspector)
+			}
+		}
 	}
 	return strip
 }
@@ -580,7 +606,13 @@ func (h *PanelHost) barActivate(r *Registry, action string) bool {
 		if barLaneLabels[lane] == "" {
 			return false
 		}
-		h.barAdding = lane
+		// The control toggles: opening the list and changing your mind has to
+		// be possible without picking something.
+		if h.barAdding == lane {
+			h.barAdding = ""
+		} else {
+			h.barAdding = lane
+		}
 		r.rebuildPanel(h)
 		return true
 
@@ -724,10 +756,10 @@ func barOutputSelector(h *PanelHost, r *Registry, width int) *ui.Node {
 	row := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Width: width, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: "Editing", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
 	}}
-	option := func(value, label string) *ui.Node {
+	option := func(value, label, tip string) *ui.Node {
 		n := &ui.Node{
 			Kind: ui.KindButton, Action: "bar-output:" + value,
-			Name: label, Role: "tab", Focusable: true,
+			Name: label, Role: "tab", Focusable: true, Tooltip: tip,
 			Height: m.StandardControl, Padding: m.ButtonPadding, Shape: ui.ShapeMedium,
 			Children: []*ui.Node{{Kind: ui.KindText, Text: label}},
 		}
@@ -737,9 +769,11 @@ func barOutputSelector(h *PanelHost, r *Registry, width int) *ui.Node {
 		}
 		return n
 	}
-	row.Children = append(row.Children, option("shared", "Shared"))
+	row.Children = append(row.Children,
+		option("shared", "Shared", "The layout every display uses unless it overrides it"))
 	for _, conn := range r.connectorsLocked() {
-		row.Children = append(row.Children, option(conn, conn))
+		row.Children = append(row.Children,
+			option(conn, conn, "A layout just for "+conn))
 	}
 	return row
 }
