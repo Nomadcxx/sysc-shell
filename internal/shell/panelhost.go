@@ -267,6 +267,24 @@ func (r *Registry) HandlePanelByName(action, name, section string) error {
 	return r.selectPanelSectionLocked(id, section)
 }
 
+// openSettingsAtLocked opens the settings panel at one section, through the
+// addressing that already exists: panelSection validates the name and
+// selectPanelSectionLocked applies it, which is what IPC section addressing
+// uses. No second route is added.
+func (r *Registry) openSettingsAtLocked(output uint32, requested string) bool {
+	section, err := panelSection(PanelSettings, requested)
+	if err != nil {
+		return true
+	}
+	if r.panelHosts[PanelSettings] == nil {
+		if err := r.openPanelRootLocked(PanelSettings, output, Trigger{}); err != nil {
+			return true
+		}
+	}
+	_ = r.selectPanelSectionLocked(PanelSettings, section)
+	return true
+}
+
 func panelSection(id PanelID, requested string) (string, error) {
 	if requested == "" {
 		switch id {
