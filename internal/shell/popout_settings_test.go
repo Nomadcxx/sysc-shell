@@ -790,3 +790,39 @@ func TestControlCentreShortcutReachesEverySection(t *testing.T) {
 			len(reached), len(settingsSections))
 	}
 }
+
+// TestEmptySectionSaysWhy covers the two sections that build their entries
+// from what the configuration already names. A user who has never pinned a
+// tray item or overridden an output opens Tray or Displays and, before this,
+// saw an empty column: indistinguishable from a section that failed to build.
+func TestEmptySectionSaysWhy(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	for _, section := range []string{"Tray", "Displays"} {
+		if got := h.set.Section(section); len(got) != 0 {
+			t.Fatalf("%s built %d entries from a default configuration; "+
+				"this test no longer covers the empty case", section, len(got))
+		}
+		col := settingsSectionColumn(h, section, nil)
+		var text string
+		var walk func(*ui.Node)
+		walk = func(n *ui.Node) {
+			if n == nil {
+				return
+			}
+			if n.Kind == ui.KindText && n.Text != "" && text == "" {
+				text = n.Text
+			}
+			for _, c := range n.Children {
+				walk(c)
+			}
+		}
+		walk(col)
+		if text == "" {
+			t.Errorf("%s renders an empty column with no explanation", section)
+		}
+		if text != settingsEmptySection[section] {
+			t.Errorf("%s says %q, want its own note %q", section, text, settingsEmptySection[section])
+		}
+	}
+}

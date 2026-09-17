@@ -30,9 +30,6 @@ var settingsSections = settings.SectionNames()
 const (
 	settingsRailWidth = ccRailWidth
 	settingsRailItem  = ccRailItem
-	// settingsSearchWidth is the search field's own width in the header. It no
-	// longer shares the rail's, which a 56-wide icon column cannot carry.
-	settingsSearchWidth = 260
 )
 
 // settingsSectionIcons names one glyph per section. Every name is confirmed
@@ -109,7 +106,11 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 		h.search = ui.NewField("")
 	}
 	search := h.search.Node("Search")
-	search.Width = settingsSearchWidth
+	// The header spans the surface and the field pins to its end, so the field
+	// lands directly above the rows' trailing control column. Sharing that
+	// column's width lines the two up and drops a literal 260 that was one
+	// panel size's answer applied to every panel size.
+	search.Width = settingsControlWidth(h)
 
 	section := h.section
 	if section == "" {
@@ -164,7 +165,31 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	if h.set != nil {
 		entries = h.set.Section(section)
 	}
-	return body(settingsSectionColumn(h, entries))
+	return body(settingsSectionColumn(h, section, entries))
+}
+
+// settingsEmptySection explains a section that legitimately has nothing in it
+// yet. Tray and Displays build their entries from what the configuration
+// already names, so a user who has never set a tray preference or overridden
+// an output is shown an empty column and no way to fill it. An empty surface
+// that says nothing reads as a defect; saying why is the honest minimum until
+// Tray can enumerate from the live host and Displays gets the per-output
+// editing model, which belongs to sub-project C.
+var settingsEmptySection = map[string]string{
+	"Tray":     "No tray item has been given a preference yet. Pin or hide one from the tray itself and it will appear here.",
+	"Displays": "No output carries its own bar override. Every display follows the settings in Bar.",
+	"Widgets":  "The bar carries no widgets, so there is nothing to configure here.",
+}
+
+func settingsEmptyNote(section string) *ui.Node {
+	text := settingsEmptySection[section]
+	if text == "" {
+		text = "Nothing to configure in this section yet."
+	}
+	return &ui.Node{
+		Kind: ui.KindText, Text: text,
+		TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
+	}
 }
 
 // settingsSearchColumn groups matches under the section that owns them, in
@@ -204,7 +229,13 @@ func settingsSearchColumn(h *PanelHost, hits []settings.Entry) *ui.Node {
 // at ItemHeight and advances by exactly that — so a caption beneath a label
 // and a heading above a run of rows cannot exist under it. Sections bound the
 // row count, which is what keeps laying the whole thing out cheap.
-func settingsSectionColumn(h *PanelHost, entries []settings.Entry) *ui.Node {
+func settingsSectionColumn(h *PanelHost, section string, entries []settings.Entry) *ui.Node {
+	if len(entries) == 0 {
+		return &ui.Node{
+			Kind: ui.KindScroll, Width: settingsBodyWidth(h), Gap: theme.MarginXL,
+			Children: []*ui.Node{settingsEmptyNote(section)},
+		}
+	}
 	var order []string
 	rows := map[string][]settings.Entry{}
 	for _, e := range entries {
@@ -252,7 +283,7 @@ func settingsEntryRow(h *PanelHost, e settings.Entry) *ui.Node {
 	if !e.IsDefault(h.draft) {
 		reset := settingsResetButton(e)
 		trailing.Children = append(trailing.Children, reset)
-		room = max(room-settingsResetWidth-theme.MarginS, 0)
+		room = max(room-settingsResetWidth(h)-theme.MarginS, 0)
 	}
 	trailing.Children = append(trailing.Children, settingsControl(h, e, room))
 
@@ -268,7 +299,10 @@ func settingsEntryRow(h *PanelHost, e settings.Entry) *ui.Node {
 }
 
 // settingsResetWidth is the room the reset control takes when a row shows one.
-const settingsResetWidth = 64
+// It is a text button, so it is sized from the density ladder's master control
+// dimension rather than from a literal: a fixed 64 was standard density's
+// answer imposed on all five rows.
+func settingsResetWidth(h *PanelHost) int { return h.metrics().BaseWidget * 2 }
 
 func settingsResetButton(e settings.Entry) *ui.Node {
 	return &ui.Node{
@@ -308,11 +342,19 @@ func settingsControl(h *PanelHost, e settings.Entry, width int) *ui.Node {
 	case settings.KindFont:
 		return settingsMenuControl(h, e, settingsFontFamilies(), raw, width)
 	case settings.KindPath:
+		// The field gives up exactly what the browse button takes. This used
+		// to reserve the reset control's width instead, which is a different
+		// control: the two happened to be close at standard density and would
+		// have diverged on any other row of the ladder.
+		browse := h.metrics().IconButton
 		return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Width: width, Children: []*ui.Node{
-			settingsField(h, e, raw, max(width-settingsResetWidth, 0)),
+			settingsField(h, e, raw, max(width-browse-theme.MarginS, 0)),
 			{
 				Kind: ui.KindButton, Action: "browse:" + e.Path,
 				Name: "Browse " + e.Label, Role: "button", Focusable: true,
+				// Carrying the width the field just gave up is what keeps the
+				// pair inside the control column instead of overrunning it.
+				Width: browse, Height: browse,
 				Shape:    ui.ShapeMedium,
 				Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "folder_open"}},
 			},
