@@ -553,3 +553,22 @@ func TestSourceCarriesASeedItsOwnSourceCanRead(t *testing.T) {
 		})
 	}
 }
+
+// TestEveryEntryCarriesADescriptionAndAGroup keeps the row anatomy whole. A
+// row without a caption is the legibility gap this milestone exists to close,
+// and an entry with no group falls outside every heading the pane renders.
+func TestEveryEntryCarriesADescriptionAndAGroup(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Tray.Hidden = []string{"steam"}
+	cfg.Outputs = []config.OutputOverride{{Connector: "DP-1", Bar: cfg.Bar}}
+	cfg.Plugins.Enabled = []string{"com.example.widget"}
+	for _, e := range DefaultFor(cfg).entries {
+		if e.Describe == "" {
+			t.Errorf("%s carries no description", e.Path)
+		}
+		if e.Group == "" {
+			t.Errorf("%s belongs to no group", e.Path)
+		}
+	}
+}
