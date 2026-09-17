@@ -329,8 +329,33 @@ func TestTheWeatherLocationPrefersTheLabelThenTheResolvedName(t *testing.T) {
 		t.Fatalf("location = %q, want the configured label to win", got)
 	}
 
-	if got := weatherLocation(cfg.Weather, services.Reading{}); got != "27.47°, 153.02°" {
-		t.Fatalf("location = %q, want the coordinates fallback", got)
+	if got := weatherLocation(cfg.Weather, services.Reading{}); got != "" {
+		t.Fatalf("location = %q, want no machine coordinate fallback", got)
+	}
+}
+
+func TestTheWeatherHeroOmitsAnUnresolvedCoordinateCaption(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Weather.Configured = true
+	cfg.Weather.Latitude, cfg.Weather.Longitude = -37.81, 144.96
+	r := &Registry{cfg: cfg, reading: observedWeather()}
+	h := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
+
+	tree := weatherTree(r, h)
+	hero := tree.Children[1].Children[0]
+	stack := hero.Children[0]
+	foreground := stack.Children[2]
+	if foreground.Kind != ui.KindColumn || len(foreground.Children) == 0 {
+		t.Fatalf("hero foreground = %+v, want content column", foreground)
+	}
+	if foreground.Children[0].Kind != ui.KindRow {
+		t.Fatalf("first hero content = %+v, want headline without a coordinate caption", foreground.Children[0])
+	}
+	for _, line := range collectTooltipLines(hero) {
+		if strings.Contains(line, "-37.81") || strings.Contains(line, "144.96") {
+			t.Fatalf("hero still contains machine coordinates: %q", line)
+		}
 	}
 }
 

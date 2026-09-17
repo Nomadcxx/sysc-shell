@@ -57,6 +57,20 @@ func TestWeatherCelestialAndCloudFormsRespondToPhase(t *testing.T) {
 	}
 }
 
+func TestWeatherLargeFormsHaveReadablePhaseMotion(t *testing.T) {
+	const width, height = 240, 144
+	for _, variant := range []ui.EffectVariant{ui.WeatherClear, ui.WeatherCloudy} {
+		t.Run(fmt.Sprintf("variant-%d", variant), func(t *testing.T) {
+			first := paintWeatherVariantFrame(t, variant, .05, width, height)
+			second := paintWeatherVariantFrame(t, variant, .55, width, height)
+			got := differingWeatherPixels(first, second, width, ui.Rect{W: width, H: height}, 12)
+			if got < 3000 {
+				t.Fatalf("variant %d changed only %d pixels at hero scale, want deliberate large-form motion", variant, got)
+			}
+		})
+	}
+}
+
 func TestWeatherCloudMassBlendsItsUnionOnce(t *testing.T) {
 	const width, height = 160, 96
 	box := ui.Rect{W: width, H: height}

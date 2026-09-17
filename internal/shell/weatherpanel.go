@@ -54,9 +54,9 @@ func weatherTree(r *Registry, h *PanelHost) *ui.Node {
 	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Padding: m.PanelPadding, Children: children}
 }
 
-// weatherLocation names the place the reading describes: the configured
-// label wins, then the geocoded city name, then the coordinates an
-// unconfigured block falls back to.
+// weatherLocation names the place the reading describes. A configured label
+// wins, then the geocoded city name; raw coordinates are not a useful hero
+// caption.
 func weatherLocation(w config.Weather, reading services.Reading) string {
 	if w.Location != "" {
 		return w.Location
@@ -68,9 +68,8 @@ func weatherLocation(w config.Weather, reading services.Reading) string {
 		if w.City != "" {
 			return w.City
 		}
-		return fmt.Sprintf("%.2f°, %.2f°", w.Latitude, w.Longitude)
 	}
-	return absent
+	return ""
 }
 
 // weatherHeaderHeight is the header capsule's height, named so the body can
@@ -146,11 +145,13 @@ func weatherHeroCard(reading services.Reading, location string, m theme.Metrics,
 		}},
 	}}
 	lines := []*ui.Node{
-		{Kind: ui.KindText, TextRole: theme.RoleCaption, Text: location},
 		headline,
 		{Kind: ui.KindText, TextRole: theme.RoleLabel, Tabular: true, Tone: ui.ToneAccent, Text: weatherDayRange(reading)},
 		weatherEssentials(reading, m, contentW),
 		{Kind: ui.KindText, TextRole: theme.RoleCaption, Tabular: true, Text: weatherFreshness(reading)},
+	}
+	if location != "" && location != absent {
+		lines = append([]*ui.Node{{Kind: ui.KindText, TextRole: theme.RoleCaption, Text: location}}, lines...)
 	}
 	card := &ui.Node{
 		Kind: ui.KindCapsule, Padding: m.CardPadding,

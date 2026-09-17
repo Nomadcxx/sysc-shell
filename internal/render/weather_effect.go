@@ -24,10 +24,10 @@ const (
 // ponytail: fixed particle counts cap CPU work; if a benchmark shows the
 // visual grain is too coarse, raise them only with measured tile/binning work.
 const (
-	weatherRainParticles          = 64
-	weatherSnowParticles          = 48
-	weatherHeavySnowParticles     = 72
-	weatherMaxRainLength          = 18
+	weatherRainParticles          = 96
+	weatherSnowParticles          = 64
+	weatherHeavySnowParticles     = 96
+	weatherMaxRainLength          = 22
 	weatherMaxSnowRadius          = 3
 	weatherLightningSegments      = 7
 	weatherMaxLightningSegmentPts = 24
@@ -108,30 +108,31 @@ func paintCelestial(c *Canvas, box ui.Rect, mask *image.Alpha, style Style, spec
 	if celestial.A == 0 {
 		return
 	}
-	time := effectTime(phase, spec.Speed)
+	time := weatherLoopPhase(phase, spec.Speed)
 	width, height := float64(box.W), float64(box.H)
 	short := float64(min(box.W, box.H))
-	breath := .96 + .04*math.Sin(2*math.Pi*(time*.22+weatherUnit(spec.Seed, 41, 1)))
-	cx := width*.69 + math.Sin(2*math.Pi*(time*.18+weatherUnit(spec.Seed, 41, 2)))*width*.035
-	cy := height*.29 + math.Sin(2*math.Pi*(time*.13+weatherUnit(spec.Seed, 41, 3)))*height*.025
+	breath := .93 + .07*(.5+.5*math.Sin(2*math.Pi*(time+weatherUnit(spec.Seed, 41, 1))))
+	cx := width*.69 + math.Sin(2*math.Pi*(time+weatherUnit(spec.Seed, 41, 2)))*width*.055
+	cy := height*.29 + math.Sin(2*math.Pi*(time+weatherUnit(spec.Seed, 41, 3)))*height*.035
 	radius := short * .18 * breath
 	if radius < 3 {
 		radius = 3
 	}
 
 	halo := LerpColor(celestial, style.Foreground, .36)
-	drawWeatherEllipse(c, box, mask, cx, cy, radius*1.72, radius*1.72,
-		halo, weatherAlpha(halo.A, intensity*.18))
-	drawWeatherEllipse(c, box, mask, cx, cy, radius*1.30, radius*1.30,
-		halo, weatherAlpha(halo.A, intensity*(.18+.05*breath)))
+	haloBreath := .5 + .5*math.Sin(2*math.Pi*(time+weatherUnit(spec.Seed, 43, 1)))
+	drawWeatherEllipse(c, box, mask, cx, cy, radius*(1.62+.20*haloBreath), radius*(1.62+.20*haloBreath),
+		halo, weatherAlpha(halo.A, intensity*(.20+.10*haloBreath)))
+	drawWeatherEllipse(c, box, mask, cx, cy, radius*(1.22+.10*haloBreath), radius*(1.22+.10*haloBreath),
+		halo, weatherAlpha(halo.A, intensity*(.24+.10*haloBreath)))
 
 	ray := LerpColor(celestial, style.Foreground, .22)
 	rayCount := 8
-	rotation := 2 * math.Pi * (time*.11 + weatherUnit(spec.Seed, 42, 1))
+	rotation := 2 * math.Pi * (time + weatherUnit(spec.Seed, 42, 1))
 	for i := 0; i < rayCount; i++ {
 		angle := rotation + float64(i)*2*math.Pi/float64(rayCount)
 		inner := radius * 1.28
-		outer := radius * (1.62 + .08*math.Sin(2*math.Pi*(time*.17+float64(i))))
+		outer := radius * (1.62 + .10*math.Sin(2*math.Pi*(time+float64(i)*.17)))
 		drawWeatherStroke(c, box, mask,
 			cx+math.Cos(angle)*inner, cy+math.Sin(angle)*inner,
 			cx+math.Cos(angle)*outer, cy+math.Sin(angle)*outer,
@@ -145,9 +146,9 @@ func paintCelestial(c *Canvas, box ui.Rect, mask *image.Alpha, style Style, spec
 		highlight, weatherAlpha(highlight.A, intensity*.42))
 }
 
-// paintCloudScene uses two overlapping masses so cloud states read as a form,
-// not as another full-card wash. Their bounded drift supplies the slow lift
-// suggested by the Meteocons reference without moving the content layout.
+// paintCloudScene uses parallax masses so cloud states read as a form, not as
+// another full-card wash. The closed phase gives the front and rear layers
+// different lift and drift, like the staged Pixel icon motion.
 func paintCloudScene(c *Canvas, box ui.Rect, mask *image.Alpha, style Style, spec ui.EffectSpec, phase, intensity, density float64) {
 	if intensity <= 0 || box.W <= 0 || box.H <= 0 || density <= 0 {
 		return
@@ -156,18 +157,25 @@ func paintCloudScene(c *Canvas, box ui.Rect, mask *image.Alpha, style Style, spe
 	if base.A == 0 {
 		return
 	}
-	time := effectTime(phase, spec.Speed)
+	time := weatherLoopPhase(phase, spec.Speed)
 	width, height := float64(box.W), float64(box.H)
-	driftX := math.Sin(2*math.Pi*(time*.34+weatherUnit(spec.Seed, 51, 1))) * width * .045
-	driftY := math.Sin(2*math.Pi*(time*.24+weatherUnit(spec.Seed, 51, 2))) * height * .035
+	backX := math.Sin(2*math.Pi*(time+weatherUnit(spec.Seed, 51, 1))) * width * .075
+	backY := math.Sin(2*math.Pi*(time+weatherUnit(spec.Seed, 51, 2))) * height * .045
+	frontX := math.Sin(2*math.Pi*(time+weatherUnit(spec.Seed, 52, 1))) * width * .11
+	frontY := math.Sin(2*math.Pi*(time+weatherUnit(spec.Seed, 52, 2))) * height * .075
+	breath := .5 + .5*math.Sin(2*math.Pi*(time+weatherUnit(spec.Seed, 53, 1)))
 
-	shadow := LerpColor(base, style.Background, .30)
-	paintCloudMass(c, box, mask, width*.38+driftX*.65, height*.57+driftY*.65,
-		width*.66, height*.31, shadow, weatherAlpha(shadow.A, intensity*density*.44))
+	shadow := LerpColor(base, style.Background, .50)
+	paintCloudMass(c, box, mask, width*.34+backX, height*(.57+.025*breath)+backY,
+		width*.70, height*.30, shadow, weatherAlpha(shadow.A, intensity*density*(.42+.10*breath)))
 
-	cloud := LerpColor(base, style.Foreground, .43)
-	paintCloudMass(c, box, mask, width*.60+driftX, height*.73+driftY,
-		width*.92, height*.39, cloud, weatherAlpha(cloud.A, intensity*density*.78))
+	cloud := LerpColor(base, style.Foreground, .27)
+	paintCloudMass(c, box, mask, width*.58+frontX, height*(.71+.025*breath)+frontY,
+		width*.92, height*.38, cloud, weatherAlpha(cloud.A, intensity*density*(.70+.12*breath)))
+
+	highlight := LerpColor(base, style.Foreground, .58)
+	paintCloudMass(c, box, mask, width*.48+frontX*.55, height*.57+frontY*.45,
+		width*.52, height*.25, highlight, weatherAlpha(highlight.A, intensity*density*.30))
 }
 
 type weatherCloudPuff struct {
@@ -301,10 +309,19 @@ func paintFogHaze(c *Canvas, box ui.Rect, mask *image.Alpha, style Style, spec u
 	if base.A == 0 || haze.A == 0 {
 		return
 	}
-	time := effectTime(phase, spec.Speed)
+	time := weatherLoopPhase(phase, spec.Speed)
+	width, height := float64(box.W), float64(box.H)
 	x0, y0, x1, y1 := c.clip(box)
 	if x0 >= x1 || y0 >= y1 {
 		return
+	}
+	for i := 0; i < 3; i++ {
+		layer := float64(i)
+		x := width*(.20+.31*layer) + math.Sin(2*math.Pi*(time+layer*.27))*width*.20
+		y := height*(.33+.23*layer) + math.Sin(2*math.Pi*(time+layer*.41))*height*.035
+		band := LerpColor(haze, base, .18+.08*layer)
+		bandAlpha := intensity * (.10 + .025*layer) * (.82 + .18*(.5+.5*math.Sin(2*math.Pi*(time+layer*.19))))
+		drawWeatherEllipse(c, box, mask, x, y, width*(.46+.06*layer), height*(.075+.012*layer), band, weatherAlpha(band.A, bandAlpha))
 	}
 	for y := y0; y < y1; y++ {
 		v := (float64(y-box.Y) + .5) / float64(box.H)
@@ -314,7 +331,7 @@ func paintFogHaze(c *Canvas, box ui.Rect, mask *image.Alpha, style Style, spec u
 			field += .20 * math.Sin(2*math.Pi*(u*.55-v*.80-time*.035))
 			field = clampEffect(field, 0, 1)
 			col := LerpColor(base, haze, .25+.35*field)
-			col.A = weatherAlpha(col.A, intensity*(.045+.13*field))
+			col.A = weatherAlpha(col.A, intensity*(.055+.15*field))
 			blendWeatherPixel(c, box, mask, x, y, col, 255)
 		}
 	}
@@ -330,21 +347,27 @@ func paintRain(c *Canvas, box ui.Rect, mask *image.Alpha, style Style, spec ui.E
 	}
 	time := effectTime(phase, spec.Speed)
 	width, height := float64(box.W), float64(box.H)
-	cycleHeight := height + weatherMaxRainLength + 1
 	for i := uint64(0); i < weatherRainParticles; i++ {
 		xSeed := weatherUnit(spec.Seed, i, 1)
 		ySeed := weatherUnit(spec.Seed, i, 2)
 		fallSpeed := .72 + weatherUnit(spec.Seed, i, 3)*.46
-		localX := positiveMod(xSeed*width+time*width*.10, width)
-		localY := positiveMod(ySeed*cycleHeight+time*cycleHeight*fallSpeed, cycleHeight) - weatherMaxRainLength
 		length := 7 + int(weatherUnit(spec.Seed, i, 4)*float64(weatherMaxRainLength-6))
 		slant := 2 + int(weatherUnit(spec.Seed, i, 5)*4)
+		life := positiveMod(ySeed+time*fallSpeed/(1+weatherMaxRainLength/height), 1)
+		entry := weatherSmoothstep(0, .16, life)
+		exit := 1 - weatherSmoothstep(.78, 1, life)
+		lifeAlpha := entry * exit
+		if lifeAlpha <= 0 {
+			continue
+		}
+		localX := positiveMod(xSeed*width+time*width*.13, width)
+		localY := life*(height+float64(length)+1) - float64(length)
 		for step := 0; step < length; step++ {
 			fraction := float64(step) / float64(max(length-1, 1))
 			px := int(math.Floor(positiveMod(localX+fraction*float64(slant), width)))
 			py := int(math.Floor(localY + float64(step)))
-			coverage := .62 + .30*math.Min(fraction, 1-fraction)
-			localWeatherPixel(c, box, mask, px, py, ink, weatherAlpha(ink.A, intensity*(.35+.35*weatherUnit(spec.Seed, i, 6))), coverage)
+			coverage := .62 + .30*(1-math.Abs(2*fraction-1))
+			localWeatherPixel(c, box, mask, px, py, ink, weatherAlpha(ink.A, intensity*lifeAlpha*(.48+.38*weatherUnit(spec.Seed, i, 6))), coverage)
 		}
 	}
 }
@@ -359,16 +382,22 @@ func paintSnow(c *Canvas, box ui.Rect, mask *image.Alpha, style Style, spec ui.E
 	}
 	time := effectTime(phase, spec.Speed)
 	width, height := float64(box.W), float64(box.H)
-	cycleHeight := height + 2*weatherMaxSnowRadius + 1
 	for i := uint64(0); i < uint64(count); i++ {
 		xSeed := weatherUnit(spec.Seed, i, 11)
 		ySeed := weatherUnit(spec.Seed, i, 12)
 		radius := 1 + int(weatherUnit(spec.Seed, i, 13)*float64(weatherMaxSnowRadius))
 		fallSpeed := .20 + weatherUnit(spec.Seed, i, 14)*.24
-		localY := positiveMod(ySeed*cycleHeight+time*cycleHeight*fallSpeed, cycleHeight) - weatherMaxSnowRadius
+		life := positiveMod(ySeed+time*fallSpeed/(1+2*weatherMaxSnowRadius/height), 1)
+		entry := weatherSmoothstep(0, .14, life)
+		exit := 1 - weatherSmoothstep(.84, 1, life)
+		lifeAlpha := entry * exit
+		if lifeAlpha <= 0 {
+			continue
+		}
+		localY := life*(height+2*weatherMaxSnowRadius+1) - weatherMaxSnowRadius
 		drift := math.Sin(2*math.Pi*(time*.20+xSeed)) * (1 + weatherUnit(spec.Seed, i, 15)*2)
 		localX := positiveMod(xSeed*width+drift, width)
-		flakeAlpha := intensity * density * (.35 + .35*weatherUnit(spec.Seed, i, 16))
+		flakeAlpha := intensity * density * lifeAlpha * (.42 + .42*weatherUnit(spec.Seed, i, 16))
 		for dy := -radius; dy <= radius; dy++ {
 			for dx := -radius; dx <= radius; dx++ {
 				distance := math.Hypot(float64(dx), float64(dy))
@@ -405,7 +434,7 @@ func paintLightning(c *Canvas, box ui.Rect, mask *image.Alpha, style Style, spec
 			u := (float64(x-box.X) + .5) / float64(box.W)
 			variation := .5 + .5*math.Sin(2*math.Pi*(u*.55+v*.90))
 			col := ink
-			col.A = weatherAlpha(ink.A, intensity*pulse*(.025+.04*variation))
+			col.A = weatherAlpha(ink.A, intensity*pulse*(.045+.07*variation))
 			blendWeatherPixel(c, box, mask, x, y, col, 255)
 		}
 	}
@@ -421,6 +450,11 @@ func paintLightning(c *Canvas, box ui.Rect, mask *image.Alpha, style Style, spec
 		nextX := clampInt(previousX+offset, 0, max(box.W-1, 0))
 		drawWeatherSegment(c, box, mask, previousX, previousY, nextX, nextY, ink,
 			weatherAlpha(ink.A, intensity*pulse*.80), .70)
+		glow := LerpColor(ink, style.Foreground, .45)
+		drawWeatherStroke(c, box, mask, float64(previousX), float64(previousY), float64(nextX), float64(nextY),
+			max(2, float64(min(box.W, box.H))*.014), glow, weatherAlpha(glow.A, intensity*pulse*.48))
+		drawWeatherSegment(c, box, mask, previousX, previousY, nextX, nextY, style.Foreground,
+			weatherAlpha(style.Foreground.A, intensity*pulse*.92), .95)
 		previousX, previousY = nextX, nextY
 	}
 }
@@ -537,6 +571,28 @@ func effectTime(phase, speed float64) float64 {
 	}
 	phase = positiveMod(phase, 1)
 	return phase * clampEffect(speed, 0, 4)
+}
+
+func weatherLoopPhase(phase, speed float64) float64 {
+	if math.IsNaN(phase) || math.IsInf(phase, 0) || math.IsNaN(speed) || math.IsInf(speed, 0) || speed <= 0 {
+		return 0
+	}
+	cycles := math.Round(clampEffect(speed, 0, 4))
+	if cycles < 1 {
+		cycles = 1
+	}
+	return positiveMod(positiveMod(phase, 1)*cycles, 1)
+}
+
+func weatherSmoothstep(edge0, edge1, value float64) float64 {
+	if edge1 <= edge0 {
+		if value >= edge1 {
+			return 1
+		}
+		return 0
+	}
+	t := clampEffect((value-edge0)/(edge1-edge0), 0, 1)
+	return t * t * (3 - 2*t)
 }
 
 func lightningPulse(phase, speed float64, seed uint64) float64 {
