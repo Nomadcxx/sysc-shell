@@ -29,6 +29,8 @@ var materialIcons = map[string]struct{}{
 	"web_asset": {}, "display_settings": {}, "apps": {}, "extension": {},
 	"accessibility_new": {}, "folder_open": {}, "expand_more": {},
 	"add": {}, "remove": {},
+	// The bar composition editor's chrome.
+	"drag_indicator": {}, "tune": {}, "link_off": {},
 	"lock": {}, "logout": {}, "bedtime": {}, "restart_alt": {}, "power_settings_new": {},
 	"speed": {}, "balance": {}, "energy_savings_leaf": {}, "check": {},
 	"content_paste": {}, "content_copy": {},

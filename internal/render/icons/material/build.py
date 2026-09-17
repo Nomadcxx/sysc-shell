@@ -122,6 +122,16 @@ ICONS = [
     "expand_more",
     "add",
     "remove",
+    # The bar composition editor. A chip is a drag source, so it wears the
+    # six-dot grip rather than the list variant; "tune" opens the inspector,
+    # because "settings" already means the settings surface itself everywhere
+    # else in this shell and reusing it on a chip would name two things with
+    # one glyph; and "link_off" dissolves a group, which is breaking a
+    # grouping rather than removing its members, so neither "close" nor
+    # "delete" says it.
+    "drag_indicator",
+    "tune",
+    "link_off",
 ]
 
 # The pinned source renamed the older smartphone ligature. Keep the shell's
