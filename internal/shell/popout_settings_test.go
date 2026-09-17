@@ -7,6 +7,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -14,10 +15,10 @@ func TestSettingsSidebarSectionsAndFocus(t *testing.T) {
 	t.Parallel()
 	h := newSettingsHost()
 	tabs := byRole(h.root, "tab")
-	if len(tabs) != 7 {
-		t.Fatalf("sidebar tabs = %d, want 7", len(tabs))
+	want := settings.SectionNames()
+	if len(tabs) != len(want) {
+		t.Fatalf("sidebar tabs = %d, want the %d sections", len(tabs), len(want))
 	}
-	want := []string{"Bar", "Widgets", "Appearance", "Panels", "Session", "Accessibility", "Plugins"}
 	for i, name := range want {
 		if tabs[i].Text != name {
 			t.Fatalf("tab %d = %q, want %q", i, tabs[i].Text, name)
@@ -75,25 +76,6 @@ func TestSettingsEntryRendersMatchingControl(t *testing.T) {
 	}
 }
 
-func TestSettingsContentIsVirtualList(t *testing.T) {
-	t.Parallel()
-	h := newSettingsHost()
-	s := findScroll(h.root)
-	if s == nil {
-		t.Fatal("settings tree has no scroll area")
-	}
-	if s.Kind != ui.KindVirtualList {
-		t.Fatalf("content kind = %d, want virtual list", s.Kind)
-	}
-	if s.Item == nil || s.ItemCount == 0 {
-		t.Fatal("virtual list has no items")
-	}
-	row := s.Item(0)
-	if row == nil {
-		t.Fatal("item 0 is nil")
-	}
-}
-
 func TestSettingsKeyboardOnlyTraversal(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
@@ -110,15 +92,16 @@ func TestSettingsKeyboardOnlyTraversal(t *testing.T) {
 	if n := h.focused(); n == nil || n.Role != "tab" {
 		t.Fatal("tab from search did not land on the sidebar")
 	}
+	sections := settings.SectionNames()
 	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyDown})
-	if n := h.focused(); n == nil || n.Text != "Widgets" {
-		t.Fatalf("arrow moved to %q, want Widgets", nameOf(h.focused()))
+	if n := h.focused(); n == nil || n.Text != sections[1] {
+		t.Fatalf("arrow moved to %q, want %q", nameOf(h.focused()), sections[1])
 	}
 	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyUp})
-	if n := h.focused(); n == nil || n.Text != "Bar" {
-		t.Fatalf("arrow moved to %q, want Bar", nameOf(h.focused()))
+	if n := h.focused(); n == nil || n.Text != sections[0] {
+		t.Fatalf("arrow moved to %q, want %q", nameOf(h.focused()), sections[0])
 	}
-	for i := 0; i < 20 && (h.focused() == nil || h.focused().Kind != ui.KindToggle); i++ {
+	for i := 0; i < len(h.focus)+2 && (h.focused() == nil || h.focused().Kind != ui.KindToggle); i++ {
 		handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyTab})
 	}
 	n := h.focused()
@@ -145,7 +128,7 @@ func TestSettingsApplyWritesConfig(t *testing.T) {
 	reqs := drainAux(t, reg, 2)
 	handle := reqs[1].Open.Callbacks.Handle
 	h := reg.panelHosts[PanelSettings]
-	for i := 0; i < 20 && (h.focused() == nil || h.focused().Kind != ui.KindToggle); i++ {
+	for i := 0; i < len(h.focus)+2 && (h.focused() == nil || h.focused().Kind != ui.KindToggle); i++ {
 		handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyTab})
 	}
 	if h.focused() == nil || h.focused().Kind != ui.KindToggle {
@@ -270,4 +253,92 @@ func nameOf(n *ui.Node) string {
 		return ""
 	}
 	return n.Text
+}
+
+// TestSettingsRowsCarryDescriptionsAndGroupHeadings is D3. KindVirtualList is
+// strictly uniform stride — column.go boxes every item at ItemHeight and
+// advances by it — so a caption under a label and a heading above a run of
+// rows cannot exist under it. The pane lays the section out instead, which
+// section partitioning keeps cheap.
+func TestSettingsRowsCarryDescriptionsAndGroupHeadings(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	if findKind(h.root, ui.KindVirtualList) != nil {
+		t.Fatal("settings still renders a virtual list, which cannot carry descriptions")
+	}
+	var caption, heading *ui.Node
+	for _, n := range walk(h.root) {
+		if n.Text == "" {
+			continue
+		}
+		if n.TextRole == theme.RoleCaption && n.Tone == ui.ToneSubtle {
+			caption = n
+		}
+		if n.TextRole == theme.RoleLabel {
+			heading = n
+		}
+	}
+	if caption == nil {
+		t.Error("no row rendered a subtle caption description")
+	}
+	if heading == nil {
+		t.Error("no group heading was rendered")
+	}
+	if findScroll(h.root) == nil {
+		t.Error("the section does not scroll")
+	}
+}
+
+// TestOnlyAChangedRowOffersItsReset is D5 at the surface: deviation is
+// ambient, so a row that still sits on its default carries no reset and a
+// changed one does. "What have I actually changed" is the question neither
+// reference shell answers at rest.
+func TestOnlyAChangedRowOffersItsReset(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	if got := byAction(h.root, "reset:bar.height"); got != nil {
+		t.Fatal("an untouched row offered a reset")
+	}
+
+	h.draft.Bar.Height = h.draft.Bar.Height + 7
+	h.root = settingsTree(nil, h)
+	if got := byAction(h.root, "reset:bar.height"); got == nil {
+		t.Fatal("a changed row did not reveal its reset")
+	}
+}
+
+// TestResetReturnsTheRowToItsDefault drives the control rather than the
+// registry, so the action wiring is covered and not just the resolution.
+func TestResetReturnsTheRowToItsDefault(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelSettings]
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	want := h.draft.Bar.Height
+	h.draft.Bar.Height = want + 7
+	reg.rebuildPanel(h)
+	reset := byAction(h.root, "reset:bar.height")
+	if reset == nil {
+		t.Fatal("changed row offered no reset")
+	}
+	h.setFocus(reset)
+	h.activate(reg)
+	if got := h.draft.Bar.Height; got != want {
+		t.Fatalf("height = %d after reset, want the default %d", got, want)
+	}
+}
+
+func byAction(n *ui.Node, action string) *ui.Node {
+	for _, c := range walk(n) {
+		if c.Action == action {
+			return c
+		}
+	}
+	return nil
 }

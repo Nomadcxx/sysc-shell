@@ -10,7 +10,11 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
-var settingsSections = []string{"Bar", "Widgets", "Appearance", "Panels", "Session", "Accessibility", "Plugins"}
+// settingsSections is the rail, and the vocabulary IPC section addressing
+// validates against. It is the registry's own ordering rather than a second
+// list: a section named here and nowhere else renders empty, and one named
+// only there is unreachable.
+var settingsSections = settings.SectionNames()
 
 // settingsSidebarWidth is the measured width of the section rail. The search
 // field takes it too, so the field and the tabs below it read as one column
@@ -68,29 +72,78 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	if h.set != nil {
 		entries = h.set.Section(section)
 	}
-	content := &ui.Node{
-		Kind:       ui.KindVirtualList,
-		ItemCount:  len(entries),
-		ItemHeight: h.metrics().StandardControl,
-		Item: func(i int) *ui.Node {
-			if i < 0 || i >= len(entries) {
-				return nil
-			}
-			return settingsEntryRow(h, entries[i])
-		},
-	}
 	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXL, Padding: h.metrics().PanelPadding, Children: []*ui.Node{
 		{Kind: ui.KindColumn, Width: settingsSidebarWidth, Gap: theme.MarginM, Children: sidebar},
-		content,
+		settingsSectionColumn(h, entries),
 	}}
 }
 
+// settingsSectionColumn lays the whole section out rather than virtualising
+// it. KindVirtualList is strictly uniform stride — column.go boxes every item
+// at ItemHeight and advances by exactly that — so a caption beneath a label
+// and a heading above a run of rows cannot exist under it. Sections bound the
+// row count, which is what keeps laying the whole thing out cheap.
+func settingsSectionColumn(h *PanelHost, entries []settings.Entry) *ui.Node {
+	var order []string
+	rows := map[string][]settings.Entry{}
+	for _, e := range entries {
+		if _, seen := rows[e.Group]; !seen {
+			order = append(order, e.Group)
+		}
+		rows[e.Group] = append(rows[e.Group], e)
+	}
+	groups := make([]*ui.Node, 0, len(order))
+	for _, name := range order {
+		body := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM}
+		for _, e := range rows[name] {
+			body.Children = append(body.Children, settingsEntryRow(h, e))
+		}
+		if name == "" {
+			groups = append(groups, body)
+			continue
+		}
+		groups = append(groups, &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: name, TextRole: theme.RoleLabel},
+			body,
+		}})
+	}
+	return &ui.Node{Kind: ui.KindScroll, Gap: theme.MarginXL, Children: groups}
+}
+
 func settingsEntryRow(h *PanelHost, e settings.Entry) *ui.Node {
-	control := settingsControl(h, e)
-	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
-		{Kind: ui.KindText, Text: e.Label},
-		control,
+	label := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: e.Label, Name: e.Label},
 	}}
+	if e.Describe != "" {
+		label.Children = append(label.Children, &ui.Node{
+			Kind: ui.KindText, Text: e.Describe,
+			TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
+		})
+	}
+	trailing := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS}
+	// Deviation is ambient: only a row that has moved off its default carries
+	// the control that puts it back.
+	if !e.IsDefault(h.draft) {
+		trailing.Children = append(trailing.Children, settingsResetButton(e))
+	}
+	trailing.Children = append(trailing.Children, settingsControl(h, e))
+
+	row := &ui.Node{Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{label, trailing}}
+	if e.Describe == "" {
+		// A one-line row takes the control height so a run of them reads as a
+		// ladder. A described row is two stacked lines and a fixed height
+		// would crop the caption, so it measures itself; every size inside it
+		// still comes from the density ladder.
+		row.Height = h.metrics().StandardControl
+	}
+	return row
+}
+
+func settingsResetButton(e settings.Entry) *ui.Node {
+	return &ui.Node{
+		Kind: ui.KindButton, Text: "Reset", Action: "reset:" + e.Path,
+		Name: "Reset " + e.Label, Role: "button", Focusable: true,
+	}
 }
 
 func settingsControl(h *PanelHost, e settings.Entry) *ui.Node {

@@ -1794,6 +1794,13 @@ func (h *PanelHost) activate(r *Registry) bool {
 		}
 		return true
 	}
+	if path, ok := strings.CutPrefix(n.Action, "reset:"); ok {
+		if e := h.set.ByPath(path); e != nil && e.Default != nil {
+			h.commitSetting(r, e, e.Default(h.draft))
+			r.rebuildPanel(h)
+		}
+		return true
+	}
 	if name, ok := strings.CutPrefix(n.Action, "profile:"); ok {
 		r.setSessionProfile(h, name)
 		return true
@@ -2021,7 +2028,12 @@ func panelTargetSize(id PanelID) ui.Rect {
 	case PanelMonitor:
 		return ui.Rect{W: 640, H: 720}
 	case PanelSettings:
-		return ui.Rect{W: 900, H: 620}
+		// Width is unchanged on purpose: the narrowest-width acceptance check
+		// lays this panel out at its target, and holding width leaves that
+		// premise intact while the plain column takes the vertical room that
+		// descriptions and group headings need. FittedSize clamps on a short
+		// output.
+		return ui.Rect{W: 900, H: 760}
 	case PanelLauncher:
 		// 700 is DMS spotlight's own height. FittedSize caps this to the
 		// output before placement, so a short screen clamps rather than
