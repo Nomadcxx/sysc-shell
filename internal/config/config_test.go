@@ -314,7 +314,7 @@ func TestARejectedCandidateLeavesNoPartialState(t *testing.T) {
 	}
 }
 
-func TestDefaultVocabularyShipsBothClocksAndBothNiriWidgets(t *testing.T) {
+func TestDefaultVocabularyShipsTimeDateGroupWordmarkAndMedia(t *testing.T) {
 	t.Parallel()
 	cfg := Default()
 
@@ -328,15 +328,25 @@ func TestDefaultVocabularyShipsBothClocksAndBothNiriWidgets(t *testing.T) {
 		t.Fatalf("left[2] = %+v, want window-title with a positive max width", cfg.Bar.Left[2])
 	}
 	if len(cfg.Bar.Center) != 3 {
-		t.Fatalf("center = %+v, want time, wordmark, and date", cfg.Bar.Center)
+		t.Fatalf("center = %+v, want time/date group, wordmark, and media", cfg.Bar.Center)
 	}
-	if cfg.Bar.Center[0].ID != "clock" || cfg.Bar.Center[1].ID != "wordmark" || cfg.Bar.Center[2].ID != "clock" {
-		t.Fatalf("center = %+v, want clock, wordmark, clock", cfg.Bar.Center)
+	group := cfg.Bar.Center[0]
+	if group.ID != "group" || len(group.Items) != 2 {
+		t.Fatalf("center[0] = %+v, want a two-clock group", group)
+	}
+	if group.Items[0].ID != "clock" || group.Items[1].ID != "clock" {
+		t.Fatalf("time/date group = %+v, want two clocks", group.Items)
+	}
+	if group.Items[0].Format != "15:04" || group.Items[1].Format != "Mon 2 Jan" {
+		t.Fatalf("time/date formats = %q/%q, want time before date", group.Items[0].Format, group.Items[1].Format)
+	}
+	if cfg.Bar.Center[1].ID != "wordmark" || cfg.Bar.Center[2].ID != "media" {
+		t.Fatalf("center = %+v, want group, wordmark, media", cfg.Bar.Center)
 	}
 	// The two default clocks must differ, or the defaults do not demonstrate
 	// a date.
-	if cfg.Bar.Center[0].Format == cfg.Bar.Center[2].Format {
-		t.Fatal("the two default clocks share a format; one should show the date")
+	if group.Items[0].Boundary != time.Minute || group.Items[1].Boundary != time.Minute {
+		t.Fatalf("time/date group boundaries = %v/%v, want one minute", group.Items[0].Boundary, group.Items[1].Boundary)
 	}
 	// The right section carries status widgets rather than a second clock.
 	if len(cfg.Bar.Right) == 0 {
@@ -351,11 +361,6 @@ func TestDefaultVocabularyShipsBothClocksAndBothNiriWidgets(t *testing.T) {
 	for i, item := range cfg.Bar.Right {
 		if item.ID == "clock" {
 			t.Fatalf("right[%d] is a clock; the date moved to the centre", i)
-		}
-	}
-	for _, item := range cfg.Bar.Center {
-		if item.ID == "clock" && item.Boundary <= 0 {
-			t.Fatalf("default clock %+v has no tick boundary", item)
 		}
 	}
 	for _, item := range cfg.Bar.Right {

@@ -29,7 +29,7 @@ func buildMediaWidget(items ...config.Item) textWidget {
 	if len(items) > 0 {
 		maxWidth = items[0].MaxWidth
 	}
-	row := &ui.Node{Kind: ui.KindRow, Gap: groupGap, Action: panelMediaAction,
+	row := &ui.Node{Kind: ui.KindRow, Gap: groupGap, Action: panelMediaAction, Absent: true,
 		Name: "Media", Role: "button",
 		Children: []*ui.Node{
 			{Kind: ui.KindIcon, Key: "media-art", Icon: "music_note", IconSize: DefaultTheme().Metrics.IconNormal},

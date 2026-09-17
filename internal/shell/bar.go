@@ -158,13 +158,49 @@ func (b *Bar) configuredSize() (w, h int) {
 // widgets returns the three sections in paint order.
 func (b *Bar) widgets() [][]textWidget { return [][]textWidget{b.left, b.center, b.right} }
 
+func visibleWidgetNode(w textWidget) *ui.Node {
+	if w.node == nil {
+		return nil
+	}
+	if w.hideWhenAbsent && w.node.Absent {
+		clearNodeBounds(w.node)
+		return nil
+	}
+	if len(w.members) > 0 {
+		container := w.inner
+		if container == nil {
+			container = w.node
+		}
+		children := make([]*ui.Node, 0, len(w.members))
+		for _, member := range w.members {
+			if node := visibleWidgetNode(member); node != nil {
+				children = append(children, node)
+			}
+		}
+		container.Children = children
+	}
+	return w.node
+}
+
+func clearNodeBounds(n *ui.Node) {
+	if n == nil {
+		return
+	}
+	n.Bounds = ui.Rect{}
+	for _, child := range n.Children {
+		clearNodeBounds(child)
+	}
+}
+
 // sections returns the retained nodes in paint order, for layout and painting.
 func (b *Bar) sections() [][]*ui.Node {
 	out := make([][]*ui.Node, 0, 3)
 	for _, section := range b.widgets() {
 		nodes := make([]*ui.Node, 0, len(section))
 		for _, w := range section {
-			nodes = append(nodes, w.node)
+			if node := visibleWidgetNode(w); node != nil {
+				nodes = append(nodes, node)
+			}
 		}
 		out = append(out, nodes)
 	}
@@ -687,10 +723,19 @@ func (b *Bar) tooltipAt(x, y int) (string, *ui.Node, ui.Rect, bool) {
 func (b *Bar) tooltipAtLocked(x, y int) (string, *ui.Node, ui.Rect, bool) {
 	for _, section := range b.widgets() {
 		for _, w := range section {
+			if w.node != nil && visibleWidgetNode(w) == nil {
+				continue
+			}
 			for _, m := range w.members {
+				if visibleWidgetNode(m) == nil {
+					continue
+				}
 				if tip := widgetTooltip(m); (tip != "" || m.tooltipTree() != nil) && m.node.Bounds.Contains(x, y) {
 					return tip, m.tooltipTree(), m.node.Bounds, true
 				}
+			}
+			if w.node == nil {
+				continue
 			}
 			if tip := widgetTooltip(w); (tip != "" || w.tooltipTree() != nil) && w.node.Bounds.Contains(x, y) {
 				return tip, w.tooltipTree(), w.node.Bounds, true

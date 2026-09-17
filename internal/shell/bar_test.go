@@ -2,11 +2,14 @@ package shell
 
 import (
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -318,8 +321,202 @@ func TestBarArrangesSectionsInsideTheContentBand(t *testing.T) {
 	// fewer than the bar produces.
 	bar := config.Default().Bar
 	want := len(bar.Left) + len(bar.Center) + len(bar.Right)
+	// Media is configured but initially absent, so it intentionally has no
+	// layout surface until a player snapshot arrives.
+	if hasMediaItem(bar.Center) {
+		want--
+	}
 	if arranged != want {
-		t.Fatalf("arranged %d items, want the %d of the full default bar", arranged, want)
+		t.Fatalf("arranged %d visible items, want %d", arranged, want)
+	}
+}
+
+func TestBarCollapsesAbsentMediaAcrossRetainedConsumers(t *testing.T) {
+	t.Parallel()
+
+	bar := newTestBar(t)
+	t.Cleanup(bar.stopAnimation)
+	metrics := bar.themeSnapshot().Metrics
+	widgets := buildWidgets([]config.Item{
+		{ID: "wordmark"},
+		{ID: "media", MaxWidth: 120},
+	}, metrics.CapsulePadding, metrics)
+	bar.left, bar.center, bar.right = nil, widgets, nil
+
+	present := barView{Media: services.MediaState{
+		Available: true, Status: services.PlaybackPlaying, Title: "Track",
+	}}
+	if !bar.apply(present) {
+		t.Fatal("the present media view reported no change")
+	}
+	layoutForTest(t, bar, 800)
+	media := widgets[1].node
+	if media.Absent || media.Bounds.W == 0 {
+		t.Fatalf("present media = %+v, want a visible arranged node", media)
+	}
+	mediaPoint := struct{ x, y int }{media.Bounds.X + media.Bounds.W/2, media.Bounds.Y + media.Bounds.H/2}
+	if got := bar.actionBounds(panelMediaAction); got != media.Bounds {
+		t.Fatalf("present media action bounds = %+v, want %+v", got, media.Bounds)
+	}
+	bar.mu.Lock()
+	if got, ok := bar.hitLocked(mediaPoint.x, mediaPoint.y); !ok || got != panelMediaAction {
+		bar.mu.Unlock()
+		t.Fatalf("present media hit = %q/%v, want %q/true", got, ok, panelMediaAction)
+	}
+	tip, _, _, ok := bar.tooltipAtLocked(mediaPoint.x, mediaPoint.y)
+	bar.mu.Unlock()
+	if !ok || tip != "Media" {
+		t.Fatalf("present media tooltip = %q/%v, want Media/true", tip, ok)
+	}
+	bar.mu.Lock()
+	root, _ := bar.renderViewLocked()
+	bar.mu.Unlock()
+	if findAction(root, panelMediaAction) == nil {
+		t.Fatal("present media was missing from the rendered tree")
+	}
+
+	if !bar.apply(barView{}) {
+		t.Fatal("the absent media view reported no change")
+	}
+	layoutForTest(t, bar, 800)
+	sections := bar.sections()
+	if len(sections[1]) != 1 || sections[1][0] != widgets[0].node {
+		t.Fatalf("absent centre sections = %+v, want only the wordmark", sections[1])
+	}
+	if media.Bounds != (ui.Rect{}) {
+		t.Fatalf("absent media bounds = %+v, want zero surface", media.Bounds)
+	}
+	if got := bar.actionBounds(panelMediaAction); got != (ui.Rect{}) {
+		t.Fatalf("absent media action bounds = %+v, want zero", got)
+	}
+	bar.mu.Lock()
+	got, hit := bar.hitLocked(mediaPoint.x, mediaPoint.y)
+	tip, _, _, tipOK := bar.tooltipAtLocked(mediaPoint.x, mediaPoint.y)
+	root, _ = bar.renderViewLocked()
+	bar.mu.Unlock()
+	if hit && got == panelMediaAction {
+		t.Fatalf("absent media retained hit action %q", got)
+	}
+	if tipOK && tip == "Media" {
+		fatalf := "absent media retained tooltip %q"
+		t.Fatalf(fatalf, tip)
+	}
+	if findAction(root, panelMediaAction) != nil {
+		t.Fatal("absent media remained in the rendered tree")
+	}
+
+	if !bar.apply(present) {
+		t.Fatal("the returning media view reported no change")
+	}
+	layoutForTest(t, bar, 800)
+	if widgets[1].node.Absent || widgets[1].node.Bounds.W == 0 {
+		t.Fatalf("returning media = %+v, want a visible arranged node", widgets[1].node)
+	}
+	if got := bar.actionBounds(panelMediaAction); got != widgets[1].node.Bounds {
+		t.Fatalf("returning media action bounds = %+v, want %+v", got, widgets[1].node.Bounds)
+	}
+}
+
+func TestDefaultCentreKeepsWordmarkAnchoredAcrossMediaAndClockChanges(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	const mediaMaxWidth = 180
+	cfg.Bar.Center[2].MaxWidth = mediaMaxWidth
+	bar, err := NewWithTheme(ThemeFrom(cfg, cfg.Bar), cfg.Bar, "DP-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(bar.stopAnimation)
+	if !bar.apply(barView{Now: reference}) {
+		t.Fatal("the initial clock snapshot reported no change")
+	}
+	const width = 1200
+	if err := bar.Configure(width, BarHeight, 120); err != nil {
+		t.Fatal(err)
+	}
+
+	render := func() *ui.Node {
+		t.Helper()
+		pixels := make([]byte, width*BarHeight*4)
+		if err := bar.Render(pixels, width, BarHeight, width*4); err != nil {
+			t.Fatal(err)
+		}
+		bar.mu.Lock()
+		defer bar.mu.Unlock()
+		root, _ := bar.renderViewLocked()
+		return root
+	}
+	wordmarkCentre := func(root *ui.Node) int {
+		t.Helper()
+		mark := findAction(root, panelControlCenterAction)
+		if mark == nil {
+			t.Fatal("rendered default bar has no wordmark")
+		}
+		return mark.Bounds.X + mark.Bounds.W/2
+	}
+
+	root := render()
+	content := bar.contentLocked(width, BarHeight)
+	wantCentre := content.X + content.W/2
+	if got := wordmarkCentre(root); got != wantCentre {
+		t.Fatalf("wordmark centre without media = %d, want %d", got, wantCentre)
+	}
+	if len(bar.sections()[1]) != 2 {
+		t.Fatalf("centre without media = %d nodes, want group and wordmark", len(bar.sections()[1]))
+	}
+	group := bar.center[0]
+	if group.node.Kind != ui.KindCapsule || group.inner == nil || group.inner.Kind != ui.KindRow || len(group.inner.Children) != 2 {
+		t.Fatalf("default time/date group = %+v, want one capsule with two clocks", group)
+	}
+	wordmark := bar.center[1].node
+	if wordmark.Action != panelControlCenterAction || wordmark.Name != "Control centre" || wordmark.Role != "button" {
+		t.Fatalf("wordmark accessibility = %+v", wordmark)
+	}
+	groupBounds := group.node.Bounds
+
+	art := &ui.Image{Width: mediaBarArtSize, Height: mediaBarArtSize, Stride: mediaBarArtSize * 4,
+		Pix: make([]byte, mediaBarArtSize*mediaBarArtSize*4)}
+	longTitle := strings.Repeat("A very long track title ", 12)
+	present := barView{
+		Now: reference, Media: services.MediaState{
+			Available: true, Player: "org.mpris.MediaPlayer2.player",
+			Status: services.PlaybackPlaying, Title: longTitle,
+		}, MediaArt: art,
+	}
+	if !bar.apply(present) {
+		t.Fatal("the present media snapshot reported no change")
+	}
+	root = render()
+	if got := wordmarkCentre(root); got != wantCentre {
+		t.Fatalf("wordmark centre with media = %d, want %d", got, wantCentre)
+	}
+	media := findAction(root, panelMediaAction)
+	if media == nil {
+		t.Fatal("rendered default bar has no media action")
+	}
+	title := findNode(root, func(n *ui.Node) bool { return n.Key == "media-title" })
+	if title == nil || title.Bounds.W > mediaMaxWidth || !title.Marquee {
+		t.Fatalf("rendered media title = %+v, want max width %d and marquee", title, mediaMaxWidth)
+	}
+	if got := bar.center[2].inner.Children[0].Kind; got != ui.KindImage {
+		t.Fatalf("media leading node kind = %d, want resolved art image", got)
+	}
+	if bar.center[2].inner.Action != panelMediaAction || bar.center[2].inner.Name != "Media" || bar.center[2].inner.Role != "button" {
+		t.Fatalf("media accessibility = %+v", bar.center[2].inner)
+	}
+	if group.node.Bounds != groupBounds {
+		t.Fatalf("clock group bounds changed with media: before=%+v after=%+v", groupBounds, group.node.Bounds)
+	}
+
+	if !bar.apply(barView{Now: reference.Add(time.Minute), Media: present.Media, MediaArt: art}) {
+		t.Fatal("the minute-boundary snapshot reported no change")
+	}
+	root = render()
+	if got := wordmarkCentre(root); got != wantCentre {
+		t.Fatalf("wordmark centre after minute boundary = %d, want %d", got, wantCentre)
+	}
+	if bar.center[0].node.Bounds != groupBounds {
+		t.Fatalf("clock group bounds changed at the minute boundary: before=%+v after=%+v", groupBounds, bar.center[0].node.Bounds)
 	}
 }
 

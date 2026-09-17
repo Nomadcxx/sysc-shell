@@ -73,6 +73,38 @@ func TestWordmarkWidgetIsBareAndBalancesItsClocks(t *testing.T) {
 	}
 }
 
+func TestDefaultCentreBuildsTimeDateGroupAndMedia(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	metrics := standardMetrics()
+	widgets := buildWidgets(cfg.Bar.Center, metrics.CapsulePadding, metrics)
+	if len(widgets) != 3 {
+		t.Fatalf("default centre widgets = %d, want group, wordmark, media", len(widgets))
+	}
+
+	group := widgets[0]
+	if group.node.Kind != ui.KindCapsule || group.inner == nil || group.inner.Kind != ui.KindRow {
+		t.Fatalf("time/date widget = %+v, want one capsule around one row", group)
+	}
+	if len(group.inner.Children) != 2 {
+		t.Fatalf("time/date members = %d, want time and date", len(group.inner.Children))
+	}
+	for i, member := range group.inner.Children {
+		if member.Kind != ui.KindText || !member.Tabular || member.MinWidthText != clockWidthFloor {
+			t.Fatalf("time/date member %d = %+v, want tabular clock with floor %q", i, member, clockWidthFloor)
+		}
+	}
+
+	mark := widgets[1]
+	if mark.node.Kind != ui.KindWordmark || mark.inner != nil {
+		t.Fatalf("wordmark = %+v, want bare wordmark", mark)
+	}
+	media := widgets[2]
+	if media.node.Kind != ui.KindCapsule || media.inner == nil || !media.node.Absent {
+		t.Fatalf("media = %+v, want an initially absent capsule", media)
+	}
+}
+
 func TestLauncherWidgetUsesGhostAndOpensLauncher(t *testing.T) {
 	t.Parallel()
 	widgets := buildWidgets([]config.Item{{ID: "launcher"}}, 8, standardMetrics())
