@@ -101,7 +101,7 @@ func barChipHeight(h *PanelHost) int { return h.metrics().StandardControl }
 // The chip carries a width. A's clipping defect was a node with no width
 // inside a row that right-pins, and this strip composes chips and lanes into
 // that same pane, so every column here states its own.
-func barChip(h *PanelHost, ref config.ItemRef, it config.Item, selected bool, width int) *ui.Node {
+func barChip(h *PanelHost, ref config.ItemRef, it config.Item, selected bool, width int, canGroup bool) *ui.Node {
 	name := settings.WidgetName(it)
 	addr := barRefAction(ref)
 	m := h.metrics()
@@ -122,18 +122,37 @@ func barChip(h *PanelHost, ref config.ItemRef, it config.Item, selected bool, wi
 	// child but never descends, so a nested row's icon and label would be
 	// given no box and the chip would paint as an empty pill. Found on the
 	// laptop, where exactly that happened.
+	// The chip carries its own actions rather than leaving them to the
+	// inspector. Lanes stack vertically, so with a full bar the inspector
+	// lands hundreds of pixels below the scroll viewport and remove and group
+	// were reachable from nowhere at all. A control belongs next to the thing
+	// it acts on.
+	glyph := func(icon, action, label string) *ui.Node {
+		return &ui.Node{
+			Kind: ui.KindButton, Action: action, Name: label, Role: "button", Focusable: true,
+			Width: m.IconNormal, Height: m.IconNormal,
+			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: icon, IconSize: m.IconSmall}},
+		}
+	}
+	trailing := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS}
+	if canGroup {
+		// Only offered where there is something after this chip to fold it
+		// together with, rather than offering a control that would fail.
+		trailing.Children = append(trailing.Children,
+			glyph("link", "bar-group:"+addr, "Group "+name+" with the widget after it"))
+	}
+	trailing.Children = append(trailing.Children,
+		glyph("tune", "bar-inspect:"+addr, "Configure "+name),
+		glyph("close", "bar-remove:"+addr, "Remove "+name+" from the bar"),
+	)
+
 	chip.Children = []*ui.Node{{
 		Kind: ui.KindRow, Gap: theme.MarginS, PinEnd: true, Children: []*ui.Node{
 			{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
 				{Kind: ui.KindIcon, Icon: "drag_indicator", IconSize: m.IconSmall, Tone: ui.ToneSubtle},
 				{Kind: ui.KindText, Text: name},
 			}},
-			{
-				Kind: ui.KindButton, Action: "bar-inspect:" + addr,
-				Name: "Configure " + name, Role: "button", Focusable: true,
-				Width: m.IconNormal, Height: m.IconNormal,
-				Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "tune", IconSize: m.IconSmall}},
-			},
+			trailing,
 		},
 	}}
 	return chip
@@ -184,8 +203,10 @@ func barGroupChip(h *PanelHost, ref config.ItemRef, it config.Item, selected str
 	})
 	for j := range it.Items {
 		member := config.ItemRef{Lane: ref.Lane, Path: config.ItemPath{Index: ref.Path.Index, Member: j}}
+		// A group is already one level deep, so its members cannot group
+		// further: the cap is expressed by not offering the control.
 		run.Children = append(run.Children,
-			barChip(h, member, it.Items[j], barRefAction(member) == selected, inner))
+			barChip(h, member, it.Items[j], barRefAction(member) == selected, inner, false))
 	}
 	return run
 }
@@ -211,7 +232,7 @@ func barLane(h *PanelHost, bar config.Bar, name string, width int) *ui.Node {
 			continue
 		}
 		zone.Children = append(zone.Children,
-			barChip(h, ref, lane[i], barRefAction(ref) == h.barSelected, inner))
+			barChip(h, ref, lane[i], barRefAction(ref) == h.barSelected, inner, i+1 < len(lane) && lane[i+1].ID != "group"))
 	}
 	if len(lane) == 0 {
 		zone.Children = append(zone.Children, &ui.Node{

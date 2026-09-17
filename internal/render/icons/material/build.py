@@ -131,6 +131,10 @@ ICONS = [
     # "delete" says it.
     "drag_indicator",
     "tune",
+    # link and link_off are a pair: one folds two chips into a group, the other
+    # dissolves one. Naming them against each other is what makes the two read
+    # as inverses rather than as two unrelated controls.
+    "link",
     "link_off",
 ]
 

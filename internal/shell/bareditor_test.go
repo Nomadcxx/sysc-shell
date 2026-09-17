@@ -748,3 +748,97 @@ func TestChipContentIsLaidOutNotJustTheChip(t *testing.T) {
 		}
 	}
 }
+
+// Every per-chip action has to be reachable where the chip is. The inspector
+// used to be the only route to remove and group, and it renders beneath three
+// vertically stacked lanes: with the default bar its controls landed some 360
+// logical pixels below the scroll viewport, so neither was reachable at all.
+// Found by the owner on the laptop.
+func TestChipCarriesItsOwnActions(t *testing.T) {
+	t.Parallel()
+	_, h := barKeyHost(t, config.Default().Bar)
+
+	for _, want := range []string{
+		"bar-remove:left:0:-1",
+		"bar-group:left:0:-1",
+		"bar-inspect:left:0:-1",
+	} {
+		var found *ui.Node
+		walkNodes(h.root, func(n *ui.Node) {
+			if n.Action == want {
+				found = n
+			}
+		})
+		if found == nil {
+			t.Errorf("%s is not on the chip at all", want)
+			continue
+		}
+		if found.Bounds.W <= 0 || found.Bounds.H <= 0 {
+			t.Errorf("%s has no box", want)
+		}
+		if !found.Focusable || found.Name == "" {
+			t.Errorf("%s is not reachable by keyboard or screen reader", want)
+		}
+	}
+}
+
+// A group's own row carries dissolve, and its members carry remove, so a
+// grouping can be taken apart and put back together without the inspector.
+func TestAGroupMemberCanBeRemovedFromItsOwnRow(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{
+		Left: []config.Item{{ID: "group", Items: []config.Item{{ID: "cpu"}, {ID: "memory"}}}},
+	})
+	var remove *ui.Node
+	walkNodes(h.root, func(n *ui.Node) {
+		if n.Action == "bar-remove:left:0:1" {
+			remove = n
+		}
+	})
+	if remove == nil || remove.Bounds.W <= 0 {
+		t.Fatal("a group member has no reachable remove control")
+	}
+	if !h.barActivate(reg, "bar-remove:left:0:1") {
+		t.Fatal("removing a group member was not handled")
+	}
+	if got := laneIDs(h.draft.Bar.Left); got != "group(cpu)" {
+		t.Errorf("after removing a member: %q", got)
+	}
+}
+
+// Grouping is reachable again after a dissolve: the chip's own control folds
+// it together with the neighbour that follows it.
+func TestAGroupCanBeRebuiltAfterBeingDissolved(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{
+		Left: []config.Item{{ID: "group", Items: []config.Item{{ID: "cpu"}, {ID: "memory"}}}},
+	})
+	if !h.barActivate(reg, "bar-ungroup:left:0:-1") {
+		t.Fatal("dissolve was not handled")
+	}
+	if got := laneIDs(h.draft.Bar.Left); got != "cpu memory" {
+		t.Fatalf("after dissolving: %q", got)
+	}
+	if !h.barActivate(reg, "bar-group:left:0:-1") {
+		t.Fatal("regrouping was not handled")
+	}
+	if got := laneIDs(h.draft.Bar.Left); got != "group(cpu,memory)" {
+		t.Errorf("after regrouping: %q", got)
+	}
+}
+
+// The last chip in a lane has nothing after it to group with, so it must not
+// offer the control at all rather than offering one that fails.
+func TestTheLastChipOffersNoGroupControl(t *testing.T) {
+	t.Parallel()
+	_, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "clock"}, {ID: "cpu"}}})
+	var found bool
+	walkNodes(h.root, func(n *ui.Node) {
+		if n.Action == "bar-group:left:1:-1" {
+			found = true
+		}
+	})
+	if found {
+		t.Error("the last chip in the lane offers a group control with nothing to group with")
+	}
+}
