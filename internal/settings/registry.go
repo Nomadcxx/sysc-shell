@@ -2,8 +2,12 @@ package settings
 
 import (
 	"fmt"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
+	"unicode"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -23,10 +27,11 @@ func DefaultFor(cfg config.Config) *Registry {
 			Set: setBool("bar.enabled", func(c *config.Config, b bool) { c.Bar.Enabled = b }),
 		},
 		{
-			Path: "bar.edge", Label: "Edge", Section: "Bar", Kind: KindEnum,
-			Options: barEdges,
-			Get:     func(c config.Config) string { return c.Bar.Edge },
-			Set:     setEnum("bar.edge", barEdges, func(c *config.Config, v string) { c.Bar.Edge = v }),
+			Path: "bar.edge", Label: "Edge", Section: "Bar", Group: "Surface", Kind: KindEnum,
+			Describe: "Which screen edge the bar anchors to.",
+			Options:  barEdges,
+			Get:      func(c config.Config) string { return c.Bar.Edge },
+			Set:      setEnum("bar.edge", barEdges, func(c *config.Config, v string) { c.Bar.Edge = v }),
 		},
 		{
 			Path: "bar.height", Label: "Height", Section: "Bar", Kind: KindInt, Min: 24, Max: 64,
@@ -259,10 +264,151 @@ func DefaultFor(cfg config.Config) *Registry {
 			Set: setBool("accessibility.high-contrast",
 				func(c *config.Config, b bool) { c.Accessibility.HighContrast = b }),
 		},
+		{
+			Path: "weather.city", Label: "City", Section: "Weather", Group: "Place", Kind: KindString,
+			Describe: "Place name the forecast service geocodes. Setting it clears the coordinates.",
+			Get:      func(c config.Config) string { return c.Weather.City },
+			Set: setPlaceLabel("weather.city", func(c *config.Config, v string) {
+				c.Weather.City = v
+				if v != "" {
+					// The writer emits a city or coordinates, never both, and
+					// the loader refuses a block carrying the two. Leaving
+					// stale coordinates behind would make this choice silently
+					// lose to them on the next write.
+					c.Weather.Latitude, c.Weather.Longitude = 0, 0
+					c.Weather.Configured = true
+				}
+			}),
+		},
+		{
+			Path: "weather.latitude", Label: "Latitude", Section: "Weather", Group: "Place", Kind: KindString,
+			Describe: "Degrees north, -90 through 90. Setting it clears the city.",
+			Get:      getFloat(func(c config.Config) float64 { return c.Weather.Latitude }),
+			Set: setFloat("weather.latitude", -90, 90, func(c *config.Config, f float64) {
+				c.Weather.Latitude = f
+				c.Weather.City = ""
+				c.Weather.Configured = true
+			}),
+		},
+		{
+			Path: "weather.longitude", Label: "Longitude", Section: "Weather", Group: "Place", Kind: KindString,
+			Describe: "Degrees east, -180 through 180. Setting it clears the city.",
+			Get:      getFloat(func(c config.Config) float64 { return c.Weather.Longitude }),
+			Set: setFloat("weather.longitude", -180, 180, func(c *config.Config, f float64) {
+				c.Weather.Longitude = f
+				c.Weather.City = ""
+				c.Weather.Configured = true
+			}),
+		},
+		{
+			Path: "weather.location", Label: "Label", Section: "Weather", Group: "Place", Kind: KindString,
+			Describe: "Display name for the place. It never feeds the request; the coordinates do that.",
+			Get:      func(c config.Config) string { return c.Weather.Location },
+			Set:      setPlaceLabel("weather.location", func(c *config.Config, v string) { c.Weather.Location = v }),
+		},
+		{
+			Path: "weather.unit", Label: "Unit", Section: "Weather", Group: "Forecast", Kind: KindEnum,
+			Describe: "Temperature scale.",
+			Options:  weatherUnits,
+			// Weather is written only once a place is set, so an unconfigured
+			// block reports the value the loader would supply rather than the
+			// empty zero value, which no option matches.
+			Get: func(c config.Config) string {
+				if c.Weather.Unit == "" {
+					return defaultWeatherUnit
+				}
+				return c.Weather.Unit
+			},
+			Set: setEnum("weather.unit", weatherUnits, func(c *config.Config, v string) { c.Weather.Unit = v }),
+		},
+		{
+			Path: "weather.interval", Label: "Refresh every", Section: "Weather", Group: "Forecast", Kind: KindString,
+			Describe: "How often the forecast is fetched, as a duration such as 15m.",
+			Get: func(c config.Config) string {
+				if c.Weather.Interval <= 0 {
+					return defaultWeatherInterval.String()
+				}
+				return c.Weather.Interval.String()
+			},
+			Set: setDuration("weather.interval", func(c *config.Config, d time.Duration) { c.Weather.Interval = d }),
+		},
+		{
+			Path: "wallpaper.image-directory", Label: "Image library", Section: "Wallpaper", Group: "Library",
+			Describe: "Directory the picker scans for stills. A leading tilde is expanded when it is opened.",
+			Kind:     KindString,
+			Get:      func(c config.Config) string { return c.Wallpaper.ImageDirectory },
+			Set: setFilledString("wallpaper.image-directory",
+				func(c *config.Config, v string) { c.Wallpaper.ImageDirectory = v }),
+		},
+		{
+			Path: "wallpaper.video-directory", Label: "Video library", Section: "Wallpaper", Group: "Library",
+			Describe: "Directory the picker scans for video wallpapers.",
+			Kind:     KindString,
+			Get:      func(c config.Config) string { return c.Wallpaper.VideoDirectory },
+			Set: setFilledString("wallpaper.video-directory",
+				func(c *config.Config, v string) { c.Wallpaper.VideoDirectory = v }),
+		},
+		{
+			Path: "wallpaper.scale", Label: "Scaling", Section: "Wallpaper", Group: "Playback", Kind: KindEnum,
+			Describe: "How a wallpaper fills an output.",
+			Options:  wallpaperScales,
+			Get:      func(c config.Config) string { return c.Wallpaper.Scale },
+			Set:      setEnum("wallpaper.scale", wallpaperScales, func(c *config.Config, v string) { c.Wallpaper.Scale = v }),
+		},
+		{
+			Path: "wallpaper.loop", Label: "Loop video", Section: "Wallpaper", Group: "Playback", Kind: KindBool,
+			Describe: "Restart a video wallpaper when it reaches its end.",
+			Get:      getBool(func(c config.Config) bool { return c.Wallpaper.Loop }),
+			Set:      setBool("wallpaper.loop", func(c *config.Config, b bool) { c.Wallpaper.Loop = b }),
+		},
+		{
+			Path: "wallpaper.fps", Label: "Frame cap", Section: "Wallpaper", Group: "Playback", Kind: KindEnum,
+			Describe: "Frames per second the playback engine is held to.",
+			Options:  wallpaperFPS,
+			Get:      getInt(func(c config.Config) int { return c.Wallpaper.FPS }),
+			Set: setEnum("wallpaper.fps", wallpaperFPS, func(c *config.Config, v string) {
+				n, _ := strconv.Atoi(v)
+				c.Wallpaper.FPS = n
+			}),
+		},
+		{
+			Path: "wallpaper.fade", Label: "Cross-fade", Section: "Wallpaper", Group: "Transition", Kind: KindBool,
+			Describe: "Fade between wallpapers instead of cutting.",
+			Get:      getBool(func(c config.Config) bool { return c.Wallpaper.Fade }),
+			Set:      setBool("wallpaper.fade", func(c *config.Config, b bool) { c.Wallpaper.Fade = b }),
+		},
+		{
+			Path: "wallpaper.fade-duration", Label: "Fade seconds", Section: "Wallpaper", Group: "Transition",
+			Describe: "How long a cross-fade takes, in seconds.",
+			Kind:     KindString,
+			Get:      getFloat(func(c config.Config) float64 { return c.Wallpaper.FadeDuration }),
+			Set: setFloat("wallpaper.fade-duration", 0, maxFadeSeconds,
+				func(c *config.Config, f float64) { c.Wallpaper.FadeDuration = f }),
+		},
+		{
+			Path: "wallpaper.hidden", Label: "When occluded", Section: "Wallpaper", Group: "Playback", Kind: KindEnum,
+			Describe: "What the playback engine does while the wallpaper cannot be seen.",
+			Options:  wallpaperHidden,
+			Get:      func(c config.Config) string { return c.Wallpaper.Hidden },
+			Set:      setEnum("wallpaper.hidden", wallpaperHidden, func(c *config.Config, v string) { c.Wallpaper.Hidden = v }),
+		},
 	}}
 	r.addWidgetEntries(cfg)
 	r.addTemplateEntries()
+	r.addTrayEntries(cfg)
+	r.addOutputEntries(cfg)
+	r.addPluginEntries(cfg)
 	return r
+}
+
+// SectionNames is the information architecture in rail order. The pane walks
+// it, so a section absent here is a section the user cannot reach however many
+// entries name it.
+func SectionNames() []string {
+	return []string{
+		"Appearance", "Templates", "Bar", "Widgets", "Panels", "Wallpaper",
+		"Weather", "Displays", "Tray", "Plugins", "Session", "Accessibility",
+	}
 }
 
 // The closed vocabularies the enum entries offer. Each is named once because
@@ -270,7 +416,11 @@ func DefaultFor(cfg config.Config) *Registry {
 // a value the surface offers and the setter rejects is unreachable, and one
 // the setter accepts and the surface hides is undiscoverable.
 var (
-	barEdges     = []string{"top", "bottom"}
+	// The loader accepts one edge today and names the rest unsupported, so
+	// offering them would hand the user a control that writes a file the shell
+	// then declines to start from. The remaining edges arrive with the bar
+	// geometry work, which is what makes them real.
+	barEdges     = []string{"top"}
 	themeSources = []string{"wallpaper", "hex", "stock", "palette"}
 	themeModes   = []string{"dark", "light"}
 	presetNames  = []string{
@@ -284,11 +434,28 @@ var (
 	elevationNames = []string{
 		string(theme.ElevationNone), string(theme.ElevationSubtle), string(theme.ElevationStandard),
 	}
-	osdPositions = []string{
+	weatherUnits    = []string{"celsius", "fahrenheit"}
+	wallpaperScales = []string{"fill", "stretch", "original", "panscan"}
+	wallpaperFPS    = []string{"30", "60", "100"}
+	wallpaperHidden = []string{"none", "auto-pause", "auto-stop"}
+	osdPositions    = []string{
 		"top-left", "top-center", "top-right",
 		"center-left", "center", "center-right",
 		"bottom-left", "bottom-center", "bottom-right",
 	}
+)
+
+const (
+	// These mirror rules the loader owns and does not export. A copy that
+	// drifts writes a file the shell then refuses to load, which is why
+	// TestSettingsWriteBackThroughTheLoader round-trips every one of them.
+	maxPlaceLabelBytes     = 80
+	defaultWeatherUnit     = "celsius"
+	defaultWeatherInterval = 15 * time.Minute
+	// maxFadeSeconds is this package's own ceiling. The loader refuses only a
+	// negative fade, but an unbounded field on a slider has no travel and a
+	// minute-long cross-fade is not a setting anyone wants by accident.
+	maxFadeSeconds = 10
 )
 
 // seedEntry is built from the supplied configuration because what the seed
@@ -316,8 +483,9 @@ func (r *Registry) addTemplateEntries() {
 		"btop", "cava", "starship", "scroll",
 	} {
 		r.entries = append(r.entries, Entry{
-			Path: "theme.templates." + name, Label: name + " theme", Section: "Appearance", Kind: KindBool,
-			Get: getBool(func(c config.Config) bool { return c.TemplateEnabled(name) }),
+			Path: "theme.templates." + name, Label: name, Section: "Templates", Group: "Applications", Kind: KindBool,
+			Describe: "Write this application's colours when the theme changes.",
+			Get:      getBool(func(c config.Config) bool { return c.TemplateEnabled(name) }),
 			Set: setBool("theme.templates."+name, func(c *config.Config, b bool) {
 				if c.Templates == nil {
 					c.Templates = map[string]bool{}
@@ -485,6 +653,230 @@ func (r *Registry) Search(q string) []Entry {
 		}
 	}
 	return out
+}
+
+// addTrayEntries renders one group per tray token the configuration already
+// names, carrying the two toggles D9 ships. The tokens are not a free-form
+// list editor: each is keyed by an item the tray host enumerates, and a token
+// whose item is absent is kept and shown rather than quietly dropped.
+func (r *Registry) addTrayEntries(cfg config.Config) {
+	for _, token := range unionOf(cfg.Tray.Hidden, cfg.Tray.Pinned, cfg.Tray.Order) {
+		r.entries = append(r.entries,
+			Entry{
+				Path: "tray." + token + ".hidden", Label: "Hidden", Section: "Tray", Group: token,
+				Describe: "Keep this item out of the tray.", Kind: KindBool,
+				Get: getBool(func(c config.Config) bool { return slices.Contains(c.Tray.Hidden, token) }),
+				Set: setBool("tray."+token+".hidden", func(c *config.Config, b bool) {
+					c.Tray.Hidden = toggleToken(c.Tray.Hidden, token, b)
+				}),
+			},
+			Entry{
+				Path: "tray." + token + ".pinned", Label: "Pinned", Section: "Tray", Group: token,
+				Describe: "Hold this item in the bar rather than the drawer.", Kind: KindBool,
+				Get: getBool(func(c config.Config) bool { return slices.Contains(c.Tray.Pinned, token) }),
+				Set: setBool("tray."+token+".pinned", func(c *config.Config, b bool) {
+					c.Tray.Pinned = toggleToken(c.Tray.Pinned, token, b)
+				}),
+			},
+		)
+	}
+}
+
+// addOutputEntries exposes the per-connector bar overrides that have been
+// modelled since the reload work and reachable from nothing. It reads the
+// overrides the configuration already carries: creating one for a connector
+// that has none is per-output geometry, which sub-project C owns.
+func (r *Registry) addOutputEntries(cfg config.Config) {
+	for i := range cfg.Outputs {
+		conn := cfg.Outputs[i].Connector
+		override := func(c *config.Config) *config.Bar {
+			for j := range c.Outputs {
+				if c.Outputs[j].Connector == conn {
+					return &c.Outputs[j].Bar
+				}
+			}
+			return nil
+		}
+		read := func(c config.Config, get func(config.Bar) int) int {
+			for _, o := range c.Outputs {
+				if o.Connector == conn {
+					return get(o.Bar)
+				}
+			}
+			return 0
+		}
+		r.entries = append(r.entries,
+			Entry{
+				Path: "outputs." + conn + ".enabled", Label: "Enabled", Section: "Displays", Group: conn,
+				Describe: "Draw the bar on this output.", Kind: KindBool,
+				Get: getBool(func(c config.Config) bool {
+					return read(c, func(b config.Bar) int {
+						if b.Enabled {
+							return 1
+						}
+						return 0
+					}) == 1
+				}),
+				Set: setBool("outputs."+conn+".enabled", func(c *config.Config, v bool) {
+					if b := override(c); b != nil {
+						b.Enabled = v
+					}
+				}),
+			},
+			Entry{
+				Path: "outputs." + conn + ".height", Label: "Height", Section: "Displays", Group: conn,
+				Describe: "Bar height on this output.", Kind: KindInt, Min: 24, Max: 64,
+				Get: getInt(func(c config.Config) int { return read(c, func(b config.Bar) int { return b.Height }) }),
+				Set: setInt("outputs."+conn+".height", 24, 64, func(c *config.Config, n int) {
+					if b := override(c); b != nil {
+						b.Height = n
+					}
+				}),
+			},
+			Entry{
+				Path: "outputs." + conn + ".font-size", Label: "Font size", Section: "Displays", Group: conn,
+				Describe: "Bar text size on this output.", Kind: KindInt, Min: 8, Max: 32,
+				Get: getInt(func(c config.Config) int { return read(c, func(b config.Bar) int { return b.FontSize }) }),
+				Set: setInt("outputs."+conn+".font-size", 8, 32, func(c *config.Config, n int) {
+					if b := override(c); b != nil {
+						b.FontSize = n
+					}
+				}),
+			},
+		)
+	}
+}
+
+// addPluginEntries gives each plugin the configuration knows about its own
+// toggle. The set is wider than Plugins.Enabled on purpose: a plugin that is
+// turned off leaves that list, so keying the rows on it alone would delete the
+// control that turns it back on. A plugin the user has settings for, or has
+// placed on the bar, is one they know about.
+func (r *Registry) addPluginEntries(cfg config.Config) {
+	var placed []string
+	for _, it := range append(append(append([]config.Item{}, cfg.Bar.Left...), cfg.Bar.Center...), cfg.Bar.Right...) {
+		for _, member := range append([]config.Item{it}, it.Items...) {
+			if member.Plugin != "" {
+				placed = append(placed, member.Plugin)
+			}
+		}
+	}
+	configured := make([]string, 0, len(cfg.Plugins.Settings))
+	for id := range cfg.Plugins.Settings {
+		configured = append(configured, id)
+	}
+	for _, id := range unionOf(cfg.Plugins.Enabled, configured, placed) {
+		r.entries = append(r.entries, Entry{
+			Path: "plugins." + id + ".enabled", Label: id, Section: "Plugins", Group: "Installed",
+			Describe: "Load this plugin and its widgets.", Kind: KindBool,
+			Get: getBool(func(c config.Config) bool { return slices.Contains(c.Plugins.Enabled, id) }),
+			Set: setBool("plugins."+id+".enabled", func(c *config.Config, b bool) {
+				c.Plugins.Enabled = toggleToken(c.Plugins.Enabled, id, b)
+			}),
+		})
+	}
+}
+
+// unionOf is the deduplicated, ordered merge the discovered-item sections are
+// keyed on. Order is alphabetical because the lists it reads are ordered by
+// how the user happened to add things, and a row that moves under the cursor
+// is worse than one in an arbitrary but stable place.
+func unionOf(lists ...[]string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, list := range lists {
+		for _, v := range list {
+			if v == "" || seen[v] {
+				continue
+			}
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// toggleToken adds or removes one token, preserving the order of the rest.
+// The loader refuses a repeated token, so adding is conditional.
+func toggleToken(list []string, token string, on bool) []string {
+	if on {
+		if slices.Contains(list, token) {
+			return list
+		}
+		return append(append([]string(nil), list...), token)
+	}
+	out := make([]string, 0, len(list))
+	for _, v := range list {
+		if v != token {
+			out = append(out, v)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func getFloat(read func(config.Config) float64) Getter {
+	return func(c config.Config) string { return strconv.FormatFloat(read(c), 'f', -1, 64) }
+}
+
+func setFloat(path string, min, max float64, assign func(*config.Config, float64)) Setter {
+	return write(func(c *config.Config, v string) error {
+		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		if err != nil {
+			return fmt.Errorf("settings: %s: %q is not a number", path, v)
+		}
+		if f < min || f > max {
+			return fmt.Errorf("settings: %s: %v is outside %v..%v", path, f, min, max)
+		}
+		assign(c, f)
+		return nil
+	})
+}
+
+func setDuration(path string, assign func(*config.Config, time.Duration)) Setter {
+	return write(func(c *config.Config, v string) error {
+		d, err := time.ParseDuration(strings.TrimSpace(v))
+		if err != nil {
+			return fmt.Errorf("settings: %s: %q is not a duration such as 15m", path, v)
+		}
+		if d <= 0 {
+			return fmt.Errorf("settings: %s: %v is not positive", path, d)
+		}
+		assign(c, d)
+		return nil
+	})
+}
+
+// setFilledString refuses the empty string, for the fields the loader requires
+// to carry something.
+func setFilledString(path string, assign func(*config.Config, string)) Setter {
+	return write(func(c *config.Config, v string) error {
+		if strings.TrimSpace(v) == "" {
+			return fmt.Errorf("settings: %s: cannot be empty", path)
+		}
+		assign(c, v)
+		return nil
+	})
+}
+
+// setPlaceLabel mirrors the loader's rule for a free-text place name: bounded,
+// and free of control characters so a stray newline cannot reach a surface.
+func setPlaceLabel(path string, assign func(*config.Config, string)) Setter {
+	return write(func(c *config.Config, v string) error {
+		if len(v) > maxPlaceLabelBytes {
+			return fmt.Errorf("settings: %s: is %d bytes, over the %d-byte limit", path, len(v), maxPlaceLabelBytes)
+		}
+		for _, r := range v {
+			if unicode.IsControl(r) {
+				return fmt.Errorf("settings: %s: carries a control character", path)
+			}
+		}
+		assign(c, v)
+		return nil
+	})
 }
 
 func formatItemIDs(items []config.Item) string {

@@ -3,7 +3,9 @@ package settings
 import (
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -270,5 +272,159 @@ func TestEntryUsesItsOwnAccessors(t *testing.T) {
 	}
 	if !cfg.Bar.Enabled {
 		t.Fatal("Set did not reach the field")
+	}
+}
+
+// TestEveryConfigDomainHasAnEntry is the guard against the five-of-twelve gap
+// reopening. Weather, Wallpaper, Tray, Outputs and Plugins were modelled in
+// configuration and unreachable from every surface, and that happened quietly
+// because nothing ever asserted otherwise.
+//
+// It runs against a configuration that exercises each domain rather than
+// config.Default(), because D9 exposes three of them as a row per discovered
+// item: a tray token, an output override and a plugin have no rows until one
+// exists to carry them. Asserting against an empty default would force a
+// placeholder entry per domain, which is what this guard exists to prevent.
+func TestEveryConfigDomainHasAnEntry(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Tray.Hidden = []string{"steam"}
+	cfg.Outputs = []config.OutputOverride{{Connector: "DP-1", Bar: cfg.Bar}}
+	cfg.Plugins.Enabled = []string{"com.example.widget"}
+	r := DefaultFor(cfg)
+
+	for _, prefix := range []string{
+		"bar.", "appearance.", "theme.templates.", "panels.", "session.",
+		"accessibility.", "weather.", "wallpaper.", "tray.", "outputs.", "plugins.",
+	} {
+		found := false
+		for _, section := range SectionNames() {
+			for _, e := range r.Section(section) {
+				if strings.HasPrefix(e.Path, prefix) {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Errorf("no settings entry reaches the %q domain", prefix)
+		}
+	}
+}
+
+// TestEverySectionIsOneOfTheNamedSections closes the other half of the same
+// hole: the pane walks SectionNames, so an entry filed under a section the
+// rail does not list is as unreachable as one that was never written.
+func TestEverySectionIsOneOfTheNamedSections(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Tray.Pinned = []string{"steam"}
+	cfg.Outputs = []config.OutputOverride{{Connector: "DP-1", Bar: cfg.Bar}}
+	cfg.Plugins.Enabled = []string{"com.example.widget"}
+
+	names := SectionNames()
+	if len(names) != 12 {
+		t.Fatalf("SectionNames = %d sections, want the twelve of the information architecture", len(names))
+	}
+	for _, e := range DefaultFor(cfg).entries {
+		if !slices.Contains(names, e.Section) {
+			t.Errorf("%s is filed under %q, which no section lists", e.Path, e.Section)
+		}
+	}
+}
+
+// TestEveryEnumOptionSurvivesTheLoader is the drift guard for the vocabularies
+// this package restates. An option the loader refuses produces a setting that
+// writes a file the shell then declines to start from, and the user sees the
+// shell fail rather than the setting fail.
+func TestEveryEnumOptionSurvivesTheLoader(t *testing.T) {
+	t.Parallel()
+	base := config.Default()
+	base.Tray.Hidden = []string{"steam"}
+	base.Outputs = []config.OutputOverride{{Connector: "DP-1", Bar: base.Bar}}
+	base.Plugins.Enabled = []string{"com.example.widget"}
+
+	for _, e := range DefaultFor(base).entries {
+		if e.Kind != KindEnum {
+			continue
+		}
+		if e.Path == "appearance.source" {
+			// The source and the seed are one choice in two fields: "hex" and
+			// "stock" need a seed the new source can read, and today changing
+			// the source alone writes a seed the loader refuses. That is
+			// sysc-107, and the exclusion goes when it is closed.
+			continue
+		}
+		for _, option := range e.Options {
+			t.Run(e.Path+"="+option, func(t *testing.T) {
+				cfg := base
+				if err := e.Set(&cfg, option); err != nil {
+					t.Fatalf("set: %v", err)
+				}
+				path := filepath.Join(t.TempDir(), "config.json")
+				if err := config.Write(path, cfg); err != nil {
+					t.Fatalf("write: %v", err)
+				}
+				if _, err := config.Load(path); err != nil {
+					t.Fatalf("the shell refuses what this option wrote: %v", err)
+				}
+			})
+		}
+	}
+}
+
+// TestWeatherPlaceIsOneWayOrTheOther holds the loader's exclusive rule at the
+// setting: coordinates and a city name cannot both reach the file, and the
+// writer prefers the city, so coordinates set beside a stale city would be
+// silently discarded.
+func TestWeatherPlaceIsOneWayOrTheOther(t *testing.T) {
+	t.Parallel()
+	r := Default()
+	cfg := config.Default()
+
+	if err := r.ByPath("weather.city").Set(&cfg, "Bristol"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ByPath("weather.latitude").Set(&cfg, "51.45"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ByPath("weather.longitude").Set(&cfg, "-2.58"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Weather.City != "" {
+		t.Errorf("city = %q; coordinates did not displace it", cfg.Weather.City)
+	}
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Write(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	back, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("the shell refuses what the weather settings wrote: %v", err)
+	}
+	if back.Weather.Latitude != 51.45 || back.Weather.Longitude != -2.58 {
+		t.Errorf("coordinates came back as %v,%v", back.Weather.Latitude, back.Weather.Longitude)
+	}
+}
+
+// TestBoundsRejectWhatTheLoaderWouldReject keeps the numeric entries from
+// writing a file that cannot be read back.
+func TestBoundsRejectWhatTheLoaderWouldReject(t *testing.T) {
+	t.Parallel()
+	r := Default()
+	for _, tc := range []struct{ path, value string }{
+		{"weather.latitude", "91"},
+		{"weather.longitude", "-181"},
+		{"weather.interval", "0s"},
+		{"weather.interval", "fortnightly"},
+		{"wallpaper.fade-duration", "-1"},
+		{"wallpaper.image-directory", "  "},
+		{"weather.city", strings.Repeat("x", 81)},
+		{"weather.location", "two\nlines"},
+	} {
+		cfg := config.Default()
+		if err := r.ByPath(tc.path).Set(&cfg, tc.value); err == nil {
+			t.Errorf("%s accepted %q", tc.path, tc.value)
+		}
 	}
 }
