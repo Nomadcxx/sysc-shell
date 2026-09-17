@@ -428,3 +428,88 @@ func TestBoundsRejectWhatTheLoaderWouldReject(t *testing.T) {
 		}
 	}
 }
+
+// TestResetUsesThePresetForThemeAxes holds D5: "default" is not one thing.
+// config.Write bases every appearance axis against the selected preset and
+// everything else against Default(), so reset has to resolve an entry through
+// the same rule the writer uses, or resetting an axis writes a value the
+// writer then records as a deviation.
+func TestResetUsesThePresetForThemeAxes(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Theme.Preset = theme.PresetCompact
+	comp, ok := theme.PresetComposition(theme.PresetCompact)
+	if !ok {
+		t.Fatal("compact preset is missing")
+	}
+	cfg.Theme.Composition = comp
+
+	r := DefaultFor(cfg)
+	e := r.ByPath("appearance.radius")
+	if e == nil {
+		t.Fatal("appearance.radius is missing")
+	}
+	if !e.IsDefault(cfg) {
+		t.Fatal("an axis sitting on its preset value must read as default")
+	}
+	if got := e.Default(cfg); got != strconv.Itoa(comp.Radius) {
+		t.Fatalf("Default = %q, want the preset's %d", got, comp.Radius)
+	}
+
+	cfg.Theme.Radius = comp.Radius + 3
+	if e.IsDefault(cfg) {
+		t.Fatal("a changed axis must not read as default, or its row hides its reset")
+	}
+
+	acc := r.ByPath("accessibility.reduced-motion")
+	if got := acc.Default(cfg); got != "false" {
+		t.Fatalf("a non-theme entry defaults against config.Default(), got %q", got)
+	}
+}
+
+// TestEveryEntryResolvesADefault stops a new entry shipping without one: a nil
+// Default reads as always-default, so the row silently loses its reset rather
+// than failing anywhere visible.
+func TestEveryEntryResolvesADefault(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Tray.Hidden = []string{"steam"}
+	cfg.Outputs = []config.OutputOverride{{Connector: "DP-1", Bar: cfg.Bar}}
+	cfg.Plugins.Enabled = []string{"com.example.widget"}
+	for _, e := range DefaultFor(cfg).entries {
+		if e.Default == nil {
+			t.Errorf("%s resolves no default", e.Path)
+		}
+	}
+}
+
+// TestPresetAxesTrackTheirPreset is the guard on the axis set itself. Every
+// composition axis has to follow the preset, and an axis left out of that set
+// would resolve against config.Default() instead, quietly disagreeing with the
+// writer for exactly the entries D5 is about.
+func TestPresetAxesTrackTheirPreset(t *testing.T) {
+	t.Parallel()
+	standard := config.Default()
+	compact := standard
+	comp, ok := theme.PresetComposition(theme.PresetCompact)
+	if !ok {
+		t.Fatal("compact preset is missing")
+	}
+	compact.Theme.Preset = theme.PresetCompact
+	compact.Theme.Composition = comp
+
+	moved := 0
+	for _, path := range presetAxisPaths() {
+		e := DefaultFor(standard).ByPath(path)
+		if e == nil {
+			t.Errorf("%s is named as a preset axis but is not registered", path)
+			continue
+		}
+		if e.Default(standard) != e.Default(compact) {
+			moved++
+		}
+	}
+	if moved == 0 {
+		t.Fatal("no named axis resolved differently under another preset")
+	}
+}

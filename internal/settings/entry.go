@@ -40,3 +40,12 @@ type Entry struct {
 	// everything else against config.Default().
 	Default Getter
 }
+
+// IsDefault reports whether this setting still sits on its default, which is
+// what decides whether a row shows a reset control.
+func (e Entry) IsDefault(c config.Config) bool {
+	if e.Get == nil || e.Default == nil {
+		return true
+	}
+	return e.Get(c) == e.Default(c)
+}

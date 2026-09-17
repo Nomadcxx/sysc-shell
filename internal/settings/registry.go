@@ -398,7 +398,62 @@ func DefaultFor(cfg config.Config) *Registry {
 	r.addTrayEntries(cfg)
 	r.addOutputEntries(cfg)
 	r.addPluginEntries(cfg)
+	r.resolveDefaults()
 	return r
+}
+
+// presetAxisPaths names the entries that write a theme.Composition axis.
+//
+// They are called out because config.Write treats them differently from every
+// other setting: themeDiff bases each one against the selected preset, while
+// barDiff, panelsDiff, accessibilityDiff and wallpaperDiff base against
+// Default(). Reset follows the writer, so an axis missing from this set would
+// reset to a value the writer then records as a deviation.
+func presetAxisPaths() []string {
+	return []string{
+		"appearance.density", "appearance.font-family", "appearance.mono-font-family",
+		"appearance.font-scale", "appearance.font-weight", "appearance.radius",
+		"appearance.motion", "appearance.motion-speed", "appearance.bar-opacity",
+		"appearance.panel-opacity", "appearance.overlay-opacity", "appearance.blur-behind",
+		"appearance.blur-radius", "appearance.elevation",
+	}
+}
+
+// resolveDefaults gives every entry the rule that resolves its default. Both
+// rules read through the entry's own Get against a configuration standing in
+// for "untouched", so a setting still declares its field exactly once.
+func (r *Registry) resolveDefaults() {
+	axis := make(map[string]bool, len(presetAxisPaths()))
+	for _, path := range presetAxisPaths() {
+		axis[path] = true
+	}
+	for i := range r.entries {
+		e := &r.entries[i]
+		if e.Default != nil || e.Get == nil {
+			continue
+		}
+		get := e.Get
+		if axis[e.Path] {
+			e.Default = func(c config.Config) string { return get(presetBaseline(c)) }
+			continue
+		}
+		e.Default = func(config.Config) string { return get(config.Default()) }
+	}
+}
+
+// presetBaseline is the configuration an axis would hold had the user never
+// touched it: the selected preset's composition, falling back to the standard
+// one for a preset the theme package does not know, which is what themeDiff
+// does when it decides whether to record an axis at all.
+func presetBaseline(c config.Config) config.Config {
+	base := config.Default()
+	base.Theme.Preset = c.Theme.Preset
+	comp, ok := theme.PresetComposition(c.Theme.Preset)
+	if !ok {
+		comp, _ = theme.PresetComposition(theme.PresetStandard)
+	}
+	base.Theme.Composition = comp
+	return base
 }
 
 // SectionNames is the information architecture in rail order. The pane walks
