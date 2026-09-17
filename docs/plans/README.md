@@ -482,12 +482,13 @@ surface-stacking merge. Epic `sysc-309`; the four execution owners are
 |---|---|---|
 | `2026-09-16-shell-polish-design.md` | design | Umbrella M10 design: slice boundaries, shared ownership, sequencing, and the integration/exit gate. |
 | `2026-09-16-metrics-control-centre-gpu-design.md` | design | Four truthful Control Centre gauges and one shared GPU snapshot for the bar, System Monitor, and Control Centre. Existing metrics ownership remains under `sysc-121`. |
-| `2026-09-17-metrics-control-centre-gpu.md` | plan | Four TDD tasks for deterministic GPU selection, four truthful Home gauges, shared selector leases, monitor/Home projection, and the DP-1 live gate. Keeps `sysc-metrics@v0.4.0` as the collector and records the upstream release stop. |
+| `2026-09-17-metrics-control-centre-gpu.md` | plan | Exact-GPU-history qualification first, then service-owned per-device history, deterministic Home/bar/System Monitor projection, lease and lock lifecycle, explicit 22px geometry gate, and the restricted DP-1 slice gate. Keeps `sysc-metrics@v0.4.0` unless a published upstream release is required. |
 | `2026-09-16-bar-weather-launcher-workspaces-design.md` | design | Weather icon/value chrome, the supplied nested-gates launcher PNG, and number-free Niri workspace shapes. Existing weather and launcher owners remain under `sysc-277`/`sysc-293` and `sysc-82`. |
 | `2026-09-16-centre-clock-media-wordmark-design.md` | design | One time/date composition, optional media at its right edge, and a fixed-centre SYSC wordmark. Executed by `sysc-314`. |
 | `2026-09-16-notifications-battery-urgency-design.md` | design | Theme-derived urgency treatment and a qualified, deduplicated battery-warning producer. Executed by `sysc-315`. |
 | `2026-09-16-owned-tray-termination-design.md` | design | Service-owned tray termination, identity validation, and shell acknowledgement after the real item delta. Executed by `sysc-316`. |
 | `2026-09-16-control-centre-network-design.md` | design | Enable the existing Network rail and reuse the NetworkManager-backed body and service under `sysc-157`, `sysc-254`, and `sysc-268`. |
+| `2026-09-17-metrics-control-centre-gpu-execution-handover.md` | execution-handover | Focused M10 planning session: governing GPU design, provisional local work, pinned reader and live hardware evidence, exact-PCI history blocker, and instructions for the next agent to write the executable plan. |
 | `2026-09-16-shell-polish-execution-handover.md` | execution-handover | Historical receiving-state commission for the M10 work. Leave unchanged; current state belongs in Beads and the completion handover. |
 | `2026-09-16-m10-shell-polish-execution-handover.md` | execution-handover | Current receiving handover for M10: commissions seven executable plans, preserves existing owners, qualifies notify/tray releases, and defines the integration and bare-metal completion gate. |
 
