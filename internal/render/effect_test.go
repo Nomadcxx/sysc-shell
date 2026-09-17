@@ -57,6 +57,24 @@ func TestWeatherCelestialAndCloudFormsRespondToPhase(t *testing.T) {
 	}
 }
 
+func TestWeatherCloudMassBlendsItsUnionOnce(t *testing.T) {
+	const width, height = 160, 96
+	box := ui.Rect{W: width, H: height}
+	mask := RoundedMask(0, width, height)
+	cloud := Color{R: 255, G: 255, B: 255, A: 255}
+
+	painted := newTestCanvas(t, width, height)
+	fillRect(painted, box, testStyle.Capsule)
+	paintCloudMass(painted, box, mask, 80, 50, 120, 40, cloud, 128)
+
+	want := newTestCanvas(t, width, height)
+	fillRect(want, box, testStyle.Capsule)
+	localWeatherPixel(want, box, mask, 80, 50, cloud, 128, 1)
+	if got, expected := effectPixelBytes(painted, 80, 50), effectPixelBytes(want, 80, 50); !bytes.Equal(got, expected) {
+		t.Fatalf("overlapping cloud puffs stacked alpha: got %v, want one union blend %v", got, expected)
+	}
+}
+
 func TestWeatherPrecipitationHasCardSizedCoverage(t *testing.T) {
 	const width, height = 160, 96
 	for _, variant := range []ui.EffectVariant{ui.WeatherRain, ui.WeatherSnow, ui.WeatherHeavySnow, ui.WeatherThunderstorm} {

@@ -179,16 +179,38 @@ func paintCloudMass(c *Canvas, box ui.Rect, mask *image.Alpha, cx, cy, width, he
 		return
 	}
 	// The lower ellipse gives the mass a stable base; the puffs provide the
-	// overlapping silhouette that distinguishes weather from a gradient.
-	drawWeatherEllipse(c, box, mask, cx, cy+height*.10, width*.50, height*.27, col, alpha)
-	for _, puff := range []weatherCloudPuff{
+	// overlapping silhouette that distinguishes weather from a gradient. Keep
+	// the union as one coverage field so intersections do not stack alpha and
+	// turn into visible bubbles.
+	ellipses := [...]weatherCloudPuff{
+		{x: 0, y: .10, rx: .50, ry: .27},
 		{x: -.34, y: -.02, rx: .25, ry: .42},
 		{x: -.12, y: -.15, rx: .28, ry: .55},
 		{x: .14, y: -.12, rx: .30, ry: .49},
 		{x: .36, y: .02, rx: .24, ry: .36},
-	} {
-		drawWeatherEllipse(c, box, mask, cx+width*puff.x, cy+height*puff.y,
-			width*puff.rx, height*puff.ry, col, alpha)
+	}
+	minX, maxX := box.W, 0
+	minY, maxY := box.H, 0
+	for _, ellipse := range ellipses {
+		minX = min(minX, int(math.Floor(cx+width*(ellipse.x-ellipse.rx)-1)))
+		maxX = max(maxX, int(math.Ceil(cx+width*(ellipse.x+ellipse.rx)+1)))
+		minY = min(minY, int(math.Floor(cy+height*(ellipse.y-ellipse.ry)-1)))
+		maxY = max(maxY, int(math.Ceil(cy+height*(ellipse.y+ellipse.ry)+1)))
+	}
+	minX, maxX = max(minX, 0), min(maxX, box.W)
+	minY, maxY = max(minY, 0), min(maxY, box.H)
+	for y := minY; y < maxY; y++ {
+		for x := minX; x < maxX; x++ {
+			coverage := 0.0
+			for _, ellipse := range ellipses {
+				coverage = max(coverage, weatherEllipseCoverage(x, y,
+					cx+width*ellipse.x, cy+height*ellipse.y,
+					width*ellipse.rx, height*ellipse.ry))
+			}
+			if coverage > 0 {
+				localWeatherPixel(c, box, mask, x, y, col, alpha, coverage)
+			}
+		}
 	}
 }
 
@@ -206,15 +228,23 @@ func drawWeatherEllipse(c *Canvas, box ui.Rect, mask *image.Alpha, cx, cy, rx, r
 	}
 	for y := minY; y < maxY; y++ {
 		for x := minX; x < maxX; x++ {
-			dx := (float64(x) + .5 - cx) / rx
-			dy := (float64(y) + .5 - cy) / ry
-			edge := (1 - math.Hypot(dx, dy)) * shortRadius
-			coverage := clampEffect(.5+edge, 0, 1)
+			coverage := weatherEllipseCoverage(x, y, cx, cy, rx, ry)
 			if coverage > 0 {
 				localWeatherPixel(c, box, mask, x, y, col, alpha, coverage)
 			}
 		}
 	}
+}
+
+func weatherEllipseCoverage(x, y int, cx, cy, rx, ry float64) float64 {
+	if rx <= 0 || ry <= 0 {
+		return 0
+	}
+	shortRadius := min(rx, ry)
+	dx := (float64(x) + .5 - cx) / rx
+	dy := (float64(y) + .5 - cy) / ry
+	edge := (1 - math.Hypot(dx, dy)) * shortRadius
+	return clampEffect(.5+edge, 0, 1)
 }
 
 func drawWeatherStroke(c *Canvas, box ui.Rect, mask *image.Alpha, x0, y0, x1, y1, width float64, col Color, alpha uint8) {
