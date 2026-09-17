@@ -304,3 +304,26 @@ func WidgetIDs() []string {
 	slices.Sort(out)
 	return out
 }
+
+// AddToGroup puts an item inside the group at index at. It is what a drop onto
+// a group's body means, and the one-level cap is enforced here rather than
+// left to the loader: a group dropped onto a group is refused outright, never
+// flattened into it.
+func AddToGroup(lane []Item, at int, it Item, m *Minter) ([]Item, error) {
+	if at < 0 || at >= len(lane) {
+		return nil, fmt.Errorf("config: add to group %d: outside a lane of %d", at, len(lane))
+	}
+	if lane[at].ID != "group" {
+		return nil, fmt.Errorf("config: add to group %d: %q is not a group", at, lane[at].ID)
+	}
+	if it.ID == "group" {
+		return nil, fmt.Errorf("config: a group may not contain a group")
+	}
+	out := cloneLane(lane)
+	m.Ensure(&it)
+	group := out[at]
+	m.Ensure(&group)
+	group.Items = append(slices.Clone(group.Items), it)
+	out[at] = group
+	return out, nil
+}

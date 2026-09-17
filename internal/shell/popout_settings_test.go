@@ -826,3 +826,47 @@ func TestEmptySectionSaysWhy(t *testing.T) {
 		}
 	}
 }
+
+// A control that has a natural size should wear it and sit at the end of the
+// row, not stretch across the column or float at its left. Reported by the
+// owner: toggles and dropdowns read as taking the full panel width.
+func TestNaturalSizedControlsDoNotFillTheColumn(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	body := settingsBodyWidth(h)
+	column := settingsControlWidth(h)
+
+	for _, tc := range []struct {
+		path  string
+		fills bool
+	}{
+		{"bar.enabled", false},              // toggle
+		{"appearance.mode", false},          // enum
+		{"bar.height", true},                // slider
+		{"wallpaper.image-directory", true}, // path field
+	} {
+		e := h.set.ByPath(tc.path)
+		if e == nil {
+			t.Fatalf("%s is not registered", tc.path)
+		}
+		row := settingsEntryRow(h, *e)
+		var trailing *ui.Node
+		for _, c := range row.Children {
+			if c.Kind == ui.KindRow {
+				trailing = c
+			}
+		}
+		if trailing == nil {
+			t.Fatalf("%s: row has no trailing column", tc.path)
+		}
+		if tc.fills && trailing.Width != column {
+			t.Errorf("%s: trailing width = %d, want the control column %d", tc.path, trailing.Width, column)
+		}
+		if !tc.fills && trailing.Width != 0 {
+			t.Errorf("%s: trailing width = %d, want it to size to the control", tc.path, trailing.Width)
+		}
+	}
+	if column >= body {
+		t.Errorf("control column %d is not narrower than the body %d", column, body)
+	}
+}

@@ -20,49 +20,51 @@ type dropOutcome struct {
 	Join   int
 }
 
-// dropEdgeShare is how much of a chip's width, at each end, reads as "put it
-// beside this one" rather than "put it with this one". A quarter at each end
-// leaves the inner half joining, which is the rule the design states.
+// dropEdgeShare is how much of a row, at each end, reads as "put it beside
+// this one" rather than "put it with this one". A quarter at each end leaves
+// the middle half joining, which is the rule the design states.
 const dropEdgeShare = 4
 
-// resolveDrop turns chip bounds and a drop point into an outcome. It is a pure
+// resolveDrop turns row bounds and a drop point into an outcome. It is a pure
 // function so the rule is testable without a live host, and so the pointer
 // path is a thin caller over it.
 //
+// The decision is on the vertical axis, because a lane is a vertical stack of
+// full-width rows. It resolved on the horizontal one first, which is a rule
+// that cannot tell two rows apart when they share an x range: every drop
+// landed on the first row, so dragging down did nothing and a group could
+// never be dropped into.
+//
 // Each lane owns exactly one drop zone and resolves the target itself.
 // ui.FindDropZone tests a node before descending into it, so an outer lane
-// zone always wins over a nested group zone; making groups drop zones would
+// zone always wins over a nested one; making groups their own zones would
 // leave them unreachable. Rather than change a primitive the plugin view also
 // uses, the lane does the work.
-//
-// Only the horizontal position matters. The lane's zone has already been hit
-// with its own drop slop, so a pointer slightly above or below a chip is still
-// on that chip as far as this decision goes.
-func resolveDrop(chips []ui.Rect, x, _ int) dropOutcome {
-	for i, chip := range chips {
-		if chip.W <= 0 {
+func resolveDrop(rows []ui.Rect, _, y int) dropOutcome {
+	for i, row := range rows {
+		if row.H <= 0 {
 			continue
 		}
-		if x < chip.X {
-			// Before this chip, and after the previous one's trailing edge:
-			// the gap between two chips inserts at that boundary.
+		if y < row.Y {
+			// Above this row and below the previous one: the gap between two
+			// rows inserts at that boundary.
 			return dropOutcome{Insert: i, Join: -1}
 		}
-		if x >= chip.X+chip.W {
+		if y >= row.Y+row.H {
 			continue
 		}
-		edge := chip.W / dropEdgeShare
+		edge := row.H / dropEdgeShare
 		switch {
-		case x < chip.X+edge:
+		case y < row.Y+edge:
 			return dropOutcome{Insert: i, Join: -1}
-		case x >= chip.X+chip.W-edge:
+		case y >= row.Y+row.H-edge:
 			return dropOutcome{Insert: i + 1, Join: -1}
 		default:
 			return dropOutcome{Join: i}
 		}
 	}
-	// Past the last chip, or an empty lane.
-	return dropOutcome{Insert: len(chips), Join: -1}
+	// Below the last row, or an empty lane.
+	return dropOutcome{Insert: len(rows), Join: -1}
 }
 
 // The lane strip. This is the Layout group at the top of the Bar section, and
@@ -172,8 +174,16 @@ func barGroupChip(h *PanelHost, ref config.ItemRef, it config.Item, selected str
 	inner := max(width-2*m.CardPadding, 0)
 	run := &ui.Node{
 		Kind: ui.KindColumn, Gap: theme.MarginXS, Width: width,
-		Shape: ui.ShapeSmall, Fill: ui.FillContainerHighest,
+		// A muted accent wash rather than another neutral level. The group sat
+		// at the same fill as the chips inside it, so a grouping read as three
+		// unrelated rows; contents keep the surface foreground, so the members
+		// stay ordinary chips rather than becoming primary ones.
+		Shape: ui.ShapeSmall, Fill: ui.FillSoft,
 		Padding: m.CardPadding, Name: "Group", Role: "group",
+		// Not focusable, so this never becomes a click target; the action is
+		// here only so the drop path can find the group's whole body and use
+		// it as one row of the lane.
+		Action: "bar-groupbody:" + addr,
 	}
 	// The group's own handle. A group is draggable, selectable and
 	// inspectable under D2, and it renders as a column, which cannot itself be
@@ -183,7 +193,7 @@ func barGroupChip(h *PanelHost, ref config.ItemRef, it config.Item, selected str
 	handle := &ui.Node{
 		Kind: ui.KindDragSource, DragType: barChipDragType, Payload: addr,
 		Action: "bar-select:" + addr, Name: "Group", Role: "button", Focusable: true,
-		Shape: ui.ShapeStadium, Fill: ui.FillContainerHigh,
+		Shape: ui.ShapeStadium, Fill: ui.FillContainerHighest,
 		Height: barChipHeight(h), Padding: m.ButtonPadding, Gap: theme.MarginS,
 		Children: []*ui.Node{
 			{Kind: ui.KindIcon, Icon: "drag_indicator", IconSize: m.IconSmall, Tone: ui.ToneSubtle},
@@ -842,33 +852,34 @@ func (h *PanelHost) barDrop(r *Registry, zone *ui.Node, payload string, x, y int
 	// members are drawn inside it and reached by dragging the group, which
 	// keeps the one-level cap a property of what can be dropped rather than a
 	// refusal after the fact.
-	var bounds []ui.Rect
-	var targets []int
 	lane := barLaneItems(h.barEditedBar(), laneName)
-	for i := range lane {
-		want := "bar-select:" + barRefAction(config.ItemRef{
-			Lane: laneName, Path: config.ItemPath{Index: i, Member: -1},
-		})
-		walkLaneNodes(zone, func(n *ui.Node) {
-			if n.Action == want && n.Bounds.H > 0 {
-				bounds = append(bounds, n.Bounds)
-				targets = append(targets, i)
-			}
-		})
-	}
+	bounds, targets := h.barDropRows(zone, laneName)
 	outcome := resolveDrop(bounds, x, y)
+	h.barDropHint = ""
 
 	// A chip dragged out of a group leaves it first, which is what prunes an
 	// emptied group and its placement.
 	if from.Lane != laneName || from.Path.Member >= 0 {
 		return h.barMoveBetween(r, from, laneName, outcome, targets)
 	}
-	if outcome.Join >= 0 {
+	if outcome.Join >= 0 && outcome.Join < len(targets) {
 		dst := targets[outcome.Join]
 		if dst == from.Path.Index {
 			return true
 		}
-		next, err := config.GroupItems(lane, from.Path.Index, dst, config.NewMinter(h.draft))
+		var next []config.Item
+		var err error
+		if lane[dst].ID == "group" {
+			// Dropping onto a group means joining it, not wrapping it in
+			// another one.
+			carried := lane[from.Path.Index]
+			next, err = config.AddToGroup(lane, dst, carried, config.NewMinter(h.draft))
+			if err == nil {
+				next, err = config.RemoveItem(next, config.ItemPath{Index: from.Path.Index, Member: -1})
+			}
+		} else {
+			next, err = config.GroupItems(lane, from.Path.Index, dst, config.NewMinter(h.draft))
+		}
 		if err != nil {
 			h.errLabel = err.Error()
 			r.rebuildPanel(h)
@@ -907,6 +918,20 @@ func (h *PanelHost) barMoveBetween(r *Registry, from config.ItemRef, laneName st
 	}
 
 	dest := barLaneItems(h.barEditedBar(), laneName)
+	if outcome.Join >= 0 && outcome.Join < len(targets) {
+		dst := targets[outcome.Join]
+		if dst < len(dest) && dest[dst].ID == "group" {
+			grown, err := config.AddToGroup(dest, dst, carried, config.NewMinter(h.draft))
+			if err != nil {
+				h.errLabel = err.Error()
+				r.rebuildPanel(h)
+				return true
+			}
+			h.errLabel = ""
+			h.barSelected = ""
+			return h.barApply(r, laneName, grown)
+		}
+	}
 	at := len(dest)
 	if outcome.Join < 0 && outcome.Insert <= len(dest) {
 		at = outcome.Insert
@@ -937,4 +962,73 @@ func walkLaneNodes(n *ui.Node, fn func(*ui.Node)) {
 	for _, c := range n.Children {
 		walkLaneNodes(c, fn)
 	}
+}
+
+// barDragHover resolves what the pointer is currently over and marks it, so a
+// drag shows where it would land. It reports whether anything changed: the
+// caller repaints only then, because the paint path reads no drag state and a
+// repaint per motion event otherwise redraws the surface identically.
+func (h *PanelHost) barDragHover() bool {
+	zone := ui.FindDropZone(h.root, &h.drag)
+	hint := ""
+	if zone != nil && h.drag.Accepts(zone) {
+		if laneName, ok := strings.CutPrefix(zone.Action, "bar-lane:"); ok {
+			rows, targets := h.barDropRows(zone, laneName)
+			outcome := resolveDrop(rows, int(h.drag.X), int(h.drag.Y))
+			if outcome.Join >= 0 && outcome.Join < len(targets) {
+				hint = barRefAction(config.ItemRef{
+					Lane: laneName,
+					Path: config.ItemPath{Index: targets[outcome.Join], Member: -1},
+				})
+			}
+		}
+	}
+	if hint == h.barDropHint {
+		return false
+	}
+	h.barDropHint = hint
+	h.applyBarDropHint()
+	return true
+}
+
+// applyBarDropHint marks the hinted row in the tree that is already built.
+// A drag does not rebuild the tree, so the mark is applied in place.
+func (h *PanelHost) applyBarDropHint() {
+	join := ""
+	body := ""
+	if h.barDropHint != "" {
+		join = "bar-select:" + h.barDropHint
+		body = "bar-groupbody:" + h.barDropHint
+	}
+	walkLaneNodes(h.root, func(n *ui.Node) {
+		switch {
+		case strings.HasPrefix(n.Action, "bar-select:"), strings.HasPrefix(n.Action, "bar-groupbody:"):
+			if n.Action == join || n.Action == body {
+				n.State |= ui.StateHovered
+				return
+			}
+			n.State &^= ui.StateHovered
+		}
+	})
+}
+
+// barDropRows lists the lane's top-level rows and which item each one is. A
+// group contributes its whole body, so dropping anywhere on it joins it.
+func (h *PanelHost) barDropRows(zone *ui.Node, laneName string) ([]ui.Rect, []int) {
+	var rows []ui.Rect
+	var targets []int
+	for i, it := range barLaneItems(h.barEditedBar(), laneName) {
+		ref := config.ItemRef{Lane: laneName, Path: config.ItemPath{Index: i, Member: -1}}
+		want := "bar-select:" + barRefAction(ref)
+		if it.ID == "group" {
+			want = "bar-groupbody:" + barRefAction(ref)
+		}
+		walkLaneNodes(zone, func(n *ui.Node) {
+			if n.Action == want && n.Bounds.H > 0 {
+				rows = append(rows, n.Bounds)
+				targets = append(targets, i)
+			}
+		})
+	}
+	return rows, targets
 }

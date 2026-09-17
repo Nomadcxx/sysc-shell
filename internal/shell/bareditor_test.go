@@ -18,12 +18,16 @@ import (
 // always wins over a nested group zone, which would make a group drop target
 // unreachable. Groups are consequently not drop zones.
 
-// chips lays three 100-wide chips at x = 0, 110 and 220, all 30 tall.
+// chips lays three rows stacked vertically, which is how a lane is drawn: one
+// full-width row per widget. The decision is therefore on the vertical axis.
+// It was written against a horizontal fixture first, and passed while the real
+// lane resolved every drop against its first chip -- a drag down did nothing
+// and a drop onto a group was unreachable.
 func chips() []ui.Rect {
 	return []ui.Rect{
-		{X: 0, Y: 0, W: 100, H: 30},
-		{X: 110, Y: 0, W: 100, H: 30},
-		{X: 220, Y: 0, W: 100, H: 30},
+		{X: 0, Y: 0, W: 300, H: 40},
+		{X: 0, Y: 50, W: 300, H: 40},
+		{X: 0, Y: 100, W: 300, H: 40},
 	}
 }
 
@@ -31,15 +35,15 @@ func TestDropOnAChipsInnerHalfJoinsIt(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name string
-		x    int
+		y    int
 		join int
 	}{
-		{"centre of the first", 50, 0},
-		{"centre of the second", 160, 1},
-		{"centre of the third", 270, 2},
-		{"just inside the inner half", 26, 0},
+		{"middle of the first", 20, 0},
+		{"middle of the second", 70, 1},
+		{"middle of the third", 120, 2},
+		{"just inside the inner half", 11, 0},
 	} {
-		got := resolveDrop(chips(), tc.x, 15)
+		got := resolveDrop(chips(), 150, tc.y)
 		if got.Join != tc.join {
 			t.Errorf("%s: Join = %d, want %d (%+v)", tc.name, got.Join, tc.join, got)
 		}
@@ -50,20 +54,20 @@ func TestDropNearAnEdgeInsertsRatherThanJoins(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name   string
-		x      int
+		y      int
 		insert int
 	}{
-		{"before the first", 5, 0},
-		{"after the first", 95, 1},
-		{"before the second", 115, 1},
-		{"after the third", 315, 3},
-		{"in the gap between chips", 105, 1},
+		{"above the first", 2, 0},
+		{"below the first", 38, 1},
+		{"above the second", 52, 1},
+		{"below the third", 138, 3},
+		{"in the gap between rows", 45, 1},
 		{"past the end of the lane", 400, 3},
-		{"before the lane starts", -20, 0},
+		{"above the lane", -20, 0},
 	} {
-		got := resolveDrop(chips(), tc.x, 15)
+		got := resolveDrop(chips(), 150, tc.y)
 		if got.Join >= 0 {
-			t.Errorf("%s: joined chip %d, want an insertion", tc.name, got.Join)
+			t.Errorf("%s: joined row %d, want an insertion", tc.name, got.Join)
 			continue
 		}
 		if got.Insert != tc.insert {
@@ -74,37 +78,36 @@ func TestDropNearAnEdgeInsertsRatherThanJoins(t *testing.T) {
 
 func TestDropOnAnEmptyLaneInsertsAtTheStart(t *testing.T) {
 	t.Parallel()
-	got := resolveDrop(nil, 40, 15)
+	got := resolveDrop(nil, 150, 40)
 	if got.Join >= 0 || got.Insert != 0 {
 		t.Errorf("got %+v, want an insertion at 0", got)
 	}
 }
 
-// A lane holding one chip still has to offer both edges, or a widget could
+// A lane holding one row still has to offer above and below, or a widget could
 // never be placed before the one already there.
 func TestASingleChipOffersBothSides(t *testing.T) {
 	t.Parallel()
-	one := []ui.Rect{{X: 0, Y: 0, W: 100, H: 30}}
-	if got := resolveDrop(one, 5, 15); got.Join >= 0 || got.Insert != 0 {
+	one := []ui.Rect{{X: 0, Y: 0, W: 300, H: 40}}
+	if got := resolveDrop(one, 150, 2); got.Join >= 0 || got.Insert != 0 {
 		t.Errorf("leading edge: got %+v, want insert 0", got)
 	}
-	if got := resolveDrop(one, 95, 15); got.Join >= 0 || got.Insert != 1 {
+	if got := resolveDrop(one, 150, 38); got.Join >= 0 || got.Insert != 1 {
 		t.Errorf("trailing edge: got %+v, want insert 1", got)
 	}
-	if got := resolveDrop(one, 50, 15); got.Join != 0 {
-		t.Errorf("centre: got %+v, want join 0", got)
+	if got := resolveDrop(one, 150, 20); got.Join != 0 {
+		t.Errorf("middle: got %+v, want join 0", got)
 	}
 }
 
-// Vertical position is deliberately not part of the decision. The lane's own
-// zone has already been resolved by FindDropZone with its drop slop, and a
-// pointer a few pixels above or below a chip is still on that chip as far as
-// the lane is concerned.
-func TestResolutionIgnoresVerticalPosition(t *testing.T) {
+// Horizontal position is not part of the decision: a lane row spans the whole
+// column, so every row shares one x range and only the vertical position can
+// tell them apart. Resolving on x is what made a drag down do nothing.
+func TestResolutionIgnoresHorizontalPosition(t *testing.T) {
 	t.Parallel()
-	for _, y := range []int{-40, 0, 15, 29, 80} {
-		if got := resolveDrop(chips(), 160, y); got.Join != 1 {
-			t.Errorf("y=%d: got %+v, want join 1", y, got)
+	for _, x := range []int{-40, 0, 150, 299, 800} {
+		if got := resolveDrop(chips(), x, 70); got.Join != 1 {
+			t.Errorf("x=%d: got %+v, want join 1", x, got)
 		}
 	}
 }
@@ -610,11 +613,13 @@ func dropOnLane(t *testing.T, reg *Registry, h *PanelHost, payload, lane string,
 	if target.H == 0 {
 		t.Fatalf("chip %d of the %s lane has no laid-out box", chipIndex, lane)
 	}
-	x := target.X + target.W/2
+	// Rows stack vertically, so the middle of a row joins it and the top edge
+	// inserts above it.
+	y := target.Y + target.H/2
 	if !inner {
-		x = target.X + 1
+		y = target.Y + 1
 	}
-	return h.barDrop(reg, zone, payload, x, target.Y+target.H/2)
+	return h.barDrop(reg, zone, payload, target.X+target.W/2, y)
 }
 
 func TestDroppingOnAChipsInnerHalfGroupsThem(t *testing.T) {
@@ -985,5 +990,143 @@ func TestTheInspectorFollowsTheLaneThatOwnsTheSelection(t *testing.T) {
 	}
 	if inspectorY > rightLaneY {
 		t.Errorf("inspector at y=%d sits below the Right lane at y=%d", inspectorY, rightLaneY)
+	}
+}
+
+// Dropping onto a group joins it, rather than being unreachable. The group's
+// whole body is the row the lane resolves against, so anywhere on it counts.
+func TestDroppingOntoAGroupJoinsIt(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{
+		{ID: "clock"},
+		{ID: "group", Items: []config.Item{{ID: "cpu"}, {ID: "memory"}}},
+	}})
+	var body ui.Rect
+	walkNodes(h.root, func(n *ui.Node) {
+		if n.Action == "bar-groupbody:left:1:-1" && n.Bounds.H > 0 {
+			body = n.Bounds
+		}
+	})
+	if body.H == 0 {
+		t.Fatal("the group body has no box, so it cannot be a drop target")
+	}
+	var zone *ui.Node
+	walkNodes(h.root, func(n *ui.Node) {
+		if n.Action == "bar-lane:left" {
+			zone = n
+		}
+	})
+	if !h.barDrop(reg, zone, "left:0:-1", body.X+body.W/2, body.Y+body.H/2) {
+		t.Fatal("the drop onto a group was not handled")
+	}
+	if got := laneIDs(h.draft.Bar.Left); got != "group(cpu,memory,clock)" {
+		t.Errorf("after dropping onto the group: %q", got)
+	}
+}
+
+// Dragging downwards has to work. It resolved every drop against the first row
+// while the rule was horizontal, so a downward drag did nothing at all.
+func TestDraggingDownwardsReorders(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{
+		Left: []config.Item{{ID: "clock"}, {ID: "cpu"}, {ID: "memory"}},
+	})
+	if !dropOnLane(t, reg, h, "left:0:-1", "left", 2, false) {
+		t.Fatal("the downward drop was not handled")
+	}
+	if got := laneIDs(h.draft.Bar.Left); got != "cpu clock memory" {
+		t.Errorf("after dragging the first row down onto the third's top edge: %q", got)
+	}
+}
+
+// A group has to read as one thing. It used to paint at the same fill as the
+// chips inside it, so a grouping looked like three unrelated rows.
+func TestAGroupIsVisuallyDistinctFromItsLaneAndItsMembers(t *testing.T) {
+	t.Parallel()
+	_, h := barKeyHost(t, config.Bar{
+		Left: []config.Item{{ID: "group", Items: []config.Item{{ID: "cpu"}, {ID: "memory"}}}},
+	})
+	var laneFill, groupFill ui.Fill
+	var memberFills []ui.Fill
+	walkNodes(h.root, func(n *ui.Node) {
+		switch {
+		case n.Action == "bar-lane:left":
+			laneFill = n.Fill
+		case n.Action == "bar-groupbody:left:0:-1":
+			groupFill = n.Fill
+		case n.Kind == ui.KindDragSource && n.DragType == barChipDragType &&
+			strings.Contains(n.Action, ":0:") && !strings.HasSuffix(n.Action, ":-1"):
+			memberFills = append(memberFills, n.Fill)
+		}
+	})
+	if groupFill == laneFill {
+		t.Errorf("the group paints the same fill as its lane (%v)", groupFill)
+	}
+	if len(memberFills) == 0 {
+		t.Fatal("no member chips found")
+	}
+	for _, f := range memberFills {
+		if f == groupFill {
+			t.Errorf("a member chip paints the same fill as the group (%v)", f)
+		}
+	}
+}
+
+// A drag repainted the whole surface on every pointer motion, and the paint
+// path reads no drag state at all, so each repaint produced identical pixels.
+// On a 900x760 software-rendered panel that is what made dragging feel like
+// heavy load. A repaint is now worth doing only when the answer changes.
+func TestDragMotionOnlyRepaintsWhenTheTargetChanges(t *testing.T) {
+	t.Parallel()
+	_, h := barKeyHost(t, config.Bar{
+		Left: []config.Item{{ID: "clock"}, {ID: "cpu"}, {ID: "memory"}},
+	})
+	var zone *ui.Node
+	rowOf := map[int]ui.Rect{}
+	walkNodes(h.root, func(n *ui.Node) {
+		if n.Action == "bar-lane:left" {
+			zone = n
+		}
+		for i := range 3 {
+			if n.Action == "bar-select:"+barRefAction(config.ItemRef{
+				Lane: "left", Path: config.ItemPath{Index: i, Member: -1},
+			}) && n.Bounds.H > 0 {
+				rowOf[i] = n.Bounds
+			}
+		}
+	})
+	if zone == nil || len(rowOf) != 3 {
+		t.Fatal("the lane did not lay out three rows")
+	}
+
+	src := &ui.Node{Kind: ui.KindDragSource, DragType: barChipDragType, Payload: "left:0:-1"}
+	first := rowOf[0]
+	h.drag.Begin(src, float64(first.X+first.W/2), float64(first.Y+first.H/2))
+	// Past the movement threshold, so the drag is live.
+	h.drag.Move(float64(first.X+first.W/2), float64(first.Y+first.H/2+20))
+	_ = h.barDragHover()
+
+	// Staying over the same row must not ask for a repaint.
+	second := rowOf[1]
+	h.drag.Move(float64(second.X+second.W/2), float64(second.Y+second.H/2))
+	if !h.barDragHover() {
+		t.Fatal("moving onto a different row did not repaint")
+	}
+	for _, dy := range []int{1, 2, 3} {
+		h.drag.Move(float64(second.X+second.W/2), float64(second.Y+second.H/2+dy))
+		if h.barDragHover() {
+			t.Errorf("a motion of %d px within the same row asked for a repaint", dy)
+		}
+	}
+
+	// And the row it is over is marked, so the drag shows where it lands.
+	var marked []string
+	walkNodes(h.root, func(n *ui.Node) {
+		if strings.HasPrefix(n.Action, "bar-select:") && n.State&ui.StateHovered != 0 {
+			marked = append(marked, n.Action)
+		}
+	})
+	if len(marked) != 1 || marked[0] != "bar-select:left:1:-1" {
+		t.Errorf("marked rows = %v, want exactly the row under the pointer", marked)
 	}
 }

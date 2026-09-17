@@ -318,3 +318,29 @@ func TestItemAtRefusesAnAddressThatNoLongerResolves(t *testing.T) {
 		}
 	}
 }
+
+func TestAddToGroupPutsAnItemInside(t *testing.T) {
+	t.Parallel()
+	start := []Item{{ID: "clock"}, {ID: "group", Items: []Item{{ID: "cpu"}}}}
+	got, err := AddToGroup(start, 1, Item{ID: "memory"}, NewMinter(Config{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ids(got) != "clock group(cpu,memory)" {
+		t.Errorf("got %q", ids(got))
+	}
+	if ids(start) != "clock group(cpu)" {
+		t.Errorf("the input lane was mutated: %q", ids(start))
+	}
+}
+
+func TestAddToGroupRefusesAGroupAndANonGroupTarget(t *testing.T) {
+	t.Parallel()
+	start := []Item{{ID: "clock"}, {ID: "group", Items: []Item{{ID: "cpu"}}}}
+	if _, err := AddToGroup(start, 1, Item{ID: "group"}, nil); err == nil {
+		t.Error("a group was added inside a group")
+	}
+	if _, err := AddToGroup(start, 0, Item{ID: "memory"}, nil); err == nil {
+		t.Error("an item was added to something that is not a group")
+	}
+}

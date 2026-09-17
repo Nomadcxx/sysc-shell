@@ -102,6 +102,9 @@ type PanelHost struct {
 	// none is. The list expands in place the way Menu does, because no
 	// popup-over-panel surface exists.
 	barAdding string
+	// barDropHint names the row the pointer is currently over, so a drag
+	// repaints when the answer changes and stays quiet when it does not.
+	barDropHint string
 	// settingsScroll retains the settings body's scroll offset across a
 	// rebuild. Every edit in the lane editor rebuilds the tree, and a fresh
 	// tree starts at the top, so without this a drag or a remove threw the
@@ -1191,7 +1194,18 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			h.hoverX, h.hoverY = int(math.Floor(e.X)), int(math.Floor(e.Y))
 			if h.drag.Source != nil {
 				h.drag.Move(e.X, e.Y)
-				return h.drag.Active()
+				if !h.drag.Active() {
+					return false
+				}
+				if h.id == PanelSettings {
+					// Repaint only when the drop target actually changes.
+					// Nothing in the paint path reads drag state, so a repaint
+					// per motion event produced pixel-identical output at the
+					// cost of a full software render of the surface -- which
+					// is what made dragging feel like heavy load.
+					return h.barDragHover()
+				}
+				return true
 			}
 			if h.sliderDrag != nil {
 				ui.SliderAt(h.sliderDrag, h.hoverX)

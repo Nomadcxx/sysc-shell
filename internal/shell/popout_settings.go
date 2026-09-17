@@ -311,12 +311,23 @@ func settingsEntryRow(h *PanelHost, e settings.Entry) *ui.Node {
 	// column, which is invisible on a wide output and clips on a small one.
 	label.Width = max(settingsBodyWidth(h)-controlW-theme.MarginL, 0)
 
-	trailing := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Width: controlW, PinEnd: true}
+	// Only a control that benefits from length takes the column: a slider is
+	// swept and a field is typed into. A toggle and a dropdown have a natural
+	// size, and stretching them across a 300-pixel column -- or, with no reset
+	// beside them to pin against, leaving them adrift at its left edge -- is
+	// what made them read as taking the whole panel.
+	trailing := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, PinEnd: true}
+	if settingsControlFills(e) {
+		trailing.Width = controlW
+	}
 	room := controlW
 	if !e.IsDefault(h.draft) {
 		reset := settingsResetButton(e)
 		trailing.Children = append(trailing.Children, reset)
 		room = max(room-settingsResetWidth(h)-theme.MarginS, 0)
+	}
+	if !settingsControlFills(e) {
+		room = 0
 	}
 	trailing.Children = append(trailing.Children, settingsControl(h, e, room))
 
@@ -329,6 +340,21 @@ func settingsEntryRow(h *PanelHost, e settings.Entry) *ui.Node {
 		row.Height = h.metrics().StandardControl
 	}
 	return row
+}
+
+// settingsControlFills reports whether this entry's control earns the whole
+// control column. Length is worth having where it is used: a slider is swept
+// along it and a field is typed into it. A toggle, a stepper and a dropdown
+// each have a size of their own and are simply placed at the end of the row.
+func settingsControlFills(e settings.Entry) bool {
+	switch e.Kind {
+	case settings.KindString, settings.KindHex, settings.KindPath, settings.KindFont:
+		return true
+	case settings.KindInt:
+		// A short range renders as a stepper, which is three small controls.
+		return !(e.Max-e.Min > 0 && e.Max-e.Min <= settingsStepperSpan)
+	}
+	return false
 }
 
 // settingsResetWidth is the room the reset control takes when a row shows one.
