@@ -80,6 +80,38 @@ func settingsBodyWidth(h *PanelHost) int {
 	return max(panelWidth-2*pad-settingsRailWidth-theme.MarginXL, 0)
 }
 
+// settingsBody is the one scrolling column the pane's content sits in. It
+// carries the retained offset, so an edit that rebuilds the tree leaves the
+// user where they were rather than at the top.
+func settingsBody(h *PanelHost, gap int, children ...*ui.Node) *ui.Node {
+	return &ui.Node{
+		Kind: ui.KindScroll, Width: settingsBodyWidth(h), Gap: gap,
+		ScrollOffset: h.settingsScroll, Children: children,
+	}
+}
+
+// settingsScrollOffset reads the offset back out of a built tree, so the next
+// rebuild can restore it. layoutScroll clamps, so an offset left over from a
+// longer list cannot strand the view past the end of a shorter one.
+func settingsScrollOffset(root *ui.Node) int {
+	var out int
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil || out != 0 {
+			return
+		}
+		if n.Kind == ui.KindScroll {
+			out = n.ScrollOffset
+			return
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+	return out
+}
+
 func settingsRail(h *PanelHost, section string) *ui.Node {
 	rail := &ui.Node{Kind: ui.KindColumn, Width: settingsRailWidth, Gap: theme.MarginM}
 	for _, name := range settingsSections {
@@ -156,10 +188,7 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 		// The plugin host's view is a column of cards with no width of its
 		// own, so inside the body row its switches stretched the full
 		// surface. It gets the same bounded, scrolling column as a section.
-		return body(&ui.Node{
-			Kind: ui.KindScroll, Width: settingsBodyWidth(h), Gap: theme.MarginM,
-			Children: []*ui.Node{pluginsTree(r, h)},
-		})
+		return body(settingsBody(h, theme.MarginM, pluginsTree(r, h)))
 	}
 	var entries []settings.Entry
 	if h.set != nil {
@@ -228,7 +257,7 @@ func settingsSearchColumn(h *PanelHost, hits []settings.Entry) *ui.Node {
 			TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
 		})
 	}
-	return &ui.Node{Kind: ui.KindScroll, Width: settingsBodyWidth(h), Gap: theme.MarginXL, Children: groups}
+	return settingsBody(h, theme.MarginXL, groups...)
 }
 
 // settingsSectionColumn lays the whole section out rather than virtualising
@@ -238,10 +267,7 @@ func settingsSearchColumn(h *PanelHost, hits []settings.Entry) *ui.Node {
 // row count, which is what keeps laying the whole thing out cheap.
 func settingsSectionColumn(h *PanelHost, section string, entries []settings.Entry) *ui.Node {
 	if len(entries) == 0 {
-		return &ui.Node{
-			Kind: ui.KindScroll, Width: settingsBodyWidth(h), Gap: theme.MarginXL,
-			Children: []*ui.Node{settingsEmptyNote(section)},
-		}
+		return settingsBody(h, theme.MarginXL, settingsEmptyNote(section))
 	}
 	var order []string
 	rows := map[string][]settings.Entry{}
@@ -266,7 +292,7 @@ func settingsSectionColumn(h *PanelHost, section string, entries []settings.Entr
 			body,
 		}})
 	}
-	return &ui.Node{Kind: ui.KindScroll, Width: settingsBodyWidth(h), Gap: theme.MarginXL, Children: groups}
+	return settingsBody(h, theme.MarginXL, groups...)
 }
 
 func settingsEntryRow(h *PanelHost, e settings.Entry) *ui.Node {

@@ -102,7 +102,12 @@ type PanelHost struct {
 	// none is. The list expands in place the way Menu does, because no
 	// popup-over-panel surface exists.
 	barAdding string
-	pressed   string
+	// settingsScroll retains the settings body's scroll offset across a
+	// rebuild. Every edit in the lane editor rebuilds the tree, and a fresh
+	// tree starts at the top, so without this a drag or a remove threw the
+	// user back to the first row and lost their place.
+	settingsScroll int
+	pressed        string
 	// pointer is the resolved hover/press state, kept as stable keys so it
 	// survives the tree rebuilds that replace every node.
 	pointer        interaction
@@ -2019,6 +2024,9 @@ func (h *PanelHost) afterFocusChange(r *Registry) {
 
 func (r *Registry) rebuildPanel(h *PanelHost) {
 	idx := h.roving.Index()
+	if h.id == PanelSettings {
+		h.settingsScroll = settingsScrollOffset(h.root)
+	}
 	focusedKey := ""
 	if h.id == PanelClipboard {
 		focusedKey = h.focused().StableKey()

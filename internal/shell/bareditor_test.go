@@ -842,3 +842,42 @@ func TestTheLastChipOffersNoGroupControl(t *testing.T) {
 		t.Error("the last chip in the lane offers a group control with nothing to group with")
 	}
 }
+
+// Every edit rebuilds the panel tree, and a fresh tree starts at the top. With
+// three stacked lanes the strip is taller than the viewport, so a drag or a
+// remove threw the user back to the first row and lost their place. Reported
+// from the laptop.
+func TestAnEditKeepsTheScrollPosition(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Default().Bar)
+
+	scroll := func() *ui.Node {
+		var out *ui.Node
+		walkNodes(h.root, func(n *ui.Node) {
+			if n.Kind == ui.KindScroll && out == nil {
+				out = n
+			}
+		})
+		return out
+	}
+	s := scroll()
+	if s == nil {
+		t.Fatal("the settings body is not a scrolling column")
+	}
+	// Somewhere down the strip, well past the first lane.
+	const parked = 240
+	s.ScrollOffset = parked
+
+	if !h.barActivate(reg, "bar-remove:right:0:-1") {
+		t.Fatal("remove was not handled")
+	}
+	barLayout(t, reg, h)
+
+	after := scroll()
+	if after == nil {
+		t.Fatal("no scrolling column after the edit")
+	}
+	if after.ScrollOffset != parked {
+		t.Errorf("scroll offset = %d after an edit, want %d: the view jumped", after.ScrollOffset, parked)
+	}
+}
