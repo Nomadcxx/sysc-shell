@@ -65,28 +65,171 @@ func paintWeatherEffect(c *Canvas, box ui.Rect, mask *image.Alpha, style Style, 
 	switch kind {
 	case weatherClear:
 		paintSkyCloudWash(c, box, mask, style, spec, phase, intensity, .10)
+		paintCelestial(c, box, mask, style, spec, phase, intensity)
 	case weatherPartlyCloudy:
 		paintSkyCloudWash(c, box, mask, style, spec, phase, intensity, .28)
+		paintCelestial(c, box, mask, style, spec, phase, intensity)
+		paintCloudScene(c, box, mask, style, spec, phase, intensity, .78)
 	case weatherCloudy:
 		paintSkyCloudWash(c, box, mask, style, spec, phase, intensity, .56)
+		paintCloudScene(c, box, mask, style, spec, phase, intensity, 1)
 	case weatherFog:
 		paintSkyCloudWash(c, box, mask, style, spec, phase, intensity, .42)
 		paintFogHaze(c, box, mask, style, spec, phase, intensity)
 	case weatherRain:
 		paintSkyCloudWash(c, box, mask, style, spec, phase, intensity, .25)
+		paintCloudScene(c, box, mask, style, spec, phase, intensity, .88)
 		paintRain(c, box, mask, style, spec, phase, intensity)
 	case weatherSnow:
 		paintSkyCloudWash(c, box, mask, style, spec, phase, intensity, .20)
+		paintCloudScene(c, box, mask, style, spec, phase, intensity, .82)
 		paintSnow(c, box, mask, style, spec, phase, intensity, weatherSnowParticles, 1)
 	case weatherHeavySnow:
 		paintSkyCloudWash(c, box, mask, style, spec, phase, intensity, .34)
+		paintCloudScene(c, box, mask, style, spec, phase, intensity, 1)
 		paintSnow(c, box, mask, style, spec, phase, intensity, weatherHeavySnowParticles, 1.25)
 	case weatherThunderstorm:
 		paintSkyCloudWash(c, box, mask, style, spec, phase, intensity, .50)
+		paintCloudScene(c, box, mask, style, spec, phase, intensity, 1)
 		paintRain(c, box, mask, style, spec, phase, intensity)
 		paintLightning(c, box, mask, style, spec, phase, intensity)
 	}
 	return nil
+}
+
+// paintCelestial gives clear states a single readable focal form. The rays and
+// halo move more slowly than the surface phase, which keeps the hero calm while
+// still making a paused frame visibly different from its neighbours.
+func paintCelestial(c *Canvas, box ui.Rect, mask *image.Alpha, style Style, spec ui.EffectSpec, phase, intensity float64) {
+	if intensity <= 0 || box.W <= 0 || box.H <= 0 {
+		return
+	}
+	celestial := weatherRole(style.Accent, style.Foreground)
+	if celestial.A == 0 {
+		return
+	}
+	time := effectTime(phase, spec.Speed)
+	width, height := float64(box.W), float64(box.H)
+	short := float64(min(box.W, box.H))
+	breath := .96 + .04*math.Sin(2*math.Pi*(time*.22+weatherUnit(spec.Seed, 41, 1)))
+	cx := width*.69 + math.Sin(2*math.Pi*(time*.18+weatherUnit(spec.Seed, 41, 2)))*width*.035
+	cy := height*.29 + math.Sin(2*math.Pi*(time*.13+weatherUnit(spec.Seed, 41, 3)))*height*.025
+	radius := short * .18 * breath
+	if radius < 3 {
+		radius = 3
+	}
+
+	halo := LerpColor(celestial, style.Foreground, .36)
+	drawWeatherEllipse(c, box, mask, cx, cy, radius*1.72, radius*1.72,
+		halo, weatherAlpha(halo.A, intensity*.18))
+	drawWeatherEllipse(c, box, mask, cx, cy, radius*1.30, radius*1.30,
+		halo, weatherAlpha(halo.A, intensity*(.18+.05*breath)))
+
+	ray := LerpColor(celestial, style.Foreground, .22)
+	rayCount := 8
+	rotation := 2 * math.Pi * (time*.11 + weatherUnit(spec.Seed, 42, 1))
+	for i := 0; i < rayCount; i++ {
+		angle := rotation + float64(i)*2*math.Pi/float64(rayCount)
+		inner := radius * 1.28
+		outer := radius * (1.62 + .08*math.Sin(2*math.Pi*(time*.17+float64(i))))
+		drawWeatherStroke(c, box, mask,
+			cx+math.Cos(angle)*inner, cy+math.Sin(angle)*inner,
+			cx+math.Cos(angle)*outer, cy+math.Sin(angle)*outer,
+			max(1, short*.018), ray, weatherAlpha(ray.A, intensity*.40))
+	}
+
+	drawWeatherEllipse(c, box, mask, cx, cy, radius, radius,
+		celestial, weatherAlpha(celestial.A, intensity*.92))
+	highlight := LerpColor(celestial, style.Foreground, .55)
+	drawWeatherEllipse(c, box, mask, cx-radius*.22, cy-radius*.24, radius*.40, radius*.32,
+		highlight, weatherAlpha(highlight.A, intensity*.42))
+}
+
+// paintCloudScene uses two overlapping masses so cloud states read as a form,
+// not as another full-card wash. Their bounded drift supplies the slow lift
+// suggested by the Meteocons reference without moving the content layout.
+func paintCloudScene(c *Canvas, box ui.Rect, mask *image.Alpha, style Style, spec ui.EffectSpec, phase, intensity, density float64) {
+	if intensity <= 0 || box.W <= 0 || box.H <= 0 || density <= 0 {
+		return
+	}
+	base := weatherRole(style.ContainerHighest, style.Foreground)
+	if base.A == 0 {
+		return
+	}
+	time := effectTime(phase, spec.Speed)
+	width, height := float64(box.W), float64(box.H)
+	driftX := math.Sin(2*math.Pi*(time*.34+weatherUnit(spec.Seed, 51, 1))) * width * .045
+	driftY := math.Sin(2*math.Pi*(time*.24+weatherUnit(spec.Seed, 51, 2))) * height * .035
+
+	shadow := LerpColor(base, style.Background, .30)
+	paintCloudMass(c, box, mask, width*.38+driftX*.65, height*.57+driftY*.65,
+		width*.66, height*.31, shadow, weatherAlpha(shadow.A, intensity*density*.44))
+
+	cloud := LerpColor(base, style.Foreground, .43)
+	paintCloudMass(c, box, mask, width*.60+driftX, height*.73+driftY,
+		width*.92, height*.39, cloud, weatherAlpha(cloud.A, intensity*density*.78))
+}
+
+type weatherCloudPuff struct {
+	x, y, rx, ry float64
+}
+
+func paintCloudMass(c *Canvas, box ui.Rect, mask *image.Alpha, cx, cy, width, height float64, col Color, alpha uint8) {
+	if alpha == 0 || width <= 0 || height <= 0 {
+		return
+	}
+	// The lower ellipse gives the mass a stable base; the puffs provide the
+	// overlapping silhouette that distinguishes weather from a gradient.
+	drawWeatherEllipse(c, box, mask, cx, cy+height*.10, width*.50, height*.27, col, alpha)
+	for _, puff := range []weatherCloudPuff{
+		{x: -.34, y: -.02, rx: .25, ry: .42},
+		{x: -.12, y: -.15, rx: .28, ry: .55},
+		{x: .14, y: -.12, rx: .30, ry: .49},
+		{x: .36, y: .02, rx: .24, ry: .36},
+	} {
+		drawWeatherEllipse(c, box, mask, cx+width*puff.x, cy+height*puff.y,
+			width*puff.rx, height*puff.ry, col, alpha)
+	}
+}
+
+func drawWeatherEllipse(c *Canvas, box ui.Rect, mask *image.Alpha, cx, cy, rx, ry float64, col Color, alpha uint8) {
+	if alpha == 0 || rx <= 0 || ry <= 0 || math.IsNaN(cx) || math.IsNaN(cy) {
+		return
+	}
+	minX := max(int(math.Floor(cx-rx-1)), 0)
+	maxX := min(int(math.Ceil(cx+rx+1)), box.W)
+	minY := max(int(math.Floor(cy-ry-1)), 0)
+	maxY := min(int(math.Ceil(cy+ry+1)), box.H)
+	shortRadius := min(rx, ry)
+	if shortRadius <= 0 {
+		return
+	}
+	for y := minY; y < maxY; y++ {
+		for x := minX; x < maxX; x++ {
+			dx := (float64(x) + .5 - cx) / rx
+			dy := (float64(y) + .5 - cy) / ry
+			edge := (1 - math.Hypot(dx, dy)) * shortRadius
+			coverage := clampEffect(.5+edge, 0, 1)
+			if coverage > 0 {
+				localWeatherPixel(c, box, mask, x, y, col, alpha, coverage)
+			}
+		}
+	}
+}
+
+func drawWeatherStroke(c *Canvas, box ui.Rect, mask *image.Alpha, x0, y0, x1, y1, width float64, col Color, alpha uint8) {
+	if alpha == 0 || width <= 0 {
+		return
+	}
+	steps := max(int(math.Ceil(math.Hypot(x1-x0, y1-y0))), 1)
+	steps = min(steps, 96)
+	radius := width / 2
+	for step := 0; step <= steps; step++ {
+		t := float64(step) / float64(steps)
+		x := x0 + (x1-x0)*t
+		y := y0 + (y1-y0)*t
+		drawWeatherEllipse(c, box, mask, x, y, radius, radius, col, alpha)
+	}
 }
 
 func paintSkyCloudWash(c *Canvas, box ui.Rect, mask *image.Alpha, style Style, spec ui.EffectSpec, phase, intensity, density float64) {
