@@ -295,7 +295,7 @@ func TestEveryConfigDomainHasAnEntry(t *testing.T) {
 
 	for _, prefix := range []string{
 		"bar.", "appearance.", "theme.templates.", "panels.", "session.",
-		"accessibility.", "weather.", "wallpaper.", "tray.", "outputs.", "plugins.",
+		"accessibility.", "weather.", "wallpaper.", "tray.", "outputs.",
 	} {
 		found := false
 		for _, section := range SectionNames() {

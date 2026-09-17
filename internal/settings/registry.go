@@ -470,7 +470,6 @@ func DefaultFor(cfg config.Config) *Registry {
 	r.addTemplateEntries()
 	r.addTrayEntries(cfg)
 	r.addOutputEntries(cfg)
-	r.addPluginEntries(cfg)
 	r.resolveDefaults()
 	return r
 }
@@ -932,36 +931,6 @@ func (r *Registry) addOutputEntries(cfg config.Config) {
 				}),
 			},
 		)
-	}
-}
-
-// addPluginEntries gives each plugin the configuration knows about its own
-// toggle. The set is wider than Plugins.Enabled on purpose: a plugin that is
-// turned off leaves that list, so keying the rows on it alone would delete the
-// control that turns it back on. A plugin the user has settings for, or has
-// placed on the bar, is one they know about.
-func (r *Registry) addPluginEntries(cfg config.Config) {
-	var placed []string
-	for _, it := range append(append(append([]config.Item{}, cfg.Bar.Left...), cfg.Bar.Center...), cfg.Bar.Right...) {
-		for _, member := range append([]config.Item{it}, it.Items...) {
-			if member.Plugin != "" {
-				placed = append(placed, member.Plugin)
-			}
-		}
-	}
-	configured := make([]string, 0, len(cfg.Plugins.Settings))
-	for id := range cfg.Plugins.Settings {
-		configured = append(configured, id)
-	}
-	for _, id := range unionOf(cfg.Plugins.Enabled, configured, placed) {
-		r.entries = append(r.entries, Entry{
-			Path: "plugins." + id + ".enabled", Label: id, Section: "Plugins", Group: "Installed",
-			Describe: "Load this plugin and its widgets.", Kind: KindBool,
-			Get: getBool(func(c config.Config) bool { return slices.Contains(c.Plugins.Enabled, id) }),
-			Set: setBool("plugins."+id+".enabled", func(c *config.Config, b bool) {
-				c.Plugins.Enabled = toggleToken(c.Plugins.Enabled, id, b)
-			}),
-		})
 	}
 }
 
