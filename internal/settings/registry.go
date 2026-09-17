@@ -2,7 +2,6 @@ package settings
 
 import (
 	"fmt"
-	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -585,9 +584,11 @@ const (
 	maxFadeSeconds = 10
 )
 
-// hexPattern mirrors the loader's colour rule. Task 11's validated hex fields
-// read it too, so the shape is stated once.
-var hexPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$`)
+// validHex asks the loader's own rule rather than restating it. A setter that
+// writes a colour and the field that marks one valid as it is typed must agree
+// with what config.Load will accept, or a value marks itself good and is then
+// refused by the very write it was typed for.
+func validHex(v string) bool { return config.ValidColor(v) }
 
 // seedFor keeps the seed readable by the source about to read it.
 //
@@ -605,7 +606,7 @@ func seedFor(source, seed string) string {
 			return names[0]
 		}
 	case "hex":
-		if hexPattern.MatchString(seed) {
+		if validHex(seed) {
 			return seed
 		}
 		// A stock name stands for a hex, so coming from a stock theme keeps
@@ -632,7 +633,7 @@ func seedFor(source, seed string) string {
 		if _, ok := theme.StockSeed(seed); ok {
 			return ""
 		}
-		if slices.Contains(theme.PaletteNames(), seed) || hexPattern.MatchString(seed) {
+		if slices.Contains(theme.PaletteNames(), seed) || validHex(seed) {
 			return ""
 		}
 	}
@@ -653,7 +654,7 @@ func seedEntry(cfg config.Config) Entry {
 	if cfg.ThemeGen.Source == "hex" {
 		e.Kind = KindHex
 		e.Set = write(func(c *config.Config, v string) error {
-			if !hexPattern.MatchString(strings.TrimSpace(v)) {
+			if !validHex(strings.TrimSpace(v)) {
 				return fmt.Errorf("settings: appearance.seed: %q is not #RRGGBB or #RRGGBBAA", v)
 			}
 			c.ThemeGen.Seed = strings.TrimSpace(v)

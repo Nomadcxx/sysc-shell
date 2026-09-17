@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -705,5 +706,87 @@ func TestRailTabsCarryTooltips(t *testing.T) {
 		if tab.Tooltip != tab.Name {
 			t.Errorf("tab %q has tooltip %q", tab.Name, tab.Tooltip)
 		}
+	}
+}
+
+// TestHexFieldAndSetterShareOneRule holds the field's "is this typed colour
+// good" answer to the setter's "will I accept this write" answer, and holds
+// both to what config.Load will read back. The three used to be three separate
+// copies of the same pattern, which is a shape that fails silently: a value
+// marks itself valid in the field and is then refused by the very write it was
+// typed for, and nothing catches the drift until a user hits it.
+func TestHexFieldAndSetterShareOneRule(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.ThemeGen.Source = "hex"
+	seed := settings.DefaultFor(cfg).ByPath("appearance.seed")
+	if seed == nil || seed.Kind != settings.KindHex {
+		t.Fatalf("appearance.seed = %+v, want a hex entry under a hex source", seed)
+	}
+
+	for _, v := range []string{
+		"#ffffff", "#000000", "#A1B2C3", "#a1b2c3d4",
+		"  #ffffff  ", "#fff", "ffffff", "#gggggg", "", "#ffffff ff",
+	} {
+		field := settingsValidHex(v)
+		c := cfg
+		accepted := seed.Set(&c, v) == nil
+		if field != accepted {
+			t.Fatalf("%q: field says valid=%v, setter says accepted=%v", v, field, accepted)
+		}
+		if !accepted {
+			continue
+		}
+		// What the setter stored has to survive the loader, or the pane has
+		// written a configuration the shell will refuse to start from.
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := config.Write(path, c); err != nil {
+			t.Fatalf("%q: write: %v", v, err)
+		}
+		got, err := config.Load(path)
+		if err != nil {
+			t.Fatalf("%q: the setter accepted a value the loader refuses: %v", v, err)
+		}
+		if got.ThemeGen.Seed != c.ThemeGen.Seed {
+			t.Fatalf("%q: seed round-tripped as %q, want %q", v, got.ThemeGen.Seed, c.ThemeGen.Seed)
+		}
+	}
+}
+
+// TestControlCentreShortcutReachesEverySection says out loud what the code
+// currently only implies. The shortcut page builds from settingsSections, so
+// it cannot drift today — but nothing recorded that it must not, and a page
+// that grew its own list would silently strand whichever section it forgot,
+// with no error anywhere. It also holds each row to a glyph, because a name
+// the icon subset lacks shapes to nothing and paints an invisible link.
+func TestControlCentreShortcutReachesEverySection(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	reached := map[string]bool{}
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if name, ok := strings.CutPrefix(n.Action, "settings-section:"); ok {
+			reached[name] = true
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(ccSettings(h))
+
+	for _, name := range settingsSections {
+		if !reached[name] {
+			t.Errorf("section %q has no shortcut row in the control centre", name)
+		}
+		if settingsSectionIcons[name] == "" {
+			t.Errorf("section %q has no glyph, so its shortcut row paints nothing", name)
+		}
+	}
+	if len(reached) != len(settingsSections) {
+		t.Errorf("shortcut rows = %d, sections = %d; the page has its own list",
+			len(reached), len(settingsSections))
 	}
 }

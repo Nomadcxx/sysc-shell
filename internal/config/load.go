@@ -187,6 +187,14 @@ type wirePlugins struct {
 
 var colorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$`)
 
+// ValidColor reports whether v is a colour this package will accept. It is the
+// one rule: a setter that writes a colour, and a field that marks one valid as
+// it is typed, must agree with the loader, or a value marks itself good and is
+// then refused by the very write it was typed for. The value is matched as it
+// will be stored, so a caller that tolerates surrounding space trims before
+// asking rather than having the rule trim on its behalf.
+func ValidColor(v string) bool { return colorPattern.MatchString(v) }
+
 // DefaultPath is $XDG_CONFIG_HOME/sysc-shell/config.json.
 func DefaultPath() string {
 	base, err := os.UserConfigDir()

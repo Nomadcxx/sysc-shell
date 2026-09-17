@@ -3,7 +3,6 @@ package shell
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	"github.com/Nomadcxx/sysc-shell/internal/wallpaper"
 )
 
 // settingsSections is the rail, and the vocabulary IPC section addressing
@@ -397,9 +397,12 @@ func settingsField(h *PanelHost, e settings.Entry, raw string, width int) *ui.No
 	return n
 }
 
-var settingsHexPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$`)
-
-func settingsValidHex(v string) bool { return settingsHexPattern.MatchString(strings.TrimSpace(v)) }
+// settingsValidHex asks the loader's own rule rather than restating it. The
+// field marks a colour good as it is typed and the entry's setter decides
+// whether the write is accepted; if those were two patterns, a value could
+// mark itself valid and then be refused by the very write it was typed for.
+// Both trim here, at this layer, so the rule itself matches what is stored.
+func settingsValidHex(v string) bool { return config.ValidColor(strings.TrimSpace(v)) }
 
 // settingsFontFamilies enumerates the scanned system fonts once. fontscan
 // reads the disk, so it is not something a tree build can afford to repeat.
@@ -430,7 +433,7 @@ var settingsFontFamilies = sync.OnceValue(func() []string {
 // the directories inside it, and the one above it. os.ReadDir is the whole
 // mechanism; no portal is involved.
 func settingsBrowseOptions(current string) []string {
-	dir := expandTilde(current)
+	dir := wallpaper.ExpandHome(current)
 	var out []string
 	if parent := filepath.Dir(dir); parent != dir && parent != "" {
 		out = append(out, parent)
@@ -445,18 +448,6 @@ func settingsBrowseOptions(current string) []string {
 		}
 	}
 	return out
-}
-
-// expandTilde resolves a leading tilde. Configuration keeps one literally,
-// because Default() must not read the environment, so expansion belongs to
-// whoever opens the directory — here, the browser.
-func expandTilde(path string) string {
-	if path == "~" || strings.HasPrefix(path, "~/") {
-		if home, err := os.UserHomeDir(); err == nil {
-			return filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(path, "~"), "/"))
-		}
-	}
-	return path
 }
 
 func (h *PanelHost) persistDraft(r *Registry) {
