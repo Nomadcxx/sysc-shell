@@ -1787,6 +1787,40 @@ func (h *PanelHost) activate(r *Registry) bool {
 		r.rebuildPanel(h)
 		return true
 	}
+	if rest, ok := strings.CutPrefix(n.Action, "step:"); ok {
+		dir, path, found := strings.Cut(rest, ":")
+		if e := h.set.ByPath(path); found && e != nil && e.Get != nil {
+			value, err := strconv.Atoi(e.Get(h.draft))
+			if err == nil {
+				if dir == "up" {
+					value++
+				} else {
+					value--
+				}
+				h.commitSetting(r, e, strconv.Itoa(value))
+				r.rebuildPanel(h)
+			}
+		}
+		return true
+	}
+	if path, ok := strings.CutPrefix(n.Action, "browse:"); ok {
+		e := h.set.ByPath(path)
+		if e == nil {
+			return true
+		}
+		// The browser is the menu the enum entries already use, filled with
+		// where this path can go from where it is.
+		if h.menus == nil {
+			h.menus = map[string]*Menu{}
+		}
+		m := NewMenu(settingsBrowseOptions(e.Get(h.draft)), 0)
+		m.Open()
+		h.menus[path] = m
+		h.menu = m
+		h.menuPath = path
+		r.rebuildPanel(h)
+		return true
+	}
 	if path, ok := strings.CutPrefix(n.Action, "reset:"); ok {
 		if e := h.set.ByPath(path); e != nil && e.Default != nil {
 			h.commitSetting(r, e, e.Default(h.draft))

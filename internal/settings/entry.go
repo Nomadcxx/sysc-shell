@@ -12,6 +12,13 @@ const (
 	KindInt
 	KindEnum
 	KindString
+	// KindHex, KindPath and KindFont are strings the surface can help with:
+	// a colour it validates as it is typed, a directory it can browse, and a
+	// family it can enumerate. Each still validates in its own Setter, so a
+	// caller that bypasses the surface is held to the same rule.
+	KindHex
+	KindPath
+	KindFont
 )
 
 // Getter reads one setting out of a configuration.

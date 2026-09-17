@@ -338,7 +338,7 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, b bool) { c.Accessibility.HighContrast = b }),
 		},
 		{
-			Path: "weather.city", Label: "City", Section: "Weather", Group: "Place", Kind: KindString,
+			Path: "weather.city", Label: "City", Section: "Weather", Group: "Place", Kind: KindFont,
 			Describe: "Place name the forecast service geocodes. Setting it clears the coordinates.",
 			Get:      func(c config.Config) string { return c.Weather.City },
 			Set: setPlaceLabel("weather.city", func(c *config.Config, v string) {
@@ -354,7 +354,7 @@ func DefaultFor(cfg config.Config) *Registry {
 			}),
 		},
 		{
-			Path: "weather.latitude", Label: "Latitude", Section: "Weather", Group: "Place", Kind: KindString,
+			Path: "weather.latitude", Label: "Latitude", Section: "Weather", Group: "Place", Kind: KindFont,
 			Describe: "Degrees north, -90 through 90. Setting it clears the city.",
 			Get:      getFloat(func(c config.Config) float64 { return c.Weather.Latitude }),
 			Set: setFloat("weather.latitude", -90, 90, func(c *config.Config, f float64) {
@@ -364,7 +364,7 @@ func DefaultFor(cfg config.Config) *Registry {
 			}),
 		},
 		{
-			Path: "weather.longitude", Label: "Longitude", Section: "Weather", Group: "Place", Kind: KindString,
+			Path: "weather.longitude", Label: "Longitude", Section: "Weather", Group: "Place", Kind: KindFont,
 			Describe: "Degrees east, -180 through 180. Setting it clears the city.",
 			Get:      getFloat(func(c config.Config) float64 { return c.Weather.Longitude }),
 			Set: setFloat("weather.longitude", -180, 180, func(c *config.Config, f float64) {
@@ -408,7 +408,7 @@ func DefaultFor(cfg config.Config) *Registry {
 		{
 			Path: "wallpaper.image-directory", Label: "Image library", Section: "Wallpaper", Group: "Library",
 			Describe: "Directory the picker scans for stills. A leading tilde is expanded when it is opened.",
-			Kind:     KindString,
+			Kind:     KindPath,
 			Get:      func(c config.Config) string { return c.Wallpaper.ImageDirectory },
 			Set: setFilledString("wallpaper.image-directory",
 				func(c *config.Config, v string) { c.Wallpaper.ImageDirectory = v }),
@@ -416,7 +416,7 @@ func DefaultFor(cfg config.Config) *Registry {
 		{
 			Path: "wallpaper.video-directory", Label: "Video library", Section: "Wallpaper", Group: "Library",
 			Describe: "Directory the picker scans for video wallpapers.",
-			Kind:     KindString,
+			Kind:     KindPath,
 			Get:      func(c config.Config) string { return c.Wallpaper.VideoDirectory },
 			Set: setFilledString("wallpaper.video-directory",
 				func(c *config.Config, v string) { c.Wallpaper.VideoDirectory = v }),
@@ -649,6 +649,17 @@ func seedEntry(cfg config.Config) Entry {
 		Kind:     KindString,
 		Get:      func(c config.Config) string { return c.ThemeGen.Seed },
 		Set:      setString(func(c *config.Config, v string) { c.ThemeGen.Seed = v }),
+	}
+	if cfg.ThemeGen.Source == "hex" {
+		e.Kind = KindHex
+		e.Set = write(func(c *config.Config, v string) error {
+			if !hexPattern.MatchString(strings.TrimSpace(v)) {
+				return fmt.Errorf("settings: appearance.seed: %q is not #RRGGBB or #RRGGBBAA", v)
+			}
+			c.ThemeGen.Seed = strings.TrimSpace(v)
+			return nil
+		})
+		return e
 	}
 	if cfg.ThemeGen.Source == "stock" {
 		names := theme.StockNames()

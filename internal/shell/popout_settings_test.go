@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"os"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -514,5 +515,110 @@ func TestSearchGroupsMatchesUnderTheirSection(t *testing.T) {
 	}
 	if !slices.Contains(labels, "Reduced motion") {
 		t.Errorf("the accessibility match was not listed, got %v", labels)
+	}
+}
+
+// TestStepperMovesTheDraftByOneStep: a short range is worth a pixel at a time,
+// which a slider a few pixels per step cannot give.
+func TestStepperMovesTheDraftByOneStep(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Bar"
+	reg.rebuildPanel(h)
+
+	up := byAction(h.root, "step:up:bar.spacing")
+	if up == nil {
+		t.Fatal("bar.spacing rendered no stepper")
+	}
+	before := h.draft.Bar.Spacing
+	h.setFocus(up)
+	h.activate(reg)
+	if got := h.draft.Bar.Spacing; got != before+1 {
+		t.Fatalf("spacing = %d after one step, want %d", got, before+1)
+	}
+}
+
+// TestInvalidHexLeavesTheDraftAlone: a colour is a validated field rather than
+// a picker, so the validation is the whole safeguard.
+func TestInvalidHexLeavesTheDraftAlone(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelSettings]
+
+	if err := h.set.ByPath("appearance.source").Set(&h.draft, "hex"); err != nil {
+		t.Fatal(err)
+	}
+	h.set = settings.DefaultFor(h.draft)
+	seed := h.set.ByPath("appearance.seed")
+	if seed.Kind != settings.KindHex {
+		t.Fatalf("seed kind = %v, want a validated colour when the source is hex", seed.Kind)
+	}
+
+	want := h.draft.ThemeGen.Seed
+	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:appearance.seed", Text: "not-a-colour"})
+	if h.draft.ThemeGen.Seed != want {
+		t.Fatalf("an invalid colour reached the draft as %q", h.draft.ThemeGen.Seed)
+	}
+	if h.errLabel == "" {
+		t.Fatal("an invalid colour was rejected silently")
+	}
+	if !settingsValidHex("#7F67BE") || settingsValidHex("#xyzxyz") {
+		t.Fatal("the field's own validation disagrees with the setter")
+	}
+}
+
+// TestFontPickerListsDeduplicatedFamilies. The list is whatever this machine
+// has, so what is asserted is the shape: no repeats and a stable order.
+func TestFontPickerListsDeduplicatedFamilies(t *testing.T) {
+	t.Parallel()
+	families := settingsFontFamilies()
+	seen := map[string]bool{}
+	for _, f := range families {
+		if seen[f] {
+			t.Errorf("%q is listed more than once", f)
+		}
+		seen[f] = true
+	}
+	if !slices.IsSorted(families) {
+		t.Error("families are not sorted, so the picker reorders itself between builds")
+	}
+}
+
+// TestPathBrowseListsDirectories: os.ReadDir is the whole mechanism, and no
+// portal is involved.
+func TestPathBrowseListsDirectories(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	for _, name := range []string{"stills", "video", ".hidden"} {
+		if err := os.Mkdir(filepath.Join(root, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "a-file"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := settingsBrowseOptions(root)
+	for _, want := range []string{filepath.Join(root, "stills"), filepath.Join(root, "video"), filepath.Dir(root)} {
+		if !slices.Contains(got, want) {
+			t.Errorf("browse did not offer %q, got %v", want, got)
+		}
+	}
+	for _, unwanted := range []string{filepath.Join(root, "a-file"), filepath.Join(root, ".hidden")} {
+		if slices.Contains(got, unwanted) {
+			t.Errorf("browse offered %q, which is not a directory to move into", unwanted)
+		}
 	}
 }

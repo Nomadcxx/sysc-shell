@@ -1,8 +1,17 @@
 package shell
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
+
+	"github.com/go-text/typesetting/fontscan"
+
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
@@ -238,44 +247,165 @@ func settingsControl(h *PanelHost, e settings.Entry) *ui.Node {
 		}
 	case settings.KindInt:
 		n, _ := strconv.Atoi(raw)
+		// A short range is worth a pixel at a time, and a slider cannot give
+		// that: a 0..32 track is a handful of pixels per step. A wide one —
+		// an opacity, a scale — is easier to sweep than to click.
+		if e.Max-e.Min > 0 && e.Max-e.Min <= settingsStepperSpan {
+			return settingsStepper(e, n)
+		}
 		return &ui.Node{
 			Kind: ui.KindSlider, Value: float64(n), Min: float64(e.Min), Max: float64(e.Max), Step: 1,
 			Action: action, Width: 160, Focusable: true, Name: e.Label, Role: "slider", // token-exempt: a slider's track width, a measured control dimension rather than a ladder value
 		}
+	case settings.KindFont:
+		return settingsMenuControl(h, e, settingsFontFamilies(), raw)
+	case settings.KindPath:
+		return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
+			settingsField(h, e, raw),
+			{
+				Kind: ui.KindButton, Action: "browse:" + e.Path,
+				Name: "Browse " + e.Label, Role: "button", Focusable: true,
+				Shape:    ui.ShapeMedium,
+				Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "folder_open"}},
+			},
+		}}
 	case settings.KindEnum:
-		idx := 0
-		for i, o := range e.Options {
-			if o == raw {
-				idx = i
-				break
-			}
-		}
-		if h.menus == nil {
-			h.menus = map[string]*Menu{}
-		}
-		m := h.menus[e.Path]
-		if m == nil || !m.Opened() {
-			m = NewMenu(e.Options, idx)
-			h.menus[e.Path] = m
-		}
-		n := m.Node()
-		n.Action = action
-		n.Name = e.Label
-		return n
+		return settingsMenuControl(h, e, e.Options, raw)
 	default:
-		if h.fields == nil {
-			h.fields = map[string]*ui.Field{}
+		return settingsField(h, e, raw)
+	}
+}
+
+// settingsStepperSpan is the widest range that reads better one step at a
+// time than as a track to sweep.
+const settingsStepperSpan = 32
+
+// settingsStepper composes from existing kinds rather than adding one: two
+// buttons and the value between them.
+func settingsStepper(e settings.Entry, value int) *ui.Node {
+	step := func(icon, dir, name string, enabled bool) *ui.Node {
+		n := &ui.Node{
+			Kind: ui.KindButton, Name: name + " " + e.Label, Role: "button",
+			Shape: ui.ShapeMedium, Children: []*ui.Node{{Kind: ui.KindIcon, Icon: icon}},
 		}
-		f := h.fields[e.Path]
-		if f == nil {
-			f = ui.NewField(raw)
-			h.fields[e.Path] = f
+		if enabled {
+			n.Action = "step:" + dir + ":" + e.Path
+			n.Focusable = true
+		} else {
+			n.AriaDisabled = true
+			n.State |= ui.StateDisabled
 		}
-		n := f.Node(e.Label)
-		n.Action = action
-		n.Width = 200
 		return n
 	}
+	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Name: e.Label, Children: []*ui.Node{
+		step("remove", "down", "Decrease", value > e.Min),
+		{Kind: ui.KindText, Text: strconv.Itoa(value)},
+		step("add", "up", "Increase", value < e.Max),
+	}}
+}
+
+func settingsMenuControl(h *PanelHost, e settings.Entry, options []string, raw string) *ui.Node {
+	idx := 0
+	for i, o := range options {
+		if o == raw {
+			idx = i
+			break
+		}
+	}
+	if h.menus == nil {
+		h.menus = map[string]*Menu{}
+	}
+	m := h.menus[e.Path]
+	if m == nil || !m.Opened() {
+		m = NewMenu(options, idx)
+		h.menus[e.Path] = m
+	}
+	n := m.Node()
+	n.Action = "set:" + e.Path
+	n.Name = e.Label
+	return n
+}
+
+func settingsField(h *PanelHost, e settings.Entry, raw string) *ui.Node {
+	if h.fields == nil {
+		h.fields = map[string]*ui.Field{}
+	}
+	f := h.fields[e.Path]
+	if f == nil {
+		f = ui.NewField(raw)
+		h.fields[e.Path] = f
+	}
+	n := f.Node(e.Label)
+	n.Action = "set:" + e.Path
+	n.Width = 200
+	// A colour is checkable as it is typed, so the field says so itself
+	// rather than waiting for the write to fail.
+	if e.Kind == settings.KindHex && !settingsValidHex(f.Text) {
+		n.Tone = ui.ToneError
+	}
+	return n
+}
+
+var settingsHexPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$`)
+
+func settingsValidHex(v string) bool { return settingsHexPattern.MatchString(strings.TrimSpace(v)) }
+
+// settingsFontFamilies enumerates the scanned system fonts once. fontscan
+// reads the disk, so it is not something a tree build can afford to repeat.
+//
+// Footprint.Family is stored normalized — "dejavusans", not "DejaVu Sans" —
+// so these are the normalized names. Deriving a display form is its own
+// decision; presenting them as they are is honest, and pretending they arrive
+// pretty would be wrong.
+var settingsFontFamilies = sync.OnceValue(func() []string {
+	fonts, err := fontscan.SystemFonts(nil, render.DefaultFontCacheDir())
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range fonts {
+		if f.Family == "" || seen[f.Family] {
+			continue
+		}
+		seen[f.Family] = true
+		out = append(out, f.Family)
+	}
+	sort.Strings(out)
+	return out
+})
+
+// settingsBrowseOptions lists where a path setting can go from where it is:
+// the directories inside it, and the one above it. os.ReadDir is the whole
+// mechanism; no portal is involved.
+func settingsBrowseOptions(current string) []string {
+	dir := expandTilde(current)
+	var out []string
+	if parent := filepath.Dir(dir); parent != dir && parent != "" {
+		out = append(out, parent)
+	}
+	items, err := os.ReadDir(dir)
+	if err != nil {
+		return out
+	}
+	for _, item := range items {
+		if item.IsDir() && !strings.HasPrefix(item.Name(), ".") {
+			out = append(out, filepath.Join(dir, item.Name()))
+		}
+	}
+	return out
+}
+
+// expandTilde resolves a leading tilde. Configuration keeps one literally,
+// because Default() must not read the environment, so expansion belongs to
+// whoever opens the directory — here, the browser.
+func expandTilde(path string) string {
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(path, "~"), "/"))
+		}
+	}
+	return path
 }
 
 func (h *PanelHost) persistDraft(r *Registry) {
