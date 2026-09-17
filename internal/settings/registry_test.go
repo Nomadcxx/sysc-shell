@@ -242,3 +242,33 @@ func TestDensitySettingDoesNotPersistAStaleDerivedBar(t *testing.T) {
 		})
 	}
 }
+
+// TestEntryUsesItsOwnAccessors is the whole point of D1: an entry carries the
+// code that reads and writes its field, so a new setting cannot be declared
+// without one and no switch can fall through to an empty string.
+func TestEntryUsesItsOwnAccessors(t *testing.T) {
+	t.Parallel()
+	e := Entry{
+		Path: "test.flag", Label: "Flag", Section: "Bar", Kind: KindBool,
+		Get: func(c config.Config) string { return strconv.FormatBool(c.Bar.Enabled) },
+		Set: func(c *config.Config, v string) error {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return err
+			}
+			c.Bar.Enabled = b
+			return nil
+		},
+	}
+	cfg := config.Default()
+	cfg.Bar.Enabled = false
+	if got := e.Get(cfg); got != "false" {
+		t.Fatalf("Get = %q, want false", got)
+	}
+	if err := e.Set(&cfg, "true"); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Bar.Enabled {
+		t.Fatal("Set did not reach the field")
+	}
+}
