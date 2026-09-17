@@ -226,6 +226,15 @@ func encodeItems(items []Item) []wireItem {
 
 func encodeItem(it Item) wireItem {
 	w := wireItem{ID: it.ID}
+	// An instance id is emitted for whatever carries one, not only for a
+	// placement. Without this the editor mints an id, the write drops it, and
+	// the next load hands back anonymous widgets -- the identity model inert.
+	// An item nobody addressed carries none, so a file grows ids only for the
+	// widgets the user actually customised (D3).
+	if it.ID != "plugin" && it.Instance != "" {
+		v := it.Instance
+		w.Instance = &v
+	}
 	switch it.ID {
 	case "plugin":
 		plugin, entry, instance := it.Plugin, it.Entry, it.Instance

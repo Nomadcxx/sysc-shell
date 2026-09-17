@@ -831,13 +831,30 @@ func resolveItem(w wireItem, path string) (Item, error) {
 	for _, misplaced := range []struct {
 		name string
 		set  bool
-	}{{"plugin", w.Plugin != nil}, {"entry", w.Entry != nil}, {"instance", w.Instance != nil}} {
+	}{{"plugin", w.Plugin != nil}, {"entry", w.Entry != nil}} {
 		if misplaced.set {
 			return Item{}, pathErr(path+"."+misplaced.name,
 				"is accepted only on a plugin placement, not on %q", w.ID)
 		}
 	}
 	item := Item{ID: w.ID}
+
+	// An instance id is accepted on every item, including a group. It is what
+	// makes one widget addressable: without it two clocks on one bar are
+	// indistinguishable, and a per-widget option write reaches every widget of
+	// that type. Ids are minted lazily by whatever addresses the widget, so an
+	// absent one is the normal case and not a default to fill in. The rule is
+	// the placement's rule, so the vocabulary stays one vocabulary.
+	//
+	// Validated here so a malformed id is reported with the other field
+	// errors, but applied at the end -- see the assignment before the return.
+	var instance string
+	if w.Instance != nil {
+		if !v1.ValidEntryID(*w.Instance) {
+			return Item{}, pathErr(path+".instance", "%q is not an instance id", *w.Instance)
+		}
+		instance = *w.Instance
+	}
 
 	if w.Items != nil && w.ID != "group" {
 		return Item{}, pathErr(path+".items", "is accepted only on a group, not on %q", w.ID)
@@ -859,6 +876,7 @@ func resolveItem(w wireItem, path string) (Item, error) {
 			}
 			item.Items = append(item.Items, member)
 		}
+		item.Instance = instance
 		return item, nil
 	}
 
@@ -973,6 +991,12 @@ func resolveItem(w wireItem, path string) (Item, error) {
 			item.WarnBelow = *w.WarnBelow
 		}
 	}
+	// Applied last, deliberately. The metric branch replaces the accumulated
+	// item wholesale with resolveMetric's own, so anything set before the
+	// switch is discarded for those seven ids -- which silently cost a nested
+	// cpu widget its id. Setting identity after the switch means a branch that
+	// rebuilds the item cannot drop it.
+	item.Instance = instance
 	return item, nil
 }
 

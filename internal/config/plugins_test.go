@@ -135,10 +135,14 @@ func TestParseRejectsPlacementFieldsOnABuiltInItem(t *testing.T) {
 
 	// A misplaced field is an error rather than a silently ignored one, so a
 	// user sees that their edit did nothing.
+	//
+	// "instance" was a third case here until sub-project B gave every widget a
+	// stable identity. It is now accepted on any item, including a group, and
+	// TestInstanceIsAcceptedOnABuiltInItem covers that. "plugin" and "entry"
+	// stay placement-only, which is what this test still holds.
 	for _, item := range []string{
 		`{"id": "clock", "plugin": "org.sysc.timer"}`,
 		`{"id": "clock", "entry": "bar"}`,
-		`{"id": "clock", "instance": "t1"}`,
 	} {
 		_, err := Parse([]byte(`{"bar": {"items": {"right": [` + item + `]}}}`))
 		if err == nil {
