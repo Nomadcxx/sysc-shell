@@ -410,32 +410,8 @@ func ccWeather(r *Registry, h *PanelHost) *ui.Node {
 		reading = r.reading
 		location = weatherLocation(r.cfg.Weather, reading)
 	}
-	icon, temperature, condition, conditionTone, fetched := "cloud", ccDash, ccDash, ui.ToneNormal, ccDash
-	if reading.Observed {
-		isDay := reading.IsDay == nil || *reading.IsDay
-		icon = render.WeatherIconName(reading.Code, isDay)
-		temperature = fmt.Sprintf("%.0f%s", reading.Temperature, unitSuffix(reading.Unit))
-		condition = render.WeatherCondition(reading.Code)
-		if !reading.FetchedAt.IsZero() {
-			fetched = "Updated " + reading.FetchedAt.Format("15:04")
-			if reading.Stale() {
-				fetched += " · Age " + humaniseAge(time.Since(reading.FetchedAt))
-			}
-		}
-	} else if !reading.FailedSince.IsZero() {
-		condition, conditionTone = "weather unavailable", ui.ToneError
-	}
-	today := monitorCard(m, []*ui.Node{
-		monitorCardTitle("Today", 0),
-		{Kind: ui.KindIcon, Icon: icon, IconSize: m.IconLarge},
-		{Kind: ui.KindText, Text: temperature, TextRole: theme.RoleTitle, Tabular: true},
-		{Kind: ui.KindText, Text: condition, TextRole: theme.RoleLabel, Tone: conditionTone},
-		{Kind: ui.KindText, Text: weatherDayRange(reading), TextRole: theme.RoleCaption, Tabular: true},
-		{Kind: ui.KindText, Text: location, TextRole: theme.RoleCaption},
-		{Kind: ui.KindText, Text: fetched, TextRole: theme.RoleCaption},
-	})
-	today.Height = ccTodayH
-	today = weatherCardWithEffect(today, reading, weatherTodayEffectKey)
+	today := weatherHeroCard(reading, location, m,
+		max(ccBodyWidth(h)-2*m.CardPadding, 0), ccTodayH, weatherTodayEffectKey)
 
 	// Four slots share the body width and the three gaps between them. The
 	// width is derived rather than written down: it was 143 for a gap of 8,
@@ -454,23 +430,7 @@ func ccWeather(r *Registry, h *PanelHost) *ui.Node {
 }
 
 func ccForecastDay(m theme.Metrics, width int, day *services.Day, unit services.Unit) *ui.Node {
-	label, icon, temperature := ccDash, "cloud", ccDash
-	if day != nil {
-		if date, err := time.Parse("2006-01-02", day.Date); err == nil {
-			label = date.Format("Mon")
-		} else {
-			label = ccText(day.Date)
-		}
-		icon = render.WeatherIconName(day.Code, true)
-		temperature = fmt.Sprintf("%.0f%s / %.0f%s", day.High, unitSuffix(unit), day.Low, unitSuffix(unit))
-	}
-	card := monitorCard(m, []*ui.Node{
-		{Kind: ui.KindText, Text: label, TextRole: theme.RoleLabel},
-		{Kind: ui.KindIcon, Icon: icon, IconSize: m.IconLarge},
-		{Kind: ui.KindText, Text: temperature, TextRole: theme.RoleCaption, Tabular: true},
-	})
-	card.Width, card.Height = width, ccForecastH
-	return card
+	return weatherForecastSlot(m, width, ccForecastH, day, unit)
 }
 
 func ccAudio(r *Registry, h *PanelHost) *ui.Node {
