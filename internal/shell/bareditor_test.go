@@ -690,3 +690,61 @@ func TestDraggingTheLastMemberOutPrunesTheGroup(t *testing.T) {
 		t.Errorf("target lane: %q", got)
 	}
 }
+
+// Every chip's own content has to be laid out, not just the chip.
+//
+// This is the defect the laptop found and every test here missed. The chip
+// nested a row inside the drag source alongside a second child, and
+// layoutButtonContent only descends into a single row or column child -- with
+// two or more it measures each one but never lays out their children. The pill
+// painted; the grip, the label and the inspector glyph inside it did not. The
+// chrome-fit conformance test could not catch it either, because it asserts a
+// box for interactive nodes and a label is not interactive.
+func TestChipContentIsLaidOutNotJustTheChip(t *testing.T) {
+	t.Parallel()
+	_, h := barKeyHost(t, config.Bar{
+		Left:  []config.Item{{ID: "clock"}, {ID: "cpu"}},
+		Right: []config.Item{{ID: "group", Items: []config.Item{{ID: "memory"}}}},
+	})
+
+	var chips []*ui.Node
+	walkNodes(h.root, func(n *ui.Node) {
+		if n.Kind == ui.KindDragSource && n.DragType == barChipDragType {
+			chips = append(chips, n)
+		}
+	})
+	if len(chips) == 0 {
+		t.Fatal("no chips in the laid-out tree")
+	}
+
+	for _, chip := range chips {
+		if chip.Bounds.W <= 0 || chip.Bounds.H <= 0 {
+			t.Errorf("chip %q has no box", chip.Name)
+			continue
+		}
+		var labels, glyphs int
+		walkNodes(chip, func(n *ui.Node) {
+			switch n.Kind {
+			case ui.KindText:
+				if n.Text == "" {
+					return
+				}
+				labels++
+				if n.Bounds.W <= 0 || n.Bounds.H <= 0 {
+					t.Errorf("chip %q: label %q has no box, so the chip paints empty", chip.Name, n.Text)
+				}
+			case ui.KindIcon:
+				glyphs++
+				if n.Bounds.W <= 0 || n.Bounds.H <= 0 {
+					t.Errorf("chip %q: glyph %q has no box", chip.Name, n.Icon)
+				}
+			}
+		})
+		if labels == 0 {
+			t.Errorf("chip %q carries no label at all", chip.Name)
+		}
+		if glyphs == 0 {
+			t.Errorf("chip %q carries no glyph at all", chip.Name)
+		}
+	}
+}

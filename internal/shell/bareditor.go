@@ -116,22 +116,26 @@ func barChip(h *PanelHost, ref config.ItemRef, it config.Item, selected bool, wi
 		chip.State |= ui.StateSelected
 		chip.Fill = ui.FillAccent
 	}
-	// PinEnd right-pins the last child of a two-child row, so the grip and the
-	// label travel together on the left and the inspector control sits at the
-	// far edge, where the reset control sits on every settings row.
-	chip.PinEnd = true
-	chip.Children = []*ui.Node{
-		{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
-			{Kind: ui.KindIcon, Icon: "drag_indicator", IconSize: m.IconSmall, Tone: ui.ToneSubtle},
-			{Kind: ui.KindText, Text: name},
-		}},
-		{
-			Kind: ui.KindButton, Action: "bar-inspect:" + addr,
-			Name: "Configure " + name, Role: "button", Focusable: true,
-			Width: m.IconNormal, Height: m.IconNormal,
-			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "tune", IconSize: m.IconSmall}},
+	// Exactly one child, and it is a row. layoutButtonContent gives a single
+	// row or column child a full Layout pass and honours PinEnd on it; with
+	// two or more children it falls back to an inline path that measures each
+	// child but never descends, so a nested row's icon and label would be
+	// given no box and the chip would paint as an empty pill. Found on the
+	// laptop, where exactly that happened.
+	chip.Children = []*ui.Node{{
+		Kind: ui.KindRow, Gap: theme.MarginS, PinEnd: true, Children: []*ui.Node{
+			{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
+				{Kind: ui.KindIcon, Icon: "drag_indicator", IconSize: m.IconSmall, Tone: ui.ToneSubtle},
+				{Kind: ui.KindText, Text: name},
+			}},
+			{
+				Kind: ui.KindButton, Action: "bar-inspect:" + addr,
+				Name: "Configure " + name, Role: "button", Focusable: true,
+				Width: m.IconNormal, Height: m.IconNormal,
+				Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "tune", IconSize: m.IconSmall}},
+			},
 		},
-	}
+	}}
 	return chip
 }
 
