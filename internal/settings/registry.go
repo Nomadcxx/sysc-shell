@@ -691,60 +691,110 @@ func (r *Registry) addTemplateEntries() {
 	}
 }
 
+// addWidgetEntries gives every option-bearing widget on the bar its own rows,
+// addressed by position rather than by widget id.
+//
+// The entries used to be one per type, reading the first widget of that type
+// and writing through eachItem to all of them, so two clocks could not take
+// different formats from any interface (D4). An entry now names one item, and
+// writing through it mints that item's instance id, because an option change
+// is one of the three things D3 counts as addressing a widget.
 func (r *Registry) addWidgetEntries(cfg config.Config) {
-	seen := map[string]bool{}
-	add := func(it config.Item) {
-		switch it.ID {
-		case "clock":
-			if seen["clock.format"] {
-				return
-			}
-			seen["clock.format"] = true
-			r.entries = append(r.entries, Entry{
-				Path: "widgets.clock.format", Label: "Clock format", Section: "Widgets", Group: "Clock",
-				Describe: "Go layout string, such as 15:04 for a 24-hour clock.",
-				Kind:     KindString,
-				Get: func(c config.Config) string {
-					if it := firstItem(c, "clock"); it != nil {
-						return it.Format
-					}
-					return ""
-				},
-				Set: setString(func(c *config.Config, v string) {
-					eachItem(c, "clock", func(it *config.Item) { it.Format = v })
-				}),
-			})
-		case "window-title":
-			if seen["window-title.max-width"] {
-				return
-			}
-			seen["window-title.max-width"] = true
-			r.entries = append(r.entries, Entry{
-				Path: "widgets.window-title.max-width", Label: "Title max width", Section: "Widgets", Group: "Window title",
-				Describe: "Longest title in logical pixels before it is shortened.",
+	for _, ref := range config.BarItemRefs(cfg.Bar) {
+		it := cfg.Bar.ItemAt(ref)
+		if it == nil {
+			continue
+		}
+		r.entries = append(r.entries, widgetEntries(cfg, ref, *it)...)
+	}
+}
 
-				Kind: KindInt, Min: 40, Max: 800,
-				Get: func(c config.Config) string {
-					if it := firstItem(c, "window-title"); it != nil {
-						return strconv.Itoa(it.MaxWidth)
-					}
-					return ""
-				},
-				Set: setInt("widgets.window-title.max-width", 40, 800, func(c *config.Config, n int) {
-					eachItem(c, "window-title", func(it *config.Item) { it.MaxWidth = n })
-				}),
-			})
+// widgetEntryGroup names the rows of one widget in the pane. Two widgets of a
+// type have to be told apart, so the group carries the lane the widget sits in
+// and, once it has one, its instance id.
+func widgetEntryGroup(ref config.ItemRef, it config.Item) string {
+	name := WidgetName(it)
+	if it.Instance != "" {
+		return name + " (" + it.Instance + ")"
+	}
+	return name + " (" + ref.Lane + " " + strconv.Itoa(ref.Path.Index+1) + ")"
+}
+
+// widgetEntryPath addresses the item rather than the widget type, so two
+// clocks produce two distinct paths.
+func widgetEntryPath(ref config.ItemRef, option string) string {
+	path := "widgets." + ref.Lane + "." + strconv.Itoa(ref.Path.Index)
+	if ref.Path.Member >= 0 {
+		path += "." + strconv.Itoa(ref.Path.Member)
+	}
+	return path + "." + option
+}
+
+// writeItem resolves the reference against the configuration being written,
+// mints the item's id, and hands it to the assignment. A reference that no
+// longer resolves is an error rather than a silent no-op: the item was removed
+// underneath an open pane, and pretending the write happened would leave the
+// surface showing a value nothing holds.
+func writeItem(ref config.ItemRef, assign func(*config.Item) error) Setter {
+	return write(func(c *config.Config, _ string) error {
+		it := c.Bar.ItemAt(ref)
+		if it == nil {
+			return fmt.Errorf("settings: %s no longer names a widget", ref.Lane)
+		}
+		config.NewMinter(*c).Ensure(it)
+		return assign(it)
+	})
+}
+
+func widgetEntries(cfg config.Config, ref config.ItemRef, it config.Item) []Entry {
+	group := widgetEntryGroup(ref, it)
+	read := func(get func(config.Item) string) Getter {
+		return func(c config.Config) string {
+			if cur := c.Bar.ItemAt(ref); cur != nil {
+				return get(*cur)
+			}
+			return ""
 		}
 	}
-	for _, it := range cfg.Bar.Left {
-		add(it)
+	switch it.ID {
+	case "clock":
+		return []Entry{{
+			Path: widgetEntryPath(ref, "format"), Label: "Format",
+			Section: "Widgets", Group: group,
+			Describe: "Go layout string, such as 15:04 for a 24-hour clock.",
+			Kind:     KindString,
+			Get:      read(func(i config.Item) string { return i.Format }),
+			Set: func(c *config.Config, v string) error {
+				return writeItem(ref, func(i *config.Item) error {
+					i.Format = v
+					return nil
+				})(c, v)
+			},
+		}}
+	case "window-title":
+		return []Entry{{
+			Path: widgetEntryPath(ref, "max-width"), Label: "Maximum width",
+			Section: "Widgets", Group: group,
+			Describe: "Longest title in logical pixels before it is shortened.",
+			Kind:     KindInt, Min: 40, Max: 800,
+			Get: read(func(i config.Item) string { return strconv.Itoa(i.MaxWidth) }),
+			Set: func(c *config.Config, v string) error {
+				n, err := strconv.Atoi(strings.TrimSpace(v))
+				if err != nil {
+					return fmt.Errorf("settings: %s: %q is not a number", widgetEntryPath(ref, "max-width"), v)
+				}
+				if n < 40 || n > 800 {
+					return fmt.Errorf("settings: %s: %d is outside 40 through 800",
+						widgetEntryPath(ref, "max-width"), n)
+				}
+				return writeItem(ref, func(i *config.Item) error {
+					i.MaxWidth = n
+					return nil
+				})(c, v)
+			},
+		}}
 	}
-	for _, it := range cfg.Bar.Center {
-		add(it)
-	}
-	for _, it := range cfg.Bar.Right {
-		add(it)
-	}
+	return nil
 }
 
 // write adapts a field assignment into a Setter. Every setter carries the same

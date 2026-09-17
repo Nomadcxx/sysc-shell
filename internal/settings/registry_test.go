@@ -82,12 +82,17 @@ func TestRegistryWidgetsFollowConfiguredBar(t *testing.T) {
 	cfg.Bar.Left = []config.Item{{ID: "window-title", MaxWidth: 200}}
 	cfg.Bar.Center = nil
 	cfg.Bar.Right = nil
+	// Entries address one item rather than a widget type (D4), so the path
+	// carries the position: "widgets.left.0.max-width", not
+	// "widgets.window-title.max-width".
 	r := DefaultFor(cfg)
-	if r.ByPath("widgets.window-title.max-width") == nil {
+	if r.ByPath("widgets.left.0.max-width") == nil {
 		t.Fatal("title option missing for configured bar")
 	}
-	if r.ByPath("widgets.clock.format") != nil {
-		t.Fatal("clock option present though clock is not on the bar")
+	for _, e := range r.Section("Widgets") {
+		if strings.Contains(e.Path, "format") {
+			t.Fatalf("clock option %q present though no clock is on the bar", e.Path)
+		}
 	}
 }
 
@@ -589,4 +594,70 @@ func TestSearchMatchesDescriptionsAsWellAsLabels(t *testing.T) {
 		}
 	}
 	t.Fatalf("search did not reach weather.city, got %d other matches", len(hits))
+}
+
+// Task 7 and D4. eachItem applied an option change to every widget of a type,
+// so a user with a time widget and a date widget could not give them different
+// formats from any interface. This is a live defect independent of the editor,
+// and it is the case that names it.
+func TestTwoClocksTakeDifferentFormats(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Bar.Left = []config.Item{
+		{ID: "clock", Format: "15:04"},
+		{ID: "clock", Format: "15:04"},
+	}
+	cfg.Bar.Center, cfg.Bar.Right = nil, nil
+
+	r := DefaultFor(cfg)
+	var paths []string
+	for _, e := range r.Section("Widgets") {
+		if strings.Contains(e.Path, "format") {
+			paths = append(paths, e.Path)
+		}
+	}
+	if len(paths) != 2 {
+		t.Fatalf("two clocks produced %d format entries (%v), want one each", len(paths), paths)
+	}
+
+	first := r.ByPath(paths[0])
+	if err := first.Set(&cfg, "Mon 2 Jan"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if got := cfg.Bar.Left[0].Format; got != "Mon 2 Jan" {
+		t.Errorf("first clock format = %q, want the new one", got)
+	}
+	if got := cfg.Bar.Left[1].Format; got != "15:04" {
+		t.Errorf("second clock format = %q; the write reached a widget it did not address", got)
+	}
+}
+
+// D3: addressing a widget is what mints its id, and an option write is one of
+// the three things the design names as addressing it.
+func TestAnOptionWriteMintsTheWidgetsId(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Bar.Left = []config.Item{{ID: "clock", Format: "15:04"}}
+	cfg.Bar.Center, cfg.Bar.Right = nil, nil
+
+	r := DefaultFor(cfg)
+	var entry *Entry
+	for _, e := range r.Section("Widgets") {
+		if strings.Contains(e.Path, "format") {
+			entry = r.ByPath(e.Path)
+			break
+		}
+	}
+	if entry == nil {
+		t.Fatal("no clock format entry")
+	}
+	if cfg.Bar.Left[0].Instance != "" {
+		t.Fatal("the clock already had an id; this test no longer covers minting")
+	}
+	if err := entry.Set(&cfg, "Mon 2 Jan"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if cfg.Bar.Left[0].Instance == "" {
+		t.Error("an option write left the widget anonymous, so nothing can address it later")
+	}
 }

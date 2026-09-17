@@ -221,3 +221,86 @@ func (m *Minter) Ensure(it *Item) string {
 		}
 	}
 }
+
+// ItemRef addresses one item across a whole bar rather than within one lane.
+// It is what a per-widget option write needs: eachItem used to apply a change
+// to every widget of a type, so a user with a time widget and a date widget
+// could not give them different formats from any interface.
+type ItemRef struct {
+	Lane string
+	Path ItemPath
+}
+
+// lane returns a pointer to the named lane, so a caller can address through it.
+func (b *Bar) lane(name string) *[]Item {
+	switch name {
+	case "left":
+		return &b.Left
+	case "center":
+		return &b.Center
+	case "right":
+		return &b.Right
+	}
+	return nil
+}
+
+// LaneNames is the lane vocabulary, in the order the editor shows them.
+func LaneNames() []string { return []string{"left", "center", "right"} }
+
+// ItemAt resolves a reference to a pointer into the bar, so a caller writes
+// through it rather than to a copy. It returns nil for an address that no
+// longer resolves: the editor holds references across a rebuild, and an item
+// removed underneath one must read as gone rather than as some other item that
+// has since taken its index.
+func (b *Bar) ItemAt(ref ItemRef) *Item {
+	lane := b.lane(ref.Lane)
+	if lane == nil || ref.Path.Index < 0 || ref.Path.Index >= len(*lane) {
+		return nil
+	}
+	it := &(*lane)[ref.Path.Index]
+	if ref.Path.Member < 0 {
+		return it
+	}
+	if it.ID != "group" || ref.Path.Member >= len(it.Items) {
+		return nil
+	}
+	return &it.Items[ref.Path.Member]
+}
+
+// BarItemRefs lists every addressable item in a bar, lane by lane and each
+// group followed by its members, which is the order the editor draws them in.
+func BarItemRefs(b Bar) []ItemRef {
+	var out []ItemRef
+	for _, name := range LaneNames() {
+		lane := *b.lane(name)
+		for i, it := range lane {
+			out = append(out, ItemRef{Lane: name, Path: ItemPath{Index: i, Member: -1}})
+			if it.ID != "group" {
+				continue
+			}
+			for j := range it.Items {
+				out = append(out, ItemRef{Lane: name, Path: ItemPath{Index: i, Member: j}})
+			}
+		}
+	}
+	return out
+}
+
+// WidgetIDs is the widget vocabulary a bar can be composed from: every known
+// item except the two that are not widgets. "group" is a container and
+// "plugin" is a placement whose real identity is the entry it names, so
+// neither is something a user picks off a list.
+//
+// Sorted, so the add control's list and any test that walks the vocabulary
+// both see a stable order.
+func WidgetIDs() []string {
+	out := make([]string, 0, len(knownItems))
+	for id := range knownItems {
+		if id == "group" || id == "plugin" {
+			continue
+		}
+		out = append(out, id)
+	}
+	slices.Sort(out)
+	return out
+}

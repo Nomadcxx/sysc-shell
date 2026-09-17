@@ -239,3 +239,82 @@ func TestAMutatedLaneSurvivesTheLoader(t *testing.T) {
 		t.Errorf("after a round trip: %q", ids(got.Bar.Left))
 	}
 }
+
+// Task 6. The whole-file guarantee behind D3: loading a document and writing
+// it back must not invent ids for widgets nobody touched, or every existing
+// configuration grows identity it never asked for on the first save.
+func TestAWriteWithoutAnEditGrowsNoIds(t *testing.T) {
+	t.Parallel()
+	cfg := Default()
+	path := t.TempDir() + "/config.json"
+	if err := Write(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, section := range [][]Item{got.Bar.Left, got.Bar.Center, got.Bar.Right} {
+		for _, it := range flattenItems(section) {
+			if it.Instance != "" && it.ID != "plugin" {
+				t.Errorf("%s gained instance %q on a plain round trip", it.ID, it.Instance)
+			}
+		}
+	}
+}
+
+// Task 7. Addressing one item out of a whole bar is what lets a per-widget
+// option write reach one widget instead of every widget of that type.
+func TestBarItemRefsReachEveryItemIncludingGroupMembers(t *testing.T) {
+	t.Parallel()
+	b := Bar{
+		Left:   []Item{{ID: "clock"}, {ID: "group", Items: []Item{{ID: "cpu"}, {ID: "memory"}}}},
+		Center: []Item{{ID: "wordmark"}},
+		Right:  []Item{{ID: "battery"}},
+	}
+	refs := BarItemRefs(b)
+	var got []string
+	for _, ref := range refs {
+		it := b.ItemAt(ref)
+		if it == nil {
+			t.Fatalf("ref %v resolved to nothing", ref)
+		}
+		got = append(got, ref.Lane+":"+it.ID)
+	}
+	want := []string{
+		"left:clock", "left:group", "left:cpu", "left:memory",
+		"center:wordmark", "right:battery",
+	}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestItemAtReturnsAPointerIntoTheBar(t *testing.T) {
+	t.Parallel()
+	b := Bar{Left: []Item{{ID: "group", Items: []Item{{ID: "clock"}}}}}
+	ref := ItemRef{Lane: "left", Path: ItemPath{Index: 0, Member: 0}}
+	it := b.ItemAt(ref)
+	if it == nil {
+		t.Fatal("ItemAt resolved to nothing")
+	}
+	it.Format = "15:04"
+	if b.Left[0].Items[0].Format != "15:04" {
+		t.Error("ItemAt returned a copy; a write through it does not reach the bar")
+	}
+}
+
+func TestItemAtRefusesAnAddressThatNoLongerResolves(t *testing.T) {
+	t.Parallel()
+	b := Bar{Left: []Item{{ID: "clock"}}}
+	for _, ref := range []ItemRef{
+		{Lane: "left", Path: ItemPath{Index: 4, Member: -1}},
+		{Lane: "right", Path: ItemPath{Index: 0, Member: -1}},
+		{Lane: "left", Path: ItemPath{Index: 0, Member: 2}},
+		{Lane: "nowhere", Path: ItemPath{Index: 0, Member: -1}},
+	} {
+		if got := b.ItemAt(ref); got != nil {
+			t.Errorf("ItemAt(%v) = %+v, want nil", ref, got)
+		}
+	}
+}
