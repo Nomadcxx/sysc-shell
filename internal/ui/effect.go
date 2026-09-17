@@ -29,8 +29,12 @@ const (
 
 // EffectSpec is the validated, host-owned request for one effect layer.
 type EffectSpec struct {
-	Program   EffectProgram
-	Variant   EffectVariant
+	Program EffectProgram
+	Variant EffectVariant
+	// Night selects the nocturnal form for weather variants that have a
+	// celestial layer. It is explicit because a weather code alone does not
+	// carry day/night state.
+	Night     bool
 	Seed      uint64
 	Intensity float64
 	Speed     float64

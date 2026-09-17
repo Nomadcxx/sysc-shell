@@ -31,6 +31,9 @@ const (
 	weatherMaxSnowRadius          = 3
 	weatherLightningSegments      = 7
 	weatherMaxLightningSegmentPts = 24
+	// Cloud masses keep the standalone hero's near-square composition when a
+	// wider consumer, such as the Control Centre, stretches the effect box.
+	weatherCloudMaxAspect = 1.25
 )
 
 func weatherKindFor(variant ui.EffectVariant) (weatherKind, error) {
@@ -118,6 +121,10 @@ func paintCelestial(c *Canvas, box ui.Rect, mask *image.Alpha, style Style, spec
 	if radius < 3 {
 		radius = 3
 	}
+	if spec.Night {
+		paintMoon(c, box, mask, style, spec, time, cx, cy, radius, intensity)
+		return
+	}
 
 	halo := LerpColor(celestial, style.Foreground, .36)
 	haloBreath := .5 + .5*math.Sin(2*math.Pi*(time+weatherUnit(spec.Seed, 43, 1)))
@@ -146,6 +153,40 @@ func paintCelestial(c *Canvas, box ui.Rect, mask *image.Alpha, style Style, spec
 		highlight, weatherAlpha(highlight.A, intensity*.42))
 }
 
+func paintMoon(c *Canvas, box ui.Rect, mask *image.Alpha, style Style, spec ui.EffectSpec, time, cx, cy, radius, intensity float64) {
+	moon := LerpColor(style.Foreground, style.Secondary, .16)
+	if moon.A == 0 {
+		moon = style.Foreground
+	}
+	halo := LerpColor(style.Secondary, style.Foreground, .35)
+	haloBreath := .5 + .5*math.Sin(2*math.Pi*(time+weatherUnit(spec.Seed, 44, 1)))
+	drawWeatherEllipse(c, box, mask, cx, cy, radius*(1.70+.18*haloBreath), radius*(1.70+.18*haloBreath),
+		halo, weatherAlpha(halo.A, intensity*(.12+.06*haloBreath)))
+	drawWeatherEllipse(c, box, mask, cx, cy, radius*(1.25+.08*haloBreath), radius*(1.25+.08*haloBreath),
+		halo, weatherAlpha(halo.A, intensity*(.16+.06*haloBreath)))
+	drawWeatherCrescent(c, box, mask, cx, cy, radius, cx+radius*.42, cy-radius*.08, radius*1.03,
+		moon, weatherAlpha(moon.A, intensity*.88))
+}
+
+func drawWeatherCrescent(c *Canvas, box ui.Rect, mask *image.Alpha, cx, cy, radius, cutX, cutY, cutRadius float64, col Color, alpha uint8) {
+	if alpha == 0 || radius <= 0 || cutRadius <= 0 {
+		return
+	}
+	minX := max(int(math.Floor(cx-radius-1)), 0)
+	maxX := min(int(math.Ceil(cx+radius+1)), box.W)
+	minY := max(int(math.Floor(cy-radius-1)), 0)
+	maxY := min(int(math.Ceil(cy+radius+1)), box.H)
+	for y := minY; y < maxY; y++ {
+		for x := minX; x < maxX; x++ {
+			coverage := weatherEllipseCoverage(x, y, cx, cy, radius, radius)
+			coverage -= weatherEllipseCoverage(x, y, cutX, cutY, cutRadius, cutRadius)
+			if coverage > 0 {
+				localWeatherPixel(c, box, mask, x, y, col, alpha, coverage)
+			}
+		}
+	}
+}
+
 // paintCloudScene uses parallax masses so cloud states read as a form, not as
 // another full-card wash. The closed phase gives the front and rear layers
 // different lift and drift, like the staged Pixel icon motion.
@@ -153,29 +194,35 @@ func paintCloudScene(c *Canvas, box ui.Rect, mask *image.Alpha, style Style, spe
 	if intensity <= 0 || box.W <= 0 || box.H <= 0 || density <= 0 {
 		return
 	}
-	base := weatherRole(style.ContainerHighest, style.Foreground)
+	base := weatherRole(style.ContainerHighest, style.Capsule)
 	if base.A == 0 {
 		return
 	}
 	time := weatherLoopPhase(phase, spec.Speed)
 	width, height := float64(box.W), float64(box.H)
-	backX := math.Sin(2*math.Pi*(time+weatherUnit(spec.Seed, 51, 1))) * width * .075
+	sceneWidth := min(width, height*weatherCloudMaxAspect)
+	sceneX := (width - sceneWidth) * .5
+	backX := math.Sin(2*math.Pi*(time+weatherUnit(spec.Seed, 51, 1))) * sceneWidth * .075
 	backY := math.Sin(2*math.Pi*(time+weatherUnit(spec.Seed, 51, 2))) * height * .045
-	frontX := math.Sin(2*math.Pi*(time+weatherUnit(spec.Seed, 52, 1))) * width * .11
+	frontX := math.Sin(2*math.Pi*(time+weatherUnit(spec.Seed, 52, 1))) * sceneWidth * .11
 	frontY := math.Sin(2*math.Pi*(time+weatherUnit(spec.Seed, 52, 2))) * height * .075
 	breath := .5 + .5*math.Sin(2*math.Pi*(time+weatherUnit(spec.Seed, 53, 1)))
 
-	shadow := LerpColor(base, style.Background, .50)
-	paintCloudMass(c, box, mask, width*.34+backX, height*(.57+.025*breath)+backY,
-		width*.70, height*.30, shadow, weatherAlpha(shadow.A, intensity*density*(.42+.10*breath)))
+	shadow := LerpColor(style.Background, base, .12)
+	paintCloudMass(c, box, mask, sceneX+sceneWidth*.47+frontX*.72, height*(.77+.025*breath)+frontY*.72,
+		sceneWidth*.86, height*.34, shadow, weatherAlpha(shadow.A, intensity*density*(.76+.10*breath)))
 
-	cloud := LerpColor(base, style.Foreground, .27)
-	paintCloudMass(c, box, mask, width*.58+frontX, height*(.71+.025*breath)+frontY,
-		width*.92, height*.38, cloud, weatherAlpha(cloud.A, intensity*density*(.70+.12*breath)))
+	backCloud := LerpColor(base, style.Foreground, .48)
+	paintCloudMass(c, box, mask, sceneX+sceneWidth*.35+backX, height*(.56+.025*breath)+backY,
+		sceneWidth*.62, height*.27, backCloud, weatherAlpha(backCloud.A, intensity*density*(.70+.10*breath)))
 
-	highlight := LerpColor(base, style.Foreground, .58)
-	paintCloudMass(c, box, mask, width*.48+frontX*.55, height*.57+frontY*.45,
-		width*.52, height*.25, highlight, weatherAlpha(highlight.A, intensity*density*.30))
+	cloud := LerpColor(base, style.Foreground, .70)
+	paintCloudMass(c, box, mask, sceneX+sceneWidth*.50+frontX, height*(.69+.025*breath)+frontY,
+		sceneWidth*.78, height*.34, cloud, weatherAlpha(cloud.A, intensity*density*(.88+.10*breath)))
+
+	highlight := LerpColor(cloud, style.Foreground, .65)
+	paintCloudMass(c, box, mask, sceneX+sceneWidth*.43+frontX*.50, height*(.55+.02*breath)+frontY*.42,
+		sceneWidth*.58, height*.24, highlight, weatherAlpha(highlight.A, intensity*density*(.72+.08*breath)))
 }
 
 type weatherCloudPuff struct {
@@ -274,12 +321,11 @@ func paintSkyCloudWash(c *Canvas, box ui.Rect, mask *image.Alpha, style Style, s
 	if intensity <= 0 || box.W <= 0 || box.H <= 0 {
 		return
 	}
-	sky := weatherRole(style.Background, style.Accent)
-	cloud := weatherRole(style.ContainerHighest, style.Secondary)
-	if sky.A == 0 || cloud.A == 0 {
+	skyTop, skyBottom, cloud := weatherSkyColors(style, spec.Night)
+	if skyTop.A == 0 || skyBottom.A == 0 || cloud.A == 0 {
 		return
 	}
-	time := effectTime(phase, spec.Speed)
+	time := weatherLoopPhase(phase, spec.Speed)
 	density = clampEffect(density, 0, 1)
 	x0, y0, x1, y1 := c.clip(box)
 	if x0 >= x1 || y0 >= y1 {
@@ -289,15 +335,32 @@ func paintSkyCloudWash(c *Canvas, box ui.Rect, mask *image.Alpha, style Style, s
 		v := (float64(y-box.Y) + .5) / float64(box.H)
 		for x := x0; x < x1; x++ {
 			u := (float64(x-box.X) + .5) / float64(box.W)
-			wave := .5 + .5*math.Sin(2*math.Pi*(u*1.15+v*.70+time*.08))
-			wave += .25 * math.Sin(2*math.Pi*(u*.45-v*1.20-time*.045))
-			wave = clampEffect(wave, 0, 1)
-			mix := clampEffect(density*.58+wave*.42, 0, 1)
-			col := LerpColor(sky, cloud, mix)
-			col.A = weatherAlpha(col.A, intensity*(.025+mix*.12))
+			depth := clampEffect(v+
+				.035*math.Sin(2*math.Pi*(u*.70+time*.10))+
+				.018*math.Sin(2*math.Pi*(u*.31-v*.80-time*.06)), 0, 1)
+			col := LerpColor(skyTop, skyBottom, depth)
+			veil := density * (.10 + .10*(.5+.5*math.Sin(2*math.Pi*(u*.85+v*.55+time*.08))))
+			col = LerpColor(col, cloud, clampEffect(veil, 0, 1))
+			col.A = weatherAlpha(col.A, intensity*(.58+.16*(.5+.5*math.Sin(2*math.Pi*(u*.45+v*.70+time*.06)))))
 			blendWeatherPixel(c, box, mask, x, y, col, 255)
 		}
 	}
+}
+
+func weatherSkyColors(style Style, night bool) (top, bottom, cloud Color) {
+	base := weatherRole(style.Background, style.Capsule)
+	surface := weatherRole(style.Capsule, base)
+	primary := weatherRole(style.Accent, style.Secondary)
+	secondary := weatherRole(style.Secondary, style.Foreground)
+	if night {
+		top = LerpColor(base, secondary, .54)
+		bottom = LerpColor(surface, base, .28)
+	} else {
+		top = LerpColor(base, primary, .62)
+		bottom = LerpColor(surface, secondary, .62)
+	}
+	cloud = LerpColor(weatherRole(style.ContainerHighest, surface), style.Foreground, .30)
+	return top, bottom, cloud
 }
 
 func paintFogHaze(c *Canvas, box ui.Rect, mask *image.Alpha, style Style, spec ui.EffectSpec, phase, intensity float64) {

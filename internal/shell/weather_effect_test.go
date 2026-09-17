@@ -15,9 +15,10 @@ func TestWeatherEffectSpecMapsWeatherCategories(t *testing.T) {
 		code    int
 		variant ui.EffectVariant
 		isDay   *bool
+		night   bool
 	}{
 		{name: "clear day", code: 0, variant: ui.WeatherClear, isDay: &day},
-		{name: "clear night", code: 0, variant: ui.WeatherClear, isDay: func() *bool { v := false; return &v }()},
+		{name: "clear night", code: 0, variant: ui.WeatherClear, isDay: func() *bool { v := false; return &v }(), night: true},
 		{name: "partly cloudy", code: 2, variant: ui.WeatherPartlyCloudy, isDay: &day},
 		{name: "cloudy", code: 3, variant: ui.WeatherCloudy, isDay: &day},
 		{name: "fog", code: 45, variant: ui.WeatherFog, isDay: &day},
@@ -36,6 +37,9 @@ func TestWeatherEffectSpecMapsWeatherCategories(t *testing.T) {
 			}
 			if spec.Program != ui.EffectWeather || spec.Variant != tt.variant {
 				t.Fatalf("spec = %+v, want weather variant %d", spec, tt.variant)
+			}
+			if spec.Night != tt.night {
+				t.Fatalf("spec night = %v, want %v", spec.Night, tt.night)
 			}
 			if err := spec.Validate(); err != nil {
 				t.Fatalf("effect spec is invalid: %v", err)
@@ -106,6 +110,24 @@ func TestWeatherHeroUsesTheWeatherEffect(t *testing.T) {
 	want, ok := weatherEffectSpec(reading)
 	if !ok || effect.Effect != want {
 		t.Fatalf("hero effect spec = %+v, want %+v", effect.Effect, want)
+	}
+}
+
+func TestWeatherHeroHeadlineDropsTextToTheIconOpticalCentre(t *testing.T) {
+	r := &Registry{reading: observedWeather()}
+	h := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
+	root := weatherTree(r, h)
+	if err := ui.LayoutColumn(root, ui.Rect{W: 460, H: 560}, h.measureText()); err != nil {
+		t.Fatalf("weather tree does not lay out: %v", err)
+	}
+
+	hero := root.Children[1].Children[0]
+	foreground := hero.Children[0].Children[2]
+	headline := foreground.Children[0]
+	icon := headline.Children[0]
+	text := headline.Children[1]
+	if text.Children[0].Bounds.Y <= icon.Bounds.Y {
+		t.Fatalf("headline text starts at y=%d beside icon y=%d; want a small optical-centre drop", text.Children[0].Bounds.Y, icon.Bounds.Y)
 	}
 }
 

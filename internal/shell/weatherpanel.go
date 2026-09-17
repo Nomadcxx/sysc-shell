@@ -139,7 +139,7 @@ func weatherHeroCard(reading services.Reading, location string, m theme.Metrics,
 	}
 	headline := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Height: m.IconHero, Children: []*ui.Node{
 		{Kind: ui.KindIcon, Icon: render.WeatherIconName(reading.Code, isDay), IconSize: m.IconHero, Tone: heroTone},
-		{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
+		{Kind: ui.KindColumn, Padding: theme.MarginXS, Gap: theme.MarginXXS, Children: []*ui.Node{
 			{Kind: ui.KindText, Text: fmt.Sprintf("%.0f%s", reading.Temperature, unitSuffix(reading.Unit)), TextRole: theme.RoleHeadline, Tabular: true},
 			{Kind: ui.KindText, Text: render.WeatherCondition(reading.Code), TextRole: theme.RoleLabel},
 		}},

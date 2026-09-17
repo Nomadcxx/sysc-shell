@@ -47,6 +47,55 @@ func TestWeatherPartlyCloudyPaintsDistinctSkyAndCloudRegions(t *testing.T) {
 	}
 }
 
+func TestWeatherNightUsesAMoonSilhouette(t *testing.T) {
+	const width, height = 160, 96
+	day := rainSpec(7)
+	day.Variant = ui.WeatherClear
+	night := day
+	night.Night = true
+	dayPixels := paintWeatherVariantFrameWithSpec(t, day, .25, width, height)
+	nightPixels := paintWeatherVariantFrameWithSpec(t, night, .25, width, height)
+	if got := differingWeatherPixels(dayPixels, nightPixels, width, ui.Rect{W: width, H: height / 2}, 18); got < 80 {
+		t.Fatalf("day and night clear forms differ at only %d upper-hero pixels, want a moon-specific silhouette", got)
+	}
+}
+
+func TestWeatherSkyHasReadableVerticalDepth(t *testing.T) {
+	const width, height = 160, 96
+	pixels := paintWeatherVariantFrame(t, ui.WeatherClear, .25, width, height)
+	top := meanWeatherColor(pixels, width, ui.Rect{Y: 4, W: width, H: 20})
+	bottom := meanWeatherColor(pixels, width, ui.Rect{Y: 68, W: width, H: 20})
+	if got := weatherRGBDistance(top, bottom); got < 28 {
+		t.Fatalf("sky depth = %d, want a readable vertical gradient", got)
+	}
+}
+
+func TestWeatherCloudsHaveHighlightAndShadowLayers(t *testing.T) {
+	const width, height = 240, 144
+	pixels := paintWeatherVariantFrame(t, ui.WeatherCloudy, .37, width, height)
+	upper := meanWeatherColor(pixels, width, ui.Rect{Y: 62, W: width, H: 24})
+	lower := meanWeatherColor(pixels, width, ui.Rect{Y: 102, W: width, H: 24})
+	if got := weatherRGBDistance(upper, lower); got < 12 {
+		t.Fatalf("cloud layer contrast = %d, want distinct highlight and shadow layers", got)
+	}
+}
+
+func TestWeatherCloudScenePreservesLandscapeComposition(t *testing.T) {
+	const width, height = 720, 400
+	c := newTestCanvas(t, width, height)
+	box := ui.Rect{W: width, H: height}
+	fillRect(c, box, testStyle.Capsule)
+	paintCloudScene(c, box, RoundedMask(0, width, height), testStyle, rainSpec(7), .37, 1, 1)
+
+	bounds, ok := weatherDifferenceBounds(c.Pix, width, testStyle.Capsule, 6)
+	if !ok {
+		t.Fatal("landscape cloud scene painted no measurable cloud form")
+	}
+	if bounds.W > height*3/2 {
+		t.Fatalf("landscape cloud width = %d in %dx%d hero, want no more than %d", bounds.W, width, height, height*3/2)
+	}
+}
+
 func TestWeatherCelestialAndCloudFormsRespondToPhase(t *testing.T) {
 	const width, height = 160, 96
 	first := paintWeatherVariantFrame(t, ui.WeatherPartlyCloudy, .10, width, height)
@@ -383,21 +432,74 @@ func absWeatherByte(a, b byte) uint8 {
 	return b - a
 }
 
-func BenchmarkPaintWeatherEffect(b *testing.B) {
-	c, err := NewCanvas(make([]byte, 256*160*4), 256, 160, 256*4)
-	if err != nil {
-		b.Fatal(err)
-	}
-	n := &ui.Node{
-		Kind:        ui.KindEffect,
-		Bounds:      ui.Rect{W: 256, H: 160},
-		Effect:      rainSpec(7),
-		EffectPhase: .25,
-	}
-	for i := 0; i < b.N; i++ {
-		clear(c.Pix)
-		if err := paintEffect(c, n, testStyle); err != nil {
-			b.Fatal(err)
+func meanWeatherColor(pixels []byte, width int, region ui.Rect) [3]byte {
+	var sums [3]int
+	count := 0
+	for y := max(region.Y, 0); y < min(region.Y+region.H, len(pixels)/(width*4)); y++ {
+		for x := max(region.X, 0); x < min(region.X+region.W, width); x++ {
+			i := y*width*4 + x*4
+			// Canvas pixels are BGRA; return RGB for the test helpers.
+			sums[0] += int(pixels[i+2])
+			sums[1] += int(pixels[i+1])
+			sums[2] += int(pixels[i])
+			count++
 		}
+	}
+	if count == 0 {
+		return [3]byte{}
+	}
+	return [3]byte{byte(sums[0] / count), byte(sums[1] / count), byte(sums[2] / count)}
+}
+
+func weatherRGBDistance(a, b [3]byte) uint8 {
+	return uint8(max(absWeatherByte(a[0], b[0]), max(absWeatherByte(a[1], b[1]), absWeatherByte(a[2], b[2]))))
+}
+
+func weatherDifferenceBounds(pixels []byte, width int, base Color, threshold uint8) (ui.Rect, bool) {
+	height := len(pixels) / (width * 4)
+	minX, minY, maxX, maxY := width, height, -1, -1
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			i := y*width*4 + x*4
+			if weatherColorDistance(pixels[i:i+4], base) < threshold {
+				continue
+			}
+			minX, minY = min(minX, x), min(minY, y)
+			maxX, maxY = max(maxX, x), max(maxY, y)
+		}
+	}
+	if maxX < minX || maxY < minY {
+		return ui.Rect{}, false
+	}
+	return ui.Rect{X: minX, Y: minY, W: maxX - minX + 1, H: maxY - minY + 1}, true
+}
+
+func BenchmarkPaintWeatherEffect(b *testing.B) {
+	for _, size := range []struct {
+		name   string
+		width  int
+		height int
+	}{
+		{name: "card", width: 256, height: 160},
+		{name: "landscape", width: 720, height: 400},
+	} {
+		b.Run(size.name, func(b *testing.B) {
+			c, err := NewCanvas(make([]byte, size.width*size.height*4), size.width, size.height, size.width*4)
+			if err != nil {
+				b.Fatal(err)
+			}
+			n := &ui.Node{
+				Kind:        ui.KindEffect,
+				Bounds:      ui.Rect{W: size.width, H: size.height},
+				Effect:      rainSpec(7),
+				EffectPhase: .25,
+			}
+			for i := 0; i < b.N; i++ {
+				clear(c.Pix)
+				if err := paintEffect(c, n, testStyle); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }

@@ -74,6 +74,24 @@ func TestWeatherBarActionTogglesTheStandalonePanel(t *testing.T) {
 	}
 }
 
+func TestWeatherBarRightClickOpensTheStandalonePanel(t *testing.T) {
+	r := newPanelRegistry(t)
+	bar := &Bar{conn: "DP-1"}
+	r.bars = map[uint32]*Bar{7: bar}
+	r.bindBarPanelActionsLocked(7, bar)
+
+	if !bar.onAction(panelWeatherAction, buttonRight) {
+		t.Fatal("right-click did not handle the weather action")
+	}
+	_ = drainAux(t, r, 2)
+	r.mu.Lock()
+	h := r.panelHosts[PanelWeather]
+	r.mu.Unlock()
+	if h == nil {
+		t.Fatal("right-click did not create PanelWeather")
+	}
+}
+
 func treeIcons(n *ui.Node) []string {
 	if n == nil {
 		return nil

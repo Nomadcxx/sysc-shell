@@ -50,6 +50,7 @@ func weatherEffectSpec(reading services.Reading) (ui.EffectSpec, bool) {
 	spec := ui.EffectSpec{
 		Program:   ui.EffectWeather,
 		Variant:   variant,
+		Night:     !isDay,
 		Seed:      weatherEffectSeed,
 		Intensity: intensity,
 		Speed:     speed,
