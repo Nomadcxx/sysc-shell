@@ -646,3 +646,64 @@ func TestSettingsBodyLeavesRoomForTheRail(t *testing.T) {
 			body.Width, room, settingsRailWidth)
 	}
 }
+
+// TestRowColumnsFitInsideTheBody is sysc-326. Neither column carried a width,
+// so the description set the row's width and pushed the right-pinned control
+// past the column's edge. A wide output has room to absorb that; a 1536-wide
+// one at scale 1.25 clips every enum and field.
+func TestRowColumnsFitInsideTheBody(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.place.Panel = ui.Rect{W: 900, H: 760}
+	h.section = "Appearance"
+	h.root = settingsTree(nil, h)
+
+	body := settingsBodyWidth(h)
+	rows := 0
+	for _, n := range walk(h.root) {
+		if n.Kind != ui.KindRow || len(n.Children) != 2 || !n.PinEnd {
+			continue
+		}
+		label, trailing := n.Children[0], n.Children[1]
+		if label.Kind != ui.KindColumn || label.Width <= 0 || trailing.Width <= 0 {
+			continue
+		}
+		rows++
+		if used := label.Width + trailing.Width; used > body {
+			t.Errorf("a row measures %d wide inside a %d-wide column", used, body)
+		}
+	}
+	if rows == 0 {
+		t.Fatal("no sized rows were rendered")
+	}
+}
+
+// TestFieldsFillTheirColumn: a fixed 200 read as a token field in a wide
+// panel, whatever the surface was.
+func TestFieldsFillTheirColumn(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.place.Panel = ui.Rect{W: 900, H: 760}
+	h.section = "Session"
+	h.root = settingsTree(nil, h)
+
+	field := findKind(h.root, ui.KindTextField)
+	if field == nil {
+		t.Fatal("no field rendered")
+	}
+	if field.Width <= 200 {
+		t.Errorf("field is %d wide; it should take the control column, not a fixed 200", field.Width)
+	}
+}
+
+// TestRailTabsCarryTooltips: the rail draws glyphs only, so hovering has to
+// say what each one is.
+func TestRailTabsCarryTooltips(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	for _, tab := range byRole(h.root, "tab") {
+		if tab.Tooltip != tab.Name {
+			t.Errorf("tab %q has tooltip %q", tab.Name, tab.Tooltip)
+		}
+	}
+}

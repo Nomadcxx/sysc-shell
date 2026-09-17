@@ -54,6 +54,19 @@ var settingsSectionIcons = map[string]string{
 	"Accessibility": "accessibility_new",
 }
 
+// settingsControlWidth is the room the trailing column takes. Controls used to
+// take a fixed 200 regardless of the surface, which reads as a token field in
+// a wide panel; sizing from the body keeps a field usable and keeps the row
+// inside the column it sits in.
+func settingsControlWidth(h *PanelHost) int {
+	body := settingsBodyWidth(h)
+	w := body * 2 / 5
+	if w > body/2 {
+		w = body / 2
+	}
+	return max(w, 0)
+}
+
 // settingsBodyWidth is what is left for the rows once the rail and the gutter
 // have taken theirs. The rows right-pin their controls, so the column has to
 // carry it: without a width the controls pin to the panel's own edge and every
@@ -76,6 +89,9 @@ func settingsRail(h *PanelHost, section string) *ui.Node {
 		entry := &ui.Node{
 			Kind: ui.KindButton, Width: settingsRailItem, Height: settingsRailItem,
 			Action: "section:" + name, Name: name, Role: "tab", Focusable: true,
+			// The rail draws glyphs only, so the name has to be reachable by
+			// hover as well as by screen reader.
+			Tooltip:  name,
 			Shape:    ui.ShapeMedium,
 			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: settingsSectionIcons[name]}},
 		}
@@ -136,7 +152,13 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 
 	if section == "Plugins" {
-		return body(pluginsTree(r, h))
+		// The plugin host's view is a column of cards with no width of its
+		// own, so inside the body row its switches stretched the full
+		// surface. It gets the same bounded, scrolling column as a section.
+		return body(&ui.Node{
+			Kind: ui.KindScroll, Width: settingsBodyWidth(h), Gap: theme.MarginM,
+			Children: []*ui.Node{pluginsTree(r, h)},
+		})
 	}
 	var entries []settings.Entry
 	if h.set != nil {
@@ -210,6 +232,7 @@ func settingsSectionColumn(h *PanelHost, entries []settings.Entry) *ui.Node {
 }
 
 func settingsEntryRow(h *PanelHost, e settings.Entry) *ui.Node {
+	controlW := settingsControlWidth(h)
 	label := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: e.Label, Name: e.Label},
 	}}
@@ -219,13 +242,19 @@ func settingsEntryRow(h *PanelHost, e settings.Entry) *ui.Node {
 			TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
 		})
 	}
-	trailing := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS}
-	// Deviation is ambient: only a row that has moved off its default carries
-	// the control that puts it back.
+	// Both columns carry their width. Without it the description sets the
+	// row's width and pushes the right-pinned control past the edge of the
+	// column, which is invisible on a wide output and clips on a small one.
+	label.Width = max(settingsBodyWidth(h)-controlW-theme.MarginL, 0)
+
+	trailing := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Width: controlW, PinEnd: true}
+	room := controlW
 	if !e.IsDefault(h.draft) {
-		trailing.Children = append(trailing.Children, settingsResetButton(e))
+		reset := settingsResetButton(e)
+		trailing.Children = append(trailing.Children, reset)
+		room = max(room-settingsResetWidth-theme.MarginS, 0)
 	}
-	trailing.Children = append(trailing.Children, settingsControl(h, e))
+	trailing.Children = append(trailing.Children, settingsControl(h, e, room))
 
 	row := &ui.Node{Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{label, trailing}}
 	if e.Describe == "" {
@@ -238,6 +267,9 @@ func settingsEntryRow(h *PanelHost, e settings.Entry) *ui.Node {
 	return row
 }
 
+// settingsResetWidth is the room the reset control takes when a row shows one.
+const settingsResetWidth = 64
+
 func settingsResetButton(e settings.Entry) *ui.Node {
 	return &ui.Node{
 		Kind: ui.KindButton, Text: "Reset", Action: "reset:" + e.Path,
@@ -245,7 +277,7 @@ func settingsResetButton(e settings.Entry) *ui.Node {
 	}
 }
 
-func settingsControl(h *PanelHost, e settings.Entry) *ui.Node {
+func settingsControl(h *PanelHost, e settings.Entry, width int) *ui.Node {
 	raw := ""
 	if h.set != nil {
 		raw = e.Get(h.draft)
@@ -271,13 +303,13 @@ func settingsControl(h *PanelHost, e settings.Entry) *ui.Node {
 		}
 		return &ui.Node{
 			Kind: ui.KindSlider, Value: float64(n), Min: float64(e.Min), Max: float64(e.Max), Step: 1,
-			Action: action, Width: 160, Focusable: true, Name: e.Label, Role: "slider", // token-exempt: a slider's track width, a measured control dimension rather than a ladder value
+			Action: action, Width: width, Focusable: true, Name: e.Label, Role: "slider",
 		}
 	case settings.KindFont:
-		return settingsMenuControl(h, e, settingsFontFamilies(), raw)
+		return settingsMenuControl(h, e, settingsFontFamilies(), raw, width)
 	case settings.KindPath:
-		return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
-			settingsField(h, e, raw),
+		return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Width: width, Children: []*ui.Node{
+			settingsField(h, e, raw, max(width-settingsResetWidth, 0)),
 			{
 				Kind: ui.KindButton, Action: "browse:" + e.Path,
 				Name: "Browse " + e.Label, Role: "button", Focusable: true,
@@ -286,9 +318,9 @@ func settingsControl(h *PanelHost, e settings.Entry) *ui.Node {
 			},
 		}}
 	case settings.KindEnum:
-		return settingsMenuControl(h, e, e.Options, raw)
+		return settingsMenuControl(h, e, e.Options, raw, width)
 	default:
-		return settingsField(h, e, raw)
+		return settingsField(h, e, raw, width)
 	}
 }
 
@@ -320,7 +352,7 @@ func settingsStepper(e settings.Entry, value int) *ui.Node {
 	}}
 }
 
-func settingsMenuControl(h *PanelHost, e settings.Entry, options []string, raw string) *ui.Node {
+func settingsMenuControl(h *PanelHost, e settings.Entry, options []string, raw string, width int) *ui.Node {
 	idx := 0
 	for i, o := range options {
 		if o == raw {
@@ -339,10 +371,13 @@ func settingsMenuControl(h *PanelHost, e settings.Entry, options []string, raw s
 	n := m.Node()
 	n.Action = "set:" + e.Path
 	n.Name = e.Label
+	if width > 0 {
+		n.Width = width
+	}
 	return n
 }
 
-func settingsField(h *PanelHost, e settings.Entry, raw string) *ui.Node {
+func settingsField(h *PanelHost, e settings.Entry, raw string, width int) *ui.Node {
 	if h.fields == nil {
 		h.fields = map[string]*ui.Field{}
 	}
@@ -353,7 +388,7 @@ func settingsField(h *PanelHost, e settings.Entry, raw string) *ui.Node {
 	}
 	n := f.Node(e.Label)
 	n.Action = "set:" + e.Path
-	n.Width = 200
+	n.Width = width
 	// A colour is checkable as it is typed, so the field says so itself
 	// rather than waiting for the write to fail.
 	if e.Kind == settings.KindHex && !settingsValidHex(f.Text) {
