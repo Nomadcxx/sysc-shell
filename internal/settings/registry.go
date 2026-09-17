@@ -2,6 +2,7 @@ package settings
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -79,10 +80,14 @@ func DefaultFor(cfg config.Config) *Registry {
 			Set: setString(func(c *config.Config, v string) { c.Bar.Right = parseItemIDs(v, c.Bar.Right) }),
 		},
 		{
-			Path: "appearance.source", Label: "Theme source", Section: "Appearance", Kind: KindEnum,
-			Options: themeSources,
-			Get:     func(c config.Config) string { return c.ThemeGen.Source },
-			Set:     setEnum("appearance.source", themeSources, func(c *config.Config, v string) { c.ThemeGen.Source = v }),
+			Path: "appearance.source", Label: "Theme source", Section: "Appearance", Group: "Palette",
+			Describe: "Where the palette is seeded from.",
+			Kind:     KindEnum, Options: themeSources,
+			Get: func(c config.Config) string { return c.ThemeGen.Source },
+			Set: setEnum("appearance.source", themeSources, func(c *config.Config, v string) {
+				c.ThemeGen.Source = v
+				c.ThemeGen.Seed = seedFor(v, c.ThemeGen.Seed)
+			}),
 		},
 		seedEntry(cfg),
 		// The palette entry writes the same field the seed does: with source
@@ -512,6 +517,60 @@ const (
 	// minute-long cross-fade is not a setting anyone wants by accident.
 	maxFadeSeconds = 10
 )
+
+// hexPattern mirrors the loader's colour rule. Task 11's validated hex fields
+// read it too, so the shape is stated once.
+var hexPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$`)
+
+// seedFor keeps the seed readable by the source about to read it.
+//
+// The loader validates the seed through the source, so changing one without
+// the other wrote a file the shell then refused to load. That is why a stock
+// theme could not be chosen from settings at all: the picker was not missing,
+// the choice it made was unloadable.
+func seedFor(source, seed string) string {
+	switch source {
+	case "stock":
+		if _, ok := theme.StockSeed(seed); ok {
+			return seed
+		}
+		if names := theme.StockNames(); len(names) > 0 {
+			return names[0]
+		}
+	case "hex":
+		if hexPattern.MatchString(seed) {
+			return seed
+		}
+		// A stock name stands for a hex, so coming from a stock theme keeps
+		// the colour the user was already looking at.
+		if hex, ok := theme.StockSeed(seed); ok {
+			return hex
+		}
+		if names := theme.StockNames(); len(names) > 0 {
+			if hex, ok := theme.StockSeed(names[0]); ok {
+				return hex
+			}
+		}
+	case "palette":
+		if slices.Contains(theme.PaletteNames(), seed) {
+			return seed
+		}
+		if names := theme.PaletteNames(); len(names) > 0 {
+			return names[0]
+		}
+	case "wallpaper":
+		// The seed is an image path here, which configuration does not
+		// validate, and an empty one means the wallpaper in use. A leftover
+		// stock name, palette name or colour would be read as a filename.
+		if _, ok := theme.StockSeed(seed); ok {
+			return ""
+		}
+		if slices.Contains(theme.PaletteNames(), seed) || hexPattern.MatchString(seed) {
+			return ""
+		}
+	}
+	return seed
+}
 
 // seedEntry is built from the supplied configuration because what the seed
 // means follows the source: under "stock" it names one of a closed set of

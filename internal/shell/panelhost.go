@@ -2140,11 +2140,21 @@ func (h *PanelHost) applySetting(r *Registry, n *ui.Node) {
 	case ui.KindMenu:
 		v = n.Text
 	}
+	h.commitSetting(r, e, v)
+}
+
+// commitSetting applies one value to the draft, rebuilds the registry from it,
+// and writes. The rebuild is what lets an entry's options depend on another
+// setting: the seed picker follows the theme source, and a registry built once
+// at open would keep offering the previous source's vocabulary for as long as
+// the panel stayed up.
+func (h *PanelHost) commitSetting(r *Registry, e *settings.Entry, v string) {
 	if err := e.Set(&h.draft, v); err != nil {
 		h.errLabel = err.Error()
 		r.rebuildPanel(h)
 		return
 	}
+	h.set = settings.DefaultFor(h.draft)
 	h.persistDraft(r)
 }
 
@@ -2157,12 +2167,7 @@ func (h *PanelHost) applyMenu(r *Registry, path string) {
 	if e == nil || m == nil {
 		return
 	}
-	if err := e.Set(&h.draft, m.Value()); err != nil {
-		h.errLabel = err.Error()
-		r.rebuildPanel(h)
-		return
-	}
-	h.persistDraft(r)
+	h.commitSetting(r, e, m.Value())
 }
 
 func (h *PanelHost) focusByName(name string) {

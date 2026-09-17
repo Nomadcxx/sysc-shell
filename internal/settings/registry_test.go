@@ -347,13 +347,6 @@ func TestEveryEnumOptionSurvivesTheLoader(t *testing.T) {
 		if e.Kind != KindEnum {
 			continue
 		}
-		if e.Path == "appearance.source" {
-			// The source and the seed are one choice in two fields: "hex" and
-			// "stock" need a seed the new source can read, and today changing
-			// the source alone writes a seed the loader refuses. That is
-			// sysc-107, and the exclusion goes when it is closed.
-			continue
-		}
 		for _, option := range e.Options {
 			t.Run(e.Path+"="+option, func(t *testing.T) {
 				cfg := base
@@ -511,5 +504,52 @@ func TestPresetAxesTrackTheirPreset(t *testing.T) {
 	}
 	if moved == 0 {
 		t.Fatal("no named axis resolved differently under another preset")
+	}
+}
+
+// TestSeedOffersStockNamesWhenSourceIsStock is half of sysc-107: with the
+// source on stock the seed names one of a closed set, so it is a picker.
+func TestSeedOffersStockNamesWhenSourceIsStock(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.ThemeGen.Source = "stock"
+	e := DefaultFor(cfg).ByPath("appearance.seed")
+	if e == nil {
+		t.Fatal("appearance.seed is missing")
+	}
+	if e.Kind != KindEnum {
+		t.Fatalf("Kind = %v, want an enum when the source is stock", e.Kind)
+	}
+	if len(e.Options) != len(theme.StockNames()) {
+		t.Fatalf("Options = %d, want the %d stock names", len(e.Options), len(theme.StockNames()))
+	}
+}
+
+// TestSourceCarriesASeedItsOwnSourceCanRead is the other half. The source and
+// the seed are one choice spread over two fields: the loader reads the seed
+// through the source, so changing the source alone left a seed it refused and
+// the shell stopped loading its own configuration. Picking a stock theme was
+// impossible for that reason, not because the picker was missing.
+func TestSourceCarriesASeedItsOwnSourceCanRead(t *testing.T) {
+	t.Parallel()
+	for _, source := range themeSources {
+		t.Run(source, func(t *testing.T) {
+			t.Parallel()
+			cfg := config.Default()
+			if err := Default().ByPath("appearance.source").Set(&cfg, source); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := config.Write(path, cfg); err != nil {
+				t.Fatal(err)
+			}
+			back, err := config.Load(path)
+			if err != nil {
+				t.Fatalf("selecting %q wrote a configuration the shell refuses: %v", source, err)
+			}
+			if back.ThemeGen.Source != source {
+				t.Errorf("source came back as %q", back.ThemeGen.Source)
+			}
+		})
 	}
 }
