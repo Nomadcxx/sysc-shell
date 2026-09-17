@@ -622,3 +622,27 @@ func TestPathBrowseListsDirectories(t *testing.T) {
 		}
 	}
 }
+
+// TestSettingsBodyLeavesRoomForTheRail: the rows right-pin their controls, so
+// the column they sit in has to know how wide it actually is. Without that the
+// controls pin to the panel's edge rather than the column's, and every enum
+// pill and text field is clipped by the surface — which looks like nothing at
+// all on a wide output and is obvious on a small one.
+func TestSettingsBodyLeavesRoomForTheRail(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.place.Panel = ui.Rect{W: 900, H: 760}
+	h.root = settingsTree(nil, h)
+
+	body := findScroll(h.root)
+	if body == nil {
+		t.Fatal("no scrolling body")
+	}
+	if body.Width <= 0 {
+		t.Fatal("the body has no width, so right-pinned controls pin to the panel edge")
+	}
+	if room := 900 - body.Width; room < settingsRailWidth {
+		t.Errorf("body is %d wide of 900, leaving %d for a %d-wide rail and its gutter",
+			body.Width, room, settingsRailWidth)
+	}
+}

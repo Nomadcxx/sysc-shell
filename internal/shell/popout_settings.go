@@ -54,6 +54,22 @@ var settingsSectionIcons = map[string]string{
 	"Accessibility": "accessibility_new",
 }
 
+// settingsBodyWidth is what is left for the rows once the rail and the gutter
+// have taken theirs. The rows right-pin their controls, so the column has to
+// carry it: without a width the controls pin to the panel's own edge and every
+// enum and field is clipped by the surface.
+func settingsBodyWidth(h *PanelHost) int {
+	panelWidth := panelTargetSize(PanelSettings).W
+	if h != nil && h.place.Panel.W > 0 {
+		panelWidth = h.place.Panel.W
+	}
+	pad := 0
+	if h != nil {
+		pad = h.metrics().PanelPadding
+	}
+	return max(panelWidth-2*pad-settingsRailWidth-theme.MarginXL, 0)
+}
+
 func settingsRail(h *PanelHost, section string) *ui.Node {
 	rail := &ui.Node{Kind: ui.KindColumn, Width: settingsRailWidth, Gap: theme.MarginM}
 	for _, name := range settingsSections {
@@ -158,7 +174,7 @@ func settingsSearchColumn(h *PanelHost, hits []settings.Entry) *ui.Node {
 			TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
 		})
 	}
-	return &ui.Node{Kind: ui.KindScroll, Gap: theme.MarginXL, Children: groups}
+	return &ui.Node{Kind: ui.KindScroll, Width: settingsBodyWidth(h), Gap: theme.MarginXL, Children: groups}
 }
 
 // settingsSectionColumn lays the whole section out rather than virtualising
@@ -190,7 +206,7 @@ func settingsSectionColumn(h *PanelHost, entries []settings.Entry) *ui.Node {
 			body,
 		}})
 	}
-	return &ui.Node{Kind: ui.KindScroll, Gap: theme.MarginXL, Children: groups}
+	return &ui.Node{Kind: ui.KindScroll, Width: settingsBodyWidth(h), Gap: theme.MarginXL, Children: groups}
 }
 
 func settingsEntryRow(h *PanelHost, e settings.Entry) *ui.Node {
