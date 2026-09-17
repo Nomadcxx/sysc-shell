@@ -170,7 +170,7 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 		// The lane editor is the Bar section's Layout group, above its
 		// geometry rows. It replaces the three comma-separated string entries,
 		// which is the whole point of the sub-project.
-		column.Children = append([]*ui.Node{barLaneStrip(h)}, column.Children...)
+		column.Children = append([]*ui.Node{h.barLaneStripFor(r)}, column.Children...)
 	}
 	return body(column)
 }

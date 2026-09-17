@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -262,5 +264,296 @@ func TestARefRoundTripsThroughItsAction(t *testing.T) {
 		if _, ok := barParseRef(bad); ok {
 			t.Errorf("barParseRef(%q) accepted a malformed address", bad)
 		}
+	}
+}
+
+// Task 11 and D6. Every keyboard command calls the same config mutation the
+// pointer path calls, so the two cannot drift.
+func barKeyHost(t *testing.T, bar config.Bar) (*Registry, *PanelHost) {
+	t.Helper()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelSettings]
+	h.draft.Bar = bar
+	h.section = "Bar"
+	h.alt = true
+	reg.rebuildPanel(h)
+	return reg, h
+}
+
+func focusChip(t *testing.T, h *PanelHost, ref config.ItemRef) {
+	t.Helper()
+	want := "bar-select:" + barRefAction(ref)
+	for i, n := range h.focus {
+		if n != nil && n.Action == want {
+			h.roving.Set(i)
+			return
+		}
+	}
+	t.Fatalf("no chip focusable for %+v", ref)
+}
+
+func laneIDs(items []config.Item) string { return chipSummary(items) }
+
+func chipSummary(items []config.Item) string {
+	var out []string
+	for _, it := range items {
+		if it.ID == "group" {
+			var m []string
+			for _, x := range it.Items {
+				m = append(m, x.ID)
+			}
+			out = append(out, "group("+strings.Join(m, ",")+")")
+			continue
+		}
+		out = append(out, it.ID)
+	}
+	return strings.Join(out, " ")
+}
+
+func TestAltArrowMovesAChipWithinItsLane(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "clock"}, {ID: "cpu"}, {ID: "memory"}}})
+	focusChip(t, h, config.ItemRef{Lane: "left", Path: config.ItemPath{Index: 0, Member: -1}})
+	if !h.barKeyPress(reg, keyRight) {
+		t.Fatal("alt+right was not handled")
+	}
+	if got := laneIDs(h.draft.Bar.Left); got != "cpu clock memory" {
+		t.Errorf("after alt+right: %q", got)
+	}
+}
+
+func TestAltArrowStopsAtTheEndOfALane(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "clock"}, {ID: "cpu"}}})
+	focusChip(t, h, config.ItemRef{Lane: "left", Path: config.ItemPath{Index: 0, Member: -1}})
+	if !h.barKeyPress(reg, keyLeft) {
+		t.Fatal("alt+left at the start should still be handled, not fall through")
+	}
+	if got := laneIDs(h.draft.Bar.Left); got != "clock cpu" {
+		t.Errorf("a chip moved off the start of its lane: %q", got)
+	}
+}
+
+func TestAltArrowMovesAChipBetweenLanes(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{
+		Left:   []config.Item{{ID: "clock"}, {ID: "cpu"}},
+		Center: []config.Item{{ID: "wordmark"}},
+	})
+	focusChip(t, h, config.ItemRef{Lane: "left", Path: config.ItemPath{Index: 0, Member: -1}})
+	if !h.barKeyPress(reg, keyDown) {
+		t.Fatal("alt+down was not handled")
+	}
+	if got := laneIDs(h.draft.Bar.Left); got != "cpu" {
+		t.Errorf("left lane after the move: %q", got)
+	}
+	if got := laneIDs(h.draft.Bar.Center); got != "wordmark clock" {
+		t.Errorf("centre lane after the move: %q", got)
+	}
+}
+
+func TestAltArrowMovesAMemberWithinItsGroup(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{
+		Left: []config.Item{{ID: "group", Items: []config.Item{{ID: "cpu"}, {ID: "memory"}}}},
+	})
+	focusChip(t, h, config.ItemRef{Lane: "left", Path: config.ItemPath{Index: 0, Member: 0}})
+	if !h.barKeyPress(reg, keyRight) {
+		t.Fatal("alt+right on a group member was not handled")
+	}
+	if got := laneIDs(h.draft.Bar.Left); got != "group(memory,cpu)" {
+		t.Errorf("after moving inside the group: %q", got)
+	}
+}
+
+// Without the modifier the arrows still belong to whatever has focus.
+func TestArrowsWithoutAltAreNotLaneCommands(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "clock"}, {ID: "cpu"}}})
+	h.alt = false
+	focusChip(t, h, config.ItemRef{Lane: "left", Path: config.ItemPath{Index: 0, Member: -1}})
+	if h.barKeyPress(reg, keyRight) {
+		t.Fatal("a bare arrow was taken as a lane command")
+	}
+	if got := laneIDs(h.draft.Bar.Left); got != "clock cpu" {
+		t.Errorf("the lane changed anyway: %q", got)
+	}
+}
+
+// Task 12. The inspector is built from entries synthesised at runtime over one
+// config.Item. This is what sub-project A exists for: the retired Get/Set
+// switch pair could name a setting only by a compile-time path.
+func TestInspectorShowsTheSelectedWidgetsOwnOptions(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{
+		Left: []config.Item{{ID: "clock", Format: "15:04"}, {ID: "clock", Format: "Mon 2 Jan"}},
+	})
+	if !h.barActivate(reg, "bar-inspect:left:1:-1") {
+		t.Fatal("inspect action was not handled")
+	}
+	node := barInspector(h, 600)
+	if node == nil {
+		t.Fatal("no inspector for a selected chip")
+	}
+	var fields []string
+	walkNodes(node, func(n *ui.Node) {
+		if n.Kind == ui.KindTextField {
+			fields = append(fields, n.Name)
+		}
+	})
+	if len(fields) != 1 || fields[0] != "Format" {
+		t.Errorf("inspector fields = %v, want one Format row", fields)
+	}
+}
+
+func TestInspectorSaysWhenAWidgetHasNoOptions(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "wordmark"}}})
+	h.barActivate(reg, "bar-select:left:0:-1")
+	var text []string
+	walkNodes(barInspector(h, 600), func(n *ui.Node) {
+		if n.Kind == ui.KindText && n.Text != "" {
+			text = append(text, n.Text)
+		}
+	})
+	if !slices.Contains(text, "This widget has no options.") {
+		t.Errorf("inspector text = %v, want it to say there are no options", text)
+	}
+}
+
+func TestInspectorSaysWhenTheSelectionIsGone(t *testing.T) {
+	t.Parallel()
+	_, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "clock"}}})
+	h.barSelected = "left:7:-1"
+	var text []string
+	walkNodes(barInspector(h, 600), func(n *ui.Node) {
+		if n.Kind == ui.KindText && n.Text != "" {
+			text = append(text, n.Text)
+		}
+	})
+	if !slices.Contains(text, "That widget is no longer on the bar.") {
+		t.Errorf("inspector text = %v, want it to say the widget is gone", text)
+	}
+}
+
+// The group command and the equivalent drag produce the same draft, which is
+// the guarantee D6 is for.
+func TestGroupCommandMatchesTheEquivalentDrag(t *testing.T) {
+	t.Parallel()
+	start := config.Bar{Left: []config.Item{{ID: "clock"}, {ID: "cpu"}, {ID: "memory"}}}
+
+	reg, h := barKeyHost(t, start)
+	h.barActivate(reg, "bar-group:left:0:-1")
+	viaCommand := laneIDs(h.draft.Bar.Left)
+
+	// The drag equivalent: a drop of chip 1 onto chip 0's inner half.
+	outcome := resolveDrop([]ui.Rect{
+		{X: 0, Y: 0, W: 100, H: 30}, {X: 110, Y: 0, W: 100, H: 30}, {X: 220, Y: 0, W: 100, H: 30},
+	}, 50, 15)
+	if outcome.Join != 0 {
+		t.Fatalf("the drop did not resolve to a join: %+v", outcome)
+	}
+	dragged, err := config.GroupItems(start.Left, 1, outcome.Join, config.NewMinter(config.Config{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if viaCommand != laneIDs(dragged) {
+		t.Errorf("command gave %q, the equivalent drag gives %q", viaCommand, laneIDs(dragged))
+	}
+}
+
+func TestUngroupCommandDissolvesTheGroup(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{
+		Left: []config.Item{{ID: "group", Items: []config.Item{{ID: "cpu"}, {ID: "memory"}}}},
+	})
+	if !h.barActivate(reg, "bar-ungroup:left:0:-1") {
+		t.Fatal("ungroup was not handled")
+	}
+	if got := laneIDs(h.draft.Bar.Left); got != "cpu memory" {
+		t.Errorf("after dissolving: %q", got)
+	}
+}
+
+func TestAddAndRemoveReachTheDraft(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "clock"}}})
+	if !h.barActivate(reg, "bar-add-item:left:battery") {
+		t.Fatal("add was not handled")
+	}
+	if got := laneIDs(h.draft.Bar.Left); got != "clock battery" {
+		t.Errorf("after adding: %q", got)
+	}
+	if !h.barActivate(reg, "bar-remove:left:0:-1") {
+		t.Fatal("remove was not handled")
+	}
+	if got := laneIDs(h.draft.Bar.Left); got != "battery" {
+		t.Errorf("after removing: %q", got)
+	}
+}
+
+// Task 13 and D7. A lane is inherited whole or overridden whole, because
+// applyBar takes it whole. Editing one widget on one output therefore forks
+// that entire lane, and later changes to the shared lane stop reaching it.
+func TestEditingAnOutputForksTheWholeLane(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{
+		Left:  []config.Item{{ID: "clock"}, {ID: "cpu"}},
+		Right: []config.Item{{ID: "battery"}},
+	})
+	h.barOutput = "DP-1"
+	reg.rebuildPanel(h)
+
+	if h.barLaneOverridden("left") {
+		t.Fatal("the lane reads as overridden before anything was edited")
+	}
+	focusChip(t, h, config.ItemRef{Lane: "left", Path: config.ItemPath{Index: 0, Member: -1}})
+	if !h.barKeyPress(reg, keyRight) {
+		t.Fatal("alt+right was not handled on an output")
+	}
+
+	if !h.barLaneOverridden("left") {
+		t.Error("the edited lane does not read as overridden")
+	}
+	if h.barLaneOverridden("right") {
+		t.Error("an untouched lane was forked too")
+	}
+	if got := laneIDs(h.draft.Bar.Left); got != "clock cpu" {
+		t.Errorf("the shared lane changed: %q", got)
+	}
+
+	// A later change to the shared lane must not reach the forked one.
+	h.draft.Bar.Left = append(h.draft.Bar.Left, config.Item{ID: "memory"})
+	if got := laneIDs(barLaneItems(h.barEditedBar(), "left")); got != "cpu clock" {
+		t.Errorf("the forked lane followed the shared one: %q", got)
+	}
+	// The lane it never touched still inherits.
+	if got := laneIDs(barLaneItems(h.barEditedBar(), "right")); got != "battery" {
+		t.Errorf("an untouched lane stopped inheriting: %q", got)
+	}
+}
+
+func TestResetReturnsALaneToShared(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "clock"}, {ID: "cpu"}}})
+	h.barOutput = "DP-1"
+	reg.rebuildPanel(h)
+	focusChip(t, h, config.ItemRef{Lane: "left", Path: config.ItemPath{Index: 0, Member: -1}})
+	h.barKeyPress(reg, keyRight)
+	if !h.barLaneOverridden("left") {
+		t.Fatal("the lane was not forked")
+	}
+	if !h.barActivate(reg, "bar-reset-lane:left") {
+		t.Fatal("reset was not handled")
+	}
+	if h.barLaneOverridden("left") {
+		t.Error("the lane still reads as overridden after a reset")
+	}
+	if got := laneIDs(barLaneItems(h.barEditedBar(), "left")); got != "clock cpu" {
+		t.Errorf("after the reset the lane shows %q, want the shared order", got)
 	}
 }

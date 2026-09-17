@@ -746,6 +746,15 @@ func writeItem(ref config.ItemRef, assign func(*config.Item) error) Setter {
 	})
 }
 
+// WidgetEntriesFor synthesises the option rows for one specific item at
+// runtime. It is the seam sub-project A was built for: entries carry their own
+// typed accessors, so a setting can be constructed over an arbitrary
+// config.Item, which the retired Get/Set switch pair could never express --
+// a switch can only name a setting by a path known at compile time.
+func WidgetEntriesFor(cfg config.Config, ref config.ItemRef, it config.Item) []Entry {
+	return widgetEntries(cfg, ref, it)
+}
+
 func widgetEntries(cfg config.Config, ref config.ItemRef, it config.Item) []Entry {
 	group := widgetEntryGroup(ref, it)
 	read := func(get func(config.Item) string) Getter {

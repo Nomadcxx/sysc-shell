@@ -32,6 +32,7 @@ const (
 	keyTab       = 15
 	keyEnter     = 28
 	keyLeftShift = 42
+	keyLeftAlt   = 56
 	keySpace     = 57
 	keyHome      = 102
 	keyUp        = 103
@@ -94,7 +95,14 @@ type PanelHost struct {
 	logicalH int
 	scale120 int
 	shift    bool
-	pressed  string
+	// alt carries the modifier the lane editor's move commands use, tracked
+	// the same way shift is: press sets it, release clears it.
+	alt bool
+	// barAdding names the lane whose add-a-widget list is open, empty when
+	// none is. The list expands in place the way Menu does, because no
+	// popup-over-panel surface exists.
+	barAdding string
+	pressed   string
 	// pointer is the resolved hover/press state, kept as stable keys so it
 	// survives the tree rebuilds that replace every node.
 	pointer        interaction
@@ -1167,8 +1175,11 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 		case wayland.EventPointerAxis:
 			return h.scrollAxis(r, e)
 		case wayland.EventKeyRelease:
-			if e.Key == keyLeftShift {
+			switch e.Key {
+			case keyLeftShift:
 				h.shift = false
+			case keyLeftAlt:
+				h.alt = false
 			}
 			return false
 		case wayland.EventPointerEnter, wayland.EventPointerMotion:
@@ -1317,9 +1328,15 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 	if h.id == PanelClipboard && h.clipboardKeyPress(r, key) {
 		return true
 	}
+	if h.id == PanelSettings && h.barKeyPress(r, key) {
+		return true
+	}
 	switch key {
 	case keyLeftShift:
 		h.shift = true
+		return false
+	case keyLeftAlt:
+		h.alt = true
 		return false
 	case keyEsc:
 		if h.id == PanelSettings && h.query != "" {
@@ -1800,6 +1817,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	}
 	if strings.HasPrefix(n.Action, "notify:") {
 		return h.activateNotify(r, n)
+	}
+	if strings.HasPrefix(n.Action, "bar-") && h.barActivate(r, n.Action) {
+		return true
 	}
 	if strings.HasPrefix(n.Action, "section:") {
 		section := strings.TrimPrefix(n.Action, "section:")

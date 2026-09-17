@@ -2,6 +2,7 @@ package shell
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -202,8 +203,28 @@ func barLane(h *PanelHost, bar config.Bar, name string, width int) *ui.Node {
 		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "add", IconSize: m.IconSmall}},
 	})
 
-	header := &ui.Node{Kind: ui.KindText, Text: barLaneLabels[name],
-		TextRole: theme.RoleCaption, Tone: ui.ToneSubtle}
+	// D7 in the interface. A lane is inherited whole or overridden whole,
+	// because applyBar takes it whole, so the heading says which this is and
+	// offers the only reset that exists -- the whole lane. A per-widget
+	// override affordance would be a lie.
+	label := barLaneLabels[name]
+	header := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Width: width, PinEnd: true, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: label, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+	}}
+	if h.barOutput != "" {
+		state := "Inherited"
+		trailing := &ui.Node{Kind: ui.KindText, Text: state,
+			TextRole: theme.RoleCaption, Tone: ui.ToneSubtle}
+		if h.barLaneOverridden(name) {
+			trailing = &ui.Node{
+				Kind: ui.KindButton, Action: "bar-reset-lane:" + name,
+				Name: "Reset the " + label + " lane to shared", Role: "button", Focusable: true,
+				Height: m.StandardControl, Padding: m.ButtonPadding, Shape: ui.ShapeMedium,
+				Children: []*ui.Node{{Kind: ui.KindText, Text: "Overridden -- reset to shared"}},
+			}
+		}
+		header.Children = append(header.Children, trailing)
+	}
 	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXS, Width: width,
 		Children: []*ui.Node{header, zone}}
 }
@@ -246,26 +267,441 @@ func barParseRef(s string) (config.ItemRef, bool) {
 	return config.ItemRef{Lane: parts[0], Path: config.ItemPath{Index: index, Member: member}}, true
 }
 
-// barLaneStrip is the Layout group: the three lanes, stacked.
+// barLaneStrip is the Layout group: the output selector, the three lanes, and
+// the inspector for whatever is selected.
 func barLaneStrip(h *PanelHost) *ui.Node {
+	return h.barLaneStripFor(nil)
+}
+
+func (h *PanelHost) barLaneStripFor(r *Registry) *ui.Node {
 	width := settingsBodyWidth(h)
 	strip := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Width: width, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: "Layout", TextRole: theme.RoleLabel},
 	}}
+	if r != nil {
+		if sel := barOutputSelector(h, r, width); sel != nil {
+			strip.Children = append(strip.Children, sel)
+		}
+	}
+	bar := h.barEditedBar()
 	for _, name := range config.LaneNames() {
-		strip.Children = append(strip.Children, barLane(h, h.barEditedBar(), name, width))
+		strip.Children = append(strip.Children, barLane(h, bar, name, width))
+		if h.barAdding == name {
+			strip.Children = append(strip.Children, barAddList(h, name, width))
+		}
+	}
+	if inspector := barInspector(h, width); inspector != nil {
+		strip.Children = append(strip.Children, inspector)
 	}
 	return strip
 }
 
-// barEditedBar is the bar the strip is editing: the shared one, or the
-// override belonging to the selected output.
+// barKeyPress is D6: keyboard parity with the drag path. Alt and an arrow move
+// the focused chip within its lane or between lanes; the group and dissolve
+// commands sit on the chip itself.
 //
-// D7 fixes the granularity, and it is the loader's rather than a choice made
-// here: applyBar starts from the resolved base bar and takes each lane whole,
-// so a lane is inherited entire or overridden entire. An output with no
-// override of its own therefore shows the shared lanes, which is what it will
-// actually draw.
+// Every one of these calls the same config mutation the pointer path calls, so
+// the two cannot drift and the tests need no synthesised pointer events.
+func (h *PanelHost) barKeyPress(r *Registry, key uint32) bool {
+	if !h.alt || h.section != "Bar" || h.query != "" {
+		return false
+	}
+	ref, ok := h.barFocusedRef()
+	if !ok {
+		return false
+	}
+	switch key {
+	case keyLeft:
+		return h.barMoveWithinLane(r, ref, -1)
+	case keyRight:
+		return h.barMoveWithinLane(r, ref, 1)
+	case keyUp:
+		return h.barMoveAcrossLanes(r, ref, -1)
+	case keyDown:
+		return h.barMoveAcrossLanes(r, ref, 1)
+	}
+	return false
+}
+
+// barFocusedRef reads the address off whatever chip currently holds focus.
+func (h *PanelHost) barFocusedRef() (config.ItemRef, bool) {
+	n := h.focused()
+	if n == nil {
+		return config.ItemRef{}, false
+	}
+	addr, ok := strings.CutPrefix(n.Action, "bar-select:")
+	if !ok {
+		return config.ItemRef{}, false
+	}
+	return barParseRef(addr)
+}
+
+// barApply writes a mutated lane back into whichever bar is being edited, then
+// persists and rebuilds. It is the one place the edited bar is written, so the
+// shared-versus-override decision (D7) is made once.
+func (h *PanelHost) barApply(r *Registry, laneName string, items []config.Item) bool {
+	bar := h.barEditedBar()
+	switch laneName {
+	case "left":
+		bar.Left = items
+	case "center":
+		bar.Center = items
+	case "right":
+		bar.Right = items
+	default:
+		return false
+	}
+
+	if h.barOutput == "" {
+		h.draft.Bar = bar
+	} else {
+		found := false
+		for i := range h.draft.Outputs {
+			if h.draft.Outputs[i].Connector != h.barOutput {
+				continue
+			}
+			// A lane is inherited whole or overridden whole, because applyBar
+			// takes it whole (D7). Touching one widget therefore forks the
+			// entire lane for this output, and the strip says so.
+			h.draft.Outputs[i].Bar = barSetLane(h.draft.Outputs[i].Bar, laneName, items)
+			found = true
+		}
+		if !found {
+			h.draft.Outputs = append(h.draft.Outputs, config.OutputOverride{
+				Connector: h.barOutput,
+				Bar:       barSetLane(config.Bar{}, laneName, items),
+			})
+		}
+	}
+	h.persistDraft(r)
+	r.rebuildPanel(h)
+	return true
+}
+
+func barSetLane(bar config.Bar, name string, items []config.Item) config.Bar {
+	switch name {
+	case "left":
+		bar.Left = items
+	case "center":
+		bar.Center = items
+	case "right":
+		bar.Right = items
+	}
+	return bar
+}
+
+// barMoveWithinLane shifts a top-level chip one place along its lane. A member
+// inside a group moves within that group instead, which is the only movement
+// that means anything for one.
+func (h *PanelHost) barMoveWithinLane(r *Registry, ref config.ItemRef, delta int) bool {
+	lane := barLaneItems(h.barEditedBar(), ref.Lane)
+	if ref.Path.Member >= 0 {
+		if ref.Path.Index >= len(lane) {
+			return false
+		}
+		group := lane[ref.Path.Index]
+		moved, err := config.MoveItem(group.Items, ref.Path.Member, ref.Path.Member+delta)
+		if err != nil {
+			return true
+		}
+		next := slices.Clone(lane)
+		next[ref.Path.Index].Items = moved
+		h.barSelected = barRefAction(config.ItemRef{
+			Lane: ref.Lane,
+			Path: config.ItemPath{Index: ref.Path.Index, Member: ref.Path.Member + delta},
+		})
+		return h.barApply(r, ref.Lane, next)
+	}
+	moved, err := config.MoveItem(lane, ref.Path.Index, ref.Path.Index+delta)
+	if err != nil {
+		// The end of a lane is not an error the user needs told about; the
+		// chip simply does not move.
+		return true
+	}
+	h.barSelected = barRefAction(config.ItemRef{
+		Lane: ref.Lane, Path: config.ItemPath{Index: ref.Path.Index + delta, Member: -1},
+	})
+	return h.barApply(r, ref.Lane, moved)
+}
+
+// barMoveAcrossLanes lifts a chip out of one lane and appends it to the next,
+// which is the only sensible reading of "up" and "down" when the lanes are
+// stacked. A group member is lifted out of its group first.
+func (h *PanelHost) barMoveAcrossLanes(r *Registry, ref config.ItemRef, delta int) bool {
+	names := config.LaneNames()
+	at := slices.Index(names, ref.Lane)
+	if at < 0 || at+delta < 0 || at+delta >= len(names) {
+		return true
+	}
+	target := names[at+delta]
+
+	bar := h.barEditedBar()
+	source := barLaneItems(bar, ref.Lane)
+	it := bar.ItemAt(ref)
+	if it == nil {
+		return false
+	}
+	carried := *it
+
+	trimmed, err := config.RemoveItem(source, ref.Path)
+	if err != nil {
+		return true
+	}
+	if !h.barApply(r, ref.Lane, trimmed) {
+		return false
+	}
+
+	dest := barLaneItems(h.barEditedBar(), target)
+	grown, err := config.InsertItem(dest, len(dest), carried)
+	if err != nil {
+		return true
+	}
+	h.barSelected = barRefAction(config.ItemRef{
+		Lane: target, Path: config.ItemPath{Index: len(grown) - 1, Member: -1},
+	})
+	return h.barApply(r, target, grown)
+}
+
+// barActivate handles the lane editor's own actions. It sits beside the
+// keyboard commands so both reach the same mutations.
+func (h *PanelHost) barActivate(r *Registry, action string) bool {
+	switch {
+	case strings.HasPrefix(action, "bar-select:"):
+		addr := strings.TrimPrefix(action, "bar-select:")
+		if _, ok := barParseRef(addr); !ok {
+			return false
+		}
+		h.barSelected = addr
+		r.rebuildPanel(h)
+		return true
+
+	case strings.HasPrefix(action, "bar-inspect:"):
+		addr := strings.TrimPrefix(action, "bar-inspect:")
+		if _, ok := barParseRef(addr); !ok {
+			return false
+		}
+		// Selecting is what opens the inspector: it is one surface beneath the
+		// strip rather than a second mode, so there is nothing else to toggle.
+		h.barSelected = addr
+		r.rebuildPanel(h)
+		return true
+
+	case strings.HasPrefix(action, "bar-ungroup:"):
+		ref, ok := barParseRef(strings.TrimPrefix(action, "bar-ungroup:"))
+		if !ok {
+			return false
+		}
+		lane := barLaneItems(h.barEditedBar(), ref.Lane)
+		next, err := config.UngroupItem(lane, ref.Path.Index)
+		if err != nil {
+			return true
+		}
+		h.barSelected = ""
+		return h.barApply(r, ref.Lane, next)
+
+	case strings.HasPrefix(action, "bar-group:"):
+		// Grouping from the keyboard folds the focused chip into the one after
+		// it, which is the same result the equivalent drag produces.
+		ref, ok := barParseRef(strings.TrimPrefix(action, "bar-group:"))
+		if !ok || ref.Path.Member >= 0 {
+			return false
+		}
+		lane := barLaneItems(h.barEditedBar(), ref.Lane)
+		next, err := config.GroupItems(lane, ref.Path.Index+1, ref.Path.Index, config.NewMinter(h.draft))
+		if err != nil {
+			h.errLabel = err.Error()
+			r.rebuildPanel(h)
+			return true
+		}
+		h.errLabel = ""
+		h.barSelected = ""
+		return h.barApply(r, ref.Lane, next)
+
+	case strings.HasPrefix(action, "bar-remove:"):
+		ref, ok := barParseRef(strings.TrimPrefix(action, "bar-remove:"))
+		if !ok {
+			return false
+		}
+		lane := barLaneItems(h.barEditedBar(), ref.Lane)
+		next, err := config.RemoveItem(lane, ref.Path)
+		if err != nil {
+			return true
+		}
+		h.barSelected = ""
+		return h.barApply(r, ref.Lane, next)
+
+	case strings.HasPrefix(action, "bar-add:"):
+		lane := strings.TrimPrefix(action, "bar-add:")
+		if barLaneLabels[lane] == "" {
+			return false
+		}
+		h.barAdding = lane
+		r.rebuildPanel(h)
+		return true
+
+	case strings.HasPrefix(action, "bar-add-item:"):
+		rest := strings.TrimPrefix(action, "bar-add-item:")
+		laneName, id, ok := strings.Cut(rest, ":")
+		if !ok || barLaneLabels[laneName] == "" {
+			return false
+		}
+		lane := barLaneItems(h.barEditedBar(), laneName)
+		next, err := config.InsertItem(lane, len(lane), config.Item{ID: id})
+		if err != nil {
+			return true
+		}
+		h.barAdding = ""
+		return h.barApply(r, laneName, next)
+
+	case strings.HasPrefix(action, "bar-output:"):
+		h.barOutput = strings.TrimPrefix(action, "bar-output:")
+		if h.barOutput == "shared" {
+			h.barOutput = ""
+		}
+		h.barSelected = ""
+		r.rebuildPanel(h)
+		return true
+
+	case strings.HasPrefix(action, "bar-reset-lane:"):
+		// D7: a lane is inherited whole or overridden whole, so the reset
+		// clears the whole lane override and lets the shared one through
+		// again.
+		name := strings.TrimPrefix(action, "bar-reset-lane:")
+		if h.barOutput == "" || barLaneLabels[name] == "" {
+			return false
+		}
+		for i := range h.draft.Outputs {
+			if h.draft.Outputs[i].Connector == h.barOutput {
+				h.draft.Outputs[i].Bar = barSetLane(h.draft.Outputs[i].Bar, name, nil)
+			}
+		}
+		h.persistDraft(r)
+		r.rebuildPanel(h)
+		return true
+	}
+	return false
+}
+
+// barAddList is the add control's in-place list of the widget vocabulary. It
+// expands where it stands, the way Menu does, because no popup-over-panel
+// surface exists in this shell.
+func barAddList(h *PanelHost, laneName string, width int) *ui.Node {
+	m := h.metrics()
+	col := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXS, Width: width, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: "Add to " + barLaneLabels[laneName],
+			TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+	}}
+	for _, id := range config.WidgetIDs() {
+		col.Children = append(col.Children, &ui.Node{
+			Kind: ui.KindButton, Action: "bar-add-item:" + laneName + ":" + id,
+			Name: settings.WidgetName(config.Item{ID: id}), Role: "button", Focusable: true,
+			Width: width, Height: m.StandardControl, Shape: ui.ShapeMedium,
+			Children: []*ui.Node{{Kind: ui.KindText, Text: settings.WidgetName(config.Item{ID: id})}},
+		})
+	}
+	return col
+}
+
+// barInspector is the option surface for the selected chip, built from entries
+// synthesised at runtime over that one config.Item.
+//
+// This is the task sub-project A exists for. A's typed accessor entries are
+// what make it expressible: the retired Get/Set switch pair could name a
+// setting only by a compile-time path, never an arbitrary instance's fields.
+// The rows follow the settings foundation's own anatomy unchanged -- label
+// over caption, no cards -- because only the lane strip is excepted from that.
+func barInspector(h *PanelHost, width int) *ui.Node {
+	if h.barSelected == "" {
+		return nil
+	}
+	ref, ok := barParseRef(h.barSelected)
+	if !ok {
+		return nil
+	}
+	bar := h.barEditedBar()
+	it := bar.ItemAt(ref)
+	if it == nil {
+		// The chip was removed underneath the selection. Saying so is better
+		// than drawing an empty panel that looks broken.
+		return &ui.Node{Kind: ui.KindText, Text: "That widget is no longer on the bar.",
+			TextRole: theme.RoleCaption, Tone: ui.ToneSubtle}
+	}
+
+	name := settings.WidgetName(*it)
+	head := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Width: width, PinEnd: true, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: name, TextRole: theme.RoleLabel},
+		{Kind: ui.KindRow, Gap: theme.MarginS, Children: barInspectorControls(h, ref, *it)},
+	}}
+
+	col := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Width: width, Children: []*ui.Node{head}}
+
+	entries := settings.WidgetEntriesFor(h.draft, ref, *it)
+	if len(entries) == 0 {
+		col.Children = append(col.Children, &ui.Node{
+			Kind: ui.KindText, Text: "This widget has no options.",
+			TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
+		})
+		return col
+	}
+	for _, e := range entries {
+		col.Children = append(col.Children, settingsEntryRow(h, e))
+	}
+	return col
+}
+
+// barInspectorControls are the actions that belong to the selected chip rather
+// than to one of its options: group it with its neighbour, and take it off the
+// bar. Dissolve lives on the group itself.
+func barInspectorControls(h *PanelHost, ref config.ItemRef, it config.Item) []*ui.Node {
+	m := h.metrics()
+	out := []*ui.Node{}
+	if ref.Path.Member < 0 && it.ID != "group" {
+		out = append(out, &ui.Node{
+			Kind: ui.KindButton, Action: "bar-group:" + barRefAction(ref),
+			Name: "Group with the next widget", Role: "button", Focusable: true,
+			Height: m.StandardControl, Padding: m.ButtonPadding, Shape: ui.ShapeMedium,
+			Children: []*ui.Node{{Kind: ui.KindText, Text: "Group"}},
+		})
+	}
+	out = append(out, &ui.Node{
+		Kind: ui.KindButton, Action: "bar-remove:" + barRefAction(ref),
+		Name: "Remove " + settings.WidgetName(it), Role: "button", Focusable: true,
+		Width: m.StandardControl, Height: m.StandardControl, Shape: ui.ShapeMedium,
+		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "close", IconSize: m.IconSmall}},
+	})
+	return out
+}
+
+// barOutputSelector is D7's per-output control. It reuses connectorsLocked, so
+// it offers the outputs that actually have a bar.
+func barOutputSelector(h *PanelHost, r *Registry, width int) *ui.Node {
+	m := h.metrics()
+	row := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Width: width, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: "Editing", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+	}}
+	option := func(value, label string) *ui.Node {
+		n := &ui.Node{
+			Kind: ui.KindButton, Action: "bar-output:" + value,
+			Name: label, Role: "tab", Focusable: true,
+			Height: m.StandardControl, Padding: m.ButtonPadding, Shape: ui.ShapeMedium,
+			Children: []*ui.Node{{Kind: ui.KindText, Text: label}},
+		}
+		if (value == "shared" && h.barOutput == "") || value == h.barOutput {
+			n.State |= ui.StateSelected
+			n.Fill = ui.FillAccent
+		}
+		return n
+	}
+	row.Children = append(row.Children, option("shared", "Shared"))
+	for _, conn := range r.connectorsLocked() {
+		row.Children = append(row.Children, option(conn, conn))
+	}
+	return row
+}
+
+// barEditedBar is the bar the strip is editing: the shared one, or the
+// override belonging to the selected output, with the lanes it does not carry
+// filled in from the shared bar exactly as applyBar fills them at load.
 func (h *PanelHost) barEditedBar() config.Bar {
 	if h.barOutput == "" {
 		return h.draft.Bar
@@ -279,7 +715,7 @@ func (h *PanelHost) barEditedBar() config.Bar {
 }
 
 // barMergeInherited fills a lane the override does not carry with the shared
-// one, which is exactly what applyBar does at load.
+// one, which is what applyBar does at load.
 func barMergeInherited(base, over config.Bar) config.Bar {
 	out := over
 	if out.Left == nil {
@@ -295,10 +731,7 @@ func barMergeInherited(base, over config.Bar) config.Bar {
 }
 
 // barLaneOverridden reports whether the edited output carries this lane itself
-// rather than inheriting it. The strip has to say so: reordering one widget on
-// one output forks that whole lane for that output, and later changes to the
-// shared lane stop reaching it. A per-widget override affordance would be a
-// lie, so the interface states the granularity it actually has.
+// rather than inheriting it.
 func (h *PanelHost) barLaneOverridden(name string) bool {
 	if h.barOutput == "" {
 		return false
