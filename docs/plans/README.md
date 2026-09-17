@@ -1,6 +1,6 @@
 # Design and Plan Register
 
-Last updated: 2026-09-16.
+Last updated: 2026-09-17.
 
 Every design, plan, and handover this project has produced, with where it lives and whether it is still
 live. Add a row here in the same commit that adds a document. A document that is not in this register is
@@ -482,6 +482,7 @@ surface-stacking merge. Epic `sysc-309`; the four execution owners are
 |---|---|---|
 | `2026-09-16-shell-polish-design.md` | design | Umbrella M10 design: slice boundaries, shared ownership, sequencing, and the integration/exit gate. |
 | `2026-09-16-metrics-control-centre-gpu-design.md` | design | Four truthful Control Centre gauges and one shared GPU snapshot for the bar, System Monitor, and Control Centre. Existing metrics ownership remains under `sysc-121`. |
+| `2026-09-17-metrics-control-centre-gpu.md` | plan | Four TDD tasks for deterministic GPU selection, four truthful Home gauges, shared selector leases, monitor/Home projection, and the DP-1 live gate. Keeps `sysc-metrics@v0.4.0` as the collector and records the upstream release stop. |
 | `2026-09-16-bar-weather-launcher-workspaces-design.md` | design | Weather icon/value chrome, the supplied nested-gates launcher PNG, and number-free Niri workspace shapes. Existing weather and launcher owners remain under `sysc-277`/`sysc-293` and `sysc-82`. |
 | `2026-09-16-centre-clock-media-wordmark-design.md` | design | One time/date composition, optional media at its right edge, and a fixed-centre SYSC wordmark. Executed by `sysc-314`. |
 | `2026-09-16-notifications-battery-urgency-design.md` | design | Theme-derived urgency treatment and a qualified, deduplicated battery-warning producer. Executed by `sysc-315`. |
