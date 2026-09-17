@@ -63,6 +63,9 @@ type Trigger struct {
 // PanelHost is one open panel: two surfaces' callbacks, content tree, focus,
 // leases, and reveal state.
 type PanelHost struct {
+	// writeTimer is the pending settings write, if a field or slider has been
+	// moved and has not settled yet.
+	writeTimer  *time.Timer
 	id          PanelID
 	output      uint32
 	place       Placement
@@ -2167,6 +2170,57 @@ func (h *PanelHost) commitSetting(r *Registry, e *settings.Entry, v string) {
 		return
 	}
 	h.set = settings.DefaultFor(h.draft)
+	// A toggle or a menu is a decision the user has finished making, so it
+	// goes to the file at once. A slider or a field is a stream of them, and
+	// writing per keystroke rewrote the whole document each time.
+	switch e.Kind {
+	case settings.KindInt, settings.KindString:
+		h.deferDraft(r)
+	default:
+		h.persistDraft(r)
+	}
+}
+
+// settingsWriteDelay is how long a stream of edits settles before it is
+// written. Short enough that releasing a slider feels like it saved, long
+// enough that typing a path is one write rather than one per character.
+const settingsWriteDelay = 400 * time.Millisecond
+
+// deferDraft arms the write, replacing any write already armed, so a run of
+// edits collapses into the one that follows the last of them.
+func (h *PanelHost) deferDraft(r *Registry) {
+	if h.writeTimer != nil {
+		h.writeTimer.Stop()
+	}
+	delay := settingsWriteDelay
+	if r != nil && r.writeDelay > 0 {
+		delay = r.writeDelay
+	}
+	h.writeTimer = time.AfterFunc(delay, func() {
+		r.mu.Lock()
+		if r.panelHosts[h.id] != h {
+			// The host was replaced while the edit was settling; its draft is
+			// no longer the one on screen.
+			r.mu.Unlock()
+			return
+		}
+		h.writeTimer = nil
+		cfg := h.draft
+		r.mu.Unlock()
+		// scheduleControl runs the write off the Wayland owner, re-takes the
+		// lock, discards the result if the host has gone, and rebuilds.
+		r.scheduleControl(h, func() error { return r.writeConfig(cfg) })
+	})
+}
+
+// flushDraft writes an edit that has not settled yet. Closing the panel is
+// otherwise a way to lose the last thing typed into it.
+func (h *PanelHost) flushDraft(r *Registry) {
+	if h.writeTimer == nil {
+		return
+	}
+	h.writeTimer.Stop()
+	h.writeTimer = nil
 	h.persistDraft(r)
 }
 
@@ -2320,6 +2374,7 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 	if h == nil {
 		return
 	}
+	h.flushDraft(r)
 	if bluetoothBodyVisible(h) {
 		r.stopBluetoothDiscoveryLocked(h)
 		r.cancelBluetoothPromptLocked(h)

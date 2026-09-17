@@ -3,6 +3,7 @@ package shell
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
@@ -341,4 +342,103 @@ func byAction(n *ui.Node, action string) *ui.Node {
 		}
 	}
 	return nil
+}
+
+// TestSettingsDebouncesFieldWrites is D4. Today every keystroke rewrites the
+// whole configuration file. A toggle is one decision and writes at once; a
+// field is a stream of them and writes once it settles.
+func TestSettingsDebouncesFieldWrites(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	reloads := make(chan struct{}, 8)
+	reg := newPanelRegistry(t)
+	reg.BindPersist(p, reloads)
+	reg.writeDelay = 5 * time.Millisecond
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelSettings]
+
+	field := &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker"}
+	for _, text := range []string{"one", "two", "three"} {
+		reg.mu.Lock()
+		field.Text = text
+		h.applySetting(reg, field)
+		reg.mu.Unlock()
+	}
+	if n := len(reloads); n != 0 {
+		t.Fatalf("%d writes before the field settled", n)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for len(reloads) == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if n := len(reloads); n != 1 {
+		t.Fatalf("three keystrokes produced %d writes, want one", n)
+	}
+	got, err := config.Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Session.Locker != "three" {
+		t.Fatalf("file holds %q, want the last value typed", got.Session.Locker)
+	}
+}
+
+// TestSettingsTogglesWriteAtOnce is the other half of D4: a decision the user
+// has finished making must not wait on a timer.
+func TestSettingsTogglesWriteAtOnce(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	reloads := make(chan struct{}, 8)
+	reg := newPanelRegistry(t)
+	reg.BindPersist(p, reloads)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelSettings]
+
+	reg.mu.Lock()
+	h.applySetting(reg, &ui.Node{Kind: ui.KindToggle, Action: "set:accessibility.high-contrast", Value: 1})
+	reg.mu.Unlock()
+	if n := len(reloads); n != 1 {
+		t.Fatalf("a toggle produced %d writes, want one immediately", n)
+	}
+	got, err := config.Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Accessibility.HighContrast {
+		t.Fatal("the toggled value did not reach the file")
+	}
+}
+
+// TestClosingSettingsFlushesAPendingWrite: a field that has not settled when
+// the panel closes must not lose what was typed into it.
+func TestClosingSettingsFlushesAPendingWrite(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	reloads := make(chan struct{}, 8)
+	reg := newPanelRegistry(t)
+	reg.BindPersist(p, reloads)
+	reg.writeDelay = time.Hour
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.applySetting(reg, &ui.Node{Kind: ui.KindTextField, Action: "set:session.locker", Text: "typed"})
+	reg.closePanelLocked(PanelSettings)
+	reg.mu.Unlock()
+
+	got, err := config.Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Session.Locker != "typed" {
+		t.Fatalf("closing lost the pending value, file holds %q", got.Session.Locker)
+	}
 }

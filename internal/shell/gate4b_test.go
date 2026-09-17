@@ -19,6 +19,9 @@ func TestAcceptSettingsConfiguresBarLive(t *testing.T) {
 	reloads := make(chan struct{}, 1)
 	reg := newPanelRegistry(t)
 	reg.BindPersist(p, reloads)
+	// The slider settles before it writes, rather than writing per pixel of
+	// travel. The acceptance is still that it reaches the file live.
+	reg.writeDelay = 5 * time.Millisecond
 	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
 		t.Fatal(err)
 	}
@@ -32,17 +35,17 @@ func TestAcceptSettingsConfiguresBarLive(t *testing.T) {
 		t.Fatal("did not reach the bar height slider")
 	}
 	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyRight})
+	select {
+	case <-reloads:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the settled slider never signalled a reload")
+	}
 	got, err := config.Load(p)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.Bar.Height == config.Default().Bar.Height {
 		t.Fatal("slider did not persist a new bar height")
-	}
-	select {
-	case <-reloads:
-	default:
-		t.Fatal("write did not signal reload")
 	}
 }
 

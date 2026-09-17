@@ -75,10 +75,13 @@ type Registry struct {
 	// roots is the one interactive root the process allows at a time.
 	roots rootChain
 	// closed unblocks a pending publish at shutdown.
-	closed               chan struct{}
-	closeOnce            sync.Once
-	dwell                *dwell
-	configPath           string
+	closed     chan struct{}
+	closeOnce  sync.Once
+	dwell      *dwell
+	configPath string
+	// writeDelay is how long a stream of edits settles before it reaches the
+	// file. Zero takes settingsWriteDelay; tests shorten it.
+	writeDelay           time.Duration
 	reloads              chan<- struct{}
 	audio                *services.Audio
 	brightness           *services.Brightness
