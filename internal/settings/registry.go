@@ -78,27 +78,6 @@ func DefaultFor(cfg config.Config) *Registry {
 			Set: setInt("bar.font-size", 8, 32, func(c *config.Config, n int) { c.Bar.FontSize = n }),
 		},
 		{
-			Path: "bar.items.left", Label: "Left items", Section: "Bar", Group: "Items",
-			Describe: "Widget ids on the left, separated by commas.",
-			Kind:     KindString,
-			Get:      func(c config.Config) string { return formatItemIDs(c.Bar.Left) },
-			Set:      setString(func(c *config.Config, v string) { c.Bar.Left = parseItemIDs(v, c.Bar.Left) }),
-		},
-		{
-			Path: "bar.items.center", Label: "Center items", Section: "Bar", Group: "Items",
-			Describe: "Widget ids in the centre, separated by commas.",
-			Kind:     KindString,
-			Get:      func(c config.Config) string { return formatItemIDs(c.Bar.Center) },
-			Set:      setString(func(c *config.Config, v string) { c.Bar.Center = parseItemIDs(v, c.Bar.Center) }),
-		},
-		{
-			Path: "bar.items.right", Label: "Right items", Section: "Bar", Group: "Items",
-			Describe: "Widget ids on the right, separated by commas.",
-			Kind:     KindString,
-			Get:      func(c config.Config) string { return formatItemIDs(c.Bar.Right) },
-			Set:      setString(func(c *config.Config, v string) { c.Bar.Right = parseItemIDs(v, c.Bar.Right) }),
-		},
-		{
 			Path: "appearance.source", Label: "Theme source", Section: "Appearance", Group: "Palette",
 			Describe: "Where the palette is seeded from.",
 			Kind:     KindEnum, Options: themeSources,
@@ -1109,57 +1088,4 @@ func setPlaceLabel(path string, assign func(*config.Config, string)) Setter {
 		assign(c, v)
 		return nil
 	})
-}
-
-func formatItemIDs(items []config.Item) string {
-	ids := make([]string, len(items))
-	for i, it := range items {
-		ids[i] = it.ID
-	}
-	return strings.Join(ids, ",")
-}
-
-func parseItemIDs(s string, prev []config.Item) []config.Item {
-	used := make([]bool, len(prev))
-	var out []config.Item
-	for _, id := range strings.Split(s, ",") {
-		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
-		}
-		it := config.Item{ID: id}
-		for i, p := range prev {
-			if used[i] || p.ID != id {
-				continue
-			}
-			it = p
-			used[i] = true
-			break
-		}
-		out = append(out, it)
-	}
-	return out
-}
-
-func firstItem(c config.Config, id string) *config.Item {
-	for _, it := range append(append(append([]config.Item{}, c.Bar.Left...), c.Bar.Center...), c.Bar.Right...) {
-		if it.ID == id {
-			item := it
-			return &item
-		}
-	}
-	return nil
-}
-
-func eachItem(c *config.Config, id string, fn func(*config.Item)) {
-	walk := func(items []config.Item) {
-		for i := range items {
-			if items[i].ID == id {
-				fn(&items[i])
-			}
-		}
-	}
-	walk(c.Bar.Left)
-	walk(c.Bar.Center)
-	walk(c.Bar.Right)
 }

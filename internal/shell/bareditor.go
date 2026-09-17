@@ -148,9 +148,28 @@ func barGroupChip(h *PanelHost, ref config.ItemRef, it config.Item, selected str
 		Shape: ui.ShapeSmall, Fill: ui.FillContainerHighest,
 		Padding: m.CardPadding, Name: "Group", Role: "group",
 	}
+	// The group's own handle. A group is draggable, selectable and
+	// inspectable under D2, and it renders as a column, which cannot itself be
+	// a drag source -- a drag source lays its children out inline, the way a
+	// button does. The handle carries the group's address so the group moves
+	// as one thing.
+	handle := &ui.Node{
+		Kind: ui.KindDragSource, DragType: barChipDragType, Payload: addr,
+		Action: "bar-select:" + addr, Name: "Group", Role: "button", Focusable: true,
+		Shape: ui.ShapeStadium, Fill: ui.FillContainerHigh,
+		Height: barChipHeight(h), Padding: m.ButtonPadding, Gap: theme.MarginS,
+		Children: []*ui.Node{
+			{Kind: ui.KindIcon, Icon: "drag_indicator", IconSize: m.IconSmall, Tone: ui.ToneSubtle},
+			{Kind: ui.KindText, Text: "Group", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+		},
+	}
+	if barRefAction(ref) == selected {
+		handle.State |= ui.StateSelected
+		handle.Fill = ui.FillAccent
+	}
 	run.Children = append(run.Children, &ui.Node{
 		Kind: ui.KindRow, Gap: theme.MarginS, Width: inner, PinEnd: true, Children: []*ui.Node{
-			{Kind: ui.KindText, Text: "Group", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+			handle,
 			{
 				Kind: ui.KindButton, Action: "bar-ungroup:" + addr,
 				Name: "Dissolve group", Role: "button", Focusable: true,
@@ -176,7 +195,8 @@ func barLane(h *PanelHost, bar config.Bar, name string, width int) *ui.Node {
 		Kind: ui.KindDropZone, Accept: []string{barChipDragType},
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard, Padding: m.CardPadding,
 		Width: width, Gap: theme.MarginXS,
-		Name: barLaneLabels[name] + " lane", Role: "group",
+		Action: "bar-lane:" + name,
+		Name:   barLaneLabels[name] + " lane", Role: "group",
 	}
 
 	lane := barLaneItems(bar, name)
@@ -743,4 +763,119 @@ func (h *PanelHost) barLaneOverridden(name string) bool {
 		return barLaneItems(o.Bar, name) != nil
 	}
 	return false
+}
+
+// barDrop completes a pointer drag onto a lane. It is the thin caller
+// resolveDrop exists for: the zone hands over its chips' bounds and the drop
+// point, the pure function says whether that means join or insert, and the
+// same config mutations the keyboard commands use do the work.
+func (h *PanelHost) barDrop(r *Registry, zone *ui.Node, payload string, x, y int) bool {
+	laneName, ok := strings.CutPrefix(zone.Action, "bar-lane:")
+	if !ok || barLaneLabels[laneName] == "" {
+		return false
+	}
+	from, ok := barParseRef(payload)
+	if !ok {
+		return false
+	}
+
+	// Only the top-level chips are drop targets within a lane. A group's
+	// members are drawn inside it and reached by dragging the group, which
+	// keeps the one-level cap a property of what can be dropped rather than a
+	// refusal after the fact.
+	var bounds []ui.Rect
+	var targets []int
+	lane := barLaneItems(h.barEditedBar(), laneName)
+	for i := range lane {
+		want := "bar-select:" + barRefAction(config.ItemRef{
+			Lane: laneName, Path: config.ItemPath{Index: i, Member: -1},
+		})
+		walkLaneNodes(zone, func(n *ui.Node) {
+			if n.Action == want && n.Bounds.H > 0 {
+				bounds = append(bounds, n.Bounds)
+				targets = append(targets, i)
+			}
+		})
+	}
+	outcome := resolveDrop(bounds, x, y)
+
+	// A chip dragged out of a group leaves it first, which is what prunes an
+	// emptied group and its placement.
+	if from.Lane != laneName || from.Path.Member >= 0 {
+		return h.barMoveBetween(r, from, laneName, outcome, targets)
+	}
+	if outcome.Join >= 0 {
+		dst := targets[outcome.Join]
+		if dst == from.Path.Index {
+			return true
+		}
+		next, err := config.GroupItems(lane, from.Path.Index, dst, config.NewMinter(h.draft))
+		if err != nil {
+			h.errLabel = err.Error()
+			r.rebuildPanel(h)
+			return true
+		}
+		h.errLabel = ""
+		return h.barApply(r, laneName, next)
+	}
+	to := outcome.Insert
+	if to > from.Path.Index {
+		to--
+	}
+	moved, err := config.MoveItem(lane, from.Path.Index, to)
+	if err != nil {
+		return true
+	}
+	return h.barApply(r, laneName, moved)
+}
+
+// barMoveBetween carries a chip from one lane, or out of a group, into the
+// lane it was dropped on.
+func (h *PanelHost) barMoveBetween(r *Registry, from config.ItemRef, laneName string, outcome dropOutcome, targets []int) bool {
+	bar := h.barEditedBar()
+	it := bar.ItemAt(from)
+	if it == nil {
+		return false
+	}
+	carried := *it
+
+	source, err := config.RemoveItem(barLaneItems(bar, from.Lane), from.Path)
+	if err != nil {
+		return true
+	}
+	if !h.barApply(r, from.Lane, source) {
+		return false
+	}
+
+	dest := barLaneItems(h.barEditedBar(), laneName)
+	at := len(dest)
+	if outcome.Join < 0 && outcome.Insert <= len(dest) {
+		at = outcome.Insert
+	}
+	if outcome.Join >= 0 && outcome.Join < len(targets) {
+		at = targets[outcome.Join]
+	}
+	if at > len(dest) {
+		at = len(dest)
+	}
+	grown, err := config.InsertItem(dest, at, carried)
+	if err != nil {
+		return true
+	}
+	h.barSelected = barRefAction(config.ItemRef{
+		Lane: laneName, Path: config.ItemPath{Index: at, Member: -1},
+	})
+	return h.barApply(r, laneName, grown)
+}
+
+// walkLaneNodes walks a subtree. The lane's own tree is small, so a plain walk
+// is cheaper than keeping a parallel index of chip bounds.
+func walkLaneNodes(n *ui.Node, fn func(*ui.Node)) {
+	if n == nil {
+		return
+	}
+	fn(n)
+	for _, c := range n.Children {
+		walkLaneNodes(c, fn)
+	}
 }

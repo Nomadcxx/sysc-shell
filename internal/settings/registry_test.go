@@ -96,28 +96,6 @@ func TestRegistryWidgetsFollowConfiguredBar(t *testing.T) {
 	}
 }
 
-func TestRegistryExposesBarItemLists(t *testing.T) {
-	t.Parallel()
-	r := Default()
-	e := r.ByPath("bar.items.left")
-	if e == nil || e.Kind != KindString {
-		t.Fatal("bar.items.left must be a string entry")
-	}
-	cfg := config.Default()
-	if got := e.Get(cfg); got != "launcher,workspace,window-title" {
-		t.Fatalf("left items = %q", got)
-	}
-	if err := e.Set(&cfg, "window-title,workspace"); err != nil {
-		t.Fatal(err)
-	}
-	if got := e.Get(cfg); got != "window-title,workspace" {
-		t.Fatalf("after set = %q", got)
-	}
-	if cfg.Bar.Left[0].ID != "window-title" || cfg.Bar.Left[0].MaxWidth <= 0 {
-		t.Fatalf("reused title lost max width: %+v", cfg.Bar.Left[0])
-	}
-}
-
 // TestAppearanceAxesRoundTrip covers every D3 axis through the registry: it is
 // discoverable, it reports the configured value, and setting it lands back on
 // the composition. An axis that resolves into the theme but cannot be reached
@@ -659,5 +637,23 @@ func TestAnOptionWriteMintsTheWidgetsId(t *testing.T) {
 	}
 	if cfg.Bar.Left[0].Instance == "" {
 		t.Error("an option write left the widget anonymous, so nothing can address it later")
+	}
+}
+
+// Task 14 and D9. The three comma-separated string entries are gone, replaced
+// by the lane editor. They were the only way to reach lane arrangement before
+// it existed, which is why their retirement came last rather than first.
+func TestTheCommaSeparatedItemEntriesAreRetired(t *testing.T) {
+	t.Parallel()
+	r := Default()
+	for _, path := range []string{"bar.items.left", "bar.items.center", "bar.items.right"} {
+		if e := r.ByPath(path); e != nil {
+			t.Errorf("%s is still registered; the lane editor replaces it", path)
+		}
+	}
+	// The Bar section still exists and still carries its geometry rows: the
+	// retirement must not have taken the section with it.
+	if len(r.Section("Bar")) == 0 {
+		t.Error("the Bar section is empty")
 	}
 }

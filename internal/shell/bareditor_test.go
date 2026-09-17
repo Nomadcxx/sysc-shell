@@ -201,8 +201,10 @@ func TestTheDefaultBarFitsTheStrip(t *testing.T) {
 	t.Parallel()
 	h := barHost(t, config.Default().Bar)
 	got := chipNames(barLaneStrip(h))
-	if len(got) != 14 {
-		t.Errorf("default bar drew %d chips (%v), want one per widget including group members", len(got), got)
+	// Fourteen widgets across the three lanes, plus the one group's own
+	// handle.
+	if len(got) != 15 {
+		t.Errorf("default bar drew %d chips (%v), want fourteen widgets plus the group handle", len(got), got)
 	}
 }
 
@@ -232,9 +234,19 @@ func TestAGroupDrawsItsMembersAndADissolveControl(t *testing.T) {
 	h := barHost(t, config.Bar{
 		Left: []config.Item{{ID: "group", Items: []config.Item{{ID: "cpu"}, {ID: "memory"}}}},
 	})
+	// The group leads with its own handle: a group is draggable, selectable
+	// and inspectable under D2, and it renders as a column, which cannot be a
+	// drag source itself.
 	strip := barLaneStrip(h)
-	if got := chipNames(strip); len(got) != 2 || got[0] != "Processor" || got[1] != "Memory" {
-		t.Errorf("group members = %v", got)
+	got := chipNames(strip)
+	want := []string{"Group", "Processor", "Memory"}
+	if len(got) != len(want) {
+		t.Fatalf("group drew %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("group drew %v, want %v", got, want)
+		}
 	}
 	found := false
 	walkNodes(strip, func(n *ui.Node) {
@@ -281,7 +293,21 @@ func barKeyHost(t *testing.T, bar config.Bar) (*Registry, *PanelHost) {
 	h.section = "Bar"
 	h.alt = true
 	reg.rebuildPanel(h)
+	barLayout(t, reg, h)
 	return reg, h
+}
+
+// barLayout lays the panel out so chip bounds exist. The pointer path resolves
+// a drop from laid-out boxes, so a test that skipped this would be inventing
+// the geometry it then asserts against.
+func barLayout(t *testing.T, reg *Registry, h *PanelHost) {
+	t.Helper()
+	size := panelTargetSize(PanelSettings)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if err := h.configure(size.W, size.H, int(ui.ScaleUnit)); err != nil {
+		t.Fatalf("settings does not lay out: %v", err)
+	}
 }
 
 func focusChip(t *testing.T, h *PanelHost, ref config.ItemRef) {
@@ -555,5 +581,112 @@ func TestResetReturnsALaneToShared(t *testing.T) {
 	}
 	if got := laneIDs(barLaneItems(h.barEditedBar(), "left")); got != "clock cpu" {
 		t.Errorf("after the reset the lane shows %q, want the shared order", got)
+	}
+}
+
+// The pointer path is a thin caller over resolveDrop and the same mutations
+// the keyboard uses. These drive it through the real node tree so the chip
+// bounds are the laid-out ones rather than invented.
+func dropOnLane(t *testing.T, reg *Registry, h *PanelHost, payload, lane string, chipIndex int, inner bool) bool {
+	t.Helper()
+	var zone *ui.Node
+	walkNodes(h.root, func(n *ui.Node) {
+		if n.Action == "bar-lane:"+lane {
+			zone = n
+		}
+	})
+	if zone == nil {
+		t.Fatalf("no drop zone for the %s lane", lane)
+	}
+	want := "bar-select:" + barRefAction(config.ItemRef{
+		Lane: lane, Path: config.ItemPath{Index: chipIndex, Member: -1},
+	})
+	var target ui.Rect
+	walkNodes(zone, func(n *ui.Node) {
+		if n.Action == want && n.Bounds.H > 0 {
+			target = n.Bounds
+		}
+	})
+	if target.H == 0 {
+		t.Fatalf("chip %d of the %s lane has no laid-out box", chipIndex, lane)
+	}
+	x := target.X + target.W/2
+	if !inner {
+		x = target.X + 1
+	}
+	return h.barDrop(reg, zone, payload, x, target.Y+target.H/2)
+}
+
+func TestDroppingOnAChipsInnerHalfGroupsThem(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "clock"}, {ID: "cpu"}, {ID: "memory"}}})
+	if !dropOnLane(t, reg, h, "left:1:-1", "left", 0, true) {
+		t.Fatal("the drop was not handled")
+	}
+	if got := laneIDs(h.draft.Bar.Left); got != "group(clock,cpu) memory" {
+		t.Errorf("after the drop: %q", got)
+	}
+}
+
+func TestDroppingNearAnEdgeReorders(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "clock"}, {ID: "cpu"}, {ID: "memory"}}})
+	if !dropOnLane(t, reg, h, "left:2:-1", "left", 0, false) {
+		t.Fatal("the drop was not handled")
+	}
+	if got := laneIDs(h.draft.Bar.Left); got != "memory clock cpu" {
+		t.Errorf("after the drop: %q", got)
+	}
+}
+
+func TestDroppingOntoAnotherLaneCarriesTheWidget(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{
+		Left:  []config.Item{{ID: "clock"}, {ID: "cpu"}},
+		Right: []config.Item{{ID: "battery"}},
+	})
+	if !dropOnLane(t, reg, h, "left:0:-1", "right", 0, false) {
+		t.Fatal("the cross-lane drop was not handled")
+	}
+	if got := laneIDs(h.draft.Bar.Left); got != "cpu" {
+		t.Errorf("source lane: %q", got)
+	}
+	if got := laneIDs(h.draft.Bar.Right); got != "clock battery" {
+		t.Errorf("target lane: %q", got)
+	}
+}
+
+// D5's cap is enforced at the drop, and the refusal is something the user sees
+// rather than a configuration that fails to load afterwards.
+func TestDroppingAGroupOntoAGroupIsRefusedAtTheDrop(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{
+		{ID: "group", Items: []config.Item{{ID: "cpu"}}},
+		{ID: "group", Items: []config.Item{{ID: "memory"}}},
+	}})
+	dropOnLane(t, reg, h, "left:1:-1", "left", 0, true)
+	if got := laneIDs(h.draft.Bar.Left); got != "group(cpu) group(memory)" {
+		t.Errorf("the lane changed despite the refusal: %q", got)
+	}
+	if h.errLabel == "" {
+		t.Error("the refusal was silent; the user is told nothing")
+	}
+}
+
+// Dragging the last member out of a group prunes the group with it.
+func TestDraggingTheLastMemberOutPrunesTheGroup(t *testing.T) {
+	t.Parallel()
+	reg, h := barKeyHost(t, config.Bar{
+		Left:  []config.Item{{ID: "group", Items: []config.Item{{ID: "cpu"}}}},
+		Right: []config.Item{{ID: "battery"}},
+	})
+	if !dropOnLane(t, reg, h, "left:0:0", "right", 0, false) {
+		t.Fatal("the drop was not handled")
+	}
+	if got := laneIDs(h.draft.Bar.Left); got != "" {
+		t.Errorf("the emptied group was left behind: %q", got)
+	}
+	if got := laneIDs(h.draft.Bar.Right); got != "cpu battery" {
+		t.Errorf("target lane: %q", got)
 	}
 }

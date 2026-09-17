@@ -1268,9 +1268,13 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			}
 			if h.drag.Active() {
 				zone := ui.FindDropZone(h.root, &h.drag)
+				dropX, dropY := int(h.drag.X), int(h.drag.Y)
 				payload, ok := h.drag.Drop(zone)
 				h.drag.Cancel()
 				if ok && zone != nil {
+					if strings.HasPrefix(zone.Action, "bar-lane:") {
+						return h.barDrop(r, zone, payload, dropX, dropY)
+					}
 					return r.deliverPluginText(zone.Action, payload, v1.EventDrop)
 				}
 				return true
