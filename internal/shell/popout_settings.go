@@ -107,14 +107,7 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 		if h.set != nil {
 			hits = h.set.Search(h.query)
 		}
-		rows := make([]*ui.Node, 0, len(hits))
-		for _, e := range hits {
-			rows = append(rows, &ui.Node{
-				Kind: ui.KindButton, Text: e.Label, Action: "goto:" + e.Path,
-				Name: e.Label, Role: "button", Focusable: true,
-			})
-		}
-		return body(&ui.Node{Kind: ui.KindScroll, Gap: theme.MarginM, Children: rows})
+		return body(settingsSearchColumn(h, hits))
 	}
 
 	if section == "Plugins" {
@@ -125,6 +118,38 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 		entries = h.set.Section(section)
 	}
 	return body(settingsSectionColumn(h, entries))
+}
+
+// settingsSearchColumn groups matches under the section that owns them, in
+// rail order. The shipped pane replaced the rail with a flat list of labels,
+// which told the user what matched but never where it lived; at two hundred
+// entries that is the difference between a result and an answer. The rows are
+// the real ones, so a setting found by searching can be changed where it was
+// found.
+func settingsSearchColumn(h *PanelHost, hits []settings.Entry) *ui.Node {
+	groups := []*ui.Node{}
+	for _, name := range settingsSections {
+		body := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM}
+		for _, e := range hits {
+			if e.Section == name {
+				body.Children = append(body.Children, settingsEntryRow(h, e))
+			}
+		}
+		if len(body.Children) == 0 {
+			continue
+		}
+		groups = append(groups, &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: name, TextRole: theme.RoleLabel},
+			body,
+		}})
+	}
+	if len(groups) == 0 {
+		groups = append(groups, &ui.Node{
+			Kind: ui.KindText, Text: "No setting matches that.",
+			TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
+		})
+	}
+	return &ui.Node{Kind: ui.KindScroll, Gap: theme.MarginXL, Children: groups}
 }
 
 // settingsSectionColumn lays the whole section out rather than virtualising

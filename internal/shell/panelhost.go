@@ -1787,16 +1787,6 @@ func (h *PanelHost) activate(r *Registry) bool {
 		r.rebuildPanel(h)
 		return true
 	}
-	if path, ok := strings.CutPrefix(n.Action, "goto:"); ok {
-		if e := h.set.ByPath(path); e != nil {
-			h.section = e.Section
-			h.query = ""
-			h.search = ui.NewField("")
-			r.rebuildPanel(h)
-			h.focusByName(e.Label)
-		}
-		return true
-	}
 	if path, ok := strings.CutPrefix(n.Action, "reset:"); ok {
 		if e := h.set.ByPath(path); e != nil && e.Default != nil {
 			h.commitSetting(r, e, e.Default(h.draft))

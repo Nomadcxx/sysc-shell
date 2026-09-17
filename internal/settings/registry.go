@@ -835,7 +835,11 @@ func (r *Registry) Search(q string) []Entry {
 	}
 	var out []Entry
 	for _, e := range r.entries {
-		if strings.Contains(strings.ToLower(e.Label), q) {
+		// The description is searched too. The word a user knows is often in
+		// the explanation rather than in the label, so matching labels alone
+		// hides the setting that would have answered them.
+		if strings.Contains(strings.ToLower(e.Label), q) ||
+			strings.Contains(strings.ToLower(e.Describe), q) {
 			out = append(out, e)
 		}
 	}

@@ -2,6 +2,7 @@ package shell
 
 import (
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -480,5 +481,38 @@ func TestSettingsRailCarriesAnIconPerSection(t *testing.T) {
 	}
 	if selected != 1 {
 		t.Errorf("%d tabs read as selected, want exactly the open one", selected)
+	}
+}
+
+// TestSearchGroupsMatchesUnderTheirSection: the shipped pane and Noctalia both
+// replace the rail with a flat list, so a match gives no clue which section
+// owns it. Grouping under the section heading is what makes search readable at
+// two hundred entries.
+func TestSearchGroupsMatchesUnderTheirSection(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.query = "motion"
+	h.root = settingsTree(nil, h)
+
+	headings := map[string]bool{}
+	for _, n := range walk(h.root) {
+		if n.TextRole == theme.RoleLabel && n.Text != "" {
+			headings[n.Text] = true
+		}
+	}
+	for _, want := range []string{"Appearance", "Accessibility"} {
+		if !headings[want] {
+			t.Errorf("no %q heading above its matches, headings were %v", want, headings)
+		}
+	}
+
+	var labels []string
+	for _, n := range walk(h.root) {
+		if n.Text != "" {
+			labels = append(labels, n.Text)
+		}
+	}
+	if !slices.Contains(labels, "Reduced motion") {
+		t.Errorf("the accessibility match was not listed, got %v", labels)
 	}
 }

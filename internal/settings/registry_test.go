@@ -572,3 +572,21 @@ func TestEveryEntryCarriesADescriptionAndAGroup(t *testing.T) {
 		}
 	}
 }
+
+// TestSearchMatchesDescriptionsAsWellAsLabels makes search double as
+// discovery: the word a user knows is often in the explanation rather than in
+// the label, and matching only labels hides the setting that would have
+// answered them.
+func TestSearchMatchesDescriptionsAsWellAsLabels(t *testing.T) {
+	t.Parallel()
+	hits := Default().Search("geocodes")
+	if len(hits) == 0 {
+		t.Fatal("a term appearing only in a description found nothing")
+	}
+	for _, e := range hits {
+		if e.Path == "weather.city" {
+			return
+		}
+	}
+	t.Fatalf("search did not reach weather.city, got %d other matches", len(hits))
+}
