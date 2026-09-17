@@ -184,3 +184,94 @@ func TestInstanceIdsSurviveAWriteAndReload(t *testing.T) {
 		t.Errorf("unaddressed memory widget gained instance %q, want none", id)
 	}
 }
+
+// Task 3. flattenItems used to append a group's members and drop the wrapper,
+// so consistentInstances had never seen a group at all. With D2 giving groups
+// ids, that would let duplicate group ids pass silently.
+//
+// The risk the design names precisely: requireWeatherWhenUsed is the other
+// caller and is indifferent to the wrapper. This pins its behaviour before the
+// change so a regression there is impossible to miss.
+func TestWeatherInsideAGroupStillRequiresALocation(t *testing.T) {
+	t.Parallel()
+	_, err := Parse([]byte(`{"bar": {"items": {"right": [
+		{"id": "group", "items": [{"id": "cpu"}, {"id": "weather"}]}
+	]}}}`))
+	if err == nil {
+		t.Fatal("a weather widget nested in a group loaded without a location")
+	}
+	if !strings.Contains(err.Error(), "weather.latitude") {
+		t.Errorf("error = %q, want it to name weather.latitude", err)
+	}
+}
+
+func TestFlattenItemsYieldsTheGroupAndItsMembers(t *testing.T) {
+	t.Parallel()
+	got := flattenItems([]Item{
+		{ID: "clock", Instance: "clock-1"},
+		{ID: "group", Instance: "group-1", Items: []Item{{ID: "cpu"}, {ID: "memory"}}},
+	})
+	var ids []string
+	for _, it := range got {
+		ids = append(ids, it.ID)
+	}
+	want := []string{"clock", "group", "cpu", "memory"}
+	if len(ids) != len(want) {
+		t.Fatalf("flattenItems yielded %v, want %v", ids, want)
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Fatalf("flattenItems yielded %v, want %v", ids, want)
+		}
+	}
+}
+
+// Task 4. A group is a structural container rather than a placement, so two
+// groups cannot share one identity under any circumstances.
+func TestDuplicateGroupIdsAreRefused(t *testing.T) {
+	t.Parallel()
+	_, err := Parse([]byte(`{"bar": {"items": {
+		"left": [{"id": "group", "instance": "g1", "items": [{"id": "cpu"}]}],
+		"right": [{"id": "group", "instance": "g1", "items": [{"id": "memory"}]}]
+	}}}`))
+	if err == nil {
+		t.Fatal("two groups shared one instance id, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "g1") {
+		t.Errorf("error = %q, want it to name the duplicated id", err)
+	}
+}
+
+// An instance id may not name two different widgets: the instance-scoped
+// values stored against it would be meaningless.
+func TestOneInstanceIdMayNotNameTwoDifferentWidgets(t *testing.T) {
+	t.Parallel()
+	_, err := Parse([]byte(`{"bar": {"items": {
+		"left": [{"id": "clock", "instance": "x1"}],
+		"right": [{"id": "cpu", "instance": "x1"}]
+	}}}`))
+	if err == nil {
+		t.Fatal("one instance id named both a clock and a cpu, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "x1") {
+		t.Errorf("error = %q, want it to name the id", err)
+	}
+}
+
+// The case consistentInstances' own comment records, which Task 3 widens the
+// function's view enough to endanger: instance settings are stored once for
+// the whole configuration, so the same id on two outputs is one placement
+// wearing one set of values. That stays legal, deliberately.
+func TestTheSameIdOnTwoOutputsStaysLegal(t *testing.T) {
+	t.Parallel()
+	_, err := Parse([]byte(`{
+		"bar": {"items": {"left": [{"id": "clock", "instance": "clock-1"}]}},
+		"outputs": [
+			{"connector": "DP-1", "bar": {"items": {"left": [{"id": "clock", "instance": "clock-1"}]}}},
+			{"connector": "DP-2", "bar": {"items": {"left": [{"id": "clock", "instance": "clock-1"}]}}}
+		]
+	}`))
+	if err != nil {
+		t.Fatalf("the same placement on two outputs was refused: %v", err)
+	}
+}

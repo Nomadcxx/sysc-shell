@@ -418,11 +418,22 @@ func consistentInstances(cfg Config) error {
 	check := func(b Bar, path string) error {
 		for _, section := range [][]Item{b.Left, b.Center, b.Right} {
 			for _, it := range flattenItems(section) {
-				if it.ID != "plugin" {
+				if it.Instance == "" {
 					continue
 				}
 				prev, seen := owner[it.Instance]
-				if seen && (prev.Plugin != it.Plugin || prev.Entry != it.Entry) {
+				switch {
+				case !seen:
+				case it.ID == "group" || prev.ID == "group":
+					// A group is a structural container, not a placement, so
+					// it has no equivalent of the shared-across-outputs case
+					// below. Two groups wearing one id is always ambiguous:
+					// nothing could say which one a drop or a dissolve meant.
+					return pathErr(path, "instance %q names more than one group", it.Instance)
+				case prev.ID != it.ID:
+					return pathErr(path, "instance %q names both a %s and a %s",
+						it.Instance, prev.ID, it.ID)
+				case it.ID == "plugin" && (prev.Plugin != it.Plugin || prev.Entry != it.Entry):
 					return pathErr(path, "instance %q names both %s/%s and %s/%s",
 						it.Instance, prev.Plugin, prev.Entry, it.Plugin, it.Entry)
 				}
@@ -657,11 +668,15 @@ func requireWeatherWhenUsed(cfg Config) error {
 func flattenItems(section []Item) []Item {
 	out := make([]Item, 0, len(section))
 	for _, item := range section {
+		// The group itself is yielded as well as its members. It used to be
+		// dropped, which meant consistentInstances had never seen a group and
+		// could not have caught a duplicate group id. Its other caller,
+		// requireWeatherWhenUsed, matches on item.ID == "weather" and is
+		// indifferent to the extra wrapper.
+		out = append(out, item)
 		if item.ID == "group" {
 			out = append(out, item.Items...)
-			continue
 		}
-		out = append(out, item)
 	}
 	return out
 }
