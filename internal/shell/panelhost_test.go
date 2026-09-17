@@ -1268,3 +1268,39 @@ func TestReducedMotionSettlesStateWithoutAnimating(t *testing.T) {
 		t.Errorf("hover value after leave = %v, want an immediate 0", got)
 	}
 }
+
+// TestReloadReseedsAnOpenSettingsDraft closes D6. PanelHost.draft is assigned
+// when the panel opens and was never refreshed, while PrepareConfig's Commit
+// replaces r.cfg without touching it. A change arriving from outside the panel
+// — a reload, another tool, a second surface — was therefore reverted by the
+// next control write, which put the stale draft back whole. Live apply widens
+// that window from rare to the whole time the panel is open.
+func TestReloadReseedsAnOpenSettingsDraft(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	next := config.Default()
+	next.Session.Locker = "externally-set"
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelSettings]
+	if h == nil {
+		t.Fatal("the reload closed the settings panel")
+	}
+	if got := h.draft.Session.Locker; got != "externally-set" {
+		t.Fatalf("draft kept the stale value %q", got)
+	}
+	if e := h.set.ByPath("session.locker"); e == nil || e.Get(h.draft) != "externally-set" {
+		t.Fatal("the registry was not rebuilt against the reloaded configuration")
+	}
+}

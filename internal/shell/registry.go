@@ -20,6 +20,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/theming"
 	"github.com/Nomadcxx/sysc-shell/internal/trayclient"
@@ -1230,6 +1231,15 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 					bar.apply(r.viewLocked(bar.connector()))
 				}
 				r.cfg = cfg
+				// An open settings panel holds its own draft, and a change
+				// arriving from outside it would otherwise be reverted by the
+				// next control write, which puts that draft back whole. The
+				// registry is rebuilt with it because an entry's options can
+				// depend on another setting.
+				if h := r.panelHosts[PanelSettings]; h != nil {
+					h.draft = cfg
+					h.set = settings.DefaultFor(cfg)
+				}
 				media = r.media
 				r.tokens = tok
 				r.themeErr = ""
