@@ -274,7 +274,7 @@ do not merge into one another.
 |---|---|---|
 | A | Settings foundation: schema, controls, surface, apply contract | Designed — `plans/2026-09-15-settings-foundation-design.md` |
 | B | Bar composition: widget add, remove, reorder, per-widget options | Designed — `plans/2026-09-15-bar-composition-design.md` |
-| C | Bar geometry and placement: edge, auto-hide, exclusive zone, per-output overrides | Not designed |
+| C | Bar geometry and placement: four edges, configurable exclusive zone, overflow | Designed — `plans/2026-09-17-bar-geometry-design.md` |
 | D | Surfaces and behaviour: notification, OSD, launcher, and panel settings | Not designed |
 | E | New subsystems: night light, idle behaviour, screenshot, hooks, keybinds, dock | Not designed |
 

@@ -130,6 +130,16 @@ rows, not 300 — so laying out the whole section stays cheap.
 tray menu, launcher, wallpaper picker, and process list — are genuinely uniform,
 and per-item measurement would tax all of them to serve one pane.
 
+This reverses an earlier deliberate fix rather than drifting from it, and the
+lineage belongs on the record. The settings pane originally set no virtual list
+at all; `sysc-40` added one as Milestone 4 shortfall remediation, and
+[the M4 code-quality sweep](2026-08-31-m4-code-quality-sweep.md) records that
+the keyboard acceptance test flipped the scroll node's kind in memory rather
+than proving one in the product tree. What makes the list wrong for this pane
+now is the uniform-stride contract meeting descriptions and group headings, not
+a judgement that the earlier remediation was mistaken. The primitive stays
+correct for the consumers that are genuinely uniform.
+
 Settings composes **no cards**. This matches v4, whose settings panes are plain
 row columns, and settles the question the component parity design left open. It
 makes settings the one surface in the shell that is not card-composed, which is
