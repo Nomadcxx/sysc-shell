@@ -66,6 +66,11 @@ below the threshold. It leaves warning when charging or full returns, or when
 discharging charge rises above the threshold plus a fixed five percentage
 point hysteresis band.
 
+The warning is global, so it uses the first resolved battery threshold on the
+base bar. Output overrides can change how their battery widget looks, but they
+do not change the producer threshold. If the base bar has no battery item, the
+shell does not publish a battery warning.
+
 The producer key stays constant, for example `sysc-shell:battery-low`. The
 reducer sends one persistent warning on entry and never sends one command per
 sampling tick. Recovery closes the service-owned warning without adding a
