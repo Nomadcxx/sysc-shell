@@ -175,6 +175,42 @@ func TestNotifyCardRendersCriticalUrgencyAsErrorTone(t *testing.T) {
 	}
 }
 
+func TestNotifyCardAppliesUrgencyToneToIdentitySummaryAndBody(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		urgency protocol.Urgency
+		want    ui.Tone
+	}{
+		{name: "low", urgency: protocol.UrgencyLow, want: ui.ToneSubtle},
+		{name: "normal", urgency: protocol.UrgencyNormal, want: ui.ToneNormal},
+		{name: "critical", urgency: protocol.UrgencyCritical, want: ui.ToneError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			n := baseNotification()
+			n.Urgency = tc.urgency
+			card := NotificationCard(n, nil, nil, true)
+			for _, text := range []string{"Mail", "Two new messages", "one", "two"} {
+				node := textNode(card, text)
+				if node == nil || node.Tone != tc.want {
+					t.Fatalf("%q node = %+v, want tone %v", text, node, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func TestHistoryAndGroupCardsReuseUrgencyTone(t *testing.T) {
+	now := time.Unix(1_756_000_000, 0)
+	entry := protocol.HistoryEntry{ID: 3, AppName: "Mail", Summary: "Old", Body: "seen", Timestamp: now, Urgency: protocol.UrgencyLow}
+	if node := textNode(HistoryCard(entry, now, nil, false), "Old"); node == nil || node.Tone != ui.ToneSubtle {
+		t.Fatalf("history summary = %+v, want subtle", node)
+	}
+	g := activeGroup{key: "mail", members: []protocol.Notification{{ID: 1, AppName: "Mail", Summary: "New", Body: "body", Timestamp: now, Urgency: protocol.UrgencyLow}}}
+	if node := textNode(ActiveGroupCard(g, now, false, nil, false), "New"); node == nil || node.Tone != ui.ToneSubtle {
+		t.Fatalf("group summary = %+v, want subtle", node)
+	}
+}
+
 func TestNotifyCardCountdownUsesTheAuthoritativeLifetime(t *testing.T) {
 	n := baseNotification()
 	lt := &protocol.Lifetime{ID: 7, DurationMS: 5000, RemainingMS: 3000, Running: true}
@@ -313,6 +349,21 @@ func strokeOf(n *ui.Node) int {
 		}
 	}
 	return 0
+}
+
+func textNode(root *ui.Node, want string) *ui.Node {
+	if root == nil {
+		return nil
+	}
+	if root.Kind == ui.KindText && root.Text == want {
+		return root
+	}
+	for _, child := range root.Children {
+		if found := textNode(child, want); found != nil {
+			return found
+		}
+	}
+	return nil
 }
 
 func TestActiveGroupCardShowsCountDismissAndExpand(t *testing.T) {

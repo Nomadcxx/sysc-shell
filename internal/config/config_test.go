@@ -777,6 +777,20 @@ func TestABatteryItemDefaults(t *testing.T) {
 	}
 }
 
+func TestBuiltInBatteryItemCarriesItsWarningThreshold(t *testing.T) {
+	t.Parallel()
+	for _, item := range Default().Bar.Right {
+		if item.ID != "battery" {
+			continue
+		}
+		if item.WarnBelow != defaultBatteryWarnBelow {
+			t.Fatalf("default battery threshold = %d, want %d", item.WarnBelow, defaultBatteryWarnBelow)
+		}
+		return
+	}
+	t.Fatal("built-in default bar has no battery item")
+}
+
 func TestABatteryIntervalIsAccepted(t *testing.T) {
 	t.Parallel()
 	cfg, err := Parse([]byte(
