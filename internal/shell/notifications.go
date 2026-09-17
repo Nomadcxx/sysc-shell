@@ -14,11 +14,12 @@ import (
 // never invents expiry: lifetimes arrive with snapshots and deltas and are
 // refreshed by renew replies.
 type notifyState struct {
-	mu         sync.Mutex
-	generation uint64
-	active     map[uint32]protocol.Notification
-	lifetimes  map[uint32]protocol.Lifetime
-	history    []protocol.HistoryEntry
+	mu           sync.Mutex
+	generation   uint64
+	active       map[uint32]protocol.Notification
+	lifetimes    map[uint32]protocol.Lifetime
+	history      []protocol.HistoryEntry
+	capabilities []string
 
 	// outputs is the set of configured connector names the projection
 	// projects to. Zero outputs means everything is suppressed.
@@ -54,6 +55,7 @@ func (s *notifyState) applyNotify(m notifyclient.Message) {
 			s.lifetimes[lt.ID] = lt
 		}
 		s.history = append(s.history[:0], m.Snapshot.History...)
+		s.capabilities = append(s.capabilities[:0], m.Capabilities...)
 
 	case notifyclient.KindDelta:
 		if m.Generation != s.generation {
@@ -102,6 +104,7 @@ func (s *notifyState) applyNotify(m notifyclient.Message) {
 		s.active = make(map[uint32]protocol.Notification)
 		s.lifetimes = make(map[uint32]protocol.Lifetime)
 		s.history = s.history[:0]
+		s.capabilities = nil
 	}
 }
 
@@ -160,6 +163,17 @@ func (s *notifyState) historyCount() int {
 // through these rather than the lock directly.
 func (r *Registry) applyNotify(m notifyclient.Message) {
 	r.notify.applyNotify(m)
+	var batteryAction *batteryProducerAction
+	if r.batteryWarning != nil {
+		switch m.Kind {
+		case notifyclient.KindSnapshot:
+			batteryAction = r.batteryWarning.snapshot(m.Generation, m.Capabilities)
+		case notifyclient.KindReply:
+			batteryAction = r.batteryWarning.reply(m.Generation, m.RequestID, m.Reply)
+		case notifyclient.KindDisconnected:
+			batteryAction = r.batteryWarning.disconnect(m.Generation)
+		}
+	}
 	r.mu.Lock()
 	if r.toasts != nil {
 		r.toasts.recompute()
@@ -178,6 +192,7 @@ func (r *Registry) applyNotify(m notifyclient.Message) {
 	if controlOpen {
 		r.publishSurface(controlOut, panelSurfaceID(PanelControlCenter))
 	}
+	r.dispatchBatteryWarning(batteryAction)
 }
 func (r *Registry) notifyActiveIDs() []uint32 { return r.notify.activeIDs() }
 func (r *Registry) notifyLifetime(id uint32) *protocol.Lifetime {
@@ -199,11 +214,16 @@ type notifyCommandSender interface {
 	Send(protocol.Command) (uint64, error)
 }
 
+type notifyProducerSender interface {
+	SendProducer(protocol.Command) (uint64, error)
+}
+
 // BindNotifications wires the toast host and the command sender. main calls
 // it once before running the client; tests that drive applyNotify directly
 // leave it nil.
 func (r *Registry) BindNotifications(sender notifyCommandSender) {
 	r.notifySender = sender
+	r.producerSender, _ = sender.(notifyProducerSender)
 	r.toasts = newToastHost(r, nil)
 	r.toasts.startLeaseRenew(presentationLeaseRenew)
 }

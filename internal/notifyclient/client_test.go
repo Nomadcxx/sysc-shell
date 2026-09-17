@@ -207,6 +207,89 @@ func TestClientCorrelatesRepliesAndRefusesUnknownOnes(t *testing.T) {
 	await(t, messages, KindDisconnected)
 }
 
+func TestClientNegotiatesAndSendsProducerCommands(t *testing.T) {
+	service := startService(t)
+	messages := make(chan Message, 32)
+	client := run(t, service.dir, messages)
+
+	conn := service.accept(t)
+	service.handshakeCapabilities(t, conn, []string{RequiredCapability, RequiredLifetimeCapability, protocol.CapabilityBatteryProducer})
+	service.write(t, conn, snapshotEnvelope(1, "first"))
+	snapshot := await(t, messages, KindSnapshot)
+	if !contains(snapshot.Capabilities, protocol.CapabilityBatteryProducer) || !client.Supports(protocol.CapabilityBatteryProducer) {
+		t.Fatalf("producer capability was not negotiated: message=%v client=%v", snapshot.Capabilities, client.Supports(protocol.CapabilityBatteryProducer))
+	}
+
+	value := int32(15)
+	requestID, err := client.SendProducer(protocol.Command{Kind: protocol.CommandProducerPublish, Producer: &protocol.ProducerRequest{
+		Key: "sysc-shell:battery-low", AppName: "sysc-shell", Summary: "Battery low",
+		Body: "Battery is at 15%.", Urgency: protocol.UrgencyCritical, Value: &value,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := service.read(t, conn)
+	if command.Kind != protocol.KindCommand || command.RequestID != requestID {
+		t.Fatalf("producer envelope = %+v, want request %d", command, requestID)
+	}
+	var decoded protocol.Command
+	if err := protocol.DecodeStrict(command.Payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Kind != protocol.CommandProducerPublish || decoded.Producer == nil || decoded.Producer.Key != "sysc-shell:battery-low" {
+		t.Fatalf("producer command = %#v", decoded)
+	}
+
+	service.write(t, conn, replyEnvelope(requestID, protocol.Reply{OK: true, ID: 7}))
+	if reply := await(t, messages, KindReply); reply.RequestID != requestID || !reply.Reply.OK || reply.Reply.ID != 7 {
+		t.Fatalf("producer reply = %#v", reply)
+	}
+}
+
+func TestClientDoesNotQueueProducerWithoutCapability(t *testing.T) {
+	service := startService(t)
+	messages := make(chan Message, 32)
+	client := run(t, service.dir, messages)
+
+	conn := service.accept(t)
+	service.handshake(t, conn)
+	service.write(t, conn, snapshotEnvelope(1, "first"))
+	await(t, messages, KindSnapshot)
+
+	_, err := client.SendProducer(protocol.Command{Kind: protocol.CommandProducerPublish, Producer: &protocol.ProducerRequest{Key: "sysc-shell:battery-low"}})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("SendProducer error = %v, want ErrUnsupported", err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := protocol.ReadFrame(conn); err == nil {
+		t.Fatal("producer command was queued without capability")
+	}
+}
+
+func TestClientClearsProducerCapabilityOnDisconnect(t *testing.T) {
+	service := startService(t)
+	messages := make(chan Message, 32)
+	client := run(t, service.dir, messages)
+
+	conn := service.accept(t)
+	service.handshakeCapabilities(t, conn, []string{RequiredCapability, RequiredLifetimeCapability, protocol.CapabilityBatteryProducer})
+	service.write(t, conn, snapshotEnvelope(1, "first"))
+	await(t, messages, KindSnapshot)
+	if !client.Supports(protocol.CapabilityBatteryProducer) {
+		t.Fatal("producer capability was not active")
+	}
+	_ = conn.Close()
+	await(t, messages, KindDisconnected)
+	if client.Supports(protocol.CapabilityBatteryProducer) {
+		t.Fatal("producer capability survived disconnect")
+	}
+	if _, err := client.SendProducer(protocol.Command{Kind: protocol.CommandProducerClose, Producer: &protocol.ProducerRequest{Key: "sysc-shell:battery-low"}}); err == nil {
+		t.Fatal("producer command succeeded while disconnected")
+	}
+}
+
 func TestClientReportsBusyWhenTheCommandQueueIsFull(t *testing.T) {
 	service := startService(t)
 	messages := make(chan Message, 32)
@@ -309,7 +392,7 @@ func (s *fakeService) handshakeCapabilities(t *testing.T, conn *net.UnixConn, ca
 	if err := hello.Validate(protocol.RolePresenter); err != nil {
 		t.Fatal(err)
 	}
-	if !contains(hello.Capabilities, RequiredCapability) || !contains(hello.Capabilities, RequiredLifetimeCapability) {
+	if !contains(hello.Capabilities, RequiredCapability) || !contains(hello.Capabilities, RequiredLifetimeCapability) || !contains(hello.Capabilities, protocol.CapabilityBatteryProducer) {
 		t.Fatalf("client capabilities = %v", hello.Capabilities)
 	}
 	s.write(t, conn, envelopeOf(t, protocol.Envelope{Kind: protocol.KindHello}, protocol.Hello{

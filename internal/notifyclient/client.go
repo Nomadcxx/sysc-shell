@@ -37,19 +37,22 @@ const (
 // connection it belongs to, so a consumer can discard anything that arrives
 // late from a connection that has already ended.
 type Message struct {
-	Generation uint64
-	Kind       Kind
-	Sequence   uint64
-	RequestID  uint64
-	Snapshot   protocol.Snapshot
-	Delta      protocol.Delta
-	Reply      protocol.Reply
-	Err        error
+	Generation   uint64
+	Kind         Kind
+	Sequence     uint64
+	RequestID    uint64
+	Capabilities []string
+	Snapshot     protocol.Snapshot
+	Delta        protocol.Delta
+	Reply        protocol.Reply
+	Err          error
 }
 
 // ErrBusy reports a full command queue. The caller retries later; the client
 // never queues without bound because a wedged service would grow it forever.
 var ErrBusy = errors.New("notifyclient: command queue is full")
+
+var ErrUnsupported = errors.New("notifyclient: service capability is unavailable")
 
 // Client keeps one connection to the presenter socket, reconnecting with a
 // capped backoff. One reader decodes frames and one writer serializes them.
@@ -57,12 +60,13 @@ type Client struct {
 	runtimeDir string
 	out        chan<- Message
 
-	mu         sync.Mutex
-	generation uint64
-	requestID  uint64
-	writer     chan []byte
-	connected  bool
-	pending    map[uint64]struct{}
+	mu           sync.Mutex
+	generation   uint64
+	requestID    uint64
+	writer       chan []byte
+	connected    bool
+	capabilities []string
+	pending      map[uint64]struct{}
 }
 
 func New(runtimeDir string, out chan<- Message) *Client {
@@ -131,10 +135,11 @@ func (c *Client) session(ctx context.Context) bool {
 		<-watched
 	}()
 
-	if err := c.handshake(socket); err != nil {
+	capabilities, err := c.handshake(socket)
+	if err != nil {
 		return false
 	}
-	generation := c.begin()
+	generation := c.begin(capabilities)
 	defer c.end(generation)
 
 	writer := make(chan []byte, protocol.MaxCommandQueue)
@@ -154,39 +159,42 @@ func (c *Client) session(ctx context.Context) bool {
 
 // handshake sends the shell's hello and requires the service's own hello back
 // before any state is accepted.
-func (c *Client) handshake(socket *net.UnixConn) error {
+func (c *Client) handshake(socket *net.UnixConn) ([]string, error) {
 	if err := socket.SetDeadline(time.Now().Add(handshakeGrace)); err != nil {
-		return err
+		return nil, err
 	}
 	hello, err := marshalEnvelope(protocol.Envelope{Kind: protocol.KindHello}, protocol.Hello{
 		Major: protocol.ProtocolMajor, Minor: protocol.ProtocolMinor,
-		Role: protocol.RolePresenter, Capabilities: []string{RequiredCapability, RequiredLifetimeCapability},
+		Role: protocol.RolePresenter, Capabilities: []string{RequiredCapability, RequiredLifetimeCapability, protocol.CapabilityBatteryProducer},
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := protocol.WriteFrame(socket, hello); err != nil {
-		return err
+		return nil, err
 	}
 	envelope, err := readEnvelope(socket)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if envelope.Kind != protocol.KindHello {
-		return fmt.Errorf("notifyclient: first message was %q", envelope.Kind)
+		return nil, fmt.Errorf("notifyclient: first message was %q", envelope.Kind)
 	}
 	var service protocol.Hello
 	if err := protocol.DecodeStrict(envelope.Payload, &service); err != nil {
-		return err
+		return nil, err
 	}
 	if err := service.Validate(protocol.RolePresenter); err != nil {
-		return err
+		return nil, err
 	}
 	if !slices.Contains(service.Capabilities, RequiredCapability) ||
 		!slices.Contains(service.Capabilities, RequiredLifetimeCapability) {
-		return errors.New("notifyclient: service lacks required presenter capability")
+		return nil, errors.New("notifyclient: service lacks required presenter capability")
 	}
-	return socket.SetDeadline(time.Time{})
+	if err := socket.SetDeadline(time.Time{}); err != nil {
+		return nil, err
+	}
+	return append([]string(nil), service.Capabilities...), nil
 }
 
 // RequiredCapability is the capability the shell needs from the service.
@@ -195,11 +203,12 @@ const RequiredCapability = "notification-state"
 // RequiredLifetimeCapability keeps countdown state owned by the service.
 const RequiredLifetimeCapability = "presentation-lifetime"
 
-func (c *Client) begin() uint64 {
+func (c *Client) begin(capabilities []string) uint64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.generation++
 	c.connected = true
+	c.capabilities = append(c.capabilities[:0], capabilities...)
 	return c.generation
 }
 
@@ -221,6 +230,7 @@ func (c *Client) end(generation uint64) {
 	}
 	c.connected = false
 	c.writer = nil
+	c.capabilities = nil
 	c.pending = make(map[uint64]struct{})
 	c.mu.Unlock()
 	c.publish(Message{Generation: generation, Kind: KindDisconnected})
@@ -244,8 +254,11 @@ func (c *Client) readLoop(socket *net.UnixConn, generation uint64) {
 				return
 			}
 			sequence, baseline = snapshot.Sequence, true
+			c.mu.Lock()
+			capabilities := append([]string(nil), c.capabilities...)
+			c.mu.Unlock()
 			c.publish(Message{
-				Generation: generation, Kind: KindSnapshot,
+				Generation: generation, Kind: KindSnapshot, Capabilities: capabilities,
 				Sequence: snapshot.Sequence, Snapshot: snapshot,
 			})
 		case protocol.KindAdded, protocol.KindReplaced, protocol.KindClosed,
@@ -282,6 +295,13 @@ func (c *Client) readLoop(socket *net.UnixConn, generation uint64) {
 			return
 		}
 	}
+}
+
+// Supports reports whether the current service generation negotiated a capability.
+func (c *Client) Supports(capability string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.connected && slices.Contains(c.capabilities, capability)
 }
 
 // resolve clears one correlation. A reply naming no outstanding request means
@@ -343,6 +363,20 @@ func (c *Client) Send(command protocol.Command) (uint64, error) {
 		c.forget(requestID)
 		return 0, ErrBusy
 	}
+}
+
+// SendProducer queues one capability-gated producer command.
+func (c *Client) SendProducer(command protocol.Command) (uint64, error) {
+	if command.Kind != protocol.CommandProducerPublish && command.Kind != protocol.CommandProducerClose {
+		return 0, errors.New("notifyclient: not a producer command")
+	}
+	if err := command.Validate(); err != nil {
+		return 0, err
+	}
+	if !c.Supports(protocol.CapabilityBatteryProducer) {
+		return 0, ErrUnsupported
+	}
+	return c.Send(command)
 }
 
 func (c *Client) forget(requestID uint64) {
