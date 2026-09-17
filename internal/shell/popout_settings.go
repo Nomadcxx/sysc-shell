@@ -16,66 +16,115 @@ import (
 // only there is unreachable.
 var settingsSections = settings.SectionNames()
 
-// settingsSidebarWidth is the measured width of the section rail. The search
-// field takes it too, so the field and the tabs below it read as one column
-// rather than two that happen to line up. It is named once because three
-// sites share it: a number repeated three times drifts apart on the first
-// edit that reaches only two of them.
-const settingsSidebarWidth = 220
+// The rail reuses the control centre's measurements so the two surfaces read
+// as one product rather than two that happen to sit side by side.
+const (
+	settingsRailWidth = ccRailWidth
+	settingsRailItem  = ccRailItem
+	// settingsSearchWidth is the search field's own width in the header. It no
+	// longer shares the rail's, which a 56-wide icon column cannot carry.
+	settingsSearchWidth = 260
+)
+
+// settingsSectionIcons names one glyph per section. Every name is confirmed
+// against the pinned Material Symbols source and asserted by the render
+// package's inventory: a name the subset lacks shapes to nothing and paints an
+// invisible control rather than failing anywhere visible.
+var settingsSectionIcons = map[string]string{
+	"Appearance":    "palette",
+	"Templates":     "description",
+	"Bar":           "toolbar",
+	"Widgets":       "widgets",
+	"Panels":        "web_asset",
+	"Wallpaper":     "wallpaper",
+	"Weather":       "partly_cloudy_day",
+	"Displays":      "display_settings",
+	"Tray":          "apps",
+	"Plugins":       "extension",
+	"Session":       "power_settings_new",
+	"Accessibility": "accessibility_new",
+}
+
+func settingsRail(h *PanelHost, section string) *ui.Node {
+	rail := &ui.Node{Kind: ui.KindColumn, Width: settingsRailWidth, Gap: theme.MarginM}
+	for _, name := range settingsSections {
+		entry := &ui.Node{
+			Kind: ui.KindButton, Width: settingsRailItem, Height: settingsRailItem,
+			Action: "section:" + name, Name: name, Role: "tab", Focusable: true,
+			Shape:    ui.ShapeMedium,
+			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: settingsSectionIcons[name]}},
+		}
+		if name == section {
+			entry.State |= ui.StateSelected
+			entry.Fill = ui.FillAccent
+		}
+		rail.Children = append(rail.Children, entry)
+	}
+	return rail
+}
 
 func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	if h.search == nil {
 		h.search = ui.NewField("")
 	}
 	search := h.search.Node("Search")
-	search.Width = settingsSidebarWidth
+	search.Width = settingsSearchWidth
+
+	section := h.section
+	if section == "" {
+		section = settingsSections[0]
+	}
+
 	head := []*ui.Node{}
 	if h.errLabel != "" {
 		head = append(head, &ui.Node{Kind: ui.KindText, Text: h.errLabel, Tone: ui.ToneError})
 	}
-	head = append(head, search)
+	// The section name is always visible in the header, which is what lets the
+	// group headings inside the column stay unsticky.
+	head = append(head, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, PinEnd: true, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: section, TextRole: theme.RoleTitle},
+		search,
+	}})
+
+	// The header spans the surface rather than sitting inside the body column
+	// the way the control centre's does. That is the one place this pane does
+	// not mirror it, and it is deliberate: the control centre has no search
+	// field, while here the field has to be the first thing the keyboard
+	// reaches, and focus order follows tree order.
+	body := func(content *ui.Node) *ui.Node {
+		return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Padding: h.metrics().PanelPadding,
+			Children: append(append([]*ui.Node{}, head...), &ui.Node{
+				Kind: ui.KindRow, Gap: theme.MarginXL, Children: []*ui.Node{
+					settingsRail(h, section),
+					content,
+				},
+			}),
+		}
+	}
 
 	if strings.TrimSpace(h.query) != "" {
 		var hits []settings.Entry
 		if h.set != nil {
 			hits = h.set.Search(h.query)
 		}
-		rows := head
+		rows := make([]*ui.Node, 0, len(hits))
 		for _, e := range hits {
 			rows = append(rows, &ui.Node{
 				Kind: ui.KindButton, Text: e.Label, Action: "goto:" + e.Path,
 				Name: e.Label, Role: "button", Focusable: true,
 			})
 		}
-		return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: h.metrics().PanelPadding, Children: rows}
+		return body(&ui.Node{Kind: ui.KindScroll, Gap: theme.MarginM, Children: rows})
 	}
 
-	sidebar := head
-	for _, name := range settingsSections {
-		sidebar = append(sidebar, &ui.Node{
-			Kind: ui.KindButton, Text: name, Action: "section:" + name,
-			Name: name, Role: "tab", Focusable: true,
-		})
-	}
-
-	section := h.section
-	if section == "" {
-		section = "Bar"
-	}
 	if section == "Plugins" {
-		return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXL, Padding: h.metrics().PanelPadding, Children: []*ui.Node{
-			{Kind: ui.KindColumn, Width: settingsSidebarWidth, Gap: theme.MarginM, Children: sidebar},
-			pluginsTree(r, h),
-		}}
+		return body(pluginsTree(r, h))
 	}
 	var entries []settings.Entry
 	if h.set != nil {
 		entries = h.set.Section(section)
 	}
-	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXL, Padding: h.metrics().PanelPadding, Children: []*ui.Node{
-		{Kind: ui.KindColumn, Width: settingsSidebarWidth, Gap: theme.MarginM, Children: sidebar},
-		settingsSectionColumn(h, entries),
-	}}
+	return body(settingsSectionColumn(h, entries))
 }
 
 // settingsSectionColumn lays the whole section out rather than virtualising

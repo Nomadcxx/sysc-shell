@@ -107,6 +107,21 @@ ICONS = [
     "smartphone",
     "speaker",
     "devices_other",
+    # The settings rail: one glyph per section of the information
+    # architecture, plus the three the pane's own controls need.
+    "palette",
+    "description",
+    "toolbar",
+    "widgets",
+    "web_asset",
+    "display_settings",
+    "apps",
+    "extension",
+    "accessibility_new",
+    "folder_open",
+    "expand_more",
+    "add",
+    "remove",
 ]
 
 # The pinned source renamed the older smartphone ligature. Keep the shell's

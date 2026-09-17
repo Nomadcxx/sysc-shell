@@ -21,6 +21,14 @@ var materialTTF []byte
 // invisible control, so the two lists are kept in step by hand and asserted by
 // test rather than discovered at runtime.
 var materialIcons = map[string]struct{}{
+	// The settings rail names one glyph per section, and the pane's own
+	// controls need three more. Every name here was confirmed against the
+	// pinned upstream before it landed: a name the font does not carry shapes
+	// to nothing and paints an invisible control.
+	"palette": {}, "description": {}, "toolbar": {}, "widgets": {},
+	"web_asset": {}, "display_settings": {}, "apps": {}, "extension": {},
+	"accessibility_new": {}, "folder_open": {}, "expand_more": {},
+	"add": {}, "remove": {},
 	"lock": {}, "logout": {}, "bedtime": {}, "restart_alt": {}, "power_settings_new": {},
 	"speed": {}, "balance": {}, "energy_savings_leaf": {}, "check": {},
 	"content_paste": {}, "content_copy": {},

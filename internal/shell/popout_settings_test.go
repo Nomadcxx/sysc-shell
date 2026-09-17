@@ -7,6 +7,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -15,16 +16,9 @@ import (
 func TestSettingsSidebarSectionsAndFocus(t *testing.T) {
 	t.Parallel()
 	h := newSettingsHost()
-	tabs := byRole(h.root, "tab")
-	want := settings.SectionNames()
-	if len(tabs) != len(want) {
-		t.Fatalf("sidebar tabs = %d, want the %d sections", len(tabs), len(want))
-	}
-	for i, name := range want {
-		if tabs[i].Text != name {
-			t.Fatalf("tab %d = %q, want %q", i, tabs[i].Text, name)
-		}
-	}
+	// The rail's naming and glyphs are covered by the rail test; this one is
+	// about the field reaching the keyboard first, so a user can type to find
+	// a setting without first tabbing past twelve sections.
 	focus := ui.Focusables(h.root)
 	if len(focus) == 0 || focus[0].Kind != ui.KindTextField || focus[0].Name != "Search" {
 		t.Fatalf("first focusable = %+v, want Search field", focus)
@@ -41,8 +35,10 @@ func TestSettingsSearchSwapsSidebarForMatches(t *testing.T) {
 	handle := reqs[1].Open.Callbacks.Handle
 	handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "motion"})
 	h := reg.panelHosts[PanelSettings]
-	if tabs := byRole(h.root, "tab"); len(tabs) != 0 {
-		t.Fatalf("search left %d sidebar tabs", len(tabs))
+	// The rail stays put under search: a match is more useful when the user
+	// can still see, and return to, the section it came from.
+	if tabs := byRole(h.root, "tab"); len(tabs) != len(settings.SectionNames()) {
+		t.Fatalf("search left %d rail tabs, want all of them", len(tabs))
 	}
 	found := false
 	for _, n := range walk(h.root) {
@@ -95,11 +91,11 @@ func TestSettingsKeyboardOnlyTraversal(t *testing.T) {
 	}
 	sections := settings.SectionNames()
 	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyDown})
-	if n := h.focused(); n == nil || n.Text != sections[1] {
+	if n := h.focused(); n == nil || n.Name != sections[1] {
 		t.Fatalf("arrow moved to %q, want %q", nameOf(h.focused()), sections[1])
 	}
 	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyUp})
-	if n := h.focused(); n == nil || n.Text != sections[0] {
+	if n := h.focused(); n == nil || n.Name != sections[0] {
 		t.Fatalf("arrow moved to %q, want %q", nameOf(h.focused()), sections[0])
 	}
 	for i := 0; i < len(h.focus)+2 && (h.focused() == nil || h.focused().Kind != ui.KindToggle); i++ {
@@ -249,11 +245,17 @@ func walk(n *ui.Node) []*ui.Node {
 	return out
 }
 
+// nameOf prefers the accessible name: a rail tab draws a glyph, so its Text
+// is empty and only Name says which section it is.
 func nameOf(n *ui.Node) string {
-	if n == nil {
+	switch {
+	case n == nil:
 		return ""
+	case n.Name != "":
+		return n.Name
+	default:
+		return n.Text
 	}
-	return n.Text
 }
 
 // TestSettingsRowsCarryDescriptionsAndGroupHeadings is D3. KindVirtualList is
@@ -440,5 +442,43 @@ func TestClosingSettingsFlushesAPendingWrite(t *testing.T) {
 	}
 	if got.Session.Locker != "typed" {
 		t.Fatalf("closing lost the pending value, file holds %q", got.Session.Locker)
+	}
+}
+
+// TestSettingsRailCarriesAnIconPerSection: the rail mirrors the control centre
+// so settings reads as the same product, and every section is reachable by
+// keyboard with a name a screen reader can announce.
+func TestSettingsRailCarriesAnIconPerSection(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	tabs := byRole(h.root, "tab")
+	want := settings.SectionNames()
+	if len(tabs) != len(want) {
+		t.Fatalf("rail has %d tabs, want the %d sections", len(tabs), len(want))
+	}
+	for i, tab := range tabs {
+		if tab.Name != want[i] {
+			t.Errorf("tab %d is named %q, want %q", i, tab.Name, want[i])
+		}
+		if !tab.Focusable {
+			t.Errorf("%s is not reachable by keyboard", want[i])
+		}
+		icon := findKind(tab, ui.KindIcon)
+		if icon == nil {
+			t.Errorf("%s has no icon", want[i])
+			continue
+		}
+		if !render.ValidMaterialIcon(icon.Icon) {
+			t.Errorf("%s draws %q, which the subset cannot shape", want[i], icon.Icon)
+		}
+	}
+	selected := 0
+	for _, tab := range tabs {
+		if tab.Fill == ui.FillAccent {
+			selected++
+		}
+	}
+	if selected != 1 {
+		t.Errorf("%d tabs read as selected, want exactly the open one", selected)
 	}
 }
