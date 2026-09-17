@@ -165,7 +165,14 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	if h.set != nil {
 		entries = h.set.Section(section)
 	}
-	return body(settingsSectionColumn(h, section, entries))
+	column := settingsSectionColumn(h, section, entries)
+	if section == "Bar" {
+		// The lane editor is the Bar section's Layout group, above its
+		// geometry rows. It replaces the three comma-separated string entries,
+		// which is the whole point of the sub-project.
+		column.Children = append([]*ui.Node{barLaneStrip(h)}, column.Children...)
+	}
+	return body(column)
 }
 
 // settingsEmptySection explains a section that legitimately has nothing in it

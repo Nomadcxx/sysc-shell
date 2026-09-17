@@ -97,19 +97,24 @@ type PanelHost struct {
 	pressed  string
 	// pointer is the resolved hover/press state, kept as stable keys so it
 	// survives the tree rebuilds that replace every node.
-	pointer            interaction
-	drag               ui.Drag
-	lastAction         string
-	hoverX, hoverY     int
-	monthDelta         int
-	errLabel           string
-	menu               *Menu
-	menuPath           string
-	menus              map[string]*Menu
-	sliderDrag         *ui.Node
-	scrollDrag         *ui.Node
-	set                *settings.Registry
-	draft              config.Config
+	pointer        interaction
+	drag           ui.Drag
+	lastAction     string
+	hoverX, hoverY int
+	monthDelta     int
+	errLabel       string
+	menu           *Menu
+	menuPath       string
+	menus          map[string]*Menu
+	sliderDrag     *ui.Node
+	scrollDrag     *ui.Node
+	set            *settings.Registry
+	draft          config.Config
+	// barSelected is the chip the lane editor has selected, as the address
+	// barRefAction encodes. barOutput is the output whose lanes are being
+	// edited, empty for the shared bar (D7).
+	barSelected        string
+	barOutput          string
 	query              string
 	section            string
 	pageDirection      int

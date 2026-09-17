@@ -28,9 +28,11 @@ func TestAcceptSettingsConfiguresBarLive(t *testing.T) {
 	reqs := drainAux(t, reg, 2)
 	handle := reqs[1].Open.Callbacks.Handle
 	h := reg.panelHosts[PanelSettings]
-	for i := 0; i < 40 && (h.focused() == nil || h.focused().Name != "Height"); i++ {
-		handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyTab})
-	}
+	// Focus the slider by name rather than counting tabs. The Bar section now
+	// carries the lane editor above its geometry rows, so the slider sits well
+	// past any fixed tab budget; what this gate is about is the slider reaching
+	// the file live, not how far into the focus order it happens to be.
+	h.focusByName("Height")
 	if h.focused() == nil || h.focused().Kind != ui.KindSlider || h.focused().Name != "Height" {
 		t.Fatal("did not reach the bar height slider")
 	}
