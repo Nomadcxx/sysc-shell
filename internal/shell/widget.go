@@ -171,7 +171,8 @@ func capsuled(w textWidget, pad int) textWidget {
 	}
 	w.inner = w.node
 	inner := w.inner
-	outer := &ui.Node{Kind: ui.KindCapsule, Padding: pad, Shape: ui.ShapeMedium, Action: inner.Action, Children: []*ui.Node{inner}}
+	outer := &ui.Node{Kind: ui.KindCapsule, Padding: pad, Shape: ui.ShapeMedium,
+		Action: inner.Action, Absent: inner.Absent, Children: []*ui.Node{inner}}
 	w.node = outer
 	if w.hideWhenAbsent && w.refresh != nil {
 		refresh := w.refresh
@@ -190,18 +191,33 @@ func capsuled(w textWidget, pad int) textWidget {
 // buildWidgets turns validated items into widget instances. Ids and options
 // are validated at load, so an unknown id cannot reach here.
 func buildWidgets(items []config.Item, pad int, m theme.Metrics) []textWidget {
-	out := make([]textWidget, 0, len(items))
+	return buildWidgetsWithClockFloor(items, pad, m, clockFloorFor(items))
+}
+
+func clockFloorFor(items []config.Item) string {
 	clocks, hasWordmark := 0, false
-	for _, item := range items {
-		if item.ID == "clock" {
-			clocks++
+	var walk func([]config.Item)
+	walk = func(items []config.Item) {
+		for _, item := range items {
+			switch item.ID {
+			case "clock":
+				clocks++
+			case "wordmark":
+				hasWordmark = true
+			case "group":
+				walk(item.Items)
+			}
 		}
-		hasWordmark = hasWordmark || item.ID == "wordmark"
 	}
-	clockFloor := ""
+	walk(items)
 	if hasWordmark && clocks >= 2 {
-		clockFloor = clockWidthFloor
+		return clockWidthFloor
 	}
+	return ""
+}
+
+func buildWidgetsWithClockFloor(items []config.Item, pad int, m theme.Metrics, clockFloor string) []textWidget {
+	out := make([]textWidget, 0, len(items))
 	for _, item := range items {
 		switch item.ID {
 		case "launcher":
@@ -255,7 +271,7 @@ func buildWidgets(items []config.Item, pad int, m theme.Metrics) []textWidget {
 			// individually capsuled: two nested surfaces read as one blob at
 			// the palette contrast a bar uses.
 			row := &ui.Node{Kind: ui.KindRow, Gap: groupGap}
-			members := buildWidgets(item.Items, noCapsule, m)
+			members := buildWidgetsWithClockFloor(item.Items, noCapsule, m, clockFloor)
 			g := textWidget{node: row, members: members}
 			for _, m := range members {
 				row.Children = append(row.Children, m.node)

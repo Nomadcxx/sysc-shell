@@ -40,11 +40,38 @@ func TestMediaWidgetIsAbsentWithNoPlayer(t *testing.T) {
 	// widget, because the capsule is what the bar lays out and paints.
 	metrics := DefaultTheme().Metrics
 	w := buildWidgets([]config.Item{{ID: "media"}}, metrics.CapsulePadding, metrics)[0]
-	if !w.refresh(barView{}) {
-		t.Fatal("the widget refresh did not report its absence")
-	}
 	if !w.node.Absent {
-		t.Error("the media capsule remained visible with no player")
+		t.Fatal("the media capsule was not absent before its first refresh")
+	}
+	if w.refresh(barView{}) {
+		t.Error("refreshing an already-absent media widget reported a change")
+	}
+}
+
+func TestGroupedAbsentMediaIsOmittedFromTheVisibleRow(t *testing.T) {
+	t.Parallel()
+	widgets := buildWidgets([]config.Item{{ID: "group", Items: []config.Item{
+		{ID: "clock", Format: "15:04"},
+		{ID: "media"},
+	}}}, 8, standardMetrics())
+	group := widgets[0]
+	bar := &Bar{center: widgets}
+
+	if !group.refresh(barView{Now: reference}) {
+		t.Fatal("the absent grouped view reported no change")
+	}
+	if got := len(group.inner.Children); got != 2 {
+		t.Fatalf("retained group children = %d, want two before visibility filtering", got)
+	}
+	if got := len(bar.sections()[1][0].Children[0].Children); got != 1 {
+		t.Fatalf("visible absent group children = %d, want one clock", got)
+	}
+
+	if !group.refresh(barView{Now: reference, Media: services.MediaState{Available: true, Title: "Track"}}) {
+		t.Fatal("the present grouped view reported no change")
+	}
+	if got := len(bar.sections()[1][0].Children[0].Children); got != 2 {
+		t.Fatalf("visible present group children = %d, want clock and media", got)
 	}
 }
 
@@ -130,5 +157,8 @@ func TestMediaWidgetSetsMarqueeConfig(t *testing.T) {
 	title := widgets[0].inner.Children[1]
 	if !title.Marquee || title.MaxWidth != 120 || title.Key != "media-title" {
 		t.Fatalf("media title = %+v, want marquee, max width 120, stable key", title)
+	}
+	if widgets[0].inner.Action != panelMediaAction || widgets[0].inner.Name != "Media" || widgets[0].inner.Role != "button" {
+		t.Fatalf("media accessibility = %+v", widgets[0].inner)
 	}
 }

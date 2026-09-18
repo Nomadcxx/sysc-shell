@@ -359,9 +359,12 @@ func Default() Config {
 			// here: it requires configured coordinates, so a default bar
 			// carrying it would fail validation out of the box.
 			Center: []Item{
-				{ID: "clock", Format: defaultClockFormat, Boundary: time.Minute},
+				{ID: "group", Items: []Item{
+					{ID: "clock", Format: defaultClockFormat, Boundary: time.Minute},
+					{ID: "clock", Format: defaultDateFormat, Boundary: time.Minute},
+				}},
 				{ID: "wordmark"},
-				{ID: "clock", Format: defaultDateFormat, Boundary: time.Minute},
+				{ID: "media"},
 			},
 			Right: []Item{
 				{ID: "running-apps"},

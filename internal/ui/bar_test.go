@@ -1,6 +1,9 @@
 package ui
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // fixed measures each rune as ten logical pixels wide and twenty tall.
 func fixed(s string, _ TextAttrs) (int, int) { return len([]rune(s)) * 10, 20 }
@@ -66,6 +69,103 @@ func TestCentreWiderThanContentTruncatesAndClearsTheSides(t *testing.T) {
 	}
 	if left.Bounds.W != 0 || right.Bounds.W != 0 {
 		t.Fatalf("sides = %d/%d, want zero width", left.Bounds.W, right.Bounds.W)
+	}
+}
+
+func TestAnchoredWordmarkKeepsTheContentBandCentre(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, before, after string
+		left, right         string
+		afterMax            int
+		contentWidth        int
+		emptyBefore         bool
+		truncateSides       bool
+	}{
+		{name: "clock and media", before: "time", after: "media", left: "left", right: "right", contentWidth: 1000},
+		{name: "media absent", before: "time/date", left: "long left", right: "long right", contentWidth: 1000},
+		{name: "bounded long title", before: "time/date", after: strings.Repeat("title", 12), afterMax: 80, left: "left", right: "right", contentWidth: 1000},
+		{name: "side budgets yield", before: "time/date", after: "media", left: strings.Repeat("left", 12), right: strings.Repeat("right", 12), contentWidth: 300, truncateSides: true},
+		{name: "empty clock group", emptyBefore: true, left: "left", right: "right", contentWidth: 300},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mark := &Node{Kind: KindWordmark, ImageW: 40, ImageH: 20}
+			var before, after, left, right *Node
+			if tc.before != "" || tc.emptyBefore {
+				before = text(tc.before)
+			}
+			if tc.after != "" {
+				after = text(tc.after)
+				after.MaxWidth = tc.afterMax
+			}
+			if tc.left != "" {
+				left = text(tc.left)
+			}
+			if tc.right != "" {
+				right = text(tc.right)
+			}
+			var center []*Node
+			if before != nil {
+				center = append(center, before)
+			}
+			center = append(center, mark)
+			if after != nil {
+				center = append(center, after)
+			}
+			var leftItems, rightItems []*Node
+			if left != nil {
+				leftItems = []*Node{left}
+			}
+			if right != nil {
+				rightItems = []*Node{right}
+			}
+
+			content := Rect{X: 10, Y: 0, W: tc.contentWidth, H: 40}
+			if err := ArrangeBar(content, leftItems, center, rightItems, 6, fixed); err != nil {
+				t.Fatal(err)
+			}
+			wantCentre := content.X + content.W/2
+			if got := mark.Bounds.X + mark.Bounds.W/2; got != wantCentre {
+				t.Fatalf("wordmark centre = %d, want content centre %d; mark=%+v", got, wantCentre, mark.Bounds)
+			}
+			if before != nil && before.Bounds.W > 0 && before.Bounds.X+before.Bounds.W > mark.Bounds.X {
+				t.Fatalf("preceding node %+v overlaps wordmark %+v", before.Bounds, mark.Bounds)
+			}
+			if after != nil {
+				if after.Bounds.X < mark.Bounds.X+mark.Bounds.W {
+					t.Fatalf("following node %+v overlaps wordmark %+v", after.Bounds, mark.Bounds)
+				}
+				if tc.afterMax > 0 && after.Bounds.W != tc.afterMax {
+					t.Fatalf("bounded title width = %d, want %d", after.Bounds.W, tc.afterMax)
+				}
+			}
+			compositionLeft, compositionRight := mark.Bounds.X, mark.Bounds.X+mark.Bounds.W
+			if before != nil && before.Bounds.W > 0 {
+				compositionLeft = before.Bounds.X
+			}
+			if after != nil && after.Bounds.W > 0 {
+				compositionRight = after.Bounds.X + after.Bounds.W
+			}
+			if left != nil && left.Bounds.X+left.Bounds.W > compositionLeft {
+				t.Fatalf("left section %+v overlaps centre composition ending at %d", left.Bounds, compositionLeft)
+			}
+			if right != nil && right.Bounds.X < compositionRight {
+				t.Fatalf("right section %+v overlaps centre composition starting at %d", right.Bounds, compositionRight)
+			}
+			if tc.emptyBefore && left.Bounds.W == 0 {
+				t.Fatal("an empty preceding node consumed the entire left-side budget")
+			}
+			if tc.truncateSides && (left.Bounds.W >= len([]rune(tc.left))*10 || right.Bounds.W >= len([]rune(tc.right))*10) {
+				t.Fatalf("tight side sections were not truncated: left=%+v right=%+v", left.Bounds, right.Bounds)
+			}
+			for _, node := range []*Node{left, before, mark, after, right} {
+				if node != nil && (node.Bounds.W < 0 || node.Bounds.H < 0) {
+					t.Fatalf("node has negative bounds: %+v", node.Bounds)
+				}
+			}
+		})
 	}
 }
 
