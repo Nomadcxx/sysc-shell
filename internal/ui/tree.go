@@ -221,6 +221,11 @@ type Node struct {
 	// cropped to this ratio by whoever produced it.
 	ImageW int
 	ImageH int
+	// Mark names the embedded alpha master a KindWordmark node paints. Empty
+	// selects the SYSC wordmark; "launcher" selects the launcher aperture
+	// mark. Both are alpha-only and tinted at paint time, so they follow the
+	// theme and its animated gradient ramp like the rest of the chrome.
+	Mark string
 	// Tone selects the text colour. Zero is ToneNormal.
 	Tone Tone
 	// CenterX centres this child within its column track instead of placing

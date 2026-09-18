@@ -165,8 +165,11 @@ func workspacePillsMatch(row *ui.Node, pills []workspacePill) bool {
 // place so no builder has to know about bar chrome.
 // A negative padding means do not wrap. Group members render flat inside their
 // group's capsule rather than each gaining one of their own.
+// The brand wordmark stays bare; a wordmark that is a button, like the
+// launcher mark, wears the same capsule as every other bar button.
 func capsuled(w textWidget, pad int) textWidget {
-	if pad < 0 || w.node == nil || w.node.Kind == ui.KindCapsule || w.node.Kind == ui.KindWordmark {
+	if pad < 0 || w.node == nil || w.node.Kind == ui.KindCapsule ||
+		(w.node.Kind == ui.KindWordmark && w.node.Mark == "") {
 		return w
 	}
 	w.inner = w.node
@@ -221,11 +224,12 @@ func buildWidgetsWithClockFloor(items []config.Item, pad int, m theme.Metrics, c
 	for _, item := range items {
 		switch item.ID {
 		case "launcher":
-			ghost, _ := render.IconByName("ghost")
 			out = append(out, textWidget{
 				node: &ui.Node{
-					Kind: ui.KindText, Text: string(ghost), TextRole: theme.RoleHeadline,
-					Action: panelLauncherAction, Name: "Open launcher", Role: "button",
+					Kind: ui.KindWordmark, Mark: "launcher",
+					ImageH: launcherMarkHeight, ImageW: launcherMarkHeight,
+					Gradient: wordmarkGradient(),
+					Action:   panelLauncherAction, Name: "Open launcher", Role: "button",
 				},
 				tooltip: "Launcher",
 				refresh: func(barView) bool { return false },

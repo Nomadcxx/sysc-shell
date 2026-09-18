@@ -105,16 +105,36 @@ func TestDefaultCentreBuildsTimeDateGroupAndMedia(t *testing.T) {
 	}
 }
 
-func TestLauncherWidgetUsesGhostAndOpensLauncher(t *testing.T) {
+func TestLauncherWidgetUsesThemedMarkAndOpensLauncher(t *testing.T) {
 	t.Parallel()
 	widgets := buildWidgets([]config.Item{{ID: "launcher"}}, 8, standardMetrics())
-	if len(widgets) != 1 || widgets[0].inner == nil {
+	if len(widgets) != 1 || widgets[0].node == nil {
 		t.Fatalf("launcher widgets = %+v", widgets)
 	}
+	if widgets[0].node == nil {
+		t.Fatalf("launcher widgets = %+v", widgets)
+	}
+	// The launcher is a button like its neighbours, so it wears the same
+	// surface capsule and gains the shared hover wash.
+	outer := widgets[0].node
+	if outer.Kind != ui.KindCapsule || outer.Action != panelLauncherAction {
+		t.Fatalf("launcher capsule = %+v", outer)
+	}
+	if widgets[0].inner == nil || widgets[0].inner != outer.Children[0] {
+		t.Fatalf("launcher capsule child = %+v", outer.Children)
+	}
 	n := widgets[0].inner
-	ghost, _ := render.IconByName("ghost")
-	if n.Kind != ui.KindText || n.Text != string(ghost) || n.Action != panelLauncherAction {
+	if n.Kind != ui.KindWordmark || n.Mark != "launcher" {
 		t.Fatalf("launcher node = %+v", n)
+	}
+	if n.ImageW != launcherMarkHeight || n.ImageH != launcherMarkHeight {
+		t.Fatalf("launcher box = %dx%d, want %dx%d", n.ImageW, n.ImageH, launcherMarkHeight, launcherMarkHeight)
+	}
+	if n.Gradient.Motion != ui.GradientLoop {
+		t.Fatalf("launcher gradient motion = %v, want the wordmark's looping ramp", n.Gradient.Motion)
+	}
+	if n.Action != panelLauncherAction || n.Name != "Open launcher" || n.Role != "button" {
+		t.Fatalf("launcher identity = %+v", n)
 	}
 }
 
@@ -250,7 +270,10 @@ func TestApplyWritesThroughToTheInnerNode(t *testing.T) {
 	var found bool
 	for _, section := range b.widgets() {
 		for _, w := range section {
-			if w.inner != nil && w.inner.Kind == ui.KindText && w.inner.Text != "" {
+			if w.inner == nil {
+				continue
+			}
+			if nodeText(w.inner) != "" {
 				found = true
 				if w.node.Text != "" {
 					t.Errorf("text landed on the capsule, not the inner node: %q", w.node.Text)
