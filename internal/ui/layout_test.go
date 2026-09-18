@@ -497,6 +497,20 @@ func TestEmptyCapsuleWithWidthIsASquareDot(t *testing.T) {
 	}
 }
 
+func TestEmptyCapsuleHonoursAnExplicitHeight(t *testing.T) {
+	t.Parallel()
+	root := &Node{Kind: KindRow, Padding: 0, Children: []*Node{{
+		Kind: KindCapsule, Width: 40, Height: 20,
+	}}}
+	if err := Layout(root, Rect{W: 400, H: 40}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	got := root.Children[0].Bounds
+	if got.W != 40 || got.H != 20 {
+		t.Fatalf("pill bounds = %+v, want 40x20", got)
+	}
+}
+
 // A capsule with children ignores its Width and measures to its content, which
 // is what a bar pill wants. A grid cell needs the opposite: an explicit width
 // so two cards share a row evenly.

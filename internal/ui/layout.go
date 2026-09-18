@@ -461,12 +461,17 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		}
 		return w, h, nil
 	case KindCapsule:
-		// An empty capsule is a dot: square, sized by Width.
+		// An empty capsule is a dot: square, sized by Width. An explicit
+		// height overrides the square, so a wider pill can stay glyph-height.
 		if len(n.Children) == 0 {
 			if n.Width <= 0 {
 				return 0, 0, nil
 			}
-			return n.Width, n.Width, nil
+			h := n.Width
+			if n.Height > 0 {
+				h = n.Height
+			}
+			return n.Width, h, nil
 		}
 		if len(n.Children) != 1 {
 			return 0, 0, fmt.Errorf("capsule has %d children, want one", len(n.Children))
