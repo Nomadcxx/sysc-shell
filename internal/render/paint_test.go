@@ -2091,3 +2091,42 @@ func TestTextColorResolvesTheSubtleToken(t *testing.T) {
 		t.Fatalf("normal text colour = %v, want the foreground", got)
 	}
 }
+
+// sysc-330. paintMenu drew every child with paintText, because until the
+// picker arrived every child was a row of label text. A filter well is a
+// child of a different kind, and drawing it as text would have left the
+// search glyph, the well and the caret unpainted while layout still reserved
+// the space for them — the same defect shape as a chip that measured as a
+// button and painted as an empty pill.
+func TestPaintMenuDrawsANestedFieldAsAField(t *testing.T) {
+	c := newTestCanvas(t, 120, 60)
+	fillRect(c, ui.Rect{W: 120, H: 60}, Color{R: 0, G: 0, B: 0, A: 0xff})
+
+	menu := &ui.Node{
+		Kind: ui.KindMenu, Text: "Inter Variable", Role: "combobox",
+		Bounds: ui.Rect{X: 0, Y: 0, W: 120, H: 60},
+		Children: []*ui.Node{
+			// The well, carrying no selection of its own.
+			{Kind: ui.KindTextField, Name: "Search", Bounds: ui.Rect{X: 0, Y: 20, W: 120, H: 20}},
+			{Kind: ui.KindText, Text: "Inter Variable", Bounds: ui.Rect{X: 0, Y: 40, W: 120, H: 20}},
+		},
+	}
+	if err := paintNode(c, menu, nil, testStyle, testStyle.Size); err != nil {
+		t.Fatalf("paintNode: %v", err)
+	}
+
+	// paintTextField strokes the control's outline around the well. Nothing
+	// on the plain-text path draws that token anywhere.
+	want := testStyle.Outline
+	found := false
+	for x := range 120 {
+		for y := 20; y < 40; y++ {
+			if pixelAt(t, c, x, y) == want {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("the filter well drew no outline, so it was painted as text rather than as a field")
+	}
+}

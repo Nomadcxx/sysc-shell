@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/go-text/typesetting/font"
+	"github.com/go-text/typesetting/font/opentype"
 	"github.com/go-text/typesetting/fontscan"
 
 	"github.com/Nomadcxx/sysc-shell/internal/render"
@@ -399,7 +401,8 @@ func settingsControl(h *PanelHost, e settings.Entry, width int) *ui.Node {
 			Action: action, Width: width, Focusable: true, Name: e.Label, Role: "slider",
 		}
 	case settings.KindFont:
-		return settingsMenuControl(h, e, settingsFontFamilies(), raw, width)
+		options, values := settingsFontOptions(e)
+		return settingsPickerControl(h, e, options, values, raw, width)
 	case settings.KindPath:
 		// The field gives up exactly what the browse button takes. This used
 		// to reserve the reset control's width instead, which is a different
@@ -454,21 +457,34 @@ func settingsStepper(e settings.Entry, value int) *ui.Node {
 }
 
 func settingsMenuControl(h *PanelHost, e settings.Entry, options []string, raw string, width int) *ui.Node {
-	idx := 0
-	for i, o := range options {
-		if o == raw {
-			idx = i
-			break
-		}
-	}
+	return settingsPickerControl(h, e, options, nil, raw, width)
+}
+
+// settingsMenuLimit is the point past which a list stops being readable whole
+// and becomes something to search. An enum's vocabulary never approaches it;
+// the font list passes it on any machine with fonts installed.
+const settingsMenuLimit = 12
+
+// settingsPickerControl renders one menu, filtered when its list is long
+// enough to need it. values may be nil, in which case each option writes
+// itself.
+func settingsPickerControl(h *PanelHost, e settings.Entry, options, values []string, raw string, width int) *ui.Node {
+	idx := settingsOptionIndex(options, values, raw)
 	if h.menus == nil {
 		h.menus = map[string]*Menu{}
 	}
 	m := h.menus[e.Path]
 	if m == nil || !m.Opened() {
-		m = NewMenu(options, idx)
+		if len(options) > settingsMenuLimit {
+			m = NewPicker(options, values, idx)
+		} else {
+			m = newMenu(options, values, idx, false)
+		}
 		h.menus[e.Path] = m
 	}
+	// Reassigned on every build rather than at construction: the ladder moves
+	// when the density does, and a retained menu outlives that change.
+	m.filterHeight = h.metrics().InputHeight
 	n := m.Node()
 	n.Action = "set:" + e.Path
 	n.Name = e.Label
@@ -476,6 +492,33 @@ func settingsMenuControl(h *PanelHost, e settings.Entry, options []string, raw s
 		n.Width = width
 	}
 	return n
+}
+
+// settingsOptionIndex finds the row the stored value sits on. A font family
+// is compared normalized when nothing matches outright: a configuration
+// written before the picker offered descriptive names carries "dejavusans"
+// for the row now drawn as "DejaVu Sans", and showing the first row instead
+// would claim the user had chosen something they had not.
+func settingsOptionIndex(options, values []string, raw string) int {
+	against := options
+	if len(values) > 0 {
+		against = values
+	}
+	for i, v := range against {
+		if v == raw {
+			return i
+		}
+	}
+	if raw == "" {
+		return 0
+	}
+	want := font.NormalizeFamily(raw)
+	for i, v := range against {
+		if v != "" && font.NormalizeFamily(v) == want {
+			return i
+		}
+	}
+	return 0
 }
 
 func settingsField(h *PanelHost, e settings.Entry, raw string, width int) *ui.Node {
@@ -509,9 +552,18 @@ func settingsValidHex(v string) bool { return config.ValidColor(strings.TrimSpac
 // reads the disk, so it is not something a tree build can afford to repeat.
 //
 // Footprint.Family is stored normalized — "dejavusans", not "DejaVu Sans" —
-// so these are the normalized names. Deriving a display form is its own
-// decision; presenting them as they are is honest, and pretending they arrive
-// pretty would be wrong.
+// which is not a name to show anyone, and title-casing it cannot recover the
+// word boundaries it dropped. The font's own name table is the only honest
+// source, so each family's first file is opened for its metadata: the
+// container loads without parsing coverage tables, which is what makes this
+// affordable. Measured here over 345 families: 21ms to scan, 10ms to name.
+// A full font.ParseTTF of the same files costs 623ms, and buys nothing this
+// needs.
+//
+// The value written is the descriptive name, matching theme.DefaultFontFamily
+// ("Inter Variable"), which is what the rest of the configuration already
+// carries. A font whose metadata will not read keeps its normalized name
+// rather than dropping out of the list.
 var settingsFontFamilies = sync.OnceValue(func() []string {
 	fonts, err := fontscan.SystemFonts(nil, render.DefaultFontCacheDir())
 	if err != nil {
@@ -519,16 +571,64 @@ var settingsFontFamilies = sync.OnceValue(func() []string {
 	}
 	seen := map[string]bool{}
 	var out []string
+	var buf []byte
 	for _, f := range fonts {
 		if f.Family == "" || seen[f.Family] {
 			continue
 		}
 		seen[f.Family] = true
-		out = append(out, f.Family)
+		name := f.Family
+		if described, rest := settingsFontName(f.Location.File, buf); described != "" {
+			name, buf = described, rest
+		}
+		out = append(out, name)
 	}
-	sort.Strings(out)
+	sort.Slice(out, func(i, j int) bool {
+		a, b := strings.ToLower(out[i]), strings.ToLower(out[j])
+		if a == b {
+			return out[i] < out[j]
+		}
+		return a < b
+	})
 	return out
 })
+
+// settingsFontName reads one font file's descriptive family. It returns the
+// scratch buffer back so a run over several hundred files reuses one
+// allocation, which is the shape font.Describe is built for.
+func settingsFontName(path string, buf []byte) (string, []byte) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", buf
+	}
+	defer f.Close()
+	ld, err := opentype.NewLoader(f)
+	if err != nil {
+		return "", buf
+	}
+	desc, rest := font.Describe(ld, buf)
+	return strings.TrimSpace(desc.Family), rest
+}
+
+// settingsFontOptions is the font picker's vocabulary: every scanned family,
+// behind the entry's own row for the empty value where it declares one. A
+// field could always be cleared; a menu can only offer what it draws, and it
+// must not offer an empty the loader will refuse — the appearance families
+// have no empty state, and the bar's is "follow the appearance font".
+func settingsFontOptions(e settings.Entry) (options, values []string) {
+	families := settingsFontFamilies()
+	options = make([]string, 0, len(families)+1)
+	values = make([]string, 0, len(families)+1)
+	if e.EmptyLabel != "" {
+		options = append(options, e.EmptyLabel)
+		values = append(values, "")
+	}
+	for _, f := range families {
+		options = append(options, f)
+		values = append(values, f)
+	}
+	return options, values
+}
 
 // settingsBrowseOptions lists where a path setting can go from where it is:
 // the directories inside it, and the one above it. os.ReadDir is the whole

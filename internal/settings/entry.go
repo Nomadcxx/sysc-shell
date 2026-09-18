@@ -38,7 +38,14 @@ type Entry struct {
 	Group    string
 	Kind     Kind
 	Options  []string
-	Min, Max int
+	// EmptyLabel names the row a picker offers for the empty value, and is
+	// set only where empty is a state the setting can actually hold. Most
+	// cannot: the loader refuses an empty appearance font family, so a picker
+	// offering the row would write a configuration the shell then declines to
+	// start from. A text field could always be cleared, so this is what a menu
+	// has to carry in its place.
+	EmptyLabel string
+	Min, Max   int
 
 	Get Getter
 	Set Setter

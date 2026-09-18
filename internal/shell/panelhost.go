@@ -1314,6 +1314,18 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 	if h.menu != nil && h.menu.Opened() {
 		if !h.menu.Handle(key) {
+			// A picker's well takes the keys the menu itself does not: the
+			// text of a family name, and the backspace that corrects it.
+			// editField routes both, so IME composition reaches the same
+			// place a keystroke does.
+			if h.menu.Filtering() {
+				if key == keyBackspace {
+					return h.editField(r, func(f *ui.Field) { f.Backspace() })
+				}
+				if ch, ok := ui.EvdevText(key, h.shift); ok {
+					return h.editField(r, func(f *ui.Field) { f.Insert(ch) })
+				}
+			}
 			return false
 		}
 		if !h.menu.Opened() && key != keyEsc {
@@ -1550,6 +1562,17 @@ func (h *PanelHost) applyIME(r *Registry, e wayland.Event) bool {
 	})
 }
 
+// pressMenuFilter answers a press inside an open picker that landed on its
+// filter well rather than on an option. The menu stays open and the well keeps
+// the caret; letting the press fall through would close the menu on the value
+// the cursor happened to rest on, so aiming at the well would commit a choice.
+// A press on the well's clear glyph never reaches here: searchClearPress takes
+// it on the press, before this runs on the release.
+func (h *PanelHost) pressMenuFilter(r *Registry) bool {
+	r.rebuildPanel(h)
+	return true
+}
+
 // searchClearPress empties a search well when the press lands on the trailing
 // clear glyph paintTextField draws in it. It is here rather than in one
 // panel's own handler because the glyph is painted by shared chrome: the
@@ -1589,6 +1612,16 @@ func searchClearAt(n *ui.Node, x, y int) *ui.Node {
 }
 
 func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
+	// An open picker owns text entry for as long as it is open. Its well is
+	// deliberately not focusable — the menu node takes the presses — so it is
+	// answered for here rather than through the focused node.
+	if h.menu.Filtering() && h.menu.Opened() {
+		if !h.menu.Edit(fn) {
+			return false
+		}
+		r.rebuildPanel(h)
+		return true
+	}
 	n := h.focused()
 	if n == nil || n.Kind != ui.KindTextField {
 		return false
@@ -1766,7 +1799,11 @@ func (h *PanelHost) activate(r *Registry) bool {
 					r.rebuildPanel(h)
 					return true
 				}
-				m.PickAt(n, h.hoverX, h.hoverY)
+				if !m.PickAt(n, h.hoverX, h.hoverY) {
+					// A press inside the popup that is not on an option: the
+					// filter well. Keep the menu open and let the well take it.
+					return h.pressMenuFilter(r)
+				}
 				m.Select()
 				n.Text = m.Value()
 				return r.handlePluginManager(h, n)
@@ -1803,7 +1840,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 				r.rebuildPanel(h)
 				return true
 			}
-			m.PickAt(n, h.hoverX, h.hoverY)
+			if !m.PickAt(n, h.hoverX, h.hoverY) {
+				return h.pressMenuFilter(r)
+			}
 			m.Select()
 			h.applyMenu(r, path)
 			r.rebuildPanel(h)

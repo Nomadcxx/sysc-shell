@@ -657,3 +657,77 @@ func TestTheCommaSeparatedItemEntriesAreRetired(t *testing.T) {
 		t.Error("the Bar section is empty")
 	}
 }
+
+// KindFont is the enumerating control: the surface offers the families it
+// scanned. It was declared on weather.city, weather.latitude and
+// weather.longitude, and the three settings that actually name a font were
+// left as plain strings, so the Place group offered a list of typefaces to
+// answer "which city" and a font had to be typed from memory. Kind is a
+// presentation choice, which is exactly why nothing else caught it: every
+// setter still validated, so both halves round-tripped while the surface was
+// unusable.
+func TestFontKindIsDeclaredOnTheSettingsThatNameAFont(t *testing.T) {
+	t.Parallel()
+	r := Default()
+	for _, path := range []string{
+		"bar.font-family", "appearance.font-family", "appearance.mono-font-family",
+	} {
+		e := r.ByPath(path)
+		if e == nil {
+			t.Errorf("%s is not registered", path)
+			continue
+		}
+		if e.Kind != KindFont {
+			t.Errorf("%s has kind %d, want KindFont so the surface can enumerate families", path, e.Kind)
+		}
+	}
+	for _, path := range []string{
+		"weather.city", "weather.latitude", "weather.longitude",
+	} {
+		e := r.ByPath(path)
+		if e == nil {
+			t.Errorf("%s is not registered", path)
+			continue
+		}
+		if e.Kind == KindFont {
+			t.Errorf("%s has kind KindFont, so the surface offers font families for a place", path)
+		}
+	}
+}
+
+// An entry that declares an empty row is promising the surface that empty is
+// a state the setting can hold. The appearance font families cannot hold it —
+// the loader refuses an empty family — so a picker offering the row there
+// would write a configuration the shell then declines to start from. This is
+// the same round trip the enum options go through, for the same reason.
+func TestEveryDeclaredEmptyValueSurvivesTheLoader(t *testing.T) {
+	t.Parallel()
+	base := config.Default()
+	declared := 0
+	for _, e := range DefaultFor(base).entries {
+		if e.EmptyLabel == "" {
+			continue
+		}
+		declared++
+		t.Run(e.Path, func(t *testing.T) {
+			cfg := base
+			if err := e.Set(&cfg, ""); err != nil {
+				t.Fatalf("set empty: %v", err)
+			}
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := config.Write(path, cfg); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			back, err := config.Load(path)
+			if err != nil {
+				t.Fatalf("the shell refuses the empty this entry offers: %v", err)
+			}
+			if got := e.Get(back); got != "" {
+				t.Errorf("empty round-tripped as %q; the row would not stay selected", got)
+			}
+		})
+	}
+	if declared == 0 {
+		t.Skip("no entry declares an empty row")
+	}
+}

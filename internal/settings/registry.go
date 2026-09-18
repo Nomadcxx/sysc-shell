@@ -65,10 +65,11 @@ func DefaultFor(cfg config.Config) *Registry {
 		},
 		{
 			Path: "bar.font-family", Label: "Font family", Section: "Bar", Group: "Typography",
-			Describe: "Font the bar's widgets use. Empty follows the appearance font.",
-			Kind:     KindString,
-			Get:      func(c config.Config) string { return c.Bar.FontFamily },
-			Set:      setString(func(c *config.Config, v string) { c.Bar.FontFamily = v }),
+			Describe:   "Font the bar's widgets use. Empty follows the appearance font.",
+			Kind:       KindFont,
+			EmptyLabel: "Follow the appearance font",
+			Get:        func(c config.Config) string { return c.Bar.FontFamily },
+			Set:        setString(func(c *config.Config, v string) { c.Bar.FontFamily = v }),
 		},
 		{
 			Path: "bar.font-size", Label: "Font size", Section: "Bar", Group: "Typography",
@@ -158,14 +159,14 @@ func DefaultFor(cfg config.Config) *Registry {
 		{
 			Path: "appearance.font-family", Label: "Font family", Section: "Appearance", Group: "Typography",
 			Describe: "Font for interface text.",
-			Kind:     KindString,
+			Kind:     KindFont,
 			Get:      func(c config.Config) string { return c.Theme.FontFamily },
 			Set:      setString(func(c *config.Config, v string) { c.Theme.FontFamily = v }),
 		},
 		{
 			Path: "appearance.mono-font-family", Label: "Mono font family", Section: "Appearance", Group: "Typography",
 			Describe: "Font for fixed-width text.",
-			Kind:     KindString,
+			Kind:     KindFont,
 			Get:      func(c config.Config) string { return c.Theme.MonoFontFamily },
 			Set:      setString(func(c *config.Config, v string) { c.Theme.MonoFontFamily = v }),
 		},
@@ -316,7 +317,7 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, b bool) { c.Accessibility.HighContrast = b }),
 		},
 		{
-			Path: "weather.city", Label: "City", Section: "Weather", Group: "Place", Kind: KindFont,
+			Path: "weather.city", Label: "City", Section: "Weather", Group: "Place", Kind: KindString,
 			Describe: "Place name the forecast service geocodes. Setting it clears the coordinates.",
 			Get:      func(c config.Config) string { return c.Weather.City },
 			Set: setPlaceLabel("weather.city", func(c *config.Config, v string) {
@@ -332,7 +333,7 @@ func DefaultFor(cfg config.Config) *Registry {
 			}),
 		},
 		{
-			Path: "weather.latitude", Label: "Latitude", Section: "Weather", Group: "Place", Kind: KindFont,
+			Path: "weather.latitude", Label: "Latitude", Section: "Weather", Group: "Place", Kind: KindString,
 			Describe: "Degrees north, -90 through 90. Setting it clears the city.",
 			Get:      getFloat(func(c config.Config) float64 { return c.Weather.Latitude }),
 			Set: setFloat("weather.latitude", -90, 90, func(c *config.Config, f float64) {
@@ -342,7 +343,7 @@ func DefaultFor(cfg config.Config) *Registry {
 			}),
 		},
 		{
-			Path: "weather.longitude", Label: "Longitude", Section: "Weather", Group: "Place", Kind: KindFont,
+			Path: "weather.longitude", Label: "Longitude", Section: "Weather", Group: "Place", Kind: KindString,
 			Describe: "Degrees east, -180 through 180. Setting it clears the city.",
 			Get:      getFloat(func(c config.Config) float64 { return c.Weather.Longitude }),
 			Set: setFloat("weather.longitude", -180, 180, func(c *config.Config, f float64) {

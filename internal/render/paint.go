@@ -351,8 +351,7 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 		return nil
 
 	case ui.KindMenu:
-		paintMenu(c, n, text, style, size)
-		return nil
+		return paintMenu(c, n, text, style, size)
 
 	case ui.KindTextField:
 		return paintTextField(c, n, text, style, size)
@@ -538,7 +537,7 @@ func paintSlider(c *Canvas, n *ui.Node, style Style) {
 	c.FillRounded(ui.Rect{X: kx, Y: box.Y + (box.H-knob)/2, W: knob, H: knob}, knob/2, style.accent())
 }
 
-func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) {
+func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
 	box := style.Scale120.PhysicalRect(n.Bounds)
 	field := box
 	if len(n.Children) > 0 {
@@ -550,7 +549,7 @@ func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 	c.FillRounded(field, style.Scale120.Physical(6), style.Track)
 	_ = paintText(c, n.Text, field, text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline)
 	if len(n.Children) == 0 {
-		return
+		return nil
 	}
 	last := style.Scale120.PhysicalRect(n.Children[len(n.Children)-1].Bounds)
 	list := ui.Rect{X: box.X, Y: field.Y + field.H, W: box.W, H: last.Y + last.H - (field.Y + field.H)}
@@ -559,12 +558,23 @@ func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 	}
 	c.FillRounded(list, style.Scale120.Physical(6), style.Background)
 	for _, child := range n.Children {
+		// An option is a run of label text, and drawing it here rather than
+		// through paintNode keeps the list one pass. A picker's filter well
+		// is not an option: it owns chrome of its own, so it goes back through
+		// the node painter that knows how to draw it.
+		if child.Kind != ui.KindText {
+			if err := paintNode(c, child, text, style, size); err != nil {
+				return err
+			}
+			continue
+		}
 		cb := style.Scale120.PhysicalRect(child.Bounds)
 		if child.Value != 0 {
 			c.FillRounded(cb, style.Scale120.Physical(4), style.accent())
 		}
 		_ = paintText(c, child.Text, cb, text, style, textSpec(style, child), child.Tabular, child.Tone, child.Underline)
 	}
+	return nil
 }
 
 func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {

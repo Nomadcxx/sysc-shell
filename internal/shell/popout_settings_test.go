@@ -593,8 +593,89 @@ func TestFontPickerListsDeduplicatedFamilies(t *testing.T) {
 		}
 		seen[f] = true
 	}
-	if !slices.IsSorted(families) {
+	// The order is what a reader scans, so it is case-insensitive: a
+	// byte-wise sort files "cursive" after every capitalised name, which
+	// reads as no order at all.
+	if !slices.IsSortedFunc(families, func(a, b string) int {
+		if la, lb := strings.ToLower(a), strings.ToLower(b); la != lb {
+			return strings.Compare(la, lb)
+		}
+		return strings.Compare(a, b)
+	}) {
 		t.Error("families are not sorted, so the picker reorders itself between builds")
+	}
+	// sysc-332. Footprint.Family is normalized; a name table is not. If every
+	// family on a machine with real fonts installed is still lower case with
+	// no spaces, the descriptive name is not being read.
+	descriptive := 0
+	for _, f := range families {
+		if f != strings.ToLower(f) || strings.Contains(f, " ") {
+			descriptive++
+		}
+	}
+	if len(families) > 8 && descriptive == 0 {
+		t.Errorf("all %d families are normalized; the picker is showing dejavusans rather than DejaVu Sans", len(families))
+	}
+}
+
+// sysc-332 and sysc-330 together. The picker draws a descriptive name and
+// writes one the configuration can carry, and every row it offers has to
+// survive the loader — the round trip that found three defects in A.
+func TestFontPickerRoundTripsEveryRowItOffers(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	r := settings.DefaultFor(cfg)
+	for _, path := range []string{"appearance.font-family", "appearance.mono-font-family", "bar.font-family"} {
+		e := r.ByPath(path)
+		if e == nil {
+			t.Fatalf("%s is not registered", path)
+		}
+		if e.Kind != settings.KindFont {
+			t.Errorf("%s is kind %d, want KindFont", path, e.Kind)
+		}
+		options, values := settingsFontOptions(*e)
+		if len(options) != len(values) {
+			t.Fatalf("%s: %d options against %d values; a row would write the wrong family", path, len(options), len(values))
+		}
+		if len(options) == 0 {
+			t.Fatalf("%s: no options at all", path)
+		}
+		// The empty row exists exactly where the entry declares one, and it
+		// is the first row when it does.
+		if (values[0] == "") != (e.EmptyLabel != "") {
+			t.Errorf("%s: first row writes %q against EmptyLabel %q", path, values[0], e.EmptyLabel)
+		}
+		for _, v := range values {
+			c := cfg
+			if err := e.Set(&c, v); err != nil {
+				t.Fatalf("%s = %q: %v", path, v, err)
+			}
+			file := filepath.Join(t.TempDir(), "config.json")
+			if err := config.Write(file, c); err != nil {
+				t.Fatalf("%s = %q: write: %v", path, v, err)
+			}
+			if _, err := config.Load(file); err != nil {
+				t.Fatalf("%s = %q: the picker offered a value the loader refuses: %v", path, v, err)
+			}
+		}
+	}
+}
+
+// A configuration written before the picker showed descriptive names carries
+// the normalized form. The row it names has to stay selected, or opening the
+// pane silently claims the user chose whatever sorts first.
+func TestTheFontPickerFindsARowForANormalizedValue(t *testing.T) {
+	t.Parallel()
+	options := []string{"Default", "DejaVu Sans", "Inter Variable"}
+	values := []string{"", "DejaVu Sans", "Inter Variable"}
+	if got := settingsOptionIndex(options, values, "intervariable"); got != 2 {
+		t.Errorf("index for the normalized name = %d, want 2", got)
+	}
+	if got := settingsOptionIndex(options, values, "Inter Variable"); got != 2 {
+		t.Errorf("index for the descriptive name = %d, want 2", got)
+	}
+	if got := settingsOptionIndex(options, values, ""); got != 0 {
+		t.Errorf("index for the empty value = %d, want the Default row", got)
 	}
 }
 
@@ -868,5 +949,78 @@ func TestNaturalSizedControlsDoNotFillTheColumn(t *testing.T) {
 	}
 	if column >= body {
 		t.Errorf("control column %d is not narrower than the body %d", column, body)
+	}
+}
+
+// An open picker must stay a control, not become a column as tall as the
+// font list. The pane lays out inside a bounded surface, and a menu whose
+// open height is one row per family does not fit in it — layout refuses the
+// tree, rebuildPanel takes the error, and the pane paints nothing.
+func TestAnOpenFontPickerFitsThePane(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.section = "Appearance"
+	h.root = settingsTree(nil, h)
+
+	var menu *ui.Node
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil || menu != nil {
+			return
+		}
+		if n.Kind == ui.KindMenu && n.Action == "set:appearance.font-family" {
+			menu = n
+			return
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(h.root)
+	if menu == nil {
+		t.Fatal("the Appearance section has no font family menu")
+	}
+	m := h.menus["appearance.font-family"]
+	if m == nil {
+		t.Fatal("no retained menu for the font family entry")
+	}
+	if !m.Filtering() {
+		t.Skip("this machine has fewer fonts than the picker threshold")
+	}
+	m.Open()
+	h.root = settingsTree(nil, h)
+
+	size := panelTargetSize(PanelSettings)
+	err := ui.LayoutColumn(h.root, ui.Rect{W: size.W, H: size.H}, func(s string, _ ui.TextAttrs) (int, int) {
+		return len(s) * 8, 16
+	})
+	if err != nil {
+		t.Fatalf("an open font picker does not lay out: %v", err)
+	}
+}
+
+// The filter well takes the ladder's input height. Measured from its own text
+// it is exactly one line tall, which reads as a rule across the list rather
+// than as something to type into.
+func TestTheFilterWellTakesTheLadderHeight(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	e := h.set.ByPath("bar.font-family")
+	if e == nil {
+		t.Fatal("bar.font-family is not registered")
+	}
+	options, values := settingsFontOptions(*e)
+	if len(options) <= settingsMenuLimit {
+		t.Skip("this machine has too few fonts for the picker")
+	}
+	settingsPickerControl(h, *e, options, values, "", 200)
+	m := h.menus["bar.font-family"]
+	m.Open()
+	n := settingsPickerControl(h, *e, options, values, "", 200)
+	if len(n.Children) == 0 {
+		t.Fatal("the open picker drew nothing")
+	}
+	if got, want := n.Children[0].Height, h.metrics().InputHeight; got != want {
+		t.Errorf("filter well height = %d, want the ladder's %d", got, want)
 	}
 }
