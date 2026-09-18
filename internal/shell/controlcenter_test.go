@@ -229,8 +229,8 @@ func TestControlCentreRailKeepsDisabledDestinationsAddressable(t *testing.T) {
 			entries = append(entries, n)
 		}
 	}
-	if len(entries) != 10 {
-		t.Fatalf("rail has %d entries, want 10", len(entries))
+	if len(entries) != len(ccSections) {
+		t.Fatalf("rail has %d entries, want one per section (%d)", len(entries), len(ccSections))
 	}
 	if entries[0].Name != "Home" || !entries[0].State.Has(ui.StateSelected) {
 		t.Errorf("first entry = %+v, want selected Home", entries[0])
@@ -245,8 +245,9 @@ func TestControlCentreRailKeepsDisabledDestinationsAddressable(t *testing.T) {
 		!network.Focusable || !network.State.Has(ui.StateDisabled) {
 		t.Errorf("disabled Network entry = %+v", network)
 	}
-	if got := len(ui.Focusables(rail)); got != 10 {
-		t.Errorf("focusable rail entries = %d, want all 10 including unavailable destinations", got)
+	if got := len(ui.Focusables(rail)); got != len(ccSections) {
+		t.Errorf("focusable rail entries = %d, want all %d including unavailable destinations",
+			got, len(ccSections))
 	}
 }
 
@@ -1322,5 +1323,44 @@ func TestTheWeatherPageUsesTheNightGlyph(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("a night reading rendered %q, want clear-night", icons)
+	}
+}
+
+// TestControlCentreSettingsPageLinksIntoThePanel is D7: the standalone panel
+// stays the complete surface and the centre gets a shortcut. The centre's body
+// is roughly 480 logical pixels once the rail takes its 56, so rendering one
+// settings tree into both would size-constrain every future section for no
+// gain.
+func TestControlCentreSettingsPageLinksIntoThePanel(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelControlCenter]
+	if _, ok := ccSectionFor("settings"); !ok {
+		reg.mu.Unlock()
+		t.Fatal("the rail has no settings destination")
+	}
+	h.section = "settings"
+	reg.rebuildPanel(h)
+	link := byAction(h.root, "settings-section:Wallpaper")
+	if link == nil {
+		reg.mu.Unlock()
+		t.Fatal("the settings page carries no link to the Wallpaper section")
+	}
+	h.setFocus(link)
+	h.activate(reg)
+	settingsHost := reg.panelHosts[PanelSettings]
+	reg.mu.Unlock()
+
+	if settingsHost == nil {
+		t.Fatal("the link did not open the settings panel")
+	}
+	if settingsHost.section != "Wallpaper" {
+		t.Fatalf("settings opened at %q, want the requested section", settingsHost.section)
 	}
 }

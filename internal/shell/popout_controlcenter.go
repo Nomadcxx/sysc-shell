@@ -39,6 +39,7 @@ var ccSections = []ccSection{
 	{ID: "weather", Label: "Weather", Icon: "cloud", Enabled: true},
 	{ID: "calendar", Label: "Calendar", Icon: "calendar_month", Enabled: true},
 	{ID: "notifications", Label: "Notifications", Icon: "notifications", Enabled: true},
+	{ID: "settings", Label: "Settings", Icon: "settings", Enabled: true},
 }
 
 func ccSectionFor(id string) (ccSection, bool) {
@@ -226,6 +227,8 @@ func ccPage(r *Registry, h *PanelHost) *ui.Node {
 		return bluetoothBody(r, h)
 	case "notifications":
 		return ccNotifications(r, h)
+	case "settings":
+		return ccSettings(h)
 	default:
 		return ccHome(r, h)
 	}
@@ -234,6 +237,9 @@ func ccPage(r *Registry, h *PanelHost) *ui.Node {
 func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 	if n == nil || h.id != PanelControlCenter {
 		return false
+	}
+	if requested, ok := strings.CutPrefix(n.Action, "settings-section:"); ok {
+		return r.openSettingsAtLocked(h.output, requested)
 	}
 	if strings.HasPrefix(n.Action, "media:") {
 		return h.activateMedia(r, n)

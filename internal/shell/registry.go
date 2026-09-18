@@ -20,6 +20,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/theming"
 	"github.com/Nomadcxx/sysc-shell/internal/trayclient"
@@ -78,10 +79,13 @@ type Registry struct {
 	// roots is the one interactive root the process allows at a time.
 	roots rootChain
 	// closed unblocks a pending publish at shutdown.
-	closed               chan struct{}
-	closeOnce            sync.Once
-	dwell                *dwell
-	configPath           string
+	closed     chan struct{}
+	closeOnce  sync.Once
+	dwell      *dwell
+	configPath string
+	// writeDelay is how long a stream of edits settles before it reaches the
+	// file. Zero takes settingsWriteDelay; tests shorten it.
+	writeDelay           time.Duration
 	reloads              chan<- struct{}
 	audio                *services.Audio
 	brightness           *services.Brightness
@@ -1236,6 +1240,15 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 					bar.apply(r.viewLocked(bar.connector()))
 				}
 				r.cfg = cfg
+				// An open settings panel holds its own draft, and a change
+				// arriving from outside it would otherwise be reverted by the
+				// next control write, which puts that draft back whole. The
+				// registry is rebuilt with it because an entry's options can
+				// depend on another setting.
+				if h := r.panelHosts[PanelSettings]; h != nil {
+					h.draft = cfg
+					h.set = settings.DefaultFor(cfg)
+				}
 				media = r.media
 				r.tokens = tok
 				r.themeErr = ""

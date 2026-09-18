@@ -19,30 +19,35 @@ func TestAcceptSettingsConfiguresBarLive(t *testing.T) {
 	reloads := make(chan struct{}, 1)
 	reg := newPanelRegistry(t)
 	reg.BindPersist(p, reloads)
+	// The slider settles before it writes, rather than writing per pixel of
+	// travel. The acceptance is still that it reaches the file live.
+	reg.writeDelay = 5 * time.Millisecond
 	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
 		t.Fatal(err)
 	}
 	reqs := drainAux(t, reg, 2)
 	handle := reqs[1].Open.Callbacks.Handle
 	h := reg.panelHosts[PanelSettings]
-	for i := 0; i < 40 && (h.focused() == nil || h.focused().Name != "Height"); i++ {
-		handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyTab})
-	}
+	// Focus the slider by name rather than counting tabs. The Bar section now
+	// carries the lane editor above its geometry rows, so the slider sits well
+	// past any fixed tab budget; what this gate is about is the slider reaching
+	// the file live, not how far into the focus order it happens to be.
+	h.focusByName("Height")
 	if h.focused() == nil || h.focused().Kind != ui.KindSlider || h.focused().Name != "Height" {
 		t.Fatal("did not reach the bar height slider")
 	}
 	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyRight})
+	select {
+	case <-reloads:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the settled slider never signalled a reload")
+	}
 	got, err := config.Load(p)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.Bar.Height == config.Default().Bar.Height {
 		t.Fatal("slider did not persist a new bar height")
-	}
-	select {
-	case <-reloads:
-	default:
-		t.Fatal("write did not signal reload")
 	}
 }
 
@@ -64,7 +69,7 @@ func TestAcceptKeyboardOnlyAllControls(t *testing.T) {
 	}
 	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyEsc})
 
-	for i := 0; i < 20 && (h.focused() == nil || h.focused().Kind != ui.KindToggle); i++ {
+	for i := 0; i < len(h.focus)+2 && (h.focused() == nil || h.focused().Kind != ui.KindToggle); i++ {
 		handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyTab})
 	}
 	if h.focused() == nil || h.focused().Kind != ui.KindToggle {
@@ -76,7 +81,7 @@ func TestAcceptKeyboardOnlyAllControls(t *testing.T) {
 		t.Fatal("space did not flip the focused toggle")
 	}
 
-	for i := 0; i < 20 && (h.focused() == nil || h.focused().Kind != ui.KindSlider); i++ {
+	for i := 0; i < len(h.focus)+2 && (h.focused() == nil || h.focused().Kind != ui.KindSlider); i++ {
 		handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyTab})
 	}
 	if h.focused() == nil || h.focused().Kind != ui.KindSlider {
@@ -88,7 +93,7 @@ func TestAcceptKeyboardOnlyAllControls(t *testing.T) {
 		t.Fatal("right did not move the slider")
 	}
 
-	for i := 0; i < 20 && (h.focused() == nil || h.focused().Kind != ui.KindMenu); i++ {
+	for i := 0; i < len(h.focus)+2 && (h.focused() == nil || h.focused().Kind != ui.KindMenu); i++ {
 		handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyTab})
 	}
 	if h.focused() == nil || h.focused().Kind != ui.KindMenu {
@@ -104,20 +109,16 @@ func TestAcceptKeyboardOnlyAllControls(t *testing.T) {
 	if s == nil {
 		t.Fatal("settings tree has no scroll area")
 	}
-	if s.Kind != ui.KindVirtualList {
-		t.Fatal("settings content is not a virtual list")
+	if s.Kind != ui.KindScroll {
+		t.Fatalf("settings content kind = %d, want a scroll column", s.Kind)
 	}
+	// The section is laid out whole, so there is no ItemHeight to synthesise:
+	// give the viewport a height shorter than its content and page it.
 	s.Bounds.H = 80
-	if s.ItemHeight <= 0 {
-		s.ItemHeight = 36
-	}
-	s.ContentH = s.ItemCount * s.ItemHeight
-	if s.ContentH < 800 {
-		s.ContentH = 800
-	}
+	s.ContentH = 800
 	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyPageDown})
 	if s.ScrollOffset == 0 {
-		t.Fatal("page down did not scroll the virtual list")
+		t.Fatal("page down did not scroll the section")
 	}
 }
 

@@ -50,7 +50,7 @@ type Library struct {
 func Scan(roots []string) *Library {
 	lib := &Library{dirs: map[string][]Entry{}}
 	for _, root := range roots {
-		abs, err := filepath.Abs(expandHome(root))
+		abs, err := filepath.Abs(ExpandHome(root))
 		if err != nil {
 			lib.note(err)
 			continue
@@ -181,10 +181,15 @@ func (l *Library) Parent(dir string) (string, bool) {
 	return parent, true
 }
 
-// expandHome resolves a leading ~ against the current user's home. The
+// ExpandHome resolves a leading ~ against the current user's home. The
 // configured directories keep the tilde literal so config.Default() stays
 // independent of the environment; this is where it is resolved.
-func expandHome(path string) string {
+//
+// It is exported because the settings pane's path browser opens these same
+// configured directories and has to resolve them the same way. A private copy
+// there would be a second rule, free to drift from the one the library
+// actually indexes by.
+func ExpandHome(path string) string {
 	if path != "~" && !strings.HasPrefix(path, "~/") {
 		return path
 	}

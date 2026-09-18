@@ -188,6 +188,14 @@ type wirePlugins struct {
 
 var colorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$`)
 
+// ValidColor reports whether v is a colour this package will accept. It is the
+// one rule: a setter that writes a colour, and a field that marks one valid as
+// it is typed, must agree with the loader, or a value marks itself good and is
+// then refused by the very write it was typed for. The value is matched as it
+// will be stored, so a caller that tolerates surrounding space trims before
+// asking rather than having the rule trim on its behalf.
+func ValidColor(v string) bool { return colorPattern.MatchString(v) }
+
 // DefaultPath is $XDG_CONFIG_HOME/sysc-shell/config.json.
 func DefaultPath() string {
 	base, err := os.UserConfigDir()
@@ -411,11 +419,22 @@ func consistentInstances(cfg Config) error {
 	check := func(b Bar, path string) error {
 		for _, section := range [][]Item{b.Left, b.Center, b.Right} {
 			for _, it := range flattenItems(section) {
-				if it.ID != "plugin" {
+				if it.Instance == "" {
 					continue
 				}
 				prev, seen := owner[it.Instance]
-				if seen && (prev.Plugin != it.Plugin || prev.Entry != it.Entry) {
+				switch {
+				case !seen:
+				case it.ID == "group" || prev.ID == "group":
+					// A group is a structural container, not a placement, so
+					// it has no equivalent of the shared-across-outputs case
+					// below. Two groups wearing one id is always ambiguous:
+					// nothing could say which one a drop or a dissolve meant.
+					return pathErr(path, "instance %q names more than one group", it.Instance)
+				case prev.ID != it.ID:
+					return pathErr(path, "instance %q names both a %s and a %s",
+						it.Instance, prev.ID, it.ID)
+				case it.ID == "plugin" && (prev.Plugin != it.Plugin || prev.Entry != it.Entry):
 					return pathErr(path, "instance %q names both %s/%s and %s/%s",
 						it.Instance, prev.Plugin, prev.Entry, it.Plugin, it.Entry)
 				}
@@ -650,11 +669,15 @@ func requireWeatherWhenUsed(cfg Config) error {
 func flattenItems(section []Item) []Item {
 	out := make([]Item, 0, len(section))
 	for _, item := range section {
+		// The group itself is yielded as well as its members. It used to be
+		// dropped, which meant consistentInstances had never seen a group and
+		// could not have caught a duplicate group id. Its other caller,
+		// requireWeatherWhenUsed, matches on item.ID == "weather" and is
+		// indifferent to the extra wrapper.
+		out = append(out, item)
 		if item.ID == "group" {
 			out = append(out, item.Items...)
-			continue
 		}
-		out = append(out, item)
 	}
 	return out
 }
@@ -833,13 +856,30 @@ func resolveItem(w wireItem, path string) (Item, error) {
 	for _, misplaced := range []struct {
 		name string
 		set  bool
-	}{{"plugin", w.Plugin != nil}, {"entry", w.Entry != nil}, {"instance", w.Instance != nil}} {
+	}{{"plugin", w.Plugin != nil}, {"entry", w.Entry != nil}} {
 		if misplaced.set {
 			return Item{}, pathErr(path+"."+misplaced.name,
 				"is accepted only on a plugin placement, not on %q", w.ID)
 		}
 	}
 	item := Item{ID: w.ID}
+
+	// An instance id is accepted on every item, including a group. It is what
+	// makes one widget addressable: without it two clocks on one bar are
+	// indistinguishable, and a per-widget option write reaches every widget of
+	// that type. Ids are minted lazily by whatever addresses the widget, so an
+	// absent one is the normal case and not a default to fill in. The rule is
+	// the placement's rule, so the vocabulary stays one vocabulary.
+	//
+	// Validated here so a malformed id is reported with the other field
+	// errors, but applied at the end -- see the assignment before the return.
+	var instance string
+	if w.Instance != nil {
+		if !v1.ValidEntryID(*w.Instance) {
+			return Item{}, pathErr(path+".instance", "%q is not an instance id", *w.Instance)
+		}
+		instance = *w.Instance
+	}
 
 	if w.Items != nil && w.ID != "group" {
 		return Item{}, pathErr(path+".items", "is accepted only on a group, not on %q", w.ID)
@@ -861,6 +901,7 @@ func resolveItem(w wireItem, path string) (Item, error) {
 			}
 			item.Items = append(item.Items, member)
 		}
+		item.Instance = instance
 		return item, nil
 	}
 
@@ -975,6 +1016,12 @@ func resolveItem(w wireItem, path string) (Item, error) {
 			item.WarnBelow = *w.WarnBelow
 		}
 	}
+	// Applied last, deliberately. The metric branch replaces the accumulated
+	// item wholesale with resolveMetric's own, so anything set before the
+	// switch is discarded for those seven ids -- which silently cost a nested
+	// cpu widget its id. Setting identity after the switch means a branch that
+	// rebuilds the item cannot drop it.
+	item.Instance = instance
 	return item, nil
 }
 

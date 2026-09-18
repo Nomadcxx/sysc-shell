@@ -102,7 +102,7 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 			if err := layoutCapsuleChild(child, measure); err != nil {
 				return fmt.Errorf("ui: child %d: %w", i, err)
 			}
-		case KindButton:
+		case KindButton, KindDragSource:
 			if w < 0 || h < 0 || h > content.H || x+w > content.X+content.W {
 				return fmt.Errorf("ui: child %d of kind %d does not fit in %dx%d", i, child.Kind, content.W, content.H)
 			}
@@ -486,11 +486,12 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 			return 0, 0, nil
 		}
 		return w + 2*n.Padding, contentHeight, nil
-	case KindButton:
+	// A drag source measures exactly as a button does, including composing
+	// children. render.paint already draws the two through one path; measuring
+	// them differently left a drag source able to carry children that were
+	// never given a box, which is an invisible control rather than an error.
+	case KindButton, KindDragSource:
 		return measureButton(n, measure)
-	case KindDragSource:
-		w, h := measure(n.Text, TextAttrsOf(n))
-		return w + 2*n.Padding, h + 2*n.Padding, nil
 	case KindIcon:
 		size := IconSize(n)
 		return size, size, nil

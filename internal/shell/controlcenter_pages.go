@@ -745,3 +745,29 @@ func ccNotifications(r *Registry, h *PanelHost) *ui.Node {
 	list := &ui.Node{Kind: ui.KindScroll, Height: ccNotifyListH, Gap: theme.MarginM, Children: cards}
 	return &ui.Node{Kind: ui.KindColumn, Height: ccPageH, Gap: theme.MarginL, Children: []*ui.Node{controls, list}}
 }
+
+// ccSettings is the control centre's shortcut into settings, not a second
+// settings surface. The standalone panel stays the complete one: the centre's
+// body is roughly 480 logical pixels tall once the rail takes its 56, and
+// rendering one settings tree into both would size-constrain every future
+// section for no gain.
+//
+// So this page is a way in, one link per section, carrying the same glyph the
+// settings rail draws so the two read as one place.
+func ccSettings(h *PanelHost) *ui.Node {
+	rows := []*ui.Node{{
+		Kind: ui.KindText, Text: "Open settings at a section.",
+		TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
+	}}
+	for _, name := range settingsSections {
+		rows = append(rows, &ui.Node{
+			Kind: ui.KindRow, Gap: theme.MarginM, Height: h.metrics().StandardControl,
+			Action: "settings-section:" + name, Name: name, Role: "button", Focusable: true,
+			Children: []*ui.Node{
+				{Kind: ui.KindIcon, Icon: settingsSectionIcons[name]},
+				{Kind: ui.KindText, Text: name},
+			},
+		})
+	}
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: rows}
+}

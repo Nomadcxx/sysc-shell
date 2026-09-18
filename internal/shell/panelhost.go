@@ -32,6 +32,7 @@ const (
 	keyTab       = 15
 	keyEnter     = 28
 	keyLeftShift = 42
+	keyLeftAlt   = 56
 	keySpace     = 57
 	keyHome      = 102
 	keyUp        = 103
@@ -63,6 +64,9 @@ type Trigger struct {
 // PanelHost is one open panel: two surfaces' callbacks, content tree, focus,
 // leases, and reveal state.
 type PanelHost struct {
+	// writeTimer is the pending settings write, if a field or slider has been
+	// moved and has not settled yet.
+	writeTimer  *time.Timer
 	id          PanelID
 	output      uint32
 	place       Placement
@@ -91,22 +95,42 @@ type PanelHost struct {
 	logicalH int
 	scale120 int
 	shift    bool
-	pressed  string
+	// alt carries the modifier the lane editor's move commands use, tracked
+	// the same way shift is: press sets it, release clears it.
+	alt bool
+	// barAdding names the lane whose add-a-widget list is open, empty when
+	// none is. The list expands in place the way Menu does, because no
+	// popup-over-panel surface exists.
+	barAdding string
+	// barDropHint names the row the pointer is currently over, so a drag
+	// repaints when the answer changes and stays quiet when it does not.
+	barDropHint string
+	// settingsScroll retains the settings body's scroll offset across a
+	// rebuild. Every edit in the lane editor rebuilds the tree, and a fresh
+	// tree starts at the top, so without this a drag or a remove threw the
+	// user back to the first row and lost their place.
+	settingsScroll int
+	pressed        string
 	// pointer is the resolved hover/press state, kept as stable keys so it
 	// survives the tree rebuilds that replace every node.
-	pointer            interaction
-	drag               ui.Drag
-	lastAction         string
-	hoverX, hoverY     int
-	monthDelta         int
-	errLabel           string
-	menu               *Menu
-	menuPath           string
-	menus              map[string]*Menu
-	sliderDrag         *ui.Node
-	scrollDrag         *ui.Node
-	set                *settings.Registry
-	draft              config.Config
+	pointer        interaction
+	drag           ui.Drag
+	lastAction     string
+	hoverX, hoverY int
+	monthDelta     int
+	errLabel       string
+	menu           *Menu
+	menuPath       string
+	menus          map[string]*Menu
+	sliderDrag     *ui.Node
+	scrollDrag     *ui.Node
+	set            *settings.Registry
+	draft          config.Config
+	// barSelected is the chip the lane editor has selected, as the address
+	// barRefAction encodes. barOutput is the output whose lanes are being
+	// edited, empty for the shared bar (D7).
+	barSelected        string
+	barOutput          string
 	query              string
 	section            string
 	pageDirection      int
@@ -269,6 +293,24 @@ func (r *Registry) HandlePanelByName(action, name, section string) error {
 		return err
 	}
 	return r.selectPanelSectionLocked(id, section)
+}
+
+// openSettingsAtLocked opens the settings panel at one section, through the
+// addressing that already exists: panelSection validates the name and
+// selectPanelSectionLocked applies it, which is what IPC section addressing
+// uses. No second route is added.
+func (r *Registry) openSettingsAtLocked(output uint32, requested string) bool {
+	section, err := panelSection(PanelSettings, requested)
+	if err != nil {
+		return true
+	}
+	if r.panelHosts[PanelSettings] == nil {
+		if err := r.openPanelRootLocked(PanelSettings, output, Trigger{}); err != nil {
+			return true
+		}
+	}
+	_ = r.selectPanelSectionLocked(PanelSettings, section)
+	return true
 }
 
 func panelSection(id PanelID, requested string) (string, error) {
@@ -1174,15 +1216,29 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 		case wayland.EventPointerAxis:
 			return h.scrollAxis(r, e)
 		case wayland.EventKeyRelease:
-			if e.Key == keyLeftShift {
+			switch e.Key {
+			case keyLeftShift:
 				h.shift = false
+			case keyLeftAlt:
+				h.alt = false
 			}
 			return false
 		case wayland.EventPointerEnter, wayland.EventPointerMotion:
 			h.hoverX, h.hoverY = int(math.Floor(e.X)), int(math.Floor(e.Y))
 			if h.drag.Source != nil {
 				h.drag.Move(e.X, e.Y)
-				return h.drag.Active()
+				if !h.drag.Active() {
+					return false
+				}
+				if h.id == PanelSettings {
+					// Repaint only when the drop target actually changes.
+					// Nothing in the paint path reads drag state, so a repaint
+					// per motion event produced pixel-identical output at the
+					// cost of a full software render of the surface -- which
+					// is what made dragging feel like heavy load.
+					return h.barDragHover()
+				}
+				return true
 			}
 			if h.sliderDrag != nil {
 				ui.SliderAt(h.sliderDrag, h.hoverX)
@@ -1264,9 +1320,13 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			}
 			if h.drag.Active() {
 				zone := ui.FindDropZone(h.root, &h.drag)
+				dropX, dropY := int(h.drag.X), int(h.drag.Y)
 				payload, ok := h.drag.Drop(zone)
 				h.drag.Cancel()
 				if ok && zone != nil {
+					if strings.HasPrefix(zone.Action, "bar-lane:") {
+						return h.barDrop(r, zone, payload, dropX, dropY)
+					}
 					return r.deliverPluginText(zone.Action, payload, v1.EventDrop)
 				}
 				return true
@@ -1287,6 +1347,18 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 	if h.menu != nil && h.menu.Opened() {
 		if !h.menu.Handle(key) {
+			// A picker's well takes the keys the menu itself does not: the
+			// text of a family name, and the backspace that corrects it.
+			// editField routes both, so IME composition reaches the same
+			// place a keystroke does.
+			if h.menu.Filtering() {
+				if key == keyBackspace {
+					return h.editField(r, func(f *ui.Field) { f.Backspace() })
+				}
+				if ch, ok := ui.EvdevText(key, h.shift); ok {
+					return h.editField(r, func(f *ui.Field) { f.Insert(ch) })
+				}
+			}
 			return false
 		}
 		if !h.menu.Opened() && key != keyEsc {
@@ -1324,9 +1396,15 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 	if h.id == PanelClipboard && h.clipboardKeyPress(r, key) {
 		return true
 	}
+	if h.id == PanelSettings && h.barKeyPress(r, key) {
+		return true
+	}
 	switch key {
 	case keyLeftShift:
 		h.shift = true
+		return false
+	case keyLeftAlt:
+		h.alt = true
 		return false
 	case keyEsc:
 		if h.id == PanelSettings && h.query != "" {
@@ -1517,6 +1595,17 @@ func (h *PanelHost) applyIME(r *Registry, e wayland.Event) bool {
 	})
 }
 
+// pressMenuFilter answers a press inside an open picker that landed on its
+// filter well rather than on an option. The menu stays open and the well keeps
+// the caret; letting the press fall through would close the menu on the value
+// the cursor happened to rest on, so aiming at the well would commit a choice.
+// A press on the well's clear glyph never reaches here: searchClearPress takes
+// it on the press, before this runs on the release.
+func (h *PanelHost) pressMenuFilter(r *Registry) bool {
+	r.rebuildPanel(h)
+	return true
+}
+
 // searchClearPress empties a search well when the press lands on the trailing
 // clear glyph paintTextField draws in it. It is here rather than in one
 // panel's own handler because the glyph is painted by shared chrome: the
@@ -1556,6 +1645,16 @@ func searchClearAt(n *ui.Node, x, y int) *ui.Node {
 }
 
 func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
+	// An open picker owns text entry for as long as it is open. Its well is
+	// deliberately not focusable — the menu node takes the presses — so it is
+	// answered for here rather than through the focused node.
+	if h.menu.Filtering() && h.menu.Opened() {
+		if !h.menu.Edit(fn) {
+			return false
+		}
+		r.rebuildPanel(h)
+		return true
+	}
 	n := h.focused()
 	if n == nil || n.Kind != ui.KindTextField {
 		return false
@@ -1733,7 +1832,11 @@ func (h *PanelHost) activate(r *Registry) bool {
 					r.rebuildPanel(h)
 					return true
 				}
-				m.PickAt(n, h.hoverX, h.hoverY)
+				if !m.PickAt(n, h.hoverX, h.hoverY) {
+					// A press inside the popup that is not on an option: the
+					// filter well. Keep the menu open and let the well take it.
+					return h.pressMenuFilter(r)
+				}
 				m.Select()
 				n.Text = m.Value()
 				return r.handlePluginManager(h, n)
@@ -1770,7 +1873,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 				r.rebuildPanel(h)
 				return true
 			}
-			m.PickAt(n, h.hoverX, h.hoverY)
+			if !m.PickAt(n, h.hoverX, h.hoverY) {
+				return h.pressMenuFilter(r)
+			}
 			m.Select()
 			h.applyMenu(r, path)
 			r.rebuildPanel(h)
@@ -1808,6 +1913,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if strings.HasPrefix(n.Action, "notify:") {
 		return h.activateNotify(r, n)
 	}
+	if strings.HasPrefix(n.Action, "bar-") && h.barActivate(r, n.Action) {
+		return true
+	}
 	if strings.HasPrefix(n.Action, "section:") {
 		section := strings.TrimPrefix(n.Action, "section:")
 		if h.id == PanelControlCenter {
@@ -1817,13 +1925,44 @@ func (h *PanelHost) activate(r *Registry) bool {
 		r.rebuildPanel(h)
 		return true
 	}
-	if path, ok := strings.CutPrefix(n.Action, "goto:"); ok {
-		if e := h.set.ByPath(path); e != nil {
-			h.section = e.Section
-			h.query = ""
-			h.search = ui.NewField("")
+	if rest, ok := strings.CutPrefix(n.Action, "step:"); ok {
+		dir, path, found := strings.Cut(rest, ":")
+		if e := h.set.ByPath(path); found && e != nil && e.Get != nil {
+			value, err := strconv.Atoi(e.Get(h.draft))
+			if err == nil {
+				if dir == "up" {
+					value++
+				} else {
+					value--
+				}
+				h.commitSetting(r, e, strconv.Itoa(value))
+				r.rebuildPanel(h)
+			}
+		}
+		return true
+	}
+	if path, ok := strings.CutPrefix(n.Action, "browse:"); ok {
+		e := h.set.ByPath(path)
+		if e == nil {
+			return true
+		}
+		// The browser is the menu the enum entries already use, filled with
+		// where this path can go from where it is.
+		if h.menus == nil {
+			h.menus = map[string]*Menu{}
+		}
+		m := NewMenu(settingsBrowseOptions(e.Get(h.draft)), 0)
+		m.Open()
+		h.menus[path] = m
+		h.menu = m
+		h.menuPath = path
+		r.rebuildPanel(h)
+		return true
+	}
+	if path, ok := strings.CutPrefix(n.Action, "reset:"); ok {
+		if e := h.set.ByPath(path); e != nil && e.Default != nil {
+			h.commitSetting(r, e, e.Default(h.draft))
 			r.rebuildPanel(h)
-			h.focusByName(e.Label)
 		}
 		return true
 	}
@@ -1971,6 +2110,9 @@ func (h *PanelHost) afterFocusChange(r *Registry) {
 
 func (r *Registry) rebuildPanel(h *PanelHost) {
 	idx := h.roving.Index()
+	if h.id == PanelSettings {
+		h.settingsScroll = settingsScrollOffset(h.root)
+	}
 	focusedKey := ""
 	if h.id == PanelClipboard {
 		focusedKey = h.focused().StableKey()
@@ -2109,7 +2251,12 @@ func panelTargetSize(id PanelID) ui.Rect {
 	case PanelMonitor:
 		return ui.Rect{W: 640, H: 720}
 	case PanelSettings:
-		return ui.Rect{W: 900, H: 620}
+		// Width is unchanged on purpose: the narrowest-width acceptance check
+		// lays this panel out at its target, and holding width leaves that
+		// premise intact while the plain column takes the vertical room that
+		// descriptions and group headings need. FittedSize clamps on a short
+		// output.
+		return ui.Rect{W: 900, H: 760}
 	case PanelLauncher:
 		// 700 is DMS spotlight's own height. FittedSize caps this to the
 		// output before placement, so a short screen clamps rather than
@@ -2228,11 +2375,72 @@ func (h *PanelHost) applySetting(r *Registry, n *ui.Node) {
 	case ui.KindMenu:
 		v = n.Text
 	}
+	h.commitSetting(r, e, v)
+}
+
+// commitSetting applies one value to the draft, rebuilds the registry from it,
+// and writes. The rebuild is what lets an entry's options depend on another
+// setting: the seed picker follows the theme source, and a registry built once
+// at open would keep offering the previous source's vocabulary for as long as
+// the panel stayed up.
+func (h *PanelHost) commitSetting(r *Registry, e *settings.Entry, v string) {
 	if err := e.Set(&h.draft, v); err != nil {
 		h.errLabel = err.Error()
 		r.rebuildPanel(h)
 		return
 	}
+	h.set = settings.DefaultFor(h.draft)
+	// A toggle or a menu is a decision the user has finished making, so it
+	// goes to the file at once. A slider or a field is a stream of them, and
+	// writing per keystroke rewrote the whole document each time.
+	switch e.Kind {
+	case settings.KindInt, settings.KindString:
+		h.deferDraft(r)
+	default:
+		h.persistDraft(r)
+	}
+}
+
+// settingsWriteDelay is how long a stream of edits settles before it is
+// written. Short enough that releasing a slider feels like it saved, long
+// enough that typing a path is one write rather than one per character.
+const settingsWriteDelay = 400 * time.Millisecond
+
+// deferDraft arms the write, replacing any write already armed, so a run of
+// edits collapses into the one that follows the last of them.
+func (h *PanelHost) deferDraft(r *Registry) {
+	if h.writeTimer != nil {
+		h.writeTimer.Stop()
+	}
+	delay := settingsWriteDelay
+	if r != nil && r.writeDelay > 0 {
+		delay = r.writeDelay
+	}
+	h.writeTimer = time.AfterFunc(delay, func() {
+		r.mu.Lock()
+		if r.panelHosts[h.id] != h {
+			// The host was replaced while the edit was settling; its draft is
+			// no longer the one on screen.
+			r.mu.Unlock()
+			return
+		}
+		h.writeTimer = nil
+		cfg := h.draft
+		r.mu.Unlock()
+		// scheduleControl runs the write off the Wayland owner, re-takes the
+		// lock, discards the result if the host has gone, and rebuilds.
+		r.scheduleControl(h, func() error { return r.writeConfig(cfg) })
+	})
+}
+
+// flushDraft writes an edit that has not settled yet. Closing the panel is
+// otherwise a way to lose the last thing typed into it.
+func (h *PanelHost) flushDraft(r *Registry) {
+	if h.writeTimer == nil {
+		return
+	}
+	h.writeTimer.Stop()
+	h.writeTimer = nil
 	h.persistDraft(r)
 }
 
@@ -2245,12 +2453,7 @@ func (h *PanelHost) applyMenu(r *Registry, path string) {
 	if e == nil || m == nil {
 		return
 	}
-	if err := e.Set(&h.draft, m.Value()); err != nil {
-		h.errLabel = err.Error()
-		r.rebuildPanel(h)
-		return
-	}
-	h.persistDraft(r)
+	h.commitSetting(r, e, m.Value())
 }
 
 func (h *PanelHost) focusByName(name string) {
@@ -2391,6 +2594,7 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 	if h == nil {
 		return
 	}
+	h.flushDraft(r)
 	if bluetoothBodyVisible(h) {
 		r.stopBluetoothDiscoveryLocked(h)
 		r.cancelBluetoothPromptLocked(h)

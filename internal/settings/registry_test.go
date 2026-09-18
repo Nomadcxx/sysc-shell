@@ -3,7 +3,9 @@ package settings
 import (
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -80,34 +82,17 @@ func TestRegistryWidgetsFollowConfiguredBar(t *testing.T) {
 	cfg.Bar.Left = []config.Item{{ID: "window-title", MaxWidth: 200}}
 	cfg.Bar.Center = nil
 	cfg.Bar.Right = nil
+	// Entries address one item rather than a widget type (D4), so the path
+	// carries the position: "widgets.left.0.max-width", not
+	// "widgets.window-title.max-width".
 	r := DefaultFor(cfg)
-	if r.ByPath("widgets.window-title.max-width") == nil {
+	if r.ByPath("widgets.left.0.max-width") == nil {
 		t.Fatal("title option missing for configured bar")
 	}
-	if r.ByPath("widgets.clock.format") != nil {
-		t.Fatal("clock option present though clock is not on the bar")
-	}
-}
-
-func TestRegistryExposesBarItemLists(t *testing.T) {
-	t.Parallel()
-	r := Default()
-	e := r.ByPath("bar.items.left")
-	if e == nil || e.Kind != KindString {
-		t.Fatal("bar.items.left must be a string entry")
-	}
-	cfg := config.Default()
-	if got := e.Get(cfg); got != "launcher,workspace,window-title" {
-		t.Fatalf("left items = %q", got)
-	}
-	if err := e.Set(&cfg, "window-title,workspace"); err != nil {
-		t.Fatal(err)
-	}
-	if got := e.Get(cfg); got != "window-title,workspace" {
-		t.Fatalf("after set = %q", got)
-	}
-	if cfg.Bar.Left[0].ID != "window-title" || cfg.Bar.Left[0].MaxWidth <= 0 {
-		t.Fatalf("reused title lost max width: %+v", cfg.Bar.Left[0])
+	for _, e := range r.Section("Widgets") {
+		if strings.Contains(e.Path, "format") {
+			t.Fatalf("clock option %q present though no clock is on the bar", e.Path)
+		}
 	}
 }
 
@@ -240,5 +225,509 @@ func TestDensitySettingDoesNotPersistAStaleDerivedBar(t *testing.T) {
 				t.Fatalf("reloaded bar height = %d, want %d", back.Bar.Height, tc.wantHeight)
 			}
 		})
+	}
+}
+
+// TestEntryUsesItsOwnAccessors is the whole point of D1: an entry carries the
+// code that reads and writes its field, so a new setting cannot be declared
+// without one and no switch can fall through to an empty string.
+func TestEntryUsesItsOwnAccessors(t *testing.T) {
+	t.Parallel()
+	e := Entry{
+		Path: "test.flag", Label: "Flag", Section: "Bar", Kind: KindBool,
+		Get: func(c config.Config) string { return strconv.FormatBool(c.Bar.Enabled) },
+		Set: func(c *config.Config, v string) error {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return err
+			}
+			c.Bar.Enabled = b
+			return nil
+		},
+	}
+	cfg := config.Default()
+	cfg.Bar.Enabled = false
+	if got := e.Get(cfg); got != "false" {
+		t.Fatalf("Get = %q, want false", got)
+	}
+	if err := e.Set(&cfg, "true"); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Bar.Enabled {
+		t.Fatal("Set did not reach the field")
+	}
+}
+
+// TestEveryConfigDomainHasAnEntry is the guard against the five-of-twelve gap
+// reopening. Weather, Wallpaper, Tray, Outputs and Plugins were modelled in
+// configuration and unreachable from every surface, and that happened quietly
+// because nothing ever asserted otherwise.
+//
+// It runs against a configuration that exercises each domain rather than
+// config.Default(), because D9 exposes three of them as a row per discovered
+// item: a tray token, an output override and a plugin have no rows until one
+// exists to carry them. Asserting against an empty default would force a
+// placeholder entry per domain, which is what this guard exists to prevent.
+func TestEveryConfigDomainHasAnEntry(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Tray.Hidden = []string{"steam"}
+	cfg.Outputs = []config.OutputOverride{{Connector: "DP-1", Bar: cfg.Bar}}
+	cfg.Plugins.Enabled = []string{"com.example.widget"}
+	r := DefaultFor(cfg)
+
+	for _, prefix := range []string{
+		"bar.", "appearance.", "theme.templates.", "panels.", "session.",
+		"accessibility.", "weather.", "wallpaper.", "tray.", "outputs.",
+	} {
+		found := false
+		for _, section := range SectionNames() {
+			for _, e := range r.Section(section) {
+				if strings.HasPrefix(e.Path, prefix) {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Errorf("no settings entry reaches the %q domain", prefix)
+		}
+	}
+}
+
+// TestEverySectionIsOneOfTheNamedSections closes the other half of the same
+// hole: the pane walks SectionNames, so an entry filed under a section the
+// rail does not list is as unreachable as one that was never written.
+func TestEverySectionIsOneOfTheNamedSections(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Tray.Pinned = []string{"steam"}
+	cfg.Outputs = []config.OutputOverride{{Connector: "DP-1", Bar: cfg.Bar}}
+	cfg.Plugins.Enabled = []string{"com.example.widget"}
+
+	names := SectionNames()
+	if len(names) != 12 {
+		t.Fatalf("SectionNames = %d sections, want the twelve of the information architecture", len(names))
+	}
+	for _, e := range DefaultFor(cfg).entries {
+		if !slices.Contains(names, e.Section) {
+			t.Errorf("%s is filed under %q, which no section lists", e.Path, e.Section)
+		}
+	}
+}
+
+// TestEveryEnumOptionSurvivesTheLoader is the drift guard for the vocabularies
+// this package restates. An option the loader refuses produces a setting that
+// writes a file the shell then declines to start from, and the user sees the
+// shell fail rather than the setting fail.
+func TestEveryEnumOptionSurvivesTheLoader(t *testing.T) {
+	t.Parallel()
+	base := config.Default()
+	base.Tray.Hidden = []string{"steam"}
+	base.Outputs = []config.OutputOverride{{Connector: "DP-1", Bar: base.Bar}}
+	base.Plugins.Enabled = []string{"com.example.widget"}
+
+	for _, e := range DefaultFor(base).entries {
+		if e.Kind != KindEnum {
+			continue
+		}
+		for _, option := range e.Options {
+			t.Run(e.Path+"="+option, func(t *testing.T) {
+				cfg := base
+				if err := e.Set(&cfg, option); err != nil {
+					t.Fatalf("set: %v", err)
+				}
+				path := filepath.Join(t.TempDir(), "config.json")
+				if err := config.Write(path, cfg); err != nil {
+					t.Fatalf("write: %v", err)
+				}
+				if _, err := config.Load(path); err != nil {
+					t.Fatalf("the shell refuses what this option wrote: %v", err)
+				}
+			})
+		}
+	}
+}
+
+// TestWeatherPlaceIsOneWayOrTheOther holds the loader's exclusive rule at the
+// setting: coordinates and a city name cannot both reach the file, and the
+// writer prefers the city, so coordinates set beside a stale city would be
+// silently discarded.
+func TestWeatherPlaceIsOneWayOrTheOther(t *testing.T) {
+	t.Parallel()
+	r := Default()
+	cfg := config.Default()
+
+	if err := r.ByPath("weather.city").Set(&cfg, "Bristol"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ByPath("weather.latitude").Set(&cfg, "51.45"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ByPath("weather.longitude").Set(&cfg, "-2.58"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Weather.City != "" {
+		t.Errorf("city = %q; coordinates did not displace it", cfg.Weather.City)
+	}
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Write(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	back, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("the shell refuses what the weather settings wrote: %v", err)
+	}
+	if back.Weather.Latitude != 51.45 || back.Weather.Longitude != -2.58 {
+		t.Errorf("coordinates came back as %v,%v", back.Weather.Latitude, back.Weather.Longitude)
+	}
+}
+
+// TestBoundsRejectWhatTheLoaderWouldReject keeps the numeric entries from
+// writing a file that cannot be read back.
+func TestBoundsRejectWhatTheLoaderWouldReject(t *testing.T) {
+	t.Parallel()
+	r := Default()
+	for _, tc := range []struct{ path, value string }{
+		{"weather.latitude", "91"},
+		{"weather.longitude", "-181"},
+		{"weather.interval", "0s"},
+		{"weather.interval", "fortnightly"},
+		{"wallpaper.fade-duration", "-1"},
+		{"wallpaper.image-directory", "  "},
+		{"weather.city", strings.Repeat("x", 81)},
+		{"weather.location", "two\nlines"},
+	} {
+		cfg := config.Default()
+		if err := r.ByPath(tc.path).Set(&cfg, tc.value); err == nil {
+			t.Errorf("%s accepted %q", tc.path, tc.value)
+		}
+	}
+}
+
+// TestResetUsesThePresetForThemeAxes holds D5: "default" is not one thing.
+// config.Write bases every appearance axis against the selected preset and
+// everything else against Default(), so reset has to resolve an entry through
+// the same rule the writer uses, or resetting an axis writes a value the
+// writer then records as a deviation.
+func TestResetUsesThePresetForThemeAxes(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Theme.Preset = theme.PresetCompact
+	comp, ok := theme.PresetComposition(theme.PresetCompact)
+	if !ok {
+		t.Fatal("compact preset is missing")
+	}
+	cfg.Theme.Composition = comp
+
+	r := DefaultFor(cfg)
+	e := r.ByPath("appearance.radius")
+	if e == nil {
+		t.Fatal("appearance.radius is missing")
+	}
+	if !e.IsDefault(cfg) {
+		t.Fatal("an axis sitting on its preset value must read as default")
+	}
+	if got := e.Default(cfg); got != strconv.Itoa(comp.Radius) {
+		t.Fatalf("Default = %q, want the preset's %d", got, comp.Radius)
+	}
+
+	cfg.Theme.Radius = comp.Radius + 3
+	if e.IsDefault(cfg) {
+		t.Fatal("a changed axis must not read as default, or its row hides its reset")
+	}
+
+	acc := r.ByPath("accessibility.reduced-motion")
+	if got := acc.Default(cfg); got != "false" {
+		t.Fatalf("a non-theme entry defaults against config.Default(), got %q", got)
+	}
+}
+
+// TestEveryEntryResolvesADefault stops a new entry shipping without one: a nil
+// Default reads as always-default, so the row silently loses its reset rather
+// than failing anywhere visible.
+func TestEveryEntryResolvesADefault(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Tray.Hidden = []string{"steam"}
+	cfg.Outputs = []config.OutputOverride{{Connector: "DP-1", Bar: cfg.Bar}}
+	cfg.Plugins.Enabled = []string{"com.example.widget"}
+	for _, e := range DefaultFor(cfg).entries {
+		if e.Default == nil {
+			t.Errorf("%s resolves no default", e.Path)
+		}
+	}
+}
+
+// TestPresetAxesTrackTheirPreset is the guard on the axis set itself. Every
+// composition axis has to follow the preset, and an axis left out of that set
+// would resolve against config.Default() instead, quietly disagreeing with the
+// writer for exactly the entries D5 is about.
+func TestPresetAxesTrackTheirPreset(t *testing.T) {
+	t.Parallel()
+	standard := config.Default()
+	compact := standard
+	comp, ok := theme.PresetComposition(theme.PresetCompact)
+	if !ok {
+		t.Fatal("compact preset is missing")
+	}
+	compact.Theme.Preset = theme.PresetCompact
+	compact.Theme.Composition = comp
+
+	moved := 0
+	for _, path := range presetAxisPaths() {
+		e := DefaultFor(standard).ByPath(path)
+		if e == nil {
+			t.Errorf("%s is named as a preset axis but is not registered", path)
+			continue
+		}
+		if e.Default(standard) != e.Default(compact) {
+			moved++
+		}
+	}
+	if moved == 0 {
+		t.Fatal("no named axis resolved differently under another preset")
+	}
+}
+
+// TestSeedOffersStockNamesWhenSourceIsStock is half of sysc-107: with the
+// source on stock the seed names one of a closed set, so it is a picker.
+func TestSeedOffersStockNamesWhenSourceIsStock(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.ThemeGen.Source = "stock"
+	e := DefaultFor(cfg).ByPath("appearance.seed")
+	if e == nil {
+		t.Fatal("appearance.seed is missing")
+	}
+	if e.Kind != KindEnum {
+		t.Fatalf("Kind = %v, want an enum when the source is stock", e.Kind)
+	}
+	if len(e.Options) != len(theme.StockNames()) {
+		t.Fatalf("Options = %d, want the %d stock names", len(e.Options), len(theme.StockNames()))
+	}
+}
+
+// TestSourceCarriesASeedItsOwnSourceCanRead is the other half. The source and
+// the seed are one choice spread over two fields: the loader reads the seed
+// through the source, so changing the source alone left a seed it refused and
+// the shell stopped loading its own configuration. Picking a stock theme was
+// impossible for that reason, not because the picker was missing.
+func TestSourceCarriesASeedItsOwnSourceCanRead(t *testing.T) {
+	t.Parallel()
+	for _, source := range themeSources {
+		t.Run(source, func(t *testing.T) {
+			t.Parallel()
+			cfg := config.Default()
+			if err := Default().ByPath("appearance.source").Set(&cfg, source); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := config.Write(path, cfg); err != nil {
+				t.Fatal(err)
+			}
+			back, err := config.Load(path)
+			if err != nil {
+				t.Fatalf("selecting %q wrote a configuration the shell refuses: %v", source, err)
+			}
+			if back.ThemeGen.Source != source {
+				t.Errorf("source came back as %q", back.ThemeGen.Source)
+			}
+		})
+	}
+}
+
+// TestEveryEntryCarriesADescriptionAndAGroup keeps the row anatomy whole. A
+// row without a caption is the legibility gap this milestone exists to close,
+// and an entry with no group falls outside every heading the pane renders.
+func TestEveryEntryCarriesADescriptionAndAGroup(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Tray.Hidden = []string{"steam"}
+	cfg.Outputs = []config.OutputOverride{{Connector: "DP-1", Bar: cfg.Bar}}
+	cfg.Plugins.Enabled = []string{"com.example.widget"}
+	for _, e := range DefaultFor(cfg).entries {
+		if e.Describe == "" {
+			t.Errorf("%s carries no description", e.Path)
+		}
+		if e.Group == "" {
+			t.Errorf("%s belongs to no group", e.Path)
+		}
+	}
+}
+
+// TestSearchMatchesDescriptionsAsWellAsLabels makes search double as
+// discovery: the word a user knows is often in the explanation rather than in
+// the label, and matching only labels hides the setting that would have
+// answered them.
+func TestSearchMatchesDescriptionsAsWellAsLabels(t *testing.T) {
+	t.Parallel()
+	hits := Default().Search("geocodes")
+	if len(hits) == 0 {
+		t.Fatal("a term appearing only in a description found nothing")
+	}
+	for _, e := range hits {
+		if e.Path == "weather.city" {
+			return
+		}
+	}
+	t.Fatalf("search did not reach weather.city, got %d other matches", len(hits))
+}
+
+// Task 7 and D4. eachItem applied an option change to every widget of a type,
+// so a user with a time widget and a date widget could not give them different
+// formats from any interface. This is a live defect independent of the editor,
+// and it is the case that names it.
+func TestTwoClocksTakeDifferentFormats(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Bar.Left = []config.Item{
+		{ID: "clock", Format: "15:04"},
+		{ID: "clock", Format: "15:04"},
+	}
+	cfg.Bar.Center, cfg.Bar.Right = nil, nil
+
+	r := DefaultFor(cfg)
+	var paths []string
+	for _, e := range r.Section("Widgets") {
+		if strings.Contains(e.Path, "format") {
+			paths = append(paths, e.Path)
+		}
+	}
+	if len(paths) != 2 {
+		t.Fatalf("two clocks produced %d format entries (%v), want one each", len(paths), paths)
+	}
+
+	first := r.ByPath(paths[0])
+	if err := first.Set(&cfg, "Mon 2 Jan"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if got := cfg.Bar.Left[0].Format; got != "Mon 2 Jan" {
+		t.Errorf("first clock format = %q, want the new one", got)
+	}
+	if got := cfg.Bar.Left[1].Format; got != "15:04" {
+		t.Errorf("second clock format = %q; the write reached a widget it did not address", got)
+	}
+}
+
+// D3: addressing a widget is what mints its id, and an option write is one of
+// the three things the design names as addressing it.
+func TestAnOptionWriteMintsTheWidgetsId(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Bar.Left = []config.Item{{ID: "clock", Format: "15:04"}}
+	cfg.Bar.Center, cfg.Bar.Right = nil, nil
+
+	r := DefaultFor(cfg)
+	var entry *Entry
+	for _, e := range r.Section("Widgets") {
+		if strings.Contains(e.Path, "format") {
+			entry = r.ByPath(e.Path)
+			break
+		}
+	}
+	if entry == nil {
+		t.Fatal("no clock format entry")
+	}
+	if cfg.Bar.Left[0].Instance != "" {
+		t.Fatal("the clock already had an id; this test no longer covers minting")
+	}
+	if err := entry.Set(&cfg, "Mon 2 Jan"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if cfg.Bar.Left[0].Instance == "" {
+		t.Error("an option write left the widget anonymous, so nothing can address it later")
+	}
+}
+
+// Task 14 and D9. The three comma-separated string entries are gone, replaced
+// by the lane editor. They were the only way to reach lane arrangement before
+// it existed, which is why their retirement came last rather than first.
+func TestTheCommaSeparatedItemEntriesAreRetired(t *testing.T) {
+	t.Parallel()
+	r := Default()
+	for _, path := range []string{"bar.items.left", "bar.items.center", "bar.items.right"} {
+		if e := r.ByPath(path); e != nil {
+			t.Errorf("%s is still registered; the lane editor replaces it", path)
+		}
+	}
+	// The Bar section still exists and still carries its geometry rows: the
+	// retirement must not have taken the section with it.
+	if len(r.Section("Bar")) == 0 {
+		t.Error("the Bar section is empty")
+	}
+}
+
+// KindFont is the enumerating control: the surface offers the families it
+// scanned. It was declared on weather.city, weather.latitude and
+// weather.longitude, and the three settings that actually name a font were
+// left as plain strings, so the Place group offered a list of typefaces to
+// answer "which city" and a font had to be typed from memory. Kind is a
+// presentation choice, which is exactly why nothing else caught it: every
+// setter still validated, so both halves round-tripped while the surface was
+// unusable.
+func TestFontKindIsDeclaredOnTheSettingsThatNameAFont(t *testing.T) {
+	t.Parallel()
+	r := Default()
+	for _, path := range []string{
+		"bar.font-family", "appearance.font-family", "appearance.mono-font-family",
+	} {
+		e := r.ByPath(path)
+		if e == nil {
+			t.Errorf("%s is not registered", path)
+			continue
+		}
+		if e.Kind != KindFont {
+			t.Errorf("%s has kind %d, want KindFont so the surface can enumerate families", path, e.Kind)
+		}
+	}
+	for _, path := range []string{
+		"weather.city", "weather.latitude", "weather.longitude",
+	} {
+		e := r.ByPath(path)
+		if e == nil {
+			t.Errorf("%s is not registered", path)
+			continue
+		}
+		if e.Kind == KindFont {
+			t.Errorf("%s has kind KindFont, so the surface offers font families for a place", path)
+		}
+	}
+}
+
+// An entry that declares an empty row is promising the surface that empty is
+// a state the setting can hold. The appearance font families cannot hold it —
+// the loader refuses an empty family — so a picker offering the row there
+// would write a configuration the shell then declines to start from. This is
+// the same round trip the enum options go through, for the same reason.
+func TestEveryDeclaredEmptyValueSurvivesTheLoader(t *testing.T) {
+	t.Parallel()
+	base := config.Default()
+	declared := 0
+	for _, e := range DefaultFor(base).entries {
+		if e.EmptyLabel == "" {
+			continue
+		}
+		declared++
+		t.Run(e.Path, func(t *testing.T) {
+			cfg := base
+			if err := e.Set(&cfg, ""); err != nil {
+				t.Fatalf("set empty: %v", err)
+			}
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := config.Write(path, cfg); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			back, err := config.Load(path)
+			if err != nil {
+				t.Fatalf("the shell refuses the empty this entry offers: %v", err)
+			}
+			if got := e.Get(back); got != "" {
+				t.Errorf("empty round-tripped as %q; the row would not stay selected", got)
+			}
+		})
+	}
+	if declared == 0 {
+		t.Skip("no entry declares an empty row")
 	}
 }

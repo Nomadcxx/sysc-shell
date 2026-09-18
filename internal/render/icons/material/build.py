@@ -107,6 +107,35 @@ ICONS = [
     "smartphone",
     "speaker",
     "devices_other",
+    # The settings rail: one glyph per section of the information
+    # architecture, plus the three the pane's own controls need.
+    "palette",
+    "description",
+    "toolbar",
+    "widgets",
+    "web_asset",
+    "display_settings",
+    "apps",
+    "extension",
+    "accessibility_new",
+    "folder_open",
+    "expand_more",
+    "add",
+    "remove",
+    # The bar composition editor. A chip is a drag source, so it wears the
+    # six-dot grip rather than the list variant; "tune" opens the inspector,
+    # because "settings" already means the settings surface itself everywhere
+    # else in this shell and reusing it on a chip would name two things with
+    # one glyph; and "link_off" dissolves a group, which is breaking a
+    # grouping rather than removing its members, so neither "close" nor
+    # "delete" says it.
+    "drag_indicator",
+    "tune",
+    # link and link_off are a pair: one folds two chips into a group, the other
+    # dissolves one. Naming them against each other is what makes the two read
+    # as inverses rather than as two unrelated controls.
+    "link",
+    "link_off",
 ]
 
 # The pinned source renamed the older smartphone ligature. Keep the shell's

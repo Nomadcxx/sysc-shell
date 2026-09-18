@@ -11,6 +11,11 @@ import (
 // icons/material/build.py: a name here that the subset does not carry would
 // shape to nothing and paint an invisible control.
 var materialInventory = []string{
+	// The settings rail's twelve sections and the pane's own controls.
+	"palette", "description", "toolbar", "widgets", "web_asset",
+	"display_settings", "apps", "extension", "accessibility_new",
+	"folder_open", "expand_more", "add", "remove",
+	"drag_indicator", "tune", "link", "link_off",
 	"lock", "logout", "bedtime", "restart_alt", "power_settings_new",
 	"speed", "balance", "energy_savings_leaf", "check",
 	"content_paste", "content_copy",

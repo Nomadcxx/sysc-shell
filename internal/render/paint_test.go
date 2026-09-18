@@ -2168,3 +2168,92 @@ func TestTextColorResolvesTheSubtleToken(t *testing.T) {
 		t.Fatalf("normal text colour = %v, want the foreground", got)
 	}
 }
+
+// sysc-330. paintMenu drew every child with paintText, because until the
+// picker arrived every child was a row of label text. A filter well is a
+// child of a different kind, and drawing it as text would have left the
+// search glyph, the well and the caret unpainted while layout still reserved
+// the space for them — the same defect shape as a chip that measured as a
+// button and painted as an empty pill.
+func TestPaintMenuDrawsANestedFieldAsAField(t *testing.T) {
+	c := newTestCanvas(t, 120, 60)
+	fillRect(c, ui.Rect{W: 120, H: 60}, Color{R: 0, G: 0, B: 0, A: 0xff})
+
+	menu := &ui.Node{
+		Kind: ui.KindMenu, Text: "Inter Variable", Role: "combobox",
+		Bounds: ui.Rect{X: 0, Y: 0, W: 120, H: 60},
+		Children: []*ui.Node{
+			// The well, carrying no selection of its own.
+			{Kind: ui.KindTextField, Name: "Search", Bounds: ui.Rect{X: 0, Y: 20, W: 120, H: 20}},
+			{Kind: ui.KindText, Text: "Inter Variable", Bounds: ui.Rect{X: 0, Y: 40, W: 120, H: 20}},
+		},
+	}
+	if err := paintNode(c, menu, nil, testStyle, testStyle.Size); err != nil {
+		t.Fatalf("paintNode: %v", err)
+	}
+
+	// paintTextField strokes the control's outline around the well. Nothing
+	// on the plain-text path draws that token anywhere.
+	want := testStyle.Outline
+	found := false
+	for x := range 120 {
+		for y := 20; y < 40; y++ {
+			if pixelAt(t, c, x, y) == want {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("the filter well drew no outline, so it was painted as text rather than as a field")
+	}
+}
+
+// A menu given a column to fill has the fill, the radius and the left-aligned
+// text of a text field, so without a mark only a press tells them apart. The
+// mark appears where there is room and is withheld where the box hugs its
+// label, which is what keeps every dropdown that hugs looking as it does.
+func TestMenuChevronAppearsOnlyWhereThereIsRoom(t *testing.T) {
+	t.Parallel()
+	const label, icon = 100, 24
+	room := icon + 2*menuChevronInset
+
+	wide := &ui.Node{Kind: ui.KindMenu, Bounds: ui.Rect{X: 5, Y: 7, W: label + room, H: 32}}
+	box, ok := menuChevronBox(wide, label, icon)
+	if !ok {
+		t.Fatal("a menu with exactly the room for the mark withheld it")
+	}
+	if box.W != icon || box.H != icon {
+		t.Errorf("mark is %dx%d, want %d square", box.W, box.H, icon)
+	}
+	if want := 5 + label + room - icon - menuChevronInset; box.X != want {
+		t.Errorf("mark x = %d, want %d: it sits at the trailing edge", box.X, want)
+	}
+	if want := 7 + (32-icon)/2; box.Y != want {
+		t.Errorf("mark y = %d, want %d: it sits on the midline", box.Y, want)
+	}
+
+	snug := &ui.Node{Kind: ui.KindMenu, Bounds: ui.Rect{W: label + room - 1, H: 32}}
+	if _, ok := menuChevronBox(snug, label, icon); ok {
+		t.Error("a menu one pixel short of the room drew the mark over its own label")
+	}
+
+	// An open menu measures its head from the first row, not from the whole
+	// box, or the mark would sink into the list below it.
+	open := &ui.Node{
+		Kind: ui.KindMenu, Bounds: ui.Rect{W: label + room, H: 400},
+		Children: []*ui.Node{{Kind: ui.KindText, Bounds: ui.Rect{Y: 32, W: 100, H: 20}}},
+	}
+	box, ok = menuChevronBox(open, label, icon)
+	if !ok {
+		t.Fatal("an open menu withheld the mark")
+	}
+	if want := (32 - icon) / 2; box.Y != want {
+		t.Errorf("mark y = %d, want %d: it must stay on the head, not the list", box.Y, want)
+	}
+
+	// A menu shorter than the glyph shrinks it rather than overflowing.
+	short := &ui.Node{Kind: ui.KindMenu, Bounds: ui.Rect{W: label + room, H: 16}}
+	if box, ok := menuChevronBox(short, label, icon); !ok || box.H != 16 {
+		t.Errorf("short menu mark = %+v ok=%v, want it clamped to the box height", box, ok)
+	}
+}
