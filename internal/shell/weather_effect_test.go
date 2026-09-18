@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -52,13 +53,13 @@ func TestWeatherEffectStateKeepsStaleAndSkipsStaticReadings(t *testing.T) {
 	observed := observedWeather()
 	observed.FetchedAt = time.Now().Add(-90 * time.Minute)
 	observed.FailedSince = time.Now().Add(-30 * time.Minute)
-	if node := weatherEffectNode(observed, "weather:hero"); node == nil {
+	if node := weatherEffectNode(observed, "weather:hero", 0); node == nil {
 		t.Fatal("stale observed reading lost its animated effect")
 	}
-	if node := weatherEffectNode(services.Reading{}, "weather:hero"); node != nil {
+	if node := weatherEffectNode(services.Reading{}, "weather:hero", 0); node != nil {
 		t.Fatal("placeholder reading produced an effect")
 	}
-	if node := weatherEffectNode(services.Reading{FailedSince: time.Now()}, "weather:hero"); node != nil {
+	if node := weatherEffectNode(services.Reading{FailedSince: time.Now()}, "weather:hero", 0); node != nil {
 		t.Fatal("error reading produced an effect")
 	}
 }
@@ -73,7 +74,7 @@ func TestWeatherEffectWrapperPreservesCardAndPlacesEffectFirst(t *testing.T) {
 	}
 	reading := observedWeather()
 
-	got := weatherCardWithEffect(card, reading, "weather:hero")
+	got := weatherCardWithEffect(card, reading, "weather:hero", 0)
 	if got != card {
 		t.Fatal("weather wrapper replaced the card node")
 	}
@@ -102,7 +103,7 @@ func TestWeatherEffectWrapperPreservesCardAndPlacesEffectFirst(t *testing.T) {
 
 func TestWeatherHeroUsesTheWeatherEffect(t *testing.T) {
 	reading := observedWeather()
-	hero := weatherHero(reading, "Brisbane", DefaultTheme().Metrics)
+	hero := weatherHero(reading, "Brisbane", DefaultTheme().Metrics, 346)
 	effect := firstWeatherEffect(hero)
 	if effect == nil || effect.Key != "weather:hero" {
 		t.Fatalf("hero effect = %+v, want the stable hero effect", effect)
@@ -113,7 +114,9 @@ func TestWeatherHeroUsesTheWeatherEffect(t *testing.T) {
 	}
 }
 
-func TestWeatherHeroHeadlineDropsTextToTheIconOpticalCentre(t *testing.T) {
+// The mark keeps the upper band and the reading is centred in the lower one,
+// so the two share a centreline without the reading sitting on the form.
+func TestWeatherHeroSeatsTheReadingBelowTheMark(t *testing.T) {
 	r := &Registry{reading: observedWeather()}
 	h := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
 	root := weatherTree(r, h)
@@ -123,11 +126,40 @@ func TestWeatherHeroHeadlineDropsTextToTheIconOpticalCentre(t *testing.T) {
 
 	hero := root.Children[1].Children[0]
 	foreground := hero.Children[0].Children[2]
-	headline := foreground.Children[0]
-	icon := headline.Children[0]
-	text := headline.Children[1]
-	if text.Children[0].Bounds.Y <= icon.Bounds.Y {
-		t.Fatalf("headline text starts at y=%d beside icon y=%d; want a small optical-centre drop", text.Children[0].Bounds.Y, icon.Bounds.Y)
+	group := foreground.Children[0]
+	band := group.Children[1]
+	stack := band.Children[0]
+	if stack.Bounds.H <= 0 {
+		t.Fatal("reading stack has no height")
+	}
+	// The reading sits in the lower band, clear of the mark's.
+	if stack.Bounds.Y <= group.Bounds.Y+group.Bounds.H/4 {
+		t.Fatalf("reading y=%d is not below the mark band of group %+v", stack.Bounds.Y, group.Bounds)
+	}
+	// And it is centred within that band.
+	above := stack.Bounds.Y - band.Bounds.Y
+	below := (band.Bounds.Y + band.Bounds.H) - (stack.Bounds.Y + stack.Bounds.H)
+	if above <= 0 {
+		t.Fatalf("reading starts at the top of its band (slack above = %d)", above)
+	}
+	if diff := above - below; diff > 1 || diff < -1 {
+		t.Fatalf("reading is not centred in its band: %d above, %d below", above, below)
+	}
+}
+
+// A stale reading still says so in full; only the fresh form is abbreviated to
+// its time, because the panel is too narrow for both.
+func TestWeatherMetaLineKeepsTheStaleWarning(t *testing.T) {
+	// Staleness is a failed refresh, not age: Reading.Stale reads FailedSince.
+	stale := observedWeather()
+	stale.FetchedAt = time.Now().Add(-3 * time.Hour)
+	stale.FailedSince = time.Now().Add(-2 * time.Hour)
+	if got := weatherMetaLine(stale, "Lisbon"); !strings.Contains(got, "Stale") {
+		t.Fatalf("stale meta line = %q, want the stale warning", got)
+	}
+	fresh := observedWeather()
+	if got := weatherMetaLine(fresh, "Lisbon"); strings.Contains(got, "Stale") {
+		t.Fatalf("fresh meta line = %q, want no stale warning", got)
 	}
 }
 
@@ -141,6 +173,7 @@ func TestControlCentreWeatherUsesTheSameWeatherEffect(t *testing.T) {
 		t.Fatalf("Today effect = %+v, want the stable Today effect", effect)
 	}
 	want, ok := weatherEffectSpec(reading)
+	want.SceneBias = -1 // the Control Centre card is wide enough to split
 	if !ok || effect.Effect != want {
 		t.Fatalf("Today effect spec = %+v, want %+v", effect.Effect, want)
 	}

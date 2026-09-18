@@ -38,6 +38,11 @@ type EffectSpec struct {
 	Seed      uint64
 	Intensity float64
 	Speed     float64
+	// SceneBias places the aspect-locked scene horizontally inside the effect
+	// box: zero centres it and minus one puts it hard against the leading
+	// edge. The host picks it from the hero composition, so the renderer does
+	// not re-derive the composition rule from the box it is handed.
+	SceneBias float64
 }
 
 // Validate checks the bounds accepted by the host effect catalogue.
@@ -53,6 +58,9 @@ func (s EffectSpec) Validate() error {
 	}
 	if !finiteInRange(s.Speed, 0, 4) {
 		return fmt.Errorf("ui: effect speed %v is outside zero through four", s.Speed)
+	}
+	if !finiteInRange(s.SceneBias, -1, 1) {
+		return fmt.Errorf("ui: effect scene bias %v is outside minus one through one", s.SceneBias)
 	}
 	return nil
 }

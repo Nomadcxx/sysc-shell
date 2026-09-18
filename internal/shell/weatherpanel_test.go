@@ -200,7 +200,9 @@ func TestWeatherPanelHeroCarriesOnlyCurrentWeatherInformation(t *testing.T) {
 
 	tree := weatherTree(r, h)
 	texts := collectTooltipLines(tree)
-	for _, want := range []string{"18°C", "Clear", "Brisbane", "Low 6°", "High 22°", "Feels like", "9.5°C", "Wind", "10.4 km/h NE", "Humidity", "62%", "Updated"} {
+	// The three-cell grid is gone; every fact it carried now rides the one
+	// quiet meta line, so assert the facts rather than their old labels.
+	for _, want := range []string{"18°C", "Clear", "Brisbane", "Low 6°", "High 22°", "feels 10°C", "10.4 km/h NE", "62%"} {
 		if !hasLine(texts, want) {
 			t.Fatalf("weather texts %q are missing %q", texts, want)
 		}
@@ -210,8 +212,11 @@ func TestWeatherPanelHeroCarriesOnlyCurrentWeatherInformation(t *testing.T) {
 			t.Fatalf("weather texts %q still contain retired field %q", texts, forbidden)
 		}
 	}
-	if !hasValue(treeIcons(tree), "clear-day") {
-		t.Fatalf("weather icons %q are missing clear-day", treeIcons(tree))
+	// The hero's mark is the effect form, not a glyph: the clear state has to
+	// be legible from the effect spec the hero actually carries.
+	effect := findNode(tree, func(n *ui.Node) bool { return n.Kind == ui.KindEffect })
+	if effect == nil || effect.Effect.Variant != ui.WeatherClear || effect.Effect.Night {
+		t.Fatalf("hero effect = %+v, want the clear day variant", effect)
 	}
 	if !hasValue(treeActions(tree), "weather-close") {
 		t.Fatalf("actions %q are missing the close button", treeActions(tree))
@@ -367,8 +372,10 @@ func TestTheWeatherHeroOmitsAnUnresolvedCoordinateCaption(t *testing.T) {
 	if foreground.Kind != ui.KindColumn || len(foreground.Children) == 0 {
 		t.Fatalf("hero foreground = %+v, want content column", foreground)
 	}
-	if foreground.Children[0].Kind != ui.KindRow {
-		t.Fatalf("first hero content = %+v, want headline without a coordinate caption", foreground.Children[0])
+	// The reading group leads the hero. An unresolved coordinate must not
+	// reappear as a caption above it.
+	if foreground.Children[0].Kind == ui.KindText {
+		t.Fatalf("first hero content = %q, want the reading group, not a caption", foreground.Children[0].Text)
 	}
 	for _, line := range collectTooltipLines(hero) {
 		if strings.Contains(line, "-37.81") || strings.Contains(line, "144.96") {
@@ -387,26 +394,13 @@ func TestTheWeatherLocationDoesNotInventCoordinatesForAnUnresolvedCity(t *testin
 	}
 }
 
-func TestTheWeatherPanelTonesFollowTheReference(t *testing.T) {
+func TestTheWeatherPanelFollowsTheDayAndNightReference(t *testing.T) {
 	t.Parallel()
 	r := &Registry{reading: observedWeather()}
 	h := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
-
-	day := weatherTree(r, h)
-	var heroTone ui.Tone
-	var found bool
-	var walk func(n *ui.Node)
-	walk = func(n *ui.Node) {
-		if !found && n.Kind == ui.KindIcon && n.Icon == "clear-day" {
-			heroTone, found = n.Tone, true
-		}
-		for _, c := range n.Children {
-			walk(c)
-		}
-	}
-	walk(day)
-	if !found || heroTone != ui.ToneAccent {
-		t.Fatalf("the day hero glyph tone = %v (found %v), want accent", heroTone, found)
+	day := findNode(weatherTree(r, h), func(n *ui.Node) bool { return n.Kind == ui.KindEffect })
+	if day == nil || day.Effect.Night {
+		t.Fatalf("day hero effect = %+v, want the daylight form", day)
 	}
 
 	night := observedWeather()
@@ -414,19 +408,63 @@ func TestTheWeatherPanelTonesFollowTheReference(t *testing.T) {
 	night.IsDay = &falseValue
 	n := &Registry{reading: night}
 	h2 := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
-	var nightTone ui.Tone
-	var nightFound bool
-	var walk2 func(n *ui.Node)
-	walk2 = func(n *ui.Node) {
-		if !nightFound && n.Kind == ui.KindIcon && n.Icon == "clear-night" {
-			nightTone, nightFound = n.Tone, true
-		}
-		for _, c := range n.Children {
-			walk2(c)
-		}
+	got := findNode(weatherTree(n, h2), func(n *ui.Node) bool { return n.Kind == ui.KindEffect })
+	if got == nil || !got.Effect.Night {
+		t.Fatalf("night hero effect = %+v, want the nocturnal form", got)
 	}
-	walk2(weatherTree(n, h2))
-	if !nightFound || nightTone != ui.ToneNormal {
-		t.Fatalf("night hero tone = %v (found %v), want normal", nightTone, nightFound)
+	if got.Effect.Intensity >= day.Effect.Intensity {
+		t.Fatalf("night intensity %v is not quieter than day %v", got.Effect.Intensity, day.Effect.Intensity)
+	}
+}
+
+func TestWeatherHeroCarriesNoStaticGlyph(t *testing.T) {
+	t.Parallel()
+	r := &Registry{cfg: config.Default(), reading: observedWeather()}
+	h := &PanelHost{id: PanelWeather, theme: DefaultTheme()}
+	hero := findNode(weatherTree(r, h), func(n *ui.Node) bool {
+		return n.Kind == ui.KindEffect && n.Key == weatherHeroEffectKey
+	})
+	if hero == nil {
+		t.Fatal("hero effect layer missing")
+	}
+	card := findNode(weatherTree(r, h), func(n *ui.Node) bool {
+		return n.Kind == ui.KindStack
+	})
+	if card == nil {
+		t.Fatal("hero stack missing")
+	}
+	walkNodes(card, func(n *ui.Node) {
+		if n.Kind == ui.KindIcon {
+			t.Fatalf("hero still paints a static glyph %q beside the effect form", n.Icon)
+		}
+	})
+}
+
+func TestWeatherHeroComposesByAspect(t *testing.T) {
+	t.Parallel()
+	m := DefaultTheme().Metrics
+	reading := observedWeather()
+
+	// The standalone panel's hero is 416x346: stacked, scene centred.
+	stacked := weatherHeroCard(reading, "Lisbon", m, 416, 346+2*m.CardPadding, weatherHeroEffectKey)
+	effect := findNode(stacked, func(n *ui.Node) bool { return n.Kind == ui.KindEffect })
+	if effect == nil {
+		t.Fatal("stacked hero has no effect")
+	}
+	if effect.Effect.SceneBias != 0 {
+		t.Fatalf("stacked scene bias = %v, want 0 (centred)", effect.Effect.SceneBias)
+	}
+
+	// The Control Centre card is 578x318: split, scene against the leading edge.
+	split := weatherHeroCard(reading, "Lisbon", m, 578, 318+2*m.CardPadding, weatherTodayEffectKey)
+	effect = findNode(split, func(n *ui.Node) bool { return n.Kind == ui.KindEffect })
+	if effect == nil {
+		t.Fatal("split hero has no effect")
+	}
+	if effect.Effect.SceneBias >= 0 {
+		t.Fatalf("split scene bias = %v, want negative (leading edge)", effect.Effect.SceneBias)
+	}
+	if err := effect.Effect.Validate(); err != nil {
+		t.Fatalf("split hero effect is invalid: %v", err)
 	}
 }

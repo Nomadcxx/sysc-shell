@@ -804,7 +804,8 @@ func TestWeatherPageUsesTheHeroInformationBudget(t *testing.T) {
 		t.Fatalf("Today content = %+v, want the stable effect-first hero stack", stack)
 	}
 	texts := collectTooltipLines(today)
-	for _, want := range []string{"18°C", "Clear", "Low 6°", "High 22°", "Feels like", "9.5°C", "Wind", "10.4 km/h NE", "Humidity", "62%", "Updated"} {
+	// Same budget as the standalone hero: the facts survive on the meta line.
+	for _, want := range []string{"18°C", "Clear", "Low 6°", "High 22°", "feels 10°C", "10.4 km/h NE", "62%"} {
 		if !hasLine(texts, want) {
 			t.Fatalf("Today texts %q are missing %q", texts, want)
 		}
@@ -1295,32 +1296,18 @@ func TestTheWeatherPageMarksAStaleReading(t *testing.T) {
 	}
 }
 
-func TestTheWeatherPageUsesTheNightGlyph(t *testing.T) {
+// The Control Centre hero shows night through the effect form, the same way
+// the standalone panel does. The glyph it used to rely on is gone by design.
+func TestTheWeatherPageUsesTheNocturnalForm(t *testing.T) {
 	night := false
 	r := &Registry{reading: services.Reading{
 		Observed: true, Temperature: 18, Unit: services.UnitCelsius, Code: 0,
 		IsDay: &night, FetchedAt: time.Now(),
 	}}
 	h := &PanelHost{id: PanelControlCenter, section: "weather", theme: DefaultTheme()}
-	page := ccWeather(r, h)
-	var icons []string
-	var walk func(n *ui.Node)
-	walk = func(n *ui.Node) {
-		if n.Kind == ui.KindIcon && n.Icon != "" {
-			icons = append(icons, n.Icon)
-		}
-		for _, c := range n.Children {
-			walk(c)
-		}
-	}
-	walk(page)
-	found := false
-	for _, icon := range icons {
-		if icon == "clear-night" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("a night reading rendered %q, want clear-night", icons)
+
+	effect := findNode(ccWeather(r, h), func(n *ui.Node) bool { return n.Kind == ui.KindEffect })
+	if effect == nil || !effect.Effect.Night {
+		t.Fatalf("night Control Centre hero effect = %+v, want the nocturnal form", effect)
 	}
 }

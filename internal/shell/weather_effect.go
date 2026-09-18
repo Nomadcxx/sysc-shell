@@ -61,9 +61,13 @@ func weatherEffectSpec(reading services.Reading) (ui.EffectSpec, bool) {
 	return spec, true
 }
 
-func weatherEffectNode(reading services.Reading, key string) *ui.Node {
+func weatherEffectNode(reading services.Reading, key string, bias float64) *ui.Node {
 	spec, ok := weatherEffectSpec(reading)
 	if !ok {
+		return nil
+	}
+	spec.SceneBias = bias
+	if err := spec.Validate(); err != nil {
 		return nil
 	}
 	return &ui.Node{Kind: ui.KindEffect, Key: key, Shape: ui.ShapeCard, Effect: spec}
@@ -73,11 +77,11 @@ func weatherEffectNode(reading services.Reading, key string) *ui.Node {
 // capsule while layering the effect, scrim, and existing foreground in its
 // content box. The current card grammar has one foreground child; malformed
 // cards are left untouched rather than losing content.
-func weatherCardWithEffect(card *ui.Node, reading services.Reading, key string) *ui.Node {
+func weatherCardWithEffect(card *ui.Node, reading services.Reading, key string, bias float64) *ui.Node {
 	if card == nil || len(card.Children) != 1 || card.Children[0] == nil {
 		return card
 	}
-	effect := weatherEffectNode(reading, key)
+	effect := weatherEffectNode(reading, key, bias)
 	if effect == nil {
 		return card
 	}

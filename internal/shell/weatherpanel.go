@@ -2,6 +2,7 @@ package shell
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -35,8 +36,7 @@ func weatherTree(r *Registry, h *PanelHost) *ui.Node {
 	bodyW := max(panelW-2*m.PanelPadding, 0)
 	forecastH := weatherForecastHeight(m)
 	heroH := max(bodyH-theme.MarginL-forecastH, 0)
-	hero := weatherHero(reading, location, m)
-	hero.Height = heroH
+	hero := weatherHero(reading, location, m, heroH)
 
 	children := []*ui.Node{
 		weatherHeader(m),
@@ -71,6 +71,20 @@ func weatherLocation(w config.Weather, reading services.Reading) string {
 	}
 	return ""
 }
+
+const (
+	// weatherSplitAspect is where the hero stops stacking the reading over the
+	// scene and sets it beside instead. The standalone panel measures 1.20 and
+	// the Control Centre card 1.82, so the two land either side of it without
+	// either surface naming itself.
+	weatherSplitAspect = 1.45
+	// weatherSceneAspect mirrors the renderer's locked scene shape, so the
+	// split composition reserves exactly the width the scene will occupy.
+	weatherSceneAspect = 1.20
+	// weatherMarkBandPercent is how much of the stacked hero the mark keeps
+	// above the reading. The remainder centres the reading beneath it.
+	weatherMarkBandPercent = 46
+)
 
 // weatherHeaderHeight is the header capsule's height, named so the body can
 // size against it without guessing.
@@ -109,10 +123,10 @@ func weatherDayRange(reading services.Reading) string {
 
 // weatherHero is the standalone hero. The sized form is shared with the
 // Control Centre Today card so both surfaces keep the same information budget.
-func weatherHero(reading services.Reading, location string, m theme.Metrics) *ui.Node {
+func weatherHero(reading services.Reading, location string, m theme.Metrics, height int) *ui.Node {
 	panelW := panelTargetSize(PanelWeather).W
 	contentW := max(panelW-2*m.PanelPadding-2*m.CardPadding, 0)
-	return weatherHeroCard(reading, location, m, contentW, 0, weatherHeroEffectKey)
+	return weatherHeroCard(reading, location, m, contentW, height, weatherHeroEffectKey)
 }
 
 func weatherHeroCard(reading services.Reading, location string, m theme.Metrics, contentW, height int, effectKey string) *ui.Node {
@@ -132,34 +146,85 @@ func weatherHeroCard(reading services.Reading, location string, m theme.Metrics,
 		return card
 	}
 
-	isDay := reading.IsDay == nil || *reading.IsDay
-	heroTone := ui.ToneAccent
-	if !isDay {
-		heroTone = ui.ToneNormal
+	// The scene is the mark, so the stack carries no glyph. Its composition
+	// follows the measured aspect rather than which surface asked for it: a
+	// tall card stacks the reading over the scene, a wide one sets it beside.
+	contentH := max(height-2*m.CardPadding, 0)
+	meta := &ui.Node{Kind: ui.KindText, TextRole: theme.RoleCaption, Tabular: true,
+		Text: weatherMetaLine(reading, location)}
+	metaH := m.IconSmall
+	groupH := max(contentH-metaH-theme.MarginS, 0)
+
+	reading0 := &ui.Node{Kind: ui.KindText, Tabular: true, TextRole: theme.RoleHeadline,
+		Text: fmt.Sprintf("%.0f%s", reading.Temperature, unitSuffix(reading.Unit))}
+	condition := &ui.Node{Kind: ui.KindText, TextRole: theme.RoleLabel,
+		Text: render.WeatherCondition(reading.Code)}
+	dayRange := &ui.Node{Kind: ui.KindText, TextRole: theme.RoleLabel, Tabular: true,
+		Tone: ui.ToneAccent, Text: weatherDayRange(reading)}
+
+	split := contentH > 0 && contentW >= int(float64(contentH)*weatherSplitAspect)
+	bias := 0.0
+	var group *ui.Node
+	if split {
+		// The locked scene keeps the leading edge; the recovered width becomes
+		// a real column, so the reading never sits on top of the form.
+		bias = -1
+		sceneW := min(int(float64(contentH)*weatherSceneAspect), contentW)
+		stack := &ui.Node{Kind: ui.KindColumn, CenterY: true, Gap: theme.MarginXXS,
+			Children: []*ui.Node{reading0, condition, dayRange}}
+		group = &ui.Node{Kind: ui.KindRow, Height: groupH, Gap: theme.MarginL, Children: []*ui.Node{
+			{Kind: ui.KindColumn, Width: sceneW},
+			{Kind: ui.KindColumn, Children: []*ui.Node{stack}},
+		}}
+	} else {
+		for _, n := range []*ui.Node{reading0, condition, dayRange} {
+			n.CenterX = true
+		}
+		stack := &ui.Node{Kind: ui.KindColumn, CenterY: true, Gap: theme.MarginXXS,
+			Children: []*ui.Node{reading0, condition, dayRange}}
+		// The mark owns the upper band and the reading the lower one, so the
+		// two share a centreline without the reading sitting on the form.
+		markH := groupH * weatherMarkBandPercent / 100
+		group = &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{
+			{Kind: ui.KindColumn, Height: markH},
+			{Kind: ui.KindColumn, Height: max(groupH-markH, 0), Children: []*ui.Node{stack}},
+		}}
+		group.Height = groupH
 	}
-	headline := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Height: m.IconHero, Children: []*ui.Node{
-		{Kind: ui.KindIcon, Icon: render.WeatherIconName(reading.Code, isDay), IconSize: m.IconHero, Tone: heroTone},
-		{Kind: ui.KindColumn, Padding: theme.MarginXS, Gap: theme.MarginXXS, Children: []*ui.Node{
-			{Kind: ui.KindText, Text: fmt.Sprintf("%.0f%s", reading.Temperature, unitSuffix(reading.Unit)), TextRole: theme.RoleHeadline, Tabular: true},
-			{Kind: ui.KindText, Text: render.WeatherCondition(reading.Code), TextRole: theme.RoleLabel},
-		}},
-	}}
-	lines := []*ui.Node{
-		headline,
-		{Kind: ui.KindText, TextRole: theme.RoleLabel, Tabular: true, Tone: ui.ToneAccent, Text: weatherDayRange(reading)},
-		weatherEssentials(reading, m, contentW),
-		{Kind: ui.KindText, TextRole: theme.RoleCaption, Tabular: true, Text: weatherFreshness(reading)},
-	}
-	if location != "" && location != absent {
-		lines = append([]*ui.Node{{Kind: ui.KindText, TextRole: theme.RoleCaption, Text: location}}, lines...)
-	}
+
 	card := &ui.Node{
 		Kind: ui.KindCapsule, Padding: m.CardPadding,
 		Height: height,
 		Fill:   ui.FillContainerHigh, Shape: ui.ShapeCard,
-		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginM, Children: lines}},
+		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginS, Children: []*ui.Node{group, meta}}},
 	}
-	return weatherCardWithEffect(card, reading, effectKey)
+	return weatherCardWithEffect(card, reading, effectKey, bias)
+}
+
+// weatherMetaLine is the hero's one quiet supporting line. Every fact the
+// three-cell grid carried survives here; none of them competes with the scene.
+func weatherMetaLine(reading services.Reading, location string) string {
+	parts := make([]string, 0, 5)
+	if location != "" && location != absent && location != ccDash {
+		parts = append(parts, location)
+	}
+	suffix := unitSuffix(reading.Unit)
+	if reading.Apparent != nil {
+		parts = append(parts, fmt.Sprintf("feels %.0f%s", *reading.Apparent, suffix))
+	}
+	if wind := weatherWind(reading); wind != absent {
+		parts = append(parts, wind)
+	}
+	if reading.Humidity != nil {
+		parts = append(parts, fmt.Sprintf("%.0f%%", *reading.Humidity))
+	}
+	if fresh := weatherMetaFreshness(reading); fresh != absent {
+		parts = append(parts, fresh)
+	}
+	if len(parts) == 0 {
+		return absent
+	}
+	return strings.Join(parts, " · ")
 }
 
 func weatherEssentials(reading services.Reading, m theme.Metrics, contentW int) *ui.Node {
@@ -180,6 +245,19 @@ func weatherEssentialCell(m theme.Metrics, width int, label, value string) *ui.N
 		{Kind: ui.KindText, Text: label, TextRole: theme.RoleCaption},
 		{Kind: ui.KindText, Text: value, TextRole: theme.RoleBody, Tabular: true},
 	}}
+}
+
+// weatherMetaFreshness is the terse form for the hero's one meta line. A stale
+// reading keeps the full wording; a fresh one is just its time, because the
+// panel is too narrow to spend eight characters saying "Updated".
+func weatherMetaFreshness(reading services.Reading) string {
+	if reading.FetchedAt.IsZero() {
+		return absent
+	}
+	if reading.Stale() {
+		return weatherFreshness(reading)
+	}
+	return reading.FetchedAt.Format("15:04")
 }
 
 func weatherFreshness(reading services.Reading) string {
