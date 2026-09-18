@@ -162,6 +162,21 @@ func TestABarRendersTheFallbackWorkspace(t *testing.T) {
 	}
 }
 
+func TestBarApplyUpdatesAnUncapsuledFormattedWidget(t *testing.T) {
+	node := &ui.Node{Kind: ui.KindText}
+	bar := &Bar{right: []textWidget{{
+		node:   node,
+		format: func(barView) string { return "42%" },
+	}}}
+
+	if !bar.apply(barView{}) {
+		t.Fatal("the formatted widget did not report a change")
+	}
+	if node.Text != "42%" {
+		t.Fatalf("widget text = %q, want 42%%", node.Text)
+	}
+}
+
 // press and release drive a full click at one point.
 func click(p *Bar, x, y int) bool {
 	return clickButton(p, x, y, buttonLeft)

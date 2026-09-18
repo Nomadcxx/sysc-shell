@@ -282,12 +282,20 @@ func (b *Bar) applyLocked(view barView) bool {
 				}
 				continue
 			}
-			// State lives on the inner node; the capsule is chrome.
-			before := *w.inner
-			if text := w.format(view); text != w.inner.Text {
-				w.inner.Text = text
+			// State lives on the inner node; the capsule is chrome. An
+			// uncapsuled widget keeps its state on node itself.
+			state := w.inner
+			if state == nil {
+				state = w.node
 			}
-			if nodeVisualStateChanged(before, *w.inner) {
+			if state == nil || w.format == nil {
+				continue
+			}
+			before := *state
+			if text := w.format(view); text != state.Text {
+				state.Text = text
+			}
+			if nodeVisualStateChanged(before, *state) {
 				changed = true
 			}
 		}
