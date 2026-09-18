@@ -15,7 +15,7 @@ Pins are in `go.mod`. This process does not vendor those trees; it imports the t
 |---|---|---|
 | [`sysc-wayland`](https://github.com/Nomadcxx/sysc-wayland) | `v0.2.2` | Pure-Go Wayland client and protocol generator. |
 | [`sysc-metrics`](https://github.com/Nomadcxx/sysc-metrics) | `v0.5.1` | Linux telemetry for built-in monitoring widgets and the on-demand process view. |
-| [`sysc-notify`](https://github.com/Nomadcxx/sysc-notify) | `v0.1.0-rc.3` | Freedesktop Notifications daemon. Separate process; this shell dials `$XDG_RUNTIME_DIR/sysc-notify/presenter.v1.sock`. Binary is `cmd/sysc-notify` on the tag (`redesign/v0.1`). That repo's `main` is still docs-only. |
+| [`sysc-notify`](https://github.com/Nomadcxx/sysc-notify) | `v0.1.0-rc.4` | Freedesktop Notifications daemon. Separate process; this shell dials `$XDG_RUNTIME_DIR/sysc-notify/presenter.v1.sock`. Binary is `cmd/sysc-notify` on the tag (`redesign/v0.1`). That repo's `main` is still docs-only. |
 | [`sysc-tray`](https://github.com/Nomadcxx/sysc-tray) | `v0.1.0-rc.1` | StatusNotifierItem and DBusMenu daemon. Separate process; this shell dials `$XDG_RUNTIME_DIR/sysc-tray/presenter.v1.sock`. Binary is `cmd/sysc-tray` on the tag. Same `main` gap as notify. |
 | [`sysc-launch`](https://github.com/Nomadcxx/sysc-launch) | `v0.1.0` | Desktop-entry scan, fzf ranking, usage history, and Niri spawn. **Library plus a one-shot CLI** (`query` / `launch`), not a daemon. This shell constructs `launcher.NewService` in-process. Ranking history stays at `$XDG_STATE_HOME/sysc-shell/launcher/history.gob` so it does not merge with the module default. Clone: `/home/nomadx/sysc-launch`. |
 

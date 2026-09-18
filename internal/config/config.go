@@ -402,7 +402,7 @@ func Default() Config {
 					{ID: "temperature", Display: "radial", Interval: defaultMetricInterval},
 					{ID: "gpu", Display: "radial", Interval: defaultMetricInterval},
 				}},
-				{ID: "battery", Interval: defaultMetricInterval},
+				{ID: "battery", WarnBelow: defaultBatteryWarnBelow, Interval: defaultMetricInterval},
 				{ID: "clipboard"},
 				{ID: "notifications"},
 			},

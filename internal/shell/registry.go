@@ -124,6 +124,9 @@ type Registry struct {
 
 	// notify is the service-owned notification projection.
 	notify *notifyState
+	// batteryWarning is the shell-owned desired-state reducer for the one
+	// keyed battery producer notification.
+	batteryWarning *batteryWarning
 
 	// clipboard is the daemon-owned metadata projection. Payload bytes never
 	// enter Registry or a bar view.
@@ -153,7 +156,8 @@ type Registry struct {
 	notifyCh chan notifyclient.Message
 	// notifySender is the client's Send seam. Nil in tests that do not
 	// assert commands.
-	notifySender notifyCommandSender
+	notifySender   notifyCommandSender
+	producerSender notifyProducerSender
 	// toasts hosts one toast stack per output, created when wiring binds it.
 	toasts *toastHost
 	// launcherSvc is created on the first launcher open; nil until then.
@@ -183,6 +187,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		startInhibit:    startInhibitDefault,
 		signalProcess:   signalProcessDefault,
 		notify:          newNotifyState(),
+		batteryWarning:  newBatteryWarning(),
 		clipboard:       newClipboardProjection(),
 		tray:            newTrayState(),
 		trayCh:          make(chan trayclient.Message, 32),
@@ -1496,6 +1501,7 @@ func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
 	r.mu.Lock()
 	r.sample = snap
 	r.machineFacts = facts
+	batteryThreshold, batteryConfigured := batteryWarningThreshold(r.cfg.Bar)
 	var changed []uint32
 	for global, bar := range r.bars {
 		if bar.apply(r.viewLocked(bar.connector())) {
@@ -1520,6 +1526,9 @@ func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
 	controlOut, controlOK := r.rebuildControlCentreLocked()
 	r.mu.Unlock()
 
+	if batteryConfigured && r.batteryWarning != nil {
+		r.dispatchBatteryWarning(r.batteryWarning.observe(snap, batteryThreshold))
+	}
 	r.publish(changed)
 	if monitorOK {
 		r.publishSurface(monitorOut, panelSurfaceID(PanelMonitor))

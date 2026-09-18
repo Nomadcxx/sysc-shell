@@ -109,20 +109,21 @@ func centreRemoveButton(action, name string) *ui.Node {
 }
 
 func notificationTree(id uint32, app, summary, body string, urgency protocol.Urgency, raster *ui.Image, value *int32, allowLinks bool, now, ts time.Time) *ui.Node {
+	tone := toneFor(urgency)
 	text := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{}}
 	identity := &ui.Node{Kind: ui.KindRow, Gap: cardGap, Children: []*ui.Node{}}
 	if app != "" {
-		identity.Children = append(identity.Children, &ui.Node{Kind: ui.KindText, Text: app})
+		identity.Children = append(identity.Children, &ui.Node{Kind: ui.KindText, Text: app, Tone: tone})
 	}
 	if !ts.IsZero() && !now.IsZero() {
-		identity.Children = append(identity.Children, &ui.Node{Kind: ui.KindText, Text: formatNotifyTime(ts, now)})
+		identity.Children = append(identity.Children, &ui.Node{Kind: ui.KindText, Text: formatNotifyTime(ts, now), Tone: tone})
 	}
 	if len(identity.Children) > 0 {
 		text.Children = append(text.Children, identity)
 	}
 	if summary != "" {
 		text.Children = append(text.Children, &ui.Node{
-			Kind: ui.KindText, Text: summary, TextRole: theme.RoleTitle, Tone: toneFor(urgency),
+			Kind: ui.KindText, Text: summary, TextRole: theme.RoleTitle, Tone: tone,
 		})
 	}
 	for _, run := range ParseBody(body, allowLinks) {
@@ -131,7 +132,7 @@ func notificationTree(id uint32, app, summary, body string, urgency protocol.Urg
 		}
 		node := &ui.Node{
 			Kind: ui.KindText, Text: run.Text,
-			Bold: run.Bold, Italic: run.Italic, Underline: run.Underline,
+			Bold: run.Bold, Italic: run.Italic, Underline: run.Underline, Tone: tone,
 		}
 		if run.Link {
 			node.Action = fmt.Sprintf("notify:%d:link:%s", id, run.Href)
@@ -148,10 +149,14 @@ func notificationTree(id uint32, app, summary, body string, urgency protocol.Urg
 }
 
 func toneFor(urgency protocol.Urgency) ui.Tone {
-	if urgency == protocol.UrgencyCritical {
+	switch urgency {
+	case protocol.UrgencyLow:
+		return ui.ToneSubtle
+	case protocol.UrgencyCritical:
 		return ui.ToneError
+	default:
+		return ui.ToneNormal
 	}
-	return ui.ToneNormal
 }
 
 // NotificationCard builds the retained tree for one active toast or ungrouped
@@ -272,7 +277,7 @@ func ActiveGroupCard(g activeGroup, now time.Time, expanded bool, raster *ui.Ima
 			limit = 10
 		}
 		for _, m := range g.members[:limit] {
-			root.Children = append(root.Children, &ui.Node{Kind: ui.KindText, Text: m.Summary})
+			root.Children = append(root.Children, &ui.Node{Kind: ui.KindText, Text: m.Summary, Tone: toneFor(m.Urgency)})
 		}
 	}
 	return cardColumn(wrapNotifyCard(root, critical, ui.FillContainerHigh))
