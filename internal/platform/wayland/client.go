@@ -652,28 +652,34 @@ func (o *owner) createBar(h *OutputHost) error {
 	return nil
 }
 
-// applyGeometryRequests sets size, anchor, exclusive zone and keyboard policy.
-// The surface height equals the exclusive zone, and the gap lives inside the
-// surface with a zero layer margin, so the screen edge stays clickable.
+// applyGeometryRequests sets size, anchor, exclusive zone and keyboard policy
+// for the edge the policy names. The gap lives inside the surface with a zero
+// layer margin, so the screen edge stays clickable.
+//
+// The zone defaults to the extent but is separately settable, including zero,
+// so the two are bounds-checked apart.
 func (o *owner) applyGeometryRequests(h *OutputHost) error {
-	height := h.surfaceHeight()
-	if height <= 0 || height > math.MaxInt32 {
-		return fmt.Errorf("wayland: surface height %d is unusable", height)
+	extent := h.surfaceHeight()
+	if extent <= 0 || extent > math.MaxInt32 {
+		return fmt.Errorf("wayland: surface extent %d is unusable", extent)
 	}
-	anchor := uint32(layershell.ZwlrLayerSurfaceV1AnchorTop |
-		layershell.ZwlrLayerSurfaceV1AnchorLeft |
-		layershell.ZwlrLayerSurfaceV1AnchorRight)
-	// Width 0 asks the compositor for the anchored width.
-	if err := h.bar.layer.SetSize(0, uint32(height)); err != nil {
+	zone := h.policy.ExclusiveZone()
+	if zone < 0 || zone > math.MaxInt32 {
+		return fmt.Errorf("wayland: exclusive zone %d is unusable", zone)
+	}
+	// The zero dimension is the compositor-anchored one: a horizontal bar asks
+	// for the anchored width, a vertical one for the anchored height.
+	w, hgt := barSize(h.policy.Edge, extent)
+	if err := h.bar.layer.SetSize(w, hgt); err != nil {
 		return err
 	}
-	if err := h.bar.layer.SetAnchor(anchor); err != nil {
+	if err := h.bar.layer.SetAnchor(barAnchor(h.policy.Edge)); err != nil {
 		return err
 	}
 	if err := h.bar.layer.SetMargin(0, 0, 0, 0); err != nil {
 		return err
 	}
-	if err := h.bar.layer.SetExclusiveZone(int32(height)); err != nil {
+	if err := h.bar.layer.SetExclusiveZone(int32(zone)); err != nil {
 		return err
 	}
 	return h.bar.layer.SetKeyboardInteractivity(
