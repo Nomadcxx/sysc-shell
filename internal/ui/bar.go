@@ -261,18 +261,20 @@ func placeSection(items []*Node, x int, content Rect, budget, reserve, spacing i
 	if err != nil {
 		return 0, err
 	}
-	fits := sectionFits(widths, budget, reserve, spacing)
+	granted, dropped := sectionGrants(items, widths, budget, reserve, spacing)
 
+	placed := 0
 	for i, n := range items {
-		if i >= fits {
+		if granted[i] < 0 {
 			n.Bounds = Rect{}
 			continue
 		}
-		if i > 0 {
+		if placed > 0 {
 			x += spacing
 		}
+		placed++
 		h := heights[i]
-		n.Bounds = Rect{X: x, Y: content.Y + (content.H-h)/2, W: widths[i], H: h}
+		n.Bounds = Rect{X: x, Y: content.Y + (content.H-h)/2, W: granted[i], H: h}
 		// A section places items itself rather than through Layout, so a
 		// capsule's contents are arranged here too. Without this a bar paints
 		// empty pills.
@@ -281,9 +283,102 @@ func placeSection(items []*Node, x int, content Rect, budget, reserve, spacing i
 				return 0, fmt.Errorf("ui: item %d: %w", i, err)
 			}
 		}
-		x += widths[i]
+		x += granted[i]
 	}
-	return len(items) - fits, nil
+	return dropped, nil
+}
+
+// elastic reports whether a node is built to shrink rather than disappear.
+// Declaring a width cap is the marker: in this bar that is the focused-window
+// title, the media title and the weather line, each of which ellipsizes inside
+// whatever box it is given. A fixed item has one right size and is better
+// dropped and counted than shown as a sliver.
+//
+// A capsule is chrome wrapped around one child, so it is as elastic as what it
+// holds. Without descending, every capsuled widget reads as fixed and the bar
+// drops the very titles this rule exists to keep.
+func elastic(n *Node) bool {
+	if n == nil {
+		return false
+	}
+	if n.MaxWidth > 0 {
+		return true
+	}
+	if n.Kind != KindCapsule {
+		return false
+	}
+	for _, c := range n.Children {
+		if elastic(c) {
+			return true
+		}
+	}
+	return false
+}
+
+// sectionGrants decides each item's width, returning -1 for a dropped item and
+// how many were dropped. The reserve is charged only when something overflows
+// without it.
+func sectionGrants(items []*Node, widths []int, budget, reserve, spacing int) ([]int, int) {
+	granted, dropped := grantsWithin(items, widths, max(0, budget), spacing)
+	if dropped > 0 && reserve > 0 {
+		granted, dropped = grantsWithin(items, widths, max(0, budget-reserve), spacing)
+	}
+	return granted, dropped
+}
+
+// grantsWithin gives every fixed item its natural width and lets the elastic
+// ones share what is left, so a narrow bar keeps its title -- narrowed -- and
+// its chips, instead of dropping whichever came last. Only when the fixed items
+// alone do not fit does the section fall back to dropping whole items from the
+// far end.
+func grantsWithin(items []*Node, widths []int, budget, spacing int) ([]int, int) {
+	granted := make([]int, len(items))
+	if len(items) == 0 {
+		return granted, 0
+	}
+	spacingTotal := spacing * (len(items) - 1)
+	fixedTotal, elasticNatural, elasticCount := 0, 0, 0
+	for i, n := range items {
+		if elastic(n) {
+			elasticNatural += widths[i]
+			elasticCount++
+			continue
+		}
+		fixedTotal += widths[i]
+	}
+
+	if fixedTotal+elasticNatural+spacingTotal <= budget {
+		copy(granted, widths)
+		return granted, 0
+	}
+
+	// The fixed items and the spacing still fit, so the elastic ones absorb the
+	// shortfall by sharing the remainder evenly, each capped at its natural
+	// width. Nothing is dropped: a narrowed title is present and legible in a
+	// way a dropped one is not.
+	if elasticCount > 0 && fixedTotal+spacingTotal < budget {
+		share := (budget - fixedTotal - spacingTotal) / elasticCount
+		if share > 0 {
+			for i, n := range items {
+				if elastic(n) {
+					granted[i] = min(widths[i], share)
+					continue
+				}
+				granted[i] = widths[i]
+			}
+			return granted, 0
+		}
+	}
+
+	fits := fitCount(widths, budget, spacing)
+	for i := range items {
+		if i < fits {
+			granted[i] = widths[i]
+			continue
+		}
+		granted[i] = -1
+	}
+	return granted, len(items) - fits
 }
 
 // placeTruncating grants each item min(natural, remaining), the behaviour the
@@ -337,16 +432,6 @@ func measureSection(items []*Node, height int, measure MeasureText) (widths, hei
 	return widths, heights, nil
 }
 
-// sectionFits is how many leading items fit whole, charging the reserve only
-// when the section overflows without it.
-func sectionFits(widths []int, budget, reserve, spacing int) int {
-	fits := fitCount(widths, max(0, budget), spacing)
-	if fits < len(widths) && reserve > 0 {
-		fits = fitCount(widths, max(0, budget-reserve), spacing)
-	}
-	return fits
-}
-
 // fitCount is how many leading items fit whole in budget, charging spacing
 // between the ones that survive. Collapse order is declaration order from the
 // far end, so the answer is always a prefix: the last-declared item goes first.
@@ -374,13 +459,17 @@ func fittedWidth(items []*Node, content Rect, budget, reserve, spacing int, meas
 	if err != nil {
 		return 0, err
 	}
-	fits := sectionFits(widths, budget, reserve, spacing)
-	used := 0
-	for i := 0; i < fits; i++ {
-		if i > 0 {
+	granted, _ := sectionGrants(items, widths, budget, reserve, spacing)
+	used, placed := 0, 0
+	for _, w := range granted {
+		if w < 0 {
+			continue
+		}
+		if placed > 0 {
 			used += spacing
 		}
-		used += widths[i]
+		placed++
+		used += w
 	}
 	return used, nil
 }
