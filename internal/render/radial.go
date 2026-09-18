@@ -3,6 +3,7 @@ package render
 import (
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -17,7 +18,8 @@ func radialWarningAmber(style Style) Color {
 
 func radialArcColor(style Style, n *ui.Node, progress float64) Color {
 	end := style.Secondary
-	if n != nil && n.Icon == "" && n.ValueText != "" {
+	if n != nil && n.Icon == "" && n.ValueText != "" &&
+		(strings.ContainsRune(n.ValueText, '°') || n.ValueText == "temperature") {
 		temperature := n.Value * 100
 		amber := radialWarningAmber(style)
 		switch {
@@ -32,6 +34,26 @@ func radialArcColor(style Style, n *ui.Node, progress float64) Color {
 		}
 	}
 	return LerpColor(style.Accent, end, progress)
+}
+
+func radialIconSize(size int) int {
+	if size < 32 {
+		// ponytail: keep the established 22px bar glyph proportion; larger
+		// rings use the box-derived proportion below.
+		return max(size/2, 1)
+	}
+	return max(size*7/20, 1)
+}
+
+func radialValueSize(size int, value string) int {
+	if size < 32 {
+		return max(size*4/11, 1)
+	}
+	valueSize := max(size/3, 1)
+	if len([]rune(value)) >= 4 {
+		valueSize = max(min(valueSize, size*3/10), 1)
+	}
+	return valueSize
 }
 
 func radialBandCoverage(distance, radius, halfStroke float64) float64 {
@@ -115,7 +137,7 @@ func paintRadialGauge(c *Canvas, n *ui.Node, text *TextRenderer, style Style) er
 
 	centre := ui.Rect{X: box.X, Y: box.Y, W: box.W, H: box.H}
 	if !n.Absent && n.Icon != "" {
-		mask, err := text.RasterProjectIcon(n.Icon, style.Scale120.Physical(11))
+		mask, err := text.RasterProjectIcon(n.Icon, radialIconSize(size))
 		if err != nil {
 			return err
 		}
@@ -128,6 +150,6 @@ func paintRadialGauge(c *Canvas, n *ui.Node, text *TextRenderer, style Style) er
 	} else if value == "" {
 		value = fmt.Sprintf("%.0f%%", fraction*100)
 	}
-	spec := textSpec(style, n).AtSize(style.Scale120.Physical(8))
+	spec := textSpec(style, n).AtSize(radialValueSize(size, value))
 	return paintCentredTextColor(c, value, centre, text, spec, true, textColor(style, n.Tone), false)
 }

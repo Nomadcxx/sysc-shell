@@ -229,6 +229,10 @@ type Node struct {
 	// than laying out across the full width and leaving nothing to move. A
 	// child at least as wide as the track keeps the full track.
 	CenterX bool
+	// CenterY centres a sole child within its column's content height. It is
+	// useful for a fixed card whose content grows with typography without
+	// changing the card's outer geometry.
+	CenterY bool
 	// PinEnd right-pins the last child of a two-child row to the row's inner
 	// right edge. Without it, only a row whose first child is KindText pins:
 	// that narrow case predates this flag and stays, because the callers

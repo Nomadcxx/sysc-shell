@@ -37,6 +37,9 @@ func LayoutColumn(root *Node, bounds Rect, measure MeasureText) error {
 			return fmt.Errorf("ui: child %d: %w", i, err)
 		}
 		box := Rect{X: content.X, Y: y, W: content.W, H: h}
+		if child.CenterY && len(root.Children) == 1 {
+			box.Y = content.Y + max((content.H-h)/2, 0)
+		}
 		if child.CenterX {
 			narrowed, err := centeredTrack(child, box, measure)
 			if err != nil {
