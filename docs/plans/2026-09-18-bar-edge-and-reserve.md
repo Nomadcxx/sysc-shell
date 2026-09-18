@@ -245,8 +245,50 @@ configurable reserve works until it is observed.
 derive it rather than assuming. Never `pkill -f` a pattern matching this
 binary's own name.
 
-Two-output behaviour stays unverified and is not claimed: both machines in
-reach have one output.
+Two-output behaviour stays unverified and is not claimed: each machine in
+reach has one output.
+
+## Live gate results, 2026-09-18
+
+Run on the laptop, `eDP-1`, 1920x1080 at scale 1.25, logical 1536x864. This
+desktop could not host the gate: its `sysc-shell` service is inactive and no
+Niri socket exists in `/run/user/1000`.
+
+**`niri msg -j layers` does not report the anchor or the exclusive zone.** This
+Niri gives only `namespace`, `output`, `layer` and `keyboard_interactivity`, so
+the check the design specified cannot be run as written. It confirms the
+surface is mapped (`sysc-shell:bar` on `eDP-1`, layer `Top`) and nothing more.
+
+What was measured instead, and why it is stronger: the focused window's
+`tile_size` height from `niri msg -j focused-window`, differentially, plus a
+`grim` screenshot per case. A difference in tile height cancels out Niri's own
+gaps, so it isolates the zone exactly; the screenshot shows where the bar
+actually painted.
+
+| Case | Tile height | Bar painted at |
+|---|---|---|
+| `edge` unset (top), no reserve | 810.4 | top |
+| `edge: bottom`, no reserve | 810.4 | lower edge, top clear |
+| `edge: bottom`, `reserve: 0` | **854.4** | lower edge, window running beneath it |
+
+- **D1 is confirmed.** The bar anchors to the lower edge and the reserved space
+  moves with it: the tile height is unchanged, and the screenshots show windows
+  starting at y=0 with the bar at the foot of the output.
+- **The design's first open question is answered: Niri honours an exclusive
+  zone of zero on a surface that still has a non-zero size.** It un-reserves
+  without unmapping. The tile grew by exactly 44, the extent, and the bar went
+  on painting over the reclaimed strip.
+- **An edge change does not take effect from a configuration write alone.**
+  Writing `edge: bottom` and waiting left the bar at the top; a service restart
+  applied it. The design's claim that "an edge change therefore takes effect
+  live" describes the reload path re-anchoring a mapped surface, which is not
+  the same as the shell noticing the file. Whether the shell watches the
+  document at all was not chased here. **Not claimed: live re-anchoring.**
+
+Noted and not caused by this slice: the clock and date pills paint empty for up
+to a minute after a restart, on both edges, and fill in at the next minute
+boundary. Reproduced on the top edge, so it is unrelated to the anchor; it is
+pre-existing on `main`. Filed rather than fixed here.
 
 ## Out of scope, recorded so it is not rediscovered
 
