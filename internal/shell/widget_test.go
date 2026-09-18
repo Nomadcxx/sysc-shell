@@ -111,10 +111,19 @@ func TestLauncherWidgetUsesThemedMarkAndOpensLauncher(t *testing.T) {
 	if len(widgets) != 1 || widgets[0].node == nil {
 		t.Fatalf("launcher widgets = %+v", widgets)
 	}
-	if widgets[0].inner != nil {
-		t.Fatalf("launcher was wrapped: %+v", widgets[0])
+	if widgets[0].node == nil {
+		t.Fatalf("launcher widgets = %+v", widgets)
 	}
-	n := widgets[0].node
+	// The launcher is a button like its neighbours, so it wears the same
+	// surface capsule and gains the shared hover wash.
+	outer := widgets[0].node
+	if outer.Kind != ui.KindCapsule || outer.Action != panelLauncherAction {
+		t.Fatalf("launcher capsule = %+v", outer)
+	}
+	if widgets[0].inner == nil || widgets[0].inner != outer.Children[0] {
+		t.Fatalf("launcher capsule child = %+v", outer.Children)
+	}
+	n := widgets[0].inner
 	if n.Kind != ui.KindWordmark || n.Mark != "launcher" {
 		t.Fatalf("launcher node = %+v", n)
 	}
