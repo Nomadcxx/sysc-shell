@@ -80,6 +80,23 @@ explicit: an item granted its whole natural extent may still be ellipsized by
 the painter when the glyph run exceeds it. What may not happen is an item
 disappearing with no indication.
 
+**Elastic items shrink; fixed items drop.** Settled during execution, after
+whole-item dropping alone lost the focused-window title on a narrow bar. A node
+that declares a width cap is built to ellipsize — the title, the media line and
+the weather line each carry one — so fixed items take their natural width and
+the elastic ones share the remainder. Only when the fixed items alone do not fit
+does a section drop whole items from the far end. A capsule inherits its child's
+elasticity, because it is chrome around one node and would otherwise read as
+fixed.
+
+This is a widening of D5, not a contradiction of it: D5's target is an item
+disappearing with no indication, and an elastic item that narrows is present and
+counted as placed. The owner chose this over accepting the drop.
+
+**Watch on the live gate:** nothing yet stops an elastic item being granted a
+sliver when the remainder is tiny. A floor was considered and not added, so the
+laptop is where a two-pixel title would show up.
+
 ## Tasks
 
 Gate after every task, one package per invocation, never the repository-wide
