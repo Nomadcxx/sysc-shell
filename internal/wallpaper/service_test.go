@@ -328,16 +328,32 @@ func TestServiceConfigHook(t *testing.T) {
 		defer mu.Unlock()
 		return append([][2]string(nil), calls...)
 	}
+	// publish lands on Updates before notifySeed runs the hook, so the calls
+	// lag the awaited snapshot; await them the way awaitSnapshot awaits state.
+	awaitCalls := func(n int) [][2]string {
+		t.Helper()
+		deadline := time.After(2 * time.Second)
+		for {
+			if got := seen(); len(got) >= n {
+				return got
+			}
+			select {
+			case <-deadline:
+				t.Fatalf("config hook never reached %d calls", n)
+			case <-time.After(time.Millisecond):
+			}
+		}
+	}
 
 	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: "/w/a.png", Kind: KindImage})
 	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Seed == "/w/a.png" })
-	if got := seen(); len(got) != 1 || got[0] != [2]string{"wallpaper", "/w/a.png"} {
+	if got := awaitCalls(1); len(got) != 1 || got[0] != [2]string{"wallpaper", "/w/a.png"} {
 		t.Fatalf("image apply hook = %v", got)
 	}
 
 	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: "/w/withstill.mp4", Kind: KindVideo})
 	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Seed == "/c/still.jpg" })
-	if got := seen(); len(got) != 2 || got[1] != [2]string{"wallpaper", "/c/still.jpg"} {
+	if got := awaitCalls(2); len(got) != 2 || got[1] != [2]string{"wallpaper", "/c/still.jpg"} {
 		t.Fatalf("video-with-still hook = %v", got)
 	}
 
