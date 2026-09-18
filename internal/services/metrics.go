@@ -226,7 +226,7 @@ func capacityFraction(c metrics.Capacity) (float64, bool) {
 
 // Metrics samples the leased telemetry sources on one goroutine.
 //
-// That goroutine solely owns the three stateful samplers. The library
+// That goroutine solely owns the stateful samplers. The library
 // documents them as owned by one sequential caller: each retains previous
 // counters, so a concurrent Sample would corrupt the rate derivation.
 type Metrics struct {
@@ -236,11 +236,12 @@ type Metrics struct {
 	// first lease of a selector and are deleted with its last, which is what
 	// stops a re-acquired widget from plotting samples from hours ago as
 	// though they were contiguous.
-	leases  map[Selector]*leaseSet
-	history map[Selector]*ring
-	stop    chan struct{}
-	done    chan struct{}
-	starts  int
+	leases     map[Selector]*leaseSet
+	history    map[Selector]*ring
+	gpuHistory map[string]*ring
+	stop       chan struct{}
+	done       chan struct{}
+	starts     int
 
 	rearm   chan struct{}
 	updates chan Snapshot
@@ -271,6 +272,9 @@ func (m *Metrics) Acquire(sel Selector, interval time.Duration) (*Lease, error) 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if sel.Source == SourceGPU && m.gpuHistory == nil {
+		m.gpuHistory = make(map[string]*ring)
+	}
 	before := m.finestLocked()
 	lease := &Lease{metrics: m, selector: sel, boundary: interval}
 	if m.leases[sel] == nil {
@@ -327,6 +331,7 @@ func (m *Metrics) Close() {
 		delete(m.leases, sel)
 		delete(m.history, sel)
 	}
+	m.gpuHistory = nil
 	done := m.stopIfUnusedLocked()
 	m.mu.Unlock()
 
@@ -398,6 +403,9 @@ func (m *Metrics) releaseMetric(l *Lease) {
 		delete(m.leases, l.selector)
 		delete(m.history, l.selector)
 	}
+	if l.selector.Source == SourceGPU && !m.sourceLeasedLocked(SourceGPU) {
+		m.gpuHistory = nil
+	}
 	done := m.stopIfUnusedLocked()
 	m.mu.Unlock()
 
@@ -414,18 +422,24 @@ type samplers struct {
 	cpu     *metrics.CPUSampler
 	block   *metrics.BlockSampler
 	network *metrics.NetworkSampler
+	gpu     *metrics.GPUSampler
 	process *metrics.ProcessSampler
 }
 
 func (m *Metrics) run(stop, done chan struct{}) {
-	defer close(done)
-
 	s := samplers{
 		cpu:     metrics.NewCPUSampler(),
 		block:   metrics.NewBlockSampler(),
 		network: metrics.NewNetworkSampler(),
+		gpu:     metrics.NewGPUSampler(),
 		process: metrics.NewProcessSampler(),
 	}
+	defer func() {
+		if err := s.gpu.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "sysc-shell: GPU sampler close failed: %v\n", err)
+		}
+		close(done)
+	}()
 	// failing tracks which sources are currently reporting errors, so the log
 	// is edge-triggered. A per-tick log at the default interval would emit
 	// roughly 1,800 lines an hour for one permanently absent device.
@@ -512,7 +526,7 @@ func (m *Metrics) collect(s *samplers, failing *[sourceCount]bool) Snapshot {
 		}
 	}
 	if m.SourceLeased(SourceGPU) {
-		if v, err := metrics.ReadGPU(); err != nil {
+		if v, err := s.gpu.Sample(); err != nil {
 			noteFailure(failing, SourceGPU, err)
 		} else {
 			noteRecovery(failing, SourceGPU)
@@ -608,6 +622,12 @@ func (r *ring) values() []float64 {
 func (m *Metrics) History(sel Selector) []float64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if sel.Source == SourceGPU && sel.Subject != "" {
+		if r := m.gpuHistory[sel.Subject]; r != nil {
+			return r.values()
+		}
+		return nil
+	}
 	if r := m.history[sel]; r != nil {
 		return r.values()
 	}
@@ -619,9 +639,12 @@ func (m *Metrics) History(sel Selector) []float64 {
 func (m *Metrics) Histories() map[Selector][]float64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := make(map[Selector][]float64, len(m.history))
+	out := make(map[Selector][]float64, len(m.history)+len(m.gpuHistory))
 	for sel, r := range m.history {
 		out[sel] = r.values()
+	}
+	for pciID, r := range m.gpuHistory {
+		out[Selector{Source: SourceGPU, Subject: pciID}] = r.values()
 	}
 	return out
 }
@@ -641,5 +664,45 @@ func (m *Metrics) record(snap Snapshot) {
 		if v, ok := snap.Value(sel); ok {
 			r.push(v)
 		}
+	}
+	m.recordGPUHistoryLocked(snap)
+}
+
+func (m *Metrics) recordGPUHistoryLocked(snap Snapshot) {
+	if snap.GPU == nil || m.gpuHistory == nil {
+		return
+	}
+
+	present := make(map[string]struct{}, len(snap.GPU.GPUs))
+	ambiguous := make(map[string]struct{})
+	for _, gpu := range snap.GPU.GPUs {
+		if gpu.PCIID == "" {
+			continue
+		}
+		if _, seen := present[gpu.PCIID]; seen {
+			ambiguous[gpu.PCIID] = struct{}{}
+			continue
+		}
+		present[gpu.PCIID] = struct{}{}
+	}
+	for pciID := range ambiguous {
+		delete(present, pciID)
+	}
+	for pciID := range m.gpuHistory {
+		if _, seen := present[pciID]; !seen {
+			delete(m.gpuHistory, pciID)
+		}
+	}
+	for _, gpu := range snap.GPU.GPUs {
+		if gpu.PCIID == "" {
+			continue
+		}
+		if _, unique := present[gpu.PCIID]; !unique || !gpu.Usage.Valid {
+			continue
+		}
+		if m.gpuHistory[gpu.PCIID] == nil {
+			m.gpuHistory[gpu.PCIID] = newRing(historySize)
+		}
+		m.gpuHistory[gpu.PCIID].push(gpu.Usage.Fraction)
 	}
 }
