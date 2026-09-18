@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -216,15 +217,19 @@ func clockFloorFor(items []config.Item) string {
 	return ""
 }
 
+// launcherMark is the supplied nested-gates mark, decoded once at init so the
+// raster work stays off Registry.mu. The bar only ever reads the immutable
+// image; the asset's transparent margin is preserved by the box.
+var launcherMark = icons.DecodeRaster(render.LauncherPNG(), launcherMarkHeight, launcherMarkHeight)
+
 func buildWidgetsWithClockFloor(items []config.Item, pad int, m theme.Metrics, clockFloor string) []textWidget {
 	out := make([]textWidget, 0, len(items))
 	for _, item := range items {
 		switch item.ID {
 		case "launcher":
-			ghost, _ := render.IconByName("ghost")
 			out = append(out, textWidget{
 				node: &ui.Node{
-					Kind: ui.KindText, Text: string(ghost), TextRole: theme.RoleHeadline,
+					Kind: ui.KindImage, Image: launcherMark, ImageSize: launcherMarkHeight,
 					Action: panelLauncherAction, Name: "Open launcher", Role: "button",
 				},
 				tooltip: "Launcher",

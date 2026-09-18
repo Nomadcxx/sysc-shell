@@ -105,16 +105,18 @@ func TestDefaultCentreBuildsTimeDateGroupAndMedia(t *testing.T) {
 	}
 }
 
-func TestLauncherWidgetUsesGhostAndOpensLauncher(t *testing.T) {
+func TestLauncherWidgetUsesSuppliedMarkAndOpensLauncher(t *testing.T) {
 	t.Parallel()
 	widgets := buildWidgets([]config.Item{{ID: "launcher"}}, 8, standardMetrics())
 	if len(widgets) != 1 || widgets[0].inner == nil {
 		t.Fatalf("launcher widgets = %+v", widgets)
 	}
 	n := widgets[0].inner
-	ghost, _ := render.IconByName("ghost")
-	if n.Kind != ui.KindText || n.Text != string(ghost) || n.Action != panelLauncherAction {
+	if n.Kind != ui.KindImage || n.Image == nil || n.ImageSize != launcherMarkHeight {
 		t.Fatalf("launcher node = %+v", n)
+	}
+	if n.Action != panelLauncherAction || n.Name != "Open launcher" || n.Role != "button" {
+		t.Fatalf("launcher identity = %+v", n)
 	}
 }
 
@@ -250,7 +252,10 @@ func TestApplyWritesThroughToTheInnerNode(t *testing.T) {
 	var found bool
 	for _, section := range b.widgets() {
 		for _, w := range section {
-			if w.inner != nil && w.inner.Kind == ui.KindText && w.inner.Text != "" {
+			if w.inner == nil {
+				continue
+			}
+			if nodeText(w.inner) != "" {
 				found = true
 				if w.node.Text != "" {
 					t.Errorf("text landed on the capsule, not the inner node: %q", w.node.Text)
