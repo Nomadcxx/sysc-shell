@@ -3,6 +3,7 @@ package shell
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,6 +20,55 @@ const (
 	monitorCardGap = 8
 )
 
+// selectGPU returns a stable selector for one GPU in a snapshot. A selector
+// must identify one device because Snapshot.Fraction otherwise takes the first
+// matching entry. Multiple devices without unique PCI identities are therefore
+// unavailable rather than an arbitrary list position.
+func selectGPU(snap services.Snapshot) (services.Selector, bool) {
+	selector := services.Selector{Source: services.SourceGPU}
+	if snap.GPU == nil || len(snap.GPU.GPUs) == 0 {
+		return selector, false
+	}
+
+	indices := make([]int, len(snap.GPU.GPUs))
+	for i := range indices {
+		indices[i] = i
+	}
+	if len(indices) == 1 {
+		selector.Subject = snap.GPU.GPUs[indices[0]].PCIID
+		return selector, true
+	}
+	seen := make(map[string]struct{}, len(indices))
+	for _, gpu := range snap.GPU.GPUs {
+		if gpu.PCIID == "" {
+			continue
+		}
+		if _, duplicate := seen[gpu.PCIID]; duplicate {
+			return selector, false
+		}
+		seen[gpu.PCIID] = struct{}{}
+	}
+	sort.SliceStable(indices, func(i, j int) bool {
+		left, right := snap.GPU.GPUs[indices[i]].PCIID, snap.GPU.GPUs[indices[j]].PCIID
+		switch {
+		case left == "" && right != "":
+			return false
+		case left != "" && right == "":
+			return true
+		case left != right:
+			return left < right
+		default:
+			return snap.GPU.GPUs[indices[i]].Name < snap.GPU.GPUs[indices[j]].Name
+		}
+	})
+	first := snap.GPU.GPUs[indices[0]]
+	if first.PCIID == "" {
+		return selector, false
+	}
+	selector.Subject = first.PCIID
+	return selector, true
+}
+
 // monitorTree builds one titled card per metric, stacked and all visible.
 //
 // The panel used to show a tab strip over a single unlabelled number and one
@@ -32,7 +82,15 @@ const (
 func monitorTree(m theme.Metrics, sels []services.Selector, snap services.Snapshot, history map[services.Selector][]float64, facts machineFacts) *ui.Node {
 	var metrics []*ui.Node
 	for _, sel := range sels {
-		metrics = append(metrics, monitorMetricCard(m, sel, snap, history[sel]))
+		selected := true
+		if sel.Source == services.SourceGPU {
+			sel, selected = selectGPU(snap)
+		}
+		samples, hasHistory := monitorHistory(sel, history)
+		if !selected {
+			samples, hasHistory = nil, false
+		}
+		metrics = append(metrics, monitorMetricCard(m, sel, snap, samples, selected, hasHistory))
 	}
 	var info []*ui.Node
 	if system := monitorSystemCard(m, factsWithGPU(facts, snap)); system != nil {
@@ -51,6 +109,17 @@ func monitorTree(m theme.Metrics, sels []services.Selector, snap services.Snapsh
 		Kind: ui.KindColumn, Gap: monitorCardGap, Padding: m.PanelPadding,
 		Children: append(monitorRows(m, metrics), monitorRows(m, info)...),
 	}
+}
+
+func monitorHistory(sel services.Selector, history map[services.Selector][]float64) ([]float64, bool) {
+	if sel.Source == services.SourceGPU && sel.Subject != "" {
+		// GPU acquisition is wildcard because the device is only known after a
+		// snapshot. A PCI-qualified card may therefore use only an exact ring;
+		// wildcard samples could belong to another GPU.
+		sel = services.Selector{Source: services.SourceGPU, Subject: sel.Subject}
+	}
+	samples, ok := history[sel]
+	return samples, ok && len(samples) > 0
 }
 
 // monitorRows pairs cards into rows of two and gives each cell an explicit
@@ -78,10 +147,19 @@ func monitorRows(m theme.Metrics, cards []*ui.Node) []*ui.Node {
 
 // monitorMetricCard is one metric: its subject, its history, and its current
 // value with the unit that value is in.
-func monitorMetricCard(m theme.Metrics, sel services.Selector, snap services.Snapshot, history []float64) *ui.Node {
+func monitorMetricCard(m theme.Metrics, sel services.Selector, snap services.Snapshot, history []float64, selected, hasHistory bool) *ui.Node {
 	label, absent := formatMonitorMetric(sel, snap)
+	if !selected {
+		absent = true
+		if snap.GPU != nil && len(snap.GPU.GPUs) > 0 {
+			label = "--"
+		}
+	}
 	rows := []*ui.Node{monitorCardTitle(selectorLabel(sel), monitorIconRune(sel))}
-	rows = append(rows, &ui.Node{Kind: ui.KindGraph, Values: monitorGraphValues(sel, history), Absent: absent})
+	rows = append(rows, &ui.Node{
+		Kind: ui.KindGraph, Values: monitorGraphValues(sel, history),
+		Absent: absent || (sel.Source == services.SourceGPU && !hasHistory),
+	})
 	rows = append(rows, monitorLegend(sel, snap, label))
 	return monitorCard(m, rows)
 }
@@ -94,6 +172,13 @@ func monitorLegend(sel services.Selector, snap services.Snapshot, label string) 
 		})
 	}
 	if sel.Source == services.SourceGPU && snap.GPU != nil {
+		if sel.Subject == "" {
+			selected, ok := selectGPU(snap)
+			if !ok {
+				return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Children: chips}
+			}
+			sel = selected
+		}
 		for _, g := range snap.GPU.GPUs {
 			if sel.Subject != "" && g.PCIID != sel.Subject {
 				continue
@@ -172,10 +257,17 @@ func readMachineFacts() machineFacts {
 }
 
 func factsWithGPU(facts machineFacts, snap services.Snapshot) machineFacts {
-	if facts.GPU != "" || snap.GPU == nil {
+	if facts.GPU != "" {
+		return facts
+	}
+	selector, ok := selectGPU(snap)
+	if !ok || snap.GPU == nil {
 		return facts
 	}
 	for _, g := range snap.GPU.GPUs {
+		if selector.Subject != "" && g.PCIID != selector.Subject {
+			continue
+		}
 		if g.Name != "" {
 			facts.GPU = g.Name
 			return facts

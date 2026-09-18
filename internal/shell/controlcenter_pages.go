@@ -40,7 +40,6 @@ const (
 	// here because two pages build tiles, and a repeated expression is the
 	// same drift as a repeated number.
 	ccTileW          = (ccRightColumnW - theme.MarginM) / 2
-	ccResourceRowH   = 40
 	ccGaugeSize      = 40
 	ccSliderCapsuleH = 52
 	ccSlidersH       = 2*ccSliderCapsuleH + theme.MarginM
@@ -192,13 +191,16 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 		{Kind: ui.KindText, Text: weatherSummary, Tone: weatherTone},
 	})
 	clockWeather.Height = ccCardH
-	sysmon := monitorCard(m, []*ui.Node{
-		monitorCardTitle("System", 0),
-		{Kind: ui.KindRow, Height: ccResourceRowH, Gap: theme.MarginM, Children: []*ui.Node{
-			ccResourceGroup(snap, "cpu", "CPU", services.Selector{Source: services.SourceCPU}),
-			ccResourceGroup(snap, "memory", "Memory", services.Selector{Source: services.SourceMemory}),
-		}},
-	})
+	gpuSelector, gpuOK := selectGPU(snap)
+	slotWidth := (ccLeftColumnW - 2*m.CardPadding - 3*theme.MarginM) / 4
+	resourceRow := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, CenterY: true, Children: []*ui.Node{
+		ccResourceGroup(snap, "cpu", "CPU", services.Selector{Source: services.SourceCPU}, true, slotWidth),
+		ccResourceGroup(snap, "memory", "Memory", services.Selector{Source: services.SourceMemory}, true, slotWidth),
+		ccResourceGroup(snap, "temperature", "Temp", services.Selector{Source: services.SourceCPU, Subject: "temperature"}, true, slotWidth),
+		ccResourceGroup(snap, "gpu", "GPU", gpuSelector, gpuOK, slotWidth),
+	}}
+	sysmon := monitorCard(m, []*ui.Node{resourceRow})
+	sysmon.Name, sysmon.Role = "System", "group"
 	sysmon.Height = ccCardH
 	left := &ui.Node{Kind: ui.KindColumn, Width: ccLeftColumnW, Height: ccSplitH, Gap: theme.MarginS,
 		Children: []*ui.Node{clockWeather, sysmon}}
@@ -295,19 +297,55 @@ func ccQuickAccessButton(width int, icon, label, action string, selected bool) *
 	return n
 }
 
-func ccResourceGroup(snap services.Snapshot, id, label string, sel services.Selector) *ui.Node {
+func ccResourceGroup(snap services.Snapshot, id, label string, sel services.Selector, selected bool, slotWidth int) *ui.Node {
+	value, valueText, ok := ccResourceValue(snap, sel, selected)
+	name := ccResourceName(snap, id, selected)
+	detail := valueText
+	if !ok {
+		detail = "unavailable"
+		if id == "gpu" && strings.Contains(name, "ambiguous") {
+			detail = "device identity ambiguous"
+		}
+	}
+	return &ui.Node{Kind: ui.KindColumn, Width: slotWidth, Gap: theme.MarginXXS, Name: name, Role: "group", Children: []*ui.Node{
+		{Kind: ui.KindRadialGauge, Width: ccGaugeSize, Height: ccGaugeSize, Value: value, ValueText: valueText, Absent: !ok, Name: name, Role: "img", Tooltip: name + ": " + detail},
+		{Kind: ui.KindText, Text: label, TextRole: theme.RoleCaption, CenterX: true},
+	}}
+}
+
+func ccResourceName(snap services.Snapshot, id string, selected bool) string {
+	if id == "gpu" && !selected && snap.GPU != nil && len(snap.GPU.GPUs) > 1 {
+		return "GPU usage: device identity ambiguous"
+	}
+	switch id {
+	case "cpu":
+		return "CPU usage"
+	case "memory":
+		return "Memory usage"
+	case "temperature":
+		return "CPU temperature"
+	case "gpu":
+		return "GPU usage"
+	default:
+		return id
+	}
+}
+
+func ccResourceValue(snap services.Snapshot, sel services.Selector, selected bool) (float64, string, bool) {
+	if !selected {
+		return 0, ccDash, false
+	}
 	value, ok := snap.Fraction(sel)
 	if !ok {
-		value = 0
+		return 0, ccDash, false
 	}
-	icon, _ := render.GaugeIconName(id)
-	return &ui.Node{Kind: ui.KindRow, Height: ccResourceRowH, Gap: theme.MarginM, Children: []*ui.Node{
-		{Kind: ui.KindRadialGauge, Width: ccGaugeSize, Height: ccGaugeSize, Icon: icon, Value: value, Absent: !ok},
-		{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
-			{Kind: ui.KindText, Text: label, TextRole: theme.RoleCaption},
-			{Kind: ui.KindText, Text: ccPercent(int(value*100+0.5), ok), Tabular: true},
-		}},
-	}}
+	if sel.Source == services.SourceCPU && sel.Subject == "temperature" {
+		if snap.Thermal == nil || !snap.Thermal.Valid {
+			return 0, ccDash, false
+		}
+		return value, fmt.Sprintf("%.0f°C", snap.Thermal.Celsius), true
+	}
+	return value, ccPercent(int(value*100+0.5), true), true
 }
 
 func ccOnOff(on bool) string {

@@ -36,11 +36,22 @@ func metricSelector(item config.Item) (services.Selector, bool) {
 	return sel, true
 }
 
+func metricSelectorForSnapshot(item config.Item, snap services.Snapshot) (services.Selector, bool) {
+	sel, ok := metricSelector(item)
+	if !ok {
+		return services.Selector{}, false
+	}
+	if item.ID == "gpu" {
+		return selectGPU(snap)
+	}
+	return sel, true
+}
+
 // metricFraction reports a fraction between zero and one for the sources that
 // have one. Rate sources have no full scale and report absent; the loader
 // already rejects a meter on them, so nothing asks twice.
 func metricFraction(item config.Item, snap services.Snapshot) (float64, bool) {
-	sel, ok := metricSelector(item)
+	sel, ok := metricSelectorForSnapshot(item, snap)
 	if !ok {
 		return 0, false
 	}
@@ -50,7 +61,7 @@ func metricFraction(item config.Item, snap services.Snapshot) (float64, bool) {
 // metricValue reports whichever kind of number this widget's source yields, for
 // a caller that only needs to know whether there is a reading at all.
 func metricValue(item config.Item, snap services.Snapshot) (float64, bool) {
-	sel, ok := metricSelector(item)
+	sel, ok := metricSelectorForSnapshot(item, snap)
 	if !ok {
 		return 0, false
 	}
@@ -65,7 +76,7 @@ func metricValue(item config.Item, snap services.Snapshot) (float64, bool) {
 // even accidentally: rates can only come from the library's comparison of two
 // monotonic samples.
 func formatMetric(item config.Item, snap services.Snapshot) string {
-	sel, ok := metricSelector(item)
+	sel, ok := metricSelectorForSnapshot(item, snap)
 	if !ok {
 		return noWorkspace
 	}
@@ -244,7 +255,6 @@ func buildMetricWidget(item config.Item) textWidget {
 		}
 	case "graph":
 		node := &ui.Node{Kind: ui.KindGraph, Width: metricGraphWidth, Action: panelMonitorAction}
-		sel, _ := metricSelector(item)
 		return textWidget{
 			node:    node,
 			tooltip: metricTooltip(item),
@@ -253,11 +263,23 @@ func buildMetricWidget(item config.Item) textWidget {
 				// The ring keeps its last good samples across a failure, and
 				// plotting those would draw a live line for a source that
 				// stopped reporting minutes ago.
+				sel, ok := metricSelectorForSnapshot(item, v.Metrics)
+				if !ok {
+					node.Values, node.Absent = nil, true
+					return ""
+				}
 				if _, ok := metricValue(item, v.Metrics); !ok {
 					node.Values, node.Absent = nil, true
 					return ""
 				}
-				node.Values, node.Absent = normalise(v.History[sel]), false
+				samples, hasHistory := v.History[sel]
+				if item.ID == "gpu" && (!hasHistory || len(samples) == 0) {
+					// GPU history is leased by wildcard until a device is known;
+					// never plot that ring against a different selected device.
+					node.Values, node.Absent = nil, true
+					return ""
+				}
+				node.Values, node.Absent = normalise(samples), false
 				return ""
 			},
 		}

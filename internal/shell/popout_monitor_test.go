@@ -39,6 +39,167 @@ func TestMonitorSelectorsUseLandedMetricVocabulary(t *testing.T) {
 	}
 }
 
+func TestSelectGPUUsesAStableIdentity(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		gpus   []metrics.GPU
+		want   services.Selector
+		wantOK bool
+	}{
+		{
+			name:   "one named device",
+			gpus:   []metrics.GPU{{PCIID: "0000:02:00.0", Name: "GPU B"}},
+			want:   services.Selector{Source: services.SourceGPU, Subject: "0000:02:00.0"},
+			wantOK: true,
+		},
+		{
+			name:   "one unnamed device",
+			gpus:   []metrics.GPU{{Name: "integrated"}},
+			want:   services.Selector{Source: services.SourceGPU},
+			wantOK: true,
+		},
+		{
+			name: "multiple devices sort by PCI ID",
+			gpus: []metrics.GPU{
+				{PCIID: "0000:03:00.0", Name: "GPU C"},
+				{PCIID: "0000:01:00.0", Name: "GPU A"},
+			},
+			want:   services.Selector{Source: services.SourceGPU, Subject: "0000:01:00.0"},
+			wantOK: true,
+		},
+		{
+			name: "unique PCI identity beats an unidentified device",
+			gpus: []metrics.GPU{
+				{PCIID: "0000:02:00.0", Name: "GPU B"},
+				{Name: "integrated"},
+			},
+			want:   services.Selector{Source: services.SourceGPU, Subject: "0000:02:00.0"},
+			wantOK: true,
+		},
+		{
+			name:   "multiple unnamed devices are ambiguous",
+			gpus:   []metrics.GPU{{Name: "integrated A"}, {Name: "integrated B"}},
+			want:   services.Selector{Source: services.SourceGPU},
+			wantOK: false,
+		},
+		{
+			name: "duplicate identities are ambiguous",
+			gpus: []metrics.GPU{
+				{PCIID: "0000:01:00.0", Name: "GPU A"},
+				{PCIID: "0000:01:00.0", Name: "GPU B"},
+			},
+			want:   services.Selector{Source: services.SourceGPU},
+			wantOK: false,
+		},
+		{
+			name: "duplicate non-primary identity is ambiguous",
+			gpus: []metrics.GPU{
+				{PCIID: "0000:01:00.0", Name: "GPU A"},
+				{PCIID: "0000:02:00.0", Name: "GPU B"},
+				{PCIID: "0000:02:00.0", Name: "GPU B duplicate"},
+			},
+			want:   services.Selector{Source: services.SourceGPU},
+			wantOK: false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			gpus := append([]metrics.GPU(nil), test.gpus...)
+			snap := services.Snapshot{GPU: &metrics.GPUSnapshot{GPUs: gpus}}
+			got, ok := selectGPU(snap)
+			if ok != test.wantOK || got != test.want {
+				t.Fatalf("selectGPU = %v/%v, want %v/%v", got, ok, test.want, test.wantOK)
+			}
+			for i := range gpus {
+				if snap.GPU.GPUs[i] != gpus[i] {
+					t.Fatalf("selection reordered snapshot at %d: got %+v, want %+v", i, snap.GPU.GPUs[i], gpus[i])
+				}
+			}
+		})
+	}
+}
+
+func TestSelectedGPUFractionPreservesValidity(t *testing.T) {
+	t.Parallel()
+	snap := services.Snapshot{GPU: &metrics.GPUSnapshot{GPUs: []metrics.GPU{
+		{PCIID: "0000:01:00.0", Usage: metrics.GPUUsage{Fraction: 0, Valid: true}},
+		{PCIID: "0000:02:00.0", Usage: metrics.GPUUsage{Fraction: .75, Valid: true}},
+	}}}
+	sel, ok := selectGPU(snap)
+	if !ok {
+		t.Fatal("selectGPU reported a valid multi-GPU snapshot as unavailable")
+	}
+	value, ok := snap.Fraction(sel)
+	if !ok || value != 0 {
+		t.Fatalf("selected zero GPU fraction = %v/%v, want 0/true", value, ok)
+	}
+	snap.GPU.GPUs[0].Usage.Valid = false
+	if _, ok := snap.Fraction(sel); ok {
+		t.Fatal("invalid GPU usage reported as valid")
+	}
+}
+
+func TestMonitorGPUDoesNotUseWildcardHistoryForASelectedDevice(t *testing.T) {
+	t.Parallel()
+	snap := services.Snapshot{GPU: &metrics.GPUSnapshot{GPUs: []metrics.GPU{
+		{PCIID: "0000:02:00.0", Usage: metrics.GPUUsage{Fraction: .75, Valid: true}},
+		{PCIID: "0000:01:00.0", Usage: metrics.GPUUsage{Fraction: .25, Valid: true}},
+	}}}
+	wildcard := services.Selector{Source: services.SourceGPU}
+	tree := monitorTree(standardMetrics(), []services.Selector{wildcard}, snap,
+		map[services.Selector][]float64{wildcard: {.91, .92}}, machineFacts{})
+	graph := findKind(tree, ui.KindGraph)
+	if graph == nil {
+		t.Fatal("GPU card has no graph")
+	}
+	if len(graph.Values) != 0 {
+		t.Fatalf("selected GPU plotted wildcard history %v", graph.Values)
+	}
+	if !graph.Absent {
+		t.Fatal("selected GPU graph did not report its PCI-specific history as unavailable")
+	}
+}
+
+func TestMonitorAndHomeUseTheSameSelectedGPU(t *testing.T) {
+	t.Parallel()
+	snap := fixtureSnapshot()
+	snap.GPU = &metrics.GPUSnapshot{GPUs: []metrics.GPU{
+		{PCIID: "0000:02:00.0", Name: "GPU B", Usage: metrics.GPUUsage{Fraction: .75, Valid: true}},
+		{PCIID: "0000:01:00.0", Name: "GPU A", Usage: metrics.GPUUsage{Fraction: .25, Valid: true}},
+	}}
+
+	monitor := monitorTree(standardMetrics(), []services.Selector{{Source: services.SourceGPU}}, snap,
+		map[services.Selector][]float64{}, machineFacts{})
+	if !treeHasText(monitor, "25%") || treeHasText(monitor, "75%") {
+		t.Fatalf("monitor GPU projection = %q, want only selected 25%%", renderText(monitor))
+	}
+	if !treeHasText(monitor, "GPU A") || treeHasText(monitor, "GPU B") {
+		t.Fatalf("monitor GPU identity = %q, want selected GPU A", renderText(monitor))
+	}
+
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	home := ccHome(&Registry{sample: snap}, h)
+	if !treeHasText(home, "25%") || treeHasText(home, "75%") {
+		t.Fatalf("Home GPU projection = %q, want only selected 25%%", renderText(home))
+	}
+}
+
+func TestMonitorMarksAmbiguousGPUUnavailable(t *testing.T) {
+	t.Parallel()
+	snap := fixtureSnapshot()
+	snap.GPU = &metrics.GPUSnapshot{GPUs: []metrics.GPU{
+		{Name: "GPU A", Usage: metrics.GPUUsage{Fraction: .25, Valid: true}},
+		{Name: "GPU B", Usage: metrics.GPUUsage{Fraction: .75, Valid: true}},
+	}}
+	tree := monitorTree(standardMetrics(), []services.Selector{{Source: services.SourceGPU}}, snap,
+		map[services.Selector][]float64{}, machineFacts{})
+	if !treeHasText(tree, "--") || treeHasText(tree, "25%") || treeHasText(tree, "75%") {
+		t.Fatalf("ambiguous GPU projection = %q, want unavailable", renderText(tree))
+	}
+}
+
 func TestMonitorUsesRegistrySnapshotAndHistory(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
@@ -131,6 +292,9 @@ func treeHasText(n *ui.Node, text string) bool {
 		return false
 	}
 	if n.Text == text {
+		return true
+	}
+	if n.ValueText == text {
 		return true
 	}
 	for _, c := range n.Children {
