@@ -105,15 +105,24 @@ func TestDefaultCentreBuildsTimeDateGroupAndMedia(t *testing.T) {
 	}
 }
 
-func TestLauncherWidgetUsesSuppliedMarkAndOpensLauncher(t *testing.T) {
+func TestLauncherWidgetUsesThemedMarkAndOpensLauncher(t *testing.T) {
 	t.Parallel()
 	widgets := buildWidgets([]config.Item{{ID: "launcher"}}, 8, standardMetrics())
-	if len(widgets) != 1 || widgets[0].inner == nil {
+	if len(widgets) != 1 || widgets[0].node == nil {
 		t.Fatalf("launcher widgets = %+v", widgets)
 	}
-	n := widgets[0].inner
-	if n.Kind != ui.KindImage || n.Image == nil || n.ImageSize != launcherMarkHeight {
+	if widgets[0].inner != nil {
+		t.Fatalf("launcher was wrapped: %+v", widgets[0])
+	}
+	n := widgets[0].node
+	if n.Kind != ui.KindWordmark || n.Mark != "launcher" {
 		t.Fatalf("launcher node = %+v", n)
+	}
+	if n.ImageW != launcherMarkHeight || n.ImageH != launcherMarkHeight {
+		t.Fatalf("launcher box = %dx%d, want %dx%d", n.ImageW, n.ImageH, launcherMarkHeight, launcherMarkHeight)
+	}
+	if n.Gradient.Motion != ui.GradientLoop {
+		t.Fatalf("launcher gradient motion = %v, want the wordmark's looping ramp", n.Gradient.Motion)
 	}
 	if n.Action != panelLauncherAction || n.Name != "Open launcher" || n.Role != "button" {
 		t.Fatalf("launcher identity = %+v", n)

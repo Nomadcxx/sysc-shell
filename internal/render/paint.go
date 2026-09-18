@@ -1137,7 +1137,7 @@ func paintWordmark(c *Canvas, n *ui.Node, style Style) error {
 	if box.W <= 0 || box.H <= 0 {
 		return nil
 	}
-	mask, err := Wordmark(box.W, box.H)
+	mask, err := markMask(n.Mark, box.W, box.H)
 	if err != nil {
 		return fmt.Errorf("render: wordmark: %w", err)
 	}

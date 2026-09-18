@@ -42,6 +42,48 @@ func visibleBounds(img image.Image) image.Rectangle {
 	return image.Rect(minX, minY, maxX, maxY)
 }
 
+func TestLauncherMarkMask(t *testing.T) {
+	t.Parallel()
+	mask, err := LauncherMark(19, 19)
+	if err != nil {
+		t.Fatalf("launcher mark: %v", err)
+	}
+	if mask == nil {
+		t.Fatal("launcher mark mask is nil")
+	}
+	if got := mask.Bounds(); got.Dx() != 19 || got.Dy() != 19 {
+		t.Fatalf("mask bounds = %v, want 19x19", got)
+	}
+	covered := 0
+	for y := 0; y < 19; y++ {
+		for x := 0; x < 19; x++ {
+			if mask.AlphaAt(x, y).A != 0 {
+				covered++
+			}
+		}
+	}
+	if covered == 0 {
+		t.Fatal("launcher mark mask is empty")
+	}
+	nilMask, err := LauncherMark(0, 19)
+	if nilMask != nil || err != nil {
+		t.Fatalf("degenerate size = (%v, %v), want (nil, nil)", nilMask, err)
+	}
+}
+
+func TestMarkMaskDispatch(t *testing.T) {
+	t.Parallel()
+	if _, err := markMask("", 8, 8); err != nil {
+		t.Fatalf("default mark: %v", err)
+	}
+	if _, err := markMask("launcher", 8, 8); err != nil {
+		t.Fatalf("launcher mark: %v", err)
+	}
+	if _, err := markMask("bogus", 8, 8); err == nil {
+		t.Fatal("unknown mark must error")
+	}
+}
+
 func TestLauncherMarkAsset(t *testing.T) {
 	t.Parallel()
 	data := LauncherPNG()
