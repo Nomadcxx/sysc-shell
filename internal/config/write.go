@@ -159,6 +159,14 @@ func barDiff(got, base Bar) *wireBar {
 		w.Gap = &v
 		set = true
 	}
+	// The reserve is a tri-state, so it compares by what is stated rather than
+	// by value: an unset reserve is never written, and a stated one is written
+	// even when it happens to equal the base.
+	if got.Reserve != nil && (base.Reserve == nil || *got.Reserve != *base.Reserve) {
+		v := *got.Reserve
+		w.Reserve = &v
+		set = true
+	}
 	if got.Padding != base.Padding {
 		v := got.Padding
 		w.Padding = &v

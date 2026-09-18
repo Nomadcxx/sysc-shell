@@ -105,10 +105,16 @@ func cloneValues(in map[string]map[string]any) map[string]map[string]any {
 
 // Bar is the resolved policy for one bar.
 type Bar struct {
-	Enabled    bool
-	Edge       string
-	Height     int
-	Gap        int
+	Enabled bool
+	Edge    string
+	Height  int
+	Gap     int
+	// Reserve overrides how much of the output the compositor keeps clear for
+	// this bar. Nil follows the extent, which is what every bar did before the
+	// field existed; a stated zero lets windows tile beneath the bar. The
+	// pointer is what separates "unset" from "zero", and it is also what keeps
+	// Write from emitting a reserve into a document that never asked for one.
+	Reserve    *int
 	Padding    int
 	Spacing    int
 	Radius     int
@@ -117,6 +123,28 @@ type Bar struct {
 	Left       []Item
 	Center     []Item
 	Right      []Item
+}
+
+// Body is the drawn height of the bar: the surface extent less the gap that
+// keeps the screen edge clickable.
+func (b Bar) Body() int { return b.Height - 2*b.Gap }
+
+// Extent is how much of the cross axis the layer surface occupies. The gap
+// lives inside the surface with a zero layer margin, so the extent carries one
+// gap, not two.
+//
+// This is the one derivation. The platform reads it for the surface size and
+// the shell reads it through Theme.Geometry; they computed it separately until
+// Milestone 9, agreeing only because each encoded the same assumption.
+func (b Bar) Extent() int { return b.Gap + b.Body() }
+
+// ExclusiveZone is how much of the output the compositor keeps clear. It
+// follows the extent unless the document states a reserve, which may be zero.
+func (b Bar) ExclusiveZone() int {
+	if b.Reserve == nil {
+		return b.Extent()
+	}
+	return *b.Reserve
 }
 
 // Theme is the composition the palette generator does not produce: the
@@ -341,7 +369,7 @@ var batteryLabels = map[string]bool{
 // milestone implements it. An unimplemented edge is rejected with a named
 // error rather than silently mis-rendering.
 var supportedEdges = map[string]bool{
-	"top": true, "bottom": false, "left": false, "right": false,
+	"top": true, "bottom": true, "left": false, "right": false,
 }
 
 // Default is the built-in configuration, used when no file exists.

@@ -81,6 +81,7 @@ type wireBar struct {
 	Edge    *string    `json:"edge,omitempty"`
 	Height  *int       `json:"height,omitempty"`
 	Gap     *int       `json:"gap,omitempty"`
+	Reserve *int       `json:"reserve,omitempty"`
 	Padding *int       `json:"padding,omitempty"`
 	Spacing *int       `json:"spacing,omitempty"`
 	Font    *wireFont  `json:"font,omitempty"`
@@ -670,7 +671,7 @@ func applyBar(base Bar, w wireBar, path string) (Bar, error) {
 		}
 		if !supported {
 			return Bar{}, pathErr(path+".edge",
-				"%q is not supported in this milestone; use top", *w.Edge)
+				"%q is not supported in this milestone; use top or bottom", *w.Edge)
 		}
 		out.Edge = *w.Edge
 	}
@@ -679,6 +680,12 @@ func applyBar(base Bar, w wireBar, path string) (Bar, error) {
 	}
 	if w.Gap != nil {
 		out.Gap = *w.Gap
+	}
+	if w.Reserve != nil {
+		// Copied rather than aliased: the wire value is scratch, and a stated
+		// zero must stay distinguishable from an absent field.
+		v := *w.Reserve
+		out.Reserve = &v
 	}
 	if w.Padding != nil {
 		out.Padding = *w.Padding
@@ -714,10 +721,13 @@ func validateBar(b Bar, path string) error {
 	if b.Gap < 0 {
 		return pathErr(path+".gap", "%d is negative", b.Gap)
 	}
-	if body := b.Height - 2*b.Gap; body <= 0 {
+	if body := b.Body(); body <= 0 {
 		return pathErr(path+".height",
 			"%d with gap %d leaves a body of %d; the minimum is %d",
 			b.Height, b.Gap, body, 2*b.Gap+1)
+	}
+	if b.Reserve != nil && *b.Reserve < 0 {
+		return pathErr(path+".reserve", "%d is negative", *b.Reserve)
 	}
 	if b.Padding < 0 {
 		return pathErr(path+".padding", "%d is negative", b.Padding)
