@@ -169,6 +169,14 @@ const (
 	activeWindowChanged        = `{"WorkspaceActiveWindowChanged":{"workspace_id":5,"active_window_id":82}}`
 	activeWindowCleared        = `{"WorkspaceActiveWindowChanged":{"workspace_id":5,"active_window_id":null}}`
 	activeWindowUnknownWkspace = `{"WorkspaceActiveWindowChanged":{"workspace_id":404,"active_window_id":82}}`
+
+	// One urgent workspace beside one that omits is_urgent entirely: urgency
+	// is optional on the wire and false when the field is missing.
+	urgentWorkspacesFixture = `{"WorkspacesChanged":{"workspaces":[` +
+		`{"id":7,"idx":2,"name":null,"output":"DP-9","is_urgent":true,` +
+		`"is_active":true,"is_focused":false,"active_window_id":null},` +
+		`{"id":8,"idx":3,"name":null,"output":"DP-9",` +
+		`"is_active":false,"is_focused":false,"active_window_id":null}]}}`
 )
 
 // workspaceByID finds a workspace in a snapshot, failing the test if absent.
@@ -197,6 +205,22 @@ func TestWorkspacesCarryTheirActiveWindow(t *testing.T) {
 	if !six.HasActiveWindow || six.ActiveWindowID != 81 {
 		t.Fatalf("workspace 6 active window = %d/%v, want 81/true",
 			six.ActiveWindowID, six.HasActiveWindow)
+	}
+}
+
+func TestWorkspacesCarryUrgency(t *testing.T) {
+	t.Parallel()
+	s := applyAll(t, urgentWorkspacesFixture)
+	snap := s.snapshot()
+
+	if got := workspaceByID(t, snap, 7); !got.Urgent {
+		t.Fatalf("workspace 7 urgent = false, want true")
+	}
+	if got := workspaceByID(t, snap, 8); got.Urgent {
+		t.Fatalf("workspace 8 urgent = true, want false when the field is absent")
+	}
+	if got := workspaceByID(t, applyAll(t, twoOutputWorkspaces).snapshot(), 5); got.Urgent {
+		t.Fatalf("workspace 5 urgent = true, want false")
 	}
 }
 
