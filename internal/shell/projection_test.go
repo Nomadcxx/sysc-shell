@@ -162,3 +162,27 @@ func TestWorkspacePillsAreOrderedByIndex(t *testing.T) {
 		}
 	}
 }
+
+// Urgency rides the pill so the painter can mark an urgent workspace without
+// a rebuild of the projection itself.
+func TestWorkspacePillsCarryUrgency(t *testing.T) {
+	t.Parallel()
+	got := projectOutputs(niri.Snapshot{Workspaces: []niri.Workspace{
+		{ID: 1, Index: 1, Output: "DP-9", Focused: true, Active: true, Urgent: true},
+		{ID: 2, Index: 2, Output: "DP-9", Urgent: true},
+		{ID: 3, Index: 3, Output: "DP-9"},
+	}})
+	pills := got["DP-9"].Pills
+	if len(pills) != 3 {
+		t.Fatalf("pills = %d, want 3", len(pills))
+	}
+	if !pills[0].Focused || !pills[0].Urgent {
+		t.Errorf("focused pill = %+v, want focused AND urgent (focus dominates)", pills[0])
+	}
+	if pills[1].Focused || !pills[1].Urgent {
+		t.Errorf("urgent pill = %+v, want urgent without focus", pills[1])
+	}
+	if pills[2].Urgent {
+		t.Errorf("calm pill = %+v, want no urgency", pills[2])
+	}
+}
