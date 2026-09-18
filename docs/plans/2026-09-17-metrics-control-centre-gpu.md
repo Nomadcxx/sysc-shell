@@ -7,9 +7,11 @@ System Monitor, and Control Centre consume one deterministic GPU snapshot and
 one exact-device history from the existing metrics service.
 
 **Scope:** This plan executes the approved
-`docs/plans/2026-09-16-metrics-control-centre-gpu-design.md`. It reconciles the
-provisional shell diff already present in the handover; it does not start a
-second shell-polish pass, add a renderer, or close the M10 parent.
+`docs/plans/2026-09-16-metrics-control-centre-gpu-design.md` and the owner-approved
+radial package in
+`docs/plans/assets/2026-09-17-metrics-control-centre-radial-design/`. It
+reconciles the provisional shell diff already present in the handover; it does
+not start a second shell-polish pass, add a renderer, or close the M10 parent.
 
 ## Qualification result that governs the implementation
 
@@ -17,10 +19,11 @@ The lease/history seam was traced before this plan was written:
 
 - `internal/services/metrics.go:Metrics.Acquire` keys leases and rings by the
   complete `services.Selector`.
-- `Metrics.collect` calls the pinned
-  `github.com/Nomadcxx/sysc-metrics@v0.4.0` `ReadGPU` once whenever any
-  `SourceGPU` selector is leased. The upstream package owns collection, not
-  shell history or selector leases.
+- `Metrics.collect` calls one service-owned
+  `github.com/Nomadcxx/sysc-metrics@v0.5.1` `GPUSampler.Sample` per collection
+  tick whenever any `SourceGPU` selector is leased. The sampler is constructed
+  and closed by the single metrics goroutine; the upstream package owns GPU
+  counter collection, not shell history or selector leases.
 - `Metrics.record` currently records a wildcard GPU lease by asking
   `Snapshot.Value({Source: SourceGPU})`. That is the first list entry, not a
   stable selected device. A PCI-qualified shell projection therefore cannot
@@ -32,16 +35,15 @@ The lease/history seam was traced before this plan was written:
 
 The selected implementation contract is therefore option 3 from the handover:
 keep the existing source-level GPU discovery lease and add a service-owned,
-immutable per-device history projection. One `ReadGPU` snapshot feeds all
+immutable per-device history projection. One `GPUSampler` snapshot feeds all
 qualified PCI rings; the shell chooses the device and looks up the exact
 `services.Selector{Source: SourceGPU, Subject: pciID}`. The source lease remains
 owned by the existing bar and `PanelHost.leases` lifecycles.
 
-This does not change `go.mod`. If the implementation proves that
-`sysc-metrics@v0.4.0` cannot provide the immutable GPU snapshot needed by this
-contract, stop at that boundary, record the API gap in the cross-repository
-issue, and wait for a published upstream tag. Do not add a `replace`, moving
-branch, shell-side `nvidia-smi`, or wildcard graph fallback.
+The shell pins the audited `github.com/Nomadcxx/sysc-metrics@v0.5.1` release.
+`v0.5.0` is explicitly excluded: its audit found that the PMU close-on-exec
+flag was passed in the wrong ABI field. Do not add a `replace`, moving branch,
+shell-side `nvidia-smi`, or wildcard graph fallback.
 
 ## Invariants
 
@@ -65,10 +67,17 @@ branch, shell-side `nvidia-smi`, or wildcard graph fallback.
   collector work stays outside `Registry.mu`; snapshot publication and surface
   invalidation happen after unlocking it. The Wayland dispatch owner remains on
   one goroutine.
-- The local `22`-pixel gauge reduction is provisional. It is not complete until
-  layout, paint legibility, and the design's hit-target/interaction decision
-  are explicitly qualified. If 22 pixels is rejected, amend the geometry/design
-  before calling the slice complete.
+- Home uses four 40px rings in one row inside the unchanged 356×88 System card;
+  each ring carries a centred value and a caption below it. The card keeps an
+  accessible group name while dropping the visible `System` heading. The
+  visible temperature caption is `Temp`; its accessible name remains `CPU
+  temperature`.
+- `paintRadialGauge` derives its centred icon/value sizes from the physical box.
+  The bar's 22px radial remains a regression surface.
+- Intel i915 usage is truthful only when the process can open the system-wide
+  PMU counters (`CAP_PERFMON` or `CAP_SYS_ADMIN`). Without that capability the
+  GPU identity remains available but usage is absent with an issue; the shell
+  must not grant capabilities implicitly or display a fabricated zero.
 - Live qualification is restricted to Niri `DP-1`, `3440×1440`, scale `1.0`.
   Do not claim a second output, laptop, absent hardware, or another machine.
 
@@ -159,9 +168,10 @@ protected by its existing mutex. The state must:
 - return copied slices from `History` and copied map values from `Histories`;
 - clear all GPU-specific rings when the last GPU source lease is released.
 
-The existing `collect` path remains one `ReadGPU` call per sampling pass. The
-service history projection must not start a goroutine, read sysfs, invoke a
-process, or call upstream code.
+The existing `collect` path remains one `GPUSampler.Sample` call per sampling
+pass. `run` closes that sampler on every stop path. The service history
+projection must not start a goroutine, read sysfs, invoke a process, or call
+upstream code.
 
 `History`/`Histories` should expose qualified GPU selectors only while
 `SourceGPU` is leased. The shell must still require a currently valid selected
@@ -361,31 +371,28 @@ git add internal/shell/panelhost.go internal/shell/registry.go \
 git commit -m "feat: release shared metrics leases"
 ```
 
-## Task 5: Resolve the four-gauge geometry explicitly
+## Task 5: Implement the approved four-gauge geometry
 
-The local implementation changed `ccResourceRowH` and `ccGaugeSize` from 40 to
-22 pixels to fit four slots in the fixed 480-pixel Home body. The design says
-to preserve existing gauge geometry; the handover says this reduction cannot
-be shipped silently. This is a gate, not a cosmetic cleanup.
+The owner-approved radial package resolves the provisional 22px two-row layout:
+four 40px rings occupy one row of four 77px slots with 9px gaps. The fixed
+356×88 System card, 9px card inset, 480px Home page, and display-only
+interaction model remain unchanged.
 
 **Files:**
 
 - Test: `internal/shell/controlcenter_test.go` for fixed-body bounds and gauge
   order/size.
-- Modify: `internal/shell/controlcenter_pages.go` only after the gate chooses
-  the size.
-- Docs: amend the approved design before implementation completion if 22 is
-  rejected or if the card/body geometry must change.
+- Modify: `internal/shell/controlcenter_pages.go` for the one-row composition,
+  accessible group names, and `Temp` caption.
+- Modify: `internal/render/radial.go` for box-derived centre type sizes.
 
 ### Step 1: Prove layout safety
 
-The focused layout test must demonstrate that all four gauge rows, labels,
-values, and the System card fit within the existing fixed body without child
-clipping or overflow. It must also assert the chosen gauge size and that the
-gauge is not being treated as an interactive hit target. If a future design
-requires pointer/keyboard activation, the target must be an enclosing control
-with the existing accessible minimum; the 22-pixel visual ring is not itself a
-hit target.
+The focused layout test must demonstrate that all four gauge slots, captions,
+values, and the System card fit within the existing fixed body at font scales
+75%, 100%, 125%, and 150%. It must use role-specific text heights rather than
+the old constant-height stub, assert 40px gauges and 77px slots, and prove the
+visual rings are display-only rather than interactive hit targets.
 
 ```bash
 GOCACHE=/tmp/sysc-shell-go-cache GIT_CONFIG_NOSYSTEM=1 \
@@ -393,19 +400,14 @@ GIT_CONFIG_GLOBAL=/dev/null go test -buildvcs=false ./internal/shell \
   -run 'TestControlCentreHome.*(Gauge|System|Bounds|Fit)' -count=1
 ```
 
-### Step 2: Qualify legibility on the restricted live target
+### Step 2: Qualify the approved geometry on the restricted live target
 
 Build/run the exact shell on Niri `DP-1` at `3440×1440`, scale `1.0`, and
 capture the Home System card with valid CPU, memory, temperature, and GPU
-fixtures from the real metrics service. Record whether 22 pixels keeps the
-ring, icon, label, value, and unavailable state legible at rest and under the
-current theme. Record whether any interactive target is required; the current
-gauges are display-only.
-
-If 22 is legible and the owner accepts the display-only target, record that
-decision in the implementation/completion evidence. Otherwise stop, amend
-`2026-09-16-metrics-control-centre-gpu-design.md` and this plan's geometry
-decision, then choose a geometry that fits without clipping before proceeding.
+fixtures from the real metrics service. Record the four captions, centred
+values, unavailable state, and display-only interaction model. The approved
+design package is the geometry decision; this gate verifies it in the real
+surface.
 
 ## Task 6: Run the slice gates and handle the upstream boundary
 
@@ -428,15 +430,13 @@ so a broad environment failure cannot hide a slice regression. Record exact
 failures; do not attribute an existing failure to this slice without a clean
 baseline comparison.
 
-### Step 2: Stop safely if the pinned reader is insufficient
+### Step 2: Verify the audited upstream pin
 
-The expected result is no module-pin change: v0.4.0 already supplies one
-immutable `GPUSnapshot` per collection with validity flags and PCI identity.
-If qualification instead finds a reader defect, stop shell implementation and
-record the required upstream API/release gate in the relevant cross-repository
-Beads issue. The upstream work must publish a tag first. Only then may a
-separate commit change `go.mod`/`go.sum`, with no local replacement or shell
-fallback:
+The expected module change is `v0.4.0` → `v0.5.1`. The latter is the published
+release containing the corrected close-on-exec PMU syscall flag. If the module
+cannot be downloaded or its checksum does not match the published tag, stop at
+that boundary and record the release gate; do not use `v0.5.0`, a moving branch,
+or a local replacement:
 
 ```bash
 git add go.mod go.sum
@@ -477,7 +477,8 @@ The intended implementation history is:
 2. service-owned qualified history;
 3. shell selector/Home/monitor/bar projection;
 4. lease and lock lifecycle;
-5. a separate upstream-pin commit only if a published release is required.
+5. the audited `v0.5.1` upstream pin;
+6. the live and package gates.
 
 Each boundary must pass its preceding focused check. The metrics slice is not
 complete until exact GPU history is observed in a real projection, the geometry

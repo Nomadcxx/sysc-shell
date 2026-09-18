@@ -3,7 +3,13 @@ package shell
 import (
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +21,35 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
+
+func TestPanelTreeDoesNotReadMachineFactsUnderRegistryLock(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	source := filepath.Join(filepath.Dir(filename), "panelhost.go")
+	file, err := parser.ParseFile(token.NewFileSet(), source, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ast.Inspect(file, func(node ast.Node) bool {
+		fn, ok := node.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "panelTree" {
+			return true
+		}
+		ast.Inspect(fn.Body, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if ident, ok := call.Fun.(*ast.Ident); ok && ident.Name == "readMachineFacts" {
+				t.Errorf("panelTree directly calls readMachineFacts; use cached facts")
+			}
+			return true
+		})
+		return false
+	})
+}
 
 // newHosts is the common setup: one registry with hosts at the given globals.
 func newHosts(t *testing.T, reg *Registry, hosts map[uint32]string) {
@@ -489,6 +524,69 @@ func TestAMetricWidgetLeasesItsSource(t *testing.T) {
 	} {
 		if reg.Metrics().SourceLeased(src) {
 			t.Fatalf("source %v leased with no widget", src)
+		}
+	}
+}
+
+func TestControlCentreLeasesEveryHomeSourceAndReleasesThem(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	want := []services.Selector{
+		{Source: services.SourceCPU},
+		{Source: services.SourceMemory},
+		{Source: services.SourceCPU, Subject: "temperature"},
+		{Source: services.SourceGPU},
+		{Source: services.SourceBattery},
+	}
+	for _, sel := range want {
+		if _, ok := reg.Metrics().Histories()[sel]; !ok {
+			t.Fatalf("Control Centre did not lease %v", sel)
+		}
+	}
+	if !reg.Clock().Running() {
+		t.Fatal("Control Centre did not lease the clock")
+	}
+
+	reg.ClosePanel(PanelControlCenter)
+	for _, sel := range want {
+		if _, ok := reg.Metrics().Histories()[sel]; ok {
+			t.Fatalf("Control Centre close retained %v", sel)
+		}
+	}
+	if reg.Clock().Running() {
+		t.Fatal("Control Centre close retained the clock")
+	}
+}
+
+func TestUpdateMetricsRebuildsOpenControlCentreWithoutReplacingMetrics(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	service := reg.Metrics()
+	starts := service.Starts()
+	reg.UpdateMetrics(fixtureSnapshot())
+
+	if reg.Metrics() != service {
+		t.Fatal("UpdateMetrics replaced the shared metrics service")
+	}
+	if got := service.Starts(); got != starts {
+		t.Fatalf("UpdateMetrics started another metrics goroutine: starts %d, want %d", got, starts)
+	}
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelControlCenter]
+	text := renderText(h.root)
+	reg.mu.Unlock()
+	for _, want := range []string{"42%", "25%", "65°C", "70%"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("Control Centre did not rebuild from UpdateMetrics: missing %q in %q", want, text)
 		}
 	}
 }

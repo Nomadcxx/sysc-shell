@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -25,7 +26,7 @@ func renderText(n *ui.Node) string {
 	if n == nil {
 		return ""
 	}
-	parts := []string{n.Text}
+	parts := []string{n.Text, n.ValueText}
 	for _, child := range n.Children {
 		parts = append(parts, renderText(child))
 	}
@@ -82,8 +83,8 @@ func TestControlCentreNameAndFlushPlacement(t *testing.T) {
 	if rootKind != ui.KindRow {
 		t.Errorf("root kind = %v, want row", rootKind)
 	}
-	if leaseCount != 4 {
-		t.Errorf("leases = %d, want CPU, memory, battery and clock", leaseCount)
+	if leaseCount != 6 {
+		t.Errorf("leases = %d, want CPU, memory, temperature, GPU, battery and clock", leaseCount)
 	}
 	if fillet != 12 || spec.Width != 724 {
 		t.Errorf("fillet = %d, drawn width = %d, want 12 and 724", fillet, spec.Width)
@@ -481,37 +482,53 @@ func TestControlCentreHomeRadialResourcesPreserveSampleState(t *testing.T) {
 	r := &Registry{sample: fixtureSnapshot()}
 	home := ccHome(r, h)
 	gauges := findAllKind(home, ui.KindRadialGauge)
-	if len(gauges) != 2 {
-		t.Fatalf("radial gauges = %d, want CPU and memory", len(gauges))
+	if len(gauges) != 4 {
+		t.Fatalf("radial gauges = %d, want CPU, memory, temperature and GPU", len(gauges))
 	}
-	want := map[string]float64{"sysmon-cpu": .42, "sysmon-memory": .25}
-	for _, gauge := range gauges {
-		if gauge.Width != 40 || gauge.Height != 40 || gauge.Absent || gauge.Value != want[gauge.Icon] {
-			t.Errorf("sampled gauge = %+v", gauge)
+	want := []struct {
+		value     float64
+		valueText string
+		name      string
+	}{
+		{value: .42, valueText: "42%", name: "CPU usage"},
+		{value: .25, valueText: "25%", name: "Memory usage"},
+		{value: .65, valueText: "65°C", name: "CPU temperature"},
+		{value: .7, valueText: "70%", name: "GPU usage"},
+	}
+	for i, gauge := range gauges {
+		if gauge.Width != ccGaugeSize || gauge.Height != ccGaugeSize || gauge.Absent || gauge.Value != want[i].value || gauge.ValueText != want[i].valueText || gauge.Name != want[i].name || gauge.Icon != "" {
+			t.Errorf("sampled gauge %d = %+v, want %+v", i, gauge, want[i])
 		}
 	}
-	for _, value := range []string{"42%", "25%"} {
+	for _, value := range []string{"42%", "25%", "65°C", "70%"} {
 		if !strings.Contains(renderText(home), value) {
 			t.Errorf("resource values %q omit %s", renderText(home), value)
 		}
 	}
 
 	absent := findAllKind(ccHome(&Registry{}, h), ui.KindRadialGauge)
-	if len(absent) != 2 || !absent[0].Absent || !absent[1].Absent {
-		t.Fatalf("unsampled gauges = %+v, want two absent gauges", absent)
+	if len(absent) != 4 {
+		t.Fatalf("unsampled gauges = %d, want four absent gauges", len(absent))
+	}
+	for i, gauge := range absent {
+		if !gauge.Absent || gauge.Value != 0 {
+			t.Errorf("unsampled gauge %d = %+v, want absent zero", i, gauge)
+		}
 	}
 
 	zero := fixtureSnapshot()
 	zero.CPU.Usage.Fraction = 0
 	zero.Memory.Memory.UsedBytes = 0
+	zero.Thermal.Celsius = 0
+	zero.GPU.GPUs[0].Usage.Fraction = 0
 	zeroHome := ccHome(&Registry{sample: zero}, h)
 	for _, gauge := range findAllKind(zeroHome, ui.KindRadialGauge) {
 		if gauge.Absent || gauge.Value != 0 {
 			t.Errorf("valid zero gauge = %+v, want present zero", gauge)
 		}
 	}
-	if got := strings.Count(renderText(zeroHome), "0%"); got != 2 {
-		t.Fatalf("valid zero values = %q, want two 0%% labels", renderText(zeroHome))
+	if got := strings.Count(renderText(zeroHome), "0%"); got != 3 {
+		t.Fatalf("valid zero values = %q, want three 0%% labels", renderText(zeroHome))
 	}
 
 	for id, icon := range map[string]string{"cpu": "sysmon-cpu", "memory": "sysmon-memory"} {
@@ -519,6 +536,109 @@ func TestControlCentreHomeRadialResourcesPreserveSampleState(t *testing.T) {
 		if !ok || got != icon {
 			t.Fatalf("%s gauge icon = %q/%v, want %q", id, got, ok, icon)
 		}
+	}
+}
+
+func TestControlCentreHomeTemperatureGaugeCarriesCelsiusValueText(t *testing.T) {
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	gauges := findAllKind(ccHome(&Registry{sample: fixtureSnapshot()}, h), ui.KindRadialGauge)
+	if len(gauges) != 4 {
+		t.Fatalf("radial gauges = %d, want CPU, memory, temperature and GPU", len(gauges))
+	}
+	if got := gauges[2].ValueText; got != "65°C" {
+		t.Fatalf("temperature gauge ValueText = %q, want 65°C", got)
+	}
+}
+
+func TestControlCentreHomeSystemGaugesFitInsideCardBounds(t *testing.T) {
+	for _, scale := range []int{75, 100, 125, 150} {
+		t.Run(fmt.Sprintf("font-scale-%d", scale), func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Theme.FontScale = scale
+			h := &PanelHost{id: PanelControlCenter, section: "home", theme: ThemeFrom(cfg, cfg.Bar)}
+			home := ccHome(&Registry{sample: fixtureSnapshot()}, h)
+			measure := func(s string, attrs ui.TextAttrs) (int, int) {
+				base := 19
+				switch attrs.Role {
+				case theme.RoleCaption:
+					base = 15
+				case theme.RoleTitle:
+					base = 22
+				}
+				height := (base*scale + 99) / 100
+				return len([]rune(s)) * 8 * scale / 100, height
+			}
+			if err := ui.LayoutColumn(home, ui.Rect{W: 596, H: ccPageH}, measure); err != nil {
+				t.Fatal(err)
+			}
+
+			system := home.Children[2].Children[0].Children[1]
+			if system.Kind != ui.KindCapsule || system.Bounds.H != ccCardH || system.Name != "System" || system.Role != "group" {
+				t.Fatalf("system card = %+v, want fixed accessible %dpx card", system, ccCardH)
+			}
+			inner := ui.Rect{
+				X: system.Bounds.X + system.Padding,
+				Y: system.Bounds.Y + system.Padding,
+				W: system.Bounds.W - 2*system.Padding,
+				H: system.Bounds.H - 2*system.Padding,
+			}
+			content := system.Children[0]
+			contentHeight, err := ui.ContentHeight(content, inner.W, measure)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if contentHeight > inner.H {
+				t.Errorf("system content height = %d, outside padded card height %d", contentHeight, inner.H)
+			}
+			row := content.Children[0]
+			if row.Kind != ui.KindRow || len(row.Children) != 4 || row.Gap != theme.MarginM {
+				t.Fatalf("system row = %+v, want four slots with %dpx gaps", row, theme.MarginM)
+			}
+			for i, slot := range row.Children {
+				if slot.Kind != ui.KindColumn || slot.Bounds.W != 77 || slot.Bounds.X != inner.X+i*(77+theme.MarginM) {
+					t.Errorf("slot %d = %+v, want 77px slot at index position", i, slot)
+				}
+				gauge := findKind(slot, ui.KindRadialGauge)
+				if gauge == nil || gauge.Width != ccGaugeSize || gauge.Height != ccGaugeSize || gauge.Action != "" || gauge.Focusable {
+					t.Errorf("slot %d gauge = %+v, want display-only 40px ring", i, gauge)
+				}
+			}
+			var checkBounds func(*ui.Node)
+			checkBounds = func(node *ui.Node) {
+				if node == nil {
+					return
+				}
+				if node.Bounds.X < inner.X || node.Bounds.Y < inner.Y ||
+					node.Bounds.X+node.Bounds.W > inner.X+inner.W ||
+					node.Bounds.Y+node.Bounds.H > inner.Y+inner.H {
+					t.Errorf("system descendant bounds = %+v, outside padded card content %+v", node.Bounds, inner)
+				}
+				for _, child := range node.Children {
+					checkBounds(child)
+				}
+			}
+			checkBounds(content)
+		})
+	}
+}
+
+func TestControlCentreHomeMarksInvalidThermalAndGPUUnavailable(t *testing.T) {
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	snap := fixtureSnapshot()
+	snap.Thermal.Valid = false
+	snap.GPU.GPUs[0].Usage.Valid = false
+	gauges := findAllKind(ccHome(&Registry{sample: snap}, h), ui.KindRadialGauge)
+	if len(gauges) != 4 {
+		t.Fatalf("radial gauges = %d, want four", len(gauges))
+	}
+	if gauges[0].Absent || gauges[1].Absent {
+		t.Fatal("valid CPU and memory readings became unavailable")
+	}
+	if !gauges[2].Absent || !gauges[3].Absent {
+		t.Fatalf("invalid thermal/GPU readings = %+v, want absent", gauges[2:])
+	}
+	if got := renderText(ccHome(&Registry{sample: snap}, h)); strings.Contains(got, "65°C") || strings.Contains(got, "70%") {
+		t.Fatalf("invalid thermal/GPU values remained visible: %q", got)
 	}
 }
 

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -283,15 +282,20 @@ func (b *Bar) applyLocked(view barView) bool {
 				}
 				continue
 			}
-			// State lives on the inner node; the capsule is chrome.
-			before := *w.inner
-			if text := w.format(view); text != w.inner.Text {
-				w.inner.Text = text
-				changed = true
+			// State lives on the inner node; the capsule is chrome. An
+			// uncapsuled widget keeps its state on node itself.
+			state := w.inner
+			if state == nil {
+				state = w.node
 			}
-			if w.inner.Value != before.Value || w.inner.Absent != before.Absent ||
-				w.inner.Tone != before.Tone ||
-				!slices.Equal(w.inner.Values, before.Values) {
+			if state == nil || w.format == nil {
+				continue
+			}
+			before := *state
+			if text := w.format(view); text != state.Text {
+				state.Text = text
+			}
+			if nodeVisualStateChanged(before, *state) {
 				changed = true
 			}
 		}
