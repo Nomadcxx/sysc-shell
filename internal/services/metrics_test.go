@@ -276,6 +276,170 @@ func TestHistoryDoesNotAliasTheRing(t *testing.T) {
 	}
 }
 
+func TestGPUHistorySeparatesDevicesWhenSnapshotOrderChanges(t *testing.T) {
+	t.Parallel()
+	m := NewMetrics()
+	t.Cleanup(m.Close)
+
+	lease, err := m.Acquire(Selector{Source: SourceGPU}, time.Hour)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer lease.Release()
+
+	first := metrics.GPUSnapshot{GPUs: []metrics.GPU{
+		{PCIID: "0000:01:00.0", Usage: metrics.GPUUsage{Fraction: 0.25, Valid: true}},
+		{PCIID: "0000:02:00.0", Usage: metrics.GPUUsage{Fraction: 0.75, Valid: true}},
+	}}
+	second := metrics.GPUSnapshot{GPUs: []metrics.GPU{
+		{PCIID: "0000:02:00.0", Usage: metrics.GPUUsage{Fraction: 0.50, Valid: true}},
+		{PCIID: "0000:01:00.0", Usage: metrics.GPUUsage{Fraction: 0.10, Valid: true}},
+	}}
+	m.record(Snapshot{GPU: &first})
+	m.record(Snapshot{GPU: &second})
+
+	want := map[Selector][]float64{
+		{Source: SourceGPU, Subject: "0000:01:00.0"}: {0.25, 0.10},
+		{Source: SourceGPU, Subject: "0000:02:00.0"}: {0.75, 0.50},
+	}
+	for sel, expected := range want {
+		if got := m.History(sel); !equalFloat64s(got, expected) {
+			t.Errorf("History(%v) = %v, want %v", sel, got, expected)
+		}
+	}
+}
+
+func TestGPUHistoryKeepsValidZeroAndSkipsInvalidUsage(t *testing.T) {
+	t.Parallel()
+	m := NewMetrics()
+	t.Cleanup(m.Close)
+
+	lease, err := m.Acquire(Selector{Source: SourceGPU}, time.Hour)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer lease.Release()
+
+	m.record(Snapshot{GPU: &metrics.GPUSnapshot{GPUs: []metrics.GPU{
+		{PCIID: "0000:03:00.0", Usage: metrics.GPUUsage{Fraction: 0, Valid: true}},
+		{PCIID: "0000:04:00.0", Usage: metrics.GPUUsage{Fraction: 0.9}},
+	}}})
+
+	if got := m.History(Selector{Source: SourceGPU, Subject: "0000:03:00.0"}); !equalFloat64s(got, []float64{0}) {
+		t.Fatalf("valid zero history = %v, want [0]", got)
+	}
+	if got := m.History(Selector{Source: SourceGPU, Subject: "0000:04:00.0"}); len(got) != 0 {
+		t.Fatalf("invalid usage history = %v, want no sample", got)
+	}
+}
+
+func TestGPUDeviceDisappearanceDropsAndReappearanceRestartsHistory(t *testing.T) {
+	t.Parallel()
+	m := NewMetrics()
+	t.Cleanup(m.Close)
+
+	lease, err := m.Acquire(Selector{Source: SourceGPU}, time.Hour)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer lease.Release()
+
+	first := metrics.GPUSnapshot{GPUs: []metrics.GPU{
+		{PCIID: "0000:05:00.0", Usage: metrics.GPUUsage{Fraction: 0.2, Valid: true}},
+		{PCIID: "0000:06:00.0", Usage: metrics.GPUUsage{Fraction: 0.4, Valid: true}},
+	}}
+	withoutFirst := metrics.GPUSnapshot{GPUs: []metrics.GPU{
+		{PCIID: "0000:06:00.0", Usage: metrics.GPUUsage{Fraction: 0.6, Valid: true}},
+	}}
+	reappeared := metrics.GPUSnapshot{GPUs: []metrics.GPU{
+		{PCIID: "0000:05:00.0", Usage: metrics.GPUUsage{Fraction: 0.8, Valid: true}},
+		{PCIID: "0000:06:00.0", Usage: metrics.GPUUsage{Fraction: 1, Valid: true}},
+	}}
+	m.record(Snapshot{GPU: &first})
+	m.record(Snapshot{GPU: &withoutFirst})
+	if got := m.History(Selector{Source: SourceGPU, Subject: "0000:05:00.0"}); len(got) != 0 {
+		t.Fatalf("disappeared device history = %v, want empty", got)
+	}
+
+	m.record(Snapshot{GPU: &reappeared})
+	if got := m.History(Selector{Source: SourceGPU, Subject: "0000:05:00.0"}); !equalFloat64s(got, []float64{0.8}) {
+		t.Fatalf("reappeared device history = %v, want [0.8]", got)
+	}
+}
+
+func TestGPUHistoryCopiesAndLastLeaseReleaseClearsQualifiedRings(t *testing.T) {
+	t.Parallel()
+	m := NewMetrics()
+	t.Cleanup(m.Close)
+
+	sel := Selector{Source: SourceGPU, Subject: "0000:07:00.0"}
+	wildcard := Selector{Source: SourceGPU}
+	first, err := m.Acquire(wildcard, time.Hour)
+	if err != nil {
+		t.Fatalf("first Acquire: %v", err)
+	}
+	second, err := m.Acquire(wildcard, time.Hour)
+	if err != nil {
+		t.Fatalf("second Acquire: %v", err)
+	}
+
+	m.record(Snapshot{GPU: &metrics.GPUSnapshot{GPUs: []metrics.GPU{
+		{PCIID: sel.Subject, Usage: metrics.GPUUsage{Fraction: 0.7, Valid: true}},
+	}}})
+	histories := m.Histories()
+	values, ok := histories[sel]
+	if !ok || len(values) != 1 {
+		t.Fatalf("Histories() = %v, want one sample for %v", histories, sel)
+	}
+	values[0] = 99
+	delete(histories, sel)
+	if got := m.History(sel); !equalFloat64s(got, []float64{0.7}) {
+		t.Fatalf("mutating Histories result changed service state: %v", got)
+	}
+
+	first.Release()
+	if got := m.History(sel); len(got) != 1 {
+		t.Fatalf("qualified history disappeared before last GPU lease: %v", got)
+	}
+	second.Release()
+	if got := m.History(sel); len(got) != 0 {
+		t.Fatalf("qualified history after last GPU lease = %v, want empty", got)
+	}
+}
+
+func TestGPULeaseUsesOneSamplerForTheWildcardSource(t *testing.T) {
+	t.Parallel()
+	m := NewMetrics()
+	t.Cleanup(m.Close)
+
+	first, err := m.Acquire(Selector{Source: SourceGPU}, time.Hour)
+	if err != nil {
+		t.Fatalf("first Acquire: %v", err)
+	}
+	defer first.Release()
+	second, err := m.Acquire(Selector{Source: SourceGPU}, time.Second)
+	if err != nil {
+		t.Fatalf("second Acquire: %v", err)
+	}
+	defer second.Release()
+
+	if got := m.Starts(); got != 1 {
+		t.Fatalf("GPU lease starts = %d, want one shared sampler", got)
+	}
+}
+
+func equalFloat64s(got, want []float64) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestHistoryRecordsOnlyLeasedSources(t *testing.T) {
 	t.Parallel()
 	m := NewMetrics()

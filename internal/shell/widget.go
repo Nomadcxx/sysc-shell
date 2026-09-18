@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"slices"
 	"strconv"
 	"time"
 
@@ -275,10 +276,11 @@ func buildWidgets(items []config.Item, pad int, m theme.Metrics) []textWidget {
 						changed = m.refresh(v) || changed
 						continue
 					}
+					before := *m.node
 					if text := m.format(v); text != m.node.Text {
 						m.node.Text = text
-						changed = true
 					}
+					changed = nodeVisualStateChanged(before, *m.node) || changed
 				}
 				return changed
 			}
@@ -322,6 +324,15 @@ func buildWidgets(items []config.Item, pad int, m theme.Metrics) []textWidget {
 		out[i] = capsuled(out[i], pad)
 	}
 	return out
+}
+
+func nodeVisualStateChanged(before, after ui.Node) bool {
+	return before.Text != after.Text ||
+		before.Value != after.Value ||
+		before.Absent != after.Absent ||
+		before.Tone != after.Tone ||
+		before.ValueText != after.ValueText ||
+		!slices.Equal(before.Values, after.Values)
 }
 
 func wordmarkGradient() ui.GradientPaint {

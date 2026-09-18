@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -287,11 +286,8 @@ func (b *Bar) applyLocked(view barView) bool {
 			before := *w.inner
 			if text := w.format(view); text != w.inner.Text {
 				w.inner.Text = text
-				changed = true
 			}
-			if w.inner.Value != before.Value || w.inner.Absent != before.Absent ||
-				w.inner.Tone != before.Tone ||
-				!slices.Equal(w.inner.Values, before.Values) {
+			if nodeVisualStateChanged(before, *w.inner) {
 				changed = true
 			}
 		}

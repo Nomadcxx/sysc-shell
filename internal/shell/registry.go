@@ -56,7 +56,10 @@ type Registry struct {
 	mediaPlayers []services.Player
 	// controlIdentity is captured outside Registry.mu so the control centre
 	// never reads /proc or user databases from the Wayland owner.
-	controlIdentity     ccIdentity
+	controlIdentity ccIdentity
+	// machineFacts is refreshed before lock-held panel rebuilds. It is a value
+	// copy so monitor trees can consume it without doing I/O under Registry.mu.
+	machineFacts        machineFacts
 	controlAvatarFailed map[icons.Key]struct{}
 
 	tokens theme.Tokens
@@ -185,6 +188,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		trayCh:          make(chan trayclient.Message, 32),
 		notifyCh:        make(chan notifyclient.Message, 32),
 		controlIdentity: readCCIdentity(),
+		machineFacts:    readMachineFacts(),
 	}
 	r.weather.SetCity(cfg.Weather.City)
 	r.tokens, r.themeErr = tokensAndReason(r.generateTheme(cfg))
@@ -1488,8 +1492,10 @@ func (r *Registry) UpdateClock(now time.Time) []uint32 {
 // UpdateMetrics applies a sampling pass to every bar and reports the globals
 // whose rendering actually changed.
 func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
+	facts := readMachineFacts()
 	r.mu.Lock()
 	r.sample = snap
+	r.machineFacts = facts
 	var changed []uint32
 	for global, bar := range r.bars {
 		if bar.apply(r.viewLocked(bar.connector())) {

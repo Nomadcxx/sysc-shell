@@ -248,9 +248,16 @@ func (r *Registry) HandlePanelByName(action, name, section string) error {
 		return fmt.Errorf("unknown panel action")
 	}
 
+	var facts machineFacts
+	if id == PanelMonitor {
+		facts = readMachineFacts()
+	}
 	out, trig := r.focusedTrigger()
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if id == PanelMonitor {
+		r.machineFacts = facts
+	}
 	if where, ok := r.panels.Output(id); ok && where == out && r.roots.owns(panelRoot(id)) {
 		if action == "toggle" {
 			r.closePanelLocked(id)
@@ -378,8 +385,15 @@ func (r *Registry) triggerLocked(global uint32, connector string) Trigger {
 }
 
 func (r *Registry) OpenPanel(id PanelID, output uint32, trig Trigger) error {
+	var facts machineFacts
+	if id == PanelMonitor {
+		facts = readMachineFacts()
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if id == PanelMonitor {
+		r.machineFacts = facts
+	}
 	if where, ok := r.panels.Output(id); ok && where == output && r.roots.owns(panelRoot(id)) {
 		return nil
 	}
@@ -441,8 +455,15 @@ func (r *Registry) closePanelLocked(id PanelID) {
 }
 
 func (r *Registry) TogglePanel(id PanelID, output uint32, trig Trigger) error {
+	var facts machineFacts
+	if id == PanelMonitor {
+		facts = readMachineFacts()
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if id == PanelMonitor {
+		r.machineFacts = facts
+	}
 	if where, ok := r.panels.Output(id); ok && where == output {
 		r.closePanelLocked(id)
 		return nil
@@ -741,6 +762,8 @@ func (r *Registry) acquirePanelLeases(h *PanelHost) error {
 		for _, sel := range []services.Selector{
 			{Source: services.SourceCPU},
 			{Source: services.SourceMemory},
+			{Source: services.SourceCPU, Subject: "temperature"},
+			{Source: services.SourceGPU},
 			{Source: services.SourceBattery},
 		} {
 			lease, err := r.metrics.Acquire(sel, time.Second)
@@ -2046,7 +2069,7 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		if bar, ok := r.bars[h.output]; ok {
 			connector = bar.connector()
 		}
-		return monitorPanelTree(h, monitorSelectors(r.cfg.ForConnector(connector)), r.sample, r.historyLocked(), readMachineFacts())
+		return monitorPanelTree(h, monitorSelectors(r.cfg.ForConnector(connector)), r.sample, r.historyLocked(), r.machineFacts)
 	case PanelSession:
 		return sessionTree(h, r.sample, r.cfg.Session.Locker)
 	case PanelSettings:

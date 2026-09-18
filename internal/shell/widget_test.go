@@ -348,3 +348,36 @@ func TestAGroupedMetricKeepsItsOwnTooltip(t *testing.T) {
 		}
 	}
 }
+
+func TestGroupedRadialMetricsReportValueChanges(t *testing.T) {
+	t.Parallel()
+	widgets := buildWidgets([]config.Item{{ID: "group", Items: []config.Item{
+		{ID: "cpu", Display: "radial"},
+		{ID: "memory", Display: "radial"},
+		{ID: "temperature", Display: "radial"},
+		{ID: "gpu", Display: "radial"},
+	}}}, noCapsule, standardMetrics())
+	if len(widgets) != 1 || widgets[0].refresh == nil {
+		t.Fatal("radial metric group did not build a refresh function")
+	}
+
+	first := fixtureSnapshot()
+	if !widgets[0].refresh(barView{Metrics: first}) {
+		t.Fatal("first radial metric values reported no change")
+	}
+
+	second := fixtureSnapshot()
+	second.CPU.Usage.Fraction = 0.51
+	second.Memory.Memory.UsedBytes = 580
+	second.Thermal.Celsius = 72
+	second.GPU.GPUs[0].Usage.Fraction = 0.03
+	if !widgets[0].refresh(barView{Metrics: second}) {
+		t.Fatal("changed radial metric values reported no change")
+	}
+
+	for i, want := range []float64{0.51, 0.58, 0.72, 0.03} {
+		if got := widgets[0].members[i].node.Value; got != want {
+			t.Errorf("radial member %d value = %v, want %v", i, got, want)
+		}
+	}
+}
