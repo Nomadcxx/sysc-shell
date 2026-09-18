@@ -1024,3 +1024,74 @@ func TestTheFilterWellTakesTheLadderHeight(t *testing.T) {
 		t.Errorf("filter well height = %d, want the ladder's %d", got, want)
 	}
 }
+
+// The picker has to be reachable through the panel, not just through Menu.
+// This walks the path a press and a keystroke actually take: activate opens
+// the menu, keyPress routes text through editField into the well, and the
+// tree that comes back carries the narrowed list. Unit tests over Menu prove
+// the widget; only this proves the wiring between the panel and the widget.
+func TestThePanelOpensAndFiltersTheFontPicker(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.section = "Appearance"
+	h.root = settingsTree(nil, h)
+	h.focus = ui.Focusables(h.root)
+	h.roving = ui.Roving{Count: len(h.focus)}
+
+	m := h.menus["appearance.font-family"]
+	if m == nil {
+		t.Fatal("the Appearance section built no font family menu, so the entry is not a picker")
+	}
+	if !m.Filtering() {
+		t.Skip("this machine has fewer fonts than the picker threshold")
+	}
+	target := "appearance.font-family"
+
+	// Focus the font family control the way the roving ring would.
+	found := false
+	for i, n := range h.focus {
+		if n != nil && n.Action == "set:"+target {
+			h.roving.Set(i)
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("the font family control is not focusable, so the keyboard cannot reach it")
+	}
+
+	r := &Registry{panelHosts: map[PanelID]*PanelHost{PanelSettings: h}}
+	if !h.activate(r) {
+		t.Fatal("activating the font family control did nothing")
+	}
+	if !m.Opened() {
+		t.Fatal("the picker did not open")
+	}
+
+	// Type into the well through the panel's own key path.
+	for _, key := range []uint32{50, 24, 49, 24} { // m, o, n, o
+		if !h.keyPress(r, key) {
+			t.Fatalf("the panel dropped a keystroke while the picker was open")
+		}
+	}
+	if got := m.filter.Text; got != "mono" {
+		t.Fatalf("the well holds %q, want \"mono\"; the keys did not reach it", got)
+	}
+
+	node := h.menus[target].Node()
+	if len(node.Children) < 1 {
+		t.Fatal("the open picker drew nothing")
+	}
+	if node.Children[0].Kind != ui.KindTextField {
+		t.Error("the first child is not the filter well")
+	}
+	for _, c := range node.Children[1:] {
+		if !strings.Contains(strings.ToLower(c.Text), "mono") {
+			t.Errorf("row %q survived the filter", c.Text)
+		}
+	}
+	if len(node.Children)-1 >= len(settingsFontFamilies()) {
+		t.Error("the filter narrowed nothing")
+	}
+	t.Logf("filtered to %d of %d families", len(node.Children)-1, len(settingsFontFamilies()))
+}

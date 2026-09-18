@@ -548,6 +548,7 @@ func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 	}
 	c.FillRounded(field, style.Scale120.Physical(6), style.Track)
 	_ = paintText(c, n.Text, field, text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline)
+	paintMenuChevron(c, n, text, style)
 	if len(n.Children) == 0 {
 		return nil
 	}
@@ -575,6 +576,55 @@ func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 		_ = paintText(c, child.Text, cb, text, style, textSpec(style, child), child.Tabular, child.Tone, child.Underline)
 	}
 	return nil
+}
+
+// menuChevronInset is the room the affordance takes at a menu's trailing edge.
+const menuChevronInset = 6
+
+// menuChevronBox places the affordance that marks a menu as something that
+// opens, and reports whether there is room for it at all. A menu whose box
+// hugs its label already reads as a chip; one given a column to fill does
+// not, because it then has the fill, the radius and the left-aligned text of
+// a text field, and only a press tells them apart. Where the label leaves no
+// room the glyph is withheld rather than drawn over the text, so every
+// menu that hugs keeps the shape it has today.
+func menuChevronBox(n *ui.Node, labelW int, iconSize int) (ui.Rect, bool) {
+	if n == nil || n.Bounds.W <= 0 || iconSize <= 0 {
+		return ui.Rect{}, false
+	}
+	height := n.Bounds.H
+	if len(n.Children) > 0 && n.Children[0] != nil && n.Children[0].Bounds.Y > n.Bounds.Y {
+		height = n.Children[0].Bounds.Y - n.Bounds.Y
+	}
+	size := min(iconSize, height)
+	if size <= 0 || n.Bounds.W-labelW < size+2*menuChevronInset {
+		return ui.Rect{}, false
+	}
+	return ui.Rect{
+		X: n.Bounds.X + n.Bounds.W - size - menuChevronInset,
+		Y: n.Bounds.Y + (height-size)/2,
+		W: size, H: size,
+	}, true
+}
+
+// paintMenuChevron draws that affordance. The label is measured in physical
+// units and the box is logical, so the comparison happens in the box's space.
+func paintMenuChevron(c *Canvas, n *ui.Node, text *TextRenderer, style Style) {
+	if text == nil {
+		return
+	}
+	labelW, _, err := text.Measure(n.Text, textSpec(style, n), n.Tabular)
+	if err != nil {
+		return
+	}
+	glyph := &ui.Node{Kind: ui.KindIcon, Icon: "expand_more"}
+	box, ok := menuChevronBox(n, style.Scale120.Logical(labelW), ui.IconSize(glyph))
+	if !ok {
+		return
+	}
+	glyph.IconSize = box.W
+	glyph.Bounds = box
+	_ = paintIcon(c, glyph, text, style)
 }
 
 func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
