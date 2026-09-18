@@ -309,7 +309,7 @@ func TestNiriStateForAnUnknownOutputIsHeldNotDropped(t *testing.T) {
 	}
 
 	newHosts(t, reg, map[uint32]string{1: "DP-9"})
-	if got := pillIndices(reg.bars[1].left[1].node); len(got) == 0 {
+	if got := pillCount(reg.bars[1].left[1].node); got == 0 {
 		t.Fatal("new bar shows no workspace pills, so the held state was lost")
 	}
 }
@@ -493,7 +493,7 @@ func TestCommitAppliesHeldStateToTheReplacementBars(t *testing.T) {
 	}
 	prepared.Commit()
 
-	if got := pillIndices(reg.bars[1].left[1].node); len(got) == 0 {
+	if got := pillCount(reg.bars[1].left[1].node); got == 0 {
 		t.Fatal("replacement bar shows no workspace pills, so the held state was lost")
 	}
 }

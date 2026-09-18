@@ -2,7 +2,6 @@ package shell
 
 import (
 	"slices"
-	"strconv"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -95,11 +94,33 @@ const (
 // measured gap in the reference bar.
 const workspacePillGap = 8
 
+// pillChrome resolves one pill's fill and box from its state and the theme's
+// density roles. Focus dominates: a focused workspace keeps the accent fill
+// even when it is urgent. Urgency outranks occupancy, and an empty workspace
+// stays present as an unfilled hit target. A focused pill is twice as wide as
+// the square the others share, so focus reads as the dominant state.
+func pillChrome(p workspacePill, m theme.Metrics) (ui.Fill, int, int) {
+	fill := ui.FillNone
+	switch {
+	case p.Focused:
+		fill = ui.FillAccent
+	case p.Urgent:
+		fill = ui.FillError
+	case p.Occupied:
+		fill = ui.FillContainer
+	}
+	width, height := m.IconLarge, m.IconLarge
+	if p.Focused {
+		width = 2 * m.IconLarge
+	}
+	return fill, width, height
+}
+
 // refreshWorkspacePills rebuilds the pill row when the workspace set, its
-// occupancy or its focus changes, and reports whether it did. The signature is
-// compared field by field rather than stuffed into a string, so paint stays a
-// function of the tree.
-func refreshWorkspacePills(row *ui.Node, v barView) bool {
+// occupancy, urgency or focus changes, and reports whether it did. The pills
+// are shapes only: the row never paints a workspace number, so the projection
+// cannot hide a label inside a smaller node.
+func refreshWorkspacePills(row *ui.Node, v barView, m theme.Metrics) bool {
 	// With no projection yet, the widget still shows the stable fallback
 	// rather than collapsing to nothing, which is what tells an owner that
 	// Niri has not reported this output.
@@ -119,42 +140,33 @@ func refreshWorkspacePills(row *ui.Node, v barView) bool {
 		})
 		return true
 	}
-	if workspacePillsMatch(row, v.Pills) {
+	if workspacePillsMatch(row, v.Pills, m) {
 		return false
 	}
 	row.Children = row.Children[:0]
 	for _, p := range v.Pills {
-		fill := ui.FillContainer
-		if p.Focused {
-			fill = ui.FillAccent
-		}
+		fill, width, height := pillChrome(p, m)
 		row.Children = append(row.Children, &ui.Node{
-			Kind: ui.KindCapsule,
-			Fill: fill,
-			Children: []*ui.Node{{
-				Kind:    ui.KindText,
-				Text:    strconv.Itoa(p.Index),
-				Tabular: true,
-			}},
+			Kind:   ui.KindCapsule,
+			Fill:   fill,
+			Width:  width,
+			Height: height,
 		})
 	}
 	return true
 }
 
-func workspacePillsMatch(row *ui.Node, pills []workspacePill) bool {
+func workspacePillsMatch(row *ui.Node, pills []workspacePill, m theme.Metrics) bool {
 	if len(row.Children) != len(pills) {
 		return false
 	}
 	for i, p := range pills {
 		c := row.Children[i]
-		if c == nil || len(c.Children) != 1 || c.Children[0] == nil {
+		if c == nil || c.Kind != ui.KindCapsule || len(c.Children) != 0 {
 			return false
 		}
-		want := ui.FillContainer
-		if p.Focused {
-			want = ui.FillAccent
-		}
-		if c.Fill != want || c.Children[0].Text != strconv.Itoa(p.Index) {
+		fill, width, height := pillChrome(p, m)
+		if c.Fill != fill || c.Width != width || c.Height != height {
 			return false
 		}
 	}
@@ -258,7 +270,7 @@ func buildWidgetsWithClockFloor(items []config.Item, pad int, m theme.Metrics, c
 		case "workspace":
 			row := &ui.Node{Kind: ui.KindRow, Gap: workspacePillGap}
 			w := textWidget{node: row}
-			w.refresh = func(v barView) bool { return refreshWorkspacePills(row, v) }
+			w.refresh = func(v barView) bool { return refreshWorkspacePills(row, v, m) }
 			out = append(out, w)
 		case "window-title":
 			out = append(out, textWidget{
