@@ -567,11 +567,24 @@ func (t Theme) BackgroundOpaque() bool {
 	return t.Background.A == 0xff && t.Surfaces.Bar == 0xff
 }
 
-// Geometry derives the Wayland dimensions from the tokens. The surface height
-// equals the exclusive zone, and the gap lives inside the surface.
+// barGeometry is the theme's bar tokens as the policy they were taken from.
+// BarHeight and BarGap are assigned straight from config.Bar, and the bar
+// policy deliberately wins over the density row it came from, so this loses
+// nothing and lets the one derivation answer for the shell too.
+func (t Theme) barGeometry() config.Bar {
+	return config.Bar{Height: t.BarHeight, Gap: t.BarGap}
+}
+
+// Geometry derives the Wayland dimensions from the tokens. The gap lives
+// inside the surface, so the surface carries one gap and not two.
+//
+// The derivation itself is config.Bar's, which is what keeps this from
+// drifting away from the extent the platform sizes the surface to. The
+// exclusive zone is no longer part of it: a bar may reserve less than it
+// occupies, or nothing at all.
 func (t Theme) Geometry() (surface, body, gap int) {
-	body = t.BarHeight - 2*t.BarGap
-	return t.BarGap + body, body, t.BarGap
+	b := t.barGeometry()
+	return b.Extent(), b.Body(), t.BarGap
 }
 
 // Valid reports whether the tokens produce a usable bar.
@@ -579,7 +592,7 @@ func (t Theme) Valid() error {
 	if t.BarGap < 0 {
 		return fmt.Errorf("shell: bar gap %d is negative", t.BarGap)
 	}
-	if body := t.BarHeight - 2*t.BarGap; body <= 0 {
+	if body := t.barGeometry().Body(); body <= 0 {
 		return fmt.Errorf("shell: bar height %d with gap %d leaves a body of %d",
 			t.BarHeight, t.BarGap, body)
 	}

@@ -166,9 +166,11 @@ func newHost(global uint32, proxy *client.Output) *OutputHost {
 // atomic commit (done) and the connector name that selects configuration.
 func (h *OutputHost) ready() bool { return h.doneSeen && h.connector != "" }
 
-// surfaceHeight is the layer surface height and exclusive zone for this host.
+// surfaceHeight is the layer surface extent for this host. The derivation
+// lives on config.Bar so the platform and the shell cannot drift apart, and
+// the exclusive zone is read separately because it need not equal the extent.
 func (h *OutputHost) surfaceHeight() int {
-	return h.policy.Gap + (h.policy.Height - 2*h.policy.Gap)
+	return h.policy.Extent()
 }
 
 // mayRecreate reports whether the host may rebuild its surface after a close.
