@@ -292,10 +292,12 @@ func barKeyHost(t *testing.T, bar config.Bar) (*Registry, *PanelHost) {
 	}
 	drainAux(t, reg, 2)
 	h := reg.panelHosts[PanelSettings]
+	reg.mu.Lock()
 	h.draft.Bar = bar
 	h.section = "Bar"
 	h.alt = true
 	reg.rebuildPanel(h)
+	reg.mu.Unlock()
 	barLayout(t, reg, h)
 	return reg, h
 }
@@ -313,12 +315,42 @@ func barLayout(t *testing.T, reg *Registry, h *PanelHost) {
 	}
 }
 
-func focusChip(t *testing.T, h *PanelHost, ref config.ItemRef) {
+// The production event loop takes Registry.mu around every panel driver; the
+// bare bar editor methods assume the caller already holds it. Tests that call
+// them directly hold it through these wrappers instead, so the surface
+// clock's deferred running=false write cannot race a rebuild's read.
+func barKeyPressMu(reg *Registry, h *PanelHost, key uint32) bool {
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	return h.barKeyPress(reg, key)
+}
+
+func barActivateMu(reg *Registry, h *PanelHost, action string) bool {
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	return h.barActivate(reg, action)
+}
+
+func barDropMu(reg *Registry, h *PanelHost, zone *ui.Node, payload string, x, y int) bool {
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	return h.barDrop(reg, zone, payload, x, y)
+}
+
+func rebuildPanelMu(reg *Registry, h *PanelHost) {
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	reg.rebuildPanel(h)
+}
+
+func focusChip(t *testing.T, reg *Registry, h *PanelHost, ref config.ItemRef) {
 	t.Helper()
 	want := "bar-select:" + barRefAction(ref)
 	for i, n := range h.focus {
 		if n != nil && n.Action == want {
+			reg.mu.Lock()
 			h.roving.Set(i)
+			reg.mu.Unlock()
 			return
 		}
 	}
@@ -346,8 +378,8 @@ func chipSummary(items []config.Item) string {
 func TestAltArrowMovesAChipWithinItsLane(t *testing.T) {
 	t.Parallel()
 	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "clock"}, {ID: "cpu"}, {ID: "memory"}}})
-	focusChip(t, h, config.ItemRef{Lane: "left", Path: config.ItemPath{Index: 0, Member: -1}})
-	if !h.barKeyPress(reg, keyRight) {
+	focusChip(t, reg, h, config.ItemRef{Lane: "left", Path: config.ItemPath{Index: 0, Member: -1}})
+	if !barKeyPressMu(reg, h, keyRight) {
 		t.Fatal("alt+right was not handled")
 	}
 	if got := laneIDs(h.draft.Bar.Left); got != "cpu clock memory" {
@@ -358,8 +390,8 @@ func TestAltArrowMovesAChipWithinItsLane(t *testing.T) {
 func TestAltArrowStopsAtTheEndOfALane(t *testing.T) {
 	t.Parallel()
 	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "clock"}, {ID: "cpu"}}})
-	focusChip(t, h, config.ItemRef{Lane: "left", Path: config.ItemPath{Index: 0, Member: -1}})
-	if !h.barKeyPress(reg, keyLeft) {
+	focusChip(t, reg, h, config.ItemRef{Lane: "left", Path: config.ItemPath{Index: 0, Member: -1}})
+	if !barKeyPressMu(reg, h, keyLeft) {
 		t.Fatal("alt+left at the start should still be handled, not fall through")
 	}
 	if got := laneIDs(h.draft.Bar.Left); got != "clock cpu" {
@@ -373,8 +405,8 @@ func TestAltArrowMovesAChipBetweenLanes(t *testing.T) {
 		Left:   []config.Item{{ID: "clock"}, {ID: "cpu"}},
 		Center: []config.Item{{ID: "wordmark"}},
 	})
-	focusChip(t, h, config.ItemRef{Lane: "left", Path: config.ItemPath{Index: 0, Member: -1}})
-	if !h.barKeyPress(reg, keyDown) {
+	focusChip(t, reg, h, config.ItemRef{Lane: "left", Path: config.ItemPath{Index: 0, Member: -1}})
+	if !barKeyPressMu(reg, h, keyDown) {
 		t.Fatal("alt+down was not handled")
 	}
 	if got := laneIDs(h.draft.Bar.Left); got != "cpu" {
@@ -390,8 +422,8 @@ func TestAltArrowMovesAMemberWithinItsGroup(t *testing.T) {
 	reg, h := barKeyHost(t, config.Bar{
 		Left: []config.Item{{ID: "group", Items: []config.Item{{ID: "cpu"}, {ID: "memory"}}}},
 	})
-	focusChip(t, h, config.ItemRef{Lane: "left", Path: config.ItemPath{Index: 0, Member: 0}})
-	if !h.barKeyPress(reg, keyRight) {
+	focusChip(t, reg, h, config.ItemRef{Lane: "left", Path: config.ItemPath{Index: 0, Member: 0}})
+	if !barKeyPressMu(reg, h, keyRight) {
 		t.Fatal("alt+right on a group member was not handled")
 	}
 	if got := laneIDs(h.draft.Bar.Left); got != "group(memory,cpu)" {
@@ -404,8 +436,8 @@ func TestArrowsWithoutAltAreNotLaneCommands(t *testing.T) {
 	t.Parallel()
 	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "clock"}, {ID: "cpu"}}})
 	h.alt = false
-	focusChip(t, h, config.ItemRef{Lane: "left", Path: config.ItemPath{Index: 0, Member: -1}})
-	if h.barKeyPress(reg, keyRight) {
+	focusChip(t, reg, h, config.ItemRef{Lane: "left", Path: config.ItemPath{Index: 0, Member: -1}})
+	if barKeyPressMu(reg, h, keyRight) {
 		t.Fatal("a bare arrow was taken as a lane command")
 	}
 	if got := laneIDs(h.draft.Bar.Left); got != "clock cpu" {
@@ -421,7 +453,7 @@ func TestInspectorShowsTheSelectedWidgetsOwnOptions(t *testing.T) {
 	reg, h := barKeyHost(t, config.Bar{
 		Left: []config.Item{{ID: "clock", Format: "15:04"}, {ID: "clock", Format: "Mon 2 Jan"}},
 	})
-	if !h.barActivate(reg, "bar-inspect:left:1:-1") {
+	if !barActivateMu(reg, h, "bar-inspect:left:1:-1") {
 		t.Fatal("inspect action was not handled")
 	}
 	node := barInspector(h, 600)
@@ -442,7 +474,7 @@ func TestInspectorShowsTheSelectedWidgetsOwnOptions(t *testing.T) {
 func TestInspectorSaysWhenAWidgetHasNoOptions(t *testing.T) {
 	t.Parallel()
 	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "wordmark"}}})
-	h.barActivate(reg, "bar-select:left:0:-1")
+	barActivateMu(reg, h, "bar-select:left:0:-1")
 	var text []string
 	walkNodes(barInspector(h, 600), func(n *ui.Node) {
 		if n.Kind == ui.KindText && n.Text != "" {
@@ -476,7 +508,7 @@ func TestGroupCommandMatchesTheEquivalentDrag(t *testing.T) {
 	start := config.Bar{Left: []config.Item{{ID: "clock"}, {ID: "cpu"}, {ID: "memory"}}}
 
 	reg, h := barKeyHost(t, start)
-	h.barActivate(reg, "bar-group:left:0:-1")
+	barActivateMu(reg, h, "bar-group:left:0:-1")
 	viaCommand := laneIDs(h.draft.Bar.Left)
 
 	// The drag equivalent: a drop of chip 1 onto chip 0's inner half.
@@ -500,7 +532,7 @@ func TestUngroupCommandDissolvesTheGroup(t *testing.T) {
 	reg, h := barKeyHost(t, config.Bar{
 		Left: []config.Item{{ID: "group", Items: []config.Item{{ID: "cpu"}, {ID: "memory"}}}},
 	})
-	if !h.barActivate(reg, "bar-ungroup:left:0:-1") {
+	if !barActivateMu(reg, h, "bar-ungroup:left:0:-1") {
 		t.Fatal("ungroup was not handled")
 	}
 	if got := laneIDs(h.draft.Bar.Left); got != "cpu memory" {
@@ -511,13 +543,13 @@ func TestUngroupCommandDissolvesTheGroup(t *testing.T) {
 func TestAddAndRemoveReachTheDraft(t *testing.T) {
 	t.Parallel()
 	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "clock"}}})
-	if !h.barActivate(reg, "bar-add-item:left:battery") {
+	if !barActivateMu(reg, h, "bar-add-item:left:battery") {
 		t.Fatal("add was not handled")
 	}
 	if got := laneIDs(h.draft.Bar.Left); got != "clock battery" {
 		t.Errorf("after adding: %q", got)
 	}
-	if !h.barActivate(reg, "bar-remove:left:0:-1") {
+	if !barActivateMu(reg, h, "bar-remove:left:0:-1") {
 		t.Fatal("remove was not handled")
 	}
 	if got := laneIDs(h.draft.Bar.Left); got != "battery" {
@@ -535,13 +567,13 @@ func TestEditingAnOutputForksTheWholeLane(t *testing.T) {
 		Right: []config.Item{{ID: "battery"}},
 	})
 	h.barOutput = "DP-1"
-	reg.rebuildPanel(h)
+	rebuildPanelMu(reg, h)
 
 	if h.barLaneOverridden("left") {
 		t.Fatal("the lane reads as overridden before anything was edited")
 	}
-	focusChip(t, h, config.ItemRef{Lane: "left", Path: config.ItemPath{Index: 0, Member: -1}})
-	if !h.barKeyPress(reg, keyRight) {
+	focusChip(t, reg, h, config.ItemRef{Lane: "left", Path: config.ItemPath{Index: 0, Member: -1}})
+	if !barKeyPressMu(reg, h, keyRight) {
 		t.Fatal("alt+right was not handled on an output")
 	}
 
@@ -570,13 +602,13 @@ func TestResetReturnsALaneToShared(t *testing.T) {
 	t.Parallel()
 	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "clock"}, {ID: "cpu"}}})
 	h.barOutput = "DP-1"
-	reg.rebuildPanel(h)
-	focusChip(t, h, config.ItemRef{Lane: "left", Path: config.ItemPath{Index: 0, Member: -1}})
-	h.barKeyPress(reg, keyRight)
+	rebuildPanelMu(reg, h)
+	focusChip(t, reg, h, config.ItemRef{Lane: "left", Path: config.ItemPath{Index: 0, Member: -1}})
+	barKeyPressMu(reg, h, keyRight)
 	if !h.barLaneOverridden("left") {
 		t.Fatal("the lane was not forked")
 	}
-	if !h.barActivate(reg, "bar-reset-lane:left") {
+	if !barActivateMu(reg, h, "bar-reset-lane:left") {
 		t.Fatal("reset was not handled")
 	}
 	if h.barLaneOverridden("left") {
@@ -619,7 +651,7 @@ func dropOnLane(t *testing.T, reg *Registry, h *PanelHost, payload, lane string,
 	if !inner {
 		y = target.Y + 1
 	}
-	return h.barDrop(reg, zone, payload, target.X+target.W/2, y)
+	return barDropMu(reg, h, zone, payload, target.X+target.W/2, y)
 }
 
 func TestDroppingOnAChipsInnerHalfGroupsThem(t *testing.T) {
@@ -803,7 +835,7 @@ func TestAGroupMemberCanBeRemovedFromItsOwnRow(t *testing.T) {
 	if remove == nil || remove.Bounds.W <= 0 {
 		t.Fatal("a group member has no reachable remove control")
 	}
-	if !h.barActivate(reg, "bar-remove:left:0:1") {
+	if !barActivateMu(reg, h, "bar-remove:left:0:1") {
 		t.Fatal("removing a group member was not handled")
 	}
 	if got := laneIDs(h.draft.Bar.Left); got != "group(cpu)" {
@@ -818,13 +850,13 @@ func TestAGroupCanBeRebuiltAfterBeingDissolved(t *testing.T) {
 	reg, h := barKeyHost(t, config.Bar{
 		Left: []config.Item{{ID: "group", Items: []config.Item{{ID: "cpu"}, {ID: "memory"}}}},
 	})
-	if !h.barActivate(reg, "bar-ungroup:left:0:-1") {
+	if !barActivateMu(reg, h, "bar-ungroup:left:0:-1") {
 		t.Fatal("dissolve was not handled")
 	}
 	if got := laneIDs(h.draft.Bar.Left); got != "cpu memory" {
 		t.Fatalf("after dissolving: %q", got)
 	}
-	if !h.barActivate(reg, "bar-group:left:0:-1") {
+	if !barActivateMu(reg, h, "bar-group:left:0:-1") {
 		t.Fatal("regrouping was not handled")
 	}
 	if got := laneIDs(h.draft.Bar.Left); got != "group(cpu,memory)" {
@@ -873,7 +905,7 @@ func TestAnEditKeepsTheScrollPosition(t *testing.T) {
 	const parked = 240
 	s.ScrollOffset = parked
 
-	if !h.barActivate(reg, "bar-remove:right:0:-1") {
+	if !barActivateMu(reg, h, "bar-remove:right:0:-1") {
 		t.Fatal("remove was not handled")
 	}
 	barLayout(t, reg, h)
@@ -935,13 +967,13 @@ func TestEveryGlyphOnlyControlInTheEditorHasATooltip(t *testing.T) {
 func TestTheAddListCanBeDismissed(t *testing.T) {
 	t.Parallel()
 	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "clock"}}})
-	if !h.barActivate(reg, "bar-add:left") {
+	if !barActivateMu(reg, h, "bar-add:left") {
 		t.Fatal("add was not handled")
 	}
 	if h.barAdding != "left" {
 		t.Fatalf("barAdding = %q, want left", h.barAdding)
 	}
-	if !h.barActivate(reg, "bar-add:left") {
+	if !barActivateMu(reg, h, "bar-add:left") {
 		t.Fatal("the second press was not handled")
 	}
 	if h.barAdding != "" {
@@ -953,8 +985,8 @@ func TestTheAddListCanBeDismissed(t *testing.T) {
 func TestOpeningAnotherLanesAddListMovesIt(t *testing.T) {
 	t.Parallel()
 	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "clock"}}})
-	h.barActivate(reg, "bar-add:left")
-	h.barActivate(reg, "bar-add:right")
+	barActivateMu(reg, h, "bar-add:left")
+	barActivateMu(reg, h, "bar-add:right")
 	if h.barAdding != "right" {
 		t.Errorf("barAdding = %q, want right", h.barAdding)
 	}
@@ -969,7 +1001,7 @@ func TestTheInspectorFollowsTheLaneThatOwnsTheSelection(t *testing.T) {
 		Left:  []config.Item{{ID: "clock"}},
 		Right: []config.Item{{ID: "battery"}},
 	})
-	h.barActivate(reg, "bar-select:left:0:-1")
+	barActivateMu(reg, h, "bar-select:left:0:-1")
 	barLayout(t, reg, h)
 
 	var inspectorY, rightLaneY int
@@ -1016,7 +1048,7 @@ func TestDroppingOntoAGroupJoinsIt(t *testing.T) {
 			zone = n
 		}
 	})
-	if !h.barDrop(reg, zone, "left:0:-1", body.X+body.W/2, body.Y+body.H/2) {
+	if !barDropMu(reg, h, zone, "left:0:-1", body.X+body.W/2, body.Y+body.H/2) {
 		t.Fatal("the drop onto a group was not handled")
 	}
 	if got := laneIDs(h.draft.Bar.Left); got != "group(cpu,memory,clock)" {
