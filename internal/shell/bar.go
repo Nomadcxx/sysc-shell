@@ -51,10 +51,12 @@ type Bar struct {
 	// after any reserve for the overflow control. The drawer re-derives the
 	// same arrangement from it without waiting for the next frame.
 	trayAvailable int
-	onTray        func(tray.ItemKey, trayArrangement, ui.Rect, wayland.Event) bool
-	onPlugin      func(string, wayland.Event) bool
-	onAction      func(action string, button uint32) bool
-	onAxis        func(action string, delta int) bool
+	// overflow is what the last layout could not place, per section.
+	overflow ui.BarOverflow
+	onTray   func(tray.ItemKey, trayArrangement, ui.Rect, wayland.Event) bool
+	onPlugin func(string, wayland.Event) bool
+	onAction func(action string, button uint32) bool
+	onAxis   func(action string, delta int) bool
 
 	// conn is the connector this bar renders for. It selects configuration and
 	// joins Niri state; it is never this bar's identity, which is its Wayland
@@ -429,7 +431,9 @@ func (b *Bar) layoutLocked(width, height int) error {
 	b.trayNodes = nil
 	sections := b.sections()
 	content := b.contentLocked(width, height)
-	if err := ui.ArrangeBar(content,
+	// The first pass only sizes the tray's available width; the authoritative
+	// overflow is the second, after the tray nodes are rebuilt.
+	if _, err := ui.ArrangeBar(content,
 		sections[0], sections[1], sections[2], b.theme.Metrics.BarSpacing, measure); err != nil {
 		return err
 	}
@@ -446,7 +450,21 @@ func (b *Bar) layoutLocked(width, height int) error {
 	b.trayArranged, b.trayAvailable = arranged, available
 	b.rebuildTrayNodesLocked()
 	sections = b.sections()
-	return ui.ArrangeBar(content, sections[0], sections[1], sections[2], b.theme.Metrics.BarSpacing, measure)
+	over, err := ui.ArrangeBar(content, sections[0], sections[1], sections[2], b.theme.Metrics.BarSpacing, measure)
+	if err != nil {
+		return err
+	}
+	// Recorded rather than drawn: sysc-313 stops the silent clip, and the
+	// chrome that shows the count belongs to the bar composition surface.
+	b.overflow = over
+	return nil
+}
+
+// Overflow reports what the last layout could not place, per section.
+func (b *Bar) Overflow() ui.BarOverflow {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.overflow
 }
 
 func (b *Bar) trayAvailableLocked(content ui.Rect, center, right []*ui.Node) int {
