@@ -573,9 +573,11 @@ func TestNetworkPanelRequestsScanOffRegistryLock(t *testing.T) {
 func TestSecretPromptReturnsPanelToWifiTab(t *testing.T) {
 	r := newPanelRegistry(t)
 	network := services.NewNetwork(&shellNetworkBackend{})
+	r.mu.Lock()
 	r.network = network
 	h := &PanelHost{id: PanelNetwork, output: 7, networkTab: "ethernet", stopAnim: make(chan struct{})}
 	r.panelHosts[PanelNetwork] = h
+	r.mu.Unlock()
 
 	r.presentNetworkSecret(network, services.SecretRequest{SSID: "Orac 15A"})
 
