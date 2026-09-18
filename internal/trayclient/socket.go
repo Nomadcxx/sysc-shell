@@ -14,7 +14,9 @@ import (
 )
 
 const (
-	socketName    = "tray.v1.sock"
+	// The name sysc-tray binds, in its internal/presenter package. It is
+	// unexported there, so this side states it and socket_test.go pins it.
+	socketName    = "presenter.v1.sock"
 	runtimeSubdir = "sysc-tray"
 	dialTimeout   = 2 * time.Second
 )
