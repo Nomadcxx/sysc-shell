@@ -567,6 +567,23 @@ func TestLayoutClampsOverflowingChildToRemainingWidth(t *testing.T) {
 	}
 }
 
+func TestLayoutClipsNestedLeadingRowWhenPinnedValueFillsBox(t *testing.T) {
+	leading := &Node{Kind: KindRow, Gap: 6, Children: []*Node{
+		{Kind: KindIcon, Icon: "thermometer"},
+		{Kind: KindText, Text: "Temperature max"},
+	}}
+	row := &Node{Kind: KindRow, Gap: 6, PinEnd: true, Children: []*Node{
+		leading,
+		{Kind: KindText, Text: "Australia/Sydney (AEST)"},
+	}}
+	if err := Layout(row, Rect{W: 150, H: 20}, fakeMeasure); err != nil {
+		t.Fatalf("Layout: %v", err)
+	}
+	if got := row.Children[1].Bounds.X + row.Children[1].Bounds.W; got > 150 {
+		t.Fatalf("pinned value overflows: right edge %d", got)
+	}
+}
+
 // TestMeasureSegmentedFitsItsOwnMeasurement pins the agreement between the two
 // halves of the segmented control: layoutSegmented gives every segment the same
 // width, so measureSegmented has to ask for the widest segment repeated. It

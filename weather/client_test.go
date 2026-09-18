@@ -136,6 +136,29 @@ func TestDecodeCarriesTheEnrichedCurrentAndRootFields(t *testing.T) {
 	}
 }
 
+func TestDecodeAcceptsOpenMeteoNumericDayFlags(t *testing.T) {
+	t.Parallel()
+	body := `{
+  "current":{"temperature_2m":18.4,"weather_code":0,"is_day":1},
+  "hourly":{
+    "time":["2026-09-16T12:00","2026-09-16T13:00"],
+    "weather_code":[0,61],"temperature_2m":[18.4,17.9],"is_day":[1,0]
+  }
+}`
+
+	fc, err := Decode([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fc.Current.IsDay == nil || !*fc.Current.IsDay {
+		t.Fatalf("current is_day = %v, want true", fc.Current.IsDay)
+	}
+	if len(fc.Hourly) != 2 || fc.Hourly[0].IsDay == nil || !*fc.Hourly[0].IsDay ||
+		fc.Hourly[1].IsDay == nil || *fc.Hourly[1].IsDay {
+		t.Fatalf("hourly is_day = %+v, want true then false", fc.Hourly)
+	}
+}
+
 func TestDecodeSevenDailyValues(t *testing.T) {
 	t.Parallel()
 	fc, err := Decode([]byte(forecastBody))

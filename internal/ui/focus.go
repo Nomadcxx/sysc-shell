@@ -5,7 +5,7 @@ func Focusables(root *Node) []*Node {
 	var out []*Node
 	var walk func(*Node)
 	walk = func(n *Node) {
-		if n == nil {
+		if n == nil || n.Kind == KindEffect {
 			return
 		}
 		// A disabled control normally leaves traversal. AriaDisabled is the
@@ -32,7 +32,7 @@ func Focusables(root *Node) []*Node {
 }
 
 func hasFocusable(n *Node) bool {
-	if n == nil {
+	if n == nil || n.Kind == KindEffect {
 		return false
 	}
 	if n.Focusable {

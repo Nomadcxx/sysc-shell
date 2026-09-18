@@ -28,6 +28,40 @@ func TestStackGivesEveryChildTheSameBox(t *testing.T) {
 	}
 }
 
+func TestStackPlacesEffectLayerWithoutHitAction(t *testing.T) {
+	t.Parallel()
+	effect := &Node{Kind: KindEffect, Action: "effect", Effect: EffectSpec{Program: EffectWeather}}
+	content := &Node{Kind: KindText, Text: "weather"}
+	n := stackOf(effect, content)
+	n.Padding = 4
+	n.Bounds = Rect{X: 10, Y: 20, W: 100, H: 50}
+
+	if err := layoutStackChildren(n, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	want := Rect{X: 14, Y: 24, W: 92, H: 42}
+	if effect.Bounds != want {
+		t.Errorf("effect bounds = %+v, want %+v", effect.Bounds, want)
+	}
+	if content.Bounds != want {
+		t.Errorf("content bounds = %+v, want %+v", content.Bounds, want)
+	}
+	if action, ok := Hit(n, 25, 25); ok {
+		t.Fatalf("effect hit = %q, want no hit action", action)
+	}
+}
+
+func TestStackHitSkipsEffectAction(t *testing.T) {
+	t.Parallel()
+	effect := &Node{Kind: KindEffect, Action: "effect", Bounds: Rect{W: 50, H: 50}, Effect: EffectSpec{Program: EffectWeather}}
+	content := &Node{Kind: KindButton, Action: "content", Bounds: Rect{W: 50, H: 50}}
+	root := &Node{Kind: KindStack, Bounds: Rect{W: 50, H: 50}, Children: []*Node{content, effect}}
+
+	if action, ok := Hit(root, 25, 25); !ok || action != "content" {
+		t.Fatalf("stack hit = %q, %v; want content action, never effect action", action, ok)
+	}
+}
+
 func TestStackMeasuresAsTheMaximumNotTheSum(t *testing.T) {
 	t.Parallel()
 	// A column sums its children. A stack must not, or every stacked card

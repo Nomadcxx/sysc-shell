@@ -48,6 +48,8 @@ const (
 	// walks children in reverse, so the topmost is hit first. It exists for a
 	// card with a background image behind its content.
 	KindStack
+	// KindEffect is a non-interactive background layer for a stack.
+	KindEffect
 
 	// kindCount is one past the last kind. It exists so a test can assert that
 	// every declared kind is measurable, and it must stay last.
@@ -194,6 +196,10 @@ type Node struct {
 	// A nil image still measures, so a card does not reflow when an icon
 	// resolves late or fails.
 	Image *Image
+	// Effect is the host-owned descriptor for a KindEffect node.
+	Effect EffectSpec
+	// EffectPhase is the resolved animation phase supplied by the surface host.
+	EffectPhase float64
 	// ImageSize is the logical edge length a KindImage node reserves. The node
 	// reserves its box whatever the raster turns out to be, so a decode that
 	// arrives later cannot change the layout around it.

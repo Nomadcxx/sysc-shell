@@ -673,6 +673,30 @@ func TestWeatherPageKeepsTodayAndFourForecastSlots(t *testing.T) {
 	}
 }
 
+func TestWeatherPageUsesTheHeroInformationBudget(t *testing.T) {
+	r := &Registry{reading: observedWeather()}
+	h := &PanelHost{id: PanelControlCenter, section: "weather", theme: DefaultTheme()}
+	today := ccWeather(r, h).Children[0]
+	if today.Kind != ui.KindCapsule || today.Height != ccTodayH {
+		t.Fatalf("Today card = %+v, want the full hero card", today)
+	}
+	stack := today.Children[0]
+	if stack.Kind != ui.KindStack || len(stack.Children) < 1 || stack.Children[0].Kind != ui.KindEffect || stack.Children[0].Key != weatherTodayEffectKey {
+		t.Fatalf("Today content = %+v, want the stable effect-first hero stack", stack)
+	}
+	texts := collectTooltipLines(today)
+	for _, want := range []string{"18°C", "Clear", "Low 6°", "High 22°", "Feels like", "9.5°C", "Wind", "10.4 km/h NE", "Humidity", "62%", "Updated"} {
+		if !hasLine(texts, want) {
+			t.Fatalf("Today texts %q are missing %q", texts, want)
+		}
+	}
+	for _, forbidden := range []string{"Temperature max", "Temperature min", "UV index", "Timezone", "Sunrise", "Sunset", "Precip chance", "Elevation"} {
+		if hasLine(texts, forbidden) {
+			t.Fatalf("Today texts %q still contain retired field %q", texts, forbidden)
+		}
+	}
+}
+
 func TestWeatherUpdateRebuildsAnOpenControlCentre(t *testing.T) {
 	r := newPanelRegistry(t)
 	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {

@@ -617,6 +617,11 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		theme:       r.panelThemeFor(output),
 		fontFamily:  r.panelFontFamily(output),
 	}
+	// Resolve the surface clock before the first tree is built. Effect phases
+	// are keyed by the tree's stable nodes, so the first frame must target the
+	// same animator entries as every later rebuild.
+	h.anim = newAnimator(nil, r.cfg.Accessibility.ReducedMotion, h.theme.Motion)
+	h.anim.Target(panelSurfaceID(id), animVisible, 1)
 	if bar, ok := r.bars[output]; ok {
 		h.scale120 = bar.scale120()
 	}
@@ -669,6 +674,9 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		// retain the initial 300 px fallback and clip the last visible card.
 		h.root = r.panelTree(h)
 	}
+	if err := h.resolveEffectMotionLocked(copyNode(h.root)); err != nil {
+		return err
+	}
 	h.focus = ui.Focusables(h.root)
 	h.roving = ui.Roving{Count: len(h.focus)}
 	if id == PanelWallpaper {
@@ -706,8 +714,6 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		r.startBluetoothDiscoveryLocked(h)
 	}
 
-	h.anim = newAnimator(nil, r.cfg.Accessibility.ReducedMotion, h.theme.Motion)
-	h.anim.Target(panelSurfaceID(id), animVisible, 1)
 	r.scheduleSurfaceFrames(h)
 	return nil
 }
@@ -1112,9 +1118,20 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	if margin := h.filletMargin(); margin > 0 && body.W >= h.place.Panel.W+2*margin {
 		body = ui.Rect{X: margin, W: h.place.Panel.W, H: body.H}
 	}
-	// Resolve the pointer state onto the tree that is about to be painted. The
-	// painter consumes an immutable mask; nothing downstream mutates state.
-	h.pointer.apply(h.root, h.anim)
+	// The painter consumes a copy. Pointer state and effect phase are render
+	// values, so neither resolver mutates the retained panel tree.
+	page, viewport, pageProgress, pageOffset := h.controlCentrePageVisual()
+	if page != nil && pageOffset != 0 {
+		offsetNodeY(page, pageOffset)
+	}
+	root := copyNode(h.root)
+	if page != nil && pageOffset != 0 {
+		offsetNodeY(page, -pageOffset)
+	}
+	h.pointer.apply(root, h.anim)
+	if err := h.resolveEffectMotionLocked(root); err != nil {
+		return err
+	}
 
 	paintTheme := h.paintTheme()
 	style := h.rootStyle(paintTheme)
@@ -1133,14 +1150,7 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 		style.AttachEdge = h.place.BarEdge
 	}
 	style.Backdrop = h.backdrop
-	page, viewport, pageProgress, pageOffset := h.controlCentrePageVisual()
-	if page != nil && pageOffset != 0 {
-		offsetNodeY(page, pageOffset)
-	}
-	err = render.Paint(c, h.root, h.text, style)
-	if page != nil && pageOffset != 0 {
-		offsetNodeY(page, -pageOffset)
-	}
+	err = render.Paint(c, root, h.text, style)
 	if err != nil {
 		return err
 	}
@@ -2091,6 +2101,9 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 		}
 		overlayEditors(h.root, h.editors)
 	}
+	if err := h.resolveEffectMotionLocked(copyNode(h.root)); err != nil {
+		h.errLabel = err.Error()
+	}
 	h.focus = ui.Focusables(h.root)
 	h.roving.Count = len(h.focus)
 	h.roving.Set(idx)
@@ -2108,6 +2121,58 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 	if h.logicalW > 0 {
 		_ = h.configure(h.logicalW, h.logicalH, h.scale120)
 	}
+	if h.stopAnim != nil {
+		r.startSurfaceFrames(h)
+	}
+}
+
+// resolveEffectMotionLocked targets the panel's effect phases on the supplied
+// render tree. The caller owns Registry.mu; root is expected to be a copy of
+// the retained tree so phase resolution cannot mutate the model being rebuilt.
+func (h *PanelHost) resolveEffectMotionLocked(root *ui.Node) error {
+	if h == nil || h.anim == nil {
+		return nil
+	}
+	type effectTarget struct {
+		node *ui.Node
+		key  string
+	}
+	var targets []effectTarget
+	var walk func(*ui.Node) error
+	walk = func(n *ui.Node) error {
+		if n == nil {
+			return nil
+		}
+		if n.Kind == ui.KindEffect {
+			key := n.StableKey()
+			if key == "" {
+				return fmt.Errorf("shell: effect node is missing a stable key")
+			}
+			targets = append(targets, effectTarget{node: n, key: key})
+		}
+		for _, child := range n.Children {
+			if err := walk(child); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := walk(root); err != nil {
+		return err
+	}
+
+	seen := make(map[string]bool, len(targets))
+	for _, target := range targets {
+		seen[target.key] = true
+		h.anim.TargetLoop(target.key, animEffect, 0, 1, effectTrip, ui.GradientLoop)
+		target.node.EffectPhase = h.anim.Value(target.key, animEffect)
+	}
+	for key := range h.anim.values {
+		if key.channel == animEffect && !seen[key.node] {
+			delete(h.anim.values, key)
+		}
+	}
+	return nil
 }
 
 func (r *Registry) panelTree(h *PanelHost) *ui.Node {

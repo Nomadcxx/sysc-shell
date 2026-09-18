@@ -1079,7 +1079,7 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 		case action == panelBluetoothAction && (button == 0 || button == buttonLeft):
 			trig.AnchorX = bar.actionCenterX(panelBluetoothAction)
 			return r.TogglePanel(PanelBluetooth, out, trig) == nil
-		case action == panelWeatherAction && (button == 0 || button == buttonLeft):
+		case action == panelWeatherAction && (button == 0 || button == buttonLeft || button == buttonRight):
 			trig.AnchorX = bar.actionCenterX(panelWeatherAction)
 			return r.TogglePanel(PanelWeather, out, trig) == nil
 		case action == panelBluetoothAction && button == buttonRight:

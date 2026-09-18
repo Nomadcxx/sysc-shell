@@ -232,6 +232,83 @@ func hasIntermediateValues(pix []byte) bool {
 	return false
 }
 
+func TestEffectStackPaintsBeforeForeground(t *testing.T) {
+	t.Parallel()
+	const width, height = 64, 64
+	style := testStyle
+	effect := &ui.Node{
+		Kind:        ui.KindEffect,
+		Bounds:      ui.Rect{W: width, H: height},
+		Radius:      12,
+		Effect:      rainSpec(7),
+		EffectPhase: .25,
+	}
+	foreground := &ui.Node{
+		Kind:   ui.KindText,
+		Text:   "FG",
+		Bounds: ui.Rect{X: 20, Y: 20, W: 24, H: 24},
+	}
+
+	paint := func(children ...*ui.Node) *Canvas {
+		t.Helper()
+		c := newTestCanvas(t, width, height)
+		stack := &ui.Node{Kind: ui.KindStack, Bounds: ui.Rect{W: width, H: height}, Children: children}
+		if err := paintNode(c, stack, NewTextRenderer(mustTestFace(t)), style, style.Size); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+
+	composed := paint(effect, foreground)
+	if got := pixelAt(t, composed, 8, 32); got == (Color{}) {
+		t.Fatal("effect did not paint in the area outside the foreground")
+	}
+
+	foregroundOnly := paint(foreground)
+	for y := foreground.Bounds.Y; y < foreground.Bounds.Y+foreground.Bounds.H; y++ {
+		for x := foreground.Bounds.X; x < foreground.Bounds.X+foreground.Bounds.W; x++ {
+			want := pixelAt(t, foregroundOnly, x, y)
+			if want != style.Foreground {
+				continue
+			}
+			if got := pixelAt(t, composed, x, y); got != want {
+				t.Fatalf("foreground pixel (%d,%d) = %+v, want legible foreground %+v", x, y, got, want)
+			}
+			return
+		}
+	}
+	t.Fatal("foreground text had no opaque raster pixel")
+}
+
+func TestEffectStackClipsOutsideRoundedMask(t *testing.T) {
+	t.Parallel()
+	const size = 64
+	c := newTestCanvas(t, size, size)
+	fillEffectSentinel(c)
+	cornerBefore := pixelAt(t, c, 0, 0)
+	centerBefore := pixelAt(t, c, size/2, size/2)
+	stack := &ui.Node{
+		Kind:   ui.KindStack,
+		Bounds: ui.Rect{W: size, H: size},
+		Children: []*ui.Node{{
+			Kind:   ui.KindEffect,
+			Bounds: ui.Rect{W: size, H: size},
+			Radius: 12,
+			Effect: rainSpec(7),
+		}},
+	}
+
+	if err := paintNode(c, stack, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
+		t.Fatal(err)
+	}
+	if got := pixelAt(t, c, 0, 0); got != cornerBefore {
+		t.Fatalf("rounded effect corner = %+v, want unchanged %+v", got, cornerBefore)
+	}
+	if got := pixelAt(t, c, size/2, size/2); got == centerBefore {
+		t.Fatalf("rounded effect centre = %+v, want painted pixel", got)
+	}
+}
+
 func TestStackScrimDarkensWhatIsBeneathIt(t *testing.T) {
 	t.Parallel()
 	// The scrim is an ordinary child rather than a property, so its presence,

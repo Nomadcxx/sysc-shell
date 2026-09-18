@@ -315,7 +315,10 @@ func (w *Weather) run(stop, done chan struct{}) {
 			return
 		}
 
-		wait := interval
+		wait := time.Duration(0)
+		if !lastAt.IsZero() {
+			wait = interval
+		}
 		if failures > 0 {
 			wait = retryAfter(failures)
 		}
