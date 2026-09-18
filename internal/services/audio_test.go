@@ -170,14 +170,20 @@ func TestCachedStateServesThePolledValueWithoutExec(t *testing.T) {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(3 * time.Second)
-	for fake.lines(t) == 0 && time.Now().Before(deadline) {
+	var st AudioState
+	var ok bool
+	for !ok && time.Now().Before(deadline) {
+		st, ok = a.CachedState()
+		if ok {
+			break
+		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if fake.lines(t) == 0 {
-		t.Fatal("baseline poll never ran wpctl")
+	if !ok {
+		t.Fatal("baseline poll never published cached state")
 	}
 	before := fake.lines(t)
-	st, ok := a.CachedState()
+	st, ok = a.CachedState()
 	if got := fake.lines(t); got != before {
 		t.Fatalf("CachedState exec'd wpctl: log lines %d -> %d", before, got)
 	}
