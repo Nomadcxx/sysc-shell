@@ -88,9 +88,52 @@ func clampAxis(desired, size, extent, pad int) int {
 	return desired
 }
 
+// alignY is the along-bar position on a side bar, the transpose of alignX.
+// The anchor carries the triggering widget's along-bar coordinate, which is
+// vertical there; the Align values transpose with the lane order.
+func alignY(p Placement) int {
+	if p.AnchorX > 0 {
+		return p.AnchorX - p.Panel.H/2
+	}
+	switch p.Align {
+	case "left":
+		return p.Padding
+	case "right":
+		return p.Output.H - p.Panel.H - p.Padding
+	default:
+		return (p.Output.H - p.Panel.H) / 2
+	}
+}
+
 func (p Placement) Margins() Margins {
-	x := clampAxis(alignX(p), p.Panel.W, p.Output.W, p.Padding)
 	anchor := p.BarZone + p.Gap
+	if p.BarEdge == "left" || p.BarEdge == "right" {
+		if p.CenterY {
+			// Centring generalises to the cross axis: the region beyond the
+			// bar. A zero anchor is a true modal: centre it in the whole
+			// output while retaining the output padding on the two cross ends.
+			var cross int
+			if anchor == 0 {
+				cross = p.Padding + (p.Output.W-2*p.Padding-p.Panel.W)/2
+			} else {
+				avail := p.Output.W - anchor - p.Padding
+				cross = anchor + (avail-p.Panel.W)/2
+			}
+			y := clampAxis(alignY(p), p.Panel.H, p.Output.H, p.Padding)
+			if p.BarEdge == "left" {
+				return Margins{Left: cross, Top: y}
+			}
+			return Margins{Right: cross, Top: y}
+		}
+		// The bar offset rides the cross axis; the along-bar position clamps
+		// over the output height, from the top on either side edge.
+		y := clampAxis(alignY(p), p.Panel.H, p.Output.H, p.Padding)
+		if p.BarEdge == "left" {
+			return Margins{Left: anchor, Top: y}
+		}
+		return Margins{Right: anchor, Top: y}
+	}
+	x := clampAxis(alignX(p), p.Panel.W, p.Output.W, p.Padding)
 	if p.CenterY {
 		// A zero anchor is a true modal: centre it in the whole output while
 		// retaining the output padding on both sides. Other floating panels
