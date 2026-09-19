@@ -416,7 +416,19 @@ func (b *Bar) contentLocked(width, height int) ui.Rect {
 
 func (b *Bar) bodyLocked(width, height int) ui.Rect {
 	gap := b.theme.BarGap
-	return ui.Rect{X: gap, Y: gap, W: max(0, width-2*gap), H: max(0, height-gap)}
+	// The gap insets against the screen edge and both cross-axis ends; the
+	// far end along the main axis stays flush. A lower-edge bar used to paint
+	// its gap on the far side, which is sysc-419.
+	switch b.policy.Edge {
+	case "bottom":
+		return ui.Rect{X: gap, Y: 0, W: max(0, width-2*gap), H: max(0, height-gap)}
+	case "left":
+		return ui.Rect{X: gap, Y: gap, W: max(0, width-gap), H: max(0, height-2*gap)}
+	case "right":
+		return ui.Rect{X: 0, Y: gap, W: max(0, width-gap), H: max(0, height-2*gap)}
+	default:
+		return ui.Rect{X: gap, Y: gap, W: max(0, width-2*gap), H: max(0, height-gap)}
+	}
 }
 
 // axis is the direction the bar runs along, from its configured edge: a top
