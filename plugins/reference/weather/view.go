@@ -68,13 +68,55 @@ func Condition(code int) string {
 	return "Cloudy"
 }
 
+// barCurrentKey names the bar's single control so CurrentPatch can replace it
+// as the reading changes. The temperature is the control's own text now, so
+// there is no separate keyed node to swap.
+const barCurrentKey = "bar-current"
+
+// BarTree is one element: the glyph and the temperature, and the whole of it
+// opens the panel. It used to carry a second button reading "Weather" beside
+// them, which named what the reader was already looking at and spent bar width
+// doing it -- width an overflowing bar has to drop a widget to find.
+//
+// It is a button only in the sense that a button is what carries an action
+// route in this protocol. With no fill it paints no chrome of its own: the
+// bar's capsule is the chrome, so it reads as a glyph and a number.
+//
+// Declaring pointer alongside activate is what makes either mouse button open
+// the panel: the shell delivers a primary press and a secondary release, and
+// the plugin opens its panel for any input on the node called "open".
 func BarTree(snap Snapshot, opt Options) *v1.Node {
-	children := statusNodes(snap, opt)
-	children = append(children, &v1.Node{
-		Kind: v1.KindButton, ID: "open", Text: "Weather", Name: "Open weather", Role: "button",
-		Events: []v1.EventKind{v1.EventActivate},
-	})
-	return &v1.Node{Kind: v1.KindRow, Gap: 8, Children: children}
+	out := &v1.Node{
+		Kind: v1.KindButton, ID: "open", Key: barCurrentKey,
+		Name: "Open weather", Role: "button",
+		Events: []v1.EventKind{v1.EventActivate, v1.EventPointer},
+	}
+	if !snap.Observed {
+		out.Text = "Weather"
+		if snap.Disabled {
+			out.Text = "Weather off"
+		} else if !snap.FailedSince.IsZero() {
+			out.Text, out.Tone = "weather unavailable", v1.ToneError
+		}
+		return out
+	}
+	if opt.ShowIcon {
+		out.Icon = render.IconName(snap.Forecast.Current.Code)
+		out.Name = Condition(snap.Forecast.Current.Code)
+	}
+	var parts []string
+	if opt.ShowTemperature {
+		parts = append(parts, formatTemp(snap.Forecast.Current.Temperature, snap.Unit, opt.ShowUnit))
+		out.Tabular = true
+	}
+	if opt.ShowCondition {
+		parts = append(parts, Condition(snap.Forecast.Current.Code))
+	}
+	if snap.Stale() {
+		parts = append(parts, "("+humaniseAge(time.Since(snap.FetchedAt))+")")
+	}
+	out.Text = strings.Join(parts, " ")
+	return out
 }
 
 func TooltipTree(snap Snapshot, opt Options) *v1.Node {
@@ -115,7 +157,14 @@ func PanelTree(snap Snapshot, opt Options) *v1.Node {
 	return &v1.Node{Kind: v1.KindColumn, Gap: 8, Children: children}
 }
 
-func CurrentPatch(snap Snapshot, opt Options) []v1.Replacement {
+// CurrentPatch is per view, because the views no longer share a shape: the bar
+// is one control carrying its reading as text, while the panel and the tooltip
+// keep separate keyed nodes. A replacement naming a key a view does not hold is
+// refused by the host, so the kind decides which keys are sent.
+func CurrentPatch(snap Snapshot, opt Options, kind v1.ViewKind) []v1.Replacement {
+	if kind == v1.ViewBar {
+		return []v1.Replacement{{Key: barCurrentKey, Node: BarTree(snap, opt)}}
+	}
 	var out []v1.Replacement
 	if opt.ShowTemperature && snap.Observed {
 		out = append(out, v1.Replacement{Key: "temp", Node: tempNode(snap, opt)})

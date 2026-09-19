@@ -69,7 +69,7 @@ func run(in *os.File, out *os.File) error {
 		}
 		for id, v := range views {
 			if patch && v.rev > 0 {
-				repl := weather.CurrentPatch(last, opt)
+				repl := weather.CurrentPatch(last, opt, v.kind)
 				if len(repl) == 0 {
 					continue
 				}

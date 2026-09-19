@@ -127,10 +127,16 @@ func TestPanelTreeShowsCurrentCardAndSevenDays(t *testing.T) {
 func TestTreesCarryAccessibleConditionText(t *testing.T) {
 	t.Parallel()
 	snap := freshSnap(t)
+	// The bar's glyph sits on the one control, so that control carries the
+	// condition as its accessible name: a reader still hears "Cloudy" rather
+	// than the route's own label.
 	root := BarTree(snap, Options{ShowIcon: true})
-	icon := findKind(root, v1.KindIcon)
-	if icon == nil || icon.Name != "Cloudy" {
-		t.Fatalf("icon = %+v, want accessible Cloudy", icon)
+	if root.Icon == "" || root.Name != "Cloudy" {
+		t.Fatalf("bar control = %+v, want the glyph and an accessible Cloudy", root)
+	}
+	panel := PanelTree(snap, Options{ShowIcon: true})
+	if icon := findKind(panel, v1.KindIcon); icon == nil || icon.Name != "Cloudy" {
+		t.Fatalf("panel icon = %+v, want accessible Cloudy", icon)
 	}
 }
 
@@ -145,7 +151,7 @@ func TestBarTreeAcceptsALiteralAccent(t *testing.T) {
 func TestCurrentPatchUpdatesTemperatureAndAge(t *testing.T) {
 	t.Parallel()
 	snap := freshSnap(t)
-	repl := CurrentPatch(snap, Options{ShowTemperature: true, ShowUnit: true})
+	repl := CurrentPatch(snap, Options{ShowTemperature: true, ShowUnit: true}, v1.ViewPanel)
 	if len(repl) == 0 {
 		t.Fatal("no replacements")
 	}
@@ -192,7 +198,7 @@ func flatten(n *v1.Node) string {
 func hasIcon(n *v1.Node, name string) bool {
 	found := false
 	walk(n, func(x *v1.Node) {
-		if x.Kind == v1.KindIcon && x.Icon == name {
+		if x.Icon == name && (x.Kind == v1.KindIcon || x.Kind == v1.KindButton) {
 			found = true
 		}
 	})
@@ -236,5 +242,65 @@ func walk(n *v1.Node, fn func(*v1.Node)) {
 	fn(n)
 	for _, c := range n.Children {
 		walk(c, fn)
+	}
+}
+
+// The bar carries a glyph and a temperature. It used to carry a button reading
+// "Weather" beside them, which named what the reader was already looking at and
+// spent bar width doing it -- width the bar has to drop widgets to find.
+func TestBarTreeCarriesNoRedundantLabel(t *testing.T) {
+	t.Parallel()
+	snap := freshSnap(t)
+	root := BarTree(snap, Options{ShowTemperature: true, ShowUnit: true, ShowIcon: true})
+	if body := flatten(root); strings.Contains(body, "Weather") {
+		t.Fatalf("bar reads %q; the glyph and the temperature say it already", body)
+	}
+}
+
+// The whole element opens the panel, not a label beside it. The plugin routes
+// any input on the node called "open", and the shell delivers a primary press
+// and a secondary release, so either button reaches it.
+func TestBarTreeIsItselfTheOpenControl(t *testing.T) {
+	t.Parallel()
+	root := BarTree(freshSnap(t), Options{ShowTemperature: true, ShowIcon: true})
+	if root.Kind != v1.KindButton {
+		t.Fatalf("bar root is %q; only a control carries an action route", root.Kind)
+	}
+	if root.ID != "open" {
+		t.Fatalf("bar root id = %q, want \"open\"", root.ID)
+	}
+	var activate, pointer bool
+	for _, e := range root.Events {
+		switch e {
+		case v1.EventActivate:
+			activate = true
+		case v1.EventPointer:
+			pointer = true
+		}
+	}
+	if !activate || !pointer {
+		t.Fatalf("bar root events = %v, want activate and pointer so both buttons open the panel", root.Events)
+	}
+	if err := v1.Validate(root, v1.ViewBar); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The bar's reading is patched through the control itself, because the bar no
+// longer holds a separate keyed node for it.
+func TestCurrentPatchUpdatesTheBarControl(t *testing.T) {
+	t.Parallel()
+	repl := CurrentPatch(freshSnap(t), Options{ShowTemperature: true, ShowUnit: true, ShowIcon: true}, v1.ViewBar)
+	if len(repl) != 1 {
+		t.Fatalf("bar patch = %+v, want one replacement", repl)
+	}
+	if repl[0].Key != barCurrentKey {
+		t.Fatalf("bar patch key = %q, want %q", repl[0].Key, barCurrentKey)
+	}
+	if repl[0].Node == nil || !strings.Contains(repl[0].Node.Text, "18") {
+		t.Fatalf("bar patch node = %+v, want the new reading", repl[0].Node)
+	}
+	if repl[0].Node.ID != "open" {
+		t.Fatalf("bar patch replaced the control with %+v; it must stay the open route", repl[0].Node)
 	}
 }
