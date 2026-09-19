@@ -377,7 +377,15 @@ var BaseMotion = MotionTokens{
 	Medium:    300 * time.Millisecond,
 	Long:      450 * time.Millisecond,
 	ExtraLong: 750 * time.Millisecond,
-	FrameCap:  33 * time.Millisecond,
+	// 33ms was one frame either side of a 60Hz vblank, so an animating surface
+	// painted every second one: 30 frames a second whatever the transition. It
+	// was set on the assumption that blitting is the expensive half, and
+	// measurement retired that assumption -- a full bar repaint is 0.56ms
+	// against a 16.67ms frame, so the cap was spending half the frame rate to
+	// save a twentieth of a frame. It now sits below the shell's sampling tick
+	// so it never drops a sample to jitter, while still bounding blits if a
+	// future surface ever asks for frames faster than the tick.
+	FrameCap: 4 * time.Millisecond,
 }
 
 // AtSpeed divides every duration by the speed factor, so 400 percent is four
@@ -403,12 +411,10 @@ func (m MotionTokens) AtSpeed(percent int) MotionTokens {
 		ExtraLong: scale(m.ExtraLong),
 		// FrameCap is deliberately NOT scaled. It bounds how often a surface is
 		// blitted, which is a cost of the machine rather than a property of the
-		// animation, and measurement showed scaling defeats it at both ends: at
-		// 400 percent it became 8.25 ms, below the 16 ms tick, and paced nothing
-		// (62 publishes a second, identical to uncapped); at 25 percent it
-		// became 132 ms, giving 7 a second, which is about two frames across a
-		// 320 ms transition and visibly steppy. Held at one value it paces every
-		// speed: roughly 30 a second.
+		// animation, and scaling defeats it at the slow end: at 25 percent it
+		// would become 32 ms, back to painting every second vblank on a 60Hz
+		// panel, so the slowest speed would be the steppiest. Held at one value
+		// it lets every speed run at the display's rate.
 		FrameCap: m.FrameCap,
 	}
 }
