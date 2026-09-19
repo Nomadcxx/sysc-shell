@@ -1351,6 +1351,7 @@ func TestControlCentreSettingsPageLinksIntoThePanel(t *testing.T) {
 		t.Fatalf("settings opened at %q, want the requested section", settingsHost.section)
 	}
 }
+
 // TestControlCentreMeasuredRowsFitTheirContainers guards the fit rather than
 // the heights. The quick tiles and the forecast slots were each sized to fill
 // their container exactly at the old gap, so moving the ladder overflows the
