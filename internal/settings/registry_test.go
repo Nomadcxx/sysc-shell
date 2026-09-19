@@ -731,3 +731,28 @@ func TestEveryDeclaredEmptyValueSurvivesTheLoader(t *testing.T) {
 		t.Skip("no entry declares an empty row")
 	}
 }
+
+// The input radius axis is reachable from the pane. It existed in the theme
+// and in every preset, but with no catalogue entry the only way to set it was
+// to hand-edit a document, which is the gap sub-project A was about closing.
+func TestInputRadiusHasAnEntryThatWritesTheAxis(t *testing.T) {
+	t.Parallel()
+	r := DefaultFor(config.Default())
+	entry := r.ByPath("appearance.input-radius")
+	if entry == nil {
+		t.Fatal("no settings entry reaches the input radius axis")
+	}
+	if entry.Kind != KindInt || entry.Min != theme.RadiusMin || entry.Max != theme.RadiusMax {
+		t.Fatalf("entry = %+v, want an int bounded like its sibling", entry)
+	}
+	cfg := config.Default()
+	if err := entry.Set(&cfg, "18"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Theme.InputRadius != 18 {
+		t.Fatalf("input radius = %d, want 18", cfg.Theme.InputRadius)
+	}
+	if got := entry.Get(cfg); got != "18" {
+		t.Fatalf("entry reads back %q, want \"18\"", got)
+	}
+}

@@ -1318,3 +1318,43 @@ func TestMediaConfigRejectsNonMPRISNames(t *testing.T) {
 		}
 	}
 }
+
+// InputRadius is a composition axis like its sibling Radius, seeded by every
+// preset and carried by Rebase, but it had no wire key: a document could not
+// state it and the writer could not record it, so the axis existed in the
+// theme and nowhere a user could reach.
+func TestInputRadiusRoundTripsThroughTheDocument(t *testing.T) {
+	cfg, err := Parse([]byte(`{"theme":{"input-radius":20}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Theme.InputRadius != 20 {
+		t.Fatalf("input radius = %d, want 20", cfg.Theme.InputRadius)
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Write(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"input-radius": 20`) {
+		t.Fatalf("writer dropped the axis: %s", raw)
+	}
+	back, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Theme.InputRadius != 20 {
+		t.Fatalf("input radius after a round trip = %d, want 20", back.Theme.InputRadius)
+	}
+}
+
+func TestInputRadiusIsBoundedLikeItsSibling(t *testing.T) {
+	if _, err := Parse([]byte(`{"theme":{"input-radius":-2}}`)); err == nil {
+		t.Fatal("a negative input radius was accepted")
+	} else if !strings.Contains(err.Error(), "theme.input-radius") {
+		t.Fatalf("error %q does not name the field", err)
+	}
+}

@@ -200,6 +200,18 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, n int) { c.Theme.Radius = n }),
 		},
 		{
+			Path: "appearance.input-radius", Label: "Input radius", Section: "Appearance", Group: "Shape",
+			Describe: "Corner radius for interactive elements: fields, switches and buttons.",
+			Kind:     KindInt,
+			Min:      theme.RadiusMin, Max: theme.RadiusMax,
+			Get: getInt(func(c config.Config) int { return c.Theme.InputRadius }),
+			// The parallel ladder to appearance.radius. Every preset seeds it
+			// with that preset's Radius, so inputs keep their shape until
+			// someone moves this axis on its own.
+			Set: setInt("appearance.input-radius", theme.RadiusMin, theme.RadiusMax,
+				func(c *config.Config, n int) { c.Theme.InputRadius = n }),
+		},
+		{
 			Path: "appearance.motion", Label: "Motion", Section: "Appearance", Group: "Motion",
 			Describe: "How animations move.",
 			Kind:     KindEnum,

@@ -96,6 +96,7 @@ type wireTheme struct {
 	FontScale      *int    `json:"font-scale,omitempty"`
 	FontWeight     *int    `json:"font-weight,omitempty"`
 	Radius         *int    `json:"radius,omitempty"`
+	InputRadius    *int    `json:"input-radius,omitempty"`
 	Motion         *string `json:"motion,omitempty"`
 	MotionSpeed    *int    `json:"motion-speed,omitempty"`
 	BarOpacity     *int    `json:"bar-opacity,omitempty"`
@@ -1238,6 +1239,9 @@ func applyTheme(base Theme, w wireTheme, path string) (Theme, error) {
 		{"font-scale", w.FontScale, &out.FontScale, theme.FontScaleMin, theme.FontScaleMax},
 		{"font-weight", w.FontWeight, &out.FontWeight, theme.FontWeightMin, theme.FontWeightMax},
 		{"radius", w.Radius, &out.Radius, theme.RadiusMin, theme.RadiusMax},
+		// The parallel ladder for interactive elements, bounded like its
+		// sibling because it is the same kind of measurement.
+		{"input-radius", w.InputRadius, &out.InputRadius, theme.RadiusMin, theme.RadiusMax},
 		{"motion-speed", w.MotionSpeed, &out.MotionSpeed, theme.SpeedMin, theme.SpeedMax},
 		{"bar-opacity", w.BarOpacity, &out.BarOpacity, theme.OpacityMin, theme.OpacityMax},
 		// Panels take the blurred floor so the axis can reach it at all;

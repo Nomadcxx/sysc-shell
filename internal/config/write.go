@@ -492,6 +492,7 @@ func themeDiff(got Theme) *wireTheme {
 		{got.FontScale, base.FontScale, &w.FontScale},
 		{got.FontWeight, base.FontWeight, &w.FontWeight},
 		{got.Radius, base.Radius, &w.Radius},
+		{got.InputRadius, base.InputRadius, &w.InputRadius},
 		{got.MotionSpeed, base.MotionSpeed, &w.MotionSpeed},
 		{got.BarOpacity, base.BarOpacity, &w.BarOpacity},
 		{got.PanelOpacity, base.PanelOpacity, &w.PanelOpacity},
