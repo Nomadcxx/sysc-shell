@@ -70,7 +70,11 @@ type Client struct {
 	requestID  uint64
 	writer     chan []byte
 	connected  bool
-	pending    map[uint64]struct{}
+	// reported keeps the unreachable-service report to one per transition.
+	// Run retries every couple of seconds forever, so reporting each attempt
+	// would bury the log; reporting none of them is what hid sysc-411.
+	reported bool
+	pending  map[uint64]struct{}
 }
 
 func New(runtimeDir string, out chan<- Message) *Client {
@@ -114,6 +118,7 @@ func (c *Client) Run(ctx context.Context) error {
 func (c *Client) session(ctx context.Context) bool {
 	socket, err := dial(c.runtimeDir)
 	if err != nil {
+		c.reportUnreachable(err)
 		return false
 	}
 	defer func() { _ = socket.Close() }()
@@ -136,8 +141,10 @@ func (c *Client) session(ctx context.Context) bool {
 	}()
 
 	if err := c.handshake(socket); err != nil {
+		c.reportUnreachable(err)
 		return false
 	}
+	c.clearUnreachable()
 	generation := c.begin()
 	defer c.end(generation)
 
@@ -357,6 +364,27 @@ func (c *Client) Send(command protocol.Command) (uint64, error) {
 func (c *Client) forget(requestID uint64) {
 	c.mu.Lock()
 	delete(c.pending, requestID)
+	c.mu.Unlock()
+}
+
+// reportUnreachable publishes the reason the service could not be reached,
+// once per transition. A caller that cannot connect is otherwise
+// indistinguishable from one connected to a service with nothing to show.
+func (c *Client) reportUnreachable(err error) {
+	c.mu.Lock()
+	first := !c.reported
+	c.reported = true
+	c.mu.Unlock()
+	if first {
+		c.publish(Message{Kind: KindDisconnected, Err: err})
+	}
+}
+
+// clearUnreachable re-arms the report, so a service that goes away again is
+// named again rather than being silent for the rest of the process's life.
+func (c *Client) clearUnreachable() {
+	c.mu.Lock()
+	c.reported = false
 	c.mu.Unlock()
 }
 

@@ -199,6 +199,13 @@ func run(ctx context.Context) (err error) {
 			case <-ctx.Done():
 				return
 			case msg := <-registry.TrayMessages():
+				// The client reports an unreachable service once per
+				// transition, so this names the reason without a line per
+				// retry. Without it an empty tray and an unreachable one look
+				// identical from the log.
+				if msg.Err != nil {
+					log.Printf("tray client: %v", msg.Err)
+				}
 				registry.ApplyTray(msg)
 			}
 		}
