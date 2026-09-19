@@ -629,3 +629,60 @@ func TestConvertRejectsAnUnknownFill(t *testing.T) {
 		t.Fatal("unknown fill accepted")
 	}
 }
+
+// A name only the material subset carries becomes a real icon node, which
+// the painter rasterises from the subset. Plugins get the whole catalogue
+// without having to know which font holds which glyph.
+func TestConvertResolvesAMaterialOnlyIcon(t *testing.T) {
+	t.Parallel()
+
+	if _, ok := render.IconByName("play_arrow"); ok {
+		t.Skip("play_arrow is in the project font now; pick another subset-only name")
+	}
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{{Kind: v1.KindIcon, Icon: "play_arrow"}}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	child := got.Children[0]
+	if child.Kind != ui.KindIcon || child.Icon != "play_arrow" {
+		t.Fatalf("child = %+v, want a material icon node", child)
+	}
+}
+
+func TestConvertRejectsAnIconInNeitherCatalogue(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{{Kind: v1.KindIcon, Icon: "briefcase"}}}
+	if _, err := Convert(root, v1.ViewPanel); err == nil {
+		t.Fatal("Convert accepted an icon no font carries")
+	}
+}
+
+// An icon beside a label keeps both inside the one control, whichever font
+// the glyph came from.
+func TestConvertPutsAMaterialIconAndLabelInOneButton(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindButton, ID: "mode-short", Icon: "coffee", Text: "Short",
+			Name: "Short break", Role: "button", Events: []v1.EventKind{v1.EventActivate}},
+	}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	button := got.Children[0]
+	if len(button.Children) != 2 {
+		t.Fatalf("button children = %d, want the glyph and the label", len(button.Children))
+	}
+	if button.Children[0].Kind != ui.KindIcon || button.Children[0].Icon != "coffee" {
+		t.Fatalf("glyph child = %+v", button.Children[0])
+	}
+	if button.Children[1].Text != "Short" {
+		t.Fatalf("label child = %+v", button.Children[1])
+	}
+	if button.Text != "" {
+		t.Fatalf("button kept a label of its own: %q", button.Text)
+	}
+}

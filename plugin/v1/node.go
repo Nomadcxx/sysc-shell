@@ -481,7 +481,10 @@ func icon(name string) error {
 	}
 	for i := 0; i < len(name); i++ {
 		c := name[i]
-		ok := c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-'
+		// Underscore is how the material subset spells its names
+		// (play_arrow, restart_alt). It separates words without ever
+		// naming a directory, which is what this check guards against.
+		ok := c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_'
 		if !ok {
 			return fmt.Errorf("icon name %q is not a lower-case identifier", name)
 		}

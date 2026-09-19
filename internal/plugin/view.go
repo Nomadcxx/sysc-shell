@@ -219,6 +219,27 @@ var wireFillKinds = map[v1.NodeKind]bool{
 	v1.KindButton:   true,
 }
 
+// iconNode turns a plugin's icon name into a node the painter can draw.
+// The material subset and the project font are both this shell's catalogue,
+// and which of the two holds a given glyph is not something a plugin should
+// have to know.
+//
+// The project font is asked first, so a name both carry keeps painting the
+// glyph it always has -- the weather widget's WMO symbols are shared that
+// way. A name only the subset holds becomes a real icon node, which the
+// painter rasterises from the subset. A name in neither fails here rather
+// than painting a missing-glyph box the user would have to interpret.
+func iconNode(name, path string) (*ui.Node, error) {
+	if glyph, ok := render.IconByName(name); ok {
+		return &ui.Node{Kind: ui.KindText, Text: string(glyph)}, nil
+	}
+	if render.ValidMaterialIcon(name) {
+		return &ui.Node{Kind: ui.KindIcon, Icon: name}, nil
+	}
+	return nil, fmt.Errorf("plugin: %s: no icon named %q; this shell has %v and %v",
+		path, name, render.IconNames(), render.MaterialIconNames())
+}
+
 var wireFills = map[string]ui.Fill{
 	"surface":         ui.FillNone,
 	"accent":          ui.FillAccent,
@@ -297,15 +318,11 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		out.Kind = ui.KindText
 		out.Text = n.Text
 	case v1.KindIcon:
-		// A plugin names a symbol; the shell decides which glyphs exist. A
-		// name the font has no glyph for fails here rather than painting a
-		// missing-glyph box the user would have to interpret.
-		glyph, ok := render.IconByName(n.Icon)
-		if !ok {
-			return nil, fmt.Errorf("plugin: %s: no icon named %q; this shell has %v", path, n.Icon, render.IconNames())
+		icon, err := iconNode(n.Icon, path)
+		if err != nil {
+			return nil, err
 		}
-		out.Kind = ui.KindText
-		out.Text = string(glyph)
+		out.Kind, out.Text, out.Icon = icon.Kind, icon.Text, icon.Icon
 	case v1.KindProgress:
 		out.Kind = ui.KindMeter
 		out.Value = n.Value
@@ -317,26 +334,26 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 	case v1.KindButton:
 		out.Kind = ui.KindButton
 		out.Text = n.Text
-		if n.Icon != "" && n.Text == "" {
-			glyph, ok := render.IconByName(n.Icon)
-			if !ok {
-				return nil, fmt.Errorf("plugin: %s: no icon named %q; this shell has %v", path, n.Icon, render.IconNames())
+		if n.Icon != "" {
+			icon, err := iconNode(n.Icon, path)
+			if err != nil {
+				return nil, err
 			}
-			out.Text = string(glyph)
-		}
-		// An icon beside a label is the noctalia bar-widget shape: one
-		// control, glyph and text together. The button carries them as
-		// children so both paint inside the control's own hit target.
-		if n.Icon != "" && n.Text != "" {
-			glyph, ok := render.IconByName(n.Icon)
-			if !ok {
-				return nil, fmt.Errorf("plugin: %s: no icon named %q; this shell has %v", path, n.Icon, render.IconNames())
+			switch {
+			case n.Text == "" && icon.Kind == ui.KindText:
+				// A project glyph is a character, so the button can carry it
+				// as its own label rather than as a child.
+				out.Text = icon.Text
+			case n.Text == "":
+				out.Children = []*ui.Node{icon}
+			default:
+				// An icon beside a label is the noctalia bar-widget shape:
+				// one control, glyph and text together. The button carries
+				// them as children so both paint inside its hit target.
+				out.Children = []*ui.Node{icon,
+					{Kind: ui.KindText, Text: n.Text, Tabular: n.Tabular}}
+				out.Text = ""
 			}
-			out.Children = []*ui.Node{
-				{Kind: ui.KindText, Text: string(glyph)},
-				{Kind: ui.KindText, Text: n.Text, Tabular: n.Tabular},
-			}
-			out.Text = ""
 		}
 		// The node id becomes the action, which is how a hit finds its way
 		// back to the node the plugin addressed.

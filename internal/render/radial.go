@@ -87,7 +87,17 @@ func paintRadialGauge(c *Canvas, n *ui.Node, text *TextRenderer, style Style) er
 	box.Y += (box.H - size) / 2
 	box.W, box.H = size, size
 
-	stroke := max(style.Scale120.Physical(2), 1)
+	// A bar glyph stays a hairline on the bright on-surface track it has
+	// always used, where a thin ring needs the contrast to register at all.
+	// A panel-sized ring scales its band with the circle and drops the track
+	// to a container tone: at that weight the old track outshouts the arc,
+	// and the arc is what the eye is meant to land on.
+	hairline := max(style.Scale120.Physical(2), 1)
+	stroke := max(size/14, hairline)
+	trackColor := style.Track
+	if stroke > hairline {
+		trackColor = style.ContainerHighest
+	}
 	outer := float64(size)/2 - 0.5
 	inner := outer - float64(stroke)
 	radius := (outer + inner) / 2
@@ -120,7 +130,7 @@ func paintRadialGauge(c *Canvas, n *ui.Node, text *TextRenderer, style Style) er
 			if coverage <= 0 {
 				continue
 			}
-			col := style.Track
+			col := trackColor
 			if activeCoverage > 0 {
 				progress := 0.0
 				if limit > 0 && angle <= limit {
@@ -129,7 +139,7 @@ func paintRadialGauge(c *Canvas, n *ui.Node, text *TextRenderer, style Style) er
 					progress = 1
 				}
 				active := radialArcColor(style, n, progress)
-				col = LerpColor(style.Track, active, activeCoverage/coverage)
+				col = LerpColor(trackColor, active, activeCoverage/coverage)
 			}
 			blendCoverage(c, x, y, col, coverage)
 		}
