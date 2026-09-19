@@ -14,6 +14,62 @@ type BarOverflow struct {
 // Any reports whether any section dropped an item.
 func (o BarOverflow) Any() bool { return o.Left > 0 || o.Center > 0 || o.Right > 0 }
 
+// Axis is the direction a bar runs along. The main axis carries the lane
+// order, the spacing and the collision total order; the cross axis is what
+// every placed item centres on. Text never rotates, so the axis switch lives
+// where a Rect is built from main and cross quantities; everything above that
+// leaf is axis-neutral arithmetic.
+type Axis int
+
+const (
+	// Horizontal runs the bar along X: lanes place left to right.
+	Horizontal Axis = iota
+	// Vertical runs the bar along Y: lanes transpose fixed, the left lane at
+	// the top and the right lane at the lower end, without mirroring.
+	Vertical
+)
+
+// mainOf splits a content band into main-axis origin and extent.
+func (a Axis) mainOf(content Rect) (mainOrigin, mainExtent int) {
+	if a == Vertical {
+		return content.Y, content.H
+	}
+	return content.X, content.W
+}
+
+// crossOf splits a content band into cross-axis origin and extent.
+func (a Axis) crossOf(content Rect) (crossOrigin, crossExtent int) {
+	if a == Vertical {
+		return content.X, content.W
+	}
+	return content.Y, content.H
+}
+
+// rect builds a placed item's box from main-axis and cross-axis quantities.
+// This leaf is the one place the axis has coordinates in it.
+func (a Axis) rect(main, mainExtent, crossOrigin, cross, crossExtent int) Rect {
+	if a == Vertical {
+		return Rect{X: crossOrigin + (crossExtent-cross)/2, Y: main, W: cross, H: mainExtent}
+	}
+	return Rect{X: main, Y: crossOrigin + (crossExtent-cross)/2, W: mainExtent, H: cross}
+}
+
+// mainExtentOf picks the measured dimension that runs along the axis.
+func (a Axis) mainExtentOf(w, h int) int {
+	if a == Vertical {
+		return h
+	}
+	return w
+}
+
+// crossExtentOf picks the measured dimension that runs across the axis.
+func (a Axis) crossExtentOf(w, h int) int {
+	if a == Vertical {
+		return w
+	}
+	return h
+}
+
 // ArrangeBar places three sections in one content band, writes each node's
 // Bounds, and reports what would not fit.
 //
@@ -29,55 +85,59 @@ func (o BarOverflow) Any() bool { return o.Left > 0 || o.Center > 0 || o.Right >
 // gets the zero Rect. An item granted its full width may still be ellipsized by
 // the painter when its glyph run runs long, which is the painter's business and
 // not an overflow.
-func ArrangeBar(content Rect, left, center, right []*Node, spacing int, measure MeasureText) (BarOverflow, error) {
+func ArrangeBar(content Rect, axis Axis, left, center, right []*Node, spacing int, measure MeasureText) (BarOverflow, error) {
 	if content.W < 0 || content.H < 0 {
 		return BarOverflow{}, fmt.Errorf("ui: negative content bounds %dx%d", content.W, content.H)
 	}
 	var over BarOverflow
-	wL, err := sectionWidth(left, spacing, content.H, measure)
+	mainOrigin, mainExtent := axis.mainOf(content)
+	_, crossExtent := axis.crossOf(content)
+	wL, err := sectionExtent(left, crossExtent, axis, spacing, measure)
 	if err != nil {
 		return over, fmt.Errorf("ui: left section: %w", err)
 	}
-	wR, err := sectionWidth(right, spacing, content.H, measure)
+	wR, err := sectionExtent(right, crossExtent, axis, spacing, measure)
 	if err != nil {
 		return over, fmt.Errorf("ui: right section: %w", err)
 	}
-	start, end, err := centreInterval(content, center, spacing, measure, &over)
+	start, end, err := centreInterval(content, axis, center, spacing, measure, &over)
 	if err != nil {
 		return over, err
 	}
-	leftMax := max(0, start-content.X-spacing)
-	if over.Left, err = placeSection(left, content.X, content, min(wL, leftMax), 0, spacing, measure); err != nil {
+	leftMax := max(0, start-mainOrigin-spacing)
+	if over.Left, err = placeSection(left, axis, mainOrigin, content, min(wL, leftMax), 0, spacing, measure); err != nil {
 		return over, fmt.Errorf("ui: left section: %w", err)
 	}
-	rightMax := max(0, content.X+content.W-end-spacing)
+	rightMax := max(0, mainOrigin+mainExtent-end-spacing)
 	granted := min(wR, rightMax)
-	used, err := fittedWidth(right, content, granted, 0, spacing, measure)
+	used, err := fittedExtent(right, content, axis, granted, 0, spacing, measure)
 	if err != nil {
 		return over, fmt.Errorf("ui: right section: %w", err)
 	}
-	if over.Right, err = placeSection(right, content.X+content.W-used, content, granted, 0, spacing, measure); err != nil {
+	if over.Right, err = placeSection(right, axis, mainOrigin+mainExtent-used, content, granted, 0, spacing, measure); err != nil {
 		return over, fmt.Errorf("ui: right section: %w", err)
 	}
 	return over, nil
 }
 
 // centreInterval places the centre section and reports the interval [start,
-// end) it occupies along the band. It is the skeleton's one variant: a plain
-// centre is one block centred in the band; a lone wordmark pins the mark to
-// the band centre with its flanks, falling back to the plain variant when the
-// composition does not fit.
-func centreInterval(content Rect, center []*Node, spacing int, measure MeasureText, over *BarOverflow) (int, int, error) {
+// end) it occupies along the main axis. It is the skeleton's one variant: a
+// plain centre is one block centred in the band; a lone wordmark pins the mark
+// to the band centre with its flanks, falling back to the plain variant when
+// the composition does not fit.
+func centreInterval(content Rect, axis Axis, center []*Node, spacing int, measure MeasureText, over *BarOverflow) (int, int, error) {
 	if mark := wordmarkIndex(center); mark >= 0 {
-		return anchoredCentreInterval(content, center, mark, spacing, measure, over)
+		return anchoredCentreInterval(content, axis, center, mark, spacing, measure, over)
 	}
-	return sectionCentreInterval(content, center, spacing, measure, over)
+	return sectionCentreInterval(content, axis, center, spacing, measure, over)
 }
 
 // sectionCentreInterval centres one block and reports its interval. The
 // truncating escape below is the one place a partial grant survives.
-func sectionCentreInterval(content Rect, center []*Node, spacing int, measure MeasureText, over *BarOverflow) (int, int, error) {
-	wC, err := sectionWidth(center, spacing, content.H, measure)
+func sectionCentreInterval(content Rect, axis Axis, center []*Node, spacing int, measure MeasureText, over *BarOverflow) (int, int, error) {
+	mainOrigin, mainExtent := axis.mainOf(content)
+	_, crossExtent := axis.crossOf(content)
+	wC, err := sectionExtent(center, crossExtent, axis, spacing, measure)
 	if err != nil {
 		return 0, 0, fmt.Errorf("ui: center section: %w", err)
 	}
@@ -90,15 +150,15 @@ func sectionCentreInterval(content Rect, center []*Node, spacing int, measure Me
 	// would leave the bar empty rather than degraded. The item is granted every
 	// pixel there is and the painter ellipsizes inside it, which is the
 	// documented "granted its whole extent" case and not a silent clip.
-	if wC > content.W {
-		if err := placeTruncating(center, content.X, content, content.W, spacing, measure); err != nil {
+	if wC > mainExtent {
+		if err := placeTruncating(center, axis, mainOrigin, content, mainExtent, spacing, measure); err != nil {
 			return 0, 0, err
 		}
-		return content.X, content.X + content.W, nil
+		return mainOrigin, mainOrigin + mainExtent, nil
 	}
 
-	start := content.X + (content.W-wC)/2
-	if over.Center, err = placeSection(center, start, content, wC, 0, spacing, measure); err != nil {
+	start := mainOrigin + (mainExtent-wC)/2
+	if over.Center, err = placeSection(center, axis, start, content, wC, 0, spacing, measure); err != nil {
 		return 0, 0, err
 	}
 	return start, start + wC, nil
@@ -109,17 +169,20 @@ func sectionCentreInterval(content Rect, center []*Node, spacing int, measure Me
 // side budgets leave the flanks their room. When the mark or the composition
 // does not fit it falls back to the plain variant, which is the documented
 // degradation for an over-wide anchored centre.
-func anchoredCentreInterval(content Rect, center []*Node, markIndex, spacing int, measure MeasureText, over *BarOverflow) (int, int, error) {
+func anchoredCentreInterval(content Rect, axis Axis, center []*Node, markIndex, spacing int, measure MeasureText, over *BarOverflow) (int, int, error) {
+	mainOrigin, mainExtent := axis.mainOf(content)
+	_, crossExtent := axis.crossOf(content)
 	before, mark, after := center[:markIndex], center[markIndex:markIndex+1], center[markIndex+1:]
-	wBefore, err := sectionWidth(before, spacing, content.H, measure)
+	wBefore, err := sectionExtent(before, crossExtent, axis, spacing, measure)
 	if err != nil {
 		return 0, 0, fmt.Errorf("ui: centre before wordmark: %w", err)
 	}
-	wMark, _, err := measureNode(mark[0], content.H, measure)
+	mw, mh, err := measureNode(mark[0], crossExtent, measure)
 	if err != nil {
 		return 0, 0, fmt.Errorf("ui: wordmark: %w", err)
 	}
-	wAfter, err := sectionWidth(after, spacing, content.H, measure)
+	wMark := axis.mainExtentOf(mw, mh)
+	wAfter, err := sectionExtent(after, crossExtent, axis, spacing, measure)
 	if err != nil {
 		return 0, 0, fmt.Errorf("ui: centre after wordmark: %w", err)
 	}
@@ -131,49 +194,49 @@ func anchoredCentreInterval(content Rect, center []*Node, markIndex, spacing int
 	if afterActive {
 		compositionWidth += spacing
 	}
-	if wMark > content.W || compositionWidth > content.W {
-		return sectionCentreInterval(content, center, spacing, measure, over)
+	if wMark > mainExtent || compositionWidth > mainExtent {
+		return sectionCentreInterval(content, axis, center, spacing, measure, over)
 	}
 
-	markX := content.X + (content.W-wMark)/2
+	markX := mainOrigin + (mainExtent-wMark)/2
 	markRight := markX + wMark
-	beforeStart := content.X
+	beforeStart := mainOrigin
 	if beforeActive {
-		beforeBudget := max(markX-content.X-spacing, 0)
+		beforeBudget := max(markX-mainOrigin-spacing, 0)
 		beforeGrant := min(wBefore, beforeBudget)
 		if beforeGrant > 0 {
 			beforeStart = markX - spacing - beforeGrant
 		}
-		n, err := placeSection(before, beforeStart, content, beforeGrant, 0, spacing, measure)
+		n, err := placeSection(before, axis, beforeStart, content, beforeGrant, 0, spacing, measure)
 		if err != nil {
 			return 0, 0, fmt.Errorf("ui: centre before wordmark: %w", err)
 		}
 		over.Center += n
 	} else if len(before) > 0 {
-		n, err := placeSection(before, content.X, content, 0, 0, spacing, measure)
+		n, err := placeSection(before, axis, mainOrigin, content, 0, 0, spacing, measure)
 		if err != nil {
 			return 0, 0, fmt.Errorf("ui: centre before wordmark: %w", err)
 		}
 		over.Center += n
 	}
-	if n, err := placeSection(mark, markX, content, wMark, 0, spacing, measure); err != nil {
+	if n, err := placeSection(mark, axis, markX, content, wMark, 0, spacing, measure); err != nil {
 		return 0, 0, fmt.Errorf("ui: wordmark: %w", err)
 	} else {
 		over.Center += n
 	}
 	afterStart, afterBudget := markRight, 0
 	if afterActive {
-		afterBudget = max(content.X+content.W-markRight-spacing, 0)
+		afterBudget = max(mainOrigin+mainExtent-markRight-spacing, 0)
 		afterGrant := min(wAfter, afterBudget)
-		afterStart = min(markRight+spacing, content.X+content.W)
-		n, err := placeSection(after, afterStart, content, afterGrant, 0, spacing, measure)
+		afterStart = min(markRight+spacing, mainOrigin+mainExtent)
+		n, err := placeSection(after, axis, afterStart, content, afterGrant, 0, spacing, measure)
 		if err != nil {
 			return 0, 0, fmt.Errorf("ui: centre after wordmark: %w", err)
 		}
 		over.Center += n
 		afterBudget = afterGrant
 	} else if len(after) > 0 {
-		n, err := placeSection(after, markRight, content, 0, 0, spacing, measure)
+		n, err := placeSection(after, axis, markRight, content, 0, 0, spacing, measure)
 		if err != nil {
 			return 0, 0, fmt.Errorf("ui: centre after wordmark: %w", err)
 		}
@@ -204,28 +267,26 @@ func wordmarkIndex(items []*Node) int {
 	return mark
 }
 
-// sectionWidth reports a section's natural width: its items plus the spacing
-// between them. An empty section is zero wide and contributes no spacing.
-func sectionWidth(items []*Node, spacing, height int, measure MeasureText) (int, error) {
+// sectionExtent reports a section's natural extent along the main axis: its
+// items plus the spacing between them. An empty section is zero long and
+// contributes no spacing.
+func sectionExtent(items []*Node, crossExtent int, axis Axis, spacing int, measure MeasureText) (int, error) {
+	main, _, err := measureSection(items, crossExtent, axis, measure)
+	if err != nil {
+		return 0, err
+	}
 	total := 0
-	for i, n := range items {
-		if n == nil {
-			return 0, fmt.Errorf("nil item %d", i)
-		}
-		w, _, err := measureNode(n, height, measure)
-		if err != nil {
-			return 0, fmt.Errorf("item %d: %w", i, err)
-		}
+	for i, m := range main {
 		if i > 0 {
 			total += spacing
 		}
-		total += w
+		total += m
 	}
 	return total, nil
 }
 
-// placeSection lays items left to right from x within a budget, centring each
-// vertically.
+// placeSection lays items main-axis forward from mainOrigin within a budget,
+// centring each on the cross axis.
 //
 // An item is placed whole or not at all, and placeSection returns how many it
 // could not place. Granting a fraction of an item is what cut a label
@@ -241,25 +302,26 @@ func sectionWidth(items []*Node, spacing, height int, measure MeasureText) (int,
 // only when the section actually overflows, because a section that fits needs
 // no indicator — which is why the fit is computed before anything is placed
 // rather than decided item by item.
-func placeSection(items []*Node, x int, content Rect, budget, reserve, spacing int, measure MeasureText) (int, error) {
-	widths, heights, err := measureSection(items, content.H, measure)
+func placeSection(items []*Node, axis Axis, mainOrigin int, content Rect, budget, reserve, spacing int, measure MeasureText) (int, error) {
+	crossOrigin, crossExtent := axis.crossOf(content)
+	main, cross, err := measureSection(items, crossExtent, axis, measure)
 	if err != nil {
 		return 0, err
 	}
-	granted, dropped := sectionGrants(items, widths, budget, reserve, spacing)
+	granted, dropped := sectionGrants(items, main, budget, reserve, spacing)
 
 	placed := 0
+	m := mainOrigin
 	for i, n := range items {
 		if granted[i] < 0 {
 			n.Bounds = Rect{}
 			continue
 		}
 		if placed > 0 {
-			x += spacing
+			m += spacing
 		}
 		placed++
-		h := heights[i]
-		n.Bounds = Rect{X: x, Y: content.Y + (content.H-h)/2, W: granted[i], H: h}
+		n.Bounds = axis.rect(m, granted[i], crossOrigin, cross[i], crossExtent)
 		// A section places items itself rather than through Layout, so a
 		// capsule's contents are arranged here too. Without this a bar paints
 		// empty pills.
@@ -268,7 +330,7 @@ func placeSection(items []*Node, x int, content Rect, budget, reserve, spacing i
 				return 0, fmt.Errorf("ui: item %d: %w", i, err)
 			}
 		}
-		x += granted[i]
+		m += granted[i]
 	}
 	return dropped, nil
 }
@@ -366,55 +428,60 @@ func grantsWithin(items []*Node, widths []int, budget, spacing int) ([]int, int)
 	return granted, len(items) - fits
 }
 
-// placeTruncating grants each item min(natural, remaining), the behaviour the
-// rest of the bar gave up in sysc-313. It exists for the single documented case
-// of a centre wider than the whole band, where there is no room to drop into.
-func placeTruncating(items []*Node, x int, content Rect, budget, spacing int, measure MeasureText) error {
-	widths, heights, err := measureSection(items, content.H, measure)
+// placeTruncating grants each item min(natural, remaining) along the main
+// axis, the behaviour the rest of the bar gave up in sysc-313. It exists for
+// the single documented case of a centre wider than the whole band, where
+// there is no room to drop into.
+func placeTruncating(items []*Node, axis Axis, mainOrigin int, content Rect, budget, spacing int, measure MeasureText) error {
+	crossOrigin, crossExtent := axis.crossOf(content)
+	main, cross, err := measureSection(items, crossExtent, axis, measure)
 	if err != nil {
 		return err
 	}
 	remaining := max(0, budget)
+	m := mainOrigin
 	for i, n := range items {
 		if i > 0 {
 			if remaining < spacing {
 				remaining = 0
 			} else {
-				x += spacing
+				m += spacing
 				remaining -= spacing
 			}
 		}
-		granted := min(widths[i], remaining)
-		h := heights[i]
-		n.Bounds = Rect{X: x, Y: content.Y + (content.H-h)/2, W: granted, H: h}
+		granted := min(main[i], remaining)
+		n.Bounds = axis.rect(m, granted, crossOrigin, cross[i], crossExtent)
 		if n.Kind == KindCapsule {
 			if err := layoutCapsuleChild(n, measure); err != nil {
 				return fmt.Errorf("ui: item %d: %w", i, err)
 			}
 		}
-		x += granted
+		m += granted
 		remaining -= granted
 	}
 	return nil
 }
 
 // measureSection measures every item once, so the fit decision and the
-// placement that follows it can never disagree about a width.
-func measureSection(items []*Node, height int, measure MeasureText) (widths, heights []int, err error) {
-	widths = make([]int, len(items))
-	heights = make([]int, len(items))
+// placement that follows it can never disagree about an extent. The band is
+// the cross extent: it constrains the dimension that runs across the axis,
+// which on a vertical strip is what clamps a wide title to the width at
+// measure time. The painter ellipsizes inside the granted box.
+func measureSection(items []*Node, crossExtent int, axis Axis, measure MeasureText) (main, cross []int, err error) {
+	main = make([]int, len(items))
+	cross = make([]int, len(items))
 	for i, n := range items {
 		if n == nil {
 			return nil, nil, fmt.Errorf("ui: nil item %d", i)
 		}
-		w, h, err := measureNode(n, height, measure)
+		w, h, err := measureNode(n, crossExtent, measure)
 		if err != nil {
 			return nil, nil, fmt.Errorf("ui: item %d: %w", i, err)
 		}
-		widths[i] = max(0, w)
-		heights[i] = min(max(0, h), height)
+		main[i] = axis.mainExtentOf(max(0, w), max(0, h))
+		cross[i] = min(axis.crossExtentOf(max(0, w), max(0, h)), crossExtent)
 	}
-	return widths, heights, nil
+	return main, cross, nil
 }
 
 // fitCount is how many leading items fit whole in budget, charging spacing
@@ -435,16 +502,17 @@ func fitCount(widths []int, budget, spacing int) int {
 	return len(widths)
 }
 
-// fittedWidth is the extent the surviving prefix of a section will occupy.
-// A right-aligned section needs this before it can choose its origin, so that
-// dropping an item slides the rest flush to the edge instead of leaving a gap
-// where the dropped one would have been.
-func fittedWidth(items []*Node, content Rect, budget, reserve, spacing int, measure MeasureText) (int, error) {
-	widths, _, err := measureSection(items, content.H, measure)
+// fittedExtent is the extent the surviving prefix of a section will occupy
+// along the main axis. An end-anchored section needs this before it can choose
+// its origin, so that dropping an item slides the rest flush to the edge
+// instead of leaving a gap where the dropped one would have been.
+func fittedExtent(items []*Node, content Rect, axis Axis, budget, reserve, spacing int, measure MeasureText) (int, error) {
+	_, crossExtent := axis.crossOf(content)
+	main, _, err := measureSection(items, crossExtent, axis, measure)
 	if err != nil {
 		return 0, err
 	}
-	granted, _ := sectionGrants(items, widths, budget, reserve, spacing)
+	granted, _ := sectionGrants(items, main, budget, reserve, spacing)
 	used, placed := 0, 0
 	for _, w := range granted {
 		if w < 0 {

@@ -65,6 +65,10 @@ type Bar struct {
 
 	theme Theme
 
+	// policy is the bar configuration this bar was built from. Its edge picks
+	// the layout axis and, through it, the body derivation and tray stacking.
+	policy config.Bar
+
 	// configured is the last size the Wayland owner gave us, and whether one
 	// has arrived. apply re-lays out at this size: the owner configures once,
 	// before any widget has text, and every later change arrives through apply
@@ -127,6 +131,7 @@ func NewWithTheme(theme Theme, policy config.Bar, connector string) (*Bar, error
 	b := &Bar{
 		conn:          connector,
 		theme:         theme,
+		policy:        policy,
 		mediaWidget:   hasMediaItem(policy.Left) || hasMediaItem(policy.Center) || hasMediaItem(policy.Right),
 		text:          render.NewTextRendererWithFontMap(fonts),
 		invalidations: make(chan struct{}, 1),
@@ -414,6 +419,15 @@ func (b *Bar) bodyLocked(width, height int) ui.Rect {
 	return ui.Rect{X: gap, Y: gap, W: max(0, width-2*gap), H: max(0, height-gap)}
 }
 
+// axis is the direction the bar runs along, from its configured edge: a top
+// or lower edge bar runs horizontally, a left or right edge bar vertically.
+func (b *Bar) axis() ui.Axis {
+	if b.policy.Edge == "left" || b.policy.Edge == "right" {
+		return ui.Vertical
+	}
+	return ui.Horizontal
+}
+
 func (b *Bar) layoutLocked(width, height int) error {
 	// Shaping for paint happens at the physical size, so measuring at the
 	// logical size and scaling the result up assumes glyph advances are linear
@@ -433,7 +447,7 @@ func (b *Bar) layoutLocked(width, height int) error {
 	content := b.contentLocked(width, height)
 	// The first pass only sizes the tray's available width; the authoritative
 	// overflow is the second, after the tray nodes are rebuilt.
-	if _, err := ui.ArrangeBar(content,
+	if _, err := ui.ArrangeBar(content, b.axis(),
 		sections[0], sections[1], sections[2], b.theme.Metrics.BarSpacing, measure); err != nil {
 		return err
 	}
@@ -450,7 +464,7 @@ func (b *Bar) layoutLocked(width, height int) error {
 	b.trayArranged, b.trayAvailable = arranged, available
 	b.rebuildTrayNodesLocked()
 	sections = b.sections()
-	over, err := ui.ArrangeBar(content, sections[0], sections[1], sections[2], b.theme.Metrics.BarSpacing, measure)
+	over, err := ui.ArrangeBar(content, b.axis(), sections[0], sections[1], sections[2], b.theme.Metrics.BarSpacing, measure)
 	if err != nil {
 		return err
 	}
