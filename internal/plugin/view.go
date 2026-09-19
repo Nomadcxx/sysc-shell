@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
@@ -207,6 +208,39 @@ func rootName(k ui.Kind) string {
 	return "column"
 }
 
+// wireFillKinds is the set the validator lets carry a fill: containers and a
+// button. It restates v1's unexported rule so the converter rejects the same
+// trees instead of trusting the validator to have caught them first.
+var wireFillKinds = map[v1.NodeKind]bool{
+	v1.KindRow:      true,
+	v1.KindColumn:   true,
+	v1.KindList:     true,
+	v1.KindDropZone: true,
+	v1.KindButton:   true,
+}
+
+var wireFills = map[string]ui.Fill{
+	"surface":         ui.FillNone,
+	"accent":          ui.FillAccent,
+	"container":       ui.FillContainer,
+	"error":           ui.FillError,
+	"soft":            ui.FillSoft,
+	"card":            ui.FillContainerHigh,
+	"outline":         ui.FillOutline,
+	"chip":            ui.FillContainerHighest,
+	"error-container": ui.FillErrorContainer,
+}
+
+var wireSizes = map[string]theme.TextRole{
+	"body":     theme.RoleBody,
+	"caption":  theme.RoleCaption,
+	"label":    theme.RoleLabel,
+	"title":    theme.RoleTitle,
+	"headline": theme.RoleHeadline,
+	"display":  theme.RoleDisplay,
+	"mono":     theme.RoleMono,
+}
+
 func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 	out := &ui.Node{
 		Padding:  n.Padding,
@@ -215,6 +249,9 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		Height:   n.Height,
 		MaxWidth: n.MaxWidth,
 		Tabular:  n.Tabular,
+		Bold:     n.Bold,
+		CenterX:  n.CenterX,
+		PinEnd:   n.PinEnd,
 		Name:     n.Name,
 		Role:     n.Role,
 	}
@@ -225,6 +262,30 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		out.Tone = ui.ToneSubtle
 	case v1.ToneAccent:
 		out.Tone = ui.ToneAccent
+	}
+
+	if n.Fill != "" {
+		fill, ok := wireFills[n.Fill]
+		if !ok {
+			return nil, fmt.Errorf("plugin: %s: unknown fill %q", path, n.Fill)
+		}
+		if !wireFillKinds[n.Kind] {
+			return nil, fmt.Errorf("plugin: %s: %s cannot carry a fill", path, n.Kind)
+		}
+		out.Fill = fill
+	}
+	if n.Radius != 0 {
+		out.Radius = n.Radius
+	}
+	if n.Size != "" {
+		role, ok := wireSizes[n.Size]
+		if !ok {
+			return nil, fmt.Errorf("plugin: %s: unknown size %q", path, n.Size)
+		}
+		if n.Kind != v1.KindText {
+			return nil, fmt.Errorf("plugin: %s: %s cannot carry a size", path, n.Kind)
+		}
+		out.TextRole = role
 	}
 
 	switch n.Kind {
@@ -276,6 +337,10 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		// back to the node the plugin addressed.
 		out.Action = n.ID
 		out.Focusable = true
+		if n.Disabled {
+			out.AriaDisabled = true
+			out.Action = "" // no action route: activation is blocked
+		}
 		if n.Tone == v1.ToneError && n.Text != "" {
 			out.Fill = ui.FillError
 			if out.Padding == 0 {
@@ -288,6 +353,10 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		out.Action = n.ID
 		out.Key = n.Key
 		out.Focusable = true
+		if n.Disabled {
+			out.AriaDisabled = true
+			out.Action = "" // no action route: activation is blocked
+		}
 		out.Multiline = n.Multiline
 		out.SubmitOnEnter = n.SubmitOnEnter
 		out.Reseed = n.Reseed
@@ -301,6 +370,10 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		out.Text = n.Text
 		out.Action = n.ID
 		out.Focusable = true
+		if n.Disabled {
+			out.AriaDisabled = true
+			out.Action = "" // no action route: activation is blocked
+		}
 		out.DragType = n.DragType
 		out.Payload = n.Payload
 	case v1.KindDropZone:

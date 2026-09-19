@@ -38,6 +38,10 @@ const (
 	// this shell supports is wider than this, so a larger number is a mistake
 	// or an attempt to make layout expensive.
 	MaxExtent = 8192
+	// MaxRadius bounds the corner-radius override. Cards and chips live in
+	// the low double digits; anything larger is a mistake or an attack on
+	// the rasteriser.
+	MaxRadius = 256
 )
 
 // NodeKind names a view element. Kinds are strings so that a plugin written in
@@ -126,10 +130,26 @@ type Node struct {
 	// Value is a progress fraction from zero through one.
 	Value float64 `json:"value,omitempty"`
 
-	// Tone selects semantic presentation. Size tiers are deliberately absent
-	// until the shell has a measure path that can honour them; a field the
-	// host would have to ignore is worse than one that is not offered.
+	// Tone selects semantic presentation.
 	Tone Tone `json:"tone,omitempty"`
+	// Fill names the semantic background of a container or button. The host
+	// maps it onto its own theme tokens; an unknown name is a diagnosable
+	// validation error, not a fallback.
+	Fill string `json:"fill,omitempty"`
+	// Radius overrides the corner radius of a container in logical pixels.
+	Radius int `json:"radius,omitempty"`
+	// Bold marks an emphasized text run. Shaping resolves a real bold face.
+	Bold bool `json:"bold,omitempty"`
+	// Size names a type-ladder rung: body, caption, label, title, headline,
+	// display, mono. The theme decides the point size and weight.
+	Size string `json:"size,omitempty"`
+	// Disabled greys an interactive node out: it stays in keyboard traversal
+	// with its accessible name explaining why, and activation is blocked.
+	Disabled bool `json:"disabled,omitempty"`
+	// CenterX centres a child in its column track.
+	CenterX bool `json:"center_x,omitempty"`
+	// PinEnd right-pins the last child of a two-child row.
+	PinEnd bool `json:"pin_end,omitempty"`
 	// Tabular requests fixed-advance figures. A countdown sets it: with
 	// proportional digits the rendered width changes every second, which
 	// visibly shifts everything beside it.
@@ -202,6 +222,21 @@ var knownViews = map[ViewKind]bool{ViewBar: true, ViewTooltip: true, ViewPanel: 
 
 var knownTones = map[Tone]bool{ToneNormal: true, ToneError: true, ToneSubtle: true, ToneAccent: true}
 
+var knownFills = map[string]bool{
+	"surface": true, "accent": true, "container": true, "error": true,
+	"soft": true, "card": true, "outline": true, "chip": true,
+	"error-container": true,
+}
+
+var knownSizes = map[string]bool{
+	"body": true, "caption": true, "label": true, "title": true,
+	"headline": true, "display": true, "mono": true,
+}
+
+func fillAllowed(k NodeKind) bool {
+	return k.container() || k == KindButton
+}
+
 // Validate reports whether root is a legal version-one tree for the given view.
 //
 // It is the only gate between plugin JSON and anything the shell will convert,
@@ -254,6 +289,9 @@ func (v *validator) node(n *Node, path string, depth int) error {
 		return err
 	}
 	if err := v.events(n, path); err != nil {
+		return err
+	}
+	if err := v.minorTwo(n, path); err != nil {
 		return err
 	}
 
@@ -383,6 +421,34 @@ func (v *validator) events(n *Node, path string) error {
 			return fmt.Errorf("%s: event %q declared twice", path, e)
 		}
 		seen[e] = true
+	}
+	return nil
+}
+
+// minorTwo checks the minor-version-two presentation fields: the fill and
+// size vocabularies, the radius bound, and the kinds each field may ride on.
+func (v *validator) minorTwo(n *Node, path string) error {
+	if n.Fill != "" {
+		if !knownFills[n.Fill] {
+			return fmt.Errorf("%s: unknown fill %q", path, n.Fill)
+		}
+		if !fillAllowed(n.Kind) {
+			return fmt.Errorf("%s: %s cannot carry a fill", path, n.Kind)
+		}
+	}
+	if n.Radius < 0 || n.Radius > MaxRadius {
+		return fmt.Errorf("%s: radius is %d, past the %d limit", path, n.Radius, MaxRadius)
+	}
+	if n.Size != "" {
+		if !knownSizes[n.Size] {
+			return fmt.Errorf("%s: unknown size %q", path, n.Size)
+		}
+		if n.Kind != KindText {
+			return fmt.Errorf("%s: %s cannot carry a size", path, n.Kind)
+		}
+	}
+	if n.Disabled && !n.Kind.interactive() {
+		return fmt.Errorf("%s: %s cannot be disabled", path, n.Kind)
 	}
 	return nil
 }
