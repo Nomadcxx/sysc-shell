@@ -266,6 +266,19 @@ func fillAttachFillets(c *Canvas, r ui.Rect, fillet int, attachEdge string, col 
 }
 
 // blendMask blends a colour through an alpha coverage mask placed at x, y.
+// coverageRow is a mask's coverage for one canvas row, given that the mask's
+// top-left sits at y. Indexing it by px-x yields the byte AlphaAt would return
+// for (Min.X+px-x, Min.Y+py-y), because that point's offset into Pix reduces to
+// (py-y)*Stride + (px-x) whatever the mask's origin is.
+//
+// The callers clip to the mask's own width and height first, so every index is
+// in range and the generic accessor's per-pixel bounds check buys nothing. It
+// was not free: AlphaAt's image.Point.In and PixOffset were 57 percent of a bar
+// repaint between them.
+func coverageRow(mask *image.Alpha, py, y int) []uint8 {
+	return mask.Pix[(py-y)*mask.Stride:]
+}
+
 func blendMask(c *Canvas, mask *image.Alpha, x, y int, col Color) {
 	if col.A == 0 || mask == nil {
 		return
@@ -273,19 +286,29 @@ func blendMask(c *Canvas, mask *image.Alpha, x, y int, col Color) {
 	b := mask.Bounds()
 	x0, y0, x1, y1 := c.clip(ui.Rect{X: x, Y: y, W: b.Dx(), H: b.Dy()})
 	src := col.premultiply()
+	// A solid colour under full coverage is the interior of every capsule,
+	// pill and card, which is most of the pixels the shell paints. There the
+	// blend reduces to the source, so it stores instead of multiplying.
+	opaque := col.A == 255
 	for py := y0; py < y1; py++ {
 		row := c.Pix[py*c.Stride:]
+		cov := coverageRow(mask, py, y)
 		for px := x0; px < x1; px++ {
-			cov := uint32(mask.AlphaAt(b.Min.X+px-x, b.Min.Y+py-y).A)
-			if cov == 0 {
+			coverage := uint32(cov[px-x])
+			if coverage == 0 {
 				continue
 			}
-			alpha := uint32(col.A) * cov / 255
+			dst := row[px*4 : px*4+4 : px*4+4]
+			if opaque && coverage == 255 {
+				dst[0], dst[1], dst[2], dst[3] = src[0], src[1], src[2], src[3]
+				continue
+			}
+			alpha := uint32(col.A) * coverage / 255
 			var s [4]byte
 			for i := range src {
-				s[i] = byte(uint32(src[i]) * cov / 255)
+				s[i] = byte(uint32(src[i]) * coverage / 255)
 			}
-			blendPixel(row[px*4:px*4+4], s, alpha)
+			blendPixel(dst, s, alpha)
 		}
 	}
 }

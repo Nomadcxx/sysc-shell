@@ -122,8 +122,9 @@ func blendMaskImageMode(c *Canvas, mask *image.Alpha, x, y int, img *ui.Image, c
 		} else {
 			sy0, sy1, wy = stretchSample(py-box.Y, box.H, img.Height)
 		}
+		coverage := coverageRow(mask, py, y)
 		for px := x0; px < x1; px++ {
-			cov := uint32(mask.AlphaAt(b.Min.X+px-x, b.Min.Y+py-y).A)
+			cov := uint32(coverage[px-x])
 			if cov == 0 {
 				continue
 			}
