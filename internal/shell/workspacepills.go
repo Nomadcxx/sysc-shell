@@ -51,7 +51,12 @@ func workspaceID(action string) (uint64, bool) {
 // workspace id a click focuses, and the accessible name reads the workspace's
 // own name, or its index when it has none.
 func pillNode(p workspacePill, m theme.Metrics) *ui.Node {
-	fill := ui.FillNone
+	// An empty workspace is a hollow dot rather than an absent one. FillNone
+	// paints no fill and no boundary, so on the live bar three workspaces read
+	// as two shapes; the outline keeps the slot countable while still saying
+	// "nothing here", which is the filled/hollow pair the dash and dock
+	// indicators in the commission's prior art use.
+	fill := ui.FillOutline
 	switch {
 	case p.Focused:
 		fill = ui.FillAccent

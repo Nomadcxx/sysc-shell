@@ -465,7 +465,10 @@ func TestWorkspacePillsPaintAsShapes(t *testing.T) {
 	if len(row.Children) != len(pills) {
 		t.Fatalf("pill count = %d, want %d", len(row.Children), len(pills))
 	}
-	wantFill := []ui.Fill{ui.FillContainer, ui.FillAccent, ui.FillError, ui.FillNone}
+	// An empty workspace is a hollow dot, not an absent one: FillNone paints
+	// nothing at all, which left the row showing two shapes for three
+	// workspaces on the live bar.
+	wantFill := []ui.Fill{ui.FillContainer, ui.FillAccent, ui.FillError, ui.FillOutline}
 	wantName := []string{"Workspace 1", "Workspace 2", "Workspace 3", "Workspace mail"}
 	wantAction := []string{"workspace:11", "workspace:12", "workspace:13", "workspace:14"}
 	for i, c := range row.Children {
