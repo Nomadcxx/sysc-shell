@@ -167,8 +167,8 @@ func (h *toastHost) spec(connector string) *wayland.AuxSpec {
 }
 
 // configure records the output's real logical size and relays out the stack
-// against it. Before it arrives the design default stands in, so a card is
-// never placed off an output whose size is not known yet.
+// against it. Nothing is placed before it arrives, because the only honest
+// answer to "how wide is this output" until then is that we do not know.
 func (h *toastHost) configure(connector string, width, height, scale120 int) error {
 	h.r.mu.Lock()
 	defer h.r.mu.Unlock()
@@ -417,16 +417,20 @@ func (h *toastHost) recompute() {
 		if !ok {
 			continue
 		}
-		geom := h.geometryFor(connector)
+		geom, known := h.geometryFor(connector)
 		if bar, ok := h.r.bars[global]; ok {
 			geom.BarZone = exclusiveBarZone(bar)
 		} else {
 			geom.BarZone = 0
 		}
-		h.geometry[connector] = geom
+		// An unmeasured output keeps no geometry: writing one back would make
+		// the placeholder indistinguishable from a real measurement.
+		if known {
+			h.geometry[connector] = geom
+		}
 		heights := make([]int, 0, len(records))
 		ids := make([]uint32, 0, len(records))
-		if !suppressed {
+		if !suppressed && known {
 			for _, id := range records {
 				heights = append(heights, h.cardHeight(id))
 				ids = append(ids, id)
@@ -531,14 +535,16 @@ func (h *toastHost) outputOrder() []string {
 	return out
 }
 
-// geometryFor reports the output's logical geometry. An output the compositor
-// has not configured yet uses the design default, so a stack computed before
-// the first configure is placed somewhere sane rather than nowhere.
-func (h *toastHost) geometryFor(connector string) toastGeometry {
-	if geometry, ok := h.geometry[connector]; ok {
-		return geometry
+// geometryFor reports an output's measured size, and whether it has been
+// measured at all. There is deliberately no stand-in size: a guess wider than
+// the real output places a card off the surface, the platform refuses that
+// input region, and the shell exits. Callers place nothing until this is known.
+func (h *toastHost) geometryFor(connector string) (toastGeometry, bool) {
+	geometry, ok := h.geometry[connector]
+	if !ok {
+		return toastGeometry{Corner: toastTopRight}, false
 	}
-	return toastGeometry{OutputW: 1920, OutputH: 1080, Corner: toastTopRight}
+	return geometry, true
 }
 
 // cardHeight is the layout height of one card, measured from its tree.
@@ -565,7 +571,11 @@ func (h *toastHost) cardRects(connector string, ids []uint32) []ui.Rect {
 	for i := range ids {
 		heights[i] = h.cardHeight(ids[i])
 	}
-	rects, _ := toastLayout(h.geometryFor(connector), heights)
+	geometry, known := h.geometryFor(connector)
+	if !known {
+		return nil
+	}
+	rects, _ := toastLayout(geometry, heights)
 	return rects
 }
 

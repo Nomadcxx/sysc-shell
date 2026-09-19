@@ -15,6 +15,12 @@ func TestIntegrationNotifyLifecycle(t *testing.T) {
 	hh := &hostHarness{}
 	r.toasts = newToastHost(r, hh)
 	r.SyncToastOutputs(map[string]uint32{"eDP-1": 5, "HDMI-A-1": 9})
+	// Cards are placed only against a measured output.
+	for _, connector := range []string{"eDP-1", "HDMI-A-1"} {
+		if err := r.toasts.configure(connector, 1920, 1080, 120); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if len(hh.opens) != 2 {
 		t.Fatalf("opens = %d, want 2", len(hh.opens))
 	}

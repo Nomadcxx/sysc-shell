@@ -41,6 +41,9 @@ func TestToastHostPublishesTheCardUnionAsInputRegion(t *testing.T) {
 	h := newToastHost(r, hh)
 	r.outputsForTest([]string{"eDP-1"})
 	h.syncOutputs(map[string]uint32{"eDP-1": 5})
+	if err := h.configure("eDP-1", 1920, 1080, 120); err != nil {
+		t.Fatal(err)
+	}
 
 	r.applyNotify(snap(1, note(1, "a"), note(2, "b")))
 	h.recompute()
@@ -94,6 +97,9 @@ func TestToastHostQueuesOverflowPerOutput(t *testing.T) {
 	h := newToastHost(r, &hostHarness{})
 	r.outputsForTest([]string{"eDP-1"})
 	h.syncOutputs(map[string]uint32{"eDP-1": 5})
+	if err := h.configure("eDP-1", 1920, 1080, 120); err != nil {
+		t.Fatal(err)
+	}
 
 	msg := snap(1)
 	for i := uint32(1); i <= 8; i++ {
@@ -171,8 +177,9 @@ func TestToastConfigurePlacesAgainstTheRealOutput(t *testing.T) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if geometry := h.geometryFor("eDP-1"); geometry.OutputW != 3440 || geometry.OutputH != 1440 {
-		t.Fatalf("geometry = %+v, want the configured size", geometry)
+	geometry, known := h.geometryFor("eDP-1")
+	if !known || geometry.OutputW != 3440 || geometry.OutputH != 1440 {
+		t.Fatalf("geometry = %+v (known %v), want the configured size", geometry, known)
 	}
 	cards := h.cards["eDP-1"]
 	if len(cards) != 1 {
@@ -299,7 +306,9 @@ func TestToastHoverFollowsThePointer(t *testing.T) {
 	}
 }
 
-func wiredToast(t *testing.T) (*Registry, *toastHost, *fakeNotifySender) {
+// unmeasuredToast wires a host whose output has never reported its size, which
+// is the state between a surface opening and its first configure.
+func unmeasuredToast(t *testing.T) (*Registry, *toastHost, *fakeNotifySender) {
 	t.Helper()
 	r := NewRegistry(config.Default())
 	t.Cleanup(r.Close)
@@ -309,6 +318,18 @@ func wiredToast(t *testing.T) (*Registry, *toastHost, *fakeNotifySender) {
 	r.toasts = h
 	r.outputsForTest([]string{"eDP-1"})
 	h.syncOutputs(map[string]uint32{"eDP-1": 5})
+	return r, h, sender
+}
+
+// wiredToast is a host whose output has reported a size, which is what every
+// test about placement needs: cards are not placed against an unmeasured
+// output, so a test that wants one has to say how big it is.
+func wiredToast(t *testing.T) (*Registry, *toastHost, *fakeNotifySender) {
+	t.Helper()
+	r, h, sender := unmeasuredToast(t)
+	if err := h.configure("eDP-1", 1920, 1080, 120); err != nil {
+		t.Fatal(err)
+	}
 	return r, h, sender
 }
 
@@ -465,4 +486,49 @@ func TestToastApplyDoesNotRaceThePainter(t *testing.T) {
 	}()
 	close(start)
 	wg.Wait()
+}
+
+// An output's size arrives with its first Configure. Until then the host knows
+// no width, and a card placed against a guess can land outside the surface the
+// compositor actually gave us: the platform rejects such an input region and
+// the shell exits, so a notification arriving early took the whole bar down on
+// a 1.25-scaled 1920x1080 laptop, whose logical width is 1536.
+func TestToastPlacesNoCardBeforeTheOutputSizeIsKnown(t *testing.T) {
+	_, h, _ := unmeasuredToast(t)
+	h.r.applyNotify(snap(1, note(1, "early")))
+
+	for _, update := range h.harness().updates {
+		if len(update.InputRects) != 0 {
+			t.Fatalf("input rects %+v were published before the output size was known", update.InputRects)
+		}
+	}
+	h.r.mu.Lock()
+	visible := len(h.visible["eDP-1"])
+	h.r.mu.Unlock()
+	if visible != 0 {
+		t.Fatalf("%d card(s) placed before the output size was known", visible)
+	}
+}
+
+// Once the size is known every card is inside it, at the scale that exposed
+// the defect: 1920x1080 at 125% is 1536x864 logical.
+func TestToastCardsStayInsideAScaledOutput(t *testing.T) {
+	_, h, _ := unmeasuredToast(t)
+	callbacks := h.harness().opens[0].Callbacks
+	if err := callbacks.Configure(1536, 864, 150); err != nil {
+		t.Fatal(err)
+	}
+	h.r.applyNotify(snap(1, note(1, "scaled")))
+
+	h.r.mu.Lock()
+	rects := h.cardRects("eDP-1", h.visible["eDP-1"])
+	h.r.mu.Unlock()
+	if len(rects) == 0 {
+		t.Fatal("no card was placed on a known output")
+	}
+	for _, r := range rects {
+		if r.X < 0 || r.Y < 0 || r.X+r.W > 1536 || r.Y+r.H > 864 {
+			t.Errorf("card %+v leaves a 1536x864 output", r)
+		}
+	}
 }
