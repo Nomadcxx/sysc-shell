@@ -475,3 +475,22 @@ func TestWeatherDetailGlyphsCarryInk(t *testing.T) {
 		}
 	}
 }
+
+func TestBatteryAndNetworkGlyphsResolveForPlugins(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{
+		"battery-0", "battery-1", "battery-2", "battery-3",
+		"battery-4", "battery-5", "battery-6",
+		"battery-charging-0", "battery-charging-1", "battery-charging-2",
+		"battery-charging-3", "battery-charging-4", "battery-charging-5",
+		"battery-charging-6", "battery-critical", "network",
+	} {
+		r, ok := IconByName(name)
+		if !ok {
+			t.Fatalf("the catalogue does not carry %q", name)
+		}
+		if got := glyphCoverage(t, r, 32); got == 0 {
+			t.Fatalf("%s glyph %U has no ink", name, r)
+		}
+	}
+}

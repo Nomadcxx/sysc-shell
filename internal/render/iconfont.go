@@ -385,6 +385,22 @@ var iconNames = map[string]rune{
 	"sysmon-cpu":          iconGaugeCPU,
 	"sysmon-memory":       iconGaugeMemory,
 	"sysmon-gpu":          iconGaugeGPU,
+	"battery-0":           iconBatteryLevel0,
+	"battery-1":           iconBatteryLevel1,
+	"battery-2":           iconBatteryLevel2,
+	"battery-3":           iconBatteryLevel3,
+	"battery-4":           iconBatteryLevel4,
+	"battery-5":           iconBatteryLevel5,
+	"battery-6":           iconBatteryLevel6,
+	"battery-charging-0":  iconBatteryCharging0,
+	"battery-charging-1":  iconBatteryCharging1,
+	"battery-charging-2":  iconBatteryCharging2,
+	"battery-charging-3":  iconBatteryCharging3,
+	"battery-charging-4":  iconBatteryCharging4,
+	"battery-charging-5":  iconBatteryCharging5,
+	"battery-charging-6":  iconBatteryCharging6,
+	"battery-critical":    iconBatteryCritical,
+	"network":             iconNetwork,
 }
 
 // IconByName resolves a catalogue name to its symbol.
