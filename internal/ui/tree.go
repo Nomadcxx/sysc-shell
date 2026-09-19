@@ -27,6 +27,10 @@ const (
 	// KindCapsule is a padded pill around one child, or an empty coloured dot
 	// when it has no children and a Width. It is the bar's per-item chrome.
 	KindCapsule
+	// KindEdgeFade softens a bar section into the surface at the edge where
+	// overflow cut it. It is a signal, not a control: nothing to click, and it
+	// takes no width, so reporting the overflow can never cause more of it.
+	KindEdgeFade
 	// KindIcon is one named glyph from the shell's dedicated chrome icon face.
 	KindIcon
 	// KindSegmented owns equal-width, exclusive button segments.

@@ -33,7 +33,7 @@ func sampleNode(k Kind) *Node {
 var allKinds = []Kind{
 	KindRow, KindText, KindMeter, KindButton, KindGraph, KindColumn,
 	KindSeparator, KindTab, KindToggle, KindSlider, KindMenu, KindTextField,
-	KindScroll, KindVirtualList, KindImage, KindCapsule, KindIcon, KindSegmented,
+	KindScroll, KindVirtualList, KindImage, KindCapsule, KindEdgeFade, KindIcon, KindSegmented,
 	KindDragSource, KindDropZone, KindWordmark, KindRadialGauge, KindStack,
 	KindEffect,
 }

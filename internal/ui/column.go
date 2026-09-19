@@ -122,6 +122,8 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 		return GraphHeight, nil
 	case KindSeparator:
 		return 1, nil
+	case KindEdgeFade:
+		return 0, nil
 	case KindButton, KindDragSource:
 		_, h, err := measureButton(n, measure)
 		return h, err

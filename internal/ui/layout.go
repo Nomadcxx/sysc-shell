@@ -423,6 +423,12 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		return n.Width, contentHeight, nil
 	case KindSeparator:
 		return 1, contentHeight, nil
+	case KindEdgeFade:
+		// A fade is placed over content that is already positioned, never
+		// measured into a run: it carries its own Bounds and takes no space of
+		// its own. Measuring as zero keeps a row that happens to hold one from
+		// reserving width the fade does not use.
+		return 0, contentHeight, nil
 	case KindRow:
 		// A nested row is as wide as its children plus the gaps between them.
 		// The outer root is arranged by Layout and never measured here; this

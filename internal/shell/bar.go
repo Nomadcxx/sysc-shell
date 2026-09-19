@@ -560,11 +560,17 @@ func (b *Bar) Render(pixels []byte, width, height, stride int) error {
 // into one child list: the painter walks bounds, not structure.
 func (b *Bar) renderViewLocked() (*ui.Node, render.Style) {
 	root := &ui.Node{Kind: ui.KindRow}
-	for _, section := range b.sections() {
+	sections := b.sections()
+	for _, section := range sections {
 		for _, n := range section {
 			root.Children = append(root.Children, copyNode(n))
 		}
 	}
+	// Last, so the fade sits over the widgets it softens. The extent comes
+	// from the control ladder rather than a literal, like every other measured
+	// piece of this bar.
+	root.Children = append(root.Children,
+		overflowFades(sections, b.overflow, b.theme.Metrics.StandardControl)...)
 	// The painter consumes an immutable mask, so state is resolved onto the
 	// copy that is about to be drawn rather than onto live model state.
 	b.pointer.apply(root, b.anim)
