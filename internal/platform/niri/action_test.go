@@ -22,6 +22,13 @@ func TestActionWritesFocusAndClose(t *testing.T) {
 		{"focus", FocusWindow{ID: 80}, `{"Action":{"FocusWindow":{"id":80}}}`, `{"Ok":"Handled"}`, false},
 		{"close", CloseWindow{ID: 80}, `{"Action":{"CloseWindow":{"id":80}}}`, `{"Ok":"Handled"}`, false},
 		{"err", FocusWindow{ID: 80}, `{"Action":{"FocusWindow":{"id":80}}}`, `{"Err":"no such window"}`, true},
+		// The reference is an externally tagged enum in niri-ipc, so an id
+		// reference is the object {"Id": n} and not a bare number.
+		{
+			"focus workspace", FocusWorkspace{ID: 7},
+			`{"Action":{"FocusWorkspace":{"reference":{"Id":7}}}}`,
+			`{"Ok":"Handled"}`, false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

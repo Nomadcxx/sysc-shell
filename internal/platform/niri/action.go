@@ -18,6 +18,14 @@ type CloseWindow struct {
 	ID uint64 `json:"id"`
 }
 
+// FocusWorkspace asks the compositor to focus one workspace by id. Niri's
+// reference is an id, an index or a name; the id is the only one that is
+// stable while workspaces are created and destroyed, so it is the only one
+// this package sends.
+type FocusWorkspace struct {
+	ID uint64
+}
+
 // Action sends one compositor request on a short-lived connection. It does
 // not use the EventStream socket.
 func Action(ctx context.Context, socketPath string, body any) error {
@@ -66,6 +74,12 @@ func marshalAction(body any) ([]byte, error) {
 		inner = map[string]any{"FocusWindow": v}
 	case CloseWindow:
 		inner = map[string]any{"CloseWindow": v}
+	case FocusWorkspace:
+		// WorkspaceReferenceArg is an externally tagged enum, so the id
+		// reference is the object {"Id": n} rather than a bare number.
+		inner = map[string]any{"FocusWorkspace": map[string]any{
+			"reference": map[string]any{"Id": v.ID},
+		}}
 	default:
 		return nil, fmt.Errorf("niri: unknown action %T", body)
 	}
