@@ -413,8 +413,33 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 			if err != nil {
 				return nil, err
 			}
-			out.Children[i] = child
+			out.Children[i] = card(child)
 		}
 	}
 	return out, nil
+}
+
+// card gives a filled container the chrome that paints it. It is applied to
+// children rather than to a root, whose kind the view contract fixes and
+// whose surface already carries the panel's own chrome.
+//
+// The painter draws a fill for a capsule and for a button, not for a bare
+// row or column, so a plugin that asked for a card got its padding and its
+// radius and no colour at all -- the fill was accepted by validation and
+// then silently dropped. Wrapping the container in the capsule the bar
+// already uses for its own cards keeps the promise the vocabulary makes,
+// and leaves the container itself to lay the children out.
+func card(out *ui.Node) *ui.Node {
+	switch out.Kind {
+	case ui.KindRow, ui.KindColumn:
+	default:
+		return out
+	}
+	if out.Fill == ui.FillNone {
+		return out
+	}
+	wrapper := &ui.Node{Kind: ui.KindCapsule, Fill: out.Fill, Radius: out.Radius,
+		Children: []*ui.Node{out}}
+	out.Fill, out.Radius = ui.FillNone, 0
+	return wrapper
 }
