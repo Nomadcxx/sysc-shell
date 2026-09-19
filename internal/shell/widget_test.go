@@ -157,8 +157,8 @@ func TestNiriWidgetsReadTheirOutputsProjection(t *testing.T) {
 	if !widgets[0].refresh(view) {
 		t.Fatal("the first refresh reported no change")
 	}
-	if got := pillIndices(widgets[0].node); len(got) != 2 || got[0] != "1" || got[1] != "2" {
-		t.Fatalf("workspace pills = %v, want 1 and 2", got)
+	if got := pillCount(widgets[0].node); got != 2 {
+		t.Fatalf("workspace pills = %d, want 2", got)
 	}
 	if widgets[0].refresh(view) {
 		t.Fatal("an unchanged view rebuilt the pill row")
@@ -304,22 +304,21 @@ func nodeText(n *ui.Node) string {
 	return ""
 }
 
-// pillIndices reports the numerals a workspace pill row renders, in order, so a
+// pillCount reports the shape pills a workspace row renders, so a
 // test can assert the projection reached the bar without depending on which
 // node carries the text.
-func pillIndices(n *ui.Node) []string {
-	var out []string
+func pillCount(n *ui.Node) int {
 	if n == nil {
-		return out
+		return 0
 	}
-	if n.Kind == ui.KindCapsule && len(n.Children) == 1 && n.Children[0] != nil &&
-		n.Children[0].Kind == ui.KindText {
-		return append(out, n.Children[0].Text)
+	if n.Kind == ui.KindCapsule && len(n.Children) == 0 {
+		return 1
 	}
+	total := 0
 	for _, c := range n.Children {
-		out = append(out, pillIndices(c)...)
+		total += pillCount(c)
 	}
-	return out
+	return total
 }
 
 func TestAGroupRendersOneCapsuleHoldingFlatMembers(t *testing.T) {
@@ -434,5 +433,93 @@ func TestGroupedRadialMetricsReportValueChanges(t *testing.T) {
 		if got := widgets[0].members[i].node.Value; got != want {
 			t.Errorf("radial member %d value = %v, want %v", i, got, want)
 		}
+	}
+}
+
+func TestWorkspacePillsPaintAsShapes(t *testing.T) {
+	t.Parallel()
+	m := standardMetrics()
+	widgets := buildWidgets([]config.Item{{ID: "workspace"}}, 8, m)
+	if len(widgets) != 1 || widgets[0].node == nil {
+		t.Fatalf("workspace widgets = %+v", widgets)
+	}
+	if widgets[0].inner == nil {
+		t.Fatalf("workspace widgets = %+v", widgets)
+	}
+	if outer := widgets[0].node; outer.Kind != ui.KindCapsule {
+		t.Fatalf("workspace wrapper = %+v, want the shared capsule", outer)
+	}
+	row := widgets[0].inner
+	if row.Kind != ui.KindRow || row.Gap != workspacePillGap {
+		t.Fatalf("workspace row = %+v, want a row with the pill gap", row)
+	}
+	pills := []workspacePill{
+		{ID: 11, Index: 1, Occupied: true},
+		{ID: 12, Index: 2, Focused: true},
+		{ID: 13, Index: 3, Urgent: true},
+		{ID: 14, Index: 4, Name: "mail"},
+	}
+	if !widgets[0].refresh(barView{Pills: pills}) {
+		t.Fatal("first refresh reported no change")
+	}
+	if len(row.Children) != len(pills) {
+		t.Fatalf("pill count = %d, want %d", len(row.Children), len(pills))
+	}
+	// An empty workspace is a hollow dot, not an absent one: FillNone paints
+	// nothing at all, which left the row showing two shapes for three
+	// workspaces on the live bar.
+	wantFill := []ui.Fill{ui.FillContainer, ui.FillAccent, ui.FillError, ui.FillOutline}
+	wantName := []string{"Workspace 1", "Workspace 2", "Workspace 3", "Workspace mail"}
+	wantAction := []string{"workspace:11", "workspace:12", "workspace:13", "workspace:14"}
+	for i, c := range row.Children {
+		if c == nil || c.Kind != ui.KindCapsule {
+			t.Fatalf("pill %d = %+v, want a capsule", i, c)
+		}
+		if len(c.Children) != 0 {
+			t.Fatalf("pill %d carries children %+v, want shapes only", i, c.Children)
+		}
+		if c.Fill != wantFill[i] {
+			t.Errorf("pill %d fill = %v, want %v", i, c.Fill, wantFill[i])
+		}
+		// One shape family: an explicit stadium overrides the bar's inherited
+		// capsule radius, so a square pill is a circle and the focused one is
+		// a true pill rather than a rounded rectangle.
+		if c.Shape != ui.ShapeStadium {
+			t.Errorf("pill %d shape = %v, want ShapeStadium", i, c.Shape)
+		}
+		if c.Height != m.IconLarge {
+			t.Errorf("pill %d height = %d, want %d", i, c.Height, m.IconLarge)
+		}
+		wantW := m.IconLarge
+		if i == 1 {
+			wantW = 2 * m.IconLarge
+		}
+		if c.Width != wantW {
+			t.Errorf("pill %d width = %d, want %d", i, c.Width, wantW)
+		}
+		if c.Action != wantAction[i] || c.Name != wantName[i] || c.Role != "button" {
+			t.Errorf("pill %d identity = (%q, %q, %q), want (%q, %q, button)",
+				i, c.Action, c.Name, c.Role, wantAction[i], wantName[i])
+		}
+	}
+	if widgets[0].refresh(barView{Pills: pills}) {
+		t.Fatal("second refresh rebuilt an unchanged row")
+	}
+}
+
+func TestWorkspaceFallbackKeepsItsLabel(t *testing.T) {
+	t.Parallel()
+	widgets := buildWidgets([]config.Item{{ID: "workspace"}}, 8, standardMetrics())
+	row := widgets[0].inner
+	if row == nil {
+		t.Fatalf("workspace widgets = %+v", widgets)
+	}
+	if !widgets[0].refresh(barView{}) {
+		t.Fatal("fallback refresh reported no change")
+	}
+	if len(row.Children) != 1 || row.Children[0] == nil ||
+		len(row.Children[0].Children) != 1 || row.Children[0].Children[0] == nil ||
+		row.Children[0].Children[0].Text != noWorkspace {
+		t.Fatalf("fallback row = %+v, want one labelled capsule", row)
 	}
 }

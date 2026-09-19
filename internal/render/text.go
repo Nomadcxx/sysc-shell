@@ -82,6 +82,58 @@ type TextRenderer struct {
 	materialErr error
 	project     *font.Face
 	projectErr  error
+	// raster caches rasterised runs. Repainting re-rasterised every string on
+	// every frame, which was 15 percent of a bar repaint for text that had not
+	// changed since the frame before.
+	//
+	// A cached mask cannot outlive its face: a renderer is paired with one font
+	// map for its whole life, and every surface builds a new renderer when its
+	// fonts change. Painters only read a mask, which is what makes handing the
+	// same one to every caller safe.
+	raster map[rasterKey]Mask
+	// rasterOrder is insertion order, for evicting the oldest half once the
+	// cache fills. A shell's working set is a few dozen strings; the bound is
+	// there for text that keeps changing, such as a window title.
+	rasterOrder []rasterKey
+}
+
+// rasterKey identifies one rasterised run. Every field changes the pixels:
+// tabular alters digit advances alone, so it has to be part of the key or a
+// tabular clock and a proportional one would share a mask.
+type rasterKey struct {
+	text    string
+	spec    TextSpec
+	tabular bool
+}
+
+// rasterCacheMax bounds one renderer's cached runs.
+const rasterCacheMax = 256
+
+// cachedRaster returns a previously rasterised run.
+func (r *TextRenderer) cachedRaster(key rasterKey) (Mask, bool) {
+	m, ok := r.raster[key]
+	return m, ok
+}
+
+// storeRaster caches one run, evicting the oldest half when full. Dropping a
+// batch keeps eviction off the common path: it happens once per rasterCacheMax
+// misses rather than on every insertion.
+func (r *TextRenderer) storeRaster(key rasterKey, m Mask) {
+	if r.raster == nil {
+		r.raster = make(map[rasterKey]Mask, rasterCacheMax)
+	}
+	if _, ok := r.raster[key]; ok {
+		return
+	}
+	if len(r.rasterOrder) >= rasterCacheMax {
+		half := len(r.rasterOrder) / 2
+		for _, old := range r.rasterOrder[:half] {
+			delete(r.raster, old)
+		}
+		r.rasterOrder = append(r.rasterOrder[:0], r.rasterOrder[half:]...)
+	}
+	r.raster[key] = m
+	r.rasterOrder = append(r.rasterOrder, key)
 }
 
 func NewTextRenderer(face *font.Face) *TextRenderer {
@@ -201,12 +253,20 @@ func (r *TextRenderer) Measure(text string, spec TextSpec, tabular bool) (int, i
 // one measurement used, or the drawn run and the space reserved for it would
 // disagree.
 func (r *TextRenderer) Raster(text string, spec TextSpec, tabular bool) (Mask, error) {
+	key := rasterKey{text: text, spec: spec, tabular: tabular}
+	if mask, ok := r.cachedRaster(key); ok {
+		return mask, nil
+	}
 	runs, err := r.shapeRuns(text, spec, tabular)
 	if err != nil {
 		return Mask{}, err
 	}
-
-	return rasterRuns(runs, spec.Size)
+	mask, err := rasterRuns(runs, spec.Size)
+	if err != nil {
+		return Mask{}, err
+	}
+	r.storeRaster(key, mask)
+	return mask, nil
 }
 
 // rasterRuns draws already-shaped runs into an alpha mask. It is separate from

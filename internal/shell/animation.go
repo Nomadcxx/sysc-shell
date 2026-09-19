@@ -24,8 +24,17 @@ const (
 	// painted rectangle only; layout bounds do not move.
 	pressScale = 0.98
 
-	// animTick is the frame cadence while a value is unsettled.
-	animTick = 16 * time.Millisecond
+	// animTick is how often an unsettled value is resampled. It is half a
+	// 60Hz frame rather than a whole one: a ticker at the frame period beats
+	// against the compositor's vblank, drifting a whole frame every few
+	// seconds, so some frames present no new value and others skip one.
+	// Sampling twice a frame keeps every presented frame within half a tick of
+	// the clock whatever the phase.
+	//
+	// This paces sampling, not painting. A frame is still only drawn when the
+	// compositor returns the frame callback, so a faster tick costs a channel
+	// send and a dirty flag, never an extra blit.
+	animTick = 8 * time.Millisecond
 	// effectTrip bounds one effect phase cycle. The surface frame cap controls
 	// how often it is painted; this duration only controls the phase itself.
 	// Weather is meant to drift, not to hurry: a short trip made clouds and

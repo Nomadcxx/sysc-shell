@@ -709,6 +709,19 @@ func TestFrameCapStaysBelowTheShortestToken(t *testing.T) {
 	}
 }
 
+// TestFrameCapClearsAVblank keeps the cap from pacing an animating surface
+// below the display. A cap at or above one 60Hz frame interval lets a surface
+// paint only every second vblank, which is 30 frames a second however quick
+// the transition is, and it reads as the judder the cap was meant to avoid.
+func TestFrameCapClearsAVblank(t *testing.T) {
+	t.Parallel()
+	const vblank60 = 16667 * time.Microsecond // one 60Hz frame
+	if BaseMotion.FrameCap >= vblank60 {
+		t.Errorf("frame cap %v does not clear a 60Hz vblank (%v), so motion is paced to 30fps",
+			BaseMotion.FrameCap, vblank60)
+	}
+}
+
 // TestMetricsCarryTheProfileIcon removes the last derived icon constant. The
 // shell's flat layer computed the profile icon as IconSmall+2, which is a
 // fixed offset masquerading as a scale: it happened to be right at standard

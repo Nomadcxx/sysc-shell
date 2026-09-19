@@ -112,9 +112,10 @@ func blendMaskGradient(c *Canvas, mask *image.Alpha, x, y int, stops []gradientS
 	axis := gradientAxisForDegrees(angle)
 	for py := y0; py < y1; py++ {
 		row := c.Pix[py*c.Stride:]
+		coverage := coverageRow(mask, py, y)
 		uy := (float64(py-box.Y) + 0.5) / float64(box.H)
 		for px := x0; px < x1; px++ {
-			cov := uint32(mask.AlphaAt(b.Min.X+px-x, b.Min.Y+py-y).A)
+			cov := uint32(coverage[px-x])
 			if cov == 0 {
 				continue
 			}

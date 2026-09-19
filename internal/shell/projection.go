@@ -22,11 +22,20 @@ type outputState struct {
 }
 
 // workspacePill is one workspace as the bar draws it. Occupied and Focused are
-// separate because a focused workspace can be empty.
+// separate because a focused workspace can be empty. Urgent mirrors Niri's
+// is_urgent so the painter can mark a workspace that demanded attention.
+//
+// ID and Name are the pill's identity rather than its appearance: a pill
+// paints no label, so the id is what a click acts on and the name is what the
+// accessible name reads. Name is empty for an unnamed workspace, where the
+// index names it instead.
 type workspacePill struct {
+	ID       uint64
 	Index    int
+	Name     string
 	Occupied bool
 	Focused  bool
+	Urgent   bool
 }
 
 // noWorkspace is the label shown before the first snapshot arrives, or for a
@@ -73,9 +82,12 @@ func projectOutputs(s niri.Snapshot) map[string]outputState {
 			continue
 		}
 		pills[w.Output] = append(pills[w.Output], workspacePill{
+			ID:       w.ID,
 			Index:    w.Index,
+			Name:     w.Name,
 			Occupied: w.HasActiveWindow || populated[w.ID],
 			Focused:  w.Focused || w.Active,
+			Urgent:   w.Urgent,
 		})
 	}
 	for connector := range pills {

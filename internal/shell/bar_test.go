@@ -141,8 +141,8 @@ func TestABarRendersTheWorkspaceAndTitleItIsGiven(t *testing.T) {
 	}
 
 	sections := p.sections()
-	if got := pillIndices(sections[0][1]); len(got) != 2 || got[0] != "1" || got[1] != "2" {
-		t.Fatalf("workspace pills = %v, want 1 and 2", got)
+	if got := pillCount(sections[0][1]); got != 2 {
+		t.Fatalf("workspace pills = %d, want 2", got)
 	}
 	if got := nodeText(sections[0][2]); got != "Fixture One" {
 		t.Fatalf("title node = %q, want Fixture One", got)

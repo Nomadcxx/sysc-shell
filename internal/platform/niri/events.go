@@ -22,6 +22,9 @@ type Workspace struct {
 	Output  string
 	Active  bool
 	Focused bool
+	// Urgent mirrors Niri's is_urgent: the workspace holds a window that
+	// demanded attention. It is optional on the wire and false when absent.
+	Urgent bool
 	// ActiveWindowID is meaningful only when HasActiveWindow is set. It is the
 	// workspace's own active window, which is what makes a per-output focused
 	// title possible; Niri's global focus is a separate concept the shell does
@@ -65,6 +68,7 @@ type wireWorkspace struct {
 	Output    *string `json:"output"`
 	IsActive  *bool   `json:"is_active"`
 	IsFocused *bool   `json:"is_focused"`
+	IsUrgent  *bool   `json:"is_urgent"`
 
 	ActiveWindowID *uint64 `json:"active_window_id"`
 }
@@ -92,6 +96,9 @@ func (w wireWorkspace) project() (Workspace, error) {
 	}
 	if w.ActiveWindowID != nil {
 		out.ActiveWindowID, out.HasActiveWindow = *w.ActiveWindowID, true
+	}
+	if w.IsUrgent != nil {
+		out.Urgent = *w.IsUrgent
 	}
 	return out, nil
 }

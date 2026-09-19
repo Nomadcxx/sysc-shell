@@ -2,7 +2,6 @@ package shell
 
 import (
 	"slices"
-	"strconv"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -90,76 +89,6 @@ const (
 	marqueePixelsPerSecond = 30
 	panelLauncherAction    = "panel:launcher"
 )
-
-// workspacePillGap separates adjacent workspace pills, and matches the
-// measured gap in the reference bar.
-const workspacePillGap = 8
-
-// refreshWorkspacePills rebuilds the pill row when the workspace set, its
-// occupancy or its focus changes, and reports whether it did. The signature is
-// compared field by field rather than stuffed into a string, so paint stays a
-// function of the tree.
-func refreshWorkspacePills(row *ui.Node, v barView) bool {
-	// With no projection yet, the widget still shows the stable fallback
-	// rather than collapsing to nothing, which is what tells an owner that
-	// Niri has not reported this output.
-	if len(v.Pills) == 0 {
-		label := v.Workspace
-		if label == "" {
-			label = noWorkspace
-		}
-		if len(row.Children) == 1 && row.Children[0] != nil &&
-			len(row.Children[0].Children) == 1 &&
-			row.Children[0].Children[0].Text == label {
-			return false
-		}
-		row.Children = append(row.Children[:0], &ui.Node{
-			Kind: ui.KindCapsule, Fill: ui.FillContainer, Shape: ui.ShapeMedium,
-			Children: []*ui.Node{{Kind: ui.KindText, Text: label}},
-		})
-		return true
-	}
-	if workspacePillsMatch(row, v.Pills) {
-		return false
-	}
-	row.Children = row.Children[:0]
-	for _, p := range v.Pills {
-		fill := ui.FillContainer
-		if p.Focused {
-			fill = ui.FillAccent
-		}
-		row.Children = append(row.Children, &ui.Node{
-			Kind: ui.KindCapsule,
-			Fill: fill,
-			Children: []*ui.Node{{
-				Kind:    ui.KindText,
-				Text:    strconv.Itoa(p.Index),
-				Tabular: true,
-			}},
-		})
-	}
-	return true
-}
-
-func workspacePillsMatch(row *ui.Node, pills []workspacePill) bool {
-	if len(row.Children) != len(pills) {
-		return false
-	}
-	for i, p := range pills {
-		c := row.Children[i]
-		if c == nil || len(c.Children) != 1 || c.Children[0] == nil {
-			return false
-		}
-		want := ui.FillContainer
-		if p.Focused {
-			want = ui.FillAccent
-		}
-		if c.Fill != want || c.Children[0].Text != strconv.Itoa(p.Index) {
-			return false
-		}
-	}
-	return true
-}
 
 // capsuled wraps one built widget in its pill. Wrapping happens in a single
 // place so no builder has to know about bar chrome.
@@ -258,7 +187,7 @@ func buildWidgetsWithClockFloor(items []config.Item, pad int, m theme.Metrics, c
 		case "workspace":
 			row := &ui.Node{Kind: ui.KindRow, Gap: workspacePillGap}
 			w := textWidget{node: row}
-			w.refresh = func(v barView) bool { return refreshWorkspacePills(row, v) }
+			w.refresh = func(v barView) bool { return refreshWorkspacePills(row, v, m) }
 			out = append(out, w)
 		case "window-title":
 			out = append(out, textWidget{
