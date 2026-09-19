@@ -144,6 +144,7 @@ type Registry struct {
 	trayMenu             *trayMenuHost
 	trayDrawer           *trayDrawerHost
 	trayReplies          *trayReplyTracker
+	trayCloses           *trayCloseTracker
 	trayIcons            *icons.Worker
 	wallpaperSvc         *wallpaper.Service
 	wallpaperThumbs      *icons.Worker
@@ -179,22 +180,25 @@ func NewRegistry(cfg config.Config) *Registry {
 		metrics: services.NewMetrics(),
 		weather: services.NewWeather(
 			cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit)),
-		themeGen:        gen,
-		invalidations:   make(chan wayland.Invalidation, 8),
-		aux:             make(chan wayland.AuxRequest, 8),
-		panelHosts:      make(map[PanelID]*PanelHost),
-		closed:          make(chan struct{}),
-		dwell:           newDwell(defaultDwell),
-		runArgv:         runArgvDefault,
-		lookPath:        exec.LookPath,
-		runArgvOutput:   runArgvOutputDefault,
-		startInhibit:    startInhibitDefault,
-		signalProcess:   signalProcessDefault,
-		notify:          newNotifyState(),
-		batteryWarning:  newBatteryWarning(),
-		clipboard:       newClipboardProjection(),
-		tray:            newTrayState(),
-		trayCh:          make(chan trayclient.Message, 32),
+		themeGen:       gen,
+		invalidations:  make(chan wayland.Invalidation, 8),
+		aux:            make(chan wayland.AuxRequest, 8),
+		panelHosts:     make(map[PanelID]*PanelHost),
+		closed:         make(chan struct{}),
+		dwell:          newDwell(defaultDwell),
+		runArgv:        runArgvDefault,
+		lookPath:       exec.LookPath,
+		runArgvOutput:  runArgvOutputDefault,
+		startInhibit:   startInhibitDefault,
+		signalProcess:  signalProcessDefault,
+		notify:         newNotifyState(),
+		batteryWarning: newBatteryWarning(),
+		clipboard:      newClipboardProjection(),
+		tray:           newTrayState(),
+		trayCh:         make(chan trayclient.Message, 32),
+		// Intrinsic state, not a binding: a message can settle a close before
+		// anything is bound, and a nil tracker would drop it.
+		trayCloses:      newTrayCloseTracker(),
 		notifyCh:        make(chan notifyclient.Message, 32),
 		controlIdentity: readCCIdentity(),
 		machineFacts:    readMachineFacts(),

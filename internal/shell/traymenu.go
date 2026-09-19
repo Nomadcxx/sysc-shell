@@ -32,10 +32,20 @@ type menuLevel struct {
 
 // trayMenu shows one list at a time. Entering a submenu pushes the parent
 // level; Escape pops before anything closes. No recursive popup surfaces.
+// trayCloseMenuID is the shell's own row, never an application's node. It is
+// deliberately not -1: focusedID already returns -1 for "nothing here is
+// focusable", so a Close row numbered -1 would be indistinguishable from an
+// empty menu and could never activate. Application ids from DBusMenu are
+// non-negative, so no real node can collide with this.
+const trayCloseMenuID int32 = -2
+
 type trayMenu struct {
 	revision uint32
 	stack    []menuLevel
 	valid    bool
+	// closeRow offers the shell-owned Close row on the root level. It is set
+	// only when the service advertised that it can close this item's owner.
+	closeRow bool
 }
 
 // newTrayMenu validates the imported tree iteratively and installs the root
@@ -125,7 +135,7 @@ func (m *trayMenu) visible() []tray.MenuNode {
 		return nil
 	}
 	nodes := m.top().nodes
-	visible := make([]tray.MenuNode, 0, len(nodes))
+	visible := make([]tray.MenuNode, 0, len(nodes)+1)
 	for _, n := range nodes {
 		if !n.Visible {
 			continue
@@ -134,6 +144,13 @@ func (m *trayMenu) visible() []tray.MenuNode {
 		if len(visible) >= menuMaxRows {
 			break
 		}
+	}
+	// The Close row belongs to the root level only: a submenu is the
+	// application's own tree, and closing is not one of its branches.
+	if m.closeRow && len(m.stack) == 1 && len(visible) < menuMaxRows {
+		visible = append(visible, tray.MenuNode{
+			ID: trayCloseMenuID, Label: "Close", Visible: true, Enabled: true,
+		})
 	}
 	return visible
 }
@@ -205,10 +222,15 @@ func (m *trayMenu) focusedID() int32 {
 	return nodes[f].ID
 }
 
-// activateFocused returns the focused row's ID for a menu.select command.
+// closeFocused reports whether the focused row is the shell's own Close row.
+func (m *trayMenu) closeFocused() bool { return m.focusedID() == trayCloseMenuID }
+
+// activateFocused returns the focused row's ID. The reserved Close row is
+// accepted alongside the application's own ids; the caller separates them,
+// because the reserved one must never be sent as a menu.select.
 func (m *trayMenu) activateFocused() (int32, bool) {
 	id := m.focusedID()
-	return id, id >= 0
+	return id, id >= 0 || id == trayCloseMenuID
 }
 
 // push enters the focused row's submenu, saving the parent's focus for back.

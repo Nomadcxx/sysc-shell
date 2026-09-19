@@ -8,6 +8,8 @@ github.com/Nomadcxx/sysc-notify v0.1.0-rc.4 h1:HaDU7BgIevI32sNHVZAzcs6gdtNUekq3k
 github.com/Nomadcxx/sysc-notify v0.1.0-rc.4/go.mod h1:ZZlN0ZktmQ15uWf1VaVZ8vXFLe708R1u85dIaag7gtM=
 github.com/Nomadcxx/sysc-tray v0.1.0-rc.1 h1:bhz3RNCBIA+v76A+q2tlg2iNaoFSSqMWLR8lz0ubc/o=
 github.com/Nomadcxx/sysc-tray v0.1.0-rc.1/go.mod h1:bXMEvkMvsvkqNXQsNrP3hZeHVq/4AVEeQhL19KdMLos=
+github.com/Nomadcxx/sysc-tray v0.1.0-rc.3 h1:WBuTqh8OlMk/PWMe2yc19rr7O6KhYxLM+xSsEywppo8=
+github.com/Nomadcxx/sysc-tray v0.1.0-rc.3/go.mod h1:bXMEvkMvsvkqNXQsNrP3hZeHVq/4AVEeQhL19KdMLos=
 github.com/Nomadcxx/sysc-wayland v0.2.2 h1:NvoacqTDvUNX40qHOaD3PzGhi/Tn10a1ctRvRrnxvLE=
 github.com/Nomadcxx/sysc-wayland v0.2.2/go.mod h1:ZNAe41EM7R5G2KA55jqMPotAvrjVWcMq21BV69gROKA=
 github.com/Wifx/gonetworkmanager/v2 v2.2.0 h1:kPstgsQtY8CmDOOFZd81ytM9Gi3f6ImzPCKF7nNhQ2U=

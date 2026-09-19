@@ -179,6 +179,7 @@ func (h *trayMenuHost) prepare(item tray.ItemKey, connector string, output, seri
 	h.revision = menu.Revision
 	h.knownRev = menu.Revision
 	h.menu = newTrayMenu(menu)
+	h.menu.closeRow = h.r.tray.closeSupported(item)
 	h.interact = false
 	h.deferred = nil
 	h.logicalW, h.logicalH = 0, 0
@@ -722,6 +723,7 @@ func (h *trayMenuHost) replaceTree(menu tray.Menu) {
 		focused = h.menu.focusedID()
 	}
 	next := newTrayMenu(menu)
+	next.closeRow = h.r.tray.closeSupported(h.item)
 	if focused >= 0 {
 		// Restore focus by entry ID: property changes and reorders keep the
 		// user's place.
@@ -784,6 +786,22 @@ func (h *trayMenuHost) selectFocused(s trayCommandSender) (stale bool) {
 	}
 	id, ok := h.menu.activateFocused()
 	if !ok {
+		return false
+	}
+	if id == trayCloseMenuID {
+		// Shell-owned: it addresses the item, never a node the application
+		// published, so it carries no menu revision or id. The request stays
+		// pending until the item is removed, because acceptance is not proof
+		// the application went away.
+		if h.r.trayCloses != nil {
+			h.r.trayCloses.begin(h.item)
+		}
+		_, _ = s.Send(tray.Command{
+			Kind:   tray.CommandTerminate,
+			Item:   h.item,
+			Output: h.output,
+			Serial: h.serial,
+		})
 		return false
 	}
 	_, _ = s.Send(tray.Command{

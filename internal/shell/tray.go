@@ -87,6 +87,15 @@ func (s *trayState) title(key tray.ItemKey) string {
 }
 
 // iconName resolves the effective named icon: NeedsAttention replaces the
+// closeSupported reports whether the service established a same-UID owner for
+// this item and will accept a terminate for it. The shell never decides this:
+// ownership and process authority belong to the service.
+func (s *trayState) closeSupported(key tray.ItemKey) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.items[key].CloseSupported
+}
+
 // normal icon with the attention icon.
 func (s *trayState) iconName(key tray.ItemKey) (string, bool) {
 	s.mu.Lock()
@@ -212,6 +221,12 @@ func (r *Registry) ApplyTray(m trayclient.Message) {
 	r.mu.Lock()
 	switch m.Kind {
 	case trayclient.KindItemRemoved:
+		// The removal is the only evidence a termination worked, so it is
+		// what settles the request. A hidden-preference change removes no
+		// item and therefore never reads as a close.
+		if r.trayCloses != nil {
+			r.trayCloses.settle(m.Removed.Key)
+		}
 		// Only this item's surfaces go. A second item's menu is untouched.
 		r.clearPendingTrayMenuFor(m.Removed.Key)
 		if r.trayMenu != nil {
@@ -232,7 +247,11 @@ func (r *Registry) ApplyTray(m trayclient.Message) {
 		}
 	case trayclient.KindDisconnected, trayclient.KindSnapshot:
 		// A reconnect republishes every item under a fresh generation, so
-		// every key a surface was correlated against is now dead.
+		// every key a surface was correlated against is now dead. A close
+		// waiting on a key from the old connection can never be answered.
+		if r.trayCloses != nil {
+			r.trayCloses.reset()
+		}
 		r.pendingTrayMenu = pendingTrayMenu{}
 		if r.trayMenu != nil && !r.tray.has(r.trayMenu.item) {
 			r.trayMenu.close()
