@@ -967,7 +967,13 @@ func resolveItem(w wireItem, path string) (Item, error) {
 			}
 			item.MaxWidth = *w.MaxWidth
 		}
-	case "cpu", "memory", "temperature", "gpu", "filesystem", "block", "network":
+	default:
+		// The metric ids come from isMetric, the one predicate the writer also
+		// uses. Two hand-kept lists is how gpu and temperature ended up on the
+		// loader's and not the writer's, and every write dropped their state.
+		if !isMetric(w.ID) {
+			break
+		}
 		resolved, err := resolveMetric(w, path)
 		if err != nil {
 			return Item{}, err

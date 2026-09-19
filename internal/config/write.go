@@ -266,7 +266,26 @@ func encodeItem(it Item) wireItem {
 			v := true
 			w.ShowCondition = &v
 		}
-	case "cpu", "memory", "filesystem", "block", "network":
+	case "battery":
+		if it.Label != "" {
+			v := it.Label
+			w.Label = &v
+		}
+		if it.WarnBelow > 0 {
+			v := it.WarnBelow
+			w.WarnBelow = &v
+		}
+		if it.Interval > 0 {
+			v := it.Interval.String()
+			w.Interval = &v
+		}
+	default:
+		// Guarded by the predicate the loader uses, not by a second list of
+		// ids written out here: the list this replaced had fallen two ids
+		// behind, and every write silently discarded what those two carried.
+		if !isMetric(it.ID) {
+			break
+		}
 		if it.Display != "" {
 			v := it.Display
 			w.Display = &v
@@ -290,19 +309,6 @@ func encodeItem(it Item) wireItem {
 		if it.Direction != "" {
 			v := it.Direction
 			w.Direction = &v
-		}
-	case "battery":
-		if it.Label != "" {
-			v := it.Label
-			w.Label = &v
-		}
-		if it.WarnBelow > 0 {
-			v := it.WarnBelow
-			w.WarnBelow = &v
-		}
-		if it.Interval > 0 {
-			v := it.Interval.String()
-			w.Interval = &v
 		}
 	}
 	return w
