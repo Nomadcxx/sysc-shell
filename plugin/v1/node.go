@@ -110,6 +110,10 @@ const (
 // Every field is data the plugin chose. Arranged bounds, focus state, hover,
 // pressed state, the live text buffer, and preedit belong to the host and have
 // no representation here.
+//
+// Fill, Radius, Bold, Size, Disabled, CenterX, and PinEnd arrived in protocol
+// minor two. A minor-one host ignores them, so a plugin that sets them still
+// speaks to an older shell, just without the presentation.
 type Node struct {
 	Kind NodeKind `json:"kind"`
 
