@@ -454,10 +454,10 @@ func TestWorkspacePillsPaintAsShapes(t *testing.T) {
 		t.Fatalf("workspace row = %+v, want a row with the pill gap", row)
 	}
 	pills := []workspacePill{
-		{Index: 1, Occupied: true},
-		{Index: 2, Focused: true},
-		{Index: 3, Urgent: true},
-		{Index: 4},
+		{ID: 11, Index: 1, Occupied: true},
+		{ID: 12, Index: 2, Focused: true},
+		{ID: 13, Index: 3, Urgent: true},
+		{ID: 14, Index: 4, Name: "mail"},
 	}
 	if !widgets[0].refresh(barView{Pills: pills}) {
 		t.Fatal("first refresh reported no change")
@@ -466,6 +466,8 @@ func TestWorkspacePillsPaintAsShapes(t *testing.T) {
 		t.Fatalf("pill count = %d, want %d", len(row.Children), len(pills))
 	}
 	wantFill := []ui.Fill{ui.FillContainer, ui.FillAccent, ui.FillError, ui.FillNone}
+	wantName := []string{"Workspace 1", "Workspace 2", "Workspace 3", "Workspace mail"}
+	wantAction := []string{"workspace:11", "workspace:12", "workspace:13", "workspace:14"}
 	for i, c := range row.Children {
 		if c == nil || c.Kind != ui.KindCapsule {
 			t.Fatalf("pill %d = %+v, want a capsule", i, c)
@@ -476,6 +478,12 @@ func TestWorkspacePillsPaintAsShapes(t *testing.T) {
 		if c.Fill != wantFill[i] {
 			t.Errorf("pill %d fill = %v, want %v", i, c.Fill, wantFill[i])
 		}
+		// One shape family: an explicit stadium overrides the bar's inherited
+		// capsule radius, so a square pill is a circle and the focused one is
+		// a true pill rather than a rounded rectangle.
+		if c.Shape != ui.ShapeStadium {
+			t.Errorf("pill %d shape = %v, want ShapeStadium", i, c.Shape)
+		}
 		if c.Height != m.IconLarge {
 			t.Errorf("pill %d height = %d, want %d", i, c.Height, m.IconLarge)
 		}
@@ -485,6 +493,10 @@ func TestWorkspacePillsPaintAsShapes(t *testing.T) {
 		}
 		if c.Width != wantW {
 			t.Errorf("pill %d width = %d, want %d", i, c.Width, wantW)
+		}
+		if c.Action != wantAction[i] || c.Name != wantName[i] || c.Role != "button" {
+			t.Errorf("pill %d identity = (%q, %q, %q), want (%q, %q, button)",
+				i, c.Action, c.Name, c.Role, wantAction[i], wantName[i])
 		}
 	}
 	if widgets[0].refresh(barView{Pills: pills}) {

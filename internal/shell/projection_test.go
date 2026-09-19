@@ -186,3 +186,23 @@ func TestWorkspacePillsCarryUrgency(t *testing.T) {
 		t.Errorf("calm pill = %+v, want no urgency", pills[2])
 	}
 }
+
+// The pill carries the compositor's own workspace id and name so a shape with
+// no label still has something to act on and something to be called.
+func TestWorkspacePillsCarryIdentity(t *testing.T) {
+	t.Parallel()
+	got := projectOutputs(niri.Snapshot{Workspaces: []niri.Workspace{
+		{ID: 11, Index: 1, Output: "DP-9", Focused: true, Active: true},
+		{ID: 12, Index: 2, Name: "mail", Output: "DP-9"},
+	}})
+	pills := got["DP-9"].Pills
+	if len(pills) != 2 {
+		t.Fatalf("pills = %d, want 2", len(pills))
+	}
+	if pills[0].ID != 11 || pills[0].Name != "" {
+		t.Errorf("pill 0 = %+v, want id 11 with no name", pills[0])
+	}
+	if pills[1].ID != 12 || pills[1].Name != "mail" {
+		t.Errorf("pill 1 = %+v, want id 12 named mail", pills[1])
+	}
+}

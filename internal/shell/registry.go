@@ -1045,6 +1045,9 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 		if key, ok := runningAppKey(action); ok {
 			return r.handleRunningAppClick(global, key, button)
 		}
+		if id, ok := workspaceID(action); ok {
+			return r.handleWorkspacePillClick(id, button)
+		}
 		out, trig := r.triggerFor(global)
 		switch {
 		case action == panelLauncherAction && (button == 0 || button == buttonLeft):
