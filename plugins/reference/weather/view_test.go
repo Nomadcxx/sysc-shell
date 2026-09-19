@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 	owm "github.com/Nomadcxx/sysc-shell/weather"
@@ -131,8 +132,12 @@ func TestTreesCarryAccessibleConditionText(t *testing.T) {
 	// condition as its accessible name: a reader still hears "Cloudy" rather
 	// than the route's own label.
 	root := BarTree(snap, Options{ShowIcon: true})
-	if root.Icon == "" || root.Name != "Cloudy" {
-		t.Fatalf("bar control = %+v, want the glyph and an accessible Cloudy", root)
+	if len(root.Children) != 1 {
+		t.Fatalf("bar root has %d children, want the one control", len(root.Children))
+	}
+	btn := root.Children[0]
+	if btn.Icon == "" || btn.Name != "Cloudy" {
+		t.Fatalf("bar control = %+v, want the glyph and an accessible Cloudy", btn)
 	}
 	panel := PanelTree(snap, Options{ShowIcon: true})
 	if icon := findKind(panel, v1.KindIcon); icon == nil || icon.Name != "Cloudy" {
@@ -260,17 +265,21 @@ func TestBarTreeCarriesNoRedundantLabel(t *testing.T) {
 // The whole element opens the panel, not a label beside it. The plugin routes
 // any input on the node called "open", and the shell delivers a primary press
 // and a secondary release, so either button reaches it.
-func TestBarTreeIsItselfTheOpenControl(t *testing.T) {
+func TestBarTreeCarriesTheOpenControl(t *testing.T) {
 	t.Parallel()
 	root := BarTree(freshSnap(t), Options{ShowTemperature: true, ShowIcon: true})
-	if root.Kind != v1.KindButton {
-		t.Fatalf("bar root is %q; only a control carries an action route", root.Kind)
+	if root.Kind != v1.KindRow {
+		t.Fatalf("bar root is %q; the host lays a bar out as a row", root.Kind)
 	}
-	if root.ID != "open" {
-		t.Fatalf("bar root id = %q, want \"open\"", root.ID)
+	if len(root.Children) != 1 {
+		t.Fatalf("bar root has %d children, want the one open control", len(root.Children))
+	}
+	btn := root.Children[0]
+	if btn.Kind != v1.KindButton || btn.ID != "open" {
+		t.Fatalf("bar control = %v/%q; only a control carries an action route", btn.Kind, btn.ID)
 	}
 	var activate, pointer bool
-	for _, e := range root.Events {
+	for _, e := range btn.Events {
 		switch e {
 		case v1.EventActivate:
 			activate = true
@@ -279,10 +288,29 @@ func TestBarTreeIsItselfTheOpenControl(t *testing.T) {
 		}
 	}
 	if !activate || !pointer {
-		t.Fatalf("bar root events = %v, want activate and pointer so both buttons open the panel", root.Events)
+		t.Fatalf("bar control events = %v, want activate and pointer so both buttons open the panel", btn.Events)
 	}
 	if err := v1.Validate(root, v1.ViewBar); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestBarTreeConvertsForTheBarHost runs the host's own gate. Validate alone
+// passed a button root that Convert then refused, and the shell showed "!"
+// instead of the widget, so the conversion is part of the contract.
+func TestBarTreeConvertsForTheBarHost(t *testing.T) {
+	t.Parallel()
+	snaps := map[string]Snapshot{
+		"observed": freshSnap(t),
+		"loading":  {},
+		"disabled": {Disabled: true},
+		"failed":   {FailedSince: time.Now()},
+	}
+	for name, snap := range snaps {
+		root := BarTree(snap, Options{ShowTemperature: true, ShowUnit: true, ShowIcon: true})
+		if _, err := plugin.Convert(root, v1.ViewBar); err != nil {
+			t.Fatalf("%s bar tree: %v", name, err)
+		}
 	}
 }
 

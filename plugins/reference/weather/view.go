@@ -86,6 +86,10 @@ const barCurrentKey = "bar-current"
 // the panel: the shell delivers a primary press and a secondary release, and
 // the plugin opens its panel for any input on the node called "open".
 func BarTree(snap Snapshot, opt Options) *v1.Node {
+	return &v1.Node{Kind: v1.KindRow, Children: []*v1.Node{barButton(snap, opt)}}
+}
+
+func barButton(snap Snapshot, opt Options) *v1.Node {
 	out := &v1.Node{
 		Kind: v1.KindButton, ID: "open", Key: barCurrentKey,
 		Name: "Open weather", Role: "button",
@@ -163,7 +167,7 @@ func PanelTree(snap Snapshot, opt Options) *v1.Node {
 // refused by the host, so the kind decides which keys are sent.
 func CurrentPatch(snap Snapshot, opt Options, kind v1.ViewKind) []v1.Replacement {
 	if kind == v1.ViewBar {
-		return []v1.Replacement{{Key: barCurrentKey, Node: BarTree(snap, opt)}}
+		return []v1.Replacement{{Key: barCurrentKey, Node: barButton(snap, opt)}}
 	}
 	var out []v1.Replacement
 	if opt.ShowTemperature && snap.Observed {
