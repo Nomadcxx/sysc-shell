@@ -70,6 +70,7 @@ func TestConvertMapsEveryVersionOneKind(t *testing.T) {
 		{"text", &v1.Node{Kind: v1.KindText, Text: "x"}, ui.KindText},
 		{"icon", &v1.Node{Kind: v1.KindIcon, Icon: "rain"}, ui.KindText},
 		{"progress", &v1.Node{Kind: v1.KindProgress, Value: 0.5}, ui.KindMeter},
+		{"gauge", &v1.Node{Kind: v1.KindGauge, Value: 0.5, ValueText: "12:34"}, ui.KindRadialGauge},
 		{"button", &v1.Node{Kind: v1.KindButton, ID: "b", Text: "x", Name: "x", Role: "button",
 			Events: []v1.EventKind{v1.EventActivate}}, ui.KindButton},
 		{"text input", &v1.Node{Kind: v1.KindTextInput, ID: "i", Name: "i", Role: "textbox",

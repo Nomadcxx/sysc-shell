@@ -60,6 +60,7 @@ const (
 	KindList       NodeKind = "list"
 	KindDragSource NodeKind = "drag_source"
 	KindDropZone   NodeKind = "drop_zone"
+	KindGauge      NodeKind = "gauge"
 )
 
 // EventKind names an input event a node declares it can emit. A node receives
@@ -133,6 +134,9 @@ type Node struct {
 	Icon string `json:"icon,omitempty"`
 	// Value is a progress fraction from zero through one.
 	Value float64 `json:"value,omitempty"`
+	// ValueText is the gauge's centre label, such as a remaining time. An
+	// empty value falls back to a percentage.
+	ValueText string `json:"value_text,omitempty"`
 
 	// Tone selects semantic presentation.
 	Tone Tone `json:"tone,omitempty"`
@@ -220,6 +224,7 @@ var knownKinds = map[NodeKind]bool{
 	KindRow: true, KindColumn: true, KindText: true, KindIcon: true,
 	KindProgress: true, KindButton: true, KindTextInput: true,
 	KindList: true, KindDragSource: true, KindDropZone: true,
+	KindGauge: true,
 }
 
 var knownViews = map[ViewKind]bool{ViewBar: true, ViewTooltip: true, ViewPanel: true}
@@ -387,6 +392,16 @@ func (v *validator) vocabulary(n *Node, path string) error {
 		}
 		if n.Value < 0 || n.Value > 1 {
 			return fmt.Errorf("%s: progress value %v is outside zero through one", path, n.Value)
+		}
+	case KindGauge:
+		if math.IsNaN(n.Value) || math.IsInf(n.Value, 0) {
+			return fmt.Errorf("%s: gauge value is not finite", path)
+		}
+		if n.Value < 0 || n.Value > 1 {
+			return fmt.Errorf("%s: gauge value %v is outside zero through one", path, n.Value)
+		}
+		if len(n.ValueText) > MaxTextBytes {
+			return fmt.Errorf("%s: value text is %d bytes, more than the %d allowed", path, len(n.ValueText), MaxTextBytes)
 		}
 	}
 	if v.view == ViewTooltip && n.Kind.interactive() {

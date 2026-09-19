@@ -267,6 +267,23 @@ func TestValidateRejectsNonFiniteProgress(t *testing.T) {
 	}
 }
 
+func TestValidateBoundsGaugeValue(t *testing.T) {
+	t.Parallel()
+
+	if err := Validate(&Node{Kind: KindGauge, Value: 1, ValueText: "12:34"}, ViewPanel); err != nil {
+		t.Fatalf("gauge 1 rejected: %v", err)
+	}
+	for _, v := range []float64{-0.1, 1.1} {
+		if err := Validate(&Node{Kind: KindGauge, Value: v}, ViewPanel); err == nil {
+			t.Fatalf("gauge %v accepted", v)
+		}
+	}
+	nan := &Node{Kind: KindGauge, Value: math.NaN()}
+	if err := Validate(nan, ViewPanel); err == nil {
+		t.Fatal("Validate accepted a non-finite gauge value")
+	}
+}
+
 func TestValidateRequiresAnIconName(t *testing.T) {
 	t.Parallel()
 
