@@ -372,7 +372,11 @@ func TestAGrowingTitleIsMeasuredAgain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := bar.Configure(600, BarHeight, int(ui.ScaleUnit)); err != nil {
+	// Wide enough that the title has room. At 600 the centre composition leaves
+	// the left section about twenty pixels, so the title's capsule is granted
+	// nothing; this test is about re-measuring a title that grew, not about a
+	// bar too narrow to hold one.
+	if err := bar.Configure(1400, BarHeight, int(ui.ScaleUnit)); err != nil {
 		t.Fatalf("Configure: %v", err)
 	}
 

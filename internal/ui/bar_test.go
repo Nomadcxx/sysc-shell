@@ -15,12 +15,12 @@ func TestCenterIsAbsolutelyCentredRegardlessOfSideWidths(t *testing.T) {
 	content := Rect{X: 0, Y: 0, W: 1000, H: 40}
 	center := text("mid") // 30 wide
 
-	if err := ArrangeBar(content, []*Node{text("a")}, []*Node{center}, []*Node{text("z")}, 6, fixed); err != nil {
+	if _, err := ArrangeBar(content, []*Node{text("a")}, []*Node{center}, []*Node{text("z")}, 6, fixed); err != nil {
 		t.Fatalf("ArrangeBar: %v", err)
 	}
 	withNarrowLeft := center.Bounds.X
 
-	if err := ArrangeBar(content, []*Node{text("aaaaaaaaaaaaaaa")}, []*Node{center}, []*Node{text("z")}, 6, fixed); err != nil {
+	if _, err := ArrangeBar(content, []*Node{text("aaaaaaaaaaaaaaa")}, []*Node{center}, []*Node{text("z")}, 6, fixed); err != nil {
 		t.Fatalf("ArrangeBar: %v", err)
 	}
 	if center.Bounds.X != withNarrowLeft {
@@ -32,27 +32,33 @@ func TestCenterIsAbsolutelyCentredRegardlessOfSideWidths(t *testing.T) {
 	}
 }
 
-func TestSidesTruncateBeforeTheCentre(t *testing.T) {
+// The sides give way before the centre. As of sysc-313 they give way by
+// dropping the whole item rather than being granted a sliver of it, so this
+// asserts the drop and the reported count where it used to assert a truncated
+// width.
+func TestSidesGiveWayBeforeTheCentre(t *testing.T) {
 	t.Parallel()
 	content := Rect{X: 0, Y: 0, W: 120, H: 40}
-	left := text("aaaaaaaaaa")  // 100 natural
+	left := text("aaaaaaaaaa")  // 100 natural, against a 39 budget
 	center := text("mid")       // 30 natural
-	right := text("zzzzzzzzzz") // 100 natural
+	right := text("zzzzzzzzzz") // 100 natural, against a 39 budget
 
-	if err := ArrangeBar(content, []*Node{left}, []*Node{center}, []*Node{right}, 6, fixed); err != nil {
+	over, err := ArrangeBar(content, []*Node{left}, []*Node{center}, []*Node{right}, 6, fixed)
+	if err != nil {
 		t.Fatalf("ArrangeBar: %v", err)
 	}
 	if center.Bounds.W != 30 {
 		t.Fatalf("centre width = %d, want its natural 30", center.Bounds.W)
 	}
-	if left.Bounds.W >= 100 {
-		t.Fatalf("left width = %d, want it truncated below 100", left.Bounds.W)
+	if (left.Bounds != Rect{}) || (right.Bounds != Rect{}) {
+		t.Fatalf("sides = %+v/%+v, want both dropped whole: a side that cannot "+
+			"fit its item is no longer granted part of it", left.Bounds, right.Bounds)
 	}
-	if left.Bounds.X+left.Bounds.W > center.Bounds.X {
-		t.Fatal("left overlaps the centre")
+	if over.Left != 1 || over.Right != 1 {
+		t.Fatalf("overflow = %+v, want one dropped on each side", over)
 	}
-	if right.Bounds.X < center.Bounds.X+center.Bounds.W {
-		t.Fatal("right overlaps the centre")
+	if over.Center != 0 {
+		t.Fatalf("overflow = %+v, want the centre untouched", over)
 	}
 }
 
@@ -61,7 +67,7 @@ func TestCentreWiderThanContentTruncatesAndClearsTheSides(t *testing.T) {
 	content := Rect{X: 0, Y: 0, W: 50, H: 40}
 	left, center, right := text("aaa"), text("mmmmmmmmmm"), text("zzz")
 
-	if err := ArrangeBar(content, []*Node{left}, []*Node{center}, []*Node{right}, 6, fixed); err != nil {
+	if _, err := ArrangeBar(content, []*Node{left}, []*Node{center}, []*Node{right}, 6, fixed); err != nil {
 		t.Fatalf("ArrangeBar: %v", err)
 	}
 	if center.Bounds.X != 0 || center.Bounds.W != 50 {
@@ -123,7 +129,7 @@ func TestAnchoredWordmarkKeepsTheContentBandCentre(t *testing.T) {
 			}
 
 			content := Rect{X: 10, Y: 0, W: tc.contentWidth, H: 40}
-			if err := ArrangeBar(content, leftItems, center, rightItems, 6, fixed); err != nil {
+			if _, err := ArrangeBar(content, leftItems, center, rightItems, 6, fixed); err != nil {
 				t.Fatal(err)
 			}
 			wantCentre := content.X + content.W/2
@@ -148,10 +154,10 @@ func TestAnchoredWordmarkKeepsTheContentBandCentre(t *testing.T) {
 			if after != nil && after.Bounds.W > 0 {
 				compositionRight = after.Bounds.X + after.Bounds.W
 			}
-			if left != nil && left.Bounds.X+left.Bounds.W > compositionLeft {
+			if left != nil && left.Bounds.W > 0 && left.Bounds.X+left.Bounds.W > compositionLeft {
 				t.Fatalf("left section %+v overlaps centre composition ending at %d", left.Bounds, compositionLeft)
 			}
-			if right != nil && right.Bounds.X < compositionRight {
+			if right != nil && right.Bounds.W > 0 && right.Bounds.X < compositionRight {
 				t.Fatalf("right section %+v overlaps centre composition starting at %d", right.Bounds, compositionRight)
 			}
 			if tc.emptyBefore && left.Bounds.W == 0 {
@@ -173,7 +179,7 @@ func TestEmptySectionsContributeNothing(t *testing.T) {
 	t.Parallel()
 	content := Rect{X: 0, Y: 0, W: 300, H: 40}
 	center := text("mid")
-	if err := ArrangeBar(content, nil, []*Node{center}, nil, 6, fixed); err != nil {
+	if _, err := ArrangeBar(content, nil, []*Node{center}, nil, 6, fixed); err != nil {
 		t.Fatalf("ArrangeBar: %v", err)
 	}
 	if want := (300 - 30) / 2; center.Bounds.X != want {
@@ -185,7 +191,7 @@ func TestNegativeAvailableWidthYieldsZeroNotNegativeBounds(t *testing.T) {
 	t.Parallel()
 	content := Rect{X: 0, Y: 0, W: 40, H: 40}
 	left, center := text("aaaa"), text("mmm")
-	if err := ArrangeBar(content, []*Node{left}, []*Node{center}, nil, 6, fixed); err != nil {
+	if _, err := ArrangeBar(content, []*Node{left}, []*Node{center}, nil, 6, fixed); err != nil {
 		t.Fatalf("ArrangeBar: %v", err)
 	}
 	if left.Bounds.W < 0 || left.Bounds.H < 0 {
@@ -197,7 +203,7 @@ func TestItemsWithinASectionAreSpaced(t *testing.T) {
 	t.Parallel()
 	content := Rect{X: 0, Y: 0, W: 1000, H: 40}
 	one, two := text("ab"), text("cd") // 20 each
-	if err := ArrangeBar(content, []*Node{one, two}, nil, nil, 6, fixed); err != nil {
+	if _, err := ArrangeBar(content, []*Node{one, two}, nil, nil, 6, fixed); err != nil {
 		t.Fatalf("ArrangeBar: %v", err)
 	}
 	if two.Bounds.X != one.Bounds.X+one.Bounds.W+6 {
@@ -209,7 +215,7 @@ func TestRightSectionEndsAtTheContentEdge(t *testing.T) {
 	t.Parallel()
 	content := Rect{X: 10, Y: 0, W: 500, H: 40}
 	right := text("zz") // 20 wide
-	if err := ArrangeBar(content, nil, nil, []*Node{right}, 6, fixed); err != nil {
+	if _, err := ArrangeBar(content, nil, nil, []*Node{right}, 6, fixed); err != nil {
 		t.Fatalf("ArrangeBar: %v", err)
 	}
 	if got := right.Bounds.X + right.Bounds.W; got != content.X+content.W {
@@ -219,7 +225,7 @@ func TestRightSectionEndsAtTheContentEdge(t *testing.T) {
 
 func TestArrangeBarRejectsNegativeContent(t *testing.T) {
 	t.Parallel()
-	if err := ArrangeBar(Rect{W: -1, H: 40}, nil, nil, nil, 6, fixed); err == nil {
+	if _, err := ArrangeBar(Rect{W: -1, H: 40}, nil, nil, nil, 6, fixed); err == nil {
 		t.Fatal("ArrangeBar accepted negative content bounds")
 	}
 }
@@ -253,7 +259,7 @@ func TestArrangeBarLaysOutCapsuleContents(t *testing.T) {
 	workspace := &Node{Kind: KindCapsule, Padding: 8, Children: []*Node{row}}
 
 	content := Rect{X: 6, Y: 6, W: 600, H: 36}
-	if err := ArrangeBar(content, []*Node{workspace}, []*Node{clock}, nil, 4, fakeMeasure); err != nil {
+	if _, err := ArrangeBar(content, []*Node{workspace}, []*Node{clock}, nil, 4, fakeMeasure); err != nil {
 		t.Fatal(err)
 	}
 
@@ -286,7 +292,7 @@ func TestCapsuleCentresAMemberTallerThanItsBand(t *testing.T) {
 	group := &Node{Kind: KindCapsule, Padding: 8, Children: []*Node{row}}
 
 	content := Rect{X: 0, Y: 0, W: 400, H: 28}
-	if err := ArrangeBar(content, []*Node{group}, nil, nil, 4, fakeMeasure); err != nil {
+	if _, err := ArrangeBar(content, []*Node{group}, nil, nil, 4, fakeMeasure); err != nil {
 		t.Fatal(err)
 	}
 
