@@ -142,19 +142,6 @@ func TestTheLowerEdgeLoads(t *testing.T) {
 	}
 }
 
-func TestVerticalEdgesAreStillGated(t *testing.T) {
-	t.Parallel()
-	for _, edge := range []string{"left", "right"} {
-		_, err := Parse([]byte(`{"bar":{"edge":"` + edge + `"}}`))
-		if err == nil {
-			t.Fatalf("%q must still be rejected: the vertical axis waits on sysc-314", edge)
-		}
-		if !strings.Contains(err.Error(), "top or bottom") {
-			t.Fatalf("%q must be told what does work, got: %v", edge, err)
-		}
-	}
-}
-
 func TestAnUnknownEdgeNamesAllFour(t *testing.T) {
 	t.Parallel()
 	_, err := Parse([]byte(`{"bar":{"edge":"sideways"}}`))

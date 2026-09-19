@@ -369,7 +369,7 @@ var batteryLabels = map[string]bool{
 // milestone implements it. An unimplemented edge is rejected with a named
 // error rather than silently mis-rendering.
 var supportedEdges = map[string]bool{
-	"top": true, "bottom": true, "left": false, "right": false,
+	"top": true, "bottom": true, "left": true, "right": true,
 }
 
 // Default is the built-in configuration, used when no file exists.
