@@ -21,10 +21,47 @@ type trayState struct {
 	items      map[tray.ItemKey]tray.Item
 	order      []tray.ItemKey
 	menus      map[tray.ItemKey]tray.Menu
+	// closing holds keys with a termination request in flight. The item
+	// stays visible until the service confirms with a removal; a failed
+	// reply or a generation change restores it.
+	closing map[tray.ItemKey]bool
 }
 
 func newTrayState() *trayState {
 	return &trayState{items: map[tray.ItemKey]tray.Item{}, menus: map[tray.ItemKey]tray.Menu{}}
+}
+
+// markClosing records a termination request in flight for one key.
+func (s *trayState) markClosing(key tray.ItemKey) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closing == nil {
+		s.closing = map[tray.ItemKey]bool{}
+	}
+	s.closing[key] = true
+}
+
+// unmarkClosing drops a pending termination: the request failed or was
+// cancelled, and the item is interactive again.
+func (s *trayState) unmarkClosing(key tray.ItemKey) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.closing, key)
+}
+
+// closing reports whether a termination request is in flight for one key.
+func (s *trayState) isClosing(key tray.ItemKey) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closing[key]
+}
+
+// closeable reports whether the service established a same-UID process
+// identity for one item, so the shell may offer its Close action.
+func (s *trayState) closeable(key tray.ItemKey) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.items[key].CloseSupported
 }
 
 // applyTray applies one immutable client message. A stale generation is
@@ -37,6 +74,9 @@ func (s *trayState) applyTray(m trayclient.Message) {
 		s.generation = m.Generation
 		s.items = make(map[tray.ItemKey]tray.Item, len(m.Snapshot.Items))
 		s.order = s.order[:0]
+		// A new generation cancels every pending termination: the keys
+		// describe items this snapshot may not contain.
+		s.closing = make(map[tray.ItemKey]bool)
 		for _, it := range m.Snapshot.Items {
 			s.items[it.Key] = it
 			s.order = append(s.order, it.Key)
@@ -55,6 +95,7 @@ func (s *trayState) applyTray(m trayclient.Message) {
 		}
 		delete(s.items, m.Removed.Key)
 		delete(s.menus, m.Removed.Key)
+		delete(s.closing, m.Removed.Key)
 		for i, key := range s.order {
 			if key == m.Removed.Key {
 				s.order = append(s.order[:i], s.order[i+1:]...)
@@ -71,6 +112,7 @@ func (s *trayState) applyTray(m trayclient.Message) {
 		s.items = map[tray.ItemKey]tray.Item{}
 		s.order = nil
 		s.menus = map[tray.ItemKey]tray.Menu{}
+		s.closing = nil
 	}
 }
 
@@ -190,7 +232,7 @@ func (r *Registry) BindTray(sender trayCommandSender) {
 	// A stale-item reply means the service replaced the key under a click that
 	// was already in flight. The projection is authoritative, so the retry is
 	// to reproject: the next command carries the live key or is not sent.
-	r.trayReplies = newTrayReplyTracker(r, func(tray.ItemKey) { r.reprojectTray() })
+	r.trayReplies = newTrayReplyTracker(r, func(tray.ItemKey) { r.reprojectTray() }, r.tray.unmarkClosing)
 	workerContext, cancel := context.WithCancel(context.Background())
 	r.trayIconCancel = cancel
 	r.trayIcons = icons.NewWorker(icons.NewResolver("", nil), r.applyTrayIcon)
@@ -370,12 +412,16 @@ func (r *Registry) applyTrayIcon(key icons.Key, image *ui.Image) {
 // so its reply can be correlated. A key the projection no longer holds never
 // leaves the shell.
 func (r *Registry) sendTrayLocked(command tray.Command) (uint64, error) {
-	if r.traySender == nil || !r.tray.has(command.Item) {
+	if r.traySender == nil || !r.tray.has(command.Item) || r.tray.isClosing(command.Item) {
 		return 0, trayclient.ErrBusy
 	}
 	requestID, err := r.traySender.Send(command)
 	if err == nil && r.trayReplies != nil {
-		r.trayReplies.note(requestID, command.Item)
+		if command.Kind == tray.CommandTerminate {
+			r.trayReplies.noteTerminate(requestID, command.Item)
+		} else {
+			r.trayReplies.note(requestID, command.Item)
+		}
 	}
 	return requestID, err
 }

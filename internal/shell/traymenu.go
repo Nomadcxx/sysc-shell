@@ -36,6 +36,7 @@ type trayMenu struct {
 	revision uint32
 	stack    []menuLevel
 	valid    bool
+	closeRow bool
 }
 
 // newTrayMenu validates the imported tree iteratively and installs the root
@@ -90,7 +91,7 @@ func (m *trayMenu) widestLevel() int {
 		nodes []tray.MenuNode
 		depth int
 	}
-	work := []frame{{m.stack[0].nodes, 1}}
+	work := []frame{{m.rootNodes(), 1}}
 	widest := 0
 	for len(work) > 0 {
 		f := work[len(work)-1]
@@ -120,20 +121,70 @@ func (m *trayMenu) len() int {
 	return len(m.visible())
 }
 
+// trayCloseMenuID is the shell-reserved row ID for the Close action. The
+// protocol rejects negative menu IDs for service nodes, so this row can
+// never collide with one and is never sent to the service.
+const trayCloseMenuID int32 = -1
+
+// offerClose appends the reserved Close row to the root level, for items
+// whose service established a same-UID process identity.
+func (m *trayMenu) offerClose() { m.closeRow = true }
+
+// closeNode is the reserved Close row as a service-shaped node.
+func closeNode() tray.MenuNode {
+	return tray.MenuNode{ID: trayCloseMenuID, Label: "Close", Visible: true, Enabled: true}
+}
+
+// rootNodes is the root level's node list with the Close row appended.
+func (m *trayMenu) rootNodes() []tray.MenuNode {
+	if len(m.stack) == 0 {
+		return nil
+	}
+	if !m.closeRow {
+		return m.stack[0].nodes
+	}
+	nodes := make([]tray.MenuNode, 0, len(m.stack[0].nodes)+1)
+	nodes = append(nodes, m.stack[0].nodes...)
+	return append(nodes, closeNode())
+}
+
+// closeFocused reports whether the reserved Close row holds focus at the
+// root level.
+func (m *trayMenu) closeFocused() bool {
+	if !m.closeRow || !m.valid || len(m.stack) != 1 {
+		return false
+	}
+	nodes := m.visible()
+	focus := m.top().focus
+	return focus >= 0 && focus < len(nodes) && nodes[focus].ID == trayCloseMenuID
+}
+
 func (m *trayMenu) visible() []tray.MenuNode {
 	if !m.valid || len(m.stack) == 0 {
 		return nil
 	}
+	root := len(m.stack) == 1
 	nodes := m.top().nodes
-	visible := make([]tray.MenuNode, 0, len(nodes))
+	limit := menuMaxRows
+	if root {
+		nodes = m.stack[0].nodes
+		if m.closeRow {
+			// The Close row always fits: service rows give up one slot.
+			limit = menuMaxRows - 1
+		}
+	}
+	visible := make([]tray.MenuNode, 0, len(nodes)+1)
 	for _, n := range nodes {
 		if !n.Visible {
 			continue
 		}
 		visible = append(visible, n)
-		if len(visible) >= menuMaxRows {
+		if len(visible) >= limit {
 			break
 		}
+	}
+	if root && m.closeRow {
+		visible = append(visible, closeNode())
 	}
 	return visible
 }

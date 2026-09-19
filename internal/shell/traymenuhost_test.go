@@ -288,3 +288,37 @@ func TestTrayMenuHoverInvalidatesOnlyOnRowChange(t *testing.T) {
 		t.Errorf("leave left hover at %q", h.pointer.hover)
 	}
 }
+
+// Activating the reserved Close row asks the service to terminate the item's
+// process instead of sending a menu selection, and closes the menu.
+func TestTrayMenuCloseRowActivatesTerminate(t *testing.T) {
+	r := NewRegistry(config.Default())
+	key := tray.ItemKey{Owner: "org.x", ObjectPath: "/org/x/1"}
+	r.applyTray(trayclient.Message{Generation: 1, Kind: trayclient.KindSnapshot,
+		Snapshot: tray.Snapshot{Items: []tray.Item{{Key: key, Title: "Chat", CloseSupported: true}}}})
+	r.applyTray(trayclient.Message{Generation: 1, Kind: trayclient.KindMenuUpdated,
+		Menu: tray.MenuUpdate{Key: key, Menu: flatMenu(3)}})
+	snd := &recordSender{}
+	r.traySender = snd
+	h := newTrayMenuHost(r, &hostHarness{})
+	if !h.open(key, "eDP-1", 7, 42) {
+		t.Fatal("open refused a live closeable item")
+	}
+	h.menu.top().focus = h.menu.len() - 1
+	if !h.menu.closeFocused() {
+		t.Fatal("the Close row did not hold focus")
+	}
+	if !h.activateFocused() {
+		t.Fatal("activation refused the Close row")
+	}
+	if h.open_ {
+		t.Fatal("the menu stayed open after a terminate request")
+	}
+	if len(snd.sent) < 1 || snd.sent[0].Kind != tray.CommandTerminate ||
+		snd.sent[0].Item != key || snd.sent[0].Output != 7 {
+		t.Fatalf("sent = %+v, want terminate first for the full key", snd.sent)
+	}
+	if !r.tray.isClosing(key) {
+		t.Fatal("the termination was not marked pending")
+	}
+}

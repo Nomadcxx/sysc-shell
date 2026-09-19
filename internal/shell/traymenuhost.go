@@ -179,6 +179,9 @@ func (h *trayMenuHost) prepare(item tray.ItemKey, connector string, output, seri
 	h.revision = menu.Revision
 	h.knownRev = menu.Revision
 	h.menu = newTrayMenu(menu)
+	if h.r.tray.closeable(item) {
+		h.menu.offerClose()
+	}
 	h.interact = false
 	h.deferred = nil
 	h.logicalW, h.logicalH = 0, 0
@@ -522,6 +525,13 @@ func (h *trayMenuHost) activateFocused() bool {
 	if h.r.traySender == nil {
 		return false
 	}
+	if h.menu.closeFocused() {
+		// The reserved Close row never reaches the service as a menu
+		// selection; it asks the service to end the item's process.
+		h.r.trayTerminate(h.item, h.output)
+		h.close()
+		return true
+	}
 	stale := h.selectFocused(h.r.traySender)
 	if stale {
 		h.askRefresh()
@@ -722,6 +732,9 @@ func (h *trayMenuHost) replaceTree(menu tray.Menu) {
 		focused = h.menu.focusedID()
 	}
 	next := newTrayMenu(menu)
+	if h.r.tray.closeable(h.item) {
+		next.offerClose()
+	}
 	if focused >= 0 {
 		// Restore focus by entry ID: property changes and reorders keep the
 		// user's place.

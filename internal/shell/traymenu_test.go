@@ -192,3 +192,53 @@ func TestTrayMenuAccessibleNamesAndRoles(t *testing.T) {
 		t.Fatalf("separator role = %q", m2.row(0).role)
 	}
 }
+
+// The reserved Close row exists only for items the service marked closeable,
+// and it is always the last root row.
+func TestTrayMenuCloseRowAppearsOnlyWhenOffered(t *testing.T) {
+	menu := flatMenu(3)
+	m := newTrayMenu(menu)
+	if got := m.len(); got != 3 {
+		t.Fatalf("rows = %d, want 3 without the offer", got)
+	}
+	m.offerClose()
+	nodes := m.visible()
+	last := nodes[len(nodes)-1]
+	if last.ID != trayCloseMenuID || last.Label != "Close" || !last.Enabled {
+		t.Fatalf("last row = %+v, want the reserved Close row", last)
+	}
+	row := m.row(len(nodes) - 1)
+	if row.id != trayCloseMenuID || row.role != "menuitem" || !row.enabled {
+		t.Fatalf("projected row = %+v", row)
+	}
+}
+
+// The Close row participates in focus and reports when it holds it.
+func TestTrayMenuCloseRowFocus(t *testing.T) {
+	m := newTrayMenu(flatMenu(3))
+	m.offerClose()
+	if m.closeFocused() {
+		t.Fatal("the Close row held focus without being moved to")
+	}
+	m.move(1)
+	m.move(1)
+	m.move(1)
+	if !m.closeFocused() {
+		t.Fatal("the Close row did not take focus after three moves")
+	}
+	if id, ok := m.activateFocused(); ok || id != trayCloseMenuID {
+		t.Fatalf("activateFocused = %d, %v; the Close row must not look selectable", id, ok)
+	}
+}
+
+// The Close row always fits: service rows give up one slot at the cap.
+func TestTrayMenuCloseRowFitsTheCap(t *testing.T) {
+	m := newTrayMenu(flatMenu(menuMaxRows))
+	m.offerClose()
+	if got := m.len(); got != menuMaxRows {
+		t.Fatalf("rows = %d, want %d with the Close row", got, menuMaxRows)
+	}
+	if last := m.visible()[m.len()-1]; last.ID != trayCloseMenuID {
+		t.Fatal("the Close row was dropped at the cap")
+	}
+}
