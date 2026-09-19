@@ -708,3 +708,37 @@ func TestImageNodeLandscapeRowHeightInAColumn(t *testing.T) {
 		t.Fatalf("column height = %d, want the raster height 96", h)
 	}
 }
+
+// A row that packs columns between fixed controls must measure each column by
+// its widest child. A flat guess reserves phantom width and pushes trailing
+// controls out of the row, which fails layout instead of clipping.
+func TestLayoutRowMeasuresColumnsByContent(t *testing.T) {
+	t.Parallel()
+
+	root := &Node{
+		Kind:    KindRow,
+		Padding: 8,
+		Gap:     8,
+		Children: []*Node{
+			{Kind: KindDragSource, Text: "=", Action: "drag", DragType: "zone"},
+			{Kind: KindColumn, Gap: 2, Children: []*Node{
+				{Kind: KindText, Text: "London"},
+				{Kind: KindText, Text: "Europe/London"},
+			}},
+			{Kind: KindColumn, Gap: 2, Children: []*Node{
+				{Kind: KindText, Text: "21:23"},
+				{Kind: KindText, Text: "UTC+1"},
+			}},
+			{Kind: KindButton, Text: "Remove", Action: "rm"},
+			{Kind: KindDropZone, Action: "drop", Accept: []string{"zone"}},
+		},
+	}
+	if err := Layout(root, Rect{W: 404, H: 34}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+
+	button := root.Children[3]
+	if button.Bounds.X+button.Bounds.W > 404-8 {
+		t.Fatalf("button bounds %+v overflow the row", button.Bounds)
+	}
+}

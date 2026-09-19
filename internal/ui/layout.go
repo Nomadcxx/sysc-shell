@@ -568,6 +568,21 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		return w, contentHeight, nil
 	case KindColumn, KindDropZone:
 		w := n.Width
+		if w <= 0 && n.Kind == KindColumn && len(n.Children) > 0 {
+			// A column's intrinsic width is its widest child, not a fixed
+			// guess: rows that pack several columns otherwise reserve far
+			// more than they need and push trailing controls out of bounds.
+			for _, c := range n.Children {
+				if c == nil {
+					continue
+				}
+				cw, _, err := measureNode(c, contentHeight, measure)
+				if err != nil {
+					return 0, 0, err
+				}
+				w = max(w, cw+2*n.Padding)
+			}
+		}
 		if w <= 0 {
 			w = 220
 		}
