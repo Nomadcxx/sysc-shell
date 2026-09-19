@@ -494,3 +494,20 @@ func TestBatteryAndNetworkGlyphsResolveForPlugins(t *testing.T) {
 		}
 	}
 }
+
+func TestDeviceGlyphsCarryInk(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{
+		"smartphone", "phonelink-off", "tablet", "laptop", "desktop-windows",
+		"tv", "devices", "phone-in-talk", "folder-open", "content-paste",
+		"share", "sms", "notifications-active", "refresh",
+	} {
+		r, ok := IconByName(name)
+		if !ok {
+			t.Fatalf("the catalogue does not carry %q", name)
+		}
+		if got := glyphCoverage(t, r, 32); got == 0 {
+			t.Fatalf("%s glyph %U has no ink", name, r)
+		}
+	}
+}

@@ -105,6 +105,27 @@ const (
 	iconElevation
 )
 
+// The device and communication glyphs extend the font after the weather
+// details, for the KDE Connect phone plugin: the device types, the
+// ring/browse/clipboard/share/SMS actions, the daemon refresh control, and
+// the offline state.
+const (
+	iconSmartphone rune = iconElevation + 1 + iota
+	iconPhonelinkOff
+	iconTablet
+	iconLaptop
+	iconDesktopWindows
+	iconTV
+	iconDevices
+	iconPhoneInTalk
+	iconFolderOpen
+	iconContentPaste
+	iconShare
+	iconSMS
+	iconNotificationsActive
+	iconRefresh
+)
+
 // batteryLevels is how many level glyphs each state has.
 const batteryLevels = 7
 
@@ -356,51 +377,65 @@ func BatteryIconRune(charge float64, charging, critical bool) rune {
 // appear in the shell stays the shell's to decide, and a name the font does
 // not have is a diagnosable error instead of a missing-glyph box.
 var iconNames = map[string]rune{
-	"clear-day":           iconClearDay,
-	"clear-night":         iconClearNight,
-	"partly-cloudy":       iconPartlyCloudy,
-	"partly-cloudy-night": iconPartlyCloudyNight,
-	"cloud":               iconCloud,
-	"fog":                 iconFog,
-	"rain":                iconRain,
-	"snow":                iconSnow,
-	"heavy-snow":          iconHeavySnow,
-	"thunderstorm":        iconThunderstorm,
-	"thermometer":         iconThermometer,
-	"wind":                iconWind,
-	"humidity":            iconHumidity,
-	"sunrise":             iconSunrise,
-	"sunset":              iconSunset,
-	"elevation":           iconElevation,
-	"camera":              iconCamera,
-	"camera-off":          iconCameraOff,
-	"record":              iconRecord,
-	"stop":                iconStop,
-	"replay":              iconReplay,
-	"notifications":       iconNotifications,
-	"notifications-off":   iconNotificationsOff,
-	"close":               iconClose,
-	"schedule":            iconSchedule,
-	"ghost":               iconGhost,
-	"sysmon-cpu":          iconGaugeCPU,
-	"sysmon-memory":       iconGaugeMemory,
-	"sysmon-gpu":          iconGaugeGPU,
-	"battery-0":           iconBatteryLevel0,
-	"battery-1":           iconBatteryLevel1,
-	"battery-2":           iconBatteryLevel2,
-	"battery-3":           iconBatteryLevel3,
-	"battery-4":           iconBatteryLevel4,
-	"battery-5":           iconBatteryLevel5,
-	"battery-6":           iconBatteryLevel6,
-	"battery-charging-0":  iconBatteryCharging0,
-	"battery-charging-1":  iconBatteryCharging1,
-	"battery-charging-2":  iconBatteryCharging2,
-	"battery-charging-3":  iconBatteryCharging3,
-	"battery-charging-4":  iconBatteryCharging4,
-	"battery-charging-5":  iconBatteryCharging5,
-	"battery-charging-6":  iconBatteryCharging6,
-	"battery-critical":    iconBatteryCritical,
-	"network":             iconNetwork,
+	"clear-day":            iconClearDay,
+	"clear-night":          iconClearNight,
+	"partly-cloudy":        iconPartlyCloudy,
+	"partly-cloudy-night":  iconPartlyCloudyNight,
+	"cloud":                iconCloud,
+	"fog":                  iconFog,
+	"rain":                 iconRain,
+	"snow":                 iconSnow,
+	"heavy-snow":           iconHeavySnow,
+	"thunderstorm":         iconThunderstorm,
+	"thermometer":          iconThermometer,
+	"wind":                 iconWind,
+	"humidity":             iconHumidity,
+	"sunrise":              iconSunrise,
+	"sunset":               iconSunset,
+	"elevation":            iconElevation,
+	"camera":               iconCamera,
+	"camera-off":           iconCameraOff,
+	"record":               iconRecord,
+	"stop":                 iconStop,
+	"replay":               iconReplay,
+	"notifications":        iconNotifications,
+	"notifications-off":    iconNotificationsOff,
+	"close":                iconClose,
+	"schedule":             iconSchedule,
+	"ghost":                iconGhost,
+	"sysmon-cpu":           iconGaugeCPU,
+	"sysmon-memory":        iconGaugeMemory,
+	"sysmon-gpu":           iconGaugeGPU,
+	"battery-0":            iconBatteryLevel0,
+	"battery-1":            iconBatteryLevel1,
+	"battery-2":            iconBatteryLevel2,
+	"battery-3":            iconBatteryLevel3,
+	"battery-4":            iconBatteryLevel4,
+	"battery-5":            iconBatteryLevel5,
+	"battery-6":            iconBatteryLevel6,
+	"battery-charging-0":   iconBatteryCharging0,
+	"battery-charging-1":   iconBatteryCharging1,
+	"battery-charging-2":   iconBatteryCharging2,
+	"battery-charging-3":   iconBatteryCharging3,
+	"battery-charging-4":   iconBatteryCharging4,
+	"battery-charging-5":   iconBatteryCharging5,
+	"battery-charging-6":   iconBatteryCharging6,
+	"battery-critical":     iconBatteryCritical,
+	"network":              iconNetwork,
+	"smartphone":           iconSmartphone,
+	"phonelink-off":        iconPhonelinkOff,
+	"tablet":               iconTablet,
+	"laptop":               iconLaptop,
+	"desktop-windows":      iconDesktopWindows,
+	"tv":                   iconTV,
+	"devices":              iconDevices,
+	"phone-in-talk":        iconPhoneInTalk,
+	"folder-open":          iconFolderOpen,
+	"content-paste":        iconContentPaste,
+	"share":                iconShare,
+	"sms":                  iconSMS,
+	"notifications-active": iconNotificationsActive,
+	"refresh":              iconRefresh,
 }
 
 // IconByName resolves a catalogue name to its symbol.

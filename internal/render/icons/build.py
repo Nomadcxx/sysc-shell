@@ -65,6 +65,20 @@ GLYPHS = [
     ("uniE02D", 0xE02D, "sunrise"),
     ("uniE02E", 0xE02E, "sunset"),
     ("uniE02F", 0xE02F, "elevation"),
+    ("uniE030", 0xE030, "smartphone"),
+    ("uniE031", 0xE031, "phonelink-off"),
+    ("uniE032", 0xE032, "tablet"),
+    ("uniE033", 0xE033, "laptop"),
+    ("uniE034", 0xE034, "desktop-windows"),
+    ("uniE035", 0xE035, "tv"),
+    ("uniE036", 0xE036, "devices"),
+    ("uniE037", 0xE037, "phone-in-talk"),
+    ("uniE038", 0xE038, "folder-open"),
+    ("uniE039", 0xE039, "content-paste"),
+    ("uniE03A", 0xE03A, "share"),
+    ("uniE03B", 0xE03B, "sms"),
+    ("uniE03C", 0xE03C, "notifications-active"),
+    ("uniE03D", 0xE03D, "refresh"),
 ]
 
 UPM = 1000
