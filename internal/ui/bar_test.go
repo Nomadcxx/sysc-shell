@@ -175,6 +175,64 @@ func TestAnchoredWordmarkKeepsTheContentBandCentre(t *testing.T) {
 	}
 }
 
+// An anchored centre that cannot fit must fall back to the sections path and
+// place every node exactly as that path places it alone. The comparison runs
+// the same sections through a centre with no wordmark, which routes straight
+// to the sections path, so the pin holds however the fallback is implemented.
+func TestAnchoredCentreThatDoesNotFitFallsBackToSections(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		markW      int
+		beforeText string
+	}{
+		{name: "mark wider than the band", markW: 60},
+		{name: "composition wider than the band", markW: 30, beforeText: "time"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			content := Rect{X: 5, Y: 0, W: 50, H: 40}
+			build := func(mark *Node) (left, center, right []*Node) {
+				left = []*Node{text("aaa")}
+				right = []*Node{text("zzz")}
+				if tc.beforeText != "" {
+					center = append(center, text(tc.beforeText))
+				}
+				center = append(center, mark)
+				return left, center, right
+			}
+			anchoredLeft, anchoredCenter, anchoredRight :=
+				build(&Node{Kind: KindWordmark, ImageW: tc.markW, ImageH: 20})
+			plainLeft, plainCenter, plainRight := build(text(strings.Repeat("m", tc.markW/10)))
+
+			over, err := ArrangeBar(content, anchoredLeft, anchoredCenter, anchoredRight, 6, fixed)
+			if err != nil {
+				t.Fatalf("ArrangeBar: %v", err)
+			}
+			wantOver, err := ArrangeBar(content, plainLeft, plainCenter, plainRight, 6, fixed)
+			if err != nil {
+				t.Fatalf("ArrangeBar: %v", err)
+			}
+			if over != wantOver {
+				t.Fatalf("overflow = %+v, want the sections path's %+v", over, wantOver)
+			}
+			if anchoredLeft[0].Bounds != plainLeft[0].Bounds {
+				t.Fatalf("left bounds = %+v, want the sections path's %+v",
+					anchoredLeft[0].Bounds, plainLeft[0].Bounds)
+			}
+			if anchoredRight[0].Bounds != plainRight[0].Bounds {
+				t.Fatalf("right bounds = %+v, want the sections path's %+v",
+					anchoredRight[0].Bounds, plainRight[0].Bounds)
+			}
+			for i := range anchoredCenter {
+				if anchoredCenter[i].Bounds != plainCenter[i].Bounds {
+					t.Fatalf("centre item %d bounds = %+v, want the sections path's %+v",
+						i, anchoredCenter[i].Bounds, plainCenter[i].Bounds)
+				}
+			}
+		})
+	}
+}
+
 func TestEmptySectionsContributeNothing(t *testing.T) {
 	t.Parallel()
 	content := Rect{X: 0, Y: 0, W: 300, H: 40}
