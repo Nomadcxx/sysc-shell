@@ -29,8 +29,8 @@ const (
 	Vertical
 )
 
-// mainOf splits a content band into main-axis origin and extent.
-func (a Axis) mainOf(content Rect) (mainOrigin, mainExtent int) {
+// MainBand splits a content band into main-axis origin and extent.
+func (a Axis) MainBand(content Rect) (mainOrigin, mainExtent int) {
 	if a == Vertical {
 		return content.Y, content.H
 	}
@@ -70,6 +70,22 @@ func (a Axis) crossExtentOf(w, h int) int {
 	return h
 }
 
+// MainOrigin reports where a placed box starts along the axis.
+func (a Axis) MainOrigin(r Rect) int {
+	if a == Vertical {
+		return r.Y
+	}
+	return r.X
+}
+
+// MainEnd reports where a placed box ends along the axis.
+func (a Axis) MainEnd(r Rect) int {
+	if a == Vertical {
+		return r.Y + r.H
+	}
+	return r.X + r.W
+}
+
 // ArrangeBar places three sections in one content band, writes each node's
 // Bounds, and reports what would not fit.
 //
@@ -90,7 +106,7 @@ func ArrangeBar(content Rect, axis Axis, left, center, right []*Node, spacing in
 		return BarOverflow{}, fmt.Errorf("ui: negative content bounds %dx%d", content.W, content.H)
 	}
 	var over BarOverflow
-	mainOrigin, mainExtent := axis.mainOf(content)
+	mainOrigin, mainExtent := axis.MainBand(content)
 	_, crossExtent := axis.crossOf(content)
 	wL, err := sectionExtent(left, crossExtent, axis, spacing, measure)
 	if err != nil {
@@ -135,7 +151,7 @@ func centreInterval(content Rect, axis Axis, center []*Node, spacing int, measur
 // sectionCentreInterval centres one block and reports its interval. The
 // truncating escape below is the one place a partial grant survives.
 func sectionCentreInterval(content Rect, axis Axis, center []*Node, spacing int, measure MeasureText, over *BarOverflow) (int, int, error) {
-	mainOrigin, mainExtent := axis.mainOf(content)
+	mainOrigin, mainExtent := axis.MainBand(content)
 	_, crossExtent := axis.crossOf(content)
 	wC, err := sectionExtent(center, crossExtent, axis, spacing, measure)
 	if err != nil {
@@ -170,7 +186,7 @@ func sectionCentreInterval(content Rect, axis Axis, center []*Node, spacing int,
 // does not fit it falls back to the plain variant, which is the documented
 // degradation for an over-wide anchored centre.
 func anchoredCentreInterval(content Rect, axis Axis, center []*Node, markIndex, spacing int, measure MeasureText, over *BarOverflow) (int, int, error) {
-	mainOrigin, mainExtent := axis.mainOf(content)
+	mainOrigin, mainExtent := axis.MainBand(content)
 	_, crossExtent := axis.crossOf(content)
 	before, mark, after := center[:markIndex], center[markIndex:markIndex+1], center[markIndex+1:]
 	wBefore, err := sectionExtent(before, crossExtent, axis, spacing, measure)

@@ -493,21 +493,26 @@ func (b *Bar) Overflow() ui.BarOverflow {
 	return b.overflow
 }
 
+// trayAvailableLocked computes the main-axis extent the tray lane may use,
+// from the placed bounds of the centre and right lanes. The tray rides the
+// right lane, so on a side bar it stacks toward the lower end of the strip.
 func (b *Bar) trayAvailableLocked(content ui.Rect, center, right []*ui.Node) int {
-	start := content.X + content.W/2
+	axis := b.axis()
+	mainOrigin, mainExtent := axis.MainBand(content)
+	start := mainOrigin + mainExtent/2
 	if len(center) > 0 {
 		last := center[len(center)-1].Bounds
-		start = last.X + last.W
+		start = axis.MainEnd(last)
 	}
 	if len(center) > 0 || len(right) > 0 {
 		start += b.theme.Metrics.BarSpacing
 	}
 	used := 0
 	if len(right) > 0 {
-		used = content.X + content.W - right[0].Bounds.X
+		used = mainOrigin + mainExtent - axis.MainOrigin(right[0].Bounds)
 		used += b.theme.Metrics.BarSpacing
 	}
-	return max(0, content.X+content.W-start-used)
+	return max(0, mainOrigin+mainExtent-start-used)
 }
 
 func (b *Bar) rebuildTrayNodesLocked() {
