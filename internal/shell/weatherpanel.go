@@ -150,8 +150,7 @@ func weatherHeroCard(reading services.Reading, location string, m theme.Metrics,
 	// follows the measured aspect rather than which surface asked for it: a
 	// tall card stacks the reading over the scene, a wide one sets it beside.
 	contentH := max(height-2*m.CardPadding, 0)
-	meta := &ui.Node{Kind: ui.KindText, TextRole: theme.RoleCaption, Tabular: true,
-		Text: weatherMetaLine(reading, location)}
+	meta := weatherMetaRow(reading, location, m)
 	metaH := m.IconSmall
 	groupH := max(contentH-metaH-theme.MarginS, 0)
 
@@ -201,8 +200,25 @@ func weatherHeroCard(reading services.Reading, location string, m theme.Metrics,
 	return weatherCardWithEffect(card, reading, effectKey, bias)
 }
 
-// weatherMetaLine is the hero's one quiet supporting line. Every fact the
-// three-cell grid carried survives here; none of them competes with the scene.
+// weatherMetaRow is the hero's one quiet supporting line. The place sits at the
+// leading edge and the readings at the trailing one, both in the muted
+// foreground: they are there to be found, not to compete with the scene. A
+// single run-on caption at full contrast read as an unstyled afterthought.
+func weatherMetaRow(reading services.Reading, location string, m theme.Metrics) *ui.Node {
+	readings := &ui.Node{Kind: ui.KindText, TextRole: theme.RoleCaption, Tabular: true,
+		Tone: ui.ToneSubtle, Text: weatherMetaLine(reading, "")}
+	place := strings.TrimSpace(location)
+	if place == "" || place == absent || place == ccDash {
+		return readings
+	}
+	return &ui.Node{Kind: ui.KindRow, Height: m.IconSmall, Gap: theme.MarginM, PinEnd: true, Children: []*ui.Node{
+		{Kind: ui.KindText, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, Text: place},
+		readings,
+	}}
+}
+
+// weatherMetaLine is the readings half of that row. Every fact the three-cell
+// grid carried survives here; none of them competes with the scene.
 func weatherMetaLine(reading services.Reading, location string) string {
 	parts := make([]string, 0, 5)
 	if location != "" && location != absent && location != ccDash {

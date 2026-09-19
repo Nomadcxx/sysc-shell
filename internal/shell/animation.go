@@ -28,7 +28,16 @@ const (
 	animTick = 16 * time.Millisecond
 	// effectTrip bounds one effect phase cycle. The surface frame cap controls
 	// how often it is painted; this duration only controls the phase itself.
-	effectTrip = 2 * time.Second
+	// Weather is meant to drift, not to hurry: a short trip made clouds and
+	// haze travel at a speed no sky moves at.
+	effectTrip = 9 * time.Second
+	// effectFrameCap paces a surface whose only work in flight is an effect.
+	// A drifting scene on a 9-second cycle is indistinguishable at this rate
+	// from one painted every vsync, and the difference is most of a core: an
+	// effect repaints the whole surface, and its loop never settles, so an
+	// open weather panel would otherwise animate at the interaction cadence
+	// for as long as it is open.
+	effectFrameCap = 66 * time.Millisecond
 )
 
 // animChannel is one animated property of one keyed node.
@@ -282,6 +291,23 @@ func (a *animator) Settled() bool {
 	return true
 }
 
+// SettledExceptEffects reports whether everything but the effect layers has
+// come to rest. Effects loop forever, so they can never settle; asking this
+// separately is what lets a surface drop to the effect cadence once its
+// transitions are done, instead of pacing a drifting sky like a hover.
+func (a *animator) SettledExceptEffects() bool {
+	now := a.now()
+	for key, v := range a.values {
+		if key.channel == animEffect {
+			continue
+		}
+		if !v.settled(now) {
+			return false
+		}
+	}
+	return true
+}
+
 // Forget drops a node's values. A control that left the tree must not hold a
 // transition open and keep the surface requesting frames.
 func (a *animator) Forget(node string) {
@@ -345,12 +371,14 @@ func (a *animator) frameCap() time.Duration {
 // everything settles, so an idle shell schedules nothing. Panels and the OSD
 // both drive their frames through it rather than keeping timers of their own.
 //
-// minInterval bounds how often it publishes. The ticker cadence is unchanged:
-// this reduces blits, never frame requests, so it cannot add a frame source.
+// minInterval bounds how often it publishes, and is asked per tick: a surface
+// paces interaction and a drifting effect differently, and which one is in
+// flight changes while the loop runs. The ticker cadence is unchanged: this
+// reduces blits, never frame requests, so it cannot add a frame source.
 //
 // settled and publish do their own locking: the surfaces they touch differ, and
 // holding a lock across a publish would put the frame request under it.
-func animateSurface(stop <-chan struct{}, settled func() bool, publish func(), minInterval time.Duration) {
+func animateSurface(stop <-chan struct{}, settled func() bool, publish func(), minInterval func() time.Duration) {
 	tick := time.NewTicker(animTick)
 	defer tick.Stop()
 	var last time.Time
@@ -368,7 +396,7 @@ func animateSurface(stop <-chan struct{}, settled func() bool, publish func(), m
 			// The settling frame always publishes, even inside the cap window,
 			// or a settled value is left unpainted and the surface keeps a
 			// stale pixel.
-			if done || last.IsZero() || now.Sub(last) >= minInterval {
+			if done || last.IsZero() || now.Sub(last) >= minInterval() {
 				publish()
 				last = now
 			}

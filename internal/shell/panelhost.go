@@ -2360,11 +2360,17 @@ func (r *Registry) surfaceFrameLoop(h *PanelHost) {
 		h.anim.running = false
 		r.mu.Unlock()
 	}()
-	// Resolve the cap once, under the lock: a theme reload can replace the
-	// animator, and the call expression below runs unlocked.
-	r.mu.Lock()
-	frameCap := h.anim.frameCap()
-	r.mu.Unlock()
+	// The cap is resolved per tick rather than once: a surface carrying an
+	// effect paces its drift far slower than its interactions, and which of
+	// the two is in flight changes while this loop runs.
+	frameCap := func() time.Duration {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if h.anim.SettledExceptEffects() {
+			return effectFrameCap
+		}
+		return h.anim.frameCap()
+	}
 	animateSurface(h.stopAnim, func() bool {
 		r.mu.Lock()
 		defer r.mu.Unlock()

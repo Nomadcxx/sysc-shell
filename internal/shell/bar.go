@@ -644,7 +644,7 @@ func (b *Bar) barFrameLoop() {
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		return b.anim.Settled()
-	}, b.invalidate, frameCap)
+	}, b.invalidate, func() time.Duration { return frameCap })
 }
 
 func (b *Bar) stopAnimation() {
