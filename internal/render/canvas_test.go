@@ -139,7 +139,7 @@ func TestFilletCoverageClipsToCanvas(t *testing.T) {
 func TestSurfaceTransformScalesPremultipliedChannels(t *testing.T) {
 	c := newTestCanvas(t, 1, 1)
 	copy(c.Pix, []byte{80, 60, 40, 100})
-	c.ApplySurfaceTransform(0.5, 0)
+	c.ApplySurfaceTransform(0.5, 0, 0)
 	if got, want := c.Pix[:4], []byte{40, 30, 20, 50}; !bytes.Equal(got, want) {
 		t.Fatalf("transformed pixel = %v, want %v", got, want)
 	}
@@ -160,7 +160,7 @@ func TestSurfaceTransformTranslatesInPlaceAndClearsExposedRows(t *testing.T) {
 				c.Pix[y*c.Stride+3] = alpha
 			}
 			backing := &c.Pix[0]
-			c.ApplySurfaceTransform(1, tc.dy)
+			c.ApplySurfaceTransform(1, 0, tc.dy)
 			if &c.Pix[0] != backing {
 				t.Fatal("surface transform replaced the frame buffer")
 			}

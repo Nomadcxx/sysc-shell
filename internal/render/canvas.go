@@ -49,23 +49,41 @@ type Canvas struct {
 	restrict      ui.Rect
 }
 
-// ApplySurfaceTransform applies the final opacity and vertical translation to
-// an already-premultiplied frame. copy handles overlapping slices, so the
-// translation reuses the compositor buffer and only clears the rows it exposes.
-func (c *Canvas) ApplySurfaceTransform(opacity float64, translateY int) {
+// ApplySurfaceTransform applies the final opacity and translation to an
+// already-premultiplied frame. copy handles overlapping slices, so the
+// translation reuses the compositor buffer and only clears the rows and
+// columns it exposes. A horizontal bar slides in Y and a side bar in X, so
+// one of the two offsets is always zero.
+func (c *Canvas) ApplySurfaceTransform(opacity float64, offsetX, offsetY int) {
 	if c == nil || c.Width <= 0 || c.Height <= 0 || c.Stride <= 0 {
 		return
 	}
 	pix := c.Pix[:c.Stride*c.Height]
-	if translateY >= c.Height || translateY <= -c.Height {
+	if offsetY >= c.Height || offsetY <= -c.Height {
 		clear(pix)
-	} else if translateY > 0 {
-		copy(pix[translateY*c.Stride:], pix[:(c.Height-translateY)*c.Stride])
-		clear(pix[:translateY*c.Stride])
-	} else if translateY < 0 {
-		rows := -translateY
+	} else if offsetY > 0 {
+		copy(pix[offsetY*c.Stride:], pix[:(c.Height-offsetY)*c.Stride])
+		clear(pix[:offsetY*c.Stride])
+	} else if offsetY < 0 {
+		rows := -offsetY
 		copy(pix[:(c.Height-rows)*c.Stride], pix[rows*c.Stride:])
 		clear(pix[(c.Height-rows)*c.Stride:])
+	}
+	if offsetX >= c.Width || offsetX <= -c.Width {
+		clear(pix)
+	} else if offsetX > 0 {
+		for y := 0; y < c.Height; y++ {
+			row := c.Pix[y*c.Stride : y*c.Stride+c.Width*4]
+			copy(row[offsetX*4:], row[:(c.Width-offsetX)*4])
+			clear(row[:offsetX*4])
+		}
+	} else if offsetX < 0 {
+		d := -offsetX
+		for y := 0; y < c.Height; y++ {
+			row := c.Pix[y*c.Stride : y*c.Stride+c.Width*4]
+			copy(row[:(c.Width-d)*4], row[d*4:])
+			clear(row[(c.Width-d)*4:])
+		}
 	}
 	if opacity >= 1 {
 		return
@@ -200,7 +218,9 @@ func strokeRoundedRect(c *Canvas, r ui.Rect, radius, width int, col Color) {
 
 // clearOutsideRoundedRect restores transparency after children paint. Child
 // bounds may reach a body corner when padding is zero, but the final surface
-// silhouette must remain the same rounded rectangle as its background.
+// silhouette must remain the same rounded rectangle as its background. The
+// attached column squares so a panel reads as one piece with its bar; beside
+// a side bar no wedges are painted, so nothing beyond the body survives.
 func clearOutsideRoundedRect(c *Canvas, r ui.Rect, radius, fillet int, attachEdge string) {
 	radius = min(radius, min(r.W, r.H)/2)
 	for y := 0; y < c.Height; y++ {
@@ -209,24 +229,40 @@ func clearOutsideRoundedRect(c *Canvas, r ui.Rect, radius, fillet int, attachEdg
 			clear(row)
 			continue
 		}
-		ext := 0
-		if fillet > 0 {
-			ly := y - r.Y
-			if attachEdge == "bottom" {
-				ly = r.Y + r.H - 1 - y
-			}
-			ext = filletExtent(ly, fillet)
-		}
-		inset := 0
-		if radius > 0 {
-			ly := y - r.Y
-			square := (attachEdge == "top" && ly < radius) || (attachEdge == "bottom" && ly >= r.H-radius)
-			if !square {
+		ly := y - r.Y
+		ext, inset := 0, 0
+		switch attachEdge {
+		case "left", "right":
+			if radius > 0 {
 				inset = roundedInset(ly, r.H, radius)
 			}
+		default:
+			if fillet > 0 {
+				fy := ly
+				if attachEdge == "bottom" {
+					fy = r.Y + r.H - 1 - y
+				}
+				ext = filletExtent(fy, fillet)
+			}
+			if radius > 0 {
+				square := (attachEdge == "top" && ly < radius) || (attachEdge == "bottom" && ly >= r.H-radius)
+				if !square {
+					inset = roundedInset(ly, r.H, radius)
+				}
+			}
 		}
-		x0 := max(0, min(c.Width, r.X+inset-ext))
-		x1 := max(x0, min(c.Width, r.X+r.W-inset+ext))
+		var x0, x1 int
+		switch attachEdge {
+		case "left":
+			x0 = max(0, min(c.Width, r.X))
+			x1 = max(x0, min(c.Width, r.X+r.W-inset))
+		case "right":
+			x0 = max(0, min(c.Width, r.X+inset))
+			x1 = max(x0, min(c.Width, r.X+r.W))
+		default:
+			x0 = max(0, min(c.Width, r.X+inset-ext))
+			x1 = max(x0, min(c.Width, r.X+r.W-inset+ext))
+		}
 		clear(row[:x0*4])
 		clear(row[x1*4:])
 	}
@@ -238,6 +274,9 @@ func fillAttachFillets(c *Canvas, r ui.Rect, fillet int, attachEdge string, col 
 	if fillet <= 0 || col.A == 0 || r.W <= 0 || r.H <= 0 {
 		return
 	}
+	// Side edges keep this early return deliberately: whether concave fillets
+	// are meaningful on a vertical bar edge is a live-gate question, answered
+	// by observation rather than assumed here.
 	if attachEdge != "top" && attachEdge != "bottom" {
 		return
 	}

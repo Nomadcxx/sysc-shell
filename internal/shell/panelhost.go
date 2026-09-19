@@ -938,20 +938,35 @@ func (h *PanelHost) rootStyle(t Theme) render.Style {
 
 func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	anchor := uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorLeft)
-	if h.place.BarEdge == "bottom" {
+	switch h.place.BarEdge {
+	case "bottom":
 		anchor = uint32(layershell.ZwlrLayerSurfaceV1AnchorBottom | layershell.ZwlrLayerSurfaceV1AnchorLeft)
+	case "left":
+		anchor = uint32(layershell.ZwlrLayerSurfaceV1AnchorLeft | layershell.ZwlrLayerSurfaceV1AnchorTop)
+	case "right":
+		anchor = uint32(layershell.ZwlrLayerSurfaceV1AnchorRight | layershell.ZwlrLayerSurfaceV1AnchorTop)
 	}
 	// Where the panel's body will land on the output, in the same logical
 	// coordinates the capture takes. It is computed before the fillet shifts
-	// the surface left, because the body sits inset by exactly that much inside
+	// the surface, because the body sits inset by exactly that much inside
 	// the surface, so the two cancel.
 	region := ui.Rect{X: m.Left, Y: m.Top, W: h.place.Panel.W, H: h.place.Panel.H}
 	if h.place.BarEdge == "bottom" {
 		region.Y = h.place.Output.H - m.Bottom - h.place.Panel.H
 	}
+	if h.place.BarEdge == "right" {
+		region.X = h.place.Output.W - m.Right - h.place.Panel.W
+	}
 	fillet := h.filletMargin()
 	if fillet > 0 {
-		m.Left -= fillet
+		// The surface grows along the bar's axis, the way m.Left -= fillet
+		// serves the horizontal edges.
+		switch h.place.BarEdge {
+		case "left", "right":
+			m.Top -= fillet
+		default:
+			m.Left -= fillet
+		}
 	}
 	opaque := h.theme.BackgroundOpaque()
 	if fillet > 0 {
@@ -965,6 +980,11 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	if r.cfg.Theme.BlurBehind {
 		blurRegion = &region
 	}
+	width, height := h.place.Panel.W+2*fillet, h.place.Panel.H
+	switch h.place.BarEdge {
+	case "left", "right":
+		width, height = h.place.Panel.W, h.place.Panel.H+2*fillet
+	}
 	return &wayland.AuxSpec{
 		ID:            panelSurfaceID(h.id),
 		Namespace:     "sysc-shell-panel",
@@ -974,8 +994,8 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 		MarginBottom:  int32(m.Bottom),
 		MarginLeft:    int32(m.Left),
 		MarginRight:   int32(m.Right),
-		Width:         int32(h.place.Panel.W + 2*fillet),
-		Height:        int32(h.place.Panel.H),
+		Width:         int32(width),
+		Height:        int32(height),
 		ExclusiveZone: -1,
 		Keyboard:      keyboardExclusive,
 		BlurRegion:    blurRegion,
@@ -1016,9 +1036,17 @@ func (h *PanelHost) filletMargin() int {
 	room := h.place.Padding - BarGap
 	if h.id == PanelControlCenter {
 		m := h.place.Margins()
-		left := m.Left - BarGap
-		right := h.place.Output.W - BarGap - (m.Left + h.place.Panel.W)
-		room = min(left, right)
+		if h.place.BarEdge == "left" || h.place.BarEdge == "right" {
+			// The wedges would taper beyond the body's top and lower ends, so
+			// the room the joint needs is measured along the bar's axis.
+			top := m.Top - BarGap
+			end := h.place.Output.H - BarGap - (m.Top + h.place.Panel.H)
+			room = min(top, end)
+		} else {
+			left := m.Left - BarGap
+			right := h.place.Output.W - BarGap - (m.Left + h.place.Panel.W)
+			room = min(left, right)
+		}
 	}
 	if room <= 0 {
 		return 0
@@ -1105,21 +1133,28 @@ func (h *PanelHost) measureText() ui.MeasureText {
 	}
 }
 
-func (h *PanelHost) panelReveal() (opacity float64, offsetY, fillet int) {
+func (h *PanelHost) panelReveal() (opacity float64, offsetX, offsetY, fillet int) {
 	if h == nil || h.anim == nil || !h.anim.has(panelSurfaceID(h.id), animVisible) {
 		if h == nil {
-			return 1, 0, 0
+			return 1, 0, 0, 0
 		}
-		return 1, 0, h.theme.Fillet
+		return 1, 0, 0, h.theme.Fillet
 	}
 	key := panelSurfaceID(h.id)
 	opacity = h.anim.PanelOpacity(key)
+	// The panel slides along the axis perpendicular to its bar: a side bar
+	// slides in X where a horizontal bar slides in Y, always toward the bar.
 	offsetY = h.anim.PanelSlide(key)
-	if h.place.BarEdge == "top" {
+	switch h.place.BarEdge {
+	case "top":
 		offsetY = -offsetY
+	case "left":
+		offsetX, offsetY = -offsetY, 0
+	case "right":
+		offsetX, offsetY = offsetY, 0
 	}
 	fillet = int(math.Round(float64(h.theme.Fillet) * opacity))
-	return opacity, offsetY, fillet
+	return opacity, offsetX, offsetY, fillet
 }
 
 func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
@@ -1138,8 +1173,19 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	if body.W <= 0 || body.H <= 0 {
 		body = ui.Rect{W: h.place.Panel.W, H: h.place.Panel.H}
 	}
-	if margin := h.filletMargin(); margin > 0 && body.W >= h.place.Panel.W+2*margin {
-		body = ui.Rect{X: margin, W: h.place.Panel.W, H: body.H}
+	if margin := h.filletMargin(); margin > 0 {
+		// The body sits inset from the side the surface grew along, the way
+		// the horizontal edges inset it from the left.
+		switch h.place.BarEdge {
+		case "left", "right":
+			if body.H >= h.place.Panel.H+2*margin {
+				body = ui.Rect{Y: margin, W: body.W, H: h.place.Panel.H}
+			}
+		default:
+			if body.W >= h.place.Panel.W+2*margin {
+				body = ui.Rect{X: margin, W: h.place.Panel.W, H: body.H}
+			}
+		}
 	}
 	// The painter consumes a copy. Pointer state and effect phase are render
 	// values, so neither resolver mutates the retained panel tree.
@@ -1167,7 +1213,7 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	}
 	style.Scale120 = scale
 	style.Body = body
-	opacity, offsetY, fillet := h.panelReveal()
+	opacity, offsetX, offsetY, fillet := h.panelReveal()
 	style.Fillet = fillet
 	if !h.place.CenterY {
 		style.AttachEdge = h.place.BarEdge
@@ -1200,7 +1246,7 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 			c.StrokeRounded(ring, radius, max(scale.Physical(2), 2), h.theme.Accent)
 		}
 	}
-	c.ApplySurfaceTransform(opacity, scale.Physical(offsetY))
+	c.ApplySurfaceTransform(opacity, scale.Physical(offsetX), scale.Physical(offsetY))
 	return nil
 }
 

@@ -129,10 +129,13 @@ func TestControlCentreRevealFollowsSurfaceAnimator(t *testing.T) {
 		name    string
 		edge    string
 		reduced bool
+		wantX   int
 		wantY   int
 	}{
 		{name: "top", edge: "top", wantY: -panelSlidePx},
 		{name: "bottom", edge: "bottom", wantY: panelSlidePx},
+		{name: "left", edge: "left", wantX: -panelSlidePx},
+		{name: "right", edge: "right", wantX: panelSlidePx},
 		{name: "reduced", edge: "top", reduced: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -141,18 +144,20 @@ func TestControlCentreRevealFollowsSurfaceAnimator(t *testing.T) {
 			h.anim = newAnimator(func() time.Time { return now }, tc.reduced, h.theme.Motion)
 			h.anim.Target(panelSurfaceID(h.id), animVisible, 1)
 
-			opacity, offsetY, fillet := h.panelReveal()
-			if opacity != 0 || offsetY != tc.wantY || fillet != 0 {
-				t.Fatalf("initial reveal = opacity %v offset %d fillet %d, want 0, %d, 0", opacity, offsetY, fillet, tc.wantY)
+			opacity, offsetX, offsetY, fillet := h.panelReveal()
+			if opacity != 0 || offsetX != tc.wantX || offsetY != tc.wantY || fillet != 0 {
+				t.Fatalf("initial reveal = opacity %v offset %d,%d fillet %d, want 0, %d,%d, 0",
+					opacity, offsetX, offsetY, fillet, tc.wantX, tc.wantY)
 			}
 			settle := h.theme.Motion.Durations.Medium
 			if tc.reduced {
 				settle = reducedPanelCap
 			}
 			now = now.Add(settle)
-			opacity, offsetY, fillet = h.panelReveal()
-			if opacity != 1 || offsetY != 0 || fillet != h.theme.Fillet {
-				t.Fatalf("settled reveal = opacity %v offset %d fillet %d, want 1, 0, %d", opacity, offsetY, fillet, h.theme.Fillet)
+			opacity, offsetX, offsetY, fillet = h.panelReveal()
+			if opacity != 1 || offsetX != 0 || offsetY != 0 || fillet != h.theme.Fillet {
+				t.Fatalf("settled reveal = opacity %v offset %d,%d fillet %d, want 1, 0,0, %d",
+					opacity, offsetX, offsetY, fillet, h.theme.Fillet)
 			}
 		})
 	}

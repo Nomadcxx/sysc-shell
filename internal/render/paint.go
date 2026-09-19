@@ -216,11 +216,16 @@ func squareAttachedEdge(c *Canvas, box ui.Rect, radius int, edge string, col Col
 		return
 	}
 	h := min(radius, box.H)
+	w := min(radius, box.W)
 	switch edge {
 	case "top":
 		fillRect(c, ui.Rect{X: box.X, Y: box.Y, W: box.W, H: h}, col)
 	case "bottom":
 		fillRect(c, ui.Rect{X: box.X, Y: box.Y + box.H - h, W: box.W, H: h}, col)
+	case "left":
+		fillRect(c, ui.Rect{X: box.X, Y: box.Y, W: w, H: box.H}, col)
+	case "right":
+		fillRect(c, ui.Rect{X: box.X + box.W - w, Y: box.Y, W: w, H: box.H}, col)
 	}
 }
 
