@@ -132,6 +132,10 @@ func HelperServe(args []string) int {
 			_ = out.Encode(&v1.PluginStatus{State: v1.StatusOK, Message: string(m.Result)})
 		case *v1.InputEvent:
 			_ = out.Encode(&v1.PluginStatus{State: v1.StatusOK, Message: m.Node})
+			if mode == "panel-on-input" {
+				params, _ := json.Marshal(v1.PanelParams{Entry: "panel", Output: m.Output})
+				_ = out.Encode(&v1.HostCall{ID: "c1", Call: v1.CallPanelOpen, Params: params})
+			}
 		}
 	}
 }

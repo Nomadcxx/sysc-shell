@@ -224,7 +224,7 @@ func TestPluginHostIgnoresStaleEventsAfterClose(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	ok := reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "go"}, v1.EventActivate, "", "")
+	ok := reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "go"}, v1.EventActivate, "", "", 0)
 	if ok {
 		t.Fatal("closed view still accepted input")
 	}
@@ -903,4 +903,40 @@ func TestPluginBarTreeFitsHostSlot(t *testing.T) {
 	if err := ui.Layout(root, ui.Rect{W: pluginBarViewWidth, H: pluginBarViewHeight}, pluginMeasure); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestPluginPanelAnchorsUnderTheClickedWidget(t *testing.T) {
+	reg := bindTestPlugin(t, "panel-on-input")
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	waitPluginText(t, reg.bars[1], "hello")
+	bar := reg.bars[1]
+	if err := bar.Configure(800, BarHeight, 120); err != nil {
+		t.Fatal(err)
+	}
+	w := pluginWidget(bar)
+	if w.node == nil {
+		t.Fatal("no plugin widget")
+	}
+	want := w.node.Bounds.X + w.node.Bounds.W/2
+	action, x, y := pluginHitPoint(bar)
+	if action == "" {
+		t.Fatal("plugin button was not arranged")
+	}
+	bar.Handle(wayland.Event{Kind: wayland.EventPointerEnter, X: x, Y: y})
+	// Press only: the release would toggle the panel closed again.
+	bar.Handle(wayland.Event{Kind: wayland.EventPointerPress, Button: 272, X: x, Y: y})
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		h := reg.panelHosts[PanelPlugin]
+		reg.mu.Unlock()
+		if h != nil {
+			if h.place.AnchorX != want {
+				t.Fatalf("panel anchor = %d, want %d", h.place.AnchorX, want)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("plugin panel never opened")
 }

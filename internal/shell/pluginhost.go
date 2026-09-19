@@ -62,7 +62,11 @@ type pluginHost struct {
 	flushPending bool
 	closed       []string
 	panel        *hostedView
-	catalog      plugin.Catalog
+	// lastAnchor remembers the bar X of the widget that most recently
+	// delivered input for a plugin, so the panel it opens can anchor under
+	// that widget instead of floating at the default position.
+	lastAnchor map[string]int
+	catalog    plugin.Catalog
 }
 
 func pluginMeasure(s string, _ ui.TextAttrs) (int, int) { return len(s) * 8, 16 }
@@ -82,13 +86,14 @@ var hostPluginCaps = []plugin.Capability{
 func (r *Registry) BindPlugins(opts PluginHostOptions) error {
 	ctx, stop := context.WithCancel(context.Background())
 	h := &pluginHost{
-		r:     r,
-		opts:  opts,
-		ctx:   ctx,
-		stop:  stop,
-		prep:  plugin.NewPreparer(2, pluginMeasure),
-		slots: make(map[string]*pluginSlot),
-		views: make(map[string]*hostedView),
+		r:          r,
+		opts:       opts,
+		ctx:        ctx,
+		stop:       stop,
+		prep:       plugin.NewPreparer(2, pluginMeasure),
+		slots:      make(map[string]*pluginSlot),
+		views:      make(map[string]*hostedView),
+		lastAnchor: make(map[string]int),
 	}
 	r.mu.Lock()
 	old := r.plugins
@@ -565,6 +570,8 @@ func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResul
 	slot := h.slots[pluginID]
 	var spec plugin.Panel
 	found := false
+	anchor := h.lastAnchor[pluginID]
+	delete(h.lastAnchor, pluginID)
 	if slot != nil {
 		for _, panel := range slot.rt.Manifest().Panels {
 			if panel.ID == p.Entry {
@@ -589,6 +596,9 @@ func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResul
 		if bar, ok := h.r.bars[global]; ok {
 			policy := h.r.cfg.ForConnector(bar.connector())
 			trig = Trigger{BarEdge: policy.Edge, BarZone: exclusiveBarZone(bar), Align: "center"}
+			if anchor > 0 {
+				trig.AnchorX = anchor
+			}
 		}
 	}
 	h.r.mu.Unlock()
@@ -803,12 +813,15 @@ func pluginPanelError(reason string, actions bool) *ui.Node {
 	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: theme.MarginL, Children: rows}
 }
 
-func (h *pluginHost) deliver(hit pluginHit, event v1.EventKind, button v1.PointerButton, text string) bool {
+func (h *pluginHost) deliver(hit pluginHit, event v1.EventKind, button v1.PointerButton, text string, anchorX int) bool {
 	h.mu.Lock()
 	v, ok := h.views[hit.ViewID]
 	var slot *pluginSlot
 	if ok {
 		slot = h.slots[v.Plugin]
+		if anchorX > 0 {
+			h.lastAnchor[v.Plugin] = anchorX
+		}
 	}
 	var toSend []v1.InputEvent
 	if ok {
@@ -993,7 +1006,7 @@ func (h *pluginHost) resolveOutputLocked(p v1.OutputContextParams) (string, uint
 	return conn, global, nil
 }
 
-func (r *Registry) handlePluginBar(action string, event wayland.Event) bool {
+func (r *Registry) handlePluginBar(action string, event wayland.Event, anchorX int) bool {
 	hit, ok := parsePluginAction(action)
 	if !ok || r.plugins == nil {
 		return false
@@ -1016,7 +1029,7 @@ func (r *Registry) handlePluginBar(action string, event wayland.Event) bool {
 			button = pointerButton(event.Button)
 		}
 	}
-	return r.plugins.deliver(hit, kind, button, "")
+	return r.plugins.deliver(hit, kind, button, "", anchorX)
 }
 
 func (r *Registry) deliverPluginText(action, text string, kind v1.EventKind) bool {
@@ -1024,7 +1037,7 @@ func (r *Registry) deliverPluginText(action, text string, kind v1.EventKind) boo
 	if !ok || r.plugins == nil {
 		return false
 	}
-	return r.plugins.deliver(hit, kind, "", text)
+	return r.plugins.deliver(hit, kind, "", text, 0)
 }
 
 func (r *Registry) PluginPID(id string) int {

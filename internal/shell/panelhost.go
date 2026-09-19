@@ -1807,7 +1807,7 @@ func (h *PanelHost) activate(r *Registry) bool {
 		if n.Kind == ui.KindTextField {
 			return r.deliverPluginText(n.Action, n.Text, v1.EventSubmit)
 		}
-		return r.handlePluginBar(n.Action, wayland.Event{Kind: wayland.EventPointerRelease, Button: 272})
+		return r.handlePluginBar(n.Action, wayland.Event{Kind: wayland.EventPointerRelease, Button: 272}, 0)
 	}
 	if strings.HasPrefix(n.Action, "plugin-set:") {
 		switch n.Kind {
