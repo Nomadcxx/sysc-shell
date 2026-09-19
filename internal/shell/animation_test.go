@@ -373,7 +373,7 @@ func TestAnimateSurfacePacesPublishes(t *testing.T) {
 	var published int
 	done := make(chan struct{})
 	go func() {
-		animateSurface(stop, func() bool { return false }, func() { published++ }, 50*time.Millisecond)
+		animateSurface(stop, func() bool { return false }, func() { published++ }, func() time.Duration { return 50 * time.Millisecond })
 		close(done)
 	}()
 	time.Sleep(200 * time.Millisecond)
@@ -397,7 +397,7 @@ func TestAnimateSurfaceAlwaysPublishesTheSettlingFrame(t *testing.T) {
 	var published int
 	done := make(chan struct{})
 	go func() {
-		animateSurface(stop, func() bool { return true }, func() { published++ }, time.Hour)
+		animateSurface(stop, func() bool { return true }, func() { published++ }, func() time.Duration { return time.Hour })
 		close(done)
 	}()
 	select {
@@ -415,7 +415,7 @@ func TestAnimateSurfaceStopsOnStop(t *testing.T) {
 	stop := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
-		animateSurface(stop, func() bool { return false }, func() {}, time.Millisecond)
+		animateSurface(stop, func() bool { return false }, func() {}, func() time.Duration { return time.Millisecond })
 		close(done)
 	}()
 	close(stop)

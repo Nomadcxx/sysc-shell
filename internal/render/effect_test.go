@@ -85,7 +85,7 @@ func TestWeatherCloudScenePreservesLandscapeComposition(t *testing.T) {
 	c := newTestCanvas(t, width, height)
 	box := ui.Rect{W: width, H: height}
 	fillRect(c, box, testStyle.Capsule)
-	paintCloudScene(c, box, RoundedMask(0, width, height), testStyle, rainSpec(7), .37, 1, 1)
+	paintCloudScene(c, box, weatherSceneBox(box, 0), RoundedMask(0, width, height), testStyle, rainSpec(7), .37, 1, 1)
 
 	bounds, ok := weatherDifferenceBounds(c.Pix, width, testStyle.Capsule, 6)
 	if !ok {
@@ -501,5 +501,153 @@ func BenchmarkPaintWeatherEffect(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+func TestWeatherSceneBoxLocksAspectAndHonoursBias(t *testing.T) {
+	t.Parallel()
+	// A Control Centre-shaped box: 578x318 is aspect 1.82, well past the lock.
+	wide := ui.Rect{W: 578, H: 318}
+	locked := weatherSceneBox(wide, 0).W
+	tests := []struct {
+		name  string
+		bias  float64
+		wantX int
+	}{
+		{"centred", 0, (578 - locked) / 2},
+		{"leading edge", -1, 0},
+		{"trailing edge", 1, 578 - locked},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scene := weatherSceneBox(wide, tt.bias)
+			if scene.W != locked {
+				t.Fatalf("scene width = %d, want %d", scene.W, locked)
+			}
+			if scene.X != tt.wantX {
+				t.Fatalf("scene x = %d, want %d", scene.X, tt.wantX)
+			}
+			if scene.H != wide.H {
+				t.Fatalf("scene height = %d, want %d", scene.H, wide.H)
+			}
+		})
+	}
+
+	// A box at or inside the lock keeps its full width and never letterboxes.
+	narrow := ui.Rect{W: 380, H: 346}
+	if scene := weatherSceneBox(narrow, 0); scene.W != narrow.W || scene.X != 0 {
+		t.Fatalf("narrow scene = %+v, want full width at origin", scene)
+	}
+
+	// The standalone panel is 1.2023, a hair past the 1.20 lock, so it
+	// letterboxes by a pixel. That is a rounding artefact, not a composition:
+	// assert it stays invisible rather than pretending it is exactly zero.
+	panel := ui.Rect{W: 416, H: 346}
+	if scene := weatherSceneBox(panel, 0); panel.W-scene.W > 2 {
+		t.Fatalf("panel scene width = %d, want within 2px of %d", scene.W, panel.W)
+	}
+}
+
+func TestWeatherFormsStayInsideTheBiasedScene(t *testing.T) {
+	t.Parallel()
+	const w, h = 578, 318
+	locked := weatherSceneBox(ui.Rect{W: w, H: h}, 0).W
+	for _, tt := range []struct {
+		name string
+		bias float64
+		minX int
+	}{
+		{"centred", 0, (w - locked) / 2},
+		{"leading edge", -1, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := rainSpec(7)
+			spec.Variant = ui.WeatherClear
+			spec.SceneBias = tt.bias
+			pixels := paintWeatherVariantFrameWithSpec(t, spec, .37, w, h)
+			// The sun disc is the brightest thing in a clear scene.
+			bx, _, ok := brightestWeatherPixel(pixels, w, h)
+			if !ok {
+				t.Fatal("no painted pixels")
+			}
+			if bx < tt.minX || bx >= tt.minX+locked {
+				t.Fatalf("brightest pixel x = %d, outside scene [%d,%d)", bx, tt.minX, tt.minX+locked)
+			}
+		})
+	}
+}
+
+func brightestWeatherPixel(pixels []byte, width, height int) (int, int, bool) {
+	best, bx, by := -1, 0, 0
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			i := y*width*4 + x*4
+			lum := int(pixels[i]) + int(pixels[i+1]) + int(pixels[i+2])
+			if lum > best {
+				best, bx, by = lum, x, y
+			}
+		}
+	}
+	return bx, by, best >= 0
+}
+
+func TestWeatherLightningDescendsFromTheCloudBase(t *testing.T) {
+	t.Parallel()
+	const w, h = 416, 346
+	spec := rainSpec(7)
+	spec.Variant = ui.WeatherThunderstorm
+	// Sweep phases so at least one frame catches the irregular pulse.
+	struck := false
+	for _, phase := range []float64{0, .04, .08, .12, .2, .3, .4, .5, .6, .7, .8, .9} {
+		lit := paintWeatherVariantFrameWithSpec(t, spec, phase, w, h)
+		dark := paintWeatherVariantFrameWithSpec(t, withoutLightning(spec), phase, w, h)
+		base := weatherSceneBox(ui.Rect{W: w, H: h}, 0).H
+		base = int(float64(base) * weatherLightningOriginY)
+		// Above the cloud base only the glow may differ, never the bolt. The
+		// bolt is near-white and high contrast; the glow is a few percent.
+		for y := 0; y < base; y++ {
+			for x := 0; x < w; x++ {
+				i := y*w*4 + x*4
+				if absWeatherByte(lit[i+2], dark[i+2]) > 40 {
+					t.Fatalf("bolt-strength pixel at (%d,%d), above cloud base y=%d", x, y, base)
+				}
+			}
+		}
+		if differingWeatherPixels(lit, dark, w, ui.Rect{Y: base, W: w, H: h - base}, 40) > 0 {
+			struck = true
+		}
+	}
+	if !struck {
+		t.Fatal("no phase in the sweep produced a bolt below the cloud base")
+	}
+}
+
+// withoutLightning is the same storm with its bolt suppressed, so a difference
+// isolates the strike rather than the whole scene.
+func withoutLightning(spec ui.EffectSpec) ui.EffectSpec {
+	out := spec
+	out.Variant = ui.WeatherRain
+	return out
+}
+
+func TestWeatherSkyIsStaticAcrossPhases(t *testing.T) {
+	t.Parallel()
+	// Direction B keeps a vertical sky gradient but takes all motion from the
+	// forms. A travelling sky is the "animated gradient" this replaces, so two
+	// phases must agree everywhere the forms do not reach.
+	const w, h = 578, 318
+	spec := rainSpec(7)
+	spec.Variant = ui.WeatherClear
+	spec.SceneBias = -1 // forms hard left, so the right edge is pure sky
+	first := paintWeatherVariantFrameWithSpec(t, spec, .11, w, h)
+	second := paintWeatherVariantFrameWithSpec(t, spec, .74, w, h)
+
+	scene := weatherSceneBox(ui.Rect{W: w, H: h}, -1)
+	skyOnly := ui.Rect{X: scene.X + scene.W + 8, Y: 0, W: w - (scene.X + scene.W + 8), H: h}
+	if skyOnly.W <= 0 {
+		t.Fatal("no sky-only region to sample")
+	}
+	if n := differingWeatherPixels(first, second, w, skyOnly, 2); n != 0 {
+		t.Fatalf("%d sky pixels changed between phases; the sky must not travel", n)
 	}
 }

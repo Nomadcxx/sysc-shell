@@ -230,7 +230,7 @@ func (m *OSDManager) revealLoop() {
 		for _, p := range pubs {
 			m.r.publishSurface(p.global, p.id)
 		}
-	}, frameCap)
+	}, func() time.Duration { return frameCap })
 }
 
 func osdLabel(v OSDView) string {

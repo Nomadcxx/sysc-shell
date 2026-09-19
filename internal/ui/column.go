@@ -191,6 +191,12 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 		}
 		return 240, nil
 	case KindRow:
+		// An explicit height is a reserved box here too, for the same reason it
+		// is one for a capsule or a column: a caller that sizes a row wants
+		// that box, and the tallest child is not it.
+		if n.Height > 0 {
+			return n.Height, nil
+		}
 		// Ask for each child's intrinsic height, not measureNode's. That one
 		// answers "how tall is this in the band offered", and a column has no
 		// band to offer: passing a sentinel made every kind that fills its
@@ -230,6 +236,13 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 		}
 		return tallest + 2*n.Padding, nil
 	case KindColumn, KindDropZone:
+		// An explicit height is a reserved box here for the same reason it is
+		// one for a capsule, a meter and a gauge: a caller that sizes a column
+		// wants that box, and measuring the children instead silently discards
+		// it -- which is what stopped CenterY from having any slack to work in.
+		if n.Height > 0 {
+			return n.Height, nil
+		}
 		h := 2 * n.Padding
 		for i, c := range n.Children {
 			if c == nil {
@@ -443,6 +456,15 @@ func centeredTrack(child *Node, box Rect, measure MeasureText) (Rect, error) {
 		return Rect{}, err
 	}
 	if w <= 0 || w >= box.W {
+		return box, nil
+	}
+	// Layout measures at the logical size; the painter measures at the size
+	// rounded to physical pixels, which is wider for the same string at a
+	// fractional scale -- 1-3px on a caption at 1.25. A track narrowed to the
+	// exact logical width therefore truncates text that layout believed fit,
+	// so the centred track carries a proportional allowance for that rounding.
+	w += max(2, w/32)
+	if w >= box.W {
 		return box, nil
 	}
 	box.X += (box.W - w) / 2
