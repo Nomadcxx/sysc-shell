@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"sync/atomic"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/render"
@@ -139,8 +140,10 @@ type animator struct {
 	spatial theme.Curve
 	values  map[animKey]animValue
 	// running reports whether a frame loop is already ticking this surface, so
-	// a second target change does not start a second ticker.
-	running bool
+	// a second target change does not start a second ticker. It is atomic
+	// because panel frame loops start from paths that hold no registry lock;
+	// bar loops start under the bar lock and simply load it.
+	running atomic.Bool
 }
 
 func newAnimator(now func() time.Time, reduced bool, motion render.MotionSet) *animator {

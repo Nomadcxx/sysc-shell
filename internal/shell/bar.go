@@ -646,17 +646,17 @@ func (b *Bar) resolveMediaMotionLocked(root *ui.Node) {
 }
 
 func (b *Bar) startBarFramesLocked() {
-	if b.anim == nil || b.anim.running || b.anim.Settled() {
+	if b.anim == nil || b.anim.running.Load() || b.anim.Settled() {
 		return
 	}
-	b.anim.running = true
+	b.anim.running.Store(true)
 	go b.barFrameLoop()
 }
 
 func (b *Bar) barFrameLoop() {
 	defer func() {
 		b.mu.Lock()
-		b.anim.running = false
+		b.anim.running.Store(false)
 		b.mu.Unlock()
 	}()
 	// Resolve the cap once, under the lock: a theme reload can replace the

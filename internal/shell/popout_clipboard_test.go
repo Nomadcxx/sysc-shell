@@ -77,8 +77,10 @@ func clipboardTestRegistry(entries []clipboardprotocol.Entry) *Registry {
 
 func clipboardOnlyRegistry(entries []clipboardprotocol.Entry) *Registry {
 	r := clipboardTestRegistry(entries)
+	r.mu.Lock()
 	r.bars = make(map[uint32]*Bar)
 	r.panelHosts = make(map[PanelID]*PanelHost)
+	r.mu.Unlock()
 	r.invalidations = make(chan wayland.Invalidation, 8)
 	r.aux = make(chan wayland.AuxRequest, 8)
 	r.closed = make(chan struct{})

@@ -81,8 +81,10 @@ func TestBluetoothWidgetUsesAnIconNode(t *testing.T) {
 func TestBluetoothBarRoutesLeftToStandaloneAndRightToControlCentreBluetooth(t *testing.T) {
 	r := newPanelRegistry(t)
 	bar := &Bar{conn: "DP-1"}
+	r.mu.Lock()
 	r.bars = map[uint32]*Bar{7: bar}
 	r.bindBarPanelActionsLocked(7, bar)
+	r.mu.Unlock()
 
 	if !bar.onAction(panelBluetoothAction, buttonLeft) {
 		t.Fatal("left-click did not open the standalone Bluetooth panel")
@@ -117,9 +119,11 @@ func TestBluetoothRightClickUsesTheClickedBarOutput(t *testing.T) {
 	r := newPanelRegistry(t)
 	clicked := &Bar{conn: "DP-1"}
 	focused := &Bar{conn: "DP-2"}
+	r.mu.Lock()
 	r.bars = map[uint32]*Bar{7: clicked, 8: focused}
 	r.focused = "DP-2"
 	r.bindBarPanelActionsLocked(7, clicked)
+	r.mu.Unlock()
 
 	if !clicked.onAction(panelBluetoothAction, buttonRight) {
 		t.Fatal("right-click was not handled")

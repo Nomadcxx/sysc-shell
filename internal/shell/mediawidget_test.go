@@ -139,8 +139,11 @@ func TestRegistrySharesCachedMediaArtWithTheBar(t *testing.T) {
 
 	widget := buildMediaWidget()
 	bar := &Bar{right: []textWidget{widget}}
+	r.mu.Lock()
 	r.bars = map[uint32]*Bar{1: bar}
-	if !bar.apply(r.viewLocked("")) {
+	updated := bar.apply(r.viewLocked(""))
+	r.mu.Unlock()
+	if !updated {
 		t.Fatal("cached art did not update the bar widget")
 	}
 	if got := widget.node.Children[0]; got.Kind != ui.KindImage || got.Image != image {

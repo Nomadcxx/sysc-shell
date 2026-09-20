@@ -2527,11 +2527,13 @@ func (h *PanelHost) stopAnimation() {
 // left alone: a second target change joins the clock rather than starting a
 // second ticker.
 func (r *Registry) startSurfaceFrames(h *PanelHost) {
-	if h.anim == nil || h.anim.running ||
-		(h.anim.Settled() && !mediaPageFramesWantedLocked(r, h)) {
+	if h.anim == nil || !h.anim.running.CompareAndSwap(false, true) {
 		return
 	}
-	h.anim.running = true
+	if h.anim.Settled() && !mediaPageFramesWantedLocked(r, h) {
+		h.anim.running.Store(false)
+		return
+	}
 	go r.surfaceFrameLoop(h)
 }
 
@@ -2560,7 +2562,7 @@ func (h *PanelHost) pointerChanged(r *Registry, changed bool) bool {
 func (r *Registry) surfaceFrameLoop(h *PanelHost) {
 	defer func() {
 		r.mu.Lock()
-		h.anim.running = false
+		h.anim.running.Store(false)
 		r.mu.Unlock()
 	}()
 	// The cap is resolved per tick rather than once: a surface carrying an
