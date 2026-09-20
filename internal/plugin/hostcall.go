@@ -28,6 +28,8 @@ type CallEnv struct {
 	ClosePanel     func(context.Context, v1.PanelParams) error
 	Notify         func(context.Context, v1.NotifyParams) (v1.NotifyResult, error)
 	OutputContext  func(context.Context, v1.OutputContextParams) (v1.OutputContextResult, error)
+	PanelResize    func(context.Context, v1.PanelResizeParams) error
+	ViewFocus      func(context.Context, v1.ViewFocusParams) error
 	MaxPending     int
 	CallTimeout    time.Duration
 }
@@ -137,6 +139,11 @@ func (d *Dispatcher) dispatch(ctx context.Context, call *v1.HostCall) v1.HostRep
 			return failReply(call.ID, "capability panels is not granted")
 		}
 		return d.panel(ctx, call)
+	case v1.CallPanelResize, v1.CallViewFocus:
+		if !d.env.allows(CapPanels) {
+			return failReply(call.ID, "capability panels is not granted")
+		}
+		return d.panelSurface(ctx, call)
 	case v1.CallNotify:
 		if !d.env.allows(CapNotifications) {
 			return failReply(call.ID, "capability notifications is not granted")
@@ -234,6 +241,61 @@ func (d *Dispatcher) output(ctx context.Context, call *v1.HostCall) v1.HostReply
 		return failReply(call.ID, err.Error())
 	}
 	return okReply(call.ID, result)
+}
+
+// panelSurface serves the two calls that operate on an already-open panel
+// surface: resizing it and focusing one of its nodes.
+func (d *Dispatcher) panelSurface(ctx context.Context, call *v1.HostCall) v1.HostReply {
+	switch call.Call {
+	case v1.CallPanelResize:
+		var p v1.PanelResizeParams
+		if err := decodeParams(call.Params, &p); err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		if err := boundPanelResize(&p); err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		if d.env.PanelResize == nil {
+			return failReply(call.ID, "panel resize is not available")
+		}
+		if err := d.env.PanelResize(ctx, p); err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		return okReply(call.ID, nil)
+	case v1.CallViewFocus:
+		var p v1.ViewFocusParams
+		if err := decodeParams(call.Params, &p); err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		if p.View == "" || p.Node == "" {
+			return failReply(call.ID, "view focus needs a view and a node")
+		}
+		if d.env.ViewFocus == nil {
+			return failReply(call.ID, "view focus is not available")
+		}
+		if err := d.env.ViewFocus(ctx, p); err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		return okReply(call.ID, nil)
+	}
+	return failReply(call.ID, "unknown panel surface call")
+}
+
+const (
+	minPanelExtent = 64
+	maxPanelExtent = 4096
+)
+
+// boundPanelResize keeps a plugin panel a popup: 64 to 4096 logical pixels per
+// axis. The tighter bound is the contract, not the wire's MaxExtent.
+func boundPanelResize(p *v1.PanelResizeParams) error {
+	if p.Width < minPanelExtent || p.Width > maxPanelExtent {
+		return fmt.Errorf("panel width %d is outside %d..%d", p.Width, minPanelExtent, maxPanelExtent)
+	}
+	if p.Height < minPanelExtent || p.Height > maxPanelExtent {
+		return fmt.Errorf("panel height %d is outside %d..%d", p.Height, minPanelExtent, maxPanelExtent)
+	}
+	return nil
 }
 
 const (

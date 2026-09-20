@@ -1014,3 +1014,104 @@ func TestPluginPanelKeepsTheBoxForAMissingImage(t *testing.T) {
 	}
 	t.Fatal("panel tree never carried an image node")
 }
+
+func TestPluginPanelResizeRetargetsTheOpenPanel(t *testing.T) {
+	reg := bindTestPlugin(t, "call-panel")
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	_ = drainAux(t, reg, 2) // keyboard + panel-open
+
+	// The helper's own panel.open may still be in flight; retry until the
+	// panel view exists and the surface is open.
+	deadline := time.Now().Add(5 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if err := reg.plugins.resizePanel(v1.PanelResizeParams{Width: 400, Height: 300}); err == nil {
+			lastErr = nil
+			break
+		} else {
+			lastErr = err
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if lastErr != nil {
+		t.Fatalf("resizePanel never succeeded: %v", lastErr)
+	}
+	if got := reg.plugins.panelSize(); got.W != 400 || got.H != 300 {
+		t.Fatalf("panelSize after resize = %+v, want 400x300", got)
+	}
+
+	reqs := drainAux(t, reg, 1)
+	req := reqs[0]
+	if req.ID != panelSurfaceID(PanelPlugin) {
+		t.Fatalf("aux update ID = %q, want %q", req.ID, panelSurfaceID(PanelPlugin))
+	}
+	if req.Update == nil || req.Update.Width == nil || req.Update.Height == nil {
+		t.Fatalf("aux update missing size: %+v", req.Update)
+	}
+	if *req.Update.Width != 400 || *req.Update.Height != 300 {
+		t.Fatalf("aux update size = %d x %d, want 400x300", *req.Update.Width, *req.Update.Height)
+	}
+}
+
+func TestPluginPanelFocusRoutesToTheStampedNode(t *testing.T) {
+	reg := bindTestPlugin(t, "call-panel")
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	_ = drainAux(t, reg, 2) // keyboard + panel-open
+
+	// Wait until the panel tree carries the stamped button action.
+	var viewID, stamped string
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		root := reg.plugins.panelTree(nil)
+		var found bool
+		var walk func(n *ui.Node)
+		walk = func(n *ui.Node) {
+			if n == nil || found {
+				return
+			}
+			if strings.HasPrefix(n.Action, pluginActionPrefix) {
+				if hit, ok := parsePluginAction(n.Action); ok {
+					viewID, stamped, found = hit.ViewID, n.Action, true
+					return
+				}
+			}
+			for _, c := range n.Children {
+				walk(c)
+			}
+		}
+		walk(root)
+		if found {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if viewID == "" {
+		t.Fatal("panel tree never carried a stamped action")
+	}
+
+	// Happy path: focusing the stamped node succeeds and moves roving focus.
+	if err := reg.plugins.focusPanelView("org.sysc.timer", v1.ViewFocusParams{View: viewID, Node: "act"}); err != nil {
+		t.Fatalf("focusPanelView: %v", err)
+	}
+	reg.mu.Lock()
+	host := reg.panelHosts[PanelPlugin]
+	var focused string
+	if host != nil && host.roving.Count > 0 {
+		focused = host.focus[host.roving.Index()].Action
+	}
+	reg.mu.Unlock()
+	if focused != stamped {
+		t.Fatalf("focused action = %q, want %q", focused, stamped)
+	}
+
+	// Unknown node fails loudly.
+	if err := reg.plugins.focusPanelView("org.sysc.timer", v1.ViewFocusParams{View: viewID, Node: "nope"}); err == nil {
+		t.Fatal("focus of unknown node succeeded")
+	}
+	// Unknown view fails loudly.
+	if err := reg.plugins.focusPanelView("org.sysc.timer", v1.ViewFocusParams{View: "view-zzz", Node: "act"}); err == nil {
+		t.Fatal("focus of unknown view succeeded")
+	}
+}

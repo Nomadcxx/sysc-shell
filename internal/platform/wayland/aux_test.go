@@ -309,3 +309,48 @@ func TestTeardownUnitDestroysTheSurfaceBeforeItsBuffers(t *testing.T) {
 		t.Fatal("the generation was not marked freeable, so its storage leaked")
 	}
 }
+
+func TestAuxUpdateResizesTheSurfaceInPlace(t *testing.T) {
+	t.Parallel()
+	u := newSurfaceUnit("panel:session")
+	// openAux seeds the policy with the size the surface was opened at.
+	u.policy.width, u.policy.height = 400, 300
+	w, hgt := uint32(400), uint32(300)
+	next, err := planAuxUpdate(u, &AuxUpdate{Width: &w, Height: &hgt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.width != 400 || next.height != 300 {
+		t.Fatalf("size = %dx%d, want 400x300", next.width, next.height)
+	}
+	u.policy = next
+	if next.hasInputRegion {
+		t.Fatal("a size-only update claimed an input region")
+	}
+
+	// One axis at a time keeps the other at the opened size.
+	only := uint32(480)
+	next, err = planAuxUpdate(u, &AuxUpdate{Width: &only})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.width != 480 || next.height != 300 {
+		t.Fatalf("one-axis size = %dx%d, want 480x300", next.width, next.height)
+	}
+	u.policy = next
+
+	// A nil size leaves the surface alone.
+	next, err = planAuxUpdate(u, &AuxUpdate{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.width != 480 || next.height != 300 {
+		t.Fatalf("nil size changed the policy: %dx%d", next.width, next.height)
+	}
+
+	// A zero axis is meaningless.
+	zero := uint32(0)
+	if _, err := planAuxUpdate(u, &AuxUpdate{Height: &zero}); err == nil {
+		t.Fatal("a zero height was accepted")
+	}
+}

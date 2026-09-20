@@ -342,3 +342,97 @@ func (*blockingStore) Keys() []string { return nil }
 func (*blockingStore) Set(context.Context, string, json.RawMessage) error {
 	return errors.New("unused")
 }
+
+func TestHostCallPanelSurfaceHonoursTheGrant(t *testing.T) {
+	t.Parallel()
+	var resized v1.PanelResizeParams
+	var focused v1.ViewFocusParams
+	d := NewDispatcher(CallEnv{
+		PluginID: "org.sysc.timer",
+		Granted:  []Capability{CapPanels},
+		PanelResize: func(_ context.Context, p v1.PanelResizeParams) error {
+			resized = p
+			return nil
+		},
+		ViewFocus: func(_ context.Context, p v1.ViewFocusParams) error {
+			focused = p
+			return nil
+		},
+	})
+
+	ok := d.Handle(context.Background(), &v1.HostCall{
+		ID: "1", Call: v1.CallPanelResize,
+		Params: jsonOf(t, v1.PanelResizeParams{Width: 400, Height: 300}),
+	})
+	if !ok.OK || resized != (v1.PanelResizeParams{Width: 400, Height: 300}) {
+		t.Fatalf("resize = %+v params=%+v", ok, resized)
+	}
+
+	focus := d.Handle(context.Background(), &v1.HostCall{
+		ID: "2", Call: v1.CallViewFocus,
+		Params: jsonOf(t, v1.ViewFocusParams{View: "view-7", Node: "act"}),
+	})
+	if !focus.OK || focused != (v1.ViewFocusParams{View: "view-7", Node: "act"}) {
+		t.Fatalf("focus = %+v params=%+v", focus, focused)
+	}
+}
+
+func TestHostCallPanelSurfaceDeniedWithoutCapability(t *testing.T) {
+	t.Parallel()
+	d := NewDispatcher(CallEnv{PluginID: "org.sysc.timer"})
+	for _, call := range []v1.CallKind{v1.CallPanelResize, v1.CallViewFocus} {
+		reply := d.Handle(context.Background(), &v1.HostCall{ID: "1", Call: call})
+		if reply.OK || reply.Error == "" {
+			t.Fatalf("%s without the grant = %+v", call, reply)
+		}
+	}
+}
+
+func TestHostCallPanelResizeBounds(t *testing.T) {
+	t.Parallel()
+	calls := 0
+	d := NewDispatcher(CallEnv{
+		PluginID: "org.sysc.timer",
+		Granted:  []Capability{CapPanels},
+		PanelResize: func(context.Context, v1.PanelResizeParams) error {
+			calls++
+			return nil
+		},
+	})
+	for _, bad := range []v1.PanelResizeParams{
+		{Width: 63, Height: 300},
+		{Width: 4097, Height: 300},
+		{Width: 400, Height: 0},
+		{Width: 400, Height: 4097},
+	} {
+		reply := d.Handle(context.Background(), &v1.HostCall{
+			ID: "1", Call: v1.CallPanelResize, Params: jsonOf(t, bad),
+		})
+		if reply.OK {
+			t.Fatalf("bounds %+v were accepted", bad)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("rejected bounds reached the host %d times", calls)
+	}
+}
+
+func TestHostCallViewFocusNeedsAViewAndANode(t *testing.T) {
+	t.Parallel()
+	d := NewDispatcher(CallEnv{
+		PluginID: "org.sysc.timer",
+		Granted:  []Capability{CapPanels},
+		ViewFocus: func(context.Context, v1.ViewFocusParams) error {
+			t.Error("focus reached the host")
+			return nil
+		},
+	})
+	for _, bad := range []v1.ViewFocusParams{{View: "view-7"}, {Node: "act"}} {
+		reply := d.Handle(context.Background(), &v1.HostCall{
+			ID: "1", Call: v1.CallViewFocus, Params: jsonOf(t, bad),
+		})
+		if reply.OK {
+			t.Fatalf("focus %+v was accepted", bad)
+		}
+	}
+}

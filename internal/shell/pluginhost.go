@@ -225,6 +225,8 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 		OutputContext: func(_ context.Context, p v1.OutputContextParams) (v1.OutputContextResult, error) {
 			return h.outputContext(p)
 		},
+		PanelResize: func(_ context.Context, p v1.PanelResizeParams) error { return h.resizePanel(p) },
+		ViewFocus:   func(_ context.Context, p v1.ViewFocusParams) error { return h.focusPanelView(id, p) },
 	})
 	rt.SetCalls(disp)
 	slot := &pluginSlot{rt: rt, disp: disp}
@@ -887,6 +889,71 @@ func (h *pluginHost) panelSize() ui.Rect {
 		return ui.Rect{W: h.panel.Width, H: h.panel.Height}
 	}
 	return ui.Rect{W: 320, H: 280}
+}
+
+// resizePanel retargets the calling plugin's open panel. The tree re-lays-out
+// at the new bounds at once; the reply reports the size as requested and the
+// compositor's configure completes it.
+func (h *pluginHost) resizePanel(p v1.PanelResizeParams) error {
+	h.r.mu.Lock()
+	global, open := h.r.panels.Output(PanelPlugin)
+	h.r.mu.Unlock()
+	if !open {
+		return errors.New("panel surface is not open")
+	}
+	h.mu.Lock()
+	if h.panel == nil {
+		h.mu.Unlock()
+		return errors.New("no open panel to resize")
+	}
+	h.panel.Width, h.panel.Height = p.Width, p.Height
+	h.mu.Unlock()
+	h.refreshPanel()
+	w, hgt := uint32(p.Width), uint32(p.Height)
+	h.r.sendAux(wayland.AuxRequest{
+		Output: global,
+		ID:     panelSurfaceID(PanelPlugin),
+		Update: &wayland.AuxUpdate{Width: &w, Height: &hgt},
+	})
+	return nil
+}
+
+// focusPanelView focuses one node of the calling plugin's open panel, matched
+// by the action identity stamped at render time. A miss is an error, never a
+// silent no-op: the plugin needs to know its dialog did not take focus.
+func (h *pluginHost) focusPanelView(pluginID string, p v1.ViewFocusParams) error {
+	h.mu.Lock()
+	v, ok := h.views[p.View]
+	same := ok && v.Kind == v1.ViewPanel && v.Plugin == pluginID && h.panel != nil && h.panel.ID == p.View
+	h.mu.Unlock()
+	if !same {
+		return fmt.Errorf("view %q is not the open panel of %s", p.View, pluginID)
+	}
+	h.r.mu.Lock()
+	host := h.r.panelHosts[PanelPlugin]
+	var target *ui.Node
+	if host != nil {
+		action := pluginActionPrefix + p.View + ":" + p.Node
+		for _, n := range host.focus {
+			if n != nil && n.Action == action {
+				target = n
+				break
+			}
+		}
+		if target != nil {
+			host.setFocus(target)
+		}
+	}
+	output := uint32(0)
+	if host != nil {
+		output = host.output
+	}
+	h.r.mu.Unlock()
+	if target == nil {
+		return fmt.Errorf("node %q is not focusable on view %q", p.Node, p.View)
+	}
+	h.r.publishSurface(output, panelSurfaceID(PanelPlugin))
+	return nil
 }
 
 func pluginPanelError(reason string, actions bool) *ui.Node {
