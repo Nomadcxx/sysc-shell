@@ -79,6 +79,15 @@ GLYPHS = [
     ("uniE03B", 0xE03B, "sms"),
     ("uniE03C", 0xE03C, "notifications-active"),
     ("uniE03D", 0xE03D, "refresh"),
+    ("uniE03E", 0xE03E, "5g"),
+    ("uniE03F", 0xE03F, "4g-mobiledata"),
+    ("uniE040", 0xE040, "3g-mobiledata"),
+    ("uniE041", 0xE041, "g-mobiledata"),
+    ("uniE042", 0xE042, "signal-cellular-null"),
+    ("uniE043", 0xE043, "signal-cellular-1-bar"),
+    ("uniE044", 0xE044, "signal-cellular-2-bar"),
+    ("uniE045", 0xE045, "signal-cellular-3-bar"),
+    ("uniE046", 0xE046, "signal-cellular-4-bar"),
 ]
 
 UPM = 1000
