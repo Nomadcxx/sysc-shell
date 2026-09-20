@@ -695,9 +695,11 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		// retain the initial 300 px fallback and clip the last visible card.
 		h.root = r.panelTree(h)
 	}
-	if err := h.resolveEffectMotionLocked(copyNode(h.root)); err != nil {
+	probe := copyNode(h.root)
+	if err := h.resolveEffectMotionLocked(probe); err != nil {
 		return err
 	}
+	resolveProgressMotion(h.anim, probe)
 	h.focus = ui.Focusables(h.root)
 	h.roving = ui.Roving{Count: len(h.focus)}
 	if id == PanelWallpaper {
@@ -1155,6 +1157,7 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	if err := h.resolveEffectMotionLocked(root); err != nil {
 		return err
 	}
+	resolveProgressMotion(h.anim, root)
 
 	paintTheme := h.paintTheme()
 	style := h.rootStyle(paintTheme)
@@ -2124,9 +2127,11 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 		}
 		overlayEditors(h.root, h.editors)
 	}
-	if err := h.resolveEffectMotionLocked(copyNode(h.root)); err != nil {
+	probe := copyNode(h.root)
+	if err := h.resolveEffectMotionLocked(probe); err != nil {
 		h.errLabel = err.Error()
 	}
+	resolveProgressMotion(h.anim, probe)
 	h.focus = ui.Focusables(h.root)
 	h.roving.Count = len(h.focus)
 	h.roving.Set(idx)
@@ -2527,11 +2532,13 @@ func (h *PanelHost) stopAnimation() {
 // left alone: a second target change joins the clock rather than starting a
 // second ticker.
 func (r *Registry) startSurfaceFrames(h *PanelHost) {
-	if h.anim == nil || h.anim.running ||
-		(h.anim.Settled() && !mediaPageFramesWantedLocked(r, h)) {
+	if h.anim == nil || !h.anim.running.CompareAndSwap(false, true) {
 		return
 	}
-	h.anim.running = true
+	if h.anim.Settled() && !mediaPageFramesWantedLocked(r, h) {
+		h.anim.running.Store(false)
+		return
+	}
 	go r.surfaceFrameLoop(h)
 }
 
@@ -2560,7 +2567,7 @@ func (h *PanelHost) pointerChanged(r *Registry, changed bool) bool {
 func (r *Registry) surfaceFrameLoop(h *PanelHost) {
 	defer func() {
 		r.mu.Lock()
-		h.anim.running = false
+		h.anim.running.Store(false)
 		r.mu.Unlock()
 	}()
 	// The cap is resolved per tick rather than once: a surface carrying an

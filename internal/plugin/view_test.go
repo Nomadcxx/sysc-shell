@@ -686,3 +686,145 @@ func TestConvertPutsAMaterialIconAndLabelInOneButton(t *testing.T) {
 		t.Fatalf("button kept a label of its own: %q", button.Text)
 	}
 }
+
+func TestConvertMapsMinorFour(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindGraph, Values: []float64{0.1, 0.5, 0.9}, Height: 40, Absent: true},
+		{Kind: v1.KindSeparator},
+		{Kind: v1.KindRow, Shape: "circle", Children: []*v1.Node{
+			{Kind: v1.KindText, Text: "C", Tooltip: "snapshot provider"},
+		}},
+	}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	graph := got.Children[0]
+	if graph.Kind != ui.KindGraph || len(graph.Values) != 3 || !graph.Absent {
+		t.Fatalf("graph = %+v", graph)
+	}
+	if got.Children[1].Kind != ui.KindSeparator {
+		t.Fatalf("separator = %+v", got.Children[1])
+	}
+	row := got.Children[2]
+	if row.Shape != ui.ShapeCircle {
+		t.Fatalf("row shape = %v", row.Shape)
+	}
+	if row.Children[0].Tooltip != "snapshot provider" {
+		t.Fatalf("tooltip = %+v", row.Children[0])
+	}
+}
+
+func TestConvertRejectsAnUnknownShape(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindRow, Shape: "neon"}
+	if _, err := Convert(root, v1.ViewPanel); err == nil {
+		t.Fatal("unknown shape accepted")
+	}
+}
+
+func TestConvertMapsAnImage(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindImage, Path: "/home/x/Pictures/a.png", ImageW: 320, ImageH: 180,
+			Background: true, Shape: "card"},
+	}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	img := got.Children[0]
+	if img.Kind != ui.KindImage || img.ImagePath != "/home/x/Pictures/a.png" ||
+		img.ImageW != 320 || img.ImageH != 180 || !img.Background || img.Shape != ui.ShapeCard {
+		t.Fatalf("image = %+v", img)
+	}
+	if img.Image != nil {
+		t.Fatal("converter decoded an image; the host owns the decode")
+	}
+}
+
+func TestConvertStrokesTheWrapperNotTheInnerRow(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindRow, Stroke: 1, StrokeFill: "outline", Children: []*v1.Node{
+			{Kind: v1.KindText, Text: "x"},
+		}},
+	}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	wrapper := got.Children[0]
+	if wrapper.Kind != ui.KindCapsule || wrapper.Stroke != 1 || wrapper.StrokeFill != ui.FillOutline {
+		t.Fatalf("wrapper = %+v", wrapper)
+	}
+	inner := wrapper.Children[0]
+	if inner.Stroke != 0 || inner.StrokeFill != ui.FillNone {
+		t.Fatalf("inner row kept the stroke: %+v", inner)
+	}
+}
+
+func TestConvertStrokesTheButtonItself(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindButton, ID: "send", Name: "Send", Role: "button", Stroke: 1,
+			Events: []v1.EventKind{v1.EventActivate}},
+	}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	button := got.Children[0]
+	if button.Kind != ui.KindButton || button.Stroke != 1 || button.StrokeFill != ui.FillOutline {
+		t.Fatalf("button = %+v", button)
+	}
+}
+
+func TestConvertButtonChildrenReplaceSynthesis(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindButton, ID: "send", Icon: "link", Text: "Send",
+			Name: "Send", Role: "button", Events: []v1.EventKind{v1.EventActivate},
+			Children: []*v1.Node{{Kind: v1.KindText, Text: "explicit"}}},
+	}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	button := got.Children[0]
+	if len(button.Children) != 1 || button.Children[0].Text != "explicit" {
+		t.Fatalf("explicit children did not replace the synthesis: %+v", button.Children)
+	}
+}
+
+func TestConvertMapsAnAnimatedValue(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindProgress, Key: "battery", Value: 0.4, Animate: true},
+		{Kind: v1.KindGauge, Key: "cpu", Value: 0.7, Animate: true, ValueText: "70%"},
+		{Kind: v1.KindProgress, Key: "static", Value: 0.9},
+	}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	meter := got.Children[0]
+	if meter.Kind != ui.KindMeter || meter.Key != "battery" || !meter.Animate || meter.Value != 0.4 {
+		t.Fatalf("meter = %+v", meter)
+	}
+	gauge := got.Children[1]
+	if gauge.Kind != ui.KindRadialGauge || gauge.Key != "cpu" || !gauge.Animate || gauge.ValueText != "70%" {
+		t.Fatalf("gauge = %+v", gauge)
+	}
+	if got.Children[2].Animate {
+		t.Fatal("static progress converted as animated")
+	}
+}

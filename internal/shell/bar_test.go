@@ -76,7 +76,7 @@ func TestBarGradientFramesFollowMotionPreference(t *testing.T) {
 			}
 			bar.mu.Lock()
 			root, _ := bar.renderViewLocked()
-			settled, running := bar.anim.Settled(), bar.anim.running
+			settled, running := bar.anim.Settled(), bar.anim.running.Load()
 			bar.mu.Unlock()
 			mark := findKind(root, ui.KindWordmark)
 			if mark == nil {

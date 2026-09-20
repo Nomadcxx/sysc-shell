@@ -42,6 +42,20 @@ const (
 	// the low double digits; anything larger is a mistake or an attack on
 	// the rasteriser.
 	MaxRadius = 256
+	// MaxTooltipBytes bounds the hover text one node carries. A tooltip is a
+	// glanceable hint, not a document.
+	MaxTooltipBytes = 256
+	// MinGraphSamples and MaxGraphSamples bound a graph's sample count.
+	// One sample is a dot, not a shape; more than this is a data dump the
+	// host cannot draw meaningfully at view sizes.
+	MinGraphSamples = 2
+	MaxGraphSamples = 64
+	// MaxPathBytes bounds an image node's filesystem path. The host reads
+	// the file itself, so the path is an address, not content.
+	MaxPathBytes = 4096
+	// MaxStroke bounds a container or button rim in logical pixels. The
+	// consumer is a one-pixel hairline; anything larger is a mistake.
+	MaxStroke = 8
 )
 
 // NodeKind names a view element. Kinds are strings so that a plugin written in
@@ -61,6 +75,19 @@ const (
 	KindDragSource NodeKind = "drag_source"
 	KindDropZone   NodeKind = "drop_zone"
 	KindGauge      NodeKind = "gauge"
+	// KindGraph draws a column sparkline of normalized samples, oldest
+	// first. It is the plugin's history at a glance: values carry the data,
+	// absent reserves the box when nothing has been recorded yet.
+	KindGraph NodeKind = "graph"
+	// KindSeparator is a rhythm rule between sibling groups. It is a panel
+	// affordance: a bar strip has no room for punctuation.
+	KindSeparator NodeKind = "separator"
+	// KindImage displays a host-decoded raster from an absolute filesystem
+	// path. It is a panel affordance: bar slots are fixed-width and rebuilt
+	// per frame, so a decode job per bar revision is waste no consumer
+	// needs. The host owns the decode; the plugin names a path and gains
+	// display, not read, power.
+	KindImage NodeKind = "image"
 )
 
 // EventKind names an input event a node declares it can emit. A node receives
@@ -113,8 +140,11 @@ const (
 // no representation here.
 //
 // Fill, Radius, Bold, Size, Disabled, CenterX, and PinEnd arrived in protocol
-// minor two. A minor-one host ignores them, so a plugin that sets them still
-// speaks to an older shell, just without the presentation.
+// minor two. Tooltip, Shape, Values, Absent, and the graph and separator kinds
+// arrived in minor four. Path, the image box fields, Background, Stroke, and
+// StrokeFill, and the image kind arrived in minor five. Animate arrived in
+// minor six. A minor-one host ignores the new fields, so a plugin that sets
+// them still speaks to an older shell, just without the presentation.
 type Node struct {
 	Kind NodeKind `json:"kind"`
 
@@ -134,6 +164,11 @@ type Node struct {
 	Icon string `json:"icon,omitempty"`
 	// Value is a progress fraction from zero through one.
 	Value float64 `json:"value,omitempty"`
+	// Animate asks the host to glide this node's Value to each new revision's
+	// target instead of jumping. Progress and gauge only, and it requires a
+	// Key so the host can keep one transition attached to one element across
+	// revisions. It arrived with protocol minor six.
+	Animate bool `json:"animate,omitempty"`
 	// ValueText is the gauge's centre label, such as a remaining time. An
 	// empty value falls back to a percentage.
 	ValueText string `json:"value_text,omitempty"`
@@ -162,6 +197,43 @@ type Node struct {
 	// proportional digits the rendered width changes every second, which
 	// visibly shifts everything beside it.
 	Tabular bool `json:"tabular,omitempty"`
+
+	// Tooltip is bounded hover text owned by the node's feature. The shell
+	// paints it wherever it paints its own hints; a longer value is a
+	// diagnosable validation error.
+	Tooltip string `json:"tooltip,omitempty"`
+	// Shape names the corner treatment a container or button asks for:
+	// circle, stadium, small, medium, large, card, panel. The host maps it
+	// onto its own shape tokens; an unknown name is a diagnosable error.
+	Shape string `json:"shape,omitempty"`
+	// Values are the graph's samples, oldest first, each normalized zero
+	// through one. Only a graph carries them.
+	Values []float64 `json:"values,omitempty"`
+	// Absent reserves the node's box and paints nothing: a gauge with no
+	// reading yet keeps the layout steady instead of vanishing. Only a
+	// gauge or a graph may be absent.
+	Absent bool `json:"absent,omitempty"`
+
+	// Path names the absolute file an image node displays. The host decodes
+	// it with its own caps and cache; the plugin gains display, not read,
+	// power. A relative path would resolve against the shell's working
+	// directory, which the plugin cannot know, so it is a validation error.
+	Path string `json:"path,omitempty"`
+	// ImageSize fixes a square image edge in logical pixels; ImageW and
+	// ImageH fix an explicit box instead. Exactly one form is legal, and
+	// one of a pair alone is rejected rather than silently squared.
+	ImageSize int `json:"image_size,omitempty"`
+	ImageW    int `json:"image_w,omitempty"`
+	ImageH    int `json:"image_h,omitempty"`
+	// Background asks the painter to cover-fill the explicit box rather
+	// than fit the image inside it. A cover-fill needs a container shape
+	// to fill, so it requires the explicit box.
+	Background bool `json:"background,omitempty"`
+	// Stroke draws a rim around a row, column, or button, in logical
+	// pixels; StrokeFill names the rim's fill and defaults to the outline
+	// tone when absent.
+	Stroke     int    `json:"stroke,omitempty"`
+	StrokeFill string `json:"stroke_fill,omitempty"`
 
 	// Width fixes a logical width; MaxWidth caps a measured one. Padding and
 	// Gap open a container. Zero means natural in every case.
@@ -224,7 +296,7 @@ var knownKinds = map[NodeKind]bool{
 	KindRow: true, KindColumn: true, KindText: true, KindIcon: true,
 	KindProgress: true, KindButton: true, KindTextInput: true,
 	KindList: true, KindDragSource: true, KindDropZone: true,
-	KindGauge: true,
+	KindGauge: true, KindGraph: true, KindSeparator: true, KindImage: true,
 }
 
 var knownViews = map[ViewKind]bool{ViewBar: true, ViewTooltip: true, ViewPanel: true}
@@ -240,6 +312,11 @@ var knownFills = map[string]bool{
 var knownSizes = map[string]bool{
 	"body": true, "caption": true, "label": true, "title": true,
 	"headline": true, "display": true, "mono": true,
+}
+
+var knownShapes = map[string]bool{
+	"circle": true, "stadium": true, "small": true, "medium": true,
+	"large": true, "card": true, "panel": true,
 }
 
 func fillAllowed(k NodeKind) bool {
@@ -303,8 +380,17 @@ func (v *validator) node(n *Node, path string, depth int) error {
 	if err := v.minorTwo(n, path); err != nil {
 		return err
 	}
+	if err := v.minorFour(n, path); err != nil {
+		return err
+	}
+	if err := v.minorFive(n, path); err != nil {
+		return err
+	}
+	if err := v.minorSix(n, path); err != nil {
+		return err
+	}
 
-	if !n.Kind.container() && len(n.Children) > 0 {
+	if !n.Kind.container() && n.Kind != KindButton && len(n.Children) > 0 {
 		return fmt.Errorf("%s: %s takes no children", path, n.Kind)
 	}
 	if len(n.Children) > MaxChildren {
@@ -410,7 +496,7 @@ func (v *validator) vocabulary(n *Node, path string) error {
 	if v.view == ViewBar && n.Kind.keyboard() {
 		return fmt.Errorf("%s: a bar view has no keyboard focus and cannot hold a %s", path, n.Kind)
 	}
-	if v.view != ViewPanel && (n.Kind == KindList || n.Kind == KindDragSource || n.Kind == KindDropZone) {
+	if v.view != ViewPanel && (n.Kind == KindList || n.Kind == KindDragSource || n.Kind == KindDropZone || n.Kind == KindSeparator) {
 		return fmt.Errorf("%s: a %s view cannot hold a %s", path, v.view, n.Kind)
 	}
 	if n.Kind == KindDragSource && n.Name == "" {
@@ -468,6 +554,124 @@ func (v *validator) minorTwo(n *Node, path string) error {
 	}
 	if n.Disabled && !n.Kind.interactive() {
 		return fmt.Errorf("%s: %s cannot be disabled", path, n.Kind)
+	}
+	return nil
+}
+
+// minorFour validates the parity surface that arrived with protocol minor
+// four: hover tooltips, semantic shapes, graph sparklines, separators, and
+// the absent dim state. Each maps onto a renderer the host already ships,
+// so the checks stay vocabulary-level.
+func (v *validator) minorFour(n *Node, path string) error {
+	if len(n.Tooltip) > MaxTooltipBytes {
+		return fmt.Errorf("%s: tooltip is %d bytes, more than the %d allowed", path, len(n.Tooltip), MaxTooltipBytes)
+	}
+	if n.Shape != "" {
+		if !knownShapes[n.Shape] {
+			return fmt.Errorf("%s: unknown shape %q", path, n.Shape)
+		}
+		if !fillAllowed(n.Kind) && n.Kind != KindImage {
+			return fmt.Errorf("%s: %s cannot carry a shape", path, n.Kind)
+		}
+	}
+	if len(n.Values) > 0 {
+		if n.Kind != KindGraph {
+			return fmt.Errorf("%s: %s cannot carry values", path, n.Kind)
+		}
+		if len(n.Values) < MinGraphSamples || len(n.Values) > MaxGraphSamples {
+			return fmt.Errorf("%s: graph holds %d samples, outside %d through %d", path, len(n.Values), MinGraphSamples, MaxGraphSamples)
+		}
+		for i, s := range n.Values {
+			if math.IsNaN(s) || math.IsInf(s, 0) {
+				return fmt.Errorf("%s: graph sample %d is not finite", path, i)
+			}
+			if s < 0 || s > 1 {
+				return fmt.Errorf("%s: graph sample %d is outside zero through one", path, i)
+			}
+		}
+	}
+	if n.Absent && n.Kind != KindGauge && n.Kind != KindGraph {
+		return fmt.Errorf("%s: %s cannot be absent", path, n.Kind)
+	}
+	return nil
+}
+
+// minorFive validates the presentation primitives that arrived with protocol
+// minor five: the image kind with its host-decoded path and box forms, the
+// container stroke, and explicit button children. Each maps onto a painter
+// the host already ships, so the checks stay vocabulary-level.
+func (v *validator) minorFive(n *Node, path string) error {
+	if n.Kind == KindImage {
+		if v.view != ViewPanel {
+			return fmt.Errorf("%s: a %s view cannot hold an image", path, v.view)
+		}
+		if n.Path == "" {
+			return fmt.Errorf("%s: image has no path", path)
+		}
+		if n.Path[0] != '/' {
+			return fmt.Errorf("%s: image path %q is not absolute", path, n.Path)
+		}
+		if len(n.Path) > MaxPathBytes {
+			return fmt.Errorf("%s: image path is %d bytes, more than the %d allowed", path, len(n.Path), MaxPathBytes)
+		}
+		square, boxed := n.ImageSize > 0, n.ImageW > 0 || n.ImageH > 0
+		if square && boxed {
+			return fmt.Errorf("%s: image sets image_size and an explicit box; exactly one form is legal", path)
+		}
+		if !square && !boxed {
+			return fmt.Errorf("%s: image needs an image_size or an image_w and image_h box", path)
+		}
+		if square {
+			if n.ImageSize > MaxExtent {
+				return fmt.Errorf("%s: image_size is %d, past the %d limit", path, n.ImageSize, MaxExtent)
+			}
+		} else {
+			if n.ImageW <= 0 || n.ImageH <= 0 {
+				return fmt.Errorf("%s: image box needs both image_w and image_h, not one of the pair", path)
+			}
+			if n.ImageW > MaxExtent || n.ImageH > MaxExtent {
+				return fmt.Errorf("%s: image box is past the %d limit", path, MaxExtent)
+			}
+		}
+		if n.Background && !(n.ImageW > 0 && n.ImageH > 0) {
+			return fmt.Errorf("%s: image background needs the explicit image_w and image_h box", path)
+		}
+	} else if n.Path != "" || n.ImageSize != 0 || n.ImageW != 0 || n.ImageH != 0 || n.Background {
+		return fmt.Errorf("%s: %s cannot carry image fields", path, n.Kind)
+	}
+	if n.Stroke != 0 || n.StrokeFill != "" {
+		if n.Kind != KindRow && n.Kind != KindColumn && n.Kind != KindButton {
+			return fmt.Errorf("%s: %s cannot carry a stroke", path, n.Kind)
+		}
+		if n.Stroke < 0 || n.Stroke > MaxStroke {
+			return fmt.Errorf("%s: stroke is %d, outside zero through %d", path, n.Stroke, MaxStroke)
+		}
+		if n.StrokeFill != "" && !knownFills[n.StrokeFill] {
+			return fmt.Errorf("%s: unknown stroke fill %q", path, n.StrokeFill)
+		}
+	}
+	if n.Kind == KindButton {
+		for i, c := range n.Children {
+			if c.Kind.interactive() {
+				return fmt.Errorf("%s: button child %d is an interactive %s; the button is the one hit target", path, i, c.Kind)
+			}
+		}
+	}
+	return nil
+}
+
+// minorSix validates the declarative value animation that arrived with
+// protocol minor six: the animate flag, legal only on the two value kinds and
+// only when the node carries a key for the host's animator to hold onto.
+func (v *validator) minorSix(n *Node, path string) error {
+	if !n.Animate {
+		return nil
+	}
+	if n.Kind != KindProgress && n.Kind != KindGauge {
+		return fmt.Errorf("%s: %s cannot animate", path, n.Kind)
+	}
+	if n.Key == "" {
+		return fmt.Errorf("%s: an animated %s needs a key so the host keeps one transition across revisions", path, n.Kind)
 	}
 	return nil
 }

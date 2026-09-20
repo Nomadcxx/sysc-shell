@@ -244,6 +244,8 @@ const (
 	CallPanelClose    CallKind = "panel.close"
 	CallNotify        CallKind = "notify"
 	CallOutputContext CallKind = "output.context"
+	CallPanelResize   CallKind = "panel.resize"
+	CallViewFocus     CallKind = "view.focus"
 )
 
 // HostCall is a request from the plugin. Params is left raw so that adding a
@@ -372,4 +374,20 @@ type NotifyAction struct {
 // NotifyResult carries the served notification identity.
 type NotifyResult struct {
 	ID uint32 `json:"id"`
+}
+
+// PanelResizeParams asks the host to resize the calling plugin's open panel.
+// There is no entry field: a plugin hosts at most one panel, so the call
+// always targets it. Bounds are checked by the host dispatcher.
+type PanelResizeParams struct {
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
+// ViewFocusParams asks the host to focus one node of the calling plugin's
+// open panel. Node is the node's action identifier as declared in the view
+// tree; the host matches it against the identity it stamped at render time.
+type ViewFocusParams struct {
+	View string `json:"view"`
+	Node string `json:"node"`
 }

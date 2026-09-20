@@ -13,6 +13,29 @@ func TestGhostLauncherIconIsInProjectFace(t *testing.T) {
 	}
 }
 
+func TestAIUsageGlyphIsInCatalogueAndHasInk(t *testing.T) {
+	t.Parallel()
+	r, ok := IconByName("ai-usage")
+	if !ok || r != iconAIUsage {
+		t.Fatalf("ai-usage = %U, %v", r, ok)
+	}
+	if r != 0xE030 {
+		t.Fatalf("ai-usage rune %U is not the codepoint after the detail band", r)
+	}
+	if got := glyphCoverage(t, r, 32); got == 0 {
+		t.Fatalf("ai-usage glyph %U has no ink", r)
+	}
+	found := false
+	for _, n := range IconNames() {
+		if n == "ai-usage" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("IconNames() does not list ai-usage")
+	}
+}
+
 func TestGaugeIconsAreDistinctProjectGlyphs(t *testing.T) {
 	t.Parallel()
 	seen := map[rune]string{}

@@ -228,7 +228,8 @@ func TestValidateRejectsEventsOnNodesThatCannotEmitThem(t *testing.T) {
 func TestValidateRejectsChildrenOnLeafKinds(t *testing.T) {
 	t.Parallel()
 
-	for _, kind := range []NodeKind{KindText, KindIcon, KindProgress, KindButton, KindTextInput} {
+	// Button takes children since minor five; the rest stay leaves.
+	for _, kind := range []NodeKind{KindText, KindIcon, KindProgress, KindTextInput} {
 		t.Run(string(kind), func(t *testing.T) {
 			t.Parallel()
 			n := &Node{Kind: kind, ID: "x", Name: "x", Role: "r", Icon: "clear-day", Text: "x",
@@ -592,5 +593,194 @@ func TestValidateAcceptsEveryFillAndSizeName(t *testing.T) {
 	// It still needs the accessible identity every interactive node carries.
 	if err := Validate(&Node{Kind: KindDragSource, ID: "d", Name: "d", Role: "button", DragType: "zone", Disabled: true, Events: []EventKind{EventPointer}}, ViewPanel); err != nil {
 		t.Errorf("disabled drag source rejected: %v", err)
+	}
+}
+
+func TestValidateAcceptsMinorFour(t *testing.T) {
+	t.Parallel()
+
+	root := &Node{Kind: KindColumn, Children: []*Node{
+		{Kind: KindText, Text: "history", Tooltip: "30 snapshots"},
+		{Kind: KindGraph, Values: []float64{0.1, 0.4, 0.9}, Height: 40},
+		{Kind: KindGauge, Value: 0.5, ValueText: "50", Absent: true},
+		{Kind: KindSeparator},
+		{Kind: KindRow, Shape: "card", Children: []*Node{
+			{Kind: KindColumn, Shape: "circle", Fill: "accent", Children: []*Node{
+				{Kind: KindText, Text: "C"},
+			}},
+		}},
+	}}
+	if err := Validate(root, ViewPanel); err != nil {
+		t.Fatalf("minor-4 tree rejected: %v", err)
+	}
+	// A graph is legal where a meter is: the bar strip carries sparklines.
+	if err := Validate(&Node{Kind: KindGraph, Values: []float64{0.2, 0.8}}, ViewBar); err != nil {
+		t.Fatalf("graph in a bar view rejected: %v", err)
+	}
+}
+
+func TestValidateRejectsBadMinorFour(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		node *Node
+	}{
+		{"unknown shape", &Node{Kind: KindRow, Shape: "neon"}},
+		{"shape on text", &Node{Kind: KindText, Text: "x", Shape: "card"}},
+		{"tooltip over cap", &Node{Kind: KindText, Text: "x", Tooltip: strings.Repeat("a", 257)}},
+		{"graph one sample", &Node{Kind: KindGraph, Values: []float64{0.5}}},
+		{"graph over cap", &Node{Kind: KindGraph, Values: make([]float64, 65)}},
+		{"graph nan", &Node{Kind: KindGraph, Values: []float64{math.NaN()}}},
+		{"graph out of range", &Node{Kind: KindGraph, Values: []float64{1.5}}},
+		{"values on text", &Node{Kind: KindText, Text: "x", Values: []float64{0.5}}},
+		{"absent on text", &Node{Kind: KindText, Text: "x", Absent: true}},
+		{"absent on progress", &Node{Kind: KindProgress, Value: 0.5, Absent: true}},
+		{"separator with children", &Node{Kind: KindSeparator, Children: []*Node{{Kind: KindText, Text: "x"}}}},
+		{"separator in a bar view", &Node{Kind: KindSeparator}},
+		{"separator declares events", &Node{Kind: KindSeparator, Events: []EventKind{EventActivate}}},
+	}
+	views := map[string]ViewKind{"separator in a bar view": ViewBar, "separator declares events": ViewPanel}
+	for _, tc := range cases {
+		view := ViewPanel
+		if v, ok := views[tc.name]; ok {
+			view = v
+		}
+		if err := Validate(tc.node, view); err == nil {
+			t.Errorf("%s: Validate accepted", tc.name)
+		}
+	}
+}
+
+func TestValidateAcceptsMinorFiveFields(t *testing.T) {
+	t.Parallel()
+
+	root := &Node{Kind: KindColumn, Stroke: 1, StrokeFill: "outline", Children: []*Node{
+		{Kind: KindImage, Path: "/home/x/Pictures/a.png", ImageSize: 96},
+		{Kind: KindImage, Path: "/home/x/Pictures/b.png", ImageW: 320, ImageH: 180,
+			Background: true, Shape: "card", Radius: 12},
+		{Kind: KindButton, ID: "send", Name: "Send", Role: "button", Stroke: 1,
+			Events: []EventKind{EventActivate}, Children: []*Node{
+				{Kind: KindText, Text: "Send"},
+				{Kind: KindIcon, Icon: "send"},
+			}},
+	}}
+	if err := Validate(root, ViewPanel); err != nil {
+		t.Fatalf("minor-5 fields rejected: %v", err)
+	}
+}
+
+func TestValidateRejectsBadMinorFiveValues(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		node *Node
+		view ViewKind
+	}{
+		{"image in a bar", &Node{Kind: KindImage, Path: "/a.png", ImageSize: 96}, ViewBar},
+		{"image in a tooltip", &Node{Kind: KindImage, Path: "/a.png", ImageSize: 96}, ViewTooltip},
+		{"image without path", &Node{Kind: KindImage, ImageSize: 96}, ViewPanel},
+		{"image relative path", &Node{Kind: KindImage, Path: "Pictures/a.png", ImageSize: 96}, ViewPanel},
+		{"image path over cap", &Node{Kind: KindImage, Path: "/" + strings.Repeat("a", MaxPathBytes), ImageSize: 96}, ViewPanel},
+		{"image without a box", &Node{Kind: KindImage, Path: "/a.png"}, ViewPanel},
+		{"image both box forms", &Node{Kind: KindImage, Path: "/a.png", ImageSize: 96, ImageW: 320, ImageH: 180}, ViewPanel},
+		{"image half a box", &Node{Kind: KindImage, Path: "/a.png", ImageW: 320}, ViewPanel},
+		{"image size over cap", &Node{Kind: KindImage, Path: "/a.png", ImageSize: MaxExtent + 1}, ViewPanel},
+		{"image box over cap", &Node{Kind: KindImage, Path: "/a.png", ImageW: MaxExtent + 1, ImageH: 180}, ViewPanel},
+		{"image background without a box", &Node{Kind: KindImage, Path: "/a.png", ImageSize: 96, Background: true}, ViewPanel},
+		{"image with children", &Node{Kind: KindImage, Path: "/a.png", ImageSize: 96, Children: []*Node{{Kind: KindText, Text: "x"}}}, ViewPanel},
+		{"image fields on text", &Node{Kind: KindText, Text: "x", Path: "/a.png"}, ViewPanel},
+		{"image size on text", &Node{Kind: KindText, Text: "x", ImageSize: 96}, ViewPanel},
+		{"background on text", &Node{Kind: KindText, Text: "x", Background: true}, ViewPanel},
+		{"stroke on text", &Node{Kind: KindText, Text: "x", Stroke: 1}, ViewPanel},
+		{"stroke on image", &Node{Kind: KindImage, Path: "/a.png", ImageSize: 96, Stroke: 1}, ViewPanel},
+		{"stroke negative", &Node{Kind: KindColumn, Stroke: -1}, ViewPanel},
+		{"stroke over cap", &Node{Kind: KindColumn, Stroke: MaxStroke + 1}, ViewPanel},
+		{"unknown stroke fill", &Node{Kind: KindColumn, Stroke: 1, StrokeFill: "neon"}, ViewPanel},
+		{"button with interactive child", &Node{Kind: KindButton, ID: "b", Name: "b", Role: "button",
+			Events: []EventKind{EventActivate}, Children: []*Node{{
+				Kind: KindButton, ID: "inner", Name: "inner", Role: "button", Events: []EventKind{EventActivate},
+			}}}, ViewPanel},
+	}
+	for _, tc := range cases {
+		if err := Validate(tc.node, tc.view); err == nil {
+			t.Errorf("%s: Validate accepted", tc.name)
+		}
+	}
+}
+
+func TestMinorFiveFieldsRoundTripOnTheWire(t *testing.T) {
+	t.Parallel()
+
+	n := &Node{Kind: KindImage, Path: "/home/x/Pictures/a.png", ImageW: 320, ImageH: 180,
+		Background: true, Shape: "card"}
+	raw, err := json.Marshal(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Node
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.Path != n.Path || back.ImageW != n.ImageW || back.ImageH != n.ImageH ||
+		back.Background != n.Background || back.Shape != n.Shape {
+		t.Fatalf("image fields did not round-trip: %s", raw)
+	}
+	if !strings.Contains(string(raw), `"image_w":320`) || !strings.Contains(string(raw), `"background":true`) {
+		t.Fatalf("wire names drifted: %s", raw)
+	}
+}
+
+func TestValidateAcceptsMinorSixFields(t *testing.T) {
+	t.Parallel()
+
+	root := &Node{Kind: KindColumn, Children: []*Node{
+		{Kind: KindProgress, Key: "battery", Value: 0.4, Animate: true},
+		{Kind: KindGauge, Key: "cpu", Value: 0.7, Animate: true, ValueText: "70%"},
+		{Kind: KindProgress, Key: "static", Value: 0.9},
+	}}
+	if err := Validate(root, ViewPanel); err != nil {
+		t.Fatalf("minor-6 fields rejected: %v", err)
+	}
+}
+
+func TestValidateRejectsBadMinorSixValues(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		node *Node
+	}{
+		{"animate on a row", &Node{Kind: KindRow, Key: "r", Animate: true}},
+		{"animate on a button", &Node{Kind: KindButton, ID: "b", Key: "b", Animate: true,
+			Name: "B", Role: "button", Events: []EventKind{EventActivate}}},
+		{"animate on a gauge without a key", &Node{Kind: KindGauge, Value: 0.5, Animate: true}},
+		{"animate on a progress without a key", &Node{Kind: KindProgress, Value: 0.5, Animate: true}},
+	}
+	for _, tc := range cases {
+		root := &Node{Kind: KindColumn, Children: []*Node{tc.node}}
+		if err := Validate(root, ViewPanel); err == nil {
+			t.Errorf("%s: accepted, want rejection", tc.name)
+		}
+	}
+}
+
+func TestMinorSixFieldsRoundTripOnTheWire(t *testing.T) {
+	t.Parallel()
+
+	sent := &Node{Kind: KindProgress, Key: "battery", Value: 0.4, Animate: true}
+	b, err := json.Marshal(sent)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got Node
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Animate != true || got.Key != "battery" || got.Value != 0.4 {
+		t.Fatalf("round trip lost the animate fields: %+v", got)
 	}
 }

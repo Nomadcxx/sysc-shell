@@ -42,6 +42,7 @@ ICONS = [
     "balance",
     "energy_savings_leaf",
     "check",
+    "send",
     "content_paste",
     "content_copy",
     "close",

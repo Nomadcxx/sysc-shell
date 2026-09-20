@@ -48,8 +48,10 @@ func TestPanelWeatherDispatchesTheWeatherTree(t *testing.T) {
 func TestWeatherBarActionTogglesTheStandalonePanel(t *testing.T) {
 	r := newPanelRegistry(t)
 	bar := &Bar{conn: "DP-1"}
+	r.mu.Lock()
 	r.bars = map[uint32]*Bar{7: bar}
 	r.bindBarPanelActionsLocked(7, bar)
+	r.mu.Unlock()
 
 	if !bar.onAction(panelWeatherAction, buttonLeft) {
 		t.Fatal("left-click did not handle the weather action")
@@ -77,8 +79,10 @@ func TestWeatherBarActionTogglesTheStandalonePanel(t *testing.T) {
 func TestWeatherBarRightClickOpensTheStandalonePanel(t *testing.T) {
 	r := newPanelRegistry(t)
 	bar := &Bar{conn: "DP-1"}
+	r.mu.Lock()
 	r.bars = map[uint32]*Bar{7: bar}
 	r.bindBarPanelActionsLocked(7, bar)
+	r.mu.Unlock()
 
 	if !bar.onAction(panelWeatherAction, buttonRight) {
 		t.Fatal("right-click did not handle the weather action")

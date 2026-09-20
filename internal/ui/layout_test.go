@@ -742,3 +742,26 @@ func TestLayoutRowMeasuresColumnsByContent(t *testing.T) {
 		t.Fatalf("button bounds %+v overflow the row", button.Bounds)
 	}
 }
+
+func TestHitRoutesButtonChildrenToTheButton(t *testing.T) {
+	t.Parallel()
+
+	root := &Node{Kind: KindRow, Children: []*Node{{
+		Kind:    KindButton,
+		Action:  "send",
+		Padding: 4,
+		Children: []*Node{
+			{Kind: KindText, Text: "Send"},
+			{Kind: KindIcon, Icon: "irrelevant"},
+		},
+	}}}
+	if err := Layout(root, Rect{W: 120, H: 40}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	button := root.Children[0]
+	inner := button.Children[0].Bounds
+	action, ok := Hit(root, inner.X+inner.W/2, inner.Y+inner.H/2)
+	if !ok || action != "send" {
+		t.Fatalf("Hit on a button child = (%q, %t), want the button's \"send\"", action, ok)
+	}
+}

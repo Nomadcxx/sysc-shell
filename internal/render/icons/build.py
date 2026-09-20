@@ -65,6 +65,7 @@ GLYPHS = [
     ("uniE02D", 0xE02D, "sunrise"),
     ("uniE02E", 0xE02E, "sunset"),
     ("uniE02F", 0xE02F, "elevation"),
+    ("uniE030", 0xE030, "ai-usage"),
 ]
 
 UPM = 1000

@@ -104,7 +104,9 @@ func TestMediaCardUsesTheOutputWallpaperThumbnailWithoutCoverArt(t *testing.T) {
 	}
 
 	r, h := mediaTestRegistry(t, services.MediaState{Available: true, Title: "Track"}, nil)
+	r.mu.Lock()
 	r.bars = map[uint32]*Bar{1: {conn: "DP-1"}}
+	r.mu.Unlock()
 	svc := wallpaper.NewService(wallpaper.ServiceConfig{
 		Engine:     mediaWallpaperEngine{},
 		Connectors: []string{"DP-1"},

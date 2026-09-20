@@ -262,6 +262,16 @@ var wireSizes = map[string]theme.TextRole{
 	"mono":     theme.RoleMono,
 }
 
+var wireShapes = map[string]ui.Shape{
+	"circle":  ui.ShapeCircle,
+	"stadium": ui.ShapeStadium,
+	"small":   ui.ShapeSmall,
+	"medium":  ui.ShapeMedium,
+	"large":   ui.ShapeLarge,
+	"card":    ui.ShapeCard,
+	"panel":   ui.ShapePanel,
+}
+
 func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 	out := &ui.Node{
 		Padding:  n.Padding,
@@ -275,6 +285,8 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		PinEnd:   n.PinEnd,
 		Name:     n.Name,
 		Role:     n.Role,
+		Tooltip:  n.Tooltip,
+		Absent:   n.Absent,
 	}
 	switch n.Tone {
 	case v1.ToneError:
@@ -308,6 +320,24 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		}
 		out.TextRole = role
 	}
+	if n.Shape != "" {
+		shape, ok := wireShapes[n.Shape]
+		if !ok {
+			return nil, fmt.Errorf("plugin: %s: unknown shape %q", path, n.Shape)
+		}
+		out.Shape = shape
+	}
+	if n.Stroke != 0 || n.StrokeFill != "" {
+		strokeFill := ui.FillOutline
+		if n.StrokeFill != "" {
+			fill, ok := wireFills[n.StrokeFill]
+			if !ok {
+				return nil, fmt.Errorf("plugin: %s: unknown stroke fill %q", path, n.StrokeFill)
+			}
+			strokeFill = fill
+		}
+		out.Stroke, out.StrokeFill = n.Stroke, strokeFill
+	}
 
 	switch n.Kind {
 	case v1.KindRow:
@@ -326,11 +356,25 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 	case v1.KindProgress:
 		out.Kind = ui.KindMeter
 		out.Value = n.Value
+		out.Key, out.Animate = n.Key, n.Animate
 	case v1.KindGauge:
 		out.Kind = ui.KindRadialGauge
 		out.Value = n.Value
 		out.ValueText = n.ValueText
 		out.Icon = n.Icon
+		out.Key, out.Animate = n.Key, n.Animate
+	case v1.KindGraph:
+		out.Kind = ui.KindGraph
+		out.Values = n.Values
+	case v1.KindSeparator:
+		out.Kind = ui.KindSeparator
+	case v1.KindImage:
+		out.Kind = ui.KindImage
+		out.ImagePath = n.Path
+		out.ImageSize = n.ImageSize
+		out.ImageW = n.ImageW
+		out.ImageH = n.ImageH
+		out.Background = n.Background
 	case v1.KindButton:
 		out.Kind = ui.KindButton
 		out.Text = n.Text
@@ -435,11 +479,12 @@ func card(out *ui.Node) *ui.Node {
 	default:
 		return out
 	}
-	if out.Fill == ui.FillNone {
+	if out.Fill == ui.FillNone && out.Stroke == 0 {
 		return out
 	}
 	wrapper := &ui.Node{Kind: ui.KindCapsule, Fill: out.Fill, Radius: out.Radius,
-		Children: []*ui.Node{out}}
+		Stroke: out.Stroke, StrokeFill: out.StrokeFill, Children: []*ui.Node{out}}
 	out.Fill, out.Radius = ui.FillNone, 0
+	out.Stroke, out.StrokeFill = 0, ui.FillNone
 	return wrapper
 }

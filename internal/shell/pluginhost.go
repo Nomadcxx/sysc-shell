@@ -10,6 +10,7 @@ import (
 	"log/slog"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -67,6 +68,9 @@ type pluginHost struct {
 	// that widget instead of floating at the default position.
 	lastAnchor map[string]int
 	catalog    plugin.Catalog
+	// images decodes the absolute paths plugin image nodes name, off the
+	// Wayland owner and under the worker's caps and bounded cache.
+	images *icons.Worker
 }
 
 func pluginMeasure(s string, _ ui.TextAttrs) (int, int) { return len(s) * 8, 16 }
@@ -95,6 +99,8 @@ func (r *Registry) BindPlugins(opts PluginHostOptions) error {
 		views:      make(map[string]*hostedView),
 		lastAnchor: make(map[string]int),
 	}
+	h.images = icons.NewWorker(icons.FileResolver{}, h.applyPluginImage)
+	go h.images.Run(ctx)
 	r.mu.Lock()
 	old := r.plugins
 	r.plugins = h
@@ -219,6 +225,8 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 		OutputContext: func(_ context.Context, p v1.OutputContextParams) (v1.OutputContextResult, error) {
 			return h.outputContext(p)
 		},
+		PanelResize: func(_ context.Context, p v1.PanelResizeParams) error { return h.resizePanel(p) },
+		ViewFocus:   func(_ context.Context, p v1.ViewFocusParams) error { return h.focusPanelView(id, p) },
 	})
 	rt.SetCalls(disp)
 	slot := &pluginSlot{rt: rt, disp: disp}
@@ -379,6 +387,7 @@ func (h *pluginHost) applyResult(res plugin.Result) {
 		v.Failed = false
 		v.Root = res.Root
 		v.Label = ""
+		queuePluginImages(h, res.Root)
 	}
 	kind := v.Kind
 	h.mu.Unlock()
@@ -387,6 +396,90 @@ func (h *pluginHost) applyResult(res plugin.Result) {
 		return
 	}
 	h.r.refreshPluginBars()
+}
+
+// pluginImageKey names the decode a node wants: the path plus the box the
+// validator made it declare. The box is part of the key, so one path at two
+// sizes is two decodes rather than one badly rescaled.
+func pluginImageKey(n *ui.Node) (icons.Key, bool) {
+	switch {
+	case n.ImageW > 0 && n.ImageH > 0:
+		return icons.Key{Name: n.ImagePath, W: n.ImageW, H: n.ImageH}, true
+	case n.ImageSize > 0:
+		return icons.Key{Name: n.ImagePath, W: n.ImageSize, H: n.ImageSize}, true
+	}
+	return icons.Key{}, false
+}
+
+// queuePluginImages walks a freshly applied tree and fills every image node
+// the worker already has a decode for; the rest queue. A failed decode
+// publishes nothing, so the reserved box stays and the next revision tries
+// again, which is also how a file that appears later gets picked up.
+func queuePluginImages(h *pluginHost, n *ui.Node) {
+	if n == nil {
+		return
+	}
+	if n.Kind == ui.KindImage && n.Image == nil && n.ImagePath != "" {
+		if key, ok := pluginImageKey(n); ok {
+			if image, hit, err := h.images.Request(key); err == nil && hit {
+				n.Image = image
+			}
+		}
+	}
+	for _, c := range n.Children {
+		queuePluginImages(h, c)
+	}
+}
+
+// applyPluginImage is the worker's publish callback. It stamps the decode
+// into every retained node waiting for that exact path and box, then
+// invalidates the views that changed -- the same invalidation a view
+// revision rides. A nil image never reflows: the box was reserved at
+// layout time. The stamp holds r.mu around h.mu -- the order rebuildPanel
+// already establishes -- because the retained tree is read under r.mu by
+// the panel copy while revisions land under h.mu.
+func (h *pluginHost) applyPluginImage(key icons.Key, image *ui.Image) {
+	if image == nil {
+		return
+	}
+	h.r.mu.Lock()
+	h.mu.Lock()
+	panels, bars := false, false
+	for _, v := range h.views {
+		if v.Root == nil {
+			continue
+		}
+		if fillPluginImages(v.Root, key, image) {
+			if v.Kind == v1.ViewPanel {
+				panels = true
+			} else {
+				bars = true
+			}
+		}
+	}
+	h.mu.Unlock()
+	h.r.mu.Unlock()
+	if panels {
+		h.refreshPanel()
+	}
+	if bars {
+		h.r.refreshPluginBars()
+	}
+}
+
+// fillPluginImages stamps image into the matching nodes of one tree and
+// reports whether anything changed.
+func fillPluginImages(n *ui.Node, key icons.Key, image *ui.Image) bool {
+	changed := false
+	if nodeKey, ok := pluginImageKey(n); ok &&
+		n.Kind == ui.KindImage && n.Image == nil && nodeKey == key {
+		n.Image = image
+		changed = true
+	}
+	for _, c := range n.Children {
+		changed = fillPluginImages(c, key, image) || changed
+	}
+	return changed
 }
 
 func (h *pluginHost) syncBars() {
@@ -796,6 +889,71 @@ func (h *pluginHost) panelSize() ui.Rect {
 		return ui.Rect{W: h.panel.Width, H: h.panel.Height}
 	}
 	return ui.Rect{W: 320, H: 280}
+}
+
+// resizePanel retargets the calling plugin's open panel. The tree re-lays-out
+// at the new bounds at once; the reply reports the size as requested and the
+// compositor's configure completes it.
+func (h *pluginHost) resizePanel(p v1.PanelResizeParams) error {
+	h.r.mu.Lock()
+	global, open := h.r.panels.Output(PanelPlugin)
+	h.r.mu.Unlock()
+	if !open {
+		return errors.New("panel surface is not open")
+	}
+	h.mu.Lock()
+	if h.panel == nil {
+		h.mu.Unlock()
+		return errors.New("no open panel to resize")
+	}
+	h.panel.Width, h.panel.Height = p.Width, p.Height
+	h.mu.Unlock()
+	h.refreshPanel()
+	w, hgt := uint32(p.Width), uint32(p.Height)
+	h.r.sendAux(wayland.AuxRequest{
+		Output: global,
+		ID:     panelSurfaceID(PanelPlugin),
+		Update: &wayland.AuxUpdate{Width: &w, Height: &hgt},
+	})
+	return nil
+}
+
+// focusPanelView focuses one node of the calling plugin's open panel, matched
+// by the action identity stamped at render time. A miss is an error, never a
+// silent no-op: the plugin needs to know its dialog did not take focus.
+func (h *pluginHost) focusPanelView(pluginID string, p v1.ViewFocusParams) error {
+	h.mu.Lock()
+	v, ok := h.views[p.View]
+	same := ok && v.Kind == v1.ViewPanel && v.Plugin == pluginID && h.panel != nil && h.panel.ID == p.View
+	h.mu.Unlock()
+	if !same {
+		return fmt.Errorf("view %q is not the open panel of %s", p.View, pluginID)
+	}
+	h.r.mu.Lock()
+	host := h.r.panelHosts[PanelPlugin]
+	var target *ui.Node
+	if host != nil {
+		action := pluginActionPrefix + p.View + ":" + p.Node
+		for _, n := range host.focus {
+			if n != nil && n.Action == action {
+				target = n
+				break
+			}
+		}
+		if target != nil {
+			host.setFocus(target)
+		}
+	}
+	output := uint32(0)
+	if host != nil {
+		output = host.output
+	}
+	h.r.mu.Unlock()
+	if target == nil {
+		return fmt.Errorf("node %q is not focusable on view %q", p.Node, p.View)
+	}
+	h.r.publishSurface(output, panelSurfaceID(PanelPlugin))
+	return nil
 }
 
 func pluginPanelError(reason string, actions bool) *ui.Node {

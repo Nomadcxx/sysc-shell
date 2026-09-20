@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"sync/atomic"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/render"
@@ -67,6 +68,9 @@ const (
 	animSweep
 	// animEffect is the phase of a host-owned effect layer.
 	animEffect
+	// animProgress is a declarative value glide: a plugin-flagged meter or
+	// gauge glides to each revision's target instead of jumping.
+	animProgress
 )
 
 // animKey addresses one value: a stable node key plus the channel. Keys are
@@ -139,8 +143,10 @@ type animator struct {
 	spatial theme.Curve
 	values  map[animKey]animValue
 	// running reports whether a frame loop is already ticking this surface, so
-	// a second target change does not start a second ticker.
-	running bool
+	// a second target change does not start a second ticker. It is atomic
+	// because panel frame loops start from paths that hold no registry lock;
+	// bar loops start under the bar lock and simply load it.
+	running atomic.Bool
 }
 
 func newAnimator(now func() time.Time, reduced bool, motion render.MotionSet) *animator {
@@ -204,8 +210,50 @@ func (a *animator) duration(channel animChannel, rising bool) time.Duration {
 		// A palette change is a whole-surface change, so it takes the time a
 		// whole surface takes to arrive.
 		return a.motion.Medium
+	case animProgress:
+		// A value glide reads as one motion whatever its direction: a battery
+		// filling and draining both travel the same road.
+		return a.motion.Medium
 	}
 	return 0
+}
+
+// resolveProgressMotion glides every animated meter and gauge toward the value
+// its tree carries, writing the interpolated value back into the node the way
+// the marquee walk writes its sweep offset. Target is idempotent for an
+// unchanged target, so a resolve per frame keeps one transition in flight and
+// lets it settle; a changed target retargets from wherever the value is now.
+// Reduced motion collapses the glide: duration returns zero, so the first
+// resolve writes the target directly and nothing stays in flight. Keys whose
+// nodes left the tree are retired so the animator never grows on a rebuild
+// churn.
+func resolveProgressMotion(anim *animator, root *ui.Node) {
+	if anim == nil {
+		return
+	}
+	seen := make(map[string]bool)
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n.Animate && (n.Kind == ui.KindMeter || n.Kind == ui.KindRadialGauge) {
+			if key := n.StableKey(); key != "" {
+				seen[key] = true
+				anim.Target(key, animProgress, n.Value)
+				n.Value = anim.Value(key, animProgress)
+			}
+		}
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(root)
+	for key := range anim.values {
+		if key.channel == animProgress && !seen[key.node] {
+			delete(anim.values, key)
+		}
+	}
 }
 
 // Target aims a value at to. A reversal starts from wherever the value is
