@@ -686,3 +686,42 @@ func TestConvertPutsAMaterialIconAndLabelInOneButton(t *testing.T) {
 		t.Fatalf("button kept a label of its own: %q", button.Text)
 	}
 }
+
+func TestConvertMapsMinorFour(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindGraph, Values: []float64{0.1, 0.5, 0.9}, Height: 40, Absent: true},
+		{Kind: v1.KindSeparator},
+		{Kind: v1.KindRow, Shape: "circle", Children: []*v1.Node{
+			{Kind: v1.KindText, Text: "C", Tooltip: "snapshot provider"},
+		}},
+	}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	graph := got.Children[0]
+	if graph.Kind != ui.KindGraph || len(graph.Values) != 3 || !graph.Absent {
+		t.Fatalf("graph = %+v", graph)
+	}
+	if got.Children[1].Kind != ui.KindSeparator {
+		t.Fatalf("separator = %+v", got.Children[1])
+	}
+	row := got.Children[2]
+	if row.Shape != ui.ShapeCircle {
+		t.Fatalf("row shape = %v", row.Shape)
+	}
+	if row.Children[0].Tooltip != "snapshot provider" {
+		t.Fatalf("tooltip = %+v", row.Children[0])
+	}
+}
+
+func TestConvertRejectsAnUnknownShape(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindRow, Shape: "neon"}
+	if _, err := Convert(root, v1.ViewPanel); err == nil {
+		t.Fatal("unknown shape accepted")
+	}
+}

@@ -262,6 +262,16 @@ var wireSizes = map[string]theme.TextRole{
 	"mono":     theme.RoleMono,
 }
 
+var wireShapes = map[string]ui.Shape{
+	"circle":  ui.ShapeCircle,
+	"stadium": ui.ShapeStadium,
+	"small":   ui.ShapeSmall,
+	"medium":  ui.ShapeMedium,
+	"large":   ui.ShapeLarge,
+	"card":    ui.ShapeCard,
+	"panel":   ui.ShapePanel,
+}
+
 func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 	out := &ui.Node{
 		Padding:  n.Padding,
@@ -275,6 +285,8 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		PinEnd:   n.PinEnd,
 		Name:     n.Name,
 		Role:     n.Role,
+		Tooltip:  n.Tooltip,
+		Absent:   n.Absent,
 	}
 	switch n.Tone {
 	case v1.ToneError:
@@ -308,6 +320,13 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		}
 		out.TextRole = role
 	}
+	if n.Shape != "" {
+		shape, ok := wireShapes[n.Shape]
+		if !ok {
+			return nil, fmt.Errorf("plugin: %s: unknown shape %q", path, n.Shape)
+		}
+		out.Shape = shape
+	}
 
 	switch n.Kind {
 	case v1.KindRow:
@@ -331,6 +350,11 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		out.Value = n.Value
 		out.ValueText = n.ValueText
 		out.Icon = n.Icon
+	case v1.KindGraph:
+		out.Kind = ui.KindGraph
+		out.Values = n.Values
+	case v1.KindSeparator:
+		out.Kind = ui.KindSeparator
 	case v1.KindButton:
 		out.Kind = ui.KindButton
 		out.Text = n.Text

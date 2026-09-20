@@ -42,6 +42,14 @@ const (
 	// the low double digits; anything larger is a mistake or an attack on
 	// the rasteriser.
 	MaxRadius = 256
+	// MaxTooltipBytes bounds the hover text one node carries. A tooltip is a
+	// glanceable hint, not a document.
+	MaxTooltipBytes = 256
+	// MinGraphSamples and MaxGraphSamples bound a graph's sample count.
+	// One sample is a dot, not a shape; more than this is a data dump the
+	// host cannot draw meaningfully at view sizes.
+	MinGraphSamples = 2
+	MaxGraphSamples = 64
 )
 
 // NodeKind names a view element. Kinds are strings so that a plugin written in
@@ -61,6 +69,13 @@ const (
 	KindDragSource NodeKind = "drag_source"
 	KindDropZone   NodeKind = "drop_zone"
 	KindGauge      NodeKind = "gauge"
+	// KindGraph draws a column sparkline of normalized samples, oldest
+	// first. It is the plugin's history at a glance: values carry the data,
+	// absent reserves the box when nothing has been recorded yet.
+	KindGraph NodeKind = "graph"
+	// KindSeparator is a rhythm rule between sibling groups. It is a panel
+	// affordance: a bar strip has no room for punctuation.
+	KindSeparator NodeKind = "separator"
 )
 
 // EventKind names an input event a node declares it can emit. A node receives
@@ -113,8 +128,9 @@ const (
 // no representation here.
 //
 // Fill, Radius, Bold, Size, Disabled, CenterX, and PinEnd arrived in protocol
-// minor two. A minor-one host ignores them, so a plugin that sets them still
-// speaks to an older shell, just without the presentation.
+// minor two. Tooltip, Shape, Values, Absent, and the graph and separator kinds
+// arrived in minor four. A minor-one host ignores the new fields, so a plugin
+// that sets them still speaks to an older shell, just without the presentation.
 type Node struct {
 	Kind NodeKind `json:"kind"`
 
@@ -162,6 +178,22 @@ type Node struct {
 	// proportional digits the rendered width changes every second, which
 	// visibly shifts everything beside it.
 	Tabular bool `json:"tabular,omitempty"`
+
+	// Tooltip is bounded hover text owned by the node's feature. The shell
+	// paints it wherever it paints its own hints; a longer value is a
+	// diagnosable validation error.
+	Tooltip string `json:"tooltip,omitempty"`
+	// Shape names the corner treatment a container or button asks for:
+	// circle, stadium, small, medium, large, card, panel. The host maps it
+	// onto its own shape tokens; an unknown name is a diagnosable error.
+	Shape string `json:"shape,omitempty"`
+	// Values are the graph's samples, oldest first, each normalized zero
+	// through one. Only a graph carries them.
+	Values []float64 `json:"values,omitempty"`
+	// Absent reserves the node's box and paints nothing: a gauge with no
+	// reading yet keeps the layout steady instead of vanishing. Only a
+	// gauge or a graph may be absent.
+	Absent bool `json:"absent,omitempty"`
 
 	// Width fixes a logical width; MaxWidth caps a measured one. Padding and
 	// Gap open a container. Zero means natural in every case.
@@ -224,7 +256,7 @@ var knownKinds = map[NodeKind]bool{
 	KindRow: true, KindColumn: true, KindText: true, KindIcon: true,
 	KindProgress: true, KindButton: true, KindTextInput: true,
 	KindList: true, KindDragSource: true, KindDropZone: true,
-	KindGauge: true,
+	KindGauge: true, KindGraph: true, KindSeparator: true,
 }
 
 var knownViews = map[ViewKind]bool{ViewBar: true, ViewTooltip: true, ViewPanel: true}
@@ -240,6 +272,11 @@ var knownFills = map[string]bool{
 var knownSizes = map[string]bool{
 	"body": true, "caption": true, "label": true, "title": true,
 	"headline": true, "display": true, "mono": true,
+}
+
+var knownShapes = map[string]bool{
+	"circle": true, "stadium": true, "small": true, "medium": true,
+	"large": true, "card": true, "panel": true,
 }
 
 func fillAllowed(k NodeKind) bool {
@@ -301,6 +338,9 @@ func (v *validator) node(n *Node, path string, depth int) error {
 		return err
 	}
 	if err := v.minorTwo(n, path); err != nil {
+		return err
+	}
+	if err := v.minorFour(n, path); err != nil {
 		return err
 	}
 
@@ -410,7 +450,7 @@ func (v *validator) vocabulary(n *Node, path string) error {
 	if v.view == ViewBar && n.Kind.keyboard() {
 		return fmt.Errorf("%s: a bar view has no keyboard focus and cannot hold a %s", path, n.Kind)
 	}
-	if v.view != ViewPanel && (n.Kind == KindList || n.Kind == KindDragSource || n.Kind == KindDropZone) {
+	if v.view != ViewPanel && (n.Kind == KindList || n.Kind == KindDragSource || n.Kind == KindDropZone || n.Kind == KindSeparator) {
 		return fmt.Errorf("%s: a %s view cannot hold a %s", path, v.view, n.Kind)
 	}
 	if n.Kind == KindDragSource && n.Name == "" {
@@ -468,6 +508,44 @@ func (v *validator) minorTwo(n *Node, path string) error {
 	}
 	if n.Disabled && !n.Kind.interactive() {
 		return fmt.Errorf("%s: %s cannot be disabled", path, n.Kind)
+	}
+	return nil
+}
+
+// minorFour validates the parity surface that arrived with protocol minor
+// four: hover tooltips, semantic shapes, graph sparklines, separators, and
+// the absent dim state. Each maps onto a renderer the host already ships,
+// so the checks stay vocabulary-level.
+func (v *validator) minorFour(n *Node, path string) error {
+	if len(n.Tooltip) > MaxTooltipBytes {
+		return fmt.Errorf("%s: tooltip is %d bytes, more than the %d allowed", path, len(n.Tooltip), MaxTooltipBytes)
+	}
+	if n.Shape != "" {
+		if !knownShapes[n.Shape] {
+			return fmt.Errorf("%s: unknown shape %q", path, n.Shape)
+		}
+		if !fillAllowed(n.Kind) {
+			return fmt.Errorf("%s: %s cannot carry a shape", path, n.Kind)
+		}
+	}
+	if len(n.Values) > 0 {
+		if n.Kind != KindGraph {
+			return fmt.Errorf("%s: %s cannot carry values", path, n.Kind)
+		}
+		if len(n.Values) < MinGraphSamples || len(n.Values) > MaxGraphSamples {
+			return fmt.Errorf("%s: graph holds %d samples, outside %d through %d", path, len(n.Values), MinGraphSamples, MaxGraphSamples)
+		}
+		for i, s := range n.Values {
+			if math.IsNaN(s) || math.IsInf(s, 0) {
+				return fmt.Errorf("%s: graph sample %d is not finite", path, i)
+			}
+			if s < 0 || s > 1 {
+				return fmt.Errorf("%s: graph sample %d is outside zero through one", path, i)
+			}
+		}
+	}
+	if n.Absent && n.Kind != KindGauge && n.Kind != KindGraph {
+		return fmt.Errorf("%s: %s cannot be absent", path, n.Kind)
 	}
 	return nil
 }

@@ -594,3 +594,59 @@ func TestValidateAcceptsEveryFillAndSizeName(t *testing.T) {
 		t.Errorf("disabled drag source rejected: %v", err)
 	}
 }
+
+func TestValidateAcceptsMinorFour(t *testing.T) {
+	t.Parallel()
+
+	root := &Node{Kind: KindColumn, Children: []*Node{
+		{Kind: KindText, Text: "history", Tooltip: "30 snapshots"},
+		{Kind: KindGraph, Values: []float64{0.1, 0.4, 0.9}, Height: 40},
+		{Kind: KindGauge, Value: 0.5, ValueText: "50", Absent: true},
+		{Kind: KindSeparator},
+		{Kind: KindRow, Shape: "card", Children: []*Node{
+			{Kind: KindColumn, Shape: "circle", Fill: "accent", Children: []*Node{
+				{Kind: KindText, Text: "C"},
+			}},
+		}},
+	}}
+	if err := Validate(root, ViewPanel); err != nil {
+		t.Fatalf("minor-4 tree rejected: %v", err)
+	}
+	// A graph is legal where a meter is: the bar strip carries sparklines.
+	if err := Validate(&Node{Kind: KindGraph, Values: []float64{0.2, 0.8}}, ViewBar); err != nil {
+		t.Fatalf("graph in a bar view rejected: %v", err)
+	}
+}
+
+func TestValidateRejectsBadMinorFour(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		node *Node
+	}{
+		{"unknown shape", &Node{Kind: KindRow, Shape: "neon"}},
+		{"shape on text", &Node{Kind: KindText, Text: "x", Shape: "card"}},
+		{"tooltip over cap", &Node{Kind: KindText, Text: "x", Tooltip: strings.Repeat("a", 257)}},
+		{"graph one sample", &Node{Kind: KindGraph, Values: []float64{0.5}}},
+		{"graph over cap", &Node{Kind: KindGraph, Values: make([]float64, 65)}},
+		{"graph nan", &Node{Kind: KindGraph, Values: []float64{math.NaN()}}},
+		{"graph out of range", &Node{Kind: KindGraph, Values: []float64{1.5}}},
+		{"values on text", &Node{Kind: KindText, Text: "x", Values: []float64{0.5}}},
+		{"absent on text", &Node{Kind: KindText, Text: "x", Absent: true}},
+		{"absent on progress", &Node{Kind: KindProgress, Value: 0.5, Absent: true}},
+		{"separator with children", &Node{Kind: KindSeparator, Children: []*Node{{Kind: KindText, Text: "x"}}}},
+		{"separator in a bar view", &Node{Kind: KindSeparator}},
+		{"separator declares events", &Node{Kind: KindSeparator, Events: []EventKind{EventActivate}}},
+	}
+	views := map[string]ViewKind{"separator in a bar view": ViewBar, "separator declares events": ViewPanel}
+	for _, tc := range cases {
+		view := ViewPanel
+		if v, ok := views[tc.name]; ok {
+			view = v
+		}
+		if err := Validate(tc.node, view); err == nil {
+			t.Errorf("%s: Validate accepted", tc.name)
+		}
+	}
+}
