@@ -356,11 +356,13 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 	case v1.KindProgress:
 		out.Kind = ui.KindMeter
 		out.Value = n.Value
+		out.Key, out.Animate = n.Key, n.Animate
 	case v1.KindGauge:
 		out.Kind = ui.KindRadialGauge
 		out.Value = n.Value
 		out.ValueText = n.ValueText
 		out.Icon = n.Icon
+		out.Key, out.Animate = n.Key, n.Animate
 	case v1.KindGraph:
 		out.Kind = ui.KindGraph
 		out.Values = n.Values

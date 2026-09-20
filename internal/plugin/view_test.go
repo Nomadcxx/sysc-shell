@@ -803,3 +803,28 @@ func TestConvertButtonChildrenReplaceSynthesis(t *testing.T) {
 		t.Fatalf("explicit children did not replace the synthesis: %+v", button.Children)
 	}
 }
+
+func TestConvertMapsAnAnimatedValue(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindProgress, Key: "battery", Value: 0.4, Animate: true},
+		{Kind: v1.KindGauge, Key: "cpu", Value: 0.7, Animate: true, ValueText: "70%"},
+		{Kind: v1.KindProgress, Key: "static", Value: 0.9},
+	}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	meter := got.Children[0]
+	if meter.Kind != ui.KindMeter || meter.Key != "battery" || !meter.Animate || meter.Value != 0.4 {
+		t.Fatalf("meter = %+v", meter)
+	}
+	gauge := got.Children[1]
+	if gauge.Kind != ui.KindRadialGauge || gauge.Key != "cpu" || !gauge.Animate || gauge.ValueText != "70%" {
+		t.Fatalf("gauge = %+v", gauge)
+	}
+	if got.Children[2].Animate {
+		t.Fatal("static progress converted as animated")
+	}
+}

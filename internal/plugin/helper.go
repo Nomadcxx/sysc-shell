@@ -124,8 +124,16 @@ func HelperServe(args []string) int {
 				_ = out.Encode(&v1.ViewSnapshot{ViewID: m.ViewID, Revision: 1, Root: imagePanelRoot()})
 				break
 			}
+			if mode == "progress-panel" && m.View == v1.ViewPanel {
+				_ = out.Encode(&v1.ViewSnapshot{ViewID: m.ViewID, Revision: 1, Root: progressPanelRoot(0.2)})
+				go func() {
+					time.Sleep(150 * time.Millisecond)
+					_ = out.Encode(&v1.ViewSnapshot{ViewID: m.ViewID, Revision: 2, Root: progressPanelRoot(0.8)})
+				}()
+				break
+			}
 			_ = out.Encode(helperSnapshot(m.ViewID, m.View))
-			if (mode == "call-panel" || mode == "image-panel") && m.View == v1.ViewBar {
+			if (mode == "call-panel" || mode == "image-panel" || mode == "progress-panel") && m.View == v1.ViewBar {
 				params, _ := json.Marshal(v1.PanelParams{Entry: "panel", Output: m.Output, Instance: m.Instance})
 				_ = out.Encode(&v1.HostCall{ID: "c1", Call: v1.CallPanelOpen, Params: params})
 			}
@@ -150,6 +158,16 @@ func HelperServe(args []string) int {
 func imagePanelRoot() *v1.Node {
 	return &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
 		{Kind: v1.KindImage, Path: os.Getenv("SYSC_HELPER_IMAGE"), ImageSize: 96},
+		{Kind: v1.KindText, Text: "hello"},
+	}}
+}
+
+// progressPanelRoot is the progress-panel mode's panel: one animated meter at
+// the given value. The mode publishes two revisions so a test can watch the
+// host glide between them.
+func progressPanelRoot(value float64) *v1.Node {
+	return &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindProgress, Key: "battery", Value: value, Animate: true},
 		{Kind: v1.KindText, Text: "hello"},
 	}}
 }

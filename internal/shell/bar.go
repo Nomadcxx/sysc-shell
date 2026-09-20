@@ -576,6 +576,8 @@ func (b *Bar) renderViewLocked() (*ui.Node, render.Style) {
 	b.pointer.apply(root, b.anim)
 	b.resolveGradientMotionLocked(root)
 	b.resolveMediaMotionLocked(root)
+	resolveProgressMotion(b.anim, root)
+	b.startBarFramesLocked()
 	return root, b.style
 }
 

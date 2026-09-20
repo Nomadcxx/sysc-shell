@@ -16,6 +16,9 @@ func TestAnimatedTracksOnlyInteractiveChrome(t *testing.T) {
 		{"segmented", &Node{Kind: KindSegmented, Key: "profiles"}, true},
 		{"clickable capsule", &Node{Kind: KindCapsule, Action: "battery"}, true},
 		{"display capsule", &Node{Kind: KindCapsule}, false},
+		{"animated meter", &Node{Kind: KindMeter, Key: "battery", Animate: true}, true},
+		{"static meter", &Node{Kind: KindMeter, Key: "cpu"}, false},
+		{"animated gauge", &Node{Kind: KindRadialGauge, Key: "cpu", Animate: true}, true},
 		{"text", &Node{Kind: KindText, Text: "42%"}, false},
 		{"nil", nil, false},
 	} {
@@ -93,5 +96,41 @@ func TestFocusablesSkipDisabledNodes(t *testing.T) {
 	got := Focusables(&Node{Kind: KindColumn, Children: []*Node{off, on}})
 	if len(got) != 1 || got[0] != on {
 		t.Fatalf("Focusables returned %d nodes, want only the enabled one", len(got))
+	}
+}
+
+func TestValidateKeysCoversAnimatedMeters(t *testing.T) {
+	t.Parallel()
+
+	ok := &Node{Kind: KindColumn, Children: []*Node{
+		{Kind: KindMeter, Key: "battery", Animate: true},
+		{Kind: KindRadialGauge, Key: "cpu", Animate: true},
+	}}
+	if err := ValidateKeys(ok); err != nil {
+		t.Fatalf("distinct animated meters rejected: %v", err)
+	}
+
+	dup := &Node{Kind: KindColumn, Children: []*Node{
+		{Kind: KindMeter, Key: "same", Animate: true},
+		{Kind: KindRadialGauge, Key: "same", Animate: true},
+	}}
+	if err := ValidateKeys(dup); err == nil {
+		t.Fatal("duplicate key across animated meters accepted")
+	}
+
+	unkeyed := &Node{Kind: KindColumn, Children: []*Node{
+		{Kind: KindMeter, Animate: true},
+	}}
+	if err := ValidateKeys(unkeyed); err == nil {
+		t.Fatal("unkeyed animated meter accepted")
+	}
+
+	// A static meter stays outside the animator's contract: no key needed.
+	static := &Node{Kind: KindColumn, Children: []*Node{
+		{Kind: KindMeter, Key: "a"},
+		{Kind: KindMeter, Key: "a"},
+	}}
+	if err := ValidateKeys(static); err != nil {
+		t.Fatalf("static meters rejected: %v", err)
 	}
 }

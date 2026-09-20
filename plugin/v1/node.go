@@ -142,9 +142,9 @@ const (
 // Fill, Radius, Bold, Size, Disabled, CenterX, and PinEnd arrived in protocol
 // minor two. Tooltip, Shape, Values, Absent, and the graph and separator kinds
 // arrived in minor four. Path, the image box fields, Background, Stroke, and
-// StrokeFill, and the image kind arrived in minor five. A minor-one host
-// ignores the new fields, so a plugin that sets them still speaks to an older
-// shell, just without the presentation.
+// StrokeFill, and the image kind arrived in minor five. Animate arrived in
+// minor six. A minor-one host ignores the new fields, so a plugin that sets
+// them still speaks to an older shell, just without the presentation.
 type Node struct {
 	Kind NodeKind `json:"kind"`
 
@@ -164,6 +164,11 @@ type Node struct {
 	Icon string `json:"icon,omitempty"`
 	// Value is a progress fraction from zero through one.
 	Value float64 `json:"value,omitempty"`
+	// Animate asks the host to glide this node's Value to each new revision's
+	// target instead of jumping. Progress and gauge only, and it requires a
+	// Key so the host can keep one transition attached to one element across
+	// revisions. It arrived with protocol minor six.
+	Animate bool `json:"animate,omitempty"`
 	// ValueText is the gauge's centre label, such as a remaining time. An
 	// empty value falls back to a percentage.
 	ValueText string `json:"value_text,omitempty"`
@@ -379,6 +384,9 @@ func (v *validator) node(n *Node, path string, depth int) error {
 		return err
 	}
 	if err := v.minorFive(n, path); err != nil {
+		return err
+	}
+	if err := v.minorSix(n, path); err != nil {
 		return err
 	}
 
@@ -648,6 +656,22 @@ func (v *validator) minorFive(n *Node, path string) error {
 				return fmt.Errorf("%s: button child %d is an interactive %s; the button is the one hit target", path, i, c.Kind)
 			}
 		}
+	}
+	return nil
+}
+
+// minorSix validates the declarative value animation that arrived with
+// protocol minor six: the animate flag, legal only on the two value kinds and
+// only when the node carries a key for the host's animator to hold onto.
+func (v *validator) minorSix(n *Node, path string) error {
+	if !n.Animate {
+		return nil
+	}
+	if n.Kind != KindProgress && n.Kind != KindGauge {
+		return fmt.Errorf("%s: %s cannot animate", path, n.Kind)
+	}
+	if n.Key == "" {
+		return fmt.Errorf("%s: an animated %s needs a key so the host keeps one transition across revisions", path, n.Kind)
 	}
 	return nil
 }

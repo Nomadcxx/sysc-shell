@@ -695,9 +695,11 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		// retain the initial 300 px fallback and clip the last visible card.
 		h.root = r.panelTree(h)
 	}
-	if err := h.resolveEffectMotionLocked(copyNode(h.root)); err != nil {
+	probe := copyNode(h.root)
+	if err := h.resolveEffectMotionLocked(probe); err != nil {
 		return err
 	}
+	resolveProgressMotion(h.anim, probe)
 	h.focus = ui.Focusables(h.root)
 	h.roving = ui.Roving{Count: len(h.focus)}
 	if id == PanelWallpaper {
@@ -1155,6 +1157,7 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	if err := h.resolveEffectMotionLocked(root); err != nil {
 		return err
 	}
+	resolveProgressMotion(h.anim, root)
 
 	paintTheme := h.paintTheme()
 	style := h.rootStyle(paintTheme)
@@ -2124,9 +2127,11 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 		}
 		overlayEditors(h.root, h.editors)
 	}
-	if err := h.resolveEffectMotionLocked(copyNode(h.root)); err != nil {
+	probe := copyNode(h.root)
+	if err := h.resolveEffectMotionLocked(probe); err != nil {
 		h.errLabel = err.Error()
 	}
+	resolveProgressMotion(h.anim, probe)
 	h.focus = ui.Focusables(h.root)
 	h.roving.Count = len(h.focus)
 	h.roving.Set(idx)

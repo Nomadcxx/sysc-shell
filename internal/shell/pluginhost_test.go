@@ -55,6 +55,13 @@ func pluginConfig(root string) config.Config {
 }
 
 func bindTestPlugin(t *testing.T, mode string) *Registry {
+	return bindTestPluginMotion(t, mode, true)
+}
+
+// bindTestPluginMotion binds the helper plugin with reduced motion set
+// explicitly: the default keeps other plugin tests deterministic, while the
+// glide test needs the animator's real clock.
+func bindTestPluginMotion(t *testing.T, mode string, reduced bool) *Registry {
 	t.Helper()
 	self, err := os.Executable()
 	if err != nil {
@@ -65,7 +72,9 @@ func bindTestPlugin(t *testing.T, mode string) *Registry {
 	if _, err := plugin.WriteHelperPlugin(dir, self, mode, testTimerManifest); err != nil {
 		t.Fatal(err)
 	}
-	reg := NewRegistry(pluginConfig(root))
+	cfg := pluginConfig(root)
+	cfg.Accessibility.ReducedMotion = reduced
+	reg := NewRegistry(cfg)
 	t.Cleanup(reg.Close)
 	if err := reg.BindPlugins(PluginHostOptions{
 		Roots:    []plugin.Root{{Path: root, Source: plugin.SourceUser}},
@@ -1114,4 +1123,36 @@ func TestPluginPanelFocusRoutesToTheStampedNode(t *testing.T) {
 	if err := reg.plugins.focusPanelView("org.sysc.timer", v1.ViewFocusParams{View: "view-zzz", Node: "act"}); err == nil {
 		t.Fatal("focus of unknown view succeeded")
 	}
+}
+
+func TestPluginPanelGlidesAnAnimatedValue(t *testing.T) {
+	reg := bindTestPluginMotion(t, "progress-panel", false)
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	_ = drainAux(t, reg, 2) // keyboard + panel-open
+
+	// The painted tree carries wire targets; the glide lives in the surface
+	// animator. Watch it move off 0.2 toward 0.8 and land exactly on 0.8.
+	deadline := time.Now().Add(5 * time.Second)
+	intermediate := false
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		host := reg.panelHosts[PanelPlugin]
+		value := -1.0
+		if host != nil && host.anim != nil {
+			value = host.anim.Value("battery", animProgress)
+		}
+		reg.mu.Unlock()
+		if value > 0.2 && value < 0.8 {
+			intermediate = true
+		}
+		if value == 0.8 {
+			if !intermediate {
+				t.Fatal("value reached 0.8 without a visible glide")
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("animated value never landed on 0.8")
 }

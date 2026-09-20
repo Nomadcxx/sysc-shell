@@ -125,9 +125,13 @@ type Node struct {
 	// StableKey.
 	Key   string
 	Value float64
-	Min   float64
-	Max   float64
-	Step  float64
+	// Animate asks the surface animator to glide Value to each revision's
+	// target instead of jumping. Only a meter or a radial gauge honours it,
+	// and only when the node carries a stable key.
+	Animate bool
+	Min     float64
+	Max     float64
+	Step    float64
 	// Preedit is composing text shown underlined; it is not committed.
 	Preedit string
 	// Cursor is a byte index into Text for KindTextField.

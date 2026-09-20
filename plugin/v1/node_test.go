@@ -731,3 +731,56 @@ func TestMinorFiveFieldsRoundTripOnTheWire(t *testing.T) {
 		t.Fatalf("wire names drifted: %s", raw)
 	}
 }
+
+func TestValidateAcceptsMinorSixFields(t *testing.T) {
+	t.Parallel()
+
+	root := &Node{Kind: KindColumn, Children: []*Node{
+		{Kind: KindProgress, Key: "battery", Value: 0.4, Animate: true},
+		{Kind: KindGauge, Key: "cpu", Value: 0.7, Animate: true, ValueText: "70%"},
+		{Kind: KindProgress, Key: "static", Value: 0.9},
+	}}
+	if err := Validate(root, ViewPanel); err != nil {
+		t.Fatalf("minor-6 fields rejected: %v", err)
+	}
+}
+
+func TestValidateRejectsBadMinorSixValues(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		node *Node
+	}{
+		{"animate on a row", &Node{Kind: KindRow, Key: "r", Animate: true}},
+		{"animate on a button", &Node{Kind: KindButton, ID: "b", Key: "b", Animate: true,
+			Name: "B", Role: "button", Events: []EventKind{EventActivate}}},
+		{"animate on a gauge without a key", &Node{Kind: KindGauge, Value: 0.5, Animate: true}},
+		{"animate on a progress without a key", &Node{Kind: KindProgress, Value: 0.5, Animate: true}},
+	}
+	for _, tc := range cases {
+		root := &Node{Kind: KindColumn, Children: []*Node{tc.node}}
+		if err := Validate(root, ViewPanel); err == nil {
+			t.Errorf("%s: accepted, want rejection", tc.name)
+		}
+	}
+}
+
+func TestMinorSixFieldsRoundTripOnTheWire(t *testing.T) {
+	t.Parallel()
+
+	sent := &Node{Kind: KindProgress, Key: "battery", Value: 0.4, Animate: true}
+	b, err := json.Marshal(sent)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got Node
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Animate != true || got.Key != "battery" || got.Value != 0.4 {
+		t.Fatalf("round trip lost the animate fields: %+v", got)
+	}
+}
