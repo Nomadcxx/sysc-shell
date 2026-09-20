@@ -1,6 +1,6 @@
 # Design and Plan Register
 
-Last updated: 2026-09-19.
+Last updated: 2026-09-21.
 
 Every design, plan, and handover this project has produced, with where it lives and whether it is still
 live. Add a row here in the same commit that adds a document. A document that is not in this register is
@@ -385,6 +385,17 @@ from the session that holds that branch. Do not start a second M6 branch.
 | `2026-09-02-recorder-panel.md` | plan | Glyphs, bar pill, panel header, host-composed settings, command wiring, live Niri check. |
 | `2026-09-02-recorder-panel-handover.md` | completion-handover | Recorder panel live gate on the laptop: pill, record/stop/replay, hide_inactive, panel layout failure. |
 | `2026-09-01-milestone-6f-protocol-qualification.md` | plan | Protocol v1 fixtures, abuse and recovery gates, packaging, live qualification, and handoff. |
+
+## Plugin wire minors (post-M6 protocol)
+
+Additive wire vocabulary after protocol v1 shipped. Minor 2 (fills, radius, bold, size tiers,
+disabled, alignment) and minor 3 (gauge) were planned and executed from sysc-plugins documents;
+minor 4 (tooltips, shapes, values, absent, graph, separator) likewise. This section registers
+sysc-shell-side documents for the minors.
+
+| Document | Kind | Purpose |
+|---|---|---|
+| `2026-09-21-wire-minor-5-presentation-design.md` | design | Owner-approved 2026-09-21. Design A of the KDE Connect modern-panel infrastructure: an `image` kind decoded by the host through a `FileResolver` + `icons.Worker`, container `stroke`/`stroke_fill` on row/column/button, explicit non-interactive children on `button`, and the `send` glyph. Zero new rendering — every primitive maps onto an existing painter. Records D1–D10, including the strict-decode lockstep consequence. |
 
 ## Plugin visual polish (post-M6 chrome)
 
