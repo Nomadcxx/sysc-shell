@@ -120,8 +120,12 @@ func HelperServe(args []string) int {
 					Root: &v1.Node{Kind: v1.KindText, Text: "hello"}})
 				break
 			}
+			if mode == "image-panel" && m.View == v1.ViewPanel {
+				_ = out.Encode(&v1.ViewSnapshot{ViewID: m.ViewID, Revision: 1, Root: imagePanelRoot()})
+				break
+			}
 			_ = out.Encode(helperSnapshot(m.ViewID, m.View))
-			if mode == "call-panel" && m.View == v1.ViewBar {
+			if (mode == "call-panel" || mode == "image-panel") && m.View == v1.ViewBar {
 				params, _ := json.Marshal(v1.PanelParams{Entry: "panel", Output: m.Output, Instance: m.Instance})
 				_ = out.Encode(&v1.HostCall{ID: "c1", Call: v1.CallPanelOpen, Params: params})
 			}
@@ -138,6 +142,16 @@ func HelperServe(args []string) int {
 			}
 		}
 	}
+}
+
+// imagePanelRoot is the image-panel mode's panel: one image node naming the
+// file the test planted, addressed through the environment so the separate
+// plugin process can reach the test's temp dir.
+func imagePanelRoot() *v1.Node {
+	return &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindImage, Path: os.Getenv("SYSC_HELPER_IMAGE"), ImageSize: 96},
+		{Kind: v1.KindText, Text: "hello"},
+	}}
 }
 
 func helperSnapshot(viewID string, view v1.ViewKind) *v1.ViewSnapshot {

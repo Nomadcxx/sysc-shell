@@ -725,3 +725,81 @@ func TestConvertRejectsAnUnknownShape(t *testing.T) {
 		t.Fatal("unknown shape accepted")
 	}
 }
+
+func TestConvertMapsAnImage(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindImage, Path: "/home/x/Pictures/a.png", ImageW: 320, ImageH: 180,
+			Background: true, Shape: "card"},
+	}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	img := got.Children[0]
+	if img.Kind != ui.KindImage || img.ImagePath != "/home/x/Pictures/a.png" ||
+		img.ImageW != 320 || img.ImageH != 180 || !img.Background || img.Shape != ui.ShapeCard {
+		t.Fatalf("image = %+v", img)
+	}
+	if img.Image != nil {
+		t.Fatal("converter decoded an image; the host owns the decode")
+	}
+}
+
+func TestConvertStrokesTheWrapperNotTheInnerRow(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindRow, Stroke: 1, StrokeFill: "outline", Children: []*v1.Node{
+			{Kind: v1.KindText, Text: "x"},
+		}},
+	}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	wrapper := got.Children[0]
+	if wrapper.Kind != ui.KindCapsule || wrapper.Stroke != 1 || wrapper.StrokeFill != ui.FillOutline {
+		t.Fatalf("wrapper = %+v", wrapper)
+	}
+	inner := wrapper.Children[0]
+	if inner.Stroke != 0 || inner.StrokeFill != ui.FillNone {
+		t.Fatalf("inner row kept the stroke: %+v", inner)
+	}
+}
+
+func TestConvertStrokesTheButtonItself(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindButton, ID: "send", Name: "Send", Role: "button", Stroke: 1,
+			Events: []v1.EventKind{v1.EventActivate}},
+	}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	button := got.Children[0]
+	if button.Kind != ui.KindButton || button.Stroke != 1 || button.StrokeFill != ui.FillOutline {
+		t.Fatalf("button = %+v", button)
+	}
+}
+
+func TestConvertButtonChildrenReplaceSynthesis(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindButton, ID: "send", Icon: "link", Text: "Send",
+			Name: "Send", Role: "button", Events: []v1.EventKind{v1.EventActivate},
+			Children: []*v1.Node{{Kind: v1.KindText, Text: "explicit"}}},
+	}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	button := got.Children[0]
+	if len(button.Children) != 1 || button.Children[0].Text != "explicit" {
+		t.Fatalf("explicit children did not replace the synthesis: %+v", button.Children)
+	}
+}

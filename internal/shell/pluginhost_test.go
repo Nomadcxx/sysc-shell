@@ -1,6 +1,9 @@
 package shell
 
 import (
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,7 +49,7 @@ func pluginConfig(root string) config.Config {
 		{ID: "clock", Format: "15:04", Boundary: time.Minute},
 	}
 	cfg.Bar.Right = []config.Item{{
-		ID: "plugin", Plugin: "org.sysc.timer", Entry: "bar", Instance: "timer-1",
+		ID: "plugin", Plugin: "org.sysc.timer", Entry: "bar", Instance: "org.sysc.timer-1",
 	}}
 	return cfg
 }
@@ -593,7 +596,7 @@ func TestPluginOpenPanelTogglesThisEntryClosed(t *testing.T) {
 	waitPluginText(t, reg.bars[7], "hello")
 
 	res, err := reg.plugins.openPanel("org.sysc.timer", v1.PanelParams{
-		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "timer-1",
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "org.sysc.timer-1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -605,7 +608,7 @@ func TestPluginOpenPanelTogglesThisEntryClosed(t *testing.T) {
 	waitPluginPanelRoot(t, reg)
 
 	res, err = reg.plugins.openPanel("org.sysc.timer", v1.PanelParams{
-		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "timer-1",
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "org.sysc.timer-1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -632,7 +635,7 @@ func TestDropPanelViewsKeepsReopenedPanel(t *testing.T) {
 	waitPluginText(t, reg.bars[7], "hello")
 
 	first, err := reg.plugins.openPanel("org.sysc.timer", v1.PanelParams{
-		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "timer-1",
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "org.sysc.timer-1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -669,7 +672,7 @@ func TestDropPanelViewsKeepsReopenedPanel(t *testing.T) {
 	}
 
 	second, err := reg.plugins.openPanel("org.sysc.timer", v1.PanelParams{
-		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "timer-1",
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "org.sysc.timer-1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -939,4 +942,75 @@ func TestPluginPanelAnchorsUnderTheClickedWidget(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("plugin panel never opened")
+}
+
+func plantPNG(t *testing.T, path string) {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	img.Set(0, 0, color.RGBA{R: 0xff, A: 0xff})
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func findImageNode(n *ui.Node) *ui.Node {
+	if n == nil {
+		return nil
+	}
+	if n.Kind == ui.KindImage {
+		return n
+	}
+	for _, c := range n.Children {
+		if got := findImageNode(c); got != nil {
+			return got
+		}
+	}
+	return nil
+}
+
+func TestPluginPanelDecodesImagePaths(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "art.png")
+	plantPNG(t, path)
+	t.Setenv("SYSC_HELPER_IMAGE", path)
+	reg := bindTestPlugin(t, "image-panel")
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if node := findImageNode(reg.plugins.panelTree(nil)); node != nil && node.Image != nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	node := findImageNode(reg.plugins.panelTree(nil))
+	if node == nil {
+		t.Fatal("panel tree never carried an image node")
+	}
+	t.Fatalf("image node never decoded: path=%q image=%v", node.ImagePath, node.Image)
+}
+
+func TestPluginPanelKeepsTheBoxForAMissingImage(t *testing.T) {
+	t.Setenv("SYSC_HELPER_IMAGE", filepath.Join(t.TempDir(), "missing.png"))
+	reg := bindTestPlugin(t, "image-panel")
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if node := findImageNode(reg.plugins.panelTree(nil)); node != nil {
+			if node.Image != nil {
+				t.Fatal("a missing file decoded")
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("panel tree never carried an image node")
 }

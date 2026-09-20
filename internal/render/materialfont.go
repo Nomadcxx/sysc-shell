@@ -32,7 +32,7 @@ var materialIcons = map[string]struct{}{
 	// The bar composition editor's chrome.
 	"drag_indicator": {}, "tune": {}, "link": {}, "link_off": {},
 	"lock": {}, "logout": {}, "bedtime": {}, "restart_alt": {}, "power_settings_new": {},
-	"speed": {}, "balance": {}, "energy_savings_leaf": {}, "check": {},
+	"speed": {}, "balance": {}, "energy_savings_leaf": {}, "check": {}, "send": {},
 	"content_paste": {}, "content_copy": {},
 	"close": {}, "chevron_left": {}, "chevron_right": {},
 	"search": {}, "settings": {}, "notifications": {}, "do_not_disturb_on": {},

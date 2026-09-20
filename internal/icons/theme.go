@@ -73,6 +73,20 @@ func SearchDirs() []string {
 	return append(dirs, "/usr/share/pixmaps")
 }
 
+// FileResolver resolves absolute filesystem paths and nothing else. Plugin
+// images name files the host decodes with the user's privileges; a relative
+// path would resolve against the shell's working directory, which the plugin
+// cannot know, so it fails rather than guessing.
+type FileResolver struct{}
+
+// Resolve reports the path itself when it names a file the decoder can read.
+func (FileResolver) Resolve(name string, size int) (string, bool) {
+	if !filepath.IsAbs(name) || !isDecodableFile(name) {
+		return "", false
+	}
+	return name, true
+}
+
 // Resolve reports the best file for an icon name at a wanted logical size.
 //
 // An absolute path is taken as given, which is what the freedesktop

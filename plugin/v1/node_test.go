@@ -228,7 +228,8 @@ func TestValidateRejectsEventsOnNodesThatCannotEmitThem(t *testing.T) {
 func TestValidateRejectsChildrenOnLeafKinds(t *testing.T) {
 	t.Parallel()
 
-	for _, kind := range []NodeKind{KindText, KindIcon, KindProgress, KindButton, KindTextInput} {
+	// Button takes children since minor five; the rest stay leaves.
+	for _, kind := range []NodeKind{KindText, KindIcon, KindProgress, KindTextInput} {
 		t.Run(string(kind), func(t *testing.T) {
 			t.Parallel()
 			n := &Node{Kind: kind, ID: "x", Name: "x", Role: "r", Icon: "clear-day", Text: "x",
@@ -648,5 +649,85 @@ func TestValidateRejectsBadMinorFour(t *testing.T) {
 		if err := Validate(tc.node, view); err == nil {
 			t.Errorf("%s: Validate accepted", tc.name)
 		}
+	}
+}
+
+func TestValidateAcceptsMinorFiveFields(t *testing.T) {
+	t.Parallel()
+
+	root := &Node{Kind: KindColumn, Stroke: 1, StrokeFill: "outline", Children: []*Node{
+		{Kind: KindImage, Path: "/home/x/Pictures/a.png", ImageSize: 96},
+		{Kind: KindImage, Path: "/home/x/Pictures/b.png", ImageW: 320, ImageH: 180,
+			Background: true, Shape: "card", Radius: 12},
+		{Kind: KindButton, ID: "send", Name: "Send", Role: "button", Stroke: 1,
+			Events: []EventKind{EventActivate}, Children: []*Node{
+				{Kind: KindText, Text: "Send"},
+				{Kind: KindIcon, Icon: "send"},
+			}},
+	}}
+	if err := Validate(root, ViewPanel); err != nil {
+		t.Fatalf("minor-5 fields rejected: %v", err)
+	}
+}
+
+func TestValidateRejectsBadMinorFiveValues(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		node *Node
+		view ViewKind
+	}{
+		{"image in a bar", &Node{Kind: KindImage, Path: "/a.png", ImageSize: 96}, ViewBar},
+		{"image in a tooltip", &Node{Kind: KindImage, Path: "/a.png", ImageSize: 96}, ViewTooltip},
+		{"image without path", &Node{Kind: KindImage, ImageSize: 96}, ViewPanel},
+		{"image relative path", &Node{Kind: KindImage, Path: "Pictures/a.png", ImageSize: 96}, ViewPanel},
+		{"image path over cap", &Node{Kind: KindImage, Path: "/" + strings.Repeat("a", MaxPathBytes), ImageSize: 96}, ViewPanel},
+		{"image without a box", &Node{Kind: KindImage, Path: "/a.png"}, ViewPanel},
+		{"image both box forms", &Node{Kind: KindImage, Path: "/a.png", ImageSize: 96, ImageW: 320, ImageH: 180}, ViewPanel},
+		{"image half a box", &Node{Kind: KindImage, Path: "/a.png", ImageW: 320}, ViewPanel},
+		{"image size over cap", &Node{Kind: KindImage, Path: "/a.png", ImageSize: MaxExtent + 1}, ViewPanel},
+		{"image box over cap", &Node{Kind: KindImage, Path: "/a.png", ImageW: MaxExtent + 1, ImageH: 180}, ViewPanel},
+		{"image background without a box", &Node{Kind: KindImage, Path: "/a.png", ImageSize: 96, Background: true}, ViewPanel},
+		{"image with children", &Node{Kind: KindImage, Path: "/a.png", ImageSize: 96, Children: []*Node{{Kind: KindText, Text: "x"}}}, ViewPanel},
+		{"image fields on text", &Node{Kind: KindText, Text: "x", Path: "/a.png"}, ViewPanel},
+		{"image size on text", &Node{Kind: KindText, Text: "x", ImageSize: 96}, ViewPanel},
+		{"background on text", &Node{Kind: KindText, Text: "x", Background: true}, ViewPanel},
+		{"stroke on text", &Node{Kind: KindText, Text: "x", Stroke: 1}, ViewPanel},
+		{"stroke on image", &Node{Kind: KindImage, Path: "/a.png", ImageSize: 96, Stroke: 1}, ViewPanel},
+		{"stroke negative", &Node{Kind: KindColumn, Stroke: -1}, ViewPanel},
+		{"stroke over cap", &Node{Kind: KindColumn, Stroke: MaxStroke + 1}, ViewPanel},
+		{"unknown stroke fill", &Node{Kind: KindColumn, Stroke: 1, StrokeFill: "neon"}, ViewPanel},
+		{"button with interactive child", &Node{Kind: KindButton, ID: "b", Name: "b", Role: "button",
+			Events: []EventKind{EventActivate}, Children: []*Node{{
+				Kind: KindButton, ID: "inner", Name: "inner", Role: "button", Events: []EventKind{EventActivate},
+			}}}, ViewPanel},
+	}
+	for _, tc := range cases {
+		if err := Validate(tc.node, tc.view); err == nil {
+			t.Errorf("%s: Validate accepted", tc.name)
+		}
+	}
+}
+
+func TestMinorFiveFieldsRoundTripOnTheWire(t *testing.T) {
+	t.Parallel()
+
+	n := &Node{Kind: KindImage, Path: "/home/x/Pictures/a.png", ImageW: 320, ImageH: 180,
+		Background: true, Shape: "card"}
+	raw, err := json.Marshal(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Node
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.Path != n.Path || back.ImageW != n.ImageW || back.ImageH != n.ImageH ||
+		back.Background != n.Background || back.Shape != n.Shape {
+		t.Fatalf("image fields did not round-trip: %s", raw)
+	}
+	if !strings.Contains(string(raw), `"image_w":320`) || !strings.Contains(string(raw), `"background":true`) {
+		t.Fatalf("wire names drifted: %s", raw)
 	}
 }

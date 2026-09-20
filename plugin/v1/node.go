@@ -50,6 +50,12 @@ const (
 	// host cannot draw meaningfully at view sizes.
 	MinGraphSamples = 2
 	MaxGraphSamples = 64
+	// MaxPathBytes bounds an image node's filesystem path. The host reads
+	// the file itself, so the path is an address, not content.
+	MaxPathBytes = 4096
+	// MaxStroke bounds a container or button rim in logical pixels. The
+	// consumer is a one-pixel hairline; anything larger is a mistake.
+	MaxStroke = 8
 )
 
 // NodeKind names a view element. Kinds are strings so that a plugin written in
@@ -76,6 +82,12 @@ const (
 	// KindSeparator is a rhythm rule between sibling groups. It is a panel
 	// affordance: a bar strip has no room for punctuation.
 	KindSeparator NodeKind = "separator"
+	// KindImage displays a host-decoded raster from an absolute filesystem
+	// path. It is a panel affordance: bar slots are fixed-width and rebuilt
+	// per frame, so a decode job per bar revision is waste no consumer
+	// needs. The host owns the decode; the plugin names a path and gains
+	// display, not read, power.
+	KindImage NodeKind = "image"
 )
 
 // EventKind names an input event a node declares it can emit. A node receives
@@ -129,8 +141,10 @@ const (
 //
 // Fill, Radius, Bold, Size, Disabled, CenterX, and PinEnd arrived in protocol
 // minor two. Tooltip, Shape, Values, Absent, and the graph and separator kinds
-// arrived in minor four. A minor-one host ignores the new fields, so a plugin
-// that sets them still speaks to an older shell, just without the presentation.
+// arrived in minor four. Path, the image box fields, Background, Stroke, and
+// StrokeFill, and the image kind arrived in minor five. A minor-one host
+// ignores the new fields, so a plugin that sets them still speaks to an older
+// shell, just without the presentation.
 type Node struct {
 	Kind NodeKind `json:"kind"`
 
@@ -195,6 +209,27 @@ type Node struct {
 	// gauge or a graph may be absent.
 	Absent bool `json:"absent,omitempty"`
 
+	// Path names the absolute file an image node displays. The host decodes
+	// it with its own caps and cache; the plugin gains display, not read,
+	// power. A relative path would resolve against the shell's working
+	// directory, which the plugin cannot know, so it is a validation error.
+	Path string `json:"path,omitempty"`
+	// ImageSize fixes a square image edge in logical pixels; ImageW and
+	// ImageH fix an explicit box instead. Exactly one form is legal, and
+	// one of a pair alone is rejected rather than silently squared.
+	ImageSize int `json:"image_size,omitempty"`
+	ImageW    int `json:"image_w,omitempty"`
+	ImageH    int `json:"image_h,omitempty"`
+	// Background asks the painter to cover-fill the explicit box rather
+	// than fit the image inside it. A cover-fill needs a container shape
+	// to fill, so it requires the explicit box.
+	Background bool `json:"background,omitempty"`
+	// Stroke draws a rim around a row, column, or button, in logical
+	// pixels; StrokeFill names the rim's fill and defaults to the outline
+	// tone when absent.
+	Stroke     int    `json:"stroke,omitempty"`
+	StrokeFill string `json:"stroke_fill,omitempty"`
+
 	// Width fixes a logical width; MaxWidth caps a measured one. Padding and
 	// Gap open a container. Zero means natural in every case.
 	Width    int `json:"width,omitempty"`
@@ -256,7 +291,7 @@ var knownKinds = map[NodeKind]bool{
 	KindRow: true, KindColumn: true, KindText: true, KindIcon: true,
 	KindProgress: true, KindButton: true, KindTextInput: true,
 	KindList: true, KindDragSource: true, KindDropZone: true,
-	KindGauge: true, KindGraph: true, KindSeparator: true,
+	KindGauge: true, KindGraph: true, KindSeparator: true, KindImage: true,
 }
 
 var knownViews = map[ViewKind]bool{ViewBar: true, ViewTooltip: true, ViewPanel: true}
@@ -343,8 +378,11 @@ func (v *validator) node(n *Node, path string, depth int) error {
 	if err := v.minorFour(n, path); err != nil {
 		return err
 	}
+	if err := v.minorFive(n, path); err != nil {
+		return err
+	}
 
-	if !n.Kind.container() && len(n.Children) > 0 {
+	if !n.Kind.container() && n.Kind != KindButton && len(n.Children) > 0 {
 		return fmt.Errorf("%s: %s takes no children", path, n.Kind)
 	}
 	if len(n.Children) > MaxChildren {
@@ -524,7 +562,7 @@ func (v *validator) minorFour(n *Node, path string) error {
 		if !knownShapes[n.Shape] {
 			return fmt.Errorf("%s: unknown shape %q", path, n.Shape)
 		}
-		if !fillAllowed(n.Kind) {
+		if !fillAllowed(n.Kind) && n.Kind != KindImage {
 			return fmt.Errorf("%s: %s cannot carry a shape", path, n.Kind)
 		}
 	}
@@ -546,6 +584,70 @@ func (v *validator) minorFour(n *Node, path string) error {
 	}
 	if n.Absent && n.Kind != KindGauge && n.Kind != KindGraph {
 		return fmt.Errorf("%s: %s cannot be absent", path, n.Kind)
+	}
+	return nil
+}
+
+// minorFive validates the presentation primitives that arrived with protocol
+// minor five: the image kind with its host-decoded path and box forms, the
+// container stroke, and explicit button children. Each maps onto a painter
+// the host already ships, so the checks stay vocabulary-level.
+func (v *validator) minorFive(n *Node, path string) error {
+	if n.Kind == KindImage {
+		if v.view != ViewPanel {
+			return fmt.Errorf("%s: a %s view cannot hold an image", path, v.view)
+		}
+		if n.Path == "" {
+			return fmt.Errorf("%s: image has no path", path)
+		}
+		if n.Path[0] != '/' {
+			return fmt.Errorf("%s: image path %q is not absolute", path, n.Path)
+		}
+		if len(n.Path) > MaxPathBytes {
+			return fmt.Errorf("%s: image path is %d bytes, more than the %d allowed", path, len(n.Path), MaxPathBytes)
+		}
+		square, boxed := n.ImageSize > 0, n.ImageW > 0 || n.ImageH > 0
+		if square && boxed {
+			return fmt.Errorf("%s: image sets image_size and an explicit box; exactly one form is legal", path)
+		}
+		if !square && !boxed {
+			return fmt.Errorf("%s: image needs an image_size or an image_w and image_h box", path)
+		}
+		if square {
+			if n.ImageSize > MaxExtent {
+				return fmt.Errorf("%s: image_size is %d, past the %d limit", path, n.ImageSize, MaxExtent)
+			}
+		} else {
+			if n.ImageW <= 0 || n.ImageH <= 0 {
+				return fmt.Errorf("%s: image box needs both image_w and image_h, not one of the pair", path)
+			}
+			if n.ImageW > MaxExtent || n.ImageH > MaxExtent {
+				return fmt.Errorf("%s: image box is past the %d limit", path, MaxExtent)
+			}
+		}
+		if n.Background && !(n.ImageW > 0 && n.ImageH > 0) {
+			return fmt.Errorf("%s: image background needs the explicit image_w and image_h box", path)
+		}
+	} else if n.Path != "" || n.ImageSize != 0 || n.ImageW != 0 || n.ImageH != 0 || n.Background {
+		return fmt.Errorf("%s: %s cannot carry image fields", path, n.Kind)
+	}
+	if n.Stroke != 0 || n.StrokeFill != "" {
+		if n.Kind != KindRow && n.Kind != KindColumn && n.Kind != KindButton {
+			return fmt.Errorf("%s: %s cannot carry a stroke", path, n.Kind)
+		}
+		if n.Stroke < 0 || n.Stroke > MaxStroke {
+			return fmt.Errorf("%s: stroke is %d, outside zero through %d", path, n.Stroke, MaxStroke)
+		}
+		if n.StrokeFill != "" && !knownFills[n.StrokeFill] {
+			return fmt.Errorf("%s: unknown stroke fill %q", path, n.StrokeFill)
+		}
+	}
+	if n.Kind == KindButton {
+		for i, c := range n.Children {
+			if c.Kind.interactive() {
+				return fmt.Errorf("%s: button child %d is an interactive %s; the button is the one hit target", path, i, c.Kind)
+			}
+		}
 	}
 	return nil
 }

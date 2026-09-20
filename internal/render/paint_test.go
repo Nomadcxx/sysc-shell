@@ -2257,3 +2257,31 @@ func TestMenuChevronAppearsOnlyWhereThereIsRoom(t *testing.T) {
 		t.Errorf("short menu mark = %+v ok=%v, want it clamped to the box height", box, ok)
 	}
 }
+
+func TestPaintNodeStrokeRimsCapsulesAndButtons(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []ui.Kind{ui.KindCapsule, ui.KindButton} {
+		c := newTestCanvas(t, 100, 80)
+		style := capsuleStyle()
+		style.Body = ui.Rect{X: 8, Y: 8, W: 84, H: 64}
+		n := &ui.Node{Kind: kind, Stroke: 2, StrokeFill: ui.FillOutline, Bounds: style.Body}
+		if kind == ui.KindButton {
+			n.Text = "Go"
+		}
+		root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{n}}
+		if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+			t.Fatal(err)
+		}
+		want := style.outline()
+		// The ring mask antialiases both edges, so the outermost pixel is a
+		// near-full blend of the stroke over the fill, not the pure token.
+		got := pixelAt(t, c, 8, 40)
+		if diff := max(abs(int(got.R)-int(want.R)), abs(int(got.G)-int(want.G)), abs(int(got.B)-int(want.B))); diff > 4 {
+			t.Fatalf("%v rim = %+v, want near the stroke fill %+v", kind, got, want)
+		}
+		if got := pixelAt(t, c, 50, 40); got == want {
+			t.Fatalf("%v interior picked up the stroke colour", kind)
+		}
+	}
+}

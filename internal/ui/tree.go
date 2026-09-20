@@ -225,6 +225,11 @@ type Node struct {
 	// cropped to this ratio by whoever produced it.
 	ImageW int
 	ImageH int
+	// ImagePath is the filesystem path a plugin image node names, recorded
+	// so the decode registrar can find the nodes whose raster is still
+	// missing and key the worker's cache by what was asked for. It is
+	// host-side bookkeeping, like Image: layout and paint never read it.
+	ImagePath string
 	// Mark names the embedded alpha master a KindWordmark node paints. Empty
 	// selects the SYSC wordmark; "launcher" selects the launcher aperture
 	// mark. Both are alpha-only and tinted at paint time, so they follow the
