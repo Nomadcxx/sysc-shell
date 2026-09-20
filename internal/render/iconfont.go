@@ -84,6 +84,11 @@ const (
 	notifyRuneLast  = iconGhost
 	gaugeRuneFirst  = iconGaugeCPU
 	gaugeRuneLast   = iconGaugeGPU
+
+	// The weather-detail run and the ai-usage glyph that continues it are
+	// one contiguous band; the face router needs it as a whole.
+	detailRuneFirst = iconThermometer
+	detailRuneLast  = iconAIUsage
 )
 
 // The night weather glyphs extend the font after the sysmon gauges, so they
@@ -103,6 +108,12 @@ const (
 	iconSunrise
 	iconSunset
 	iconElevation
+)
+
+// The ai-usage glyph closes the font after the weather-detail run: the
+// catalogue's assistant mark for the AI Usage plugin.
+const (
+	iconAIUsage rune = iconElevation + 1
 )
 
 // batteryLevels is how many level glyphs each state has.
@@ -385,6 +396,7 @@ var iconNames = map[string]rune{
 	"sysmon-cpu":          iconGaugeCPU,
 	"sysmon-memory":       iconGaugeMemory,
 	"sysmon-gpu":          iconGaugeGPU,
+	"ai-usage":            iconAIUsage,
 }
 
 // IconByName resolves a catalogue name to its symbol.
