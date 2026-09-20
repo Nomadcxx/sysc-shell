@@ -198,7 +198,7 @@ func (s *Supervisor) reap(sess *Session) {
 func (s *Supervisor) handshake(ctx context.Context, sess *Session) error {
 	granted := intersect(s.Manifest.Capabilities, s.Supported)
 	hello := &v1.HostHello{
-		Supported:    []v1.Version{{Major: 1, Minor: 3}, {Major: 1, Minor: 4}, {Major: 1, Minor: 5}},
+		Supported:    []v1.Version{{Major: 1, Minor: 3}, {Major: 1, Minor: 4}, {Major: 1, Minor: 5}, {Major: 1, Minor: 6}},
 		Plugin:       v1.Identity{ID: s.Manifest.ID, Name: s.Manifest.Name, Version: s.Manifest.Version},
 		Capabilities: capabilityNames(granted),
 		Limits:       s.Limits,
