@@ -396,6 +396,7 @@ sysc-shell-side documents for the minors.
 | Document | Kind | Purpose |
 |---|---|---|
 | `2026-09-21-wire-minor-5-presentation-design.md` | design | Owner-approved 2026-09-21. Design A of the KDE Connect modern-panel infrastructure: an `image` kind decoded by the host through a `FileResolver` + `icons.Worker`, container `stroke`/`stroke_fill` on row/column/button, explicit non-interactive children on `button`, and the `send` glyph. Zero new rendering — every primitive maps onto an existing painter. Records D1–D10, including the strict-decode lockstep consequence. |
+| `2026-09-21-panel-capabilities-design.md` | design | Draft. Design B of the KDE Connect modern-panel infrastructure: `panel.resize` and `view.focus` host calls under `CapPanels`. Resize updates the singular `hostedView`, re-lays-out the retained tree, and rides a size field on the existing `AuxUpdate` path (`layer.SetSize` + commit, configure completes it — the first live layer resize). Focus matches the stamped `plugin:<view>:<node>` action among the panel's focusables and calls `setFocus`; no Wayland work, the panel already holds `keyboardExclusive`. Records D1–D9, including reply-means-requested for the async configure round-trip. |
 
 ## Plugin visual polish (post-M6 chrome)
 
