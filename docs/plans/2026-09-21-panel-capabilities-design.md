@@ -1,7 +1,7 @@
 # Panel Capabilities Design — `panel.resize` and `view.focus`
 
 Date: 2026-09-21
-Status: Draft for owner approval.
+Status: Owner-approved 2026-09-21
 Branch: docs-only on `main` (implementation later, alongside or after `feature/wire-minor-5`).
 Commissioned by: the KDE Connect modern-panel infrastructure plan
 (`~/.commandcode/plans/kdeconnect-modern-panel-infrastructure.md`, Design B).
