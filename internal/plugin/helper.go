@@ -93,6 +93,8 @@ func HelperServe(args []string) int {
 	}
 
 	switch mode {
+	case "malformed-after-hello":
+		fmt.Fprintln(os.Stdout, `{"type":"view.snapshot","unexpected":true}`)
 	case "crash-after-hello":
 		return 4
 	case "ignore-shutdown":

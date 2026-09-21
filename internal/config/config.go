@@ -189,9 +189,12 @@ type Panels struct {
 // generations deliberately never appear here: reconnecting the tray service
 // must not discard a user's placement choices.
 type TrayPreferences struct {
-	Hidden []string
-	Pinned []string
-	Order  []string
+	// Enabled controls whether the shell projects tray items into bars. The
+	// tray service remains available so the projection can be re-enabled.
+	Enabled bool
+	Hidden  []string
+	Pinned  []string
+	Order   []string
 }
 
 // OutputOverride adjusts the bar on one connector.
@@ -402,7 +405,6 @@ func Default() Config {
 					{ID: "temperature", Display: "radial", Interval: defaultMetricInterval},
 					{ID: "gpu", Display: "radial", Interval: defaultMetricInterval},
 				}},
-				{ID: "battery", WarnBelow: defaultBatteryWarnBelow, Interval: defaultMetricInterval},
 				{ID: "clipboard"},
 				{ID: "notifications"},
 			},

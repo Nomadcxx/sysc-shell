@@ -253,3 +253,17 @@ func TestConcurrentShapingAcrossFontMaps(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestEveryCatalogIconUsesProjectFont(t *testing.T) {
+	m := newFixtureFontMap(t)
+	for name, glyph := range iconNames {
+		face := m.iconFaceFor(glyph)
+		if face == nil {
+			t.Errorf("%s falls through to a text font", name)
+			continue
+		}
+		if _, ok := face.NominalGlyph(glyph); !ok {
+			t.Errorf("%s has no glyph", name)
+		}
+	}
+}

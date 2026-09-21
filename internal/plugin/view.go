@@ -36,7 +36,7 @@ func Convert(root *v1.Node, view v1.ViewKind) (*ui.Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	if converted.Kind != want {
+	if converted.Kind != want && !(view == v1.ViewPanel && converted.Kind == ui.KindScroll) {
 		return nil, fmt.Errorf("plugin: a %s view needs a %s root, not %s", view, rootName(want), root.Kind)
 	}
 	return converted, nil

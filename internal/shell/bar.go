@@ -205,7 +205,9 @@ func (b *Bar) sections() [][]*ui.Node {
 		}
 		out = append(out, nodes)
 	}
-	out[2] = append(out[2], b.trayNodes...)
+	if b.trayPrefs.Enabled {
+		out[2] = append(out[2], b.trayNodes...)
+	}
 	return out
 }
 
@@ -213,7 +215,8 @@ func (b *Bar) setTray(items []tray.Item, prefs config.TrayPreferences, images ma
 	b.mu.Lock()
 	b.trayItems = append([]tray.Item(nil), items...)
 	b.trayPrefs = config.TrayPreferences{
-		Hidden: append([]string(nil), prefs.Hidden...), Pinned: append([]string(nil), prefs.Pinned...),
+		Enabled: prefs.Enabled,
+		Hidden:  append([]string(nil), prefs.Hidden...), Pinned: append([]string(nil), prefs.Pinned...),
 		Order: append([]string(nil), prefs.Order...),
 	}
 	b.trayImages = make(map[tray.ItemKey]*ui.Image, len(images))

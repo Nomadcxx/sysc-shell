@@ -379,6 +379,11 @@ func (h *pluginHost) applyResult(res plugin.Result) {
 	}
 	v.Revision = res.Revision
 	if res.Err != nil {
+		// A rejected view must reach the operator's journal: the failure
+		// surface shows the message, but silence here makes a layout bug
+		// indistinguishable from a dead plugin.
+		slog.Warn("plugin view rejected", "plugin", v.Plugin, "view", v.Kind,
+			"revision", res.Revision, "err", res.Err)
 		v.Failed = true
 		v.Root = nil
 		v.Label = res.Err.Error()
@@ -1071,30 +1076,28 @@ func (h *pluginHost) barViewIDs(output string) []string {
 	return ids
 }
 
+// retryOrDisable runs under Registry.mu from the panel input handler.
 func (h *pluginHost) retryOrDisable(action string) {
 	h.mu.Lock()
-	v := h.panel
-	slot := (*pluginSlot)(nil)
-	if v != nil {
-		slot = h.slots[v.Plugin]
-	}
-	pluginID := ""
-	if v != nil {
-		pluginID = v.Plugin
+	id := ""
+	if h.panel != nil {
+		id = h.panel.Plugin
 	}
 	h.mu.Unlock()
+	h.r.closePanelLocked(PanelPlugin)
+	if id == "" {
+		return
+	}
+	// Process shutdown and handshake must never occupy the Wayland input loop.
 	switch action {
-	case "plugin-close":
-		h.r.ClosePanel(PanelPlugin)
 	case "plugin-retry":
-		if slot != nil {
-			_ = slot.rt.Retry(h.ctx)
-		}
+		go func() {
+			if err := h.retry(id); err != nil {
+				slog.Warn("plugin retry failed", "plugin", id, "err", err)
+			}
+		}()
 	case "plugin-disable":
-		if pluginID != "" {
-			h.stopPlugin(pluginID)
-		}
-		h.r.ClosePanel(PanelPlugin)
+		go func() { _ = h.enable(id, false) }()
 	}
 }
 
@@ -1272,13 +1275,16 @@ func (h *pluginHost) setEnabledConfigLocked(id string, on bool) config.Config {
 }
 
 func (h *pluginHost) retry(id string) error {
+	// Views belong to a process lifetime. Recreate them along with the runtime.
+	h.stopPlugin(id)
 	h.mu.Lock()
-	slot := h.slots[id]
+	cat := h.catalog
 	h.mu.Unlock()
-	if slot == nil {
-		return h.enable(id, true)
+	if err := h.ensure(id, cat, false); err != nil {
+		return err
 	}
-	return slot.rt.Retry(h.ctx)
+	h.syncBars()
+	return nil
 }
 
 func (h *pluginHost) retryLocked(id string) error {

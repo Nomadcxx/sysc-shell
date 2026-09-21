@@ -8,11 +8,11 @@ import (
 )
 
 func TestTrayPreferencesRoundTripThroughStrictConfig(t *testing.T) {
-	cfg, err := Parse([]byte(`{"tray":{"hidden":["id:chat"],"pinned":["id:mail"],"order":["id:mail","id:chat"]}}`))
+	cfg, err := Parse([]byte(`{"tray":{"enabled":true,"hidden":["id:chat"],"pinned":["id:mail"],"order":["id:mail","id:chat"]}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(cfg.Tray.Hidden, []string{"id:chat"}) ||
+	if !cfg.Tray.Enabled || !slices.Equal(cfg.Tray.Hidden, []string{"id:chat"}) ||
 		!slices.Equal(cfg.Tray.Pinned, []string{"id:mail"}) ||
 		!slices.Equal(cfg.Tray.Order, []string{"id:mail", "id:chat"}) {
 		t.Fatalf("tray preferences = %+v", cfg.Tray)
@@ -26,8 +26,14 @@ func TestTrayPreferencesRoundTripThroughStrictConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !slices.Equal(got.Tray.Hidden, cfg.Tray.Hidden) || !slices.Equal(got.Tray.Pinned, cfg.Tray.Pinned) ||
-		!slices.Equal(got.Tray.Order, cfg.Tray.Order) {
+		!slices.Equal(got.Tray.Order, cfg.Tray.Order) || got.Tray.Enabled != cfg.Tray.Enabled {
 		t.Fatalf("round trip = %+v, want %+v", got.Tray, cfg.Tray)
+	}
+}
+
+func TestDefaultDisablesTrayProjection(t *testing.T) {
+	if config := Default(); config.Tray.Enabled {
+		t.Fatal("built-in desktop configuration enables tray projection")
 	}
 }
 

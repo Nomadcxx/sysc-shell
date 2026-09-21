@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -263,4 +264,21 @@ func TestNotificationReplyDoesNotBlockTheShell(t *testing.T) {
 		t.Fatal("snapshot blocked behind notify")
 	}
 	close(release)
+}
+
+func TestRuntimeRetainsProtocolFailure(t *testing.T) {
+	r := NewRuntime(Candidate{Manifest: installHelper(t, "malformed-after-hello")}, helperOptions())
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer r.Stop()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		st := r.Status()
+		if st.State == StateFailed && strings.Contains(st.Failure, "unexpected") && st.Starts == 1 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("protocol error discarded: %+v", r.Status())
 }

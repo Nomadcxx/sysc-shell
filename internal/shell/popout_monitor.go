@@ -166,7 +166,7 @@ func monitorMetricCard(m theme.Metrics, sel services.Selector, snap services.Sna
 
 func monitorLegend(sel services.Selector, snap services.Snapshot, label string) *ui.Node {
 	chips := []*ui.Node{{Kind: ui.KindText, Text: label, Tabular: true}}
-	if sel.Source == services.SourceCPU && snap.Thermal != nil && snap.Thermal.Valid {
+	if sel.Source == services.SourceCPU && sel.Subject != "temperature" && snap.Thermal != nil && snap.Thermal.Valid {
 		chips = append(chips, &ui.Node{
 			Kind: ui.KindText, Text: fmt.Sprintf("%.0f°C", snap.Thermal.Celsius), Tabular: true,
 		})
@@ -509,6 +509,12 @@ func selectorLabel(sel services.Selector) string {
 }
 
 func formatMonitorMetric(sel services.Selector, snap services.Snapshot) (string, bool) {
+	if sel.Source == services.SourceCPU && sel.Subject == "temperature" {
+		if snap.Thermal == nil || !snap.Thermal.Valid {
+			return "collecting", true
+		}
+		return fmt.Sprintf("%.0f°C", snap.Thermal.Celsius), false
+	}
 	if sel.Source == services.SourceMemory && snap.Memory != nil && snap.Memory.Memory.TotalBytes > 0 {
 		frac, ok := snap.Fraction(sel)
 		if !ok {

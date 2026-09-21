@@ -130,9 +130,10 @@ type wirePanels struct {
 }
 
 type wireTrayPreferences struct {
-	Hidden []string `json:"hidden,omitempty"`
-	Pinned []string `json:"pinned,omitempty"`
-	Order  []string `json:"order,omitempty"`
+	Enabled *bool    `json:"enabled,omitempty"`
+	Hidden  []string `json:"hidden,omitempty"`
+	Pinned  []string `json:"pinned,omitempty"`
+	Order   []string `json:"order,omitempty"`
 }
 
 type wireOutput struct {
@@ -494,7 +495,11 @@ func applyTrayPreferences(w wireTrayPreferences) (TrayPreferences, error) {
 	if err != nil {
 		return TrayPreferences{}, err
 	}
-	return TrayPreferences{Hidden: hidden, Pinned: pinned, Order: order}, nil
+	enabled := false
+	if w.Enabled != nil {
+		enabled = *w.Enabled
+	}
+	return TrayPreferences{Enabled: enabled, Hidden: hidden, Pinned: pinned, Order: order}, nil
 }
 
 // applyWeather resolves and validates the weather block. A block names its

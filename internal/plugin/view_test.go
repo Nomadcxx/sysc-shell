@@ -844,3 +844,17 @@ func TestConvertListKeepsHeightAndWidth(t *testing.T) {
 		t.Fatalf("scroll = %+v, want width 290 height 406", scroll)
 	}
 }
+
+func TestConvertScrollablePanelRoot(t *testing.T) {
+	root := &v1.Node{Kind: v1.KindList, Children: []*v1.Node{{Kind: v1.KindText, Text: "phone"}}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Kind != ui.KindScroll {
+		t.Fatalf("kind = %v", got.Kind)
+	}
+	if _, err := Convert(root, v1.ViewBar); err == nil {
+		t.Fatal("bar accepted a list root")
+	}
+}
