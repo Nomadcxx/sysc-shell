@@ -44,6 +44,24 @@ func TestBarConcurrentUpdateAndRender(t *testing.T) {
 	wg.Wait()
 }
 
+func TestBarSuppressesTrayWhenProjectionIsDisabled(t *testing.T) {
+	bar := &Bar{
+		trayNodes: []*ui.Node{{Kind: ui.KindText, Text: "tray"}},
+		trayPrefs: config.TrayPreferences{Enabled: false},
+	}
+	sections := bar.sections()
+	if len(sections) != 3 {
+		t.Fatalf("sections = %d, want three bar sections", len(sections))
+	}
+	if len(sections[2]) != 0 {
+		t.Fatalf("disabled tray projected %d nodes", len(sections[2]))
+	}
+	bar.trayPrefs.Enabled = true
+	if got := len(bar.sections()[2]); got != 1 {
+		t.Fatalf("enabled tray projected %d nodes, want one", got)
+	}
+}
+
 func newTestBar(t *testing.T) *Bar {
 	t.Helper()
 	p, err := New("DP-9")

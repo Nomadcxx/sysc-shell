@@ -40,6 +40,8 @@ func TestAnimatorUsesCatalogueDurations(t *testing.T) {
 		// faster than it arrives.
 		{"panel enter", animVisible, true, 300 * time.Millisecond},
 		{"panel exit", animVisible, false, 150 * time.Millisecond},
+		{"progress fill", animProgress, true, 300 * time.Millisecond},
+		{"progress drain", animProgress, false, 300 * time.Millisecond},
 	} {
 		if got := a.duration(tc.channel, tc.rising); got != tc.want {
 			t.Errorf("%s = %v, want %v", tc.name, got, tc.want)
@@ -423,5 +425,93 @@ func TestAnimateSurfaceStopsOnStop(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("animateSurface ignored stop")
+	}
+}
+
+func TestProgressGlideRetargetsFromMidFlight(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	a.Target("b", animProgress, 0.2)
+	clock.add(150 * time.Millisecond)
+	mid := a.Value("b", animProgress)
+	if mid <= 0 || mid >= 0.2 {
+		t.Fatalf("mid-flight value = %v, want strictly inside the glide", mid)
+	}
+	// A new target continues from wherever the value is, not from zero.
+	a.Target("b", animProgress, 0.8)
+	if got := a.Value("b", animProgress); math.Abs(got-mid) > 0.01 {
+		t.Fatalf("value after retarget = %v, want near %v", got, mid)
+	}
+	clock.add(300 * time.Millisecond)
+	if got := a.Value("b", animProgress); got != 0.8 {
+		t.Fatalf("settled value = %v, want exactly 0.8", got)
+	}
+	if !a.Settled() {
+		t.Fatal("animator still busy after the glide window")
+	}
+}
+
+func TestProgressGlideWritesTheTargetUnderReducedMotion(t *testing.T) {
+	t.Parallel()
+	a, _ := newTestAnimator(true)
+	a.Target("b", animProgress, 0.8)
+	if got := a.Value("b", animProgress); got != 0.8 {
+		t.Fatalf("reduced-motion value = %v, want the target at once", got)
+	}
+	if !a.Settled() {
+		t.Fatal("reduced-motion glide left work in flight")
+	}
+}
+
+func TestResolveProgressMotionGlidesRetargetsAndRetires(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+
+	meter := func(value float64) *ui.Node {
+		return &ui.Node{Kind: ui.KindMeter, Key: "battery", Value: value, Animate: true}
+	}
+	static := &ui.Node{Kind: ui.KindMeter, Key: "cpu", Value: 0.5}
+
+	// First resolve starts the glide from zero.
+	first := &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{meter(0.2), static}}
+	resolveProgressMotion(a, first)
+	if got := first.Children[0].Value; got != 0 {
+		t.Fatalf("first resolve value = %v, want the glide's start", got)
+	}
+	if first.Children[1].Value != 0.5 {
+		t.Fatalf("static meter moved to %v", first.Children[1].Value)
+	}
+
+	// A later revision lands exactly on its target.
+	clock.add(300 * time.Millisecond)
+	second := &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{meter(0.2), static}}
+	resolveProgressMotion(a, second)
+	if got := second.Children[0].Value; got != 0.2 {
+		t.Fatalf("settled value = %v, want exactly 0.2", got)
+	}
+
+	// A higher target glides from where the value is, never backward.
+	third := &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{meter(0.8), static}}
+	resolveProgressMotion(a, third)
+	clock.add(75 * time.Millisecond)
+	mid := &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{meter(0.8), static}}
+	resolveProgressMotion(a, mid)
+	if got := mid.Children[0].Value; got <= 0.2 || got >= 0.8 {
+		t.Fatalf("retargeted value = %v, want strictly between 0.2 and 0.8", got)
+	}
+	clock.add(300 * time.Millisecond)
+	again := &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{meter(0.8), static}}
+	resolveProgressMotion(a, again)
+	if got := again.Children[0].Value; got != 0.8 {
+		t.Fatalf("settled value = %v, want exactly 0.8", got)
+	}
+
+	// A node that left the tree retires its key.
+	gone := &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{static}}
+	resolveProgressMotion(a, gone)
+	for key := range a.values {
+		if key.channel == animProgress {
+			t.Fatalf("stale progress key %q survived the retire", key.node)
+		}
 	}
 }

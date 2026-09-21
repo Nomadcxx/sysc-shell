@@ -34,7 +34,7 @@ var ccSections = []ccSection{
 	{ID: "audio", Label: "Audio", Icon: "volume_up", Enabled: true},
 	{ID: "monitor", Label: "Monitor", Icon: "desktop_windows", Enabled: true},
 	{ID: "power", Label: "Power", Icon: "power_settings_new", Enabled: true},
-	{ID: "network", Label: "Network", Icon: "wifi"},
+	{ID: "network", Label: "Network", Icon: "wifi", Enabled: true},
 	{ID: "bluetooth", Label: "Bluetooth", Icon: "bluetooth", Enabled: true},
 	{ID: "weather", Label: "Weather", Icon: "cloud", Enabled: true},
 	{ID: "calendar", Label: "Calendar", Icon: "calendar_month", Enabled: true},
@@ -217,6 +217,8 @@ func ccPage(r *Registry, h *PanelHost) *ui.Node {
 		return mediaBody(r, h)
 	case "monitor":
 		return ccMonitor(r, h)
+	case "network":
+		return networkTree(r, h)
 	case "power":
 		return ccPower(r, h)
 	case "weather":

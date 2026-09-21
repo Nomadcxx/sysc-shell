@@ -67,7 +67,7 @@ func networkTree(r *Registry, h *PanelHost) *ui.Node {
 			TextRole: theme.RoleCaption,
 		})
 	}
-	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Padding: m.PanelPadding, Children: children}
+	return &ui.Node{Kind: ui.KindColumn, Height: ccPageH, Gap: theme.MarginL, Padding: m.PanelPadding, Children: children}
 }
 
 func networkHeaderHeight(m theme.Metrics) int {

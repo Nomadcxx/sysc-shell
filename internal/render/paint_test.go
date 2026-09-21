@@ -1902,15 +1902,15 @@ func TestRadialGaugeAntialiasesRingEdges(t *testing.T) {
 func TestRadialGaugeArcColorsFollowThemeAndTemperature(t *testing.T) {
 	t.Parallel()
 	metric := &ui.Node{Icon: "sysmon-cpu", Value: .75}
-	if got := radialArcColor(testStyle, metric, 0); got != testStyle.Accent {
+	if got := radialArcColor(testStyle, metric, 0, testStyle.Track); got != testStyle.Accent {
 		t.Fatalf("metric arc start = %#v, want accent %#v", got, testStyle.Accent)
 	}
-	if got := radialArcColor(testStyle, metric, 1); got != testStyle.Secondary {
+	if got := radialArcColor(testStyle, metric, 1, testStyle.Track); got != testStyle.Secondary {
 		t.Fatalf("metric arc end = %#v, want secondary %#v", got, testStyle.Secondary)
 	}
 
 	temperature := func(celsius float64) Color {
-		return radialArcColor(testStyle, &ui.Node{Value: celsius / 100, ValueText: "temperature"}, 1)
+		return radialArcColor(testStyle, &ui.Node{Value: celsius / 100, ValueText: "temperature"}, 1, testStyle.Track)
 	}
 	low, amber, warm, hot := temperature(59), temperature(75), temperature(80), temperature(85)
 	if low != testStyle.Accent {
@@ -1919,11 +1919,16 @@ func TestRadialGaugeArcColorsFollowThemeAndTemperature(t *testing.T) {
 	if amber == testStyle.Accent || amber == testStyle.Error {
 		t.Fatalf("75C end = %#v, want a distinct warning amber", amber)
 	}
-	if want := LerpColor(amber, testStyle.Error, .5); warm != want {
+	wantError := theme.EnsureContrast(
+		theme.Color{R: testStyle.Error.R, G: testStyle.Error.G, B: testStyle.Error.B, A: testStyle.Error.A},
+		theme.Color{R: testStyle.Track.R, G: testStyle.Track.G, B: testStyle.Track.B, A: testStyle.Track.A}, 3,
+	)
+	wantErrorColor := Color{R: wantError.R, G: wantError.G, B: wantError.B, A: wantError.A}
+	if want := LerpColor(amber, wantErrorColor, .5); warm != want {
 		t.Fatalf("80C end = %#v, want halfway %#v", warm, want)
 	}
-	if hot != testStyle.Error {
-		t.Fatalf("85C end = %#v, want error %#v", hot, testStyle.Error)
+	if hot != (Color{R: wantError.R, G: wantError.G, B: wantError.B, A: wantError.A}) {
+		t.Fatalf("85C end = %#v, want contrasted error %#v", hot, wantError)
 	}
 }
 
@@ -1932,7 +1937,7 @@ func TestRadialGaugeWarningAmberContrastsWithTrack(t *testing.T) {
 	for _, track := range []Color{{R: 0x20, G: 0x24, B: 0x28, A: 0xff}, {R: 0xee, G: 0xee, B: 0xee, A: 0xff}} {
 		style := testStyle
 		style.Track = track
-		amber := radialWarningAmber(style)
+		amber := radialWarningAmber(style, track)
 		ratio := theme.ContrastRatio(
 			theme.Color{R: amber.R, G: amber.G, B: amber.B, A: amber.A},
 			theme.Color{R: track.R, G: track.G, B: track.B, A: track.A},
@@ -1940,6 +1945,19 @@ func TestRadialGaugeWarningAmberContrastsWithTrack(t *testing.T) {
 		if ratio < 3 {
 			t.Fatalf("amber %#v contrast against track %#v = %.2f, want at least 3", amber, track, ratio)
 		}
+	}
+}
+
+func TestRadialGaugeThermalErrorContrastsWithThePaintedTrack(t *testing.T) {
+	t.Parallel()
+	track := Color{R: 0x30, G: 0x34, B: 0x38, A: 0xff}
+	hot := radialArcColor(testStyle, &ui.Node{Value: .9, ValueText: "temperature"}, 1, track)
+	ratio := theme.ContrastRatio(
+		theme.Color{R: hot.R, G: hot.G, B: hot.B, A: hot.A},
+		theme.Color{R: track.R, G: track.G, B: track.B, A: track.A},
+	)
+	if ratio < 3 {
+		t.Fatalf("thermal error %#v contrast against track %#v = %.2f, want at least 3", hot, track, ratio)
 	}
 }
 
@@ -2255,5 +2273,33 @@ func TestMenuChevronAppearsOnlyWhereThereIsRoom(t *testing.T) {
 	short := &ui.Node{Kind: ui.KindMenu, Bounds: ui.Rect{W: label + room, H: 16}}
 	if box, ok := menuChevronBox(short, label, icon); !ok || box.H != 16 {
 		t.Errorf("short menu mark = %+v ok=%v, want it clamped to the box height", box, ok)
+	}
+}
+
+func TestPaintNodeStrokeRimsCapsulesAndButtons(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []ui.Kind{ui.KindCapsule, ui.KindButton} {
+		c := newTestCanvas(t, 100, 80)
+		style := capsuleStyle()
+		style.Body = ui.Rect{X: 8, Y: 8, W: 84, H: 64}
+		n := &ui.Node{Kind: kind, Stroke: 2, StrokeFill: ui.FillOutline, Bounds: style.Body}
+		if kind == ui.KindButton {
+			n.Text = "Go"
+		}
+		root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{n}}
+		if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+			t.Fatal(err)
+		}
+		want := style.outline()
+		// The ring mask antialiases both edges, so the outermost pixel is a
+		// near-full blend of the stroke over the fill, not the pure token.
+		got := pixelAt(t, c, 8, 40)
+		if diff := max(abs(int(got.R)-int(want.R)), abs(int(got.G)-int(want.G)), abs(int(got.B)-int(want.B))); diff > 4 {
+			t.Fatalf("%v rim = %+v, want near the stroke fill %+v", kind, got, want)
+		}
+		if got := pixelAt(t, c, 50, 40); got == want {
+			t.Fatalf("%v interior picked up the stroke colour", kind)
+		}
 	}
 }

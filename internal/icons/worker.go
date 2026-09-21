@@ -53,11 +53,18 @@ func Square(name string, size int) Key { return Key{Name: name, W: size, H: size
 // a single edge. The larger edge is the honest answer for a landscape box.
 func (k Key) nominal() int { return max(k.W, k.H) }
 
+// PathResolver is the Worker's source of candidate files: a name in, a
+// decodable path out. The theme Resolver and the paths-only FileResolver
+// both satisfy it.
+type PathResolver interface {
+	Resolve(name string, size int) (string, bool)
+}
+
 // Worker decodes icons away from the Wayland owner and publishes immutable
 // results. One decode runs per job; duplicate requests for a key in flight
 // collapse onto the first.
 type Worker struct {
-	resolver *Resolver
+	resolver PathResolver
 	jobs     chan Key
 	publish  func(Key, *ui.Image)
 
@@ -68,7 +75,7 @@ type Worker struct {
 	inFlight map[Key]struct{}
 }
 
-func NewWorker(resolver *Resolver, publish func(Key, *ui.Image)) *Worker {
+func NewWorker(resolver PathResolver, publish func(Key, *ui.Image)) *Worker {
 	return &Worker{
 		resolver: resolver, publish: publish,
 		jobs:     make(chan Key, MaxQueue),

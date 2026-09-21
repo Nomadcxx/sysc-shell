@@ -338,3 +338,16 @@ func TestStartRefusesAPluginWithAMissingDependency(t *testing.T) {
 		t.Fatalf("err = %v, want it to name the missing command", err)
 	}
 }
+
+func TestSupervisorRejectsUnsupportedManifestMinor(t *testing.T) {
+	m := installHelper(t, "ok")
+	m.Protocol.Minor = 99
+	sess, err := supervisor(m).Start(context.Background())
+	if sess != nil {
+		sess.Close()
+	}
+	var incompatible *IncompatibleError
+	if !errors.As(err, &incompatible) {
+		t.Fatalf("accepted unsupported manifest protocol: %v", err)
+	}
+}

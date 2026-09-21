@@ -511,6 +511,10 @@ func ccMonitor(r *Registry, h *PanelHost) *ui.Node {
 		}
 	}
 	network := ccNetworkSelector(snap, history)
+	gpu, gpuOK := selectGPU(snap)
+	if !gpuOK {
+		gpu = services.Selector{Source: services.SourceGPU}
+	}
 	selectors := []struct {
 		selector services.Selector
 		label    string
@@ -519,10 +523,19 @@ func ccMonitor(r *Registry, h *PanelHost) *ui.Node {
 		{services.Selector{Source: services.SourceCPU}, "CPU", 154},
 		{services.Selector{Source: services.SourceMemory}, "Memory", 154},
 		{network, "Network", 156},
+		{services.Selector{Source: services.SourceCPU, Subject: "temperature"}, "Temperature", 154},
+		{gpu, "GPU", 154},
 	}
-	page := &ui.Node{Kind: ui.KindColumn, Height: ccPageH, Gap: theme.MarginM}
+	// The Control Centre wraps this page in its fixed viewport scroll. Leave
+	// the page intrinsic so that all metric cards contribute to ContentH and
+	// remain reachable after the GPU and temperature cards are added.
+	page := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM}
 	for _, item := range selectors {
-		card := ccMonitorMetricCard(m, item.label, item.selector, snap, history[item.selector])
+		samples := history[item.selector]
+		if item.selector.Source == services.SourceGPU && !gpuOK {
+			samples = nil
+		}
+		card := ccMonitorMetricCard(m, item.label, item.selector, snap, samples)
 		card.Height = item.height
 		page.Children = append(page.Children, card)
 	}

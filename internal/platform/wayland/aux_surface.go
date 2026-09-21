@@ -43,6 +43,10 @@ type AuxRequest struct {
 // region is replaced only when SetInputRegion is true.
 type AuxUpdate struct {
 	Keyboard *uint32
+	// Width and Height resize the surface in surface-local coordinates. A nil
+	// pointer leaves that axis alone; both nil leaves the size alone.
+	Width  *uint32
+	Height *uint32
 	// SetInputRegion replaces the surface input region. An empty InputRects
 	// means the surface accepts no pointer input, which is not the same as
 	// leaving the region unset: an unset region covers the whole surface.
@@ -53,6 +57,7 @@ type AuxUpdate struct {
 // auxPolicy is the mutable policy of one open auxiliary surface.
 type auxPolicy struct {
 	keyboard       uint32
+	width, height  uint32
 	inputRects     []ui.Rect
 	hasInputRegion bool
 }
@@ -157,6 +162,9 @@ func (o *owner) openAux(h *OutputHost, spec *AuxSpec) error {
 		return fmt.Errorf("wayland: initial aux commit %s: %w", spec.ID, err)
 	}
 	h.aux[spec.ID] = u
+	// The policy starts at the size the surface was opened with, so a
+	// later one-axis update resolves the other axis against reality.
+	u.policy.width, u.policy.height = uint32(max(spec.Width, 0)), uint32(max(spec.Height, 0))
 	return nil
 }
 
@@ -228,6 +236,19 @@ func planAuxUpdate(u *surfaceUnit, upd *AuxUpdate) (auxPolicy, error) {
 	if upd.Keyboard != nil {
 		next.keyboard = *upd.Keyboard
 	}
+	if upd.Width != nil || upd.Height != nil {
+		w, hgt := next.width, next.height
+		if upd.Width != nil {
+			w = *upd.Width
+		}
+		if upd.Height != nil {
+			hgt = *upd.Height
+		}
+		if w == 0 || hgt == 0 {
+			return auxPolicy{}, fmt.Errorf("wayland: aux %s size %dx%d is empty", u.id, w, hgt)
+		}
+		next.width, next.height = w, hgt
+	}
 	if !upd.SetInputRegion {
 		return next, nil
 	}
@@ -251,6 +272,11 @@ func planAuxUpdate(u *surfaceUnit, upd *AuxUpdate) (auxPolicy, error) {
 func (o *owner) applyAuxPolicy(u *surfaceUnit, next auxPolicy) error {
 	if u.layer == nil || u.surface == nil {
 		return fmt.Errorf("wayland: aux %s has no surface", u.id)
+	}
+	if next.width != u.policy.width || next.height != u.policy.height {
+		if err := u.layer.SetSize(next.width, next.height); err != nil {
+			return fmt.Errorf("wayland: aux %s size: %w", u.id, err)
+		}
 	}
 	if next.keyboard != u.policy.keyboard {
 		if err := u.layer.SetKeyboardInteractivity(next.keyboard); err != nil {

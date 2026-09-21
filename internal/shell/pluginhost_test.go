@@ -1,6 +1,9 @@
 package shell
 
 import (
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,12 +49,19 @@ func pluginConfig(root string) config.Config {
 		{ID: "clock", Format: "15:04", Boundary: time.Minute},
 	}
 	cfg.Bar.Right = []config.Item{{
-		ID: "plugin", Plugin: "org.sysc.timer", Entry: "bar", Instance: "timer-1",
+		ID: "plugin", Plugin: "org.sysc.timer", Entry: "bar", Instance: "org.sysc.timer-1",
 	}}
 	return cfg
 }
 
 func bindTestPlugin(t *testing.T, mode string) *Registry {
+	return bindTestPluginMotion(t, mode, true)
+}
+
+// bindTestPluginMotion binds the helper plugin with reduced motion set
+// explicitly: the default keeps other plugin tests deterministic, while the
+// glide test needs the animator's real clock.
+func bindTestPluginMotion(t *testing.T, mode string, reduced bool) *Registry {
 	t.Helper()
 	self, err := os.Executable()
 	if err != nil {
@@ -62,7 +72,9 @@ func bindTestPlugin(t *testing.T, mode string) *Registry {
 	if _, err := plugin.WriteHelperPlugin(dir, self, mode, testTimerManifest); err != nil {
 		t.Fatal(err)
 	}
-	reg := NewRegistry(pluginConfig(root))
+	cfg := pluginConfig(root)
+	cfg.Accessibility.ReducedMotion = reduced
+	reg := NewRegistry(cfg)
 	t.Cleanup(reg.Close)
 	if err := reg.BindPlugins(PluginHostOptions{
 		Roots:    []plugin.Root{{Path: root, Source: plugin.SourceUser}},
@@ -593,7 +605,7 @@ func TestPluginOpenPanelTogglesThisEntryClosed(t *testing.T) {
 	waitPluginText(t, reg.bars[7], "hello")
 
 	res, err := reg.plugins.openPanel("org.sysc.timer", v1.PanelParams{
-		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "timer-1",
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "org.sysc.timer-1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -605,7 +617,7 @@ func TestPluginOpenPanelTogglesThisEntryClosed(t *testing.T) {
 	waitPluginPanelRoot(t, reg)
 
 	res, err = reg.plugins.openPanel("org.sysc.timer", v1.PanelParams{
-		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "timer-1",
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "org.sysc.timer-1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -632,7 +644,7 @@ func TestDropPanelViewsKeepsReopenedPanel(t *testing.T) {
 	waitPluginText(t, reg.bars[7], "hello")
 
 	first, err := reg.plugins.openPanel("org.sysc.timer", v1.PanelParams{
-		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "timer-1",
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "org.sysc.timer-1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -669,7 +681,7 @@ func TestDropPanelViewsKeepsReopenedPanel(t *testing.T) {
 	}
 
 	second, err := reg.plugins.openPanel("org.sysc.timer", v1.PanelParams{
-		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "timer-1",
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "org.sysc.timer-1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -939,4 +951,208 @@ func TestPluginPanelAnchorsUnderTheClickedWidget(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("plugin panel never opened")
+}
+
+func plantPNG(t *testing.T, path string) {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	img.Set(0, 0, color.RGBA{R: 0xff, A: 0xff})
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func findImageNode(n *ui.Node) *ui.Node {
+	if n == nil {
+		return nil
+	}
+	if n.Kind == ui.KindImage {
+		return n
+	}
+	for _, c := range n.Children {
+		if got := findImageNode(c); got != nil {
+			return got
+		}
+	}
+	return nil
+}
+
+func TestPluginPanelDecodesImagePaths(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "art.png")
+	plantPNG(t, path)
+	t.Setenv("SYSC_HELPER_IMAGE", path)
+	reg := bindTestPlugin(t, "image-panel")
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if node := findImageNode(reg.plugins.panelTree(nil)); node != nil && node.Image != nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	node := findImageNode(reg.plugins.panelTree(nil))
+	if node == nil {
+		t.Fatal("panel tree never carried an image node")
+	}
+	t.Fatalf("image node never decoded: path=%q image=%v", node.ImagePath, node.Image)
+}
+
+func TestPluginPanelKeepsTheBoxForAMissingImage(t *testing.T) {
+	t.Setenv("SYSC_HELPER_IMAGE", filepath.Join(t.TempDir(), "missing.png"))
+	reg := bindTestPlugin(t, "image-panel")
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if node := findImageNode(reg.plugins.panelTree(nil)); node != nil {
+			if node.Image != nil {
+				t.Fatal("a missing file decoded")
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("panel tree never carried an image node")
+}
+
+func TestPluginPanelResizeRetargetsTheOpenPanel(t *testing.T) {
+	reg := bindTestPlugin(t, "call-panel")
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	_ = drainAux(t, reg, 2) // keyboard + panel-open
+
+	// The helper's own panel.open may still be in flight; retry until the
+	// panel view exists and the surface is open.
+	deadline := time.Now().Add(5 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if err := reg.plugins.resizePanel(v1.PanelResizeParams{Width: 400, Height: 300}); err == nil {
+			lastErr = nil
+			break
+		} else {
+			lastErr = err
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if lastErr != nil {
+		t.Fatalf("resizePanel never succeeded: %v", lastErr)
+	}
+	if got := reg.plugins.panelSize(); got.W != 400 || got.H != 300 {
+		t.Fatalf("panelSize after resize = %+v, want 400x300", got)
+	}
+
+	reqs := drainAux(t, reg, 1)
+	req := reqs[0]
+	if req.ID != panelSurfaceID(PanelPlugin) {
+		t.Fatalf("aux update ID = %q, want %q", req.ID, panelSurfaceID(PanelPlugin))
+	}
+	if req.Update == nil || req.Update.Width == nil || req.Update.Height == nil {
+		t.Fatalf("aux update missing size: %+v", req.Update)
+	}
+	if *req.Update.Width != 400 || *req.Update.Height != 300 {
+		t.Fatalf("aux update size = %d x %d, want 400x300", *req.Update.Width, *req.Update.Height)
+	}
+}
+
+func TestPluginPanelFocusRoutesToTheStampedNode(t *testing.T) {
+	reg := bindTestPlugin(t, "call-panel")
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	_ = drainAux(t, reg, 2) // keyboard + panel-open
+
+	// Wait until the panel tree carries the stamped button action.
+	var viewID, stamped string
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		root := reg.plugins.panelTree(nil)
+		var found bool
+		var walk func(n *ui.Node)
+		walk = func(n *ui.Node) {
+			if n == nil || found {
+				return
+			}
+			if strings.HasPrefix(n.Action, pluginActionPrefix) {
+				if hit, ok := parsePluginAction(n.Action); ok {
+					viewID, stamped, found = hit.ViewID, n.Action, true
+					return
+				}
+			}
+			for _, c := range n.Children {
+				walk(c)
+			}
+		}
+		walk(root)
+		if found {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if viewID == "" {
+		t.Fatal("panel tree never carried a stamped action")
+	}
+
+	// Happy path: focusing the stamped node succeeds and moves roving focus.
+	if err := reg.plugins.focusPanelView("org.sysc.timer", v1.ViewFocusParams{View: viewID, Node: "act"}); err != nil {
+		t.Fatalf("focusPanelView: %v", err)
+	}
+	reg.mu.Lock()
+	host := reg.panelHosts[PanelPlugin]
+	var focused string
+	if host != nil && host.roving.Count > 0 {
+		focused = host.focus[host.roving.Index()].Action
+	}
+	reg.mu.Unlock()
+	if focused != stamped {
+		t.Fatalf("focused action = %q, want %q", focused, stamped)
+	}
+
+	// Unknown node fails loudly.
+	if err := reg.plugins.focusPanelView("org.sysc.timer", v1.ViewFocusParams{View: viewID, Node: "nope"}); err == nil {
+		t.Fatal("focus of unknown node succeeded")
+	}
+	// Unknown view fails loudly.
+	if err := reg.plugins.focusPanelView("org.sysc.timer", v1.ViewFocusParams{View: "view-zzz", Node: "act"}); err == nil {
+		t.Fatal("focus of unknown view succeeded")
+	}
+}
+
+func TestPluginPanelGlidesAnAnimatedValue(t *testing.T) {
+	reg := bindTestPluginMotion(t, "progress-panel", false)
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	_ = drainAux(t, reg, 2) // keyboard + panel-open
+
+	// The painted tree carries wire targets; the glide lives in the surface
+	// animator. Watch it move off 0.2 toward 0.8 and land exactly on 0.8.
+	deadline := time.Now().Add(5 * time.Second)
+	intermediate := false
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		host := reg.panelHosts[PanelPlugin]
+		value := -1.0
+		if host != nil && host.anim != nil {
+			value = host.anim.Value("battery", animProgress)
+		}
+		reg.mu.Unlock()
+		if value > 0.2 && value < 0.8 {
+			intermediate = true
+		}
+		if value == 0.8 {
+			if !intermediate {
+				t.Fatal("value reached 0.8 without a visible glide")
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("animated value never landed on 0.8")
 }

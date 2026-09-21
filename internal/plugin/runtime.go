@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 
@@ -269,9 +270,11 @@ func (r *Runtime) launch(ctx context.Context) error {
 // holding the lock across them would let one slow process stall every status
 // read the manager makes.
 func (r *Runtime) supervise(ctx context.Context, sess *Session, generation int) {
+	var readErr error
 	for {
 		msg, err := sess.Recv()
 		if err != nil {
+			readErr = err
 			break
 		}
 		if call, ok := msg.(*v1.HostCall); ok {
@@ -306,6 +309,10 @@ func (r *Runtime) supervise(ctx context.Context, sess *Session, generation int) 
 		return
 	}
 
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		r.setState(StateFailed, fmt.Sprintf("plugin protocol error: %v", readErr))
+		return
+	}
 	if reason.Kind == ExitOrderly {
 		// The plugin chose to stop. That is not a fault to restart around.
 		r.setState(StateDisabled, "")

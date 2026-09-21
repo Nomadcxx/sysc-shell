@@ -371,3 +371,22 @@ func TestResolverAcceptsAnyDecodableAbsolutePath(t *testing.T) {
 		t.Error("a non-image absolute path must not resolve")
 	}
 }
+
+func TestFileResolverTakesOnlyAbsoluteDecodablePaths(t *testing.T) {
+	t.Parallel()
+
+	var r FileResolver
+	dir := t.TempDir()
+	real := filepath.Join(dir, "a.png")
+	if err := os.WriteFile(real, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if path, ok := r.Resolve(real, 96); !ok || path != real {
+		t.Fatalf("absolute png = %q, %v", path, ok)
+	}
+	for _, name := range []string{"", "relative.png", filepath.Join(dir, "a.svg"), filepath.Join(dir, "a.txt"), filepath.Join(dir, "missing.png")} {
+		if _, ok := r.Resolve(name, 96); ok {
+			t.Fatalf("resolved %q", name)
+		}
+	}
+}

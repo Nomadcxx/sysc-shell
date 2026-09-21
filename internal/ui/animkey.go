@@ -4,8 +4,9 @@ import "fmt"
 
 // Animated reports whether the surface animator tracks this node. Only chrome
 // that resolves interaction state carries a transition: buttons and segments
-// always, and a capsule only when it is clickable, so the bar's CPU and memory
-// display groups stay static.
+// always, a capsule only when it is clickable, and a meter or gauge only when
+// the plugin asked for a value glide, so the bar's CPU and memory display
+// groups stay static unless they opt in.
 func Animated(n *Node) bool {
 	if n == nil {
 		return false
@@ -15,6 +16,8 @@ func Animated(n *Node) bool {
 		return true
 	case KindCapsule:
 		return n.Action != ""
+	case KindMeter, KindRadialGauge:
+		return n.Animate
 	default:
 		return false
 	}

@@ -9,28 +9,33 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
-func radialWarningAmber(style Style) Color {
+func radialWarningAmber(style Style, track Color) Color {
 	amber := theme.Color{R: 0xff, G: 0xb3, B: 0x00, A: style.Accent.A}
-	track := theme.Color{R: style.Track.R, G: style.Track.G, B: style.Track.B, A: style.Track.A}
-	amber = theme.EnsureContrast(amber, track, 3)
+	background := theme.Color{R: track.R, G: track.G, B: track.B, A: track.A}
+	amber = theme.EnsureContrast(amber, background, 3)
 	return Color{R: amber.R, G: amber.G, B: amber.B, A: amber.A}
 }
 
-func radialArcColor(style Style, n *ui.Node, progress float64) Color {
+func radialArcColor(style Style, n *ui.Node, progress float64, track Color) Color {
 	end := style.Secondary
 	if n != nil && n.Icon == "" && n.ValueText != "" &&
 		(strings.ContainsRune(n.ValueText, '°') || n.ValueText == "temperature") {
 		temperature := n.Value * 100
-		amber := radialWarningAmber(style)
+		amber := radialWarningAmber(style, track)
+		error := theme.EnsureContrast(
+			theme.Color{R: style.Error.R, G: style.Error.G, B: style.Error.B, A: style.Error.A},
+			theme.Color{R: track.R, G: track.G, B: track.B, A: track.A}, 3,
+		)
+		errorColor := Color{R: error.R, G: error.G, B: error.B, A: error.A}
 		switch {
 		case temperature < 60:
 			end = style.Accent
 		case temperature < 75:
 			end = LerpColor(style.Accent, amber, (temperature-60)/15)
 		case temperature < 85:
-			end = LerpColor(amber, style.Error, (temperature-75)/10)
+			end = LerpColor(amber, errorColor, (temperature-75)/10)
 		default:
-			end = style.Error
+			end = errorColor
 		}
 	}
 	return LerpColor(style.Accent, end, progress)
@@ -138,7 +143,7 @@ func paintRadialGauge(c *Canvas, n *ui.Node, text *TextRenderer, style Style) er
 				} else if math.Hypot(dx-math.Sin(limit)*radius, dy+math.Cos(limit)*radius) < math.Hypot(dx, dy+radius) {
 					progress = 1
 				}
-				active := radialArcColor(style, n, progress)
+				active := radialArcColor(style, n, progress, trackColor)
 				col = LerpColor(trackColor, active, activeCoverage/coverage)
 			}
 			blendCoverage(c, x, y, col, coverage)

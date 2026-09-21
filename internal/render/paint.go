@@ -1100,6 +1100,11 @@ func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size in
 		if n.StrokeFill == ui.FillNone {
 			strokeCol = style.Accent
 		}
+		if n.StrokeFill == ui.FillOutline {
+			// The outline token fills nothing and marks only the boundary,
+			// so as a stroke colour it is the rim the outlined cards draw.
+			strokeCol = style.outline()
+		}
 		c.StrokeRounded(box, radius, max(1, style.Scale120.Physical(n.Stroke)), strokeCol)
 	}
 	if n.Fill == ui.FillOutline {
