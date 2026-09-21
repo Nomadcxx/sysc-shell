@@ -431,6 +431,12 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		if n.Height > 0 {
 			out.Height = n.Height
 		}
+		// A scroll fills the row when no width is set; a master/detail
+		// panel needs two sized panes side by side, so an explicit width
+		// must survive the wire.
+		if n.Width > 0 {
+			out.Width = n.Width
+		}
 	case v1.KindDragSource:
 		out.Kind = ui.KindDragSource
 		out.Text = n.Text

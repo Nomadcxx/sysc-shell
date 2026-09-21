@@ -828,3 +828,19 @@ func TestConvertMapsAnAnimatedValue(t *testing.T) {
 		t.Fatal("static progress converted as animated")
 	}
 }
+
+func TestConvertListKeepsHeightAndWidth(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindList, Width: 290, Height: 406},
+	}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	scroll := got.Children[0]
+	if scroll.Kind != ui.KindScroll || scroll.Width != 290 || scroll.Height != 406 {
+		t.Fatalf("scroll = %+v, want width 290 height 406", scroll)
+	}
+}
