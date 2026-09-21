@@ -143,8 +143,9 @@ const (
 // minor two. Tooltip, Shape, Values, Absent, and the graph and separator kinds
 // arrived in minor four. Path, the image box fields, Background, Stroke, and
 // StrokeFill, and the image kind arrived in minor five. Animate arrived in
-// minor six. A minor-one host ignores the new fields, so a plugin that sets
-// them still speaks to an older shell, just without the presentation.
+// minor six. Minor seven widened Absent to meters. A minor-one host ignores
+// the new fields, so a plugin that sets them still speaks to an older shell,
+// just without the presentation.
 type Node struct {
 	Kind NodeKind `json:"kind"`
 
@@ -210,8 +211,10 @@ type Node struct {
 	// through one. Only a graph carries them.
 	Values []float64 `json:"values,omitempty"`
 	// Absent reserves the node's box and paints nothing: a gauge with no
-	// reading yet keeps the layout steady instead of vanishing. Only a
-	// gauge or a graph may be absent.
+	// reading yet keeps the layout steady instead of vanishing. A meter
+	// gained the same power in minor seven — an elapsed strip with unknown
+	// window bounds reserves its slot honestly. Only a gauge, a graph, or
+	// a meter may be absent.
 	Absent bool `json:"absent,omitempty"`
 
 	// Path names the absolute file an image node displays. The host decodes
@@ -590,7 +593,10 @@ func (v *validator) minorFour(n *Node, path string) error {
 			}
 		}
 	}
-	if n.Absent && n.Kind != KindGauge && n.Kind != KindGraph {
+	// Minor seven widened absent from gauge to the other value-bearing
+	// kinds: an elapsed strip with unknown window bounds must reserve its
+	// slot and paint nothing, not quietly claim the window just began.
+	if n.Absent && n.Kind != KindGauge && n.Kind != KindGraph && n.Kind != KindProgress {
 		return fmt.Errorf("%s: %s cannot be absent", path, n.Kind)
 	}
 	return nil

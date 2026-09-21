@@ -27,14 +27,15 @@ var ErrHandshakeTimeout = errors.New("plugin: handshake timed out")
 // will produce the same answer, so the manager says "incompatible" and stops
 // rather than looping.
 type IncompatibleError struct {
-	Plugin string
-	Want   int
-	Got    v1.Version
+	Plugin   string
+	Want     int
+	MaxMinor int
+	Got      v1.Version
 }
 
 func (e *IncompatibleError) Error() string {
-	return fmt.Sprintf("plugin %s speaks protocol %d.%d; this shell speaks major %d",
-		e.Plugin, e.Got.Major, e.Got.Minor, e.Want)
+	return fmt.Sprintf("plugin %s requires protocol %d.%d; this shell supports %d.0 through %d.%d",
+		e.Plugin, e.Got.Major, e.Got.Minor, e.Want, e.Want, e.MaxMinor)
 }
 
 // ExitKind classifies why a process is no longer running.
@@ -130,6 +131,9 @@ type Session struct {
 // what it started: leaving a rejected plugin running against a shell that has
 // forgotten about it is worse than never having started it.
 func (s *Supervisor) Start(ctx context.Context) (*Session, error) {
+	if p := s.Manifest.Protocol; p.Major != 1 || p.Minor > 6 {
+		return nil, &IncompatibleError{Plugin: s.Manifest.ID, Want: 1, MaxMinor: 6, Got: p}
+	}
 	if s.Manifest.ExecPath == "" {
 		return nil, fmt.Errorf("plugin: %s has no resolved entry point", s.Manifest.ID)
 	}
@@ -198,7 +202,7 @@ func (s *Supervisor) reap(sess *Session) {
 func (s *Supervisor) handshake(ctx context.Context, sess *Session) error {
 	granted := intersect(s.Manifest.Capabilities, s.Supported)
 	hello := &v1.HostHello{
-		Supported:    []v1.Version{{Major: 1, Minor: 3}, {Major: 1, Minor: 4}, {Major: 1, Minor: 5}, {Major: 1, Minor: 6}},
+		Supported:    []v1.Version{{Major: 1, Minor: 3}, {Major: 1, Minor: 4}, {Major: 1, Minor: 5}, {Major: 1, Minor: 6}, {Major: 1, Minor: 7}},
 		Plugin:       v1.Identity{ID: s.Manifest.ID, Name: s.Manifest.Name, Version: s.Manifest.Version},
 		Capabilities: capabilityNames(granted),
 		Limits:       s.Limits,
@@ -243,8 +247,8 @@ func (s *Supervisor) handshake(ctx context.Context, sess *Session) error {
 		return fmt.Errorf("plugin: %s sent %s before plugin.hello",
 			s.Manifest.ID, v1.TypeOf(got.msg))
 	}
-	if reply.Protocol.Major != 1 {
-		return &IncompatibleError{Plugin: s.Manifest.ID, Want: 1, Got: reply.Protocol}
+	if reply.Protocol.Major != 1 || reply.Protocol.Minor > 6 {
+		return &IncompatibleError{Plugin: s.Manifest.ID, Want: 1, MaxMinor: 6, Got: reply.Protocol}
 	}
 	want := hello.Plugin
 	if reply.Plugin != want {
