@@ -55,15 +55,16 @@ type pluginHost struct {
 	stop context.CancelFunc
 	prep *plugin.Preparer
 
-	mu           sync.Mutex
-	slots        map[string]*pluginSlot
-	views        map[string]*hostedView
-	nextID       uint64
-	inputs       []v1.InputEvent
-	textOut      plugin.TextOut
-	flushPending bool
-	closed       []string
-	panel        *hostedView
+	mu                  sync.Mutex
+	slots               map[string]*pluginSlot
+	views               map[string]*hostedView
+	nextID              uint64
+	inputs              []v1.InputEvent
+	textOut             plugin.TextOut
+	flushPending        bool
+	closed              []string
+	panel               *hostedView
+	wallpaperProjection pluginWallpaperProjection
 	// lastAnchor remembers the bar X of the widget that most recently
 	// delivered input for a plugin, so the panel it opens can anchor under
 	// that widget instead of floating at the default position.
@@ -82,7 +83,7 @@ const pluginBarViewWidth = lint.BarWidth
 const pluginBarViewHeight = lint.BarHeight
 
 var hostPluginCaps = []plugin.Capability{
-	plugin.CapNotifications, plugin.CapPanels, plugin.CapSettings, plugin.CapState,
+	plugin.CapNotifications, plugin.CapPanels, plugin.CapSettings, plugin.CapState, plugin.CapWallpaper,
 }
 
 // BindPlugins discovers enabled plugins and starts one runtime for each.
@@ -225,8 +226,9 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 		OutputContext: func(_ context.Context, p v1.OutputContextParams) (v1.OutputContextResult, error) {
 			return h.outputContext(p)
 		},
-		PanelResize: func(_ context.Context, p v1.PanelResizeParams) error { return h.resizePanel(p) },
-		ViewFocus:   func(_ context.Context, p v1.ViewFocusParams) error { return h.focusPanelView(id, p) },
+		PanelResize:       func(_ context.Context, p v1.PanelResizeParams) error { return h.resizePanel(p) },
+		ViewFocus:         func(_ context.Context, p v1.ViewFocusParams) error { return h.focusPanelView(id, p) },
+		WallpaperSnapshot: h.wallpaperSnapshot,
 	})
 	rt.SetCalls(disp)
 	slot := &pluginSlot{rt: rt, disp: disp}
