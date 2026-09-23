@@ -3,6 +3,8 @@ package plugin
 import (
 	"context"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -281,4 +283,106 @@ func TestRuntimeRetainsProtocolFailure(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("protocol error discarded: %+v", r.Status())
+}
+
+func TestRuntimeSessionEndedRunsOnceWhenStopped(t *testing.T) {
+	var ended atomic.Int32
+	opts := helperOptions()
+	opts.SessionEnded = func() { ended.Add(1) }
+	r := NewRuntime(Candidate{Manifest: installHelper(t, "ok")}, opts)
+	r.Stop()
+	if got := ended.Load(); got != 0 {
+		t.Fatalf("SessionEnded before a live session = %d, want 0", got)
+	}
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	r.Stop()
+	r.Stop()
+	if got := ended.Load(); got != 1 {
+		t.Fatalf("SessionEnded after repeated Stop = %d, want 1", got)
+	}
+}
+
+func TestRuntimeSessionEndedRunsAfterOrderlyExit(t *testing.T) {
+	var ended atomic.Int32
+	opts := helperOptions()
+	opts.SessionEnded = func() { ended.Add(1) }
+	r := NewRuntime(Candidate{Manifest: installHelper(t, "ok")}, opts)
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Send(&v1.HostShutdown{}); err != nil {
+		t.Fatal(err)
+	}
+	waitRuntimeState(t, r, StateDisabled)
+	if got := ended.Load(); got != 1 {
+		t.Fatalf("SessionEnded after orderly exit = %d, want 1", got)
+	}
+}
+
+func TestRuntimeSessionEndedRunsOnProtocolFailure(t *testing.T) {
+	var ended atomic.Int32
+	opts := helperOptions()
+	opts.SessionEnded = func() { ended.Add(1) }
+	r := NewRuntime(Candidate{Manifest: installHelper(t, "malformed-after-hello")}, opts)
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitRuntimeState(t, r, StateFailed)
+	if got := ended.Load(); got != 1 {
+		t.Fatalf("SessionEnded after protocol failure = %d, want 1", got)
+	}
+}
+
+func TestRuntimeSessionEndedPrecedesEachAutomaticRestart(t *testing.T) {
+	var mu sync.Mutex
+	var startsAtEnd []int
+	var r *Runtime
+	opts := helperOptions()
+	opts.SessionEnded = func() {
+		mu.Lock()
+		startsAtEnd = append(startsAtEnd, r.Status().Starts)
+		mu.Unlock()
+	}
+	r = NewRuntime(Candidate{Manifest: installHelper(t, "crash-after-hello")}, opts)
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer r.Stop()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		status := r.Status()
+		if status.State == StateFailed && status.Starts == MaxAutoStarts {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if status := r.Status(); status.State != StateFailed || status.Starts != MaxAutoStarts {
+		t.Fatalf("runtime did not finish its restart budget: %+v", status)
+	}
+	mu.Lock()
+	got := append([]int(nil), startsAtEnd...)
+	mu.Unlock()
+	want := []int{1, 2, 3}
+	if len(got) != len(want) {
+		t.Fatalf("starts at SessionEnded = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("starts at SessionEnded = %v, want %v", got, want)
+		}
+	}
+}
+
+func waitRuntimeState(t *testing.T, r *Runtime, want State) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if got := r.Status().State; got == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("runtime state = %q, want %q", r.Status().State, want)
 }

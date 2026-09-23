@@ -1236,9 +1236,14 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				r.mu.Lock()
 				outgoing := r.leases
 				outgoingBars := r.bars
+				depthClockFontChanged := r.cfg.Bar.FontFamily != cfg.Bar.FontFamily
+				depthClockVisualChanged := r.cfg.Wallpaper.Scale != cfg.Wallpaper.Scale ||
+					r.tokens != tok || depthClockFontChanged ||
+					r.cfg.Bar.FontSize != cfg.Bar.FontSize
 				mediaConfigChanged := r.cfg.Media.Preferred != cfg.Media.Preferred ||
 					!slices.Equal(r.cfg.Media.Blacklist, cfg.Media.Blacklist)
 				var media *services.Media
+				var depthEffects depthClockEffects
 				// Coordinates, unit and city are the request, not a lease
 				// parameter, so the service has to be told. Each call is a
 				// no-op unless its value changed, which is the common case
@@ -1270,6 +1275,9 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 					r.themeErr = genErr.Error()
 				}
 				r.retheThemeOpenSurfacesLocked()
+				if depthClockVisualChanged && r.depthClocks != nil {
+					depthEffects = r.depthClocks.reconfigureLocked(depthClockFontChanged)
+				}
 				r.bars = bars
 				r.leases = leases
 				for global, bar := range r.bars {
@@ -1285,6 +1293,9 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				r.mu.Unlock()
 				if mediaConfigChanged && media != nil {
 					media.Configure(cfg.Media.Preferred, cfg.Media.Blacklist)
+				}
+				if r.depthClocks != nil {
+					r.depthClocks.emit(depthEffects)
 				}
 				for _, bar := range outgoingBars {
 					bar.stopAnimation()

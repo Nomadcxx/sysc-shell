@@ -345,6 +345,13 @@ func (h *depthClockHost) updateClockLocked(now time.Time) depthClockEffects {
 	return effects
 }
 
+func (h *depthClockHost) reconfigureLocked(fontChanged bool) depthClockEffects {
+	if fontChanged {
+		h.text = nil
+	}
+	return h.updateClockLocked(h.clockNowLocked())
+}
+
 func (h *depthClockHost) closeLocked() depthClockEffects {
 	effects := depthClockEffects{}
 	for connector, surface := range h.surfaces {

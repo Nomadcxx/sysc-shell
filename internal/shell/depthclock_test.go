@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
@@ -159,6 +160,45 @@ func TestDepthClockMaskReplacementClearAndOutputRemoval(t *testing.T) {
 	r.SyncToastOutputs(nil)
 	if len(harness.closes) != 3 || r.clock.Running() {
 		t.Fatalf("output removal: closes=%d, clock running=%v", len(harness.closes), r.clock.Running())
+	}
+}
+
+func TestDepthClockRedrawsOnScaleAndThemeReload(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*config.Config)
+	}{
+		{name: "scale", change: func(cfg *config.Config) { cfg.Wallpaper.Scale = "stretch" }},
+		{name: "theme", change: func(cfg *config.Config) { cfg.ThemeGen.Mode = "light" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, h, _ := newDepthClockTestHost(t, map[string]struct {
+				global uint32
+				width  int
+				height int
+			}{"DP-1": {global: 7, width: 1920, height: 1080}})
+			if err := h.set("DP-1", depthClockTestDescriptor("plugin-a", 0)); err != nil {
+				t.Fatal(err)
+			}
+			for len(r.invalidations) != 0 {
+				<-r.invalidations
+			}
+			cfg := r.cfg
+			tc.change(&cfg)
+			prepared, err := r.PrepareConfig(cfg, []wayland.HostIdentity{{Global: 7, Connector: "DP-1"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			prepared.Commit()
+			select {
+			case got := <-r.invalidations:
+				if got.SurfaceID != depthClockSurfaceID("DP-1") {
+					t.Fatalf("reload invalidated %q", got.SurfaceID)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("config reload did not redraw the depth clock")
+			}
+		})
 	}
 }
 

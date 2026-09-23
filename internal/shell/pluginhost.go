@@ -125,6 +125,9 @@ func (h *pluginHost) Close() {
 	h.mu.Unlock()
 	for _, s := range slots {
 		s.rt.Stop()
+		if h.r.depthClocks != nil {
+			h.r.depthClocks.clearOwner(s.rt.Manifest().ID)
+		}
 	}
 	h.prep.Close()
 }
@@ -177,7 +180,13 @@ func (h *pluginHost) finishSyncEnabled(enabled []string, cat plugin.Catalog, reg
 	}
 	h.mu.Unlock()
 	for _, id := range drop {
+		if registryHeld {
+			h.r.mu.Unlock()
+		}
 		h.stopPlugin(id)
+		if registryHeld {
+			h.r.mu.Lock()
+		}
 	}
 	if registryHeld {
 		h.syncBarsLocked()
@@ -200,8 +209,9 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 		return fmt.Errorf("plugin %s is not installed", id)
 	}
 	rt := plugin.NewRuntime(c, plugin.RuntimeOptions{
-		Supported: hostPluginCaps,
-		Limits:    v1.DefaultLimits,
+		Supported:    hostPluginCaps,
+		Limits:       v1.DefaultLimits,
+		SessionEnded: func() { h.clearWallpaperMasks(id) },
 	})
 	stateDir := h.opts.StateDir
 	if stateDir == "" {
@@ -229,6 +239,9 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 		PanelResize:       func(_ context.Context, p v1.PanelResizeParams) error { return h.resizePanel(p) },
 		ViewFocus:         func(_ context.Context, p v1.ViewFocusParams) error { return h.focusPanelView(id, p) },
 		WallpaperSnapshot: h.wallpaperSnapshot,
+		WallpaperMaskSet: func(ctx context.Context, p v1.WallpaperMaskSetParams) error {
+			return h.registerWallpaperMask(ctx, id, p)
+		},
 	})
 	rt.SetCalls(disp)
 	slot := &pluginSlot{rt: rt, disp: disp}
@@ -280,6 +293,13 @@ func (h *pluginHost) stopPlugin(id string) {
 	}
 	if slot != nil {
 		slot.rt.Stop()
+	}
+	h.clearWallpaperMasks(id)
+}
+
+func (h *pluginHost) clearWallpaperMasks(id string) {
+	if h.r.depthClocks != nil {
+		h.r.depthClocks.clearOwner(id)
 	}
 }
 
@@ -1297,7 +1317,10 @@ func (h *pluginHost) retryLocked(id string) error {
 	if slot == nil {
 		return h.enableLocked(id, true)
 	}
-	return slot.rt.Retry(h.ctx)
+	h.r.mu.Unlock()
+	err := slot.rt.Retry(h.ctx)
+	h.r.mu.Lock()
+	return err
 }
 
 func (h *pluginHost) rescan() error { return h.syncEnabled() }
