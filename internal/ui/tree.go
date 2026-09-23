@@ -2,7 +2,11 @@
 // All coordinates are logical pixels; painting converts them to buffer pixels.
 package ui
 
-import "github.com/Nomadcxx/sysc-shell/internal/theme"
+import (
+	"strconv"
+
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
+)
 
 // Kind names the node types the proof tree supports.
 type Kind uint8
@@ -59,6 +63,65 @@ const (
 	// every declared kind is measurable, and it must stay last.
 	kindCount
 )
+
+// String names the kind the way a rejection message or a diagnostic reads.
+// Only the string verbs use it: fmt keeps %d numeric for a Stringer, so the
+// historical "kind %d" tails stay byte-identical.
+func (k Kind) String() string {
+	switch k {
+	case KindRow:
+		return "row"
+	case KindText:
+		return "text"
+	case KindMeter:
+		return "meter"
+	case KindButton:
+		return "button"
+	case KindGraph:
+		return "graph"
+	case KindColumn:
+		return "column"
+	case KindSeparator:
+		return "separator"
+	case KindTab:
+		return "tab"
+	case KindToggle:
+		return "toggle"
+	case KindSlider:
+		return "slider"
+	case KindMenu:
+		return "menu"
+	case KindTextField:
+		return "text_field"
+	case KindScroll:
+		return "scroll"
+	case KindVirtualList:
+		return "virtual_list"
+	case KindImage:
+		return "image"
+	case KindCapsule:
+		return "capsule"
+	case KindEdgeFade:
+		return "edge_fade"
+	case KindIcon:
+		return "icon"
+	case KindSegmented:
+		return "segmented"
+	case KindDragSource:
+		return "drag_source"
+	case KindDropZone:
+		return "drop_zone"
+	case KindWordmark:
+		return "wordmark"
+	case KindRadialGauge:
+		return "radial_gauge"
+	case KindStack:
+		return "stack"
+	case KindEffect:
+		return "effect"
+	}
+	return "kind " + strconv.Itoa(int(k))
+}
 
 // Image is a decoded raster in premultiplied straight-alpha BGRA, the layout
 // the shell's buffers use. Pix is never mutated after publication.
@@ -234,6 +297,11 @@ type Node struct {
 	// missing and key the worker's cache by what was asked for. It is
 	// host-side bookkeeping, like Image: layout and paint never read it.
 	ImagePath string
+	// Path is host bookkeeping too: the converter's wire path for this node
+	// ("root.children[1].children[0]"). Layout and paint never read it; a
+	// rejection message names the node with it, so a plugin author can find
+	// the node the host refused without instrumenting anything.
+	Path string
 	// Mark names the embedded alpha master a KindWordmark node paints. Empty
 	// selects the SYSC wordmark; "launcher" selects the launcher aperture
 	// mark. Both are alpha-only and tinted at paint time, so they follow the

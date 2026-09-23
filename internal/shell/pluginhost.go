@@ -15,6 +15,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	"github.com/Nomadcxx/sysc-shell/plugin/lint"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
@@ -73,13 +74,12 @@ type pluginHost struct {
 	images *icons.Worker
 }
 
-func pluginMeasure(s string, _ ui.TextAttrs) (int, int) { return len(s) * 8, 16 }
-
-// pluginBarViewWidth is the prepare slot for a plugin bar tree. Camera+Record+Stop
-// with the error-fill Record chip is ~128px under pluginMeasure; 120 failed and
-// the bar showed "!" (no clicks).
-const pluginBarViewWidth = 240
-const pluginBarViewHeight = 32
+// The bar and tooltip slots are public because a plugin author needs them to
+// check a view before shipping it: see plugin/lint. Camera+Record+Stop with the
+// error-fill Record chip is ~128px under the host's measure; 120 failed and the
+// bar showed "!" (no clicks).
+const pluginBarViewWidth = lint.BarWidth
+const pluginBarViewHeight = lint.BarHeight
 
 var hostPluginCaps = []plugin.Capability{
 	plugin.CapNotifications, plugin.CapPanels, plugin.CapSettings, plugin.CapState,
@@ -94,7 +94,7 @@ func (r *Registry) BindPlugins(opts PluginHostOptions) error {
 		opts:       opts,
 		ctx:        ctx,
 		stop:       stop,
-		prep:       plugin.NewPreparer(2, pluginMeasure),
+		prep:       plugin.NewPreparer(2, plugin.Measure),
 		slots:      make(map[string]*pluginSlot),
 		views:      make(map[string]*hostedView),
 		lastAnchor: make(map[string]int),
@@ -544,7 +544,7 @@ func (h *pluginHost) reconcileBarViews(desired []hostedView, registryHeld bool) 
 		if _, ok := haveTip[key]; !ok {
 			tip := d
 			tip.Kind = v1.ViewTooltip
-			tip.Width, tip.Height = 280, 200
+			tip.Width, tip.Height = lint.TooltipWidth, lint.TooltipHeight
 			h.openView(tip, registryHeld)
 		}
 	}

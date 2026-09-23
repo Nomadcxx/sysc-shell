@@ -274,6 +274,9 @@ var wireShapes = map[string]ui.Shape{
 
 func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 	out := &ui.Node{
+		// The path travels with the node so a rejection downstream can name
+		// it: layout runs long after the converter stopped holding it.
+		Path:     path,
 		Padding:  n.Padding,
 		Gap:      n.Gap,
 		Width:    n.Width,

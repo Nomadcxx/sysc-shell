@@ -10,8 +10,9 @@ import (
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
-// measureFixed gives every glyph a width of 8 and every line a height of 16.
-func measureFixed(s string, _ ui.TextAttrs) (int, int) { return len(s) * 8, 16 }
+// measureFixed gives every glyph a width of 8 and every line a height of 16:
+// the host's own metric, so a test cannot pass under a different one.
+func measureFixed(s string, a ui.TextAttrs) (int, int) { return Measure(s, a) }
 
 func barJob(viewID string, revision uint64, root *v1.Node) Job {
 	return Job{

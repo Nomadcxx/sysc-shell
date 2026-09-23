@@ -1,6 +1,9 @@
 package ui
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // fakeMeasure gives every glyph a width of 8 and every line a height of 16.
 func fakeMeasure(s string, _ TextAttrs) (int, int) { return len(s) * 8, 16 }
@@ -763,5 +766,33 @@ func TestHitRoutesButtonChildrenToTheButton(t *testing.T) {
 	action, ok := Hit(root, inner.X+inner.W/2, inner.Y+inner.H/2)
 	if !ok || action != "send" {
 		t.Fatalf("Hit on a button child = (%q, %t), want the button's \"send\"", action, ok)
+	}
+}
+
+// TestLayoutNamesTheNodeThatDoesNotFit pins the wording a plugin author reads
+// in the journal: which row offered the box, which child missed it, and the
+// tail the older docs quote.
+func TestLayoutNamesTheNodeThatDoesNotFit(t *testing.T) {
+	t.Parallel()
+
+	// The shape that reached a user: a row of declared Height 28 with Padding
+	// 8 leaves a 274x12 content box for a text that measures 16 tall.
+	row := &Node{Kind: KindRow, Padding: 8, Height: 28, Path: "root.children[1]",
+		Children: []*Node{
+			{Kind: KindText, Text: "Avg 70%", Path: "root.children[1].children[0]"},
+			{Kind: KindButton, Text: "Peak Claude 99%", Path: "root.children[1].children[1]"},
+		}}
+	err := Layout(row, Rect{W: 290, H: 28}, fakeMeasure)
+	if err == nil {
+		t.Fatal("a 12px content box cannot hold a 16px text; want a rejection")
+	}
+	for _, want := range []string{
+		"root.children[1]",
+		`text "Avg 70%" at root.children[1].children[0]`,
+		"does not fit in 274x12",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
 	}
 }

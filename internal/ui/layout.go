@@ -1,8 +1,44 @@
 package ui
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+)
 
 const defaultIconSize = 20
+
+// label names a node for a rejection message: the kind, the text it carries
+// when it carries any, and the wire path the converter stamped when there is
+// one. It is the string a plugin author reads in the journal to find the node
+// the host refused.
+func label(n *Node) string {
+	if n == nil {
+		return "nil"
+	}
+	out := n.Kind.String()
+	if n.Text != "" {
+		text := n.Text
+		if len(text) > 24 {
+			text = text[:24] + "…"
+		}
+		out += " " + strconv.Quote(text)
+	}
+	switch {
+	case n.Path != "":
+		return out + " at " + n.Path
+	case n.Key != "":
+		return out + " keyed " + strconv.Quote(n.Key)
+	}
+	return out
+}
+
+// fitError is the one wording for "this child cannot live in the box its
+// parent offered": the parent that offered it, the child that missed, and the
+// tail the older docs quote kept byte-identical.
+func fitError(parent *Node, i int, child *Node, content Rect) error {
+	return fmt.Errorf("ui: %s: child %d of kind %d (%s) does not fit in %dx%d",
+		label(parent), i, child.Kind, label(child), content.W, content.H)
+}
 
 // Layout arranges a row root and its leaf children inside bounds, writing the
 // result into each node's Bounds. Children are placed in source order from the
@@ -96,7 +132,7 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 			}
 		case KindCapsule:
 			if w < 0 || h < 0 || h > content.H || x+w > content.X+content.W {
-				return fmt.Errorf("ui: child %d of kind %d does not fit in %dx%d", i, child.Kind, content.W, content.H)
+				return fitError(root, i, child, content)
 			}
 			child.Bounds = Rect{X: x, Y: content.Y + (content.H-h)/2, W: w, H: h}
 			if err := layoutCapsuleChild(child, measure); err != nil {
@@ -104,7 +140,7 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 			}
 		case KindButton, KindDragSource:
 			if w < 0 || h < 0 || h > content.H || x+w > content.X+content.W {
-				return fmt.Errorf("ui: child %d of kind %d does not fit in %dx%d", i, child.Kind, content.W, content.H)
+				return fitError(root, i, child, content)
 			}
 			child.Bounds = Rect{X: x, Y: content.Y + (content.H-h)/2, W: w, H: h}
 			if err := layoutButtonContent(child, measure, child.Height > 0); err != nil {
@@ -112,7 +148,7 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 			}
 		case KindSegmented:
 			if w < 0 || h < 0 || h > content.H || x+w > content.X+content.W {
-				return fmt.Errorf("ui: child %d of kind %d does not fit in %dx%d", i, child.Kind, content.W, content.H)
+				return fitError(root, i, child, content)
 			}
 			child.Bounds = Rect{X: x, Y: content.Y + (content.H-h)/2, W: w, H: h}
 			if err := layoutSegmented(child, measure); err != nil {
@@ -120,7 +156,7 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 			}
 		case KindMenu:
 			if w < 0 || h < 0 || h > content.H || x+w > content.X+content.W {
-				return fmt.Errorf("ui: child %d of kind %d does not fit in %dx%d", i, child.Kind, content.W, content.H)
+				return fitError(root, i, child, content)
 			}
 			box := Rect{X: x, Y: content.Y, W: w, H: h}
 			if err := placeColumnChild(child, box, measure); err != nil {
@@ -128,7 +164,7 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 			}
 		default:
 			if w < 0 || h < 0 || h > content.H {
-				return fmt.Errorf("ui: child %d of kind %d does not fit in %dx%d", i, child.Kind, content.W, content.H)
+				return fitError(root, i, child, content)
 			}
 			// Nested rows in a column of known width (a System card cell)
 			// must clip overflowing text rather than close the surface.
@@ -139,7 +175,7 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 				w = remain
 			}
 			if w < 0 {
-				return fmt.Errorf("ui: child %d of kind %d does not fit in %dx%d", i, child.Kind, content.W, content.H)
+				return fitError(root, i, child, content)
 			}
 			child.Bounds = Rect{X: x, Y: content.Y + (content.H-h)/2, W: w, H: h}
 			if child.Kind == KindRow {
@@ -614,7 +650,7 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		}
 		return w, h, nil
 	default:
-		return 0, 0, fmt.Errorf("unsupported kind %d", n.Kind)
+		return 0, 0, fmt.Errorf("ui: %s: unsupported kind %s", label(n), n.Kind)
 	}
 }
 

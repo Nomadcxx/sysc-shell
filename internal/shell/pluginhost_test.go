@@ -912,7 +912,7 @@ func TestPluginBarTreeFitsHostSlot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ui.Layout(root, ui.Rect{W: pluginBarViewWidth, H: pluginBarViewHeight}, pluginMeasure); err != nil {
+	if err := ui.Layout(root, ui.Rect{W: pluginBarViewWidth, H: pluginBarViewHeight}, plugin.Measure); err != nil {
 		t.Fatal(err)
 	}
 }

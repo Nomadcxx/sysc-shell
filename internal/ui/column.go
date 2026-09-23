@@ -261,7 +261,7 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 		}
 		return h, nil
 	default:
-		return 0, fmt.Errorf("unsupported kind %d", n.Kind)
+		return 0, fmt.Errorf("ui: %s: unsupported kind %s", label(n), n.Kind)
 	}
 }
 
