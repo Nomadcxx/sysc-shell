@@ -3,6 +3,8 @@ package plugin
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -349,5 +351,50 @@ func TestSupervisorRejectsUnsupportedManifestMinor(t *testing.T) {
 	var incompatible *IncompatibleError
 	if !errors.As(err, &incompatible) {
 		t.Fatalf("accepted unsupported manifest protocol: %v", err)
+	}
+}
+
+func TestSupervisorMinorSevenBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		manifestMinor  int
+		handshakeMinor int
+		wantSuccess    bool
+	}{
+		{name: "minor seven", manifestMinor: 7, handshakeMinor: 7, wantSuccess: true},
+		{name: "manifest minor eight", manifestMinor: 8, handshakeMinor: 7},
+		{name: "handshake minor eight", manifestMinor: 7, handshakeMinor: 8},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := installHelper(t, "ok")
+			m.Protocol.Minor = tc.manifestMinor
+			script := fmt.Sprintf(`#!/bin/sh
+IFS= read -r _
+printf '%%s\n' '{"type":"plugin.hello","protocol":{"major":1,"minor":%d},"plugin":{"id":"org.sysc.timer","name":"Timer","version":"1.0.0"},"capabilities":["notifications","panels","settings","state"]}'
+IFS= read -r _
+`, tc.handshakeMinor)
+			if err := os.WriteFile(m.ExecPath, []byte(script), 0o755); err != nil {
+				t.Fatalf("write protocol helper: %v", err)
+			}
+
+			sess, err := supervisor(m).Start(context.Background())
+			if tc.wantSuccess {
+				if err != nil {
+					t.Fatalf("Start: %v", err)
+				}
+				defer sess.Close()
+				if sess.Protocol != (v1.Version{Major: 1, Minor: 7}) {
+					t.Fatalf("protocol = %+v, want 1.7", sess.Protocol)
+				}
+				return
+			}
+			if sess != nil {
+				_ = sess.Close()
+			}
+			var incompatible *IncompatibleError
+			if !errors.As(err, &incompatible) {
+				t.Fatalf("Start error = %v, want IncompatibleError", err)
+			}
+		})
 	}
 }

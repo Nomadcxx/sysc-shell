@@ -237,15 +237,17 @@ func (*SettingsChanged) messageType() string { return TypeSettingsChanged }
 type CallKind string
 
 const (
-	CallStateGet      CallKind = "state.get"
-	CallStateSet      CallKind = "state.set"
-	CallStateList     CallKind = "state.list"
-	CallPanelOpen     CallKind = "panel.open"
-	CallPanelClose    CallKind = "panel.close"
-	CallNotify        CallKind = "notify"
-	CallOutputContext CallKind = "output.context"
-	CallPanelResize   CallKind = "panel.resize"
-	CallViewFocus     CallKind = "view.focus"
+	CallStateGet          CallKind = "state.get"
+	CallStateSet          CallKind = "state.set"
+	CallStateList         CallKind = "state.list"
+	CallPanelOpen         CallKind = "panel.open"
+	CallPanelClose        CallKind = "panel.close"
+	CallNotify            CallKind = "notify"
+	CallOutputContext     CallKind = "output.context"
+	CallPanelResize       CallKind = "panel.resize"
+	CallViewFocus         CallKind = "view.focus"
+	CallWallpaperSnapshot CallKind = "wallpaper.snapshot"
+	CallWallpaperMaskSet  CallKind = "wallpaper.mask.set"
 )
 
 // HostCall is a request from the plugin. Params is left raw so that adding a
@@ -313,6 +315,40 @@ type StateSetParams struct {
 // StateListResult names the keys the plugin has stored.
 type StateListResult struct {
 	Keys []string `json:"keys"`
+}
+
+// WallpaperOutputState describes the shell's current wallpaper assignment for
+// one connected output.
+type WallpaperOutputState string
+
+const (
+	WallpaperImage         WallpaperOutputState = "image"
+	WallpaperVideo         WallpaperOutputState = "video"
+	WallpaperNone          WallpaperOutputState = "none"
+	WallpaperTransitioning WallpaperOutputState = "transitioning"
+	WallpaperCovered       WallpaperOutputState = "covered"
+)
+
+// WallpaperOutput is one connected output's wallpaper state.
+type WallpaperOutput struct {
+	Output string               `json:"output"`
+	State  WallpaperOutputState `json:"state"`
+	Path   string               `json:"path,omitempty"`
+}
+
+// WallpaperSnapshotResult is the current wallpaper projection and its
+// monotonically increasing revision.
+type WallpaperSnapshotResult struct {
+	Revision uint64            `json:"revision"`
+	Scale    string            `json:"scale"`
+	Outputs  []WallpaperOutput `json:"outputs"`
+}
+
+// WallpaperMaskSetParams registers or clears one output's depth mask.
+type WallpaperMaskSetParams struct {
+	Output        string `json:"output"`
+	WallpaperPath string `json:"wallpaper_path"`
+	MaskPath      string `json:"mask_path,omitempty"`
 }
 
 // PanelParams opens or closes a panel the manifest declared.
