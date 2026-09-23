@@ -260,6 +260,7 @@ func (h *depthClockHost) configure(connector string, global uint32, width, heigh
 func (h *depthClockHost) spec(connector string) *wayland.AuxSpec {
 	surface := h.surfaces[connector]
 	global := surface.global
+	// blur-exempt: wallpaper depth keeps the desktop clock crisp.
 	return &wayland.AuxSpec{
 		ID:            depthClockSurfaceID(connector),
 		Namespace:     depthClockNamespace,
