@@ -165,6 +165,9 @@ type Registry struct {
 	producerSender notifyProducerSender
 	// toasts hosts one toast stack per output, created when wiring binds it.
 	toasts *toastHost
+	// depthClocks contains one click-through wallpaper clock per accepted mask.
+	depthClocks     *depthClockHost
+	depthClockLease *services.Lease
 	// launcherSvc is created on the first launcher open; nil until then.
 	launcherSvc *launcher.Service
 }
@@ -203,6 +206,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		controlIdentity: readCCIdentity(),
 		machineFacts:    readMachineFacts(),
 	}
+	r.depthClocks = newDepthClockHost(r, nil)
 	r.weather.SetCity(cfg.Weather.City)
 	r.tokens, r.themeErr = tokensAndReason(r.generateTheme(cfg))
 	r.osd = newOSDManager(r, 0)
@@ -1386,6 +1390,7 @@ func (r *Registry) Close() {
 	var wallpaperSvc *wallpaper.Service
 	var wallpaperThumbCancel context.CancelFunc
 	var mediaArt *mediaArtWorker
+	var depthEffects depthClockEffects
 	if locked {
 		if r.toasts != nil {
 			r.toasts.stopLeaseRenew()
@@ -1399,6 +1404,9 @@ func (r *Registry) Close() {
 		}
 		r.stopTrayIconsLocked()
 		r.closeAllPanelsLocked()
+		if r.depthClocks != nil {
+			depthEffects = r.depthClocks.closeLocked()
+		}
 		for global, held := range r.leases {
 			leases = append(leases, held...)
 			delete(r.leases, global)
@@ -1436,6 +1444,9 @@ func (r *Registry) Close() {
 
 	for _, req := range osdAux {
 		r.sendAux(req)
+	}
+	if r.depthClocks != nil {
+		r.depthClocks.emit(depthEffects)
 	}
 	if audioLease != nil {
 		audioLease.Release()
@@ -1507,10 +1518,17 @@ func (r *Registry) UpdateClock(now time.Time) []uint32 {
 			changed = append(changed, global)
 		}
 	}
+	var depthEffects depthClockEffects
+	if r.depthClocks != nil {
+		depthEffects = r.depthClocks.updateClockLocked(now)
+	}
 	controlOut, controlOK := r.rebuildControlCentreLocked()
 	r.mu.Unlock()
 
 	r.publish(changed)
+	if r.depthClocks != nil {
+		r.depthClocks.emit(depthEffects)
+	}
 	if controlOK {
 		r.publishSurface(controlOut, panelSurfaceID(PanelControlCenter))
 	}
@@ -1813,6 +1831,15 @@ func (r *Registry) bindHost(global uint32, bar *Bar, hooks wayland.HostCallbacks
 		changed := innerHandle(event)
 		r.drivePointerTooltip(global, bar, event)
 		return changed
+	}
+	innerOutputSize := hooks.OutputSize
+	hooks.OutputSize = func(width, height int) {
+		if innerOutputSize != nil {
+			innerOutputSize(width, height)
+		}
+		if r.depthClocks != nil {
+			r.depthClocks.outputSize(bar.connector(), global, width, height)
+		}
 	}
 	innerConfigure := hooks.Configure
 	hooks.Configure = func(width, height, scale120 int) error {
