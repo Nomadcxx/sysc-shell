@@ -1,9 +1,11 @@
 package plugin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 
@@ -20,18 +22,20 @@ type StateStore interface {
 
 // CallEnv is the host surface one plugin is allowed to use.
 type CallEnv struct {
-	PluginID       string
-	Granted        []Capability
-	DeclaredPanels []Panel
-	Store          StateStore
-	OpenPanel      func(context.Context, v1.PanelParams) (v1.PanelResult, error)
-	ClosePanel     func(context.Context, v1.PanelParams) error
-	Notify         func(context.Context, v1.NotifyParams) (v1.NotifyResult, error)
-	OutputContext  func(context.Context, v1.OutputContextParams) (v1.OutputContextResult, error)
-	PanelResize    func(context.Context, v1.PanelResizeParams) error
-	ViewFocus      func(context.Context, v1.ViewFocusParams) error
-	MaxPending     int
-	CallTimeout    time.Duration
+	PluginID          string
+	Granted           []Capability
+	DeclaredPanels    []Panel
+	Store             StateStore
+	OpenPanel         func(context.Context, v1.PanelParams) (v1.PanelResult, error)
+	ClosePanel        func(context.Context, v1.PanelParams) error
+	Notify            func(context.Context, v1.NotifyParams) (v1.NotifyResult, error)
+	OutputContext     func(context.Context, v1.OutputContextParams) (v1.OutputContextResult, error)
+	PanelResize       func(context.Context, v1.PanelResizeParams) error
+	ViewFocus         func(context.Context, v1.ViewFocusParams) error
+	WallpaperSnapshot func(context.Context) (v1.WallpaperSnapshotResult, error)
+	WallpaperMaskSet  func(context.Context, v1.WallpaperMaskSetParams) error
+	MaxPending        int
+	CallTimeout       time.Duration
 }
 
 func (e CallEnv) maxPending() int {
@@ -151,9 +155,51 @@ func (d *Dispatcher) dispatch(ctx context.Context, call *v1.HostCall) v1.HostRep
 		return d.notify(ctx, call)
 	case v1.CallOutputContext:
 		return d.output(ctx, call)
+	case v1.CallWallpaperSnapshot, v1.CallWallpaperMaskSet:
+		if !d.env.allows(CapWallpaper) {
+			return failReply(call.ID, "capability wallpaper is not granted")
+		}
+		return d.wallpaper(ctx, call)
 	default:
 		return failReply(call.ID, fmt.Sprintf("unknown call %q", call.Call))
 	}
+}
+
+func (d *Dispatcher) wallpaper(ctx context.Context, call *v1.HostCall) v1.HostReply {
+	switch call.Call {
+	case v1.CallWallpaperSnapshot:
+		var params struct{}
+		if err := decodeStrictParams(call.Params, &params); err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		if d.env.WallpaperSnapshot == nil {
+			return failReply(call.ID, "wallpaper snapshot is not available")
+		}
+		result, err := d.env.WallpaperSnapshot(ctx)
+		if err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		return okReply(call.ID, result)
+	case v1.CallWallpaperMaskSet:
+		var params v1.WallpaperMaskSetParams
+		if err := decodeStrictParams(call.Params, &params); err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		if params.Output == "" {
+			return failReply(call.ID, "wallpaper mask set needs an output")
+		}
+		if params.MaskPath != "" && params.WallpaperPath == "" {
+			return failReply(call.ID, "wallpaper mask set needs a wallpaper path")
+		}
+		if d.env.WallpaperMaskSet == nil {
+			return failReply(call.ID, "wallpaper mask set is not available")
+		}
+		if err := d.env.WallpaperMaskSet(ctx, params); err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		return okReply(call.ID, nil)
+	}
+	return failReply(call.ID, "unknown wallpaper call")
 }
 
 func (d *Dispatcher) state(ctx context.Context, call *v1.HostCall) v1.HostReply {
@@ -329,6 +375,25 @@ func decodeParams(raw json.RawMessage, dest any) error {
 		return nil
 	}
 	if err := json.Unmarshal(raw, dest); err != nil {
+		return fmt.Errorf("params: %w", err)
+	}
+	return nil
+}
+
+func decodeStrictParams(raw json.RawMessage, dest any) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dest); err != nil {
+		return fmt.Errorf("params: %w", err)
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("params: multiple JSON values")
+		}
 		return fmt.Errorf("params: %w", err)
 	}
 	return nil
