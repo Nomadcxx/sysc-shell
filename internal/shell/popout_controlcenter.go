@@ -257,6 +257,8 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 		target = PanelSession
 	case "cc:wallpaper":
 		target = PanelWallpaper
+	case panelMonitorAction:
+		target = PanelMonitor
 	case "cc:close":
 		r.closePanelLocked(h.id)
 		return true

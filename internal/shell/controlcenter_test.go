@@ -886,7 +886,7 @@ func TestControlCentreNativePagesFillTheBody(t *testing.T) {
 		want    []string
 	}{
 		{section: "audio", want: []string{"Volume", "Mute"}},
-		{section: "monitor", want: []string{"CPU", "Memory", "Network", "Temperature", "GPU"}},
+		{section: "monitor", want: []string{"CPU", "Memory", "Temperature", "GPU", "Storage", "Network", "Disk I/O"}},
 		{section: "network", want: []string{"Network", "Wi-Fi", "Ethernet"}},
 		{section: "power", want: []string{"Battery", "Power profile", "Session"}},
 		{section: "calendar", want: []string{"September 2026", "Previous month", "Next month"}},
@@ -895,11 +895,7 @@ func TestControlCentreNativePagesFillTheBody(t *testing.T) {
 		t.Run(tc.section, func(t *testing.T) {
 			h := &PanelHost{id: PanelControlCenter, section: tc.section, theme: DefaultTheme()}
 			page := ccPage(r, h)
-			if tc.section == "monitor" {
-				if page.Height != 0 {
-					t.Errorf("monitor page height = %d, want intrinsic height for the outer scroll", page.Height)
-				}
-			} else if page.Height != 480 {
+			if page.Height != 480 {
 				t.Errorf("%s page height = %d, want the full 480px body", tc.section, page.Height)
 			}
 			got := renderText(page)
