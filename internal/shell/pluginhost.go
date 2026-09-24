@@ -77,6 +77,10 @@ type pluginHost struct {
 	// images decodes the absolute paths plugin image nodes name, off the
 	// Wayland owner and under the worker's caps and bounded cache.
 	images *icons.Worker
+	// ensureRaceHook, when set, runs in ensure after a runtime has started but
+	// before its slot is inserted. Production leaves it nil; tests use it to
+	// land a concurrent replace's swapping mark inside that window.
+	ensureRaceHook func(id string, rt *plugin.Runtime)
 }
 
 // The bar and tooltip slots are public because a plugin author needs them to
@@ -250,7 +254,18 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 	})
 	rt.SetCalls(disp)
 	slot := &pluginSlot{rt: rt, disp: disp}
+	if h.ensureRaceHook != nil {
+		h.ensureRaceHook(id, rt)
+	}
 	h.mu.Lock()
+	if h.swapping[id] || h.slots[id] != nil {
+		// A replace landed while this ensure was starting a runtime against
+		// the pre-swap catalog, or another ensure already won the insert.
+		// Stop what was just started rather than let it occupy the slot.
+		h.mu.Unlock()
+		rt.Stop()
+		return nil
+	}
 	h.slots[id] = slot
 	h.mu.Unlock()
 	go h.pumpRuntime(slot)

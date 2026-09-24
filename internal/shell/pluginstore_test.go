@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
@@ -111,6 +112,78 @@ func TestReplaceBlocksAConcurrentEnsureWhileSwapping(t *testing.T) {
 	reg.plugins.mu.Unlock()
 	if swapping {
 		t.Fatal("replace left the id marked swapping after returning")
+	}
+}
+
+// TestEnsureRefusesToInsertWhileSwapping reproduces sysc-513: an ensure that
+// passed its swapping/slot check just before replace marked the id swapping,
+// and is only now inserting the runtime it started against the pre-swap
+// catalog. The insert-time check must see the mark, refuse to insert, and
+// stop the runtime it just started rather than let replace's rescan miss it.
+//
+// The fixture is the race-built helper binary (see testTimerManifest in
+// pluginhost_test.go) rather than the store package's inert fixture: a
+// runtime that never completes its handshake never reaches ensure's insert
+// point, so this race cannot be reproduced against it.
+func TestEnsureRefusesToInsertWhileSwapping(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if _, err := plugin.WriteHelperPlugin(filepath.Join(root, "org.sysc.timer"), self, "", testTimerManifest); err != nil {
+		t.Fatal(err)
+	}
+	reg := NewRegistry(config.Default())
+	t.Cleanup(reg.Close)
+	if err := reg.BindPlugins(PluginHostOptions{
+		Roots:    []plugin.Root{{Path: root, Source: plugin.SourceUser}},
+		StateDir: t.TempDir(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cat := reg.plugins.discovered()
+
+	started := make(chan *plugin.Runtime, 1)
+	proceed := make(chan struct{})
+	reg.plugins.ensureRaceHook = func(id string, rt *plugin.Runtime) {
+		started <- rt
+		<-proceed
+	}
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- reg.plugins.ensure("org.sysc.timer", cat, false) }()
+
+	rt := <-started
+	// The interleaving under test: replace has marked the id swapping while
+	// this ensure is mid-start, past its own check.
+	reg.plugins.mu.Lock()
+	reg.plugins.swapping["org.sysc.timer"] = true
+	reg.plugins.mu.Unlock()
+	close(proceed)
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+
+	reg.plugins.mu.Lock()
+	_, inserted := reg.plugins.slots["org.sysc.timer"]
+	delete(reg.plugins.swapping, "org.sysc.timer")
+	reg.plugins.ensureRaceHook = nil
+	reg.plugins.mu.Unlock()
+	if inserted {
+		t.Fatal("ensure inserted a slot for an id marked swapping")
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if rt.Status().State == plugin.StateDisabled {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("ensure did not stop the runtime it started; status = %+v", rt.Status())
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
