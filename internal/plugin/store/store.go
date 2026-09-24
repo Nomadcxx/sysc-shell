@@ -244,9 +244,17 @@ func (s *Store) enqueue(o op) (<-chan error, error) {
 	}
 }
 
+// find looks up one source+id row for Install. A row with StatusUnlisted is a
+// managed install no enabled source's catalog covers (its Source field only
+// remembers where it was installed from); Install must refuse it the same
+// way as no row at all, rather than reach install() with a nil Release and
+// report a spurious protocol mismatch.
 func (s *Store) find(source, id string) (Listing, error) {
 	for _, l := range s.State().Listings {
 		if l.Source == source && l.Entry.ID == id {
+			if l.Status == StatusUnlisted {
+				return Listing{}, fail(KindNotListed, nil, "%s is installed but not listed by any enabled source", id)
+			}
 			return l, nil
 		}
 	}

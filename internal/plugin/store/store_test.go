@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -352,5 +353,33 @@ func TestInstallOfSomethingUnlisted(t *testing.T) {
 	}
 	if _, err := f.st.Install("nosuch", fixtureID); KindOf(err) != KindNotListed {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// TestInstallOfAnOrphanRowRefusesWithoutMentioningProtocol proves sysc-514:
+// find can still match an orphan row by source+id, since an orphan's Source
+// field carries the source it was originally installed from. Install must
+// refuse it as not listed rather than reach install() with a nil Release and
+// report "needs protocol 0.0".
+func TestInstallOfAnOrphanRowRefusesWithoutMentioningProtocol(t *testing.T) {
+	t.Parallel()
+	f := newStoreFixture(t, nil)
+	arch := runtime.GOARCH
+	f.publish(release(t, f.srv, arch, "1.4.0", defaultCaps, nil))
+	f.await(f.st.Install("test", fixtureID))
+
+	// The source stops publishing this id, orphaning the managed install.
+	f.repo.publish(catalogJSON(t))
+	f.await(f.st.Refresh())
+	if l := f.listing(); l.Status != StatusUnlisted {
+		t.Fatalf("status after the source dropped it: %s, want %s", l.Status, StatusUnlisted)
+	}
+
+	_, err := f.st.Install("test", fixtureID)
+	if KindOf(err) != KindNotListed {
+		t.Fatalf("err = %v, want %s", err, KindNotListed)
+	}
+	if err == nil || strings.Contains(strings.ToLower(err.Error()), "protocol") {
+		t.Fatalf("err = %v; must not mention protocol", err)
 	}
 }
