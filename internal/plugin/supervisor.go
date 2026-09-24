@@ -131,8 +131,8 @@ type Session struct {
 // what it started: leaving a rejected plugin running against a shell that has
 // forgotten about it is worse than never having started it.
 func (s *Supervisor) Start(ctx context.Context) (*Session, error) {
-	if p := s.Manifest.Protocol; p.Major != 1 || p.Minor > 6 {
-		return nil, &IncompatibleError{Plugin: s.Manifest.ID, Want: 1, MaxMinor: 6, Got: p}
+	if p := s.Manifest.Protocol; !HostSupports(p) {
+		return nil, &IncompatibleError{Plugin: s.Manifest.ID, Want: HostProtocolMajor, MaxMinor: HostProtocolMinor, Got: p}
 	}
 	if s.Manifest.ExecPath == "" {
 		return nil, fmt.Errorf("plugin: %s has no resolved entry point", s.Manifest.ID)
@@ -247,8 +247,8 @@ func (s *Supervisor) handshake(ctx context.Context, sess *Session) error {
 		return fmt.Errorf("plugin: %s sent %s before plugin.hello",
 			s.Manifest.ID, v1.TypeOf(got.msg))
 	}
-	if reply.Protocol.Major != 1 || reply.Protocol.Minor > 6 {
-		return &IncompatibleError{Plugin: s.Manifest.ID, Want: 1, MaxMinor: 6, Got: reply.Protocol}
+	if !HostSupports(reply.Protocol) {
+		return &IncompatibleError{Plugin: s.Manifest.ID, Want: HostProtocolMajor, MaxMinor: HostProtocolMinor, Got: reply.Protocol}
 	}
 	want := hello.Plugin
 	if reply.Plugin != want {
