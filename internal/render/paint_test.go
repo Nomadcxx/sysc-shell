@@ -836,31 +836,102 @@ func TestPaintRejectsInvalidInput(t *testing.T) {
 
 // A graph paints a column per sample, taller for larger values, and leaves the
 // unfilled part of the box alone.
-func TestGraphPaintsTallerColumnsForLargerValues(t *testing.T) {
+// paintGraphNode paints one graph node and, beside it, the same node marked
+// absent. Paint fills the surface first, so "painted" means a pixel that
+// differs from that reference, not a pixel with alpha.
+func paintGraphNode(t *testing.T, style Style, n *ui.Node, cw, ch int) (c, bg *Canvas) {
+	t.Helper()
+	paint := func(node *ui.Node) *Canvas {
+		cv := newTestCanvas(t, cw, ch)
+		s := style
+		s.Body = ui.Rect{W: cw, H: ch}
+		if err := Paint(cv, &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{node}}, NewTextRenderer(mustTestFace(t)), s); err != nil {
+			t.Fatalf("Paint: %v", err)
+		}
+		return cv
+	}
+	absent := *n
+	absent.Absent = true
+	return paint(n), paint(&absent)
+}
+
+func graphPainted(t *testing.T, c, bg *Canvas, x, y int) bool {
+	return pixelAt(t, c, x, y) != pixelAt(t, bg, x, y)
+}
+
+func TestGraphLineStaysInsideItsBox(t *testing.T) {
 	t.Parallel()
-
-	const w, h = 40, 20
-	c := newTestCanvas(t, w, h)
-	style := testStyle
-	style.Body = ui.Rect{W: w, H: h}
-
-	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{{
-		Kind:   ui.KindGraph,
-		Width:  4,
-		Values: []float64{0, 1},
-		Bounds: ui.Rect{X: 0, Y: 0, W: 4, H: h},
-	}}}
-
-	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
-		t.Fatalf("Paint: %v", err)
+	for _, scale := range []ui.Scale120{ui.ScaleUnit, 150, 240} {
+		style := testStyle
+		style.Scale120 = scale
+		box := ui.Rect{X: 10, Y: 10, W: 40, H: 20}
+		n := &ui.Node{Kind: ui.KindGraph, Width: box.W, Values: []float64{0, 1, 0, 1},
+			SecondValues: []float64{1, 0, 1, 0}, Bounds: box}
+		c, bg := paintGraphNode(t, style, n, 120, 90)
+		phys := scale.PhysicalRect(box)
+		inside := 0
+		for y := 0; y < c.Height; y++ {
+			for x := 0; x < c.Width; x++ {
+				if !graphPainted(t, c, bg, x, y) {
+					continue
+				}
+				if x < phys.X || x >= phys.X+phys.W || y < phys.Y || y >= phys.Y+phys.H {
+					t.Fatalf("scale %d painted (%d,%d) outside %v", scale, x, y, phys)
+				}
+				inside++
+			}
+		}
+		if inside == 0 {
+			t.Fatalf("scale %d painted nothing", scale)
+		}
 	}
+}
 
-	// The zero sample paints nothing; the full one fills its column's height.
-	if got := accentPixels(c, style.Accent, ui.Rect{X: 0, Y: 0, W: 2, H: h}); got != 0 {
-		t.Errorf("the zero-valued column painted %d pixels, want none", got)
+func TestGraphMarksTheNewestSampleWithTheToneColour(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		tone ui.Tone
+		want Color
+	}{
+		{ui.ToneNormal, testStyle.Accent},
+		{ui.ToneActivity, testStyle.Tertiary},
+		{ui.ToneError, testStyle.Error},
+	} {
+		// One full sample: the dot centre is inset 1.5px from the top-right corner.
+		n := &ui.Node{Kind: ui.KindGraph, Width: 40, Values: []float64{1}, Tone: tc.tone,
+			Bounds: ui.Rect{W: 40, H: 20}}
+		c, _ := paintGraphNode(t, testStyle, n, 40, 20)
+		if got := pixelAt(t, c, 37, 1); got != tc.want {
+			t.Errorf("tone %d dot = %v, want %v", tc.tone, got, tc.want)
+		}
 	}
-	if got := accentPixels(c, style.Accent, ui.Rect{X: 2, Y: 0, W: 2, H: h}); got != 2*h {
-		t.Errorf("the full-height column painted %d pixels, want %d", got, 2*h)
+}
+
+func TestGraphDrawsNewestOnTheRight(t *testing.T) {
+	t.Parallel()
+	n := &ui.Node{Kind: ui.KindGraph, Width: 40, Values: []float64{0, 0, 0, 1}, Bounds: ui.Rect{W: 40, H: 20}}
+	c, bg := paintGraphNode(t, testStyle, n, 40, 20)
+	if !graphPainted(t, c, bg, 37, 1) {
+		t.Error("the newest full sample painted nothing in the top-right corner")
+	}
+	if graphPainted(t, c, bg, 2, 2) {
+		t.Error("the oldest zero sample painted in the top-left corner")
+	}
+	if got := pixelAt(t, c, 20, 19); got != testStyle.Track && !graphPainted(t, c, bg, 20, 19) {
+		t.Error("the baseline is missing from the lower edge")
+	}
+}
+
+func TestAnEmptyGraphPaintsNothing(t *testing.T) {
+	t.Parallel()
+	n := &ui.Node{Kind: ui.KindGraph, Width: 40, Bounds: ui.Rect{W: 40, H: 20}}
+	c, bg := paintGraphNode(t, testStyle, n, 40, 20)
+	for y := 0; y < 20; y++ {
+		for x := 0; x < 40; x++ {
+			if graphPainted(t, c, bg, x, y) {
+				t.Fatalf("a graph with no samples painted (%d,%d)", x, y)
+			}
+		}
 	}
 }
 
