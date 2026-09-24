@@ -61,6 +61,12 @@ func TestDepthClockSurfaceSpecAndClickThrough(t *testing.T) {
 	if spec.Width != depthClockWidth || spec.Height != depthClockHeight {
 		t.Fatalf("surface size = %dx%d, want %dx%d", spec.Width, spec.Height, depthClockWidth, depthClockHeight)
 	}
+	if spec.Callbacks.Handle == nil {
+		t.Fatal("click-through surface has no required input callback")
+	}
+	if spec.Callbacks.Handle(wayland.Event{}) {
+		t.Fatal("click-through surface handled input")
+	}
 	if err := spec.Callbacks.Configure(int(spec.Width), int(spec.Height), 150); err != nil {
 		t.Fatal(err)
 	}

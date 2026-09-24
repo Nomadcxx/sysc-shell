@@ -276,6 +276,7 @@ func (h *depthClockHost) spec(connector string) *wayland.AuxSpec {
 			Render: func(pixels []byte, width, height, stride int) error {
 				return h.render(connector, global, pixels, width, height, stride)
 			},
+			Handle: func(wayland.Event) bool { return false },
 		},
 	}
 }
