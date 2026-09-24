@@ -159,7 +159,10 @@ func ccBodyWidth(h *PanelHost) int {
 }
 
 func ccRail(h *PanelHost) *ui.Node {
-	rail := &ui.Node{Kind: ui.KindColumn, Width: ccRailWidth, Gap: theme.MarginM}
+	// Eleven 40px destinations and three group spacers have to fit the 532px
+	// the panel leaves inside its padding. The buttons sit on the tight rung so
+	// the MarginM spacers still read as the group breaks.
+	rail := &ui.Node{Kind: ui.KindColumn, Width: ccRailWidth, Gap: theme.MarginXS}
 	for _, section := range ccSections {
 		if section.ID == "media" || section.ID == "network" || section.ID == "weather" {
 			rail.Children = append(rail.Children, &ui.Node{Kind: ui.KindColumn, Height: theme.MarginM})

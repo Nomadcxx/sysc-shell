@@ -196,6 +196,9 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 		{Kind: ui.KindText, Text: weatherSummary, Tone: weatherTone},
 	})
 	clockWeather.Height = ccCardH
+	// The clock and date own the leading edge, so the scene sits hard against
+	// the trailing one, where the scrim is enough to keep the summary legible.
+	clockWeather = weatherCardWithEffect(clockWeather, reading, weatherHomeEffectKey, 1)
 	gpuSelector, gpuOK := selectGPU(snap)
 	slotWidth := (ccLeftColumnW - 2*m.CardPadding - 3*theme.MarginM) / 4
 	resourceRow := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, CenterY: true, Children: []*ui.Node{
