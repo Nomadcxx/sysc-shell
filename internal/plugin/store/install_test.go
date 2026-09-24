@@ -144,8 +144,12 @@ func TestRemoveDeletesEveryVersion(t *testing.T) {
 	t.Parallel()
 	in, srv := newInstaller(t)
 	ctx := context.Background()
-	_ = in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.4.0", defaultCaps, nil)))
-	_ = in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.5.0", defaultCaps, nil)))
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.4.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.5.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
 	if err := in.Remove(fixtureID); err != nil {
 		t.Fatal(err)
 	}
@@ -159,6 +163,59 @@ func TestRemoveDeletesEveryVersion(t *testing.T) {
 	}
 }
 
+// TestRecoverInterruptedRestoresAStrandedPrev proves F5: a crash between the
+// two renames in swapIn leaves only .prev/<id>, with the active directory
+// gone. RecoverInterrupted must put it back so LoadInstalled sees it again.
+func TestRecoverInterruptedRestoresAStrandedPrev(t *testing.T) {
+	t.Parallel()
+	in, srv := newInstaller(t)
+	ctx := context.Background()
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.4.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.5.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	active, _ := in.paths(fixtureID)
+	if err := os.RemoveAll(active); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.RecoverInterrupted(); err != nil {
+		t.Fatalf("RecoverInterrupted: %v", err)
+	}
+	if _, err := os.Stat(active); err != nil {
+		t.Fatalf("active directory not restored: %v", err)
+	}
+	if got := installedVersion(t, in.Root); got != "1.4.0" {
+		t.Fatalf("after recovery: %s, want 1.4.0", got)
+	}
+}
+
+// TestRecoverInterruptedIsANoOpWhenNothingIsStranded covers the ordinary
+// case: no .prev directory, or a .prev entry whose active counterpart is
+// already there.
+func TestRecoverInterruptedIsANoOpWhenNothingIsStranded(t *testing.T) {
+	t.Parallel()
+	in, _ := newInstaller(t)
+	if err := in.RecoverInterrupted(); err != nil {
+		t.Fatalf("no .prev at all: %v", err)
+	}
+	srv := newAssetServer(t)
+	ctx := context.Background()
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.4.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.5.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.RecoverInterrupted(); err != nil {
+		t.Fatalf("active present alongside .prev: %v", err)
+	}
+	if got := installedVersion(t, in.Root); got != "1.5.0" {
+		t.Fatalf("RecoverInterrupted touched a healthy install: %s", got)
+	}
+}
+
 func TestEveryTreeChangeGoesThroughReplace(t *testing.T) {
 	t.Parallel()
 	in, srv := newInstaller(t)
@@ -168,9 +225,15 @@ func TestEveryTreeChangeGoesThroughReplace(t *testing.T) {
 		return swap()
 	}
 	ctx := context.Background()
-	_ = in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.4.0", defaultCaps, nil)))
-	_ = in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.5.0", defaultCaps, nil)))
-	_ = in.Rollback(fixtureID)
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.4.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Install(ctx, plan(release(t, srv, runtime.GOARCH, "1.5.0", defaultCaps, nil))); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Rollback(fixtureID); err != nil {
+		t.Fatal(err)
+	}
 	_ = in.Remove(fixtureID)
 	if len(ids) != 4 {
 		t.Fatalf("Replace saw %v, want four calls", ids)

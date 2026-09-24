@@ -252,6 +252,10 @@ type Resolution struct {
 	// Needs is the newest release's protocol, which the manager names when
 	// the row is held back or incompatible.
 	Needs v1.Version
+	// NoAsset is true when nothing resolved but at least one candidate's
+	// protocol is supported: the blocker is the missing linux-<arch> asset,
+	// not the protocol ceiling named by Needs.
+	NoAsset bool
 }
 
 // Resolve picks the newest release this host can run on arch.
@@ -259,11 +263,13 @@ func Resolve(e Entry, arch string) Resolution {
 	key := "linux-" + arch
 	candidates := append([]Release{e.Release}, e.Releases...)
 	var best *Release
+	protocolOK := false
 	for i := range candidates {
 		r := &candidates[i]
 		if !plugin.HostSupports(r.Protocol) {
 			continue
 		}
+		protocolOK = true
 		if _, ok := r.Assets[key]; !ok {
 			continue
 		}
@@ -275,6 +281,7 @@ func Resolve(e Entry, arch string) Resolution {
 	switch {
 	case best == nil:
 		res.Compat = Incompatible
+		res.NoAsset = protocolOK
 	case best.Version == e.Version:
 		res.Compat = Compatible
 	default:

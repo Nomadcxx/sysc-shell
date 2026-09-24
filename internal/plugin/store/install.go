@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -222,6 +223,37 @@ func (in *Installer) Remove(id string) error {
 // CleanStaging removes work an interrupted run left behind.
 func (in *Installer) CleanStaging() error {
 	return os.RemoveAll(filepath.Join(in.Root, ".staging"))
+}
+
+// RecoverInterrupted restores a plugin whose swap crashed between the two
+// renames of swapIn: active moved to .prev, but staged never made it to
+// active, so only .prev/<id> is left and LoadInstalled would drop the
+// record. For each directory under .prev whose active counterpart is
+// missing, it renames .prev/<id> back to <root>/<id>.
+func (in *Installer) RecoverInterrupted() error {
+	prevRoot := filepath.Join(in.Root, ".prev")
+	entries, err := os.ReadDir(prevRoot)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fail(KindDisk, err, "")
+	}
+	var errs []error
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		id := e.Name()
+		active, prev := in.paths(id)
+		if exists(active) {
+			continue
+		}
+		if err := in.doRename(prev, active); err != nil {
+			errs = append(errs, fail(KindDisk, err, "recovering %s", id))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (in *Installer) stage(prefix string) (string, error) {

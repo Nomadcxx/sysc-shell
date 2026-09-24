@@ -124,15 +124,16 @@ func TestResolve(t *testing.T) {
 		arch    string
 		compat  Compat
 		version string
+		noAsset bool
 	}{
-		{"tip fits", entryFor(Release{Version: "1.4.0", Protocol: v1Version(1, 0), Assets: asset}), "amd64", Compatible, "1.4.0"},
+		{"tip fits", entryFor(Release{Version: "1.4.0", Protocol: v1Version(1, 0), Assets: asset}), "amd64", Compatible, "1.4.0", false},
 		{"tip too new, older fits", entryFor(
 			Release{Version: "2.0.0", Protocol: tooNew, Assets: asset},
 			Release{Version: "1.3.2", Protocol: v1Version(1, 0), Assets: asset},
 			Release{Version: "1.2.0", Protocol: v1Version(1, 0), Assets: asset},
-		), "amd64", HeldBack, "1.3.2"},
-		{"nothing fits", entryFor(Release{Version: "2.0.0", Protocol: v1Version(2, 0), Assets: asset}), "amd64", Incompatible, ""},
-		{"no asset for arch", entryFor(Release{Version: "1.4.0", Protocol: v1Version(1, 0), Assets: asset}), "arm64", Incompatible, ""},
+		), "amd64", HeldBack, "1.3.2", false},
+		{"nothing fits", entryFor(Release{Version: "2.0.0", Protocol: v1Version(2, 0), Assets: asset}), "amd64", Incompatible, "", false},
+		{"no asset for arch", entryFor(Release{Version: "1.4.0", Protocol: v1Version(1, 0), Assets: asset}), "arm64", Incompatible, "", true},
 	}
 	for _, c := range cases {
 		got := Resolve(c.entry, c.arch)
@@ -144,6 +145,9 @@ func TestResolve(t *testing.T) {
 		}
 		if got.Needs != c.entry.Protocol {
 			t.Errorf("%s: needs %+v, want the tip's %+v", c.name, got.Needs, c.entry.Protocol)
+		}
+		if got.NoAsset != c.noAsset {
+			t.Errorf("%s: NoAsset %v, want %v", c.name, got.NoAsset, c.noAsset)
 		}
 	}
 }

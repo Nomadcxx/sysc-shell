@@ -88,6 +88,10 @@ func tarball(t *testing.T, entries ...tarEntry) []byte {
 		if e.typ != tar.TypeReg {
 			hdr.Size = 0
 		}
+		if e.typ == tar.TypeXGlobalHeader {
+			// The tar writer refuses any field but PAXRecords on this type.
+			hdr = &tar.Header{Typeflag: tar.TypeXGlobalHeader, PAXRecords: map[string]string{"comment": "test"}}
+		}
 		if err := tw.WriteHeader(hdr); err != nil {
 			t.Fatal(err)
 		}

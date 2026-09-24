@@ -74,6 +74,25 @@ func TestExtractRejectsHostileArchives(t *testing.T) {
 	}
 }
 
+// TestExtractSkipsAPaxGlobalHeader proves F9: git archive prefixes its
+// tarball with a pax_global_header entry, which is metadata rather than part
+// of the plugin tree and must not sink extraction.
+func TestExtractSkipsAPaxGlobalHeader(t *testing.T) {
+	t.Parallel()
+	body := tarball(t,
+		tarEntry{name: "pax_global_header", typ: tar.TypeXGlobalHeader, body: "52 comment=abcdef\n"},
+		tarEntry{name: fixtureID + "/", typ: tar.TypeDir, mode: 0o755},
+		tarEntry{name: fixtureID + "/manifest.json", typ: tar.TypeReg, body: "{}", mode: 0o644},
+	)
+	dest := t.TempDir()
+	if err := Extract(bytes.NewReader(body), dest, fixtureID, DefaultLimits); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, fixtureID, "manifest.json")); err != nil {
+		t.Fatalf("manifest.json missing: %v", err)
+	}
+}
+
 func TestExtractRejectsSomethingThatIsNotGzip(t *testing.T) {
 	t.Parallel()
 	err := Extract(bytes.NewReader([]byte("plain")), t.TempDir(), fixtureID, DefaultLimits)

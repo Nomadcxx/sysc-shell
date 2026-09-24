@@ -39,6 +39,10 @@ const (
 	StatusIncompatible    Status = "incompatible"
 	StatusShadowed        Status = "shadowed"
 	StatusLocalOnly       Status = "local only"
+	// StatusUnlisted is a managed install no enabled source's catalog lists:
+	// its source was disabled or removed, its record's source is unknown, or
+	// the source no longer publishes that id.
+	StatusUnlisted Status = "managed, unlisted"
 )
 
 // Listing is one catalog row resolved against this machine. It carries every
@@ -105,6 +109,9 @@ func New(opts Options) *Store {
 
 // Run is the worker. It returns when ctx is done.
 func (s *Store) Run(ctx context.Context) {
+	if err := s.opts.Installer.RecoverInterrupted(); err != nil {
+		slog.Warn("plugin store: cannot recover an interrupted swap", "err", err)
+	}
 	if err := s.opts.Installer.CleanStaging(); err != nil {
 		slog.Warn("plugin store: cannot clear staging", "err", err)
 	}
@@ -144,14 +151,22 @@ func (s *Store) Refresh() (<-chan error, error) {
 }
 
 // Install queues installing id from source. The command itself is the consent:
-// the manager shows its consent sheet before calling this.
+// the manager shows its consent sheet before calling this. The release
+// identity the caller saw is captured now and re-checked when the op runs, so
+// a refresh that lands first cannot install a different release than the one
+// consented to.
 func (s *Store) Install(source, id string) (<-chan error, error) {
-	if _, err := s.find(source, id); err != nil {
+	l, err := s.find(source, id)
+	if err != nil {
 		return nil, err
 	}
+	version, sha := releaseIdentity(l.Resolution.Release, s.opts.Installer.Arch)
 	return s.enqueue(op{name: "install " + id, id: id, run: func(ctx context.Context) error {
 		l, err := s.find(source, id)
 		if err != nil {
+			return err
+		}
+		if err := s.checkConsent(l, version, sha); err != nil {
 			return err
 		}
 		return s.install(ctx, l)
@@ -160,6 +175,10 @@ func (s *Store) Install(source, id string) (<-chan error, error) {
 
 // Update queues updating id from the source it was installed from. An update
 // that changes capabilities or required commands is refused until confirmed.
+// The release identity is captured at enqueue time and re-checked when the op
+// runs, whether or not confirmed: a refresh that lands first must not let a
+// stale consent (confirmed or not) install whatever the catalog resolves to
+// by then.
 func (s *Store) Update(id string, confirmed bool) (<-chan error, error) {
 	l, err := s.updatable(id)
 	if err != nil {
@@ -170,13 +189,37 @@ func (s *Store) Update(id string, confirmed bool) (<-chan error, error) {
 		return nil, fail(KindConsent, nil, "%s %s asks for capabilities %v and commands %v; installed %s has %v and %v",
 			id, rel.Version, rel.Capabilities, rel.Requires.Commands, l.Installed.Version, l.Installed.Capabilities, l.Installed.Requires)
 	}
+	version, sha := releaseIdentity(rel, s.opts.Installer.Arch)
 	return s.enqueue(op{name: "update " + id, id: id, run: func(ctx context.Context) error {
 		l, err := s.updatable(id)
 		if err != nil {
 			return err
 		}
+		if err := s.checkConsent(l, version, sha); err != nil {
+			return err
+		}
 		return s.install(ctx, l)
 	}})
+}
+
+// releaseIdentity is the version and linux-<arch> asset sha256 a caller
+// consents to when it issues an Install or Update.
+func releaseIdentity(rel *Release, arch string) (version, sha string) {
+	if rel == nil {
+		return "", ""
+	}
+	return rel.Version, rel.Assets["linux-"+arch].SHA256
+}
+
+// checkConsent refuses l when it no longer resolves to the release identity
+// the caller consented to: a refresh may have run between the request and
+// the op running and published a different version or asset.
+func (s *Store) checkConsent(l Listing, version, sha string) error {
+	gotVersion, gotSHA := releaseIdentity(l.Resolution.Release, s.opts.Installer.Arch)
+	if gotVersion != version || gotSHA != sha {
+		return fail(KindConsent, nil, "the catalog changed since the request; re-issue")
+	}
+	return nil
 }
 
 func (s *Store) Rollback(id string) (<-chan error, error) {
@@ -227,6 +270,9 @@ func (s *Store) updatable(id string) (Listing, error) {
 
 func (s *Store) install(ctx context.Context, l Listing) error {
 	if l.Resolution.Release == nil {
+		if l.Resolution.NoAsset {
+			return fail(KindNoAsset, nil, "%s: no linux-%s release", l.Entry.ID, s.opts.Installer.Arch)
+		}
 		return fail(KindNoAsset, nil, "%s needs protocol %d.%d", l.Entry.ID, l.Resolution.Needs.Major, l.Resolution.Needs.Minor)
 	}
 	return s.opts.Installer.Install(ctx, Plan{
@@ -299,11 +345,16 @@ func (s *Store) setBusy(what string) {
 	s.mu.Unlock()
 }
 
-// buildListings resolves every catalog row, in source order then catalog order.
+// buildListings resolves every catalog row, in source order then catalog
+// order, then appends one row for each managed install that no catalog row
+// covers: its source disabled or removed, its record's source unknown, or
+// the source no longer publishing that id. Without these, an operation that
+// fails on such a plugin (rollback, remove) has nowhere to show its error.
 func buildListings(sources []SourceState, catalogs map[string]Catalog, installed Installed,
 	local map[string]string, errs map[string]error, arch string) []Listing {
 
 	var out []Listing
+	seen := map[string]bool{}
 	for _, src := range sources {
 		for _, e := range catalogs[src.Name].Entries {
 			l := Listing{Source: src.Name, CatalogCommit: src.Commit, Entry: e, Resolution: Resolve(e, arch),
@@ -313,7 +364,30 @@ func buildListings(sources []SourceState, catalogs map[string]Catalog, installed
 			}
 			l.Status = statusOf(l)
 			out = append(out, l)
+			seen[e.ID] = true
 		}
+	}
+	var orphans []string
+	for id := range installed {
+		if !seen[id] {
+			orphans = append(orphans, id)
+		}
+	}
+	slices.Sort(orphans)
+	for _, id := range orphans {
+		rec := installed[id]
+		l := Listing{
+			Source:    rec.Source,
+			Entry:     Entry{ID: id, Name: id},
+			Installed: &rec,
+			LocalDir:  local[id],
+			Err:       errs[id],
+			Status:    StatusUnlisted,
+		}
+		if l.LocalDir != "" {
+			l.Status = StatusShadowed
+		}
+		out = append(out, l)
 	}
 	return out
 }

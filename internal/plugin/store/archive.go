@@ -53,6 +53,11 @@ func Extract(r io.Reader, dest, root string, lim Limits) error {
 		if entries++; entries > lim.MaxEntries {
 			return fail(KindArchive, nil, "more than %d entries", lim.MaxEntries)
 		}
+		if hdr.Typeflag == tar.TypeXGlobalHeader {
+			// git archive emits one of these ahead of the tree; it is
+			// metadata, never written, but it still counts toward MaxEntries.
+			continue
+		}
 		name := strings.TrimSuffix(hdr.Name, "/")
 		if !filepath.IsLocal(name) || path.Clean(name) != name {
 			return fail(KindArchive, nil, "%q is not a plain relative path", hdr.Name)

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -41,6 +42,38 @@ func TestListingStatus(t *testing.T) {
 		if len(got) != 1 || got[0].Status != c.want {
 			t.Errorf("%s: %+v, want %s", c.name, got, c.want)
 		}
+	}
+}
+
+// TestBuildListingsAddsOrphanManagedInstalls proves F4: a managed install
+// whose id no catalog row covers (a disabled/removed source, an unknown
+// source, or a source that stopped publishing that id) still gets a row, so
+// an error on it (a failed rollback or remove) has somewhere to show.
+func TestBuildListingsAddsOrphanManagedInstalls(t *testing.T) {
+	t.Parallel()
+	installed := Installed{
+		"org.sysc.orphan":          {Source: "gone", Version: "1.0.0"},
+		"org.sysc.shadowed-orphan": {Source: SourceUnknown, Version: "2.0.0"},
+	}
+	local := map[string]string{"org.sysc.shadowed-orphan": "/home/u/p"}
+	errs := map[string]error{"org.sysc.orphan": errors.New("boom")}
+
+	got := buildListings(nil, nil, installed, local, errs, "amd64")
+	if len(got) != 2 {
+		t.Fatalf("listings = %+v, want 2", got)
+	}
+	byID := map[string]Listing{}
+	for _, l := range got {
+		byID[l.Entry.ID] = l
+	}
+	o, ok := byID["org.sysc.orphan"]
+	if !ok || o.Status != StatusUnlisted || o.Source != "gone" || o.Err == nil ||
+		o.Installed == nil || o.Installed.Version != "1.0.0" {
+		t.Errorf("orphan = %+v, %v", o, ok)
+	}
+	s, ok := byID["org.sysc.shadowed-orphan"]
+	if !ok || s.Status != StatusShadowed || s.LocalDir != "/home/u/p" {
+		t.Errorf("shadowed orphan = %+v, %v", s, ok)
 	}
 }
 
@@ -178,6 +211,135 @@ func TestALocalCopyShadowsTheManagedListing(t *testing.T) {
 	f.await(f.st.Install("test", fixtureID))
 	if got := f.listing().Status; got != StatusShadowed {
 		t.Fatalf("after install: %s", got)
+	}
+}
+
+// TestUpdateRefusesIfTheCatalogChangesBeforeItRuns proves F1: Update captures
+// the release identity (version + asset sha256) the caller consented to when
+// it enqueues, and refuses with KindConsent if a refresh lands first and
+// resolves something else -- even when the enqueue-time caps/requires check
+// passed, and even for a confirmed update.
+func TestUpdateRefusesIfTheCatalogChangesBeforeItRuns(t *testing.T) {
+	t.Parallel()
+	f := newStoreFixture(t, nil)
+	arch := runtime.GOARCH
+	v1rel := release(t, f.srv, arch, "1.4.0", defaultCaps, nil)
+	f.publish(v1rel)
+	f.await(f.st.Install("test", fixtureID))
+
+	// 1.5.0 has the same capabilities as installed, so a later Update(id,
+	// false) would pass the enqueue-time caps/requires check on its own.
+	v2rel := release(t, f.srv, arch, "1.5.0", defaultCaps, nil)
+	f.publish(v2rel, v1rel)
+
+	// Change the catalog again directly (bypassing Store.Refresh), so the
+	// store has not seen it yet: 1.6.0 changes both the version and the
+	// asset content, with a smaller capability set too.
+	v3rel := release(t, f.srv, arch, "1.6.0", []string{"notifications", "panels"}, nil)
+	f.repo.publish(catalogJSON(t, entryFor(v3rel, v2rel, v1rel)))
+
+	// Queue a refresh, then an unconfirmed update, without awaiting the
+	// refresh first: the single worker runs its queue in order, so the
+	// refresh (which resolves 1.6.0) completes before the update's op runs,
+	// whatever the update's own enqueue-time snapshot saw.
+	refreshDone, err := f.st.Refresh()
+	if err != nil {
+		t.Fatal(err)
+	}
+	updateDone, err := f.st.Update(fixtureID, false)
+	var uerr error
+	if err != nil {
+		uerr = err
+	} else {
+		uerr = <-updateDone
+	}
+	if KindOf(uerr) != KindConsent {
+		t.Fatalf("update after catalog changed: %v, want %s", uerr, KindConsent)
+	}
+	if err := <-refreshDone; err != nil {
+		t.Fatal(err)
+	}
+	if l := f.listing(); l.Installed == nil || l.Installed.Version != "1.4.0" {
+		t.Fatalf("installed version changed: %+v", l.Installed)
+	}
+}
+
+// TestConfirmedUpdateRefusesIfTheCatalogChangesBeforeItRuns is the confirmed
+// variant: confirming an old identity's caps/requires question must not
+// waive consent for a release that resolves differently by the time the
+// update runs.
+func TestConfirmedUpdateRefusesIfTheCatalogChangesBeforeItRuns(t *testing.T) {
+	t.Parallel()
+	f := newStoreFixture(t, nil)
+	arch := runtime.GOARCH
+	v1rel := release(t, f.srv, arch, "1.4.0", defaultCaps, nil)
+	f.publish(v1rel)
+	f.await(f.st.Install("test", fixtureID))
+
+	v2rel := release(t, f.srv, arch, "1.5.0", defaultCaps, nil)
+	f.publish(v2rel, v1rel)
+
+	v3rel := release(t, f.srv, arch, "1.6.0", defaultCaps, nil)
+	f.repo.publish(catalogJSON(t, entryFor(v3rel, v2rel, v1rel)))
+
+	refreshDone, err := f.st.Refresh()
+	if err != nil {
+		t.Fatal(err)
+	}
+	updateDone, err := f.st.Update(fixtureID, true)
+	var uerr error
+	if err != nil {
+		uerr = err
+	} else {
+		uerr = <-updateDone
+	}
+	if KindOf(uerr) != KindConsent {
+		t.Fatalf("confirmed update after catalog changed: %v, want %s", uerr, KindConsent)
+	}
+	if err := <-refreshDone; err != nil {
+		t.Fatal(err)
+	}
+	if l := f.listing(); l.Installed == nil || l.Installed.Version != "1.4.0" {
+		t.Fatalf("installed version changed: %+v", l.Installed)
+	}
+}
+
+// TestInstallRefusesIfTheCatalogChangesBeforeItRuns is F1's Install
+// equivalent: nothing to install yet, so there is no caps fallback like
+// Update has; the version+sha256 check alone must catch it.
+func TestInstallRefusesIfTheCatalogChangesBeforeItRuns(t *testing.T) {
+	t.Parallel()
+	f := newStoreFixture(t, nil)
+	arch := runtime.GOARCH
+	v1rel := release(t, f.srv, arch, "1.4.0", defaultCaps, nil)
+	f.publish(v1rel)
+	if got := f.listing().Status; got != StatusAvailable {
+		t.Fatalf("before install: %s", got)
+	}
+
+	// Change the catalog directly, without letting the store see it yet.
+	v2rel := release(t, f.srv, arch, "1.5.0", defaultCaps, nil)
+	f.repo.publish(catalogJSON(t, entryFor(v2rel, v1rel)))
+
+	refreshDone, err := f.st.Refresh()
+	if err != nil {
+		t.Fatal(err)
+	}
+	installDone, err := f.st.Install("test", fixtureID)
+	var ierr error
+	if err != nil {
+		ierr = err
+	} else {
+		ierr = <-installDone
+	}
+	if KindOf(ierr) != KindConsent {
+		t.Fatalf("install after catalog changed: %v, want %s", ierr, KindConsent)
+	}
+	if err := <-refreshDone; err != nil {
+		t.Fatal(err)
+	}
+	if l := f.listing(); l.Installed != nil {
+		t.Fatalf("install ran despite the catalog having changed: %+v", l.Installed)
 	}
 }
 
