@@ -2303,3 +2303,21 @@ func TestPaintNodeStrokeRimsCapsulesAndButtons(t *testing.T) {
 		}
 	}
 }
+
+func TestToneColorSelectsThresholdRoles(t *testing.T) {
+	for _, tc := range []struct {
+		tone ui.Tone
+		want Color
+	}{
+		{ui.ToneNormal, testStyle.Accent},
+		{ui.ToneActivity, testStyle.Tertiary},
+		{ui.ToneError, testStyle.Error},
+	} {
+		if got := toneColor(testStyle, tc.tone, testStyle.Accent); got != tc.want {
+			t.Errorf("toneColor(%d) = %v, want %v", tc.tone, got, tc.want)
+		}
+	}
+	if got := textColor(testStyle, ui.ToneActivity); got != testStyle.Tertiary {
+		t.Errorf("activity text = %v, want Tertiary", got)
+	}
+}

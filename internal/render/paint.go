@@ -289,11 +289,7 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 		fillRect(c, box, style.Track)
 		filled := box
 		filled.W = style.Scale120.Physical(n.Bounds.X+int(float64(n.Bounds.W)*n.Value+0.5)) - box.X
-		fill := style.accent()
-		if n.Tone == ui.ToneError {
-			fill = style.Error
-		}
-		fillRect(c, filled, fill)
+		fillRect(c, filled, toneColor(style, n.Tone, style.accent()))
 		return nil
 
 	case ui.KindCapsule:
@@ -1431,8 +1427,22 @@ func paintCentredMask(c *Canvas, mask Mask, box ui.Rect, fg Color) (ui.Rect, boo
 	return ink, true
 }
 
+// toneColor resolves a threshold tone for a graph line or meter fill. A
+// normal tone keeps the caller's colour.
+func toneColor(style Style, tone ui.Tone, normal Color) Color {
+	switch tone {
+	case ui.ToneError:
+		return style.Error
+	case ui.ToneActivity:
+		return style.Tertiary
+	}
+	return normal
+}
+
 func textColor(style Style, tone ui.Tone) Color {
 	switch tone {
+	case ui.ToneActivity:
+		return style.Tertiary
 	case ui.ToneError:
 		return style.Error
 	case ui.ToneAccent:
