@@ -103,7 +103,7 @@ viewport for consistency, and its content height equals `ccPageH`.
 │ ▣ CPU                                   12%   [↗]  │    │ ▣ Memory        39% │
 │ ╭╮╭─╮  ╭╮     ╭──╮            64px line + area    •│    │ ████████░░░░░░░░░░░ │  168
 │─╯╰╯ ╰──╯╰─────╯  ╰─────────────────────────────────│    │ 12.2 / 31.3 GiB     │
-│ 63°C · load 0.82 0.74 0.66                         │    │ ██░░░░ swap 0.4/8 G │
+│ 63°C · 4.21 GHz · load 0.82 0.74 0.66              │    │ ██░░░░ swap 0.4/8 G │
 └────────────────────────────────────────────────────┘    │ ~~~~~~ 28px line    │
                                                            └─────────────────────┘
                                    13
@@ -142,16 +142,21 @@ Row content, where the sysc-metrics v0.5.1 snapshot supports it:
 
 | Row | Value | Caption | Mark |
 |---|---|---|---|
-| CPU hero | usage % | CPU °C · load 1 / 5 / 15 | usage, 64px |
+| CPU hero | usage % | CPU °C · mean core GHz · load 1 / 5 / 15 | usage, 64px |
 | Memory hero | used % | used / total, swap used / total | used-fraction meter, swap meter, usage 28px |
 | Temperature | CPU °C · GPU °C (GPU part omitted if it reports none) | the CPU sensor source | CPU °C |
-| GPU | usage % | GPU name | usage |
+| GPU | usage % | GPU name · VRAM used / total (after the v0.6.0 pin) | usage |
 | Storage | used / total for `/` | `/` · percent | meter |
 | Network | ↓ rx · ↑ tx | interface · peak | rx and tx |
 | Disk I/O | R read · W write | device · peak | read and write |
 
-v0.5.1 reports neither GPU VRAM nor CPU frequency, so neither appears. Adding them is sysc-metrics
-work and is out of scope here.
+CPU frequency is already in v0.5.1: `CPUSnapshot.Cores[i].FrequencyHz` with `FrequencyValid`. The caption
+shows the mean of the valid cores in GHz to two decimals, and drops the part when no core is valid.
+
+GPU VRAM is not in v0.5.1, and dgop, the behavioural reference, has no VRAM collector either. It is
+planned in `sysc-metrics` `docs/plans/2026-09-25-gpu-vram.md` for `v0.6.0` and gated by `sysc-521`. Until
+the shell pins that release, the GPU caption carries the name only; the pin bump and the VRAM caption are
+the last task of this work and wait on the gate.
 
 ### D5. Leases and subject selection
 
@@ -184,7 +189,6 @@ invalidation, and it needs no reduced-motion variant.
 
 - Per-core CPU, a process list on this page (the standalone monitor and process panel own those),
   and network session totals.
-- GPU VRAM and CPU frequency, pending sysc-metrics support.
 - Configurable thresholds, history windows or chart colours.
 - The Home weather scene inset. It is its own issue.
 
