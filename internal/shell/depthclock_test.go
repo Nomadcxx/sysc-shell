@@ -290,7 +290,7 @@ func TestDepthClockTreeUsesThemedTimeAndDateRoles(t *testing.T) {
 		t.Fatalf("clock tree = %+v", tree)
 	}
 	timeNode, dateNode := tree.Children[0].Children[0], tree.Children[0].Children[1]
-	if timeNode.Text != "09:07" || timeNode.TextRole != theme.RoleTitle || !timeNode.Tabular {
+	if timeNode.Text != "09:07" || timeNode.TextRole != theme.RoleDisplay || !timeNode.Tabular {
 		t.Fatalf("time node = %+v", timeNode)
 	}
 	if dateNode.Text != "Thu 24 Sep" || dateNode.TextRole != theme.RoleCaption {

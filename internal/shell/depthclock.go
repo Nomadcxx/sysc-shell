@@ -422,7 +422,7 @@ func depthClockTree(now time.Time) *ui.Node {
 			CenterX: true,
 			CenterY: true,
 			Children: []*ui.Node{
-				{Kind: ui.KindText, Text: now.Format("15:04"), TextRole: theme.RoleTitle, Tabular: true, CenterX: true},
+				{Kind: ui.KindText, Text: now.Format("15:04"), TextRole: theme.RoleDisplay, Tabular: true, CenterX: true},
 				{Kind: ui.KindText, Text: now.Format("Mon 2 Jan"), TextRole: theme.RoleCaption, CenterX: true},
 			},
 		}},
