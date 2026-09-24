@@ -320,11 +320,20 @@ func encodeItem(it Item) wireItem {
 // pluginsDiff emits the plugin section only when it holds something, so a
 // configuration that uses no plugins is written exactly as short as before.
 func pluginsDiff(got Plugins) *wirePlugins {
-	if len(got.Enabled) == 0 && len(got.Settings) == 0 && len(got.Instances) == 0 {
+	if len(got.Enabled) == 0 && len(got.Settings) == 0 && len(got.Instances) == 0 && len(got.Sources) == 0 {
 		return nil
 	}
 	c := got.clone()
-	return &wirePlugins{Enabled: c.Enabled, Settings: c.Settings, Instances: c.Instances}
+	w := &wirePlugins{Enabled: c.Enabled, Settings: c.Settings, Instances: c.Instances}
+	for _, s := range c.Sources {
+		ws := wirePluginSource{Name: s.Name, URL: s.URL}
+		if !s.Enabled {
+			off := false
+			ws.Enabled = &off
+		}
+		w.Sources = append(w.Sources, ws)
+	}
+	return w
 }
 
 func themeGenDiff(got, base ThemeConfig) *wireThemeGen {
