@@ -60,6 +60,60 @@ func TestReplacePluginRescansAfterTheSwap(t *testing.T) {
 	}
 }
 
+// TestReplaceBlocksAConcurrentEnsureWhileSwapping proves F2: between
+// stopPlugin and the swap finishing, a concurrent syncEnabled (a config
+// change, another BindPlugins caller racing in) must not restart the plugin
+// from whatever the tree looked like before the swap landed. The fake plugin
+// binary these fixtures use has no protocol handshake, so starting a real
+// process and asserting it ends up running is impractical here (see
+// writeStoreTestPlugin); instead this asserts what F2 is actually about:
+// ensure refuses while the id is marked swapping, and the mark is gone once
+// replace returns.
+func TestReplaceBlocksAConcurrentEnsureWhileSwapping(t *testing.T) {
+	user, managed := t.TempDir(), t.TempDir()
+	cfg := config.Default()
+	cfg.Plugins.Enabled = []string{"org.sysc.timer"}
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	if err := reg.BindPlugins(PluginHostOptions{Roots: []plugin.Root{
+		{Path: user, Source: plugin.SourceUser}, {Path: managed, Source: plugin.SourceManaged},
+	}, StateDir: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := reg.ReplacePlugin("org.sysc.timer", func() error {
+		writeStoreTestPlugin(t, managed)
+		reg.plugins.mu.Lock()
+		swapping := reg.plugins.swapping["org.sysc.timer"]
+		reg.plugins.mu.Unlock()
+		if !swapping {
+			t.Fatal("replace did not mark the id swapping before calling swap")
+		}
+		// A concurrent syncEnabled, racing on another caller's goroutine in
+		// production, landing while the id is swapping.
+		if err := reg.plugins.syncEnabled(); err != nil {
+			t.Fatal(err)
+		}
+		reg.plugins.mu.Lock()
+		_, started := reg.plugins.slots["org.sysc.timer"]
+		reg.plugins.mu.Unlock()
+		if started {
+			t.Fatal("ensure started the plugin while it was still swapping")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ReplacePlugin: %v", err)
+	}
+
+	reg.plugins.mu.Lock()
+	swapping := reg.plugins.swapping["org.sysc.timer"]
+	reg.plugins.mu.Unlock()
+	if swapping {
+		t.Fatal("replace left the id marked swapping after returning")
+	}
+}
+
 func TestLocalPluginDirsListsUserCopies(t *testing.T) {
 	user := t.TempDir()
 	dir := writeStoreTestPlugin(t, user)

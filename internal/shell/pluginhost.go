@@ -55,9 +55,13 @@ type pluginHost struct {
 	stop context.CancelFunc
 	prep *plugin.Preparer
 
-	mu           sync.Mutex
-	slots        map[string]*pluginSlot
-	views        map[string]*hostedView
+	mu    sync.Mutex
+	slots map[string]*pluginSlot
+	views map[string]*hostedView
+	// swapping holds plugin ids replace has stopped and not yet restarted.
+	// ensure refuses to start one of these: a concurrent syncEnabled must not
+	// resurrect the old copy while its directory is mid-swap.
+	swapping     map[string]bool
 	nextID       uint64
 	inputs       []v1.InputEvent
 	textOut      plugin.TextOut
@@ -98,6 +102,7 @@ func (r *Registry) BindPlugins(opts PluginHostOptions) error {
 		slots:      make(map[string]*pluginSlot),
 		views:      make(map[string]*hostedView),
 		lastAnchor: make(map[string]int),
+		swapping:   make(map[string]bool),
 	}
 	h.images = icons.NewWorker(icons.FileResolver{}, h.applyPluginImage)
 	go h.images.Run(ctx)
@@ -188,7 +193,7 @@ func (h *pluginHost) finishSyncEnabled(enabled []string, cat plugin.Catalog, reg
 
 func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) error {
 	h.mu.Lock()
-	if h.slots[id] != nil {
+	if h.slots[id] != nil || h.swapping[id] {
 		h.mu.Unlock()
 		return nil
 	}
@@ -1305,9 +1310,20 @@ func (h *pluginHost) rescan() error { return h.syncEnabled() }
 // a directory mid-swap; the rescan restarts the plugin when it is enabled and
 // the swap left something startable. It takes Registry.mu itself, through
 // syncEnabled, and must be called without it.
+//
+// id is marked swapping before stopPlugin and cleared after swap returns, so
+// a concurrent syncEnabled's ensure(id) — racing in between on another
+// caller's goroutine — refuses to restart the old copy from the stale
+// catalog; this replace's own rescan below is what starts the new one.
 func (h *pluginHost) replace(id string, swap func() error) error {
+	h.mu.Lock()
+	h.swapping[id] = true
+	h.mu.Unlock()
 	h.stopPlugin(id)
 	err := swap()
+	h.mu.Lock()
+	delete(h.swapping, id)
+	h.mu.Unlock()
 	if serr := h.syncEnabled(); serr != nil {
 		err = errors.Join(err, serr)
 	}

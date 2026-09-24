@@ -127,6 +127,13 @@ func storeStateReply(st store.State) map[string]any {
 		if l.Installed != nil {
 			row["installed_version"] = l.Installed.Version
 		}
+		if l.Status == store.StatusIncompatible {
+			if l.Resolution.NoAsset {
+				row["reason"] = "no asset for this machine"
+			} else {
+				row["reason"] = fmt.Sprintf("needs protocol %d.%d", l.Resolution.Needs.Major, l.Resolution.Needs.Minor)
+			}
+		}
 		listings = append(listings, row)
 	}
 	return map[string]any{"busy": st.Busy, "sources": sources, "listings": listings}
