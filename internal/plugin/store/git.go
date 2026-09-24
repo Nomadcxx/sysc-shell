@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Nomadcxx/sysc-shell/plugin/catalog"
 )
 
 // CatalogFile is the one file a source repository must hold at its root.
@@ -36,7 +38,7 @@ func (g Git) Catalog(ctx context.Context, dir, url string) ([]byte, string, erro
 	if err != nil {
 		return nil, "", fail(KindGitMissing, err, "")
 	}
-	have, err := g.run(ctx, bin, dir, MaxCatalogBytes, "remote", "get-url", "origin")
+	have, err := g.run(ctx, bin, dir, catalog.MaxCatalogBytes, "remote", "get-url", "origin")
 	if err != nil || strings.TrimSpace(string(have)) != url {
 		// No clone yet, a broken one, or a clone of a URL the source no
 		// longer names: start again rather than fetch the wrong remote.
@@ -46,17 +48,17 @@ func (g Git) Catalog(ctx context.Context, dir, url string) ([]byte, string, erro
 		if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 			return nil, "", fail(KindDisk, err, "")
 		}
-		if _, err := g.run(ctx, bin, "", MaxCatalogBytes, "clone", "--filter=blob:none", "--no-checkout", "--quiet", "--", url, dir); err != nil {
+		if _, err := g.run(ctx, bin, "", catalog.MaxCatalogBytes, "clone", "--filter=blob:none", "--no-checkout", "--quiet", "--", url, dir); err != nil {
 			return nil, "", err
 		}
-	} else if _, err := g.run(ctx, bin, dir, MaxCatalogBytes, "fetch", "--quiet", "origin"); err != nil {
+	} else if _, err := g.run(ctx, bin, dir, catalog.MaxCatalogBytes, "fetch", "--quiet", "origin"); err != nil {
 		return nil, "", err
 	}
-	commit, err := g.run(ctx, bin, dir, MaxCatalogBytes, "rev-parse", "origin/HEAD")
+	commit, err := g.run(ctx, bin, dir, catalog.MaxCatalogBytes, "rev-parse", "origin/HEAD")
 	if err != nil {
 		return nil, "", err
 	}
-	body, err := g.run(ctx, bin, dir, MaxCatalogBytes, "show", "origin/HEAD:"+CatalogFile)
+	body, err := g.run(ctx, bin, dir, catalog.MaxCatalogBytes, "show", "origin/HEAD:"+CatalogFile)
 	if err != nil {
 		return nil, "", err
 	}

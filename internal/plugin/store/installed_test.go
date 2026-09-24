@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Nomadcxx/sysc-shell/plugin/catalog"
 )
 
 func TestLoadInstalledOfAnEmptyRoot(t *testing.T) {
@@ -52,7 +54,7 @@ func TestLoadInstalledReconcilesWithTheTree(t *testing.T) {
 		t.Error("a directory whose name is not its manifest id was adopted")
 	}
 	rec, ok := got[fixtureID]
-	if !ok || rec.Source != SourceUnknown || rec.Version != "1.4.0" || !sameSet(rec.Requires, []string{"gh"}) {
+	if !ok || rec.Source != SourceUnknown || rec.Version != "1.4.0" || !catalog.SameSet(rec.Requires, []string{"gh"}) {
 		t.Errorf("unrecorded directory = %+v, %v; want an unknown-source record from its manifest", rec, ok)
 	}
 }

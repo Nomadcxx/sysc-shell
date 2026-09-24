@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/Nomadcxx/sysc-shell/plugin/catalog"
 )
 
 func newInstaller(t *testing.T) (*Installer, *assetServer) {
@@ -23,7 +25,7 @@ func installedVersion(t *testing.T, root string) string {
 	return in[fixtureID].Version
 }
 
-func plan(r Release) Plan {
+func plan(r catalog.Release) Plan {
 	return Plan{Source: "test", CatalogCommit: "c0ffee", ID: fixtureID, Release: r}
 }
 
@@ -36,7 +38,7 @@ func TestInstallPlacesThePluginAndRecordsIt(t *testing.T) {
 	}
 	recs, _ := LoadInstalled(in.Root)
 	rec := recs[fixtureID]
-	if rec.Source != "test" || rec.Version != "1.4.0" || rec.CatalogCommit != "c0ffee" || rec.SHA256 == "" || !sameSet(rec.Capabilities, defaultCaps) {
+	if rec.Source != "test" || rec.Version != "1.4.0" || rec.CatalogCommit != "c0ffee" || rec.SHA256 == "" || !catalog.SameSet(rec.Capabilities, defaultCaps) {
 		t.Errorf("record = %+v", rec)
 	}
 	if entries, _ := os.ReadDir(filepath.Join(in.Root, ".staging")); len(entries) != 0 {
@@ -46,11 +48,11 @@ func TestInstallPlacesThePluginAndRecordsIt(t *testing.T) {
 
 func TestInstallRejectsAManifestThatDisagreesWithTheCatalog(t *testing.T) {
 	t.Parallel()
-	cases := map[string]func(*Release){
-		"version":      func(r *Release) { r.Version = "9.9.9" },
-		"capabilities": func(r *Release) { r.Capabilities = []string{"panels"} },
-		"requires":     func(r *Release) { r.Requires.Commands = []string{"gh"} },
-		"protocol":     func(r *Release) { r.Protocol = v1Version(1, 2) },
+	cases := map[string]func(*catalog.Release){
+		"version":      func(r *catalog.Release) { r.Version = "9.9.9" },
+		"capabilities": func(r *catalog.Release) { r.Capabilities = []string{"panels"} },
+		"requires":     func(r *catalog.Release) { r.Requires.Commands = []string{"gh"} },
+		"protocol":     func(r *catalog.Release) { r.Protocol = v1Version(1, 2) },
 	}
 	for name, mutate := range cases {
 		in, srv := newInstaller(t)

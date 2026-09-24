@@ -8,6 +8,8 @@ import (
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/Nomadcxx/sysc-shell/plugin/catalog"
 )
 
 // Source is one enabled catalog source.
@@ -50,7 +52,7 @@ const (
 type Listing struct {
 	Source        string
 	CatalogCommit string
-	Entry         Entry
+	Entry         catalog.Entry
 	Resolution    Resolution
 	Status        Status
 	// Installed is the managed copy's record, when there is one.
@@ -69,7 +71,7 @@ type SourceState struct {
 	Commit    string
 	FetchedAt time.Time
 	Plugins   int
-	Rejected  []RowError
+	Rejected  []catalog.RowError
 	Err       error
 }
 
@@ -98,13 +100,13 @@ type Store struct {
 
 	mu       sync.Mutex
 	sources  []SourceState
-	catalogs map[string]Catalog
+	catalogs map[string]catalog.Catalog
 	errs     map[string]error
 	state    State
 }
 
 func New(opts Options) *Store {
-	return &Store{opts: opts, ops: make(chan op, queueDepth), catalogs: map[string]Catalog{}, errs: map[string]error{}}
+	return &Store{opts: opts, ops: make(chan op, queueDepth), catalogs: map[string]catalog.Catalog{}, errs: map[string]error{}}
 }
 
 // Run is the worker. It returns when ctx is done.
@@ -185,7 +187,7 @@ func (s *Store) Update(id string, confirmed bool) (<-chan error, error) {
 		return nil, err
 	}
 	rel := l.Resolution.Release
-	if !confirmed && (!sameSet(l.Installed.Capabilities, rel.Capabilities) || !sameSet(l.Installed.Requires, rel.Requires.Commands)) {
+	if !confirmed && (!catalog.SameSet(l.Installed.Capabilities, rel.Capabilities) || !catalog.SameSet(l.Installed.Requires, rel.Requires.Commands)) {
 		return nil, fail(KindConsent, nil, "%s %s asks for capabilities %v and commands %v; installed %s has %v and %v",
 			id, rel.Version, rel.Capabilities, rel.Requires.Commands, l.Installed.Version, l.Installed.Capabilities, l.Installed.Requires)
 	}
@@ -204,7 +206,7 @@ func (s *Store) Update(id string, confirmed bool) (<-chan error, error) {
 
 // releaseIdentity is the version and linux-<arch> asset sha256 a caller
 // consents to when it issues an Install or Update.
-func releaseIdentity(rel *Release, arch string) (version, sha string) {
+func releaseIdentity(rel *catalog.Release, arch string) (version, sha string) {
 	if rel == nil {
 		return "", ""
 	}
@@ -267,7 +269,7 @@ func (s *Store) updatable(id string) (Listing, error) {
 			if l.Status != StatusUpdateAvailable && l.Status != StatusShadowed {
 				return Listing{}, fail(KindNotListed, nil, "no update for %s", id)
 			}
-			if l.Resolution.Release == nil || !Newer(l.Resolution.Release.Version, l.Installed.Version) {
+			if l.Resolution.Release == nil || !catalog.Newer(l.Resolution.Release.Version, l.Installed.Version) {
 				return Listing{}, fail(KindNotListed, nil, "no update for %s", id)
 			}
 			return l, nil
@@ -300,7 +302,7 @@ func (s *Store) refresh(ctx context.Context) error {
 	s.mu.Unlock()
 
 	var next []SourceState
-	cats := map[string]Catalog{}
+	cats := map[string]catalog.Catalog{}
 	var errs []error
 	for _, src := range s.opts.Sources() {
 		st := SourceState{Name: src.Name, URL: src.URL}
@@ -309,9 +311,19 @@ func (s *Store) refresh(ctx context.Context) error {
 			cats[src.Name] = prevCats[src.Name]
 		}
 		body, commit, err := s.opts.Git.Catalog(ctx, filepath.Join(s.opts.CacheDir, src.Name), src.URL)
-		var cat Catalog
+		var cat catalog.Catalog
 		if err == nil {
-			cat, err = Decode(body)
+			cat, err = catalog.Decode(body)
+			if err != nil {
+				// The only place a catalog decode failure becomes a store
+				// Kind: schema mismatches are distinguished so the manager
+				// can tell "unsupported" from "malformed".
+				kind := KindCatalog
+				if errors.Is(err, catalog.ErrSchema) {
+					kind = KindSchema
+				}
+				err = fail(kind, err, "")
+			}
 		}
 		if err != nil {
 			st.Err = err
@@ -358,7 +370,7 @@ func (s *Store) setBusy(what string) {
 // covers: its source disabled or removed, its record's source unknown, or
 // the source no longer publishing that id. Without these, an operation that
 // fails on such a plugin (rollback, remove) has nowhere to show its error.
-func buildListings(sources []SourceState, catalogs map[string]Catalog, installed Installed,
+func buildListings(sources []SourceState, catalogs map[string]catalog.Catalog, installed Installed,
 	local map[string]string, errs map[string]error, arch string) []Listing {
 
 	var out []Listing
@@ -386,7 +398,7 @@ func buildListings(sources []SourceState, catalogs map[string]Catalog, installed
 		rec := installed[id]
 		l := Listing{
 			Source:    rec.Source,
-			Entry:     Entry{ID: id, Name: id},
+			Entry:     catalog.Entry{ID: id, Name: id},
 			Installed: &rec,
 			LocalDir:  local[id],
 			Err:       errs[id],
@@ -407,7 +419,7 @@ func statusOf(l Listing) Status {
 	case l.LocalDir != "":
 		return StatusLocalOnly
 	case l.Installed != nil:
-		if l.Installed.Source == l.Source && l.Resolution.Release != nil && Newer(l.Resolution.Release.Version, l.Installed.Version) {
+		if l.Installed.Source == l.Source && l.Resolution.Release != nil && catalog.Newer(l.Resolution.Release.Version, l.Installed.Version) {
 			return StatusUpdateAvailable
 		}
 		return StatusInstalled

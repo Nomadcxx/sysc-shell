@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
+	"github.com/Nomadcxx/sysc-shell/plugin/catalog"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
@@ -175,22 +176,22 @@ func (s *assetServer) put(path string, body []byte) string {
 
 // release builds a plugin at version, serves its tarball, and returns the
 // catalog release describing it for arch.
-func release(t *testing.T, srv *assetServer, arch, version string, caps, requires []string) Release {
+func release(t *testing.T, srv *assetServer, arch, version string, caps, requires []string) catalog.Release {
 	t.Helper()
 	parent := t.TempDir()
 	writePluginDir(t, parent, fixtureID, version, caps, requires)
 	body := tarDir(t, parent, fixtureID)
 	url := srv.put("/"+version+"-"+arch+".tar.gz", body)
-	return Release{
+	return catalog.Release{
 		Version: version, Protocol: v1Version(1, 0), Capabilities: caps,
-		Requires: Requires{Commands: requires},
-		Assets:   map[string]Asset{"linux-" + arch: {URL: url, SHA256: sum(body), Size: int64(len(body))}},
+		Requires: catalog.Requires{Commands: requires},
+		Assets:   map[string]catalog.Asset{"linux-" + arch: {URL: url, SHA256: sum(body), Size: int64(len(body))}},
 	}
 }
 
 // catalogJSON renders a schema-1 catalog of one entry per release list; the
 // first release of each list is the top-level one.
-func catalogJSON(t *testing.T, entries ...Entry) []byte {
+func catalogJSON(t *testing.T, entries ...catalog.Entry) []byte {
 	t.Helper()
 	b, err := json.Marshal(map[string]any{"schema": 1, "plugins": entries})
 	if err != nil {
@@ -199,10 +200,14 @@ func catalogJSON(t *testing.T, entries ...Entry) []byte {
 	return b
 }
 
-func entryFor(rels ...Release) Entry {
-	e := Entry{ID: fixtureID, Name: "Timer", Author: "sysc", Description: "Countdown.", Category: "productivity", Release: rels[0]}
+func entryFor(rels ...catalog.Release) catalog.Entry {
+	e := catalog.Entry{ID: fixtureID, Name: "Timer", Author: "sysc", Description: "Countdown.", Category: "productivity", Release: rels[0]}
 	e.Releases = rels[1:]
 	return e
+}
+
+func validAsset() catalog.Asset {
+	return catalog.Asset{URL: "https://example.com/t.tar.gz", SHA256: sum([]byte("x")), Size: 10}
 }
 
 func requireGit(t *testing.T) string {

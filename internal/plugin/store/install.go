@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
+	"github.com/Nomadcxx/sysc-shell/plugin/catalog"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
@@ -36,7 +37,7 @@ type Plan struct {
 	Source        string
 	CatalogCommit string
 	ID            string
-	Release       Release
+	Release       catalog.Release
 }
 
 // Install downloads, verifies and installs p, keeping any installed version as
@@ -105,9 +106,9 @@ func matchManifest(m plugin.Manifest, p Plan) error {
 	case m.Protocol != p.Release.Protocol:
 		return fail(KindManifest, nil, "protocol is %d.%d; the catalog says %d.%d",
 			m.Protocol.Major, m.Protocol.Minor, p.Release.Protocol.Major, p.Release.Protocol.Minor)
-	case !sameSet(caps, p.Release.Capabilities):
+	case !catalog.SameSet(caps, p.Release.Capabilities):
 		return fail(KindManifest, nil, "capabilities are %v; the catalog says %v", caps, p.Release.Capabilities)
-	case !sameSet(m.Requires, p.Release.Requires.Commands):
+	case !catalog.SameSet(m.Requires, p.Release.Requires.Commands):
 		return fail(KindManifest, nil, "required commands are %v; the catalog says %v", m.Requires, p.Release.Requires.Commands)
 	}
 	return nil

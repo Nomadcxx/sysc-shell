@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/Nomadcxx/sysc-shell/plugin/catalog"
 )
 
 // NewHTTPClient is the client every store download uses. Redirects are held to
@@ -21,7 +23,7 @@ func NewHTTPClient() *http.Client {
 			if len(via) >= 10 {
 				return errors.New("too many redirects")
 			}
-			return checkFetchURL(req.URL.String())
+			return catalog.CheckFetchURL(req.URL.String())
 		},
 	}
 }
@@ -30,8 +32,8 @@ func NewHTTPClient() *http.Client {
 // limit bytes and anything whose sha256 is not sha, and leaves nothing behind
 // when it refuses.
 func Download(ctx context.Context, c *http.Client, rawURL, sha string, limit int64, dst string) error {
-	if err := checkFetchURL(rawURL); err != nil {
-		return err
+	if err := catalog.CheckFetchURL(rawURL); err != nil {
+		return fail(KindCatalog, err, "")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {

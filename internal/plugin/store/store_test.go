@@ -8,16 +8,18 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/Nomadcxx/sysc-shell/plugin/catalog"
 )
 
 func TestListingStatus(t *testing.T) {
 	t.Parallel()
-	asset := map[string]Asset{"linux-amd64": {URL: "https://e.com/a", SHA256: sum(nil), Size: 1}}
-	tip := entryFor(Release{Version: "1.5.0", Protocol: v1Version(1, 0), Assets: asset})
-	tooNew := entryFor(Release{Version: "2.0.0", Protocol: v1Version(2, 0), Assets: asset})
+	asset := map[string]catalog.Asset{"linux-amd64": {URL: "https://e.com/a", SHA256: sum(nil), Size: 1}}
+	tip := entryFor(catalog.Release{Version: "1.5.0", Protocol: v1Version(1, 0), Assets: asset})
+	tooNew := entryFor(catalog.Release{Version: "2.0.0", Protocol: v1Version(2, 0), Assets: asset})
 	cases := []struct {
 		name      string
-		entry     Entry
+		entry     catalog.Entry
 		installed *Record
 		local     string
 		want      Status
@@ -39,7 +41,7 @@ func TestListingStatus(t *testing.T) {
 		if c.local != "" {
 			local[fixtureID] = c.local
 		}
-		got := buildListings([]SourceState{{Name: "s"}}, map[string]Catalog{"s": {Entries: []Entry{c.entry}}}, installed, local, nil, "amd64")
+		got := buildListings([]SourceState{{Name: "s"}}, map[string]catalog.Catalog{"s": {Entries: []catalog.Entry{c.entry}}}, installed, local, nil, "amd64")
 		if len(got) != 1 || got[0].Status != c.want {
 			t.Errorf("%s: %+v, want %s", c.name, got, c.want)
 		}
@@ -103,7 +105,7 @@ func newStoreFixture(t *testing.T, local map[string]string) *storeFixture {
 	return f
 }
 
-func (f *storeFixture) publish(rels ...Release) {
+func (f *storeFixture) publish(rels ...catalog.Release) {
 	f.repo.publish(catalogJSON(f.t, entryFor(rels...)))
 	f.await(f.st.Refresh())
 }
@@ -199,6 +201,27 @@ func TestRefreshKeepsTheLastGoodCatalogWhenAFetchFails(t *testing.T) {
 	st := f.st.State()
 	if st.Sources[0].Err == nil || st.Sources[0].FetchedAt.IsZero() || len(st.Listings) != 1 {
 		t.Fatalf("state = %+v; want the source stale and its listing kept", st)
+	}
+}
+
+// TestRefreshSurfacesAnUnsupportedSchemaAsKindSchema proves the store's
+// catalog.Decode error is mapped onto KindSchema, not the generic
+// KindCatalog, so the manager can tell "this shell is too old" from an
+// ordinary malformed catalog.
+func TestRefreshSurfacesAnUnsupportedSchemaAsKindSchema(t *testing.T) {
+	t.Parallel()
+	f := newStoreFixture(t, nil)
+	f.repo.publish([]byte(`{"schema": 2, "plugins": []}`))
+	done, err := f.st.Refresh()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; KindOf(err) != KindSchema {
+		t.Fatalf("refresh err = %v, want %s", err, KindSchema)
+	}
+	st := f.st.State()
+	if len(st.Sources) != 1 || KindOf(st.Sources[0].Err) != KindSchema {
+		t.Fatalf("source state = %+v, want KindSchema", st.Sources)
 	}
 }
 
