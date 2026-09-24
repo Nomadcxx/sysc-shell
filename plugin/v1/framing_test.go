@@ -263,6 +263,48 @@ func TestSnapshotSurvivesTextThatContainsANewline(t *testing.T) {
 	}
 }
 
+func TestWallpaperPayloadsRoundTripThroughJSON(t *testing.T) {
+	t.Parallel()
+
+	snapshot := WallpaperSnapshotResult{
+		Revision: 12,
+		Scale:    "fill",
+		Outputs: []WallpaperOutput{{
+			Output: "DP-1",
+			State:  WallpaperImage,
+			Path:   "/wallpaper.jpg",
+		}},
+	}
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatalf("marshal wallpaper snapshot: %v", err)
+	}
+	var decodedSnapshot WallpaperSnapshotResult
+	if err := json.Unmarshal(data, &decodedSnapshot); err != nil {
+		t.Fatalf("unmarshal wallpaper snapshot: %v", err)
+	}
+	if !reflect.DeepEqual(decodedSnapshot, snapshot) {
+		t.Fatalf("snapshot = %+v, want %+v", decodedSnapshot, snapshot)
+	}
+
+	mask := WallpaperMaskSetParams{
+		Output:        "DP-1",
+		WallpaperPath: "/wallpaper.jpg",
+		MaskPath:      "/mask.png",
+	}
+	data, err = json.Marshal(mask)
+	if err != nil {
+		t.Fatalf("marshal wallpaper mask: %v", err)
+	}
+	var decodedMask WallpaperMaskSetParams
+	if err := json.Unmarshal(data, &decodedMask); err != nil {
+		t.Fatalf("unmarshal wallpaper mask: %v", err)
+	}
+	if decodedMask != mask {
+		t.Fatalf("mask params = %+v, want %+v", decodedMask, mask)
+	}
+}
+
 func TestPatchAndResyncRoundTrip(t *testing.T) {
 	t.Parallel()
 

@@ -136,6 +136,28 @@ func TestClosingTheWeatherServiceStopsTheGoroutine(t *testing.T) {
 	w.Close()
 }
 
+type idleCloseTransport struct {
+	closed atomic.Int32
+}
+
+func (t *idleCloseTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, fmt.Errorf("unexpected weather request")
+}
+
+func (t *idleCloseTransport) CloseIdleConnections() { t.closed.Add(1) }
+
+func TestWeatherCloseClosesIdleConnections(t *testing.T) {
+	w := NewWeather(0, 0, UnitCelsius)
+	transport := &idleCloseTransport{}
+	w.client.Transport = transport
+
+	w.Close()
+
+	if got := transport.closed.Load(); got != 1 {
+		t.Fatalf("CloseIdleConnections calls = %d, want 1", got)
+	}
+}
+
 // Coordinates and unit are the request, so a reload has to be able to change
 // them. Without this the service fetches the city it started with for the life
 // of the process, however often the configuration is reloaded.

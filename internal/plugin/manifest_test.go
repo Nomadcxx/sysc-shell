@@ -97,6 +97,19 @@ func TestLoadManifestAcceptsTheDesignFixture(t *testing.T) {
 	}
 }
 
+func TestLoadManifestAcceptsWallpaperCapability(t *testing.T) {
+	t.Parallel()
+
+	dir := writePlugin(t, edit(t, "capabilities", []string{"wallpaper"}), "bin/sysc-plugin-timer")
+	m, err := LoadManifest(dir)
+	if err != nil {
+		t.Fatalf("LoadManifest wallpaper capability: %v", err)
+	}
+	if len(m.Capabilities) != 1 || m.Capabilities[0] != "wallpaper" {
+		t.Fatalf("capabilities = %v, want [wallpaper]", m.Capabilities)
+	}
+}
+
 // loadErr is LoadManifest with the manifest discarded, for the many cases that
 // only assert on the rejection.
 func loadErr(t *testing.T, dir string) error {

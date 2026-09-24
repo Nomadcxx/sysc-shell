@@ -61,13 +61,14 @@ type pluginHost struct {
 	// swapping holds plugin ids replace has stopped and not yet restarted.
 	// ensure refuses to start one of these: a concurrent syncEnabled must not
 	// resurrect the old copy while its directory is mid-swap.
-	swapping     map[string]bool
-	nextID       uint64
-	inputs       []v1.InputEvent
-	textOut      plugin.TextOut
-	flushPending bool
-	closed       []string
-	panel        *hostedView
+	swapping            map[string]bool
+	nextID              uint64
+	inputs              []v1.InputEvent
+	textOut             plugin.TextOut
+	flushPending        bool
+	closed              []string
+	panel               *hostedView
+	wallpaperProjection pluginWallpaperProjection
 	// lastAnchor remembers the bar X of the widget that most recently
 	// delivered input for a plugin, so the panel it opens can anchor under
 	// that widget instead of floating at the default position.
@@ -86,7 +87,7 @@ const pluginBarViewWidth = lint.BarWidth
 const pluginBarViewHeight = lint.BarHeight
 
 var hostPluginCaps = []plugin.Capability{
-	plugin.CapNotifications, plugin.CapPanels, plugin.CapSettings, plugin.CapState,
+	plugin.CapNotifications, plugin.CapPanels, plugin.CapSettings, plugin.CapState, plugin.CapWallpaper,
 }
 
 // BindPlugins discovers enabled plugins and starts one runtime for each.
@@ -129,6 +130,9 @@ func (h *pluginHost) Close() {
 	h.mu.Unlock()
 	for _, s := range slots {
 		s.rt.Stop()
+		if h.r.depthClocks != nil {
+			h.r.depthClocks.clearOwner(s.rt.Manifest().ID)
+		}
 	}
 	h.prep.Close()
 }
@@ -181,7 +185,13 @@ func (h *pluginHost) finishSyncEnabled(enabled []string, cat plugin.Catalog, reg
 	}
 	h.mu.Unlock()
 	for _, id := range drop {
+		if registryHeld {
+			h.r.mu.Unlock()
+		}
 		h.stopPlugin(id)
+		if registryHeld {
+			h.r.mu.Lock()
+		}
 	}
 	if registryHeld {
 		h.syncBarsLocked()
@@ -204,8 +214,9 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 		return fmt.Errorf("plugin %s is not installed", id)
 	}
 	rt := plugin.NewRuntime(c, plugin.RuntimeOptions{
-		Supported: hostPluginCaps,
-		Limits:    v1.DefaultLimits,
+		Supported:    hostPluginCaps,
+		Limits:       v1.DefaultLimits,
+		SessionEnded: func() { h.clearWallpaperMasks(id) },
 	})
 	stateDir := h.opts.StateDir
 	if stateDir == "" {
@@ -230,8 +241,12 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 		OutputContext: func(_ context.Context, p v1.OutputContextParams) (v1.OutputContextResult, error) {
 			return h.outputContext(p)
 		},
-		PanelResize: func(_ context.Context, p v1.PanelResizeParams) error { return h.resizePanel(p) },
-		ViewFocus:   func(_ context.Context, p v1.ViewFocusParams) error { return h.focusPanelView(id, p) },
+		PanelResize:       func(_ context.Context, p v1.PanelResizeParams) error { return h.resizePanel(p) },
+		ViewFocus:         func(_ context.Context, p v1.ViewFocusParams) error { return h.focusPanelView(id, p) },
+		WallpaperSnapshot: h.wallpaperSnapshot,
+		WallpaperMaskSet: func(ctx context.Context, p v1.WallpaperMaskSetParams) error {
+			return h.registerWallpaperMask(ctx, id, p)
+		},
 	})
 	rt.SetCalls(disp)
 	slot := &pluginSlot{rt: rt, disp: disp}
@@ -283,6 +298,13 @@ func (h *pluginHost) stopPlugin(id string) {
 	}
 	if slot != nil {
 		slot.rt.Stop()
+	}
+	h.clearWallpaperMasks(id)
+}
+
+func (h *pluginHost) clearWallpaperMasks(id string) {
+	if h.r.depthClocks != nil {
+		h.r.depthClocks.clearOwner(id)
 	}
 }
 
@@ -1300,7 +1322,10 @@ func (h *pluginHost) retryLocked(id string) error {
 	if slot == nil {
 		return h.enableLocked(id, true)
 	}
-	return slot.rt.Retry(h.ctx)
+	h.r.mu.Unlock()
+	err := slot.rt.Retry(h.ctx)
+	h.r.mu.Lock()
+	return err
 }
 
 func (h *pluginHost) rescan() error { return h.syncEnabled() }

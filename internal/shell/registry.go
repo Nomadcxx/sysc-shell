@@ -169,6 +169,9 @@ type Registry struct {
 	producerSender notifyProducerSender
 	// toasts hosts one toast stack per output, created when wiring binds it.
 	toasts *toastHost
+	// depthClocks contains one click-through wallpaper clock per accepted mask.
+	depthClocks     *depthClockHost
+	depthClockLease *services.Lease
 	// launcherSvc is created on the first launcher open; nil until then.
 	launcherSvc *launcher.Service
 }
@@ -207,6 +210,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		controlIdentity: readCCIdentity(),
 		machineFacts:    readMachineFacts(),
 	}
+	r.depthClocks = newDepthClockHost(r, nil)
 	r.weather.SetCity(cfg.Weather.City)
 	r.tokens, r.themeErr = tokensAndReason(r.generateTheme(cfg))
 	r.osd = newOSDManager(r, 0)
@@ -1236,9 +1240,14 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				r.mu.Lock()
 				outgoing := r.leases
 				outgoingBars := r.bars
+				depthClockFontChanged := r.cfg.Bar.FontFamily != cfg.Bar.FontFamily
+				depthClockVisualChanged := r.cfg.Wallpaper.Scale != cfg.Wallpaper.Scale ||
+					r.tokens != tok || depthClockFontChanged ||
+					r.cfg.Bar.FontSize != cfg.Bar.FontSize
 				mediaConfigChanged := r.cfg.Media.Preferred != cfg.Media.Preferred ||
 					!slices.Equal(r.cfg.Media.Blacklist, cfg.Media.Blacklist)
 				var media *services.Media
+				var depthEffects depthClockEffects
 				// Coordinates, unit and city are the request, not a lease
 				// parameter, so the service has to be told. Each call is a
 				// no-op unless its value changed, which is the common case
@@ -1270,6 +1279,9 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 					r.themeErr = genErr.Error()
 				}
 				r.retheThemeOpenSurfacesLocked()
+				if depthClockVisualChanged && r.depthClocks != nil {
+					depthEffects = r.depthClocks.reconfigureLocked(depthClockFontChanged)
+				}
 				r.bars = bars
 				r.leases = leases
 				for global, bar := range r.bars {
@@ -1285,6 +1297,9 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				r.mu.Unlock()
 				if mediaConfigChanged && media != nil {
 					media.Configure(cfg.Media.Preferred, cfg.Media.Blacklist)
+				}
+				if r.depthClocks != nil {
+					r.depthClocks.emit(depthEffects)
 				}
 				for _, bar := range outgoingBars {
 					bar.stopAnimation()
@@ -1390,6 +1405,7 @@ func (r *Registry) Close() {
 	var wallpaperSvc *wallpaper.Service
 	var wallpaperThumbCancel context.CancelFunc
 	var mediaArt *mediaArtWorker
+	var depthEffects depthClockEffects
 	if locked {
 		if r.toasts != nil {
 			r.toasts.stopLeaseRenew()
@@ -1403,6 +1419,9 @@ func (r *Registry) Close() {
 		}
 		r.stopTrayIconsLocked()
 		r.closeAllPanelsLocked()
+		if r.depthClocks != nil {
+			depthEffects = r.depthClocks.closeLocked()
+		}
 		for global, held := range r.leases {
 			leases = append(leases, held...)
 			delete(r.leases, global)
@@ -1440,6 +1459,9 @@ func (r *Registry) Close() {
 
 	for _, req := range osdAux {
 		r.sendAux(req)
+	}
+	if r.depthClocks != nil {
+		r.depthClocks.emit(depthEffects)
 	}
 	if audioLease != nil {
 		audioLease.Release()
@@ -1511,10 +1533,17 @@ func (r *Registry) UpdateClock(now time.Time) []uint32 {
 			changed = append(changed, global)
 		}
 	}
+	var depthEffects depthClockEffects
+	if r.depthClocks != nil {
+		depthEffects = r.depthClocks.updateClockLocked(now)
+	}
 	controlOut, controlOK := r.rebuildControlCentreLocked()
 	r.mu.Unlock()
 
 	r.publish(changed)
+	if r.depthClocks != nil {
+		r.depthClocks.emit(depthEffects)
+	}
 	if controlOK {
 		r.publishSurface(controlOut, panelSurfaceID(PanelControlCenter))
 	}
@@ -1817,6 +1846,15 @@ func (r *Registry) bindHost(global uint32, bar *Bar, hooks wayland.HostCallbacks
 		changed := innerHandle(event)
 		r.drivePointerTooltip(global, bar, event)
 		return changed
+	}
+	innerOutputSize := hooks.OutputSize
+	hooks.OutputSize = func(width, height int) {
+		if innerOutputSize != nil {
+			innerOutputSize(width, height)
+		}
+		if r.depthClocks != nil {
+			r.depthClocks.outputSize(bar.connector(), global, width, height)
+		}
 	}
 	innerConfigure := hooks.Configure
 	hooks.Configure = func(width, height, scale120 int) error {

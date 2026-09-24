@@ -7,7 +7,7 @@ import v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 // a release the store offers is one the supervisor will start.
 const (
 	HostProtocolMajor = 1
-	HostProtocolMinor = 6
+	HostProtocolMinor = 7
 )
 
 // HostSupports reports whether a plugin declaring v can run on this host.
