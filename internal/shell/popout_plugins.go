@@ -97,7 +97,7 @@ func pluginCard(r *Registry, h *PanelHost, c plugin.Candidate) *ui.Node {
 	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: children}
 }
 
-// pluginPanelSettingGroups is the recorder panel layout from the design.
+// pluginPanelSettingGroups names the sections exposed in plugin panels.
 // Keys absent from a plugin's schema are skipped; headings omit empty groups.
 var pluginPanelSettingGroups = []struct {
 	Title string
@@ -109,6 +109,17 @@ var pluginPanelSettingGroups = []struct {
 	{"Audio", []string{"audio_source", "audio_codec", "audio_bitrate"}},
 	{"Replay", []string{"replay_enabled", "replay_duration", "replay_filename_pattern", "replay_storage"}},
 	{"Bar", []string{"hide_inactive"}},
+	{"Providers", []string{
+		"track_claude", "track_codex", "track_commandcode", "track_copilot",
+		"track_ollama", "track_minimax", "track_opencode_go", "track_synthetic",
+		"commandcode_api_key", "ollama_api_key", "minimax_api_key", "opencode_go_api_key", "synthetic_api_key",
+	}},
+	{"Refresh", []string{"refresh_interval"}},
+	{"Alerts", []string{
+		"alerts_enabled", "warn_threshold", "critical_threshold", "alert_thresholds",
+		"alert_window_scope", "alert_cooldown",
+	}},
+	{"History", []string{"history_retention"}},
 }
 
 func pluginPanelSettings(r *Registry, h *PanelHost, pluginID string, schema []plugin.Setting) []*ui.Node {
@@ -258,8 +269,11 @@ func pluginSettingControl(h *PanelHost, s plugin.Setting, raw, action, store str
 		n.Name = s.Label
 		return n
 	default:
+		secret := strings.HasSuffix(s.Key, "_api_key")
 		if h == nil {
-			n := ui.NewField(raw).Node(s.Label)
+			f := ui.NewField(raw)
+			f.Masked = secret
+			n := f.Node(s.Label)
 			n.Action = action
 			n.Width = 200
 			return n
@@ -270,11 +284,25 @@ func pluginSettingControl(h *PanelHost, s plugin.Setting, raw, action, store str
 		f := h.fields[store]
 		if f == nil {
 			f = ui.NewField(raw)
+			f.Masked = secret
 			h.fields[store] = f
 		}
 		n := f.Node(s.Label)
 		n.Action = action
 		n.Width = 200
+		if secret {
+			label := "Show"
+			name := "Show " + s.Label
+			if !f.Masked {
+				label = "Hide"
+				name = "Hide " + s.Label
+			}
+			return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
+				n,
+				{Kind: ui.KindButton, Text: label, Action: "plugin-secret:" + store,
+					Name: name, Role: "button", Focusable: true},
+			}}
+		}
 		return n
 	}
 }
@@ -282,10 +310,21 @@ func pluginSettingControl(h *PanelHost, s plugin.Setting, raw, action, store str
 // handlePluginManager runs under Registry.mu (PanelHost.handle). It must not
 // call paths that re-lock the registry.
 func (r *Registry) handlePluginManager(h *PanelHost, n *ui.Node) bool {
-	if r.plugins == nil || n == nil {
+	if n == nil {
 		return false
 	}
 	action := n.Action
+	if store, ok := strings.CutPrefix(action, "plugin-secret:"); ok {
+		if h == nil || h.fields[store] == nil {
+			return false
+		}
+		h.fields[store].Masked = !h.fields[store].Masked
+		r.rebuildPanel(h)
+		return true
+	}
+	if r.plugins == nil {
+		return false
+	}
 	switch {
 	case action == "plugin-rescan":
 		_ = r.plugins.syncEnabledLocked()

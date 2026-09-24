@@ -127,6 +127,103 @@ func TestPluginPanelSettingsVisibleWhenReplayDuration(t *testing.T) {
 	}
 }
 
+func TestAIUsagePanelRendersProviderAndPluginSettings(t *testing.T) {
+	h := &PanelHost{}
+	track := func(key, label string, enabled bool) plugin.Setting {
+		return plugin.Setting{Key: key, Type: plugin.SettingBool, Label: label, Default: enabled}
+	}
+	key := func(name, label, provider string) plugin.Setting {
+		return plugin.Setting{
+			Key: name, Type: plugin.SettingString, Label: label, Default: "",
+			VisibleWhen: &plugin.VisibleWhen{Key: "track_" + provider, Equals: true},
+		}
+	}
+	schema := []plugin.Setting{
+		track("track_claude", "Track Claude", true),
+		track("track_codex", "Track Codex", true),
+		track("track_commandcode", "Track Command Code", true),
+		track("track_copilot", "Track Copilot", false),
+		track("track_ollama", "Track Ollama", false),
+		track("track_minimax", "Track MiniMax", false),
+		track("track_opencode_go", "Track OpenCode Go", false),
+		track("track_synthetic", "Track Synthetic", false),
+		key("commandcode_api_key", "Command Code API key", "commandcode"),
+		key("ollama_api_key", "Ollama API key", "ollama"),
+		key("minimax_api_key", "MiniMax API key", "minimax"),
+		key("opencode_go_api_key", "OpenCode Go API key", "opencode_go"),
+		key("synthetic_api_key", "Synthetic API key", "synthetic"),
+		{Key: "refresh_interval", Type: plugin.SettingInt, Label: "Refresh interval (s)", Default: 300.0, Min: f64(60), Max: f64(3600)},
+		track("alerts_enabled", "Threshold alerts", true),
+		{Key: "warn_threshold", Type: plugin.SettingInt, Label: "Warn at %", Default: 85.0,
+			VisibleWhen: &plugin.VisibleWhen{Key: "alerts_enabled", Equals: true}},
+		{Key: "critical_threshold", Type: plugin.SettingInt, Label: "Critical at %", Default: 95.0,
+			VisibleWhen: &plugin.VisibleWhen{Key: "alerts_enabled", Equals: true}},
+		{Key: "alert_thresholds", Type: plugin.SettingString, Label: "Per-provider warn overrides", Default: "",
+			VisibleWhen: &plugin.VisibleWhen{Key: "alerts_enabled", Equals: true}},
+		{Key: "alert_window_scope", Type: plugin.SettingSelect, Label: "Alert windows", Default: "all",
+			VisibleWhen: &plugin.VisibleWhen{Key: "alerts_enabled", Equals: true},
+			Options:     []plugin.SettingOption{{Value: "all", Label: "All windows"}, {Value: "primary", Label: "Primary window only"}}},
+		{Key: "alert_cooldown", Type: plugin.SettingSelect, Label: "Re-alert cooldown", Default: "0",
+			VisibleWhen: &plugin.VisibleWhen{Key: "alerts_enabled", Equals: true},
+			Options:     []plugin.SettingOption{{Value: "0", Label: "Once per window"}, {Value: "60", Label: "Every hour"}}},
+		{Key: "history_retention", Type: plugin.SettingSelect, Label: "History retention (lines)", Default: "2000",
+			Options: []plugin.SettingOption{{Value: "500"}, {Value: "2000"}, {Value: "10000"}}},
+	}
+	reg := &Registry{}
+	reg.cfg.Plugins.Settings = map[string]map[string]any{
+		"org.sysc.aiusage": {
+			"track_ollama": true, "track_minimax": true, "track_opencode_go": true, "track_synthetic": true,
+		},
+	}
+	nodes := pluginPanelSettings(reg, h, "org.sysc.aiusage", schema)
+	text := treeText(&ui.Node{Kind: ui.KindColumn, Children: nodes})
+	for _, want := range []string{
+		"Providers", "Track Claude", "Track Codex", "Track Command Code", "Track Copilot",
+		"Track Ollama", "Track MiniMax", "Track OpenCode Go", "Track Synthetic", "Command Code API key",
+		"Ollama API key", "MiniMax API key", "OpenCode Go API key", "Synthetic API key", "Refresh interval (s)",
+		"Alerts", "Warn at %", "Critical at %", "Per-provider warn overrides",
+		"Alert windows", "Re-alert cooldown", "History", "History retention (lines)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("AI Usage panel setting %q missing from %q", want, text)
+		}
+	}
+}
+
+func TestPluginAPIKeySettingIsMaskedAndCanBeRevealed(t *testing.T) {
+	reg := bindTestPlugin(t, "ok")
+	h := &PanelHost{id: PanelSettings, section: "Plugins", search: ui.NewField(""), fields: map[string]*ui.Field{}}
+	setting := plugin.Setting{Key: "opencode_go_api_key", Type: plugin.SettingString, Label: "OpenCode Go API key"}
+	const secret = "opencode-test-key"
+	const store = "org.sysc.aiusage.opencode_go_api_key"
+	control := pluginSettingControl(h, setting, secret, "plugin-set:org.sysc.aiusage:opencode_go_api_key", store)
+	if control.Kind != ui.KindRow || len(control.Children) != 2 {
+		t.Fatalf("secret control = %+v, want field plus show button", control)
+	}
+	field, toggle := control.Children[0], control.Children[1]
+	if !field.Masked || ui.DisplayText(field) != strings.Repeat(string(ui.MaskRune), len([]rune(secret))) {
+		t.Fatalf("secret field is not masked: %+v", field)
+	}
+	if toggle.Text != "Show" || !toggle.Focusable || toggle.Name != "Show OpenCode Go API key" {
+		t.Fatalf("reveal control = %+v", toggle)
+	}
+
+	reg.mu.Lock()
+	handled := reg.handlePluginManager(h, toggle)
+	reg.mu.Unlock()
+	if !handled {
+		t.Fatal("show action was not handled")
+	}
+	control = pluginSettingControl(h, setting, secret, "plugin-set:org.sysc.aiusage:opencode_go_api_key", store)
+	field, toggle = control.Children[0], control.Children[1]
+	if field.Masked || ui.DisplayText(field) != secret {
+		t.Fatalf("revealed field = %+v", field)
+	}
+	if toggle.Text != "Hide" || toggle.Name != "Hide OpenCode Go API key" {
+		t.Fatalf("hide control = %+v", toggle)
+	}
+}
+
 func TestPluginSettingApplyDecodedControlValue(t *testing.T) {
 	reg := bindManifestPlugin(t, "ok", "org.sysc.screen-recorder", testRecorderPanelManifest,
 		[]string{"org.sysc.screen-recorder"})

@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -529,8 +530,12 @@ func (m *Metrics) collect(s *samplers, failing *[sourceCount]bool) Snapshot {
 		if v, err := s.gpu.Sample(); err != nil {
 			noteFailure(failing, SourceGPU, err)
 		} else {
-			noteRecovery(failing, SourceGPU)
 			snap.GPU = &v
+			if err := gpuSnapshotError(v); err != nil {
+				noteFailure(failing, SourceGPU, err)
+			} else {
+				noteRecovery(failing, SourceGPU)
+			}
 		}
 	}
 	if m.SourceLeased(SourceProcess) {
@@ -547,6 +552,16 @@ func (m *Metrics) collect(s *samplers, failing *[sourceCount]bool) Snapshot {
 		s.process = nil
 	}
 	return snap
+}
+
+func gpuSnapshotError(snap metrics.GPUSnapshot) error {
+	var issues []error
+	for _, issue := range snap.Issues {
+		if issue.Err != nil {
+			issues = append(issues, fmt.Errorf("%s: %w", issue.Source, issue.Err))
+		}
+	}
+	return errors.Join(issues...)
 }
 
 func noteFailure(failing *[sourceCount]bool, src Source, err error) {

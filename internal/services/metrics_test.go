@@ -1,11 +1,30 @@
 package services
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	metrics "github.com/Nomadcxx/sysc-metrics"
 )
+
+func TestGPUReaderIssueIsNotMistakenForSamplerRecovery(t *testing.T) {
+	snap := metrics.GPUSnapshot{
+		GPUs: []metrics.GPU{{PCIID: "10de:2808"}},
+		Issues: []metrics.Issue{{
+			Source: "nvidia-smi",
+			Err:    errors.New("driver unavailable"),
+		}},
+	}
+	err := gpuSnapshotError(snap)
+	if err == nil || !strings.Contains(err.Error(), "nvidia-smi: driver unavailable") {
+		t.Fatalf("GPU snapshot issue = %v, want the NVIDIA reader failure", err)
+	}
+	if err := gpuSnapshotError(metrics.GPUSnapshot{}); err != nil {
+		t.Fatalf("healthy GPU snapshot issue = %v, want nil", err)
+	}
+}
 
 func TestTheFirstMetricLeaseStartsAndTheLastStops(t *testing.T) {
 	t.Parallel()
