@@ -49,6 +49,8 @@ type Handlers struct {
 	Panel   func(action, panel, section string) error
 	OSDStep func(kind, action string) error
 	Status  func() map[string]any
+	// Plugins answers every plugins.* method.
+	Plugins func(method string, params json.RawMessage) (map[string]any, error)
 }
 
 type Server struct {
@@ -185,6 +187,16 @@ func (s *Server) handleLine(line string) []byte {
 		}
 		return envelope(req.ID, "ok", "")
 	default:
+		if strings.HasPrefix(req.Method, "plugins.") {
+			if s.h.Plugins == nil {
+				return envelope(req.ID, "", "plugin store handler unset")
+			}
+			body, err := s.h.Plugins(req.Method, req.Params)
+			if err != nil {
+				return envelope(req.ID, "", err.Error())
+			}
+			return envelope(req.ID, "ok", "", body)
+		}
 		return envelope(req.ID, "", "unknown method")
 	}
 }

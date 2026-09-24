@@ -1300,6 +1300,20 @@ func (h *pluginHost) retryLocked(id string) error {
 
 func (h *pluginHost) rescan() error { return h.syncEnabled() }
 
+// replace stops a plugin, lets the store swap its directory, and rescans. The
+// store calls it for every change to the managed tree, so no process runs from
+// a directory mid-swap; the rescan restarts the plugin when it is enabled and
+// the swap left something startable. It takes Registry.mu itself, through
+// syncEnabled, and must be called without it.
+func (h *pluginHost) replace(id string, swap func() error) error {
+	h.stopPlugin(id)
+	err := swap()
+	if serr := h.syncEnabled(); serr != nil {
+		err = errors.Join(err, serr)
+	}
+	return err
+}
+
 func (h *pluginHost) applySetting(pluginID, key string, value any) error {
 	h.r.mu.Lock()
 	defer h.r.mu.Unlock()

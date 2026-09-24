@@ -19,6 +19,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/notifyclient"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -155,6 +156,9 @@ type Registry struct {
 
 	// plugins hosts one process per enabled plugin. Nil until BindPlugins.
 	plugins *pluginHost
+	// pluginStore runs the plugin store's own goroutine. Nil until
+	// BindPluginStore. Named to avoid shadowing the store package.
+	pluginStore *store.Store
 
 	// notifyCh carries client messages; main pumps it. Nil in tests that drive
 	// applyNotify directly.
