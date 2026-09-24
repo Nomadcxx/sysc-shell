@@ -204,9 +204,14 @@ func TestDepthMaskWallpaperGeometry(t *testing.T) {
 			x:    0, y: 0, inside: false,
 		},
 		{
-			name: "panscan 1 uses full crop",
-			g:    DepthGeometry{Mode: "panscan", Scale120: 120, SurfaceWidth: 2, SurfaceHeight: 2, OutputWidth: 2, OutputHeight: 2, ImageWidth: 4, ImageHeight: 2},
-			x:    0, y: 0, wantX: 1, wantY: 0, inside: true,
+			name: "panscan 1 fits inside",
+			g:    DepthGeometry{Mode: "panscan", Scale120: 120, SurfaceWidth: 4, SurfaceHeight: 4, OutputWidth: 4, OutputHeight: 4, ImageWidth: 4, ImageHeight: 2},
+			x:    0, y: 1, wantX: 0, wantY: 0, inside: true,
+		},
+		{
+			name: "panscan 1 leaves letterbox uncovered",
+			g:    DepthGeometry{Mode: "panscan", Scale120: 120, SurfaceWidth: 4, SurfaceHeight: 4, OutputWidth: 4, OutputHeight: 4, ImageWidth: 4, ImageHeight: 2},
+			x:    0, y: 0, inside: false,
 		},
 	}
 	for _, tc := range cases {

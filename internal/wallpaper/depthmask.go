@@ -153,10 +153,18 @@ func depthMaskSource(g DepthGeometry, pixelX, pixelY int) (x, y float64, inside 
 	case "stretch":
 		x = outX*float64(g.ImageWidth)/float64(g.OutputWidth) - 0.5
 		y = outY*float64(g.ImageHeight)/float64(g.OutputHeight) - 0.5
-	case "fill", "panscan":
+	case "fill":
 		fit := max(float64(g.OutputWidth)/float64(g.ImageWidth), float64(g.OutputHeight)/float64(g.ImageHeight))
 		x = (outX-float64(g.OutputWidth)/2)/fit + float64(g.ImageWidth)/2 - 0.5
 		y = (outY-float64(g.OutputHeight)/2)/fit + float64(g.ImageHeight)/2 - 0.5
+	case "panscan":
+		fit := min(float64(g.OutputWidth)/float64(g.ImageWidth), float64(g.OutputHeight)/float64(g.ImageHeight))
+		edgeX := (outX-float64(g.OutputWidth)/2)/fit + float64(g.ImageWidth)/2
+		edgeY := (outY-float64(g.OutputHeight)/2)/fit + float64(g.ImageHeight)/2
+		if edgeX < 0 || edgeY < 0 || edgeX >= float64(g.ImageWidth) || edgeY >= float64(g.ImageHeight) {
+			return 0, 0, false
+		}
+		x, y = edgeX-0.5, edgeY-0.5
 	case "original":
 		edgeX := outX + (float64(g.ImageWidth)-float64(g.OutputWidth))/2
 		edgeY := outY + (float64(g.ImageHeight)-float64(g.OutputHeight))/2
