@@ -196,8 +196,9 @@ plugin or the plugin tree.
 
 ### D8. Updates are checked, never applied
 
-The worker fetches every enabled source at startup and every 24 hours through the existing
-`schedule.go` path. A newer compatible release sets *update available*. Nothing is installed without
+The worker fetches every enabled source at startup and every 24 hours on a `time.Ticker` it owns.
+(`internal/plugin/schedule.go` is the 30 Hz view-publish gate, not a periodic scheduler; the approved
+text named it in error, corrected 2026-09-24 with the tranche 1 plan.) A newer compatible release sets *update available*. Nothing is installed without
 the user's Update action. The built-in `sysc` source is enabled by default, so a default install makes
 this daily request.
 
