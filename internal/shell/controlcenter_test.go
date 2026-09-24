@@ -83,8 +83,8 @@ func TestControlCentreNameAndFlushPlacement(t *testing.T) {
 	if rootKind != ui.KindRow {
 		t.Errorf("root kind = %v, want row", rootKind)
 	}
-	if leaseCount != 6 {
-		t.Errorf("leases = %d, want CPU, memory, temperature, GPU, battery and clock", leaseCount)
+	if leaseCount != 9 {
+		t.Errorf("leases = %d, want CPU, memory, temperature, GPU, battery, root filesystem, network, block and clock", leaseCount)
 	}
 	if fillet != 12 || spec.Width != 724 {
 		t.Errorf("fillet = %d, drawn width = %d, want 12 and 724", fillet, spec.Width)
