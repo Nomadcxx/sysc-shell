@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // MaxPluginDirs bounds how many candidate directories one scan may consider.
@@ -12,15 +13,28 @@ import (
 // packaged plugins by exhausting a shared budget.
 const MaxPluginDirs = 128
 
-// Source says where a candidate came from. It is shown in the manager and it
-// decides nothing else: packaged code has no more authority than user content,
-// and neither shadows the other.
+// Source says where a candidate came from. It is shown in the manager, and it
+// decides one thing: a user copy overrides a managed copy of the same plugin
+// ID. Every other pairing of sources is a collision, and neither side wins.
 type Source string
 
 const (
-	SourceUser   Source = "user"
-	SourceSystem Source = "system"
+	SourceUser    Source = "user"
+	SourceSystem  Source = "system"
+	SourceManaged Source = "managed"
 )
+
+// ManagedRoot is the directory the plugin store installs into. The shell owns
+// it; hand-managed plugins live in the user root instead, so an install or a
+// removal can never touch a directory the user placed.
+func ManagedRoot() string {
+	base := os.Getenv("XDG_DATA_HOME")
+	// The specification requires an absolute path, as StateRoot does.
+	if !filepath.IsAbs(base) {
+		base = filepath.Join(os.Getenv("HOME"), ".local", "share")
+	}
+	return filepath.Join(base, "sysc-shell", "plugins")
+}
 
 // Root is one directory to scan.
 type Root struct {
@@ -28,12 +42,14 @@ type Root struct {
 	Source Source
 }
 
-// DefaultRoots names the user plugin directory and the packaged one.
+// DefaultRoots names the user plugin directory, the managed one, and the
+// packaged one.
 func DefaultRoots(systemDir string) []Root {
-	roots := make([]Root, 0, 2)
+	roots := make([]Root, 0, 3)
 	if base, err := os.UserConfigDir(); err == nil {
 		roots = append(roots, Root{Path: filepath.Join(base, "sysc-shell", "plugins"), Source: SourceUser})
 	}
+	roots = append(roots, Root{Path: ManagedRoot(), Source: SourceManaged})
 	if systemDir != "" {
 		roots = append(roots, Root{Path: systemDir, Source: SourceSystem})
 	}
@@ -54,10 +70,15 @@ type Candidate struct {
 	// MissingCommands are declared dependencies absent from PATH. Such a
 	// candidate is valid and visible, but must not be started.
 	MissingCommands []string
+	// ShadowedBy is the user directory overriding this managed copy. A
+	// shadowed candidate is valid and shown, and never started.
+	ShadowedBy string
 }
 
 // Startable reports whether this candidate can run right now.
-func (c Candidate) Startable() bool { return c.Err == nil && len(c.MissingCommands) == 0 }
+func (c Candidate) Startable() bool {
+	return c.Err == nil && c.ShadowedBy == "" && len(c.MissingCommands) == 0
+}
 
 // Catalog is one complete scan result.
 type Catalog struct {
@@ -69,7 +90,7 @@ type Catalog struct {
 // Lookup returns the usable candidate with the given plugin ID.
 func (c Catalog) Lookup(id string) (Candidate, bool) {
 	for _, p := range c.Plugins {
-		if p.Err == nil && p.Manifest.ID == id {
+		if p.Err == nil && p.ShadowedBy == "" && p.Manifest.ID == id {
 			return p, true
 		}
 	}
@@ -97,6 +118,11 @@ func Discover(roots ...Root) (Catalog, error) {
 		}
 		var dirs []os.DirEntry
 		for _, e := range entries {
+			// The store keeps .staging and .prev beside installed plugins;
+			// neither is a plugin, and nothing hidden is scanned.
+			if strings.HasPrefix(e.Name(), ".") {
+				continue
+			}
 			// Stat rather than DirEntry.IsDir: a symlinked plugin directory
 			// is a supported install (make install links a checkout into the
 			// user root), and the dirent type of a symlink is not a dir. A
@@ -158,6 +184,10 @@ func rejectDuplicates(found []Candidate) {
 		if len(idx) < 2 {
 			continue
 		}
+		if user, managed, ok := overridePair(found, idx); ok {
+			found[managed].ShadowedBy = found[user].Dir
+			continue
+		}
 		paths := make([]string, len(idx))
 		for n, i := range idx {
 			paths[n] = found[i].Dir
@@ -169,4 +199,23 @@ func rejectDuplicates(found []Candidate) {
 			found[i].MissingCommands = nil
 		}
 	}
+}
+
+// overridePair reports whether a collision is one user copy over one managed
+// copy: the only collision that resolves rather than rejects. A developer's
+// checkout linked into the user root is how a plugin is worked on, and it has
+// to be able to stand in front of the released copy the store installed.
+// Every other pairing stays a fault, per the M6 rule.
+func overridePair(found []Candidate, idx []int) (user, managed int, ok bool) {
+	if len(idx) != 2 {
+		return 0, 0, false
+	}
+	a, b := idx[0], idx[1]
+	switch {
+	case found[a].Source == SourceUser && found[b].Source == SourceManaged:
+		return a, b, true
+	case found[b].Source == SourceUser && found[a].Source == SourceManaged:
+		return b, a, true
+	}
+	return 0, 0, false
 }
