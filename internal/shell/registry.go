@@ -118,7 +118,10 @@ type Registry struct {
 
 	running      []runningAppSlot
 	runningIndex []runningAppEntry
-	runningMenu  *runningAppMenuHost
+	// usernames resolves process owners for the system monitor. It carries
+	// its own lock; see usernameCache.
+	usernames   *usernameCache
+	runningMenu *runningAppMenuHost
 	// niriSend is the FocusWindow/CloseWindow seam. Tests replace it; nil
 	// sends niri.Action on $NIRI_SOCKET off this goroutine.
 	niriSend func(any) error

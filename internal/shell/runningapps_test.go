@@ -265,3 +265,29 @@ func TestRunningAppMenu(t *testing.T) {
 		t.Fatalf("empty actions = %+v, want Close all only", only)
 	}
 }
+
+func TestRunningAppSlotsCarryTheDesktopName(t *testing.T) {
+	entries := []runningAppEntry{{ID: "org.mozilla.firefox", Name: "Firefox", Icon: "firefox"}}
+	slots := groupRunningApps([]niri.Window{
+		{ID: 1, AppID: "org.mozilla.firefox", Pid: 100},
+		{ID: 2, AppID: "foot", Pid: 200},
+	}, entries)
+	if slots[0].Name != "Firefox" {
+		t.Errorf("matched slot name = %q, want Firefox", slots[0].Name)
+	}
+	if slots[1].Name != "foot" {
+		t.Errorf("unmatched slot name = %q, want the app id", slots[1].Name)
+	}
+}
+
+func TestLoadRunningAppEntriesReadsTheName(t *testing.T) {
+	dir := t.TempDir()
+	body := "[Desktop Entry]\nType=Application\nName=Firefox\nIcon=firefox\nExec=firefox\n"
+	if err := os.WriteFile(filepath.Join(dir, "firefox.desktop"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entries := loadRunningAppEntries([]string{dir})
+	if len(entries) != 1 || entries[0].Name != "Firefox" {
+		t.Fatalf("entries = %+v", entries)
+	}
+}
