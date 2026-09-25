@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/backgroundeffect"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/fractionalscale"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/screencopy"
@@ -119,6 +120,12 @@ type Callbacks struct {
 	// DropAux releases per-aux resources after a surface is destroyed, whether
 	// by request, compositor close, or output loss.
 	DropAux func(output uint32, id string)
+	// Capabilities reports what optional compositor effects are available.
+	// It is called on the Wayland goroutine before the first NewHost when
+	// the compositor advertises the protocol, and again whenever the answer
+	// changes. Nil ignores the reports. A compositor without the protocol
+	// never calls it: the zero Capabilities is the answer.
+	Capabilities func(Capabilities)
 	// ConfigPath is the file a reload re-reads. Empty disables reloading.
 	ConfigPath string
 }
@@ -191,8 +198,12 @@ type owner struct {
 	// screencopy is nil when the compositor does not advertise it. Blur is
 	// decoration; its absence is not an error.
 	screencopy *screencopy.ZwlrScreencopyManagerV1
-	pointer    *client.Pointer
-	keyboard   *client.Keyboard
+	// backgroundEffect is nil when the compositor does not advertise
+	// ext-background-effect; caps records what it last said it can do.
+	backgroundEffect *backgroundeffect.ExtBackgroundEffectManagerV1
+	caps             capabilityState
+	pointer          *client.Pointer
+	keyboard         *client.Keyboard
 
 	textInputMgr *textinput.ZwpTextInputManagerV3
 	textInput    *textinput.ZwpTextInputV3
@@ -353,6 +364,18 @@ func (o *owner) bindGlobals() error {
 			return err
 		}
 	}
+	// Bound before the outputs, so the capabilities event it answers with is
+	// dispatched ahead of any output becoming ready: the shell knows whether
+	// it can frost before it builds the first bar.
+	if _, ok := o.rs.singletons["ext_background_effect_manager_v1"]; ok {
+		o.backgroundEffect = backgroundeffect.NewExtBackgroundEffectManagerV1(ctx)
+		o.backgroundEffect.SetCapabilitiesHandler(func(e backgroundeffect.ExtBackgroundEffectManagerV1CapabilitiesEvent) {
+			o.caps.update(e.Flags, o.cb.Capabilities)
+		})
+		if err := o.bindSingleton("ext_background_effect_manager_v1", o.backgroundEffect); err != nil {
+			return err
+		}
+	}
 	if err := o.bindOptionalInput(ctx); err != nil {
 		return err
 	}
@@ -448,6 +471,10 @@ func (o *owner) destroyGlobals() error {
 	if o.screencopy != nil {
 		errs = append(errs, o.screencopy.Destroy())
 		o.screencopy = nil
+	}
+	if o.backgroundEffect != nil {
+		errs = append(errs, o.backgroundEffect.Destroy())
+		o.backgroundEffect = nil
 	}
 	if o.pointer != nil {
 		errs = append(errs, o.pointer.Release())

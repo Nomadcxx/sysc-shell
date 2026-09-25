@@ -48,6 +48,9 @@ type Registry struct {
 	leases  map[uint32][]*services.Lease
 	now     time.Time
 	focused string
+	// caps is what the compositor last said it can do. The zero value, no
+	// blur, is also the answer for a compositor without the protocol.
+	caps wayland.Capabilities
 
 	clock        *services.Clock
 	metrics      *services.Metrics
@@ -1930,3 +1933,15 @@ func withPanelRadius(t Theme, h *PanelHost) Theme {
 	t.CardRadius = h.theme.Shapes.Card
 	return t
 }
+
+// SetCapabilities records the compositor's optional effects. The platform
+// calls it on the Wayland goroutine before the first bar is built, and again
+// when the answer changes.
+func (r *Registry) SetCapabilities(c wayland.Capabilities) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.caps = c
+}
+
+// blurAvailableLocked reports whether the compositor blurs behind regions.
+func (r *Registry) blurAvailableLocked() bool { return r.caps.Blur }
