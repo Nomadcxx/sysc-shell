@@ -157,6 +157,24 @@ const iconGPU rune = iconSignalCellular4Bar + 1
 // Latin cross with its crossbar in the upper third.
 const iconCross rune = iconGPU + 1
 
+// The cat glyphs close the font after the cellular set, for the Cat plugin.
+// Each act is a run of distinct poses and the acts follow one another in
+// catActs order. A plugin strings an act's poses into a sprite cycle,
+// repeating a name where the motion returns through a pose.
+// build.py's CAT_ACTS carries the same table.
+var catActs = []struct {
+	name  string
+	poses int
+}{
+	{"sleep", 4}, {"sit", 4}, {"groom", 5}, {"scratch", 3},
+	{"stretch", 4}, {"walk", 8}, {"run", 12},
+}
+
+const (
+	catRuneFirst = iconCross + 1
+	catRuneLast  = catRuneFirst + 40 - 1
+)
+
 // batteryLevels is how many level glyphs each state has.
 const batteryLevels = 7
 
@@ -212,6 +230,16 @@ func (r *TextRenderer) RasterProjectIcon(name string, size int) (Mask, error) {
 		return Mask{}, err
 	}
 	return rasterRuns([]shapedFaceRun{{face: face, text: string(glyph), output: out}}, size)
+}
+
+// RasterProjectIconIn rasterises a project glyph so its whole design box
+// fits a square of box pixels. The font's box is 1.2 em -- the ascent and
+// descent build.py sets -- so a glyph shaped at box pixels paints a fifth
+// larger than the square it was measured into and spills over its
+// neighbours. The icon painter uses this form; text runs keep the em sizing
+// that sits a glyph beside body text.
+func (r *TextRenderer) RasterProjectIconIn(name string, box int) (Mask, error) {
+	return r.RasterProjectIcon(name, max(box*5/6, 1))
 }
 
 // IconRune maps a WMO weather code to its symbol.
@@ -479,6 +507,19 @@ var iconNames = map[string]rune{
 	"signal-cellular-3-bar": iconSignalCellular3Bar,
 	"signal-cellular-4-bar": iconSignalCellular4Bar,
 	"cross":                 iconCross,
+}
+
+func init() {
+	r := catRuneFirst
+	for _, act := range catActs {
+		for i := 0; i < act.poses; i++ {
+			iconNames[fmt.Sprintf("cat-%s-%d", act.name, i)] = r
+			r++
+		}
+	}
+	if r-1 != catRuneLast {
+		panic(fmt.Sprintf("render: cat acts end at %U, the band at %U", r-1, catRuneLast))
+	}
 }
 
 // IconByName resolves a catalogue name to its symbol.

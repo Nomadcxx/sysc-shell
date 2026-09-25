@@ -182,7 +182,8 @@ func (m *FontMap) iconFaceFor(r rune) *font.Face {
 	inDevice := r >= iconSmartphone && r <= iconSignalCellular4Bar
 	inGPUMetric := r == iconGPU
 	inCross := r == iconCross
-	if !inDevice && !inWeather && !inBattery && !inMetric && !inRecorder && !inNotify && !inGauge && !inNight && !inDetail && !inGPUMetric && !inCross {
+	inCat := r >= catRuneFirst && r <= catRuneLast
+	if !inDevice && !inWeather && !inBattery && !inMetric && !inRecorder && !inNotify && !inGauge && !inNight && !inDetail && !inGPUMetric && !inCross && !inCat {
 		return nil
 	}
 	if !m.iconLoaded {

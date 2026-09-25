@@ -1285,7 +1285,7 @@ func paintIcon(c *Canvas, n *ui.Node, text *TextRenderer, style Style) error {
 	}
 	mask, err := text.RasterMaterialIcon(n.Icon, size)
 	if err != nil && !ValidMaterialIcon(n.Icon) {
-		mask, err = text.RasterProjectIcon(n.Icon, size)
+		mask, err = text.RasterProjectIconIn(n.Icon, size)
 	}
 	if err != nil {
 		return err
