@@ -1,6 +1,9 @@
 package ui
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // sampleNode returns a minimally valid node of the given kind, populated well
 // enough that a measure path can size it.
@@ -24,6 +27,8 @@ func sampleNode(k Kind) *Node {
 		n.Children = []*Node{{Kind: KindButton, Text: "c"}}
 	case KindWordmark:
 		n.ImageW, n.ImageH = 168, 23
+	case KindScheduleGrid:
+		n.Schedule = &ScheduleLayout{Start: time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC), Now: time.Now(), Zone: time.UTC, Days: 1}
 	}
 	return n
 }
@@ -33,7 +38,7 @@ func sampleNode(k Kind) *Node {
 var allKinds = []Kind{
 	KindRow, KindText, KindMeter, KindButton, KindGraph, KindColumn,
 	KindSeparator, KindTab, KindToggle, KindSlider, KindMenu, KindTextField,
-	KindScroll, KindVirtualList, KindImage, KindCapsule, KindEdgeFade, KindIcon, KindSegmented,
+	KindScroll, KindVirtualList, KindImage, KindCapsule, KindEdgeFade, KindIcon, KindSegmented, KindScheduleGrid,
 	KindDragSource, KindDropZone, KindWordmark, KindRadialGauge, KindStack,
 	KindEffect,
 }

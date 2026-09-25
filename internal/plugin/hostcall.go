@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +42,8 @@ type CallEnv struct {
 	WallpaperSnapshot func(context.Context) (v1.WallpaperSnapshotResult, error)
 	WallpaperMaskSet  func(context.Context, v1.WallpaperMaskSetParams) error
 	ClipboardRead     func(context.Context) (v1.ClipboardReadResult, error)
+	OpenURL           func(context.Context, v1.OpenURLParams) error
+	ClipboardWrite    func(context.Context, v1.ClipboardWriteParams) error
 	MaxPending        int
 	CallTimeout       time.Duration
 }
@@ -190,6 +194,16 @@ func (d *Dispatcher) dispatch(ctx context.Context, call *v1.HostCall) v1.HostRep
 			return failReply(call.ID, "clipboard returned invalid or oversized text")
 		}
 		return okReply(call.ID, result)
+	case v1.CallOpenURL:
+		if !d.env.allows(CapOpenURL) {
+			return failReply(call.ID, "capability open-url is not granted")
+		}
+		return d.openURL(ctx, call)
+	case v1.CallClipboardWrite:
+		if !d.env.allows(CapClipboardWrite) {
+			return failReply(call.ID, "capability clipboard-write is not granted")
+		}
+		return d.clipboardWrite(ctx, call)
 	default:
 		return failReply(call.ID, fmt.Sprintf("unknown call %q", call.Call))
 	}
@@ -291,6 +305,91 @@ func (d *Dispatcher) wallpaper(ctx context.Context, call *v1.HostCall) v1.HostRe
 		return okReply(call.ID, nil)
 	}
 	return failReply(call.ID, "unknown wallpaper call")
+}
+
+func (d *Dispatcher) openURL(ctx context.Context, call *v1.HostCall) v1.HostReply {
+	var p v1.OpenURLParams
+	if err := decodeStrictParams(call.Params, &p); err != nil {
+		return failReply(call.ID, err.Error())
+	}
+	if !validHTTPURL(p.URL) {
+		return failReply(call.ID, "URL must be an absolute HTTP(S) address without credentials")
+	}
+	if d.env.OpenURL != nil {
+		if err := d.env.OpenURL(ctx, p); err != nil {
+			return failReply(call.ID, err.Error())
+		}
+	} else if err := openURLCommand(ctx, p.URL); err != nil {
+		return failReply(call.ID, err.Error())
+	}
+	return okReply(call.ID, nil)
+}
+
+func (d *Dispatcher) clipboardWrite(ctx context.Context, call *v1.HostCall) v1.HostReply {
+	var p v1.ClipboardWriteParams
+	if err := decodeStrictParams(call.Params, &p); err != nil {
+		return failReply(call.ID, err.Error())
+	}
+	if err := validClipboardText(p.Text); err != nil {
+		return failReply(call.ID, err.Error())
+	}
+	if d.env.ClipboardWrite != nil {
+		if err := d.env.ClipboardWrite(ctx, p); err != nil {
+			return failReply(call.ID, err.Error())
+		}
+	} else if err := clipboardWriteCommand(ctx, p.Text); err != nil {
+		return failReply(call.ID, err.Error())
+	}
+	return okReply(call.ID, nil)
+}
+
+func validHTTPURL(raw string) bool {
+	if raw == "" || len(raw) > 2048 {
+		return false
+	}
+	for _, r := range raw {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	u, err := url.Parse(raw)
+	return err == nil && u.IsAbs() && u.Opaque == "" && u.User == nil && u.Hostname() != "" &&
+		(strings.EqualFold(u.Scheme, "http") || strings.EqualFold(u.Scheme, "https"))
+}
+
+func validClipboardText(value string) error {
+	if len(value) > 8192 {
+		return fmt.Errorf("clipboard text exceeds 8192 bytes")
+	}
+	if !utf8.ValidString(value) {
+		return fmt.Errorf("clipboard text is not valid UTF-8")
+	}
+	for _, r := range value {
+		if (r < 0x20 && r != '\n' && r != '\t') || r == 0x7f {
+			return fmt.Errorf("clipboard text contains a control character")
+		}
+	}
+	return nil
+}
+
+func openURLCommand(parent context.Context, raw string) error {
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+	if err := exec.CommandContext(ctx, "xdg-open", raw).Run(); err != nil {
+		return fmt.Errorf("open URL: %w", err)
+	}
+	return nil
+}
+
+func clipboardWriteCommand(parent context.Context, value string) error {
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, "wl-copy")
+	command.Stdin = strings.NewReader(value)
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("write clipboard: %w", err)
+	}
+	return nil
 }
 
 func (d *Dispatcher) state(ctx context.Context, call *v1.HostCall) v1.HostReply {

@@ -29,22 +29,26 @@ const (
 	keyboardNone      = uint32(layershell.ZwlrLayerSurfaceV1KeyboardInteractivityNone)
 	layerOverlay      = layershell.ZwlrLayerShellV1LayerOverlay
 
-	keyEsc       = 1
-	keyBackspace = 14
-	keyTab       = 15
-	keyEnter     = 28
-	keyLeftShift = 42
-	keyLeftAlt   = 56
-	keySpace     = 57
-	keyHome      = 102
-	keyUp        = 103
-	keyPageUp    = 104
-	keyLeft      = 105
-	keyRight     = 106
-	keyEnd       = 107
-	keyDown      = 108
-	keyPageDown  = 109
-	keyDelete    = 111
+	keyEsc        = 1
+	keyBackspace  = 14
+	keyTab        = 15
+	keyEnter      = 28
+	keyLeftCtrl   = 29
+	keyLeftShift  = 42
+	keyLeftAlt    = 56
+	keyRightShift = 54
+	keyRightAlt   = 100
+	keyRightCtrl  = 97
+	keySpace      = 57
+	keyHome       = 102
+	keyUp         = 103
+	keyPageUp     = 104
+	keyLeft       = 105
+	keyRight      = 106
+	keyEnd        = 107
+	keyDown       = 108
+	keyPageDown   = 109
+	keyDelete     = 111
 
 	btnLeft  = 272
 	btnRight = 273
@@ -102,6 +106,7 @@ type PanelHost struct {
 	logicalH int
 	scale120 int
 	shift    bool
+	ctrl     bool
 	// alt carries the modifier the lane editor's move commands use, tracked
 	// the same way shift is: press sets it, release clears it.
 	alt bool
@@ -1236,10 +1241,12 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			return h.scrollAxis(r, e)
 		case wayland.EventKeyRelease:
 			switch e.Key {
-			case keyLeftShift:
+			case keyLeftShift, keyRightShift:
 				h.shift = false
-			case keyLeftAlt:
+			case keyLeftAlt, keyRightAlt:
 				h.alt = false
+			case keyLeftCtrl, keyRightCtrl:
+				h.ctrl = false
 			}
 			return false
 		case wayland.EventPointerEnter, wayland.EventPointerMotion:
@@ -1401,7 +1408,7 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 	// field consumes it as text, so fall through rather than return when the
 	// edit does not land -- otherwise no control is ever activatable by
 	// keyboard, because every accept press is swallowed here.
-	if ch, ok := ui.EvdevText(key, h.shift); ok {
+	if ch, ok := ui.EvdevText(key, h.shift); ok && !h.ctrl && !h.alt {
 		if h.editField(r, func(f *ui.Field) { f.Insert(ch) }) {
 			return true
 		}
@@ -1418,12 +1425,32 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 	if h.id == PanelSettings && h.barKeyPress(r, key) {
 		return true
 	}
+	if h.id == PanelPlugin {
+		if n := h.focused(); n == nil || n.Kind != ui.KindTextField {
+			mods := make([]string, 0, 3)
+			if h.alt {
+				mods = append(mods, "alt")
+			}
+			if h.ctrl {
+				mods = append(mods, "ctrl")
+			}
+			if h.shift {
+				mods = append(mods, "shift")
+			}
+			if shortcut := panelShortcutKey(key); shortcut != "" && r.plugins != nil && r.plugins.deliverShortcut(shortcut, mods) {
+				return true
+			}
+		}
+	}
 	switch key {
-	case keyLeftShift:
+	case keyLeftShift, keyRightShift:
 		h.shift = true
 		return false
-	case keyLeftAlt:
+	case keyLeftAlt, keyRightAlt:
 		h.alt = true
+		return false
+	case keyLeftCtrl, keyRightCtrl:
+		h.ctrl = true
 		return false
 	case keyEsc:
 		if h.id == PanelSettings && h.query != "" {
@@ -1472,6 +1499,20 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 		return h.activate(r)
 	}
 	return false
+}
+
+func panelShortcutKey(key uint32) string {
+	if key == keyHome {
+		return "home"
+	}
+	text, ok := ui.EvdevText(key, false)
+	if !ok || len(text) != 1 {
+		return ""
+	}
+	if text[0] >= 'a' && text[0] <= 'z' || text[0] >= '0' && text[0] <= '9' {
+		return text
+	}
+	return ""
 }
 
 func (h *PanelHost) scrollAxis(r *Registry, e wayland.Event) bool {

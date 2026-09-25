@@ -43,8 +43,12 @@ func TestClientHandshakeAndSnapshotStayOnStdout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := hello.(*PluginHello); !ok {
+	pluginHello, ok := hello.(*PluginHello)
+	if !ok {
 		t.Fatalf("got %T", hello)
+	}
+	if pluginHello.Protocol != (Version{Major: 1, Minor: 0}) {
+		t.Fatalf("negotiated protocol = %+v, want 1.0", pluginHello.Protocol)
 	}
 	snap, err := dec.Decode()
 	if err != nil {

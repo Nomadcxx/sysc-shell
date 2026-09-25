@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 )
 
 // timerPanel is the richest tree Milestone 6A has to carry: the Timer panel,
@@ -806,5 +807,96 @@ func TestMinorSixFieldsRoundTripOnTheWire(t *testing.T) {
 	}
 	if got.Animate != true || got.Key != "battery" || got.Value != 0.4 {
 		t.Fatalf("round trip lost the animate fields: %+v", got)
+	}
+}
+
+func TestValidateSegmentedRequiresOneSelectedButton(t *testing.T) {
+	button := func(id string, selected bool) *Node {
+		return &Node{Kind: KindButton, ID: id, Name: id, Role: "button", Text: id, Selected: selected, Events: []EventKind{EventActivate}}
+	}
+	valid := &Node{Kind: KindSegmented, Children: []*Node{button("month", true), button("week", false)}}
+	if err := Validate(valid, ViewPanel); err != nil {
+		t.Fatalf("valid segmented control: %v", err)
+	}
+	for name, root := range map[string]*Node{
+		"none selected":    {Kind: KindSegmented, Children: []*Node{button("month", false), button("week", false)}},
+		"two selected":     {Kind: KindSegmented, Children: []*Node{button("month", true), button("week", true)}},
+		"non-button":       {Kind: KindSegmented, Children: []*Node{button("month", true), {Kind: KindText, Text: "week"}}},
+		"one button":       {Kind: KindSegmented, Children: []*Node{button("month", true)}},
+		"selected outside": {Kind: KindColumn, Children: []*Node{button("month", true)}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := Validate(root, ViewPanel); err == nil {
+				t.Fatal("invalid segmented control was accepted")
+			}
+		})
+	}
+}
+
+func TestValidateEventMarkerColorIsBoundedAndButtonOnly(t *testing.T) {
+	button := &Node{Kind: KindButton, ID: "event", Text: "Review", Name: "Review", Role: "button", MarkerColor: "#0A7bDe", Events: []EventKind{EventActivate}}
+	if err := Validate(button, ViewPanel); err != nil {
+		t.Fatalf("valid source marker: %v", err)
+	}
+	for _, node := range []*Node{
+		{Kind: KindButton, ID: "event", Text: "Review", Name: "Review", Role: "button", MarkerColor: "#gg0000", Events: []EventKind{EventActivate}},
+		{Kind: KindText, Text: "Review", MarkerColor: "#0a7bde"},
+	} {
+		if err := Validate(node, ViewPanel); err == nil {
+			t.Fatalf("invalid source marker was accepted: %+v", node)
+		}
+	}
+}
+
+func TestValidateScheduleGridBoundsAndOccurrences(t *testing.T) {
+	zone, err := time.LoadLocation("Australia/Melbourne")
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 9, 14, 0, 0, 0, 0, zone)
+	valid := func() *Node {
+		return &Node{Kind: KindScheduleGrid, Schedule: &ScheduleGrid{
+			Start: start, Now: time.Date(2026, 9, 15, 10, 0, 0, 0, zone), Zone: zone.String(), Days: 4,
+			Events: []ScheduleEvent{
+				{ID: "timed", Title: "Design review", Name: "Design review, 10 AM", Start: time.Date(2026, 9, 15, 10, 0, 0, 0, zone), End: time.Date(2026, 9, 15, 11, 0, 0, 0, zone), Marker: "#0a7bde"},
+				{ID: "holiday", Title: "Holiday", Name: "Holiday, all day", AllDay: true, StartDate: "2026-09-16", EndDate: "2026-09-17", Marker: "secondary"},
+			},
+		}}
+	}
+	if err := Validate(valid(), ViewPanel); err != nil {
+		t.Fatalf("valid schedule: %v", err)
+	}
+	encoded, err := json.Marshal(valid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTrip Node
+	if err := json.Unmarshal(encoded, &roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	if err := Validate(&roundTrip, ViewPanel); err != nil {
+		t.Fatalf("round-trip schedule: %v", err)
+	}
+	for name, mutate := range map[string]func(*ScheduleGrid){
+		"empty range":       func(s *ScheduleGrid) { s.Days = 0 },
+		"too many days":     func(s *ScheduleGrid) { s.Days = 8 },
+		"unknown zone":      func(s *ScheduleGrid) { s.Zone = "Mars/Olympus" },
+		"timed interval":    func(s *ScheduleGrid) { s.Events[0].End = s.Events[0].Start },
+		"all day dates":     func(s *ScheduleGrid) { s.Events[1].EndDate = s.Events[1].StartDate },
+		"duplicate id":      func(s *ScheduleGrid) { s.Events[1].ID = s.Events[0].ID },
+		"unknown marker":    func(s *ScheduleGrid) { s.Events[0].Marker = "#zz0000" },
+		"missing name":      func(s *ScheduleGrid) { s.Events[0].Name = "" },
+		"invalid selection": func(s *ScheduleGrid) { s.Selected = "missing" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			n := valid()
+			mutate(n.Schedule)
+			if err := Validate(n, ViewPanel); err == nil {
+				t.Fatal("invalid schedule was accepted")
+			}
+		})
+	}
+	if err := Validate(valid(), ViewTooltip); err == nil {
+		t.Fatal("schedule grid was accepted in a tooltip")
 	}
 }
