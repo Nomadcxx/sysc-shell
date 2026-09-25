@@ -2,6 +2,7 @@ package shell
 
 import (
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
@@ -148,7 +149,20 @@ func TestSearchKeepsAGroupWithOnlyTheMatchingMembersCounted(t *testing.T) {
 	in.Query = "CONTENTPROC"
 	in.ShowApps = false
 	lines := projectProcessLines(in)
-	if got := lineKeys(lines); !reflect.DeepEqual(got, []string{"section:procs", "pid:22:220"}) {
+	if got := lineKeys(lines); !reflect.DeepEqual(got, []string{"section:procs", "exe:name:firefox"}) {
+		t.Fatalf("keys = %v, want the firefox group kept", got)
+	}
+	g := findLine(t, lines, "exe:name:firefox")
+	if g.Kind != lineGroup || g.Totals.Resident != 500<<20 {
+		t.Fatalf("group = %+v, want a group counting only pid 22 (500 MiB)", g)
+	}
+}
+
+func TestAProcessAloneInItsGroupStaysAPlainRowUnderSearch(t *testing.T) {
+	procs, _ := desktopFixture()
+	in := lineInput(procs, nil)
+	in.Query = "zsh"
+	if got := lineKeys(projectProcessLines(in)); !reflect.DeepEqual(got, []string{"section:procs", "pid:11:110"}) {
 		t.Fatalf("keys = %v", got)
 	}
 }
@@ -177,6 +191,29 @@ func TestSortKeysAndInvalidLast(t *testing.T) {
 		got := lineKeys(projectProcessLines(in))[1:] // drop section:procs
 		if !reflect.DeepEqual(got, tt.want) {
 			t.Errorf("%s desc=%v = %v, want %v", tt.sort, tt.desc, got, tt.want)
+		}
+	}
+}
+
+// Every sort key, in each direction, puts a line without a value last.
+func TestEveryKeyPutsAMissingValueLastInEachDirection(t *testing.T) {
+	low := processLine{Key: "a", Name: "alpha", User: "alice", PID: 1, Totals: processTotals{
+		CPU: .1, CPUValid: true, Resident: 1, ResidentValid: true, Swap: 1, SwapValid: true, IO: 1, IOValid: true}}
+	high := processLine{Key: "b", Name: "beta", User: "bob", PID: 2, Totals: processTotals{
+		CPU: .2, CPUValid: true, Resident: 2, ResidentValid: true, Swap: 2, SwapValid: true, IO: 2, IOValid: true}}
+	missing := processLine{Key: "0", Name: "", User: "", PID: 0}
+	for _, key := range []string{"name", "cpu", "mem", "swap", "io", "pid", "user"} {
+		for _, desc := range []bool{false, true} {
+			lines := []processLine{missing, high, low}
+			in := processLineInput{Sort: key, Desc: desc}
+			slices.SortStableFunc(lines, func(a, b processLine) int { return compareLines(in, a, b) })
+			want := []string{"a", "b", "0"}
+			if desc {
+				want = []string{"b", "a", "0"}
+			}
+			if got := lineKeys(lines); !reflect.DeepEqual(got, want) {
+				t.Errorf("%s desc=%v = %v, want %v", key, desc, got, want)
+			}
 		}
 	}
 }

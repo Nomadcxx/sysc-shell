@@ -437,6 +437,9 @@ func TestParseProcessOrder(t *testing.T) {
 		{"name", "name", false, true},
 		{"-name", "name", true, true},
 		{"io", "io", true, true},
+		{"pid", "pid", false, true},
+		{"-pid", "pid", true, true},
+		{"user", "user", false, true},
 		{"memory", "", false, false},
 		{"", "", false, false},
 	}
@@ -485,5 +488,25 @@ func TestASuccessfulViewOptionSaveClearsAnEarlierError(t *testing.T) {
 	h.activateMonitor(reg, &ui.Node{Action: "monitor:show:apps"})
 	if h.processStatus != "" || h.processStatusErr != nil {
 		t.Fatalf("status after a successful save = %q / %v", h.processStatus, h.processStatusErr)
+	}
+}
+
+// A header click and a panel.open order name the same default direction.
+func TestClickingAHeaderSortsLikeOpeningWithThatOrder(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelMonitor, 7, Trigger{OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelMonitor]
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	for _, key := range []string{"name", "cpu", "mem", "swap", "io", "pid", "user"} {
+		h.processSort = "none"
+		h.activateMonitor(reg, &ui.Node{Action: "monitor:sort:" + key})
+		_, want, _ := parseProcessOrder(key)
+		if h.processSort != key || h.processDesc != want {
+			t.Errorf("click %s: sort=%q desc=%v, want desc=%v", key, h.processSort, h.processDesc, want)
+		}
 	}
 }

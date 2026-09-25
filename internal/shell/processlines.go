@@ -82,22 +82,23 @@ func projectProcessLines(in processLineInput) []processLine {
 			kept = append(kept, p)
 		}
 	}
+	// owned is what the owner filter alone keeps. An application found by the
+	// name its row shows keeps all of it, and whether a process is a group of
+	// one is decided on it, so a search does not turn a group into a row.
+	owned := make([]services.Process, 0, len(in.Processes))
+	unsearched := in
+	unsearched.Query = ""
+	for _, p := range in.Processes {
+		if keepProcess(p, unsearched) {
+			owned = append(owned, p)
+		}
+	}
 	var out []processLine
 	if in.ShowApps && len(in.Apps) > 0 {
-		// An application found by the name its row shows keeps every member
-		// the owner filter allows, not only those whose own text matched.
-		owned := make([]services.Process, 0, len(in.Processes))
-		unsearched := in
-		unsearched.Query = ""
-		for _, p := range in.Processes {
-			if keepProcess(p, unsearched) {
-				owned = append(owned, p)
-			}
-		}
 		out = appendSection(out, in, sectionApps, "Applications", appGroups(in, kept, owned))
 	}
 	if in.ShowProcesses {
-		out = appendSection(out, in, sectionProcs, "Processes", exeGroups(in, kept))
+		out = appendSection(out, in, sectionProcs, "Processes", exeGroups(in, kept, owned))
 	}
 	return out
 }
@@ -199,15 +200,24 @@ func appGroups(in processLineInput, kept, owned []services.Process) []processGro
 	return groups
 }
 
-func exeGroups(in processLineInput, kept []services.Process) []processGroup {
+func exeGroupKey(p services.Process) (key, name string) {
+	exe := processExecutable(p)
+	if exe == "" {
+		return "exe:name:" + p.Name, p.Name
+	}
+	return "exe:" + exe, filepath.Base(exe)
+}
+
+func exeGroups(in processLineInput, kept, owned []services.Process) []processGroup {
+	size := map[string]int{}
+	for _, p := range owned {
+		key, _ := exeGroupKey(p)
+		size[key]++
+	}
 	order := []string{}
 	byKey := map[string]*processGroup{}
 	for _, p := range kept {
-		exe := processExecutable(p)
-		key, name := "exe:"+exe, filepath.Base(exe)
-		if exe == "" {
-			key, name = "exe:name:"+p.Name, p.Name
-		}
+		key, name := exeGroupKey(p)
 		g, ok := byKey[key]
 		if !ok {
 			icon := ""
@@ -224,7 +234,7 @@ func exeGroups(in processLineInput, kept []services.Process) []processGroup {
 	groups := make([]processGroup, 0, len(order))
 	for _, key := range order {
 		g := *byKey[key]
-		if len(g.members) == 1 {
+		if size[key] <= 1 {
 			// A group of one is the process itself.
 			leaf := leafLine(in, g.members[0], 0)
 			leaf.Icon = g.line.Icon
@@ -319,8 +329,12 @@ func compareLines(in processLineInput, a, b processLine) int {
 			return l.Totals.SwapValid
 		case "io":
 			return l.Totals.IOValid
+		case "name":
+			return l.Name != ""
+		case "user":
+			return l.User != "" // mixed owners or an unreadable UID
 		}
-		return true
+		return l.PID != 0 // groups carry no PID
 	}
 	if va, vb := validity(a), validity(b); va != vb {
 		if va {

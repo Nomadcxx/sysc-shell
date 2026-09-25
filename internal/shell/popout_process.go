@@ -338,11 +338,17 @@ func parseProcessOrder(s string) (string, bool, bool) {
 	if !validProcessSort(key) {
 		return "", false, false
 	}
-	desc := key != "name" && key != "user"
+	desc := processSortDescends(key)
 	if flip {
 		desc = !desc
 	}
 	return key, desc, true
+}
+
+// processSortDescends is a key's first direction: measurements descend, so
+// the busiest rows come first; name, PID and user ascend.
+func processSortDescends(key string) bool {
+	return key != "name" && key != "user" && key != "pid"
 }
 
 func validProcessSort(key string) bool {
@@ -476,7 +482,7 @@ func (h *PanelHost) activateMonitor(r *Registry, n *ui.Node) bool {
 		if h.processSort == key {
 			h.processDesc = !h.processDesc
 		} else {
-			h.processSort, h.processDesc = key, key != "name" && key != "user" && key != "pid"
+			h.processSort, h.processDesc = key, processSortDescends(key)
 		}
 		return rebuild()
 	case strings.HasPrefix(a, "monitor:toggle:"):
