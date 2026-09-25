@@ -695,7 +695,8 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	if id == PanelMonitor {
 		h.monitorPage = monitorPageProcesses
 		h.processFilter = "all"
-		h.processSort, h.processDesc = "cpu", true
+		h.processSort, h.processDesc = "mem", true
+		h.processExpanded, h.processCollapsed = map[string]bool{}, map[string]bool{}
 		h.search = ui.NewField("")
 	}
 	if id == PanelControlCenter {
@@ -2239,11 +2240,7 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		}
 		return clockTree(now, h.monthDelta, h.theme)
 	case PanelMonitor:
-		connector := ""
-		if bar, ok := r.bars[h.output]; ok {
-			connector = bar.connector()
-		}
-		return monitorPanelTree(h, monitorSelectors(r.cfg.ForConnector(connector)), r.sample, r.historyLocked(), r.machineFacts)
+		return monitorPanelTree(h, r.monitorViewLocked(h))
 	case PanelSession:
 		return sessionTree(h, r.sample, r.cfg.Session.Locker)
 	case PanelSettings:

@@ -373,16 +373,18 @@ func (r *Registry) applyTrayIcon(key icons.Key, image *ui.Image) {
 	}
 	r.reprojectTray()
 	r.reprojectRunningApps()
-	r.mu.Lock()
-	h := r.panelHosts[PanelLauncher]
-	if h == nil {
+	for _, id := range []PanelID{PanelLauncher, PanelMonitor} {
+		r.mu.Lock()
+		h := r.panelHosts[id]
+		if h == nil {
+			r.mu.Unlock()
+			continue
+		}
+		r.rebuildPanel(h)
+		out := h.output
 		r.mu.Unlock()
-		return
+		r.publishSurface(out, panelSurfaceID(id))
 	}
-	r.rebuildPanel(h)
-	out := h.output
-	r.mu.Unlock()
-	r.publishSurface(out, panelSurfaceID(PanelLauncher))
 }
 
 // sendTrayLocked sends one command for a live item and remembers the request

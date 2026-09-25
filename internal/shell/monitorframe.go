@@ -19,7 +19,7 @@ const (
 	monitorFactMaxW  = 360
 	monitorOptionW   = 320
 	monitorOwnerH    = 28
-	monitorSearchW   = 300
+	monitorSearchW   = 220
 )
 
 type monitorView struct {

@@ -231,7 +231,8 @@ func TestMonitorConfigureAcceptsTabsAndGraph(t *testing.T) {
 	}
 	_ = drainAux(t, reg, 2)
 	h := reg.panelHosts[PanelMonitor]
-	if err := h.configure(640, 480, 120); err != nil {
+	size := panelTargetSize(PanelMonitor)
+	if err := h.configure(size.W, size.H, 120); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -607,7 +608,7 @@ func TestMonitorSurfaceHeightCoversATallTree(t *testing.T) {
 		{Source: services.SourceCPU, Subject: "temperature"},
 		{Source: services.SourceNetwork, Direction: "rx"},
 	}, fixtureSnapshot(), map[services.Selector][]float64{}, machineFacts{
-		CPU: "Intel(R) Core(TM) i7-8665U CPU @ 1.90GHz",
+		CPU:    "Intel(R) Core(TM) i7-8665U CPU @ 1.90GHz",
 		Distro: "Arch Linux", Kernel: "7.2.2-arch1-1",
 		Uptime: "1 hour 1 minute",
 	})
@@ -644,4 +645,3 @@ func TestMonitorCardsHaveSaneHeights(t *testing.T) {
 		}
 	}
 }
-
