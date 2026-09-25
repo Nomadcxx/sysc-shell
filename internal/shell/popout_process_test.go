@@ -510,3 +510,71 @@ func TestClickingAHeaderSortsLikeOpeningWithThatOrder(t *testing.T) {
 		}
 	}
 }
+
+// A group row's chevron slot keeps its width. A slot that took the rest of
+// the Name cell pushed the icon out of it, and the whole surface refused to
+// lay out: live, the table showed its first section header and nothing else.
+func TestAGroupRowLaysOutWithinTheNameColumn(t *testing.T) {
+	procs := append(processFixture(), processFixture()[0])
+	procs[len(procs)-1].Identity = services.ProcessIdentity{PID: 31, StartTimeTicks: 310}
+	h := processHost()
+	h.processExpanded["exe:name:gamma"] = true
+	root := monitorPanelTree(h, processView(procs))
+	size := panelTargetSize(PanelMonitor)
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 8, 16 }
+	if err := ui.LayoutColumn(root, ui.Rect{W: size.W, H: size.H}, measure); err != nil {
+		t.Fatalf("layout: %v", err)
+	}
+	list := processVirtualList(root)
+	var group *ui.Node
+	for _, row := range list.Children {
+		if row.Action == "monitor:toggle:exe:name:gamma" {
+			group = row
+		}
+	}
+	if group == nil {
+		t.Fatal("no gamma group row laid out")
+	}
+	name := group.Children[0].Children[0]
+	slot := name.Children[0]
+	if slot.Bounds.W != processIndent {
+		t.Errorf("chevron slot is %d wide, want %d", slot.Bounds.W, processIndent)
+	}
+	for _, c := range name.Children {
+		if c.Bounds.X+c.Bounds.W > name.Bounds.X+name.Bounds.W {
+			t.Errorf("name cell child %+v leaves the cell %+v", c.Bounds, name.Bounds)
+		}
+	}
+}
+
+// Every row's value cells sit under their header cells, whatever the length
+// of the name beside them.
+func TestRowCellsAlignWithTheirHeaders(t *testing.T) {
+	procs := append(processFixture(), processFixture()[0])
+	procs[len(procs)-1].Identity = services.ProcessIdentity{PID: 31, StartTimeTicks: 310}
+	procs[1].Name = "a-much-longer-process-name"
+	h := processHost()
+	root := monitorPanelTree(h, processView(procs))
+	size := panelTargetSize(PanelMonitor)
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 8, 16 }
+	if err := ui.LayoutColumn(root, ui.Rect{W: size.W, H: size.H}, measure); err != nil {
+		t.Fatalf("layout: %v", err)
+	}
+	for _, c := range processColumnsAfterName {
+		header := findByName(root, "Sort by "+c.label)
+		for _, row := range processVirtualList(root).Children {
+			if row.Role != "row" {
+				continue
+			}
+			var cell *ui.Node
+			for _, n := range row.Children {
+				if n.Name == c.label+" value" {
+					cell = n
+				}
+			}
+			if cell == nil || cell.Bounds.X != header.Bounds.X || cell.Bounds.W != header.Bounds.W {
+				t.Errorf("%s: row %q cell %+v, header %+v", c.label, row.Name, cell.Bounds, header.Bounds)
+			}
+		}
+	}
+}

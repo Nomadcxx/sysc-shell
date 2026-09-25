@@ -215,8 +215,10 @@ func processLineRow(h *PanelHost, in monitorView, l processLine) *ui.Node {
 		if l.Expanded {
 			chevron = "expand_more"
 		}
-		nameCell.Children[0] = &ui.Node{Kind: ui.KindRow, Width: processIndent * (l.Depth + 1), PinEnd: true,
-			Children: []*ui.Node{{Kind: ui.KindColumn}, {Kind: ui.KindIcon, Icon: chevron, IconSize: processIconSize - 4}}}
+		// A fixed column, not a PinEnd row: a nested PinEnd row takes all the
+		// width left in its parent, which pushed the icon out of the cell.
+		nameCell.Children[0] = &ui.Node{Kind: ui.KindColumn, Width: processIndent * (l.Depth + 1), CenterY: true,
+			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: chevron, IconSize: processIconSize - 4, CenterX: true}}}
 	}
 	nameCell.Children = append(nameCell.Children, processLineIcon(in, l), &ui.Node{Kind: ui.KindText, Text: l.Name,
 		MaxWidth: processNameWidth(h) - processIndent*(l.Depth+1) - processIconSize - 2*theme.MarginS})
@@ -224,7 +226,10 @@ func processLineRow(h *PanelHost, in monitorView, l processLine) *ui.Node {
 		Shape: ui.ShapeSmall, Role: "row", Focusable: true, Name: l.Name,
 		HoverFill: monitorRole(in.Config.HoverBackground, ui.PaintSurfaceVariant),
 		HoverInk:  monitorRole(in.Config.HoverColor, ui.PaintOnSurfaceVariant),
-		Children:  []*ui.Node{nameCell}}
+		// A nested row measures by its content, so the fixed column around
+		// it is what keeps every row's cells under their headers.
+		Children: []*ui.Node{{Kind: ui.KindColumn, Width: processNameWidth(h), CenterY: true,
+			Children: []*ui.Node{nameCell}}}}
 	if l.Kind == lineGroup {
 		row.Action = "monitor:toggle:" + l.Key
 	} else {
