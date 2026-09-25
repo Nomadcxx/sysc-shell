@@ -91,15 +91,27 @@ func TestEscapeClosesTheDetailBeforeThePanel(t *testing.T) {
 	}
 	_ = drainAux(t, reg, 2)
 	h := reg.panelHosts[PanelMonitor]
+	press := func() {
+		// keyPress runs under Registry.mu, as the Wayland handler takes it.
+		reg.mu.Lock()
+		defer reg.mu.Unlock()
+		h.keyPress(reg, keyEsc)
+	}
+	reg.mu.Lock()
 	h.processSelected = services.ProcessIdentity{PID: 20, StartTimeTicks: 200}
-	h.keyPress(reg, keyEsc)
+	reg.mu.Unlock()
+	press()
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
 	if reg.panelHosts[PanelMonitor] == nil {
 		t.Fatal("Escape closed the panel while the detail was open")
 	}
 	if h.processSelected != (services.ProcessIdentity{}) {
 		t.Fatal("Escape left the detail open")
 	}
-	h.keyPress(reg, keyEsc)
+	reg.mu.Unlock()
+	press()
+	reg.mu.Lock()
 	if reg.panelHosts[PanelMonitor] != nil {
 		t.Fatal("second Escape did not close the panel")
 	}
