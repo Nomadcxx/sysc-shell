@@ -374,6 +374,7 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 			// either catalogue at the measured size; a project glyph carried
 			// as text would take the type ladder's size instead.
 			out.Kind, out.Text, out.Icon, out.IconSize = ui.KindIcon, "", n.Icon, n.IconSize
+			out.IconProjectFirst = true
 		}
 		if len(n.Frames) > 0 {
 			// Every pose must be drawable before the animator can land on

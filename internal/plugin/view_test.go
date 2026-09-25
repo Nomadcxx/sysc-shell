@@ -971,7 +971,7 @@ func TestConvertCarriesAnIconSizeToTheIconPainter(t *testing.T) {
 		t.Fatalf("Convert: %v", err)
 	}
 	hero, material, plain := got.Children[0], got.Children[1], got.Children[2]
-	if hero.Kind != ui.KindIcon || hero.Icon != "cat-run-2" || hero.IconSize != 96 || hero.Text != "" {
+	if hero.Kind != ui.KindIcon || hero.Icon != "cat-run-2" || hero.IconSize != 96 || hero.Text != "" || !hero.IconProjectFirst {
 		t.Fatalf("hero = %+v, want a 96 px icon node", hero)
 	}
 	if hero.Tone != ui.ToneAccent {

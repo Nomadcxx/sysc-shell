@@ -893,7 +893,7 @@ func (v *validator) minorNine(n *Node, path string) error {
 		return fmt.Errorf("%s: %s cannot carry an icon size or a sprite cycle", path, n.Kind)
 	}
 	if n.IconSize < 0 || n.IconSize > MaxIconSize {
-		return fmt.Errorf("%s: icon size is %d, outside 1 through %d", path, n.IconSize, MaxIconSize)
+		return fmt.Errorf("%s: icon size is %d, outside 0 (the host's size) through %d", path, n.IconSize, MaxIconSize)
 	}
 	if n.Frames == nil && n.CycleMS == 0 {
 		return nil

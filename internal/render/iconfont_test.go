@@ -3,6 +3,8 @@ package render
 import (
 	"fmt"
 	"testing"
+
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 func TestGhostLauncherIconIsInProjectFace(t *testing.T) {
@@ -712,6 +714,47 @@ func TestProjectIconFitsItsSquare(t *testing.T) {
 		}
 		if b := mask.Alpha.Bounds(); b.Dy() < box*9/10 {
 			t.Fatalf("box %d: mask %d tall wastes the square", box, b.Dy())
+		}
+	}
+}
+
+// A name in both catalogues must paint the same glyph whether a plugin sized
+// it or not: plugins resolve the project catalogue first, chrome the Material
+// subset first.
+func TestSizedPluginIconKeepsTheProjectGlyph(t *testing.T) {
+	t.Parallel()
+	tr := NewTextRenderer(newIconFace())
+	var shared []string
+	for _, name := range IconNames() {
+		if ValidMaterialIcon(name) {
+			shared = append(shared, name)
+		}
+	}
+	if len(shared) == 0 {
+		t.Skip("no name is in both catalogues")
+	}
+	for _, name := range shared {
+		project, err := tr.RasterProjectIconIn(name, 24)
+		if err != nil {
+			t.Fatal(err)
+		}
+		material, err := tr.RasterMaterialIcon(name, 24)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plugin, err := rasterIcon(tr, &ui.Node{Kind: ui.KindIcon, Icon: name, IconSize: 24, IconProjectFirst: true}, 24)
+		if err != nil {
+			t.Fatal(err)
+		}
+		chrome, err := rasterIcon(tr, &ui.Node{Kind: ui.KindIcon, Icon: name, IconSize: 24}, 24)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(plugin.Alpha.Pix) != string(project.Alpha.Pix) {
+			t.Errorf("%s: a sized plugin icon did not paint the project glyph", name)
+		}
+		if string(chrome.Alpha.Pix) != string(material.Alpha.Pix) {
+			t.Errorf("%s: chrome stopped painting the Material glyph", name)
 		}
 	}
 }
