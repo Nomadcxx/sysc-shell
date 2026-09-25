@@ -314,14 +314,17 @@ func processFooter(h *PanelHost, snapshot services.ProcessSnapshot, uid uint32) 
 	}
 	text := fmt.Sprintf("Total processes: %d (user: %d  system: %d)", len(snapshot.Processes), users, len(snapshot.Processes)-users)
 	tone := ui.ToneSubtle
-	switch {
-	case h.processStatus != "":
-		text, tone = h.processStatus, ui.ToneNormal
+	if len(snapshot.Issues) > 0 {
+		text += fmt.Sprintf(" · %d could not be read", len(snapshot.Issues))
+	}
+	// The last action's outcome sits beside the totals rather than in their
+	// place, so one Kill does not hide the counts for the panel's lifetime.
+	if h.processStatus != "" {
+		text += " · " + h.processStatus
+		tone = ui.ToneNormal
 		if h.processStatusErr != nil {
 			tone = ui.ToneError
 		}
-	case len(snapshot.Issues) > 0:
-		text += fmt.Sprintf(" · %d could not be read", len(snapshot.Issues))
 	}
 	return &ui.Node{Kind: ui.KindText, Text: text, Tone: tone, TextRole: theme.RoleCaption, Height: processFooterHeight}
 }
@@ -497,6 +500,7 @@ func (h *PanelHost) activateMonitor(r *Registry, n *ui.Node) bool {
 			// writeConfig only signals the reload; apply the view option now
 			// so the toggle and the table agree on this rebuild.
 			r.cfg.Monitor = c.Monitor
+			h.processStatus, h.processStatusErr = "", nil
 		}
 		return rebuild()
 	}

@@ -109,3 +109,38 @@ func TestOptionsColumnCarriesTheSectionTogglesAndOwnerFilter(t *testing.T) {
 		t.Fatal("owner User is not selected")
 	}
 }
+
+func TestInfoCardGaugesStayInsideTheCard(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelMonitor, 7, Trigger{OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelMonitor]
+	for _, page := range []string{monitorPageProcesses, monitorPageMetrics} {
+		reg.mu.Lock()
+		h.monitorPage = page
+		reg.rebuildPanel(h)
+		err := h.configure(h.place.Panel.W, h.place.Panel.H, int(ui.ScaleUnit))
+		reg.mu.Unlock()
+		if err != nil {
+			t.Fatal(err)
+		}
+		card := findByName(h.root, "CPU gauge")
+		var info *ui.Node
+		walkNodes(h.root, func(n *ui.Node) {
+			if info == nil && n.Kind == ui.KindCapsule && n.Height == monitorInfoH {
+				info = n
+			}
+		})
+		if card == nil || info == nil {
+			t.Fatalf("%s: gauge %v info %v", page, card, info)
+		}
+		bottom := info.Bounds.Y + info.Bounds.H - info.Padding
+		walkNodes(card, func(n *ui.Node) {
+			if n.Bounds.Y+n.Bounds.H > bottom {
+				t.Errorf("%s: %v %q ends at %d, past the card's inner edge %d", page, n.Kind, n.Text, n.Bounds.Y+n.Bounds.H, bottom)
+			}
+		})
+	}
+}

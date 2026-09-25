@@ -41,7 +41,7 @@ func ccMonitor(r *Registry, h *PanelHost) *ui.Node {
 	}}
 	rows := monitorCard(m, []*ui.Node{
 		ccMonTemperatureRow(snap, history),
-		ccMonGPURow(snap, history),
+		ccMonGPURow(snap, history, false),
 		ccMonStorageRow("Storage", snap),
 		ccMonRateRow("network", "Network", iface, snap, history,
 			services.Selector{Source: services.SourceNetwork, Subject: iface, Direction: "rx"},
@@ -186,7 +186,9 @@ func ccMonTemperatureRow(snap services.Snapshot, history map[services.Selector][
 		ccMonCaption(source), ccMonGraph(ccMonMarkW, ccMonMarkH, samples, nil, tone))
 }
 
-func ccMonGPURow(snap services.Snapshot, history map[services.Selector][]float64) *ui.Node {
+// ccMonGPURow is the GPU row. withTemp adds the GPU temperature to its
+// caption, for a surface that has no Temperature row to carry it.
+func ccMonGPURow(snap services.Snapshot, history map[services.Selector][]float64, withTemp bool) *ui.Node {
 	value, tone, name := ccDash, ui.ToneNormal, ""
 	var samples []float64
 	if sel, ok := selectGPU(snap); ok {
@@ -201,7 +203,7 @@ func ccMonGPURow(snap services.Snapshot, history map[services.Selector][]float64
 				pct := g.Usage.Fraction * 100
 				value, tone, samples = fmt.Sprintf("%.0f%%", pct), thresholdTone(metricGPU, pct), history[sel]
 			}
-			if g.TempValid {
+			if withTemp && g.TempValid {
 				name = joinCaption(name, fmt.Sprintf("%.0f°C", g.Celsius))
 			}
 		}

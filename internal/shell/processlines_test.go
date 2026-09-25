@@ -212,3 +212,18 @@ func indexOf(xs []string, x string) int {
 	}
 	return -1
 }
+
+func TestSearchFindsAnApplicationByItsDisplayedName(t *testing.T) {
+	procs, apps := desktopFixture()
+	apps[0].Name = "Terminal" // no process, exe or argument contains this
+	in := lineInput(procs, apps)
+	in.ShowProcesses = false
+	in.Query = "termin"
+	got := lineKeys(projectProcessLines(in))
+	if len(got) != 2 || got[1] != "app:foot" {
+		t.Fatalf("keys = %v, want the Terminal app found by its displayed name", got)
+	}
+	if l := findLine(t, projectProcessLines(in), "app:foot"); l.Totals.Resident != 45<<20 {
+		t.Fatalf("terminal rss = %d MiB, want all its members (45)", l.Totals.Resident>>20)
+	}
+}

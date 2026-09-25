@@ -84,7 +84,17 @@ func projectProcessLines(in processLineInput) []processLine {
 	}
 	var out []processLine
 	if in.ShowApps && len(in.Apps) > 0 {
-		out = appendSection(out, in, sectionApps, "Applications", appGroups(in, kept))
+		// An application found by the name its row shows keeps every member
+		// the owner filter allows, not only those whose own text matched.
+		owned := make([]services.Process, 0, len(in.Processes))
+		unsearched := in
+		unsearched.Query = ""
+		for _, p := range in.Processes {
+			if keepProcess(p, unsearched) {
+				owned = append(owned, p)
+			}
+		}
+		out = appendSection(out, in, sectionApps, "Applications", appGroups(in, kept, owned))
 	}
 	if in.ShowProcesses {
 		out = appendSection(out, in, sectionProcs, "Processes", exeGroups(in, kept))
@@ -123,7 +133,7 @@ func keepProcess(p services.Process, in processLineInput) bool {
 // appGroups assigns each kept process to at most one application: the one
 // whose window PID it descends from. Descent stops at another application's
 // window PID, so a browser started from a terminal is not counted twice.
-func appGroups(in processLineInput, kept []services.Process) []processGroup {
+func appGroups(in processLineInput, kept, owned []services.Process) []processGroup {
 	byPID := make(map[int]services.Process, len(in.Processes))
 	children := map[int][]int{}
 	for _, p := range in.Processes {
@@ -134,6 +144,11 @@ func appGroups(in processLineInput, kept []services.Process) []processGroup {
 	for _, p := range kept {
 		keptPID[p.Identity.PID] = true
 	}
+	ownedPID := make(map[int]bool, len(owned))
+	for _, p := range owned {
+		ownedPID[p.Identity.PID] = true
+	}
+	query := strings.ToLower(strings.TrimSpace(in.Query))
 	windowOwner := map[int]string{}
 	for _, slot := range in.Apps {
 		for _, w := range slot.Members {
@@ -144,6 +159,10 @@ func appGroups(in processLineInput, kept []services.Process) []processGroup {
 	}
 	var groups []processGroup
 	for _, slot := range in.Apps {
+		include := keptPID
+		if query != "" && (strings.Contains(strings.ToLower(slot.Name), query) || strings.Contains(strings.ToLower(slot.Key), query)) {
+			include = ownedPID
+		}
 		seen := map[int]bool{}
 		var members []services.Process
 		var walk func(pid int)
@@ -155,7 +174,7 @@ func appGroups(in processLineInput, kept []services.Process) []processGroup {
 				return
 			}
 			seen[pid] = true
-			if p, ok := byPID[pid]; ok && keptPID[pid] {
+			if p, ok := byPID[pid]; ok && include[pid] {
 				members = append(members, p)
 			}
 			for _, c := range children[pid] {

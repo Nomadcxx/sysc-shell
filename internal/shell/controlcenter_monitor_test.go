@@ -159,3 +159,19 @@ func TestMonitorRowLabelsHavePlainNames(t *testing.T) {
 		}
 	}
 }
+
+// The Control Centre states the GPU temperature once, in its Temperature row;
+// the system monitor has no Temperature row, so its GPU caption carries it.
+func TestGPUTemperatureAppearsOncePerSurface(t *testing.T) {
+	gpu := &metrics.GPUSnapshot{GPUs: []metrics.GPU{{PCIID: "10de:2808", Name: "RTX 4060", Celsius: 51, TempValid: true}}}
+	r := monitorTestRegistry()
+	r.sample.GPU = gpu
+	if n := strings.Count(renderText(layOutMonitor(t, r)), "51°C"); n != 1 {
+		t.Fatalf("Control Centre shows the GPU temperature %d times, want once", n)
+	}
+	v := testMonitorView()
+	v.Snap.GPU = gpu
+	if !strings.Contains(renderText(systemPageTree(systemHost(), v)), "RTX 4060 · 51°C") {
+		t.Fatal("system page GPU caption lacks the temperature")
+	}
+}

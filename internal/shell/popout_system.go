@@ -54,7 +54,7 @@ func systemPageTree(h *PanelHost, in monitorView) *ui.Node {
 		key, title string
 		rows       []*ui.Node
 	}{
-		{"section:compute", "Compute", []*ui.Node{cpu, ccMonGPURow(snap, history)}},
+		{"section:compute", "Compute", []*ui.Node{cpu, ccMonGPURow(snap, history, true)}},
 		{"section:memory", "Memory", []*ui.Node{ram, swap}},
 		{"section:storage", "Storage & network", []*ui.Node{
 			ccMonStorageRow("/", snap),

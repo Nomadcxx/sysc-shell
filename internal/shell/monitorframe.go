@@ -14,7 +14,7 @@ const (
 	monitorHeaderH   = 36
 	monitorInfoH     = 142
 	monitorLogoSize  = 110
-	monitorGaugeSize = 118
+	monitorGaugeSize = 84
 	monitorFactIcon  = 18
 	monitorFactMaxW  = 360
 	monitorOptionW   = 320

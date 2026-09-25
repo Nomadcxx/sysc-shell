@@ -3,6 +3,7 @@ package shell
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -459,5 +460,30 @@ func TestPanelOpenWithAnOrderSortsTheTable(t *testing.T) {
 	}
 	if err := reg.HandlePanelByName("open", "system-monitor", "memory"); err == nil {
 		t.Fatal("unknown order accepted")
+	}
+}
+
+func TestFooterKeepsTheTotalsBesideAStatus(t *testing.T) {
+	h := processHost()
+	h.processStatus = "Sent INT to PID 30"
+	foot := processFooter(h, services.ProcessSnapshot{Processes: processFixture()}, 1000)
+	if !strings.Contains(foot.Text, "Total processes: 4") || !strings.Contains(foot.Text, "Sent INT to PID 30") {
+		t.Fatalf("footer = %q, want the totals and the status", foot.Text)
+	}
+}
+
+func TestASuccessfulViewOptionSaveClearsAnEarlierError(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelMonitor, 7, Trigger{OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelMonitor]
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h.processStatus, h.processStatusErr = "Could not save view options: disk full", errors.New("disk full")
+	h.activateMonitor(reg, &ui.Node{Action: "monitor:show:apps"})
+	if h.processStatus != "" || h.processStatusErr != nil {
+		t.Fatalf("status after a successful save = %q / %v", h.processStatus, h.processStatusErr)
 	}
 }
