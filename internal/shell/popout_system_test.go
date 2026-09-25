@@ -1,10 +1,13 @@
 package shell
 
 import (
+	"slices"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -82,5 +85,95 @@ func TestMonitorLeaseIntervalFollowsRefresh(t *testing.T) {
 	m.Refresh = 0
 	if got := monitorLeaseInterval(m); got != time.Second {
 		t.Fatalf("zero refresh interval = %v, want the one-second floor", got)
+	}
+}
+
+// A reload that changes monitor.refresh re-leases an open monitor at the new
+// interval rather than waiting for it to be reopened.
+func TestAReloadedRefreshReachesAnOpenMonitor(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelMonitor, 7, Trigger{OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	reg.mu.Lock()
+	before := slices.Clone(reg.panelHosts[PanelMonitor].leases)
+	reg.mu.Unlock()
+
+	next := config.Default()
+	next.Monitor.Refresh = 3
+	prepared, err := reg.PrepareConfig(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelMonitor]
+	if h == nil {
+		t.Fatal("the reload closed the monitor")
+	}
+	if h.monitorInterval != 3*time.Second {
+		t.Fatalf("monitor leased at %v, want 3s", h.monitorInterval)
+	}
+	if len(h.leases) != len(before) {
+		t.Fatalf("leases = %d, want %d", len(h.leases), len(before))
+	}
+	for i := range before {
+		if h.leases[i] == before[i] {
+			t.Fatalf("lease %d was kept at the old interval", i)
+		}
+	}
+}
+
+// Usernames are resolved for the panel's lifetime: closing the monitor drops
+// them, so a renamed account reads correctly the next time it opens.
+func TestClosingTheMonitorForgetsUsernames(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelMonitor, 7, Trigger{OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	reg.mu.Lock()
+	reg.usernameCache().Name(1000)
+	reg.closePanelLocked(PanelMonitor)
+	cache := reg.usernames
+	reg.mu.Unlock()
+	if cache != nil {
+		t.Fatal("usernames outlived the monitor")
+	}
+}
+
+// Icons arriving together rebuild the open monitor once, not once each.
+func TestArrivingIconsRebuildTheMonitorOnce(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelMonitor, 7, Trigger{OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	surface := panelSurfaceID(PanelMonitor)
+	count := func(wait time.Duration) int {
+		n := 0
+		deadline := time.After(wait)
+		for {
+			select {
+			case inv := <-reg.Invalidations():
+				if inv.SurfaceID == surface {
+					n++
+				}
+			case <-deadline:
+				return n
+			}
+		}
+	}
+	for count(100*time.Millisecond) > 0 { // let the open animation finish
+	}
+	img := &ui.Image{Width: 1, Height: 1, Stride: 4, Pix: make([]byte, 4)}
+	for i := range 5 {
+		reg.applyTrayIcon(icons.Key{Name: "icon-" + strconv.Itoa(i)}, img)
+	}
+	if got := count(300 * time.Millisecond); got != 1 {
+		t.Fatalf("monitor published %d times for 5 icons, want 1", got)
 	}
 }

@@ -3,6 +3,7 @@ package shell
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
@@ -373,18 +374,45 @@ func (r *Registry) applyTrayIcon(key icons.Key, image *ui.Image) {
 	}
 	r.reprojectTray()
 	r.reprojectRunningApps()
-	for _, id := range []PanelID{PanelLauncher, PanelMonitor} {
+	r.mu.Lock()
+	h := r.panelHosts[PanelLauncher]
+	if h != nil {
+		r.rebuildPanel(h)
+	}
+	r.mu.Unlock()
+	if h != nil {
+		r.publishSurface(h.output, panelSurfaceID(PanelLauncher))
+	}
+	r.mu.Lock()
+	r.scheduleMonitorIconRebuildLocked()
+	r.mu.Unlock()
+}
+
+// monitorIconBatch is how long the system monitor waits for more icons
+// before rebuilding for the ones that arrived. Opening it requests one per
+// visible row, and each would otherwise rebuild the whole table.
+const monitorIconBatch = time.Second / 30
+
+// scheduleMonitorIconRebuildLocked rebuilds an open system monitor once for a
+// batch of arriving icons. Caller holds r.mu.
+func (r *Registry) scheduleMonitorIconRebuildLocked() {
+	h := r.panelHosts[PanelMonitor]
+	if h == nil || h.monitorIconRebuild {
+		return
+	}
+	h.monitorIconRebuild = true
+	time.AfterFunc(monitorIconBatch, func() {
 		r.mu.Lock()
-		h := r.panelHosts[id]
-		if h == nil {
+		h.monitorIconRebuild = false
+		if r.panelHosts[PanelMonitor] != h {
 			r.mu.Unlock()
-			continue
+			return
 		}
 		r.rebuildPanel(h)
 		out := h.output
 		r.mu.Unlock()
-		r.publishSurface(out, panelSurfaceID(id))
-	}
+		r.publishSurface(out, panelSurfaceID(PanelMonitor))
+	})
 }
 
 // sendTrayLocked sends one command for a live item and remembers the request

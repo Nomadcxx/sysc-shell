@@ -1276,6 +1276,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 					h.draft = cfg
 					h.set = settings.DefaultFor(cfg)
 				}
+				r.refreshMonitorLeasesLocked(r.panelHosts[PanelMonitor])
 				media = r.media
 				r.tokens = tok
 				r.themeErr = ""
