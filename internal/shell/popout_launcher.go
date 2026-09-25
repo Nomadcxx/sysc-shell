@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
 // Launcher chrome: SYSC rail, pill search, a list of padded row pills with an
@@ -98,7 +100,11 @@ func (r *Registry) relayLauncher(svc *launcher.Service) {
 			r.mu.Lock()
 			h := r.panelHosts[PanelLauncher]
 			if h != nil {
-				h.launcherResults = results
+				if custom, handled := notesLauncherResults(h.query); handled {
+					h.launcherResults = custom
+				} else {
+					h.launcherResults = addNotesProvider(h.query, results)
+				}
 				r.rebuildPanel(h)
 			}
 			r.mu.Unlock()
@@ -411,15 +417,108 @@ func (h *PanelHost) launcherActivateSelected(r *Registry) {
 	}
 	h.launcherSel = min(h.launcherSel, len(h.launcherResults)-1)
 	res := h.launcherResults[h.launcherSel]
+	if res.Entry.ID == notesLauncherActionID || res.Entry.ID == notesLauncherTooLongID {
+		h.launcherNotesAction(r, res.Entry.ID)
+		return
+	}
 	if len(res.Entry.Argv) == 0 && strings.HasPrefix(res.Entry.ID, "/") {
 		h.query = res.Entry.ID
 		h.search = ui.NewField(h.query)
 		h.launcherSel = 0
-		r.launcherServiceLocked().Query(h.query)
+		if custom, handled := notesLauncherResults(h.query); handled {
+			h.launcherResults = custom
+		} else {
+			r.launcherServiceLocked().Query(h.query)
+		}
 		r.rebuildPanel(h)
 		return
 	}
 	h.launcherSpawn(r, res.Entry.ID, "")
+}
+
+const (
+	notesLauncherActionID  = "sysc-notes-launcher-action"
+	notesLauncherTooLongID = "sysc-notes-launcher-too-long"
+)
+
+func notesLauncherResults(query string) ([]launcher.Result, bool) {
+	query = strings.TrimSpace(query)
+	if query != "/nt" && !strings.HasPrefix(query, "/nt ") {
+		return nil, false
+	}
+	body := strings.TrimSpace(strings.TrimPrefix(query, "/nt"))
+	id, name, comment := notesLauncherActionID, "Open Notes", "Search your Markdown library or capture a thought"
+	if body != "" {
+		name = "Capture note: " + launcherPreview(body, 72)
+		comment = "Create a Markdown note in your configured Notes folder"
+		if len(body) > v1.MaxInputBytes {
+			id, name, comment = notesLauncherTooLongID, "Capture is too long", "Notes captures are limited to 1 MiB"
+		}
+	}
+	return []launcher.Result{{Entry: launcher.Entry{ID: id, Name: name, Comment: comment}}}, true
+}
+
+func addNotesProvider(query string, results []launcher.Result) []launcher.Result {
+	query = strings.TrimSpace(query)
+	if query != "/" && query != "/n" {
+		return results
+	}
+	for _, result := range results {
+		if result.Entry.ID == "/nt" {
+			return results
+		}
+	}
+	out := append([]launcher.Result(nil), results...)
+	return append(out, launcher.Result{Entry: launcher.Entry{
+		ID: "/nt", Name: "Notes", Comment: "Search notes or capture with /nt <text>", IconName: "note",
+	}})
+}
+
+func launcherPreview(value string, maxRunes int) string {
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return string(runes)
+	}
+	return string(runes[:maxRunes]) + "…"
+}
+
+func (h *PanelHost) launcherNotesAction(r *Registry, action string) {
+	if action == notesLauncherTooLongID {
+		h.errLabel = "Capture is too long (maximum 1 MiB)"
+		r.rebuildPanel(h)
+		return
+	}
+	body := ""
+	if strings.HasPrefix(strings.TrimSpace(h.query), "/nt ") {
+		body = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(h.query), "/nt"))
+	}
+	var output string
+	if bar := r.bars[h.output]; bar != nil {
+		output = bar.connector()
+	}
+	generation := h.output
+	plugins := r.plugins
+	go func() {
+		var err error
+		if plugins == nil {
+			err = errors.New("Notes plugin is not running")
+		} else {
+			err = plugins.launcherNotes(output, generation, body)
+		}
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		host := r.panelHosts[PanelLauncher]
+		if host == nil {
+			return
+		}
+		if err != nil {
+			host.errLabel = err.Error()
+			r.rebuildPanel(host)
+			r.publishSurface(host.output, panelSurfaceID(PanelLauncher))
+			return
+		}
+		r.closePanelLocked(PanelLauncher)
+	}()
 }
 
 // launcherSpawn activates through the service off the Wayland goroutine: the
@@ -460,8 +559,16 @@ func (h *PanelHost) launcherPointerPress(r *Registry, e wayland.Event) bool {
 	for i, res := range h.launcherResults {
 		if res.Entry.ID == id {
 			h.launcherSel = i
+			if len(res.Entry.Argv) == 0 && strings.HasPrefix(id, "/") {
+				h.launcherActivateSelected(r)
+				return true
+			}
 			break
 		}
+	}
+	if id == notesLauncherActionID || id == notesLauncherTooLongID {
+		h.launcherNotesAction(r, id)
+		return true
 	}
 	h.launcherSpawn(r, id, "")
 	return true

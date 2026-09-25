@@ -22,6 +22,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
 func launcherTestEntries() []launcher.Entry {
@@ -115,6 +116,24 @@ func TestLauncherHistoryPath(t *testing.T) {
 	wantHome := "/home/test/.local/state/sysc-shell/launcher/history.gob"
 	if homeOnly != wantHome {
 		t.Fatalf("home fallback: got %q, want %q", homeOnly, wantHome)
+	}
+}
+
+func TestNotesLauncherCaptureAndProviderRoutes(t *testing.T) {
+	if got, handled := notesLauncherResults("/nt"); !handled || len(got) != 1 || got[0].Entry.ID != notesLauncherActionID || got[0].Entry.Name != "Open Notes" {
+		t.Fatalf("/nt route = %+v, handled=%v", got, handled)
+	}
+	if got, handled := notesLauncherResults("/nt Remember this"); !handled || got[0].Entry.Name != "Capture note: Remember this" {
+		t.Fatalf("capture route = %+v, handled=%v", got, handled)
+	}
+	if got, handled := notesLauncherResults("/nth"); handled || got != nil {
+		t.Fatalf("unrelated route = %+v, handled=%v", got, handled)
+	}
+	if got, handled := notesLauncherResults("/nt " + strings.Repeat("x", v1.MaxInputBytes+1)); !handled || got[0].Entry.ID != notesLauncherTooLongID {
+		t.Fatalf("oversized route = %+v, handled=%v", got, handled)
+	}
+	if got := addNotesProvider("/", nil); len(got) != 1 || got[0].Entry.ID != "/nt" {
+		t.Fatalf("provider overview = %+v", got)
 	}
 }
 

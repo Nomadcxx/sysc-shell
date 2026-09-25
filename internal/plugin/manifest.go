@@ -73,12 +73,15 @@ const (
 	CapFloatingSurfaces Capability = "floating_surfaces"
 	// CapWallpaper lets a plugin read wallpaper state and register depth masks.
 	CapWallpaper Capability = "wallpaper"
+	// CapClipboardRead grants an explicit, bounded read of plain-text clipboard contents.
+	CapClipboardRead Capability = "clipboard-read"
 )
 
 var knownCapabilities = map[Capability]bool{
 	CapNotifications: true, CapPanels: true, CapSettings: true, CapState: true,
 	CapFloatingSurfaces: true,
 	CapWallpaper:        true,
+	CapClipboardRead:    true,
 }
 
 // Placement says how a declared panel is positioned. Version one attaches a

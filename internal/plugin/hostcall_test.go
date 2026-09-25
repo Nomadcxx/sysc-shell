@@ -103,6 +103,37 @@ func TestHostCallWallpaperSnapshot(t *testing.T) {
 	}
 }
 
+func TestHostCallClipboardReadRequiresGrantAndBoundsText(t *testing.T) {
+	t.Parallel()
+	params := jsonOf(t, v1.ClipboardReadParams{})
+	called := false
+	callback := func(context.Context) (v1.ClipboardReadResult, error) {
+		called = true
+		return v1.ClipboardReadResult{Text: "copied text"}, nil
+	}
+	call := &v1.HostCall{ID: "clipboard", Call: v1.CallClipboardRead, Params: params}
+	denied := NewDispatcher(CallEnv{ClipboardRead: callback}).Handle(context.Background(), call)
+	if denied.OK || !strings.Contains(denied.Error, "clipboard-read") || called {
+		t.Fatalf("denied clipboard read = %+v, callback called=%v", denied, called)
+	}
+
+	allowed := NewDispatcher(CallEnv{Granted: []Capability{CapClipboardRead}, ClipboardRead: callback}).Handle(context.Background(), call)
+	var result v1.ClipboardReadResult
+	if !allowed.OK || json.Unmarshal(allowed.Result, &result) != nil || result.Text != "copied text" {
+		t.Fatalf("allowed clipboard read = %+v, result=%+v", allowed, result)
+	}
+
+	overLimit := NewDispatcher(CallEnv{
+		Granted: []Capability{CapClipboardRead},
+		ClipboardRead: func(context.Context) (v1.ClipboardReadResult, error) {
+			return v1.ClipboardReadResult{Text: strings.Repeat("x", v1.MaxInputBytes+1)}, nil
+		},
+	}).Handle(context.Background(), call)
+	if overLimit.OK || !strings.Contains(overLimit.Error, "oversized") {
+		t.Fatalf("oversized clipboard read = %+v", overLimit)
+	}
+}
+
 func TestHostCallWallpaperMaskSetPassesDescriptor(t *testing.T) {
 	t.Parallel()
 
