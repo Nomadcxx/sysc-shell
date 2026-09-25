@@ -84,7 +84,7 @@ pushing. Never force over someone else's commits.
 ### 3.1 Centre pill (#13, `6eec0d4`)
 
 Design: `2026-09-25-centre-pill-design.md`. Mockups and a shell-render
-comparison: <https://claude.ai/artifact/Lpc8oG86pkLDknbeJzZiN1>.
+comparison: `assets/2026-09-25-centre-pill-design/centre-pill-mockups.html` (also <https://claude.ai/artifact/Lpc8oG86pkLDknbeJzZiN1>).
 
 **Problem fixed.** `clockFloorFor` gave every clock a "Wed 30 Sep" width floor
 when two clocks sat next to a wordmark, so "15:04" ended up in a pill about
@@ -536,7 +536,7 @@ handover.
 
 ### 6.2 Survey output: six upgrades
 
-Mockups: <https://claude.ai/artifact/JwBJ1YDCrUt62Skpm1Jdsa>.
+Mockups: `assets/2026-09-25-bar-surface-and-attach-design/bar-survey-mockups.html` (also <https://claude.ai/artifact/JwBJ1YDCrUt62Skpm1Jdsa>).
 
 1. **Frosted bar.** Designed as D1–D3. Mock values: bar 62%, pills 55%, blur
    18 px, luminance lift on, a 1 px white rim at 7–9% and a soft shadow.
@@ -598,7 +598,10 @@ profiles). Bar `group` is one capsule with flat members.
      afterwards.
 - **Inter 4.1** comes from the GitHub release zip `Inter-4.1.zip`. Subset
   fixtures with `pyftsubset --text=... --layout-features='tnum,kern'`.
-- **The mockups** use the same geometry and tokens as §5. The CSS unit
+- **The mockups** are committed under `docs/plans/assets/` as standalone HTML
+  (open them in a browser; fonts load from Google Fonts and fall back offline).
+  The claude.ai links are the published originals. They use the same geometry
+  and tokens as §5. The CSS unit
   variable `--u` scales them.
 - **The owner reviews PRs** before merging and may rewrite branch history.
   Fetch and rebase before every push.

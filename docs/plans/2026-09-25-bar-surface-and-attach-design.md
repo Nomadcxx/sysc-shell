@@ -2,7 +2,8 @@
 
 Date: 2026-09-25. Owner-directed on 2026-09-25 after the bar survey of
 DankMaterialShell, Noctalia v5 and Caelestia (interactive mockups:
-<https://claude.ai/artifact/JwBJ1YDCrUt62Skpm1Jdsa>). Status lives in bd.
+`assets/2026-09-25-bar-surface-and-attach-design/bar-survey-mockups.html`,
+published at <https://claude.ai/artifact/JwBJ1YDCrUt62Skpm1Jdsa>). Status lives in bd.
 
 The owner asked for three things:
 
