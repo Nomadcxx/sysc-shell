@@ -590,6 +590,15 @@ func animateSurfaceResting(stop, wake <-chan struct{}, settled func() bool, publ
 		case now = <-timer.C:
 		}
 		done := settled()
+		// A close nudges wake as it stops the loop -- it retargets the
+		// surface's visibility -- so a woken loop can reach settled while the
+		// close holds the lock settled takes. Once settled returns the close
+		// has finished, and stop is checked again before anything publishes.
+		select {
+		case <-stop:
+			return
+		default:
+		}
 		// A skipped frame still advances the animation: values are computed
 		// from the clock, not from how many times the surface was published.
 		// Pacing changes how often we blit, never where the animation gets to.
