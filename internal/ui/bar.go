@@ -44,7 +44,7 @@ func ArrangeBar(content Rect, left, center, right []*Node, spacing int, measure 
 func wordmarkIndex(items []*Node) int {
 	mark := -1
 	for i, n := range items {
-		if n != nil && n.Kind == KindWordmark {
+		if anchorsWordmark(n) {
 			if mark >= 0 {
 				return -1
 			}
@@ -52,6 +52,28 @@ func wordmarkIndex(items []*Node) int {
 		}
 	}
 	return mark
+}
+
+// anchorsWordmark reports whether a centre item is the SYSC wordmark or the
+// capsule whose row holds it. The centre pill carries the mark beside the
+// time and date, and it is the pill, not the mark inside it, that stays on
+// the band's centre while media comes and goes beside it.
+func anchorsWordmark(n *Node) bool {
+	if n == nil {
+		return false
+	}
+	if n.Kind == KindWordmark {
+		return true
+	}
+	if n.Kind != KindCapsule || len(n.Children) != 1 || n.Children[0] == nil || n.Children[0].Kind != KindRow {
+		return false
+	}
+	for _, c := range n.Children[0].Children {
+		if c != nil && c.Kind == KindWordmark {
+			return true
+		}
+	}
+	return false
 }
 
 func arrangeAnchoredWordmark(content Rect, left, center, right []*Node, markIndex, spacing int, measure MeasureText) (BarOverflow, error) {

@@ -824,3 +824,46 @@ func TestLayoutNamesTheNodeThatDoesNotFit(t *testing.T) {
 		}
 	}
 }
+
+// PaddingX widens a capsule's ends without moving its vertical inset, which
+// the bar band fixes.
+func TestCapsulePaddingXWidensOnlyTheEnds(t *testing.T) {
+	t.Parallel()
+	text := &Node{Kind: KindText, Text: "15:04"} // 40 x 16 under fakeMeasure
+	pill := &Node{Kind: KindCapsule, Padding: 4, PaddingX: 11, Children: []*Node{text}}
+	w, h, err := measureNode(pill, 25, fakeMeasure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w != 40+2*11 || h != 25 {
+		t.Fatalf("measured %dx%d, want %dx25", w, h, 40+2*11)
+	}
+	pill.Bounds = Rect{X: 100, Y: 0, W: w, H: h}
+	if err := layoutCapsuleChild(pill, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	if text.Bounds.X != 111 || text.Bounds.W != 40 {
+		t.Fatalf("child at x=%d w=%d, want x=111 w=40", text.Bounds.X, text.Bounds.W)
+	}
+	if text.Bounds.Y != (25-16)/2 {
+		t.Fatalf("child at y=%d, want it centred in the vertical inset", text.Bounds.Y)
+	}
+}
+
+// A row rule that names a height keeps it and centres on the row; one that
+// does not spans the row, as every existing rule does.
+func TestRowSeparatorKeepsANamedHeight(t *testing.T) {
+	t.Parallel()
+	short := &Node{Kind: KindSeparator, Height: 13}
+	full := &Node{Kind: KindSeparator}
+	root := &Node{Kind: KindRow, Children: []*Node{short, full}}
+	if err := Layout(root, Rect{W: 40, H: 19}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	if short.Bounds.H != 13 || short.Bounds.Y != 3 {
+		t.Fatalf("short rule = %+v, want 13 tall at y=3", short.Bounds)
+	}
+	if full.Bounds.H != 19 {
+		t.Fatalf("full rule = %+v, want the row's 19", full.Bounds)
+	}
+}

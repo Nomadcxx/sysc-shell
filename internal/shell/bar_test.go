@@ -450,11 +450,11 @@ func TestBarCollapsesAbsentMediaAcrossRetainedConsumers(t *testing.T) {
 	}
 }
 
-func TestDefaultCentreKeepsWordmarkAnchoredAcrossMediaAndClockChanges(t *testing.T) {
+func TestDefaultCentrePillStaysAnchoredAcrossMediaAndClockChanges(t *testing.T) {
 	t.Parallel()
 	cfg := config.Default()
 	const mediaMaxWidth = 180
-	cfg.Bar.Center[2].MaxWidth = mediaMaxWidth
+	cfg.Bar.Center[1].MaxWidth = mediaMaxWidth
 	bar, err := NewWithTheme(ThemeFrom(cfg, cfg.Bar), cfg.Bar, "DP-1")
 	if err != nil {
 		t.Fatal(err)
@@ -479,33 +479,36 @@ func TestDefaultCentreKeepsWordmarkAnchoredAcrossMediaAndClockChanges(t *testing
 		root, _ := bar.renderViewLocked()
 		return root
 	}
-	wordmarkCentre := func(root *ui.Node) int {
+	// The pill's left edge is where the band's centre puts it; an odd width
+	// rounds the same way every time, so the edge is compared exactly.
+	pillX := func(root *ui.Node) int {
 		t.Helper()
-		mark := findAction(root, panelControlCenterAction)
-		if mark == nil {
-			t.Fatal("rendered default bar has no wordmark")
+		pill := findAction(root, panelControlCenterAction)
+		if pill == nil || pill.Kind != ui.KindCapsule {
+			t.Fatalf("rendered default bar has no centre pill: %+v", pill)
 		}
-		return mark.Bounds.X + mark.Bounds.W/2
+		return pill.Bounds.X
 	}
 
 	root := render()
 	content := bar.contentLocked(width, BarHeight)
-	wantCentre := content.X + content.W/2
-	if got := wordmarkCentre(root); got != wantCentre {
-		t.Fatalf("wordmark centre without media = %d, want %d", got, wantCentre)
+	wantX := content.X + (content.W-bar.center[0].node.Bounds.W)/2
+	if got := pillX(root); got != wantX {
+		t.Fatalf("pill x without media = %d, want %d", got, wantX)
 	}
-	if len(bar.sections()[1]) != 2 {
-		t.Fatalf("centre without media = %d nodes, want group and wordmark", len(bar.sections()[1]))
+	pill := bar.center[0].node
+	pillBounds := pill.Bounds
+	// The bar rebuilds a group's row from its members at layout, so the
+	// hairline has to be one or it vanishes from the painted pill.
+	if kids := bar.center[0].inner.Children; len(kids) != 4 || kids[1].Kind != ui.KindSeparator || kids[1].Bounds.W != 1 {
+		t.Fatalf("laid-out pill row = %d nodes, want mark, a placed hairline, time and date", len(kids))
 	}
-	group := bar.center[0]
-	if group.node.Kind != ui.KindCapsule || group.inner == nil || group.inner.Kind != ui.KindRow || len(group.inner.Children) != 2 {
-		t.Fatalf("default time/date group = %+v, want one capsule with two clocks", group)
+
+	// The time, not only the mark, opens the control centre.
+	clock := bar.center[0].inner.Children[2]
+	if action, ok := bar.hitLocked(clock.Bounds.X+clock.Bounds.W/2, clock.Bounds.Y+clock.Bounds.H/2); !ok || action != panelControlCenterAction {
+		t.Fatalf("hit on the time = %q, want %q", action, panelControlCenterAction)
 	}
-	wordmark := bar.center[1].node
-	if wordmark.Action != panelControlCenterAction || wordmark.Name != "Control centre" || wordmark.Role != "button" {
-		t.Fatalf("wordmark accessibility = %+v", wordmark)
-	}
-	groupBounds := group.node.Bounds
 
 	art := &ui.Image{Width: mediaBarArtSize, Height: mediaBarArtSize, Stride: mediaBarArtSize * 4,
 		Pix: make([]byte, mediaBarArtSize*mediaBarArtSize*4)}
@@ -520,36 +523,36 @@ func TestDefaultCentreKeepsWordmarkAnchoredAcrossMediaAndClockChanges(t *testing
 		t.Fatal("the present media snapshot reported no change")
 	}
 	root = render()
-	if got := wordmarkCentre(root); got != wantCentre {
-		t.Fatalf("wordmark centre with media = %d, want %d", got, wantCentre)
+	if got := pillX(root); got != wantX {
+		t.Fatalf("pill x with media = %d, want %d", got, wantX)
 	}
 	media := findAction(root, panelMediaAction)
 	if media == nil {
 		t.Fatal("rendered default bar has no media action")
 	}
+	if media.Bounds.X < pillBounds.X+pillBounds.W {
+		t.Fatalf("media at x=%d overlaps the pill ending at %d", media.Bounds.X, pillBounds.X+pillBounds.W)
+	}
 	title := findNode(root, func(n *ui.Node) bool { return n.Key == "media-title" })
 	if title == nil || title.Bounds.W > mediaMaxWidth || !title.Marquee {
 		t.Fatalf("rendered media title = %+v, want max width %d and marquee", title, mediaMaxWidth)
 	}
-	if got := bar.center[2].inner.Children[0].Kind; got != ui.KindImage {
-		t.Fatalf("media leading node kind = %d, want resolved art image", got)
+	if bar.center[1].inner.Action != panelMediaAction || bar.center[1].inner.Name != "Media" || bar.center[1].inner.Role != "button" {
+		t.Fatalf("media accessibility = %+v", bar.center[1].inner)
 	}
-	if bar.center[2].inner.Action != panelMediaAction || bar.center[2].inner.Name != "Media" || bar.center[2].inner.Role != "button" {
-		t.Fatalf("media accessibility = %+v", bar.center[2].inner)
-	}
-	if group.node.Bounds != groupBounds {
-		t.Fatalf("clock group bounds changed with media: before=%+v after=%+v", groupBounds, group.node.Bounds)
+	if pill.Bounds != pillBounds {
+		t.Fatalf("pill bounds changed with media: before=%+v after=%+v", pillBounds, pill.Bounds)
 	}
 
 	if !bar.apply(barView{Now: reference.Add(time.Minute), Media: present.Media, MediaArt: art}) {
 		t.Fatal("the minute-boundary snapshot reported no change")
 	}
 	root = render()
-	if got := wordmarkCentre(root); got != wantCentre {
-		t.Fatalf("wordmark centre after minute boundary = %d, want %d", got, wantCentre)
+	if got := pillX(root); got != wantX {
+		t.Fatalf("pill x after minute boundary = %d, want %d", got, wantX)
 	}
-	if bar.center[0].node.Bounds != groupBounds {
-		t.Fatalf("clock group bounds changed at the minute boundary: before=%+v after=%+v", groupBounds, bar.center[0].node.Bounds)
+	if pill.Bounds != pillBounds {
+		t.Fatalf("pill bounds changed at the minute boundary: before=%+v after=%+v", pillBounds, pill.Bounds)
 	}
 }
 

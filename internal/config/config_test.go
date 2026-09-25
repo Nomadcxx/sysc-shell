@@ -316,7 +316,7 @@ func TestARejectedCandidateLeavesNoPartialState(t *testing.T) {
 	}
 }
 
-func TestDefaultVocabularyShipsTimeDateGroupWordmarkAndMedia(t *testing.T) {
+func TestDefaultVocabularyShipsCentrePillAndMedia(t *testing.T) {
 	t.Parallel()
 	cfg := Default()
 
@@ -329,26 +329,26 @@ func TestDefaultVocabularyShipsTimeDateGroupWordmarkAndMedia(t *testing.T) {
 	if cfg.Bar.Left[2].ID != "window-title" || cfg.Bar.Left[2].MaxWidth <= 0 {
 		t.Fatalf("left[2] = %+v, want window-title with a positive max width", cfg.Bar.Left[2])
 	}
-	if len(cfg.Bar.Center) != 3 {
-		t.Fatalf("center = %+v, want time/date group, wordmark, and media", cfg.Bar.Center)
+	if len(cfg.Bar.Center) != 2 {
+		t.Fatalf("center = %+v, want the centre pill group and media", cfg.Bar.Center)
 	}
 	group := cfg.Bar.Center[0]
-	if group.ID != "group" || len(group.Items) != 2 {
-		t.Fatalf("center[0] = %+v, want a two-clock group", group)
+	if group.ID != "group" || len(group.Items) != 3 {
+		t.Fatalf("center[0] = %+v, want a wordmark and two clocks in one group", group)
 	}
-	if group.Items[0].ID != "clock" || group.Items[1].ID != "clock" {
-		t.Fatalf("time/date group = %+v, want two clocks", group.Items)
+	if group.Items[0].ID != "wordmark" || group.Items[1].ID != "clock" || group.Items[2].ID != "clock" {
+		t.Fatalf("centre pill = %+v, want wordmark, clock, clock", group.Items)
 	}
-	if group.Items[0].Format != "15:04" || group.Items[1].Format != "Mon 2 Jan" {
-		t.Fatalf("time/date formats = %q/%q, want time before date", group.Items[0].Format, group.Items[1].Format)
+	if group.Items[1].Format != "15:04" || group.Items[2].Format != "Mon 2 Jan" {
+		t.Fatalf("time/date formats = %q/%q, want time before date", group.Items[1].Format, group.Items[2].Format)
 	}
-	if cfg.Bar.Center[1].ID != "wordmark" || cfg.Bar.Center[2].ID != "media" {
-		t.Fatalf("center = %+v, want group, wordmark, media", cfg.Bar.Center)
+	if cfg.Bar.Center[1].ID != "media" {
+		t.Fatalf("center = %+v, want the pill then media", cfg.Bar.Center)
 	}
 	// The two default clocks must differ, or the defaults do not demonstrate
 	// a date.
-	if group.Items[0].Boundary != time.Minute || group.Items[1].Boundary != time.Minute {
-		t.Fatalf("time/date group boundaries = %v/%v, want one minute", group.Items[0].Boundary, group.Items[1].Boundary)
+	if group.Items[1].Boundary != time.Minute || group.Items[2].Boundary != time.Minute {
+		t.Fatalf("time/date boundaries = %v/%v, want one minute", group.Items[1].Boundary, group.Items[2].Boundary)
 	}
 	// The right section carries status widgets rather than a second clock.
 	if len(cfg.Bar.Right) == 0 {

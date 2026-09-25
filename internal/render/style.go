@@ -205,7 +205,7 @@ func (s TextSpec) Italicised() TextSpec {
 // adding one past it without changing this line leaves the array a slot short
 // and indexes out of range at paint -- silently, because the table is a
 // fixed-size array and the guard below would still have passed.
-const textRoleCount = int(theme.RoleDisplay) + 1
+const textRoleCount = int(theme.RoleFigure) + 1
 
 // Spec returns the resolved spec for a role, falling back to body text for a
 // role outside the table so a frame still paints.

@@ -137,7 +137,11 @@ func clockFloorFor(items []config.Item) string {
 			case "wordmark":
 				hasWordmark = true
 			case "group":
-				walk(item.Items)
+				// The centre pill sizes its own clocks; a floor there is the
+				// empty slack the pill replaced.
+				if !groupHoldsWordmark(item.Items) {
+					walk(item.Items)
+				}
 			}
 		}
 	}
@@ -200,6 +204,10 @@ func buildWidgetsWithClockFloor(items []config.Item, pad int, m theme.Metrics, c
 		case "weather":
 			out = append(out, buildWeatherWidget(item, m))
 		case "group":
+			if groupHoldsWordmark(item.Items) {
+				out = append(out, buildCentrePill(item.Items, pad, m))
+				continue
+			}
 			// One capsule holding its members as a flat row. Members are not
 			// individually capsuled: two nested surfaces read as one blob at
 			// the palette contrast a bar uses.
@@ -218,21 +226,7 @@ func buildWidgetsWithClockFloor(items []config.Item, pad int, m theme.Metrics, c
 					}
 				}
 			}
-			g.refresh = func(v barView) bool {
-				changed := false
-				for _, m := range members {
-					if m.refresh != nil {
-						changed = m.refresh(v) || changed
-						continue
-					}
-					before := *m.node
-					if text := m.format(v); text != m.node.Text {
-						m.node.Text = text
-					}
-					changed = nodeVisualStateChanged(before, *m.node) || changed
-				}
-				return changed
-			}
+			g.refresh = func(v barView) bool { return refreshMembers(members, v) }
 			out = append(out, g)
 		case "battery":
 			node := &ui.Node{Kind: ui.KindText, Action: panelSessionAction}
@@ -273,6 +267,24 @@ func buildWidgetsWithClockFloor(items []config.Item, pad int, m theme.Metrics, c
 		out[i] = capsuled(out[i], pad)
 	}
 	return out
+}
+
+// refreshMembers refreshes every member of a group and reports whether any of
+// them changed what the group paints.
+func refreshMembers(members []textWidget, v barView) bool {
+	changed := false
+	for _, m := range members {
+		if m.refresh != nil {
+			changed = m.refresh(v) || changed
+			continue
+		}
+		before := *m.node
+		if text := m.format(v); text != m.node.Text {
+			m.node.Text = text
+		}
+		changed = nodeVisualStateChanged(before, *m.node) || changed
+	}
+	return changed
 }
 
 func nodeVisualStateChanged(before, after ui.Node) bool {
