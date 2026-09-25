@@ -179,6 +179,33 @@ func TestMonitorGPURowShowsVRAMOnlyWhenValid(t *testing.T) {
 	}
 }
 
+func TestMonitorGPUCaptionFitsBesideItsGraph(t *testing.T) {
+	r := monitorTestRegistry()
+	r.sample.GPU = &metrics.GPUSnapshot{GPUs: []metrics.GPU{{
+		PCIID: "10de:2808", Name: "AD106 [GeForce RTX 4060]",
+		VRAM: metrics.Capacity{UsedBytes: 473 << 20, TotalBytes: 8188 << 20}, VRAMValid: true,
+	}}}
+	page := layOutMonitor(t, r)
+	var caption *ui.Node
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if strings.Contains(n.Text, "AD106 [GeForce RTX 4060]") {
+			caption = n
+		}
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(page)
+	if caption == nil {
+		t.Fatal("GPU caption was not laid out")
+	}
+	wantWidth := len([]rune(caption.Text)) * 7
+	if caption.Bounds.W < wantWidth {
+		t.Fatalf("GPU caption %q needs %dpx but has %dpx", caption.Text, wantWidth, caption.Bounds.W)
+	}
+}
+
 // Row values read as one column: every row's value starts at the same x
 // whatever its label's length, and whether or not the label has a glyph.
 func TestMonitorRowValuesShareOneColumn(t *testing.T) {

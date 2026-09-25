@@ -216,7 +216,7 @@ func ccMonGPURow(snap services.Snapshot, history map[services.Selector][]float64
 		}
 	}
 	return ccMonRow("gpu", "GPU", ccMonValue("GPU usage", value, tone, theme.RoleBody),
-		ccMonCaption(caption), ccMonGraph(ccMonMarkW, ccMonMarkH, samples, nil, tone))
+		ccMonCaption(caption), ccMonGraph(ccMonMarkW/2, ccMonMarkH, samples, nil, tone))
 }
 
 func ccMonStorageRow(snap services.Snapshot) *ui.Node {
