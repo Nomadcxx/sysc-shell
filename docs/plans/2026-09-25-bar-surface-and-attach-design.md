@@ -1,7 +1,8 @@
 # Bar surface styles and attached panels design
 
 Date: 2026-09-25. Owner-directed on 2026-09-25 after the bar survey of
-DankMaterialShell, Noctalia v5 and Caelestia. Status lives in bd.
+DankMaterialShell, Noctalia v5 and Caelestia (interactive mockups:
+`assets/2026-09-25-bar-surface-and-attach-design/bar-survey-mockups.html`). Status lives in bd.
 
 The owner asked for three things:
 
