@@ -8,6 +8,11 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
+// systemRowH is a System row: tighter than the Control Centre's, so all seven
+// rows and their section headers fit the panel without scrolling. The value
+// and its caption still fit inside it.
+const systemRowH = 40
+
 // systemPageTree is the System page: the shared header and info card over one
 // card of collapsible sections in the process table's style. Row content is
 // the Control Centre Monitor page's, so the two surfaces never disagree.
@@ -76,6 +81,9 @@ func systemPageTree(h *PanelHost, in monitorView) *ui.Node {
 		open := !h.processCollapsed[s.key]
 		body.Children = append(body.Children, processLineRow(h, in, processLine{Kind: lineSection, Key: s.key, Name: s.title, Expanded: open}))
 		if open {
+			for _, row := range s.rows {
+				row.Height = systemRowH
+			}
 			body.Children = append(body.Children, s.rows...)
 		}
 	}

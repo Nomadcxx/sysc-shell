@@ -177,3 +177,27 @@ func TestArrivingIconsRebuildTheMonitorOnce(t *testing.T) {
 		t.Fatalf("monitor published %d times for 5 icons, want 1", got)
 	}
 }
+
+// At the panel's own size every System row is visible without scrolling:
+// the Network row used to sit below the fold (476 px of rows in 410).
+func TestSystemPageFitsWithoutScrolling(t *testing.T) {
+	h := systemHost()
+	root := monitorPanelTree(h, testMonitorView())
+	size := panelTargetSize(PanelMonitor)
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 8, 16 }
+	if err := ui.LayoutColumn(root, ui.Rect{W: size.W, H: size.H}, measure); err != nil {
+		t.Fatalf("layout: %v", err)
+	}
+	var scroll *ui.Node
+	walkNodes(root, func(n *ui.Node) {
+		if n.Kind == ui.KindScroll {
+			scroll = n
+		}
+	})
+	if scroll == nil {
+		t.Fatal("no scroll")
+	}
+	if view := scroll.Bounds.H - 2*scroll.Padding; scroll.ContentH > view {
+		t.Fatalf("System rows are %d tall in a %d view", scroll.ContentH, view)
+	}
+}
