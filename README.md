@@ -108,7 +108,7 @@ docs/                          architecture, roadmap, designs and plans
 ## Official plugins
 
 The official plugins (screen recorder, notes, timer, world clock, calendar,
-GitHub notifications, mini docker, wallpaper depth) live in the companion
+GitHub notifications, mini docker, wallpaper depth, cat) live in the companion
 repository [`sysc-plugins`](https://github.com/Nomadcxx/sysc-plugins). Build and
 install them from there (`make install` symlinks each plugin directory into
 `$XDG_CONFIG_HOME/sysc-shell/plugins`); the shell discovers them at startup and
