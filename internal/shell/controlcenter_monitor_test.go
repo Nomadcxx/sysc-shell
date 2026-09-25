@@ -111,6 +111,99 @@ func TestMonitorPageDashesAGPUWithoutAValidSample(t *testing.T) {
 	if !strings.Contains(renderText(page), "RTX 4060") {
 		t.Fatal("the GPU row lost its name")
 	}
+
+	// A stale ring is not a valid reading for this sample and must not draw.
+	sel := services.Selector{Source: services.SourceGPU, Subject: "10de:2808"}
+	row := ccMonGPURow(r.sample, map[services.Selector][]float64{sel: {0.4, 0.8}})
+	var graphs []*ui.Node
+	collectByKind(row, ui.KindGraph, &graphs)
+	if len(graphs) != 1 || !graphs[0].Absent || len(graphs[0].Values) != 0 {
+		t.Fatalf("GPU graph = %+v, want absent with no values", graphs)
+	}
+}
+
+func TestMonitorTemperatureUsesEitherSensorAndWorstTone(t *testing.T) {
+	tests := []struct {
+		name string
+		snap services.Snapshot
+		want string
+		tone ui.Tone
+	}{
+		{
+			name: "GPU only",
+			snap: services.Snapshot{GPU: &metrics.GPUSnapshot{GPUs: []metrics.GPU{{
+				PCIID: "10de:2808", Celsius: 51, TempValid: true,
+			}}}},
+			want: "GPU 51°C", tone: ui.ToneNormal,
+		},
+		{
+			name: "GPU critical overrides normal CPU",
+			snap: services.Snapshot{
+				Thermal: &metrics.ThermalSnapshot{Celsius: 50, Valid: true},
+				GPU: &metrics.GPUSnapshot{GPUs: []metrics.GPU{{
+					PCIID: "10de:2808", Celsius: 90, TempValid: true,
+				}}},
+			},
+			want: "CPU 50°C · GPU 90°C", tone: ui.ToneError,
+		},
+		{name: "neither sensor", snap: services.Snapshot{}, want: ccDash, tone: ui.ToneNormal},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			row := ccMonTemperatureRow(tt.snap, nil)
+			value := findByName(row, "Temperature reading")
+			if value == nil || value.Text != tt.want || value.Tone != tt.tone {
+				t.Fatalf("temperature = %+v, want %q with tone %v", value, tt.want, tt.tone)
+			}
+		})
+	}
+}
+
+func TestMonitorGPURowShowsVRAMOnlyWhenValid(t *testing.T) {
+	const name = "RTX 4060"
+	used, total := uint64(2<<30), uint64(8<<30)
+	withVRAM := services.Snapshot{GPU: &metrics.GPUSnapshot{GPUs: []metrics.GPU{{
+		PCIID: "10de:2808", Name: name, VRAM: metrics.Capacity{UsedBytes: used, TotalBytes: total}, VRAMValid: true,
+	}}}}
+	caption := renderText(ccMonGPURow(withVRAM, nil))
+	if !strings.Contains(caption, name) || !strings.Contains(caption, formatBytes(float64(used))+" / "+formatBytes(float64(total))) {
+		t.Fatalf("GPU caption = %q, want name and VRAM used / total", caption)
+	}
+
+	withoutVRAM := services.Snapshot{GPU: &metrics.GPUSnapshot{GPUs: []metrics.GPU{{
+		PCIID: "10de:2808", Name: name,
+	}}}}
+	caption = renderText(ccMonGPURow(withoutVRAM, nil))
+	if !strings.Contains(caption, name) || strings.Contains(caption, "/") {
+		t.Fatalf("GPU caption without VRAM = %q, want name only", caption)
+	}
+}
+
+func TestMonitorGPUCaptionFitsBesideItsGraph(t *testing.T) {
+	r := monitorTestRegistry()
+	r.sample.GPU = &metrics.GPUSnapshot{GPUs: []metrics.GPU{{
+		PCIID: "10de:2808", Name: "AD106 [GeForce RTX 4060]",
+		VRAM: metrics.Capacity{UsedBytes: 473 << 20, TotalBytes: 8188 << 20}, VRAMValid: true,
+	}}}
+	page := layOutMonitor(t, r)
+	var caption *ui.Node
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if strings.Contains(n.Text, "AD106 [GeForce RTX 4060]") {
+			caption = n
+		}
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(page)
+	if caption == nil {
+		t.Fatal("GPU caption was not laid out")
+	}
+	wantWidth := len([]rune(caption.Text)) * 7
+	if caption.Bounds.W < wantWidth {
+		t.Fatalf("GPU caption %q needs %dpx but has %dpx", caption.Text, wantWidth, caption.Bounds.W)
+	}
 }
 
 // Row values read as one column: every row's value starts at the same x

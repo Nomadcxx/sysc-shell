@@ -2,11 +2,13 @@ package render
 
 import (
 	"fmt"
+	"image"
 	"math"
 	"strings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	"golang.org/x/image/vector"
 )
 
 // buttonText returns the label colour over a Primary fill, falling back to
@@ -792,18 +794,24 @@ func paintGraph(c *Canvas, n *ui.Node, box ui.Rect, style Style) error {
 	line := toneColor(style, n.Tone, style.accent())
 
 	fillRect(c, ui.Rect{X: box.X, Y: box.Y + box.H - 1, W: box.W, H: 1}, style.Track)
+	rasterizer := vector.NewRasterizer(box.W, box.H)
+	mask := image.NewAlpha(image.Rect(0, 0, box.W, box.H))
 
 	primary := smoothLine(sparklinePoints(n.Values, window, box.W, box.H, inset))
-	if area := areaContour(primary, float32(box.H)); area != nil {
-		blendMask(c, rasterize(box.W, box.H, [][]fpt{area}), box.X, box.Y, withAlpha(line, 0.18))
+	if len(primary) >= 2 {
+		rasterizeArea(rasterizer, mask, primary, float32(box.H))
+		blendMask(c, mask, box.X, box.Y, withAlpha(line, 0.18))
 	}
 	if len(n.SecondValues) > 0 {
 		second := smoothLine(sparklinePoints(n.SecondValues, window, box.W, box.H, inset))
-		blendMask(c, rasterize(box.W, box.H, strokeContours(second, max(scale, 1))), box.X, box.Y, style.Secondary)
+		rasterizeStroke(rasterizer, mask, second, max(scale, 1))
+		blendMask(c, mask, box.X, box.Y, style.Secondary)
 	}
-	blendMask(c, rasterize(box.W, box.H, strokeContours(primary, stroke)), box.X, box.Y, line)
+	rasterizeStroke(rasterizer, mask, primary, stroke)
+	blendMask(c, mask, box.X, box.Y, line)
 	newest := primary[len(primary)-1]
-	blendMask(c, rasterize(box.W, box.H, [][]fpt{circleContour(newest, dot, 12)}), box.X, box.Y, line)
+	rasterizeCircle(rasterizer, mask, newest, dot, 12)
+	blendMask(c, mask, box.X, box.Y, line)
 	return nil
 }
 

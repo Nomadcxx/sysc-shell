@@ -27,9 +27,9 @@ func primaryInterface(snap services.Snapshot) string {
 	return best
 }
 
-// primaryBlockDevice is the device backing /, or failing that the busiest
-// real device. Loop, RAM and zram devices are never chosen.
-func primaryBlockDevice(snap services.Snapshot, resolve func(string) (string, error)) string {
+// primaryBlockDevice uses the cached root backing device when it is present,
+// or failing that the busiest real device. Loop, RAM and zram are skipped.
+func primaryBlockDevice(snap services.Snapshot, rootDevice string) string {
 	if snap.Block == nil {
 		return ""
 	}
@@ -37,15 +37,8 @@ func primaryBlockDevice(snap services.Snapshot, resolve func(string) (string, er
 	for _, d := range snap.Block.Devices {
 		listed[d.Name] = true
 	}
-	if snap.Filesystem != nil {
-		for _, fs := range snap.Filesystem.Filesystems {
-			if fs.MountPoint != "/" {
-				continue
-			}
-			if path, err := resolve(fs.Source); err == nil && listed[filepath.Base(path)] {
-				return filepath.Base(path)
-			}
-		}
+	if rootDevice != "" && listed[rootDevice] {
+		return rootDevice
 	}
 	best, bestBytes := "", uint64(0)
 	for _, d := range snap.Block.Devices {
