@@ -16,6 +16,7 @@ var materialInventory = []string{
 	"display_settings", "apps", "extension", "accessibility_new",
 	"folder_open", "expand_more", "add", "remove",
 	"drag_indicator", "tune", "link", "link_off",
+	"public", "edit",
 	"lock", "logout", "bedtime", "restart_alt", "power_settings_new",
 	"speed", "balance", "energy_savings_leaf", "check", "send",
 	"content_paste", "content_copy",
