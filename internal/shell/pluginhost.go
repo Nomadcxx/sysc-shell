@@ -97,7 +97,7 @@ const pluginBarViewHeight = lint.BarHeight
 
 var hostPluginCaps = []plugin.Capability{
 	plugin.CapNotifications, plugin.CapPanels, plugin.CapSettings, plugin.CapState,
-	plugin.CapFloatingSurfaces, plugin.CapWallpaper,
+	plugin.CapFloatingSurfaces, plugin.CapWallpaper, plugin.CapClipboardRead,
 }
 
 // BindPlugins discovers enabled plugins and starts one runtime for each.
@@ -272,6 +272,7 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 		WallpaperMaskSet: func(ctx context.Context, p v1.WallpaperMaskSetParams) error {
 			return h.registerWallpaperMask(ctx, id, p)
 		},
+		ClipboardRead: readSystemClipboard,
 	})
 	rt.SetCalls(disp)
 	slot := &pluginSlot{rt: rt, disp: disp, store: store}

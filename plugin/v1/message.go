@@ -2,6 +2,11 @@ package v1
 
 import "encoding/json"
 
+const (
+	ProtocolMajor = 1
+	ProtocolMinor = 8
+)
+
 // The version-one message names. Every line on the wire carries one of these
 // in its "type" field, and a reader that does not recognise a name rejects the
 // message rather than guessing.
@@ -251,6 +256,7 @@ const (
 	CallSurfaceOpen       CallKind = "surface.open"
 	CallSurfaceClose      CallKind = "surface.close"
 	CallSurfacePin        CallKind = "surface.pin"
+	CallClipboardRead     CallKind = "clipboard.read"
 	CallWallpaperSnapshot CallKind = "wallpaper.snapshot"
 	CallWallpaperMaskSet  CallKind = "wallpaper.mask.set"
 )
@@ -416,6 +422,16 @@ type OutputContextResult struct {
 // PanelResult names the view the host opened, so the plugin can close it.
 type PanelResult struct {
 	ViewID string `json:"view_id"`
+}
+
+// ClipboardReadParams has no options: clipboard imports always read bounded
+// plain text from the current selection.
+type ClipboardReadParams struct{}
+
+// ClipboardReadResult is limited by the host to keep one reply within the
+// protocol message ceiling.
+type ClipboardReadResult struct {
+	Text string `json:"text"`
 }
 
 // Urgency mirrors the notification specification's three levels.
