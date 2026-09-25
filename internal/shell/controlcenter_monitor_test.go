@@ -118,7 +118,7 @@ func TestMonitorPageDashesAGPUWithoutAValidSample(t *testing.T) {
 func TestMonitorRowValuesShareOneColumn(t *testing.T) {
 	page := layOutMonitor(t, monitorTestRegistry())
 	x := -1
-	for _, name := range []string{"Temperature", "GPU usage", "Storage used", "Network rate", "Disk I/O rate"} {
+	for _, name := range []string{"Temperature reading", "GPU usage", "Storage used", "Network rate", "Disk I/O rate"} {
 		n := findByName(page, name)
 		if n == nil {
 			t.Fatalf("no value named %q", name)
@@ -127,6 +127,35 @@ func TestMonitorRowValuesShareOneColumn(t *testing.T) {
 			x = n.Bounds.X
 		} else if n.Bounds.X != x {
 			t.Errorf("%s value starts at x=%d, want %d", name, n.Bounds.X, x)
+		}
+	}
+}
+
+// A chart opened with a short history draws it against the right edge on the
+// ring's full time scale, rather than stretching two samples across the width
+// and compressing them for the next two minutes.
+func TestMonitorGraphsUseTheRingWindow(t *testing.T) {
+	page := layOutMonitor(t, monitorTestRegistry())
+	var graphs []*ui.Node
+	collectByKind(page, ui.KindGraph, &graphs)
+	if len(graphs) == 0 {
+		t.Fatal("no graphs on the monitor page")
+	}
+	for _, g := range graphs {
+		if g.Window != services.HistorySize {
+			t.Errorf("graph window = %d, want the ring size %d", g.Window, services.HistorySize)
+		}
+	}
+}
+
+// Row labels paint an icon-font glyph. Their accessible name is the plain
+// label, so assistive tech never reads a private-use character.
+func TestMonitorRowLabelsHavePlainNames(t *testing.T) {
+	page := layOutMonitor(t, monitorTestRegistry())
+	for _, label := range []string{"Temperature", "GPU", "Storage", "Network", "Disk I/O"} {
+		n := findByName(page, label)
+		if n == nil || n.Kind != ui.KindText {
+			t.Errorf("no text node named %q", label)
 		}
 	}
 }

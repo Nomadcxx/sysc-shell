@@ -82,3 +82,26 @@ func TestControlCentreResolvesSubjectsOnceAndKeepsThem(t *testing.T) {
 		}
 	}
 }
+
+// A failed network or block pass leaves that source nil. That is no
+// information, not a missing subject: the chart keeps its subject and its
+// ring rather than blanking and restarting from nothing.
+func TestControlCentreKeepsSubjectsThroughAFailedPass(t *testing.T) {
+	r := newPanelRegistry(t)
+	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	h := r.panelHosts[PanelControlCenter]
+	r.syncControlCentreSubjectsLocked(h, ccSubjectSnapshot("enp7s0"))
+	r.syncControlCentreSubjectsLocked(h, services.Snapshot{})
+	if h.ccIface != "enp7s0" || h.ccDevice != "nvme0n1" {
+		t.Fatalf("subjects after a failed pass = %q, %q; want enp7s0, nvme0n1", h.ccIface, h.ccDevice)
+	}
+	for _, sel := range ccRateSelectors("enp7s0", "nvme0n1") {
+		if !r.metrics.Leased(sel) {
+			t.Errorf("%v was released by a failed pass", sel)
+		}
+	}
+}

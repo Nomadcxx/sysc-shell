@@ -30,11 +30,13 @@ func (r *Registry) syncControlCentreSubjectsLocked(h *PanelHost, snap services.S
 	if h == nil || r.metrics == nil {
 		return
 	}
+	// A nil source is a failed pass, not a missing subject. Re-resolving on it
+	// would release the rings and restart the chart from nothing.
 	iface, device := h.ccIface, h.ccDevice
-	if !snapshotHasInterface(snap, iface) {
+	if snap.Network != nil && !snapshotHasInterface(snap, iface) {
 		iface = primaryInterface(snap)
 	}
-	if !snapshotHasDevice(snap, device) {
+	if snap.Block != nil && !snapshotHasDevice(snap, device) {
 		device = primaryBlockDevice(snap, resolveDevicePath)
 	}
 	if iface == h.ccIface && device == h.ccDevice {

@@ -69,7 +69,7 @@ func ccMonCaption(text string) *ui.Node {
 
 func ccMonGraph(width, height int, values, second []float64, tone ui.Tone) *ui.Node {
 	return &ui.Node{Kind: ui.KindGraph, Width: width, Height: height, Values: values,
-		SecondValues: second, Tone: tone, Absent: len(values) == 0}
+		SecondValues: second, Window: services.HistorySize, Tone: tone, Absent: len(values) == 0}
 }
 
 func ccMonCPUHero(m theme.Metrics, snap services.Snapshot, history map[services.Selector][]float64) *ui.Node {
@@ -145,13 +145,15 @@ func ccMonMemoryHero(m theme.Metrics, snap services.Snapshot, history map[servic
 // caption, and the mark on the trailing edge.
 func ccMonRow(iconID, label string, value, caption *ui.Node, mark *ui.Node) *ui.Node {
 	// MetricIconRune knows cpu, memory, filesystem/block and network. Other
-	// IDs return zero, and a zero rune would paint as a missing glyph.
+	// IDs return zero, and a zero rune would paint as a missing glyph. The
+	// glyph is painted, never named: the accessible name is the plain label.
+	name, text := label, label
 	if icon := render.MetricIconRune(iconID); icon != 0 {
-		label = string(icon) + " " + label
+		text = string(icon) + " " + label
 	}
 	return &ui.Node{Kind: ui.KindRow, Height: ccMonRowH, Gap: theme.MarginM, CenterY: true, PinEnd: true, Children: []*ui.Node{
 		{Kind: ui.KindRow, Gap: theme.MarginM, CenterY: true, Children: []*ui.Node{
-			{Kind: ui.KindText, Text: label, MinWidthText: ccMonLabelFloor()},
+			{Kind: ui.KindText, Name: name, Text: text, MinWidthText: ccMonLabelFloor()},
 			{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{value, caption}},
 		}},
 		mark,
@@ -180,7 +182,7 @@ func ccMonTemperatureRow(snap services.Snapshot, history map[services.Selector][
 			}
 		}
 	}
-	return ccMonRow("cpu", "Temperature", ccMonValue("Temperature", value, tone, theme.RoleBody),
+	return ccMonRow("cpu", "Temperature", ccMonValue("Temperature reading", value, tone, theme.RoleBody),
 		ccMonCaption(source), ccMonGraph(ccMonMarkW, ccMonMarkH, samples, nil, tone))
 }
 
