@@ -242,12 +242,21 @@ func resolveType(comp theme.Composition, bar config.Bar) render.TypeSet {
 		set.Roles[role] = spec
 	}
 	// The bar carries an explicit size for its own body text.
-	if bar.FontSize > 0 {
-		spec := set.Roles[theme.RoleBody]
-		spec.Size = bar.FontSize
-		set.Roles[theme.RoleBody] = spec
-	}
+	applyBarFontSize(&set, bar.FontSize)
 	return set
+}
+
+// applyBarFontSize sets the bar's explicit text size on body text and on the
+// figure role, which is body text at another weight. Zero leaves the ladder.
+func applyBarFontSize(set *render.TypeSet, size int) {
+	if size <= 0 {
+		return
+	}
+	for _, role := range []theme.TextRole{theme.RoleBody, theme.RoleFigure} {
+		spec := set.Roles[role]
+		spec.Size = size
+		set.Roles[role] = spec
+	}
 }
 
 // resolveSurfaces converts the percentage axes to alpha. High contrast forces
@@ -421,11 +430,7 @@ func withBarGeometry(t Theme, bar config.Bar) Theme {
 	t.Metrics.BarPadding = bar.Padding
 	t.Metrics.BarSpacing = bar.Spacing
 	t.BarGap = bar.Gap
-	if bar.FontSize > 0 {
-		spec := t.Type.Roles[theme.RoleBody]
-		spec.Size = bar.FontSize
-		t.Type.Roles[theme.RoleBody] = spec
-	}
+	applyBarFontSize(&t.Type, bar.FontSize)
 	applyFlat(&t)
 	return t
 }

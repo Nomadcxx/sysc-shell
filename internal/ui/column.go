@@ -111,7 +111,7 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 		if n.Width > 0 {
 			width = n.Width
 		}
-		h, err := columnChildHeight(n.Children[0], max(width-2*n.Padding, 0), measure)
+		h, err := columnChildHeight(n.Children[0], max(width-2*CapsulePadX(n), 0), measure)
 		if err != nil {
 			return 0, err
 		}
@@ -324,9 +324,10 @@ func placeColumnChild(n *Node, box Rect, measure MeasureText) error {
 		if len(n.Children) == 0 || n.Children[0] == nil {
 			return nil
 		}
+		padX := CapsulePadX(n)
 		inner := Rect{
-			X: box.X + n.Padding, Y: box.Y + n.Padding,
-			W: max(box.W-2*n.Padding, 0), H: max(box.H-2*n.Padding, 0),
+			X: box.X + padX, Y: box.Y + n.Padding,
+			W: max(box.W-2*padX, 0), H: max(box.H-2*n.Padding, 0),
 		}
 		return placeColumnChild(n.Children[0], inner, measure)
 	case KindButton, KindDragSource:

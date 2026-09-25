@@ -291,6 +291,10 @@ const (
 	// It is appended rather than inserted, so every role above keeps its iota
 	// value, and textRoleCount in internal/render tracks it as the last role.
 	RoleDisplay
+	// RoleFigure is body-sized text one step heavier: the lead reading in a
+	// composition, such as the time beside a quieter date in the bar's centre
+	// pill. Appended for the same reason as RoleDisplay.
+	RoleFigure
 )
 
 // TypeSpec is one row of the type table from design D7, before font scaling.
@@ -316,6 +320,7 @@ var typeRoles = map[TextRole]TypeSpec{
 	RoleHeadline: {Size: 21, Weight: 600},
 	RoleDisplay:  {Size: 24, Weight: 600},
 	RoleMono:     {Size: 13, Weight: 400, Mono: true},
+	RoleFigure:   {Size: 15, Weight: 600},
 }
 
 // TypeFor returns the unscaled row for a role. An unknown role measures as
@@ -341,6 +346,8 @@ func (r TextRole) String() string {
 		return "mono"
 	case RoleDisplay:
 		return "display"
+	case RoleFigure:
+		return "figure"
 	default:
 		return "body"
 	}

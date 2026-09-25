@@ -366,8 +366,12 @@ type Node struct {
 	GradientOffset float64
 	State          Interaction
 	Padding        int
-	Gap            int
-	Action         string
+	// PaddingX, when positive, replaces Padding on a capsule's left and right
+	// edges only. A bar capsule's vertical padding is fixed by the band it sits
+	// in, so a pill that wants wider ends cannot get them from Padding.
+	PaddingX int
+	Gap      int
+	Action   string
 	// Tooltip is bounded hover text owned by the node's feature. The shared
 	// dwell controller decides when and where to show it.
 	Tooltip          string
@@ -466,6 +470,10 @@ const (
 	FillNoteSky
 	FillNoteRose
 	FillNoteLilac
+	// FillOutlineVariant is a stroke colour: the quiet boundary a divider
+	// draws. As a fill it paints nothing, like FillOutline. It marks a control
+	// whose edge should read without competing with the focus outline.
+	FillOutlineVariant
 )
 
 // Tone selects which theme colour paints a text node.
@@ -551,6 +559,14 @@ func TextAttrsOf(n *Node) TextAttrs {
 		Bold:    n.Bold,
 		Italic:  n.Italic,
 	}
+}
+
+// CapsulePadX is the padding a capsule leaves at each horizontal end.
+func CapsulePadX(n *Node) int {
+	if n.PaddingX > 0 {
+		return n.PaddingX
+	}
+	return n.Padding
 }
 
 // imageBox returns the explicit landscape box of a KindImage node. Both edges

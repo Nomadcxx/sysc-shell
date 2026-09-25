@@ -416,16 +416,17 @@ func Default() Config {
 				{ID: "workspace"},
 				{ID: "window-title", MaxWidth: defaultTitleMaxWidth},
 			},
-			// Time and date sit together, which is what each reference shell
-			// does; the right section carries status widgets. Weather is not
-			// here: it requires configured coordinates, so a default bar
-			// carrying it would fail validation out of the box.
+			// The mark, time and date share one pill, which opens the control
+			// centre; a group holding the wordmark is built as that pill.
+			// Media sits beside it. Weather is not here: it requires
+			// configured coordinates, so a default bar carrying it would fail
+			// validation out of the box.
 			Center: []Item{
 				{ID: "group", Items: []Item{
+					{ID: "wordmark"},
 					{ID: "clock", Format: defaultClockFormat, Boundary: time.Minute},
 					{ID: "clock", Format: defaultDateFormat, Boundary: time.Minute},
 				}},
-				{ID: "wordmark"},
 				{ID: "media"},
 			},
 			Right: []Item{

@@ -1,11 +1,13 @@
 package shell
 
 import (
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -73,35 +75,84 @@ func TestWordmarkWidgetIsBareAndBalancesItsClocks(t *testing.T) {
 	}
 }
 
-func TestDefaultCentreBuildsTimeDateGroupAndMedia(t *testing.T) {
+func TestDefaultCentreBuildsOnePillAndMedia(t *testing.T) {
 	t.Parallel()
 	cfg := config.Default()
 	metrics := standardMetrics()
 	widgets := buildWidgets(cfg.Bar.Center, metrics.CapsulePadding, metrics)
-	if len(widgets) != 3 {
-		t.Fatalf("default centre widgets = %d, want group, wordmark, media", len(widgets))
+	if len(widgets) != 2 {
+		t.Fatalf("default centre widgets = %d, want the pill and media", len(widgets))
 	}
 
-	group := widgets[0]
-	if group.node.Kind != ui.KindCapsule || group.inner == nil || group.inner.Kind != ui.KindRow {
-		t.Fatalf("time/date widget = %+v, want one capsule around one row", group)
+	pill := widgets[0]
+	if pill.node.Kind != ui.KindCapsule || pill.inner == nil || pill.inner.Kind != ui.KindRow {
+		t.Fatalf("centre pill = %+v, want one capsule around one row", pill)
 	}
-	if len(group.inner.Children) != 2 {
-		t.Fatalf("time/date members = %d, want time and date", len(group.inner.Children))
+	// The capsule is the one control: every part of it opens the control
+	// centre, and it is the node a screen reader names.
+	if pill.node.Action != panelControlCenterAction || pill.node.Name != "Control centre" || pill.node.Role != "button" {
+		t.Fatalf("pill accessibility = %q %q %q", pill.node.Action, pill.node.Name, pill.node.Role)
 	}
-	for i, member := range group.inner.Children {
-		if member.Kind != ui.KindText || !member.Tabular || member.MinWidthText != clockWidthFloor {
-			t.Fatalf("time/date member %d = %+v, want tabular clock with floor %q", i, member, clockWidthFloor)
-		}
+	if pill.node.Stroke != 1 || pill.node.StrokeFill != ui.FillOutlineVariant {
+		t.Fatalf("pill stroke = %d/%d, want a 1 px outline_variant hairline", pill.node.Stroke, pill.node.StrokeFill)
+	}
+	if pill.node.PaddingX != centrePadX || pill.node.Padding != metrics.CapsulePadding {
+		t.Fatalf("pill padding = %d x %d, want %d x %d", pill.node.PaddingX, pill.node.Padding, centrePadX, metrics.CapsulePadding)
 	}
 
-	mark := widgets[1]
-	if mark.node.Kind != ui.KindWordmark || mark.inner != nil {
-		t.Fatalf("wordmark = %+v, want bare wordmark", mark)
+	kids := pill.inner.Children
+	if len(kids) != 4 {
+		t.Fatalf("pill row = %d nodes, want mark, hairline, time, date", len(kids))
 	}
-	media := widgets[2]
+	mark, rule, clock, date := kids[0], kids[1], kids[2], kids[3]
+	if mark.Kind != ui.KindWordmark || mark.ImageH != centreMarkHeight || mark.ImageW != render.WordmarkWidth(centreMarkHeight) {
+		t.Fatalf("mark = %+v, want the SYSC mark at %d px", mark, centreMarkHeight)
+	}
+	if mark.Action != "" || mark.Name != "" || mark.Gradient.Motion != ui.GradientLoop {
+		t.Fatalf("mark = %+v, want a decorative animated mark inside the button", mark)
+	}
+	if rule.Kind != ui.KindSeparator || rule.Height != centreRuleHeight {
+		t.Fatalf("row[1] = %+v, want the %d px hairline", rule, centreRuleHeight)
+	}
+	if clock.TextRole != theme.RoleFigure || !clock.Tabular || clock.MinWidthText != "" {
+		t.Fatalf("time = %+v, want a tabular figure with no width floor", clock)
+	}
+	if date.Tone != ui.ToneSubtle || date.TextRole != theme.RoleBody || date.MinWidthText != "" {
+		t.Fatalf("date = %+v, want subtle body text with no width floor", date)
+	}
+
+	now := time.Date(2026, time.September, 25, 9, 7, 0, 0, time.UTC)
+	if !pill.refresh(barView{Now: now}) {
+		t.Fatal("the first tick reported no change")
+	}
+	if clock.Text != "09:07" || date.Text != "Fri 25 Sep" {
+		t.Fatalf("pill text = %q / %q", clock.Text, date.Text)
+	}
+	if pill.node.Tooltip != "Friday 25 September 2026" {
+		t.Fatalf("pill tooltip = %q, want the full date", pill.node.Tooltip)
+	}
+
+	media := widgets[1]
 	if media.node.Kind != ui.KindCapsule || media.inner == nil || !media.node.Absent {
 		t.Fatalf("media = %+v, want an initially absent capsule", media)
+	}
+}
+
+func TestCentrePillSeparatesTheMarkOnEitherSide(t *testing.T) {
+	t.Parallel()
+	metrics := standardMetrics()
+	widgets := buildWidgets([]config.Item{{ID: "group", Items: []config.Item{
+		{ID: "clock", Format: "15:04"},
+		{ID: "wordmark"},
+		{ID: "clock", Format: "Mon 2 Jan"},
+	}}}, metrics.CapsulePadding, metrics)
+	var kinds []ui.Kind
+	for _, n := range widgets[0].inner.Children {
+		kinds = append(kinds, n.Kind)
+	}
+	want := []ui.Kind{ui.KindText, ui.KindSeparator, ui.KindWordmark, ui.KindSeparator, ui.KindText}
+	if !slices.Equal(kinds, want) {
+		t.Fatalf("row kinds = %v, want %v", kinds, want)
 	}
 }
 

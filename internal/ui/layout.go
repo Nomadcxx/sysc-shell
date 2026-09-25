@@ -383,10 +383,11 @@ func layoutCapsuleChild(n *Node, measure MeasureText) error {
 	if child == nil {
 		return fmt.Errorf("capsule has a nil child")
 	}
+	padX := CapsulePadX(n)
 	inner := Rect{
-		X: n.Bounds.X + n.Padding,
+		X: n.Bounds.X + padX,
 		Y: n.Bounds.Y + n.Padding,
-		W: max(n.Bounds.W-2*n.Padding, 0),
+		W: max(n.Bounds.W-2*padX, 0),
 		H: max(n.Bounds.H-2*n.Padding, 0),
 	}
 	switch child.Kind {
@@ -467,7 +468,10 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		// so a row can set a short sparkline beside two lines of text.
 		return n.Width, ownHeight(n, contentHeight), nil
 	case KindSeparator:
-		return 1, contentHeight, nil
+		// A rule spans the row unless it names a height, which a hairline
+		// between the centre pill's mark and time does so it stays shorter
+		// than the text line it divides.
+		return 1, ownHeight(n, contentHeight), nil
 	case KindEdgeFade:
 		// A fade is placed over content that is already positioned, never
 		// measured into a run: it carries its own Bounds and takes no space of
@@ -541,7 +545,7 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		if w == 0 {
 			return 0, 0, nil
 		}
-		return w + 2*n.Padding, contentHeight, nil
+		return w + 2*CapsulePadX(n), contentHeight, nil
 	// A drag source measures exactly as a button does, including composing
 	// children. render.paint already draws the two through one path; measuring
 	// them differently left a drag source able to carry children that were

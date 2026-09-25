@@ -1110,7 +1110,7 @@ func fillPair(style Style, fill ui.Fill, base Color) (Color, Color) {
 		dim := style.scrim()
 		dim.A = uint8(math.Round(float64(dim.A) * scrimAlpha))
 		return dim, style.Foreground
-	case ui.FillOutline:
+	case ui.FillOutline, ui.FillOutlineVariant:
 		// Outlined chrome keeps whatever its parent painted; only the
 		// boundary and the label mark it.
 		return Color{}, style.Foreground
@@ -1210,6 +1210,9 @@ func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size in
 		}
 		if sourceColor, ok := sourceMarkerColor(n.StrokeColor); ok {
 			strokeCol = sourceColor
+		}
+		if n.StrokeFill == ui.FillOutlineVariant {
+			strokeCol = style.outlineVariant()
 		}
 		c.StrokeRounded(box, radius, max(1, style.Scale120.Physical(n.Stroke)), strokeCol)
 	}

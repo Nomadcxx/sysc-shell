@@ -2461,3 +2461,26 @@ func TestSourceCalendarColorOnlyTintsEventRim(t *testing.T) {
 		t.Fatalf("event surface uses source color: %+v", got)
 	}
 }
+
+// The centre pill's hairline is the quiet boundary, not the focus outline.
+func TestPaintStrokeInOutlineVariantUsesTheQuietBoundary(t *testing.T) {
+	t.Parallel()
+	c := newTestCanvas(t, 100, 80)
+	style := capsuleStyle()
+	style.OutlineVariant = Color{R: 0x20, G: 0xa0, B: 0x40, A: 0xff}
+	style.Body = ui.Rect{X: 8, Y: 8, W: 84, H: 64}
+	n := &ui.Node{Kind: ui.KindCapsule, Stroke: 2, StrokeFill: ui.FillOutlineVariant, Bounds: style.Body}
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{n}}
+	if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatal(err)
+	}
+	want := style.OutlineVariant
+	got := pixelAt(t, c, 8, 40)
+	if diff := max(abs(int(got.R)-int(want.R)), abs(int(got.G)-int(want.G)), abs(int(got.B)-int(want.B))); diff > 4 {
+		t.Fatalf("rim = %+v, want near outline_variant %+v", got, want)
+	}
+	// As a fill it paints nothing of its own; the capsule keeps its surface.
+	if got := pixelAt(t, c, 50, 40); got == want {
+		t.Fatal("interior picked up the stroke colour")
+	}
+}
