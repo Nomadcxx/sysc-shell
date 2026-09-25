@@ -991,6 +991,7 @@ func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbac
 
 	r.SyncToastOutputs(toastOutputs)
 	if plugins != nil {
+		plugins.outputLost(global)
 		plugins.syncBars()
 	}
 	// An output that comes back gets its wallpaper back (D20). This is the
@@ -1356,6 +1357,7 @@ func (r *Registry) DropHost(global uint32) {
 	}
 	r.SyncToastOutputs(toastOutputs)
 	if plugins != nil {
+		plugins.outputLost(global)
 		plugins.syncBars()
 	}
 	releaseAll(leases)

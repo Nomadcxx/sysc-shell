@@ -178,6 +178,9 @@ type GradientPaint struct {
 type Node struct {
 	Kind Kind
 	Text string
+	// Placeholder is input guidance painted only while Text is empty. Name
+	// remains the accessible identity.
+	Placeholder string
 	// ValueText is the compact formatted value painted inside a radial gauge.
 	ValueText string
 	// Icon names a glyph in the dedicated chrome icon inventory.
@@ -427,6 +430,12 @@ const (
 	// FillScrim dims the live content behind a modal surface. It is a wash,
 	// not a plate; what sits underneath stays visible through it.
 	FillScrim
+	// Note fills are muted semantic tints paired with the theme foreground.
+	FillNoteSun
+	FillNoteMint
+	FillNoteSky
+	FillNoteRose
+	FillNoteLilac
 )
 
 // Tone selects which theme colour paints a text node.

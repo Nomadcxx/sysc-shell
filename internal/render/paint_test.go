@@ -78,6 +78,40 @@ func TestPaintKeepsColorEmojiUntinted(t *testing.T) {
 	t.Fatal("emoji painted as tinted notdef; no un-tinted colour pixel")
 }
 
+func TestStickyNoteFillPairsKeepTextContrastInDarkAndLightPalettes(t *testing.T) {
+	toRender := func(value string) Color {
+		t.Helper()
+		parsed, err := theme.ParseColor(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return Color{R: parsed.R, G: parsed.G, B: parsed.B, A: parsed.A}
+	}
+	toTheme := func(value Color) theme.Color {
+		return theme.Color{R: value.R, G: value.G, B: value.B, A: value.A}
+	}
+	fills := []ui.Fill{ui.FillNoteSun, ui.FillNoteMint, ui.FillNoteSky, ui.FillNoteRose, ui.FillNoteLilac}
+	for _, palette := range theme.PaletteNames() {
+		for _, mode := range []string{"dark", "light"} {
+			tokens, ok := theme.NamedPalette(palette, mode, false)
+			if !ok {
+				t.Fatalf("palette %q disappeared", palette)
+			}
+			style := Style{
+				Capsule: toRender(tokens.SurfaceContainerHigh), Foreground: toRender(tokens.OnSurface),
+				Accent: toRender(tokens.Primary), Secondary: toRender(tokens.Secondary),
+				Tertiary: toRender(tokens.Tertiary), Error: toRender(tokens.Error),
+			}
+			for _, fill := range fills {
+				background, foreground := fillPair(style, fill, style.Capsule)
+				if ratio := theme.ContrastRatio(toTheme(foreground), toTheme(background)); ratio < theme.TextRatio(false) {
+					t.Errorf("%s/%s fill %d contrast %.2f:1, want at least %.1f:1", palette, mode, fill, ratio, theme.TextRatio(false))
+				}
+			}
+		}
+	}
+}
+
 func TestPaintFillsOnlyTheRoundedBody(t *testing.T) {
 	t.Parallel()
 

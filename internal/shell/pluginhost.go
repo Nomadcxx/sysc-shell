@@ -27,8 +27,9 @@ type PluginHostOptions struct {
 }
 
 type pluginSlot struct {
-	rt   *plugin.Runtime
-	disp *plugin.Dispatcher
+	rt    *plugin.Runtime
+	disp  *plugin.Dispatcher
+	store plugin.StateStore
 }
 
 type hostedView struct {
@@ -46,6 +47,8 @@ type hostedView struct {
 	Label      string
 	Width      int
 	Height     int
+	Title      string
+	SurfaceKey string
 }
 
 type pluginHost struct {
@@ -55,9 +58,11 @@ type pluginHost struct {
 	stop context.CancelFunc
 	prep *plugin.Preparer
 
-	mu    sync.Mutex
-	slots map[string]*pluginSlot
-	views map[string]*hostedView
+	mu        sync.Mutex
+	surfaceMu sync.Mutex
+	slots     map[string]*pluginSlot
+	views     map[string]*hostedView
+	surfaces  map[string]*pluginSurfaceHost
 	// swapping holds plugin ids replace has stopped and not yet restarted.
 	// ensure refuses to start one of these: a concurrent syncEnabled must not
 	// resurrect the old copy while its directory is mid-swap.
@@ -91,7 +96,8 @@ const pluginBarViewWidth = lint.BarWidth
 const pluginBarViewHeight = lint.BarHeight
 
 var hostPluginCaps = []plugin.Capability{
-	plugin.CapNotifications, plugin.CapPanels, plugin.CapSettings, plugin.CapState, plugin.CapWallpaper,
+	plugin.CapNotifications, plugin.CapPanels, plugin.CapSettings, plugin.CapState,
+	plugin.CapFloatingSurfaces, plugin.CapWallpaper,
 }
 
 // BindPlugins discovers enabled plugins and starts one runtime for each.
@@ -106,6 +112,7 @@ func (r *Registry) BindPlugins(opts PluginHostOptions) error {
 		prep:       plugin.NewPreparer(2, plugin.Measure),
 		slots:      make(map[string]*pluginSlot),
 		views:      make(map[string]*hostedView),
+		surfaces:   make(map[string]*pluginSurfaceHost),
 		lastAnchor: make(map[string]int),
 		swapping:   make(map[string]bool),
 	}
@@ -131,7 +138,12 @@ func (h *pluginHost) Close() {
 	slots := h.slots
 	h.slots = nil
 	h.views = make(map[string]*hostedView)
+	surfaces := h.surfaces
+	h.surfaces = make(map[string]*pluginSurfaceHost)
 	h.mu.Unlock()
+	for _, surface := range surfaces {
+		surface.closeWayland()
+	}
 	for _, s := range slots {
 		s.rt.Stop()
 		if h.r.depthClocks != nil {
@@ -245,15 +257,24 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 		OutputContext: func(_ context.Context, p v1.OutputContextParams) (v1.OutputContextResult, error) {
 			return h.outputContext(p)
 		},
-		PanelResize:       func(_ context.Context, p v1.PanelResizeParams) error { return h.resizePanel(p) },
-		ViewFocus:         func(_ context.Context, p v1.ViewFocusParams) error { return h.focusPanelView(id, p) },
+		PanelResize: func(_ context.Context, p v1.PanelResizeParams) error { return h.resizePanel(p) },
+		ViewFocus:   func(_ context.Context, p v1.ViewFocusParams) error { return h.focusPanelView(id, p) },
+		OpenSurface: func(ctx context.Context, p v1.SurfaceOpenParams) (v1.SurfaceResult, error) {
+			return h.openFloatingSurface(ctx, id, p)
+		},
+		CloseSurface: func(_ context.Context, p v1.SurfaceCloseParams) error {
+			return h.closeFloatingSurface(id, p)
+		},
+		SurfacePin: func(ctx context.Context, p v1.SurfacePinParams) error {
+			return h.pinFloatingSurface(ctx, id, p)
+		},
 		WallpaperSnapshot: h.wallpaperSnapshot,
 		WallpaperMaskSet: func(ctx context.Context, p v1.WallpaperMaskSetParams) error {
 			return h.registerWallpaperMask(ctx, id, p)
 		},
 	})
 	rt.SetCalls(disp)
-	slot := &pluginSlot{rt: rt, disp: disp}
+	slot := &pluginSlot{rt: rt, disp: disp, store: store}
 	if h.ensureRaceHook != nil {
 		h.ensureRaceHook(id, rt)
 	}
@@ -438,9 +459,14 @@ func (h *pluginHost) applyResult(res plugin.Result) {
 		queuePluginImages(h, res.Root)
 	}
 	kind := v.Kind
+	viewID := v.ID
 	h.mu.Unlock()
 	if kind == v1.ViewPanel {
 		h.refreshPanel()
+		return
+	}
+	if kind == v1.ViewFloating {
+		h.refreshFloatingSurface(viewID)
 		return
 	}
 	h.r.refreshPluginBars()
@@ -606,7 +632,7 @@ func barKey(pluginID, instance, output string) string {
 	return pluginID + "/" + instance + "/" + output
 }
 
-func (h *pluginHost) openView(spec hostedView, registryHeld bool) {
+func (h *pluginHost) reserveView(spec hostedView) (hostedView, *pluginSlot, error) {
 	h.mu.Lock()
 	slot := h.slots[spec.Plugin]
 	n := 0
@@ -617,14 +643,29 @@ func (h *pluginHost) openView(spec hostedView, registryHeld bool) {
 	}
 	if slot == nil || n >= v1.DefaultLimits.MaxViews {
 		h.mu.Unlock()
-		return
+		if slot == nil {
+			return hostedView{}, nil, errors.New("plugin is not running")
+		}
+		return hostedView{}, nil, fmt.Errorf("plugin %s reached the %d-view limit", spec.Plugin, v1.DefaultLimits.MaxViews)
 	}
 	h.nextID++
 	spec.ID = fmt.Sprintf("v%d", h.nextID)
 	copied := spec
 	h.views[spec.ID] = &copied
 	h.mu.Unlock()
+	return spec, slot, nil
+}
 
+func (h *pluginHost) openView(spec hostedView, registryHeld bool) string {
+	opened, slot, err := h.reserveView(spec)
+	if err != nil {
+		return ""
+	}
+	h.announceView(opened, slot, registryHeld)
+	return opened.ID
+}
+
+func (h *pluginHost) announceView(spec hostedView, slot *pluginSlot, registryHeld bool) {
 	_ = slot.rt.Send(&v1.ViewOpen{
 		ViewID: spec.ID, View: spec.Kind, Entry: spec.Entry,
 		Instance: spec.Instance, Output: spec.Output, Generation: spec.Generation,
@@ -652,11 +693,16 @@ func (h *pluginHost) closeView(id string) {
 	}
 	slot := h.slots[v.Plugin]
 	delete(h.views, id)
+	surface := h.surfaces[id]
+	delete(h.surfaces, id)
 	h.closed = append(h.closed, id)
 	if h.panel != nil && h.panel.ID == id {
 		h.panel = nil
 	}
 	h.mu.Unlock()
+	if surface != nil {
+		surface.closeWayland()
+	}
 	if slot != nil {
 		_ = slot.rt.Send(&v1.ViewClose{ViewID: id})
 	}

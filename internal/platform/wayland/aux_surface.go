@@ -22,6 +22,9 @@ type AuxSpec struct {
 	Width, Height                                    int32
 	ExclusiveZone                                    int32
 	Keyboard                                         uint32
+	// RequiredLayerShellVersion prevents an auxiliary surface from issuing
+	// requests the compositor did not advertise, such as on-demand focus.
+	RequiredLayerShellVersion uint32
 	// BlurRegion is the output-logical rect to capture behind this surface
 	// before it is created. Nil disables the backdrop and all of its cost.
 	BlurRegion *ui.Rect
@@ -36,13 +39,16 @@ type AuxRequest struct {
 	ID     string
 	Open   *AuxSpec
 	Update *AuxUpdate
+	Reply  chan error
 }
 
 // AuxUpdate changes policy on an already-open auxiliary surface without
 // recreating it. A nil Keyboard leaves keyboard interactivity alone; the input
 // region is replaced only when SetInputRegion is true.
 type AuxUpdate struct {
-	Keyboard *uint32
+	Keyboard                                         *uint32
+	Layer                                            *layershell.ZwlrLayerShellV1Layer
+	MarginTop, MarginBottom, MarginLeft, MarginRight *int32
 	// Width and Height resize the surface in surface-local coordinates. A nil
 	// pointer leaves that axis alone; both nil leaves the size alone.
 	Width  *uint32
@@ -56,24 +62,37 @@ type AuxUpdate struct {
 
 // auxPolicy is the mutable policy of one open auxiliary surface.
 type auxPolicy struct {
-	keyboard       uint32
-	width, height  uint32
-	inputRects     []ui.Rect
-	hasInputRegion bool
+	keyboard                                         uint32
+	layer                                            layershell.ZwlrLayerShellV1Layer
+	marginTop, marginBottom, marginLeft, marginRight int32
+	width, height                                    uint32
+	inputRects                                       []ui.Rect
+	hasInputRegion                                   bool
 }
 
 func (o *owner) handleAux(req AuxRequest) {
 	h, ok := o.hosts.get(req.Output)
 	if !ok || !h.alive {
+		if req.Reply != nil {
+			req.Reply <- fmt.Errorf("wayland: output %d is not available for aux surface %s", req.Output, req.ID)
+		}
+		// ponytail: asynchronous closes can trail output removal; dropping those
+		// stale requests is safe, while open/update callers receive the error.
 		return
 	}
+	var err error
 	switch {
 	case req.Open != nil:
-		o.fail(o.openAux(h, req.Open))
+		err = o.openAux(h, req.Open)
 	case req.Update != nil:
-		o.fail(o.updateAux(h, req.ID, req.Update))
+		err = o.updateAux(h, req.ID, req.Update)
 	default:
 		o.closeAux(h, req.ID)
+	}
+	if req.Reply != nil {
+		req.Reply <- err
+	} else {
+		o.fail(err)
 	}
 }
 
@@ -83,6 +102,10 @@ func (o *owner) openAux(h *OutputHost, spec *AuxSpec) error {
 	}
 	if spec.Namespace == "" {
 		return fmt.Errorf("wayland: aux %s has no namespace", spec.ID)
+	}
+	version := o.rs.singletons["zwlr_layer_shell_v1"].version
+	if spec.RequiredLayerShellVersion > version {
+		return fmt.Errorf("wayland: %s needs layer-shell version %d for on-demand focus; compositor provides %d", spec.ID, spec.RequiredLayerShellVersion, version)
 	}
 	if err := spec.Callbacks.validate(spec.ID); err != nil {
 		return err
@@ -165,6 +188,9 @@ func (o *owner) openAux(h *OutputHost, spec *AuxSpec) error {
 	// The policy starts at the size the surface was opened with, so a
 	// later one-axis update resolves the other axis against reality.
 	u.policy.width, u.policy.height = uint32(max(spec.Width, 0)), uint32(max(spec.Height, 0))
+	u.policy.layer = spec.Layer
+	u.policy.marginTop, u.policy.marginBottom = spec.MarginTop, spec.MarginBottom
+	u.policy.marginLeft, u.policy.marginRight = spec.MarginLeft, spec.MarginRight
 	return nil
 }
 
@@ -236,6 +262,24 @@ func planAuxUpdate(u *surfaceUnit, upd *AuxUpdate) (auxPolicy, error) {
 	if upd.Keyboard != nil {
 		next.keyboard = *upd.Keyboard
 	}
+	if upd.Layer != nil {
+		if *upd.Layer > layershell.ZwlrLayerShellV1LayerOverlay {
+			return auxPolicy{}, fmt.Errorf("wayland: aux %s has invalid layer %d", u.id, *upd.Layer)
+		}
+		next.layer = *upd.Layer
+	}
+	if upd.MarginTop != nil {
+		next.marginTop = *upd.MarginTop
+	}
+	if upd.MarginBottom != nil {
+		next.marginBottom = *upd.MarginBottom
+	}
+	if upd.MarginLeft != nil {
+		next.marginLeft = *upd.MarginLeft
+	}
+	if upd.MarginRight != nil {
+		next.marginRight = *upd.MarginRight
+	}
 	if upd.Width != nil || upd.Height != nil {
 		w, hgt := next.width, next.height
 		if upd.Width != nil {
@@ -276,6 +320,16 @@ func (o *owner) applyAuxPolicy(u *surfaceUnit, next auxPolicy) error {
 	if next.width != u.policy.width || next.height != u.policy.height {
 		if err := u.layer.SetSize(next.width, next.height); err != nil {
 			return fmt.Errorf("wayland: aux %s size: %w", u.id, err)
+		}
+	}
+	if next.layer != u.policy.layer {
+		if err := u.layer.SetLayer(uint32(next.layer)); err != nil {
+			return fmt.Errorf("wayland: aux %s layer: %w", u.id, err)
+		}
+	}
+	if next.marginTop != u.policy.marginTop || next.marginBottom != u.policy.marginBottom || next.marginLeft != u.policy.marginLeft || next.marginRight != u.policy.marginRight {
+		if err := u.layer.SetMargin(next.marginTop, next.marginRight, next.marginBottom, next.marginLeft); err != nil {
+			return fmt.Errorf("wayland: aux %s margins: %w", u.id, err)
 		}
 	}
 	if next.keyboard != u.policy.keyboard {

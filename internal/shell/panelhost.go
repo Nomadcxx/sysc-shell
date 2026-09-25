@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -517,6 +519,12 @@ func (r *Registry) TogglePanel(id PanelID, output uint32, trig Trigger) error {
 
 func (r *Registry) DropAux(output uint32, surfaceID string) {
 	if r.DropTrayAux(output, surfaceID) {
+		return
+	}
+	r.mu.Lock()
+	plugins := r.plugins
+	r.mu.Unlock()
+	if plugins != nil && plugins.dropFloatingAux(output, surfaceID) {
 		return
 	}
 	if surfaceID == runningAppMenuSurfaceID || surfaceID == runningAppMenuShieldID {
@@ -2647,6 +2655,31 @@ func (r *Registry) sendAux(req wayland.AuxRequest) {
 	select {
 	case r.aux <- req:
 	case <-r.closed:
+	}
+}
+
+func (r *Registry) sendAuxWait(ctx context.Context, req wayland.AuxRequest) error {
+	req.Reply = make(chan error, 1)
+	select {
+	case r.aux <- req:
+	case <-r.closed:
+		return errors.New("shell is closing")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case err := <-req.Reply:
+		return err
+	case <-r.closed:
+		return errors.New("shell is closing")
+	case <-ctx.Done():
+		// Preserve request order: if open was already dequeued, this close
+		// retires it after the owner finishes handling the open.
+		select {
+		case r.aux <- wayland.AuxRequest{Output: req.Output, ID: req.ID}:
+		case <-r.closed:
+		}
+		return ctx.Err()
 	}
 }
 

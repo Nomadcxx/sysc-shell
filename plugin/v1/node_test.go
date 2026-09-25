@@ -180,6 +180,17 @@ func TestValidateBoundsTextPerNode(t *testing.T) {
 	}
 }
 
+func TestValidateAllowsLargerBoundedTextInputs(t *testing.T) {
+	at := &Node{Kind: KindTextInput, ID: "body", Text: strings.Repeat("a", MaxInputBytes), Name: "Note body", Role: "textbox", Events: []EventKind{EventChange}, Multiline: true}
+	if err := Validate(at, ViewPanel); err != nil {
+		t.Fatalf("text input at %d bytes rejected: %v", MaxInputBytes, err)
+	}
+	at.Text += "a"
+	if err := Validate(at, ViewPanel); err == nil {
+		t.Fatalf("text input over %d bytes accepted", MaxInputBytes)
+	}
+}
+
 func TestValidateRequiresAccessibleIdentityOnInteractiveNodes(t *testing.T) {
 	t.Parallel()
 
@@ -573,8 +584,17 @@ func TestValidateAcceptsEveryFillAndSizeName(t *testing.T) {
 	t.Parallel()
 
 	for fill := range knownFills {
-		if err := Validate(&Node{Kind: KindColumn, Fill: fill}, ViewPanel); err != nil {
+		view := ViewPanel
+		if noteFill(fill) {
+			view = ViewFloating
+		}
+		if err := Validate(&Node{Kind: KindColumn, Fill: fill}, view); err != nil {
 			t.Errorf("fill %q rejected: %v", fill, err)
+		}
+	}
+	for fill := range knownFills {
+		if noteFill(fill) && Validate(&Node{Kind: KindColumn, Fill: fill}, ViewPanel) == nil {
+			t.Errorf("sticky fill %q accepted in a panel", fill)
 		}
 	}
 	for size := range knownSizes {

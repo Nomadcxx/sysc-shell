@@ -36,7 +36,7 @@ func Convert(root *v1.Node, view v1.ViewKind) (*ui.Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	if converted.Kind != want && !(view == v1.ViewPanel && converted.Kind == ui.KindScroll) {
+	if converted.Kind != want && !((view == v1.ViewPanel || view == v1.ViewFloating) && converted.Kind == ui.KindScroll) {
 		return nil, fmt.Errorf("plugin: a %s view needs a %s root, not %s", view, rootName(want), root.Kind)
 	}
 	return converted, nil
@@ -250,6 +250,11 @@ var wireFills = map[string]ui.Fill{
 	"outline":         ui.FillOutline,
 	"chip":            ui.FillContainerHighest,
 	"error-container": ui.FillErrorContainer,
+	"note-sun":        ui.FillNoteSun,
+	"note-mint":       ui.FillNoteMint,
+	"note-sky":        ui.FillNoteSky,
+	"note-rose":       ui.FillNoteRose,
+	"note-lilac":      ui.FillNoteLilac,
 }
 
 var wireSizes = map[string]theme.TextRole{
@@ -276,20 +281,21 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 	out := &ui.Node{
 		// The path travels with the node so a rejection downstream can name
 		// it: layout runs long after the converter stopped holding it.
-		Path:     path,
-		Padding:  n.Padding,
-		Gap:      n.Gap,
-		Width:    n.Width,
-		Height:   n.Height,
-		MaxWidth: n.MaxWidth,
-		Tabular:  n.Tabular,
-		Bold:     n.Bold,
-		CenterX:  n.CenterX,
-		PinEnd:   n.PinEnd,
-		Name:     n.Name,
-		Role:     n.Role,
-		Tooltip:  n.Tooltip,
-		Absent:   n.Absent,
+		Path:        path,
+		Padding:     n.Padding,
+		Gap:         n.Gap,
+		Width:       n.Width,
+		Height:      n.Height,
+		MaxWidth:    n.MaxWidth,
+		Tabular:     n.Tabular,
+		Bold:        n.Bold,
+		CenterX:     n.CenterX,
+		PinEnd:      n.PinEnd,
+		Name:        n.Name,
+		Role:        n.Role,
+		Tooltip:     n.Tooltip,
+		Absent:      n.Absent,
+		Placeholder: n.Placeholder,
 	}
 	switch n.Tone {
 	case v1.ToneError:

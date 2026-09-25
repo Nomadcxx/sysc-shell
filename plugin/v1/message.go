@@ -56,6 +56,7 @@ type Limits struct {
 	MaxDepth           int `json:"max_depth"`
 	MaxChildren        int `json:"max_children"`
 	MaxTextBytes       int `json:"max_text_bytes"`
+	MaxInputBytes      int `json:"max_input_bytes"`
 	MaxViews           int `json:"max_views"`
 	MaxStateValueBytes int `json:"max_state_value_bytes"`
 	MaxStateTotalBytes int `json:"max_state_total_bytes"`
@@ -71,6 +72,7 @@ var DefaultLimits = Limits{
 	MaxDepth:           MaxDepth,
 	MaxChildren:        MaxChildren,
 	MaxTextBytes:       MaxTextBytes,
+	MaxInputBytes:      MaxInputBytes,
 	MaxViews:           64,
 	MaxStateValueBytes: 256 << 10,
 	MaxStateTotalBytes: 4 << 20,
@@ -246,6 +248,9 @@ const (
 	CallOutputContext     CallKind = "output.context"
 	CallPanelResize       CallKind = "panel.resize"
 	CallViewFocus         CallKind = "view.focus"
+	CallSurfaceOpen       CallKind = "surface.open"
+	CallSurfaceClose      CallKind = "surface.close"
+	CallSurfacePin        CallKind = "surface.pin"
 	CallWallpaperSnapshot CallKind = "wallpaper.snapshot"
 	CallWallpaperMaskSet  CallKind = "wallpaper.mask.set"
 )
@@ -315,6 +320,37 @@ type StateSetParams struct {
 // StateListResult names the keys the plugin has stored.
 type StateListResult struct {
 	Keys []string `json:"keys"`
+}
+
+// SurfaceOpenParams asks the host to open or focus one plugin-owned floating
+// surface. Key is stable within one plugin and output; the host owns the view
+// ID, geometry after opening, and Wayland surface.
+type SurfaceOpenParams struct {
+	Key        string `json:"key"`
+	Title      string `json:"title,omitempty"`
+	Output     string `json:"output,omitempty"`
+	Generation uint32 `json:"generation,omitempty"`
+	X          int    `json:"x"`
+	Y          int    `json:"y"`
+	Width      int    `json:"width"`
+	Height     int    `json:"height"`
+}
+
+// SurfaceCloseParams closes one view owned by the calling plugin.
+type SurfaceCloseParams struct {
+	View string `json:"view"`
+}
+
+// SurfacePinParams changes whether one view uses the shell overlay layer.
+type SurfacePinParams struct {
+	View   string `json:"view"`
+	Pinned bool   `json:"pinned"`
+}
+
+// SurfaceResult names the opened or already-open view.
+type SurfaceResult struct {
+	ViewID      string `json:"view_id"`
+	AlreadyOpen bool   `json:"already_open,omitempty"`
 }
 
 // WallpaperOutputState describes the shell's current wallpaper assignment for

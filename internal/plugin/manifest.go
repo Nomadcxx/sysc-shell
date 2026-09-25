@@ -69,13 +69,16 @@ const (
 	CapSettings Capability = "settings"
 	// CapState lets a plugin read and write its namespaced persistent store.
 	CapState Capability = "state"
+	// CapFloatingSurfaces lets a plugin request bounded shell-owned surfaces.
+	CapFloatingSurfaces Capability = "floating_surfaces"
 	// CapWallpaper lets a plugin read wallpaper state and register depth masks.
 	CapWallpaper Capability = "wallpaper"
 )
 
 var knownCapabilities = map[Capability]bool{
 	CapNotifications: true, CapPanels: true, CapSettings: true, CapState: true,
-	CapWallpaper: true,
+	CapFloatingSurfaces: true,
+	CapWallpaper:        true,
 }
 
 // Placement says how a declared panel is positioned. Version one attaches a
