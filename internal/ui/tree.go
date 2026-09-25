@@ -39,6 +39,8 @@ const (
 	KindIcon
 	// KindSegmented owns equal-width, exclusive button segments.
 	KindSegmented
+	// KindScheduleGrid owns time-scaled local-day columns and event layout.
+	KindScheduleGrid
 
 	KindDragSource
 	KindDropZone
@@ -107,6 +109,8 @@ func (k Kind) String() string {
 		return "icon"
 	case KindSegmented:
 		return "segmented"
+	case KindScheduleGrid:
+		return "schedule_grid"
 	case KindDragSource:
 		return "drag_source"
 	case KindDropZone:
@@ -372,6 +376,9 @@ type Node struct {
 	// Stroke is a capsule's border width in logical pixels. Zero means none.
 	Stroke     int
 	StrokeFill Fill
+	// StrokeColor is an optional source-owned RGB accent for a narrow event
+	// marker. It is never used for text or surface fills.
+	StrokeColor string
 	// Gradient is a 2–4 stop token ramp. Count 0 is solid. GradientOffset is
 	// the live sample shift; it is not part of the recipe.
 	Gradient       GradientPaint
@@ -382,9 +389,12 @@ type Node struct {
 	Action         string
 	// Tooltip is bounded hover text owned by the node's feature. The shared
 	// dwell controller decides when and where to show it.
-	Tooltip  string
-	Bounds   Rect
-	Children []*Node
+	Tooltip          string
+	Bounds           Rect
+	Children         []*Node
+	Schedule         *ScheduleLayout
+	ScheduleItem     *ScheduleItem
+	ScheduleGeometry ScheduleGeometry
 
 	// Name and Role are required on every Focusable node.
 	Focusable bool

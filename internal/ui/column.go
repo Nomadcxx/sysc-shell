@@ -135,6 +135,14 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 	case KindSegmented:
 		_, h, err := measureSegmented(n, measure)
 		return h, err
+	case KindScheduleGrid:
+		if n.Schedule == nil {
+			return 0, fmt.Errorf("schedule grid has no range")
+		}
+		if n.Height > 0 {
+			return n.Height, nil
+		}
+		return 560, nil
 	case KindImage:
 		if _, h, ok := imageBox(n); ok {
 			return h, nil
@@ -327,6 +335,8 @@ func placeColumnChild(n *Node, box Rect, measure MeasureText) error {
 	case KindSegmented:
 		n.Bounds = box
 		return layoutSegmented(n, measure)
+	case KindScheduleGrid:
+		return layoutScheduleGrid(n, box, measure)
 	case KindColumn, KindDropZone:
 		return LayoutColumn(n, box, measure)
 	case KindStack:

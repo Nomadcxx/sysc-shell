@@ -98,6 +98,7 @@ const pluginBarViewHeight = lint.BarHeight
 var hostPluginCaps = []plugin.Capability{
 	plugin.CapNotifications, plugin.CapPanels, plugin.CapSettings, plugin.CapState,
 	plugin.CapFloatingSurfaces, plugin.CapWallpaper, plugin.CapClipboardRead,
+	plugin.CapOpenURL, plugin.CapClipboardWrite,
 }
 
 // BindPlugins discovers enabled plugins and starts one runtime for each.
@@ -1095,6 +1096,56 @@ func (h *pluginHost) deliver(hit pluginHit, event v1.EventKind, button v1.Pointe
 	for i := range toSend {
 		_ = slot.rt.Send(&toSend[i])
 	}
+	return true
+}
+
+func (h *pluginHost) deliverShortcut(key string, modifiers []string) bool {
+	h.mu.Lock()
+	v := h.panel
+	if v == nil || v.Kind != v1.ViewPanel || v.Failed {
+		h.mu.Unlock()
+		return false
+	}
+	slot := h.slots[v.Plugin]
+	if slot == nil {
+		h.mu.Unlock()
+		return false
+	}
+	target := ""
+	for _, panel := range slot.rt.Manifest().Panels {
+		if panel.ID != v.Entry {
+			continue
+		}
+		for _, shortcut := range panel.Shortcuts {
+			if shortcut.Key != key || len(shortcut.Modifiers) != len(modifiers) {
+				continue
+			}
+			matched := true
+			for i := range modifiers {
+				if shortcut.Modifiers[i] != modifiers[i] {
+					matched = false
+					break
+				}
+			}
+			if matched {
+				target = shortcut.Node
+				break
+			}
+		}
+		break
+	}
+	if target == "" {
+		h.mu.Unlock()
+		return false
+	}
+	ev := v1.InputEvent{
+		ViewID: v.ID, Revision: v.Revision, Node: target,
+		Event: v1.EventShortcut, Key: key, Modifiers: append([]string(nil), modifiers...),
+		Output: v.Output, Generation: v.Generation,
+	}
+	h.inputs = append(h.inputs, ev)
+	h.mu.Unlock()
+	_ = slot.rt.Send(&ev)
 	return true
 }
 

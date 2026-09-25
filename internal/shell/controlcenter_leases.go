@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"path/filepath"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/services"
@@ -23,10 +24,62 @@ func ccRateSelectors(iface, device string) []services.Selector {
 	return out
 }
 
+func rootFilesystemSource(snap services.Snapshot) string {
+	if snap.Filesystem == nil {
+		return ""
+	}
+	for _, fs := range snap.Filesystem.Filesystems {
+		if fs.MountPoint == "/" {
+			return fs.Source
+		}
+	}
+	return ""
+}
+
+// rateSubjectPanels are the hosts that chart one interface and one device:
+// the Control Centre's Monitor page and the system monitor's System page.
+var rateSubjectPanels = [...]PanelID{PanelControlCenter, PanelMonitor}
+
+// updateRootDevice caches the root filesystem's backing device on each host
+// that charts one, resolving the source off Registry.mu and only when it
+// changes. UpdateMetrics calls this from its sampling goroutine.
+func (r *Registry) updateRootDevice(snap services.Snapshot, resolve func(string) (string, error)) {
+	if snap.Filesystem == nil {
+		return
+	}
+	source := rootFilesystemSource(snap)
+	var stale []*PanelHost
+	r.mu.Lock()
+	for _, id := range rateSubjectPanels {
+		if h := r.panelHosts[id]; h != nil && h.ccRootSource != source {
+			h.ccRootSource = source
+			stale = append(stale, h)
+		}
+	}
+	r.mu.Unlock()
+	if len(stale) == 0 {
+		return
+	}
+
+	device := ""
+	if source != "" {
+		if path, err := resolve(source); err == nil {
+			device = filepath.Base(path)
+		}
+	}
+
+	r.mu.Lock()
+	for _, h := range stale {
+		if r.panelHosts[h.id] == h && h.ccRootSource == source {
+			h.ccRootDevice = device
+		}
+	}
+	r.mu.Unlock()
+}
+
 // syncRateSubjectsLocked keeps one interface and one device leased for a host
-// that charts them: the Control Centre's Monitor page and the system
-// monitor's System page. A subject is re-resolved only when the snapshot no
-// longer carries it. Caller holds r.mu.
+// in rateSubjectPanels. A subject changes when it disappears or the root
+// filesystem source changes. Caller holds r.mu.
 func (r *Registry) syncRateSubjectsLocked(h *PanelHost, snap services.Snapshot, interval time.Duration) {
 	if h == nil || r.metrics == nil {
 		return
@@ -37,10 +90,14 @@ func (r *Registry) syncRateSubjectsLocked(h *PanelHost, snap services.Snapshot, 
 	if snap.Network != nil && !snapshotHasInterface(snap, iface) {
 		iface = primaryInterface(snap)
 	}
-	if snap.Block != nil && !snapshotHasDevice(snap, device) {
-		device = primaryBlockDevice(snap, resolveDevicePath)
+	rootSourceChanged := h.ccRootSource != h.ccRootSelectionSource
+	if snap.Block != nil && (rootSourceChanged || !snapshotHasDevice(snap, device)) {
+		device = primaryBlockDevice(snap, h.ccRootDevice)
 	}
 	if iface == h.ccIface && device == h.ccDevice {
+		if snap.Block != nil {
+			h.ccRootSelectionSource = h.ccRootSource
+		}
 		return
 	}
 	var leases []*services.Lease
@@ -54,6 +111,9 @@ func (r *Registry) syncRateSubjectsLocked(h *PanelHost, snap services.Snapshot, 
 	}
 	releaseAll(h.subjectLeases)
 	h.subjectLeases, h.ccIface, h.ccDevice = leases, iface, device
+	if snap.Block != nil {
+		h.ccRootSelectionSource = h.ccRootSource
+	}
 }
 
 func snapshotHasInterface(snap services.Snapshot, name string) bool {

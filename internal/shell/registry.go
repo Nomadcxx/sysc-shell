@@ -1560,6 +1560,7 @@ func (r *Registry) UpdateClock(now time.Time) []uint32 {
 // whose rendering actually changed.
 func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
 	facts := readMachineFacts()
+	r.updateRootDevice(snap, resolveDevicePath)
 	r.mu.Lock()
 	r.sample = snap
 	r.machineFacts = facts

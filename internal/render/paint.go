@@ -2,11 +2,14 @@ package render
 
 import (
 	"fmt"
+	"image"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	"golang.org/x/image/vector"
 )
 
 // buttonText returns the label colour over a Primary fill, falling back to
@@ -338,6 +341,23 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 	case ui.KindButton, ui.KindDragSource:
 		return paintButton(c, n, text, style, size)
 
+	case ui.KindScheduleGrid:
+		prev := c.restrict
+		c.restrict = style.Scale120.PhysicalRect(n.Bounds)
+		defer func() { c.restrict = prev }()
+		if err := paintScheduleGrid(c, n, text, style); err != nil {
+			return err
+		}
+		for i, child := range n.Children {
+			if child == nil {
+				return fmt.Errorf("nil schedule event %d", i)
+			}
+			if err := paintNode(c, child, text, style, size); err != nil {
+				return err
+			}
+		}
+		return nil
+
 	case ui.KindIcon:
 		return paintIcon(c, n, text, style)
 
@@ -433,6 +453,60 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 	default:
 		return fmt.Errorf("unsupported kind %d", n.Kind)
 	}
+}
+
+func paintScheduleGrid(c *Canvas, n *ui.Node, text *TextRenderer, style Style) error {
+	if n.Schedule == nil {
+		return fmt.Errorf("schedule grid has no range")
+	}
+	geometry := n.ScheduleGeometry
+	box := style.Scale120.PhysicalRect(n.Bounds)
+	axis := style.Scale120.Physical(geometry.AxisWidth)
+	colW := style.Scale120.Physical(geometry.ColumnWidth)
+	header := style.Scale120.Physical(geometry.HeaderHeight)
+	timelineY := style.Scale120.Physical(geometry.TimelineY)
+	timelineH := style.Scale120.Physical(geometry.TimelineH)
+	line := style.outlineVariant()
+	dayStart := n.Schedule.Start.In(n.Schedule.Zone)
+	labelNode := &ui.Node{TextRole: theme.RoleCaption}
+	labelSpec := textSpec(style, labelNode)
+	for day := 0; day < geometry.Days; day++ {
+		x := box.X + axis + day*colW
+		label := dayStart.AddDate(0, 0, day).Format("Mon 2 Jan")
+		if err := paintText(c, label, ui.Rect{X: x + 6, Y: box.Y + 4, W: max(colW-12, 0), H: header - 8}, text, style, labelSpec, false, ui.ToneSubtle, false); err != nil {
+			return err
+		}
+		fillRect(c, ui.Rect{X: x, Y: box.Y + header, W: 1, H: box.H - header}, line)
+		for hour := 0; hour <= 24; hour += 3 {
+			y := box.Y + timelineY + hour*timelineH/24
+			if hour > 0 {
+				fillRect(c, ui.Rect{X: x, Y: y, W: colW, H: 1}, line)
+			}
+			if day == 0 && hour < 24 {
+				label := fmt.Sprintf("%02d", hour)
+				if err := paintText(c, label, ui.Rect{X: box.X + 4, Y: y - style.Scale120.Physical(7), W: max(axis-style.Scale120.Physical(8), 0), H: style.Scale120.Physical(16)}, text, style, labelSpec, true, ui.ToneSubtle, false); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	fillRect(c, ui.Rect{X: box.X + axis, Y: box.Y + header, W: colW * geometry.Days, H: 1}, line)
+	day := n.Schedule.DayIndex(n.Schedule.Now)
+	if day >= 0 {
+		dayStart, dayEnd := n.Schedule.DayBounds(day)
+		now := n.Schedule.Now.In(n.Schedule.Zone)
+		if now.Before(dayStart) || !now.Before(dayEnd) {
+			day = -1
+		}
+	}
+	if day >= 0 {
+		dayStart, dayEnd := n.Schedule.DayBounds(day)
+		now := n.Schedule.Now.In(n.Schedule.Zone)
+		y := geometry.TimelineY + int(float64(geometry.TimelineH)*float64(now.Sub(dayStart))/float64(dayEnd.Sub(dayStart)))
+		x := box.X + axis + day*colW
+		fillRect(c, ui.Rect{X: x, Y: box.Y + style.Scale120.Physical(y), W: colW, H: max(style.Scale120.Physical(2), 1)}, style.accent())
+	}
+	return nil
 }
 
 func paintScrollThumb(c *Canvas, n *ui.Node, style Style) {
@@ -802,18 +876,24 @@ func paintGraph(c *Canvas, n *ui.Node, box ui.Rect, style Style) error {
 	line := toneColor(style, n.Tone, style.accent())
 
 	fillRect(c, ui.Rect{X: box.X, Y: box.Y + box.H - 1, W: box.W, H: 1}, style.Track)
+	rasterizer := vector.NewRasterizer(box.W, box.H)
+	mask := image.NewAlpha(image.Rect(0, 0, box.W, box.H))
 
 	primary := smoothLine(sparklinePoints(n.Values, window, box.W, box.H, inset))
-	if area := areaContour(primary, float32(box.H)); area != nil {
-		blendMask(c, rasterize(box.W, box.H, [][]fpt{area}), box.X, box.Y, withAlpha(line, 0.18))
+	if len(primary) >= 2 {
+		rasterizeArea(rasterizer, mask, primary, float32(box.H))
+		blendMask(c, mask, box.X, box.Y, withAlpha(line, 0.18))
 	}
 	if len(n.SecondValues) > 0 {
 		second := smoothLine(sparklinePoints(n.SecondValues, window, box.W, box.H, inset))
-		blendMask(c, rasterize(box.W, box.H, strokeContours(second, max(scale, 1))), box.X, box.Y, style.Secondary)
+		rasterizeStroke(rasterizer, mask, second, max(scale, 1))
+		blendMask(c, mask, box.X, box.Y, style.Secondary)
 	}
-	blendMask(c, rasterize(box.W, box.H, strokeContours(primary, stroke)), box.X, box.Y, line)
+	rasterizeStroke(rasterizer, mask, primary, stroke)
+	blendMask(c, mask, box.X, box.Y, line)
 	newest := primary[len(primary)-1]
-	blendMask(c, rasterize(box.W, box.H, [][]fpt{circleContour(newest, dot, 12)}), box.X, box.Y, line)
+	rasterizeCircle(rasterizer, mask, newest, dot, 12)
+	blendMask(c, mask, box.X, box.Y, line)
 	return nil
 }
 
@@ -1124,6 +1204,17 @@ func stateLayer(fg Color, state ui.Interaction) Color {
 // a control cannot acquire chrome that differs from the pill beside it.
 // radius is the logical corner radius to use when the node does not carry one;
 // zero asks for a stadium.
+func sourceMarkerColor(value string) (Color, bool) {
+	if len(value) != 7 || value[0] != '#' {
+		return Color{}, false
+	}
+	parsed, err := strconv.ParseUint(value[1:], 16, 24)
+	if err != nil {
+		return Color{}, false
+	}
+	return Color{R: uint8(parsed >> 16), G: uint8(parsed >> 8), B: uint8(parsed), A: 255}, true
+}
+
 func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int, base Color, radiusLogical int) error {
 	box := style.Scale120.PhysicalRect(n.Bounds)
 	radius := chromeRadius(style, nodeRadius(style, n, radiusLogical), box)
@@ -1147,6 +1238,9 @@ func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size in
 			// The outline token fills nothing and marks only the boundary,
 			// so as a stroke colour it is the rim the outlined cards draw.
 			strokeCol = style.outline()
+		}
+		if sourceColor, ok := sourceMarkerColor(n.StrokeColor); ok {
+			strokeCol = sourceColor
 		}
 		c.StrokeRounded(box, radius, max(1, style.Scale120.Physical(n.Stroke)), strokeCol)
 	}

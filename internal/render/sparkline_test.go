@@ -3,6 +3,8 @@ package render
 import (
 	"math"
 	"testing"
+
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 func near(a, b float32) bool { return math.Abs(float64(a-b)) < 1e-3 }
@@ -39,6 +41,18 @@ func TestSparklinePoints(t *testing.T) {
 	}
 }
 
+func TestSparklinePointsMapsNonFiniteSamplesToZero(t *testing.T) {
+	points := sparklinePoints([]float64{math.NaN(), math.Inf(1), math.Inf(-1)}, 0, 11, 11, 0)
+	if len(points) != 3 {
+		t.Fatalf("points = %v, want three baseline points", points)
+	}
+	for _, p := range points {
+		if math.IsNaN(float64(p.Y)) || math.IsInf(float64(p.Y), 0) || !near(p.Y, 10) {
+			t.Fatalf("non-finite sample mapped to %v, want finite baseline y=10", p)
+		}
+	}
+}
+
 func TestSmoothLineKeepsEndpointsAndPassesMidpoints(t *testing.T) {
 	in := []fpt{{0, 10}, {5, 0}, {10, 10}}
 	out := smoothLine(in)
@@ -71,6 +85,19 @@ func TestContoursArePositivelyOriented(t *testing.T) {
 	}
 }
 
+func TestStrokeContoursSkipsJoinsOnNearlyStraightSegments(t *testing.T) {
+	flat := make([]fpt, 1000)
+	for i := range flat {
+		flat[i] = fpt{X: float32(i), Y: 5}
+	}
+	if got, want := len(strokeContours(flat, 1.5)), len(flat)-1; got != want {
+		t.Fatalf("flat contour count = %d, want %d segment quads without joins", got, want)
+	}
+	if got := len(strokeContours([]fpt{{0, 0}, {1, 0}, {1, 1}}, 1.5)); got != 3 {
+		t.Fatalf("right-angle contour count = %d, want two segments and one join", got)
+	}
+}
+
 func TestRasterizeAntialiasesADiagonalStroke(t *testing.T) {
 	mask := rasterize(20, 20, strokeContours([]fpt{{2, 18}, {18, 2}}, 1.5))
 	partial, full := 0, 0
@@ -87,5 +114,60 @@ func TestRasterizeAntialiasesADiagonalStroke(t *testing.T) {
 	}
 	if full+partial == 0 {
 		t.Fatal("stroke painted nothing")
+	}
+}
+
+func BenchmarkPaintGraph(b *testing.B) {
+	for _, tc := range []struct {
+		name string
+		w, h int
+	}{
+		{"240x28", 240, 28},
+		{"331x64", 331, 64},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			values := make([]float64, 120)
+			for i := range values {
+				values[i] = float64((i*17)%101) / 100
+			}
+			pix := make([]byte, tc.w*tc.h*4)
+			canvas, err := NewCanvas(pix, tc.w, tc.h, tc.w*4)
+			if err != nil {
+				b.Fatal(err)
+			}
+			node := &ui.Node{Kind: ui.KindGraph, Values: values, SecondValues: values, Window: len(values)}
+			box := ui.Rect{W: tc.w, H: tc.h}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if err := paintGraph(canvas, node, box, testStyle); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func TestPaintGraphAllocationCountDoesNotGrowWithHistory(t *testing.T) {
+	allocations := func(samples int) float64 {
+		values := make([]float64, samples)
+		for i := range values {
+			values[i] = float64((i*17)%101) / 100
+		}
+		canvas, err := NewCanvas(make([]byte, 240*28*4), 240, 28, 240*4)
+		if err != nil {
+			t.Fatal(err)
+		}
+		node := &ui.Node{Kind: ui.KindGraph, Values: values, Window: samples}
+		box := ui.Rect{W: 240, H: 28}
+		return testing.AllocsPerRun(20, func() {
+			if err := paintGraph(canvas, node, box, testStyle); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	short, full := allocations(8), allocations(120)
+	if short != full {
+		t.Fatalf("allocs/op changed with history size: 8 samples = %v, 120 samples = %v", short, full)
 	}
 }

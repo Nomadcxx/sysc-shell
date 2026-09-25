@@ -106,3 +106,67 @@ func TestControlCentreKeepsSubjectsThroughAFailedPass(t *testing.T) {
 		}
 	}
 }
+
+// Both hosts that chart a device resolve the root source off Registry.mu,
+// once per source.
+func TestRateSubjectHostsResolveRootDeviceOncePerSource(t *testing.T) {
+	for _, id := range rateSubjectPanels {
+		t.Run(panelSurfaceID(id), func(t *testing.T) {
+			r := newPanelRegistry(t)
+			if err := r.OpenPanel(id, 7, Trigger{OutW: 1920, OutH: 1080}); err != nil {
+				t.Fatal(err)
+			}
+			snap := ccSubjectSnapshot("enp7s0")
+			snap.Block.Devices = append(snap.Block.Devices, metrics.BlockDevice{Name: "dm-0"})
+			snap.Filesystem = &metrics.FilesystemSnapshot{Filesystems: []metrics.Filesystem{{
+				MountPoint: "/", Source: "/dev/mapper/root",
+			}}}
+			calls, resolvedUnlocked := 0, true
+			resolve := func(source string) (string, error) {
+				calls++
+				if r.mu.TryLock() {
+					r.mu.Unlock()
+				} else {
+					resolvedUnlocked = false
+				}
+				if source == "/dev/mapper/root" {
+					return "/dev/dm-0", nil
+				}
+				return "/dev/nvme0n1", nil
+			}
+			for i := 0; i < 3; i++ {
+				r.updateRootDevice(snap, resolve)
+				r.mu.Lock()
+				h := r.panelHosts[id]
+				r.syncRateSubjectsLocked(h, snap, time.Second)
+				r.mu.Unlock()
+			}
+			if calls != 1 || !resolvedUnlocked {
+				t.Fatalf("resolve calls = %d, unlocked = %v; want one call outside Registry.mu", calls, resolvedUnlocked)
+			}
+			r.mu.Lock()
+			h := r.panelHosts[id]
+			got := h.ccDevice
+			r.mu.Unlock()
+			if got != "dm-0" {
+				t.Fatalf("root device = %q, want dm-0", got)
+			}
+			failedFilesystem := snap
+			failedFilesystem.Filesystem = nil
+			r.updateRootDevice(failedFilesystem, resolve)
+			if calls != 1 {
+				t.Fatalf("a failed filesystem pass re-resolved the root %d times", calls)
+			}
+
+			snap.Filesystem.Filesystems[0].Source = "/dev/mapper/new-root"
+			r.updateRootDevice(snap, resolve)
+			r.mu.Lock()
+			r.syncRateSubjectsLocked(h, snap, time.Second)
+			got = h.ccDevice
+			r.mu.Unlock()
+			if calls != 2 || got != "nvme0n1" {
+				t.Fatalf("changed root source: resolve calls = %d, device = %q; want 2 and nvme0n1", calls, got)
+			}
+		})
+	}
+}

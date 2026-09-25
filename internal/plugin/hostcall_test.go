@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -440,6 +442,83 @@ func TestHostCallOutputContext(t *testing.T) {
 	})
 	if unknown.OK || !strings.Contains(unknown.Error, "HDMI-1") {
 		t.Fatalf("undeclared = %+v", unknown)
+	}
+}
+
+func TestHostCallOpenURLChecksGrantAndHTTPAddress(t *testing.T) {
+	var opened string
+	d := NewDispatcher(CallEnv{Granted: []Capability{CapOpenURL}, OpenURL: func(_ context.Context, p v1.OpenURLParams) error {
+		opened = p.URL
+		return nil
+	}})
+	ok := d.Handle(context.Background(), &v1.HostCall{ID: "1", Call: v1.CallOpenURL, Params: jsonOf(t, v1.OpenURLParams{URL: "https://meet.example/room"})})
+	if !ok.OK || opened != "https://meet.example/room" {
+		t.Fatalf("safe URL reply=%+v opened=%q", ok, opened)
+	}
+	for _, raw := range []string{"javascript:alert(1)", "file:///etc/passwd", "//meet.example/room", "https://user:pass@meet.example/", "http:opaque", "https://meet.example/a\n"} {
+		reply := d.Handle(context.Background(), &v1.HostCall{ID: raw, Call: v1.CallOpenURL, Params: jsonOf(t, v1.OpenURLParams{URL: raw})})
+		if reply.OK {
+			t.Errorf("unsafe URL %q was opened", raw)
+		}
+	}
+	denied := NewDispatcher(CallEnv{}).Handle(context.Background(), &v1.HostCall{ID: "denied", Call: v1.CallOpenURL, Params: jsonOf(t, v1.OpenURLParams{URL: "https://meet.example"})})
+	if denied.OK || !strings.Contains(denied.Error, "capability") {
+		t.Fatalf("ungranted URL call = %+v", denied)
+	}
+}
+
+func TestHostCallClipboardBoundsTextAndGrant(t *testing.T) {
+	var copied string
+	d := NewDispatcher(CallEnv{Granted: []Capability{CapClipboardWrite}, ClipboardWrite: func(_ context.Context, p v1.ClipboardWriteParams) error {
+		copied = p.Text
+		return nil
+	}})
+	ok := d.Handle(context.Background(), &v1.HostCall{ID: "1", Call: v1.CallClipboardWrite, Params: jsonOf(t, v1.ClipboardWriteParams{Text: "Review\n10:00–11:00"})})
+	if !ok.OK || copied != "Review\n10:00–11:00" {
+		t.Fatalf("clipboard reply=%+v copied=%q", ok, copied)
+	}
+	for _, value := range []string{strings.Repeat("x", 8193), "bad\x00text"} {
+		reply := d.Handle(context.Background(), &v1.HostCall{ID: "bad", Call: v1.CallClipboardWrite, Params: jsonOf(t, v1.ClipboardWriteParams{Text: value})})
+		if reply.OK {
+			t.Fatal("invalid clipboard text was accepted")
+		}
+	}
+	denied := NewDispatcher(CallEnv{}).Handle(context.Background(), &v1.HostCall{ID: "denied", Call: v1.CallClipboardWrite, Params: jsonOf(t, v1.ClipboardWriteParams{Text: "text"})})
+	if denied.OK || !strings.Contains(denied.Error, "capability") {
+		t.Fatalf("ungranted clipboard call = %+v", denied)
+	}
+}
+
+func TestOpenAndClipboardCommandsUseArgumentAndStdinBoundaries(t *testing.T) {
+	dir := t.TempDir()
+	openPath := filepath.Join(dir, "xdg-open")
+	copyPath := filepath.Join(dir, "wl-copy")
+	openCapture := filepath.Join(dir, "opened-url")
+	copyCapture := filepath.Join(dir, "clipboard")
+	for path, script := range map[string]string{
+		openPath: "#!/bin/sh\nprintf '%s' \"$1\" > \"$OPEN_CAPTURE\"\n",
+		copyPath: "#!/bin/sh\ncat > \"$COPY_CAPTURE\"\n",
+	} {
+		if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	t.Setenv("OPEN_CAPTURE", openCapture)
+	t.Setenv("COPY_CAPTURE", copyCapture)
+	url := "https://meet.example/room?topic=design-review"
+	if err := openURLCommand(context.Background(), url); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(openCapture); err != nil || string(got) != url {
+		t.Fatalf("opened argv = %q err=%v", got, err)
+	}
+	text := "Review\n10:00–11:00"
+	if err := clipboardWriteCommand(context.Background(), text); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(copyCapture); err != nil || string(got) != text {
+		t.Fatalf("clipboard stdin = %q err=%v", got, err)
 	}
 }
 
