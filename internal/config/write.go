@@ -180,6 +180,26 @@ func barDiff(got, base Bar) *wireBar {
 		w.Spacing = &v
 		set = true
 	}
+	if got.Style != base.Style {
+		v := got.Style
+		w.Style = &v
+		set = true
+	}
+	if got.Shape != base.Shape {
+		v := got.Shape
+		w.Shape = &v
+		set = true
+	}
+	if got.FrostOpacity != base.FrostOpacity {
+		v := got.FrostOpacity
+		w.Frost = &v
+		set = true
+	}
+	if got.PillOpacity != base.PillOpacity {
+		v := got.PillOpacity
+		w.Pill = &v
+		set = true
+	}
 	if got.FontFamily != base.FontFamily || got.FontSize != base.FontSize {
 		f := wireFont{}
 		if got.FontFamily != base.FontFamily {
