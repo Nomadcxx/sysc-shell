@@ -423,3 +423,41 @@ func TestFormatProcessCell(t *testing.T) {
 		}
 	}
 }
+
+func TestParseProcessOrder(t *testing.T) {
+	cases := []struct {
+		in   string
+		key  string
+		desc bool
+		ok   bool
+	}{
+		{"mem", "mem", true, true},
+		{"-mem", "mem", false, true},
+		{"name", "name", false, true},
+		{"-name", "name", true, true},
+		{"io", "io", true, true},
+		{"memory", "", false, false},
+		{"", "", false, false},
+	}
+	for _, c := range cases {
+		key, desc, ok := parseProcessOrder(c.in)
+		if key != c.key || desc != c.desc || ok != c.ok {
+			t.Errorf("%q = %q %v %v", c.in, key, desc, ok)
+		}
+	}
+}
+
+func TestPanelOpenWithAnOrderSortsTheTable(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.HandlePanelByName("open", "system-monitor", "-cpu"); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelMonitor]
+	if h.processSort != "cpu" || h.processDesc || h.monitorPage != monitorPageProcesses {
+		t.Fatalf("sort = %q desc=%v page=%q", h.processSort, h.processDesc, h.monitorPage)
+	}
+	if err := reg.HandlePanelByName("open", "system-monitor", "memory"); err == nil {
+		t.Fatal("unknown order accepted")
+	}
+}

@@ -326,6 +326,22 @@ func processFooter(h *PanelHost, snapshot services.ProcessSnapshot, uid uint32) 
 	return &ui.Node{Kind: ui.KindText, Text: text, Tone: tone, TextRole: theme.RoleCaption, Height: processFooterHeight}
 }
 
+// parseProcessOrder reads panel.open's section as the reference's order_by:
+// a sort key, optionally prefixed with "-" to reverse its default direction.
+// Numeric keys default to descending, name and user to ascending.
+func parseProcessOrder(s string) (string, bool, bool) {
+	flip := strings.HasPrefix(s, "-")
+	key := strings.TrimPrefix(s, "-")
+	if !validProcessSort(key) {
+		return "", false, false
+	}
+	desc := key != "name" && key != "user"
+	if flip {
+		desc = !desc
+	}
+	return key, desc, true
+}
+
 func validProcessSort(key string) bool {
 	switch key {
 	case "name", "cpu", "mem", "swap", "io", "pid", "user":

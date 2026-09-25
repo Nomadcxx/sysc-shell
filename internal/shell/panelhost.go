@@ -339,6 +339,10 @@ func panelSection(id PanelID, requested string) (string, error) {
 		}
 	}
 	switch id {
+	case PanelMonitor:
+		if _, _, ok := parseProcessOrder(requested); ok {
+			return requested, nil
+		}
 	case PanelControlCenter:
 		section, ok := ccSectionFor(requested)
 		if !ok {
@@ -365,6 +369,15 @@ func (r *Registry) selectPanelSectionLocked(id PanelID, section string) error {
 	h := r.panelHosts[id]
 	if h == nil {
 		return fmt.Errorf("panel %q is not open", id)
+	}
+	if id == PanelMonitor {
+		// The section is a sort order, not a page: apply it every time,
+		// so reopening at the same order after a click still resets it.
+		key, desc, _ := parseProcessOrder(section)
+		h.monitorPage, h.processSort, h.processDesc = monitorPageProcesses, key, desc
+		r.rebuildPanel(h)
+		r.publishSurface(h.output, panelSurfaceID(id))
+		return nil
 	}
 	if h.section == section {
 		return nil
