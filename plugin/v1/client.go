@@ -30,6 +30,17 @@ func NewClient(in io.Reader, out io.Writer) *Client {
 	}
 }
 
+// NegotiateProtocol returns the highest version-one minor both sides support.
+func NegotiateProtocol(supported []Version) (Version, bool) {
+	best := Version{Major: 1, Minor: -1}
+	for _, version := range supported {
+		if version.Major == 1 && version.Minor >= 0 && version.Minor <= CurrentProtocolMinor && version.Minor > best.Minor {
+			best = version
+		}
+	}
+	return best, best.Minor >= 0
+}
+
 // Handshake answers host.hello. It must be the first call.
 func (c *Client) Handshake(identity Identity) (*HostHello, error) {
 	msg, err := c.dec.Decode()
@@ -40,8 +51,12 @@ func (c *Client) Handshake(identity Identity) (*HostHello, error) {
 	if !ok {
 		return nil, fmt.Errorf("plugin/v1: handshake: first message was %s", TypeOf(msg))
 	}
+	protocol, ok := NegotiateProtocol(hello.Supported)
+	if !ok {
+		return nil, fmt.Errorf("plugin/v1: host has no supported protocol version")
+	}
 	if err := c.enc.Encode(&PluginHello{
-		Protocol:     Version{Major: 1, Minor: 0},
+		Protocol:     protocol,
 		Plugin:       identity,
 		Capabilities: hello.Capabilities,
 	}); err != nil {

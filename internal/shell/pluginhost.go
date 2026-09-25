@@ -83,6 +83,7 @@ const pluginBarViewHeight = lint.BarHeight
 
 var hostPluginCaps = []plugin.Capability{
 	plugin.CapNotifications, plugin.CapPanels, plugin.CapSettings, plugin.CapState,
+	plugin.CapOpenURL, plugin.CapClipboardWrite,
 }
 
 // BindPlugins discovers enabled plugins and starts one runtime for each.

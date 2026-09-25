@@ -2,6 +2,10 @@ package v1
 
 import "encoding/json"
 
+// CurrentProtocolMinor is the newest additive version-one wire surface this
+// package knows how to encode and validate.
+const CurrentProtocolMinor = 8
+
 // The version-one message names. Every line on the wire carries one of these
 // in its "type" field, and a reader that does not recognise a name rejects the
 // message rather than guessing.
@@ -237,15 +241,17 @@ func (*SettingsChanged) messageType() string { return TypeSettingsChanged }
 type CallKind string
 
 const (
-	CallStateGet      CallKind = "state.get"
-	CallStateSet      CallKind = "state.set"
-	CallStateList     CallKind = "state.list"
-	CallPanelOpen     CallKind = "panel.open"
-	CallPanelClose    CallKind = "panel.close"
-	CallNotify        CallKind = "notify"
-	CallOutputContext CallKind = "output.context"
-	CallPanelResize   CallKind = "panel.resize"
-	CallViewFocus     CallKind = "view.focus"
+	CallStateGet       CallKind = "state.get"
+	CallStateSet       CallKind = "state.set"
+	CallStateList      CallKind = "state.list"
+	CallPanelOpen      CallKind = "panel.open"
+	CallPanelClose     CallKind = "panel.close"
+	CallNotify         CallKind = "notify"
+	CallOutputContext  CallKind = "output.context"
+	CallPanelResize    CallKind = "panel.resize"
+	CallViewFocus      CallKind = "view.focus"
+	CallOpenURL        CallKind = "open-url"
+	CallClipboardWrite CallKind = "clipboard.write"
 )
 
 // HostCall is a request from the plugin. Params is left raw so that adding a
@@ -339,6 +345,16 @@ type OutputContextParams struct {
 type OutputContextResult struct {
 	Output     string `json:"output"`
 	Generation uint32 `json:"generation"`
+}
+
+// OpenURLParams asks the shell to open one validated HTTP(S) address.
+type OpenURLParams struct {
+	URL string `json:"url"`
+}
+
+// ClipboardWriteParams writes bounded plain text to the user's clipboard.
+type ClipboardWriteParams struct {
+	Text string `json:"text"`
 }
 
 // PanelResult names the view the host opened, so the plugin can close it.

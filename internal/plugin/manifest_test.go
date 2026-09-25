@@ -241,6 +241,16 @@ func TestLoadManifestRejectsUnknownCapabilities(t *testing.T) {
 	}
 }
 
+func TestManifestAcceptsCalendarHostCallCapabilities(t *testing.T) {
+	caps, err := capabilities([]string{"clipboard-write", "open-url"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(caps) != 2 || caps[0] != CapClipboardWrite || caps[1] != CapOpenURL {
+		t.Fatalf("calendar capabilities = %v", caps)
+	}
+}
+
 func TestLoadManifestRejectsDuplicateCapabilities(t *testing.T) {
 	t.Parallel()
 

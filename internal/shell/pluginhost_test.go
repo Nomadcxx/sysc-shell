@@ -25,6 +25,21 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+func TestPluginHostGrantsCalendarActionCapabilities(t *testing.T) {
+	for _, want := range []plugin.Capability{plugin.CapOpenURL, plugin.CapClipboardWrite} {
+		found := false
+		for _, got := range hostPluginCaps {
+			if got == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("host capability set omits %q", want)
+		}
+	}
+}
+
 const testTimerManifest = `{
   "schema": 1,
   "id": "org.sysc.timer",

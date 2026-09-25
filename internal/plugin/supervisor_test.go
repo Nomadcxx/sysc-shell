@@ -51,8 +51,8 @@ func TestStartCompletesTheHandshake(t *testing.T) {
 	t.Parallel()
 
 	sess := startHelper(t, "ok")
-	if sess.Protocol != (v1.Version{Major: 1, Minor: 0}) {
-		t.Errorf("protocol = %+v, want 1.0", sess.Protocol)
+	if sess.Protocol != (v1.Version{Major: 1, Minor: v1.CurrentProtocolMinor}) {
+		t.Errorf("protocol = %+v, want 1.%d", sess.Protocol, v1.CurrentProtocolMinor)
 	}
 	if len(sess.Granted) != len(hostCaps) {
 		t.Errorf("granted = %v, want all four", sess.Granted)
@@ -349,5 +349,18 @@ func TestSupervisorRejectsUnsupportedManifestMinor(t *testing.T) {
 	var incompatible *IncompatibleError
 	if !errors.As(err, &incompatible) {
 		t.Fatalf("accepted unsupported manifest protocol: %v", err)
+	}
+}
+
+func TestSupervisorAcceptsCalendarProtocolMinor(t *testing.T) {
+	m := installHelper(t, "ok")
+	m.Protocol.Minor = v1.CurrentProtocolMinor
+	sess, err := supervisor(m).Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start at protocol 1.%d: %v", v1.CurrentProtocolMinor, err)
+	}
+	defer sess.Close()
+	if sess.Protocol.Minor != v1.CurrentProtocolMinor {
+		t.Fatalf("negotiated minor = %d, want %d", sess.Protocol.Minor, v1.CurrentProtocolMinor)
 	}
 }

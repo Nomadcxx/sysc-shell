@@ -69,10 +69,15 @@ const (
 	CapSettings Capability = "settings"
 	// CapState lets a plugin read and write its namespaced persistent store.
 	CapState Capability = "state"
+	// CapOpenURL lets a plugin ask the shell to open a validated HTTP(S) URL.
+	CapOpenURL Capability = "open-url"
+	// CapClipboardWrite lets a plugin write bounded plain text to the clipboard.
+	CapClipboardWrite Capability = "clipboard-write"
 )
 
 var knownCapabilities = map[Capability]bool{
 	CapNotifications: true, CapPanels: true, CapSettings: true, CapState: true,
+	CapOpenURL: true, CapClipboardWrite: true,
 }
 
 // Placement says how a declared panel is positioned. Version one attaches a
