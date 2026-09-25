@@ -2056,8 +2056,8 @@ func (h *PanelHost) activateNotify(r *Registry, n *ui.Node) bool {
 	h.lastAction = action
 	if rest, ok := strings.CutPrefix(action, "notify:center:"); ok {
 		switch {
-		case rest == "clear":
-			r.clearVisible(h)
+		case rest == "clear", rest == "clear-all":
+			r.clearAll()
 		case rest == "settings":
 			trig := Trigger{BarEdge: h.place.BarEdge, BarZone: h.place.BarZone, OutW: h.place.Output.W, OutH: h.place.Output.H}
 			if where, ok := r.panels.Output(PanelSettings); ok && where == h.output {
@@ -2128,6 +2128,13 @@ func (h *PanelHost) activateNotify(r *Registry, n *ui.Node) bool {
 		}
 	}
 	return true
+}
+
+// clearAll sends the service-owned scopes in order so active notifications
+// dismissed by the first command cannot repopulate history after it is cleared.
+func (r *Registry) clearAll() {
+	r.sendNotify(protocol.Command{Kind: protocol.CommandDismissAll})
+	r.sendNotify(protocol.Command{Kind: protocol.CommandHistoryClear})
 }
 
 // clearVisible clears exactly what the open filter shows. With the tabs gone

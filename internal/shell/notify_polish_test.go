@@ -39,7 +39,7 @@ func TestNotifyCentrePopulatedLayout(t *testing.T) {
 					t.Errorf("text %q has no bounds: %+v", text.Text, text.Bounds)
 				}
 			}
-			for _, name := range []string{"Do not disturb", "Schedule", "Clear", "Settings", "Close", "Dismiss", "Remove"} {
+			for _, name := range []string{"Do not disturb", "Schedule", "Clear all", "Settings", "Close", "Dismiss", "Remove"} {
 				button := buttonByName(root, name)
 				if button == nil {
 					t.Fatalf("missing %s", name)

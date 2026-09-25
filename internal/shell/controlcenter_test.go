@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
@@ -890,7 +891,7 @@ func TestControlCentreNativePagesFillTheBody(t *testing.T) {
 		{section: "network", want: []string{"Network", "Wi-Fi", "Ethernet"}},
 		{section: "power", want: []string{"Battery", "Power profile", "Session"}},
 		{section: "calendar", want: []string{"September 2026", "Previous month", "Next month"}},
-		{section: "notifications", want: []string{"Do not disturb", "Nothing to see here"}},
+		{section: "notifications", want: []string{"Do not disturb", "Clear all", "Nothing to see here"}},
 	} {
 		t.Run(tc.section, func(t *testing.T) {
 			h := &PanelHost{id: PanelControlCenter, section: tc.section, theme: DefaultTheme()}
@@ -905,6 +906,27 @@ func TestControlCentreNativePagesFillTheBody(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestControlCentreNotificationsClearAllUsesServiceScopes(t *testing.T) {
+	r := &Registry{notify: newNotifyState(), notifySender: &fakeNotifySender{}}
+	h := &PanelHost{id: PanelControlCenter, section: "notifications", theme: DefaultTheme()}
+	h.root = ccNotifications(r, h)
+	h.focus = ui.Focusables(h.root)
+	h.roving.Count = len(h.focus)
+	for i, n := range h.focus {
+		if n.Name == "Clear all" {
+			h.roving.Set(i)
+			break
+		}
+	}
+	if !h.activate(r) {
+		t.Fatal("control centre clear action was not handled")
+	}
+	got := r.notifySender.(*fakeNotifySender).cmds
+	if len(got) != 2 || got[0].Kind != protocol.CommandDismissAll || got[1].Kind != protocol.CommandHistoryClear {
+		t.Fatalf("clear commands = %+v, want dismiss-all then history.clear", got)
 	}
 }
 
