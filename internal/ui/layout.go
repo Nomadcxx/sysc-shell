@@ -441,7 +441,7 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		if n.Value < 0 || n.Value > 1 {
 			return 0, 0, fmt.Errorf("meter value %v is outside zero through one", n.Value)
 		}
-		return n.Width, contentHeight, nil
+		return n.Width, ownHeight(n, contentHeight), nil
 	case KindRadialGauge:
 		size := n.Width
 		if size <= 0 {
@@ -455,8 +455,9 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 	case KindGraph:
 		// A graph reserves its configured width and the full content height,
 		// the way a meter does. It does not measure its data, so a bar does
-		// not reflow as samples arrive.
-		return n.Width, contentHeight, nil
+		// not reflow as samples arrive. One that names a height keeps it,
+		// so a row can set a short sparkline beside two lines of text.
+		return n.Width, ownHeight(n, contentHeight), nil
 	case KindSeparator:
 		return 1, contentHeight, nil
 	case KindEdgeFade:
@@ -707,4 +708,13 @@ func Hit(root *Node, x, y int) (string, bool) {
 		}
 	}
 	return root.Action, root.Action != ""
+}
+
+// ownHeight is a band node's height in a row: its own when it names one,
+// never taller than the row, and the row's content height otherwise.
+func ownHeight(n *Node, contentHeight int) int {
+	if n.Height > 0 {
+		return min(n.Height, contentHeight)
+	}
+	return contentHeight
 }

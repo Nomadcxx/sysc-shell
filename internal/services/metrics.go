@@ -279,7 +279,7 @@ func (m *Metrics) Acquire(sel Selector, interval time.Duration) (*Lease, error) 
 	lease := &Lease{metrics: m, selector: sel, boundary: interval}
 	if m.leases[sel] == nil {
 		m.leases[sel] = &leaseSet{}
-		m.history[sel] = newRing(historySize)
+		m.history[sel] = newRing(HistorySize)
 	}
 	m.leases[sel].add(lease)
 	after := m.finestLocked()
@@ -583,9 +583,10 @@ func sendSnapshot(updates chan Snapshot, snap Snapshot) {
 	}
 }
 
-// historySize is the number of samples a graph plots. It matches the reference
-// shell's window; at the default two-second interval it is four minutes.
-const historySize = 120
+// HistorySize is the number of samples each history ring keeps and a graph
+// plots. It matches the reference shell's window. A graph uses it as its
+// window, so a short history is drawn on the same time scale a full one is.
+const HistorySize = 120
 
 // ring is a fixed-capacity sample buffer, newest last. It never allocates
 // after construction, because a graph pushes one value per source per tick for
@@ -701,7 +702,7 @@ func (m *Metrics) recordGPUHistoryLocked(snap Snapshot) {
 			continue
 		}
 		if m.gpuHistory[gpu.PCIID] == nil {
-			m.gpuHistory[gpu.PCIID] = newRing(historySize)
+			m.gpuHistory[gpu.PCIID] = newRing(HistorySize)
 		}
 		m.gpuHistory[gpu.PCIID].push(gpu.Usage.Fraction)
 	}

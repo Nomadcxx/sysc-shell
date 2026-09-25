@@ -675,3 +675,24 @@ func TestReadUptime(t *testing.T) {
 		t.Fatalf("ReadUptime() = %v, %v", d, ok)
 	}
 }
+
+// Leased answers false, rather than panicking, for a selector no consumer has
+// asked for and for one whose last lease has been released.
+func TestLeasedIsFalseForAnUnleasedSelector(t *testing.T) {
+	m := NewMetrics()
+	sel := Selector{Source: SourceNetwork, Subject: "enp7s0", Direction: "rx"}
+	if m.Leased(sel) {
+		t.Fatal("a selector nobody leased reports leased")
+	}
+	lease, err := m.Acquire(sel, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.Leased(sel) {
+		t.Fatal("an acquired selector reports unleased")
+	}
+	lease.Release()
+	if m.Leased(sel) {
+		t.Fatal("a released selector still reports leased")
+	}
+}

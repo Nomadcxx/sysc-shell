@@ -289,11 +289,7 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 		fillRect(c, box, style.Track)
 		filled := box
 		filled.W = style.Scale120.Physical(n.Bounds.X+int(float64(n.Bounds.W)*n.Value+0.5)) - box.X
-		fill := style.accent()
-		if n.Tone == ui.ToneError {
-			fill = style.Error
-		}
-		fillRect(c, filled, fill)
+		fillRect(c, filled, toneColor(style, n.Tone, style.accent()))
 		return nil
 
 	case ui.KindCapsule:
@@ -776,47 +772,45 @@ func paintMultilineField(c *Canvas, n *ui.Node, text *TextRenderer, style Style,
 	return nil
 }
 
-// paintGraph fills one column per sample, newest at the right, using the same
-// rectangle fill the meter uses. There is no path rasteriser and no
-// anti-aliasing: a bar-height sparkline needs neither.
-//
-// Values are already normalised to zero through one by the widget, so this
-// applies no scale of its own.
+// paintGraph draws a sparkline: a baseline, an area under the primary series,
+// an optional thin second series, the primary line, and a dot on the newest
+// sample. Values arrive normalised to zero through one; the painter applies no
+// scale of its own. Coverage comes from the vector rasterizer, so the line is
+// anti-aliased at every render scale.
 func paintGraph(c *Canvas, n *ui.Node, box ui.Rect, style Style) error {
 	if n.Absent || box.W <= 0 || box.H <= 0 || len(n.Values) == 0 {
 		return nil
 	}
+	scale := float32(style.Scale120) / float32(ui.ScaleUnit)
+	if scale <= 0 {
+		scale = 1
+	}
+	stroke := max(1.5*scale, 1)
+	dot := 1.5 * scale
+	inset := max(stroke/2, dot)
+	window := max(n.Window, len(n.Values), len(n.SecondValues))
+	line := toneColor(style, n.Tone, style.accent())
 
-	// Columns are laid out newest-last. When there are more samples than
-	// pixels, the oldest are dropped rather than averaged: the recent shape is
-	// what a glanceable bar graph is for.
-	values := n.Values
-	if len(values) > box.W {
-		values = values[len(values)-box.W:]
-	}
-	width := box.W / len(values)
-	if width < 1 {
-		width = 1
-	}
+	fillRect(c, ui.Rect{X: box.X, Y: box.Y + box.H - 1, W: box.W, H: 1}, style.Track)
 
-	for i, v := range values {
-		if v < 0 {
-			v = 0
-		}
-		if v > 1 {
-			v = 1
-		}
-		height := int(float64(box.H) * v)
-		if height <= 0 {
-			continue
-		}
-		x := box.X + box.W - (len(values)-i)*width
-		if x < box.X {
-			continue
-		}
-		fillRect(c, ui.Rect{X: x, Y: box.Y + box.H - height, W: width, H: height}, style.Accent)
+	primary := smoothLine(sparklinePoints(n.Values, window, box.W, box.H, inset))
+	if area := areaContour(primary, float32(box.H)); area != nil {
+		blendMask(c, rasterize(box.W, box.H, [][]fpt{area}), box.X, box.Y, withAlpha(line, 0.18))
 	}
+	if len(n.SecondValues) > 0 {
+		second := smoothLine(sparklinePoints(n.SecondValues, window, box.W, box.H, inset))
+		blendMask(c, rasterize(box.W, box.H, strokeContours(second, max(scale, 1))), box.X, box.Y, style.Secondary)
+	}
+	blendMask(c, rasterize(box.W, box.H, strokeContours(primary, stroke)), box.X, box.Y, line)
+	newest := primary[len(primary)-1]
+	blendMask(c, rasterize(box.W, box.H, [][]fpt{circleContour(newest, dot, 12)}), box.X, box.Y, line)
 	return nil
+}
+
+// withAlpha scales a colour's alpha by f.
+func withAlpha(col Color, f float64) Color {
+	col.A = uint8(float64(col.A)*f + 0.5)
+	return col
 }
 
 // paintText shapes at the physical size and blends the mask at the box origin.
@@ -1466,8 +1460,22 @@ func paintCentredMask(c *Canvas, mask Mask, box ui.Rect, fg Color) (ui.Rect, boo
 	return ink, true
 }
 
+// toneColor resolves a threshold tone for a graph line or meter fill. A
+// normal tone keeps the caller's colour.
+func toneColor(style Style, tone ui.Tone, normal Color) Color {
+	switch tone {
+	case ui.ToneError:
+		return style.Error
+	case ui.ToneActivity:
+		return style.Tertiary
+	}
+	return normal
+}
+
 func textColor(style Style, tone ui.Tone) Color {
 	switch tone {
+	case ui.ToneActivity:
+		return style.Tertiary
 	case ui.ToneError:
 		return style.Error
 	case ui.ToneAccent:

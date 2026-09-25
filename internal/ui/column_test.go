@@ -57,6 +57,13 @@ func TestColumnLayoutStacksAndCentersText(t *testing.T) {
 	}
 }
 
+func TestColumnGraphKeepsItsOwnHeight(t *testing.T) {
+	h, err := columnChildHeight(&Node{Kind: KindGraph, Width: 240, Height: 28}, 400, fakeMeasure)
+	if err != nil || h != 28 {
+		t.Fatalf("graph height = %d, %v; want 28", h, err)
+	}
+}
+
 func TestColumnLayoutAcceptsGraph(t *testing.T) {
 	t.Parallel()
 	root := &Node{Kind: KindColumn, Padding: 12, Children: []*Node{
@@ -245,6 +252,7 @@ func TestColumnChildHeightBandKindsInRow(t *testing.T) {
 	}{
 		{"meter", &Node{Kind: KindMeter, Value: 0.5}, MeterHeight},
 		{"graph", &Node{Kind: KindGraph, Width: 240}, GraphHeight},
+		{"graph with a height", &Node{Kind: KindGraph, Width: 240, Height: 28}, 28},
 		{"separator", &Node{Kind: KindSeparator}, 1},
 		{"column", &Node{Kind: KindColumn, Children: []*Node{{Kind: KindMeter, Value: 0.5}}}, MeterHeight},
 	} {

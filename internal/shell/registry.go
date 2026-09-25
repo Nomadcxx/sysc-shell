@@ -1581,6 +1581,9 @@ func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
 		r.rebuildPanel(h)
 		networkOut, networkOK = h.output, true
 	}
+	if h := r.panelHosts[PanelControlCenter]; h != nil {
+		r.syncControlCentreSubjectsLocked(h, snap)
+	}
 	controlOut, controlOK := r.rebuildControlCentreLocked()
 	r.mu.Unlock()
 
