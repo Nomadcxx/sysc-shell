@@ -78,6 +78,13 @@ const (
 	// taste rather than legibility. Panels only: the bar is docked and its text
 	// sits directly over the wallpaper, which is a different problem.
 	OpacityMinBlurred = 60
+	// OpacityMinFrost is the floor for the frosted bar and its pills. The
+	// compositor blurs what is behind them, which removes the wallpaper detail
+	// the 80 floor guards against, so the limit is taste rather than legibility.
+	OpacityMinFrost = 40
+	// FilletRadius is the radius of the concave wedges that join a panel to the
+	// bar and an attached bar to the screen's sides.
+	FilletRadius = 12
 	// BlurRadius bounds the backdrop blur, in logical pixels at full
 	// resolution. Kernel cost does not grow with radius -- the window slides --
 	// so the ceiling is a matter of taste rather than budget.

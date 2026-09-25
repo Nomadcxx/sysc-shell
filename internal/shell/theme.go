@@ -184,7 +184,7 @@ func ResolveTheme(cfg config.Config, bar config.Bar, tok theme.Tokens) (Theme, e
 		// a tonal step the palette may not have room for.
 		Outlined: hc,
 		BarGap:   bar.Gap,
-		Fillet:   12,
+		Fillet:   theme.FilletRadius,
 	}
 	applyFlat(&t)
 	if err := t.Valid(); err != nil {

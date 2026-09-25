@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -86,6 +87,10 @@ type wireBar struct {
 	Reserve *int       `json:"reserve,omitempty"`
 	Padding *int       `json:"padding,omitempty"`
 	Spacing *int       `json:"spacing,omitempty"`
+	Style   *string    `json:"style,omitempty"`
+	Shape   *string    `json:"shape,omitempty"`
+	Frost   *int       `json:"frost-opacity,omitempty"`
+	Pill    *int       `json:"pill-opacity,omitempty"`
 	Font    *wireFont  `json:"font,omitempty"`
 	Items   *wireItems `json:"items,omitempty"`
 }
@@ -767,6 +772,31 @@ func applyBar(base Bar, w wireBar, path string) (Bar, error) {
 	}
 	if w.Spacing != nil {
 		out.Spacing = *w.Spacing
+	}
+	if w.Style != nil {
+		if !slices.Contains(BarStyles, *w.Style) {
+			return Bar{}, pathErr(path+".style", "%q is not one of %s", *w.Style, strings.Join(BarStyles, ", "))
+		}
+		out.Style = *w.Style
+	}
+	if w.Shape != nil {
+		if !slices.Contains(BarShapes, *w.Shape) {
+			return Bar{}, pathErr(path+".shape", "%q is not one of %s", *w.Shape, strings.Join(BarShapes, ", "))
+		}
+		out.Shape = *w.Shape
+	}
+	for _, o := range []struct {
+		key string
+		in  *int
+		out *int
+	}{{"frost-opacity", w.Frost, &out.FrostOpacity}, {"pill-opacity", w.Pill, &out.PillOpacity}} {
+		if o.in == nil {
+			continue
+		}
+		if *o.in < theme.OpacityMinFrost || *o.in > theme.OpacityMax {
+			return Bar{}, pathErr(path+"."+o.key, "%d is outside %d through %d", *o.in, theme.OpacityMinFrost, theme.OpacityMax)
+		}
+		*o.out = *o.in
 	}
 	if w.Font != nil {
 		if w.Font.Family != nil {

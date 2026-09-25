@@ -154,6 +154,16 @@ type Bar struct {
 	Left       []Item
 	Center     []Item
 	Right      []Item
+
+	// Style is how the bar's ground and pills are painted: one of BarStyles.
+	// Shape is whether the bar meets the screen edge or floats off it: one of
+	// BarShapes. Both are the bar's own identity, not theme axes.
+	Style string
+	Shape string
+	// FrostOpacity is the frosted ground's opacity and PillOpacity the pills'
+	// in the frosted and islands styles, both percentages.
+	FrostOpacity int
+	PillOpacity  int
 }
 
 // Body is the drawn height of the bar: the surface extent less the gap that
@@ -177,6 +187,23 @@ func (b Bar) ExclusiveZone() int {
 	}
 	return *b.Reserve
 }
+
+// Overhang is how far an attached bar's surface reaches past its body, to hold
+// the concave fillets that curve its ends into the screen's sides. It is
+// derived from the shape and never written.
+func (b Bar) Overhang() int {
+	if b.Shape == "attached" {
+		return theme.FilletRadius
+	}
+	return 0
+}
+
+// BarStyles and BarShapes are the values bar.style and bar.shape accept, in
+// the order the settings registry offers them.
+var (
+	BarStyles = []string{"frosted", "solid", "islands"}
+	BarShapes = []string{"attached", "floating"}
+)
 
 // Theme is the composition the palette generator does not produce: the
 // independent density, typography, shape, opacity, elevation, and motion axes,
@@ -411,6 +438,7 @@ func Default() Config {
 	c := Config{
 		Bar: Bar{
 			Enabled: true, Edge: "top", Gap: 4,
+			Style: "frosted", Shape: "attached", FrostOpacity: 65, PillOpacity: 70,
 			Left: []Item{
 				{ID: "launcher"},
 				{ID: "workspace"},
