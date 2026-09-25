@@ -4,7 +4,7 @@ import "encoding/json"
 
 const (
 	ProtocolMajor = 1
-	ProtocolMinor = 8
+	ProtocolMinor = 9
 )
 
 // The version-one message names. Every line on the wire carries one of these

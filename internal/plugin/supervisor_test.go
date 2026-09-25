@@ -354,16 +354,16 @@ func TestSupervisorRejectsUnsupportedManifestMinor(t *testing.T) {
 	}
 }
 
-func TestSupervisorMinorEightBounds(t *testing.T) {
+func TestSupervisorMinorNineBounds(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
 		manifestMinor  int
 		handshakeMinor int
 		wantSuccess    bool
 	}{
-		{name: "minor eight", manifestMinor: 8, handshakeMinor: 8, wantSuccess: true},
-		{name: "manifest minor nine", manifestMinor: 9, handshakeMinor: 8},
-		{name: "handshake minor nine", manifestMinor: 8, handshakeMinor: 9},
+		{name: "minor nine", manifestMinor: 9, handshakeMinor: 9, wantSuccess: true},
+		{name: "manifest minor ten", manifestMinor: 10, handshakeMinor: 9},
+		{name: "handshake minor ten", manifestMinor: 9, handshakeMinor: 10},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := installHelper(t, "ok")
@@ -383,8 +383,8 @@ IFS= read -r _
 					t.Fatalf("Start: %v", err)
 				}
 				defer sess.Close()
-				if sess.Protocol != (v1.Version{Major: 1, Minor: 8}) {
-					t.Fatalf("protocol = %+v, want 1.8", sess.Protocol)
+				if sess.Protocol != (v1.Version{Major: 1, Minor: 9}) {
+					t.Fatalf("protocol = %+v, want 1.9", sess.Protocol)
 				}
 				return
 			}

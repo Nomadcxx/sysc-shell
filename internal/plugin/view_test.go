@@ -954,3 +954,65 @@ func TestConvertScrollablePanelRoot(t *testing.T) {
 		t.Fatal("bar accepted a list root")
 	}
 }
+
+// A sized icon must reach the icon painter with its square, whichever
+// catalogue holds the glyph: carried as text, a project glyph would take the
+// type ladder's size and the plugin's hero would paint as a label.
+func TestConvertCarriesAnIconSizeToTheIconPainter(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindIcon, Icon: "cat-run-2", IconSize: 96, Tone: v1.ToneAccent},
+		{Kind: v1.KindIcon, Icon: "play_arrow", IconSize: 40},
+		{Kind: v1.KindIcon, Icon: "cat-run-2"},
+	}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	hero, material, plain := got.Children[0], got.Children[1], got.Children[2]
+	if hero.Kind != ui.KindIcon || hero.Icon != "cat-run-2" || hero.IconSize != 96 || hero.Text != "" {
+		t.Fatalf("hero = %+v, want a 96 px icon node", hero)
+	}
+	if hero.Tone != ui.ToneAccent {
+		t.Fatalf("hero tone = %v, want the accent it asked for", hero.Tone)
+	}
+	if material.Kind != ui.KindIcon || material.IconSize != 40 {
+		t.Fatalf("material = %+v, want a 40 px icon node", material)
+	}
+	glyph, _ := render.IconByName("cat-run-2")
+	if plain.Kind != ui.KindText || plain.Text != string(glyph) {
+		t.Fatalf("unsized = %+v, want the glyph carried as text as before", plain)
+	}
+}
+
+func TestConvertCarriesASpriteCycle(t *testing.T) {
+	t.Parallel()
+
+	frames := []string{"cat-sit-0", "cat-sit-1", "cat-sit-0"}
+	root := &v1.Node{Kind: v1.KindRow, Children: []*v1.Node{
+		{Kind: v1.KindIcon, Key: "cat", Icon: "cat-sit-0", IconSize: 24, Frames: frames, CycleMS: 1500},
+	}}
+	got, err := Convert(root, v1.ViewBar)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	cat := got.Children[0]
+	if cat.Kind != ui.KindIcon || cat.Key != "cat" || cat.Icon != "cat-sit-0" || len(cat.Frames) != 3 {
+		t.Fatalf("sprite = %+v", cat)
+	}
+	if cat.Cycle != 1500*time.Millisecond {
+		t.Fatalf("cycle = %v", cat.Cycle)
+	}
+	frames[1] = "changed"
+	if cat.Frames[1] != "cat-sit-1" {
+		t.Fatal("the converted sprite aliases the wire's frame list")
+	}
+
+	bad := &v1.Node{Kind: v1.KindRow, Children: []*v1.Node{
+		{Kind: v1.KindIcon, Key: "cat", Icon: "cat-sit-0", IconSize: 24, Frames: []string{"cat-sit-0", "no-such-pose"}, CycleMS: 500},
+	}}
+	if _, err := Convert(bad, v1.ViewBar); err == nil || !strings.Contains(err.Error(), "frames[1]") {
+		t.Fatalf("an unknown pose converted: %v", err)
+	}
+}

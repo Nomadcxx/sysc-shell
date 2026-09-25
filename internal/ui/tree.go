@@ -4,6 +4,7 @@ package ui
 
 import (
 	"strconv"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
@@ -210,6 +211,11 @@ type Node struct {
 	Height int
 	// IconSize is the logical square reserved by KindIcon. Zero uses 20.
 	IconSize int
+	// Frames and Cycle make a KindIcon a sprite: the surface animator steps
+	// Icon through Frames, one pass every Cycle, on the render copy. Icon as
+	// composed is the resting pose, which is what reduced motion paints.
+	Frames []string
+	Cycle  time.Duration
 	// Radius overrides the semantic radius for this node in logical pixels.
 	// Zero defers to Shape, and a zero Shape defers to the surface's base.
 	Radius int
