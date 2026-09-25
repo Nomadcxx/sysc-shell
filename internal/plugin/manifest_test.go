@@ -110,6 +110,15 @@ func TestLoadManifestAcceptsWallpaperCapability(t *testing.T) {
 	}
 }
 
+func TestLoadManifestAcceptsClipboardReadCapability(t *testing.T) {
+	t.Parallel()
+	dir := writePlugin(t, edit(t, "capabilities", []string{"clipboard-read"}), "bin/sysc-plugin-timer")
+	m, err := LoadManifest(dir)
+	if err != nil || !m.Grants(CapClipboardRead) {
+		t.Fatalf("clipboard-read manifest = %+v, %v", m, err)
+	}
+}
+
 // loadErr is LoadManifest with the manifest discarded, for the many cases that
 // only assert on the rejection.
 func loadErr(t *testing.T, dir string) error {

@@ -45,8 +45,8 @@ func TestCrossGlyphIsALatinCross(t *testing.T) {
 	if !ok || r != iconCross {
 		t.Fatalf("cross = %U, %v", r, ok)
 	}
-	if r != 0xE048 {
-		t.Fatalf("cross rune %U is not the codepoint after the cellular band", r)
+	if r != 0xE049 {
+		t.Fatalf("cross rune %U is not the codepoint after the GPU metric glyph", r)
 	}
 	found := false
 	for _, n := range IconNames() {
@@ -117,6 +117,25 @@ func TestGaugeIconsAreDistinctProjectGlyphs(t *testing.T) {
 	}
 	if _, ok := GaugeIconRune("temperature"); ok {
 		t.Fatal("temperature mapped to an icon instead of its numeric value")
+	}
+}
+
+func TestGPUHasAMetricGlyph(t *testing.T) {
+	t.Parallel()
+	r := MetricIconRune("gpu")
+	if r == 0 {
+		t.Fatal("GPU has no metric glyph")
+	}
+	if got := glyphCoverage(t, r, 32); got == 0 {
+		t.Fatalf("GPU metric glyph %U has no ink", r)
+	}
+	m, err := NewSystemFontMap("sans-serif", "")
+	if err != nil {
+		t.Skipf("no system font available: %v", err)
+	}
+	face := m.Face(r, FaceRequest{})
+	if face == nil || face == m.Primary() {
+		t.Fatalf("GPU metric rune %U did not resolve to the project icon face", r)
 	}
 }
 

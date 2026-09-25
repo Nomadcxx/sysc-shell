@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"errors"
 	"testing"
 
 	metrics "github.com/Nomadcxx/sysc-metrics"
@@ -49,21 +48,16 @@ func TestPrimaryBlockDevice(t *testing.T) {
 			dev("dm-0", 10, 10), dev("nvme0n1", 500, 500), dev("zram0", 9e9, 9e9), dev("loop0", 8e9, 0),
 		}},
 	}
-	resolveTo := func(target string) func(string) (string, error) {
-		return func(string) (string, error) { return target, nil }
-	}
-	failing := func(string) (string, error) { return "", errors.New("no such file") }
-
-	if got := primaryBlockDevice(snap, resolveTo("/dev/dm-0")); got != "dm-0" {
+	if got := primaryBlockDevice(snap, "dm-0"); got != "dm-0" {
 		t.Errorf("root device = %q, want dm-0", got)
 	}
-	if got := primaryBlockDevice(snap, failing); got != "nvme0n1" {
+	if got := primaryBlockDevice(snap, ""); got != "nvme0n1" {
 		t.Errorf("fallback = %q, want the busiest real device, not zram or loop", got)
 	}
-	if got := primaryBlockDevice(snap, resolveTo("/dev/sdz")); got != "nvme0n1" {
+	if got := primaryBlockDevice(snap, "sdz"); got != "nvme0n1" {
 		t.Errorf("unlisted root device = %q, want the fallback", got)
 	}
-	if got := primaryBlockDevice(services.Snapshot{}, failing); got != "" {
+	if got := primaryBlockDevice(services.Snapshot{}, ""); got != "" {
 		t.Errorf("no block snapshot = %q", got)
 	}
 }

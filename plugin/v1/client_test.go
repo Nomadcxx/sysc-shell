@@ -58,6 +58,27 @@ func TestClientHandshakeAndSnapshotStayOnStdout(t *testing.T) {
 	}
 }
 
+func TestClientHandshakeSelectsHighestSupportedVersion(t *testing.T) {
+	var hostInput bytes.Buffer
+	if err := NewEncoder(&hostInput).Encode(&HostHello{Supported: []Version{
+		{Major: 1, Minor: 7}, {Major: 1, Minor: 8}, {Major: 2, Minor: 0},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	var pluginOutput bytes.Buffer
+	if _, err := NewClient(&hostInput, &pluginOutput).Handshake(Identity{}); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := NewDecoder(&pluginOutput, ToHost).Decode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := msg.(*PluginHello).Protocol
+	if got != (Version{Major: 1, Minor: 8}) {
+		t.Fatalf("negotiated version = %+v, want 1.8", got)
+	}
+}
+
 func TestClientCallPairsReplyAndHonoursCancel(t *testing.T) {
 	t.Parallel()
 	pluginIn, hostWrites := io.Pipe()

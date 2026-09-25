@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
@@ -38,6 +39,7 @@ type CallEnv struct {
 	SurfacePin        func(context.Context, v1.SurfacePinParams) error
 	WallpaperSnapshot func(context.Context) (v1.WallpaperSnapshotResult, error)
 	WallpaperMaskSet  func(context.Context, v1.WallpaperMaskSetParams) error
+	ClipboardRead     func(context.Context) (v1.ClipboardReadResult, error)
 	MaxPending        int
 	CallTimeout       time.Duration
 }
@@ -169,6 +171,25 @@ func (d *Dispatcher) dispatch(ctx context.Context, call *v1.HostCall) v1.HostRep
 			return failReply(call.ID, "capability wallpaper is not granted")
 		}
 		return d.wallpaper(ctx, call)
+	case v1.CallClipboardRead:
+		if !d.env.allows(CapClipboardRead) {
+			return failReply(call.ID, "capability clipboard-read is not granted")
+		}
+		var params v1.ClipboardReadParams
+		if err := decodeStrictParams(call.Params, &params); err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		if d.env.ClipboardRead == nil {
+			return failReply(call.ID, "clipboard read is not available")
+		}
+		result, err := d.env.ClipboardRead(ctx)
+		if err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		if len(result.Text) > v1.MaxInputBytes || !utf8.ValidString(result.Text) || strings.ContainsRune(result.Text, '\x00') {
+			return failReply(call.ID, "clipboard returned invalid or oversized text")
+		}
+		return okReply(call.ID, result)
 	default:
 		return failReply(call.ID, fmt.Sprintf("unknown call %q", call.Call))
 	}
