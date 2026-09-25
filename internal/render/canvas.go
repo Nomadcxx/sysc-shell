@@ -145,42 +145,9 @@ func fillRoundedRect(c *Canvas, r ui.Rect, radius int, col Color) {
 		return
 	}
 	for y := 0; y < r.H; y++ {
-		inset := roundedInset(y, r.H, radius)
+		inset := ui.RoundedInset(y, r.H, radius)
 		fillRect(c, ui.Rect{X: r.X + inset, Y: r.Y + y, W: r.W - 2*inset, H: 1}, col)
 	}
-}
-
-func roundedInset(y, height, radius int) int {
-	edgeY := min(y, height-1-y)
-	if edgeY >= radius {
-		return 0
-	}
-	radiusSquared := float64(radius) * float64(radius)
-	dy := float64(radius-edgeY) - 0.5
-	dx := math.Sqrt(max(0, radiusSquared-dy*dy))
-	return max(0, int(math.Ceil(float64(radius)-dx-0.5)))
-}
-
-// filletCoverage returns the coverage of one wedge pixel. x is its distance
-// from the panel body's edge and y is its distance from the attached bar edge.
-// The circle is centred on their intersection; a one-pixel distance band
-// antialiases the outer arc without softening the solid interior.
-func filletCoverage(x, y, fillet int) uint8 {
-	if fillet <= 0 || x < 0 || y < 0 || x >= fillet || y >= fillet {
-		return 0
-	}
-	distance := math.Hypot(float64(x)+0.5, float64(y)+0.5)
-	coverage := min(max(float64(fillet)+0.5-distance, 0.0), 1.0)
-	return uint8(coverage * 255)
-}
-
-func filletExtent(y, fillet int) int {
-	for x := fillet - 1; x >= 0; x-- {
-		if filletCoverage(x, y, fillet) > 0 {
-			return x + 1
-		}
-	}
-	return 0
 }
 
 // strokeRoundedRect outlines one clipped rounded rectangle inward from its
@@ -215,14 +182,14 @@ func clearOutsideRoundedRect(c *Canvas, r ui.Rect, radius, fillet int, attachEdg
 			if attachEdge == "bottom" {
 				ly = r.Y + r.H - 1 - y
 			}
-			ext = filletExtent(ly, fillet)
+			ext = ui.FilletExtent(ly, fillet)
 		}
 		inset := 0
 		if radius > 0 {
 			ly := y - r.Y
 			square := (attachEdge == "top" && ly < radius) || (attachEdge == "bottom" && ly >= r.H-radius)
 			if !square {
-				inset = roundedInset(ly, r.H, radius)
+				inset = ui.RoundedInset(ly, r.H, radius)
 			}
 		}
 		x0 := max(0, min(c.Width, r.X+inset-ext))
@@ -250,7 +217,7 @@ func fillAttachFillets(c *Canvas, r ui.Rect, fillet int, attachEdge string, col 
 			continue
 		}
 		for x := 0; x < fillet; x++ {
-			coverage := filletCoverage(x, y, fillet)
+			coverage := ui.FilletCoverage(x, y, fillet)
 			if coverage == 0 {
 				continue
 			}
