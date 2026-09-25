@@ -53,6 +53,8 @@ var materialIcons = map[string]struct{}{
 	"lan": {}, "visibility": {}, "visibility_off": {},
 	"bluetooth_disabled": {}, "bluetooth_connected": {}, "keyboard": {},
 	"mouse": {}, "smartphone": {}, "speaker": {}, "devices_other": {},
+	// The system monitor panel's info card and process detail view.
+	"memory": {}, "developer_board": {}, "disabled_by_default": {}, "skull": {}, "cancel": {},
 }
 
 // The pinned Material Symbols source no longer carries the older
