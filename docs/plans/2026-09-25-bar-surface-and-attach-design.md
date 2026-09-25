@@ -10,7 +10,10 @@ The owner asked for three things:
    options, chosen in Settings.
 2. An attached bar: flush to the screen edge, with concave corners where it
    meets the screen.
-3. Every panel attached to the bar with concave joints, except Settings.
+3. Every panel attached to the bar with concave joints, except Settings,
+   the launcher and the clipboard (amended by the owner on 2026-09-25: those
+   three stay floating, because attaching them would confuse where they come
+   from).
 
 References were read for behaviour only. No QML, C++ or configuration is
 imported.
@@ -184,14 +187,19 @@ theme. `Extent()` becomes the anchored-edge extent without the overhang.
 `SurfaceExtent()` adds it, and the platform sizes the surface from
 `SurfaceExtent()`.
 
-### D6. Every panel attaches, except Settings
+### D6. Every panel attaches, except Settings, the launcher and the clipboard
 
 | Panel | Today | After |
 |---|---|---|
 | Clock, Monitor, Session, Notifications, Plugin, Audio, Control Centre, Network, Bluetooth, Weather | attached, 4 px joints | attached, full joints (D7) |
-| Launcher, Wallpaper | centred below the bar, floating | attached at the bar's centre |
-| Clipboard | centred in the whole output, modal | attached at the bar's centre (it keeps the shield and exclusive keyboard every panel has) |
+| Wallpaper | centred below the bar, floating | attached at the bar's centre |
+| Launcher | centred below the bar, floating | unchanged: floating |
+| Clipboard | centred in the whole output, modal | unchanged: floating |
 | Settings | attached, centred | **floating**: centred below the bar, full radius, rim |
+
+The launcher and clipboard are keyboard-first pickers summoned by hotkey as
+often as from the bar. Attaching them would tie them visually to a bar
+button they were not opened from.
 
 In `islands` style, or with the bar disabled on that output, every panel is
 detached. It sits `theme.MarginS` below the bar zone with full radius and its
@@ -298,8 +306,8 @@ The shell publishes regions whether or not a rule exists, as Noctalia does.
 Owner-run on Niri 26.04+, `DP-1`:
 
 - Each style × shape combination, over a bright and a dark wallpaper.
-- Open every panel: joints visible and continuous, no hairline at the seam,
-  Settings floating.
+- Open every panel: joints visible and continuous, no hairline at the seam;
+  Settings, the launcher and the clipboard floating.
 - Session and Notifications flush to the right edge with a screen fillet.
 - Switch style and shape live from Settings.
 - Start on a compositor without the protocol, and confirm `frosted` falls back

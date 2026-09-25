@@ -4,7 +4,8 @@
 
 **Goal:** Ship the frosted, solid and islands bar styles, with frosted as the default. Blur comes from
 the compositor through `ext-background-effect-v1`. Add an attached bar shape with concave end fillets,
-and make every panel except Settings attach to the bar with full concave joints.
+and make every panel except Settings, the launcher and the clipboard attach to the bar with full
+concave joints.
 
 **Architecture:** `internal/platform/wayland` gains a generated `backgroundeffect` binding, an optional
 global, a `Capabilities` callback, and per-surface blur regions supplied as logical rectangles.
@@ -45,7 +46,7 @@ repo's usual `bd` parent/dependency flags:
 - Compositor blur: ext-background-effect binding, capability, regions (Tasks 1–4)
 - Bar styles: frosted, solid, islands (Tasks 5–8)
 - Attached bar shape with end fillets (Tasks 9–10)
-- Attach every panel except Settings (Tasks 11–14)
+- Attach every panel except Settings, launcher and clipboard (Tasks 11–14)
 - Niri blur documentation and live gate (Tasks 15–16)
 
 Record the two follow-ups as discovered work (`bd create "..." --deps discovered-from:<epic>`):
@@ -327,18 +328,17 @@ func TestBlurCapabilityUsesTheCorrectedMask(t *testing.T) {
 ### Task 11: Placement for every panel
 
 **Files:**
-- Modify: `internal/shell/panelhost.go:598` (`spawnPanelLocked`: remove `CenterY` from Launcher and
-  Wallpaper; Clipboard attaches at the centre; Settings becomes
-  `CenterY`; islands style or no bar on the output → `Detached` with `Gap: theme.MarginS`)
+- Modify: `internal/shell/panelhost.go:598` (`spawnPanelLocked`: remove `CenterY` from Wallpaper;
+  Launcher and Clipboard keep `CenterY`; Settings becomes `CenterY`; islands style or no bar on the output → `Detached` with `Gap: theme.MarginS`)
 - Modify: `internal/shell/panel.go` (`Placement.Detached bool`)
 - Test: `internal/shell/panelhost_test.go`
 
 - [ ] **Step 1: Failing table test** over every `PanelID` × {frosted-attached, solid-floating, islands,
   bar disabled}. It asserts `CenterY`, `Detached`, `Align`, and whether the style sets `AttachEdge`.
-  Settings is always `CenterY`. Islands and bar-disabled are always `Detached`.
+  Settings, Launcher and Clipboard are always `CenterY`. Islands and bar-disabled are always `Detached`.
 - [ ] **Step 2:** Implement. Keep today's per-panel `Align`.
 - [ ] **Step 3:** `go test ./internal/shell/ -run 'Placement|Spawn|Panel' -count=1`.
-- [ ] **Step 4:** Commit: `feat(panels): attach every panel except Settings`.
+- [ ] **Step 4:** Commit: `feat(panels): attach every panel except the floating three`.
 
 ### Task 12: Per-side joints and flush panels
 
