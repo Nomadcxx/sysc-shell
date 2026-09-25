@@ -78,7 +78,7 @@ type processColumn struct {
 
 var processColumnsAfterName = []processColumn{
 	{"cpu", "CPU", 72}, {"mem", "MEM", 100}, {"swap", "SWAP", 84},
-	{"io", "DISK", 96}, {"pid", "PID", 72}, {"user", "USER", 88},
+	{"io", "DISK", 96}, {"pid", "PID", 80}, {"user", "USER", 88},
 }
 
 func processNameWidth(h *PanelHost) int {
@@ -173,19 +173,15 @@ func monitorRole(name string, fallback ui.PaintRole) ui.PaintRole {
 func processTableHeader(h *PanelHost, in monitorView) *ui.Node {
 	cell := func(key, label string, width int) *ui.Node {
 		text := label
-		n := &ui.Node{Kind: ui.KindButton, Action: "monitor:sort:" + key, Name: "Sort by " + label,
-			Role: "button", Focusable: true, Width: width, Height: processHeaderHeight, Shape: ui.ShapeSmall,
-			Children: []*ui.Node{{Kind: ui.KindText, Text: text, CenterX: true}}}
 		if h.processSort == key {
-			arrow := "▲ "
+			text = "▲ " + label
 			if h.processDesc {
-				arrow = "▼ "
+				text = "▼ " + label
 			}
-			n.Children[0].Text = arrow + label
-			n.Fill = ui.FillRole
-			n.FillRole = monitorRole(in.Config.SortBackground, ui.PaintSurfaceVariant)
-			n.InkRole = monitorRole(in.Config.SortColor, ui.PaintOnSurfaceVariant)
 		}
+		n := processCell(in, h.processSort == key, width, processHeaderHeight,
+			&ui.Node{Kind: ui.KindText, Text: text, CenterX: true})
+		n.Action, n.Name, n.Role, n.Focusable = "monitor:sort:"+key, "Sort by "+label, "button", true
 		return n
 	}
 	row := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Padding: processTablePadding + processRowPadding, Height: processHeaderRowH,
@@ -248,19 +244,33 @@ func processLineRow(h *PanelHost, in monitorView, l processLine) *ui.Node {
 		default:
 			text = formatProcessCell(c.key, l.Totals)
 		}
-		cell := &ui.Node{Kind: ui.KindCapsule, Width: c.width, Height: processRowHeight - 4, Name: c.label + " value",
-			Shape: ui.ShapeSmall, Children: []*ui.Node{{Kind: ui.KindText, Text: text, Tabular: true, MaxWidth: c.width - 8, CenterY: true}}}
-		if c.key == "cpu" || c.key == "mem" || c.key == "swap" || c.key == "io" {
-			cell.Children[0].PinEnd = true
+		value := &ui.Node{Kind: ui.KindText, Text: text, Tabular: true, MaxWidth: c.width - 2*theme.MarginXS}
+		if c.key != "user" {
+			// A row led by text pins its last child to the right edge, which
+			// is how the numbers line up on their units.
+			value = &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{{Kind: ui.KindText}, value}}
 		}
-		if h.processSort == c.key {
-			cell.Fill = ui.FillRole
-			cell.FillRole = monitorRole(in.Config.SortBackground, ui.PaintSurfaceVariant)
-			cell.InkRole = monitorRole(in.Config.SortColor, ui.PaintOnSurfaceVariant)
-		}
+		cell := processCell(in, h.processSort == c.key, c.width, processRowHeight-4, value)
+		cell.Name = c.label + " value"
 		row.Children = append(row.Children, cell)
 	}
 	return row
+}
+
+// processCell is one fixed table cell. Only the sorted column is a pill, as in
+// the reference; the others are bare content on the same geometry, so the
+// columns line up whichever is sorted.
+func processCell(in monitorView, sorted bool, width, height int, content *ui.Node) *ui.Node {
+	col := &ui.Node{Kind: ui.KindColumn, Width: width, Height: height, Padding: theme.MarginXS, CenterY: true,
+		Children: []*ui.Node{content}}
+	if !sorted {
+		return col
+	}
+	col.Width, col.Height = 0, 0
+	return &ui.Node{Kind: ui.KindCapsule, Width: width, Height: height, Shape: ui.ShapeSmall, Fill: ui.FillRole,
+		FillRole: monitorRole(in.Config.SortBackground, ui.PaintSurfaceVariant),
+		InkRole:  monitorRole(in.Config.SortColor, ui.PaintOnSurfaceVariant),
+		Children: []*ui.Node{col}}
 }
 
 func processLineIcon(in monitorView, l processLine) *ui.Node {

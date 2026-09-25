@@ -10,6 +10,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -574,6 +575,51 @@ func TestRowCellsAlignWithTheirHeaders(t *testing.T) {
 			}
 			if cell == nil || cell.Bounds.X != header.Bounds.X || cell.Bounds.W != header.Bounds.W {
 				t.Errorf("%s: row %q cell %+v, header %+v", c.label, row.Name, cell.Bounds, header.Bounds)
+			}
+		}
+	}
+}
+
+// Only the sorted column is a pill, header and rows alike; numbers sit on the
+// right edge of their cell, as in the reference.
+func TestOnlyTheSortedColumnIsAPillAndNumbersAlignRight(t *testing.T) {
+	h := processHost()
+	root := monitorPanelTree(h, processView(processFixture()))
+	size := panelTargetSize(PanelMonitor)
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 8, 16 }
+	if err := ui.LayoutColumn(root, ui.Rect{W: size.W, H: size.H}, measure); err != nil {
+		t.Fatalf("layout: %v", err)
+	}
+	pill := func(n *ui.Node) bool { return n != nil && n.Kind == ui.KindCapsule && n.Fill == ui.FillRole }
+	for _, c := range processColumnsAfterName {
+		sorted := c.key == h.processSort
+		if got := pill(findByName(root, "Sort by "+c.label)); got != sorted {
+			t.Errorf("header %s pill = %v, want %v", c.label, got, sorted)
+		}
+		for _, row := range processVirtualList(root).Children {
+			var cell *ui.Node
+			for _, n := range row.Children {
+				if n.Name == c.label+" value" {
+					cell = n
+				}
+			}
+			if cell == nil {
+				continue
+			}
+			if got := pill(cell); got != sorted {
+				t.Errorf("row %q %s pill = %v, want %v", row.Name, c.label, got, sorted)
+			}
+			var text *ui.Node
+			walkNodes(cell, func(n *ui.Node) {
+				if n.Kind == ui.KindText && n.Text != "" {
+					text = n
+				}
+			})
+			if c.key == "user" || text == nil {
+				continue
+			}
+			if right := cell.Bounds.X + cell.Bounds.W - theme.MarginXS; text.Bounds.X+text.Bounds.W != right {
+				t.Errorf("row %q %s %q ends at %d, want %d", row.Name, c.label, text.Text, text.Bounds.X+text.Bounds.W, right)
 			}
 		}
 	}
