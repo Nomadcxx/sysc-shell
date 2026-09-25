@@ -312,7 +312,7 @@ func centreHeaderRow(dnd bool) *ui.Node {
 	controls := &ui.Node{Kind: ui.KindRow, Gap: cardGap, Children: []*ui.Node{
 		centreIconButton(dndIcon, "notify:center:dnd", "Do not disturb"),
 		centreIconButton("schedule", "notify:center:schedule", "Schedule"),
-		centreIconButton("delete", "notify:center:clear", "Clear"),
+		centreIconButton("delete", "notify:center:clear", "Clear all"),
 		centreIconButton("settings", "notify:center:settings", "Settings"),
 		centreIconButton("close", "notify:center:close", "Close"),
 	}}
