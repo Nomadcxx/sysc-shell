@@ -112,3 +112,21 @@ func TestMonitorPageDashesAGPUWithoutAValidSample(t *testing.T) {
 		t.Fatal("the GPU row lost its name")
 	}
 }
+
+// Row values read as one column: every row's value starts at the same x
+// whatever its label's length, and whether or not the label has a glyph.
+func TestMonitorRowValuesShareOneColumn(t *testing.T) {
+	page := layOutMonitor(t, monitorTestRegistry())
+	x := -1
+	for _, name := range []string{"Temperature", "GPU usage", "Storage used", "Network rate", "Disk I/O rate"} {
+		n := findByName(page, name)
+		if n == nil {
+			t.Fatalf("no value named %q", name)
+		}
+		if x < 0 {
+			x = n.Bounds.X
+		} else if n.Bounds.X != x {
+			t.Errorf("%s value starts at x=%d, want %d", name, n.Bounds.X, x)
+		}
+	}
+}

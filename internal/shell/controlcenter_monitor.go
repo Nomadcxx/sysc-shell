@@ -16,7 +16,6 @@ const (
 	ccMonRowH       = 50
 	ccMonMarkH      = 28
 	ccMonMarkW      = 240
-	ccMonLabelW     = 96
 	ccMonCPUGraphH  = 64
 	ccMonMemMeterH  = 8
 	ccMonSwapMeterH = 4
@@ -152,11 +151,18 @@ func ccMonRow(iconID, label string, value, caption *ui.Node, mark *ui.Node) *ui.
 	}
 	return &ui.Node{Kind: ui.KindRow, Height: ccMonRowH, Gap: theme.MarginM, CenterY: true, PinEnd: true, Children: []*ui.Node{
 		{Kind: ui.KindRow, Gap: theme.MarginM, CenterY: true, Children: []*ui.Node{
-			{Kind: ui.KindText, Width: ccMonLabelW, Text: label},
+			{Kind: ui.KindText, Text: label, MinWidthText: ccMonLabelFloor()},
 			{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{value, caption}},
 		}},
 		mark,
 	}}
+}
+
+// ccMonLabelFloor is the widest row label, glyph included. Every label is
+// floored to it so the values after them start on one column; text nodes
+// take their width from a measured sample, not a pixel count.
+func ccMonLabelFloor() string {
+	return string(render.MetricIconRune("cpu")) + " Temperature"
 }
 
 func ccMonTemperatureRow(snap services.Snapshot, history map[services.Selector][]float64) *ui.Node {
