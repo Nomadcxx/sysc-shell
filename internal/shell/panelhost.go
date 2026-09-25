@@ -83,9 +83,10 @@ type PanelHost struct {
 	// subjectLeases hold the Control Centre's per-interface and per-device rate
 	// rings. They are resolved from the first snapshot that names a subject and
 	// kept until that subject disappears, so the chart does not hop.
-	subjectLeases     []*services.Lease
-	ccIface, ccDevice string
-	shieldQuiet       time.Time
+	subjectLeases                                     []*services.Lease
+	ccIface, ccDevice                                 string
+	ccRootSource, ccRootDevice, ccRootSelectionSource string
+	shieldQuiet                                       time.Time
 	// anim is this surface's one clock: every transition it runs shares it, so
 	// frames are scheduled from a single place.
 	anim     *animator
@@ -2695,6 +2696,7 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 	h.leases = nil
 	releaseAll(h.subjectLeases)
 	h.subjectLeases, h.ccIface, h.ccDevice = nil, "", ""
+	h.ccRootSource, h.ccRootDevice, h.ccRootSelectionSource = "", "", ""
 	if h.mixerLease != nil {
 		lease := h.mixerLease
 		h.mixerLease = nil

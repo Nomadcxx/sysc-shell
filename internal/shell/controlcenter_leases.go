@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"path/filepath"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/services"
@@ -23,8 +24,50 @@ func ccRateSelectors(iface, device string) []services.Selector {
 	return out
 }
 
+func rootFilesystemSource(snap services.Snapshot) string {
+	if snap.Filesystem == nil {
+		return ""
+	}
+	for _, fs := range snap.Filesystem.Filesystems {
+		if fs.MountPoint == "/" {
+			return fs.Source
+		}
+	}
+	return ""
+}
+
+// updateControlCentreRootDevice caches the root source before resolving it
+// off Registry.mu. UpdateMetrics calls this from its sampling goroutine.
+func (r *Registry) updateControlCentreRootDevice(snap services.Snapshot, resolve func(string) (string, error)) {
+	if snap.Filesystem == nil {
+		return
+	}
+	source := rootFilesystemSource(snap)
+	r.mu.Lock()
+	h := r.panelHosts[PanelControlCenter]
+	if h == nil || h.ccRootSource == source {
+		r.mu.Unlock()
+		return
+	}
+	h.ccRootSource = source
+	r.mu.Unlock()
+
+	device := ""
+	if source != "" {
+		if path, err := resolve(source); err == nil {
+			device = filepath.Base(path)
+		}
+	}
+
+	r.mu.Lock()
+	if r.panelHosts[PanelControlCenter] == h && h.ccRootSource == source {
+		h.ccRootDevice = device
+	}
+	r.mu.Unlock()
+}
+
 // syncControlCentreSubjectsLocked keeps one interface and one device leased.
-// A subject is re-resolved only when the snapshot no longer carries it.
+// A subject changes when it disappears or the root filesystem source changes.
 // Caller holds r.mu.
 func (r *Registry) syncControlCentreSubjectsLocked(h *PanelHost, snap services.Snapshot) {
 	if h == nil || r.metrics == nil {
@@ -36,10 +79,14 @@ func (r *Registry) syncControlCentreSubjectsLocked(h *PanelHost, snap services.S
 	if snap.Network != nil && !snapshotHasInterface(snap, iface) {
 		iface = primaryInterface(snap)
 	}
-	if snap.Block != nil && !snapshotHasDevice(snap, device) {
-		device = primaryBlockDevice(snap, resolveDevicePath)
+	rootSourceChanged := h.ccRootSource != h.ccRootSelectionSource
+	if snap.Block != nil && (rootSourceChanged || !snapshotHasDevice(snap, device)) {
+		device = primaryBlockDevice(snap, h.ccRootDevice)
 	}
 	if iface == h.ccIface && device == h.ccDevice {
+		if snap.Block != nil {
+			h.ccRootSelectionSource = h.ccRootSource
+		}
 		return
 	}
 	var leases []*services.Lease
@@ -53,6 +100,9 @@ func (r *Registry) syncControlCentreSubjectsLocked(h *PanelHost, snap services.S
 	}
 	releaseAll(h.subjectLeases)
 	h.subjectLeases, h.ccIface, h.ccDevice = leases, iface, device
+	if snap.Block != nil {
+		h.ccRootSelectionSource = h.ccRootSource
+	}
 }
 
 func snapshotHasInterface(snap services.Snapshot, name string) bool {

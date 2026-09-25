@@ -105,3 +105,61 @@ func TestControlCentreKeepsSubjectsThroughAFailedPass(t *testing.T) {
 		}
 	}
 }
+
+func TestControlCentreResolvesRootDeviceOncePerSource(t *testing.T) {
+	r := newPanelRegistry(t)
+	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	snap := ccSubjectSnapshot("enp7s0")
+	snap.Block.Devices = append(snap.Block.Devices, metrics.BlockDevice{Name: "dm-0"})
+	snap.Filesystem = &metrics.FilesystemSnapshot{Filesystems: []metrics.Filesystem{{
+		MountPoint: "/", Source: "/dev/mapper/root",
+	}}}
+	calls, resolvedUnlocked := 0, true
+	resolve := func(source string) (string, error) {
+		calls++
+		if r.mu.TryLock() {
+			r.mu.Unlock()
+		} else {
+			resolvedUnlocked = false
+		}
+		if source == "/dev/mapper/root" {
+			return "/dev/dm-0", nil
+		}
+		return "/dev/nvme0n1", nil
+	}
+	for i := 0; i < 3; i++ {
+		r.updateControlCentreRootDevice(snap, resolve)
+		r.mu.Lock()
+		h := r.panelHosts[PanelControlCenter]
+		r.syncControlCentreSubjectsLocked(h, snap)
+		r.mu.Unlock()
+	}
+	if calls != 1 || !resolvedUnlocked {
+		t.Fatalf("resolve calls = %d, unlocked = %v; want one call outside Registry.mu", calls, resolvedUnlocked)
+	}
+	r.mu.Lock()
+	h := r.panelHosts[PanelControlCenter]
+	got := h.ccDevice
+	r.mu.Unlock()
+	if got != "dm-0" {
+		t.Fatalf("root device = %q, want dm-0", got)
+	}
+	failedFilesystem := snap
+	failedFilesystem.Filesystem = nil
+	r.updateControlCentreRootDevice(failedFilesystem, resolve)
+	if calls != 1 {
+		t.Fatalf("a failed filesystem pass re-resolved the root %d times", calls)
+	}
+
+	snap.Filesystem.Filesystems[0].Source = "/dev/mapper/new-root"
+	r.updateControlCentreRootDevice(snap, resolve)
+	r.mu.Lock()
+	r.syncControlCentreSubjectsLocked(h, snap)
+	got = h.ccDevice
+	r.mu.Unlock()
+	if calls != 2 || got != "nvme0n1" {
+		t.Fatalf("changed root source: resolve calls = %d, device = %q; want 2 and nvme0n1", calls, got)
+	}
+}

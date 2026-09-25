@@ -254,7 +254,7 @@ func buildMetricWidget(item config.Item) textWidget {
 			},
 		}
 	case "graph":
-		node := &ui.Node{Kind: ui.KindGraph, Width: metricGraphWidth, Action: panelMonitorAction}
+		node := &ui.Node{Kind: ui.KindGraph, Width: metricGraphWidth, Window: services.HistorySize, Action: panelMonitorAction}
 		return textWidget{
 			node:    node,
 			tooltip: metricTooltip(item),
