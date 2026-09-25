@@ -53,8 +53,8 @@ func TestStartCompletesTheHandshake(t *testing.T) {
 	t.Parallel()
 
 	sess := startHelper(t, "ok")
-	if sess.Protocol != (v1.Version{Major: 1, Minor: 0}) {
-		t.Errorf("protocol = %+v, want 1.0", sess.Protocol)
+	if sess.Protocol != (v1.Version{Major: 1, Minor: v1.ProtocolMinor}) {
+		t.Errorf("protocol = %+v, want 1.%d", sess.Protocol, v1.ProtocolMinor)
 	}
 	if len(sess.Granted) != len(hostCaps) {
 		t.Errorf("granted = %v, want all four", sess.Granted)

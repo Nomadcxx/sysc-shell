@@ -211,6 +211,9 @@ type InputEvent struct {
 	// Text is the committed value on change and submit events. The host owns
 	// the live buffer; this is what it has committed.
 	Text string `json:"text,omitempty"`
+	// Key and Modifiers identify a manifest-declared panel shortcut.
+	Key       string   `json:"key,omitempty"`
+	Modifiers []string `json:"modifiers,omitempty"`
 	// Output is the connector the event came from.
 	Output string `json:"output,omitempty"`
 	// Generation is Output's host identity at the time of the event.
@@ -259,6 +262,8 @@ const (
 	CallClipboardRead     CallKind = "clipboard.read"
 	CallWallpaperSnapshot CallKind = "wallpaper.snapshot"
 	CallWallpaperMaskSet  CallKind = "wallpaper.mask.set"
+	CallOpenURL           CallKind = "open-url"
+	CallClipboardWrite    CallKind = "clipboard.write"
 )
 
 // HostCall is a request from the plugin. Params is left raw so that adding a
@@ -417,6 +422,16 @@ type OutputContextParams struct {
 type OutputContextResult struct {
 	Output     string `json:"output"`
 	Generation uint32 `json:"generation"`
+}
+
+// OpenURLParams asks the shell to open one validated HTTP(S) address.
+type OpenURLParams struct {
+	URL string `json:"url"`
+}
+
+// ClipboardWriteParams writes bounded plain text to the user's clipboard.
+type ClipboardWriteParams struct {
+	Text string `json:"text"`
 }
 
 // PanelResult names the view the host opened, so the plugin can close it.

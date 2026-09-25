@@ -84,6 +84,26 @@ func TestHelloExchangeRoundTripsOnOneLine(t *testing.T) {
 	}
 }
 
+func TestShortcutInputRoundTripsKeyAndModifiers(t *testing.T) {
+	line := []byte(`{"type":"input.event","view_id":"calendar","revision":7,"node":"cal-today","event":"shortcut","key":"r","modifiers":["ctrl"]}` + "\n")
+	message, err := NewDecoder(bytes.NewReader(line), ToPlugin).Decode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, ok := message.(*InputEvent)
+	if !ok {
+		t.Fatalf("decoded %T, want *InputEvent", message)
+	}
+	roundTrip := encodeOne(t, input)
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(roundTrip, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if string(fields["key"]) != `"r"` || string(fields["modifiers"]) != `["ctrl"]` || string(fields["event"]) != `"shortcut"` {
+		t.Fatalf("shortcut fields lost in round trip: %s", roundTrip)
+	}
+}
+
 func TestEncodeStampsTheRegisteredType(t *testing.T) {
 	t.Parallel()
 

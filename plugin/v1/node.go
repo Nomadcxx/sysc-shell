@@ -17,6 +17,8 @@ package v1
 import (
 	"fmt"
 	"math"
+	"strconv"
+	"time"
 )
 
 // The version-one ceilings. They are constants rather than configuration
@@ -57,8 +59,30 @@ const (
 	MaxPathBytes = 4096
 	// MaxStroke bounds a container or button rim in logical pixels. The
 	// consumer is a one-pixel hairline; anything larger is a mistake.
-	MaxStroke = 8
+	MaxStroke         = 8
+	MaxScheduleEvents = 256
 )
+
+type ScheduleGrid struct {
+	Start    time.Time       `json:"start"`
+	Now      time.Time       `json:"now"`
+	Zone     string          `json:"zone"`
+	Days     int             `json:"days"`
+	Selected string          `json:"selected,omitempty"`
+	Events   []ScheduleEvent `json:"events"`
+}
+
+type ScheduleEvent struct {
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Name      string    `json:"name"`
+	Start     time.Time `json:"start,omitempty"`
+	End       time.Time `json:"end,omitempty"`
+	AllDay    bool      `json:"all_day,omitempty"`
+	StartDate string    `json:"start_date,omitempty"`
+	EndDate   string    `json:"end_date,omitempty"`
+	Marker    string    `json:"marker,omitempty"`
+}
 
 // NodeKind names a view element. Kinds are strings so that a plugin written in
 // any language is self-describing on the wire and an unknown kind produces a
@@ -90,6 +114,10 @@ const (
 	// needs. The host owns the decode; the plugin names a path and gains
 	// display, not read, power.
 	KindImage NodeKind = "image"
+	// KindSegmented exposes the shell's exclusive segmented control to plugins.
+	KindSegmented NodeKind = "segmented"
+	// KindScheduleGrid arranges bounded event occurrences in local-time columns.
+	KindScheduleGrid NodeKind = "schedule_grid"
 )
 
 // EventKind names an input event a node declares it can emit. A node receives
@@ -104,6 +132,8 @@ const (
 	EventSubmit   EventKind = "submit"
 	EventScroll   EventKind = "scroll"
 	EventDrop     EventKind = "drop"
+	// EventShortcut is a panel-level action, not a node-emitted pointer event.
+	EventShortcut EventKind = "shortcut"
 )
 
 // Tone selects the semantic theme role a text node paints in. Plugins name
@@ -193,6 +223,12 @@ type Node struct {
 	// Disabled greys an interactive node out: it stays in keyboard traversal
 	// with its accessible name explaining why, and activation is blocked.
 	Disabled bool `json:"disabled,omitempty"`
+	// Selected marks the active button inside a segmented control. Minor eight.
+	Selected bool `json:"selected,omitempty"`
+	// MarkerColor supplies an event's bounded RGB marker. The shell uses it
+	// only on the button rim, never on text or the event surface. Minor eight.
+	MarkerColor string        `json:"marker_color,omitempty"`
+	Schedule    *ScheduleGrid `json:"schedule,omitempty"`
 	// CenterX centres a child in its column track.
 	CenterX bool `json:"center_x,omitempty"`
 	// PinEnd right-pins the last child of a two-child row.
@@ -278,7 +314,7 @@ type Node struct {
 
 // container reports whether a kind holds children.
 func (k NodeKind) container() bool {
-	return k == KindRow || k == KindColumn || k == KindList || k == KindDropZone
+	return k == KindRow || k == KindColumn || k == KindList || k == KindDropZone || k == KindSegmented
 }
 
 // interactive reports whether a kind produces input and therefore needs an
@@ -306,6 +342,7 @@ var knownKinds = map[NodeKind]bool{
 	KindProgress: true, KindButton: true, KindTextInput: true,
 	KindList: true, KindDragSource: true, KindDropZone: true,
 	KindGauge: true, KindGraph: true, KindSeparator: true, KindImage: true,
+	KindSegmented: true, KindScheduleGrid: true,
 }
 
 var knownViews = map[ViewKind]bool{ViewBar: true, ViewTooltip: true, ViewPanel: true, ViewFloating: true}
@@ -371,6 +408,10 @@ type validator struct {
 }
 
 func (v *validator) node(n *Node, path string, depth int) error {
+	return v.nodeIn(n, path, depth, false)
+}
+
+func (v *validator) nodeIn(n *Node, path string, depth int, segmentChild bool) error {
 	if n == nil {
 		return fmt.Errorf("%s: nil node", path)
 	}
@@ -408,6 +449,29 @@ func (v *validator) node(n *Node, path string, depth int) error {
 	if err := v.minorSix(n, path); err != nil {
 		return err
 	}
+	if err := v.minorEight(n, path); err != nil {
+		return err
+	}
+	if n.Selected && (!segmentChild || n.Kind != KindButton) {
+		return fmt.Errorf("%s: selected is only valid on a button inside a segmented control", path)
+	}
+	if n.Kind == KindSegmented {
+		if len(n.Children) < 2 {
+			return fmt.Errorf("%s: segmented control needs at least two buttons", path)
+		}
+		selected := 0
+		for i, child := range n.Children {
+			if child == nil || child.Kind != KindButton {
+				return fmt.Errorf("%s.children[%d]: segmented control requires buttons", path, i)
+			}
+			if child.Selected {
+				selected++
+			}
+		}
+		if selected != 1 {
+			return fmt.Errorf("%s: segmented control has %d selected buttons, want one", path, selected)
+		}
+	}
 
 	if !n.Kind.container() && n.Kind != KindButton && len(n.Children) > 0 {
 		return fmt.Errorf("%s: %s takes no children", path, n.Kind)
@@ -416,7 +480,7 @@ func (v *validator) node(n *Node, path string, depth int) error {
 		return fmt.Errorf("%s: %d children, more than the %d allowed", path, len(n.Children), MaxChildren)
 	}
 	for i, c := range n.Children {
-		if err := v.node(c, fmt.Sprintf("%s.children[%d]", path, i), depth+1); err != nil {
+		if err := v.nodeIn(c, fmt.Sprintf("%s.children[%d]", path, i), depth+1, n.Kind == KindSegmented); err != nil {
 			return err
 		}
 	}
@@ -518,6 +582,9 @@ func (v *validator) vocabulary(n *Node, path string) error {
 	}
 	if v.view == ViewTooltip && n.Kind.interactive() {
 		return fmt.Errorf("%s: a tooltip is read-only and cannot hold a %s", path, n.Kind)
+	}
+	if n.Kind == KindSegmented && v.view != ViewPanel {
+		return fmt.Errorf("%s: a segmented control is only valid in a panel", path)
 	}
 	if v.view == ViewBar && n.Kind.keyboard() {
 		return fmt.Errorf("%s: a bar view has no keyboard focus and cannot hold a %s", path, n.Kind)
@@ -709,6 +776,92 @@ func (v *validator) minorSix(n *Node, path string) error {
 		return fmt.Errorf("%s: an animated %s needs a key so the host keeps one transition across revisions", path, n.Kind)
 	}
 	return nil
+}
+
+func (v *validator) minorEight(n *Node, path string) error {
+	if n.MarkerColor != "" && (n.Kind != KindButton || !validRGBMarker(n.MarkerColor)) {
+		return fmt.Errorf("%s: marker color is only valid as RGB on a button", path)
+	}
+	if n.Schedule == nil {
+		if n.Kind == KindScheduleGrid {
+			return fmt.Errorf("%s: schedule grid needs schedule data", path)
+		}
+		return nil
+	}
+	if n.Kind != KindScheduleGrid {
+		return fmt.Errorf("%s: %s cannot carry schedule data", path, n.Kind)
+	}
+	if v.view != ViewPanel {
+		return fmt.Errorf("%s: a schedule grid is only valid in a panel", path)
+	}
+	s := n.Schedule
+	if s.Start.IsZero() || s.Now.IsZero() {
+		return fmt.Errorf("%s: schedule start and current time are required", path)
+	}
+	if s.Days < 1 || s.Days > 7 {
+		return fmt.Errorf("%s: schedule days %d is outside one through seven", path, s.Days)
+	}
+	if len(s.Zone) == 0 || len(s.Zone) > 64 {
+		return fmt.Errorf("%s: schedule time zone is invalid", path)
+	}
+	zone, err := time.LoadLocation(s.Zone)
+	if err != nil {
+		return fmt.Errorf("%s: schedule time zone %q is unknown", path, s.Zone)
+	}
+	start := s.Start.In(zone)
+	year, month, day := start.Date()
+	if start.Hour() != 0 || start.Minute() != 0 || start.Second() != 0 || start.Nanosecond() != 0 || !s.Start.Equal(time.Date(year, month, day, 0, 0, 0, 0, zone)) {
+		return fmt.Errorf("%s: schedule start must be local midnight", path)
+	}
+	if len(s.Events) > MaxScheduleEvents {
+		return fmt.Errorf("%s: schedule has %d events, more than %d", path, len(s.Events), MaxScheduleEvents)
+	}
+	seen := make(map[string]bool, len(s.Events))
+	selected := s.Selected == ""
+	for i, event := range s.Events {
+		eventPath := fmt.Sprintf("%s.schedule.events[%d]", path, i)
+		if event.ID == "" || len(event.ID) > MaxIdentBytes || seen[event.ID] || v.ids[event.ID] {
+			return fmt.Errorf("%s: event ID is empty, oversized, or duplicated", eventPath)
+		}
+		seen[event.ID], v.ids[event.ID] = true, true
+		if len(event.Title) == 0 || len(event.Title) > 512 || len(event.Name) == 0 || len(event.Name) > MaxIdentBytes {
+			return fmt.Errorf("%s: title or accessible name is outside bounds", eventPath)
+		}
+		if !validScheduleMarker(event.Marker) {
+			return fmt.Errorf("%s: unknown semantic marker or invalid RGB marker %q", eventPath, event.Marker)
+		}
+		if event.AllDay {
+			first, firstErr := time.Parse("2006-01-02", event.StartDate)
+			last, lastErr := time.Parse("2006-01-02", event.EndDate)
+			if firstErr != nil || lastErr != nil || !first.Before(last) || !event.Start.IsZero() || !event.End.IsZero() {
+				return fmt.Errorf("%s: all-day event needs valid exclusive date bounds", eventPath)
+			}
+		} else if event.Start.IsZero() || event.End.IsZero() || !event.Start.Before(event.End) || event.End.Sub(event.Start) > 366*24*time.Hour || event.StartDate != "" || event.EndDate != "" {
+			return fmt.Errorf("%s: timed event needs a positive interval under one year", eventPath)
+		}
+		if event.ID == s.Selected {
+			selected = true
+		}
+	}
+	if !selected {
+		return fmt.Errorf("%s: selected event %q is not present", path, s.Selected)
+	}
+	return nil
+}
+
+func validScheduleMarker(marker string) bool {
+	if marker == "accent" || marker == "secondary" || marker == "tertiary" || marker == "outline" {
+		return true
+	}
+	return validRGBMarker(marker)
+}
+
+func validRGBMarker(marker string) bool {
+	if len(marker) != 7 || marker[0] != '#' {
+		return false
+	}
+	_, err := strconv.ParseUint(marker[1:], 16, 24)
+	return err == nil
 }
 
 // icon checks that a name addresses the shell's catalogue rather than the

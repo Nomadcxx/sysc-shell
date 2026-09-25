@@ -5,6 +5,7 @@ import (
 	"image"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -2424,5 +2425,39 @@ func TestToneColorSelectsThresholdRoles(t *testing.T) {
 	}
 	if got := textColor(testStyle, ui.ToneActivity); got != testStyle.Tertiary {
 		t.Errorf("activity text = %v, want Tertiary", got)
+	}
+}
+
+func TestSchedulePaintDrawsTheCurrentTimeMarker(t *testing.T) {
+	zone := time.UTC
+	start := time.Date(2026, 9, 14, 0, 0, 0, 0, zone)
+	node := &ui.Node{
+		Kind: ui.KindScheduleGrid, Bounds: ui.Rect{W: 500, H: 400},
+		Schedule:         &ui.ScheduleLayout{Start: start, Now: start.Add(12 * time.Hour), Zone: zone, Days: 1},
+		ScheduleGeometry: ui.ScheduleGeometry{AxisWidth: 48, HeaderHeight: 30, TimelineY: 50, TimelineH: 300, ColumnWidth: 452, Days: 1},
+	}
+	c := newTestCanvas(t, 500, 400)
+	if err := paintNode(c, node, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
+		t.Fatal(err)
+	}
+	if got := pixelAt(t, c, 60, 200); got != testStyle.Accent {
+		t.Fatalf("current-time marker pixel = %+v, want accent %+v", got, testStyle.Accent)
+	}
+}
+
+func TestSourceCalendarColorOnlyTintsEventRim(t *testing.T) {
+	c := newTestCanvas(t, 100, 64)
+	style := capsuleStyle()
+	style.Body = ui.Rect{X: 0, Y: 0, W: 100, H: 64}
+	marker := Color{R: 0xe8, G: 0x32, B: 0x10, A: 0xff}
+	n := &ui.Node{Kind: ui.KindButton, Text: "Event", Stroke: 2, StrokeFill: ui.FillAccent, StrokeColor: "#e83210", Bounds: ui.Rect{X: 10, Y: 10, W: 80, H: 44}}
+	if err := paintChrome(c, n, NewTextRenderer(mustTestFace(t)), style, style.Size, style.Background, 12); err != nil {
+		t.Fatal(err)
+	}
+	if got := pixelAt(t, c, 10, 32); got != marker {
+		t.Fatalf("event rim = %+v, want source marker %+v", got, marker)
+	}
+	if got := pixelAt(t, c, 50, 32); got == marker {
+		t.Fatalf("event surface uses source color: %+v", got)
 	}
 }

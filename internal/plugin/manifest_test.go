@@ -263,6 +263,16 @@ func TestLoadManifestRejectsUnknownCapabilities(t *testing.T) {
 	}
 }
 
+func TestManifestAcceptsCalendarHostCallCapabilities(t *testing.T) {
+	caps, err := capabilities([]string{"clipboard-write", "open-url"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(caps) != 2 || caps[0] != CapClipboardWrite || caps[1] != CapOpenURL {
+		t.Fatalf("calendar capabilities = %v", caps)
+	}
+}
+
 func TestLoadManifestRejectsDuplicateCapabilities(t *testing.T) {
 	t.Parallel()
 
@@ -299,6 +309,63 @@ func TestLoadManifestValidPanelIncludeSettings(t *testing.T) {
 	if len(m.Panels) != 1 || m.Panels[0].IncludeSettings {
 		t.Errorf("panels = %+v, want IncludeSettings false", m.Panels)
 	}
+}
+
+func TestLoadManifestAcceptsDeclaredPanelShortcuts(t *testing.T) {
+	manifest := panelShortcutManifest(t, []any{
+		map[string]any{"key": "t", "node": "today"},
+		map[string]any{"key": "r", "modifiers": []string{"ctrl"}, "node": "refresh"},
+	}, 8)
+	got, err := LoadManifest(writePlugin(t, manifest, "bin/sysc-plugin-timer"))
+	if err != nil {
+		t.Fatalf("panel shortcuts rejected: %v", err)
+	}
+	shortcuts := got.Panels[0].Shortcuts
+	if len(shortcuts) != 2 || shortcuts[0].Key != "t" || shortcuts[0].Node != "today" ||
+		shortcuts[1].Key != "r" || shortcuts[1].Node != "refresh" || len(shortcuts[1].Modifiers) != 1 || shortcuts[1].Modifiers[0] != "ctrl" {
+		t.Fatalf("parsed shortcuts = %+v", shortcuts)
+	}
+}
+
+func TestLoadManifestRejectsInvalidPanelShortcuts(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		shortcuts []any
+		minor     int
+	}{
+		{"reserved escape", []any{map[string]any{"key": "escape", "node": "close"}}, 8},
+		{"unknown modifier", []any{map[string]any{"key": "r", "modifiers": []string{"meta"}, "node": "refresh"}}, 8},
+		{"duplicate chord", []any{
+			map[string]any{"key": "r", "modifiers": []string{"ctrl"}, "node": "refresh"},
+			map[string]any{"key": "r", "modifiers": []string{"ctrl"}, "node": "retry"},
+		}, 8},
+		{"shortcut requires minor 8", []any{map[string]any{"key": "t", "node": "today"}}, 7},
+		{"invalid target", []any{map[string]any{"key": "t", "node": ""}}, 8},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manifest := panelShortcutManifest(t, tc.shortcuts, tc.minor)
+			if _, err := LoadManifest(writePlugin(t, manifest, "bin/sysc-plugin-timer")); err == nil {
+				t.Fatal("invalid panel shortcut was accepted")
+			}
+		})
+	}
+}
+
+func panelShortcutManifest(t *testing.T, shortcuts []any, minor int) string {
+	t.Helper()
+	manifest := edit(t, "panels", []any{map[string]any{
+		"id": "panel", "width": 320, "height": 280, "placement": "attached", "shortcuts": shortcuts,
+	}})
+	var document map[string]any
+	if err := json.Unmarshal([]byte(manifest), &document); err != nil {
+		t.Fatal(err)
+	}
+	document["protocol"].(map[string]any)["minor"] = float64(minor)
+	manifestBytes, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(manifestBytes)
 }
 
 func TestLoadReferenceRecorderManifest(t *testing.T) {

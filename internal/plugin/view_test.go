@@ -3,6 +3,7 @@ package plugin
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -54,6 +55,73 @@ func TestConvertBuildsAShellOwnedTree(t *testing.T) {
 	// Nothing on the wire can supply arranged bounds.
 	if button.Bounds != (ui.Rect{}) {
 		t.Errorf("bounds = %+v, want them unset until layout runs", button.Bounds)
+	}
+}
+
+func TestConvertExposesSelectedSegmentToTheNativeControl(t *testing.T) {
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{{
+		Kind: v1.KindSegmented, Children: []*v1.Node{
+			{Kind: v1.KindButton, ID: "month", Text: "Month", Name: "Month", Role: "button", Selected: true, Events: []v1.EventKind{v1.EventActivate}},
+			{Kind: v1.KindButton, ID: "week", Text: "Week", Name: "Week", Role: "button", Events: []v1.EventKind{v1.EventActivate}},
+		},
+	}}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control := got.Children[0]
+	if control.Kind != ui.KindSegmented || len(control.Children) != 2 {
+		t.Fatalf("converted control = %+v", control)
+	}
+	if !control.Children[0].State.Has(ui.StateSelected) || control.Children[1].State.Has(ui.StateSelected) {
+		t.Fatalf("selected state = %v, %v", control.Children[0].State, control.Children[1].State)
+	}
+}
+
+func TestConvertScheduleGridCopiesAndPositionsEvents(t *testing.T) {
+	zone, err := time.LoadLocation("Australia/Melbourne")
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 9, 14, 0, 0, 0, 0, zone)
+	wire := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{{Kind: v1.KindScheduleGrid, Schedule: &v1.ScheduleGrid{
+		Start: start, Now: start.Add(time.Hour), Zone: zone.String(), Days: 4, Selected: "meeting",
+		Events: []v1.ScheduleEvent{
+			{ID: "meeting", Title: "Design review", Name: "Design review, 10 AM", Start: start.Add(10 * time.Hour), End: start.Add(11 * time.Hour), Marker: "#d13333"},
+			{ID: "leave", Title: "Leave", Name: "Leave, all day", AllDay: true, StartDate: "2026-09-15", EndDate: "2026-09-17", Marker: "secondary"},
+		},
+	}}}}
+	got, err := Convert(wire, v1.ViewPanel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grid := got.Children[0]
+	if grid.Kind != ui.KindScheduleGrid || grid.Schedule.Zone.String() != zone.String() || len(grid.Children) != 2 {
+		t.Fatalf("converted grid = %+v", grid)
+	}
+	if grid.Children[0].Action != "meeting" || grid.Children[0].Text != "Design review" || !grid.Children[0].State.Has(ui.StateSelected) {
+		t.Fatalf("timed event = %+v", grid.Children[0])
+	}
+	if grid.Children[0].StrokeColor != "#d13333" {
+		t.Fatalf("source marker color = %q", grid.Children[0].StrokeColor)
+	}
+	if grid.Children[1].Action != "leave" || grid.Children[1].ScheduleItem.EndDate != "2026-09-17" {
+		t.Fatalf("all-day event = %+v", grid.Children[1])
+	}
+	wire.Children[0].Schedule.Events[0].Title = "changed after conversion"
+	if grid.Children[0].Text != "Design review" {
+		t.Fatal("converted event aliases plugin-owned text")
+	}
+}
+
+func TestConvertButtonCopiesValidatedMarkerColor(t *testing.T) {
+	wire := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{{Kind: v1.KindButton, ID: "event", Text: "Review", Name: "Review", Role: "button", MarkerColor: "#d13333", Stroke: 2, Events: []v1.EventKind{v1.EventActivate}}}}
+	got, err := Convert(wire, v1.ViewPanel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Children[0].StrokeColor != "#d13333" {
+		t.Fatalf("converted marker = %q", got.Children[0].StrokeColor)
 	}
 }
 

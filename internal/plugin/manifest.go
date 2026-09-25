@@ -43,6 +43,8 @@ const (
 	MaxSelectOptions = 64
 	// MaxRequires bounds the declared command dependencies.
 	MaxRequires = 16
+	// MaxPanelShortcuts bounds one panel's keyboard bindings.
+	MaxPanelShortcuts = 32
 	// MinPanelExtent and MaxPanelExtent bound a declared panel in logical
 	// pixels. A panel smaller than the minimum could not show its own error
 	// content; one larger than the maximum is not a panel.
@@ -75,6 +77,10 @@ const (
 	CapWallpaper Capability = "wallpaper"
 	// CapClipboardRead grants an explicit, bounded read of plain-text clipboard contents.
 	CapClipboardRead Capability = "clipboard-read"
+	// CapOpenURL lets a plugin ask the shell to open a validated HTTP(S) URL.
+	CapOpenURL Capability = "open-url"
+	// CapClipboardWrite lets a plugin write bounded plain text to the clipboard.
+	CapClipboardWrite Capability = "clipboard-write"
 )
 
 var knownCapabilities = map[Capability]bool{
@@ -82,6 +88,7 @@ var knownCapabilities = map[Capability]bool{
 	CapFloatingSurfaces: true,
 	CapWallpaper:        true,
 	CapClipboardRead:    true,
+	CapOpenURL:          true, CapClipboardWrite: true,
 }
 
 // Placement says how a declared panel is positioned. Version one attaches a
@@ -160,6 +167,14 @@ type Panel struct {
 	Height          int
 	Placement       Placement
 	IncludeSettings bool
+	Shortcuts       []PanelShortcut
+}
+
+// PanelShortcut maps one declared key chord to a plugin action identifier.
+type PanelShortcut struct {
+	Key       string
+	Modifiers []string
+	Node      string
 }
 
 // SettingOption is one choice in a select setting.
@@ -274,12 +289,19 @@ type wireWidget struct {
 }
 
 type wirePanel struct {
-	ID              string `json:"id"`
-	Label           string `json:"label,omitempty"`
-	Width           int    `json:"width"`
-	Height          int    `json:"height"`
-	Placement       string `json:"placement"`
-	IncludeSettings bool   `json:"include_settings,omitempty"`
+	ID              string              `json:"id"`
+	Label           string              `json:"label,omitempty"`
+	Width           int                 `json:"width"`
+	Height          int                 `json:"height"`
+	Placement       string              `json:"placement"`
+	IncludeSettings bool                `json:"include_settings,omitempty"`
+	Shortcuts       []wirePanelShortcut `json:"shortcuts,omitempty"`
+}
+
+type wirePanelShortcut struct {
+	Key       string   `json:"key"`
+	Modifiers []string `json:"modifiers,omitempty"`
+	Node      string   `json:"node"`
 }
 
 type wireSetting struct {
@@ -419,6 +441,13 @@ func validateManifest(w wireManifest) (Manifest, error) {
 	if m.Panels, err = panels(w.Panels); err != nil {
 		return Manifest{}, err
 	}
+	if m.Protocol.Minor < 8 {
+		for i, panel := range m.Panels {
+			if len(panel.Shortcuts) > 0 {
+				return Manifest{}, fmt.Errorf("panels[%d]: shortcuts require protocol minor 8", i)
+			}
+		}
+	}
 	if m.Settings, err = settings(w.Settings, "settings"); err != nil {
 		return Manifest{}, err
 	}
@@ -548,12 +577,67 @@ func panels(w []wirePanel) ([]Panel, error) {
 					i, d.what, d.v, MinPanelExtent, MaxPanelExtent)
 			}
 		}
+		shortcuts, err := panelShortcuts(e.Shortcuts, i)
+		if err != nil {
+			return nil, err
+		}
 		out[i] = Panel{
 			ID: e.ID, Label: e.Label, Width: e.Width, Height: e.Height,
-			Placement: PlacementAttached, IncludeSettings: e.IncludeSettings,
+			Placement: PlacementAttached, IncludeSettings: e.IncludeSettings, Shortcuts: shortcuts,
 		}
 	}
 	return out, nil
+}
+
+func panelShortcuts(w []wirePanelShortcut, panel int) ([]PanelShortcut, error) {
+	if len(w) > MaxPanelShortcuts {
+		return nil, fmt.Errorf("panels[%d].shortcuts lists %d entries, more than the %d allowed", panel, len(w), MaxPanelShortcuts)
+	}
+	out := make([]PanelShortcut, 0, len(w))
+	seen := make(map[string]bool, len(w))
+	for i, item := range w {
+		path := fmt.Sprintf("panels[%d].shortcuts[%d]", panel, i)
+		if !validShortcutKey(item.Key) {
+			return nil, fmt.Errorf("%s: key %q is not a supported shortcut key", path, item.Key)
+		}
+		if !v1.ValidEntryID(item.Node) {
+			return nil, fmt.Errorf("%s: node %q is not an identifier", path, item.Node)
+		}
+		modifiers := make(map[string]bool, len(item.Modifiers))
+		for _, modifier := range item.Modifiers {
+			switch modifier {
+			case "alt", "ctrl", "shift":
+			default:
+				return nil, fmt.Errorf("%s: modifier %q is not supported", path, modifier)
+			}
+			if modifiers[modifier] {
+				return nil, fmt.Errorf("%s: modifier %q is repeated", path, modifier)
+			}
+			modifiers[modifier] = true
+		}
+		ordered := make([]string, 0, len(modifiers))
+		for _, modifier := range []string{"alt", "ctrl", "shift"} {
+			if modifiers[modifier] {
+				ordered = append(ordered, modifier)
+			}
+		}
+		identity := item.Key + "+" + strings.Join(ordered, "+")
+		if seen[identity] {
+			return nil, fmt.Errorf("%s: shortcut %s is declared twice", path, identity)
+		}
+		seen[identity] = true
+		out = append(out, PanelShortcut{Key: item.Key, Modifiers: ordered, Node: item.Node})
+	}
+	return out, nil
+}
+
+func validShortcutKey(key string) bool {
+	if len(key) == 1 && (key[0] >= 'a' && key[0] <= 'z' || key[0] >= '0' && key[0] <= '9') {
+		return true
+	}
+	// ponytail: shortcuts are limited to single alphanumeric keys and Home;
+	// Escape, focus traversal, editing, and paging remain host-owned.
+	return key == "home"
 }
 
 func settings(w []wireSetting, field string) ([]Setting, error) {

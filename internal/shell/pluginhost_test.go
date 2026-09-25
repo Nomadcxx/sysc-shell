@@ -6,6 +6,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +24,124 @@ func TestMain(m *testing.M) {
 		os.Exit(plugin.HelperServe(os.Args[2:]))
 	}
 	os.Exit(m.Run())
+}
+
+func TestPluginHostGrantsCalendarActionCapabilities(t *testing.T) {
+	for _, want := range []plugin.Capability{plugin.CapOpenURL, plugin.CapClipboardWrite} {
+		found := false
+		for _, got := range hostPluginCaps {
+			if got == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("host capability set omits %q", want)
+		}
+	}
+}
+
+const testPanelShortcutManifest = `{
+  "schema": 1,
+  "id": "org.sysc.shortcuts",
+  "name": "Shortcuts",
+  "version": "1.0.0",
+  "protocol": {"major": 1, "minor": 8},
+  "exec": "bin/sysc-plugin-timer",
+  "capabilities": ["panels"],
+  "panels": [{"id": "panel", "width": 320, "height": 280, "placement": "attached", "shortcuts": [
+    {"key": "j", "node": "next"},
+    {"key": "home", "node": "today"},
+    {"key": "r", "modifiers": ["ctrl"], "node": "refresh"}
+  ]}]
+}`
+
+func TestPluginPanelRoutesDeclaredShortcutsAndKeepsEditorKeysLocal(t *testing.T) {
+	const pluginID = "org.sysc.shortcuts"
+	reg := bindManifestPlugin(t, "ok", pluginID, testPanelShortcutManifest, []string{pluginID})
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	opened, err := reg.plugins.openPanel(pluginID, v1.PanelParams{Entry: "panel", Output: "DP-1", Generation: 7, Instance: pluginID + "-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	waitPluginPanelRoot(t, reg)
+
+	reg.mu.Lock()
+	host := reg.panelHosts[PanelPlugin]
+	var button, editor *ui.Node
+	for _, node := range host.focus {
+		if node.Kind == ui.KindButton && button == nil {
+			button = node
+		}
+		if node.Kind == ui.KindTextField {
+			editor = node
+		}
+	}
+	if button == nil || editor == nil {
+		reg.mu.Unlock()
+		t.Fatalf("helper panel focusables = %+v", host.focus)
+	}
+	host.setFocus(button)
+	reg.mu.Unlock()
+	handle := host.handle(reg)
+
+	if !handle(wayland.Event{Kind: wayland.EventKeyPress, Key: 36}) { // KEY_J
+		t.Fatal("declared j shortcut was not handled")
+	}
+	inputs := reg.plugins.lastInputs()
+	if len(inputs) == 0 {
+		t.Fatal("j shortcut was not delivered")
+	}
+	got := inputs[len(inputs)-1]
+	if got.Event != v1.EventShortcut || got.ViewID != opened.ViewID || got.Node != "next" || got.Key != "j" || len(got.Modifiers) != 0 {
+		t.Fatalf("j shortcut input = %+v", got)
+	}
+	if !handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyHome}) {
+		t.Fatal("declared Home shortcut was not handled")
+	}
+	inputs = reg.plugins.lastInputs()
+	got = inputs[len(inputs)-1]
+	if got.Event != v1.EventShortcut || got.Node != "today" || got.Key != "home" {
+		t.Fatalf("Home shortcut input = %+v", got)
+	}
+
+	if handle(wayland.Event{Kind: wayland.EventKeyPress, Key: 29}) { // KEY_LEFTCTRL
+		t.Fatal("modifier press was consumed")
+	}
+	if !handle(wayland.Event{Kind: wayland.EventKeyPress, Key: 19}) { // KEY_R
+		t.Fatal("declared Ctrl+R shortcut was not handled")
+	}
+	_ = handle(wayland.Event{Kind: wayland.EventKeyRelease, Key: 29})
+	inputs = reg.plugins.lastInputs()
+	got = inputs[len(inputs)-1]
+	if got.Event != v1.EventShortcut || got.Node != "refresh" || got.Key != "r" || !reflect.DeepEqual(got.Modifiers, []string{"ctrl"}) {
+		t.Fatalf("Ctrl+R shortcut input = %+v", got)
+	}
+
+	reg.mu.Lock()
+	host.setFocus(editor)
+	reg.mu.Unlock()
+	before := len(reg.plugins.lastInputs())
+	if !handle(wayland.Event{Kind: wayland.EventKeyPress, Key: 36}) { // KEY_J
+		t.Fatal("ordinary j input was not accepted by the focused text field")
+	}
+	_ = handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyHome})
+	inputs = reg.plugins.lastInputs()
+	for _, input := range inputs[before:] {
+		if input.Event == v1.EventShortcut {
+			t.Fatalf("Home reached the plugin while its text input had focus: %+v", input)
+		}
+	}
+
+	_ = handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyEsc})
+	reg.mu.Lock()
+	_, panelStillOpen := reg.panels.Output(PanelPlugin)
+	reg.mu.Unlock()
+	if panelStillOpen {
+		t.Fatal("plugin shortcut handling took Escape away from the host")
+	}
 }
 
 const testTimerManifest = `{

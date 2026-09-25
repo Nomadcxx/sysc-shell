@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -212,11 +213,12 @@ func rootName(k ui.Kind) string {
 // button. It restates v1's unexported rule so the converter rejects the same
 // trees instead of trusting the validator to have caught them first.
 var wireFillKinds = map[v1.NodeKind]bool{
-	v1.KindRow:      true,
-	v1.KindColumn:   true,
-	v1.KindList:     true,
-	v1.KindDropZone: true,
-	v1.KindButton:   true,
+	v1.KindRow:       true,
+	v1.KindColumn:    true,
+	v1.KindList:      true,
+	v1.KindDropZone:  true,
+	v1.KindSegmented: true,
+	v1.KindButton:    true,
 }
 
 // iconNode turns a plugin's icon name into a node the painter can draw.
@@ -387,6 +389,7 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 	case v1.KindButton:
 		out.Kind = ui.KindButton
 		out.Text = n.Text
+		out.StrokeColor = n.MarkerColor
 		if n.Icon != "" {
 			icon, err := iconNode(n.Icon, path)
 			if err != nil {
@@ -412,6 +415,9 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		// back to the node the plugin addressed.
 		out.Action = n.ID
 		out.Focusable = true
+		if n.Selected {
+			out.State |= ui.StateSelected
+		}
 		if n.Disabled {
 			out.AriaDisabled = true
 			out.Action = "" // no action route: activation is blocked
@@ -420,6 +426,54 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 			out.Fill = ui.FillError
 			if out.Padding == 0 {
 				out.Padding = 4
+			}
+		}
+	case v1.KindSegmented:
+		out.Kind = ui.KindSegmented
+	case v1.KindScheduleGrid:
+		out.Kind = ui.KindScheduleGrid
+		zone, err := time.LoadLocation(n.Schedule.Zone)
+		if err != nil {
+			return nil, fmt.Errorf("plugin: %s: invalid schedule time zone: %w", path, err)
+		}
+		out.Schedule = &ui.ScheduleLayout{Start: n.Schedule.Start, Now: n.Schedule.Now, Zone: zone, Days: n.Schedule.Days}
+		for _, event := range n.Schedule.Events {
+			marker := scheduleMarkerFill(event.Marker)
+			base := &ui.Node{Kind: ui.KindButton, Text: event.Title, Action: event.ID, Name: event.Name, Role: "button", Focusable: true, Stroke: 2, StrokeFill: marker, Height: 22}
+			if len(event.Marker) == 7 && event.Marker[0] == '#' {
+				base.StrokeColor = event.Marker
+			}
+			if event.ID == n.Schedule.Selected {
+				base.State |= ui.StateSelected
+			}
+			if event.AllDay {
+				first, _ := time.ParseInLocation("2006-01-02", event.StartDate, zone)
+				last, _ := time.ParseInLocation("2006-01-02", event.EndDate, zone)
+				gridStart := n.Schedule.Start.In(zone)
+				gridEnd := gridStart.AddDate(0, 0, n.Schedule.Days)
+				if first.Before(gridEnd) && last.After(gridStart) {
+					item := *base
+					item.ScheduleItem = &ui.ScheduleItem{AllDay: true, StartDate: event.StartDate, EndDate: event.EndDate}
+					out.Children = append(out.Children, &item)
+				}
+				continue
+			}
+			for day := 0; day < n.Schedule.Days; day++ {
+				dayStart := n.Schedule.Start.In(zone).AddDate(0, 0, day)
+				dayEnd := dayStart.AddDate(0, 0, 1)
+				start, end := event.Start.In(zone), event.End.In(zone)
+				if start.Before(dayStart) {
+					start = dayStart
+				}
+				if end.After(dayEnd) {
+					end = dayEnd
+				}
+				if !start.Before(end) {
+					continue
+				}
+				item := *base
+				item.ScheduleItem = &ui.ScheduleItem{Start: start, End: end, DayIndex: day}
+				out.Children = append(out.Children, &item)
 			}
 		}
 	case v1.KindTextInput:
@@ -476,6 +530,19 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		}
 	}
 	return out, nil
+}
+
+func scheduleMarkerFill(marker string) ui.Fill {
+	switch marker {
+	case "secondary":
+		return ui.FillContainer
+	case "tertiary":
+		return ui.FillSoft
+	case "outline":
+		return ui.FillOutline
+	default:
+		return ui.FillAccent
+	}
 }
 
 // card gives a filled container the chrome that paints it. It is applied to

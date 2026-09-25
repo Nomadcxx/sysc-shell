@@ -64,8 +64,9 @@ func HelperServe(args []string) int {
 		return 1
 	}
 
+	protocol, _ := v1.NegotiateProtocol(hello.Supported)
 	reply := &v1.PluginHello{
-		Protocol:     v1.Version{Major: 1, Minor: 0},
+		Protocol:     protocol,
 		Plugin:       hello.Plugin,
 		Capabilities: hello.Capabilities,
 	}

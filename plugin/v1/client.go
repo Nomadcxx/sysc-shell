@@ -30,6 +30,17 @@ func NewClient(in io.Reader, out io.Writer) *Client {
 	}
 }
 
+// NegotiateProtocol returns the highest version-one minor both sides support.
+func NegotiateProtocol(supported []Version) (Version, bool) {
+	best := Version{Major: ProtocolMajor, Minor: -1}
+	for _, version := range supported {
+		if version.Major == ProtocolMajor && version.Minor >= 0 && version.Minor <= ProtocolMinor && version.Minor > best.Minor {
+			best = version
+		}
+	}
+	return best, best.Minor >= 0
+}
+
 // Handshake answers host.hello. It must be the first call.
 func (c *Client) Handshake(identity Identity) (*HostHello, error) {
 	msg, err := c.dec.Decode()
@@ -40,9 +51,9 @@ func (c *Client) Handshake(identity Identity) (*HostHello, error) {
 	if !ok {
 		return nil, fmt.Errorf("plugin/v1: handshake: first message was %s", TypeOf(msg))
 	}
-	protocol, ok := negotiatedVersion(hello.Supported)
+	protocol, ok := NegotiateProtocol(hello.Supported)
 	if !ok {
-		return nil, fmt.Errorf("plugin/v1: host offers no supported protocol version")
+		return nil, fmt.Errorf("plugin/v1: host has no supported protocol version")
 	}
 	if err := c.enc.Encode(&PluginHello{
 		Protocol:     protocol,
@@ -55,17 +66,6 @@ func (c *Client) Handshake(identity Identity) (*HostHello, error) {
 	c.hello = hello
 	c.mu.Unlock()
 	return hello, nil
-}
-
-func negotiatedVersion(supported []Version) (Version, bool) {
-	selected := Version{Major: ProtocolMajor, Minor: -1}
-	for _, candidate := range supported {
-		if candidate.Major == ProtocolMajor && candidate.Minor >= 0 && candidate.Minor <= ProtocolMinor &&
-			candidate.Minor > selected.Minor {
-			selected = candidate
-		}
-	}
-	return selected, selected.Minor >= 0
 }
 
 // Recv reads the next host message. Host replies are delivered to Call

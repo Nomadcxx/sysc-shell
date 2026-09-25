@@ -105,6 +105,14 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 			}
 		}
 		switch child.Kind {
+		case KindScheduleGrid:
+			if w <= 0 {
+				w = remain
+			}
+			child.Bounds = Rect{X: x, Y: content.Y, W: min(w, remain), H: content.H}
+			if err := layoutScheduleGrid(child, child.Bounds, measure); err != nil {
+				return fmt.Errorf("ui: child %d: %w", i, err)
+			}
 		case KindColumn:
 			if child.Width <= 0 && (i == len(root.Children)-1 || root.PinEnd) {
 				w = remain
@@ -545,6 +553,11 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		return size, size, nil
 	case KindSegmented:
 		return measureSegmented(n, measure)
+	case KindScheduleGrid:
+		if n.Schedule == nil {
+			return 0, 0, fmt.Errorf("schedule grid has no range")
+		}
+		return n.Width, n.Height, nil
 	case KindWordmark:
 		// The mark is always given an explicit box: the shell derives its
 		// width from render.WordmarkAspect so the asset owns its proportions.

@@ -38,6 +38,18 @@ func checkNode(n *Node, box Rect, measure MeasureText, out *[]FitProblem) {
 		checkColumn(n, box, measure, out)
 	case KindScroll, KindVirtualList:
 		checkScroll(n, box, measure, out)
+	case KindScheduleGrid:
+		copyOfNode := *n
+		copyOfNode.Children = make([]*Node, len(n.Children))
+		for i, child := range n.Children {
+			if child != nil {
+				childCopy := *child
+				copyOfNode.Children[i] = &childCopy
+			}
+		}
+		if err := layoutScheduleGrid(&copyOfNode, box, measure); err != nil {
+			*out = append(*out, FitProblem{Path: n.Path, Message: "ui: " + err.Error()})
+		}
 	case KindCapsule, KindStack:
 		inner := Rect{X: box.X + n.Padding, Y: box.Y + n.Padding,
 			W: max(box.W-2*n.Padding, 0), H: max(box.H-2*n.Padding, 0)}
@@ -87,6 +99,11 @@ func checkRow(n *Node, box Rect, measure MeasureText, out *[]FitProblem) {
 			}
 		}
 		switch child.Kind {
+		case KindScheduleGrid:
+			if err := measureScheduleGridFits(child, Rect{X: x, Y: content.Y, W: remain, H: content.H}, measure); err != nil {
+				*out = append(*out, FitProblem{Path: child.Path, Message: "ui: " + err.Error()})
+			}
+			continue
 		case KindColumn, KindStack:
 			// A column or a stack is handed the row's content box whatever it
 			// measures: an overrun inside it is the column's business.
@@ -128,6 +145,18 @@ func checkRow(n *Node, box Rect, measure MeasureText, out *[]FitProblem) {
 		checkNode(child, Rect{X: x, Y: content.Y, W: w, H: h}, measure, out)
 		x += w
 	}
+}
+
+func measureScheduleGridFits(n *Node, bounds Rect, measure MeasureText) error {
+	copyOfNode := *n
+	copyOfNode.Children = make([]*Node, len(n.Children))
+	for i, child := range n.Children {
+		if child != nil {
+			childCopy := *child
+			copyOfNode.Children[i] = &childCopy
+		}
+	}
+	return layoutScheduleGrid(&copyOfNode, bounds, measure)
 }
 
 // checkColumn mirrors LayoutColumn, which rejects nothing: a child taller or
