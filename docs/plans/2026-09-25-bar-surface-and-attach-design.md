@@ -35,6 +35,13 @@ imported.
   wallpaper and clipboard panels are `CenterY`, so they never attach. And the
   bar floats 4 px from every edge with a 12 px radius, so the joint reads as a
   panel hanging off a pill. This is why the attached look has never landed.
+- **The existing joint was the wrong shape.** `filletCoverage` centred its
+  circle on the junction of the bar edge and the panel side, which fills a
+  convex quarter disc: a rounded block beside the panel that meets both edges
+  at right angles. A concave joint centres the circle a radius away from both
+  edges, so the arc runs tangent into each. Corrected in Phase A, where the
+  coverage maths moved to `internal/ui` so the painter and blur regions share
+  it.
 - **Segmented bar groups do not exist.** `KindSegmented` is a row of equal
   buttons, each its own stadium, used for tab rows inside panels. A bar `group`
   is one capsule with its members flat inside it. The DMS "segments" style
@@ -133,16 +140,13 @@ to publish one number per output.
 A pure function in `internal/ui` turns a shape into row strips:
 
 ```go
-// SurfaceShape describes a painted silhouette for region building.
 type SurfaceShape struct {
-	Body        Rect
-	Radius      int    // convex corners; 0 = square
-	SquareEdge  string // "top" | "bottom" | "": the edge flush to the bar or screen
-	JointLeft   int    // concave wedge width on the left of SquareEdge, 0 = none
-	JointRight  int
-	EndFillets  int    // bar only: concave wedges below the ends, into the screen edges
-	FlushLeft   bool   // panel flush to the output's left edge (D7)
-	FlushRight  bool
+	Body                  Rect
+	Radius                int    // convex corners
+	AttachEdge            string // "top" | "bottom" | "": that edge's corners are square
+	JointLeft, JointRight int    // concave wedges beside the attached edge, joining the bar
+	EdgeFillet            int    // wedges off the far edge, curving into the screen's side
+	EdgeLeft, EdgeRight   bool   // an attached bar sets both; a flush panel sets its flush side
 }
 func BlurStrips(s SurfaceShape) []Rect
 ```

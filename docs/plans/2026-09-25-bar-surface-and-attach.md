@@ -154,6 +154,7 @@ func TestBlurCapabilityUsesTheCorrectedMask(t *testing.T) {
 
 **Interfaces:**
 - Produces: `ui.SurfaceShape` (fields as in design D4) and `ui.BlurStrips(ui.SurfaceShape) []ui.Rect`.
+  Flush panels and attached bar ends share one `EdgeFillet` with `EdgeLeft`/`EdgeRight` flags.
 - Consumes: the coverage rules. Move `filletCoverage` and `roundedInset`'s row maths into `internal/ui`
   as exported pure helpers (`ui.FilletExtent(row, r int) int`, `ui.RoundedInset(row, h, r int) int`),
   and have `internal/render/canvas.go` call them, so paint and region share one rule.
