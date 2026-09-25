@@ -93,9 +93,6 @@ func monitorTree(m theme.Metrics, sels []services.Selector, snap services.Snapsh
 		metrics = append(metrics, monitorMetricCard(m, sel, snap, samples, selected, hasHistory))
 	}
 	var info []*ui.Node
-	if system := monitorSystemCard(m, factsWithGPU(facts, snap)); system != nil {
-		info = append(info, system)
-	}
 	if resources := monitorResourcesCard(m, snap); resources != nil {
 		info = append(info, resources)
 	}
@@ -207,32 +204,15 @@ func monitorLegend(sel services.Selector, snap services.Snapshot, label string) 
 	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Children: chips}
 }
 
-// machineFacts is the System card: the six identity rows Noctalia draws on
-// the sysmon pane. GPU usage and CPU temperature live on the metric cards.
-// GPU model is filled from the GPU snapshot when a name exists.
+// machineFacts is the monitor's info card: the five identity rows the
+// reference draws beside the distro logo. Logo is an icon-theme name from
+// os-release; the letter tile stands in when it is empty or unresolvable.
+// Uptime is the short form the Control Centre's Home identity shows;
+// UptimeLong is the monitor's always-three-units form.
 type machineFacts struct {
-	CPU, GPU, OS, Kernel, WM, Uptime string
-}
-
-func monitorSystemCard(m theme.Metrics, facts machineFacts) *ui.Node {
-	rows := []*ui.Node{monitorCardTitle("System", 0)}
-	before := len(rows)
-	for _, kv := range [][2]string{
-		{"CPU", facts.CPU},
-		{"GPU", facts.GPU},
-		{"OS", facts.OS},
-		{"Kernel", facts.Kernel},
-		{"WM", facts.WM},
-		{"Uptime", facts.Uptime},
-	} {
-		if kv[1] != "" {
-			rows = append(rows, monitorKeyValue(kv[0], kv[1]))
-		}
-	}
-	if len(rows) == before {
-		return nil
-	}
-	return monitorCard(m, rows)
+	Distro, Kernel, CPU, Board string
+	Uptime, UptimeLong         string
+	Logo, LogoLetter           string
 }
 
 // readMachineFacts is a one-shot identity read. Uptime is the only field
@@ -241,57 +221,46 @@ func monitorSystemCard(m theme.Metrics, facts machineFacts) *ui.Node {
 func readMachineFacts() machineFacts {
 	cpu, _ := os.ReadFile("/proc/cpuinfo")
 	osrel, _ := os.ReadFile("/etc/os-release")
-	ostype, _ := os.ReadFile("/proc/sys/kernel/ostype")
-	osrelk, _ := os.ReadFile("/proc/sys/kernel/osrelease")
-	uptime := ""
-	if d, ok := services.ReadUptime(); ok {
-		uptime = formatUptime(d)
-	}
-	return machineFacts{
+	release, _ := os.ReadFile("/proc/sys/kernel/osrelease")
+	vendor, _ := os.ReadFile("/sys/class/dmi/id/board_vendor")
+	board, _ := os.ReadFile("/sys/class/dmi/id/board_name")
+	facts := machineFacts{
+		Distro: parseOSRelease(string(osrel)),
+		Kernel: strings.TrimSpace(string(release)),
 		CPU:    parseCPUModel(string(cpu)),
-		OS:     parseOSRelease(string(osrel)),
-		Kernel: kernelLabel(strings.TrimSpace(string(ostype)), strings.TrimSpace(string(osrelk))),
-		WM:     compositorLabel(),
-		Uptime: uptime,
+		Board:  strings.TrimSpace(strings.TrimSpace(string(vendor)) + " " + strings.TrimSpace(string(board))),
+		Logo:   parseOSReleaseField(string(osrel), "LOGO"),
 	}
-}
-
-func factsWithGPU(facts machineFacts, snap services.Snapshot) machineFacts {
-	if facts.GPU != "" {
-		return facts
+	for _, r := range parseOSReleaseField(string(osrel), "NAME") {
+		facts.LogoLetter = strings.ToUpper(string(r))
+		break
 	}
-	selector, ok := selectGPU(snap)
-	if !ok || snap.GPU == nil {
-		return facts
-	}
-	for _, g := range snap.GPU.GPUs {
-		if selector.Subject != "" && g.PCIID != selector.Subject {
-			continue
-		}
-		if g.Name != "" {
-			facts.GPU = g.Name
-			return facts
-		}
+	if d, ok := services.ReadUptime(); ok {
+		facts.Uptime, facts.UptimeLong = formatUptime(d), formatUptimeLong(d)
 	}
 	return facts
 }
 
-func kernelLabel(sysname, release string) string {
-	switch {
-	case sysname != "" && release != "":
-		return sysname + " " + release
-	case release != "":
-		return release
-	default:
-		return sysname
+func parseOSReleaseField(text, key string) string {
+	for _, line := range strings.Split(text, "\n") {
+		k, v, ok := strings.Cut(line, "=")
+		if ok && strings.TrimSpace(k) == key {
+			return strings.Trim(strings.TrimSpace(v), `"`)
+		}
 	}
+	return ""
 }
 
-func compositorLabel() string {
-	if d := strings.TrimSpace(os.Getenv("XDG_CURRENT_DESKTOP")); d != "" {
-		return d
+// formatUptimeLong always names days, hours and minutes, as the reference's
+// info card does: "0 days 9 hours 25 minutes".
+func formatUptimeLong(d time.Duration) string {
+	if d < 0 {
+		d = 0
 	}
-	return "niri"
+	days := int64(d / (24 * time.Hour))
+	hours := int64(d % (24 * time.Hour) / time.Hour)
+	mins := int64(d % time.Hour / time.Minute)
+	return countUnit(days, "day", "days") + " " + countUnit(hours, "hour", "hours") + " " + countUnit(mins, "minute", "minutes")
 }
 
 func parseCPUModel(text string) string {

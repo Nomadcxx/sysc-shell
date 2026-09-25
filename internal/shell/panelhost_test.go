@@ -59,7 +59,8 @@ func TestPanelHostRenderPaintsMonitorCards(t *testing.T) {
 	settleHostAnimation(reg, h)
 	h.monitorPage = monitorPageMetrics
 	reg.rebuildPanel(h)
-	const w, hgt = 640, 720
+	size := panelTargetSize(PanelMonitor)
+	w, hgt := size.W, size.H
 	if err := panel.Callbacks.Configure(w, hgt, 120); err != nil {
 		t.Fatal(err)
 	}

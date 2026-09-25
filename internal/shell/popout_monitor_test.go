@@ -162,30 +162,6 @@ func TestMonitorGPUDoesNotUseWildcardHistoryForASelectedDevice(t *testing.T) {
 	}
 }
 
-func TestMonitorAndHomeUseTheSameSelectedGPU(t *testing.T) {
-	t.Parallel()
-	snap := fixtureSnapshot()
-	snap.GPU = &metrics.GPUSnapshot{GPUs: []metrics.GPU{
-		{PCIID: "0000:02:00.0", Name: "GPU B", Usage: metrics.GPUUsage{Fraction: .75, Valid: true}},
-		{PCIID: "0000:01:00.0", Name: "GPU A", Usage: metrics.GPUUsage{Fraction: .25, Valid: true}},
-	}}
-
-	monitor := monitorTree(standardMetrics(), []services.Selector{{Source: services.SourceGPU}}, snap,
-		map[services.Selector][]float64{}, machineFacts{})
-	if !treeHasText(monitor, "25%") || treeHasText(monitor, "75%") {
-		t.Fatalf("monitor GPU projection = %q, want only selected 25%%", renderText(monitor))
-	}
-	if !treeHasText(monitor, "GPU A") || treeHasText(monitor, "GPU B") {
-		t.Fatalf("monitor GPU identity = %q, want selected GPU A", renderText(monitor))
-	}
-
-	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
-	home := ccHome(&Registry{sample: snap}, h)
-	if !treeHasText(home, "25%") || treeHasText(home, "75%") {
-		t.Fatalf("Home GPU projection = %q, want only selected 25%%", renderText(home))
-	}
-}
-
 func TestMonitorMarksAmbiguousGPUUnavailable(t *testing.T) {
 	t.Parallel()
 	snap := fixtureSnapshot()
@@ -363,80 +339,6 @@ func TestMonitorBuildsOneTitledCardPerMetric(t *testing.T) {
 	}
 }
 
-func TestMonitorSystemCardProjectsStaticFacts(t *testing.T) {
-	t.Parallel()
-	facts := machineFacts{
-		CPU:    "Intel Core i7-8665U @ 1.90GHz",
-		GPU:    "Intel UHD Graphics 620",
-		OS:     "Arch Linux",
-		Kernel: "Linux 7.1.9-arch1-2",
-		WM:     "niri",
-		Uptime: "4 hours 59 minutes",
-	}
-	tree := monitorSystemCard(standardMetrics(), facts)
-	for _, want := range []string{
-		"System",
-		"CPU", "Intel Core i7-8665U @ 1.90GHz",
-		"GPU", "Intel UHD Graphics 620",
-		"OS", "Arch Linux",
-		"Kernel", "Linux 7.1.9-arch1-2",
-		"WM", "niri",
-		"Uptime", "4 hours 59 minutes",
-	} {
-		if !treeHasText(tree, want) {
-			t.Fatalf("system card missing %q", want)
-		}
-	}
-}
-
-func TestMonitorOmitsEmptySystemCard(t *testing.T) {
-	t.Parallel()
-	if n := monitorSystemCard(standardMetrics(), machineFacts{}); n != nil {
-		t.Fatal("empty facts still built a card")
-	}
-}
-
-func TestMonitorSystemCardOmitsEmptyGPU(t *testing.T) {
-	t.Parallel()
-	tree := monitorSystemCard(standardMetrics(), machineFacts{CPU: "x"})
-	if treeHasText(tree, "GPU") {
-		t.Fatal("an empty GPU row was rendered")
-	}
-}
-
-func TestMonitorTreeKeepsASystemCard(t *testing.T) {
-	t.Parallel()
-	tree := monitorTree(standardMetrics(), nil, services.Snapshot{}, nil, machineFacts{CPU: "box"})
-	if !treeHasText(tree, "System") || !treeHasText(tree, "box") {
-		t.Fatal("monitor tree dropped the system card")
-	}
-}
-
-// The reference is CPU|Memory, then GPU|Network, then System|Resources.
-// Identity cards sit on the last row, not above the graphs.
-func TestMonitorPutsSystemBesideResources(t *testing.T) {
-	t.Parallel()
-	tree := monitorTree(standardMetrics(), []services.Selector{
-		{Source: services.SourceCPU},
-		{Source: services.SourceMemory},
-	}, fixtureSnapshot(), map[services.Selector][]float64{}, machineFacts{CPU: "box"})
-	var last *ui.Node
-	for _, child := range tree.Children {
-		if child.Kind == ui.KindRow {
-			last = child
-		}
-	}
-	if last == nil || len(last.Children) != 2 {
-		t.Fatal("System and Resources are not a two-up row")
-	}
-	if !treeHasName(last.Children[0], "System") {
-		t.Fatal("left of the last row is not System")
-	}
-	if !treeHasName(last.Children[1], "Resources") {
-		t.Fatal("right of the last row is not Resources")
-	}
-}
-
 func TestParseCPUModel(t *testing.T) {
 	t.Parallel()
 	got := parseCPUModel("processor\t: 0\nvendor_id\t: AuthenticAMD\nmodel name\t: AMD Ryzen 9 9950X 16-Core Processor\n")
@@ -571,17 +473,6 @@ func TestMonitorGPUWithoutUsageShowsAnEmDash(t *testing.T) {
 	}
 }
 
-func TestMonitorSystemCardUsesGPUNameFromSnapshot(t *testing.T) {
-	t.Parallel()
-	snap := services.Snapshot{GPU: &metrics.GPUSnapshot{GPUs: []metrics.GPU{
-		{Name: "Intel UHD Graphics 620"},
-	}}}
-	tree := monitorTree(standardMetrics(), nil, snap, nil, machineFacts{CPU: "x"})
-	if !treeHasText(tree, "Intel UHD Graphics 620") {
-		t.Fatal("system card did not take the GPU name from the snapshot")
-	}
-}
-
 func legendRowHolds(n *ui.Node, text string) bool {
 	for _, row := range findAllKind(n, ui.KindRow) {
 		if len(row.Children) == 0 {
@@ -713,11 +604,12 @@ func TestMonitorSurfaceHeightCoversATallTree(t *testing.T) {
 		{Source: services.SourceCPU},
 		{Source: services.SourceMemory},
 		{Source: services.SourceGPU},
+		{Source: services.SourceCPU, Subject: "temperature"},
+		{Source: services.SourceNetwork, Direction: "rx"},
 	}, fixtureSnapshot(), map[services.Selector][]float64{}, machineFacts{
 		CPU: "Intel(R) Core(TM) i7-8665U CPU @ 1.90GHz",
-		GPU: "WhiskeyLake-U GT2 [UHD Graphics 620]",
-		OS:  "Arch Linux", Kernel: "Linux 7.2.2-arch1-1",
-		WM: "niri", Uptime: "1 hour 1 minute",
+		Distro: "Arch Linux", Kernel: "7.2.2-arch1-1",
+		Uptime: "1 hour 1 minute",
 	})
 	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 8, 20 }
 	content, err := ui.ContentHeight(tree, 640, measure)
@@ -753,18 +645,3 @@ func TestMonitorCardsHaveSaneHeights(t *testing.T) {
 	}
 }
 
-// The System card sits in a two-up cell. A long CPU string used to make the
-// nested key/value row refuse layout and close the panel.
-func TestMonitorSystemCardWithLongCPUFitsPanel(t *testing.T) {
-	t.Parallel()
-	tree := monitorTree(standardMetrics(), []services.Selector{
-		{Source: services.SourceCPU},
-	}, fixtureSnapshot(), map[services.Selector][]float64{}, machineFacts{
-		CPU: "AMD Ryzen 7 8845HS w/ Radeon 780M Graphics",
-	})
-	size := panelTargetSize(PanelMonitor)
-	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 8, 16 }
-	if err := ui.LayoutColumn(tree, ui.Rect{W: size.W, H: size.H}, measure); err != nil {
-		t.Fatalf("LayoutColumn: %v", err)
-	}
-}

@@ -204,6 +204,13 @@ type PanelHost struct {
 	processStatus    string
 	processStatusErr error
 	processSelected  services.ProcessIdentity
+	// monitorOptions swaps the info card's facts for the view options.
+	monitorOptions bool
+	// processExpanded holds the group keys the user opened, and
+	// processCollapsed the section keys the user closed. Both are keyed by
+	// application or executable, so they survive recycled PIDs.
+	processExpanded  map[string]bool
+	processCollapsed map[string]bool
 
 	clipboardSelectedID       string
 	clipboardConfirmScope     string
@@ -2274,7 +2281,7 @@ func panelTargetSize(id PanelID) ui.Rect {
 	case PanelClock:
 		return ui.Rect{W: 360, H: 420}
 	case PanelMonitor:
-		return ui.Rect{W: 640, H: 720}
+		return ui.Rect{W: 800, H: 650}
 	case PanelSettings:
 		// Width is unchanged on purpose: the narrowest-width acceptance check
 		// lays this panel out at its target, and holding width leaves that
