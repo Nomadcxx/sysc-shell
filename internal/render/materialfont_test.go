@@ -36,10 +36,21 @@ var materialInventory = []string{
 	"lan", "visibility", "visibility_off",
 	"bluetooth_disabled", "bluetooth_connected", "keyboard", "mouse",
 	"smartphone", "speaker", "devices_other",
+	"menu_book",
 }
 
 func TestAudioPanelIconsAreInTheSubset(t *testing.T) {
 	for _, name := range []string{"mic", "mic_off", "graphic_eq", "headphones"} {
+		if !ValidMaterialIcon(name) {
+			t.Errorf("%q missing from the subset: it would shape to nothing and paint an invisible control", name)
+		}
+	}
+}
+
+// The Faith plugin's panel names these: previous, next, new verse, read the
+// chapter, commentary, and cross-references.
+func TestFaithPanelIconsAreInTheSubset(t *testing.T) {
+	for _, name := range []string{"chevron_left", "chevron_right", "menu_book", "description", "link"} {
 		if !ValidMaterialIcon(name) {
 			t.Errorf("%q missing from the subset: it would shape to nothing and paint an invisible control", name)
 		}

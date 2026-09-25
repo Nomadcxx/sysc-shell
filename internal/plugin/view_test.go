@@ -687,6 +687,34 @@ func TestConvertPutsAMaterialIconAndLabelInOneButton(t *testing.T) {
 	}
 }
 
+// A glyph and its label painted flush against each other: "Read chapter"
+// with the book's edge touching the R. The button spaces them the way a row
+// of chips does; a glyph-only or label-only button has nothing to space.
+func TestConvertSpacesAButtonGlyphFromItsLabel(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindButton, ID: "both", Icon: "menu_book", Text: "Read chapter",
+			Name: "Read chapter", Role: "button", Events: []v1.EventKind{v1.EventActivate}},
+		{Kind: v1.KindButton, ID: "glyph", Icon: "chevron_left",
+			Name: "Previous", Role: "button", Events: []v1.EventKind{v1.EventActivate}},
+		{Kind: v1.KindButton, ID: "label", Text: "New verse",
+			Name: "New verse", Role: "button", Events: []v1.EventKind{v1.EventActivate}},
+	}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if g := got.Children[0].Gap; g != buttonGlyphGap {
+		t.Fatalf("glyph-and-label button gap = %d, want %d", g, buttonGlyphGap)
+	}
+	for _, i := range []int{1, 2} {
+		if g := got.Children[i].Gap; g != 0 {
+			t.Fatalf("button %q gap = %d, want 0", got.Children[i].Action, g)
+		}
+	}
+}
+
 func TestConvertMapsMinorFour(t *testing.T) {
 	t.Parallel()
 

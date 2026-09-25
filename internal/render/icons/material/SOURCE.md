@@ -45,7 +45,7 @@ that join them. Layout closure is disabled during subsetting: leaving it on lets
 the retained letters reach every ligature they could begin, which is all
 6,605 glyphs and a 1.4 MB file.
 
-Result: **27,052 bytes, 118 glyphs** (86 shell names, the letters and underscore
+Result: **27,568 bytes, 119 glyphs** (87 shell names, the letters and underscore
 that spell them, and `.notdef`).
 
 ### Inventory
@@ -71,6 +71,7 @@ palette description toolbar widgets web_asset display_settings apps extension
 accessibility_new folder_open expand_more add remove
 drag_indicator tune link link_off
 public edit
+menu_book
 ```
 
 `materialfont.go` accepts exactly these names and rejects anything else. Adding

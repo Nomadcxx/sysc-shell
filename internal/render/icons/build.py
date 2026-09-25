@@ -90,6 +90,7 @@ GLYPHS = [
     ("uniE046", 0xE046, "signal-cellular-3-bar"),
     ("uniE047", 0xE047, "signal-cellular-4-bar"),
     ("uniE048", 0xE048, "sysmon-gpu"),
+    ("uniE049", 0xE049, "cross"),
 ]
 
 UPM = 1000

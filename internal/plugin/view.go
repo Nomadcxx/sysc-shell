@@ -219,6 +219,11 @@ var wireFillKinds = map[v1.NodeKind]bool{
 	v1.KindButton:   true,
 }
 
+// buttonGlyphGap separates a button's glyph from its label. Without it the
+// two paint flush, and a label such as "Read chapter" reads as touching its
+// icon.
+const buttonGlyphGap = 4
+
 // iconNode turns a plugin's icon name into a node the painter can draw.
 // The material subset and the project font are both this shell's catalogue,
 // and which of the two holds a given glyph is not something a plugin should
@@ -406,6 +411,9 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 				out.Children = []*ui.Node{icon,
 					{Kind: ui.KindText, Text: n.Text, Tabular: n.Tabular}}
 				out.Text = ""
+				if out.Gap == 0 {
+					out.Gap = buttonGlyphGap
+				}
 			}
 		}
 		// The node id becomes the action, which is how a hit finds its way

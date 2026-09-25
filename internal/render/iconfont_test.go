@@ -36,6 +36,69 @@ func TestAIUsageGlyphIsInCatalogueAndHasInk(t *testing.T) {
 	}
 }
 
+// The Faith plugin's bar glyph is a Latin cross: a crossbar wider than the
+// upright, set above the glyph's middle. Coverage alone would pass a plus sign
+// or a medical cross, so the rows are measured.
+func TestCrossGlyphIsALatinCross(t *testing.T) {
+	t.Parallel()
+	r, ok := IconByName("cross")
+	if !ok || r != iconCross {
+		t.Fatalf("cross = %U, %v", r, ok)
+	}
+	if r != 0xE049 {
+		t.Fatalf("cross rune %U is not the codepoint after the GPU metric glyph", r)
+	}
+	found := false
+	for _, n := range IconNames() {
+		if n == "cross" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("IconNames() does not list cross")
+	}
+	tr := NewTextRenderer(newIconFace())
+	mask, err := tr.Raster(string(r), TextSpec{Size: 64, Weight: 400}, false)
+	if err != nil || mask.Alpha == nil {
+		t.Fatalf("raster cross: %v", err)
+	}
+	a := mask.Alpha
+	b := a.Rect
+	width := func(y int) int {
+		n := 0
+		for x := b.Min.X; x < b.Max.X; x++ {
+			if a.AlphaAt(x, y).A >= 128 {
+				n++
+			}
+		}
+		return n
+	}
+	top, bottom, widest, barRow := -1, -1, 0, -1
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		w := width(y)
+		if w == 0 {
+			continue
+		}
+		if top < 0 {
+			top = y
+		}
+		bottom = y
+		if w > widest {
+			widest, barRow = w, y
+		}
+	}
+	if top < 0 {
+		t.Fatal("cross glyph has no ink")
+	}
+	stem := width(bottom - (bottom-top)/8)
+	if stem == 0 || widest < 3*stem {
+		t.Fatalf("crossbar %dpx is not at least three stems (%dpx) wide", widest, stem)
+	}
+	if mid := (top + bottom) / 2; barRow >= mid {
+		t.Fatalf("crossbar row %d is not above the middle row %d", barRow, mid)
+	}
+}
+
 func TestGaugeIconsAreDistinctProjectGlyphs(t *testing.T) {
 	t.Parallel()
 	seen := map[rune]string{}
