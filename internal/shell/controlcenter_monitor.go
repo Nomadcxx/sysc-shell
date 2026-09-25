@@ -2,6 +2,7 @@ package shell
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
@@ -144,9 +145,7 @@ func ccMonMemoryHero(m theme.Metrics, snap services.Snapshot, history map[servic
 // ccMonRow is one line of the rows card: icon and label, a value over a
 // caption, and the mark on the trailing edge.
 func ccMonRow(iconID, label string, value, caption *ui.Node, mark *ui.Node) *ui.Node {
-	// MetricIconRune knows cpu, memory, filesystem/block and network. Other
-	// IDs return zero, and a zero rune would paint as a missing glyph. The
-	// glyph is painted, never named: the accessible name is the plain label.
+	// The glyph is painted, never named: the accessible name is the plain label.
 	name, text := label, label
 	if icon := render.MetricIconRune(iconID); icon != 0 {
 		text = string(icon) + " " + label
@@ -169,32 +168,45 @@ func ccMonLabelFloor() string {
 
 func ccMonTemperatureRow(snap services.Snapshot, history map[services.Selector][]float64) *ui.Node {
 	sel := services.Selector{Source: services.SourceCPU, Subject: "temperature"}
-	value, tone, source := ccDash, ui.ToneNormal, ""
+	parts, tone, source := []string{}, ui.ToneNormal, ""
 	var samples []float64
 	if snap.Thermal != nil && snap.Thermal.Valid {
-		value = fmt.Sprintf("CPU %.0f°C", snap.Thermal.Celsius)
+		parts = append(parts, fmt.Sprintf("CPU %.0f°C", snap.Thermal.Celsius))
 		tone, samples, source = thresholdTone(metricCPUTemp, snap.Thermal.Celsius), temperatureSeries(history[sel]), snap.Thermal.Source
-		if gpuSel, ok := selectGPU(snap); ok {
-			for _, g := range snap.GPU.GPUs {
-				if g.PCIID == gpuSel.Subject && g.TempValid {
-					value += fmt.Sprintf(" · GPU %.0f°C", g.Celsius)
-				}
+	}
+	if gpuSel, ok := selectGPU(snap); ok {
+		for _, g := range snap.GPU.GPUs {
+			if g.PCIID != gpuSel.Subject || !g.TempValid {
+				continue
 			}
+			parts = append(parts, fmt.Sprintf("GPU %.0f°C", g.Celsius))
+			gpuTone := thresholdTone(metricGPUTemp, g.Celsius)
+			if gpuTone == ui.ToneError || (gpuTone == ui.ToneActivity && tone == ui.ToneNormal) {
+				tone = gpuTone
+			}
+			break
 		}
+	}
+	value := strings.Join(parts, " · ")
+	if value == "" {
+		value = ccDash
 	}
 	return ccMonRow("cpu", "Temperature", ccMonValue("Temperature reading", value, tone, theme.RoleBody),
 		ccMonCaption(source), ccMonGraph(ccMonMarkW, ccMonMarkH, samples, nil, tone))
 }
 
 func ccMonGPURow(snap services.Snapshot, history map[services.Selector][]float64) *ui.Node {
-	value, tone, name := ccDash, ui.ToneNormal, ""
+	value, tone, caption := ccDash, ui.ToneNormal, ""
 	var samples []float64
 	if sel, ok := selectGPU(snap); ok {
 		for _, g := range snap.GPU.GPUs {
 			if g.PCIID != sel.Subject {
 				continue
 			}
-			name = g.Name
+			caption = g.Name
+			if g.VRAMValid {
+				caption = joinCaption(caption, formatBytes(float64(g.VRAM.UsedBytes))+" / "+formatBytes(float64(g.VRAM.TotalBytes)))
+			}
 			// An nvidia-smi failure leaves usage invalid for this sample
 			// (sysc-495): the row dashes rather than holding a stale value.
 			if g.Usage.Valid {
@@ -204,7 +216,7 @@ func ccMonGPURow(snap services.Snapshot, history map[services.Selector][]float64
 		}
 	}
 	return ccMonRow("gpu", "GPU", ccMonValue("GPU usage", value, tone, theme.RoleBody),
-		ccMonCaption(name), ccMonGraph(ccMonMarkW, ccMonMarkH, samples, nil, tone))
+		ccMonCaption(caption), ccMonGraph(ccMonMarkW, ccMonMarkH, samples, nil, tone))
 }
 
 func ccMonStorageRow(snap services.Snapshot) *ui.Node {
