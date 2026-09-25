@@ -92,7 +92,7 @@ column go last in either direction.
 Without a Niri connection, the Applications section is hidden rather than shown empty. The
 *Show applications* and *Show processes* options hide their section.
 
-**Rows** are 50 px, as in the reference. Hovering fills a row with the configured hover colours (D7).
+**Rows** are on a 32 px pitch. That is the reference's row measured at its screenshot scale: the logo, declared 110 px in the plugin source, spans 168 px in the capture, a scale of 1.53, so its 50 px physical rows are about 33 logical. Hovering fills a row with the configured hover colours (D7).
 Clicking a leaf row opens the detail view (D6). Clicking a group row toggles it. Expansion is keyed by
 stable IDs, `app:<app_id>` and `exe:<path>`, so it survives refreshes.
 
@@ -147,7 +147,7 @@ mirror the reference's settings.
 | `show_processes` | bool | true | Processes section |
 
 - Colours are theme role names, not hex, so they follow wallpaper and matugen retheming, as in the
-  reference. An unknown role name falls back to the default and is reported by config validation.
+  reference. An unknown role name is refused by the loader with a path error, as every other invalid value in this configuration is, and the running configuration is kept.
 - The options menu's section toggles write the same keys, so they persist.
 - The owner filter and sort order are session state, not configuration.
 - The metric thresholds stay fixed in code, as the Control Centre monitor design (D2 there) decided.
@@ -155,8 +155,8 @@ mirror the reference's settings.
 ### D8. System page
 
 The same header (D2) and info card (D3). Below them is one content card in the process table's style:
-the same container, the same collapsible pink section headers, and the same 50 px row rhythm, so the
-two pages read as one panel.
+the same container and the same collapsible pink section headers, so the two pages read as one panel.
+Its rows are the Control Centre's two-line 50 px rows, because each carries a value, a caption and a mark.
 
 | Section | Row | Value | Caption | Mark |
 |---|---|---|---|---|
