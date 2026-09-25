@@ -51,8 +51,15 @@ func checkNode(n *Node, box Rect, measure MeasureText, out *[]FitProblem) {
 			*out = append(*out, FitProblem{Path: n.Path, Message: "ui: " + err.Error()})
 		}
 	case KindCapsule, KindStack:
-		inner := Rect{X: box.X + n.Padding, Y: box.Y + n.Padding,
-			W: max(box.W-2*n.Padding, 0), H: max(box.H-2*n.Padding, 0)}
+		// A capsule insets its ends by CapsulePadX, a stack by Padding; the
+		// vertical inset is Padding for both. Mirroring the wrong one let a
+		// child that overflows the real inner box go unreported.
+		padX := n.Padding
+		if n.Kind == KindCapsule {
+			padX = CapsulePadX(n)
+		}
+		inner := Rect{X: box.X + padX, Y: box.Y + n.Padding,
+			W: max(box.W-2*padX, 0), H: max(box.H-2*n.Padding, 0)}
 		for _, c := range n.Children {
 			if c != nil {
 				checkNode(c, inner, measure, out)

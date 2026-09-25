@@ -80,3 +80,27 @@ func TestCheckFitReportsEveryViolation(t *testing.T) {
 		}
 	}
 }
+
+// A capsule with PaddingX insets its child by CapsulePadX, not Padding. The
+// checker must descend with the same inner box LayoutColumn uses, or a child
+// that overflows the real inner box goes unreported.
+func TestCheckFitCapsulePaddingXAgreesWithColumnLayout(t *testing.T) {
+	t.Parallel()
+
+	root := &Node{Kind: KindColumn, Children: []*Node{
+		{Kind: KindCapsule, Padding: 4, PaddingX: 20, Children: []*Node{
+			{Kind: KindColumn, Children: []*Node{
+				{Kind: KindRow, Children: []*Node{
+					{Kind: KindButton, Text: "x", Width: 80},
+				}},
+			}},
+		}},
+	}}
+	bounds := Rect{W: 100, H: 60}
+	problems := CheckFit(root, bounds, fakeMeasure)
+	err := LayoutColumn(root, bounds, fakeMeasure)
+	if len(problems) == 0 || err == nil {
+		t.Fatalf("CheckFit found %d problems (%v), LayoutColumn returned %v; both must report the child that overflows the PaddingX inset",
+			len(problems), problems, err)
+	}
+}
