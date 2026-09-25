@@ -94,3 +94,28 @@ func TestHostRegionGeometryUsesCurrentConfigureAndCandidateGap(t *testing.T) {
 		t.Fatalf("body = %+v, want candidate 6px gap inside current configure", body)
 	}
 }
+
+func TestBlurRegionUpdateSendsOnlyChanges(t *testing.T) {
+	t.Parallel()
+	a := []ui.Rect{{W: 100, H: 40}}
+	b := []ui.Rect{{W: 100, H: 40}, {X: 0, Y: 40, W: 8, H: 1}}
+	for _, tc := range []struct {
+		name        string
+		prev, next  []ui.Rect
+		capable     bool
+		send, clear bool
+	}{
+		{"first region", nil, a, true, true, false},
+		{"unchanged", a, a, true, false, false},
+		{"changed", a, b, true, true, false},
+		{"emptied", a, nil, true, false, true},
+		{"nothing to nothing", nil, nil, true, false, false},
+		{"capability lost with a region", a, a, false, false, true},
+		{"incapable and empty", nil, a, false, false, false},
+	} {
+		send, clear := blurRegionUpdate(tc.prev, tc.next, tc.capable)
+		if send != tc.send || clear != tc.clear {
+			t.Errorf("%s: send=%v clear=%v, want %v %v", tc.name, send, clear, tc.send, tc.clear)
+		}
+	}
+}

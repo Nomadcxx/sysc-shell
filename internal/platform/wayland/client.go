@@ -902,6 +902,9 @@ func (o *owner) renderJob(h *OutputHost, u *surfaceUnit, job render.Job) error {
 	if err := u.app.Render(gen.pixels(job.Slot), int(gen.width), int(gen.height), int(gen.stride)); err != nil {
 		return err
 	}
+	if err := o.applyBlurShape(u); err != nil {
+		return fmt.Errorf("wayland: blur region: %w", err)
+	}
 	if err := u.surface.Attach(gen.slots[job.Slot], 0, 0); err != nil {
 		return fmt.Errorf("wayland: attach: %w", err)
 	}
