@@ -53,6 +53,8 @@ var materialIcons = map[string]struct{}{
 	"lan": {}, "visibility": {}, "visibility_off": {},
 	"bluetooth_disabled": {}, "bluetooth_connected": {}, "keyboard": {},
 	"mouse": {}, "smartphone": {}, "speaker": {}, "devices_other": {},
+	// The Faith plugin's read-the-chapter control.
+	"menu_book": {},
 }
 
 // The pinned Material Symbols source no longer carries the older

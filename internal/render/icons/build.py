@@ -89,6 +89,7 @@ GLYPHS = [
     ("uniE045", 0xE045, "signal-cellular-2-bar"),
     ("uniE046", 0xE046, "signal-cellular-3-bar"),
     ("uniE047", 0xE047, "signal-cellular-4-bar"),
+    ("uniE048", 0xE048, "cross"),
 ]
 
 UPM = 1000

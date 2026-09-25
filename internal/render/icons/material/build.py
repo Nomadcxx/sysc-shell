@@ -141,6 +141,8 @@ ICONS = [
     # renaming a zone in place.
     "public",
     "edit",
+    # The Faith plugin's read-the-chapter control.
+    "menu_book",
 ]
 
 # The pinned source renamed the older smartphone ligature. Keep the shell's

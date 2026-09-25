@@ -151,6 +151,12 @@ const (
 	iconSignalCellular4Bar
 )
 
+// The cross closes the font after the cellular band: the Faith plugin's bar
+// glyph, a Latin cross with its crossbar in the upper third.
+const (
+	iconCross rune = iconSignalCellular4Bar + 1
+)
+
 // batteryLevels is how many level glyphs each state has.
 const batteryLevels = 7
 
@@ -471,6 +477,7 @@ var iconNames = map[string]rune{
 	"signal-cellular-2-bar": iconSignalCellular2Bar,
 	"signal-cellular-3-bar": iconSignalCellular3Bar,
 	"signal-cellular-4-bar": iconSignalCellular4Bar,
+	"cross":                 iconCross,
 }
 
 // IconByName resolves a catalogue name to its symbol.
