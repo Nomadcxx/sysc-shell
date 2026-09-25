@@ -31,6 +31,8 @@ const (
 	MaxChildren = 256
 	// MaxTextBytes bounds the text a single node carries.
 	MaxTextBytes = 64 << 10
+	// MaxInputBytes gives editable note bodies a larger, still bounded payload.
+	MaxInputBytes = 1 << 20
 	// MaxIdentBytes bounds node IDs, keys, icon names, accessible names, and
 	// roles. These are addresses and labels, not content.
 	MaxIdentBytes = 256
@@ -128,9 +130,10 @@ const (
 type ViewKind string
 
 const (
-	ViewBar     ViewKind = "bar"
-	ViewTooltip ViewKind = "tooltip"
-	ViewPanel   ViewKind = "panel"
+	ViewBar      ViewKind = "bar"
+	ViewTooltip  ViewKind = "tooltip"
+	ViewPanel    ViewKind = "panel"
+	ViewFloating ViewKind = "floating"
 )
 
 // Node is one declarative view element.
@@ -266,6 +269,9 @@ type Node struct {
 	Multiline     bool   `json:"multiline,omitempty"`
 	SubmitOnEnter bool   `json:"submit_on_enter,omitempty"`
 	Reseed        uint64 `json:"reseed,omitempty"`
+	// Placeholder is presentation copy shown only while a text input is empty.
+	// Name remains the accessible label.
+	Placeholder string `json:"placeholder,omitempty"`
 
 	Children []*Node `json:"children,omitempty"`
 }
@@ -302,14 +308,15 @@ var knownKinds = map[NodeKind]bool{
 	KindGauge: true, KindGraph: true, KindSeparator: true, KindImage: true,
 }
 
-var knownViews = map[ViewKind]bool{ViewBar: true, ViewTooltip: true, ViewPanel: true}
+var knownViews = map[ViewKind]bool{ViewBar: true, ViewTooltip: true, ViewPanel: true, ViewFloating: true}
 
 var knownTones = map[Tone]bool{ToneNormal: true, ToneError: true, ToneSubtle: true, ToneAccent: true}
 
 var knownFills = map[string]bool{
 	"surface": true, "accent": true, "container": true, "error": true,
 	"soft": true, "card": true, "outline": true, "chip": true,
-	"error-container": true,
+	"error-container": true, "note-sun": true, "note-mint": true,
+	"note-sky": true, "note-rose": true, "note-lilac": true,
 }
 
 var knownSizes = map[string]bool{
@@ -324,6 +331,15 @@ var knownShapes = map[string]bool{
 
 func fillAllowed(k NodeKind) bool {
 	return k.container() || k == KindButton
+}
+
+func noteFill(fill string) bool {
+	switch fill {
+	case "note-sun", "note-mint", "note-sky", "note-rose", "note-lilac":
+		return true
+	default:
+		return false
+	}
 }
 
 // Validate reports whether root is a legal version-one tree for the given view.
@@ -461,8 +477,15 @@ func (v *validator) presentation(n *Node, path string) error {
 
 // vocabulary checks the per-kind payload and what this view kind permits.
 func (v *validator) vocabulary(n *Node, path string) error {
-	if len(n.Text) > MaxTextBytes {
-		return fmt.Errorf("%s: text is %d bytes, more than the %d allowed", path, len(n.Text), MaxTextBytes)
+	maxTextBytes := MaxTextBytes
+	if n.Kind == KindTextInput {
+		maxTextBytes = MaxInputBytes
+	}
+	if len(n.Text) > maxTextBytes {
+		return fmt.Errorf("%s: text is %d bytes, more than the %d allowed", path, len(n.Text), maxTextBytes)
+	}
+	if len(n.Placeholder) > MaxTextBytes {
+		return fmt.Errorf("%s: placeholder is %d bytes, more than the %d allowed", path, len(n.Placeholder), MaxTextBytes)
 	}
 	switch n.Kind {
 	case KindIcon:
@@ -499,13 +522,13 @@ func (v *validator) vocabulary(n *Node, path string) error {
 	if v.view == ViewBar && n.Kind.keyboard() {
 		return fmt.Errorf("%s: a bar view has no keyboard focus and cannot hold a %s", path, n.Kind)
 	}
-	if v.view != ViewPanel && (n.Kind == KindList || n.Kind == KindDragSource || n.Kind == KindDropZone || n.Kind == KindSeparator) {
+	if v.view != ViewPanel && v.view != ViewFloating && (n.Kind == KindList || n.Kind == KindDragSource || n.Kind == KindDropZone || n.Kind == KindSeparator) {
 		return fmt.Errorf("%s: a %s view cannot hold a %s", path, v.view, n.Kind)
 	}
 	if n.Kind == KindDragSource && n.Name == "" {
 		return fmt.Errorf("%s: a drag handle needs an accessible name", path)
 	}
-	if n.Kind != KindTextInput && (n.Multiline || n.SubmitOnEnter || n.Reseed != 0) {
+	if n.Kind != KindTextInput && (n.Multiline || n.SubmitOnEnter || n.Reseed != 0 || n.Placeholder != "") {
 		return fmt.Errorf("%s: %s cannot carry editor flags", path, n.Kind)
 	}
 	return nil
@@ -542,6 +565,9 @@ func (v *validator) minorTwo(n *Node, path string) error {
 		}
 		if !fillAllowed(n.Kind) {
 			return fmt.Errorf("%s: %s cannot carry a fill", path, n.Kind)
+		}
+		if noteFill(n.Fill) && v.view != ViewFloating {
+			return fmt.Errorf("%s: sticky note fills are only available in a floating view", path)
 		}
 	}
 	if n.Radius < 0 || n.Radius > MaxRadius {
@@ -608,7 +634,7 @@ func (v *validator) minorFour(n *Node, path string) error {
 // the host already ships, so the checks stay vocabulary-level.
 func (v *validator) minorFive(n *Node, path string) error {
 	if n.Kind == KindImage {
-		if v.view != ViewPanel {
+		if v.view != ViewPanel && v.view != ViewFloating {
 			return fmt.Errorf("%s: a %s view cannot hold an image", path, v.view)
 		}
 		if n.Path == "" {
@@ -654,6 +680,9 @@ func (v *validator) minorFive(n *Node, path string) error {
 		}
 		if n.StrokeFill != "" && !knownFills[n.StrokeFill] {
 			return fmt.Errorf("%s: unknown stroke fill %q", path, n.StrokeFill)
+		}
+		if noteFill(n.StrokeFill) && v.view != ViewFloating {
+			return fmt.Errorf("%s: sticky note fills are only available in a floating view", path)
 		}
 	}
 	if n.Kind == KindButton {

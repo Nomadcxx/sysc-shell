@@ -27,8 +27,9 @@ type PluginHostOptions struct {
 }
 
 type pluginSlot struct {
-	rt   *plugin.Runtime
-	disp *plugin.Dispatcher
+	rt    *plugin.Runtime
+	disp  *plugin.Dispatcher
+	store plugin.StateStore
 }
 
 type hostedView struct {
@@ -46,6 +47,8 @@ type hostedView struct {
 	Label      string
 	Width      int
 	Height     int
+	Title      string
+	SurfaceKey string
 }
 
 type pluginHost struct {
@@ -55,15 +58,22 @@ type pluginHost struct {
 	stop context.CancelFunc
 	prep *plugin.Preparer
 
-	mu           sync.Mutex
-	slots        map[string]*pluginSlot
-	views        map[string]*hostedView
-	nextID       uint64
-	inputs       []v1.InputEvent
-	textOut      plugin.TextOut
-	flushPending bool
-	closed       []string
-	panel        *hostedView
+	mu        sync.Mutex
+	surfaceMu sync.Mutex
+	slots     map[string]*pluginSlot
+	views     map[string]*hostedView
+	surfaces  map[string]*pluginSurfaceHost
+	// swapping holds plugin ids replace has stopped and not yet restarted.
+	// ensure refuses to start one of these: a concurrent syncEnabled must not
+	// resurrect the old copy while its directory is mid-swap.
+	swapping            map[string]bool
+	nextID              uint64
+	inputs              []v1.InputEvent
+	textOut             plugin.TextOut
+	flushPending        bool
+	closed              []string
+	panel               *hostedView
+	wallpaperProjection pluginWallpaperProjection
 	// lastAnchor remembers the bar X of the widget that most recently
 	// delivered input for a plugin, so the panel it opens can anchor under
 	// that widget instead of floating at the default position.
@@ -72,6 +82,10 @@ type pluginHost struct {
 	// images decodes the absolute paths plugin image nodes name, off the
 	// Wayland owner and under the worker's caps and bounded cache.
 	images *icons.Worker
+	// ensureRaceHook, when set, runs in ensure after a runtime has started but
+	// before its slot is inserted. Production leaves it nil; tests use it to
+	// land a concurrent replace's swapping mark inside that window.
+	ensureRaceHook func(id string, rt *plugin.Runtime)
 }
 
 // The bar and tooltip slots are public because a plugin author needs them to
@@ -83,6 +97,7 @@ const pluginBarViewHeight = lint.BarHeight
 
 var hostPluginCaps = []plugin.Capability{
 	plugin.CapNotifications, plugin.CapPanels, plugin.CapSettings, plugin.CapState,
+	plugin.CapFloatingSurfaces, plugin.CapWallpaper, plugin.CapClipboardRead,
 }
 
 // BindPlugins discovers enabled plugins and starts one runtime for each.
@@ -97,7 +112,9 @@ func (r *Registry) BindPlugins(opts PluginHostOptions) error {
 		prep:       plugin.NewPreparer(2, plugin.Measure),
 		slots:      make(map[string]*pluginSlot),
 		views:      make(map[string]*hostedView),
+		surfaces:   make(map[string]*pluginSurfaceHost),
 		lastAnchor: make(map[string]int),
+		swapping:   make(map[string]bool),
 	}
 	h.images = icons.NewWorker(icons.FileResolver{}, h.applyPluginImage)
 	go h.images.Run(ctx)
@@ -121,9 +138,17 @@ func (h *pluginHost) Close() {
 	slots := h.slots
 	h.slots = nil
 	h.views = make(map[string]*hostedView)
+	surfaces := h.surfaces
+	h.surfaces = make(map[string]*pluginSurfaceHost)
 	h.mu.Unlock()
+	for _, surface := range surfaces {
+		surface.closeWayland()
+	}
 	for _, s := range slots {
 		s.rt.Stop()
+		if h.r.depthClocks != nil {
+			h.r.depthClocks.clearOwner(s.rt.Manifest().ID)
+		}
 	}
 	h.prep.Close()
 }
@@ -176,7 +201,13 @@ func (h *pluginHost) finishSyncEnabled(enabled []string, cat plugin.Catalog, reg
 	}
 	h.mu.Unlock()
 	for _, id := range drop {
+		if registryHeld {
+			h.r.mu.Unlock()
+		}
 		h.stopPlugin(id)
+		if registryHeld {
+			h.r.mu.Lock()
+		}
 	}
 	if registryHeld {
 		h.syncBarsLocked()
@@ -188,7 +219,7 @@ func (h *pluginHost) finishSyncEnabled(enabled []string, cat plugin.Catalog, reg
 
 func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) error {
 	h.mu.Lock()
-	if h.slots[id] != nil {
+	if h.slots[id] != nil || h.swapping[id] {
 		h.mu.Unlock()
 		return nil
 	}
@@ -199,8 +230,9 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 		return fmt.Errorf("plugin %s is not installed", id)
 	}
 	rt := plugin.NewRuntime(c, plugin.RuntimeOptions{
-		Supported: hostPluginCaps,
-		Limits:    v1.DefaultLimits,
+		Supported:    hostPluginCaps,
+		Limits:       v1.DefaultLimits,
+		SessionEnded: func() { h.clearWallpaperMasks(id) },
 	})
 	stateDir := h.opts.StateDir
 	if stateDir == "" {
@@ -227,10 +259,35 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 		},
 		PanelResize: func(_ context.Context, p v1.PanelResizeParams) error { return h.resizePanel(p) },
 		ViewFocus:   func(_ context.Context, p v1.ViewFocusParams) error { return h.focusPanelView(id, p) },
+		OpenSurface: func(ctx context.Context, p v1.SurfaceOpenParams) (v1.SurfaceResult, error) {
+			return h.openFloatingSurface(ctx, id, p)
+		},
+		CloseSurface: func(_ context.Context, p v1.SurfaceCloseParams) error {
+			return h.closeFloatingSurface(id, p)
+		},
+		SurfacePin: func(ctx context.Context, p v1.SurfacePinParams) error {
+			return h.pinFloatingSurface(ctx, id, p)
+		},
+		WallpaperSnapshot: h.wallpaperSnapshot,
+		WallpaperMaskSet: func(ctx context.Context, p v1.WallpaperMaskSetParams) error {
+			return h.registerWallpaperMask(ctx, id, p)
+		},
+		ClipboardRead: readSystemClipboard,
 	})
 	rt.SetCalls(disp)
-	slot := &pluginSlot{rt: rt, disp: disp}
+	slot := &pluginSlot{rt: rt, disp: disp, store: store}
+	if h.ensureRaceHook != nil {
+		h.ensureRaceHook(id, rt)
+	}
 	h.mu.Lock()
+	if h.swapping[id] || h.slots[id] != nil {
+		// A replace landed while this ensure was starting a runtime against
+		// the pre-swap catalog, or another ensure already won the insert.
+		// Stop what was just started rather than let it occupy the slot.
+		h.mu.Unlock()
+		rt.Stop()
+		return nil
+	}
 	h.slots[id] = slot
 	h.mu.Unlock()
 	go h.pumpRuntime(slot)
@@ -278,6 +335,13 @@ func (h *pluginHost) stopPlugin(id string) {
 	}
 	if slot != nil {
 		slot.rt.Stop()
+	}
+	h.clearWallpaperMasks(id)
+}
+
+func (h *pluginHost) clearWallpaperMasks(id string) {
+	if h.r.depthClocks != nil {
+		h.r.depthClocks.clearOwner(id)
 	}
 }
 
@@ -396,9 +460,14 @@ func (h *pluginHost) applyResult(res plugin.Result) {
 		queuePluginImages(h, res.Root)
 	}
 	kind := v.Kind
+	viewID := v.ID
 	h.mu.Unlock()
 	if kind == v1.ViewPanel {
 		h.refreshPanel()
+		return
+	}
+	if kind == v1.ViewFloating {
+		h.refreshFloatingSurface(viewID)
 		return
 	}
 	h.r.refreshPluginBars()
@@ -564,7 +633,7 @@ func barKey(pluginID, instance, output string) string {
 	return pluginID + "/" + instance + "/" + output
 }
 
-func (h *pluginHost) openView(spec hostedView, registryHeld bool) {
+func (h *pluginHost) reserveView(spec hostedView) (hostedView, *pluginSlot, error) {
 	h.mu.Lock()
 	slot := h.slots[spec.Plugin]
 	n := 0
@@ -575,14 +644,29 @@ func (h *pluginHost) openView(spec hostedView, registryHeld bool) {
 	}
 	if slot == nil || n >= v1.DefaultLimits.MaxViews {
 		h.mu.Unlock()
-		return
+		if slot == nil {
+			return hostedView{}, nil, errors.New("plugin is not running")
+		}
+		return hostedView{}, nil, fmt.Errorf("plugin %s reached the %d-view limit", spec.Plugin, v1.DefaultLimits.MaxViews)
 	}
 	h.nextID++
 	spec.ID = fmt.Sprintf("v%d", h.nextID)
 	copied := spec
 	h.views[spec.ID] = &copied
 	h.mu.Unlock()
+	return spec, slot, nil
+}
 
+func (h *pluginHost) openView(spec hostedView, registryHeld bool) string {
+	opened, slot, err := h.reserveView(spec)
+	if err != nil {
+		return ""
+	}
+	h.announceView(opened, slot, registryHeld)
+	return opened.ID
+}
+
+func (h *pluginHost) announceView(spec hostedView, slot *pluginSlot, registryHeld bool) {
 	_ = slot.rt.Send(&v1.ViewOpen{
 		ViewID: spec.ID, View: spec.Kind, Entry: spec.Entry,
 		Instance: spec.Instance, Output: spec.Output, Generation: spec.Generation,
@@ -610,11 +694,16 @@ func (h *pluginHost) closeView(id string) {
 	}
 	slot := h.slots[v.Plugin]
 	delete(h.views, id)
+	surface := h.surfaces[id]
+	delete(h.surfaces, id)
 	h.closed = append(h.closed, id)
 	if h.panel != nil && h.panel.ID == id {
 		h.panel = nil
 	}
 	h.mu.Unlock()
+	if surface != nil {
+		surface.closeWayland()
+	}
 	if slot != nil {
 		_ = slot.rt.Send(&v1.ViewClose{ViewID: id})
 	}
@@ -1295,10 +1384,38 @@ func (h *pluginHost) retryLocked(id string) error {
 	if slot == nil {
 		return h.enableLocked(id, true)
 	}
-	return slot.rt.Retry(h.ctx)
+	h.r.mu.Unlock()
+	err := slot.rt.Retry(h.ctx)
+	h.r.mu.Lock()
+	return err
 }
 
 func (h *pluginHost) rescan() error { return h.syncEnabled() }
+
+// replace stops a plugin, lets the store swap its directory, and rescans. The
+// store calls it for every change to the managed tree, so no process runs from
+// a directory mid-swap; the rescan restarts the plugin when it is enabled and
+// the swap left something startable. It takes Registry.mu itself, through
+// syncEnabled, and must be called without it.
+//
+// id is marked swapping before stopPlugin and cleared after swap returns, so
+// a concurrent syncEnabled's ensure(id) — racing in between on another
+// caller's goroutine — refuses to restart the old copy from the stale
+// catalog; this replace's own rescan below is what starts the new one.
+func (h *pluginHost) replace(id string, swap func() error) error {
+	h.mu.Lock()
+	h.swapping[id] = true
+	h.mu.Unlock()
+	h.stopPlugin(id)
+	err := swap()
+	h.mu.Lock()
+	delete(h.swapping, id)
+	h.mu.Unlock()
+	if serr := h.syncEnabled(); serr != nil {
+		err = errors.Join(err, serr)
+	}
+	return err
+}
 
 func (h *pluginHost) applySetting(pluginID, key string, value any) error {
 	h.r.mu.Lock()

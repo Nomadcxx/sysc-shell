@@ -193,6 +193,7 @@ func (w *Weather) Close() {
 	if done != nil {
 		<-done
 	}
+	w.client.CloseIdleConnections()
 }
 
 func (w *Weather) Running() bool {

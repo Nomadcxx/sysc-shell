@@ -57,6 +57,25 @@ func TestGaugeIconsAreDistinctProjectGlyphs(t *testing.T) {
 	}
 }
 
+func TestGPUHasAMetricGlyph(t *testing.T) {
+	t.Parallel()
+	r := MetricIconRune("gpu")
+	if r == 0 {
+		t.Fatal("GPU has no metric glyph")
+	}
+	if got := glyphCoverage(t, r, 32); got == 0 {
+		t.Fatalf("GPU metric glyph %U has no ink", r)
+	}
+	m, err := NewSystemFontMap("sans-serif", "")
+	if err != nil {
+		t.Skipf("no system font available: %v", err)
+	}
+	face := m.Face(r, FaceRequest{})
+	if face == nil || face == m.Primary() {
+		t.Fatalf("GPU metric rune %U did not resolve to the project icon face", r)
+	}
+}
+
 func TestGaugeRunesResolveToTheProjectFace(t *testing.T) {
 	t.Parallel()
 	m, err := NewSystemFontMap("sans-serif", "")

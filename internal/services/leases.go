@@ -46,7 +46,14 @@ func (s *leaseSet) finest() time.Duration {
 	return out
 }
 
-func (s *leaseSet) len() int { return len(s.leases) }
+// len is nil-safe: a selector nobody has leased has no set, and asking
+// whether it is leased is a question, not an error.
+func (s *leaseSet) len() int {
+	if s == nil {
+		return 0
+	}
+	return len(s.leases)
+}
 
 // clear empties the set and returns what it held, for a caller releasing all.
 func (s *leaseSet) clear() []*Lease {

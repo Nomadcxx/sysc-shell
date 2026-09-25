@@ -157,7 +157,7 @@ func monitorMetricCard(m theme.Metrics, sel services.Selector, snap services.Sna
 	}
 	rows := []*ui.Node{monitorCardTitle(selectorLabel(sel), monitorIconRune(sel))}
 	rows = append(rows, &ui.Node{
-		Kind: ui.KindGraph, Values: monitorGraphValues(sel, history),
+		Kind: ui.KindGraph, Values: monitorGraphValues(sel, history), Window: services.HistorySize,
 		Absent: absent || (sel.Source == services.SourceGPU && !hasHistory),
 	})
 	rows = append(rows, monitorLegend(sel, snap, label))

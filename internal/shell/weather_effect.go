@@ -9,6 +9,7 @@ import (
 const (
 	weatherHeroEffectKey  = "weather:hero"
 	weatherTodayEffectKey = "weather:today"
+	weatherHomeEffectKey  = "weather:home"
 	// A fixed seed keeps the particle field stable when a reading is refreshed.
 	weatherEffectSeed uint64 = 0x534f4d455f574541
 )

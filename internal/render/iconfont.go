@@ -151,6 +151,8 @@ const (
 	iconSignalCellular4Bar
 )
 
+const iconGPU rune = iconSignalCellular4Bar + 1
+
 // batteryLevels is how many level glyphs each state has.
 const batteryLevels = 7
 
@@ -332,9 +334,8 @@ func WeatherCondition(code int) string {
 // Critical overrides the level entirely: a battery about to die should look
 // like one at every charge the caller considers critical, which is a policy
 // the widget owns rather than a threshold baked in here.
-// MetricIconRune is the glyph naming what a metric measures. A bar shows a
-// bare percentage otherwise, and a grouped one loses even the separation that
-// hinted at distinct widgets. An id with no icon returns zero.
+// MetricIconRune returns the project glyph naming a metric. An id with no
+// metric icon returns zero.
 func MetricIconRune(id string) rune {
 	switch id {
 	case "cpu":
@@ -345,6 +346,8 @@ func MetricIconRune(id string) rune {
 		return iconDisk
 	case "network":
 		return iconNetwork
+	case "gpu":
+		return iconGPU
 	}
 	return 0
 }

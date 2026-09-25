@@ -83,8 +83,8 @@ func TestControlCentreNameAndFlushPlacement(t *testing.T) {
 	if rootKind != ui.KindRow {
 		t.Errorf("root kind = %v, want row", rootKind)
 	}
-	if leaseCount != 6 {
-		t.Errorf("leases = %d, want CPU, memory, temperature, GPU, battery and clock", leaseCount)
+	if leaseCount != 9 {
+		t.Errorf("leases = %d, want CPU, memory, temperature, GPU, battery, root filesystem, network, block and clock", leaseCount)
 	}
 	if fillet != 12 || spec.Width != 724 {
 		t.Errorf("fillet = %d, drawn width = %d, want 12 and 724", fillet, spec.Width)
@@ -886,7 +886,7 @@ func TestControlCentreNativePagesFillTheBody(t *testing.T) {
 		want    []string
 	}{
 		{section: "audio", want: []string{"Volume", "Mute"}},
-		{section: "monitor", want: []string{"CPU", "Memory", "Network", "Temperature", "GPU"}},
+		{section: "monitor", want: []string{"CPU", "Memory", "Temperature", "GPU", "Storage", "Network", "Disk I/O"}},
 		{section: "network", want: []string{"Network", "Wi-Fi", "Ethernet"}},
 		{section: "power", want: []string{"Battery", "Power profile", "Session"}},
 		{section: "calendar", want: []string{"September 2026", "Previous month", "Next month"}},
@@ -895,11 +895,7 @@ func TestControlCentreNativePagesFillTheBody(t *testing.T) {
 		t.Run(tc.section, func(t *testing.T) {
 			h := &PanelHost{id: PanelControlCenter, section: tc.section, theme: DefaultTheme()}
 			page := ccPage(r, h)
-			if tc.section == "monitor" {
-				if page.Height != 0 {
-					t.Errorf("monitor page height = %d, want intrinsic height for the outer scroll", page.Height)
-				}
-			} else if page.Height != 480 {
+			if page.Height != 480 {
 				t.Errorf("%s page height = %d, want the full 480px body", tc.section, page.Height)
 			}
 			got := renderText(page)
@@ -1010,6 +1006,58 @@ func TestControlCentrePagesLayOutAtTheContractSize(t *testing.T) {
 			}
 			assertLaidOut(t, PanelControlCenter, h.root)
 		})
+	}
+}
+
+// The rail is one fixed column beside the body. Every destination has to land
+// inside the panel's padded height: Settings is last, so it is the one a spacing
+// change pushes past the edge.
+func TestControlCentreRailFitsThePanel(t *testing.T) {
+	r := newPanelRegistry(t)
+	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{BarEdge: "top", BarZone: 40}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, r, 2)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	h := r.panelHosts[PanelControlCenter]
+	size := panelTargetSize(PanelControlCenter)
+	if err := h.configure(size.W, size.H, int(ui.ScaleUnit)); err != nil {
+		t.Fatal(err)
+	}
+	rail := h.root.Children[0]
+	limit := h.root.Bounds.Y + h.root.Bounds.H - ccPanelPad
+	for _, entry := range rail.Children {
+		if entry.Kind != ui.KindButton {
+			continue
+		}
+		if got := entry.Bounds.Y + entry.Bounds.H; got > limit {
+			t.Errorf("rail %q ends at %d, past the padded panel edge %d", entry.Name, got, limit)
+		}
+	}
+}
+
+func TestHomeWeatherCardCarriesTheWeatherEffect(t *testing.T) {
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	var effects []*ui.Node
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n.Kind == ui.KindEffect {
+			effects = append(effects, n)
+		}
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(ccHome(&Registry{reading: observedWeather()}, h))
+	if len(effects) != 1 || effects[0].Key != weatherHomeEffectKey {
+		t.Fatalf("Home effects = %+v, want one %q scene", effects, weatherHomeEffectKey)
+	}
+
+	effects = nil
+	walk(ccHome(&Registry{}, h))
+	if len(effects) != 0 {
+		t.Fatalf("Home without a reading has effects %+v, want none", effects)
 	}
 }
 

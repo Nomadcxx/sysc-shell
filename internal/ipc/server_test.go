@@ -252,6 +252,23 @@ func TestPanelOpenBluetoothDispatches(t *testing.T) {
 	}
 }
 
+func TestPluginsMethodsRouteToTheHandler(t *testing.T) {
+	var gotMethod string
+	var gotParams string
+	s := NewServer("", Handlers{Plugins: func(method string, params json.RawMessage) (map[string]any, error) {
+		gotMethod, gotParams = method, string(params)
+		return map[string]any{"queued": method}, nil
+	}})
+	out := string(s.handleLine(`{"id":1,"method":"plugins.install","params":{"source":"sysc","id":"org.sysc.timer"}}`))
+	if gotMethod != "plugins.install" || !strings.Contains(gotParams, "org.sysc.timer") || !strings.Contains(out, `"ok"`) {
+		t.Fatalf("method %q params %q reply %s", gotMethod, gotParams, out)
+	}
+	out = string(NewServer("", Handlers{}).handleLine(`{"id":2,"method":"plugins.store"}`))
+	if !strings.Contains(out, "plugin store handler unset") {
+		t.Fatalf("reply without a handler: %s", out)
+	}
+}
+
 func startServer(t *testing.T, h Handlers) (string, context.CancelFunc) {
 	t.Helper()
 	sock := filepath.Join(t.TempDir(), "ipc.v1.sock")

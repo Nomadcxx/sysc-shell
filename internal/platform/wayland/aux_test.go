@@ -2,6 +2,7 @@ package wayland
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -143,6 +144,54 @@ func TestAuxUpdateRaisesKeyboardInteractivityInPlace(t *testing.T) {
 	}
 }
 
+func TestAuxRejectsUnsupportedLayerShellVersionBeforeCreatingSurface(t *testing.T) {
+	o := &owner{rs: newRegistryState()}
+	o.rs.singletons["zwlr_layer_shell_v1"] = globalEntry{version: 3}
+	err := o.openAux(nil, &AuxSpec{
+		ID: "plugin-floating:note", Namespace: "sysc-shell-plugin-sticky",
+		RequiredLayerShellVersion: 4,
+	})
+	if err == nil || !strings.Contains(err.Error(), "compositor provides 3") {
+		t.Fatalf("openAux error = %v, want a layer-shell version error", err)
+	}
+}
+
+func TestAuxUpdatePlansMoveResizeAndLayerTogether(t *testing.T) {
+	t.Parallel()
+	u := newSurfaceUnit("note:test")
+	u.policy = auxPolicy{
+		layer: layershell.ZwlrLayerShellV1LayerTop,
+		width: 360, height: 480,
+		marginTop: 20, marginLeft: 24,
+	}
+	w, h := uint32(420), uint32(520)
+	x, y := int32(80), int32(100)
+	layer := layershell.ZwlrLayerShellV1LayerOverlay
+	next, err := planAuxUpdate(u, &AuxUpdate{Width: &w, Height: &h, MarginLeft: &x, MarginTop: &y, Layer: &layer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.width != w || next.height != h || next.marginLeft != x || next.marginTop != y || next.layer != layer {
+		t.Fatalf("planned policy = %+v", next)
+	}
+	if u.policy.width != 360 || u.policy.marginLeft != 24 || u.policy.layer != layershell.ZwlrLayerShellV1LayerTop {
+		t.Fatalf("planning mutated current policy: %+v", u.policy)
+	}
+}
+
+func TestAuxUpdateRejectsUnknownLayerWithoutChangingPolicy(t *testing.T) {
+	t.Parallel()
+	u := newSurfaceUnit("note:test")
+	u.policy = auxPolicy{layer: layershell.ZwlrLayerShellV1LayerTop}
+	bad := layershell.ZwlrLayerShellV1Layer(4)
+	if _, err := planAuxUpdate(u, &AuxUpdate{Layer: &bad}); err == nil {
+		t.Fatal("invalid layer was accepted")
+	}
+	if u.policy.layer != layershell.ZwlrLayerShellV1LayerTop {
+		t.Fatal("invalid update changed policy")
+	}
+}
+
 func TestAuxUpdateReplacesTheInputRegionThenEmptiesIt(t *testing.T) {
 	t.Parallel()
 	u := newSurfaceUnit("panel:session")
@@ -227,11 +276,19 @@ func TestAuxUpdateForAMissingSurfaceLeavesSiblingsAlone(t *testing.T) {
 
 	// An update for an output that is not mapped is refused the same way.
 	o.handleAux(AuxRequest{Output: 99, ID: "panel:session", Update: &AuxUpdate{Keyboard: &onDemand}})
+	if o.fatal != nil {
+		t.Fatalf("a stale async update made the Wayland owner fatal: %v", o.fatal)
+	}
 	if h.aux["panel:session"].policy.keyboard != 1 {
 		t.Fatal("an update for an unknown output reached a live surface")
 	}
 	if len(h.aux) != 1 {
 		t.Fatalf("aux map = %d, want the sibling only", len(h.aux))
+	}
+	reply := make(chan error, 1)
+	o.handleAux(AuxRequest{Output: 99, ID: "panel:session", Update: &AuxUpdate{Keyboard: &onDemand}, Reply: reply})
+	if err := <-reply; err == nil {
+		t.Fatal("a synchronous update for an unknown output was accepted")
 	}
 }
 

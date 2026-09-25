@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -66,15 +68,21 @@ type Trigger struct {
 type PanelHost struct {
 	// writeTimer is the pending settings write, if a field or slider has been
 	// moved and has not settled yet.
-	writeTimer  *time.Timer
-	id          PanelID
-	output      uint32
-	place       Placement
-	root        *ui.Node
-	focus       []*ui.Node
-	roving      ui.Roving
-	leases      []*services.Lease
-	shieldQuiet time.Time
+	writeTimer *time.Timer
+	id         PanelID
+	output     uint32
+	place      Placement
+	root       *ui.Node
+	focus      []*ui.Node
+	roving     ui.Roving
+	leases     []*services.Lease
+	// subjectLeases hold the Control Centre's per-interface and per-device rate
+	// rings. They are resolved from the first snapshot that names a subject and
+	// kept until that subject disappears, so the chart does not hop.
+	subjectLeases                                     []*services.Lease
+	ccIface, ccDevice                                 string
+	ccRootSource, ccRootDevice, ccRootSelectionSource string
+	shieldQuiet                                       time.Time
 	// anim is this surface's one clock: every transition it runs shares it, so
 	// frames are scheduled from a single place.
 	anim     *animator
@@ -519,6 +527,12 @@ func (r *Registry) DropAux(output uint32, surfaceID string) {
 	if r.DropTrayAux(output, surfaceID) {
 		return
 	}
+	r.mu.Lock()
+	plugins := r.plugins
+	r.mu.Unlock()
+	if plugins != nil && plugins.dropFloatingAux(output, surfaceID) {
+		return
+	}
 	if surfaceID == runningAppMenuSurfaceID || surfaceID == runningAppMenuShieldID {
 		r.mu.Lock()
 		if h := r.runningMenu; h != nil && h.open_ && h.output == output {
@@ -809,6 +823,9 @@ func (r *Registry) acquirePanelLeases(h *PanelHost) error {
 			{Source: services.SourceCPU, Subject: "temperature"},
 			{Source: services.SourceGPU},
 			{Source: services.SourceBattery},
+			{Source: services.SourceFilesystem, Subject: "/"},
+			{Source: services.SourceNetwork},
+			{Source: services.SourceBlock},
 		} {
 			lease, err := r.metrics.Acquire(sel, time.Second)
 			if err != nil {
@@ -1737,7 +1754,11 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 		if h.id == PanelLauncher {
 			h.launcherSel = 0
 			h.launcherScroll = 0
-			r.launcherServiceLocked().Query(h.query)
+			if results, handled := notesLauncherResults(h.query); handled {
+				h.launcherResults = results
+			} else {
+				r.launcherServiceLocked().Query(h.query)
+			}
 		}
 		idx := h.roving.Index()
 		r.rebuildPanel(h)
@@ -2632,6 +2653,9 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 	r.sendAux(wayland.AuxRequest{Output: h.output, ID: shieldSurfaceID(id)})
 	releaseAll(h.leases)
 	h.leases = nil
+	releaseAll(h.subjectLeases)
+	h.subjectLeases, h.ccIface, h.ccDevice = nil, "", ""
+	h.ccRootSource, h.ccRootDevice, h.ccRootSelectionSource = "", "", ""
 	if h.mixerLease != nil {
 		lease := h.mixerLease
 		h.mixerLease = nil
@@ -2647,6 +2671,31 @@ func (r *Registry) sendAux(req wayland.AuxRequest) {
 	select {
 	case r.aux <- req:
 	case <-r.closed:
+	}
+}
+
+func (r *Registry) sendAuxWait(ctx context.Context, req wayland.AuxRequest) error {
+	req.Reply = make(chan error, 1)
+	select {
+	case r.aux <- req:
+	case <-r.closed:
+		return errors.New("shell is closing")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case err := <-req.Reply:
+		return err
+	case <-r.closed:
+		return errors.New("shell is closing")
+	case <-ctx.Done():
+		// Preserve request order: if open was already dequeued, this close
+		// retires it after the owner finishes handling the open.
+		select {
+		case r.aux <- wayland.AuxRequest{Output: req.Output, ID: req.ID}:
+		case <-r.closed:
+		}
+		return ctx.Err()
 	}
 }
 

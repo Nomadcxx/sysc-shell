@@ -245,3 +245,58 @@ func TestDefaultConfigHasNoPlugins(t *testing.T) {
 		t.Fatalf("default document mentions plugins:\n%s", data)
 	}
 }
+
+func TestPluginSourcesRoundTrip(t *testing.T) {
+	t.Parallel()
+	cfg, err := Parse([]byte(`{"plugins": {"sources": [
+		{"name": "sysc", "enabled": false},
+		{"name": "mine", "url": "https://github.com/me/my-plugins"},
+		{"name": "dev", "url": "file:///home/me/catalog", "enabled": false}
+	]}}`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	got := cfg.Plugins.EffectiveSources()
+	want := []PluginSource{
+		{Name: "sysc", URL: BuiltinPluginSource.URL, Enabled: false},
+		{Name: "mine", URL: "https://github.com/me/my-plugins", Enabled: true},
+		{Name: "dev", URL: "file:///home/me/catalog", Enabled: false},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("EffectiveSources = %+v", got)
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Write(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	again, err := Load(path)
+	if err != nil || !reflect.DeepEqual(again.Plugins.EffectiveSources(), want) {
+		t.Fatalf("after write: %+v, %v", again.Plugins.EffectiveSources(), err)
+	}
+}
+
+func TestDefaultConfigHasTheBuiltinSourceEnabled(t *testing.T) {
+	t.Parallel()
+	got := Default().Plugins.EffectiveSources()
+	if len(got) != 1 || got[0] != BuiltinPluginSource || !got[0].Enabled {
+		t.Fatalf("EffectiveSources = %+v", got)
+	}
+}
+
+func TestParseRejectsBadPluginSources(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		"bad name":        `[{"name": "My Source", "url": "https://e.com/r"}]`,
+		"duplicate":       `[{"name": "a", "url": "https://e.com/r"}, {"name": "a", "url": "https://e.com/s"}]`,
+		"http":            `[{"name": "a", "url": "http://e.com/r"}]`,
+		"relative file":   `[{"name": "a", "url": "file://relative/path"}]`,
+		"missing url":     `[{"name": "a"}]`,
+		"repointed sysc":  `[{"name": "sysc", "url": "https://e.com/fork"}]`,
+		"ssh unsupported": `[{"name": "a", "url": "ssh://git@e.com/r"}]`,
+	}
+	for name, sources := range cases {
+		if _, err := Parse([]byte(`{"plugins": {"sources": ` + sources + `}}`)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

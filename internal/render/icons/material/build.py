@@ -137,6 +137,10 @@ ICONS = [
     # as inverses rather than as two unrelated controls.
     "link",
     "link_off",
+    # The world clock: a globe for its icon-only bar mode, and a pencil for
+    # renaming a zone in place.
+    "public",
+    "edit",
 ]
 
 # The pinned source renamed the older smartphone ligature. Keep the shell's

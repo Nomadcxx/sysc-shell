@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -61,6 +62,144 @@ func TestHostCallStateDeniedWithoutCapability(t *testing.T) {
 	})
 	if reply.OK || reply.Error == "" {
 		t.Fatalf("want a capability denial, got %+v", reply)
+	}
+}
+
+func TestHostCallWallpaperDeniedWithoutCapability(t *testing.T) {
+	t.Parallel()
+
+	for _, call := range []v1.CallKind{v1.CallWallpaperSnapshot, v1.CallWallpaperMaskSet} {
+		reply := NewDispatcher(CallEnv{}).Handle(context.Background(), &v1.HostCall{ID: "wallpaper", Call: call})
+		if reply.OK || !strings.Contains(reply.Error, "capability wallpaper is not granted") {
+			t.Errorf("%s reply = %+v, want wallpaper capability denial", call, reply)
+		}
+	}
+}
+
+func TestHostCallWallpaperSnapshot(t *testing.T) {
+	t.Parallel()
+
+	want := v1.WallpaperSnapshotResult{
+		Revision: 3,
+		Scale:    "fill",
+		Outputs:  []v1.WallpaperOutput{{Output: "DP-1", State: v1.WallpaperImage, Path: "/wallpaper.jpg"}},
+	}
+	d := NewDispatcher(CallEnv{
+		Granted: []Capability{CapWallpaper},
+		WallpaperSnapshot: func(context.Context) (v1.WallpaperSnapshotResult, error) {
+			return want, nil
+		},
+	})
+	reply := d.Handle(context.Background(), &v1.HostCall{ID: "snapshot", Call: v1.CallWallpaperSnapshot})
+	if !reply.OK {
+		t.Fatalf("snapshot reply = %+v", reply)
+	}
+	var got v1.WallpaperSnapshotResult
+	if err := json.Unmarshal(reply.Result, &got); err != nil {
+		t.Fatalf("decode snapshot reply: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("snapshot = %+v, want %+v", got, want)
+	}
+}
+
+func TestHostCallClipboardReadRequiresGrantAndBoundsText(t *testing.T) {
+	t.Parallel()
+	params := jsonOf(t, v1.ClipboardReadParams{})
+	called := false
+	callback := func(context.Context) (v1.ClipboardReadResult, error) {
+		called = true
+		return v1.ClipboardReadResult{Text: "copied text"}, nil
+	}
+	call := &v1.HostCall{ID: "clipboard", Call: v1.CallClipboardRead, Params: params}
+	denied := NewDispatcher(CallEnv{ClipboardRead: callback}).Handle(context.Background(), call)
+	if denied.OK || !strings.Contains(denied.Error, "clipboard-read") || called {
+		t.Fatalf("denied clipboard read = %+v, callback called=%v", denied, called)
+	}
+
+	allowed := NewDispatcher(CallEnv{Granted: []Capability{CapClipboardRead}, ClipboardRead: callback}).Handle(context.Background(), call)
+	var result v1.ClipboardReadResult
+	if !allowed.OK || json.Unmarshal(allowed.Result, &result) != nil || result.Text != "copied text" {
+		t.Fatalf("allowed clipboard read = %+v, result=%+v", allowed, result)
+	}
+
+	overLimit := NewDispatcher(CallEnv{
+		Granted: []Capability{CapClipboardRead},
+		ClipboardRead: func(context.Context) (v1.ClipboardReadResult, error) {
+			return v1.ClipboardReadResult{Text: strings.Repeat("x", v1.MaxInputBytes+1)}, nil
+		},
+	}).Handle(context.Background(), call)
+	if overLimit.OK || !strings.Contains(overLimit.Error, "oversized") {
+		t.Fatalf("oversized clipboard read = %+v", overLimit)
+	}
+}
+
+func TestHostCallWallpaperMaskSetPassesDescriptor(t *testing.T) {
+	t.Parallel()
+
+	want := v1.WallpaperMaskSetParams{Output: "DP-1", WallpaperPath: "/wallpaper.jpg", MaskPath: "/mask.png"}
+	var got v1.WallpaperMaskSetParams
+	d := NewDispatcher(CallEnv{
+		Granted: []Capability{CapWallpaper},
+		WallpaperMaskSet: func(_ context.Context, p v1.WallpaperMaskSetParams) error {
+			got = p
+			return nil
+		},
+	})
+	reply := d.Handle(context.Background(), &v1.HostCall{
+		ID: "mask", Call: v1.CallWallpaperMaskSet, Params: jsonOf(t, want),
+	})
+	if !reply.OK || got != want {
+		t.Fatalf("mask reply = %+v, descriptor = %+v, want %+v", reply, got, want)
+	}
+}
+
+func TestHostCallWallpaperMissingCallbacksAreNamed(t *testing.T) {
+	t.Parallel()
+
+	d := NewDispatcher(CallEnv{Granted: []Capability{CapWallpaper}})
+	for _, tc := range []struct {
+		call   v1.CallKind
+		params json.RawMessage
+		want   string
+	}{
+		{call: v1.CallWallpaperSnapshot, want: "wallpaper snapshot is not available"},
+		{call: v1.CallWallpaperMaskSet, params: json.RawMessage(`{"output":"DP-1","wallpaper_path":"/wallpaper.jpg","mask_path":"/mask.png"}`), want: "wallpaper mask set is not available"},
+	} {
+		reply := d.Handle(context.Background(), &v1.HostCall{ID: "missing", Call: tc.call, Params: tc.params})
+		if reply.OK || !strings.Contains(reply.Error, tc.want) {
+			t.Errorf("%s reply = %+v, want %q", tc.call, reply, tc.want)
+		}
+	}
+}
+
+func TestHostCallWallpaperRejectsInvalidParamsBeforeCallback(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	d := NewDispatcher(CallEnv{
+		Granted: []Capability{CapWallpaper},
+		WallpaperSnapshot: func(context.Context) (v1.WallpaperSnapshotResult, error) {
+			calls++
+			return v1.WallpaperSnapshotResult{}, nil
+		},
+		WallpaperMaskSet: func(context.Context, v1.WallpaperMaskSetParams) error {
+			calls++
+			return nil
+		},
+	})
+	for _, call := range []*v1.HostCall{
+		{ID: "snapshot-extra", Call: v1.CallWallpaperSnapshot, Params: json.RawMessage(`{"unexpected":true}`)},
+		{ID: "mask-extra", Call: v1.CallWallpaperMaskSet, Params: json.RawMessage(`{"output":"DP-1","wallpaper_path":"/wallpaper.jpg","mask_path":"/mask.png","unexpected":true}`)},
+		{ID: "mask-empty-output", Call: v1.CallWallpaperMaskSet, Params: json.RawMessage(`{"output":"","wallpaper_path":"/wallpaper.jpg","mask_path":"/mask.png"}`)},
+		{ID: "mask-missing-wallpaper", Call: v1.CallWallpaperMaskSet, Params: json.RawMessage(`{"output":"DP-1","mask_path":"/mask.png"}`)},
+	} {
+		if reply := d.Handle(context.Background(), call); reply.OK {
+			t.Errorf("%s was accepted", call.ID)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("callbacks = %d, want 0 for invalid params", calls)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
+	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
 	"github.com/Nomadcxx/sysc-shell/internal/shell"
 	"github.com/Nomadcxx/sysc-shell/internal/trayclient"
 )
@@ -104,6 +106,21 @@ func run(ctx context.Context) (err error) {
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	pluginStore := store.New(store.Options{
+		CacheDir: store.CacheRoot(),
+		Installer: &store.Installer{
+			Root: plugin.ManagedRoot(), Client: store.NewHTTPClient(), Arch: runtime.GOARCH,
+			Replace: registry.ReplacePlugin,
+		},
+		Sources: registry.PluginSources,
+		Local:   registry.LocalPluginDirs,
+	})
+	registry.BindPluginStore(pluginStore)
+	go pluginStore.Run(ctx)
+	if _, err := pluginStore.Refresh(); err != nil {
+		log.Printf("sysc-shell: plugin store: %v", err)
+	}
 
 	snapshots, niriErrs := niri.Stream(ctx, socket)
 	streamFailed := make(chan error, 1)
@@ -261,6 +278,7 @@ func run(ctx context.Context) (err error) {
 			Panel:   registry.HandlePanelByName,
 			Status:  registry.Status,
 			OSDStep: registry.OSDStep,
+			Plugins: registry.PluginStoreCall,
 		})
 		ipcErr <- srv.Serve(ctx)
 	}()

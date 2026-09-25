@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -186,6 +188,30 @@ type wirePlugins struct {
 	Enabled   []string                  `json:"enabled,omitempty"`
 	Settings  map[string]map[string]any `json:"settings,omitempty"`
 	Instances map[string]map[string]any `json:"instances,omitempty"`
+	Sources   []wirePluginSource        `json:"sources,omitempty"`
+}
+
+type wirePluginSource struct {
+	Name    string `json:"name"`
+	URL     string `json:"url,omitempty"`
+	Enabled *bool  `json:"enabled,omitempty"`
+}
+
+var sourceNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+
+// validSourceURL admits https repositories and local file:// ones, which is
+// how an author tests a catalog before publishing it.
+func validSourceURL(raw string) error {
+	u, err := url.Parse(raw)
+	switch {
+	case err != nil:
+		return err
+	case u.Scheme == "https" && u.Host != "":
+		return nil
+	case u.Scheme == "file" && u.Host == "" && path.IsAbs(u.Path):
+		return nil
+	}
+	return fmt.Errorf("%q must be an https:// or file:/// URL", raw)
 }
 
 var colorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$`)
@@ -379,6 +405,26 @@ func applyPlugins(w wirePlugins, path string) (Plugins, error) {
 	}
 	if out.Instances, err = settingValues(w.Instances, path+".instances", v1.ValidEntryID, "an instance id"); err != nil {
 		return Plugins{}, err
+	}
+
+	names := make(map[string]struct{}, len(w.Sources))
+	for i, ws := range w.Sources {
+		field := fmt.Sprintf("%s.sources[%d]", path, i)
+		if !sourceNamePattern.MatchString(ws.Name) {
+			return Plugins{}, pathErr(field+".name", "%q is not a source name", ws.Name)
+		}
+		if _, dup := names[ws.Name]; dup {
+			return Plugins{}, pathErr(field+".name", "%q appears more than once", ws.Name)
+		}
+		names[ws.Name] = struct{}{}
+		if ws.Name == BuiltinPluginSource.Name {
+			if ws.URL != "" {
+				return Plugins{}, pathErr(field+".url", "the built-in source cannot be repointed")
+			}
+		} else if err := validSourceURL(ws.URL); err != nil {
+			return Plugins{}, pathErr(field+".url", "%v", err)
+		}
+		out.Sources = append(out.Sources, PluginSource{Name: ws.Name, URL: ws.URL, Enabled: ws.Enabled == nil || *ws.Enabled})
 	}
 	return out, nil
 }

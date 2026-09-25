@@ -67,6 +67,9 @@ type RuntimeOptions struct {
 	Limits           v1.Limits
 	HandshakeTimeout time.Duration
 	ShutdownGrace    time.Duration
+	// SessionEnded runs once after a live helper session ends, before any
+	// automatic restart. Stop invokes it when it closes a live session.
+	SessionEnded func()
 	// Now is the clock, injected so restart policy is testable without
 	// waiting out a sixty-second window.
 	Now func() time.Time
@@ -91,15 +94,16 @@ type Runtime struct {
 	opts      RuntimeOptions
 	messages  chan v1.Message
 
-	mu      sync.Mutex
-	state   State
-	since   time.Time
-	failure string
-	starts  int
-	stderr  []byte
-	session *Session
-	disp    *Dispatcher
-	budget  *restartBudget
+	mu            sync.Mutex
+	state         State
+	since         time.Time
+	failure       string
+	starts        int
+	stderr        []byte
+	session       *Session
+	sessionCancel context.CancelFunc
+	disp          *Dispatcher
+	budget        *restartBudget
 	// generation rises on every deliberate stop, so a supervise goroutine
 	// belonging to a previous life cannot restart a plugin the user disabled.
 	generation int
@@ -249,18 +253,21 @@ func (r *Runtime) launch(ctx context.Context) error {
 		return err
 	}
 
+	sessionCtx, cancelSession := context.WithCancel(ctx)
 	r.mu.Lock()
 	if r.generation != generation || r.stopping {
 		// The user disabled this plugin while it was starting.
 		r.mu.Unlock()
+		cancelSession()
 		sess.Close()
 		return nil
 	}
 	r.session = sess
+	r.sessionCancel = cancelSession
 	r.mu.Unlock()
 
 	r.setState(StateRunning, "")
-	go r.supervise(ctx, sess, generation)
+	go r.supervise(ctx, sessionCtx, cancelSession, sess, generation)
 	return nil
 }
 
@@ -269,7 +276,7 @@ func (r *Runtime) launch(ctx context.Context) error {
 // It runs outside the runtime's mutex. A plugin's writes are its own business;
 // holding the lock across them would let one slow process stall every status
 // read the manager makes.
-func (r *Runtime) supervise(ctx context.Context, sess *Session, generation int) {
+func (r *Runtime) supervise(ctx, sessionCtx context.Context, cancel context.CancelFunc, sess *Session, generation int) {
 	var readErr error
 	for {
 		msg, err := sess.Recv()
@@ -282,7 +289,7 @@ func (r *Runtime) supervise(ctx context.Context, sess *Session, generation int) 
 			d := r.disp
 			r.mu.Unlock()
 			if d != nil {
-				go r.answer(ctx, sess, d, call)
+				go r.answer(sessionCtx, sess, d, call)
 				continue
 			}
 		}
@@ -294,6 +301,7 @@ func (r *Runtime) supervise(ctx context.Context, sess *Session, generation int) 
 	}
 
 	reason := sess.Close()
+	cancel()
 	stderr := sess.Stderr()
 	ended := r.opts.now()
 
@@ -301,12 +309,16 @@ func (r *Runtime) supervise(ctx context.Context, sess *Session, generation int) 
 	stale := r.generation != generation || r.stopping
 	if !stale {
 		r.session = nil
+		r.sessionCancel = nil
 		r.stderr = stderr
 		r.budget.ranSteadily(sess.Started(), ended)
 	}
 	r.mu.Unlock()
 	if stale {
 		return
+	}
+	if r.opts.SessionEnded != nil {
+		r.opts.SessionEnded()
 	}
 
 	if readErr != nil && !errors.Is(readErr, io.EOF) {
@@ -332,14 +344,22 @@ func (r *Runtime) Stop() {
 	r.stopping = true
 	r.generation++
 	sess := r.session
+	cancelSession := r.sessionCancel
 	r.session = nil
+	r.sessionCancel = nil
 	r.mu.Unlock()
 
+	if cancelSession != nil {
+		cancelSession()
+	}
 	if sess != nil {
 		sess.Close()
 		r.mu.Lock()
 		r.stderr = sess.Stderr()
 		r.mu.Unlock()
+		if r.opts.SessionEnded != nil {
+			r.opts.SessionEnded()
+		}
 	}
 	r.setState(StateDisabled, "")
 }

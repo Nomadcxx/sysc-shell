@@ -73,6 +73,34 @@ type Plugins struct {
 	// Instances holds widget-instance-scoped values, keyed by the placement
 	// instance id.
 	Instances map[string]map[string]any
+	// Sources lists the sources the user added, plus an entry named for the
+	// built-in source when the user disabled it. EffectiveSources merges in
+	// the built-in one.
+	Sources []PluginSource
+}
+
+// PluginSource is one git repository the plugin store reads a catalog from.
+type PluginSource struct {
+	Name    string
+	URL     string
+	Enabled bool
+}
+
+// BuiltinPluginSource is the first-party catalog. It is always present: a
+// configuration may disable it but not remove or repoint it.
+var BuiltinPluginSource = PluginSource{Name: "sysc", URL: "https://github.com/Nomadcxx/sysc-plugins", Enabled: true}
+
+// EffectiveSources is every source in order, the built-in one first.
+func (p Plugins) EffectiveSources() []PluginSource {
+	out := []PluginSource{BuiltinPluginSource}
+	for _, s := range p.Sources {
+		if s.Name == BuiltinPluginSource.Name {
+			out[0].Enabled = s.Enabled
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // Clone is a deep copy, so a candidate cannot alias live configuration.
@@ -85,6 +113,9 @@ func (p Plugins) clone() Plugins {
 	}
 	out.Settings = cloneValues(p.Settings)
 	out.Instances = cloneValues(p.Instances)
+	if p.Sources != nil {
+		out.Sources = append([]PluginSource(nil), p.Sources...)
+	}
 	return out
 }
 

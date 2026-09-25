@@ -11,7 +11,7 @@ import (
 // MaxMessageBytes bounds one framed line, newline included. The reader
 // enforces it before decoding, so a plugin cannot make the host allocate or
 // parse an unbounded value.
-const MaxMessageBytes = 1 << 20
+const MaxMessageBytes = 8 << 20
 
 var (
 	// ErrLineTooLong reports a frame at or over MaxMessageBytes. It is a

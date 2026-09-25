@@ -61,12 +61,15 @@ func TestPluginPanelSettingsWrapsGroupsInCapsules(t *testing.T) {
 	schema := []plugin.Setting{
 		{Key: "frame_rate", Type: plugin.SettingInt, Label: "Frame rate", Default: 60.0, Min: f64(1), Max: f64(240)},
 		{Key: "directory", Type: plugin.SettingFolder, Label: "Output directory", Default: "~/Videos"},
+		{Key: "auto_generate", Type: plugin.SettingBool, Label: "Generate on wallpaper change", Default: true},
+		{Key: "details", Type: plugin.SettingString, Label: "Advanced details", Default: "hidden",
+			VisibleWhen: &plugin.VisibleWhen{Key: "auto_generate", Equals: false}},
 	}
 	nodes := pluginPanelSettings(nil, h, "org.sysc.screen-recorder", schema)
-	if len(nodes) != 2 {
-		t.Fatalf("groups = %d, want one capsule per section", len(nodes))
+	if len(nodes) != 3 {
+		t.Fatalf("groups = %d, want Capture, File, and generic Settings capsules", len(nodes))
 	}
-	for i, title := range []string{"Capture", "File"} {
+	for i, title := range []string{"Capture", "File", "Settings"} {
 		n := nodes[i]
 		if n.Kind != ui.KindCapsule {
 			t.Fatalf("%s kind = %d, want KindCapsule", title, n.Kind)
@@ -74,6 +77,10 @@ func TestPluginPanelSettingsWrapsGroupsInCapsules(t *testing.T) {
 		if !strings.Contains(treeText(n), title) {
 			t.Fatalf("%s missing from %q", title, treeText(n))
 		}
+	}
+	settings := treeText(nodes[2])
+	if !strings.Contains(settings, "Generate on wallpaper change") || strings.Contains(settings, "Advanced details") {
+		t.Fatalf("generic settings card does not honor schema visibility: %q", settings)
 	}
 }
 

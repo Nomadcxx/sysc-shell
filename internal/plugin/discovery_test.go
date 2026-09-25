@@ -3,6 +3,7 @@ package plugin
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -230,18 +231,18 @@ func TestDiscoverIgnoresAFileNamedLikeAPlugin(t *testing.T) {
 	}
 }
 
-// Not parallel: it replaces XDG_CONFIG_HOME for the process.
-func TestDefaultRootsNameTheUserAndSystemDirectories(t *testing.T) {
+// Not parallel: it replaces XDG_CONFIG_HOME and XDG_DATA_HOME for the process.
+func TestDefaultRootsNameTheUserManagedAndSystemDirectories(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "/tmp/cfg")
+	t.Setenv("XDG_DATA_HOME", "/tmp/data")
 	roots := DefaultRoots("/usr/share/sysc-shell/plugins")
-	if len(roots) != 2 {
-		t.Fatalf("roots = %+v, want the user and system directories", roots)
+	want := []Root{
+		{Path: "/tmp/cfg/sysc-shell/plugins", Source: SourceUser},
+		{Path: "/tmp/data/sysc-shell/plugins", Source: SourceManaged},
+		{Path: "/usr/share/sysc-shell/plugins", Source: SourceSystem},
 	}
-	if roots[0].Path != "/tmp/cfg/sysc-shell/plugins" || roots[0].Source != SourceUser {
-		t.Errorf("user root = %+v", roots[0])
-	}
-	if roots[1].Path != "/usr/share/sysc-shell/plugins" || roots[1].Source != SourceSystem {
-		t.Errorf("system root = %+v", roots[1])
+	if !reflect.DeepEqual(roots, want) {
+		t.Fatalf("roots = %+v, want %+v", roots, want)
 	}
 }
 
@@ -275,5 +276,84 @@ func TestDiscoverFollowsSymlinkedPluginDirectories(t *testing.T) {
 	}
 	if len(cat.Plugins) != 1 || cat.Plugins[0].Manifest.ID != "org.example.notes" {
 		t.Fatalf("plugins = %+v", cat.Plugins)
+	}
+}
+
+func TestDiscoverLetsAUserCopyShadowAManagedOne(t *testing.T) {
+	t.Parallel()
+
+	user, managed := t.TempDir(), t.TempDir()
+	userDir := install(t, user, "timer", timerManifest)
+	managedDir := install(t, managed, "org.sysc.timer", timerManifest)
+
+	cat, err := Discover(Root{Path: user, Source: SourceUser}, Root{Path: managed, Source: SourceManaged})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	got, ok := cat.Lookup("org.sysc.timer")
+	if !ok || got.Dir != userDir {
+		t.Fatalf("Lookup = %+v, %v; want the user copy at %s", got, ok, userDir)
+	}
+	var shadowed *Candidate
+	for i := range cat.Plugins {
+		if cat.Plugins[i].Dir == managedDir {
+			shadowed = &cat.Plugins[i]
+		}
+	}
+	if shadowed == nil {
+		t.Fatal("the managed copy disappeared; the manager must still show it")
+	}
+	if shadowed.Err != nil || shadowed.ShadowedBy != userDir || shadowed.Startable() {
+		t.Errorf("managed = %+v; want valid, ShadowedBy %s, not startable", *shadowed, userDir)
+	}
+}
+
+func TestDiscoverStillRejectsEveryOtherCollision(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct{ a, b Source }{
+		{SourceUser, SourceUser},
+		{SourceManaged, SourceManaged},
+		{SourceUser, SourceSystem},
+		{SourceManaged, SourceSystem},
+	}
+	for _, c := range cases {
+		ra, rb := t.TempDir(), t.TempDir()
+		install(t, ra, "one", timerManifest)
+		install(t, rb, "two", timerManifest)
+		cat, err := Discover(Root{Path: ra, Source: c.a}, Root{Path: rb, Source: c.b})
+		if err != nil {
+			t.Fatalf("%v/%v: Discover: %v", c.a, c.b, err)
+		}
+		if _, ok := cat.Lookup("org.sysc.timer"); ok {
+			t.Errorf("%v against %v: a duplicated id stayed usable", c.a, c.b)
+		}
+	}
+}
+
+func TestDiscoverSkipsDotDirectories(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	install(t, root, ".staging", timerManifest)
+	install(t, root, ".prev", idOf(t, "org.sysc.other"))
+	cat, err := Discover(Root{Path: root, Source: SourceManaged})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(cat.Plugins) != 0 {
+		t.Fatalf("found %d candidates in dot-directories, want none", len(cat.Plugins))
+	}
+}
+
+func TestManagedRootFollowsXDGDataHome(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", "/data")
+	if got := ManagedRoot(); got != "/data/sysc-shell/plugins" {
+		t.Errorf("ManagedRoot = %s", got)
+	}
+	t.Setenv("XDG_DATA_HOME", "relative")
+	t.Setenv("HOME", "/home/u")
+	if got := ManagedRoot(); got != "/home/u/.local/share/sysc-shell/plugins" {
+		t.Errorf("ManagedRoot with a relative XDG_DATA_HOME = %s", got)
 	}
 }

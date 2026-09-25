@@ -768,3 +768,13 @@ func TestMonitorSystemCardWithLongCPUFitsPanel(t *testing.T) {
 		t.Fatalf("LayoutColumn: %v", err)
 	}
 }
+
+func TestStandaloneMonitorGraphUsesTheRingWindow(t *testing.T) {
+	t.Parallel()
+	sel := services.Selector{Source: services.SourceCPU}
+	card := monitorMetricCard(standardMetrics(), sel, fixtureSnapshot(), []float64{0.4, 0.5}, true, true)
+	graph := findKind(card, ui.KindGraph)
+	if graph == nil || graph.Window != services.HistorySize {
+		t.Fatalf("standalone monitor graph = %+v, want window %d", graph, services.HistorySize)
+	}
+}

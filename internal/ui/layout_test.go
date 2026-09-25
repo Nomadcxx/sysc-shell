@@ -386,6 +386,34 @@ func TestAGraphMeasuresItsConfiguredWidth(t *testing.T) {
 	}
 }
 
+// A graph that names a height keeps it inside a taller row, so a row can
+// carry a two-line label beside a short sparkline.
+func TestAGraphInARowKeepsItsOwnHeight(t *testing.T) {
+	t.Parallel()
+	measure := func(s string, _ TextAttrs) (int, int) { return 10 * len([]rune(s)), 10 }
+
+	root := &Node{Kind: KindRow, Children: []*Node{{Kind: KindGraph, Width: 60, Height: 28}}}
+	if err := Layout(root, Rect{X: 0, Y: 0, W: 200, H: 50}, measure); err != nil {
+		t.Fatalf("Layout: %v", err)
+	}
+	if got := root.Children[0].Bounds.H; got != 28 {
+		t.Fatalf("graph height = %d, want its own 28", got)
+	}
+}
+
+func TestAMeterInARowKeepsItsOwnHeight(t *testing.T) {
+	t.Parallel()
+	measure := func(s string, _ TextAttrs) (int, int) { return 10 * len([]rune(s)), 10 }
+
+	root := &Node{Kind: KindRow, Children: []*Node{{Kind: KindMeter, Width: 60, Height: 8, Value: 0.5}}}
+	if err := Layout(root, Rect{X: 0, Y: 0, W: 200, H: 50}, measure); err != nil {
+		t.Fatalf("Layout: %v", err)
+	}
+	if got := root.Children[0].Bounds.H; got != 8 {
+		t.Fatalf("meter height = %d, want its own 8", got)
+	}
+}
+
 // A graph with no samples still reserves its width, so a bar does not reflow
 // when the first sample arrives.
 func TestAnEmptyGraphStillReservesItsWidth(t *testing.T) {

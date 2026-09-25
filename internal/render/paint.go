@@ -2,11 +2,13 @@ package render
 
 import (
 	"fmt"
+	"image"
 	"math"
 	"strings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	"golang.org/x/image/vector"
 )
 
 // buttonText returns the label colour over a Primary fill, falling back to
@@ -289,11 +291,7 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 		fillRect(c, box, style.Track)
 		filled := box
 		filled.W = style.Scale120.Physical(n.Bounds.X+int(float64(n.Bounds.W)*n.Value+0.5)) - box.X
-		fill := style.accent()
-		if n.Tone == ui.ToneError {
-			fill = style.Error
-		}
-		fillRect(c, filled, fill)
+		fillRect(c, filled, toneColor(style, n.Tone, style.accent()))
 		return nil
 
 	case ui.KindCapsule:
@@ -687,7 +685,7 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 	}
 	// A Search field's glass is the affordance; painting Name as a
 	// placeholder put bright body text in the well.
-	if n.Text == "" && n.Preedit == "" && n.Name != "" && mark == 0 {
+	if n.Text == "" && n.Preedit == "" && n.Placeholder == "" && n.Name != "" && mark == 0 {
 		_ = paintText(c, n.Name, phys, text, style, textSpec(style, n).Italicised(), n.Tabular, n.Tone, false)
 	}
 	// A masked field draws one bullet per rune. The value, the committed
@@ -696,7 +694,11 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 	shown := ui.DisplayText(n)
 	shownPreedit := ui.DisplayPreedit(n)
 	committed := ui.DisplayPrefix(n, n.Cursor)
-	if err := paintText(c, shown, phys, text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline); err != nil {
+	tone := n.Tone
+	if n.Text == "" && n.Preedit == "" && n.Placeholder != "" {
+		shown, tone = n.Placeholder, ui.ToneSubtle
+	}
+	if err := paintText(c, shown, phys, text, style, textSpec(style, n), n.Tabular, tone, n.Underline); err != nil {
 		return err
 	}
 	prefixW := 0
@@ -741,6 +743,10 @@ func paintMultilineField(c *Canvas, n *ui.Node, text *TextRenderer, style Style,
 		cursor = len(n.Text)
 	}
 	for i, line := range lines {
+		tone := n.Tone
+		if n.Text == "" && n.Preedit == "" && n.Placeholder != "" {
+			line, tone = n.Placeholder, ui.ToneSubtle
+		}
 		end := off + len(line)
 		if cursor >= off && cursor <= end {
 			caretLine, caretCol = i, cursor-off
@@ -748,7 +754,7 @@ func paintMultilineField(c *Canvas, n *ui.Node, text *TextRenderer, style Style,
 		box := phys
 		box.Y += i * lineH
 		box.H = lineH
-		if err := paintText(c, line, box, text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline); err != nil {
+		if err := paintText(c, line, box, text, style, textSpec(style, n), n.Tabular, tone, n.Underline); err != nil {
 			return err
 		}
 		off = end + 1
@@ -768,47 +774,51 @@ func paintMultilineField(c *Canvas, n *ui.Node, text *TextRenderer, style Style,
 	return nil
 }
 
-// paintGraph fills one column per sample, newest at the right, using the same
-// rectangle fill the meter uses. There is no path rasteriser and no
-// anti-aliasing: a bar-height sparkline needs neither.
-//
-// Values are already normalised to zero through one by the widget, so this
-// applies no scale of its own.
+// paintGraph draws a sparkline: a baseline, an area under the primary series,
+// an optional thin second series, the primary line, and a dot on the newest
+// sample. Values arrive normalised to zero through one; the painter applies no
+// scale of its own. Coverage comes from the vector rasterizer, so the line is
+// anti-aliased at every render scale.
 func paintGraph(c *Canvas, n *ui.Node, box ui.Rect, style Style) error {
 	if n.Absent || box.W <= 0 || box.H <= 0 || len(n.Values) == 0 {
 		return nil
 	}
+	scale := float32(style.Scale120) / float32(ui.ScaleUnit)
+	if scale <= 0 {
+		scale = 1
+	}
+	stroke := max(1.5*scale, 1)
+	dot := 1.5 * scale
+	inset := max(stroke/2, dot)
+	window := max(n.Window, len(n.Values), len(n.SecondValues))
+	line := toneColor(style, n.Tone, style.accent())
 
-	// Columns are laid out newest-last. When there are more samples than
-	// pixels, the oldest are dropped rather than averaged: the recent shape is
-	// what a glanceable bar graph is for.
-	values := n.Values
-	if len(values) > box.W {
-		values = values[len(values)-box.W:]
-	}
-	width := box.W / len(values)
-	if width < 1 {
-		width = 1
-	}
+	fillRect(c, ui.Rect{X: box.X, Y: box.Y + box.H - 1, W: box.W, H: 1}, style.Track)
+	rasterizer := vector.NewRasterizer(box.W, box.H)
+	mask := image.NewAlpha(image.Rect(0, 0, box.W, box.H))
 
-	for i, v := range values {
-		if v < 0 {
-			v = 0
-		}
-		if v > 1 {
-			v = 1
-		}
-		height := int(float64(box.H) * v)
-		if height <= 0 {
-			continue
-		}
-		x := box.X + box.W - (len(values)-i)*width
-		if x < box.X {
-			continue
-		}
-		fillRect(c, ui.Rect{X: x, Y: box.Y + box.H - height, W: width, H: height}, style.Accent)
+	primary := smoothLine(sparklinePoints(n.Values, window, box.W, box.H, inset))
+	if len(primary) >= 2 {
+		rasterizeArea(rasterizer, mask, primary, float32(box.H))
+		blendMask(c, mask, box.X, box.Y, withAlpha(line, 0.18))
 	}
+	if len(n.SecondValues) > 0 {
+		second := smoothLine(sparklinePoints(n.SecondValues, window, box.W, box.H, inset))
+		rasterizeStroke(rasterizer, mask, second, max(scale, 1))
+		blendMask(c, mask, box.X, box.Y, style.Secondary)
+	}
+	rasterizeStroke(rasterizer, mask, primary, stroke)
+	blendMask(c, mask, box.X, box.Y, line)
+	newest := primary[len(primary)-1]
+	rasterizeCircle(rasterizer, mask, newest, dot, 12)
+	blendMask(c, mask, box.X, box.Y, line)
 	return nil
+}
+
+// withAlpha scales a colour's alpha by f.
+func withAlpha(col Color, f float64) Color {
+	col.A = uint8(float64(col.A)*f + 0.5)
+	return col
 }
 
 // paintText shapes at the physical size and blends the mask at the box origin.
@@ -1011,6 +1021,16 @@ func fillPair(style Style, fill ui.Fill, base Color) (Color, Color) {
 		return style.Error, style.onError()
 	case ui.FillErrorContainer:
 		return style.errorContainer()
+	case ui.FillNoteSun:
+		return noteWash(style.Tertiary, style.Capsule, style.Foreground), style.Foreground
+	case ui.FillNoteMint:
+		return noteWash(style.Secondary, style.Capsule, style.Foreground), style.Foreground
+	case ui.FillNoteSky:
+		return noteWash(style.Accent, style.Capsule, style.Foreground), style.Foreground
+	case ui.FillNoteRose:
+		return noteWash(style.Error, style.Capsule, style.Foreground), style.Foreground
+	case ui.FillNoteLilac:
+		return noteWash(style.Tertiary, noteWash(style.Accent, style.Capsule, style.Foreground), style.Foreground), style.Foreground
 	case ui.FillScrim:
 		// The wash is the scrim token at the shield's alpha, so the content
 		// behind it survives the composite. Contents keep the surface
@@ -1290,6 +1310,23 @@ func wash(accent, surface Color) Color {
 	return Color{R: mix(accent.R, surface.R), G: mix(accent.G, surface.G), B: mix(accent.B, surface.B), A: 0xff}
 }
 
+// noteWash keeps as much tint as possible while preserving normal-text
+// contrast against the foreground paired with the surface.
+func noteWash(tint, surface, foreground Color) Color {
+	const maxAlpha uint32 = 64
+	toTheme := func(c Color) theme.Color { return theme.Color{R: c.R, G: c.G, B: c.B, A: c.A} }
+	for alpha := maxAlpha; ; alpha-- {
+		inv := uint32(255) - alpha
+		mix := func(over, under uint8) uint8 {
+			return uint8((uint32(over)*alpha + uint32(under)*inv) / 255)
+		}
+		candidate := Color{R: mix(tint.R, surface.R), G: mix(tint.G, surface.G), B: mix(tint.B, surface.B), A: 0xff}
+		if theme.ContrastRatio(toTheme(foreground), toTheme(candidate)) >= theme.TextRatio(false) || alpha == 0 {
+			return candidate
+		}
+	}
+}
+
 // paintSearchMark draws a magnifying glass in the leading well. There is no
 // SVG rasterizer on this path; the glyph is two rounded fills.
 const (
@@ -1431,8 +1468,22 @@ func paintCentredMask(c *Canvas, mask Mask, box ui.Rect, fg Color) (ui.Rect, boo
 	return ink, true
 }
 
+// toneColor resolves a threshold tone for a graph line or meter fill. A
+// normal tone keeps the caller's colour.
+func toneColor(style Style, tone ui.Tone, normal Color) Color {
+	switch tone {
+	case ui.ToneError:
+		return style.Error
+	case ui.ToneActivity:
+		return style.Tertiary
+	}
+	return normal
+}
+
 func textColor(style Style, tone ui.Tone) Color {
 	switch tone {
+	case ui.ToneActivity:
+		return style.Tertiary
 	case ui.ToneError:
 		return style.Error
 	case ui.ToneAccent:

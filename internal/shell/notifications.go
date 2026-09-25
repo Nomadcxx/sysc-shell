@@ -250,8 +250,15 @@ func (r *Registry) SyncToastOutputs(globals map[string]uint32) {
 	r.notify.mu.Unlock()
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.toasts != nil {
 		r.toasts.syncOutputs(globals)
+	}
+	var effects depthClockEffects
+	if r.depthClocks != nil {
+		effects = r.depthClocks.syncOutputsLocked(globals)
+	}
+	r.mu.Unlock()
+	if r.depthClocks != nil {
+		r.depthClocks.emit(effects)
 	}
 }

@@ -1,11 +1,15 @@
 package plugin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
@@ -20,18 +24,24 @@ type StateStore interface {
 
 // CallEnv is the host surface one plugin is allowed to use.
 type CallEnv struct {
-	PluginID       string
-	Granted        []Capability
-	DeclaredPanels []Panel
-	Store          StateStore
-	OpenPanel      func(context.Context, v1.PanelParams) (v1.PanelResult, error)
-	ClosePanel     func(context.Context, v1.PanelParams) error
-	Notify         func(context.Context, v1.NotifyParams) (v1.NotifyResult, error)
-	OutputContext  func(context.Context, v1.OutputContextParams) (v1.OutputContextResult, error)
-	PanelResize    func(context.Context, v1.PanelResizeParams) error
-	ViewFocus      func(context.Context, v1.ViewFocusParams) error
-	MaxPending     int
-	CallTimeout    time.Duration
+	PluginID          string
+	Granted           []Capability
+	DeclaredPanels    []Panel
+	Store             StateStore
+	OpenPanel         func(context.Context, v1.PanelParams) (v1.PanelResult, error)
+	ClosePanel        func(context.Context, v1.PanelParams) error
+	Notify            func(context.Context, v1.NotifyParams) (v1.NotifyResult, error)
+	OutputContext     func(context.Context, v1.OutputContextParams) (v1.OutputContextResult, error)
+	PanelResize       func(context.Context, v1.PanelResizeParams) error
+	ViewFocus         func(context.Context, v1.ViewFocusParams) error
+	OpenSurface       func(context.Context, v1.SurfaceOpenParams) (v1.SurfaceResult, error)
+	CloseSurface      func(context.Context, v1.SurfaceCloseParams) error
+	SurfacePin        func(context.Context, v1.SurfacePinParams) error
+	WallpaperSnapshot func(context.Context) (v1.WallpaperSnapshotResult, error)
+	WallpaperMaskSet  func(context.Context, v1.WallpaperMaskSetParams) error
+	ClipboardRead     func(context.Context) (v1.ClipboardReadResult, error)
+	MaxPending        int
+	CallTimeout       time.Duration
 }
 
 func (e CallEnv) maxPending() int {
@@ -144,6 +154,11 @@ func (d *Dispatcher) dispatch(ctx context.Context, call *v1.HostCall) v1.HostRep
 			return failReply(call.ID, "capability panels is not granted")
 		}
 		return d.panelSurface(ctx, call)
+	case v1.CallSurfaceOpen, v1.CallSurfaceClose, v1.CallSurfacePin:
+		if !d.env.allows(CapFloatingSurfaces) {
+			return failReply(call.ID, "capability floating_surfaces is not granted")
+		}
+		return d.floatingSurface(ctx, call)
 	case v1.CallNotify:
 		if !d.env.allows(CapNotifications) {
 			return failReply(call.ID, "capability notifications is not granted")
@@ -151,9 +166,131 @@ func (d *Dispatcher) dispatch(ctx context.Context, call *v1.HostCall) v1.HostRep
 		return d.notify(ctx, call)
 	case v1.CallOutputContext:
 		return d.output(ctx, call)
+	case v1.CallWallpaperSnapshot, v1.CallWallpaperMaskSet:
+		if !d.env.allows(CapWallpaper) {
+			return failReply(call.ID, "capability wallpaper is not granted")
+		}
+		return d.wallpaper(ctx, call)
+	case v1.CallClipboardRead:
+		if !d.env.allows(CapClipboardRead) {
+			return failReply(call.ID, "capability clipboard-read is not granted")
+		}
+		var params v1.ClipboardReadParams
+		if err := decodeStrictParams(call.Params, &params); err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		if d.env.ClipboardRead == nil {
+			return failReply(call.ID, "clipboard read is not available")
+		}
+		result, err := d.env.ClipboardRead(ctx)
+		if err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		if len(result.Text) > v1.MaxInputBytes || !utf8.ValidString(result.Text) || strings.ContainsRune(result.Text, '\x00') {
+			return failReply(call.ID, "clipboard returned invalid or oversized text")
+		}
+		return okReply(call.ID, result)
 	default:
 		return failReply(call.ID, fmt.Sprintf("unknown call %q", call.Call))
 	}
+}
+
+func (d *Dispatcher) floatingSurface(ctx context.Context, call *v1.HostCall) v1.HostReply {
+	switch call.Call {
+	case v1.CallSurfaceOpen:
+		var p v1.SurfaceOpenParams
+		if err := decodeStrictParams(call.Params, &p); err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		if p.Key == "" || len(p.Key) > v1.MaxIdentBytes || strings.ContainsAny(p.Key, "/\\\x00") {
+			return failReply(call.ID, "surface key is empty, too long, or contains a path separator")
+		}
+		if len(p.Title) > v1.MaxIdentBytes {
+			return failReply(call.ID, "surface title is too long")
+		}
+		if p.Width < 200 || p.Width > 2048 || p.Height < 120 || p.Height > 2048 {
+			return failReply(call.ID, "surface size is outside 200..2048 by 120..2048")
+		}
+		if p.X < 0 || p.Y < 0 {
+			return failReply(call.ID, "surface position cannot be negative")
+		}
+		if d.env.OpenSurface == nil {
+			return failReply(call.ID, "floating surfaces are not available")
+		}
+		result, err := d.env.OpenSurface(ctx, p)
+		if err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		return okReply(call.ID, result)
+	case v1.CallSurfaceClose:
+		var p v1.SurfaceCloseParams
+		if err := decodeStrictParams(call.Params, &p); err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		if p.View == "" {
+			return failReply(call.ID, "surface close needs a view")
+		}
+		if d.env.CloseSurface == nil {
+			return failReply(call.ID, "floating surfaces are not available")
+		}
+		if err := d.env.CloseSurface(ctx, p); err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		return okReply(call.ID, nil)
+	case v1.CallSurfacePin:
+		var p v1.SurfacePinParams
+		if err := decodeStrictParams(call.Params, &p); err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		if p.View == "" {
+			return failReply(call.ID, "surface pin needs a view")
+		}
+		if d.env.SurfacePin == nil {
+			return failReply(call.ID, "floating surfaces are not available")
+		}
+		if err := d.env.SurfacePin(ctx, p); err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		return okReply(call.ID, nil)
+	}
+	return failReply(call.ID, "unknown floating surface call")
+}
+
+func (d *Dispatcher) wallpaper(ctx context.Context, call *v1.HostCall) v1.HostReply {
+	switch call.Call {
+	case v1.CallWallpaperSnapshot:
+		var params struct{}
+		if err := decodeStrictParams(call.Params, &params); err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		if d.env.WallpaperSnapshot == nil {
+			return failReply(call.ID, "wallpaper snapshot is not available")
+		}
+		result, err := d.env.WallpaperSnapshot(ctx)
+		if err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		return okReply(call.ID, result)
+	case v1.CallWallpaperMaskSet:
+		var params v1.WallpaperMaskSetParams
+		if err := decodeStrictParams(call.Params, &params); err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		if params.Output == "" {
+			return failReply(call.ID, "wallpaper mask set needs an output")
+		}
+		if params.MaskPath != "" && params.WallpaperPath == "" {
+			return failReply(call.ID, "wallpaper mask set needs a wallpaper path")
+		}
+		if d.env.WallpaperMaskSet == nil {
+			return failReply(call.ID, "wallpaper mask set is not available")
+		}
+		if err := d.env.WallpaperMaskSet(ctx, params); err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		return okReply(call.ID, nil)
+	}
+	return failReply(call.ID, "unknown wallpaper call")
 }
 
 func (d *Dispatcher) state(ctx context.Context, call *v1.HostCall) v1.HostReply {
@@ -329,6 +466,25 @@ func decodeParams(raw json.RawMessage, dest any) error {
 		return nil
 	}
 	if err := json.Unmarshal(raw, dest); err != nil {
+		return fmt.Errorf("params: %w", err)
+	}
+	return nil
+}
+
+func decodeStrictParams(raw json.RawMessage, dest any) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dest); err != nil {
+		return fmt.Errorf("params: %w", err)
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("params: multiple JSON values")
+		}
 		return fmt.Errorf("params: %w", err)
 	}
 	return nil

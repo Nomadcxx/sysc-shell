@@ -118,11 +118,16 @@ func pluginPanelSettings(r *Registry, h *PanelHost, pluginID string, schema []pl
 	}
 	values := pluginSettingValues(r, pluginID, schema)
 	var out []*ui.Node
+	grouped := make(map[string]struct{}, len(schema))
 	for _, g := range pluginPanelSettingGroups {
 		var rows []*ui.Node
 		for _, key := range g.Keys {
 			s, ok := byKey[key]
-			if !ok || !plugin.SettingVisible(s, values) {
+			if !ok {
+				continue
+			}
+			grouped[key] = struct{}{}
+			if !plugin.SettingVisible(s, values) {
 				continue
 			}
 			rows = append(rows, pluginSettingRow(r, h, pluginID, s))
@@ -131,6 +136,16 @@ func pluginPanelSettings(r *Registry, h *PanelHost, pluginID string, schema []pl
 			continue
 		}
 		out = append(out, monitorCard(h.metrics(), append([]*ui.Node{monitorCardTitle(g.Title, 0)}, rows...)))
+	}
+	var rows []*ui.Node
+	for _, s := range schema {
+		if _, ok := grouped[s.Key]; ok || !plugin.SettingVisible(s, values) {
+			continue
+		}
+		rows = append(rows, pluginSettingRow(r, h, pluginID, s))
+	}
+	if len(rows) != 0 {
+		out = append(out, monitorCard(h.metrics(), append([]*ui.Node{monitorCardTitle("Settings", 0)}, rows...)))
 	}
 	return out
 }

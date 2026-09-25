@@ -7,6 +7,7 @@ import (
 	metrics "github.com/Nomadcxx/sysc-metrics"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -208,7 +209,7 @@ func TestBarGPUProjectionUsesTheSelectedIdentity(t *testing.T) {
 	}}}
 
 	textWidget := buildMetricWidget(config.Item{ID: "gpu"})
-	if got := textWidget.format(barView{Metrics: snap}); got != "20%" {
+	if got, want := textWidget.format(barView{Metrics: snap}), string(render.MetricIconRune("gpu"))+" 20%"; got != want {
 		t.Fatalf("GPU text = %q, want selected device value 20%%", got)
 	}
 	radialWidget := buildMetricWidget(config.Item{ID: "gpu", Display: "radial"})
@@ -226,8 +227,8 @@ func TestBarGPUProjectionRejectsAmbiguousIdentity(t *testing.T) {
 	}}}
 
 	textWidget := buildMetricWidget(config.Item{ID: "gpu"})
-	if got := textWidget.format(barView{Metrics: snap}); got != noWorkspace {
-		t.Fatalf("ambiguous GPU text = %q, want %q", got, noWorkspace)
+	if got, want := textWidget.format(barView{Metrics: snap}), string(render.MetricIconRune("gpu"))+" "+noWorkspace; got != want {
+		t.Fatalf("ambiguous GPU text = %q, want %q", got, want)
 	}
 	radialWidget := buildMetricWidget(config.Item{ID: "gpu", Display: "radial"})
 	radialWidget.format(barView{Metrics: snap})
@@ -243,7 +244,7 @@ func TestBarGPUProjectionPreservesValidZero(t *testing.T) {
 	}}}
 
 	textWidget := buildMetricWidget(config.Item{ID: "gpu"})
-	if got := textWidget.format(barView{Metrics: snap}); got != "0%" {
+	if got, want := textWidget.format(barView{Metrics: snap}), string(render.MetricIconRune("gpu"))+" 0%"; got != want {
 		t.Fatalf("zero GPU text = %q, want 0%%", got)
 	}
 	radialWidget := buildMetricWidget(config.Item{ID: "gpu", Display: "radial"})
@@ -280,6 +281,18 @@ func TestBarGPUGraphUsesOnlySelectedHistory(t *testing.T) {
 	})
 	if len(wildcardOnly.node.Values) != 0 || !wildcardOnly.node.Absent {
 		t.Fatalf("wildcard-only GPU graph = %+v absent=%v, want unavailable", wildcardOnly.node.Values, wildcardOnly.node.Absent)
+	}
+}
+
+func TestBarGraphUsesTheRingWindow(t *testing.T) {
+	t.Parallel()
+	widget := buildMetricWidget(config.Item{ID: "cpu", Display: "graph"})
+	widget.format(barView{
+		Metrics: fixtureSnapshot(),
+		History: map[services.Selector][]float64{{Source: services.SourceCPU}: {0.4, 0.5}},
+	})
+	if widget.node.Window != services.HistorySize {
+		t.Fatalf("bar graph window = %d, want %d", widget.node.Window, services.HistorySize)
 	}
 }
 

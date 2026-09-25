@@ -2,6 +2,11 @@ package v1
 
 import "encoding/json"
 
+const (
+	ProtocolMajor = 1
+	ProtocolMinor = 8
+)
+
 // The version-one message names. Every line on the wire carries one of these
 // in its "type" field, and a reader that does not recognise a name rejects the
 // message rather than guessing.
@@ -56,6 +61,7 @@ type Limits struct {
 	MaxDepth           int `json:"max_depth"`
 	MaxChildren        int `json:"max_children"`
 	MaxTextBytes       int `json:"max_text_bytes"`
+	MaxInputBytes      int `json:"max_input_bytes"`
 	MaxViews           int `json:"max_views"`
 	MaxStateValueBytes int `json:"max_state_value_bytes"`
 	MaxStateTotalBytes int `json:"max_state_total_bytes"`
@@ -71,6 +77,7 @@ var DefaultLimits = Limits{
 	MaxDepth:           MaxDepth,
 	MaxChildren:        MaxChildren,
 	MaxTextBytes:       MaxTextBytes,
+	MaxInputBytes:      MaxInputBytes,
 	MaxViews:           64,
 	MaxStateValueBytes: 256 << 10,
 	MaxStateTotalBytes: 4 << 20,
@@ -237,15 +244,21 @@ func (*SettingsChanged) messageType() string { return TypeSettingsChanged }
 type CallKind string
 
 const (
-	CallStateGet      CallKind = "state.get"
-	CallStateSet      CallKind = "state.set"
-	CallStateList     CallKind = "state.list"
-	CallPanelOpen     CallKind = "panel.open"
-	CallPanelClose    CallKind = "panel.close"
-	CallNotify        CallKind = "notify"
-	CallOutputContext CallKind = "output.context"
-	CallPanelResize   CallKind = "panel.resize"
-	CallViewFocus     CallKind = "view.focus"
+	CallStateGet          CallKind = "state.get"
+	CallStateSet          CallKind = "state.set"
+	CallStateList         CallKind = "state.list"
+	CallPanelOpen         CallKind = "panel.open"
+	CallPanelClose        CallKind = "panel.close"
+	CallNotify            CallKind = "notify"
+	CallOutputContext     CallKind = "output.context"
+	CallPanelResize       CallKind = "panel.resize"
+	CallViewFocus         CallKind = "view.focus"
+	CallSurfaceOpen       CallKind = "surface.open"
+	CallSurfaceClose      CallKind = "surface.close"
+	CallSurfacePin        CallKind = "surface.pin"
+	CallClipboardRead     CallKind = "clipboard.read"
+	CallWallpaperSnapshot CallKind = "wallpaper.snapshot"
+	CallWallpaperMaskSet  CallKind = "wallpaper.mask.set"
 )
 
 // HostCall is a request from the plugin. Params is left raw so that adding a
@@ -315,6 +328,71 @@ type StateListResult struct {
 	Keys []string `json:"keys"`
 }
 
+// SurfaceOpenParams asks the host to open or focus one plugin-owned floating
+// surface. Key is stable within one plugin and output; the host owns the view
+// ID, geometry after opening, and Wayland surface.
+type SurfaceOpenParams struct {
+	Key        string `json:"key"`
+	Title      string `json:"title,omitempty"`
+	Output     string `json:"output,omitempty"`
+	Generation uint32 `json:"generation,omitempty"`
+	X          int    `json:"x"`
+	Y          int    `json:"y"`
+	Width      int    `json:"width"`
+	Height     int    `json:"height"`
+}
+
+// SurfaceCloseParams closes one view owned by the calling plugin.
+type SurfaceCloseParams struct {
+	View string `json:"view"`
+}
+
+// SurfacePinParams changes whether one view uses the shell overlay layer.
+type SurfacePinParams struct {
+	View   string `json:"view"`
+	Pinned bool   `json:"pinned"`
+}
+
+// SurfaceResult names the opened or already-open view.
+type SurfaceResult struct {
+	ViewID      string `json:"view_id"`
+	AlreadyOpen bool   `json:"already_open,omitempty"`
+}
+
+// WallpaperOutputState describes the shell's current wallpaper assignment for
+// one connected output.
+type WallpaperOutputState string
+
+const (
+	WallpaperImage         WallpaperOutputState = "image"
+	WallpaperVideo         WallpaperOutputState = "video"
+	WallpaperNone          WallpaperOutputState = "none"
+	WallpaperTransitioning WallpaperOutputState = "transitioning"
+	WallpaperCovered       WallpaperOutputState = "covered"
+)
+
+// WallpaperOutput is one connected output's wallpaper state.
+type WallpaperOutput struct {
+	Output string               `json:"output"`
+	State  WallpaperOutputState `json:"state"`
+	Path   string               `json:"path,omitempty"`
+}
+
+// WallpaperSnapshotResult is the current wallpaper projection and its
+// monotonically increasing revision.
+type WallpaperSnapshotResult struct {
+	Revision uint64            `json:"revision"`
+	Scale    string            `json:"scale"`
+	Outputs  []WallpaperOutput `json:"outputs"`
+}
+
+// WallpaperMaskSetParams registers or clears one output's depth mask.
+type WallpaperMaskSetParams struct {
+	Output        string `json:"output"`
+	WallpaperPath string `json:"wallpaper_path"`
+	MaskPath      string `json:"mask_path,omitempty"`
+}
+
 // PanelParams opens or closes a panel the manifest declared.
 type PanelParams struct {
 	// Entry is the manifest panel entry.
@@ -344,6 +422,16 @@ type OutputContextResult struct {
 // PanelResult names the view the host opened, so the plugin can close it.
 type PanelResult struct {
 	ViewID string `json:"view_id"`
+}
+
+// ClipboardReadParams has no options: clipboard imports always read bounded
+// plain text from the current selection.
+type ClipboardReadParams struct{}
+
+// ClipboardReadResult is limited by the host to keep one reply within the
+// protocol message ceiling.
+type ClipboardReadResult struct {
+	Text string `json:"text"`
 }
 
 // Urgency mirrors the notification specification's three levels.

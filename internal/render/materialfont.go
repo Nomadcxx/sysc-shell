@@ -31,6 +31,8 @@ var materialIcons = map[string]struct{}{
 	"add": {}, "remove": {},
 	// The bar composition editor's chrome.
 	"drag_indicator": {}, "tune": {}, "link": {}, "link_off": {},
+	// The world clock's bar glyph and rename control.
+	"public": {}, "edit": {},
 	"lock": {}, "logout": {}, "bedtime": {}, "restart_alt": {}, "power_settings_new": {},
 	"speed": {}, "balance": {}, "energy_savings_leaf": {}, "check": {}, "send": {},
 	"content_paste": {}, "content_copy": {},

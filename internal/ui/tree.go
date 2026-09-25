@@ -178,6 +178,9 @@ type GradientPaint struct {
 type Node struct {
 	Kind Kind
 	Text string
+	// Placeholder is input guidance painted only while Text is empty. Name
+	// remains the accessible identity.
+	Placeholder string
 	// ValueText is the compact formatted value painted inside a radial gauge.
 	ValueText string
 	// Icon names a glyph in the dedicated chrome icon inventory.
@@ -222,6 +225,14 @@ type Node struct {
 	// Values are the graph's samples, oldest first, each already normalised to
 	// zero through one by the widget. The node carries no scale of its own.
 	Values []float64
+	// SecondValues is an optional second graph series, drawn as a thin line
+	// with no area in the secondary colour: upload beside download, writes
+	// beside reads. Normalised to the same scale as Values.
+	SecondValues []float64
+	// Window is how many samples the graph's full width represents. Zero
+	// means the samples present fill the width. A graph with a window draws a
+	// short history against the right edge rather than stretching it.
+	Window int
 	// MaxWidth caps a text node's measured width. Zero means unbounded. It
 	// exists because a focused-window title is unbounded user text: without a
 	// cap it would take a whole section's budget before anything truncated.
@@ -427,6 +438,12 @@ const (
 	// FillScrim dims the live content behind a modal surface. It is a wash,
 	// not a plate; what sits underneath stays visible through it.
 	FillScrim
+	// Note fills are muted semantic tints paired with the theme foreground.
+	FillNoteSun
+	FillNoteMint
+	FillNoteSky
+	FillNoteRose
+	FillNoteLilac
 )
 
 // Tone selects which theme colour paints a text node.
@@ -448,6 +465,10 @@ const (
 	// on_surface_variant, which carries text at full contrast, unlike the
 	// low-contrast muted token the Tone doc rules out.
 	ToneSubtle
+	// ToneActivity marks a reading past its activity threshold but short of
+	// critical. It paints the theme's Tertiary role: the theme has no warning
+	// token, and Tertiary exists on every palette.
+	ToneActivity
 )
 
 // Shape names the corner treatment a node asks for.
