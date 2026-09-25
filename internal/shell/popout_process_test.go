@@ -224,7 +224,7 @@ func TestProcessSignalRunsUnlockedAndReportsIdentityFailure(t *testing.T) {
 		} else {
 			reg.mu.Unlock()
 		}
-		if id.PID != 30 || sig != syscall.SIGTERM {
+		if id.PID != 30 || sig != syscall.SIGINT {
 			t.Errorf("signal request = %#v, %v", id, sig)
 		}
 		called <- struct{}{}
@@ -235,7 +235,7 @@ func TestProcessSignalRunsUnlockedAndReportsIdentityFailure(t *testing.T) {
 	}
 	_ = drainAux(t, reg, 2)
 	h := reg.panelHosts[PanelMonitor]
-	n := &ui.Node{Action: "process:term:30:300"}
+	n := &ui.Node{Action: "process:int:30:300"}
 	reg.mu.Lock()
 	if !h.activateMonitor(reg, n) {
 		reg.mu.Unlock()

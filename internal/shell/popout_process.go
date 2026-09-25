@@ -131,6 +131,9 @@ func processTableTree(h *PanelHost, in monitorView) *ui.Node {
 		middle = monitorOptionsColumn(h, in)
 	}
 	info := monitorInfoCard(in, middle)
+	if detail := processDetailCard(h, in, snapshot); detail != nil {
+		info = detail
+	}
 
 	pad := h.metrics().PanelPadding
 	used := 2*pad + monitorHeaderH + monitorInfoH + processHeaderRowH + 2*processTablePadding + processFooterHeight + 4*theme.MarginM
@@ -402,9 +405,16 @@ func nodeContains(root, target *ui.Node) bool {
 	return false
 }
 
+// parseProcessAction reads the detail view's two signal actions: Kill is
+// SIGINT, Force kill is SIGKILL, as the reference sends them.
 func parseProcessAction(action string) (services.ProcessIdentity, syscall.Signal, bool) {
-	identity, ok := parseProcessIdentityAction(action, "process:term")
-	return identity, syscall.SIGTERM, ok
+	if id, ok := parseProcessIdentityAction(action, "process:int"); ok {
+		return id, syscall.SIGINT, true
+	}
+	if id, ok := parseProcessIdentityAction(action, "process:kill"); ok {
+		return id, syscall.SIGKILL, true
+	}
+	return services.ProcessIdentity{}, 0, false
 }
 
 func parseProcessIdentityAction(action, prefix string) (services.ProcessIdentity, bool) {
@@ -486,6 +496,10 @@ func (h *PanelHost) activateMonitor(r *Registry, n *ui.Node) bool {
 		}
 		return rebuild()
 	}
+	if n.Action == "monitor:detail:close" {
+		h.processSelected = services.ProcessIdentity{}
+		return rebuild()
+	}
 	if identity, ok := parseProcessIdentityAction(n.Action, "monitor:select"); ok {
 		h.processSelected = identity
 		r.rebuildPanel(h)
@@ -522,7 +536,12 @@ func (r *Registry) scheduleProcessSignal(h *PanelHost, identity services.Process
 			return
 		}
 		if err == nil {
-			current.processStatus = fmt.Sprintf("Sent TERM to PID %d", identity.PID)
+			name := "INT"
+			if signal == syscall.SIGKILL {
+				name = "KILL"
+			}
+			current.processStatus = fmt.Sprintf("Sent %s to PID %d", name, identity.PID)
+			current.processSelected = services.ProcessIdentity{}
 			current.processStatusErr = nil
 		} else {
 			current.processStatus = processSignalError(identity.PID, err)

@@ -1434,6 +1434,11 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 		h.alt = true
 		return false
 	case keyEsc:
+		if h.id == PanelMonitor && h.processSelected != (services.ProcessIdentity{}) {
+			h.processSelected = services.ProcessIdentity{}
+			r.rebuildPanel(h)
+			return true
+		}
 		if h.id == PanelSettings && h.query != "" {
 			h.query = ""
 			h.search = ui.NewField("")
