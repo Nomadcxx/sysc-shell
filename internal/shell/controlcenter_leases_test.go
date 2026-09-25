@@ -2,6 +2,7 @@ package shell
 
 import (
 	"testing"
+	"time"
 
 	metrics "github.com/Nomadcxx/sysc-metrics"
 
@@ -43,7 +44,7 @@ func TestControlCentreResolvesSubjectsOnceAndKeepsThem(t *testing.T) {
 	}
 	r.mu.Lock()
 	h := r.panelHosts[PanelControlCenter]
-	r.syncControlCentreSubjectsLocked(h, ccSubjectSnapshot("enp7s0", "wlan0"))
+	r.syncRateSubjectsLocked(h, ccSubjectSnapshot("enp7s0", "wlan0"), time.Second)
 	r.mu.Unlock()
 	for _, sel := range ccRateSelectors("enp7s0", "nvme0n1") {
 		if !r.metrics.Leased(sel) {
@@ -56,7 +57,7 @@ func TestControlCentreResolvesSubjectsOnceAndKeepsThem(t *testing.T) {
 	busier := ccSubjectSnapshot("enp7s0")
 	busier.Network.Interfaces = append(busier.Network.Interfaces,
 		metrics.NetworkInterface{Name: "tailscale0", ReceiveBytes: 1 << 40})
-	r.syncControlCentreSubjectsLocked(h, busier)
+	r.syncRateSubjectsLocked(h, busier, time.Second)
 	got := h.ccIface
 	r.mu.Unlock()
 	if got != "enp7s0" {
@@ -65,7 +66,7 @@ func TestControlCentreResolvesSubjectsOnceAndKeepsThem(t *testing.T) {
 
 	// The chosen interface disappearing re-resolves and releases the old leases.
 	r.mu.Lock()
-	r.syncControlCentreSubjectsLocked(h, ccSubjectSnapshot("wlan0"))
+	r.syncRateSubjectsLocked(h, ccSubjectSnapshot("wlan0"), time.Second)
 	got = h.ccIface
 	r.mu.Unlock()
 	if got != "wlan0" {
@@ -94,8 +95,8 @@ func TestControlCentreKeepsSubjectsThroughAFailedPass(t *testing.T) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	h := r.panelHosts[PanelControlCenter]
-	r.syncControlCentreSubjectsLocked(h, ccSubjectSnapshot("enp7s0"))
-	r.syncControlCentreSubjectsLocked(h, services.Snapshot{})
+	r.syncRateSubjectsLocked(h, ccSubjectSnapshot("enp7s0"), time.Second)
+	r.syncRateSubjectsLocked(h, services.Snapshot{}, time.Second)
 	if h.ccIface != "enp7s0" || h.ccDevice != "nvme0n1" {
 		t.Fatalf("subjects after a failed pass = %q, %q; want enp7s0, nvme0n1", h.ccIface, h.ccDevice)
 	}

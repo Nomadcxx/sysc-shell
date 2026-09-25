@@ -23,10 +23,11 @@ func ccRateSelectors(iface, device string) []services.Selector {
 	return out
 }
 
-// syncControlCentreSubjectsLocked keeps one interface and one device leased.
-// A subject is re-resolved only when the snapshot no longer carries it.
-// Caller holds r.mu.
-func (r *Registry) syncControlCentreSubjectsLocked(h *PanelHost, snap services.Snapshot) {
+// syncRateSubjectsLocked keeps one interface and one device leased for a host
+// that charts them: the Control Centre's Monitor page and the system
+// monitor's System page. A subject is re-resolved only when the snapshot no
+// longer carries it. Caller holds r.mu.
+func (r *Registry) syncRateSubjectsLocked(h *PanelHost, snap services.Snapshot, interval time.Duration) {
 	if h == nil || r.metrics == nil {
 		return
 	}
@@ -44,7 +45,7 @@ func (r *Registry) syncControlCentreSubjectsLocked(h *PanelHost, snap services.S
 	}
 	var leases []*services.Lease
 	for _, sel := range ccRateSelectors(iface, device) {
-		lease, err := r.metrics.Acquire(sel, time.Second)
+		lease, err := r.metrics.Acquire(sel, interval)
 		if err != nil {
 			releaseAll(leases)
 			return

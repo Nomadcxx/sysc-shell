@@ -1571,6 +1571,7 @@ func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
 	}
 	monitorOut, monitorOK := uint32(0), false
 	if h := r.panelHosts[PanelMonitor]; h != nil {
+		r.syncRateSubjectsLocked(h, snap, monitorLeaseInterval(r.cfg.Monitor))
 		r.rebuildPanel(h)
 		monitorOut, monitorOK = h.output, true
 	}
@@ -1585,7 +1586,7 @@ func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
 		networkOut, networkOK = h.output, true
 	}
 	if h := r.panelHosts[PanelControlCenter]; h != nil {
-		r.syncControlCentreSubjectsLocked(h, snap)
+		r.syncRateSubjectsLocked(h, snap, time.Second)
 	}
 	controlOut, controlOK := r.rebuildControlCentreLocked()
 	r.mu.Unlock()

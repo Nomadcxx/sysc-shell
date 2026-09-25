@@ -784,12 +784,9 @@ func (r *Registry) acquirePanelLeases(h *PanelHost) error {
 		}
 		h.leases = []*services.Lease{lease}
 	case PanelMonitor:
-		connector := ""
-		if bar, ok := r.bars[h.output]; ok {
-			connector = bar.connector()
-		}
-		for _, sel := range monitorSelectors(r.cfg.ForConnector(connector)) {
-			lease, err := r.metrics.Acquire(sel, time.Second)
+		interval := monitorLeaseInterval(r.cfg.Monitor)
+		for _, sel := range append(monitorLeaseSelectors(), services.Selector{Source: services.SourceProcess}) {
+			lease, err := r.metrics.Acquire(sel, interval)
 			if err != nil {
 				releaseAll(h.leases)
 				h.leases = nil
@@ -797,13 +794,6 @@ func (r *Registry) acquirePanelLeases(h *PanelHost) error {
 			}
 			h.leases = append(h.leases, lease)
 		}
-		lease, err := r.metrics.Acquire(services.Selector{Source: services.SourceProcess}, time.Second)
-		if err != nil {
-			releaseAll(h.leases)
-			h.leases = nil
-			return err
-		}
-		h.leases = append(h.leases, lease)
 	case PanelSession:
 		lease, err := r.metrics.Acquire(services.Selector{Source: services.SourceBattery}, time.Second)
 		if err != nil {
@@ -837,16 +827,7 @@ func (r *Registry) acquirePanelLeases(h *PanelHost) error {
 		}
 		h.leases = []*services.Lease{lease}
 	case PanelControlCenter:
-		for _, sel := range []services.Selector{
-			{Source: services.SourceCPU},
-			{Source: services.SourceMemory},
-			{Source: services.SourceCPU, Subject: "temperature"},
-			{Source: services.SourceGPU},
-			{Source: services.SourceBattery},
-			{Source: services.SourceFilesystem, Subject: "/"},
-			{Source: services.SourceNetwork},
-			{Source: services.SourceBlock},
-		} {
+		for _, sel := range append(monitorLeaseSelectors(), services.Selector{Source: services.SourceBattery}) {
 			lease, err := r.metrics.Acquire(sel, time.Second)
 			if err != nil {
 				releaseAll(h.leases)
@@ -875,40 +856,25 @@ func (r *Registry) acquirePanelLeases(h *PanelHost) error {
 	return nil
 }
 
-func monitorSelectors(bar config.Bar) []services.Selector {
-	out := []services.Selector{
+// monitorLeaseSelectors are the sources the Control Centre's Monitor page and
+// the system monitor's System page chart. Battery is the Control Centre's
+// alone, and processes the system monitor's.
+func monitorLeaseSelectors() []services.Selector {
+	return []services.Selector{
 		{Source: services.SourceCPU},
 		{Source: services.SourceMemory},
+		{Source: services.SourceCPU, Subject: "temperature"},
 		{Source: services.SourceGPU},
+		{Source: services.SourceFilesystem, Subject: "/"},
+		{Source: services.SourceNetwork},
+		{Source: services.SourceBlock},
 	}
-	seenFS, seenBlock, seenNet := false, false, false
-	for _, item := range append(append(append([]config.Item{}, bar.Left...), bar.Center...), bar.Right...) {
-		sel, ok := metricSelector(item)
-		if !ok {
-			continue
-		}
-		switch sel.Source {
-		case services.SourceFilesystem:
-			if seenFS {
-				continue
-			}
-			seenFS = true
-		case services.SourceBlock:
-			if seenBlock {
-				continue
-			}
-			seenBlock = true
-		case services.SourceNetwork:
-			if seenNet {
-				continue
-			}
-			seenNet = true
-		default:
-			continue
-		}
-		out = append(out, sel)
-	}
-	return out
+}
+
+// monitorLeaseInterval is the system monitor's sampling interval: the
+// configured refresh, never below one second.
+func monitorLeaseInterval(m config.Monitor) time.Duration {
+	return time.Duration(max(m.Refresh, 1)) * time.Second
 }
 
 func placeholderTree() *ui.Node {

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -25,7 +24,8 @@ func (r *Registry) monitorViewLocked(h *PanelHost) monitorView {
 	users := r.usernameCache()
 	entries := r.runningIndex
 	return monitorView{
-		Snap: r.sample, History: r.historyLocked(), Facts: r.machineFacts, Apps: r.running,
+		Metrics: h.metrics(),
+		Snap:    r.sample, History: r.historyLocked(), Facts: r.machineFacts, Apps: r.running,
 		Config: r.cfg.Monitor, UID: uint32(os.Getuid()), Iface: h.ccIface, Device: h.ccDevice,
 		Icon:     func(name string, size int) *ui.Image { return monitorLookupIcon(r, h, name, size) },
 		Username: users.Name,
@@ -84,7 +84,7 @@ var processColumnsAfterName = []processColumn{
 func processNameWidth(h *PanelHost) int {
 	// The table card and the list well each inset by processTablePadding, and
 	// a row by processRowPadding; the header row carries the same total.
-	w := h.place.Panel.W - 2*h.metrics().PanelPadding - 4*processTablePadding - 2*processRowPadding
+	w := h.place.Panel.W - 2*h.metrics().PanelPadding - 2*h.metrics().CardPadding - 2*processTablePadding - 2*processRowPadding
 	for _, c := range processColumnsAfterName {
 		w -= c.width + theme.MarginM
 	}
@@ -96,7 +96,7 @@ func monitorPanelTree(h *PanelHost, in monitorView) *ui.Node {
 		h.monitorPage = monitorPageProcesses
 	}
 	if h.monitorPage == monitorPageMetrics {
-		return legacySystemPage(h, in)
+		return systemPageTree(h, in)
 	}
 	return processTableTree(h, in)
 }
@@ -136,7 +136,7 @@ func processTableTree(h *PanelHost, in monitorView) *ui.Node {
 	}
 
 	pad := h.metrics().PanelPadding
-	used := 2*pad + monitorHeaderH + monitorInfoH + processHeaderRowH + 2*processTablePadding + processFooterHeight + 4*theme.MarginM
+	used := 2*pad + monitorHeaderH + monitorInfoH + processHeaderRowH + 2*h.metrics().CardPadding + processFooterHeight + 4*theme.MarginM
 	tableH := max(h.place.Panel.H-used, processRowPitch+2*processTablePadding)
 	rows := make([]*ui.Node, len(lines))
 	list := &ui.Node{
@@ -152,7 +152,7 @@ func processTableTree(h *PanelHost, in monitorView) *ui.Node {
 			return rows[i]
 		},
 	}
-	table := &ui.Node{Kind: ui.KindCapsule, Padding: processTablePadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+	table := &ui.Node{Kind: ui.KindCapsule, Padding: h.metrics().CardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
 		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginM, Children: []*ui.Node{
 			processTableHeader(h, in),
 			{Kind: ui.KindCapsule, Height: tableH, Fill: ui.FillContainerHighest, Shape: ui.ShapeCard,
@@ -205,7 +205,7 @@ func processLineRow(h *PanelHost, in monitorView, l processLine) *ui.Node {
 		return &ui.Node{Kind: ui.KindRow, Height: processRowHeight, Gap: theme.MarginS, CenterY: true,
 			Action: "monitor:toggle:" + l.Key, Name: l.Name, Role: "button", Focusable: true, Children: []*ui.Node{
 				{Kind: ui.KindIcon, Icon: chevron, IconSize: processIconSize},
-				{Kind: ui.KindText, Text: l.Name, TextRole: theme.RoleTitle, Tone: ui.ToneActivity},
+				{Kind: ui.KindText, Text: l.Name, TextRole: theme.RoleTitle, Tone: ui.ToneActivity, Role: "heading"},
 			}}
 	}
 	nameCell := &ui.Node{Kind: ui.KindRow, Width: processNameWidth(h), Gap: theme.MarginS, CenterY: true}
@@ -348,18 +348,6 @@ func validProcessSort(key string) bool {
 		return true
 	}
 	return false
-}
-
-// legacySystemPage is the previous metric cards, kept only until the System
-// page is rebuilt on the shared frame.
-func legacySystemPage(h *PanelHost, in monitorView) *ui.Node {
-	bodyH := max(h.place.Panel.H-2*h.metrics().PanelPadding-monitorHeaderH-theme.MarginL, processRowHeight)
-	body := monitorTree(h.metrics(), monitorSelectors(config.Bar{}), in.Snap, in.History, in.Facts)
-	body.Padding = 0
-	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Padding: h.metrics().PanelPadding, Children: []*ui.Node{
-		monitorHeader(h, monitorPageMetrics),
-		{Kind: ui.KindScroll, Height: bodyH, Children: []*ui.Node{body}},
-	}}
 }
 
 func revealFocusedProcess(h *PanelHost) bool {

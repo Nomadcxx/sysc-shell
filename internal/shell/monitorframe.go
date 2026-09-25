@@ -23,6 +23,7 @@ const (
 )
 
 type monitorView struct {
+	Metrics  theme.Metrics
 	Snap     services.Snapshot
 	History  map[services.Selector][]float64
 	Facts    machineFacts
@@ -58,7 +59,7 @@ func monitorHeader(h *PanelHost, page string) *ui.Node {
 	left := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, CenterY: true, Children: []*ui.Node{
 		{Kind: ui.KindRow, Gap: theme.MarginS, CenterY: true, Children: []*ui.Node{
 			{Kind: ui.KindIcon, Icon: "desktop_windows", IconSize: centreIconSize},
-			{Kind: ui.KindText, Text: title, TextRole: theme.RoleHeadline},
+			{Kind: ui.KindText, Text: title, TextRole: theme.RoleTitle, Role: "heading", Name: title},
 		}},
 		{Kind: ui.KindRow, Gap: theme.MarginXS, Children: []*ui.Node{
 			pill(monitorPageProcesses, "Processes", "apps"),
@@ -109,7 +110,7 @@ func monitorInfoCard(in monitorView, middle *ui.Node) *ui.Node {
 				{Kind: ui.KindText, Text: in.Facts.LogoLetter, TextRole: theme.RoleDisplay, CenterX: true, CenterY: true},
 			}}
 	}
-	return &ui.Node{Kind: ui.KindCapsule, Height: monitorInfoH, Padding: theme.MarginL,
+	return &ui.Node{Kind: ui.KindCapsule, Height: monitorInfoH, Padding: in.Metrics.CardPadding,
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard, Children: []*ui.Node{
 			{Kind: ui.KindRow, Gap: theme.MarginL, CenterY: true, PinEnd: true, Children: []*ui.Node{
 				{Kind: ui.KindRow, Gap: theme.MarginL, CenterY: true, Children: []*ui.Node{logo, middle}},

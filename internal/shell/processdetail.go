@@ -49,7 +49,7 @@ func processDetailCard(h *PanelHost, in monitorView, snap services.ProcessSnapsh
 		centreIconButton("cancel", "monitor:detail:close", "Close process view"),
 	}}
 	if !found {
-		return detailFrame(buttons, &ui.Node{Kind: ui.KindText, Text: "Process exited", Tone: ui.ToneSubtle}, nil)
+		return detailFrame(in.Metrics, buttons, &ui.Node{Kind: ui.KindText, Text: "Process exited", Tone: ui.ToneSubtle}, nil)
 	}
 	cpu := ccDash
 	if p.CPU.Valid {
@@ -77,7 +77,7 @@ func processDetailCard(h *PanelHost, in monitorView, snap services.ProcessSnapsh
 		{"private:", private}, {"shared:", shared}, {"mem:", mem},
 		{"swap:", swap}, {"io read:", ioRead}, {"io write:", ioWrite},
 	}, detailNarrowValueW)
-	return detailFrame(buttons, left, right)
+	return detailFrame(in.Metrics, buttons, left, right)
 }
 
 func detailPairs(pairs [][2]string, valueWidth int) *ui.Node {
@@ -95,12 +95,12 @@ func detailPairs(pairs [][2]string, valueWidth int) *ui.Node {
 	return col
 }
 
-func detailFrame(buttons, left, right *ui.Node) *ui.Node {
+func detailFrame(m theme.Metrics, buttons, left, right *ui.Node) *ui.Node {
 	children := []*ui.Node{buttons, {Kind: ui.KindSeparator}, left}
 	if right != nil {
 		children = append(children, &ui.Node{Kind: ui.KindSeparator}, right)
 	}
-	return &ui.Node{Kind: ui.KindCapsule, Height: monitorInfoH, Padding: theme.MarginL,
+	return &ui.Node{Kind: ui.KindCapsule, Height: monitorInfoH, Padding: m.CardPadding,
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard, Children: []*ui.Node{
 			{Kind: ui.KindRow, Gap: theme.MarginL, Children: children},
 		}}
