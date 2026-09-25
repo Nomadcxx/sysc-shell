@@ -71,6 +71,9 @@ const (
 	// animProgress is a declarative value glide: a plugin-flagged meter or
 	// gauge glides to each revision's target instead of jumping.
 	animProgress
+	// animSprite is a plugin sprite cycle's phase: a linear 0-to-1 loop over
+	// one pass through the icon's frames.
+	animSprite
 )
 
 // animKey addresses one value: a stable node key plus the channel. Keys are
@@ -87,6 +90,11 @@ type animValue struct {
 	dur      time.Duration
 	ease     func(float64) float64
 	loop     ui.GradientMotion
+	// steps and poses belong to a sprite cycle: how many poses one pass
+	// shows, and a fingerprint of which ones, so a new pose list restarts
+	// the cycle while a new speed for the same list keeps its phase.
+	steps int
+	poses uint64
 }
 
 func (v animValue) at(now time.Time) float64 {
@@ -142,6 +150,10 @@ type animator struct {
 	motion  theme.MotionTokens
 	spatial theme.Curve
 	values  map[animKey]animValue
+	// wake is nudged whenever a value is aimed somewhere new, so a frame
+	// loop resting between sprite poses picks up a hover or a glide at once
+	// instead of at the next pose.
+	wake chan struct{}
 	// running reports whether a frame loop is already ticking this surface, so
 	// a second target change does not start a second ticker. It is atomic
 	// because panel frame loops start from paths that hold no registry lock;
@@ -162,6 +174,16 @@ func newAnimator(now func() time.Time, reduced bool, motion render.MotionSet) *a
 		now: now, reduced: reduced || motion.Reduced,
 		motion: m, spatial: motion.Spatial,
 		values: map[animKey]animValue{},
+		wake:   make(chan struct{}, 1),
+	}
+}
+
+// nudge wakes a resting frame loop. It never blocks: one pending nudge is
+// as good as many.
+func (a *animator) nudge() {
+	select {
+	case a.wake <- struct{}{}:
+	default:
 	}
 }
 
@@ -216,6 +238,54 @@ func (a *animator) duration(channel animChannel, rising bool) time.Duration {
 		return a.motion.Medium
 	}
 	return 0
+}
+
+// resolveSpriteMotion steps every sprite icon through its frames, writing
+// the pose the surface clock has reached into the render copy's Icon the way
+// resolveProgressMotion writes a glided value. Under reduced motion nothing
+// is tracked and the icon keeps its resting pose. Keys whose nodes left the
+// tree are retired, which is also what ends a sprite's frames.
+func resolveSpriteMotion(anim *animator, root *ui.Node) {
+	if anim == nil {
+		return
+	}
+	seen := make(map[string]bool)
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n.Kind == ui.KindIcon && len(n.Frames) > 1 && n.Cycle > 0 && !anim.reduced {
+			if key := n.StableKey(); key != "" {
+				seen[key] = true
+				anim.TargetCycle(key, n.Cycle, len(n.Frames), posePrint(n.Frames))
+				pose := int(anim.Value(key, animSprite) * float64(len(n.Frames)))
+				n.Icon = n.Frames[min(max(pose, 0), len(n.Frames)-1)]
+			}
+		}
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(root)
+	for key := range anim.values {
+		if key.channel == animSprite && !seen[key.node] {
+			delete(anim.values, key)
+		}
+	}
+}
+
+// posePrint fingerprints a pose list without allocating: FNV-1a over the
+// names with a separator, so ["ab","c"] and ["a","bc"] differ.
+func posePrint(frames []string) uint64 {
+	h := uint64(14695981039346656037)
+	for _, f := range frames {
+		for i := 0; i < len(f); i++ {
+			h = (h ^ uint64(f[i])) * 1099511628211
+		}
+		h = (h ^ 0xff) * 1099511628211
+	}
+	return h
 }
 
 // resolveProgressMotion glides every animated meter and gauge toward the value
@@ -273,6 +343,7 @@ func (a *animator) Target(node string, channel animChannel, to float64) {
 	}
 	dur := a.duration(channel, to > from)
 	a.values[key] = animValue{from: from, to: to, start: now, dur: dur, ease: a.easeFor(channel)}
+	a.nudge()
 }
 
 // TargetLoop runs a linear paint offset until the node leaves the tree. An
@@ -291,6 +362,7 @@ func (a *animator) TargetLoop(node string, channel animChannel, from, to float64
 		return
 	}
 	a.values[key] = animValue{from: from, to: to, start: now, dur: dur, loop: motion}
+	a.nudge()
 }
 
 // TargetSweep runs a linear 0-to-1 phase until the node leaves the tree. It
@@ -308,6 +380,60 @@ func (a *animator) TargetSweep(node string, channel animChannel, dur time.Durati
 		return
 	}
 	a.values[key] = animValue{from: 0, to: 1, start: now, dur: dur, loop: ui.GradientLoop}
+	a.nudge()
+}
+
+// TargetCycle runs a sprite's phase: a linear 0-to-1 loop, one pass every
+// cycle, over steps poses fingerprinted by poses. The same cycle is a no-op,
+// so a rebuild keeps the phase. A new cycle for the same poses keeps the
+// phase too -- the start is rebased so the pose on screen stays put and only
+// the speed changes -- because a plugin that retargets its speed on every
+// sample would otherwise hitch the motion each time. New poses start from
+// the first.
+func (a *animator) TargetCycle(node string, cycle time.Duration, steps int, poses uint64) {
+	key := animKey{node: node, channel: animSprite}
+	current, ok := a.values[key]
+	if ok && current.dur == cycle && current.steps == steps && current.poses == poses {
+		return
+	}
+	now := a.now()
+	start := now
+	if ok && current.poses == poses && current.steps == steps && current.dur > 0 {
+		start = now.Add(-time.Duration(current.at(now) * float64(cycle)))
+	}
+	a.values[key] = animValue{from: 0, to: 1, start: start, dur: cycle, loop: ui.GradientLoop,
+		steps: steps, poses: poses}
+	a.nudge()
+}
+
+// SpriteRest reports how long a frame loop may sleep when every value still
+// in flight is a sprite cycle: until the soonest next pose, when the picture
+// can next change. ok is false while anything else is moving, which keeps
+// the loop on its ordinary tick.
+func (a *animator) SpriteRest() (time.Duration, bool) {
+	now := a.now()
+	rest, sprites := time.Duration(0), false
+	for key, v := range a.values {
+		if key.channel != animSprite {
+			if !v.settled(now) {
+				return 0, false
+			}
+			continue
+		}
+		if v.dur <= 0 || v.steps <= 0 {
+			continue
+		}
+		pose := v.dur / time.Duration(v.steps)
+		if pose <= 0 {
+			continue
+		}
+		wait := pose - now.Sub(v.start)%pose
+		if !sprites || wait < rest {
+			rest = wait
+		}
+		sprites = true
+	}
+	return rest, sprites
 }
 
 // Reset drops a value so the next Target starts it from zero rather than from
@@ -379,6 +505,7 @@ func (a *animator) Forget(node string) {
 // transitions in flight from their current rendered values. A theme change is
 // a target change like any other, so it reuses the same clock.
 func (a *animator) Retarget() {
+	defer a.nudge()
 	now := a.now()
 	for key, v := range a.values {
 		if v.loop != ui.GradientNone {
@@ -436,31 +563,68 @@ func (a *animator) frameCap() time.Duration {
 // settled and publish do their own locking: the surfaces they touch differ, and
 // holding a lock across a publish would put the frame request under it.
 func animateSurface(stop <-chan struct{}, settled func() bool, publish func(), minInterval func() time.Duration) {
-	tick := time.NewTicker(animTick)
-	defer tick.Stop()
+	animateSurfaceResting(stop, nil, settled, publish, minInterval, nil)
+}
+
+// animateSurfaceResting is animateSurface for a surface that can carry
+// sprite cycles. A sprite never settles, and its picture changes only at a
+// pose boundary, so while sprites are all that is moving the loop sleeps
+// until the next boundary rather than ticking every animTick: a bar cat costs
+// one wake and one publish per pose, not ~125 idle checks a second. wake
+// cuts a rest short when anything else starts moving; rest reports the
+// sleep, and a nil rest keeps the plain tick.
+func animateSurfaceResting(stop, wake <-chan struct{}, settled func() bool, publish func(), minInterval func() time.Duration, rest func() (time.Duration, bool)) {
+	timer := time.NewTimer(animTick)
+	defer timer.Stop()
+	// deadline advances by whole ticks, as the ticker this replaced did, so
+	// the ordinary cadence keeps its phase against the compositor.
+	deadline := time.Now().Add(animTick)
 	var last time.Time
 	for {
+		var now time.Time
 		select {
 		case <-stop:
 			return
-		case now := <-tick.C:
-			done := settled()
-			// A skipped frame still advances the animation: values are
-			// computed from the clock, not from how many times the surface was
-			// published. Pacing changes how often we blit, never where the
-			// animation gets to.
-			//
-			// The settling frame always publishes, even inside the cap window,
-			// or a settled value is left unpainted and the surface keeps a
-			// stale pixel.
-			if done || last.IsZero() || now.Sub(last) >= minInterval() {
-				publish()
-				last = now
-			}
-			if done {
-				return
+		case <-wake:
+			now = time.Now()
+		case now = <-timer.C:
+		}
+		done := settled()
+		// A close nudges wake as it stops the loop -- it retargets the
+		// surface's visibility -- so a woken loop can reach settled while the
+		// close holds the lock settled takes. Once settled returns the close
+		// has finished, and stop is checked again before anything publishes.
+		select {
+		case <-stop:
+			return
+		default:
+		}
+		// A skipped frame still advances the animation: values are computed
+		// from the clock, not from how many times the surface was published.
+		// Pacing changes how often we blit, never where the animation gets to.
+		//
+		// The settling frame always publishes, even inside the cap window, or
+		// a settled value is left unpainted and the surface keeps a stale
+		// pixel.
+		if done || last.IsZero() || now.Sub(last) >= minInterval() {
+			publish()
+			last = now
+		}
+		if done {
+			return
+		}
+		deadline = deadline.Add(animTick)
+		if !deadline.After(now) {
+			deadline = now.Add(animTick)
+		}
+		if rest != nil {
+			// A millisecond past the boundary, so the pose has turned over by
+			// the time the publish resolves it.
+			if d, ok := rest(); ok && d+time.Millisecond > animTick {
+				deadline = now.Add(d + time.Millisecond)
 			}
 		}
+		timer.Reset(time.Until(deadline))
 	}
 }
 

@@ -848,6 +848,44 @@ func TestValidateEventMarkerColorIsBoundedAndButtonOnly(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsMinorEightFields(t *testing.T) {
+	t.Parallel()
+
+	root := &Node{Kind: KindColumn, Children: []*Node{
+		{Kind: KindIcon, Icon: "cat-run-0", IconSize: 96},
+		{Kind: KindIcon, Icon: "schedule", IconSize: MaxIconSize},
+		{Kind: KindIcon, Icon: "schedule"},
+	}}
+	if err := Validate(root, ViewPanel); err != nil {
+		t.Fatalf("minor-8 fields rejected: %v", err)
+	}
+	bar := &Node{Kind: KindRow, Children: []*Node{{Kind: KindIcon, Icon: "cat-sleep-0", IconSize: 24}}}
+	if err := Validate(bar, ViewBar); err != nil {
+		t.Fatalf("a sized icon in a bar rejected: %v", err)
+	}
+}
+
+func TestValidateRejectsBadMinorEightValues(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		node *Node
+	}{
+		{"icon size on text", &Node{Kind: KindText, Text: "hi", IconSize: 24}},
+		{"icon size on a button", &Node{Kind: KindButton, ID: "b", Icon: "close", IconSize: 24,
+			Name: "B", Role: "button", Events: []EventKind{EventActivate}}},
+		{"negative icon size", &Node{Kind: KindIcon, Icon: "close", IconSize: -1}},
+		{"icon size past the limit", &Node{Kind: KindIcon, Icon: "close", IconSize: MaxIconSize + 1}},
+	}
+	for _, tc := range cases {
+		root := &Node{Kind: KindColumn, Children: []*Node{tc.node}}
+		if err := Validate(root, ViewPanel); err == nil {
+			t.Errorf("%s: accepted, want rejection", tc.name)
+		}
+	}
+}
+
 func TestValidateScheduleGridBoundsAndOccurrences(t *testing.T) {
 	zone, err := time.LoadLocation("Australia/Melbourne")
 	if err != nil {
@@ -898,5 +936,70 @@ func TestValidateScheduleGridBoundsAndOccurrences(t *testing.T) {
 	}
 	if err := Validate(valid(), ViewTooltip); err == nil {
 		t.Fatal("schedule grid was accepted in a tooltip")
+	}
+}
+
+func TestValidateSpriteCycles(t *testing.T) {
+	t.Parallel()
+
+	run := []string{"cat-run-0", "cat-run-1", "cat-run-0"}
+	good := &Node{Kind: KindIcon, Key: "cat", Icon: "cat-run-0", IconSize: 28, Frames: run, CycleMS: 600}
+	for _, view := range []ViewKind{ViewBar, ViewPanel} {
+		root := &Node{Kind: KindColumn, Children: []*Node{good}}
+		if view == ViewBar {
+			root.Kind = KindRow
+		}
+		if err := Validate(root, view); err != nil {
+			t.Fatalf("%s: sprite rejected: %v", view, err)
+		}
+	}
+
+	long := make([]string, MaxSpriteFrames+1)
+	for i := range long {
+		long[i] = "cat-run-0"
+	}
+	cases := []struct {
+		name string
+		node *Node
+	}{
+		{"frames without a cycle", &Node{Kind: KindIcon, Key: "k", Icon: "a", IconSize: 20, Frames: run}},
+		{"cycle without frames", &Node{Kind: KindIcon, Key: "k", Icon: "a", IconSize: 20, CycleMS: 500}},
+		{"sprite without a size", &Node{Kind: KindIcon, Key: "k", Icon: "a", Frames: run, CycleMS: 500}},
+		{"sprite without a key", &Node{Kind: KindIcon, Icon: "a", IconSize: 20, Frames: run, CycleMS: 500}},
+		{"one frame", &Node{Kind: KindIcon, Key: "k", Icon: "a", IconSize: 20, Frames: run[:1], CycleMS: 500}},
+		{"too many frames", &Node{Kind: KindIcon, Key: "k", Icon: "a", IconSize: 20, Frames: long, CycleMS: 500}},
+		{"cycle too fast", &Node{Kind: KindIcon, Key: "k", Icon: "a", IconSize: 20, Frames: run, CycleMS: MinCycleMS - 1}},
+		{"cycle too slow", &Node{Kind: KindIcon, Key: "k", Icon: "a", IconSize: 20, Frames: run, CycleMS: MaxCycleMS + 1}},
+		{"frame is a path", &Node{Kind: KindIcon, Key: "k", Icon: "a", IconSize: 20, Frames: []string{"a", "../b"}, CycleMS: 500}},
+		{"frames on text", &Node{Kind: KindText, Key: "k", Text: "a", Frames: run, CycleMS: 500}},
+	}
+	for _, tc := range cases {
+		root := &Node{Kind: KindColumn, Children: []*Node{tc.node}}
+		if err := Validate(root, ViewPanel); err == nil {
+			t.Errorf("%s: accepted, want rejection", tc.name)
+		}
+	}
+}
+
+func TestMinorEightFieldsRoundTripOnTheWire(t *testing.T) {
+	t.Parallel()
+
+	sent := &Node{Kind: KindIcon, Key: "cat", Icon: "cat-run-3", IconSize: 96,
+		Frames: []string{"cat-run-3", "cat-run-4"}, CycleMS: 480}
+	b, err := json.Marshal(sent)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !bytes.Contains(b, []byte(`"icon_size":96`)) || !bytes.Contains(b, []byte(`"cycle_ms":480`)) {
+		t.Fatalf("wire form %s does not spell icon_size", b)
+	}
+	var got Node
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.IconSize != 96 || got.Icon != "cat-run-3" || got.CycleMS != 480 || len(got.Frames) != 2 {
+		t.Fatalf("round trip lost the icon size: %+v", got)
 	}
 }

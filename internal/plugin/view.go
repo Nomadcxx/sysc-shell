@@ -369,6 +369,26 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 			return nil, err
 		}
 		out.Kind, out.Text, out.Icon = icon.Kind, icon.Text, icon.Icon
+		if n.IconSize > 0 {
+			// An explicit square needs the icon painter, which rasterises
+			// either catalogue at the measured size; a project glyph carried
+			// as text would take the type ladder's size instead.
+			out.Kind, out.Text, out.Icon, out.IconSize = ui.KindIcon, "", n.Icon, n.IconSize
+			out.IconProjectFirst = true
+		}
+		if len(n.Frames) > 0 {
+			// Every pose must be drawable before the animator can land on
+			// it; an unknown one fails here, naming the path, rather than
+			// as an invisible pose mid-cycle.
+			for i, name := range n.Frames {
+				if _, err := iconNode(name, fmt.Sprintf("%s.frames[%d]", path, i)); err != nil {
+					return nil, err
+				}
+			}
+			out.Key = n.Key
+			out.Frames = append([]string(nil), n.Frames...)
+			out.Cycle = time.Duration(n.CycleMS) * time.Millisecond
+		}
 	case v1.KindProgress:
 		out.Kind = ui.KindMeter
 		out.Value = n.Value

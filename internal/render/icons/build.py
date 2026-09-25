@@ -93,6 +93,15 @@ GLYPHS = [
     ("uniE049", 0xE049, "cross"),
 ]
 
+# The cat's acts follow the cellular set, pose by pose, in the order
+# iconfont.go's catActs lists them. cat.py draws the SVGs.
+CAT_ACTS = [("sleep", 4), ("sit", 4), ("groom", 5), ("scratch", 3), ("stretch", 4), ("walk", 8), ("run", 12)]
+_next = 0xE04A
+for _act, _poses in CAT_ACTS:
+    for _i in range(_poses):
+        GLYPHS.append((f"uni{_next:04X}", _next, f"cat-{_act}-{_i}"))
+        _next += 1
+
 UPM = 1000
 # 24px SVG -> font units, y-flipped so the icon sits on the baseline.
 #

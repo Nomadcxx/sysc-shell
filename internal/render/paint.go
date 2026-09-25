@@ -1283,10 +1283,7 @@ func paintIcon(c *Canvas, n *ui.Node, text *TextRenderer, style Style) error {
 	if size <= 0 {
 		return fmt.Errorf("render: icon %q has no size", n.Icon)
 	}
-	mask, err := text.RasterMaterialIcon(n.Icon, size)
-	if err != nil && !ValidMaterialIcon(n.Icon) {
-		mask, err = text.RasterProjectIcon(n.Icon, size)
-	}
+	mask, err := rasterIcon(text, n, size)
 	if err != nil {
 		return err
 	}
@@ -1300,6 +1297,23 @@ func paintIcon(c *Canvas, n *ui.Node, text *TextRenderer, style Style) error {
 		fillRoundedRect(c, ui.Rect{X: box.X + box.W - badge, Y: box.Y, W: badge, H: badge}, badge/2, style.Error)
 	}
 	return nil
+}
+
+// rasterIcon resolves an icon node's name to a mask at size. Shell chrome
+// asks the Material subset first; a plugin icon asks the project catalogue
+// first, the order its name was converted in, so the two catalogues' shared
+// names paint the same glyph whether or not the plugin sized the icon.
+func rasterIcon(text *TextRenderer, n *ui.Node, size int) (Mask, error) {
+	if n.IconProjectFirst {
+		if _, ok := IconByName(n.Icon); ok {
+			return text.RasterProjectIconIn(n.Icon, size)
+		}
+	}
+	mask, err := text.RasterMaterialIcon(n.Icon, size)
+	if err != nil && !ValidMaterialIcon(n.Icon) {
+		mask, err = text.RasterProjectIconIn(n.Icon, size)
+	}
+	return mask, err
 }
 
 // paintWordmark blends the embedded SYSC mark into its measured box, tinted
