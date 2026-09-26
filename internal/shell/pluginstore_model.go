@@ -268,7 +268,10 @@ type Detail struct {
 	ID               string
 	Title            string
 	Author           string
+	Category         string
+	Glyph            string
 	Version          string
+	ReleaseRef       store.ReleaseRef
 	License          string
 	Source           string
 	SourceBadge      string
@@ -317,7 +320,9 @@ func detailFor(listing store.Listing, enabled bool, media map[string]store.Media
 	}
 	detail := Detail{
 		ID: listing.Entry.ID, Title: listing.Entry.Name, Author: listing.Entry.Author,
-		Version: version, License: listing.Entry.License, Source: listing.Source,
+		Category: listing.Entry.Category, Glyph: categoryGlyph(listing.Entry.Category),
+		Version: version, ReleaseRef: store.ReleaseRef{Version: version, SHA256: sha},
+		License: listing.Entry.License, Source: listing.Source,
 		SourceBadge: badgeLabel(listing.Source), CatalogCommit: listing.CatalogCommit,
 		SHA256Prefix: shaPrefix, Description: description, Readme: readme,
 		Homepage: listing.Entry.Homepage, ReleaseNotes: release.ReleaseNotes,
@@ -331,7 +336,7 @@ func detailFor(listing store.Listing, enabled bool, media map[string]store.Media
 			"Source: " + detail.SourceBadge,
 			"Version: " + version,
 			"Catalog commit: " + listing.CatalogCommit,
-			"SHA-256: " + shaPrefix,
+			"SHA-256: " + sha,
 			"Capabilities: " + strings.Join(detail.Capabilities, ", "),
 			"Required commands: " + strings.Join(detail.RequiredCommands, ", "),
 			"runs as your user with full file and network access",

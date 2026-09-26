@@ -195,14 +195,18 @@ type PanelHost struct {
 	// wallpaperThemeErr mirrors Registry.themeErr for the picker's banners.
 	wallpaperThemeErr string
 
-	pluginStoreQuery      BrowseQuery
-	pluginStoreSelected   string
-	pluginStoreDetail     string
-	pluginStoreScroll     int
-	pluginStoreColumns    int
-	pluginStoreRowHeight  int
-	pluginStoreGridHeight int
-	pluginStoreConfigured bool
+	pluginStoreQuery         BrowseQuery
+	pluginStoreSelected      string
+	pluginStoreDetail        string
+	pluginStoreConsent       *pluginStorePinnedConsent
+	pluginStoreRemoveConfirm bool
+	pluginStoreDetailErr     string
+	pluginStoreDetailScroll  int
+	pluginStoreScroll        int
+	pluginStoreColumns       int
+	pluginStoreRowHeight     int
+	pluginStoreGridHeight    int
+	pluginStoreConfigured    bool
 
 	notifyFilter string
 	notifyExpand string
@@ -1632,6 +1636,9 @@ func (h *PanelHost) scrollBy(delta int) bool {
 		return false
 	}
 	ui.ScrollBy(s, delta)
+	if h.id == PanelPluginStore && h.pluginStoreDetail != "" {
+		h.pluginStoreDetailScroll = s.ScrollOffset
+	}
 	if h.id == PanelLauncher {
 		h.launcherScroll = s.ScrollOffset
 	}
@@ -1648,6 +1655,9 @@ func (h *PanelHost) scrollTo(off int) bool {
 	}
 	s.ScrollOffset = off
 	ui.ScrollBy(s, 0)
+	if h.id == PanelPluginStore && h.pluginStoreDetail != "" {
+		h.pluginStoreDetailScroll = s.ScrollOffset
+	}
 	if h.logicalW > 0 {
 		_ = h.configure(h.logicalW, h.logicalH, h.scale120)
 	}

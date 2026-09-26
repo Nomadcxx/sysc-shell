@@ -27,6 +27,18 @@ func pluginStoreTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	h.pluginStoreQuery.Text = h.search.Text
 	state := r.pluginStoreSnapshot
+	metrics := h.theme.Metrics
+	inner := max(h.place.Panel.W-2*pluginStorePadding, 0)
+	if h.pluginStoreDetail != "" {
+		if pluginStoreHasListing(state.Listings, h.pluginStoreDetail) {
+			return pluginStoreRoot([]*ui.Node{pluginStoreDetail(r, h, h.pluginStoreDetail, inner, metrics)})
+		}
+		h.pluginStoreDetail = ""
+		h.pluginStoreConsent = nil
+		h.pluginStoreRemoveConfirm = false
+		h.pluginStoreDetailErr = ""
+		h.pluginStoreDetailScroll = 0
+	}
 	listings := browseListings(state.Listings, h.pluginStoreQuery)
 	if !pluginStoreHasListing(listings, h.pluginStoreSelected) {
 		h.pluginStoreSelected = ""
@@ -36,8 +48,6 @@ func pluginStoreTree(r *Registry, h *PanelHost) *ui.Node {
 		}
 	}
 
-	metrics := h.theme.Metrics
-	inner := max(h.place.Panel.W-2*pluginStorePadding, 0)
 	children := []*ui.Node{
 		pluginStoreHeader(h, len(listings), state.Busy),
 		pluginStoreSearch(h, inner, metrics),
@@ -53,14 +63,6 @@ func pluginStoreTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	if len(stale) > 0 {
 		children = append(children, pluginStoreBanner("Stale sources", strings.Join(stale, ", "), false, metrics))
-	}
-
-	if h.pluginStoreDetail != "" {
-		if listing, ok := pluginStoreFind(state.Listings, h.pluginStoreDetail); ok {
-			children = append(children, pluginStoreDetailPreview(r, h, listing, inner, metrics))
-			return pluginStoreRoot(children)
-		}
-		h.pluginStoreDetail = ""
 	}
 
 	if len(listings) == 0 {
@@ -472,60 +474,12 @@ func pluginStoreFind(listings []store.Listing, key string) (store.Listing, bool)
 	return store.Listing{}, false
 }
 
-func pluginStoreDetailPreview(r *Registry, h *PanelHost, listing store.Listing, width int, metrics theme.Metrics) *ui.Node {
-	card := cardFor(listing, r.pluginStoreSnapshot.Media)
-	var keys []store.MediaKey
-	if card.Screenshot.SHA256 != "" {
-		keys = append(keys, card.Screenshot)
-	}
-	if r.pluginStore != nil {
-		r.pluginStore.Want(keys)
-	}
-	imageWidth := min(420, max((width-pluginStoreGap)/2, 1))
-	imageHeight := imageWidth * 9 / 16
-	image := &ui.Node{Kind: ui.KindCapsule, Width: imageWidth, Height: imageHeight, Fill: ui.FillContainer, Shape: ui.ShapeMedium, CenterX: true, CenterY: true,
-		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: card.Glyph, IconSize: metrics.IconLarge}}}
-	if card.ScreenshotPath != "" {
-		image = &ui.Node{Kind: ui.KindCapsule, Width: imageWidth, Height: imageHeight, Fill: ui.FillContainer, Shape: ui.ShapeMedium,
-			Children: []*ui.Node{{Kind: ui.KindImage, ImageW: imageWidth, ImageH: imageHeight, ImagePath: card.ScreenshotPath, Background: true}}}
-		if r.plugins != nil && r.plugins.images != nil {
-			img := image.Children[0]
-			if key, ok := pluginImageKey(img); ok {
-				if decoded, hit, err := r.plugins.images.Request(key); err == nil && hit {
-					img.Image = decoded
-				}
-			}
-		}
-	}
-	back := pluginStoreIconButton("store-back", "Back", "chevron_left", metrics)
-	close := pluginStoreIconButton("store-close", "Close", "close", metrics)
-	description := listing.Entry.LongDescription
-	if description == "" {
-		description = listing.Entry.Description
-	}
-	return &ui.Node{Kind: ui.KindColumn, Gap: pluginStoreGap, Children: []*ui.Node{
-		{Kind: ui.KindRow, Height: metrics.StandardControl, Gap: pluginStoreGap, Children: []*ui.Node{
-			back, {Kind: ui.KindText, Text: "Plugin details", TextRole: theme.RoleTitle}, close,
-		}},
-		{Kind: ui.KindRow, Gap: pluginStoreGap, Children: []*ui.Node{
-			image,
-			{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{
-				{Kind: ui.KindText, Text: card.Title, TextRole: theme.RoleHeadline, MaxWidth: width - imageWidth - pluginStoreGap},
-				{Kind: ui.KindText, Text: card.Byline, TextRole: theme.RoleCaption},
-				{Kind: ui.KindText, Text: description, Multiline: true, MaxWidth: width - imageWidth - pluginStoreGap},
-				{Kind: ui.KindText, Text: "Plugin detail view", TextRole: theme.RoleCaption},
-			}},
-		}},
-	}}
-}
-
 func (h *PanelHost) pluginStoreKeyPress(r *Registry, key uint32) bool {
 	focused := h.focused()
 	searching := focused != nil && focused.Kind == ui.KindTextField
 	if key == keyEsc {
 		if h.pluginStoreDetail != "" {
-			h.pluginStoreDetail = ""
-			r.rebuildPanel(h)
+			h.pluginStoreLeaveDetail(r)
 		} else if h.search != nil && h.search.Text != "" {
 			h.search.Clear()
 			h.pluginStoreQuery.Text = ""
@@ -534,6 +488,10 @@ func (h *PanelHost) pluginStoreKeyPress(r *Registry, key uint32) bool {
 		} else {
 			r.closePanelLocked(PanelPluginStore)
 		}
+		return true
+	}
+	if h.pluginStoreDetail != "" && (key == keyPageUp || key == keyPageDown) {
+		h.pluginStorePageDetail(r, key == keyPageUp)
 		return true
 	}
 	if !searching && !h.ctrl && !h.alt {
@@ -581,6 +539,10 @@ func (h *PanelHost) pluginStoreKeyPress(r *Registry, key uint32) bool {
 	case keyEnter:
 		if h.pluginStoreSelected != "" {
 			h.pluginStoreDetail = h.pluginStoreSelected
+			h.pluginStoreConsent = nil
+			h.pluginStoreRemoveConfirm = false
+			h.pluginStoreDetailErr = ""
+			h.pluginStoreDetailScroll = 0
 			r.rebuildPanel(h)
 		}
 	default:
@@ -684,10 +646,24 @@ func (h *PanelHost) activatePluginStore(r *Registry, n *ui.Node) bool {
 	case strings.HasPrefix(n.Action, "store-open:"):
 		h.pluginStoreSelected = strings.TrimPrefix(n.Action, "store-open:")
 		h.pluginStoreDetail = h.pluginStoreSelected
+		h.pluginStoreConsent = nil
+		h.pluginStoreRemoveConfirm = false
+		h.pluginStoreDetailErr = ""
+		h.pluginStoreDetailScroll = 0
 		r.rebuildPanel(h)
 	case n.Action == "store-back":
-		h.pluginStoreDetail = ""
+		h.pluginStoreLeaveDetail(r)
+	case n.Action == "store-primary":
+		h.pluginStoreBeginPrimary(r)
+	case n.Action == "store-confirm":
+		h.pluginStoreConfirm(r)
+	case n.Action == "store-cancel-confirmation":
+		h.pluginStoreConsent = nil
+		h.pluginStoreRemoveConfirm = false
+		h.pluginStoreDetailErr = ""
 		r.rebuildPanel(h)
+	case n.Action == "store-open-homepage", n.Action == "store-open-release-notes":
+		h.pluginStoreOpenLink(r, n.Action)
 	default:
 		return false
 	}

@@ -163,6 +163,7 @@ type Registry struct {
 	// snapshot; Store.State is never called while Registry.mu is held.
 	pluginStore         *store.Store
 	pluginStoreSnapshot store.State
+	pluginStoreReadmes  map[string]string
 
 	// notifyCh carries client messages; main pumps it. Nil in tests that drive
 	// applyNotify directly.
