@@ -115,6 +115,47 @@ func TestThumbRekeysWhenTheSourceChanges(t *testing.T) {
 	}
 }
 
+func TestThumbPublishesFinalCountsWhenNothingNewIsMade(t *testing.T) {
+	root := t.TempDir()
+	cache := t.TempDir()
+	var entries []Entry
+	for _, name := range []string{"a.png", "b.png"} {
+		p := filepath.Join(root, name)
+		writePNG(t, p, 400, 200)
+		entries = append(entries, Entry{Name: name, Path: p, Kind: KindImage})
+	}
+
+	th := NewThumbnailer(cache, time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	drain := func() {
+		for {
+			select {
+			case <-th.Progress():
+			default:
+				return
+			}
+		}
+	}
+
+	th.generate(ctx, entries)
+	drain()
+
+	// Second pass: every preview is cached, so no per-item tick fires. The
+	// walk must still announce that it finished, or the picker shows a stale
+	// "generating previews" count forever.
+	th.generate(ctx, entries)
+	select {
+	case <-th.Progress():
+	default:
+		t.Fatal("a fully cached walk published no final progress")
+	}
+	done, total := th.Counts()
+	if done != total || total != len(entries) {
+		t.Fatalf("counts after the walk: %d/%d, want %d/%d", done, total, len(entries), len(entries))
+	}
+}
+
 func TestThumbPacesAndStopsOnCancel(t *testing.T) {
 	root := t.TempDir()
 	cache := t.TempDir()
