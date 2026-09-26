@@ -182,24 +182,41 @@ func TestCardsSitOnTheHighContainer(t *testing.T) {
 	}
 }
 
-func TestCenterClearActionIsAlwaysClear(t *testing.T) {
+func TestCenterClearAllActionIsAlwaysClear(t *testing.T) {
 	r := NewRegistry(config.Default())
 	r.applyNotify(snap(1))
 	h := &PanelHost{id: PanelNotifications}
 	tree := r.centerTreeFor(h)
-	clear := buttonByName(tree, "Clear")
+	clear := buttonByName(tree, "Clear all")
 	if clear == nil || clear.Action != "notify:center:clear" {
 		t.Fatalf("clear = %+v", clear)
 	}
 }
 
-func TestCenterActivateClearSetsLastAction(t *testing.T) {
+func TestCenterClearSendsDismissAllThenHistoryClear(t *testing.T) {
+	r := NewRegistry(config.Default())
+	sender := &fakeNotifySender{}
+	r.notifySender = sender
+	r.applyNotify(snap(1, note(7, "active")))
+	r.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
+		History: ptrH(historyEntry(8, "mail", "Mail", "closed", time.Unix(1_756_000_000, 0), true))}))
+
+	h := &PanelHost{id: PanelNotifications}
+	if !h.activateNotify(r, &ui.Node{Action: "notify:center:clear"}) {
+		t.Fatal("clear action was not handled")
+	}
+	if got := sender.cmds; len(got) != 2 || got[0].Kind != protocol.CommandDismissAll || got[1].Kind != protocol.CommandHistoryClear {
+		t.Fatalf("clear commands = %+v, want dismiss-all then history.clear", got)
+	}
+}
+
+func TestCenterActivateClearAllSetsLastAction(t *testing.T) {
 	r := NewRegistry(config.Default())
 	r.applyNotify(snap(1))
 	h := &PanelHost{id: PanelNotifications}
 	r.rebuildPanel(h)
 	for i, n := range h.focus {
-		if n.Name == "Clear" {
+		if n.Name == "Clear all" {
 			h.roving.Set(i)
 			h.activate(r)
 			break

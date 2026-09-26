@@ -25,6 +25,7 @@ type runningAppAction struct {
 
 type runningAppEntry struct {
 	ID             string
+	Name           string
 	Icon           string
 	StartupWMClass string
 	Actions        []runningAppAction
@@ -32,6 +33,7 @@ type runningAppEntry struct {
 
 type runningAppSlot struct {
 	Key     string
+	Name    string
 	Icon    string
 	Focused bool
 	Members []niri.Window
@@ -63,10 +65,13 @@ func groupRunningApps(windows []niri.Window, entries []runningAppEntry) []runnin
 		}
 		slot, exists := byKey[key]
 		if !exists {
-			slot = &runningAppSlot{Key: key}
+			slot = &runningAppSlot{Key: key, Name: w.AppID}
 			if ok {
 				slot.Icon = entry.Icon
 				slot.Actions = entry.Actions
+				if entry.Name != "" {
+					slot.Name = entry.Name
+				}
 			}
 			byKey[key] = slot
 			order = append(order, key)
@@ -129,7 +134,7 @@ func loadRunningAppEntries(dirs []string) []runningAppEntry {
 				delete(byID, id)
 				return nil
 			}
-			e := runningAppEntry{ID: id, Icon: de.Icon, StartupWMClass: de.StartupWMClass}
+			e := runningAppEntry{ID: id, Name: de.Name, Icon: de.Icon, StartupWMClass: de.StartupWMClass}
 			// ponytail: go-freedesktop leaves Action.ID empty; zip Actions= order.
 			ids := desktopActionIDs(path)
 			for i, a := range de.Actions {

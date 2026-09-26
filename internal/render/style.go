@@ -75,6 +75,10 @@ type Style struct {
 	// quieter divider. Both are set for every surface.
 	Outline        Color
 	OutlineVariant Color
+
+	// Roles is every Material role by paint role, for nodes that name one.
+	// The named fields above stay the vocabulary built-in chrome paints from.
+	Roles [ui.PaintRoleCount]Color
 	// Subtle paints secondary text: labels beside a value, captions, dates
 	// outside the viewed month. It is the theme's muted foreground (Material's
 	// on_surface_variant), which carries text at full contrast.

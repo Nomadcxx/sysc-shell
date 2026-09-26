@@ -69,170 +69,15 @@ func selectGPU(snap services.Snapshot) (services.Selector, bool) {
 	return selector, true
 }
 
-// monitorTree builds one titled card per metric, stacked and all visible.
-//
-// The panel used to show a tab strip over a single unlabelled number and one
-// sparkline, so a reader had to know which tab was selected to know what the
-// number meant. Cards state their own subject, carry their value with its
-// unit, and end with a resources card projecting what the metrics release
-// supplies and no bar widget shows.
-//
-// Cards are laid two to a row, as the reference does. A lone trailing card
-// spans the full width rather than sitting in a half-empty row.
-func monitorTree(m theme.Metrics, sels []services.Selector, snap services.Snapshot, history map[services.Selector][]float64, facts machineFacts) *ui.Node {
-	var metrics []*ui.Node
-	for _, sel := range sels {
-		selected := true
-		if sel.Source == services.SourceGPU {
-			sel, selected = selectGPU(snap)
-		}
-		samples, hasHistory := monitorHistory(sel, history)
-		if !selected {
-			samples, hasHistory = nil, false
-		}
-		metrics = append(metrics, monitorMetricCard(m, sel, snap, samples, selected, hasHistory))
-	}
-	var info []*ui.Node
-	if system := monitorSystemCard(m, factsWithGPU(facts, snap)); system != nil {
-		info = append(info, system)
-	}
-	if resources := monitorResourcesCard(m, snap); resources != nil {
-		info = append(info, resources)
-	}
-	cards := append(metrics, info...)
-	if len(cards) == 0 {
-		return &ui.Node{Kind: ui.KindColumn, Padding: m.PanelPadding, Children: []*ui.Node{
-			{Kind: ui.KindText, Text: "No metrics"},
-		}}
-	}
-	return &ui.Node{
-		Kind: ui.KindColumn, Gap: monitorCardGap, Padding: m.PanelPadding,
-		Children: append(monitorRows(m, metrics), monitorRows(m, info)...),
-	}
-}
-
-func monitorHistory(sel services.Selector, history map[services.Selector][]float64) ([]float64, bool) {
-	if sel.Source == services.SourceGPU && sel.Subject != "" {
-		// GPU acquisition is wildcard because the device is only known after a
-		// snapshot. A PCI-qualified card may therefore use only an exact ring;
-		// wildcard samples could belong to another GPU.
-		sel = services.Selector{Source: services.SourceGPU, Subject: sel.Subject}
-	}
-	samples, ok := history[sel]
-	return samples, ok && len(samples) > 0
-}
-
-// monitorRows pairs cards into rows of two and gives each cell an explicit
-// half width, so a row's two cards are the same size whichever holds the
-// longer figure. An odd final card takes the whole content width.
-func monitorRows(m theme.Metrics, cards []*ui.Node) []*ui.Node {
-	content := panelTargetSize(PanelMonitor).W - 2*m.PanelPadding
-	cell := (content - monitorCardGap) / 2
-	rows := make([]*ui.Node, 0, (len(cards)+1)/2)
-	for i := 0; i < len(cards); i += 2 {
-		if i == len(cards)-1 {
-			cards[i].Width = content
-			rows = append(rows, cards[i])
-			continue
-		}
-		cards[i].Width = cell
-		cards[i+1].Width = cell
-		rows = append(rows, &ui.Node{
-			Kind: ui.KindRow, Gap: monitorCardGap,
-			Children: []*ui.Node{cards[i], cards[i+1]},
-		})
-	}
-	return rows
-}
-
-// monitorMetricCard is one metric: its subject, its history, and its current
-// value with the unit that value is in.
-func monitorMetricCard(m theme.Metrics, sel services.Selector, snap services.Snapshot, history []float64, selected, hasHistory bool) *ui.Node {
-	label, absent := formatMonitorMetric(sel, snap)
-	if !selected {
-		absent = true
-		if snap.GPU != nil && len(snap.GPU.GPUs) > 0 {
-			label = "--"
-		}
-	}
-	rows := []*ui.Node{monitorCardTitle(selectorLabel(sel), monitorIconRune(sel))}
-	rows = append(rows, &ui.Node{
-		Kind: ui.KindGraph, Values: monitorGraphValues(sel, history), Window: services.HistorySize,
-		Absent: absent || (sel.Source == services.SourceGPU && !hasHistory),
-	})
-	rows = append(rows, monitorLegend(sel, snap, label))
-	return monitorCard(m, rows)
-}
-
-func monitorLegend(sel services.Selector, snap services.Snapshot, label string) *ui.Node {
-	chips := []*ui.Node{{Kind: ui.KindText, Text: label, Tabular: true}}
-	if sel.Source == services.SourceCPU && sel.Subject != "temperature" && snap.Thermal != nil && snap.Thermal.Valid {
-		chips = append(chips, &ui.Node{
-			Kind: ui.KindText, Text: fmt.Sprintf("%.0f°C", snap.Thermal.Celsius), Tabular: true,
-		})
-	}
-	if sel.Source == services.SourceGPU && snap.GPU != nil {
-		if sel.Subject == "" {
-			selected, ok := selectGPU(snap)
-			if !ok {
-				return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Children: chips}
-			}
-			sel = selected
-		}
-		for _, g := range snap.GPU.GPUs {
-			if sel.Subject != "" && g.PCIID != sel.Subject {
-				continue
-			}
-			if g.TempValid {
-				chips = append(chips, &ui.Node{
-					Kind: ui.KindText, Text: fmt.Sprintf("%.0f°C", g.Celsius), Tabular: true,
-				})
-			}
-			break
-		}
-	}
-	if sel.Source == services.SourceNetwork && sel.Direction == "rx" && snap.Network != nil {
-		for _, iface := range snap.Network.Interfaces {
-			if sel.Subject != "" && iface.Name != sel.Subject {
-				continue
-			}
-			if iface.Rates.TransmitBytesPerSecond > 0 {
-				chips = append(chips, &ui.Node{
-					Kind: ui.KindText, Text: formatRate(iface.Rates.TransmitBytesPerSecond), Tabular: true,
-				})
-			}
-			break
-		}
-	}
-	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Children: chips}
-}
-
-// machineFacts is the System card: the six identity rows Noctalia draws on
-// the sysmon pane. GPU usage and CPU temperature live on the metric cards.
-// GPU model is filled from the GPU snapshot when a name exists.
+// machineFacts is the monitor's info card: the five identity rows the
+// reference draws beside the distro logo. Logo is an icon-theme name from
+// os-release; the letter tile stands in when it is empty or unresolvable.
+// Uptime is the short form the Control Centre's Home identity shows;
+// UptimeLong is the monitor's always-three-units form.
 type machineFacts struct {
-	CPU, GPU, OS, Kernel, WM, Uptime string
-}
-
-func monitorSystemCard(m theme.Metrics, facts machineFacts) *ui.Node {
-	rows := []*ui.Node{monitorCardTitle("System", 0)}
-	before := len(rows)
-	for _, kv := range [][2]string{
-		{"CPU", facts.CPU},
-		{"GPU", facts.GPU},
-		{"OS", facts.OS},
-		{"Kernel", facts.Kernel},
-		{"WM", facts.WM},
-		{"Uptime", facts.Uptime},
-	} {
-		if kv[1] != "" {
-			rows = append(rows, monitorKeyValue(kv[0], kv[1]))
-		}
-	}
-	if len(rows) == before {
-		return nil
-	}
-	return monitorCard(m, rows)
+	Distro, Kernel, CPU, Board string
+	Uptime, UptimeLong         string
+	Logo, LogoLetter           string
 }
 
 // readMachineFacts is a one-shot identity read. Uptime is the only field
@@ -241,57 +86,46 @@ func monitorSystemCard(m theme.Metrics, facts machineFacts) *ui.Node {
 func readMachineFacts() machineFacts {
 	cpu, _ := os.ReadFile("/proc/cpuinfo")
 	osrel, _ := os.ReadFile("/etc/os-release")
-	ostype, _ := os.ReadFile("/proc/sys/kernel/ostype")
-	osrelk, _ := os.ReadFile("/proc/sys/kernel/osrelease")
-	uptime := ""
-	if d, ok := services.ReadUptime(); ok {
-		uptime = formatUptime(d)
-	}
-	return machineFacts{
+	release, _ := os.ReadFile("/proc/sys/kernel/osrelease")
+	vendor, _ := os.ReadFile("/sys/class/dmi/id/board_vendor")
+	board, _ := os.ReadFile("/sys/class/dmi/id/board_name")
+	facts := machineFacts{
+		Distro: parseOSRelease(string(osrel)),
+		Kernel: strings.TrimSpace(string(release)),
 		CPU:    parseCPUModel(string(cpu)),
-		OS:     parseOSRelease(string(osrel)),
-		Kernel: kernelLabel(strings.TrimSpace(string(ostype)), strings.TrimSpace(string(osrelk))),
-		WM:     compositorLabel(),
-		Uptime: uptime,
+		Board:  strings.TrimSpace(strings.TrimSpace(string(vendor)) + " " + strings.TrimSpace(string(board))),
+		Logo:   parseOSReleaseField(string(osrel), "LOGO"),
 	}
-}
-
-func factsWithGPU(facts machineFacts, snap services.Snapshot) machineFacts {
-	if facts.GPU != "" {
-		return facts
+	for _, r := range parseOSReleaseField(string(osrel), "NAME") {
+		facts.LogoLetter = strings.ToUpper(string(r))
+		break
 	}
-	selector, ok := selectGPU(snap)
-	if !ok || snap.GPU == nil {
-		return facts
-	}
-	for _, g := range snap.GPU.GPUs {
-		if selector.Subject != "" && g.PCIID != selector.Subject {
-			continue
-		}
-		if g.Name != "" {
-			facts.GPU = g.Name
-			return facts
-		}
+	if d, ok := services.ReadUptime(); ok {
+		facts.Uptime, facts.UptimeLong = formatUptime(d), formatUptimeLong(d)
 	}
 	return facts
 }
 
-func kernelLabel(sysname, release string) string {
-	switch {
-	case sysname != "" && release != "":
-		return sysname + " " + release
-	case release != "":
-		return release
-	default:
-		return sysname
+func parseOSReleaseField(text, key string) string {
+	for _, line := range strings.Split(text, "\n") {
+		k, v, ok := strings.Cut(line, "=")
+		if ok && strings.TrimSpace(k) == key {
+			return strings.Trim(strings.TrimSpace(v), `"`)
+		}
 	}
+	return ""
 }
 
-func compositorLabel() string {
-	if d := strings.TrimSpace(os.Getenv("XDG_CURRENT_DESKTOP")); d != "" {
-		return d
+// formatUptimeLong always names days, hours and minutes, as the reference's
+// info card does: "0 days 9 hours 25 minutes".
+func formatUptimeLong(d time.Duration) string {
+	if d < 0 {
+		d = 0
 	}
-	return "niri"
+	days := int64(d / (24 * time.Hour))
+	hours := int64(d % (24 * time.Hour) / time.Hour)
+	mins := int64(d % time.Hour / time.Minute)
+	return countUnit(days, "day", "days") + " " + countUnit(hours, "hour", "hours") + " " + countUnit(mins, "minute", "minutes")
 }
 
 func parseCPUModel(text string) string {
@@ -356,59 +190,6 @@ func countUnit(n int64, one, many string) string {
 	return fmt.Sprintf("%d %s", n, many)
 }
 
-// monitorResourcesCard reports the capacities and averages the sampler already
-// collects and nothing projects: the load average, memory and swap as bytes
-// rather than a bare percentage.
-//
-// It is omitted entirely when none of them is available, so an unsampled
-// machine shows no empty card.
-func monitorResourcesCard(m theme.Metrics, snap services.Snapshot) *ui.Node {
-	rows := []*ui.Node{monitorCardTitle("Resources", 0)}
-	before := len(rows)
-
-	if snap.CPU != nil && snap.CPU.LoadValid {
-		rows = append(rows, monitorKeyValue("Load",
-			fmt.Sprintf("%.2f / %.2f / %.2f", snap.CPU.Load1, snap.CPU.Load5, snap.CPU.Load15)))
-	}
-	if snap.Memory != nil {
-		if row := monitorCapacityRow("Memory",
-			snap.Memory.Memory.UsedBytes, snap.Memory.Memory.TotalBytes); row != nil {
-			rows = append(rows, row)
-		}
-		if row := monitorCapacityRow("Swap",
-			snap.Memory.Swap.UsedBytes, snap.Memory.Swap.TotalBytes); row != nil {
-			rows = append(rows, row)
-		}
-	}
-	if snap.Filesystem != nil {
-		for _, fs := range snap.Filesystem.Filesystems {
-			if row := monitorCapacityRow(fs.MountPoint,
-				fs.Capacity.UsedBytes, fs.Capacity.TotalBytes); row != nil {
-				rows = append(rows, row)
-			}
-		}
-	}
-	if len(rows) == before {
-		return nil
-	}
-	return monitorCard(m, rows)
-}
-
-// monitorCapacityRow renders one used-of-total pair. A zero total is a
-// capacity the machine does not have, such as swap on a system without it,
-// and renders nothing rather than "0 B / 0 B".
-//
-// It takes the two counts rather than the upstream capacity type: this file
-// projects what internal/services already resolved, and importing the metrics
-// release here would put the panel back on the sampler's vocabulary.
-func monitorCapacityRow(label string, used, total uint64) *ui.Node {
-	if total == 0 {
-		return nil
-	}
-	return monitorKeyValue(label,
-		fmt.Sprintf("%s / %s", formatBytes(float64(used)), formatBytes(float64(total))))
-}
-
 // monitorCard wraps content in the same capsule the bar uses, so a panel card
 // and a bar widget are visibly the same surface.
 // monitorCard is a panel card: a capsule that declares the high container role
@@ -444,28 +225,6 @@ func monitorKeyValue(label, value string) *ui.Node {
 	}}
 }
 
-// monitorGraphValues scales one history against the right ceiling.
-//
-// A fraction source is already zero through one and graphs against that, so a
-// steady 31 per cent draws a flat line a third of the way up. Normalising it
-// against its own maximum instead made every sample full height, which reads
-// as a machine at its limit. A rate has no ceiling, so its own maximum is the
-// only scale there is.
-func monitorGraphValues(sel services.Selector, history []float64) []float64 {
-	if monitorSourceIsFraction(sel.Source) {
-		return append([]float64(nil), history...)
-	}
-	return normalise(history)
-}
-
-func monitorSourceIsFraction(source services.Source) bool {
-	switch source {
-	case services.SourceCPU, services.SourceMemory, services.SourceFilesystem, services.SourceGPU:
-		return true
-	}
-	return false
-}
-
 func monitorIconRune(sel services.Selector) rune {
 	switch sel.Source {
 	case services.SourceCPU:
@@ -478,58 +237,4 @@ func monitorIconRune(sel services.Selector) rune {
 		return render.MetricIconRune("network")
 	}
 	return 0
-}
-
-func selectorLabel(sel services.Selector) string {
-	switch sel.Source {
-	case services.SourceCPU:
-		return "CPU"
-	case services.SourceMemory:
-		return "Memory"
-	case services.SourceFilesystem:
-		if sel.Subject != "" {
-			return sel.Subject
-		}
-		return "Disk"
-	case services.SourceBlock:
-		if sel.Subject != "" {
-			return sel.Subject
-		}
-		return "Block"
-	case services.SourceNetwork:
-		if sel.Subject != "" {
-			return sel.Subject
-		}
-		return "Net"
-	case services.SourceGPU:
-		return "GPU"
-	default:
-		return sel.String()
-	}
-}
-
-func formatMonitorMetric(sel services.Selector, snap services.Snapshot) (string, bool) {
-	if sel.Source == services.SourceCPU && sel.Subject == "temperature" {
-		if snap.Thermal == nil || !snap.Thermal.Valid {
-			return "collecting", true
-		}
-		return fmt.Sprintf("%.0f°C", snap.Thermal.Celsius), false
-	}
-	if sel.Source == services.SourceMemory && snap.Memory != nil && snap.Memory.Memory.TotalBytes > 0 {
-		frac, ok := snap.Fraction(sel)
-		if !ok {
-			return "collecting", true
-		}
-		return fmt.Sprintf("%s · %.0f%%", formatBytes(float64(snap.Memory.Memory.UsedBytes)), frac*100), false
-	}
-	if fraction, ok := snap.Fraction(sel); ok {
-		return fmt.Sprintf("%.0f%%", fraction*100), false
-	}
-	if rate, ok := snap.Rate(sel); ok {
-		return formatRate(rate), false
-	}
-	if sel.Source == services.SourceGPU && snap.GPU != nil && len(snap.GPU.GPUs) > 0 {
-		return "--", true
-	}
-	return "collecting", true
 }

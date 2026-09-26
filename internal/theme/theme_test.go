@@ -120,6 +120,21 @@ func TestGenerateReportsFailureAlongsideTheFallback(t *testing.T) {
 	}
 }
 
+func TestGenerateWaitsForTheFirstWallpaper(t *testing.T) {
+	t.Parallel()
+	g := Generator{CacheDir: t.TempDir(), Matugen: "/nonexistent/matugen"}
+	tok, err := g.Generate(Source{Kind: "wallpaper"}, Options{Mode: "dark"})
+	if err == nil {
+		t.Fatal("an empty wallpaper seed must report that it is waiting, not succeed")
+	}
+	if !strings.Contains(err.Error(), "waiting for the first wallpaper") {
+		t.Fatalf("error = %v, want the waiting-for-first-wallpaper notice", err)
+	}
+	if tok != Fallback {
+		t.Fatalf("tokens = %+v, want the compiled fallback", tok)
+	}
+}
+
 func TestGenerateRejectsAnUnknownSource(t *testing.T) {
 	t.Parallel()
 	g := Generator{CacheDir: t.TempDir()}

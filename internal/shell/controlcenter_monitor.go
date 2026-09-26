@@ -42,8 +42,8 @@ func ccMonitor(r *Registry, h *PanelHost) *ui.Node {
 	}}
 	rows := monitorCard(m, []*ui.Node{
 		ccMonTemperatureRow(snap, history),
-		ccMonGPURow(snap, history),
-		ccMonStorageRow(snap),
+		ccMonGPURow(snap, history, false),
+		ccMonStorageRow("Storage", snap),
 		ccMonRateRow("network", "Network", iface, snap, history,
 			services.Selector{Source: services.SourceNetwork, Subject: iface, Direction: "rx"},
 			services.Selector{Source: services.SourceNetwork, Subject: iface, Direction: "tx"},
@@ -195,7 +195,9 @@ func ccMonTemperatureRow(snap services.Snapshot, history map[services.Selector][
 		ccMonCaption(source), ccMonGraph(ccMonMarkW, ccMonMarkH, samples, nil, tone))
 }
 
-func ccMonGPURow(snap services.Snapshot, history map[services.Selector][]float64) *ui.Node {
+// ccMonGPURow is the GPU row. withTemp adds the GPU temperature to its
+// caption, for a surface that has no Temperature row to carry it.
+func ccMonGPURow(snap services.Snapshot, history map[services.Selector][]float64, withTemp bool) *ui.Node {
 	value, tone, caption := ccDash, ui.ToneNormal, ""
 	var samples []float64
 	if sel, ok := selectGPU(snap); ok {
@@ -206,6 +208,9 @@ func ccMonGPURow(snap services.Snapshot, history map[services.Selector][]float64
 			caption = g.Name
 			if g.VRAMValid {
 				caption = joinCaption(caption, formatBytes(float64(g.VRAM.UsedBytes))+" / "+formatBytes(float64(g.VRAM.TotalBytes)))
+			}
+			if withTemp && g.TempValid {
+				caption = joinCaption(caption, fmt.Sprintf("%.0f°C", g.Celsius))
 			}
 			// An nvidia-smi failure leaves usage invalid for this sample
 			// (sysc-495): the row dashes rather than holding a stale value.
@@ -219,7 +224,7 @@ func ccMonGPURow(snap services.Snapshot, history map[services.Selector][]float64
 		ccMonCaption(caption), ccMonGraph(ccMonMarkW/2, ccMonMarkH, samples, nil, tone))
 }
 
-func ccMonStorageRow(snap services.Snapshot) *ui.Node {
+func ccMonStorageRow(label string, snap services.Snapshot) *ui.Node {
 	value, caption, tone, fraction, ok := ccDash, "", ui.ToneNormal, 0.0, false
 	if snap.Filesystem != nil {
 		for _, fs := range snap.Filesystem.Filesystems {
@@ -233,7 +238,7 @@ func ccMonStorageRow(snap services.Snapshot) *ui.Node {
 		}
 	}
 	mark := &ui.Node{Kind: ui.KindMeter, Width: ccMonMarkW, Height: ccMonMemMeterH, Value: fraction, Max: 1, Tone: tone, Absent: !ok}
-	return ccMonRow("filesystem", "Storage", ccMonValue("Storage used", value, tone, theme.RoleBody), ccMonCaption(caption), mark)
+	return ccMonRow("filesystem", label, ccMonValue("Storage used", value, tone, theme.RoleBody), ccMonCaption(caption), mark)
 }
 
 func ccMonRateRow(iconID, label, subject string, snap services.Snapshot, history map[services.Selector][]float64,
@@ -260,4 +265,18 @@ func joinCaption(a, b string) string {
 		return a
 	}
 	return a + " · " + b
+}
+
+// ccMonCapacity is one used-of-total reading: a percent value, a bytes
+// caption, the meter fraction and, when threshold is set, the metric's tone.
+func ccMonCapacity(metric monitorMetric, threshold bool, used, total uint64) (value, caption string, fraction float64, tone ui.Tone, ok bool) {
+	if total == 0 {
+		return ccDash, "", 0, ui.ToneNormal, false
+	}
+	fraction = float64(used) / float64(total)
+	tone = ui.ToneNormal
+	if threshold {
+		tone = thresholdTone(metric, fraction*100)
+	}
+	return fmt.Sprintf("%.0f%%", fraction*100), formatBytes(float64(used)) + " / " + formatBytes(float64(total)), fraction, tone, true
 }

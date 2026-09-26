@@ -44,6 +44,7 @@ var settingsSectionIcons = map[string]string{
 	"Bar":           "toolbar",
 	"Widgets":       "widgets",
 	"Panels":        "web_asset",
+	"Monitor":       "memory",
 	"Wallpaper":     "wallpaper",
 	"Weather":       "partly_cloudy_day",
 	"Displays":      "display_settings",

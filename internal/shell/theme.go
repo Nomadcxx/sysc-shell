@@ -6,6 +6,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 // Color is the painter's colour type, re-exported so components name one type.
@@ -559,7 +560,7 @@ func (t Theme) LerpColors(to Theme, progress float64) Theme {
 // scale, body, and attach edge.
 func (t Theme) Style() render.Style {
 	p := t.Palette
-	return render.Style{
+	s := render.Style{
 		Size:       t.TextSize,
 		Radius:     t.Radius,
 		CardRadius: t.CardRadius,
@@ -596,6 +597,31 @@ func (t Theme) Style() render.Style {
 		Scrim:          p.Scrim,
 		Motion:         t.Motion,
 	}
+	s.Roles = paletteRoles(p)
+	return s
+}
+
+// paletteRoles lays the palette out by paint role for nodes that name a role.
+func paletteRoles(p Palette) [ui.PaintRoleCount]render.Color {
+	var r [ui.PaintRoleCount]render.Color
+	for role, c := range map[ui.PaintRole]Color{
+		ui.PaintPrimary: p.Primary, ui.PaintOnPrimary: p.OnPrimary,
+		ui.PaintPrimaryContainer: p.PrimaryContainer, ui.PaintOnPrimaryContainer: p.OnPrimaryContainer,
+		ui.PaintSecondary: p.Secondary, ui.PaintOnSecondary: p.OnSecondary,
+		ui.PaintSecondaryContainer: p.SecondaryContainer, ui.PaintOnSecondaryContainer: p.OnSecondaryContainer,
+		ui.PaintTertiary: p.Tertiary, ui.PaintOnTertiary: p.OnTertiary,
+		ui.PaintTertiaryContainer: p.TertiaryContainer, ui.PaintOnTertiaryContainer: p.OnTertiaryContainer,
+		ui.PaintError: p.Error, ui.PaintOnError: p.OnError,
+		ui.PaintErrorContainer: p.ErrorContainer, ui.PaintOnErrorContainer: p.OnErrorContainer,
+		ui.PaintSurface: p.Surface, ui.PaintOnSurface: p.OnSurface,
+		ui.PaintSurfaceVariant: p.SurfaceVariant, ui.PaintOnSurfaceVariant: p.OnSurfaceVariant,
+		ui.PaintSurfaceContainerLow: p.SurfaceContainerLow, ui.PaintSurfaceContainer: p.SurfaceContainer,
+		ui.PaintSurfaceContainerHigh: p.SurfaceContainerHigh, ui.PaintSurfaceContainerHighest: p.SurfaceContainerHighest,
+		ui.PaintOutline: p.Outline, ui.PaintOutlineVariant: p.OutlineVariant,
+	} {
+		r[role] = c
+	}
+	return r
 }
 
 // StyleFor is the resolved style for one root surface. Style() is the bar's,

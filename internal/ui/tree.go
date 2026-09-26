@@ -155,6 +155,30 @@ const (
 	PaintOnSurfaceVariant
 	PaintOnSurface
 	PaintSurface
+	// The remaining Material roles, reachable by name through PaintRoleFor.
+	PaintOnPrimary
+	PaintPrimaryContainer
+	PaintOnPrimaryContainer
+	PaintOnSecondary
+	PaintSecondaryContainer
+	PaintOnSecondaryContainer
+	PaintOnTertiary
+	PaintTertiaryContainer
+	PaintOnTertiaryContainer
+	PaintError
+	PaintOnError
+	PaintErrorContainer
+	PaintOnErrorContainer
+	PaintSurfaceVariant
+	PaintSurfaceContainerLow
+	PaintSurfaceContainer
+	PaintSurfaceContainerHigh
+	PaintSurfaceContainerHighest
+	PaintOutline
+	PaintOutlineVariant
+
+	// PaintRoleCount sizes the render role table. It must stay last.
+	PaintRoleCount
 )
 
 type GradientMotion uint8
@@ -354,6 +378,13 @@ type Node struct {
 	// Fill selects a capsule's background, and a button's chrome. Zero is the
 	// surface capsule / an unfilled button (the wrapping pill is the chrome).
 	Fill Fill
+	// FillRole and InkRole are read only when Fill is FillRole.
+	FillRole PaintRole
+	InkRole  PaintRole
+	// HoverFill and HoverInk, when set, replace the translucent hover layer
+	// on a hovered row with a solid role fill and foreground.
+	HoverFill PaintRole
+	HoverInk  PaintRole
 	// Stroke is a capsule's border width in logical pixels. Zero means none.
 	Stroke     int
 	StrokeFill Fill
@@ -470,6 +501,10 @@ const (
 	FillNoteSky
 	FillNoteRose
 	FillNoteLilac
+	// FillRole paints the node's FillRole behind its content and InkRole as
+	// the foreground its children inherit. It is for colours a user chose by
+	// role name; built-in chrome keeps the named fills above.
+	FillRole
 	// FillOutlineVariant is a stroke colour: the quiet boundary a divider
 	// draws. As a fill it paints nothing, like FillOutline. It marks a control
 	// whose edge should read without competing with the focus outline.

@@ -33,6 +33,9 @@ func Write(path string, c Config) error {
 	if _, err := applyMedia(wireMedia{Preferred: &c.Media.Preferred, Blacklist: c.Media.Blacklist}, "media"); err != nil {
 		return err
 	}
+	if _, err := applyMonitor(*monitorWire(c.Monitor), "monitor"); err != nil {
+		return err
+	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("config: mkdir %s: %w", dir, err)
@@ -123,6 +126,9 @@ func toWire(c Config) wireConfig {
 			preferred := c.Media.Preferred
 			w.Media.Preferred = &preferred
 		}
+	}
+	if c.Monitor != defaultMonitor() {
+		w.Monitor = monitorWire(c.Monitor)
 	}
 	for i := range c.Outputs {
 		conn := c.Outputs[i].Connector
@@ -543,4 +549,30 @@ func themeDiff(got Theme) *wireTheme {
 		}
 	}
 	return &w
+}
+
+// monitorWire emits only the monitor fields that differ from the default.
+func monitorWire(m Monitor) *wireMonitor {
+	d := defaultMonitor()
+	out := &wireMonitor{}
+	if m.Refresh != d.Refresh {
+		out.Refresh = &m.Refresh
+	}
+	pick := func(v, def string) *string {
+		if v == def {
+			return nil
+		}
+		return &v
+	}
+	out.SortBackground = pick(m.SortBackground, d.SortBackground)
+	out.SortColor = pick(m.SortColor, d.SortColor)
+	out.HoverBackground = pick(m.HoverBackground, d.HoverBackground)
+	out.HoverColor = pick(m.HoverColor, d.HoverColor)
+	if m.ShowApps != d.ShowApps {
+		out.ShowApps = &m.ShowApps
+	}
+	if m.ShowProcesses != d.ShowProcesses {
+		out.ShowProcesses = &m.ShowProcesses
+	}
+	return out
 }

@@ -1,15 +1,15 @@
 package shell
 
 import (
-	"cmp"
 	"errors"
 	"fmt"
+	"math"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 	"syscall"
 
+	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -18,225 +18,360 @@ import (
 const (
 	monitorPageProcesses = "processes"
 	monitorPageMetrics   = "monitor"
-	processRowHeight     = 26
-	processRowPitch      = 32
-	processHeaderHeight  = 22
-	monitorControlHeight = 28
-	processTablePadding  = 6
-	processRowPadding    = 2
-	// processStatusHeight is the inline status or issue line above the table,
-	// and processCellHeight is one row's text band. Each is named because it
-	// appears twice: once on the node and once in the height the panel
-	// subtracts for it, and the scan can only see the first of those.
-	processStatusHeight = 24
-	processCellHeight   = 22
 )
 
-func monitorPanelTree(h *PanelHost, sels []services.Selector, snap services.Snapshot, history map[services.Selector][]float64, facts machineFacts) *ui.Node {
+func (r *Registry) monitorViewLocked(h *PanelHost) monitorView {
+	users := r.usernameCache()
+	entries := r.runningIndex
+	return monitorView{
+		Metrics: h.metrics(),
+		Snap:    r.sample, History: r.historyLocked(), Facts: r.machineFacts, Apps: r.running,
+		Config: r.cfg.Monitor, UID: uint32(os.Getuid()), Iface: h.ccIface, Device: h.ccDevice,
+		Icon:     func(name string, size int) *ui.Image { return monitorLookupIcon(r, h, name, size) },
+		Username: users.Name,
+		AppIcon: func(name string) string {
+			if e, ok := lookupRunningApp(name, entries); ok {
+				return e.Icon
+			}
+			return ""
+		},
+	}
+}
+
+// monitorLookupIcon is launcherLookupIcon at an arbitrary logical size.
+func monitorLookupIcon(r *Registry, h *PanelHost, name string, logical int) *ui.Image {
+	if r == nil || r.trayIcons == nil || name == "" {
+		return nil
+	}
+	size := logical
+	if scale := ui.Scale120(h.scale120); scale.Valid() {
+		size = max(scale.Physical(logical), 1)
+	}
+	key := icons.Square(name, size)
+	if img, ok := r.trayIcons.Lookup(key); ok {
+		return img
+	}
+	_, _, _ = r.trayIcons.Request(key)
+	return nil
+}
+
+const (
+	processRowPitch     = 32
+	processRowHeight    = 30
+	processHeaderHeight = 32
+	processTablePadding = 6
+	processIconSize     = 20
+	processIndent       = 20
+	processFooterHeight = 20
+	processRowPadding   = 2
+	// processHeaderRowH is the header cells plus the insets that line them
+	// up with the list rows below.
+	processHeaderRowH = processHeaderHeight + 2*(processTablePadding+processRowPadding)
+)
+
+// processColumn is one table column after Name. Widths are the reference's
+// proportions at 800 logical; Name takes what is left.
+type processColumn struct {
+	key, label string
+	width      int
+}
+
+var processColumnsAfterName = []processColumn{
+	{"cpu", "CPU", 72}, {"mem", "MEM", 100}, {"swap", "SWAP", 84},
+	{"io", "DISK", 96}, {"pid", "PID", 80}, {"user", "USER", 88},
+}
+
+func processNameWidth(h *PanelHost) int {
+	// The table card and the list well each inset by processTablePadding, and
+	// a row by processRowPadding; the header row carries the same total.
+	w := h.place.Panel.W - 2*h.metrics().PanelPadding - 2*h.metrics().CardPadding - 2*processTablePadding - 2*processRowPadding
+	for _, c := range processColumnsAfterName {
+		w -= c.width + theme.MarginM
+	}
+	return max(w, 120)
+}
+
+func monitorPanelTree(h *PanelHost, in monitorView) *ui.Node {
 	if h.monitorPage == "" {
 		h.monitorPage = monitorPageProcesses
 	}
 	if h.monitorPage == monitorPageMetrics {
-		bodyH := max(h.place.Panel.H-2*h.metrics().PanelPadding-monitorControlHeight-theme.MarginL, processRowHeight)
-		body := monitorTree(h.metrics(), sels, snap, history, facts)
-		body.Padding = 0
-		return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Padding: h.metrics().PanelPadding, Children: []*ui.Node{
-			monitorPageSwitcher(h),
-			{Kind: ui.KindScroll, Height: bodyH, Children: []*ui.Node{body}},
-		}}
+		return systemPageTree(h, in)
 	}
-	var processes services.ProcessSnapshot
-	if snap.Processes != nil {
-		processes = *snap.Processes
-	}
-	return processMonitorTree(h, processes, uint32(os.Getuid()))
+	return processTableTree(h, in)
 }
 
-func monitorPageSwitcher(h *PanelHost) *ui.Node {
-	segment := func(page, label string) *ui.Node {
-		n := &ui.Node{
-			Kind: ui.KindButton, Action: "monitor:page:" + page, Name: label, Role: "tab",
-			Focusable: true, Height: monitorControlHeight, Fill: ui.FillOutline,
-			Gradient: quietButtonGradient(),
-			Children: []*ui.Node{{Kind: ui.KindText, Text: label}},
-		}
-		if h.monitorPage == page || h.monitorPage == "" && page == monitorPageProcesses {
-			n.State |= ui.StateSelected
-		}
-		return n
-	}
-	return &ui.Node{Kind: ui.KindSegmented, Key: "monitor-page", Height: monitorControlHeight,
-		Children: []*ui.Node{
-			segment(monitorPageProcesses, "System Processes"),
-			segment(monitorPageMetrics, "System Monitor"),
-		}}
-}
-
-func quietButtonGradient() ui.GradientPaint {
-	return ui.GradientPaint{
-		Stops: [4]ui.GradientStop{
-			{At: 0, Role: ui.PaintSecondary},
-			{At: 1, Role: ui.PaintPrimary},
-		},
-		Count: 2, AngleDeg: 0,
-	}
-}
-
-func processMonitorTree(h *PanelHost, snapshot services.ProcessSnapshot, currentUID uint32) *ui.Node {
-	if h.search == nil {
-		h.search = ui.NewField("")
-	}
+func processTableTree(h *PanelHost, in monitorView) *ui.Node {
 	if h.processFilter == "" {
 		h.processFilter = "all"
 	}
 	if h.processSort == "" {
-		h.processSort, h.processDesc = "cpu", true
+		h.processSort, h.processDesc = "mem", true
 	}
-	field := h.search.Node("Search")
-	field.Width, field.Height = 300, monitorControlHeight
-	filters := processFilterSwitcher(h)
-	filters.Width = 264
-	tools := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Height: monitorControlHeight, PinEnd: true,
-		Children: []*ui.Node{field, filters}}
-	processes := projectProcesses(snapshot.Processes, h.query, h.processFilter, h.processSort, h.processDesc, currentUID)
-	header := processHeader(h)
+	if h.processExpanded == nil {
+		h.processExpanded = map[string]bool{}
+	}
+	if h.processCollapsed == nil {
+		h.processCollapsed = map[string]bool{}
+	}
+	var snapshot services.ProcessSnapshot
+	if in.Snap.Processes != nil {
+		snapshot = *in.Snap.Processes
+	}
+	lines := projectProcessLines(processLineInput{
+		Processes: snapshot.Processes, Apps: in.Apps, CurrentUID: in.UID,
+		Query: h.query, Owner: h.processFilter, Sort: h.processSort, Desc: h.processDesc,
+		Expanded: h.processExpanded, Collapsed: h.processCollapsed,
+		ShowApps: in.Config.ShowApps, ShowProcesses: in.Config.ShowProcesses,
+		Username: in.Username, AppIcon: in.AppIcon,
+	})
 
-	// The column below stacks the switcher, the tools row, the header and the
-	// table, so it spends three gaps -- yet the first term is 12 where the
-	// column itself uses MarginM. That extra pixel is load-bearing: reconciling
-	// it to the column's gap grows the table by one and pushes the measured
-	// content past the surface, which TestToggleMonitorOpensTallerThanTheOldGuess
-	// catches. Something in the stack measures one taller than these terms say,
-	// and until that is found this reserve stays as it is.
-	used := 2*h.metrics().PanelPadding + monitorControlHeight + 12 +
-		monitorControlHeight + theme.MarginM + processHeaderHeight + theme.MarginM
-	children := []*ui.Node{monitorPageSwitcher(h), tools, header}
-	if h.processStatus != "" {
-		tone := ui.ToneNormal
-		if h.processStatusErr != nil {
-			tone = ui.ToneError
-		}
-		children = append(children, &ui.Node{Kind: ui.KindText, Text: h.processStatus, Tone: tone, Height: processStatusHeight})
-		used += processStatusHeight + theme.MarginM
-	} else if len(snapshot.Issues) > 0 {
-		children = append(children, &ui.Node{
-			Kind: ui.KindText, Text: fmt.Sprintf("%d processes could not be read", len(snapshot.Issues)),
-			Tone: ui.ToneError, Height: processStatusHeight,
-		})
-		used += processStatusHeight + theme.MarginM
+	middle := monitorFactsColumn(in.Facts)
+	if h.monitorOptions {
+		middle = monitorOptionsColumn(h, in)
 	}
-	rows := make([]*ui.Node, len(processes))
-	tableHeight := max(h.place.Panel.H-used, processRowPitch+2*processTablePadding)
+	info := monitorInfoCard(in, middle)
+	if detail := processDetailCard(h, in, snapshot); detail != nil {
+		info = detail
+	}
+
+	pad := h.metrics().PanelPadding
+	used := 2*pad + monitorHeaderH + monitorInfoH + processHeaderRowH + 2*h.metrics().CardPadding + processFooterHeight + 4*theme.MarginM
+	tableH := max(h.place.Panel.H-used, processRowPitch+2*processTablePadding)
+	rows := make([]*ui.Node, len(lines))
 	list := &ui.Node{
-		Kind: ui.KindVirtualList, Height: tableHeight - 2*processTablePadding,
-		ItemCount: len(processes), ItemHeight: processRowPitch, HideScrollbar: true,
+		Kind: ui.KindVirtualList, Height: tableH - 2*processTablePadding,
+		ItemCount: len(lines), ItemHeight: processRowPitch, HideScrollbar: true,
 		Item: func(i int) *ui.Node {
-			if i < 0 || i >= len(processes) {
+			if i < 0 || i >= len(lines) {
 				return nil
 			}
 			if rows[i] == nil {
-				rows[i] = processRow(h, processes[i])
+				rows[i] = processLineRow(h, in, lines[i])
 			}
 			return rows[i]
 		},
 	}
-	children = append(children, &ui.Node{
-		Kind: ui.KindCapsule, Height: tableHeight, Padding: processTablePadding,
-		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard, Children: []*ui.Node{list},
-	})
-	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: h.metrics().PanelPadding, Children: children}
+	table := &ui.Node{Kind: ui.KindCapsule, Padding: h.metrics().CardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
+		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginM, Children: []*ui.Node{
+			processTableHeader(h, in),
+			{Kind: ui.KindCapsule, Height: tableH, Fill: ui.FillContainerHighest, Shape: ui.ShapeCard,
+				Padding: processTablePadding, Children: []*ui.Node{list}},
+		}}}}
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: pad, Children: []*ui.Node{
+		monitorHeader(h, monitorPageProcesses), info, table, processFooter(h, snapshot, in.UID),
+	}}
 }
 
-func processFilterSwitcher(h *PanelHost) *ui.Node {
-	segments := make([]*ui.Node, 0, 3)
-	for _, filter := range []struct{ id, label string }{{"all", "All"}, {"user", "User"}, {"system", "System"}} {
-		n := &ui.Node{
-			Kind: ui.KindButton, Action: "monitor:filter:" + filter.id, Name: filter.label,
-			Role: "tab", Focusable: true, Height: monitorControlHeight,
-			Children: []*ui.Node{{Kind: ui.KindText, Text: filter.label}},
-		}
-		if h.processFilter == filter.id {
-			n.State |= ui.StateSelected
-			n.Gradient = quietButtonGradient()
-		}
-		segments = append(segments, n)
+func monitorRole(name string, fallback ui.PaintRole) ui.PaintRole {
+	if r, ok := ui.PaintRoleFor(name); ok {
+		return r
 	}
-	return &ui.Node{Kind: ui.KindSegmented, Key: "process-filter",
-		Height: monitorControlHeight, Children: segments}
+	return fallback
 }
 
-func processColumns(h *PanelHost) (name, cpu, memory, pid, action int) {
-	action = 48
-	cpu, memory, pid = 84, 112, 72
-	// ponytail: fixed columns keep compositor downsizing safe; widen Name only
-	// when the table gains a measured-column layout.
-	name = 150
-	return
-}
-
-func processHeader(h *PanelHost) *ui.Node {
-	nameW, cpuW, memoryW, pidW, actionW := processColumns(h)
-	button := func(key, label string, width int) *ui.Node {
+func processTableHeader(h *PanelHost, in monitorView) *ui.Node {
+	cell := func(key, label string, width int) *ui.Node {
 		text := label
-		if key == "" {
-			return &ui.Node{Kind: ui.KindColumn, Width: width, Height: processHeaderHeight,
-				Children: []*ui.Node{{Kind: ui.KindText, Text: text}}}
-		}
 		if h.processSort == key {
+			text = "▲ " + label
 			if h.processDesc {
-				text += " ↓"
-			} else {
-				text += " ↑"
+				text = "▼ " + label
 			}
 		}
-		return &ui.Node{Kind: ui.KindColumn, Action: "monitor:sort:" + key,
-			Name: "Sort by " + label, Role: "button", Focusable: true,
-			Width: width, Height: processHeaderHeight,
-			Children: []*ui.Node{{Kind: ui.KindText, Text: text}}}
+		n := processCell(in, h.processSort == key, width, processHeaderHeight,
+			&ui.Node{Kind: ui.KindText, Text: text, CenterX: true})
+		n.Action, n.Name, n.Role, n.Focusable = "monitor:sort:"+key, "Sort by "+label, "button", true
+		return n
 	}
-	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Padding: processTablePadding + processRowPadding,
-		Height: processHeaderHeight, Children: []*ui.Node{
-			button("name", "Name", nameW), button("cpu", "CPU", cpuW),
-			button("memory", "Memory", memoryW), button("pid", "PID", pidW),
-			button("", "", actionW),
-		}}
-}
-
-func processRow(h *PanelHost, process services.Process) *ui.Node {
-	nameW, cpuW, memoryW, pidW, actionW := processColumns(h)
-	cell := func(text string, width int, tabular bool) *ui.Node {
-		return &ui.Node{Kind: ui.KindColumn, Width: width, Children: []*ui.Node{
-			{Kind: ui.KindText, Text: text, MaxWidth: width, Tabular: tabular},
-		}}
-	}
-	cpu, memory := "—", "—"
-	if process.CPU.Valid {
-		cpu = fmt.Sprintf("%.1f%%", process.CPU.Fraction*100)
-	}
-	if process.ResidentValid {
-		memory = formatBytes(float64(process.ResidentBytes))
-	}
-	identity := fmt.Sprintf(":%d:%d", process.Identity.PID, process.Identity.StartTimeTicks)
-	data := &ui.Node{
-		Kind: ui.KindRow, Gap: theme.MarginM, Height: processCellHeight, Children: []*ui.Node{
-			cell(process.Name, nameW, false), cell(cpu, cpuW, true), cell(memory, memoryW, true),
-			cell(strconv.Itoa(process.Identity.PID), pidW, true),
-		},
-	}
-	kill := &ui.Node{
-		Kind: ui.KindButton, Text: "Kill", Action: "process:term" + identity,
-		Name: fmt.Sprintf("Kill %s", process.Name), Role: "button", Focusable: true,
-		Width: actionW, Height: processCellHeight, Padding: theme.MarginXS, Fill: ui.FillOutline, Tone: ui.ToneError,
-	}
-	row := &ui.Node{
-		Kind: ui.KindRow, Height: processRowHeight, Padding: processRowPadding, Gap: theme.MarginM,
-		Action: "monitor:select" + identity, Name: fmt.Sprintf("Select %s", process.Name),
-		Role: "row", Focusable: true, Children: []*ui.Node{data, kill},
-	}
-	if h.processSelected == process.Identity {
-		row.Fill = ui.FillSoft
+	row := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Padding: processTablePadding + processRowPadding, Height: processHeaderRowH,
+		Children: []*ui.Node{cell("name", "Name", processNameWidth(h))}}
+	for _, c := range processColumnsAfterName {
+		row.Children = append(row.Children, cell(c.key, c.label, c.width))
 	}
 	return row
+}
+
+func processLineRow(h *PanelHost, in monitorView, l processLine) *ui.Node {
+	if l.Kind == lineSection {
+		chevron := "chevron_right"
+		if l.Expanded {
+			chevron = "expand_more"
+		}
+		return &ui.Node{Kind: ui.KindRow, Height: processRowHeight, Gap: theme.MarginS, CenterY: true,
+			Action: "monitor:toggle:" + l.Key, Name: l.Name, Role: "button", Focusable: true, Children: []*ui.Node{
+				{Kind: ui.KindIcon, Icon: chevron, IconSize: processIconSize},
+				{Kind: ui.KindText, Text: l.Name, TextRole: theme.RoleTitle, Tone: ui.ToneActivity, Role: "heading"},
+			}}
+	}
+	nameCell := &ui.Node{Kind: ui.KindRow, Width: processNameWidth(h), Gap: theme.MarginS, CenterY: true}
+	nameCell.Children = append(nameCell.Children, &ui.Node{Kind: ui.KindColumn, Width: processIndent * (l.Depth + 1)})
+	if l.Expandable {
+		chevron := "chevron_right"
+		if l.Expanded {
+			chevron = "expand_more"
+		}
+		// A fixed column, not a PinEnd row: a nested PinEnd row takes all the
+		// width left in its parent, which pushed the icon out of the cell.
+		nameCell.Children[0] = &ui.Node{Kind: ui.KindColumn, Width: processIndent * (l.Depth + 1), CenterY: true,
+			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: chevron, IconSize: processIconSize - 4, CenterX: true}}}
+	}
+	nameCell.Children = append(nameCell.Children, processLineIcon(in, l), &ui.Node{Kind: ui.KindText, Text: l.Name,
+		MaxWidth: processNameWidth(h) - processIndent*(l.Depth+1) - processIconSize - 2*theme.MarginS})
+	row := &ui.Node{Kind: ui.KindRow, Height: processRowHeight, Padding: processRowPadding, Gap: theme.MarginM, CenterY: true,
+		Shape: ui.ShapeSmall, Role: "row", Focusable: true, Name: l.Name,
+		HoverFill: monitorRole(in.Config.HoverBackground, ui.PaintSurfaceVariant),
+		HoverInk:  monitorRole(in.Config.HoverColor, ui.PaintOnSurfaceVariant),
+		// A nested row measures by its content, so the fixed column around
+		// it is what keeps every row's cells under their headers.
+		Children: []*ui.Node{{Kind: ui.KindColumn, Width: processNameWidth(h), CenterY: true,
+			Children: []*ui.Node{nameCell}}}}
+	if l.Kind == lineGroup {
+		row.Action = "monitor:toggle:" + l.Key
+	} else {
+		row.Action = fmt.Sprintf("monitor:select:%d:%d", l.Identity.PID, l.Identity.StartTimeTicks)
+		if h.processSelected == l.Identity {
+			row.Fill = ui.FillSoft
+		}
+	}
+	for _, c := range processColumnsAfterName {
+		var text string
+		switch c.key {
+		case "pid":
+			text = l.PIDText
+		case "user":
+			text = l.User
+		default:
+			text = formatProcessCell(c.key, l.Totals)
+		}
+		value := &ui.Node{Kind: ui.KindText, Text: text, Tabular: true, MaxWidth: c.width - 2*theme.MarginXS}
+		if c.key != "user" {
+			// A row led by text pins its last child to the right edge, which
+			// is how the numbers line up on their units.
+			value = &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{{Kind: ui.KindText}, value}}
+		}
+		cell := processCell(in, h.processSort == c.key, c.width, processRowHeight-4, value)
+		cell.Name = c.label + " value"
+		row.Children = append(row.Children, cell)
+	}
+	return row
+}
+
+// processCell is one fixed table cell. Only the sorted column is a pill, as in
+// the reference; the others are bare content on the same geometry, so the
+// columns line up whichever is sorted.
+func processCell(in monitorView, sorted bool, width, height int, content *ui.Node) *ui.Node {
+	col := &ui.Node{Kind: ui.KindColumn, Width: width, Height: height, Padding: theme.MarginXS, CenterY: true,
+		Children: []*ui.Node{content}}
+	if !sorted {
+		return col
+	}
+	col.Width, col.Height = 0, 0
+	return &ui.Node{Kind: ui.KindCapsule, Width: width, Height: height, Shape: ui.ShapeSmall, Fill: ui.FillRole,
+		FillRole: monitorRole(in.Config.SortBackground, ui.PaintSurfaceVariant),
+		InkRole:  monitorRole(in.Config.SortColor, ui.PaintOnSurfaceVariant),
+		Children: []*ui.Node{col}}
+}
+
+func processLineIcon(in monitorView, l processLine) *ui.Node {
+	if in.Icon != nil && l.Icon != "" {
+		if img := in.Icon(l.Icon, processIconSize); img != nil {
+			return &ui.Node{Kind: ui.KindImage, Image: img, Width: processIconSize, Height: processIconSize}
+		}
+	}
+	return &ui.Node{Kind: ui.KindCapsule, Width: processIconSize, Height: processIconSize, Fill: ui.FillContainer,
+		Shape: ui.ShapeSmall, Children: []*ui.Node{{Kind: ui.KindText, Text: launcherGlyph(l.Name),
+			TextRole: theme.RoleCaption, CenterX: true, CenterY: true}}}
+}
+
+// formatProcessCell is one numeric cell in the reference's form. Zero and
+// unavailable are the same em dash, as they are there.
+func formatProcessCell(kind string, t processTotals) string {
+	spaced := func(b uint64) string {
+		s := formatProcessBytes(b)
+		return s[:len(s)-1] + " " + s[len(s)-1:]
+	}
+	switch kind {
+	case "cpu":
+		if !t.CPUValid || t.CPU*100 < 0.05 {
+			return ccDash
+		}
+		pct := t.CPU * 100
+		if pct == math.Trunc(pct) {
+			return fmt.Sprintf("%.0f%%", pct)
+		}
+		return strings.TrimSuffix(strings.TrimSuffix(fmt.Sprintf("%.1f", pct), "0"), ".") + "%"
+	case "mem":
+		if !t.ResidentValid || t.Resident == 0 {
+			return ccDash
+		}
+		return spaced(t.Resident)
+	case "swap":
+		if !t.SwapValid || t.Swap == 0 {
+			return ccDash
+		}
+		return spaced(t.Swap)
+	case "io":
+		if !t.IOValid || t.IO < 1 {
+			return ccDash
+		}
+		return spaced(uint64(t.IO)) + "/s"
+	}
+	return ccDash
+}
+
+func processFooter(h *PanelHost, snapshot services.ProcessSnapshot, uid uint32) *ui.Node {
+	users := 0
+	for _, p := range snapshot.Processes {
+		if p.UIDValid && p.UID == uid {
+			users++
+		}
+	}
+	text := fmt.Sprintf("Total processes: %d (user: %d  system: %d)", len(snapshot.Processes), users, len(snapshot.Processes)-users)
+	tone := ui.ToneSubtle
+	if len(snapshot.Issues) > 0 {
+		text += fmt.Sprintf(" · %d could not be read", len(snapshot.Issues))
+	}
+	// The last action's outcome sits beside the totals rather than in their
+	// place, so one Kill does not hide the counts for the panel's lifetime.
+	if h.processStatus != "" {
+		text += " · " + h.processStatus
+		tone = ui.ToneNormal
+		if h.processStatusErr != nil {
+			tone = ui.ToneError
+		}
+	}
+	return &ui.Node{Kind: ui.KindText, Text: text, Tone: tone, TextRole: theme.RoleCaption, Height: processFooterHeight}
+}
+
+// parseProcessOrder reads panel.open's section as the reference's order_by:
+// a sort key, optionally prefixed with "-" to reverse its default direction.
+// Numeric keys default to descending, name and user to ascending.
+func parseProcessOrder(s string) (string, bool, bool) {
+	flip := strings.HasPrefix(s, "-")
+	key := strings.TrimPrefix(s, "-")
+	if !validProcessSort(key) {
+		return "", false, false
+	}
+	desc := processSortDescends(key)
+	if flip {
+		desc = !desc
+	}
+	return key, desc, true
+}
+
+// processSortDescends is a key's first direction: measurements descend, so
+// the busiest rows come first; name, PID and user ascend.
+func processSortDescends(key string) bool {
+	return key != "name" && key != "user" && key != "pid"
+}
+
+func validProcessSort(key string) bool {
+	switch key {
+	case "name", "cpu", "mem", "swap", "io", "pid", "user":
+		return true
+	}
+	return false
 }
 
 func revealFocusedProcess(h *PanelHost) bool {
@@ -298,63 +433,16 @@ func nodeContains(root, target *ui.Node) bool {
 	return false
 }
 
-func projectProcesses(processes []services.Process, query, filter, sortKey string, desc bool, currentUID uint32) []services.Process {
-	query = strings.ToLower(strings.TrimSpace(query))
-	out := make([]services.Process, 0, len(processes))
-	for _, process := range processes {
-		switch filter {
-		case "user":
-			if !process.UIDValid || process.UID != currentUID {
-				continue
-			}
-		case "system":
-			if !process.UIDValid || process.UID == currentUID {
-				continue
-			}
-		}
-		if query != "" {
-			haystack := strings.ToLower(process.Name + "\x00" + strings.Join(process.Args, "\x00"))
-			if !strings.Contains(haystack, query) {
-				continue
-			}
-		}
-		out = append(out, process)
-	}
-	slices.SortStableFunc(out, func(a, b services.Process) int {
-		var order int
-		switch sortKey {
-		case "name":
-			order = cmp.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
-		case "cpu":
-			if a.CPU.Valid != b.CPU.Valid {
-				if a.CPU.Valid {
-					return -1
-				}
-				return 1
-			}
-			order = cmp.Compare(a.CPU.Fraction, b.CPU.Fraction)
-		case "memory":
-			if a.ResidentValid != b.ResidentValid {
-				if a.ResidentValid {
-					return -1
-				}
-				return 1
-			}
-			order = cmp.Compare(a.ResidentBytes, b.ResidentBytes)
-		default:
-			order = cmp.Compare(a.Identity.PID, b.Identity.PID)
-		}
-		if desc {
-			return -order
-		}
-		return order
-	})
-	return out
-}
-
+// parseProcessAction reads the detail view's two signal actions: Kill is
+// SIGINT, Force kill is SIGKILL, as the reference sends them.
 func parseProcessAction(action string) (services.ProcessIdentity, syscall.Signal, bool) {
-	identity, ok := parseProcessIdentityAction(action, "process:term")
-	return identity, syscall.SIGTERM, ok
+	if id, ok := parseProcessIdentityAction(action, "process:int"); ok {
+		return id, syscall.SIGINT, true
+	}
+	if id, ok := parseProcessIdentityAction(action, "process:kill"); ok {
+		return id, syscall.SIGKILL, true
+	}
+	return services.ProcessIdentity{}, 0, false
 }
 
 func parseProcessIdentityAction(action, prefix string) (services.ProcessIdentity, bool) {
@@ -374,36 +462,72 @@ func parseProcessIdentityAction(action, prefix string) (services.ProcessIdentity
 }
 
 func (h *PanelHost) activateMonitor(r *Registry, n *ui.Node) bool {
-	switch {
-	case strings.HasPrefix(n.Action, "monitor:page:"):
-		page := strings.TrimPrefix(n.Action, "monitor:page:")
+	rebuild := func() bool { r.rebuildPanel(h); return true }
+	switch a := n.Action; {
+	case a == "monitor:close":
+		r.closePanelLocked(h.id)
+		return true
+	case a == "monitor:settings":
+		return r.openSettingsAtLocked(h.output, "Monitor")
+	case a == "monitor:options":
+		h.monitorOptions = !h.monitorOptions
+		return rebuild()
+	case a == "monitor:clear":
+		h.query, h.search = "", ui.NewField("")
+		return rebuild()
+	case strings.HasPrefix(a, "monitor:page:"):
+		page := strings.TrimPrefix(a, "monitor:page:")
 		if page != monitorPageProcesses && page != monitorPageMetrics {
 			return false
 		}
 		h.monitorPage = page
-		r.rebuildPanel(h)
-		return true
-	case strings.HasPrefix(n.Action, "monitor:filter:"):
-		filter := strings.TrimPrefix(n.Action, "monitor:filter:")
-		if filter != "all" && filter != "user" && filter != "system" {
+		return rebuild()
+	case strings.HasPrefix(a, "monitor:owner:"):
+		o := strings.TrimPrefix(a, "monitor:owner:")
+		if o != "all" && o != "user" && o != "system" {
 			return false
 		}
-		h.processFilter = filter
-		r.rebuildPanel(h)
-		return true
-	case strings.HasPrefix(n.Action, "monitor:sort:"):
-		key := strings.TrimPrefix(n.Action, "monitor:sort:")
-		if key != "name" && key != "cpu" && key != "memory" && key != "pid" {
+		h.processFilter = o
+		return rebuild()
+	case strings.HasPrefix(a, "monitor:sort:"):
+		key := strings.TrimPrefix(a, "monitor:sort:")
+		if !validProcessSort(key) {
 			return false
 		}
 		if h.processSort == key {
 			h.processDesc = !h.processDesc
 		} else {
-			h.processSort = key
-			h.processDesc = key == "cpu" || key == "memory"
+			h.processSort, h.processDesc = key, processSortDescends(key)
 		}
-		r.rebuildPanel(h)
-		return true
+		return rebuild()
+	case strings.HasPrefix(a, "monitor:toggle:"):
+		key := strings.TrimPrefix(a, "monitor:toggle:")
+		if strings.HasPrefix(key, "section:") {
+			h.processCollapsed[key] = !h.processCollapsed[key]
+		} else {
+			h.processExpanded[key] = !h.processExpanded[key]
+		}
+		return rebuild()
+	case a == "monitor:show:apps" || a == "monitor:show:procs":
+		c := r.cfg
+		if a == "monitor:show:apps" {
+			c.Monitor.ShowApps = !c.Monitor.ShowApps
+		} else {
+			c.Monitor.ShowProcesses = !c.Monitor.ShowProcesses
+		}
+		if err := r.writeConfig(c); err != nil {
+			h.processStatus, h.processStatusErr = "Could not save view options: "+err.Error(), err
+		} else {
+			// writeConfig only signals the reload; apply the view option now
+			// so the toggle and the table agree on this rebuild.
+			r.cfg.Monitor = c.Monitor
+			h.processStatus, h.processStatusErr = "", nil
+		}
+		return rebuild()
+	}
+	if n.Action == "monitor:detail:close" {
+		h.processSelected = services.ProcessIdentity{}
+		return rebuild()
 	}
 	if identity, ok := parseProcessIdentityAction(n.Action, "monitor:select"); ok {
 		h.processSelected = identity
@@ -441,7 +565,12 @@ func (r *Registry) scheduleProcessSignal(h *PanelHost, identity services.Process
 			return
 		}
 		if err == nil {
-			current.processStatus = fmt.Sprintf("Sent TERM to PID %d", identity.PID)
+			name := "INT"
+			if signal == syscall.SIGKILL {
+				name = "KILL"
+			}
+			current.processStatus = fmt.Sprintf("Sent %s to PID %d", name, identity.PID)
+			current.processSelected = services.ProcessIdentity{}
 			current.processStatusErr = nil
 		} else {
 			current.processStatus = processSignalError(identity.PID, err)

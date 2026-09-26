@@ -17,6 +17,7 @@ var materialInventory = []string{
 	"folder_open", "expand_more", "add", "remove",
 	"drag_indicator", "tune", "link", "link_off",
 	"public", "edit",
+	"memory", "developer_board", "disabled_by_default", "skull", "cancel",
 	"lock", "logout", "bedtime", "restart_alt", "power_settings_new",
 	"speed", "balance", "energy_savings_leaf", "check", "send",
 	"content_paste", "content_copy",
@@ -218,5 +219,13 @@ func TestPaintIconRejectsAnUnknownName(t *testing.T) {
 	n := &ui.Node{Kind: ui.KindIcon, Icon: "rocket", IconSize: 20, Bounds: ui.Rect{W: 20, H: 20}}
 	if err := paintNode(c, n, r, testStyle, testStyle.Size); err == nil {
 		t.Error("painting an unknown icon succeeded; it must not fail silently")
+	}
+}
+
+func TestMonitorGlyphsAreInTheSubset(t *testing.T) {
+	for _, name := range []string{"memory", "developer_board", "disabled_by_default", "skull", "cancel"} {
+		if !ValidMaterialIcon(name) {
+			t.Errorf("%q is not in the material subset", name)
+		}
 	}
 }

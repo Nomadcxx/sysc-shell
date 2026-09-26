@@ -336,6 +336,35 @@ func DefaultFor(cfg config.Config) *Registry {
 			Set:      setEnum("panels.osd", osdPositions, func(c *config.Config, v string) { c.Panels.OSD = v }),
 		},
 		{
+			Path: "monitor.refresh", Label: "Refresh every", Section: "Monitor", Group: "Sampling",
+			Describe: "Seconds between process and metric samples while the panel is open.",
+			Kind:     KindInt, Min: 1, Max: 10,
+			Get: getInt(func(c config.Config) int { return c.Monitor.Refresh }),
+			Set: setInt("monitor.refresh", 1, 10, func(c *config.Config, n int) { c.Monitor.Refresh = n }),
+		},
+		monitorRoleEntry("monitor.sort-column-background", "Sort column background", "Fill behind the sorted column.",
+			func(c *config.Config) *string { return &c.Monitor.SortBackground }),
+		monitorRoleEntry("monitor.sort-column-color", "Sort column text", "Text colour in the sorted column.",
+			func(c *config.Config) *string { return &c.Monitor.SortColor }),
+		monitorRoleEntry("monitor.hover-background", "Hover background", "Fill behind the hovered row.",
+			func(c *config.Config) *string { return &c.Monitor.HoverBackground }),
+		monitorRoleEntry("monitor.hover-color", "Hover text", "Text colour in the hovered row.",
+			func(c *config.Config) *string { return &c.Monitor.HoverColor }),
+		{
+			Path: "monitor.show-apps", Label: "Show applications", Section: "Monitor", Group: "Sections",
+			Describe: "Group processes under their open application windows.",
+			Kind:     KindBool,
+			Get:      getBool(func(c config.Config) bool { return c.Monitor.ShowApps }),
+			Set:      setBool("monitor.show-apps", func(c *config.Config, v bool) { c.Monitor.ShowApps = v }),
+		},
+		{
+			Path: "monitor.show-processes", Label: "Show processes", Section: "Monitor", Group: "Sections",
+			Describe: "List every process grouped by executable.",
+			Kind:     KindBool,
+			Get:      getBool(func(c config.Config) bool { return c.Monitor.ShowProcesses }),
+			Set:      setBool("monitor.show-processes", func(c *config.Config, v bool) { c.Monitor.ShowProcesses = v }),
+		},
+		{
 			Path: "session.locker", Label: "Locker", Section: "Session", Group: "Lock",
 			Describe: "Command that locks the session. Empty hides the lock action.",
 			Kind:     KindString,
@@ -554,7 +583,7 @@ func presetBaseline(c config.Config) config.Config {
 // entries name it.
 func SectionNames() []string {
 	return []string{
-		"Appearance", "Templates", "Bar", "Widgets", "Panels", "Wallpaper",
+		"Appearance", "Templates", "Bar", "Widgets", "Panels", "Monitor", "Wallpaper",
 		"Weather", "Displays", "Tray", "Plugins", "Session", "Accessibility",
 	}
 }
@@ -843,6 +872,18 @@ func write(assign func(*config.Config, string) error) Setter {
 		}
 		config.RebaseDerivedBar(c, from)
 		return nil
+	}
+}
+
+// monitorRoleEntry is one monitor colour: a menu over the theme's role
+// names, so the panel follows the palette rather than a fixed hex value.
+func monitorRoleEntry(path, label, describe string, field func(*config.Config) *string) Entry {
+	roles := theme.ColorRoleNames()
+	return Entry{
+		Path: path, Label: label, Describe: describe, Section: "Monitor", Group: "Colours",
+		Kind: KindEnum, Options: roles,
+		Get: func(c config.Config) string { return *field(&c) },
+		Set: setEnum(path, roles, func(c *config.Config, v string) { *field(c) = v }),
 	}
 }
 

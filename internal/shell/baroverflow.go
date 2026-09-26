@@ -51,3 +51,16 @@ func lastPlaced(section []*ui.Node) *ui.Node {
 	}
 	return nil
 }
+
+// clearHoverLocked drops the hover state interaction.apply resolved onto the
+// bar's render copy; see renderViewLocked for why the bar paints its
+// clickables at rest.
+func clearHoverLocked(n *ui.Node) {
+	if n == nil {
+		return
+	}
+	n.State &^= ui.StateHovered
+	for _, c := range n.Children {
+		clearHoverLocked(c)
+	}
+}

@@ -60,8 +60,9 @@ func TestPanelHostRenderPaintsMonitorCards(t *testing.T) {
 	settleHostAnimation(reg, h)
 	h.monitorPage = monitorPageMetrics
 	reg.rebuildPanel(h)
-	// 640 of body, configured at the surface size the joints widen it to.
-	w, hgt := 640+int(panel.Width)-reg.panelHosts[PanelMonitor].place.Panel.W, 720
+	// The target body, configured at the surface size the joints widen it to.
+	size := panelTargetSize(PanelMonitor)
+	w, hgt := size.W+int(panel.Width)-reg.panelHosts[PanelMonitor].place.Panel.W, size.H
 	if err := panel.Callbacks.Configure(w, hgt, 120); err != nil {
 		t.Fatal(err)
 	}

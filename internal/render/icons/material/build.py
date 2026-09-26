@@ -141,6 +141,13 @@ ICONS = [
     # renaming a zone in place.
     "public",
     "edit",
+    # The system monitor panel: the info card's CPU and board rows, and the
+    # process view's interrupt, force-kill and close buttons.
+    "memory",
+    "developer_board",
+    "disabled_by_default",
+    "skull",
+    "cancel",
     # The Faith plugin's read-the-chapter control.
     "menu_book",
 ]

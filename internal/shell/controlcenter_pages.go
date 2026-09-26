@@ -672,7 +672,7 @@ func ccNotifications(r *Registry, h *PanelHost) *ui.Node {
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
 		Children: []*ui.Node{{Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{
 			ccSegment("do_not_disturb_on", "Do not disturb", "cc:dnd", dnd),
-			ccSegment("delete", "Clear", "notify:center:clear", false),
+			ccSegment("delete", "Clear all", "notify:center:clear", false),
 		}}},
 	}
 	var cards []*ui.Node

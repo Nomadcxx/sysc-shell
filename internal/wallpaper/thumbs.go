@@ -169,6 +169,10 @@ func (t *Thumbnailer) generate(ctx context.Context, entries []Entry) {
 		case <-time.After(t.pace):
 		}
 	}
+	// The tail of a walk is often all cache hits, which fire no per-item
+	// tick. Announce the finished counts anyway, or the picker shows a stale
+	// "generating previews" number forever.
+	t.note()
 }
 
 func (t *Thumbnailer) note() {

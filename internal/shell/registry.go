@@ -124,7 +124,10 @@ type Registry struct {
 
 	running      []runningAppSlot
 	runningIndex []runningAppEntry
-	runningMenu  *runningAppMenuHost
+	// usernames resolves process owners for the system monitor. It carries
+	// its own lock; see usernameCache.
+	usernames   *usernameCache
+	runningMenu *runningAppMenuHost
 	// niriSend is the FocusWindow/CloseWindow seam. Tests replace it; nil
 	// sends niri.Action on $NIRI_SOCKET off this goroutine.
 	niriSend func(any) error
@@ -1282,6 +1285,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 					h.draft = cfg
 					h.set = settings.DefaultFor(cfg)
 				}
+				r.refreshMonitorLeasesLocked(r.panelHosts[PanelMonitor])
 				media = r.media
 				r.tokens = tok
 				r.themeErr = ""
@@ -1565,7 +1569,7 @@ func (r *Registry) UpdateClock(now time.Time) []uint32 {
 // whose rendering actually changed.
 func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
 	facts := readMachineFacts()
-	r.updateControlCentreRootDevice(snap, resolveDevicePath)
+	r.updateRootDevice(snap, resolveDevicePath)
 	r.mu.Lock()
 	r.sample = snap
 	r.machineFacts = facts
@@ -1578,6 +1582,7 @@ func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
 	}
 	monitorOut, monitorOK := uint32(0), false
 	if h := r.panelHosts[PanelMonitor]; h != nil {
+		r.syncRateSubjectsLocked(h, snap, monitorLeaseInterval(r.cfg.Monitor))
 		r.rebuildPanel(h)
 		monitorOut, monitorOK = h.output, true
 	}
@@ -1592,7 +1597,7 @@ func (r *Registry) UpdateMetrics(snap services.Snapshot) []uint32 {
 		networkOut, networkOK = h.output, true
 	}
 	if h := r.panelHosts[PanelControlCenter]; h != nil {
-		r.syncControlCentreSubjectsLocked(h, snap)
+		r.syncRateSubjectsLocked(h, snap, time.Second)
 	}
 	controlOut, controlOK := r.rebuildControlCentreLocked()
 	r.mu.Unlock()
