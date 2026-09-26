@@ -253,6 +253,19 @@ func socketFileIfOwned(path string, proc Process) (os.FileInfo, error) {
 	return info, nil
 }
 
+// deadSocketFile reports whether path is a socket file with nothing listening
+// behind it. Such a file is garbage left by a killed run: connecting is
+// refused, so no process owns it and removing it cannot disturb anyone. Any
+// probe that cannot prove the file dead counts as live.
+func deadSocketFile(path string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSocket == 0 {
+		return false
+	}
+	_, err = socketPeerPID(path)
+	return errors.Is(err, syscall.ECONNREFUSED)
+}
+
 func removeSocketIfSame(path string, expected os.FileInfo) error {
 	current, err := os.Lstat(path)
 	if os.IsNotExist(err) {
@@ -327,15 +340,12 @@ func (e *gslapperEngine) Apply(job Job, set Settings) (string, error) {
 	owned := e.ownedProcess(job.Connector)
 	_, socketErr := os.Stat(socket)
 	switch {
-	case socketErr == nil:
-		if owned == nil {
-			return "", fmt.Errorf("wallpaper: %s socket is not owned by this shell", job.Connector)
-		}
+	case socketErr == nil && owned != nil:
+		// gSlapper needs --auto-stop to change a video path, so at any other
+		// hidden setting the change is known to fail and is not attempted.
+		// ponytail: gSlapper 1.5.1 can acknowledge non-fading image
+		// changes without repainting. Relaunch until upstream fixes invalidation.
 		if e.liveSocket(owned, socket) {
-			// gSlapper needs --auto-stop to change a video path, so at any other
-			// hidden setting the change is known to fail and is not attempted.
-			// ponytail: gSlapper 1.5.1 can acknowledge non-fading image
-			// changes without repainting. Relaunch until upstream fixes invalidation.
 			attemptChange := (job.Kind == KindImage && set.Fade) || (job.Kind == KindVideo && !videoChangeNeedsRestart(set.Hidden))
 			if attemptChange {
 				reply, err := e.requestSocket(owned, socket, "change "+job.Path, ipcTimeout)
@@ -352,6 +362,18 @@ func (e *gslapperEngine) Apply(job Job, set Settings) (string, error) {
 		}
 		if err := e.stopOwned(job.Connector, socket); err != nil {
 			return "", err
+		}
+	case socketErr == nil:
+		// A socket file with no listener is garbage from a killed run: no
+		// process owns it, so unlinking disturbs nobody. A live socket we do
+		// not own is still refused (D17/D18).
+		// ponytail: probe-then-remove races a binder arriving in between;
+		// launch re-checks and a losing gslapper bind fails visibly.
+		if !deadSocketFile(socket) {
+			return "", fmt.Errorf("wallpaper: %s socket is not owned by this shell", job.Connector)
+		}
+		if err := os.Remove(socket); err != nil && !os.IsNotExist(err) {
+			return "", fmt.Errorf("wallpaper: clear stale %s socket: %w", job.Connector, err)
 		}
 	case !os.IsNotExist(socketErr):
 		return "", fmt.Errorf("wallpaper: stat %s: %w", socket, socketErr)
@@ -492,13 +514,20 @@ func (e *gslapperEngine) liveSocket(proc Process, socket string) bool {
 //
 // There is deliberately no match-by-name step. If the socket outlives both and
 // we hold no handle for it, that is reported rather than resolved by killing
-// something that merely looks like ours.
+// something that merely looks like ours. A socket file with no listener is the
+// one exception: no process is behind it, so it is cleared as garbage.
 func (e *gslapperEngine) stopOwned(connector, socket string) error {
 	e.mu.Lock()
 	proc := e.owned[connector]
 	e.mu.Unlock()
 	if proc == nil {
 		if _, err := os.Stat(socket); os.IsNotExist(err) {
+			return nil
+		}
+		if deadSocketFile(socket) {
+			if err := os.Remove(socket); err != nil && !os.IsNotExist(err) {
+				return err
+			}
 			return nil
 		}
 		return fmt.Errorf("wallpaper: %s still holds %s and is not ours to stop", connector, socket)
