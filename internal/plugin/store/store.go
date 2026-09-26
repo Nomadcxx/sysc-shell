@@ -209,6 +209,10 @@ func cloneState(state State) State {
 	for i := range state.Listings {
 		l := &state.Listings[i]
 		l.Entry = cloneEntry(l.Entry)
+		if l.Resolution.Release != nil {
+			release := cloneRelease(*l.Resolution.Release)
+			l.Resolution.Release = &release
+		}
 		if l.Installed != nil {
 			copy := cloneRecord(*l.Installed)
 			l.Installed = &copy
