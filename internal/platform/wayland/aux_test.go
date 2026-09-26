@@ -252,6 +252,30 @@ func TestAuxUpdateRejectsRectanglesOutsideTheSurface(t *testing.T) {
 	}
 }
 
+// TestAuxUpdateBoundsTheInputRegionByTheRequestedSize: an update that resizes
+// the surface carries the input region for the new size. Checking it against
+// the size being replaced rejected every region that grew with the surface,
+// and the fire-and-forget failure took the shell down (a plugin panel resized
+// from 400x700 to 400x760 on the laptop).
+func TestAuxUpdateBoundsTheInputRegionByTheRequestedSize(t *testing.T) {
+	t.Parallel()
+	u := newSurfaceUnit("panel:plugin")
+	u.ss.logicalWidth, u.ss.logicalHeight = 424, 700
+	w, hgt := uint32(424), uint32(772)
+	grown := []ui.Rect{{X: 12, Y: 0, W: 400, H: 760}}
+	next, err := planAuxUpdate(u, &AuxUpdate{Width: &w, Height: &hgt, SetInputRegion: true, InputRects: grown})
+	if err != nil {
+		t.Fatalf("region inside the requested size rejected: %v", err)
+	}
+	if len(next.inputRects) != 1 || next.inputRects[0] != grown[0] {
+		t.Fatalf("input region = %+v", next.inputRects)
+	}
+	past := []ui.Rect{{X: 12, Y: 0, W: 400, H: 773}}
+	if _, err := planAuxUpdate(u, &AuxUpdate{Width: &w, Height: &hgt, SetInputRegion: true, InputRects: past}); err == nil {
+		t.Fatal("region past the requested size accepted")
+	}
+}
+
 func TestAuxUpdateForAMissingSurfaceLeavesSiblingsAlone(t *testing.T) {
 	t.Parallel()
 	s := newHostSet()

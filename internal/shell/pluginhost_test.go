@@ -1279,6 +1279,67 @@ func TestPluginPanelResizeRetargetsTheOpenPanel(t *testing.T) {
 	}
 }
 
+// TestPluginPanelResizeFitsTheOutput: panel.resize is fitted to the output as
+// view.open is (sysc-578). The KDE Connect panel asked for 400x760 on the
+// laptop; the unfitted size and its input region overran the surface, and the
+// failed update took the shell down.
+func TestPluginPanelResizeFitsTheOutput(t *testing.T) {
+	reg := bindTestPlugin(t, "call-panel")
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	_ = drainAux(t, reg, 2) // keyboard + panel-open
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		reg.mu.Lock()
+		host := reg.panelHosts[PanelPlugin]
+		if host != nil {
+			host.place.Output.H = 600
+		}
+		reg.mu.Unlock()
+		if host != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("plugin panel never opened")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if lastErr = reg.plugins.resizePanel(v1.PanelResizeParams{Width: 400, Height: 2000}); lastErr == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if lastErr != nil {
+		t.Fatalf("resizePanel never succeeded: %v", lastErr)
+	}
+	reg.mu.Lock()
+	host := reg.panelHosts[PanelPlugin]
+	place := host.place
+	place.Panel = ui.Rect{W: 400, H: 2000}
+	wantW, wantH := place.FittedSize()
+	j := place.Joints()
+	edge := host.edgeExtent(j)
+	reg.mu.Unlock()
+	if wantH >= 2000 {
+		t.Fatalf("fixture does not constrain the panel: fitted %dx%d", wantW, wantH)
+	}
+	if got := reg.plugins.panelSize(); got.W != wantW || got.H != wantH {
+		t.Fatalf("view size after resize = %+v, want the fitted %dx%d", got, wantW, wantH)
+	}
+	req := drainAux(t, reg, 1)[0]
+	if req.Update == nil || req.Update.Height == nil || int(*req.Update.Height) != wantH+edge {
+		t.Fatalf("surface update = %+v, want height %d", req.Update, wantH+edge)
+	}
+	for _, r := range req.Update.InputRects {
+		if r.Y+r.H > int(*req.Update.Height) || r.X+r.W > int(*req.Update.Width) {
+			t.Fatalf("input rect %+v leaves the %dx%d surface", r, *req.Update.Width, *req.Update.Height)
+		}
+	}
+}
+
 func TestPluginPanelFocusRoutesToTheStampedNode(t *testing.T) {
 	reg := bindTestPlugin(t, "call-panel")
 	newHosts(t, reg, map[uint32]string{7: "DP-1"})
