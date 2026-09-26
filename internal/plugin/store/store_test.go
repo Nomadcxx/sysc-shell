@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/plugin/catalog"
 )
@@ -82,27 +83,79 @@ func TestBuildListingsAddsOrphanManagedInstalls(t *testing.T) {
 
 // storeFixture is a source repo, an asset server and a store over them.
 type storeFixture struct {
-	t    *testing.T
-	repo *gitRepo
-	srv  *assetServer
-	st   *Store
-	root string
+	t        *testing.T
+	repo     *gitRepo
+	srv      *assetServer
+	st       *Store
+	root     string
+	mediaDir string
 }
 
 func newStoreFixture(t *testing.T, local map[string]string) *storeFixture {
+	return newStoreFixtureWithInterval(t, local, 0)
+}
+
+func newStoreFixtureWithInterval(t *testing.T, local map[string]string, checkInterval time.Duration) *storeFixture {
 	t.Helper()
 	f := &storeFixture{t: t, repo: newGitRepo(t), srv: newAssetServer(t)}
 	f.root = filepath.Join(t.TempDir(), "plugins")
+	f.mediaDir = filepath.Join(t.TempDir(), "media")
 	f.st = New(Options{
-		CacheDir:  filepath.Join(t.TempDir(), "sources"),
-		Installer: &Installer{Root: f.root, Client: NewHTTPClient(), Arch: runtime.GOARCH},
-		Sources:   func() []Source { return []Source{{Name: "test", URL: f.repo.url()}} },
-		Local:     func() map[string]string { return local },
+		CacheDir:      filepath.Join(t.TempDir(), "sources"),
+		MediaDir:      f.mediaDir,
+		CheckInterval: checkInterval,
+		Installer:     &Installer{Root: f.root, Client: NewHTTPClient(), Arch: runtime.GOARCH},
+		Sources:       func() []Source { return []Source{{Name: "test", URL: f.repo.url()}} },
+		Local:         func() map[string]string { return local },
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go f.st.Run(ctx)
 	return f
+}
+
+func TestStoreUpdatesPublishLatestSnapshot(t *testing.T) {
+	t.Parallel()
+	f := newStoreFixture(t, nil)
+	f.st.setBusy("first")
+	f.st.setBusy("latest")
+
+	select {
+	case st := <-f.st.Updates():
+		if st.Busy != "latest" {
+			t.Fatalf("update busy = %q, want latest", st.Busy)
+		}
+	default:
+		t.Fatal("busy change did not publish a store update")
+	}
+	select {
+	case st := <-f.st.Updates():
+		t.Fatalf("stale update remained buffered: %+v", st)
+	default:
+	}
+}
+
+func TestStoreRefreshesAtCheckInterval(t *testing.T) {
+	t.Parallel()
+	const interval = 50 * time.Millisecond
+	f := newStoreFixtureWithInterval(t, nil, interval)
+	oldRelease := release(t, f.srv, runtime.GOARCH, "1.4.0", defaultCaps, nil)
+	f.publish(oldRelease)
+
+	newRelease := release(t, f.srv, runtime.GOARCH, "1.5.0", defaultCaps, nil)
+	commit := f.repo.publish(catalogJSON(t, entryFor(newRelease, oldRelease)))
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		st := f.st.State()
+		if len(st.Sources) == 1 && st.Sources[0].Commit == commit {
+			if got := f.listing().Entry.Version; got != "1.5.0" {
+				t.Fatalf("listing version after timed refresh = %s, want 1.5.0", got)
+			}
+			return
+		}
+		time.Sleep(interval / 5)
+	}
+	t.Fatal("the store did not refresh the source on its check interval")
 }
 
 func (f *storeFixture) publish(rels ...catalog.Release) {
@@ -139,7 +192,7 @@ func TestStoreInstallsUpdatesRollsBackAndRemoves(t *testing.T) {
 		t.Fatalf("before install: %s", got)
 	}
 
-	f.await(f.st.Install("test", fixtureID))
+	f.await(f.st.Install("test", fixtureID, ReleaseRef{}))
 	if l := f.listing(); l.Status != StatusInstalled || l.Installed.Version != "1.4.0" {
 		t.Fatalf("after install: %+v", l)
 	}
@@ -148,7 +201,7 @@ func TestStoreInstallsUpdatesRollsBackAndRemoves(t *testing.T) {
 	if got := f.listing().Status; got != StatusUpdateAvailable {
 		t.Fatalf("after publishing 1.5.0: %s", got)
 	}
-	f.await(f.st.Update(fixtureID, false))
+	f.await(f.st.Update(fixtureID, ReleaseRef{}, false))
 	if l := f.listing(); l.Installed.Version != "1.5.0" {
 		t.Fatalf("after update: %+v", l.Installed)
 	}
@@ -172,13 +225,13 @@ func TestUpdateAsksAgainWhenCapabilitiesChange(t *testing.T) {
 	f := newStoreFixture(t, nil)
 	arch := runtime.GOARCH
 	f.publish(release(t, f.srv, arch, "1.4.0", []string{"panels", "settings"}, nil))
-	f.await(f.st.Install("test", fixtureID))
+	f.await(f.st.Install("test", fixtureID, ReleaseRef{}))
 	f.publish(release(t, f.srv, arch, "1.5.0", defaultCaps, nil))
 
-	if _, err := f.st.Update(fixtureID, false); KindOf(err) != KindConsent {
+	if _, err := f.st.Update(fixtureID, ReleaseRef{}, false); KindOf(err) != KindConsent {
 		t.Fatalf("unconfirmed update: %v, want %s", err, KindConsent)
 	}
-	f.await(f.st.Update(fixtureID, true))
+	f.await(f.st.Update(fixtureID, ReleaseRef{}, true))
 	if l := f.listing(); l.Installed.Version != "1.5.0" {
 		t.Fatalf("after confirmed update: %+v", l.Installed)
 	}
@@ -232,9 +285,53 @@ func TestALocalCopyShadowsTheManagedListing(t *testing.T) {
 	if got := f.listing().Status; got != StatusLocalOnly {
 		t.Fatalf("before install: %s", got)
 	}
-	f.await(f.st.Install("test", fixtureID))
+	f.await(f.st.Install("test", fixtureID, ReleaseRef{}))
 	if got := f.listing().Status; got != StatusShadowed {
 		t.Fatalf("after install: %s", got)
+	}
+}
+
+func TestShadowedListingKeepsItsUpdateAvailableFlag(t *testing.T) {
+	t.Parallel()
+	release := entryFor(
+		catalog.Release{Version: "1.5.0", Protocol: v1Version(1, 0), Assets: map[string]catalog.Asset{"linux-amd64": {URL: "https://e.com/new", SHA256: sum([]byte("new")), Size: 3}}},
+		catalog.Release{Version: "1.4.0", Protocol: v1Version(1, 0), Assets: map[string]catalog.Asset{"linux-amd64": {URL: "https://e.com/old", SHA256: sum([]byte("old")), Size: 3}}},
+	)
+	got := buildListings(
+		[]SourceState{{Name: "s"}}, map[string]catalog.Catalog{"s": {Entries: []catalog.Entry{release}}},
+		Installed{fixtureID: {Source: "s", Version: "1.4.0"}}, map[string]string{fixtureID: "/home/u/plugin"}, nil, "amd64",
+	)
+	if len(got) != 1 || got[0].Status != StatusShadowed || !got[0].UpdateAvailable {
+		t.Fatalf("shadowed listing = %+v; want shadowed with update available", got)
+	}
+}
+
+func TestInstallRejectsAReleaseDifferentFromDisplayedConsent(t *testing.T) {
+	t.Parallel()
+	f := newStoreFixture(t, nil)
+	f.publish(release(t, f.srv, runtime.GOARCH, "1.4.0", defaultCaps, nil))
+	_, err := f.st.Install("test", fixtureID, ReleaseRef{Version: "1.3.0", SHA256: sum([]byte("stale"))})
+	if KindOf(err) != KindConsent {
+		t.Fatalf("Install with stale displayed release = %v, want %s", err, KindConsent)
+	}
+}
+
+func TestUpdateRejectsAReleaseDifferentFromDisplayedConsent(t *testing.T) {
+	t.Parallel()
+	f := newStoreFixture(t, nil)
+	arch := runtime.GOARCH
+	oldRelease := release(t, f.srv, arch, "1.4.0", defaultCaps, nil)
+	f.publish(oldRelease)
+	f.await(f.st.Install("test", fixtureID, ReleaseRef{}))
+	shown := release(t, f.srv, arch, "1.5.0", defaultCaps, nil)
+	f.publish(shown, oldRelease)
+	current := release(t, f.srv, arch, "1.6.0", defaultCaps, nil)
+	f.repo.publish(catalogJSON(t, entryFor(current, shown, oldRelease)))
+	f.await(f.st.Refresh())
+
+	want := ReleaseRef{Version: shown.Version, SHA256: shown.Assets["linux-"+arch].SHA256}
+	if _, err := f.st.Update(fixtureID, want, false); KindOf(err) != KindConsent {
+		t.Fatalf("Update with stale displayed release = %v, want %s", err, KindConsent)
 	}
 }
 
@@ -249,7 +346,7 @@ func TestUpdateRefusesIfTheCatalogChangesBeforeItRuns(t *testing.T) {
 	arch := runtime.GOARCH
 	v1rel := release(t, f.srv, arch, "1.4.0", defaultCaps, nil)
 	f.publish(v1rel)
-	f.await(f.st.Install("test", fixtureID))
+	f.await(f.st.Install("test", fixtureID, ReleaseRef{}))
 
 	// 1.5.0 has the same capabilities as installed, so a later Update(id,
 	// false) would pass the enqueue-time caps/requires check on its own.
@@ -270,7 +367,7 @@ func TestUpdateRefusesIfTheCatalogChangesBeforeItRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	updateDone, err := f.st.Update(fixtureID, false)
+	updateDone, err := f.st.Update(fixtureID, ReleaseRef{}, false)
 	var uerr error
 	if err != nil {
 		uerr = err
@@ -298,7 +395,7 @@ func TestConfirmedUpdateRefusesIfTheCatalogChangesBeforeItRuns(t *testing.T) {
 	arch := runtime.GOARCH
 	v1rel := release(t, f.srv, arch, "1.4.0", defaultCaps, nil)
 	f.publish(v1rel)
-	f.await(f.st.Install("test", fixtureID))
+	f.await(f.st.Install("test", fixtureID, ReleaseRef{}))
 
 	v2rel := release(t, f.srv, arch, "1.5.0", defaultCaps, nil)
 	f.publish(v2rel, v1rel)
@@ -310,7 +407,7 @@ func TestConfirmedUpdateRefusesIfTheCatalogChangesBeforeItRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	updateDone, err := f.st.Update(fixtureID, true)
+	updateDone, err := f.st.Update(fixtureID, ReleaseRef{}, true)
 	var uerr error
 	if err != nil {
 		uerr = err
@@ -349,7 +446,7 @@ func TestInstallRefusesIfTheCatalogChangesBeforeItRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	installDone, err := f.st.Install("test", fixtureID)
+	installDone, err := f.st.Install("test", fixtureID, ReleaseRef{})
 	var ierr error
 	if err != nil {
 		ierr = err
@@ -371,10 +468,10 @@ func TestInstallOfSomethingUnlisted(t *testing.T) {
 	t.Parallel()
 	f := newStoreFixture(t, nil)
 	f.publish(release(t, f.srv, runtime.GOARCH, "1.4.0", defaultCaps, nil))
-	if _, err := f.st.Install("test", "org.sysc.nope"); KindOf(err) != KindNotListed {
+	if _, err := f.st.Install("test", "org.sysc.nope", ReleaseRef{}); KindOf(err) != KindNotListed {
 		t.Fatalf("err = %v", err)
 	}
-	if _, err := f.st.Install("nosuch", fixtureID); KindOf(err) != KindNotListed {
+	if _, err := f.st.Install("nosuch", fixtureID, ReleaseRef{}); KindOf(err) != KindNotListed {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -389,7 +486,7 @@ func TestInstallOfAnOrphanRowRefusesWithoutMentioningProtocol(t *testing.T) {
 	f := newStoreFixture(t, nil)
 	arch := runtime.GOARCH
 	f.publish(release(t, f.srv, arch, "1.4.0", defaultCaps, nil))
-	f.await(f.st.Install("test", fixtureID))
+	f.await(f.st.Install("test", fixtureID, ReleaseRef{}))
 
 	// The source stops publishing this id, orphaning the managed install.
 	f.repo.publish(catalogJSON(t))
@@ -398,7 +495,7 @@ func TestInstallOfAnOrphanRowRefusesWithoutMentioningProtocol(t *testing.T) {
 		t.Fatalf("status after the source dropped it: %s, want %s", l.Status, StatusUnlisted)
 	}
 
-	_, err := f.st.Install("test", fixtureID)
+	_, err := f.st.Install("test", fixtureID, ReleaseRef{})
 	if KindOf(err) != KindNotListed {
 		t.Fatalf("err = %v, want %s", err, KindNotListed)
 	}

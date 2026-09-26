@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -22,8 +23,11 @@ type Source struct {
 type Options struct {
 	// CacheDir holds one git clone per source name.
 	CacheDir  string
+	MediaDir  string
 	Installer *Installer
 	Git       Git
+	// CheckInterval controls the automatic source refresh; zero means 24 hours.
+	CheckInterval time.Duration
 	// Sources returns the enabled sources. It is read at every refresh, so a
 	// configuration change is picked up without restarting the store.
 	Sources func() []Source
@@ -55,12 +59,20 @@ type Listing struct {
 	Entry         catalog.Entry
 	Resolution    Resolution
 	Status        Status
+	// UpdateAvailable remains true for a shadowed managed copy with a newer release.
+	UpdateAvailable bool
 	// Installed is the managed copy's record, when there is one.
 	Installed *Record
 	// LocalDir is a user-root copy with the same id, when there is one.
 	LocalDir string
 	// Err is the last failed operation on this plugin, until the next one.
 	Err error
+}
+
+// ReleaseRef is the identity shown in the consent step.
+type ReleaseRef struct {
+	Version string
+	SHA256  string
 }
 
 // SourceState is one source's last fetch. Err with a zero FetchedAt means the
@@ -79,6 +91,7 @@ type SourceState struct {
 type State struct {
 	Sources  []SourceState
 	Listings []Listing
+	Media    map[string]MediaState
 	// Busy names the operation in flight, "" when idle.
 	Busy string
 }
@@ -95,18 +108,30 @@ type op struct {
 // Store runs every git, network and disk operation on one goroutine. Callers
 // enqueue and read snapshots; nothing they call blocks on I/O.
 type Store struct {
-	opts Options
-	ops  chan op
+	opts      Options
+	ops       chan op
+	updates   chan State
+	mediaWant chan []MediaKey
 
-	mu       sync.Mutex
-	sources  []SourceState
-	catalogs map[string]catalog.Catalog
-	errs     map[string]error
-	state    State
+	mu          sync.Mutex
+	sources     []SourceState
+	catalogs    map[string]catalog.Catalog
+	errs        map[string]error
+	state       State
+	mediaWanted map[string]MediaKey
+	mediaActive MediaKey
+	mediaCancel context.CancelFunc
 }
 
 func New(opts Options) *Store {
-	return &Store{opts: opts, ops: make(chan op, queueDepth), catalogs: map[string]catalog.Catalog{}, errs: map[string]error{}}
+	if opts.MediaDir == "" {
+		opts.MediaDir = MediaRoot()
+	}
+	return &Store{
+		opts: opts, ops: make(chan op, queueDepth), updates: make(chan State, 1), mediaWant: make(chan []MediaKey, 1),
+		catalogs: map[string]catalog.Catalog{}, errs: map[string]error{}, mediaWanted: map[string]MediaKey{},
+		state: State{Media: map[string]MediaState{}},
+	}
 }
 
 // Run is the worker. It returns when ctx is done.
@@ -118,10 +143,23 @@ func (s *Store) Run(ctx context.Context) {
 		slog.Warn("plugin store: cannot clear staging", "err", err)
 	}
 	s.rebuild()
+	interval := s.opts.CheckInterval
+	if interval <= 0 {
+		interval = 24 * time.Hour
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-ticker.C:
+			refresh := op{name: "refresh", run: s.refresh, done: make(chan error, 1)}
+			select {
+			case s.ops <- refresh:
+			default:
+				slog.Warn("plugin store: daily refresh skipped; operation queue is full")
+			}
 		case o := <-s.ops:
 			s.setBusy(o.name)
 			err := o.run(ctx)
@@ -133,6 +171,8 @@ func (s *Store) Run(ctx context.Context) {
 			s.rebuild()
 			s.setBusy("")
 			o.done <- err
+		case keys := <-s.mediaWant:
+			s.fetchMedia(ctx, keys)
 		}
 	}
 }
@@ -141,34 +181,102 @@ func (s *Store) Run(ctx context.Context) {
 func (s *Store) State() State {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return State{
-		Sources:  slices.Clone(s.state.Sources),
-		Listings: slices.Clone(s.state.Listings),
-		Busy:     s.state.Busy,
+	return cloneState(s.state)
+}
+
+// Updates carries immutable latest-wins snapshots for UI relays.
+func (s *Store) Updates() <-chan State { return s.updates }
+
+func (s *Store) publishLocked() {
+	state := cloneState(s.state)
+	select {
+	case s.updates <- state:
+	default:
+		select {
+		case <-s.updates:
+		default:
+		}
+		s.updates <- state
 	}
+}
+
+func cloneState(state State) State {
+	state.Sources = slices.Clone(state.Sources)
+	for i := range state.Sources {
+		state.Sources[i].Rejected = slices.Clone(state.Sources[i].Rejected)
+	}
+	state.Listings = slices.Clone(state.Listings)
+	for i := range state.Listings {
+		l := &state.Listings[i]
+		l.Entry = cloneEntry(l.Entry)
+		if l.Installed != nil {
+			copy := cloneRecord(*l.Installed)
+			l.Installed = &copy
+		}
+	}
+	state.Media = maps.Clone(state.Media)
+	return state
+}
+
+func cloneEntry(entry catalog.Entry) catalog.Entry {
+	entry.Release = cloneRelease(entry.Release)
+	entry.Releases = slices.Clone(entry.Releases)
+	for i := range entry.Releases {
+		entry.Releases[i] = cloneRelease(entry.Releases[i])
+	}
+	if entry.Screenshot != nil {
+		copy := *entry.Screenshot
+		entry.Screenshot = &copy
+	}
+	if entry.Readme != nil {
+		copy := *entry.Readme
+		entry.Readme = &copy
+	}
+	return entry
+}
+
+func cloneRelease(release catalog.Release) catalog.Release {
+	release.Capabilities = slices.Clone(release.Capabilities)
+	release.Requires.Commands = slices.Clone(release.Requires.Commands)
+	release.Assets = maps.Clone(release.Assets)
+	return release
+}
+
+func cloneRecord(record Record) Record {
+	record.Capabilities = slices.Clone(record.Capabilities)
+	record.Requires = slices.Clone(record.Requires)
+	if record.Previous != nil {
+		previous := *record.Previous
+		previous.Capabilities = slices.Clone(previous.Capabilities)
+		previous.Requires = slices.Clone(previous.Requires)
+		previous.Previous = nil // rollback keeps one previous version
+		record.Previous = &previous
+	}
+	return record
 }
 
 func (s *Store) Refresh() (<-chan error, error) {
 	return s.enqueue(op{name: "refresh", run: s.refresh})
 }
 
-// Install queues installing id from source. The command itself is the consent:
-// the manager shows its consent sheet before calling this. The release
-// identity the caller saw is captured now and re-checked when the op runs, so
-// a refresh that lands first cannot install a different release than the one
-// consented to.
-func (s *Store) Install(source, id string) (<-chan error, error) {
+// Install queues installing id from source. The identity shown by the manager
+// is checked now and again when the operation runs. An empty want preserves
+// enqueue-time pinning for IPC callers that do not pass an explicit identity.
+func (s *Store) Install(source, id string, want ReleaseRef) (<-chan error, error) {
 	l, err := s.find(source, id)
 	if err != nil {
 		return nil, err
 	}
-	version, sha := releaseIdentity(l.Resolution.Release, s.opts.Installer.Arch)
+	want, err = s.pinRelease(l, want)
+	if err != nil {
+		return nil, err
+	}
 	return s.enqueue(op{name: "install " + id, id: id, run: func(ctx context.Context) error {
 		l, err := s.find(source, id)
 		if err != nil {
 			return err
 		}
-		if err := s.checkConsent(l, version, sha); err != nil {
+		if err := s.checkConsent(l, want.Version, want.SHA256); err != nil {
 			return err
 		}
 		return s.install(ctx, l)
@@ -181,8 +289,12 @@ func (s *Store) Install(source, id string) (<-chan error, error) {
 // runs, whether or not confirmed: a refresh that lands first must not let a
 // stale consent (confirmed or not) install whatever the catalog resolves to
 // by then.
-func (s *Store) Update(id string, confirmed bool) (<-chan error, error) {
+func (s *Store) Update(id string, want ReleaseRef, confirmed bool) (<-chan error, error) {
 	l, err := s.updatable(id)
+	if err != nil {
+		return nil, err
+	}
+	want, err = s.pinRelease(l, want)
 	if err != nil {
 		return nil, err
 	}
@@ -191,17 +303,28 @@ func (s *Store) Update(id string, confirmed bool) (<-chan error, error) {
 		return nil, fail(KindConsent, nil, "%s %s asks for capabilities %v and commands %v; installed %s has %v and %v",
 			id, rel.Version, rel.Capabilities, rel.Requires.Commands, l.Installed.Version, l.Installed.Capabilities, l.Installed.Requires)
 	}
-	version, sha := releaseIdentity(rel, s.opts.Installer.Arch)
 	return s.enqueue(op{name: "update " + id, id: id, run: func(ctx context.Context) error {
 		l, err := s.updatable(id)
 		if err != nil {
 			return err
 		}
-		if err := s.checkConsent(l, version, sha); err != nil {
+		if err := s.checkConsent(l, want.Version, want.SHA256); err != nil {
 			return err
 		}
 		return s.install(ctx, l)
 	}})
+}
+
+func (s *Store) pinRelease(l Listing, want ReleaseRef) (ReleaseRef, error) {
+	version, sha := releaseIdentity(l.Resolution.Release, s.opts.Installer.Arch)
+	current := ReleaseRef{Version: version, SHA256: sha}
+	if want == (ReleaseRef{}) {
+		return current, nil
+	}
+	if want != current {
+		return ReleaseRef{}, fail(KindConsent, nil, "the catalog changed since consent; re-issue")
+	}
+	return want, nil
 }
 
 // releaseIdentity is the version and linux-<arch> asset sha256 a caller
@@ -357,12 +480,17 @@ func (s *Store) rebuild() {
 	defer s.mu.Unlock()
 	s.state.Sources = slices.Clone(s.sources)
 	s.state.Listings = buildListings(s.sources, s.catalogs, installed, local, s.errs, s.opts.Installer.Arch)
+	s.publishLocked()
 }
 
 func (s *Store) setBusy(what string) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state.Busy == what {
+		return
+	}
 	s.state.Busy = what
-	s.mu.Unlock()
+	s.publishLocked()
 }
 
 // buildListings resolves every catalog row, in source order then catalog
@@ -383,6 +511,8 @@ func buildListings(sources []SourceState, catalogs map[string]catalog.Catalog, i
 				l.Installed = &rec
 			}
 			l.Status = statusOf(l)
+			l.UpdateAvailable = l.Installed != nil && l.Installed.Source == l.Source &&
+				l.Resolution.Release != nil && catalog.Newer(l.Resolution.Release.Version, l.Installed.Version)
 			out = append(out, l)
 			seen[e.ID] = true
 		}
