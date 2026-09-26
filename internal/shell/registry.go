@@ -1820,11 +1820,14 @@ func (r *Registry) buildBar(cfg config.Config, connector string, tok theme.Token
 	}
 
 	return bar, leases, wayland.HostCallbacks{
-		Configure:        bar.Configure,
-		OutputSize:       bar.setOutputSize,
-		Render:           bar.Render,
-		Handle:           bar.Handle,
-		OpaqueBackground: th.BackgroundOpaque(),
+		Configure:  bar.Configure,
+		OutputSize: bar.setOutputSize,
+		Render:     bar.Render,
+		Handle:     bar.Handle,
+		BlurShape:  bar.blurShape,
+		// The hint is fixed for the bar's life, but SetCapabilities can make a
+		// frosted bar translucent later; claim opaque only if it stays so.
+		OpaqueBackground: th.WithCompositor(true).BackgroundOpaque(),
 	}, nil
 }
 

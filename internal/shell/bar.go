@@ -417,6 +417,46 @@ func (b *Bar) bodyLocked(width, height int) ui.Rect {
 	return ui.Rect{X: gap, Y: gap, W: max(0, width-2*gap), H: max(0, height-gap)}
 }
 
+// blurShape is the region the compositor blurs behind the bar, in surface
+// coordinates: the body when frosted, each visible capsule when islands, and
+// nothing when the bar paints solid or the compositor cannot blur. It reads the
+// arrangement Render just brought up to date.
+func (b *Bar) blurShape() []ui.Rect {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.theme.Blur || !b.configured.set {
+		return nil
+	}
+	if b.theme.BarStyle == "islands" {
+		var out []ui.Rect
+		for _, section := range b.sections() {
+			for _, n := range section {
+				if n.Kind != ui.KindCapsule || n.Bounds.W <= 0 || n.Bounds.H <= 0 {
+					continue
+				}
+				// Zero is half the shorter side, which BlurStrips clamps to.
+				radius := render.CapsuleRadius(b.style, n)
+				if radius <= 0 {
+					radius = min(n.Bounds.W, n.Bounds.H)
+				}
+				out = append(out, ui.BlurStrips(ui.SurfaceShape{Body: n.Bounds, Radius: radius})...)
+			}
+		}
+		return out
+	}
+	shape := ui.SurfaceShape{
+		Body:   b.bodyLocked(b.configured.width, b.configured.height),
+		Radius: b.theme.Radius,
+	}
+	if b.theme.BarShape == "attached" {
+		// An attached bar meets the screen along its edge and curves into the
+		// screen's sides at both ends.
+		shape.Radius, shape.AttachEdge = 0, b.theme.BarEdge
+		shape.EdgeFillet, shape.EdgeLeft, shape.EdgeRight = b.theme.Fillet, true, true
+	}
+	return ui.BlurStrips(shape)
+}
+
 func (b *Bar) layoutLocked(width, height int) error {
 	// Shaping for paint happens at the physical size, so measuring at the
 	// logical size and scaling the result up assumes glyph advances are linear
