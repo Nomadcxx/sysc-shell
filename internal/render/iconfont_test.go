@@ -758,3 +758,70 @@ func TestSizedPluginIconKeepsTheProjectGlyph(t *testing.T) {
 		}
 	}
 }
+
+// The mini-docker plugin's bar glyph is the Docker whale: a stack of
+// containers on a whale's back. Coverage alone would pass a blob, so the
+// bands are measured: containers carry ink in the upper third, the body in
+// the lower third, and the body is the widest band.
+func TestDockerGlyphIsTheWhale(t *testing.T) {
+	t.Parallel()
+	r, ok := IconByName("docker")
+	if !ok || r != iconDocker {
+		t.Fatalf("docker = %U, %v", r, ok)
+	}
+	if r != 0xE072 {
+		t.Fatalf("docker rune %U is not the codepoint after the cat band", r)
+	}
+	found := false
+	for _, n := range IconNames() {
+		if n == "docker" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("IconNames() does not list docker")
+	}
+	tr := NewTextRenderer(newIconFace())
+	mask, err := tr.Raster(string(r), TextSpec{Size: 64, Weight: 400}, false)
+	if err != nil || mask.Alpha == nil {
+		t.Fatalf("raster docker: %v", err)
+	}
+	a := mask.Alpha
+	b := a.Rect
+	width := func(y int) int {
+		n := 0
+		for x := b.Min.X; x < b.Max.X; x++ {
+			if a.AlphaAt(x, y).A >= 128 {
+				n++
+			}
+		}
+		return n
+	}
+	top, bottom, widest, widestRow := -1, -1, 0, -1
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		w := width(y)
+		if w == 0 {
+			continue
+		}
+		if top < 0 {
+			top = y
+		}
+		bottom = y
+		if w > widest {
+			widest, widestRow = w, y
+		}
+	}
+	if top < 0 {
+		t.Fatal("docker glyph has no ink")
+	}
+	height := bottom - top
+	if width(top+height/6) == 0 {
+		t.Fatal("docker glyph has no container band in its upper third")
+	}
+	if width(bottom-height/6) == 0 {
+		t.Fatal("docker glyph has no body band in its lower third")
+	}
+	if widestRow < top+height/2 {
+		t.Fatalf("docker glyph's widest row %d is not in the body half", widestRow)
+	}
+}
