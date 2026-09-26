@@ -144,27 +144,62 @@ Failures, all pre-existing (the same sets fail at the branch base `4e1f888`):
 The execution handover lists these as container-only. They also fail on this
 machine, identically at the base.
 
-## Live gate (owner, Niri 26.04 or later, `DP-1`)
+## Live gate (laptop, Niri 26.04, `eDP-1`)
 
-Not yet run. Record the results here.
+Run on 2026-09-27 on the laptop only, at the owner's choice: `eDP-1`,
+1536×864 logical at scale 1.25, Niri 26.04 (`8ed0da4`). The build was the
+merge of `origin/main` into this branch (`7f402f1`), then the islands fix
+below. Panels were opened over IPC (`panel.open`), and each state was
+captured with `grim` and checked with `niri msg -j layers`. Style and shape
+were switched by rewriting `bar.style` and `bar.shape` in `config.json` and
+sending SIGHUP, the reload path Settings uses. The owner's config was backed
+up first and restored afterwards.
 
-- [ ] Each style × shape (frosted, solid, islands × attached, floating), over a
-      bright and a dark wallpaper.
-- [ ] Open every panel. Joints are visible and continuous, with no hairline at
-      the seam; check the frosted default especially (deviation 4). Settings,
-      the launcher and the clipboard float.
-- [ ] Session and Notifications sit flush to the right edge, with a screen
-      fillet below.
-- [ ] Switch style and shape live from Settings. The bar restyles through the
-      reload path. **An open panel keeps the placement it opened with until
-      it is reopened.**
-- [ ] Start on a compositor without the protocol and confirm frosted falls back
-      to solid, with the one line
-      `shell: the compositor offers no blur (...)`.
-- [ ] The centre pill's hairline (`FillOutlineVariant`, opaque) on a
-      translucent pill: if it reads heavy, mix it at the pill alpha.
-- [ ] With xray on, look for the wallpaper-coloured fringe on rounded edges
-      (`docs/niri-blur.md`, "Known artefact").
+**Main had moved on.** PR #16 showed as conflicting: `origin/main` was 46
+commits ahead. Merging it (`7f402f1`) conflicted only in
+`internal/settings/registry_test.go` and `internal/shell/panelhost_test.go`,
+where each side had added tests at the same place. One test from main,
+`TestPluginPanelIsPlacedAgainstTheRealOutput`, assumed every panel keeps the
+output padding. On an attached bar a panel within one fillet of the screen
+edge snaps flush, so the test now allows the screen edge when the panel is
+flush on the right.
+
+**Islands was broken (fixed in `25a4909`).** It painted the same opaque
+ground as solid, `(26,17,17)` between the capsules, and it honoured
+`bar.shape`, against D5. The painter reads a zero `SurfaceOpacity` as unset
+and fills the root opaque, and islands expresses its missing ground as zero.
+`render.Style.NoGround` now says it explicitly. `config.Bar.Attached` returns
+false for islands, and the theme takes its layout shape from that rule, so
+the platform's surface and the painted body still agree under high contrast.
+After the fix, the gaps between capsules sample as wallpaper, identical in
+both shapes. The unit tests had checked the resolved alpha, never the painted
+pixels. `TestIslandsPaintNoGround` now renders the bar.
+
+| Check | Result |
+|---|---|
+| Each style × shape | **Pass after `25a4909`.** Frosted and solid are correct in both shapes. Islands: see above. Only the laptop's light wallpaper was captured. |
+| Every panel opens and joins | 12 of 13 panels map in frosted-attached, frosted-floating, solid-attached and islands-attached. **Audio never maps:** `row: child 3 of kind 3 (button) does not fit in 676x68`. The build before this branch fails the same way, so it is older than this branch (`sysc-589`). Under islands, panels detach. |
+| Seam at the bar (deviation 4) | **No hairline** at scale 1.25. Columns through the body edge are uniform, within ±1 of blur noise, under frosted and solid (Notifications, clock, Session, weather, control centre). |
+| Settings, launcher and clipboard float | Pass: centred below the bar, with no joints. |
+| Session and Notifications flush right | Pass. The frosted ground runs to x=1919 below each panel, and stops at the bar beside a panel that is not flush. |
+| Live restyle through the reload path | Pass. The bar restyled on every SIGHUP. Panels were closed between switches, so "an open panel keeps its placement" was not exercised. It is a known limit (`sysc-588`). |
+| Blur capability line | `shell: the compositor blurs behind surfaces; frosted bars and panels blur`. |
+| Frosted falls back without the protocol | Not run: both machines run Niri 26.04. Unit-tested. |
+| Centre pill hairline; xray fringe | Visual judgements left to the owner. |
+
+Not covered: the desktop (`DP-1`, 3440×1440, scale 1.0), a dark wallpaper,
+the pill hairline, the xray fringe, and the fallback without the protocol.
+They are tracked in `sysc-595`.
+
+Seen during the gate but not caused by this branch:
+
+- After any shell start, the clock and date stay blank until the next minute
+  boundary, and the battery until its first sample (`sysc-340`).
+- The weather plugin fails `plugin.hello` on the laptop at every start, before
+  and after this branch.
+- Another session restarted the laptop's shell partway through the captures.
+  Frames from right after that restart show the fallback palette, and were
+  discarded.
 
 ## Remaining work
 
