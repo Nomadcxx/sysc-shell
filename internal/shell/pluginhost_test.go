@@ -1177,8 +1177,21 @@ func TestPluginPanelResizeRetargetsTheOpenPanel(t *testing.T) {
 	if req.Update == nil || req.Update.Width == nil || req.Update.Height == nil {
 		t.Fatalf("aux update missing size: %+v", req.Update)
 	}
-	if *req.Update.Width != 400 || *req.Update.Height != 300 {
-		t.Fatalf("aux update size = %d x %d, want 400x300", *req.Update.Width, *req.Update.Height)
+	// The surface keeps the joints it opened with around the resized body.
+	reg.mu.Lock()
+	j := reg.panelHosts[PanelPlugin].place.Joints()
+	reg.mu.Unlock()
+	wantW, wantH := 400+j.Left+j.Right, 300
+	if j.Flush() {
+		wantH += reg.panelHosts[PanelPlugin].place.Fillet
+	}
+	if int(*req.Update.Width) != wantW || int(*req.Update.Height) != wantH {
+		t.Fatalf("aux update size = %d x %d, want %dx%d for joints %+v",
+			*req.Update.Width, *req.Update.Height, wantW, wantH, j)
+	}
+	if j != (Joints{}) && (!req.Update.SetInputRegion || len(req.Update.InputRects) != 1 ||
+		req.Update.InputRects[0].W != 400) {
+		t.Fatalf("resize input region = %+v, want the 400 px body", req.Update.InputRects)
 	}
 }
 

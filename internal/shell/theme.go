@@ -614,7 +614,6 @@ func (t Theme) StyleFor(a uint8) render.Style {
 // have to remember which alpha it owns.
 func (t Theme) PanelStyle() render.Style {
 	s := t.StyleFor(t.Surfaces.Panel)
-	s.Fillet = t.Fillet
 	s.FilletFill = t.Style().RootFill()
 	return s
 }
@@ -628,7 +627,6 @@ func (t Theme) AttachedPanelStyle() render.Style {
 		return t.PanelStyle()
 	}
 	s := t.StyleFor(t.Surfaces.Bar)
-	s.Fillet = t.Fillet
 	s.FilletFill = t.Style().RootFill()
 	return s
 }

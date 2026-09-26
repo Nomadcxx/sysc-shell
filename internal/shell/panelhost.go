@@ -637,8 +637,21 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	if id == PanelSession || id == PanelNotifications {
 		place.Align = "right"
 	}
-	if id == PanelLauncher || id == PanelWallpaper {
+	if bar, ok := r.bars[output]; ok {
+		bt := bar.themeSnapshot()
+		place.BarShape, place.BarGap, place.BarRadius, place.Fillet = bt.BarShape, bt.BarGap, bt.Radius, bt.Fillet
+	}
+	// Settings, the launcher and the clipboard float over the desktop; every
+	// other panel attaches to the bar.
+	if id == PanelLauncher || id == PanelSettings || id == PanelClipboard {
 		place.CenterY = true
+	}
+	if _, hasBar := r.bars[output]; !place.CenterY && (!hasBar || r.panelThemeFor(output).BarStyle == "islands") {
+		place.Detached = true
+		place.Gap = theme.MarginS
+		if !hasBar {
+			place.BarZone = 0
+		}
 	}
 	if id == PanelClipboard {
 		// Clipboard history is a true modal: centre it against the whole output,
@@ -956,7 +969,7 @@ func (r *Registry) shieldSpec(h *PanelHost) *wayland.AuxSpec {
 // throw the capture away -- which is exactly what the renderer's
 // TestOpaqueRootHidesTheBackdrop asserts an opaque root does.
 func (h *PanelHost) rootStyle(t Theme) render.Style {
-	if !h.place.CenterY && h.backdrop == nil {
+	if h.place.Attached() && h.backdrop == nil {
 		return t.AttachedPanelStyle()
 	}
 	return t.PanelStyle()
@@ -975,12 +988,15 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	if h.place.BarEdge == "bottom" {
 		region.Y = h.place.Output.H - m.Bottom - h.place.Panel.H
 	}
-	fillet := h.filletMargin()
-	if fillet > 0 {
-		m.Left -= fillet
-	}
+	joints := h.place.Joints()
+	m.Left -= joints.Left
+	width, height := h.surfaceSize()
 	opaque := h.theme.BackgroundOpaque()
-	if fillet > 0 {
+	var input []ui.Rect
+	if joints != (Joints{}) {
+		// The joints and a flush panel's screen-edge wedge hang past the body
+		// over whatever is beneath; only the body takes input.
+		input = []ui.Rect{h.surfaceBody(width, height)}
 		// ponytail: omit the hint for fillet-expanded surfaces; add a body-aware
 		// opaque-region API only if compositor profiling shows this matters.
 		opaque = false
@@ -1000,8 +1016,9 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 		MarginBottom:  int32(m.Bottom),
 		MarginLeft:    int32(m.Left),
 		MarginRight:   int32(m.Right),
-		Width:         int32(h.place.Panel.W + 2*fillet),
-		Height:        int32(h.place.Panel.H),
+		Width:         int32(width),
+		Height:        int32(height),
+		InputRects:    input,
 		ExclusiveZone: -1,
 		Keyboard:      keyboardExclusive,
 		BlurRegion:    blurRegion,
@@ -1031,25 +1048,33 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	}
 }
 
-// filletMargin is the per-side room the concave bar joint needs. It clamps to
-// the gap between this panel's edge and the bar's, because a wedge wider than
-// that margin paints past the bar it is meant to join. Floating panels
-// (CenterY) do not attach, so they take no margin.
-func (h *PanelHost) filletMargin() int {
-	if h == nil || h.place.BarEdge == "" || h.place.CenterY {
-		return 0
+// edgeExtent is how far a flush panel's surface reaches past its far edge,
+// to hold the wedge that curves it into the screen's side.
+func (h *PanelHost) edgeExtent(j Joints) int {
+	if j.Flush() {
+		return h.place.Fillet
 	}
-	room := h.place.Padding - BarGap
-	if h.id == PanelControlCenter {
-		m := h.place.Margins()
-		left := m.Left - BarGap
-		right := h.place.Output.W - BarGap - (m.Left + h.place.Panel.W)
-		room = min(left, right)
+	return 0
+}
+
+// surfaceSize is the surface the placed panel needs: its body widened by the
+// joints and lengthened by any screen-edge wedge.
+func (h *PanelHost) surfaceSize() (w, hgt int) {
+	j := h.place.Joints()
+	return h.place.Panel.W + j.Left + j.Right, h.place.Panel.H + h.edgeExtent(j)
+}
+
+// surfaceBody is where the body sits in a surface of the given size: inset by
+// the left joint, and below the screen-edge wedge when the bar is on the lower
+// edge.
+func (h *PanelHost) surfaceBody(w, hgt int) ui.Rect {
+	j := h.place.Joints()
+	edge := h.edgeExtent(j)
+	body := ui.Rect{X: j.Left, W: max(0, w-j.Left-j.Right), H: max(0, hgt-edge)}
+	if h.place.BarEdge == "bottom" {
+		body.Y = edge
 	}
-	if room <= 0 {
-		return 0
-	}
-	return min(h.theme.Fillet, room)
+	return body
 }
 
 // panelFontFamily resolves the font of the output the panel opens on. A panel
@@ -1102,10 +1127,7 @@ func (h *PanelHost) configure(w, height, scale120 int) error {
 	if err := h.ensureText(); err != nil {
 		return err
 	}
-	box := ui.Rect{W: w, H: height}
-	if margin := h.filletMargin(); margin > 0 && w >= h.place.Panel.W+2*margin {
-		box = ui.Rect{X: margin, W: w - 2*margin, H: height}
-	}
+	box := h.surfaceBody(w, height)
 	if h.root != nil && h.root.Kind == ui.KindRow {
 		return ui.Layout(h.root, box, h.measureText())
 	}
@@ -1131,12 +1153,10 @@ func (h *PanelHost) measureText() ui.MeasureText {
 	}
 }
 
-func (h *PanelHost) panelReveal() (opacity float64, offsetY, fillet int) {
+// panelReveal is the surface's reveal: its opacity and slide.
+func (h *PanelHost) panelReveal() (opacity float64, offsetY int) {
 	if h == nil || h.anim == nil || !h.anim.has(panelSurfaceID(h.id), animVisible) {
-		if h == nil {
-			return 1, 0, 0
-		}
-		return 1, 0, h.theme.Fillet
+		return 1, 0
 	}
 	key := panelSurfaceID(h.id)
 	opacity = h.anim.PanelOpacity(key)
@@ -1144,8 +1164,15 @@ func (h *PanelHost) panelReveal() (opacity float64, offsetY, fillet int) {
 	if h.place.BarEdge == "top" {
 		offsetY = -offsetY
 	}
-	fillet = int(math.Round(float64(h.theme.Fillet) * opacity))
-	return opacity, offsetY, fillet
+	return opacity, offsetY
+}
+
+// revealJoints scales each joint and the screen-edge wedge by the reveal's
+// opacity, so they grow out of the bar with the panel rather than popping.
+func (h *PanelHost) revealJoints(opacity float64) (left, right, edge int) {
+	j := h.place.Joints()
+	scale := func(v int) int { return int(math.Round(float64(v) * opacity)) }
+	return scale(j.Left), scale(j.Right), scale(h.edgeExtent(j))
 }
 
 func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
@@ -1160,13 +1187,11 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	if !scale.Valid() {
 		scale = ui.ScaleUnit
 	}
-	body := ui.Rect{W: h.logicalW, H: h.logicalH}
-	if body.W <= 0 || body.H <= 0 {
-		body = ui.Rect{W: h.place.Panel.W, H: h.place.Panel.H}
+	w, hgt := h.logicalW, h.logicalH
+	if w <= 0 || hgt <= 0 {
+		w, hgt = h.surfaceSize()
 	}
-	if margin := h.filletMargin(); margin > 0 && body.W >= h.place.Panel.W+2*margin {
-		body = ui.Rect{X: margin, W: h.place.Panel.W, H: body.H}
-	}
+	body := h.surfaceBody(w, hgt)
 	// The painter consumes a copy. Pointer state and effect phase are render
 	// values, so neither resolver mutates the retained panel tree.
 	page, viewport, pageProgress, pageOffset := h.controlCentrePageVisual()
@@ -1195,10 +1220,12 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	}
 	style.Scale120 = scale
 	style.Body = body
-	opacity, offsetY, fillet := h.panelReveal()
-	style.Fillet = fillet
-	if !h.place.CenterY {
+	opacity, offsetY := h.panelReveal()
+	if h.place.Attached() {
 		style.AttachEdge = h.place.BarEdge
+		j := h.place.Joints()
+		style.JointLeft, style.JointRight, style.EdgeFillet = h.revealJoints(opacity)
+		style.EdgeLeft, style.EdgeRight = j.FlushLeft, j.FlushRight
 	}
 	style.Backdrop = h.backdrop
 	err = render.Paint(c, root, h.text, style)

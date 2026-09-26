@@ -177,28 +177,24 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style) error {
 	clear(c.Pix)
 	box := style.Scale120.PhysicalRect(style.Body)
 	radius := style.Scale120.Physical(style.Radius)
-	if style.squareBody() {
-		// Filled square rather than rounded and then patched: a patch blended
-		// over a translucent fill would paint a denser band.
-		radius = 0
-	}
+	square := style.squareCorners()
+	body := CornerMask(radius, box.W, box.H, square)
 	// The silhouette is drawn from the antialiased mask, and the rim is a real
 	// stroke over it. Filling the rim colour and laying a smaller fill on top
 	// left the border as the difference of two quantised silhouettes, which is
 	// why it thinned and broke up around the corners.
-	// The backdrop goes through the same rounded mask the fill uses, so it
-	// stops exactly where the body does and the corners stay transparent. The
+	// The backdrop goes through the same mask the fill uses, so it stops
+	// exactly where the body does and the corners stay transparent. The
 	// translucent root fill then paints over it.
 	if style.Backdrop != nil {
-		blendMaskImage(c, RoundedMask(radius, box.W, box.H), box.X, box.Y, style.Backdrop)
+		blendMaskImage(c, body, box.X, box.Y, style.Backdrop)
 	}
-	c.FillRounded(box, radius, style.rootFill())
+	blendMask(c, body, box.X, box.Y, style.rootFill())
 	if style.Rim.A > 0 {
 		c.StrokeRounded(box, radius, max(style.Scale120.Physical(1), 1), style.Rim)
 	}
-	squareAttachedEdge(c, box, radius, style.AttachEdge, style.rootFill())
-	fillet := style.Scale120.Physical(style.Fillet)
-	fillAttachFillets(c, box, fillet, style.AttachEdge, style.FilletFill)
+	jointL, jointR := style.Scale120.Physical(style.JointLeft), style.Scale120.Physical(style.JointRight)
+	fillAttachFillets(c, box, jointL, jointR, style.AttachEdge, style.FilletFill)
 
 	size := style.Scale120.Physical(style.Size)
 	if root.Kind == ui.KindScroll || root.Kind == ui.KindVirtualList {
@@ -215,7 +211,7 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style) error {
 			}
 		}
 	}
-	clearOutsideRoundedRect(c, box, radius, fillet, style.AttachEdge)
+	clearOutsideRoundedRect(c, box, radius, square, jointL, jointR, style.AttachEdge)
 	// The end wedges lie outside the body, where the clear above has just
 	// emptied every row, so they go down last.
 	if style.EdgeLeft || style.EdgeRight {
@@ -225,24 +221,25 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style) error {
 	return nil
 }
 
-// squareBody reports whether every corner of the body is square: the attached
-// edge's, and the far edge's where both turn into edge fillets.
-func (s Style) squareBody() bool {
-	return (s.AttachEdge == "top" || s.AttachEdge == "bottom") &&
-		s.EdgeFillet > 0 && s.EdgeLeft && s.EdgeRight
-}
-
-func squareAttachedEdge(c *Canvas, box ui.Rect, radius int, edge string, col Color) {
-	if radius <= 0 {
-		return
-	}
-	h := min(radius, box.H)
-	switch edge {
+// squareCorners is the body's square corners: the two on the attached edge,
+// and each far corner that turns into an edge fillet.
+func (s Style) squareCorners() Corners {
+	near, far := SquareTL|SquareTR, SquareBL|SquareBR
+	switch s.AttachEdge {
 	case "top":
-		fillRect(c, ui.Rect{X: box.X, Y: box.Y, W: box.W, H: h}, col)
 	case "bottom":
-		fillRect(c, ui.Rect{X: box.X, Y: box.Y + box.H - h, W: box.W, H: h}, col)
+		near, far = far, near
+	default:
+		return 0
 	}
+	square := near
+	if s.EdgeFillet > 0 && s.EdgeLeft {
+		square |= far & (SquareTL | SquareBL)
+	}
+	if s.EdgeFillet > 0 && s.EdgeRight {
+		square |= far & (SquareTR | SquareBR)
+	}
+	return square
 }
 
 func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {

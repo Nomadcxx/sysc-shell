@@ -1005,11 +1005,23 @@ func (h *pluginHost) resizePanel(p v1.PanelResizeParams) error {
 	h.panel.Width, h.panel.Height = p.Width, p.Height
 	h.mu.Unlock()
 	h.refreshPanel()
-	w, hgt := uint32(p.Width), uint32(p.Height)
+	// The surface keeps the joints it opened with around the new body.
+	sw, sh := p.Width, p.Height
+	var input []ui.Rect
+	h.r.mu.Lock()
+	if host := h.r.panelHosts[PanelPlugin]; host != nil {
+		j := host.place.Joints()
+		sw, sh = sw+j.Left+j.Right, sh+host.edgeExtent(j)
+		if j != (Joints{}) {
+			input = []ui.Rect{host.surfaceBody(sw, sh)}
+		}
+	}
+	h.r.mu.Unlock()
+	w, hgt := uint32(sw), uint32(sh)
 	h.r.sendAux(wayland.AuxRequest{
 		Output: global,
 		ID:     panelSurfaceID(PanelPlugin),
-		Update: &wayland.AuxUpdate{Width: &w, Height: &hgt},
+		Update: &wayland.AuxUpdate{Width: &w, Height: &hgt, SetInputRegion: input != nil, InputRects: input},
 	})
 	return nil
 }

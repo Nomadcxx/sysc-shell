@@ -50,6 +50,7 @@ func TestPanelHostRenderPaintsClockText(t *testing.T) {
 func TestPanelHostRenderPaintsMonitorCards(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
+	withTestBar(t, reg, 7, reg.cfg)
 	if err := reg.OpenPanel(PanelMonitor, 7, Trigger{BarEdge: "top", BarZone: 44}); err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +60,8 @@ func TestPanelHostRenderPaintsMonitorCards(t *testing.T) {
 	settleHostAnimation(reg, h)
 	h.monitorPage = monitorPageMetrics
 	reg.rebuildPanel(h)
-	const w, hgt = 640, 720
+	// 640 of body, configured at the surface size the joints widen it to.
+	w, hgt := 640+int(panel.Width)-reg.panelHosts[PanelMonitor].place.Panel.W, 720
 	if err := panel.Callbacks.Configure(w, hgt, 120); err != nil {
 		t.Fatal(err)
 	}
@@ -81,8 +83,8 @@ func TestPanelHostRenderPaintsMonitorCards(t *testing.T) {
 	if got != h.theme.Capsule {
 		t.Fatalf("card fill = %+v, want Capsule %+v (panel is %+v)", got, h.theme.Capsule, h.theme.Background)
 	}
-	// Attached to a top bar: the body meets the bar with a square top, so the
-	// corner at (0,0) is opaque rather than a rounded seam of wallpaper.
+	// Attached to a top bar: the body meets the bar with a square top and a
+	// joint beside it, so (0,0) is painted rather than a seam of wallpaper.
 	if pix[3] == 0 {
 		t.Fatal("attached panel top-left is transparent; that is the gap under the bar")
 	}
@@ -508,6 +510,7 @@ func TestNotificationsPanelTargetSize(t *testing.T) {
 func TestOpeningNotificationsSetsCenterOpenAndMarksSeen(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
+	withTestBar(t, reg, 7, reg.cfg)
 	sender := &fakeNotifySender{}
 	reg.notifySender = sender
 	reg.applyNotify(snap(1))
@@ -524,14 +527,16 @@ func TestOpeningNotificationsSetsCenterOpenAndMarksSeen(t *testing.T) {
 	if panel == nil || panel.ID != "panel:notifications" {
 		t.Fatalf("opened %+v", panel)
 	}
-	if panel.Width != 424 {
-		t.Fatalf("width = %d, want 424", panel.Width)
+	// Right-aligned on an attached bar, it sits flush on the screen edge: a
+	// joint on its left only, and a screen-edge wedge below its body.
+	if panel.Width != 416+12 {
+		t.Fatalf("width = %d, want the body plus its left joint, 428", panel.Width)
 	}
-	if panel.Height < 300 {
-		t.Fatalf("height = %d, want at least 300", panel.Height)
+	if panel.Height < 300+12 {
+		t.Fatalf("height = %d, want at least 300 plus the wedge", panel.Height)
 	}
-	if want := int32(1536 - 416 - 8 - 4); panel.MarginLeft != want {
-		t.Fatalf("margin left = %d, want trailing %d", panel.MarginLeft, want)
+	if want := int32(1536 - 416 - 12); panel.MarginLeft != want {
+		t.Fatalf("margin left = %d, want flush %d", panel.MarginLeft, want)
 	}
 	if panel.MarginTop != 44 {
 		t.Fatalf("margin top = %d, want hug bar 44", panel.MarginTop)
@@ -668,7 +673,7 @@ func TestTogglePanelByNameCentresFlushUnderTheBar(t *testing.T) {
 	if got.MarginTop != 40 {
 		t.Fatalf("margin top = %d, want flush on the 40px attached body", got.MarginTop)
 	}
-	if want := int32((1536-panelTargetSize(PanelMonitor).W)/2 - 4); got.MarginLeft != want {
+	if want := int32((1536-panelTargetSize(PanelMonitor).W)/2 - 12); got.MarginLeft != want {
 		t.Fatalf("margin left = %d, want centred %d", got.MarginLeft, want)
 	}
 }
@@ -758,6 +763,19 @@ func newPanelRegistry(t *testing.T) *Registry {
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
 	return reg
+}
+
+// withTestBar gives output global a bar built from cfg, releasing its leases
+// when the test ends.
+func withTestBar(t *testing.T, reg *Registry, global uint32, cfg config.Config) *Bar {
+	t.Helper()
+	bar, leases, _, err := reg.buildBar(cfg, "DP-1", reg.tokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { releaseAll(leases) })
+	reg.setTestBar(global, bar)
+	return bar
 }
 
 func settleHostAnimation(reg *Registry, h *PanelHost) {

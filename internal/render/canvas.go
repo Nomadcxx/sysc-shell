@@ -167,8 +167,10 @@ func strokeRoundedRect(c *Canvas, r ui.Rect, radius, width int, col Color) {
 
 // clearOutsideRoundedRect restores transparency after children paint. Child
 // bounds may reach a body corner when padding is zero, but the final surface
-// silhouette must remain the same rounded rectangle as its background.
-func clearOutsideRoundedRect(c *Canvas, r ui.Rect, radius, fillet int, attachEdge string) {
+// silhouette must remain the body's: rounded where square does not mark a
+// corner, widened beside the attached edge by each side's joint. Rows past the
+// body are emptied.
+func clearOutsideRoundedRect(c *Canvas, r ui.Rect, radius int, square Corners, jointL, jointR int, attachEdge string) {
 	radius = min(radius, min(r.W, r.H)/2)
 	for y := 0; y < c.Height; y++ {
 		row := c.Pix[y*c.Stride : y*c.Stride+c.Width*4]
@@ -176,60 +178,68 @@ func clearOutsideRoundedRect(c *Canvas, r ui.Rect, radius, fillet int, attachEdg
 			clear(row)
 			continue
 		}
-		ext := 0
-		if fillet > 0 {
-			ly := y - r.Y
-			if attachEdge == "bottom" {
-				ly = r.Y + r.H - 1 - y
-			}
-			ext = ui.FilletExtent(ly, fillet)
+		ly := y - r.Y
+		near := ly
+		if attachEdge == "bottom" {
+			near = r.H - 1 - ly
 		}
-		inset := 0
+		extL, extR := 0, 0
+		if attachEdge == "top" || attachEdge == "bottom" {
+			extL, extR = ui.FilletExtent(near, jointL), ui.FilletExtent(near, jointR)
+		}
+		insetL, insetR := 0, 0
 		if radius > 0 {
-			ly := y - r.Y
-			square := (attachEdge == "top" && ly < radius) || (attachEdge == "bottom" && ly >= r.H-radius)
-			if !square {
-				inset = ui.RoundedInset(ly, r.H, radius)
+			inset := ui.RoundedInset(ly, r.H, radius)
+			left, right := SquareTL, SquareTR
+			if ly > r.H-1-ly {
+				left, right = SquareBL, SquareBR
+			}
+			if square&left == 0 {
+				insetL = inset
+			}
+			if square&right == 0 {
+				insetR = inset
 			}
 		}
-		x0 := max(0, min(c.Width, r.X+inset-ext))
-		x1 := max(x0, min(c.Width, r.X+r.W-inset+ext))
+		x0 := max(0, min(c.Width, r.X+insetL-extL))
+		x1 := max(x0, min(c.Width, r.X+r.W-insetR+extR))
 		clear(row[:x0*4])
 		clear(row[x1*4:])
 	}
 }
 
-// fillAttachFillets paints the two concave wedges joining a panel to the bar,
-// one outside each side edge of the body, tapering over the fillet band.
-func fillAttachFillets(c *Canvas, r ui.Rect, fillet int, attachEdge string, col Color) {
-	if fillet <= 0 || col.A == 0 || r.W <= 0 || r.H <= 0 {
+// fillAttachFillets paints the concave wedges joining a panel to the bar, one
+// outside each side edge of the body at its own radius, tapering over the rows
+// beside the attached edge.
+func fillAttachFillets(c *Canvas, r ui.Rect, left, right int, attachEdge string, col Color) {
+	if col.A == 0 || r.W <= 0 || r.H <= 0 {
 		return
 	}
 	if attachEdge != "top" && attachEdge != "bottom" {
 		return
 	}
-	for y := 0; y < fillet && y < r.H; y++ {
-		row := r.Y + y
-		if attachEdge == "bottom" {
-			row = r.Y + r.H - 1 - y
-		}
-		if row < 0 || row >= c.Height {
-			continue
-		}
-		for x := 0; x < fillet; x++ {
-			coverage := ui.FilletCoverage(x, y, fillet)
-			if coverage == 0 {
+	side := func(fillet int, px func(x int) int) {
+		for y := 0; y < fillet && y < r.H; y++ {
+			row := r.Y + y
+			if attachEdge == "bottom" {
+				row = r.Y + r.H - 1 - y
+			}
+			if row < 0 || row >= c.Height {
 				continue
 			}
-			alpha := float64(coverage) / 255
-			if left := r.X - 1 - x; left >= 0 && left < c.Width {
-				blendCoverage(c, left, row, col, alpha)
-			}
-			if right := r.X + r.W + x; right >= 0 && right < c.Width {
-				blendCoverage(c, right, row, col, alpha)
+			for x := 0; x < fillet; x++ {
+				coverage := ui.FilletCoverage(x, y, fillet)
+				if coverage == 0 {
+					continue
+				}
+				if p := px(x); p >= 0 && p < c.Width {
+					blendCoverage(c, p, row, col, float64(coverage)/255)
+				}
 			}
 		}
 	}
+	side(left, func(x int) int { return r.X - 1 - x })
+	side(right, func(x int) int { return r.X + r.W + x })
 }
 
 // fillEdgeFillets paints the concave wedges past the far edge of a surface

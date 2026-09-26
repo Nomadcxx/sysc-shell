@@ -69,9 +69,69 @@ type Placement struct {
 	// unset; Align then centres on the output.
 	AnchorX int
 	// CenterY centres the panel vertically inside the output minus the bar
-	// zone and padding (the launcher floats; every other panel hugs the bar).
+	// zone and padding: Settings, the launcher and the clipboard float.
 	CenterY bool
+	// Detached keeps a panel off the bar, Gap away from it with no joints:
+	// islands paint no ground to join, and an output without a bar has none.
+	Detached bool
+	// BarShape, BarGap and BarRadius describe the bar an attached panel joins,
+	// and Fillet is the joint radius. Together they say where the bar's
+	// straight edge ends on each side, which bounds each joint.
+	BarShape          string
+	BarGap, BarRadius int
+	Fillet            int
 }
+
+// Joints is how an attached panel meets the bar: the concave wedge beside each
+// side of its attached edge, and whether a side sits flush on the screen edge
+// instead, curving into it past its far corner.
+type Joints struct {
+	Left, Right           int
+	FlushLeft, FlushRight bool
+}
+
+// Flush reports whether either side sits on the screen edge.
+func (j Joints) Flush() bool { return j.FlushLeft || j.FlushRight }
+
+// Joints is the panel's joints at its placed position.
+func (p Placement) Joints() Joints {
+	_, j := p.layout()
+	return j
+}
+
+// layout places the panel horizontally and derives its joints. A joint is as
+// wide as the fillet, less where the bar's straight edge ends sooner: at the
+// screen edge for an attached bar, at its rounded end for a floating one. On
+// an attached bar a panel too close to the screen edge for a whole joint
+// snaps flush to it instead.
+func (p Placement) layout() (int, Joints) {
+	x := clampAxis(alignX(p), p.Panel.W, p.Output.W, p.Padding)
+	if !p.Attached() || p.Fillet <= 0 {
+		return x, Joints{}
+	}
+	attachedBar := p.BarShape == "attached"
+	lo, hi := p.BarGap+p.BarRadius, p.Output.W-p.BarGap-p.BarRadius
+	var j Joints
+	if attachedBar {
+		lo, hi = 0, p.Output.W
+		switch {
+		case x-lo < p.Fillet:
+			x, j.FlushLeft = 0, true
+		case hi-(x+p.Panel.W) < p.Fillet:
+			x, j.FlushRight = p.Output.W-p.Panel.W, true
+		}
+	}
+	if !j.FlushLeft {
+		j.Left = min(max(x-lo, 0), p.Fillet)
+	}
+	if !j.FlushRight {
+		j.Right = min(max(hi-(x+p.Panel.W), 0), p.Fillet)
+	}
+	return x, j
+}
+
+// Attached reports whether the panel joins the bar along its edge.
+func (p Placement) Attached() bool { return p.BarEdge != "" && !p.CenterY && !p.Detached }
 
 type Margins struct{ Top, Bottom, Left, Right int }
 
@@ -89,7 +149,7 @@ func clampAxis(desired, size, extent, pad int) int {
 }
 
 func (p Placement) Margins() Margins {
-	x := clampAxis(alignX(p), p.Panel.W, p.Output.W, p.Padding)
+	x, _ := p.layout()
 	anchor := p.BarZone + p.Gap
 	if p.CenterY {
 		// A zero anchor is a true modal: centre it in the whole output while
