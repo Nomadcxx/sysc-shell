@@ -656,7 +656,8 @@ func TestTogglePanelByNameCentresFlushUnderTheBar(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cb.Configure(1536, 44, 120); err != nil {
+	// The default bar is attached: a 52 px surface whose body, and zone, is 40.
+	if err := cb.Configure(1536, 52, 120); err != nil {
 		t.Fatal(err)
 	}
 	if err := reg.TogglePanelByName("system-monitor"); err != nil {
@@ -664,8 +665,8 @@ func TestTogglePanelByNameCentresFlushUnderTheBar(t *testing.T) {
 	}
 	reqs := drainAux(t, reg, 2)
 	got := reqs[1].Open
-	if got.MarginTop != 44 {
-		t.Fatalf("margin top = %d, want flush on the 44px exclusive zone", got.MarginTop)
+	if got.MarginTop != 40 {
+		t.Fatalf("margin top = %d, want flush on the 40px attached body", got.MarginTop)
 	}
 	if want := int32((1536-panelTargetSize(PanelMonitor).W)/2 - 4); got.MarginLeft != want {
 		t.Fatalf("margin left = %d, want centred %d", got.MarginLeft, want)

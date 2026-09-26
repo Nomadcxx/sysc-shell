@@ -69,8 +69,13 @@ func TestHostZoneFollowsTheExtentByDefault(t *testing.T) {
 	t.Parallel()
 	h := newHost(11, nil)
 	h.policy = config.Default().Bar
-	if got, want := h.policy.ExclusiveZone(), h.surfaceHeight(); got != want {
+	if got, want := h.policy.ExclusiveZone(), h.policy.Extent(); got != want {
 		t.Fatalf("zone = %d, want the extent %d", got, want)
+	}
+	// The default bar is attached: its surface also holds the overhang, which
+	// the zone does not reserve.
+	if got := h.surfaceHeight(); got != h.policy.Extent()+h.policy.Overhang() {
+		t.Fatalf("surface = %d, want the extent plus the overhang", got)
 	}
 }
 
@@ -84,8 +89,8 @@ func TestHostZoneOfZeroLeavesTheExtentAlone(t *testing.T) {
 	if got := h.policy.ExclusiveZone(); got != 0 {
 		t.Fatalf("zone = %d, want 0 so windows may tile under the bar", got)
 	}
-	if got := h.surfaceHeight(); got != 44 {
-		t.Fatalf("extent = %d, want 44: un-reserving must not shrink the surface", got)
+	if got := h.surfaceHeight(); got != 52 {
+		t.Fatalf("extent = %d, want 52: un-reserving must not shrink the surface", got)
 	}
 }
 
@@ -103,7 +108,7 @@ func TestHostOnTheLowerEdgeComposesItsAnchor(t *testing.T) {
 		t.Fatalf("anchor = %#b, must not also claim the upper edge", got)
 	}
 	w, hgt := barSize(h.policy.Edge, h.surfaceHeight())
-	if w != 0 || hgt != 44 {
-		t.Fatalf("size = (%d, %d), want (0, 44)", w, hgt)
+	if w != 0 || hgt != 52 {
+		t.Fatalf("size = (%d, %d), want (0, 52)", w, hgt)
 	}
 }
