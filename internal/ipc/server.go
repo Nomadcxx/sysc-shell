@@ -33,6 +33,7 @@ var (
 		"bluetooth":      "",
 		"weather":        "",
 		"clipboard":      "",
+		"plugin-store":   "",
 	}
 )
 

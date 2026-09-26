@@ -13,8 +13,10 @@ import (
 // the registry answers what it asks (enabled sources, local copies) and lends
 // it the plugin host to swap directories under.
 func (r *Registry) BindPluginStore(s *store.Store) {
+	snapshot := s.State()
 	r.mu.Lock()
 	r.pluginStore = s
+	r.pluginStoreSnapshot = snapshot
 	r.mu.Unlock()
 }
 
