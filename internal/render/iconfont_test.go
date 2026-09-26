@@ -1,6 +1,11 @@
 package render
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
+)
 
 func TestGhostLauncherIconIsInProjectFace(t *testing.T) {
 	t.Parallel()
@@ -33,6 +38,69 @@ func TestAIUsageGlyphIsInCatalogueAndHasInk(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("IconNames() does not list ai-usage")
+	}
+}
+
+// The Faith plugin's bar glyph is a Latin cross: a crossbar wider than the
+// upright, set above the glyph's middle. Coverage alone would pass a plus sign
+// or a medical cross, so the rows are measured.
+func TestCrossGlyphIsALatinCross(t *testing.T) {
+	t.Parallel()
+	r, ok := IconByName("cross")
+	if !ok || r != iconCross {
+		t.Fatalf("cross = %U, %v", r, ok)
+	}
+	if r != 0xE049 {
+		t.Fatalf("cross rune %U is not the codepoint after the GPU metric glyph", r)
+	}
+	found := false
+	for _, n := range IconNames() {
+		if n == "cross" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("IconNames() does not list cross")
+	}
+	tr := NewTextRenderer(newIconFace())
+	mask, err := tr.Raster(string(r), TextSpec{Size: 64, Weight: 400}, false)
+	if err != nil || mask.Alpha == nil {
+		t.Fatalf("raster cross: %v", err)
+	}
+	a := mask.Alpha
+	b := a.Rect
+	width := func(y int) int {
+		n := 0
+		for x := b.Min.X; x < b.Max.X; x++ {
+			if a.AlphaAt(x, y).A >= 128 {
+				n++
+			}
+		}
+		return n
+	}
+	top, bottom, widest, barRow := -1, -1, 0, -1
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		w := width(y)
+		if w == 0 {
+			continue
+		}
+		if top < 0 {
+			top = y
+		}
+		bottom = y
+		if w > widest {
+			widest, barRow = w, y
+		}
+	}
+	if top < 0 {
+		t.Fatal("cross glyph has no ink")
+	}
+	stem := width(bottom - (bottom-top)/8)
+	if stem == 0 || widest < 3*stem {
+		t.Fatalf("crossbar %dpx is not at least three stems (%dpx) wide", widest, stem)
+	}
+	if mid := (top + bottom) / 2; barRow >= mid {
+		t.Fatalf("crossbar row %d is not above the middle row %d", barRow, mid)
 	}
 }
 
@@ -567,6 +635,126 @@ func TestCellularGlyphsCarryInk(t *testing.T) {
 		}
 		if got := glyphCoverage(t, r, 32); got == 0 {
 			t.Fatalf("%s glyph %U has no ink", name, r)
+		}
+	}
+}
+
+// The Cat plugin animates by stepping through catalogue names, so the band
+// must sit where the font puts it, every frame must carry ink, and no two
+// frames may draw the same silhouette -- a duplicated frame is a stutter.
+func TestCatGlyphsAreDistinctFramesInTheirBand(t *testing.T) {
+	t.Parallel()
+	var names []string
+	for _, act := range catActs {
+		for i := 0; i < act.poses; i++ {
+			names = append(names, fmt.Sprintf("cat-%s-%d", act.name, i))
+		}
+	}
+	if len(names) != int(catRuneLast-catRuneFirst)+1 {
+		t.Fatalf("%d names for a band of %d runes", len(names), catRuneLast-catRuneFirst+1)
+	}
+	tr := NewTextRenderer(newIconFace())
+	seen := map[string]string{}
+	for i, name := range names {
+		r, ok := IconByName(name)
+		if !ok {
+			t.Fatalf("%s is not in the catalogue", name)
+		}
+		if want := catRuneFirst + rune(i); r != want {
+			t.Fatalf("%s = %U, want %U", name, r, want)
+		}
+		if r < catRuneFirst || r > catRuneLast {
+			t.Fatalf("%s rune %U is outside the cat band", name, r)
+		}
+		mask, err := tr.Raster(string(r), TextSpec{Size: 48, Weight: 400}, false)
+		if err != nil || mask.Alpha == nil {
+			t.Fatalf("raster %s: %v", name, err)
+		}
+		ink := 0
+		for _, a := range mask.Alpha.Pix {
+			ink += int(a)
+		}
+		if ink == 0 {
+			t.Fatalf("%s has no ink", name)
+		}
+		key := string(mask.Alpha.Pix)
+		if prev := seen[key]; prev != "" {
+			t.Fatalf("%s draws the same silhouette as %s", name, prev)
+		}
+		seen[key] = name
+	}
+}
+
+func TestCatRunesResolveToTheProjectFace(t *testing.T) {
+	t.Parallel()
+	m, err := NewSystemFontMap("sans-serif", "")
+	if err != nil {
+		t.Skipf("no system font available: %v", err)
+	}
+	for _, r := range []rune{catRuneFirst, catRuneLast} {
+		if face := m.Face(r, FaceRequest{}); face == nil || face == m.Primary() {
+			t.Fatalf("cat rune %U did not resolve to the project icon face", r)
+		}
+	}
+}
+
+// A sized project glyph must stay inside the square it was measured into:
+// shaped at the square's size, the font's 1.2 em box spilled a fifth past
+// it and a plugin's hero cat painted over the caption beneath it.
+func TestProjectIconFitsItsSquare(t *testing.T) {
+	t.Parallel()
+	tr := NewTextRenderer(newIconFace())
+	for _, box := range []int{24, 48, 120, 240} {
+		mask, err := tr.RasterProjectIconIn("cat-sleep-0", box)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b := mask.Alpha.Bounds(); b.Dx() > box || b.Dy() > box {
+			t.Fatalf("box %d: mask %dx%d spills past the square", box, b.Dx(), b.Dy())
+		}
+		if b := mask.Alpha.Bounds(); b.Dy() < box*9/10 {
+			t.Fatalf("box %d: mask %d tall wastes the square", box, b.Dy())
+		}
+	}
+}
+
+// A name in both catalogues must paint the same glyph whether a plugin sized
+// it or not: plugins resolve the project catalogue first, chrome the Material
+// subset first.
+func TestSizedPluginIconKeepsTheProjectGlyph(t *testing.T) {
+	t.Parallel()
+	tr := NewTextRenderer(newIconFace())
+	var shared []string
+	for _, name := range IconNames() {
+		if ValidMaterialIcon(name) {
+			shared = append(shared, name)
+		}
+	}
+	if len(shared) == 0 {
+		t.Skip("no name is in both catalogues")
+	}
+	for _, name := range shared {
+		project, err := tr.RasterProjectIconIn(name, 24)
+		if err != nil {
+			t.Fatal(err)
+		}
+		material, err := tr.RasterMaterialIcon(name, 24)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plugin, err := rasterIcon(tr, &ui.Node{Kind: ui.KindIcon, Icon: name, IconSize: 24, IconProjectFirst: true}, 24)
+		if err != nil {
+			t.Fatal(err)
+		}
+		chrome, err := rasterIcon(tr, &ui.Node{Kind: ui.KindIcon, Icon: name, IconSize: 24}, 24)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(plugin.Alpha.Pix) != string(project.Alpha.Pix) {
+			t.Errorf("%s: a sized plugin icon did not paint the project glyph", name)
+		}
+		if string(chrome.Alpha.Pix) != string(material.Alpha.Pix) {
+			t.Errorf("%s: chrome stopped painting the Material glyph", name)
 		}
 	}
 }

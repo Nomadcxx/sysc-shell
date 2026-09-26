@@ -148,6 +148,8 @@ ICONS = [
     "disabled_by_default",
     "skull",
     "cancel",
+    # The Faith plugin's read-the-chapter control.
+    "menu_book",
 ]
 
 # The pinned source renamed the older smartphone ligature. Keep the shell's

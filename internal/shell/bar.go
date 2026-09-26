@@ -580,6 +580,7 @@ func (b *Bar) renderViewLocked() (*ui.Node, render.Style) {
 	b.resolveGradientMotionLocked(root)
 	b.resolveMediaMotionLocked(root)
 	resolveProgressMotion(b.anim, root)
+	resolveSpriteMotion(b.anim, root)
 	b.startBarFramesLocked()
 	return root, b.style
 }
@@ -668,12 +669,17 @@ func (b *Bar) barFrameLoop() {
 	// animator, and the call expression below runs unlocked.
 	b.mu.Lock()
 	frameCap := b.anim.frameCap()
+	wake := b.anim.wake
 	b.mu.Unlock()
-	animateSurface(b.stopAnim, func() bool {
+	animateSurfaceResting(b.stopAnim, wake, func() bool {
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		return b.anim.Settled()
-	}, b.invalidate, func() time.Duration { return frameCap })
+	}, b.invalidate, func() time.Duration { return frameCap }, func() (time.Duration, bool) {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return b.anim.SpriteRest()
+	})
 }
 
 func (b *Bar) stopAnimation() {
@@ -694,6 +700,11 @@ func copyNode(n *ui.Node) *ui.Node {
 	// live model state reaches the painter, and a slice header carries one.
 	if len(n.Values) > 0 {
 		c.Values = append([]float64(nil), n.Values...)
+	}
+	// Frames too: the sprite walk writes the resolved pose into the copy's
+	// Icon, and must never be handed the live list to alias.
+	if len(n.Frames) > 0 {
+		c.Frames = append([]string(nil), n.Frames...)
 	}
 	if len(n.Children) > 0 {
 		c.Children = make([]*ui.Node, len(n.Children))

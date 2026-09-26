@@ -55,6 +55,8 @@ var materialIcons = map[string]struct{}{
 	"mouse": {}, "smartphone": {}, "speaker": {}, "devices_other": {},
 	// The system monitor panel's info card and process detail view.
 	"memory": {}, "developer_board": {}, "disabled_by_default": {}, "skull": {}, "cancel": {},
+	// The Faith plugin's read-the-chapter control.
+	"menu_book": {},
 }
 
 // The pinned Material Symbols source no longer carries the older

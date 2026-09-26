@@ -267,3 +267,58 @@ func TestEveryCatalogIconUsesProjectFont(t *testing.T) {
 		}
 	}
 }
+
+// A family shipped as one variable file is indexed once, at its default
+// instance. The fixture is Inter Variable, the default family, subset to the
+// clock's digits and colon.
+func newVariableFontMap(t *testing.T) *FontMap {
+	t.Helper()
+	file, err := os.Open("testdata/InterVariable-digits.ttf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	inner := fontscan.NewFontMap(nil)
+	if err := inner.AddFont(file, "fixture:inter", "Inter Variable"); err != nil {
+		t.Fatal(err)
+	}
+	inner.SetQuery(fontscan.Query{Families: []string{"Inter Variable"}})
+	primary := inner.ResolveFace('1')
+	if primary == nil {
+		t.Fatal("fixture font map resolved no primary face")
+	}
+	return &FontMap{inner: inner, primary: primary, family: "Inter Variable", cache: make(map[faceKey]*font.Face)}
+}
+
+func TestVariableFontResolvesTheRequestedWeight(t *testing.T) {
+	t.Parallel()
+	m := newVariableFontMap(t)
+	regular := m.Face('1', FaceRequest{Weight: 400})
+	semibold := m.Face('1', FaceRequest{Weight: 600})
+	if regular != m.Primary() {
+		t.Error("weight 400 is the default instance and should reuse the scanned face")
+	}
+	if semibold == regular || len(semibold.Coords()) == 0 {
+		t.Fatal("weight 600 resolved the default instance; the wght axis was not applied")
+	}
+	if again := m.Face(':', FaceRequest{Weight: 600}); again != semibold {
+		t.Error("two runes at one weight resolved different instances, which splits a run per rune")
+	}
+
+	// Proportional figures, because Inter holds its tabular figures at one
+	// width across the axis. The advance moving proves the shaper saw the
+	// instance and not only the rasteriser: go-text caches its HarfBuzz font
+	// per *font.Font, so an instance sharing the scanned Font shaped at 400.
+	r := NewTextRendererWithFontMap(m)
+	width := func(weight int) int {
+		t.Helper()
+		w, _, err := r.Measure("15:04", TextSpec{Family: "Inter Variable", Size: 60, Weight: weight}, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return w
+	}
+	if w4, w6 := width(400), width(600); w6 <= w4 {
+		t.Errorf("15:04 measures %d px at 600 and %d px at 400; the 600 instance should be wider", w6, w4)
+	}
+}

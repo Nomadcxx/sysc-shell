@@ -746,6 +746,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		return err
 	}
 	resolveProgressMotion(h.anim, probe)
+	resolveSpriteMotion(h.anim, probe)
 	h.focus = ui.Focusables(h.root)
 	h.roving = ui.Roving{Count: len(h.focus)}
 	if id == PanelWallpaper {
@@ -1195,6 +1196,7 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 		return err
 	}
 	resolveProgressMotion(h.anim, root)
+	resolveSpriteMotion(h.anim, root)
 
 	paintTheme := h.paintTheme()
 	style := h.rootStyle(paintTheme)
@@ -2221,6 +2223,7 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 		h.errLabel = err.Error()
 	}
 	resolveProgressMotion(h.anim, probe)
+	resolveSpriteMotion(h.anim, probe)
 	h.focus = ui.Focusables(h.root)
 	h.roving.Count = len(h.focus)
 	h.roving.Set(idx)
@@ -2666,7 +2669,10 @@ func (r *Registry) surfaceFrameLoop(h *PanelHost) {
 		}
 		return h.anim.frameCap()
 	}
-	animateSurface(h.stopAnim, func() bool {
+	r.mu.Lock()
+	wake := h.anim.wake
+	r.mu.Unlock()
+	animateSurfaceResting(h.stopAnim, wake, func() bool {
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		return h.anim.Settled() && !mediaPageFramesWantedLocked(r, h)
@@ -2678,7 +2684,14 @@ func (r *Registry) surfaceFrameLoop(h *PanelHost) {
 		out := h.output
 		r.mu.Unlock()
 		r.publishSurface(out, panelSurfaceID(h.id))
-	}, frameCap)
+	}, frameCap, func() (time.Duration, bool) {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if mediaPageFramesWantedLocked(r, h) {
+			return 0, false
+		}
+		return h.anim.SpriteRest()
+	})
 }
 
 func (r *Registry) teardownPanelLocked(id PanelID) {

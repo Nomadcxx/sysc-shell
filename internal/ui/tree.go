@@ -4,6 +4,7 @@ package ui
 
 import (
 	"strconv"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
@@ -234,6 +235,17 @@ type Node struct {
 	Height int
 	// IconSize is the logical square reserved by KindIcon. Zero uses 20.
 	IconSize int
+	// IconProjectFirst resolves Icon in the project catalogue before the
+	// Material subset: the precedence a plugin's icon names convert with.
+	// A handful of names are in both, and a plugin icon given a size must
+	// paint the glyph the same name paints without one. Shell chrome leaves
+	// it false and keeps the Material glyphs it was designed around.
+	IconProjectFirst bool
+	// Frames and Cycle make a KindIcon a sprite: the surface animator steps
+	// Icon through Frames, one pass every Cycle, on the render copy. Icon as
+	// composed is the resting pose, which is what reduced motion paints.
+	Frames []string
+	Cycle  time.Duration
 	// Radius overrides the semantic radius for this node in logical pixels.
 	// Zero defers to Shape, and a zero Shape defers to the surface's base.
 	Radius int
@@ -385,8 +397,12 @@ type Node struct {
 	GradientOffset float64
 	State          Interaction
 	Padding        int
-	Gap            int
-	Action         string
+	// PaddingX, when positive, replaces Padding on a capsule's left and right
+	// edges only. A bar capsule's vertical padding is fixed by the band it sits
+	// in, so a pill that wants wider ends cannot get them from Padding.
+	PaddingX int
+	Gap      int
+	Action   string
 	// Tooltip is bounded hover text owned by the node's feature. The shared
 	// dwell controller decides when and where to show it.
 	Tooltip          string
@@ -489,6 +505,10 @@ const (
 	// the foreground its children inherit. It is for colours a user chose by
 	// role name; built-in chrome keeps the named fills above.
 	FillRole
+	// FillOutlineVariant is a stroke colour: the quiet boundary a divider
+	// draws. As a fill it paints nothing, like FillOutline. It marks a control
+	// whose edge should read without competing with the focus outline.
+	FillOutlineVariant
 )
 
 // Tone selects which theme colour paints a text node.
@@ -574,6 +594,14 @@ func TextAttrsOf(n *Node) TextAttrs {
 		Bold:    n.Bold,
 		Italic:  n.Italic,
 	}
+}
+
+// CapsulePadX is the padding a capsule leaves at each horizontal end.
+func CapsulePadX(n *Node) int {
+	if n.PaddingX > 0 {
+		return n.PaddingX
+	}
+	return n.Padding
 }
 
 // imageBox returns the explicit landscape box of a KindImage node. Both edges

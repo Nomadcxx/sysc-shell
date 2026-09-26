@@ -220,6 +220,28 @@ func TestColumnPlacesACapsuleChild(t *testing.T) {
 	}
 }
 
+// A capsule's PaddingX insets its child at the ends in a column too, the same
+// way it does in a row. The column path used to inset by Padding, so a pill's
+// content sat under its rounded ends.
+func TestColumnCapsulePaddingXInsetsTheChild(t *testing.T) {
+	t.Parallel()
+	inner := &Node{Kind: KindRow, Children: []*Node{
+		{Kind: KindText, Text: "15:04"},
+	}}
+	card := &Node{Kind: KindCapsule, Padding: 4, PaddingX: 11, Children: []*Node{inner}}
+	root := &Node{Kind: KindColumn, Children: []*Node{card}}
+
+	if err := LayoutColumn(root, Rect{W: 100, H: 60}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	if inner.Bounds.X != card.Bounds.X+11 {
+		t.Fatalf("content x = %d, want %d (the capsule's PaddingX inset)", inner.Bounds.X, card.Bounds.X+11)
+	}
+	if want := card.Bounds.W - 2*11; inner.Bounds.W != want {
+		t.Fatalf("content width = %d, want %d", inner.Bounds.W, want)
+	}
+}
+
 // A capsule inside a row inside a column must measure to its child plus
 // padding. The row case used to offer measureNode a sentinel band, and every
 // kind that fills the band offered reported that sentinel as its height.

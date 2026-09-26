@@ -68,3 +68,20 @@ func TestFindingStringCarriesThePath(t *testing.T) {
 		t.Fatal("a finding without a path must read as its message")
 	}
 }
+
+// A sized icon is geometry the validator cannot judge: one that fits the
+// bar's strip lays out, and one taller than the strip is reported.
+func TestTreeJudgesASizedIconAgainstTheBar(t *testing.T) {
+	fits := &v1.Node{Kind: v1.KindRow, Children: []*v1.Node{{Kind: v1.KindIcon, Icon: "cat-run-0", IconSize: 24}}}
+	if f := lint.Tree(fits, v1.ViewBar, lint.BarWidth, lint.BarHeight); len(f) != 0 {
+		t.Fatalf("findings = %v, want none", f)
+	}
+	tall := &v1.Node{Kind: v1.KindRow, Children: []*v1.Node{{Kind: v1.KindIcon, Icon: "cat-run-0", IconSize: 96}}}
+	if f := lint.Tree(tall, v1.ViewBar, lint.BarWidth, lint.BarHeight); len(f) == 0 {
+		t.Fatal("a 96 px icon in a 32 px bar must be reported")
+	}
+	hero := panelRoot(&v1.Node{Kind: v1.KindIcon, Icon: "cat-run-0", IconSize: 96})
+	if f := lint.Tree(hero, v1.ViewPanel, 360, 400); len(f) != 0 {
+		t.Fatalf("hero findings = %v, want none", f)
+	}
+}

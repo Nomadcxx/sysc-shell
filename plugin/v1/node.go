@@ -61,6 +61,20 @@ const (
 	// consumer is a one-pixel hairline; anything larger is a mistake.
 	MaxStroke         = 8
 	MaxScheduleEvents = 256
+	// MaxIconSize bounds an icon's explicit square in logical pixels. A
+	// panel hero glyph is the consumer; past this a glyph is a wallpaper,
+	// and a rasterisation that large is an attack on the paint budget.
+	MaxIconSize = 256
+	// MinSpriteFrames and MaxSpriteFrames bound a sprite cycle's poses. One
+	// pose is a still icon; past this a cycle is a video the glyph catalogue
+	// was never meant to carry.
+	MinSpriteFrames = 2
+	MaxSpriteFrames = 32
+	// MinCycleMS and MaxCycleMS bound one pass through a sprite cycle. Faster
+	// than this, a pose lasts under a frame at 60 Hz for a full cycle; slower,
+	// the motion stops reading as motion.
+	MinCycleMS = 100
+	MaxCycleMS = 60000
 )
 
 type ScheduleGrid struct {
@@ -176,8 +190,9 @@ const (
 // minor two. Tooltip, Shape, Values, Absent, and the graph and separator kinds
 // arrived in minor four. Path, the image box fields, Background, Stroke, and
 // StrokeFill, and the image kind arrived in minor five. Animate arrived in
-// minor six. Minor seven widened Absent to meters. A minor-one host ignores
-// the new fields, so a plugin that sets them still speaks to an older shell,
+// minor six. Minor seven widened Absent to meters. IconSize, Frames, and
+// CycleMS arrived in minor eight. A minor-one host ignores the new fields,
+// so a plugin that sets them still speaks to an older shell,
 // just without the presentation.
 type Node struct {
 	Kind NodeKind `json:"kind"`
@@ -196,6 +211,20 @@ type Node struct {
 	// Icon names a symbol from the shell's catalogue. It is a name rather than
 	// a codepoint or a path so that the shell owns which glyphs exist.
 	Icon string `json:"icon,omitempty"`
+	// IconSize fixes an icon node's square in logical pixels, so a glyph can
+	// stand as a panel's hero rather than only as a label beside text. Zero
+	// keeps the host's own size. The host still paints it in the node's tone:
+	// a size is geometry, never colour. It arrived with protocol minor eight.
+	IconSize int `json:"icon_size,omitempty"`
+	// Frames and CycleMS make a sized icon a sprite cycle: the host steps
+	// through Frames, catalogue names in order, once every CycleMS on its own
+	// frame clock, so the plugin publishes a pose list and a period rather
+	// than a patch per pose. A name may repeat where the motion returns
+	// through a pose. Icon stays the resting pose, painted under reduced
+	// motion. Both need IconSize and a Key, and each needs the other. They
+	// arrived with protocol minor eight.
+	Frames  []string `json:"frames,omitempty"`
+	CycleMS int      `json:"cycle_ms,omitempty"`
 	// Value is a progress fraction from zero through one.
 	Value float64 `json:"value,omitempty"`
 	// Animate asks the host to glide this node's Value to each new revision's
@@ -450,6 +479,9 @@ func (v *validator) nodeIn(n *Node, path string, depth int, segmentChild bool) e
 		return err
 	}
 	if err := v.minorEight(n, path); err != nil {
+		return err
+	}
+	if err := v.minorNine(n, path); err != nil {
 		return err
 	}
 	if n.Selected && (!segmentChild || n.Kind != KindButton) {
@@ -845,6 +877,48 @@ func (v *validator) minorEight(n *Node, path string) error {
 	}
 	if !selected {
 		return fmt.Errorf("%s: selected event %q is not present", path, s.Selected)
+	}
+	return nil
+}
+
+// minorNine validates the explicit icon size that arrived with protocol
+// minor nine: legal only on an icon node, and bounded like every other
+// measurement on the wire. Whether the square fits its view is geometry,
+// which the host's layout decides and plugin/lint reports.
+func (v *validator) minorNine(n *Node, path string) error {
+	if n.IconSize == 0 && n.Frames == nil && n.CycleMS == 0 {
+		return nil
+	}
+	if n.Kind != KindIcon {
+		return fmt.Errorf("%s: %s cannot carry an icon size or a sprite cycle", path, n.Kind)
+	}
+	if n.IconSize < 0 || n.IconSize > MaxIconSize {
+		return fmt.Errorf("%s: icon size is %d, outside 0 (the host's size) through %d", path, n.IconSize, MaxIconSize)
+	}
+	if n.Frames == nil && n.CycleMS == 0 {
+		return nil
+	}
+	switch {
+	case n.CycleMS == 0:
+		return fmt.Errorf("%s: sprite frames need a cycle_ms", path)
+	case n.Frames == nil:
+		return fmt.Errorf("%s: a cycle_ms needs sprite frames", path)
+	case n.IconSize == 0:
+		return fmt.Errorf("%s: a sprite cycle needs an icon_size so its box does not change per pose", path)
+	case n.Key == "":
+		return fmt.Errorf("%s: a sprite cycle needs a key so the host keeps its phase across revisions", path)
+	case len(n.Frames) < MinSpriteFrames || len(n.Frames) > MaxSpriteFrames:
+		return fmt.Errorf("%s: sprite holds %d frames, outside %d through %d", path, len(n.Frames), MinSpriteFrames, MaxSpriteFrames)
+	case n.CycleMS < MinCycleMS || n.CycleMS > MaxCycleMS:
+		return fmt.Errorf("%s: cycle_ms is %d, outside %d through %d", path, n.CycleMS, MinCycleMS, MaxCycleMS)
+	}
+	for i, name := range n.Frames {
+		if len(name) > MaxIdentBytes {
+			return fmt.Errorf("%s: frame %d is %d bytes, more than the %d allowed", path, i, len(name), MaxIdentBytes)
+		}
+		if err := icon(name); err != nil {
+			return fmt.Errorf("%s: frame %d: %w", path, i, err)
+		}
 	}
 	return nil
 }

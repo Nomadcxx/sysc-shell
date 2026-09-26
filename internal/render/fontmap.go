@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/go-text/typesetting/font"
+	ot "github.com/go-text/typesetting/font/opentype"
 	"github.com/go-text/typesetting/fontscan"
 	"github.com/go-text/typesetting/language"
 )
@@ -69,6 +70,16 @@ type FontMap struct {
 	// makes two goroutines write to the same glyph caches.
 	icon       *font.Face
 	iconLoaded bool
+	// weighted holds one instance per variable font and requested weight.
+	// It is separate from cache because every rune of a run must resolve to
+	// the same instance, or SplitRuns breaks the run at each rune.
+	weighted map[weightedKey]*font.Face
+}
+
+// weightedKey names one weight instance of one parsed font.
+type weightedKey struct {
+	font   *font.Font
+	weight int
 }
 
 // DefaultFontCacheDir is the fontscan disk-cache location.
@@ -159,6 +170,7 @@ func (m *FontMap) Face(r rune, req FaceRequest) *font.Face {
 		// never searches script fallbacks and Noto Color Emoji is never tried.
 		m.inner.SetScript(language.LookupScript(r))
 		face = outlineFaceForRune(m.inner.ResolveFace(r), m.primary, r)
+		face = m.atWeight(face, req.Weight)
 	}
 	if len(m.order) >= faceCacheLimit {
 		delete(m.cache, m.order[0])
@@ -167,6 +179,53 @@ func (m *FontMap) Face(r rune, req FaceRequest) *font.Face {
 	m.cache[key] = face
 	m.order = append(m.order, key)
 	return face
+}
+
+// wghtAxis is the OpenType weight axis.
+var wghtAxis = ot.MustNewTag("wght")
+
+// atWeight returns face set to weight on its wght axis, or face itself when
+// the font is not variable or the weight is its default.
+//
+// fontscan indexes a variable font once, as its default instance, so a
+// request for 600 from a family shipped as one variable file (Inter Variable,
+// the default family) resolves to the regular instance. Without this every
+// weight in the type ramp painted at 400.
+func (m *FontMap) atWeight(face *font.Face, weight int) *font.Face {
+	if face == nil || weight <= 0 {
+		return face
+	}
+	key := weightedKey{font: face.Font, weight: weight}
+	if v, ok := m.weighted[key]; ok {
+		return v
+	}
+	// The instance gets its own Font value, sharing the parsed tables. The
+	// go-text shaper caches its HarfBuzz font per *font.Font and builds it
+	// from the first face it sees, so instances sharing one Font would all
+	// shape with that face's advances and kerning.
+	inst := *face.Font
+	v := font.NewFace(&inst)
+	v.SetVariations([]font.Variation{{Tag: wghtAxis, Value: float32(weight)}})
+	if !hasVariation(v.Coords()) {
+		v = face
+	}
+	if m.weighted == nil {
+		m.weighted = make(map[weightedKey]*font.Face)
+	}
+	m.weighted[key] = v
+	return v
+}
+
+// hasVariation reports whether normalised coordinates move off the default
+// instance. A static font has none; a default weight has only zeros.
+func hasVariation[T comparable](coords []T) bool {
+	var zero T
+	for _, c := range coords {
+		if c != zero {
+			return true
+		}
+	}
+	return false
 }
 
 // iconFaceFor returns this map's project face for an icon rune, or nil.
@@ -181,7 +240,9 @@ func (m *FontMap) iconFaceFor(r rune) *font.Face {
 	inDetail := r >= detailRuneFirst && r <= detailRuneLast
 	inDevice := r >= iconSmartphone && r <= iconSignalCellular4Bar
 	inGPUMetric := r == iconGPU
-	if !inDevice && !inWeather && !inBattery && !inMetric && !inRecorder && !inNotify && !inGauge && !inNight && !inDetail && !inGPUMetric {
+	inCross := r == iconCross
+	inCat := r >= catRuneFirst && r <= catRuneLast
+	if !inDevice && !inWeather && !inBattery && !inMetric && !inRecorder && !inNotify && !inGauge && !inNight && !inDetail && !inGPUMetric && !inCross && !inCat {
 		return nil
 	}
 	if !m.iconLoaded {
