@@ -109,6 +109,9 @@ type Style struct {
 	// from 0 to 255. Nested fills composite over the painted root rather
 	// than inheriting it.
 	SurfaceOpacity uint8
+	// NoGround leaves the root unfilled: an islands bar, whose capsules carry
+	// the bar. SurfaceOpacity cannot say so, because zero there means unset.
+	NoGround bool
 	// Backdrop is a blurred capture of what sat behind this surface when it
 	// opened, held at reduced resolution and scaled during the blit. Nil is
 	// today's paint: an opaque root over whatever the compositor shows.

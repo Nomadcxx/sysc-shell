@@ -54,8 +54,12 @@ func (s Style) containerHighest() Color {
 // translucent panel must not drag its cards toward the wallpaper with it.
 //
 // A zero SurfaceOpacity means the field was never set, not that the surface is
-// invisible, so it paints opaque.
+// invisible, so it paints opaque. A surface with no ground says so with
+// NoGround.
 func (s Style) rootFill() Color {
+	if s.NoGround {
+		return Color{}
+	}
 	a := s.SurfaceOpacity
 	if a == 0 || a == 0xff {
 		return s.Background

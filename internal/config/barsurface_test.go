@@ -99,4 +99,9 @@ func TestOverhangFollowsTheShape(t *testing.T) {
 	if got := b.Overhang(); got != 0 {
 		t.Errorf("floating overhang = %d, want 0", got)
 	}
+	// Islands has no ground to attach, so it lays out as floating (D5).
+	b.Style, b.Shape = "islands", "attached"
+	if b.Attached() || b.Overhang() != 0 || b.Extent() != b.Gap+b.Body() {
+		t.Errorf("islands attached: Attached %v overhang %d extent %d, want floating", b.Attached(), b.Overhang(), b.Extent())
+	}
 }

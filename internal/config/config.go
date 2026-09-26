@@ -189,8 +189,9 @@ func (b Bar) Extent() int {
 // overhang that holds an attached bar's end fillets.
 func (b Bar) SurfaceExtent() int { return b.Extent() + b.Overhang() }
 
-// Attached reports whether the bar meets the screen edge.
-func (b Bar) Attached() bool { return b.Shape == "attached" }
+// Attached reports whether the bar meets the screen edge. Islands paints no
+// ground to attach, so it lays out as floating whatever the shape says.
+func (b Bar) Attached() bool { return b.Shape == "attached" && b.Style != "islands" }
 
 // BodyIn places the painted body inside a surface of the given size. A
 // floating body is inset by the gap; an attached one spans the width against

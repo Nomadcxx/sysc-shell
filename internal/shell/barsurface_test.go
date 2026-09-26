@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 
@@ -186,27 +187,45 @@ func TestIslandsBlurEachVisibleCapsule(t *testing.T) {
 // declares it, for both shapes on both edges.
 func TestBarBodyMatchesThePlatform(t *testing.T) {
 	t.Parallel()
-	for _, shape := range config.BarShapes {
-		for _, edge := range []string{"top", "bottom"} {
-			cfg := config.Default()
-			policy := cfg.Bar
-			policy.Shape, policy.Edge = shape, edge
-			policy.Left, policy.Center, policy.Right = nil, nil, nil
-			bar, err := NewWithTheme(ThemeFrom(cfg, policy), policy, "DP-1")
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(bar.stopAnimation)
-			height := policy.SurfaceExtent()
-			var want ui.Rect
-			want.X, want.Y, want.W, want.H = policy.BodyIn(1200, height)
-			if got := bar.bodyLocked(1200, height); got != want {
-				t.Errorf("%s %s: shell body %+v, platform body %+v", shape, edge, got, want)
-			}
-			if surface, _, _ := bar.themeSnapshot().Geometry(); surface != policy.Extent() {
-				t.Errorf("%s %s: theme extent %d, want %d", shape, edge, surface, policy.Extent())
+	for _, tc := range []struct {
+		style string
+		hc    bool
+	}{{"frosted", false}, {"islands", false}, {"islands", true}} {
+		for _, shape := range config.BarShapes {
+			for _, edge := range []string{"top", "bottom"} {
+				checkBarBodyMatchesThePlatform(t, tc.style, tc.hc, shape, edge)
 			}
 		}
+	}
+}
+
+// checkBarBodyMatchesThePlatform compares one combination. High contrast
+// paints islands as solid, but the surface is still sized from the configured
+// style, so the painted body has to follow that too.
+func checkBarBodyMatchesThePlatform(t *testing.T, style string, hc bool, shape, edge string) {
+	t.Helper()
+	cfg := config.Default()
+	cfg.Accessibility.HighContrast = hc
+	policy := cfg.Bar
+	policy.Style, policy.Shape, policy.Edge = style, shape, edge
+	policy.Left, policy.Center, policy.Right = nil, nil, nil
+	bar, err := NewWithTheme(ThemeFrom(cfg, policy), policy, "DP-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(bar.stopAnimation)
+	name := fmt.Sprintf("%s hc=%v %s %s", style, hc, shape, edge)
+	height := policy.SurfaceExtent()
+	var want ui.Rect
+	want.X, want.Y, want.W, want.H = policy.BodyIn(1200, height)
+	if got := bar.bodyLocked(1200, height); got != want {
+		t.Errorf("%s: shell body %+v, platform body %+v", name, got, want)
+	}
+	if surface, _, _ := bar.themeSnapshot().Geometry(); surface != policy.Extent() {
+		t.Errorf("%s: theme extent %d, want %d", name, surface, policy.Extent())
+	}
+	if g := barStyle(bar.themeSnapshot()); (g.AttachEdge != "") != policy.Attached() {
+		t.Errorf("%s: painter attach edge %q, platform attached %v", name, g.AttachEdge, policy.Attached())
 	}
 }
 
@@ -266,6 +285,45 @@ func TestAttachedBarRendersItsEndFillets(t *testing.T) {
 				if alpha(x, y) == 0 {
 					t.Fatalf("blurred pixel (%d,%d) past the body is unpainted", x, y)
 				}
+			}
+		}
+	}
+}
+
+// TestIslandsPaintNoGround renders an islands bar: the capsules paint, and the
+// bar between them stays transparent whether or not the compositor blurs.
+func TestIslandsPaintNoGround(t *testing.T) {
+	t.Parallel()
+	for _, blur := range []bool{true, false} {
+		bar := blurBar(t, "islands", "attached", blur, config.Default().Bar.Center)
+		const w = 1200
+		h := bar.themeSnapshot().barGeometry().SurfaceExtent()
+		if err := bar.Configure(w, h, 120); err != nil {
+			t.Fatal(err)
+		}
+		pix := make([]byte, w*h*4)
+		if err := bar.Render(pix, w, h, w*4); err != nil {
+			t.Fatal(err)
+		}
+		alpha := func(x, y int) byte { return pix[(y*w+x)*4+3] }
+		var pill *ui.Node
+		for _, section := range bar.sections() {
+			for _, n := range section {
+				if n.Kind == ui.KindCapsule && n.Bounds.W > 0 && pill == nil {
+					pill = n
+				}
+			}
+		}
+		if pill == nil {
+			t.Fatalf("blur=%v: no capsule was arranged", blur)
+		}
+		cx, cy := pill.Bounds.X+pill.Bounds.W/2, pill.Bounds.Y+pill.Bounds.H/2
+		if alpha(cx, cy) == 0 {
+			t.Errorf("blur=%v: the capsule at %+v is unpainted", blur, pill.Bounds)
+		}
+		for _, x := range []int{4, w / 4, w - 5} {
+			if a := alpha(x, cy); a != 0 {
+				t.Errorf("blur=%v: ground at (%d,%d) alpha %#x, want transparent", blur, x, cy, a)
 			}
 		}
 	}

@@ -101,8 +101,8 @@ type Theme struct {
 	// BarStyle is the effective bar style. High contrast forces solid, and a
 	// bar that names no style paints solid, as every bar did before styles.
 	BarStyle string
-	// BarEdge and BarShape are the bar policy's edge and shape, which decide
-	// where its surface meets the screen.
+	// BarEdge and BarShape are the bar policy's edge and the shape it lays out
+	// in (layoutShape), which decide where its surface meets the screen.
 	BarEdge, BarShape string
 	// Blur reports that the compositor blurs behind this bar: its style is
 	// translucent and the compositor offers ext-background-effect.
@@ -207,7 +207,7 @@ func ResolveTheme(cfg config.Config, bar config.Bar, tok theme.Tokens) (Theme, e
 
 		BarStyle:     effectiveBarStyle(bar.Style, hc),
 		BarEdge:      bar.Edge,
-		BarShape:     bar.Shape,
+		BarShape:     layoutShape(bar),
 		frostOpacity: bar.FrostOpacity,
 		pillOpacity:  bar.PillOpacity,
 	}
@@ -592,10 +592,13 @@ func (t Theme) Style() render.Style {
 		Shapes:         t.Shapes,
 		Type:           t.Type,
 		SurfaceOpacity: t.Surfaces.Bar,
-		Elevation:      t.Elevation,
-		Shadow:         p.Shadow,
-		Scrim:          p.Scrim,
-		Motion:         t.Motion,
+		// Islands resolves its ground to zero, which the painter would read
+		// as unset and fill opaque.
+		NoGround:  t.BarStyle == "islands" && t.Surfaces.Bar == 0,
+		Elevation: t.Elevation,
+		Shadow:    p.Shadow,
+		Scrim:     p.Scrim,
+		Motion:    t.Motion,
 	}
 	s.Roles = paletteRoles(p)
 	return s
@@ -661,6 +664,17 @@ func (t Theme) OverlayStyle() render.Style { return t.StyleFor(t.Surfaces.Overla
 // BackgroundOpaque reports whether the surface token is fully opaque.
 func (t Theme) BackgroundOpaque() bool {
 	return t.Background.A == 0xff && t.Surfaces.Bar == 0xff
+}
+
+// layoutShape is the shape the bar lays out in, which config.Bar.Attached
+// decides from the configured style: islands is floating whatever it names,
+// and stays so under high contrast, because the platform sizes the surface
+// from the same configured policy.
+func layoutShape(b config.Bar) string {
+	if b.Attached() {
+		return "attached"
+	}
+	return "floating"
 }
 
 // barGeometry is the theme's bar tokens as the policy they were taken from.
