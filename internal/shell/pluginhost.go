@@ -781,12 +781,23 @@ func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResul
 	h.r.mu.Lock()
 	conn, global, err := h.resolveOutputLocked(v1.OutputContextParams{Output: p.Output, Generation: p.Generation})
 	trig := Trigger{}
+	// size is what the surface will actually be. The manifest declares a
+	// size; a short or narrow output fits it down, and view.open must say so
+	// or the plugin lays out for a box it never gets (sysc-578).
+	size := ui.Rect{W: spec.Width, H: spec.Height}
 	if err == nil {
 		if bar, ok := h.r.bars[global]; ok {
-			policy := h.r.cfg.ForConnector(bar.connector())
-			trig = Trigger{BarEdge: policy.Edge, BarZone: exclusiveBarZone(bar), Align: "center"}
+			// triggerLocked carries the output's logical size. Without it the
+			// panel was clamped against a 1920x1080 fallback and ran off the
+			// right edge of smaller screens (sysc-578).
+			trig = h.r.triggerLocked(global, bar.connector())
+			trig.BarZone = exclusiveBarZone(bar)
 			if anchor > 0 {
 				trig.AnchorX = anchor
+			}
+			if trig.OutW > 0 && trig.OutH > 0 {
+				size.W, size.H = Placement{Output: ui.Rect{W: trig.OutW, H: trig.OutH}, BarZone: trig.BarZone,
+					Padding: h.r.cfg.Panels.Padding, Panel: size}.FittedSize()
 			}
 		}
 	}
@@ -811,7 +822,7 @@ func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResul
 	h.panel = &hostedView{
 		Plugin: pluginID, Entry: p.Entry, Instance: p.Instance,
 		Output: p.Output, Generation: global, Kind: v1.ViewPanel,
-		Width: spec.Width, Height: spec.Height,
+		Width: size.W, Height: size.H,
 	}
 	h.mu.Unlock()
 
@@ -831,7 +842,7 @@ func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResul
 	view := hostedView{
 		Plugin: pluginID, Entry: p.Entry, Instance: p.Instance,
 		Output: p.Output, Generation: global, Kind: v1.ViewPanel,
-		Width: spec.Width, Height: spec.Height,
+		Width: size.W, Height: size.H,
 	}
 	h.openView(view, false)
 	h.mu.Lock()

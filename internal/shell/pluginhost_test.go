@@ -1072,6 +1072,84 @@ func TestPluginPanelAnchorsUnderTheClickedWidget(t *testing.T) {
 	t.Fatal("plugin panel never opened")
 }
 
+// A plugin panel was placed against a 1920x1080 fallback because its trigger
+// never carried the output size. On a 1536x864 laptop a panel opened near the
+// right edge then overran the screen and was cropped (sysc-578).
+func TestPluginPanelIsPlacedAgainstTheRealOutput(t *testing.T) {
+	reg := bindManifestPlugin(t, "ok", "org.sysc.screen-recorder", testRecorderPanelManifest,
+		[]string{"org.sysc.screen-recorder"})
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	bar := reg.bars[7]
+	bar.setOutputSize(1536, 864)
+	if err := bar.Configure(1536, BarHeight, 150); err != nil {
+		t.Fatal(err)
+	}
+	reg.plugins.mu.Lock()
+	reg.plugins.lastAnchor["org.sysc.screen-recorder"] = 1400
+	reg.plugins.mu.Unlock()
+	if _, err := reg.plugins.openPanel("org.sysc.screen-recorder", v1.PanelParams{
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "org.sysc.screen-recorder-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	reg.mu.Lock()
+	host := reg.panelHosts[PanelPlugin]
+	reg.mu.Unlock()
+	if host == nil {
+		t.Fatal("plugin panel never opened")
+	}
+	if host.place.Output.W != 1536 || host.place.Output.H != 864 {
+		t.Fatalf("placed against a %dx%d output, want 1536x864", host.place.Output.W, host.place.Output.H)
+	}
+	m := host.place.Margins()
+	if right := m.Left + host.place.Panel.W; right > 1536-host.place.Padding {
+		t.Fatalf("panel spans x=%d..%d on a 1536-wide output", m.Left, right)
+	}
+}
+
+// view.open carried the manifest size even when the output could not hold
+// it, so a plugin laid out for a box it never got (sysc-578).
+func TestPluginPanelViewOpenReportsTheGrantedSize(t *testing.T) {
+	reg := bindManifestPlugin(t, "ok", "org.sysc.screen-recorder", testRecorderPanelManifest,
+		[]string{"org.sysc.screen-recorder"})
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	bar := reg.bars[7]
+	bar.setOutputSize(1536, 600)
+	if err := bar.Configure(1536, BarHeight, 150); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reg.plugins.openPanel("org.sysc.screen-recorder", v1.PanelParams{
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "org.sysc.screen-recorder-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	reg.mu.Lock()
+	host := reg.panelHosts[PanelPlugin]
+	reg.mu.Unlock()
+	if host == nil {
+		t.Fatal("plugin panel never opened")
+	}
+	wantW, wantH := host.place.FittedSize()
+	if wantH >= 720 {
+		t.Fatalf("fixture does not constrain the panel: fitted %dx%d", wantW, wantH)
+	}
+	reg.plugins.mu.Lock()
+	defer reg.plugins.mu.Unlock()
+	for _, v := range reg.plugins.views {
+		if v.Kind == v1.ViewPanel {
+			if v.Width != wantW || v.Height != wantH {
+				t.Fatalf("view.open said %dx%d, the surface is %dx%d", v.Width, v.Height, wantW, wantH)
+			}
+			return
+		}
+	}
+	t.Fatal("no panel view opened")
+}
+
 func plantPNG(t *testing.T, path string) {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
