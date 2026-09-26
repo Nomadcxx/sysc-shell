@@ -48,6 +48,20 @@ func TestOpacityUnsetStaysOpaque(t *testing.T) {
 	}
 }
 
+// TestNoGroundLeavesTheRootTransparent is the explicit form of an invisible
+// root, which a zero SurfaceOpacity cannot express.
+func TestNoGroundLeavesTheRootTransparent(t *testing.T) {
+	t.Parallel()
+	style := darkStyle()
+	style.NoGround = true
+	for _, a := range []uint8{0, 0x80, 0xff} {
+		style.SurfaceOpacity = a
+		if got := style.rootFill(); got.A != 0 {
+			t.Errorf("opacity %#x: root fill = %+v, want transparent", a, got)
+		}
+	}
+}
+
 // TestElevationSelectsTheShadowInk resolves the three levels onto the shadow
 // role. None draws nothing at all; the other two differ in strength, and both
 // take the palette's Shadow token rather than a hardcoded black.

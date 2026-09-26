@@ -3,6 +3,7 @@ package wayland
 import (
 	"testing"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -68,7 +69,7 @@ func TestInputRegionCoversTheWholeSurfaceIncludingTheGap(t *testing.T) {
 	surface := ui.Rect{X: 0, Y: 0, W: 3440, H: 44}
 	body := ui.Rect{X: 4, Y: 4, W: 3432, H: 40}
 
-	got := inputRect(surface)
+	got := inputRect(config.Bar{Shape: "floating"}, surface, body)
 	if got != surface {
 		t.Fatalf("inputRect = %+v, want the whole surface %+v", got, surface)
 	}
@@ -92,5 +93,59 @@ func TestHostRegionGeometryUsesCurrentConfigureAndCandidateGap(t *testing.T) {
 	}
 	if body != (ui.Rect{X: 6, Y: 6, W: 1188, H: 38}) {
 		t.Fatalf("body = %+v, want candidate 6px gap inside current configure", body)
+	}
+}
+
+func TestBlurRegionUpdateSendsOnlyChanges(t *testing.T) {
+	t.Parallel()
+	a := []ui.Rect{{W: 100, H: 40}}
+	b := []ui.Rect{{W: 100, H: 40}, {X: 0, Y: 40, W: 8, H: 1}}
+	for _, tc := range []struct {
+		name        string
+		prev, next  []ui.Rect
+		capable     bool
+		send, clear bool
+	}{
+		{"first region", nil, a, true, true, false},
+		{"unchanged", a, a, true, false, false},
+		{"changed", a, b, true, true, false},
+		{"emptied", a, nil, true, false, true},
+		{"nothing to nothing", nil, nil, true, false, false},
+		{"capability lost with a region", a, a, false, false, true},
+		{"incapable and empty", nil, a, false, false, false},
+	} {
+		send, clear := blurRegionUpdate(tc.prev, tc.next, tc.capable)
+		if send != tc.send || clear != tc.clear {
+			t.Errorf("%s: send=%v clear=%v, want %v %v", tc.name, send, clear, tc.send, tc.clear)
+		}
+	}
+}
+
+// An attached bar's overhang holds only the end fillets, which hang over the
+// windows below; input stops at the body, and a bottom edge mirrors a top one.
+func TestAttachedBarRegionsExcludeTheOverhang(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		edge string
+		body ui.Rect
+	}{
+		{"top", ui.Rect{W: 1200, H: 40}},
+		{"bottom", ui.Rect{Y: 12, W: 1200, H: 40}},
+	} {
+		policy := config.Bar{Height: 48, Gap: 4, Shape: "attached", Edge: tc.edge}
+		h := newHost(7, nil)
+		h.policy = policy
+		if got := h.surfaceHeight(); got != 52 {
+			t.Fatalf("%s surface height = %d, want 52 with the overhang", tc.edge, got)
+		}
+		h.bar.ss.configure(1200, 52)
+		h.bar.ss.acknowledge()
+		surface, body := hostRegionGeometry(h, policy)
+		if body != tc.body {
+			t.Errorf("%s body = %+v, want %+v", tc.edge, body, tc.body)
+		}
+		if got := inputRect(policy, surface, body); got != tc.body {
+			t.Errorf("%s input = %+v, want the body %+v", tc.edge, got, tc.body)
+		}
 	}
 }

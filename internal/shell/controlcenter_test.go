@@ -51,6 +51,7 @@ func TestControlCentreNameAndFlushPlacement(t *testing.T) {
 	cfg.Panels.Gap = 19 // The fused panel ignores a configured floating gap.
 	r := NewRegistry(cfg)
 	t.Cleanup(r.Close)
+	withTestBar(t, r, 1, cfg)
 	if err := r.OpenPanelByName("control-center"); err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +66,7 @@ func TestControlCentreNameAndFlushPlacement(t *testing.T) {
 	section := h.section
 	rootKind := h.root.Kind
 	leaseCount := len(h.leases)
-	fillet := h.filletMargin()
+	joints := place.Joints()
 	spec := r.panelSpec(h, place.Margins())
 	r.mu.Unlock()
 
@@ -75,7 +76,7 @@ func TestControlCentreNameAndFlushPlacement(t *testing.T) {
 	if place.Gap != 0 {
 		t.Errorf("gap = %d, want 0", place.Gap)
 	}
-	if got := place.Margins(); got.Top != place.BarZone || got.Left != (place.Output.W-place.Panel.W)/2 {
+	if got := place.Margins(); got.Top != place.BarZone-1 || got.Left != (place.Output.W-place.Panel.W)/2 {
 		t.Errorf("margins = %+v, want flush and centred", got)
 	}
 	if section != "home" {
@@ -87,8 +88,8 @@ func TestControlCentreNameAndFlushPlacement(t *testing.T) {
 	if leaseCount != 9 {
 		t.Errorf("leases = %d, want CPU, memory, temperature, GPU, battery, root filesystem, network, block and clock", leaseCount)
 	}
-	if fillet != 12 || spec.Width != 724 {
-		t.Errorf("fillet = %d, drawn width = %d, want 12 and 724", fillet, spec.Width)
+	if joints != (Joints{Left: 12, Right: 12}) || spec.Width != 724 {
+		t.Errorf("joints = %+v, drawn width = %d, want 12 each side and 724", joints, spec.Width)
 	}
 }
 
@@ -105,21 +106,21 @@ func TestControlCentrePanelOpaqueHintMatchesExpandedSilhouette(t *testing.T) {
 		{name: "plain opaque panel", fillet: 0, wantOpaque: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			theme := DefaultTheme()
-			theme.Fillet = tc.fillet
 			h := &PanelHost{
 				id:    PanelControlCenter,
-				theme: theme,
+				theme: DefaultTheme(),
 				place: Placement{
-					BarEdge: "top",
-					Output:  ui.Rect{W: 1000, H: 800},
-					Padding: 16,
-					Panel:   ui.Rect{W: 700, H: 564},
+					BarEdge:  "top",
+					BarShape: "attached",
+					Output:   ui.Rect{W: 1000, H: 800},
+					Padding:  16,
+					Panel:    ui.Rect{W: 700, H: 564},
+					Fillet:   tc.fillet,
 				},
 			}
 			spec := r.panelSpec(h, h.place.Margins())
 			if got := spec.Callbacks.OpaqueBackground; got != tc.wantOpaque {
-				t.Fatalf("OpaqueBackground = %t, want %t (fillet margin %d)", got, tc.wantOpaque, h.filletMargin())
+				t.Fatalf("OpaqueBackground = %t, want %t (joints %+v)", got, tc.wantOpaque, h.place.Joints())
 			}
 		})
 	}
@@ -138,22 +139,27 @@ func TestControlCentreRevealFollowsSurfaceAnimator(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			now := time.Unix(0, 0)
-			h := &PanelHost{id: PanelControlCenter, place: Placement{BarEdge: tc.edge}, theme: DefaultTheme()}
+			h := &PanelHost{id: PanelControlCenter, theme: DefaultTheme(), place: Placement{
+				BarEdge: tc.edge, BarShape: "attached", Fillet: 12,
+				Output: ui.Rect{W: 1000, H: 800}, Padding: 16, Panel: ui.Rect{W: 700, H: 564},
+			}}
 			h.anim = newAnimator(func() time.Time { return now }, tc.reduced, h.theme.Motion)
 			h.anim.Target(panelSurfaceID(h.id), animVisible, 1)
 
-			opacity, offsetY, fillet := h.panelReveal()
+			opacity, offsetY := h.panelReveal()
+			fillet, _, _ := h.revealJoints(opacity)
 			if opacity != 0 || offsetY != tc.wantY || fillet != 0 {
-				t.Fatalf("initial reveal = opacity %v offset %d fillet %d, want 0, %d, 0", opacity, offsetY, fillet, tc.wantY)
+				t.Fatalf("initial reveal = opacity %v offset %d joint %d, want 0, %d, 0", opacity, offsetY, fillet, tc.wantY)
 			}
 			settle := h.theme.Motion.Durations.Medium
 			if tc.reduced {
 				settle = reducedPanelCap
 			}
 			now = now.Add(settle)
-			opacity, offsetY, fillet = h.panelReveal()
-			if opacity != 1 || offsetY != 0 || fillet != h.theme.Fillet {
-				t.Fatalf("settled reveal = opacity %v offset %d fillet %d, want 1, 0, %d", opacity, offsetY, fillet, h.theme.Fillet)
+			opacity, offsetY = h.panelReveal()
+			fillet, _, _ = h.revealJoints(opacity)
+			if opacity != 1 || offsetY != 0 || fillet != 12 {
+				t.Fatalf("settled reveal = opacity %v offset %d joint %d, want 1, 0, 12", opacity, offsetY, fillet)
 			}
 		})
 	}

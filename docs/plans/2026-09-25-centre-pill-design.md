@@ -5,6 +5,10 @@ of five mocked alternatives. Amends
 [the centre clock, media and wordmark design](2026-09-16-centre-clock-media-wordmark-design.md):
 D1's separate wordmark button and D2's anchor on the bare mark.
 
+The five options, the diagnosis of the old centre, and the shell's own render
+of A against the mock are in
+`assets/2026-09-25-centre-pill-design/centre-pill-mockups.html`.
+
 ## Problem
 
 The centre read as three objects: a time pill, the bare SYSC mark, and a

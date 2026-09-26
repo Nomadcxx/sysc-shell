@@ -24,6 +24,7 @@ import (
 func openWallpaperPanel(t *testing.T, roots []string) (*Registry, *wallpaper.Service, []wayland.AuxRequest) {
 	t.Helper()
 	reg := newPanelRegistry(t)
+	withTestBar(t, reg, 7, reg.cfg)
 	svc := wallpaper.NewService(wallpaper.ServiceConfig{
 		Engine:     stubWallpaperEngine{},
 		Settings:   wallpaper.Settings{Scale: "fill", Loop: true, FPS: 30, Hidden: wallpaper.HiddenNone},
@@ -41,8 +42,10 @@ func openWallpaperPanel(t *testing.T, roots []string) (*Registry, *wallpaper.Ser
 		t.Fatal(err)
 	}
 	reqs := drainAux(t, reg, 2)
-	size := panelTargetSize(PanelWallpaper)
-	if err := reqs[1].Open.Callbacks.Configure(size.W, size.H, 120); err != nil {
+	// The compositor configures the surface at the size the spec asked for,
+	// which carries the joints beside the body.
+	open := reqs[1].Open
+	if err := open.Callbacks.Configure(int(open.Width), int(open.Height), 120); err != nil {
 		t.Fatal(err)
 	}
 	return reg, svc, reqs
@@ -92,30 +95,31 @@ func TestWallpaperPanelGeometry(t *testing.T) {
 
 	// 1100 does not fit under a 40px bar on a 1080 output, so the M4 clamp
 	// shrinks it rather than letting it run off the screen (D2).
+	// Attached, it tucks 1 px under the opaque bar and keeps no gap.
 	reg.mu.Lock()
-	gap, pad := reg.cfg.Panels.Gap, reg.cfg.Panels.Padding
+	pad := reg.cfg.Panels.Padding
 	reg.mu.Unlock()
-	anchor := 40 + gap
+	anchor := 40 - 1
 	wantH := 1080 - anchor - pad
 	if int(panel.Height) != wantH {
 		t.Fatalf("height = %d, want the clamped %d", panel.Height, wantH)
 	}
-	if int(panel.Width) != 980 {
-		t.Fatalf("width = %d, want 980", panel.Width)
+	if int(panel.Width) != 980+2*12 {
+		t.Fatalf("width = %d, want 980 plus a 12 px joint each side", panel.Width)
 	}
 }
 
-func TestWallpaperPanelIsAFloatingExclusiveOverlay(t *testing.T) {
+func TestWallpaperPanelIsAnAttachedExclusiveOverlay(t *testing.T) {
 	t.Parallel()
 
 	reg, _, reqs := openWallpaperPanel(t, nil)
 	h := wallpaperHost(t, reg)
 
 	reg.mu.Lock()
-	centred := h.place.CenterY
+	attached := h.place.Attached()
 	reg.mu.Unlock()
-	if !centred {
-		t.Error("the picker floats like the launcher rather than hugging the bar")
+	if !attached {
+		t.Error("the picker floats; it attaches to the bar like every panel but the floating three")
 	}
 	if reqs[1].Open.Keyboard != keyboardExclusive {
 		t.Errorf("keyboard = %d, want exclusive", reqs[1].Open.Keyboard)

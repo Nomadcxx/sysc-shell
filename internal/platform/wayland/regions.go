@@ -1,35 +1,43 @@
 package wayland
 
 import (
+	"slices"
+
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-wayland/client"
 )
 
-// inputRect is the area the bar accepts pointer input in: the whole surface.
+// inputRect is the area the bar accepts pointer input in.
 //
-// Milestone 2 declares no click-through pixels inside the surface. The gap band
-// is transparent but still clickable, so a pointer slammed to the screen edge
-// lands on the bar rather than in a dead strip. A later milestone that adds a
-// shadow grows the surface past the exclusive zone and excludes that band here.
-func inputRect(surface ui.Rect) ui.Rect { return surface }
+// A floating bar takes the whole surface: the gap band is transparent but still
+// clickable, so a pointer slammed to the screen edge lands on the bar rather
+// than in a dead strip. An attached bar's body already meets the screen edge,
+// and its overhang holds only the end fillets over the windows below, so input
+// stops at the body.
+func inputRect(policy config.Bar, surface, body ui.Rect) ui.Rect {
+	if policy.Attached() {
+		return body
+	}
+	return surface
+}
 
 // hostRegionGeometry derives regions from the host's accepted configure and a
 // candidate policy. Reload uses the current configure until the compositor
 // sends a replacement configure for changed layer-surface geometry.
 func hostRegionGeometry(h *OutputHost, policy config.Bar) (surface, body ui.Rect) {
 	surface = ui.Rect{W: h.bar.ss.logicalWidth, H: h.bar.ss.logicalHeight}
-	body = ui.Rect{
-		X: policy.Gap, Y: policy.Gap,
-		W: max(0, surface.W-2*policy.Gap),
-		H: max(0, surface.H-policy.Gap),
-	}
+	body.X, body.Y, body.W, body.H = policy.BodyIn(surface.W, surface.H)
 	return surface, body
 }
 
 func (o *owner) applyHostRegions(h *OutputHost, policy config.Bar, opaqueBackground bool) error {
 	surface, body := hostRegionGeometry(h, policy)
-	return o.applyRegions(h.bar.surface, surface, body, policy.Radius, opaqueBackground)
+	radius := policy.Radius
+	if policy.Attached() {
+		radius = 0 // an attached body is square; its fillets lie outside it
+	}
+	return o.applyRegions(h.bar.surface, inputRect(policy, surface, body), body, radius, opaqueBackground)
 }
 
 // opaqueRects decomposes the painted body into rectangles the bar fills with
@@ -59,10 +67,10 @@ func opaqueRects(body ui.Rect, radius int, opaqueBackground bool) []ui.Rect {
 	}
 }
 
-// applyRegions sets the input and opaque regions for one bar. Regions are in
+// applyRegions sets the input and opaque regions for one surface. Regions are in
 // logical surface coordinates, which is the viewport destination space.
-func (o *owner) applyRegions(surface *client.Surface, surfaceRect, body ui.Rect, radius int, opaqueBackground bool) error {
-	if err := o.applyInputRects(surface, []ui.Rect{inputRect(surfaceRect)}); err != nil {
+func (o *owner) applyRegions(surface *client.Surface, input, body ui.Rect, radius int, opaqueBackground bool) error {
+	if err := o.applyInputRects(surface, []ui.Rect{input}); err != nil {
 		return err
 	}
 	return o.applyOpaqueRegion(surface, body, radius, opaqueBackground)
@@ -107,4 +115,70 @@ func (o *owner) applyOpaqueRegion(surface *client.Surface, body ui.Rect, radius 
 		return err
 	}
 	return opaque.Destroy()
+}
+
+// blurRegionUpdate decides what one commit sends for a surface's blur. send
+// means set the region to next; clear means set a null region, which removes
+// the effect. Nothing is sent when the region is unchanged, so a surface that
+// repaints every frame does not rebuild a wl_region every frame.
+func blurRegionUpdate(prev, next []ui.Rect, capable bool) (send, clear bool) {
+	if !capable || len(next) == 0 {
+		return false, len(prev) > 0
+	}
+	return !slices.Equal(prev, next), false
+}
+
+// applyBlurShape brings a surface's blur region up to date before it commits.
+// The region is double-buffered, so it lands with the frame just painted.
+// The effect object is created on first use, and its cleanup runs before the
+// surface's because the stack unwinds in reverse.
+func (o *owner) applyBlurShape(u *surfaceUnit) error {
+	capable := o.backgroundEffect != nil && o.caps.current.Blur
+	var next []ui.Rect
+	if capable && u.app.BlurShape != nil {
+		next = u.app.BlurShape()
+	}
+	send, clear := blurRegionUpdate(u.blurRects, next, capable)
+	switch {
+	case clear:
+		if u.effect != nil {
+			if err := u.effect.SetBlurRegion(nil); err != nil {
+				return err
+			}
+		}
+		u.blurRects = nil
+	case send:
+		if u.effect == nil {
+			effect, err := o.backgroundEffect.GetBackgroundEffect(u.surface)
+			if err != nil {
+				return err
+			}
+			u.effect = effect
+			u.cleanup.push("background-effect", func() error {
+				e := u.effect
+				u.effect, u.blurRects = nil, nil
+				if e == nil {
+					return nil
+				}
+				return e.Destroy()
+			})
+		}
+		region, err := o.compositor.CreateRegion()
+		if err != nil {
+			return err
+		}
+		for _, r := range next {
+			if err := region.Add(int32(r.X), int32(r.Y), int32(r.W), int32(r.H)); err != nil {
+				return err
+			}
+		}
+		if err := u.effect.SetBlurRegion(region); err != nil {
+			return err
+		}
+		if err := region.Destroy(); err != nil {
+			return err
+		}
+		u.blurRects = slices.Clone(next)
+	}
+	return nil
 }

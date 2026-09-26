@@ -1,6 +1,7 @@
 package wayland
 
 import (
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/backgroundeffect"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -58,6 +59,11 @@ type HostCallbacks struct {
 	// handed to a painter here. Nil leaves the surface without a backdrop,
 	// which is how every surface painted before this existed.
 	Backdrop func(*ui.Image)
+	// BlurShape reports, in surface-local logical pixels, the region the
+	// compositor should blur behind. It is read after every Render, on the
+	// Wayland goroutine, and only when the compositor can blur. Nil or empty
+	// means no blur.
+	BlurShape func() []ui.Rect
 	// Handle consumes a pointer event and reports whether state changed.
 	Handle func(Event) bool
 	// WantIME reports whether the focused control needs text-input-v3.
@@ -93,6 +99,11 @@ type surfaceUnit struct {
 
 	frameCallback *client.Callback
 	cleanup       cleanupStack
+
+	// effect is the surface's background-effect object, created on the first
+	// non-empty blur region; blurRects is the region it last sent.
+	effect    *backgroundeffect.ExtBackgroundEffectSurfaceV1
+	blurRects []ui.Rect
 
 	app HostCallbacks
 
@@ -166,11 +177,12 @@ func newHost(global uint32, proxy *client.Output) *OutputHost {
 // atomic commit (done) and the connector name that selects configuration.
 func (h *OutputHost) ready() bool { return h.doneSeen && h.connector != "" }
 
-// surfaceHeight is the layer surface extent for this host. The derivation
-// lives on config.Bar so the platform and the shell cannot drift apart, and
-// the exclusive zone is read separately because it need not equal the extent.
+// surfaceHeight is the layer surface extent for this host, including an
+// attached bar's overhang. The derivation lives on config.Bar so the platform
+// and the shell cannot drift apart, and the exclusive zone is read separately
+// because it need not equal the extent.
 func (h *OutputHost) surfaceHeight() int {
-	return h.policy.Extent()
+	return h.policy.SurfaceExtent()
 }
 
 // mayRecreate reports whether the host may rebuild its surface after a close.

@@ -974,8 +974,9 @@ func TestPluginPanelHostUsesManifestSize(t *testing.T) {
 		if host.place.BarZone != zone {
 			t.Fatalf("plugin BarZone = %d, want exclusive zone %d", host.place.BarZone, zone)
 		}
-		if top := host.place.Margins().Top; top != zone {
-			t.Fatalf("plugin top margin = %d, want %d", top, zone)
+		// Attached under an opaque bar, it tucks one pixel beneath it.
+		if top := host.place.Margins().Top; top != zone-1 {
+			t.Fatalf("plugin top margin = %d, want %d", top, zone-1)
 		}
 		if err := host.configure(host.place.Panel.W, host.place.Panel.H, 120); err != nil {
 			t.Fatal(err)
@@ -1104,7 +1105,12 @@ func TestPluginPanelIsPlacedAgainstTheRealOutput(t *testing.T) {
 		t.Fatalf("placed against a %dx%d output, want 1536x864", host.place.Output.W, host.place.Output.H)
 	}
 	m := host.place.Margins()
-	if right := m.Left + host.place.Panel.W; right > 1536-host.place.Padding {
+	// A panel this near the edge of an attached bar snaps flush to it.
+	limit := 1536 - host.place.Padding
+	if host.place.Joints().FlushRight {
+		limit = 1536
+	}
+	if right := m.Left + host.place.Panel.W; right > limit {
 		t.Fatalf("panel spans x=%d..%d on a 1536-wide output", m.Left, right)
 	}
 }
@@ -1255,8 +1261,21 @@ func TestPluginPanelResizeRetargetsTheOpenPanel(t *testing.T) {
 	if req.Update == nil || req.Update.Width == nil || req.Update.Height == nil {
 		t.Fatalf("aux update missing size: %+v", req.Update)
 	}
-	if *req.Update.Width != 400 || *req.Update.Height != 300 {
-		t.Fatalf("aux update size = %d x %d, want 400x300", *req.Update.Width, *req.Update.Height)
+	// The surface keeps the joints it opened with around the resized body.
+	reg.mu.Lock()
+	j := reg.panelHosts[PanelPlugin].place.Joints()
+	reg.mu.Unlock()
+	wantW, wantH := 400+j.Left+j.Right, 300
+	if j.Flush() {
+		wantH += reg.panelHosts[PanelPlugin].place.Fillet
+	}
+	if int(*req.Update.Width) != wantW || int(*req.Update.Height) != wantH {
+		t.Fatalf("aux update size = %d x %d, want %dx%d for joints %+v",
+			*req.Update.Width, *req.Update.Height, wantW, wantH, j)
+	}
+	if j != (Joints{}) && (!req.Update.SetInputRegion || len(req.Update.InputRects) != 1 ||
+		req.Update.InputRects[0].W != 400) {
+		t.Fatalf("resize input region = %+v, want the 400 px body", req.Update.InputRects)
 	}
 }
 

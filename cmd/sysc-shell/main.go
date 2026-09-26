@@ -298,6 +298,7 @@ func run(ctx context.Context) (err error) {
 		PrepareConfig: registry.PrepareConfig,
 		DropHost:      registry.DropHost,
 		DropAux:       registry.DropAux,
+		Capabilities:  registry.SetCapabilities,
 		Invalidations: registry.Invalidations(),
 		Aux:           registry.AuxRequests(),
 		Tooltips:      registry.Tooltips(),

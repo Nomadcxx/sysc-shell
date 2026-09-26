@@ -154,20 +154,57 @@ type Bar struct {
 	Left       []Item
 	Center     []Item
 	Right      []Item
+
+	// Style is how the bar's ground and pills are painted: one of BarStyles.
+	// Shape is whether the bar meets the screen edge or floats off it: one of
+	// BarShapes. Both are the bar's own identity, not theme axes.
+	Style string
+	Shape string
+	// FrostOpacity is the frosted ground's opacity and PillOpacity the pills'
+	// in the frosted and islands styles, both percentages.
+	FrostOpacity int
+	PillOpacity  int
 }
 
 // Body is the drawn height of the bar: the surface extent less the gap that
 // keeps the screen edge clickable.
 func (b Bar) Body() int { return b.Height - 2*b.Gap }
 
-// Extent is how much of the cross axis the layer surface occupies. The gap
-// lives inside the surface with a zero layer margin, so the extent carries one
-// gap, not two.
+// Extent is how far the bar reaches from the screen edge: where panels meet it
+// and what the exclusive zone follows. A floating bar's gap lives inside the
+// surface with a zero layer margin, so it carries one gap, not two; an
+// attached bar sits on the screen edge and is its body.
 //
 // This is the one derivation. The platform reads it for the surface size and
 // the shell reads it through Theme.Geometry; they computed it separately until
 // Milestone 9, agreeing only because each encoded the same assumption.
-func (b Bar) Extent() int { return b.Gap + b.Body() }
+func (b Bar) Extent() int {
+	if b.Attached() {
+		return b.Body()
+	}
+	return b.Gap + b.Body()
+}
+
+// SurfaceExtent is the layer surface's cross-axis size: the extent plus the
+// overhang that holds an attached bar's end fillets.
+func (b Bar) SurfaceExtent() int { return b.Extent() + b.Overhang() }
+
+// Attached reports whether the bar meets the screen edge. Islands paints no
+// ground to attach, so it lays out as floating whatever the shape says.
+func (b Bar) Attached() bool { return b.Shape == "attached" && b.Style != "islands" }
+
+// BodyIn places the painted body inside a surface of the given size. A
+// floating body is inset by the gap; an attached one spans the width against
+// the screen edge, with the overhang on its far side.
+func (b Bar) BodyIn(surfaceW, surfaceH int) (x, y, w, h int) {
+	if b.Attached() {
+		if b.Edge == "bottom" {
+			y = b.Overhang()
+		}
+		return 0, y, surfaceW, max(0, surfaceH-b.Overhang())
+	}
+	return b.Gap, b.Gap, max(0, surfaceW-2*b.Gap), max(0, surfaceH-b.Gap)
+}
 
 // ExclusiveZone is how much of the output the compositor keeps clear. It
 // follows the extent unless the document states a reserve, which may be zero.
@@ -177,6 +214,23 @@ func (b Bar) ExclusiveZone() int {
 	}
 	return *b.Reserve
 }
+
+// Overhang is how far an attached bar's surface reaches past its body, to hold
+// the concave fillets that curve its ends into the screen's sides. It is
+// derived from the shape and never written.
+func (b Bar) Overhang() int {
+	if b.Attached() {
+		return theme.FilletRadius
+	}
+	return 0
+}
+
+// BarStyles and BarShapes are the values bar.style and bar.shape accept, in
+// the order the settings registry offers them.
+var (
+	BarStyles = []string{"frosted", "solid", "islands"}
+	BarShapes = []string{"attached", "floating"}
+)
 
 // Theme is the composition the palette generator does not produce: the
 // independent density, typography, shape, opacity, elevation, and motion axes,
@@ -430,6 +484,7 @@ func Default() Config {
 	c := Config{
 		Bar: Bar{
 			Enabled: true, Edge: "top", Gap: 4,
+			Style: "frosted", Shape: "attached", FrostOpacity: 65, PillOpacity: 70,
 			Left: []Item{
 				{ID: "launcher"},
 				{ID: "workspace"},

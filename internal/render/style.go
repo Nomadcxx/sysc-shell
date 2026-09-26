@@ -24,13 +24,21 @@ type Style struct {
 	// corners stay square so the rounded body does not punch a wallpaper
 	// seam against the bar.
 	AttachEdge string
-	// Fillet is the radius, in logical pixels, of the concave wedges joining
-	// this surface to the bar at AttachEdge. Zero draws none.
-	Fillet int
+	// JointLeft and JointRight are the radii, in logical pixels, of the
+	// concave wedges joining this surface to the bar at AttachEdge, one beside
+	// each side of the body. Zero draws none on that side.
+	JointLeft, JointRight int
 	// FilletFill paints those wedges. It is the *bar's* fill, not this
 	// surface's: the two carry different alphas, and painting the wedge with
 	// rootFill leaves a visible seam wherever surface opacity is below 100.
 	FilletFill Color
+	// AttachEdge is also the edge an attached bar meets the screen along.
+	// EdgeFillet is the radius, in logical pixels, of the concave wedges past
+	// the far edge that curve the surface into the screen's side, one for each
+	// of EdgeLeft and EdgeRight. They take the surface's own fill. A surface
+	// is square at the far corner on each side that carries one.
+	EdgeFillet          int
+	EdgeLeft, EdgeRight bool
 
 	Background Color
 	Foreground Color
@@ -101,6 +109,9 @@ type Style struct {
 	// from 0 to 255. Nested fills composite over the painted root rather
 	// than inheriting it.
 	SurfaceOpacity uint8
+	// NoGround leaves the root unfilled: an islands bar, whose capsules carry
+	// the bar. SurfaceOpacity cannot say so, because zero there means unset.
+	NoGround bool
 	// Backdrop is a blurred capture of what sat behind this surface when it
 	// opened, held at reduced resolution and scaled during the blit. Nil is
 	// today's paint: an opaque root over whatever the compositor shows.
