@@ -3,6 +3,7 @@ package theme
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -72,6 +73,13 @@ func (g Generator) Generate(src Source, opts Options) (Tokens, error) {
 	args := make([]string, 0, 12)
 	switch src.Kind {
 	case "wallpaper":
+		if src.Seed == "" {
+			// The seed is rebuilt from the first successful wallpaper apply,
+			// so a cold start starts empty. There is nothing to derive a
+			// palette from yet; say so instead of failing matugen on an
+			// empty image path every boot.
+			return fallback, errors.New("theme: waiting for the first wallpaper")
+		}
 		args = append(args, "image", src.Seed)
 	case "hex":
 		args = append(args, "color", "hex", src.Seed)
