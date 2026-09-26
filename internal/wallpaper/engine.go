@@ -254,16 +254,19 @@ func socketFileIfOwned(path string, proc Process) (os.FileInfo, error) {
 }
 
 // deadSocketFile reports whether path is a socket file with nothing listening
-// behind it. Such a file is garbage left by a killed run: connecting is
-// refused, so no process owns it and removing it cannot disturb anyone. Any
-// probe that cannot prove the file dead counts as live.
-func deadSocketFile(path string) bool {
+// behind it, returning the identity observed before the probe. Such a file is
+// garbage left by a killed run: connecting is refused, so no process owns it
+// and removing it cannot disturb anyone. Any probe that cannot prove the file
+// dead counts as live.
+func deadSocketFile(path string) (os.FileInfo, bool) {
 	info, err := os.Lstat(path)
 	if err != nil || info.Mode()&os.ModeSocket == 0 {
-		return false
+		return nil, false
 	}
-	_, err = socketPeerPID(path)
-	return errors.Is(err, syscall.ECONNREFUSED)
+	if _, err := socketPeerPID(path); !errors.Is(err, syscall.ECONNREFUSED) {
+		return nil, false
+	}
+	return info, true
 }
 
 func removeSocketIfSame(path string, expected os.FileInfo) error {
@@ -368,11 +371,13 @@ func (e *gslapperEngine) Apply(job Job, set Settings) (string, error) {
 		// process owns it, so unlinking disturbs nobody. A live socket we do
 		// not own is still refused (D17/D18).
 		// ponytail: probe-then-remove races a binder arriving in between;
-		// launch re-checks and a losing gslapper bind fails visibly.
-		if !deadSocketFile(socket) {
+		// removeSocketIfSame narrows it to its own Lstat-to-Remove window and
+		// launch re-checks.
+		info, dead := deadSocketFile(socket)
+		if !dead {
 			return "", fmt.Errorf("wallpaper: %s socket is not owned by this shell", job.Connector)
 		}
-		if err := os.Remove(socket); err != nil && !os.IsNotExist(err) {
+		if err := removeSocketIfSame(socket, info); err != nil {
 			return "", fmt.Errorf("wallpaper: clear stale %s socket: %w", job.Connector, err)
 		}
 	case !os.IsNotExist(socketErr):
@@ -524,11 +529,8 @@ func (e *gslapperEngine) stopOwned(connector, socket string) error {
 		if _, err := os.Stat(socket); os.IsNotExist(err) {
 			return nil
 		}
-		if deadSocketFile(socket) {
-			if err := os.Remove(socket); err != nil && !os.IsNotExist(err) {
-				return err
-			}
-			return nil
+		if info, dead := deadSocketFile(socket); dead {
+			return removeSocketIfSame(socket, info)
 		}
 		return fmt.Errorf("wallpaper: %s still holds %s and is not ours to stop", connector, socket)
 	}

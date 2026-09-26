@@ -266,6 +266,49 @@ func TestEngineRestoreClearsStaleSocket(t *testing.T) {
 	}
 }
 
+func TestEngineStopOwnedRefusesForeignLiveSocket(t *testing.T) {
+	h := newEngineHarness(t)
+	l, err := net.Listen("unix", h.socket("DP-1"))
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer l.Close()
+	if err := h.eng.stopOwned("DP-1", h.socket("DP-1")); err == nil || !strings.Contains(err.Error(), "not ours to stop") {
+		t.Fatalf("stopOwned over a live foreign socket: got %v, want a refusal", err)
+	}
+	if _, err := os.Lstat(h.socket("DP-1")); err != nil {
+		t.Fatalf("live foreign socket was removed: %v", err)
+	}
+}
+
+func TestRemoveSocketIfSameRefusesReplacedSocket(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "gslapper-DP-1.sock")
+	deadSocketFileFor(t, path)
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("lstat: %v", err)
+	}
+	// Bind the replacement while the probed file still exists, then rename it
+	// over: the inode cannot be a reuse of the one just unlinked.
+	replacement := filepath.Join(dir, "replacement.sock")
+	l, err := net.Listen("unix", replacement)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer l.Close()
+	if err := os.Rename(replacement, path); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	err = removeSocketIfSame(path, info)
+	if err == nil || !strings.Contains(err.Error(), "changed while it was stopped") {
+		t.Fatalf("removeSocketIfSame over a replaced socket: got %v, want a refusal", err)
+	}
+	if _, err := os.Lstat(path); err != nil {
+		t.Fatalf("live replacement socket was removed: %v", err)
+	}
+}
+
 func TestEngineChildExitBeforeReady(t *testing.T) {
 	h := newEngineHarness(t)
 	h.mu.Lock()
