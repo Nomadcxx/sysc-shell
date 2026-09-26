@@ -644,11 +644,13 @@ func (t Theme) BackgroundOpaque() bool {
 // policy deliberately wins over the density row it came from, so this loses
 // nothing and lets the one derivation answer for the shell too.
 func (t Theme) barGeometry() config.Bar {
-	return config.Bar{Height: t.BarHeight, Gap: t.BarGap}
+	return config.Bar{Height: t.BarHeight, Gap: t.BarGap, Edge: t.BarEdge, Shape: t.BarShape}
 }
 
 // Geometry derives the Wayland dimensions from the tokens. The gap lives
-// inside the surface, so the surface carries one gap and not two.
+// inside the surface, so the surface carries one gap and not two. surface is
+// the bar's extent, where panels meet it; an attached bar's overhang lies past
+// it and does not count.
 //
 // The derivation itself is config.Bar's, which is what keeps this from
 // drifting away from the extent the platform sizes the surface to. The

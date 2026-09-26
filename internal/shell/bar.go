@@ -413,8 +413,9 @@ func (b *Bar) contentLocked(width, height int) ui.Rect {
 }
 
 func (b *Bar) bodyLocked(width, height int) ui.Rect {
-	gap := b.theme.BarGap
-	return ui.Rect{X: gap, Y: gap, W: max(0, width-2*gap), H: max(0, height-gap)}
+	var body ui.Rect
+	body.X, body.Y, body.W, body.H = b.theme.barGeometry().BodyIn(width, height)
+	return body
 }
 
 // blurShape is the region the compositor blurs behind the bar, in surface
@@ -448,7 +449,7 @@ func (b *Bar) blurShape() []ui.Rect {
 		Body:   b.bodyLocked(b.configured.width, b.configured.height),
 		Radius: b.theme.Radius,
 	}
-	if b.theme.BarShape == "attached" {
+	if b.theme.barGeometry().Attached() {
 		// An attached bar meets the screen along its edge and curves into the
 		// screen's sides at both ends.
 		shape.Radius, shape.AttachEdge = 0, b.theme.BarEdge

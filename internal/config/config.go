@@ -170,14 +170,40 @@ type Bar struct {
 // keeps the screen edge clickable.
 func (b Bar) Body() int { return b.Height - 2*b.Gap }
 
-// Extent is how much of the cross axis the layer surface occupies. The gap
-// lives inside the surface with a zero layer margin, so the extent carries one
-// gap, not two.
+// Extent is how far the bar reaches from the screen edge: where panels meet it
+// and what the exclusive zone follows. A floating bar's gap lives inside the
+// surface with a zero layer margin, so it carries one gap, not two; an
+// attached bar sits on the screen edge and is its body.
 //
 // This is the one derivation. The platform reads it for the surface size and
 // the shell reads it through Theme.Geometry; they computed it separately until
 // Milestone 9, agreeing only because each encoded the same assumption.
-func (b Bar) Extent() int { return b.Gap + b.Body() }
+func (b Bar) Extent() int {
+	if b.Attached() {
+		return b.Body()
+	}
+	return b.Gap + b.Body()
+}
+
+// SurfaceExtent is the layer surface's cross-axis size: the extent plus the
+// overhang that holds an attached bar's end fillets.
+func (b Bar) SurfaceExtent() int { return b.Extent() + b.Overhang() }
+
+// Attached reports whether the bar meets the screen edge.
+func (b Bar) Attached() bool { return b.Shape == "attached" }
+
+// BodyIn places the painted body inside a surface of the given size. A
+// floating body is inset by the gap; an attached one spans the width against
+// the screen edge, with the overhang on its far side.
+func (b Bar) BodyIn(surfaceW, surfaceH int) (x, y, w, h int) {
+	if b.Attached() {
+		if b.Edge == "bottom" {
+			y = b.Overhang()
+		}
+		return 0, y, surfaceW, max(0, surfaceH-b.Overhang())
+	}
+	return b.Gap, b.Gap, max(0, surfaceW-2*b.Gap), max(0, surfaceH-b.Gap)
+}
 
 // ExclusiveZone is how much of the output the compositor keeps clear. It
 // follows the extent unless the document states a reserve, which may be zero.
@@ -192,7 +218,7 @@ func (b Bar) ExclusiveZone() int {
 // the concave fillets that curve its ends into the screen's sides. It is
 // derived from the shape and never written.
 func (b Bar) Overhang() int {
-	if b.Shape == "attached" {
+	if b.Attached() {
 		return theme.FilletRadius
 	}
 	return 0

@@ -417,13 +417,14 @@ func (r *Registry) triggerFor(global uint32) (uint32, Trigger) {
 
 func (r *Registry) triggerLocked(global uint32, connector string) Trigger {
 	policy := r.cfg.ForConnector(connector)
-	trig := Trigger{BarEdge: policy.Edge, BarZone: policy.Height - policy.Gap, Align: "center"}
+	trig := Trigger{BarEdge: policy.Edge, BarZone: policy.Extent(), Align: "center"}
 	if bar, ok := r.bars[global]; ok {
 		w, h := bar.configuredSize()
 		if w > 0 {
 			trig.OutW = w
 		}
-		if h > 0 {
+		// Panels meet the body; an attached bar's overhang lies past it.
+		if h -= policy.Overhang(); h > 0 {
 			trig.BarZone = h
 		}
 		// The screen, not the bar. Without it every panel was placed as if the

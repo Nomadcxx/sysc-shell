@@ -181,3 +181,57 @@ func TestIslandsBlurEachVisibleCapsule(t *testing.T) {
 		t.Errorf("absent media still published %v", got)
 	}
 }
+
+// TestBarBodyMatchesThePlatform: the shell paints its body where the platform
+// declares it, for both shapes on both edges.
+func TestBarBodyMatchesThePlatform(t *testing.T) {
+	t.Parallel()
+	for _, shape := range config.BarShapes {
+		for _, edge := range []string{"top", "bottom"} {
+			cfg := config.Default()
+			policy := cfg.Bar
+			policy.Shape, policy.Edge = shape, edge
+			policy.Left, policy.Center, policy.Right = nil, nil, nil
+			bar, err := NewWithTheme(ThemeFrom(cfg, policy), policy, "DP-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(bar.stopAnimation)
+			height := policy.SurfaceExtent()
+			var want ui.Rect
+			want.X, want.Y, want.W, want.H = policy.BodyIn(1200, height)
+			if got := bar.bodyLocked(1200, height); got != want {
+				t.Errorf("%s %s: shell body %+v, platform body %+v", shape, edge, got, want)
+			}
+			if surface, _, _ := bar.themeSnapshot().Geometry(); surface != policy.Extent() {
+				t.Errorf("%s %s: theme extent %d, want %d", shape, edge, surface, policy.Extent())
+			}
+		}
+	}
+}
+
+// TestPanelsMeetTheAttachedBody: the bar's surface holds the overhang, but a
+// panel attaches at the body's edge.
+func TestPanelsMeetTheAttachedBody(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Bar.Left, cfg.Bar.Center, cfg.Bar.Right = nil, nil, nil
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	reg.tokens = theme.Fallback
+	bar, leases, _, err := reg.buildBar(cfg, "DP-2", reg.tokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { releaseAll(leases) })
+	reg.setTestBar(7, bar)
+	if err := bar.Configure(1200, cfg.Bar.SurfaceExtent(), 120); err != nil {
+		t.Fatal(err)
+	}
+	reg.mu.Lock()
+	trig := reg.triggerLocked(7, "DP-2")
+	reg.mu.Unlock()
+	if trig.BarZone != cfg.Bar.Extent() {
+		t.Errorf("zone = %d, want the attached body %d", trig.BarZone, cfg.Bar.Extent())
+	}
+}
