@@ -974,8 +974,9 @@ func TestPluginPanelHostUsesManifestSize(t *testing.T) {
 		if host.place.BarZone != zone {
 			t.Fatalf("plugin BarZone = %d, want exclusive zone %d", host.place.BarZone, zone)
 		}
-		if top := host.place.Margins().Top; top != zone {
-			t.Fatalf("plugin top margin = %d, want %d", top, zone)
+		// Attached under an opaque bar, it tucks one pixel beneath it.
+		if top := host.place.Margins().Top; top != zone-1 {
+			t.Fatalf("plugin top margin = %d, want %d", top, zone-1)
 		}
 		if err := host.configure(host.place.Panel.W, host.place.Panel.H, 120); err != nil {
 			t.Fatal(err)

@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -127,6 +128,108 @@ func TestFlushPanelSurface(t *testing.T) {
 		}
 		if spec.MarginLeft != 1366-380-12 {
 			t.Errorf("%s: margin left %d, want %d", edge, spec.MarginLeft, 1366-380-12)
+		}
+	}
+}
+
+// TestAttachedPanelJoinsTheBarAsOneGround is Task 13: no rim on an attached
+// panel (Settings, floating, keeps its), a 1 px tuck under an opaque bar with
+// the body at the surface's attached edge, and a blur shape over body, joints
+// and screen-edge wedge that frosts only with a frosted bar.
+func TestAttachedPanelJoinsTheBarAsOneGround(t *testing.T) {
+	t.Parallel()
+	open := func(t *testing.T, style string, blur bool, id PanelID) (*Registry, *PanelHost) {
+		cfg := config.Default()
+		cfg.Accessibility.ReducedMotion = true
+		cfg.Bar.Style = style
+		cfg.Bar.Left, cfg.Bar.Center, cfg.Bar.Right = nil, nil, nil
+		reg := newPanelRegistry(t)
+		reg.cfg = cfg
+		reg.tokens = theme.Fallback
+		reg.caps.Blur = blur
+		withTestBar(t, reg, 7, cfg)
+		if err := reg.OpenPanel(id, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1366, OutH: 768}); err != nil {
+			t.Fatal(err)
+		}
+		reg.mu.Lock()
+		h := reg.panelHosts[id]
+		reg.mu.Unlock()
+		settleHostAnimation(reg, h) // the joints grow in with the reveal
+		return reg, h
+	}
+
+	reg, session := open(t, "solid", false, PanelSession)
+	reg.mu.Lock()
+	if rim := session.rootStyle(session.paintTheme()).Rim; rim.A != 0 {
+		t.Errorf("attached session rim %+v, want none", rim)
+	}
+	if got := session.place.Margins().Top; got != 39 {
+		t.Errorf("top margin %d, want tucked 1 px under the 40 px bar", got)
+	}
+	w, hgt := session.surfaceSize()
+	if body := session.surfaceBody(w, hgt); body.Y != 0 {
+		t.Errorf("body starts at y=%d, want 0 on the attached edge", body.Y)
+	}
+	if got := session.blurShape(reg); got != nil {
+		t.Errorf("solid bar: blur %v, want none", got)
+	}
+	reg.mu.Unlock()
+
+	reg, settings := open(t, "solid", false, PanelSettings)
+	reg.mu.Lock()
+	if rim := settings.rootStyle(settings.paintTheme()).Rim; rim.A == 0 {
+		t.Error("floating settings lost its rim")
+	}
+	reg.mu.Unlock()
+
+	reg, session = open(t, "frosted", true, PanelSession)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	j := session.place.Joints()
+	if !j.FlushRight || j.Left == 0 {
+		t.Fatalf("session joints %+v, want flush right with a left joint", j)
+	}
+	w, hgt = session.surfaceSize()
+	body := session.surfaceBody(w, hgt)
+	want := ui.BlurStrips(ui.SurfaceShape{
+		Body: body, Radius: session.theme.Radius, AttachEdge: "top",
+		JointLeft: j.Left, EdgeFillet: session.place.Fillet, EdgeRight: true,
+	})
+	got := session.blurShape(reg)
+	if len(got) == 0 || !slices.Equal(got, want) {
+		t.Errorf("frosted blur %v, want the silhouette %v", got, want)
+	}
+	if session.place.Overlap != 0 {
+		t.Errorf("translucent frosted bar: overlap %d, want none", session.place.Overlap)
+	}
+}
+
+// TestPanelBlurPrefersTheCompositor is Task 14: with blur-behind on, a
+// compositor that blurs replaces the screen capture.
+func TestPanelBlurPrefersTheCompositor(t *testing.T) {
+	t.Parallel()
+	for _, capable := range []bool{false, true} {
+		cfg := config.Default()
+		cfg.Accessibility.ReducedMotion = true
+		cfg.Theme.BlurBehind = true
+		cfg.Bar.Style = "solid"
+		reg := newPanelRegistry(t)
+		reg.cfg = cfg
+		reg.caps.Blur = capable
+		if err := reg.OpenPanel(PanelSettings, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1920, OutH: 1080}); err != nil {
+			t.Fatal(err)
+		}
+		reqs := drainAux(t, reg, 2)
+		spec := reqs[1].Open
+		if capable && spec.BlurRegion != nil {
+			t.Errorf("capable compositor: capture %+v, want none", spec.BlurRegion)
+		}
+		if !capable && spec.BlurRegion == nil {
+			t.Error("no compositor blur: the capture fallback is gone")
+		}
+		shape := spec.Callbacks.BlurShape()
+		if capable != (len(shape) > 0) {
+			t.Errorf("capable=%v: blur shape %v", capable, shape)
 		}
 	}
 }

@@ -75,7 +75,7 @@ func TestControlCentreNameAndFlushPlacement(t *testing.T) {
 	if place.Gap != 0 {
 		t.Errorf("gap = %d, want 0", place.Gap)
 	}
-	if got := place.Margins(); got.Top != place.BarZone || got.Left != (place.Output.W-place.Panel.W)/2 {
+	if got := place.Margins(); got.Top != place.BarZone-1 || got.Left != (place.Output.W-place.Panel.W)/2 {
 		t.Errorf("margins = %+v, want flush and centred", got)
 	}
 	if section != "home" {

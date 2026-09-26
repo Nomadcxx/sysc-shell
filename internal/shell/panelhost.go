@@ -662,6 +662,12 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		place.Align = "center"
 	}
 
+	// Tuck an attached panel one pixel under an opaque bar. Over a
+	// translucent one the doubled row would paint a darker line instead.
+	if place.Attached() && r.panelThemeFor(output).Surfaces.Bar == 0xff {
+		place.Overlap = 1
+	}
+
 	h := &PanelHost{
 		id:          id,
 		output:      output,
@@ -968,11 +974,21 @@ func (r *Registry) shieldSpec(h *PanelHost) *wayland.AuxSpec {
 // whenever the bar is, so keeping it would paint straight over the blur and
 // throw the capture away -- which is exactly what the renderer's
 // TestOpaqueRootHidesTheBackdrop asserts an opaque root does.
+//
+// Only a panel draws its own rim; the bar, toasts and tray surfaces sit
+// directly on the shared surface and leave it zero. An attached panel paints
+// none either: it and the bar are one ground, and a stroke would read as a
+// seam between them.
 func (h *PanelHost) rootStyle(t Theme) render.Style {
-	if h.place.Attached() && h.backdrop == nil {
-		return t.AttachedPanelStyle()
+	if h.place.Attached() {
+		if h.backdrop == nil {
+			return t.AttachedPanelStyle()
+		}
+		return t.PanelStyle()
 	}
-	return t.PanelStyle()
+	s := t.PanelStyle()
+	s.Rim = t.Outline
+	return s
 }
 
 func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
@@ -1002,9 +1018,10 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 		opaque = false
 	}
 	// Nil disables the capture entirely, so a shell with blur off pays none of
-	// its cost rather than capturing and discarding.
+	// its cost rather than capturing and discarding. A compositor that blurs
+	// does the job itself, through BlurShape.
 	var blurRegion *ui.Rect
-	if r.cfg.Theme.BlurBehind {
+	if r.cfg.Theme.BlurBehind && !r.caps.Blur {
 		blurRegion = &region
 	}
 	return &wayland.AuxSpec{
@@ -1031,6 +1048,11 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 				defer r.mu.Unlock()
 				h.backdrop = img
 			},
+			BlurShape: func() []ui.Rect {
+				r.mu.Lock()
+				defer r.mu.Unlock()
+				return h.blurShape(r)
+			},
 			OpaqueBackground: opaque,
 			Radius:           h.theme.Radius,
 			Configure:        h.configureLocking(r),
@@ -1046,6 +1068,30 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 			},
 		},
 	}
+}
+
+// blurShape is the region the compositor blurs behind the panel, in surface
+// coordinates: its whole silhouette, joints and screen-edge wedge included. An
+// attached panel on a frosted bar blurs so it shares the bar's ground; any
+// panel blurs when blur-behind is on and the compositor can. Caller holds
+// r.mu.
+func (h *PanelHost) blurShape(r *Registry) []ui.Rect {
+	if !(h.place.Attached() && h.theme.Blur) && !(r.cfg.Theme.BlurBehind && r.caps.Blur) {
+		return nil
+	}
+	w, hgt := h.logicalW, h.logicalH
+	if w <= 0 || hgt <= 0 {
+		w, hgt = h.surfaceSize()
+	}
+	shape := ui.SurfaceShape{Body: h.surfaceBody(w, hgt), Radius: h.theme.Radius}
+	if h.place.Attached() {
+		opacity, _ := h.panelReveal()
+		j := h.place.Joints()
+		shape.AttachEdge = h.place.BarEdge
+		shape.JointLeft, shape.JointRight, shape.EdgeFillet = h.revealJoints(opacity)
+		shape.EdgeLeft, shape.EdgeRight = j.FlushLeft, j.FlushRight
+	}
+	return ui.BlurStrips(shape)
 }
 
 // edgeExtent is how far a flush panel's surface reaches past its far edge,
@@ -1211,13 +1257,6 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 
 	paintTheme := h.paintTheme()
 	style := h.rootStyle(paintTheme)
-	// Only a panel draws its own rim; the bar, toasts and tray surfaces
-	// sit directly on the shared surface and leave it zero. A fused audio
-	// panel paints no rim: it and the bar share Style.Background, and a
-	// stroke would read as a seam.
-	if h.id != PanelAudio {
-		style.Rim = paintTheme.Outline
-	}
 	style.Scale120 = scale
 	style.Body = body
 	opacity, offsetY := h.panelReveal()

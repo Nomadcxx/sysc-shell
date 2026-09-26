@@ -95,10 +95,11 @@ func TestWallpaperPanelGeometry(t *testing.T) {
 
 	// 1100 does not fit under a 40px bar on a 1080 output, so the M4 clamp
 	// shrinks it rather than letting it run off the screen (D2).
+	// Attached, it tucks 1 px under the opaque bar and keeps no gap.
 	reg.mu.Lock()
-	gap, pad := reg.cfg.Panels.Gap, reg.cfg.Panels.Padding
+	pad := reg.cfg.Panels.Padding
 	reg.mu.Unlock()
-	anchor := 40 + gap
+	anchor := 40 - 1
 	wantH := 1080 - anchor - pad
 	if int(panel.Height) != wantH {
 		t.Fatalf("height = %d, want the clamped %d", panel.Height, wantH)

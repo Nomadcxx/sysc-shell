@@ -24,8 +24,9 @@ func TestPanelLargerThanOutputClampsToPadding(t *testing.T) {
 	}
 }
 
+// A panel that does not join the bar keeps the configured gap from it.
 func TestAnchorMarginsForTopBar(t *testing.T) {
-	g := Placement{BarEdge: "top", Output: ui.Rect{W: 1920, H: 1080}, BarZone: 40, Gap: 8, Padding: 8, Panel: ui.Rect{W: 700, H: 520}, Align: "center"}
+	g := Placement{BarEdge: "top", Detached: true, Output: ui.Rect{W: 1920, H: 1080}, BarZone: 40, Gap: 8, Padding: 8, Panel: ui.Rect{W: 700, H: 520}, Align: "center"}
 	m := g.Margins()
 	if m.Top != 48 || m.Left != 610 {
 		t.Fatalf("margins wrong: %+v", m)
@@ -50,7 +51,7 @@ func TestAttachedPanelHugsTheBar(t *testing.T) {
 }
 
 func TestFittedSizeShrinksTallPanel(t *testing.T) {
-	p := Placement{BarEdge: "top", Output: ui.Rect{W: 800, H: 600}, BarZone: 40, Gap: 8, Padding: 8, Panel: ui.Rect{W: 700, H: 900}}
+	p := Placement{BarEdge: "top", Detached: true, Output: ui.Rect{W: 800, H: 600}, BarZone: 40, Gap: 8, Padding: 8, Panel: ui.Rect{W: 700, H: 900}}
 	_, h := p.FittedSize()
 	if h != 600-40-8-8 {
 		t.Fatalf("height must shrink to fit: %d", h)

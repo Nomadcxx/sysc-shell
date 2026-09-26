@@ -80,6 +80,9 @@ type Placement struct {
 	BarShape          string
 	BarGap, BarRadius int
 	Fillet            int
+	// Overlap is how far an attached panel tucks under the bar's edge, so
+	// no seam of wallpaper opens between them at a fractional scale.
+	Overlap int
 }
 
 // Joints is how an attached panel meets the bar: the concave wedge beside each
@@ -135,6 +138,16 @@ func (p Placement) Attached() bool { return p.BarEdge != "" && !p.CenterY && !p.
 
 type Margins struct{ Top, Bottom, Left, Right int }
 
+// anchor is how far from the bar's screen edge the panel's near edge sits. An
+// attached panel meets the bar, tucked under it by the overlap, whatever gap
+// the others keep.
+func (p Placement) anchor() int {
+	if p.Attached() {
+		return p.BarZone - p.Overlap
+	}
+	return p.BarZone + p.Gap
+}
+
 func clampAxis(desired, size, extent, pad int) int {
 	if size+2*pad > extent {
 		return pad
@@ -150,7 +163,7 @@ func clampAxis(desired, size, extent, pad int) int {
 
 func (p Placement) Margins() Margins {
 	x, _ := p.layout()
-	anchor := p.BarZone + p.Gap
+	anchor := p.anchor()
 	if p.CenterY {
 		// A zero anchor is a true modal: centre it in the whole output while
 		// retaining the output padding on both sides. Other floating panels
@@ -208,7 +221,11 @@ func (p Placement) FittedSize() (w, h int) {
 	} else if w > max {
 		w = max
 	}
-	if max := p.Output.H - p.BarZone - p.Gap - p.Padding; max < 0 {
+	room := p.Output.H - p.anchor() - p.Padding
+	if p.Joints().Flush() {
+		room -= p.Fillet // the screen-edge wedge hangs past the body
+	}
+	if max := room; max < 0 {
 		h = 0
 	} else if h > max {
 		h = max

@@ -538,8 +538,8 @@ func TestOpeningNotificationsSetsCenterOpenAndMarksSeen(t *testing.T) {
 	if want := int32(1536 - 416 - 12); panel.MarginLeft != want {
 		t.Fatalf("margin left = %d, want flush %d", panel.MarginLeft, want)
 	}
-	if panel.MarginTop != 44 {
-		t.Fatalf("margin top = %d, want hug bar 44", panel.MarginTop)
+	if panel.MarginTop != 43 {
+		t.Fatalf("margin top = %d, want tucked 1 px under the 44 px bar", panel.MarginTop)
 	}
 	if !reg.roots.owns(panelRoot(PanelNotifications)) {
 		t.Fatal("opening did not acquire the interactive root")
@@ -670,8 +670,8 @@ func TestTogglePanelByNameCentresFlushUnderTheBar(t *testing.T) {
 	}
 	reqs := drainAux(t, reg, 2)
 	got := reqs[1].Open
-	if got.MarginTop != 40 {
-		t.Fatalf("margin top = %d, want flush on the 40px attached body", got.MarginTop)
+	if got.MarginTop != 39 {
+		t.Fatalf("margin top = %d, want tucked 1 px under the 40px attached body", got.MarginTop)
 	}
 	if want := int32((1536-panelTargetSize(PanelMonitor).W)/2 - 12); got.MarginLeft != want {
 		t.Fatalf("margin left = %d, want centred %d", got.MarginLeft, want)
