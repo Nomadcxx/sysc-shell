@@ -232,6 +232,41 @@ func fillAttachFillets(c *Canvas, r ui.Rect, fillet int, attachEdge string, col 
 	}
 }
 
+// fillEdgeFillets paints the concave wedges past the far edge of a surface
+// attached along attachEdge, curving it into the screen's side at the left end,
+// the right end, or both. Each is ui.FilletCoverage with x counted in from the
+// body's side and y out from its far edge.
+func fillEdgeFillets(c *Canvas, r ui.Rect, fillet int, attachEdge string, left, right bool, col Color) {
+	if fillet <= 0 || col.A == 0 || r.W <= 0 || r.H <= 0 {
+		return
+	}
+	if attachEdge != "top" && attachEdge != "bottom" {
+		return
+	}
+	for y := 0; y < fillet; y++ {
+		row := r.Y + r.H + y
+		if attachEdge == "bottom" {
+			row = r.Y - 1 - y
+		}
+		if row < 0 || row >= c.Height {
+			continue
+		}
+		for x := 0; x < fillet && x < r.W; x++ {
+			coverage := ui.FilletCoverage(x, y, fillet)
+			if coverage == 0 {
+				continue
+			}
+			alpha := float64(coverage) / 255
+			if px := r.X + x; left && px >= 0 && px < c.Width {
+				blendCoverage(c, px, row, col, alpha)
+			}
+			if px := r.X + r.W - 1 - x; right && px >= 0 && px < c.Width {
+				blendCoverage(c, px, row, col, alpha)
+			}
+		}
+	}
+}
+
 // blendMask blends a colour through an alpha coverage mask placed at x, y.
 // coverageRow is a mask's coverage for one canvas row, given that the mask's
 // top-left sits at y. Indexing it by px-x yields the byte AlphaAt would return

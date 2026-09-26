@@ -235,3 +235,38 @@ func TestPanelsMeetTheAttachedBody(t *testing.T) {
 		t.Errorf("zone = %d, want the attached body %d", trig.BarZone, cfg.Bar.Extent())
 	}
 }
+
+// TestAttachedBarRendersItsEndFillets renders the default attached bar: the
+// wedges paint at both ends of the overhang, nothing paints between them, and
+// every blurred pixel past the body is painted.
+func TestAttachedBarRendersItsEndFillets(t *testing.T) {
+	t.Parallel()
+	bar := blurBar(t, "frosted", "attached", true, nil)
+	const w = 1200
+	h := config.Default().Bar.SurfaceExtent()
+	if err := bar.Configure(w, h, 120); err != nil {
+		t.Fatal(err)
+	}
+	pix := make([]byte, w*h*4)
+	if err := bar.Render(pix, w, h, w*4); err != nil {
+		t.Fatal(err)
+	}
+	alpha := func(x, y int) byte { return pix[(y*w+x)*4+3] }
+	body := bar.bodyLocked(w, h)
+	below := body.Y + body.H
+	if alpha(0, below) == 0 || alpha(w-1, below) == 0 {
+		t.Errorf("no wedge at the ends of the overhang: left %#x right %#x", alpha(0, below), alpha(w-1, below))
+	}
+	if a := alpha(w/2, below); a != 0 {
+		t.Errorf("mid overhang alpha %#x, want transparent", a)
+	}
+	for _, r := range bar.blurShape() {
+		for y := max(r.Y, below); y < r.Y+r.H; y++ {
+			for x := r.X; x < r.X+r.W; x++ {
+				if alpha(x, y) == 0 {
+					t.Fatalf("blurred pixel (%d,%d) past the body is unpainted", x, y)
+				}
+			}
+		}
+	}
+}

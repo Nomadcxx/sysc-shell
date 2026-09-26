@@ -1004,6 +1004,12 @@ func (b *Bar) trayGestureLocked(action string) (trayGesture, bool) {
 func barStyle(theme Theme) render.Style {
 	style := theme.Style()
 	style.Scale120 = ui.ScaleUnit
+	// An attached bar meets the screen along its edge and curves into the
+	// screen's sides at both ends, the shape blurShape publishes.
+	if g := theme.barGeometry(); g.Attached() {
+		style.AttachEdge = g.Edge
+		style.EdgeFillet, style.EdgeLeft, style.EdgeRight = theme.Fillet, true, true
+	}
 	// A translucent pill is lifted toward the foreground by (1 - alpha) x 0.3,
 	// so it stays distinct from the translucent ground behind it (design D3).
 	if a := theme.PillAlpha; a > 0 && a < 0xff {
