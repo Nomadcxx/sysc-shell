@@ -249,13 +249,23 @@ func audioVolumeCard(n services.AudioNode, role string, icon *ui.Image, h *Panel
 	innerW := max(panelW-2*m.PanelPadding-2*m.CardPadding, 0)
 	// Identity, value and mute are fixed; the middle column receives every
 	// remaining pixel so the slider grows with the panel.
-	row.Children[1].Width = max(innerW-m.CompactControl-audioValueColumnW-m.CompactControl-3*row.Gap, 0)
-	row.Children[2].Width = audioValueColumnW
+	valueW := audioValueColumn(h)
+	row.Children[1].Width = max(innerW-m.CompactControl-valueW-m.CompactControl-3*row.Gap, 0)
+	row.Children[2].Width = valueW
 	return &ui.Node{
 		Kind: ui.KindCapsule, Height: row.Height + 2*m.CardPadding,
 		Padding: m.CardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
 		Children: []*ui.Node{row},
 	}
+}
+
+// audioValueColumn is the value column's width: audioValueColumnW, or "100%"
+// as measured at the panel's scale when that is wider. A fractional scale
+// rounds the measured text up (45 at 1.25), and the fixed column then pushed
+// the mute button off the row.
+func audioValueColumn(h *PanelHost) int {
+	w, _ := h.measureText()("100%", ui.TextAttrs{Role: theme.RoleBody, Tabular: true})
+	return max(audioValueColumnW, w)
 }
 
 func audioRoleIcon(role string, muted bool) string {
