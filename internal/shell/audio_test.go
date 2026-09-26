@@ -477,10 +477,9 @@ func TestAudioRowsFitAtFractionalScale(t *testing.T) {
 			id: PanelAudio, audioTab: "volumes", theme: DefaultTheme(), scale120: scale,
 			place: Placement{Panel: size},
 		}
-		if err := h.ensureText(); err != nil {
-			t.Fatal(err)
-		}
-		if err := ui.LayoutColumn(audioTree(nil, h), size, h.measureText()); err != nil {
+		// The tree is built first, as at open, before the text engine loads.
+		root := audioTree(nil, h)
+		if err := ui.LayoutColumn(root, size, h.measureText()); err != nil {
 			t.Errorf("scale %d: %v", scale, err)
 		}
 	}

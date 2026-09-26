@@ -264,6 +264,11 @@ func audioVolumeCard(n services.AudioNode, role string, icon *ui.Image, h *Panel
 // rounds the measured text up (45 at 1.25), and the fixed column then pushed
 // the mute button off the row.
 func audioValueColumn(h *PanelHost) int {
+	// The tree is built at open, before anything else has loaded the text
+	// engine, and measureText's fallback estimate would always fit.
+	if err := h.ensureText(); err != nil {
+		return audioValueColumnW
+	}
 	w, _ := h.measureText()("100%", ui.TextAttrs{Role: theme.RoleBody, Tabular: true})
 	return max(audioValueColumnW, w)
 }
