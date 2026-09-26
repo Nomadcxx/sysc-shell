@@ -36,21 +36,30 @@ func rootFilesystemSource(snap services.Snapshot) string {
 	return ""
 }
 
-// updateControlCentreRootDevice caches the root source before resolving it
-// off Registry.mu. UpdateMetrics calls this from its sampling goroutine.
-func (r *Registry) updateControlCentreRootDevice(snap services.Snapshot, resolve func(string) (string, error)) {
+// rateSubjectPanels are the hosts that chart one interface and one device:
+// the Control Centre's Monitor page and the system monitor's System page.
+var rateSubjectPanels = [...]PanelID{PanelControlCenter, PanelMonitor}
+
+// updateRootDevice caches the root filesystem's backing device on each host
+// that charts one, resolving the source off Registry.mu and only when it
+// changes. UpdateMetrics calls this from its sampling goroutine.
+func (r *Registry) updateRootDevice(snap services.Snapshot, resolve func(string) (string, error)) {
 	if snap.Filesystem == nil {
 		return
 	}
 	source := rootFilesystemSource(snap)
+	var stale []*PanelHost
 	r.mu.Lock()
-	h := r.panelHosts[PanelControlCenter]
-	if h == nil || h.ccRootSource == source {
-		r.mu.Unlock()
+	for _, id := range rateSubjectPanels {
+		if h := r.panelHosts[id]; h != nil && h.ccRootSource != source {
+			h.ccRootSource = source
+			stale = append(stale, h)
+		}
+	}
+	r.mu.Unlock()
+	if len(stale) == 0 {
 		return
 	}
-	h.ccRootSource = source
-	r.mu.Unlock()
 
 	device := ""
 	if source != "" {
@@ -60,16 +69,18 @@ func (r *Registry) updateControlCentreRootDevice(snap services.Snapshot, resolve
 	}
 
 	r.mu.Lock()
-	if r.panelHosts[PanelControlCenter] == h && h.ccRootSource == source {
-		h.ccRootDevice = device
+	for _, h := range stale {
+		if r.panelHosts[h.id] == h && h.ccRootSource == source {
+			h.ccRootDevice = device
+		}
 	}
 	r.mu.Unlock()
 }
 
-// syncControlCentreSubjectsLocked keeps one interface and one device leased.
-// A subject changes when it disappears or the root filesystem source changes.
-// Caller holds r.mu.
-func (r *Registry) syncControlCentreSubjectsLocked(h *PanelHost, snap services.Snapshot) {
+// syncRateSubjectsLocked keeps one interface and one device leased for a host
+// in rateSubjectPanels. A subject changes when it disappears or the root
+// filesystem source changes. Caller holds r.mu.
+func (r *Registry) syncRateSubjectsLocked(h *PanelHost, snap services.Snapshot, interval time.Duration) {
 	if h == nil || r.metrics == nil {
 		return
 	}
@@ -91,7 +102,7 @@ func (r *Registry) syncControlCentreSubjectsLocked(h *PanelHost, snap services.S
 	}
 	var leases []*services.Lease
 	for _, sel := range ccRateSelectors(iface, device) {
-		lease, err := r.metrics.Acquire(sel, time.Second)
+		lease, err := r.metrics.Acquire(sel, interval)
 		if err != nil {
 			releaseAll(leases)
 			return

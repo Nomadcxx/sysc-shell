@@ -86,7 +86,13 @@ type PanelHost struct {
 	subjectLeases                                     []*services.Lease
 	ccIface, ccDevice                                 string
 	ccRootSource, ccRootDevice, ccRootSelectionSource string
-	shieldQuiet                                       time.Time
+	// monitorInterval is the interval the system monitor's leases were taken
+	// at, so a reload that changes monitor.refresh can tell to re-lease.
+	monitorInterval time.Duration
+	// monitorIconRebuild is set while a coalesced rebuild for arriving icons
+	// is scheduled.
+	monitorIconRebuild bool
+	shieldQuiet        time.Time
 	// anim is this surface's one clock: every transition it runs shares it, so
 	// frames are scheduled from a single place.
 	anim     *animator
@@ -210,6 +216,13 @@ type PanelHost struct {
 	processStatus    string
 	processStatusErr error
 	processSelected  services.ProcessIdentity
+	// monitorOptions swaps the info card's facts for the view options.
+	monitorOptions bool
+	// processExpanded holds the group keys the user opened, and
+	// processCollapsed the section keys the user closed. Both are keyed by
+	// application or executable, so they survive recycled PIDs.
+	processExpanded  map[string]bool
+	processCollapsed map[string]bool
 
 	clipboardSelectedID       string
 	clipboardConfirmScope     string
@@ -338,6 +351,10 @@ func panelSection(id PanelID, requested string) (string, error) {
 		}
 	}
 	switch id {
+	case PanelMonitor:
+		if _, _, ok := parseProcessOrder(requested); ok {
+			return requested, nil
+		}
 	case PanelControlCenter:
 		section, ok := ccSectionFor(requested)
 		if !ok {
@@ -364,6 +381,15 @@ func (r *Registry) selectPanelSectionLocked(id PanelID, section string) error {
 	h := r.panelHosts[id]
 	if h == nil {
 		return fmt.Errorf("panel %q is not open", id)
+	}
+	if id == PanelMonitor {
+		// The section is a sort order, not a page: apply it every time,
+		// so reopening at the same order after a click still resets it.
+		key, desc, _ := parseProcessOrder(section)
+		h.monitorPage, h.processSort, h.processDesc = monitorPageProcesses, key, desc
+		r.rebuildPanel(h)
+		r.publishSurface(h.output, panelSurfaceID(id))
+		return nil
 	}
 	if h.section == section {
 		return nil
@@ -694,7 +720,8 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	if id == PanelMonitor {
 		h.monitorPage = monitorPageProcesses
 		h.processFilter = "all"
-		h.processSort, h.processDesc = "cpu", true
+		h.processSort, h.processDesc = "mem", true
+		h.processExpanded, h.processCollapsed = map[string]bool{}, map[string]bool{}
 		h.search = ui.NewField("")
 	}
 	if id == PanelControlCenter {
@@ -769,12 +796,9 @@ func (r *Registry) acquirePanelLeases(h *PanelHost) error {
 		}
 		h.leases = []*services.Lease{lease}
 	case PanelMonitor:
-		connector := ""
-		if bar, ok := r.bars[h.output]; ok {
-			connector = bar.connector()
-		}
-		for _, sel := range monitorSelectors(r.cfg.ForConnector(connector)) {
-			lease, err := r.metrics.Acquire(sel, time.Second)
+		interval := monitorLeaseInterval(r.cfg.Monitor)
+		for _, sel := range append(monitorLeaseSelectors(), services.Selector{Source: services.SourceProcess}) {
+			lease, err := r.metrics.Acquire(sel, interval)
 			if err != nil {
 				releaseAll(h.leases)
 				h.leases = nil
@@ -782,13 +806,7 @@ func (r *Registry) acquirePanelLeases(h *PanelHost) error {
 			}
 			h.leases = append(h.leases, lease)
 		}
-		lease, err := r.metrics.Acquire(services.Selector{Source: services.SourceProcess}, time.Second)
-		if err != nil {
-			releaseAll(h.leases)
-			h.leases = nil
-			return err
-		}
-		h.leases = append(h.leases, lease)
+		h.monitorInterval = interval
 	case PanelSession:
 		lease, err := r.metrics.Acquire(services.Selector{Source: services.SourceBattery}, time.Second)
 		if err != nil {
@@ -822,16 +840,7 @@ func (r *Registry) acquirePanelLeases(h *PanelHost) error {
 		}
 		h.leases = []*services.Lease{lease}
 	case PanelControlCenter:
-		for _, sel := range []services.Selector{
-			{Source: services.SourceCPU},
-			{Source: services.SourceMemory},
-			{Source: services.SourceCPU, Subject: "temperature"},
-			{Source: services.SourceGPU},
-			{Source: services.SourceBattery},
-			{Source: services.SourceFilesystem, Subject: "/"},
-			{Source: services.SourceNetwork},
-			{Source: services.SourceBlock},
-		} {
+		for _, sel := range append(monitorLeaseSelectors(), services.Selector{Source: services.SourceBattery}) {
 			lease, err := r.metrics.Acquire(sel, time.Second)
 			if err != nil {
 				releaseAll(h.leases)
@@ -860,40 +869,46 @@ func (r *Registry) acquirePanelLeases(h *PanelHost) error {
 	return nil
 }
 
-func monitorSelectors(bar config.Bar) []services.Selector {
-	out := []services.Selector{
+// refreshMonitorLeasesLocked re-leases an open system monitor at the configured
+// refresh when it differs from the interval its leases hold. The new leases
+// are taken before the old ones go, so no source stops in between; on a
+// failure the monitor keeps sampling at the old interval.
+func (r *Registry) refreshMonitorLeasesLocked(h *PanelHost) {
+	if h == nil || r.metrics == nil || h.monitorInterval == monitorLeaseInterval(r.cfg.Monitor) {
+		return
+	}
+	old, oldInterval := h.leases, h.monitorInterval
+	h.leases = nil
+	if err := r.acquirePanelLeases(h); err != nil {
+		h.leases, h.monitorInterval = old, oldInterval
+		return
+	}
+	releaseAll(old)
+	// Forget the resolved subjects so the next sync re-leases their rate
+	// rings at the new interval.
+	h.ccIface, h.ccDevice = "", ""
+	r.syncRateSubjectsLocked(h, r.sample, h.monitorInterval)
+}
+
+// monitorLeaseSelectors are the sources the Control Centre's Monitor page and
+// the system monitor's System page chart. Battery is the Control Centre's
+// alone, and processes the system monitor's.
+func monitorLeaseSelectors() []services.Selector {
+	return []services.Selector{
 		{Source: services.SourceCPU},
 		{Source: services.SourceMemory},
+		{Source: services.SourceCPU, Subject: "temperature"},
 		{Source: services.SourceGPU},
+		{Source: services.SourceFilesystem, Subject: "/"},
+		{Source: services.SourceNetwork},
+		{Source: services.SourceBlock},
 	}
-	seenFS, seenBlock, seenNet := false, false, false
-	for _, item := range append(append(append([]config.Item{}, bar.Left...), bar.Center...), bar.Right...) {
-		sel, ok := metricSelector(item)
-		if !ok {
-			continue
-		}
-		switch sel.Source {
-		case services.SourceFilesystem:
-			if seenFS {
-				continue
-			}
-			seenFS = true
-		case services.SourceBlock:
-			if seenBlock {
-				continue
-			}
-			seenBlock = true
-		case services.SourceNetwork:
-			if seenNet {
-				continue
-			}
-			seenNet = true
-		default:
-			continue
-		}
-		out = append(out, sel)
-	}
-	return out
+}
+
+// monitorLeaseInterval is the system monitor's sampling interval: the
+// configured refresh, never below one second.
+func monitorLeaseInterval(m config.Monitor) time.Duration {
+	return time.Duration(max(m.Refresh, 1)) * time.Second
 }
 
 func placeholderTree() *ui.Node {
@@ -1454,6 +1469,11 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 		h.ctrl = true
 		return false
 	case keyEsc:
+		if h.id == PanelMonitor && h.processSelected != (services.ProcessIdentity{}) {
+			h.processSelected = services.ProcessIdentity{}
+			r.rebuildPanel(h)
+			return true
+		}
 		if h.id == PanelSettings && h.query != "" {
 			h.query = ""
 			h.search = ui.NewField("")
@@ -2281,11 +2301,7 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		}
 		return clockTree(now, h.monthDelta, h.theme)
 	case PanelMonitor:
-		connector := ""
-		if bar, ok := r.bars[h.output]; ok {
-			connector = bar.connector()
-		}
-		return monitorPanelTree(h, monitorSelectors(r.cfg.ForConnector(connector)), r.sample, r.historyLocked(), r.machineFacts)
+		return monitorPanelTree(h, r.monitorViewLocked(h))
 	case PanelSession:
 		return sessionTree(h, r.sample, r.cfg.Session.Locker)
 	case PanelSettings:
@@ -2323,7 +2339,7 @@ func panelTargetSize(id PanelID) ui.Rect {
 	case PanelClock:
 		return ui.Rect{W: 360, H: 420}
 	case PanelMonitor:
-		return ui.Rect{W: 640, H: 720}
+		return ui.Rect{W: 800, H: 650}
 	case PanelSettings:
 		// Width is unchanged on purpose: the narrowest-width acceptance check
 		// lays this panel out at its target, and holding width leaves that
@@ -2688,6 +2704,10 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 	h.drag.Cancel()
 	if id == PanelNetwork {
 		h.clearNetworkSecret()
+	}
+	if id == PanelMonitor {
+		// Owners are resolved for the panel's lifetime (D10).
+		r.usernames = nil
 	}
 	if id == PanelClipboard {
 		h.clipboardThumbnails = nil

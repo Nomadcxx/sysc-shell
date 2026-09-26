@@ -780,3 +780,13 @@ func TestInputRadiusDefaultsToTheContainerLadder(t *testing.T) {
 			th.Shapes.Input, th.Shapes.Card)
 	}
 }
+
+func TestThemeStyleCarriesEveryPaletteRole(t *testing.T) {
+	s := DefaultTheme().Style()
+	for _, name := range theme.ColorRoleNames() {
+		role, _ := ui.PaintRoleFor(name)
+		if s.Roles[role].A == 0 {
+			t.Errorf("role %q is transparent in the style table", name)
+		}
+	}
+}

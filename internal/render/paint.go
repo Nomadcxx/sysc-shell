@@ -393,10 +393,20 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 	// A process-table row may carry a flat selection or interaction wash. Its
 	// square edge is deliberate: the table surface owns the rounded outline.
 	case ui.KindRow:
-		fill, fg := fillPair(style, n.Fill, Color{})
+		fill, fg, layered := rowFill(style, n)
 		box := style.Scale120.PhysicalRect(n.Bounds)
-		fillRect(c, box, fill)
-		fillRect(c, box, stateLayer(fg, n.State))
+		if n.Shape != ui.ShapeInherit {
+			mask := RoundedMask(chromeRadius(style, nodeRadius(style, n, 0), box), box.W, box.H)
+			blendMask(c, mask, box.X, box.Y, fill)
+			if layered {
+				blendMask(c, mask, box.X, box.Y, stateLayer(fg, n.State))
+			}
+		} else {
+			fillRect(c, box, fill)
+			if layered {
+				fillRect(c, box, stateLayer(fg, n.State))
+			}
+		}
 		inner := style
 		inner.Foreground = fg
 		for i, child := range n.Children {
@@ -1048,12 +1058,33 @@ const (
 // base is the kind's resting fill, which differs by kind rather than by token:
 // a capsule or card rests on the high container, a control resting on one of
 // those needs the level above it.
+// rowFill resolves a table row's wash. A hovered row that names hover roles
+// takes them as a solid fill and foreground instead of the translucent state
+// layer; any other row keeps its declared fill and the layer.
+func rowFill(style Style, n *ui.Node) (fill, fg Color, layered bool) {
+	if n.State.Has(ui.StateHovered) && n.HoverFill != ui.PaintUnset {
+		ink := style.Foreground
+		if n.HoverInk != ui.PaintUnset {
+			ink = resolvePaintRole(style, n.HoverInk)
+		}
+		return resolvePaintRole(style, n.HoverFill), ink, false
+	}
+	if n.Fill == ui.FillRole {
+		return resolvePaintRole(style, n.FillRole), resolvePaintRole(style, n.InkRole), true
+	}
+	fill, fg = fillPair(style, n.Fill, Color{})
+	return fill, fg, true
+}
+
 func chromeFill(style Style, n *ui.Node, base Color) (fill, fg Color) {
 	// Selection outranks the declared fill: a selected segment is Primary
 	// whatever it rests in. D6 names OnPrimary for this row specifically, so
 	// it reads the paired token directly rather than the accent's foreground.
 	if n.State.Has(ui.StateSelected) {
 		return style.accent(), style.buttonText()
+	}
+	if n.Fill == ui.FillRole {
+		return resolvePaintRole(style, n.FillRole), resolvePaintRole(style, n.InkRole)
 	}
 	// A destructive outline is error-toned rather than a solid red block. The
 	// tone lives on the node, so it is resolved here and not in the table.
@@ -1342,6 +1373,9 @@ func resolvePaintRole(style Style, role ui.PaintRole) Color {
 	case ui.PaintSurface:
 		return style.Background
 	default:
+		if role > ui.PaintUnset && role < ui.PaintRoleCount && style.Roles[role].A > 0 {
+			return style.Roles[role]
+		}
 		return style.Accent
 	}
 }

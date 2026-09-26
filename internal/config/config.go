@@ -292,6 +292,24 @@ type Media struct {
 	Blacklist []string
 }
 
+// Monitor is the system monitor panel. Colours are theme role names, not
+// hex, so they follow the wallpaper palette; theme.ColorRoleNames is the
+// vocabulary.
+type Monitor struct {
+	Refresh         int // seconds, 1..10
+	SortBackground  string
+	SortColor       string
+	HoverBackground string
+	HoverColor      string
+	ShowApps        bool
+	ShowProcesses   bool
+}
+
+func defaultMonitor() Monitor {
+	return Monitor{Refresh: 1, SortBackground: "surface_variant", SortColor: "on_surface_variant",
+		HoverBackground: "surface_variant", HoverColor: "on_surface_variant", ShowApps: true, ShowProcesses: true}
+}
+
 // Config is an immutable, fully resolved configuration.
 type Config struct {
 	Bar           Bar
@@ -303,6 +321,7 @@ type Config struct {
 	Tray          TrayPreferences
 	Weather       Weather
 	Media         Media
+	Monitor       Monitor
 	Wallpaper     Wallpaper
 	Outputs       []OutputOverride
 	Templates     map[string]bool
@@ -446,7 +465,8 @@ func Default() Config {
 			Scheme: "scheme-tonal-spot",
 			Mode:   "dark",
 		},
-		Panels: Panels{Gap: 0, Padding: 8, OSD: "bottom-center"},
+		Panels:  Panels{Gap: 0, Padding: 8, OSD: "bottom-center"},
+		Monitor: defaultMonitor(),
 		Wallpaper: Wallpaper{
 			// Stills and video share one directory by default, which D9
 			// allows: that is how the library on this machine is laid out, and

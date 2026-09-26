@@ -157,6 +157,16 @@ type wireMedia struct {
 	Blacklist []string `json:"blacklist,omitempty"`
 }
 
+type wireMonitor struct {
+	Refresh         *int    `json:"refresh,omitempty"`
+	SortBackground  *string `json:"sort_column_background,omitempty"`
+	SortColor       *string `json:"sort_column_color,omitempty"`
+	HoverBackground *string `json:"hover_background,omitempty"`
+	HoverColor      *string `json:"hover_color,omitempty"`
+	ShowApps        *bool   `json:"show_apps,omitempty"`
+	ShowProcesses   *bool   `json:"show_processes,omitempty"`
+}
+
 type wireWallpaper struct {
 	ImageDirectory *string  `json:"image_directory,omitempty"`
 	VideoDirectory *string  `json:"video_directory,omitempty"`
@@ -178,6 +188,7 @@ type wireConfig struct {
 	Tray          *wireTrayPreferences `json:"tray,omitempty"`
 	Weather       *wireWeather         `json:"weather,omitempty"`
 	Media         *wireMedia           `json:"media,omitempty"`
+	Monitor       *wireMonitor         `json:"monitor,omitempty"`
 	Wallpaper     *wireWallpaper       `json:"wallpaper,omitempty"`
 	Outputs       []wireOutput         `json:"outputs,omitempty"`
 	Templates     map[string]bool      `json:"templates,omitempty"`
@@ -337,6 +348,13 @@ func Parse(data []byte) (Config, error) {
 			return Config{}, err
 		}
 		cfg.Media = media
+	}
+	if wire.Monitor != nil {
+		monitor, err := applyMonitor(*wire.Monitor, "monitor")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Monitor = monitor
 	}
 
 	seen := make(map[string]struct{}, len(wire.Outputs))
@@ -664,6 +682,44 @@ func isBusNameStart(c byte) bool {
 
 func isBusNameChar(c byte) bool {
 	return isBusNameStart(c) || c >= '0' && c <= '9'
+}
+
+// applyMonitor resolves the monitor block over its defaults. A colour must be
+// a theme role name: an unknown one is refused like any other invalid value
+// rather than painted as a default the user did not ask for.
+func applyMonitor(w wireMonitor, path string) (Monitor, error) {
+	out := defaultMonitor()
+	if w.Refresh != nil {
+		if *w.Refresh < 1 || *w.Refresh > 10 {
+			return Monitor{}, pathErr(path+".refresh", "%d is outside 1 through 10", *w.Refresh)
+		}
+		out.Refresh = *w.Refresh
+	}
+	for _, f := range []struct {
+		key string
+		in  *string
+		out *string
+	}{
+		{"sort_column_background", w.SortBackground, &out.SortBackground},
+		{"sort_column_color", w.SortColor, &out.SortColor},
+		{"hover_background", w.HoverBackground, &out.HoverBackground},
+		{"hover_color", w.HoverColor, &out.HoverColor},
+	} {
+		if f.in == nil {
+			continue
+		}
+		if !theme.ValidColorRole(*f.in) {
+			return Monitor{}, pathErr(path+"."+f.key, "%q is not a theme colour role", *f.in)
+		}
+		*f.out = *f.in
+	}
+	if w.ShowApps != nil {
+		out.ShowApps = *w.ShowApps
+	}
+	if w.ShowProcesses != nil {
+		out.ShowProcesses = *w.ShowProcesses
+	}
+	return out, nil
 }
 
 func applyMedia(w wireMedia, path string) (Media, error) {

@@ -305,8 +305,8 @@ func TestEverySectionIsOneOfTheNamedSections(t *testing.T) {
 	cfg.Plugins.Enabled = []string{"com.example.widget"}
 
 	names := SectionNames()
-	if len(names) != 12 {
-		t.Fatalf("SectionNames = %d sections, want the twelve of the information architecture", len(names))
+	if len(names) != 13 {
+		t.Fatalf("SectionNames = %d sections, want the thirteen of the information architecture", len(names))
 	}
 	for _, e := range DefaultFor(cfg).entries {
 		if !slices.Contains(names, e.Section) {
@@ -754,5 +754,44 @@ func TestInputRadiusHasAnEntryThatWritesTheAxis(t *testing.T) {
 	}
 	if got := entry.Get(cfg); got != "18" {
 		t.Fatalf("entry reads back %q, want \"18\"", got)
+	}
+}
+
+func TestMonitorSectionEntries(t *testing.T) {
+	r := Default()
+	got := map[string]Kind{}
+	for _, e := range r.Section("Monitor") {
+		got[e.Path] = e.Kind
+	}
+	want := map[string]Kind{
+		"monitor.refresh": KindInt, "monitor.sort-column-background": KindEnum,
+		"monitor.sort-column-color": KindEnum, "monitor.hover-background": KindEnum,
+		"monitor.hover-color": KindEnum, "monitor.show-apps": KindBool, "monitor.show-processes": KindBool,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("Monitor entries = %v", got)
+	}
+	for path, kind := range want {
+		if got[path] != kind {
+			t.Errorf("%s kind = %v, want %v", path, got[path], kind)
+		}
+	}
+	found := false
+	for _, s := range SectionNames() {
+		found = found || s == "Monitor"
+	}
+	if !found {
+		t.Fatal("Monitor is not in the settings rail")
+	}
+	c := config.Default()
+	for _, e := range r.Section("Monitor") {
+		if e.Path == "monitor.hover-color" {
+			if err := e.Set(&c, "magenta"); err == nil {
+				t.Fatal("hover-color accepted magenta")
+			}
+			if err := e.Set(&c, "primary"); err != nil || c.Monitor.HoverColor != "primary" {
+				t.Fatalf("set primary: %v, %q", err, c.Monitor.HoverColor)
+			}
+		}
 	}
 }

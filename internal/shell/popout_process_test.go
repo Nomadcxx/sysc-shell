@@ -2,12 +2,15 @@ package shell
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -17,56 +20,6 @@ func processFixture() []services.Process {
 		{Identity: services.ProcessIdentity{PID: 10, StartTimeTicks: 100}, Name: "Alpha", UID: 0, UIDValid: true, ResidentBytes: 100, ResidentValid: true, CPU: services.ProcessCPU{Fraction: .1, Valid: true}},
 		{Identity: services.ProcessIdentity{PID: 20, StartTimeTicks: 200}, Name: "beta", UID: 1000, UIDValid: true, ResidentBytes: 200, ResidentValid: true, Args: []string{"beta", "--Chrome-Helper"}, CPU: services.ProcessCPU{Fraction: .2, Valid: true}},
 		{Identity: services.ProcessIdentity{PID: 40, StartTimeTicks: 400}, Name: "unknown"},
-	}
-}
-
-func TestProcessesAreTheDefaultMonitorPage(t *testing.T) {
-	reg := newPanelRegistry(t)
-	if err := reg.OpenPanel(PanelMonitor, 7, Trigger{OutW: 1920, OutH: 1080}); err != nil {
-		t.Fatal(err)
-	}
-	_ = drainAux(t, reg, 2)
-	h := reg.panelHosts[PanelMonitor]
-	for _, label := range []string{"System Processes", "System Monitor", "Search", "All", "User", "System"} {
-		if !treeHasNameOrText(h.root, label) {
-			t.Errorf("default process page missing %q", label)
-		}
-	}
-	if list := findKind(h.root, ui.KindVirtualList); list == nil {
-		t.Fatal("default process page has no virtual list")
-	}
-	if findKind(h.root, ui.KindGraph) != nil {
-		t.Fatal("monitor cards rendered on the default process page")
-	}
-}
-
-func TestProjectProcessesFiltersSearchesAndSortsStably(t *testing.T) {
-	procs := processFixture()
-	tests := []struct {
-		name, query, filter, sort string
-		desc                      bool
-		want                      []int
-	}{
-		{name: "all by pid", filter: "all", sort: "pid", want: []int{10, 20, 30, 40}},
-		{name: "user", filter: "user", sort: "pid", want: []int{20, 30}},
-		{name: "system", filter: "system", sort: "pid", want: []int{10}},
-		{name: "case insensitive args search", query: "chrome", filter: "all", sort: "pid", want: []int{20}},
-		{name: "cpu descending", filter: "all", sort: "cpu", desc: true, want: []int{30, 20, 10, 40}},
-		{name: "memory ascending", filter: "all", sort: "memory", want: []int{10, 20, 30, 40}},
-		{name: "name ascending", filter: "all", sort: "name", want: []int{10, 20, 30, 40}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := projectProcesses(procs, tt.query, tt.filter, tt.sort, tt.desc, 1000)
-			if len(got) != len(tt.want) {
-				t.Fatalf("PIDs = %v, want %v", processPIDs(got), tt.want)
-			}
-			for i, pid := range tt.want {
-				if got[i].Identity.PID != pid {
-					t.Fatalf("PIDs = %v, want %v", processPIDs(got), tt.want)
-				}
-			}
-		})
 	}
 }
 
@@ -81,104 +34,21 @@ func TestProcessListStaysInsideItsViewport(t *testing.T) {
 	}
 	procs := make([]services.Process, 500)
 	for i := range procs {
-		procs[i] = services.Process{Identity: services.ProcessIdentity{PID: i + 2, StartTimeTicks: uint64(i + 1)}, Name: "worker"}
+		procs[i] = services.Process{Identity: services.ProcessIdentity{PID: i + 2, StartTimeTicks: uint64(i + 1)}, Name: fmt.Sprintf("worker%d", i)}
 	}
-	tree := processMonitorTree(h, services.ProcessSnapshot{Processes: procs}, 1000)
+	h.processExpanded, h.processCollapsed = map[string]bool{}, map[string]bool{}
+	tree := processTableTree(h, processView(procs))
 	size := panelTargetSize(PanelMonitor)
 	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 8, 16 }
 	if err := ui.LayoutColumn(tree, size, measure); err != nil {
 		t.Fatal(err)
 	}
 	list := findKind(tree, ui.KindVirtualList)
-	if list == nil || list.ItemCount != 500 {
+	if list == nil || list.ItemCount != 501 { // the Processes section header, then 500 rows
 		t.Fatalf("virtual list = %#v", list)
 	}
 	if bottom := list.Bounds.Y + list.Bounds.H; bottom > size.H {
 		t.Fatalf("list bottom %d exceeds panel %d", bottom, size.H)
-	}
-}
-
-func TestProcessTableUsesCompactChromeAndOneKillAction(t *testing.T) {
-	h := &PanelHost{
-		place: Placement{Panel: panelTargetSize(PanelMonitor)}, theme: Theme{Metrics: standardMetrics()},
-		monitorPage: monitorPageProcesses, processFilter: "all", processSort: "pid", search: ui.NewField(""),
-	}
-	tree := processMonitorTree(h, services.ProcessSnapshot{Processes: processFixture()[:2]}, 1000)
-	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 8, 16 }
-	if err := ui.LayoutColumn(tree, panelTargetSize(PanelMonitor), measure); err != nil {
-		t.Fatal(err)
-	}
-
-	page := findNodeKey(tree, "monitor-page")
-	if page == nil || page.Height != 28 || page.Gap != 0 {
-		t.Fatalf("page switch = %+v, want a joined 28px segmented control", page)
-	}
-	for _, segment := range page.Children {
-		if segment.Fill != ui.FillOutline {
-			t.Fatalf("page segment %q fill = %v, want outline", segment.Name, segment.Fill)
-		}
-		if segment.Gradient.Count != 2 || segment.Gradient.Stops[0].Role != ui.PaintSecondary || segment.Gradient.Stops[1].Role != ui.PaintPrimary || segment.Gradient.Motion != ui.GradientNone {
-			t.Fatalf("page segment %q gradient = %+v, want a static semantic ramp", segment.Name, segment.Gradient)
-		}
-	}
-	field := findKind(tree, ui.KindTextField)
-	if field == nil || field.Height != 28 || field.Bounds.H != 28 {
-		t.Fatalf("search field = %+v, want a laid-out 28px control", field)
-	}
-	filters := findNodeKey(tree, "process-filter")
-	if filters == nil || filters.Height != 28 {
-		t.Fatalf("filter switch = %+v, want 28px", filters)
-	}
-	for _, filter := range filters.Children {
-		if filter.State.Has(ui.StateSelected) && filter.Gradient.Count != 2 {
-			t.Fatalf("selected filter %q gradient = %+v, want quiet ramp", filter.Name, filter.Gradient)
-		}
-		if !filter.State.Has(ui.StateSelected) && filter.Gradient.Count != 0 {
-			t.Fatalf("resting filter %q gradient = %+v, want solid zero-value path", filter.Name, filter.Gradient)
-		}
-	}
-	for _, key := range []string{"name", "cpu", "memory", "pid"} {
-		header := findAction(tree, "monitor:sort:"+key)
-		if header == nil || header.Height != 22 {
-			t.Fatalf("%s header = %+v, want a text-like 22px sort action", key, header)
-		}
-	}
-
-	list := findKind(tree, ui.KindVirtualList)
-	if list == nil || list.ItemHeight != 32 {
-		t.Fatalf("process list = %+v, want 32px row pitch", list)
-	}
-	if !list.HideScrollbar || ui.ScrollTrack(list) != (ui.Rect{}) {
-		t.Fatalf("process list scrollbar = hidden %t track %+v, want hidden with no hit strip", list.HideScrollbar, ui.ScrollTrack(list))
-	}
-	table := tree.Children[len(tree.Children)-1]
-	if table.Kind != ui.KindCapsule || table.Fill != ui.FillContainerHigh || table.Shape != ui.ShapeCard || len(table.Children) != 1 || table.Children[0] != list {
-		t.Fatalf("table surface = %+v, want one high-container card around the list", table)
-	}
-	row := list.Item(0)
-	row2 := list.Item(1)
-	if row == nil || row2 == nil || row.Kind != ui.KindRow || row.Fill != ui.FillNone || row.Height != 26 || row.Bounds.H != 26 || row2.Bounds.Y-row.Bounds.Y != 32 || row2.Bounds.Y-(row.Bounds.Y+row.Bounds.H) != 6 {
-		t.Fatalf("process rows = %+v / %+v, want transparent 26px rows on a 32px pitch", row, row2)
-	}
-	if row.Action != "monitor:select:10:100" || !row.Focusable || row.Role != "row" {
-		t.Fatalf("process row does not own selection: %+v", row)
-	}
-	data := row.Children[0]
-	for i, key := range []string{"name", "cpu", "memory", "pid"} {
-		header := findAction(tree, "monitor:sort:"+key)
-		if header.Bounds.X != data.Children[i].Bounds.X || header.Bounds.W != data.Children[i].Bounds.W {
-			t.Fatalf("%s header bounds = %+v, row cell = %+v", key, header.Bounds, data.Children[i].Bounds)
-		}
-	}
-	if end := findText(row, "End"); end != nil {
-		t.Fatalf("redundant End action remains: %+v", end)
-	}
-	kill := findAction(row, "process:term:10:100")
-	if kill == nil || kill.Text != "Kill" || kill.Height != 22 || kill.Width != 48 || kill.Fill != ui.FillOutline || kill.State.Has(ui.StateDisabled) {
-		t.Fatalf("single TERM-backed Kill action = %+v", kill)
-	}
-	if legacy := findAction(row, "process:kill:10:100"); legacy != nil {
-		t.Fatalf("SIGKILL action remains: %+v", legacy)
 	}
 }
 
@@ -188,7 +58,7 @@ func TestHiddenProcessScrollbarKeepsWheelAndKeyboardPaging(t *testing.T) {
 	for i := range processes {
 		processes[i] = services.Process{
 			Identity: services.ProcessIdentity{PID: 100 + i, StartTimeTicks: uint64(1000 + i)},
-			Name:     "worker",
+			Name:     fmt.Sprintf("worker%02d", i),
 		}
 	}
 	reg.sample.Processes = &services.ProcessSnapshot{Processes: processes}
@@ -220,36 +90,15 @@ func TestSelectedProcessRowKeepsAVisibleHighlight(t *testing.T) {
 		place: Placement{Panel: panelTargetSize(PanelMonitor)}, theme: Theme{Metrics: standardMetrics()},
 		processSelected: process.Identity,
 	}
-	row := processRow(h, process)
+	row := processLineRow(h, processView(processFixture()), processLine{Kind: lineProcess, Identity: process.Identity, Name: process.Name})
 	if row.Kind != ui.KindRow || row.Fill != ui.FillSoft || row.Stroke != 0 {
 		t.Fatalf("selected row = kind %v fill %v stroke %d, want one flat soft wash", row.Kind, row.Fill, row.Stroke)
-	}
-}
-
-func TestProcessIdentityActionsAcceptSelectionAndTermOnly(t *testing.T) {
-	want := services.ProcessIdentity{PID: 30, StartTimeTicks: 300}
-	if got, ok := parseProcessIdentityAction("monitor:select:30:300", "monitor:select"); !ok || got != want {
-		t.Fatalf("selection parsed as %+v/%v, want %+v", got, ok, want)
-	}
-	if got, signal, ok := parseProcessAction("process:term:30:300"); !ok || got != want || signal != syscall.SIGTERM {
-		t.Fatalf("TERM parsed as %+v/%v/%v", got, signal, ok)
-	}
-	if _, _, ok := parseProcessAction("process:kill:30:300"); ok {
-		t.Fatal("SIGKILL action is still accepted")
 	}
 }
 
 func TestProcessRowPointerActionUsesLaidOutControl(t *testing.T) {
 	reg := newPanelRegistry(t)
 	reg.sample.Processes = &services.ProcessSnapshot{Processes: processFixture()[:1]}
-	signaled := make(chan services.ProcessIdentity, 1)
-	reg.signalProcess = func(id services.ProcessIdentity, signal syscall.Signal) error {
-		if signal != syscall.SIGTERM {
-			t.Errorf("signal = %v, want SIGTERM", signal)
-		}
-		signaled <- id
-		return nil
-	}
 	if err := reg.OpenPanel(PanelMonitor, 7, Trigger{OutW: 1920, OutH: 1080}); err != nil {
 		t.Fatal(err)
 	}
@@ -258,26 +107,24 @@ func TestProcessRowPointerActionUsesLaidOutControl(t *testing.T) {
 	if err := h.configure(h.place.Panel.W, h.place.Panel.H, int(ui.ScaleUnit)); err != nil {
 		t.Fatal(err)
 	}
-	button := findAction(h.root, "process:term:30:300")
+	button := findAction(h.root, "monitor:select:30:300")
 	if button == nil || button.Bounds.W == 0 || button.Bounds.H == 0 {
-		t.Fatalf("laid-out Kill control = %+v", button)
+		t.Fatalf("laid-out process row = %+v", button)
 	}
 	x := float64(button.Bounds.X + button.Bounds.W/2)
 	y := float64(button.Bounds.Y + button.Bounds.H/2)
 	handle := reqs[1].Open.Callbacks.Handle
 	if !handle(wayland.Event{Kind: wayland.EventPointerPress, X: x, Y: y}) {
-		t.Fatal("pointer press did not resolve the laid-out Kill control")
+		t.Fatal("pointer press did not resolve the laid-out process row")
 	}
 	if !handle(wayland.Event{Kind: wayland.EventPointerRelease, X: x, Y: y}) {
-		t.Fatal("pointer release did not activate the laid-out Kill control")
+		t.Fatal("pointer release did not activate the laid-out process row")
 	}
-	select {
-	case id := <-signaled:
-		if id != (services.ProcessIdentity{PID: 30, StartTimeTicks: 300}) {
-			t.Fatalf("signaled process = %+v", id)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("pointer action did not signal the process")
+	reg.mu.Lock()
+	selected := h.processSelected
+	reg.mu.Unlock()
+	if selected != (services.ProcessIdentity{PID: 30, StartTimeTicks: 300}) {
+		t.Fatalf("selected process = %+v", selected)
 	}
 }
 
@@ -287,15 +134,10 @@ func TestScrolledOutProcessButtonCannotActivateAtItsOldPosition(t *testing.T) {
 	for i := range processes {
 		processes[i] = services.Process{
 			Identity: services.ProcessIdentity{PID: 100 + i, StartTimeTicks: uint64(1000 + i)},
-			Name:     "worker",
+			Name:     fmt.Sprintf("worker%02d", i),
 		}
 	}
 	reg.sample.Processes = &services.ProcessSnapshot{Processes: processes}
-	signaled := make(chan services.ProcessIdentity, 1)
-	reg.signalProcess = func(id services.ProcessIdentity, _ syscall.Signal) error {
-		signaled <- id
-		return nil
-	}
 	if err := reg.OpenPanel(PanelMonitor, 7, Trigger{OutW: 1920, OutH: 1080}); err != nil {
 		t.Fatal(err)
 	}
@@ -304,9 +146,16 @@ func TestScrolledOutProcessButtonCannotActivateAtItsOldPosition(t *testing.T) {
 	if err := h.configure(h.place.Panel.W, h.place.Panel.H, int(ui.ScaleUnit)); err != nil {
 		t.Fatal(err)
 	}
-	old := findAction(h.root, "process:term:100:1000")
+	h.processSort, h.processDesc = "pid", false
+	reg.mu.Lock()
+	reg.rebuildPanel(h)
+	reg.mu.Unlock()
+	if err := h.configure(h.place.Panel.W, h.place.Panel.H, int(ui.ScaleUnit)); err != nil {
+		t.Fatal(err)
+	}
+	old := findAction(h.root, "monitor:select:100:1000")
 	if old == nil || old.Bounds.W == 0 || old.Bounds.H == 0 {
-		t.Fatalf("initial Kill control = %+v", old)
+		t.Fatalf("initial process row = %+v", old)
 	}
 	x := float64(old.Bounds.X + old.Bounds.W/2)
 	y := float64(old.Bounds.Y + old.Bounds.H/2)
@@ -318,15 +167,13 @@ func TestScrolledOutProcessButtonCannotActivateAtItsOldPosition(t *testing.T) {
 	handle := reqs[1].Open.Callbacks.Handle
 	if !handle(wayland.Event{Kind: wayland.EventPointerPress, X: x, Y: y}) ||
 		!handle(wayland.Event{Kind: wayland.EventPointerRelease, X: x, Y: y}) {
-		t.Fatal("old row position did not resolve the currently visible Kill control")
+		t.Fatal("old row position did not resolve the currently visible process row")
 	}
-	select {
-	case id := <-signaled:
-		if id == (services.ProcessIdentity{PID: 100, StartTimeTicks: 1000}) {
-			t.Fatalf("scrolled-out process %+v activated at its stale position", id)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("visible End control was not activated")
+	reg.mu.Lock()
+	selected := h.processSelected
+	reg.mu.Unlock()
+	if selected == (services.ProcessIdentity{PID: 100, StartTimeTicks: 1000}) || selected == (services.ProcessIdentity{}) {
+		t.Fatalf("selection after scrolling = %+v, want the row now under the pointer", selected)
 	}
 }
 
@@ -336,7 +183,7 @@ func TestKeyboardFocusRevealsAProcessAction(t *testing.T) {
 	for i := range processes {
 		processes[i] = services.Process{
 			Identity: services.ProcessIdentity{PID: 100 + i, StartTimeTicks: uint64(1000 + i)},
-			Name:     "worker",
+			Name:     fmt.Sprintf("worker%02d", i),
 		}
 	}
 	reg.sample.Processes = &services.ProcessSnapshot{Processes: processes}
@@ -350,7 +197,7 @@ func TestKeyboardFocusRevealsAProcessAction(t *testing.T) {
 	}
 	var target *ui.Node
 	for _, candidate := range h.focus {
-		if candidate.Action == "process:term:129:1029" {
+		if candidate.Action == "monitor:select:129:1029" {
 			target = candidate
 			break
 		}
@@ -379,7 +226,7 @@ func TestProcessSignalRunsUnlockedAndReportsIdentityFailure(t *testing.T) {
 		} else {
 			reg.mu.Unlock()
 		}
-		if id.PID != 30 || sig != syscall.SIGTERM {
+		if id.PID != 30 || sig != syscall.SIGINT {
 			t.Errorf("signal request = %#v, %v", id, sig)
 		}
 		called <- struct{}{}
@@ -390,19 +237,9 @@ func TestProcessSignalRunsUnlockedAndReportsIdentityFailure(t *testing.T) {
 	}
 	_ = drainAux(t, reg, 2)
 	h := reg.panelHosts[PanelMonitor]
-	var n *ui.Node
-	for _, candidate := range h.focus {
-		if candidate.Action == "process:term:30:300" {
-			n = candidate
-			break
-		}
-	}
-	if n == nil {
-		t.Fatal("TERM action missing")
-	}
-	h.setFocus(n)
+	n := &ui.Node{Action: "process:int:30:300"}
 	reg.mu.Lock()
-	if !h.activate(reg) {
+	if !h.activateMonitor(reg, n) {
 		reg.mu.Unlock()
 		t.Fatal("TERM action was not handled")
 	}
@@ -481,4 +318,309 @@ func findText(n *ui.Node, value string) *ui.Node {
 		}
 	}
 	return nil
+}
+
+func processView(procs []services.Process) monitorView {
+	v := testMonitorView()
+	v.Snap.Processes = &services.ProcessSnapshot{Processes: procs}
+	v.UID = 1000
+	return v
+}
+
+func processHost() *PanelHost {
+	return &PanelHost{
+		place: Placement{Panel: panelTargetSize(PanelMonitor)}, theme: Theme{Metrics: standardMetrics()},
+		monitorPage: monitorPageProcesses, processFilter: "all", processSort: "mem", processDesc: true,
+		search: ui.NewField(""), processExpanded: map[string]bool{}, processCollapsed: map[string]bool{},
+	}
+}
+
+func TestProcessPageMatchesTheReferenceLayout(t *testing.T) {
+	root := monitorPanelTree(processHost(), processView(processFixture()))
+	for _, label := range []string{"Processes", "System", "Search"} {
+		if !treeHasNameOrText(root, label) {
+			t.Errorf("processes page missing %q", label)
+		}
+	}
+	for _, col := range []string{"Name", "CPU", "MEM", "SWAP", "DISK", "PID", "USER"} {
+		if findByName(root, "Sort by "+col) == nil {
+			t.Errorf("table header missing %q", col)
+		}
+	}
+	if findKind(root, ui.KindVirtualList) == nil {
+		t.Fatal("no virtual list")
+	}
+	if treeHasNameOrText(root, "Kill") {
+		t.Fatal("per-row Kill pill is still drawn")
+	}
+	if panelTargetSize(PanelMonitor) != (ui.Rect{W: 800, H: 650}) {
+		t.Fatalf("panel size = %+v", panelTargetSize(PanelMonitor))
+	}
+}
+
+func TestSortedColumnUsesTheConfiguredRoles(t *testing.T) {
+	h := processHost()
+	v := processView(processFixture())
+	v.Config.SortBackground, v.Config.SortColor = "primary_container", "on_primary_container"
+	root := monitorPanelTree(h, v)
+	head := findByName(root, "Sort by MEM")
+	if head == nil || head.Fill != ui.FillRole || head.FillRole != ui.PaintPrimaryContainer || head.InkRole != ui.PaintOnPrimaryContainer {
+		t.Fatalf("MEM header = %+v", head)
+	}
+	if !treeHasNameOrText(head, "▼ MEM") {
+		t.Fatal("descending MEM header lacks ▼")
+	}
+	list := findKind(root, ui.KindVirtualList)
+	row := list.Item(1) // 0 is the Processes section header
+	cell := findByName(row, "MEM value")
+	if cell == nil || cell.Fill != ui.FillRole || cell.FillRole != ui.PaintPrimaryContainer {
+		t.Fatalf("MEM cell = %+v", cell)
+	}
+}
+
+func TestRowsHoverWithTheConfiguredRoles(t *testing.T) {
+	v := processView(processFixture())
+	v.Config.HoverBackground, v.Config.HoverColor = "secondary_container", "on_secondary_container"
+	list := findKind(monitorPanelTree(processHost(), v), ui.KindVirtualList)
+	row := list.Item(1)
+	if row.HoverFill != ui.PaintSecondaryContainer || row.HoverInk != ui.PaintOnSecondaryContainer || row.Shape == ui.ShapeInherit {
+		t.Fatalf("row hover = fill %v ink %v shape %v", row.HoverFill, row.HoverInk, row.Shape)
+	}
+}
+
+func TestGroupRowHasNoPIDAndTogglesByKey(t *testing.T) {
+	procs := append(processFixture(),
+		services.Process{Identity: services.ProcessIdentity{PID: 31, StartTimeTicks: 310}, Name: "gamma", UID: 1000, UIDValid: true, ResidentBytes: 1, ResidentValid: true})
+	list := findKind(monitorPanelTree(processHost(), processView(procs)), ui.KindVirtualList)
+	var group *ui.Node
+	for i := 0; i < list.ItemCount && group == nil; i++ {
+		group = findAction(list.Item(i), "monitor:toggle:exe:name:gamma")
+	}
+	if group == nil {
+		t.Fatal("gamma group has no toggle action")
+	}
+	if treeHasNameOrText(group, "30") || treeHasNameOrText(group, "31") {
+		t.Fatal("group row shows a PID")
+	}
+}
+
+func TestFormatProcessCell(t *testing.T) {
+	cases := []struct {
+		kind string
+		t    processTotals
+		want string
+	}{
+		{"cpu", processTotals{CPU: .002, CPUValid: true}, "0.2%"},
+		{"cpu", processTotals{CPU: .01, CPUValid: true}, "1%"},
+		{"cpu", processTotals{CPU: 0, CPUValid: true}, "—"},
+		{"cpu", processTotals{}, "—"},
+		{"mem", processTotals{Resident: 2576980377, ResidentValid: true}, "2.4 G"},
+		{"mem", processTotals{Resident: 682699161, ResidentValid: true}, "651.1 M"},
+		{"swap", processTotals{}, "—"},
+		{"io", processTotals{IO: 1536, IOValid: true}, "1.5 K/s"},
+	}
+	for _, c := range cases {
+		if got := formatProcessCell(c.kind, c.t); got != c.want {
+			t.Errorf("%s %+v = %q, want %q", c.kind, c.t, got, c.want)
+		}
+	}
+}
+
+func TestParseProcessOrder(t *testing.T) {
+	cases := []struct {
+		in   string
+		key  string
+		desc bool
+		ok   bool
+	}{
+		{"mem", "mem", true, true},
+		{"-mem", "mem", false, true},
+		{"name", "name", false, true},
+		{"-name", "name", true, true},
+		{"io", "io", true, true},
+		{"pid", "pid", false, true},
+		{"-pid", "pid", true, true},
+		{"user", "user", false, true},
+		{"memory", "", false, false},
+		{"", "", false, false},
+	}
+	for _, c := range cases {
+		key, desc, ok := parseProcessOrder(c.in)
+		if key != c.key || desc != c.desc || ok != c.ok {
+			t.Errorf("%q = %q %v %v", c.in, key, desc, ok)
+		}
+	}
+}
+
+func TestPanelOpenWithAnOrderSortsTheTable(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.HandlePanelByName("open", "system-monitor", "-cpu"); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelMonitor]
+	if h.processSort != "cpu" || h.processDesc || h.monitorPage != monitorPageProcesses {
+		t.Fatalf("sort = %q desc=%v page=%q", h.processSort, h.processDesc, h.monitorPage)
+	}
+	if err := reg.HandlePanelByName("open", "system-monitor", "memory"); err == nil {
+		t.Fatal("unknown order accepted")
+	}
+}
+
+func TestFooterKeepsTheTotalsBesideAStatus(t *testing.T) {
+	h := processHost()
+	h.processStatus = "Sent INT to PID 30"
+	foot := processFooter(h, services.ProcessSnapshot{Processes: processFixture()}, 1000)
+	if !strings.Contains(foot.Text, "Total processes: 4") || !strings.Contains(foot.Text, "Sent INT to PID 30") {
+		t.Fatalf("footer = %q, want the totals and the status", foot.Text)
+	}
+}
+
+func TestASuccessfulViewOptionSaveClearsAnEarlierError(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelMonitor, 7, Trigger{OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelMonitor]
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h.processStatus, h.processStatusErr = "Could not save view options: disk full", errors.New("disk full")
+	h.activateMonitor(reg, &ui.Node{Action: "monitor:show:apps"})
+	if h.processStatus != "" || h.processStatusErr != nil {
+		t.Fatalf("status after a successful save = %q / %v", h.processStatus, h.processStatusErr)
+	}
+}
+
+// A header click and a panel.open order name the same default direction.
+func TestClickingAHeaderSortsLikeOpeningWithThatOrder(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelMonitor, 7, Trigger{OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelMonitor]
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	for _, key := range []string{"name", "cpu", "mem", "swap", "io", "pid", "user"} {
+		h.processSort = "none"
+		h.activateMonitor(reg, &ui.Node{Action: "monitor:sort:" + key})
+		_, want, _ := parseProcessOrder(key)
+		if h.processSort != key || h.processDesc != want {
+			t.Errorf("click %s: sort=%q desc=%v, want desc=%v", key, h.processSort, h.processDesc, want)
+		}
+	}
+}
+
+// A group row's chevron slot keeps its width. A slot that took the rest of
+// the Name cell pushed the icon out of it, and the whole surface refused to
+// lay out: live, the table showed its first section header and nothing else.
+func TestAGroupRowLaysOutWithinTheNameColumn(t *testing.T) {
+	procs := append(processFixture(), processFixture()[0])
+	procs[len(procs)-1].Identity = services.ProcessIdentity{PID: 31, StartTimeTicks: 310}
+	h := processHost()
+	h.processExpanded["exe:name:gamma"] = true
+	root := monitorPanelTree(h, processView(procs))
+	size := panelTargetSize(PanelMonitor)
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 8, 16 }
+	if err := ui.LayoutColumn(root, ui.Rect{W: size.W, H: size.H}, measure); err != nil {
+		t.Fatalf("layout: %v", err)
+	}
+	list := processVirtualList(root)
+	var group *ui.Node
+	for _, row := range list.Children {
+		if row.Action == "monitor:toggle:exe:name:gamma" {
+			group = row
+		}
+	}
+	if group == nil {
+		t.Fatal("no gamma group row laid out")
+	}
+	name := group.Children[0].Children[0]
+	slot := name.Children[0]
+	if slot.Bounds.W != processIndent {
+		t.Errorf("chevron slot is %d wide, want %d", slot.Bounds.W, processIndent)
+	}
+	for _, c := range name.Children {
+		if c.Bounds.X+c.Bounds.W > name.Bounds.X+name.Bounds.W {
+			t.Errorf("name cell child %+v leaves the cell %+v", c.Bounds, name.Bounds)
+		}
+	}
+}
+
+// Every row's value cells sit under their header cells, whatever the length
+// of the name beside them.
+func TestRowCellsAlignWithTheirHeaders(t *testing.T) {
+	procs := append(processFixture(), processFixture()[0])
+	procs[len(procs)-1].Identity = services.ProcessIdentity{PID: 31, StartTimeTicks: 310}
+	procs[1].Name = "a-much-longer-process-name"
+	h := processHost()
+	root := monitorPanelTree(h, processView(procs))
+	size := panelTargetSize(PanelMonitor)
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 8, 16 }
+	if err := ui.LayoutColumn(root, ui.Rect{W: size.W, H: size.H}, measure); err != nil {
+		t.Fatalf("layout: %v", err)
+	}
+	for _, c := range processColumnsAfterName {
+		header := findByName(root, "Sort by "+c.label)
+		for _, row := range processVirtualList(root).Children {
+			if row.Role != "row" {
+				continue
+			}
+			var cell *ui.Node
+			for _, n := range row.Children {
+				if n.Name == c.label+" value" {
+					cell = n
+				}
+			}
+			if cell == nil || cell.Bounds.X != header.Bounds.X || cell.Bounds.W != header.Bounds.W {
+				t.Errorf("%s: row %q cell %+v, header %+v", c.label, row.Name, cell.Bounds, header.Bounds)
+			}
+		}
+	}
+}
+
+// Only the sorted column is a pill, header and rows alike; numbers sit on the
+// right edge of their cell, as in the reference.
+func TestOnlyTheSortedColumnIsAPillAndNumbersAlignRight(t *testing.T) {
+	h := processHost()
+	root := monitorPanelTree(h, processView(processFixture()))
+	size := panelTargetSize(PanelMonitor)
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 8, 16 }
+	if err := ui.LayoutColumn(root, ui.Rect{W: size.W, H: size.H}, measure); err != nil {
+		t.Fatalf("layout: %v", err)
+	}
+	pill := func(n *ui.Node) bool { return n != nil && n.Kind == ui.KindCapsule && n.Fill == ui.FillRole }
+	for _, c := range processColumnsAfterName {
+		sorted := c.key == h.processSort
+		if got := pill(findByName(root, "Sort by "+c.label)); got != sorted {
+			t.Errorf("header %s pill = %v, want %v", c.label, got, sorted)
+		}
+		for _, row := range processVirtualList(root).Children {
+			var cell *ui.Node
+			for _, n := range row.Children {
+				if n.Name == c.label+" value" {
+					cell = n
+				}
+			}
+			if cell == nil {
+				continue
+			}
+			if got := pill(cell); got != sorted {
+				t.Errorf("row %q %s pill = %v, want %v", row.Name, c.label, got, sorted)
+			}
+			var text *ui.Node
+			walkNodes(cell, func(n *ui.Node) {
+				if n.Kind == ui.KindText && n.Text != "" {
+					text = n
+				}
+			})
+			if c.key == "user" || text == nil {
+				continue
+			}
+			if right := cell.Bounds.X + cell.Bounds.W - theme.MarginXS; text.Bounds.X+text.Bounds.W != right {
+				t.Errorf("row %q %s %q ends at %d, want %d", row.Name, c.label, text.Text, text.Bounds.X+text.Bounds.W, right)
+			}
+		}
+	}
 }

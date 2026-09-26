@@ -114,7 +114,7 @@ func TestMonitorPageDashesAGPUWithoutAValidSample(t *testing.T) {
 
 	// A stale ring is not a valid reading for this sample and must not draw.
 	sel := services.Selector{Source: services.SourceGPU, Subject: "10de:2808"}
-	row := ccMonGPURow(r.sample, map[services.Selector][]float64{sel: {0.4, 0.8}})
+	row := ccMonGPURow(r.sample, map[services.Selector][]float64{sel: {0.4, 0.8}}, false)
 	var graphs []*ui.Node
 	collectByKind(row, ui.KindGraph, &graphs)
 	if len(graphs) != 1 || !graphs[0].Absent || len(graphs[0].Values) != 0 {
@@ -165,7 +165,7 @@ func TestMonitorGPURowShowsVRAMOnlyWhenValid(t *testing.T) {
 	withVRAM := services.Snapshot{GPU: &metrics.GPUSnapshot{GPUs: []metrics.GPU{{
 		PCIID: "10de:2808", Name: name, VRAM: metrics.Capacity{UsedBytes: used, TotalBytes: total}, VRAMValid: true,
 	}}}}
-	caption := renderText(ccMonGPURow(withVRAM, nil))
+	caption := renderText(ccMonGPURow(withVRAM, nil, false))
 	if !strings.Contains(caption, name) || !strings.Contains(caption, formatBytes(float64(used))+" / "+formatBytes(float64(total))) {
 		t.Fatalf("GPU caption = %q, want name and VRAM used / total", caption)
 	}
@@ -173,7 +173,7 @@ func TestMonitorGPURowShowsVRAMOnlyWhenValid(t *testing.T) {
 	withoutVRAM := services.Snapshot{GPU: &metrics.GPUSnapshot{GPUs: []metrics.GPU{{
 		PCIID: "10de:2808", Name: name,
 	}}}}
-	caption = renderText(ccMonGPURow(withoutVRAM, nil))
+	caption = renderText(ccMonGPURow(withoutVRAM, nil, false))
 	if !strings.Contains(caption, name) || strings.Contains(caption, "/") {
 		t.Fatalf("GPU caption without VRAM = %q, want name only", caption)
 	}
@@ -250,5 +250,21 @@ func TestMonitorRowLabelsHavePlainNames(t *testing.T) {
 		if n == nil || n.Kind != ui.KindText {
 			t.Errorf("no text node named %q", label)
 		}
+	}
+}
+
+// The Control Centre states the GPU temperature once, in its Temperature row;
+// the system monitor has no Temperature row, so its GPU caption carries it.
+func TestGPUTemperatureAppearsOncePerSurface(t *testing.T) {
+	gpu := &metrics.GPUSnapshot{GPUs: []metrics.GPU{{PCIID: "10de:2808", Name: "RTX 4060", Celsius: 51, TempValid: true}}}
+	r := monitorTestRegistry()
+	r.sample.GPU = gpu
+	if n := strings.Count(renderText(layOutMonitor(t, r)), "51°C"); n != 1 {
+		t.Fatalf("Control Centre shows the GPU temperature %d times, want once", n)
+	}
+	v := testMonitorView()
+	v.Snap.GPU = gpu
+	if !strings.Contains(renderText(systemPageTree(systemHost(), v)), "RTX 4060 · 51°C") {
+		t.Fatal("system page GPU caption lacks the temperature")
 	}
 }
