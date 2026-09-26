@@ -38,6 +38,7 @@ var materialInventory = []string{
 	"bluetooth_disabled", "bluetooth_connected", "keyboard", "mouse",
 	"smartphone", "speaker", "devices_other",
 	"menu_book",
+	"sports_esports",
 }
 
 func TestAudioPanelIconsAreInTheSubset(t *testing.T) {

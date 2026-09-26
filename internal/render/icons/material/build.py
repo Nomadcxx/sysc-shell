@@ -150,6 +150,9 @@ ICONS = [
     "cancel",
     # The Faith plugin's read-the-chapter control.
     "menu_book",
+    # The games plugin's bar pill: a gamepad for the library and a launch
+    # affordance. "sports_esports" is Material's own gamepad glyph.
+    "sports_esports",
 ]
 
 # The pinned source renamed the older smartphone ligature. Keep the shell's

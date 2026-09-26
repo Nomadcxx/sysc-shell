@@ -57,6 +57,8 @@ var materialIcons = map[string]struct{}{
 	"memory": {}, "developer_board": {}, "disabled_by_default": {}, "skull": {}, "cancel": {},
 	// The Faith plugin's read-the-chapter control.
 	"menu_book": {},
+	// The games plugin's bar pill glyph.
+	"sports_esports": {},
 }
 
 // The pinned Material Symbols source no longer carries the older
