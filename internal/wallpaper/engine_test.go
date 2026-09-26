@@ -519,11 +519,15 @@ func TestEngineDoesNotRemoveReplacedSocket(t *testing.T) {
 		t.Fatalf("initial apply: %v", err)
 	}
 	socket := h.socket("DP-1")
-	if err := os.Remove(socket); err != nil {
-		t.Fatalf("replace old socket: %v", err)
-	}
-	if err := os.WriteFile(socket, nil, 0o600); err != nil {
+	// Create the replacement while the original still exists, then rename it
+	// over: the inode cannot be a reuse of the one just unlinked, so the
+	// identity check stays meaningful on filesystems that recycle inodes.
+	replacement := socket + ".replacement"
+	if err := os.WriteFile(replacement, nil, 0o600); err != nil {
 		t.Fatalf("write replacement: %v", err)
+	}
+	if err := os.Rename(replacement, socket); err != nil {
+		t.Fatalf("replace old socket: %v", err)
 	}
 	called := false
 	h.eng.request = func(string, string, time.Duration) (string, error) {
