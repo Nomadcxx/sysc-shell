@@ -1,7 +1,7 @@
 # Micro-interaction Primitives — Design
 
 Tracking: `sysc-590` (UI parity slice 1). Source: `reports/sysc-shell UI design gap analysis.md`,
-"Polish gaps: the micro-interaction layer". Draft awaiting owner approval.
+"Polish gaps: the micro-interaction layer". Owner-approved 2026-09-27.
 
 ## Problem
 

@@ -1,8 +1,7 @@
 # OSD Breadth and Notification Micro-interactions — Design
 
 Tracking: `sysc-592` (UI parity slice 3). Source: `reports/sysc-shell UI design gap analysis.md`,
-just-below-critical gap "OSD breadth" plus the notification/micro list. Draft awaiting owner
-approval.
+just-below-critical gap "OSD breadth" plus the notification/micro list. Owner-approved 2026-09-27.
 
 ## D0. Hover-pause is already shipped
 

@@ -1,7 +1,7 @@
 # UI Correctness Tranche — Design
 
 Tracking: `sysc-591` (UI parity slice 2). Source: `reports/sysc-shell UI design gap analysis.md`,
-critical gaps 1 and 2 plus `sysc-171`. Draft awaiting owner approval.
+critical gaps 1 and 2 plus `sysc-171`. Owner-approved 2026-09-27.
 
 Three defects, not features: SVG icons never resolve (critical gap 1, `sysc-173`, blocks `sysc-117`
 and `sysc-186`), template apply overwrites files the user edited (critical gap 2, `sysc-405`, P1),
