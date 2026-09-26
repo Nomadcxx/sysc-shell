@@ -693,3 +693,35 @@ func TestRunArgvDefaultRefusesToLaunchFromATestBinary(t *testing.T) {
 		}
 	}
 }
+
+// TestSessionPanelHoldsTheBatteryAndProfileCards: with a battery present, the
+// panel is tall enough for the battery card, the profile row that loads after
+// it opens, and every action below them. The fixed 420x360 body clipped the
+// laptop's panel through Suspend (sysc-596).
+func TestSessionPanelHoldsTheBatteryAndProfileCards(t *testing.T) {
+	reg := newPanelRegistry(t)
+	withTestBar(t, reg, 7, reg.cfg)
+	reg.sample.Battery = &metrics.BatterySnapshot{
+		Present: true, ChargeValid: true, Charge: 0.24, State: metrics.BatteryDischarging,
+		TimeRemaining: 52 * time.Minute, RateWatts: 16.2,
+	}
+	if err := reg.OpenPanel(PanelSession, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelSession]
+	h.profiles, h.profilesOK = []string{"performance", "balanced", "power-saver"}, true
+	root := sessionTree(h, reg.sample, reg.cfg.Session.Locker)
+	need, err := ui.ContentHeight(root, h.place.Panel.W, h.measureText())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.place.Panel.H < need {
+		t.Fatalf("session body %dx%d, the loaded content needs %d", h.place.Panel.W, h.place.Panel.H, need)
+	}
+	if err := ui.LayoutColumn(root, ui.Rect{W: h.place.Panel.W, H: h.place.Panel.H}, h.measureText()); err != nil {
+		t.Fatalf("loaded content does not lay out in the body: %v", err)
+	}
+}

@@ -753,6 +753,10 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		h.clipboardThumbnailRequest = make(map[string]struct{})
 	}
 	h.root = r.panelTree(h)
+	if id == PanelSession {
+		_ = h.ensureText()
+		h.place.Panel.H = r.sessionSurfaceHeight(h)
+	}
 	if id == PanelNotifications {
 		_ = h.ensureText()
 		h.place.Panel.H = notificationsSurfaceHeight(h)
@@ -2477,6 +2481,30 @@ func monitorSurfaceHeight(root *ui.Node, width, radius int, measure ui.MeasureTe
 		radius = 0
 	}
 	return ht + 2*radius
+}
+
+// sessionProfilesReserved stands in for the power profiles while the panel is
+// measured: they load after it opens.
+var sessionProfilesReserved = []string{"performance", "balanced", "power-saver"}
+
+// sessionSurfaceHeight is the session panel's height for everything it can
+// show: the battery card when the sample carries a battery, and the profile
+// row, which arrives after the panel opens and would otherwise push the
+// actions past a body sized without it (sysc-596). It never shrinks below the
+// design's target.
+func (r *Registry) sessionSurfaceHeight(h *PanelHost) int {
+	target := panelTargetSize(PanelSession).H
+	profiles, loaded := h.profiles, h.profilesOK
+	if !loaded || len(profiles) == 0 {
+		h.profiles, h.profilesOK = sessionProfilesReserved, true
+	}
+	root := sessionTree(h, r.sample, r.cfg.Session.Locker)
+	h.profiles, h.profilesOK = profiles, loaded
+	ht, err := ui.ContentHeight(root, h.place.Panel.W, h.measureText())
+	if err != nil {
+		return target
+	}
+	return max(target, ht)
 }
 
 func notificationsSurfaceHeight(h *PanelHost) int {
