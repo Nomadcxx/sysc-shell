@@ -300,11 +300,7 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 		// background: same fill resolution, same state layers, differing only
 		// in radius. A capsule with no explicit Radius stays a stadium, so an
 		// empty dot is a circle; a card sets the theme's card radius.
-		radius := style.Radius
-		if n.Fill == ui.FillContainerHigh && style.CardRadius > 0 {
-			radius = style.CardRadius
-		}
-		return paintChrome(c, n, text, style, size, style.Capsule, radius)
+		return paintChrome(c, n, text, style, size, style.Capsule, capsuleInherit(style, n))
 
 	case ui.KindGraph:
 		return paintGraph(c, n, style.Scale120.PhysicalRect(n.Bounds), style)
@@ -1127,6 +1123,22 @@ func chromeRadius(style Style, logical int, box ui.Rect) int {
 		return half
 	}
 	return min(style.Scale120.Physical(logical), half)
+}
+
+// capsuleInherit is the radius a capsule inherits before its own shape
+// applies: the card radius for a card, else the surface's.
+func capsuleInherit(style Style, n *ui.Node) int {
+	if n.Fill == ui.FillContainerHigh && style.CardRadius > 0 {
+		return style.CardRadius
+	}
+	return style.Radius
+}
+
+// CapsuleRadius is the logical corner radius a capsule paints with; zero means
+// half its shorter side. A blur region that must follow the painted capsule
+// reads it rather than re-deriving the rule.
+func CapsuleRadius(style Style, n *ui.Node) int {
+	return nodeRadius(style, n, capsuleInherit(style, n))
 }
 
 // nodeRadius resolves the logical corner radius one node paints with, in

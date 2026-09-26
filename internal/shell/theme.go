@@ -100,6 +100,9 @@ type Theme struct {
 	// BarStyle is the effective bar style. High contrast forces solid, and a
 	// bar that names no style paints solid, as every bar did before styles.
 	BarStyle string
+	// BarEdge and BarShape are the bar policy's edge and shape, which decide
+	// where its surface meets the screen.
+	BarEdge, BarShape string
 	// Blur reports that the compositor blurs behind this bar: its style is
 	// translucent and the compositor offers ext-background-effect.
 	Blur bool
@@ -202,6 +205,8 @@ func ResolveTheme(cfg config.Config, bar config.Bar, tok theme.Tokens) (Theme, e
 		Fillet:   theme.FilletRadius,
 
 		BarStyle:     effectiveBarStyle(bar.Style, hc),
+		BarEdge:      bar.Edge,
+		BarShape:     bar.Shape,
 		frostOpacity: bar.FrostOpacity,
 		pillOpacity:  bar.PillOpacity,
 	}

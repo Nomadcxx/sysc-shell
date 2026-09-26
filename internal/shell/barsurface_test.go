@@ -1,11 +1,14 @@
 package shell
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 // TestBarStyleResolvesGroundAndPillAlpha is design D1-D3 as a table: style,
@@ -89,5 +92,92 @@ func TestPillLiftsTowardTheForeground(t *testing.T) {
 	solid.Style = "solid"
 	if got := barStyle(ThemeFrom(cfg, solid).WithCompositor(true)).Capsule; got != base.Capsule {
 		t.Errorf("solid capsule %+v moved from %+v", got, base.Capsule)
+	}
+}
+
+// blurBar builds a bar in the given style and shape, resolved against blur,
+// and configures it at 1200 logical pixels.
+func blurBar(t *testing.T, style, shape string, blur bool, center []config.Item) *Bar {
+	t.Helper()
+	cfg := config.Default()
+	policy := cfg.Bar
+	policy.Style, policy.Shape = style, shape
+	policy.Left, policy.Center, policy.Right = nil, center, nil
+	bar, err := NewWithTheme(ThemeFrom(cfg, policy).WithCompositor(blur), policy, "DP-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(bar.stopAnimation)
+	if err := bar.Configure(1200, BarHeight, 120); err != nil {
+		t.Fatal(err)
+	}
+	return bar
+}
+
+func TestBarBlurShapeFollowsStyleAndShape(t *testing.T) {
+	t.Parallel()
+	for _, style := range []string{"solid", "frosted", "islands"} {
+		if got := blurBar(t, style, "floating", false, nil).blurShape(); got != nil {
+			t.Errorf("%s without compositor blur published %v, want nil", style, got)
+		}
+	}
+	if got := blurBar(t, "solid", "floating", true, nil).blurShape(); got != nil {
+		t.Errorf("solid published %v, want nil", got)
+	}
+
+	floating := blurBar(t, "frosted", "floating", true, nil)
+	body := floating.bodyLocked(1200, BarHeight)
+	want := ui.BlurStrips(ui.SurfaceShape{Body: body, Radius: floating.theme.Radius})
+	if got := floating.blurShape(); !slices.Equal(got, want) {
+		t.Errorf("frosted floating = %v, want the rounded body %v", got, want)
+	}
+
+	attached := blurBar(t, "frosted", "attached", true, nil)
+	body = attached.bodyLocked(1200, BarHeight)
+	got := attached.blurShape()
+	if len(got) == 0 || got[0] != (ui.Rect{X: body.X, Y: body.Y, W: body.W, H: got[0].H}) {
+		t.Fatalf("attached = %v, want square corners on the attached edge of %+v", got, body)
+	}
+	var below []ui.Rect
+	for _, r := range got {
+		if r.Y >= body.Y+body.H {
+			below = append(below, r)
+		}
+	}
+	if len(below) == 0 || below[0].X != body.X || below[len(below)-1].X+below[len(below)-1].W != body.X+body.W {
+		t.Errorf("attached published no end fillets past the body: %v", below)
+	}
+}
+
+func TestIslandsBlurEachVisibleCapsule(t *testing.T) {
+	t.Parallel()
+	bar := blurBar(t, "islands", "floating", true, []config.Item{{ID: "media", MaxWidth: 120}})
+	present := barView{Media: services.MediaState{
+		Available: true, Status: services.PlaybackPlaying, Title: "Track",
+	}}
+	bar.apply(present)
+	if err := bar.Configure(1200, BarHeight, 120); err != nil {
+		t.Fatal(err)
+	}
+	media := bar.center[0].node
+	if media.Kind != ui.KindCapsule || media.Bounds.W == 0 {
+		t.Fatalf("media = kind %v bounds %+v, want an arranged capsule", media.Kind, media.Bounds)
+	}
+	got := bar.blurShape()
+	if len(got) == 0 {
+		t.Fatal("a visible media capsule published no blur")
+	}
+	for _, r := range got {
+		if !media.Bounds.Contains(r.X, r.Y) || !media.Bounds.Contains(r.X+r.W-1, r.Y+r.H-1) {
+			t.Errorf("strip %+v escapes the media capsule %+v", r, media.Bounds)
+		}
+	}
+
+	bar.apply(barView{})
+	if err := bar.Configure(1200, BarHeight, 120); err != nil {
+		t.Fatal(err)
+	}
+	if got := bar.blurShape(); len(got) != 0 {
+		t.Errorf("absent media still published %v", got)
 	}
 }
