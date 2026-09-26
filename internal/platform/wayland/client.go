@@ -375,6 +375,10 @@ func (o *owner) bindGlobals() error {
 		if err := o.bindSingleton("ext_background_effect_manager_v1", o.backgroundEffect); err != nil {
 			return err
 		}
+	} else {
+		// No protocol is an answer too: report it, so the shell can say why
+		// its frosted surfaces paint solid.
+		o.caps.update(0, o.cb.Capabilities)
 	}
 	if err := o.bindOptionalInput(ctx); err != nil {
 		return err

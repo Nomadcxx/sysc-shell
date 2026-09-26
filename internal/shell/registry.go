@@ -51,6 +51,9 @@ type Registry struct {
 	// caps is what the compositor last said it can do. The zero value, no
 	// blur, is also the answer for a compositor without the protocol.
 	caps wayland.Capabilities
+	// capsKnown is set by the first report, which is logged even when it
+	// matches the zero value.
+	capsKnown bool
 
 	clock        *services.Clock
 	metrics      *services.Metrics
@@ -1949,7 +1952,10 @@ func withPanelRadius(t Theme, h *PanelHost) Theme {
 func (r *Registry) SetCapabilities(c wayland.Capabilities) {
 	r.mu.Lock()
 	changed := r.caps.Blur != c.Blur
-	r.caps = c
+	if changed || !r.capsKnown {
+		log.Print(blurLogLine(c.Blur))
+	}
+	r.caps, r.capsKnown = c, true
 	if !changed {
 		r.mu.Unlock()
 		return
@@ -1966,6 +1972,14 @@ func (r *Registry) SetCapabilities(c wayland.Capabilities) {
 	for _, global := range outputs {
 		r.publishSurface(global, "")
 	}
+}
+
+// blurLogLine says what the compositor's blur answer means for the shell.
+func blurLogLine(blur bool) string {
+	if blur {
+		return "shell: the compositor blurs behind surfaces; frosted bars and panels blur"
+	}
+	return "shell: the compositor offers no blur (ext-background-effect-v1, Niri 26.04 or later); frosted bars paint solid"
 }
 
 // blurAvailableLocked reports whether the compositor blurs behind regions.

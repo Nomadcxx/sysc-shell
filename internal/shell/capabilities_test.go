@@ -1,6 +1,9 @@
 package shell
 
 import (
+	"bytes"
+	"log"
+	"strings"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -55,5 +58,30 @@ func TestBlurCapabilityRestylesTheLiveBar(t *testing.T) {
 	if back := bar.themeSnapshot(); back.Blur || back.Surfaces.Bar != solid.Surfaces.Bar || back.PillAlpha != 0xff {
 		t.Fatalf("blur went away but the bar stayed frosted: blur %v ground %#x pill %#x",
 			back.Blur, back.Surfaces.Bar, back.PillAlpha)
+	}
+}
+
+// TestBlurAnswerIsLoggedOnceAndOnChange: the first answer is logged even when
+// it is "no blur", so a frosted bar painting solid says why; a repeat is not.
+// Not parallel: it swaps the process logger.
+func TestBlurAnswerIsLoggedOnceAndOnChange(t *testing.T) {
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+
+	r := &Registry{}
+	count := func() int { return strings.Count(buf.String(), "shell: the compositor") }
+	r.SetCapabilities(wayland.Capabilities{})
+	if count() != 1 || !strings.Contains(buf.String(), "offers no blur") {
+		t.Fatalf("first answer logged %d times:\n%s", count(), buf.String())
+	}
+	r.SetCapabilities(wayland.Capabilities{})
+	if count() != 1 {
+		t.Fatalf("a repeated answer was logged again:\n%s", buf.String())
+	}
+	r.SetCapabilities(wayland.Capabilities{Blur: true})
+	if count() != 2 || !strings.Contains(buf.String(), "frosted bars and panels blur") {
+		t.Fatalf("a change was not logged:\n%s", buf.String())
 	}
 }
