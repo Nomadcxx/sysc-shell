@@ -31,6 +31,13 @@ type Style struct {
 	// surface's: the two carry different alphas, and painting the wedge with
 	// rootFill leaves a visible seam wherever surface opacity is below 100.
 	FilletFill Color
+	// AttachEdge is also the edge an attached bar meets the screen along.
+	// EdgeFillet is the radius, in logical pixels, of the concave wedges past
+	// the far edge that curve the surface into the screen's side, one for each
+	// of EdgeLeft and EdgeRight. They take the surface's own fill. A surface
+	// with both, an attached bar, is square at every corner.
+	EdgeFillet          int
+	EdgeLeft, EdgeRight bool
 
 	Background Color
 	Foreground Color

@@ -177,6 +177,11 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style) error {
 	clear(c.Pix)
 	box := style.Scale120.PhysicalRect(style.Body)
 	radius := style.Scale120.Physical(style.Radius)
+	if style.squareBody() {
+		// Filled square rather than rounded and then patched: a patch blended
+		// over a translucent fill would paint a denser band.
+		radius = 0
+	}
 	// The silhouette is drawn from the antialiased mask, and the rim is a real
 	// stroke over it. Filling the rim colour and laying a smaller fill on top
 	// left the border as the difference of two quantised silhouettes, which is
@@ -211,7 +216,20 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style) error {
 		}
 	}
 	clearOutsideRoundedRect(c, box, radius, fillet, style.AttachEdge)
+	// The end wedges lie outside the body, where the clear above has just
+	// emptied every row, so they go down last.
+	if style.EdgeLeft || style.EdgeRight {
+		fillEdgeFillets(c, box, style.Scale120.Physical(style.EdgeFillet), style.AttachEdge,
+			style.EdgeLeft, style.EdgeRight, style.rootFill())
+	}
 	return nil
+}
+
+// squareBody reports whether every corner of the body is square: the attached
+// edge's, and the far edge's where both turn into edge fillets.
+func (s Style) squareBody() bool {
+	return (s.AttachEdge == "top" || s.AttachEdge == "bottom") &&
+		s.EdgeFillet > 0 && s.EdgeLeft && s.EdgeRight
 }
 
 func squareAttachedEdge(c *Canvas, box ui.Rect, radius int, edge string, col Color) {

@@ -2484,3 +2484,81 @@ func TestPaintStrokeInOutlineVariantUsesTheQuietBoundary(t *testing.T) {
 		t.Fatal("interior picked up the stroke colour")
 	}
 }
+
+// TestAttachedBarPaintsEndFillets: a bar attached along its edge is square at
+// every corner and curves into the screen's sides with concave wedges past its
+// far edge, mirrored at the right end and for the lower edge.
+func TestAttachedBarPaintsEndFillets(t *testing.T) {
+	for _, tc := range []struct {
+		edge string
+		body ui.Rect
+		// row maps a distance out from the far edge to a canvas row.
+		row func(int) int
+		// near is a row inside the body on the attached edge.
+		near int
+	}{
+		{"top", ui.Rect{W: 200, H: 40}, func(i int) int { return 40 + i }, 0},
+		{"bottom", ui.Rect{Y: 12, W: 200, H: 40}, func(i int) int { return 11 - i }, 51},
+	} {
+		style := testStyle
+		style.Radius = 12
+		style.AttachEdge = tc.edge
+		style.EdgeFillet, style.EdgeLeft, style.EdgeRight = 12, true, true
+		style.Body = tc.body
+		c := newTestCanvas(t, 200, 52)
+		if err := Paint(c, &ui.Node{Kind: ui.KindColumn}, NewTextRenderer(mustTestFace(t)), style); err != nil {
+			t.Fatalf("%s: paint: %v", tc.edge, err)
+		}
+		root := style.rootFill()
+		for _, x := range []int{0, 199} {
+			mirror := func(dx int) int {
+				if x == 0 {
+					return dx
+				}
+				return 199 - dx
+			}
+			if got := pixelAt(t, c, x, tc.near); got != root {
+				t.Errorf("%s x=%d: attached corner = %v, want square root %v", tc.edge, x, got, root)
+			}
+			if got := pixelAt(t, c, x, tc.row(-1)); got != root {
+				t.Errorf("%s x=%d: far corner = %v, want square root %v", tc.edge, x, got, root)
+			}
+			if got := pixelAt(t, c, mirror(0), tc.row(0)); got != root {
+				t.Errorf("%s x=%d: wedge root = %v, want %v", tc.edge, x, got, root)
+			}
+			if got := pixelAt(t, c, mirror(1), tc.row(1)); got.A < 0xf0 {
+				t.Errorf("%s x=%d: wedge near its root = %v, want near full coverage", tc.edge, x, got)
+			}
+			if got := pixelAt(t, c, mirror(11), tc.row(11)); got.A != 0 {
+				t.Errorf("%s x=%d: wedge tip = %v, want transparent", tc.edge, x, got)
+			}
+		}
+		if got := pixelAt(t, c, 100, tc.row(0)); got.A != 0 {
+			t.Errorf("%s: mid overhang = %v, want transparent", tc.edge, got)
+		}
+	}
+}
+
+// A translucent attached bar is one even ground: the band along its attached
+// edge must not be blended twice.
+func TestTranslucentAttachedBarHasNoDenserBand(t *testing.T) {
+	style := testStyle
+	style.Radius = 12
+	style.Background.A = 0xa6
+	style.AttachEdge = "top"
+	style.EdgeFillet, style.EdgeLeft, style.EdgeRight = 12, true, true
+	style.Body = ui.Rect{W: 200, H: 40}
+	c := newTestCanvas(t, 200, 52)
+	if err := Paint(c, &ui.Node{Kind: ui.KindColumn}, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatal(err)
+	}
+	centre := pixelAt(t, c, 100, 20)
+	if centre.A == 0xff || centre.A == 0 {
+		t.Fatalf("centre alpha %#x, want translucent", centre.A)
+	}
+	for _, p := range [][2]int{{0, 0}, {100, 2}, {199, 0}, {0, 39}} {
+		if got := pixelAt(t, c, p[0], p[1]); got != centre {
+			t.Errorf("(%d,%d) = %v, want the centre's %v", p[0], p[1], got, centre)
+		}
+	}
+}
