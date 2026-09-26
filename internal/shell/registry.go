@@ -795,11 +795,14 @@ func (r *Registry) panelTheme() Theme {
 	if err != nil {
 		return DefaultTheme()
 	}
-	return t
+	return t.WithCompositor(r.caps.Blur)
 }
 
-func resolveOutputTheme(cfg config.Config, connector string, tok theme.Tokens) (Theme, error) {
-	return ResolveTheme(cfg, cfg.ForConnector(connector), tok)
+// resolveOutputTheme is one output's theme, with the compositor's blur applied
+// so the bar and the panels that join it agree about its ground.
+func resolveOutputTheme(cfg config.Config, connector string, tok theme.Tokens, blur bool) (Theme, error) {
+	t, err := ResolveTheme(cfg, cfg.ForConnector(connector), tok)
+	return t.WithCompositor(blur), err
 }
 
 func (r *Registry) panelThemeFor(output uint32) Theme {
@@ -807,7 +810,7 @@ func (r *Registry) panelThemeFor(output uint32) Theme {
 	if bar, ok := r.bars[output]; ok {
 		connector = bar.connector()
 	}
-	t, err := resolveOutputTheme(r.cfg, connector, r.tokens)
+	t, err := resolveOutputTheme(r.cfg, connector, r.tokens, r.caps.Blur)
 	if err != nil {
 		return DefaultTheme()
 	}
@@ -1743,7 +1746,10 @@ func (r *Registry) buildBar(cfg config.Config, connector string, tok theme.Token
 	*Bar, []*services.Lease, wayland.HostCallbacks, error,
 ) {
 	policy := cfg.ForConnector(connector)
-	th, err := resolveOutputTheme(cfg, connector, tok)
+	r.mu.Lock()
+	blur := r.caps.Blur
+	r.mu.Unlock()
+	th, err := resolveOutputTheme(cfg, connector, tok, blur)
 	if err != nil {
 		return nil, nil, wayland.HostCallbacks{}, err
 	}
@@ -1939,8 +1945,24 @@ func withPanelRadius(t Theme, h *PanelHost) Theme {
 // when the answer changes.
 func (r *Registry) SetCapabilities(c wayland.Capabilities) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	changed := r.caps.Blur != c.Blur
 	r.caps = c
+	if !changed {
+		r.mu.Unlock()
+		return
+	}
+	// The bar restyles in place: WithCompositor re-derives its ground and
+	// pills from the configured values, so no reload or remap is needed.
+	for _, bar := range r.bars {
+		bar.retheme(bar.themeSnapshot().WithCompositor(c.Blur))
+	}
+	r.retheThemeOpenSurfacesLocked()
+	outputs := r.outputGlobalsLocked()
+	r.mu.Unlock()
+
+	for _, global := range outputs {
+		r.publishSurface(global, "")
+	}
 }
 
 // blurAvailableLocked reports whether the compositor blurs behind regions.
