@@ -577,6 +577,11 @@ func (b *Bar) renderViewLocked() (*ui.Node, render.Style) {
 	// The painter consumes an immutable mask, so state is resolved onto the
 	// copy that is about to be drawn rather than onto live model state.
 	b.pointer.apply(root, b.anim)
+	// A hover wash marks a control a dialog raises; the bar is furniture, and
+	// pointer-over lightening on every clickable pill reads as a popup. The
+	// bar paints its clickables at rest. Press survives: it marks a real
+	// activation, not a cursor that happens to pass.
+	clearHoverLocked(root)
 	b.resolveGradientMotionLocked(root)
 	b.resolveMediaMotionLocked(root)
 	resolveProgressMotion(b.anim, root)
