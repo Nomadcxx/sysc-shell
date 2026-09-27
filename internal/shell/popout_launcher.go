@@ -102,7 +102,7 @@ func (r *Registry) relayLauncher(svc *launcher.Service) {
 			r.mu.Lock()
 			h := r.panelHosts[PanelLauncher]
 			if h != nil {
-				h.launcherResults = results
+				h.launcherResults = launcherWithHints(h.query, results)
 				r.rebuildPanel(h)
 			}
 			r.mu.Unlock()
