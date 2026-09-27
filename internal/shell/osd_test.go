@@ -168,27 +168,27 @@ if [ "$1" = get-volume ]; then printf 'Volume: %s\n' "$(cat '` + dir + `/vol')";
 	}
 }
 
-func TestOsdRenderHasGlyphLabelAndBar(t *testing.T) {
+func TestOsdRenderReflectsMeterLevel(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
-	reg.setTestBar(1, &Bar{conn: "eDP-1"})
-	reg.OSD().Show(OSDView{Kind: "audio", Level: 40, Muted: true})
-	if got := osdLabel(reg.osd.view); got != "Muted" {
-		t.Fatalf("label = %q, want Muted", got)
+	m := newOSDManager(reg, 0)
+	paint := func(level int) []byte {
+		reg.mu.Lock()
+		m.view, m.theme = OSDView{Kind: osdAudio, Level: level}, reg.panelTheme()
+		reg.mu.Unlock()
+		pix := make([]byte, osdWidth*osdHeight*4)
+		if err := m.render(pix, osdWidth, osdHeight, osdWidth*4); err != nil {
+			t.Fatal(err)
+		}
+		return pix
 	}
-	pix := make([]byte, osdWidth*osdHeight*4)
-	if err := reg.osd.render(pix, osdWidth, osdHeight, osdWidth*4); err != nil {
-		t.Fatal(err)
+	a, b := paint(0), paint(100)
+	for i := range a {
+		if a[i] != b[i] {
+			return
+		}
 	}
-	if !regionHasColor(pix, osdWidth, 16, 12, 20, 20, reg.osd.theme.Accent) {
-		t.Fatal("glyph square missing accent pixels")
-	}
-	if !regionHasColor(pix, osdWidth, 44, 16, 80, 16, reg.osd.theme.Foreground) {
-		t.Fatal("label track missing foreground pixels")
-	}
-	if !regionHasColor(pix, osdWidth, 16, osdHeight-16, 80, 8, reg.osd.theme.Accent) {
-		t.Fatal("level bar missing accent pixels")
-	}
+	t.Fatal("meter rendered identically at zero and full level")
 }
 
 func TestOsdRevealPublishesMultipleFrames(t *testing.T) {

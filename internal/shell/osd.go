@@ -32,6 +32,7 @@ type OSDManager struct {
 	anim     *animator
 	stopAnim chan struct{}
 	stopOnce sync.Once
+	text     *render.TextRenderer
 }
 
 func newOSDManager(r *Registry, hide time.Duration) *OSDManager {
@@ -160,10 +161,50 @@ func (m *OSDManager) spec(id string, anchor uint32, mgn Margins) *wayland.AuxSpe
 		Keyboard:      keyboardNone,
 		Callbacks: wayland.HostCallbacks{
 			Configure: func(int, int, int) error { return nil },
-			Render:    m.render,
+			Render:    m.renderLocking,
 			Handle:    func(wayland.Event) bool { return false },
 		},
 	}
+}
+
+func (m *OSDManager) renderLocking(pixels []byte, width, height, stride int) error {
+	m.r.mu.Lock()
+	defer m.r.mu.Unlock()
+	return m.render(pixels, width, height, stride)
+}
+
+// ensureText builds the OSD's text renderer once, from the same system font
+// resolution the panels use. Registry.mu is held.
+func (m *OSDManager) ensureText() error {
+	if m.text != nil {
+		return nil
+	}
+	fonts, err := render.NewSystemFontMap(m.r.cfg.ForConnector("").FontFamily, render.DefaultFontCacheDir())
+	if err != nil {
+		return err
+	}
+	m.text = render.NewTextRendererWithFontMap(fonts)
+	return nil
+}
+
+// layoutView lays the current view out inside the OSD body at the given
+// scale and returns it with the style it paints with.
+func (m *OSDManager) layoutView(scale ui.Scale120, body ui.Rect) (*ui.Node, render.Style, error) {
+	style := m.theme.PanelStyle()
+	style.Scale120 = scale
+	style.Body = body
+	measure := func(s string, attrs ui.TextAttrs) (int, int) {
+		spec := render.SpecFor(style, attrs)
+		if w, h, err := m.text.Measure(s, spec, attrs.Tabular); err == nil {
+			return scale.Logical(w), scale.Logical(h)
+		}
+		return len(s) * 8, 16
+	}
+	root := osdTree(m.view)
+	if err := ui.LayoutColumn(root, body, measure); err != nil {
+		return nil, style, err
+	}
+	return root, style, nil
 }
 
 func (m *OSDManager) render(pixels []byte, width, height, stride int) error {
@@ -171,25 +212,21 @@ func (m *OSDManager) render(pixels []byte, width, height, stride int) error {
 	if err != nil {
 		return err
 	}
+	if err := m.ensureText(); err != nil {
+		return err
+	}
+	// The buffer is physical pixels; the OSD is laid out in logical ones.
+	scale := ui.Scale120(120 * width / osdWidth)
+	if !scale.Valid() {
+		scale = ui.ScaleUnit
+	}
 	slide := m.slidePx()
 	body := ui.Rect{X: 8, Y: 8 + slide, W: osdWidth - 16, H: osdHeight - 16}
-	c.FillRounded(body, 8, m.theme.Background)
-	glyph := ui.Rect{X: body.X + 8, Y: body.Y + 4, W: 20, H: 20}
-	c.FillRounded(glyph, 4, m.theme.Accent)
-	lx := glyph.X + glyph.W + 8
-	ly := body.Y + 8
-	for range osdLabel(m.view) {
-		c.FillRounded(ui.Rect{X: lx, Y: ly, W: 4, H: 8}, 1, m.theme.Foreground)
-		lx += 6
+	root, style, err := m.layoutView(scale, body)
+	if err != nil {
+		return err
 	}
-	fill := body
-	fill.Y += body.H - 8
-	fill.H = 6
-	fill.W = body.W * m.view.Level / 100
-	if fill.W > 0 {
-		c.FillRounded(fill, 3, m.theme.Accent)
-	}
-	return nil
+	return render.Paint(c, root, m.text, style)
 }
 
 func (m *OSDManager) slidePx() int {
