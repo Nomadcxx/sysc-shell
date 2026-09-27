@@ -226,7 +226,10 @@ func (r *Registry) centerTreeFor(h *PanelHost) *ui.Node {
 		body = append(body, closed...)
 	}
 	if len(body) == 0 {
-		body = append(body, &ui.Node{Kind: ui.KindText, Text: "Nothing to see here"})
+		body = append(body, &ui.Node{Kind: ui.KindColumn, Gap: cardGap, Padding: theme.MarginL, Children: []*ui.Node{
+			{Kind: ui.KindIcon, Icon: "notifications", IconSize: centreIconSize, Tone: ui.ToneSubtle, CenterX: true},
+			{Kind: ui.KindText, Text: "No notifications", Tone: ui.ToneSubtle, CenterX: true},
+		}})
 	}
 
 	// fitNotificationBody below resolves the real height from the surface this

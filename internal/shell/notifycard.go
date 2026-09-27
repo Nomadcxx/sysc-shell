@@ -260,7 +260,7 @@ func ActiveGroupCard(g activeGroup, now time.Time, expanded bool, raster *ui.Ima
 	root := &ui.Node{Kind: ui.KindColumn, Gap: cardGap, Children: []*ui.Node{head}}
 	if n := len(g.members); n > 1 {
 		root.Children = append(root.Children, &ui.Node{
-			Kind: ui.KindCapsule, Fill: ui.FillAccent, Padding: theme.MarginXS, Shape: ui.ShapeMedium,
+			Kind: ui.KindCapsule, Key: badgeKeyPrefix + g.key, Fill: ui.FillAccent, Padding: theme.MarginXS, Shape: ui.ShapeMedium,
 			Children: []*ui.Node{{Kind: ui.KindText, Text: fmt.Sprintf("%d", n)}},
 		})
 	}

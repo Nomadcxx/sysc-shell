@@ -16,10 +16,12 @@ const (
 	osdLayout     = "layout"
 	osdDND        = "do not disturb"
 
-	osdPad    = 12
-	osdInnerW = osdWidth - 16 - 2*osdPad
-	osdIconSz = 20
-	osdGap    = 10
+	osdPad         = 12
+	osdInnerW      = osdWidth - 16 - 2*osdPad
+	osdIconSz      = 20
+	osdGap         = 10
+	osdStackGap    = theme.MarginS
+	osdMeterHeight = 6
 
 	osdFadeFrom = 85
 	osdFadeTo   = 95
@@ -118,9 +120,9 @@ func osdTree(v OSDView) *ui.Node {
 		if v.Muted {
 			tone = ui.ToneSubtle
 		}
-		return &ui.Node{Kind: ui.KindMeter, Key: "osd-meter", Value: float64(v.Level) / 100, Width: w, Height: 6, Tone: tone}
+		return &ui.Node{Kind: ui.KindMeter, Key: "osd-meter", Value: float64(v.Level) / 100, Width: w, Height: osdMeterHeight, Tone: tone}
 	}
-	root := &ui.Node{Kind: ui.KindColumn, Padding: osdPad, Gap: 6}
+	root := &ui.Node{Kind: ui.KindColumn, Padding: osdPad, Gap: osdStackGap}
 	switch {
 	case v.Kind == osdLayout:
 		label.MaxWidth = osdInnerW
@@ -135,7 +137,7 @@ func osdTree(v OSDView) *ui.Node {
 	case osdMetered(v.Kind):
 		root.Children = []*ui.Node{{Kind: ui.KindRow, Gap: osdGap, Children: []*ui.Node{
 			icon,
-			{Kind: ui.KindColumn, Gap: 6, Children: []*ui.Node{label, meter(osdInnerW - osdIconSz - osdGap)}},
+			{Kind: ui.KindColumn, Gap: osdStackGap, Children: []*ui.Node{label, meter(osdInnerW - osdIconSz - osdGap)}},
 		}}}
 	default:
 		root.Children = []*ui.Node{{Kind: ui.KindRow, Gap: osdGap, Children: []*ui.Node{icon, label}}}
