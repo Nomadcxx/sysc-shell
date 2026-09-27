@@ -133,8 +133,6 @@ func writeTarget(home, name string) string {
 		return filepath.Join(home, ".config", "wezterm", "wezterm.lua")
 	case "emacs":
 		return filepath.Join(home, ".emacs.d", "sysc-shell-theme.el")
-	case "scroll":
-		return filepath.Join(home, ".config", "scroll", "config")
 	default:
 		return ""
 	}
@@ -306,6 +304,19 @@ var templateTargets = map[string]templateTarget{
 				section: "General",
 				seed:    "[General]\nColorSchemeName=sysc-shell\n",
 				create:  true,
+			}}
+		},
+	},
+	"scroll": {
+		sidecar: func(h string) []string { return []string{joined(h, ".config", "scroll", "sysc-shell")} },
+		directives: func(h string) []directive {
+			line := "include ~/.config/scroll/sysc-shell"
+			return []directive{{
+				file:   joined(h, ".config", "scroll", "config"),
+				line:   line,
+				key:    "include ",
+				seed:   line + "\n",
+				create: true,
 			}}
 		},
 	},
