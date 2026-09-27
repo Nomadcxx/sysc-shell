@@ -97,6 +97,7 @@ type Registry struct {
 	reloads              chan<- struct{}
 	audio                *services.Audio
 	brightness           *services.Brightness
+	lockKeys             *services.LockKeys
 	network              *services.Network
 	media                *services.Media
 	mediaRelayCancel     chan struct{}
@@ -229,6 +230,11 @@ func NewRegistry(cfg config.Config) *Registry {
 	r.osd = newOSDManager(r, 0)
 	r.setAudio(services.NewAudio(0, ""))
 	r.setBrightness(services.NewBrightness("", "", 0))
+	if !runningAsTest() {
+		r.lockKeys = services.NewLockKeys("", 0)
+		r.lockKeys.Start()
+		go r.relayLockKeysOSD(r.lockKeys)
+	}
 	// The media service opens a session-bus connection, which no unit test
 	// should need. Tests get the inert service and install their own over the
 	// fake, the same way the network service below is skipped.
@@ -1522,6 +1528,9 @@ func (r *Registry) Close() {
 	}
 	if r.brightness != nil {
 		r.brightness.Close()
+	}
+	if r.lockKeys != nil {
+		r.lockKeys.Close()
 	}
 	if r.network != nil {
 		r.network.Close()
