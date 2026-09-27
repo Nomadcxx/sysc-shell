@@ -17,6 +17,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -157,7 +158,7 @@ func TestControlCentreRevealFollowsSurfaceAnimator(t *testing.T) {
 }
 
 func TestWordmarkRightClickOpensControlCentre(t *testing.T) {
-	widgets := buildWidgets([]config.Item{{ID: "wordmark"}}, 6)
+	widgets := buildWidgets([]config.Item{{ID: "wordmark"}}, 6, DefaultTheme().Metrics.IconNormal)
 	if len(widgets) != 1 {
 		t.Fatalf("buildWidgets = %d widgets, want 1", len(widgets))
 	}
@@ -166,7 +167,7 @@ func TestWordmarkRightClickOpensControlCentre(t *testing.T) {
 		mark.Name != "Control centre" || mark.Role != "button" {
 		t.Fatalf("wordmark = %+v, want the accessible control-centre action", mark)
 	}
-	if got := buildWidgets([]config.Item{{ID: "control-center"}}, 6); len(got) != 0 {
+	if got := buildWidgets([]config.Item{{ID: "control-center"}}, 6, DefaultTheme().Metrics.IconNormal); len(got) != 0 {
 		t.Fatalf("standalone control-center built %d widgets, want none", len(got))
 	}
 	for _, id := range config.KnownItemIDs() {
@@ -392,8 +393,8 @@ func TestControlCentreHomeFillsTheBodyContract(t *testing.T) {
 		t.Fatalf("body height = %d, want 480", body.Height)
 	}
 	home := body.Children[0]
-	if home.Gap != 12 || len(home.Children) != 4 {
-		t.Fatalf("Home composition = %+v, want four blocks separated by 12px", home)
+	if home.Gap != theme.MarginL || len(home.Children) != 4 {
+		t.Fatalf("Home composition = %+v, want four blocks separated by marginL", home)
 	}
 	want := []int{96, 48, 184, 116}
 	for i, child := range home.Children {
@@ -417,8 +418,8 @@ func TestHomeShowsDashesBeforeTheFirstSample(t *testing.T) {
 func TestControlCentreHomeQuickAccessControlsAreSeparated(t *testing.T) {
 	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
 	quick := ccHome(&Registry{}, h).Children[1]
-	if quick.Kind != ui.KindRow || quick.Gap != 8 || len(quick.Children) != 2 {
-		t.Fatalf("quick access = %+v, want two controls in an 8px-gap row", quick)
+	if quick.Kind != ui.KindRow || quick.Gap != theme.MarginM || len(quick.Children) != 2 {
+		t.Fatalf("quick access = %+v, want two controls in a marginM-gap row", quick)
 	}
 	for _, name := range []string{"Caffeine", "Wallpaper"} {
 		n := findByName(quick, name)
@@ -428,6 +429,51 @@ func TestControlCentreHomeQuickAccessControlsAreSeparated(t *testing.T) {
 	}
 	if segmented := findNode(quick, func(n *ui.Node) bool { return n.Kind == ui.KindSegmented }); segmented != nil {
 		t.Fatalf("quick access still uses joined segmented chrome: %+v", segmented)
+	}
+}
+
+func TestControlCentreMeasuredRowsContainTokenSpacedChildren(t *testing.T) {
+	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
+	home := ccHome(&Registry{}, h)
+	split := home.Children[2]
+	left, right := split.Children[0], split.Children[1]
+	if split.Gap != theme.MarginL || left.Width+split.Gap+right.Width != 596 {
+		t.Fatalf("Home split = %d+%d+%d, want measured 596px width", left.Width, split.Gap, right.Width)
+	}
+	if right.Width != 228 {
+		t.Fatalf("quick tile grid width = %d, want measured 228px", right.Width)
+	}
+	wantTileWidth := (right.Width - theme.MarginM) / 2
+	for i, row := range right.Children {
+		if row.Gap != theme.MarginM || len(row.Children) != 2 {
+			t.Fatalf("quick tile row %d = %+v, want two marginM-spaced tiles", i, row)
+		}
+		used := row.Children[0].Width + row.Gap + row.Children[1].Width
+		if row.Children[0].Width != wantTileWidth || row.Children[1].Width != wantTileWidth || used > right.Width {
+			t.Errorf("quick tile row %d uses %dpx in %dpx with widths %d/%d, want %dpx tiles",
+				i, used, right.Width, row.Children[0].Width, row.Children[1].Width, wantTileWidth)
+		}
+		for _, tile := range row.Children {
+			if tile.Padding != h.metrics().CardPadding {
+				t.Errorf("quick tile row %d padding = %d, want card padding %d", i, tile.Padding, h.metrics().CardPadding)
+			}
+		}
+	}
+
+	forecast := ccWeather(&Registry{}, h).Children[1]
+	if forecast.Width != 596 || forecast.Gap != theme.MarginM || len(forecast.Children) != 4 {
+		t.Fatalf("forecast row = %+v, want four marginM-spaced days in measured 596px width", forecast)
+	}
+	wantDayWidth := (forecast.Width - 3*theme.MarginM) / 4
+	used := 3 * forecast.Gap
+	for i, day := range forecast.Children {
+		used += day.Width
+		if day.Width != wantDayWidth {
+			t.Errorf("forecast day %d width = %d, want %d", i, day.Width, wantDayWidth)
+		}
+	}
+	if used > forecast.Width {
+		t.Errorf("forecast uses %dpx in measured %dpx row", used, forecast.Width)
 	}
 }
 
@@ -616,7 +662,7 @@ func TestWeatherPageKeepsTodayAndFourForecastSlots(t *testing.T) {
 	r := &Registry{}
 	h := &PanelHost{id: PanelControlCenter, section: "weather", theme: DefaultTheme()}
 	page := ccWeather(r, h)
-	if page.Height != 480 || page.Gap != 12 || len(page.Children) != 2 {
+	if page.Height != 480 || page.Gap != theme.MarginL || len(page.Children) != 2 {
 		t.Fatalf("weather page = %+v, want 336px Today and 132px forecast strip", page)
 	}
 	if page.Children[0].Height != 336 || page.Children[1].Height != 132 || len(page.Children[1].Children) != 4 {
@@ -1014,6 +1060,7 @@ func TestCCProfileImagePathRejectsDirectoriesAndMissingFiles(t *testing.T) {
 
 func TestCCAvatarKeepsCircularGeometryForImageAndFallback(t *testing.T) {
 	image := &ui.Image{Width: 1, Height: 1, Stride: 4, Pix: []byte{0xff, 0xff, 0xff, 0xff}}
+	m, _ := theme.MetricsFor(theme.DensityDefault)
 	for name, tc := range map[string]struct {
 		image *ui.Image
 		kind  ui.Kind
@@ -1022,14 +1069,14 @@ func TestCCAvatarKeepsCircularGeometryForImageAndFallback(t *testing.T) {
 		"fallback": {kind: ui.KindCapsule},
 	} {
 		t.Run(name, func(t *testing.T) {
-			got := ccAvatarNode(tc.image)
+			got := ccAvatarNode(tc.image, m.IconLarge)
 			if got.Kind != tc.kind || got.Width != 56 || got.Height != 56 || got.Shape != ui.ShapeCircle {
 				t.Fatalf("avatar = %+v, want %v 56x56 circle", got, tc.kind)
 			}
 			if tc.image == nil {
 				icon := findNode(got, func(n *ui.Node) bool { return n.Kind == ui.KindIcon })
-				if icon == nil || icon.Icon != "person" {
-					t.Fatalf("fallback = %+v, want person glyph", icon)
+				if icon == nil || icon.Icon != "person" || icon.IconSize != m.IconLarge {
+					t.Fatalf("fallback = %+v, want person glyph at large icon size %d", icon, m.IconLarge)
 				}
 			}
 		})

@@ -13,12 +13,25 @@ import (
 // test runs.
 var reference = time.Date(2026, 8, 30, 15, 4, 5, 0, time.UTC)
 
+func TestStatusWidgetIconSizeFollowsActiveDensity(t *testing.T) {
+	t.Parallel()
+	for _, id := range []string{"notifications", "wifi"} {
+		widgets := buildWidgets([]config.Item{{ID: id}}, 8, 17)
+		if len(widgets) != 1 || widgets[0].inner == nil {
+			t.Fatalf("%s widgets = %+v, want one wrapped widget", id, widgets)
+		}
+		if got := widgets[0].inner.IconSize; got != 17 {
+			t.Errorf("%s icon size = %d, want active density size 17", id, got)
+		}
+	}
+}
+
 func TestAClockWidgetFormatsTheSharedSnapshot(t *testing.T) {
 	t.Parallel()
 	widgets := buildWidgets([]config.Item{
 		{ID: "clock", Format: "15:04", Boundary: time.Minute},
 		{ID: "clock", Format: "Mon 2 Jan", Boundary: time.Minute},
-	}, 8)
+	}, 8, DefaultTheme().Metrics.IconNormal)
 
 	view := barView{Now: reference}
 	if got := widgets[0].format(view); got != "15:04" {
@@ -32,7 +45,7 @@ func TestAClockWidgetFormatsTheSharedSnapshot(t *testing.T) {
 // Before the first tick there is no time to show, and a bar must still render.
 func TestAClockWidgetIsEmptyBeforeTheFirstTick(t *testing.T) {
 	t.Parallel()
-	widgets := buildWidgets([]config.Item{{ID: "clock", Format: "15:04"}}, 8)
+	widgets := buildWidgets([]config.Item{{ID: "clock", Format: "15:04"}}, 8, DefaultTheme().Metrics.IconNormal)
 
 	if got := widgets[0].format(barView{}); got != "" {
 		t.Fatalf("clock before the first tick = %q, want empty", got)
@@ -45,7 +58,7 @@ func TestWordmarkWidgetIsBareAndBalancesItsClocks(t *testing.T) {
 		{ID: "clock", Format: "15:04"},
 		{ID: "wordmark"},
 		{ID: "clock", Format: "Mon 2 Jan"},
-	}, 8)
+	}, 8, DefaultTheme().Metrics.IconNormal)
 	if len(widgets) != 3 {
 		t.Fatalf("built %d widgets, want 3", len(widgets))
 	}
@@ -75,7 +88,7 @@ func TestWordmarkWidgetIsBareAndBalancesItsClocks(t *testing.T) {
 
 func TestLauncherWidgetUsesGhostAndOpensLauncher(t *testing.T) {
 	t.Parallel()
-	widgets := buildWidgets([]config.Item{{ID: "launcher"}}, 8)
+	widgets := buildWidgets([]config.Item{{ID: "launcher"}}, 8, DefaultTheme().Metrics.IconNormal)
 	if len(widgets) != 1 || widgets[0].inner == nil {
 		t.Fatalf("launcher widgets = %+v", widgets)
 	}
@@ -91,7 +104,7 @@ func TestNiriWidgetsReadTheirOutputsProjection(t *testing.T) {
 	widgets := buildWidgets([]config.Item{
 		{ID: "workspace"},
 		{ID: "window-title", MaxWidth: 120},
-	}, 8)
+	}, 8, DefaultTheme().Metrics.IconNormal)
 	view := barView{
 		Workspace: "code", Title: "Fixture One",
 		Pills: []workspacePill{{Index: 1, Focused: true}, {Index: 2}},
@@ -165,7 +178,7 @@ func TestOnlyClockWidgetsRequestTabularFigures(t *testing.T) {
 		{ID: "clock", Format: "15:04"},
 		{ID: "workspace"},
 		{ID: "window-title", MaxWidth: 120},
-	}, 8)
+	}, 8, DefaultTheme().Metrics.IconNormal)
 
 	if !widgets[0].inner.Tabular {
 		t.Fatal("the clock node does not request tabular figures")
@@ -183,7 +196,7 @@ func TestEveryBarWidgetIsWrappedInACapsule(t *testing.T) {
 		{ID: "window-title", MaxWidth: 200},
 		{ID: "cpu", Display: "meter"},
 		{ID: "memory", Display: "graph"},
-	}, 8)
+	}, 8, DefaultTheme().Metrics.IconNormal)
 	if len(widgets) != 5 {
 		t.Fatalf("built %d widgets", len(widgets))
 	}
@@ -272,7 +285,7 @@ func TestAGroupRendersOneCapsuleHoldingFlatMembers(t *testing.T) {
 	widgets := buildWidgets([]config.Item{{ID: "group", Items: []config.Item{
 		{ID: "cpu", Display: "text"},
 		{ID: "memory", Display: "text"},
-	}}}, 8)
+	}}}, 8, DefaultTheme().Metrics.IconNormal)
 	if len(widgets) != 1 {
 		t.Fatalf("built %d widgets, want one group", len(widgets))
 	}

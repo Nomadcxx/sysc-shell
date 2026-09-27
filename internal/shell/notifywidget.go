@@ -12,9 +12,9 @@ const (
 	notifyDNDMenuAction      = "notify:dnd-menu"
 )
 
-func buildNotifyWidget() textWidget {
+func buildNotifyWidget(iconSize int) textWidget {
 	icon := &ui.Node{
-		Kind: ui.KindIcon, Icon: "notifications", IconSize: 20,
+		Kind: ui.KindIcon, Icon: "notifications", IconSize: iconSize,
 		Action: panelNotificationsAction,
 	}
 	return textWidget{

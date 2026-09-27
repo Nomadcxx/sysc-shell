@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -30,10 +31,10 @@ func monitorPanelTree(h *PanelHost, sels []services.Selector, snap services.Snap
 		h.monitorPage = monitorPageProcesses
 	}
 	if h.monitorPage == monitorPageMetrics {
-		bodyH := max(h.place.Panel.H-2*h.metrics().PanelPadding-monitorControlHeight-12, processRowHeight)
+		bodyH := max(h.place.Panel.H-2*h.metrics().PanelPadding-monitorControlHeight-theme.MarginL, processRowHeight)
 		body := monitorTree(h.metrics(), sels, snap, history, facts)
 		body.Padding = 0
-		return &ui.Node{Kind: ui.KindColumn, Gap: 12, Padding: h.metrics().PanelPadding, Children: []*ui.Node{
+		return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Padding: h.metrics().PanelPadding, Children: []*ui.Node{
 			monitorPageSwitcher(h),
 			{Kind: ui.KindScroll, Height: bodyH, Children: []*ui.Node{body}},
 		}}
@@ -89,26 +90,27 @@ func processMonitorTree(h *PanelHost, snapshot services.ProcessSnapshot, current
 	field.Width, field.Height = 300, monitorControlHeight
 	filters := processFilterSwitcher(h)
 	filters.Width = 264
-	tools := &ui.Node{Kind: ui.KindRow, Gap: 12, Height: monitorControlHeight, PinEnd: true,
+	tools := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, Height: monitorControlHeight, PinEnd: true,
 		Children: []*ui.Node{field, filters}}
 	processes := projectProcesses(snapshot.Processes, h.query, h.processFilter, h.processSort, h.processDesc, currentUID)
 	header := processHeader(h)
 
-	used := 2*h.metrics().PanelPadding + monitorControlHeight + 12 + monitorControlHeight + 8 + processHeaderHeight + 8
 	children := []*ui.Node{monitorPageSwitcher(h), tools, header}
 	if h.processStatus != "" {
 		tone := ui.ToneNormal
 		if h.processStatusErr != nil {
 			tone = ui.ToneError
 		}
-		children = append(children, &ui.Node{Kind: ui.KindText, Text: h.processStatus, Tone: tone, Height: 24})
-		used += 24 + 8
+		children = append(children, &ui.Node{Kind: ui.KindText, Text: h.processStatus, Tone: tone, Height: 24}) // token-exempt: measured single-line status band; informational copy is not a density-scaled control
 	} else if len(snapshot.Issues) > 0 {
 		children = append(children, &ui.Node{
-			Kind: ui.KindText, Text: fmt.Sprintf("%d processes could not be read", len(snapshot.Issues)),
-			Tone: ui.ToneError, Height: 24,
+			Kind: ui.KindText, Text: fmt.Sprintf("%d processes could not be read", len(snapshot.Issues)), Tone: ui.ToneError,
+			Height: 24, // token-exempt: measured single-line status band; informational copy is not a density-scaled control
 		})
-		used += 24 + 8
+	}
+	used := 2 * h.metrics().PanelPadding
+	for _, child := range children {
+		used += child.Height + theme.MarginM
 	}
 	rows := make([]*ui.Node, len(processes))
 	tableHeight := max(h.place.Panel.H-used, processRowPitch+2*processTablePadding)
@@ -129,7 +131,7 @@ func processMonitorTree(h *PanelHost, snapshot services.ProcessSnapshot, current
 		Kind: ui.KindCapsule, Height: tableHeight, Padding: processTablePadding,
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard, Children: []*ui.Node{list},
 	})
-	return &ui.Node{Kind: ui.KindColumn, Gap: 8, Padding: h.metrics().PanelPadding, Children: children}
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: h.metrics().PanelPadding, Children: children}
 }
 
 func processFilterSwitcher(h *PanelHost) *ui.Node {
@@ -179,7 +181,7 @@ func processHeader(h *PanelHost) *ui.Node {
 			Width: width, Height: processHeaderHeight,
 			Children: []*ui.Node{{Kind: ui.KindText, Text: text}}}
 	}
-	return &ui.Node{Kind: ui.KindRow, Gap: 8, Padding: processTablePadding + processRowPadding,
+	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Padding: processTablePadding + processRowPadding,
 		Height: processHeaderHeight, Children: []*ui.Node{
 			button("name", "Name", nameW), button("cpu", "CPU", cpuW),
 			button("memory", "Memory", memoryW), button("pid", "PID", pidW),
@@ -203,7 +205,7 @@ func processRow(h *PanelHost, process services.Process) *ui.Node {
 	}
 	identity := fmt.Sprintf(":%d:%d", process.Identity.PID, process.Identity.StartTimeTicks)
 	data := &ui.Node{
-		Kind: ui.KindRow, Gap: 8, Height: 22, Children: []*ui.Node{
+		Kind: ui.KindRow, Gap: theme.MarginM, Height: processHeaderHeight, Children: []*ui.Node{
 			cell(process.Name, nameW, false), cell(cpu, cpuW, true), cell(memory, memoryW, true),
 			cell(strconv.Itoa(process.Identity.PID), pidW, true),
 		},
@@ -211,10 +213,10 @@ func processRow(h *PanelHost, process services.Process) *ui.Node {
 	kill := &ui.Node{
 		Kind: ui.KindButton, Text: "Kill", Action: "process:term" + identity,
 		Name: fmt.Sprintf("Kill %s", process.Name), Role: "button", Focusable: true,
-		Width: actionW, Height: 22, Padding: 4, Fill: ui.FillOutline, Tone: ui.ToneError,
+		Width: actionW, Height: processHeaderHeight, Padding: theme.MarginXS, Fill: ui.FillOutline, Tone: ui.ToneError,
 	}
 	row := &ui.Node{
-		Kind: ui.KindRow, Height: processRowHeight, Padding: processRowPadding, Gap: 8,
+		Kind: ui.KindRow, Height: processRowHeight, Padding: processRowPadding, Gap: theme.MarginM,
 		Action: "monitor:select" + identity, Name: fmt.Sprintf("Select %s", process.Name),
 		Role: "row", Focusable: true, Children: []*ui.Node{data, kill},
 	}

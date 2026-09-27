@@ -13,9 +13,9 @@ import (
 // to them.
 const panelWifiAction = "panel:wifi"
 
-func buildWifiWidget() textWidget {
+func buildWifiWidget(iconSize int) textWidget {
 	icon := &ui.Node{
-		Kind: ui.KindIcon, Icon: "wifi_off", IconSize: 20,
+		Kind: ui.KindIcon, Icon: "wifi_off", IconSize: iconSize,
 		Action: panelWifiAction,
 	}
 	return textWidget{

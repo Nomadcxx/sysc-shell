@@ -8,6 +8,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -95,6 +96,40 @@ func TestProcessListStaysInsideItsViewport(t *testing.T) {
 	}
 	if bottom := list.Bounds.Y + list.Bounds.H; bottom > size.H {
 		t.Fatalf("list bottom %d exceeds panel %d", bottom, size.H)
+	}
+}
+
+func TestProcessTableHeightUsesUniformColumnGap(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		status string
+	}{
+		{name: "normal"},
+		{name: "status", status: "Sent TERM to PID 30"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &PanelHost{
+				place:         Placement{Panel: panelTargetSize(PanelMonitor)},
+				theme:         Theme{Metrics: standardMetrics()},
+				monitorPage:   monitorPageProcesses,
+				processFilter: "all",
+				processSort:   "pid",
+				processStatus: tt.status,
+				search:        ui.NewField(""),
+			}
+			tree := processMonitorTree(h, services.ProcessSnapshot{Processes: processFixture()}, 1000)
+			if tree.Gap != theme.MarginM {
+				t.Errorf("process column gap = %d, want marginM %d", tree.Gap, theme.MarginM)
+			}
+			table := tree.Children[len(tree.Children)-1]
+			used := 2 * tree.Padding
+			for _, child := range tree.Children[:len(tree.Children)-1] {
+				used += child.Height + tree.Gap
+			}
+			if got, want := table.Height, max(h.place.Panel.H-used, processRowPitch+2*processTablePadding); got != want {
+				t.Fatalf("table height = %d, want %d from the declared bands and uniform gaps", got, want)
+			}
+		})
 	}
 }
 

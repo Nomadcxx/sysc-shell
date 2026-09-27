@@ -59,7 +59,7 @@ func ccProfileImagePath(home, username, accountsDir string) string {
 	return ""
 }
 
-func ccAvatarNode(image *ui.Image) *ui.Node {
+func ccAvatarNode(image *ui.Image, iconSize int) *ui.Node {
 	if image != nil {
 		return &ui.Node{
 			Kind: ui.KindImage, Width: ccAvatarSize, Height: ccAvatarSize,
@@ -69,13 +69,13 @@ func ccAvatarNode(image *ui.Image) *ui.Node {
 	return &ui.Node{
 		Kind: ui.KindCapsule, Width: ccAvatarSize, Height: ccAvatarSize,
 		Fill: ui.FillContainerHighest, Shape: ui.ShapeCircle,
-		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "person", IconSize: 28}},
+		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "person", IconSize: iconSize}},
 	}
 }
 
 func ccAvatar(r *Registry, h *PanelHost, identity ccIdentity) *ui.Node {
 	if r == nil || r.trayIcons == nil || identity.ImagePath == "" {
-		return ccAvatarNode(nil)
+		return ccAvatarNode(nil, h.metrics().IconLarge)
 	}
 	scale := ui.Scale120(h.scale120)
 	if !scale.Valid() {
@@ -83,12 +83,12 @@ func ccAvatar(r *Registry, h *PanelHost, identity ccIdentity) *ui.Node {
 	}
 	key := icons.Square(identity.ImagePath, scale.Physical(ccAvatarSize))
 	if image, ok := r.trayIcons.Lookup(key); ok {
-		return ccAvatarNode(image)
+		return ccAvatarNode(image, h.metrics().IconLarge)
 	}
 	if _, failed := r.controlAvatarFailed[key]; !failed {
 		_, _, _ = r.trayIcons.Request(key)
 	}
-	return ccAvatarNode(nil)
+	return ccAvatarNode(nil, h.metrics().IconLarge)
 }
 
 func ccHome(r *Registry, h *PanelHost) *ui.Node {
@@ -125,15 +125,15 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 		identityRows = append([]*ui.Node{{Kind: ui.KindText, Text: h.errLabel, Tone: ui.ToneError}}, identityRows...)
 	}
 	identityCard := monitorCard(m, []*ui.Node{{
-		Kind: ui.KindRow, Gap: 12, Children: []*ui.Node{
+		Kind: ui.KindRow, Gap: theme.MarginL, Children: []*ui.Node{
 			ccAvatar(r, h, identity),
-			{Kind: ui.KindColumn, Gap: 4, Children: identityRows},
+			{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: identityRows},
 		},
 	}})
 	identityCard.Height = 96
 
-	quickWidth := max((ccBodyWidth(h)-8)/2, 0)
-	togglePill := &ui.Node{Kind: ui.KindRow, Height: 48, Gap: 8, Children: []*ui.Node{
+	quickWidth := max((ccBodyWidth(h)-theme.MarginM)/2, 0)
+	togglePill := &ui.Node{Kind: ui.KindRow, Height: 48, Gap: theme.MarginM, Children: []*ui.Node{ // token-exempt: the measured quick-access band has no density-row counterpart
 		ccQuickAccessButton(quickWidth, "coffee", "Caffeine", "cc:caffeine", caffeine),
 		ccQuickAccessButton(quickWidth, "wallpaper", "Wallpaper", "cc:wallpaper", false),
 	}}
@@ -146,13 +146,17 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 	clockWeather.Height = 88
 	sysmon := monitorCard(m, []*ui.Node{
 		monitorCardTitle("System", 0),
-		{Kind: ui.KindRow, Height: 40, Gap: 8, Children: []*ui.Node{
+		{Kind: ui.KindRow, Height: 40, Gap: theme.MarginM, Children: []*ui.Node{ // token-exempt: the measured radial-resource band has no density-row counterpart
 			ccResourceGroup(snap, "cpu", "CPU", services.Selector{Source: services.SourceCPU}),
 			ccResourceGroup(snap, "memory", "Memory", services.Selector{Source: services.SourceMemory}),
 		}},
 	})
 	sysmon.Height = 88
-	left := &ui.Node{Kind: ui.KindColumn, Width: 356, Height: 184, Gap: 8,
+	contentWidth := 596 // token-exempt: measured control-centre body width inside the fixed 700px panel contract
+	rightWidth := 228   // token-exempt: measured Home quick-tile column width inside the fixed body contract
+	tileWidth := (rightWidth - theme.MarginM) / 2
+	leftWidth := contentWidth - theme.MarginL - rightWidth
+	left := &ui.Node{Kind: ui.KindColumn, Width: leftWidth, Height: 184, Gap: theme.MarginM, // token-exempt: the measured two-card Home band has no density-row counterpart
 		Children: []*ui.Node{clockWeather, sysmon}}
 
 	battery := ccDash
@@ -163,35 +167,35 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 	if h != nil && h.profileActive != "" {
 		profile = powerProfileLabel(h.profileActive)
 	}
-	mute := ccQuickTile("volume_off", "Mute", ccPercent(audio.Level, audioOK), "cc:mute", audio.Muted)
+	mute := ccQuickTile(m, tileWidth, "volume_off", "Mute", ccPercent(audio.Level, audioOK), "cc:mute", audio.Muted)
 	if !audioOK {
 		ccDisable(mute)
 	}
 	nextProfile := hProfileNext(h)
-	profileTile := ccQuickTile("balance", "Profile", profile, "cc:profile:"+nextProfile, false)
+	profileTile := ccQuickTile(m, tileWidth, "balance", "Profile", profile, "cc:profile:"+nextProfile, false)
 	profileTile.Name = "Power profile"
 	if nextProfile == "" {
 		ccDisable(profileTile)
 	}
-	dndTile := ccQuickTile("do_not_disturb_on", "DND", ccOnOff(dnd), "cc:dnd", dnd)
+	dndTile := ccQuickTile(m, tileWidth, "do_not_disturb_on", "DND", ccOnOff(dnd), "cc:dnd", dnd)
 	dndTile.Name = "Do not disturb"
-	right := &ui.Node{Kind: ui.KindColumn, Width: 228, Height: 184, Gap: 8, Children: []*ui.Node{
-		{Kind: ui.KindRow, Height: 88, Gap: 8, Children: []*ui.Node{
+	right := &ui.Node{Kind: ui.KindColumn, Width: rightWidth, Height: 184, Gap: theme.MarginM, Children: []*ui.Node{ // token-exempt: the measured two-row Home band has no density-row counterpart
+		{Kind: ui.KindRow, Height: 88, Gap: theme.MarginM, Children: []*ui.Node{ // token-exempt: the measured quick-tile row has no density-row counterpart
 			mute,
 			dndTile,
 		}},
-		{Kind: ui.KindRow, Height: 88, Gap: 8, Children: []*ui.Node{
+		{Kind: ui.KindRow, Height: 88, Gap: theme.MarginM, Children: []*ui.Node{ // token-exempt: the measured quick-tile row has no density-row counterpart
 			profileTile,
-			ccBatteryTile(battery),
+			ccBatteryTile(m, tileWidth, battery),
 		}},
 	}}
-	split := &ui.Node{Kind: ui.KindRow, Height: 184, Gap: 12, Children: []*ui.Node{left, right}}
+	split := &ui.Node{Kind: ui.KindRow, Height: 184, Gap: theme.MarginL, Children: []*ui.Node{left, right}} // token-exempt: the measured Home split band has no density-row counterpart
 
-	sliders := &ui.Node{Kind: ui.KindColumn, Height: 116, Gap: 12, Children: []*ui.Node{
+	sliders := &ui.Node{Kind: ui.KindColumn, Height: 116, Gap: theme.MarginL, Children: []*ui.Node{ // token-exempt: the measured two-slider band has no density-row counterpart
 		ccSlider(m, "volume_up", "Volume", "cc:volume", audio.Level, audioOK),
 		ccSlider(m, "brightness_high", "Brightness", "cc:brightness", brightness.Level, brightnessOK),
 	}}
-	return &ui.Node{Kind: ui.KindColumn, Height: 480, Gap: 12,
+	return &ui.Node{Kind: ui.KindColumn, Height: 480, Gap: theme.MarginL, // token-exempt: the measured page body fills the fixed 480px viewport
 		Children: []*ui.Node{identityCard, togglePill, split, sliders}}
 }
 
@@ -245,9 +249,9 @@ func ccResourceGroup(snap services.Snapshot, id, label string, sel services.Sele
 		value = 0
 	}
 	icon, _ := render.GaugeIconName(id)
-	return &ui.Node{Kind: ui.KindRow, Height: 40, Gap: 8, Children: []*ui.Node{
-		{Kind: ui.KindRadialGauge, Width: 40, Height: 40, Icon: icon, Value: value, Absent: !ok},
-		{Kind: ui.KindColumn, Gap: 2, Children: []*ui.Node{
+	return &ui.Node{Kind: ui.KindRow, Height: 40, Gap: theme.MarginM, Children: []*ui.Node{ // token-exempt: the measured radial-resource row has no density-row counterpart
+		{Kind: ui.KindRadialGauge, Width: 40, Height: 40, Icon: icon, Value: value, Absent: !ok}, // token-exempt: the measured radial gauge diameter has no density-row counterpart
+		{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
 			{Kind: ui.KindText, Text: label, TextRole: theme.RoleCaption},
 			{Kind: ui.KindText, Text: ccPercent(int(value*100+0.5), ok), Tabular: true},
 		}},
@@ -264,7 +268,7 @@ func ccOnOff(on bool) string {
 func ccSegment(icon, label, action string, selected bool) *ui.Node {
 	n := &ui.Node{
 		Kind: ui.KindButton, Action: action, Name: label, Role: "button", Focusable: true,
-		Gap: 6, Children: []*ui.Node{
+		Gap: theme.MarginS, Children: []*ui.Node{
 			{Kind: ui.KindIcon, Icon: icon},
 			{Kind: ui.KindText, Text: label, TextRole: theme.RoleLabel},
 		},
@@ -276,12 +280,12 @@ func ccSegment(icon, label, action string, selected bool) *ui.Node {
 	return n
 }
 
-func ccQuickTile(icon, label, value, action string, selected bool) *ui.Node {
+func ccQuickTile(m theme.Metrics, width int, icon, label, value, action string, selected bool) *ui.Node {
 	n := &ui.Node{
-		Kind: ui.KindCapsule, Width: 110, Height: 88, Padding: 12,
+		Kind: ui.KindCapsule, Width: width, Height: 88, Padding: m.CardPadding, // token-exempt: the measured quick-tile height has no density-row counterpart
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
 		Action: action, Name: label, Role: "button", Focusable: true,
-		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: 4, Children: []*ui.Node{
+		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{
 			{Kind: ui.KindIcon, Icon: icon},
 			{Kind: ui.KindText, Text: label, TextRole: theme.RoleLabel},
 			{Kind: ui.KindText, Text: value, TextRole: theme.RoleCaption, Tabular: true},
@@ -294,11 +298,11 @@ func ccQuickTile(icon, label, value, action string, selected bool) *ui.Node {
 	return n
 }
 
-func ccBatteryTile(value string) *ui.Node {
+func ccBatteryTile(m theme.Metrics, width int, value string) *ui.Node {
 	return &ui.Node{
-		Kind: ui.KindCapsule, Width: 110, Height: 88, Padding: 12,
-		Shape: ui.ShapeCard, Stroke: 1, StrokeFill: ui.FillOutline,
-		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: 4, Children: []*ui.Node{
+		Kind: ui.KindCapsule, Width: width, Height: 88, Padding: m.CardPadding, // token-exempt: the measured battery-tile height has no density-row counterpart
+		Shape: ui.ShapeCard, Stroke: 1, StrokeFill: ui.FillOutline, // token-exempt: the measured one-pixel readout outline has no theme geometry token
+		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{
 			{Kind: ui.KindIcon, Icon: "battery_full"},
 			{Kind: ui.KindText, Text: "Battery", TextRole: theme.RoleLabel},
 			{Kind: ui.KindText, Text: value, TextRole: theme.RoleCaption, Tabular: true},
@@ -317,19 +321,19 @@ func ccDisable(n *ui.Node) {
 func ccSlider(m theme.Metrics, icon, label, action string, value int, ok bool) *ui.Node {
 	control := &ui.Node{
 		Kind: ui.KindSlider, Action: action, Name: label, Role: "slider", Focusable: true,
-		Value: float64(value), Min: 0, Max: 100, Step: 5, Width: 360, Absent: !ok,
+		Value: float64(value), Min: 0, Max: 100, Step: 5, Width: 360, Absent: !ok, // token-exempt: the measured slider track width fills the fixed control-centre row
 	}
 	if !ok {
 		control.State |= ui.StateDisabled
 	}
 	return &ui.Node{
-		Kind: ui.KindCapsule, Height: 52, Padding: m.CardPadding,
+		Kind: ui.KindCapsule, Height: 52, Padding: m.CardPadding, // token-exempt: the measured slider-card band has no density-row counterpart
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
-		Children: []*ui.Node{{Kind: ui.KindRow, Gap: 8, Children: []*ui.Node{
+		Children: []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
 			{Kind: ui.KindIcon, Icon: icon},
 			{Kind: ui.KindText, Text: label, TextRole: theme.RoleLabel},
 			control,
-			{Kind: ui.KindText, Text: ccPercent(value, ok), Width: 44, MinWidthText: "100%", Tabular: true},
+			{Kind: ui.KindText, Text: ccPercent(value, ok), Width: 44, MinWidthText: "100%", Tabular: true}, // token-exempt: the measured tabular percentage track fits the widest value
 		}}},
 	}
 }
@@ -373,18 +377,20 @@ func ccWeather(r *Registry, h *PanelHost) *ui.Node {
 	})
 	today.Height = 336
 
-	forecast := &ui.Node{Kind: ui.KindRow, Height: 132, Gap: 8}
+	forecastWidth := 596 // token-exempt: measured forecast width inside the fixed 700px control-centre contract
+	forecastDayWidth := (forecastWidth - 3*theme.MarginM) / 4
+	forecast := &ui.Node{Kind: ui.KindRow, Width: forecastWidth, Height: 132, Gap: theme.MarginM} // token-exempt: the measured forecast band has no density-row counterpart
 	for i := 0; i < 4; i++ {
 		var day *services.Day
 		if i+1 < len(reading.Daily) {
 			day = &reading.Daily[i+1]
 		}
-		forecast.Children = append(forecast.Children, ccForecastDay(m, day, reading.Unit))
+		forecast.Children = append(forecast.Children, ccForecastDay(m, forecastDayWidth, day, reading.Unit))
 	}
-	return &ui.Node{Kind: ui.KindColumn, Height: 480, Gap: 12, Children: []*ui.Node{today, forecast}}
+	return &ui.Node{Kind: ui.KindColumn, Height: 480, Gap: theme.MarginL, Children: []*ui.Node{today, forecast}} // token-exempt: the measured page body fills the fixed 480px viewport
 }
 
-func ccForecastDay(m theme.Metrics, day *services.Day, unit services.Unit) *ui.Node {
+func ccForecastDay(m theme.Metrics, width int, day *services.Day, unit services.Unit) *ui.Node {
 	label, icon, temperature := ccDash, "cloud", ccDash
 	if day != nil {
 		if date, err := time.Parse("2006-01-02", day.Date); err == nil {
@@ -405,7 +411,7 @@ func ccForecastDay(m theme.Metrics, day *services.Day, unit services.Unit) *ui.N
 		{Kind: ui.KindIcon, Icon: icon, IconSize: m.IconLarge},
 		{Kind: ui.KindText, Text: temperature, TextRole: theme.RoleCaption, Tabular: true},
 	})
-	card.Width, card.Height = 143, 132
+	card.Width, card.Height = width, 132
 	return card
 }
 
@@ -442,7 +448,8 @@ func ccAudio(r *Registry, h *PanelHost) *ui.Node {
 	if r != nil && r.audio != nil {
 		state, ok = r.audio.CachedState()
 	}
-	mute := ccQuickTile("volume_off", "Mute", ccOnOff(state.Muted), "cc:mute", state.Muted)
+	muteWidth := 110 // token-exempt: measured compact mute tile width in the single-column Audio page
+	mute := ccQuickTile(m, muteWidth, "volume_off", "Mute", ccOnOff(state.Muted), "cc:mute", state.Muted)
 	if !ok {
 		ccDisable(mute)
 	}
@@ -456,7 +463,7 @@ func ccAudio(r *Registry, h *PanelHost) *ui.Node {
 	}
 	card := monitorCard(m, rows)
 	card.Height = 480
-	return &ui.Node{Kind: ui.KindColumn, Height: 480, Children: []*ui.Node{card}}
+	return &ui.Node{Kind: ui.KindColumn, Height: 480, Children: []*ui.Node{card}} // token-exempt: the measured page body fills the fixed 480px viewport
 }
 
 func ccMonitor(r *Registry, h *PanelHost) *ui.Node {
@@ -479,7 +486,7 @@ func ccMonitor(r *Registry, h *PanelHost) *ui.Node {
 		{services.Selector{Source: services.SourceMemory}, "Memory", 154},
 		{network, "Network", 156},
 	}
-	page := &ui.Node{Kind: ui.KindColumn, Height: 480, Gap: 8}
+	page := &ui.Node{Kind: ui.KindColumn, Height: 480, Gap: theme.MarginM} // token-exempt: the measured page body fills the fixed 480px viewport
 	for _, item := range selectors {
 		card := ccMonitorMetricCard(m, item.label, item.selector, snap, history[item.selector])
 		card.Height = item.height
@@ -534,7 +541,7 @@ func ccPower(r *Registry, h *PanelHost) *ui.Node {
 	battery := ccPowerBattery(m, snap, errLabel)
 	profiles := ccPowerProfiles(m, h)
 	actions := ccSessionActions(m, locker)
-	return &ui.Node{Kind: ui.KindColumn, Height: 480, Gap: 8,
+	return &ui.Node{Kind: ui.KindColumn, Height: 480, Gap: theme.MarginM, // token-exempt: the measured page body fills the fixed 480px viewport
 		Children: []*ui.Node{battery, profiles, actions}}
 }
 
@@ -609,7 +616,7 @@ func ccSessionActions(m theme.Metrics, locker string) *ui.Node {
 	for _, action := range actions {
 		n := &ui.Node{
 			Kind: ui.KindButton, Action: action.action, Name: action.name, Role: "button", Focusable: true,
-			Height: m.CompactControl, Gap: 8, Padding: m.CardPadding,
+			Height: m.CompactControl, Gap: theme.MarginM, Padding: m.CardPadding,
 			Children: []*ui.Node{
 				{Kind: ui.KindIcon, Icon: action.icon, IconSize: m.IconNormal},
 				{Kind: ui.KindText, Text: action.name},
@@ -643,16 +650,16 @@ func ccCalendar(r *Registry, h *PanelHost) *ui.Node {
 			calendarArrow("chevron_right", "cal-next", "Next month", h.theme),
 		},
 	}}
-	weekdays := &ui.Node{Kind: ui.KindRow, Gap: 4}
+	weekdays := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS}
 	for _, day := range []string{"S", "M", "T", "W", "T", "F", "S"} {
-		weekdays.Children = append(weekdays.Children, &ui.Node{Kind: ui.KindText, Text: day, Width: 74, CenterX: true})
+		weekdays.Children = append(weekdays.Children, &ui.Node{Kind: ui.KindText, Text: day, Width: 74, CenterX: true}) // token-exempt: the measured seven-column calendar track has no theme width token
 	}
 	rows = append(rows, weekdays)
 	rowHeight := max((480-2*m.CardPadding-m.StandardControl-28)/max(len(grid.Weeks), 1), 32)
 	for _, week := range grid.Weeks {
-		row := &ui.Node{Kind: ui.KindRow, Height: rowHeight, Gap: 4}
+		row := &ui.Node{Kind: ui.KindRow, Height: rowHeight, Gap: theme.MarginXS}
 		for _, cell := range week {
-			day := &ui.Node{Kind: ui.KindText, Text: fmt.Sprintf("%d", cell.Day), Width: 74, CenterX: true, Tabular: true}
+			day := &ui.Node{Kind: ui.KindText, Text: fmt.Sprintf("%d", cell.Day), Width: 74, CenterX: true, Tabular: true} // token-exempt: the measured seven-column calendar track has no theme width token
 			if cell.Today {
 				day.Tone = ui.ToneAccent
 			}
@@ -662,7 +669,7 @@ func ccCalendar(r *Registry, h *PanelHost) *ui.Node {
 	}
 	card := monitorCard(m, rows)
 	card.Height = 480
-	return &ui.Node{Kind: ui.KindColumn, Height: 480, Children: []*ui.Node{card}}
+	return &ui.Node{Kind: ui.KindColumn, Height: 480, Children: []*ui.Node{card}} // token-exempt: the measured page body fills the fixed 480px viewport
 }
 
 func ccNotifications(r *Registry, h *PanelHost) *ui.Node {
@@ -684,7 +691,7 @@ func ccNotifications(r *Registry, h *PanelHost) *ui.Node {
 	}
 	sort.Slice(history, func(i, j int) bool { return history[i].Timestamp.After(history[j].Timestamp) })
 	controls := &ui.Node{
-		Kind: ui.KindCapsule, Height: 52, Padding: m.CardPadding,
+		Kind: ui.KindCapsule, Height: 52, Padding: m.CardPadding, // token-exempt: the measured notification-control band has no density-row counterpart
 		Fill: ui.FillContainerHigh, Shape: ui.ShapeCard,
 		Children: []*ui.Node{{Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{
 			ccSegment("do_not_disturb_on", "Do not disturb", "cc:dnd", dnd),
@@ -706,6 +713,6 @@ func ccNotifications(r *Registry, h *PanelHost) *ui.Node {
 		empty.Height = 416
 		cards = append(cards, empty)
 	}
-	list := &ui.Node{Kind: ui.KindScroll, Height: 416, Gap: 8, Children: cards}
-	return &ui.Node{Kind: ui.KindColumn, Height: 480, Gap: 12, Children: []*ui.Node{controls, list}}
+	list := &ui.Node{Kind: ui.KindScroll, Height: 416, Gap: theme.MarginM, Children: cards}                     // token-exempt: the measured notification viewport fills the remaining page body
+	return &ui.Node{Kind: ui.KindColumn, Height: 480, Gap: theme.MarginL, Children: []*ui.Node{controls, list}} // token-exempt: the measured page body fills the fixed 480px viewport
 }
