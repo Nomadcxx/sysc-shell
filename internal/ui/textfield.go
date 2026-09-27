@@ -16,6 +16,10 @@ type Field struct {
 	// runes, so editing, cursor motion and submit are unchanged and exactly
 	// one code path knows about the disguise.
 	Masked bool
+	// ScrollX and ScrollY are view state kept with the editor so a rebuild
+	// does not jump the view: px for a single line, lines for multiline.
+	ScrollX int
+	ScrollY int
 }
 
 func NewField(s string) *Field {
