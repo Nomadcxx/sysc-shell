@@ -139,8 +139,6 @@ func writeTarget(home, name string) string {
 		return filepath.Join(home, ".emacs.d", "sysc-shell-theme.el")
 	case "helix":
 		return filepath.Join(home, ".config", "helix", "themes", "sysc-shell.toml")
-	case "cava":
-		return filepath.Join(home, ".config", "cava", "config")
 	case "scroll":
 		return filepath.Join(home, ".config", "scroll", "config")
 	default:
@@ -267,6 +265,17 @@ var templateTargets = map[string]templateTarget{
 			}}
 		},
 		signal: signalKitty,
+	},
+	"cava": {
+		sidecar: func(h string) string { return joined(h, ".config", "cava", "themes", "sysc-shell") },
+		directives: func(h string) []directive {
+			return []directive{{
+				file:    joined(h, ".config", "cava", "config"),
+				line:    `theme = "sysc-shell"`,
+				key:     "theme",
+				section: "color",
+			}}
+		},
 	},
 	"btop": {
 		sidecar: func(h string) string { return joined(h, ".config", "btop", "themes", "sysc-shell.theme") },
