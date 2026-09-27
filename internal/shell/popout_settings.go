@@ -593,10 +593,17 @@ func settingsControl(h *PanelHost, e settings.Entry, width int) *ui.Node {
 		if e.Max-e.Min > 0 && e.Max-e.Min <= settingsStepperSpan {
 			return settingsStepper(e, n)
 		}
-		return &ui.Node{
-			Kind: ui.KindSlider, Value: float64(n), Min: float64(e.Min), Max: float64(e.Max), Step: 1,
-			Action: action, Width: width, Focusable: true, Name: e.Label, Role: "slider",
-		}
+		// The value sits beside the track in a cell measured for the widest
+		// value the range holds (design D4; a fixed cell overflowed at 1.25
+		// in the audio panel, sysc-589).
+		valueW, _ := settingsMeasure(h)(strconv.Itoa(max(e.Max, -e.Min)), ui.TextAttrs{Tabular: true})
+		return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Width: width, Children: []*ui.Node{
+			{
+				Kind: ui.KindSlider, Value: float64(n), Min: float64(e.Min), Max: float64(e.Max), Step: 1,
+				Action: action, Width: max(width-valueW-theme.MarginS, 0), Focusable: true, Name: e.Label, Role: "slider",
+			},
+			{Kind: ui.KindText, Text: strconv.Itoa(n), Tabular: true, Width: valueW},
+		}}
 	case settings.KindFont:
 		options, values := settingsFontOptions(e)
 		return settingsPickerControl(h, e, options, values, raw, width)
@@ -619,6 +626,11 @@ func settingsControl(h *PanelHost, e settings.Entry, width int) *ui.Node {
 			},
 		}}
 	case settings.KindEnum:
+		// One option is a fact, not a choice: a one-row menu drew as a
+		// clipped pill (the bar's Edge, which is only ever top).
+		if len(e.Options) == 1 {
+			return &ui.Node{Kind: ui.KindText, Text: settingsOptionLabel(e.Options[0]), Tone: ui.ToneSubtle, Name: e.Label}
+		}
 		if e.Present == settings.PresentAuto && len(e.Options) >= 2 && len(e.Options) <= settingsSegmentLimit {
 			return settingsSegmented(h, e, raw)
 		}

@@ -47,19 +47,44 @@ func (r *Registry) settingsBarImage(h *PanelHost, cfg config.Config, width int) 
 	return &ui.Image{Width: pw, Height: ph, Stride: pw * 4, Pix: pix}
 }
 
-// settingsBarPreview is the Appearance page's lead card: the draft's bar at
-// the page's width. A draft that does not resolve keeps the last good image,
-// so a value that is mid-edit does not blank the preview.
+// settingsPreviewLayoutW is the width the preview bar lays out at: the
+// output's, so its widgets sit as they do on screen. Laid out at the card's
+// width instead, the centre crowded into the window title on the laptop.
+func settingsPreviewLayoutW(h *PanelHost, least int) int {
+	return max(h.place.Output.W, least)
+}
+
+// settingsBarPreview is the Appearance page's lead card: the draft's bar laid
+// out at the output's width and scaled down to the card. A draft that does not
+// resolve keeps the last good image, so a value that is mid-edit does not
+// blank the preview.
 func settingsBarPreview(r *Registry, h *PanelHost) *ui.Node {
 	w := settingsCardInner(h)
-	if img := r.settingsBarImage(h, h.draft, w); img != nil {
+	layoutW := settingsPreviewLayoutW(h, w)
+	if img := r.settingsBarImage(h, h.draft, layoutW); img != nil {
 		h.barPreview = img
 	}
+	extent := h.draft.ForConnector("").SurfaceExtent()
 	return settingsGroupCard(h, "Preview", []*ui.Node{{
 		Kind: ui.KindImage, Image: h.barPreview, ImageW: w,
-		ImageH: h.draft.ForConnector("").SurfaceExtent(),
+		ImageH: max(extent*w/max(layoutW, 1), 1),
 		Name:   "Bar preview", Role: "img",
 	}})
+}
+
+// settingsBarEnd is the left end of a full-width bar image, width logical
+// pixels of it, without copying: the painter reads rows by stride, so a
+// narrower Width over the same pixels is a crop.
+func settingsBarEnd(img *ui.Image, width, scale120 int) *ui.Image {
+	if img == nil {
+		return nil
+	}
+	if !ui.Scale120(scale120).Valid() {
+		scale120 = int(ui.ScaleUnit)
+	}
+	crop := *img
+	crop.Width = min(img.Width, width*scale120/120)
+	return &crop
 }
 
 // settingsPictureCardW is the widest a picture card's bar segment gets.
@@ -96,7 +121,9 @@ func settingsPictureCards(r *Registry, h *PanelHost, e settings.Entry) *ui.Node 
 			Fill: ui.FillContainerHighest, Padding: pad, Width: cardW,
 			Height: imgH + theme.MarginS + labelH + 2*pad,
 			Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginS, Children: []*ui.Node{
-				{Kind: ui.KindImage, Image: r.settingsBarImage(h, cfg, imgW), ImageW: imgW, ImageH: imgH},
+				// The left end of the bar at the output's width: where the
+				// ground, the pills and an attached or floating end differ.
+				{Kind: ui.KindImage, Image: settingsBarEnd(r.settingsBarImage(h, cfg, settingsPreviewLayoutW(h, imgW)), imgW, h.scale120), ImageW: imgW, ImageH: imgH},
 				{Kind: ui.KindText, Text: label},
 			}}},
 		}

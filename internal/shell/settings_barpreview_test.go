@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"strings"
 	"testing"
 
@@ -196,5 +197,34 @@ func TestAppearanceFillsThePaneAndCardsHoldTheirContent(t *testing.T) {
 		if !inside(img[0].Bounds) || !inside(label.Bounds) {
 			t.Errorf("%s card %+v does not hold its picture %+v and label %+v", opt, card.Bounds, img[0].Bounds, label.Bounds)
 		}
+	}
+}
+
+// Found on the laptop at 1.25: the preview laid out at the card's width
+// crowded the centre into the window title, Edge drew as a clipped one-row
+// menu, and sliders showed no value.
+func TestLaptopGateFixes(t *testing.T) {
+	reg, h := openSettingsForPreview(t)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if h.place.Output.W != 1536 {
+		t.Fatalf("settings placed against a %d-wide output", h.place.Output.W)
+	}
+	if got := settingsPreviewLayoutW(h, settingsCardInner(h)); got != 1536 {
+		t.Errorf("preview lays out at %d, want the output's 1536", got)
+	}
+	preview := findAllKind(settingsBarPreview(reg, h), ui.KindImage)[0]
+	if preview.Image == nil || preview.Image.Width < 1536*h.scale120/120 {
+		t.Errorf("preview raster %+v is narrower than the output", preview.Image)
+	}
+	if edge := settingsControl(h, *h.set.ByPath("bar.edge"), 200); edge.Kind != ui.KindText || edge.Text != "Top" {
+		t.Errorf("one-option Edge renders as %v %q, want the text Top", edge.Kind, edge.Text)
+	}
+	frost := settingsControl(h, *h.set.ByPath("bar.frost-opacity"), 300)
+	if frost.Kind != ui.KindRow || len(frost.Children) != 2 || frost.Children[1].Kind != ui.KindText || frost.Children[1].Text == "" {
+		t.Fatalf("frost opacity control has no value cell: %+v", frost)
+	}
+	if frost.Children[0].Width+theme.MarginS+frost.Children[1].Width > 300 {
+		t.Errorf("slider and value overrun their 300 column")
 	}
 }
