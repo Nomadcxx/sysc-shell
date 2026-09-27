@@ -171,6 +171,10 @@ ICONS = [
     "swap_vert",
     "language",
     "gpp_bad",
+    # The launcher's Calculator and Emoji providers (overview and row glyphs).
+    # Material Symbols has no "emoji_emotions"; "mood" is its smiley.
+    "calculate",
+    "mood",
 ]
 
 # The pinned source renamed the older smartphone ligature. Keep the shell's
