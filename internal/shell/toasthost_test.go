@@ -453,6 +453,7 @@ func TestToastRenewsPresentationWhileCardsStayUp(t *testing.T) {
 // new card while a frame is painting used to trip harfbuzz.
 func TestToastApplyDoesNotRaceThePainter(t *testing.T) {
 	r, h, _ := wiredToast(t)
+	keepInvalidationsDrained(t, r) // 80 applies outrun the cap-8 channel
 	r.applyNotify(snap(1, note(1, "one")))
 	callbacks := h.harness().opens[0].Callbacks
 	const width, height = 1200, 800
