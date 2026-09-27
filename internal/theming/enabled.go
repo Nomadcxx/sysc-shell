@@ -133,8 +133,6 @@ func writeTarget(home, name string) string {
 		return filepath.Join(home, ".config", "wezterm", "wezterm.lua")
 	case "qt":
 		return filepath.Join(home, ".config", "qt5ct", "colors", "sysc-shell.conf")
-	case "kcolorscheme":
-		return filepath.Join(home, ".local", "share", "color-schemes", "sysc-shell.colors")
 	case "emacs":
 		return filepath.Join(home, ".emacs.d", "sysc-shell-theme.el")
 	case "scroll":
@@ -293,6 +291,19 @@ var templateTargets = map[string]templateTarget{
 				file: joined(h, ".config", "btop", "btop.conf"),
 				line: `color_theme = "sysc-shell"`,
 				key:  "color_theme",
+			}}
+		},
+	},
+	"kcolorscheme": {
+		sidecar: func(h string) string { return joined(h, ".local", "share", "color-schemes", "sysc-shell.colors") },
+		directives: func(h string) []directive {
+			return []directive{{
+				file:    joined(h, ".config", "kdeglobals"),
+				line:    "ColorSchemeName=sysc-shell",
+				key:     "ColorSchemeName",
+				section: "General",
+				seed:    "[General]\nColorSchemeName=sysc-shell\n",
+				create:  true,
 			}}
 		},
 	},

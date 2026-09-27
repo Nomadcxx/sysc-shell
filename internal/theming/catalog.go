@@ -3,6 +3,7 @@ package theming
 import (
 	"bytes"
 	"embed"
+	"fmt"
 	"io/fs"
 	"path"
 	"strings"
@@ -83,7 +84,7 @@ func Render(tpl string, tok theme.Tokens) string {
 // shape, opacity, elevation and motion are the shell's composition and mean
 // nothing in another application's colour file.
 func RenderWith(tpl string, tok theme.Tokens, mode, source string) string {
-	t, err := template.New("t").Funcs(template.FuncMap{"darken": darken}).Option("missingkey=zero").Parse(tpl)
+	t, err := template.New("t").Funcs(template.FuncMap{"darken": darken, "rgb": rgb}).Option("missingkey=zero").Parse(tpl)
 	if err != nil {
 		return ""
 	}
@@ -98,6 +99,17 @@ func RenderWith(tpl string, tok theme.Tokens, mode, source string) string {
 		return ""
 	}
 	return buf.String()
+}
+
+// rgb renders a #RRGGBB colour as the decimal r,g,b triples KDE colour
+// schemes use. An unparsable colour yields an empty value; the golden test
+// fails loudly on empty rather than on a plausible wrong triple.
+func rgb(hex string) string {
+	c, err := theme.ParseColor(hex)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%d,%d,%d", c.R, c.G, c.B)
 }
 
 // darken mixes a #RRGGBB colour toward black. A few application theme files
