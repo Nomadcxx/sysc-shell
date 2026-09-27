@@ -382,6 +382,7 @@ type directive struct {
 	section string // ini/toml section the line must live under ("" = top level)
 	seed    string // whole-file content when creating (empty = just the line)
 	create  bool   // invent the file if it does not exist
+	top     bool   // root-key zone: insert before the first table header
 }
 
 // EnsureDirective appends, updates or creates exactly one directive line.
@@ -429,7 +430,7 @@ func ensureDirective(d directive, force bool) error {
 		return writeDirectiveConfig(d.file, directiveContent(b, lines, d))
 	}
 	if force {
-		if err := backupDirectiveOnce(d.file, b); err != nil {
+		if err := backupUserFileOnce(d.file, b); err != nil {
 			return err
 		}
 	}
@@ -445,6 +446,17 @@ func ensureDirective(d directive, force bool) error {
 }
 
 func directiveContent(body []byte, lines []string, d directive) []byte {
+	if d.top && d.section == "" {
+		for i, ln := range lines {
+			if strings.HasPrefix(strings.TrimSpace(ln), "[") {
+				out := make([]string, 0, len(lines)+1)
+				out = append(out, lines[:i]...)
+				out = append(out, d.line)
+				out = append(out, lines[i:]...)
+				return []byte(strings.Join(out, "\n"))
+			}
+		}
+	}
 	if d.section == "" {
 		out := strings.TrimSuffix(string(body), "\n") + "\n" + d.line + "\n"
 		if strings.TrimSpace(out) == d.line+"\n" {
@@ -469,9 +481,9 @@ func directiveContent(body []byte, lines []string, d directive) []byte {
 	return []byte(out)
 }
 
-// backupDirectiveOnce preserves the complete user config before a confirmed
-// directive replacement, retaining its mode and the first backup.
-func backupDirectiveOnce(path string, data []byte) error {
+// backupUserFileOnce preserves the complete user config before a confirmed
+// replacement, retaining its mode and the first backup.
+func backupUserFileOnce(path string, data []byte) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		return err
@@ -542,4 +554,130 @@ func RemoveDirective(d directive) error {
 		return os.Remove(d.file)
 	}
 	return writeDirectiveConfig(d.file, []byte(strings.Join(keep, "\n")))
+}
+
+// ManageBlock writes body between the open and close marker lines,
+// replacing a previous managed block or appending a new one. The markers are
+// sysc-shell-specific; only a block whose saved bytes still match is updated.
+func ManageBlock(file, open, close, body string, force bool) error {
+	block := managedBlockLines(open, close, body)
+	key := managedBlockKey(file, open, close)
+	b, err := os.ReadFile(file)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		if err := writeDirectiveConfig(file, []byte(strings.Join(block, "\n")+"\n")); err != nil {
+			return err
+		}
+		_ = rememberHash(key, hash([]byte(strings.Join(block, "\n"))))
+		return nil
+	}
+	lines := strings.Split(string(b), "\n")
+	start, end := -1, -1
+	for i, ln := range lines {
+		switch strings.TrimSpace(ln) {
+		case open:
+			if start >= 0 {
+				return fmt.Errorf("skipped: two sysc-shell blocks in %s", file)
+			}
+			start = i
+		case close:
+			if start < 0 || end >= 0 {
+				return fmt.Errorf("skipped: stray sysc-shell block end in %s", file)
+			}
+			end = i
+		}
+	}
+	if start >= 0 && end < start {
+		return fmt.Errorf("skipped: unbalanced sysc-shell block in %s", file)
+	}
+	if start >= 0 {
+		oldBlock := []byte(strings.Join(lines[start:end+1], "\n"))
+		if stateHash(key) != hash(oldBlock) {
+			if !force {
+				return fmt.Errorf("%w: managed block in %s", ErrUserModified, file)
+			}
+			if err := backupUserFileOnce(file, b); err != nil {
+				return err
+			}
+		}
+	}
+	var out []string
+	if start < 0 {
+		out = append(out, lines...)
+		if len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
+			out = out[:len(out)-1]
+		}
+		if len(out) > 0 {
+			out = append(out, "")
+		}
+		out = append(out, block...)
+	} else {
+		out = append(out, lines[:start]...)
+		out = append(out, block...)
+		out = append(out, lines[end+1:]...)
+	}
+	if err := writeDirectiveConfig(file, []byte(strings.Join(out, "\n")+"\n")); err != nil {
+		return err
+	}
+	_ = rememberHash(key, hash([]byte(strings.Join(block, "\n"))))
+	return nil
+}
+
+// RemoveBlock deletes the managed block including its marker lines.
+func RemoveBlock(file, open, close string, force bool) error {
+	b, err := os.ReadFile(file)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	lines := strings.Split(string(b), "\n")
+	start, end := -1, -1
+	for i, ln := range lines {
+		switch strings.TrimSpace(ln) {
+		case open:
+			if start >= 0 {
+				return fmt.Errorf("skipped: two sysc-shell blocks in %s", file)
+			}
+			start = i
+		case close:
+			if start < 0 || end >= 0 {
+				return fmt.Errorf("skipped: stray sysc-shell block end in %s", file)
+			}
+			end = i
+		}
+	}
+	if start < 0 {
+		return nil
+	}
+	if end < start {
+		return fmt.Errorf("skipped: unterminated sysc-shell block in %s", file)
+	}
+	key := managedBlockKey(file, open, close)
+	oldBlock := []byte(strings.Join(lines[start:end+1], "\n"))
+	if stateHash(key) != hash(oldBlock) {
+		if !force {
+			return fmt.Errorf("%w: managed block in %s", ErrUserModified, file)
+		}
+		if err := backupUserFileOnce(file, b); err != nil {
+			return err
+		}
+	}
+	out := append(append([]string{}, lines[:start]...), lines[end+1:]...)
+	if strings.TrimSpace(strings.Join(out, "\n")) == "" {
+		return os.Remove(file)
+	}
+	return writeDirectiveConfig(file, []byte(strings.Join(out, "\n")))
+}
+
+func managedBlockLines(open, close, body string) []string {
+	block := strings.Split(strings.TrimSuffix(body, "\n"), "\n")
+	return append(append([]string{open}, block...), close)
+}
+
+func managedBlockKey(file, open, close string) string {
+	return file + "\x00sysc-shell-block\x00" + open + "\x00" + close
 }

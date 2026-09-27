@@ -143,8 +143,6 @@ func writeTarget(home, name string) string {
 		return filepath.Join(home, ".config", "btop", "themes", "sysc-shell.theme")
 	case "cava":
 		return filepath.Join(home, ".config", "cava", "config")
-	case "starship":
-		return filepath.Join(home, ".config", "starship.toml")
 	case "scroll":
 		return filepath.Join(home, ".config", "scroll", "config")
 	default:
@@ -202,11 +200,19 @@ func signalKitty(root string) error {
 // ponytail: directive matching uses the target's key prefix rather than an
 // app-config parser; add format-aware parsing only when a supported target
 // needs syntax beyond one managed line in a named section.
+// block applications get no sidecar: the rendered body is managed in place
+// between marker lines inside the user's own config file.
 type templateTarget struct {
 	sidecar    func(home string) string
 	directives func(home string) []directive
 	signal     func(root string) error
+	block      func(home string) (file, open, close string)
 }
+
+const (
+	blockOpen  = "# >>> sysc-shell >>>"
+	blockClose = "# <<< sysc-shell <<<"
+)
 
 func joined(home string, elems ...string) string {
 	return filepath.Join(append([]string{home}, elems...)...)
@@ -264,6 +270,20 @@ var templateTargets = map[string]templateTarget{
 		},
 		signal: signalKitty,
 	},
+	"starship": {
+		block: func(h string) (string, string, string) {
+			return joined(h, ".config", "starship.toml"), blockOpen, blockClose
+		},
+		directives: func(h string) []directive {
+			return []directive{{
+				file:   joined(h, ".config", "starship.toml"),
+				line:   `palette = "sysc-shell"`,
+				key:    "palette",
+				top:    true,
+				create: true,
+			}}
+		},
+	},
 	"wezterm": {
 		sidecar: func(h string) string { return joined(h, ".config", "wezterm", "colors", "sysc-shell.toml") },
 		directives: func(h string) []directive {
@@ -289,6 +309,26 @@ func applyTemplateTarget(name, home string, on bool, rendered string, force bool
 			return applyWrite(target, rendered, force)
 		}
 		return UnapplyWrite(target)
+	}
+	if tgt.block != nil {
+		file, open, close := tgt.block(home)
+		if on {
+			if err := ManageBlock(file, open, close, rendered, force); err != nil {
+				return err
+			}
+			for _, dir := range tgt.directives(home) {
+				if err := ensureDirective(dir, force); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		for _, dir := range tgt.directives(home) {
+			if err := RemoveDirective(dir); err != nil {
+				return err
+			}
+		}
+		return RemoveBlock(file, open, close, force)
 	}
 	sidecar := tgt.sidecar(home)
 	if on {

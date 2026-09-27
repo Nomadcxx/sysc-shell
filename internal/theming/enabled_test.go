@@ -297,7 +297,13 @@ func TestApplyEnabledGatesIncompleteTemplates(t *testing.T) {
 		}
 		targets := []string{writeTarget(home, name)}
 		if tgt, ok := templateTargets[name]; ok {
-			targets = append(targets, tgt.sidecar(home))
+			if tgt.sidecar != nil {
+				targets = append(targets, tgt.sidecar(home))
+			}
+			if tgt.block != nil {
+				f, _, _ := tgt.block(home)
+				targets = append(targets, f)
+			}
 			for _, dir := range tgt.directives(home) {
 				targets = append(targets, dir.file)
 			}
