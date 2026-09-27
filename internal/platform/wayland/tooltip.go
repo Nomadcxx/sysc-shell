@@ -27,11 +27,14 @@ type TooltipRequest struct {
 }
 
 // TooltipStyle is the resolved appearance of one tooltip. The shell owns the
-// theme, so it sends the colours it already resolved for the bar rather than
-// the owner deriving a second theme model from configuration.
+// theme, so it sends the colours it already resolved rather than the owner
+// deriving a second theme model from configuration.
 type TooltipStyle struct {
 	Background render.Color
 	Foreground render.Color
+	// Border strokes the tooltip's own edge, the same rim a floating panel
+	// draws. Zero alpha paints no stroke.
+	Border render.Color
 }
 
 // tooltipGap is the space between the bar edge and the tooltip.
@@ -39,13 +42,14 @@ const tooltipGap = 4
 
 const tooltipNamespace = "sysc-shell:tooltip"
 
-// tooltipPlacement positions a tooltip below its anchor, centred on it, and
-// clamped fully inside the output.
+// tooltipPlacement positions a tooltip beside its anchor, centred on it, and
+// clamped fully inside the output. On a bottom bar it goes above the anchor;
+// otherwise below.
 //
 // This is the panel design's D5 rule: anchored off the triggering bar's edge,
 // aligned to the triggering widget, clamped inside the output. Tranche 4A
 // adopts this rule rather than reconciling two.
-func tooltipPlacement(anchor ui.Rect, width, height, outputWidth, outputHeight int) ui.Rect {
+func tooltipPlacement(edge string, anchor ui.Rect, width, height, outputWidth, outputHeight int) ui.Rect {
 	if width > outputWidth {
 		width = outputWidth
 	}
@@ -58,6 +62,9 @@ func tooltipPlacement(anchor ui.Rect, width, height, outputWidth, outputHeight i
 	}
 
 	y := anchor.Y + anchor.H + tooltipGap
+	if edge == "bottom" {
+		y = anchor.Y - height - tooltipGap
+	}
 	if y+height > outputHeight {
 		y = outputHeight - height
 	}
@@ -74,10 +81,8 @@ func tooltipPlacement(anchor ui.Rect, width, height, outputWidth, outputHeight i
 // and needs no outside-click dismissal, which is the panel design's OSD shape
 // rather than its panel shape.
 const (
-	tooltipLayer    = layershell.ZwlrLayerShellV1LayerOverlay
-	tooltipKeyboard = uint32(layershell.ZwlrLayerSurfaceV1KeyboardInteractivityNone)
-	// tooltipTextSize is the logical size the label is measured and painted at.
-	tooltipTextSize      = 14
+	tooltipLayer         = layershell.ZwlrLayerShellV1LayerOverlay
+	tooltipKeyboard      = uint32(layershell.ZwlrLayerSurfaceV1KeyboardInteractivityNone)
 	tooltipExclusiveZone = int32(-1)
 )
 
@@ -97,6 +102,9 @@ type tooltipSurface struct {
 	root     *ui.Node
 	scale120 ui.Scale120
 	style    TooltipStyle
+	// backdrop is the blurred capture of what sat under the tooltip before it
+	// mapped, the same shape a panel takes through the aux surface path.
+	backdrop *ui.Image
 }
 
 func (o *owner) handleTooltip(req TooltipRequest) {
@@ -126,9 +134,25 @@ func (o *owner) showTooltip(req TooltipRequest) error {
 	if outH <= 0 {
 		outH = 1080
 	}
-	place := tooltipPlacement(req.Anchor, width, height, outW, outH)
+	place := tooltipPlacement(h.policy.Edge, req.Anchor, width, height, outW, outH)
 	if place.W <= 0 || place.H <= 0 {
 		return nil
+	}
+
+	// The backdrop a panel takes when it opens: capture what sits under this
+	// rectangle before the tooltip maps, reduced and blurred. When the theme
+	// asks for no blur, or the compositor has no screencopy, the capture is
+	// nil and painting stays a plain root fill.
+	//
+	// A panel prefers the compositor's background-effect protocol when the
+	// compositor offers it; a tooltip is small and short-lived, so it always
+	// captures instead of routing this hand-built surface through the aux
+	// surface unit that owns that protocol.
+	var backdrop *ui.Image
+	if o.cfg.Theme.BlurBehind {
+		if shot := o.captureRegion(h.proxy, place); shot != nil {
+			backdrop = render.Blur(shot, backdropDownsample, o.cfg.Theme.BlurRadius)
+		}
 	}
 
 	surface, err := o.compositor.CreateSurface()
@@ -184,6 +208,7 @@ func (o *owner) showTooltip(req TooltipRequest) error {
 		root:     req.Root,
 		scale120: h.bar.ss.scale120,
 		style:    req.Style,
+		backdrop: backdrop,
 	}
 	if tt.scale120 == 0 {
 		tt.scale120 = ui.ScaleUnit
@@ -307,6 +332,8 @@ func (o *owner) tooltipStyle(tt *tooltipSurface) (render.Style, string) {
 		OnPrimary:  tooltipColor(tt.style.Foreground, ink),
 		Body:       ui.Rect{X: 0, Y: 0, W: tt.place.W, H: tt.place.H},
 		Radius:     o.cfg.Theme.Radius,
+		Rim:        tt.style.Border,
+		Backdrop:   tt.backdrop,
 	}, bar.FontFamily
 }
 

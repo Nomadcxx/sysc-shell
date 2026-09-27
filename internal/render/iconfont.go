@@ -187,6 +187,10 @@ const (
 	iconGitHubUnread
 )
 
+// The Proton VPN mark follows the GitHub pair for the protonvpn plugin's
+// bar pill and panel header.
+const iconProton rune = iconGitHubUnread + 1
+
 // batteryLevels is how many level glyphs each state has.
 const batteryLevels = 7
 
@@ -522,6 +526,7 @@ var iconNames = map[string]rune{
 	"docker":                iconDocker,
 	"github":                iconGitHub,
 	"github-unread":         iconGitHubUnread,
+	"proton":                iconProton,
 }
 
 func init() {
