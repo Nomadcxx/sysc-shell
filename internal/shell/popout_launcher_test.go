@@ -543,4 +543,3 @@ func writeLauncherPNG(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 }
-

@@ -316,10 +316,10 @@ func TestServiceSeedsTheThemeFromAPersistedAssignment(t *testing.T) {
 
 	seeds := make(chan string, 4)
 	svc := NewService(ServiceConfig{
-		Engine:     newFakeEngine(),
-		Connectors: []string{"DP-1"},
+		Engine:      newFakeEngine(),
+		Connectors:  []string{"DP-1"},
 		PersistPath: path,
-		ConfigHook: func(_, seed string) { seeds <- seed },
+		ConfigHook:  func(_, seed string) { seeds <- seed },
 	})
 	t.Cleanup(svc.Close)
 
