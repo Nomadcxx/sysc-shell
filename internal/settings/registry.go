@@ -755,7 +755,7 @@ func seedEntry(cfg config.Config) Entry {
 func (r *Registry) addTemplateEntries() {
 	for _, name := range []string{
 		"alacritty", "foot", "ghostty", "kitty", "wezterm", "niri",
-		"gtk3", "gtk4", "qt", "kcolorscheme", "emacs", "helix",
+		"qt", "kcolorscheme", "helix",
 		"btop", "cava", "starship", "scroll",
 	} {
 		// GH #7: only complete templates get a toggle; a stub would brick the

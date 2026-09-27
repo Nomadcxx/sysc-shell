@@ -93,25 +93,6 @@ func applyOnce(home string, enabled func(string) bool, tok theme.Tokens, force f
 				continue
 			}
 			record(name, applyNiri(cfg, gen, rendered, forceOn(name)))
-		case "gtk3", "gtk4":
-			ini := filepath.Join(home, ".config", "gtk-3.0", "settings.ini")
-			css := filepath.Join(home, ".themes", "sysc-shell-Dark", "gtk-3.0", "gtk.css")
-			if name == "gtk4" {
-				ini = filepath.Join(home, ".config", "gtk-4.0", "settings.ini")
-				css = filepath.Join(home, ".themes", "sysc-shell-Dark", "gtk-4.0", "gtk.css")
-			}
-			if !on {
-				record(name, UnapplyWrite(css))
-				record(name, UnapplyGtkThemeName(ini))
-				continue
-			}
-			// Pointing gtk-theme-name at a css the shell refused to write
-			// would half-apply the theme: skip the ini when the css fails.
-			if err := applyWrite(css, rendered, forceOn(name)); err != nil {
-				record(name, err)
-				continue
-			}
-			record(name, ApplyGtkThemeName(ini, gtkOurs))
 		default:
 			record(name, applyTemplateTarget(name, home, on, rendered, forceOn(name)))
 		}
@@ -131,8 +112,6 @@ func writeTarget(home, name string) string {
 		return filepath.Join(home, ".config", "kitty", "kitty.conf")
 	case "wezterm":
 		return filepath.Join(home, ".config", "wezterm", "wezterm.lua")
-	case "emacs":
-		return filepath.Join(home, ".emacs.d", "sysc-shell-theme.el")
 	default:
 		return ""
 	}

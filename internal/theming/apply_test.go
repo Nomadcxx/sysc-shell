@@ -158,43 +158,6 @@ func TestNiriIncludeInjectionIdempotent(t *testing.T) {
 	}
 }
 
-func TestGtkThemeNameOnlySwitchedWhenUnsetOrOurs(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	adw := filepath.Join(dir, "adw.ini")
-	if err := os.WriteFile(adw, []byte("[Settings]\ngtk-theme-name=Adwaita\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := ApplyGtkThemeName(adw, gtkOurs); err != nil {
-		t.Fatal(err)
-	}
-	got, _ := os.ReadFile(adw)
-	if !strings.Contains(string(got), "Adwaita") {
-		t.Fatal("Adwaita was replaced")
-	}
-
-	ours := filepath.Join(dir, "ours.ini")
-	if err := os.WriteFile(ours, []byte("[Settings]\ngtk-theme-name=sysc-shell-Dark\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := ApplyGtkThemeName(ours, "sysc-shell-Light"); err != nil {
-		t.Fatal(err)
-	}
-	got, _ = os.ReadFile(ours)
-	if !strings.Contains(string(got), "sysc-shell-Light") {
-		t.Fatalf("ours theme not updated: %s", got)
-	}
-
-	absent := filepath.Join(dir, "absent.ini")
-	if err := ApplyGtkThemeName(absent, gtkOurs); err != nil {
-		t.Fatal(err)
-	}
-	got, _ = os.ReadFile(absent)
-	if !strings.Contains(string(got), "gtk-theme-name="+gtkOurs) {
-		t.Fatalf("absent not set: %s", got)
-	}
-}
-
 func TestDisablingNiriTemplateRemovesIncludeAndFile(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	dir := t.TempDir()
@@ -238,34 +201,6 @@ func TestDisableIsIdempotentAndSafeWhenNeverApplied(t *testing.T) {
 	got, _ := os.ReadFile(cfg)
 	if string(got) != "keybinds { }\n" {
 		t.Fatal("disable modified a config it never touched")
-	}
-}
-
-func TestDisableGtkRestoresOnlyOurThemeName(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	ours := filepath.Join(dir, "ours.ini")
-	if err := os.WriteFile(ours, []byte("[Settings]\ngtk-theme-name=sysc-shell-Dark\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := UnapplyGtkThemeName(ours); err != nil {
-		t.Fatal(err)
-	}
-	got, _ := os.ReadFile(ours)
-	if strings.Contains(string(got), "gtk-theme-name=sysc-shell-Dark") {
-		t.Fatalf("ours name survived: %s", got)
-	}
-
-	adw := filepath.Join(dir, "adw.ini")
-	if err := os.WriteFile(adw, []byte("[Settings]\ngtk-theme-name=Adwaita\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := UnapplyGtkThemeName(adw); err != nil {
-		t.Fatal(err)
-	}
-	got, _ = os.ReadFile(adw)
-	if !strings.Contains(string(got), "Adwaita") {
-		t.Fatal("Adwaita was touched")
 	}
 }
 
