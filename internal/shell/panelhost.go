@@ -135,6 +135,17 @@ type PanelHost struct {
 	// barPreview is the last bar preview that resolved, kept so a draft that
 	// is mid-edit does not blank the Appearance page's preview.
 	barPreview *ui.Image
+	// barImages caches rendered bar pictures by the draft, width and scale
+	// they were painted from. Building one scans system fonts; the
+	// Appearance page cost 38 ms a rebuild on the Wayland owner without it.
+	barImages map[string]*ui.Image
+	// settingsScrollTop makes the next rebuild open the body at the top: a
+	// page or section switch. rebuildPanel otherwise carries the old offset.
+	settingsScrollTop bool
+	// settingsTreeScale is the scale the settings tree was built at, so a
+	// configure at another scale rebuilds it (its measured widths and the bar
+	// pictures depend on it).
+	settingsTreeScale int
 	// pluginName resolves a plugin ID to its catalogue name for the bar
 	// editor's rows (settings redesign D9). Set by barLaneStripFor; nil
 	// falls back to the plugin ID.
@@ -341,7 +352,13 @@ func (r *Registry) openSettingsAtLocked(output uint32, requested string) bool {
 		return true
 	}
 	if r.panelHosts[PanelSettings] == nil {
-		if err := r.openPanelRootLocked(PanelSettings, output, Trigger{}); err != nil {
+		// The output's size, so Settings takes its responsive size (D10)
+		// rather than one for a 1920x1080 output that is not there.
+		connector := ""
+		if bar, ok := r.bars[output]; ok {
+			connector = bar.connector()
+		}
+		if err := r.openPanelRootLocked(PanelSettings, output, r.triggerLocked(output, connector)); err != nil {
 			return true
 		}
 	}
@@ -402,13 +419,14 @@ func (r *Registry) selectPanelSectionLocked(id PanelID, section string) error {
 	page := ""
 	if id == PanelSettings {
 		var ok bool
-		if section, page, ok = settingsAddress(section); !ok {
-			return fmt.Errorf("unknown section %q", section)
+		requested := section
+		if section, page, ok = settingsAddress(requested); !ok {
+			return fmt.Errorf("unknown section %q", requested)
 		}
 		if h.section == section && settingsCurrentPage(h, section) == page {
 			return nil
 		}
-		h.settingsScroll = 0
+		h.settingsScrollTop = true
 	} else if h.section == section {
 		return nil
 	}
@@ -1211,7 +1229,16 @@ func (h *PanelHost) configureLocking(r *Registry) func(int, int, int) error {
 	return func(w, height, scale120 int) error {
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		return h.configure(w, height, scale120)
+		if err := h.configure(w, height, scale120); err != nil {
+			return err
+		}
+		// The settings tree is built before the first configure, at the
+		// bar's scale or none; widths and bar pictures measured at another
+		// scale are rebuilt at this one.
+		if h.id == PanelSettings && h.settingsTreeScale != scale120 && ui.Scale120(scale120).Valid() {
+			r.rebuildPanel(h)
+		}
+		return nil
 	}
 }
 
@@ -2115,12 +2142,12 @@ func (h *PanelHost) activate(r *Registry) bool {
 		if h.id == PanelControlCenter {
 			return h.selectControlCentreSection(r, section)
 		}
-		h.section, h.settingsPage, h.settingsScroll = section, "", 0
+		h.section, h.settingsPage, h.settingsScrollTop = section, "", true
 		r.rebuildPanel(h)
 		return true
 	}
 	if page, ok := strings.CutPrefix(n.Action, "page:"); ok {
-		h.settingsPage, h.settingsScroll = page, 0
+		h.settingsPage, h.settingsScrollTop = page, true
 		r.rebuildPanel(h)
 		return true
 	}
@@ -2326,6 +2353,9 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 	idx := h.roving.Index()
 	if h.id == PanelSettings {
 		h.settingsScroll = settingsScrollOffset(h.root)
+		if h.settingsScrollTop {
+			h.settingsScroll, h.settingsScrollTop = 0, false
+		}
 	}
 	focusedKey := ""
 	if h.id == PanelClipboard {
@@ -2610,6 +2640,11 @@ func (h *PanelHost) applySetting(r *Registry, n *ui.Node) {
 		v = n.Text
 	}
 	h.commitSetting(r, e, v)
+	// A toggle or a menu can change what else applies: turning the bar off
+	// dims the rest of Appearance. Sliders and fields stream, so they wait.
+	if h.id == PanelSettings && (n.Kind == ui.KindToggle || n.Kind == ui.KindMenu) {
+		r.rebuildPanel(h)
+	}
 }
 
 // commitSetting applies one value to the draft, rebuilds the registry from it,

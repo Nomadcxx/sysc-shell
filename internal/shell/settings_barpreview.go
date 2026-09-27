@@ -1,6 +1,10 @@
 package shell
 
 import (
+	"fmt"
+	"hash/fnv"
+	"strconv"
+
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -16,15 +20,50 @@ func (r *Registry) settingsBarImage(h *PanelHost, cfg config.Config, width int) 
 	if width <= 0 {
 		return nil
 	}
+	scale := h.scale120
+	if !ui.Scale120(scale).Valid() {
+		scale = int(ui.ScaleUnit)
+	}
+	key := settingsBarImageKey(cfg, r.tokens, width, scale)
+	if img, ok := h.barImages[key]; ok {
+		return img
+	}
+	img := r.paintSettingsBar(h, cfg, width, scale)
+	if img == nil {
+		return nil
+	}
+	// A handful of pictures per page; a long session of edits would
+	// otherwise keep every one it ever drew.
+	if h.barImages == nil || len(h.barImages) >= 32 {
+		h.barImages = map[string]*ui.Image{}
+	}
+	h.barImages[key] = img
+	return img
+}
+
+// settingsBarImageKey names a picture by everything it is painted from except
+// the live widget data: the draft, the palette, the width and the scale. A
+// clock in a cached picture keeps the minute it was drawn at.
+func settingsBarImageKey(cfg config.Config, tok theme.Tokens, width, scale int) string {
+	f := fnv.New64a()
+	fmt.Fprintf(f, "%v|%v|%d|%d", cfg, tok, width, scale)
+	return strconv.FormatUint(f.Sum64(), 16)
+}
+
+// paintSettingsBar draws the shared bar policy, cfg.Bar, which is the one
+// Appearance edits. The output's own override would ignore the draft's Style
+// and Shape on an output that has one.
+func (r *Registry) paintSettingsBar(h *PanelHost, cfg config.Config, width, scale int) *ui.Image {
 	connector := ""
 	if bar, ok := r.bars[h.output]; ok {
 		connector = bar.connector()
 	}
-	policy := cfg.ForConnector(connector)
-	t, err := resolveOutputTheme(cfg, connector, r.tokens, true)
+	policy := cfg.Bar
+	resolved, err := ResolveTheme(cfg, policy, r.tokens)
 	if err != nil {
 		return nil
 	}
+	t := resolved.WithCompositor(true)
 	bar, err := NewWithTheme(t, policy, connector)
 	if err != nil {
 		return nil
@@ -32,10 +71,6 @@ func (r *Registry) settingsBarImage(h *PanelHost, cfg config.Config, width int) 
 	defer bar.stopAnimation()
 	bar.apply(r.viewLocked(connector))
 	height := policy.SurfaceExtent()
-	scale := h.scale120
-	if !ui.Scale120(scale).Valid() {
-		scale = int(ui.ScaleUnit)
-	}
 	if err := bar.Configure(width, height, scale); err != nil {
 		return nil
 	}
@@ -64,7 +99,7 @@ func settingsBarPreview(r *Registry, h *PanelHost) *ui.Node {
 	if img := r.settingsBarImage(h, h.draft, layoutW); img != nil {
 		h.barPreview = img
 	}
-	extent := h.draft.ForConnector("").SurfaceExtent()
+	extent := h.draft.Bar.SurfaceExtent()
 	return settingsGroupCard(h, "Preview", []*ui.Node{{
 		Kind: ui.KindImage, Image: h.barPreview, ImageW: w,
 		ImageH: max(extent*w/max(layoutW, 1), 1),
@@ -111,7 +146,7 @@ func settingsPictureCards(r *Registry, h *PanelHost, e settings.Entry) *ui.Node 
 			continue
 		}
 		label := settingsOptionLabel(opt)
-		imgH := cfg.ForConnector("").SurfaceExtent()
+		imgH := cfg.Bar.SurfaceExtent()
 		_, labelH := measure(label, ui.TextAttrs{})
 		// A button sizes to a control, not to its content, so the card states
 		// the height its picture and label need.

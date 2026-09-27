@@ -121,10 +121,10 @@ func settingsRail(h *PanelHost, section string) *ui.Node {
 	if h.search == nil {
 		h.search = ui.NewField("")
 	}
-	m := h.metrics()
 	search := h.search.Node("Search")
 	search.Width = settingsRailWidth
 	rail := &ui.Node{Kind: ui.KindColumn, Width: settingsRailWidth, Gap: theme.MarginXXS, Children: []*ui.Node{search}}
+	item := settingsRailItemHeight(h, search)
 	for _, c := range settings.SectionClusters() {
 		rail.Children = append(rail.Children, &ui.Node{
 			Kind: ui.KindText, Text: c.Name, TextRole: theme.RoleCaption,
@@ -132,9 +132,12 @@ func settingsRail(h *PanelHost, section string) *ui.Node {
 		})
 		for _, name := range c.Sections {
 			entry := &ui.Node{
-				Kind: ui.KindButton, Width: settingsRailWidth, Height: m.StandardControl,
+				Kind: ui.KindButton, Width: settingsRailWidth, Height: item,
 				Action: "section:" + name, Name: name, Role: "tab", Focusable: true,
-				Tooltip: name, Shape: ui.ShapeMedium, Padding: m.ButtonPadding,
+				// A rail tab is a list row, not a push button: the button
+				// padding (18 at spacious) would make twelve of them overrun
+				// a short pane.
+				Tooltip: name, Shape: ui.ShapeMedium, Padding: theme.MarginS,
 				// One row child: layoutButtonContent lays a single row out in
 				// full, where several children would get no box (barChip).
 				Children: []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
@@ -150,6 +153,31 @@ func settingsRail(h *PanelHost, section string) *ui.Node {
 		}
 	}
 	return rail
+}
+
+// settingsRailItemHeight is a section tab's height: the density's standard
+// control, or less when twelve of them, the four captions and search would
+// not fit the pane. At spacious density on a 1280x720 output they ran 150 px
+// past its bottom edge.
+func settingsRailItemHeight(h *PanelHost, search *ui.Node) int {
+	m := h.metrics()
+	if m.StandardControl <= 0 {
+		return 0 // no density metrics: the layout measures the tab
+	}
+	ph := h.place.Panel.H
+	if ph <= 0 {
+		ph = panelTargetSize(PanelSettings).H
+	}
+	clusters := settings.SectionClusters()
+	_, captionH := settingsMeasure(h)("Look", ui.TextAttrs{Role: theme.RoleCaption})
+	searchH := search.Height
+	if searchH <= 0 {
+		searchH = m.InputHeight
+	}
+	children := 1 + len(clusters) + len(settingsSections)
+	room := ph - 2*m.PanelPadding - searchH - len(clusters)*captionH - (children-1)*theme.MarginXXS
+	// Never shorter than the icon and its padding, which the tab has to hold.
+	return max(min(m.StandardControl, room/max(len(settingsSections), 1)), captionH, m.IconNormal+2*theme.MarginS)
 }
 
 // settingsPageTabs switches a section's pages. They are a segmented control
@@ -185,6 +213,7 @@ func settingsCurrentPage(h *PanelHost, section string) string {
 }
 
 func settingsTree(r *Registry, h *PanelHost) *ui.Node {
+	h.settingsTreeScale = h.scale120
 	section := h.section
 	if section == "" {
 		section = settingsSections[0]
@@ -298,7 +327,12 @@ func settingsBarPage(r *Registry, h *PanelHost, page string) *ui.Node {
 	var rest []settings.Entry
 	for _, e := range entries {
 		if e.Present == settings.PresentCards {
-			lead = append(lead, settingsGroupCard(h, e.Label, []*ui.Node{settingsCardsFor(r, h, e)}))
+			cards := []*ui.Node{settingsCardsFor(r, h, e)}
+			if reason := settingsBarDimReason(h, e.Path); reason != "" {
+				settingsDimRow(&ui.Node{Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{{Kind: ui.KindColumn}, cards[0]}}, reason)
+				cards = append(cards, &ui.Node{Kind: ui.KindText, Text: reason, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
+			}
+			lead = append(lead, settingsGroupCard(h, e.Label, cards))
 			continue
 		}
 		rest = append(rest, e)
@@ -321,34 +355,115 @@ func settingsCardsFor(r *Registry, h *PanelHost, e settings.Entry) *ui.Node {
 	return settingsSegmented(h, e, raw)
 }
 
-// settingsDimBarRows disables what does not apply: the frost sliders under a
-// solid bar, and everything but Enabled when the bar is off. The rows stay in
-// place with their descriptions, so the user learns why rather than hunting.
+// settingsBarDimReason says why a Bar setting does not apply to the draft,
+// or "" when it does. Enabled always applies: it is how the rest comes back.
+func settingsBarDimReason(h *PanelHost, path string) string {
+	b := h.draft.Bar
+	switch {
+	case path == "bar.enabled" || !strings.HasPrefix(path, "bar."):
+		return ""
+	case !b.Enabled:
+		return "The bar is off. Turn it on to change this."
+	}
+	hc := h.draft.Accessibility.HighContrast
+	switch path {
+	case "bar.frost-opacity":
+		if hc {
+			return "High contrast draws the bar solid."
+		}
+		if b.Style != "frosted" {
+			return "Applies to the Frosted style."
+		}
+	case "bar.pill-opacity":
+		if hc {
+			return "High contrast draws the bar solid."
+		}
+		if b.Style == "solid" {
+			return "Applies to the Frosted and Islands styles."
+		}
+	case "bar.shape":
+		if b.Style == "islands" {
+			return "Islands always floats."
+		}
+	}
+	return ""
+}
+
+// settingsDimBarRows dims each row that does not apply, label and all, and
+// puts the reason where its description was (design D8). The row stays, so
+// the user learns why rather than hunting for a setting that vanished.
 func settingsDimBarRows(h *PanelHost, root *ui.Node) {
-	off := !h.draft.Bar.Enabled
-	solid := h.draft.Bar.Style == "solid"
 	var walk func(n *ui.Node)
 	walk = func(n *ui.Node) {
 		if n == nil {
 			return
 		}
-		path := n.Action
-		for _, prefix := range []string{"set:", "pick:", "reset:", "step:up:", "step:down:"} {
-			path = strings.TrimPrefix(path, prefix)
-		}
-		path, _, _ = strings.Cut(path, "=")
-		if path != n.Action && strings.HasPrefix(path, "bar.") && path != "bar.enabled" {
-			frost := path == "bar.frost-opacity" || path == "bar.pill-opacity"
-			if off || (solid && frost) {
-				n.State |= ui.StateDisabled
-				n.Focusable = false
+		if path := settingsRowPath(n); path != "" {
+			if reason := settingsBarDimReason(h, path); reason != "" {
+				settingsDimRow(n, reason)
 			}
+			return
 		}
 		for _, c := range n.Children {
 			walk(c)
 		}
 	}
 	walk(root)
+}
+
+// settingsRowPath is the setting a settingsEntryRow edits, or "" when n is
+// not one: a pinned row of a label column and its trailing control.
+func settingsRowPath(n *ui.Node) string {
+	if n.Kind != ui.KindRow || !n.PinEnd || len(n.Children) != 2 || n.Children[0].Kind != ui.KindColumn {
+		return ""
+	}
+	path := ""
+	var find func(c *ui.Node)
+	find = func(c *ui.Node) {
+		if c == nil || path != "" {
+			return
+		}
+		for _, prefix := range []string{"set:", "pick:", "step:up:", "step:down:"} {
+			if rest, ok := strings.CutPrefix(c.Action, prefix); ok {
+				path, _, _ = strings.Cut(rest, "=")
+				return
+			}
+		}
+		for _, k := range c.Children {
+			find(k)
+		}
+	}
+	find(n.Children[1])
+	return path
+}
+
+// settingsDimRow disables every control in n, mutes its text, and replaces
+// its description with reason.
+func settingsDimRow(n *ui.Node, reason string) {
+	var walk func(c *ui.Node)
+	walk = func(c *ui.Node) {
+		if c == nil {
+			return
+		}
+		if c.Focusable || c.Action != "" {
+			c.State |= ui.StateDisabled
+			c.Focusable = false
+		}
+		if c.Kind == ui.KindText {
+			c.Tone = ui.ToneSubtle
+		}
+		for _, k := range c.Children {
+			walk(k)
+		}
+	}
+	walk(n)
+	label := n.Children[0]
+	why := &ui.Node{Kind: ui.KindText, Text: reason, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle}
+	if len(label.Children) > 1 {
+		label.Children[1] = why
+	} else {
+		label.Children = append(label.Children, why)
+	}
 }
 
 // settingsAddress resolves an IPC or shortcut section name. "Section/Page"

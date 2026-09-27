@@ -568,7 +568,23 @@ func paintScrollThumb(c *Canvas, n *ui.Node, style Style) {
 	c.FillRounded(ui.Rect{X: track.X, Y: thumbY, W: trackW, H: thumbH}, trackW/2, style.Foreground)
 }
 
+// dimmedControl fades the inks a toggle, slider or menu paints itself, by the
+// same factor a disabled button's foreground takes. They drew no disabled look
+// at all, so a dimmed settings row read as live.
+func dimmedControl(n *ui.Node, style Style) Style {
+	if !n.State.Has(ui.StateDisabled) {
+		return style
+	}
+	fade := func(c Color) Color {
+		c.A = uint8(math.Round(float64(c.A) * disabledForeground))
+		return c
+	}
+	style.Track, style.Accent, style.AccentOn, style.Foreground = fade(style.Track), fade(style.Accent), fade(style.AccentOn), fade(style.Foreground)
+	return style
+}
+
 func paintToggle(c *Canvas, n *ui.Node, style Style) {
+	style = dimmedControl(n, style)
 	if n.Role == "checkbox" {
 		paintCheckbox(c, n, style)
 		return
@@ -611,6 +627,7 @@ func paintCheckbox(c *Canvas, n *ui.Node, style Style) {
 }
 
 func paintSlider(c *Canvas, n *ui.Node, style Style) {
+	style = dimmedControl(n, style)
 	box := style.Scale120.PhysicalRect(n.Bounds)
 	trackH := max(style.Scale120.Physical(ui.SliderTrack), 1)
 	y := box.Y + (box.H-trackH)/2
@@ -640,6 +657,7 @@ func paintSlider(c *Canvas, n *ui.Node, style Style) {
 }
 
 func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
+	style = dimmedControl(n, style)
 	box := style.Scale120.PhysicalRect(n.Bounds)
 	field := box
 	if len(n.Children) > 0 {
