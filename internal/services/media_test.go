@@ -492,6 +492,30 @@ func TestMediaSeekedResetsTheBaseline(t *testing.T) {
 	}
 }
 
+func TestSeekedSignalIncrementsSeeks(t *testing.T) {
+	t.Parallel()
+	const vlc = "org.mpris.MediaPlayer2.vlc"
+	b := newFakeBus(vlc)
+	b.setProps(vlc, map[string]any{"PlaybackStatus": "Playing"})
+	m := NewMedia(b)
+	t.Cleanup(m.Close)
+	lease, err := m.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(lease.Release)
+	waitFor(t, func() bool { return m.State().Available })
+
+	b.nameCh <- nameChange{Name: vlc, Acquired: true}
+	b.nameCh <- nameChange{Name: vlc, Acquired: true, Seeked: true}
+	waitFor(t, func() bool { return m.State().Seeks == 1 })
+	b.nameCh <- nameChange{Name: vlc, Acquired: true}
+	time.Sleep(20 * time.Millisecond)
+	if got := m.State().Seeks; got != 1 {
+		t.Fatalf("a plain refresh changed Seeks to %d", got)
+	}
+}
+
 func TestMediaRunningSlowTrackRate(t *testing.T) {
 	t.Parallel()
 	m := newMediaAt(t, PlaybackPlaying, 0, 0.5)

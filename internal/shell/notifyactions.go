@@ -16,11 +16,22 @@ const swipeSlop = 8
 // percent of the card width commits to dismiss; anything shorter returns.
 const swipeCommitFraction = 0.35
 
+const expandThreshold = 12
+
+type toastGesture uint8
+
+const (
+	gestureNone toastGesture = iota
+	gestureDismiss
+	gestureExpand
+)
+
 // notifyActions is the sink a resolver drives. The production wiring turns
 // these into notifyclient commands; tests capture them.
 type notifyActions interface {
 	invoke(id uint32, key string)
 	dismiss(id uint32)
+	toggleExpand(id uint32)
 	reply(id uint32, text string)
 	hover(id uint32, on bool)
 	openLink(href string)
@@ -45,6 +56,32 @@ type notifyResolver struct {
 
 func newNotifyResolver(a notifyActions) *notifyResolver {
 	return &notifyResolver{actions: a}
+}
+
+// classifyToastDrag keeps dismissal for a leftward, horizontally dominant
+// swipe. A vertical drag past the threshold toggles expansion; a diagonal tie
+// has no dominant direction and commits neither action.
+func classifyToastDrag(dx, dy, width int) toastGesture {
+	adx, ady := dx, dy
+	if adx < 0 {
+		adx = -adx
+	}
+	if ady < 0 {
+		ady = -ady
+	}
+	if ady > adx {
+		if ady > expandThreshold {
+			return gestureExpand
+		}
+		return gestureNone
+	}
+	if ady == adx {
+		return gestureNone
+	}
+	if width > 0 && float64(dx) > swipeCommitFraction*float64(width) {
+		return gestureDismiss
+	}
+	return gestureNone
 }
 
 // hitAt returns the deepest node under (x, y) that carries an action.
@@ -84,11 +121,15 @@ func (r *notifyResolver) release(root *ui.Node, x, y int) {
 	r.pointer.setPress("")
 	r.pointer.apply(root, nil)
 
-	// A horizontal drag past the threshold dismisses regardless of which node
-	// the press landed on, so swiping a button never invokes it.
-	if dx := r.pressX - x; r.cardWidth > 0 && float64(dx) > swipeCommitFraction*float64(r.cardWidth) {
+	switch classifyToastDrag(r.pressX-x, y-r.pressY, r.cardWidth) {
+	case gestureDismiss:
 		if id, ok := cardID(root); ok {
 			r.actions.dismiss(id)
+		}
+		return
+	case gestureExpand:
+		if id, ok := cardID(root); ok {
+			r.actions.toggleExpand(id)
 		}
 		return
 	}

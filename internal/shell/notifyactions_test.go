@@ -3,6 +3,7 @@ package shell
 import (
 	"testing"
 
+	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -11,6 +12,7 @@ type resolverHarness struct {
 	commands []resolvedCommand
 	focused  []uint32
 	opened   []string
+	expanded []uint32
 }
 
 type resolvedCommand struct {
@@ -31,6 +33,46 @@ func (h *resolverHarness) reply(id uint32, text string) {
 }
 func (h *resolverHarness) hover(id uint32, on bool) {}
 func (h *resolverHarness) openLink(href string)     { h.opened = append(h.opened, href) }
+func (h *resolverHarness) toggleExpand(id uint32)   { h.expanded = append(h.expanded, id) }
+
+func TestClassifyToastDrag(t *testing.T) {
+	const w = 360
+	cases := []struct {
+		name   string
+		dx, dy int
+		want   toastGesture
+	}{
+		{"click", 2, 3, gestureNone},
+		{"short left swipe", 60, 0, gestureNone},
+		{"committed left swipe", 130, 10, gestureDismiss},
+		{"right swipe never dismisses", -200, 0, gestureNone},
+		{"down drag expands", 3, 20, gestureExpand},
+		{"up drag toggles too", 0, -20, gestureExpand},
+		{"under the expand threshold", 0, 11, gestureNone},
+		{"mostly vertical beats a 35% horizontal", 130, 140, gestureExpand},
+		{"mostly horizontal is today's dismiss", 140, 130, gestureDismiss},
+		{"equal diagonal is not dominant", 130, 130, gestureNone},
+	}
+	for _, tc := range cases {
+		if got := classifyToastDrag(tc.dx, tc.dy, w); got != tc.want {
+			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestVerticalDragOnACardTogglesExpand(t *testing.T) {
+	h := &resolverHarness{}
+	r := newNotifyResolver(h)
+	root := NotificationCard(protocol.Notification{ID: 7, Summary: "Hello", Body: "World"}, nil, nil, false)
+	if err := ui.LayoutColumn(root, ui.Rect{W: 360, H: 120}, func(s string, _ ui.TextAttrs) (int, int) { return len(s) * 8, 16 }); err != nil {
+		t.Fatal(err)
+	}
+	r.press(root, 100, 20)
+	r.release(root, 102, 50)
+	if len(h.expanded) != 1 || h.expanded[0] != 7 || len(h.commands) != 0 {
+		t.Fatalf("expanded %v commands %v", h.expanded, h.commands)
+	}
+}
 
 func cardFixture() *ui.Node {
 	body := &ui.Node{Kind: ui.KindColumn, Action: "notify:7:default", Children: []*ui.Node{

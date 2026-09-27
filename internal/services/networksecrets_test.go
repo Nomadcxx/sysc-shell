@@ -191,3 +191,73 @@ func TestFullRequestChannelNeverLeavesGetSecretsHanging(t *testing.T) {
 		t.Fatal("full request channel left GetSecrets hanging")
 	}
 }
+
+func secretWireRequest() map[string]map[string]dbus.Variant {
+	return map[string]map[string]dbus.Variant{
+		"802-11-wireless": {"ssid": dbus.MakeVariant([]byte("Orac 15A"))},
+	}
+}
+
+func TestUnansweredPromptExpiresAtTheDeadline(t *testing.T) {
+	requests := make(chan SecretRequest, 1)
+	expired := make(chan struct{}, 1)
+	export := &secretExport{
+		slot: newSecretSlot(), requests: requests,
+		timeout: 25 * time.Millisecond, expired: expired,
+	}
+	done := make(chan *dbus.Error, 1)
+	go func() {
+		_, err := export.GetSecrets(secretWireRequest(), "/connection", wirelessSecuritySetting, nil, flagAllowInteraction)
+		done <- err
+	}()
+
+	<-requests // the prompt is shown and never answered
+
+	select {
+	case err := <-done:
+		if err == nil || err.Name != errUserCanceled {
+			t.Fatalf("expired prompt returned %v, want UserCanceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("an unanswered prompt never timed out")
+	}
+	select {
+	case <-expired:
+	default:
+		t.Fatal("the relay was not nudged to clear the password card")
+	}
+	next := make(chan secretReply, 1)
+	if !export.slot.begin(SecretRequest{SSID: "LukeAP"}, next) {
+		t.Fatal("the timeout must free the slot for the next join")
+	}
+}
+
+func TestAnsweredPromptIsNotRevivedByTheDeadline(t *testing.T) {
+	requests := make(chan SecretRequest, 1)
+	expired := make(chan struct{}, 1)
+	export := &secretExport{
+		slot: newSecretSlot(), requests: requests,
+		timeout: 25 * time.Millisecond, expired: expired,
+	}
+	done := make(chan *dbus.Error, 1)
+	go func() {
+		_, err := export.GetSecrets(secretWireRequest(), "/connection", wirelessSecuritySetting, nil, flagAllowInteraction)
+		done <- err
+	}()
+
+	<-requests
+	export.slot.submit("hunter2")
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("submitted prompt returned %v, want success", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("submitting did not complete GetSecrets")
+	}
+	time.Sleep(100 * time.Millisecond) // let the armed deadline fire
+	if export.slot.pending() {
+		t.Fatal("a fired deadline must not reopen an answered slot")
+	}
+}

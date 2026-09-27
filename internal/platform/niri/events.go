@@ -50,10 +50,17 @@ type Window struct {
 	Pid            int   // 0 when Niri sends null
 }
 
-// Snapshot is an immutable view of workspace and window state.
+// KeyboardLayouts is niri's configured keyboard layout list and active index.
+type KeyboardLayouts struct {
+	Names   []string
+	Current int
+}
+
+// Snapshot is an immutable view of workspace, window, and keyboard state.
 type Snapshot struct {
 	Workspaces []Workspace
 	Windows    []Window
+	Layouts    KeyboardLayouts
 	// FocusedOutput is derived from the workspace whose is_focused is true.
 	// Niri has no dedicated event or field for it.
 	FocusedOutput string
@@ -170,6 +177,17 @@ type wireWindowClosed struct {
 	ID *uint64 `json:"id"`
 }
 
+type wireKeyboardLayoutsChanged struct {
+	KeyboardLayouts struct {
+		Names      []string `json:"names"`
+		CurrentIdx *int     `json:"current_idx"`
+	} `json:"keyboard_layouts"`
+}
+
+type wireKeyboardLayoutSwitched struct {
+	Idx *int `json:"idx"`
+}
+
 // state accumulates workspace and window events into snapshots.
 //
 // last is the most recently published snapshot. Comparing against it is what
@@ -177,6 +195,7 @@ type wireWindowClosed struct {
 type state struct {
 	workspaces []Workspace
 	windows    []Window
+	layouts    KeyboardLayouts
 	last       Snapshot
 }
 
@@ -321,6 +340,33 @@ func (s *state) apply(line []byte) (bool, error) {
 		return s.publishIfChanged(), nil
 	}
 
+	if payload, ok := envelope["KeyboardLayoutsChanged"]; ok {
+		var changed wireKeyboardLayoutsChanged
+		if err := json.Unmarshal(payload, &changed); err != nil {
+			return false, fmt.Errorf("niri: decode KeyboardLayoutsChanged: %w", err)
+		}
+		if changed.KeyboardLayouts.CurrentIdx == nil {
+			return false, fmt.Errorf("niri: KeyboardLayoutsChanged is missing current_idx")
+		}
+		s.layouts = KeyboardLayouts{
+			Names:   slices.Clone(changed.KeyboardLayouts.Names),
+			Current: *changed.KeyboardLayouts.CurrentIdx,
+		}
+		return s.publishIfChanged(), nil
+	}
+
+	if payload, ok := envelope["KeyboardLayoutSwitched"]; ok {
+		var switched wireKeyboardLayoutSwitched
+		if err := json.Unmarshal(payload, &switched); err != nil {
+			return false, fmt.Errorf("niri: decode KeyboardLayoutSwitched: %w", err)
+		}
+		if switched.Idx == nil {
+			return false, fmt.Errorf("niri: KeyboardLayoutSwitched is missing idx")
+		}
+		s.layouts.Current = *switched.Idx
+		return s.publishIfChanged(), nil
+	}
+
 	return false, nil
 }
 
@@ -378,7 +424,14 @@ func (s *state) snapshot() Snapshot {
 		return 0
 	})
 
-	snap := Snapshot{Workspaces: workspaces, Windows: windows}
+	snap := Snapshot{
+		Workspaces: workspaces,
+		Windows:    windows,
+		Layouts: KeyboardLayouts{
+			Names:   slices.Clone(s.layouts.Names),
+			Current: s.layouts.Current,
+		},
+	}
 	for _, w := range workspaces {
 		if w.Focused {
 			snap.FocusedOutput = w.Output
@@ -395,7 +448,9 @@ func (s *state) publishIfChanged() bool {
 	next := s.snapshot()
 	if next.FocusedOutput == s.last.FocusedOutput &&
 		slices.Equal(next.Workspaces, s.last.Workspaces) &&
-		slices.Equal(next.Windows, s.last.Windows) {
+		slices.Equal(next.Windows, s.last.Windows) &&
+		slices.Equal(next.Layouts.Names, s.last.Layouts.Names) &&
+		next.Layouts.Current == s.last.Layouts.Current {
 		return false
 	}
 	s.last = next

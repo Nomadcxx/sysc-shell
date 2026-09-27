@@ -128,3 +128,28 @@ func writeTheme(t *testing.T, root, theme, inherits string) {
 		t.Fatal(err)
 	}
 }
+
+func TestNewResolverUsesTheConfiguredIconTheme(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	settings := filepath.Join(home, ".config", "gtk-3.0")
+	if err := os.MkdirAll(settings, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	contents := "[Settings]\ngtk-icon-theme-name=\"Tela\"\n"
+	if err := os.WriteFile(filepath.Join(settings, "settings.ini"), []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	writeTheme(t, root, "Tela", "hicolor")
+	writeIcon(t, root, "Tela", "48x48/apps", "chat.png")
+	writeIcon(t, root, "hicolor", "48x48/apps", "fallback.png")
+
+	resolver := NewResolver("", []string{root})
+	if _, ok := resolver.Resolve("chat", 48); !ok {
+		t.Fatal("the configured icon theme was not searched")
+	}
+	if _, ok := resolver.Resolve("fallback", 48); !ok {
+		t.Fatal("hicolor was not searched after the configured theme")
+	}
+}

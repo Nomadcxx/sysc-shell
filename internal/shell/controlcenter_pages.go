@@ -684,8 +684,8 @@ func ccNotifications(r *Registry, h *PanelHost) *ui.Node {
 	}
 	if len(cards) == 0 {
 		empty := monitorCard(m, []*ui.Node{
-			{Kind: ui.KindIcon, Icon: "notifications", IconSize: m.IconLarge},
-			{Kind: ui.KindText, Text: "Nothing to see here", TextRole: theme.RoleLabel, CenterX: true},
+			{Kind: ui.KindIcon, Icon: "notifications", IconSize: m.IconLarge, Tone: ui.ToneSubtle},
+			{Kind: ui.KindText, Text: "No notifications", TextRole: theme.RoleLabel, Tone: ui.ToneSubtle, CenterX: true},
 		})
 		empty.Height = 416
 		cards = append(cards, empty)

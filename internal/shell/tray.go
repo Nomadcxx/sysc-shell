@@ -386,6 +386,14 @@ func (r *Registry) applyTrayIcon(key icons.Key, image *ui.Image) {
 	r.mu.Lock()
 	r.scheduleMonitorIconRebuildLocked()
 	r.mu.Unlock()
+	// The decoded image may also be a toast card's app icon, requested
+	// lazily by lookupNotifyIcon; recompute so the letter tile is replaced
+	// without waiting for the next notification (GitHub #27).
+	r.mu.Lock()
+	if r.toasts != nil {
+		r.toasts.recompute()
+	}
+	r.mu.Unlock()
 }
 
 // monitorIconBatch is how long the system monitor waits for more icons

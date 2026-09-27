@@ -90,10 +90,11 @@ type PanelHost struct {
 	shieldQuiet        time.Time
 	// anim is this surface's one clock: every transition it runs shares it, so
 	// frames are scheduled from a single place.
-	anim     *animator
-	stopAnim chan struct{}
-	stopOnce sync.Once
-	theme    Theme
+	anim        *animator
+	stopAnim    chan struct{}
+	stopOnce    sync.Once
+	badgeCounts map[string]int
+	theme       Theme
 	// themeFrom is the palette this surface is fading out of. It is the theme
 	// as it was rendering when the change arrived, not the last published one,
 	// so a reload during a fade continues from what is on screen.
@@ -609,6 +610,22 @@ func (r *Registry) DropAux(output uint32, surfaceID string) {
 			h.closeLocked()
 		}
 		r.mu.Unlock()
+		return
+	}
+	if connector, ok := strings.CutPrefix(surfaceID, "toast:"); ok {
+		r.mu.Lock()
+		if r.toasts != nil {
+			r.toasts.drop(connector)
+		}
+		r.mu.Unlock()
+		return
+	}
+	if digits, ok := strings.CutPrefix(surfaceID, "osd:"); ok {
+		if g, err := strconv.ParseUint(digits, 10, 32); err == nil {
+			r.mu.Lock()
+			delete(r.osd.open, uint32(g))
+			r.mu.Unlock()
+		}
 		return
 	}
 	id, ok := panelIDFromAux(surfaceID)
@@ -1338,6 +1355,7 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 		return err
 	}
 	resolveProgressMotion(h.anim, root)
+	h.applyBadgePop(root)
 	resolveSpriteMotion(h.anim, root)
 
 	paintTheme := h.paintTheme()
@@ -2536,6 +2554,7 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 		h.errLabel = err.Error()
 	}
 	resolveProgressMotion(h.anim, probe)
+	h.noteBadges(h.root)
 	resolveSpriteMotion(h.anim, probe)
 	h.focus = ui.Focusables(h.root)
 	h.roving.Count = len(h.focus)
