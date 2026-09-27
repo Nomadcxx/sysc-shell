@@ -427,6 +427,39 @@ func TestEnsureDirectiveCreates(t *testing.T) {
 	}
 }
 
+func TestEnsureDirectiveUsesSection(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "alacritty.toml")
+	original := "[general]\nlive_config_reload = true\n[window]\nopacity = 0.9\n"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dd := directive{
+		file:    path,
+		line:    `import = ["themes/sysc-shell.toml"]`,
+		key:     "import",
+		section: "general",
+	}
+	if err := EnsureDirective(dd); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "[general]\nimport = [\"themes/sysc-shell.toml\"]\nlive_config_reload = true\n[window]\nopacity = 0.9\n"
+	if string(got) != want {
+		t.Fatalf("section directive result = %q, want %q", got, want)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("config mode = %v, want 0600", info.Mode().Perm())
+	}
+}
+
 func TestEnsureDirectiveAppendUpdateRefuse(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -473,6 +506,34 @@ func TestEnsureDirectiveAppendUpdateRefuse(t *testing.T) {
 	backup, _ := os.ReadFile(user.file + ".bak")
 	if string(backup) != "theme = catppuccin\n" {
 		t.Fatalf("backup = %q", backup)
+	}
+}
+
+func TestEnsureDirectiveSection(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	dd := d(dir, "config")
+	dd.create = true
+	dd.section = "main"
+	if err := os.WriteFile(dd.file, []byte("[colors]\nfg = 0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureDirective(dd); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(dd.file)
+	if string(got) != "[colors]\nfg = 0\n\n[main]\ntheme = sysc-shell\n" {
+		t.Fatalf("missing section not added: %q", got)
+	}
+	if err := os.WriteFile(dd.file, []byte("[main]\nx = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureDirective(dd); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = os.ReadFile(dd.file)
+	if string(got) != "[main]\ntheme = sysc-shell\nx = 1\n" {
+		t.Fatalf("existing section not used: %q", got)
 	}
 }
 

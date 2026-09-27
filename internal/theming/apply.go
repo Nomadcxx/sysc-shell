@@ -376,11 +376,12 @@ func applySidecar(path, content string, force bool) error {
 // directive is one single-line setting sysc-shell manages inside a user
 // config file, without owning the file itself.
 type directive struct {
-	file   string // user config path
-	line   string // the exact line sysc-shell writes
-	key    string // a line starting with this is ours or the user's
-	seed   string // whole-file content when creating (empty = just the line)
-	create bool   // invent the file if it does not exist
+	file    string // user config path
+	line    string // the exact line sysc-shell writes
+	key     string // a line starting with this is ours or the user's
+	section string // ini/toml section the line must live under ("" = top level)
+	seed    string // whole-file content when creating (empty = just the line)
+	create  bool   // invent the file if it does not exist
 }
 
 // EnsureDirective appends, updates or creates exactly one directive line.
@@ -425,30 +426,47 @@ func ensureDirective(d directive, force bool) error {
 		return fmt.Errorf("%w: directive in %s", ErrUserModified, d.file)
 	}
 	if conflictCount == 0 && ownCount == 0 {
-		out := strings.TrimSuffix(string(b), "\n") + "\n" + d.line + "\n"
-		if strings.TrimSpace(out) == d.line+"\n" {
-			out = d.line + "\n"
+		return writeDirectiveConfig(d.file, directiveContent(b, lines, d))
+	}
+	if force {
+		if err := backupDirectiveOnce(d.file, b); err != nil {
+			return err
 		}
-		return writeDirectiveConfig(d.file, []byte(out))
 	}
-
-	if err := backupDirectiveOnce(d.file, b); err != nil {
-		return err
-	}
-	out := make([]string, 0, len(lines))
-	inserted := false
+	remaining := make([]string, 0, len(lines))
 	for _, ln := range lines {
 		trim := strings.TrimSpace(ln)
 		if trim == own || strings.HasPrefix(trim, d.key) {
-			if !inserted {
-				out = append(out, d.line)
-				inserted = true
-			}
 			continue
 		}
-		out = append(out, ln)
+		remaining = append(remaining, ln)
 	}
-	return writeDirectiveConfig(d.file, []byte(strings.Join(out, "\n")))
+	return writeDirectiveConfig(d.file, directiveContent([]byte(strings.Join(remaining, "\n")), remaining, d))
+}
+
+func directiveContent(body []byte, lines []string, d directive) []byte {
+	if d.section == "" {
+		out := strings.TrimSuffix(string(body), "\n") + "\n" + d.line + "\n"
+		if strings.TrimSpace(out) == d.line+"\n" {
+			out = d.line + "\n"
+		}
+		return []byte(out)
+	}
+	header := "[" + d.section + "]"
+	for i, ln := range lines {
+		if strings.TrimSpace(ln) == header {
+			out := make([]string, 0, len(lines)+1)
+			out = append(out, lines[:i+1]...)
+			out = append(out, d.line)
+			out = append(out, lines[i+1:]...)
+			return []byte(strings.Join(out, "\n"))
+		}
+	}
+	out := strings.TrimSuffix(string(body), "\n") + "\n\n" + header + "\n" + d.line + "\n"
+	if strings.TrimSpace(string(body)) == "" {
+		out = header + "\n" + d.line + "\n"
+	}
+	return []byte(out)
 }
 
 // backupDirectiveOnce preserves the complete user config before a confirmed

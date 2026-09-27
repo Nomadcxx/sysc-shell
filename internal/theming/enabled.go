@@ -196,11 +196,12 @@ func signalKitty(root string) error {
 
 // templateTarget is the sidecar+directive model for one application: we own
 // a generated file, and manage exactly one include-ish line in the user's
-// real config. Names not in the table still use the legacy clobber path
+// real config. Names not in the table still use the guarded whole-file path
 // until their port task adds a row.
 //
-// ponytail: directive lines are appended without section awareness; the foot
-// and btop ports add a section anchor if the append lands in the wrong one.
+// ponytail: directive matching uses the target's key prefix rather than an
+// app-config parser; add format-aware parsing only when a supported target
+// needs syntax beyond one managed line in a named section.
 type templateTarget struct {
 	sidecar    func(home string) string
 	directives func(home string) []directive
@@ -217,10 +218,12 @@ var templateTargets = map[string]templateTarget{
 		directives: func(h string) []directive {
 			p := joined(h, ".config", "alacritty", "themes", "sysc-shell.toml")
 			return []directive{{
-				file:   joined(h, ".config", "alacritty", "alacritty.toml"),
-				line:   `import = ["` + p + `"]`,
-				key:    "import",
-				create: true,
+				file:    joined(h, ".config", "alacritty", "alacritty.toml"),
+				line:    `import = ["` + p + `"]`,
+				key:     "import",
+				section: "general",
+				seed:    "[general]\n" + `import = ["` + p + `"]` + "\n",
+				create:  true,
 			}}
 		},
 	},
@@ -229,11 +232,12 @@ var templateTargets = map[string]templateTarget{
 		directives: func(h string) []directive {
 			line := "include=~/.config/foot/themes/sysc-shell"
 			return []directive{{
-				file:   joined(h, ".config", "foot", "foot.ini"),
-				line:   line,
-				key:    "include=",
-				seed:   "[main]\n" + line + "\n",
-				create: true,
+				file:    joined(h, ".config", "foot", "foot.ini"),
+				line:    line,
+				key:     "include=",
+				section: "main",
+				seed:    "[main]\n" + line + "\n",
+				create:  true,
 			}}
 		},
 	},
@@ -273,7 +277,7 @@ var templateTargets = map[string]templateTarget{
 }
 
 // applyTemplateTarget is the per-app dispatch: sidecar+directive for table
-// members, the legacy whole-file clobber (guarded) for the rest.
+// members, and a guarded whole-file write for the rest.
 func applyTemplateTarget(name, home string, on bool, rendered string, force bool) error {
 	tgt, known := templateTargets[name]
 	if !known {
