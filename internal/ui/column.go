@@ -128,6 +128,17 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 	case KindEdgeFade:
 		return 0, nil
 	case KindButton, KindDragSource:
+		// A button around one column is a tappable card, placed the way a
+		// capsule card is: its column fills the padded box. measureButton
+		// asks the column for the band offered, which is zero without an
+		// explicit height, so the card reserved its padding alone.
+		if n.Height <= 0 && len(n.Children) == 1 && n.Children[0] != nil && n.Children[0].Kind == KindColumn {
+			h, err := columnChildHeight(n.Children[0], max(width-2*n.Padding, 0), measure)
+			if err != nil {
+				return 0, err
+			}
+			return h + 2*n.Padding, nil
+		}
 		_, h, err := measureButton(n, measure)
 		return h, err
 	case KindIcon:

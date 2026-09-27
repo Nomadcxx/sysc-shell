@@ -220,6 +220,36 @@ func TestColumnPlacesACapsuleChild(t *testing.T) {
 	}
 }
 
+// A button whose one child is a column is a tappable card. It measured the
+// column through measureNode, which answers with the band offered -- zero,
+// since the button names no height -- so the card reserved only its padding
+// and its content spilled over whatever the column placed next.
+func TestColumnReservesAButtonCardsColumnContent(t *testing.T) {
+	t.Parallel()
+	inner := &Node{Kind: KindColumn, Gap: 6, Children: []*Node{
+		{Kind: KindImage, ImageW: 111, ImageH: 225},
+		{Kind: KindText, Text: "Pixel 8 Pro"},
+		{Kind: KindMeter, Value: 0.5, Width: 180},
+	}}
+	card := &Node{Kind: KindButton, Action: "device-ping", Padding: 14, Children: []*Node{inner}}
+	next := &Node{Kind: KindText, Text: "Battery"}
+	root := &Node{Kind: KindColumn, Gap: 10, Children: []*Node{card, next}}
+
+	if err := LayoutColumn(root, Rect{W: 380, H: 600}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	_, text := fakeMeasure("Pixel 8 Pro", TextAttrs{})
+	if want := 2*14 + 225 + 6 + text + 6 + MeterHeight; card.Bounds.H != want {
+		t.Fatalf("card height = %d, want %d (padding plus the column's content)", card.Bounds.H, want)
+	}
+	if bottom := inner.Children[2].Bounds.Y + inner.Children[2].Bounds.H; bottom > card.Bounds.Y+card.Bounds.H {
+		t.Fatalf("card content ends at %d, past the card's lower edge %d", bottom, card.Bounds.Y+card.Bounds.H)
+	}
+	if next.Bounds.Y < card.Bounds.Y+card.Bounds.H {
+		t.Fatalf("next child at y=%d overlaps the card ending at %d", next.Bounds.Y, card.Bounds.Y+card.Bounds.H)
+	}
+}
+
 // A capsule's PaddingX insets its child at the ends in a column too, the same
 // way it does in a row. The column path used to inset by Padding, so a pill's
 // content sat under its rounded ends.
