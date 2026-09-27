@@ -104,7 +104,13 @@ type Bar struct {
 	stopOnce sync.Once
 
 	invalidations chan struct{}
-	mediaWidget   bool
+	// onPublish is the registry seam wired at adopt time: it routes an
+	// invalidation to the Wayland owner for this bar's global. The private
+	// channel above is the fallback for a stand-alone bar (proofs, tests);
+	// in production nothing reads it, so routing through the registry is
+	// what lets animation frames actually reach the owner.
+	onPublish   func()
+	mediaWidget bool
 }
 
 // New builds a bar from the built-in defaults for one connector.
@@ -349,8 +355,9 @@ func (b *Bar) applyLocked(view barView) bool {
 	return changed
 }
 
-// Invalidations is the channel the Wayland owner receives from. The proof owns
-// it and never closes it.
+// Invalidations is the stand-alone seam for a bar no registry has adopted;
+// proofs and tests own it and never close it. An adopted bar routes its
+// invalidations through the registry instead (see onPublish).
 func (b *Bar) Invalidations() <-chan struct{} { return b.invalidations }
 
 // invalidate requests one coalesced redraw.
@@ -358,6 +365,9 @@ func (b *Bar) invalidate() {
 	select {
 	case b.invalidations <- struct{}{}:
 	default:
+	}
+	if b.onPublish != nil {
+		b.onPublish()
 	}
 }
 

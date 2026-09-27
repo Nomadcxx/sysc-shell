@@ -110,8 +110,9 @@ type Network struct {
 	// secrets holds the one in-flight passphrase prompt. It is always
 	// non-nil: the panel calls CancelSecret on close whether or not a prompt
 	// was ever opened.
-	secrets    *secretSlot
-	secretReqs chan SecretRequest
+	secrets       *secretSlot
+	secretReqs    chan SecretRequest
+	secretExpired chan struct{}
 	// closeSecrets unregisters and unexports the process-wide credential
 	// holder. Close clears it before calling it so repeated shutdown is safe.
 	closeSecrets func()
@@ -119,12 +120,13 @@ type Network struct {
 
 func NewNetwork(b backend) *Network {
 	return &Network{
-		be:         b,
-		ok:         b != nil,
-		changes:    make(chan NetworkState, 1),
-		wake:       make(chan struct{}, 1),
-		secrets:    newSecretSlot(),
-		secretReqs: make(chan SecretRequest, 1),
+		be:            b,
+		ok:            b != nil,
+		changes:       make(chan NetworkState, 1),
+		wake:          make(chan struct{}, 1),
+		secrets:       newSecretSlot(),
+		secretReqs:    make(chan SecretRequest, 1),
+		secretExpired: make(chan struct{}, 1),
 	}
 }
 
