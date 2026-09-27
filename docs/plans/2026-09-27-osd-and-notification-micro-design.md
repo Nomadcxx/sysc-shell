@@ -74,3 +74,21 @@ rasters until then — soft dep. Checks: table tests for kind→label/paint sele
 collapse-slide geometry; the drag-to-expand dominance rule as a pure function test; live Niri
 captures of each new OSD kind triggered by real key combos, an expand-and-dismiss sequence, and a
 reduced-motion pass.
+
+## Amendment 2026-09-27 — D1 trigger sources (owner-approved)
+
+D1 said the `caps lock`, `num lock` and `layout` kinds come "from the modifier state the platform
+keyboard layer already decodes". Two facts make that unworkable: the platform decodes no modifier
+state today, and a layer-shell surface receives `wl_keyboard` events only while it holds keyboard
+focus, so the shell would almost never see a lock key or a layout switch made in another client.
+The sources are therefore:
+
+- `layout` — niri's event stream, which the shell already consumes: `KeyboardLayoutsChanged`
+  (names and current index) and `KeyboardLayoutSwitched` (index). Fires whatever has focus.
+- `caps lock`, `num lock` — `/sys/class/leds/*::capslock/brightness` and `*::numlock/brightness`,
+  polled every 250 ms by a lease-based service shaped like `services.Brightness`, as Noctalia does.
+  Readable without root; any keyboard lit counts as on; no LED files means no polling and no OSD.
+
+Found while planning: the OSD's paint path is still a placeholder (a filled square for the icon, a
+bar per label character, a plain fill), so the per-kind paint in D1 and D2 starts by moving the OSD
+onto the shared tree renderer. The plan records this and the other fidelity notes.
