@@ -32,9 +32,9 @@ uncommitted change removing the result cap):
 type Provider struct {
 	Name, Prefix, Glyph, Description string
 	Query    func(query string) []Result
-	// Activate runs a row this provider produced. Nil means the Applications
-	// behaviour: spawn the entry (or its action) through niri.
-	Activate func(id, action string) error
+	// Activate runs a row this provider produced, given the routed query.
+	// Nil means the Applications behaviour: spawn the entry (or its action).
+	Activate func(query, id, action string) error
 	// Inline providers are also queried for bare (unprefixed) text; their
 	// rows are placed above the default provider's.
 	Inline bool
@@ -155,3 +155,29 @@ the pinned upstream font in `SOURCE.md` (the `sports_esports` precedent, `a3c838
 
 Windows provider. App grid, compact mode, category chips. Skin-tone selection. Unit and currency
 conversion. Plugin-contributed providers. A calculator history.
+
+## Amendment 2026-09-27 — settled by the rendered mockups (owner-approved)
+
+The owner approved this design subject to a mockup of the finished launcher. The mockups in
+`assets/2026-09-27-launcher-providers/` were rendered by the shell's own launcher panel and painter
+(real theme, real sysc-launch scan, real app icons, the two new glyphs built from the pinned Material
+font), and they settled five details:
+
+1. **D7's emoji glyph is `mood`, not `emoji_emotions`.** Material Symbols Rounded at the pinned
+   commit has no `emoji_emotions` (that name is from the older Material Icons set); `mood` is its
+   smiley glyph.
+2. **Provider rows fill the icon slot by convention.** `Entry.IconName` of `glyph:<name>` draws a
+   Material subset glyph in the tinted slot; `text:<s>` draws `s` itself at the display rung on an
+   untinted slot, so an emoji reads in colour. Anything else keeps today's icon-theme lookup and
+   letter fallback.
+3. **Hint rows.** A row with an empty `Entry.ID` explains rather than acts ("Invalid expression"):
+   muted text, never highlighted, ignored by activation, not counted by the footer.
+4. **The footer pluralises and counts only results**: "1 result", "3 apps", and "No results" when
+   only hints show. (Today it reads "1 results".)
+5. **`Provider.Activate` also receives the routed query**: `Activate(query, id, action string)`.
+   Notes needs its capture body, which lives in the query, and the calculator re-evaluates from it.
+   `ServiceConfig.ApplicationsGlyph` sets the Applications row's overview glyph (default
+   `PlaceholderGlyph`), so the shell can give it `glyph:apps`.
+
+Real data also showed that "private window" matches Firefox and Zen but not Brave, whose action is
+"New Incognito Window" — the ranking works on the names apps actually ship.
