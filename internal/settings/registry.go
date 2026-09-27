@@ -51,7 +51,7 @@ func DefaultFor(cfg config.Config) *Registry {
 		},
 		{
 			Path: "bar.frost-opacity", Label: "Frost opacity", Section: "Bar", Page: "Appearance", Group: "Frost",
-			Describe: "How opaque the frosted bar's ground is.",
+			Describe: "How opaque the frosted bar's ground is. Applies to the Frosted style.",
 			Kind:     KindInt, Min: theme.OpacityMinFrost, Max: theme.OpacityMax,
 			Get: getInt(func(c config.Config) int { return c.Bar.FrostOpacity }),
 			Set: setInt("bar.frost-opacity", theme.OpacityMinFrost, theme.OpacityMax,

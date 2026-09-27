@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -92,5 +93,69 @@ func TestPreviewKeepsTheLastGoodImageOnABadDraft(t *testing.T) {
 	}
 	if len(bi) == 0 || bi[0].Image != gi[0].Image {
 		t.Fatal("a failing draft replaced the preview instead of keeping the last good image")
+	}
+}
+
+func TestBarAppearanceLeadsWithPreviewAndCards(t *testing.T) {
+	reg := newPanelRegistry(t)
+	withTestBar(t, reg, 7, reg.cfg)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+	reqs := drainAux(t, reg, 2)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelSettings]
+	if err := h.configure(int(reqs[1].Open.Width), int(reqs[1].Open.Height), 150); err != nil {
+		t.Fatal(err)
+	}
+	body := findScroll(h.root)
+	if body == nil || len(body.Children) < 3 {
+		t.Fatal("Appearance body is missing its blocks")
+	}
+	if len(findAllKind(body.Children[0], ui.KindImage)) == 0 {
+		t.Error("the first block is not the preview")
+	}
+	if findAction(body, "pick:bar.style=islands") == nil || findAction(body, "pick:bar.shape=floating") == nil {
+		t.Fatal("Style or Shape picture cards are missing")
+	}
+	style := findAction(body, "pick:bar.style=frosted")
+	frost := findAction(body, "set:bar.frost-opacity")
+	if style == nil || frost == nil || style.Bounds.Y > frost.Bounds.Y {
+		t.Errorf("Style (%v) does not sit above the frost sliders (%v)", style, frost)
+	}
+	if view := body.Bounds.H; style != nil && style.Bounds.Y > body.Bounds.Y+view {
+		t.Errorf("Style at y=%d is below the %d-tall viewport", style.Bounds.Y, view)
+	}
+}
+
+func TestFrostDimsWhenTheStyleIsSolidAndAllDimWhenTheBarIsOff(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.draft.Bar.Style = "solid"
+	h.root = settingsTree(nil, h)
+	if frost := findAction(h.root, "set:bar.frost-opacity"); frost == nil || frost.State&ui.StateDisabled == 0 {
+		t.Fatal("frost opacity is live under a solid bar")
+	}
+	if hgt := findAction(h.root, "set:bar.height"); hgt != nil && hgt.State&ui.StateDisabled != 0 {
+		t.Fatal("bar height dimmed under a solid bar")
+	}
+	h.draft.Bar.Style = "frosted"
+	h.draft.Bar.Enabled = false
+	h.root = settingsTree(nil, h)
+	dimmed := 0
+	for _, n := range walk(h.root) {
+		if strings.HasPrefix(n.Action, "set:bar.") && n.Action != "set:bar.enabled" {
+			if n.State&ui.StateDisabled == 0 {
+				t.Errorf("%s is live with the bar disabled", n.Action)
+			}
+			dimmed++
+		}
+	}
+	if dimmed == 0 {
+		t.Fatal("no bar rows found to dim")
+	}
+	if n := findAction(h.root, "set:bar.enabled"); n == nil || n.State&ui.StateDisabled != 0 {
+		t.Fatal("the Enabled toggle itself was disabled")
 	}
 }

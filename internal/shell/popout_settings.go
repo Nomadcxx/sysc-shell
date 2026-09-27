@@ -234,22 +234,85 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	return body(settingsSectionColumn(h, section, entries))
 }
 
-// settingsBarPage is one of Bar's pages (settings redesign D8).
+// settingsBarPage is one of Bar's pages (settings redesign D8). Appearance
+// leads with the live preview and the Style and Shape picture cards, above
+// the rest of its groups; Layout is the lane editor; Displays holds the
+// per-output overrides.
 func settingsBarPage(r *Registry, h *PanelHost, page string) *ui.Node {
-	if page == "Layout" {
-		if r == nil {
-			return settingsBody(h, theme.MarginL)
-		}
-		return settingsBody(h, theme.MarginL, h.barLaneStripFor(r))
-	}
 	var entries []settings.Entry
 	if h.set != nil {
 		entries = h.set.PageEntries("Bar", page)
 	}
-	if len(entries) == 0 {
-		return settingsBody(h, theme.MarginL, settingsEmptyNote(page))
+	switch page {
+	case "Layout":
+		if r == nil {
+			return settingsBody(h, theme.MarginL)
+		}
+		return settingsBody(h, theme.MarginL, h.barLaneStripFor(r))
+	case "Displays":
+		if len(entries) == 0 {
+			return settingsBody(h, theme.MarginL, settingsEmptyNote("Displays"))
+		}
+		return settingsPageColumn(h, entries)
 	}
-	return settingsPageColumn(h, entries)
+	var lead []*ui.Node
+	if r != nil {
+		lead = append(lead, settingsBarPreview(r, h))
+	}
+	var rest []settings.Entry
+	for _, e := range entries {
+		if e.Present == settings.PresentCards {
+			lead = append(lead, settingsGroupCard(h, e.Label, []*ui.Node{settingsCardsFor(r, h, e)}))
+			continue
+		}
+		rest = append(rest, e)
+	}
+	col := settingsPageColumn(h, rest, lead...)
+	settingsDimBarRows(h, col)
+	return col
+}
+
+// settingsCardsFor is the picture cards, or the same choices without pictures
+// when there is no registry to paint from.
+func settingsCardsFor(r *Registry, h *PanelHost, e settings.Entry) *ui.Node {
+	if r != nil {
+		return settingsPictureCards(r, h, e)
+	}
+	raw := ""
+	if e.Get != nil {
+		raw = e.Get(h.draft)
+	}
+	return settingsSegmented(h, e, raw)
+}
+
+// settingsDimBarRows disables what does not apply: the frost sliders under a
+// solid bar, and everything but Enabled when the bar is off. The rows stay in
+// place with their descriptions, so the user learns why rather than hunting.
+func settingsDimBarRows(h *PanelHost, root *ui.Node) {
+	off := !h.draft.Bar.Enabled
+	solid := h.draft.Bar.Style == "solid"
+	var walk func(n *ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		path := n.Action
+		for _, prefix := range []string{"set:", "pick:", "reset:", "step:up:", "step:down:"} {
+			path = strings.TrimPrefix(path, prefix)
+		}
+		path, _, _ = strings.Cut(path, "=")
+		if path != n.Action && strings.HasPrefix(path, "bar.") && path != "bar.enabled" {
+			frost := path == "bar.frost-opacity" || path == "bar.pill-opacity"
+			if off || (solid && frost) {
+				n.State |= ui.StateDisabled
+				n.Focusable = false
+			}
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
 }
 
 // settingsAddress resolves an IPC or shortcut section name. "Section/Page"
@@ -282,7 +345,7 @@ func settingsAddress(requested string) (section, page string, ok bool) {
 // editing model, which belongs to sub-project C.
 var settingsEmptySection = map[string]string{
 	"Tray":     "No tray item has been given a preference yet. Pin or hide one from the tray itself and it will appear here.",
-	"Displays": "No output carries its own bar override. Every display follows the settings in Bar.",
+	"Displays": "No output overrides the bar yet. Every display follows the settings on Appearance.",
 	"Widgets":  "The bar carries no widgets, so there is nothing to configure here.",
 }
 
