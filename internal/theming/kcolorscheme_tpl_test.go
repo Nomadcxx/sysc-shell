@@ -56,7 +56,7 @@ func TestKcolorschemeAppliesSidecarAndKdeGlobals(t *testing.T) {
 	if !strings.Contains(string(b), "Font=Sans Serif") || strings.Count(string(b), "ColorSchemeName=") != 1 {
 		t.Fatalf("kdeglobals mangled: %s", b)
 	}
-	side, err := os.ReadFile(templateTargets["kcolorscheme"].sidecar(home))
+	side, err := os.ReadFile(templateTargets["kcolorscheme"].sidecar(home)[0])
 	if err != nil || !strings.Contains(string(side), "[Colors:View]") {
 		t.Fatalf("sidecar missing or wrong: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestKcolorschemeAppliesSidecarAndKdeGlobals(t *testing.T) {
 	if string(b3) != user {
 		t.Fatalf("disable did not restore: %q", b3)
 	}
-	if _, err := os.Stat(templateTargets["kcolorscheme"].sidecar(home)); !os.IsNotExist(err) {
+	if _, err := os.Stat(templateTargets["kcolorscheme"].sidecar(home)[0]); !os.IsNotExist(err) {
 		t.Fatal("sidecar survived disable")
 	}
 }

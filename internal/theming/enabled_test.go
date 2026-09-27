@@ -298,7 +298,7 @@ func TestApplyEnabledGatesIncompleteTemplates(t *testing.T) {
 		targets := []string{writeTarget(home, name)}
 		if tgt, ok := templateTargets[name]; ok {
 			if tgt.sidecar != nil {
-				targets = append(targets, tgt.sidecar(home))
+				targets = append(targets, tgt.sidecar(home)...)
 			}
 			if tgt.block != nil {
 				f, _, _ := tgt.block(home)

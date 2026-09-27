@@ -131,8 +131,6 @@ func writeTarget(home, name string) string {
 		return filepath.Join(home, ".config", "kitty", "kitty.conf")
 	case "wezterm":
 		return filepath.Join(home, ".config", "wezterm", "wezterm.lua")
-	case "qt":
-		return filepath.Join(home, ".config", "qt5ct", "colors", "sysc-shell.conf")
 	case "emacs":
 		return filepath.Join(home, ".emacs.d", "sysc-shell-theme.el")
 	case "scroll":
@@ -195,7 +193,7 @@ func signalKitty(root string) error {
 // block applications get no sidecar: the rendered body is managed in place
 // between marker lines inside the user's own config file.
 type templateTarget struct {
-	sidecar    func(home string) string
+	sidecar    func(home string) []string
 	directives func(home string) []directive
 	signal     func(root string) error
 	block      func(home string) (file, open, close string)
@@ -212,7 +210,9 @@ func joined(home string, elems ...string) string {
 
 var templateTargets = map[string]templateTarget{
 	"alacritty": {
-		sidecar: func(h string) string { return joined(h, ".config", "alacritty", "themes", "sysc-shell.toml") },
+		sidecar: func(h string) []string {
+			return []string{joined(h, ".config", "alacritty", "themes", "sysc-shell.toml")}
+		},
 		directives: func(h string) []directive {
 			p := joined(h, ".config", "alacritty", "themes", "sysc-shell.toml")
 			return []directive{{
@@ -226,7 +226,7 @@ var templateTargets = map[string]templateTarget{
 		},
 	},
 	"foot": {
-		sidecar: func(h string) string { return joined(h, ".config", "foot", "themes", "sysc-shell") },
+		sidecar: func(h string) []string { return []string{joined(h, ".config", "foot", "themes", "sysc-shell")} },
 		directives: func(h string) []directive {
 			line := "include=~/.config/foot/themes/sysc-shell"
 			return []directive{{
@@ -240,7 +240,7 @@ var templateTargets = map[string]templateTarget{
 		},
 	},
 	"ghostty": {
-		sidecar: func(h string) string { return joined(h, ".config", "ghostty", "themes", "sysc-shell") },
+		sidecar: func(h string) []string { return []string{joined(h, ".config", "ghostty", "themes", "sysc-shell")} },
 		directives: func(h string) []directive {
 			return []directive{{
 				file:   joined(h, ".config", "ghostty", "config"),
@@ -251,7 +251,7 @@ var templateTargets = map[string]templateTarget{
 		},
 	},
 	"kitty": {
-		sidecar: func(h string) string { return joined(h, ".config", "kitty", "themes", "sysc-shell.conf") },
+		sidecar: func(h string) []string { return []string{joined(h, ".config", "kitty", "themes", "sysc-shell.conf")} },
 		directives: func(h string) []directive {
 			return []directive{{
 				file:   joined(h, ".config", "kitty", "kitty.conf"),
@@ -263,7 +263,7 @@ var templateTargets = map[string]templateTarget{
 		signal: signalKitty,
 	},
 	"helix": {
-		sidecar: func(h string) string { return joined(h, ".config", "helix", "themes", "sysc-shell.toml") },
+		sidecar: func(h string) []string { return []string{joined(h, ".config", "helix", "themes", "sysc-shell.toml")} },
 		directives: func(h string) []directive {
 			return []directive{{
 				file:    joined(h, ".config", "helix", "config.toml"),
@@ -274,7 +274,7 @@ var templateTargets = map[string]templateTarget{
 		},
 	},
 	"cava": {
-		sidecar: func(h string) string { return joined(h, ".config", "cava", "themes", "sysc-shell") },
+		sidecar: func(h string) []string { return []string{joined(h, ".config", "cava", "themes", "sysc-shell")} },
 		directives: func(h string) []directive {
 			return []directive{{
 				file:    joined(h, ".config", "cava", "config"),
@@ -285,7 +285,7 @@ var templateTargets = map[string]templateTarget{
 		},
 	},
 	"btop": {
-		sidecar: func(h string) string { return joined(h, ".config", "btop", "themes", "sysc-shell.theme") },
+		sidecar: func(h string) []string { return []string{joined(h, ".config", "btop", "themes", "sysc-shell.theme")} },
 		directives: func(h string) []directive {
 			return []directive{{
 				file: joined(h, ".config", "btop", "btop.conf"),
@@ -295,7 +295,9 @@ var templateTargets = map[string]templateTarget{
 		},
 	},
 	"kcolorscheme": {
-		sidecar: func(h string) string { return joined(h, ".local", "share", "color-schemes", "sysc-shell.colors") },
+		sidecar: func(h string) []string {
+			return []string{joined(h, ".local", "share", "color-schemes", "sysc-shell.colors")}
+		},
 		directives: func(h string) []directive {
 			return []directive{{
 				file:    joined(h, ".config", "kdeglobals"),
@@ -321,8 +323,30 @@ var templateTargets = map[string]templateTarget{
 			}}
 		},
 	},
+	"qt": {
+		sidecar: func(h string) []string {
+			return []string{
+				joined(h, ".config", "qt5ct", "colors", "sysc-shell.conf"),
+				joined(h, ".config", "qt6ct", "colors", "sysc-shell.conf"),
+			}
+		},
+		directives: func(h string) []directive {
+			mk := func(ct, path string) directive {
+				return directive{
+					file:    joined(h, ".config", ct, ct+".conf"),
+					line:    "color_scheme_path=" + path,
+					key:     "color_scheme_path",
+					section: "General",
+				}
+			}
+			return []directive{
+				mk("qt5ct", joined(h, ".config", "qt5ct", "colors", "sysc-shell.conf")),
+				mk("qt6ct", joined(h, ".config", "qt6ct", "colors", "sysc-shell.conf")),
+			}
+		},
+	},
 	"wezterm": {
-		sidecar: func(h string) string { return joined(h, ".config", "wezterm", "colors", "sysc-shell.toml") },
+		sidecar: func(h string) []string { return []string{joined(h, ".config", "wezterm", "colors", "sysc-shell.toml")} },
 		directives: func(h string) []directive {
 			return []directive{{
 				file: joined(h, ".config", "wezterm", "wezterm.lua"),
@@ -367,10 +391,12 @@ func applyTemplateTarget(name, home string, on bool, rendered string, force bool
 		}
 		return RemoveBlock(file, open, close, force)
 	}
-	sidecar := tgt.sidecar(home)
+	sidecars := tgt.sidecar(home)
 	if on {
-		if err := applySidecar(sidecar, rendered, force); err != nil {
-			return err
+		for _, sidecar := range sidecars {
+			if err := applySidecar(sidecar, rendered, force); err != nil {
+				return err
+			}
 		}
 		for _, dir := range tgt.directives(home) {
 			if err := ensureDirective(dir, force); err != nil {
@@ -387,5 +413,10 @@ func applyTemplateTarget(name, home string, on bool, rendered string, force bool
 			return err
 		}
 	}
-	return UnapplyWrite(sidecar)
+	for _, sidecar := range sidecars {
+		if err := UnapplyWrite(sidecar); err != nil {
+			return err
+		}
+	}
+	return nil
 }

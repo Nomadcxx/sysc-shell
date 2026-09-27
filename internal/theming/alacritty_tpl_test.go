@@ -40,7 +40,7 @@ func assertHexAssignments(t *testing.T, out string) {
 			if !strings.HasPrefix(tok, "#") {
 				continue
 			}
-			hex := strings.TrimRight(tok, "'\"")
+			hex := strings.TrimRight(tok, "'\",")
 			if _, err := theme.ParseColor(hex); err != nil {
 				t.Errorf("bad colour assignment: %s: %v", line, err)
 			}
@@ -77,7 +77,7 @@ func TestAlacrittyAppliesSidecarAndImport(t *testing.T) {
 	if err := ApplyEnabled(home, func(string) bool { return true }, theme.Fallback); err != nil {
 		t.Fatal(err)
 	}
-	b, err := os.ReadFile(templateTargets["alacritty"].sidecar(home))
+	b, err := os.ReadFile(templateTargets["alacritty"].sidecar(home)[0])
 	if err != nil {
 		t.Fatal(err)
 	}
