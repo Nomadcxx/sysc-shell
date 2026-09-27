@@ -177,6 +177,32 @@ func TestKeyboardDisplaySingleSlotGenerationAndTimeout(t *testing.T) {
 	}
 }
 
+func TestKeyboardDisplayExpiredPromptFreesTheSlot(t *testing.T) {
+	agent := newKeyboardDisplay(15 * time.Millisecond)
+	t.Cleanup(func() { _ = agent.Close() })
+
+	if err := agent.DisplayPasskey("/org/bluez/hci0/dev_AA", 42, 3); err != nil {
+		t.Fatal(err)
+	}
+	waitBluetoothPrompt(t, agent)
+	deadline := time.Now().Add(time.Second)
+	for {
+		if _, ok := agent.PendingPrompt(); !ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("display prompt never expired")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	// GH #9: a stale display prompt used to hold the slot forever, so the next
+	// pairing was rejected with "a pairing prompt is already open".
+	if err := agent.DisplayPasskey("/org/bluez/hci0/dev_BB", 7, 1); err != nil {
+		t.Fatalf("display after expired display: %v", err)
+	}
+}
+
 func TestKeyboardDisplayDisplayMethodsAndFailClosedShutdown(t *testing.T) {
 	agent := newKeyboardDisplay(time.Second)
 	if err := agent.DisplayPinCode(dbus.ObjectPath("/org/bluez/hci0/dev_AA"), "1234"); err != nil {

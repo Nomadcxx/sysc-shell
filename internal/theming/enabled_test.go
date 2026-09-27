@@ -14,8 +14,21 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
 
+// markTemplatesComplete lets mechanism tests exercise the write path of a
+// template the release has not verified yet (GH #7 gate).
+func markTemplatesComplete(t *testing.T, names ...string) {
+	t.Helper()
+	for _, n := range names {
+		if !completeTemplates[n] {
+			completeTemplates[n] = true
+			t.Cleanup(func() { delete(completeTemplates, n) })
+		}
+	}
+}
+
 func TestApplyEnabledWritesAlacrittyUnderXDG(t *testing.T) {
 	home := t.TempDir()
+	markTemplatesComplete(t, "alacritty")
 	only := func(name string) bool { return name == "alacritty" }
 	if err := ApplyEnabled(home, only, theme.Fallback); err != nil {
 		t.Fatal(err)
@@ -36,6 +49,7 @@ func TestApplyEnabledWritesAlacrittyUnderXDG(t *testing.T) {
 
 func TestApplyEnabledSkipsForeignKitty(t *testing.T) {
 	home := t.TempDir()
+	markTemplatesComplete(t, "kitty")
 	p := filepath.Join(home, ".config", "kitty", "kitty.conf")
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
@@ -76,6 +90,7 @@ func TestKittyPIDsFromProc(t *testing.T) {
 
 func TestApplyEnabledSignalsKitty(t *testing.T) {
 	home := t.TempDir()
+	markTemplatesComplete(t, "kitty")
 	got := make(chan os.Signal, 1)
 	signal.Notify(got, syscall.SIGUSR1)
 	t.Cleanup(func() { signal.Stop(got) })
@@ -103,6 +118,7 @@ func TestApplyEnabledSignalsKitty(t *testing.T) {
 
 func TestApplyEnabledSingleFlight(t *testing.T) {
 	home := t.TempDir()
+	markTemplatesComplete(t, "alacritty")
 	only := func(name string) bool { return name == "alacritty" }
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -125,6 +141,7 @@ func TestApplyEnabledSingleFlight(t *testing.T) {
 
 func TestApplyEnabledReportsFirstError(t *testing.T) {
 	home := t.TempDir()
+	markTemplatesComplete(t, "alacritty")
 	p := filepath.Join(home, ".config", "alacritty", "alacritty.toml")
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
@@ -144,6 +161,7 @@ func TestApplyEnabledReportsFirstError(t *testing.T) {
 
 func TestApplyEnabledSupersedeUsesLatestHome(t *testing.T) {
 	home1 := t.TempDir()
+	markTemplatesComplete(t, "alacritty")
 	home2 := t.TempDir()
 	started := make(chan struct{})
 	block := make(chan struct{})
@@ -181,5 +199,21 @@ func TestApplyEnabledSupersedeUsesLatestHome(t *testing.T) {
 	p2 := filepath.Join(home2, ".config", "alacritty", "alacritty.toml")
 	if _, err := os.Stat(p2); err != nil {
 		t.Fatalf("latest home missing alacritty.toml: %v", err)
+	}
+}
+
+func TestApplyEnabledGatesIncompleteTemplates(t *testing.T) {
+	home := t.TempDir()
+	on := func(name string) bool { return true }
+	if err := ApplyEnabled(home, on, theme.Fallback); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range Catalog().Names() {
+		if Complete(name) || writeTarget(home, name) == "" {
+			continue
+		}
+		if _, err := os.Stat(writeTarget(home, name)); !os.IsNotExist(err) {
+			t.Fatalf("incomplete template %s wrote its stub (GH #7)", name)
+		}
 	}
 }

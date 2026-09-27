@@ -5,6 +5,8 @@
 package wallpaper
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"path/filepath"
 	"strings"
 )
@@ -71,20 +73,30 @@ func connectorByteAllowed(c byte) bool {
 // gate proves we only ever stop sockets we own.
 func SanitizeConnector(name string) string {
 	var b strings.Builder
-	b.Grow(len(name))
+	b.Grow(len(name) + 10)
 	dashed := false
+	altered := false
 	for i := 0; i < len(name); i++ {
 		if c := name[i]; connectorByteAllowed(c) {
 			b.WriteByte(c)
 			dashed = false
 			continue
 		}
+		altered = true
 		if !dashed {
 			b.WriteByte('-')
 			dashed = true
 		}
 	}
-	return b.String()
+	if !altered {
+		return b.String()
+	}
+	// GH #11: collapsing turns "DP/1" into "DP-1", which is already a real
+	// connector. A name that lost bytes gets a short digest of the original,
+	// so two different connectors can never bind the same socket; readable
+	// names are untouched.
+	sum := sha256.Sum256([]byte(name))
+	return b.String() + "-" + hex.EncodeToString(sum[:4])
 }
 
 // socketPath names the gSlapper control socket for one connector inside dir.

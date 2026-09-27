@@ -65,7 +65,10 @@ func applyOnce(home string, enabled func(string) bool, tok theme.Tokens) error {
 	}
 	for _, name := range cat.Names() {
 		rendered := Render(cat.Template(name), tok)
-		on := enabled(name)
+		// GH #7: a stub template rendered onto a live app config neuters the
+		// app. An incomplete template behaves as off everywhere, which also
+		// removes a stub written by an older release.
+		on := enabled(name) && Complete(name)
 		switch name {
 		case "niri":
 			cfg := filepath.Join(home, ".config", "niri", "config.kdl")

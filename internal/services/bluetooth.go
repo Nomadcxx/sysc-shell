@@ -251,6 +251,13 @@ func (a *KeyboardDisplay) display(prompt BluetoothPrompt) *dbus.Error {
 	prompt.ID = a.nextID
 	a.current = &pairingRequest{prompt: prompt}
 	a.publishLocked(&prompt)
+	// Display-only prompts must expire like requested ones: Bluez can leave
+	// one open indefinitely, and a stuck prompt rejects every later pairing
+	// with "a pairing prompt is already open" (GH #9).
+	displayID := prompt.ID
+	a.current.timer = time.AfterFunc(a.timeout, func() {
+		a.finish(displayID, pairingReply{errName: agentErrorCanceled})
+	})
 	return nil
 }
 

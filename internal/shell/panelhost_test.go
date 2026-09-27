@@ -3,6 +3,7 @@ package shell
 import (
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -194,9 +195,7 @@ func TestSpaceActivatesFocusedButton(t *testing.T) {
 	}
 	reqs := drainAux(t, reg, 2)
 	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keySpace})
-	if _, ok := reg.panelHosts[PanelSession]; ok {
-		t.Fatal("space did not activate the focused session action")
-	}
+	waitSessionPanelClosed(t, reg)
 }
 
 func TestRevealAnimationInvalidatesUntilDone(t *testing.T) {
@@ -1322,4 +1321,84 @@ func TestReloadReseedsAnOpenSettingsDraft(t *testing.T) {
 	if e := h.set.ByPath("session.locker"); e == nil || e.Get(h.draft) != "externally-set" {
 		t.Fatal("the registry was not rebuilt against the reloaded configuration")
 	}
+}
+
+// The owner's bridge drains invalidations continuously, so a full channel is
+// momentary. Dropping there leaves a surface stale until an unrelated event;
+// publishSurface must block and deliver like publish (GH #4).
+func TestPublishSurfaceNeverDrops(t *testing.T) {
+	t.Parallel()
+	r := &Registry{
+		invalidations: make(chan wayland.Invalidation, 1),
+		closed:        make(chan struct{}),
+	}
+	r.invalidations <- wayland.Invalidation{Global: 1, SurfaceID: "occupied"}
+	done := make(chan struct{})
+	go func() {
+		r.publishSurface(2, "panel:test")
+		close(done)
+	}()
+	select {
+	case <-done:
+		t.Fatal("publishSurface returned while a full channel had no consumer: the invalidation was dropped")
+	case <-time.After(20 * time.Millisecond):
+	}
+	<-r.invalidations // the bridge drains one
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("publishSurface never completed after the channel drained")
+	}
+	if inv := <-r.invalidations; inv.Global != 2 || inv.SurfaceID != "panel:test" {
+		t.Fatalf("invalidation lost or wrong: %+v", inv)
+	}
+}
+
+// keepInvalidationsDrained stands in for the owner's bridge in tests that
+// build a Registry without one: publishSurface blocks (GH #4) instead of
+// dropping, so such a test needs a consumer or it stalls at the ninth one.
+func keepInvalidationsDrained(t *testing.T, r *Registry) {
+	t.Helper()
+	stop := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-r.invalidations:
+			case <-r.closed:
+				return
+			case <-stop:
+				return
+			}
+		}
+	}()
+	t.Cleanup(func() { close(stop) })
+}
+
+// syncIME and syncCursor call these closures from the Wayland goroutine while
+// a relay rebuilds the tree under Registry.mu (GH #6). A lock-free read races.
+func TestWantIMEAndIBeamAtTakeTheRegistryLock(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelLauncher, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	h := reg.panelHosts[PanelLauncher]
+	if h == nil {
+		t.Fatal("launcher host is missing")
+	}
+	spec := reg.panelSpec(h, Margins{})
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			reg.mu.Lock()
+			defer reg.mu.Unlock()
+			reg.rebuildPanel(h)
+		}()
+		spec.Callbacks.WantIME()
+		spec.Callbacks.IBeamAt(1, 1)
+	}
+	wg.Wait()
 }
