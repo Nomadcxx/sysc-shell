@@ -1095,3 +1095,52 @@ func TestThePanelOpensAndFiltersTheFontPicker(t *testing.T) {
 	}
 	t.Logf("filtered to %d of %d families", len(node.Children)-1, len(settingsFontFamilies()))
 }
+
+func TestShortEnumsRenderSegmentedAndPickWrites(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	e := *h.set.ByPath("weather.unit")
+	n := settingsControl(h, e, 200)
+	if n.Kind != ui.KindSegmented || len(n.Children) != len(e.Options) {
+		t.Fatalf("weather.unit control = kind %v with %d children, want a segmented of %d", n.Kind, len(n.Children), len(e.Options))
+	}
+	if n.Children[0].Action != "pick:weather.unit="+e.Options[0] {
+		t.Fatalf("first segment action = %q", n.Children[0].Action)
+	}
+	selected := 0
+	for _, c := range n.Children {
+		if c.State&ui.StateSelected != 0 {
+			selected++
+		}
+	}
+	if selected != 1 {
+		t.Fatalf("%d segments selected, want 1", selected)
+	}
+	menu := e
+	menu.Present = settings.PresentMenu
+	if settingsControl(h, menu, 200).Kind == ui.KindSegmented {
+		t.Error("PresentMenu still rendered segmented")
+	}
+	if osd := h.set.ByPath("panels.osd"); osd == nil || settingsControl(h, *osd, 200).Kind == ui.KindSegmented {
+		t.Error("the nine-option OSD position rendered segmented, or is missing")
+	}
+}
+
+func TestPickActionCommitsTheValue(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelSettings]
+	h.focus = []*ui.Node{{Kind: ui.KindButton, Action: "pick:weather.unit=fahrenheit", Focusable: true}}
+	h.roving = ui.Roving{Count: 1}
+	if !h.activate(reg) {
+		t.Fatal("pick was not handled")
+	}
+	if h.draft.Weather.Unit != "fahrenheit" {
+		t.Fatalf("draft unit = %q after pick", h.draft.Weather.Unit)
+	}
+}

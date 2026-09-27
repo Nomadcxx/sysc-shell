@@ -423,10 +423,51 @@ func settingsControl(h *PanelHost, e settings.Entry, width int) *ui.Node {
 			},
 		}}
 	case settings.KindEnum:
+		if e.Present == settings.PresentAuto && len(e.Options) >= 2 && len(e.Options) <= settingsSegmentLimit {
+			return settingsSegmented(h, e, raw)
+		}
 		return settingsMenuControl(h, e, e.Options, raw, width)
 	default:
 		return settingsField(h, e, raw, width)
 	}
+}
+
+// settingsSegmentLimit is the most options a segmented control shows. Past
+// it the labels crowd the control column and a menu reads better (settings
+// redesign D2).
+const settingsSegmentLimit = 4
+
+// settingsSegmented shows every option at once, the way the audio panel's
+// tabs do. Each segment writes its value through the pick action.
+func settingsSegmented(h *PanelHost, e settings.Entry, raw string) *ui.Node {
+	m := h.metrics()
+	seg := &ui.Node{
+		Kind: ui.KindSegmented, Key: "seg:" + e.Path, Gap: theme.MarginXXS,
+		Height: m.CompactControl, Name: e.Label, Role: "radiogroup",
+	}
+	for _, opt := range e.Options {
+		label := settingsOptionLabel(opt)
+		b := &ui.Node{
+			Kind: ui.KindButton, Action: "pick:" + e.Path + "=" + opt,
+			Name: label, Role: "radio", Focusable: true, Height: m.CompactControl,
+			Children: []*ui.Node{{Kind: ui.KindText, Text: label}},
+		}
+		if opt == raw {
+			b.State |= ui.StateSelected
+		}
+		seg.Children = append(seg.Children, b)
+	}
+	return seg
+}
+
+// settingsOptionLabel turns a config value into a label: "auto-pause" reads
+// "Auto pause".
+func settingsOptionLabel(opt string) string {
+	s := strings.ReplaceAll(opt, "-", " ")
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 // settingsStepperSpan is the widest range that reads better one step at a

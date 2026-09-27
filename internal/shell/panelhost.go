@@ -2103,6 +2103,14 @@ func (h *PanelHost) activate(r *Registry) bool {
 		}
 		return true
 	}
+	if rest, ok := strings.CutPrefix(n.Action, "pick:"); ok {
+		path, value, found := strings.Cut(rest, "=")
+		if e := h.set.ByPath(path); found && e != nil {
+			h.commitSetting(r, e, value)
+			r.rebuildPanel(h)
+		}
+		return true
+	}
 	if path, ok := strings.CutPrefix(n.Action, "browse:"); ok {
 		e := h.set.ByPath(path)
 		if e == nil {
