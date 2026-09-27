@@ -658,6 +658,9 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	if id == PanelAudio {
 		size = audioPanelSize(outW, outH)
 	}
+	if id == PanelSettings {
+		size = settingsPanelSize(outW, outH)
+	}
 	gap := r.cfg.Panels.Gap
 	if id == PanelPlugin || id == PanelAudio || id == PanelControlCenter {
 		gap = 0
@@ -1014,16 +1017,31 @@ func (r *Registry) shieldSpec(h *PanelHost) *wayland.AuxSpec {
 // none either: it and the bar are one ground, and a stroke would read as a
 // seam between them.
 func (h *PanelHost) rootStyle(t Theme) render.Style {
-	if h.place.Attached() {
-		if h.backdrop == nil {
-			return t.AttachedPanelStyle()
-		}
-		return t.PanelStyle()
+	var s render.Style
+	switch {
+	case h.place.Attached() && h.backdrop == nil:
+		s = t.AttachedPanelStyle()
+	case h.place.Attached():
+		s = t.PanelStyle()
+	default:
+		s = t.PanelStyle()
+		s.Rim = t.Outline
 	}
-	s := t.PanelStyle()
-	s.Rim = t.Outline
+	if h.id == PanelSettings {
+		s.SurfaceOpacity = max(s.SurfaceOpacity, settingsOpacityFloor)
+	}
 	return s
 }
+
+// settingsPanelSize is settings redesign D10: 72 percent of the output's
+// width and 88 percent of its height, capped at 1120x820.
+func settingsPanelSize(outputW, outputH int) ui.Rect {
+	return ui.Rect{W: min(1120, outputW*72/100), H: min(820, outputH*88/100)}
+}
+
+// settingsOpacityFloor is the least alpha the settings root paints at (D7):
+// the pane is read for minutes at a time, over whatever is behind it.
+const settingsOpacityFloor uint8 = 0xf0
 
 func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	anchor := uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorLeft)
@@ -2443,12 +2461,9 @@ func panelTargetSize(id PanelID) ui.Rect {
 	case PanelMonitor:
 		return ui.Rect{W: 800, H: 650}
 	case PanelSettings:
-		// Width is unchanged on purpose: the narrowest-width acceptance check
-		// lays this panel out at its target, and holding width leaves that
-		// premise intact while the plain column takes the vertical room that
-		// descriptions and group headings need. FittedSize clamps on a short
-		// output.
-		return ui.Rect{W: 900, H: 760}
+		// The open path sizes it from the output (settings redesign D10);
+		// this is that rule on the 1920x1080 fallback.
+		return settingsPanelSize(1920, 1080)
 	case PanelLauncher:
 		// 700 is DMS spotlight's own height. FittedSize caps this to the
 		// output before placement, so a short screen clamps rather than

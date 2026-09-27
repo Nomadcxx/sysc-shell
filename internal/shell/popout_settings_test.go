@@ -1286,3 +1286,30 @@ func TestClearingSearchReturnsToTheSamePage(t *testing.T) {
 		t.Error("Layout is not the selected page after search")
 	}
 }
+
+func TestSettingsSizeFollowsTheOutput(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ w, h, wantW, wantH int }{
+		{1536, 864, 1105, 760},
+		{3440, 1440, 1120, 820},
+		{1280, 720, 921, 633},
+	} {
+		if got := settingsPanelSize(tc.w, tc.h); got.W != tc.wantW || got.H != tc.wantH {
+			t.Errorf("%dx%d → %+v, want %dx%d", tc.w, tc.h, got, tc.wantW, tc.wantH)
+		}
+	}
+}
+
+func TestSettingsPaintsAtLeastTheOpaqueFloor(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.theme = DefaultTheme()
+	h.theme.Surfaces.Panel = 0x80
+	if a := h.rootStyle(h.theme).SurfaceOpacity; a < settingsOpacityFloor {
+		t.Fatalf("settings root alpha %#x, want at least %#x", a, settingsOpacityFloor)
+	}
+	other := &PanelHost{id: PanelClock, theme: h.theme}
+	if a := other.rootStyle(other.theme).SurfaceOpacity; a != 0x80 {
+		t.Fatalf("clock root alpha %#x changed", a)
+	}
+}
