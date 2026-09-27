@@ -246,8 +246,9 @@ func (m *OSDManager) revealLoop() {
 	// frameCap answers with zero: no pacing, one publish per tick.
 	m.r.mu.Lock()
 	frameCap := m.anim.frameCap()
+	stop := m.stopAnim
 	m.r.mu.Unlock()
-	animateSurface(m.stopAnim, func() bool {
+	animateSurface(stop, func() bool {
 		m.r.mu.Lock()
 		defer m.r.mu.Unlock()
 		return m.anim == nil || m.anim.Settled()
