@@ -1951,11 +1951,7 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 		if h.id == PanelLauncher {
 			h.launcherSel = 0
 			h.launcherScroll = 0
-			if results, handled := notesLauncherResults(h.query); handled {
-				h.launcherResults = results
-			} else {
-				r.launcherServiceLocked().Query(h.query)
-			}
+			r.launcherServiceLocked().Query(h.query)
 		}
 		idx := h.roving.Index()
 		r.rebuildPanel(h)

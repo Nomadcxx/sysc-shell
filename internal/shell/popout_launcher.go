@@ -68,10 +68,9 @@ const (
 // hit the service's rescan-if-stale path (D12). Caller holds r.mu.
 func (r *Registry) launcherServiceLocked() *launcher.Service {
 	if r.launcherSvc == nil {
-		r.launcherSvc = launcher.NewService(launcher.ServiceConfig{
-			History: launcher.OpenHistory(launcherHistoryPath(os.Getenv), nil),
-			Rank:    launcherRank,
-		})
+		cfg := r.launcherServiceConfig()
+		cfg.History = launcher.OpenHistory(launcherHistoryPath(os.Getenv), nil)
+		r.launcherSvc = launcher.NewService(cfg)
 		go r.relayLauncher(r.launcherSvc)
 	}
 	return r.launcherSvc
@@ -103,11 +102,7 @@ func (r *Registry) relayLauncher(svc *launcher.Service) {
 			r.mu.Lock()
 			h := r.panelHosts[PanelLauncher]
 			if h != nil {
-				if custom, handled := notesLauncherResults(h.query); handled {
-					h.launcherResults = custom
-				} else {
-					h.launcherResults = addNotesProvider(h.query, results)
-				}
+				h.launcherResults = results
 				r.rebuildPanel(h)
 			}
 			r.mu.Unlock()
@@ -454,23 +449,17 @@ func (h *PanelHost) launcherActivateSelected(r *Registry) {
 	if res.Entry.ID == "" {
 		return // a hint row explains; it does not act
 	}
-	if res.Entry.ID == notesLauncherActionID || res.Entry.ID == notesLauncherTooLongID {
-		h.launcherNotesAction(r, res.Entry.ID)
-		return
-	}
 	if len(res.Entry.Argv) == 0 && strings.HasPrefix(res.Entry.ID, "/") {
 		h.query = res.Entry.ID
 		h.search = ui.NewField(h.query)
 		h.launcherSel = 0
-		if custom, handled := notesLauncherResults(h.query); handled {
-			h.launcherResults = custom
-		} else {
-			r.launcherServiceLocked().Query(h.query)
-		}
+		r.launcherServiceLocked().Query(h.query)
 		r.rebuildPanel(h)
 		return
 	}
-	h.launcherSpawn(r, res.Entry.ID, res.Action)
+	// A Notes row closes the panel (or shows its error) from its own action.
+	notes := res.Entry.ID == notesLauncherActionID || res.Entry.ID == notesLauncherTooLongID
+	h.launcherSpawn(r, res.Entry.ID, res.Action, !notes)
 }
 
 const (
@@ -493,22 +482,6 @@ func notesLauncherResults(query string) ([]launcher.Result, bool) {
 		}
 	}
 	return []launcher.Result{{Entry: launcher.Entry{ID: id, Name: name, Comment: comment}}}, true
-}
-
-func addNotesProvider(query string, results []launcher.Result) []launcher.Result {
-	query = strings.TrimSpace(query)
-	if query != "/" && query != "/n" {
-		return results
-	}
-	for _, result := range results {
-		if result.Entry.ID == "/nt" {
-			return results
-		}
-	}
-	out := append([]launcher.Result(nil), results...)
-	return append(out, launcher.Result{Entry: launcher.Entry{
-		ID: "/nt", Name: "Notes", Comment: "Search notes or capture with /nt <text>", IconName: "note",
-	}})
 }
 
 func launcherPreview(value string, maxRunes int) string {
@@ -559,8 +532,9 @@ func (h *PanelHost) launcherNotesAction(r *Registry, action string) {
 }
 
 // launcherSpawn activates through the service off the Wayland goroutine: the
-// panel closes on success and shows the error in place on failure (D6).
-func (h *PanelHost) launcherSpawn(r *Registry, id, action string) {
+// panel shows the error in place on failure (D6) and, when closeOnSuccess,
+// closes on success. A provider that manages the panel itself passes false.
+func (h *PanelHost) launcherSpawn(r *Registry, id, action string, closeOnSuccess bool) {
 	svc := r.launcherServiceLocked()
 	go func() {
 		err := svc.Activate(id, action)
@@ -573,6 +547,11 @@ func (h *PanelHost) launcherSpawn(r *Registry, id, action string) {
 		if err != nil {
 			host.errLabel = err.Error()
 			r.rebuildPanel(host)
+			r.publishSurface(host.output, panelSurfaceID(PanelLauncher))
+			return
+		}
+		if !closeOnSuccess {
+			// The provider may have changed the panel (a Notes error label).
 			r.publishSurface(host.output, panelSurfaceID(PanelLauncher))
 			return
 		}
@@ -638,7 +617,7 @@ func (h *PanelHost) applyLauncherMenu(r *Registry) {
 	action := h.launcherActions[idx].ID
 	id := h.launcherMenuID
 	h.launcherMenuID = ""
-	h.launcherSpawn(r, id, action)
+	h.launcherSpawn(r, id, action, true)
 }
 
 func (h *PanelHost) activateLauncher(r *Registry, n *ui.Node) bool {

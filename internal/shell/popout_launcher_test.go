@@ -71,11 +71,10 @@ func openLauncherPanel(t *testing.T, entries []launcher.Entry) (*Registry, *reco
 	t.Helper()
 	reg := newPanelRegistry(t)
 	run := &recordedSpawn{}
-	svc := launcher.NewService(launcher.ServiceConfig{
-		Scan: func() []launcher.Entry { return entries },
-		Rank: launcherRank,
-		Run:  run.run,
-	})
+	cfg := reg.launcherServiceConfig()
+	cfg.Scan = func() []launcher.Entry { return entries }
+	cfg.Run = run.run
+	svc := launcher.NewService(cfg)
 	reg.mu.Lock()
 	reg.launcherSvc = svc
 	reg.mu.Unlock()
@@ -131,9 +130,6 @@ func TestNotesLauncherCaptureAndProviderRoutes(t *testing.T) {
 	}
 	if got, handled := notesLauncherResults("/nt " + strings.Repeat("x", v1.MaxInputBytes+1)); !handled || got[0].Entry.ID != notesLauncherTooLongID {
 		t.Fatalf("oversized route = %+v, handled=%v", got, handled)
-	}
-	if got := addNotesProvider("/", nil); len(got) != 1 || got[0].Entry.ID != "/nt" {
-		t.Fatalf("provider overview = %+v", got)
 	}
 }
 
@@ -1123,4 +1119,57 @@ func firstLauncherRowBounds(n *ui.Node) (ui.Rect, bool) {
 		}
 	}
 	return ui.Rect{}, false
+}
+
+// Notes capture reaches the Notes action end to end: with no plugin host the
+// action reports that Notes is not running and leaves the launcher open.
+func TestLauncherNotesCaptureRoutesToNotes(t *testing.T) {
+	t.Parallel()
+
+	reg, run, reqs := openLauncherPanel(t, launcherTestEntries())
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "/nt buy milk"})
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && len(h.launcherResults) == 1 && h.launcherResults[0].Entry.Name == "Capture note: buy milk"
+	})
+	pressLauncherKey(reqs, keyEnter)
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && h.errLabel == "Notes plugin is not running"
+	})
+	run.mu.Lock()
+	spawned := run.argv
+	run.mu.Unlock()
+	if spawned != nil {
+		t.Fatalf("a Notes row spawned %v", spawned)
+	}
+}
+
+func TestLauncherNotesTooLongCaptureShowsTheLimit(t *testing.T) {
+	t.Parallel()
+
+	reg, _, reqs := openLauncherPanel(t, launcherTestEntries())
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "/nt " + strings.Repeat("x", v1.MaxInputBytes+1)})
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && len(h.launcherResults) == 1 && h.launcherResults[0].Entry.ID == notesLauncherTooLongID
+	})
+	pressLauncherKey(reqs, keyEnter)
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && h.errLabel == "Capture is too long (maximum 1 MiB)"
+	})
+}
+
+func TestLauncherOverviewListsProvidersWithGlyphs(t *testing.T) {
+	t.Parallel()
+
+	reg, _, reqs := openLauncherPanel(t, launcherTestEntries())
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "/"})
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		if h == nil {
+			return false
+		}
+		var got []string
+		for _, r := range h.launcherResults {
+			got = append(got, r.Entry.Name+"|"+r.Entry.IconName)
+		}
+		return strings.Join(got, ",") == "Applications|glyph:apps,Notes|glyph:description"
+	})
 }
