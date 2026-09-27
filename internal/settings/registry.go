@@ -793,7 +793,7 @@ func (r *Registry) addWidgetEntries(cfg config.Config) {
 // type have to be told apart, so the group carries the lane the widget sits in
 // and, once it has one, its instance id.
 func widgetEntryGroup(ref config.ItemRef, it config.Item) string {
-	name := WidgetName(it)
+	name := WidgetName(it, nil)
 	if it.Instance != "" {
 		return name + " (" + it.Instance + ")"
 	}

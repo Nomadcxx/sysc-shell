@@ -104,7 +104,7 @@ func barChipHeight(h *PanelHost) int { return h.metrics().StandardControl }
 // inside a row that right-pins, and this strip composes chips and lanes into
 // that same pane, so every column here states its own.
 func barChip(h *PanelHost, ref config.ItemRef, it config.Item, selected bool, width int, canGroup bool) *ui.Node {
-	name := settings.WidgetName(it)
+	name := h.widgetName(it)
 	addr := barRefAction(ref)
 	m := h.metrics()
 
@@ -341,6 +341,9 @@ func barLaneStrip(h *PanelHost) *ui.Node {
 }
 
 func (h *PanelHost) barLaneStripFor(r *Registry) *ui.Node {
+	if r != nil {
+		h.pluginName = r.pluginDisplayName
+	}
 	width := settingsBodyWidth(h)
 	// One line of orientation. Nothing else on this surface says that the rows
 	// are draggable or what the three lanes correspond to, and a pane whose
@@ -681,9 +684,9 @@ func barAddList(h *PanelHost, laneName string, width int) *ui.Node {
 	for _, id := range config.WidgetIDs() {
 		col.Children = append(col.Children, &ui.Node{
 			Kind: ui.KindButton, Action: "bar-add-item:" + laneName + ":" + id,
-			Name: settings.WidgetName(config.Item{ID: id}), Role: "button", Focusable: true,
+			Name: h.widgetName(config.Item{ID: id}), Role: "button", Focusable: true,
 			Width: width, Height: m.StandardControl, Shape: ui.ShapeMedium,
-			Children: []*ui.Node{{Kind: ui.KindText, Text: settings.WidgetName(config.Item{ID: id})}},
+			Children: []*ui.Node{{Kind: ui.KindText, Text: h.widgetName(config.Item{ID: id})}},
 		})
 	}
 	return col
@@ -714,7 +717,7 @@ func barInspector(h *PanelHost, width int) *ui.Node {
 			TextRole: theme.RoleCaption, Tone: ui.ToneSubtle}
 	}
 
-	name := settings.WidgetName(*it)
+	name := h.widgetName(*it)
 	head := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Width: width, PinEnd: true, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: name, TextRole: theme.RoleLabel},
 		{Kind: ui.KindRow, Gap: theme.MarginS, Children: barInspectorControls(h, ref, *it)},
@@ -752,7 +755,7 @@ func barInspectorControls(h *PanelHost, ref config.ItemRef, it config.Item) []*u
 	}
 	out = append(out, &ui.Node{
 		Kind: ui.KindButton, Action: "bar-remove:" + barRefAction(ref),
-		Name: "Remove " + settings.WidgetName(it), Role: "button", Focusable: true,
+		Name: "Remove " + h.widgetName(it), Role: "button", Focusable: true,
 		Width: m.StandardControl, Height: m.StandardControl, Shape: ui.ShapeMedium,
 		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "close", IconSize: m.IconSmall}},
 	})
@@ -1031,4 +1034,22 @@ func (h *PanelHost) barDropRows(zone *ui.Node, laneName string) ([]ui.Rect, []in
 		})
 	}
 	return rows, targets
+}
+
+// widgetName is a lane row's display name, with plugins named by their plugin.
+func (h *PanelHost) widgetName(it config.Item) string {
+	return settings.WidgetName(it, h.pluginName)
+}
+
+// pluginDisplayName is a plugin's catalogue name, or "" when the catalogue
+// does not know it. Callers hold r.mu; the plugin host's lock nests inside
+// it, as pluginHost.panelTree already does.
+func (r *Registry) pluginDisplayName(id string) string {
+	if r == nil || r.plugins == nil {
+		return ""
+	}
+	if c, ok := r.plugins.discovered().Lookup(id); ok {
+		return c.Manifest.Name
+	}
+	return ""
 }

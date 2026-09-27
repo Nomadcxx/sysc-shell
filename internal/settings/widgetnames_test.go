@@ -38,13 +38,33 @@ func TestWidgetNameHandlesGroupsAndPlacements(t *testing.T) {
 		want string
 	}{
 		{config.Item{ID: "group"}, "Group"},
-		{config.Item{ID: "plugin", Entry: "timer"}, "timer"},
+		{config.Item{ID: "plugin", Plugin: "org.example.timer", Entry: "bar"}, "org.example.timer"},
 		{config.Item{ID: "plugin"}, "Plugin"},
 		{config.Item{ID: "window-title"}, "Window title"},
 		{config.Item{ID: "not-a-widget"}, "not-a-widget"},
 	} {
-		if got := WidgetName(tc.it); got != tc.want {
+		if got := WidgetName(tc.it, nil); got != tc.want {
 			t.Errorf("WidgetName(%+v) = %q, want %q", tc.it, got, tc.want)
 		}
+	}
+}
+
+func TestPluginWidgetsAreNamedByTheirPlugin(t *testing.T) {
+	t.Parallel()
+	it := config.Item{ID: "plugin", Plugin: "org.sysc.mini-docker", Entry: "bar"}
+	names := func(id string) string {
+		if id == "org.sysc.mini-docker" {
+			return "Mini Docker"
+		}
+		return ""
+	}
+	if got := WidgetName(it, names); got != "Mini Docker" {
+		t.Errorf("named %q, want Mini Docker", got)
+	}
+	if got := WidgetName(it, func(string) string { return "" }); got != "org.sysc.mini-docker" {
+		t.Errorf("unknown plugin named %q, want its id", got)
+	}
+	if got := WidgetName(config.Item{ID: "clock"}, nil); got != "Clock" {
+		t.Errorf("clock named %q", got)
 	}
 }

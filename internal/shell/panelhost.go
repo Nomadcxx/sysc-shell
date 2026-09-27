@@ -129,7 +129,11 @@ type PanelHost struct {
 	// tree starts at the top, so without this a drag or a remove threw the
 	// user back to the first row and lost their place.
 	settingsScroll int
-	pressed        string
+	// pluginName resolves a plugin ID to its catalogue name for the bar
+	// editor's rows (settings redesign D9). Set by barLaneStripFor; nil
+	// falls back to the plugin ID.
+	pluginName func(id string) string
+	pressed    string
 	// pointer is the resolved hover/press state, kept as stable keys so it
 	// survives the tree rebuilds that replace every node.
 	pointer        interaction

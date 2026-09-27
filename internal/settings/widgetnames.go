@@ -40,13 +40,20 @@ var widgetNames = map[string]string{
 // what it is; a plugin placement is named by its entry, which is the only part
 // of it that means anything to a person, and falls back to the raw id so an
 // unknown token is visible rather than blank.
-func WidgetName(it config.Item) string {
+func WidgetName(it config.Item, plugin func(id string) string) string {
 	switch it.ID {
 	case "group":
 		return "Group"
 	case "plugin":
-		if it.Entry != "" {
-			return it.Entry
+		// A plugin widget is named by its plugin (settings redesign D9). The
+		// entry point ("bar") names nothing a user would recognise.
+		if plugin != nil {
+			if name := plugin(it.Plugin); name != "" {
+				return name
+			}
+		}
+		if it.Plugin != "" {
+			return it.Plugin
 		}
 		return "Plugin"
 	}
