@@ -1330,6 +1330,7 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	if page != nil && pageOffset != 0 {
 		offsetNodeY(page, -pageOffset)
 	}
+	h.applyEditorView(root)
 	h.pointer.apply(root, h.anim)
 	if err := h.resolveEffectMotionLocked(root); err != nil {
 		return err
@@ -1873,8 +1874,50 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 		return true
 	}
 	n := h.focused()
-	if n == nil || n.Kind != ui.KindTextField {
+	f := h.fieldFor(n)
+	if f == nil {
 		return false
+	}
+	fn(f)
+	f.SyncTo(n)
+	if _, ok := parsePluginAction(n.Action); ok {
+		r.deliverPluginText(n.Action, n.Text, v1.EventChange)
+		return true
+	}
+	if n.Action == "bluetooth-prompt-input" {
+		r.rebuildPanel(h)
+		return true
+	}
+	if n.Name == "Search" {
+		h.query = f.Text
+		if h.id == PanelLauncher {
+			h.launcherSel = 0
+			h.launcherScroll = 0
+			if results, handled := notesLauncherResults(h.query); handled {
+				h.launcherResults = results
+			} else {
+				r.launcherServiceLocked().Query(h.query)
+			}
+		}
+		idx := h.roving.Index()
+		r.rebuildPanel(h)
+		h.roving.Set(idx)
+		return true
+	}
+	if strings.HasPrefix(n.Action, "plugin-set:") {
+		return r.handlePluginManager(h, n)
+	}
+	h.applySetting(r, n)
+	return true
+}
+
+// fieldFor is the retained editor behind a text-field node: the Bluetooth
+// PIN, the network password, a panel search, a plugin field's retained
+// editor, or a settings entry. It is created on first use and synced from
+// the node, so every path that edits or paints a field shares one state.
+func (h *PanelHost) fieldFor(n *ui.Node) *ui.Field {
+	if n == nil || n.Kind != ui.KindTextField {
+		return nil
 	}
 	var f *ui.Field
 	if n.Action == "bluetooth-prompt-input" && bluetoothBodyVisible(h) {
@@ -1936,37 +1979,65 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 			f.SyncFrom(n)
 		}
 	}
-	fn(f)
-	f.SyncTo(n)
-	if _, ok := parsePluginAction(n.Action); ok {
-		r.deliverPluginText(n.Action, n.Text, v1.EventChange)
-		return true
+	return f
+}
+
+// applyEditorView marks the focused field on a paint copy and gives it the
+// scroll that keeps its caret visible. It runs after layout, so bounds are
+// real, and measures with the same text metrics the painter uses.
+func (h *PanelHost) applyEditorView(root *ui.Node) {
+	focused := h.focused()
+	if focused == nil || focused.Kind != ui.KindTextField {
+		return
 	}
-	if n.Action == "bluetooth-prompt-input" {
-		r.rebuildPanel(h)
-		return true
+	f := h.fieldFor(focused)
+	n := mirrorNode(h.root, root, focused)
+	if f == nil || n == nil {
+		return
 	}
-	if n.Name == "Search" {
-		h.query = f.Text
-		if h.id == PanelLauncher {
-			h.launcherSel = 0
-			h.launcherScroll = 0
-			if results, handled := notesLauncherResults(h.query); handled {
-				h.launcherResults = results
-			} else {
-				r.launcherServiceLocked().Query(h.query)
-			}
+	n.Editing = true
+	n.SelStart, n.SelEnd = f.Selection()
+	box := render.FieldTextRect(n)
+	measure := h.measureText()
+	attrs := ui.TextAttrsOf(n)
+	if n.Multiline {
+		lines := strings.Count(ui.DisplayPrefix(n, n.Cursor), "\n")
+		_, lineH := measure(" ", attrs)
+		visible := max(box.H/max(lineH, 1), 1)
+		switch {
+		case lines < f.ScrollY:
+			f.ScrollY = lines
+		case lines >= f.ScrollY+visible:
+			f.ScrollY = lines - visible + 1
 		}
-		idx := h.roving.Index()
-		r.rebuildPanel(h)
-		h.roving.Set(idx)
-		return true
+		n.ScrollY = f.ScrollY
+		return
 	}
-	if strings.HasPrefix(n.Action, "plugin-set:") {
-		return r.handlePluginManager(h, n)
+	caretX, _ := measure(ui.DisplayPrefix(n, n.Cursor)+ui.DisplayPreedit(n), attrs)
+	textW, _ := measure(ui.DisplayText(n)+ui.DisplayPreedit(n), attrs)
+	f.ScrollX = ui.KeepCaretVisible(f.ScrollX, caretX, textW, box.W, 8)
+	n.ScrollX = f.ScrollX
+}
+
+// mirrorNode finds target in live and returns the node at the same place in
+// cp, a copyNode of live. Position, not key: a panel search carries neither a
+// Key nor an Action, and copyNode keeps every child in order.
+func mirrorNode(live, cp, target *ui.Node) *ui.Node {
+	if live == nil || cp == nil {
+		return nil
 	}
-	h.applySetting(r, n)
-	return true
+	if live == target {
+		return cp
+	}
+	if len(live.Children) != len(cp.Children) {
+		return nil
+	}
+	for i, c := range live.Children {
+		if m := mirrorNode(c, cp.Children[i], target); m != nil {
+			return m
+		}
+	}
+	return nil
 }
 
 // metrics is the density row a tree builds against. The receiver may be nil:

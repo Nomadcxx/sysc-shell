@@ -205,3 +205,7 @@ func (f *Field) SyncTo(n *Node) {
 	}
 	n.Text, n.Preedit, n.Cursor = f.Text, f.PreeditText, f.Cursor
 }
+
+// Selection returns the selected byte range, start <= end. Task 6 replaces
+// this with the anchor-aware version.
+func (f *Field) Selection() (start, end int) { return f.Cursor, f.Cursor }

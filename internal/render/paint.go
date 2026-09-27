@@ -747,6 +747,33 @@ func paintMenuChevron(c *Canvas, n *ui.Node, text *TextRenderer, style Style) {
 	_ = paintIcon(c, glyph, text, style)
 }
 
+// FieldTextRect is the logical box a text field's text occupies: inside its
+// padding, after a Search field's leading glyph and before its clear glyph.
+// Painting and pointer hit testing both read it, so a click lands on the
+// glyph the user sees.
+func FieldTextRect(n *ui.Node) ui.Rect {
+	if n == nil {
+		return ui.Rect{}
+	}
+	mark := 0
+	if n.Name == "Search" && !n.Multiline {
+		// The leading inset clears the stadium cap. At 26 the glyph was
+		// centred 13 from the edge, inside the curve of a 56-tall pill, so it
+		// read as crowding the corner rather than sitting in the field.
+		mark = searchGlyphInset + searchGlyphSize + searchGlyphGap - n.Padding
+	}
+	trail := 0
+	if clear := SearchClearBox(n); clear.W > 0 {
+		trail = clearGlyphInset + clearGlyphSize + clearGlyphGap - n.Padding
+	}
+	return ui.Rect{
+		X: n.Bounds.X + n.Padding + mark,
+		Y: n.Bounds.Y + n.Padding,
+		W: max(n.Bounds.W-2*n.Padding-mark-trail, 0),
+		H: n.Bounds.H - 2*n.Padding,
+	}
+}
+
 func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
 	box := style.Scale120.PhysicalRect(n.Bounds)
 	// Stadium: a search well is a pill, not a 6px-radius box.
@@ -762,29 +789,17 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 	if boundary := style.outline(); boundary.A > 0 {
 		c.StrokeRounded(box, radius, max(style.Scale120.Physical(1), 1), boundary)
 	}
-	mark := 0
-	if n.Name == "Search" && !n.Multiline {
-		// The leading inset clears the stadium cap. At 26 the glyph was
-		// centred 13 from the edge, inside the curve of a 56-tall pill, so it
-		// read as crowding the corner rather than sitting in the field.
-		mark = searchGlyphInset + searchGlyphSize + searchGlyphGap - n.Padding
+	searchMark := n.Name == "Search" && !n.Multiline
+	if searchMark {
 		paintSearchGlyph(c, box, style)
 	}
 	// The trailing clear mirrors the leading one, and only appears once there
 	// is something to clear: an empty well would otherwise carry an affordance
 	// that does nothing.
-	trail := 0
 	if clear := SearchClearBox(n); clear.W > 0 {
-		trail = clearGlyphInset + clearGlyphSize + clearGlyphGap - n.Padding
 		paintClearGlyph(c, style.Scale120.PhysicalRect(clear), style)
 	}
-	inner := ui.Rect{
-		X: n.Bounds.X + n.Padding + mark,
-		Y: n.Bounds.Y + n.Padding,
-		W: max(n.Bounds.W-2*n.Padding-mark-trail, 0),
-		H: n.Bounds.H - 2*n.Padding,
-	}
-	phys := style.Scale120.PhysicalRect(inner)
+	phys := style.Scale120.PhysicalRect(FieldTextRect(n))
 	// One line of text sits on the midline of the well, not against its top
 	// edge. paintText draws from the top of the box it is given, which is
 	// invisible while a field is only as tall as its text and obvious once it
@@ -800,7 +815,7 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 	}
 	// A Search field's glass is the affordance; painting Name as a
 	// placeholder put bright body text in the well.
-	if n.Text == "" && n.Preedit == "" && n.Placeholder == "" && n.Name != "" && mark == 0 {
+	if n.Text == "" && n.Preedit == "" && n.Placeholder == "" && n.Name != "" && !searchMark {
 		_ = paintText(c, n.Name, phys, text, style, textSpec(style, n).Italicised(), n.Tabular, n.Tone, false)
 	}
 	// A masked field draws one bullet per rune. The value, the committed
@@ -813,7 +828,15 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 	if n.Text == "" && n.Preedit == "" && n.Placeholder != "" {
 		shown, tone = n.Placeholder, ui.ToneSubtle
 	}
-	if err := paintText(c, shown, phys, text, style, textSpec(style, n), n.Tabular, tone, n.Underline); err != nil {
+	// An editing field is a window onto its line: the text slides left by
+	// ScrollX and is clipped by the box rather than ellipsized, so the caret
+	// the user is typing at stays on screen.
+	origin := phys
+	if n.Editing {
+		origin.X -= style.Scale120.Physical(n.ScrollX)
+		origin.W += style.Scale120.Physical(n.ScrollX) + phys.W
+	}
+	if err := paintText(c, shown, origin, text, style, textSpec(style, n), n.Tabular, tone, n.Underline); err != nil {
 		return err
 	}
 	prefixW := 0
@@ -823,7 +846,7 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 		}
 	}
 	if shownPreedit != "" {
-		pre := phys
+		pre := origin
 		pre.X += prefixW
 		pre.W -= prefixW
 		if err := paintText(c, shownPreedit, pre, text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline); err != nil {
@@ -835,7 +858,7 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 			prefixW += pw
 		}
 	}
-	caret := ui.Rect{X: phys.X + prefixW, Y: phys.Y, W: 1, H: phys.H}
+	caret := ui.Rect{X: origin.X + prefixW, Y: origin.Y, W: 1, H: origin.H}
 	fillRect(c, caret, style.accent())
 	return nil
 }
@@ -848,6 +871,12 @@ func paintMultilineField(c *Canvas, n *ui.Node, text *TextRenderer, style Style,
 		}
 	}
 	lines := strings.Split(n.Text, "\n")
+	// An editing field skips the lines scrolled off its top; the clip set by
+	// the caller hides whatever runs past its bottom.
+	scrollY := 0
+	if n.Editing {
+		scrollY = max(n.ScrollY, 0)
+	}
 	off := 0
 	caretLine, caretCol := 0, 0
 	cursor := n.Cursor
@@ -866,8 +895,12 @@ func paintMultilineField(c *Canvas, n *ui.Node, text *TextRenderer, style Style,
 		if cursor >= off && cursor <= end {
 			caretLine, caretCol = i, cursor-off
 		}
+		if i < scrollY {
+			off = end + 1
+			continue
+		}
 		box := phys
-		box.Y += i * lineH
+		box.Y += (i - scrollY) * lineH
 		box.H = lineH
 		if err := paintText(c, line, box, text, style, textSpec(style, n), n.Tabular, tone, n.Underline); err != nil {
 			return err
@@ -884,7 +917,7 @@ func paintMultilineField(c *Canvas, n *ui.Node, text *TextRenderer, style Style,
 			prefixW = w
 		}
 	}
-	caret := ui.Rect{X: phys.X + prefixW, Y: phys.Y + caretLine*lineH, W: 1, H: lineH}
+	caret := ui.Rect{X: phys.X + prefixW, Y: phys.Y + (caretLine-scrollY)*lineH, W: 1, H: lineH}
 	fillRect(c, caret, style.accent())
 	return nil
 }
