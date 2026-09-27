@@ -225,6 +225,18 @@ func validSourceURL(raw string) error {
 	return fmt.Errorf("%q must be an https:// or file:/// URL", raw)
 }
 
+// ValidatePluginSource applies the config loader's rules to a custom source
+// before the Settings page writes it.
+func ValidatePluginSource(name, rawURL string) error {
+	if !sourceNamePattern.MatchString(name) {
+		return fmt.Errorf("%q is not a source name", name)
+	}
+	if name == BuiltinPluginSource.Name {
+		return fmt.Errorf("%q is reserved for the built-in source", name)
+	}
+	return validSourceURL(rawURL)
+}
+
 var colorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$`)
 
 // ValidColor reports whether v is a colour this package will accept. It is the

@@ -195,6 +195,14 @@ type PanelHost struct {
 	// wallpaperThemeErr mirrors Registry.themeErr for the picker's banners.
 	wallpaperThemeErr string
 
+	pluginManagerTab            string
+	pluginManagerSourceWarning  bool
+	pluginManagerRemoveConfirm  string
+	pluginManagerError          string
+	pluginManagerExpanded       map[string]bool
+	pluginUpdateAllNeedsConsent []string
+	pluginStoreReviewKey        string
+
 	pluginStoreQuery         BrowseQuery
 	pluginStoreSelected      string
 	pluginStoreDetail        string

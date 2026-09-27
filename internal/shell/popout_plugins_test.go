@@ -15,7 +15,11 @@ func settingRowControl(row *ui.Node) *ui.Node {
 	if row == nil || len(row.Children) < 2 {
 		return nil
 	}
-	return row.Children[1]
+	trailing := row.Children[1]
+	if trailing.Kind == ui.KindRow && len(trailing.Children) > 0 {
+		return trailing.Children[0]
+	}
+	return trailing
 }
 
 func TestPluginSettingRowRendersSelectAsMenu(t *testing.T) {
@@ -32,27 +36,31 @@ func TestPluginSettingRowRendersSelectAsMenu(t *testing.T) {
 	if ctrl.Text != "H.264" {
 		t.Fatalf("menu label = %q, want H.264", ctrl.Text)
 	}
-	if row.Kind != ui.KindColumn {
-		t.Fatalf("select row kind = %d, want column so the open list can lay out", row.Kind)
+	if row.Kind != ui.KindRow {
+		t.Fatalf("select row kind = %d, want settings row", row.Kind)
 	}
 }
 
 func TestPluginSettingRowRendersBoolAsCheckbox(t *testing.T) {
 	h := &PanelHost{}
-	s := plugin.Setting{Key: "show_cursor", Type: plugin.SettingBool, Label: "Show cursor", Default: true}
+	s := plugin.Setting{Key: "show_cursor", Type: plugin.SettingBool, Label: "Show cursor", Description: "Include the pointer in captures.", Default: true}
 	row := pluginSettingRow(nil, h, "org.sysc.screen-recorder", s)
 	if row == nil || row.Kind != ui.KindRow || len(row.Children) < 2 {
 		t.Fatalf("bool row = %+v, want checkbox then label", row)
 	}
-	box := row.Children[0]
+	box := settingRowControl(row)
 	if box.Kind != ui.KindToggle || box.Role != "checkbox" {
 		t.Fatalf("bool control = kind %d role %q, want toggle checkbox", box.Kind, box.Role)
 	}
-	if row.Children[1].Text != "Show cursor" {
-		t.Fatalf("bool label = %q", row.Children[1].Text)
+	label := row.Children[0].Children[0]
+	if label.Text != "Show cursor" {
+		t.Fatalf("bool label = %q", label.Text)
 	}
-	if !row.Children[1].Focusable || row.Children[1].Action != box.Action {
+	if !label.Focusable || label.Action != box.Action {
 		t.Fatal("checkbox label must share the toggle action")
+	}
+	if row.Children[0].Kind != ui.KindColumn || row.Children[0].Children[1].Text != s.Description || !row.Children[1].PinEnd {
+		t.Fatal("plugin setting does not use the Settings label, caption, and right-pinned control anatomy")
 	}
 }
 
