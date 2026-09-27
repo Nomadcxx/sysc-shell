@@ -305,12 +305,16 @@ func TestEverySectionIsOneOfTheNamedSections(t *testing.T) {
 	cfg.Plugins.Enabled = []string{"com.example.widget"}
 
 	names := SectionNames()
-	if len(names) != 13 {
-		t.Fatalf("SectionNames = %d sections, want the thirteen of the information architecture", len(names))
+	// Twelve: Displays became Bar's Displays page (settings redesign D5).
+	if len(names) != 12 {
+		t.Fatalf("SectionNames = %d sections, want the twelve of the information architecture", len(names))
 	}
 	for _, e := range DefaultFor(cfg).entries {
 		if !slices.Contains(names, e.Section) {
 			t.Errorf("%s is filed under %q, which no section lists", e.Path, e.Section)
+		}
+		if pages := SectionPages(e.Section); len(pages) > 0 && !slices.Contains(pages, e.Page) {
+			t.Errorf("%s is on page %q, which %s does not list", e.Path, e.Page, e.Section)
 		}
 	}
 }

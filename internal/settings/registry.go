@@ -22,35 +22,35 @@ func Default() *Registry {
 func DefaultFor(cfg config.Config) *Registry {
 	r := &Registry{entries: []Entry{
 		{
-			Path: "bar.enabled", Label: "Enabled", Section: "Bar", Group: "Surface",
+			Path: "bar.enabled", Label: "Enabled", Section: "Bar", Page: "Appearance", Group: "Surface",
 			Describe: "Draw the bar on every output.",
 			Kind:     KindBool,
 			Get:      getBool(func(c config.Config) bool { return c.Bar.Enabled }),
 			Set:      setBool("bar.enabled", func(c *config.Config, b bool) { c.Bar.Enabled = b }),
 		},
 		{
-			Path: "bar.edge", Label: "Edge", Section: "Bar", Group: "Surface", Kind: KindEnum,
+			Path: "bar.edge", Label: "Edge", Section: "Bar", Page: "Appearance", Group: "Surface", Kind: KindEnum,
 			Describe: "Which screen edge the bar anchors to.",
 			Options:  barEdges,
 			Get:      func(c config.Config) string { return c.Bar.Edge },
 			Set:      setEnum("bar.edge", barEdges, func(c *config.Config, v string) { c.Bar.Edge = v }),
 		},
 		{
-			Path: "bar.style", Label: "Style", Section: "Bar", Group: "Surface", Kind: KindEnum,
+			Path: "bar.style", Label: "Style", Section: "Bar", Page: "Appearance", Group: "Surface", Kind: KindEnum, Present: PresentCards,
 			Describe: "How the bar's ground and pills are painted. Frosted needs Niri 26.04 or later; elsewhere it looks Solid.",
 			Options:  config.BarStyles,
 			Get:      func(c config.Config) string { return c.Bar.Style },
 			Set:      setEnum("bar.style", config.BarStyles, func(c *config.Config, v string) { c.Bar.Style = v }),
 		},
 		{
-			Path: "bar.shape", Label: "Shape", Section: "Bar", Group: "Surface", Kind: KindEnum,
+			Path: "bar.shape", Label: "Shape", Section: "Bar", Page: "Appearance", Group: "Surface", Kind: KindEnum, Present: PresentCards,
 			Describe: "Whether the bar meets the screen edge or floats off it.",
 			Options:  config.BarShapes,
 			Get:      func(c config.Config) string { return c.Bar.Shape },
 			Set:      setEnum("bar.shape", config.BarShapes, func(c *config.Config, v string) { c.Bar.Shape = v }),
 		},
 		{
-			Path: "bar.frost-opacity", Label: "Frost opacity", Section: "Bar", Group: "Frost",
+			Path: "bar.frost-opacity", Label: "Frost opacity", Section: "Bar", Page: "Appearance", Group: "Frost",
 			Describe: "How opaque the frosted bar's ground is.",
 			Kind:     KindInt, Min: theme.OpacityMinFrost, Max: theme.OpacityMax,
 			Get: getInt(func(c config.Config) int { return c.Bar.FrostOpacity }),
@@ -58,7 +58,7 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, n int) { c.Bar.FrostOpacity = n }),
 		},
 		{
-			Path: "bar.pill-opacity", Label: "Pill opacity", Section: "Bar", Group: "Frost",
+			Path: "bar.pill-opacity", Label: "Pill opacity", Section: "Bar", Page: "Appearance", Group: "Frost",
 			Describe: "How opaque the bar's pills are when Style is Frosted or Islands.",
 			Kind:     KindInt, Min: theme.OpacityMinFrost, Max: theme.OpacityMax,
 			Get: getInt(func(c config.Config) int { return c.Bar.PillOpacity }),
@@ -66,35 +66,35 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, n int) { c.Bar.PillOpacity = n }),
 		},
 		{
-			Path: "bar.height", Label: "Height", Section: "Bar", Group: "Geometry",
+			Path: "bar.height", Label: "Height", Section: "Bar", Page: "Appearance", Group: "Geometry",
 			Describe: "Bar height in logical pixels. It follows the density ladder unless set here.",
 			Kind:     KindInt, Min: 24, Max: 64,
 			Get: getInt(func(c config.Config) int { return c.Bar.Height }),
 			Set: setInt("bar.height", 24, 64, func(c *config.Config, n int) { c.Bar.Height = n }),
 		},
 		{
-			Path: "bar.gap", Label: "Gap", Section: "Bar", Group: "Geometry",
+			Path: "bar.gap", Label: "Gap", Section: "Bar", Page: "Appearance", Group: "Geometry",
 			Describe: "Space between the bar and the screen edge.",
 			Kind:     KindInt, Min: 0, Max: 32,
 			Get: getInt(func(c config.Config) int { return c.Bar.Gap }),
 			Set: setInt("bar.gap", 0, 32, func(c *config.Config, n int) { c.Bar.Gap = n }),
 		},
 		{
-			Path: "bar.padding", Label: "Padding", Section: "Bar", Group: "Geometry",
+			Path: "bar.padding", Label: "Padding", Section: "Bar", Page: "Appearance", Group: "Geometry",
 			Describe: "Space inside the bar, before its first widget.",
 			Kind:     KindInt, Min: 0, Max: 32,
 			Get: getInt(func(c config.Config) int { return c.Bar.Padding }),
 			Set: setInt("bar.padding", 0, 32, func(c *config.Config, n int) { c.Bar.Padding = n }),
 		},
 		{
-			Path: "bar.spacing", Label: "Spacing", Section: "Bar", Group: "Geometry",
+			Path: "bar.spacing", Label: "Spacing", Section: "Bar", Page: "Appearance", Group: "Geometry",
 			Describe: "Space between neighbouring widgets.",
 			Kind:     KindInt, Min: 0, Max: 32,
 			Get: getInt(func(c config.Config) int { return c.Bar.Spacing }),
 			Set: setInt("bar.spacing", 0, 32, func(c *config.Config, n int) { c.Bar.Spacing = n }),
 		},
 		{
-			Path: "bar.font-family", Label: "Font family", Section: "Bar", Group: "Typography",
+			Path: "bar.font-family", Label: "Font family", Section: "Bar", Page: "Appearance", Group: "Typography",
 			Describe:   "Font the bar's widgets use. Empty follows the appearance font.",
 			Kind:       KindFont,
 			EmptyLabel: "Follow the appearance font",
@@ -102,7 +102,7 @@ func DefaultFor(cfg config.Config) *Registry {
 			Set:        setString(func(c *config.Config, v string) { c.Bar.FontFamily = v }),
 		},
 		{
-			Path: "bar.font-size", Label: "Font size", Section: "Bar", Group: "Typography",
+			Path: "bar.font-size", Label: "Font size", Section: "Bar", Page: "Appearance", Group: "Typography",
 			Describe: "Text size in the bar.",
 			Kind:     KindInt, Min: 8, Max: 32,
 			Get: getInt(func(c config.Config) int { return c.Bar.FontSize }),
@@ -578,14 +578,43 @@ func presetBaseline(c config.Config) config.Config {
 	return base
 }
 
+// Cluster is one captioned run of the rail (design D5).
+type Cluster struct {
+	Name     string
+	Sections []string
+}
+
+// SectionClusters is the rail, in order. SectionNames flattens it, so the two
+// cannot disagree.
+func SectionClusters() []Cluster {
+	return []Cluster{
+		{"Look", []string{"Appearance", "Templates", "Wallpaper"}},
+		{"Bar", []string{"Bar", "Widgets", "Tray"}},
+		{"Panels", []string{"Panels", "Monitor", "Weather", "Plugins"}},
+		{"System", []string{"Session", "Accessibility"}},
+	}
+}
+
 // SectionNames is the information architecture in rail order. The pane walks
 // it, so a section absent here is a section the user cannot reach however many
 // entries name it.
 func SectionNames() []string {
-	return []string{
-		"Appearance", "Templates", "Bar", "Widgets", "Panels", "Monitor", "Wallpaper",
-		"Weather", "Displays", "Tray", "Plugins", "Session", "Accessibility",
+	var out []string
+	for _, c := range SectionClusters() {
+		out = append(out, c.Sections...)
 	}
+	return out
+}
+
+// SectionPages is a section's tabs, in order; nil for a section with one page.
+// Bar's Layout page carries no entries (the lane editor is the page), so pages
+// are a fixed list rather than derived from entries.
+func SectionPages(section string) []string {
+	switch section {
+	case "Bar":
+		return []string{"Appearance", "Layout", "Displays"}
+	}
+	return nil
 }
 
 // The closed vocabularies the enum entries offer. Each is named once because
@@ -953,6 +982,20 @@ func (r *Registry) Section(name string) []Entry {
 	return out
 }
 
+// PageEntries is one page of a section, in registry order.
+func (r *Registry) PageEntries(section, page string) []Entry {
+	var out []Entry
+	for _, e := range r.Section(section) {
+		if e.Page == page {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// All is every entry, in registry order.
+func (r *Registry) All() []Entry { return append([]Entry(nil), r.entries...) }
+
 func (r *Registry) ByPath(path string) *Entry {
 	for i := range r.entries {
 		if r.entries[i].Path == path {
@@ -1032,7 +1075,7 @@ func (r *Registry) addOutputEntries(cfg config.Config) {
 		}
 		r.entries = append(r.entries,
 			Entry{
-				Path: "outputs." + conn + ".enabled", Label: "Enabled", Section: "Displays", Group: conn,
+				Path: "outputs." + conn + ".enabled", Label: "Enabled", Section: "Bar", Page: "Displays", Group: conn,
 				Describe: "Draw the bar on this output.", Kind: KindBool,
 				Get: getBool(func(c config.Config) bool {
 					return read(c, func(b config.Bar) int {
@@ -1049,7 +1092,7 @@ func (r *Registry) addOutputEntries(cfg config.Config) {
 				}),
 			},
 			Entry{
-				Path: "outputs." + conn + ".height", Label: "Height", Section: "Displays", Group: conn,
+				Path: "outputs." + conn + ".height", Label: "Height", Section: "Bar", Page: "Displays", Group: conn,
 				Describe: "Bar height on this output.", Kind: KindInt, Min: 24, Max: 64,
 				Get: getInt(func(c config.Config) int { return read(c, func(b config.Bar) int { return b.Height }) }),
 				Set: setInt("outputs."+conn+".height", 24, 64, func(c *config.Config, n int) {
@@ -1059,7 +1102,7 @@ func (r *Registry) addOutputEntries(cfg config.Config) {
 				}),
 			},
 			Entry{
-				Path: "outputs." + conn + ".font-size", Label: "Font size", Section: "Displays", Group: conn,
+				Path: "outputs." + conn + ".font-size", Label: "Font size", Section: "Bar", Page: "Displays", Group: conn,
 				Describe: "Bar text size on this output.", Kind: KindInt, Min: 8, Max: 32,
 				Get: getInt(func(c config.Config) int { return read(c, func(b config.Bar) int { return b.FontSize }) }),
 				Set: setInt("outputs."+conn+".font-size", 8, 32, func(c *config.Config, n int) {

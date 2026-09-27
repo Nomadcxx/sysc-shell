@@ -30,14 +30,29 @@ type Setter func(*config.Config, string) error
 // Entry is one setting. Its accessors live here rather than in a switch so a
 // setting is declared in exactly one place and the compiler enforces that a
 // new entry carries them.
+// Presentation is how a row shows its control (design D2). The zero value
+// keeps the kind's own control, except that a short enum renders segmented.
+type Presentation uint8
+
+const (
+	PresentAuto Presentation = iota
+	PresentMenu
+	PresentCards
+)
+
 type Entry struct {
 	Path     string
 	Label    string
 	Describe string
 	Section  string
 	Group    string
-	Kind     Kind
-	Options  []string
+	// Page is the tab within Section this entry sits on (design D1). Empty in
+	// a section with no pages.
+	Page string
+	// Present overrides how the control is drawn (design D2).
+	Present Presentation
+	Kind    Kind
+	Options []string
 	// EmptyLabel names the row a picker offers for the empty value, and is
 	// set only where empty is a state the setting can actually hold. Most
 	// cannot: the loader refuses an empty appearance font family, so a picker
