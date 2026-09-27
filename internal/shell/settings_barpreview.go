@@ -78,6 +78,7 @@ func settingsPictureCards(r *Registry, h *PanelHost, e settings.Entry) *ui.Node 
 	n := max(len(e.Options), 1)
 	cardW := (settingsCardInner(h) - (n-1)*theme.MarginM) / n
 	imgW := min(settingsPictureCardW, max(cardW-2*pad, 0))
+	measure := settingsMeasure(h)
 	row := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Name: e.Label, Role: "radiogroup"}
 	for _, opt := range e.Options {
 		cfg := h.draft
@@ -85,15 +86,17 @@ func settingsPictureCards(r *Registry, h *PanelHost, e settings.Entry) *ui.Node 
 			continue
 		}
 		label := settingsOptionLabel(opt)
+		imgH := cfg.ForConnector("").SurfaceExtent()
+		_, labelH := measure(label, ui.TextAttrs{})
+		// A button sizes to a control, not to its content, so the card states
+		// the height its picture and label need.
 		card := &ui.Node{
 			Kind: ui.KindButton, Action: "pick:" + e.Path + "=" + opt,
 			Name: label, Role: "radio", Focusable: true, Shape: ui.ShapeCard,
 			Fill: ui.FillContainerHighest, Padding: pad, Width: cardW,
+			Height: imgH + theme.MarginS + labelH + 2*pad,
 			Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginS, Children: []*ui.Node{
-				{
-					Kind: ui.KindImage, Image: r.settingsBarImage(h, cfg, imgW),
-					ImageW: imgW, ImageH: cfg.ForConnector("").SurfaceExtent(),
-				},
+				{Kind: ui.KindImage, Image: r.settingsBarImage(h, cfg, imgW), ImageW: imgW, ImageH: imgH},
 				{Kind: ui.KindText, Text: label},
 			}}},
 		}

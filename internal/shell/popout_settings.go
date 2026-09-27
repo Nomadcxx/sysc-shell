@@ -204,6 +204,9 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 
 	body := func(content *ui.Node) *ui.Node {
+		if content.Kind == ui.KindScroll {
+			content.Height = settingsContentHeight(h, head)
+		}
 		right := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Children: append(append([]*ui.Node{}, head...), content)}
 		return &ui.Node{Kind: ui.KindColumn, Padding: h.metrics().PanelPadding, Children: []*ui.Node{{
 			Kind: ui.KindRow, Gap: theme.MarginXL, Children: []*ui.Node{settingsRail(h, section), right},
@@ -232,6 +235,39 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 		entries = h.set.Section(section)
 	}
 	return body(settingsSectionColumn(h, section, entries))
+}
+
+// settingsContentHeight is what the scrolling body gets once the title, the
+// page tabs and their gaps are taken. The body sits in a column under them,
+// and a scroll in a column with no height of its own takes the layout's 240
+// fallback: the live gate found the Appearance page cut off after Shape.
+func settingsContentHeight(h *PanelHost, head []*ui.Node) int {
+	ph := h.place.Panel.H
+	if ph <= 0 {
+		ph = panelTargetSize(PanelSettings).H
+	}
+	used := 2 * h.metrics().PanelPadding
+	measure := settingsMeasure(h)
+	for _, n := range head {
+		if n.Height > 0 {
+			used += n.Height
+		} else {
+			_, th := measure(n.Text, ui.TextAttrsOf(n))
+			used += th
+		}
+		used += theme.MarginL
+	}
+	return max(ph-used, 0)
+}
+
+// settingsMeasure is the pane's text measure with the text engine loaded. The
+// tree is built before anything else loads it, and measureText's fallback
+// guesses (sysc-589 was that guess).
+func settingsMeasure(h *PanelHost) ui.MeasureText {
+	if h.theme.Valid() == nil {
+		_ = h.ensureText()
+	}
+	return h.measureText()
 }
 
 // settingsBarPage is one of Bar's pages (settings redesign D8). Appearance

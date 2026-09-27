@@ -159,3 +159,42 @@ func TestFrostDimsWhenTheStyleIsSolidAndAllDimWhenTheBarIsOff(t *testing.T) {
 		t.Fatal("the Enabled toggle itself was disabled")
 	}
 }
+
+// TestAppearanceFillsThePaneAndCardsHoldTheirContent is the live gate's
+// finding on the desktop: the scrolling body sat inside a column, which gave it
+// the layout's 240 fallback and cut the page off after Shape; and a picture
+// card was a control's height, so its picture spilled out and its label had
+// no room.
+func TestAppearanceFillsThePaneAndCardsHoldTheirContent(t *testing.T) {
+	reg := newPanelRegistry(t)
+	withTestBar(t, reg, 7, reg.cfg)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 3440, OutH: 1440}); err != nil {
+		t.Fatal(err)
+	}
+	open := drainAux(t, reg, 2)[1].Open
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelSettings]
+	if err := h.configure(int(open.Width), int(open.Height), 120); err != nil {
+		t.Fatal(err)
+	}
+	body := findScroll(h.root)
+	if body == nil || body.Bounds.H < int(open.Height)/2 {
+		t.Fatalf("scrolling body is %+v in a %d-tall pane", body.Bounds, open.Height)
+	}
+	for _, opt := range []string{"frosted", "solid", "islands"} {
+		card := findAction(h.root, "pick:bar.style="+opt)
+		img := findAllKind(card, ui.KindImage)
+		label := findNode(card, func(n *ui.Node) bool { return n.Kind == ui.KindText })
+		if len(img) == 0 || label == nil {
+			t.Fatalf("%s card lacks a picture or a label", opt)
+		}
+		inside := func(r ui.Rect) bool {
+			b := card.Bounds
+			return r.W > 0 && r.H > 0 && r.X >= b.X && r.Y >= b.Y && r.X+r.W <= b.X+b.W && r.Y+r.H <= b.Y+b.H
+		}
+		if !inside(img[0].Bounds) || !inside(label.Bounds) {
+			t.Errorf("%s card %+v does not hold its picture %+v and label %+v", opt, card.Bounds, img[0].Bounds, label.Bounds)
+		}
+	}
+}
