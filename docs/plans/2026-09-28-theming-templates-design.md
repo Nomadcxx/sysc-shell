@@ -24,8 +24,9 @@ Noctalia solved this: **sidecar theme file + one managed directive in the user c
 
 ## D1 — terminal token set (sysc-626)
 
-Add a `terminal_*` block to `internal/theme` roles so `Tokens.Export()` carries it; shape mirrors
-Noctalia `tokens.h`. Exported keys: `.TerminalBackground` `.TerminalForeground` `.TerminalCursor`
+Terminal block mirrors Noctalia `tokens.h` keys, implemented as derived export values
+(`internal/theme/terminal.go`, merged by `Tokens.Export()`) rather than matugen wire roles —
+every palette source carries the block with no second table. Exported keys: `.TerminalBackground` `.TerminalForeground` `.TerminalCursor`
 `.TerminalCursorText` `.TerminalSelectionForeground` `.TerminalSelectionBackground`,
 `.TerminalNormal{Black,Red,Green,Yellow,Blue,Magenta,Cyan,White}` and the same with `Bright`.
 
@@ -38,7 +39,8 @@ helpers in `internal/theme`):
 | TerminalForeground | `on_surface` |
 | TerminalCursor | TerminalForeground; TerminalCursorText = TerminalBackground |
 | TerminalSelection{Background,Foreground} | `surface_variant` / `on_surface_variant` |
-| ANSI 0-7, 8-15 | Noctalia's role map (error/primary/secondary/tertiary/outline/surface variants…), each clamped toward black/white until ≥3.0:1 contrast vs TerminalBackground; 0 and 15 are background/foreground shades rather than palette roles |
+| ANSI 0, 7, 8 | Anchors, not clamped: 0 = `surface_variant` (= selection background), 7 = `on_surface` (= foreground), 8 = `outline` |
+| ANSI 1-6, 9-14 | Noctalia's role map (red=error, green=primary, yellow=secondary, blue=tertiary, magenta=primary_fixed_dim, cyan=secondary_fixed_dim; bright = same), each passed through `EnsureContrast` against TerminalBackground at ≥4.5:1 (`TerminalContrast` const) |
 
 Contrast floor is a named const with a `ponytail:` comment; it is the calibration knob.
 
