@@ -25,6 +25,7 @@ type Field struct {
 	// goalCol is the column vertical motion aims for, kept across short
 	// lines; -1 when the next vertical move should start from the caret.
 	goalCol int
+	history undoHistory
 }
 
 func NewField(s string) *Field {
@@ -95,6 +96,7 @@ func (f *Field) Commit(s string) {
 	if f == nil {
 		return
 	}
+	f.record(editOther, "")
 	f.Insert(s)
 }
 
@@ -189,18 +191,31 @@ func (f *Field) Node(name string) *Node {
 	if f == nil {
 		f = NewField("")
 	}
+	start, end := f.Selection()
 	return &Node{
 		Kind: KindTextField, Text: f.Text, Preedit: f.PreeditText, Cursor: f.Cursor,
+		SelStart: start, SelEnd: end,
 		Focusable: true, Name: name, Role: "textbox", Multiline: f.Multiline,
 		SubmitOnEnter: f.SubmitOnEnter, Masked: f.Masked,
 	}
 }
 
+// SyncFrom adopts a node's value. New text is a reseed — from a plugin or a
+// programmatic set — so the caret follows the node and selection, history
+// and scroll reset. The same text means the node was rebuilt from this
+// field, and the field's own caret, selection and history stand.
 func (f *Field) SyncFrom(n *Node) {
 	if f == nil || n == nil {
 		return
 	}
-	f.Text, f.PreeditText, f.Cursor = n.Text, n.Preedit, n.Cursor
+	f.PreeditText = n.Preedit
+	if n.Text == f.Text {
+		return
+	}
+	f.Text, f.Cursor = n.Text, n.Cursor
+	f.clamp()
+	f.Anchor, f.goalCol, f.ScrollX, f.ScrollY = f.Cursor, -1, 0, 0
+	f.history = undoHistory{}
 }
 
 func (f *Field) SyncTo(n *Node) {
@@ -208,4 +223,5 @@ func (f *Field) SyncTo(n *Node) {
 		return
 	}
 	n.Text, n.Preedit, n.Cursor = f.Text, f.PreeditText, f.Cursor
+	n.SelStart, n.SelEnd = f.Selection()
 }
