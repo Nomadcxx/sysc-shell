@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -148,7 +150,10 @@ func (s *Supervisor) Start(ctx context.Context) (*Session, error) {
 	cmd := exec.CommandContext(ctx, s.Manifest.ExecPath)
 	cmd.Args = []string{s.Manifest.ExecPath}
 	cmd.Dir = s.Manifest.Dir
-	cmd.Env = os.Environ()
+	// GH #11: a third-party process gets the handful of variables it needs to
+	// find the compositor and its own config, not the whole session
+	// environment (which can carry tokens, proxy credentials, search paths).
+	cmd.Env = pluginEnvironment()
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -452,4 +457,33 @@ func (t *tail) drain(r io.Reader) {
 			return
 		}
 	}
+}
+
+// pluginEnvironment is the allowlisted view of the host environment a plugin
+// process starts with.
+func pluginEnvironment() []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		key := strings.SplitN(kv, "=", 2)[0]
+		// SYSC_* is our own config namespace (e.g. the weather plugin's
+		// endpoint override); everything else must be on the allowlist.
+		if strings.HasPrefix(key, "SYSC_") {
+			env = append(env, kv)
+			continue
+		}
+		if slices.Contains(pluginEnvKeys, key) {
+			env = append(env, kv)
+		}
+	}
+	return env
+}
+
+// pluginEnvKeys covers: finding binaries (PATH), config and state dirs (HOME,
+// XDG_*), locale and timezone, and the session buses a widget draws on
+// (WAYLAND_DISPLAY, NIRI_SOCKET).
+var pluginEnvKeys = []string{
+	"PATH", "HOME", "USER", "LOGNAME", "SHELL",
+	"LANG", "LC_ALL", "TZ",
+	"XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME",
+	"WAYLAND_DISPLAY", "WAYLAND_SOCKET", "NIRI_SOCKET",
 }
