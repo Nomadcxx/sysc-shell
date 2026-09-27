@@ -3,6 +3,7 @@ package wayland
 import (
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-wayland/client"
 )
 
@@ -142,9 +143,7 @@ func (o *owner) fireRepeat() {
 		return
 	}
 	o.repeat.next = now.Add(time.Second / time.Duration(o.repeat.rate))
-	o.deliverUnit(o.keyFocus.host, o.keyFocus.unit, Event{
-		Kind: EventKeyPress, Key: o.repeat.key, Serial: o.repeat.serial,
-	})
+	o.deliverUnit(o.keyFocus.host, o.keyFocus.unit, o.keyEvent(EventKeyPress, o.repeat.key, o.repeat.serial))
 }
 
 // deliverKey forwards a wl_keyboard.key to the focused surface. Key is the
@@ -161,7 +160,19 @@ func (o *owner) deliverKey(serial, key, state uint32) {
 	default:
 		o.disarmRepeat(key)
 	}
-	o.deliverUnit(o.keyFocus.host, o.keyFocus.unit, Event{
-		Kind: kind, Key: key, Serial: serial,
-	})
+	o.deliverUnit(o.keyFocus.host, o.keyFocus.unit, o.keyEvent(kind, key, serial))
+}
+
+// setModifiers records wl_keyboard.modifiers. group selects the layout and is
+// used once a keymap is loaded.
+func (o *owner) setModifiers(depressed, latched, locked, group uint32) {
+	o.mods = ui.ModsFromMask(depressed, latched, locked)
+}
+
+// keyEvent resolves a key at delivery time. Real presses and synthesised
+// repeats both come through here, so a repeat types what the keys held now
+// would type.
+func (o *owner) keyEvent(kind EventKind, key, serial uint32) Event {
+	k := ui.FallbackKey(key, o.mods)
+	return Event{Kind: kind, Key: key, Serial: serial, Sym: k.Sym, Text: k.Text, Mods: k.Mods}
 }

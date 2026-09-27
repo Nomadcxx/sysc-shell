@@ -54,6 +54,13 @@ type Event struct {
 	// Key is the evdev code from wl_keyboard.key. Set on key events only.
 	// The compositor already reports evdev; do not subtract 8.
 	Key uint32
+	// Sym, Text and Mods are the key resolved through the active layout:
+	// the keysym, the UTF-8 it types ("" for non-printing keys and while a
+	// compose sequence is open), and the modifiers held. Set on every key
+	// press, release and repeat; Mods is also set on pointer buttons.
+	Sym  uint32
+	Text string
+	Mods ui.Mods
 	// IME fields are set on EventIME only, after zwp_text_input_v3.done.
 	IMEPreedit      string
 	IMECommit       string
@@ -225,6 +232,8 @@ type owner struct {
 	// deadline. The compositor sends one key event per press and leaves the
 	// rest to us.
 	repeat keyRepeat
+	// mods is the modifier state from the latest wl_keyboard.modifiers.
+	mods ui.Mods
 	// clock is the owner's time source. Nil means time.Now; tests replace it
 	// to drive the repeat deadline without sleeping.
 	clock func() time.Time
@@ -558,7 +567,7 @@ func (o *owner) onSeatCapabilities(e client.SeatCapabilitiesEvent) {
 			// what the press acts on.
 			o.deliverUnit(o.focus.host, o.focus.unit, Event{
 				Kind: kind, Button: e.Button, Serial: e.Serial,
-				X: o.focus.x, Y: o.focus.y,
+				X: o.focus.x, Y: o.focus.y, Mods: o.mods,
 			})
 		})
 		pointer.SetAxisHandler(func(e client.PointerAxisEvent) {
@@ -607,6 +616,9 @@ func (o *owner) onSeatCapabilities(e client.SeatCapabilitiesEvent) {
 		// repeat_info arrives before any key event and can be resent later.
 		keyboard.SetRepeatInfoHandler(func(e client.KeyboardRepeatInfoEvent) {
 			o.setRepeatInfo(e.Rate, e.Delay)
+		})
+		keyboard.SetModifiersHandler(func(e client.KeyboardModifiersEvent) {
+			o.setModifiers(e.ModsDepressed, e.ModsLatched, e.ModsLocked, e.Group)
 		})
 	case !hasKeyboard && o.keyboard != nil:
 		o.leaveKeyboard()
