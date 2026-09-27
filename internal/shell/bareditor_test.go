@@ -309,7 +309,7 @@ func barKeyHost(t *testing.T, bar config.Bar) (*Registry, *PanelHost) {
 	reg.mu.Lock()
 	h.draft.Bar = bar
 	h.section, h.settingsPage = "Bar", "Layout"
-	h.alt = true
+	h.mods = ui.ModAlt
 	reg.rebuildPanel(h)
 	reg.mu.Unlock()
 	barLayout(t, reg, h)
@@ -449,7 +449,7 @@ func TestAltArrowMovesAMemberWithinItsGroup(t *testing.T) {
 func TestArrowsWithoutAltAreNotLaneCommands(t *testing.T) {
 	t.Parallel()
 	reg, h := barKeyHost(t, config.Bar{Left: []config.Item{{ID: "clock"}, {ID: "cpu"}}})
-	h.alt = false
+	h.mods = 0
 	focusChip(t, reg, h, config.ItemRef{Lane: "left", Path: config.ItemPath{Index: 0, Member: -1}})
 	if barKeyPressMu(reg, h, keyRight) {
 		t.Fatal("a bare arrow was taken as a lane command")
