@@ -150,12 +150,35 @@ ICONS = [
     "cancel",
     # The Faith plugin's read-the-chapter control.
     "menu_book",
+    # The ProtonVPN plugin: state glyphs (shield/verified_user/vpn_key/
+    # vpn_key_off/bolt/gpp_bad), detail rows (dns/location_on/security),
+    # country and feature tags (flag/public), traffic (download/upload),
+    # and sort/expand affordances (swap_vert/language).
+    "shield",
+    "verified_user",
+    "vpn_key",
+    "vpn_key_off",
+    "bolt",
+    "dns",
+    "location_on",
+    "security",
+    "flag",
+    "download",
+    "upload",
+    "swap_vert",
+    "language",
+    "gpp_bad",
 ]
 
 # The pinned source renamed the older smartphone ligature. Keep the shell's
 # stable public name while retaining the closest phone glyph available in the
-# source font.
-GLYPH_ALIASES = {"smartphone": "phone_bluetooth_speaker"}
+# source font. The same rename hit location_on -> place, but there the source
+# still ligates the typed letters "location_on" to the place glyph, so only the
+# glyph name needs mapping -- the Go renderer keeps shaping the public name.
+GLYPH_ALIASES = {
+    "smartphone": "phone_bluetooth_speaker",
+    "location_on": "place",
+}
 
 # Material Symbols addresses a glyph by typing its name, so the letters and the
 # underscore have to survive subsetting for the ligature to have inputs.
