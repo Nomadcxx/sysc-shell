@@ -810,9 +810,9 @@ func (h *pluginHost) callEnv(id string, rt *plugin.Runtime, store plugin.StateSt
 		OutputContext: func(_ context.Context, p v1.OutputContextParams) (v1.OutputContextResult, error) {
 			return h.outputContext(p)
 		},
-		PanelResize: func(ctx context.Context, p v1.PanelResizeParams) error {
+		PanelResize: func(ctx context.Context, p v1.PanelResizeParams) (v1.PanelResizeResult, error) {
 			if err := ctx.Err(); err != nil {
-				return err
+				return v1.PanelResizeResult{}, err
 			}
 			return h.resizePanel(p)
 		},
@@ -1072,7 +1072,9 @@ func (h *pluginHost) panelTree(host *PanelHost) *ui.Node {
 	settings := pluginPanelSettings(h.r, host, pluginID, schema)
 	head := root
 	if root.Kind != ui.KindCapsule {
-		head = monitorCard(host.metrics(), []*ui.Node{root})
+		// Keep the host inset without painting over the captured backdrop.
+		head = &ui.Node{Kind: ui.KindColumn, Padding: host.metrics().CardPadding,
+			Children: []*ui.Node{root}}
 	}
 	return &ui.Node{Kind: ui.KindScroll, Gap: monitorCardGap, Padding: host.metrics().PanelPadding, Children: append([]*ui.Node{head}, settings...)}
 }
@@ -1088,50 +1090,57 @@ func (h *pluginHost) panelSize() ui.Rect {
 
 // resizePanel retargets the calling plugin's open panel. The request is fitted
 // to the output as view.open's is (sysc-578), and the tree re-lays-out at the
-// granted bounds at once; the compositor's configure completes the surface.
-func (h *pluginHost) resizePanel(p v1.PanelResizeParams) error {
+// granted bounds at once; the reply reports the fitted size and the
+// compositor's configure completes the surface.
+func (h *pluginHost) resizePanel(p v1.PanelResizeParams) (v1.PanelResizeResult, error) {
 	h.r.mu.Lock()
 	global, open := h.r.panels.Output(PanelPlugin)
-	size := ui.Rect{W: p.Width, H: p.Height}
-	var joints Joints
-	var host *PanelHost
-	if host = h.r.panelHosts[PanelPlugin]; host != nil {
-		place := host.place
-		place.Panel = size
-		size.W, size.H = place.FittedSize()
-		// The surface keeps the joints it opened with around the new body,
-		// which is also what surfaceBody places it by (sysc-588).
-		joints = host.place.Joints()
+	host := h.r.panelHosts[PanelPlugin]
+	if !open || host == nil {
+		h.r.mu.Unlock()
+		return v1.PanelResizeResult{}, errors.New("panel surface is not open")
 	}
+	place := host.place
+	place.Panel = ui.Rect{W: p.Width, H: p.Height}
+	p.Width, p.Height = place.FittedSize()
+	place.Panel.W, place.Panel.H = p.Width, p.Height
+	host.place = place
+	// The surface keeps the joints it opened with around the new body,
+	// which is also what surfaceBody places it by (sysc-588).
+	joints := place.Joints()
+	margins := place.Margins()
 	h.r.mu.Unlock()
-	if !open {
-		return errors.New("panel surface is not open")
-	}
 	h.mu.Lock()
 	if h.panel == nil {
 		h.mu.Unlock()
-		return errors.New("no open panel to resize")
+		return v1.PanelResizeResult{}, errors.New("no open panel to resize")
 	}
-	h.panel.Width, h.panel.Height = size.W, size.H
+	h.panel.Width, h.panel.Height = p.Width, p.Height
 	h.mu.Unlock()
 	h.refreshPanel()
-	sw, sh := size.W, size.H
+	sw, sh := p.Width, p.Height
 	var input []ui.Rect
-	if host != nil {
-		h.r.mu.Lock()
-		sw, sh = sw+joints.Left+joints.Right, sh+host.edgeExtent(joints)
-		if joints != (Joints{}) {
-			input = []ui.Rect{host.surfaceBody(sw, sh)}
-		}
-		h.r.mu.Unlock()
+	h.r.mu.Lock()
+	sw, sh = sw+joints.Left+joints.Right, sh+host.edgeExtent(joints)
+	if joints != (Joints{}) {
+		input = []ui.Rect{host.surfaceBody(sw, sh)}
 	}
+	h.r.mu.Unlock()
 	w, hgt := uint32(sw), uint32(sh)
+	top, bottom := int32(margins.Top), int32(margins.Bottom)
+	// The surface is inset by the left joint, exactly as panelSpec places it
+	// at open: the body must land on margins.Left, not the surface edge.
+	left, right := int32(margins.Left-joints.Left), int32(margins.Right)
 	h.r.sendAux(wayland.AuxRequest{
 		Output: global,
 		ID:     panelSurfaceID(PanelPlugin),
-		Update: &wayland.AuxUpdate{Width: &w, Height: &hgt, SetInputRegion: input != nil, InputRects: input},
+		Update: &wayland.AuxUpdate{
+			Width: &w, Height: &hgt, SetInputRegion: input != nil, InputRects: input,
+			MarginTop: &top, MarginBottom: &bottom,
+			MarginLeft: &left, MarginRight: &right,
+		},
 	})
-	return nil
+	return v1.PanelResizeResult{Width: p.Width, Height: p.Height}, nil
 }
 
 // focusPanelView focuses one node of the calling plugin's open panel, matched
