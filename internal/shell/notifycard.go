@@ -108,7 +108,7 @@ func centreRemoveButton(action, name string) *ui.Node {
 	}
 }
 
-func notificationTree(id uint32, app, summary, body string, urgency protocol.Urgency, raster *ui.Image, value *int32, allowLinks bool, now, ts time.Time) *ui.Node {
+func notificationTree(id uint32, app, summary, body string, urgency protocol.Urgency, raster *ui.Image, value *int32, allowLinks bool, wrap func(string) []string, now, ts time.Time) *ui.Node {
 	tone := toneFor(urgency)
 	text := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{}}
 	identity := &ui.Node{Kind: ui.KindRow, Gap: cardGap, Children: []*ui.Node{}}
@@ -130,14 +130,23 @@ func notificationTree(id uint32, app, summary, body string, urgency protocol.Urg
 		if run.Break || run.Text == "" {
 			continue
 		}
-		node := &ui.Node{
-			Kind: ui.KindText, Text: run.Text,
-			Bold: run.Bold, Italic: run.Italic, Underline: run.Underline, Tone: tone,
+		lines := []string{run.Text}
+		if wrap != nil {
+			lines = wrap(run.Text)
 		}
-		if run.Link {
-			node.Action = fmt.Sprintf("notify:%d:link:%s", id, run.Href)
+		for _, line := range lines {
+			if line == "" {
+				continue
+			}
+			node := &ui.Node{
+				Kind: ui.KindText, Text: line,
+				Bold: run.Bold, Italic: run.Italic, Underline: run.Underline, Tone: tone,
+			}
+			if run.Link {
+				node.Action = fmt.Sprintf("notify:%d:link:%s", id, run.Href)
+			}
+			text.Children = append(text.Children, node)
 		}
-		text.Children = append(text.Children, node)
 	}
 	if m := valueMeter(value); m != nil {
 		text.Children = append(text.Children, m)
@@ -163,12 +172,22 @@ func toneFor(urgency protocol.Urgency) ui.Tone {
 // record. lt is the service's authoritative lifetime; raster is the already
 // decoded icon, or nil for the letter fallback.
 func NotificationCard(n protocol.Notification, lt *protocol.Lifetime, raster *ui.Image, allowLinks bool) *ui.Node {
+	return notificationCard(n, lt, raster, allowLinks, nil)
+}
+
+// ExpandedNotificationCard is a toast whose body is wrapped over several
+// lines after a vertical drag.
+func ExpandedNotificationCard(n protocol.Notification, lt *protocol.Lifetime, raster *ui.Image, allowLinks bool, wrap func(string) []string) *ui.Node {
+	return notificationCard(n, lt, raster, allowLinks, wrap)
+}
+
+func notificationCard(n protocol.Notification, lt *protocol.Lifetime, raster *ui.Image, allowLinks bool, wrap func(string) []string) *ui.Node {
 	if raster == nil {
 		raster = protocolImage(n.Image)
 	}
 	now := time.Now()
 	root := &ui.Node{Kind: ui.KindColumn, Gap: cardGap, Children: []*ui.Node{
-		notificationTree(n.ID, n.AppName, n.Summary, n.Body, n.Urgency, raster, n.Value, allowLinks, now, n.Timestamp),
+		notificationTree(n.ID, n.AppName, n.Summary, n.Body, n.Urgency, raster, n.Value, allowLinks, wrap, now, n.Timestamp),
 	}}
 
 	hasDefault := false
@@ -212,7 +231,7 @@ func HistoryCard(e protocol.HistoryEntry, now time.Time, raster *ui.Image, allow
 	if raster == nil {
 		raster = protocolImage(e.Image)
 	}
-	inner := notificationTree(e.ID, e.AppName, e.Summary, e.Body, e.Urgency, raster, nil, allowLinks, now, e.Timestamp)
+	inner := notificationTree(e.ID, e.AppName, e.Summary, e.Body, e.Urgency, raster, nil, allowLinks, nil, now, e.Timestamp)
 	if historyRemoveSupported() {
 		inner = &ui.Node{Kind: ui.KindRow, Gap: cardGap, PinEnd: true, Children: []*ui.Node{
 			inner,
@@ -233,7 +252,7 @@ func ActiveGroupCard(g activeGroup, now time.Time, expanded bool, raster *ui.Ima
 		raster = protocolImage(latest.Image)
 	}
 	critical := groupCritical(g.members)
-	head := notificationTree(latest.ID, latest.AppName, latest.Summary, latest.Body, latest.Urgency, raster, latest.Value, allowLinks, now, latest.Timestamp)
+	head := notificationTree(latest.ID, latest.AppName, latest.Summary, latest.Body, latest.Urgency, raster, latest.Value, allowLinks, nil, now, latest.Timestamp)
 	head = &ui.Node{Kind: ui.KindRow, Gap: cardGap, PinEnd: true, Children: []*ui.Node{
 		head,
 		centreRemoveButton(fmt.Sprintf("notify:%d:dismiss", latest.ID), "Dismiss"),

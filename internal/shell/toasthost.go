@@ -30,9 +30,10 @@ type toastHost struct {
 	// toast surface open.
 	outputs map[string]uint32
 	// visible and queued are the last computed placement per output.
-	visible map[string][]uint32
-	queued  map[string][]uint32
-	hovered map[string]map[uint32]bool
+	visible  map[string][]uint32
+	queued   map[string][]uint32
+	hovered  map[string]map[uint32]bool
+	expanded map[uint32]bool
 
 	// geometry is the size each output's surface was configured at. Until a
 	// configure arrives an output has none, and the design default stands in.
@@ -87,6 +88,7 @@ func newToastHost(r *Registry, harness *hostHarness) *toastHost {
 		visible:  map[string][]uint32{},
 		queued:   map[string][]uint32{},
 		hovered:  map[string]map[uint32]bool{},
+		expanded: map[uint32]bool{},
 		geometry: map[string]toastGeometry{},
 		scale120: map[string]int{},
 		cards:    map[string][]toastCard{},
@@ -323,6 +325,14 @@ func (h *toastHost) invoke(id uint32, key string) {
 func (h *toastHost) dismiss(id uint32) {
 	h.r.sendNotify(protocol.Command{Kind: protocol.CommandDismiss, ID: id})
 }
+func (h *toastHost) toggleExpand(id uint32) {
+	if h.expanded[id] {
+		delete(h.expanded, id)
+	} else {
+		h.expanded[id] = true
+	}
+	h.recompute()
+}
 func (h *toastHost) reply(id uint32, text string) {
 	h.r.sendNotify(protocol.Command{Kind: protocol.CommandReply, ID: id, Text: text})
 }
@@ -393,7 +403,20 @@ func (h *toastHost) cardFor(id uint32) *ui.Node {
 	if !ok {
 		return nil
 	}
-	return NotificationCard(notification, lifetime, h.r.lookupNotifyIcon(notification.AppIcon), h.r.linksAllowed())
+	raster := h.r.lookupNotifyIcon(notification.AppIcon)
+	if h.expanded[id] {
+		return ExpandedNotificationCard(notification, lifetime, raster, h.r.linksAllowed(), h.wrapBody)
+	}
+	return NotificationCard(notification, lifetime, raster, h.r.linksAllowed())
+}
+
+func (h *toastHost) wrapBody(s string) []string {
+	measure := h.measureText()
+	width := toastCardWidth - 2*cardPadding - cardIconSize - cardGap
+	return wrapLines(s, width, func(text string) int {
+		w, _ := measure(text, ui.TextAttrs{})
+		return w
+	}, 8)
 }
 
 // recompute relayouts every open output from the current projection and
@@ -404,10 +427,17 @@ func (h *toastHost) recompute() {
 	s.mu.Lock()
 	suppressed := s.dnd || s.centerOpen
 	records := make([]uint32, 0, len(s.active))
+	active := make(map[uint32]struct{}, len(s.active))
 	for id := range s.active {
 		records = append(records, id)
+		active[id] = struct{}{}
 	}
 	s.mu.Unlock()
+	for id := range h.expanded {
+		if _, ok := active[id]; !ok {
+			delete(h.expanded, id)
+		}
+	}
 
 	// Newest first: the stack reads down from the freshest card.
 	sort.Slice(records, func(i, j int) bool { return records[i] > records[j] })
