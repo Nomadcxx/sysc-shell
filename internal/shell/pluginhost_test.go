@@ -988,8 +988,12 @@ func TestPluginPanelHostUsesManifestSize(t *testing.T) {
 			t.Fatal("plugin panel scroll has no children")
 		}
 		for i, c := range root.Children {
-			if c == nil || c.Kind != ui.KindCapsule {
-				t.Fatalf("scroll child %d = %+v, want KindCapsule", i, c)
+			want := ui.KindCapsule // Settings groups remain host cards.
+			if i == 0 {
+				want = ui.KindColumn // Plugin content keeps the backdrop visible.
+			}
+			if c == nil || c.Kind != want {
+				t.Fatalf("scroll child %d = %+v, want %v", i, c, want)
 			}
 		}
 		return
@@ -1232,7 +1236,7 @@ func TestPluginPanelResizeRetargetsTheOpenPanel(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	var lastErr error
 	for time.Now().Before(deadline) {
-		if err := reg.plugins.resizePanel(v1.PanelResizeParams{Width: 400, Height: 300}); err == nil {
+		if _, err := reg.plugins.resizePanel(v1.PanelResizeParams{Width: 400, Height: 300}); err == nil {
 			lastErr = nil
 			break
 		} else {
@@ -1257,6 +1261,22 @@ func TestPluginPanelResizeRetargetsTheOpenPanel(t *testing.T) {
 	}
 	if *req.Update.Width != 400 || *req.Update.Height != 300 {
 		t.Fatalf("aux update size = %d x %d, want 400x300", *req.Update.Width, *req.Update.Height)
+	}
+
+	reg.mu.Lock()
+	panelHost := reg.panelHosts[PanelPlugin]
+	panelHost.place.Output = ui.Rect{W: 800, H: 600}
+	panelHost.place.BarZone, panelHost.place.Gap, panelHost.place.Padding = 40, 0, 8
+	reg.mu.Unlock()
+	fitted, err := reg.plugins.resizePanel(v1.PanelResizeParams{Width: 400, Height: 900})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (v1.PanelResizeResult{Width: 400, Height: 552}); fitted != want {
+		t.Fatalf("fitted resize = %+v, want %+v", fitted, want)
+	}
+	if got := reg.plugins.panelSize(); got.W != fitted.Width || got.H != fitted.Height {
+		t.Fatalf("stored panel size = %+v, want %+v", got, fitted)
 	}
 }
 

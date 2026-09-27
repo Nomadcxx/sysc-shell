@@ -258,8 +258,10 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 		OutputContext: func(_ context.Context, p v1.OutputContextParams) (v1.OutputContextResult, error) {
 			return h.outputContext(p)
 		},
-		PanelResize: func(_ context.Context, p v1.PanelResizeParams) error { return h.resizePanel(p) },
-		ViewFocus:   func(_ context.Context, p v1.ViewFocusParams) error { return h.focusPanelView(id, p) },
+		PanelResize: func(_ context.Context, p v1.PanelResizeParams) (v1.PanelResizeResult, error) {
+			return h.resizePanel(p)
+		},
+		ViewFocus: func(_ context.Context, p v1.ViewFocusParams) error { return h.focusPanelView(id, p) },
 		OpenSurface: func(ctx context.Context, p v1.SurfaceOpenParams) (v1.SurfaceResult, error) {
 			return h.openFloatingSurface(ctx, id, p)
 		},
@@ -984,7 +986,9 @@ func (h *pluginHost) panelTree(host *PanelHost) *ui.Node {
 	settings := pluginPanelSettings(h.r, host, pluginID, schema)
 	head := root
 	if root.Kind != ui.KindCapsule {
-		head = monitorCard(host.metrics(), []*ui.Node{root})
+		// Keep the host inset without painting over the captured backdrop.
+		head = &ui.Node{Kind: ui.KindColumn, Padding: host.metrics().CardPadding,
+			Children: []*ui.Node{root}}
 	}
 	return &ui.Node{Kind: ui.KindScroll, Gap: monitorCardGap, Padding: host.metrics().PanelPadding, Children: append([]*ui.Node{head}, settings...)}
 }
@@ -999,30 +1003,44 @@ func (h *pluginHost) panelSize() ui.Rect {
 }
 
 // resizePanel retargets the calling plugin's open panel. The tree re-lays-out
-// at the new bounds at once; the reply reports the size as requested and the
+// at the new bounds at once; the reply reports the fitted size and the
 // compositor's configure completes it.
-func (h *pluginHost) resizePanel(p v1.PanelResizeParams) error {
+func (h *pluginHost) resizePanel(p v1.PanelResizeParams) (v1.PanelResizeResult, error) {
 	h.r.mu.Lock()
 	global, open := h.r.panels.Output(PanelPlugin)
-	h.r.mu.Unlock()
-	if !open {
-		return errors.New("panel surface is not open")
+	panelHost := h.r.panelHosts[PanelPlugin]
+	if !open || panelHost == nil {
+		h.r.mu.Unlock()
+		return v1.PanelResizeResult{}, errors.New("panel surface is not open")
 	}
+	place := panelHost.place
+	place.Panel.W, place.Panel.H = p.Width, p.Height
+	p.Width, p.Height = place.FittedSize()
+	place.Panel.W, place.Panel.H = p.Width, p.Height
+	panelHost.place = place
+	margins := place.Margins()
+	h.r.mu.Unlock()
 	h.mu.Lock()
 	if h.panel == nil {
 		h.mu.Unlock()
-		return errors.New("no open panel to resize")
+		return v1.PanelResizeResult{}, errors.New("no open panel to resize")
 	}
 	h.panel.Width, h.panel.Height = p.Width, p.Height
 	h.mu.Unlock()
 	h.refreshPanel()
 	w, hgt := uint32(p.Width), uint32(p.Height)
+	top, bottom := int32(margins.Top), int32(margins.Bottom)
+	left, right := int32(margins.Left), int32(margins.Right)
 	h.r.sendAux(wayland.AuxRequest{
 		Output: global,
 		ID:     panelSurfaceID(PanelPlugin),
-		Update: &wayland.AuxUpdate{Width: &w, Height: &hgt},
+		Update: &wayland.AuxUpdate{
+			Width: &w, Height: &hgt,
+			MarginTop: &top, MarginBottom: &bottom,
+			MarginLeft: &left, MarginRight: &right,
+		},
 	})
-	return nil
+	return v1.PanelResizeResult{Width: p.Width, Height: p.Height}, nil
 }
 
 // focusPanelView focuses one node of the calling plugin's open panel, matched

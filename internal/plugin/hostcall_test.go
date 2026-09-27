@@ -568,9 +568,9 @@ func TestHostCallPanelSurfaceHonoursTheGrant(t *testing.T) {
 	d := NewDispatcher(CallEnv{
 		PluginID: "org.sysc.timer",
 		Granted:  []Capability{CapPanels},
-		PanelResize: func(_ context.Context, p v1.PanelResizeParams) error {
+		PanelResize: func(_ context.Context, p v1.PanelResizeParams) (v1.PanelResizeResult, error) {
 			resized = p
-			return nil
+			return v1.PanelResizeResult{Width: p.Width, Height: p.Height}, nil
 		},
 		ViewFocus: func(_ context.Context, p v1.ViewFocusParams) error {
 			focused = p
@@ -582,7 +582,12 @@ func TestHostCallPanelSurfaceHonoursTheGrant(t *testing.T) {
 		ID: "1", Call: v1.CallPanelResize,
 		Params: jsonOf(t, v1.PanelResizeParams{Width: 400, Height: 300}),
 	})
-	if !ok.OK || resized != (v1.PanelResizeParams{Width: 400, Height: 300}) {
+	var fitted v1.PanelResizeResult
+	if err := json.Unmarshal(ok.Result, &fitted); err != nil {
+		t.Fatal(err)
+	}
+	if !ok.OK || resized != (v1.PanelResizeParams{Width: 400, Height: 300}) ||
+		fitted != (v1.PanelResizeResult{Width: 400, Height: 300}) {
 		t.Fatalf("resize = %+v params=%+v", ok, resized)
 	}
 
@@ -612,9 +617,9 @@ func TestHostCallPanelResizeBounds(t *testing.T) {
 	d := NewDispatcher(CallEnv{
 		PluginID: "org.sysc.timer",
 		Granted:  []Capability{CapPanels},
-		PanelResize: func(context.Context, v1.PanelResizeParams) error {
+		PanelResize: func(context.Context, v1.PanelResizeParams) (v1.PanelResizeResult, error) {
 			calls++
-			return nil
+			return v1.PanelResizeResult{}, nil
 		},
 	})
 	for _, bad := range []v1.PanelResizeParams{

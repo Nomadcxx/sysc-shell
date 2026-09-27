@@ -34,7 +34,7 @@ type CallEnv struct {
 	ClosePanel        func(context.Context, v1.PanelParams) error
 	Notify            func(context.Context, v1.NotifyParams) (v1.NotifyResult, error)
 	OutputContext     func(context.Context, v1.OutputContextParams) (v1.OutputContextResult, error)
-	PanelResize       func(context.Context, v1.PanelResizeParams) error
+	PanelResize       func(context.Context, v1.PanelResizeParams) (v1.PanelResizeResult, error)
 	ViewFocus         func(context.Context, v1.ViewFocusParams) error
 	OpenSurface       func(context.Context, v1.SurfaceOpenParams) (v1.SurfaceResult, error)
 	CloseSurface      func(context.Context, v1.SurfaceCloseParams) error
@@ -494,10 +494,11 @@ func (d *Dispatcher) panelSurface(ctx context.Context, call *v1.HostCall) v1.Hos
 		if d.env.PanelResize == nil {
 			return failReply(call.ID, "panel resize is not available")
 		}
-		if err := d.env.PanelResize(ctx, p); err != nil {
+		result, err := d.env.PanelResize(ctx, p)
+		if err != nil {
 			return failReply(call.ID, err.Error())
 		}
-		return okReply(call.ID, nil)
+		return okReply(call.ID, result)
 	case v1.CallViewFocus:
 		var p v1.ViewFocusParams
 		if err := decodeParams(call.Params, &p); err != nil {

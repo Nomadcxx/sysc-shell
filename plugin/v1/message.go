@@ -487,6 +487,12 @@ type PanelResizeParams struct {
 	Height int `json:"height"`
 }
 
+// PanelResizeResult reports the size fitted to the output by the host.
+type PanelResizeResult struct {
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
 // ViewFocusParams asks the host to focus one node of the calling plugin's
 // open panel. Node is the node's action identifier as declared in the view
 // tree; the host matches it against the identity it stamped at render time.
