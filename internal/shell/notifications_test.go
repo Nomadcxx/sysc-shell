@@ -1,12 +1,15 @@
 package shell
 
 import (
+	"context"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/notifyclient"
+	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
 func note(id uint32, summary string) protocol.Notification {
@@ -103,3 +106,82 @@ func TestNotificationHistoryTracksDeltas(t *testing.T) {
 }
 
 func ptr(n protocol.Notification) *protocol.Notification { return &n }
+
+type pluginToastRecorder struct {
+	mu   sync.Mutex
+	seen []protocol.Command
+	next uint64
+	err  error
+}
+
+func (s *pluginToastRecorder) Send(protocol.Command) (uint64, error) { return 0, nil }
+
+func (s *pluginToastRecorder) SendProducer(c protocol.Command) (uint64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.err != nil {
+		return 0, s.err
+	}
+	s.next++
+	s.seen = append(s.seen, c)
+	return s.next, nil
+}
+
+func (s *pluginToastRecorder) commands() []protocol.Command {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]protocol.Command(nil), s.seen...)
+}
+
+func TestPluginNotifyPublishesReplacingFreeToasts(t *testing.T) {
+	r := NewRegistry(config.Default())
+	rec := &pluginToastRecorder{}
+	r.BindNotifications(rec)
+
+	if _, err := r.PluginNotify(context.Background(), v1.NotifyParams{
+		Summary: "Pinged Pixel", Urgency: v1.UrgencyNormal, TimeoutMS: 2500,
+	}); err != nil {
+		t.Fatalf("PluginNotify: %v", err)
+	}
+	res, err := r.PluginNotify(context.Background(), v1.NotifyParams{
+		Summary: "Ringing", Body: "find me", Urgency: v1.UrgencyCritical,
+	})
+	if err != nil {
+		t.Fatalf("PluginNotify: %v", err)
+	}
+
+	got := rec.commands()
+	if len(got) != 2 {
+		t.Fatalf("commands = %d, want 2", len(got))
+	}
+	first, second := got[0].Producer, got[1].Producer
+	if first == nil || second == nil {
+		t.Fatal("producer request missing")
+	}
+	if got[0].Kind != protocol.CommandProducerPublish {
+		t.Fatalf("kind = %v", got[0].Kind)
+	}
+	if first.Key == second.Key {
+		t.Fatalf("keys collide: %s", first.Key)
+	}
+	if first.Urgency != protocol.UrgencyNormal || first.ExpireTimeoutMS != 2500 {
+		t.Fatalf("first = %+v", first)
+	}
+	// TimeoutMS 0 must map to the server default (-1), never persistent (0).
+	if second.Urgency != protocol.UrgencyCritical || second.ExpireTimeoutMS != -1 {
+		t.Fatalf("second = %+v", second)
+	}
+	if second.Summary != "Ringing" || second.Body != "find me" {
+		t.Fatalf("text lost: %+v", second)
+	}
+	if res.ID != 2 {
+		t.Fatalf("reply ID = %d, want 2", res.ID)
+	}
+}
+
+func TestPluginNotifyWithoutClientReportsUnavailable(t *testing.T) {
+	r := NewRegistry(config.Default())
+	if _, err := r.PluginNotify(context.Background(), v1.NotifyParams{Summary: "x"}); err == nil {
+		t.Fatal("want error before BindNotifications")
+	}
+}

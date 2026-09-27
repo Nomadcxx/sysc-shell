@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -170,6 +171,9 @@ type Registry struct {
 	// assert commands.
 	notifySender   notifyCommandSender
 	producerSender notifyProducerSender
+	// pluginNotifySeq makes each plugin toast a unique producer key; the
+	// service replaces live notifications that share a key.
+	pluginNotifySeq atomic.Uint32
 	// toasts hosts one toast stack per output, created when wiring binds it.
 	toasts *toastHost
 	// depthClocks contains one click-through wallpaper clock per accepted mask.

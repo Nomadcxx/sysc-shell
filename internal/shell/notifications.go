@@ -1,12 +1,16 @@
 package shell
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/notifyclient"
+	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
 // notifyState is the shell's projection of service-owned notifications. It
@@ -226,6 +230,44 @@ func (r *Registry) BindNotifications(sender notifyCommandSender) {
 	r.producerSender, _ = sender.(notifyProducerSender)
 	r.toasts = newToastHost(r, nil)
 	r.toasts.startLeaseRenew(presentationLeaseRenew)
+}
+
+// PluginNotify is the plugin host's notify seam: it republishes each plugin
+// toast as a producer command with a unique key, because the service replaces
+// live notifications that share one key. The reply ID is the client request
+// ID; plugins treat it as opaque.
+//
+// ponytail: v1 Actions are dropped — the producer protocol has no actions.
+func (r *Registry) PluginNotify(_ context.Context, p v1.NotifyParams) (v1.NotifyResult, error) {
+	if r.producerSender == nil {
+		return v1.NotifyResult{}, errors.New("notifications are not available")
+	}
+	urgency := protocol.UrgencyNormal
+	switch p.Urgency {
+	case v1.UrgencyLow:
+		urgency = protocol.UrgencyLow
+	case v1.UrgencyCritical:
+		urgency = protocol.UrgencyCritical
+	}
+	timeout := p.TimeoutMS
+	if timeout <= 0 {
+		timeout = -1 // server default; 0 would mean never expire
+	}
+	id, err := r.producerSender.SendProducer(protocol.Command{
+		Kind: protocol.CommandProducerPublish,
+		Producer: &protocol.ProducerRequest{
+			Key:             fmt.Sprintf("sysc-shell:plugin-toast:%d", r.pluginNotifySeq.Add(1)),
+			AppName:         "sysc-shell",
+			Summary:         p.Summary,
+			Body:            p.Body,
+			Urgency:         urgency,
+			ExpireTimeoutMS: timeout,
+		},
+	})
+	if err != nil {
+		return v1.NotifyResult{}, err
+	}
+	return v1.NotifyResult{ID: uint32(id)}, nil
 }
 
 // NotifyMessages returns the channel the notifyclient publishes to and main

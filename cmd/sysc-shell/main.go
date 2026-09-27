@@ -86,9 +86,14 @@ func run(ctx context.Context) (err error) {
 	}
 
 	registry := shell.NewRegistry(cfg)
+	// Built before the plugin host: plugin toasts send through this client,
+	// so BindNotifications must run first. The pumps below still drain it.
+	notifyClient := notifyclient.New(os.Getenv("XDG_RUNTIME_DIR"), registry.NotifyMessages())
+	registry.BindNotifications(notifyClient)
 	_ = registry.BindPlugins(shell.PluginHostOptions{
 		Roots:    plugin.DefaultRoots("/usr/share/sysc-shell/plugins"),
 		StateDir: plugin.StateRoot(),
+		Notify:   registry.PluginNotify,
 	})
 	// Releases every service lease and stops the clock goroutine when the
 	// process unwinds, whether through cancellation or an error return.
@@ -177,12 +182,10 @@ func run(ctx context.Context) (err error) {
 		}
 	}()
 
-	// The notification service publishes immutable messages on its own
-	// reconnecting client; this pump applies each to the projection and
+	// The notification client was bound above (the plugin host needs it
+	// first); this pump applies each immutable message to the projection and
 	// recomputes the toast surfaces. A missing service is not fatal: the
 	// client retries with backoff and toasts simply never open.
-	notifyClient := notifyclient.New(os.Getenv("XDG_RUNTIME_DIR"), registry.NotifyMessages())
-	registry.BindNotifications(notifyClient)
 	go func() {
 		for {
 			select {
