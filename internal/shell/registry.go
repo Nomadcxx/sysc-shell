@@ -733,7 +733,7 @@ func (r *Registry) stepAudio(action string) error {
 		return err
 	}
 	st := r.audio.State()
-	r.OSD().Show(OSDView{Kind: "audio", Level: st.Level, Muted: st.Muted})
+	r.OSD().Show(OSDView{Kind: osdAudio, Level: st.Level, Muted: st.Muted})
 	return nil
 }
 
@@ -757,7 +757,7 @@ func (r *Registry) stepBrightness(action string) error {
 	if err != nil {
 		return err
 	}
-	r.OSD().Show(OSDView{Kind: "brightness", Level: r.brightness.Level()})
+	r.OSD().Show(OSDView{Kind: osdBrightness, Level: r.brightness.Level()})
 	return nil
 }
 
@@ -916,7 +916,7 @@ func (r *Registry) relayAudioOSD(audio *services.Audio) {
 			if !ok {
 				return
 			}
-			r.OSD().Show(OSDView{Kind: "audio", Level: st.Level, Muted: st.Muted})
+			r.OSD().Show(OSDView{Kind: osdAudio, Level: st.Level, Muted: st.Muted})
 			r.mu.Lock()
 			out, open := r.rebuildControlCentreLocked()
 			r.mu.Unlock()
@@ -942,7 +942,7 @@ func (r *Registry) relayBrightnessOSD(brightness *services.Brightness) {
 			if !ok {
 				return
 			}
-			r.OSD().Show(OSDView{Kind: "brightness", Level: st.Level})
+			r.OSD().Show(OSDView{Kind: osdBrightness, Level: st.Level})
 			r.mu.Lock()
 			out, open := r.rebuildControlCentreLocked()
 			r.mu.Unlock()

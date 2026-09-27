@@ -18,13 +18,6 @@ const (
 	osdHide   = 1500 * time.Millisecond
 )
 
-// OSDView is one OSD payload: a kind, a 0..100 level, and optional mute.
-type OSDView struct {
-	Kind  string
-	Level int
-	Muted bool
-}
-
 type OSDManager struct {
 	r       *Registry
 	hideFor time.Duration
@@ -231,13 +224,6 @@ func (m *OSDManager) revealLoop() {
 			m.r.publishSurface(p.global, p.id)
 		}
 	}, func() time.Duration { return frameCap })
-}
-
-func osdLabel(v OSDView) string {
-	if v.Muted {
-		return v.Kind + " muted"
-	}
-	return v.Kind
 }
 
 func osdSurfaceID(global uint32) string { return fmt.Sprintf("osd:%d", global) }

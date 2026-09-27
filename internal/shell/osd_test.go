@@ -173,8 +173,8 @@ func TestOsdRenderHasGlyphLabelAndBar(t *testing.T) {
 	reg := newPanelRegistry(t)
 	reg.setTestBar(1, &Bar{conn: "eDP-1"})
 	reg.OSD().Show(OSDView{Kind: "audio", Level: 40, Muted: true})
-	if got := osdLabel(reg.osd.view); got != "audio muted" {
-		t.Fatalf("label = %q, want audio muted", got)
+	if got := osdLabel(reg.osd.view); got != "Muted" {
+		t.Fatalf("label = %q, want Muted", got)
 	}
 	pix := make([]byte, osdWidth*osdHeight*4)
 	if err := reg.osd.render(pix, osdWidth, osdHeight, osdWidth*4); err != nil {
