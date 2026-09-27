@@ -1444,6 +1444,7 @@ func (r *Registry) Close() {
 	if locked {
 		if r.toasts != nil {
 			r.toasts.stopLeaseRenew()
+			r.toasts.stopSlideAnimation()
 		}
 		if r.osd != nil {
 			osdAux = r.osd.prepareHide()

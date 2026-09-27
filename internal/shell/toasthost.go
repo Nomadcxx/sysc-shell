@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"sync"
@@ -39,6 +40,7 @@ type toastHost struct {
 	// configure arrives an output has none, and the design default stands in.
 	geometry map[string]toastGeometry
 	scale120 map[string]int
+	measured map[string]bool
 	// cards is the arranged stack per output, rebuilt whenever the projection
 	// or the geometry changes.
 	cards map[string][]toastCard
@@ -53,6 +55,12 @@ type toastHost struct {
 	// outside it.
 	press    toastCard
 	pressing bool
+
+	anim      *animator
+	shown     map[string]map[uint32]ui.Rect
+	from      map[string]map[uint32]ui.Rect
+	stopSlide chan struct{}
+	sliding   bool
 
 	stopRenew chan struct{}
 	renewOnce sync.Once
@@ -89,10 +97,20 @@ func newToastHost(r *Registry, harness *hostHarness) *toastHost {
 		queued:   map[string][]uint32{},
 		hovered:  map[string]map[uint32]bool{},
 		expanded: map[uint32]bool{},
+		shown:    map[string]map[uint32]ui.Rect{},
+		from:     map[string]map[uint32]ui.Rect{},
 		geometry: map[string]toastGeometry{},
 		scale120: map[string]int{},
+		measured: map[string]bool{},
 		cards:    map[string][]toastCard{},
 		pointer:  map[string]ui.Rect{},
+	}
+	if r != nil {
+		r.mu.Lock()
+		motion := r.panelTheme().Motion
+		reduced := r.cfg.Accessibility.ReducedMotion
+		r.mu.Unlock()
+		h.anim = newAnimator(nil, reduced, motion)
 	}
 	if harness != nil {
 		h.request = harness.request
@@ -107,6 +125,10 @@ func newToastHost(r *Registry, harness *hostHarness) *toastHost {
 func (h *toastHost) harness() *hostHarness { return h.harnessRef }
 
 func toastSurfaceID(connector string) string { return "toast:" + connector }
+
+func toastSlideKey(connector string, id uint32) string {
+	return fmt.Sprintf("toast-slide:%s:%d", connector, id)
+}
 
 // syncOutputs opens a surface for each new output and closes surfaces whose
 // output went away. Outputs are identified by wl_registry global, matching
@@ -123,8 +145,10 @@ func (h *toastHost) syncOutputs(globals map[string]uint32) {
 			delete(h.hovered, connector)
 			delete(h.geometry, connector)
 			delete(h.scale120, connector)
+			delete(h.measured, connector)
 			delete(h.cards, connector)
 			delete(h.pointer, connector)
+			h.noteTargets(connector, nil, nil)
 		}
 	}
 	for connector, global := range globals {
@@ -199,7 +223,23 @@ func (h *toastHost) render(connector string, pixels []byte, width, height, strid
 		scale, body := h.style.Scale120, h.style.Body
 		h.style = theme.OverlayStyle()
 		h.style.Scale120, h.style.Body = scale, body
+	}
+	if !h.measured[connector] {
+		// Pre-render layout uses fallback text widths. Start from these real
+		// font measurements without animating a slot the user never saw.
+		h.noteTargets(connector, nil, nil)
 		h.rebuild(connector)
+		h.measured[connector] = true
+		if output, ok := h.outputs[connector]; ok {
+			h.request(wayland.AuxRequest{
+				Output: output,
+				ID:     toastSurfaceID(connector),
+				Update: &wayland.AuxUpdate{
+					SetInputRegion: true,
+					InputRects:     toastInputRegion(h.cardRects(connector, h.visible[connector])),
+				},
+			})
+		}
 	}
 	canvas, err := render.NewCanvas(pixels, width, height, stride)
 	if err != nil {
@@ -215,7 +255,11 @@ func (h *toastHost) render(connector string, pixels []byte, width, height, strid
 	// leaves the gaps and the rest of the output transparent.
 	clear(pixels)
 	for _, card := range h.cards[connector] {
-		if err := h.paintCard(canvas, card, style); err != nil {
+		drawn := card
+		if id, ok := cardID(card.root); ok {
+			drawn.rect = h.displayRect(connector, id, card.rect)
+		}
+		if err := h.paintCard(canvas, drawn, style); err != nil {
 			return err
 		}
 	}
@@ -374,6 +418,40 @@ func (h *toastHost) updateHover(connector string) bool {
 func (h *toastHost) rebuild(connector string) {
 	ids := h.visible[connector]
 	rects := h.cardRects(connector, ids)
+	var moved bool
+	if h.text != nil {
+		moved = h.noteTargets(connector, ids[:min(len(ids), len(rects))], rects)
+	}
+	if moved && !h.sliding && h.anim != nil && !h.anim.reduced && !h.anim.Settled() {
+		h.sliding = true
+		h.stopSlide = make(chan struct{})
+		stop := h.stopSlide
+		frameCap := h.anim.frameCap()
+		go animateSurface(stop, func() bool {
+			h.r.mu.Lock()
+			defer h.r.mu.Unlock()
+			settled := h.anim == nil || h.anim.Settled()
+			if settled {
+				h.sliding = false
+				h.stopSlide = nil
+			}
+			return settled
+		}, func() {
+			h.r.mu.Lock()
+			type surface struct {
+				output uint32
+				id     string
+			}
+			pubs := make([]surface, 0, len(h.outputs))
+			for connector, output := range h.outputs {
+				pubs = append(pubs, surface{output: output, id: toastSurfaceID(connector)})
+			}
+			h.r.mu.Unlock()
+			for _, pub := range pubs {
+				h.r.publishSurface(pub.output, pub.id)
+			}
+		}, func() time.Duration { return frameCap })
+	}
 	measure := h.measureText()
 	cards := make([]toastCard, 0, len(ids))
 	for i, id := range ids {
@@ -390,6 +468,66 @@ func (h *toastHost) rebuild(connector string) {
 		cards = append(cards, toastCard{root: root, rect: rects[i]})
 	}
 	h.cards[connector] = cards
+}
+
+// displayRect is where one output draws a card this frame: on its way from
+// its old slot to the new one, or in its slot once settled.
+func (h *toastHost) displayRect(connector string, id uint32, target ui.Rect) ui.Rect {
+	from, ok := h.from[connector][id]
+	if !ok || h.anim == nil || h.anim.reduced {
+		return target
+	}
+	p := h.anim.Value(toastSlideKey(connector, id), animVisible)
+	if p >= 1 {
+		delete(h.from[connector], id)
+		return target
+	}
+	return ui.LerpRect(from, target, p)
+}
+
+// noteTargets tracks the visible cards' target rectangles per output. Moved
+// cards restart from where they are drawn so a second change never jumps.
+func (h *toastHost) noteTargets(connector string, ids []uint32, rects []ui.Rect) (moved bool) {
+	shown := h.shown[connector]
+	if shown == nil {
+		shown = make(map[uint32]ui.Rect, len(ids))
+		h.shown[connector] = shown
+	}
+	from := h.from[connector]
+	if from == nil {
+		from = make(map[uint32]ui.Rect)
+		h.from[connector] = from
+	}
+	seen := make(map[uint32]bool, len(ids))
+	for i, id := range ids {
+		if i >= len(rects) {
+			break
+		}
+		seen[id] = true
+		old, ok := shown[id]
+		if ok && old != rects[i] {
+			moved = true
+			if h.anim != nil && !h.anim.reduced {
+				from[id] = h.displayRect(connector, id, old)
+				key := toastSlideKey(connector, id)
+				h.anim.Reset(key, animVisible)
+				h.anim.Target(key, animVisible, 1)
+			} else {
+				delete(from, id)
+			}
+		}
+		shown[id] = rects[i]
+	}
+	for id := range shown {
+		if !seen[id] {
+			delete(shown, id)
+			delete(from, id)
+			if h.anim != nil {
+				h.anim.Forget(toastSlideKey(connector, id))
+			}
+		}
+	}
+	return moved
 }
 
 // cardFor projects one active record. A record that has gone between the
@@ -536,6 +674,15 @@ func (h *toastHost) stopLeaseRenew() {
 			close(h.stopRenew)
 		}
 	})
+}
+
+// stopSlideAnimation is called with Registry.mu held during shutdown.
+func (h *toastHost) stopSlideAnimation() {
+	if h.stopSlide != nil {
+		close(h.stopSlide)
+		h.stopSlide = nil
+	}
+	h.sliding = false
 }
 
 // placeIDs is the id-carrying half of toastLayout: geometry decides which
