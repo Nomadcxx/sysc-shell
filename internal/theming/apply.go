@@ -336,6 +336,9 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	} else {
 		_ = f.Close()
 	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
 	f, err := os.CreateTemp(filepath.Dir(path), ".sysc-*.tmp")
 	if err != nil {
 		return err
@@ -358,4 +361,167 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// ApplySidecar writes a generated file we own, refusing any existing
+// untracked or user-edited file like ApplyWrite does, but swapping atomically.
+func ApplySidecar(path, content string) error {
+	return applySidecar(path, content, false)
+}
+
+func applySidecar(path, content string, force bool) error {
+	return applyWrite(path, content, force)
+}
+
+// directive is one single-line setting sysc-shell manages inside a user
+// config file, without owning the file itself.
+type directive struct {
+	file   string // user config path
+	line   string // the exact line sysc-shell writes
+	key    string // a line starting with this is ours or the user's
+	seed   string // whole-file content when creating (empty = just the line)
+	create bool   // invent the file if it does not exist
+}
+
+// EnsureDirective appends, updates or creates exactly one directive line.
+// A pre-existing line with the same key that is not ours is the user's and
+// is never touched.
+func EnsureDirective(d directive) error {
+	return ensureDirective(d, false)
+}
+
+func ensureDirective(d directive, force bool) error {
+	b, err := os.ReadFile(d.file)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		if !d.create {
+			return nil
+		}
+		content := d.seed
+		if content == "" {
+			content = d.line + "\n"
+		}
+		return writeFileAtomic(d.file, []byte(content), 0o644)
+	}
+	lines := strings.Split(string(b), "\n")
+	own := strings.TrimSpace(d.line)
+	ownCount, conflictCount := 0, 0
+	for _, ln := range lines {
+		trim := strings.TrimSpace(ln)
+		if trim == own {
+			ownCount++
+			continue
+		}
+		if strings.HasPrefix(trim, d.key) {
+			conflictCount++
+		}
+	}
+	if conflictCount == 0 && ownCount == 1 {
+		return nil
+	}
+	if (conflictCount > 0 || ownCount > 1) && !force {
+		return fmt.Errorf("%w: directive in %s", ErrUserModified, d.file)
+	}
+	if conflictCount == 0 && ownCount == 0 {
+		out := strings.TrimSuffix(string(b), "\n") + "\n" + d.line + "\n"
+		if strings.TrimSpace(out) == d.line+"\n" {
+			out = d.line + "\n"
+		}
+		return writeDirectiveConfig(d.file, []byte(out))
+	}
+
+	if err := backupDirectiveOnce(d.file, b); err != nil {
+		return err
+	}
+	out := make([]string, 0, len(lines))
+	inserted := false
+	for _, ln := range lines {
+		trim := strings.TrimSpace(ln)
+		if trim == own || strings.HasPrefix(trim, d.key) {
+			if !inserted {
+				out = append(out, d.line)
+				inserted = true
+			}
+			continue
+		}
+		out = append(out, ln)
+	}
+	return writeDirectiveConfig(d.file, []byte(strings.Join(out, "\n")))
+}
+
+// backupDirectiveOnce preserves the complete user config before a confirmed
+// directive replacement, retaining its mode and the first backup.
+func backupDirectiveOnce(path string, data []byte) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	backup := path + ".bak"
+	f, err := os.OpenFile(backup, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
+	if errors.Is(err, os.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	cleanup := func(err error) error {
+		_ = f.Close()
+		_ = os.Remove(backup)
+		return err
+	}
+	if err := f.Chmod(info.Mode().Perm()); err != nil {
+		return cleanup(err)
+	}
+	if _, err := f.Write(data); err != nil {
+		return cleanup(err)
+	}
+	if err := f.Sync(); err != nil {
+		return cleanup(err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(backup)
+		return err
+	}
+	return nil
+}
+
+func writeDirectiveConfig(path string, data []byte) error {
+	mode := os.FileMode(0o644)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return writeFileAtomic(path, data, mode)
+}
+
+// RemoveDirective deletes only the exact line sysc-shell wrote; a file
+// left with nothing but blank lines is removed.
+func RemoveDirective(d directive) error {
+	b, err := os.ReadFile(d.file)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	own := strings.TrimSpace(d.line)
+	var keep []string
+	removed := false
+	for _, ln := range strings.Split(string(b), "\n") {
+		if strings.TrimSpace(ln) == own {
+			removed = true
+			continue
+		}
+		keep = append(keep, ln)
+	}
+	if !removed {
+		return nil
+	}
+	if strings.TrimSpace(strings.Join(keep, "\n")) == "" {
+		return os.Remove(d.file)
+	}
+	return writeDirectiveConfig(d.file, []byte(strings.Join(keep, "\n")))
 }

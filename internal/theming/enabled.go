@@ -113,21 +113,7 @@ func applyOnce(home string, enabled func(string) bool, tok theme.Tokens, force f
 			}
 			record(name, ApplyGtkThemeName(ini, gtkOurs))
 		default:
-			target := writeTarget(home, name)
-			if target == "" {
-				continue
-			}
-			if !on {
-				record(name, UnapplyWrite(target))
-				continue
-			}
-			if err := applyWrite(target, rendered, forceOn(name)); err != nil {
-				record(name, err)
-				continue
-			}
-			if name == "kitty" {
-				record(name, signalKitty(procRoot))
-			}
+			record(name, applyTemplateTarget(name, home, on, rendered, forceOn(name)))
 		}
 	}
 	return outcomes, first
@@ -206,4 +192,119 @@ func signalKitty(root string) error {
 		}
 	}
 	return first
+}
+
+// templateTarget is the sidecar+directive model for one application: we own
+// a generated file, and manage exactly one include-ish line in the user's
+// real config. Names not in the table still use the legacy clobber path
+// until their port task adds a row.
+//
+// ponytail: directive lines are appended without section awareness; the foot
+// and btop ports add a section anchor if the append lands in the wrong one.
+type templateTarget struct {
+	sidecar    func(home string) string
+	directives func(home string) []directive
+	signal     func(root string) error
+}
+
+func joined(home string, elems ...string) string {
+	return filepath.Join(append([]string{home}, elems...)...)
+}
+
+var templateTargets = map[string]templateTarget{
+	"alacritty": {
+		sidecar: func(h string) string { return joined(h, ".config", "alacritty", "themes", "sysc-shell.toml") },
+		directives: func(h string) []directive {
+			p := joined(h, ".config", "alacritty", "themes", "sysc-shell.toml")
+			return []directive{{
+				file:   joined(h, ".config", "alacritty", "alacritty.toml"),
+				line:   `import = ["` + p + `"]`,
+				key:    "import",
+				create: true,
+			}}
+		},
+	},
+	"foot": {
+		sidecar: func(h string) string { return joined(h, ".config", "foot", "themes", "sysc-shell") },
+		directives: func(h string) []directive {
+			line := "include=~/.config/foot/themes/sysc-shell"
+			return []directive{{
+				file:   joined(h, ".config", "foot", "foot.ini"),
+				line:   line,
+				key:    "include=",
+				seed:   "[main]\n" + line + "\n",
+				create: true,
+			}}
+		},
+	},
+	"ghostty": {
+		sidecar: func(h string) string { return joined(h, ".config", "ghostty", "themes", "sysc-shell") },
+		directives: func(h string) []directive {
+			return []directive{{
+				file:   joined(h, ".config", "ghostty", "config"),
+				line:   "theme = sysc-shell",
+				key:    "theme",
+				create: true,
+			}}
+		},
+	},
+	"kitty": {
+		sidecar: func(h string) string { return joined(h, ".config", "kitty", "themes", "sysc-shell.conf") },
+		directives: func(h string) []directive {
+			return []directive{{
+				file:   joined(h, ".config", "kitty", "kitty.conf"),
+				line:   "include themes/sysc-shell.conf",
+				key:    "include",
+				create: true,
+			}}
+		},
+		signal: signalKitty,
+	},
+	"wezterm": {
+		sidecar: func(h string) string { return joined(h, ".config", "wezterm", "colors", "sysc-shell.toml") },
+		directives: func(h string) []directive {
+			return []directive{{
+				file: joined(h, ".config", "wezterm", "wezterm.lua"),
+				line: `config.color_scheme = "sysc-shell"`,
+				key:  "config.color_scheme",
+			}}
+		},
+	},
+}
+
+// applyTemplateTarget is the per-app dispatch: sidecar+directive for table
+// members, the legacy whole-file clobber (guarded) for the rest.
+func applyTemplateTarget(name, home string, on bool, rendered string, force bool) error {
+	tgt, known := templateTargets[name]
+	if !known {
+		target := writeTarget(home, name)
+		if target == "" {
+			return nil
+		}
+		if on {
+			return applyWrite(target, rendered, force)
+		}
+		return UnapplyWrite(target)
+	}
+	sidecar := tgt.sidecar(home)
+	if on {
+		if err := applySidecar(sidecar, rendered, force); err != nil {
+			return err
+		}
+		for _, dir := range tgt.directives(home) {
+			if err := ensureDirective(dir, force); err != nil {
+				return err
+			}
+		}
+		if tgt.signal != nil {
+			return tgt.signal(procRoot)
+		}
+		return nil
+	}
+	for _, dir := range tgt.directives(home) {
+		if err := RemoveDirective(dir); err != nil {
+			return err
+		}
+	}
+	return UnapplyWrite(sidecar)
 }

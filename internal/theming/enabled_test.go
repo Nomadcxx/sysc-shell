@@ -67,17 +67,20 @@ func TestApplyEnabledWritesAlacrittyUnderXDG(t *testing.T) {
 	if _, err := ApplyEnabled(home, only, theme.Fallback, nil); err != nil {
 		t.Fatal(err)
 	}
-	p := filepath.Join(home, ".config", "alacritty", "alacritty.toml")
-	b, err := os.ReadFile(p)
+	sidecar := filepath.Join(home, ".config", "alacritty", "themes", "sysc-shell.toml")
+	b, err := os.ReadFile(sidecar)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(b), marker) {
-		t.Fatalf("missing marker in %s", p)
+		t.Fatalf("missing marker in %s", sidecar)
 	}
-	sand := filepath.Join(home, ".config", "sysc-shell", "themes", "alacritty.conf")
-	if _, err := os.Stat(sand); !os.IsNotExist(err) {
-		t.Fatalf("wrote sandbox path %s", sand)
+	cfg, err := os.ReadFile(filepath.Join(home, ".config", "alacritty", "alacritty.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(cfg), `import = ["`+sidecar+`"]`) {
+		t.Fatalf("import directive missing: %q", cfg)
 	}
 }
 
@@ -89,16 +92,51 @@ func TestApplyEnabledSkipsForeignKitty(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(p, []byte("font_size 12\n"), 0o644); err != nil {
+	user := "font_size 12\ninclude themes/user.conf\n"
+	if err := os.WriteFile(p, []byte(user), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	only := func(name string) bool { return name == "kitty" }
 	if _, err := ApplyEnabled(home, only, theme.Fallback, nil); err == nil {
-		t.Fatal("foreign kitty.conf must be reported")
+		t.Fatal("user-written include must be reported")
 	}
 	got, _ := os.ReadFile(p)
-	if string(got) != "font_size 12\n" {
+	if string(got) != user {
 		t.Fatalf("rewrote user kitty.conf: %q", got)
+	}
+}
+
+func TestApplyEnabledForceReplacesDirectiveWithBackup(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	home := t.TempDir()
+	markTemplatesComplete(t, "ghostty")
+	config := filepath.Join(home, ".config", "ghostty", "config")
+	if err := os.MkdirAll(filepath.Dir(config), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := "theme = catppuccin\nfont-size = 12\n"
+	if err := os.WriteFile(config, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	only := func(name string) bool { return name == "ghostty" }
+	outcomes, err := ApplyEnabled(home, only, theme.Fallback, only)
+	if err != nil || len(outcomes) != 0 {
+		t.Fatalf("forced apply = %v, %v", outcomes, err)
+	}
+	got, err := os.ReadFile(config)
+	if err != nil || !strings.Contains(string(got), "theme = sysc-shell") || !strings.Contains(string(got), "font-size = 12") {
+		t.Fatalf("config after force = %q, %v", got, err)
+	}
+	backup, err := os.ReadFile(config + ".bak")
+	if err != nil || string(backup) != original {
+		t.Fatalf("config backup = %q, %v", backup, err)
+	}
+	info, err := os.Stat(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("config mode = %v, want 0600", info.Mode().Perm())
 	}
 }
 
@@ -171,8 +209,12 @@ func TestApplyEnabledSingleFlight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), marker) {
+	if strings.Count(string(b), "import = [") != 1 {
 		t.Fatalf("interleaved write: %q", b)
+	}
+	sidecar, _ := os.ReadFile(filepath.Join(home, ".config", "alacritty", "themes", "sysc-shell.toml"))
+	if !strings.Contains(string(sidecar), marker) {
+		t.Fatalf("sidecar missing marker: %q", sidecar)
 	}
 }
 
@@ -184,7 +226,7 @@ func TestApplyEnabledReportsFirstError(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(p, []byte("user\n"), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(`import = ["user.toml"]`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	only := func(name string) bool { return name == "alacritty" }
@@ -250,11 +292,23 @@ func TestApplyEnabledGatesIncompleteTemplates(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range Catalog().Names() {
-		if Complete(name) || writeTarget(home, name) == "" {
+		if Complete(name) {
 			continue
 		}
-		if _, err := os.Stat(writeTarget(home, name)); !os.IsNotExist(err) {
-			t.Fatalf("incomplete template %s wrote its stub (GH #7)", name)
+		targets := []string{writeTarget(home, name)}
+		if tgt, ok := templateTargets[name]; ok {
+			targets = append(targets, tgt.sidecar(home))
+			for _, dir := range tgt.directives(home) {
+				targets = append(targets, dir.file)
+			}
+		}
+		for _, p := range targets {
+			if p == "" {
+				continue
+			}
+			if _, err := os.Stat(p); !os.IsNotExist(err) {
+				t.Fatalf("incomplete template %s wrote %s (GH #7)", name, p)
+			}
 		}
 	}
 }
