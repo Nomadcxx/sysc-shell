@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/theming"
 )
 
 func TestRegistryCoversAllSections(t *testing.T) {
@@ -840,5 +841,28 @@ func TestMonitorSectionEntries(t *testing.T) {
 				t.Fatalf("set primary: %v, %q", err, c.Monitor.HoverColor)
 			}
 		}
+	}
+}
+
+// GH #7: only verified templates may take a toggle; the stubs would write
+// non-functional content onto live app config paths.
+func TestOnlyCompleteTemplatesGetToggles(t *testing.T) {
+	t.Parallel()
+	r := Default()
+	seen := map[string]bool{}
+	for _, section := range SectionNames() {
+		for _, e := range r.Section(section) {
+			if rest, ok := strings.CutPrefix(e.Path, "theme.templates."); ok {
+				seen[rest] = true
+			}
+		}
+	}
+	for name := range seen {
+		if !theming.Complete(name) {
+			t.Errorf("toggle exposed for incomplete template %q", name)
+		}
+	}
+	if !seen["niri"] {
+		t.Errorf("complete template niri has no toggle: %v", seen)
 	}
 }
