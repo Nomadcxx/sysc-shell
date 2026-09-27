@@ -240,7 +240,9 @@ func TestRevealAnimationInvalidatesUntilDone(t *testing.T) {
 }
 
 func TestRightClickingTheBarBatteryOpensSession(t *testing.T) {
-	reg := newPanelRegistry(t)
+	cfg := config.Default()
+	cfg.Bar.Right = []config.Item{{ID: "battery", Label: "percent", WarnBelow: 20, Interval: 30 * time.Second}}
+	reg := newPanelRegistryWithConfig(t, cfg)
 	cb, err := reg.NewHost(7, "eDP-1")
 	if err != nil {
 		t.Fatal(err)
@@ -273,7 +275,9 @@ func TestRightClickingTheBarBatteryOpensSession(t *testing.T) {
 }
 
 func TestRightClickingBatteryCapsulePaddingOpensSession(t *testing.T) {
-	reg := newPanelRegistry(t)
+	cfg := config.Default()
+	cfg.Bar.Right = []config.Item{{ID: "battery", Label: "percent", WarnBelow: 20, Interval: 30 * time.Second}}
+	reg := newPanelRegistryWithConfig(t, cfg)
 	cb, err := reg.NewHost(7, "eDP-1")
 	if err != nil {
 		t.Fatal(err)
@@ -750,8 +754,11 @@ func TestClosingDuringRevealStopsTicker(t *testing.T) {
 }
 
 func newPanelRegistry(t *testing.T) *Registry {
+	return newPanelRegistryWithConfig(t, config.Default())
+}
+
+func newPanelRegistryWithConfig(t *testing.T, cfg config.Config) *Registry {
 	t.Helper()
-	cfg := config.Default()
 	cfg.Accessibility.ReducedMotion = true
 	reg := NewRegistry(cfg)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }

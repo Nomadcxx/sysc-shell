@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -529,8 +530,12 @@ func (m *Metrics) collect(s *samplers, failing *[sourceCount]bool) Snapshot {
 		if v, err := s.gpu.Sample(); err != nil {
 			noteFailure(failing, SourceGPU, err)
 		} else {
-			noteRecovery(failing, SourceGPU)
 			snap.GPU = &v
+			if err := gpuSnapshotError(v); err != nil {
+				noteFailure(failing, SourceGPU, err)
+			} else {
+				noteRecovery(failing, SourceGPU)
+			}
 		}
 	}
 	if m.SourceLeased(SourceProcess) {
@@ -547,6 +552,23 @@ func (m *Metrics) collect(s *samplers, failing *[sourceCount]bool) Snapshot {
 		s.process = nil
 	}
 	return snap
+}
+
+// gpuSnapshotError reports recoverable reader failures without discarding the
+// partial snapshot that still contains device identity and truthful validity.
+func gpuSnapshotError(snapshot metrics.GPUSnapshot) error {
+	issues := make([]error, 0, len(snapshot.Issues))
+	for _, issue := range snapshot.Issues {
+		switch {
+		case issue.Err != nil && issue.Source != "":
+			issues = append(issues, fmt.Errorf("%s: %w", issue.Source, issue.Err))
+		case issue.Err != nil:
+			issues = append(issues, issue.Err)
+		case issue.Source != "":
+			issues = append(issues, errors.New(issue.Source))
+		}
+	}
+	return errors.Join(issues...)
 }
 
 func noteFailure(failing *[sourceCount]bool, src Source, err error) {

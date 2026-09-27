@@ -1127,7 +1127,7 @@ func TestPanelSectionValidationPrecedesMutation(t *testing.T) {
 	r.mu.Lock()
 	original := r.panelHosts[PanelControlCenter]
 	r.mu.Unlock()
-	for _, section := range []string{"network", "nope"} {
+	for _, section := range []string{"nope"} {
 		if err := call("open", "control-center", section); err == nil {
 			t.Errorf("section %q was accepted", section)
 		}
@@ -1139,11 +1139,21 @@ func TestPanelSectionValidationPrecedesMutation(t *testing.T) {
 			t.Fatalf("rejected section %q changed host or selection", section)
 		}
 	}
+	if err := call("open", "control-center", "network"); err != nil {
+		t.Fatalf("open Network section: %v", err)
+	}
+	r.mu.Lock()
+	got := r.panelHosts[PanelControlCenter]
+	selected := got.section
+	r.mu.Unlock()
+	if got != original || selected != "network" {
+		t.Fatalf("Network selection changed host or selected %q", selected)
+	}
 	if err := call("open", "control-center", "audio"); err != nil {
 		t.Fatal(err)
 	}
 	r.mu.Lock()
-	selected := r.panelHosts[PanelControlCenter].section
+	selected = r.panelHosts[PanelControlCenter].section
 	r.mu.Unlock()
 	if selected != "audio" {
 		t.Errorf("selected section = %q, want audio", selected)
