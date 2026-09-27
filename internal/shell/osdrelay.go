@@ -53,3 +53,25 @@ func layoutOSD(prev, next niri.KeyboardLayouts, seen bool) (OSDView, bool) {
 	}
 	return OSDView{Kind: osdLayout, Text: next.Names[next.Current]}, true
 }
+
+// mediaOSD announces transport changes: play, pause, stop, a new track, or a
+// seek. Position ticks are not announcements.
+func mediaOSD(prev, next services.MediaState) (OSDView, bool) {
+	if !next.Available {
+		return OSDView{}, false
+	}
+	if next.Status == prev.Status && next.Title == prev.Title && next.Seeks == prev.Seeks {
+		return OSDView{}, false
+	}
+	level := 0
+	if next.LengthUS > 0 {
+		level = int(next.PositionUS * 100 / next.LengthUS)
+	}
+	return OSDView{
+		Kind:  osdMedia,
+		Text:  next.Title,
+		Level: level,
+		On:    next.Status == services.PlaybackPlaying,
+		Muted: next.Status == services.PlaybackStopped,
+	}, true
+}

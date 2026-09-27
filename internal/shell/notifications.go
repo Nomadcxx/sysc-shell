@@ -24,6 +24,7 @@ type notifyState struct {
 	lifetimes    map[uint32]protocol.Lifetime
 	history      []protocol.HistoryEntry
 	capabilities []string
+	onDND        func(on bool)
 
 	// outputs is the set of configured connector names the projection
 	// projects to. Zero outputs means everything is suppressed.

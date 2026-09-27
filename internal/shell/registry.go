@@ -230,6 +230,9 @@ func NewRegistry(cfg config.Config) *Registry {
 	r.weather.SetCity(cfg.Weather.City)
 	r.tokens, r.themeErr = tokensAndReason(r.generateTheme(cfg))
 	r.osd = newOSDManager(r, 0)
+	// DND toggles often run under Registry.mu; Show takes it, so publish from
+	// a separate goroutine after the setter returns.
+	r.notify.onDND = func(on bool) { go r.OSD().Show(OSDView{Kind: osdDND, On: on}) }
 	r.setAudio(services.NewAudio(0, ""))
 	r.setBrightness(services.NewBrightness("", "", 0))
 	if !runningAsTest() {
@@ -327,6 +330,7 @@ func (r *Registry) relayMedia(media *services.Media, cancel <-chan struct{}) {
 		return
 	}
 	r.publishMediaSnapshot(media, media.CachedState())
+	prev := media.CachedState()
 	for {
 		select {
 		case <-r.closed:
@@ -335,6 +339,10 @@ func (r *Registry) relayMedia(media *services.Media, cancel <-chan struct{}) {
 			return
 		case state := <-media.Changes():
 			r.publishMediaSnapshot(media, state)
+			if view, show := mediaOSD(prev, state); show {
+				r.OSD().Show(view)
+			}
+			prev = state
 		}
 	}
 }

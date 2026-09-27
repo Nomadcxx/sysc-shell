@@ -94,16 +94,26 @@ func (s *notifyState) unread() int {
 // has no end. One timer clears whichever end is set.
 func (s *notifyState) setDND(on bool) {
 	s.mu.Lock()
+	changed := s.dnd != on
 	s.dnd = on
 	s.dndUntil = time.Time{}
+	hook := s.onDND
 	s.mu.Unlock()
+	if changed && hook != nil {
+		hook(on)
+	}
 }
 
 func (s *notifyState) setDNDPreset(now time.Time, d time.Duration) {
 	s.mu.Lock()
+	changed := !s.dnd
 	s.dnd = true
 	s.dndUntil = now.Add(d)
+	hook := s.onDND
 	s.mu.Unlock()
+	if changed && hook != nil {
+		hook(true)
+	}
 }
 
 func (s *notifyState) dndState(now time.Time) (time.Time, bool) {
