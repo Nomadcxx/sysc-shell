@@ -30,6 +30,10 @@ var completeTemplates = map[string]bool{
 	// tests only, the binaries are not installed here.
 	"alacritty": true, "foot": true, "ghostty": true, "kitty": true,
 	"starship": true, "wezterm": true,
+	// Non-terminal cluster: btop and cava were checked by running them here;
+	// helix, kcolorscheme, qt and scroll are test-only (binaries absent).
+	"btop": true, "cava": true, "helix": true,
+	"kcolorscheme": true, "qt": true, "scroll": true,
 }
 
 func Complete(name string) bool { return completeTemplates[name] }
