@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"fmt"
+
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -18,6 +20,10 @@ const (
 	osdInnerW = osdWidth - 16 - 2*osdPad
 	osdIconSz = 20
 	osdGap    = 10
+
+	osdFadeFrom = 85
+	osdFadeTo   = 95
+	osdHandleSz = 14
 )
 
 // OSDView is one OSD payload. Level is 0..100 for metered kinds; Muted is
@@ -135,4 +141,56 @@ func osdTree(v OSDView) *ui.Node {
 		root.Children = []*ui.Node{{Kind: ui.KindRow, Gap: osdGap, Children: []*ui.Node{icon, label}}}
 	}
 	return root
+}
+
+// x is the handle's centre on the track; iconOpacity and textOpacity are
+// percent, 0 meaning "do not paint".
+func osdHandle(level, trackX, trackW int) (x int, iconOpacity, textOpacity uint8) {
+	level = min(max(level, 0), 100)
+	x = trackX + trackW*level/100
+	switch {
+	case level <= osdFadeFrom:
+		return x, 100, 0
+	case level >= osdFadeTo:
+		return x, 0, 100
+	}
+	text := uint8((level - osdFadeFrom) * 100 / (osdFadeTo - osdFadeFrom))
+	return x, 100 - text, text
+}
+
+// osdHandleNodes are painted over a laid-out meter: the kind's icon at the
+// fill edge, crossfading to the percentage near full. Opacity zero means
+// "unset" to the painter, so a fully faded node is left out instead.
+func osdHandleNodes(v OSDView, meter *ui.Node) []*ui.Node {
+	if !osdMetered(v.Kind) || meter == nil {
+		return nil
+	}
+	x, iconOp, textOp := osdHandle(v.Level, meter.Bounds.X, meter.Bounds.W)
+	cy := meter.Bounds.Y + meter.Bounds.H/2
+	var out []*ui.Node
+	if iconOp > 0 {
+		out = append(out, &ui.Node{Kind: ui.KindIcon, Icon: osdIcon(v), IconSize: osdHandleSz, Opacity: iconOp,
+			Bounds: ui.Rect{X: x - osdHandleSz/2, Y: cy - osdHandleSz/2, W: osdHandleSz, H: osdHandleSz}})
+	}
+	if textOp > 0 {
+		out = append(out, &ui.Node{Kind: ui.KindText, Text: fmt.Sprintf("%d%%", min(max(v.Level, 0), 100)),
+			TextRole: theme.RoleCaption, Tabular: true, Opacity: textOp,
+			Bounds: ui.Rect{X: x - 16, Y: cy - 8, W: 32, H: 16}})
+	}
+	return out
+}
+
+func osdFindKey(n *ui.Node, key string) *ui.Node {
+	if n == nil {
+		return nil
+	}
+	if n.Key == key {
+		return n
+	}
+	for _, child := range n.Children {
+		if found := osdFindKey(child, key); found != nil {
+			return found
+		}
+	}
+	return nil
 }

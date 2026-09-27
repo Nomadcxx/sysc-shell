@@ -95,3 +95,37 @@ func TestOSDTreesFitTheBody(t *testing.T) {
 		checkBounds(root)
 	}
 }
+
+func TestOSDHandleRidesTheFillAndCrossfadesNearFull(t *testing.T) {
+	cases := []struct {
+		level      int
+		x          int
+		icon, text uint8
+	}{
+		{0, 10, 100, 0},
+		{50, 60, 100, 0},
+		{85, 95, 100, 0},
+		{90, 100, 50, 50},
+		{95, 105, 0, 100},
+		{100, 110, 0, 100},
+		{140, 110, 0, 100},
+		{-5, 10, 100, 0},
+	}
+	for _, tc := range cases {
+		x, icon, text := osdHandle(tc.level, 10, 100)
+		if x != tc.x || icon != tc.icon || text != tc.text {
+			t.Errorf("level %d: x=%d icon=%d text=%d, want %d %d %d", tc.level, x, icon, text, tc.x, tc.icon, tc.text)
+		}
+	}
+}
+
+func TestOSDHandleNodesOnlyForMeteredKinds(t *testing.T) {
+	meter := &ui.Node{Kind: ui.KindMeter, Bounds: ui.Rect{X: 40, Y: 30, W: 150, H: 6}}
+	if n := osdHandleNodes(OSDView{Kind: osdCapsLock}, meter); len(n) != 0 {
+		t.Fatal("a toggle kind got a handle")
+	}
+	nodes := osdHandleNodes(OSDView{Kind: osdAudio, Level: 90}, meter)
+	if len(nodes) != 2 || nodes[0].Opacity != 50 || nodes[1].Text != "90%" {
+		t.Fatalf("handle nodes at 90%%: %+v", nodes)
+	}
+}

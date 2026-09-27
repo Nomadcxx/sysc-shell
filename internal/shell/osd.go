@@ -226,6 +226,7 @@ func (m *OSDManager) render(pixels []byte, width, height, stride int) error {
 	if err != nil {
 		return err
 	}
+	root.Children = append(root.Children, osdHandleNodes(m.view, osdFindKey(root, "osd-meter"))...)
 	return render.Paint(c, root, m.text, style)
 }
 
