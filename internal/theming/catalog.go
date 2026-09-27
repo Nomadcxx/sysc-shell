@@ -22,7 +22,14 @@ type CatalogT struct {
 // completeTemplates names the templates whose output is real enough to write
 // onto an application's live config path. Everything else is a colour stub
 // and is gated off (GH #7); add a name here when its template is verified.
-var completeTemplates = map[string]bool{"niri": true}
+var completeTemplates = map[string]bool{
+	"niri": true,
+	// Terminal cluster: alacritty, foot, ghostty and kitty passed live checks
+	// on Niri; wezterm and starship are covered by render and mechanism
+	// tests only, the binaries are not installed here.
+	"alacritty": true, "foot": true, "ghostty": true, "kitty": true,
+	"starship": true, "wezterm": true,
+}
 
 func Complete(name string) bool { return completeTemplates[name] }
 
