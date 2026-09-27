@@ -143,6 +143,11 @@ func (o *owner) showTooltip(req TooltipRequest) error {
 	// rectangle before the tooltip maps, reduced and blurred. When the theme
 	// asks for no blur, or the compositor has no screencopy, the capture is
 	// nil and painting stays a plain root fill.
+	//
+	// A panel prefers the compositor's background-effect protocol when the
+	// compositor offers it; a tooltip is small and short-lived, so it always
+	// captures instead of routing this hand-built surface through the aux
+	// surface unit that owns that protocol.
 	var backdrop *ui.Image
 	if o.cfg.Theme.BlurBehind {
 		if shot := o.captureRegion(h.proxy, place); shot != nil {

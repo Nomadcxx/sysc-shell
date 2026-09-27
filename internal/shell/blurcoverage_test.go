@@ -67,10 +67,15 @@ func TestEveryPanelRequestsABackdrop(t *testing.T) {
 // backdrop, with every test still passing.
 //
 // So the decision has to be written down at the site: an AuxSpec either sets
-// BlurRegion or carries `blur-exempt:` with a reason. Design D13 scopes the
-// backdrop to panels and names the bar, toasts, the OSD and tooltips as out;
-// the menu and drawer surfaces are neither panels nor named there, which is a
-// scope question their exemptions record rather than hide.
+// BlurRegion or carries `blur-exempt:` with a reason. Design D13 scoped the
+// backdrop to panels and named the bar, toasts, the OSD and tooltips as out;
+// tooltips have since taken the capture path (see wayland/tooltip.go), and the
+// bar, toasts and OSD remain out. The menu and drawer surfaces are neither
+// panels nor named there, which is a scope question their exemptions record
+// rather than hide.
+//
+// The tooltip surface is hand-built rather than an AuxSpec, so this scan cannot
+// see it; TestTooltipCarriesTheBackdropIntoThePaint covers its wiring.
 func TestEveryAuxSurfaceDecidesAboutBlur(t *testing.T) {
 	t.Parallel()
 	entries, err := os.ReadDir(".")

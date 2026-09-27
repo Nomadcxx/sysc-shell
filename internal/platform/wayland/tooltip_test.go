@@ -177,3 +177,21 @@ func TestTooltipFallsBackWhenNoColourWasSent(t *testing.T) {
 		t.Fatalf("fallback left a transparent tooltip: %#v / %#v", style.Background, style.Foreground)
 	}
 }
+
+// A tooltip that captured a backdrop paints it. The capture itself needs a
+// compositor, so this pins the wiring from the surface to the paint.
+func TestTooltipCarriesTheBackdropIntoThePaint(t *testing.T) {
+	cfg := config.Default()
+	o := &owner{cfg: &cfg}
+	shot := &ui.Image{}
+	tt := &tooltipSurface{
+		host:     &OutputHost{connector: "DP-1"},
+		place:    ui.Rect{W: 120, H: 30},
+		backdrop: shot,
+	}
+
+	style, _ := o.tooltipStyle(tt)
+	if style.Backdrop != shot {
+		t.Fatalf("backdrop = %p, want the captured image %p", style.Backdrop, shot)
+	}
+}
