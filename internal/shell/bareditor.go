@@ -387,7 +387,7 @@ func (h *PanelHost) barLaneStripFor(r *Registry) *ui.Node {
 // Every one of these calls the same config mutation the pointer path calls, so
 // the two cannot drift and the tests need no synthesised pointer events.
 func (h *PanelHost) barKeyPress(r *Registry, key uint32) bool {
-	if !h.alt || h.section != "Bar" || h.query != "" {
+	if !h.alt || h.section != "Bar" || settingsCurrentPage(h, "Bar") != "Layout" || h.query != "" {
 		return false
 	}
 	ref, ok := h.barFocusedRef()

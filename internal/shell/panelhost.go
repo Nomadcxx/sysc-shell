@@ -129,6 +129,9 @@ type PanelHost struct {
 	// tree starts at the top, so without this a drag or a remove threw the
 	// user back to the first row and lost their place.
 	settingsScroll int
+	// settingsPage is the open section's page (settings redesign D1). Empty
+	// means the section's first.
+	settingsPage string
 	// pluginName resolves a plugin ID to its catalogue name for the bar
 	// editor's rows (settings redesign D9). Set by barLaneStripFor; nil
 	// falls back to the plugin ID.
@@ -369,10 +372,8 @@ func panelSection(id PanelID, requested string) (string, error) {
 		}
 		return requested, nil
 	case PanelSettings:
-		for _, section := range settingsSections {
-			if section == requested {
-				return requested, nil
-			}
+		if _, _, ok := settingsAddress(requested); ok {
+			return requested, nil
 		}
 	}
 	return "", fmt.Errorf("unknown section %q", requested)
@@ -395,7 +396,17 @@ func (r *Registry) selectPanelSectionLocked(id PanelID, section string) error {
 		r.publishSurface(h.output, panelSurfaceID(id))
 		return nil
 	}
-	if h.section == section {
+	page := ""
+	if id == PanelSettings {
+		var ok bool
+		if section, page, ok = settingsAddress(section); !ok {
+			return fmt.Errorf("unknown section %q", section)
+		}
+		if h.section == section && settingsCurrentPage(h, section) == page {
+			return nil
+		}
+		h.settingsScroll = 0
+	} else if h.section == section {
 		return nil
 	}
 	if id == PanelControlCenter {
@@ -403,7 +414,7 @@ func (r *Registry) selectPanelSectionLocked(id PanelID, section string) error {
 		r.publishSurface(h.output, panelSurfaceID(id))
 		return nil
 	}
-	h.section = section
+	h.section, h.settingsPage = section, page
 	r.rebuildPanel(h)
 	r.publishSurface(h.output, panelSurfaceID(id))
 	return nil
@@ -2083,7 +2094,12 @@ func (h *PanelHost) activate(r *Registry) bool {
 		if h.id == PanelControlCenter {
 			return h.selectControlCentreSection(r, section)
 		}
-		h.section = section
+		h.section, h.settingsPage, h.settingsScroll = section, "", 0
+		r.rebuildPanel(h)
+		return true
+	}
+	if page, ok := strings.CutPrefix(n.Action, "page:"); ok {
+		h.settingsPage, h.settingsScroll = page, 0
 		r.rebuildPanel(h)
 		return true
 	}

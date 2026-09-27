@@ -3,6 +3,7 @@ package shell
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,12 +28,9 @@ import (
 // only there is unreachable.
 var settingsSections = settings.SectionNames()
 
-// The rail reuses the control centre's measurements so the two surfaces read
-// as one product rather than two that happen to sit side by side.
-const (
-	settingsRailWidth = ccRailWidth
-	settingsRailItem  = ccRailItem
-)
+// settingsRailWidth holds an icon and a section name (settings redesign D5).
+// The control centre's 56 fitted a glyph and nothing else.
+const settingsRailWidth = 208
 
 // settingsSectionIcons names one glyph per section. Every name is confirmed
 // against the pinned Material Symbols source and asserted by the render
@@ -115,71 +113,104 @@ func settingsScrollOffset(root *ui.Node) int {
 	return out
 }
 
+// settingsRail is the section list: search first, then each cluster's
+// caption and its sections as icon-and-name tabs (settings redesign D5). It
+// runs the full height of the pane, so the title and page tabs sit over the
+// content only, and search stays the first thing the keyboard reaches.
 func settingsRail(h *PanelHost, section string) *ui.Node {
-	rail := &ui.Node{Kind: ui.KindColumn, Width: settingsRailWidth, Gap: theme.MarginM}
-	for _, name := range settingsSections {
-		entry := &ui.Node{
-			Kind: ui.KindButton, Width: settingsRailItem, Height: settingsRailItem,
-			Action: "section:" + name, Name: name, Role: "tab", Focusable: true,
-			// The rail draws glyphs only, so the name has to be reachable by
-			// hover as well as by screen reader.
-			Tooltip:  name,
-			Shape:    ui.ShapeMedium,
-			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: settingsSectionIcons[name]}},
+	if h.search == nil {
+		h.search = ui.NewField("")
+	}
+	m := h.metrics()
+	search := h.search.Node("Search")
+	search.Width = settingsRailWidth
+	rail := &ui.Node{Kind: ui.KindColumn, Width: settingsRailWidth, Gap: theme.MarginXXS, Children: []*ui.Node{search}}
+	for _, c := range settings.SectionClusters() {
+		rail.Children = append(rail.Children, &ui.Node{
+			Kind: ui.KindText, Text: c.Name, TextRole: theme.RoleCaption,
+			Tone: ui.ToneSubtle, Role: "heading",
+		})
+		for _, name := range c.Sections {
+			entry := &ui.Node{
+				Kind: ui.KindButton, Width: settingsRailWidth, Height: m.StandardControl,
+				Action: "section:" + name, Name: name, Role: "tab", Focusable: true,
+				Tooltip: name, Shape: ui.ShapeMedium, Padding: m.ButtonPadding,
+				// One row child: layoutButtonContent lays a single row out in
+				// full, where several children would get no box (barChip).
+				Children: []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
+					{Kind: ui.KindIcon, Icon: settingsSectionIcons[name]},
+					{Kind: ui.KindText, Text: name},
+				}}},
+			}
+			if name == section {
+				entry.State |= ui.StateSelected
+				entry.Fill = ui.FillAccent
+			}
+			rail.Children = append(rail.Children, entry)
 		}
-		if name == section {
-			entry.State |= ui.StateSelected
-			entry.Fill = ui.FillAccent
-		}
-		rail.Children = append(rail.Children, entry)
 	}
 	return rail
 }
 
-func settingsTree(r *Registry, h *PanelHost) *ui.Node {
-	if h.search == nil {
-		h.search = ui.NewField("")
+// settingsPageTabs switches a section's pages. They are a segmented control
+// of radios: "tab" is the rail's role, one per section.
+func settingsPageTabs(h *PanelHost, pages []string, page string) *ui.Node {
+	m := h.metrics()
+	seg := &ui.Node{Kind: ui.KindSegmented, Key: "settings-page", Gap: theme.MarginXXS, Height: m.CompactControl, Name: "Pages", Role: "radiogroup"}
+	for _, p := range pages {
+		b := &ui.Node{
+			Kind: ui.KindButton, Action: "page:" + p, Name: p, Role: "radio",
+			Focusable: true, Height: m.CompactControl,
+			Children: []*ui.Node{{Kind: ui.KindText, Text: p}},
+		}
+		if p == page {
+			b.State |= ui.StateSelected
+		}
+		seg.Children = append(seg.Children, b)
 	}
-	search := h.search.Node("Search")
-	// The header spans the surface and the field pins to its end, so the field
-	// lands directly above the rows' trailing control column. Sharing that
-	// column's width lines the two up and drops a literal 260 that was one
-	// panel size's answer applied to every panel size.
-	search.Width = settingsControlWidth(h)
+	return seg
+}
 
+// settingsCurrentPage is the page the section shows: the host's, when the
+// section has it, else the section's first. Empty for a one-page section.
+func settingsCurrentPage(h *PanelHost, section string) string {
+	pages := settings.SectionPages(section)
+	if len(pages) == 0 {
+		return ""
+	}
+	if slices.Contains(pages, h.settingsPage) {
+		return h.settingsPage
+	}
+	return pages[0]
+}
+
+func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	section := h.section
 	if section == "" {
 		section = settingsSections[0]
 	}
+	page := settingsCurrentPage(h, section)
+	searching := strings.TrimSpace(h.query) != ""
 
 	head := []*ui.Node{}
 	if h.errLabel != "" {
 		head = append(head, &ui.Node{Kind: ui.KindText, Text: h.errLabel, Tone: ui.ToneError})
 	}
-	// The section name is always visible in the header, which is what lets the
-	// group headings inside the column stay unsticky.
-	head = append(head, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, PinEnd: true, Children: []*ui.Node{
-		{Kind: ui.KindText, Text: section, TextRole: theme.RoleTitle},
-		search,
-	}})
-
-	// The header spans the surface rather than sitting inside the body column
-	// the way the control centre's does. That is the one place this pane does
-	// not mirror it, and it is deliberate: the control centre has no search
-	// field, while here the field has to be the first thing the keyboard
-	// reaches, and focus order follows tree order.
-	body := func(content *ui.Node) *ui.Node {
-		return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Padding: h.metrics().PanelPadding,
-			Children: append(append([]*ui.Node{}, head...), &ui.Node{
-				Kind: ui.KindRow, Gap: theme.MarginXL, Children: []*ui.Node{
-					settingsRail(h, section),
-					content,
-				},
-			}),
-		}
+	// The section name is always visible over the content, which is what lets
+	// the group titles inside the column stay unsticky.
+	head = append(head, &ui.Node{Kind: ui.KindText, Text: section, TextRole: theme.RoleTitle})
+	if pages := settings.SectionPages(section); len(pages) > 0 && !searching {
+		head = append(head, settingsPageTabs(h, pages, page))
 	}
 
-	if strings.TrimSpace(h.query) != "" {
+	body := func(content *ui.Node) *ui.Node {
+		right := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Children: append(append([]*ui.Node{}, head...), content)}
+		return &ui.Node{Kind: ui.KindColumn, Padding: h.metrics().PanelPadding, Children: []*ui.Node{{
+			Kind: ui.KindRow, Gap: theme.MarginXL, Children: []*ui.Node{settingsRail(h, section), right},
+		}}}
+	}
+
+	if searching {
 		var hits []settings.Entry
 		if h.set != nil {
 			hits = h.set.Search(h.query)
@@ -193,18 +224,53 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 		// surface. It gets the same bounded, scrolling column as a section.
 		return body(settingsBody(h, theme.MarginM, pluginsTree(r, h)))
 	}
+	if section == "Bar" {
+		return body(settingsBarPage(r, h, page))
+	}
 	var entries []settings.Entry
 	if h.set != nil {
 		entries = h.set.Section(section)
 	}
-	column := settingsSectionColumn(h, section, entries)
-	if section == "Bar" {
-		// The lane editor is the Bar section's Layout group, above its
-		// geometry rows. It replaces the three comma-separated string entries,
-		// which is the whole point of the sub-project.
-		column.Children = append([]*ui.Node{h.barLaneStripFor(r)}, column.Children...)
+	return body(settingsSectionColumn(h, section, entries))
+}
+
+// settingsBarPage is one of Bar's pages (settings redesign D8).
+func settingsBarPage(r *Registry, h *PanelHost, page string) *ui.Node {
+	if page == "Layout" {
+		if r == nil {
+			return settingsBody(h, theme.MarginL)
+		}
+		return settingsBody(h, theme.MarginL, h.barLaneStripFor(r))
 	}
-	return body(column)
+	var entries []settings.Entry
+	if h.set != nil {
+		entries = h.set.PageEntries("Bar", page)
+	}
+	if len(entries) == 0 {
+		return settingsBody(h, theme.MarginL, settingsEmptyNote(page))
+	}
+	return settingsPageColumn(h, entries)
+}
+
+// settingsAddress resolves an IPC or shortcut section name. "Section/Page"
+// picks a page; "Displays" is the old rail section, now Bar › Displays.
+func settingsAddress(requested string) (section, page string, ok bool) {
+	section, page, _ = strings.Cut(requested, "/")
+	if section == "Displays" && page == "" {
+		section, page = "Bar", "Displays"
+	}
+	if !slices.Contains(settingsSections, section) {
+		return "", "", false
+	}
+	pages := settings.SectionPages(section)
+	switch {
+	case len(pages) == 0:
+		return section, "", page == ""
+	case page == "":
+		return section, pages[0], true
+	default:
+		return section, page, slices.Contains(pages, page)
+	}
 }
 
 // settingsEmptySection explains a section that legitimately has nothing in it

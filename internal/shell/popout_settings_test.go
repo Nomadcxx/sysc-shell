@@ -1188,3 +1188,101 @@ func TestSearchHitsNameTheirPage(t *testing.T) {
 	}
 	t.Fatal("a Bar frost hit is not captioned Bar › Appearance")
 }
+
+func TestRailIsLabelledAndClustered(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	rail := settingsRail(h, "Bar")
+	var captions, tabs []string
+	for _, n := range walk(rail) {
+		if n.Role == "tab" {
+			tabs = append(tabs, n.Name)
+			if findNode(n, func(c *ui.Node) bool { return c.Kind == ui.KindText && c.Text == n.Name }) == nil {
+				t.Errorf("rail tab %s has no visible label", n.Name)
+			}
+		}
+		if n.Role == "heading" && n.TextRole == theme.RoleCaption {
+			captions = append(captions, n.Text)
+		}
+	}
+	if !slices.Equal(tabs, settings.SectionNames()) {
+		t.Errorf("tabs %v, want %v", tabs, settings.SectionNames())
+	}
+	if !slices.Equal(captions, []string{"Look", "Bar", "Panels", "System"}) {
+		t.Errorf("captions %v", captions)
+	}
+}
+
+func TestBarOpensOnAppearanceAndPagesSwitch(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	if findByName(h.root, "Style") == nil {
+		t.Fatal("Bar did not open on Appearance: no Style row")
+	}
+	for _, page := range []string{"Appearance", "Layout", "Displays"} {
+		if findAction(h.root, "page:"+page) == nil {
+			t.Errorf("no tab for page %s", page)
+		}
+	}
+	h.settingsPage = "Layout"
+	h.root = settingsTree(nil, h)
+	if findByName(h.root, "Style") != nil {
+		t.Error("Style shows on the Layout page")
+	}
+}
+
+func TestSettingsAddressesResolvePages(t *testing.T) {
+	t.Parallel()
+	for req, want := range map[string][2]string{
+		"Displays":   {"Bar", "Displays"},
+		"Bar":        {"Bar", "Appearance"},
+		"Bar/Layout": {"Bar", "Layout"},
+		"Appearance": {"Appearance", ""},
+	} {
+		s, p, ok := settingsAddress(req)
+		if !ok || s != want[0] || p != want[1] {
+			t.Errorf("%q → %q %q %v, want %v", req, s, p, ok, want)
+		}
+	}
+	for _, bad := range []string{"Nowhere", "Bar/Nowhere", "Appearance/Layout"} {
+		if _, _, ok := settingsAddress(bad); ok {
+			t.Errorf("%q was accepted", bad)
+		}
+	}
+}
+
+func TestOpeningTheOldDisplaysSectionLandsOnBarDisplays(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if err := reg.selectPanelSectionLocked(PanelSettings, "Displays"); err != nil {
+		t.Fatal(err)
+	}
+	h := reg.panelHosts[PanelSettings]
+	if h.section != "Bar" || h.settingsPage != "Displays" {
+		t.Fatalf("landed on %q/%q", h.section, h.settingsPage)
+	}
+}
+
+func TestClearingSearchReturnsToTheSamePage(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.settingsPage = "Layout"
+	h.query = "frost"
+	h.root = settingsTree(nil, h)
+	if findAction(h.root, "page:Layout") != nil {
+		t.Error("page tabs show while searching")
+	}
+	h.query = ""
+	h.root = settingsTree(nil, h)
+	if h.section != "Bar" || settingsCurrentPage(h, "Bar") != "Layout" {
+		t.Fatalf("after search: %q/%q", h.section, settingsCurrentPage(h, "Bar"))
+	}
+	if n := findAction(h.root, "page:Layout"); n == nil || n.State&ui.StateSelected == 0 {
+		t.Error("Layout is not the selected page after search")
+	}
+}
