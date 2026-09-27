@@ -876,3 +876,70 @@ func TestGitHubGlyphsCarryTheUnreadDot(t *testing.T) {
 		t.Fatalf("unread corner ink %d vs plain %d: no dot", dotCorner, plainCorner)
 	}
 }
+
+// The protonvpn plugin's bar pill and panel header use the Proton VPN mark:
+// a rounded triangle that is widest along its top edge and tapers to a point
+// at the bottom. Coverage alone would pass a blob, so the bands are measured:
+// ink in the top and bottom thirds, and the widest row in the upper half.
+func TestProtonGlyphIsTheMark(t *testing.T) {
+	t.Parallel()
+	r, ok := IconByName("proton")
+	if !ok || r != iconProton {
+		t.Fatalf("proton = %U, %v", r, ok)
+	}
+	if r != 0xE075 {
+		t.Fatalf("proton rune %U is not the codepoint after the GitHub pair", r)
+	}
+	found := false
+	for _, n := range IconNames() {
+		if n == "proton" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("IconNames() does not list proton")
+	}
+	tr := NewTextRenderer(newIconFace())
+	mask, err := tr.Raster(string(r), TextSpec{Size: 64, Weight: 400}, false)
+	if err != nil || mask.Alpha == nil {
+		t.Fatalf("raster proton: %v", err)
+	}
+	a := mask.Alpha
+	b := a.Rect
+	width := func(y int) int {
+		n := 0
+		for x := b.Min.X; x < b.Max.X; x++ {
+			if a.AlphaAt(x, y).A >= 128 {
+				n++
+			}
+		}
+		return n
+	}
+	top, bottom, widest, widestRow := -1, -1, 0, -1
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		w := width(y)
+		if w == 0 {
+			continue
+		}
+		if top < 0 {
+			top = y
+		}
+		bottom = y
+		if w > widest {
+			widest, widestRow = w, y
+		}
+	}
+	if top < 0 {
+		t.Fatal("proton glyph has no ink")
+	}
+	height := bottom - top
+	if width(top+height/6) == 0 {
+		t.Fatal("proton glyph has no ink in its top third")
+	}
+	if width(bottom-height/6) == 0 {
+		t.Fatal("proton glyph has no ink in its bottom third")
+	}
+	if widestRow > top+height/2 {
+		t.Fatalf("proton glyph's widest row %d is not in the upper half", widestRow)
+	}
+}
