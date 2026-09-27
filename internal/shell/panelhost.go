@@ -1525,7 +1525,9 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			pressed := h.pressed
 			h.pressed = ""
 			cleared := h.pointerChanged(r, h.pointer.setPress(""))
-			if n != nil && pressed != "" && n.StableKey() == pressed {
+			// A press in a text field placed its caret; releasing it is not an
+			// activation. Enter submits a field, never the pointer.
+			if n != nil && pressed != "" && n.StableKey() == pressed && n.Kind != ui.KindTextField {
 				return h.activate(r)
 			}
 			return cleared
