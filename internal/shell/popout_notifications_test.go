@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -521,3 +523,27 @@ func firstCardCapsule(n *ui.Node) *ui.Node {
 }
 
 var _ = ui.Rect{}
+
+func TestDesktopEntryIconResolvesIconKeysFromApplicationsDirs(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", root)
+	t.Setenv("XDG_DATA_DIRS", "")
+	dir := filepath.Join(root, "applications")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	contents := "[Desktop Entry]\nName=Firefox\nIcon=firefox\n"
+	if err := os.WriteFile(filepath.Join(dir, "firefox.desktop"), []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := desktopEntryIcon("firefox"); got != "firefox" {
+		t.Fatalf("entry icon = %q, want firefox", got)
+	}
+	if got := desktopEntryIcon("absent"); got != "" {
+		t.Fatalf("absent entry = %q, want empty", got)
+	}
+	if got := desktopEntryIcon("no/separator"); got != "" {
+		t.Fatalf("separator entry = %q, want empty", got)
+	}
+}

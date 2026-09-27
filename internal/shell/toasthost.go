@@ -122,12 +122,33 @@ func newToastHost(r *Registry, harness *hostHarness) *toastHost {
 	return h
 }
 
+// restyleLocked rebinds the cached layout style to the published palette and
+// relayouts every output. Called with Registry.mu held, from the retheme pass.
+func (h *toastHost) restyleLocked() { h.recompute() }
+
 func (h *toastHost) harness() *hostHarness { return h.harnessRef }
 
 func toastSurfaceID(connector string) string { return "toast:" + connector }
 
 func toastSlideKey(connector string, id uint32) string {
 	return fmt.Sprintf("toast-slide:%s:%d", connector, id)
+}
+
+// drop forgets every per-output record for a surface that is gone -- the
+// compositor closed it on its own -- so recompute stops sending Update to a
+// surface that no longer exists. The next syncOutputs opens a fresh one
+// (GitHub #21).
+func (h *toastHost) drop(connector string) {
+	delete(h.outputs, connector)
+	delete(h.visible, connector)
+	delete(h.queued, connector)
+	delete(h.hovered, connector)
+	delete(h.geometry, connector)
+	delete(h.scale120, connector)
+	delete(h.measured, connector)
+	delete(h.cards, connector)
+	delete(h.pointer, connector)
+	h.noteTargets(connector, nil, nil)
 }
 
 // syncOutputs opens a surface for each new output and closes surfaces whose
@@ -139,16 +160,7 @@ func (h *toastHost) syncOutputs(globals map[string]uint32) {
 	for connector, global := range h.outputs {
 		if _, ok := globals[connector]; !ok {
 			h.request(wayland.AuxRequest{Output: global, ID: toastSurfaceID(connector)})
-			delete(h.outputs, connector)
-			delete(h.visible, connector)
-			delete(h.queued, connector)
-			delete(h.hovered, connector)
-			delete(h.geometry, connector)
-			delete(h.scale120, connector)
-			delete(h.measured, connector)
-			delete(h.cards, connector)
-			delete(h.pointer, connector)
-			h.noteTargets(connector, nil, nil)
+			h.drop(connector)
 		}
 	}
 	for connector, global := range globals {
@@ -219,10 +231,6 @@ func (h *toastHost) render(connector string, pixels []byte, width, height, strid
 			return err
 		}
 		h.text = render.NewTextRendererWithFontMap(fonts)
-		theme := h.r.surfaceTheme()
-		scale, body := h.style.Scale120, h.style.Body
-		h.style = theme.OverlayStyle()
-		h.style.Scale120, h.style.Body = scale, body
 	}
 	if !h.measured[connector] {
 		// Pre-render layout uses fallback text widths. Start from these real
@@ -416,6 +424,10 @@ func (h *toastHost) updateHover(connector string) bool {
 // rebuild arranges one output's visible cards. Each is laid out at its own
 // origin, because each is painted into its own buffer before it is placed.
 func (h *toastHost) rebuild(connector string) {
+	// Rebound from the published palette on every rebuild, not cached at
+	// first paint, so a theme reload reaches open toasts immediately
+	// (GitHub #29).
+	h.style = h.r.surfaceTheme().OverlayStyle()
 	ids := h.visible[connector]
 	rects := h.cardRects(connector, ids)
 	var moved bool
@@ -541,11 +553,11 @@ func (h *toastHost) cardFor(id uint32) *ui.Node {
 	if !ok {
 		return nil
 	}
-	raster := h.r.lookupNotifyIcon(notification.AppIcon)
+	icon := h.r.notifyIcon(notification.AppIcon, notification.DesktopEntry)
 	if h.expanded[id] {
-		return ExpandedNotificationCard(notification, lifetime, raster, h.r.linksAllowed(), h.wrapBody)
+		return ExpandedNotificationCard(notification, lifetime, icon, h.r.linksAllowed(), h.wrapBody)
 	}
-	return NotificationCard(notification, lifetime, raster, h.r.linksAllowed())
+	return NotificationCard(notification, lifetime, icon, h.r.linksAllowed())
 }
 
 func (h *toastHost) wrapBody(s string) []string {
