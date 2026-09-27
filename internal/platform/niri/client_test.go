@@ -34,7 +34,7 @@ const (
 
 	// Events the shell does not model and must ignore. WindowsChanged left this
 	// set when window state became modelled state.
-	unknownEvents = `{"KeyboardLayoutsChanged":{"keyboard_layouts":{"names":["English (US)"],"current_idx":0}}}` + "\n" +
+	unknownEvents = `{"OverviewOpenedOrClosed":{"is_open":true}}` + "\n" +
 		`{"OverviewOpenedOrClosed":{"is_open":false}}` + "\n" +
 		`{"ConfigLoaded":{"failed":false}}`
 )

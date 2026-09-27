@@ -130,12 +130,33 @@ func TestCentreHeaderCarriesFiveCircularButtons(t *testing.T) {
 	}
 }
 
-func TestCenterEmptyStateNamesNothingToSeeHere(t *testing.T) {
-	r := NewRegistry(config.Default())
-	r.applyNotify(snap(1))
+func TestEmptyNotificationCentreShowsIconAndMutedCopy(t *testing.T) {
+	r := newPanelRegistry(t)
+	r.mu.Lock()
 	tree := r.centerTree()
-	if !containsText(tree, "Nothing to see here") {
-		t.Fatalf("empty center tree lacks the empty state: %v", texts(tree))
+	r.mu.Unlock()
+	if containsText(tree, "Nothing to see here") || !containsText(tree, "No notifications") {
+		t.Fatalf("empty centre copy: %v", texts(tree))
+	}
+	mutedIcon, mutedCopy := false, false
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n.Kind == ui.KindIcon && n.Icon == "notifications" && n.Tone == ui.ToneSubtle {
+			mutedIcon = true
+		}
+		if n.Kind == ui.KindText && n.Text == "No notifications" && n.Tone == ui.ToneSubtle {
+			mutedCopy = true
+		}
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(tree)
+	if !mutedIcon || !mutedCopy {
+		t.Fatalf("empty centre lacks muted icon or copy: icon=%v copy=%v", mutedIcon, mutedCopy)
 	}
 }
 

@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -313,6 +314,9 @@ func resolveProgressMotion(anim *animator, root *ui.Node) {
 				anim.Target(key, animProgress, n.Value)
 				n.Value = anim.Value(key, animProgress)
 			}
+		}
+		if strings.HasPrefix(n.Key, badgeKeyPrefix) {
+			seen[n.Key] = true
 		}
 		for _, child := range n.Children {
 			walk(child)

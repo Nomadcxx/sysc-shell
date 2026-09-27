@@ -313,3 +313,24 @@ func TestARealTitleChangeStillPublishes(t *testing.T) {
 		t.Fatal("a title change did not publish")
 	}
 }
+
+func TestKeyboardLayoutEventsReachTheSnapshot(t *testing.T) {
+	var s state
+	changed, err := s.apply([]byte(`{"KeyboardLayoutsChanged":{"keyboard_layouts":{"names":["English (US)","German"],"current_idx":0}}}`))
+	if err != nil || !changed {
+		t.Fatalf("layouts changed: %v %v", changed, err)
+	}
+	if got := s.last.Layouts; len(got.Names) != 2 || got.Current != 0 {
+		t.Fatalf("layouts %+v", got)
+	}
+	changed, err = s.apply([]byte(`{"KeyboardLayoutSwitched":{"idx":1}}`))
+	if err != nil || !changed || s.last.Layouts.Current != 1 {
+		t.Fatalf("switch: %v %v %+v", changed, err, s.last.Layouts)
+	}
+	if changed, _ := s.apply([]byte(`{"KeyboardLayoutSwitched":{"idx":1}}`)); changed {
+		t.Fatal("a switch to the current layout published")
+	}
+	if _, err := s.apply([]byte(`{"KeyboardLayoutSwitched":{}}`)); err == nil {
+		t.Fatal("a switch without idx was accepted")
+	}
+}

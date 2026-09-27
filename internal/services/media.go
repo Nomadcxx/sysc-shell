@@ -74,6 +74,7 @@ type MediaState struct {
 	Album      string
 	ArtKey     string // identifier for the async art worker, never a decoded image
 	Status     PlaybackStatus
+	Seeks      uint64
 	PositionUS int64
 	LengthUS   int64
 	Rate       float64
@@ -116,6 +117,7 @@ type Media struct {
 	stop       chan struct{}
 	done       chan struct{}
 	closed     bool
+	seeks      uint64
 	// now is the clock position interpolates against. It is a field so tests
 	// can move time instead of sleeping; it defaults to time.Now.
 	now func() time.Time
@@ -401,6 +403,9 @@ func (m *Media) handleNameChange(ch nameChange) {
 	m.mergePlayerLocked(p)
 	m.players[ch.Name] = p
 	m.reselectLocked()
+	if ch.Seeked && ch.Name == m.active {
+		m.seeks++
+	}
 	m.publishLocked()
 	m.mu.Unlock()
 }
@@ -586,6 +591,7 @@ func (m *Media) onSeeked(positionUS int64) {
 	}
 	p.positionUS = positionUS
 	p.positionAt = m.now()
+	m.seeks++
 	m.publishLocked()
 }
 
@@ -768,7 +774,7 @@ func (m *Media) publishLocked() {
 // snapshotLocked builds the immutable view from the live selection. Callers
 // hold m.mu.
 func (m *Media) snapshotLocked() MediaState {
-	var st MediaState
+	st := MediaState{Seeks: m.seeks}
 	st.Available = len(m.players) > 0
 	st.Player = m.active
 	p, ok := m.players[m.active]

@@ -32,6 +32,7 @@ type bus interface {
 type nameChange struct {
 	Name     string
 	Acquired bool
+	Seeked   bool
 }
 
 // mprisRoot is the object path every MPRIS player exposes its two interfaces
@@ -123,7 +124,7 @@ func (b *sessionBus) pump(signals <-chan *dbus.Signal) {
 				}
 			case sig.Name == mprisPlayerIface+".Seeked" && len(sig.Body) >= 1:
 				if name := b.ownerFor(sig.Sender); name != "" {
-					b.emit(nameChange{Name: name, Acquired: true})
+					b.emit(nameChange{Name: name, Acquired: true, Seeked: true})
 				}
 			}
 		}
