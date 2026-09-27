@@ -243,6 +243,9 @@ type owner struct {
 	sel selectionState
 	// mods is the modifier state from the latest wl_keyboard.modifiers.
 	mods ui.Mods
+	// keymap resolves keys through the compositor's layout; nil falls back
+	// to the US table.
+	keymap *keymapResolver
 	// clock is the owner's time source. Nil means time.Now; tests replace it
 	// to drive the repeat deadline without sleeping.
 	clock func() time.Time
@@ -629,6 +632,9 @@ func (o *owner) onSeatCapabilities(e client.SeatCapabilitiesEvent) {
 		// repeat_info arrives before any key event and can be resent later.
 		keyboard.SetRepeatInfoHandler(func(e client.KeyboardRepeatInfoEvent) {
 			o.setRepeatInfo(e.Rate, e.Delay)
+		})
+		keyboard.SetKeymapHandler(func(e client.KeyboardKeymapEvent) {
+			o.loadKeymap(e.Format, e.Fd, e.Size)
 		})
 		keyboard.SetModifiersHandler(func(e client.KeyboardModifiersEvent) {
 			o.setModifiers(e.ModsDepressed, e.ModsLatched, e.ModsLocked, e.Group)
