@@ -36,9 +36,14 @@ func assertHexAssignments(t *testing.T, out string) {
 		if !strings.Contains(val, "#") {
 			continue
 		}
-		hex := strings.TrimRight(val[strings.Index(val, "#"):], "'\" \t")
-		if _, err := theme.ParseColor(hex); err != nil {
-			t.Errorf("bad colour assignment: %s: %v", line, err)
+		for _, tok := range strings.Fields(val) {
+			if !strings.HasPrefix(tok, "#") {
+				continue
+			}
+			hex := strings.TrimRight(tok, "'\"")
+			if _, err := theme.ParseColor(hex); err != nil {
+				t.Errorf("bad colour assignment: %s: %v", line, err)
+			}
 		}
 	}
 }
