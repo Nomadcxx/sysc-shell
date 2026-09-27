@@ -243,13 +243,6 @@ func (m *Metrics) Acquire(sel Selector, interval time.Duration) (*Lease, error) 
 	return lease, nil
 }
 
-// Leased reports whether any consumer needs this exact selector.
-func (m *Metrics) Leased(sel Selector) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.leases[sel].len() > 0
-}
-
 // SourceLeased reports whether any consumer needs this source, whatever its
 // subject. The sampling loop asks this: one collector serves every subject it
 // reports, so a second interface costs no second read.
