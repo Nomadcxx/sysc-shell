@@ -1,6 +1,9 @@
 package wallpaper
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestClassifyName(t *testing.T) {
 	cases := []struct {
@@ -38,7 +41,12 @@ func TestSocketPath(t *testing.T) {
 	if socketPath("/run/user/1000/sysc-shell", "HDMI-A-1") == got {
 		t.Fatal("connectors must not share a socket")
 	}
-	if socketPath("/tmp", "DP-1; rm -rf /") != "/tmp/gslapper-DP-1-rm--rf-.sock" {
-		t.Fatalf("sanitize connector to [A-Za-z0-9._-], got %q", socketPath("/tmp", "DP-1; rm -rf /"))
+	injected := socketPath("/tmp", "DP-1; rm -rf /")
+	if !strings.HasPrefix(injected, "/tmp/gslapper-DP-1-rm--rf--") || !strings.HasSuffix(injected, ".sock") {
+		t.Fatalf("sanitize connector to [A-Za-z0-9._-], got %q", injected)
+	}
+	// GH #11: the collapsed form of "DP/1" must not collide with "DP-1".
+	if socketPath("/tmp", "DP/1") == socketPath("/tmp", "DP-1") {
+		t.Fatal("DP/1 collided with DP-1")
 	}
 }

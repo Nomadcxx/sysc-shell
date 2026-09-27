@@ -1034,10 +1034,16 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 			Render:           h.renderLocking(r),
 			Handle:           h.handle(r),
 			WantIME: func() bool {
+				// syncIME calls this from the Wayland goroutine outside any
+				// handler, so the tree can be mid-rebuild under r.mu (GH #6).
+				r.mu.Lock()
+				defer r.mu.Unlock()
 				n := h.focused()
 				return n != nil && n.Kind == ui.KindTextField
 			},
 			IBeamAt: func(x, y float64) bool {
+				r.mu.Lock()
+				defer r.mu.Unlock()
 				n := h.hitFocusable(int(math.Floor(x)), int(math.Floor(y)))
 				return n != nil && n.Kind == ui.KindTextField
 			},
@@ -2781,22 +2787,37 @@ func (r *Registry) sendAuxWait(ctx context.Context, req wayland.AuxRequest) erro
 }
 
 func (r *Registry) publishSurface(global uint32, surfaceID string) {
+	// Blocking is bounded: the owner's bridge goroutine drains this channel
+	// into an unbounded queue without taking r.mu (see Registry.publish).
+	// Dropping here is a surface that never repaints, which is the defect.
 	select {
 	case r.invalidations <- wayland.Invalidation{Global: global, SurfaceID: surfaceID}:
 	case <-r.closed:
-	default:
-		// Drop when the owner is behind rather than stalling the caller.
 	}
 }
 
 func (r *Registry) runSessionAction(h *PanelHost, action string) {
 	argv := sessionArgv(action, r.cfg.Session.Locker)
-	if err := r.runArgv(argv); err != nil {
-		h.errLabel = err.Error()
-		r.rebuildPanel(h)
-		return
-	}
-	r.closePanelLocked(h.id)
+	run := r.runArgv
+	// loginctl actions run under a 5-second timeout; holding Registry.mu
+	// across them stalls every relay and the Wayland owner (GH #5). Launch
+	// off the lock and commit the panel result after re-acquiring it, the
+	// same prepare/commit shape scheduleControl uses.
+	go func() {
+		err := run(argv)
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if r.panelHosts[h.id] != h {
+			return
+		}
+		if err != nil {
+			h.errLabel = err.Error()
+			r.rebuildPanel(h)
+			r.publishSurface(h.output, panelSurfaceID(h.id))
+			return
+		}
+		r.closePanelLocked(h.id)
+	}()
 }
 
 func (r *Registry) closeAllPanelsLocked() {

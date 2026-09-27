@@ -11,6 +11,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
+	"github.com/Nomadcxx/sysc-shell/internal/theming"
 )
 
 type Registry struct{ entries []Entry }
@@ -698,6 +699,11 @@ func (r *Registry) addTemplateEntries() {
 		"gtk3", "gtk4", "qt", "kcolorscheme", "emacs", "helix",
 		"btop", "cava", "starship", "scroll",
 	} {
+		// GH #7: only complete templates get a toggle; a stub would brick the
+		// application's config one click away.
+		if !theming.Complete(name) {
+			continue
+		}
 		r.entries = append(r.entries, Entry{
 			Path: "theme.templates." + name, Label: name, Section: "Templates", Group: "Applications", Kind: KindBool,
 			Describe: "Write this application's colours when the theme changes.",

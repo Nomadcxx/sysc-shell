@@ -830,3 +830,34 @@ func TestEngineStillWithoutFadeRestartsForEveryApply(t *testing.T) {
 		t.Fatalf("launched %d processes; non-fading stills require a fresh render on each apply", got)
 	}
 }
+
+func TestStillForExtractsVideoStillOnDemand(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	srcDir := t.TempDir()
+	src := filepath.Join(srcDir, "clip.mp4")
+	if err := os.WriteFile(src, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(srcDir, "gone.mp4")
+
+	var called int
+	e := &gslapperEngine{extract: func(_ context.Context, _, dst string) error {
+		called++
+		return os.WriteFile(dst, []byte("fake jpeg"), 0o644)
+	}}
+	want := CachedStillPath(src)
+	if want == "" {
+		t.Fatal("no cache path")
+	}
+	if got := e.stillFor(Job{Kind: KindVideo, Path: src}); got != want || called != 1 {
+		t.Fatalf("first stillFor = %q (extract calls %d)", got, called)
+	}
+	if got := e.stillFor(Job{Kind: KindVideo, Path: src}); got != want || called != 1 {
+		t.Fatalf("cached stillFor re-extracted (calls %d)", called)
+	}
+
+	e.extract = func(context.Context, string, string) error { return errors.New("no ffmpeg") }
+	if got := e.stillFor(Job{Kind: KindVideo, Path: missing}); got != "" {
+		t.Fatalf("failed extractor must degrade to no seed, got %q", got)
+	}
+}

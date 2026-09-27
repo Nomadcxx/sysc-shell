@@ -19,6 +19,13 @@ type CatalogT struct {
 	tpl   map[string]string
 }
 
+// completeTemplates names the templates whose output is real enough to write
+// onto an application's live config path. Everything else is a colour stub
+// and is gated off (GH #7); add a name here when its template is verified.
+var completeTemplates = map[string]bool{"niri": true}
+
+func Complete(name string) bool { return completeTemplates[name] }
+
 func Catalog() *CatalogT {
 	c := &CatalogT{tpl: map[string]string{}}
 	_ = fs.WalkDir(tplFS, "templates", func(p string, d fs.DirEntry, err error) error {

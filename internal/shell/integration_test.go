@@ -12,6 +12,7 @@ import (
 // toast host through the registry, and a service loss cleans every surface.
 func TestIntegrationNotifyLifecycle(t *testing.T) {
 	r := NewRegistry(config.Default())
+	keepInvalidationsDrained(t, r)
 	hh := &hostHarness{}
 	r.toasts = newToastHost(r, hh)
 	r.SyncToastOutputs(map[string]uint32{"eDP-1": 5, "HDMI-A-1": 9})

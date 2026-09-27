@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -239,9 +240,12 @@ func TestASuccessfulProfileSetClearsAPriorError(t *testing.T) {
 func TestSessionExecMapping(t *testing.T) {
 	t.Parallel()
 	reg, h := newSessionHost(t, "swaylock")
+	var mu sync.Mutex
 	var got [][]string
 	reg.runArgv = func(argv []string) error {
+		mu.Lock()
 		got = append(got, append([]string(nil), argv...))
+		mu.Unlock()
 		return nil
 	}
 	cases := []struct {
@@ -262,12 +266,50 @@ func TestSessionExecMapping(t *testing.T) {
 			_ = drainAux(t, reg, 2)
 			h = reg.panelHosts[PanelSession]
 		}
+		mu.Lock()
 		got = nil
+		mu.Unlock()
 		activateNamed(h, reg, tc.name)
-		if len(got) != 1 || !reflect.DeepEqual(got[0], tc.want) {
-			t.Fatalf("%s: argv = %v, want %v", tc.name, got, tc.want)
+		// runSessionAction launches off Registry.mu (GH #5); the launch and
+		// the close it schedules land asynchronously.
+		var argv []string
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			mu.Lock()
+			if len(got) == 1 {
+				argv = got[0]
+			}
+			mu.Unlock()
+			if argv != nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: runArgv never ran", tc.name)
+			}
+			time.Sleep(time.Millisecond)
 		}
+		if !reflect.DeepEqual(argv, tc.want) {
+			t.Fatalf("%s: argv = %v, want %v", tc.name, argv, tc.want)
+		}
+		waitSessionPanelClosed(t, reg)
 		_ = drainAux(t, reg, 2) // close requests after a successful action
+	}
+}
+
+func waitSessionPanelClosed(t *testing.T, reg *Registry) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		reg.mu.Lock()
+		_, open := reg.panelHosts[PanelSession]
+		reg.mu.Unlock()
+		if !open {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the successful session action never closed the panel")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
@@ -692,4 +734,64 @@ func TestRunArgvDefaultRefusesToLaunchFromATestBinary(t *testing.T) {
 			t.Errorf("runArgvDefault(%v) launched from a test binary", argv)
 		}
 	}
+}
+
+func TestRunSessionActionLaunchesOffTheRegistryLock(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	started := make(chan []string, 1)
+	release := make(chan struct{})
+	reg.runArgv = func(argv []string) error {
+		started <- argv
+		<-release
+		return nil
+	}
+	h := &PanelHost{id: PanelSession, output: 1}
+
+	// activate calls runSessionAction with Registry.mu held. The subprocess
+	// must start anyway (GH #5): a loginctl action runs for up to five
+	// seconds, and blocking the lock across it freezes every relay. The
+	// locked goroutine below stands in for one event dispatch.
+	returned := make(chan struct{})
+	go func() {
+		reg.mu.Lock()
+		defer reg.mu.Unlock()
+		reg.runSessionAction(h, "session-suspend")
+		close(returned)
+	}()
+
+	var argv []string
+	select {
+	case argv = <-started:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("runArgv never started")
+	}
+	if want := []string{"loginctl", "suspend"}; !reflect.DeepEqual(argv, want) {
+		close(release)
+		t.Errorf("argv = %v, want %v", argv, want)
+		t.FailNow()
+	}
+
+	// The stub is still blocked, so a synchronous runArgv would keep the
+	// dispatch (and Registry.mu) wedged here.
+	select {
+	case <-returned:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("runSessionAction did not return while runArgv was blocked")
+	}
+
+	acquired := make(chan struct{})
+	go func() {
+		reg.mu.Lock()
+		reg.mu.Unlock()
+		close(acquired)
+	}()
+	select {
+	case <-acquired:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Registry.mu stayed locked across runArgv")
+	}
+	close(release)
 }

@@ -374,3 +374,37 @@ func TestLifecycleGenerationRetiresOnSurfaceDestroy(t *testing.T) {
 
 // errTest marks a destructor failure in cleanup tests.
 var errTest = errors.New("destructor failed")
+
+// The bar teardown must free SHM generations only after the wl_surface is
+// destroyed, matching teardownUnit for aux surfaces. Destroying buffers under
+// a live surface lets the compositor send wl_buffer.release for a dead id.
+func TestTeardownSurfaceDestroysTheSurfaceBeforeItsBuffers(t *testing.T) {
+	t.Parallel()
+	h := newHost(1, nil)
+	gen := &generation{id: 1, fd: -1, width: 64, height: 44}
+	gen.retire.attached() // the compositor still holds this buffer
+	h.bar.current = gen
+
+	// The output step stays (teardownSurface must not unwind past it); the
+	// surface step observes how far buffer retirement has gone.
+	h.bar.cleanup.push("output", func() error { return nil })
+	retiringAtSurfaceDestroy := -1
+	h.bar.cleanup.push("surface", func() error {
+		retiringAtSurfaceDestroy = len(h.bar.retiring)
+		return nil
+	})
+
+	o := &owner{hosts: newHostSet()}
+	if err := o.teardownSurface(h); err != nil {
+		t.Fatalf("teardownSurface: %v", err)
+	}
+	if retiringAtSurfaceDestroy == 0 {
+		t.Fatal("buffers were destroyed while the surface was alive; a late wl_buffer.release then hits a dead id")
+	}
+	if h.bar.current != nil || len(h.bar.retiring) != 0 {
+		t.Fatal("generations survived teardown")
+	}
+	if !gen.retire.freeable() {
+		t.Fatal("the generation was not marked freeable, so its storage leaked")
+	}
+}

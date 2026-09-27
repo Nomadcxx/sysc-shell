@@ -119,6 +119,7 @@ type gslapperEngine struct {
 	spawn        func(argv []string) (Process, error)
 	request      func(socket, command string, timeout time.Duration) (string, error)
 	requestOwned func(context.Context, string, string, time.Duration, int) (string, error)
+	extract      func(context.Context, string, string) error
 	ctx          context.Context
 	cancel       context.CancelFunc
 
@@ -393,19 +394,36 @@ func (e *gslapperEngine) Apply(job Job, set Settings) (string, error) {
 	return e.stillFor(job), nil
 }
 
-// stillFor is the preview a video apply reports back. Extraction is not wired
-// in this slice: a video with no cached still simply leaves the theme seed
-// alone, which is what the design asks for (D15).
+// stillFor is the preview a video apply reports back. A still the picker has
+// already cached is used as-is; otherwise one frame is extracted on demand so
+// a video apply seeds the theme (GH #10). With no extractor, or a failed one,
+// the seed is left alone, which is what the design asks for (D15).
 func (e *gslapperEngine) stillFor(job Job) string {
 	if job.Kind != KindVideo {
 		return ""
 	}
-	if still := CachedStillPath(job.Path); still != "" {
-		if _, err := os.Stat(still); err == nil {
-			return still
-		}
+	still := CachedStillPath(job.Path)
+	if still == "" {
+		return ""
 	}
-	return ""
+	if _, err := os.Stat(still); err == nil {
+		return still
+	}
+	ctx := e.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := os.MkdirAll(filepath.Dir(still), 0o700); err != nil {
+		return ""
+	}
+	extract := e.extract
+	if extract == nil {
+		extract = extractVideoStill
+	}
+	if err := extract(ctx, job.Path, still); err != nil {
+		return ""
+	}
+	return still
 }
 
 // launch starts one gSlapper and waits until it actually answers.

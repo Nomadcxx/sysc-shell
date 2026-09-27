@@ -1140,13 +1140,6 @@ func (o *owner) teardownSurface(h *OutputHost) error {
 		h.bar.retiring = append(h.bar.retiring, h.bar.current)
 		h.bar.current = nil
 	}
-	for _, gen := range h.bar.retiring {
-		gen.retire.destroy()
-		if err := gen.destroy(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	h.bar.retiring = nil
 
 	// clearFocus delivers a leave, so pressed-node state does not survive into
 	// a recreated surface. Aux pointer focus is left alone so a bar rebuild
@@ -1155,10 +1148,20 @@ func (o *owner) teardownSurface(h *OutputHost) error {
 		o.clearFocus()
 	}
 	// Unwind viewport, fractional-scale, layer surface and wl_surface; the
-	// output step stays so the host keeps its wl_output.
+	// output step stays so the host keeps its wl_output. The surface goes
+	// before the generations are freed, matching teardownUnit: a wl_buffer
+	// destroyed under a live surface can still be released, and dispatching
+	// an event for a dead id panics the client.
 	if _, err := h.bar.cleanup.unwindTo("output"); err != nil {
 		errs = append(errs, err)
 	}
+	for _, gen := range h.bar.retiring {
+		gen.retire.destroy()
+		if err := gen.destroy(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	h.bar.retiring = nil
 	h.bar.surface, h.bar.layer, h.bar.scale, h.bar.viewport = nil, nil, nil, nil
 	h.bar.ss = newSurfaceState()
 	h.bar.sched = render.NewScheduler()

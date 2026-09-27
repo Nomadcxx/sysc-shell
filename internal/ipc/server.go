@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 const socketName = "ipc.v1.sock"
@@ -37,10 +39,12 @@ var (
 )
 
 // DefaultSocket returns $XDG_RUNTIME_DIR/sysc-shell/ipc.v1.sock.
+// os.TempDir() is world-writable and shared between users; the XDG base spec's
+// own fallback (/run/user/UID) keeps the socket inside our private directory.
 func DefaultSocket() string {
 	dir := os.Getenv("XDG_RUNTIME_DIR")
 	if dir == "" {
-		dir = os.TempDir()
+		dir = fmt.Sprintf("/run/user/%d", os.Getuid())
 	}
 	return filepath.Join(dir, "sysc-shell", socketName)
 }
@@ -100,8 +104,37 @@ func (s *Server) Serve(ctx context.Context) error {
 			}
 			return err
 		}
+		if !sameUser(conn) {
+			_ = conn.Close()
+			continue
+		}
 		go s.serveConn(conn)
 	}
+}
+
+// sameUser checks SO_PEERCRED on an accepted connection. The socket's 0600
+// mode already restricts who can connect; this catches the window before the
+// chmod lands and any socket inherited from an odd setup (GH #8).
+func sameUser(conn net.Conn) bool {
+	uc, ok := conn.(*net.UnixConn)
+	if !ok {
+		return false
+	}
+	raw, err := uc.SyscallConn()
+	if err != nil {
+		return false
+	}
+	var credential *unix.Ucred
+	var controlErr error
+	if err := raw.Control(func(fd uintptr) {
+		credential, controlErr = unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED)
+	}); err != nil {
+		return false
+	}
+	if controlErr != nil {
+		return false
+	}
+	return credential != nil && credential.Uid == uint32(os.Getuid())
 }
 
 func (s *Server) Close() error {

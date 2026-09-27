@@ -293,3 +293,16 @@ func waitSock(t *testing.T, sock string) {
 	}
 	t.Fatalf("socket %s never accepted", sock)
 }
+
+func TestDefaultSocketStaysInsideARuntimeDirectory(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+	if got := DefaultSocket(); got != "/run/user/1000/sysc-shell/ipc.v1.sock" {
+		t.Fatalf("DefaultSocket() = %q", got)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	t.Setenv("TMPDIR", "/tmp")
+	got := DefaultSocket()
+	if !filepath.IsAbs(got) || strings.HasPrefix(got, "/tmp/") {
+		t.Fatalf("fallback socket sits in a shared directory: %q", got)
+	}
+}
