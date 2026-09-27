@@ -305,6 +305,7 @@ func run(ctx context.Context) (err error) {
 		Invalidations: registry.Invalidations(),
 		Aux:           registry.AuxRequests(),
 		Tooltips:      registry.Tooltips(),
+		Selection:     registry.Selections(),
 		Reloads:       reloads,
 		ConfigPath:    cfgPath,
 	})

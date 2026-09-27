@@ -109,10 +109,6 @@ type PanelHost struct {
 	scale120 int
 	// mods is the modifier state the platform resolved with the latest key.
 	mods ui.Mods
-	// copyRequest and pasteRequest carry a field's clipboard requests to the
-	// platform. Nil drops them.
-	copyRequest  func(text string, serial uint32)
-	pasteRequest func(serial uint32)
 	// fieldDrag is the editor a primary press in a single-line field is
 	// drag-selecting; nil when none is. The retained field, not a key, names
 	// it: a panel search carries neither Key nor Action.
@@ -1397,6 +1393,8 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			return h.keyEvent(r, e)
 		case wayland.EventIME:
 			return h.applyIME(r, e)
+		case wayland.EventPaste:
+			return h.applyPaste(r, e.Paste)
 		case wayland.EventPointerAxis:
 			return h.scrollAxis(r, e)
 		case wayland.EventKeyRelease:
@@ -1609,8 +1607,9 @@ func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) bool {
 			// text of a family name and the keys that edit it, through the
 			// same engine as every other field.
 			if h.menu.Filtering() {
-				handled := false
-				if h.menu.Edit(func(f *ui.Field) { handled = f.HandleKey(k).Handled }) && handled {
+				var res ui.FieldResult
+				if h.menu.Edit(func(f *ui.Field) { res = f.HandleKey(k) }) && res.Handled {
+					r.requestClipboard(res, k.Serial)
 					r.rebuildPanel(h)
 					return true
 				}
@@ -1738,12 +1737,7 @@ func (h *PanelHost) fieldKey(r *Registry, k ui.KeyInput) (ui.FieldResult, bool) 
 		return res, true
 	}
 	f.SyncTo(n)
-	if res.Copy != "" && h.copyRequest != nil {
-		h.copyRequest(res.Copy, k.Serial)
-	}
-	if res.Paste && h.pasteRequest != nil {
-		h.pasteRequest(k.Serial)
-	}
+	r.requestClipboard(res, k.Serial)
 	if res.Changed {
 		h.fieldChanged(r, n, f)
 	}

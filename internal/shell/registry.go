@@ -82,8 +82,11 @@ type Registry struct {
 	// closes it.
 	invalidations chan wayland.Invalidation
 	aux           chan wayland.AuxRequest
-	panels        PanelSet
-	panelHosts    map[PanelID]*PanelHost
+	// selections carries text fields' copy and paste requests to the
+	// platform's clipboard.
+	selections chan wayland.SelectionRequest
+	panels     PanelSet
+	panelHosts map[PanelID]*PanelHost
 	// roots is the one interactive root the process allows at a time.
 	roots rootChain
 	// closed unblocks a pending publish at shutdown.
@@ -203,6 +206,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		themeGen:       gen,
 		invalidations:  make(chan wayland.Invalidation, 8),
 		aux:            make(chan wayland.AuxRequest, 8),
+		selections:     make(chan wayland.SelectionRequest, 8),
 		panelHosts:     make(map[PanelID]*PanelHost),
 		closed:         make(chan struct{}),
 		dwell:          newDwell(defaultDwell),
