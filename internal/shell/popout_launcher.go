@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -27,6 +28,8 @@ import (
 // the 12-above/16-below padding the height is derived from.
 const (
 	launcherIconSlot = 40
+	// launcherGlyphSize is a provider row's Material glyph inside that slot.
+	launcherGlyphSize = 24
 	// launcherRowPadTop and launcherRowPadBottom are DMS's row padding: 12
 	// above the text block and 16 below. The asymmetry is the point -- the
 	// four extra pixels at the foot are what make its list breathe where our
@@ -263,7 +266,7 @@ func launcherRow(r *Registry, h *PanelHost, results []launcher.Result, i int) *u
 		return nil
 	}
 	res := results[i]
-	if h.launcherMenuID == res.Entry.ID && h.menu != nil && h.menu.Opened() {
+	if h.launcherMenuID == res.Entry.ID && res.Action == "" && h.menu != nil && h.menu.Opened() {
 		return h.menu.Node()
 	}
 	fill := ui.FillNone
@@ -286,7 +289,8 @@ func launcherRow(r *Registry, h *PanelHost, results []launcher.Result, i int) *u
 		Children: []*ui.Node{{
 			Kind: ui.KindCapsule, Fill: fill, Shape: ui.ShapeMedium,
 			Padding: launcherRowPadTop, Height: launcherRowHeight,
-			Action: "launch:" + res.Entry.ID,
+			// By index: a desktop-action row shares its application's ID.
+			Action: "launch:" + strconv.Itoa(i),
 			Children: []*ui.Node{{
 				Kind:     ui.KindColumn,
 				Children: []*ui.Node{launcherRowBody(r, h, res.Entry)},
@@ -327,7 +331,7 @@ func launcherIconNode(r *Registry, h *PanelHost, e launcher.Entry) *ui.Node {
 		return &ui.Node{
 			Kind: ui.KindCapsule, Width: launcherIconSlot, Height: launcherIconSlot,
 			Fill: ui.FillContainer, Shape: ui.ShapeMedium,
-			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: name, IconSize: 24}},
+			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: name, IconSize: launcherGlyphSize}},
 		}
 	}
 	if text, ok := strings.CutPrefix(e.IconName, "text:"); ok {
@@ -466,7 +470,7 @@ func (h *PanelHost) launcherActivateSelected(r *Registry) {
 		r.rebuildPanel(h)
 		return
 	}
-	h.launcherSpawn(r, res.Entry.ID, "")
+	h.launcherSpawn(r, res.Entry.ID, res.Action)
 }
 
 const (
@@ -582,28 +586,19 @@ func (h *PanelHost) launcherSpawn(r *Registry, id, action string) {
 // keyboard focus and typing always filters.
 func (h *PanelHost) launcherPointerPress(r *Registry, e wayland.Event) bool {
 	x, y := int(math.Floor(e.X)), int(math.Floor(e.Y))
-	id := launcherRowAt(h.root, x, y)
-	if id == "" {
+	i, ok := launcherRowAt(h.root, x, y)
+	if !ok || i >= len(h.launcherResults) {
 		return false
 	}
+	res := h.launcherResults[i]
 	if e.Button == btnRight {
-		return h.openLauncherActions(r, id)
-	}
-	for i, res := range h.launcherResults {
-		if res.Entry.ID == id {
-			h.launcherSel = i
-			if len(res.Entry.Argv) == 0 && strings.HasPrefix(id, "/") {
-				h.launcherActivateSelected(r)
-				return true
-			}
-			break
+		if res.Action != "" {
+			return true // an action row has no actions menu of its own
 		}
+		return h.openLauncherActions(r, res.Entry.ID)
 	}
-	if id == notesLauncherActionID || id == notesLauncherTooLongID {
-		h.launcherNotesAction(r, id)
-		return true
-	}
-	h.launcherSpawn(r, id, "")
+	h.launcherSel = i
+	h.launcherActivateSelected(r)
 	return true
 }
 
@@ -660,18 +655,20 @@ func (h *PanelHost) activateLauncher(r *Registry, n *ui.Node) bool {
 	return true
 }
 
-// launcherRowAt finds the laid-out row under a point by its launch action.
-func launcherRowAt(n *ui.Node, x, y int) string {
+// launcherRowAt finds the index of the laid-out row under a point by its
+// launch action.
+func launcherRowAt(n *ui.Node, x, y int) (int, bool) {
 	if n == nil {
-		return ""
+		return 0, false
 	}
-	if id, ok := strings.CutPrefix(n.Action, "launch:"); ok && n.Bounds.Contains(x, y) {
-		return id
+	if v, ok := strings.CutPrefix(n.Action, "launch:"); ok && n.Bounds.Contains(x, y) {
+		i, err := strconv.Atoi(v)
+		return i, err == nil && i >= 0
 	}
 	for _, c := range n.Children {
-		if id := launcherRowAt(c, x, y); id != "" {
-			return id
+		if i, ok := launcherRowAt(c, x, y); ok {
+			return i, true
 		}
 	}
-	return ""
+	return 0, false
 }

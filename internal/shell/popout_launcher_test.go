@@ -608,7 +608,8 @@ func TestLauncherRightClickOpensActionsMenu(t *testing.T) {
 	reg, run, reqs := openLauncherPanel(t, launcherTestEntries())
 	h := launcherHost(t, reg)
 	reg.mu.Lock()
-	bounds, ok := walkActionBounds(h.root, "launch:firefox.desktop")
+	row := slices.IndexFunc(h.launcherResults, func(r launcher.Result) bool { return r.Entry.ID == "firefox.desktop" })
+	bounds, ok := walkActionBounds(h.root, fmt.Sprintf("launch:%d", row))
 	reg.mu.Unlock()
 	if !ok {
 		t.Fatal("firefox row has no laid-out bounds")
@@ -1081,4 +1082,45 @@ func TestLauncherFooterPluralises(t *testing.T) {
 	if !treeHasText(launcherFooter(browse, 3), "3 apps • "+launcherHints) {
 		t.Fatal("plural browse")
 	}
+}
+
+// An action row shares its application's ID, so a click must resolve the row
+// itself, not the first row with that ID.
+func TestLauncherClickOnActionRowSpawnsTheAction(t *testing.T) {
+	t.Parallel()
+
+	reg, run, reqs := openLauncherPanel(t, launcherTestEntries())
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "new window"})
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && len(h.launcherResults) == 1 && h.launcherResults[0].Action == "new-window"
+	})
+	h := launcherHost(t, reg)
+	reg.mu.Lock()
+	bounds, ok := firstLauncherRowBounds(h.root)
+	reg.mu.Unlock()
+	if !ok {
+		t.Fatal("action row has no laid-out bounds")
+	}
+	reqs[1].Open.Callbacks.Handle(wayland.Event{
+		Kind: wayland.EventPointerPress, Button: btnLeft,
+		X: float64(bounds.X + 4), Y: float64(bounds.Y + 4),
+	})
+	if got := run.waitArgv(t); !slices.Equal(got, []string{"niri", "msg", "action", "spawn", "--", "firefox", "--new-window"}) {
+		t.Fatalf("spawn argv = %v", got)
+	}
+}
+
+func firstLauncherRowBounds(n *ui.Node) (ui.Rect, bool) {
+	if n == nil {
+		return ui.Rect{}, false
+	}
+	if strings.HasPrefix(n.Action, "launch:") && n.Bounds.W > 0 {
+		return n.Bounds, true
+	}
+	for _, c := range n.Children {
+		if b, ok := firstLauncherRowBounds(c); ok {
+			return b, true
+		}
+	}
+	return ui.Rect{}, false
 }

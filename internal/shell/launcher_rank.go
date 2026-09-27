@@ -25,6 +25,9 @@ import (
 const (
 	launcherSearchLimit   = 50
 	launcherUsageBoostCap = 25
+	// launcherActionPenalty keeps an application above its own desktop
+	// actions when the same text matches both.
+	launcherActionPenalty = 5
 )
 
 var launcherInitFZF sync.Once
@@ -43,6 +46,28 @@ func launcherRank(entries []launcher.Entry, query string, boost func(query, iden
 		}
 		results = append(results, launcher.Result{Entry: entry, Score: score})
 	}
+	// Desktop actions are rows of their own when searching; browse stays
+	// applications only. An action matches on "<App> <Action>".
+	if query != "" {
+		for _, entry := range entries {
+			for _, a := range entry.Actions {
+				score, ok := launcherFuzzyScore(entry.Name+" "+a.Name, query, slab)
+				if !ok {
+					continue
+				}
+				if boost != nil {
+					score += min(boost(query, entry.ID), launcherUsageBoostCap)
+				}
+				row := entry
+				row.Name = entry.Name + " · " + a.Name
+				row.Comment = "Desktop action"
+				if a.IconName != "" {
+					row.IconName = a.IconName
+				}
+				results = append(results, launcher.Result{Entry: row, Score: score - launcherActionPenalty, Action: a.ID})
+			}
+		}
+	}
 	sort.Slice(results, func(i, j int) bool {
 		if results[i].Score != results[j].Score {
 			return results[i].Score > results[j].Score
@@ -54,7 +79,10 @@ func launcherRank(entries []launcher.Entry, query string, boost func(query, iden
 		if results[i].Entry.Name != results[j].Entry.Name {
 			return results[i].Entry.Name < results[j].Entry.Name
 		}
-		return results[i].Entry.ID < results[j].Entry.ID
+		if results[i].Entry.ID != results[j].Entry.ID {
+			return results[i].Entry.ID < results[j].Entry.ID
+		}
+		return results[i].Action < results[j].Action // an action row shares its app's ID
 	})
 	if query != "" && len(results) > launcherSearchLimit {
 		results = results[:launcherSearchLimit]
