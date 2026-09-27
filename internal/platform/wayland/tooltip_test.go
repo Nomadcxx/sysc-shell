@@ -16,6 +16,7 @@ func TestTooltipPlacementClampsInsideTheOutput(t *testing.T) {
 
 	cases := []struct {
 		name         string
+		edge         string
 		anchor       ui.Rect
 		width        int
 		wantXAtLeast int
@@ -23,6 +24,7 @@ func TestTooltipPlacementClampsInsideTheOutput(t *testing.T) {
 	}{
 		{
 			name:         "centred under its widget",
+			edge:         "top",
 			anchor:       ui.Rect{X: 900, Y: 0, W: 40, H: 44},
 			width:        200,
 			wantXAtLeast: 0,
@@ -30,6 +32,7 @@ func TestTooltipPlacementClampsInsideTheOutput(t *testing.T) {
 		},
 		{
 			name:         "clamped at the right edge",
+			edge:         "top",
 			anchor:       ui.Rect{X: 1900, Y: 0, W: 20, H: 44},
 			width:        200,
 			wantXAtLeast: 0,
@@ -37,6 +40,7 @@ func TestTooltipPlacementClampsInsideTheOutput(t *testing.T) {
 		},
 		{
 			name:         "clamped at the left edge",
+			edge:         "top",
 			anchor:       ui.Rect{X: 0, Y: 0, W: 20, H: 44},
 			width:        200,
 			wantXAtLeast: 0,
@@ -47,7 +51,7 @@ func TestTooltipPlacementClampsInsideTheOutput(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			got := tooltipPlacement(c.anchor, c.width, 30, outputWidth, outputHeight)
+			got := tooltipPlacement(c.edge, c.anchor, c.width, 30, outputWidth, outputHeight)
 			if got.X < c.wantXAtLeast || got.X > c.wantXAtMost {
 				t.Fatalf("x = %d, want within [%d, %d]", got.X, c.wantXAtLeast, c.wantXAtMost)
 			}
@@ -61,10 +65,25 @@ func TestTooltipPlacementClampsInsideTheOutput(t *testing.T) {
 	}
 }
 
+// A bottom bar sits at the foot of the output, so its tooltip must rise above
+// the anchor instead of being clamped onto the bar itself.
+func TestTooltipOnABottomBarIsPlacedAboveTheAnchor(t *testing.T) {
+	t.Parallel()
+	bar := ui.Rect{X: 900, Y: 1080 - 44, W: 40, H: 44}
+	got := tooltipPlacement("bottom", bar, 200, 30, 1920, 1080)
+
+	if got.Y+got.H > bar.Y {
+		t.Fatalf("tooltip bottom %d overlaps the bar at %d", got.Y+got.H, bar.Y)
+	}
+	if got.Y < 0 {
+		t.Fatalf("y = %d, want clamped inside the output", got.Y)
+	}
+}
+
 // A tooltip wider than the output is clamped to it rather than placed off it.
 func TestATooltipWiderThanTheOutputIsClamped(t *testing.T) {
 	t.Parallel()
-	got := tooltipPlacement(ui.Rect{X: 10, Y: 0, W: 20, H: 44}, 3000, 30, 1920, 1080)
+	got := tooltipPlacement("top", ui.Rect{X: 10, Y: 0, W: 20, H: 44}, 3000, 30, 1920, 1080)
 
 	if got.X != 0 {
 		t.Fatalf("x = %d, want 0 for an over-wide tooltip", got.X)

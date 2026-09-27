@@ -1908,11 +1908,7 @@ func (r *Registry) drivePointerTooltip(global uint32, bar *Bar, event wayland.Ev
 		r.dwell.leave()
 	case wayland.EventPointerEnter, wayland.EventPointerMotion:
 		if text, root, bounds, ok := bar.hoverTooltip(); ok {
-			theme := bar.themeSnapshot()
-			style := wayland.TooltipStyle{
-				Background: theme.Background,
-				Foreground: theme.Foreground,
-			}
+			style := tooltipStyleFor(bar.themeSnapshot())
 			if root != nil {
 				r.dwell.enterRoot(global, bounds, root, style)
 			} else {

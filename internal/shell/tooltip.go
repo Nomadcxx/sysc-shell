@@ -25,6 +25,10 @@ type dwell struct {
 	out        chan wayland.TooltipRequest
 	closed     bool
 	generation uint64
+	// armed holds the request the current dwell (or the tooltip on screen)
+	// belongs to, so repeated motion over the same widget is a no-op.
+	armed      wayland.TooltipRequest
+	armedValid bool
 }
 
 func newDwell(delay time.Duration) *dwell {
@@ -36,6 +40,21 @@ func newDwell(delay time.Duration) *dwell {
 
 // requests is the channel the process wires into wayland.Callbacks.Tooltips.
 func (d *dwell) requests() <-chan wayland.TooltipRequest { return d.out }
+
+// tooltipStyleFor resolves the paint for one floating tooltip. A tooltip
+// floats over the desktop like a panel, not over the bar like a pill, so it
+// takes the overlay root colour and the panel rim rather than the bar's own
+// fill. The owner still falls back to the compiled palette when a colour is
+// absent.
+func tooltipStyleFor(t Theme) wayland.TooltipStyle {
+	bg := t.SurfaceContainerHigh
+	bg.A = t.Surfaces.Overlay
+	return wayland.TooltipStyle{
+		Background: bg,
+		Foreground: t.OnSurface,
+		Border:     t.Outline,
+	}
+}
 
 // enter starts or restarts the dwell for one widget. Entering a second widget
 // replaces the pending request rather than queueing behind it.
@@ -61,11 +80,18 @@ func (d *dwell) queue(req wayland.TooltipRequest) {
 	if d.closed {
 		return
 	}
+	// Pointer motion re-enters the same widget on every event. Re-arming each
+	// time demanded a dead-still pointer for the whole dwell, so an identical
+	// pending-or-shown request leaves the timer alone.
+	if d.armedValid && d.armed == req {
+		return
+	}
 	if d.timer != nil {
 		d.timer.Stop()
 	}
 	d.generation++
 	generation := d.generation
+	d.armed, d.armedValid = req, true
 	d.timer = time.AfterFunc(d.delay, func() { d.fire(generation, req) })
 }
 
@@ -88,6 +114,7 @@ func (d *dwell) leave() {
 		d.timer.Stop()
 		d.timer = nil
 	}
+	d.armedValid = false
 	shown := d.shown
 	d.shown = false
 	closed := d.closed
@@ -107,6 +134,7 @@ func (d *dwell) stop() {
 		d.timer.Stop()
 		d.timer = nil
 	}
+	d.armedValid = false
 	wasShown := d.shown
 	d.shown, d.closed = false, true
 	d.mu.Unlock()

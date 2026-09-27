@@ -145,6 +145,47 @@ func TestDwellEnterRootReplacesThePendingTree(t *testing.T) {
 	}
 }
 
+func TestMotionOverTheSameWidgetDoesNotRestartTheDwell(t *testing.T) {
+	d := newDwell(time.Hour)
+	t.Cleanup(d.stop)
+	rect := ui.Rect{X: 10, Y: 0, W: 40, H: 44}
+	d.enter(1, rect, "fixture", wayland.TooltipStyle{})
+
+	d.mu.Lock()
+	generation := d.generation
+	d.mu.Unlock()
+
+	d.enter(1, rect, "fixture", wayland.TooltipStyle{})
+	d.mu.Lock()
+	if d.generation != generation {
+		d.mu.Unlock()
+		t.Fatal("an identical request restarted the dwell")
+	}
+	d.mu.Unlock()
+
+	d.enter(1, ui.Rect{X: 60, Y: 0, W: 40, H: 44}, "fixture", wayland.TooltipStyle{})
+	d.mu.Lock()
+	if d.generation == generation {
+		d.mu.Unlock()
+		t.Fatal("a different widget must restart the dwell")
+	}
+	d.mu.Unlock()
+
+	// After a leave the memo is cleared, so re-entering re-arms once.
+	d.leave()
+	d.enter(1, rect, "fixture", wayland.TooltipStyle{})
+	d.mu.Lock()
+	afterLeave := d.generation
+	d.mu.Unlock()
+	d.enter(1, rect, "fixture", wayland.TooltipStyle{})
+	d.mu.Lock()
+	if d.generation != afterLeave {
+		d.mu.Unlock()
+		t.Fatal("identical re-entered requests must not restart the dwell")
+	}
+	d.mu.Unlock()
+}
+
 func TestStaleDwellCallbackDoesNotShowTooltip(t *testing.T) {
 	d := newDwell(time.Hour)
 	t.Cleanup(d.stop)
@@ -160,5 +201,25 @@ func TestStaleDwellCallbackDoesNotShowTooltip(t *testing.T) {
 	case req := <-d.requests():
 		t.Fatalf("stale callback produced request: %+v", req)
 	default:
+	}
+}
+
+func TestTooltipPaintsTheFloatingSurfaceRole(t *testing.T) {
+	th := Theme{
+		SurfaceContainerHigh: Color{R: 10, G: 20, B: 30, A: 255},
+		OnSurface:            Color{R: 200, G: 210, B: 220, A: 255},
+		Outline:              Color{R: 5, G: 6, B: 7, A: 9},
+		Background:           Color{R: 1, G: 1, B: 1, A: 1},
+		Surfaces:             Surfaces{Bar: 255, Overlay: 178},
+	}
+	style := tooltipStyleFor(th)
+	if want := (Color{R: 10, G: 20, B: 30, A: 178}); style.Background != want {
+		t.Fatalf("background = %+v, want the container high at overlay alpha %+v", style.Background, want)
+	}
+	if style.Foreground != th.OnSurface {
+		t.Fatalf("foreground = %+v, want on-surface", style.Foreground)
+	}
+	if style.Border != th.Outline {
+		t.Fatalf("border = %+v, want the outline token", style.Border)
 	}
 }
