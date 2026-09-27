@@ -1,8 +1,10 @@
-Copyright 2026 Nomadcxx
+Copyright 2026 Nomadcxx for the project-authored icons.
+Copyright (c) 2026 GitHub Inc. for github.svg from Primer Octicons.
 
-The SVG sources in svg/ and the generated font sysc-icons.ttf are original
-geometric drawings for sysc-shell. They are not derived from Material Symbols,
-Noctalia, or DankMaterialShell.
+The project-authored SVGs and generated sysc-icons.ttf are original geometric
+drawings for sysc-shell. The GitHub glyph is sourced from Primer Octicons at
+svg/github.svg; its source revision is recorded in svg/github-SOURCE.md. Both
+are distributed under the MIT License below.
 
 Licensed under the MIT License:
 

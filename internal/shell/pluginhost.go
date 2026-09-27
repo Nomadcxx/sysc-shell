@@ -984,7 +984,9 @@ func (h *pluginHost) panelTree(host *PanelHost) *ui.Node {
 	settings := pluginPanelSettings(h.r, host, pluginID, schema)
 	head := root
 	if root.Kind != ui.KindCapsule {
-		head = monitorCard(host.metrics(), []*ui.Node{root})
+		// Keep the host inset without painting over the captured backdrop.
+		head = &ui.Node{Kind: ui.KindColumn, Padding: host.metrics().CardPadding,
+			Children: []*ui.Node{root}}
 	}
 	return &ui.Node{Kind: ui.KindScroll, Gap: monitorCardGap, Padding: host.metrics().PanelPadding, Children: append([]*ui.Node{head}, settings...)}
 }

@@ -988,8 +988,12 @@ func TestPluginPanelHostUsesManifestSize(t *testing.T) {
 			t.Fatal("plugin panel scroll has no children")
 		}
 		for i, c := range root.Children {
-			if c == nil || c.Kind != ui.KindCapsule {
-				t.Fatalf("scroll child %d = %+v, want KindCapsule", i, c)
+			want := ui.KindCapsule // Settings groups remain host cards.
+			if i == 0 {
+				want = ui.KindColumn // Plugin content keeps the backdrop visible.
+			}
+			if c == nil || c.Kind != want {
+				t.Fatalf("scroll child %d = %+v, want %v", i, c, want)
 			}
 		}
 		return

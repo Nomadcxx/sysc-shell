@@ -18,6 +18,17 @@ func TestGhostLauncherIconIsInProjectFace(t *testing.T) {
 	}
 }
 
+func TestGitHubMarkIsInProjectFace(t *testing.T) {
+	t.Parallel()
+	r, ok := IconByName("github")
+	if !ok {
+		t.Fatal("github mark is not in the project icon catalogue")
+	}
+	if got := glyphCoverage(t, r, 32); got == 0 {
+		t.Fatal("github mark glyph has no ink")
+	}
+}
+
 func TestAIUsageGlyphIsInCatalogueAndHasInk(t *testing.T) {
 	t.Parallel()
 	r, ok := IconByName("ai-usage")
