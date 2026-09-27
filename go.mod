@@ -19,6 +19,7 @@ require (
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/junegunn/fzf v0.74.3
 	github.com/rivo/uniseg v0.4.7
+	github.com/thegrumpylion/xkb-go v0.1.0
 )
 
 require (
