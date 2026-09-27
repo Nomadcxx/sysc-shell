@@ -179,6 +179,14 @@ const (
 // plugin's bar pill.
 const iconDocker rune = catRuneLast + 1
 
+// The GitHub mark follows the whale for the github-notifications bar
+// launcher. The unread variant is the same mark shrunk toward the
+// bottom-left with a detached dot in the freed corner.
+const (
+	iconGitHub rune = iconDocker + 1 + iota
+	iconGitHubUnread
+)
+
 // batteryLevels is how many level glyphs each state has.
 const batteryLevels = 7
 
@@ -512,6 +520,8 @@ var iconNames = map[string]rune{
 	"signal-cellular-4-bar": iconSignalCellular4Bar,
 	"cross":                 iconCross,
 	"docker":                iconDocker,
+	"github":                iconGitHub,
+	"github-unread":         iconGitHubUnread,
 }
 
 func init() {

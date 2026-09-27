@@ -825,3 +825,54 @@ func TestDockerGlyphIsTheWhale(t *testing.T) {
 		t.Fatalf("docker glyph's widest row %d is not in the body half", widestRow)
 	}
 }
+
+// The github-notifications bar launcher is the GitHub mark, with an unread
+// variant that carries a detached dot in the top-right corner. The plain
+// mark leaves that corner empty; the unread one inks it.
+func TestGitHubGlyphsCarryTheUnreadDot(t *testing.T) {
+	t.Parallel()
+	for name, want := range map[string]rune{"github": iconGitHub, "github-unread": iconGitHubUnread} {
+		r, ok := IconByName(name)
+		if !ok || r != want {
+			t.Fatalf("%s = %U, %v; want %U", name, r, ok, want)
+		}
+	}
+	if iconGitHub != 0xE073 || iconGitHubUnread != 0xE074 {
+		t.Fatalf("github runes %U, %U do not follow the whale", iconGitHub, iconGitHubUnread)
+	}
+	tr := NewTextRenderer(newIconFace())
+	corner := func(r rune) (ink, total int) {
+		mask, err := tr.Raster(string(r), TextSpec{Size: 64, Weight: 400}, false)
+		if err != nil || mask.Alpha == nil {
+			t.Fatalf("raster %U: %v", r, err)
+		}
+		a := mask.Alpha
+		b := a.Rect
+		if b.Dx() == 0 || b.Dy() == 0 {
+			t.Fatalf("%U painted nothing", r)
+		}
+		for y := b.Min.Y; y < b.Min.Y+b.Dy()/5; y++ {
+			for x := b.Max.X - b.Dx()/5; x < b.Max.X; x++ {
+				if a.AlphaAt(x, y).A >= 128 {
+					ink++
+				}
+			}
+		}
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			for x := b.Min.X; x < b.Max.X; x++ {
+				if a.AlphaAt(x, y).A >= 128 {
+					total++
+				}
+			}
+		}
+		return ink, total
+	}
+	plainCorner, plainTotal := corner(iconGitHub)
+	dotCorner, dotTotal := corner(iconGitHubUnread)
+	if plainTotal == 0 || dotTotal == 0 {
+		t.Fatal("github glyphs are empty")
+	}
+	if dotCorner <= plainCorner*2 || dotCorner == 0 {
+		t.Fatalf("unread corner ink %d vs plain %d: no dot", dotCorner, plainCorner)
+	}
+}

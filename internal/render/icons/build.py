@@ -106,6 +106,11 @@ for _act, _poses in CAT_ACTS:
 # plugin's bar pill.
 GLYPHS.append(("uniE072", 0xE072, "docker"))
 
+# The GitHub mark follows for the github-notifications bar launcher; the
+# unread variant shrinks the mark to free the top-right corner for a dot.
+GLYPHS.append(("uniE073", 0xE073, "github"))
+GLYPHS.append(("uniE074", 0xE074, "github-unread"))
+
 UPM = 1000
 # 24px SVG -> font units, y-flipped so the icon sits on the baseline.
 #
