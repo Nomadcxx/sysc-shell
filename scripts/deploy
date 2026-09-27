@@ -113,7 +113,7 @@ for host in $targets; do
 	laptop)
 		rdir=$(ssh -p "$port" "$laptop" 'mktemp -d')
 		scp -q -P "$port" "${install_files[@]}" scripts/deploy-install.sh "$laptop:$rdir/"
-		ssh -p "$port" "$laptop" "bash $rdir/deploy-install.sh $rdir/sysc-shell $rdir/sysc-shell-guard $rdir/deploy-guard.conf $rev $(printf '%q' "$branch") $(printf '%q' "$force"); status=\$?; rm -rf $rdir; exit \$status"
+		ssh -p "$port" "$laptop" "bash $rdir/deploy-install.sh $rdir/sysc-shell $rdir/sysc-shell-guard $rdir/deploy-guard.conf $rev $(printf '%q' "$branch") $(printf '%q' "$force"); rc=\$?; rm -rf $rdir; exit \$rc"
 		;;
 	esac
 done

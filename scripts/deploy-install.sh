@@ -34,7 +34,7 @@ mv -f "$bin.new" "$bin"
 	echo "sha256=$(sha256sum "$bin" | cut -d' ' -f1)"
 	echo "branch=$branch"
 	echo "deployed=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-	echo "by=${USER:-unknown}@$(hostname)"
+	echo "by=${USER:-unknown}@$(uname -n)"
 	echo "force=$reason"
 } >"$state/deployed"
 
@@ -43,9 +43,9 @@ if [ -z "${SYSC_DEPLOY_NO_RESTART:-}" ]; then
 	systemctl --user restart sysc-shell.service
 	sleep 3
 	if ! systemctl --user is-active --quiet sysc-shell.service; then
-		echo "deploy: sysc-shell did not stay up on $(hostname); rollback: $rollback" >&2
+		echo "deploy: sysc-shell did not stay up on $(uname -n); rollback: $rollback" >&2
 		exit 1
 	fi
 	journalctl --user -u sysc-shell.service --since "-10s" --no-pager | grep -iE 'panic|closing surface' || true
 fi
-echo "deploy: $(hostname) now runs ${rev:0:12} (rollback: ${rollback:-none})"
+echo "deploy: $(uname -n) now runs ${rev:0:12} (rollback: ${rollback:-none})"
