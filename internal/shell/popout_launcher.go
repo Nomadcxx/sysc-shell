@@ -169,14 +169,24 @@ func (h *PanelHost) launcherHeaderHeight() int {
 // muted text tone -- it measures 1.47:1 and cannot carry text -- so the
 // footer steps back by size, not by contrast.
 func launcherFooter(h *PanelHost, count int) *ui.Node {
-	noun := "results"
+	// Hint rows (empty ID) explain; they are not results.
+	for _, res := range h.launcherResults {
+		if res.Entry.ID == "" {
+			count--
+		}
+	}
+	noun := "result"
 	if strings.TrimSpace(h.query) == "" {
-		noun = "apps"
+		noun = "app"
 	}
-	return &ui.Node{
-		Kind: ui.KindText, CenterX: true, TextRole: theme.RoleCaption,
-		Text: fmt.Sprintf("%d %s \u2022 %s", count, noun, launcherHints),
+	if count != 1 {
+		noun += "s"
 	}
+	text := fmt.Sprintf("%d %s \u2022 %s", count, noun, launcherHints)
+	if count == 0 {
+		text = "No results \u2022 " + launcherHints
+	}
+	return &ui.Node{Kind: ui.KindText, CenterX: true, TextRole: theme.RoleCaption, Text: text}
 }
 
 // launcherFooterHeight is the footer's laid-out height, measured for the same
@@ -257,7 +267,7 @@ func launcherRow(r *Registry, h *PanelHost, results []launcher.Result, i int) *u
 		return h.menu.Node()
 	}
 	fill := ui.FillNone
-	if i == h.launcherSel {
+	if i == h.launcherSel && res.Entry.ID != "" {
 		fill = ui.FillSoft
 	}
 	// The wrapper column carries half the gap at each end, so the space
@@ -286,9 +296,13 @@ func launcherRow(r *Registry, h *PanelHost, results []launcher.Result, i int) *u
 }
 
 func launcherRowBody(r *Registry, h *PanelHost, e launcher.Entry) *ui.Node {
-	labels := []*ui.Node{{Kind: ui.KindText, Text: e.Name, TextRole: theme.RoleLabel}}
+	tone := ui.ToneNormal
+	if e.ID == "" {
+		tone = ui.ToneSubtle // a hint, not a result
+	}
+	labels := []*ui.Node{{Kind: ui.KindText, Text: e.Name, TextRole: theme.RoleLabel, Tone: tone}}
 	if e.Comment != "" {
-		labels = append(labels, &ui.Node{Kind: ui.KindText, Text: e.Comment})
+		labels = append(labels, &ui.Node{Kind: ui.KindText, Text: e.Comment, Tone: tone})
 	}
 	// Panel pad 12×2, capsule pad launcherRowPadTop×2, glyph, gap. The row
 	// itself is unpadded: its vertical inset is the capsule's, and a second
@@ -307,6 +321,22 @@ func launcherRowBody(r *Registry, h *PanelHost, e launcher.Entry) *ui.Node {
 }
 
 func launcherIconNode(r *Registry, h *PanelHost, e launcher.Entry) *ui.Node {
+	// Provider rows have no desktop icon. "glyph:<name>" draws a Material
+	// subset glyph in the slot; "text:<s>" draws s itself (an emoji).
+	if name, ok := strings.CutPrefix(e.IconName, "glyph:"); ok {
+		return &ui.Node{
+			Kind: ui.KindCapsule, Width: launcherIconSlot, Height: launcherIconSlot,
+			Fill: ui.FillContainer, Shape: ui.ShapeMedium,
+			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: name, IconSize: 24}},
+		}
+	}
+	if text, ok := strings.CutPrefix(e.IconName, "text:"); ok {
+		return &ui.Node{
+			Kind: ui.KindCapsule, Width: launcherIconSlot, Height: launcherIconSlot,
+			Fill: ui.FillNone, Shape: ui.ShapeMedium,
+			Children: []*ui.Node{{Kind: ui.KindText, Text: text, TextRole: theme.RoleDisplay}},
+		}
+	}
 	if img := launcherLookupIcon(r, h, e.IconName); img != nil {
 		return &ui.Node{Kind: ui.KindImage, ImageSize: launcherIconSlot, Image: img}
 	}
@@ -417,6 +447,9 @@ func (h *PanelHost) launcherActivateSelected(r *Registry) {
 	}
 	h.launcherSel = min(h.launcherSel, len(h.launcherResults)-1)
 	res := h.launcherResults[h.launcherSel]
+	if res.Entry.ID == "" {
+		return // a hint row explains; it does not act
+	}
 	if res.Entry.ID == notesLauncherActionID || res.Entry.ID == notesLauncherTooLongID {
 		h.launcherNotesAction(r, res.Entry.ID)
 		return

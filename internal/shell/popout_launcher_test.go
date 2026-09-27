@@ -1040,3 +1040,45 @@ func launcherSearchField(t *testing.T, h *PanelHost) *ui.Node {
 	}
 	return field
 }
+
+func TestLauncherIconSlotConventions(t *testing.T) {
+	r := newPanelRegistry(t)
+	h := &PanelHost{}
+	g := launcherIconNode(r, h, launcher.Entry{Name: "Calculator", IconName: "glyph:calculate"})
+	if g.Fill != ui.FillContainer || len(g.Children) != 1 || g.Children[0].Kind != ui.KindIcon || g.Children[0].Icon != "calculate" {
+		t.Fatalf("glyph slot %+v", g)
+	}
+	e := launcherIconNode(r, h, launcher.Entry{Name: "party popper", IconName: "text:🎉"})
+	if e.Fill != ui.FillNone || e.Children[0].Text != "🎉" || e.Children[0].TextRole != theme.RoleDisplay {
+		t.Fatalf("text slot %+v", e)
+	}
+}
+
+func TestLauncherHintRowIsMutedUnselectedAndUncounted(t *testing.T) {
+	r := newPanelRegistry(t)
+	h := &PanelHost{query: "/calc 2+", launcherResults: []launcher.Result{
+		{Entry: launcher.Entry{Name: "Invalid expression", Comment: "Try 6*7", IconName: "glyph:calculate"}},
+	}}
+	row := launcherRow(r, h, h.launcherResults, 0)
+	capsule := row.Children[0]
+	if capsule.Fill != ui.FillNone {
+		t.Fatal("hint row highlighted")
+	}
+	if !treeHasText(launcherFooter(h, 1), "No results • "+launcherHints) {
+		t.Fatal("footer counted the hint")
+	}
+}
+
+func TestLauncherFooterPluralises(t *testing.T) {
+	one := &PanelHost{query: "6*7", launcherResults: []launcher.Result{{Entry: launcher.Entry{ID: "calc:42"}}}}
+	if !treeHasText(launcherFooter(one, 1), "1 result • "+launcherHints) {
+		t.Fatal("singular")
+	}
+	browse := &PanelHost{launcherResults: make([]launcher.Result, 3)}
+	for i := range browse.launcherResults {
+		browse.launcherResults[i].Entry.ID = fmt.Sprintf("app%d", i)
+	}
+	if !treeHasText(launcherFooter(browse, 3), "3 apps • "+launcherHints) {
+		t.Fatal("plural browse")
+	}
+}
