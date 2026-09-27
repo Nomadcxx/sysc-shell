@@ -76,7 +76,7 @@ func Render(tpl string, tok theme.Tokens) string {
 // shape, opacity, elevation and motion are the shell's composition and mean
 // nothing in another application's colour file.
 func RenderWith(tpl string, tok theme.Tokens, mode, source string) string {
-	t, err := template.New("t").Option("missingkey=zero").Parse(tpl)
+	t, err := template.New("t").Funcs(template.FuncMap{"darken": darken}).Option("missingkey=zero").Parse(tpl)
 	if err != nil {
 		return ""
 	}
@@ -91,4 +91,20 @@ func RenderWith(tpl string, tok theme.Tokens, mode, source string) string {
 		return ""
 	}
 	return buf.String()
+}
+
+// darken mixes a #RRGGBB colour toward black. A few application theme files
+// want derived shades rather than another palette role.
+func darken(hex string, amt float64) string {
+	c, err := theme.ParseColor(hex)
+	if err != nil {
+		return hex
+	}
+	f := 1 - amt
+	return theme.Color{
+		R: uint8(float64(c.R) * f),
+		G: uint8(float64(c.G) * f),
+		B: uint8(float64(c.B) * f),
+		A: c.A,
+	}.Hex()
 }
