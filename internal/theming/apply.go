@@ -1,6 +1,10 @@
 package theming
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -19,15 +23,135 @@ func oursFile(content string) bool {
 	return strings.Contains(line, marker)
 }
 
-// ApplyWrite writes rendered content when the target is missing or already ours.
+// ErrUserModified reports a target whose current bytes the shell cannot
+// account for: the user edited it, or the shell has no record of ever writing
+// it. The settings Templates surface offers an explicit overwrite.
+var ErrUserModified = errors.New("theming: target modified outside the shell")
+
+// ApplyWrite writes rendered content over a target the shell can account for:
+// absent, empty, or byte-identical to what it last rendered. Anything else is
+// refused rather than clobbered.
 func ApplyWrite(path, rendered string) error {
+	return applyWrite(path, rendered, false)
+}
+
+func applyWrite(path, rendered string, force bool) error {
+	if force {
+		return applyWriteForce(path, rendered)
+	}
+	if current, err := os.ReadFile(path); err == nil && len(bytes.TrimSpace(current)) > 0 {
+		if stateHash(path) != hash(current) {
+			return fmt.Errorf("%w: %s", ErrUserModified, path)
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return writeAdopted(path, []byte(rendered))
+}
+
+// ApplyWriteForce overwrites regardless of the target's history, backing the
+// previous bytes up to <path>.bak first. It is the explicit action behind a
+// refusal, never a default.
+func ApplyWriteForce(path, rendered string) error {
+	return applyWriteForce(path, rendered)
+}
+
+func applyWriteForce(path, rendered string) error {
+	if info, err := os.Stat(path); err == nil && info.Size() > 0 {
+		if err := os.Rename(path, path+".bak"); err != nil {
+			return err
+		}
+	}
+	return writeAdopted(path, []byte(rendered))
+}
+
+func writeAdopted(path string, data []byte) error {
+	if err := swapWrite(path, data); err != nil {
+		return err
+	}
+	// The state file is a cache, never an authority: failing to record here
+	// degrades the next apply to a refusal, which is the safe direction.
+	_ = rememberHash(path, hash(data))
+	return nil
+}
+
+// swapWrite renders into a sibling temp file and renames it over the target.
+// Rename is atomic within a directory, so a reader never sees a half-written
+// config and a crash leaves the previous bytes in place.
+func swapWrite(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	if b, err := os.ReadFile(path); err == nil && !oursFile(string(b)) {
-		return fmt.Errorf("skipped: user file")
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".sysc-*")
+	if err != nil {
+		return err
 	}
-	return writeFileAtomic(path, []byte(rendered), 0o644)
+	name := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(name)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(name)
+		return err
+	}
+	if err := os.Chmod(name, 0o644); err != nil {
+		os.Remove(name)
+		return err
+	}
+	return os.Rename(name, path)
+}
+
+// statePath is $XDG_STATE_HOME/sysc-shell/templates/state.json. The design
+// says XDG_STATE_HOME/sysc/; every state root in this repository is
+// sysc-shell (internal/wallpaper/persist.go:41, internal/plugin/state.go:54),
+// so the record follows the convention.
+func statePath() string {
+	base := os.Getenv("XDG_STATE_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		base = filepath.Join(home, ".local", "state")
+	}
+	return filepath.Join(base, "sysc-shell", "templates", "state.json")
+}
+
+// loadState reads the rendered-hash record. Any problem -- absent, corrupt,
+// unwritable -- is an empty record: losing the state file must degrade to
+// refusing, never to clobbering.
+func loadState() map[string]string {
+	state := map[string]string{}
+	if data, err := os.ReadFile(statePath()); err == nil {
+		_ = json.Unmarshal(data, &state)
+	}
+	return state
+}
+
+func stateHash(path string) string { return loadState()[path] }
+
+func rememberHash(path, sum string) error {
+	root := statePath()
+	if root == "" {
+		return nil
+	}
+	state := loadState()
+	state[path] = sum
+	data, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(root), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(root, data, 0o644)
+}
+
+func hash(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 func UnapplyWrite(path string) error {

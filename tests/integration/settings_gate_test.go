@@ -47,7 +47,7 @@ func TestAcceptStockThemesGenerate(t *testing.T) {
 }
 
 func TestAcceptNiriTemplateLiveApply(t *testing.T) {
-	t.Parallel()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.kdl")
 	gen := filepath.Join(dir, "sysc-shell.kdl")

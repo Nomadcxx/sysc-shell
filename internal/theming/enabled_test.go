@@ -1,6 +1,7 @@
 package theming
 
 import (
+	"errors"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -27,6 +28,7 @@ func markTemplatesComplete(t *testing.T, names ...string) {
 }
 
 func TestApplyEnabledWritesAlacrittyUnderXDG(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	home := t.TempDir()
 	markTemplatesComplete(t, "alacritty")
 	only := func(name string) bool { return name == "alacritty" }
@@ -48,6 +50,7 @@ func TestApplyEnabledWritesAlacrittyUnderXDG(t *testing.T) {
 }
 
 func TestApplyEnabledSkipsForeignKitty(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	home := t.TempDir()
 	markTemplatesComplete(t, "kitty")
 	p := filepath.Join(home, ".config", "kitty", "kitty.conf")
@@ -89,6 +92,7 @@ func TestKittyPIDsFromProc(t *testing.T) {
 }
 
 func TestApplyEnabledSignalsKitty(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	home := t.TempDir()
 	markTemplatesComplete(t, "kitty")
 	got := make(chan os.Signal, 1)
@@ -117,6 +121,7 @@ func TestApplyEnabledSignalsKitty(t *testing.T) {
 }
 
 func TestApplyEnabledSingleFlight(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	home := t.TempDir()
 	markTemplatesComplete(t, "alacritty")
 	only := func(name string) bool { return name == "alacritty" }
@@ -140,6 +145,7 @@ func TestApplyEnabledSingleFlight(t *testing.T) {
 }
 
 func TestApplyEnabledReportsFirstError(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	home := t.TempDir()
 	markTemplatesComplete(t, "alacritty")
 	p := filepath.Join(home, ".config", "alacritty", "alacritty.toml")
@@ -154,12 +160,13 @@ func TestApplyEnabledReportsFirstError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected skip error")
 	}
-	if !strings.Contains(err.Error(), "skipped") {
+	if !errors.Is(err, ErrUserModified) {
 		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestApplyEnabledSupersedeUsesLatestHome(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	home1 := t.TempDir()
 	markTemplatesComplete(t, "alacritty")
 	home2 := t.TempDir()
