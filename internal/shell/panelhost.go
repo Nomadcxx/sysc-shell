@@ -1947,10 +1947,7 @@ func (h *PanelHost) fieldFor(n *ui.Node) *ui.Field {
 		}
 		slot := h.editors[k]
 		if slot == nil {
-			slot = &retainedEditor{field: &ui.Field{
-				Text: n.Text, PreeditText: n.Preedit, Cursor: n.Cursor,
-				Multiline: n.Multiline, SubmitOnEnter: n.SubmitOnEnter,
-			}, reseed: n.Reseed}
+			slot = &retainedEditor{field: seedField(n), reseed: n.Reseed}
 			h.editors[k] = slot
 		}
 		slot.field.SyncFrom(n)
@@ -1961,7 +1958,7 @@ func (h *PanelHost) fieldFor(n *ui.Node) *ui.Field {
 		}
 		f = h.fields[store]
 		if f == nil {
-			f = &ui.Field{Text: n.Text, PreeditText: n.Preedit, Cursor: n.Cursor}
+			f = seedField(n)
 			h.fields[store] = f
 		} else {
 			f.SyncFrom(n)
@@ -1973,7 +1970,7 @@ func (h *PanelHost) fieldFor(n *ui.Node) *ui.Field {
 		}
 		f = h.fields[path]
 		if f == nil {
-			f = &ui.Field{Text: n.Text, PreeditText: n.Preedit, Cursor: n.Cursor}
+			f = seedField(n)
 			h.fields[path] = f
 		} else {
 			f.SyncFrom(n)
@@ -3058,6 +3055,16 @@ func (r *Registry) closeAllPanelsLocked() {
 	}
 }
 
+// seedField is a fresh editor holding a node's value with the caret where
+// the node put it and nothing selected.
+func seedField(n *ui.Node) *ui.Field {
+	f := ui.NewField(n.Text)
+	f.PreeditText = n.Preedit
+	f.Multiline, f.SubmitOnEnter = n.Multiline, n.SubmitOnEnter
+	f.SetCaret(n.Cursor, false)
+	return f
+}
+
 type retainedEditor struct {
 	field  *ui.Field
 	reseed uint64
@@ -3079,13 +3086,7 @@ func overlayEditors(root *ui.Node, eds map[string]*retainedEditor) {
 				seen[k] = true
 				slot := eds[k]
 				if slot == nil || n.Reseed > slot.reseed {
-					eds[k] = &retainedEditor{
-						field: &ui.Field{
-							Text: n.Text, PreeditText: n.Preedit, Cursor: n.Cursor,
-							Multiline: n.Multiline, SubmitOnEnter: n.SubmitOnEnter,
-						},
-						reseed: n.Reseed,
-					}
+					eds[k] = &retainedEditor{field: seedField(n), reseed: n.Reseed}
 				} else {
 					slot.field.Multiline = n.Multiline
 					slot.field.SubmitOnEnter = n.SubmitOnEnter

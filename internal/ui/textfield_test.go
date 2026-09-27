@@ -36,7 +36,7 @@ func TestMultilineInsertsNewlineAndBackspacesAcrossIt(t *testing.T) {
 	t.Parallel()
 	f := NewField("ab")
 	f.Multiline = true
-	f.Cursor = 1
+	f.SetCaret(1, false)
 	f.Insert("\n")
 	if f.Text != "a\nb" {
 		t.Fatalf("insert newline = %q", f.Text)

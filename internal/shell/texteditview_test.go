@@ -52,3 +52,23 @@ func findEditing(n *ui.Node) *ui.Node {
 	}
 	return nil
 }
+
+// A field seeded from a node starts with its caret collapsed. An anchor left
+// at zero would select everything before the caret, and the first key typed
+// would replace a plugin's or a setting's prefilled value.
+func TestSeededFieldsStartWithoutASelection(t *testing.T) {
+	eds := map[string]*retainedEditor{}
+	root := &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{
+		{Kind: ui.KindTextField, Key: "note", Action: "body", Text: "disk", Cursor: 4},
+	}}
+	overlayEditors(root, eds)
+	if f := eds["note"].field; f.HasSelection() {
+		s, e := f.Selection()
+		t.Fatalf("plugin editor seeded with selection %d..%d", s, e)
+	}
+	h := &PanelHost{}
+	setting := &ui.Node{Kind: ui.KindTextField, Action: "set:bar.label", Text: "clock", Cursor: 5}
+	if f := h.fieldFor(setting); f == nil || f.HasSelection() {
+		t.Fatalf("settings field seeded with a selection: %+v", f)
+	}
+}
