@@ -240,19 +240,31 @@ func settingsEmptyNote(section string) *ui.Node {
 func settingsSearchColumn(h *PanelHost, hits []settings.Entry) *ui.Node {
 	groups := []*ui.Node{}
 	for _, name := range settingsSections {
-		body := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM}
-		for _, e := range hits {
-			if e.Section == name {
-				body.Children = append(body.Children, settingsEntryRow(h, e))
+		pages := settings.SectionPages(name)
+		if len(pages) == 0 {
+			pages = []string{""}
+		}
+		// A hit says where it lives: "Bar › Appearance", or just the section
+		// when it has one page.
+		for _, page := range pages {
+			body := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM}
+			for _, e := range hits {
+				if e.Section == name && e.Page == page {
+					body.Children = append(body.Children, settingsEntryRow(h, e, settingsBodyWidth(h)))
+				}
 			}
+			if len(body.Children) == 0 {
+				continue
+			}
+			caption := name
+			if page != "" {
+				caption += " › " + page
+			}
+			groups = append(groups, &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: []*ui.Node{
+				{Kind: ui.KindText, Text: caption, TextRole: theme.RoleLabel},
+				body,
+			}})
 		}
-		if len(body.Children) == 0 {
-			continue
-		}
-		groups = append(groups, &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: []*ui.Node{
-			{Kind: ui.KindText, Text: name, TextRole: theme.RoleLabel},
-			body,
-		}})
 	}
 	if len(groups) == 0 {
 		groups = append(groups, &ui.Node{
@@ -272,33 +284,52 @@ func settingsSectionColumn(h *PanelHost, section string, entries []settings.Entr
 	if len(entries) == 0 {
 		return settingsBody(h, theme.MarginXL, settingsEmptyNote(section))
 	}
+	return settingsPageColumn(h, entries)
+}
+
+// settingsGroupCard is one group as a titled card (settings redesign D3,
+// reversing the foundation design's plain columns).
+func settingsGroupCard(h *PanelHost, title string, rows []*ui.Node) *ui.Node {
+	m := h.metrics()
+	col := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM}
+	if title != "" {
+		col.Children = append(col.Children, &ui.Node{Kind: ui.KindText, Text: title, TextRole: theme.RoleLabel})
+	}
+	col.Children = append(col.Children, rows...)
+	return &ui.Node{
+		Kind: ui.KindCapsule, Padding: m.CardPadding, Fill: ui.FillContainerHigh,
+		Shape: ui.ShapeCard, Width: settingsBodyWidth(h), Children: []*ui.Node{col},
+	}
+}
+
+// settingsCardInner is the width a row gets inside a group card.
+func settingsCardInner(h *PanelHost) int {
+	return max(settingsBodyWidth(h)-2*h.metrics().CardPadding, 0)
+}
+
+// settingsPageColumn is a page's groups as cards, after any lead blocks (the
+// bar preview, the picture cards), in the scrolling body.
+func settingsPageColumn(h *PanelHost, entries []settings.Entry, lead ...*ui.Node) *ui.Node {
+	rowW := settingsCardInner(h)
 	var order []string
-	rows := map[string][]settings.Entry{}
+	rows := map[string][]*ui.Node{}
 	for _, e := range entries {
 		if _, seen := rows[e.Group]; !seen {
 			order = append(order, e.Group)
 		}
-		rows[e.Group] = append(rows[e.Group], e)
+		rows[e.Group] = append(rows[e.Group], settingsEntryRow(h, e, rowW))
 	}
-	groups := make([]*ui.Node, 0, len(order))
-	for _, name := range order {
-		body := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM}
-		for _, e := range rows[name] {
-			body.Children = append(body.Children, settingsEntryRow(h, e))
-		}
-		if name == "" {
-			groups = append(groups, body)
-			continue
-		}
-		groups = append(groups, &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: []*ui.Node{
-			{Kind: ui.KindText, Text: name, TextRole: theme.RoleLabel},
-			body,
-		}})
+	children := append([]*ui.Node{}, lead...)
+	for _, g := range order {
+		children = append(children, settingsGroupCard(h, g, rows[g]))
 	}
-	return settingsBody(h, theme.MarginXL, groups...)
+	return settingsBody(h, theme.MarginL, children...)
 }
 
-func settingsEntryRow(h *PanelHost, e settings.Entry) *ui.Node {
+// settingsEntryRow is one setting: its label over its description, and the
+// control at the end. width is the column the row sits in: the body for a
+// search hit, the inside of a card for a group row.
+func settingsEntryRow(h *PanelHost, e settings.Entry, width int) *ui.Node {
 	controlW := settingsControlWidth(h)
 	label := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: e.Label, Name: e.Label},
@@ -312,7 +343,7 @@ func settingsEntryRow(h *PanelHost, e settings.Entry) *ui.Node {
 	// Both columns carry their width. Without it the description sets the
 	// row's width and pushes the right-pinned control past the edge of the
 	// column, which is invisible on a wide output and clips on a small one.
-	label.Width = max(settingsBodyWidth(h)-controlW-theme.MarginL, 0)
+	label.Width = max(width-controlW-theme.MarginL, 0)
 
 	// Only a control that benefits from length takes the column: a slider is
 	// swept and a field is typed into. A toggle and a dropdown have a natural
@@ -334,7 +365,7 @@ func settingsEntryRow(h *PanelHost, e settings.Entry) *ui.Node {
 	}
 	trailing.Children = append(trailing.Children, settingsControl(h, e, room))
 
-	row := &ui.Node{Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{label, trailing}}
+	row := &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: width, Children: []*ui.Node{label, trailing}}
 	if e.Describe == "" {
 		// A one-line row takes the control height so a run of them reads as a
 		// ladder. A described row is two stacked lines and a fixed height

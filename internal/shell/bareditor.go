@@ -734,7 +734,7 @@ func barInspector(h *PanelHost, width int) *ui.Node {
 		return col
 	}
 	for _, e := range entries {
-		col.Children = append(col.Children, settingsEntryRow(h, e))
+		col.Children = append(col.Children, settingsEntryRow(h, e, width))
 	}
 	return col
 }

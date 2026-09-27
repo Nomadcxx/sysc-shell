@@ -930,7 +930,7 @@ func TestNaturalSizedControlsDoNotFillTheColumn(t *testing.T) {
 		if e == nil {
 			t.Fatalf("%s is not registered", tc.path)
 		}
-		row := settingsEntryRow(h, *e)
+		row := settingsEntryRow(h, *e, settingsBodyWidth(h))
 		var trailing *ui.Node
 		for _, c := range row.Children {
 			if c.Kind == ui.KindRow {
@@ -1143,4 +1143,48 @@ func TestPickActionCommitsTheValue(t *testing.T) {
 	if h.draft.Weather.Unit != "fahrenheit" {
 		t.Fatalf("draft unit = %q after pick", h.draft.Weather.Unit)
 	}
+}
+
+func TestGroupsRenderAsCardsWithRowsInside(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.section = "Appearance"
+	h.place.Panel = ui.Rect{W: 1105, H: 760}
+	h.root = settingsTree(nil, h)
+	cards := 0
+	inner := settingsCardInner(h)
+	for _, n := range walk(h.root) {
+		if n.Kind != ui.KindCapsule || n.Shape != ui.ShapeCard {
+			continue
+		}
+		cards++
+		col := n.Children[0]
+		if col.Children[0].TextRole != theme.RoleLabel {
+			t.Errorf("card does not open with its title: %+v", col.Children[0])
+		}
+		for _, row := range col.Children[1:] {
+			if row.Kind == ui.KindRow && row.Width > inner {
+				t.Errorf("row %d wide overruns its %d-wide card", row.Width, inner)
+			}
+		}
+	}
+	if cards == 0 {
+		t.Fatal("Appearance rendered no group cards")
+	}
+	if err := ui.LayoutColumn(h.root, h.place.Panel, func(s string, _ ui.TextAttrs) (int, int) { return len(s) * 8, 18 }); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSearchHitsNameTheirPage(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.query = "frost"
+	h.root = settingsTree(nil, h)
+	for _, n := range walk(h.root) {
+		if n.Text == "Bar › Appearance" {
+			return
+		}
+	}
+	t.Fatal("a Bar frost hit is not captioned Bar › Appearance")
 }
