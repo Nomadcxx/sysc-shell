@@ -111,6 +111,10 @@ GLYPHS.append(("uniE072", 0xE072, "docker"))
 GLYPHS.append(("uniE073", 0xE073, "github"))
 GLYPHS.append(("uniE074", 0xE074, "github-unread"))
 
+# The Proton VPN mark follows for the protonvpn plugin's bar pill and panel
+# header.
+GLYPHS.append(("uniE075", 0xE075, "proton"))
+
 UPM = 1000
 # 24px SVG -> font units, y-flipped so the icon sits on the baseline.
 #
