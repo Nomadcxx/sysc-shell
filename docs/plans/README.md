@@ -1,0 +1,615 @@
+# Design and Plan Register
+
+Last updated: 2026-09-27.
+
+Every design, plan, and handover this project has produced, with where it lives and whether it is still
+live. Add a row here in the same commit that adds a document. A document that is not in this register is
+one the project will lose.
+
+## This file indexes documents. bd tracks state.
+
+`bd ready` and `bd blocked` are authoritative for what is done, in flight, or gated. This register is
+authoritative for what documents exist and what each one is for. Do not duplicate status between them: a
+status written into a document header drifts, and one already did.
+
+## Why this file exists
+
+Documents were first written on milestone branches and reached `main` at different times. This was
+resolved on 2026-08-30. Every registered document now lives on `main`, including the Milestone 2 set.
+
+| Branch | Holds |
+|---|---|
+| `main` | Every registered document |
+| `milestone/stable-bar` | Milestone 2 implementation branch, merged into `main` at `309f9d2` |
+| `milestone/panels-controls` | Merged into `main` at `01cae98` (2026-08-31). Branch deleted after the local merge. |
+
+Re-check with `git ls-tree -r --name-only <branch> -- docs/` rather than trusting this table blindly.
+
+## Document kinds
+
+Naming is `YYYY-MM-DD-<topic>[-<kind>].md`. A topic with no kind suffix is the implementation plan.
+
+| Kind | Purpose |
+|---|---|
+| *(none)* | The executable implementation plan. Carries the `superpowers:executing-plans` header, exact files, TDD steps, and commit boundaries. |
+| `-design` | The approved design. Fixes contracts and decisions before any plan is written. |
+| `-execution-handover` | Commissions the next tranche. When that tranche has a completion snapshot or remaining items are in bd, retire it the same way as a progress handover. |
+| `-design-handover` | Older name for the same thing. Not used for new work. |
+| `-progress-handover` | In-flight only. When the work lands, or remaining items are in bd, **delete the file** and drop its register row. Do not patch it to keep it current. |
+| `-completion-handover` | Snapshot after implementation: commit hashes, gate output, live observations, measurements, known defects. **Do not edit later. Do not delete.** A later correction goes in bd or the register, not back into the snapshot. |
+| `-project-handover` | Same retirement rule as a progress handover. Remaining-work maps drift; harvest into bd, then remove. |
+| `-audit-handover` | Commissions an audit. |
+| `-audit-report` | The audit's findings and verdict. |
+
+## Milestone 0 and 1 — foundation and architectural proof
+
+Status: **complete and merged to `main`.**
+
+| Document | Kind | Branch | State |
+|---|---|---|---|
+| `2026-08-26-sysc-shell-design.md` | design | `main` | Approved; amended 2026-08-27 by the plan audit. The project-wide architecture. Still the governing document. |
+| `2026-08-26-development-orchestration.md` | process | `main` | Live. Defines the design, dependency, review, performance, hardware, and handoff gates. |
+| `2026-08-26-architectural-proof.md` | plan | `main` | Executed. Milestone 1. |
+| `2026-08-27-plan-audit-handover.md` | audit-handover | `main` | Closed. |
+| `2026-08-27-plan-audit-report.md` | audit-report | `main` | Closed, but its owner decisions D3/D4/D5 remain referenced. D3 (SVG) was settled by the Tranche 3A charter's icon-asset policy. |
+| `2026-08-28-architectural-proof-review-fixes.md` | plan | `main` | Executed. |
+| `2026-08-28-implementation-handover.md` | handover | `main` | Closed. Milestone 1 to Milestone 2. |
+| `../roadmap.md` | roadmap | all branches | Live. The milestone sequence and every exit gate. Amended 2026-08-27. |
+| `../prior-art.md` | assessment | all branches | Live. Noctalia, DMS, dgop, `dankgo`, notification and tray references, with licensing. Architectural only — it records no widget-level findings; those live in the Tranche 3A design. |
+
+## Milestone 2 — stable bar on every output
+
+Milestone 2 implementation and review corrections are on `main`. The remaining exit gate is `sysc-5`,
+which needs two connected outputs, physical hotplug and pointer checks, and the full idle duration.
+
+| Document | Kind | Branch | State |
+|---|---|---|---|
+| `2026-08-29-stable-multi-output-bar-design-handover.md` | commission | `main` | Closed. Geometry and ownership contracts. Its implementation status is historical. |
+| `2026-08-29-stable-multi-output-bar-design.md` | design | `main` | Owner-approved. |
+| `2026-08-29-stable-multi-output-bar.md` | plan | `main` | The five-task correction plan, not the missing original. Executed. |
+| `2026-08-29-stable-multi-output-bar-progress-handover.md` | progress-handover | `main` | Historical pre-correction state. Do not edit from another tranche. |
+
+### Known gap: the original Milestone 2 plan is missing
+
+The progress handover records "all 16 plan tasks implemented", but **no 16-task plan exists on any branch
+or on disk**. `2026-08-29-stable-multi-output-bar.md` was created already as the five-task correction plan
+(`f483cc8`), after those 16 tasks had been committed. The original plan was never committed.
+
+Consequence: Milestone 2's implementation cannot be reviewed against its own plan. The work is
+recoverable only from the 19 `feat`/`test`/`fix` commits in `main..milestone/stable-bar`, running from
+`74706ff` to `f3bdae1` for the original implementation plus four later `fix` commits. Those 19 commits do
+not map one-to-one onto the handover's "16 tasks", and no document reconciles them.
+
+This is the concrete reason this register exists. Do not repeat it: commit the plan before executing it.
+
+The formerly uncommitted `internal/platform/wayland/policy_test.go` landed in `72cb086`; `sysc-13` tracks
+that resolved defect.
+
+## Milestone 3 — built-in widget foundation
+
+Split into four reviewed tranches by the charter. 3A and 3B are merged.
+
+| Document | Kind | Branch | State |
+|---|---|---|---|
+| `2026-08-30-built-in-widget-foundation-execution-handover.md` | commission | `main` | Historical commission that produced the approved design and plan. |
+| `2026-08-30-live-gate-to-tranche-3a-execution-handover.md` | execution-handover | `main` | Current receiving-agent handover. Start Tranche 3A now; `sysc-5` remains open as deferred hardware qualification. |
+| `2026-08-30-built-in-widget-foundation-design.md` | design | `main` | Owner-approved, audited, amended. Records D1–D8 and the design-audit outcome. |
+| `2026-08-30-built-in-widget-foundation.md` | plan | `main` | Complete. 16 tasks (0–15). Audit findings applied. Ready to execute. |
+| `2026-08-30-built-in-widget-foundation-audit-handover.md` | audit-handover | `main` | Closed. Commissioned the technical and design audits. |
+| `2026-08-30-built-in-widget-foundation-audit-report.md` | audit-report | `main` | Closed. Verdict: proceed with named corrections; all seven applied at `9a114eb`. Verified assumption 4 live. |
+| `2026-08-31-tranche-3a-implementation-audit-report.md` | audit-report | `main` | Implementation vs spec + Q/A. Finding 1 (major, `apply` does not re-layout) fixed at `b669622`. Findings 2–4 (DropHost on failed `hostBecameReady`; reload boundary-change test; focus/title/close invalidation test) applied at `b43ace7`. Closed. |
+| `2026-08-30-core-metrics-design.md` | design | `main` | Owner-approved, audited, amended. D1–D8; D3, D6, D7 and D8 amended 2026-08-31. Graph node ships in 3B (charter deviation D5). |
+| `2026-08-30-core-metrics.md` | plan | `main` | Executed. 13 tasks. |
+| `2026-08-30-core-metrics-completion-handover.md` | completion-handover | `main` | Closed. Implementation complete; superseded by the audit and its corrections. |
+| `2026-08-31-tranche-3b-audit-brief.md` | audit-handover | `main` | Closed. Commissioned the 3B audit. |
+| `2026-08-31-core-metrics-audit-report.md` | audit-report | `main` | Closed. Verdict: proceed with named corrections. Two majors (D6 grain, D7 meter/graph); all six applied. |
+| `2026-08-31-core-metrics-audit-corrections.md` | corrections | `main` | Closed. All six findings applied and evidenced. |
+| `2026-08-30-weather-and-visual-vocabulary-design.md` | design | `main` | Owner-approved, audited, amended. D1–D9; D4 is a recorded charter deviation (icons as a font). D3 amended and `Weather.Reconfigure` added 2026-08-31. |
+| `2026-08-30-weather-and-visual-vocabulary.md` | plan | `main` | 11 tasks; 9–11 (tooltip) were cuttable and were implemented. Audit amendments applied 2026-08-31. |
+| `2026-08-30-weather-and-visual-vocabulary-completion-handover.md` | completion-handover | `main` | Implementation complete; live matrix owner-deferred. |
+| `2026-08-31-weather-and-visual-vocabulary-audit-report.md` | audit-report | `main` | Closed. Verdict: amend before executing; all six amendments applied. |
+| `2026-08-31-power-design.md` | design | `main` | Owner-approved, audited. D1–D6. Signatures provisional on `sysc-19`. Scope sentence aligned with D4 2026-08-31. |
+| `2026-08-31-power.md` | plan | `main` | Executed. 7 tasks. Task 0 reconciled against `sysc-metrics@v0.2.0`. |
+| `2026-08-31-power-audit-report.md` | audit-report | `main` | Closed. Verdict: rebase onto post-D6 `Metrics`, then wait for Task 0. Findings 1, 3, 4, 5 applied; finding 6 is 3D's `Tone` comparison. |
+| `2026-08-31-power-completion-handover.md` | completion-handover | `main` | Implementation complete; live matrix owner-deferred. |
+| `2026-08-31-m3-code-quality-sweep.md` | audit-report | `main` | Ponytail pass over 3A–3D. Report only; cuts listed, not applied. |
+| `2026-08-31-m3-spec-review-sweep.md` | audit-report | `main` | Implementation vs designs, plans, charter, and 2026-08-31 audits. |
+| `2026-08-31-m3-quality-findings-review.md` | audit-handover | `main` | Classifies ponytail cuts as M4-reserved, specified M3 API, real-dead, or optional shrink. For a second agent to confirm. |
+| `2026-08-31-milestone-3-implementation-audit-report.md` | audit-report | `main` | Independent merged-M3 spec and correctness audit, including Grok classification corrections. |
+| `2026-08-31-m3-audit-defect-corrections.md` | plan | `main` | TDD plan for the five defects filed by the merged-M3 implementation audit. |
+
+### Tranche state
+
+| Tranche | Scope | State |
+|---|---|---|
+| 3A | Clock, date, Niri workspace, focused-window title; service lifetime; per-output widget instances | Merged. |
+| 3B | CPU, memory, filesystem, block and network rates | Merged. Audited; all six findings applied. |
+| 3C | Battery and remaining time | Merged. Live matrix owner-deferred. |
+| 3D | Weather, icons, error tone, tooltip | Merged. Live matrix owner-deferred. |
+
+## Milestone 4 — panels and standard controls
+
+Designed, planned, reviewed, executed and merged to `main` at `01cae98`. Spec shortfalls
+`sysc-38`–`sysc-40` closed at `b4c4bc6`. Live Niri checklists remain owner-deferred.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-08-30-panels-and-controls-prior-art.md` | assessment | Noctalia v5 and DMS v1.5.3 inventories with file:line evidence. |
+| `2026-08-30-panels-and-controls-research.md` | research | Niri capability claims, source-verified against niri main. |
+| `2026-08-30-panel-foundation-design.md` | design | Tranche 4A. Owner-approved; amended for M3 auxiliary ownership and one process-wide root chain. |
+| `2026-08-30-panel-foundation.md` | plan | Tranche 4A, **13 tasks**. Ready to execute once its prerequisites clear. |
+| `2026-08-30-panel-foundation-parallel-execution-handover.md` | execution-handover | Starts Tasks 1, 5 and 8 while Tranche 3A continues, then joins the remaining plan after M3 integration. |
+| `2026-08-30-settings-osd-theme-catalog-design.md` | design | Tranche 4B. Owner-approved; amended for the review. D1–D10. |
+| `2026-08-30-settings-osd-theme-catalog.md` | plan | Tranche 4B, 14 tasks with three mandatory review boundaries. |
+| `2026-08-30-milestone-4-review.md` | review | Closed. Both blockers fixed in `3fc026c`; findings tracked as `sysc-16`. |
+| `2026-08-31-milestone-4-post-m3-audit-report.md` | audit-report | Reconciles 4A/4B with landed M1-M3 APIs and corrects the executable plans. |
+| `2026-08-31-milestone-4-execution-handover.md` | execution-handover | Commissions corrected 4A and the three reviewed 4B slices in the existing M4 worktree. |
+| `2026-08-31-m4-spec-review-sweep.md` | audit-report | Implementation vs 4A/4B designs, post-M3 audit, charter, roadmap gate. Live matrices owner-deferred. |
+| `2026-08-31-m4-code-quality-sweep.md` | audit-report | Correctness and reliability pass over landed M4. Report only. |
+| `2026-08-31-m4-spec-shortfall-corrections.md` | plan | TDD plan for sysc-38, sysc-39, sysc-40. |
+| `2026-08-31-m4-post-shortfall-polish.md` | plan | Hide-lock, apply supersede, status IPC, virtual-list focus. |
+| `2026-08-31-m4-post-shortfall-spec-check.md` | audit-report | Re-check of sysc-38–40 vs 4A/4B after the shortfall merge. |
+| `2026-08-31-m4-post-shortfall-quality-polish.md` | audit-report | Leftovers applied; remaining ceilings. |
+
+### Tranche state
+
+| Tranche | Scope | State |
+|---|---|---|
+| 4A | Panel machinery, placement, rounding and shadows, button/label/separator/tabs, matugen theming, clock/calendar, system-monitor and session/power popouts, IPC | Merged to `main` at `01cae98`. Live checklist unrun. |
+| 4B | Controls, settings modal and registry, OSD with audio/brightness services, stock themes, template catalog | Merged to `main` at `01cae98`. Live checklist unrun. `sysc-38`–`sysc-40` closed at `b4c4bc6`. |
+
+### Post-M3 reconciliation
+
+- The system-monitor returns because 3B qualified and pinned `sysc-metrics@v0.2.0`. It reuses
+  `services.Metrics`, selector leases, histories, and M3's `KindGraph`; M4 adds no wrapper service or
+  module dependency.
+- A configuration reload leaves panel surfaces mapped. Tearing them down would have dismissed 4B's
+  settings modal on every change made inside it.
+- Colour fields that palette generation now owns are removed from the schema, and unknown keys are
+  rejected at load, so a stale file fails with its field path named rather than silently doing nothing.
+- Every template apply hook gained a reverse, so disabling one removes the include line and file it
+  added to another application's configuration.
+
+### Resolved plan decisions
+
+- Runtime binaries use `exec.LookPath`, argv slices, bounded contexts, and no shell. Missing optional
+  tools hide the capability or select the documented fallback.
+- 4B remains one design and plan, executed as three reviewed slices: Tasks 1-8, 9-11, and 12-14.
+
+## Bar visual parity (post-M4 chrome)
+
+Live DMS grim on the owner's laptop vs default sysc-shell bar. Capsules, `SurfaceContainer` fill, and workspace pills. Not a widget-roster port. Epic `sysc-43`, executed and merged 2026-09-02. Remaining live judgment is `sysc-54`; card-fill contrast is `sysc-104`.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-08-31-bar-visual-parity-research.md` | research | Live grim of DMS on eDP-1; Noctalia from installed settings.json (package not running). Assets under `docs/plans/assets/2026-08-31-bar-visual-parity/`. |
+| `2026-08-31-bar-visual-parity-design.md` | design | D1–D9, including the numbered-pill amendment. Executed. |
+| `2026-08-31-bar-visual-parity.md` | plan | Six TDD tasks. Executed and merged. |
+
+## Power panel (battery, profiles, session)
+
+Owner-approved 2026-09-02. Grows the M4 session panel. Does not start Milestone 6.
+Gamer-mode's freeze/kill engine stays a plugin.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-02-power-panel-design.md` | design | One `session` surface: battery card, `powerprofilesctl` row, existing session actions. Right-click bar battery. IPC `power` alias. |
+| `2026-09-02-power-panel.md` | plan | Six TDD tasks: parser, LookPath gate, right-click, three-card tree, IPC alias, owner-deferred live Niri list. |
+
+## Chrome catalogue (shared buttons, pills, hover)
+
+Owner-commissioned 2026-09-02 after the live session panel mapped but painted as
+accent-filled rectangles. Design-first: one reusable chrome language, original
+SVGs, DMS/Noctalia as prior art. Not a general toolkit. Do not execute product
+code from the handover.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-02-chrome-catalogue-design.md` | design | Owner-approved native chrome, motion, Material Symbols subset, semantic theme composition, and session-panel consumer. |
+| `2026-09-02-chrome-catalogue.md` | plan | Owner-directed implementation-first plan for semantic chrome, native transitions, Material subset, session composition, and focused regression checks. |
+
+## Animated gradient paint
+
+Owner-approved 2026-09-07. Host-owned CPU ramp on rects and alpha masks, with
+a looping offset. First consumer is the centred bar wordmark. Not a Noctalia
+plugin API. Epic `sysc-217`.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-07-gradient-paint-design.md` | design | D1–D12. `GradientPaint` on `ui.Node`, token stops, ping-pong wordmark, named idle-frame exception. |
+| `2026-09-07-gradient-paint.md` | plan | Six TDD tasks (`sysc-218`–`sysc-223`): sampler, rect/mask fill, node field, looping animator, bar widget and default layout, architecture amendment. |
+
+## Theme system parity
+
+Owner-approved 2026-09-02. Extends the existing native Go palette and renderer
+with one resolved composition model. Presets provide defaults; colour, density,
+typography, shape, opacity, elevation, motion, and accessibility remain
+independent axes. Epic `sysc-142` depends on the chrome catalogue.
+
+| Document | Kind | State |
+|---|---|---|
+**The design is superseded by `2026-09-11-noctalia-parity-design.md`.** Its
+mechanism survives and is restated there; its numeric ladders were derived from
+observation rather than measurement, and every one of them differs from Noctalia
+v4.7.7. The plan was executed, but its live Niri gate was never run and is
+re-inherited by the superseding design rather than discharged.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-02-theme-system-parity-design.md` | design | **Superseded 2026-09-11.** Owner-approved semantic palette, composition, type, density, shape, opacity, elevation, motion, accessibility, settings, and live-reload contract. D1, D3, D4, D6, D11, D13 and D15 carried forward verbatim into the superseding design. |
+| `2026-09-02-theme-system-parity.md` | plan | Owner-directed implementation-first plan with resolver/configuration and shell-wide composition review checkpoints. Executed and merged 2026-09-05 (`1e28e30..41a06bc`); Task 13's live Niri gate, ten configurations needing human confirmation, remains unrun. |
+
+## Noctalia v4 parity
+
+Owner-approved approach 2026-09-11: visual parity with Noctalia v4,
+near-indistinguishable, as the standing target for first-party surfaces.
+Supersedes the theme-system-parity design above. Second document of the parity
+tranche, after the backdrop blur design it depends on for the opacity floor.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-11-noctalia-parity-design.md` | design | D1–D15. Re-bases spacing, radius, type, density and motion onto measured v4.7.7 constants; adds a second radius ladder for inputs and a `Display` type role; maps v4's 16 colour roles onto all 49 without deletion. Records the resolution of open `sysc-104`: the nested-surface floor drops 1.45:1 → 1.30:1, text floors unchanged, `Outline` keeps 3:1 while `OutlineVariant` is exempt. Calibration is measured, not assumed — bar 62 px and capsule 50 px both resolve at 2×, title em confirms 16 pt at 96 DPI, so v4 constants are logical px and points convert ×4/3. |
+| `2026-09-11-noctalia-parity.md` | plan | Thirteen tasks, executing **three** designs: the parity ladders, the token-conformance gate as Task 1, and component parity as Tasks 5A and 5B (one master control dimension with per-shape odd/even forcing; padding resolved to ladder rungs). Carries the token-conformance design as its Task 1. That task is committed **red on purpose**: 96 of the 105 literal sites are `Gap` or `Padding`, the exact ladder Task 2 re-bases underneath them, so the gate lands against an enumerated worklist and Tasks 2–9 drive it green. Two hazards are called out because each would ship a runtime fault: `textRoleCount` is *derived* (`int(theme.RoleMono)+1`), so adding `RoleDisplay` without re-deriving it indexes past a fixed-size array while the existing guard test still passes; and the 1.45 floor is **not** a constant — `derive()` carries only 4.5/3.0 and the separation emerges from ladder steps, so the change targets the two assertions at `theme_test.go:252,255`. Re-inherits the live Niri gate `sysc-142` closed without running, with clipping in the densest surfaces named as the expected failure since type and density both shrink. |
+| `2026-09-14-density-config-migration-design.md` | design | Amended 2026-09-16 by the owner: the standard preset and fresh/default configuration use the legacy `48/6/4` bar; `DensityDefault` remains the smaller opt-in row. The hidden `standard` compatibility row retains current control metrics, selector-free migration, and sparse preset provenance. |
+| `2026-09-14-density-config-migration.md` | plan | Three TDD tasks, amended 2026-09-16 for the owner’s legacy-default decision: project the hidden compatibility row, preserve selector-free configuration, record sparse preset provenance, and align Wayland expectations before the integration gate. |
+
+## Parity tranche execution handover
+
+Commissions execution of the whole 2026-09-11 tranche. Seven designs, five plans, none started.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-12-parity-tranche-execution-handover.md` | execution-handover | **Blur half discharged 2026-09-13**; the rest still commissions. Recommended starting at backdrop blur Tasks 1–3 and stopping at the Task 3 measurement gate: it resolved the tranche's largest unknown first, unblocked parity's opacity floor, and stayed clear of the concurrent surface-polish pass. Records the hazards, the two corrections not to re-introduce (padding is not 14; stacking's consumer is the media card), the five unverified claims, and that no bd issue yet named any tranche work. Superseded for state by the continuation handover below. |
+| `2026-09-15-parity-task9-completion-handover.md` | completion-handover | **Live.** Snapshot after the four-way landing at `9cb2acb`, with `main` green on all nine packages and the conformance scan passing for the first time since Task 1 committed it red. Records the order the merges had to take and why — density first (`d69b4d4`, the P1 `sysc-276` regression), parity Task 9 second (`2f97256`), Bluetooth last (`9cb2acb`) against a tree already carrying both — and that landing Task 9 first *created* the `widget.go` conflict the Bluetooth merge then resolved. Carries the three structural findings: the scan cannot see the arithmetic that models its literals, the control centre's spacing and widths are one composition (a 228 column held two 110 tiles at a gap of 8 and filled it exactly), and `buildWidgets`' int carries a `noCapsule` sentinel a metrics row cannot express. Names the one deliberate inconsistency left in `popout_process.go` and why touching it fails a test. Records a duplicate Task 9 left uncommitted by a concurrent session in `integrate/bluetooth-panel-main`, now redundant and to be discarded. Tasks 10 and 11 remain; Step 1 is superseded by the density migration, Step 2 still owes the input radius row, Step 3's live gate is runnable again. |
+| `2026-09-14-parity-slice-execution-handover.md` | execution-handover | Superseded by the completion handover above. Commissioned Tasks 6, 5B, 7, 8, 9, 10 and 11 from `30b5f06`; 6, 5B, 7 and 8 are on `main`, 9 is complete on the branch. Its claim that the live gates cannot run is out of date — the laptop is reachable again. |
+| `2026-09-13-parity-tranche-continuation-handover.md` | execution-handover | Live. Records backdrop blur as implemented and measured on `feature/panel-backdrop-blur` (twelve commits, rebased onto `79e9899`, unmerged): both stop gates cleared at 4.94 ms blur and 5.67 ms readback, ~11 ms per open. Carries the five corrections the live work forced — xrgb8888-only offers, the exactly-one-buffer pool, the rounded-mask clip, the shell owning a panel's `Style`, and the opacity bound sitting in three places — plus the proof that `capture_output_region` is output-relative, which D3 assumed. Records the post-rebase defect where `AttachedPanelStyle` painted an opaque root over the blur, and why that condition must survive future changes. Commissions the remaining tranche in order (smoothness, parity, media, stacking, template), notes that **no bd issue names smoothness, stacking, conformance or the template**, leaves the menu/drawer blur scope open for the owner, and records two hazards this session paid for: a second agent deploying over `~/.local/bin/sysc-shell`, and screenshot-diff verification being invalid on a changing screen. |
+
+## Component parity (evidence audit)
+
+Written 2026-09-11 after auditing the parity design against source. That design
+sourced the global ladders correctly and the component layer not at all: it had
+read 2 of v4.7.7's 52 components and none of its 261 composition modules, and it
+carried two constants imported from **v5**. This design covers how a control gets
+its size and how a surface gets its padding, and records the corrections.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-11-component-parity-design.md` | design | D1–D8, D3 and D8 extended 2026-09-12. Every control derives from `baseWidgetSize` 33 × a per-control ratio, with odd forced on icon buttons and checkboxes and even on toggles and sliders — a *system*, not a table. Padding is a margin-ladder rung per surface, sourced from nine cards, **seven panels**, a settings pane and the launcher delegate: every panel insets at `marginL` with a `margin2L` reserve, the inter-card gap is `marginM` (the control centre's `marginL` is the lone exception), card interiors are `marginM`, dense cards `marginS`; `NBox` defines none. Hero type is an inline multiplier (`fontSizeXXXL × 1.75` ≈ 42 pt), not a role. The inverted hero card is a plain `mPrimary` rectangle and needs no primitive. **Corrects two committed designs.** Two gaps left open deliberately: panel dimensions diverge (v4's standard panel is 440 wide) and v4 settings panes use **no cards**, which is a composition change owned by the chrome catalogue. Has no plan of its own — executed as Tasks 5A and 5B of `2026-09-11-noctalia-parity.md`. |
+
+## Token conformance
+
+Third and last design of the parity tranche. Answers why the chrome catalogue
+and theme system parity, both approved 2026-09-02, did not stop surfaces
+re-deriving their own chrome. Enforcement is partial rather than absent: the
+existing source scan bans legacy aliases and synthetic bold but says nothing
+about a bare number.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-11-token-conformance-design.md` | design | D1–D10. Adds one regexp to the existing `TestSurfaceSourcesCarryNoLegacyVisuals` scan rather than a new gate, plus a marked `token-exempt:` idiom carrying its reason at the site, and widens three behavioural checks past `PanelMonitor`/`PanelSession`. Measured: 105 literal geometry assignments in `internal/shell`, of which 58 `Gap` and 38 `Padding`; `internal/ui` and `internal/render` are clean, so the existing scan's package scope is already right. **Revises the tranche order** — the gate lands as task one of the parity plan, red against an enumerated worklist, because 96 of the 105 are the spacing ladder that parity re-bases underneath them. |
+
+## Rendering smoothness (Milestone 8 remainder)
+
+Closes the rest of `sysc-202`. The epic names four cases — animation frame time,
+large blurred panels, image-heavy grids, CPU/power — and the blur design
+measured the second. Also keeps the architecture document's unkept L193 promise
+that "the bar milestone adds rectangle damage", which Milestone 2 never
+delivered and no issue tracked.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-11-rendering-smoothness-design.md` | design | D1–D9. Rectangle damage via a `Damaged` sibling callback on `HostCallbacks` rather than changing `Render`'s signature; dirty geometry owned by the tree, with `Scheduler.dirty` untouched; a theme-resolved pacing cap replacing the fixed 16 ms `animTick`; and coalescing the wallpaper picker, which today rebuilds its whole tree and repaints 4.1 MiB per decoded thumbnail. Full-buffer damage stays the default and the fallback — damage is an optimisation, never a correctness boundary. |
+| `2026-09-11-rendering-smoothness.md` | plan | **Tasks 1–4 landed 2026-09-13** on `feature/rendering-smoothness` (`71ae0df`, `a0d28c8`, `98858d8`, `6a65808`): a pure `DamageSet` accumulating old **and** new bounds; `damageRects` submitting per-rectangle damage with a clipped full-buffer fallback, leaving every existing surface unchanged; the pacing cap in `animateSurface`, which always publishes the settling frame so no settled value is left unpainted; and dropping the picker's per-raster tree rebuild. No surface opts into rectangle damage — the path is built, not adopted. **Task 5 (coalescing) is dropped:** it flushed its last pending publish through an `icons.Worker.Progress()` channel that does not exist, leaving the final tile of a burst unpainted, and its premise is moot because the render path already coalesces twice — `publishSurface` drops on a full 8-deep channel, and `Scheduler.Invalidate` folds repeated calls into one redraw. **Task 6 is outstanding** and cannot retire `sysc-202` as written: `sysc-256`'s live gates are unrun and its two-output case is unrunnable on either machine here. The plan now carries an Amendments section — treat every line number in it as stale and locate anchors by symbol. |
+
+## Surface stacking
+
+One container kind whose children share its box, so content can sit over a
+background image. Small because the hard parts already hold: paint walks
+children forward and `Hit` walks them in reverse, so last-child-is-topmost is
+already true in both.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-11-surface-stacking-design.md` | design | D1–D9. `KindStack` modelled on `layoutCapsuleChild`; measures as the **max** of its children where a column sums, honouring an explicit `Height` to avoid the disagreement the `KindCapsule` case documents; scrim as an ordinary `FillScrim` child rather than a property; bilinear background sampling shared with the blur design. The approved consumers are the control-centre media card and the planned template panel. |
+| `2026-09-11-surface-stacking.md` | plan | Six tasks. Task 1 is end-to-end by necessity: `kindcoverage_test.go` fails the package for a kind that is not both measurable and paintable, so the kind cannot land half-built. Paint needs **one line** — `KindStack` joins the existing `KindColumn, KindDropZone, KindSegmented` case, because paint already walks children forward and `Hit` already walks them in reverse. Task 2 pins topmost-wins hit testing so a later refactor cannot silently break it. Task 4 consumes the blur merge's bilinear image compositor. Task 5 is the real media-card consumer gate; the template panel is the second approved consumer. |
+| `2026-09-16-surface-stacking-completion-handover.md` | completion-handover | Completion snapshot for the six-task stacking plan. The `KindStack` media-card consumer, blur-default persistence, and bare-metal Niri observation landed in merge `07c8544`; `sysc-307` is closed. |
+
+## Media service, widget and page
+
+The one feature slice of the parity tranche, and the design `sysc-156` says it
+requires. Follows `2026-09-06-connectivity-and-media-prior-art.md` rather than
+repeating it.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-11-media-service-design.md` | design | D1–D11. MPRIS service as a peer of `audio.go`; hand-rolled on `godbus/dbus/v5` because no binding covers discovery — `leberKleber/go-mpris` is a client but has none and is stale since 2022, `go-music-players/mpris` is a server library — which satisfies AGENTS.md's rung order rather than bypassing it. Discovery via `NameOwnerChanged`, explicit active-player rules, art off the paint path, position interpolation in the service on the prior art's eight-consumer argument. Bar widget is `media`, verified free against `knownItems`. Re-slices `sysc-156` into service, widget and page so the service stops depending on the control-centre spine. |
+| `2026-09-11-media-service.md` | plan | Ten TDD tasks against a `bus` seam and a fake bus — never a real session bus. Service skeleton and dependency (`godbus/dbus/v5 v5.2.2`, verified present in the local module cache so `GOPROXY=off` resolves); discovery; deterministic active-player selection; metadata decode where every field is a checked assertion and `file://` art only; position interpolated in the service with an injected clock and no timer; commands that fail quietly and re-select; registry ownership with a consumer-counted lifetime and deliberately **no** OSD relay; the `media` widget with a test that fails if a player picker appears in it; the page, left light because it waits on `sysc-253`; then the tracker split. |
+
+## Media page and bar parity
+
+Owner-commissioned 2026-09-15 after the media service and bar widget landed
+(sysc-281, sysc-282) and the owner's review named what was missing for full
+functionality and Noctalia v4/DMS parity: the CC page and Home summary
+(sysc-156), the bar's state-swapped glyph and scrolling title (sysc-284), and
+the D3 configuration surface (sysc-283).
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-15-media-page-design.md` | design | D1–D12. One shared CC body over cached media state; three ladder-rung cards; bounded rounded art on a third worker with the read timeout D11.2 mandates and a negative cache; a marquee text cell behind one render primitive and a new linear sweep animator mode; state-swapped bar glyph; `Configure(preferred, blacklist)` with the most-recently-playing middle rule; lease lifecycle hooks beside the Bluetooth pair; live Niri gate with two measured tunables. |
+| `2026-09-15-media-page.md` | plan | Eight tasks (0–7): docs land on `main` first, service configuration, four transport glyphs via the two-list TTF procedure, marquee render/animator/bar wiring, art worker, the page, Home tile + IPC route, then gates, tracker closes and live evidence. Carries the no `-race`/`go test ./...` constraint and the fake-bus rule forward from the service slice. |
+
+## Milestone 5: notifications and system tray
+
+Shell presentation is on `main`. The services this milestone consumes are tagged candidates in their
+own repositories (`sysc-notify v0.1.0-rc.2`, `sysc-tray v0.1.0-rc.1`); those tags are full daemons.
+Their default branch `main` is still the original docs-only commit. The live matrix is `sysc-97`.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-08-30-notifications-and-tray-prior-art.md` | assessment | Noctalia, DMS, `sysc-notify`, and `sysc-tray` inventory. |
+| `2026-08-30-notifications-and-tray-research.md` | research | Decisions D1–D14. |
+| `2026-08-30-notifications-foundation-design.md` | design | Tranche 5A notification presentation. |
+| `2026-08-30-notifications-foundation.md` | plan | Tranche 5A, 10 tasks. |
+| `2026-08-30-sysc-notify-persistence-design.md` | service design | Persistence addendum owned by `sysc-notify`. |
+| `2026-08-30-tray-foundation-design.md` | design | Tranche 5B tray presentation. |
+| `2026-08-30-tray-foundation.md` | plan | Tranche 5B, 9 tasks. |
+| `2026-08-30-notifications-and-tray-audit-handover.md` | audit-handover | Commissions the cross-repository design and plan audit for Tranches 5A and 5B. |
+| `2026-08-30-notifications-and-tray-audit-report.md` | audit-report | Redesign required for both tranches; records service-contract, lifetime, release, persistence, and menu blockers. |
+| `2026-08-31-notifications-and-tray-integration-design.md` | design | Corrected cross-repository ownership, parity, shared M3/M4 primitives, limits, release order, and gates. |
+| `2026-09-02-milestone-5-completion-handover.md` | completion-handover | Snapshot at `2604d77`. Leave as written. Live remainder is `sysc-97`. |
+| `2026-09-01-milestone-5-shell-prerequisites.md` | plan | `AuxUpdate` and process-wide interactive-root ownership required before 5A. |
+| `2026-09-03-notification-centre-design.md` | design | Post-5A first-party centre. DMS 1.5.3 popout + toast chrome (D1–D17). Amends D10. Clipping defect is D17. |
+| `2026-09-03-notification-centre.md` | plan | TDD: unclip toasts, bar bell, `PanelNotifications`, Current/History, header commands (`sysc-150`), DMS toast chrome. |
+| `/home/nomadx/.config/superpowers/worktrees/sysc-notify/redesign/v0.1/docs/plans/2026-08-31-sysc-notify-v0.1.md` | service plan | Executable notify service and candidate/stable release gates. |
+| `/home/nomadx/.config/superpowers/worktrees/sysc-tray/redesign/v0.1/docs/plans/2026-08-31-sysc-tray-v0.1.md` | service plan | Executable tray service and candidate/stable release gates. |
+
+Original source worktree: `/home/nomadx/.config/superpowers/worktrees/sysc-shell/milestone/notifications-tray`.
+Redesign worktree: `/home/nomadx/.config/superpowers/worktrees/sysc-shell/redesign/milestone-5`.
+
+## Milestone 6: external widget and plugin host
+
+Milestone 6 hosts trusted external processes and ships five reference plugins. Progress lives in bd.
+Implementation is on `milestone/plugin-host` (main already merged into it) and is expected on `main`
+from the session that holds that branch. Do not start a second M6 branch.
+
+| Document | Kind | Purpose |
+|---|---|---|
+| `2026-09-01-milestone-6-plugin-host-design.md` | design | Process model, protocol, UI vocabulary, manager, limits, reference suite, and tranche boundaries. |
+| `2026-09-01-milestone-6a-plugin-host-timer.md` | plan | Host kernel, local manager, bounded draft protocol, and Timer vertical slice. |
+| `2026-09-01-milestone-6b-world-clock.md` | plan | Revisioned patches, bounded scheduling, lists, drag/reorder, and World Clock. |
+| `2026-09-01-milestone-6c-notes.md` | plan | Multiline retained editing, safe note storage, autosave, and external reconciliation. |
+| `2026-09-01-milestone-6d-weather.md` | plan | Shared Open-Meteo client, structured tooltips, Weather settings, and forecast panel. |
+| `2026-09-01-milestone-6e-screen-recorder.md` | plan | Recorder configuration, exact process ownership, replay buffer, context, and live gate. |
+| `2026-09-01-milestone-6e-recorder-handover.md` | completion-handover | Automated PluginRecorderGate output and live GSR 6.0.1 observations on the laptop. |
+| `2026-09-02-recorder-panel-design.md` | design | Composite camera pill, sysmon-placed panel, full schema on the same store as Settings. |
+| `2026-09-02-recorder-panel.md` | plan | Glyphs, bar pill, panel header, host-composed settings, command wiring, live Niri check. |
+| `2026-09-02-recorder-panel-handover.md` | completion-handover | Recorder panel live gate on the laptop: pill, record/stop/replay, hide_inactive, panel layout failure. |
+| `2026-09-01-milestone-6f-protocol-qualification.md` | plan | Protocol v1 fixtures, abuse and recovery gates, packaging, live qualification, and handoff. |
+
+## Plugin wire minors (post-M6 protocol)
+
+Additive wire vocabulary after protocol v1 shipped. Minor 2 (fills, radius, bold, size tiers,
+disabled, alignment) and minor 3 (gauge) were planned and executed from sysc-plugins documents;
+minor 4 (tooltips, shapes, values, absent, graph, separator) likewise. This section registers
+sysc-shell-side documents for the minors.
+
+| Document | Kind | Purpose |
+|---|---|---|
+| `2026-09-21-wire-minor-5-presentation-design.md` | design | Owner-approved 2026-09-21. Design A of the KDE Connect modern-panel infrastructure: an `image` kind decoded by the host through a `FileResolver` + `icons.Worker`, container `stroke`/`stroke_fill` on row/column/button, explicit non-interactive children on `button`, and the `send` glyph. Zero new rendering — every primitive maps onto an existing painter. Records D1–D10, including the strict-decode lockstep consequence. |
+| `2026-09-21-panel-capabilities-design.md` | design | Owner-approved 2026-09-21. Design B of the KDE Connect modern-panel infrastructure: `panel.resize` and `view.focus` host calls under `CapPanels`. Resize updates the singular `hostedView`, re-lays-out the retained tree, and rides a size field on the existing `AuxUpdate` path (`layer.SetSize` + commit, configure completes it — the first live layer resize). Focus matches the stamped `plugin:<view>:<node>` action among the panel's focusables and calls `setFocus`; no Wayland work, the panel already holds `keyboardExclusive`. Records D1–D9, including reply-means-requested for the async configure round-trip. |
+| `2026-09-21-declarative-value-animation-design.md` | design | Owner-approved 2026-09-21. Design C of the KDE Connect modern-panel infrastructure: an opt-in `animate` flag on `progress`/`gauge` (protocol minor 6) with one new `animProgress` animator channel. The plugin declares targets per revision; a shared resolve walk (the `resolveMediaMotionLocked` marquee shape) aims `Target(key, animProgress, value)` and writes the interpolated value back before paint, `animateSurface` scheduling frames until settled, reduced motion collapsing to the target. `ui.Animated` tracks the flagged nodes so `ValidateKeys` enforces the key rule. Records D1–D7. |
+
+## Plugin visual polish (post-M6 chrome)
+
+Secondary to Milestone 6. Two tranches: prior-art IA, then Hallmark voices. Do not
+execute while `sysc-66` is open. Not QML/Luau compatibility.
+
+| Document | Kind | Purpose |
+|---|---|---|
+| `2026-09-02-plugin-visual-polish-research.md` | research | Noctalia official plugins + DMS PluginComponent/BasePill vs Timer, World Clock, manager. |
+| `2026-09-02-plugin-visual-polish-audit-report.md` | audit-report | Hallmark audit of plugin trees and host paint. 2 critical · 6 major · 2 minor. |
+| `2026-09-02-plugin-visual-polish-design.md` | design | D1–D13. Host chrome + trees. Approved 2026-09-02. |
+| `2026-09-02-plugin-visual-polish.md` | plan | T1 six tasks (`sysc-127`), T2 three tasks (`sysc-128`). Blocked on `sysc-66`. |
+
+## Milestone 7: shell breadth
+
+Not designed as a whole. Launcher v1 and the wallpaper picker have designs.
+Remaining M7 clusters (clipboard, session adapters, control center, desktop
+widgets) are still unordered.
+
+| Document | Kind | State |
+|---|---|---|
+| 2026-09-15-clipboard-history.md | plan | Executable two-repository TDD plan: initialize and release sysc-clipboard, pin its public client, add the default bar item, add the 720x560 panel, run automated gates, and qualify the live Niri path. |
+| 2026-09-15-clipboard-history-completion-handover.md | completion-handover | Implementation, automated-gate, and live-Niri snapshot for the sysc-clipboard daemon and sysc-shell presenter. |
+| `2026-09-05-running-apps-pill-prior-art.md` | assessment | DMS RunningApps vs Dock vs FocusedApp; Noctalia Taskbar vs Dock vs ActiveWindow. Bar pill maps to RunningApps chrome; Niri windows are the model. `.desktop` Actions= are the app menu (Steam is not special; Spotify on this machine ships none). |
+| `2026-09-05-running-apps-pill-design.md` | design | Owner-approved 2026-09-05. D1–D15. D8/D11: shell-owned XDG identity and niri spawn; launcher widget is optional. Audit amendments: focus_timestamp `{secs,nanos}`, D6 drops sticky last-focused. |
+| `2026-09-05-running-apps-pill.md` | plan | Ten TDD tasks after audit: niri focus fields (`{secs,nanos}` + `WindowFocusChanged`), Action IPC, grouping, shell desktop-entry lookup (not sysc-launch), focus-or-cycle, menu rows, config, capsule, clicks/menu host, live Niri gate. |
+| `2026-09-05-running-apps-pill-audit-report.md` | audit-report | Plan audit 2026-09-05. Findings 1–8 applied to the design and plan. |
+| `2026-09-06-running-apps-pill-audit-handover.md` | audit-handover | Post-implementation audit of the 2026-09-05 pill session (D1–D15, prior art, owner live feedback, uncommitted sysc-181). Report: `2026-09-06-running-apps-pill-audit-report.md`. Beads `sysc-189`. |
+| `2026-09-01-launcher-prior-art.md` | assessment | Noctalia 5 list + first-class DMS DankLauncherV2 (this machine: full/compact) + Go reuse. §6/§9 superseded 2026-09-01: Elephant is first-class prior art, GPL-3 not a constraint (owner decision). No live grim in-tree. |
+| `2026-09-01-milestone-7-launcher-design-handover.md` | execution-handover | Commissions the launcher design and implementation plan. Do not write product code from it. |
+| `2026-09-01-launcher-design.md` | design | M7 launcher v1: Noctalia list chrome 560×500, fzf + Elephant-weighted scoring, ported usage store, pinned desktopentry, Niri argv spawn, `/` prefix registry, glyph icons behind an Icon seam. 16 numbered decisions. |
+| `2026-09-01-launcher.md` | plan | 13 tasks: Task 0 reconciliation, pinned deps, TDD slices for exclusions/exec/scoring/history/prefix/service/spawn, panel projection, IPC + Super+Space bind, owner-deferrable live Niri gate. |
+| `2026-09-02-sysc-launch-extraction-design.md` | design | Owner-approved boundary for history-preserving extraction into `github.com/Nomadcxx/sysc-launch`, a presentation-neutral library plus diagnostic CLI. |
+| `2026-09-02-sysc-launch-extraction.md` | plan | Nine-task history-preserving extraction, public API and CLI, local two-module gate, v0.1.0 release, and immutable shell pin. |
+| `2026-09-03-wallpaper-design.md` | design | M7 wallpaper picker (`sysc-146`): noctalia-gslapper chrome + native virtualized grid, gSlapper-first with awww/swaybg static fallback, owned per-connector sockets, Restore exception. Overrules the roadmap socket-client-only line. |
+| `2026-09-03-wallpaper.md` | plan | 14 tasks (`sysc-149`): assignment store, IPC, argv, config, library, service, panel chrome, apply/restore, startup reconcile, live Niri gate. Audit pins applied 2026-09-03. |
+| `2026-09-03-wallpaper-audit.md` | audit-report | Pre-implementation audit. Accepted: bd claim, All token, `SplitN`, `-r`, `cfgHook`, spawn stub. Dirty `main` and AGENTS.md output line left as ops, not plan text. |
+| `2026-09-04-wallpaper-execution-handover.md` | execution-handover | Commissions implementing `sysc-149`. Session context: chrome mix, gSlapper-first, Waytrogen sockets, fan-out All, Restore exception. Do not reopen those. |
+| `2026-09-26-wallpaper-p2-trio-completion-handover.md` | completion-handover | Snapshot for `sysc-460`/`sysc-461`/`sysc-462`: stale gslapper sockets, thumbnail final publish, empty-seed matugen wait; audit verdict, gates, live A/B proof, merge `b4301b3`, and the standing audit→backend→front→gap→test→verify→merge→push cycle. |
+| `2026-09-05-launcher-ui-handover.md` | execution-handover | Commissions the launcher UI audit. Three diagnosed defects first: the 50-result cap in sysc-launch that ends the browse list in the E's, missing client-side key repeat, and frecency judged only after the cap is lifted. Then the chrome, which has never had a design pass. |
+| `2026-09-03-control-center-design.md` | design | Control centre (`sysc-158`): `PanelControlCenter` 700x564, 56 px icon rail plus one scrollable body reusing the shipped `PanelHost.section` seam (D1-D12). Its own UI, sharing services with the dedicated panels and embedding none of their trees. Seven functional pages; Media, Network and Bluetooth disabled in place. Adds sixteen Material ligatures. |
+| `2026-09-10-control-center-dashboard-correction-design.md` | design | Owner-approved Home and attached-chrome correction for `sysc-154`: account image with fallback, separated quick-access pills, shipped radial resource gauges, correct transparent fillet margins, antialiased Noctalia-shaped joints, wordmark anchoring, focus, reveal, and reduced motion. |
+| `2026-09-11-control-center-dashboard-correction.md` | plan | Six focused correction tasks for `sysc-154`: rebase, circular account image through the shipped worker, independent quick controls, radial resources, truthful opaque regions, antialiased joints, existing-animator reveal/focus, capped checks, and the scale-1.25 laptop gate. |
+| `2026-09-07-notification-centre-polish-design.md` | design | Notification centre visual pass (`sysc-151`, `sysc-153`): Noctalia clone target for centre layout only. Three-level surface ladder, headline header with five circular buttons, one segmented filter row replacing tabs plus chips, merged list with live pinned, per-card remove, concave bar fillets. D1-D14. Card internals and toast chrome explicitly unchanged; does not amend the 2026-09-03 design. |
+| `2026-09-07-notification-centre-polish.md` | plan | 17 tasks across three slices (`sysc-153`, `sysc-198`, `sysc-199`): history.remove and the rc.3 pin; then the shared chrome primitives (icon subset, PinEnd, icon tone, concave fillet); then the centre tree. Records that AGENTS.md's `-race` full-tree gate is unrunnable here and gives the per-package substitute. |
+| `2026-09-03-control-center.md` | plan | Fourteen slices for `sysc-154`: the `AttachedMask` concave primitive, seventeen ligatures, panel identity and flush bar-centre placement, bar trigger, IPC section addressing, rail and page dispatch, the off-owner `scheduleControl` seam, the caffeine idle inhibit released on `Registry.Close`, seven pages, the daily forecast the wire layer already decodes, focus and reveal, then the live Niri matrix. TDD waived: one focused check per slice. |
+| `2026-09-07-audio-panel.md` | plan | Nine tasks: attached-mask primitive with concave top corners (`sysc-154` gains the dep), four Material ligatures (mic/mic_off/graphic_eq/headphones), `pw-dump` enumeration service with cubic volume and `SetDefault`, fused wing-tip panel chrome with trigger-centred `AnchorX`, Volumes/Devices tabs with off-owner `scheduleControl` writes, volume bar widget, density verification and live Niri gate. |
+| `2026-09-07-audio-panel-completion-handover.md` | completion-handover | Snapshot at `18470ab`: gate output, audit verdict (no blocking defects; four low deviations recorded), live IPC open/close and cubic-volume reconciliation. Pointer-driven matrix items owner-verified. |
+| `2026-09-08-live-shell-correction-design.md` | design | Owner-approved correction pass: seamless themed mark, functional responsive audio, notification containment/bell, four sysmon gauges plus processes, weather, and far-left launcher. |
+| `2026-09-08-live-shell-correction.md` | plan | Eight lean slices implementing and live-testing the approved correction across the existing shell owners and `sysc-metrics`. |
+| `2026-09-11-shell-surface-polish-execution-handover.md` | execution-handover | Commissions the accepted monitor table's final visual pass: hidden process scrollbar, antialiased rounded chrome, restrained theme-derived button gradients, truthful attached-panel transparency, and one bar/panel root colour. Uses `sysc-121` and `sysc-54`. |
+| `2026-09-06-connectivity-and-media-prior-art.md` | assessment | Noctalia and DMS division of service, bar widget and page for network, bluetooth and media (`sysc-155`/`156`/`157`). The service is a peer of the shell, not part of the control centre; the standalone widget carries no device picker; `network` is already bound to the throughput metric. |
+| `2026-09-11-network-panel-design.md` | design | `PanelNetwork` (`sysc-157`): Wi-Fi and Ethernet tabs on one 460x560 surface, Direction B status-first composition, event-driven NetworkManager service over pinned `Wifx/gonetworkmanager/v2 v2.2.0` with only the secret export hand-written on `godbus/v5`, single-slot credential prompts, `wifi` bar widget, masked password field, nine added Material glyphs. D1-D18. Three slices; the `nm-applet` collision is the open risk. |
+| `2026-09-11-network-panel.md` | plan | Thirteen TDD tasks in three slices for `sysc-157`: verify the cached dependency and fix the tracker, state types and signal bands, pushed service with lease lifecycle, backend and pin, nine glyphs and the `wifi` widget, panel identity and bar trigger, status-first header, tabs and access-point list, off-owner writes, masked fields, single-slot credential export, password card, live gate. Records the `GOPROXY=off` resolution trap and that the commit hook rejects the substring `agent`. |
+| `2026-09-13-network-panel-execution-handover.md` | execution-handover | Continue `sysc-157` from branch `feature/network-panel` at `cfe692e`: Tasks 1 to 9 committed, Task 10 dirty in three credential files, then rebase onto current main before the password card and live Niri gate. Records the font-inventory merge rule, credential lifetime invariants, `nm-applet` collision, `sysc-254`, and the unresolved Down/Up figures. |
+| `2026-09-13-panel-list-row-shape-design.md` | design | Wi-Fi access-point rows opt into `ShapeSmall` for a slightly rounded rectangular field. The global button default, surrounding card, tabs, header well, content layout, and interaction behaviour stay unchanged. Future panel lists adopt the role at their construction site when their design calls for it. |
+| `2026-09-14-panel-list-row-inset-design.md` | design | AP rows keep `ShapeSmall` and add density-aware `ButtonPadding` so leading and trailing glyphs sit inside the surface. A reusable `panelListRow` constructor waits for a second matching panel consumer. |
+| `2026-09-13-bluetooth-panel-design.md` | design | `sysc-155`: one Registry-owned, signal-driven BlueZ service over `godbus/v5`; full `KeyboardDisplay` pairing and authorization; `bluetooth` bar widget; standalone panel and control-centre page sharing one body; explicit scan, connect, trust, and Forget controls. One-adapter ceiling and Blueman default-agent collision recorded. |
+| `2026-09-13-bluetooth-panel.md` | plan | `sysc-155`: preflight plus ten implementation slices covering the BlueZ reducer, single-slot pairing, Registry relay, glyphs/widget, shared body, standalone panel, and the mandatory functional control-centre page. The issue cannot close on standalone work alone. |
+| `2026-09-14-bluetooth-panel-execution-handover.md` | execution-handover | Commissions `sysc-155` after `sysc-157` lands. Records the live network-worktree collision, one-service/shared-body boundary, complete pairing-agent invariants, and the control-centre page as a required consumer and completion gate. |
+| `2026-09-13-bluetooth-panel-completion-handover.md` | completion-handover | Snapshot of `sysc-155` implementation, automated gates, live Niri/BlueZ observations, and hardware-limited device-action coverage. |
+| `2026-09-13-panel-list-row-shape.md` | plan | One TDD code change for `sysc-157`: assert and set `ShapeSmall` on Wi-Fi access-point buttons, run focused and repository gates, then deploy the exact build to the laptop for visual confirmation without toggling Wi-Fi. |
+| `2026-09-14-panel-list-row-inset.md` | plan | TDD update to assert both AP-row edge insets, apply `ButtonPadding`, run repository gates, and deploy the exact build for laptop visual confirmation. |
+| `2026-09-15-weather-panel-design.md` | design | Owner-directed 2026-09-15 after the `sysc-277` audit. D1–D12: enriched Open-Meteo wire model (apparent, is_day, wind, humidity, UV, precipitation, root elevation/timezone), night glyphs in the custom weather font, one condition-word table and one glyph mapping shared by bar, panel and control-centre page, a structured bar tooltip, `PanelWeather` 460×560 on `panel:weather`, the three-state stale/error rule everywhere, a config location label, and Hourly deferred. |
+| `2026-09-15-weather-panel.md` | plan | Ten TDD tasks for `sysc-277` in `.worktrees/feature/weather-panel` off `41eaf68`: wire model, Reading passthrough, night glyphs and vocabulary, config location, bar widget, panel identity, hero and details, forecast list, cc page restyle, gates and handover. |
+| `2026-09-15-weather-panel-execution-handover.md` | execution-handover | Live. Ten commits on `feature/weather-panel` (`165f955..bd760f2`) executing the plan: enriched wire model, one weather vocabulary with night and detail glyphs, the upgraded bar widget, `PanelWeather`, the day list, and the cc page restyle. Commissions the audit **before** the owner-approved laptop live gate, lists the five points the audit must confirm beyond the spec walk, and records the three amendments the execution forced. The live gate needs the owner's coordinates for the laptop's `weather` config block. |
+| `2026-09-15-weather-parity-research.md` | assessment | Owner-directed 2026-09-15: measure the weather reference in the actual codebases, not the screenshot. Identifies the screenshot panel as Noctalia v5's control-centre weather tab; measures v5 (`5.0.0.r4969`) and DMS (`892b8ae`, the running `v1.6.1`) with file:line evidence. Answers the gap plan's questions: hourly is a seven-row list (168 hours requested), the daily list excludes today and orders High/Low, the hero glyph is ≈2.2 × controlHeightLg, glyphs are single-tone role-selected (Primary day / Secondary night), and geocoding is v5's own backend — substituted with Open-Meteo's per owner decision. |
+| `2026-09-15-weather-parity-audit-handover.md` | audit-handover | Live. Commissions the pre-merge audit of `feature/weather-panel` (19 commits: the weather slice plus the sysc-286 gap slices). Seven points the audit must confirm beyond the spec walk, four recorded deviations to rule on, the exact gate set, the do-not list (no merge, no deploy, no AI attribution), and the verdict format. Findings file as `discovered-from:sysc-277`. |
+| `2026-09-16-effect-rendering-design.md` | design | Owner-approved animated weather design. A host-owned procedural effect layer composes through `KindStack`, reuses the surface animator and frame scheduler, clips to semantic card shapes, and reserves a negotiated declarative capability for future supported plugins without accepting shader code or independent render loops. |
+| `2026-09-16-effect-rendering.md` | plan | TDD implementation plan for the host-owned effect layer: retained effect node, deterministic weather raster program, stack clipping, surface animation lifecycle, shared Weather/Control Centre consumers, plugin v1 compatibility guard, and the laptop Niri gate. |
+| `2026-09-16-weather-hero-composition-design.md` | design | Owner-approved correction to the first effects pass: one dominant animated hero, a four-day forecast strip, removal of the detail table and hourly tabs, readable celestial/cloud/precipitation forms, and explicit weather-surface invalidation. |
+| `2026-09-17-weather-hero-composition.md` | plan | Test-first implementation plan for the approved hero correction: compact standalone and Control Centre composition, readable celestial/cloud/precipitation raster forms, visible-surface invalidation proof, affected gates, and laptop completion handoff. |
+| `2026-09-18-weather-animation-polish-execution-handover.md` | execution-handover | Commission for `sysc-318`: design-first reference research and a future-safe visual/motion pass over the landed weather hero, with explicit Pixel-inspired hierarchy, aspect-ratio, performance, licensing, and laptop gates. |
+| `2026-09-15-clipboard-history-design.md` | design | Owner-approved standalone `sysc-clipboard` daemon and shell presenter. Records the data-control fallback, encrypted byte-faithful history, versioned same-UID socket, restore/pin/delete/clear/thumbnail protocol, and bar/panel parity target. |
+
+## Panel backdrop blur (Milestone 8 evidence)
+
+Owner-approved approach 2026-09-11: visual parity with Noctalia v4 as the
+target, rendering before tokens. Carries the measured answer `sysc-202` asked
+for — a blurred panel backdrop costs 0.54–4.6 ms on `wl_shm`, inside one 60 Hz
+frame, so blurred panels are **not** the named failing case that would justify
+EGL/OpenGL ES. Epic `sysc-202`. The screencopy readback itself is unmeasured
+and is the first implementation task.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-11-panel-backdrop-blur-design.md` | design | D1–D16. Static per-open `zwlr_screencopy_manager_v1` region capture, CPU box blur at quarter resolution with no upsample pass, composited under `rootFill`; lifts the `OpacityMin = 80` floor that existed only because the shell could not blur. Amends the architecture document's rendering section and open gate. Panels only — not the bar, toasts, or OSD. |
+| `2026-09-11-panel-backdrop-blur.md` | plan | Ten TDD tasks: vendor and generate the screencopy binding; bind it as an **optional** global (added to `interfaceMaximum`, deliberately absent from `requiredSingletons`, which is what makes a compositor without it degrade rather than fail); the pure blur kernel; a bilinear path beside `paintImage` that leaves the icon contract alone; `Style.Backdrop` composited beneath `rootFill`; the region capture; capture at the top of `openAux` before any surface exists; the opacity floor; config and settings; the architecture amendment and live gate. Two explicit stop-and-re-review gates on measured cost — the blur kernel against the predicted 4.6 ms, and the unmeasured screencopy readback. |
+
+## Milestone 10: shell surface polish
+
+Owner-approved 2026-09-16 as a seven-design follow-up after the
+surface-stacking merge. Epic `sysc-309`; the four execution owners are
+`sysc-314`–`sysc-317`.
+
+| Document | Kind | Purpose |
+|---|---|---|
+| `2026-09-16-shell-polish-design.md` | design | Umbrella M10 design: slice boundaries, shared ownership, sequencing, and the integration/exit gate. |
+| `2026-09-25-m10-integration-exit-gate.md` | plan | Cross-slice review, repository and live Niri gates, truthful omissions, and the completion handover for `sysc-317`/`sysc-309`. |
+| `2026-09-16-metrics-control-centre-gpu-design.md` | design | Four truthful Control Centre gauges and one shared GPU snapshot for the bar, System Monitor, and Control Centre. Existing metrics ownership remains under `sysc-121`. |
+| `2026-09-17-metrics-control-centre-gpu.md` | plan | Exact-GPU-history qualification first, then service-owned per-device history, deterministic Home/bar/System Monitor projection, lease and lock lifecycle, explicit 22px geometry gate, and the restricted DP-1 slice gate. Keeps `sysc-metrics@v0.4.0` unless a published upstream release is required. |
+| `2026-09-16-bar-weather-launcher-workspaces-design.md` | design | Weather icon/value chrome, the supplied nested-gates launcher PNG, and number-free Niri workspace shapes. Existing weather and launcher owners remain under `sysc-277`/`sysc-293` and `sysc-82`. |
+| `2026-09-19-launcher-mark.md` | plan | Executes D2 of the bar/weather/launcher/workspaces design: embed the supplied nested-gates PNG as a render asset and paint it as the bar launcher's image node. |
+| `2026-09-25-bar-weather-row.md` | plan | Qualifies D1’s compact weather icon/value row while preserving the existing service, unavailable states, tooltip, and panel action. |
+| `2026-09-19-workspace-pills.md` | plan | Executes D3 of the bar/weather/launcher/workspaces design as `sysc-410`: carry niri `is_urgent` through the wire and projection, then paint the workspace row as shape-only pills — focused larger flexible element, occupied/urgent/empty distinguished by fill, no painted number anywhere in the projected tree. |
+| `2026-09-19-workspace-pill-art-commission.md` | design | Art commission for the `sysc-410` pill paint: the first paint reads as a toggle bar (2×-wide rounded rectangle beside rounded squares), so every pill moves to one stadium shape family — dots for occupied/empty, a same-height 2×-wide pill for focus, urgency as a colour treatment — and each pill becomes a button that focuses its workspace through the platform Niri connection; grounded in the Waybar state model, i3/swaybar urgent colours, dash/dock dots, page-dot proportions, and Noctalia geometry (reference only). |
+| `2026-09-16-centre-clock-media-wordmark-design.md` | design | One time/date composition, optional media at its right edge, and a fixed-centre SYSC wordmark. Executed by `sysc-314`. |
+| `2026-09-17-centre-clock-media-wordmark.md` | plan | Executed by `sysc-314` at `e7d6c55`; completion evidence is in the handover below. |
+| `2026-09-17-centre-clock-media-wordmark-completion-handover.md` | completion-handover | Snapshot at `e7d6c55`: affected-package gates pass, the DP-1 bar composition was checked at 3440×1440 scale 1.0, and the repository-wide race/full-suite forms remain machine-blocked. |
+| `2026-09-25-centre-pill-design.md` | design | Owner-approved 2026-09-25 (option A, "hairline split"). Amends the 2026-09-16 centre design's D1/D2: a group holding the wordmark becomes one outlined pill (mark, hairline, time in the new `RoleFigure`, subtle date) that is the control-centre button and the anchored centre; clocks in it lose the width floor. Adds `Node.PaddingX`, `FillOutlineVariant` as a stroke colour, and a named `Height` on row separators. Fixes variable-font weights: `FontMap` sets `wght` per request, with a `Font` copy per instance because the go-text shaper caches per `*font.Font`. |
+| `2026-09-25-bar-surface-and-attach-design.md` | design | Owner-directed 2026-09-25 after the DMS/Noctalia/Caelestia bar survey. D1–D11: `bar.style` frosted (default) / solid / islands, with blur from the compositor through `ext-background-effect-v1` (Niri 26.04+; capability mask is `flags&1` despite the 1.45 XML's `0`), solid fallback without it; `bar.frost-opacity` and `bar.pill-opacity`; `bar.shape` attached (default) / floating, with concave end fillets and a click-through overhang past the exclusive zone; every panel attaches except Settings, the launcher and the clipboard, which float (owner amendment the same day). Records why attached panels never showed: `filletMargin` capped joints at `Padding − BarGap` = 4 px, and the launcher, wallpaper and clipboard never attached. Per-side joints, flush edge panels with screen-edge fillets, a 1 px joint overlap, no rim on attached panels, and panel blur moving to the compositor with screencopy as fallback. Segmented bar groups do not exist and stay out of scope. |
+| `2026-09-25-bar-surface-and-attach.md` | plan | Sixteen test-first tasks in five phases: the generated `backgroundeffect` binding, optional global, `Capabilities` callback and per-surface blur regions; `ui.BlurStrips` sharing the fillet and rounded-corner rules with the painter; config, settings and theme for the three styles; attached bar geometry (`SurfaceExtent`, `Overhang`) and end-fillet paint; placement for every panel, per-side joints, flush panels, joined ground and compositor panel blur; Niri documentation and the owner-run live gate. |
+| `2026-09-25-bar-surface-execution-handover.md` | execution-handover | Full handover of the 2026-09-25 session: branch and PR state (#13 tip needs resetting to `294c708`, #15 is the superset), the commit log, owner decisions in order, what shipped (centre pill, variable-font weights, Phase A) with file anchors, task-by-task guidance for Phases B–E that refines the plan (`WithCompositor` post-step, `Overhang` source, per-side joints replacing the 4 px `filletMargin`, placement changes), protocol and geometry facts, the reference-shell research record with file paths, the six-upgrade survey and deferred ideas, and container notes (blocked hosts, offscreen bar rendering, Inter fixtures, known container-only test failures). |
+| `2026-09-27-bar-surface-and-attach-completion-handover.md` | completion-handover | Phases A–E done on `bar-surface` (#16, replacing #15 after the branch was rewritten to drop tool attribution). Commit map, where each piece lives (`WithCompositor`, `config.Bar.BodyIn`, `Placement.Joints`, `render.CornerMask`, `AuxSpec.InputRects`), six deviations from the plan with reasons (one-pass body fill replacing `squareAttachedEdge`; 1 px overlap only under an opaque bar; attached panels ignore `panels.gap`), fixes found on the way, the automated gate with pre-existing failures checked against the base, and the laptop live gate: islands fixed, the rest passing, with the desktop and owner-judgement checks left in `sysc-595`. |
+| `assets/2026-09-25-centre-pill-design/` | design | The centre pill mockups as standalone HTML: five options (A hairline split, chosen), the diagnosis of the old centre, and the shell's own offscreen render of A against the mock at the same scale. |
+| `assets/2026-09-25-bar-surface-and-attach-design/` | design | The bar survey mockups as standalone HTML: the six upgrades from DMS, Noctalia and Caelestia at sysc geometry, with a mix-and-match bar, opacity and blur sliders, the attached bar with an open control centre, the workspace track and the live centre island. |
+| `2026-09-16-notifications-battery-urgency-design.md` | design | Theme-derived urgency treatment and a qualified, deduplicated battery-warning producer. Executed by `sysc-315`. |
+| `2026-09-17-notifications-battery-urgency-implementation.md` | plan | Service-first producer protocol qualification, capability-safe shell integration, hysteretic reducer, urgency roles, and focused cross-repository gates for `sysc-315`. |
+| `2026-09-16-owned-tray-termination-design.md` | design | Service-owned tray termination, identity validation, and shell acknowledgement after the real item delta. Executed by `sysc-316`. |
+| `2026-09-20-owned-tray-termination-plan.md` | plan | Two-phase execution for `sysc-316`: upstream `sysc-tray` terminate command, ownership record, and capability, then the shell Close row and delta acknowledgement. |
+| `2026-09-16-control-centre-network-design.md` | design | Enable the existing Network rail and reuse the NetworkManager-backed body and service under `sysc-157`, `sysc-254`, and `sysc-268`. |
+| `2026-09-25-control-centre-network-route.md` | plan | Qualifies the Control Centre Network route through the existing service, cached state, and `networkTree`, including the read-only Niri gate. |
+| `2026-09-17-metrics-control-centre-radial-design-execution-handover.md` | execution-handover | Design commission for the Home System composition: rejects the provisional 22px layout, fixes the gauge and GPU contracts, and requires a measured artifact package before implementation resumes. |
+| `assets/2026-09-17-metrics-control-centre-radial-design/` | design | Owner-approved radial design package (option B): four 40px rings in one row, value inside the ring, caption beneath, no card title. Measured against the real layout and font stack; records the card overflow on `main`, the guard test that cannot see it, and the fixed-size ring interior. |
+| `2026-09-17-metrics-control-centre-radial-design-completion-handover.md` | completion-handover | Design commission complete and owner-approved 2026-09-17: four 40px rings in one row, the three approved amendments, the measured overflow on `main`, the guard test that cannot see it, and the cross-surface reading contract. Implementation tracked as `sysc-335`. |
+| `2026-09-19-weather-hero-composition-amendment.md` | design | Owner-approved amendment and plan for `sysc-318`: measured 1.20 vs 1.82 hero aspects, six anchored defects, scene direction B with a static sky, an aspect-chosen stacked/split composition, and `EffectSpec.SceneBias`. Amends the centreline clause for the split case. |
+| `2026-09-17-metrics-control-centre-gpu-execution-handover.md` | execution-handover | Focused M10 planning session: governing GPU design, provisional local work, pinned reader and live hardware evidence, exact-PCI history blocker, and instructions for the next agent to write the executable plan. |
+| `2026-09-16-shell-polish-execution-handover.md` | execution-handover | Historical receiving-state commission for the M10 work. Leave unchanged; current state belongs in Beads and the completion handover. |
+| `2026-09-16-m10-shell-polish-execution-handover.md` | execution-handover | Current receiving handover for M10: commissions seven executable plans, preserves existing owners, qualifies notify/tray releases, and defines the integration and bare-metal completion gate. |
+
+## Milestones 7 remainder and 8: not yet designed
+
+| Milestone | Scope | Note |
+|---|---|---|
+| 7 (after launcher) | Clipboard, network/BT/MPRIS, control center, desktop widgets | Wallpaper has `2026-09-03-wallpaper-design.md`. Do not fold the rest into the launcher slice. |
+| 8 | Rendering qualification | Blurred panels are measured and resolved in favour of `wl_shm` by `2026-09-11-panel-backdrop-blur-design.md`. The other named cases — animation frame time, image-heavy grids, CPU/power — still require evidence. |
+| — | **Template panel** | Owner-requested 2026-09-12, to follow the parity tranche. One shipped surface composing every primitive the shell owns, setting out what a default panel looks like. **Four committed documents already name it as a planned consumer** — the stacking design D5/D8/D9, the stacking plan's Global Constraints, Task 5 and Self-Review, and the parity plan's D4 coverage note — so those gates no longer revert a primitive for want of a production consumer. It also serves Milestone 6's undertaking to version the vocabulary "proven by built-in widgets", which nothing currently proves: `internal/ui` carries 22 kinds against `plugin/v1`'s 10. Not yet designed; this row exists so the forward references do not dangle. |
+
+## Milestone 9: user control of the shell
+
+Owner-approved 2026-09-15. A programme of five sub-projects — settings foundation, bar composition,
+bar geometry, surfaces and behaviour, and new subsystems — each taking its own design, plan, and
+implementation cycle. Sub-projects A, B, C and D are designed; A has an implementation plan. Roadmap: `../roadmap.md` Milestone 9.
+Clipboard history stays `sysc-205` and is not part of this milestone.
+
+| Document | Kind | State |
+|---|---|---|
+| `2026-09-15-settings-foundation-design.md` | design | Sub-project A, satisfying `sysc-204`. D1–D11: typed accessor entries replacing the `Get`/`Set` switch pair, entries carrying description and group, a plain grouped column that drops `KindVirtualList` because it is strictly uniform-stride, no cards, live apply debounced through `scheduleControl`, per-entry reset resolved by the writer's own rule (preset-relative for theme axes, `Default()`-relative elsewhere), the stale-draft reload defect closed in `PrepareConfig`, one full panel plus a control-centre shortcut riding the existing `panelSection` addressing, a validated hex field instead of a colour picker because `internal/ui` carries no colour type, `fontscan.SystemFonts` for a real font picker, and the five unreachable config domains exposed. **Supersedes D1–D4 of `2026-08-30-settings-osd-theme-catalog-design.md`** and settles the settings-composition question `2026-09-11-component-parity-design.md` left open. |
+| `2026-09-15-bar-composition-design.md` | design | Sub-project B, consuming A's schema and chrome. D1–D9: lane mutations as pure functions in `internal/config` called by both the pointer and keyboard paths; instance ids extended to built-in widgets **and groups**, minted lazily, which also fixes `eachItem` writing one widget's option to every widget of that type; typed options kept on `config.Item` so `resolveItem`'s per-id validation survives; full group editing with the one-level cap enforced at the drop and empty groups pruned; per-output lanes at **lane** granularity, because `applyBar` inherits or replaces a lane whole and no per-item override exists; `flattenItems` stops hiding the group wrapper so `consistentInstances` can see group ids; and the three `bar.items.*` string entries removed. Records that groups cannot be drop zones — `FindDropZone` tests a node before descending, so an outer lane always wins — and that `Bar.Handle` has no drag state, which is why editing lives in the settings surface. |
+| `2026-09-17-bar-composition.md` | plan | Live. Executes the bar composition design as `sysc-323`, fourteen test-first tasks. Builds **on `milestone/m9-settings-foundation`, not on `main`**, because the inspector needs entries synthesised at runtime over one `config.Item` — the thing A's typed accessors made expressible. Anchors re-verified against A's tip, and it corrects the design on one point: the loader *already* refuses an empty group and a nested group, so D5's two invariants have loader backing and the editor must refuse at the drop rather than lean on the load-time error. Settles the six unconfirmed ligatures by checking `materialIcons`: `add`, `close`, `delete`, `settings`, `chevron_left`, `chevron_right` are present; `drag_indicator`, `tune`, `more_vert`, `edit`, `call_split`, `link_off` and `workspaces` are not and must be cut in Task 0 before any chrome is written. Orders the string-entry retirement **last**, since those three strings are the only route to lane arrangement until the editor lands. Carries A's two transferable lessons: round-trip every mutation through `Write` and `Load`, and give every column a width. Records that two-output behaviour is unexercised on both machines in reach. |
+| `2026-09-17-m9-bar-composition-handover.md` | bar-composition-handover | Live. Hands over after sub-project B was implemented and run on the laptop. All fourteen tasks done on `milestone/m9-bar-composition`, which branched from A's tip and therefore carries **A, A's polish and B** in one branch. **Unmerged, deliberately**: `main` held 15 uncommitted files of the owner's metrics/GPU work and five paths collide, `panelhost.go` sharpest — the merge waits for that to land, and the owner's work is never to be stashed around it. Records the three defects that passed the full suite and were found only on the laptop — chips painting as empty pills, remove and group rendering 360px below the viewport, and drop resolution reading the horizontal axis after lanes became vertical, whose tests kept passing because the fixture was horizontal. Carries what B corrected in the design (lanes are vertical stacks; the default bar cannot fit one row and `internal/ui` has no wrapping row or horizontal scroll), the owner's open items (input field height at mini density, the editor still rough), and that **nothing from the session reached `bd`**. Names C1 (`sysc-321`) as the next plan, notes `bd ready` cannot be trusted for M9 while the epic `sysc-319` is open, and adds traps: the JSONL repair must splice **raw** lines, one package per `go test` invocation, `wtype` cannot reach a layer-shell panel, and the schema change is one-way. |
+| `2026-09-17-bar-geometry-design.md` | design | Sub-project C. D1–D6: the bar edge is configured, validated, and **ignored** — `applyGeometryRequests` composes `Top\|Left\|Right` inline while `supportedEdges` admits only `top`. Bottom is therefore plumbing, not rendering: the platform host already holds `policy config.Bar`, six placement branches already handle a bottom bar, `AttachEdge` already documents it, and the reload path already re-anchors a mapped surface. All four edges enter the model, with left/right gated on `sysc-314` because it and D3 both change `ui.ArrangeBar`; that function becomes axis-aware rather than forked, so its documented collision total order stays in one place. Takes ownership of `sysc-313` — overflow drops whole items in declaration order behind a visible indicator, never silent clipping, and never refusal at load, because plugin widgets come and go at runtime. Unifies the extent/reserve derivation currently duplicated between `OutputHost.surfaceHeight()` and `Theme.Geometry()`, making the exclusive zone configurable including zero. Auto-hide, floating margins, per-output geometry and multiple bars are out of scope, so the "gap inside the surface, zero layer margin" invariant stands. |
+| `2026-09-18-bar-edge-and-reserve.md` | plan | Live. Executes D1 and D6 of the bar geometry design as `sysc-321`, eight test-first tasks, merged to `main` 2026-09-19. Scope is the lower edge plus one derivation only: `applyGeometryRequests` composes its anchor from `h.policy.Edge` through pure `barAnchor`/`barSize` functions that are table-tested over all four edges without a compositor, and `Body`/`Extent`/`ExclusiveZone` become methods on `config.Bar` so `OutputHost.surfaceHeight()`, `Theme.Geometry()` and `Theme.Valid()` stop repeating one expression three times. The exclusive zone gains a `reserve` that may be stated as zero; it is a pointer because the zone is tri-state and a plain int cannot separate unset from zero, which is also what keeps `Write` from emitting one into a document that never asked. Touches `ui.ArrangeBar` not at all. **Corrects the design's live gate**: `niri msg -j layers` reports neither anchor nor exclusive zone on this Niri, so the gate was measured differentially from the focused tile's height plus `grim` screenshots. Answers the design's first open question — Niri **does** honour an exclusive zone of zero on a surface that still has a size, un-reserving without unmapping. Records two things as **not claimed**: live re-anchoring, because a configuration write alone left the bar in place until a restart, and two-output behaviour, untestable on either machine in reach. |
+| `2026-09-19-m9-overflow-and-tray-handover.md` | handover | Live. Hands over after C1 (`sysc-321`) merged and the overflow slice reached half-done. Three jobs in order: fix the tray, finish overflow, then the rest of M9. **The tray is not missing code** — `sysc-tray v0.1.0-rc.1` is a released dependency and a separate daemon the shell reaches over a presenter socket; on the laptop the binary was installed and had never been started, so a `sysc-tray.service` unit now exists and the watcher registers two items, but the bar still paints none. Names the two unverified candidates (the items may be `Passive`, which `arrangeTray` skips before anything else, or a protocol skew between the Sep 7 tray binary and the Sep 17 shell) and records that **why it works on the desktop was not established** — neither machine had a unit or a spawn-at-startup line, and the desktop's compositor was down so nothing could be inspected. Overflow lives on the unmerged `milestone/m9-bar-overflow`: whole-item dropping and elastic shrinking are green and live-gated, the **indicator chrome was never started** so `sysc-313` stays open, and the elastic sliver floor is untested. Records that `sysc-314` forked `ArrangeBar` after the design rejected forking it, so D3's premise is stale and the fork's resolution is undecided. Carries the confirmed traps — run the real commit hook rather than re-implementing it, "bottom" trips the substring rule, `niri msg -j layers` omits anchor and zone, there is no `tray` bar item — and three mistakes, two of which took the owner's bar down. |
+| `2026-09-19-bar-overflow.md` | plan | Live. Executes D4 and D5 of the bar geometry design as `sysc-313`, six test-first tasks. An item is placed whole or not at all; a section that cannot fit drops from the far end in declaration order and reports what it dropped, so silent mid-glyph clipping stops. **Deliberately excludes D3, the vertical axis**, because `sysc-314` forked `ArrangeBar` into `arrangeAnchoredWordmark` and `arrangeBarSections` after the design had rejected forking it, so D3's premise no longer holds and the fork's resolution is a separate decision. Overflow is unaffected by that: every placement in both paths funnels through one `placeSection`, thirteen call sites, so one change fixes both compositions. Settles that layout decides and the shell renders — `ArrangeBar` returns counts rather than synthesising an indicator node, following `arrangeTray`'s existing `trayArrangement` shape so this codebase keeps one pattern for overflow — and that the indicator's extent is reserved from a caller-supplied width, escaping the circularity of measuring a label whose text depends on how many items it hid. Stops short of painting the indicator chrome, which belongs to bar composition's surface. |
+| `2026-09-19-c2-vertical-axis-execution-handover.md` | execution-handover | Live. Commissions brainstorming the C2 plan (`sysc-322`, design decisions D2 and D3) and records why a plan cannot be written yet: `sysc-314` forked `ArrangeBar` after the design rejected forking it, so the fork's resolution — unify then generalise once (the recorded assessment, with the evidence that both paths share one skeleton and differ only in centre-interval computation), generalise each separately, or vertical only for the sections path — is the owner's and gates every task. Verified against the tree what the slice already has (platform anchor/size for all four edges, edge-neutral extent/zone derivation, the `supportedEdges` boolean gate as the remaining config work) and what it must answer: lane-to-edge mapping on vertical bars, the tray's horizontal-only arithmetic, the unused indicator reserve that couples this slice to `sysc-313`, and the vertical meaning of the anchored wordmark. Files the lower-edge body-gap defect as `sysc-419` (`bodyLocked` hardcodes the top edge, so a lower-edge bar paints its gap on the far side). Carries the prior learning that matters most here: B's drop-resolution defect whose tests kept passing because the fixture was horizontal, the overflow slice's `elastic()` capsule descent and its one deliberate partial grant, the commit-msg substring traps, the differential zone measurement, C1's unclaimed restart-based re-anchor, and the untestable two-output case. |
+| `2026-09-19-c2-vertical-axis-design.md` | design | C2 addendum, amending the bar geometry design for `sysc-322`. D7–D12, owner-approved in brainstorming: the fork `sysc-314` left in `ui.ArrangeBar` is **unified, then generalised once** — one skeleton whose only variant is the centre-interval computation, the collision total order back in one place, the truncating case and the anchored fallback surviving — with the axis transposing per D3 at the placement leaf and no coordinate-swap trick; lanes transpose **fixed, without mirroring** (left→top, centre→middle, right→lower on the side edges, matching C1's precedent); `bodyLocked` becomes edge-aware inside the slice, closing `sysc-419`; the tray **stacks** on vertical edges riding the right lane, `trayAvailableLocked` transposing and `arrangeTray`'s fit arithmetic already axis-neutral; the overflow indicator chrome stays with `sysc-313` immediately after C2, callers' zero reserves unchanged; and the anchored wordmark transposes to the vertical centre with before/above and after/below flanks. Records the vertical behaviour note that the elastic mechanism stays main-axis — wide titles are cross-clamped at measure and ellipsized by the painter, a gate question — and confirms panel placement on side edges in scope (`Placement.Margins` over `Output.H`, `AttachEdge`, the three paint functions). Live gate: left/right attempted locally by rotating DP-1, re-anchor gated around a restart claiming or re-recording C1's write-gap, the laptop pass at scale 1.25, `grim` screenshots answering capsule rounding, two-output recorded unclaimed. |
+| `2026-09-19-c2-vertical-axis.md` | plan | Nine test-first tasks for `sysc-322`, executing the C2 addendum's D7–D12 on `milestone/m9-c2-vertical-axis`. T1 unifies the fork under the twelve pinning tests **unchanged** and adds the missing fallback pin; T2 transposes to a main/cross axis through one Rect-building leaf, with vertical fixtures pinning the fixed lane transposition, the vertical total order, the D12 mark transposition and the cross-clamped title; T3 opens `supportedEdges` proven through the Write/Load round trip; T4 makes `bodyLocked` edge-aware with the per-edge body table, closing `sysc-419`; T5 transposes `trayAvailableLocked` onto the main axis so the tray stacks; T6 and T7 carry panel placement to side edges — `Margins`, `clampAxis`, the trigger coordinate, `panelSpec` anchors, the reveal slide axis, the squared attached column in `squareAttachedEdge`/`clearOutsideRoundedRect`, and `fillAttachFillets` deliberately drawing none on side edges pending the gate; T8 gates per-package and closes `sysc-419` in bd; T9 is the dev-machine live gate under DP-1 rotation with restart-based re-anchor claiming or re-recording C1's write-gap, and `grim` answering capsule rounding. The overflow chrome stays with `sysc-313` (D11); `sysc-322` closes only after the audit, laptop pass and merge in the implementation handover. |
+| `2026-09-19-c2-vertical-axis-implementation-handover.md` | implementation-handover | Live. Commissions a fresh agent to execute the C2 plan as `sysc-322` through a five-stage flow with stop conditions at each: audit the addendum and plan against the tree before any code (anchors, decision-to-task mapping, the D11 exclusion, bd state — disagreement stops the run), implement test-first in the worktree with **T1's absolute bar that the twelve pinning tests pass unchanged**, run the dev-machine live gate under DP-1 rotation with restart-based re-anchor, then the laptop gate over `ssh -p 7777 nomadx@192.168.0.64` — the shared machine at 1920x1080 scale 1.25 that caught B's clipping defects, backed-up binary and config restored afterwards, `sysc-tray.service` stacking verified, screenshots pulled over ssh with the session environment checked rather than assumed — and only then merge `milestone/m9-c2-vertical-axis` into `main` with a merge commit, close `sysc-322`, update the plan's register row, and push only on the owner's say-so. Carries the traps a fresh agent cannot infer, including that the commit hook rejects AI attribution outright — a co-author trailer fails it, verified 2026-09-19. |
+| `2026-09-17-surfaces-and-behaviour-design.md` | design | Sub-project D, supplying the configuration the settings foundation deliberately left unmodelled. D1–D7: the OSD's hide duration, size and permitted kinds become configuration — the manager already takes a hide parameter that `registry.go` always passes `0` and the constructor replaces with a constant, the same plumbed-but-unconfigured shape C found on the bar edge; OSD position stays in `Panels.OSD` rather than moving and breaking existing documents; notification settings are **presentation only**, because the shell connects as `RolePresenter` and retention, capacity, eviction and filters belong to `sysc-notify` — a boundary, not a deferral; do-not-disturb persists as a preference and never as a deadline, so the shell cannot start up silent with a timer it cannot explain; toast placement is a layout change rather than an anchor change, since that surface already spans all four output edges; the launcher exposes behaviour but never its DMS-measured chrome constants; and panels keep only the gap and padding they have, leaving Noctalia's ~47 placement keys to their own slice. |
+| `2026-09-17-settings-foundation.md` | plan | Thirteen TDD tasks for `sysc-320`. `Entry` splits into its own file with typed accessors; all 37 catalogue entries convert and the two switch statements are deleted, proven by the ten existing tests passing unmodified. Then the domain-coverage invariant that stops the five-of-twelve gap reopening, per-entry reset resolving by the writer's two rules, dependent options closing `sysc-107`, the grouped column replacing `KindVirtualList` with `ToneSubtle` captions, debounced writes through `scheduleControl`, the draft re-seeded inside `PrepareConfig.Commit`, the twelve-section rail and its glyphs, context-keeping search, the remaining controls, the centre shortcut, then gates and a live Niri check. Records that `-race` and `./...` are **refused by a hook** on this workstation, and that the `loginctl` shim earlier plans prescribe is obsolete since `popout_session.go` guards with `testing.Testing()`. |
+| `2026-09-17-m9-execution-handover.md` | execution-handover | Live. Commissions implementing sub-project A (`sysc-320`) and carrying the milestone forward afterwards. Carries the machine traps a fresh agent cannot infer: the hook-denied `-race` and `./...` forms, the **obsolete** `loginctl` shim older plans still prescribe, the `commit-msg` substring match that rejects `both`/`bottom`/`precursor`, the bd `pre-commit` hook staging the tracker into every commit, and the JSONL truncation *plus* comment-stripping repair recipe. Also the settled decisions per sub-project, the consolidated not-verified lists, the M10 boundary and the `sysc-314` gate on `ArrangeBar`, and why E is a **decomposition rather than a document**. Records that A's D8 control exclusions — list, string-map and keybind editors — find their consumers in E, so that question is best answered before A ships. |
+| `2026-09-17-m9-continuation-handover.md` | continuation-handover | Live. Hands over the milestone after sub-project A shipped and closed. Records that the work sits unmerged on `milestone/m9-settings-foundation` and that the merge will conflict in `panelhost.go` and `controlcenter_pages.go`, that the owner's laptop runs the build with its previous binary kept beside it, and that the laptop at 1536x864 scale 1.25 caught a clipping defect every test and the first live check missed. Carries the polish backlog: the plugin cards still wear the plugin host's own composition, the hex rule now exists in three places, the font picker never got its filtering half, families show normalized, two chrome literals were added against `sysc-265`, weather unit and interval are dropped at the write while unconfigured, and Tray and Displays render empty until configuration already names something. Corrects the settings design on one point — `Plugins.Enabled` was already reachable through the plugin host, so no second switch was added. Names B (`sysc-323`) as the next plan and why A unblocks it. New traps: the bd duplicate-id mint fired again and deleting the copies drops dependency edges, JSONL truncation fires on **read** commands so the rebuild and the commit must share one command, the shell has no argument parsing and is driven over its IPC socket, and the Material subset can be re-cut because the pinned upstream is reachable. |
+
+## Plugin sources and installer (post-M6 distribution)
+
+Supersedes M6 design D7's deferral of a catalog, installer, updater, and removal UI. Issue `sysc-506`.
+
+| Document | Kind | Purpose |
+|---|---|---|
+| `2026-09-24-plugin-sources-design.md` | design | Owner-approved 2026-09-24. D1–D10: a source is any git repository with a root `catalog.json`, read Noctalia-style with a blobless clone and `git show`; `sysc-plugins` is built in and `sysc-community-plugins` is suggested. Payloads are per-arch release tarballs pinned by sha256, because plugins are compiled Go and neither building on the user's machine nor committing binaries is acceptable. The installer owns `$XDG_DATA_HOME/sysc-shell/plugins` with one-step rollback; a local user copy overrides a managed one, the only exception to M6's neither-wins rule. Consent is asked when a source is added, at install, and on an update that changes capabilities or required commands; updates are checked daily and never applied automatically. The Settings UI is at near parity with Noctalia and DMS (grid with screenshots, detail view, search, category/source/installed filters, sort, Update all, keyboard navigation), with ratings, README rendering and change diffs deferred behind stated seams. Closed DMS-derived category set; authoring kit and CI validator in `sysc-plugins`. |
+| `2026-09-24-plugin-sources-store.md` | plan | Tranche 1 of the sources design, thirteen test-first tasks (0–12) on `feature/plugin-sources-store`: name the host protocol ceiling once (`HostSupports`, value unchanged at minor 6); the managed root with user-over-managed shadowing and dot-directory skipping; the `internal/plugin/store` package (catalog decode and resolution, defensive `os.Root` extraction, sha256-pinned downloads with redirect checks, `git` catalog reads, `installed.json` reconciled with the tree, installer with rollback and failure injection at each rename, one worker with snapshots and update consent); `plugins.sources` in config; `plugins.*` IPC methods; and a live Niri run against a local `file://` source and loopback asset server. No Settings UI. Corrects D8's `schedule.go` reference and records the minor 6 vs minor 7 ceiling mismatch for bd. |
+| `2026-09-25-plugin-release-pipeline.md` | plan | sysc-509, five tasks across `sysc-shell` and `sysc-plugins`. Owner decisions: per-plugin tags `<dir>-v<version>`, and a release workflow that opens a PR carrying the regenerated `catalog.json`. The catalog schema and validation move to a public `sysc-shell/plugin/catalog` package so the shell and the plugin tooling enforce one rule set. `sysc-plugins` gains `tools/catalog` (`package` builds reproducible per-arch tarballs, `update` maintains the catalog from `catalog-meta.json` plus manifests, `validate` runs in CI), a tag-triggered release workflow, and a publishing guide for third-party sources. The gate is a real Timer install from the first real release through the built-in `sysc` source. |
+| `2026-09-26-plugin-store-ui-design.md` | design | Owner-approved 2026-09-26. Amends D9 of the sources design after capturing the running DMS and Noctalia plugin UIs on the laptop (images in `assets/2026-09-26-plugin-store-references/`). U1: Browse moves to a dedicated 1280×820 `plugin-store` panel (both references use a large dedicated surface). U2: the store layout with a chip row, a 4-column card grid, and a detail view combining Noctalia's arrangement with DMS's header action and chips, keeping D5 consent (DMS installs official plugins without confirmation). U3: pinned `readme` catalog field and a markdown subset rendered into existing nodes (Noctalia renders READMEs). U4: Settings → Plugins becomes Installed · Sources in the settings row anatomy. U5: carried-forward items. Verification bar: headless renders plus live side-by-side comparisons on both machines and a visual review. |
+| `2026-09-26-plugin-store-ui.md` | plan | sysc-508, nine tasks: pinned `readme` in `plugin/catalog` and `tools/catalog`; store updates channel, daily ticker, `ReleaseRef`-pinned consent and a `Want`-driven media cache; a pure view model (`browseListings`, cards, detail); the markdown subset with a fuzz test; the store panel with grid and keyboard; detail, consent and `xdg-open` links; the Settings Plugins page rebuilt; the update relay; live comparisons on the desktop and the laptop (`ydotool` calibration recipe included) followed by a visual review. |
+| `2026-09-26-plugin-store-ui-execution-handover.md` | execution-handover | Live. Commissions implementing sysc-508 from the store UI plan. Records the verified state (backend, public catalog package and release pipeline on `main`; Timer the only catalog row), the owner's working rules (one review at the end, pushes and service stops need a go-ahead each time, no AI attribution), the machine traps (hook-blocked race and `./...` forms, bd truncating the JSONL on writes and its recovery recipe, the substring commit hook, gopls false errors, other sessions' uncommitted work in both repositories, and failures that already exist on `main`), the live recipe for the desktop and for the laptop including the `ydotool` flat-acceleration calibration, the decisions not to reopen, and the definition of done. |
+| `2026-09-25-control-centre-monitor-design.md` | design | sysc-517, owner-approved 2026-09-25. Redesigns the Control Centre Monitor section after Noctalia's `system-monitor` plugin and `chr314/dms-system-monitor`: CPU (wide) and Memory (narrow) heroes on Home's 355/228 grid over one card of five rows (Temperature, GPU, Storage, Network, Disk I/O), fitting 596×480 without scrolling. `KindGraph` becomes a smoothed anti-aliased line with an 18% area, a second series, and a "now" dot for every consumer including bar widgets and plugins. Colour keeps Accent / Secondary / Tertiary (`ToneActivity`) / Error, which the owner chose over the design audit's one-accent budget. Rates get a scale floor and a peak caption. Fixes the empty network row: the Control Centre leases network, filesystem and block, and picks the busiest interface and the device backing `/`. |
+| `2026-09-25-sprite-cycle-design.md` | design | Host-animated glyph cycles for plugins, commissioned by the Cat plugin (port of noctalia `cat` and DMS Cat Widget #562). Protocol minor 8 adds `icon_size`, `frames` and `cycle_ms` on icon nodes; one `animSprite` channel loops the pose phase, keeps phase across period changes, and lets a sprite-only surface sleep to the next pose boundary instead of the 8 ms tick. Project glyphs are fitted to their square (`RasterProjectIconIn`). |
+| `2026-09-25-control-centre-monitor.md` | plan | sysc-517, nine test-first tasks: `ui.ToneActivity`, `SecondValues` and `Window` on the graph node; pure sparkline geometry and a `vector`-rasterised `paintGraph` for every `KindGraph` consumer; shell scale, threshold and caption helpers; primary interface and root block device pickers; Control Centre leases for `/`, network and block with per-subject rate leases re-resolved only when a subject disappears; the option C page replacing `ccMonitor`; capped package gates; a live Niri capture. The VRAM caption is `sysc-522`, gated on sysc-metrics `v0.6.0` (`sysc-521`, planned in that repository's `docs/plans/2026-09-25-gpu-vram.md`). |
+| `2026-09-25-system-monitor-panel-design.md` | design | Owner-approved 2026-09-25. Redesigns both `PanelMonitor` pages after the Noctalia community `processes` plugin: 800×650 frame, a shared header (page pills Processes / System, search, options, settings, close) and info card (distro logo, five facts, CPU and Memory rings); a Processes table with Name / CPU / MEM / SWAP / DISK / PID / USER, a highlighted sort column, collapsible Applications (Niri `app_id` plus descendants) and executable-grouped Processes sections, and a detail view with SIGINT / SIGKILL and copy-on-click; a System page of sectioned metric rows sharing the Control Centre builders; a `[monitor]` config for refresh, sort and hover colour roles, and section visibility. Gated on a sysc-metrics release adding exe, swap, I/O and private/shared memory per process, and a sysc-clipboard `copy` message. |
+| `2026-09-25-system-monitor-panel.md` | plan | Fourteen test-first tasks for the system monitor panel design: five icon glyphs; named Material colour roles with a role fill and role hover in the renderer; the `monitor` config block and Settings section; desktop names on running apps and a username cache; the pure `projectProcessLines` projection (application trees, executable groups, filters, sorts, expansion); the shared header and info card; the Processes page; the detail view with SIGINT/SIGKILL and Escape; `panel.open` with an `order_by` section; the System page on shared leases at the configured refresh; package gates; two gated tasks for the sysc-clipboard `copy` message and the sysc-metrics process fields; the live Niri gate and completion handover. Also amends the design: 32 px process rows measured from the reference, and an unknown colour role refused by the loader. |
+| `2026-09-26-system-monitor-panel-completion-handover.md` | completion-handover | Snapshot of the system monitor panel redesign merged at `e63d564` and deployed: gate output, the live empty-table defect and its fix, application memory checked against `/proc`, headless captures of the System page and detail view, rulings on the review minors and open questions, and what still differs from the reference. Remaining work is epic `sysc-533`: Tasks 12–13 gated on sysc-clipboard and sysc-metrics. Captures in `assets/2026-09-26-system-monitor-panel/`. |
+| `2026-09-27-launcher-providers-design.md` | design | `sysc-624` (parent of `sysc-79`, `sysc-80`, `sysc-84`), owner-approved 2026-09-27. sysc-launch v0.2.0 gains the provider seam its D10 promised (`ServiceConfig.Providers`, `Provider.Activate`, `Provider.Inline`, `Result.Action`) without touching `score.go`; a pure calculator (`/calc` and inline only for real expressions) and an embedded Unicode 16 emoji table (`/emo`), each copying through the shell's own clipboard from `sysc-623` Phase 3; desktop actions as ranked rows in the shell's injected rank; Notes moved off its three special cases onto the seam. Windows and the app grid stay out. |
+| `2026-09-27-microinteraction-primitives-design.md` | design | `sysc-590`, owner-approved 2026-09-27. The shared micro-interaction layer the reference shells all have: no new node kinds — state layer (hover 0.08 / press 0.12) as a per-surface policy so the bar's furniture ruling holds, an `animRipple` channel with press-point origin clipped to the node's rounded rect, shape morph derived from existing press progress, and a pure `panelPlacement` function that clamps and shifts panels against open siblings. Springs deferred with a named trigger (notification stack reflow); elevation and 9-direction shadows parked behind panel coordination. |
+| `2026-09-27-ui-correctness-tranche-design.md` | design | `sysc-591`, owner-approved 2026-09-27. Three defects, not features. SVG icons via pinned pure-Go `oksvg`+`rasterx` with an explicit tier order (exact PNG > SVG > nearest raster) and silent fallthrough on parse failure; template apply made adopt-if-untouched — per-path sha256 state, temp+rename swap, refuse and offer backed-up overwrite when the user edited, chosen over per-format managed-block markers; key repeat fixed inside the existing platform `keyRepeat` state machine, starting from a characterisation test. |
+| `2026-09-27-osd-and-notification-micro.md` | plan | `sysc-592`, ten tasks. OSD: per-kind view model and tree, then the paint path moved onto `render.Paint` (the old one painted no text), the value-reactive handle, Caps/Num Lock from a lease-free sysfs LED service, layout from niri `KeyboardLayoutsChanged`/`Switched`, media transport and seeks (new `Seeks` counter), DND via a change hook shown after unlock. Notifications: `classifyToastDrag` with vertical dominance, word-wrapped expanded toasts, a collapse slide on the toast host's new animator, badge pop on the paint copy, and muted empty states. Eight fidelity notes. |
+| `2026-09-27-osd-and-notification-micro-design.md` | design | `sysc-592`, owner-approved 2026-09-27. Records that toast hover-pause already ships via the presentation lease. Adds OSD kinds media / caps-num lock / layout / DND through the existing `OSDView.Kind` vocabulary, a value-reactive icon-in-handle inside the OSD meter only, drag-to-expand on collapsed toasts with horizontal dominance preserving dismiss, a lerp collapse-on-dismiss slide that is the spring trigger point, +N badge pop, and an empty state. Rejected: earcons (no audio subsystem), interactive OSD, countdown bar (client-side timing is not authoritative). |
+| `2026-09-27-microinteraction-primitives.md` | plan | `sysc-590`, seven tasks: UI value primitives and render-copy carriers; state layer as per-surface policy with the bar excluded; `animRipple` channel with pointer and keyboard origins; paint of overlay, masked disc and morphed radius; pure `panelPlacement` wired into the panel host; per-package gates; live Niri gate with reduced-motion pass. Fidelity notes record the four places the design's wording did not survive contact with the code. |
+| `2026-09-27-ui-correctness-tranche.md` | plan | `sysc-591`, eight tasks, ordered P1-first: adopt-if-untouched template writes with temp+rename; per-template refusal surfaced in settings with backed-up overwrite; pinned `oksvg`+`rasterx`; SVG decode on the icons worker with the tier order and golden-pixel tests; key-repeat characterisation test (root cause pinned to `leaveKeyboard` killing the repeat with no re-arm on enter); the retargeting fix; gates; live Niri check ending in a human held-key observation. |
+| `2026-09-27-text-input-parity.md` | plan | `sysc-623`, fifteen tasks in four phases. Layout and scroll (width rule, `KeepCaretVisible`, a post-layout editor view pass, `FieldTextRect` shared by painter and hit testing); editing engine (`ui.Mods`/`KeyInput`/fallback resolver, platform events carrying `Sym/Text/Mods`, grapheme-aware selection and motion via `uniseg`, coalesced undo with a sync rule that keeps the editor's caret, the `HandleKey` table, host routing, selection paint and pointer caret); clipboard (`wl_data_device` with off-owner reads, `SelectionRequest` channel, paste flattening); keymaps (`xkb-go` resolver with Caps Lock and modifier-index workarounds probed against real `de`/`us(intl)` keymaps, then owner wiring after `sysc-591`'s repeat tasks). Eight fidelity notes record where the design's wording did not survive the code. |
+| `2026-09-27-text-input-parity-design.md` | design | `sysc-623`, owner-approved approach 2026-09-27. Every text field, plugin fields included, gains parity with QML `TextInput`: keys resolve once at the platform edge through pinned pure-Go `xkb-go` (US table as fallback) into `Event.Sym/Text/Mods`; `ui.Field` becomes the editing engine behind one pure `HandleKey` (GUI-first keys plus non-conflicting readline, grapheme-aware, selection, 100-step coalesced undo); system clipboard via `wl_data_device` with off-owner reads; fields keep their declared width and scroll to the caret; pointer caret placement, drag and multi-click selection. No plugin protocol change. Four phases; keymaps wait on `sysc-591`'s key-repeat tasks. |
+| `2026-09-27-settings-redesign-design.md` | design | Owner-approved outline 2026-09-27. Settings redesign for every section plus Bar settings: entries gain a page and a presentation hint, a labelled clustered rail with search, page tabs (Bar › Appearance, Layout, Displays), groups as cards (reverses the foundation design's D3), segmented short enums, Style and Shape picture cards painted by the bar's own renderer, a live offscreen bar preview, a 94% opaque floor, and a surface sized to the output (reverses its D11). Bar breadth (`sysc-587`) is out of scope. |
+| `2026-09-27-settings-redesign.md` | plan | Nine test-first tasks for the settings redesign design: registry pages, presentation and clusters; plugin rows named by plugin; segmented enums and the `pick:` action; group cards; labelled rail, page tabs and `Section/Page` addressing with the `Displays` alias; responsive size and opaque floor; offscreen bar preview and picture cards; the Bar pages with dimming; a section × page × output × scale layout matrix and the live gate. |
+| `2026-09-27-settings-redesign-completion-handover.md` | completion-handover | Snapshot of the settings redesign fast-forwarded to main at `6dd19fd`: commit map for Tasks 1–9, the gate at `4103057`, the desktop and laptop live gates (five defects found and fixed), the whole-branch review's fixes with RED→GREEN tests, nine rulings, and open follow-ups `sysc-617`..`sysc-621` plus the stale-deploy guard `sysc-622`. |
+| `2026-09-28-theming-templates-execution-handover.md` | execution-handover | Commissions replacing the 15 stub `.tpl` files with real app-correct themes so their toggles can be enabled. Records the shipped `theming.Complete` gate from `sysc-405` (GH#7), the four tokens templates get today, per-format scope, one shared terminal-palette token extension, golden-render exit per app, and the disposition rule: delete templates (gtk3/gtk4, maybe qt) that cannot be themed by the single file `writeTarget` points at instead of shipping half-themes. Ordered token extension → terminal cluster → non-terminal cluster → disposition; mirrored in bd under `sysc-405`. |
+| `2026-09-28-theming-templates-design.md` | design | Owner decision requested. The handover's write-target-clobber model cannot theme most apps (guard no-ops for users with an existing config; sidecars need activation), so this adopts Noctalia's shipped model: `terminal_*` token block ported from `src/theme/tokens.h`/`fixed_palette.cpp`, a sidecar-file + one-managed-directive apply mechanism, per-app table ported from `assets/templates/`, dispositions = delete gtk3/gtk4 (colour-only css is not a named theme) and emacs (activation is elisp eval), gate-first via `sysc-630` because the committed `Complete()` gate the handover cites exists only uncommitted in `.worktrees/fix-audit-tranche`. |
+| `2026-09-28-theming-templates.md` | plan | Seventeen tasks: land the `Complete()` gate (`sysc-630`); terminal tokens with contrast-invariant tests (`sysc-626`); `ApplySidecar`/`EnsureDirective`/`RemoveDirective` + `templateTargets` table; one task per template port with a golden render test and a live-app check (`sysc-627`, `sysc-628`); disposition deletions (`sysc-629`); package gates and completion handover. |
+
+## Sibling repositories
+
+Verified 2026-09-02 against git, GitHub, and `go list -m`. `sysc-shell` pins the **tags**, not
+whatever is checked out on each repo's `main`. Checking out `/home/nomadx/sysc-notify` or
+`/home/nomadx/sysc-tray` on `main` shows docs only; that is not what this module compiles.
+
+| Repository | Pin in go.mod | Where the pin lives | State |
+|---|---|---|---|
+| `/home/nomadx/sysc-wayland` | `v0.2.1` | `main` (`6bef268`) | Tagged and pushed. Object-argument fix. |
+| `/home/nomadx/sysc-metrics` | `v0.3.0` | `main` (`263a6f7`) | Core counters, sysfs battery, CPU package temperature, GPU usage/temperature (`nvidia-smi` for NVIDIA). |
+| `/home/nomadx/sysc-notify` | `v0.1.0-rc.3` | `redesign/v0.1` (`02cb723`). `origin/main` is still `32da2b5` (docs only). | Full daemon (`cmd/sysc-notify`, protocol 1.1, presenter socket). Never merged to default branch. Stable `v0.1.0` waits on `sysc-97`. Not installed or running on the development machine. Tag `v0.1.0-rc.3` is local until published. |
+| `/home/nomadx/sysc-tray` | `v0.1.0-rc.1` | `origin/redesign/v0.1` tag `30d266e` (branch tip one docs commit later). `origin/main` is still `04ca018` (docs only). | Full daemon (`cmd/sysc-tray`). Same merge and install gap as notify. |
+| `/home/nomadx/sysc-launch` | `v0.1.0` | `main` (`fb6f73c`) | Library plus one-shot CLI (`query` / `launch`). Not a daemon. Shell hosts `launcher.NewService` in-process. |
+
+## Work selection
+
+Use `bd ready` and `bd blocked`. This register does not duplicate execution order or issue status.
