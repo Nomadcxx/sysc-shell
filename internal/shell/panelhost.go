@@ -132,6 +132,9 @@ type PanelHost struct {
 	// settingsPage is the open section's page (settings redesign D1). Empty
 	// means the section's first.
 	settingsPage string
+	// barPreview is the last bar preview that resolved, kept so a draft that
+	// is mid-edit does not blank the Appearance page's preview.
+	barPreview *ui.Image
 	// pluginName resolves a plugin ID to its catalogue name for the bar
 	// editor's rows (settings redesign D9). Set by barLaneStripFor; nil
 	// falls back to the plugin ID.
