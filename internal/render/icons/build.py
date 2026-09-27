@@ -102,6 +102,10 @@ for _act, _poses in CAT_ACTS:
         GLYPHS.append((f"uni{_next:04X}", _next, f"cat-{_act}-{_i}"))
         _next += 1
 
+# The Docker whale closes the font after the cat band, for the mini-docker
+# plugin's bar pill.
+GLYPHS.append(("uniE072", 0xE072, "docker"))
+
 UPM = 1000
 # 24px SVG -> font units, y-flipped so the icon sits on the baseline.
 #

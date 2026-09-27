@@ -175,6 +175,10 @@ const (
 	catRuneLast  = catRuneFirst + 40 - 1
 )
 
+// The Docker whale closes the font after the cat band, for the mini-docker
+// plugin's bar pill.
+const iconDocker rune = catRuneLast + 1
+
 // batteryLevels is how many level glyphs each state has.
 const batteryLevels = 7
 
@@ -507,6 +511,7 @@ var iconNames = map[string]rune{
 	"signal-cellular-3-bar": iconSignalCellular3Bar,
 	"signal-cellular-4-bar": iconSignalCellular4Bar,
 	"cross":                 iconCross,
+	"docker":                iconDocker,
 }
 
 func init() {
