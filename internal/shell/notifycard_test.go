@@ -1,6 +1,10 @@
 package shell
 
 import (
+	"bytes"
+	"image"
+	"image/color"
+	"image/png"
 	"strings"
 	"testing"
 	"time"
@@ -425,5 +429,38 @@ func TestActiveCardRemoveDismisses(t *testing.T) {
 
 	if findAction(card, "notify:4:dismiss") == nil {
 		t.Fatal("live card has no remove control")
+	}
+}
+
+// The wire format is PNG, not a raw raster: a hinted pixmap must decode to a
+// BGRA ui.Image, and a PNG claiming more than the wire limits must be dropped
+// rather than allocated (GitHub #25).
+func TestProtocolImageDecodesPNGData(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	src := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	src.SetRGBA(0, 0, color.RGBA{R: 0x11, G: 0x22, B: 0x33, A: 0xFF})
+	if err := png.Encode(&buf, src); err != nil {
+		t.Fatal(err)
+	}
+	img := protocolImage(&protocol.Image{MediaType: "image/png", Data: buf.Bytes()})
+	if img == nil {
+		t.Fatal("protocolImage rejected a valid PNG")
+	}
+	want := []byte{0x33, 0x22, 0x11, 0xFF}
+	if !bytes.Equal(img.Pix, want) {
+		t.Fatalf("decoded pixels = %v, want BGRA %v", img.Pix, want)
+	}
+
+	if got := protocolImage(&protocol.Image{MediaType: "image/png", Data: []byte("not a png")}); got != nil {
+		t.Fatalf("non-PNG data decoded to %+v", got)
+	}
+
+	var bomb bytes.Buffer
+	if err := png.Encode(&bomb, image.NewRGBA(image.Rect(0, 0, protocol.MaxWireImageLongEdge+1, protocol.MaxWireImageLongEdge+1))); err != nil {
+		t.Fatal(err)
+	}
+	if got := protocolImage(&protocol.Image{MediaType: "image/png", Data: bomb.Bytes()}); got != nil {
+		t.Fatal("oversized PNG was not dropped")
 	}
 }
