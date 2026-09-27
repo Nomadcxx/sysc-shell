@@ -889,6 +889,48 @@ func TestMediaSnapshotUpdatesTheRetainedRegistryView(t *testing.T) {
 	}
 }
 
+func TestCanceledMediaRelayDoesNotApplyStartupSnapshot(t *testing.T) {
+	media := services.NewUnavailableMedia()
+	r := &Registry{
+		closed:        make(chan struct{}),
+		invalidations: make(chan wayland.Invalidation, 1),
+		media:         media,
+		metrics:       services.NewMetrics(),
+		notify:        newNotifyState(),
+		bars:          make(map[uint32]*Bar),
+		mediaState:    services.MediaState{Title: "retained"},
+	}
+	t.Cleanup(func() {
+		close(r.closed)
+		media.Close()
+	})
+
+	applied := 0
+	inner := &ui.Node{Kind: ui.KindText, Text: "retained"}
+	r.bars[1] = &Bar{
+		conn: "DP-1",
+		left: []textWidget{{
+			node:  inner,
+			inner: inner,
+			format: func(v barView) string {
+				applied++
+				return v.Media.Title
+			},
+		}},
+	}
+	cancel := make(chan struct{})
+	close(cancel)
+
+	r.relayMedia(media, cancel)
+
+	if applied != 0 {
+		t.Fatalf("canceled relay applied a startup snapshot %d times", applied)
+	}
+	if got := r.mediaState.Title; got != "retained" {
+		t.Fatalf("canceled relay replaced retained title with %q", got)
+	}
+}
+
 // setTestBar installs a bar under the registry lock. Tests run beside live
 // goroutines (the media relay walks r.bars under the same lock), so a bare
 // map write from the test goroutine is a data race.

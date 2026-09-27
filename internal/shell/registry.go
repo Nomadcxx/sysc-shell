@@ -280,7 +280,6 @@ func (r *Registry) relayMedia(media *services.Media, cancel <-chan struct{}) {
 	if media == nil {
 		return
 	}
-	r.publishMediaSnapshot(media, media.CachedState())
 	for {
 		select {
 		case <-r.closed:

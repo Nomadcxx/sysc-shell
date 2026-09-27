@@ -129,6 +129,28 @@ func TestMediaWithNoPlayersIsUnavailable(t *testing.T) {
 	}
 }
 
+func TestMediaConstructorDoesNotPublishInitialSnapshot(t *testing.T) {
+	t.Parallel()
+	b := newFakeBus("org.mpris.MediaPlayer2.player")
+	b.setProps("org.mpris.MediaPlayer2.player", map[string]any{
+		"PlaybackStatus": "Playing",
+		"Rate":           1.0,
+		"Position":       int64(1_000_000),
+	})
+	m := NewMedia(b)
+	t.Cleanup(m.Close)
+
+	state := m.CachedState()
+	if !state.Available || state.Status != PlaybackPlaying || state.PositionUS < 1_000_000 {
+		t.Fatalf("constructor state = %+v, want a playing cached snapshot", state)
+	}
+	select {
+	case got := <-m.Changes():
+		t.Fatalf("constructor published %+v on Changes", got)
+	default:
+	}
+}
+
 func TestMediaWatchStartsWithItsFirstLease(t *testing.T) {
 	t.Parallel()
 	m := NewMedia(newFakeBus())

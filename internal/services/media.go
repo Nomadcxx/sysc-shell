@@ -133,7 +133,9 @@ func NewMedia(b bus) *Media {
 		changes:   make(chan MediaState, 1),
 		now:       time.Now,
 	}
-	m.enumerate()
+	// Constructor state is available through CachedState; it is not also an
+	// update for consumers to replay while their owners are still starting.
+	m.enumerate(false)
 	return m
 }
 
@@ -232,7 +234,7 @@ func (m *Media) Configure(preferred string, blacklist []string) {
 	m.reselectLocked()
 	m.publishLocked()
 	m.mu.Unlock()
-	go m.enumerate()
+	go m.enumerate(true)
 }
 
 // Acquire registers a consumer. The first lease starts the watch; the last
@@ -310,7 +312,7 @@ func (m *Media) stopIfUnusedLocked() chan struct{} {
 func (m *Media) run(stop, done chan struct{}, reenumerate bool) {
 	defer close(done)
 	if reenumerate {
-		m.enumerate()
+		m.enumerate(true)
 	}
 	changes := m.b.NameChanges()
 	for {
@@ -326,7 +328,7 @@ func (m *Media) run(stop, done chan struct{}, reenumerate bool) {
 // enumerate lists the bus and reconciles the player set against it. The
 // property lookups run without the mutex; only the apply takes it, so a paint
 // path reader never waits on bus I/O.
-func (m *Media) enumerate() {
+func (m *Media) enumerate(publish bool) {
 	names, err := m.b.ListNames()
 	if err != nil {
 		return
@@ -358,7 +360,9 @@ func (m *Media) enumerate() {
 	}
 	m.players = next
 	m.reselectLocked()
-	m.publishLocked()
+	if publish {
+		m.publishLocked()
+	}
 }
 
 // handleNameChange adds or drops one player. A known name arriving again is
