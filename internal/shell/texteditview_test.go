@@ -72,3 +72,19 @@ func TestSeededFieldsStartWithoutASelection(t *testing.T) {
 		t.Fatalf("settings field seeded with a selection: %+v", f)
 	}
 }
+
+// A builder that writes the caret at the end of the text must not move the
+// painted caret the user placed: the paint copy takes caret and selection
+// from the retained field.
+func TestPaintCopyTakesTheCaretFromTheField(t *testing.T) {
+	r, h := openClipboardSearch(t)
+	typeKeys(r, h, txt("a"), txt("b"), txt("c"), ui.KeyInput{Sym: ui.SymLeft})
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	h.focused().Cursor = 3 // what a builder writing the caret at the end leaves
+	root := copyNode(h.root)
+	h.applyEditorView(root)
+	if field := findEditing(root); field == nil || field.Cursor != 2 {
+		t.Fatalf("painted caret = %+v, want 2", field)
+	}
+}

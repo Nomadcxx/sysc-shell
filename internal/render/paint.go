@@ -836,6 +836,12 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 		origin.X -= style.Scale120.Physical(n.ScrollX)
 		origin.W += style.Scale120.Physical(n.ScrollX) + phys.W
 	}
+	if n.Editing && n.SelStart < n.SelEnd && text != nil {
+		spec := textSpec(style, n)
+		startW, _, _ := text.Measure(ui.DisplayPrefix(n, n.SelStart), spec, n.Tabular)
+		endW, _, _ := text.Measure(ui.DisplayPrefix(n, n.SelEnd), spec, n.Tabular)
+		fillRect(c, ui.Rect{X: origin.X + startW, Y: phys.Y, W: endW - startW, H: phys.H}, selectionFill(style))
+	}
 	if err := paintText(c, shown, origin, text, style, textSpec(style, n), n.Tabular, tone, n.Underline); err != nil {
 		return err
 	}
@@ -861,6 +867,41 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 	caret := ui.Rect{X: origin.X + prefixW, Y: origin.Y, W: 1, H: origin.H}
 	fillRect(c, caret, style.accent())
 	return nil
+}
+
+// selectionFill is the accent at 40%: the text stays readable over it.
+func selectionFill(style Style) Color {
+	sel := style.accent()
+	sel.A = uint8(uint32(sel.A) * 40 / 100)
+	return sel
+}
+
+// FieldOffsetAt is the byte offset of the grapheme boundary nearest logical
+// x in a single-line field, through the same text box and scroll the painter
+// uses.
+func FieldOffsetAt(n *ui.Node, x int, measure ui.MeasureText) int {
+	box := FieldTextRect(n)
+	rel := x - box.X
+	if n.Editing {
+		rel += n.ScrollX
+	}
+	attrs := ui.TextAttrsOf(n)
+	best, bestD := 0, abs(rel)
+	for pos := 0; pos < len(n.Text); {
+		pos = ui.NextGraphemeBoundary(n.Text, pos)
+		w, _ := measure(ui.DisplayPrefix(n, pos), attrs)
+		if d := abs(w - rel); d < bestD {
+			best, bestD = pos, d
+		}
+	}
+	return best
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 func paintMultilineField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int, phys ui.Rect) error {
@@ -902,6 +943,19 @@ func paintMultilineField(c *Canvas, n *ui.Node, text *TextRenderer, style Style,
 		box := phys
 		box.Y += (i - scrollY) * lineH
 		box.H = lineH
+		// The selected span of this line, behind its text. A selection that
+		// runs past the line's end also covers the break, one space wide.
+		if n.Editing && n.SelStart < n.SelEnd && text != nil && n.SelStart <= end && n.SelEnd >= off {
+			spec := textSpec(style, n)
+			from, to := max(n.SelStart, off)-off, min(n.SelEnd, end)-off
+			startW, _, _ := text.Measure(line[:from], spec, n.Tabular)
+			endW, _, _ := text.Measure(line[:to], spec, n.Tabular)
+			if n.SelEnd > end {
+				spaceW, _, _ := text.Measure(" ", spec, n.Tabular)
+				endW += spaceW
+			}
+			fillRect(c, ui.Rect{X: box.X + startW, Y: box.Y, W: endW - startW, H: box.H}, selectionFill(style))
+		}
 		if err := paintText(c, line, box, text, style, textSpec(style, n), n.Tabular, tone, n.Underline); err != nil {
 			return err
 		}

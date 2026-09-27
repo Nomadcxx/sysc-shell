@@ -113,6 +113,16 @@ type PanelHost struct {
 	// platform. Nil drops them.
 	copyRequest  func(text string, serial uint32)
 	pasteRequest func(serial uint32)
+	// fieldDrag is the editor a primary press in a single-line field is
+	// drag-selecting; nil when none is. The retained field, not a key, names
+	// it: a panel search carries neither Key nor Action.
+	fieldDrag *ui.Field
+	// clickField, clickAt, clickX, clickY and clicks count presses on one
+	// field for double- and triple-click selection.
+	clickField     *ui.Field
+	clickAt        time.Time
+	clickX, clickY int
+	clicks         int
 	// barAdding names the lane whose add-a-widget list is open, empty when
 	// none is. The list expands in place the way Menu does, because no
 	// popup-over-panel surface exists.
@@ -1420,6 +1430,14 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 				}
 				return true
 			}
+			if h.fieldDrag != nil {
+				if n := h.focused(); h.fieldFor(n) == h.fieldDrag {
+					h.fieldDrag.SetCaret(h.fieldOffsetAt(n, h.fieldDrag), true)
+					h.fieldDrag.SyncTo(n)
+					return true
+				}
+				h.fieldDrag = nil
+			}
 			// Only a change of resolved target repaints. Movement inside the
 			// control the pointer is already on resolves to the same key and
 			// costs nothing.
@@ -1428,6 +1446,7 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			h.pressed = ""
 			h.sliderDrag = nil
 			h.scrollDrag = nil
+			h.fieldDrag = nil
 			return h.pointerChanged(r, h.pointer.clear())
 		case wayland.EventPointerPress:
 			h.hoverX, h.hoverY = int(math.Floor(e.X)), int(math.Floor(e.Y))
@@ -1461,11 +1480,15 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 					ui.SliderAt(n, h.hoverX)
 					h.sliderDrag = n
 				}
+				if n.Kind == ui.KindTextField && !n.Multiline && (e.Button == btnLeft || e.Button == 0) {
+					h.pressField(n, e.Mods)
+				}
 				return true
 			}
 			return false
 		case wayland.EventPointerRelease:
 			h.hoverX, h.hoverY = int(math.Floor(e.X)), int(math.Floor(e.Y))
+			h.fieldDrag = nil
 			if h.sliderDrag != nil {
 				n := h.sliderDrag
 				ui.SliderAt(n, h.hoverX)
@@ -1511,6 +1534,59 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 		}
 		return false
 	}
+}
+
+// multiClickInterval and multiClickSlop bound a double or triple press: the
+// same field, soon enough, and near enough to the previous press.
+const (
+	multiClickInterval = 400 * time.Millisecond
+	multiClickSlop     = 4
+)
+
+// pressField places the caret of a single-line field under a primary press:
+// one press sets it (Shift extends the selection) and starts a drag, two
+// select the word there, three select the line. Multiline fields keep
+// focus-only presses until the painter exposes per-line hit testing.
+func (h *PanelHost) pressField(n *ui.Node, mods ui.Mods) {
+	f := h.fieldFor(n)
+	if f == nil {
+		return
+	}
+	now := time.Now()
+	if f == h.clickField && now.Sub(h.clickAt) <= multiClickInterval &&
+		abs(h.hoverX-h.clickX) <= multiClickSlop && abs(h.hoverY-h.clickY) <= multiClickSlop {
+		h.clicks++
+	} else {
+		h.clicks = 1
+	}
+	h.clickField, h.clickAt, h.clickX, h.clickY = f, now, h.hoverX, h.hoverY
+	pos := h.fieldOffsetAt(n, f)
+	switch h.clicks {
+	case 1:
+		f.SetCaret(pos, mods.Has(ui.ModShift))
+		h.fieldDrag = f
+	case 2:
+		f.SelectWordAt(pos)
+	default:
+		f.SelectLineAt(pos)
+	}
+	f.BreakUndo()
+	f.SyncTo(n)
+}
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+// fieldOffsetAt is the text offset under the pointer in a single-line field,
+// measured through the field's current scroll the way it was painted.
+func (h *PanelHost) fieldOffsetAt(n *ui.Node, f *ui.Field) int {
+	view := copyNode(n)
+	view.Editing, view.ScrollX = true, f.ScrollX
+	return render.FieldOffsetAt(view, h.hoverX, h.measureText())
 }
 
 // keyEvent is the live key path: the platform has already resolved the key
@@ -2014,7 +2090,9 @@ func (h *PanelHost) applyEditorView(root *ui.Node) {
 		return
 	}
 	n.Editing = true
-	n.SelStart, n.SelEnd = f.Selection()
+	// The field owns caret and selection. A builder may have written the
+	// caret at the end of the text; the painted one is where the user put it.
+	f.SyncTo(n)
 	box := render.FieldTextRect(n)
 	measure := h.measureText()
 	attrs := ui.TextAttrsOf(n)

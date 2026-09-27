@@ -484,13 +484,6 @@ func TestMetricIconRasterIsSquareAtBarSize(t *testing.T) {
 	}
 }
 
-func abs(n int) int {
-	if n < 0 {
-		return -n
-	}
-	return n
-}
-
 // The night variants extend the weather set: a clear or partly-cloudy sky at
 // night shows the moon, and every other category reads the same by night.
 func TestWeatherIconSelectsNightVariants(t *testing.T) {

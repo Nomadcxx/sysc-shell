@@ -19,6 +19,9 @@ func nextGrapheme(s string, i int) int {
 	return i + len(cluster)
 }
 
+// NextGraphemeBoundary is the boundary after i, for hit testing outside ui.
+func NextGraphemeBoundary(s string, i int) int { return nextGrapheme(s, i) }
+
 func prevGrapheme(s string, i int) int {
 	if i <= 0 {
 		return 0
