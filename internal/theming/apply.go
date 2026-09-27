@@ -1,6 +1,7 @@
 package theming
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,7 +27,7 @@ func ApplyWrite(path, rendered string) error {
 	if b, err := os.ReadFile(path); err == nil && !oursFile(string(b)) {
 		return fmt.Errorf("skipped: user file")
 	}
-	return os.WriteFile(path, []byte(rendered), 0o644)
+	return writeFileAtomic(path, []byte(rendered), 0o644)
 }
 
 func UnapplyWrite(path string) error {
@@ -60,7 +61,7 @@ func ApplyNiri(configPath, genPath, rendered string) error {
 		out += "\n"
 	}
 	out += niriInclude + "\n"
-	return os.WriteFile(configPath, []byte(out), 0o644)
+	return writeFileAtomic(configPath, []byte(out), 0o644)
 }
 
 func UnapplyNiri(configPath, genPath string) error {
@@ -82,7 +83,7 @@ func UnapplyNiri(configPath, genPath string) error {
 		}
 		keep = append(keep, ln)
 	}
-	return os.WriteFile(configPath, []byte(strings.Join(keep, "")), 0o644)
+	return writeFileAtomic(configPath, []byte(strings.Join(keep, "")), 0o644)
 }
 
 func ApplyGtkThemeName(iniPath, name string) error {
@@ -153,5 +154,44 @@ func writeGtkThemeName(path, body, name string) error {
 		}
 		out += "gtk-theme-name=" + name + "\n"
 	}
-	return os.WriteFile(path, []byte(out), 0o644)
+	return writeFileAtomic(path, []byte(out), 0o644)
+}
+
+// writeFileAtomic replaces path via a unique temp in the same directory, then
+// rename, so a reader (niri watching its config, a GTK app loading settings)
+// never sees a half-written file and a crash leaves the previous content
+// intact (GitHub #23; same shape as config.Write, without its symlink
+// guarantee).
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	// A rename would replace an unwritable target that a direct write must
+	// fail on; keep reporting read-only files instead of silently succeeding.
+	if f, err := os.OpenFile(path, os.O_WRONLY, 0); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	} else {
+		_ = f.Close()
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".sysc-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if err := f.Chmod(mode); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }

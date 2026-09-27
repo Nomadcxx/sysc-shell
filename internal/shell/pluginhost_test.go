@@ -87,7 +87,7 @@ func TestPluginPanelRoutesDeclaredShortcutsAndKeepsEditorKeysLocal(t *testing.T)
 	reg.mu.Unlock()
 	handle := host.handle(reg)
 
-	if !handle(wayland.Event{Kind: wayland.EventKeyPress, Key: 36}) { // KEY_J
+	if !handle(keyEv(36, 0)) { // KEY_J
 		t.Fatal("declared j shortcut was not handled")
 	}
 	inputs := reg.plugins.lastInputs()
@@ -98,7 +98,7 @@ func TestPluginPanelRoutesDeclaredShortcutsAndKeepsEditorKeysLocal(t *testing.T)
 	if got.Event != v1.EventShortcut || got.ViewID != opened.ViewID || got.Node != "next" || got.Key != "j" || len(got.Modifiers) != 0 {
 		t.Fatalf("j shortcut input = %+v", got)
 	}
-	if !handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyHome}) {
+	if !handle(keyEv(keyHome, 0)) {
 		t.Fatal("declared Home shortcut was not handled")
 	}
 	inputs = reg.plugins.lastInputs()
@@ -107,10 +107,10 @@ func TestPluginPanelRoutesDeclaredShortcutsAndKeepsEditorKeysLocal(t *testing.T)
 		t.Fatalf("Home shortcut input = %+v", got)
 	}
 
-	if handle(wayland.Event{Kind: wayland.EventKeyPress, Key: 29}) { // KEY_LEFTCTRL
+	if handle(keyEv(29, 0)) { // KEY_LEFTCTRL
 		t.Fatal("modifier press was consumed")
 	}
-	if !handle(wayland.Event{Kind: wayland.EventKeyPress, Key: 19}) { // KEY_R
+	if !handle(keyEv(19, ui.ModCtrl)) { // KEY_R
 		t.Fatal("declared Ctrl+R shortcut was not handled")
 	}
 	_ = handle(wayland.Event{Kind: wayland.EventKeyRelease, Key: 29})
@@ -124,10 +124,10 @@ func TestPluginPanelRoutesDeclaredShortcutsAndKeepsEditorKeysLocal(t *testing.T)
 	host.setFocus(editor)
 	reg.mu.Unlock()
 	before := len(reg.plugins.lastInputs())
-	if !handle(wayland.Event{Kind: wayland.EventKeyPress, Key: 36}) { // KEY_J
+	if !handle(keyEv(36, 0)) { // KEY_J
 		t.Fatal("ordinary j input was not accepted by the focused text field")
 	}
-	_ = handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyHome})
+	_ = handle(keyEv(keyHome, 0))
 	inputs = reg.plugins.lastInputs()
 	for _, input := range inputs[before:] {
 		if input.Event == v1.EventShortcut {

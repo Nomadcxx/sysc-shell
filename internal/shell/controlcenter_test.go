@@ -897,7 +897,7 @@ func TestControlCentreNativePagesFillTheBody(t *testing.T) {
 		{section: "network", want: []string{"Network", "Wi-Fi", "Ethernet"}},
 		{section: "power", want: []string{"Battery", "Power profile", "Session"}},
 		{section: "calendar", want: []string{"September 2026", "Previous month", "Next month"}},
-		{section: "notifications", want: []string{"Do not disturb", "Clear all", "Nothing to see here"}},
+		{section: "notifications", want: []string{"Do not disturb", "Clear all", "No notifications"}},
 	} {
 		t.Run(tc.section, func(t *testing.T) {
 			h := &PanelHost{id: PanelControlCenter, section: tc.section, theme: DefaultTheme()}

@@ -195,7 +195,7 @@ func walkActionBounds(n *ui.Node, action string) (ui.Rect, bool) {
 }
 
 func pressLauncherKey(reqs []wayland.AuxRequest, key uint32) {
-	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventKeyPress, Key: key})
+	reqs[1].Open.Callbacks.Handle(keyEv(key, 0))
 }
 
 func TestParsePanelNameLauncher(t *testing.T) {
@@ -443,7 +443,7 @@ func TestLauncherLetterKeyTypesIntoSearch(t *testing.T) {
 	t.Parallel()
 
 	reg, _, reqs := openLauncherPanel(t, launcherTestEntries())
-	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventKeyPress, Key: 33}) // F
+	reqs[1].Open.Callbacks.Handle(keyEv(33, 0)) // F
 	h := launcherHost(t, reg)
 	reg.mu.Lock()
 	query := h.query
@@ -813,7 +813,7 @@ func TestLauncherFooterNounFollowsTheQuery(t *testing.T) {
 
 	reg, _, reqs := openLauncherPanel(t, launcherTestEntries())
 	handle := reqs[1].Open.Callbacks.Handle
-	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: 33}) // F
+	handle(keyEv(33, 0)) // F
 	waitForLauncherState(t, reg, func(h *PanelHost) bool {
 		return strings.TrimSpace(h.query) != ""
 	})

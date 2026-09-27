@@ -7,6 +7,10 @@ import (
 
 const defaultIconSize = 20
 
+// MinTextFieldWidth is what a text field with no declared width takes when it
+// is not in a position to fill its row.
+const MinTextFieldWidth = 120
+
 // label names a node for a rejection message: the kind, the text it carries
 // when it carries any, and the wire path the converter stamped when there is
 // one. It is the string a plugin author reads in the journal to find the node
@@ -178,6 +182,12 @@ func Layout(root *Node, bounds Rect, measure MeasureText) error {
 			// must clip overflowing text rather than close the surface.
 			if child.Kind == KindRow && child.PinEnd {
 				w = remain
+			}
+			// A field with no declared width fills the row where a column
+			// would: as the last child, or the leading child of a pinned row.
+			if child.Kind == KindTextField && child.Width <= 0 &&
+				(i == len(root.Children)-1 || (root.PinEnd && len(root.Children) == 2 && i == 0)) {
+				w = max(remain, MinTextFieldWidth)
 			}
 			if w > remain {
 				w = remain
@@ -603,15 +613,17 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		}
 		return w, h, nil
 	case KindTextField:
-		// Measured on the displayed runes, not the stored ones: a masked field
-		// draws bullets, whose advance differs from the letters behind them.
+		// A field's width is declared, never measured from its text: sizing
+		// to the text made a field grow as the user typed and push siblings.
+		// The height still fits one padded line of the displayed runes.
 		sample := DisplayText(n) + DisplayPreedit(n)
 		if sample == "" {
 			sample = " "
 		}
-		w, h := measure(sample, TextAttrsOf(n))
-		if n.Width > w {
-			w = n.Width
+		_, h := measure(sample, TextAttrsOf(n))
+		w := n.Width
+		if w <= 0 {
+			w = MinTextFieldWidth
 		}
 		return w, max(n.Height, h+2*n.Padding), nil
 	case KindScroll, KindVirtualList:

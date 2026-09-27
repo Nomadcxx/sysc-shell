@@ -47,6 +47,11 @@ Mods Mods   // Shift, Ctrl, Alt (Mod1), Super (Mod4), CapsLock; AltGr is a level
   because AGENTS.md puts a pinned dependency above a C boundary and no measured requirement defeats
   the Go implementation yet; over an own parser because compose would be missing. If a defect in the
   library blocks a layout, patch it in a fork pinned by commit, and record the reason here.
+- v0.1.0 defects worked around in `internal/platform/wayland/keymap.go` rather than forked:
+  `Keymap.ModGetIndex` returns -1 on a parsed keymap, so masks pass through by fixed real-modifier
+  bit; Caps Lock does not select the capital level of letters, so they are cased there; and
+  `ComposeState.Feed` cancels on any keysym the table lacks, so modifier keysyms (Shift for a
+  capital inside a dead-key sequence) are kept out of compose.
 - `Text` is computed from the xkb state at delivery time, so a repeat reflects the modifiers held
   now, not at the first press.
 - Control characters (below U+0020 and U+007F) are stripped from `Text`: shortcuts are matched on

@@ -1,7 +1,9 @@
 package shell
 
 import (
+	"bytes"
 	"fmt"
+	"image/png"
 	"strings"
 	"time"
 
@@ -20,15 +22,35 @@ const (
 	centreIconPad  = 6
 )
 
+// protocolImage decodes the notification's wire image. The sysc-notify
+// protocol carries PNG bytes (protocol.Image.Validate rejects any other
+// media type), so the data is decoded rather than treated as a raw raster.
 func protocolImage(img *protocol.Image) *ui.Image {
-	if img == nil || img.Width == 0 || img.Height == 0 {
+	if img == nil || len(img.Data) == 0 {
 		return nil
 	}
-	stride := int(img.Width) * 4
-	if len(img.Data) != stride*int(img.Height) {
+	source, err := png.Decode(bytes.NewReader(img.Data))
+	if err != nil {
 		return nil
 	}
-	return &ui.Image{Width: int(img.Width), Height: int(img.Height), Stride: stride, Pix: img.Data}
+	bounds := source.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+	if width <= 0 || height <= 0 ||
+		width > protocol.MaxWireImageLongEdge || height > protocol.MaxWireImageLongEdge {
+		return nil
+	}
+	out := &ui.Image{Width: width, Height: height, Stride: width * 4, Pix: make([]byte, width*height*4)}
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			r, g, b, a := source.At(bounds.Min.X+x, bounds.Min.Y+y).RGBA()
+			offset := y*out.Stride + x*4
+			out.Pix[offset+0] = uint8(b >> 8)
+			out.Pix[offset+1] = uint8(g >> 8)
+			out.Pix[offset+2] = uint8(r >> 8)
+			out.Pix[offset+3] = uint8(a >> 8)
+		}
+	}
+	return out
 }
 
 func appLetter(app string) string {
@@ -108,7 +130,7 @@ func centreRemoveButton(action, name string) *ui.Node {
 	}
 }
 
-func notificationTree(id uint32, app, summary, body string, urgency protocol.Urgency, raster *ui.Image, value *int32, allowLinks bool, now, ts time.Time) *ui.Node {
+func notificationTree(id uint32, app, summary, body string, urgency protocol.Urgency, raster *ui.Image, value *int32, allowLinks bool, wrap func(string) []string, now, ts time.Time) *ui.Node {
 	tone := toneFor(urgency)
 	text := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{}}
 	identity := &ui.Node{Kind: ui.KindRow, Gap: cardGap, Children: []*ui.Node{}}
@@ -130,14 +152,23 @@ func notificationTree(id uint32, app, summary, body string, urgency protocol.Urg
 		if run.Break || run.Text == "" {
 			continue
 		}
-		node := &ui.Node{
-			Kind: ui.KindText, Text: run.Text,
-			Bold: run.Bold, Italic: run.Italic, Underline: run.Underline, Tone: tone,
+		lines := []string{run.Text}
+		if wrap != nil {
+			lines = wrap(run.Text)
 		}
-		if run.Link {
-			node.Action = fmt.Sprintf("notify:%d:link:%s", id, run.Href)
+		for _, line := range lines {
+			if line == "" {
+				continue
+			}
+			node := &ui.Node{
+				Kind: ui.KindText, Text: line,
+				Bold: run.Bold, Italic: run.Italic, Underline: run.Underline, Tone: tone,
+			}
+			if run.Link {
+				node.Action = fmt.Sprintf("notify:%d:link:%s", id, run.Href)
+			}
+			text.Children = append(text.Children, node)
 		}
-		text.Children = append(text.Children, node)
 	}
 	if m := valueMeter(value); m != nil {
 		text.Children = append(text.Children, m)
@@ -163,12 +194,22 @@ func toneFor(urgency protocol.Urgency) ui.Tone {
 // record. lt is the service's authoritative lifetime; raster is the already
 // decoded icon, or nil for the letter fallback.
 func NotificationCard(n protocol.Notification, lt *protocol.Lifetime, raster *ui.Image, allowLinks bool) *ui.Node {
+	return notificationCard(n, lt, raster, allowLinks, nil)
+}
+
+// ExpandedNotificationCard is a toast whose body is wrapped over several
+// lines after a vertical drag.
+func ExpandedNotificationCard(n protocol.Notification, lt *protocol.Lifetime, raster *ui.Image, allowLinks bool, wrap func(string) []string) *ui.Node {
+	return notificationCard(n, lt, raster, allowLinks, wrap)
+}
+
+func notificationCard(n protocol.Notification, lt *protocol.Lifetime, raster *ui.Image, allowLinks bool, wrap func(string) []string) *ui.Node {
 	if raster == nil {
 		raster = protocolImage(n.Image)
 	}
 	now := time.Now()
 	root := &ui.Node{Kind: ui.KindColumn, Gap: cardGap, Children: []*ui.Node{
-		notificationTree(n.ID, n.AppName, n.Summary, n.Body, n.Urgency, raster, n.Value, allowLinks, now, n.Timestamp),
+		notificationTree(n.ID, n.AppName, n.Summary, n.Body, n.Urgency, raster, n.Value, allowLinks, wrap, now, n.Timestamp),
 	}}
 
 	hasDefault := false
@@ -212,7 +253,7 @@ func HistoryCard(e protocol.HistoryEntry, now time.Time, raster *ui.Image, allow
 	if raster == nil {
 		raster = protocolImage(e.Image)
 	}
-	inner := notificationTree(e.ID, e.AppName, e.Summary, e.Body, e.Urgency, raster, nil, allowLinks, now, e.Timestamp)
+	inner := notificationTree(e.ID, e.AppName, e.Summary, e.Body, e.Urgency, raster, nil, allowLinks, nil, now, e.Timestamp)
 	if historyRemoveSupported() {
 		inner = &ui.Node{Kind: ui.KindRow, Gap: cardGap, PinEnd: true, Children: []*ui.Node{
 			inner,
@@ -233,7 +274,7 @@ func ActiveGroupCard(g activeGroup, now time.Time, expanded bool, raster *ui.Ima
 		raster = protocolImage(latest.Image)
 	}
 	critical := groupCritical(g.members)
-	head := notificationTree(latest.ID, latest.AppName, latest.Summary, latest.Body, latest.Urgency, raster, latest.Value, allowLinks, now, latest.Timestamp)
+	head := notificationTree(latest.ID, latest.AppName, latest.Summary, latest.Body, latest.Urgency, raster, latest.Value, allowLinks, nil, now, latest.Timestamp)
 	head = &ui.Node{Kind: ui.KindRow, Gap: cardGap, PinEnd: true, Children: []*ui.Node{
 		head,
 		centreRemoveButton(fmt.Sprintf("notify:%d:dismiss", latest.ID), "Dismiss"),
@@ -241,7 +282,7 @@ func ActiveGroupCard(g activeGroup, now time.Time, expanded bool, raster *ui.Ima
 	root := &ui.Node{Kind: ui.KindColumn, Gap: cardGap, Children: []*ui.Node{head}}
 	if n := len(g.members); n > 1 {
 		root.Children = append(root.Children, &ui.Node{
-			Kind: ui.KindCapsule, Fill: ui.FillAccent, Padding: theme.MarginXS, Shape: ui.ShapeMedium,
+			Kind: ui.KindCapsule, Key: badgeKeyPrefix + g.key, Fill: ui.FillAccent, Padding: theme.MarginXS, Shape: ui.ShapeMedium,
 			Children: []*ui.Node{{Kind: ui.KindText, Text: fmt.Sprintf("%d", n)}},
 		})
 	}

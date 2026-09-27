@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	launcher "github.com/Nomadcxx/sysc-launch"
 	"github.com/Nomadcxx/sysc-notify/protocol"
@@ -29,26 +30,20 @@ const (
 	keyboardNone      = uint32(layershell.ZwlrLayerSurfaceV1KeyboardInteractivityNone)
 	layerOverlay      = layershell.ZwlrLayerShellV1LayerOverlay
 
-	keyEsc        = 1
-	keyBackspace  = 14
-	keyTab        = 15
-	keyEnter      = 28
-	keyLeftCtrl   = 29
-	keyLeftShift  = 42
-	keyLeftAlt    = 56
-	keyRightShift = 54
-	keyRightAlt   = 100
-	keyRightCtrl  = 97
-	keySpace      = 57
-	keyHome       = 102
-	keyUp         = 103
-	keyPageUp     = 104
-	keyLeft       = 105
-	keyRight      = 106
-	keyEnd        = 107
-	keyDown       = 108
-	keyPageDown   = 109
-	keyDelete     = 111
+	keyEsc       = 1
+	keyBackspace = 14
+	keyTab       = 15
+	keyEnter     = 28
+	keySpace     = 57
+	keyHome      = 102
+	keyUp        = 103
+	keyPageUp    = 104
+	keyLeft      = 105
+	keyRight     = 106
+	keyEnd       = 107
+	keyDown      = 108
+	keyPageDown  = 109
+	keyDelete    = 111
 
 	btnLeft  = 272
 	btnRight = 273
@@ -95,10 +90,11 @@ type PanelHost struct {
 	shieldQuiet        time.Time
 	// anim is this surface's one clock: every transition it runs shares it, so
 	// frames are scheduled from a single place.
-	anim     *animator
-	stopAnim chan struct{}
-	stopOnce sync.Once
-	theme    Theme
+	anim        *animator
+	stopAnim    chan struct{}
+	stopOnce    sync.Once
+	badgeCounts map[string]int
+	theme       Theme
 	// themeFrom is the palette this surface is fading out of. It is the theme
 	// as it was rendering when the change arrived, not the last published one,
 	// so a reload during a fade continues from what is on screen.
@@ -112,11 +108,18 @@ type PanelHost struct {
 	logicalW int
 	logicalH int
 	scale120 int
-	shift    bool
-	ctrl     bool
-	// alt carries the modifier the lane editor's move commands use, tracked
-	// the same way shift is: press sets it, release clears it.
-	alt bool
+	// mods is the modifier state the platform resolved with the latest key.
+	mods ui.Mods
+	// fieldDrag is the editor a primary press in a single-line field is
+	// drag-selecting; nil when none is. The retained field, not a key, names
+	// it: a panel search carries neither Key nor Action.
+	fieldDrag *ui.Field
+	// clickField, clickAt, clickX, clickY and clicks count presses on one
+	// field for double- and triple-click selection.
+	clickField     *ui.Field
+	clickAt        time.Time
+	clickX, clickY int
+	clicks         int
 	// barAdding names the lane whose add-a-widget list is open, empty when
 	// none is. The list expands in place the way Menu does, because no
 	// popup-over-panel surface exists.
@@ -607,6 +610,22 @@ func (r *Registry) DropAux(output uint32, surfaceID string) {
 			h.closeLocked()
 		}
 		r.mu.Unlock()
+		return
+	}
+	if connector, ok := strings.CutPrefix(surfaceID, "toast:"); ok {
+		r.mu.Lock()
+		if r.toasts != nil {
+			r.toasts.drop(connector)
+		}
+		r.mu.Unlock()
+		return
+	}
+	if digits, ok := strings.CutPrefix(surfaceID, "osd:"); ok {
+		if g, err := strconv.ParseUint(digits, 10, 32); err == nil {
+			r.mu.Lock()
+			delete(r.osd.open, uint32(g))
+			r.mu.Unlock()
+		}
 		return
 	}
 	id, ok := panelIDFromAux(surfaceID)
@@ -1330,11 +1349,13 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	if page != nil && pageOffset != 0 {
 		offsetNodeY(page, -pageOffset)
 	}
+	h.applyEditorView(root)
 	h.pointer.apply(root, h.anim)
 	if err := h.resolveEffectMotionLocked(root); err != nil {
 		return err
 	}
 	resolveProgressMotion(h.anim, root)
+	h.applyBadgePop(root)
 	resolveSpriteMotion(h.anim, root)
 
 	paintTheme := h.paintTheme()
@@ -1386,20 +1407,16 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 		defer r.mu.Unlock()
 		switch e.Kind {
 		case wayland.EventKeyPress:
-			return h.keyPress(r, e.Key)
+			h.mods = e.Mods
+			return h.keyEvent(r, e)
 		case wayland.EventIME:
 			return h.applyIME(r, e)
+		case wayland.EventPaste:
+			return h.applyPaste(r, e.Paste)
 		case wayland.EventPointerAxis:
 			return h.scrollAxis(r, e)
 		case wayland.EventKeyRelease:
-			switch e.Key {
-			case keyLeftShift, keyRightShift:
-				h.shift = false
-			case keyLeftAlt, keyRightAlt:
-				h.alt = false
-			case keyLeftCtrl, keyRightCtrl:
-				h.ctrl = false
-			}
+			h.mods = e.Mods
 			return false
 		case wayland.EventPointerEnter, wayland.EventPointerMotion:
 			h.hoverX, h.hoverY = int(math.Floor(e.X)), int(math.Floor(e.Y))
@@ -1429,6 +1446,14 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 				}
 				return true
 			}
+			if h.fieldDrag != nil {
+				if n := h.focused(); h.fieldFor(n) == h.fieldDrag {
+					h.fieldDrag.SetCaret(h.fieldOffsetAt(n, h.fieldDrag), true)
+					h.fieldDrag.SyncTo(n)
+					return true
+				}
+				h.fieldDrag = nil
+			}
 			// Only a change of resolved target repaints. Movement inside the
 			// control the pointer is already on resolves to the same key and
 			// costs nothing.
@@ -1437,6 +1462,7 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			h.pressed = ""
 			h.sliderDrag = nil
 			h.scrollDrag = nil
+			h.fieldDrag = nil
 			return h.pointerChanged(r, h.pointer.clear())
 		case wayland.EventPointerPress:
 			h.hoverX, h.hoverY = int(math.Floor(e.X)), int(math.Floor(e.Y))
@@ -1470,11 +1496,15 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 					ui.SliderAt(n, h.hoverX)
 					h.sliderDrag = n
 				}
+				if n.Kind == ui.KindTextField && !n.Multiline && (e.Button == btnLeft || e.Button == 0) {
+					h.pressField(n, e.Mods)
+				}
 				return true
 			}
 			return false
 		case wayland.EventPointerRelease:
 			h.hoverX, h.hoverY = int(math.Floor(e.X)), int(math.Floor(e.Y))
+			h.fieldDrag = nil
 			if h.sliderDrag != nil {
 				n := h.sliderDrag
 				ui.SliderAt(n, h.hoverX)
@@ -1513,7 +1543,9 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			pressed := h.pressed
 			h.pressed = ""
 			cleared := h.pointerChanged(r, h.pointer.setPress(""))
-			if n != nil && pressed != "" && n.StableKey() == pressed {
+			// A press in a text field placed its caret; releasing it is not an
+			// activation. Enter submits a field, never the pointer.
+			if n != nil && pressed != "" && n.StableKey() == pressed && n.Kind != ui.KindTextField {
 				return h.activate(r)
 			}
 			return cleared
@@ -1522,19 +1554,84 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 	}
 }
 
+// multiClickInterval and multiClickSlop bound a double or triple press: the
+// same field, soon enough, and near enough to the previous press.
+const (
+	multiClickInterval = 400 * time.Millisecond
+	multiClickSlop     = 4
+)
+
+// pressField places the caret of a single-line field under a primary press:
+// one press sets it (Shift extends the selection) and starts a drag, two
+// select the word there, three select the line. Multiline fields keep
+// focus-only presses until the painter exposes per-line hit testing.
+func (h *PanelHost) pressField(n *ui.Node, mods ui.Mods) {
+	f := h.fieldFor(n)
+	if f == nil {
+		return
+	}
+	now := time.Now()
+	if f == h.clickField && now.Sub(h.clickAt) <= multiClickInterval &&
+		abs(h.hoverX-h.clickX) <= multiClickSlop && abs(h.hoverY-h.clickY) <= multiClickSlop {
+		h.clicks++
+	} else {
+		h.clicks = 1
+	}
+	h.clickField, h.clickAt, h.clickX, h.clickY = f, now, h.hoverX, h.hoverY
+	pos := h.fieldOffsetAt(n, f)
+	switch h.clicks {
+	case 1:
+		f.SetCaret(pos, mods.Has(ui.ModShift))
+		h.fieldDrag = f
+	case 2:
+		f.SelectWordAt(pos)
+	default:
+		f.SelectLineAt(pos)
+	}
+	f.BreakUndo()
+	f.SyncTo(n)
+}
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+// fieldOffsetAt is the text offset under the pointer in a single-line field,
+// measured through the field's current scroll the way it was painted.
+func (h *PanelHost) fieldOffsetAt(n *ui.Node, f *ui.Field) int {
+	view := copyNode(n)
+	view.Editing, view.ScrollX = true, f.ScrollX
+	return render.FieldOffsetAt(view, h.hoverX, h.measureText())
+}
+
+// keyEvent is the live key path: the platform has already resolved the key
+// through the active layout.
+func (h *PanelHost) keyEvent(r *Registry, e wayland.Event) bool {
+	return h.keyInput(r, ui.KeyInput{Code: e.Key, Sym: e.Sym, Text: e.Text, Mods: e.Mods, Serial: e.Serial})
+}
+
+// keyPress resolves a raw evdev code through the US fallback. Tests and any
+// caller holding only a code use it.
 func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
+	return h.keyInput(r, ui.FallbackKey(key, h.mods))
+}
+
+func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) bool {
+	key := k.Code
 	if h.menu != nil && h.menu.Opened() {
 		if !h.menu.Handle(key) {
 			// A picker's well takes the keys the menu itself does not: the
-			// text of a family name, and the backspace that corrects it.
-			// editField routes both, so IME composition reaches the same
-			// place a keystroke does.
+			// text of a family name and the keys that edit it, through the
+			// same engine as every other field.
 			if h.menu.Filtering() {
-				if key == keyBackspace {
-					return h.editField(r, func(f *ui.Field) { f.Backspace() })
-				}
-				if ch, ok := ui.EvdevText(key, h.shift); ok {
-					return h.editField(r, func(f *ui.Field) { f.Insert(ch) })
+				var res ui.FieldResult
+				if h.menu.Edit(func(f *ui.Field) { res = f.HandleKey(k) }) && res.Handled {
+					r.requestClipboard(res, k.Serial)
+					r.rebuildPanel(h)
+					return true
 				}
 			}
 			return false
@@ -1553,22 +1650,19 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 		r.rebuildPanel(h)
 		return true
 	}
-	if key == keyBackspace {
-		return h.editField(r, func(f *ui.Field) { f.Backspace() })
-	}
-	// Space is both printable text and the accept key. Only a focused text
-	// field consumes it as text, so fall through rather than return when the
-	// edit does not land -- otherwise no control is ever activatable by
-	// keyboard, because every accept press is swallowed here.
-	if ch, ok := ui.EvdevText(key, h.shift); ok && !h.ctrl && !h.alt {
-		if h.editField(r, func(f *ui.Field) { f.Insert(ch) }) {
-			return true
-		}
-	}
-	if h.id == PanelWallpaper && h.wallpaperKeyPress(r, key) {
+	// A focused field takes its editing keys first. Space is text there and
+	// the accept key everywhere else, because fieldKey reports no focus for a
+	// control. Enter submits by falling through to the path it always took,
+	// so a launcher still runs its selection and a form still activates.
+	// The launcher is type-to-search: its well always has focus, and the list
+	// keys (Up, Down, Page, Home, End, Enter) drive the results, not the caret.
+	if h.id == PanelLauncher && h.launcherKeyPress(r, key) {
 		return true
 	}
-	if h.id == PanelLauncher && h.launcherKeyPress(r, key) {
+	if res, focused := h.fieldKey(r, k); focused && res.Handled && !res.Submit {
+		return true
+	}
+	if h.id == PanelWallpaper && h.wallpaperKeyPress(r, key) {
 		return true
 	}
 	if h.id == PanelClipboard && h.clipboardKeyPress(r, key) {
@@ -1580,30 +1674,21 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 	if h.id == PanelPlugin {
 		if n := h.focused(); n == nil || n.Kind != ui.KindTextField {
 			mods := make([]string, 0, 3)
-			if h.alt {
+			if h.mods.Has(ui.ModAlt) {
 				mods = append(mods, "alt")
 			}
-			if h.ctrl {
+			if h.mods.Has(ui.ModCtrl) {
 				mods = append(mods, "ctrl")
 			}
-			if h.shift {
+			if h.mods.Has(ui.ModShift) {
 				mods = append(mods, "shift")
 			}
-			if shortcut := panelShortcutKey(key); shortcut != "" && r.plugins != nil && r.plugins.deliverShortcut(shortcut, mods) {
+			if shortcut := panelShortcutKey(k.Sym); shortcut != "" && r.plugins != nil && r.plugins.deliverShortcut(shortcut, mods) {
 				return true
 			}
 		}
 	}
 	switch key {
-	case keyLeftShift, keyRightShift:
-		h.shift = true
-		return false
-	case keyLeftAlt, keyRightAlt:
-		h.alt = true
-		return false
-	case keyLeftCtrl, keyRightCtrl:
-		h.ctrl = true
-		return false
 	case keyEsc:
 		if h.id == PanelMonitor && h.processSelected != (services.ProcessIdentity{}) {
 			h.processSelected = services.ProcessIdentity{}
@@ -1619,7 +1704,7 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 		r.closePanelLocked(h.id)
 		return true
 	case keyTab:
-		if h.shift {
+		if h.mods.Has(ui.ModShift) {
 			h.roving.Prev()
 		} else {
 			h.roving.Next()
@@ -1658,16 +1743,36 @@ func (h *PanelHost) keyPress(r *Registry, key uint32) bool {
 	return false
 }
 
-func panelShortcutKey(key uint32) string {
-	if key == keyHome {
+// fieldKey applies one key to the focused text field. Text changes run the
+// field's change path (query, plugin change event, setting); caret and
+// selection moves only repaint. The bool reports whether a field had focus.
+func (h *PanelHost) fieldKey(r *Registry, k ui.KeyInput) (ui.FieldResult, bool) {
+	n := h.focused()
+	f := h.fieldFor(n)
+	if f == nil {
+		return ui.FieldResult{}, false
+	}
+	res := f.HandleKey(k)
+	if !res.Handled {
+		return res, true
+	}
+	f.SyncTo(n)
+	r.requestClipboard(res, k.Serial)
+	if res.Changed {
+		h.fieldChanged(r, n, f)
+	}
+	return res, true
+}
+
+// panelShortcutKey names a keysym the way plugin shortcuts are declared:
+// "home", a lowercase letter, or a digit. Anything else is not a shortcut.
+func panelShortcutKey(sym uint32) string {
+	if sym == ui.SymHome {
 		return "home"
 	}
-	text, ok := ui.EvdevText(key, false)
-	if !ok || len(text) != 1 {
-		return ""
-	}
-	if text[0] >= 'a' && text[0] <= 'z' || text[0] >= '0' && text[0] <= '9' {
-		return text
+	sym = uint32(unicode.ToLower(rune(sym)))
+	if sym >= 'a' && sym <= 'z' || sym >= '0' && sym <= '9' {
+		return string(rune(sym))
 	}
 	return ""
 }
@@ -1873,8 +1978,53 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 		return true
 	}
 	n := h.focused()
-	if n == nil || n.Kind != ui.KindTextField {
+	f := h.fieldFor(n)
+	if f == nil {
 		return false
+	}
+	fn(f)
+	f.SyncTo(n)
+	return h.fieldChanged(r, n, f)
+}
+
+// fieldChanged carries a field's new text to whoever owns it: a plugin's
+// change event, the Bluetooth prompt, a panel query, the plugin manager, or
+// a setting.
+func (h *PanelHost) fieldChanged(r *Registry, n *ui.Node, f *ui.Field) bool {
+	if _, ok := parsePluginAction(n.Action); ok {
+		r.deliverPluginText(n.Action, n.Text, v1.EventChange)
+		return true
+	}
+	if n.Action == "bluetooth-prompt-input" {
+		r.rebuildPanel(h)
+		return true
+	}
+	if n.Name == "Search" {
+		h.query = f.Text
+		if h.id == PanelLauncher {
+			h.launcherSel = 0
+			h.launcherScroll = 0
+			r.launcherServiceLocked().Query(h.query)
+		}
+		idx := h.roving.Index()
+		r.rebuildPanel(h)
+		h.roving.Set(idx)
+		return true
+	}
+	if strings.HasPrefix(n.Action, "plugin-set:") {
+		return r.handlePluginManager(h, n)
+	}
+	h.applySetting(r, n)
+	return true
+}
+
+// fieldFor is the retained editor behind a text-field node: the Bluetooth
+// PIN, the network password, a panel search, a plugin field's retained
+// editor, or a settings entry. It is created on first use and synced from
+// the node, so every path that edits or paints a field shares one state.
+func (h *PanelHost) fieldFor(n *ui.Node) *ui.Field {
+	if n == nil || n.Kind != ui.KindTextField {
+		return nil
 	}
 	var f *ui.Field
 	if n.Action == "bluetooth-prompt-input" && bluetoothBodyVisible(h) {
@@ -1904,10 +2054,7 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 		}
 		slot := h.editors[k]
 		if slot == nil {
-			slot = &retainedEditor{field: &ui.Field{
-				Text: n.Text, PreeditText: n.Preedit, Cursor: n.Cursor,
-				Multiline: n.Multiline, SubmitOnEnter: n.SubmitOnEnter,
-			}, reseed: n.Reseed}
+			slot = &retainedEditor{field: seedField(n), reseed: n.Reseed}
 			h.editors[k] = slot
 		}
 		slot.field.SyncFrom(n)
@@ -1918,7 +2065,7 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 		}
 		f = h.fields[store]
 		if f == nil {
-			f = &ui.Field{Text: n.Text, PreeditText: n.Preedit, Cursor: n.Cursor}
+			f = seedField(n)
 			h.fields[store] = f
 		} else {
 			f.SyncFrom(n)
@@ -1930,39 +2077,73 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 		}
 		f = h.fields[path]
 		if f == nil {
-			f = &ui.Field{Text: n.Text, PreeditText: n.Preedit, Cursor: n.Cursor}
+			f = seedField(n)
 			h.fields[path] = f
 		} else {
 			f.SyncFrom(n)
 		}
 	}
-	fn(f)
+	return f
+}
+
+// applyEditorView marks the focused field on a paint copy and gives it the
+// scroll that keeps its caret visible. It runs after layout, so bounds are
+// real, and measures with the same text metrics the painter uses.
+func (h *PanelHost) applyEditorView(root *ui.Node) {
+	focused := h.focused()
+	if focused == nil || focused.Kind != ui.KindTextField {
+		return
+	}
+	f := h.fieldFor(focused)
+	n := mirrorNode(h.root, root, focused)
+	if f == nil || n == nil {
+		return
+	}
+	n.Editing = true
+	// The field owns caret and selection. A builder may have written the
+	// caret at the end of the text; the painted one is where the user put it.
 	f.SyncTo(n)
-	if _, ok := parsePluginAction(n.Action); ok {
-		r.deliverPluginText(n.Action, n.Text, v1.EventChange)
-		return true
-	}
-	if n.Action == "bluetooth-prompt-input" {
-		r.rebuildPanel(h)
-		return true
-	}
-	if n.Name == "Search" {
-		h.query = f.Text
-		if h.id == PanelLauncher {
-			h.launcherSel = 0
-			h.launcherScroll = 0
-			r.launcherServiceLocked().Query(h.query)
+	box := render.FieldTextRect(n)
+	measure := h.measureText()
+	attrs := ui.TextAttrsOf(n)
+	if n.Multiline {
+		lines := strings.Count(ui.DisplayPrefix(n, n.Cursor), "\n")
+		_, lineH := measure(" ", attrs)
+		visible := max(box.H/max(lineH, 1), 1)
+		switch {
+		case lines < f.ScrollY:
+			f.ScrollY = lines
+		case lines >= f.ScrollY+visible:
+			f.ScrollY = lines - visible + 1
 		}
-		idx := h.roving.Index()
-		r.rebuildPanel(h)
-		h.roving.Set(idx)
-		return true
+		n.ScrollY = f.ScrollY
+		return
 	}
-	if strings.HasPrefix(n.Action, "plugin-set:") {
-		return r.handlePluginManager(h, n)
+	caretX, _ := measure(ui.DisplayPrefix(n, n.Cursor)+ui.DisplayPreedit(n), attrs)
+	textW, _ := measure(ui.DisplayText(n)+ui.DisplayPreedit(n), attrs)
+	f.ScrollX = ui.KeepCaretVisible(f.ScrollX, caretX, textW, box.W, 8)
+	n.ScrollX = f.ScrollX
+}
+
+// mirrorNode finds target in live and returns the node at the same place in
+// cp, a copyNode of live. Position, not key: a panel search carries neither a
+// Key nor an Action, and copyNode keeps every child in order.
+func mirrorNode(live, cp, target *ui.Node) *ui.Node {
+	if live == nil || cp == nil {
+		return nil
 	}
-	h.applySetting(r, n)
-	return true
+	if live == target {
+		return cp
+	}
+	if len(live.Children) != len(cp.Children) {
+		return nil
+	}
+	for i, c := range live.Children {
+		if m := mirrorNode(c, cp.Children[i], target); m != nil {
+			return m
+		}
+	}
+	return nil
 }
 
 // metrics is the density row a tree builds against. The receiver may be nil:
@@ -2369,6 +2550,7 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 		h.errLabel = err.Error()
 	}
 	resolveProgressMotion(h.anim, probe)
+	h.noteBadges(h.root)
 	resolveSpriteMotion(h.anim, probe)
 	h.focus = ui.Focusables(h.root)
 	h.roving.Count = len(h.focus)
@@ -2983,6 +3165,16 @@ func (r *Registry) closeAllPanelsLocked() {
 	}
 }
 
+// seedField is a fresh editor holding a node's value with the caret where
+// the node put it and nothing selected.
+func seedField(n *ui.Node) *ui.Field {
+	f := ui.NewField(n.Text)
+	f.PreeditText = n.Preedit
+	f.Multiline, f.SubmitOnEnter = n.Multiline, n.SubmitOnEnter
+	f.SetCaret(n.Cursor, false)
+	return f
+}
+
 type retainedEditor struct {
 	field  *ui.Field
 	reseed uint64
@@ -3004,13 +3196,7 @@ func overlayEditors(root *ui.Node, eds map[string]*retainedEditor) {
 				seen[k] = true
 				slot := eds[k]
 				if slot == nil || n.Reseed > slot.reseed {
-					eds[k] = &retainedEditor{
-						field: &ui.Field{
-							Text: n.Text, PreeditText: n.Preedit, Cursor: n.Cursor,
-							Multiline: n.Multiline, SubmitOnEnter: n.SubmitOnEnter,
-						},
-						reseed: n.Reseed,
-					}
+					eds[k] = &retainedEditor{field: seedField(n), reseed: n.Reseed}
 				} else {
 					slot.field.Multiline = n.Multiline
 					slot.field.SubmitOnEnter = n.SubmitOnEnter

@@ -231,8 +231,21 @@ type Node struct {
 	Preedit string
 	// Cursor is a byte index into Text for KindTextField.
 	Cursor int
-	Width  int
-	Height int
+	// ScrollX and ScrollY are the render-time scroll of a focused text field:
+	// logical px along a single line, whole lines in a multiline field. The
+	// host sets them on the paint copy; plugins never do.
+	ScrollX int
+	ScrollY int
+	// SelStart and SelEnd bound the selected bytes of Text. Equal means no
+	// selection. Render-only, like Cursor.
+	SelStart int
+	SelEnd   int
+	// Editing marks the one text field that has keyboard focus on this paint
+	// copy: it scrolls to its caret and paints its selection instead of
+	// ellipsizing from the start.
+	Editing bool
+	Width   int
+	Height  int
 	// IconSize is the logical square reserved by KindIcon. Zero uses 20.
 	IconSize int
 	// IconProjectFirst resolves Icon in the project catalogue before the

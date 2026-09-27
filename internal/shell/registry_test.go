@@ -995,3 +995,36 @@ func (r *Registry) setTestBar(global uint32, bar *Bar) {
 	defer r.mu.Unlock()
 	r.bars[global] = bar
 }
+
+// An adopted bar's invalidation must reach the registry channel so the owner
+// repaints settling animation frames. Before the publish seam existed the
+// frame loop wrote a private channel nothing read (GitHub #18).
+func TestAdoptedBarInvalidationReachesTheRegistry(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry(config.Default())
+	t.Cleanup(reg.Close)
+	newHosts(t, reg, map[uint32]string{7: "DP-9"})
+
+	reg.mu.Lock()
+	bar := reg.bars[7]
+	reg.mu.Unlock()
+
+drain:
+	for {
+		select {
+		case <-reg.Invalidations():
+		default:
+			break drain
+		}
+	}
+
+	bar.invalidate()
+	select {
+	case inv := <-reg.Invalidations():
+		if inv.Global != 7 {
+			t.Fatalf("invalidation global = %d, want 7", inv.Global)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("adopted bar invalidation never reached the registry")
+	}
+}

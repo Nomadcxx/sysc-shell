@@ -7,19 +7,29 @@ const KeyBackspace = 14
 // Field is a single-line text value. Preedit is IME composing text and is
 // not part of Text until Commit.
 type Field struct {
-	Text          string
-	PreeditText   string
-	Cursor        int
+	Text        string
+	PreeditText string
+	Cursor      int
+	// Anchor is the other end of the selection; equal to Cursor means none.
+	Anchor        int
 	Multiline     bool
 	SubmitOnEnter bool
 	// Masked disguises the value at render time only. Text keeps the real
 	// runes, so editing, cursor motion and submit are unchanged and exactly
 	// one code path knows about the disguise.
 	Masked bool
+	// ScrollX and ScrollY are view state kept with the editor so a rebuild
+	// does not jump the view: px for a single line, lines for multiline.
+	ScrollX int
+	ScrollY int
+	// goalCol is the column vertical motion aims for, kept across short
+	// lines; -1 when the next vertical move should start from the caret.
+	goalCol int
+	history undoHistory
 }
 
 func NewField(s string) *Field {
-	return &Field{Text: s, Cursor: len(s)}
+	return &Field{Text: s, Cursor: len(s), Anchor: len(s), goalCol: -1}
 }
 
 // MaskRune is drawn in place of each rune of a masked field.
@@ -86,6 +96,7 @@ func (f *Field) Commit(s string) {
 	if f == nil {
 		return
 	}
+	f.record(editOther, "")
 	f.Insert(s)
 }
 
@@ -100,8 +111,10 @@ func (f *Field) Insert(s string) bool {
 	}
 	f.PreeditText = ""
 	f.clamp()
+	f.DeleteSelection()
 	f.Text = f.Text[:f.Cursor] + s + f.Text[f.Cursor:]
 	f.Cursor += len(s)
+	f.Anchor, f.goalCol = f.Cursor, -1
 	return true
 }
 
@@ -120,19 +133,14 @@ func (f *Field) Move(runes int) {
 		f.Cursor += size
 		runes--
 	}
+	f.Anchor = f.Cursor
 }
 
+// Backspace deletes the selection, else the grapheme before the caret.
 func (f *Field) Backspace() {
-	if f == nil {
-		return
+	if f != nil {
+		f.DeleteGrapheme(-1)
 	}
-	f.clamp()
-	if f.Cursor <= 0 {
-		return
-	}
-	_, size := utf8.DecodeLastRuneInString(f.Text[:f.Cursor])
-	f.Text = f.Text[:f.Cursor-size] + f.Text[f.Cursor:]
-	f.Cursor -= size
 }
 
 // Clear empties the field. It is the pointer path's counterpart to holding
@@ -142,7 +150,7 @@ func (f *Field) Clear() {
 	if f == nil {
 		return
 	}
-	f.Text, f.PreeditText, f.Cursor = "", "", 0
+	f.Text, f.PreeditText, f.Cursor, f.Anchor = "", "", 0, 0
 }
 
 func (f *Field) DeleteSurrounding(before, after int) {
@@ -166,6 +174,7 @@ func (f *Field) DeleteSurrounding(before, after int) {
 	}
 	f.Text = f.Text[:start] + f.Text[end:]
 	f.Cursor = start
+	f.Anchor = f.Cursor
 }
 
 func (f *Field) clamp() {
@@ -175,24 +184,38 @@ func (f *Field) clamp() {
 	if f.Cursor > len(f.Text) {
 		f.Cursor = len(f.Text)
 	}
+	f.Anchor = min(max(f.Anchor, 0), len(f.Text))
 }
 
 func (f *Field) Node(name string) *Node {
 	if f == nil {
 		f = NewField("")
 	}
+	start, end := f.Selection()
 	return &Node{
 		Kind: KindTextField, Text: f.Text, Preedit: f.PreeditText, Cursor: f.Cursor,
+		SelStart: start, SelEnd: end,
 		Focusable: true, Name: name, Role: "textbox", Multiline: f.Multiline,
 		SubmitOnEnter: f.SubmitOnEnter, Masked: f.Masked,
 	}
 }
 
+// SyncFrom adopts a node's value. New text is a reseed — from a plugin or a
+// programmatic set — so the caret follows the node and selection, history
+// and scroll reset. The same text means the node was rebuilt from this
+// field, and the field's own caret, selection and history stand.
 func (f *Field) SyncFrom(n *Node) {
 	if f == nil || n == nil {
 		return
 	}
-	f.Text, f.PreeditText, f.Cursor = n.Text, n.Preedit, n.Cursor
+	f.PreeditText = n.Preedit
+	if n.Text == f.Text {
+		return
+	}
+	f.Text, f.Cursor = n.Text, n.Cursor
+	f.clamp()
+	f.Anchor, f.goalCol, f.ScrollX, f.ScrollY = f.Cursor, -1, 0, 0
+	f.history = undoHistory{}
 }
 
 func (f *Field) SyncTo(n *Node) {
@@ -200,4 +223,5 @@ func (f *Field) SyncTo(n *Node) {
 		return
 	}
 	n.Text, n.Preedit, n.Cursor = f.Text, f.PreeditText, f.Cursor
+	n.SelStart, n.SelEnd = f.Selection()
 }

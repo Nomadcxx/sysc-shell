@@ -1,8 +1,13 @@
 package wayland
 
 import (
+	"bytes"
+	"log"
 	"time"
 
+	"golang.org/x/sys/unix"
+
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-wayland/client"
 )
 
@@ -61,6 +66,11 @@ func (o *owner) leaveKeyboard() {
 	o.setTextInputEnabled(false)
 	o.keyFocus = keyFocus{}
 	o.stopRepeat()
+	// A dead key pressed before focus moved must not compose with the first
+	// key typed at the new focus.
+	if o.keymap != nil {
+		o.keymap.resetCompose()
+	}
 }
 
 // now is the owner's clock. Tests replace it to drive the repeat deadline
@@ -142,9 +152,7 @@ func (o *owner) fireRepeat() {
 		return
 	}
 	o.repeat.next = now.Add(time.Second / time.Duration(o.repeat.rate))
-	o.deliverUnit(o.keyFocus.host, o.keyFocus.unit, Event{
-		Kind: EventKeyPress, Key: o.repeat.key, Serial: o.repeat.serial,
-	})
+	o.deliverUnit(o.keyFocus.host, o.keyFocus.unit, o.keyEvent(EventKeyPress, o.repeat.key, o.repeat.serial))
 }
 
 // deliverKey forwards a wl_keyboard.key to the focused surface. Key is the
@@ -161,7 +169,57 @@ func (o *owner) deliverKey(serial, key, state uint32) {
 	default:
 		o.disarmRepeat(key)
 	}
-	o.deliverUnit(o.keyFocus.host, o.keyFocus.unit, Event{
-		Kind: kind, Key: key, Serial: serial,
-	})
+	o.deliverUnit(o.keyFocus.host, o.keyFocus.unit, o.keyEvent(kind, key, serial))
+}
+
+// setModifiers records wl_keyboard.modifiers. group selects the layout and is
+// used once a keymap is loaded.
+func (o *owner) setModifiers(depressed, latched, locked, group uint32) {
+	o.mods = ui.ModsFromMask(depressed, latched, locked)
+	if o.keymap != nil {
+		o.keymap.setMask(depressed, latched, locked, group)
+	}
+}
+
+// loadKeymap installs the compositor's keymap. Anything but a parseable
+// xkb_v1 keymap keeps the US fallback, logged once per keymap event.
+func (o *owner) loadKeymap(format uint32, fd int, size uint32) {
+	if fd >= 0 {
+		defer unix.Close(fd)
+	}
+	o.keymap = nil
+	if format != uint32(client.KeyboardKeymapFormatXkbV1) || fd < 0 || size == 0 {
+		return
+	}
+	data, err := unix.Mmap(fd, 0, int(size), unix.PROT_READ, unix.MAP_PRIVATE)
+	if err != nil {
+		log.Printf("wayland: keymap mmap: %v; using the US fallback", err)
+		return
+	}
+	defer unix.Munmap(data)
+	text := bytes.TrimRight(data, "\x00")
+	k, err := newKeymapResolver(append([]byte(nil), text...), "")
+	if err != nil {
+		log.Printf("wayland: keymap parse: %v; using the US fallback", err)
+		return
+	}
+	o.keymap = k
+}
+
+// keyEvent resolves a key at delivery time. Real presses and synthesised
+// repeats both come through here, so a repeat types what the keys held now
+// would type.
+func (o *owner) keyEvent(kind EventKind, key, serial uint32) Event {
+	e := Event{Kind: kind, Key: key, Serial: serial, Mods: o.mods}
+	switch {
+	case o.keymap == nil:
+		k := ui.FallbackKey(key, o.mods)
+		e.Sym, e.Text = k.Sym, k.Text
+	case kind == EventKeyRelease:
+		// A release must not feed compose; only its keysym matters.
+		e.Sym, _ = o.keymap.peek(key)
+	default:
+		e.Sym, e.Text = o.keymap.resolve(key, o.mods)
+	}
+	return e
 }

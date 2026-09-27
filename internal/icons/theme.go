@@ -39,8 +39,12 @@ type Resolver struct {
 }
 
 // NewResolver builds a resolver over the standard search path. An empty theme
-// name means hicolor, which every compliant theme inherits anyway.
+// name uses the configured desktop icon theme, falling back to hicolor, which
+// every compliant theme inherits anyway.
 func NewResolver(theme string, dirs []string) *Resolver {
+	if theme == "" {
+		theme = configuredIconTheme()
+	}
 	if theme == "" {
 		theme = "hicolor"
 	}
@@ -71,6 +75,29 @@ func SearchDirs() []string {
 		}
 	}
 	return append(dirs, "/usr/share/pixmaps")
+}
+
+// configuredIconTheme reads gtk-icon-theme-name from the GTK settings files,
+// preferring the newest version the desktop writes. The shell keeps no icon
+// theme key of its own; this is the same value GTK applications use.
+func configuredIconTheme() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	for _, version := range []string{"gtk-4.0", "gtk-3.0"} {
+		contents, err := os.ReadFile(filepath.Join(home, ".config", version, "settings.ini"))
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(contents), "\n") {
+			value, ok := strings.CutPrefix(strings.TrimSpace(line), "gtk-icon-theme-name=")
+			if ok {
+				return strings.Trim(strings.TrimSpace(value), `"`)
+			}
+		}
+	}
+	return ""
 }
 
 // FileResolver resolves absolute filesystem paths and nothing else. Plugin

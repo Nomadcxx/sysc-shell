@@ -179,8 +179,7 @@ func TestTabMovesRovingFocus(t *testing.T) {
 	h := reg.panelHosts[PanelSession]
 	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyTab})
 	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyTab})
-	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyLeftShift})
-	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyTab})
+	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyTab, Mods: ui.ModShift})
 	if h.roving.Index() != 1 {
 		t.Fatalf("focus index = %d, want 1", h.roving.Index())
 	}
