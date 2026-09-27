@@ -129,7 +129,28 @@ type PanelHost struct {
 	// tree starts at the top, so without this a drag or a remove threw the
 	// user back to the first row and lost their place.
 	settingsScroll int
-	pressed        string
+	// settingsPage is the open section's page (settings redesign D1). Empty
+	// means the section's first.
+	settingsPage string
+	// barPreview is the last bar preview that resolved, kept so a draft that
+	// is mid-edit does not blank the Appearance page's preview.
+	barPreview *ui.Image
+	// barImages caches rendered bar pictures by the draft, width and scale
+	// they were painted from. Building one scans system fonts; the
+	// Appearance page cost 38 ms a rebuild on the Wayland owner without it.
+	barImages map[string]*ui.Image
+	// settingsScrollTop makes the next rebuild open the body at the top: a
+	// page or section switch. rebuildPanel otherwise carries the old offset.
+	settingsScrollTop bool
+	// settingsTreeScale is the scale the settings tree was built at, so a
+	// configure at another scale rebuilds it (its measured widths and the bar
+	// pictures depend on it).
+	settingsTreeScale int
+	// pluginName resolves a plugin ID to its catalogue name for the bar
+	// editor's rows (settings redesign D9). Set by barLaneStripFor; nil
+	// falls back to the plugin ID.
+	pluginName func(id string) string
+	pressed    string
 	// pointer is the resolved hover/press state, kept as stable keys so it
 	// survives the tree rebuilds that replace every node.
 	pointer        interaction
@@ -331,7 +352,13 @@ func (r *Registry) openSettingsAtLocked(output uint32, requested string) bool {
 		return true
 	}
 	if r.panelHosts[PanelSettings] == nil {
-		if err := r.openPanelRootLocked(PanelSettings, output, Trigger{}); err != nil {
+		// The output's size, so Settings takes its responsive size (D10)
+		// rather than one for a 1920x1080 output that is not there.
+		connector := ""
+		if bar, ok := r.bars[output]; ok {
+			connector = bar.connector()
+		}
+		if err := r.openPanelRootLocked(PanelSettings, output, r.triggerLocked(output, connector)); err != nil {
 			return true
 		}
 	}
@@ -365,10 +392,8 @@ func panelSection(id PanelID, requested string) (string, error) {
 		}
 		return requested, nil
 	case PanelSettings:
-		for _, section := range settingsSections {
-			if section == requested {
-				return requested, nil
-			}
+		if _, _, ok := settingsAddress(requested); ok {
+			return requested, nil
 		}
 	}
 	return "", fmt.Errorf("unknown section %q", requested)
@@ -391,7 +416,18 @@ func (r *Registry) selectPanelSectionLocked(id PanelID, section string) error {
 		r.publishSurface(h.output, panelSurfaceID(id))
 		return nil
 	}
-	if h.section == section {
+	page := ""
+	if id == PanelSettings {
+		var ok bool
+		requested := section
+		if section, page, ok = settingsAddress(requested); !ok {
+			return fmt.Errorf("unknown section %q", requested)
+		}
+		if h.section == section && settingsCurrentPage(h, section) == page {
+			return nil
+		}
+		h.settingsScrollTop = true
+	} else if h.section == section {
 		return nil
 	}
 	if id == PanelControlCenter {
@@ -399,7 +435,7 @@ func (r *Registry) selectPanelSectionLocked(id PanelID, section string) error {
 		r.publishSurface(h.output, panelSurfaceID(id))
 		return nil
 	}
-	h.section = section
+	h.section, h.settingsPage = section, page
 	r.rebuildPanel(h)
 	r.publishSurface(h.output, panelSurfaceID(id))
 	return nil
@@ -443,13 +479,14 @@ func (r *Registry) triggerFor(global uint32) (uint32, Trigger) {
 
 func (r *Registry) triggerLocked(global uint32, connector string) Trigger {
 	policy := r.cfg.ForConnector(connector)
-	trig := Trigger{BarEdge: policy.Edge, BarZone: policy.Height - policy.Gap, Align: "center"}
+	trig := Trigger{BarEdge: policy.Edge, BarZone: policy.Extent(), Align: "center"}
 	if bar, ok := r.bars[global]; ok {
 		w, h := bar.configuredSize()
 		if w > 0 {
 			trig.OutW = w
 		}
-		if h > 0 {
+		// Panels meet the body; an attached bar's overhang lies past it.
+		if h -= policy.Overhang(); h > 0 {
 			trig.BarZone = h
 		}
 		// The screen, not the bar. Without it every panel was placed as if the
@@ -642,6 +679,9 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	if id == PanelAudio {
 		size = audioPanelSize(outW, outH)
 	}
+	if id == PanelSettings {
+		size = settingsPanelSize(outW, outH)
+	}
 	gap := r.cfg.Panels.Gap
 	if id == PanelPlugin || id == PanelAudio || id == PanelControlCenter {
 		gap = 0
@@ -662,8 +702,21 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	if id == PanelSession || id == PanelNotifications {
 		place.Align = "right"
 	}
-	if id == PanelLauncher || id == PanelWallpaper {
+	if bar, ok := r.bars[output]; ok {
+		bt := bar.themeSnapshot()
+		place.BarShape, place.BarGap, place.BarRadius, place.Fillet = bt.BarShape, bt.BarGap, bt.Radius, bt.Fillet
+	}
+	// Settings, the launcher and the clipboard float over the desktop; every
+	// other panel attaches to the bar.
+	if id == PanelLauncher || id == PanelSettings || id == PanelClipboard {
 		place.CenterY = true
+	}
+	if _, hasBar := r.bars[output]; !place.CenterY && (!hasBar || r.panelThemeFor(output).BarStyle == "islands") {
+		place.Detached = true
+		place.Gap = theme.MarginS
+		if !hasBar {
+			place.BarZone = 0
+		}
 	}
 	if id == PanelClipboard {
 		// Clipboard history is a true modal: centre it against the whole output,
@@ -672,6 +725,12 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		place.Gap = 0
 		place.CenterY = true
 		place.Align = "center"
+	}
+
+	// Tuck an attached panel one pixel under an opaque bar. Over a
+	// translucent one the doubled row would paint a darker line instead.
+	if place.Attached() && r.panelThemeFor(output).Surfaces.Bar == 0xff {
+		place.Overlap = 1
 	}
 
 	h := &PanelHost{
@@ -733,6 +792,10 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		h.clipboardThumbnailRequest = make(map[string]struct{})
 	}
 	h.root = r.panelTree(h)
+	if id == PanelSession {
+		_ = h.ensureText()
+		h.place.Panel.H = r.sessionSurfaceHeight(h)
+	}
 	if id == PanelNotifications {
 		_ = h.ensureText()
 		h.place.Panel.H = notificationsSurfaceHeight(h)
@@ -969,12 +1032,37 @@ func (r *Registry) shieldSpec(h *PanelHost) *wayland.AuxSpec {
 // whenever the bar is, so keeping it would paint straight over the blur and
 // throw the capture away -- which is exactly what the renderer's
 // TestOpaqueRootHidesTheBackdrop asserts an opaque root does.
+//
+// Only a panel draws its own rim; the bar, toasts and tray surfaces sit
+// directly on the shared surface and leave it zero. An attached panel paints
+// none either: it and the bar are one ground, and a stroke would read as a
+// seam between them.
 func (h *PanelHost) rootStyle(t Theme) render.Style {
-	if !h.place.CenterY && h.backdrop == nil {
-		return t.AttachedPanelStyle()
+	var s render.Style
+	switch {
+	case h.place.Attached() && h.backdrop == nil:
+		s = t.AttachedPanelStyle()
+	case h.place.Attached():
+		s = t.PanelStyle()
+	default:
+		s = t.PanelStyle()
+		s.Rim = t.Outline
 	}
-	return t.PanelStyle()
+	if h.id == PanelSettings {
+		s.SurfaceOpacity = max(s.SurfaceOpacity, settingsOpacityFloor)
+	}
+	return s
 }
+
+// settingsPanelSize is settings redesign D10: 72 percent of the output's
+// width and 88 percent of its height, capped at 1120x820.
+func settingsPanelSize(outputW, outputH int) ui.Rect {
+	return ui.Rect{W: min(1120, outputW*72/100), H: min(820, outputH*88/100)}
+}
+
+// settingsOpacityFloor is the least alpha the settings root paints at (D7):
+// the pane is read for minutes at a time, over whatever is behind it.
+const settingsOpacityFloor uint8 = 0xf0
 
 func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	anchor := uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorLeft)
@@ -989,20 +1077,24 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	if h.place.BarEdge == "bottom" {
 		region.Y = h.place.Output.H - m.Bottom - h.place.Panel.H
 	}
-	fillet := h.filletMargin()
-	if fillet > 0 {
-		m.Left -= fillet
-	}
+	joints := h.place.Joints()
+	m.Left -= joints.Left
+	width, height := h.surfaceSize()
 	opaque := h.theme.BackgroundOpaque()
-	if fillet > 0 {
+	var input []ui.Rect
+	if joints != (Joints{}) {
+		// The joints and a flush panel's screen-edge wedge hang past the body
+		// over whatever is beneath; only the body takes input.
+		input = []ui.Rect{h.surfaceBody(width, height)}
 		// ponytail: omit the hint for fillet-expanded surfaces; add a body-aware
 		// opaque-region API only if compositor profiling shows this matters.
 		opaque = false
 	}
 	// Nil disables the capture entirely, so a shell with blur off pays none of
-	// its cost rather than capturing and discarding.
+	// its cost rather than capturing and discarding. A compositor that blurs
+	// does the job itself, through BlurShape.
 	var blurRegion *ui.Rect
-	if r.cfg.Theme.BlurBehind {
+	if r.cfg.Theme.BlurBehind && !r.caps.Blur {
 		blurRegion = &region
 	}
 	return &wayland.AuxSpec{
@@ -1014,8 +1106,9 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 		MarginBottom:  int32(m.Bottom),
 		MarginLeft:    int32(m.Left),
 		MarginRight:   int32(m.Right),
-		Width:         int32(h.place.Panel.W + 2*fillet),
-		Height:        int32(h.place.Panel.H),
+		Width:         int32(width),
+		Height:        int32(height),
+		InputRects:    input,
 		ExclusiveZone: -1,
 		Keyboard:      keyboardExclusive,
 		BlurRegion:    blurRegion,
@@ -1027,6 +1120,11 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 				r.mu.Lock()
 				defer r.mu.Unlock()
 				h.backdrop = img
+			},
+			BlurShape: func() []ui.Rect {
+				r.mu.Lock()
+				defer r.mu.Unlock()
+				return h.blurShape(r)
 			},
 			OpaqueBackground: opaque,
 			Radius:           h.theme.Radius,
@@ -1045,25 +1143,57 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	}
 }
 
-// filletMargin is the per-side room the concave bar joint needs. It clamps to
-// the gap between this panel's edge and the bar's, because a wedge wider than
-// that margin paints past the bar it is meant to join. Floating panels
-// (CenterY) do not attach, so they take no margin.
-func (h *PanelHost) filletMargin() int {
-	if h == nil || h.place.BarEdge == "" || h.place.CenterY {
-		return 0
+// blurShape is the region the compositor blurs behind the panel, in surface
+// coordinates: its whole silhouette, joints and screen-edge wedge included. An
+// attached panel on a frosted bar blurs so it shares the bar's ground; any
+// panel blurs when blur-behind is on and the compositor can. Caller holds
+// r.mu.
+func (h *PanelHost) blurShape(r *Registry) []ui.Rect {
+	if !(h.place.Attached() && h.theme.Blur) && !(r.cfg.Theme.BlurBehind && r.caps.Blur) {
+		return nil
 	}
-	room := h.place.Padding - BarGap
-	if h.id == PanelControlCenter {
-		m := h.place.Margins()
-		left := m.Left - BarGap
-		right := h.place.Output.W - BarGap - (m.Left + h.place.Panel.W)
-		room = min(left, right)
+	w, hgt := h.logicalW, h.logicalH
+	if w <= 0 || hgt <= 0 {
+		w, hgt = h.surfaceSize()
 	}
-	if room <= 0 {
-		return 0
+	shape := ui.SurfaceShape{Body: h.surfaceBody(w, hgt), Radius: h.theme.Radius}
+	if h.place.Attached() {
+		opacity, _ := h.panelReveal()
+		j := h.place.Joints()
+		shape.AttachEdge = h.place.BarEdge
+		shape.JointLeft, shape.JointRight, shape.EdgeFillet = h.revealJoints(opacity)
+		shape.EdgeLeft, shape.EdgeRight = j.FlushLeft, j.FlushRight
 	}
-	return min(h.theme.Fillet, room)
+	return ui.BlurStrips(shape)
+}
+
+// edgeExtent is how far a flush panel's surface reaches past its far edge,
+// to hold the wedge that curves it into the screen's side.
+func (h *PanelHost) edgeExtent(j Joints) int {
+	if j.Flush() {
+		return h.place.Fillet
+	}
+	return 0
+}
+
+// surfaceSize is the surface the placed panel needs: its body widened by the
+// joints and lengthened by any screen-edge wedge.
+func (h *PanelHost) surfaceSize() (w, hgt int) {
+	j := h.place.Joints()
+	return h.place.Panel.W + j.Left + j.Right, h.place.Panel.H + h.edgeExtent(j)
+}
+
+// surfaceBody is where the body sits in a surface of the given size: inset by
+// the left joint, and below the screen-edge wedge when the bar is on the lower
+// edge.
+func (h *PanelHost) surfaceBody(w, hgt int) ui.Rect {
+	j := h.place.Joints()
+	edge := h.edgeExtent(j)
+	body := ui.Rect{X: j.Left, W: max(0, w-j.Left-j.Right), H: max(0, hgt-edge)}
+	if h.place.BarEdge == "bottom" {
+		body.Y = edge
+	}
+	return body
 }
 
 // panelFontFamily resolves the font of the output the panel opens on. A panel
@@ -1099,7 +1229,16 @@ func (h *PanelHost) configureLocking(r *Registry) func(int, int, int) error {
 	return func(w, height, scale120 int) error {
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		return h.configure(w, height, scale120)
+		if err := h.configure(w, height, scale120); err != nil {
+			return err
+		}
+		// The settings tree is built before the first configure, at the
+		// bar's scale or none; widths and bar pictures measured at another
+		// scale are rebuilt at this one.
+		if h.id == PanelSettings && h.settingsTreeScale != scale120 && ui.Scale120(scale120).Valid() {
+			r.rebuildPanel(h)
+		}
+		return nil
 	}
 }
 
@@ -1116,10 +1255,7 @@ func (h *PanelHost) configure(w, height, scale120 int) error {
 	if err := h.ensureText(); err != nil {
 		return err
 	}
-	box := ui.Rect{W: w, H: height}
-	if margin := h.filletMargin(); margin > 0 && w >= h.place.Panel.W+2*margin {
-		box = ui.Rect{X: margin, W: w - 2*margin, H: height}
-	}
+	box := h.surfaceBody(w, height)
 	if h.root != nil && h.root.Kind == ui.KindRow {
 		return ui.Layout(h.root, box, h.measureText())
 	}
@@ -1145,12 +1281,10 @@ func (h *PanelHost) measureText() ui.MeasureText {
 	}
 }
 
-func (h *PanelHost) panelReveal() (opacity float64, offsetY, fillet int) {
+// panelReveal is the surface's reveal: its opacity and slide.
+func (h *PanelHost) panelReveal() (opacity float64, offsetY int) {
 	if h == nil || h.anim == nil || !h.anim.has(panelSurfaceID(h.id), animVisible) {
-		if h == nil {
-			return 1, 0, 0
-		}
-		return 1, 0, h.theme.Fillet
+		return 1, 0
 	}
 	key := panelSurfaceID(h.id)
 	opacity = h.anim.PanelOpacity(key)
@@ -1158,8 +1292,15 @@ func (h *PanelHost) panelReveal() (opacity float64, offsetY, fillet int) {
 	if h.place.BarEdge == "top" {
 		offsetY = -offsetY
 	}
-	fillet = int(math.Round(float64(h.theme.Fillet) * opacity))
-	return opacity, offsetY, fillet
+	return opacity, offsetY
+}
+
+// revealJoints scales each joint and the screen-edge wedge by the reveal's
+// opacity, so they grow out of the bar with the panel rather than popping.
+func (h *PanelHost) revealJoints(opacity float64) (left, right, edge int) {
+	j := h.place.Joints()
+	scale := func(v int) int { return int(math.Round(float64(v) * opacity)) }
+	return scale(j.Left), scale(j.Right), scale(h.edgeExtent(j))
 }
 
 func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
@@ -1174,13 +1315,11 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	if !scale.Valid() {
 		scale = ui.ScaleUnit
 	}
-	body := ui.Rect{W: h.logicalW, H: h.logicalH}
-	if body.W <= 0 || body.H <= 0 {
-		body = ui.Rect{W: h.place.Panel.W, H: h.place.Panel.H}
+	w, hgt := h.logicalW, h.logicalH
+	if w <= 0 || hgt <= 0 {
+		w, hgt = h.surfaceSize()
 	}
-	if margin := h.filletMargin(); margin > 0 && body.W >= h.place.Panel.W+2*margin {
-		body = ui.Rect{X: margin, W: h.place.Panel.W, H: body.H}
-	}
+	body := h.surfaceBody(w, hgt)
 	// The painter consumes a copy. Pointer state and effect phase are render
 	// values, so neither resolver mutates the retained panel tree.
 	page, viewport, pageProgress, pageOffset := h.controlCentrePageVisual()
@@ -1200,19 +1339,14 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 
 	paintTheme := h.paintTheme()
 	style := h.rootStyle(paintTheme)
-	// Only a panel draws its own rim; the bar, toasts and tray surfaces
-	// sit directly on the shared surface and leave it zero. A fused audio
-	// panel paints no rim: it and the bar share Style.Background, and a
-	// stroke would read as a seam.
-	if h.id != PanelAudio {
-		style.Rim = paintTheme.Outline
-	}
 	style.Scale120 = scale
 	style.Body = body
-	opacity, offsetY, fillet := h.panelReveal()
-	style.Fillet = fillet
-	if !h.place.CenterY {
+	opacity, offsetY := h.panelReveal()
+	if h.place.Attached() {
 		style.AttachEdge = h.place.BarEdge
+		j := h.place.Joints()
+		style.JointLeft, style.JointRight, style.EdgeFillet = h.revealJoints(opacity)
+		style.EdgeLeft, style.EdgeRight = j.FlushLeft, j.FlushRight
 	}
 	style.Backdrop = h.backdrop
 	err = render.Paint(c, root, h.text, style)
@@ -2008,7 +2142,12 @@ func (h *PanelHost) activate(r *Registry) bool {
 		if h.id == PanelControlCenter {
 			return h.selectControlCentreSection(r, section)
 		}
-		h.section = section
+		h.section, h.settingsPage, h.settingsScrollTop = section, "", true
+		r.rebuildPanel(h)
+		return true
+	}
+	if page, ok := strings.CutPrefix(n.Action, "page:"); ok {
+		h.settingsPage, h.settingsScrollTop = page, true
 		r.rebuildPanel(h)
 		return true
 	}
@@ -2025,6 +2164,14 @@ func (h *PanelHost) activate(r *Registry) bool {
 				h.commitSetting(r, e, strconv.Itoa(value))
 				r.rebuildPanel(h)
 			}
+		}
+		return true
+	}
+	if rest, ok := strings.CutPrefix(n.Action, "pick:"); ok {
+		path, value, found := strings.Cut(rest, "=")
+		if e := h.set.ByPath(path); found && e != nil {
+			h.commitSetting(r, e, value)
+			r.rebuildPanel(h)
 		}
 		return true
 	}
@@ -2206,6 +2353,9 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 	idx := h.roving.Index()
 	if h.id == PanelSettings {
 		h.settingsScroll = settingsScrollOffset(h.root)
+		if h.settingsScrollTop {
+			h.settingsScroll, h.settingsScrollTop = 0, false
+		}
 	}
 	focusedKey := ""
 	if h.id == PanelClipboard {
@@ -2344,12 +2494,9 @@ func panelTargetSize(id PanelID) ui.Rect {
 	case PanelMonitor:
 		return ui.Rect{W: 800, H: 650}
 	case PanelSettings:
-		// Width is unchanged on purpose: the narrowest-width acceptance check
-		// lays this panel out at its target, and holding width leaves that
-		// premise intact while the plain column takes the vertical room that
-		// descriptions and group headings need. FittedSize clamps on a short
-		// output.
-		return ui.Rect{W: 900, H: 760}
+		// The open path sizes it from the output (settings redesign D10);
+		// this is that rule on the 1920x1080 fallback.
+		return settingsPanelSize(1920, 1080)
 	case PanelLauncher:
 		// 700 is DMS spotlight's own height. FittedSize caps this to the
 		// output before placement, so a short screen clamps rather than
@@ -2412,6 +2559,30 @@ func monitorSurfaceHeight(root *ui.Node, width, radius int, measure ui.MeasureTe
 	return ht + 2*radius
 }
 
+// sessionProfilesReserved stands in for the power profiles while the panel is
+// measured: they load after it opens.
+var sessionProfilesReserved = []string{"performance", "balanced", "power-saver"}
+
+// sessionSurfaceHeight is the session panel's height for everything it can
+// show: the battery card when the sample carries a battery, and the profile
+// row, which arrives after the panel opens and would otherwise push the
+// actions past a body sized without it (sysc-596). It never shrinks below the
+// design's target.
+func (r *Registry) sessionSurfaceHeight(h *PanelHost) int {
+	target := panelTargetSize(PanelSession).H
+	profiles, loaded := h.profiles, h.profilesOK
+	if !loaded || len(profiles) == 0 {
+		h.profiles, h.profilesOK = sessionProfilesReserved, true
+	}
+	root := sessionTree(h, r.sample, r.cfg.Session.Locker)
+	h.profiles, h.profilesOK = profiles, loaded
+	ht, err := ui.ContentHeight(root, h.place.Panel.W, h.measureText())
+	if err != nil {
+		return target
+	}
+	return max(target, ht)
+}
+
 func notificationsSurfaceHeight(h *PanelHost) int {
 	root := h.root
 	if root != nil {
@@ -2469,6 +2640,11 @@ func (h *PanelHost) applySetting(r *Registry, n *ui.Node) {
 		v = n.Text
 	}
 	h.commitSetting(r, e, v)
+	// A toggle or a menu can change what else applies: turning the bar off
+	// dims the rest of Appearance. Sliders and fields stream, so they wait.
+	if h.id == PanelSettings && (n.Kind == ui.KindToggle || n.Kind == ui.KindMenu) {
+		r.rebuildPanel(h)
+	}
 }
 
 // commitSetting applies one value to the draft, rebuilds the registry from it,

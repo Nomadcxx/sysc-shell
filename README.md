@@ -6,6 +6,7 @@ Quickshell, C++, Rust, Lua, or Luau.
 
 Work is tracked in `bd`. Designs and plans are registered in
 [`docs/plans/README.md`](docs/plans/README.md). The milestone sequence is [`docs/roadmap.md`](docs/roadmap.md).
+Niri setup for the frosted bar and blurred panels is in [`docs/niri-blur.md`](docs/niri-blur.md).
 
 ## Consumed modules
 

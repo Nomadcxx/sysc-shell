@@ -305,12 +305,16 @@ func TestEverySectionIsOneOfTheNamedSections(t *testing.T) {
 	cfg.Plugins.Enabled = []string{"com.example.widget"}
 
 	names := SectionNames()
-	if len(names) != 13 {
-		t.Fatalf("SectionNames = %d sections, want the thirteen of the information architecture", len(names))
+	// Twelve: Displays became Bar's Displays page (settings redesign D5).
+	if len(names) != 12 {
+		t.Fatalf("SectionNames = %d sections, want the twelve of the information architecture", len(names))
 	}
 	for _, e := range DefaultFor(cfg).entries {
 		if !slices.Contains(names, e.Section) {
 			t.Errorf("%s is filed under %q, which no section lists", e.Path, e.Section)
+		}
+		if pages := SectionPages(e.Section); len(pages) > 0 && !slices.Contains(pages, e.Page) {
+			t.Errorf("%s is on page %q, which %s does not list", e.Path, e.Page, e.Section)
 		}
 	}
 }
@@ -754,6 +758,49 @@ func TestInputRadiusHasAnEntryThatWritesTheAxis(t *testing.T) {
 	}
 	if got := entry.Get(cfg); got != "18" {
 		t.Fatalf("entry reads back %q, want \"18\"", got)
+	}
+}
+
+func TestBarSurfaceEntries(t *testing.T) {
+	t.Parallel()
+	r := Default()
+	def := config.Default()
+	for _, tc := range []struct {
+		path, group, bad, good string
+		get                    func(config.Config) string
+	}{
+		{"bar.style", "Surface", "glass", "islands", func(c config.Config) string { return c.Bar.Style }},
+		{"bar.shape", "Surface", "hanging", "floating", func(c config.Config) string { return c.Bar.Shape }},
+		{"bar.frost-opacity", "Frost", "39", "50", func(c config.Config) string { return strconv.Itoa(c.Bar.FrostOpacity) }},
+		{"bar.pill-opacity", "Frost", "101", "40", func(c config.Config) string { return strconv.Itoa(c.Bar.PillOpacity) }},
+	} {
+		e := r.ByPath(tc.path)
+		if e == nil {
+			t.Errorf("missing %s", tc.path)
+			continue
+		}
+		if e.Section != "Bar" || e.Group != tc.group {
+			t.Errorf("%s is in %s › %s, want Bar › %s", tc.path, e.Section, e.Group, tc.group)
+		}
+		cfg := config.Default()
+		if err := e.Set(&cfg, tc.bad); err == nil {
+			t.Errorf("%s accepted %q", tc.path, tc.bad)
+		}
+		if err := e.Set(&cfg, tc.good); err != nil {
+			t.Errorf("%s rejected %q: %v", tc.path, tc.good, err)
+		}
+		if got := e.Get(cfg); got != tc.good || got != tc.get(cfg) {
+			t.Errorf("%s reads %q after setting %q", tc.path, got, tc.good)
+		}
+		if got := e.Default(cfg); got != tc.get(def) {
+			t.Errorf("%s default = %q, want %q", tc.path, got, tc.get(def))
+		}
+	}
+	if d := r.ByPath("bar.style").Describe; !strings.Contains(d, "Niri 26.04") {
+		t.Errorf("style description %q does not name Niri 26.04", d)
+	}
+	if l := r.ByPath("appearance.bar-opacity").Label; l != "Solid bar opacity" {
+		t.Errorf("appearance.bar-opacity label = %q", l)
 	}
 }
 

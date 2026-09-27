@@ -930,7 +930,7 @@ func TestNaturalSizedControlsDoNotFillTheColumn(t *testing.T) {
 		if e == nil {
 			t.Fatalf("%s is not registered", tc.path)
 		}
-		row := settingsEntryRow(h, *e)
+		row := settingsEntryRow(h, *e, settingsBodyWidth(h))
 		var trailing *ui.Node
 		for _, c := range row.Children {
 			if c.Kind == ui.KindRow {
@@ -1094,4 +1094,222 @@ func TestThePanelOpensAndFiltersTheFontPicker(t *testing.T) {
 		t.Error("the filter narrowed nothing")
 	}
 	t.Logf("filtered to %d of %d families", len(node.Children)-1, len(settingsFontFamilies()))
+}
+
+func TestShortEnumsRenderSegmentedAndPickWrites(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	e := *h.set.ByPath("weather.unit")
+	n := settingsControl(h, e, 200)
+	if n.Kind != ui.KindSegmented || len(n.Children) != len(e.Options) {
+		t.Fatalf("weather.unit control = kind %v with %d children, want a segmented of %d", n.Kind, len(n.Children), len(e.Options))
+	}
+	if n.Children[0].Action != "pick:weather.unit="+e.Options[0] {
+		t.Fatalf("first segment action = %q", n.Children[0].Action)
+	}
+	selected := 0
+	for _, c := range n.Children {
+		if c.State&ui.StateSelected != 0 {
+			selected++
+		}
+	}
+	if selected != 1 {
+		t.Fatalf("%d segments selected, want 1", selected)
+	}
+	menu := e
+	menu.Present = settings.PresentMenu
+	if settingsControl(h, menu, 200).Kind == ui.KindSegmented {
+		t.Error("PresentMenu still rendered segmented")
+	}
+	if osd := h.set.ByPath("panels.osd"); osd == nil || settingsControl(h, *osd, 200).Kind == ui.KindSegmented {
+		t.Error("the nine-option OSD position rendered segmented, or is missing")
+	}
+}
+
+func TestPickActionCommitsTheValue(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelSettings]
+	h.focus = []*ui.Node{{Kind: ui.KindButton, Action: "pick:weather.unit=fahrenheit", Focusable: true}}
+	h.roving = ui.Roving{Count: 1}
+	if !h.activate(reg) {
+		t.Fatal("pick was not handled")
+	}
+	if h.draft.Weather.Unit != "fahrenheit" {
+		t.Fatalf("draft unit = %q after pick", h.draft.Weather.Unit)
+	}
+}
+
+func TestGroupsRenderAsCardsWithRowsInside(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.section = "Appearance"
+	h.place.Panel = ui.Rect{W: 1105, H: 760}
+	h.root = settingsTree(nil, h)
+	cards := 0
+	inner := settingsCardInner(h)
+	for _, n := range walk(h.root) {
+		if n.Kind != ui.KindCapsule || n.Shape != ui.ShapeCard {
+			continue
+		}
+		cards++
+		col := n.Children[0]
+		if col.Children[0].TextRole != theme.RoleLabel {
+			t.Errorf("card does not open with its title: %+v", col.Children[0])
+		}
+		for _, row := range col.Children[1:] {
+			if row.Kind == ui.KindRow && row.Width > inner {
+				t.Errorf("row %d wide overruns its %d-wide card", row.Width, inner)
+			}
+		}
+	}
+	if cards == 0 {
+		t.Fatal("Appearance rendered no group cards")
+	}
+	if err := ui.LayoutColumn(h.root, h.place.Panel, func(s string, _ ui.TextAttrs) (int, int) { return len(s) * 8, 18 }); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSearchHitsNameTheirPage(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.query = "frost"
+	h.root = settingsTree(nil, h)
+	for _, n := range walk(h.root) {
+		if n.Text == "Bar › Appearance" {
+			return
+		}
+	}
+	t.Fatal("a Bar frost hit is not captioned Bar › Appearance")
+}
+
+func TestRailIsLabelledAndClustered(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	rail := settingsRail(h, "Bar")
+	var captions, tabs []string
+	for _, n := range walk(rail) {
+		if n.Role == "tab" {
+			tabs = append(tabs, n.Name)
+			if findNode(n, func(c *ui.Node) bool { return c.Kind == ui.KindText && c.Text == n.Name }) == nil {
+				t.Errorf("rail tab %s has no visible label", n.Name)
+			}
+		}
+		if n.Role == "heading" && n.TextRole == theme.RoleCaption {
+			captions = append(captions, n.Text)
+		}
+	}
+	if !slices.Equal(tabs, settings.SectionNames()) {
+		t.Errorf("tabs %v, want %v", tabs, settings.SectionNames())
+	}
+	if !slices.Equal(captions, []string{"Look", "Bar", "Panels", "System"}) {
+		t.Errorf("captions %v", captions)
+	}
+}
+
+func TestBarOpensOnAppearanceAndPagesSwitch(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	if findByName(h.root, "Style") == nil {
+		t.Fatal("Bar did not open on Appearance: no Style row")
+	}
+	for _, page := range []string{"Appearance", "Layout", "Displays"} {
+		if findAction(h.root, "page:"+page) == nil {
+			t.Errorf("no tab for page %s", page)
+		}
+	}
+	h.settingsPage = "Layout"
+	h.root = settingsTree(nil, h)
+	if findByName(h.root, "Style") != nil {
+		t.Error("Style shows on the Layout page")
+	}
+}
+
+func TestSettingsAddressesResolvePages(t *testing.T) {
+	t.Parallel()
+	for req, want := range map[string][2]string{
+		"Displays":   {"Bar", "Displays"},
+		"Bar":        {"Bar", "Appearance"},
+		"Bar/Layout": {"Bar", "Layout"},
+		"Appearance": {"Appearance", ""},
+	} {
+		s, p, ok := settingsAddress(req)
+		if !ok || s != want[0] || p != want[1] {
+			t.Errorf("%q → %q %q %v, want %v", req, s, p, ok, want)
+		}
+	}
+	for _, bad := range []string{"Nowhere", "Bar/Nowhere", "Appearance/Layout"} {
+		if _, _, ok := settingsAddress(bad); ok {
+			t.Errorf("%q was accepted", bad)
+		}
+	}
+}
+
+func TestOpeningTheOldDisplaysSectionLandsOnBarDisplays(t *testing.T) {
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if err := reg.selectPanelSectionLocked(PanelSettings, "Displays"); err != nil {
+		t.Fatal(err)
+	}
+	h := reg.panelHosts[PanelSettings]
+	if h.section != "Bar" || h.settingsPage != "Displays" {
+		t.Fatalf("landed on %q/%q", h.section, h.settingsPage)
+	}
+}
+
+func TestClearingSearchReturnsToTheSamePage(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.settingsPage = "Layout"
+	h.query = "frost"
+	h.root = settingsTree(nil, h)
+	if findAction(h.root, "page:Layout") != nil {
+		t.Error("page tabs show while searching")
+	}
+	h.query = ""
+	h.root = settingsTree(nil, h)
+	if h.section != "Bar" || settingsCurrentPage(h, "Bar") != "Layout" {
+		t.Fatalf("after search: %q/%q", h.section, settingsCurrentPage(h, "Bar"))
+	}
+	if n := findAction(h.root, "page:Layout"); n == nil || n.State&ui.StateSelected == 0 {
+		t.Error("Layout is not the selected page after search")
+	}
+}
+
+func TestSettingsSizeFollowsTheOutput(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ w, h, wantW, wantH int }{
+		{1536, 864, 1105, 760},
+		{3440, 1440, 1120, 820},
+		{1280, 720, 921, 633},
+	} {
+		if got := settingsPanelSize(tc.w, tc.h); got.W != tc.wantW || got.H != tc.wantH {
+			t.Errorf("%dx%d → %+v, want %dx%d", tc.w, tc.h, got, tc.wantW, tc.wantH)
+		}
+	}
+}
+
+func TestSettingsPaintsAtLeastTheOpaqueFloor(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.theme = DefaultTheme()
+	h.theme.Surfaces.Panel = 0x80
+	if a := h.rootStyle(h.theme).SurfaceOpacity; a < settingsOpacityFloor {
+		t.Fatalf("settings root alpha %#x, want at least %#x", a, settingsOpacityFloor)
+	}
+	other := &PanelHost{id: PanelClock, theme: h.theme}
+	if a := other.rootStyle(other.theme).SurfaceOpacity; a != 0x80 {
+		t.Fatalf("clock root alpha %#x changed", a)
+	}
 }

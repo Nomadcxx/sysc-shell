@@ -466,3 +466,21 @@ fi
 	}
 	time.Sleep(50 * time.Millisecond)
 }
+
+// TestAudioRowsFitAtFractionalScale: at 1.25 the tabular "100%" measures 45,
+// one pixel past the 44 px value column, and the mute button fell off the row.
+// The laptop's audio panel failed layout and closed at open (sysc-589).
+func TestAudioRowsFitAtFractionalScale(t *testing.T) {
+	for _, scale := range []int{120, 150, 180} {
+		size := audioPanelSize(1536, 864)
+		h := &PanelHost{
+			id: PanelAudio, audioTab: "volumes", theme: DefaultTheme(), scale120: scale,
+			place: Placement{Panel: size},
+		}
+		// The tree is built first, as at open, before the text engine loads.
+		root := audioTree(nil, h)
+		if err := ui.LayoutColumn(root, size, h.measureText()); err != nil {
+			t.Errorf("scale %d: %v", scale, err)
+		}
+	}
+}

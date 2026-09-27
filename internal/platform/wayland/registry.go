@@ -29,6 +29,8 @@ var interfaceMaximum = map[string]uint32{
 	"zwp_text_input_manager_v3":      1,
 	"wp_cursor_shape_manager_v1":     1,
 	"zwlr_screencopy_manager_v1":     3,
+	// Optional like screencopy: frost needs it, a bar without it stays solid.
+	"ext_background_effect_manager_v1": 1,
 }
 
 // requiredSingletons must all be present before the proof can start. The

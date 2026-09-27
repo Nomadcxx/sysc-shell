@@ -7,7 +7,20 @@ import (
 	"sync"
 )
 
-type maskKey struct{ radius, w, h int }
+type maskKey struct {
+	radius, w, h int
+	square       Corners
+}
+
+// Corners marks corners of a rounded rectangle that stay square.
+type Corners uint8
+
+const (
+	SquareTL Corners = 1 << iota
+	SquareTR
+	SquareBL
+	SquareBR
+)
 
 type ringKey struct{ radius, w, h, width int }
 
@@ -31,8 +44,14 @@ var (
 )
 
 // RoundedMask returns a cached antialiased rounded-rectangle alpha mask.
-func RoundedMask(radius, w, h int) *image.Alpha {
-	key := maskKey{radius, w, h}
+func RoundedMask(radius, w, h int) *image.Alpha { return CornerMask(radius, w, h, 0) }
+
+// CornerMask is RoundedMask with the marked corners left square. A surface
+// joined to something along an edge fills through it in one pass: squaring a
+// rounded fill afterwards blends twice where the two overlap, which on a
+// translucent fill paints a denser band.
+func CornerMask(radius, w, h int, square Corners) *image.Alpha {
+	key := maskKey{radius, w, h, square}
 	maskMu.Lock()
 	defer maskMu.Unlock()
 	if mask := masks[key]; mask != nil {
@@ -43,7 +62,11 @@ func RoundedMask(radius, w, h int) *image.Alpha {
 		radius = min(radius, min(w, h)/2)
 		for y := 0; y < h; y++ {
 			for x := 0; x < w; x++ {
-				mask.SetAlpha(x, y, color.Alpha{A: roundedCoverage(radius, w, h, x, y)})
+				a := roundedCoverage(radius, w, h, x, y)
+				if square&quadrant(x, y, w, h) != 0 {
+					a = 255
+				}
+				mask.SetAlpha(x, y, color.Alpha{A: a})
 			}
 		}
 	}
@@ -95,6 +118,21 @@ func RingMask(radius, w, h, width int) *image.Alpha {
 	}
 	rings[key] = mask
 	return mask
+}
+
+// quadrant is the corner of a w x h box that pixel (x, y) lies nearest.
+func quadrant(x, y, w, h int) Corners {
+	left, top := 2*x+1 <= w, 2*y+1 <= h
+	switch {
+	case top && left:
+		return SquareTL
+	case top:
+		return SquareTR
+	case left:
+		return SquareBL
+	default:
+		return SquareBR
+	}
 }
 
 func roundedCoverage(radius, w, h, x, y int) uint8 {

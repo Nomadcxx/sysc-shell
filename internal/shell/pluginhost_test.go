@@ -974,8 +974,9 @@ func TestPluginPanelHostUsesManifestSize(t *testing.T) {
 		if host.place.BarZone != zone {
 			t.Fatalf("plugin BarZone = %d, want exclusive zone %d", host.place.BarZone, zone)
 		}
-		if top := host.place.Margins().Top; top != zone {
-			t.Fatalf("plugin top margin = %d, want %d", top, zone)
+		// Attached under an opaque bar, it tucks one pixel beneath it.
+		if top := host.place.Margins().Top; top != zone-1 {
+			t.Fatalf("plugin top margin = %d, want %d", top, zone-1)
 		}
 		if err := host.configure(host.place.Panel.W, host.place.Panel.H, 120); err != nil {
 			t.Fatal(err)
@@ -1104,7 +1105,12 @@ func TestPluginPanelIsPlacedAgainstTheRealOutput(t *testing.T) {
 		t.Fatalf("placed against a %dx%d output, want 1536x864", host.place.Output.W, host.place.Output.H)
 	}
 	m := host.place.Margins()
-	if right := m.Left + host.place.Panel.W; right > 1536-host.place.Padding {
+	// A panel this near the edge of an attached bar snaps flush to it.
+	limit := 1536 - host.place.Padding
+	if host.place.Joints().FlushRight {
+		limit = 1536
+	}
+	if right := m.Left + host.place.Panel.W; right > limit {
 		t.Fatalf("panel spans x=%d..%d on a 1536-wide output", m.Left, right)
 	}
 }
@@ -1255,8 +1261,82 @@ func TestPluginPanelResizeRetargetsTheOpenPanel(t *testing.T) {
 	if req.Update == nil || req.Update.Width == nil || req.Update.Height == nil {
 		t.Fatalf("aux update missing size: %+v", req.Update)
 	}
-	if *req.Update.Width != 400 || *req.Update.Height != 300 {
-		t.Fatalf("aux update size = %d x %d, want 400x300", *req.Update.Width, *req.Update.Height)
+	// The surface keeps the joints it opened with around the resized body.
+	reg.mu.Lock()
+	j := reg.panelHosts[PanelPlugin].place.Joints()
+	reg.mu.Unlock()
+	wantW, wantH := 400+j.Left+j.Right, 300
+	if j.Flush() {
+		wantH += reg.panelHosts[PanelPlugin].place.Fillet
+	}
+	if int(*req.Update.Width) != wantW || int(*req.Update.Height) != wantH {
+		t.Fatalf("aux update size = %d x %d, want %dx%d for joints %+v",
+			*req.Update.Width, *req.Update.Height, wantW, wantH, j)
+	}
+	if j != (Joints{}) && (!req.Update.SetInputRegion || len(req.Update.InputRects) != 1 ||
+		req.Update.InputRects[0].W != 400) {
+		t.Fatalf("resize input region = %+v, want the 400 px body", req.Update.InputRects)
+	}
+}
+
+// TestPluginPanelResizeFitsTheOutput: panel.resize is fitted to the output as
+// view.open is (sysc-578). The KDE Connect panel asked for 400x760 on the
+// laptop; the unfitted size and its input region overran the surface, and the
+// failed update took the shell down.
+func TestPluginPanelResizeFitsTheOutput(t *testing.T) {
+	reg := bindTestPlugin(t, "call-panel")
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	_ = drainAux(t, reg, 2) // keyboard + panel-open
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		reg.mu.Lock()
+		host := reg.panelHosts[PanelPlugin]
+		if host != nil {
+			host.place.Output.H = 600
+		}
+		reg.mu.Unlock()
+		if host != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("plugin panel never opened")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if lastErr = reg.plugins.resizePanel(v1.PanelResizeParams{Width: 400, Height: 2000}); lastErr == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if lastErr != nil {
+		t.Fatalf("resizePanel never succeeded: %v", lastErr)
+	}
+	reg.mu.Lock()
+	host := reg.panelHosts[PanelPlugin]
+	place := host.place
+	place.Panel = ui.Rect{W: 400, H: 2000}
+	wantW, wantH := place.FittedSize()
+	j := place.Joints()
+	edge := host.edgeExtent(j)
+	reg.mu.Unlock()
+	if wantH >= 2000 {
+		t.Fatalf("fixture does not constrain the panel: fitted %dx%d", wantW, wantH)
+	}
+	if got := reg.plugins.panelSize(); got.W != wantW || got.H != wantH {
+		t.Fatalf("view size after resize = %+v, want the fitted %dx%d", got, wantW, wantH)
+	}
+	req := drainAux(t, reg, 1)[0]
+	if req.Update == nil || req.Update.Height == nil || int(*req.Update.Height) != wantH+edge {
+		t.Fatalf("surface update = %+v, want height %d", req.Update, wantH+edge)
+	}
+	for _, r := range req.Update.InputRects {
+		if r.Y+r.H > int(*req.Update.Height) || r.X+r.W > int(*req.Update.Width) {
+			t.Fatalf("input rect %+v leaves the %dx%d surface", r, *req.Update.Width, *req.Update.Height)
+		}
 	}
 }
 

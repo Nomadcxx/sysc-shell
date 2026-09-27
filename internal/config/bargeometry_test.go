@@ -21,8 +21,44 @@ func TestBarBodyAndExtentDeriveFromHeightAndGap(t *testing.T) {
 func TestBarExtentMatchesTheDefaultBar(t *testing.T) {
 	t.Parallel()
 	bar := Default().Bar
-	if got, want := bar.Extent(), bar.Height-bar.Gap; got != want {
-		t.Fatalf("extent = %d, want %d", got, want)
+	if got, want := bar.Extent(), bar.Body(); got != want {
+		t.Fatalf("extent = %d, want the attached body %d", got, want)
+	}
+}
+
+// TestAttachedGeometry is the attached bar against the floating one at height
+// 48 and gap 4: the extent and the zone are the body, and the surface grows by
+// the overhang that holds the end fillets.
+func TestAttachedGeometry(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		shape                 string
+		extent, surface, zone int
+	}{{"attached", 40, 52, 40}, {"floating", 44, 44, 44}} {
+		bar := Bar{Height: 48, Gap: 4, Shape: tc.shape}
+		if bar.Extent() != tc.extent || bar.SurfaceExtent() != tc.surface || bar.ExclusiveZone() != tc.zone {
+			t.Errorf("%s: extent %d surface %d zone %d, want %d/%d/%d", tc.shape,
+				bar.Extent(), bar.SurfaceExtent(), bar.ExclusiveZone(), tc.extent, tc.surface, tc.zone)
+		}
+	}
+}
+
+func TestBodyInFollowsShapeAndEdge(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		shape, edge string
+		want        [4]int
+	}{
+		{"floating", "top", [4]int{4, 4, 1192, 40}},
+		{"floating", "bottom", [4]int{4, 4, 1192, 40}},
+		{"attached", "top", [4]int{0, 0, 1200, 40}},
+		{"attached", "bottom", [4]int{0, 12, 1200, 40}},
+	} {
+		bar := Bar{Height: 48, Gap: 4, Shape: tc.shape, Edge: tc.edge}
+		x, y, w, h := bar.BodyIn(1200, bar.SurfaceExtent())
+		if got := [4]int{x, y, w, h}; got != tc.want {
+			t.Errorf("%s %s body = %v, want %v", tc.shape, tc.edge, got, tc.want)
+		}
 	}
 }
 

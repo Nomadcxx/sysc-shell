@@ -28,3 +28,17 @@ func TestScreencopyBindsAtOurMaximum(t *testing.T) {
 		t.Errorf("server below our maximum should bind at the server version, got %d", got)
 	}
 }
+
+func TestBackgroundEffectIsKnownButNotRequired(t *testing.T) {
+	t.Parallel()
+	if got, ok := bindVersion("ext_background_effect_manager_v1", 4); !ok || got != 1 {
+		t.Fatalf("bind version = %d/%v, want 1 and known", got, ok)
+	}
+	// Frost degrades to a solid bar; a compositor before Niri 26.04 must
+	// still start.
+	for _, iface := range requiredSingletons {
+		if iface == "ext_background_effect_manager_v1" {
+			t.Fatal("ext-background-effect is required; a compositor without it would fail to start")
+		}
+	}
+}

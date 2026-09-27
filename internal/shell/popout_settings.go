@@ -3,6 +3,7 @@ package shell
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,12 +28,9 @@ import (
 // only there is unreachable.
 var settingsSections = settings.SectionNames()
 
-// The rail reuses the control centre's measurements so the two surfaces read
-// as one product rather than two that happen to sit side by side.
-const (
-	settingsRailWidth = ccRailWidth
-	settingsRailItem  = ccRailItem
-)
+// settingsRailWidth holds an icon and a section name (settings redesign D5).
+// The control centre's 56 fitted a glyph and nothing else.
+const settingsRailWidth = 208
 
 // settingsSectionIcons names one glyph per section. Every name is confirmed
 // against the pinned Material Symbols source and asserted by the render
@@ -115,71 +113,136 @@ func settingsScrollOffset(root *ui.Node) int {
 	return out
 }
 
+// settingsRail is the section list: search first, then each cluster's
+// caption and its sections as icon-and-name tabs (settings redesign D5). It
+// runs the full height of the pane, so the title and page tabs sit over the
+// content only, and search stays the first thing the keyboard reaches.
 func settingsRail(h *PanelHost, section string) *ui.Node {
-	rail := &ui.Node{Kind: ui.KindColumn, Width: settingsRailWidth, Gap: theme.MarginM}
-	for _, name := range settingsSections {
-		entry := &ui.Node{
-			Kind: ui.KindButton, Width: settingsRailItem, Height: settingsRailItem,
-			Action: "section:" + name, Name: name, Role: "tab", Focusable: true,
-			// The rail draws glyphs only, so the name has to be reachable by
-			// hover as well as by screen reader.
-			Tooltip:  name,
-			Shape:    ui.ShapeMedium,
-			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: settingsSectionIcons[name]}},
-		}
-		if name == section {
-			entry.State |= ui.StateSelected
-			entry.Fill = ui.FillAccent
-		}
-		rail.Children = append(rail.Children, entry)
-	}
-	return rail
-}
-
-func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	if h.search == nil {
 		h.search = ui.NewField("")
 	}
 	search := h.search.Node("Search")
-	// The header spans the surface and the field pins to its end, so the field
-	// lands directly above the rows' trailing control column. Sharing that
-	// column's width lines the two up and drops a literal 260 that was one
-	// panel size's answer applied to every panel size.
-	search.Width = settingsControlWidth(h)
+	search.Width = settingsRailWidth
+	rail := &ui.Node{Kind: ui.KindColumn, Width: settingsRailWidth, Gap: theme.MarginXXS, Children: []*ui.Node{search}}
+	item := settingsRailItemHeight(h, search)
+	for _, c := range settings.SectionClusters() {
+		rail.Children = append(rail.Children, &ui.Node{
+			Kind: ui.KindText, Text: c.Name, TextRole: theme.RoleCaption,
+			Tone: ui.ToneSubtle, Role: "heading",
+		})
+		for _, name := range c.Sections {
+			entry := &ui.Node{
+				Kind: ui.KindButton, Width: settingsRailWidth, Height: item,
+				Action: "section:" + name, Name: name, Role: "tab", Focusable: true,
+				// A rail tab is a list row, not a push button: the button
+				// padding (18 at spacious) would make twelve of them overrun
+				// a short pane.
+				Tooltip: name, Shape: ui.ShapeMedium, Padding: theme.MarginS,
+				// One row child: layoutButtonContent lays a single row out in
+				// full, where several children would get no box (barChip).
+				Children: []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
+					{Kind: ui.KindIcon, Icon: settingsSectionIcons[name]},
+					{Kind: ui.KindText, Text: name},
+				}}},
+			}
+			if name == section {
+				entry.State |= ui.StateSelected
+				entry.Fill = ui.FillAccent
+			}
+			rail.Children = append(rail.Children, entry)
+		}
+	}
+	return rail
+}
 
+// settingsRailItemHeight is a section tab's height: the density's standard
+// control, or less when twelve of them, the four captions and search would
+// not fit the pane. At spacious density on a 1280x720 output they ran 150 px
+// past its bottom edge.
+func settingsRailItemHeight(h *PanelHost, search *ui.Node) int {
+	m := h.metrics()
+	if m.StandardControl <= 0 {
+		return 0 // no density metrics: the layout measures the tab
+	}
+	ph := h.place.Panel.H
+	if ph <= 0 {
+		ph = panelTargetSize(PanelSettings).H
+	}
+	clusters := settings.SectionClusters()
+	_, captionH := settingsMeasure(h)("Look", ui.TextAttrs{Role: theme.RoleCaption})
+	searchH := search.Height
+	if searchH <= 0 {
+		searchH = m.InputHeight
+	}
+	children := 1 + len(clusters) + len(settingsSections)
+	room := ph - 2*m.PanelPadding - searchH - len(clusters)*captionH - (children-1)*theme.MarginXXS
+	// Never shorter than the icon and its padding, which the tab has to hold.
+	return max(min(m.StandardControl, room/max(len(settingsSections), 1)), captionH, m.IconNormal+2*theme.MarginS)
+}
+
+// settingsPageTabs switches a section's pages. They are a segmented control
+// of radios: "tab" is the rail's role, one per section.
+func settingsPageTabs(h *PanelHost, pages []string, page string) *ui.Node {
+	m := h.metrics()
+	seg := &ui.Node{Kind: ui.KindSegmented, Key: "settings-page", Gap: theme.MarginXXS, Height: m.CompactControl, Name: "Pages", Role: "radiogroup"}
+	for _, p := range pages {
+		b := &ui.Node{
+			Kind: ui.KindButton, Action: "page:" + p, Name: p, Role: "radio",
+			Focusable: true, Height: m.CompactControl,
+			Children: []*ui.Node{{Kind: ui.KindText, Text: p}},
+		}
+		if p == page {
+			b.State |= ui.StateSelected
+		}
+		seg.Children = append(seg.Children, b)
+	}
+	return seg
+}
+
+// settingsCurrentPage is the page the section shows: the host's, when the
+// section has it, else the section's first. Empty for a one-page section.
+func settingsCurrentPage(h *PanelHost, section string) string {
+	pages := settings.SectionPages(section)
+	if len(pages) == 0 {
+		return ""
+	}
+	if slices.Contains(pages, h.settingsPage) {
+		return h.settingsPage
+	}
+	return pages[0]
+}
+
+func settingsTree(r *Registry, h *PanelHost) *ui.Node {
+	h.settingsTreeScale = h.scale120
 	section := h.section
 	if section == "" {
 		section = settingsSections[0]
 	}
+	page := settingsCurrentPage(h, section)
+	searching := strings.TrimSpace(h.query) != ""
 
 	head := []*ui.Node{}
 	if h.errLabel != "" {
 		head = append(head, &ui.Node{Kind: ui.KindText, Text: h.errLabel, Tone: ui.ToneError})
 	}
-	// The section name is always visible in the header, which is what lets the
-	// group headings inside the column stay unsticky.
-	head = append(head, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginL, PinEnd: true, Children: []*ui.Node{
-		{Kind: ui.KindText, Text: section, TextRole: theme.RoleTitle},
-		search,
-	}})
-
-	// The header spans the surface rather than sitting inside the body column
-	// the way the control centre's does. That is the one place this pane does
-	// not mirror it, and it is deliberate: the control centre has no search
-	// field, while here the field has to be the first thing the keyboard
-	// reaches, and focus order follows tree order.
-	body := func(content *ui.Node) *ui.Node {
-		return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Padding: h.metrics().PanelPadding,
-			Children: append(append([]*ui.Node{}, head...), &ui.Node{
-				Kind: ui.KindRow, Gap: theme.MarginXL, Children: []*ui.Node{
-					settingsRail(h, section),
-					content,
-				},
-			}),
-		}
+	// The section name is always visible over the content, which is what lets
+	// the group titles inside the column stay unsticky.
+	head = append(head, &ui.Node{Kind: ui.KindText, Text: section, TextRole: theme.RoleTitle})
+	if pages := settings.SectionPages(section); len(pages) > 0 && !searching {
+		head = append(head, settingsPageTabs(h, pages, page))
 	}
 
-	if strings.TrimSpace(h.query) != "" {
+	body := func(content *ui.Node) *ui.Node {
+		if content.Kind == ui.KindScroll {
+			content.Height = settingsContentHeight(h, head)
+		}
+		right := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Children: append(append([]*ui.Node{}, head...), content)}
+		return &ui.Node{Kind: ui.KindColumn, Padding: h.metrics().PanelPadding, Children: []*ui.Node{{
+			Kind: ui.KindRow, Gap: theme.MarginXL, Children: []*ui.Node{settingsRail(h, section), right},
+		}}}
+	}
+
+	if searching {
 		var hits []settings.Entry
 		if h.set != nil {
 			hits = h.set.Search(h.query)
@@ -193,18 +256,235 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 		// surface. It gets the same bounded, scrolling column as a section.
 		return body(settingsBody(h, theme.MarginM, pluginsTree(r, h)))
 	}
+	if section == "Bar" {
+		return body(settingsBarPage(r, h, page))
+	}
 	var entries []settings.Entry
 	if h.set != nil {
 		entries = h.set.Section(section)
 	}
-	column := settingsSectionColumn(h, section, entries)
-	if section == "Bar" {
-		// The lane editor is the Bar section's Layout group, above its
-		// geometry rows. It replaces the three comma-separated string entries,
-		// which is the whole point of the sub-project.
-		column.Children = append([]*ui.Node{h.barLaneStripFor(r)}, column.Children...)
+	return body(settingsSectionColumn(h, section, entries))
+}
+
+// settingsContentHeight is what the scrolling body gets once the title, the
+// page tabs and their gaps are taken. The body sits in a column under them,
+// and a scroll in a column with no height of its own takes the layout's 240
+// fallback: the live gate found the Appearance page cut off after Shape.
+func settingsContentHeight(h *PanelHost, head []*ui.Node) int {
+	ph := h.place.Panel.H
+	if ph <= 0 {
+		ph = panelTargetSize(PanelSettings).H
 	}
-	return body(column)
+	used := 2 * h.metrics().PanelPadding
+	measure := settingsMeasure(h)
+	for _, n := range head {
+		if n.Height > 0 {
+			used += n.Height
+		} else {
+			_, th := measure(n.Text, ui.TextAttrsOf(n))
+			used += th
+		}
+		used += theme.MarginL
+	}
+	return max(ph-used, 0)
+}
+
+// settingsMeasure is the pane's text measure with the text engine loaded. The
+// tree is built before anything else loads it, and measureText's fallback
+// guesses (sysc-589 was that guess).
+func settingsMeasure(h *PanelHost) ui.MeasureText {
+	if h.theme.Valid() == nil {
+		_ = h.ensureText()
+	}
+	return h.measureText()
+}
+
+// settingsBarPage is one of Bar's pages (settings redesign D8). Appearance
+// leads with the live preview and the Style and Shape picture cards, above
+// the rest of its groups; Layout is the lane editor; Displays holds the
+// per-output overrides.
+func settingsBarPage(r *Registry, h *PanelHost, page string) *ui.Node {
+	var entries []settings.Entry
+	if h.set != nil {
+		entries = h.set.PageEntries("Bar", page)
+	}
+	switch page {
+	case "Layout":
+		if r == nil {
+			return settingsBody(h, theme.MarginL)
+		}
+		return settingsBody(h, theme.MarginL, h.barLaneStripFor(r))
+	case "Displays":
+		if len(entries) == 0 {
+			return settingsBody(h, theme.MarginL, settingsEmptyNote("Displays"))
+		}
+		return settingsPageColumn(h, entries)
+	}
+	var lead []*ui.Node
+	if r != nil {
+		lead = append(lead, settingsBarPreview(r, h))
+	}
+	var rest []settings.Entry
+	for _, e := range entries {
+		if e.Present == settings.PresentCards {
+			cards := []*ui.Node{settingsCardsFor(r, h, e)}
+			if reason := settingsBarDimReason(h, e.Path); reason != "" {
+				settingsDimRow(&ui.Node{Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{{Kind: ui.KindColumn}, cards[0]}}, reason)
+				cards = append(cards, &ui.Node{Kind: ui.KindText, Text: reason, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
+			}
+			lead = append(lead, settingsGroupCard(h, e.Label, cards))
+			continue
+		}
+		rest = append(rest, e)
+	}
+	col := settingsPageColumn(h, rest, lead...)
+	settingsDimBarRows(h, col)
+	return col
+}
+
+// settingsCardsFor is the picture cards, or the same choices without pictures
+// when there is no registry to paint from.
+func settingsCardsFor(r *Registry, h *PanelHost, e settings.Entry) *ui.Node {
+	if r != nil {
+		return settingsPictureCards(r, h, e)
+	}
+	raw := ""
+	if e.Get != nil {
+		raw = e.Get(h.draft)
+	}
+	return settingsSegmented(h, e, raw)
+}
+
+// settingsBarDimReason says why a Bar setting does not apply to the draft,
+// or "" when it does. Enabled always applies: it is how the rest comes back.
+func settingsBarDimReason(h *PanelHost, path string) string {
+	b := h.draft.Bar
+	switch {
+	case path == "bar.enabled" || !strings.HasPrefix(path, "bar."):
+		return ""
+	case !b.Enabled:
+		return "The bar is off. Turn it on to change this."
+	}
+	hc := h.draft.Accessibility.HighContrast
+	switch path {
+	case "bar.frost-opacity":
+		if hc {
+			return "High contrast draws the bar solid."
+		}
+		if b.Style != "frosted" {
+			return "Applies to the Frosted style."
+		}
+	case "bar.pill-opacity":
+		if hc {
+			return "High contrast draws the bar solid."
+		}
+		if b.Style == "solid" {
+			return "Applies to the Frosted and Islands styles."
+		}
+	case "bar.shape":
+		if b.Style == "islands" {
+			return "Islands always floats."
+		}
+	}
+	return ""
+}
+
+// settingsDimBarRows dims each row that does not apply, label and all, and
+// puts the reason where its description was (design D8). The row stays, so
+// the user learns why rather than hunting for a setting that vanished.
+func settingsDimBarRows(h *PanelHost, root *ui.Node) {
+	var walk func(n *ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if path := settingsRowPath(n); path != "" {
+			if reason := settingsBarDimReason(h, path); reason != "" {
+				settingsDimRow(n, reason)
+			}
+			return
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+}
+
+// settingsRowPath is the setting a settingsEntryRow edits, or "" when n is
+// not one: a pinned row of a label column and its trailing control.
+func settingsRowPath(n *ui.Node) string {
+	if n.Kind != ui.KindRow || !n.PinEnd || len(n.Children) != 2 || n.Children[0].Kind != ui.KindColumn {
+		return ""
+	}
+	path := ""
+	var find func(c *ui.Node)
+	find = func(c *ui.Node) {
+		if c == nil || path != "" {
+			return
+		}
+		for _, prefix := range []string{"set:", "pick:", "step:up:", "step:down:"} {
+			if rest, ok := strings.CutPrefix(c.Action, prefix); ok {
+				path, _, _ = strings.Cut(rest, "=")
+				return
+			}
+		}
+		for _, k := range c.Children {
+			find(k)
+		}
+	}
+	find(n.Children[1])
+	return path
+}
+
+// settingsDimRow disables every control in n, mutes its text, and replaces
+// its description with reason.
+func settingsDimRow(n *ui.Node, reason string) {
+	var walk func(c *ui.Node)
+	walk = func(c *ui.Node) {
+		if c == nil {
+			return
+		}
+		if c.Focusable || c.Action != "" {
+			c.State |= ui.StateDisabled
+			c.Focusable = false
+		}
+		if c.Kind == ui.KindText {
+			c.Tone = ui.ToneSubtle
+		}
+		for _, k := range c.Children {
+			walk(k)
+		}
+	}
+	walk(n)
+	label := n.Children[0]
+	why := &ui.Node{Kind: ui.KindText, Text: reason, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle}
+	if len(label.Children) > 1 {
+		label.Children[1] = why
+	} else {
+		label.Children = append(label.Children, why)
+	}
+}
+
+// settingsAddress resolves an IPC or shortcut section name. "Section/Page"
+// picks a page; "Displays" is the old rail section, now Bar › Displays.
+func settingsAddress(requested string) (section, page string, ok bool) {
+	section, page, _ = strings.Cut(requested, "/")
+	if section == "Displays" && page == "" {
+		section, page = "Bar", "Displays"
+	}
+	if !slices.Contains(settingsSections, section) {
+		return "", "", false
+	}
+	pages := settings.SectionPages(section)
+	switch {
+	case len(pages) == 0:
+		return section, "", page == ""
+	case page == "":
+		return section, pages[0], true
+	default:
+		return section, page, slices.Contains(pages, page)
+	}
 }
 
 // settingsEmptySection explains a section that legitimately has nothing in it
@@ -216,7 +496,7 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 // editing model, which belongs to sub-project C.
 var settingsEmptySection = map[string]string{
 	"Tray":     "No tray item has been given a preference yet. Pin or hide one from the tray itself and it will appear here.",
-	"Displays": "No output carries its own bar override. Every display follows the settings in Bar.",
+	"Displays": "No output overrides the bar yet. Every display follows the settings on Appearance.",
 	"Widgets":  "The bar carries no widgets, so there is nothing to configure here.",
 }
 
@@ -240,19 +520,31 @@ func settingsEmptyNote(section string) *ui.Node {
 func settingsSearchColumn(h *PanelHost, hits []settings.Entry) *ui.Node {
 	groups := []*ui.Node{}
 	for _, name := range settingsSections {
-		body := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM}
-		for _, e := range hits {
-			if e.Section == name {
-				body.Children = append(body.Children, settingsEntryRow(h, e))
+		pages := settings.SectionPages(name)
+		if len(pages) == 0 {
+			pages = []string{""}
+		}
+		// A hit says where it lives: "Bar › Appearance", or just the section
+		// when it has one page.
+		for _, page := range pages {
+			body := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM}
+			for _, e := range hits {
+				if e.Section == name && e.Page == page {
+					body.Children = append(body.Children, settingsEntryRow(h, e, settingsBodyWidth(h)))
+				}
 			}
+			if len(body.Children) == 0 {
+				continue
+			}
+			caption := name
+			if page != "" {
+				caption += " › " + page
+			}
+			groups = append(groups, &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: []*ui.Node{
+				{Kind: ui.KindText, Text: caption, TextRole: theme.RoleLabel},
+				body,
+			}})
 		}
-		if len(body.Children) == 0 {
-			continue
-		}
-		groups = append(groups, &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: []*ui.Node{
-			{Kind: ui.KindText, Text: name, TextRole: theme.RoleLabel},
-			body,
-		}})
 	}
 	if len(groups) == 0 {
 		groups = append(groups, &ui.Node{
@@ -272,33 +564,52 @@ func settingsSectionColumn(h *PanelHost, section string, entries []settings.Entr
 	if len(entries) == 0 {
 		return settingsBody(h, theme.MarginXL, settingsEmptyNote(section))
 	}
+	return settingsPageColumn(h, entries)
+}
+
+// settingsGroupCard is one group as a titled card (settings redesign D3,
+// reversing the foundation design's plain columns).
+func settingsGroupCard(h *PanelHost, title string, rows []*ui.Node) *ui.Node {
+	m := h.metrics()
+	col := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM}
+	if title != "" {
+		col.Children = append(col.Children, &ui.Node{Kind: ui.KindText, Text: title, TextRole: theme.RoleLabel})
+	}
+	col.Children = append(col.Children, rows...)
+	return &ui.Node{
+		Kind: ui.KindCapsule, Padding: m.CardPadding, Fill: ui.FillContainerHigh,
+		Shape: ui.ShapeCard, Width: settingsBodyWidth(h), Children: []*ui.Node{col},
+	}
+}
+
+// settingsCardInner is the width a row gets inside a group card.
+func settingsCardInner(h *PanelHost) int {
+	return max(settingsBodyWidth(h)-2*h.metrics().CardPadding, 0)
+}
+
+// settingsPageColumn is a page's groups as cards, after any lead blocks (the
+// bar preview, the picture cards), in the scrolling body.
+func settingsPageColumn(h *PanelHost, entries []settings.Entry, lead ...*ui.Node) *ui.Node {
+	rowW := settingsCardInner(h)
 	var order []string
-	rows := map[string][]settings.Entry{}
+	rows := map[string][]*ui.Node{}
 	for _, e := range entries {
 		if _, seen := rows[e.Group]; !seen {
 			order = append(order, e.Group)
 		}
-		rows[e.Group] = append(rows[e.Group], e)
+		rows[e.Group] = append(rows[e.Group], settingsEntryRow(h, e, rowW))
 	}
-	groups := make([]*ui.Node, 0, len(order))
-	for _, name := range order {
-		body := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM}
-		for _, e := range rows[name] {
-			body.Children = append(body.Children, settingsEntryRow(h, e))
-		}
-		if name == "" {
-			groups = append(groups, body)
-			continue
-		}
-		groups = append(groups, &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: []*ui.Node{
-			{Kind: ui.KindText, Text: name, TextRole: theme.RoleLabel},
-			body,
-		}})
+	children := append([]*ui.Node{}, lead...)
+	for _, g := range order {
+		children = append(children, settingsGroupCard(h, g, rows[g]))
 	}
-	return settingsBody(h, theme.MarginXL, groups...)
+	return settingsBody(h, theme.MarginL, children...)
 }
 
-func settingsEntryRow(h *PanelHost, e settings.Entry) *ui.Node {
+// settingsEntryRow is one setting: its label over its description, and the
+// control at the end. width is the column the row sits in: the body for a
+// search hit, the inside of a card for a group row.
+func settingsEntryRow(h *PanelHost, e settings.Entry, width int) *ui.Node {
 	controlW := settingsControlWidth(h)
 	label := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: e.Label, Name: e.Label},
@@ -312,7 +623,7 @@ func settingsEntryRow(h *PanelHost, e settings.Entry) *ui.Node {
 	// Both columns carry their width. Without it the description sets the
 	// row's width and pushes the right-pinned control past the edge of the
 	// column, which is invisible on a wide output and clips on a small one.
-	label.Width = max(settingsBodyWidth(h)-controlW-theme.MarginL, 0)
+	label.Width = max(width-controlW-theme.MarginL, 0)
 
 	// Only a control that benefits from length takes the column: a slider is
 	// swept and a field is typed into. A toggle and a dropdown have a natural
@@ -334,7 +645,7 @@ func settingsEntryRow(h *PanelHost, e settings.Entry) *ui.Node {
 	}
 	trailing.Children = append(trailing.Children, settingsControl(h, e, room))
 
-	row := &ui.Node{Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{label, trailing}}
+	row := &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: width, Children: []*ui.Node{label, trailing}}
 	if e.Describe == "" {
 		// A one-line row takes the control height so a run of them reads as a
 		// ladder. A described row is two stacked lines and a fixed height
@@ -397,10 +708,17 @@ func settingsControl(h *PanelHost, e settings.Entry, width int) *ui.Node {
 		if e.Max-e.Min > 0 && e.Max-e.Min <= settingsStepperSpan {
 			return settingsStepper(e, n)
 		}
-		return &ui.Node{
-			Kind: ui.KindSlider, Value: float64(n), Min: float64(e.Min), Max: float64(e.Max), Step: 1,
-			Action: action, Width: width, Focusable: true, Name: e.Label, Role: "slider",
-		}
+		// The value sits beside the track in a cell measured for the widest
+		// value the range holds (design D4; a fixed cell overflowed at 1.25
+		// in the audio panel, sysc-589).
+		valueW, _ := settingsMeasure(h)(strconv.Itoa(max(e.Max, -e.Min)), ui.TextAttrs{Tabular: true})
+		return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Width: width, Children: []*ui.Node{
+			{
+				Kind: ui.KindSlider, Value: float64(n), Min: float64(e.Min), Max: float64(e.Max), Step: 1,
+				Action: action, Width: max(width-valueW-theme.MarginS, 0), Focusable: true, Name: e.Label, Role: "slider",
+			},
+			{Kind: ui.KindText, Text: strconv.Itoa(n), Tabular: true, Width: valueW},
+		}}
 	case settings.KindFont:
 		options, values := settingsFontOptions(e)
 		return settingsPickerControl(h, e, options, values, raw, width)
@@ -423,10 +741,56 @@ func settingsControl(h *PanelHost, e settings.Entry, width int) *ui.Node {
 			},
 		}}
 	case settings.KindEnum:
+		// One option is a fact, not a choice: a one-row menu drew as a
+		// clipped pill (the bar's Edge, which is only ever top).
+		if len(e.Options) == 1 {
+			return &ui.Node{Kind: ui.KindText, Text: settingsOptionLabel(e.Options[0]), Tone: ui.ToneSubtle, Name: e.Label}
+		}
+		if e.Present == settings.PresentAuto && len(e.Options) >= 2 && len(e.Options) <= settingsSegmentLimit {
+			return settingsSegmented(h, e, raw)
+		}
 		return settingsMenuControl(h, e, e.Options, raw, width)
 	default:
 		return settingsField(h, e, raw, width)
 	}
+}
+
+// settingsSegmentLimit is the most options a segmented control shows. Past
+// it the labels crowd the control column and a menu reads better (settings
+// redesign D2).
+const settingsSegmentLimit = 4
+
+// settingsSegmented shows every option at once, the way the audio panel's
+// tabs do. Each segment writes its value through the pick action.
+func settingsSegmented(h *PanelHost, e settings.Entry, raw string) *ui.Node {
+	m := h.metrics()
+	seg := &ui.Node{
+		Kind: ui.KindSegmented, Key: "seg:" + e.Path, Gap: theme.MarginXXS,
+		Height: m.CompactControl, Name: e.Label, Role: "radiogroup",
+	}
+	for _, opt := range e.Options {
+		label := settingsOptionLabel(opt)
+		b := &ui.Node{
+			Kind: ui.KindButton, Action: "pick:" + e.Path + "=" + opt,
+			Name: label, Role: "radio", Focusable: true, Height: m.CompactControl,
+			Children: []*ui.Node{{Kind: ui.KindText, Text: label}},
+		}
+		if opt == raw {
+			b.State |= ui.StateSelected
+		}
+		seg.Children = append(seg.Children, b)
+	}
+	return seg
+}
+
+// settingsOptionLabel turns a config value into a label: "auto-pause" reads
+// "Auto pause".
+func settingsOptionLabel(opt string) string {
+	s := strings.ReplaceAll(opt, "-", " ")
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 // settingsStepperSpan is the widest range that reads better one step at a

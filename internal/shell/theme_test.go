@@ -25,10 +25,15 @@ func TestDefaultThemeGeometryMatchesTheBaseline(t *testing.T) {
 	if body != 40 {
 		t.Fatalf("body = %d, want 40, which is height 48 minus twice the gap", body)
 	}
-	// The surface height is also the exclusive zone, so Niri windows begin 44
-	// logical pixels from the screen edge.
-	if surface != 44 {
-		t.Fatalf("surface = %d, want 44, which is gap plus body", surface)
+	// The default bar is attached: it meets the screen edge, so its extent,
+	// and the exclusive zone that follows it, is the body alone.
+	if surface != 40 {
+		t.Fatalf("surface = %d, want 40, the attached body", surface)
+	}
+	floating := DefaultTheme()
+	floating.BarShape = "floating"
+	if surface, _, _ := floating.Geometry(); surface != 44 {
+		t.Fatalf("floating surface = %d, want 44, which is gap plus body", surface)
 	}
 }
 
@@ -57,7 +62,7 @@ func TestNominalHeightIsATokenNotASurfaceDimension(t *testing.T) {
 func TestThemeGeometryScalesWithTokens(t *testing.T) {
 	t.Parallel()
 	th := DefaultTheme()
-	th.BarHeight, th.BarGap = 60, 6
+	th.BarHeight, th.BarGap, th.BarShape = 60, 6, "floating"
 	surface, body, gap := th.Geometry()
 	if gap != 6 || body != 48 || surface != 54 {
 		t.Fatalf("geometry = surface %d body %d gap %d, want 54/48/6", surface, body, gap)

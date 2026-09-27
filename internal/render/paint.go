@@ -54,8 +54,12 @@ func (s Style) containerHighest() Color {
 // translucent panel must not drag its cards toward the wallpaper with it.
 //
 // A zero SurfaceOpacity means the field was never set, not that the surface is
-// invisible, so it paints opaque.
+// invisible, so it paints opaque. A surface with no ground says so with
+// NoGround.
 func (s Style) rootFill() Color {
+	if s.NoGround {
+		return Color{}
+	}
 	a := s.SurfaceOpacity
 	if a == 0 || a == 0xff {
 		return s.Background
@@ -177,23 +181,24 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style) error {
 	clear(c.Pix)
 	box := style.Scale120.PhysicalRect(style.Body)
 	radius := style.Scale120.Physical(style.Radius)
+	square := style.squareCorners()
+	body := CornerMask(radius, box.W, box.H, square)
 	// The silhouette is drawn from the antialiased mask, and the rim is a real
 	// stroke over it. Filling the rim colour and laying a smaller fill on top
 	// left the border as the difference of two quantised silhouettes, which is
 	// why it thinned and broke up around the corners.
-	// The backdrop goes through the same rounded mask the fill uses, so it
-	// stops exactly where the body does and the corners stay transparent. The
+	// The backdrop goes through the same mask the fill uses, so it stops
+	// exactly where the body does and the corners stay transparent. The
 	// translucent root fill then paints over it.
 	if style.Backdrop != nil {
-		blendMaskImage(c, RoundedMask(radius, box.W, box.H), box.X, box.Y, style.Backdrop)
+		blendMaskImage(c, body, box.X, box.Y, style.Backdrop)
 	}
-	c.FillRounded(box, radius, style.rootFill())
+	blendMask(c, body, box.X, box.Y, style.rootFill())
 	if style.Rim.A > 0 {
 		c.StrokeRounded(box, radius, max(style.Scale120.Physical(1), 1), style.Rim)
 	}
-	squareAttachedEdge(c, box, radius, style.AttachEdge, style.rootFill())
-	fillet := style.Scale120.Physical(style.Fillet)
-	fillAttachFillets(c, box, fillet, style.AttachEdge, style.FilletFill)
+	jointL, jointR := style.Scale120.Physical(style.JointLeft), style.Scale120.Physical(style.JointRight)
+	fillAttachFillets(c, box, jointL, jointR, style.AttachEdge, style.FilletFill)
 
 	size := style.Scale120.Physical(style.Size)
 	if root.Kind == ui.KindScroll || root.Kind == ui.KindVirtualList {
@@ -210,21 +215,35 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style) error {
 			}
 		}
 	}
-	clearOutsideRoundedRect(c, box, radius, fillet, style.AttachEdge)
+	clearOutsideRoundedRect(c, box, radius, square, jointL, jointR, style.AttachEdge)
+	// The end wedges lie outside the body, where the clear above has just
+	// emptied every row, so they go down last.
+	if style.EdgeLeft || style.EdgeRight {
+		fillEdgeFillets(c, box, style.Scale120.Physical(style.EdgeFillet), style.AttachEdge,
+			style.EdgeLeft, style.EdgeRight, style.rootFill())
+	}
 	return nil
 }
 
-func squareAttachedEdge(c *Canvas, box ui.Rect, radius int, edge string, col Color) {
-	if radius <= 0 {
-		return
-	}
-	h := min(radius, box.H)
-	switch edge {
+// squareCorners is the body's square corners: the two on the attached edge,
+// and each far corner that turns into an edge fillet.
+func (s Style) squareCorners() Corners {
+	near, far := SquareTL|SquareTR, SquareBL|SquareBR
+	switch s.AttachEdge {
 	case "top":
-		fillRect(c, ui.Rect{X: box.X, Y: box.Y, W: box.W, H: h}, col)
 	case "bottom":
-		fillRect(c, ui.Rect{X: box.X, Y: box.Y + box.H - h, W: box.W, H: h}, col)
+		near, far = far, near
+	default:
+		return 0
 	}
+	square := near
+	if s.EdgeFillet > 0 && s.EdgeLeft {
+		square |= far & (SquareTL | SquareBL)
+	}
+	if s.EdgeFillet > 0 && s.EdgeRight {
+		square |= far & (SquareTR | SquareBR)
+	}
+	return square
 }
 
 func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
@@ -300,11 +319,7 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 		// background: same fill resolution, same state layers, differing only
 		// in radius. A capsule with no explicit Radius stays a stadium, so an
 		// empty dot is a circle; a card sets the theme's card radius.
-		radius := style.Radius
-		if n.Fill == ui.FillContainerHigh && style.CardRadius > 0 {
-			radius = style.CardRadius
-		}
-		return paintChrome(c, n, text, style, size, style.Capsule, radius)
+		return paintChrome(c, n, text, style, size, style.Capsule, capsuleInherit(style, n))
 
 	case ui.KindGraph:
 		return paintGraph(c, n, style.Scale120.PhysicalRect(n.Bounds), style)
@@ -553,7 +568,23 @@ func paintScrollThumb(c *Canvas, n *ui.Node, style Style) {
 	c.FillRounded(ui.Rect{X: track.X, Y: thumbY, W: trackW, H: thumbH}, trackW/2, style.Foreground)
 }
 
+// dimmedControl fades the inks a toggle, slider or menu paints itself, by the
+// same factor a disabled button's foreground takes. They drew no disabled look
+// at all, so a dimmed settings row read as live.
+func dimmedControl(n *ui.Node, style Style) Style {
+	if !n.State.Has(ui.StateDisabled) {
+		return style
+	}
+	fade := func(c Color) Color {
+		c.A = uint8(math.Round(float64(c.A) * disabledForeground))
+		return c
+	}
+	style.Track, style.Accent, style.AccentOn, style.Foreground = fade(style.Track), fade(style.Accent), fade(style.AccentOn), fade(style.Foreground)
+	return style
+}
+
 func paintToggle(c *Canvas, n *ui.Node, style Style) {
+	style = dimmedControl(n, style)
 	if n.Role == "checkbox" {
 		paintCheckbox(c, n, style)
 		return
@@ -596,6 +627,7 @@ func paintCheckbox(c *Canvas, n *ui.Node, style Style) {
 }
 
 func paintSlider(c *Canvas, n *ui.Node, style Style) {
+	style = dimmedControl(n, style)
 	box := style.Scale120.PhysicalRect(n.Bounds)
 	trackH := max(style.Scale120.Physical(ui.SliderTrack), 1)
 	y := box.Y + (box.H-trackH)/2
@@ -625,6 +657,7 @@ func paintSlider(c *Canvas, n *ui.Node, style Style) {
 }
 
 func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
+	style = dimmedControl(n, style)
 	box := style.Scale120.PhysicalRect(n.Bounds)
 	field := box
 	if len(n.Children) > 0 {
@@ -1158,6 +1191,22 @@ func chromeRadius(style Style, logical int, box ui.Rect) int {
 		return half
 	}
 	return min(style.Scale120.Physical(logical), half)
+}
+
+// capsuleInherit is the radius a capsule inherits before its own shape
+// applies: the card radius for a card, else the surface's.
+func capsuleInherit(style Style, n *ui.Node) int {
+	if n.Fill == ui.FillContainerHigh && style.CardRadius > 0 {
+		return style.CardRadius
+	}
+	return style.Radius
+}
+
+// CapsuleRadius is the logical corner radius a capsule paints with; zero means
+// half its shorter side. A blur region that must follow the painted capsule
+// reads it rather than re-deriving the rule.
+func CapsuleRadius(style Style, n *ui.Node) int {
+	return nodeRadius(style, n, capsuleInherit(style, n))
 }
 
 // nodeRadius resolves the logical corner radius one node paints with, in

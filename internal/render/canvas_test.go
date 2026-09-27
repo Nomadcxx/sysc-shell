@@ -79,7 +79,7 @@ func TestFilletCoverageSweepsSmoothlyFromBarToPanel(t *testing.T) {
 		t.Run(fmt.Sprintf("radius_%d", radius), func(t *testing.T) {
 			c := newTestCanvas(t, radius*2+4, radius+1)
 			body := ui.Rect{X: radius, W: 4, H: radius + 1}
-			fillAttachFillets(c, body, radius, "top", Color{R: 255, A: 255})
+			fillAttachFillets(c, body, radius, radius, "top", Color{R: 255, A: 255})
 
 			partial := false
 			previous := radius*255 + 1
@@ -118,8 +118,8 @@ func TestFilletCoverageIsSymmetricAcrossAttachedEdges(t *testing.T) {
 	top := newTestCanvas(t, radius*2+4, radius+1)
 	bottom := newTestCanvas(t, radius*2+4, radius+1)
 	body := ui.Rect{X: radius, W: 4, H: radius + 1}
-	fillAttachFillets(top, body, radius, "top", Color{A: 255})
-	fillAttachFillets(bottom, body, radius, "bottom", Color{A: 255})
+	fillAttachFillets(top, body, radius, radius, "top", Color{A: 255})
+	fillAttachFillets(bottom, body, radius, radius, "bottom", Color{A: 255})
 	for y := 0; y < top.Height; y++ {
 		for x := 0; x < top.Width; x++ {
 			got := top.Pix[y*top.Stride+x*4+3]
@@ -133,7 +133,7 @@ func TestFilletCoverageIsSymmetricAcrossAttachedEdges(t *testing.T) {
 
 func TestFilletCoverageClipsToCanvas(t *testing.T) {
 	c := newTestCanvas(t, 4, 4)
-	fillAttachFillets(c, ui.Rect{X: 0, Y: -2, W: 4, H: 8}, 8, "top", Color{A: 255})
+	fillAttachFillets(c, ui.Rect{X: 0, Y: -2, W: 4, H: 8}, 8, 8, "top", Color{A: 255})
 }
 
 func TestSurfaceTransformScalesPremultipliedChannels(t *testing.T) {

@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>:root{color-scheme:light}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+</head>
+<body>
+<title>SYSC Bar Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,500..800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap">
+<style>
+:root{
+  --pg:#eceef2; --card:#f7f8fa; --ink:#15181d; --ink2:#4d5563; --ink3:#747d8b; --line:#d5dae1; --acc:#2b62c9;
+  --lo:#dcefe2; --lo-ink:#1d6b3a; --md:#f5ead0; --md-ink:#7a5a10; --hi:#f6dddd; --hi-ink:#8a2a2a;
+  --display:"Archivo","Arial Narrow",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;
+  --pg:#101216; --card:#16191e; --ink:#e3e6eb; --ink2:#a3abb8; --ink3:#7b8492; --line:#262a31; --acc:#86b2ff;
+  --lo:#173222; --lo-ink:#8fd6a8; --md:#352a12; --md-ink:#e7c46f; --hi:#3a1a1a; --hi-ink:#f0a0a0;}}
+:root[data-theme="dark"]{color-scheme:dark;
+  --pg:#101216; --card:#16191e; --ink:#e3e6eb; --ink2:#a3abb8; --ink3:#7b8492; --line:#262a31; --acc:#86b2ff;
+  --lo:#173222; --lo-ink:#8fd6a8; --md:#352a12; --md-ink:#e7c46f; --hi:#3a1a1a; --hi-ink:#f0a0a0;}
+*{box-sizing:border-box}
+body{background:var(--pg);color:var(--ink);font:400 15px/1.55 var(--body);padding-inline:20px;padding-block:28px 64px}
+.wrap{max-width:1120px;margin:0 auto;display:flex;flex-direction:column;gap:52px}
+h1,h2,h3{font-family:var(--display);font-stretch:85%;margin:0;text-wrap:balance;letter-spacing:-.01em}
+h1{font-size:clamp(30px,5vw,46px);font-weight:750;line-height:1.02}
+h2{font-size:24px;font-weight:700}
+h3{font-size:20px;font-weight:700}
+p{margin:0;max-width:70ch}
+code{font:500 .86em var(--mono);background:color-mix(in srgb,var(--ink) 7%,transparent);padding:.05em .35em;border-radius:4px}
+.eyebrow{font:500 12px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+header{display:flex;flex-direction:column;gap:14px}
+.lede{font-size:17px;color:var(--ink2)}
+section{display:flex;flex-direction:column;gap:16px}
+.sec-head{display:flex;flex-direction:column;gap:6px}
+.sec-head p{color:var(--ink2)}
+
+/* controls */
+.controls{display:flex;flex-wrap:wrap;gap:12px 22px;align-items:flex-end}
+.ctl{display:flex;flex-direction:column;gap:6px}
+.ctl>span{font:500 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+.seg{display:flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:9px;padding:3px;gap:2px;background:var(--card)}
+.seg input{position:absolute;opacity:0;pointer-events:none}
+.seg label{font:500 13px var(--body);padding:5px 11px;border-radius:6px;cursor:pointer;color:var(--ink2);white-space:nowrap}
+.seg label:hover{color:var(--ink);background:color-mix(in srgb,var(--ink) 6%,transparent)}
+.seg input:checked+label{background:var(--ink);color:var(--pg)}
+.seg input:focus-visible+label{outline:2px solid var(--acc);outline-offset:1px}
+.range{display:flex;align-items:center;gap:10px;font:500 13px var(--mono);color:var(--ink2)}
+.range input{width:130px;accent-color:var(--acc)}
+.range output{min-width:44px;font-variant-numeric:tabular-nums}
+.chk{display:flex;align-items:center;gap:7px;font:500 13px var(--body);color:var(--ink2);cursor:pointer}
+.chk input{accent-color:var(--acc);width:15px;height:15px}
+.btn{font:500 13px var(--body);border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:6px 12px;cursor:pointer}
+.btn:hover{background:color-mix(in srgb,var(--ink) 6%,var(--card))}
+.btn:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+
+/* ---------- desktop scene ---------- */
+.scene{--u:1px;position:relative;height:230px;border-radius:12px;overflow:hidden;border:1px solid var(--line);
+  background:#0b0f18 var(--wall) top center/cover no-repeat;font-family:"Inter",system-ui,sans-serif;font-feature-settings:"tnum" 1;color:var(--on)}
+.scene.short{height:150px}
+.scene[data-pal="blue"]{--bar:#1d2025;--cap:#3a4149;--caph:#464e58;--on:#e6e6e6;--onv:#9aa0a6;--ol:#737d89;--olv:#59616b;--p:#0080ff;--s:#bec6dc;--t:#ddbce0}
+.scene[data-pal="amber"]{--bar:#1e1b16;--cap:#383128;--caph:#443c31;--on:#ece2d3;--onv:#a99f90;--ol:#978e7e;--olv:#5a5244;--p:#f0bd6e;--s:#dcc49f;--t:#afcfa8}
+.scene[data-pal="teal"]{--bar:#151c1c;--cap:#2b3534;--caph:#36413f;--on:#dce4e3;--onv:#96a9a7;--ol:#869392;--olv:#46524f;--p:#7fd4ce;--s:#b1cbc8;--t:#b2c7ea}
+.win{position:absolute;left:12px;right:12px;top:52px;bottom:-20px;border-radius:12px;background:color-mix(in srgb,var(--bar) 94%,transparent);border:1px solid color-mix(in srgb,var(--olv) 70%,transparent);
+  font:13px/1.6 "IBM Plex Mono",monospace;color:var(--onv);padding:12px 16px;overflow:hidden}
+.win b{color:var(--p);font-weight:500}.win i{color:var(--t);font-style:normal}
+.win.narrow{left:auto;width:46%}
+
+.bar{position:absolute;top:calc(var(--u)*4);left:calc(var(--u)*4);right:calc(var(--u)*4);height:calc(var(--u)*40);border-radius:calc(var(--u)*12);
+  display:flex;align-items:center;justify-content:space-between;padding:0 calc(var(--u)*6);z-index:3}
+.bar.attached{top:0;left:0;right:0;height:calc(var(--u)*40);border-radius:0}
+.side{display:flex;align-items:center;gap:calc(var(--u)*4);min-width:0}
+.ttl{color:var(--onv);font-size:13.5px;padding:0 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pill{position:relative;display:inline-flex;align-items:center;justify-content:center;height:calc(var(--u)*28);border-radius:calc(var(--u)*12);
+  color:var(--on);font-size:calc(var(--u)*15);line-height:1;white-space:nowrap;flex:none;cursor:pointer;transition:border-radius .18s cubic-bezier(.2,0,0,1),background-color .2s}
+.pill::after{content:"";position:absolute;inset:0;border-radius:inherit;background:var(--on);opacity:0;transition:opacity .15s;pointer-events:none}
+.pill:hover::after{opacity:.08}
+.squish .pill:active{border-radius:calc(var(--u)*6)!important}
+.pad{padding:0 calc(var(--u)*8)}
+.glyph{width:calc(var(--u)*17);height:calc(var(--u)*17);border-radius:calc(var(--u)*5);border:calc(var(--u)*4.5) solid var(--p);background:transparent}
+.ico svg{width:calc(var(--u)*15);height:calc(var(--u)*15);stroke:var(--on);fill:none;stroke-width:1.6}
+.ico{width:calc(var(--u)*30)}
+.rings{gap:calc(var(--u)*7);padding:0 calc(var(--u)*9)}
+.rings svg{width:calc(var(--u)*15);height:calc(var(--u)*15)}
+.group{display:flex;align-items:center}
+
+/* workspace dots (today) */
+.wsd{gap:calc(var(--u)*5);padding:0 calc(var(--u)*9)}
+.wsd i{display:block;width:calc(var(--u)*8);height:calc(var(--u)*8);border-radius:99px;background:var(--olv)}
+.wsd i.occ{background:var(--onv)}
+.wsd i.on{width:calc(var(--u)*20);background:var(--p)}
+/* workspace track (Caelestia) */
+.wst{padding:0 calc(var(--u)*7)}
+.track{position:relative;height:calc(var(--u)*16);display:flex}
+.slot{width:calc(var(--u)*18);height:100%;display:grid;place-items:center;position:relative;z-index:2;cursor:pointer}
+.slot::before{content:"";width:calc(var(--u)*4);height:calc(var(--u)*4);border-radius:99px;background:var(--olv)}
+.slot.occ::before{background:var(--onv)}
+.slot.on::before{background:color-mix(in srgb,var(--bar) 85%,var(--p))}
+.run{position:absolute;top:0;height:100%;border-radius:calc(var(--u)*8);background:var(--caph);z-index:0;transition:left .3s,width .3s}
+.ind{position:absolute;top:0;height:100%;border-radius:calc(var(--u)*8);background:var(--p);z-index:1}
+
+/* centre pill (built) */
+.cpill{border:var(--u) solid var(--olv);padding:0 calc(var(--u)*10);gap:calc(var(--u)*9);overflow:hidden;justify-content:flex-start;transition:width .38s cubic-bezier(.2,0,0,1),border-radius .18s}
+.cpill .inner{display:inline-flex;align-items:center;gap:calc(var(--u)*9)}
+.mk{display:inline-block;flex:none;height:calc(var(--u)*11);width:calc(var(--u)*80);-webkit-mask:var(--mark) center/100% 100% no-repeat;mask:var(--mark) center/100% 100% no-repeat;
+  background:linear-gradient(90deg,var(--p) 0%,var(--s) 16.5%,var(--t) 33%,var(--p) 50%,var(--s) 66.5%,var(--t) 83%,var(--p) 100%);background-size:200% 100%;animation:slide 8s linear infinite}
+@keyframes slide{from{background-position:0% 0}to{background-position:100% 0}}
+.sep{width:var(--u);height:calc(var(--u)*13);background:var(--olv);flex:none}
+.tm{font-weight:600}.dt{color:var(--onv)}
+.art{width:calc(var(--u)*17);height:calc(var(--u)*17);border-radius:calc(var(--u)*4);background:linear-gradient(135deg,var(--t),var(--p));flex:none}
+.muted{color:var(--onv)}
+.nt-dot{width:calc(var(--u)*8);height:calc(var(--u)*8);border-radius:99px;background:var(--p);flex:none}
+.vol{display:inline-block;width:calc(var(--u)*90);height:calc(var(--u)*5);border-radius:9px;background:var(--caph);position:relative;overflow:hidden}
+.vol::before{content:"";position:absolute;inset:0;width:var(--v,62%);background:var(--p);border-radius:inherit;transition:width .25s}
+.prog{position:absolute;left:calc(var(--u)*12);right:calc(var(--u)*12);bottom:calc(var(--u)*3);height:calc(var(--u)*2);border-radius:2px;background:color-mix(in srgb,var(--olv) 60%,transparent);overflow:hidden;opacity:0;transition:opacity .3s}
+.prog::before{content:"";position:absolute;inset:0;width:38%;background:var(--p)}
+.cpill.media .prog{opacity:1}
+.ctr{position:absolute;left:50%;top:0;height:100%;transform:translateX(-50%);display:flex;align-items:center}
+
+/* attached: concave fillets */
+.fillet{position:absolute;width:calc(var(--u)*14);height:calc(var(--u)*14);z-index:3;pointer-events:none}
+.cc{position:absolute;left:50%;transform:translateX(-50%);width:340px;max-width:calc(100% - 60px);z-index:2;border-radius:0 0 16px 16px;padding:12px 14px;display:flex;flex-direction:column;gap:10px;
+  font:500 12.5px/1.2 "Inter",sans-serif;color:var(--on)}
+.cc .tiles{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.cc .tile{height:34px;border-radius:12px;background:var(--caph);display:flex;align-items:center;padding:0 12px}
+.cc .tile.on{background:var(--p);color:var(--bar)}
+.cc .sl{height:6px;border-radius:9px;background:var(--caph);position:relative}
+.cc .sl::before{content:"";position:absolute;inset:0 38% 0 0;border-radius:inherit;background:var(--p)}
+
+/* ---------- cards ---------- */
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:16px}
+.card-top{display:flex;align-items:baseline;gap:10px 14px;flex-wrap:wrap}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{font:500 11.5px var(--mono);border:1px solid var(--line);border-radius:99px;padding:2px 9px;color:var(--ink2)}
+.cols{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:22px}
+.cols h4{font:500 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin:0 0 6px}
+.cols p,.cols li{font-size:14px;color:var(--ink2)}
+.cols ul{margin:0;padding-left:16px;display:flex;flex-direction:column;gap:4px}
+.cols code{font-size:12px}
+.cost{display:inline-block;font:600 11px var(--mono);letter-spacing:.06em;text-transform:uppercase;border-radius:5px;padding:2px 7px;margin-bottom:6px}
+.c-lo{background:var(--lo);color:var(--lo-ink)}.c-md{background:var(--md);color:var(--md-ink)}.c-hi{background:var(--hi);color:var(--hi-ink)}
+
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+table{border-collapse:collapse;width:100%;min-width:760px;font-size:14px}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font:500 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+tr:last-child td{border-bottom:0}
+td:first-child{font-weight:600;white-space:nowrap}
+td{color:var(--ink2)}
+.note{border-left:3px solid var(--acc);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:8px;color:var(--ink2)}
+.note b{color:var(--ink)}
+
+@media (max-width:860px){.cols{grid-template-columns:1fr}}
+@media (max-width:760px){.hide-md{display:none!important}}
+@media (max-width:520px){.hide-sm{display:none!important}}
+@media (prefers-reduced-motion:reduce){.mk{animation:none}.pill,.cpill,.run,.ind{transition:none!important}}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">sysc-shell · bar · ideas from DMS, Noctalia and Caelestia</div>
+    <h1>Six upgrades for the sysc bar</h1>
+    <p class="lede">I read the bar code of DankMaterialShell, Noctalia v5 and Caelestia (current main of each, 20–25 September 2026) and pulled out what they do that sysc-shell doesn't yet. Every scene below uses sysc's real bar geometry (40&nbsp;px body, 28&nbsp;px pills, 12&nbsp;px radius, 4&nbsp;px gap) and the centre pill from PR&nbsp;#13.</p>
+  </header>
+
+  <section>
+    <div class="sec-head">
+      <h2>Mix them</h2>
+      <p>Combine the ideas on one bar. Each is explained on its own further down.</p>
+    </div>
+    <div class="controls">
+      <div class="ctl"><span>Surface</span><div class="seg" id="h-surface"></div></div>
+      <div class="ctl"><span>Widgets</span><div class="seg" id="h-style"></div></div>
+      <div class="ctl"><span>Workspaces</span><div class="seg" id="h-ws"></div></div>
+      <div class="ctl"><span>Wallpaper</span><div class="seg" id="h-pal"></div></div>
+    </div>
+    <div class="scene" id="hero"></div>
+  </section>
+
+  <section>
+    <div class="sec-head"><h2>At a glance</h2></div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Upgrade</th><th>Seen in</th><th>sysc-shell today</th><th>Build</th></tr></thead>
+        <tbody>
+          <tr><td>1 · Frosted bar</td><td>Noctalia, DMS, Caelestia</td><td>Opacity only, floored at 80%; no blur behind the bar</td><td><span class="cost c-md">Medium</span> needs Niri ≥ 26.04</td></tr>
+          <tr><td>2 · Floating islands</td><td>DMS, Noctalia</td><td>Bar always paints its full background</td><td><span class="cost c-lo">Small</span> after 1</td></tr>
+          <tr><td>3 · Segmented groups</td><td>DMS, Noctalia</td><td>A group is one capsule; no per-corner radius</td><td><span class="cost c-lo">Small</span></td></tr>
+          <tr><td>4 · Attached bar</td><td>Noctalia, DMS, Caelestia</td><td>Floating bar only; panels already attach with fillets</td><td><span class="cost c-md">Medium</span></td></tr>
+          <tr><td>5 · Workspace track</td><td>Caelestia</td><td>Dots and a wide focused pill; no motion</td><td><span class="cost c-md">Medium</span></td></tr>
+          <tr><td>6 · Live centre island</td><td>DMS</td><td>Centre pill is static; OSD and toasts live elsewhere</td><td><span class="cost c-md">Medium</span> builds on #13</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">
+      <p><b>The blur answer.</b> Both Noctalia and DMS get blur from the compositor, not by blurring pixels themselves. They publish the bar's shape through <code>ext-background-effect-v1</code>, and Niri 26.04+ blurs whatever is behind it on the GPU, live, at no cost to the shell. sysc-shell's panel blur (one screen capture per open, blurred on the CPU) was the right call before Niri had this. For the bar it's the wrong tool, because the bar is always on screen.</p>
+      <p><b>Fallback.</b> On an older Niri, the bar can keep today's opaque look, or blur the wallpaper image sysc-shell already owns. A docked bar with a reserved zone only ever sits over the wallpaper.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><h2>The six, one at a time</h2></div>
+    <div id="cards" style="display:flex;flex-direction:column;gap:18px"></div>
+  </section>
+
+  <section>
+    <div class="sec-head"><h2>Suggested order</h2></div>
+    <div class="note">
+      <p><b>1 first.</b> The compositor-blur binding is the foundation for 2 and for translucent panels later, and it's the change you'll notice most. Check <code>niri --version</code> is 26.04 or later.</p>
+      <p><b>Then 3 and 5.</b> Each is self-contained. Segments need per-corner radii, which 4 and a future hanging tab also need.</p>
+      <p><b>4 and 6 last.</b> Both are bigger. 4 changes the bar's surface geometry, and 6 routes notifications, media and the volume OSD into the centre pill.</p>
+    </div>
+  </section>
+</div>
+
+<script>
+(function(){
+  const MARK="data:image/png;base64,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";
+  document.documentElement.style.setProperty("--mark",`url("${MARK}")`);
+
+  /* ---------- wallpapers: painted once, detailed near the top so blur shows ---------- */
+  const WALLS={
+    blue:{sky:["#0a1430","#1b2d6b","#3f3a86"],band:["#4f8dff","#b48cff","#63d3ff"],moon:"#f1ecff",ridge:["#10183a","#0b1129","#070b1a"]},
+    amber:{sky:["#2a1206","#8a3b12","#f0a04b"],band:["#ffcf7a","#ff8a5c","#ffe2a8"],moon:"#fff1cf",ridge:["#3a1a0c","#251008","#150904"]},
+    teal:{sky:["#031617","#0c3b3f","#1d6b6a"],band:["#55ffd0","#7fb8ff","#b7ff9b"],moon:"#e6fff8",ridge:["#082224","#051718","#030d0e"]}
+  };
+  function rng(seed){return()=>{seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+  const LUMA={};
+  function paintWall(key){
+    const w=WALLS[key],W=1600,H=560,c=document.createElement("canvas");c.width=W;c.height=H;const g=c.getContext("2d"),r=rng(7);
+    let gr=g.createLinearGradient(0,0,0,H);gr.addColorStop(0,w.sky[0]);gr.addColorStop(.55,w.sky[1]);gr.addColorStop(1,w.sky[2]);g.fillStyle=gr;g.fillRect(0,0,W,H);
+    for(let i=0;i<520;i++){const y=r()*H*.7;g.fillStyle=`rgba(255,255,255,${.25+r()*.7})`;const s=r()<.08?2.2:1.1;g.fillRect(r()*W,y,s,s)}
+    g.globalCompositeOperation="lighter";
+    for(let b=0;b<14;b++){const col=w.band[b%3],y0=10+r()*170,amp=10+r()*40,f=.002+r()*.004,ph=r()*6;g.strokeStyle=col;g.globalAlpha=.05+r()*.12;g.lineWidth=6+r()*26;g.beginPath();
+      for(let x=0;x<=W;x+=12){const y=y0+Math.sin(x*f+ph)*amp+Math.sin(x*f*3.1+ph)*amp*.3;x?g.lineTo(x,y):g.moveTo(x,y)}g.stroke()}
+    g.globalAlpha=1;
+    const mx=W*.7,my=H*.26,rad=g.createRadialGradient(mx,my,0,mx,my,160);rad.addColorStop(0,w.moon);rad.addColorStop(.18,w.moon);rad.addColorStop(.2,"rgba(255,255,255,.25)");rad.addColorStop(1,"rgba(255,255,255,0)");g.fillStyle=rad;g.beginPath();g.arc(mx,my,160,0,7);g.fill();
+    g.globalCompositeOperation="source-over";
+    w.ridge.forEach((col,k)=>{g.fillStyle=col;g.beginPath();g.moveTo(0,H);let y=H*(.55+k*.12);for(let x=0;x<=W;x+=8){y+=(r()-.5)*(14-k*3);y=Math.min(H*.95,Math.max(H*(.4+k*.1),y));g.lineTo(x,y)}g.lineTo(W,H);g.fill()});
+    const d=g.getImageData(0,0,W,60).data;let sum=0;for(let i=0;i<d.length;i+=16){sum+=.2126*d[i]+.7152*d[i+1]+.0722*d[i+2]}LUMA[key]=sum/(d.length/16)/255;
+    return c.toDataURL("image/jpeg",.86);
+  }
+  const WALLURL={};for(const k of Object.keys(WALLS))WALLURL[k]=paintWall(k);
+
+  /* ---------- bar renderer ---------- */
+  const ring=v=>{const c=2*Math.PI*6;return `<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="var(--caph)" stroke-width="2.2"/><circle cx="8" cy="8" r="6" fill="none" stroke="var(--p)" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="${c*v} ${c}" transform="rotate(-90 8 8)"/></svg>`};
+  const ICON={
+    vol:`<svg viewBox="0 0 16 16"><path d="M3 6h2.5L9 3v10L5.5 10H3z"/><path d="M11.5 5.5a3.5 3.5 0 0 1 0 5"/></svg>`,
+    clip:`<svg viewBox="0 0 16 16"><rect x="3.5" y="2.5" width="9" height="11.5" rx="2"/><path d="M6 2.5h4v2H6z"/></svg>`,
+    bell:`<svg viewBox="0 0 16 16"><path d="M4 11V7a4 4 0 0 1 8 0v4l1 1.5H3z"/><path d="M6.5 14a1.5 1.5 0 0 0 3 0"/></svg>`
+  };
+  const WS={occupied:[0,1,2,4],count:7};
+
+  // Pill fill. Caelestia's layer(): translucent layers are lifted in proportion
+  // to the wallpaper's brightness so they still separate from the bar.
+  function pillBg(o,pal){
+    const a=Math.round(o.pillAlpha*100);
+    if(!o.luma||o.pillAlpha>=.999)return `color-mix(in srgb,var(--cap) ${a}%,transparent)`;
+    const lift=Math.min(40,Math.round((1-o.pillAlpha)*30*(1+LUMA[pal]*2.5)));
+    return `color-mix(in srgb,color-mix(in srgb,var(--cap),white ${lift}%) ${a}%,transparent)`;
+  }
+  function barBg(o){return `color-mix(in srgb,var(--bar) ${Math.round(o.barAlpha*100)}%,transparent)`}
+  const blurCss=px=>px>0?`backdrop-filter:blur(${px}px) saturate(1.5);-webkit-backdrop-filter:blur(${px}px) saturate(1.5);`:"";
+
+  // One widget group. style: pills (separate), segments (joined), flat (no chrome).
+  function group(items,o,pal){
+    const bg=pillBg(o,pal), own=o.surface==="islands"?blurCss(o.blur):"";
+    const rim=o.rim?`box-shadow:inset 0 0 0 var(--u) color-mix(in srgb,white 9%,transparent);`:"";
+    if(o.style==="segments"){
+      return `<div class="group" style="gap:calc(var(--u)*2)">`+items.map((it,i)=>{
+        const L=i===0?12:5,R=i===items.length-1?12:5;
+        return `<span class="pill ${it.cls}" style="background:${bg};${own}${rim}border-radius:calc(var(--u)*${L}) calc(var(--u)*${R}) calc(var(--u)*${R}) calc(var(--u)*${L})">${it.html}</span>`}).join("")+`</div>`;
+    }
+    if(o.style==="flat")return `<div class="group" style="gap:calc(var(--u)*2)">`+items.map(it=>`<span class="pill ${it.cls}" style="border-radius:calc(var(--u)*8)">${it.html}</span>`).join("")+`</div>`;
+    return items.map(it=>`<span class="pill ${it.cls}" style="background:${bg};${own}${rim}">${it.html}</span>`).join("");
+  }
+  function wsHtml(o){
+    if(o.ws==="track")return `<div class="track" data-track>`+Array.from({length:WS.count},(_,i)=>`<span class="slot ${WS.occupied.includes(i)?"occ":""}" data-i="${i}"></span>`).join("")+`<span class="ind"></span></div>`;
+    return Array.from({length:5},(_,i)=>`<i class="${i===1?"on":WS.occupied.includes(i)?"occ":""}"></i>`).join("");
+  }
+  function centreInner(state){
+    const t=now();
+    switch(state){
+      case "notify":return `<span class="mk"></span><span class="sep"></span><span class="nt-dot"></span><span class="tm">Alex Chen</span><span class="muted">are we still on for 7?</span>`;
+      case "media":return `<span class="mk"></span><span class="sep"></span><span class="tm">${t.time}</span><span class="art"></span><span class="muted">Rone · Bye Bye Macadam</span>`;
+      case "volume":return `<span class="mk"></span><span class="sep"></span><span style="display:inline-flex;width:calc(var(--u)*15)" class="ico">${ICON.vol}</span><span class="vol" style="--v:${state==="volume"?62:0}%"></span><span class="tm">62%</span>`;
+      default:return `<span class="mk"></span><span class="sep"></span><span class="tm">${t.time}</span><span class="dt">${t.date}</span>`;
+    }
+  }
+  function centre(o,pal){
+    const bg=o.surface==="islands"?`background:${pillBg(o,pal)};${blurCss(o.blur)}`:`background:${pillBg(o,pal)};`;
+    return `<div class="ctr"><span class="pill cpill ${o.island==="media"?"media":""}" data-cpill style="${bg}"><span class="inner">${centreInner(o.island||"rest")}</span><span class="prog"></span></span></div>`;
+  }
+  function renderScene(el,o){
+    const pal=o.pal;el.dataset.pal=pal;el.style.setProperty("--wall",`url(${WALLURL[pal]})`);
+    const attached=o.surface==="attached";
+    const barStyle=o.surface==="islands"?"background:transparent;":`background:${barBg(o)};${blurCss(o.blur)}${o.rim?"box-shadow:0 6px 24px rgba(0,0,0,.28),inset 0 0 0 1px color-mix(in srgb,white 7%,transparent);":""}`;
+    const left=group([{cls:"pad",html:`<span class="glyph"></span>`},{cls:o.ws==="track"?"wst":"wsd",html:wsHtml(o)}],o,pal);
+    const right=group([{cls:"rings",html:[.34,.61,.48,.22].map(ring).join("")},{cls:"ico hide-sm",html:ICON.vol},{cls:"ico hide-sm",html:ICON.clip},{cls:"ico",html:ICON.bell}],o,pal);
+    let extra="";
+    if(attached){
+      const fill=`background:${barBg(o)};${blurCss(o.blur)}`;
+      const m=(pos)=>`-webkit-mask:radial-gradient(circle at ${pos},transparent calc(var(--u)*13.5),#000 calc(var(--u)*14));mask:radial-gradient(circle at ${pos},transparent calc(var(--u)*13.5),#000 calc(var(--u)*14));`;
+      extra+=`<span class="fillet" style="top:calc(var(--u)*40);left:0;${fill}${m("100% 100%")}"></span><span class="fillet" style="top:calc(var(--u)*40);right:0;${fill}${m("0% 100%")}"></span>`;
+      if(o.cc){
+        extra+=`<div class="cc" style="top:calc(var(--u)*40);${fill}"><div class="tiles"><div class="tile on">Wi‑Fi</div><div class="tile">Bluetooth</div><div class="tile">Do not disturb</div><div class="tile on">Night light</div></div><div class="sl"></div></div>`;
+        extra+=`<span class="fillet" data-ccf="l" style="top:calc(var(--u)*40);${fill}${m("0% 100%")}"></span><span class="fillet" data-ccf="r" style="top:calc(var(--u)*40);${fill}${m("100% 100%")}"></span>`;
+      }
+    }
+    const win=o.win===false?"":`<div class="win ${o.surface==="islands"?"":""}"><b>~/sysc-shell</b> <i>git:(main)</i> go test ./internal/shell/<br>ok&nbsp; github.com/Nomadcxx/sysc-shell/internal/shell&nbsp; 13.3s<br><b>~/sysc-shell</b> <i>git:(main)</i> niri msg -j layers | jq length<br>4</div>`;
+    el.innerHTML=`${win}<div class="bar ${attached?"attached":""} ${o.squish?"squish":""}" style="${barStyle}">
+      <div class="side">${left}<span class="ttl hide-md">bar.go · nvim</span></div>
+      <div class="side">${right}</div>
+    </div>${centre(o,pal)}${extra}`;
+    if(attached){el.querySelector(".ctr").style.height="calc(var(--u)*40)";el.querySelector(".ctr").style.zIndex=4}
+    else{el.querySelector(".ctr").style.height="calc(var(--u)*48)";el.querySelector(".ctr").style.zIndex=4}
+    if(o.cc)placeCCFillets(el);
+    if(o.ws==="track")initTrack(el,o);
+    sizeCentre(el);
+  }
+  function placeCCFillets(el){
+    const cc=el.querySelector(".cc");if(!cc)return;
+    requestAnimationFrame(()=>{const s=el.getBoundingClientRect(),b=cc.getBoundingClientRect();
+      const l=el.querySelector('[data-ccf="l"]'),r=el.querySelector('[data-ccf="r"]');
+      l.style.left=(b.left-s.left-14)+"px";r.style.left=(b.right-s.left-1)+"px"})
+  }
+  function sizeCentre(el){
+    const p=el.querySelector("[data-cpill]");if(!p)return;const inner=p.querySelector(".inner");
+    const w=inner.scrollWidth+22;p.style.width=w+"px";
+  }
+  function setIsland(el,state){
+    const p=el.querySelector("[data-cpill]");const inner=p.querySelector(".inner");
+    p.style.width=p.getBoundingClientRect().width+"px";
+    inner.innerHTML=centreInner(state);p.classList.toggle("media",state==="media");
+    requestAnimationFrame(()=>{p.style.width=(inner.scrollWidth+22)+"px"});
+  }
+
+  /* Caelestia's stretchy indicator: the leading edge moves fast, the trailing edge follows. */
+  function initTrack(el,o){
+    const tr=el.querySelector("[data-track]");if(!tr)return;const slots=[...tr.querySelectorAll(".slot")];const ind=tr.querySelector(".ind");
+    const sw=()=>slots[0].getBoundingClientRect().width;
+    tr.querySelectorAll(".run").forEach(r=>r.remove());
+    let runs=[],start=null;for(let i=0;i<=WS.count;i++){const occ=WS.occupied.includes(i);if(occ&&start===null)start=i;if(!occ&&start!==null){runs.push([start,i-1]);start=null}}
+    runs.forEach(([a,b])=>{const r=document.createElement("span");r.className="run";r.style.left=(a*sw())+"px";r.style.width=((b-a+1)*sw())+"px";tr.prepend(r)});
+    let active=tr.__active??1;
+    const place=(i,from)=>{const W=sw(),L=i*W,R=L+W;const goingRight=from===undefined?true:i>from;
+      ind.style.transition=from===undefined?"none":(goingRight?"left .42s cubic-bezier(.3,0,0,1),right .18s cubic-bezier(.2,0,0,1)":"left .18s cubic-bezier(.2,0,0,1),right .42s cubic-bezier(.3,0,0,1)");
+      ind.style.left=L+"px";ind.style.right=(tr.getBoundingClientRect().width-R)+"px";
+      slots.forEach((s,k)=>s.classList.toggle("on",k===i));tr.__active=i};
+    requestAnimationFrame(()=>place(active));
+    slots.forEach((s,i)=>s.onclick=e=>{e.stopPropagation();const f=tr.__active;place(i,f)});
+    tr.__place=place;
+  }
+
+  /* ---------- time ---------- */
+  const DAYS=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"],MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  function now(){const d=new Date(),p=n=>String(n).padStart(2,"0");return{time:`${p(d.getHours())}:${p(d.getMinutes())}`,date:`${DAYS[d.getDay()]} ${d.getDate()} ${MON[d.getMonth()]}`}}
+
+  /* ---------- UI helpers ---------- */
+  function segs(el,name,opts,get,set){
+    el.innerHTML=opts.map(o=>`<input type="radio" name="${name}" id="${name}-${o[0]}" value="${o[0]}" ${get()===o[0]?"checked":""}><label for="${name}-${o[0]}">${o[1]}</label>`).join("");
+    el.addEventListener("change",e=>set(e.target.value));
+  }
+  function range(id,label,min,max,val,fmt,on){return {html:`<label class="range" for="${id}">${label}<input type="range" id="${id}" min="${min}" max="${max}" value="${val}"><output id="${id}-o">${fmt(val)}</output></label>`,bind(){const i=document.getElementById(id),out=document.getElementById(id+"-o");i.addEventListener("input",()=>{out.textContent=fmt(+i.value);on(+i.value)})}}}
+  function check(id,label,val,on){return {html:`<label class="chk" for="${id}"><input type="checkbox" id="${id}" ${val?"checked":""}>${label}</label>`,bind(){const i=document.getElementById(id);i.addEventListener("change",()=>on(i.checked))}}}
+  function button(id,label,on){return {html:`<button class="btn" id="${id}" type="button">${label}</button>`,bind(){document.getElementById(id).addEventListener("click",on)}}}
+
+  /* ---------- hero ---------- */
+  const PRESET={
+    today:{surface:"bar",barAlpha:1,pillAlpha:1,blur:0,luma:false,rim:false},
+    frosted:{surface:"bar",barAlpha:.62,pillAlpha:.55,blur:18,luma:true,rim:true},
+    islands:{surface:"islands",barAlpha:0,pillAlpha:.6,blur:16,luma:true,rim:true},
+    attached:{surface:"attached",barAlpha:.72,pillAlpha:.6,blur:18,luma:true,rim:false,cc:false}
+  };
+  let H={surfaceKey:"frosted",style:"pills",ws:"track",pal:"blue"};
+  try{Object.assign(H,JSON.parse(localStorage.getItem("bar-lab-hero")||"{}"))}catch(e){}
+  const heroEl=document.getElementById("hero");
+  const drawHero=()=>{try{localStorage.setItem("bar-lab-hero",JSON.stringify(H))}catch(e){}
+    renderScene(heroEl,{...PRESET[H.surfaceKey],style:H.style,ws:H.ws,pal:H.pal,squish:H.style==="segments"})};
+  segs(document.getElementById("h-surface"),"hs",[["today","Today"],["frosted","Frosted"],["islands","Islands"],["attached","Attached"]],()=>H.surfaceKey,v=>{H.surfaceKey=v;drawHero()});
+  segs(document.getElementById("h-style"),"hw",[["pills","Pills"],["segments","Segments"],["flat","Flat"]],()=>H.style,v=>{H.style=v;drawHero()});
+  segs(document.getElementById("h-ws"),"hk",[["dots","Dots (today)"],["track","Track"]],()=>H.ws,v=>{H.ws=v;drawHero()});
+  segs(document.getElementById("h-pal"),"hp",[["blue","Night · fallback"],["amber","Dusk"],["teal","Aurora"]],()=>H.pal,v=>{H.pal=v;drawAll()});
+
+  /* ---------- cards ---------- */
+  const CARDS=[
+    {id:"frost",title:"1 · Frosted bar",chips:["Noctalia","DMS","Caelestia"],
+      state:{surface:"bar",barAlpha:.62,pillAlpha:.55,blur:18,luma:true,rim:true,style:"pills",ws:"dots"},
+      controls:s=>[
+        range("f-bar","Bar",20,100,Math.round(s.barAlpha*100),v=>v+"%",v=>{s.barAlpha=v/100}),
+        range("f-pill","Pills",20,100,Math.round(s.pillAlpha*100),v=>v+"%",v=>{s.pillAlpha=v/100}),
+        range("f-blur","Blur",0,40,s.blur,v=>v?v+"px":"off",v=>{s.blur=v}),
+        check("f-luma","Lift pills by wallpaper brightness",s.luma,v=>{s.luma=v}),
+        check("f-rim","Rim and shadow",s.rim,v=>{s.rim=v}),
+        button("f-today","Show today's bar",()=>{Object.assign(s,{barAlpha:1,pillAlpha:1,blur:0,luma:false,rim:false});return "reset"})],
+      idea:"The bar turns translucent with a real blur behind it, and each pill keeps its own, higher opacity. With the lift switched on, pills are brightened more over bright wallpapers, which is what keeps them readable as separate objects. Try Dusk with the lift on and off.",
+      from:["Noctalia <code>src/shell/bar/bar.cpp</code> <code>applyBarCompositorBlur</code> publishes the bar's shape (concave corners included) as a blur region; <code>background_opacity</code>, <code>capsule_opacity</code>","DMS <code>Widgets/WindowBlur.qml</code>; bar and widget opacity sliders","Caelestia <code>services/Colours.qml</code> <code>layer()</code> and <code>alterColour()</code>: nested layers lifted by wallpaper luminance"],
+      today:"The bar has an opacity axis but it stops at 80% (<code>theme.OpacityMin</code>), because the bar has no blur behind it. Panels blur a one-off screen capture on the CPU. Pills are opaque <code>SurfaceContainerHigh</code>.",
+      cost:["c-md","Medium"],build:"Bind <code>ext-background-effect-v1</code> in <code>internal/platform/wayland</code> (generated like the layer-shell binding) and set the bar body's rounded rect as the blur region on each configure. Lift the 80% floor while the compositor reports blur. Add a pill opacity axis and the luminance lift to <code>fillPair</code>. Needs Niri 26.04+; without it the bar stays as it is today."},
+    {id:"isl",title:"2 · Floating islands",chips:["DMS","Noctalia"],
+      state:{surface:"islands",barAlpha:0,pillAlpha:.6,blur:16,luma:true,rim:true,style:"pills",ws:"dots"},
+      controls:s=>[
+        range("i-pill","Pills",20,100,Math.round(s.pillAlpha*100),v=>v+"%",v=>{s.pillAlpha=v/100}),
+        range("i-blur","Blur",0,40,s.blur,v=>v?v+"px":"off",v=>{s.blur=v}),
+        segRow("i-style",[["pills","Separate"],["segments","Joined per section"]],()=>s.style,v=>{s.style=v})],
+      idea:"No bar at all, just frosted pills floating over the wallpaper. The desktop reads as more open, and each control is its own object. Joining each section into one island keeps it from looking scattered.",
+      from:["DMS <code>barNoBackground</code> and the widget opacity slider in <code>DankBarAppearanceTab.qml</code>","Noctalia <code>background_opacity = 0</code> with <code>capsule = true</code>"],
+      today:"The bar always paints its root fill. The closest you can get is 80% opacity.",
+      cost:["c-lo","Small, after 1"],build:"A bar setting that skips the root fill, and a blur region made of the union of the capsule rects instead of the body. The window title needs its own pill or a text shadow, since it no longer sits on a surface."},
+    {id:"segs",title:"3 · Segmented groups",chips:["DMS","Noctalia"],
+      state:{surface:"bar",barAlpha:1,pillAlpha:1,blur:0,luma:false,rim:false,style:"segments",ws:"dots",squish:true},
+      controls:s=>[segRow("s-style",[["pills","Pills (today)"],["segments","Segments"],["flat","Flat"]],()=>s.style,v=>{s.style=v}),
+        check("s-squish","Squish on press",s.squish,v=>{s.squish=v})],
+      idea:"Related controls join into one segmented strip: a 2 px gap, 5 px inner corners, full corners at the outer ends. The right-hand status cluster reads as one unit instead of four floating pills. Pressing a segment briefly squares its corners (DMS's press morph); click and hold to see it.",
+      from:["DMS <code>Modules/DankBar/BarMetrics.qml</code>: <code>segmentInnerRadius</code>, <code>pressedRadius</code>, and the widget style picker (pills, segments, flat)","Noctalia <code>widgetCapsuleGroups</code>: styled capsule groups"],
+      today:"A <code>group</code> is one capsule with its members flat inside it. <code>RoundedMask</code> takes one radius for all four corners.",
+      cost:["c-lo","Small"],build:"Per-corner radius in <code>RoundedMask</code> and <code>StrokeRounded</code> (a hanging tab or attached bar needs this too), a <code>style</code> field on bar groups, and a pressed-radius channel in the existing animator next to hover and press."},
+    {id:"att",title:"4 · Attached bar",chips:["Noctalia","DMS","Caelestia"],
+      state:{surface:"attached",barAlpha:.72,pillAlpha:.6,blur:18,luma:true,rim:false,style:"pills",ws:"dots",cc:true},
+      controls:s=>[check("a-cc","Control centre open",s.cc,v=>{s.cc=v}),
+        range("a-bar","Bar",40,100,Math.round(s.barAlpha*100),v=>v+"%",v=>{s.barAlpha=v/100})],
+      idea:"The bar sits flush against the top edge and curves into the screen at both ends with concave corners. Panels drop out of it with the same curve where they join, so the control centre looks like it grows from the bar instead of floating under it.",
+      from:["Noctalia <code>concave_edge_corners</code>, <code>bar_corner_shape.h</code>, <code>panel_overlap</code>, <code>contact_shadow</code>","DMS corner style (Rounded, Flush, Square) and \"Goth corners\"","Caelestia's screen border: the bar is one side of a frame, and drawers grow out of it"],
+      today:"The bar floats with a 4 px gap and 12 px radius. Attached panels already draw fillets (<code>filletCoverage</code> in <code>render/canvas.go</code>).",
+      cost:["c-md","Medium"],build:"An <code>attach</code> bar mode: zero gap, square outer edge, edge fillets drawn with the existing fillet code. The surface grows by the fillet radius past the reserved zone, with that strip left out of the input region. Panels reuse their fillets."},
+    {id:"ws",title:"5 · Workspace track",chips:["Caelestia"],
+      state:{surface:"bar",barAlpha:1,pillAlpha:1,blur:0,luma:false,rim:false,style:"pills",ws:"track",win:false,short:true},
+      controls:s=>[button("w-next","Next workspace",()=>stepWs(1)),button("w-prev","Previous",()=>stepWs(-1)),button("w-far","Jump to 6",()=>jumpWs(5))],
+      idea:"Occupied workspaces merge into one continuous track, so you can see at a glance which run of workspaces has windows. The focus indicator stretches as it moves: the leading edge gets there fast and the trailing edge catches up. It stays number-free, as the workspace design asks. Click a slot or use the buttons.",
+      from:["Caelestia <code>modules/bar/components/workspaces/OccupiedBg.qml</code> (adjacent occupied workspaces share one shape)","Caelestia <code>ActiveIndicator.qml</code> (separate leading and trailing durations)"],
+      today:"Dots with a wide focused pill and an urgent tint (<code>workspacepills.go</code>). Focus changes jump with no motion.",
+      cost:["c-md","Medium"],build:"The Niri projection already carries occupied and urgent. Needs run merging in the pill builder, and two animated edges for the indicator in the existing animator, with the leading edge on a short duration and the trailing edge on a long one."},
+    {id:"island",title:"6 · Live centre island",chips:["DMS"],
+      state:{surface:"bar",barAlpha:1,pillAlpha:1,blur:0,luma:false,rim:false,style:"pills",ws:"dots",island:"rest",win:false,short:true},
+      controls:s=>[button("c-n","New notification",()=>islandDemo("notify")),button("c-m","Media playing",()=>islandDemo("media",true)),button("c-v","Volume change",()=>islandDemo("volume")),button("c-r","Back to rest",()=>islandDemo("rest",true))],
+      idea:"The centre pill you just built grows in place to show what changed, then shrinks back. A new notification slides in for four seconds, playing media shares the pill with the time and draws a progress hairline, and a volume change shows inline instead of in a separate OSD. It stays centred as it grows.",
+      from:["DMS <code>Modules/DankIsland</code>: <code>NotificationCompact</code>, <code>MediaCompact</code>, <code>SystemLevelCompact</code> activities"],
+      today:"The centre pill (PR #13) is static. Media is its own pill, notifications are toasts, and the volume OSD sits at the bottom centre.",
+      cost:["c-md","Medium"],build:"The anchored layout already keeps the pill centred as its width changes. Needs a small state machine for the pill's content (rest, notification, media, level), width animation in the animator, and feeds from the existing notification, media and audio services."}
+  ];
+  function segRow(id,opts,get,set){return {html:`<div class="seg" id="${id}">`+opts.map(o=>`<input type="radio" name="${id}" id="${id}-${o[0]}" value="${o[0]}" ${get()===o[0]?"checked":""}><label for="${id}-${o[0]}">${o[1]}</label>`).join("")+`</div>`,bind(){document.getElementById(id).addEventListener("change",e=>set(e.target.value))}}}
+
+  const cardsEl=document.getElementById("cards");
+  cardsEl.innerHTML=CARDS.map(c=>`<article class="card" id="card-${c.id}">
+      <div class="card-top"><h3>${c.title}</h3><div class="chips">${c.chips.map(x=>`<span class="chip">${x}</span>`).join("")}</div></div>
+      <div class="controls" data-controls></div>
+      <div class="scene ${c.state.short?"short":""}" data-scene></div>
+      <div class="cols">
+        <div><h4>Idea</h4><p>${c.idea}</p></div>
+        <div><h4>Seen in</h4><ul>${c.from.map(x=>`<li>${x}</li>`).join("")}</ul><h4 style="margin-top:12px">sysc-shell today</h4><p>${c.today}</p></div>
+        <div><h4>Build</h4><span class="cost ${c.cost[0]}">${c.cost[1]}</span><p>${c.build}</p></div>
+      </div></article>`).join("");
+  CARDS.forEach(c=>{
+    const card=document.getElementById("card-"+c.id),ctl=card.querySelector("[data-controls]"),scene=card.querySelector("[data-scene]");
+    c.el=scene;const parts=c.controls(c.state);ctl.innerHTML=parts.map(p=>p.html).join("");
+    const redraw=()=>renderScene(scene,{...c.state,pal:H.pal});c.redraw=redraw;
+    parts.forEach(p=>{const orig=p.bind;p.bind=orig;orig()});
+    ctl.addEventListener("input",()=>redraw());ctl.addEventListener("change",()=>redraw());
+    ctl.addEventListener("click",e=>{if(e.target.id==="f-today"){["f-bar","f-pill"].forEach(i=>{const x=document.getElementById(i);x.value=100;document.getElementById(i+"-o").textContent="100%"});
+      const b=document.getElementById("f-blur");b.value=0;document.getElementById("f-blur-o").textContent="off";document.getElementById("f-luma").checked=false;document.getElementById("f-rim").checked=false;redraw()}});
+  });
+  const wsCard=CARDS.find(c=>c.id==="ws"),isCard=CARDS.find(c=>c.id==="island");
+  function stepWs(d){const tr=wsCard.el.querySelector("[data-track]");const f=tr.__active;const n=(f+d+WS.count)%WS.count;tr.__place(n,f)}
+  function jumpWs(i){const tr=wsCard.el.querySelector("[data-track]");tr.__place(i,tr.__active)}
+  let islandTimer=null;
+  function islandDemo(state,sticky){clearTimeout(islandTimer);isCard.state.island=state;setIsland(isCard.el,state);
+    if(!sticky&&state!=="rest")islandTimer=setTimeout(()=>{isCard.state.island=isCard.lastSticky||"rest";setIsland(isCard.el,isCard.state.island)},state==="volume"?1800:4000);
+    if(sticky)isCard.lastSticky=state}
+
+  function drawAll(){drawHero();CARDS.forEach(c=>c.redraw())}
+  drawAll();
+  window.addEventListener("resize",()=>{clearTimeout(window.__rz);window.__rz=setTimeout(drawAll,150)});
+  document.fonts&&document.fonts.ready.then(()=>{CARDS.forEach(c=>sizeCentre(c.el));sizeCentre(heroEl)});
+})();
+</script>
+
+</body>
+</html>

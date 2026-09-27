@@ -2221,7 +2221,7 @@ func TestIconTonePicksTheAccent(t *testing.T) {
 func TestFilletPaintsBarColourOutsideTheBody(t *testing.T) {
 	style := testStyle
 	style.AttachEdge = "top"
-	style.Fillet = 8
+	style.JointLeft, style.JointRight = 8, 8
 	style.FilletFill = Color{R: 0, G: 0, B: 255, A: 255}
 	style.Body = ui.Rect{X: 8, Y: 0, W: 100, H: 60}
 
@@ -2237,7 +2237,7 @@ func TestFilletPaintsBarColourOutsideTheBody(t *testing.T) {
 		t.Fatalf("row 8 outside the body = %v, want transparent", got)
 	}
 	partial := false
-	for y := 0; y < style.Fillet; y++ {
+	for y := 0; y < style.JointLeft; y++ {
 		for x := 0; x < style.Body.X; x++ {
 			a := pixelAt(t, c, x, y).A
 			partial = partial || (a > 0 && a < 255)
@@ -2482,5 +2482,159 @@ func TestPaintStrokeInOutlineVariantUsesTheQuietBoundary(t *testing.T) {
 	// As a fill it paints nothing of its own; the capsule keeps its surface.
 	if got := pixelAt(t, c, 50, 40); got == want {
 		t.Fatal("interior picked up the stroke colour")
+	}
+}
+
+// TestAttachedBarPaintsEndFillets: a bar attached along its edge is square at
+// every corner and curves into the screen's sides with concave wedges past its
+// far edge, mirrored at the right end and for the lower edge.
+func TestAttachedBarPaintsEndFillets(t *testing.T) {
+	for _, tc := range []struct {
+		edge string
+		body ui.Rect
+		// row maps a distance out from the far edge to a canvas row.
+		row func(int) int
+		// near is a row inside the body on the attached edge.
+		near int
+	}{
+		{"top", ui.Rect{W: 200, H: 40}, func(i int) int { return 40 + i }, 0},
+		{"bottom", ui.Rect{Y: 12, W: 200, H: 40}, func(i int) int { return 11 - i }, 51},
+	} {
+		style := testStyle
+		style.Radius = 12
+		style.AttachEdge = tc.edge
+		style.EdgeFillet, style.EdgeLeft, style.EdgeRight = 12, true, true
+		style.Body = tc.body
+		c := newTestCanvas(t, 200, 52)
+		if err := Paint(c, &ui.Node{Kind: ui.KindColumn}, NewTextRenderer(mustTestFace(t)), style); err != nil {
+			t.Fatalf("%s: paint: %v", tc.edge, err)
+		}
+		root := style.rootFill()
+		for _, x := range []int{0, 199} {
+			mirror := func(dx int) int {
+				if x == 0 {
+					return dx
+				}
+				return 199 - dx
+			}
+			if got := pixelAt(t, c, x, tc.near); got != root {
+				t.Errorf("%s x=%d: attached corner = %v, want square root %v", tc.edge, x, got, root)
+			}
+			if got := pixelAt(t, c, x, tc.row(-1)); got != root {
+				t.Errorf("%s x=%d: far corner = %v, want square root %v", tc.edge, x, got, root)
+			}
+			if got := pixelAt(t, c, mirror(0), tc.row(0)); got != root {
+				t.Errorf("%s x=%d: wedge root = %v, want %v", tc.edge, x, got, root)
+			}
+			if got := pixelAt(t, c, mirror(1), tc.row(1)); got.A < 0xf0 {
+				t.Errorf("%s x=%d: wedge near its root = %v, want near full coverage", tc.edge, x, got)
+			}
+			if got := pixelAt(t, c, mirror(11), tc.row(11)); got.A != 0 {
+				t.Errorf("%s x=%d: wedge tip = %v, want transparent", tc.edge, x, got)
+			}
+		}
+		if got := pixelAt(t, c, 100, tc.row(0)); got.A != 0 {
+			t.Errorf("%s: mid overhang = %v, want transparent", tc.edge, got)
+		}
+	}
+}
+
+// A translucent attached bar is one even ground: the band along its attached
+// edge must not be blended twice.
+func TestTranslucentAttachedBarHasNoDenserBand(t *testing.T) {
+	style := testStyle
+	style.Radius = 12
+	style.Background.A = 0xa6
+	style.AttachEdge = "top"
+	style.EdgeFillet, style.EdgeLeft, style.EdgeRight = 12, true, true
+	style.Body = ui.Rect{W: 200, H: 40}
+	c := newTestCanvas(t, 200, 52)
+	if err := Paint(c, &ui.Node{Kind: ui.KindColumn}, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatal(err)
+	}
+	centre := pixelAt(t, c, 100, 20)
+	if centre.A == 0xff || centre.A == 0 {
+		t.Fatalf("centre alpha %#x, want translucent", centre.A)
+	}
+	for _, p := range [][2]int{{0, 0}, {100, 2}, {199, 0}, {0, 39}} {
+		if got := pixelAt(t, c, p[0], p[1]); got != centre {
+			t.Errorf("(%d,%d) = %v, want the centre's %v", p[0], p[1], got, centre)
+		}
+	}
+}
+
+// TestJointsPaintAtTheirOwnWidths: each side's joint is its own radius, and a
+// flush side paints no joint but curves into the screen past its far corner.
+func TestJointsPaintAtTheirOwnWidths(t *testing.T) {
+	style := testStyle
+	style.Radius = 12
+	style.AttachEdge = "top"
+	style.FilletFill = Color{B: 255, A: 255}
+	style.JointLeft, style.JointRight = 12, 5
+	style.Body = ui.Rect{X: 12, W: 100, H: 60}
+	c := newTestCanvas(t, 117, 60)
+	if err := Paint(c, &ui.Node{Kind: ui.KindColumn}, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatal(err)
+	}
+	// Row 0 beside the body: the wedge reaches its full width on each side.
+	if got := pixelAt(t, c, 0, 0); got.A == 0 {
+		t.Errorf("left joint does not reach 12 px: %v", got)
+	}
+	if got := pixelAt(t, c, 116, 0); got.A == 0 {
+		t.Errorf("right joint does not reach 5 px: %v", got)
+	}
+	if got := pixelAt(t, c, 0, 11); got.A != 0 {
+		t.Errorf("left joint tip = %v, want transparent", got)
+	}
+	if got := pixelAt(t, c, 116, 4); got.A != 0 {
+		t.Errorf("right joint tip = %v, want transparent", got)
+	}
+
+	flush := testStyle
+	flush.Radius = 12
+	flush.AttachEdge = "top"
+	flush.FilletFill = Color{B: 255, A: 255}
+	flush.JointLeft = 12
+	flush.EdgeFillet, flush.EdgeRight = 12, true
+	flush.Body = ui.Rect{X: 12, W: 100, H: 60}
+	c = newTestCanvas(t, 112, 72)
+	if err := Paint(c, &ui.Node{Kind: ui.KindColumn}, NewTextRenderer(mustTestFace(t)), flush); err != nil {
+		t.Fatal(err)
+	}
+	root := flush.rootFill()
+	if got := pixelAt(t, c, 111, 59); got != root {
+		t.Errorf("flush far corner = %v, want square root %v", got, root)
+	}
+	if got := pixelAt(t, c, 12, 59); got == root {
+		t.Error("the far corner away from the screen edge lost its rounding")
+	}
+	if got := pixelAt(t, c, 111, 60); got != root {
+		t.Errorf("screen-edge wedge root = %v, want %v", got, root)
+	}
+	if got := pixelAt(t, c, 100, 71); got.A != 0 {
+		t.Errorf("screen-edge wedge tip = %v, want transparent", got)
+	}
+}
+
+// A translucent attached panel keeps its rounded far corners yet fills its
+// squared attached edge in the same pass: no denser band along it.
+func TestTranslucentAttachedPanelHasNoDenserBand(t *testing.T) {
+	style := testStyle
+	style.Radius = 12
+	style.Background.A = 0xa6
+	style.AttachEdge = "top"
+	style.Body = ui.Rect{W: 100, H: 60}
+	c := newTestCanvas(t, 100, 60)
+	if err := Paint(c, &ui.Node{Kind: ui.KindColumn}, NewTextRenderer(mustTestFace(t)), style); err != nil {
+		t.Fatal(err)
+	}
+	centre := pixelAt(t, c, 50, 30)
+	for _, p := range [][2]int{{0, 0}, {50, 3}, {99, 0}} {
+		if got := pixelAt(t, c, p[0], p[1]); got != centre {
+			t.Errorf("(%d,%d) = %v, want the centre's %v", p[0], p[1], got, centre)
+		}
+	}
+	if got := pixelAt(t, c, 0, 59); got.A != 0 {
+		t.Errorf("far corner = %v, want rounded away", got)
 	}
 }

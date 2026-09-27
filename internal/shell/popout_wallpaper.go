@@ -1259,7 +1259,7 @@ func (r *Registry) republishTheme(cfg config.Config) {
 	r.mu.Lock()
 	nextBars := make(map[*Bar]Theme, len(r.bars))
 	for _, bar := range r.bars {
-		next, err := resolveOutputTheme(cfg, bar.connector(), tokens)
+		next, err := resolveOutputTheme(cfg, bar.connector(), tokens, r.caps.Blur)
 		if err != nil {
 			r.themeErr = err.Error()
 			r.mu.Unlock()

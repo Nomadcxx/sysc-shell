@@ -29,6 +29,9 @@ type AuxSpec struct {
 	// before it is created. Nil disables the backdrop and all of its cost.
 	BlurRegion *ui.Rect
 	BlurRadius int
+	// InputRects, when non-nil, limit pointer input to these surface-local
+	// rectangles from the first frame. Nil leaves the whole surface.
+	InputRects []ui.Rect
 	Callbacks  HostCallbacks
 }
 
@@ -191,6 +194,9 @@ func (o *owner) openAux(h *OutputHost, spec *AuxSpec) error {
 	u.policy.layer = spec.Layer
 	u.policy.marginTop, u.policy.marginBottom = spec.MarginTop, spec.MarginBottom
 	u.policy.marginLeft, u.policy.marginRight = spec.MarginLeft, spec.MarginRight
+	if spec.InputRects != nil {
+		u.policy.inputRects, u.policy.hasInputRegion = append([]ui.Rect(nil), spec.InputRects...), true
+	}
 	return nil
 }
 
@@ -296,7 +302,12 @@ func planAuxUpdate(u *surfaceUnit, upd *AuxUpdate) (auxPolicy, error) {
 	if !upd.SetInputRegion {
 		return next, nil
 	}
+	// The region applies to the surface this update asks for, so a resize is
+	// checked against its new size, not the one it replaces.
 	bounds := ui.Rect{W: u.ss.logicalWidth, H: u.ss.logicalHeight}
+	if upd.Width != nil || upd.Height != nil {
+		bounds.W, bounds.H = int(next.width), int(next.height)
+	}
 	rects := make([]ui.Rect, 0, len(upd.InputRects))
 	for _, r := range upd.InputRects {
 		if r.W <= 0 || r.H <= 0 || r.X < 0 || r.Y < 0 {

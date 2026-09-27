@@ -98,6 +98,24 @@ type Theme struct {
 	// shell's surfaces meet, not a density row.
 	Fillet int
 
+	// BarStyle is the effective bar style. High contrast forces solid, and a
+	// bar that names no style paints solid, as every bar did before styles.
+	BarStyle string
+	// BarEdge and BarShape are the bar policy's edge and the shape it lays out
+	// in (layoutShape), which decide where its surface meets the screen.
+	BarEdge, BarShape string
+	// Blur reports that the compositor blurs behind this bar: its style is
+	// translucent and the compositor offers ext-background-effect.
+	Blur bool
+	// PillAlpha is the alpha of the bar's capsules. Surfaces.Bar is the
+	// ground's.
+	PillAlpha uint8
+	// barSolid, frostOpacity and pillOpacity are what WithCompositor derives
+	// the ground and pills from, kept so a capability change can re-derive
+	// them without resolving the whole theme again.
+	barSolid                  uint8
+	frostOpacity, pillOpacity int
+
 	// The fields below are the flat names the existing surfaces still read.
 	// They are derived from the groups above, and they go away as each tree
 	// moves onto roles.
@@ -185,8 +203,18 @@ func ResolveTheme(cfg config.Config, bar config.Bar, tok theme.Tokens) (Theme, e
 		// a tonal step the palette may not have room for.
 		Outlined: hc,
 		BarGap:   bar.Gap,
-		Fillet:   12,
+		Fillet:   theme.FilletRadius,
+
+		BarStyle:     effectiveBarStyle(bar.Style, hc),
+		BarEdge:      bar.Edge,
+		BarShape:     layoutShape(bar),
+		frostOpacity: bar.FrostOpacity,
+		pillOpacity:  bar.PillOpacity,
 	}
+	t.barSolid = t.Surfaces.Bar
+	// Resolution stays a pure function of configuration: it assumes no
+	// compositor blur, and the registry applies the capability afterwards.
+	t = t.WithCompositor(false)
 	applyFlat(&t)
 	if err := t.Valid(); err != nil {
 		return Theme{}, err
@@ -274,16 +302,51 @@ func resolveSurfaces(comp theme.Composition, highContrast bool) Surfaces {
 	}
 }
 
+// effectiveBarStyle is the style the bar paints in. High contrast forces
+// solid, as it forces every root opaque; an unknown or unnamed style is solid.
+func effectiveBarStyle(style string, highContrast bool) string {
+	if highContrast || (style != "frosted" && style != "islands") {
+		return "solid"
+	}
+	return style
+}
+
+// WithCompositor resolves the bar's ground and pill alpha against whether the
+// compositor can blur behind the bar (design D1-D3). Without blur, frosted
+// paints as solid and islands keeps its unpainted ground with pills on the
+// solid floor. It re-derives from the configured values, so it can be applied
+// again whenever the capability changes.
+func (t Theme) WithCompositor(blur bool) Theme {
+	t.Blur = blur && t.BarStyle != "solid"
+	t.Surfaces.Bar, t.PillAlpha = t.barSolid, 0xff
+	switch {
+	case t.BarStyle == "islands":
+		t.Surfaces.Bar = 0
+		t.PillAlpha = opacityAlpha(t.pillOpacity, false)
+		if t.Blur {
+			t.PillAlpha = alphaAbove(t.pillOpacity, theme.OpacityMinFrost)
+		}
+	case t.Blur:
+		t.Surfaces.Bar = alphaAbove(t.frostOpacity, theme.OpacityMinFrost)
+		t.PillAlpha = alphaAbove(t.pillOpacity, theme.OpacityMinFrost)
+	}
+	return t
+}
+
 // opacityAlpha converts a percentage to alpha, clamped to whichever floor
 // applies. The blurred floor is the lower of the two because the reason for the
 // higher one -- wallpaper detail reading through a label -- stops holding once
 // the ground behind the text has been blurred. Only panels can pass true: the
 // bar is docked and the overlay does not carry a backdrop.
 func opacityAlpha(percent int, blurred bool) uint8 {
-	floor := theme.OpacityMin
 	if blurred {
-		floor = theme.OpacityMinBlurred
+		return alphaAbove(percent, theme.OpacityMinBlurred)
 	}
+	return alphaAbove(percent, theme.OpacityMin)
+}
+
+// alphaAbove converts a percentage to alpha, clamped to floor and 100.
+func alphaAbove(percent, floor int) uint8 {
 	if percent < floor {
 		percent = floor
 	}
@@ -529,10 +592,13 @@ func (t Theme) Style() render.Style {
 		Shapes:         t.Shapes,
 		Type:           t.Type,
 		SurfaceOpacity: t.Surfaces.Bar,
-		Elevation:      t.Elevation,
-		Shadow:         p.Shadow,
-		Scrim:          p.Scrim,
-		Motion:         t.Motion,
+		// Islands resolves its ground to zero, which the painter would read
+		// as unset and fill opaque.
+		NoGround:  t.BarStyle == "islands" && t.Surfaces.Bar == 0,
+		Elevation: t.Elevation,
+		Shadow:    p.Shadow,
+		Scrim:     p.Scrim,
+		Motion:    t.Motion,
 	}
 	s.Roles = paletteRoles(p)
 	return s
@@ -577,7 +643,6 @@ func (t Theme) StyleFor(a uint8) render.Style {
 // have to remember which alpha it owns.
 func (t Theme) PanelStyle() render.Style {
 	s := t.StyleFor(t.Surfaces.Panel)
-	s.Fillet = t.Fillet
 	s.FilletFill = t.Style().RootFill()
 	return s
 }
@@ -586,8 +651,11 @@ func (t Theme) PanelStyle() render.Style {
 // the bar opacity. Without a captured backdrop the two surfaces are one joined
 // ground; using the detached panel alpha would composite a different colour.
 func (t Theme) AttachedPanelStyle() render.Style {
+	// Islands paints no bar ground to join, so the panel keeps its own.
+	if t.Surfaces.Bar == 0 {
+		return t.PanelStyle()
+	}
 	s := t.StyleFor(t.Surfaces.Bar)
-	s.Fillet = t.Fillet
 	s.FilletFill = t.Style().RootFill()
 	return s
 }
@@ -598,16 +666,29 @@ func (t Theme) BackgroundOpaque() bool {
 	return t.Background.A == 0xff && t.Surfaces.Bar == 0xff
 }
 
+// layoutShape is the shape the bar lays out in, which config.Bar.Attached
+// decides from the configured style: islands is floating whatever it names,
+// and stays so under high contrast, because the platform sizes the surface
+// from the same configured policy.
+func layoutShape(b config.Bar) string {
+	if b.Attached() {
+		return "attached"
+	}
+	return "floating"
+}
+
 // barGeometry is the theme's bar tokens as the policy they were taken from.
 // BarHeight and BarGap are assigned straight from config.Bar, and the bar
 // policy deliberately wins over the density row it came from, so this loses
 // nothing and lets the one derivation answer for the shell too.
 func (t Theme) barGeometry() config.Bar {
-	return config.Bar{Height: t.BarHeight, Gap: t.BarGap}
+	return config.Bar{Height: t.BarHeight, Gap: t.BarGap, Edge: t.BarEdge, Shape: t.BarShape}
 }
 
 // Geometry derives the Wayland dimensions from the tokens. The gap lives
-// inside the surface, so the surface carries one gap and not two.
+// inside the surface, so the surface carries one gap and not two. surface is
+// the bar's extent, where panels meet it; an attached bar's overhang lies past
+// it and does not count.
 //
 // The derivation itself is config.Bar's, which is what keeps this from
 // drifting away from the extent the platform sizes the surface to. The
@@ -651,7 +732,8 @@ func (t Theme) Valid() error {
 		name  string
 		alpha uint8
 	}{{"bar", t.Surfaces.Bar}, {"panel", t.Surfaces.Panel}, {"overlay", t.Surfaces.Overlay}} {
-		if s.alpha == 0 {
+		// Islands paints no ground by design; its pills carry the bar.
+		if s.alpha == 0 && (s.name != "bar" || t.BarStyle != "islands") {
 			return fmt.Errorf("shell: %s surface is fully transparent", s.name)
 		}
 	}

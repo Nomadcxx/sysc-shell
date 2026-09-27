@@ -80,6 +80,12 @@ func TestAcceptKeyboardOnlyAllControls(t *testing.T) {
 	if h.draft.Bar.Enabled == before {
 		t.Fatal("space did not flip the focused toggle")
 	}
+	// That toggle is the bar's Enabled, and a bar that is off dims the rest
+	// of Appearance, sliders included. Turn it back on to reach one.
+	handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keySpace})
+	if h.draft.Bar.Enabled != before {
+		t.Fatal("space did not flip the toggle back")
+	}
 
 	for i := 0; i < len(h.focus)+2 && (h.focused() == nil || h.focused().Kind != ui.KindSlider); i++ {
 		handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyTab})

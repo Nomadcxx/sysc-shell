@@ -117,7 +117,7 @@ func barHost(t *testing.T, bar config.Bar) *PanelHost {
 	t.Helper()
 	h := newSettingsHost()
 	h.draft.Bar = bar
-	h.section = "Bar"
+	h.section, h.settingsPage = "Bar", "Layout"
 	return h
 }
 
@@ -308,7 +308,7 @@ func barKeyHost(t *testing.T, bar config.Bar) (*Registry, *PanelHost) {
 	h := reg.panelHosts[PanelSettings]
 	reg.mu.Lock()
 	h.draft.Bar = bar
-	h.section = "Bar"
+	h.section, h.settingsPage = "Bar", "Layout"
 	h.alt = true
 	reg.rebuildPanel(h)
 	reg.mu.Unlock()

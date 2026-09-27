@@ -48,6 +48,20 @@ func TestOpacityUnsetStaysOpaque(t *testing.T) {
 	}
 }
 
+// TestNoGroundLeavesTheRootTransparent is the explicit form of an invisible
+// root, which a zero SurfaceOpacity cannot express.
+func TestNoGroundLeavesTheRootTransparent(t *testing.T) {
+	t.Parallel()
+	style := darkStyle()
+	style.NoGround = true
+	for _, a := range []uint8{0, 0x80, 0xff} {
+		style.SurfaceOpacity = a
+		if got := style.rootFill(); got.A != 0 {
+			t.Errorf("opacity %#x: root fill = %+v, want transparent", a, got)
+		}
+	}
+}
+
 // TestElevationSelectsTheShadowInk resolves the three levels onto the shadow
 // role. None draws nothing at all; the other two differ in strength, and both
 // take the palette's Shadow token rather than a hardcoded black.
@@ -87,4 +101,23 @@ func premul(c Color) Color {
 	}
 	f := func(v uint8) uint8 { return uint8(uint32(v) * uint32(c.A) / 255) }
 	return Color{R: f(c.R), G: f(c.G), B: f(c.B), A: c.A}
+}
+
+// TestDisabledControlsPaintFaded: toggles, sliders and menus ignored the
+// disabled state, so a dimmed settings row looked exactly as live as the rest.
+func TestDisabledControlsPaintFaded(t *testing.T) {
+	t.Parallel()
+	style := darkStyle()
+	live := dimmedControl(&ui.Node{Kind: ui.KindSlider}, style)
+	dim := dimmedControl(&ui.Node{Kind: ui.KindSlider, State: ui.StateDisabled}, style)
+	if live.Accent != style.Accent {
+		t.Fatal("a live control was faded")
+	}
+	for name, pair := range map[string][2]Color{
+		"accent": {style.Accent, dim.Accent}, "track": {style.Track, dim.Track}, "foreground": {style.Foreground, dim.Foreground},
+	} {
+		if pair[1].A >= pair[0].A {
+			t.Errorf("disabled %s alpha %#x, live %#x", name, pair[1].A, pair[0].A)
+		}
+	}
 }
