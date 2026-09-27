@@ -38,6 +38,8 @@ const (
 	EventKeyRelease
 	EventIME
 	EventPointerAxis
+	// EventPaste carries the clipboard's text, answering a paste request.
+	EventPaste
 )
 
 // Event is one pointer event in logical surface coordinates, which match the
@@ -65,7 +67,9 @@ type Event struct {
 	IMEPreedit      string
 	IMECommit       string
 	IMEDeleteBefore uint32
-	IMEDeleteAfter  uint32
+	// Paste is the clipboard's text on EventPaste.
+	Paste          string
+	IMEDeleteAfter uint32
 	// Axis fields are set on EventPointerAxis only.
 	Axis         uint32
 	AxisValue    float64
@@ -124,6 +128,9 @@ type Callbacks struct {
 	// Aux opens or closes auxiliary layer surfaces. It is owned by the caller;
 	// Run only receives from it and never closes it. Nil disables aux.
 	Aux <-chan AuxRequest
+	// Selection asks the owner to copy to or paste from the system
+	// clipboard. It is owned by the caller and may be nil.
+	Selection <-chan SelectionRequest
 	// DropAux releases per-aux resources after a surface is destroyed, whether
 	// by request, compositor close, or output loss.
 	DropAux func(output uint32, id string)
@@ -232,6 +239,8 @@ type owner struct {
 	// deadline. The compositor sends one key event per press and leaves the
 	// rest to us.
 	repeat keyRepeat
+	// sel is the seat's clipboard: data device, our source, the current offer.
+	sel selectionState
 	// mods is the modifier state from the latest wl_keyboard.modifiers.
 	mods ui.Mods
 	// clock is the owner's time source. Nil means time.Now; tests replace it
@@ -392,6 +401,9 @@ func (o *owner) bindGlobals() error {
 	if err := o.bindOptionalInput(ctx); err != nil {
 		return err
 	}
+	if err := o.bindSelection(ctx); err != nil {
+		return err
+	}
 	o.cleanup.push("globals", o.destroyGlobals)
 
 	o.shm.SetFormatHandler(func(e client.ShmFormatEvent) { o.rs.addFormat(e.Format) })
@@ -489,6 +501,7 @@ func (o *owner) destroyGlobals() error {
 		errs = append(errs, o.backgroundEffect.Destroy())
 		o.backgroundEffect = nil
 	}
+	errs = append(errs, o.destroySelection()...)
 	if o.pointer != nil {
 		errs = append(errs, o.pointer.Release())
 		o.pointer = nil
@@ -1222,7 +1235,8 @@ func (o *owner) loop(ctx context.Context) error {
 		return err
 	}
 	defer wake.close()
-	wake.bridge(runCtx, o.cb.Invalidations, o.cb.Reloads, o.cb.Tooltips, o.cb.Aux)
+	pastes := make(chan pasteResult, 4)
+	wake.bridge(runCtx, o.cb.Invalidations, o.cb.Reloads, o.cb.Tooltips, o.cb.Aux, o.cb.Selection, pastes)
 
 	for {
 		if o.fatal != nil {
@@ -1258,6 +1272,12 @@ func (o *owner) loop(ctx context.Context) error {
 			}
 			for _, req := range wake.takeAux() {
 				o.handleAux(req)
+			}
+			for _, req := range wake.takeSelection() {
+				o.handleSelection(req, pastes)
+			}
+			for _, p := range wake.takePastes() {
+				o.deliverPaste(p)
 			}
 			for _, inv := range wake.take() {
 				o.invalidate(inv)

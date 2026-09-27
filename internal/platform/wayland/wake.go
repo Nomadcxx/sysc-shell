@@ -21,6 +21,10 @@ type wakePipe struct {
 	mu      sync.Mutex
 	pending []Invalidation
 	aux     []AuxRequest
+	// selection and pastes are clipboard requests from the shell and paste
+	// reads finished on their goroutines, both served by the owner.
+	selection []SelectionRequest
+	pastes    []pasteResult
 	// reload is set when a SIGHUP arrived. The owner reads and clears it, so
 	// repeated signals during one wait coalesce into a single reload.
 	reload bool
@@ -40,7 +44,7 @@ func newWakePipe() (*wakePipe, error) {
 
 // bridge forwards cancellation and application invalidations to the pipe. It
 // never closes the caller-owned invalidation channel and never calls a proxy.
-func (w *wakePipe) bridge(ctx context.Context, invalidations <-chan Invalidation, reloads <-chan struct{}, tooltips <-chan TooltipRequest, aux <-chan AuxRequest) {
+func (w *wakePipe) bridge(ctx context.Context, invalidations <-chan Invalidation, reloads <-chan struct{}, tooltips <-chan TooltipRequest, aux <-chan AuxRequest, selection <-chan SelectionRequest, pastes <-chan pasteResult) {
 	go func() {
 		for {
 			select {
@@ -74,6 +78,20 @@ func (w *wakePipe) bridge(ctx context.Context, invalidations <-chan Invalidation
 					return
 				}
 				w.pushAux(req)
+				w.signal()
+			case req, ok := <-selection:
+				if !ok {
+					selection = nil
+					continue
+				}
+				w.mu.Lock()
+				w.selection = append(w.selection, req)
+				w.mu.Unlock()
+				w.signal()
+			case p := <-pastes:
+				w.mu.Lock()
+				w.pastes = append(w.pastes, p)
+				w.mu.Unlock()
 				w.signal()
 			}
 		}
@@ -111,6 +129,22 @@ func (w *wakePipe) takeAux() []AuxRequest {
 	w.mu.Lock()
 	out := w.aux
 	w.aux = nil
+	w.mu.Unlock()
+	return out
+}
+
+func (w *wakePipe) takeSelection() []SelectionRequest {
+	w.mu.Lock()
+	out := w.selection
+	w.selection = nil
+	w.mu.Unlock()
+	return out
+}
+
+func (w *wakePipe) takePastes() []pasteResult {
+	w.mu.Lock()
+	out := w.pastes
+	w.pastes = nil
 	w.mu.Unlock()
 	return out
 }
