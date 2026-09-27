@@ -263,7 +263,37 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	if h.set != nil {
 		entries = h.set.Section(section)
 	}
-	return body(settingsSectionColumn(h, section, entries))
+	content := settingsSectionColumn(h, section, entries)
+	if section == "Templates" {
+		content.Children = append(content.Children, templateRefusals(r)...)
+	}
+	return body(content)
+}
+
+// templateRefusals reports, under the toggle rows, every template whose file
+// the shell refused to write because the user edited it, each with the
+// explicit overwrite that backs the file up to <path>.bak.
+func templateRefusals(r *Registry) []*ui.Node {
+	if r == nil || len(r.templateRefusals) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(r.templateRefusals))
+	for name := range r.templateRefusals {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	notes := make([]*ui.Node, 0, len(names))
+	for _, name := range names {
+		notes = append(notes, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, PinEnd: true,
+			Children: []*ui.Node{
+				{Kind: ui.KindText, Name: name + " refusal",
+					Text:     name + " is user-modified; its theme file was not written",
+					TextRole: theme.RoleCaption, Tone: ui.ToneError},
+				{Kind: ui.KindButton, Text: "Overwrite", Action: "template-overwrite:" + name,
+					Name: "Overwrite " + name, Role: "button", Focusable: true},
+			}})
+	}
+	return notes
 }
 
 // settingsContentHeight is what the scrolling body gets once the title, the

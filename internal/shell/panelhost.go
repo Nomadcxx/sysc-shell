@@ -2324,6 +2324,19 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if strings.HasPrefix(n.Action, "bar-") && h.barActivate(r, n.Action) {
 		return true
 	}
+	if name, ok := strings.CutPrefix(n.Action, "template-overwrite:"); ok {
+		if r.templateForce == nil {
+			r.templateForce = map[string]bool{}
+		}
+		r.templateForce[name] = true
+		// A config rewrite is the one path that re-runs every template
+		// apply; the force flag is consumed there, off this goroutine.
+		if err := r.writeConfig(r.cfg); err != nil {
+			h.errLabel = err.Error()
+		}
+		r.rebuildPanel(h)
+		return true
+	}
 	if strings.HasPrefix(n.Action, "section:") {
 		section := strings.TrimPrefix(n.Action, "section:")
 		if h.id == PanelControlCenter {

@@ -1313,3 +1313,25 @@ func TestSettingsPaintsAtLeastTheOpaqueFloor(t *testing.T) {
 		t.Fatalf("clock root alpha %#x changed", a)
 	}
 }
+
+func TestSettingsTemplatesSurfaceRefusals(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.section = "Templates"
+	r := &Registry{templateRefusals: map[string]string{
+		"cava": "theming: target modified outside the shell: /home/u/.config/cava/config",
+	}}
+	h.root = settingsTree(r, h)
+	if !strings.Contains(renderText(h.root), "user-modified") {
+		t.Fatal("the refusal note is missing from the Templates section")
+	}
+	overwrite := findByName(h.root, "Overwrite cava")
+	if overwrite == nil || overwrite.Action != "template-overwrite:cava" || !overwrite.Focusable {
+		t.Fatalf("overwrite control = %+v", overwrite)
+	}
+
+	h.root = settingsTree(nil, h)
+	if strings.Contains(renderText(h.root), "user-modified") {
+		t.Fatal("a registry with no refusals rendered a refusal note")
+	}
+}

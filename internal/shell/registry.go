@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -77,7 +78,14 @@ type Registry struct {
 	// themeErr is why the published palette is not the requested one, empty
 	// when it is. Surfaced by the picker; never fatal.
 	themeErr string
-	themeGen theme.Generator
+	// templateRefusals names templates whose files the shell refused to write
+	// because their current bytes are not the shell's last render. The
+	// settings Templates section surfaces them with an overwrite action.
+	templateRefusals map[string]string
+	// templateForce marks templates the user explicitly overrode a refusal
+	// for; the next apply that succeeds consumes the entry.
+	templateForce map[string]bool
+	themeGen      theme.Generator
 
 	// invalidations carries one entry per bar whose rendered text changed.
 	// The Wayland owner receives from it; the registry owns it and never
@@ -207,6 +215,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		weather: services.NewWeather(
 			cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit)),
 		themeGen:       gen,
+		templateForce:  map[string]bool{},
 		invalidations:  make(chan wayland.Invalidation, 8),
 		aux:            make(chan wayland.AuxRequest, 8),
 		selections:     make(chan wayland.SelectionRequest, 8),
@@ -896,11 +905,30 @@ func (r *Registry) generateTheme(cfg config.Config) (theme.Tokens, error) {
 			fmt.Errorf("theme: generated palette is incomplete: %w", err)
 	}
 	if !runningAsTest() {
-		if err := theming.ApplyEnabled(os.Getenv("HOME"), cfg.TemplateEnabled, tok); err != nil {
+		outcomes, err := theming.ApplyEnabled(os.Getenv("HOME"), cfg.TemplateEnabled, tok, r.consumeTemplateForce)
+		r.templateRefusals = map[string]string{}
+		for name, oerr := range outcomes {
+			if errors.Is(oerr, theming.ErrUserModified) {
+				r.templateRefusals[name] = oerr.Error()
+			}
+		}
+		for name := range r.templateForce {
+			if _, refused := r.templateRefusals[name]; !refused {
+				delete(r.templateForce, name)
+			}
+		}
+		if err != nil {
 			return tok, fmt.Errorf("theme: external templates: %w", err)
 		}
 	}
 	return tok, nil
+}
+
+// consumeTemplateForce reports and clears one template's overwrite request.
+func (r *Registry) consumeTemplateForce(name string) bool {
+	forced := r.templateForce[name]
+	delete(r.templateForce, name)
+	return forced
 }
 
 // tokensAndReason flattens generateTheme for the construction path, which has

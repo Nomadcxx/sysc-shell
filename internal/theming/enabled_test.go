@@ -27,12 +27,44 @@ func markTemplatesComplete(t *testing.T, names ...string) {
 	}
 }
 
+func TestApplyEnabledReportsRefusalsPerTemplate(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	home := t.TempDir()
+	markTemplatesComplete(t, "cava")
+	target := filepath.Join(home, ".config", "cava", "config")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("user edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	only := func(name string) bool { return name == "cava" }
+	outcomes, _ := ApplyEnabled(home, only, theme.Fallback, nil)
+	if !errors.Is(outcomes["cava"], ErrUserModified) {
+		t.Fatalf("outcomes = %v, want a cava refusal", outcomes)
+	}
+
+	outcomes, err := ApplyEnabled(home, only, theme.Fallback, only)
+	if err != nil {
+		t.Fatalf("forced apply: %v", err)
+	}
+	if len(outcomes) != 0 {
+		t.Fatalf("forced outcomes = %v", outcomes)
+	}
+	if got, _ := os.ReadFile(target); !strings.Contains(string(got), marker) {
+		t.Fatalf("forced write = %q", got)
+	}
+	if _, err := os.Stat(target + ".bak"); err != nil {
+		t.Fatal("the refused bytes were not backed up")
+	}
+}
+
 func TestApplyEnabledWritesAlacrittyUnderXDG(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	home := t.TempDir()
 	markTemplatesComplete(t, "alacritty")
 	only := func(name string) bool { return name == "alacritty" }
-	if err := ApplyEnabled(home, only, theme.Fallback); err != nil {
+	if _, err := ApplyEnabled(home, only, theme.Fallback, nil); err != nil {
 		t.Fatal(err)
 	}
 	p := filepath.Join(home, ".config", "alacritty", "alacritty.toml")
@@ -61,7 +93,7 @@ func TestApplyEnabledSkipsForeignKitty(t *testing.T) {
 		t.Fatal(err)
 	}
 	only := func(name string) bool { return name == "kitty" }
-	if err := ApplyEnabled(home, only, theme.Fallback); err == nil {
+	if _, err := ApplyEnabled(home, only, theme.Fallback, nil); err == nil {
 		t.Fatal("foreign kitty.conf must be reported")
 	}
 	got, _ := os.ReadFile(p)
@@ -110,7 +142,7 @@ func TestApplyEnabledSignalsKitty(t *testing.T) {
 	procRoot = root
 	t.Cleanup(func() { procRoot = prev })
 	only := func(name string) bool { return name == "kitty" }
-	if err := ApplyEnabled(home, only, theme.Fallback); err != nil {
+	if _, err := ApplyEnabled(home, only, theme.Fallback, nil); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -130,7 +162,7 @@ func TestApplyEnabledSingleFlight(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		go func() {
 			defer wg.Done()
-			_ = ApplyEnabled(home, only, theme.Fallback)
+			_, _ = ApplyEnabled(home, only, theme.Fallback, nil)
 		}()
 	}
 	wg.Wait()
@@ -156,7 +188,7 @@ func TestApplyEnabledReportsFirstError(t *testing.T) {
 		t.Fatal(err)
 	}
 	only := func(name string) bool { return name == "alacritty" }
-	err := ApplyEnabled(home, only, theme.Fallback)
+	_, err := ApplyEnabled(home, only, theme.Fallback, nil)
 	if err == nil {
 		t.Fatal("expected skip error")
 	}
@@ -185,7 +217,7 @@ func TestApplyEnabledSupersedeUsesLatestHome(t *testing.T) {
 		return true
 	}
 	done := make(chan error, 1)
-	go func() { done <- ApplyEnabled(home1, first, theme.Fallback) }()
+	go func() { _, err := ApplyEnabled(home1, first, theme.Fallback, nil); done <- err }()
 	select {
 	case <-started:
 	case <-time.After(2 * time.Second):
@@ -193,7 +225,8 @@ func TestApplyEnabledSupersedeUsesLatestHome(t *testing.T) {
 	}
 	secondDone := make(chan error, 1)
 	go func() {
-		secondDone <- ApplyEnabled(home2, func(name string) bool { return name == "alacritty" }, theme.Fallback)
+		_, err := ApplyEnabled(home2, func(name string) bool { return name == "alacritty" }, theme.Fallback, nil)
+		secondDone <- err
 	}()
 	time.Sleep(20 * time.Millisecond)
 	close(block)
@@ -212,7 +245,7 @@ func TestApplyEnabledSupersedeUsesLatestHome(t *testing.T) {
 func TestApplyEnabledGatesIncompleteTemplates(t *testing.T) {
 	home := t.TempDir()
 	on := func(name string) bool { return true }
-	if err := ApplyEnabled(home, on, theme.Fallback); err != nil {
+	if _, err := ApplyEnabled(home, on, theme.Fallback, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range Catalog().Names() {

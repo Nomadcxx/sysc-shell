@@ -169,7 +169,11 @@ func UnapplyWrite(path string) error {
 }
 
 func ApplyNiri(configPath, genPath, rendered string) error {
-	if err := ApplyWrite(genPath, rendered); err != nil {
+	return applyNiri(configPath, genPath, rendered, false)
+}
+
+func applyNiri(configPath, genPath, rendered string, force bool) error {
+	if err := applyWrite(genPath, rendered, force); err != nil {
 		return err
 	}
 	b, err := os.ReadFile(configPath)

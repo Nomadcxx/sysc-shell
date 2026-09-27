@@ -17,6 +17,7 @@ type applyJob struct {
 	home    string
 	enabled func(string) bool
 	tok     theme.Tokens
+	force   func(string) bool
 }
 
 var (
@@ -25,29 +26,34 @@ var (
 	applyQueued *applyJob
 )
 
-func ApplyEnabled(home string, enabled func(string) bool, tok theme.Tokens) error {
+// ApplyEnabled renders every enabled template for home. It returns the
+// per-template outcomes -- a refusal or write failure keyed by template name
+// -- plus the first error overall. force names templates the user explicitly
+// overrode a refusal for; those are overwritten with a backup.
+func ApplyEnabled(home string, enabled func(string) bool, tok theme.Tokens, force func(string) bool) (map[string]error, error) {
 	if home == "" || enabled == nil {
-		return nil
+		return nil, nil
 	}
-	job := applyJob{home: home, enabled: enabled, tok: tok}
+	job := applyJob{home: home, enabled: enabled, tok: tok, force: force}
 	applyMu.Lock()
 	if applyBusy {
 		applyQueued = &job
 		applyMu.Unlock()
-		return nil
+		return nil, nil
 	}
 	applyBusy = true
 	applyMu.Unlock()
 
 	var err error
+	var outcomes map[string]error
 	current := job
 	for {
-		err = applyOnce(current.home, current.enabled, current.tok)
+		outcomes, err = applyOnce(current.home, current.enabled, current.tok, current.force)
 		applyMu.Lock()
 		if applyQueued == nil {
 			applyBusy = false
 			applyMu.Unlock()
-			return err
+			return outcomes, err
 		}
 		current = *applyQueued
 		applyQueued = nil
@@ -55,14 +61,20 @@ func ApplyEnabled(home string, enabled func(string) bool, tok theme.Tokens) erro
 	}
 }
 
-func applyOnce(home string, enabled func(string) bool, tok theme.Tokens) error {
+func applyOnce(home string, enabled func(string) bool, tok theme.Tokens, force func(string) bool) (map[string]error, error) {
 	cat := Catalog()
+	outcomes := map[string]error{}
 	var first error
-	keep := func(err error) {
-		if first == nil && err != nil {
+	record := func(name string, err error) {
+		if err == nil {
+			return
+		}
+		outcomes[name] = err
+		if first == nil {
 			first = err
 		}
 	}
+	forceOn := func(name string) bool { return force != nil && force(name) }
 	for _, name := range cat.Names() {
 		rendered := Render(cat.Template(name), tok)
 		// GH #7: a stub template rendered onto a live app config neuters the
@@ -74,13 +86,13 @@ func applyOnce(home string, enabled func(string) bool, tok theme.Tokens) error {
 			cfg := filepath.Join(home, ".config", "niri", "config.kdl")
 			gen := filepath.Join(home, ".config", "niri", "sysc-shell.kdl")
 			if !on {
-				keep(UnapplyNiri(cfg, gen))
+				record(name, UnapplyNiri(cfg, gen))
 				continue
 			}
 			if _, err := os.Stat(cfg); err != nil {
 				continue
 			}
-			keep(ApplyNiri(cfg, gen, rendered))
+			record(name, applyNiri(cfg, gen, rendered, forceOn(name)))
 		case "gtk3", "gtk4":
 			ini := filepath.Join(home, ".config", "gtk-3.0", "settings.ini")
 			css := filepath.Join(home, ".themes", "sysc-shell-Dark", "gtk-3.0", "gtk.css")
@@ -89,31 +101,31 @@ func applyOnce(home string, enabled func(string) bool, tok theme.Tokens) error {
 				css = filepath.Join(home, ".themes", "sysc-shell-Dark", "gtk-4.0", "gtk.css")
 			}
 			if !on {
-				keep(UnapplyWrite(css))
-				keep(UnapplyGtkThemeName(ini))
+				record(name, UnapplyWrite(css))
+				record(name, UnapplyGtkThemeName(ini))
 				continue
 			}
-			keep(ApplyWrite(css, rendered))
-			keep(ApplyGtkThemeName(ini, gtkOurs))
+			record(name, applyWrite(css, rendered, forceOn(name)))
+			record(name, ApplyGtkThemeName(ini, gtkOurs))
 		default:
 			target := writeTarget(home, name)
 			if target == "" {
 				continue
 			}
 			if !on {
-				keep(UnapplyWrite(target))
+				record(name, UnapplyWrite(target))
 				continue
 			}
-			if err := ApplyWrite(target, rendered); err != nil {
-				keep(err)
+			if err := applyWrite(target, rendered, forceOn(name)); err != nil {
+				record(name, err)
 				continue
 			}
 			if name == "kitty" {
-				keep(signalKitty(procRoot))
+				record(name, signalKitty(procRoot))
 			}
 		}
 	}
-	return first
+	return outcomes, first
 }
 
 func writeTarget(home, name string) string {
