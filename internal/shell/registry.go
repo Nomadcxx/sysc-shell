@@ -42,13 +42,15 @@ import (
 // announced yet or has already been removed. A host is never created or
 // destroyed from a Niri event.
 type Registry struct {
-	mu      sync.Mutex
-	cfg     config.Config
-	outputs map[string]outputState
-	bars    map[uint32]*Bar
-	leases  map[uint32][]*services.Lease
-	now     time.Time
-	focused string
+	mu          sync.Mutex
+	cfg         config.Config
+	outputs     map[string]outputState
+	bars        map[uint32]*Bar
+	leases      map[uint32][]*services.Lease
+	now         time.Time
+	focused     string
+	layouts     niri.KeyboardLayouts
+	layoutsSeen bool
 	// caps is what the compositor last said it can do. The zero value, no
 	// blur, is also the answer for a compositor without the protocol.
 	caps wayland.Capabilities
@@ -1694,9 +1696,17 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 		h.closeLocked()
 	}
 	changed := r.applyRunningIconsLocked()
+	layoutView, showLayout := layoutOSD(r.layouts, s.Layouts, r.layoutsSeen)
+	r.layouts = niri.KeyboardLayouts{Names: slices.Clone(s.Layouts.Names), Current: s.Layouts.Current}
+	if len(s.Layouts.Names) > 0 {
+		r.layoutsSeen = true
+	}
 	r.mu.Unlock()
 
 	r.publish(changed)
+	if showLayout {
+		r.OSD().Show(layoutView)
+	}
 	return changed
 }
 

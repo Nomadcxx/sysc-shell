@@ -1,6 +1,11 @@
 package shell
 
-import "github.com/Nomadcxx/sysc-shell/internal/services"
+import (
+	"slices"
+
+	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
+	"github.com/Nomadcxx/sysc-shell/internal/services"
+)
 
 // lockOSD names the lock keys that changed. If both change in one poll, the
 // second view replaces the first on screen.
@@ -35,4 +40,16 @@ func (r *Registry) relayLockKeysOSD(l *services.LockKeys) {
 			prev = st
 		}
 	}
+}
+
+// layoutOSD announces a layout switch. The first snapshot after connecting
+// only reports the current layout, so it is never announced.
+func layoutOSD(prev, next niri.KeyboardLayouts, seen bool) (OSDView, bool) {
+	if !seen || next.Current == prev.Current && slices.Equal(next.Names, prev.Names) {
+		return OSDView{}, false
+	}
+	if next.Current < 0 || next.Current >= len(next.Names) {
+		return OSDView{}, false
+	}
+	return OSDView{Kind: osdLayout, Text: next.Names[next.Current]}, true
 }
