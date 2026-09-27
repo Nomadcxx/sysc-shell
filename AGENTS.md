@@ -78,6 +78,23 @@ message before committing.
 Panel, tray, toast and drawer `configure`/`render`/`handle` take `Registry.mu`. Relays run off the
 Wayland owner. `rebuildPanel` already holds the lock and calls the unlocked form.
 
+## Deploying
+
+- **Deploy only with `scripts/deploy`** (`--host desktop|laptop|both`). Never copy or move a binary into
+  `~/.local/bin/sysc-shell` by hand, on either machine. On 2026-09-27 hand-copied builds that lacked
+  merged work repeatedly replaced the owner's shell, and the owner saw regressions everywhere (`sysc-622`).
+- The script refuses a dirty tree, a HEAD without `origin/main`, and a deploy over a build with commits
+  your HEAD lacks. Fix the cause: commit, merge `origin/main`, or merge the deployed work. `--force
+  "reason"` exists for the owner; the reason is recorded.
+- A startup guard (`sysc-shell-guard`, run by the `deploy-guard.conf` drop-in) restores the stamped build
+  if the binary was replaced by hand, and logs `refused an unstamped binary`. If you see that line, your
+  copy was undone; use the script.
+- Never build a deploy from the primary checkout: its `main` lags `origin/main` and holds other
+  sessions' uncommitted work. Build from your own worktree, based on `origin/main`.
+- After testing a feature branch on a machine, put `origin/main` back on it with `scripts/deploy` from a
+  clean worktree of `origin/main`.
+- `bash scripts/deploy_test.sh` checks the script, the installer and the guard in temporary directories.
+
 ## Live Niri
 
 The agent shell inherits none of the compositor environment:

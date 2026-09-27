@@ -28,6 +28,15 @@ Then remove niri's own launch, or the session starts two shells:
 Keybinds still `spawn` the binary in `ipc` mode; those are one-shot clients
 and are unaffected.
 
+## Deploy guard
+
+`scripts/deploy` installs `sysc-shell.service.d/deploy-guard.conf` beside the
+unit. It runs `~/.local/bin/sysc-shell-guard` before every start, which
+restores the stamped build if the binary was replaced by hand. The stamp is
+`~/.local/state/sysc-shell/deployed`, and a refused binary is kept as
+`refused-latest` in the same directory. To take the guard off, delete the
+drop-in and run `systemctl --user daemon-reload`.
+
 ## Check
 
     systemctl --user status sysc-shell

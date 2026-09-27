@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# sysc-shell-guard runs before the shell starts (ExecStartPre in the
+# deploy-guard.conf drop-in). The binary that starts must be the one
+# scripts/deploy stamped. A binary copied in by hand is set aside and the
+# stamped build restored, so a stale build cannot survive a restart
+# (sysc-622: sessions kept overwriting the owner's shell with builds that
+# lacked merged work).
+#
+# It never stops the shell from starting: with no stamp, or with the stamped
+# copy missing, it logs and lets the binary run.
+set -u
+
+bin=${SYSC_SHELL_BIN:-$HOME/.local/bin/sysc-shell}
+state=${XDG_STATE_HOME:-$HOME/.local/state}/sysc-shell
+stamp=$state/deployed
+good=$state/sysc-shell.deployed
+
+field() { sed -n "s/^$1=//p" "$stamp" | head -n 1; }
+sum() { sha256sum "$1" 2>/dev/null | cut -d' ' -f1; }
+
+if [ ! -f "$stamp" ]; then
+	echo "sysc-shell-guard: no deploy stamp; starting $bin as is. Deploy with scripts/deploy." >&2
+	exit 0
+fi
+
+want=$(field sha256)
+have=$(sum "$bin")
+if [ -n "$want" ] && [ "$have" = "$want" ]; then
+	exit 0
+fi
+
+rev=$(field revision)
+if [ -f "$good" ] && [ "$(sum "$good")" = "$want" ]; then
+	# Keep the refused binary for whoever put it there, then restore.
+	[ -f "$bin" ] && cp -p "$bin" "$state/refused-latest"
+	cp -p "$good" "$bin.guard" && mv -f "$bin.guard" "$bin"
+	echo "sysc-shell-guard: refused an unstamped binary (sha256 ${have:0:12}); restored the deployed build ${rev:0:12}. The refused binary is $state/refused-latest. Deploy with scripts/deploy." >&2
+	exit 0
+fi
+
+echo "sysc-shell-guard: $bin does not match the deploy stamp and the stamped copy is missing; starting it anyway." >&2
+exit 0

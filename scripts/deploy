@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# scripts/deploy is the one supported way to put a sysc-shell build on the
+# owner's desktop or laptop (sysc-622). It refuses a build that would put
+# older code on a machine:
+#   - the tree has uncommitted changes, so the build would not name what it
+#     contains;
+#   - HEAD does not contain origin/main, so the build lacks merged work;
+#   - the machine runs a build with commits HEAD lacks, so the deploy would
+#     overwrite someone's newer work.
+# --force "reason" overrides a refusal, and the reason goes into the stamp.
+# The install stamps the build, and the startup guard (sysc-shell-guard)
+# restores it if a binary is later copied in by hand.
+set -euo pipefail
+
+usage() {
+	cat <<'EOF'
+Usage: scripts/deploy [--host desktop|laptop|both] [--force "reason"] [--dry-run]
+
+  --host     where to deploy (default: desktop)
+  --force    override a refusal; the reason is recorded in the stamp
+  --dry-run  run every check, build and install nothing
+
+Environment: SYSC_DEPLOY_LAPTOP (default nomadx@192.168.0.64),
+SYSC_DEPLOY_LAPTOP_PORT (default 7777).
+EOF
+}
+
+hosts=desktop force="" dry=0
+while [ $# -gt 0 ]; do
+	case $1 in
+	--host) hosts=${2:?--host needs a value}; shift 2 ;;
+	--force) force=${2:?--force needs a reason}; shift 2 ;;
+	--dry-run) dry=1; shift ;;
+	-h | --help) usage; exit 0 ;;
+	*) usage >&2; exit 2 ;;
+	esac
+done
+case $hosts in
+desktop | laptop) targets=$hosts ;;
+both) targets="desktop laptop" ;;
+*) echo "deploy: unknown host $hosts" >&2; exit 2 ;;
+esac
+
+laptop=${SYSC_DEPLOY_LAPTOP:-nomadx@192.168.0.64}
+port=${SYSC_DEPLOY_LAPTOP_PORT:-7777}
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+
+refuse() {
+	if [ -n "$force" ]; then
+		echo "deploy: overriding: $1 (forced: $force)" >&2
+		return
+	fi
+	echo "deploy: refused: $1" >&2
+	echo "deploy: see AGENTS.md, Deploying. --force \"reason\" overrides." >&2
+	exit 1
+}
+
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+	refuse "the tree has uncommitted changes; commit them so the build names what it contains"
+fi
+git fetch -q origin main || refuse "cannot fetch origin/main"
+if ! git merge-base --is-ancestor origin/main HEAD; then
+	refuse "HEAD lacks origin/main ($(git rev-parse --short origin/main)); merge or rebase origin/main first"
+fi
+rev=$(git rev-parse HEAD)
+branch=$(git rev-parse --abbrev-ref HEAD)
+
+# deployed_rev prints the revision the host's binary was built from, or
+# nothing when it has none. SYSC_DEPLOY_CURRENT_REV stands in for it in tests.
+deployed_rev() {
+	local out
+	if [ -n "${SYSC_DEPLOY_CURRENT_REV+set}" ]; then
+		echo "$SYSC_DEPLOY_CURRENT_REV"
+		return
+	fi
+	case $1 in
+	desktop) out=$(go version -m "${SYSC_SHELL_BIN:-$HOME/.local/bin/sysc-shell}" 2>/dev/null || true) ;;
+	laptop) out=$(ssh -p "$port" "$laptop" 'go version -m ~/.local/bin/sysc-shell' 2>/dev/null || true) ;;
+	esac
+	printf '%s\n' "$out" | sed -n 's/.*vcs\.revision=//p' | head -n 1
+}
+
+for host in $targets; do
+	cur=$(deployed_rev "$host")
+	if [ -n "$cur" ] && [ "$cur" != "$rev" ]; then
+		git cat-file -e "$cur^{commit}" 2>/dev/null || git fetch -q origin "$cur" 2>/dev/null || true
+		if ! git merge-base --is-ancestor "$cur" HEAD 2>/dev/null; then
+			refuse "$host runs ${cur:0:12}, which has commits this build lacks; merge that work first"
+		fi
+	fi
+	echo "deploy: $host: ${cur:0:12}${cur:+ -> }${rev:0:12}"
+done
+
+if [ "$dry" = 1 ]; then
+	echo "deploy: dry run; nothing built or installed"
+	exit 0
+fi
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+GOWORK=off GOMAXPROCS=4 go build -p 2 -o "$tmp/sysc-shell" ./cmd/sysc-shell
+if ! go version -m "$tmp/sysc-shell" | grep -q 'vcs.modified=false'; then
+	refuse "the build is marked modified"
+fi
+
+install_files=("$tmp/sysc-shell" scripts/sysc-shell-guard packaging/systemd/sysc-shell.service.d/deploy-guard.conf)
+for host in $targets; do
+	case $host in
+	desktop)
+		bash scripts/deploy-install.sh "${install_files[@]}" "$rev" "$branch" "$force"
+		;;
+	laptop)
+		rdir=$(ssh -p "$port" "$laptop" 'mktemp -d')
+		scp -q -P "$port" "${install_files[@]}" scripts/deploy-install.sh "$laptop:$rdir/"
+		ssh -p "$port" "$laptop" "bash $rdir/deploy-install.sh $rdir/sysc-shell $rdir/sysc-shell-guard $rdir/deploy-guard.conf $rev $(printf '%q' "$branch") $(printf '%q' "$force"); status=\$?; rm -rf $rdir; exit \$status"
+		;;
+	esac
+done
