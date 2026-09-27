@@ -52,3 +52,10 @@ func LerpRect(from, to Rect, progress float64) Rect {
 		H: lerpInt(from.H, to.H, p),
 	}
 }
+
+// ScaleRectAbout grows or shrinks r by s about its centre.
+func ScaleRectAbout(r Rect, s float64) Rect {
+	w := int(math.Round(float64(r.W) * s))
+	h := int(math.Round(float64(r.H) * s))
+	return Rect{X: r.X + (r.W-w)/2, Y: r.Y + (r.H-h)/2, W: w, H: h}
+}

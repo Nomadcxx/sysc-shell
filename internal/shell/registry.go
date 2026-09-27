@@ -42,13 +42,15 @@ import (
 // announced yet or has already been removed. A host is never created or
 // destroyed from a Niri event.
 type Registry struct {
-	mu      sync.Mutex
-	cfg     config.Config
-	outputs map[string]outputState
-	bars    map[uint32]*Bar
-	leases  map[uint32][]*services.Lease
-	now     time.Time
-	focused string
+	mu          sync.Mutex
+	cfg         config.Config
+	outputs     map[string]outputState
+	bars        map[uint32]*Bar
+	leases      map[uint32][]*services.Lease
+	now         time.Time
+	focused     string
+	layouts     niri.KeyboardLayouts
+	layoutsSeen bool
 	// caps is what the compositor last said it can do. The zero value, no
 	// blur, is also the answer for a compositor without the protocol.
 	caps wayland.Capabilities
@@ -97,6 +99,7 @@ type Registry struct {
 	reloads              chan<- struct{}
 	audio                *services.Audio
 	brightness           *services.Brightness
+	lockKeys             *services.LockKeys
 	network              *services.Network
 	media                *services.Media
 	mediaRelayCancel     chan struct{}
@@ -227,8 +230,16 @@ func NewRegistry(cfg config.Config) *Registry {
 	r.weather.SetCity(cfg.Weather.City)
 	r.tokens, r.themeErr = tokensAndReason(r.generateTheme(cfg))
 	r.osd = newOSDManager(r, 0)
+	// DND toggles often run under Registry.mu; Show takes it, so publish from
+	// a separate goroutine after the setter returns.
+	r.notify.onDND = func(on bool) { go r.OSD().Show(OSDView{Kind: osdDND, On: on}) }
 	r.setAudio(services.NewAudio(0, ""))
 	r.setBrightness(services.NewBrightness("", "", 0))
+	if !runningAsTest() {
+		r.lockKeys = services.NewLockKeys("", 0)
+		r.lockKeys.Start()
+		go r.relayLockKeysOSD(r.lockKeys)
+	}
 	// The media service opens a session-bus connection, which no unit test
 	// should need. Tests get the inert service and install their own over the
 	// fake, the same way the network service below is skipped.
@@ -319,6 +330,7 @@ func (r *Registry) relayMedia(media *services.Media, cancel <-chan struct{}) {
 		return
 	}
 	r.publishMediaSnapshot(media, media.CachedState())
+	prev := media.CachedState()
 	for {
 		select {
 		case <-r.closed:
@@ -327,6 +339,10 @@ func (r *Registry) relayMedia(media *services.Media, cancel <-chan struct{}) {
 			return
 		case state := <-media.Changes():
 			r.publishMediaSnapshot(media, state)
+			if view, show := mediaOSD(prev, state); show {
+				r.OSD().Show(view)
+			}
+			prev = state
 		}
 	}
 }
@@ -733,7 +749,7 @@ func (r *Registry) stepAudio(action string) error {
 		return err
 	}
 	st := r.audio.State()
-	r.OSD().Show(OSDView{Kind: "audio", Level: st.Level, Muted: st.Muted})
+	r.OSD().Show(OSDView{Kind: osdAudio, Level: st.Level, Muted: st.Muted})
 	return nil
 }
 
@@ -757,7 +773,7 @@ func (r *Registry) stepBrightness(action string) error {
 	if err != nil {
 		return err
 	}
-	r.OSD().Show(OSDView{Kind: "brightness", Level: r.brightness.Level()})
+	r.OSD().Show(OSDView{Kind: osdBrightness, Level: r.brightness.Level()})
 	return nil
 }
 
@@ -916,7 +932,7 @@ func (r *Registry) relayAudioOSD(audio *services.Audio) {
 			if !ok {
 				return
 			}
-			r.OSD().Show(OSDView{Kind: "audio", Level: st.Level, Muted: st.Muted})
+			r.OSD().Show(OSDView{Kind: osdAudio, Level: st.Level, Muted: st.Muted})
 			r.mu.Lock()
 			out, open := r.rebuildControlCentreLocked()
 			r.mu.Unlock()
@@ -942,7 +958,7 @@ func (r *Registry) relayBrightnessOSD(brightness *services.Brightness) {
 			if !ok {
 				return
 			}
-			r.OSD().Show(OSDView{Kind: "brightness", Level: st.Level})
+			r.OSD().Show(OSDView{Kind: osdBrightness, Level: st.Level})
 			r.mu.Lock()
 			out, open := r.rebuildControlCentreLocked()
 			r.mu.Unlock()
@@ -1428,6 +1444,7 @@ func (r *Registry) Close() {
 	if locked {
 		if r.toasts != nil {
 			r.toasts.stopLeaseRenew()
+			r.toasts.stopSlideAnimation()
 		}
 		if r.osd != nil {
 			osdAux = r.osd.prepareHide()
@@ -1522,6 +1539,9 @@ func (r *Registry) Close() {
 	}
 	if r.brightness != nil {
 		r.brightness.Close()
+	}
+	if r.lockKeys != nil {
+		r.lockKeys.Close()
 	}
 	if r.network != nil {
 		r.network.Close()
@@ -1685,9 +1705,17 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 		h.closeLocked()
 	}
 	changed := r.applyRunningIconsLocked()
+	layoutView, showLayout := layoutOSD(r.layouts, s.Layouts, r.layoutsSeen)
+	r.layouts = niri.KeyboardLayouts{Names: slices.Clone(s.Layouts.Names), Current: s.Layouts.Current}
+	if len(s.Layouts.Names) > 0 {
+		r.layoutsSeen = true
+	}
 	r.mu.Unlock()
 
 	r.publish(changed)
+	if showLayout {
+		r.OSD().Show(layoutView)
+	}
 	return changed
 }
 
