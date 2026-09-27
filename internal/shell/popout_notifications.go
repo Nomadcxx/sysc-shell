@@ -1,7 +1,10 @@
 package shell
 
 import (
+	"bufio"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -196,14 +199,14 @@ func (r *Registry) centerTreeFor(h *PanelHost) *ui.Node {
 		return !historyFilter(filter, n.Timestamp, now)
 	})
 	for _, g := range activeGroups(active) {
-		raster := r.lookupNotifyIcon(g.members[0].AppIcon)
+		raster := r.notifyIcon(g.members[0].AppIcon, g.members[0].DesktopEntry)
 		live = append(live, ActiveGroupCard(g, now, expand == g.key, raster, r.linksAllowed()))
 	}
 	for _, e := range history {
 		if !historyFilter(filter, e.Timestamp, now) {
 			continue
 		}
-		closed = append(closed, HistoryCard(e, now, r.lookupNotifyIcon(e.AppIcon), r.linksAllowed()))
+		closed = append(closed, HistoryCard(e, now, r.notifyIcon(e.AppIcon, e.DesktopEntry), r.linksAllowed()))
 	}
 
 	body := []*ui.Node{}
@@ -287,6 +290,64 @@ func (r *Registry) lookupNotifyIcon(name string) *ui.Image {
 	}
 	_, _, _ = r.trayIcons.Request(key)
 	return nil
+}
+
+// notifyIcon resolves a notification's icon: the app-icon hint when present,
+// otherwise the Icon= key of the desktop entry it names. With neither the
+// card draws its letter placeholder.
+func (r *Registry) notifyIcon(appIcon, desktopEntry string) *ui.Image {
+	name := appIcon
+	if name == "" {
+		name = desktopEntryIcon(desktopEntry)
+	}
+	return r.lookupNotifyIcon(name)
+}
+
+// desktopEntryIcon reads the Icon= key of a freedesktop desktop entry from
+// the standard applications directories. A name with a path separator is
+// rejected: entries are looked up by name, not opened wherever asked.
+func desktopEntryIcon(entry string) string {
+	if entry == "" || strings.ContainsRune(entry, filepath.Separator) {
+		return ""
+	}
+	var dirs []string
+	if data := os.Getenv("XDG_DATA_HOME"); data != "" {
+		dirs = append(dirs, filepath.Join(data, "applications"))
+	} else if home, err := os.UserHomeDir(); err == nil {
+		dirs = append(dirs, filepath.Join(home, ".local", "share", "applications"))
+	}
+	shared := os.Getenv("XDG_DATA_DIRS")
+	if shared == "" {
+		shared = "/usr/local/share:/usr/share"
+	}
+	for _, dir := range strings.Split(shared, ":") {
+		if dir != "" {
+			dirs = append(dirs, filepath.Join(dir, "applications"))
+		}
+	}
+	for _, dir := range dirs {
+		file, err := os.Open(filepath.Join(dir, entry+".desktop"))
+		if err != nil {
+			continue
+		}
+		icon := readDesktopIcon(file)
+		_ = file.Close()
+		if icon != "" {
+			return icon
+		}
+	}
+	return ""
+}
+
+func readDesktopIcon(file *os.File) string {
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		value, ok := strings.CutPrefix(strings.TrimSpace(scanner.Text()), "Icon=")
+		if ok {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 // centreIconButton is one circular control in the centre's header. The glyph

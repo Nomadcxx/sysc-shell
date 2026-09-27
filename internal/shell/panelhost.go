@@ -609,6 +609,22 @@ func (r *Registry) DropAux(output uint32, surfaceID string) {
 		r.mu.Unlock()
 		return
 	}
+	if connector, ok := strings.CutPrefix(surfaceID, "toast:"); ok {
+		r.mu.Lock()
+		if r.toasts != nil {
+			r.toasts.drop(connector)
+		}
+		r.mu.Unlock()
+		return
+	}
+	if digits, ok := strings.CutPrefix(surfaceID, "osd:"); ok {
+		if g, err := strconv.ParseUint(digits, 10, 32); err == nil {
+			r.mu.Lock()
+			delete(r.osd.open, uint32(g))
+			r.mu.Unlock()
+		}
+		return
+	}
 	id, ok := panelIDFromAux(surfaceID)
 	if !ok {
 		return

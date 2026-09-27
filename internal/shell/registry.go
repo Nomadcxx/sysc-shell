@@ -581,6 +581,8 @@ func (r *Registry) relayNetwork(network *services.Network) {
 				return
 			}
 			r.presentNetworkSecret(network, req)
+		case <-network.SecretExpiry():
+			r.expireNetworkSecret(network)
 		}
 	}
 }
@@ -632,6 +634,27 @@ func (r *Registry) presentNetworkSecret(network *services.Network, req services.
 	h.errLabel = ""
 	r.rebuildPanel(h)
 	h.focusByName("Password")
+	out := h.output
+	r.mu.Unlock()
+	r.publishSurface(out, panelSurfaceID(PanelNetwork))
+}
+
+// expireNetworkSecret drops the password card once a prompt outlived its
+// deadline. The service has already answered NetworkManager with a cancel;
+// this keeps the panel from offering to submit a secret nobody waits for.
+func (r *Registry) expireNetworkSecret(network *services.Network) {
+	r.mu.Lock()
+	if r.network != network {
+		r.mu.Unlock()
+		return
+	}
+	h := r.panelHosts[PanelNetwork]
+	if h == nil || h.pendingSSID == "" {
+		r.mu.Unlock()
+		return
+	}
+	h.clearNetworkSecret()
+	r.rebuildPanel(h)
 	out := h.output
 	r.mu.Unlock()
 	r.publishSurface(out, panelSurfaceID(PanelNetwork))
@@ -1039,6 +1062,10 @@ func (r *Registry) adoptBar(
 	bar.apply(r.viewLocked(connector))
 	r.bars[global] = bar
 	r.leases[global] = leases
+	// Route this bar's invalidations -- animation frames included -- to the
+	// owner through the registry. Without this the frame loop writes a
+	// private channel nothing reads and every settling frame is dropped.
+	bar.onPublish = func() { r.publish([]uint32{global}) }
 	r.bindBarTrayLocked(global, connector, bar)
 	r.bindBarPluginLocked(bar)
 	r.bindBarPanelActionsLocked(global, bar)
@@ -1940,6 +1967,9 @@ func (r *Registry) retheThemeOpenSurfacesLocked() {
 		next := r.panelThemeFor(h.output)
 		h.retheme(withPanelRadius(next, h))
 		r.startSurfaceFrames(h)
+	}
+	if r.toasts != nil {
+		r.toasts.restyleLocked()
 	}
 }
 

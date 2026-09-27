@@ -102,9 +102,28 @@ func newToastHost(r *Registry, harness *hostHarness) *toastHost {
 	return h
 }
 
+// restyleLocked rebinds the cached layout style to the published palette and
+// relayouts every output. Called with Registry.mu held, from the retheme pass.
+func (h *toastHost) restyleLocked() { h.recompute() }
+
 func (h *toastHost) harness() *hostHarness { return h.harnessRef }
 
 func toastSurfaceID(connector string) string { return "toast:" + connector }
+
+// drop forgets every per-output record for a surface that is gone -- the
+// compositor closed it on its own -- so recompute stops sending Update to a
+// surface that no longer exists. The next syncOutputs opens a fresh one
+// (GitHub #21).
+func (h *toastHost) drop(connector string) {
+	delete(h.outputs, connector)
+	delete(h.visible, connector)
+	delete(h.queued, connector)
+	delete(h.hovered, connector)
+	delete(h.geometry, connector)
+	delete(h.scale120, connector)
+	delete(h.cards, connector)
+	delete(h.pointer, connector)
+}
 
 // syncOutputs opens a surface for each new output and closes surfaces whose
 // output went away. Outputs are identified by wl_registry global, matching
@@ -115,14 +134,7 @@ func (h *toastHost) syncOutputs(globals map[string]uint32) {
 	for connector, global := range h.outputs {
 		if _, ok := globals[connector]; !ok {
 			h.request(wayland.AuxRequest{Output: global, ID: toastSurfaceID(connector)})
-			delete(h.outputs, connector)
-			delete(h.visible, connector)
-			delete(h.queued, connector)
-			delete(h.hovered, connector)
-			delete(h.geometry, connector)
-			delete(h.scale120, connector)
-			delete(h.cards, connector)
-			delete(h.pointer, connector)
+			h.drop(connector)
 		}
 	}
 	for connector, global := range globals {
@@ -193,10 +205,6 @@ func (h *toastHost) render(connector string, pixels []byte, width, height, strid
 			return err
 		}
 		h.text = render.NewTextRendererWithFontMap(fonts)
-		theme := h.r.surfaceTheme()
-		scale, body := h.style.Scale120, h.style.Body
-		h.style = theme.OverlayStyle()
-		h.style.Scale120, h.style.Body = scale, body
 		h.rebuild(connector)
 	}
 	canvas, err := render.NewCanvas(pixels, width, height, stride)
@@ -362,6 +370,10 @@ func (h *toastHost) updateHover(connector string) bool {
 // rebuild arranges one output's visible cards. Each is laid out at its own
 // origin, because each is painted into its own buffer before it is placed.
 func (h *toastHost) rebuild(connector string) {
+	// Rebound from the published palette on every rebuild, not cached at
+	// first paint, so a theme reload reaches open toasts immediately
+	// (GitHub #29).
+	h.style = h.r.surfaceTheme().OverlayStyle()
 	ids := h.visible[connector]
 	rects := h.cardRects(connector, ids)
 	measure := h.measureText()
@@ -393,7 +405,7 @@ func (h *toastHost) cardFor(id uint32) *ui.Node {
 	if !ok {
 		return nil
 	}
-	return NotificationCard(notification, lifetime, h.r.lookupNotifyIcon(notification.AppIcon), h.r.linksAllowed())
+	return NotificationCard(notification, lifetime, h.r.notifyIcon(notification.AppIcon, notification.DesktopEntry), h.r.linksAllowed())
 }
 
 // recompute relayouts every open output from the current projection and

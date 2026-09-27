@@ -7,9 +7,11 @@ import (
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/notifyclient"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 func TestToastHostOpensOneOverlayPerOutput(t *testing.T) {
@@ -530,5 +532,72 @@ func TestToastCardsStayInsideAScaledOutput(t *testing.T) {
 		if r.X < 0 || r.Y < 0 || r.X+r.W > 1536 || r.Y+r.H > 864 {
 			t.Errorf("card %+v leaves a 1536x864 output", r)
 		}
+	}
+}
+
+func TestDropAuxAfterCompositorCloseLeavesNoZombieSurfaces(t *testing.T) {
+	r := NewRegistry(config.Default())
+	hh := &hostHarness{}
+	r.toasts = newToastHost(r, hh)
+	r.outputsForTest([]string{"eDP-1"})
+	r.toasts.syncOutputs(map[string]uint32{"eDP-1": 5})
+	r.applyNotify(snap(1, note(1, "a")))
+	r.toasts.recompute()
+
+	r.DropAux(5, toastSurfaceID("eDP-1"))
+
+	hh.updates = nil
+	r.toasts.recompute()
+	if len(hh.updates) != 0 {
+		t.Fatalf("recompute sent %d updates to a dropped toast surface", len(hh.updates))
+	}
+
+	r.osd.open[5] = true
+	r.DropAux(5, osdSurfaceID(5))
+	if r.osd.open[5] {
+		t.Fatal("dropped OSD surface stayed open")
+	}
+
+	// A later output sync reopens the toast surface cleanly.
+	hh.opens = nil
+	r.toasts.syncOutputs(map[string]uint32{"eDP-1": 7})
+	if len(hh.opens) != 1 || hh.opens[0].ID != toastSurfaceID("eDP-1") {
+		t.Fatalf("toast surface was not reopened: %+v", hh.opens)
+	}
+}
+
+func TestDecodedIconRecomputesOpenToasts(t *testing.T) {
+	r := NewRegistry(config.Default())
+	hh := &hostHarness{}
+	r.toasts = newToastHost(r, hh)
+	r.outputsForTest([]string{"eDP-1"})
+	r.toasts.syncOutputs(map[string]uint32{"eDP-1": 5})
+	n := note(1, "build done")
+	n.AppIcon = "firefox"
+	r.applyNotify(snap(1, n))
+	before := len(hh.updates)
+
+	r.applyTrayIcon(icons.Square("firefox", cardIconSize), &ui.Image{Width: 16, Height: 16, Stride: 64, Pix: make([]byte, 16*64)})
+
+	if len(hh.updates) <= before {
+		t.Fatalf("decoding the toast's app icon did not recompute (updates %d -> %d)", before, len(hh.updates))
+	}
+}
+
+func TestRethemeRecomputesToasts(t *testing.T) {
+	r := NewRegistry(config.Default())
+	hh := &hostHarness{}
+	r.toasts = newToastHost(r, hh)
+	r.outputsForTest([]string{"eDP-1"})
+	r.toasts.syncOutputs(map[string]uint32{"eDP-1": 5})
+	r.applyNotify(snap(1, note(1, "a")))
+	before := len(hh.updates)
+
+	r.mu.Lock()
+	r.retheThemeOpenSurfacesLocked()
+	r.mu.Unlock()
+
+	if len(hh.updates) <= before {
+		t.Fatalf("retheme did not relayout open toasts (updates %d -> %d)", before, len(hh.updates))
 	}
 }

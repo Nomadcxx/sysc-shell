@@ -591,6 +591,27 @@ func TestSecretPromptReturnsPanelToWifiTab(t *testing.T) {
 	}
 }
 
+func TestExpiringSecretPromptClearsThePasswordCard(t *testing.T) {
+	r := newPanelRegistry(t)
+	network := services.NewNetwork(&shellNetworkBackend{})
+	r.mu.Lock()
+	r.network = network
+	h := &PanelHost{id: PanelNetwork, output: 7, stopAnim: make(chan struct{})}
+	r.panelHosts[PanelNetwork] = h
+	r.mu.Unlock()
+
+	r.presentNetworkSecret(network, services.SecretRequest{SSID: "Orac 15A"})
+	r.expireNetworkSecret(network)
+	// A second expiry with no card open must be a no-op, not a panic.
+	r.expireNetworkSecret(network)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if h.pendingSSID != "" {
+		t.Fatalf("expired prompt still shown: ssid=%q", h.pendingSSID)
+	}
+}
+
 func hasNamedNode(n *ui.Node, name string) bool {
 	if n == nil {
 		return false

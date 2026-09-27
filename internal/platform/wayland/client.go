@@ -1222,7 +1222,10 @@ func (o *owner) loop(ctx context.Context) error {
 
 		if h, u, decision, job := o.nextJob(); decision == render.DecisionRender {
 			if err := o.renderJob(h, u, job); err != nil {
-				return err
+				// Same containment as the configure path: one bad aux frame
+				// closes that surface, only a bar failure is fatal (GitHub #19).
+				o.failUnit(h, u, err)
+				continue
 			}
 			continue
 		}

@@ -3,6 +3,7 @@ package services
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/godbus/dbus/v5"
 )
@@ -122,6 +123,10 @@ func sendReply(ch chan<- secretReply, r secretReply) {
 // the bus method never waits for the shell relay to be scheduled.
 func (n *Network) SecretRequests() <-chan SecretRequest { return n.secretReqs }
 
+// SecretExpiry signals that a shown prompt outlived its deadline and was
+// cancelled by the service; the relay clears the password card on it.
+func (n *Network) SecretExpiry() <-chan struct{} { return n.secretExpired }
+
 // SubmitSecret answers the open prompt with a passphrase.
 //
 // The passphrase goes to NetworkManager over the system bus and is stored by
@@ -139,7 +144,7 @@ func (n *Network) PendingSecret() (SecretRequest, bool) { return n.secrets.reque
 // startSecrets binds the process-wide export to this service's slot and owns
 // its cleanup for the service lifetime.
 func (n *Network) startSecrets(start func(*secretExport) (func(), error)) error {
-	closeExport, err := start(&secretExport{slot: n.secrets, requests: n.secretReqs})
+	closeExport, err := start(&secretExport{slot: n.secrets, requests: n.secretReqs, expired: n.secretExpired})
 	if err != nil {
 		return err
 	}
@@ -149,10 +154,20 @@ func (n *Network) startSecrets(start func(*secretExport) (func(), error)) error 
 	return nil
 }
 
+// secretPromptTimeout is the hard deadline for an unanswered password card.
+// Without one, GetSecrets holds its D-Bus call and the single slot open until
+// NetworkManager cancels -- if it ever does -- blocking every later join
+// (GitHub #24, mirroring the Bluetooth pairing timer).
+const secretPromptTimeout = 60 * time.Second
+
 // secretExport is the object NetworkManager calls.
 type secretExport struct {
 	slot     *secretSlot
 	requests chan SecretRequest
+	// timeout is the prompt deadline; zero selects secretPromptTimeout.
+	timeout time.Duration
+	// expired nudges the shell relay to clear its password card.
+	expired chan struct{}
 }
 
 // GetSecrets blocks until the panel answers. godbus runs each incoming call on
@@ -180,9 +195,10 @@ func (e *secretExport) GetSecrets(
 	}
 	select {
 	case e.requests <- req:
+		e.armDeadline()
 	default:
-		// A stale notification must not strand this call. There is no timeout
-		// above us; answer once with UserCanceled and let NetworkManager stop.
+		// A stale notification must not strand this call. Answer once with
+		// UserCanceled and let NetworkManager stop.
 		e.slot.cancel()
 	}
 
@@ -196,6 +212,25 @@ func (e *secretExport) GetSecrets(
 			settingName: {"psk": dbus.MakeVariant(r.psk)},
 		}, nil
 	}
+}
+
+// armDeadline cancels an unanswered prompt after the timeout and tells the
+// relay. A late fire is harmless: the slot answers exactly once, and a card
+// already cleared stays cleared.
+func (e *secretExport) armDeadline() {
+	timeout := e.timeout
+	if timeout == 0 {
+		timeout = secretPromptTimeout
+	}
+	time.AfterFunc(timeout, func() {
+		e.slot.cancel()
+		if e.expired != nil {
+			select {
+			case e.expired <- struct{}{}:
+			default:
+			}
+		}
+	})
 }
 
 // CancelGetSecrets is NetworkManager withdrawing the question, which must
