@@ -1335,3 +1335,39 @@ func TestSettingsTemplatesSurfaceRefusals(t *testing.T) {
 		t.Fatal("a registry with no refusals rendered a refusal note")
 	}
 }
+
+func TestTemplateOverwritePersistsTheDraftNotTheOldConfig(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	r := &Registry{configPath: path, cfg: config.Default()}
+	r.templateRefusals = map[string]string{"cava": "theming: target modified: x"}
+	h := newSettingsHost()
+	h.section = "Templates"
+	h.draft = config.Default()
+	h.draft.Templates = map[string]bool{"niri": true}
+	h.root = settingsTree(r, h)
+	h.focus = ui.Focusables(h.root)
+	h.roving = ui.Roving{Count: len(h.focus)}
+	for i, n := range h.focus {
+		if n.Action == "template-overwrite:cava" {
+			h.roving.Set(i)
+			break
+		}
+	}
+	if !h.activate(r) {
+		t.Fatal("overwrite not handled")
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Templates["niri"] {
+		t.Fatal("the overwrite discarded the unsaved draft")
+	}
+	r.templateMu.Lock()
+	defer r.templateMu.Unlock()
+	if !r.templateForce["cava"] {
+		t.Fatal("the overwrite did not arm the force flag")
+	}
+}

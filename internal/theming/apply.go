@@ -194,6 +194,13 @@ func UnapplyWrite(path string) error {
 	if !oursFile(string(b)) {
 		return nil
 	}
+	// The same accounting rule as apply: remove only the bytes the shell can
+	// vouch for. A marker file whose bytes differ from the state record —
+	// edited, or rendered before the record existed — is the user's now;
+	// disabling leaves it in place rather than deleting their work.
+	if stateHash(path) != hash(b) {
+		return nil
+	}
 	return os.Remove(path)
 }
 

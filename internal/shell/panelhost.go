@@ -2337,7 +2337,10 @@ func (h *PanelHost) activate(r *Registry) bool {
 		r.templateMu.Unlock()
 		// A config rewrite is the one path that re-runs every template
 		// apply; the force flag is consumed there, off this goroutine.
-		if err := r.writeConfig(r.cfg); err != nil {
+		// Persist the draft, not the committed config: the refusal row is
+		// shown inside the settings view, and overwriting must not throw
+		// away the edits the user is looking at.
+		if err := r.writeConfig(h.draft); err != nil {
 			h.errLabel = err.Error()
 		}
 		r.rebuildPanel(h)
