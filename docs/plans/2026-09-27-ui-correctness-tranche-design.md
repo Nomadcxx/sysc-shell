@@ -43,6 +43,8 @@ state record under `XDG_STATE_HOME/sysc/`. Anything else — the user edited it,
 wrote it — refuses with a "user-modified" outcome the control-centre/settings surface reports,
 and offers an explicit overwrite action that backs the previous file up to `<path>.bak` first.
 The state file is a cache, never an authority: losing it degrades to refusing, not clobbering.
+(Shipped note: the record lives under `XDG_STATE_HOME/sysc-shell/templates/state.json`, the
+repo-wide state-root convention, not `sysc/`.)
 
 **Why not managed-block markers.** Marker regions need per-format comment syntax (TOML, ini, CSS,
 JSON do not agree), and a half-owned file still lets a user edit inside the block. Hash-adopt is
