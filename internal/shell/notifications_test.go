@@ -105,6 +105,36 @@ func TestNotificationHistoryTracksDeltas(t *testing.T) {
 	}
 }
 
+// The daemon confirms history.mark-seen with a history-seen delta, and a
+// second shell or client marking entries seen arrives the same way (GH #39).
+func TestNotificationHistorySeenDeltaMarksOnlyThoseEntries(t *testing.T) {
+	r := NewRegistry(config.Default())
+	m := snap(1)
+	m.Snapshot.History = []protocol.HistoryEntry{
+		{ID: 1, AppName: "App", Summary: "one", Timestamp: time.Unix(1_756_000_000, 0)},
+		{ID: 2, AppName: "App", Summary: "two", Timestamp: time.Unix(1_756_000_001, 0)},
+	}
+	r.applyNotify(m)
+	if got := r.unreadCount(); got != 2 {
+		t.Fatalf("unread before = %d, want 2", got)
+	}
+
+	r.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaHistorySeen, IDs: []uint32{1}}))
+
+	r.notify.mu.Lock()
+	seen := map[uint32]bool{}
+	for _, e := range r.notify.history {
+		seen[e.ID] = e.Seen
+	}
+	r.notify.mu.Unlock()
+	if !seen[1] || seen[2] {
+		t.Fatalf("seen = %v, want entry 1 only", seen)
+	}
+	if got := r.unreadCount(); got != 1 {
+		t.Fatalf("unread after = %d, want 1", got)
+	}
+}
+
 func ptr(n protocol.Notification) *protocol.Notification { return &n }
 
 type pluginToastRecorder struct {

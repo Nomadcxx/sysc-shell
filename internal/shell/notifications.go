@@ -93,6 +93,16 @@ func (s *notifyState) applyNotify(m notifyclient.Message) {
 			}
 		case protocol.DeltaHistoryCleared:
 			s.history = s.history[:0]
+		case protocol.DeltaHistorySeen:
+			seen := make(map[uint32]bool, len(d.IDs))
+			for _, id := range d.IDs {
+				seen[id] = true
+			}
+			for i := range s.history {
+				if seen[s.history[i].ID] {
+					s.history[i].Seen = true
+				}
+			}
 		}
 
 	case notifyclient.KindReply:
