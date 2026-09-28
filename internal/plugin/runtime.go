@@ -330,6 +330,13 @@ func (r *Runtime) supervise(ctx, sessionCtx context.Context, cancel context.Canc
 		r.opts.SessionEnded()
 	}
 
+	if errors.Is(readErr, ErrFlooding) {
+		// The session is already closed. Degraded, not failed: the plugin is
+		// intact and a retry can start it again, but it does not get to
+		// restart itself around a budget it just ignored.
+		r.setState(StateDegraded, "exceeded its update budget")
+		return
+	}
 	if readErr != nil && !errors.Is(readErr, io.EOF) {
 		r.setState(StateFailed, fmt.Sprintf("plugin protocol error: %v", readErr))
 		return

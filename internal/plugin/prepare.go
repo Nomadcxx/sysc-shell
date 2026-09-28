@@ -46,10 +46,11 @@ type Result struct {
 // newest tree, so preparing the intermediate ones would be work with no
 // consumer, done while the newest one waits.
 type Preparer struct {
-	measure ui.MeasureText
-	results chan Result
-	now     func() time.Time
-	budget  time.Duration
+	measure  ui.MeasureText
+	results  chan Result
+	now      func() time.Time
+	budget   time.Duration
+	schedule *Schedule
 
 	mu       sync.Mutex
 	cond     *sync.Cond
@@ -60,7 +61,8 @@ type Preparer struct {
 	degraded map[string]bool
 	closed   bool
 
-	wg sync.WaitGroup
+	done chan struct{}
+	wg   sync.WaitGroup
 }
 
 const (
@@ -83,12 +85,17 @@ func NewPreparer(workers int, measure ui.MeasureText) *Preparer {
 		waiting:  make(map[string][]string),
 		overruns: make(map[string][]time.Time),
 		degraded: make(map[string]bool),
+		done:     make(chan struct{}),
 	}
+	// The schedule reads the clock through the field, so a test that swaps
+	// now for a fake clock moves the publish gate with it.
+	p.schedule = NewSchedule(func() time.Time { return p.now() })
 	p.cond = sync.NewCond(&p.mu)
-	p.wg.Add(workers)
+	p.wg.Add(workers + 1)
 	for i := 0; i < workers; i++ {
 		go p.work()
 	}
+	go p.tick()
 	return p
 }
 
@@ -145,9 +152,27 @@ func (p *Preparer) Close() {
 	p.plugins = nil
 	p.mu.Unlock()
 
+	close(p.done)
 	p.cond.Broadcast()
 	p.wg.Wait()
 	close(p.results)
+}
+
+// tick wakes the workers on the publish interval. A view held back by the
+// rate gate is prepared as soon as it is due, even when no further update
+// arrives to signal the condition.
+func (p *Preparer) tick() {
+	defer p.wg.Done()
+	t := time.NewTicker(publishInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-p.done:
+			return
+		case <-t.C:
+			p.cond.Broadcast()
+		}
+	}
 }
 
 // work takes the oldest waiting view and prepares whatever its newest job is.
@@ -169,11 +194,20 @@ func (p *Preparer) next() (Job, bool) {
 		if p.closed {
 			return Job{}, false
 		}
-		if len(p.plugins) > 0 {
-			plugin := p.plugins[0]
-			p.plugins = p.plugins[1:]
+		for i, plugin := range p.plugins {
 			ids := p.waiting[plugin]
+			if len(ids) == 0 {
+				continue
+			}
 			id := ids[0]
+			// One view commits at most once per publish interval. A view
+			// that is not due stays pending, so the newest job is the one
+			// that eventually goes out; the ticker wakes the pool when it
+			// comes due.
+			if !p.schedule.Due(id) {
+				continue
+			}
+			p.plugins = append(p.plugins[:i], p.plugins[i+1:]...)
 			p.waiting[plugin] = ids[1:]
 			if len(p.waiting[plugin]) == 0 {
 				delete(p.waiting, plugin)

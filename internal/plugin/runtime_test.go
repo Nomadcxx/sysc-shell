@@ -386,3 +386,22 @@ func waitRuntimeState(t *testing.T, r *Runtime, want State) {
 	}
 	t.Fatalf("runtime state = %q, want %q", r.Status().State, want)
 }
+
+func TestRuntimeDegradesAPluginThatFloods(t *testing.T) {
+	opts := helperOptions()
+	opts.Limits = v1.Limits{UpdatesPerSecond: 10, UpdateBurst: 20}
+	r := NewRuntime(Candidate{Manifest: installHelper(t, "flood")}, opts)
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer r.Stop()
+
+	waitRuntimeState(t, r, StateDegraded)
+	st := r.Status()
+	if !strings.Contains(st.Failure, "budget") {
+		t.Fatalf("degraded without a reason: %+v", st)
+	}
+	if st.Starts != 1 {
+		t.Fatalf("flooding plugin restarted itself: %+v", st)
+	}
+}

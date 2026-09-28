@@ -168,10 +168,21 @@ func NewDecoder(r io.Reader, dir Direction) *Decoder {
 // plugin cannot smuggle content past a v1 reader by appending to a line it
 // otherwise understands.
 func (d *Decoder) Decode() (Message, error) {
-	line, err := d.readLine()
+	line, err := d.ReadFrame()
 	if err != nil {
 		return nil, err
 	}
+	return d.DecodeFrame(line)
+}
+
+// ReadFrame reads one framed line without decoding it. It exists so a caller
+// can apply a budget to a frame before paying for JSON decoding.
+func (d *Decoder) ReadFrame() ([]byte, error) {
+	return d.readLine()
+}
+
+// DecodeFrame decodes one frame previously returned by ReadFrame.
+func (d *Decoder) DecodeFrame(line []byte) (Message, error) {
 	if len(bytes.TrimSpace(line)) == 0 {
 		return nil, errors.New("plugin/v1: empty message")
 	}

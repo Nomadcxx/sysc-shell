@@ -24,6 +24,10 @@ const MaxStderrBytes = 64 << 10
 // ErrHandshakeTimeout reports a plugin that did not answer host.hello in time.
 var ErrHandshakeTimeout = errors.New("plugin: handshake timed out")
 
+// ErrFlooding reports that a plugin kept sending after its inbound budget was
+// exhausted. The session stops reading; the runtime marks the plugin degraded.
+var ErrFlooding = errors.New("plugin: exceeded its update budget")
+
 // IncompatibleError reports a plugin that speaks a protocol this shell does
 // not. It is a distinct type because it is permanent: restarting the process
 // will produce the same answer, so the manager says "incompatible" and stops
@@ -110,12 +114,13 @@ type Session struct {
 	// Granted is what the host offered and the plugin accepted.
 	Granted []Capability
 
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	enc    *v1.Encoder
-	dec    *v1.Decoder
-	stderr *tail
-	grace  time.Duration
+	cmd     *exec.Cmd
+	stdin   io.WriteCloser
+	enc     *v1.Encoder
+	dec     *v1.Decoder
+	stderr  *tail
+	grace   time.Duration
+	inbound *Inbound
 
 	sendMu sync.Mutex
 	recvMu sync.Mutex
@@ -179,6 +184,7 @@ func (s *Supervisor) Start(ctx context.Context) (*Session, error) {
 		dec:     v1.NewDecoder(stdout, v1.ToHost),
 		stderr:  newTail(MaxStderrBytes),
 		grace:   s.ShutdownGrace,
+		inbound: NewInbound(nil, s.Limits),
 		started: time.Now(),
 	}
 	go sess.stderr.drain(stderrPipe)
@@ -357,10 +363,26 @@ func (s *Session) Send(m v1.Message) error {
 
 // Recv reads one message from the plugin. It returns an error at end of
 // stream, which is how the host learns the process is gone without polling.
+//
+// The budget is charged per frame, before decoding, so a plugin that floods
+// costs the host a read and a token rather than a parse and a layout. A frame
+// over budget is dropped; repeated drops end the session with ErrFlooding.
 func (s *Session) Recv() (v1.Message, error) {
 	s.recvMu.Lock()
 	defer s.recvMu.Unlock()
-	return s.dec.Decode()
+	for {
+		line, err := s.dec.ReadFrame()
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := s.inbound.Accept(line); !ok {
+			if s.inbound.Degraded() {
+				return nil, ErrFlooding
+			}
+			continue
+		}
+		return s.dec.DecodeFrame(line)
+	}
 }
 
 // Close ends the process and returns why it stopped.

@@ -398,3 +398,30 @@ IFS= read -r _
 		})
 	}
 }
+
+func TestRecvStopsAPluginThatFloods(t *testing.T) {
+	s := supervisor(installHelper(t, "flood"))
+	s.Limits = v1.Limits{UpdatesPerSecond: 10, UpdateBurst: 20}
+	sess, err := s.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer sess.Close()
+
+	accepted := 0
+	for {
+		if _, err := sess.Recv(); err != nil {
+			if !errors.Is(err, ErrFlooding) {
+				t.Fatalf("Recv error = %v, want ErrFlooding", err)
+			}
+			break
+		}
+		accepted++
+		if accepted > 100 {
+			t.Fatal("the flood was never stopped")
+		}
+	}
+	if accepted < 10 {
+		t.Fatalf("accepted only %d messages, want the burst to be allowed", accepted)
+	}
+}

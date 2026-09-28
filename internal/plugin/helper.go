@@ -109,6 +109,13 @@ func HelperServe(args []string) int {
 	case "ignore-shutdown":
 		time.Sleep(time.Minute)
 		return 0
+	case "flood":
+		// More frames than any sane budget allows, written in one burst so
+		// the host has to drop them rather than merely fall behind.
+		for i := 0; i < 200; i++ {
+			_ = out.Encode(&v1.ViewSnapshot{ViewID: "v1", Revision: uint64(i + 1),
+				Root: &v1.Node{Kind: v1.KindText, Text: "flood"}})
+		}
 	}
 
 	if mode == "notify-then-snapshot" {

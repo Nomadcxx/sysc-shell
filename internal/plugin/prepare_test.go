@@ -352,3 +352,36 @@ func TestPrepareFairnessFloodDoesNotStarve(t *testing.T) {
 		t.Fatal("the quiet plugin's only job never ran among the first results")
 	}
 }
+
+func TestPrepareGatesPublishesToThirtyHertz(t *testing.T) {
+	t.Parallel()
+	var clock atomic.Int64
+	p := NewPreparer(1, measureFixed)
+	p.now = func() time.Time { return time.Unix(0, clock.Load()) }
+	defer p.Close()
+
+	p.Submit(barJob("v1", 1, timerBar()))
+	if got := await(t, p); got.Revision != 1 {
+		t.Fatalf("first revision = %d, want 1", got.Revision)
+	}
+
+	// A second update inside the publish interval stays pending: one view
+	// commits at most thirty frames per second, and the newest job is the
+	// one that goes out.
+	p.Submit(barJob("v1", 2, timerBar()))
+	select {
+	case got := <-p.Results():
+		t.Fatalf("revision %d published inside the interval", got.Revision)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	clock.Add(int64(publishInterval))
+	select {
+	case got := <-p.Results():
+		if got.Revision != 2 {
+			t.Fatalf("revision = %d, want the newest pending job", got.Revision)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the rate-gated view was never published")
+	}
+}
