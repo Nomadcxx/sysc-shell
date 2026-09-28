@@ -620,6 +620,8 @@ func glassToasts(t *testing.T, blur bool, notes ...protocol.Notification) (*Regi
 	r.caps.Blur = blur
 	r.mu.Unlock()
 	h := newToastHost(r, &hostHarness{})
+	// Wired as main wires it, so notification changes reach the host.
+	r.toasts = h
 	r.outputsForTest([]string{"eDP-1"})
 	h.syncOutputs(map[string]uint32{"eDP-1": 5})
 	r.applyNotify(snap(1, notes...))
@@ -785,5 +787,62 @@ func TestToastHoverHitTestsThePlacedCards(t *testing.T) {
 	h.updateHover("eDP-1")
 	if !h.hovered["eDP-1"][1] {
 		t.Fatal("pointer over the placed card is not hovering it")
+	}
+}
+
+// A card clamps to a narrow output, so its actions have to pack for the width
+// it gets: a row packed for the full design width overflowed, failed layout,
+// and the toast silently vanished while still counted as visible.
+func TestToastPacksActionsForANarrowOutput(t *testing.T) {
+	n := note(1, "hello")
+	n.Actions = []protocol.Action{
+		{Key: "a1", Label: "Open in browser"}, {Key: "a2", Label: "Mark as read"},
+		{Key: "a3", Label: "Archive"}, {Key: "a4", Label: "Reply"},
+	}
+	r, h, _, _ := glassToasts(t, true, n)
+	cb := h.harness().opens[0].Callbacks
+	const width, height = 330, 800
+	if err := cb.Configure(width, height, 120); err != nil {
+		t.Fatal(err)
+	}
+	pixels := make([]byte, width*4*height)
+	for range 2 {
+		if err := cb.Render(pixels, width, height, width*4); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if got := len(h.cards["eDP-1"]); got != 1 {
+		t.Fatalf("cards on a %d px output = %d, want the one toast", width, got)
+	}
+}
+
+// Losing compositor blur at runtime drops the glass ground and the blur
+// region together, never a translucent card over an unblurred desktop.
+func TestToastBlurLostAtRuntimeDropsGroundAndRegionTogether(t *testing.T) {
+	r, h, pixels, stride := glassToasts(t, true, note(1, "hello"))
+	r.SetCapabilities(wayland.Capabilities{Blur: false})
+	cb := h.harness().opens[0].Callbacks
+	if err := cb.Render(pixels, 1200, 800, stride); err != nil {
+		t.Fatal(err)
+	}
+	if shape := cb.BlurShape(); len(shape) != 0 {
+		t.Fatalf("blur region kept after blur was lost: %+v", shape)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if got, want := groundAlpha(h, pixels, stride), r.surfaceTheme().OverlayStyle().RootFill().A; got != want {
+		t.Fatalf("ground alpha = %d, want the overlay's %d once blur is gone", got, want)
+	}
+}
+
+// The last card closing empties the blur region, or a blurred patch would
+// stay in the corner.
+func TestToastBlurClearsWhenTheLastCardCloses(t *testing.T) {
+	r, h, _, _ := glassToasts(t, true, note(1, "hello"))
+	r.applyNotify(snap(2))
+	if shape := h.harness().opens[0].Callbacks.BlurShape(); len(shape) != 0 {
+		t.Fatalf("blur region kept after the last card closed: %+v", shape)
 	}
 }

@@ -59,7 +59,8 @@ func protocolImage(img *protocol.Image) *ui.Image {
 }
 
 // leadSlot is the card's lead: the notification's own image, or a bell in a
-// tinted tile. It carries the app name, since layout C has no app line.
+// tinted tile. Layout C has no app line, so the node's Name keeps the app
+// name for an accessibility bridge; nothing reads it yet.
 func leadSlot(app string, raster *ui.Image, urgency protocol.Urgency) *ui.Node {
 	if raster != nil {
 		return &ui.Node{Kind: ui.KindImage, Image: raster, ImageSize: cardIconSize, Name: app}
@@ -169,6 +170,10 @@ func notificationTree(id uint32, app, summary, body string, urgency protocol.Urg
 	if headline == "" {
 		headline = app
 	}
+	if headline == "" {
+		// A raw D-Bus sender can omit both; a card is never just a time.
+		headline = "Notification"
+	}
 	head := &ui.Node{Kind: ui.KindRow, Gap: cardGap, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: headline, TextRole: theme.RoleFigure, Tone: toneFor(urgency)},
 	}}
@@ -204,18 +209,19 @@ func toneFor(urgency protocol.Urgency) ui.Tone {
 // icon, or nil for the glyph tile. measure packs action pills into rows; nil
 // stacks them one per row.
 func NotificationCard(n protocol.Notification, raster *ui.Image, allowLinks bool, measure ui.MeasureText) *ui.Node {
-	return notificationCard(n, raster, allowLinks, measure, nil, time.Now())
+	return notificationCard(n, raster, allowLinks, measure, nil, time.Now(), toastCardWidth)
 }
 
 // ExpandedNotificationCard is a toast whose body is wrapped over several
 // lines after a vertical drag.
 func ExpandedNotificationCard(n protocol.Notification, raster *ui.Image, allowLinks bool, measure ui.MeasureText, wrap func(string) []string) *ui.Node {
-	return notificationCard(n, raster, allowLinks, measure, wrap, time.Now())
+	return notificationCard(n, raster, allowLinks, measure, wrap, time.Now(), toastCardWidth)
 }
 
 // notificationCard has no chrome of its own: the toast host paints the card
-// ground, rim and blur around it.
-func notificationCard(n protocol.Notification, raster *ui.Image, allowLinks bool, measure ui.MeasureText, wrap func(string) []string, now time.Time) *ui.Node {
+// ground, rim and blur around it. width is the card's laid-out width, which
+// the action rows pack against.
+func notificationCard(n protocol.Notification, raster *ui.Image, allowLinks bool, measure ui.MeasureText, wrap func(string) []string, now time.Time, width int) *ui.Node {
 	if raster == nil {
 		raster = protocolImage(n.Image)
 	}
@@ -233,7 +239,7 @@ func notificationCard(n protocol.Notification, raster *ui.Image, allowLinks bool
 		}
 		pills = append(pills, a)
 	}
-	rowWidth := toastCardWidth - 2*cardPadding
+	rowWidth := width - 2*cardPadding
 	for _, row := range actionRows(pills, rowWidth, measure) {
 		// Only a pill too wide for any row takes the column, where it spans
 		// the card and its label clips; one that fits keeps its own width.

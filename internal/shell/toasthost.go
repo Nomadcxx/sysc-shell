@@ -326,15 +326,6 @@ func (h *toastHost) cardStyle() render.Style {
 	return s
 }
 
-// critical reports whether an active record is critical, which strokes its
-// card's rim in the error colour.
-func (h *toastHost) critical(id uint32) bool {
-	s := h.r.notify
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.active[id].Urgency == protocol.UrgencyCritical
-}
-
 // paintCard renders one card into the scratch buffer and copies it onto the
 // surface. The painter clears outside the card's rounded body, so the copy
 // carries transparent corners rather than a square patch.
@@ -529,14 +520,15 @@ func (h *toastHost) rebuild(connector string) {
 		if i >= len(rects) {
 			break
 		}
-		root := h.cardFor(id)
-		if root == nil {
+		n, ok := h.record(id)
+		if !ok {
 			continue
 		}
+		root := h.cardOf(n)
 		if err := ui.LayoutColumn(root, ui.Rect{W: rects[i].W, H: rects[i].H}, measure); err != nil {
 			continue
 		}
-		cards = append(cards, toastCard{root: root, rect: rects[i], critical: h.critical(id)})
+		cards = append(cards, toastCard{root: root, rect: rects[i], critical: n.Urgency == protocol.UrgencyCritical})
 	}
 	h.cards[connector] = cards
 }
@@ -601,26 +593,52 @@ func (h *toastHost) noteTargets(connector string, ids []uint32, rects []ui.Rect)
 	return moved
 }
 
-// cardFor projects one active record. A record that has gone between the
-// placement and the paint yields nothing rather than an empty card.
-func (h *toastHost) cardFor(id uint32) *ui.Node {
+// record reads one active notification. A record that has gone between the
+// placement and the paint reports false rather than yielding an empty card.
+func (h *toastHost) record(id uint32) (protocol.Notification, bool) {
 	s := h.r.notify
 	s.mu.Lock()
-	notification, ok := s.active[id]
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	n, ok := s.active[id]
+	return n, ok
+}
+
+// cardFor projects one active record, or nothing if it has gone.
+func (h *toastHost) cardFor(id uint32) *ui.Node {
+	n, ok := h.record(id)
 	if !ok {
 		return nil
 	}
-	icon := h.r.notifyIcon(notification.AppIcon, notification.DesktopEntry)
-	if h.expanded[id] {
-		return ExpandedNotificationCard(notification, icon, h.r.linksAllowed(), h.measureText(), h.wrapBody)
+	return h.cardOf(n)
+}
+
+// cardOf builds a record's card at the width cards lay out at, wrapped over
+// several lines once a drag has expanded it.
+func (h *toastHost) cardOf(n protocol.Notification) *ui.Node {
+	icon := h.r.notifyIcon(n.AppIcon, n.DesktopEntry)
+	var wrap func(string) []string
+	if h.expanded[n.ID] {
+		wrap = h.wrapBody
 	}
-	return NotificationCard(notification, icon, h.r.linksAllowed(), h.measureText())
+	return notificationCard(n, icon, h.r.linksAllowed(), h.measureText(), wrap, time.Now(), h.cardWidth())
+}
+
+// cardWidth is the width toast cards lay out at: the design width, or
+// narrower where an open output clamps it. Card trees are shared by every
+// output, so they fit the narrowest. Caller holds r.mu.
+func (h *toastHost) cardWidth() int {
+	width := toastCardWidth
+	for _, g := range h.geometry {
+		if w := g.OutputW - 2*toastMargin; w > 0 && w < width {
+			width = w
+		}
+	}
+	return width
 }
 
 func (h *toastHost) wrapBody(s string) []string {
 	measure := h.measureText()
-	width := toastCardWidth - 2*cardPadding - cardIconSize - cardLeadGap
+	width := h.cardWidth() - 2*cardPadding - cardIconSize - cardLeadGap
 	return wrapLines(s, width, func(text string) int {
 		w, _ := measure(text, ui.TextAttrs{})
 		return w
@@ -797,7 +815,7 @@ func (h *toastHost) geometryFor(connector string) (toastGeometry, bool) {
 // cardHeight is the layout height of one card, measured from its tree.
 // A missing tree or measure falls back to 96 so the card still places.
 func (h *toastHost) cardHeight(id uint32) int {
-	return toastCardHeight(h.cardFor(id), toastCardWidth, h.measureText())
+	return toastCardHeight(h.cardFor(id), h.cardWidth(), h.measureText())
 }
 
 // measureText measures at the output's scale and rounds up into logical
