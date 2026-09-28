@@ -83,12 +83,12 @@ func (s *notifyState) applyNotify(m notifyclient.Message) {
 				s.history = append(s.history, *d.History)
 			}
 		case protocol.DeltaHistoryRemoved:
-			for _, id := range d.IDs {
-				for i, e := range s.history {
-					if e.ID == id {
-						s.history = append(s.history[:i], s.history[i+1:]...)
-						break
-					}
+			// One entry per delta, in ID: eviction, expiry, removal, and the
+			// old entry an id that is added again replaces.
+			for i, e := range s.history {
+				if e.ID == d.ID {
+					s.history = append(s.history[:i], s.history[i+1:]...)
+					break
 				}
 			}
 		case protocol.DeltaHistoryCleared:

@@ -100,7 +100,7 @@ func TestNotificationHistoryTracksDeltas(t *testing.T) {
 	if got := r.notifyHistoryCount(); got != 1 {
 		t.Fatalf("history = %d", got)
 	}
-	r.applyNotify(delta(1, 3, protocol.Delta{Kind: protocol.DeltaHistoryRemoved, IDs: []uint32{5}}))
+	r.applyNotify(delta(1, 3, protocol.Delta{Kind: protocol.DeltaHistoryRemoved, ID: 5}))
 	if got := r.notifyHistoryCount(); got != 0 {
 		t.Fatalf("history after removal = %d", got)
 	}
@@ -133,6 +133,30 @@ func TestNotificationHistorySeenDeltaMarksOnlyThoseEntries(t *testing.T) {
 	}
 	if got := r.unreadCount(); got != 1 {
 		t.Fatalf("unread after = %d, want 1", got)
+	}
+}
+
+// The daemon replaces a history entry that is added again under the same id:
+// it removes the old one, then adds the new one. The shell used to ignore the
+// removal, kept both, and history.mark-seen was then refused for a duplicate
+// id, so the badge could never clear.
+func TestNotificationHistoryReAddKeepsOneEntryPerID(t *testing.T) {
+	r := NewRegistry(config.Default())
+	r.applyNotify(snap(1))
+	entry := protocol.HistoryEntry{ID: 5, AppName: "App", Summary: "first", Timestamp: time.Unix(1_756_000_000, 0)}
+	r.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaHistoryAdded, History: &entry}))
+
+	again := entry
+	again.Summary = "second"
+	r.applyNotify(delta(1, 3, protocol.Delta{Kind: protocol.DeltaHistoryRemoved, ID: 5}))
+	r.applyNotify(delta(1, 4, protocol.Delta{Kind: protocol.DeltaHistoryAdded, History: &again}))
+
+	if ids := r.notify.unseenIDs(); len(ids) != 1 || ids[0] != 5 {
+		t.Fatalf("unseen ids = %v, want [5] once", ids)
+	}
+	cmd := protocol.Command{Kind: protocol.CommandHistoryMarkSeen, IDs: r.notify.unseenIDs()}
+	if err := cmd.Validate(); err != nil {
+		t.Fatalf("mark-seen for the projection is invalid: %v", err)
 	}
 }
 
