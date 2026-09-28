@@ -335,7 +335,7 @@ func d(dir, name string) directive {
 }
 
 func TestEnsureDirectiveCreates(t *testing.T) {
-	t.Parallel()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	dir := t.TempDir()
 	dd := d(dir, "config")
 	dd.create = true
@@ -358,6 +358,7 @@ func TestEnsureDirectiveCreates(t *testing.T) {
 }
 
 func TestEnsureDirectiveUsesSection(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	dir := t.TempDir()
 	path := filepath.Join(dir, "alacritty.toml")
 	original := "[general]\nlive_config_reload = true\n[window]\nopacity = 0.9\n"
@@ -391,7 +392,7 @@ func TestEnsureDirectiveUsesSection(t *testing.T) {
 }
 
 func TestEnsureDirectiveAppendUpdateRefuse(t *testing.T) {
-	t.Parallel()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	dir := t.TempDir()
 	dd := d(dir, "config")
 	dd.create = true
@@ -440,7 +441,7 @@ func TestEnsureDirectiveAppendUpdateRefuse(t *testing.T) {
 }
 
 func TestEnsureDirectiveSection(t *testing.T) {
-	t.Parallel()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	dir := t.TempDir()
 	dd := d(dir, "config")
 	dd.create = true
@@ -468,19 +469,22 @@ func TestEnsureDirectiveSection(t *testing.T) {
 }
 
 func TestRemoveDirective(t *testing.T) {
-	t.Parallel()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	dir := t.TempDir()
 	dd := d(dir, "config")
 	dd.create = true
-	if err := os.WriteFile(dd.file, []byte("theme = catppuccin\ntheme = sysc-shell\n"), 0o644); err != nil {
+	if err := os.WriteFile(dd.file, []byte("opacity = 0.9\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureDirective(dd); err != nil {
 		t.Fatal(err)
 	}
 	if err := RemoveDirective(dd); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(dd.file)
-	if string(got) != "theme = catppuccin\n" {
-		t.Fatalf("removed too much or too little: %q", got)
+	if string(got) != "opacity = 0.9\n" {
+		t.Fatalf("remove did not restore original config: %q", got)
 	}
 	if err := os.WriteFile(dd.file, []byte("theme = sysc-shell\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -488,10 +492,171 @@ func TestRemoveDirective(t *testing.T) {
 	if err := RemoveDirective(dd); err != nil {
 		t.Fatal(err)
 	}
+	if got, _ := os.ReadFile(dd.file); string(got) != "theme = sysc-shell\n" {
+		t.Fatalf("removed an identical user directive: %q", got)
+	}
+	if err := os.WriteFile(dd.file, []byte("opacity = 0.9\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureDirective(dd); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dd.file, []byte("opacity = 0.9\ntheme = sysc-shell\ntheme = sysc-shell\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveDirective(dd); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(dd.file); string(got) != "opacity = 0.9\ntheme = sysc-shell\n" {
+		t.Fatalf("remove did not preserve a duplicate user directive: %q", got)
+	}
+	if err := os.Remove(dd.file); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureDirective(dd); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveDirective(dd); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(dd.file); !os.IsNotExist(err) {
-		t.Fatal("empty created file must be removed")
+		t.Fatal("empty created config must be removed")
 	}
 	if err := RemoveDirective(d(dir, "missing")); err != nil {
 		t.Fatalf("missing file: %v", err)
+	}
+}
+
+func TestDirectiveWritesPreserveSymlink(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	dir := t.TempDir()
+	target := filepath.Join(dir, "real-config")
+	link := filepath.Join(dir, "config")
+	if err := os.WriteFile(target, []byte("opacity = 0.9\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real-config", link); err != nil {
+		t.Fatal(err)
+	}
+	dd := d(dir, "config")
+	if err := EnsureDirective(dd); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("apply replaced config symlink: mode=%v", info.Mode())
+	}
+	if err := RemoveDirective(dd); err != nil {
+		t.Fatal(err)
+	}
+	info, err = os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("remove replaced config symlink: mode=%v", info.Mode())
+	}
+	if got, err := os.ReadFile(target); err != nil || string(got) != "opacity = 0.9\n" {
+		t.Fatalf("symlink target = %q, err=%v", got, err)
+	}
+
+	emptyTarget := filepath.Join(dir, "empty-real-config")
+	emptyLink := filepath.Join(dir, "empty-config")
+	if err := os.WriteFile(emptyTarget, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("empty-real-config", emptyLink); err != nil {
+		t.Fatal(err)
+	}
+	emptyDirective := d(dir, "empty-config")
+	if err := EnsureDirective(emptyDirective); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveDirective(emptyDirective); err != nil {
+		t.Fatal(err)
+	}
+	info, err = os.Lstat(emptyLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("empty config removal replaced symlink: mode=%v", info.Mode())
+	}
+	if got, err := os.ReadFile(emptyTarget); err != nil || len(got) != 0 {
+		t.Fatalf("empty symlink target = %q, err=%v", got, err)
+	}
+}
+
+func TestRemoveDirectiveRefusesUnownedMatchingLine(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	dir := t.TempDir()
+	dd := d(dir, "config")
+	if err := os.WriteFile(dd.file, []byte("theme = sysc-shell\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureDirective(dd); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveDirective(dd); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(dd.file); err != nil || string(got) != "theme = sysc-shell\n" {
+		t.Fatalf("unowned directive = %q, err=%v", got, err)
+	}
+}
+
+func TestWezTermDirectivePrecedesReturn(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	dir := t.TempDir()
+	dd := templateTargets["wezterm"].directives(dir)[0]
+	if err := os.MkdirAll(filepath.Dir(dd.file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dd.file, []byte("local config = {}\nreturn config\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureDirective(dd); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(dd.file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "local config = {}\nconfig.color_scheme = \"sysc-shell\"\nreturn config\n" {
+		t.Fatalf("WezTerm directive placement = %q", got)
+	}
+}
+
+func TestWezTermDirectiveRefusesReturnedTable(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	dir := t.TempDir()
+	dd := templateTargets["wezterm"].directives(dir)[0]
+	if err := os.MkdirAll(filepath.Dir(dd.file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := "return { color_scheme = \"Builtin\" }\n"
+	if err := os.WriteFile(dd.file, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureDirective(dd); err == nil {
+		t.Fatal("must refuse a Lua table return that cannot accept an assignment")
+	}
+	got, err := os.ReadFile(dd.file)
+	if err != nil || string(got) != original {
+		t.Fatalf("unsupported WezTerm config changed: %q, err=%v", got, err)
+	}
+	nested := "local config = {}\nfunction f()\n  return config\nend\n"
+	if err := os.WriteFile(dd.file, []byte(nested), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureDirective(dd); err == nil {
+		t.Fatal("must refuse a function return without a final config return")
+	}
+	got, err = os.ReadFile(dd.file)
+	if err != nil || string(got) != nested {
+		t.Fatalf("unsupported WezTerm config changed: %q, err=%v", got, err)
 	}
 }

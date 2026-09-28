@@ -252,9 +252,14 @@ func UnapplyNiri(configPath, genPath string) error {
 // writeFileAtomic replaces path via a unique temp in the same directory, then
 // rename, so a reader such as Niri watching its config never sees a
 // half-written file and a crash leaves the previous content
-// intact (GitHub #23; same shape as config.Write, without its symlink
-// guarantee).
+// intact (GitHub #23). Existing symlink targets are updated through the link
+// so user-managed dotfile links remain links.
 func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	resolved, err := resolveSymlinkTarget(path)
+	if err != nil {
+		return err
+	}
+	path = resolved
 	// A rename would replace an unwritable target that a direct write must
 	// fail on; keep reporting read-only files instead of silently succeeding.
 	if f, err := os.OpenFile(path, os.O_WRONLY, 0); err != nil {
@@ -291,6 +296,21 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	return os.Rename(tmp, path)
 }
 
+func resolveSymlinkTarget(path string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return resolved, nil
+	}
+	info, lstatErr := os.Lstat(path)
+	if lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
+		return "", err
+	}
+	if lstatErr != nil && !errors.Is(lstatErr, os.ErrNotExist) {
+		return "", lstatErr
+	}
+	return path, nil
+}
+
 // ApplySidecar writes a generated file we own, refusing any existing
 // untracked or user-edited file like ApplyWrite does, but swapping atomically.
 func ApplySidecar(path, content string) error {
@@ -302,15 +322,17 @@ func applySidecar(path, content string, force bool) error {
 }
 
 // directive is one single-line setting sysc-shell manages inside a user
-// config file, without owning the file itself.
+// config file, without owning the file itself. State records distinguish a
+// line inserted by the shell from an identical line already owned by the user.
 type directive struct {
-	file    string // user config path
-	line    string // the exact line sysc-shell writes
-	key     string // a line starting with this is ours or the user's
-	section string // ini/toml section the line must live under ("" = top level)
-	seed    string // whole-file content when creating (empty = just the line)
-	create  bool   // invent the file if it does not exist
-	top     bool   // root-key zone: insert before the first table header
+	file         string // user config path
+	line         string // the exact line sysc-shell writes
+	key          string // a line starting with this is ours or the user's
+	section      string // ini/toml section the line must live under ("" = top level)
+	seed         string // whole-file content when creating (empty = just the line)
+	create       bool   // invent the file if it does not exist
+	top          bool   // root-key zone: insert before the first table header
+	returnConfig bool   // Lua assignment must precede a final `return config`
 }
 
 // EnsureDirective appends, updates or creates exactly one directive line.
@@ -333,11 +355,20 @@ func ensureDirective(d directive, force bool) error {
 		if content == "" {
 			content = d.line + "\n"
 		}
-		return writeFileAtomic(d.file, []byte(content), 0o644)
+		if err := writeFileAtomic(d.file, []byte(content), 0o644); err != nil {
+			return err
+		}
+		_ = setDirectiveOwned(d, true)
+		return nil
 	}
 	lines := strings.Split(string(b), "\n")
+	returnIndex, err := directiveReturnIndex(lines, d)
+	if err != nil {
+		return err
+	}
 	own := strings.TrimSpace(d.line)
 	ownCount, conflictCount := 0, 0
+	ownIndex := -1
 	for _, ln := range lines {
 		trim := strings.TrimSpace(ln)
 		if trim == own {
@@ -348,14 +379,28 @@ func ensureDirective(d directive, force bool) error {
 			conflictCount++
 		}
 	}
-	if conflictCount == 0 && ownCount == 1 {
+	for i, ln := range lines {
+		if strings.TrimSpace(ln) == own {
+			ownIndex = i
+			break
+		}
+	}
+	needsMove := d.returnConfig && ownCount == 1 && ownIndex >= returnIndex
+	if needsMove && !directiveOwned(d) {
+		return fmt.Errorf("%w: misplaced directive in %s", ErrUserModified, d.file)
+	}
+	if conflictCount == 0 && ownCount == 1 && !needsMove {
 		return nil
 	}
 	if (conflictCount > 0 || ownCount > 1) && !force {
 		return fmt.Errorf("%w: directive in %s", ErrUserModified, d.file)
 	}
 	if conflictCount == 0 && ownCount == 0 {
-		return writeDirectiveConfig(d.file, directiveContent(b, lines, d))
+		if err := writeDirectiveConfig(d.file, directiveContent(b, lines, d)); err != nil {
+			return err
+		}
+		_ = setDirectiveOwned(d, true)
+		return nil
 	}
 	if force {
 		if err := backupUserFileOnce(d.file, b); err != nil {
@@ -370,13 +415,60 @@ func ensureDirective(d directive, force bool) error {
 		}
 		remaining = append(remaining, ln)
 	}
-	return writeDirectiveConfig(d.file, directiveContent([]byte(strings.Join(remaining, "\n")), remaining, d))
+	if err := writeDirectiveConfig(d.file, directiveContent([]byte(strings.Join(remaining, "\n")), remaining, d)); err != nil {
+		return err
+	}
+	_ = setDirectiveOwned(d, true)
+	return nil
+}
+
+func directiveReturnIndex(lines []string, d directive) (int, error) {
+	if !d.returnConfig {
+		return -1, nil
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		trim := strings.TrimSpace(lines[i])
+		if trim == "" || strings.HasPrefix(trim, "--") {
+			continue
+		}
+		if trim != "return config" {
+			break
+		}
+		return i, nil
+	}
+	return -1, fmt.Errorf("%w: WezTerm config must end with `return config`", ErrUserModified)
+}
+
+func directiveOwnershipKey(d directive) string {
+	return "directive:" + hash([]byte(d.file+"\x00"+strings.TrimSpace(d.line)))
+}
+
+func directiveOwned(d directive) bool {
+	return stateHash(directiveOwnershipKey(d)) == "owned"
+}
+
+func setDirectiveOwned(d directive, owned bool) error {
+	value := ""
+	if owned {
+		value = "owned"
+	}
+	return rememberHash(directiveOwnershipKey(d), value)
 }
 
 func directiveContent(body []byte, lines []string, d directive) []byte {
+	if d.returnConfig {
+		if index, err := directiveReturnIndex(lines, d); err == nil {
+			out := make([]string, 0, len(lines)+1)
+			out = append(out, lines[:index]...)
+			out = append(out, d.line)
+			out = append(out, lines[index:]...)
+			return []byte(strings.Join(out, "\n"))
+		}
+	}
 	if d.top && d.section == "" {
 		for i, ln := range lines {
-			if strings.HasPrefix(strings.TrimSpace(ln), "[") {
+			trim := strings.TrimSpace(ln)
+			if trim == blockOpen || strings.HasPrefix(trim, "[") {
 				out := make([]string, 0, len(lines)+1)
 				out = append(out, lines[:i]...)
 				out = append(out, d.line)
@@ -458,10 +550,13 @@ func writeDirectiveConfig(path string, data []byte) error {
 // RemoveDirective deletes only the exact line sysc-shell wrote; a file
 // left with nothing but blank lines is removed.
 func RemoveDirective(d directive) error {
+	if !directiveOwned(d) {
+		return nil
+	}
 	b, err := os.ReadFile(d.file)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return setDirectiveOwned(d, false)
 		}
 		return err
 	}
@@ -469,19 +564,30 @@ func RemoveDirective(d directive) error {
 	var keep []string
 	removed := false
 	for _, ln := range strings.Split(string(b), "\n") {
-		if strings.TrimSpace(ln) == own {
+		if strings.TrimSpace(ln) == own && !removed {
 			removed = true
 			continue
 		}
 		keep = append(keep, ln)
 	}
 	if !removed {
-		return nil
+		return setDirectiveOwned(d, false)
+	}
+	if err := setDirectiveOwned(d, false); err != nil {
+		return err
 	}
 	if strings.TrimSpace(strings.Join(keep, "\n")) == "" {
-		return os.Remove(d.file)
+		if err := removeOrEmpty(d.file); err != nil {
+			_ = setDirectiveOwned(d, true)
+			return err
+		}
+		return nil
 	}
-	return writeDirectiveConfig(d.file, []byte(strings.Join(keep, "\n")))
+	if err := writeDirectiveConfig(d.file, []byte(strings.Join(keep, "\n"))); err != nil {
+		_ = setDirectiveOwned(d, true)
+		return err
+	}
+	return nil
 }
 
 // ManageBlock writes body between the open and close marker lines,
@@ -596,9 +702,20 @@ func RemoveBlock(file, open, close string, force bool) error {
 	}
 	out := append(append([]string{}, lines[:start]...), lines[end+1:]...)
 	if strings.TrimSpace(strings.Join(out, "\n")) == "" {
-		return os.Remove(file)
+		return removeOrEmpty(file)
 	}
 	return writeDirectiveConfig(file, []byte(strings.Join(out, "\n")))
+}
+
+func removeOrEmpty(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return writeDirectiveConfig(path, nil)
+	}
+	return os.Remove(path)
 }
 
 func managedBlockLines(open, close, body string) []string {

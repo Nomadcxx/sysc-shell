@@ -31,9 +31,9 @@ var completeTemplates = map[string]bool{
 	"alacritty": true, "foot": true, "ghostty": true, "kitty": true,
 	"starship": true, "wezterm": true,
 	// Non-terminal cluster: btop and cava were checked by running them here;
-	// helix, kcolorscheme, qt and scroll are test-only (binaries absent).
+	// helix, kcolorscheme and qt are test-only (binaries absent).
 	"btop": true, "cava": true, "helix": true,
-	"kcolorscheme": true, "qt": true, "scroll": true,
+	"kcolorscheme": true, "qt": true,
 }
 
 func Complete(name string) bool { return completeTemplates[name] }

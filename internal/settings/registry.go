@@ -756,7 +756,7 @@ func (r *Registry) addTemplateEntries() {
 	for _, name := range []string{
 		"alacritty", "foot", "ghostty", "kitty", "wezterm", "niri",
 		"qt", "kcolorscheme", "helix",
-		"btop", "cava", "starship", "scroll",
+		"btop", "cava", "starship",
 	} {
 		// GH #7: only complete templates get a toggle; a stub would brick the
 		// application's config one click away.

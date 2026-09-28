@@ -243,10 +243,10 @@ var templateTargets = map[string]templateTarget{
 		sidecar: func(h string) []string { return []string{joined(h, ".config", "helix", "themes", "sysc-shell.toml")} },
 		directives: func(h string) []directive {
 			return []directive{{
-				file:    joined(h, ".config", "helix", "config.toml"),
-				line:    `theme = "sysc-shell"`,
-				key:     "theme",
-				section: "editor",
+				file: joined(h, ".config", "helix", "config.toml"),
+				line: `theme = "sysc-shell"`,
+				key:  "theme",
+				top:  true,
 			}}
 		},
 	},
@@ -283,19 +283,6 @@ var templateTargets = map[string]templateTarget{
 				section: "General",
 				seed:    "[General]\nColorSchemeName=sysc-shell\n",
 				create:  true,
-			}}
-		},
-	},
-	"scroll": {
-		sidecar: func(h string) []string { return []string{joined(h, ".config", "scroll", "sysc-shell")} },
-		directives: func(h string) []directive {
-			line := "include ~/.config/scroll/sysc-shell"
-			return []directive{{
-				file:   joined(h, ".config", "scroll", "config"),
-				line:   line,
-				key:    "include ",
-				seed:   line + "\n",
-				create: true,
 			}}
 		},
 	},
@@ -339,9 +326,10 @@ var templateTargets = map[string]templateTarget{
 		sidecar: func(h string) []string { return []string{joined(h, ".config", "wezterm", "colors", "sysc-shell.toml")} },
 		directives: func(h string) []directive {
 			return []directive{{
-				file: joined(h, ".config", "wezterm", "wezterm.lua"),
-				line: `config.color_scheme = "sysc-shell"`,
-				key:  "config.color_scheme",
+				file:         joined(h, ".config", "wezterm", "wezterm.lua"),
+				line:         `config.color_scheme = "sysc-shell"`,
+				key:          "config.color_scheme",
+				returnConfig: true,
 			}}
 		},
 	},

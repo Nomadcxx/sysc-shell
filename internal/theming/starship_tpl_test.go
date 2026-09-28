@@ -79,3 +79,32 @@ func TestStarshipManagesPaletteBlockInUserConfig(t *testing.T) {
 		t.Fatalf("disable did not restore user file: %q", b3)
 	}
 }
+
+func TestStarshipKeepsRootDirectiveOutsideManagedBlock(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	home := t.TempDir()
+	markTemplatesComplete(t, "starship")
+	only := func(name string) bool { return name == "starship" }
+
+	if err := applyForTest(home, only, theme.Fallback); err != nil {
+		t.Fatal(err)
+	}
+	cfg := joined(home, ".config", "starship.toml")
+	b, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	if palette, block := strings.Index(s, `palette = "sysc-shell"`), strings.Index(s, blockOpen); palette < 0 || block < 0 || palette > block {
+		t.Fatalf("palette directive must stay outside managed block: %s", s)
+	}
+	if err := applyForTest(home, only, theme.Fallback); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+	if err := applyForTest(home, func(string) bool { return false }, theme.Fallback); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if _, err := os.Stat(cfg); !os.IsNotExist(err) {
+		t.Fatalf("empty managed config survived disable: %v", err)
+	}
+}

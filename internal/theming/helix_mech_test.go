@@ -24,8 +24,10 @@ func TestHelixAppliesSidecarAndThemeDirective(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(conf)
-	if !strings.Contains(string(b), "[editor]\ntheme = \"sysc-shell\"") {
-		t.Fatalf("directive not under [editor]: %q", b)
+	content := string(b)
+	themeAt, editorAt := strings.Index(content, `theme = "sysc-shell"`), strings.Index(content, "[editor]")
+	if themeAt < 0 || editorAt < 0 || themeAt > editorAt {
+		t.Fatalf("theme directive not at the config root: %q", b)
 	}
 	if err := applyForTest(home, func(string) bool { return false }, theme.Fallback); err != nil {
 		t.Fatal(err)
