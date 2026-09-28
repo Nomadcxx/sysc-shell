@@ -20,6 +20,7 @@ const (
 	PanelBluetooth
 	PanelWeather
 	PanelClipboard
+	PanelPluginStore
 )
 
 func (p PanelID) String() string {
@@ -52,6 +53,8 @@ func (p PanelID) String() string {
 		return "weather"
 	case PanelClipboard:
 		return "clipboard"
+	case PanelPluginStore:
+		return "plugin-store"
 	default:
 		return "unknown"
 	}

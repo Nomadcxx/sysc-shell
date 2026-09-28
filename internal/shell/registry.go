@@ -187,9 +187,11 @@ type Registry struct {
 
 	// plugins hosts one process per enabled plugin. Nil until BindPlugins.
 	plugins *pluginHost
-	// pluginStore runs the plugin store's own goroutine. Nil until
-	// BindPluginStore. Named to avoid shadowing the store package.
-	pluginStore *store.Store
+	// pluginStore runs its own goroutine. Tree builders read only this immutable
+	// snapshot; Store.State is never called while Registry.mu is held.
+	pluginStore         *store.Store
+	pluginStoreSnapshot store.State
+	pluginStoreReadmes  map[string]string
 
 	// notifyCh carries client messages; main pumps it. Nil in tests that drive
 	// applyNotify directly.

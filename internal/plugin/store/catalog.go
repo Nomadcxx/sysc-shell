@@ -18,7 +18,9 @@ const (
 type Resolution struct {
 	// Release is nil when nothing is installable.
 	Release *catalog.Release
-	Compat  Compat
+	// AssetKey is the host architecture's key in Release.Assets.
+	AssetKey string
+	Compat   Compat
 	// Needs is the newest release's protocol, which the manager names when
 	// the row is held back or incompatible.
 	Needs v1.Version
@@ -49,7 +51,7 @@ func Resolve(e catalog.Entry, arch string) Resolution {
 			best = r
 		}
 	}
-	res := Resolution{Release: best, Needs: e.Protocol}
+	res := Resolution{Release: best, AssetKey: key, Needs: e.Protocol}
 	switch {
 	case best == nil:
 		res.Compat = Incompatible

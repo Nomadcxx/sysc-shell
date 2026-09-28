@@ -224,6 +224,27 @@ type PanelHost struct {
 	// wallpaperThemeErr mirrors Registry.themeErr for the picker's banners.
 	wallpaperThemeErr string
 
+	pluginManagerTab            string
+	pluginManagerSourceWarning  bool
+	pluginManagerRemoveConfirm  string
+	pluginManagerError          string
+	pluginManagerExpanded       map[string]bool
+	pluginUpdateAllNeedsConsent []string
+	pluginStoreReviewKey        string
+
+	pluginStoreQuery         BrowseQuery
+	pluginStoreSelected      string
+	pluginStoreDetail        string
+	pluginStoreConsent       *pluginStorePinnedConsent
+	pluginStoreRemoveConfirm bool
+	pluginStoreDetailErr     string
+	pluginStoreDetailScroll  int
+	pluginStoreScroll        int
+	pluginStoreColumns       int
+	pluginStoreRowHeight     int
+	pluginStoreGridHeight    int
+	pluginStoreConfigured    bool
+
 	notifyFilter string
 	notifyExpand string
 	notifyMenu   bool
@@ -290,6 +311,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelWeather, nil
 	case "clipboard":
 		return PanelClipboard, nil
+	case "plugin-store":
+		return PanelPluginStore, nil
 	default:
 		return 0, fmt.Errorf("unknown panel")
 	}
@@ -578,6 +601,9 @@ func (r *Registry) closePanelLocked(id PanelID) {
 	}
 	r.panels.Close(id)
 	r.teardownPanelLocked(id)
+	if id == PanelPluginStore && r.pluginStore != nil {
+		r.pluginStore.Want(nil)
+	}
 	if id == PanelPlugin && r.plugins != nil {
 		ids := r.plugins.snapshotPanelViewIDs()
 		go r.plugins.dropPanelViews(ids)
@@ -717,7 +743,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		size = settingsPanelSize(outW, outH)
 	}
 	gap := r.cfg.Panels.Gap
-	if id == PanelPlugin || id == PanelAudio || id == PanelControlCenter {
+	if id == PanelPlugin || id == PanelAudio || id == PanelControlCenter || id == PanelPluginStore {
 		gap = 0
 	}
 	place := Placement{
@@ -740,9 +766,9 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		bt := bar.themeSnapshot()
 		place.BarShape, place.BarGap, place.BarRadius, place.Fillet = bt.BarShape, bt.BarGap, bt.Radius, bt.Fillet
 	}
-	// Settings, the launcher and the clipboard float over the desktop; every
+	// Settings, the launcher, the clipboard and the plugin store float over the desktop; every
 	// other panel attaches to the bar.
-	if id == PanelLauncher || id == PanelSettings || id == PanelClipboard {
+	if id == PanelLauncher || id == PanelSettings || id == PanelClipboard || id == PanelPluginStore {
 		place.CenterY = true
 	}
 	if _, hasBar := r.bars[output]; !place.CenterY && (!hasBar || r.panelThemeFor(output).BarStyle == "islands") {
@@ -752,13 +778,17 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 			place.BarZone = 0
 		}
 	}
-	if id == PanelClipboard {
-		// Clipboard history is a true modal: centre it against the whole output,
+	if id == PanelClipboard || id == PanelPluginStore {
+		// These surfaces are true modals: centre them against the whole output,
 		// not the bar-free region used by attached/floating pickers.
 		place.BarZone = 0
 		place.Gap = 0
 		place.CenterY = true
 		place.Align = "center"
+	}
+	if id == PanelPluginStore {
+		w, hgt := place.FittedSize()
+		place.Panel.W, place.Panel.H = w, hgt
 	}
 
 	// Tuck an attached panel one pixel under an opaque bar. Over a
@@ -791,6 +821,11 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		h.search = ui.NewField("")
 		h.menus = map[string]*Menu{}
 		h.fields = map[string]*ui.Field{}
+	}
+	if id == PanelPluginStore {
+		h.search = ui.NewField("")
+		h.pluginStoreQuery.Sort = SortName
+		h.menus = map[string]*Menu{}
 	}
 	if id == PanelLauncher {
 		h.search = ui.NewField("")
@@ -857,6 +892,9 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	}
 	if id == PanelClipboard {
 		h.focusByName("Search")
+	}
+	if id == PanelPluginStore {
+		h.focusPluginStoreSelection()
 	}
 	w, hgt := h.place.FittedSize()
 	h.place.Panel.W, h.place.Panel.H = w, hgt
@@ -1291,15 +1329,45 @@ func (h *PanelHost) renderLocking(r *Registry) func([]byte, int, int, int) error
 }
 
 func (h *PanelHost) configure(w, height, scale120 int) error {
+	var focusKey, focusName string
+	var focusKind ui.Kind
+	if h.id == PanelPluginStore && h.pluginStoreConfigured {
+		if focused := h.focused(); focused != nil {
+			focusKey, focusName, focusKind = focused.StableKey(), focused.Name, focused.Kind
+		}
+	}
 	h.logicalW, h.logicalH, h.scale120 = w, height, scale120
 	if err := h.ensureText(); err != nil {
 		return err
 	}
 	box := h.surfaceBody(w, height)
+	var err error
 	if h.root != nil && h.root.Kind == ui.KindRow {
-		return ui.Layout(h.root, box, h.measureText())
+		err = ui.Layout(h.root, box, h.measureText())
+	} else {
+		err = ui.LayoutColumn(h.root, box, h.measureText())
 	}
-	return ui.LayoutColumn(h.root, box, h.measureText())
+	if err != nil || h.id != PanelPluginStore {
+		return err
+	}
+	h.focus = ui.Focusables(h.root)
+	h.roving.Count = len(h.focus)
+	if !h.pluginStoreConfigured {
+		h.pluginStoreConfigured = true
+		h.focusPluginStoreSelection()
+		return nil
+	}
+	for i, n := range h.focus {
+		if n == nil {
+			continue
+		}
+		if focusKey != "" && n.StableKey() == focusKey || focusKey == "" && focusName != "" && n.Kind == focusKind && n.Name == focusName {
+			h.roving.Set(i)
+			return nil
+		}
+	}
+	h.focusPluginStoreSelection()
+	return nil
 }
 
 func (h *PanelHost) measureText() ui.MeasureText {
@@ -1664,6 +1732,8 @@ func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) bool {
 		if !h.menu.Opened() && key != keyEsc {
 			if h.id == PanelLauncher {
 				h.applyLauncherMenu(r)
+			} else if h.id == PanelPluginStore && h.menuPath == "plugin-store-category" {
+				h.applyPluginStoreCategory(r)
 			} else if strings.HasPrefix(h.menuPath, "plugin-set:") {
 				_ = r.handlePluginManager(h, &ui.Node{
 					Kind: ui.KindMenu, Action: h.menuPath, Text: h.menu.Value(),
@@ -1685,6 +1755,9 @@ func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) bool {
 		return true
 	}
 	if res, focused := h.fieldKey(r, k); focused && res.Handled && !res.Submit {
+		return true
+	}
+	if h.id == PanelPluginStore && h.pluginStoreKeyPress(r, key) {
 		return true
 	}
 	if h.id == PanelWallpaper && h.wallpaperKeyPress(r, key) {
@@ -1836,6 +1909,9 @@ func (h *PanelHost) scrollBy(delta int) bool {
 		return false
 	}
 	ui.ScrollBy(s, delta)
+	if h.id == PanelPluginStore && h.pluginStoreDetail != "" {
+		h.pluginStoreDetailScroll = s.ScrollOffset
+	}
 	if h.id == PanelLauncher {
 		h.launcherScroll = s.ScrollOffset
 	}
@@ -1852,6 +1928,9 @@ func (h *PanelHost) scrollTo(off int) bool {
 	}
 	s.ScrollOffset = off
 	ui.ScrollBy(s, 0)
+	if h.id == PanelPluginStore && h.pluginStoreDetail != "" {
+		h.pluginStoreDetailScroll = s.ScrollOffset
+	}
 	if h.logicalW > 0 {
 		_ = h.configure(h.logicalW, h.logicalH, h.scale120)
 	}
@@ -2026,6 +2105,10 @@ func (h *PanelHost) fieldChanged(r *Registry, n *ui.Node, f *ui.Field) bool {
 	}
 	if n.Name == "Search" {
 		h.query = f.Text
+		if h.id == PanelPluginStore {
+			h.pluginStoreQuery.Text = f.Text
+			h.pluginStoreScroll = 0
+		}
 		if h.id == PanelLauncher {
 			// A failed activation's error answers that attempt, not the
 			// search the user has moved on to.
@@ -2221,6 +2304,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	}
 	if h.id == PanelClipboard {
 		return h.activateClipboard(r, n)
+	}
+	if h.id == PanelPluginStore {
+		return h.activatePluginStore(r, n)
 	}
 	switch n.Action {
 	case "plugin-close", "plugin-retry", "plugin-disable":
@@ -2585,8 +2671,14 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 		}
 	}
 	focusedKey := ""
-	if h.id == PanelClipboard {
-		focusedKey = h.focused().StableKey()
+	focusedName := ""
+	focusedKind := ui.Kind(0)
+	if h.id == PanelClipboard || h.id == PanelPluginStore {
+		if focused := h.focused(); focused != nil {
+			focusedKey = focused.StableKey()
+			focusedName = focused.Name
+			focusedKind = focused.Kind
+		}
 	}
 	h.root = r.panelTree(h)
 	if h.id == PanelPlugin {
@@ -2605,13 +2697,27 @@ func (r *Registry) rebuildPanel(h *PanelHost) {
 	h.focus = ui.Focusables(h.root)
 	h.roving.Count = len(h.focus)
 	h.roving.Set(idx)
+	restoredFocus := false
 	if focusedKey != "" {
 		for i, n := range h.focus {
 			if n != nil && n.StableKey() == focusedKey {
 				h.roving.Set(i)
+				restoredFocus = true
 				break
 			}
 		}
+	}
+	if h.id == PanelPluginStore && !restoredFocus && focusedKey == "" && focusedName != "" {
+		for i, n := range h.focus {
+			if n != nil && n.Kind == focusedKind && n.Name == focusedName {
+				h.roving.Set(i)
+				restoredFocus = true
+				break
+			}
+		}
+	}
+	if h.id == PanelPluginStore && !restoredFocus {
+		h.focusPluginStoreSelection()
 	}
 	if h.id == PanelNotifications {
 		r.syncNotificationsSize(h)
@@ -2691,6 +2797,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		return launcherTree(r, h)
 	case PanelWallpaper:
 		return wallpaperTree(r, h)
+	case PanelPluginStore:
+		return pluginStoreTree(r, h)
 	case PanelPlugin:
 		if r.plugins != nil {
 			return r.plugins.panelTree(h)
@@ -2757,6 +2865,8 @@ func panelTargetSize(id PanelID) ui.Rect {
 		return ui.Rect{W: 460, H: 560}
 	case PanelClipboard:
 		return ui.Rect{W: 720, H: 560}
+	case PanelPluginStore:
+		return ui.Rect{W: 1280, H: 820}
 	default:
 		return ui.Rect{W: 280, H: 200}
 	}

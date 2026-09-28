@@ -13,8 +13,10 @@ import (
 // the registry answers what it asks (enabled sources, local copies) and lends
 // it the plugin host to swap directories under.
 func (r *Registry) BindPluginStore(s *store.Store) {
+	snapshot := s.State()
 	r.mu.Lock()
 	r.pluginStore = s
+	r.pluginStoreSnapshot = snapshot
 	r.mu.Unlock()
 }
 
@@ -70,6 +72,8 @@ func (r *Registry) PluginStoreCall(method string, params json.RawMessage) (map[s
 	var p struct {
 		Source  string `json:"source"`
 		ID      string `json:"id"`
+		Version string `json:"version"`
+		SHA256  string `json:"sha256"`
 		Confirm bool   `json:"confirm"`
 	}
 	if len(params) > 0 {
@@ -84,9 +88,9 @@ func (r *Registry) PluginStoreCall(method string, params json.RawMessage) (map[s
 	case "plugins.refresh":
 		_, err = s.Refresh()
 	case "plugins.install":
-		_, err = s.Install(p.Source, p.ID)
+		_, err = s.Install(p.Source, p.ID, store.ReleaseRef{Version: p.Version, SHA256: p.SHA256})
 	case "plugins.update":
-		_, err = s.Update(p.ID, p.Confirm)
+		_, err = s.Update(p.ID, store.ReleaseRef{Version: p.Version, SHA256: p.SHA256}, p.Confirm)
 	case "plugins.rollback":
 		_, err = s.Rollback(p.ID)
 	case "plugins.remove":
@@ -119,7 +123,7 @@ func storeStateReply(st store.State) map[string]any {
 	for _, l := range st.Listings {
 		row := map[string]any{
 			"source": l.Source, "id": l.Entry.ID, "name": l.Entry.Name, "status": string(l.Status),
-			"local_dir": l.LocalDir, "error": errText(l.Err),
+			"local_dir": l.LocalDir, "error": errText(l.Err), "update_available": l.UpdateAvailable,
 		}
 		if l.Resolution.Release != nil {
 			row["version"] = l.Resolution.Release.Version
