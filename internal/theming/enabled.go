@@ -93,41 +93,8 @@ func applyOnce(home string, enabled func(string) bool, tok theme.Tokens, force f
 				continue
 			}
 			record(name, applyNiri(cfg, gen, rendered, forceOn(name)))
-		case "gtk3", "gtk4":
-			ini := filepath.Join(home, ".config", "gtk-3.0", "settings.ini")
-			css := filepath.Join(home, ".themes", "sysc-shell-Dark", "gtk-3.0", "gtk.css")
-			if name == "gtk4" {
-				ini = filepath.Join(home, ".config", "gtk-4.0", "settings.ini")
-				css = filepath.Join(home, ".themes", "sysc-shell-Dark", "gtk-4.0", "gtk.css")
-			}
-			if !on {
-				record(name, UnapplyWrite(css))
-				record(name, UnapplyGtkThemeName(ini))
-				continue
-			}
-			// Pointing gtk-theme-name at a css the shell refused to write
-			// would half-apply the theme: skip the ini when the css fails.
-			if err := applyWrite(css, rendered, forceOn(name)); err != nil {
-				record(name, err)
-				continue
-			}
-			record(name, ApplyGtkThemeName(ini, gtkOurs))
 		default:
-			target := writeTarget(home, name)
-			if target == "" {
-				continue
-			}
-			if !on {
-				record(name, UnapplyWrite(target))
-				continue
-			}
-			if err := applyWrite(target, rendered, forceOn(name)); err != nil {
-				record(name, err)
-				continue
-			}
-			if name == "kitty" {
-				record(name, signalKitty(procRoot))
-			}
+			record(name, applyTemplateTarget(name, home, on, rendered, forceOn(name)))
 		}
 	}
 	return outcomes, first
@@ -145,22 +112,6 @@ func writeTarget(home, name string) string {
 		return filepath.Join(home, ".config", "kitty", "kitty.conf")
 	case "wezterm":
 		return filepath.Join(home, ".config", "wezterm", "wezterm.lua")
-	case "qt":
-		return filepath.Join(home, ".config", "qt5ct", "colors", "sysc-shell.conf")
-	case "kcolorscheme":
-		return filepath.Join(home, ".local", "share", "color-schemes", "sysc-shell.colors")
-	case "emacs":
-		return filepath.Join(home, ".emacs.d", "sysc-shell-theme.el")
-	case "helix":
-		return filepath.Join(home, ".config", "helix", "themes", "sysc-shell.toml")
-	case "btop":
-		return filepath.Join(home, ".config", "btop", "themes", "sysc-shell.theme")
-	case "cava":
-		return filepath.Join(home, ".config", "cava", "config")
-	case "starship":
-		return filepath.Join(home, ".config", "starship.toml")
-	case "scroll":
-		return filepath.Join(home, ".config", "scroll", "config")
 	default:
 		return ""
 	}
@@ -206,4 +157,244 @@ func signalKitty(root string) error {
 		}
 	}
 	return first
+}
+
+// templateTarget is the sidecar+directive model for one application: we own
+// a generated file, and manage exactly one include-ish line in the user's
+// real config. Names not in the table still use the guarded whole-file path
+// until their port task adds a row.
+//
+// ponytail: directive matching uses the target's key prefix rather than an
+// app-config parser; add format-aware parsing only when a supported target
+// needs syntax beyond one managed line in a named section.
+// block applications get no sidecar: the rendered body is managed in place
+// between marker lines inside the user's own config file.
+type templateTarget struct {
+	sidecar    func(home string) []string
+	directives func(home string) []directive
+	signal     func(root string) error
+	block      func(home string) (file, open, close string)
+}
+
+const (
+	blockOpen  = "# >>> sysc-shell >>>"
+	blockClose = "# <<< sysc-shell <<<"
+)
+
+func joined(home string, elems ...string) string {
+	return filepath.Join(append([]string{home}, elems...)...)
+}
+
+var templateTargets = map[string]templateTarget{
+	"alacritty": {
+		sidecar: func(h string) []string {
+			return []string{joined(h, ".config", "alacritty", "themes", "sysc-shell.toml")}
+		},
+		directives: func(h string) []directive {
+			p := joined(h, ".config", "alacritty", "themes", "sysc-shell.toml")
+			return []directive{{
+				file:    joined(h, ".config", "alacritty", "alacritty.toml"),
+				line:    `import = ["` + p + `"]`,
+				key:     "import",
+				section: "general",
+				seed:    "[general]\n" + `import = ["` + p + `"]` + "\n",
+				create:  true,
+			}}
+		},
+	},
+	"foot": {
+		sidecar: func(h string) []string { return []string{joined(h, ".config", "foot", "themes", "sysc-shell")} },
+		directives: func(h string) []directive {
+			line := "include=~/.config/foot/themes/sysc-shell"
+			return []directive{{
+				file:    joined(h, ".config", "foot", "foot.ini"),
+				line:    line,
+				key:     "include=",
+				section: "main",
+				seed:    "[main]\n" + line + "\n",
+				create:  true,
+			}}
+		},
+	},
+	"ghostty": {
+		sidecar: func(h string) []string { return []string{joined(h, ".config", "ghostty", "themes", "sysc-shell")} },
+		directives: func(h string) []directive {
+			return []directive{{
+				file:   joined(h, ".config", "ghostty", "config"),
+				line:   "theme = sysc-shell",
+				key:    "theme",
+				create: true,
+			}}
+		},
+	},
+	"kitty": {
+		sidecar: func(h string) []string { return []string{joined(h, ".config", "kitty", "themes", "sysc-shell.conf")} },
+		directives: func(h string) []directive {
+			return []directive{{
+				file:   joined(h, ".config", "kitty", "kitty.conf"),
+				line:   "include themes/sysc-shell.conf",
+				key:    "include",
+				create: true,
+			}}
+		},
+		signal: signalKitty,
+	},
+	"helix": {
+		sidecar: func(h string) []string { return []string{joined(h, ".config", "helix", "themes", "sysc-shell.toml")} },
+		directives: func(h string) []directive {
+			return []directive{{
+				file: joined(h, ".config", "helix", "config.toml"),
+				line: `theme = "sysc-shell"`,
+				key:  "theme",
+				top:  true,
+			}}
+		},
+	},
+	"cava": {
+		sidecar: func(h string) []string { return []string{joined(h, ".config", "cava", "themes", "sysc-shell")} },
+		directives: func(h string) []directive {
+			return []directive{{
+				file:    joined(h, ".config", "cava", "config"),
+				line:    `theme = "sysc-shell"`,
+				key:     "theme",
+				section: "color",
+			}}
+		},
+	},
+	"btop": {
+		sidecar: func(h string) []string { return []string{joined(h, ".config", "btop", "themes", "sysc-shell.theme")} },
+		directives: func(h string) []directive {
+			return []directive{{
+				file: joined(h, ".config", "btop", "btop.conf"),
+				line: `color_theme = "sysc-shell"`,
+				key:  "color_theme",
+			}}
+		},
+	},
+	"kcolorscheme": {
+		sidecar: func(h string) []string {
+			return []string{joined(h, ".local", "share", "color-schemes", "sysc-shell.colors")}
+		},
+		directives: func(h string) []directive {
+			return []directive{{
+				file:    joined(h, ".config", "kdeglobals"),
+				line:    "ColorSchemeName=sysc-shell",
+				key:     "ColorSchemeName",
+				section: "General",
+				seed:    "[General]\nColorSchemeName=sysc-shell\n",
+				create:  true,
+			}}
+		},
+	},
+	"starship": {
+		block: func(h string) (string, string, string) {
+			return joined(h, ".config", "starship.toml"), blockOpen, blockClose
+		},
+		directives: func(h string) []directive {
+			return []directive{{
+				file:   joined(h, ".config", "starship.toml"),
+				line:   `palette = "sysc-shell"`,
+				key:    "palette",
+				top:    true,
+				create: true,
+			}}
+		},
+	},
+	"qt": {
+		sidecar: func(h string) []string {
+			return []string{
+				joined(h, ".config", "qt5ct", "colors", "sysc-shell.conf"),
+				joined(h, ".config", "qt6ct", "colors", "sysc-shell.conf"),
+			}
+		},
+		directives: func(h string) []directive {
+			mk := func(ct, path string) directive {
+				return directive{
+					file:    joined(h, ".config", ct, ct+".conf"),
+					line:    "color_scheme_path=" + path,
+					key:     "color_scheme_path",
+					section: "General",
+				}
+			}
+			return []directive{
+				mk("qt5ct", joined(h, ".config", "qt5ct", "colors", "sysc-shell.conf")),
+				mk("qt6ct", joined(h, ".config", "qt6ct", "colors", "sysc-shell.conf")),
+			}
+		},
+	},
+	"wezterm": {
+		sidecar: func(h string) []string { return []string{joined(h, ".config", "wezterm", "colors", "sysc-shell.toml")} },
+		directives: func(h string) []directive {
+			return []directive{{
+				file:         joined(h, ".config", "wezterm", "wezterm.lua"),
+				line:         `config.color_scheme = "sysc-shell"`,
+				key:          "config.color_scheme",
+				returnConfig: true,
+			}}
+		},
+	},
+}
+
+// applyTemplateTarget is the per-app dispatch: sidecar+directive for table
+// members, and a guarded whole-file write for the rest.
+func applyTemplateTarget(name, home string, on bool, rendered string, force bool) error {
+	tgt, known := templateTargets[name]
+	if !known {
+		target := writeTarget(home, name)
+		if target == "" {
+			return nil
+		}
+		if on {
+			return applyWrite(target, rendered, force)
+		}
+		return UnapplyWrite(target)
+	}
+	if tgt.block != nil {
+		file, open, close := tgt.block(home)
+		if on {
+			if err := ManageBlock(file, open, close, rendered, force); err != nil {
+				return err
+			}
+			for _, dir := range tgt.directives(home) {
+				if err := ensureDirective(dir, force); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		for _, dir := range tgt.directives(home) {
+			if err := RemoveDirective(dir); err != nil {
+				return err
+			}
+		}
+		return RemoveBlock(file, open, close, force)
+	}
+	sidecars := tgt.sidecar(home)
+	if on {
+		for _, sidecar := range sidecars {
+			if err := applySidecar(sidecar, rendered, force); err != nil {
+				return err
+			}
+		}
+		for _, dir := range tgt.directives(home) {
+			if err := ensureDirective(dir, force); err != nil {
+				return err
+			}
+		}
+		if tgt.signal != nil {
+			return tgt.signal(procRoot)
+		}
+		return nil
+	}
+	for _, dir := range tgt.directives(home) {
+		if err := RemoveDirective(dir); err != nil {
+			return err
+		}
+	}
+	for _, sidecar := range sidecars {
+		if err := UnapplyWrite(sidecar); err != nil {
+			return err
+		}
+	}
+	return nil
 }
