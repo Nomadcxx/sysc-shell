@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -41,6 +42,13 @@ func HelperServe(args []string) int {
 	mode := ""
 	if len(args) > 0 {
 		mode = args[0]
+	}
+	// crash-once:<marker> dies on the first view.open and serves normally
+	// afterwards: the shape of a respawn a host must reopen its views against.
+	crashOnce := ""
+	if p, ok := strings.CutPrefix(mode, "crash-once:"); ok {
+		crashOnce = p
+		mode = "ok"
 	}
 	out := v1.NewEncoder(os.Stdout)
 	in := v1.NewDecoder(os.Stdin, v1.ToPlugin)
@@ -118,6 +126,12 @@ func HelperServe(args []string) int {
 		case *v1.HostShutdown:
 			return 0
 		case *v1.ViewOpen:
+			if crashOnce != "" {
+				if _, err := os.Stat(crashOnce); errors.Is(err, os.ErrNotExist) {
+					_ = os.WriteFile(crashOnce, nil, 0o600)
+					return 4
+				}
+			}
 			if mode == "bad-view" && m.View == v1.ViewBar {
 				_ = out.Encode(&v1.ViewSnapshot{ViewID: m.ViewID, Revision: 1,
 					Root: &v1.Node{Kind: v1.KindText, Text: "hello"}})

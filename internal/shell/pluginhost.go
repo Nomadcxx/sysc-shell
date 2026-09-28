@@ -231,9 +231,10 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 		return fmt.Errorf("plugin %s is not installed", id)
 	}
 	rt := plugin.NewRuntime(c, plugin.RuntimeOptions{
-		Supported:    hostPluginCaps,
-		Limits:       v1.DefaultLimits,
-		SessionEnded: func() { h.clearWallpaperMasks(id) },
+		Supported:      hostPluginCaps,
+		Limits:         v1.DefaultLimits,
+		SessionEnded:   func() { h.clearWallpaperMasks(id) },
+		SessionStarted: func() { h.reopenViews(id) },
 	})
 	stateDir := h.opts.StateDir
 	if stateDir == "" {
@@ -683,6 +684,29 @@ func (h *pluginHost) announceView(spec hostedView, slot *pluginSlot, registryHel
 	}
 	if inst != nil {
 		_ = slot.rt.Send(&v1.SettingsChanged{Scope: v1.ScopeInstance, Instance: spec.Instance, Values: inst})
+	}
+}
+
+// reopenViews re-announces the shell's views to a freshly started process
+// (sysc-456). Without it a respawned plugin never learns its view ids and
+// the bar keeps rendering the dead process's last tree. It runs from the
+// runtime's start paths, never under h.mu or Registry.mu. A view closed
+// between the copy and the send just gets an unknown-id snapshot dropped.
+func (h *pluginHost) reopenViews(pluginID string) {
+	h.mu.Lock()
+	slot := h.slots[pluginID]
+	var specs []hostedView
+	for _, v := range h.views {
+		if v.Plugin == pluginID {
+			specs = append(specs, *v)
+		}
+	}
+	h.mu.Unlock()
+	if slot == nil {
+		return
+	}
+	for _, spec := range specs {
+		h.announceView(spec, slot, false)
 	}
 }
 

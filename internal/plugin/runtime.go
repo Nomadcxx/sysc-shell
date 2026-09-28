@@ -70,6 +70,12 @@ type RuntimeOptions struct {
 	// SessionEnded runs once after a live helper session ends, before any
 	// automatic restart. Stop invokes it when it closes a live session.
 	SessionEnded func()
+	// SessionStarted runs after every successful launch, with the new
+	// session live and no lock held. A started process knows nothing about
+	// the views the host still holds, so on a restart the host must
+	// re-announce them; on a first start there are none and the host does
+	// nothing.
+	SessionStarted func()
 	// Now is the clock, injected so restart policy is testable without
 	// waiting out a sixty-second window.
 	Now func() time.Time
@@ -267,6 +273,9 @@ func (r *Runtime) launch(ctx context.Context) error {
 	r.mu.Unlock()
 
 	r.setState(StateRunning, "")
+	if r.opts.SessionStarted != nil {
+		r.opts.SessionStarted()
+	}
 	go r.supervise(ctx, sessionCtx, cancelSession, sess, generation)
 	return nil
 }

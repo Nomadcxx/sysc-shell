@@ -1433,3 +1433,30 @@ func TestPluginPanelGlidesAnAnimatedValue(t *testing.T) {
 	}
 	t.Fatal("animated value never landed on 0.8")
 }
+
+func TestPluginBarRecoversAfterACrashRestart(t *testing.T) {
+	// sysc-456: a respawned process knows nothing about the shell's views
+	// unless the host re-sends view.open; without that the bar keeps the
+	// dead process's last tree forever.
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	dir := filepath.Join(root, "org.sysc.timer")
+	marker := filepath.Join(t.TempDir(), "first-process-crashed")
+	if _, err := plugin.WriteHelperPlugin(dir, self, "crash-once:"+marker, testTimerManifest); err != nil {
+		t.Fatal(err)
+	}
+	cfg := pluginConfig(root)
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	if err := reg.BindPlugins(PluginHostOptions{
+		Roots:    []plugin.Root{{Path: root, Source: plugin.SourceUser}},
+		StateDir: t.TempDir(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	waitPluginText(t, reg.bars[1], "hello")
+}
