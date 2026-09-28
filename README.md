@@ -1,124 +1,149 @@
 # sysc-shell
 
-`sysc-shell` is a Go-first native Wayland desktop shell for Niri: one bar per output, panels, OSDs,
-notifications, a system tray, a launcher, and a plugin host. It does not depend on Qt, QML,
-Quickshell, C++, Rust, Lua, or Luau.
+A desktop shell for [Niri](https://github.com/YaLTeR/niri), written in Go. Bars, panels, a launcher,
+notifications, a system tray, clipboard history and plugins, drawn straight to Wayland with no Qt,
+QML, GTK or Quickshell underneath.
 
-Work is tracked in `bd`. Designs and plans are registered in
-[`docs/plans/README.md`](docs/plans/README.md). The milestone sequence is [`docs/roadmap.md`](docs/roadmap.md).
-Niri setup for the frosted bar and blurred panels is in [`docs/niri-blur.md`](docs/niri-blur.md).
+## Features
 
-## Consumed modules
+- **Bars**: one per output, with workspaces, window title, clock, weather, CPU, memory, temperature,
+  GPU, disk, network, battery and the system tray
+- **Launcher**: fuzzy app search that learns what you open, desktop actions, a calculator and emoji
+- **Control centre**: network, Bluetooth, audio, media players, weather and a calendar in one panel
+- **Notifications**: popups and a history centre, fed by [sysc-notify](https://github.com/Nomadcxx/sysc-notify)
+- **Clipboard**: browse, restore and pin history kept by [sysc-clipboard](https://github.com/Nomadcxx/sysc-clipboard)
+- **System monitor**: live gauges, and a process view grouped by application
+- **Session panel**: log out, suspend, reboot and power off, with battery status and power profiles
+- **OSD**: volume and brightness
+- **Theming**: Material 3 colours from your wallpaper through matugen, applied to the shell and, with
+  templates, to your other apps
+- **Wallpaper**: set it from the shell with awww, swaybg or gSlapper
+- **Frosted glass**: blurred bars and panels on Niri 26.04 and later
+- **Plugins**: a plugin manager and store. The official plugins live in
+  [sysc-plugins](https://github.com/Nomadcxx/sysc-plugins)
 
-Pins are in `go.mod`. This process does not vendor those trees; it imports the tagged modules.
-
-| Module | Pin | Role |
-|---|---|---|
-| [`sysc-wayland`](https://github.com/Nomadcxx/sysc-wayland) | `v0.2.2` | Pure-Go Wayland client and protocol generator. |
-| [`sysc-metrics`](https://github.com/Nomadcxx/sysc-metrics) | `v0.7.0` | Linux telemetry for built-in monitoring widgets and the on-demand process view, including validated NVIDIA GPU VRAM parsing and unprivileged GPU usage from DRM client fdinfo (Intel without `CAP_PERFMON`). |
-| [`sysc-notify`](https://github.com/Nomadcxx/sysc-notify) | `v0.1.0-rc.4` | Freedesktop Notifications daemon. Separate process; this shell dials `$XDG_RUNTIME_DIR/sysc-notify/presenter.v1.sock`. Binary is `cmd/sysc-notify` on the tag (`redesign/v0.1`). That repo's `main` is still docs-only. |
-| [`sysc-tray`](https://github.com/Nomadcxx/sysc-tray) | `v0.1.0-rc.1` | StatusNotifierItem and DBusMenu daemon. Separate process; this shell dials `$XDG_RUNTIME_DIR/sysc-tray/presenter.v1.sock`. Binary is `cmd/sysc-tray` on the tag. Same `main` gap as notify. |
-| [`sysc-launch`](https://github.com/Nomadcxx/sysc-launch) | `v0.1.0` | Desktop-entry scan, fzf ranking, usage history, and Niri spawn. **Library plus a one-shot CLI** (`query` / `launch`), not a daemon. This shell constructs `launcher.NewService` in-process. Ranking history stays at `$XDG_STATE_HOME/sysc-shell/launcher/history.gob` so it does not merge with the module default. Clone: `/home/nomadx/sysc-launch`. |
-| [`oksvg`](https://github.com/srwiley/oksvg) + [`rasterx`](https://github.com/srwiley/rasterx) | `v0.0.0-20221011165216-be6e8873101c` / `v0.0.0-20220730225603-2ab79fcdd4ef` | Pure-Go SVG rasterisation for theme icons (design D1). Upstream tags no releases; the pins are the proxy `@latest` pseudo-versions, resolved 2026-09-27. |
-
-`replace` directives are forbidden. `git diff --exit-code -- go.mod go.sum` is part of the commit gate.
-
-Local clones of notify and tray at `/home/nomadx/sysc-notify` and `/home/nomadx/sysc-tray` follow
-those repos' default branch. Checking them out on `main` is not what this module compiles.
-
-## Intel i915 GPU usage
-
-Intel i915 reports utilization through PMU engine-busy counters. A shell build that displays Intel
-usage must pin `sysc-metrics` to `v0.5.1` or newer and let its metrics service own one stateful
-`GPUSampler`. `ReadGPU` supplies Intel identity and temperature, but it cannot produce Intel
-utilization. The sampler needs two samples: the first establishes a baseline and the second can
-report usage. A valid `0%` means the GPU is idle. Without permission, identity and temperature
-remain available while usage stays unavailable.
-
-On the tested Intel laptop, opening the system-wide i915 counters requires `CAP_PERFMON` on the
-shell process. `CAP_SYS_ADMIN` also satisfies the kernel gate but grants broader privilege. Lowering
-`kernel.perf_event_paranoid` alone did not enable these counters. Apply the file capability again
-after every replacement of the installed binary:
-
-```sh
-sudo setcap cap_perfmon+ep /home/nomadx/.local/bin/sysc-shell
-getcap /home/nomadx/.local/bin/sysc-shell
-systemctl --user restart sysc-shell.service
-systemctl --user is-active sysc-shell.service
-```
-
-The expected `getcap` result contains `cap_perfmon=ep`. The implementation covers the Linux
-`i915` driver. The newer `xe` driver needs a separate driver-specific qualification.
-
-## Existing bar configurations
-
-The built-in default groups CPU, memory, temperature, and GPU as radial gauges. Existing JSON
-configs keep their stored display mode, so an older config can show the legacy text or meter
-widgets even while GPU telemetry works. Set `"display": "radial"` on each metric item that should
-use the grouped gauges:
+Only Niri is supported. There is no lock screen built in. The session panel shows a Lock button once
+you tell it which locker to run:
 
 ```json
-[
-  {"id":"cpu","display":"radial"},
-  {"id":"memory","display":"radial"},
-  {"id":"temperature","display":"radial"},
-  {"id":"gpu","display":"radial"}
-]
+{ "session": { "locker": "swaylock -f" } }
 ```
 
-Back up `~/.config/sysc-shell/config.json` before editing it, then restart the user service.
+## Installation
 
-## Scope
+**Requires:** Go 1.26.4+ and Niri, started as a session (`niri-session`, which is what display managers
+run) so systemd knows about your graphical session.
 
-Shipped: a bar on each output; clock, workspace, title, CPU, memory, filesystem, block, network,
-battery, and weather widgets; panels (clock, system-monitor, session, settings, launcher); OSD;
-notification and tray presentation against the protocol packages; theme generation and a template
-catalog.
+**Optional:** `matugen` for wallpaper colours, `awww`, `swaybg` or `gSlapper` for wallpapers, and
+`wl-clipboard`.
 
-Excluded: a lock screen, a compositor, Noctalia or DMS configuration/plugin/QML compatibility, and
-compositors other than Niri.
+### Build from Source
 
-## Technology direction
-
-- Go owns shell state, Niri IPC, layout, widgets, services, configuration, and plugin supervision.
-- `wl_shm` is the renderer. EGL/OpenGL ES enters only after profiling shows a named failing case.
-- [`go-text/typesetting`](https://github.com/go-text/typesetting) is the text stack.
-
-## Layout
-
-```text
-cmd/sysc-shell/                executable
-internal/platform/wayland/     Wayland connection, protocols, outputs, seats, scaling, surfaces
-internal/platform/niri/        Niri socket protocol and state projection
-internal/render/               buffers, rasterisation, damage, frame scheduling
-internal/ui/                   retained nodes, measurement, layout, hit testing
-internal/shell/                output hosts, bars, panels, tray, toasts, launcher projection
-internal/services/             clock, weather, metrics
-internal/notifyclient/         sysc-notify presenter client
-internal/trayclient/           sysc-tray presenter client
-internal/icons/                theme-icon resolve and decode
-internal/theme/                Material 3 generation (matugen) and fallback
-internal/theming/              template catalog and apply/unapply
-internal/settings/             settings registry
-internal/config/               JSON configuration
-internal/ipc/                  local IPC
-plugins/reference/             in-tree reference plugin (weather)
-tests/integration/             Niri and Wayland integration checks
-docs/                          architecture, roadmap, designs and plans
+```bash
+git clone https://github.com/Nomadcxx/sysc-shell
+cd sysc-shell
+go build -o ~/.local/bin/sysc-shell ./cmd/sysc-shell
 ```
 
-## Official plugins
+### Run it as a user service
 
-The official plugins (screen recorder, notes, timer, world clock, calendar,
-GitHub notifications, mini docker, wallpaper depth, cat) live in the companion
-repository [`sysc-plugins`](https://github.com/Nomadcxx/sysc-plugins). Build and
-install them from there (`make install` symlinks each plugin directory into
-`$XDG_CONFIG_HOME/sysc-shell/plugins`); the shell discovers them at startup and
-manages enable/disable, settings, and state through the plugin host.
+```bash
+install -Dm644 packaging/systemd/sysc-shell.service ~/.config/systemd/user/sysc-shell.service
+systemctl --user daemon-reload
+systemctl --user enable --now sysc-shell.service
+```
+
+The service starts with your Niri session and restarts the shell if it crashes. If your Niri config
+already has a `spawn-at-startup` line for sysc-shell, remove it, or you'll get two shells. More detail
+in [packaging/systemd](packaging/systemd/README.md).
+
+### The daemons
+
+Notifications, the tray and clipboard history each run as their own small daemon, so a crash in one
+doesn't take the bar with it, and restarting the shell loses nothing. The shell works without them;
+you just don't get that feature.
+
+**Notifications:** follow the [sysc-notify README](https://github.com/Nomadcxx/sysc-notify#installation).
+Stop mako, dunst or swaync first.
+
+**Clipboard history:** follow the [sysc-clipboard README](https://github.com/Nomadcxx/sysc-clipboard#installation).
+
+**System tray:**
+
+```bash
+GOBIN="$HOME/.local/bin" go install github.com/Nomadcxx/sysc-tray/cmd/sysc-tray@v0.1.0-rc.3
+
+cat > ~/.config/systemd/user/sysc-tray.service <<'EOF'
+[Unit]
+Description=sysc tray presenter
+
+[Service]
+ExecStart=%h/.local/bin/sysc-tray
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=default.target
+EOF
+systemctl --user daemon-reload
+systemctl --user enable --now sysc-tray.service
+```
+
+### Plugins
+
+```bash
+git clone https://github.com/Nomadcxx/sysc-plugins
+cd sysc-plugins
+make install
+```
+
+Then enable them from the plugin manager. See [sysc-plugins](https://github.com/Nomadcxx/sysc-plugins)
+for what each one needs.
+
+## Usage
+
+Everything opens from the bar. To open panels from the keyboard, bind `sysc-shell ipc` in your Niri
+config:
+
+```kdl
+binds {
+    Super+Space { spawn "sysc-shell" "ipc" "panel.toggle" "{\"panel\":\"launcher\"}"; }
+    Super+X     { spawn "sysc-shell" "ipc" "panel.toggle" "{\"panel\":\"session\"}"; }
+    Super+Comma { spawn "sysc-shell" "ipc" "panel.toggle" "{\"panel\":\"settings\"}"; }
+    XF86AudioRaiseVolume allow-when-locked { spawn "sysc-shell" "ipc" "osd.step" "{\"kind\":\"audio\",\"action\":\"up\"}"; }
+}
+```
+
+The panels you can name are `launcher`, `control-center`, `notifications`, `clipboard`, `clock`,
+`weather`, `system-monitor`, `session`, `power`, `settings`, `wallpaper`, `audio`, `network`,
+`bluetooth` and `plugin`. The full set of bindings, including brightness and mute, is in
+[docs/niri-hotkeys.md](docs/niri-hotkeys.md).
+
+From a terminal:
+
+```bash
+sysc-shell ipc status
+sysc-shell ipc panel.toggle '{"panel":"control-center"}'
+```
+
+Settings are in the settings panel and saved to `~/.config/sysc-shell/config.json`. Logs go to
+`journalctl --user -u sysc-shell`.
 
 ## Documentation
 
-- [Approved architecture](docs/plans/2026-08-26-sysc-shell-design.md)
-- [Roadmap](docs/roadmap.md)
-- [Design and plan register](docs/plans/README.md)
 - [Niri hotkeys](docs/niri-hotkeys.md)
+- [Blur on Niri](docs/niri-blur.md)
+- [Metrics widgets and Intel GPU usage](docs/metrics-widgets.md)
+- [Running under systemd](packaging/systemd/README.md)
+- [Development](docs/development.md)
+- [Architecture](docs/plans/2026-08-26-sysc-shell-design.md)
+- [Roadmap](docs/roadmap.md)
+
+## License
+
+BSD-3-Clause. [NOTICE](NOTICE) covers the app-theming template catalog.
+
+---
+
+<a href="https://github.com/Nomadcxx"><img src="https://raw.githubusercontent.com/Nomadcxx/Nomadcxx/main/assets/rama-mark.svg" height="22" alt="RAMA"></a> — terminal-native tooling for the linux desktop.
+[More projects →](https://github.com/Nomadcxx) · [Sponsor](https://github.com/sponsors/Nomadcxx) ❤️
