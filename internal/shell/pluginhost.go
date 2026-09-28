@@ -938,7 +938,7 @@ func (h *pluginHost) closePanel(pluginID string, p v1.PanelParams) error {
 func (h *pluginHost) closePanelOwned(pluginID string, p v1.PanelParams, global uint32, requireOutput bool) error {
 	h.r.mu.Lock()
 	where, open := h.r.panels.Output(PanelPlugin)
-	owns := open && h.r.roots.owns(panelRoot(PanelPlugin))
+	owns := open && h.r.panelOpenLocked(PanelPlugin)
 	if requireOutput {
 		owns = owns && where == global
 	}
@@ -984,7 +984,7 @@ func (h *pluginHost) snapshotPanelViewIDs() []string {
 func (h *pluginHost) dropPanelViews(ids []string) {
 	h.r.mu.Lock()
 	live := ""
-	if _, open := h.r.panels.Output(PanelPlugin); open && h.r.roots.owns(panelRoot(PanelPlugin)) {
+	if _, open := h.r.panels.Output(PanelPlugin); open && h.r.panelOpenLocked(PanelPlugin) {
 		h.mu.Lock()
 		if h.panel != nil {
 			live = h.panel.ID

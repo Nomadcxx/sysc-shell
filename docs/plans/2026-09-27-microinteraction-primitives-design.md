@@ -55,8 +55,12 @@ If a real component later needs a bespoke target radius, it gets a field then.
 
 `panelPlacement(anchor ui.Rect, output, alreadyOpen []ui.Rect, size ui.Size) ui.Rect` in
 `internal/shell`: clamps a panel inside the work area, then shifts along the bar edge to clear
-already-open panels; when nothing is open it behaves exactly as today. Consumers: `panelhost`,
-popouts, weather panel, calendar. Table-tested pure geometry; no render or protocol change.
+already-open panels; when nothing is open it behaves exactly as today. If no single slot fits,
+reflow the overlapping row while keeping existing panels close to their prior positions. All open
+panels share one modal root and one outside-click shield per output; an outside press closes the
+newest panel, and remaining panels return toward their preferred positions. Other modal roots still
+replace the panel group. Consumers: `panelhost`, popouts, weather panel, calendar. Table-tested
+pure geometry; no render or plugin protocol change.
 Rejected: an owning "surface manager" object — the open-panels set already lives on the Registry.
 
 ### D6. Springs are deferred, with a named trigger

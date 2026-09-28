@@ -834,7 +834,7 @@ func TestDropPanelViewsKeepsReopenedPanel(t *testing.T) {
 	}
 	reg.mu.Lock()
 	where, open := reg.panels.Output(PanelPlugin)
-	owns := open && where == 7 && reg.roots.owns(panelRoot(PanelPlugin))
+	owns := open && where == 7 && reg.panelOpenLocked(PanelPlugin)
 	reg.mu.Unlock()
 	if !owns {
 		t.Fatal("PanelPlugin ownership lost after deferred drop")

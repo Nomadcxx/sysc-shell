@@ -571,7 +571,7 @@ func TestOpeningNotificationsSetsCenterOpenAndMarksSeen(t *testing.T) {
 	if panel.MarginTop != 43 {
 		t.Fatalf("margin top = %d, want tucked 1 px under the 44 px bar", panel.MarginTop)
 	}
-	if !reg.roots.owns(panelRoot(PanelNotifications)) {
+	if !reg.panelOpenLocked(PanelNotifications) {
 		t.Fatal("opening did not acquire the interactive root")
 	}
 	reg.notify.mu.Lock()
@@ -860,7 +860,7 @@ func drainInvalidations(reg *Registry) {
 	}
 }
 
-func TestOpeningAnUnrelatedPanelClosesTheOldRoot(t *testing.T) {
+func TestOpeningAnUnrelatedPanelKeepsTheOldPanelOpen(t *testing.T) {
 	reg := newPanelRegistry(t)
 	if err := reg.OpenPanel(PanelClock, 7, Trigger{}); err != nil {
 		t.Fatal(err)
@@ -869,25 +869,28 @@ func TestOpeningAnUnrelatedPanelClosesTheOldRoot(t *testing.T) {
 	if _, ok := reg.panelHosts[PanelClock]; !ok {
 		t.Fatal("the first panel never opened")
 	}
+	owner, generation, ok := reg.roots.current()
+	if !ok || owner != panelGroupRoot() {
+		t.Fatal("the first panel did not create the panel group root")
+	}
 
 	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
 		t.Fatal(err)
 	}
-	// Closing the old root emits its panel and shield closes; the new root
-	// then emits its own two opens.
-	_ = drainAux(t, reg, 4)
+	_ = drainAux(t, reg, 1)
 
-	if _, ok := reg.panelHosts[PanelClock]; ok {
-		t.Fatal("the replaced panel is still hosted")
+	if _, ok := reg.panelHosts[PanelClock]; !ok {
+		t.Fatal("opening another panel closed the first panel")
 	}
-	if _, ok := reg.panels.Output(PanelClock); ok {
-		t.Fatal("the replaced panel is still recorded as open")
+	if _, ok := reg.panels.Output(PanelClock); !ok {
+		t.Fatal("the first panel is not recorded as open")
 	}
 	if _, ok := reg.panelHosts[PanelSession]; !ok {
-		t.Fatal("the new root did not open")
+		t.Fatal("the second panel did not open")
 	}
-	if !reg.roots.owns(panelRoot(PanelSession)) {
-		t.Fatal("the chain owner is not the new panel")
+	owner, nextGeneration, ok := reg.roots.current()
+	if !ok || owner != panelGroupRoot() || nextGeneration != generation {
+		t.Fatal("opening a second panel replaced the panel group root")
 	}
 }
 
@@ -923,7 +926,7 @@ func TestTogglingTheSamePanelClosesItsRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = drainAux(t, reg, 2)
-	if !reg.roots.owns(panelRoot(PanelMonitor)) {
+	if !reg.panelOpenLocked(PanelMonitor) {
 		t.Fatal("toggling open did not publish a root")
 	}
 
@@ -941,11 +944,15 @@ func TestTogglingTheSamePanelClosesItsRoot(t *testing.T) {
 
 func TestEveryPanelCloseReleasesItsChainExactlyOnce(t *testing.T) {
 	for name, closer := range map[string]func(*Registry){
-		"ClosePanel":   func(r *Registry) { r.ClosePanel(PanelClock) },
-		"TogglePanel":  func(r *Registry) { _ = r.TogglePanel(PanelClock, 7, Trigger{}) },
-		"DropAux":      func(r *Registry) { r.DropAux(7, panelSurfaceID(PanelClock)) },
-		"closeAll":     func(r *Registry) { r.mu.Lock(); r.closeAllPanelsLocked(); r.mu.Unlock() },
-		"replacedRoot": func(r *Registry) { _ = r.OpenPanel(PanelSession, 7, Trigger{}) },
+		"ClosePanel":  func(r *Registry) { r.ClosePanel(PanelClock) },
+		"TogglePanel": func(r *Registry) { _ = r.TogglePanel(PanelClock, 7, Trigger{}) },
+		"DropAux":     func(r *Registry) { r.DropAux(7, panelSurfaceID(PanelClock)) },
+		"closeAll":    func(r *Registry) { r.mu.Lock(); r.closeAllPanelsLocked(); r.mu.Unlock() },
+		"replacedByModalRoot": func(r *Registry) {
+			r.mu.Lock()
+			r.roots.openRoot(trayMenuRoot(7))
+			r.mu.Unlock()
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			reg := newPanelRegistry(t)
