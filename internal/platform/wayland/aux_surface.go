@@ -73,6 +73,10 @@ type auxPolicy struct {
 	hasInputRegion                                   bool
 }
 
+// errOutputGone reports an open abandoned because its output was removed while
+// the owner round tripped for the backdrop capture.
+var errOutputGone = errors.New("output removed during backdrop capture")
+
 func (o *owner) handleAux(req AuxRequest) {
 	h, ok := o.hosts.get(req.Output)
 	if !ok || !h.alive {
@@ -92,9 +96,13 @@ func (o *owner) handleAux(req AuxRequest) {
 	default:
 		o.closeAux(h, req.ID)
 	}
-	if req.Reply != nil {
+	switch {
+	case req.Reply != nil:
 		req.Reply <- err
-	} else {
+	case errors.Is(err, errOutputGone):
+		// The same stale request as an unavailable output above: the removal
+		// already tore the host down and told the shell, so nothing is lost.
+	default:
 		o.fail(err)
 	}
 }
@@ -126,8 +134,14 @@ func (o *owner) openAux(h *OutputHost, spec *AuxSpec) error {
 	// its Render returns immediately, leaving a cleared, fully transparent
 	// buffer -- so it cannot show up in the copy either.
 	if spec.BlurRegion != nil && spec.Callbacks.Backdrop != nil {
-		if shot := o.captureRegion(h.proxy, *spec.BlurRegion); shot != nil {
+		if shot := o.captureBackdrop(h.proxy, *spec.BlurRegion); shot != nil {
 			spec.Callbacks.Backdrop(render.Blur(shot, backdropDownsample, spec.BlurRadius))
+		}
+		// The capture round trips, and a global_remove dispatched in one of
+		// them tears this host down. Creating the surface now would bind a
+		// removed wl_output and register a unit no teardown will reach.
+		if !h.alive {
+			return fmt.Errorf("wayland: aux surface %s on output %d: %w", spec.ID, h.global, errOutputGone)
 		}
 	}
 

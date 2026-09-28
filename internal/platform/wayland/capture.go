@@ -183,6 +183,14 @@ func (o *owner) pumpUntil(ready func() bool) bool {
 	return ready()
 }
 
+// captureBackdrop is captureRegion unless a test replaced the capture.
+func (o *owner) captureBackdrop(out *client.Output, r ui.Rect) *ui.Image {
+	if o.capture != nil {
+		return o.capture(out, r)
+	}
+	return o.captureRegion(out, r)
+}
+
 // captureRegion copies one output region through zwlr_screencopy_frame_v1 and
 // returns it as a premultiplied ARGB image.
 //

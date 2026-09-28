@@ -6,6 +6,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	"github.com/Nomadcxx/sysc-wayland/client"
 )
 
 // Placement follows the panel design's rule: anchored off the bar edge,
@@ -193,5 +194,24 @@ func TestTooltipCarriesTheBackdropIntoThePaint(t *testing.T) {
 	style, _ := o.tooltipStyle(tt)
 	if style.Backdrop != shot {
 		t.Fatalf("backdrop = %p, want the captured image %p", style.Backdrop, shot)
+	}
+}
+
+func TestTooltipAbandonsAHostRemovedDuringBackdropCapture(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Theme.BlurBehind = true
+	s := newHostSet()
+	h := mappedHost(s, 7, "DP-1")
+	h.proxy = &client.Output{}
+	h.bar.ss.logicalWidth = 1920
+	o := &owner{hosts: s, cfg: &cfg}
+	o.capture = removeDuringCapture(t, o, s, h)
+
+	if err := o.showTooltip(TooltipRequest{Global: 7, Text: "Volume", Anchor: ui.Rect{X: 10, W: 20, H: 20}}); err != nil {
+		t.Fatalf("showTooltip: %v", err)
+	}
+	if o.tooltip != nil {
+		t.Fatal("tooltip mapped on a removed host")
 	}
 }
