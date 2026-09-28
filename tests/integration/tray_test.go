@@ -118,7 +118,6 @@ func newFakeCompositor(t *testing.T, reg *shell.Registry) *fakeCompositor {
 			case <-c.stop:
 				return
 			case <-reg.Invalidations():
-			case <-reg.Tooltips():
 			case request := <-reg.AuxRequests():
 				c.apply(request)
 			}
