@@ -10,6 +10,7 @@ import (
 )
 
 func TestHelixAppliesSidecarAndThemeDirective(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	home := t.TempDir()
 	markTemplatesComplete(t, "helix")
 	conf := joined(home, ".config", "helix", "config.toml")
@@ -19,14 +20,14 @@ func TestHelixAppliesSidecarAndThemeDirective(t *testing.T) {
 	if err := os.WriteFile(conf, []byte("[editor]\nline-number = \"relative\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplyEnabled(home, func(name string) bool { return name == "helix" }, theme.Fallback); err != nil {
+	if err := applyForTest(home, func(name string) bool { return name == "helix" }, theme.Fallback); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(conf)
 	if !strings.Contains(string(b), "[editor]\ntheme = \"sysc-shell\"") {
 		t.Fatalf("directive not under [editor]: %q", b)
 	}
-	if err := ApplyEnabled(home, func(string) bool { return false }, theme.Fallback); err != nil {
+	if err := applyForTest(home, func(string) bool { return false }, theme.Fallback); err != nil {
 		t.Fatal(err)
 	}
 	b2, _ := os.ReadFile(conf)

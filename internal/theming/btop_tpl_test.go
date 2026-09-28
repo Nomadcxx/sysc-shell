@@ -19,6 +19,7 @@ func TestBtopTemplateRendersCompleteOutput(t *testing.T) {
 }
 
 func TestBtopAppliesSidecarAndThemeDirective(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	home := t.TempDir()
 	markTemplatesComplete(t, "btop")
 	conf := joined(home, ".config", "btop", "btop.conf")
@@ -28,7 +29,7 @@ func TestBtopAppliesSidecarAndThemeDirective(t *testing.T) {
 	if err := os.WriteFile(conf, []byte("theme_background = true\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplyEnabled(home, func(name string) bool { return name == "btop" }, theme.Fallback); err != nil {
+	if err := applyForTest(home, func(name string) bool { return name == "btop" }, theme.Fallback); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(conf)
@@ -39,7 +40,7 @@ func TestBtopAppliesSidecarAndThemeDirective(t *testing.T) {
 	if err != nil || !strings.Contains(string(side), "theme[main_bg]=") {
 		t.Fatalf("sidecar missing or wrong: %v", err)
 	}
-	if err := ApplyEnabled(home, func(string) bool { return false }, theme.Fallback); err != nil {
+	if err := applyForTest(home, func(string) bool { return false }, theme.Fallback); err != nil {
 		t.Fatal(err)
 	}
 	b2, _ := os.ReadFile(conf)

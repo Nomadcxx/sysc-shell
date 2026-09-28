@@ -72,9 +72,10 @@ func TestAlacrittyTemplateRendersCompleteOutput(t *testing.T) {
 }
 
 func TestAlacrittyAppliesSidecarAndImport(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	home := t.TempDir()
 	markTemplatesComplete(t, "alacritty")
-	if err := ApplyEnabled(home, func(string) bool { return true }, theme.Fallback); err != nil {
+	if err := applyForTest(home, func(string) bool { return true }, theme.Fallback); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(templateTargets["alacritty"].sidecar(home)[0])

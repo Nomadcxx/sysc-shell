@@ -23,6 +23,7 @@ func TestQtTemplateRendersCompleteOutput(t *testing.T) {
 }
 
 func TestQtAppliesSidecarsAndSchemePaths(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	home := t.TempDir()
 	markTemplatesComplete(t, "qt")
 	for _, ct := range []string{"qt5ct", "qt6ct"} {
@@ -38,7 +39,7 @@ func TestQtAppliesSidecarsAndSchemePaths(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := ApplyEnabled(home, func(string) bool { return true }, theme.Fallback); err != nil {
+	if err := applyForTest(home, func(string) bool { return true }, theme.Fallback); err != nil {
 		t.Fatal(err)
 	}
 	for _, p := range templateTargets["qt"].sidecar(home) {
@@ -55,7 +56,7 @@ func TestQtAppliesSidecarsAndSchemePaths(t *testing.T) {
 	if !strings.Contains(s, "style=Fusion") || strings.Count(s, "color_scheme_path=") != 1 {
 		t.Fatalf("directive not managed: %s", s)
 	}
-	if err := ApplyEnabled(home, func(string) bool { return false }, theme.Fallback); err != nil {
+	if err := applyForTest(home, func(string) bool { return false }, theme.Fallback); err != nil {
 		t.Fatal(err)
 	}
 	for _, p := range templateTargets["qt"].sidecar(home) {

@@ -15,6 +15,11 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
 
+func applyForTest(home string, enabled func(string) bool, tok theme.Tokens) error {
+	_, err := ApplyEnabled(home, enabled, tok, nil)
+	return err
+}
+
 // markTemplatesComplete lets mechanism tests exercise the write path of a
 // template the release has not verified yet (GH #7 gate).
 func markTemplatesComplete(t *testing.T, names ...string) {
@@ -35,7 +40,7 @@ func TestApplyEnabledReportsRefusalsPerTemplate(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(target, []byte("user edit\n"), 0o644); err != nil {
+	if err := os.WriteFile(target, []byte("[color]\ntheme = user-choice\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	only := func(name string) bool { return name == "cava" }
@@ -51,11 +56,11 @@ func TestApplyEnabledReportsRefusalsPerTemplate(t *testing.T) {
 	if len(outcomes) != 0 {
 		t.Fatalf("forced outcomes = %v", outcomes)
 	}
-	if got, _ := os.ReadFile(target); !strings.Contains(string(got), marker) {
-		t.Fatalf("forced write = %q", got)
+	if got, _ := os.ReadFile(target); string(got) != "[color]\ntheme = \"sysc-shell\"\n" {
+		t.Fatalf("forced directive replacement = %q", got)
 	}
-	if _, err := os.Stat(target + ".bak"); err != nil {
-		t.Fatal("the refused bytes were not backed up")
+	if backup, err := os.ReadFile(target + ".bak"); err != nil || string(backup) != "[color]\ntheme = user-choice\n" {
+		t.Fatalf("refused config backup = %q, %v", backup, err)
 	}
 }
 

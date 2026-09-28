@@ -39,6 +39,7 @@ func TestKcolorschemeTemplateRendersCompleteOutput(t *testing.T) {
 }
 
 func TestKcolorschemeAppliesSidecarAndKdeGlobals(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	home := t.TempDir()
 	markTemplatesComplete(t, "kcolorscheme")
 	user := "[General]\nFont=Sans Serif,9,-1,5,50,0,0,0,0,0\n"
@@ -49,7 +50,7 @@ func TestKcolorschemeAppliesSidecarAndKdeGlobals(t *testing.T) {
 	if err := os.WriteFile(cfg, []byte(user), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplyEnabled(home, func(string) bool { return true }, theme.Fallback); err != nil {
+	if err := applyForTest(home, func(string) bool { return true }, theme.Fallback); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(cfg)
@@ -60,7 +61,7 @@ func TestKcolorschemeAppliesSidecarAndKdeGlobals(t *testing.T) {
 	if err != nil || !strings.Contains(string(side), "[Colors:View]") {
 		t.Fatalf("sidecar missing or wrong: %v", err)
 	}
-	if err := ApplyEnabled(home, func(string) bool { return false }, theme.Fallback); err != nil {
+	if err := applyForTest(home, func(string) bool { return false }, theme.Fallback); err != nil {
 		t.Fatal(err)
 	}
 	b3, _ := os.ReadFile(cfg)

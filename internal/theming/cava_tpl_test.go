@@ -19,6 +19,7 @@ func TestCavaTemplateRendersCompleteOutput(t *testing.T) {
 }
 
 func TestCavaAppliesSidecarIntoColorSection(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	home := t.TempDir()
 	markTemplatesComplete(t, "cava")
 	conf := joined(home, ".config", "cava", "config")
@@ -29,7 +30,7 @@ func TestCavaAppliesSidecarIntoColorSection(t *testing.T) {
 	if err := os.WriteFile(conf, []byte(user), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplyEnabled(home, func(name string) bool { return name == "cava" }, theme.Fallback); err != nil {
+	if err := applyForTest(home, func(name string) bool { return name == "cava" }, theme.Fallback); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(conf)
@@ -39,7 +40,7 @@ func TestCavaAppliesSidecarIntoColorSection(t *testing.T) {
 	if j <= i {
 		t.Fatalf("directive not under [color]: %q", s)
 	}
-	if err := ApplyEnabled(home, func(string) bool { return false }, theme.Fallback); err != nil {
+	if err := applyForTest(home, func(string) bool { return false }, theme.Fallback); err != nil {
 		t.Fatal(err)
 	}
 	b2, _ := os.ReadFile(conf)

@@ -27,6 +27,7 @@ func TestScrollTemplateRendersCompleteOutput(t *testing.T) {
 }
 
 func TestScrollAppliesSidecarAndInclude(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	home := t.TempDir()
 	markTemplatesComplete(t, "scroll")
 	dir := joined(home, ".config", "scroll")
@@ -37,7 +38,7 @@ func TestScrollAppliesSidecarAndInclude(t *testing.T) {
 	if err := os.WriteFile(dir+"/config", []byte(user), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplyEnabled(home, func(string) bool { return true }, theme.Fallback); err != nil {
+	if err := applyForTest(home, func(string) bool { return true }, theme.Fallback); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(dir + "/config")
@@ -49,7 +50,7 @@ func TestScrollAppliesSidecarAndInclude(t *testing.T) {
 	if err != nil || !strings.Contains(string(side), "client.focused ") {
 		t.Fatalf("sidecar: %v %q", err, side)
 	}
-	if err := ApplyEnabled(home, func(string) bool { return false }, theme.Fallback); err != nil {
+	if err := applyForTest(home, func(string) bool { return false }, theme.Fallback); err != nil {
 		t.Fatal(err)
 	}
 	b, _ = os.ReadFile(dir + "/config")

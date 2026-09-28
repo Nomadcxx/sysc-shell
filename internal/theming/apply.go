@@ -386,10 +386,10 @@ func directiveContent(body []byte, lines []string, d directive) []byte {
 		}
 	}
 	if d.section == "" {
-		out := strings.TrimSuffix(string(body), "\n") + "\n" + d.line + "\n"
-		if strings.TrimSpace(out) == d.line+"\n" {
-			out = d.line + "\n"
+		if strings.TrimSpace(string(body)) == "" {
+			return []byte(d.line + "\n")
 		}
+		out := strings.TrimSuffix(string(body), "\n") + "\n" + d.line + "\n"
 		return []byte(out)
 	}
 	header := "[" + d.section + "]"
