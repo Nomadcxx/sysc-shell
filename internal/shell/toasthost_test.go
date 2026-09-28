@@ -578,7 +578,7 @@ func TestDecodedIconRecomputesOpenToasts(t *testing.T) {
 	r.applyNotify(snap(1, n))
 	before := len(hh.updates)
 
-	r.applyTrayIcon(icons.Square("firefox", cardIconSize), &ui.Image{Width: 16, Height: 16, Stride: 64, Pix: make([]byte, 16*64)})
+	r.applyTrayIcon(icons.Square("firefox", notifyIconRaster), &ui.Image{Width: 16, Height: 16, Stride: 64, Pix: make([]byte, 16*64)})
 
 	if len(hh.updates) <= before {
 		t.Fatalf("decoding the toast's app icon did not recompute (updates %d -> %d)", before, len(hh.updates))

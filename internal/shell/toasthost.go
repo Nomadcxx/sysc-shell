@@ -548,21 +548,20 @@ func (h *toastHost) cardFor(id uint32) *ui.Node {
 	s := h.r.notify
 	s.mu.Lock()
 	notification, ok := s.active[id]
-	lifetime := cloneLifetime(s.lifetimes, id)
 	s.mu.Unlock()
 	if !ok {
 		return nil
 	}
 	icon := h.r.notifyIcon(notification.AppIcon, notification.DesktopEntry)
 	if h.expanded[id] {
-		return ExpandedNotificationCard(notification, lifetime, icon, h.r.linksAllowed(), h.wrapBody)
+		return ExpandedNotificationCard(notification, icon, h.r.linksAllowed(), h.measureText(), h.wrapBody)
 	}
-	return NotificationCard(notification, lifetime, icon, h.r.linksAllowed())
+	return NotificationCard(notification, icon, h.r.linksAllowed(), h.measureText())
 }
 
 func (h *toastHost) wrapBody(s string) []string {
 	measure := h.measureText()
-	width := toastCardWidth - 2*cardPadding - cardIconSize - cardGap
+	width := toastCardWidth - 2*cardPadding - cardIconSize - cardLeadGap
 	return wrapLines(s, width, func(text string) int {
 		w, _ := measure(text, ui.TextAttrs{})
 		return w

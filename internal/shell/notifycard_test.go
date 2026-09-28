@@ -50,29 +50,27 @@ func buttons(n *ui.Node) []*ui.Node {
 	return nodes
 }
 
-func TestNotifyCardShowsSummaryBodyAndApp(t *testing.T) {
-	card := NotificationCard(baseNotification(), nil, nil, true)
+func TestNotifyCardShowsSummaryBodyAndNamesTheApp(t *testing.T) {
+	card := NotificationCard(baseNotification(), nil, true, nil)
 	joined := strings.Join(texts(card), "\n")
-	for _, want := range []string{"Mail", "Two new messages", "one", "two"} {
+	for _, want := range []string{"Two new messages", "one"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("card text %q lacks %q", joined, want)
 		}
 	}
+	if strings.Contains(joined, "two") {
+		t.Fatalf("collapsed card showed the second body line: %q", joined)
+	}
+	if lead := card.Children[0].Children[0]; lead.Name != "Mail" {
+		t.Fatalf("lead name = %q, want the app name", lead.Name)
+	}
 }
 
 func TestNotifyCardPreservesBodyStyles(t *testing.T) {
-	card := NotificationCard(baseNotification(), nil, nil, true)
-	var styled *ui.Node
-	var walk func(n *ui.Node)
-	walk = func(n *ui.Node) {
-		if n.Kind == ui.KindText && n.Text == "two" {
-			styled = n
-		}
-		for _, c := range n.Children {
-			walk(c)
-		}
-	}
-	walk(card)
+	n := baseNotification()
+	n.Body = "one <b>two</b>"
+	card := NotificationCard(n, nil, true, nil)
+	styled := textNode(card, "two")
 	if styled == nil || !styled.Bold {
 		t.Fatalf("bold run lost its style: %+v", styled)
 	}
@@ -89,7 +87,7 @@ func TestNotifyCardBuildsSixActionPairs(t *testing.T) {
 		{Key: "a5", Label: "Five"},
 		{Key: "a6", Label: "Six"},
 	}
-	card := NotificationCard(n, nil, nil, true)
+	card := NotificationCard(n, nil, true, nil)
 	got := buttons(card)
 	var keys []string
 	for _, b := range got {
@@ -115,7 +113,7 @@ func TestNotifyCardBuildsSixActionPairs(t *testing.T) {
 }
 
 func TestNotifyCardStampsDismissWhenNoDefault(t *testing.T) {
-	card := NotificationCard(baseNotification(), nil, nil, true)
+	card := NotificationCard(baseNotification(), nil, true, nil)
 	id, rest, ok := parseCardAction(card.Action)
 	if !ok || id != 7 || len(rest) == 0 || rest[0] != "dismiss" {
 		t.Fatalf("root action = %q, want notify:7:dismiss so a body click can close it", card.Action)
@@ -125,7 +123,7 @@ func TestNotifyCardStampsDismissWhenNoDefault(t *testing.T) {
 func TestNotifyCardMarksTheDefaultActionOnTheBody(t *testing.T) {
 	n := baseNotification()
 	n.Actions = []protocol.Action{{Key: "default", Label: "Open"}}
-	card := NotificationCard(n, nil, nil, true)
+	card := NotificationCard(n, nil, true, nil)
 	found := false
 	var walk func(n *ui.Node)
 	walk = func(n *ui.Node) {
@@ -144,7 +142,7 @@ func TestNotifyCardMarksTheDefaultActionOnTheBody(t *testing.T) {
 
 func TestNotifyCardAddsInlineReplyOnlyWhenAdvertised(t *testing.T) {
 	n := baseNotification()
-	without := NotificationCard(n, nil, nil, true)
+	without := NotificationCard(n, nil, true, nil)
 	var fields []*ui.Node
 	collectByKind(without, ui.KindTextField, &fields)
 	if len(fields) != 0 {
@@ -152,7 +150,7 @@ func TestNotifyCardAddsInlineReplyOnlyWhenAdvertised(t *testing.T) {
 	}
 
 	n.InlineReply = true
-	with := NotificationCard(n, nil, nil, true)
+	with := NotificationCard(n, nil, true, nil)
 	collectByKind(with, ui.KindTextField, &fields)
 	if len(fields) != 1 || !fields[0].Focusable {
 		t.Fatalf("inline reply = %+v, want one focusable field", fields)
@@ -162,7 +160,7 @@ func TestNotifyCardAddsInlineReplyOnlyWhenAdvertised(t *testing.T) {
 func TestNotifyCardRendersCriticalUrgencyAsErrorTone(t *testing.T) {
 	n := baseNotification()
 	n.Urgency = protocol.UrgencyCritical
-	card := NotificationCard(n, nil, nil, true)
+	card := NotificationCard(n, nil, true, nil)
 	var found bool
 	var walk func(n *ui.Node)
 	walk = func(n *ui.Node) {
@@ -179,7 +177,7 @@ func TestNotifyCardRendersCriticalUrgencyAsErrorTone(t *testing.T) {
 	}
 }
 
-func TestNotifyCardAppliesUrgencyToneToIdentitySummaryAndBody(t *testing.T) {
+func TestNotifyCardAppliesUrgencyToneToTheSummary(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		urgency protocol.Urgency
@@ -192,12 +190,12 @@ func TestNotifyCardAppliesUrgencyToneToIdentitySummaryAndBody(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			n := baseNotification()
 			n.Urgency = tc.urgency
-			card := NotificationCard(n, nil, nil, true)
-			for _, text := range []string{"Mail", "Two new messages", "one", "two"} {
-				node := textNode(card, text)
-				if node == nil || node.Tone != tc.want {
-					t.Fatalf("%q node = %+v, want tone %v", text, node, tc.want)
-				}
+			card := NotificationCard(n, nil, true, nil)
+			if node := textNode(card, "Two new messages"); node == nil || node.Tone != tc.want {
+				t.Fatalf("summary = %+v, want tone %v", node, tc.want)
+			}
+			if node := textNode(card, "one"); node == nil || node.Tone != ui.ToneSubtle {
+				t.Fatalf("body = %+v, want subtle", node)
 			}
 		})
 	}
@@ -215,28 +213,11 @@ func TestHistoryAndGroupCardsReuseUrgencyTone(t *testing.T) {
 	}
 }
 
-func TestNotifyCardCountdownUsesTheAuthoritativeLifetime(t *testing.T) {
-	n := baseNotification()
-	lt := &protocol.Lifetime{ID: 7, DurationMS: 5000, RemainingMS: 3000, Running: true}
-	card := NotificationCard(n, lt, nil, true)
+func TestNotifyToastHasNoTimeoutMeter(t *testing.T) {
 	var meters []*ui.Node
-	collectByKind(card, ui.KindMeter, &meters)
-	if len(meters) != 1 || meters[0].Height != 3 || meters[0].Value != 0.6 {
-		t.Fatalf("timeout meter = %+v, want Height 3 Value 0.6", meters)
-	}
-
-	lt.Running = false
-	meters = nil
-	collectByKind(NotificationCard(n, lt, nil, true), ui.KindMeter, &meters)
-	if len(meters) != 1 || meters[0].Value != 0.6 {
-		t.Fatalf("paused meter = %+v, want remaining 0.6", meters)
-	}
-
-	n.ExpireTimeoutMS = 0
-	meters = nil
-	collectByKind(NotificationCard(n, &protocol.Lifetime{ID: 7}, nil, true), ui.KindMeter, &meters)
+	collectByKind(NotificationCard(baseNotification(), nil, true, nil), ui.KindMeter, &meters)
 	if len(meters) != 0 {
-		t.Fatalf("persistent card has a timeout meter: %+v", meters)
+		t.Fatalf("toast carries meters %+v, want none without a value", meters)
 	}
 }
 
@@ -244,7 +225,7 @@ func TestNotifyCardValueBarIsIndependentOfCardState(t *testing.T) {
 	n := baseNotification()
 	v := int32(40)
 	n.Value = &v
-	card := NotificationCard(n, nil, nil, true)
+	card := NotificationCard(n, nil, true, nil)
 	var meters []*ui.Node
 	collectByKind(card, ui.KindMeter, &meters)
 	if len(meters) != 1 {
@@ -255,7 +236,7 @@ func TestNotifyCardValueBarIsIndependentOfCardState(t *testing.T) {
 	}
 
 	v = 140
-	card = NotificationCard(n, nil, nil, true)
+	card = NotificationCard(n, nil, true, nil)
 	meters = nil
 	collectByKind(card, ui.KindMeter, &meters)
 	if meters[0].Value != 1 {
@@ -290,7 +271,7 @@ func TestNotifyHistoryCardOmitsActionsAndReply(t *testing.T) {
 func TestNotifyCardGatesLinksOnTheOpenerCapability(t *testing.T) {
 	n := baseNotification()
 	n.Body = `see <a href="https://example.test">the page</a>`
-	allowed := NotificationCard(n, nil, nil, true)
+	allowed := NotificationCard(n, nil, true, nil)
 	found := false
 	for _, s := range texts(allowed) {
 		if strings.Contains(s, "the page") {
@@ -315,7 +296,7 @@ func TestNotifyCardGatesLinksOnTheOpenerCapability(t *testing.T) {
 		t.Fatal("no node carries the link href when links are allowed")
 	}
 
-	disallowed := NotificationCard(n, nil, nil, false)
+	disallowed := NotificationCard(n, nil, false, nil)
 	linkAction = false
 	walk(disallowed)
 	if linkAction {
@@ -329,14 +310,77 @@ func TestNotifyCardGatesLinksOnTheOpenerCapability(t *testing.T) {
 func TestNotifyCardOmitsCriticalBang(t *testing.T) {
 	n := baseNotification()
 	n.Urgency = protocol.UrgencyCritical
-	card := NotificationCard(n, nil, nil, true)
+	card := NotificationCard(n, nil, true, nil)
 	for _, s := range texts(card) {
 		if s == "!" {
 			t.Fatal("critical toast still paints !")
 		}
 	}
-	if strokeOf(card) != 2 {
-		t.Fatalf("critical stroke = %d, want 2", strokeOf(card))
+	if s := strokeOf(card); s != 0 {
+		t.Fatalf("toast tree stroke = %d, want 0: the host paints the rim", s)
+	}
+	now := time.Unix(1_756_000_000, 0)
+	history := HistoryCard(protocol.HistoryEntry{ID: 3, Summary: "Low", Timestamp: now, Urgency: protocol.UrgencyCritical}, now, nil, false)
+	if s := strokeOf(history); s != 1 {
+		t.Fatalf("critical history stroke = %d, want 1", s)
+	}
+}
+
+func TestNotifyCardKeepsTheTimeBesideALongSummary(t *testing.T) {
+	n := baseNotification()
+	n.Summary = strings.Repeat("A very long summary that cannot fit ", 4)
+	now := n.Timestamp
+	card := notificationCard(n, nil, true, nil, nil, now)
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 8, 16 }
+	if err := ui.LayoutColumn(card, ui.Rect{W: toastCardWidth, H: 400}, measure); err != nil {
+		t.Fatal(err)
+	}
+	stamp := textNode(card, formatNotifyTime(now, now))
+	if stamp == nil {
+		t.Fatal("no time node")
+	}
+	if want, _ := measure(stamp.Text, ui.TextAttrs{}); stamp.Bounds.W < want {
+		t.Fatalf("time clipped to %d px, want %d", stamp.Bounds.W, want)
+	}
+}
+
+func TestNotifyCardFallsBackToTheAppNameWithoutASummary(t *testing.T) {
+	n := baseNotification()
+	n.Summary = ""
+	if textNode(NotificationCard(n, nil, true, nil), "Mail") == nil {
+		t.Fatal("card without a summary has no headline")
+	}
+}
+
+func TestNotifyCardPacksActionsIntoRowsThatFit(t *testing.T) {
+	n := baseNotification()
+	n.Actions = []protocol.Action{
+		{Key: "a1", Label: "Open in browser"}, {Key: "a2", Label: "Mark as read"},
+		{Key: "a3", Label: "Archive"}, {Key: "a4", Label: "Reply"},
+		{Key: "a5", Label: "Snooze for an hour"}, {Key: "a6", Label: "Mute conversation forever and ever"},
+	}
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 9, 18 }
+	card := NotificationCard(n, nil, true, measure)
+	h, err := ui.ContentHeight(card, toastCardWidth, measure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if problems := ui.CheckFit(card, ui.Rect{W: toastCardWidth, H: h}, measure); len(problems) != 0 {
+		t.Fatalf("actions do not fit: %+v", problems)
+	}
+	if got := len(buttons(card)); got != 6 {
+		t.Fatalf("buttons = %d, want 6", got)
+	}
+	var rows []*ui.Node
+	collectByKind(card, ui.KindRow, &rows)
+	packed := false
+	for _, r := range rows {
+		if len(r.Children) > 1 && r.Children[0].Kind == ui.KindButton {
+			packed = true
+		}
+	}
+	if !packed {
+		t.Fatal("no two short actions shared a row")
 	}
 }
 
@@ -378,7 +422,7 @@ func TestActiveGroupCardShowsCountDismissAndExpand(t *testing.T) {
 	}}
 	card := ActiveGroupCard(g, now.Add(time.Hour), false, nil, false)
 	joined := strings.Join(texts(card), "\n")
-	for _, want := range []string{"Mail", "new", "b", "2"} {
+	for _, want := range []string{"new", "b", "2"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("group text %q lacks %q", joined, want)
 		}

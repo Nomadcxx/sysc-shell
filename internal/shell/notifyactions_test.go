@@ -63,7 +63,7 @@ func TestClassifyToastDrag(t *testing.T) {
 func TestVerticalDragOnACardTogglesExpand(t *testing.T) {
 	h := &resolverHarness{}
 	r := newNotifyResolver(h)
-	root := NotificationCard(protocol.Notification{ID: 7, Summary: "Hello", Body: "World"}, nil, nil, false)
+	root := NotificationCard(protocol.Notification{ID: 7, Summary: "Hello", Body: "World"}, nil, false, nil)
 	if err := ui.LayoutColumn(root, ui.Rect{W: 360, H: 120}, func(s string, _ ui.TextAttrs) (int, int) { return len(s) * 8, 16 }); err != nil {
 		t.Fatal(err)
 	}
