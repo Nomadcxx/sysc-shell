@@ -1,7 +1,5 @@
 # Development
 
-Work is tracked in `bd`. Designs and plans are registered in
-[plans/README.md](plans/README.md), and the milestone sequence is in [roadmap.md](roadmap.md).
 Deploying to a machine goes through `scripts/deploy`; see `AGENTS.md`.
 
 ## Sibling modules

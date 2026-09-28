@@ -136,8 +136,6 @@ Settings are in the settings panel and saved to `~/.config/sysc-shell/config.jso
 - [Metrics widgets and Intel GPU usage](docs/metrics-widgets.md)
 - [Running under systemd](packaging/systemd/README.md)
 - [Development](docs/development.md)
-- [Architecture](docs/plans/2026-08-26-sysc-shell-design.md)
-- [Roadmap](docs/roadmap.md)
 
 ## License
 

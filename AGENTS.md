@@ -14,7 +14,7 @@
 
 - Stop at the first working rung: existing project code, Go standard library, native Linux service, pinned dependency, then new code.
 - Keep Wayland types inside `internal/platform/wayland` and Niri wire types inside `internal/platform/niri`.
-- Pin `github.com/Nomadcxx/sysc-wayland@v0.2.2`; do not import `dankgo` from shell code. Current pins for every consumed module are in `go.mod` and the README table.
+- Pin `github.com/Nomadcxx/sysc-wayland@v0.2.2`; do not import `dankgo` from shell code. Current pins for every consumed module are in `go.mod`.
 - Keep the Wayland dispatch loop on one goroutine. Other goroutines submit commands and receive immutable state updates through channels.
 - Draw only after invalidation. Respect frame callbacks and buffer release events.
 - Add one focused runnable check for non-trivial logic. Use table tests for pure layout and protocol code.
@@ -31,8 +31,8 @@
   over re-deriving state by reading documents.
 - Claim work with `bd update <id> --status in_progress`, close it with `bd close <id> --reason "..."`.
   Record discovered work as `bd create "..." --deps discovered-from:<id>`.
-- Commit `.beads/issues.jsonl` in the same commit as the code or documents it describes. The SQLite
-  database is gitignored; the JSONL is the source of truth in git.
+- `.beads/` is gitignored and lives only in the primary checkout `/home/nomadx/sysc-shell`. bd's
+  pre-commit hook still exports `issues.jsonl` there, and its `git add` is a no-op. Never force-add it.
 - **Status lives in bd, not in documents.** A design or plan states its decisions; bd states whether the
   work is done, in flight, or blocked. Do not duplicate status into a document header, where it drifts.
 - Cross-repository gates are modelled as issues in this repository — `sysc-metrics` needing a release tag,
@@ -50,13 +50,13 @@
 
 ## Designs and plans
 
-- Every design, plan and handover is registered in `docs/plans/README.md`. Add a row in the same commit
-  that adds a document.
-- **Commit the plan before executing it.** Milestone 2's 16-task plan was executed and never committed; it
-  no longer exists on any branch, and that implementation can no longer be reviewed against its own plan.
-- **Land design and plan documents on `main` as docs-only commits, not on a milestone branch.** They
-  describe intent, not shipped code, and they do not depend on the code. Holding them on a branch means no
-  other branch can see them and they die if the branch is abandoned.
+- **Plans never go in the repository.** Designs, plans, handovers, research, reports, `docs/roadmap.md`
+  and `docs/prior-art.md` are gitignored. They live only in the primary checkout,
+  `/home/nomadx/sysc-shell/docs/plans/`. Never `git add -f` them.
+- A worktree does not contain them. Read and write them at the primary checkout's path.
+- They have no copy anywhere else. Write the plan before executing it, and do not delete one that is
+  still referenced by bd or code.
+- Every design, plan and handover is registered in `docs/plans/README.md`.
 - Naming is `YYYY-MM-DD-<topic>[-<kind>].md`; the kinds are listed in `docs/plans/README.md`.
 
 ## Workflow
