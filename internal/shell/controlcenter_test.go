@@ -1424,8 +1424,12 @@ func TestControlCentreSettingsPageLinksIntoThePanel(t *testing.T) {
 	h.setFocus(link)
 	h.activate(reg)
 	settingsHost := reg.panelHosts[PanelSettings]
+	_, controlCentreOpen := reg.panelHosts[PanelControlCenter]
 	reg.mu.Unlock()
 
+	if controlCentreOpen {
+		t.Fatal("settings navigation left the control centre open")
+	}
 	if settingsHost == nil {
 		t.Fatal("the link did not open the settings panel")
 	}
