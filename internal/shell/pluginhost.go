@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -291,6 +292,23 @@ func (h *pluginHost) pushSettings(id string, rt *plugin.Runtime) {
 
 func (h *pluginHost) pushSettingsLocked(id string, rt *plugin.Runtime) {
 	_ = rt.Send(&v1.SettingsChanged{Scope: v1.ScopePlugin, Values: h.r.cfg.Plugins.Settings[id]})
+}
+
+// stateValue reads one key from a running plugin's persistent state. The
+// store holds its whole document in memory, so a page built under Registry.mu
+// reads it without touching the disk. A plugin that is not running has no
+// value: what it left on disk is from a source the user has since switched off.
+func (h *pluginHost) stateValue(id, key string) (json.RawMessage, bool) {
+	if h == nil {
+		return nil, false
+	}
+	h.mu.Lock()
+	slot := h.slots[id]
+	h.mu.Unlock()
+	if slot == nil || slot.store == nil {
+		return nil, false
+	}
+	return slot.store.Get(key)
 }
 
 func (h *pluginHost) stopPlugin(id string) {

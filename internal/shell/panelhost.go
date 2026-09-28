@@ -2701,6 +2701,10 @@ func (h *PanelHost) activate(r *Registry) bool {
 	case "cal-next":
 		h.monthDelta++
 		r.rebuildPanel(h)
+	case "plugin-calendar:open":
+		if r.plugins != nil {
+			_, _ = r.plugins.openPanel("org.sysc.calendar", v1.PanelParams{Entry: "panel"})
+		}
 	case "session-lock", "session-logout", "session-suspend", "session-reboot", "session-poweroff":
 		r.runSessionAction(h, n.Action)
 	}
