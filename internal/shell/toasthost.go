@@ -3,7 +3,9 @@ package shell
 import (
 	"fmt"
 	"math"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -67,6 +69,20 @@ type toastHost struct {
 
 	text  *render.TextRenderer
 	style render.Style
+
+	// editing is the inline reply being typed, nil when none is open. The
+	// resolver owns which record it answers; the host owns the text and the
+	// keyboard of the one output it was opened on.
+	editing *toastReply
+}
+
+type toastReply struct {
+	connector string
+	field     *ui.Field
+	// focused is true while the reply holds the keyboard. A reply parked by
+	// the pointer leaving keeps its text but neither the keyboard nor its
+	// card's hold.
+	focused bool
 }
 
 const toastNamespace = "sysc-shell-toast"
@@ -148,6 +164,10 @@ func (h *toastHost) drop(connector string) {
 	delete(h.measured, connector)
 	delete(h.cards, connector)
 	delete(h.pointer, connector)
+	if h.editing != nil && h.editing.connector == connector {
+		h.endReply() // the surface, and its keyboard, are already gone
+		h.publishPresentation()
+	}
 	h.noteTargets(connector, nil, nil)
 }
 
@@ -381,7 +401,19 @@ func (h *toastHost) handle(connector string, event wayland.Event) bool {
 		return false
 	case wayland.EventPointerLeave:
 		delete(h.pointer, connector)
-		if h.updateHover(connector) {
+		// Leaving an empty reply abandons it; one with text is parked. The
+		// surface has no shield, so a click on another window never reaches
+		// the shell, and an exclusive grab kept past this point would take
+		// that window's keystrokes into the reply.
+		left := h.editing != nil && h.editing.connector == connector && h.editing.focused
+		if left {
+			if h.editing.field.Text == "" {
+				h.endReply()
+			} else {
+				h.parkReply()
+			}
+		}
+		if h.updateHover(connector) || left {
 			h.publishPresentation()
 			return true
 		}
@@ -404,10 +436,151 @@ func (h *toastHost) handle(connector string, event wayland.Event) bool {
 		h.pressing = false
 		h.press = toastCard{}
 		h.resolver.release(card.root, x-card.rect.X, y-card.rect.Y)
+		if h.resolver.takeReplyHit() {
+			h.focusReply(connector)
+		}
+		return true
+	case wayland.EventKeyPress:
+		return h.replyKey(connector, ui.KeyInput{Code: event.Key, Sym: event.Sym, Text: event.Text, Mods: event.Mods, Serial: event.Serial})
+	case wayland.EventPaste:
+		if h.editing == nil || h.editing.connector != connector {
+			return false
+		}
+		h.editing.field.BreakUndo()
+		h.editing.field.Commit(flattenPaste(strings.ReplaceAll(event.Paste, "\x00", "")))
+		h.repaint(connector)
 		return true
 	default:
 		return false
 	}
+}
+
+// focusReply opens the reply whose field was pressed, or resumes a parked
+// one, taking the keyboard for the toast surface in place and holding the
+// card open while it is typed into.
+//
+// Exclusive, as a panel is, not on-demand: a compositor focuses an on-demand
+// surface on the button press, which has already happened by the time this
+// runs, so on-demand would need a second click before the first key landed.
+// Enter, Escape, or the pointer leaving hands the keyboard back.
+func (h *toastHost) focusReply(connector string) {
+	if h.editing == nil {
+		h.editing = &toastReply{connector: connector, field: ui.NewField("")}
+	}
+	if h.editing.connector != connector || h.editing.focused {
+		return
+	}
+	h.editing.focused = true
+	h.setKeyboard(connector, keyboardExclusive)
+	h.repaint(connector)
+	h.publishPresentation()
+}
+
+// parkReply keeps the typed text and hands the keyboard back. The caller
+// republishes presentation.
+func (h *toastHost) parkReply() {
+	h.editing.focused = false
+	h.setKeyboard(h.editing.connector, keyboardNone)
+	h.repaint(h.editing.connector)
+}
+
+// endReply closes the reply without sending it and hands the keyboard back.
+// The caller republishes presentation.
+func (h *toastHost) endReply() {
+	if h.editing == nil {
+		return
+	}
+	connector, focused := h.editing.connector, h.editing.focused
+	h.editing = nil
+	h.resolver.cancelReply()
+	if focused {
+		h.setKeyboard(connector, keyboardNone)
+	}
+	h.repaint(connector)
+}
+
+// replyKey edits the open reply. Enter sends it, Escape abandons it, and
+// every other key goes through the shared field editor.
+func (h *toastHost) replyKey(connector string, k ui.KeyInput) bool {
+	if h.editing == nil || h.editing.connector != connector || !h.editing.focused {
+		return false
+	}
+	switch k.Sym {
+	case ui.SymEscape:
+		h.endReply()
+		h.publishPresentation()
+		return true
+	case ui.SymReturn, ui.SymKPEnter:
+		h.resolver.submitReply(h.resolver.replyID, h.editing.field.Text)
+		h.endReply()
+		h.publishPresentation()
+		return true
+	}
+	res := h.editing.field.HandleKey(k)
+	h.r.requestClipboard(res, k.Serial)
+	if res.Changed || res.Handled {
+		h.repaint(connector)
+	}
+	return res.Handled
+}
+
+func (h *toastHost) setKeyboard(connector string, mode uint32) {
+	global, ok := h.outputs[connector]
+	if !ok {
+		return
+	}
+	h.request(wayland.AuxRequest{
+		Output: global,
+		ID:     toastSurfaceID(connector),
+		Update: &wayland.AuxUpdate{Keyboard: &mode},
+	})
+}
+
+// repaint rebuilds one output's cards from the current placement and asks
+// for a frame.
+func (h *toastHost) repaint(connector string) {
+	global, ok := h.outputs[connector]
+	if !ok {
+		return
+	}
+	h.rebuild(connector)
+	h.r.publishSurface(global, toastSurfaceID(connector))
+}
+
+// showReply paints the open reply into its laid-out card: the typed text,
+// caret and selection, scrolled so the caret stays in view.
+func (h *toastHost) showReply(root *ui.Node, id uint32, measure ui.MeasureText) {
+	action := fmt.Sprintf("notify:%d:reply", id)
+	var find func(*ui.Node) *ui.Node
+	find = func(n *ui.Node) *ui.Node {
+		if n.Action == action && n.Kind == ui.KindTextField {
+			return n
+		}
+		for _, c := range n.Children {
+			if f := find(c); f != nil {
+				return f
+			}
+		}
+		return nil
+	}
+	n := find(root)
+	if n == nil {
+		return
+	}
+	f := h.editing.field
+	n.Editing = h.editing.focused
+	f.SyncTo(n)
+	attrs := ui.TextAttrsOf(n)
+	caretX, _ := measure(ui.DisplayPrefix(n, n.Cursor)+ui.DisplayPreedit(n), attrs)
+	textW, _ := measure(ui.DisplayText(n)+ui.DisplayPreedit(n), attrs)
+	f.ScrollX = ui.KeepCaretVisible(f.ScrollX, caretX, textW, render.FieldTextRect(n).W, 8)
+	n.ScrollX = f.ScrollX
+}
+
+// replyingOn reports whether id's card on connector holds the open reply,
+// focused or parked.
+func (h *toastHost) replyingOn(connector string, id uint32) bool {
+	return h.editing != nil && h.editing.connector == connector && h.resolver.replyID == id
 }
 
 func (h *toastHost) cardAt(connector string, x, y int) (toastCard, bool) {
@@ -527,6 +700,9 @@ func (h *toastHost) rebuild(connector string) {
 		root := h.cardOf(n)
 		if err := ui.LayoutColumn(root, ui.Rect{W: rects[i].W, H: rects[i].H}, measure); err != nil {
 			continue
+		}
+		if h.replyingOn(connector, id) {
+			h.showReply(root, id, measure)
 		}
 		cards = append(cards, toastCard{root: root, rect: rects[i], critical: n.Urgency == protocol.UrgencyCritical})
 	}
@@ -695,6 +871,11 @@ func (h *toastHost) recompute() {
 		visible, queued := placeIDs(ids, heights, geom)
 		h.visible[connector] = visible
 		h.queued[connector] = queued
+		// A reply ends with its card: the record closed, or the stack was
+		// suppressed or pushed it into the queue.
+		if h.editing != nil && h.editing.connector == connector && !slices.Contains(visible, h.resolver.replyID) {
+			h.endReply()
+		}
 		h.rebuild(connector)
 		h.updateHover(connector)
 
@@ -864,7 +1045,7 @@ func (h *toastHost) viewFor(id uint32) presentationView {
 	for connector := range h.outputs {
 		for _, vid := range h.visible[connector] {
 			if vid == id {
-				if h.hovered[connector][id] {
+				if h.hovered[connector][id] || (h.replyingOn(connector, id) && h.editing.focused) {
 					v.hovered = append(v.hovered, connector)
 				}
 				v.visible = append(v.visible, connector)
