@@ -50,6 +50,152 @@ func TestStateLayerPolicyGatesHoverOnly(t *testing.T) {
 	}
 }
 
+func TestRippleRestartsAtTheNewOrigin(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	a.TargetRipple("lock", 3, 4)
+	clock.add(400 * time.Millisecond)
+	if phase, x, y, ok := a.Ripple("lock"); !ok || phase <= 0 || phase >= 1 || x != 3 || y != 4 {
+		t.Fatalf("in-flight ripple = %v at %v,%v (ok %v)", phase, x, y, ok)
+	}
+	a.TargetRipple("lock", 8, 9)
+	if phase, x, y, _ := a.Ripple("lock"); phase > 0.1 || x != 8 || y != 9 {
+		t.Fatalf("second press left phase %v at %v,%v", phase, x, y)
+	}
+	clock.add(2 * time.Second)
+	if phase, _, _, _ := a.Ripple("lock"); phase != 1 {
+		t.Fatalf("settled ripple phase = %v, want 1", phase)
+	}
+	if !a.Settled() {
+		t.Error("a settled ripple must not keep the surface requesting frames")
+	}
+	if _, _, _, ok := a.Ripple("ghost"); ok {
+		t.Error("a node with no ripple reported one")
+	}
+}
+
+func TestRippleRunsLinearlyForItsFullRecipe(t *testing.T) {
+	t.Parallel()
+	a, _ := newTestAnimator(false)
+	if got := a.duration(animRipple, true); got != 800*time.Millisecond {
+		t.Fatalf("ripple duration = %v, want 800ms", got)
+	}
+	a.TargetRipple("lock", 0, 0)
+	if got := a.easeFor(animRipple)(0.5); got != 0.5 {
+		t.Fatalf("ripple ease at midpoint = %v, want linear", got)
+	}
+}
+
+func TestRippleSnapsUnderReducedMotion(t *testing.T) {
+	t.Parallel()
+	a, _ := newTestAnimator(true)
+	a.TargetRipple("lock", 1, 2)
+	if phase, _, _, _ := a.Ripple("lock"); phase != 1 {
+		t.Fatalf("reduced-motion ripple phase = %v, want 1", phase)
+	}
+	if !a.Settled() {
+		t.Error("reduced-motion ripple requested frames")
+	}
+}
+
+func TestRippleOriginIsForgottenWithItsNode(t *testing.T) {
+	t.Parallel()
+	a, _ := newTestAnimator(false)
+	a.TargetRipple("lock", 3, 4)
+	a.Forget("lock")
+	if _, _, _, ok := a.Ripple("lock"); ok {
+		t.Error("forgotten node still reported a ripple")
+	}
+}
+
+func TestRetargetDoesNotRestartRipple(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	a.TargetRipple("lock", 3, 4)
+	clock.add(400 * time.Millisecond)
+	a.Retarget()
+	clock.add(400 * time.Millisecond)
+	if phase, _, _, _ := a.Ripple("lock"); phase != 1 {
+		t.Fatalf("theme retarget left ripple at %v, want settled", phase)
+	}
+}
+
+func TestApplyWritesPressProgressAndRipple(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{
+		{Kind: ui.KindButton, Action: "b", Bounds: ui.Rect{W: 10, H: 10}},
+	}}
+	interaction{press: "b", stateLayer: true}.apply(root, a)
+	a.TargetRipple("b", 2, 3)
+	clock.add(30 * time.Millisecond)
+	interaction{press: "b", stateLayer: true}.apply(root, a)
+	n := root.Children[0]
+	if n.PressProgress <= 0 || n.PressProgress >= 1 {
+		t.Fatalf("press progress = %v, want a value in flight", n.PressProgress)
+	}
+	if n.Ripple.X != 2 || n.Ripple.Y != 3 || n.Ripple.Phase <= 0 || n.Ripple.Phase >= 1 {
+		t.Fatalf("ripple on the copy = %+v", n.Ripple)
+	}
+}
+
+func TestInteractionKeepsHoverStateThroughFadeOut(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	n := &ui.Node{Kind: ui.KindButton, Action: "b"}
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{n}}
+	pointer := interaction{stateLayer: true}
+	pointer.setHover("b")
+	pointer.apply(root, a)
+	if n.State.Has(ui.StateHovered) || n.HoverProgress != 0 {
+		t.Fatalf("hover at transition start = %v, %v", n.State, n.HoverProgress)
+	}
+	clock.add(40 * time.Millisecond)
+	pointer.apply(root, a)
+	if !n.State.Has(ui.StateHovered) || n.HoverProgress <= 0 || n.HoverProgress >= 1 {
+		t.Fatalf("hover did not enter through its channel: state=%v progress=%v", n.State, n.HoverProgress)
+	}
+	pointer.setHover("")
+	pointer.apply(root, a)
+	clock.add(40 * time.Millisecond)
+	pointer.apply(root, a)
+	if !n.State.Has(ui.StateHovered) || n.HoverProgress <= 0 {
+		t.Fatalf("hover state vanished before fading: state=%v progress=%v", n.State, n.HoverProgress)
+	}
+	clock.add(110 * time.Millisecond)
+	pointer.apply(root, a)
+	if n.State.Has(ui.StateHovered) || n.HoverProgress != 0 {
+		t.Fatalf("hover remained after settling: state=%v progress=%v", n.State, n.HoverProgress)
+	}
+}
+
+func TestInteractionKeepsPressStateThroughReleaseFade(t *testing.T) {
+	t.Parallel()
+	a, clock := newTestAnimator(false)
+	n := &ui.Node{Kind: ui.KindButton, Action: "b"}
+	root := &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{n}}
+	pointer := interaction{stateLayer: true}
+	pointer.setPress("b")
+	pointer.apply(root, a)
+	clock.add(30 * time.Millisecond)
+	pointer.apply(root, a)
+	if !n.State.Has(ui.StatePressed) || n.PressProgress <= 0 || n.PressProgress >= 1 {
+		t.Fatalf("press did not enter through its channel: state=%v progress=%v", n.State, n.PressProgress)
+	}
+	pointer.setPress("")
+	pointer.apply(root, a)
+	clock.add(30 * time.Millisecond)
+	pointer.apply(root, a)
+	if !n.State.Has(ui.StatePressed) || n.PressProgress <= 0 || n.PressProgress >= 1 {
+		t.Fatalf("press state vanished before fading: state=%v progress=%v", n.State, n.PressProgress)
+	}
+	clock.add(120 * time.Millisecond)
+	pointer.apply(root, a)
+	if n.State.Has(ui.StatePressed) || n.PressProgress != 0 {
+		t.Fatalf("press remained after settling: state=%v progress=%v", n.State, n.PressProgress)
+	}
+}
+
 func TestAnimatorUsesCatalogueDurations(t *testing.T) {
 	t.Parallel()
 	a, _ := newTestAnimator(false)

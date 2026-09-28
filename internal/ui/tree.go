@@ -306,8 +306,9 @@ type Node struct {
 	// TextOffset is the resolved physical-pixel phase for a marquee copy. It
 	// lives on the render copy, not the retained widget tree.
 	TextOffset int
-	// PressProgress and Ripple are resolved by the surface host on the render
-	// copy, never on the retained tree.
+	// HoverProgress, PressProgress, and Ripple are resolved by the surface host
+	// on the render copy, never on the retained tree.
+	HoverProgress float64
 	PressProgress float64
 	Ripple        RipplePaint
 	// MinWidthText floors a text node's width at the measured width of this

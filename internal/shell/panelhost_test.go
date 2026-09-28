@@ -45,6 +45,37 @@ func TestPanelHostRenderPaintsClockText(t *testing.T) {
 	}
 }
 
+func TestPanelPointerRippleUsesPressPoint(t *testing.T) {
+	a, _ := newTestAnimator(true)
+	n := &ui.Node{Kind: ui.KindButton, Action: "button", Focusable: true,
+		Bounds: ui.Rect{X: 5, Y: 6, W: 10, H: 12}}
+	h := &PanelHost{
+		id: PanelClock, output: 7, anim: a,
+		pointer: interaction{stateLayer: true},
+		root:    &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{n}},
+		focus:   []*ui.Node{n}, roving: ui.Roving{Count: 1},
+	}
+	h.handle(&Registry{})(wayland.Event{Kind: wayland.EventPointerPress, X: 8.9, Y: 9.9})
+	if phase, x, y, ok := a.Ripple("button"); !ok || phase != 1 || x != 8 || y != 9 {
+		t.Fatalf("pointer ripple = %v at %d,%d (ok %v), want centre-independent event point 8,9", phase, x, y, ok)
+	}
+}
+
+func TestPanelKeyboardRippleUsesControlCentre(t *testing.T) {
+	a, _ := newTestAnimator(true)
+	n := &ui.Node{Kind: ui.KindButton, Action: "unknown", Focusable: true,
+		Bounds: ui.Rect{X: 5, Y: 7, W: 11, H: 9}}
+	h := &PanelHost{
+		id: PanelClock, anim: a,
+		pointer: interaction{stateLayer: true},
+		focus:   []*ui.Node{n}, roving: ui.Roving{Count: 1},
+	}
+	h.keyInput(&Registry{}, ui.KeyInput{Code: keyEnter})
+	if phase, x, y, ok := a.Ripple("unknown"); !ok || phase != 1 || x != 10 || y != 11 {
+		t.Fatalf("keyboard ripple = %v at %d,%d (ok %v), want centre 10,11", phase, x, y, ok)
+	}
+}
+
 // Monitor cards are KindCapsule. The panel painter used to omit Capsule from
 // Style, so fillRoundedRect skipped the A=0 fill and every card vanished
 // into the panel background.

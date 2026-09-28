@@ -1513,6 +1513,9 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			}
 			if n := h.hitFocusable(h.hoverX, h.hoverY); n != nil {
 				h.pressed = n.StableKey()
+				if h.anim != nil && ui.Animated(n) && h.pressed != "" {
+					h.anim.TargetRipple(h.pressed, h.hoverX, h.hoverY)
+				}
 				h.pointerChanged(r, h.pointer.setPress(n.StableKey()))
 				h.setFocus(n)
 				if n.Kind == ui.KindDragSource {
@@ -1764,6 +1767,12 @@ func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) bool {
 	case keyPageDown:
 		return h.scrollBy(max(h.logicalH, 1))
 	case keySpace, keyEnter:
+		if n := h.focused(); n != nil && h.anim != nil && ui.Animated(n) {
+			if key := n.StableKey(); key != "" {
+				h.anim.TargetRipple(key, n.Bounds.X+n.Bounds.W/2, n.Bounds.Y+n.Bounds.H/2)
+				r.startSurfaceFrames(h)
+			}
+		}
 		return h.activate(r)
 	}
 	return false

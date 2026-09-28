@@ -25,6 +25,8 @@ const (
 	// pressScale is the visual shrink a pressed control takes. It changes the
 	// painted rectangle only; layout bounds do not move.
 	pressScale = 0.98
+	rippleGrow = 500 * time.Millisecond
+	rippleFade = 300 * time.Millisecond
 
 	// animTick is how often an unsettled value is resampled. It is half a
 	// 60Hz frame rather than a whole one: a ticker at the frame period beats
@@ -75,6 +77,8 @@ const (
 	// animSprite is a plugin sprite cycle's phase: a linear 0-to-1 loop over
 	// one pass through the icon's frames.
 	animSprite
+	// animRipple is one press ripple's linear phase.
+	animRipple
 )
 
 // animKey addresses one value: a stable node key plus the channel. Keys are
@@ -151,6 +155,7 @@ type animator struct {
 	motion  theme.MotionTokens
 	spatial theme.Curve
 	values  map[animKey]animValue
+	origins map[string][2]int
 	// wake is nudged whenever a value is aimed somewhere new, so a frame
 	// loop resting between sprite poses picks up a hover or a glide at once
 	// instead of at the next pose.
@@ -174,8 +179,9 @@ func newAnimator(now func() time.Time, reduced bool, motion render.MotionSet) *a
 	return &animator{
 		now: now, reduced: reduced || motion.Reduced,
 		motion: m, spatial: motion.Spatial,
-		values: map[animKey]animValue{},
-		wake:   make(chan struct{}, 1),
+		values:  map[animKey]animValue{},
+		origins: map[string][2]int{},
+		wake:    make(chan struct{}, 1),
 	}
 }
 
@@ -191,6 +197,9 @@ func (a *animator) nudge() {
 // easeFor is a method because the curve is a theme axis now: an expressive
 // motion style settles every spatial recipe harder, not just selection.
 func (a *animator) easeFor(channel animChannel) func(float64) float64 {
+	if channel == animRipple {
+		return func(p float64) float64 { return p }
+	}
 	// Selection settles harder so the moving indicator arrives decisively;
 	// everything else uses the curve the theme chose.
 	if channel == animSelect || a.spatial == theme.CurveOutQuart {
@@ -237,6 +246,8 @@ func (a *animator) duration(channel animChannel, rising bool) time.Duration {
 		// A value glide reads as one motion whatever its direction: a battery
 		// filling and draining both travel the same road.
 		return a.motion.Medium
+	case animRipple:
+		return rippleGrow + rippleFade
 	}
 	return 0
 }
@@ -448,6 +459,28 @@ func (a *animator) Reset(node string, channel animChannel) {
 	delete(a.values, animKey{node: node, channel: channel})
 }
 
+// TargetRipple restarts one node's ripple at the new press origin.
+func (a *animator) TargetRipple(node string, x, y int) {
+	if a == nil || node == "" {
+		return
+	}
+	if a.origins == nil {
+		a.origins = map[string][2]int{}
+	}
+	a.origins[node] = [2]int{x, y}
+	a.Reset(node, animRipple)
+	a.Target(node, animRipple, 1)
+}
+
+// Ripple returns a node's resolved ripple frame and origin.
+func (a *animator) Ripple(node string) (phase float64, x, y int, ok bool) {
+	if a == nil || !a.has(node, animRipple) {
+		return 0, 0, 0, false
+	}
+	p := a.origins[node]
+	return a.Value(node, animRipple), p[0], p[1], true
+}
+
 // has reports whether a channel has ever been aimed at anything. A value that
 // was never targeted is not the same as one resting at zero: the first means
 // there is nothing to resolve, the second that it resolved to zero.
@@ -498,6 +531,7 @@ func (a *animator) SettledExceptEffects() bool {
 // Forget drops a node's values. A control that left the tree must not hold a
 // transition open and keep the surface requesting frames.
 func (a *animator) Forget(node string) {
+	delete(a.origins, node)
 	for key := range a.values {
 		if key.node == node {
 			delete(a.values, key)
@@ -512,6 +546,9 @@ func (a *animator) Retarget() {
 	defer a.nudge()
 	now := a.now()
 	for key, v := range a.values {
+		if key.channel == animRipple {
+			continue
+		}
 		if v.loop != ui.GradientNone {
 			continue
 		}
@@ -686,13 +723,8 @@ func (s interaction) apply(root *ui.Node, anim *animator) {
 			key := n.StableKey()
 			hovered := s.stateLayer && key != "" && key == s.hover
 			pressed := key != "" && key == s.press
-			n.State &^= ui.StateHovered | ui.StatePressed
-			if hovered {
-				n.State |= ui.StateHovered
-			}
-			if pressed {
-				n.State |= ui.StatePressed
-			}
+			n.HoverProgress, n.PressProgress = 0, 0
+			n.Ripple = ui.RipplePaint{}
 			// Only chrome carries a transition. A clickable tray row resolves
 			// state so the host can react, but a display group that merely
 			// reports a number never animates.
@@ -700,6 +732,20 @@ func (s interaction) apply(root *ui.Node, anim *animator) {
 				anim.Target(key, animHover, boolValue(hovered))
 				anim.Target(key, animPress, boolValue(pressed))
 				anim.Target(key, animSelect, boolValue(n.State.Has(ui.StateSelected)))
+				n.HoverProgress = anim.Value(key, animHover)
+				n.PressProgress = anim.Value(key, animPress)
+				hovered = n.HoverProgress > 0
+				pressed = n.PressProgress > 0
+				if phase, x, y, ok := anim.Ripple(key); ok {
+					n.Ripple = ui.RipplePaint{Phase: phase, X: x, Y: y}
+				}
+			}
+			n.State &^= ui.StateHovered | ui.StatePressed
+			if hovered {
+				n.State |= ui.StateHovered
+			}
+			if pressed {
+				n.State |= ui.StatePressed
 			}
 		}
 		// A virtual list is not rebuilt here. Layout materialises the visible
