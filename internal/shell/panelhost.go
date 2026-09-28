@@ -2021,6 +2021,9 @@ func (h *PanelHost) fieldChanged(r *Registry, n *ui.Node, f *ui.Field) bool {
 	if n.Name == "Search" {
 		h.query = f.Text
 		if h.id == PanelLauncher {
+			// A failed activation's error answers that attempt, not the
+			// search the user has moved on to.
+			h.errLabel = ""
 			h.launcherSel = 0
 			h.launcherScroll = 0
 			r.launcherServiceLocked().Query(h.query)

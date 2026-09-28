@@ -656,6 +656,45 @@ func TestLauncherSpawnFailureKeepsPanelOpen(t *testing.T) {
 	})
 }
 
+// A failed activation's error answers that attempt. Typing again starts a new
+// search, and the old error must not sit over its results (GH #41).
+func TestLauncherTypingClearsAFailedActivationError(t *testing.T) {
+	t.Parallel()
+
+	reg, run, reqs := openLauncherPanel(t, launcherTestEntries())
+	run.err = errors.New("niri refused")
+	pressLauncherKey(reqs, keyEnter)
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && h.errLabel != ""
+	})
+
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "f"})
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelLauncher]
+	label := h.errLabel
+	errorText := launcherErrorText(h.root)
+	reg.mu.Unlock()
+	if label != "" || errorText != "" {
+		t.Fatalf("after typing, errLabel = %q and the tree shows %q, want neither", label, errorText)
+	}
+}
+
+// launcherErrorText returns the first error-toned text in the tree.
+func launcherErrorText(n *ui.Node) string {
+	if n == nil {
+		return ""
+	}
+	if n.Kind == ui.KindText && n.Tone == ui.ToneError {
+		return n.Text
+	}
+	for _, c := range n.Children {
+		if s := launcherErrorText(c); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
 func writeLauncherPNG(t *testing.T, path string) {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, 8, 8))
