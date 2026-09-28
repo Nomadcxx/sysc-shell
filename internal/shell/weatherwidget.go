@@ -143,9 +143,9 @@ func weatherTooltipTree(reading services.Reading) *ui.Node {
 		}}
 	}
 	lines := []*ui.Node{
-		// The condition titles the card, as a plugin's bold label title does; the
+		// The condition titles the card in the label role's heavier weight; the
 		// readings under it are body text.
-		{Kind: ui.KindText, Text: render.WeatherCondition(reading.Code), TextRole: theme.RoleLabel, Bold: true},
+		{Kind: ui.KindText, Text: render.WeatherCondition(reading.Code), TextRole: theme.RoleLabel},
 	}
 	if len(reading.Daily) > 0 {
 		lines = append(lines, &ui.Node{Kind: ui.KindText, Tabular: true, Text: weatherDayRange(reading)})
