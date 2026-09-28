@@ -178,9 +178,9 @@ func (h *toastHost) syncOutputs(globals map[string]uint32) {
 // so the compositor reports the output's own logical size, which is what the
 // stack lays out against; the input region is narrowed to the visible cards
 // immediately afterwards, so the rest of the output still takes clicks.
-// blur-exempt: design D13 names toasts as out of scope. This surface spans the
-// whole output while the cards occupy a corner of it, so a backdrop would
-// capture and blur an entire screen to sit behind a notification card.
+// Each card blurs through the compositor: BlurShape hands it the cards'
+// silhouettes, so nothing is captured and only the cards blur, not the
+// output the surface spans (the cost design D13 exempted toasts over).
 func (h *toastHost) spec(connector string) *wayland.AuxSpec {
 	return &wayland.AuxSpec{
 		ID:        toastSurfaceID(connector),
@@ -200,8 +200,32 @@ func (h *toastHost) spec(connector string) *wayland.AuxSpec {
 				return h.render(connector, pixels, width, height, stride)
 			},
 			Handle: func(event wayland.Event) bool { return h.handle(connector, event) },
+			BlurShape: func() []ui.Rect {
+				h.r.mu.Lock()
+				defer h.r.mu.Unlock()
+				return h.blurShape(connector)
+			},
 		},
 	}
+}
+
+// blurShape is the region the compositor blurs behind this output's toasts,
+// in surface coordinates: each card's rounded silhouette where it draws this
+// frame, so the blur follows a card as it slides. Without compositor blur the
+// cards keep the overlay ground and nothing blurs. Caller holds r.mu.
+func (h *toastHost) blurShape(connector string) []ui.Rect {
+	if !h.glass() {
+		return nil
+	}
+	var out []ui.Rect
+	for _, card := range h.cards[connector] {
+		body := card.rect
+		if id, ok := cardID(card.root); ok {
+			body = h.displayRect(connector, id, card.rect)
+		}
+		out = append(out, ui.BlurStrips(ui.SurfaceShape{Body: body, Radius: h.style.Radius})...)
+	}
+	return out
 }
 
 // configure records the output's real logical size and relays out the stack

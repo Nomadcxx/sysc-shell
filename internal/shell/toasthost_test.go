@@ -700,3 +700,46 @@ func TestToastCriticalCardStrokesTheErrorRim(t *testing.T) {
 		t.Fatalf("edge pixel %+v is nearer the outline %+v than the error %+v", px, rim, errC)
 	}
 }
+
+func TestToastBlurShapeCoversEachCard(t *testing.T) {
+	r, h, _, _ := glassToasts(t, true, note(1, "first"), note(2, "second"))
+	shape := h.harness().opens[0].Callbacks.BlurShape()
+	r.mu.Lock()
+	cards := append([]toastCard(nil), h.cards["eDP-1"]...)
+	r.mu.Unlock()
+	if len(cards) != 2 || len(shape) == 0 {
+		t.Fatalf("cards %d, strips %d", len(cards), len(shape))
+	}
+	area := map[int]int{}
+	for _, s := range shape {
+		inside := -1
+		for i, c := range cards {
+			if s.X >= c.rect.X && s.Y >= c.rect.Y && s.X+s.W <= c.rect.X+c.rect.W && s.Y+s.H <= c.rect.Y+c.rect.H {
+				inside = i
+			}
+		}
+		if inside < 0 {
+			t.Fatalf("strip %+v lies outside every card", s)
+		}
+		area[inside] += s.W * s.H
+	}
+	for i, c := range cards {
+		if full := c.rect.W * c.rect.H; area[i] < full*9/10 {
+			t.Fatalf("card %d blur covers %d of %d px", i, area[i], full)
+		}
+	}
+}
+
+func TestToastBlurShapeIsEmptyWithoutCompositorBlur(t *testing.T) {
+	_, h, _, _ := glassToasts(t, false, note(1, "first"))
+	if shape := h.harness().opens[0].Callbacks.BlurShape(); len(shape) != 0 {
+		t.Fatalf("blur without compositor blur: %+v", shape)
+	}
+}
+
+func TestToastBlurShapeIsEmptyWithNoCards(t *testing.T) {
+	_, h, _, _ := glassToasts(t, true)
+	if shape := h.harness().opens[0].Callbacks.BlurShape(); len(shape) != 0 {
+		t.Fatalf("blur with no cards: %+v", shape)
+	}
+}
