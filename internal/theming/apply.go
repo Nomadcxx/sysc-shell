@@ -163,7 +163,7 @@ func stateHash(path string) string { return loadState()[path] }
 func rememberHash(path, sum string) error {
 	root := statePath()
 	if root == "" {
-		return nil
+		return errors.New("theming: state directory is unavailable")
 	}
 	state := loadState()
 	state[path] = sum
@@ -355,11 +355,13 @@ func ensureDirective(d directive, force bool) error {
 		if content == "" {
 			content = d.line + "\n"
 		}
+		if err := setDirectiveOwned(d, false); err != nil {
+			return fmt.Errorf("clear stale directive ownership for %s: %w", d.file, err)
+		}
 		if err := writeFileAtomic(d.file, []byte(content), 0o644); err != nil {
 			return err
 		}
-		_ = setDirectiveOwned(d, true)
-		return nil
+		return recordDirectiveOwned(d, nil, []byte(content), false)
 	}
 	lines := strings.Split(string(b), "\n")
 	returnIndex, err := directiveReturnIndex(lines, d)
@@ -375,7 +377,7 @@ func ensureDirective(d directive, force bool) error {
 			ownCount++
 			continue
 		}
-		if strings.HasPrefix(trim, d.key) {
+		if directiveKeyMatches(trim, d.key) {
 			conflictCount++
 		}
 	}
@@ -395,12 +397,17 @@ func ensureDirective(d directive, force bool) error {
 	if (conflictCount > 0 || ownCount > 1) && !force {
 		return fmt.Errorf("%w: directive in %s", ErrUserModified, d.file)
 	}
+	if ownCount == 0 {
+		if err := setDirectiveOwned(d, false); err != nil {
+			return fmt.Errorf("clear stale directive ownership for %s: %w", d.file, err)
+		}
+	}
 	if conflictCount == 0 && ownCount == 0 {
-		if err := writeDirectiveConfig(d.file, directiveContent(b, lines, d)); err != nil {
+		content := directiveContent(b, lines, d)
+		if err := writeDirectiveConfig(d.file, content); err != nil {
 			return err
 		}
-		_ = setDirectiveOwned(d, true)
-		return nil
+		return recordDirectiveOwned(d, b, content, true)
 	}
 	if force {
 		if err := backupUserFileOnce(d.file, b); err != nil {
@@ -410,16 +417,16 @@ func ensureDirective(d directive, force bool) error {
 	remaining := make([]string, 0, len(lines))
 	for _, ln := range lines {
 		trim := strings.TrimSpace(ln)
-		if trim == own || strings.HasPrefix(trim, d.key) {
+		if trim == own || directiveKeyMatches(trim, d.key) {
 			continue
 		}
 		remaining = append(remaining, ln)
 	}
-	if err := writeDirectiveConfig(d.file, directiveContent([]byte(strings.Join(remaining, "\n")), remaining, d)); err != nil {
+	content := directiveContent([]byte(strings.Join(remaining, "\n")), remaining, d)
+	if err := writeDirectiveConfig(d.file, content); err != nil {
 		return err
 	}
-	_ = setDirectiveOwned(d, true)
-	return nil
+	return recordDirectiveOwned(d, b, content, true)
 }
 
 func directiveReturnIndex(lines []string, d directive) (int, error) {
@@ -443,6 +450,18 @@ func directiveOwnershipKey(d directive) string {
 	return "directive:" + hash([]byte(d.file+"\x00"+strings.TrimSpace(d.line)))
 }
 
+func directiveKeyMatches(line, key string) bool {
+	trim := strings.TrimSpace(line)
+	if strings.HasSuffix(key, "=") {
+		name := strings.TrimSpace(strings.TrimSuffix(key, "="))
+		if name == "" || !strings.HasPrefix(trim, name) {
+			return false
+		}
+		return strings.HasPrefix(strings.TrimLeft(trim[len(name):], " \t"), "=")
+	}
+	return strings.HasPrefix(trim, key)
+}
+
 func directiveOwned(d directive) bool {
 	return stateHash(directiveOwnershipKey(d)) == "owned"
 }
@@ -453,6 +472,33 @@ func setDirectiveOwned(d directive, owned bool) error {
 		value = "owned"
 	}
 	return rememberHash(directiveOwnershipKey(d), value)
+}
+
+func recordDirectiveOwned(d directive, before, written []byte, existed bool) error {
+	if err := setDirectiveOwned(d, true); err != nil {
+		cause := fmt.Errorf("record directive ownership for %s: %w", d.file, err)
+		current, readErr := os.ReadFile(d.file)
+		if errors.Is(readErr, os.ErrNotExist) {
+			return cause
+		}
+		if readErr != nil {
+			return errors.Join(cause, fmt.Errorf("check config before rollback: %w", readErr))
+		}
+		if !bytes.Equal(current, written) {
+			return errors.Join(cause, fmt.Errorf("config changed before rollback; preserving %s", d.file))
+		}
+		var rollbackErr error
+		if existed {
+			rollbackErr = writeDirectiveConfig(d.file, before)
+		} else {
+			rollbackErr = os.Remove(d.file)
+		}
+		if rollbackErr != nil {
+			return errors.Join(cause, fmt.Errorf("roll back config %s: %w", d.file, rollbackErr))
+		}
+		return cause
+	}
+	return nil
 }
 
 func directiveContent(body []byte, lines []string, d directive) []byte {
@@ -547,31 +593,52 @@ func writeDirectiveConfig(path string, data []byte) error {
 	return writeFileAtomic(path, data, mode)
 }
 
-// RemoveDirective deletes only the exact line sysc-shell wrote; a file
-// left with nothing but blank lines is removed.
+// RemoveDirective deletes only the exact line sysc-shell wrote and refuses
+// to leave an unowned or edited directive with the same key. A file left with
+// nothing but blank lines is removed.
 func RemoveDirective(d directive) error {
-	if !directiveOwned(d) {
-		return nil
-	}
+	owned := directiveOwned(d)
 	b, err := os.ReadFile(d.file)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return setDirectiveOwned(d, false)
+			if owned {
+				return setDirectiveOwned(d, false)
+			}
+			return nil
 		}
 		return err
 	}
 	own := strings.TrimSpace(d.line)
 	var keep []string
 	removed := false
+	matchingKey := false
 	for _, ln := range strings.Split(string(b), "\n") {
-		if strings.TrimSpace(ln) == own && !removed {
-			removed = true
-			continue
+		trim := strings.TrimSpace(ln)
+		if directiveKeyMatches(trim, d.key) {
+			if owned && !removed {
+				if trim == own {
+					removed = true
+					continue
+				}
+			}
+			matchingKey = true
 		}
 		keep = append(keep, ln)
 	}
+	if !owned {
+		if matchingKey {
+			return fmt.Errorf("%w: unowned directive in %s", ErrUserModified, d.file)
+		}
+		return nil
+	}
 	if !removed {
-		return setDirectiveOwned(d, false)
+		if err := setDirectiveOwned(d, false); err != nil {
+			return err
+		}
+		if matchingKey {
+			return fmt.Errorf("%w: modified directive in %s", ErrUserModified, d.file)
+		}
+		return nil
 	}
 	if err := setDirectiveOwned(d, false); err != nil {
 		return err
@@ -586,6 +653,9 @@ func RemoveDirective(d directive) error {
 	if err := writeDirectiveConfig(d.file, []byte(strings.Join(keep, "\n"))); err != nil {
 		_ = setDirectiveOwned(d, true)
 		return err
+	}
+	if matchingKey {
+		return fmt.Errorf("%w: additional directive in %s", ErrUserModified, d.file)
 	}
 	return nil
 }

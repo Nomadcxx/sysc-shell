@@ -357,6 +357,160 @@ func TestEnsureDirectiveCreates(t *testing.T) {
 	}
 }
 
+func TestEnsureDirectiveRequiresWritableOwnershipState(t *testing.T) {
+	for _, initiallyExists := range []bool{false, true} {
+		name := "created config"
+		if initiallyExists {
+			name = "existing config"
+		}
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			stateHome := filepath.Join(root, "state")
+			if err := os.WriteFile(stateHome, []byte("not a directory"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("XDG_STATE_HOME", stateHome)
+
+			config := filepath.Join(root, "config")
+			original := []byte("opacity = 0.9\n")
+			if initiallyExists {
+				if err := os.WriteFile(config, original, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			dd := d(root, "config")
+			dd.create = true
+			if err := EnsureDirective(dd); err == nil {
+				t.Fatal("ownership persistence failure was ignored")
+			}
+
+			got, err := os.ReadFile(config)
+			if initiallyExists {
+				if err != nil || string(got) != string(original) {
+					t.Fatalf("config after failed ownership write = %q, %v", got, err)
+				}
+			} else if !os.IsNotExist(err) {
+				t.Fatalf("created config survived failed ownership write: %q, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestRecordDirectiveOwnedRollsBackFailedStateWrite(t *testing.T) {
+	for _, existed := range []bool{false, true} {
+		name := "new config"
+		if existed {
+			name = "existing config"
+		}
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			stateHome := filepath.Join(root, "state")
+			if err := os.WriteFile(stateHome, []byte("not a directory"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("XDG_STATE_HOME", stateHome)
+
+			config := filepath.Join(root, "config")
+			written := []byte("theme = sysc-shell\n")
+			before := []byte("opacity = 0.9\n")
+			if err := os.WriteFile(config, written, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := recordDirectiveOwned(d(root, "config"), before, written, existed); err == nil {
+				t.Fatal("ownership persistence failure was ignored")
+			}
+
+			got, err := os.ReadFile(config)
+			if existed {
+				if err != nil || string(got) != string(before) {
+					t.Fatalf("config after failed ownership write = %q, %v", got, err)
+				}
+			} else if !os.IsNotExist(err) {
+				t.Fatalf("new config survived failed ownership write: %q, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestEnsureDirectiveFailsWhenStateHomeCannotBeResolved(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", "relative")
+	t.Setenv("HOME", "")
+	root := t.TempDir()
+	config := filepath.Join(root, "config")
+	original := []byte("opacity = 0.9\n")
+	if err := os.WriteFile(config, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := EnsureDirective(d(root, "config")); err == nil {
+		t.Fatal("apply succeeded without a persistent state path")
+	}
+	if got, err := os.ReadFile(config); err != nil || string(got) != string(original) {
+		t.Fatalf("config after state-path failure = %q, %v", got, err)
+	}
+}
+
+func TestEnsureDirectiveDetectsWhitespaceAroundEquals(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	home := t.TempDir()
+	directive := templateTargets["foot"].directives(home)[0]
+	original := "[main]\ninclude = ~/.config/foot/themes/user-choice\n"
+	if err := os.MkdirAll(filepath.Dir(directive.file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(directive.file, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := EnsureDirective(directive); !errors.Is(err, ErrUserModified) {
+		t.Fatalf("whitespace-formatted include = %v, want ErrUserModified", err)
+	}
+	if got, err := os.ReadFile(directive.file); err != nil || string(got) != original {
+		t.Fatalf("config after refusal = %q, %v", got, err)
+	}
+	if err := ensureDirective(directive, true); err != nil {
+		t.Fatalf("confirmed replacement of whitespace-formatted include: %v", err)
+	}
+	want := "[main]\ninclude=~/.config/foot/themes/sysc-shell\n"
+	if got, err := os.ReadFile(directive.file); err != nil || string(got) != want {
+		t.Fatalf("config after confirmed replacement = %q, %v", got, err)
+	}
+}
+
+func TestEnsureDirectiveClearsStaleOwnershipBeforeRetry(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses read-only file permissions")
+	}
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	home := t.TempDir()
+	directive := templateTargets["foot"].directives(home)[0]
+	original := "[main]\nfont-size=12\n"
+	if err := os.MkdirAll(filepath.Dir(directive.file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(directive.file, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureDirective(directive); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(directive.file, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(statePath(), 0o444); err != nil {
+		t.Fatal(err)
+	}
+
+	err := EnsureDirective(directive)
+	if err == nil || !strings.Contains(err.Error(), "clear stale directive ownership") {
+		t.Fatalf("retry with stale ownership and read-only state = %v", err)
+	}
+	if got, err := os.ReadFile(directive.file); err != nil || string(got) != original {
+		t.Fatalf("config after stale ownership refusal = %q, %v", got, err)
+	}
+}
+
 func TestEnsureDirectiveUsesSection(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	dir := t.TempDir()
@@ -489,8 +643,8 @@ func TestRemoveDirective(t *testing.T) {
 	if err := os.WriteFile(dd.file, []byte("theme = sysc-shell\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := RemoveDirective(dd); err != nil {
-		t.Fatal(err)
+	if err := RemoveDirective(dd); !errors.Is(err, ErrUserModified) {
+		t.Fatalf("unowned matching line = %v, want ErrUserModified", err)
 	}
 	if got, _ := os.ReadFile(dd.file); string(got) != "theme = sysc-shell\n" {
 		t.Fatalf("removed an identical user directive: %q", got)
@@ -504,8 +658,8 @@ func TestRemoveDirective(t *testing.T) {
 	if err := os.WriteFile(dd.file, []byte("opacity = 0.9\ntheme = sysc-shell\ntheme = sysc-shell\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := RemoveDirective(dd); err != nil {
-		t.Fatal(err)
+	if err := RemoveDirective(dd); !errors.Is(err, ErrUserModified) {
+		t.Fatalf("duplicate matching line = %v, want ErrUserModified", err)
 	}
 	if got, _ := os.ReadFile(dd.file); string(got) != "opacity = 0.9\ntheme = sysc-shell\n" {
 		t.Fatalf("remove did not preserve a duplicate user directive: %q", got)
@@ -600,8 +754,8 @@ func TestRemoveDirectiveRefusesUnownedMatchingLine(t *testing.T) {
 	if err := EnsureDirective(dd); err != nil {
 		t.Fatal(err)
 	}
-	if err := RemoveDirective(dd); err != nil {
-		t.Fatal(err)
+	if err := RemoveDirective(dd); !errors.Is(err, ErrUserModified) {
+		t.Fatalf("unowned matching line = %v, want ErrUserModified", err)
 	}
 	if got, err := os.ReadFile(dd.file); err != nil || string(got) != "theme = sysc-shell\n" {
 		t.Fatalf("unowned directive = %q, err=%v", got, err)
