@@ -253,6 +253,9 @@ type owner struct {
 	// captureRegion; tests replace it to act while a capture's round trips
 	// are dispatching.
 	capture func(*client.Output, ui.Rect) *ui.Image
+	// tooltipConfigure answers a tooltip configure. Nil means
+	// configureTooltip; tests replace it to fail without a compositor.
+	tooltipConfigure func(*tooltipSurface, layershell.ZwlrLayerSurfaceV1ConfigureEvent) error
 	// cfg is the live configuration. It is replaced only after a candidate has
 	// resolved for every connected output.
 	cfg *config.Config
@@ -276,8 +279,9 @@ func (o *owner) fail(err error) {
 
 // failUnit contains a surface error to the surface that raised it. A bar
 // failure stays fatal: there is no shell without its bar. An auxiliary
-// surface -- a panel, OSD or tooltip -- closes instead, because one panel
+// surface -- a panel, toast or OSD -- closes instead, because one panel
 // whose tree cannot be arranged must not take the whole process down with it.
+// The tooltip is not a unit; failTooltip contains its errors the same way.
 //
 // This is the containment half of the crash where a panel holding a node kind
 // the layout could not measure failed the owner during configure.
