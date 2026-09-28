@@ -140,6 +140,16 @@ type Image struct {
 // Rect is a logical-pixel rectangle.
 type Rect struct{ X, Y, W, H int }
 
+// Size is a logical-pixel width and height.
+type Size struct{ W, H int }
+
+// RipplePaint carries the host-resolved ripple phase and origin in the
+// surface's logical coordinate space.
+type RipplePaint struct {
+	Phase float64
+	X, Y  int
+}
+
 // Contains reports whether the point lies inside the rectangle.
 func (r Rect) Contains(x, y int) bool {
 	return x >= r.X && x < r.X+r.W && y >= r.Y && y < r.Y+r.H
@@ -296,6 +306,10 @@ type Node struct {
 	// TextOffset is the resolved physical-pixel phase for a marquee copy. It
 	// lives on the render copy, not the retained widget tree.
 	TextOffset int
+	// PressProgress and Ripple are resolved by the surface host on the render
+	// copy, never on the retained tree.
+	PressProgress float64
+	Ripple        RipplePaint
 	// MinWidthText floors a text node's width at the measured width of this
 	// sample string, shaped through the same path as the node's own text.
 	// Empty means natural width.
