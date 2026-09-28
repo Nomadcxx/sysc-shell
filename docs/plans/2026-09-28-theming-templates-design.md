@@ -52,7 +52,9 @@ New mechanism in `internal/theming/apply.go` (minimal, guarded like `ApplyWrite`
 2. `EnsureDirective(path, key, value, fmt)` / `RemoveDirective` — append-or-update **one**
    single-line directive in the user's config file; only a line matching the key that sysc-shell
    wrote (or an absent file) is touched; a multi-line/preformatted user value → refuse, log,
-   no-op. Never rewrites anything else. This replaces clobbering main configs.
+   no-op. Record ownership so disable removes only the occurrence the shell inserted; an identical
+   pre-existing user line stays. Writes follow a config symlink to preserve the link.
+   This replaces clobbering main configs.
 
 the default branch of `applyOnce`/`writeTarget()` in `internal/theming/enabled.go` becomes a table of (sidecar path, directive target+key) per template. The marker
 guard, temp+rename swap and `Complete()` gating stay untouched.
@@ -74,8 +76,13 @@ Formats come from the Noctalia body files; the job is token mapping + Go `text/t
 | helix | `~/.config/helix/themes/sysc-shell.toml` | `theme =` line in `config.toml` | 161L |
 | kcolorscheme | `~/.local/share/color-schemes/sysc-shell.colors` | `ColorSchemeName=` in `kdeglobals` | 146L |
 | qt | `~/.config/qt6ct/colors/sysc-shell.conf` (+qt5ct dir if present) | `color_scheme_path=` in `qt5ct.conf`/`qt6ct.conf` | 8L |
-| scroll | sidecar per `noctalia/assets/templates/scroll/apply.sh` (confirm at port time) | managed include line in `~/.config/scroll/config` | 22L |
 | niri | unchanged (`sysc-shell.kdl` include, real today) | — | done |
+
+Scroll is a separate Wayland compositor and is deferred until it has a separate
+approved design consistent with the Niri-first product constraint.
+
+WezTerm supports the managed assignment only when `wezterm.lua` ends in `return config`; the
+assignment is inserted immediately before it. Configs returning a table are left untouched.
 
 ## D4 — dispositions (sysc-629)
 

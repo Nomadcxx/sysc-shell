@@ -14,7 +14,7 @@ The GH #7 completeness gate (`sysc-630`) must protect users before template writ
 
 ## Apply mechanism
 
-`internal/theming` owns guarded writes for generated sidecars, managed directive lines in user configuration, and managed blocks for formats such as Starship. Use temporary files and rename for atomic replacement. Refuse unknown or modified user content unless the caller explicitly confirms an overwrite; retain the original config in `.bak` before confirmed replacement. Preserve Niri handling and Kitty's reload signal. Keep application wire formats inside each target's directive configuration rather than adding a general config parser.
+`internal/theming` owns guarded writes for generated sidecars, managed directive lines in user configuration, and managed blocks for formats such as Starship. Track directive ownership so disabling removes only a line inserted by the shell; preserve an identical pre-existing user line. Write config symlink targets without detaching their links. Use temporary files and rename for atomic replacement. Refuse unknown or modified user content unless the caller explicitly confirms an overwrite; retain the original config in `.bak` before confirmed replacement. Preserve Niri handling and Kitty's reload signal. Keep application wire formats inside each target's directive configuration rather than adding a general config parser. For WezTerm, insert before a final `return config` and refuse other return shapes.
 
 The target table maps each template to its sidecar paths and directives. Alacritty uses a single-line import, Foot an include in `[main]`, Ghostty a theme key, Kitty an include, and Cava a theme key in `[color]`. Qt writes both qt5ct and qt6ct sidecars and their `General` paths. Starship places its palette and rendered block in `starship.toml`.
 
@@ -24,7 +24,7 @@ Port the Alacritty, Foot, Ghostty, Kitty, WezTerm, and Starship bodies from the 
 
 ## Non-terminal templates
 
-Port Btop, Cava, Helix, KDE colour scheme, Qt 5/6, and Scroll. Confirm Scroll's sidecar and include form against Noctalia's `scroll/apply.sh`. Add a render test and an apply test for directive placement, user-config preservation, idempotence, and disable behavior. Verify installed applications live; record unavailable binaries as unverified.
+Port Btop, Cava, Helix, KDE colour scheme, and Qt 5/6. Add a render test and an apply test for directive placement, user-config preservation, idempotence, and disable behavior. Verify installed applications live; record unavailable binaries as unverified. Defer Scroll because it is a separate compositor and requires its own approved design.
 
 ## Template dispositions
 
