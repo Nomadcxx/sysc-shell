@@ -12,6 +12,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -741,5 +742,24 @@ func TestToastBlurShapeIsEmptyWithNoCards(t *testing.T) {
 	_, h, _, _ := glassToasts(t, true)
 	if shape := h.harness().opens[0].Callbacks.BlurShape(); len(shape) != 0 {
 		t.Fatalf("blur with no cards: %+v", shape)
+	}
+}
+
+// Layout is in logical pixels, so the host measures text at the unit scale
+// with its real fonts. An unset scale failed every measurement into the
+// 8 px-per-rune fallback, and the painter then clipped the time to "n…".
+func TestToastMeasuresTextWithItsRealFonts(t *testing.T) {
+	r, h, _, _ := glassToasts(t, true, note(1, "hello"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	logical := h.style
+	logical.Scale120 = ui.ScaleUnit
+	attrs := ui.TextAttrs{Role: theme.RoleCaption}
+	want, _, err := h.text.Measure("now", render.SpecFor(logical, attrs), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := h.measureText()("now", attrs); got != want {
+		t.Fatalf("measured %d px, want the font's %d", got, want)
 	}
 }

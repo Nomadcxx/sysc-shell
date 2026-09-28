@@ -798,10 +798,15 @@ func (h *toastHost) cardHeight(id uint32) int {
 	return toastCardHeight(h.cardFor(id), toastCardWidth, h.measureText())
 }
 
+// measureText measures in logical pixels, the space cards are laid out in:
+// the style's own scale is unset between paints, and a zero scale sized
+// every run to nothing, failing it into the rough fallback below.
 func (h *toastHost) measureText() ui.MeasureText {
+	logical := h.style
+	logical.Scale120 = ui.ScaleUnit
 	return func(text string, attrs ui.TextAttrs) (int, int) {
 		if h.text != nil {
-			spec := render.SpecFor(h.style, attrs)
+			spec := render.SpecFor(logical, attrs)
 			if w, height, err := h.text.Measure(text, spec, attrs.Tabular); err == nil {
 				return w, height
 			}
