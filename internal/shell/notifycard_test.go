@@ -330,7 +330,7 @@ func TestNotifyCardKeepsTheTimeBesideALongSummary(t *testing.T) {
 	n := baseNotification()
 	n.Summary = strings.Repeat("A very long summary that cannot fit ", 4)
 	now := n.Timestamp
-	card := notificationCard(n, nil, true, nil, nil, now)
+	card := notificationCard(n, nil, true, nil, nil, now, toastCardWidth)
 	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 8, 16 }
 	if err := ui.LayoutColumn(card, ui.Rect{W: toastCardWidth, H: 400}, measure); err != nil {
 		t.Fatal(err)
@@ -527,5 +527,13 @@ func TestNotifyCardKeepsALonePillAtItsOwnWidth(t *testing.T) {
 	}
 	if full := toastCardWidth - 2*cardPadding; pill.Bounds.W >= full {
 		t.Fatalf("lone pill is %d px wide, the full row; want its own width", pill.Bounds.W)
+	}
+}
+
+func TestNotifyCardNeverShowsOnlyATime(t *testing.T) {
+	n := baseNotification()
+	n.Summary, n.AppName = "", ""
+	if textNode(NotificationCard(n, nil, true, nil), "Notification") == nil {
+		t.Fatal("a card with no summary and no app name has no headline")
 	}
 }
