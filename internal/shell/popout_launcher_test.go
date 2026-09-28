@@ -70,6 +70,11 @@ func (r *recordedSpawn) waitArgv(t *testing.T) []string {
 func openLauncherPanel(t *testing.T, entries []launcher.Entry) (*Registry, *recordedSpawn, []wayland.AuxRequest) {
 	t.Helper()
 	reg := newPanelRegistry(t)
+	// Production drains invalidations on the owner's bridge without r.mu.
+	// Nothing does here, and a launcher publishes from goroutines that hold
+	// r.mu (the activation result), so a full cap-8 channel left the next
+	// waitForLauncherState parked on the lock for good.
+	keepInvalidationsDrained(t, reg)
 	run := &recordedSpawn{}
 	cfg := reg.launcherServiceConfig()
 	cfg.Scan = func() []launcher.Entry { return entries }
@@ -654,6 +659,45 @@ func TestLauncherSpawnFailureKeepsPanelOpen(t *testing.T) {
 	waitForLauncherState(t, reg, func(h *PanelHost) bool {
 		return h != nil && h.errLabel != ""
 	})
+}
+
+// A failed activation's error answers that attempt. Typing again starts a new
+// search, and the old error must not sit over its results (GH #41).
+func TestLauncherTypingClearsAFailedActivationError(t *testing.T) {
+	t.Parallel()
+
+	reg, run, reqs := openLauncherPanel(t, launcherTestEntries())
+	run.err = errors.New("niri refused")
+	pressLauncherKey(reqs, keyEnter)
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && h.errLabel != ""
+	})
+
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "f"})
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelLauncher]
+	label := h.errLabel
+	errorText := launcherErrorText(h.root)
+	reg.mu.Unlock()
+	if label != "" || errorText != "" {
+		t.Fatalf("after typing, errLabel = %q and the tree shows %q, want neither", label, errorText)
+	}
+}
+
+// launcherErrorText returns the first error-toned text in the tree.
+func launcherErrorText(n *ui.Node) string {
+	if n == nil {
+		return ""
+	}
+	if n.Kind == ui.KindText && n.Tone == ui.ToneError {
+		return n.Text
+	}
+	for _, c := range n.Children {
+		if s := launcherErrorText(c); s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 func writeLauncherPNG(t *testing.T, path string) {

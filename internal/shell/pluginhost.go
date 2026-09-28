@@ -247,35 +247,7 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 	if err := rt.Start(h.ctx); err != nil {
 		return err
 	}
-	m := rt.Manifest()
-	disp := plugin.NewDispatcher(plugin.CallEnv{
-		PluginID:       id,
-		Granted:        grantedCaps(rt),
-		DeclaredPanels: m.Panels,
-		Store:          store,
-		OpenPanel:      func(_ context.Context, p v1.PanelParams) (v1.PanelResult, error) { return h.openPanel(id, p) },
-		ClosePanel:     func(_ context.Context, p v1.PanelParams) error { return h.closePanel(id, p) },
-		Notify:         h.opts.Notify,
-		OutputContext: func(_ context.Context, p v1.OutputContextParams) (v1.OutputContextResult, error) {
-			return h.outputContext(p)
-		},
-		PanelResize: func(_ context.Context, p v1.PanelResizeParams) error { return h.resizePanel(p) },
-		ViewFocus:   func(_ context.Context, p v1.ViewFocusParams) error { return h.focusPanelView(id, p) },
-		OpenSurface: func(ctx context.Context, p v1.SurfaceOpenParams) (v1.SurfaceResult, error) {
-			return h.openFloatingSurface(ctx, id, p)
-		},
-		CloseSurface: func(_ context.Context, p v1.SurfaceCloseParams) error {
-			return h.closeFloatingSurface(id, p)
-		},
-		SurfacePin: func(ctx context.Context, p v1.SurfacePinParams) error {
-			return h.pinFloatingSurface(ctx, id, p)
-		},
-		WallpaperSnapshot: h.wallpaperSnapshot,
-		WallpaperMaskSet: func(ctx context.Context, p v1.WallpaperMaskSetParams) error {
-			return h.registerWallpaperMask(ctx, id, p)
-		},
-		ClipboardRead: readSystemClipboard,
-	})
+	disp := plugin.NewDispatcher(h.callEnv(id, rt, store))
 	rt.SetCalls(disp)
 	slot := &pluginSlot{rt: rt, disp: disp, store: store}
 	if h.ensureRaceHook != nil {
@@ -776,6 +748,70 @@ func (h *pluginHost) failPlugin(id, reason string) {
 	h.r.refreshPluginBars()
 	h.refreshPanel()
 	h.r.dwell.leave()
+}
+
+// pluginCallTimeout bounds one host.call. A hook still running when it
+// passes is answered as a failure and keeps its pending slot until it returns.
+const pluginCallTimeout = 10 * time.Second
+
+// callEnv is the host surface one running plugin may call. Every hook that
+// changes shell state checks its context first: a call its session already
+// cancelled, or that timed out while queued behind a lock, must not open a
+// panel or post a toast after the plugin was told it failed.
+func (h *pluginHost) callEnv(id string, rt *plugin.Runtime, store plugin.StateStore) plugin.CallEnv {
+	m := rt.Manifest()
+	return plugin.CallEnv{
+		PluginID:       id,
+		Granted:        grantedCaps(rt),
+		DeclaredPanels: m.Panels,
+		Store:          store,
+		CallTimeout:    pluginCallTimeout,
+		OpenPanel: func(ctx context.Context, p v1.PanelParams) (v1.PanelResult, error) {
+			if err := ctx.Err(); err != nil {
+				return v1.PanelResult{}, err
+			}
+			return h.openPanel(id, p)
+		},
+		ClosePanel: func(ctx context.Context, p v1.PanelParams) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return h.closePanel(id, p)
+		},
+		Notify: h.opts.Notify,
+		OutputContext: func(_ context.Context, p v1.OutputContextParams) (v1.OutputContextResult, error) {
+			return h.outputContext(p)
+		},
+		PanelResize: func(ctx context.Context, p v1.PanelResizeParams) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return h.resizePanel(p)
+		},
+		ViewFocus: func(ctx context.Context, p v1.ViewFocusParams) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return h.focusPanelView(id, p)
+		},
+		OpenSurface: func(ctx context.Context, p v1.SurfaceOpenParams) (v1.SurfaceResult, error) {
+			return h.openFloatingSurface(ctx, id, p)
+		},
+		CloseSurface: func(ctx context.Context, p v1.SurfaceCloseParams) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return h.closeFloatingSurface(id, p)
+		},
+		SurfacePin: func(ctx context.Context, p v1.SurfacePinParams) error {
+			return h.pinFloatingSurface(ctx, id, p)
+		},
+		WallpaperSnapshot: h.wallpaperSnapshot,
+		WallpaperMaskSet: func(ctx context.Context, p v1.WallpaperMaskSetParams) error {
+			return h.registerWallpaperMask(ctx, id, p)
+		},
+		ClipboardRead: readSystemClipboard,
+	}
 }
 
 func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResult, error) {

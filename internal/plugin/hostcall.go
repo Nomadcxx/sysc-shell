@@ -107,10 +107,15 @@ func (d *Dispatcher) Handle(ctx context.Context, call *v1.HostCall) v1.HostReply
 	if !d.begin() {
 		return failReply(call.ID, "too many pending calls")
 	}
-	defer d.end()
 
+	// The worker, not Handle, releases the slot. A cancelled call answers at
+	// once while its hook may still be running, and that hook still counts
+	// against PendingCalls until it returns.
 	done := make(chan v1.HostReply, 1)
-	go func() { done <- d.dispatch(ctx, call) }()
+	go func() {
+		defer d.end()
+		done <- d.dispatch(ctx, call)
+	}()
 	select {
 	case reply := <-done:
 		return reply

@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -99,9 +100,63 @@ func TestNotificationHistoryTracksDeltas(t *testing.T) {
 	if got := r.notifyHistoryCount(); got != 1 {
 		t.Fatalf("history = %d", got)
 	}
-	r.applyNotify(delta(1, 3, protocol.Delta{Kind: protocol.DeltaHistoryRemoved, IDs: []uint32{5}}))
+	r.applyNotify(delta(1, 3, protocol.Delta{Kind: protocol.DeltaHistoryRemoved, ID: 5}))
 	if got := r.notifyHistoryCount(); got != 0 {
 		t.Fatalf("history after removal = %d", got)
+	}
+}
+
+// The daemon confirms history.mark-seen with a history-seen delta, and a
+// second shell or client marking entries seen arrives the same way (GH #39).
+func TestNotificationHistorySeenDeltaMarksOnlyThoseEntries(t *testing.T) {
+	r := NewRegistry(config.Default())
+	m := snap(1)
+	m.Snapshot.History = []protocol.HistoryEntry{
+		{ID: 1, AppName: "App", Summary: "one", Timestamp: time.Unix(1_756_000_000, 0)},
+		{ID: 2, AppName: "App", Summary: "two", Timestamp: time.Unix(1_756_000_001, 0)},
+	}
+	r.applyNotify(m)
+	if got := r.unreadCount(); got != 2 {
+		t.Fatalf("unread before = %d, want 2", got)
+	}
+
+	r.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaHistorySeen, IDs: []uint32{1}}))
+
+	r.notify.mu.Lock()
+	seen := map[uint32]bool{}
+	for _, e := range r.notify.history {
+		seen[e.ID] = e.Seen
+	}
+	r.notify.mu.Unlock()
+	if !seen[1] || seen[2] {
+		t.Fatalf("seen = %v, want entry 1 only", seen)
+	}
+	if got := r.unreadCount(); got != 1 {
+		t.Fatalf("unread after = %d, want 1", got)
+	}
+}
+
+// The daemon replaces a history entry that is added again under the same id:
+// it removes the old one, then adds the new one. The shell used to ignore the
+// removal, kept both, and history.mark-seen was then refused for a duplicate
+// id, so the badge could never clear.
+func TestNotificationHistoryReAddKeepsOneEntryPerID(t *testing.T) {
+	r := NewRegistry(config.Default())
+	r.applyNotify(snap(1))
+	entry := protocol.HistoryEntry{ID: 5, AppName: "App", Summary: "first", Timestamp: time.Unix(1_756_000_000, 0)}
+	r.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaHistoryAdded, History: &entry}))
+
+	again := entry
+	again.Summary = "second"
+	r.applyNotify(delta(1, 3, protocol.Delta{Kind: protocol.DeltaHistoryRemoved, ID: 5}))
+	r.applyNotify(delta(1, 4, protocol.Delta{Kind: protocol.DeltaHistoryAdded, History: &again}))
+
+	if ids := r.notify.unseenIDs(); len(ids) != 1 || ids[0] != 5 {
+		t.Fatalf("unseen ids = %v, want [5] once", ids)
+	}
+	cmd := protocol.Command{Kind: protocol.CommandHistoryMarkSeen, IDs: r.notify.unseenIDs()}
+	if err := cmd.Validate(); err != nil {
+		t.Fatalf("mark-seen for the projection is invalid: %v", err)
 	}
 }
 
@@ -183,5 +238,20 @@ func TestPluginNotifyWithoutClientReportsUnavailable(t *testing.T) {
 	r := NewRegistry(config.Default())
 	if _, err := r.PluginNotify(context.Background(), v1.NotifyParams{Summary: "x"}); err == nil {
 		t.Fatal("want error before BindNotifications")
+	}
+}
+
+// A plugin call cancelled before its toast is sent posts nothing (GH #43).
+func TestPluginNotifyPostsNothingOnceCancelled(t *testing.T) {
+	r := NewRegistry(config.Default())
+	rec := &pluginToastRecorder{}
+	r.BindNotifications(rec)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := r.PluginNotify(ctx, v1.NotifyParams{Summary: "late"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("PluginNotify = %v, want context.Canceled", err)
+	}
+	if got := rec.commands(); len(got) != 0 {
+		t.Fatalf("a cancelled call posted %+v", got)
 	}
 }

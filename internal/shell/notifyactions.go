@@ -52,6 +52,9 @@ type notifyResolver struct {
 	pointer interaction
 
 	replyID uint32 // zero when no reply is open
+	// replyHit is set when a release lands on the open reply's field, or
+	// opens one; the host takes it to give that field the keyboard.
+	replyHit bool
 }
 
 func newNotifyResolver(a notifyActions) *notifyResolver {
@@ -167,6 +170,10 @@ func (r *notifyResolver) activate(n *ui.Node) {
 		if len(rest) == 2 {
 			r.actions.openLink(rest[1])
 		}
+	case "reply":
+		if r.beginReply(id) || r.replyID == id {
+			r.replyHit = true
+		}
 	}
 }
 
@@ -238,6 +245,13 @@ func (r *notifyResolver) recordClosed(id uint32) {
 }
 
 func (r *notifyResolver) replying() bool { return r.replyID != 0 }
+
+// takeReplyHit reports and clears a press on the open reply's field.
+func (r *notifyResolver) takeReplyHit() bool {
+	hit := r.replyHit
+	r.replyHit = false
+	return hit
+}
 
 // hoverAt feeds presentation aggregation and resolves the card's own chrome
 // state. It never issues a command. It reports whether the resolved action

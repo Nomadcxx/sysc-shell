@@ -58,36 +58,68 @@ type secretSlot struct {
 	open bool
 	req  SecretRequest
 	ch   chan<- secretReply
+	// gen names the prompt in the slot, so a deadline fires only on the
+	// prompt that armed it; timer is that prompt's deadline, stopped on
+	// answer.
+	gen   uint64
+	timer *time.Timer
 }
 
 func newSecretSlot() *secretSlot { return &secretSlot{} }
 
-// begin claims the slot. It reports false when one is already open, having
-// first answered that caller so no request is left dangling.
-func (s *secretSlot) begin(req SecretRequest, ch chan<- secretReply) bool {
+// begin claims the slot and names the prompt. It reports false when one is
+// already open, having first answered that caller so no request is left
+// dangling.
+func (s *secretSlot) begin(req SecretRequest, ch chan<- secretReply) (uint64, bool) {
 	s.mu.Lock()
 	if s.open {
 		s.mu.Unlock()
 		sendReply(ch, secretReply{noSecrets: true})
-		return false
+		return 0, false
 	}
+	s.gen++
 	s.open, s.req, s.ch = true, req, ch
+	gen := s.gen
 	s.mu.Unlock()
-	return true
+	return gen, true
+}
+
+// arm gives prompt gen its deadline. A prompt already answered stops the
+// timer instead of keeping it.
+func (s *secretSlot) arm(gen uint64, t *time.Timer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.open || s.gen != gen {
+		t.Stop()
+		return
+	}
+	s.timer = t
 }
 
 // answer replies exactly once and frees the slot. A second answer is dropped:
 // NetworkManager has stopped reading by then.
 func (s *secretSlot) answer(r secretReply) {
 	s.mu.Lock()
-	if !s.open {
+	gen := s.gen
+	s.mu.Unlock()
+	s.answerGen(gen, r)
+}
+
+// answerGen answers prompt gen if it is still open and reports whether it did.
+func (s *secretSlot) answerGen(gen uint64, r secretReply) bool {
+	s.mu.Lock()
+	if !s.open || s.gen != gen {
 		s.mu.Unlock()
-		return
+		return false
 	}
 	ch := s.ch
-	s.open, s.req, s.ch = false, SecretRequest{}, nil
+	if s.timer != nil {
+		s.timer.Stop()
+	}
+	s.open, s.req, s.ch, s.timer = false, SecretRequest{}, nil, nil
 	s.mu.Unlock()
 	sendReply(ch, r)
+	return true
 }
 
 func (s *secretSlot) submit(psk string) { s.answer(secretReply{psk: psk}) }
@@ -190,12 +222,13 @@ func (e *secretExport) GetSecrets(
 
 	req := SecretRequest{SSID: ssidFromSettings(settings), SettingName: settingName}
 	ch := make(chan secretReply, 1)
-	if !e.slot.begin(req, ch) {
+	gen, ok := e.slot.begin(req, ch)
+	if !ok {
 		return nil, dbus.NewError(errNoSecrets, []any{"a prompt is already open"})
 	}
 	select {
 	case e.requests <- req:
-		e.armDeadline()
+		e.armDeadline(gen)
 	default:
 		// A stale notification must not strand this call. Answer once with
 		// UserCanceled and let NetworkManager stop.
@@ -214,23 +247,25 @@ func (e *secretExport) GetSecrets(
 	}
 }
 
-// armDeadline cancels an unanswered prompt after the timeout and tells the
-// relay. A late fire is harmless: the slot answers exactly once, and a card
-// already cleared stays cleared.
-func (e *secretExport) armDeadline() {
+// armDeadline cancels prompt gen if it is still unanswered after the timeout,
+// and tells the relay. Answering the prompt stops the timer, and a fire that
+// races the answer finds another generation, or none, and does nothing.
+func (e *secretExport) armDeadline(gen uint64) {
 	timeout := e.timeout
 	if timeout == 0 {
 		timeout = secretPromptTimeout
 	}
-	time.AfterFunc(timeout, func() {
-		e.slot.cancel()
+	e.slot.arm(gen, time.AfterFunc(timeout, func() {
+		if !e.slot.answerGen(gen, secretReply{cancelled: true}) {
+			return
+		}
 		if e.expired != nil {
 			select {
 			case e.expired <- struct{}{}:
 			default:
 			}
 		}
-	})
+	}))
 }
 
 // CancelGetSecrets is NetworkManager withdrawing the question, which must

@@ -2,6 +2,7 @@ package wayland
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/viewporter"
@@ -112,7 +113,19 @@ func (o *owner) handleTooltip(req TooltipRequest) {
 		o.fail(o.hideTooltip())
 		return
 	}
-	o.fail(o.showTooltip(req))
+	o.failTooltip(o.showTooltip(req))
+}
+
+// failTooltip contains a tooltip error to the tooltip: it hides and logs.
+// A tooltip is decoration, and the shell must not end over one.
+func (o *owner) failTooltip(err error) {
+	if err == nil {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "sysc-shell: hiding tooltip: %v\n", err)
+	if herr := o.hideTooltip(); herr != nil {
+		fmt.Fprintf(os.Stderr, "sysc-shell: hiding tooltip: %v\n", herr)
+	}
 }
 
 func (o *owner) showTooltip(req TooltipRequest) error {
@@ -221,18 +234,26 @@ func (o *owner) showTooltip(req TooltipRequest) error {
 	o.tooltip = tt
 
 	layer.SetConfigureHandler(func(e layershell.ZwlrLayerSurfaceV1ConfigureEvent) {
-		if o.tooltip != tt {
-			return
-		}
-		o.fail(o.configureTooltip(tt, e))
+		o.onTooltipConfigure(tt, e)
 	})
 	layer.SetClosedHandler(func(layershell.ZwlrLayerSurfaceV1ClosedEvent) {
 		if o.tooltip == tt {
-			o.fail(o.hideTooltip())
+			o.failTooltip(o.hideTooltip())
 		}
 	})
 
 	return surface.Commit()
+}
+
+func (o *owner) onTooltipConfigure(tt *tooltipSurface, e layershell.ZwlrLayerSurfaceV1ConfigureEvent) {
+	if o.tooltip != tt {
+		return
+	}
+	configure := o.configureTooltip
+	if o.tooltipConfigure != nil {
+		configure = o.tooltipConfigure
+	}
+	o.failTooltip(configure(tt, e))
 }
 
 func (o *owner) configureTooltip(tt *tooltipSurface, e layershell.ZwlrLayerSurfaceV1ConfigureEvent) error {

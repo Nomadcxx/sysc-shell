@@ -450,6 +450,7 @@ func (h *PanelHost) launcherActivateSelected(r *Registry) {
 		return // a hint row explains; it does not act
 	}
 	if len(res.Entry.Argv) == 0 && strings.HasPrefix(res.Entry.ID, "/") {
+		h.errLabel = ""
 		h.query = res.Entry.ID
 		h.search = ui.NewField(h.query)
 		h.launcherSel = 0
@@ -535,6 +536,8 @@ func (h *PanelHost) launcherNotesAction(r *Registry, action string) {
 // panel shows the error in place on failure (D6) and, when closeOnSuccess,
 // closes on success. A provider that manages the panel itself passes false.
 func (h *PanelHost) launcherSpawn(r *Registry, id, action string, closeOnSuccess bool) {
+	// A retry that succeeds must not leave the last attempt's error up.
+	h.errLabel = ""
 	svc := r.launcherServiceLocked()
 	go func() {
 		err := svc.Activate(id, action)

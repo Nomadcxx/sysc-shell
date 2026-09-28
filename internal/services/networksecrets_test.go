@@ -14,12 +14,12 @@ func TestSecondRequestIsRejectedWhileOneIsPending(t *testing.T) {
 	s := newSecretSlot()
 
 	first := make(chan secretReply, 1)
-	if !s.begin(SecretRequest{SSID: "Orac 15A"}, first) {
+	if _, ok := s.begin(SecretRequest{SSID: "Orac 15A"}, first); !ok {
 		t.Fatal("the first request must be accepted")
 	}
 
 	second := make(chan secretReply, 1)
-	if s.begin(SecretRequest{SSID: "LukeAP"}, second) {
+	if _, ok := s.begin(SecretRequest{SSID: "LukeAP"}, second); ok {
 		t.Fatal("a second request must be refused while one is pending")
 	}
 	select {
@@ -70,7 +70,7 @@ func TestSubmitDeliversTheSecretAndFreesTheSlot(t *testing.T) {
 
 	// The slot frees, so the next join can prompt.
 	next := make(chan secretReply, 1)
-	if !s.begin(SecretRequest{SSID: "LukeAP"}, next) {
+	if _, ok := s.begin(SecretRequest{SSID: "LukeAP"}, next); !ok {
 		t.Error("the slot must accept a new request once the last one is answered")
 	}
 }
@@ -227,7 +227,7 @@ func TestUnansweredPromptExpiresAtTheDeadline(t *testing.T) {
 		t.Fatal("the relay was not nudged to clear the password card")
 	}
 	next := make(chan secretReply, 1)
-	if !export.slot.begin(SecretRequest{SSID: "LukeAP"}, next) {
+	if _, ok := export.slot.begin(SecretRequest{SSID: "LukeAP"}, next); !ok {
 		t.Fatal("the timeout must free the slot for the next join")
 	}
 }
@@ -259,5 +259,62 @@ func TestAnsweredPromptIsNotRevivedByTheDeadline(t *testing.T) {
 	time.Sleep(100 * time.Millisecond) // let the armed deadline fire
 	if export.slot.pending() {
 		t.Fatal("a fired deadline must not reopen an answered slot")
+	}
+}
+
+// Each prompt's deadline belongs to that prompt. An answered prompt's timer
+// used to fire later and cancel whichever prompt then held the slot (GH #42).
+func TestAnEarlierDeadlineDoesNotCancelALaterPrompt(t *testing.T) {
+	const timeout = time.Second
+	requests := make(chan SecretRequest, 1)
+	expired := make(chan struct{}, 1)
+	export := &secretExport{
+		slot: newSecretSlot(), requests: requests,
+		timeout: timeout, expired: expired,
+	}
+	ask := func() <-chan *dbus.Error {
+		done := make(chan *dbus.Error, 1)
+		go func() {
+			_, err := export.GetSecrets(secretWireRequest(), "/connection", wirelessSecuritySetting, nil, flagAllowInteraction)
+			done <- err
+		}()
+		<-requests
+		return done
+	}
+
+	start := time.Now()
+	first := ask()
+	export.slot.submit("hunter2")
+	if err := <-first; err != nil {
+		t.Fatalf("first prompt returned %v, want success", err)
+	}
+
+	time.Sleep(timeout / 2)
+	second := ask()
+
+	// Past the first prompt's deadline, well before the second's.
+	time.Sleep(time.Until(start.Add(timeout * 5 / 4)))
+	if !export.slot.pending() {
+		t.Fatal("the first prompt's deadline cancelled the second prompt")
+	}
+	select {
+	case <-expired:
+		t.Fatal("the first prompt's deadline signalled expiry")
+	default:
+	}
+
+	// The second prompt's own deadline still expires it.
+	select {
+	case err := <-second:
+		if err == nil || err.Name != errUserCanceled {
+			t.Fatalf("second prompt returned %v, want UserCanceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the second prompt never expired")
+	}
+	select {
+	case <-expired:
+	case <-time.After(time.Second):
+		t.Fatal("the second prompt's expiry was not signalled")
 	}
 }

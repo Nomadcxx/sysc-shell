@@ -1,9 +1,11 @@
 package wayland
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-wayland/client"
@@ -213,5 +215,39 @@ func TestTooltipAbandonsAHostRemovedDuringBackdropCapture(t *testing.T) {
 	}
 	if o.tooltip != nil {
 		t.Fatal("tooltip mapped on a removed host")
+	}
+}
+
+// A tooltip is decoration: when its configure fails -- a paint or buffer
+// error -- the tooltip goes away and the shell stays up.
+func TestTooltipConfigureFailureHidesTheTooltipOnly(t *testing.T) {
+	t.Parallel()
+	tt := &tooltipSurface{}
+	o := &owner{tooltip: tt}
+	o.tooltipConfigure = func(*tooltipSurface, layershell.ZwlrLayerSurfaceV1ConfigureEvent) error {
+		return errors.New("paint: canvas too small")
+	}
+
+	o.onTooltipConfigure(tt, layershell.ZwlrLayerSurfaceV1ConfigureEvent{Serial: 1})
+
+	if o.fatal != nil {
+		t.Fatalf("tooltip configure failed the owner: %v", o.fatal)
+	}
+	if o.tooltip != nil {
+		t.Fatal("a tooltip that failed to configure stayed up")
+	}
+}
+
+func TestStaleTooltipConfigureIsIgnored(t *testing.T) {
+	t.Parallel()
+	current := &tooltipSurface{}
+	o := &owner{tooltip: current}
+	o.tooltipConfigure = func(*tooltipSurface, layershell.ZwlrLayerSurfaceV1ConfigureEvent) error {
+		t.Fatal("configured a tooltip that was already replaced")
+		return nil
+	}
+	o.onTooltipConfigure(&tooltipSurface{}, layershell.ZwlrLayerSurfaceV1ConfigureEvent{Serial: 1})
+	if o.tooltip != current {
+		t.Fatal("a stale configure disturbed the current tooltip")
 	}
 }

@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"context"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
@@ -1459,4 +1461,46 @@ func TestPluginBarRecoversAfterACrashRestart(t *testing.T) {
 	}
 	newHosts(t, reg, map[uint32]string{1: "DP-1"})
 	waitPluginText(t, reg.bars[1], "hello")
+}
+
+// Every CallEnv hook that changes shell state checks its context first: a
+// call cancelled while it waited must not open or change anything after the
+// plugin was already told it failed (GH #43).
+func TestPluginCallHooksChangeNothingOnceCancelled(t *testing.T) {
+	const pluginID = "org.sysc.timer"
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	reg.plugins.mu.Lock()
+	slot := reg.plugins.slots[pluginID]
+	reg.plugins.mu.Unlock()
+	if slot == nil {
+		t.Fatal("the plugin is not running")
+	}
+	env := reg.plugins.callEnv(pluginID, slot.rt, slot.store)
+	if env.CallTimeout != pluginCallTimeout {
+		t.Fatalf("call timeout = %v, want %v", env.CallTimeout, pluginCallTimeout)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := env.OpenPanel(ctx, v1.PanelParams{Entry: "panel", Output: "DP-1", Generation: 7, Instance: pluginID + "-1"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("OpenPanel = %v, want context.Canceled", err)
+	}
+	reg.mu.Lock()
+	_, open := reg.panels.Output(PanelPlugin)
+	reg.mu.Unlock()
+	if open {
+		t.Fatal("a cancelled call opened the plugin panel")
+	}
+	for name, err := range map[string]error{
+		"ClosePanel":   env.ClosePanel(ctx, v1.PanelParams{Entry: "panel"}),
+		"PanelResize":  env.PanelResize(ctx, v1.PanelResizeParams{Width: 400, Height: 300}),
+		"ViewFocus":    env.ViewFocus(ctx, v1.ViewFocusParams{View: "view-1", Node: "act"}),
+		"CloseSurface": env.CloseSurface(ctx, v1.SurfaceCloseParams{View: "view-1"}),
+	} {
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("%s = %v, want context.Canceled", name, err)
+		}
+	}
 }

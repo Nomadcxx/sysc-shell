@@ -259,7 +259,7 @@ func notificationCard(n protocol.Notification, raster *ui.Image, allowLinks bool
 	if n.InlineReply {
 		root.Children = append(root.Children, &ui.Node{
 			Kind: ui.KindTextField,
-			Name: "Reply", Role: "text", Focusable: true,
+			Name: "Reply", Placeholder: "Reply", Role: "text", Focusable: true,
 			Action: fmt.Sprintf("notify:%d:reply", n.ID),
 		})
 	}
