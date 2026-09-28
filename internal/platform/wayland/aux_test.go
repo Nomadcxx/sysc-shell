@@ -486,3 +486,73 @@ func TestAuxOpenAbandonsAHostRemovedDuringBackdropCapture(t *testing.T) {
 		t.Fatalf("reply = %v, want errOutputGone", err)
 	}
 }
+
+// A toast publishes its input region without waiting for a reply, so an
+// update can still be queued when the compositor closes the surface. That
+// update has nothing left to change and must not end the shell.
+func TestStaleAuxUpdateAfterCloseIsDropped(t *testing.T) {
+	t.Parallel()
+	s := newHostSet()
+	mappedHost(s, 7, "DP-1")
+	o := &owner{hosts: s}
+	o.handleAux(AuxRequest{Output: 7, ID: "toast:DP-1", Update: &AuxUpdate{SetInputRegion: true}})
+	if o.fatal != nil {
+		t.Fatalf("stale update failed the owner: %v", o.fatal)
+	}
+}
+
+func TestStaleAuxUpdateStillRepliesWithTheError(t *testing.T) {
+	t.Parallel()
+	s := newHostSet()
+	mappedHost(s, 7, "DP-1")
+	o := &owner{hosts: s}
+	reply := make(chan error, 1)
+	o.handleAux(AuxRequest{Output: 7, ID: "toast:DP-1", Update: &AuxUpdate{SetInputRegion: true}, Reply: reply})
+	if err := <-reply; !errors.Is(err, errAuxNotOpen) {
+		t.Fatalf("reply = %v, want an error wrapping errAuxNotOpen", err)
+	}
+	if o.fatal != nil {
+		t.Fatalf("a replied update failed the owner: %v", o.fatal)
+	}
+}
+
+func TestFireAndForgetOpenFailureClosesInsteadOfFailing(t *testing.T) {
+	t.Parallel()
+	s := newHostSet()
+	mappedHost(s, 7, "DP-1")
+	var dropped []string
+	o := &owner{hosts: s, cb: Callbacks{DropAux: func(output uint32, id string) {
+		if output != 7 {
+			t.Fatalf("DropAux output = %d, want 7", output)
+		}
+		dropped = append(dropped, id)
+	}}}
+	o.handleAux(AuxRequest{Output: 7, ID: "osd:7", Open: &AuxSpec{ID: "osd:7"}})
+	if o.fatal != nil {
+		t.Fatalf("a failed fire-and-forget open failed the owner: %v", o.fatal)
+	}
+	if len(dropped) != 1 || dropped[0] != "osd:7" {
+		t.Fatalf("DropAux calls = %v, want [osd:7]", dropped)
+	}
+}
+
+// An open that fails before it could replace a surface with its id must not
+// leave that surface mapped while the shell forgets it.
+func TestFailedReopenClosesTheSurfaceItWouldReplace(t *testing.T) {
+	t.Parallel()
+	s := newHostSet()
+	h := mappedHost(s, 7, "DP-1")
+	h.aux["osd:7"] = newSurfaceUnit("osd:7")
+	var dropped []string
+	o := &owner{hosts: s, cb: Callbacks{DropAux: func(_ uint32, id string) { dropped = append(dropped, id) }}}
+	o.handleAux(AuxRequest{Output: 7, Open: &AuxSpec{ID: "osd:7"}})
+	if _, ok := h.aux["osd:7"]; ok {
+		t.Fatal("the surface the failed open would have replaced stayed mapped")
+	}
+	if len(dropped) != 1 || dropped[0] != "osd:7" {
+		t.Fatalf("DropAux calls = %v, want exactly [osd:7]", dropped)
+	}
+	if o.fatal != nil {
+		t.Fatalf("owner failed: %v", o.fatal)
+	}
+}

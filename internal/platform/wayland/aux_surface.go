@@ -3,6 +3,7 @@ package wayland
 import (
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/fractionalscale"
@@ -77,6 +78,10 @@ type auxPolicy struct {
 // the owner round tripped for the backdrop capture.
 var errOutputGone = errors.New("output removed during backdrop capture")
 
+// errAuxNotOpen reports a request for a surface that is no longer open: the
+// compositor closed it, or the shell did, while the request was queued.
+var errAuxNotOpen = errors.New("aux surface is not open")
+
 func (o *owner) handleAux(req AuxRequest) {
 	h, ok := o.hosts.get(req.Output)
 	if !ok || !h.alive {
@@ -99,9 +104,23 @@ func (o *owner) handleAux(req AuxRequest) {
 	switch {
 	case req.Reply != nil:
 		req.Reply <- err
-	case errors.Is(err, errOutputGone):
-		// The same stale request as an unavailable output above: the removal
-		// already tore the host down and told the shell, so nothing is lost.
+	case err == nil:
+	case errors.Is(err, errOutputGone), errors.Is(err, errAuxNotOpen):
+		// Stale requests like an unavailable output above: the surface is
+		// already gone and the shell was told when it went, so nothing is lost.
+	case req.Open != nil:
+		// Nobody waits on this open, so the shell would keep a surface that
+		// never appeared. Forget it, as failUnit does for a surface that
+		// fails later; one surface must not take the process down.
+		// An open that failed before it could replace a surface with the
+		// same id closes that one too, so none stays mapped unowned.
+		fmt.Fprintf(os.Stderr, "sysc-shell: open aux %s: %v\n", req.Open.ID, err)
+		switch _, open := h.aux[req.Open.ID]; {
+		case open:
+			o.closeAux(h, req.Open.ID)
+		case req.Open.ID != "" && o.cb.DropAux != nil:
+			o.cb.DropAux(req.Output, req.Open.ID)
+		}
 	default:
 		o.fail(err)
 	}
@@ -258,7 +277,7 @@ func (o *owner) applyAuxRegions(u *surfaceUnit) error {
 func (o *owner) updateAux(h *OutputHost, id string, upd *AuxUpdate) error {
 	u, ok := h.aux[id]
 	if !ok {
-		return fmt.Errorf("wayland: aux %s is not open", id)
+		return fmt.Errorf("wayland: aux %s: %w", id, errAuxNotOpen)
 	}
 	next, err := planAuxUpdate(u, upd)
 	if err != nil {
