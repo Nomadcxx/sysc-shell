@@ -12,9 +12,9 @@ require (
 )
 
 require (
-	github.com/Nomadcxx/sysc-launch v0.2.0
+	github.com/Nomadcxx/sysc-launch v0.2.1-0.20260928124755-5ccc1d40f3cf
 	github.com/Nomadcxx/sysc-metrics v0.7.0
-	github.com/Nomadcxx/sysc-notify v0.1.0-rc.4
+	github.com/Nomadcxx/sysc-notify v0.1.0-rc.4.0.20260928141411-254ec5732728
 	github.com/Nomadcxx/sysc-tray v0.1.0-rc.3
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/junegunn/fzf v0.74.3
