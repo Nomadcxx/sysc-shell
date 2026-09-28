@@ -104,7 +104,7 @@ Split into four reviewed tranches by the charter. 3A and 3B are merged.
 | `2026-08-31-tranche-3b-audit-brief.md` | audit-handover | `main` | Closed. Commissioned the 3B audit. |
 | `2026-08-31-core-metrics-audit-report.md` | audit-report | `main` | Closed. Verdict: proceed with named corrections. Two majors (D6 grain, D7 meter/graph); all six applied. |
 | `2026-08-31-core-metrics-audit-corrections.md` | corrections | `main` | Closed. All six findings applied and evidenced. |
-| `2026-08-30-weather-and-visual-vocabulary-design.md` | design | `main` | Owner-approved, audited, amended. D1–D9; D4 is a recorded charter deviation (icons as a font). D3 amended and `Weather.Reconfigure` added 2026-08-31. |
+| `2026-08-30-weather-and-visual-vocabulary-design.md` | design | `main` | Owner-approved, audited, amended. D1–D9; D4 is a recorded charter deviation (icons as a font). D3 amended and `Weather.Reconfigure` added 2026-08-31. D6's ownership clause (the owner builds the tooltip surface) superseded 2026-09-29 by T1 of `2026-09-28-bar-tooltip-redesign.md`; its Overlay/zone −1/no-keyboard shape stands. |
 | `2026-08-30-weather-and-visual-vocabulary.md` | plan | `main` | 11 tasks; 9–11 (tooltip) were cuttable and were implemented. Audit amendments applied 2026-08-31. |
 | `2026-08-30-weather-and-visual-vocabulary-completion-handover.md` | completion-handover | `main` | Implementation complete; live matrix owner-deferred. |
 | `2026-08-31-weather-and-visual-vocabulary-audit-report.md` | audit-report | `main` | Closed. Verdict: amend before executing; all six amendments applied. |
