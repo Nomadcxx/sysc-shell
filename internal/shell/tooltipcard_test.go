@@ -156,3 +156,46 @@ func TestWeathersConditionIsALabelTitle(t *testing.T) {
 		t.Fatalf("condition role = %v, want the label role", got)
 	}
 }
+
+// Placement keeps the panel design's D5 rule: centred on the widget, off the
+// bar's edge by the gap, clamped fully inside the output.
+func TestTooltipPlacement(t *testing.T) {
+	t.Parallel()
+	const outW, outH = 1920, 1080
+	cases := []struct {
+		name   string
+		edge   string
+		anchor ui.Rect
+		w, h   int
+		want   ui.Rect
+	}{
+		{"centred below a top-bar widget", "top", ui.Rect{X: 900, Y: 0, W: 40, H: 44}, 200, 30,
+			ui.Rect{X: 820, Y: 44 + theme.MarginS, W: 200, H: 30}},
+		{"clamped at the right edge", "top", ui.Rect{X: 1900, Y: 0, W: 20, H: 44}, 200, 30,
+			ui.Rect{X: outW - 200, Y: 44 + theme.MarginS, W: 200, H: 30}},
+		{"clamped at the left edge", "top", ui.Rect{X: 0, Y: 0, W: 20, H: 44}, 200, 30,
+			ui.Rect{X: 0, Y: 44 + theme.MarginS, W: 200, H: 30}},
+		{"above a bottom-bar widget", "bottom", ui.Rect{X: 900, Y: outH - 44, W: 40, H: 44}, 200, 30,
+			ui.Rect{X: 820, Y: outH - 44 - theme.MarginS - 30, W: 200, H: 30}},
+		{"wider than the output", "top", ui.Rect{X: 10, Y: 0, W: 20, H: 44}, 3000, 30,
+			ui.Rect{X: 0, Y: 44 + theme.MarginS, W: outW, H: 30}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tooltipPlacement(c.edge, c.anchor, c.w, c.h, outW, outH); got != c.want {
+				t.Fatalf("placement = %+v, want %+v", got, c.want)
+			}
+		})
+	}
+}
+
+// The laptop's output is 1536 logical wide at 1.25; a tray item at its right
+// edge must not push the card off it.
+func TestATooltipAtTheRightEdgeOfAScaledOutputStaysInside(t *testing.T) {
+	t.Parallel()
+	got := tooltipPlacement("top", ui.Rect{X: 1510, Y: 0, W: 26, H: 38}, 180, 30, 1536, 960)
+	if got.X < 0 || got.X+got.W > 1536 {
+		t.Fatalf("placement %+v leaves the 1536 output", got)
+	}
+}
