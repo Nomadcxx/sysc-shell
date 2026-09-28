@@ -37,8 +37,8 @@ func TestToastCardHeightFollowsContent(t *testing.T) {
 	if h <= 96 {
 		t.Fatalf("content height %d still fits the 96 guess; use a taller tree", h)
 	}
-	if got := toastCardHeight(root, toastCardWidth, measure, 12); got < h {
-		t.Fatalf("placed height %d < content %d", got, h)
+	if got := toastCardHeight(root, toastCardWidth, measure); got != h {
+		t.Fatalf("card height = %d, want exactly the content height %d", got, h)
 	}
 }
 

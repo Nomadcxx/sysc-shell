@@ -11,6 +11,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/notifyclient"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -600,5 +601,102 @@ func TestRethemeRecomputesToasts(t *testing.T) {
 
 	if len(hh.updates) <= before {
 		t.Fatalf("retheme did not relayout open toasts (updates %d -> %d)", before, len(hh.updates))
+	}
+}
+
+// glassToasts opens one output, shows the given toasts and paints them twice:
+// the first render measures real fonts, the second paints the settled layout.
+func glassToasts(t *testing.T, blur bool, notes ...protocol.Notification) (*Registry, *toastHost, []byte, int) {
+	t.Helper()
+	cfg := config.Default()
+	cfg.Theme.BlurBehind = true
+	// Presets set panel and overlay opacity equal; separate them so the
+	// ground tests can tell which style painted.
+	cfg.Theme.PanelOpacity = 65
+	r := NewRegistry(cfg)
+	t.Cleanup(r.Close)
+	r.mu.Lock()
+	r.caps.Blur = blur
+	r.mu.Unlock()
+	h := newToastHost(r, &hostHarness{})
+	r.outputsForTest([]string{"eDP-1"})
+	h.syncOutputs(map[string]uint32{"eDP-1": 5})
+	r.applyNotify(snap(1, notes...))
+	const width, height = 1200, 800
+	cb := h.harness().opens[0].Callbacks
+	if err := cb.Configure(width, height, 120); err != nil {
+		t.Fatal(err)
+	}
+	pixels := make([]byte, width*4*height)
+	for range 2 {
+		if err := cb.Render(pixels, width, height, width*4); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return r, h, pixels, width * 4
+}
+
+func TestToastCardIsItsContentHeight(t *testing.T) {
+	r, h, _, _ := glassToasts(t, true, note(1, "hello"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	want, err := ui.ContentHeight(h.cardFor(1), toastCardWidth, h.measureText())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := h.cards["eDP-1"][0].rect.H; got != want {
+		t.Fatalf("card height = %d, want content height %d", got, want)
+	}
+}
+
+// groundAlpha is the alpha just inside a card's lower-left corner, clear of
+// the rim and of any content.
+func groundAlpha(h *toastHost, pixels []byte, stride int) byte {
+	rect := h.cards["eDP-1"][0].rect
+	return pixels[(rect.Y+rect.H-6)*stride+(rect.X+6)*4+3]
+}
+
+func TestToastGroundFollowsPanelOpacityUnderCompositorBlur(t *testing.T) {
+	r, h, pixels, stride := glassToasts(t, true, note(1, "hello"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	want := r.surfaceTheme().PanelStyle().RootFill().A
+	if want == r.surfaceTheme().OverlayStyle().RootFill().A {
+		t.Fatal("panel and overlay grounds match; the test cannot tell them apart")
+	}
+	if got := groundAlpha(h, pixels, stride); got != want {
+		t.Fatalf("ground alpha = %d, want the panel's %d", got, want)
+	}
+}
+
+func TestToastWithoutCompositorBlurKeepsTheOverlayGround(t *testing.T) {
+	r, h, pixels, stride := glassToasts(t, false, note(1, "hello"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	want := r.surfaceTheme().OverlayStyle().RootFill().A
+	if got := groundAlpha(h, pixels, stride); got != want {
+		t.Fatalf("ground alpha = %d, want the overlay's %d", got, want)
+	}
+}
+
+func TestToastCriticalCardStrokesTheErrorRim(t *testing.T) {
+	critical := note(1, "battery")
+	critical.Urgency = protocol.UrgencyCritical
+	r, h, pixels, stride := glassToasts(t, true, critical)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rect := h.cards["eDP-1"][0].rect
+	if !h.cards["eDP-1"][0].critical {
+		t.Fatal("critical card not marked")
+	}
+	o := (rect.Y+rect.H/2)*stride + rect.X*4
+	px := render.Color{B: pixels[o], G: pixels[o+1], R: pixels[o+2]}
+	errC, rim := h.style.Error, h.style.Rim
+	dist := func(a, b render.Color) int {
+		d := func(x, y uint8) int { v := int(x) - int(y); return v * v }
+		return d(a.R, b.R) + d(a.G, b.G) + d(a.B, b.B)
+	}
+	if dist(px, errC) >= dist(px, rim) {
+		t.Fatalf("edge pixel %+v is nearer the outline %+v than the error %+v", px, rim, errC)
 	}
 }

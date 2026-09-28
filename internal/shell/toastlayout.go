@@ -78,11 +78,10 @@ func toastLayout(g toastGeometry, heights []int) (rects []ui.Rect, queued []int)
 	return rects, queued
 }
 
-// toastCardHeight is the tree's intrinsic height plus two radii of empty
-// chrome so the rounded body does not clip the last row. Same ceiling as
-// monitorSurfaceHeight. A missing tree or measure falls back to the old 96
-// guess rather than vanishing the card.
-func toastCardHeight(root *ui.Node, width int, measure ui.MeasureText, radius int) int {
+// toastCardHeight is the tree's intrinsic height. The card is the surface
+// ground itself, so nothing needs room around the tree. A missing tree or
+// measure falls back to 96 so the card still places.
+func toastCardHeight(root *ui.Node, width int, measure ui.MeasureText) int {
 	if root == nil || measure == nil {
 		return 96
 	}
@@ -90,10 +89,7 @@ func toastCardHeight(root *ui.Node, width int, measure ui.MeasureText, radius in
 	if err != nil || ht <= 0 {
 		return 96
 	}
-	if radius < 0 {
-		radius = 0
-	}
-	return ht + 2*radius
+	return ht
 }
 
 func allIndexes(heights []int) []int {
