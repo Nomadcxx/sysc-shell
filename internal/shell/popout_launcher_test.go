@@ -70,6 +70,11 @@ func (r *recordedSpawn) waitArgv(t *testing.T) []string {
 func openLauncherPanel(t *testing.T, entries []launcher.Entry) (*Registry, *recordedSpawn, []wayland.AuxRequest) {
 	t.Helper()
 	reg := newPanelRegistry(t)
+	// Production drains invalidations on the owner's bridge without r.mu.
+	// Nothing does here, and a launcher publishes from goroutines that hold
+	// r.mu (the activation result), so a full cap-8 channel left the next
+	// waitForLauncherState parked on the lock for good.
+	keepInvalidationsDrained(t, reg)
 	run := &recordedSpawn{}
 	cfg := reg.launcherServiceConfig()
 	cfg.Scan = func() []launcher.Entry { return entries }
