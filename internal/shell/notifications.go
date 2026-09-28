@@ -193,6 +193,13 @@ func (r *Registry) applyNotify(m notifyclient.Message) {
 	if r.toasts != nil {
 		r.toasts.recompute()
 	}
+	// The bar badge reads unread history.
+	var bars []uint32
+	for global, bar := range r.bars {
+		if bar.apply(r.viewLocked(bar.connector())) {
+			bars = append(bars, global)
+		}
+	}
 	var out uint32
 	var open bool
 	if h := r.panelHosts[PanelNotifications]; h != nil {
@@ -201,6 +208,7 @@ func (r *Registry) applyNotify(m notifyclient.Message) {
 	}
 	controlOut, controlOpen := r.rebuildControlCentreLocked()
 	r.mu.Unlock()
+	r.publish(bars)
 	if open {
 		r.publishSurface(out, panelSurfaceID(PanelNotifications))
 	}
@@ -216,12 +224,17 @@ func (r *Registry) notifyLifetime(id uint32) *protocol.Lifetime {
 func (r *Registry) notifySummary(id uint32) string { return r.notify.summary(id) }
 func (r *Registry) notifyHistoryCount() int        { return r.notify.historyCount() }
 
-func (r *Registry) sendNotify(c protocol.Command) {
+// sendNotify sends one command to the daemon. Most callers ignore the error:
+// with the daemon gone, a dismiss or an action has nothing to act on.
+func (r *Registry) sendNotify(c protocol.Command) error {
 	if r == nil || r.notifySender == nil {
-		return
+		return errNotifyUnavailable
 	}
-	_, _ = r.notifySender.Send(c)
+	_, err := r.notifySender.Send(c)
+	return err
 }
+
+var errNotifyUnavailable = errors.New("notifications are not available")
 
 // notifyCommandSender is the client's Send seam: one method, so tests can
 // record instead of dialing.
@@ -251,7 +264,7 @@ func (r *Registry) BindNotifications(sender notifyCommandSender) {
 // ponytail: v1 Actions are dropped — the producer protocol has no actions.
 func (r *Registry) PluginNotify(_ context.Context, p v1.NotifyParams) (v1.NotifyResult, error) {
 	if r.producerSender == nil {
-		return v1.NotifyResult{}, errors.New("notifications are not available")
+		return v1.NotifyResult{}, errNotifyUnavailable
 	}
 	urgency := protocol.UrgencyNormal
 	switch p.Urgency {

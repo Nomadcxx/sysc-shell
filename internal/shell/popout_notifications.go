@@ -64,17 +64,17 @@ func groupCritical(members []protocol.Notification) bool {
 	return false
 }
 
-// markCenterSeen flags every unread history entry seen and returns the ids
-// the caller must report with history.mark-seen. The projection updates
-// locally; the service delta confirms.
-func (s *notifyState) markSeen() []uint32 {
+// unseenIDs lists the unread history entries the centre reports with
+// history.mark-seen. It changes nothing: the daemon owns seen state and
+// confirms with a history-seen delta, so an unreachable daemon leaves the
+// badge as it was.
+func (s *notifyState) unseenIDs() []uint32 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var ids []uint32
-	for i := range s.history {
-		if !s.history[i].Seen {
-			s.history[i].Seen = true
-			ids = append(ids, s.history[i].ID)
+	for _, e := range s.history {
+		if !e.Seen {
+			ids = append(ids, e.ID)
 		}
 	}
 	return ids
@@ -132,9 +132,8 @@ func (s *notifyState) dndState(now time.Time) (time.Time, bool) {
 }
 
 // Registry wrappers.
-func (r *Registry) markCenterSeen() []uint32 { return r.notify.markSeen() }
-func (r *Registry) unreadCount() int         { return r.notify.unread() }
-func (r *Registry) setDND(on bool)           { r.notify.setDND(on) }
+func (r *Registry) unreadCount() int { return r.notify.unread() }
+func (r *Registry) setDND(on bool)   { r.notify.setDND(on) }
 func (r *Registry) setDNDPresetAt(now time.Time, d time.Duration) {
 	r.notify.setDNDPreset(now, d)
 }

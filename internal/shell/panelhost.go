@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -541,8 +542,12 @@ func (r *Registry) openPanelRootLocked(id PanelID, output uint32, trig Trigger) 
 	}
 	if id == PanelNotifications {
 		r.setCenterOpen(true)
-		if ids := r.markCenterSeen(); len(ids) > 0 {
-			r.sendNotify(protocol.Command{Kind: protocol.CommandHistoryMarkSeen, IDs: ids})
+		// The badge clears when the daemon confirms with a history-seen
+		// delta; a command that never left keeps the entries unread.
+		if ids := r.notify.unseenIDs(); len(ids) > 0 {
+			if err := r.sendNotify(protocol.Command{Kind: protocol.CommandHistoryMarkSeen, IDs: ids}); err != nil {
+				fmt.Fprintf(os.Stderr, "sysc-shell: mark notifications seen: %v\n", err)
+			}
 		}
 	}
 	r.roots.onClose(generation, func() {

@@ -325,18 +325,85 @@ func TestCenterDNDGlyphSwapsWhenOn(t *testing.T) {
 	}
 }
 
-func TestCenterOpeningMarksShownEntriesSeen(t *testing.T) {
+func TestCenterUnseenIDsLeavesTheProjectionAlone(t *testing.T) {
 	r := NewRegistry(config.Default())
 	r.applyNotify(snap(1))
 	r.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
 		History: ptrH(historyEntry(2, "mail", "Mail", "old", time.Unix(1_756_000_000, 0), false))}))
 
-	ids := r.markCenterSeen()
+	ids := r.notify.unseenIDs()
 	if len(ids) != 1 || ids[0] != 2 {
-		t.Fatalf("mark-seen ids = %v", ids)
+		t.Fatalf("unseen ids = %v", ids)
 	}
-	if r.unreadCount() != 0 {
-		t.Fatalf("unread after seen = %d", r.unreadCount())
+	if r.unreadCount() != 1 {
+		t.Fatalf("reading the unseen ids changed unread to %d", r.unreadCount())
+	}
+}
+
+// openCentreWithUnseen opens the notification centre over one unseen history
+// entry, id 2, with the given command sender.
+func openCentreWithUnseen(t *testing.T, sender *fakeNotifySender) *Registry {
+	t.Helper()
+	r := newPanelRegistry(t)
+	r.notifySender = sender
+	r.applyNotify(snap(1))
+	r.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
+		History: ptrH(historyEntry(2, "mail", "Mail", "old", time.Unix(1_756_000_000, 0), false))}))
+	if err := r.OpenPanel(PanelNotifications, 7, Trigger{
+		BarEdge: "top", BarZone: 44, OutW: 1536, OutH: 1440,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// Opening the centre while the daemon is unreachable must not clear the badge:
+// the daemon still holds those entries unseen and would restore them on the
+// next snapshot (GH #38).
+func TestCentreOpenKeepsUnreadWhenMarkSeenFails(t *testing.T) {
+	r := openCentreWithUnseen(t, &fakeNotifySender{fail: true})
+	if got := r.unreadCount(); got != 1 {
+		t.Fatalf("unread = %d after a failed mark-seen, want 1", got)
+	}
+}
+
+// The daemon's history-seen delta is what clears the badge.
+func TestCentreOpenClearsUnreadWhenTheDaemonConfirms(t *testing.T) {
+	sender := &fakeNotifySender{}
+	r := openCentreWithUnseen(t, sender)
+	sent := sender.ofKind(protocol.CommandHistoryMarkSeen)
+	if len(sent) != 1 || len(sent[0].IDs) != 1 || sent[0].IDs[0] != 2 {
+		t.Fatalf("mark-seen commands = %+v, want one for id 2", sent)
+	}
+	if got := r.unreadCount(); got != 1 {
+		t.Fatalf("unread = %d before the daemon confirmed, want 1", got)
+	}
+	r.applyNotify(delta(1, 3, protocol.Delta{Kind: protocol.DeltaHistorySeen, IDs: []uint32{2}}))
+	if got := r.unreadCount(); got != 0 {
+		t.Fatalf("unread = %d after the confirmation, want 0", got)
+	}
+}
+
+// The bar badge reads unread history, so a notify message that changes it
+// must repaint the bar rather than wait for the next clock tick.
+func TestNotifyMessageRepaintsTheBarBadge(t *testing.T) {
+	r := newPanelRegistry(t)
+	withTestBar(t, r, 7, config.Default())
+	r.applyNotify(snap(1))
+	for len(r.invalidations) > 0 {
+		<-r.invalidations
+	}
+
+	r.applyNotify(delta(1, 2, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
+		History: ptrH(historyEntry(2, "mail", "Mail", "old", time.Unix(1_756_000_000, 0), false))}))
+
+	select {
+	case inv := <-r.invalidations:
+		if inv.Global != 7 || inv.SurfaceID != "" {
+			t.Fatalf("invalidation = %+v, want the bar on global 7", inv)
+		}
+	default:
+		t.Fatal("an unread change did not repaint the bar")
 	}
 }
 

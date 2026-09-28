@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -254,11 +255,16 @@ func TestToastPaintLeavesTheGapsTransparent(t *testing.T) {
 type fakeNotifySender struct {
 	mu   sync.Mutex
 	cmds []protocol.Command
+	// fail makes every Send report an unreachable daemon, recording nothing.
+	fail bool
 }
 
 func (f *fakeNotifySender) Send(c protocol.Command) (uint64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.fail {
+		return 0, errors.New("notify: not connected")
+	}
 	f.cmds = append(f.cmds, c)
 	return uint64(len(f.cmds)), nil
 }
