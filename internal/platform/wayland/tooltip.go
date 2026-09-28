@@ -150,8 +150,13 @@ func (o *owner) showTooltip(req TooltipRequest) error {
 	// surface unit that owns that protocol.
 	var backdrop *ui.Image
 	if o.cfg.Theme.BlurBehind {
-		if shot := o.captureRegion(h.proxy, place); shot != nil {
+		if shot := o.captureBackdrop(h.proxy, place); shot != nil {
 			backdrop = render.Blur(shot, backdropDownsample, o.cfg.Theme.BlurRadius)
+		}
+		// The capture round trips; an output removed meanwhile has been torn
+		// down and must not gain a tooltip surface.
+		if !h.alive {
+			return nil
 		}
 	}
 

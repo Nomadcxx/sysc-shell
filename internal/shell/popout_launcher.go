@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -27,6 +28,8 @@ import (
 // the 12-above/16-below padding the height is derived from.
 const (
 	launcherIconSlot = 40
+	// launcherGlyphSize is a provider row's Material glyph inside that slot.
+	launcherGlyphSize = 24
 	// launcherRowPadTop and launcherRowPadBottom are DMS's row padding: 12
 	// above the text block and 16 below. The asymmetry is the point -- the
 	// four extra pixels at the foot are what make its list breathe where our
@@ -65,10 +68,9 @@ const (
 // hit the service's rescan-if-stale path (D12). Caller holds r.mu.
 func (r *Registry) launcherServiceLocked() *launcher.Service {
 	if r.launcherSvc == nil {
-		r.launcherSvc = launcher.NewService(launcher.ServiceConfig{
-			History: launcher.OpenHistory(launcherHistoryPath(os.Getenv), nil),
-			Rank:    launcherRank,
-		})
+		cfg := r.launcherServiceConfig()
+		cfg.History = launcher.OpenHistory(launcherHistoryPath(os.Getenv), nil)
+		r.launcherSvc = launcher.NewService(cfg)
 		go r.relayLauncher(r.launcherSvc)
 	}
 	return r.launcherSvc
@@ -100,11 +102,7 @@ func (r *Registry) relayLauncher(svc *launcher.Service) {
 			r.mu.Lock()
 			h := r.panelHosts[PanelLauncher]
 			if h != nil {
-				if custom, handled := notesLauncherResults(h.query); handled {
-					h.launcherResults = custom
-				} else {
-					h.launcherResults = addNotesProvider(h.query, results)
-				}
+				h.launcherResults = launcherWithHints(h.query, results)
 				r.rebuildPanel(h)
 			}
 			r.mu.Unlock()
@@ -169,14 +167,24 @@ func (h *PanelHost) launcherHeaderHeight() int {
 // muted text tone -- it measures 1.47:1 and cannot carry text -- so the
 // footer steps back by size, not by contrast.
 func launcherFooter(h *PanelHost, count int) *ui.Node {
-	noun := "results"
+	// Hint rows (empty ID) explain; they are not results.
+	for _, res := range h.launcherResults {
+		if res.Entry.ID == "" {
+			count--
+		}
+	}
+	noun := "result"
 	if strings.TrimSpace(h.query) == "" {
-		noun = "apps"
+		noun = "app"
 	}
-	return &ui.Node{
-		Kind: ui.KindText, CenterX: true, TextRole: theme.RoleCaption,
-		Text: fmt.Sprintf("%d %s \u2022 %s", count, noun, launcherHints),
+	if count != 1 {
+		noun += "s"
 	}
+	text := fmt.Sprintf("%d %s \u2022 %s", count, noun, launcherHints)
+	if count == 0 {
+		text = "No results \u2022 " + launcherHints
+	}
+	return &ui.Node{Kind: ui.KindText, CenterX: true, TextRole: theme.RoleCaption, Text: text}
 }
 
 // launcherFooterHeight is the footer's laid-out height, measured for the same
@@ -253,11 +261,11 @@ func launcherRow(r *Registry, h *PanelHost, results []launcher.Result, i int) *u
 		return nil
 	}
 	res := results[i]
-	if h.launcherMenuID == res.Entry.ID && h.menu != nil && h.menu.Opened() {
+	if h.launcherMenuID == res.Entry.ID && res.Action == "" && h.menu != nil && h.menu.Opened() {
 		return h.menu.Node()
 	}
 	fill := ui.FillNone
-	if i == h.launcherSel {
+	if i == h.launcherSel && res.Entry.ID != "" {
 		fill = ui.FillSoft
 	}
 	// The wrapper column carries half the gap at each end, so the space
@@ -276,7 +284,8 @@ func launcherRow(r *Registry, h *PanelHost, results []launcher.Result, i int) *u
 		Children: []*ui.Node{{
 			Kind: ui.KindCapsule, Fill: fill, Shape: ui.ShapeMedium,
 			Padding: launcherRowPadTop, Height: launcherRowHeight,
-			Action: "launch:" + res.Entry.ID,
+			// By index: a desktop-action row shares its application's ID.
+			Action: "launch:" + strconv.Itoa(i),
 			Children: []*ui.Node{{
 				Kind:     ui.KindColumn,
 				Children: []*ui.Node{launcherRowBody(r, h, res.Entry)},
@@ -286,9 +295,13 @@ func launcherRow(r *Registry, h *PanelHost, results []launcher.Result, i int) *u
 }
 
 func launcherRowBody(r *Registry, h *PanelHost, e launcher.Entry) *ui.Node {
-	labels := []*ui.Node{{Kind: ui.KindText, Text: e.Name, TextRole: theme.RoleLabel}}
+	tone := ui.ToneNormal
+	if e.ID == "" {
+		tone = ui.ToneSubtle // a hint, not a result
+	}
+	labels := []*ui.Node{{Kind: ui.KindText, Text: e.Name, TextRole: theme.RoleLabel, Tone: tone}}
 	if e.Comment != "" {
-		labels = append(labels, &ui.Node{Kind: ui.KindText, Text: e.Comment})
+		labels = append(labels, &ui.Node{Kind: ui.KindText, Text: e.Comment, Tone: tone})
 	}
 	// Panel pad 12×2, capsule pad launcherRowPadTop×2, glyph, gap. The row
 	// itself is unpadded: its vertical inset is the capsule's, and a second
@@ -307,6 +320,22 @@ func launcherRowBody(r *Registry, h *PanelHost, e launcher.Entry) *ui.Node {
 }
 
 func launcherIconNode(r *Registry, h *PanelHost, e launcher.Entry) *ui.Node {
+	// Provider rows have no desktop icon. "glyph:<name>" draws a Material
+	// subset glyph in the slot; "text:<s>" draws s itself (an emoji).
+	if name, ok := strings.CutPrefix(e.IconName, "glyph:"); ok {
+		return &ui.Node{
+			Kind: ui.KindCapsule, Width: launcherIconSlot, Height: launcherIconSlot,
+			Fill: ui.FillContainer, Shape: ui.ShapeMedium,
+			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: name, IconSize: launcherGlyphSize}},
+		}
+	}
+	if text, ok := strings.CutPrefix(e.IconName, "text:"); ok {
+		return &ui.Node{
+			Kind: ui.KindCapsule, Width: launcherIconSlot, Height: launcherIconSlot,
+			Fill: ui.FillNone, Shape: ui.ShapeMedium,
+			Children: []*ui.Node{{Kind: ui.KindText, Text: text, TextRole: theme.RoleDisplay}},
+		}
+	}
 	if img := launcherLookupIcon(r, h, e.IconName); img != nil {
 		return &ui.Node{Kind: ui.KindImage, ImageSize: launcherIconSlot, Image: img}
 	}
@@ -417,23 +446,20 @@ func (h *PanelHost) launcherActivateSelected(r *Registry) {
 	}
 	h.launcherSel = min(h.launcherSel, len(h.launcherResults)-1)
 	res := h.launcherResults[h.launcherSel]
-	if res.Entry.ID == notesLauncherActionID || res.Entry.ID == notesLauncherTooLongID {
-		h.launcherNotesAction(r, res.Entry.ID)
-		return
+	if res.Entry.ID == "" {
+		return // a hint row explains; it does not act
 	}
 	if len(res.Entry.Argv) == 0 && strings.HasPrefix(res.Entry.ID, "/") {
 		h.query = res.Entry.ID
 		h.search = ui.NewField(h.query)
 		h.launcherSel = 0
-		if custom, handled := notesLauncherResults(h.query); handled {
-			h.launcherResults = custom
-		} else {
-			r.launcherServiceLocked().Query(h.query)
-		}
+		r.launcherServiceLocked().Query(h.query)
 		r.rebuildPanel(h)
 		return
 	}
-	h.launcherSpawn(r, res.Entry.ID, "")
+	// A Notes row closes the panel (or shows its error) from its own action.
+	notes := res.Entry.ID == notesLauncherActionID || res.Entry.ID == notesLauncherTooLongID
+	h.launcherSpawn(r, res.Entry.ID, res.Action, !notes)
 }
 
 const (
@@ -456,22 +482,6 @@ func notesLauncherResults(query string) ([]launcher.Result, bool) {
 		}
 	}
 	return []launcher.Result{{Entry: launcher.Entry{ID: id, Name: name, Comment: comment}}}, true
-}
-
-func addNotesProvider(query string, results []launcher.Result) []launcher.Result {
-	query = strings.TrimSpace(query)
-	if query != "/" && query != "/n" {
-		return results
-	}
-	for _, result := range results {
-		if result.Entry.ID == "/nt" {
-			return results
-		}
-	}
-	out := append([]launcher.Result(nil), results...)
-	return append(out, launcher.Result{Entry: launcher.Entry{
-		ID: "/nt", Name: "Notes", Comment: "Search notes or capture with /nt <text>", IconName: "note",
-	}})
 }
 
 func launcherPreview(value string, maxRunes int) string {
@@ -522,8 +532,9 @@ func (h *PanelHost) launcherNotesAction(r *Registry, action string) {
 }
 
 // launcherSpawn activates through the service off the Wayland goroutine: the
-// panel closes on success and shows the error in place on failure (D6).
-func (h *PanelHost) launcherSpawn(r *Registry, id, action string) {
+// panel shows the error in place on failure (D6) and, when closeOnSuccess,
+// closes on success. A provider that manages the panel itself passes false.
+func (h *PanelHost) launcherSpawn(r *Registry, id, action string, closeOnSuccess bool) {
 	svc := r.launcherServiceLocked()
 	go func() {
 		err := svc.Activate(id, action)
@@ -539,6 +550,11 @@ func (h *PanelHost) launcherSpawn(r *Registry, id, action string) {
 			r.publishSurface(host.output, panelSurfaceID(PanelLauncher))
 			return
 		}
+		if !closeOnSuccess {
+			// The provider may have changed the panel (a Notes error label).
+			r.publishSurface(host.output, panelSurfaceID(PanelLauncher))
+			return
+		}
 		r.closePanelLocked(PanelLauncher)
 	}()
 }
@@ -549,28 +565,19 @@ func (h *PanelHost) launcherSpawn(r *Registry, id, action string) {
 // keyboard focus and typing always filters.
 func (h *PanelHost) launcherPointerPress(r *Registry, e wayland.Event) bool {
 	x, y := int(math.Floor(e.X)), int(math.Floor(e.Y))
-	id := launcherRowAt(h.root, x, y)
-	if id == "" {
+	i, ok := launcherRowAt(h.root, x, y)
+	if !ok || i >= len(h.launcherResults) {
 		return false
 	}
+	res := h.launcherResults[i]
 	if e.Button == btnRight {
-		return h.openLauncherActions(r, id)
-	}
-	for i, res := range h.launcherResults {
-		if res.Entry.ID == id {
-			h.launcherSel = i
-			if len(res.Entry.Argv) == 0 && strings.HasPrefix(id, "/") {
-				h.launcherActivateSelected(r)
-				return true
-			}
-			break
+		if res.Action != "" {
+			return true // an action row has no actions menu of its own
 		}
+		return h.openLauncherActions(r, res.Entry.ID)
 	}
-	if id == notesLauncherActionID || id == notesLauncherTooLongID {
-		h.launcherNotesAction(r, id)
-		return true
-	}
-	h.launcherSpawn(r, id, "")
+	h.launcherSel = i
+	h.launcherActivateSelected(r)
 	return true
 }
 
@@ -610,7 +617,7 @@ func (h *PanelHost) applyLauncherMenu(r *Registry) {
 	action := h.launcherActions[idx].ID
 	id := h.launcherMenuID
 	h.launcherMenuID = ""
-	h.launcherSpawn(r, id, action)
+	h.launcherSpawn(r, id, action, true)
 }
 
 func (h *PanelHost) activateLauncher(r *Registry, n *ui.Node) bool {
@@ -627,18 +634,20 @@ func (h *PanelHost) activateLauncher(r *Registry, n *ui.Node) bool {
 	return true
 }
 
-// launcherRowAt finds the laid-out row under a point by its launch action.
-func launcherRowAt(n *ui.Node, x, y int) string {
+// launcherRowAt finds the index of the laid-out row under a point by its
+// launch action.
+func launcherRowAt(n *ui.Node, x, y int) (int, bool) {
 	if n == nil {
-		return ""
+		return 0, false
 	}
-	if id, ok := strings.CutPrefix(n.Action, "launch:"); ok && n.Bounds.Contains(x, y) {
-		return id
+	if v, ok := strings.CutPrefix(n.Action, "launch:"); ok && n.Bounds.Contains(x, y) {
+		i, err := strconv.Atoi(v)
+		return i, err == nil && i >= 0
 	}
 	for _, c := range n.Children {
-		if id := launcherRowAt(c, x, y); id != "" {
-			return id
+		if i, ok := launcherRowAt(c, x, y); ok {
+			return i, true
 		}
 	}
-	return ""
+	return 0, false
 }

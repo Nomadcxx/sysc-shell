@@ -249,6 +249,10 @@ type owner struct {
 	// clock is the owner's time source. Nil means time.Now; tests replace it
 	// to drive the repeat deadline without sleeping.
 	clock func() time.Time
+	// capture copies an output region for a backdrop. Nil means
+	// captureRegion; tests replace it to act while a capture's round trips
+	// are dispatching.
+	capture func(*client.Output, ui.Rect) *ui.Image
 	// cfg is the live configuration. It is replaced only after a candidate has
 	// resolved for every connected output.
 	cfg *config.Config

@@ -63,6 +63,8 @@ var materialIcons = map[string]struct{}{
 	"menu_book": {},
 	// The games plugin's bar pill glyph.
 	"sports_esports": {},
+	// The launcher's Calculator and Emoji providers.
+	"calculate": {}, "mood": {},
 }
 
 // The pinned Material Symbols source no longer carries the older

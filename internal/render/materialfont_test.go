@@ -42,6 +42,7 @@ var materialInventory = []string{
 	"smartphone", "speaker", "devices_other",
 	"menu_book",
 	"sports_esports",
+	"calculate", "mood",
 }
 
 func TestAudioPanelIconsAreInTheSubset(t *testing.T) {

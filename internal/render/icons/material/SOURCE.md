@@ -45,7 +45,7 @@ that join them. Layout closure is disabled during subsetting: leaving it on lets
 the retained letters reach every ligature they could begin, which is all
 6,605 glyphs and a 1.4 MB file.
 
-Result: **33,144 bytes, 139 glyphs** (108 shell names, the letters and underscore
+Result: **33,876 bytes, 141 glyphs** (110 shell names, the letters and underscore
 that spell them, and `.notdef`).
 
 ### Inventory
@@ -75,6 +75,8 @@ memory developer_board disabled_by_default skull cancel
 menu_book
 shield verified_user vpn_key vpn_key_off bolt gpp_bad
 dns location_on security flag download upload swap_vert language
+sports_esports
+calculate mood
 ```
 
 `materialfont.go` accepts exactly these names and rejects anything else. Adding
@@ -98,7 +100,7 @@ The head table's creation and modification timestamps are pinned, so a rebuild
 from the same source reproduces the committed file byte for byte:
 
 ```
-f1ac734eb25ed64e1e6a476255e231a7fdc44bc3d0029d5a1e0675cbbe9420c7
+3627dc101140d532ebb610372433c2aaf00a1792027165c2f6053ef25c743ec6
 ```
 
 Built with fontTools 4.66.0.

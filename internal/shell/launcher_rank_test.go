@@ -107,7 +107,14 @@ func TestLauncherRankMatchesLibraryForSearches(t *testing.T) {
 	entries := append(launcherTestEntries(), alphabetEntries(120)...)
 	for _, query := range []string{"fi", "fox", "term", "e", "entry", "zzz", "Files"} {
 		want := rankViaService(t, entries, query, nil)
-		got := rankViaService(t, entries, query, launcherRank)
+		// The library's rank produces no desktop-action rows; compare
+		// application rows only.
+		var got []launcher.Result
+		for _, r := range rankViaService(t, entries, query, launcherRank) {
+			if r.Action == "" {
+				got = append(got, r)
+			}
+		}
 		if len(got) != len(want) {
 			t.Fatalf("query %q: %d results, library gives %d", query, len(got), len(want))
 		}
@@ -147,5 +154,36 @@ func rankViaService(t *testing.T, entries []launcher.Entry, query string, rank f
 		case <-deadline:
 			t.Fatalf("query %q did not settle", query)
 		}
+	}
+}
+
+func TestActionRowsRankBelowTheirAppAndOnlyWhenSearching(t *testing.T) {
+	entries := []launcher.Entry{{
+		ID: "brave.desktop", Name: "Brave", IconName: "brave", Argv: []string{"brave"},
+		Actions: []launcher.Action{
+			{ID: "new-window", Name: "New Window", Argv: []string{"brave", "--new-window"}},
+			{ID: "new-private-window", Name: "New Incognito Window", IconName: "incognito", Argv: []string{"brave", "--incognito"}},
+		},
+	}}
+	got := launcherRank(entries, "brave", nil)
+	if len(got) != 3 || got[0].Action != "" || got[1].Action == "" || got[2].Action == "" {
+		t.Fatalf("app first then its actions: %+v", got)
+	}
+	if got[1].Entry.Name != "Brave · New Window" && got[2].Entry.Name != "Brave · New Window" {
+		t.Fatalf("action row name: %+v", got)
+	}
+	for _, r := range got[1:] {
+		if r.Entry.Comment != "Desktop action" {
+			t.Fatalf("comment %q", r.Entry.Comment)
+		}
+		if r.Action == "new-private-window" && r.Entry.IconName != "incognito" {
+			t.Fatal("an action's own icon is used when it names one")
+		}
+	}
+	if rows := launcherRank(entries, "", nil); len(rows) != 1 {
+		t.Fatalf("browse shows %d rows, want the app only", len(rows))
+	}
+	if rows := launcherRank(entries, "incognito", nil); len(rows) != 1 || rows[0].Action != "new-private-window" {
+		t.Fatalf("action-only match: %+v", rows)
 	}
 }

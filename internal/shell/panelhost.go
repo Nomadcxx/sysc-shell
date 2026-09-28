@@ -110,6 +110,10 @@ type PanelHost struct {
 	scale120 int
 	// mods is the modifier state the platform resolved with the latest key.
 	mods ui.Mods
+	// inputSerial is the serial of the latest key or pointer press this
+	// surface handled, carried into a clipboard request so the platform can
+	// claim the selection with it.
+	inputSerial uint32
 	// fieldDrag is the editor a primary press in a single-line field is
 	// drag-selecting; nil when none is. The retained field, not a key, names
 	// it: a panel search carries neither Key nor Action.
@@ -1412,6 +1416,10 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		switch e.Kind {
+		case wayland.EventKeyPress, wayland.EventPointerPress:
+			h.inputSerial = e.Serial
+		}
+		switch e.Kind {
 		case wayland.EventKeyPress:
 			h.mods = e.Mods
 			return h.keyEvent(r, e)
@@ -2010,11 +2018,7 @@ func (h *PanelHost) fieldChanged(r *Registry, n *ui.Node, f *ui.Field) bool {
 		if h.id == PanelLauncher {
 			h.launcherSel = 0
 			h.launcherScroll = 0
-			if results, handled := notesLauncherResults(h.query); handled {
-				h.launcherResults = results
-			} else {
-				r.launcherServiceLocked().Query(h.query)
-			}
+			r.launcherServiceLocked().Query(h.query)
 		}
 		idx := h.roving.Index()
 		r.rebuildPanel(h)

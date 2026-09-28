@@ -71,11 +71,10 @@ func openLauncherPanel(t *testing.T, entries []launcher.Entry) (*Registry, *reco
 	t.Helper()
 	reg := newPanelRegistry(t)
 	run := &recordedSpawn{}
-	svc := launcher.NewService(launcher.ServiceConfig{
-		Scan: func() []launcher.Entry { return entries },
-		Rank: launcherRank,
-		Run:  run.run,
-	})
+	cfg := reg.launcherServiceConfig()
+	cfg.Scan = func() []launcher.Entry { return entries }
+	cfg.Run = run.run
+	svc := launcher.NewService(cfg)
 	reg.mu.Lock()
 	reg.launcherSvc = svc
 	reg.mu.Unlock()
@@ -131,9 +130,6 @@ func TestNotesLauncherCaptureAndProviderRoutes(t *testing.T) {
 	}
 	if got, handled := notesLauncherResults("/nt " + strings.Repeat("x", v1.MaxInputBytes+1)); !handled || got[0].Entry.ID != notesLauncherTooLongID {
 		t.Fatalf("oversized route = %+v, handled=%v", got, handled)
-	}
-	if got := addNotesProvider("/", nil); len(got) != 1 || got[0].Entry.ID != "/nt" {
-		t.Fatalf("provider overview = %+v", got)
 	}
 }
 
@@ -608,7 +604,8 @@ func TestLauncherRightClickOpensActionsMenu(t *testing.T) {
 	reg, run, reqs := openLauncherPanel(t, launcherTestEntries())
 	h := launcherHost(t, reg)
 	reg.mu.Lock()
-	bounds, ok := walkActionBounds(h.root, "launch:firefox.desktop")
+	row := slices.IndexFunc(h.launcherResults, func(r launcher.Result) bool { return r.Entry.ID == "firefox.desktop" })
+	bounds, ok := walkActionBounds(h.root, fmt.Sprintf("launch:%d", row))
 	reg.mu.Unlock()
 	if !ok {
 		t.Fatal("firefox row has no laid-out bounds")
@@ -1039,4 +1036,140 @@ func launcherSearchField(t *testing.T, h *PanelHost) *ui.Node {
 		t.Fatal("no Search field in the launcher tree")
 	}
 	return field
+}
+
+func TestLauncherIconSlotConventions(t *testing.T) {
+	r := newPanelRegistry(t)
+	h := &PanelHost{}
+	g := launcherIconNode(r, h, launcher.Entry{Name: "Calculator", IconName: "glyph:calculate"})
+	if g.Fill != ui.FillContainer || len(g.Children) != 1 || g.Children[0].Kind != ui.KindIcon || g.Children[0].Icon != "calculate" {
+		t.Fatalf("glyph slot %+v", g)
+	}
+	e := launcherIconNode(r, h, launcher.Entry{Name: "party popper", IconName: "text:🎉"})
+	if e.Fill != ui.FillNone || e.Children[0].Text != "🎉" || e.Children[0].TextRole != theme.RoleDisplay {
+		t.Fatalf("text slot %+v", e)
+	}
+}
+
+func TestLauncherHintRowIsMutedUnselectedAndUncounted(t *testing.T) {
+	r := newPanelRegistry(t)
+	h := &PanelHost{query: "/calc 2+", launcherResults: []launcher.Result{
+		{Entry: launcher.Entry{Name: "Invalid expression", Comment: "Try 6*7", IconName: "glyph:calculate"}},
+	}}
+	row := launcherRow(r, h, h.launcherResults, 0)
+	capsule := row.Children[0]
+	if capsule.Fill != ui.FillNone {
+		t.Fatal("hint row highlighted")
+	}
+	if !treeHasText(launcherFooter(h, 1), "No results • "+launcherHints) {
+		t.Fatal("footer counted the hint")
+	}
+}
+
+func TestLauncherFooterPluralises(t *testing.T) {
+	one := &PanelHost{query: "6*7", launcherResults: []launcher.Result{{Entry: launcher.Entry{ID: "calc:42"}}}}
+	if !treeHasText(launcherFooter(one, 1), "1 result • "+launcherHints) {
+		t.Fatal("singular")
+	}
+	browse := &PanelHost{launcherResults: make([]launcher.Result, 3)}
+	for i := range browse.launcherResults {
+		browse.launcherResults[i].Entry.ID = fmt.Sprintf("app%d", i)
+	}
+	if !treeHasText(launcherFooter(browse, 3), "3 apps • "+launcherHints) {
+		t.Fatal("plural browse")
+	}
+}
+
+// An action row shares its application's ID, so a click must resolve the row
+// itself, not the first row with that ID.
+func TestLauncherClickOnActionRowSpawnsTheAction(t *testing.T) {
+	t.Parallel()
+
+	reg, run, reqs := openLauncherPanel(t, launcherTestEntries())
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "new window"})
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && len(h.launcherResults) == 1 && h.launcherResults[0].Action == "new-window"
+	})
+	h := launcherHost(t, reg)
+	reg.mu.Lock()
+	bounds, ok := firstLauncherRowBounds(h.root)
+	reg.mu.Unlock()
+	if !ok {
+		t.Fatal("action row has no laid-out bounds")
+	}
+	reqs[1].Open.Callbacks.Handle(wayland.Event{
+		Kind: wayland.EventPointerPress, Button: btnLeft,
+		X: float64(bounds.X + 4), Y: float64(bounds.Y + 4),
+	})
+	if got := run.waitArgv(t); !slices.Equal(got, []string{"niri", "msg", "action", "spawn", "--", "firefox", "--new-window"}) {
+		t.Fatalf("spawn argv = %v", got)
+	}
+}
+
+func firstLauncherRowBounds(n *ui.Node) (ui.Rect, bool) {
+	if n == nil {
+		return ui.Rect{}, false
+	}
+	if strings.HasPrefix(n.Action, "launch:") && n.Bounds.W > 0 {
+		return n.Bounds, true
+	}
+	for _, c := range n.Children {
+		if b, ok := firstLauncherRowBounds(c); ok {
+			return b, true
+		}
+	}
+	return ui.Rect{}, false
+}
+
+// Notes capture reaches the Notes action end to end: with no plugin host the
+// action reports that Notes is not running and leaves the launcher open.
+func TestLauncherNotesCaptureRoutesToNotes(t *testing.T) {
+	t.Parallel()
+
+	reg, run, reqs := openLauncherPanel(t, launcherTestEntries())
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "/nt buy milk"})
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && len(h.launcherResults) == 1 && h.launcherResults[0].Entry.Name == "Capture note: buy milk"
+	})
+	pressLauncherKey(reqs, keyEnter)
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && h.errLabel == "Notes plugin is not running"
+	})
+	run.mu.Lock()
+	spawned := run.argv
+	run.mu.Unlock()
+	if spawned != nil {
+		t.Fatalf("a Notes row spawned %v", spawned)
+	}
+}
+
+func TestLauncherNotesTooLongCaptureShowsTheLimit(t *testing.T) {
+	t.Parallel()
+
+	reg, _, reqs := openLauncherPanel(t, launcherTestEntries())
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "/nt " + strings.Repeat("x", v1.MaxInputBytes+1)})
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && len(h.launcherResults) == 1 && h.launcherResults[0].Entry.ID == notesLauncherTooLongID
+	})
+	pressLauncherKey(reqs, keyEnter)
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && h.errLabel == "Capture is too long (maximum 1 MiB)"
+	})
+}
+
+func TestLauncherOverviewListsProvidersWithGlyphs(t *testing.T) {
+	t.Parallel()
+
+	reg, _, reqs := openLauncherPanel(t, launcherTestEntries())
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "/"})
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		if h == nil {
+			return false
+		}
+		var got []string
+		for _, r := range h.launcherResults {
+			got = append(got, r.Entry.Name+"|"+r.Entry.IconName)
+		}
+		return strings.Join(got, ",") == "Applications|glyph:apps,Calculator|glyph:calculate,Emoji|glyph:mood,Notes|glyph:description"
+	})
 }

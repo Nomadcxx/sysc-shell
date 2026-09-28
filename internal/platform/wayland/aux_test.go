@@ -8,6 +8,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	"github.com/Nomadcxx/sysc-wayland/client"
 )
 
 func TestAuxCloseUnknownIDIsNoOp(t *testing.T) {
@@ -433,5 +434,55 @@ func TestAuxUpdateResizesTheSurfaceInPlace(t *testing.T) {
 	zero := uint32(0)
 	if _, err := planAuxUpdate(u, &AuxUpdate{Height: &zero}); err == nil {
 		t.Fatal("a zero height was accepted")
+	}
+}
+
+// removeDuringCapture stands in for a global_remove dispatched by one of the
+// capture's round trips: the host leaves the set and is torn down before the
+// capture returns.
+func removeDuringCapture(t *testing.T, o *owner, s *hostSet, h *OutputHost) func(*client.Output, ui.Rect) *ui.Image {
+	t.Helper()
+	return func(*client.Output, ui.Rect) *ui.Image {
+		s.remove(h.global)
+		if err := o.teardownHost(h); err != nil {
+			t.Fatalf("teardownHost: %v", err)
+		}
+		return &ui.Image{}
+	}
+}
+
+func TestAuxOpenAbandonsAHostRemovedDuringBackdropCapture(t *testing.T) {
+	t.Parallel()
+	s := newHostSet()
+	h := mappedHost(s, 7, "DP-1")
+	o := &owner{hosts: s, rs: newRegistryState()}
+	o.rs.singletons["zwlr_layer_shell_v1"] = globalEntry{version: 4}
+	o.capture = removeDuringCapture(t, o, s, h)
+	spec := &AuxSpec{
+		ID: "panel:session", Namespace: "sysc-shell-panel",
+		BlurRegion: &ui.Rect{W: 100, H: 100},
+		Callbacks: HostCallbacks{
+			Configure: func(int, int, int) error { return nil },
+			Render:    func([]byte, int, int, int) error { return nil },
+			Handle:    func(Event) bool { return false },
+			Backdrop:  func(*ui.Image) {},
+		},
+	}
+
+	o.handleAux(AuxRequest{Output: 7, ID: spec.ID, Open: spec})
+
+	if o.fatal != nil {
+		t.Fatalf("an output removed mid-capture failed the owner: %v", o.fatal)
+	}
+	if len(h.aux) != 0 {
+		t.Fatalf("aux registered on a removed host: %v", h.aux)
+	}
+
+	reply := make(chan error, 1)
+	h2 := mappedHost(s, 8, "DP-2")
+	o.capture = removeDuringCapture(t, o, s, h2)
+	o.handleAux(AuxRequest{Output: 8, ID: spec.ID, Open: spec, Reply: reply})
+	if err := <-reply; !errors.Is(err, errOutputGone) {
+		t.Fatalf("reply = %v, want errOutputGone", err)
 	}
 }
