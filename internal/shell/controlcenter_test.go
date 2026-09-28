@@ -17,6 +17,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -1471,24 +1472,214 @@ func TestControlCentreMeasuredRowsFitTheirContainers(t *testing.T) {
 	}
 }
 
-func TestCalendarPageRendersPluginSnapshotEvents(t *testing.T) {
+// withCalendarPlugin stands in for a running org.sysc.calendar: a plugin host
+// holding one slot whose store was loaded from state, the way ensure loads it.
+func withCalendarPlugin(t *testing.T, r *Registry, state string) {
+	t.Helper()
 	root := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", root)
-	dir := filepath.Join(root, "sysc-shell", "plugins", "org.sysc.calendar")
+	dir := filepath.Join(root, ccCalendarPluginID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	state := `{"control_center":{"generated":"2026-09-10T10:00:00Z","sources":2,` +
-		`"days":{"2026-09-12":3},"upcoming":[{"start":"2026-09-12T09:00:00Z","summary":"Standup","calendar":"Work"}]}}`
-	if err := os.WriteFile(filepath.Join(dir, "state.json"), []byte(state), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, plugin.StateFileName), []byte(state), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := plugin.OpenStore(root, ccCalendarPluginID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The stand-in has no runtime to stop, so a registry's Close must see
+	// whatever host it held before.
+	prev := r.plugins
+	t.Cleanup(func() { r.plugins = prev })
+	r.plugins = &pluginHost{r: r, slots: map[string]*pluginSlot{ccCalendarPluginID: {store: store}}}
+}
+
+const calendarSnapshotState = `{"control_center":{"generated":"2026-09-10T10:00:00Z","sources":2,` +
+	`"days":{"2026-09-12":3,"2026-09-15":1,"2026-09-30":5},"upcoming":[` +
+	`{"start":"2026-09-12T09:00:00Z","summary":"Standup","calendar":"Work"},` +
+	`{"start":"2026-09-15","summary":"Rent","all_day":true},` +
+	`{"start":"2026-09-30T18:30:00Z","summary":"Dinner","calendar":"Home"}]}}`
+
+func TestCalendarPageRendersPluginSnapshotEvents(t *testing.T) {
+	t.Parallel()
+	r := &Registry{now: time.Date(2026, time.September, 10, 12, 0, 0, 0, time.UTC)}
+	withCalendarPlugin(t, r, calendarSnapshotState)
+	h := &PanelHost{id: PanelControlCenter, section: "calendar", theme: DefaultTheme()}
+	page := ccCalendar(r, h)
+	got := renderText(page)
+	for _, want := range []string{"Standup", "Open calendar", "Work"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("calendar page lost snapshot content %q: %q", want, got)
+		}
+	}
+	// Three events on the 12th, one on the 15th, five capped at three on the
+	// 30th: seven accent dots in all.
+	dots := 0
+	for _, n := range findAllKind(page, ui.KindCapsule) {
+		if n.Fill == ui.FillAccent && len(n.Children) == 0 {
+			dots++
+		}
+	}
+	if dots != 7 {
+		t.Fatalf("calendar page drew %d event dots, want 7", dots)
+	}
+}
+
+// A plugin that is not running publishes nothing, whatever it left on disk:
+// the page takes the no-snapshot path rather than showing a stale month.
+func TestCalendarPageIgnoresAStoppedPluginsState(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", root)
+	dir := filepath.Join(root, "sysc-shell", "plugins", ccCalendarPluginID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, plugin.StateFileName), []byte(calendarSnapshotState), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	r := &Registry{now: time.Date(2026, time.September, 10, 12, 0, 0, 0, time.UTC)}
 	h := &PanelHost{id: PanelControlCenter, section: "calendar", theme: DefaultTheme()}
-	got := renderText(ccCalendar(r, h))
-	for _, want := range []string{"Standup", "Open calendar", "Work"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("calendar page lost snapshot content %q: %q", want, got)
+	if got := renderText(ccCalendar(r, h)); strings.Contains(got, "Open calendar") {
+		t.Fatalf("calendar page read a stopped plugin's state: %q", got)
+	}
+}
+
+// The month grid is a grid: every weekday and day cell is the same width, the
+// seven columns sit at the same x in the header and every week, the grid spans
+// the card's content width, and each label is centred in its cell. The content
+// test above passed while every cell collapsed to its digits and packed left.
+func TestCalendarPageGridColumnsAlign(t *testing.T) {
+	t.Parallel()
+	measure := func(s string, attrs ui.TextAttrs) (int, int) {
+		if attrs.Role == theme.RoleTitle {
+			return len([]rune(s)) * 9, 22
+		}
+		return len([]rune(s)) * 8, 19
+	}
+	cases := []struct {
+		name     string
+		now      time.Time
+		weeks    int
+		snapshot bool
+	}{
+		{"four weeks", time.Date(2026, time.February, 10, 12, 0, 0, 0, time.UTC), 4, false},
+		{"five weeks", time.Date(2026, time.September, 10, 12, 0, 0, 0, time.UTC), 5, false},
+		{"six weeks", time.Date(2026, time.August, 10, 12, 0, 0, 0, time.UTC), 6, false},
+		{"five weeks with events", time.Date(2026, time.September, 10, 12, 0, 0, 0, time.UTC), 5, true},
+		{"six weeks with events", time.Date(2026, time.August, 10, 12, 0, 0, 0, time.UTC), 6, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			r := &Registry{now: c.now}
+			if c.snapshot {
+				withCalendarPlugin(t, r, calendarSnapshotState)
+			}
+			h := &PanelHost{id: PanelControlCenter, section: "calendar", theme: DefaultTheme()}
+			page := ccCalendar(r, h)
+			if err := ui.LayoutColumn(page, ui.Rect{W: ccBodyWidth(h), H: ccPageH}, measure); err != nil {
+				t.Fatal(err)
+			}
+			card := page.Children[0]
+			inner := ui.Rect{
+				X: card.Bounds.X + card.Padding, Y: card.Bounds.Y + card.Padding,
+				W: card.Bounds.W - 2*card.Padding, H: card.Bounds.H - 2*card.Padding,
+			}
+			rows := card.Children[0].Children
+			if len(rows) < 2+c.weeks {
+				t.Fatalf("card holds %d rows, want the nav, the header and %d weeks", len(rows), c.weeks)
+			}
+			grid := rows[1 : 2+c.weeks]
+			header := grid[0].Children
+			if len(header) != 7 {
+				t.Fatalf("header holds %d cells, want 7", len(header))
+			}
+			cellW := header[0].Bounds.W
+			if span := header[6].Bounds.X + cellW - header[0].Bounds.X; span > inner.W || inner.W-span > theme.MarginXS {
+				t.Errorf("grid spans %dpx of a %dpx card, want within one gap", span, inner.W)
+			}
+			for ri, row := range grid {
+				if len(row.Children) != 7 {
+					t.Fatalf("row %d holds %d cells, want 7", ri, len(row.Children))
+				}
+				for ci, cell := range row.Children {
+					if cell.Bounds.W != cellW || cell.Bounds.X != header[ci].Bounds.X {
+						t.Errorf("row %d cell %d at x=%d w=%d, want x=%d w=%d",
+							ri, ci, cell.Bounds.X, cell.Bounds.W, header[ci].Bounds.X, cellW)
+					}
+					label := cell.Children[0].Children[0]
+					if label.Kind != ui.KindText {
+						t.Fatalf("row %d cell %d leads with %s, want its label", ri, ci, label.Kind)
+					}
+					labelMid, cellMid := label.Bounds.X+label.Bounds.W/2, cell.Bounds.X+cell.Bounds.W/2
+					if d := labelMid - cellMid; d < -2 || d > 2 {
+						t.Errorf("row %d cell %d label centre x=%d, cell centre x=%d", ri, ci, labelMid, cellMid)
+					}
+					content := cell.Children[0].Children
+					last := content[len(content)-1]
+					top, bottom := label.Bounds.Y-cell.Bounds.Y, cell.Bounds.Y+cell.Bounds.H-(last.Bounds.Y+last.Bounds.H)
+					if d := top - bottom; d < -1 || d > 1 {
+						t.Errorf("row %d cell %d content sits %dpx from the top and %dpx from the bottom", ri, ci, top, bottom)
+					}
+				}
+			}
+			var inside func(*ui.Node)
+			inside = func(n *ui.Node) {
+				b := n.Bounds
+				if b.X < inner.X || b.Y < inner.Y || b.X+b.W > inner.X+inner.W || b.Y+b.H > inner.Y+inner.H {
+					t.Errorf("%s %q at %+v leaves the card's content box %+v", n.Kind, n.Text, b, inner)
+				}
+				for _, child := range n.Children {
+					inside(child)
+				}
+			}
+			for _, row := range rows {
+				inside(row)
+			}
+		})
+	}
+}
+
+// The calendar page painted at the desktop's 1.0 and the laptop's 1.25, with
+// and without the plugin. The PNGs are for the eye; SYSC_CALENDAR_PNG_DIR
+// keeps them somewhere other than a temp directory.
+func TestCalendarPageRendersToPNG(t *testing.T) {
+	dir := os.Getenv("SYSC_CALENDAR_PNG_DIR")
+	if dir == "" {
+		dir = t.TempDir()
+	}
+	for _, scale120 := range []int{120, 150} {
+		for _, events := range []bool{false, true} {
+			name := fmt.Sprintf("calendar-%d-events-%v", scale120, events)
+			t.Run(name, func(t *testing.T) {
+				reg := newPanelRegistry(t)
+				if err := reg.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+					t.Fatal(err)
+				}
+				panel := drainAux(t, reg, 2)[1].Open
+				h := reg.panelHosts[PanelControlCenter]
+				settleHostAnimation(reg, h)
+				reg.mu.Lock()
+				reg.now = time.Date(2026, time.September, 10, 12, 0, 0, 0, time.Local)
+				if events {
+					withCalendarPlugin(t, reg, calendarSnapshotState)
+				}
+				h.section = "calendar"
+				reg.rebuildPanel(h)
+				reg.mu.Unlock()
+				s := ui.Scale120(scale120)
+				w, hgt := int(panel.Width), int(panel.Height)
+				if err := panel.Callbacks.Configure(w, hgt, scale120); err != nil {
+					t.Fatal(err)
+				}
+				pw, ph := s.Physical(w), s.Physical(hgt)
+				pix := make([]byte, pw*ph*4)
+				if err := panel.Callbacks.Render(pix, pw, ph, pw*4); err != nil {
+					t.Fatal(err)
+				}
+				writeCardPNG(t, filepath.Join(dir, name+".png"), pix, pw, ph)
+			})
 		}
 	}
 }
