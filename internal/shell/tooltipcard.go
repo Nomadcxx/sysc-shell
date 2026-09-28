@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"strings"
+
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-shell/plugin/lint"
@@ -38,7 +40,17 @@ func tooltipCard(text string, root *ui.Node, measure ui.MeasureText) (*ui.Node, 
 			w, _ := measure(s, ui.TextAttrs{Role: theme.RoleLabel})
 			return w
 		}
-		for _, line := range wrapLines(text, maxContentW, label, tooltipMaxLines) {
+		// A newline is the sender's own break -- a tray item joins its title
+		// and description with one -- so each paragraph wraps on its own.
+		var lines []string
+		for _, para := range strings.Split(text, "\n") {
+			lines = append(lines, wrapLines(para, maxContentW, label, 0)...)
+		}
+		if len(lines) > tooltipMaxLines {
+			lines = lines[:tooltipMaxLines]
+			lines[tooltipMaxLines-1] += "…"
+		}
+		for _, line := range lines {
 			col.Children = append(col.Children, &ui.Node{Kind: ui.KindText, Text: line, TextRole: theme.RoleLabel})
 		}
 	} else {

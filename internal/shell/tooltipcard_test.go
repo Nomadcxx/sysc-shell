@@ -199,3 +199,17 @@ func TestATooltipAtTheRightEdgeOfAScaledOutputStaysInside(t *testing.T) {
 		t.Fatalf("placement %+v leaves the 1536 output", got)
 	}
 }
+
+// A tray item's tooltip is its title and description joined by a newline;
+// each stays its own line.
+func TestATextTooltipKeepsItsLineBreaks(t *testing.T) {
+	t.Parallel()
+	card, _ := tooltipCard("Mail\n3 unread", nil, cardMeasure)
+	var got []string
+	for _, l := range textLeaves(card) {
+		got = append(got, l.Text)
+	}
+	if strings.Join(got, "|") != "Mail|3 unread" {
+		t.Fatalf("lines = %q, want the title and description apart", got)
+	}
+}
