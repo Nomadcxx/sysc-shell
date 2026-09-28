@@ -508,3 +508,24 @@ func TestProtocolImageDecodesPNGData(t *testing.T) {
 		t.Fatal("oversized PNG was not dropped")
 	}
 }
+
+func TestNotifyCardKeepsALonePillAtItsOwnWidth(t *testing.T) {
+	n := baseNotification()
+	n.Actions = []protocol.Action{{Key: "reply", Label: "Reply"}}
+	measure := func(s string, _ ui.TextAttrs) (int, int) { return len([]rune(s)) * 9, 18 }
+	card := NotificationCard(n, nil, true, measure)
+	h, err := ui.ContentHeight(card, toastCardWidth, measure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ui.LayoutColumn(card, ui.Rect{W: toastCardWidth, H: h}, measure); err != nil {
+		t.Fatal(err)
+	}
+	pill := buttonByName(card, "Reply")
+	if pill == nil {
+		t.Fatal("no Reply pill")
+	}
+	if full := toastCardWidth - 2*cardPadding; pill.Bounds.W >= full {
+		t.Fatalf("lone pill is %d px wide, the full row; want its own width", pill.Bounds.W)
+	}
+}

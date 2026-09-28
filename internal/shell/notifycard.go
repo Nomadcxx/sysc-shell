@@ -233,8 +233,11 @@ func notificationCard(n protocol.Notification, raster *ui.Image, allowLinks bool
 		}
 		pills = append(pills, a)
 	}
-	for _, row := range actionRows(pills, toastCardWidth-2*cardPadding, measure) {
-		if len(row) == 1 {
+	rowWidth := toastCardWidth - 2*cardPadding
+	for _, row := range actionRows(pills, rowWidth, measure) {
+		// Only a pill too wide for any row takes the column, where it spans
+		// the card and its label clips; one that fits keeps its own width.
+		if len(row) == 1 && pillWidth(row[0], rowWidth, measure) > rowWidth {
 			root.Children = append(root.Children, actionPill(n.ID, row[0]))
 			continue
 		}
@@ -266,6 +269,17 @@ func actionPill(id uint32, a protocol.Action) *ui.Node {
 	}
 }
 
+// pillWidth is the width a pill lays out at, as ui measures a button: its
+// label plus padding on each side. Without a measure it cannot be sized, and
+// reports wider than the row so the pill takes a row of its own.
+func pillWidth(a protocol.Action, width int, measure ui.MeasureText) int {
+	if measure == nil {
+		return width + 1
+	}
+	tw, _ := measure(a.Label, ui.TextAttrs{Role: theme.RoleLabel})
+	return tw + 2*theme.MarginXS
+}
+
 // actionRows packs action pills into rows no wider than width, keeping their
 // order. A pill that fits nowhere beside another takes a row alone, which the
 // card lays out as a full-width button, so no label can push layout past the
@@ -274,11 +288,7 @@ func actionRows(actions []protocol.Action, width int, measure ui.MeasureText) []
 	var rows [][]protocol.Action
 	used := 0
 	for _, a := range actions {
-		w := width + 1
-		if measure != nil {
-			tw, _ := measure(a.Label, ui.TextAttrs{Role: theme.RoleLabel})
-			w = tw + 2*theme.MarginXS
-		}
+		w := pillWidth(a, width, measure)
 		if len(rows) == 0 || used+cardGap+w > width {
 			rows = append(rows, []protocol.Action{a})
 			used = w

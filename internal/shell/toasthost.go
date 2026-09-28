@@ -454,10 +454,12 @@ func (h *toastHost) updateHover(connector string) bool {
 	at, inside := h.pointer[connector]
 	hovered := map[uint32]bool{}
 	if inside {
-		ids := h.visible[connector]
-		for i, rect := range h.cardRects(connector, ids) {
-			if i < len(ids) && rect.Contains(at.X, at.Y) {
-				hovered[ids[i]] = true
+		// The placed cards, not a fresh layout: motion arrives far faster
+		// than the stack changes, and rebuilding every tree per event held
+		// the registry lock for most of a fast pointer's travel.
+		if card, ok := h.cardAt(connector, at.X, at.Y); ok {
+			if id, ok := cardID(card.root); ok {
+				hovered[id] = true
 			}
 		}
 	}
@@ -798,17 +800,25 @@ func (h *toastHost) cardHeight(id uint32) int {
 	return toastCardHeight(h.cardFor(id), toastCardWidth, h.measureText())
 }
 
-// measureText measures in logical pixels, the space cards are laid out in:
-// the style's own scale is unset between paints, and a zero scale sized
-// every run to nothing, failing it into the rough fallback below.
+// measureText measures at the output's scale and rounds up into logical
+// pixels, the space cards are laid out in. A shaped run does not scale
+// linearly, so a 1x measure could grant less room than the painted run
+// takes and the painter would clip it. Card trees are shared by every
+// output, so it measures at the largest scale among them.
 func (h *toastHost) measureText() ui.MeasureText {
-	logical := h.style
-	logical.Scale120 = ui.ScaleUnit
+	scale := ui.ScaleUnit
+	for _, s := range h.scale120 {
+		if v := ui.Scale120(s); v.Valid() && v > scale {
+			scale = v
+		}
+	}
+	style := h.style
+	style.Scale120 = scale
 	return func(text string, attrs ui.TextAttrs) (int, int) {
 		if h.text != nil {
-			spec := render.SpecFor(logical, attrs)
+			spec := render.SpecFor(style, attrs)
 			if w, height, err := h.text.Measure(text, spec, attrs.Tabular); err == nil {
-				return w, height
+				return scale.Logical(w), scale.Logical(height)
 			}
 		}
 		return len([]rune(text)) * 8, 16

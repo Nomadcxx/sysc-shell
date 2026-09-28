@@ -745,21 +745,45 @@ func TestToastBlurShapeIsEmptyWithNoCards(t *testing.T) {
 	}
 }
 
-// Layout is in logical pixels, so the host measures text at the unit scale
-// with its real fonts. An unset scale failed every measurement into the
-// 8 px-per-rune fallback, and the painter then clipped the time to "n…".
-func TestToastMeasuresTextWithItsRealFonts(t *testing.T) {
+// Layout is logical but text is painted at the output's scale, and a
+// shaped run does not scale linearly. The host measures at the physical
+// scale and rounds up into logical pixels, so the painter never clips text
+// the layout said fits: at 1.5x the pinned time "12m" needs 35 px where a
+// 1x measure granted 34.
+func TestToastMeasuresTextAtTheOutputScale(t *testing.T) {
+	for _, scale := range []int{120, 150, 180} {
+		r, h, _, _ := glassToasts(t, true, note(1, "hello"))
+		if err := h.harness().opens[0].Callbacks.Configure(1200, 800, scale); err != nil {
+			t.Fatal(err)
+		}
+		r.mu.Lock()
+		physical := h.style
+		physical.Scale120 = ui.Scale120(scale)
+		attrs := ui.TextAttrs{Role: theme.RoleCaption}
+		mw, _, err := h.text.Measure("12m", render.SpecFor(physical, attrs), false)
+		if err != nil {
+			r.mu.Unlock()
+			t.Fatal(err)
+		}
+		want := ui.Scale120(scale).Logical(mw)
+		got, _ := h.measureText()("12m", attrs)
+		r.mu.Unlock()
+		if got != want {
+			t.Fatalf("scale %d: measured %d px, want %d so the painted run fits", scale, got, want)
+		}
+	}
+}
+
+// Pointer motion hit-tests the cards already placed; it must not rebuild and
+// re-measure every card tree under the registry lock on each event.
+func TestToastHoverHitTestsThePlacedCards(t *testing.T) {
 	r, h, _, _ := glassToasts(t, true, note(1, "hello"))
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	logical := h.style
-	logical.Scale120 = ui.ScaleUnit
-	attrs := ui.TextAttrs{Role: theme.RoleCaption}
-	want, _, err := h.text.Measure("now", render.SpecFor(logical, attrs), false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, _ := h.measureText()("now", attrs); got != want {
-		t.Fatalf("measured %d px, want the font's %d", got, want)
+	h.cards["eDP-1"][0].rect = ui.Rect{X: 10, Y: 500, W: 100, H: 50}
+	h.pointer["eDP-1"] = ui.Rect{X: 20, Y: 520}
+	h.updateHover("eDP-1")
+	if !h.hovered["eDP-1"][1] {
+		t.Fatal("pointer over the placed card is not hovering it")
 	}
 }
