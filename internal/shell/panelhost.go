@@ -1344,6 +1344,30 @@ func (h *PanelHost) revealJoints(opacity float64) (left, right, edge int) {
 	return scale(j.Left), scale(j.Right), scale(h.edgeExtent(j))
 }
 
+// markMenuRowHover resolves the open menu's option onto the render copy.
+func markMenuRowHover(root *ui.Node, path string, m *Menu, x, y int) {
+	if m == nil || path == "" {
+		return
+	}
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n.Kind == ui.KindMenu && n.Action == path {
+			if i := m.RowAt(n, x, y); i >= 0 && i < len(n.Children) && n.Children[i] != nil {
+				n.Children[i].State |= ui.StateHovered
+				n.Children[i].HoverProgress = 1
+			}
+			return
+		}
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(root)
+}
+
 func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	if err := h.ensureText(); err != nil {
 		return err
@@ -1373,6 +1397,9 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	}
 	h.applyEditorView(root)
 	h.pointer.apply(root, h.anim)
+	if h.menu != nil && h.menu.Opened() && h.menuPath != "" {
+		markMenuRowHover(root, h.menuPath, h.menu, h.hoverX, h.hoverY)
+	}
 	if err := h.resolveEffectMotionLocked(root); err != nil {
 		return err
 	}
