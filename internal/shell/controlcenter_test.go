@@ -1470,3 +1470,25 @@ func TestControlCentreMeasuredRowsFitTheirContainers(t *testing.T) {
 		t.Errorf("forecast uses %dpx across a %dpx body", used, body)
 	}
 }
+
+func TestCalendarPageRendersPluginSnapshotEvents(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", root)
+	dir := filepath.Join(root, "sysc-shell", "plugins", "org.sysc.calendar")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	state := `{"control_center":{"generated":"2026-09-10T10:00:00Z","sources":2,` +
+		`"days":{"2026-09-12":3},"upcoming":[{"start":"2026-09-12T09:00:00Z","summary":"Standup","calendar":"Work"}]}}`
+	if err := os.WriteFile(filepath.Join(dir, "state.json"), []byte(state), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := &Registry{now: time.Date(2026, time.September, 10, 12, 0, 0, 0, time.UTC)}
+	h := &PanelHost{id: PanelControlCenter, section: "calendar", theme: DefaultTheme()}
+	got := renderText(ccCalendar(r, h))
+	for _, want := range []string{"Standup", "Open calendar", "Work"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("calendar page lost snapshot content %q: %q", want, got)
+		}
+	}
+}

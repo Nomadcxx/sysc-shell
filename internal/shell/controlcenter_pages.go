@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/user"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
+	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -609,6 +611,45 @@ func ccSessionActions(m theme.Metrics, locker string) *ui.Node {
 	return card
 }
 
+// The calendar plugin publishes a compact snapshot into its own persistent
+// state; this page reads it. Key and plugin ID are the whole contract.
+const (
+	ccCalendarPluginID = "org.sysc.calendar"
+	ccCalendarStateKey = "control_center"
+)
+
+type ccCalOccurrence struct {
+	Start    string `json:"start"`
+	Summary  string `json:"summary"`
+	Calendar string `json:"calendar"`
+	AllDay   bool   `json:"all_day"`
+}
+
+type ccCalendarSnapshot struct {
+	Generated string            `json:"generated"`
+	Sources   int               `json:"sources"`
+	Days      map[string]int    `json:"days"`
+	Upcoming  []ccCalOccurrence `json:"upcoming"`
+}
+
+// loadCCCalendar reads the calendar plugin's published snapshot. Missing or
+// malformed state simply means "no events"; it never breaks the page.
+func loadCCCalendar() *ccCalendarSnapshot {
+	store, err := plugin.OpenStore(plugin.StateRoot(), ccCalendarPluginID)
+	if err != nil {
+		return nil
+	}
+	raw, ok := store.Get(ccCalendarStateKey)
+	if !ok {
+		return nil
+	}
+	var snapshot ccCalendarSnapshot
+	if json.Unmarshal(raw, &snapshot) != nil {
+		return nil
+	}
+	return &snapshot
+}
+
 func ccCalendar(r *Registry, h *PanelHost) *ui.Node {
 	m := h.metrics()
 	now := time.Time{}
@@ -620,6 +661,16 @@ func ccCalendar(r *Registry, h *PanelHost) *ui.Node {
 	}
 	view := now.AddDate(0, h.monthDelta, 0)
 	grid := calendarGrid(view)
+	snapshot := loadCCCalendar()
+	var dates []time.Time
+	if snapshot != nil {
+		first := time.Date(view.Year(), view.Month(), 1, 0, 0, 0, 0, view.Location())
+		gridStart := first.AddDate(0, 0, -int(first.Weekday()))
+		dates = make([]time.Time, len(grid.Weeks)*7)
+		for i := range dates {
+			dates[i] = gridStart.AddDate(0, 0, i)
+		}
+	}
 	rows := []*ui.Node{{
 		Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{
 			calendarArrow("chevron_left", "cal-prev", "Previous month", h.theme),
@@ -632,21 +683,79 @@ func ccCalendar(r *Registry, h *PanelHost) *ui.Node {
 		weekdays.Children = append(weekdays.Children, &ui.Node{Kind: ui.KindText, Text: day, Width: ccCalendarCellW, CenterX: true})
 	}
 	rows = append(rows, weekdays)
-	rowHeight := max((ccPageH-2*m.CardPadding-m.StandardControl-28)/max(len(grid.Weeks), 1), ccCalendarRowMin)
-	for _, week := range grid.Weeks {
+	upcomingShown := 0
+	if snapshot != nil {
+		upcomingShown = min(len(snapshot.Upcoming), 3)
+		if upcomingShown == 0 {
+			upcomingShown = 1
+		}
+	}
+	footerH := (upcomingShown+1)*(m.CompactControl+theme.MarginXS) + theme.MarginXS
+	rowHeight := max((ccPageH-2*m.CardPadding-m.StandardControl-28-footerH)/max(len(grid.Weeks), 1), ccCalendarRowMin)
+	for wi, week := range grid.Weeks {
 		row := &ui.Node{Kind: ui.KindRow, Height: rowHeight, Gap: theme.MarginXS}
-		for _, cell := range week {
-			day := &ui.Node{Kind: ui.KindText, Text: fmt.Sprintf("%d", cell.Day), Width: ccCalendarCellW, CenterX: true, Tabular: true}
+		for ci, cell := range week {
+			label := fmt.Sprintf("%d", cell.Day)
+			day := &ui.Node{Kind: ui.KindText, Text: label, Width: ccCalendarCellW, CenterX: true, Tabular: true}
 			if cell.Today {
 				day.Tone = ui.ToneAccent
+			}
+			if snapshot != nil {
+				if count := snapshot.Days[dates[wi*7+ci].Format("2006-01-02")]; count > 0 {
+					day = &ui.Node{Kind: ui.KindColumn, Width: ccCalendarCellW, Children: []*ui.Node{
+						{Kind: ui.KindText, Text: label, CenterX: true, Tabular: true, Tone: day.Tone},
+						{Kind: ui.KindText, Text: fmt.Sprintf("%d", count), CenterX: true, TextRole: theme.RoleLabel, Tone: ui.ToneAccent},
+					}}
+				}
 			}
 			row.Children = append(row.Children, day)
 		}
 		rows = append(rows, row)
 	}
+	if snapshot != nil {
+		if len(snapshot.Upcoming) == 0 {
+			rows = append(rows, &ui.Node{Kind: ui.KindText, Text: "No upcoming events", TextRole: theme.RoleLabel, Tone: ui.ToneSubtle, CenterX: true})
+		}
+		for _, occ := range snapshot.Upcoming[:min(len(snapshot.Upcoming), 3)] {
+			label := ccCalendarOccurrenceLabel(occ, now)
+			rows = append(rows, &ui.Node{
+				Kind: ui.KindButton, Action: "plugin-calendar:open", Name: label, Role: "button", Focusable: true,
+				Height: m.CompactControl, Gap: theme.MarginM, Padding: m.CardPadding,
+				Children: []*ui.Node{{Kind: ui.KindText, Text: label, TextRole: theme.RoleLabel}},
+			})
+		}
+		rows = append(rows, &ui.Node{Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{{
+			Kind: ui.KindButton, Action: "plugin-calendar:open", Name: "Open calendar", Role: "button", Focusable: true,
+			Height: m.CompactControl, Gap: theme.MarginM, Padding: m.CardPadding,
+			Children: []*ui.Node{
+				{Kind: ui.KindIcon, Icon: "calendar_month", IconSize: m.IconNormal},
+				{Kind: ui.KindText, Text: "Open calendar"},
+			},
+		}}})
+	}
 	card := monitorCard(m, rows)
 	card.Height = ccPageH
 	return &ui.Node{Kind: ui.KindColumn, Height: ccPageH, Children: []*ui.Node{card}}
+}
+
+func ccCalendarOccurrenceLabel(occ ccCalOccurrence, now time.Time) string {
+	when := ""
+	if occ.AllDay {
+		if day, err := time.Parse("2006-01-02", occ.Start); err == nil {
+			when = day.Format("Mon 2 Jan")
+		}
+	} else if at, err := time.Parse(time.RFC3339, occ.Start); err == nil {
+		if at.Format("2006-01-02") == now.Format("2006-01-02") {
+			when = at.Format("15:04")
+		} else {
+			when = at.Format("Mon 15:04")
+		}
+	}
+	label := when + "  " + occ.Summary
+	if occ.Calendar != "" {
+		label += " · " + occ.Calendar
+	}
+	return label
 }
 
 func ccNotifications(r *Registry, h *PanelHost) *ui.Node {
