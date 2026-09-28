@@ -152,8 +152,8 @@ func TestWeathersConditionIsALabelTitle(t *testing.T) {
 	if root == nil || len(root.Children) == 0 {
 		t.Fatal("an observed reading built no tooltip tree")
 	}
-	if got := root.Children[0].TextRole; got != theme.RoleLabel {
-		t.Fatalf("condition role = %v, want the label role", got)
+	if c := root.Children[0]; c.TextRole != theme.RoleLabel || !c.Bold {
+		t.Fatalf("condition role %v bold %v, want a bold label title", c.TextRole, c.Bold)
 	}
 }
 

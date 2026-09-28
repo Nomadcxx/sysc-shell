@@ -23,6 +23,11 @@ func newTooltipFixture(t *testing.T, blur bool) (*Registry, *tooltipHost, *hostH
 	r.caps = wayland.Capabilities{Blur: blur}
 	newHosts(t, r, map[uint32]string{1: "eDP-1"})
 	r.bars[1].setOutputSize(1536, 960)
+	// Configured at the laptop's 1.25, so cards measure at the scale they
+	// paint at, as they do on a real output.
+	if err := r.bars[1].Configure(1536, 38, 150); err != nil {
+		t.Fatal(err)
+	}
 	hh := &hostHarness{}
 	return r, newTooltipHost(r, hh), hh
 }
@@ -123,30 +128,7 @@ func TestPaintingATooltipAtFractionalScaleKeepsTheInsetClear(t *testing.T) {
 	if err := spec.Callbacks.Render(pix, w, hgt, w*4); err != nil {
 		t.Fatal(err)
 	}
-	at := func(x, y int) [4]byte {
-		i := y*w*4 + x*4
-		return [4]byte{pix[i], pix[i+1], pix[i+2], pix[i+3]}
-	}
-	ground := at(w/2, 3)
-	if ground[3] == 0 {
-		t.Fatal("the ground is transparent; nothing was painted")
-	}
-	insetX := s.Physical(theme.MarginM) - 1
-	insetY := s.Physical(theme.MarginS) - 1
-	corner := s.Physical(8) // past the small radius and its rim
-	edge := 2               // the rim and its antialiasing
-	for y := edge; y < hgt-edge; y++ {
-		for x := edge; x < w-edge; x++ {
-			inInset := x < insetX || x >= w-insetX || y < insetY || y >= hgt-insetY
-			nearCorner := (x < corner || x >= w-corner) && (y < corner || y >= hgt-corner)
-			if !inInset || nearCorner {
-				continue
-			}
-			if got := at(x, y); got != ground {
-				t.Fatalf("inset pixel (%d,%d) = %v, want the ground %v", x, y, got, ground)
-			}
-		}
-	}
+	assertInsetClear(t, pix, w, hgt, s)
 }
 
 // Sweeping along the bar moves the card; it does not close and reopen it.
@@ -293,5 +275,35 @@ func TestATooltipPaintsItsCapturedBackdrop(t *testing.T) {
 	i := (hgt/2*w + 2) * 4 // inside the ground, clear of glyphs
 	if string(plain[i:i+4]) == string(withBackdrop[i:i+4]) {
 		t.Fatalf("pixel %v is unchanged by the backdrop", plain[i:i+4])
+	}
+}
+
+// assertInsetClear checks that every inset pixel clear of the rounded corners
+// and the rim is the ground: no glyph reached into the host inset.
+func assertInsetClear(t *testing.T, pix []byte, w, hgt int, s ui.Scale120) {
+	t.Helper()
+	at := func(x, y int) [4]byte {
+		i := y*w*4 + x*4
+		return [4]byte{pix[i], pix[i+1], pix[i+2], pix[i+3]}
+	}
+	ground := at(w/2, 3)
+	if ground[3] == 0 {
+		t.Fatal("the ground is transparent; nothing was painted")
+	}
+	insetX := s.Physical(theme.MarginM) - 1
+	insetY := s.Physical(theme.MarginS) - 1
+	corner := s.Physical(8) // past the small radius and its rim
+	edge := 2               // the rim and its antialiasing
+	for y := edge; y < hgt-edge; y++ {
+		for x := edge; x < w-edge; x++ {
+			inInset := x < insetX || x >= w-insetX || y < insetY || y >= hgt-insetY
+			nearCorner := (x < corner || x >= w-corner) && (y < corner || y >= hgt-corner)
+			if !inInset || nearCorner {
+				continue
+			}
+			if got := at(x, y); got != ground {
+				t.Fatalf("inset pixel (%d,%d) = %v, want the ground %v", x, y, got, ground)
+			}
+		}
 	}
 }
