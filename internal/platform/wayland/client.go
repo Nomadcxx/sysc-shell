@@ -122,9 +122,6 @@ type Callbacks struct {
 	// and validates the file itself, so no other goroutine parses
 	// configuration while a bar is mapped.
 	Reloads <-chan struct{}
-	// Tooltips asks the owner to show or hide a tooltip. It is owned by the
-	// caller; Run only receives from it and never closes it.
-	Tooltips <-chan TooltipRequest
 	// Aux opens or closes auxiliary layer surfaces. It is owned by the caller;
 	// Run only receives from it and never closes it. Nil disables aux.
 	Aux <-chan AuxRequest
@@ -253,16 +250,9 @@ type owner struct {
 	// captureRegion; tests replace it to act while a capture's round trips
 	// are dispatching.
 	capture func(*client.Output, ui.Rect) *ui.Image
-	// tooltipConfigure answers a tooltip configure. Nil means
-	// configureTooltip; tests replace it to fail without a compositor.
-	tooltipConfigure func(*tooltipSurface, layershell.ZwlrLayerSurfaceV1ConfigureEvent) error
 	// cfg is the live configuration. It is replaced only after a candidate has
 	// resolved for every connected output.
 	cfg *config.Config
-
-	tooltip         *tooltipSurface
-	tooltipRenderer *render.TextRenderer
-	tooltipFont     string
 
 	cleanup cleanupStack
 	fatal   error
@@ -279,9 +269,9 @@ func (o *owner) fail(err error) {
 
 // failUnit contains a surface error to the surface that raised it. A bar
 // failure stays fatal: there is no shell without its bar. An auxiliary
-// surface -- a panel, toast or OSD -- closes instead, because one panel
-// whose tree cannot be arranged must not take the whole process down with it.
-// The tooltip is not a unit; failTooltip contains its errors the same way.
+// surface -- a panel, toast, OSD or tooltip -- closes instead, because one
+// panel whose tree cannot be arranged must not take the whole process down
+// with it.
 //
 // This is the containment half of the crash where a panel holding a node kind
 // the layout could not measure failed the owner during configure.
@@ -1043,9 +1033,6 @@ func (o *owner) reloadConfig() error {
 	if err := o.applyPreparedConfig(prepared); err != nil {
 		return fmt.Errorf("wayland: apply reloaded config: %w", err)
 	}
-	if err := o.hideTooltip(); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -1253,7 +1240,7 @@ func (o *owner) loop(ctx context.Context) error {
 	}
 	defer wake.close()
 	pastes := make(chan pasteResult, 4)
-	wake.bridge(runCtx, o.cb.Invalidations, o.cb.Reloads, o.cb.Tooltips, o.cb.Aux, o.cb.Selection, pastes)
+	wake.bridge(runCtx, o.cb.Invalidations, o.cb.Reloads, o.cb.Aux, o.cb.Selection, pastes)
 
 	for {
 		if o.fatal != nil {
@@ -1286,9 +1273,6 @@ func (o *owner) loop(ctx context.Context) error {
 				if err := o.reloadConfig(); err != nil {
 					return err
 				}
-			}
-			if req, ok := wake.takeTooltip(); ok {
-				o.handleTooltip(req)
 			}
 			for _, req := range wake.takeAux() {
 				o.handleAux(req)
@@ -1372,12 +1356,6 @@ func (o *owner) teardownHost(h *OutputHost) error {
 	h.alive = false
 	var errs []error
 
-	if o.tooltip != nil && o.tooltip.host == h {
-		if err := o.hideTooltip(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
 	o.closeAllAux(h)
 
 	h.bar.sched.Close()
@@ -1414,9 +1392,6 @@ func (o *owner) teardownHost(h *OutputHost) error {
 // flushes the destructor requests once and closes the display.
 func (o *owner) shutdown() error {
 	var errs []error
-	if err := o.hideTooltip(); err != nil {
-		errs = append(errs, err)
-	}
 	for _, h := range o.hosts.each() {
 		if err := o.teardownHost(h); err != nil {
 			errs = append(errs, err)

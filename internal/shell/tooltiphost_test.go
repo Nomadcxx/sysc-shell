@@ -263,3 +263,35 @@ func TestLosingTheOutputForgetsTheCard(t *testing.T) {
 		t.Fatalf("opens %d, want a fresh card on the remaining output", len(hh.opens))
 	}
 }
+
+// Without compositor blur the captured backdrop is what shows through the
+// translucent ground, so it has to reach the paint.
+func TestATooltipPaintsItsCapturedBackdrop(t *testing.T) {
+	t.Parallel()
+	r, h, hh := newTooltipFixture(t, false)
+	// The default overlay is opaque, which hides any backdrop by design.
+	r.mu.Lock()
+	r.cfg.Theme.OverlayOpacity = 60
+	r.mu.Unlock()
+	h.show(tooltipRequest{Global: 1, Anchor: ui.Rect{X: 700, W: 30, H: 38}, Text: "Volume 40%"})
+	spec := onlyOpen(t, hh)
+	w, hgt := int(spec.Width), int(spec.Height)
+	paint := func() []byte {
+		pix := make([]byte, w*hgt*4)
+		if err := spec.Callbacks.Render(pix, w, hgt, w*4); err != nil {
+			t.Fatal(err)
+		}
+		return pix
+	}
+	plain := paint()
+	shot := &ui.Image{Width: w, Height: hgt, Stride: w * 4, Pix: make([]byte, w*hgt*4)}
+	for i := 0; i < len(shot.Pix); i += 4 {
+		shot.Pix[i], shot.Pix[i+1], shot.Pix[i+2], shot.Pix[i+3] = 0, 0xff, 0, 0xff
+	}
+	spec.Callbacks.Backdrop(shot)
+	withBackdrop := paint()
+	i := (hgt/2*w + 2) * 4 // inside the ground, clear of glyphs
+	if string(plain[i:i+4]) == string(withBackdrop[i:i+4]) {
+		t.Fatalf("pixel %v is unchanged by the backdrop", plain[i:i+4])
+	}
+}
