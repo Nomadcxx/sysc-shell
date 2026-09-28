@@ -143,7 +143,8 @@ func weatherTooltipTree(reading services.Reading) *ui.Node {
 		}}
 	}
 	lines := []*ui.Node{
-		{Kind: ui.KindText, Text: render.WeatherCondition(reading.Code)},
+		// The condition titles the card; the readings under it are body text.
+		{Kind: ui.KindText, Text: render.WeatherCondition(reading.Code), TextRole: theme.RoleLabel},
 	}
 	if len(reading.Daily) > 0 {
 		lines = append(lines, &ui.Node{Kind: ui.KindText, Tabular: true, Text: weatherDayRange(reading)})

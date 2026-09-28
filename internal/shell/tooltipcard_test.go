@@ -1,0 +1,158 @@
+package shell
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/Nomadcxx/sysc-shell/internal/plugin"
+	"github.com/Nomadcxx/sysc-shell/internal/services"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	"github.com/Nomadcxx/sysc-shell/plugin/lint"
+	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
+)
+
+// cardMeasure is a fixed-advance measure: eight pixels a rune, sixteen tall,
+// so every expected width below is arithmetic rather than a font's.
+func cardMeasure(text string, _ ui.TextAttrs) (int, int) {
+	return 8 * len([]rune(text)), 16
+}
+
+// textLeaves collects the text nodes of a laid-out card in paint order.
+func textLeaves(n *ui.Node) []*ui.Node {
+	if n == nil {
+		return nil
+	}
+	if n.Kind == ui.KindText {
+		return []*ui.Node{n}
+	}
+	var out []*ui.Node
+	for _, c := range n.Children {
+		out = append(out, textLeaves(c)...)
+	}
+	return out
+}
+
+func TestATextTooltipIsInsetAndShrinkWrapped(t *testing.T) {
+	t.Parallel()
+	card, size := tooltipCard("Volume", nil, cardMeasure)
+
+	wantW := 8*len("Volume") + 2*theme.MarginM
+	wantH := 16 + 2*theme.MarginS
+	if size.W != wantW || size.H != wantH {
+		t.Fatalf("card size = %dx%d, want %dx%d", size.W, size.H, wantW, wantH)
+	}
+	if size.W >= lint.TooltipWidth {
+		t.Fatalf("card width %d is not narrower than the %d cap", size.W, lint.TooltipWidth)
+	}
+	leaves := textLeaves(card)
+	if len(leaves) != 1 {
+		t.Fatalf("text nodes = %d, want 1", len(leaves))
+	}
+	got := leaves[0].Bounds
+	if got.X != theme.MarginM || got.Y != theme.MarginS {
+		t.Fatalf("text at (%d,%d), want inset (%d,%d)", got.X, got.Y, theme.MarginM, theme.MarginS)
+	}
+	if got.X+got.W > size.W-theme.MarginM || got.Y+got.H > size.H-theme.MarginS {
+		t.Fatalf("text %+v reaches into the far inset of a %dx%d card", got, size.W, size.H)
+	}
+	if leaves[0].TextRole != theme.RoleLabel {
+		t.Fatalf("text role = %v, want the label role", leaves[0].TextRole)
+	}
+}
+
+func TestATreeTooltipIsAsWideAsItsWidestLine(t *testing.T) {
+	t.Parallel()
+	lines := []string{"Sunny", "12 - 21", "Wind 4.0 km/h NE", "Humidity 40%", "Updated 09:00"}
+	root := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXS}
+	for _, s := range lines {
+		root.Children = append(root.Children, &ui.Node{Kind: ui.KindText, Text: s})
+	}
+	_, size := tooltipCard("", root, cardMeasure)
+
+	wantW := 8*len("Wind 4.0 km/h NE") + 2*theme.MarginM
+	if size.W != wantW {
+		t.Fatalf("card width = %d, want the widest line plus the inset, %d", size.W, wantW)
+	}
+	wantH := 5*16 + 4*theme.MarginXS + 2*theme.MarginS
+	if size.H != wantH {
+		t.Fatalf("card height = %d, want %d", size.H, wantH)
+	}
+}
+
+func TestATreeTooltipsOwnPaddingIsIgnored(t *testing.T) {
+	t.Parallel()
+	root := &ui.Node{Kind: ui.KindColumn, Padding: 20, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: "Timer 24:13"},
+	}}
+	card, size := tooltipCard("", root, cardMeasure)
+
+	if want := 8*len("Timer 24:13") + 2*theme.MarginM; size.W != want {
+		t.Fatalf("card width = %d, want %d with the root padding ignored", size.W, want)
+	}
+	leaf := textLeaves(card)[0]
+	if leaf.Bounds.X != theme.MarginM || leaf.Bounds.Y != theme.MarginS {
+		t.Fatalf("text at (%d,%d), want the host inset alone (%d,%d)", leaf.Bounds.X, leaf.Bounds.Y, theme.MarginM, theme.MarginS)
+	}
+}
+
+func TestALongTextTooltipWrapsAtTheCap(t *testing.T) {
+	t.Parallel()
+	text := strings.Repeat("word ", 20) // 100 runes, 800 px unwrapped
+	card, size := tooltipCard(strings.TrimSpace(text), nil, cardMeasure)
+
+	if size.W > lint.TooltipWidth {
+		t.Fatalf("card width = %d, want at most the %d cap", size.W, lint.TooltipWidth)
+	}
+	leaves := textLeaves(card)
+	if len(leaves) < 2 {
+		t.Fatalf("text nodes = %d, want the line wrapped", len(leaves))
+	}
+	var joined []string
+	for _, l := range leaves {
+		if w, _ := cardMeasure(l.Text, ui.TextAttrs{}); w > size.W-2*theme.MarginM {
+			t.Fatalf("line %q is %d wide, past the %d content width", l.Text, w, size.W-2*theme.MarginM)
+		}
+		joined = append(joined, l.Text)
+	}
+	if got := strings.Join(joined, " "); got != strings.TrimSpace(text) {
+		t.Fatalf("wrapped text = %q, want every word kept", got)
+	}
+}
+
+func TestAPluginTooltipKeepsItsRolesAndTones(t *testing.T) {
+	t.Parallel()
+	// The notes plugin's tooltip, as sysc-plugins sends it.
+	wire := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindText, Text: "Notes", Bold: true, Size: "label"},
+		{Kind: v1.KindText, Text: "Open your Markdown library", Tone: v1.ToneSubtle},
+	}}
+	root, err := plugin.Convert(wire, v1.ViewTooltip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	card, _ := tooltipCard("", root, cardMeasure)
+
+	leaves := textLeaves(card)
+	if len(leaves) != 2 {
+		t.Fatalf("text nodes = %d, want 2", len(leaves))
+	}
+	if leaves[0].TextRole != theme.RoleLabel || !leaves[0].Bold {
+		t.Fatalf("title role %v bold %v, want a bold label", leaves[0].TextRole, leaves[0].Bold)
+	}
+	if leaves[1].Tone != ui.ToneSubtle {
+		t.Fatalf("second line tone = %v, want subtle", leaves[1].Tone)
+	}
+}
+
+func TestWeathersConditionIsALabelTitle(t *testing.T) {
+	t.Parallel()
+	root := weatherTooltipTree(services.Reading{Observed: true, Code: 0, Temperature: 18, FetchedAt: time.Now()})
+	if root == nil || len(root.Children) == 0 {
+		t.Fatal("an observed reading built no tooltip tree")
+	}
+	if got := root.Children[0].TextRole; got != theme.RoleLabel {
+		t.Fatalf("condition role = %v, want the label role", got)
+	}
+}
