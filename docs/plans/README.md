@@ -1,6 +1,6 @@
 # Design and Plan Register
 
-Last updated: 2026-09-27.
+Last updated: 2026-09-28.
 
 Every design, plan, and handover this project has produced, with where it lives and whether it is still
 live. Add a row here in the same commit that adds a document. A document that is not in this register is
@@ -598,6 +598,7 @@ Supersedes M6 design D7's deferral of a catalog, installer, updater, and removal
 | `2026-09-28-theming-templates-design.md` | design | Owner decision requested. The handover's write-target-clobber model cannot theme most apps (guard no-ops for users with an existing config; sidecars need activation), so this adopts Noctalia's shipped model: `terminal_*` token block ported from `src/theme/tokens.h`/`fixed_palette.cpp`, a sidecar-file + one-managed-directive apply mechanism, per-app table ported from `assets/templates/`, dispositions = delete gtk3/gtk4 (colour-only css is not a named theme) and emacs (activation is elisp eval), gate-first via `sysc-630` because the committed `Complete()` gate the handover cites exists only uncommitted in `.worktrees/fix-audit-tranche`. |
 | `2026-09-28-theming-templates.md` | plan | Seventeen tasks: land the `Complete()` gate (`sysc-630`); terminal tokens with contrast-invariant tests (`sysc-626`); `ApplySidecar`/`EnsureDirective`/`RemoveDirective` + `templateTargets` table; one task per template port with a golden render test and a live-app check (`sysc-627`, `sysc-628`); disposition deletions (`sysc-629`); package gates and completion handover. |
 | `2026-09-28-known-issues-triage-handover.md` | execution-handover | Assesses the whole known-issues queue against `a941d35`: closes what no longer obtains with tree evidence (`sysc-35`, `139`, `154`, `255`, `276`, `293`, `499`, duplicate originals), commissions what survives (`sysc-590` tranche, `sysc-585` CI, `sysc-548` bar styles, re-verified canonicals and ten re-queued orphans, `sysc-505` calibration), and records the gate baseline and the beads/disk recovery ritual. |
+| `2026-09-28-bar-tooltip-redesign.md` | plan | Moves the bar tooltip off the Wayland owner's hand-built surface onto the shell's aux-surface path, the way the toast cards work, which supersedes D6's ownership clause (weather-and-visual-vocabulary design) while keeping its Overlay/zone −1/no-keyboard shape. Fixes the missing tree padding, fixed 280 px width, near-pill radius, hard rim, bar-sized untyped text, opaque ground (`overlay-opacity`) and missing blur. Decisions T1–T8 (T2: the ground follows `panel-opacity` under compositor blur, owner-confirmed); eight test-first tasks ending in a laptop and desktop live gate. |
 
 ## Sibling repositories
 
