@@ -54,6 +54,11 @@ func TestAcceptSettingsConfiguresBarLive(t *testing.T) {
 func TestAcceptKeyboardOnlyAllControls(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)
+	// The test reads the host without the registry lock. A slider edit arms
+	// a settle timer whose write rebuilds the tree under the lock, and under
+	// a loaded -race run it fired between those reads. Persistence has its
+	// own test above; here the settle must not land at all.
+	reg.writeDelay = time.Hour
 	if err := reg.OpenPanel(PanelSettings, 7, Trigger{}); err != nil {
 		t.Fatal(err)
 	}
