@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
+	"github.com/Nomadcxx/sysc-shell/plugin/catalog"
 )
 
 // BindPluginStore attaches the plugin store. The store runs its own goroutine;
@@ -18,6 +21,104 @@ func (r *Registry) BindPluginStore(s *store.Store) {
 	r.pluginStore = s
 	r.pluginStoreSnapshot = snapshot
 	r.mu.Unlock()
+	go r.relayPluginStore(s)
+}
+
+// relayPluginStore publishes worker snapshots to the open Settings Plugins
+// page and the store panel, off the Wayland owner like relayWallpaper. A
+// README is read only for an open detail, and always outside Registry.mu.
+func (r *Registry) relayPluginStore(st *store.Store) {
+	r.relayPluginStoreUpdates(st, st.Updates())
+}
+
+func (r *Registry) relayPluginStoreUpdates(st *store.Store, updates <-chan store.State) {
+	for {
+		select {
+		case <-r.closed:
+			return
+		case snapshot, ok := <-updates:
+			if !ok {
+				return
+			}
+			r.mu.Lock()
+			if r.pluginStore != st {
+				r.mu.Unlock()
+				continue
+			}
+			storeHost := r.panelHosts[PanelPluginStore]
+			detailKey := ""
+			if storeHost != nil {
+				detailKey = storeHost.pluginStoreDetail
+			}
+			readmeSHA, readmePath := pluginStoreReadmeTarget(snapshot, detailKey)
+			r.mu.Unlock()
+
+			readme := ""
+			if readmePath != "" {
+				readme = readPluginStoreReadme(readmePath)
+			}
+
+			r.mu.Lock()
+			if r.pluginStore != st {
+				r.mu.Unlock()
+				continue
+			}
+			r.pluginStoreSnapshot = snapshot
+			r.pluginStoreReadmes = nil
+			storeHost = r.panelHosts[PanelPluginStore]
+			if storeHost != nil && storeHost.pluginStoreDetail == detailKey && readmeSHA != "" && readme != "" {
+				r.pluginStoreReadmes = map[string]string{readmeSHA: readme}
+			}
+
+			type publication struct {
+				output uint32
+				panel  PanelID
+			}
+			var publish []publication
+			if settingsHost := r.panelHosts[PanelSettings]; settingsHost != nil && settingsHost.section == "Plugins" {
+				r.rebuildPanel(settingsHost)
+				publish = append(publish, publication{settingsHost.output, PanelSettings})
+			}
+			if storeHost != nil {
+				r.rebuildPanel(storeHost)
+				publish = append(publish, publication{storeHost.output, PanelPluginStore})
+			}
+			r.mu.Unlock()
+
+			for _, p := range publish {
+				r.publishSurface(p.output, panelSurfaceID(p.panel))
+			}
+		}
+	}
+}
+
+func pluginStoreReadmeTarget(snapshot store.State, key string) (sha, path string) {
+	if key == "" {
+		return "", ""
+	}
+	listing, ok := pluginStoreFind(snapshot.Listings, key)
+	if !ok || listing.Entry.Readme == nil {
+		return "", ""
+	}
+	sha = listing.Entry.Readme.SHA256
+	media, ok := snapshot.Media[sha]
+	if !ok || media.Err != nil || media.Path == "" {
+		return sha, ""
+	}
+	return sha, media.Path
+}
+
+func readPluginStoreReadme(path string) string {
+	file, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, catalog.MaxReadmeBytes+1))
+	if err != nil || int64(len(data)) > catalog.MaxReadmeBytes {
+		return ""
+	}
+	return string(data)
 }
 
 // PluginSources returns the enabled sources from configuration.
