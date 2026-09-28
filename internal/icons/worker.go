@@ -257,10 +257,19 @@ func decodeSVG(data []byte, width, height int) *ui.Image {
 // is a fatal, unrecoverable crash of the whole shell. The guard walks ids and
 // hrefs with the stdlib XML decoder and rejects exactly what oksvg would
 // recurse on, so ordinary symbol/use documents still draw.
+//
+// ponytail: edges are recorded from every ancestor id, which over-approximates
+// (oksvg flushes defs at nested ids, so some flagged documents would in fact
+// draw); refusing one downgrades that pathological icon to the raster chain,
+// while missing one kills the shell, so the bias is deliberate. The edge cap
+// bounds the walk's cost on a crafted deep document: an icon budget-blowing
+// enough to hit it is refused like a cyclic one.
 func svgUseCyclic(data []byte) bool {
+	const maxSvgUseEdges = 4096
 	type frame struct{ id string }
 	var stack []frame
 	refs := map[string]map[string]bool{}
+	edges := 0
 	dec := xml.NewDecoder(bytes.NewReader(data))
 	for {
 		tok, err := dec.Token()
@@ -288,7 +297,13 @@ func svgUseCyclic(data []byte) bool {
 						if refs[f.id] == nil {
 							refs[f.id] = map[string]bool{}
 						}
-						refs[f.id][href] = true
+						if !refs[f.id][href] {
+							refs[f.id][href] = true
+							edges++
+							if edges > maxSvgUseEdges {
+								return true
+							}
+						}
 					}
 				}
 			}

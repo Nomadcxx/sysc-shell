@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -470,6 +471,11 @@ func TestWorkerFallsBackToARasterWhenTheSvgFails(t *testing.T) {
 	if img == nil || img.Width != 24 {
 		t.Fatalf("fallback raster = %v", img)
 	}
+	// The image alone cannot tell the raster tier from a decoded svg; the
+	// memo says the svg path was rejected.
+	if !worker.svgFailed[filepath.Join(dir, "chat.svg")] {
+		t.Fatal("the svg path was never recorded as failed; the raster tier was not a fallback")
+	}
 }
 
 func TestWorkerDecodesAnSvgOnlyTheme(t *testing.T) {
@@ -579,5 +585,29 @@ func TestSvgFailureIsLoggedOncePerPath(t *testing.T) {
 	log.SetOutput(before)
 	if n := strings.Count(buf.String(), "did not rasterise"); n != 1 {
 		t.Fatalf("failure logged %d times, want 1:\n%s", n, buf.String())
+	}
+}
+
+// The walk cost is bounded by an edge cap: a fan-out large enough to blow
+// the worker's budget is refused the same way a cycle is.
+func TestSvgUseCyclicCapsFanOut(t *testing.T) {
+	fanOut := func(n int) string {
+		var b strings.Builder
+		b.WriteString(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">`)
+		for i := 0; i < n; i++ {
+			fmt.Fprintf(&b, "<g id=\"a%d\">", i)
+		}
+		for i := 0; i < n; i++ {
+			fmt.Fprintf(&b, "<use href=\"#u%d\"/>", i)
+		}
+		b.WriteString(strings.Repeat("</g>", n))
+		b.WriteString("</svg>")
+		return b.String()
+	}
+	if !svgUseCyclic([]byte(fanOut(65))) { // 4225 edges, past the 4096 cap
+		t.Fatal("a 4225-edge fan-out was not refused")
+	}
+	if svgUseCyclic([]byte(fanOut(10))) { // 100 acyclic edges
+		t.Fatal("a small acyclic fan-out was refused")
 	}
 }

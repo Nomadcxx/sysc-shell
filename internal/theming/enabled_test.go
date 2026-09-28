@@ -244,6 +244,7 @@ func TestApplyEnabledSupersedeUsesLatestHome(t *testing.T) {
 
 func TestApplyEnabledGatesIncompleteTemplates(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	on := func(name string) bool { return true }
 	if _, err := ApplyEnabled(home, on, theme.Fallback, nil); err != nil {
 		t.Fatal(err)

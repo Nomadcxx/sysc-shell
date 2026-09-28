@@ -24,6 +24,8 @@ do not apply, and where they do the fallback makes the miss invisible to the use
 lists `.png`, `.xpm`) as its own tier, not folded into "decodable". `worker.go`: rasterize step.
 No protocol, theme-config or settings change; the icon-theme spec already says SVG-first and the
 resolver simply obeyed the decoder's limits.
+(Shipped note: `.svg` is also in the decodable-extension set so an absolute `.svg` path — a
+FileResolver or notification `image-path` — decodes; the theme-scan tier order above is unchanged.)
 
 **Check.** Golden-pixel assertions on a small embedded glyph (circle plus two-tone path) at 24 and
 48 px: coverage, alpha, colour; plus a resolver-order table test with a fixture theme dir holding

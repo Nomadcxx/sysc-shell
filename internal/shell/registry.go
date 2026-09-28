@@ -912,20 +912,26 @@ func (r *Registry) generateTheme(cfg config.Config) (theme.Tokens, error) {
 	}
 	if !runningAsTest() {
 		outcomes, err := theming.ApplyEnabled(os.Getenv("HOME"), cfg.TemplateEnabled, tok, r.consumeTemplateForce)
-		refusals := map[string]string{}
-		for name, oerr := range outcomes {
-			if errors.Is(oerr, theming.ErrUserModified) {
-				refusals[name] = oerr.Error()
+		// A nil outcomes map means the apply did not run: it was queued
+		// behind a live one (or had nothing to do). Sweeping now would eat
+		// the overwrite the queued pass is about to consume; the goroutine
+		// that eventually runs the job reports its outcomes instead.
+		if outcomes != nil {
+			refusals := map[string]string{}
+			for name, oerr := range outcomes {
+				if errors.Is(oerr, theming.ErrUserModified) {
+					refusals[name] = oerr.Error()
+				}
 			}
-		}
-		r.templateMu.Lock()
-		r.templateRefusals = refusals
-		for name := range r.templateForce {
-			if _, refused := refusals[name]; !refused {
-				delete(r.templateForce, name)
+			r.templateMu.Lock()
+			r.templateRefusals = refusals
+			for name := range r.templateForce {
+				if _, refused := refusals[name]; !refused {
+					delete(r.templateForce, name)
+				}
 			}
+			r.templateMu.Unlock()
 		}
-		r.templateMu.Unlock()
 		if err != nil {
 			return tok, fmt.Errorf("theme: external templates: %w", err)
 		}
