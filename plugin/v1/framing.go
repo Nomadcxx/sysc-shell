@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 )
 
 // MaxMessageBytes bounds one framed line, newline included. The reader
@@ -69,19 +70,22 @@ func TypeOf(m Message) string {
 
 // Encoder writes framed messages to a stream.
 type Encoder struct {
-	w io.Writer
+	mu sync.Mutex
+	w  io.Writer
 }
 
 // NewEncoder returns an encoder writing to w. It performs no buffering of its
-// own: one Encode is one write, which is what keeps a message atomic against a
-// pipe reader on the other side.
+// own: one Encode is one write, serialised against other Encodes on this
+// encoder, which is what keeps a message atomic against a pipe reader even
+// when a plugin publishes from more than one goroutine.
 func NewEncoder(w io.Writer) *Encoder { return &Encoder{w: w} }
 
 // Encode writes m as one line.
 //
 // It stamps the wire name from the Go type, so a caller cannot ship a message
 // labelled as something it is not, and it refuses to write a frame the peer
-// would be obliged to reject as oversized.
+// would be obliged to reject as oversized. Concurrent Encode calls on one
+// encoder are safe; the message itself must not be mutated while encoding.
 func (e *Encoder) Encode(m Message) error {
 	if m == nil {
 		return errors.New("plugin/v1: encode nil message")
@@ -99,6 +103,8 @@ func (e *Encoder) Encode(m Message) error {
 	line := make([]byte, 0, len(body)+1)
 	line = append(line, body...)
 	line = append(line, '\n')
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if _, err := e.w.Write(line); err != nil {
 		return fmt.Errorf("plugin/v1: write %s: %w", m.messageType(), err)
 	}

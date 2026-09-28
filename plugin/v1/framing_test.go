@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"reflect"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -348,5 +352,72 @@ func TestPatchAndResyncRoundTrip(t *testing.T) {
 	}
 	if msg.(*ViewResync).Type != TypeViewResync || msg.(*ViewResync).ViewID != "v1" {
 		t.Fatalf("resync = %+v", msg)
+	}
+}
+
+// chunkedSink mimics a writer that is not frame-atomic: every Write lands in
+// two pieces with a yield between them, so two concurrent Encode calls on an
+// unserialised encoder interleave and corrupt the stream.
+type chunkedSink struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (s *chunkedSink) Write(p []byte) (int, error) {
+	half := len(p) / 2
+	s.mu.Lock()
+	s.buf.Write(p[:half])
+	s.mu.Unlock()
+	runtime.Gosched()
+	s.mu.Lock()
+	n, err := s.buf.Write(p[half:])
+	s.mu.Unlock()
+	return half + n, err
+}
+
+func TestConcurrentEncodeKeepsEveryFrameIntact(t *testing.T) {
+	// A plugin publishing from a poll tick and an action goroutine shares one
+	// client (sysc-496). Frames must survive concurrent Encode calls.
+	sink := &chunkedSink{}
+	enc := NewEncoder(sink)
+
+	const goroutines, perGoroutine = 8, 100
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < perGoroutine; i++ {
+				snap := &ViewSnapshot{
+					ViewID:   fmt.Sprintf("v%d-%d", g, i),
+					Revision: uint64(i),
+					Root:     &Node{Kind: KindText, Text: strings.Repeat("x", 64)},
+				}
+				if err := enc.Encode(snap); err != nil {
+					t.Errorf("encode: %v", err)
+					return
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
+
+	dec := NewDecoder(bytes.NewReader(sink.buf.Bytes()), ToHost)
+	count := 0
+	for {
+		msg, err := dec.Decode()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("frame %d: %v — concurrent encodes corrupted the stream", count, err)
+		}
+		if _, ok := msg.(*ViewSnapshot); !ok {
+			t.Fatalf("frame %d decoded %T, want *ViewSnapshot", count, msg)
+		}
+		count++
+	}
+	if count != goroutines*perGoroutine {
+		t.Fatalf("decoded %d frames, want %d", count, goroutines*perGoroutine)
 	}
 }
