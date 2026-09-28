@@ -174,7 +174,7 @@ func TestTrayMenuSurfaceHoldsTheWidestLevel(t *testing.T) {
 // tooltip left up would outlive the hover that produced it.
 func TestTrayMenuOpenClosesTheTooltip(t *testing.T) {
 	r, _, key := wiringHarness(t)
-	r.dwell.enter(7, ui.Rect{W: 10, H: 10}, "Mail", wayland.TooltipStyle{})
+	r.dwell.enter(7, ui.Rect{W: 10, H: 10}, "Mail")
 
 	r.mu.Lock()
 	r.trayMenu.openAt(key, "eDP-1", 7, 11, ui.Rect{})

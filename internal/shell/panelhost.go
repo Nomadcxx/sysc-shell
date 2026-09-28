@@ -621,6 +621,12 @@ func (r *Registry) DropAux(output uint32, surfaceID string) {
 		r.mu.Unlock()
 		return
 	}
+	if strings.HasPrefix(surfaceID, "tooltip:") {
+		r.mu.Lock()
+		r.tooltips.drop(output, surfaceID)
+		r.mu.Unlock()
+		return
+	}
 	if connector, ok := strings.CutPrefix(surfaceID, "toast:"); ok {
 		r.mu.Lock()
 		if r.toasts != nil {

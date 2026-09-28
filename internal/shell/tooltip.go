@@ -4,7 +4,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -14,20 +13,21 @@ const defaultDwell = 500 * time.Millisecond
 
 // dwell turns pointer enter and leave into tooltip requests after a delay.
 //
-// The timer fires on its own goroutine and must never touch a Wayland proxy.
-// It sends on this channel instead, which the owner's wake pipe bridges; the
-// owner goroutine alone creates and destroys the surface.
+// The timer fires on its own goroutine, and leave is called under
+// Registry.mu. Neither can drive the host, which takes that lock, so both send
+// on this channel instead and Registry.relayTooltips hands each request to the
+// host in order.
 type dwell struct {
 	mu         sync.Mutex
 	delay      time.Duration
 	timer      *time.Timer
 	shown      bool
-	out        chan wayland.TooltipRequest
+	out        chan tooltipRequest
 	closed     bool
 	generation uint64
 	// armed holds the request the current dwell (or the tooltip on screen)
 	// belongs to, so repeated motion over the same widget is a no-op.
-	armed      wayland.TooltipRequest
+	armed      tooltipRequest
 	armedValid bool
 }
 
@@ -35,46 +35,31 @@ func newDwell(delay time.Duration) *dwell {
 	if delay <= 0 {
 		delay = defaultDwell
 	}
-	return &dwell{delay: delay, out: make(chan wayland.TooltipRequest, 4)}
+	return &dwell{delay: delay, out: make(chan tooltipRequest, 4)}
 }
 
-// requests is the channel the process wires into wayland.Callbacks.Tooltips.
-func (d *dwell) requests() <-chan wayland.TooltipRequest { return d.out }
-
-// tooltipStyleFor resolves the paint for one floating tooltip. A tooltip
-// floats over the desktop like a panel, not over the bar like a pill, so it
-// takes the overlay root colour and the panel rim rather than the bar's own
-// fill. The owner still falls back to the compiled palette when a colour is
-// absent.
-func tooltipStyleFor(t Theme) wayland.TooltipStyle {
-	bg := t.SurfaceContainerHigh
-	bg.A = t.Surfaces.Overlay
-	return wayland.TooltipStyle{
-		Background: bg,
-		Foreground: t.OnSurface,
-		Border:     t.Outline,
-	}
-}
+// requests is the channel Registry.relayTooltips drains.
+func (d *dwell) requests() <-chan tooltipRequest { return d.out }
 
 // enter starts or restarts the dwell for one widget. Entering a second widget
 // replaces the pending request rather than queueing behind it.
-func (d *dwell) enter(global uint32, anchor ui.Rect, text string, style wayland.TooltipStyle) {
+func (d *dwell) enter(global uint32, anchor ui.Rect, text string) {
 	if text == "" {
 		d.leave()
 		return
 	}
-	d.queue(wayland.TooltipRequest{Global: global, Anchor: anchor, Text: text, Style: style})
+	d.queue(tooltipRequest{Global: global, Anchor: anchor, Text: text})
 }
 
-func (d *dwell) enterRoot(global uint32, anchor ui.Rect, root *ui.Node, style wayland.TooltipStyle) {
+func (d *dwell) enterRoot(global uint32, anchor ui.Rect, root *ui.Node) {
 	if root == nil {
 		d.leave()
 		return
 	}
-	d.queue(wayland.TooltipRequest{Global: global, Anchor: anchor, Root: root, Style: style})
+	d.queue(tooltipRequest{Global: global, Anchor: anchor, Root: root})
 }
 
-func (d *dwell) queue(req wayland.TooltipRequest) {
+func (d *dwell) queue(req tooltipRequest) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.closed {
@@ -95,7 +80,7 @@ func (d *dwell) queue(req wayland.TooltipRequest) {
 	d.timer = time.AfterFunc(d.delay, func() { d.fire(generation, req) })
 }
 
-func (d *dwell) fire(generation uint64, req wayland.TooltipRequest) {
+func (d *dwell) fire(generation uint64, req tooltipRequest) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.closed || generation != d.generation {
@@ -121,7 +106,7 @@ func (d *dwell) leave() {
 	d.mu.Unlock()
 
 	if shown && !closed {
-		d.send(wayland.TooltipRequest{})
+		d.send(tooltipRequest{})
 	}
 }
 
@@ -140,14 +125,14 @@ func (d *dwell) stop() {
 	d.mu.Unlock()
 
 	if wasShown {
-		d.send(wayland.TooltipRequest{})
+		d.send(tooltipRequest{})
 	}
 }
 
 // send never blocks: a dropped hide would leave a tooltip on screen, so the
 // buffer is sized for the few requests a hover can produce and a full channel
 // drops the oldest rather than stalling the pointer path.
-func (d *dwell) send(req wayland.TooltipRequest) {
+func (d *dwell) send(req tooltipRequest) {
 	select {
 	case d.out <- req:
 		return

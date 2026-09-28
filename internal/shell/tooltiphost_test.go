@@ -2,6 +2,7 @@ package shell
 
 import (
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
@@ -145,5 +146,120 @@ func TestPaintingATooltipAtFractionalScaleKeepsTheInsetClear(t *testing.T) {
 				t.Fatalf("inset pixel (%d,%d) = %v, want the ground %v", x, y, got, ground)
 			}
 		}
+	}
+}
+
+// Sweeping along the bar moves the card; it does not close and reopen it.
+func TestASecondWidgetUpdatesTheCardInPlace(t *testing.T) {
+	t.Parallel()
+	_, h, hh := newTooltipFixture(t, true)
+	h.show(tooltipRequest{Global: 1, Anchor: ui.Rect{X: 700, W: 30, H: 38}, Text: "Volume 40%"})
+	first := onlyOpen(t, hh)
+	h.show(tooltipRequest{Global: 1, Anchor: ui.Rect{X: 300, W: 30, H: 38}, Text: "Wi-Fi: home network, strong signal"})
+
+	if len(hh.opens) != 1 || len(hh.closes) != 0 {
+		t.Fatalf("opens %d closes %d, want the one surface kept", len(hh.opens), len(hh.closes))
+	}
+	if len(hh.updates) != 1 {
+		t.Fatalf("updates = %d, want 1", len(hh.updates))
+	}
+	u := hh.updates[0]
+	if u.Width == nil || u.Height == nil || u.MarginTop == nil || u.MarginLeft == nil {
+		t.Fatalf("update %+v, want size and margins", u)
+	}
+	if int32(*u.Width) <= first.Width {
+		t.Fatalf("width %d, want wider than the first card's %d", *u.Width, first.Width)
+	}
+	if *u.MarginLeft >= first.MarginLeft {
+		t.Fatalf("left margin %d, want the card moved left of %d", *u.MarginLeft, first.MarginLeft)
+	}
+	if shape := first.Callbacks.BlurShape(); len(shape) == 0 || shape[len(shape)-1].W > int(*u.Width) {
+		t.Fatalf("blur shape %+v does not follow the new %d width", shape, *u.Width)
+	}
+}
+
+func TestLeavingClosesTheCard(t *testing.T) {
+	t.Parallel()
+	r, h, _ := newTooltipFixture(t, true)
+	// The relay sends off the registry lock, so capture on a channel.
+	sent := make(chan wayland.AuxRequest, 8)
+	h.request = func(q wayland.AuxRequest) { sent <- q }
+	r.tooltips = h
+	d := newDwell(time.Millisecond)
+	t.Cleanup(d.stop)
+	go r.relayTooltips(d)
+
+	d.enter(1, ui.Rect{X: 700, W: 30, H: 38}, "Volume 40%")
+	open := nextAux(t, sent)
+	if open.Open == nil {
+		t.Fatalf("first request %+v, want an open", open)
+	}
+	d.leave()
+	closed := nextAux(t, sent)
+	if closed.Open != nil || closed.Update != nil || closed.ID != open.Open.ID {
+		t.Fatalf("request %+v, want the close of %q", closed, open.Open.ID)
+	}
+}
+
+func nextAux(t *testing.T, ch <-chan wayland.AuxRequest) wayland.AuxRequest {
+	t.Helper()
+	select {
+	case q := <-ch:
+		return q
+	case <-time.After(2 * time.Second):
+		t.Fatal("no aux request arrived")
+		return wayland.AuxRequest{}
+	}
+}
+
+// The owner closed the surface on its own -- the compositor, or the output
+// leaving. The host forgets it rather than updating a surface that is gone.
+func TestACompositorCloseIsForgotten(t *testing.T) {
+	t.Parallel()
+	r, h, hh := newTooltipFixture(t, true)
+	r.tooltips = h
+	h.show(tooltipRequest{Global: 1, Anchor: ui.Rect{X: 700, W: 30, H: 38}, Text: "Volume 40%"})
+	r.DropAux(1, hh.opens[0].ID)
+	h.show(tooltipRequest{Global: 1, Anchor: ui.Rect{X: 300, W: 30, H: 38}, Text: "Battery 80%"})
+
+	if len(hh.opens) != 2 || len(hh.updates) != 0 {
+		t.Fatalf("opens %d updates %d, want the next hover to open afresh", len(hh.opens), len(hh.updates))
+	}
+	if hh.opens[1].ID == hh.opens[0].ID {
+		t.Fatalf("reopened under the dropped id %q", hh.opens[0].ID)
+	}
+}
+
+// A late report for a card already replaced must not forget its successor.
+func TestAStaleCloseReportKeepsTheNewCard(t *testing.T) {
+	t.Parallel()
+	r, h, hh := newTooltipFixture(t, false) // capture: a move reopens
+	r.tooltips = h
+	h.show(tooltipRequest{Global: 1, Anchor: ui.Rect{X: 700, W: 30, H: 38}, Text: "Volume 40%"})
+	h.show(tooltipRequest{Global: 1, Anchor: ui.Rect{X: 300, W: 30, H: 38}, Text: "Battery 80%"})
+	if len(hh.closes) != 1 || len(hh.opens) != 2 {
+		t.Fatalf("closes %d opens %d, want a move over a capture to reopen", len(hh.closes), len(hh.opens))
+	}
+	r.DropAux(1, hh.opens[0].ID)
+	h.hide()
+	if len(hh.closes) != 2 || hh.closes[1] != hh.opens[1].ID {
+		t.Fatalf("closes %v, want the second card closed on hide", hh.closes)
+	}
+}
+
+func TestLosingTheOutputForgetsTheCard(t *testing.T) {
+	t.Parallel()
+	r, h, hh := newTooltipFixture(t, true)
+	r.tooltips = h
+	newHosts(t, r, map[uint32]string{2: "HDMI-A-1"})
+	h.show(tooltipRequest{Global: 1, Anchor: ui.Rect{X: 700, W: 30, H: 38}, Text: "Volume 40%"})
+	r.DropHost(1)
+	h.show(tooltipRequest{Global: 2, Anchor: ui.Rect{X: 700, W: 30, H: 38}, Text: "Volume 40%"})
+
+	if len(hh.closes) != 0 {
+		t.Fatalf("closes %v, want none sent to an output that is gone", hh.closes)
+	}
+	if len(hh.opens) != 2 || hh.opens[1].ID == hh.opens[0].ID {
+		t.Fatalf("opens %d, want a fresh card on the remaining output", len(hh.opens))
 	}
 }

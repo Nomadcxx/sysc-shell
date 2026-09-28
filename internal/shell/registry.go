@@ -109,6 +109,7 @@ type Registry struct {
 	closed     chan struct{}
 	closeOnce  sync.Once
 	dwell      *dwell
+	tooltips   *tooltipHost
 	configPath string
 	// writeDelay is how long a stream of edits settles before it reaches the
 	// file. Zero takes settingsWriteDelay; tests shorten it.
@@ -249,6 +250,8 @@ func NewRegistry(cfg config.Config) *Registry {
 	r.weather.SetCity(cfg.Weather.City)
 	r.tokens, r.themeErr = tokensAndReason(r.generateTheme(cfg))
 	r.osd = newOSDManager(r, 0)
+	r.tooltips = newTooltipHost(r, nil)
+	go r.relayTooltips(r.dwell)
 	// DND toggles often run under Registry.mu; Show takes it, so publish from
 	// a separate goroutine after the setter returns.
 	r.notify.onDND = func(on bool) { go r.OSD().Show(OSDView{Kind: osdDND, On: on}) }
@@ -1053,8 +1056,23 @@ func (r *Registry) Metrics() *services.Metrics { return r.metrics }
 // UpdateWeather.
 func (r *Registry) Weather() *services.Weather { return r.weather }
 
-// Tooltips is the channel the Wayland owner receives hover requests from.
-func (r *Registry) Tooltips() <-chan wayland.TooltipRequest { return r.dwell.requests() }
+// relayTooltips hands the dwell's requests to the tooltip host in order. It
+// runs off the Wayland owner, like the other relays, and ends with the
+// registry. The host is read per request, so a test can install its own.
+func (r *Registry) relayTooltips(d *dwell) {
+	for {
+		select {
+		case req := <-d.requests():
+			if req.empty() {
+				r.tooltips.hide()
+			} else {
+				r.tooltips.show(req)
+			}
+		case <-r.closed:
+			return
+		}
+	}
+}
 
 // Invalidations is the channel the Wayland owner receives from. The registry
 // owns it and never closes it.
@@ -1454,6 +1472,7 @@ func (r *Registry) DropHost(global uint32) {
 	delete(r.bars, global)
 	delete(r.leases, global)
 	r.trayOutputLostLocked(global)
+	r.tooltips.outputLost(global)
 	toastOutputs := r.outputGlobalsLocked()
 	plugins := r.plugins
 	r.mu.Unlock()
@@ -2012,11 +2031,10 @@ func (r *Registry) drivePointerTooltip(global uint32, bar *Bar, event wayland.Ev
 		r.dwell.leave()
 	case wayland.EventPointerEnter, wayland.EventPointerMotion:
 		if text, root, bounds, ok := bar.hoverTooltip(); ok {
-			style := tooltipStyleFor(bar.themeSnapshot())
 			if root != nil {
-				r.dwell.enterRoot(global, bounds, root, style)
+				r.dwell.enterRoot(global, bounds, root)
 			} else {
-				r.dwell.enter(global, bounds, text, style)
+				r.dwell.enter(global, bounds, text)
 			}
 		} else {
 			r.dwell.leave()

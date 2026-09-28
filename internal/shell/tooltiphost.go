@@ -83,13 +83,18 @@ func (h *tooltipHost) show(req tooltipRequest) {
 	h.r.mu.Unlock()
 	for _, q := range reqs {
 		h.request(q)
+		// A resize is answered by a configure, which repaints; a card that
+		// kept its size still holds new content.
+		if q.Update != nil {
+			h.publish(q.Output, q.ID)
+		}
 	}
 }
 
 func (h *tooltipHost) showLocked(req tooltipRequest) []wayland.AuxRequest {
 	bar := h.r.bars[req.Global]
 	if bar == nil || req.empty() {
-		return nil
+		return h.hideLocked()
 	}
 	t := h.r.panelThemeFor(req.Global)
 	scale := ui.Scale120(bar.scale120())
@@ -97,11 +102,11 @@ func (h *tooltipHost) showLocked(req tooltipRequest) []wayland.AuxRequest {
 		scale = ui.ScaleUnit
 	}
 	if err := h.ensureText(t.Type.Family); err != nil {
-		return nil
+		return h.hideLocked()
 	}
 	card, size := tooltipCard(req.Text, req.Root, h.measure(t, scale))
 	if card == nil || size.W <= 0 || size.H <= 0 {
-		return nil
+		return h.hideLocked()
 	}
 
 	// Widget bounds are in the bar surface; placement is in the output.
@@ -120,17 +125,69 @@ func (h *tooltipHost) showLocked(req tooltipRequest) []wayland.AuxRequest {
 	}
 	place := tooltipPlacement(policy.Edge, anchor, size.W, size.H, outW, outH)
 
+	glass := h.r.cfg.Theme.BlurBehind && h.r.caps.Blur
+
+	// Sweeping along the bar moves the card in place (plan T7). A card over
+	// a captured backdrop cannot move: the capture belongs to where it was,
+	// and a fresh one has to be taken before the surface maps.
+	if st := h.open; st != nil && st.global == req.Global && st.glass && glass {
+		st.card, st.place = card, place
+		w, hgt := uint32(place.W), uint32(place.H)
+		top, left := int32(place.Y), int32(place.X)
+		return []wayland.AuxRequest{{Output: st.global, ID: st.id, Update: &wayland.AuxUpdate{
+			Width: &w, Height: &hgt, MarginTop: &top, MarginLeft: &left,
+		}}}
+	}
+
+	reqs := h.hideLocked()
 	h.seq++
 	st := &tooltipCardState{
 		id:       fmt.Sprintf("tooltip:%d", h.seq),
 		global:   req.Global,
 		card:     card,
 		place:    place,
-		glass:    h.r.cfg.Theme.BlurBehind && h.r.caps.Blur,
+		glass:    glass,
 		scale120: scale,
 	}
 	h.open = st
-	return []wayland.AuxRequest{{Output: req.Global, Open: h.spec(st)}}
+	return append(reqs, wayland.AuxRequest{Output: req.Global, Open: h.spec(st)})
+}
+
+// hide closes the card on screen, if there is one. Called without the lock.
+func (h *tooltipHost) hide() {
+	h.r.mu.Lock()
+	reqs := h.hideLocked()
+	h.r.mu.Unlock()
+	for _, q := range reqs {
+		h.request(q)
+	}
+}
+
+func (h *tooltipHost) hideLocked() []wayland.AuxRequest {
+	st := h.open
+	if st == nil {
+		return nil
+	}
+	h.open = nil
+	return []wayland.AuxRequest{{Output: st.global, ID: st.id}}
+}
+
+// drop forgets a card the owner reports gone -- the compositor closed it, or
+// its output left -- so the next hover opens afresh instead of updating a
+// surface that no longer exists. A report for a card already replaced leaves
+// its successor alone. Caller holds r.mu.
+func (h *tooltipHost) drop(output uint32, id string) {
+	if st := h.open; st != nil && st.global == output && st.id == id {
+		h.open = nil
+	}
+}
+
+// outputLost forgets a card on an output that has gone; the owner tore its
+// surfaces down with it. Caller holds r.mu.
+func (h *tooltipHost) outputLost(global uint32) {
+	if st := h.open; st != nil && st.global == global {
+		h.open = nil
+	}
 }
 
 func (h *tooltipHost) spec(st *tooltipCardState) *wayland.AuxSpec {

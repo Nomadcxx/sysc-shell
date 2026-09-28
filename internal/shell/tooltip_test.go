@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -15,7 +14,7 @@ func TestADwellRequestArrivesOnlyAfterTheDelay(t *testing.T) {
 	d := newDwell(60 * time.Millisecond)
 	t.Cleanup(d.stop)
 
-	d.enter(1, ui.Rect{X: 10, Y: 0, W: 40, H: 44}, "Fixture tooltip", wayland.TooltipStyle{})
+	d.enter(1, ui.Rect{X: 10, Y: 0, W: 40, H: 44}, "Fixture tooltip")
 
 	select {
 	case req := <-d.requests():
@@ -39,7 +38,7 @@ func TestLeavingBeforeTheDwellCancelsIt(t *testing.T) {
 	d := newDwell(80 * time.Millisecond)
 	t.Cleanup(d.stop)
 
-	d.enter(1, ui.Rect{X: 10, Y: 0, W: 40, H: 44}, "Fixture tooltip", wayland.TooltipStyle{})
+	d.enter(1, ui.Rect{X: 10, Y: 0, W: 40, H: 44}, "Fixture tooltip")
 	d.leave()
 
 	select {
@@ -57,7 +56,7 @@ func TestLeavingAfterTheDwellRequestsAHide(t *testing.T) {
 	d := newDwell(20 * time.Millisecond)
 	t.Cleanup(d.stop)
 
-	d.enter(1, ui.Rect{X: 10, Y: 0, W: 40, H: 44}, "Fixture tooltip", wayland.TooltipStyle{})
+	d.enter(1, ui.Rect{X: 10, Y: 0, W: 40, H: 44}, "Fixture tooltip")
 	<-d.requests() // the show
 	d.leave()
 
@@ -77,8 +76,8 @@ func TestMovingToAnotherWidgetReplacesThePending(t *testing.T) {
 	d := newDwell(40 * time.Millisecond)
 	t.Cleanup(d.stop)
 
-	d.enter(1, ui.Rect{X: 10, Y: 0, W: 40, H: 44}, "first", wayland.TooltipStyle{})
-	d.enter(1, ui.Rect{X: 60, Y: 0, W: 40, H: 44}, "second", wayland.TooltipStyle{})
+	d.enter(1, ui.Rect{X: 10, Y: 0, W: 40, H: 44}, "first")
+	d.enter(1, ui.Rect{X: 60, Y: 0, W: 40, H: 44}, "second")
 
 	select {
 	case req := <-d.requests():
@@ -98,7 +97,7 @@ func TestDwellEnterRootShowsAStructuredTooltip(t *testing.T) {
 		{Kind: ui.KindText, Text: "Humidity"},
 		{Kind: ui.KindText, Text: "40%"},
 	}}
-	d.enterRoot(2, ui.Rect{X: 8, Y: 0, W: 40, H: 44}, root, wayland.TooltipStyle{})
+	d.enterRoot(2, ui.Rect{X: 8, Y: 0, W: 40, H: 44}, root)
 	select {
 	case req := <-d.requests():
 		if req.Root == nil || req.Text != "" || req.Global != 2 {
@@ -116,7 +115,7 @@ func TestDwellEnterRootLeaveHides(t *testing.T) {
 	t.Parallel()
 	d := newDwell(20 * time.Millisecond)
 	t.Cleanup(d.stop)
-	d.enterRoot(1, ui.Rect{W: 10, H: 10}, &ui.Node{Kind: ui.KindColumn}, wayland.TooltipStyle{})
+	d.enterRoot(1, ui.Rect{W: 10, H: 10}, &ui.Node{Kind: ui.KindColumn})
 	<-d.requests()
 	d.leave()
 	select {
@@ -133,8 +132,8 @@ func TestDwellEnterRootReplacesThePendingTree(t *testing.T) {
 	t.Parallel()
 	d := newDwell(40 * time.Millisecond)
 	t.Cleanup(d.stop)
-	d.enterRoot(1, ui.Rect{W: 10, H: 10}, &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{{Kind: ui.KindText, Text: "first"}}}, wayland.TooltipStyle{})
-	d.enterRoot(1, ui.Rect{W: 10, H: 10}, &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{{Kind: ui.KindText, Text: "second"}}}, wayland.TooltipStyle{})
+	d.enterRoot(1, ui.Rect{W: 10, H: 10}, &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{{Kind: ui.KindText, Text: "first"}}})
+	d.enterRoot(1, ui.Rect{W: 10, H: 10}, &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{{Kind: ui.KindText, Text: "second"}}})
 	select {
 	case req := <-d.requests():
 		if req.Root == nil || req.Root.Children[0].Text != "second" {
@@ -149,13 +148,13 @@ func TestMotionOverTheSameWidgetDoesNotRestartTheDwell(t *testing.T) {
 	d := newDwell(time.Hour)
 	t.Cleanup(d.stop)
 	rect := ui.Rect{X: 10, Y: 0, W: 40, H: 44}
-	d.enter(1, rect, "fixture", wayland.TooltipStyle{})
+	d.enter(1, rect, "fixture")
 
 	d.mu.Lock()
 	generation := d.generation
 	d.mu.Unlock()
 
-	d.enter(1, rect, "fixture", wayland.TooltipStyle{})
+	d.enter(1, rect, "fixture")
 	d.mu.Lock()
 	if d.generation != generation {
 		d.mu.Unlock()
@@ -163,7 +162,7 @@ func TestMotionOverTheSameWidgetDoesNotRestartTheDwell(t *testing.T) {
 	}
 	d.mu.Unlock()
 
-	d.enter(1, ui.Rect{X: 60, Y: 0, W: 40, H: 44}, "fixture", wayland.TooltipStyle{})
+	d.enter(1, ui.Rect{X: 60, Y: 0, W: 40, H: 44}, "fixture")
 	d.mu.Lock()
 	if d.generation == generation {
 		d.mu.Unlock()
@@ -173,11 +172,11 @@ func TestMotionOverTheSameWidgetDoesNotRestartTheDwell(t *testing.T) {
 
 	// After a leave the memo is cleared, so re-entering re-arms once.
 	d.leave()
-	d.enter(1, rect, "fixture", wayland.TooltipStyle{})
+	d.enter(1, rect, "fixture")
 	d.mu.Lock()
 	afterLeave := d.generation
 	d.mu.Unlock()
-	d.enter(1, rect, "fixture", wayland.TooltipStyle{})
+	d.enter(1, rect, "fixture")
 	d.mu.Lock()
 	if d.generation != afterLeave {
 		d.mu.Unlock()
@@ -189,37 +188,17 @@ func TestMotionOverTheSameWidgetDoesNotRestartTheDwell(t *testing.T) {
 func TestStaleDwellCallbackDoesNotShowTooltip(t *testing.T) {
 	d := newDwell(time.Hour)
 	t.Cleanup(d.stop)
-	d.enter(1, ui.Rect{X: 10, Y: 0, W: 40, H: 44}, "stale", wayland.TooltipStyle{})
+	d.enter(1, ui.Rect{X: 10, Y: 0, W: 40, H: 44}, "stale")
 
 	d.mu.Lock()
 	generation := d.generation
 	d.mu.Unlock()
 	d.leave()
-	d.fire(generation, wayland.TooltipRequest{Global: 1, Text: "stale"})
+	d.fire(generation, tooltipRequest{Global: 1, Text: "stale"})
 
 	select {
 	case req := <-d.requests():
 		t.Fatalf("stale callback produced request: %+v", req)
 	default:
-	}
-}
-
-func TestTooltipPaintsTheFloatingSurfaceRole(t *testing.T) {
-	th := Theme{
-		SurfaceContainerHigh: Color{R: 10, G: 20, B: 30, A: 255},
-		OnSurface:            Color{R: 200, G: 210, B: 220, A: 255},
-		Outline:              Color{R: 5, G: 6, B: 7, A: 9},
-		Background:           Color{R: 1, G: 1, B: 1, A: 1},
-		Surfaces:             Surfaces{Bar: 255, Overlay: 178},
-	}
-	style := tooltipStyleFor(th)
-	if want := (Color{R: 10, G: 20, B: 30, A: 178}); style.Background != want {
-		t.Fatalf("background = %+v, want the container high at overlay alpha %+v", style.Background, want)
-	}
-	if style.Foreground != th.OnSurface {
-		t.Fatalf("foreground = %+v, want on-surface", style.Foreground)
-	}
-	if style.Border != th.Outline {
-		t.Fatalf("border = %+v, want the outline token", style.Border)
 	}
 }
