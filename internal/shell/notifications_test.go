@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -213,5 +214,20 @@ func TestPluginNotifyWithoutClientReportsUnavailable(t *testing.T) {
 	r := NewRegistry(config.Default())
 	if _, err := r.PluginNotify(context.Background(), v1.NotifyParams{Summary: "x"}); err == nil {
 		t.Fatal("want error before BindNotifications")
+	}
+}
+
+// A plugin call cancelled before its toast is sent posts nothing (GH #43).
+func TestPluginNotifyPostsNothingOnceCancelled(t *testing.T) {
+	r := NewRegistry(config.Default())
+	rec := &pluginToastRecorder{}
+	r.BindNotifications(rec)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := r.PluginNotify(ctx, v1.NotifyParams{Summary: "late"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("PluginNotify = %v, want context.Canceled", err)
+	}
+	if got := rec.commands(); len(got) != 0 {
+		t.Fatalf("a cancelled call posted %+v", got)
 	}
 }

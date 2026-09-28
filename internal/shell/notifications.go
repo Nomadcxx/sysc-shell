@@ -262,9 +262,13 @@ func (r *Registry) BindNotifications(sender notifyCommandSender) {
 // ID; plugins treat it as opaque.
 //
 // ponytail: v1 Actions are dropped — the producer protocol has no actions.
-func (r *Registry) PluginNotify(_ context.Context, p v1.NotifyParams) (v1.NotifyResult, error) {
+func (r *Registry) PluginNotify(ctx context.Context, p v1.NotifyParams) (v1.NotifyResult, error) {
 	if r.producerSender == nil {
 		return v1.NotifyResult{}, errNotifyUnavailable
+	}
+	// A call the plugin's session already gave up on must not post.
+	if err := ctx.Err(); err != nil {
+		return v1.NotifyResult{}, err
 	}
 	urgency := protocol.UrgencyNormal
 	switch p.Urgency {

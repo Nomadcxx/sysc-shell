@@ -654,3 +654,61 @@ func TestHostCallViewFocusNeedsAViewAndANode(t *testing.T) {
 		}
 	}
 }
+
+func (d *Dispatcher) pendingForTest() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.pending
+}
+
+// A cancelled call answers at once, but its hook may still be running. The
+// pending slot stays taken until the hook returns, so cancelling cannot let a
+// plugin run more hooks at once than PendingCalls allows (GH #43).
+func TestCancelledHostCallHoldsItsSlotUntilTheHookReturns(t *testing.T) {
+	t.Parallel()
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	d := NewDispatcher(CallEnv{
+		PluginID:   "org.sysc.timer",
+		Granted:    []Capability{CapNotifications},
+		MaxPending: 1,
+		Notify: func(context.Context, v1.NotifyParams) (v1.NotifyResult, error) {
+			started <- struct{}{}
+			<-release
+			return v1.NotifyResult{ID: 1}, nil
+		},
+	})
+	call := func(id string) *v1.HostCall {
+		return &v1.HostCall{ID: id, Call: v1.CallNotify, Params: jsonOf(t, v1.NotifyParams{Summary: "tick"})}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	replied := make(chan v1.HostReply, 1)
+	go func() { replied <- d.Handle(ctx, call("slow")) }()
+	<-started
+	cancel()
+	select {
+	case r := <-replied:
+		if r.OK {
+			t.Fatalf("cancelled call = %+v, want a failure", r)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("a cancelled call did not answer promptly")
+	}
+
+	if got := d.pendingForTest(); got != 1 {
+		t.Fatalf("pending = %d while the hook still runs, want 1", got)
+	}
+	if r := d.Handle(context.Background(), call("next")); r.OK {
+		t.Fatalf("a call past the limit ran while a cancelled hook held the slot: %+v", r)
+	}
+
+	close(release)
+	deadline := time.Now().Add(time.Second)
+	for d.pendingForTest() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the slot was not released when the hook returned")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
