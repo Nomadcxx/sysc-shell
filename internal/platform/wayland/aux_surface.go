@@ -366,7 +366,7 @@ func (o *owner) closeAux(h *OutputHost, id string) {
 		o.clearFocus()
 	}
 	if o.keyFocus.unit == u {
-		o.leaveKeyboard()
+		o.keyboardGone()
 	}
 	_ = o.teardownUnit(u)
 	if o.cb.DropAux != nil {

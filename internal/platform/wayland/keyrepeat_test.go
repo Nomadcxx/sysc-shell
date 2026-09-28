@@ -16,9 +16,11 @@ const (
 // repeatHarness is a keyboard-focused owner on a fake clock, so a repeat
 // deadline can be crossed without sleeping.
 type repeatHarness struct {
-	o    *owner
-	seen *[]Event
-	at   time.Time
+	o     *owner
+	h     *OutputHost
+	panel *surfaceUnit
+	seen  *[]Event
+	at    time.Time
 }
 
 func newRepeatHarness(t *testing.T, rate, delay int32) *repeatHarness {
@@ -31,7 +33,7 @@ func newRepeatHarness(t *testing.T, rate, delay int32) *repeatHarness {
 	}}
 	h.aux["panel:launcher"] = panel
 
-	rh := &repeatHarness{o: o, seen: panelSeen, at: time.Unix(1000, 0)}
+	rh := &repeatHarness{o: o, h: h, panel: panel, seen: panelSeen, at: time.Unix(1000, 0)}
 	o.clock = func() time.Time { return rh.at }
 	o.enterKeyboard(h, panel)
 	o.setRepeatInfo(rate, delay)
@@ -111,17 +113,21 @@ func TestKeyRepeatStopsOnRelease(t *testing.T) {
 	}
 }
 
-// A timer that outlives its surface delivers keys into a freed host, so
-// keyboard leave must stop it as firmly as a release does.
-func TestKeyRepeatStopsOnKeyboardLeave(t *testing.T) {
+// A focus move suspends the repeat; the key is still down and no second
+// press will come. Destruction is different: nothing may outlive its
+// surface, so keyboardGone kills the repeat outright.
+func TestKeyRepeatDiesWithItsSurface(t *testing.T) {
 	t.Parallel()
 	rh := newRepeatHarness(t, 25, 100)
 	rh.o.deliverKey(1, keyDown, uint32(client.KeyboardKeyStatePressed))
-	rh.o.leaveKeyboard()
+	rh.o.keyboardGone()
 	before := rh.presses(keyDown)
 	rh.advance(time.Second)
 	if got := rh.presses(keyDown); got != before {
-		t.Fatalf("presses after leave: %d -> %d", before, got)
+		t.Fatalf("presses after destruction: %d -> %d", before, got)
+	}
+	if rh.o.repeat.armed {
+		t.Fatal("the repeat outlived its surface")
 	}
 }
 
@@ -226,5 +232,62 @@ func TestKeyRepeatNeedsFocus(t *testing.T) {
 	rh.o.deliverKey(1, keyDown, uint32(client.KeyboardKeyStatePressed))
 	if rh.o.repeat.armed {
 		t.Fatal("repeat armed with no keyboard focus")
+	}
+}
+
+// sysc-171, characterisation: niri sends exactly one press per physical press
+// and a focus move as leave(A) then enter(B). A repeat that stops on leave can
+// never start again, because no second press will arrive for the key the user
+// is still holding. The held key must keep repeating at the new focus.
+func TestKeyRepeatFollowsTheHeldKeyAcrossAFocusChange(t *testing.T) {
+	t.Parallel()
+	rh := newRepeatHarness(t, 25, 100)
+	rh.o.deliverKey(1, keyDown, uint32(client.KeyboardKeyStatePressed))
+	rh.advance(100 * time.Millisecond)
+	if got := rh.presses(keyDown); got != 2 {
+		t.Fatalf("repeats before the focus move = %d, want 2", got)
+	}
+
+	otherSeen := new([]Event)
+	other := newSurfaceUnit("panel:session")
+	other.app = HostCallbacks{Handle: func(e Event) bool {
+		*otherSeen = append(*otherSeen, e)
+		return true
+	}}
+	rh.h.aux["panel:session"] = other
+	rh.o.leaveKeyboard()
+	rh.o.enterKeyboard(rh.h, other)
+
+	rh.advance(100 * time.Millisecond)
+	if got := pressesIn(otherSeen, keyDown); got != 1 {
+		t.Fatalf("the held key repeated %d times at the new focus, want 1", got)
+	}
+	if got := rh.presses(keyDown); got != 2 {
+		t.Fatalf("the old surface received %d more events after the move", got-2)
+	}
+}
+
+func pressesIn(seen *[]Event, key uint32) int {
+	n := 0
+	for _, e := range *seen {
+		if e.Kind == EventKeyPress && e.Key == key {
+			n++
+		}
+	}
+	return n
+}
+
+// A release that arrives while the focus is gone must still cancel the
+// pending deadline, or a key released mid-move resumes on re-enter.
+func TestKeyRepeatReleaseWhileUnfocusedCancels(t *testing.T) {
+	t.Parallel()
+	rh := newRepeatHarness(t, 25, 100)
+	rh.o.deliverKey(1, keyDown, uint32(client.KeyboardKeyStatePressed))
+	rh.o.leaveKeyboard()
+	rh.o.deliverKey(2, keyDown, uint32(client.KeyboardKeyStateReleased))
+	rh.o.enterKeyboard(rh.h, rh.panel)
+	rh.advance(time.Second)
+	if got := rh.presses(keyDown); got != 1 {
+		t.Fatalf("a released key resumed repeating: %d presses", got)
 	}
 }

@@ -1393,7 +1393,7 @@ func (o *owner) teardownHost(h *OutputHost) error {
 		o.clearFocus()
 	}
 	if o.keyFocus.host == h {
-		o.leaveKeyboard()
+		o.keyboardGone()
 	}
 	if _, err := h.bar.cleanup.unwind(); err != nil {
 		errs = append(errs, err)

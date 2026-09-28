@@ -59,13 +59,30 @@ var repeatExempt = map[uint32]bool{
 
 func (o *owner) enterKeyboard(h *OutputHost, u *surfaceUnit) {
 	o.keyFocus = keyFocus{host: h, unit: u}
+	// A key held across a focus move keeps repeating: the compositor sent
+	// exactly one press, so the repeat is the only thing still delivering it.
+	// The fresh delay keeps the new surface from inheriting a deadline that
+	// has already passed. The serial stays the original press's.
+	if o.repeat.armed {
+		o.repeat.next = o.now().Add(time.Duration(o.repeat.delay) * time.Millisecond)
+	}
 	o.syncIME(u)
+}
+
+// keyboardGone is leaveKeyboard for a surface that is going away rather than
+// merely losing focus: nothing may outlive it, so the repeat dies outright.
+func (o *owner) keyboardGone() {
+	o.stopRepeat()
+	o.leaveKeyboard()
 }
 
 func (o *owner) leaveKeyboard() {
 	o.setTextInputEnabled(false)
 	o.keyFocus = keyFocus{}
-	o.stopRepeat()
+	// A focus move suspends rather than kills: the key is still down and the
+	// compositor will not send another press, so stopping here is what made
+	// repeats stop. fireRepeat and repeatTimeout hold off while the focus is
+	// nil, and enterKeyboard retargets on the way back in.
 	// A dead key pressed before focus moved must not compose with the first
 	// key typed at the new focus.
 	if o.keymap != nil {
@@ -128,7 +145,7 @@ func (o *owner) stopRepeat() {
 // repeatTimeout is the poll deadline in milliseconds: -1 blocks until an event
 // arrives, which is the whole life of the loop when nothing is held.
 func (o *owner) repeatTimeout() int {
-	if !o.repeat.armed || !o.repeatEnabled() {
+	if !o.repeat.armed || !o.repeatEnabled() || o.keyFocus.unit == nil {
 		return -1
 	}
 	remaining := o.repeat.next.Sub(o.now())
@@ -144,7 +161,7 @@ func (o *owner) repeatTimeout() int {
 // render would dump a burst of arrow keys into the panel; letting the effective
 // rate fall back to the loop rate is the better failure.
 func (o *owner) fireRepeat() {
-	if !o.repeat.armed || !o.repeatEnabled() {
+	if !o.repeat.armed || !o.repeatEnabled() || o.keyFocus.unit == nil {
 		return
 	}
 	now := o.now()
@@ -158,9 +175,6 @@ func (o *owner) fireRepeat() {
 // deliverKey forwards a wl_keyboard.key to the focused surface. Key is the
 // evdev code the compositor sent; subtracting 8 underflows KEY_ESC (1).
 func (o *owner) deliverKey(serial, key, state uint32) {
-	if o.keyFocus.unit == nil {
-		return
-	}
 	kind := EventKeyRelease
 	switch state {
 	case uint32(client.KeyboardKeyStatePressed), uint32(client.KeyboardKeyStateRepeated):
@@ -168,6 +182,11 @@ func (o *owner) deliverKey(serial, key, state uint32) {
 		o.armRepeat(key, serial)
 	default:
 		o.disarmRepeat(key)
+	}
+	// The state machine runs even without a focus, so a release arriving
+	// mid-move cancels the deadline; armRepeat refuses to arm with none.
+	if o.keyFocus.unit == nil {
+		return
 	}
 	o.deliverUnit(o.keyFocus.host, o.keyFocus.unit, o.keyEvent(kind, key, serial))
 }
