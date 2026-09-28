@@ -178,9 +178,9 @@ func (h *toastHost) syncOutputs(globals map[string]uint32) {
 // so the compositor reports the output's own logical size, which is what the
 // stack lays out against; the input region is narrowed to the visible cards
 // immediately afterwards, so the rest of the output still takes clicks.
-// blur-exempt: design D13 names toasts as out of scope. This surface spans the
-// whole output while the cards occupy a corner of it, so a backdrop would
-// capture and blur an entire screen to sit behind a notification card.
+// Each card blurs through the compositor: BlurShape hands it the cards'
+// silhouettes, so nothing is captured and only the cards blur, not the
+// output the surface spans (the cost design D13 exempted toasts over).
 func (h *toastHost) spec(connector string) *wayland.AuxSpec {
 	return &wayland.AuxSpec{
 		ID:        toastSurfaceID(connector),
@@ -200,8 +200,32 @@ func (h *toastHost) spec(connector string) *wayland.AuxSpec {
 				return h.render(connector, pixels, width, height, stride)
 			},
 			Handle: func(event wayland.Event) bool { return h.handle(connector, event) },
+			BlurShape: func() []ui.Rect {
+				h.r.mu.Lock()
+				defer h.r.mu.Unlock()
+				return h.blurShape(connector)
+			},
 		},
 	}
+}
+
+// blurShape is the region the compositor blurs behind this output's toasts,
+// in surface coordinates: each card's rounded silhouette where it draws this
+// frame, so the blur follows a card as it slides. Without compositor blur the
+// cards keep the overlay ground and nothing blurs. Caller holds r.mu.
+func (h *toastHost) blurShape(connector string) []ui.Rect {
+	if !h.glass() {
+		return nil
+	}
+	var out []ui.Rect
+	for _, card := range h.cards[connector] {
+		body := card.rect
+		if id, ok := cardID(card.root); ok {
+			body = h.displayRect(connector, id, card.rect)
+		}
+		out = append(out, ui.BlurStrips(ui.SurfaceShape{Body: body, Radius: h.style.Radius})...)
+	}
+	return out
 }
 
 // configure records the output's real logical size and relays out the stack
@@ -277,8 +301,38 @@ func (h *toastHost) render(connector string, pixels []byte, width, height, strid
 // toastCard is one placed card: its tree, arranged at the origin, and where
 // on the surface it belongs.
 type toastCard struct {
-	root *ui.Node
-	rect ui.Rect
+	root     *ui.Node
+	rect     ui.Rect
+	critical bool
+}
+
+// glass reports whether toast cards take the see-through panel ground: only
+// when blur-behind is on and the compositor blurs, the condition panels use.
+// Caller holds r.mu.
+func (h *toastHost) glass() bool { return h.r.cfg.Theme.BlurBehind && h.r.caps.Blur }
+
+// cardStyle is the ground toast cards paint on. Under compositor blur a card
+// is a small floating panel: the panel's opacity, which follows the global
+// panel-opacity setting. Without blur it keeps the overlay's higher floor,
+// chosen for a surface with nothing behind it. Either way it strokes the
+// panel rim. Caller holds r.mu.
+func (h *toastHost) cardStyle() render.Style {
+	t := h.r.surfaceTheme()
+	s := t.OverlayStyle()
+	if h.glass() {
+		s = t.PanelStyle()
+	}
+	s.Rim = t.Outline
+	return s
+}
+
+// critical reports whether an active record is critical, which strokes its
+// card's rim in the error colour.
+func (h *toastHost) critical(id uint32) bool {
+	s := h.r.notify
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.active[id].Urgency == protocol.UrgencyCritical
 }
 
 // paintCard renders one card into the scratch buffer and copies it onto the
@@ -299,6 +353,9 @@ func (h *toastHost) paintCard(canvas *render.Canvas, card toastCard, style rende
 	}
 	cardStyle := style
 	cardStyle.Body = ui.Rect{W: card.rect.W, H: card.rect.H}
+	if card.critical {
+		cardStyle.Rim = style.Error
+	}
 	if err := render.Paint(cardCanvas, card.root, h.text, cardStyle); err != nil {
 		return err
 	}
@@ -397,10 +454,12 @@ func (h *toastHost) updateHover(connector string) bool {
 	at, inside := h.pointer[connector]
 	hovered := map[uint32]bool{}
 	if inside {
-		ids := h.visible[connector]
-		for i, rect := range h.cardRects(connector, ids) {
-			if i < len(ids) && rect.Contains(at.X, at.Y) {
-				hovered[ids[i]] = true
+		// The placed cards, not a fresh layout: motion arrives far faster
+		// than the stack changes, and rebuilding every tree per event held
+		// the registry lock for most of a fast pointer's travel.
+		if card, ok := h.cardAt(connector, at.X, at.Y); ok {
+			if id, ok := cardID(card.root); ok {
+				hovered[id] = true
 			}
 		}
 	}
@@ -427,7 +486,7 @@ func (h *toastHost) rebuild(connector string) {
 	// Rebound from the published palette on every rebuild, not cached at
 	// first paint, so a theme reload reaches open toasts immediately
 	// (GitHub #29).
-	h.style = h.r.surfaceTheme().OverlayStyle()
+	h.style = h.cardStyle()
 	ids := h.visible[connector]
 	rects := h.cardRects(connector, ids)
 	var moved bool
@@ -477,7 +536,7 @@ func (h *toastHost) rebuild(connector string) {
 		if err := ui.LayoutColumn(root, ui.Rect{W: rects[i].W, H: rects[i].H}, measure); err != nil {
 			continue
 		}
-		cards = append(cards, toastCard{root: root, rect: rects[i]})
+		cards = append(cards, toastCard{root: root, rect: rects[i], critical: h.critical(id)})
 	}
 	h.cards[connector] = cards
 }
@@ -548,21 +607,20 @@ func (h *toastHost) cardFor(id uint32) *ui.Node {
 	s := h.r.notify
 	s.mu.Lock()
 	notification, ok := s.active[id]
-	lifetime := cloneLifetime(s.lifetimes, id)
 	s.mu.Unlock()
 	if !ok {
 		return nil
 	}
 	icon := h.r.notifyIcon(notification.AppIcon, notification.DesktopEntry)
 	if h.expanded[id] {
-		return ExpandedNotificationCard(notification, lifetime, icon, h.r.linksAllowed(), h.wrapBody)
+		return ExpandedNotificationCard(notification, icon, h.r.linksAllowed(), h.measureText(), h.wrapBody)
 	}
-	return NotificationCard(notification, lifetime, icon, h.r.linksAllowed())
+	return NotificationCard(notification, icon, h.r.linksAllowed(), h.measureText())
 }
 
 func (h *toastHost) wrapBody(s string) []string {
 	measure := h.measureText()
-	width := toastCardWidth - 2*cardPadding - cardIconSize - cardGap
+	width := toastCardWidth - 2*cardPadding - cardIconSize - cardLeadGap
 	return wrapLines(s, width, func(text string) int {
 		w, _ := measure(text, ui.TextAttrs{})
 		return w
@@ -739,15 +797,28 @@ func (h *toastHost) geometryFor(connector string) (toastGeometry, bool) {
 // cardHeight is the layout height of one card, measured from its tree.
 // A missing tree or measure falls back to 96 so the card still places.
 func (h *toastHost) cardHeight(id uint32) int {
-	return toastCardHeight(h.cardFor(id), toastCardWidth, h.measureText(), h.style.Radius)
+	return toastCardHeight(h.cardFor(id), toastCardWidth, h.measureText())
 }
 
+// measureText measures at the output's scale and rounds up into logical
+// pixels, the space cards are laid out in. A shaped run does not scale
+// linearly, so a 1x measure could grant less room than the painted run
+// takes and the painter would clip it. Card trees are shared by every
+// output, so it measures at the largest scale among them.
 func (h *toastHost) measureText() ui.MeasureText {
+	scale := ui.ScaleUnit
+	for _, s := range h.scale120 {
+		if v := ui.Scale120(s); v.Valid() && v > scale {
+			scale = v
+		}
+	}
+	style := h.style
+	style.Scale120 = scale
 	return func(text string, attrs ui.TextAttrs) (int, int) {
 		if h.text != nil {
-			spec := render.SpecFor(h.style, attrs)
+			spec := render.SpecFor(style, attrs)
 			if w, height, err := h.text.Measure(text, spec, attrs.Tabular); err == nil {
-				return w, height
+				return scale.Logical(w), scale.Logical(height)
 			}
 		}
 		return len([]rune(text)) * 8, 16

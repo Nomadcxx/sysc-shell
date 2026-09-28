@@ -108,10 +108,10 @@ func TestNotifyCentreFiltersGroupMembersAcrossMidnight(t *testing.T) {
 	}
 }
 
-func TestNotifyToastKeepsUnfilledCard(t *testing.T) {
-	toast := NotificationCard(baseNotification(), nil, nil, false)
-	if got := toast.Children[0].Fill; got != ui.FillNone {
-		t.Fatalf("toast fill = %v, want FillNone", got)
+func TestNotifyToastIsItsOwnGround(t *testing.T) {
+	toast := NotificationCard(baseNotification(), nil, false, nil)
+	if toast.Kind != ui.KindColumn || toast.Padding != cardPadding || toast.Children[0].Kind != ui.KindRow {
+		t.Fatalf("toast root = %+v, want a padded column leading with the lead row", toast)
 	}
 	now := time.Now()
 	live := ActiveGroupCard(activeGroup{members: []protocol.Notification{baseNotification()}}, now, false, nil, false)

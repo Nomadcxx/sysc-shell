@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -77,5 +78,36 @@ func TestSlideStateIsPerOutput(t *testing.T) {
 	h.noteTargets("DP-1", []uint32{1}, []ui.Rect{{Y: 10, W: 300, H: 80}})
 	if got := h.displayRect("DP-2", 1, ui.Rect{Y: 400, W: 300, H: 80}); got.Y != 400 {
 		t.Fatalf("DP-2 card moved with DP-1 to y=%d", got.Y)
+	}
+}
+
+// The blur follows a sliding card: at the start of the slide it sits where
+// the card is drawn, its old slot, not where the card is heading.
+func TestToastBlurFollowsASlidingCard(t *testing.T) {
+	now := time.Unix(100, 0)
+	h := slideHost(t, &now)
+	cfg := config.Default()
+	cfg.Theme.BlurBehind = true
+	h.r = NewRegistry(cfg)
+	t.Cleanup(h.r.Close)
+	h.r.caps.Blur = true
+	h.noteTargets("DP-1", []uint32{1, 2}, []ui.Rect{{Y: 10, W: 300, H: 80}, {Y: 100, W: 300, H: 80}})
+	target := ui.Rect{Y: 10, W: 300, H: 80}
+	h.noteTargets("DP-1", []uint32{2}, []ui.Rect{target})
+	h.cards = map[string][]toastCard{"DP-1": {{root: &ui.Node{Kind: ui.KindColumn, Action: "notify:2:dismiss"}, rect: target}}}
+
+	top := func() int {
+		strips := h.blurShape("DP-1")
+		if len(strips) == 0 {
+			t.Fatal("no blur for a visible card")
+		}
+		return strips[0].Y
+	}
+	if got := top(); got != 100 {
+		t.Fatalf("blur starts at %d, want the drawn slot 100", got)
+	}
+	now = now.Add(time.Second)
+	if got := top(); got != 10 {
+		t.Fatalf("settled blur starts at %d, want 10", got)
 	}
 }

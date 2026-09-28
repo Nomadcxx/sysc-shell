@@ -66,11 +66,12 @@ func TestEveryPanelRequestsABackdrop(t *testing.T) {
 // of surface added later that builds its own AuxSpec and silently has no
 // backdrop, with every test still passing.
 //
-// So the decision has to be written down at the site: an AuxSpec either sets
-// BlurRegion or carries `blur-exempt:` with a reason. Design D13 scoped the
-// backdrop to panels and named the bar, toasts, the OSD and tooltips as out;
-// tooltips have since taken the capture path (see wayland/tooltip.go), and the
-// bar, toasts and OSD remain out. The menu and drawer surfaces are neither
+// So the decision has to be written down at the site: an AuxSpec sets
+// BlurRegion (the capture path), sets BlurShape (the compositor path), or
+// carries `blur-exempt:` with a reason. Design D13 scoped the backdrop to
+// panels and named the bar, toasts, the OSD and tooltips as out; tooltips
+// have since taken the capture path (see wayland/tooltip.go), toasts the
+// compositor path (toasthost.go), and the bar and OSD remain out. The menu and drawer surfaces are neither
 // panels nor named there, which is a scope question their exemptions record
 // rather than hide.
 //
@@ -101,10 +102,11 @@ func TestEveryAuxSurfaceDecidesAboutBlur(t *testing.T) {
 			}
 			found++
 			block := auxSpecContext(lines, i)
-			if strings.Contains(block, "BlurRegion:") || strings.Contains(block, "blur-exempt:") {
+			if strings.Contains(block, "BlurRegion:") || strings.Contains(block, "BlurShape:") ||
+				strings.Contains(block, "blur-exempt:") {
 				continue
 			}
-			t.Errorf("%s:%d builds an auxiliary surface that neither sets BlurRegion nor carries "+
+			t.Errorf("%s:%d builds an auxiliary surface that sets neither BlurRegion nor BlurShape nor carries "+
 				"a `blur-exempt: <reason>` comment; a panel blurs, and anything that does not has to say why",
 				name, i+1)
 		}

@@ -11,6 +11,8 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/notifyclient"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -578,7 +580,7 @@ func TestDecodedIconRecomputesOpenToasts(t *testing.T) {
 	r.applyNotify(snap(1, n))
 	before := len(hh.updates)
 
-	r.applyTrayIcon(icons.Square("firefox", cardIconSize), &ui.Image{Width: 16, Height: 16, Stride: 64, Pix: make([]byte, 16*64)})
+	r.applyTrayIcon(icons.Square("firefox", notifyIconRaster), &ui.Image{Width: 16, Height: 16, Stride: 64, Pix: make([]byte, 16*64)})
 
 	if len(hh.updates) <= before {
 		t.Fatalf("decoding the toast's app icon did not recompute (updates %d -> %d)", before, len(hh.updates))
@@ -600,5 +602,188 @@ func TestRethemeRecomputesToasts(t *testing.T) {
 
 	if len(hh.updates) <= before {
 		t.Fatalf("retheme did not relayout open toasts (updates %d -> %d)", before, len(hh.updates))
+	}
+}
+
+// glassToasts opens one output, shows the given toasts and paints them twice:
+// the first render measures real fonts, the second paints the settled layout.
+func glassToasts(t *testing.T, blur bool, notes ...protocol.Notification) (*Registry, *toastHost, []byte, int) {
+	t.Helper()
+	cfg := config.Default()
+	cfg.Theme.BlurBehind = true
+	// Presets set panel and overlay opacity equal; separate them so the
+	// ground tests can tell which style painted.
+	cfg.Theme.PanelOpacity = 65
+	r := NewRegistry(cfg)
+	t.Cleanup(r.Close)
+	r.mu.Lock()
+	r.caps.Blur = blur
+	r.mu.Unlock()
+	h := newToastHost(r, &hostHarness{})
+	r.outputsForTest([]string{"eDP-1"})
+	h.syncOutputs(map[string]uint32{"eDP-1": 5})
+	r.applyNotify(snap(1, notes...))
+	const width, height = 1200, 800
+	cb := h.harness().opens[0].Callbacks
+	if err := cb.Configure(width, height, 120); err != nil {
+		t.Fatal(err)
+	}
+	pixels := make([]byte, width*4*height)
+	for range 2 {
+		if err := cb.Render(pixels, width, height, width*4); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return r, h, pixels, width * 4
+}
+
+func TestToastCardIsItsContentHeight(t *testing.T) {
+	r, h, _, _ := glassToasts(t, true, note(1, "hello"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	want, err := ui.ContentHeight(h.cardFor(1), toastCardWidth, h.measureText())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := h.cards["eDP-1"][0].rect.H; got != want {
+		t.Fatalf("card height = %d, want content height %d", got, want)
+	}
+}
+
+// groundAlpha is the alpha just inside a card's lower-left corner, clear of
+// the rim and of any content.
+func groundAlpha(h *toastHost, pixels []byte, stride int) byte {
+	rect := h.cards["eDP-1"][0].rect
+	return pixels[(rect.Y+rect.H-6)*stride+(rect.X+6)*4+3]
+}
+
+func TestToastGroundFollowsPanelOpacityUnderCompositorBlur(t *testing.T) {
+	r, h, pixels, stride := glassToasts(t, true, note(1, "hello"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	want := r.surfaceTheme().PanelStyle().RootFill().A
+	if want == r.surfaceTheme().OverlayStyle().RootFill().A {
+		t.Fatal("panel and overlay grounds match; the test cannot tell them apart")
+	}
+	if got := groundAlpha(h, pixels, stride); got != want {
+		t.Fatalf("ground alpha = %d, want the panel's %d", got, want)
+	}
+}
+
+func TestToastWithoutCompositorBlurKeepsTheOverlayGround(t *testing.T) {
+	r, h, pixels, stride := glassToasts(t, false, note(1, "hello"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	want := r.surfaceTheme().OverlayStyle().RootFill().A
+	if got := groundAlpha(h, pixels, stride); got != want {
+		t.Fatalf("ground alpha = %d, want the overlay's %d", got, want)
+	}
+}
+
+func TestToastCriticalCardStrokesTheErrorRim(t *testing.T) {
+	critical := note(1, "battery")
+	critical.Urgency = protocol.UrgencyCritical
+	r, h, pixels, stride := glassToasts(t, true, critical)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rect := h.cards["eDP-1"][0].rect
+	if !h.cards["eDP-1"][0].critical {
+		t.Fatal("critical card not marked")
+	}
+	o := (rect.Y+rect.H/2)*stride + rect.X*4
+	px := render.Color{B: pixels[o], G: pixels[o+1], R: pixels[o+2]}
+	errC, rim := h.style.Error, h.style.Rim
+	dist := func(a, b render.Color) int {
+		d := func(x, y uint8) int { v := int(x) - int(y); return v * v }
+		return d(a.R, b.R) + d(a.G, b.G) + d(a.B, b.B)
+	}
+	if dist(px, errC) >= dist(px, rim) {
+		t.Fatalf("edge pixel %+v is nearer the outline %+v than the error %+v", px, rim, errC)
+	}
+}
+
+func TestToastBlurShapeCoversEachCard(t *testing.T) {
+	r, h, _, _ := glassToasts(t, true, note(1, "first"), note(2, "second"))
+	shape := h.harness().opens[0].Callbacks.BlurShape()
+	r.mu.Lock()
+	cards := append([]toastCard(nil), h.cards["eDP-1"]...)
+	r.mu.Unlock()
+	if len(cards) != 2 || len(shape) == 0 {
+		t.Fatalf("cards %d, strips %d", len(cards), len(shape))
+	}
+	area := map[int]int{}
+	for _, s := range shape {
+		inside := -1
+		for i, c := range cards {
+			if s.X >= c.rect.X && s.Y >= c.rect.Y && s.X+s.W <= c.rect.X+c.rect.W && s.Y+s.H <= c.rect.Y+c.rect.H {
+				inside = i
+			}
+		}
+		if inside < 0 {
+			t.Fatalf("strip %+v lies outside every card", s)
+		}
+		area[inside] += s.W * s.H
+	}
+	for i, c := range cards {
+		if full := c.rect.W * c.rect.H; area[i] < full*9/10 {
+			t.Fatalf("card %d blur covers %d of %d px", i, area[i], full)
+		}
+	}
+}
+
+func TestToastBlurShapeIsEmptyWithoutCompositorBlur(t *testing.T) {
+	_, h, _, _ := glassToasts(t, false, note(1, "first"))
+	if shape := h.harness().opens[0].Callbacks.BlurShape(); len(shape) != 0 {
+		t.Fatalf("blur without compositor blur: %+v", shape)
+	}
+}
+
+func TestToastBlurShapeIsEmptyWithNoCards(t *testing.T) {
+	_, h, _, _ := glassToasts(t, true)
+	if shape := h.harness().opens[0].Callbacks.BlurShape(); len(shape) != 0 {
+		t.Fatalf("blur with no cards: %+v", shape)
+	}
+}
+
+// Layout is logical but text is painted at the output's scale, and a
+// shaped run does not scale linearly. The host measures at the physical
+// scale and rounds up into logical pixels, so the painter never clips text
+// the layout said fits: at 1.5x the pinned time "12m" needs 35 px where a
+// 1x measure granted 34.
+func TestToastMeasuresTextAtTheOutputScale(t *testing.T) {
+	for _, scale := range []int{120, 150, 180} {
+		r, h, _, _ := glassToasts(t, true, note(1, "hello"))
+		if err := h.harness().opens[0].Callbacks.Configure(1200, 800, scale); err != nil {
+			t.Fatal(err)
+		}
+		r.mu.Lock()
+		physical := h.style
+		physical.Scale120 = ui.Scale120(scale)
+		attrs := ui.TextAttrs{Role: theme.RoleCaption}
+		mw, _, err := h.text.Measure("12m", render.SpecFor(physical, attrs), false)
+		if err != nil {
+			r.mu.Unlock()
+			t.Fatal(err)
+		}
+		want := ui.Scale120(scale).Logical(mw)
+		got, _ := h.measureText()("12m", attrs)
+		r.mu.Unlock()
+		if got != want {
+			t.Fatalf("scale %d: measured %d px, want %d so the painted run fits", scale, got, want)
+		}
+	}
+}
+
+// Pointer motion hit-tests the cards already placed; it must not rebuild and
+// re-measure every card tree under the registry lock on each event.
+func TestToastHoverHitTestsThePlacedCards(t *testing.T) {
+	r, h, _, _ := glassToasts(t, true, note(1, "hello"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	h.cards["eDP-1"][0].rect = ui.Rect{X: 10, Y: 500, W: 100, H: 50}
+	h.pointer["eDP-1"] = ui.Rect{X: 20, Y: 520}
+	h.updateHover("eDP-1")
+	if !h.hovered["eDP-1"][1] {
+		t.Fatal("pointer over the placed card is not hovering it")
 	}
 }

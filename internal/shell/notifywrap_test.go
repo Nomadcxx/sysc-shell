@@ -26,7 +26,7 @@ func TestWrapLines(t *testing.T) {
 }
 
 func TestExpandedNotificationCardUsesWrappedBody(t *testing.T) {
-	root := ExpandedNotificationCard(protocol.Notification{ID: 1, Body: "one two"}, nil, nil, false,
+	root := ExpandedNotificationCard(protocol.Notification{ID: 1, Body: "one two"}, nil, false, nil,
 		func(string) []string { return []string{"one", "two"} })
 	var got []string
 	var walk func(*ui.Node)

@@ -272,16 +272,6 @@ func centreSectionLabel(text string) *ui.Node {
 		TextRole: theme.RoleCaption, Tone: ui.ToneAccent}
 }
 
-// cloneLifetime copies a lifetime so a card never aliases the projection's
-// map value. A missing lifetime stays missing.
-func cloneLifetime(lifetimes map[uint32]protocol.Lifetime, id uint32) *protocol.Lifetime {
-	lt, ok := lifetimes[id]
-	if !ok {
-		return nil
-	}
-	return &lt
-}
-
 // linksAllowed reports the qualified opener capability. Task 10 wires the
 // real capability; the center builds with links off until then.
 func (r *Registry) linksAllowed() bool { return false }
@@ -297,7 +287,7 @@ func (r *Registry) lookupNotifyIcon(name string) *ui.Image {
 	if r == nil || r.trayIcons == nil || name == "" {
 		return nil
 	}
-	key := icons.Square(name, cardIconSize)
+	key := icons.Square(name, notifyIconRaster)
 	if img, ok := r.trayIcons.Lookup(key); ok {
 		return img
 	}

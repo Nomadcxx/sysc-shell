@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"image/png"
-	"strings"
 	"time"
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
@@ -13,13 +12,19 @@ import (
 )
 
 const (
-	cardIconSize   = 56
-	cardGap        = 6
-	cardPadding    = 12
-	cardChipW      = 8
-	toastMeterH    = 3
-	centreIconSize = 20
-	centreIconPad  = 6
+	// cardIconSize is the lead a card opens with: the notification's image
+	// or a glyph tile.
+	cardIconSize = 32
+	// notifyIconRaster is the size icons resolve at, twice the lead, so the
+	// lead stays sharp on a scaled output.
+	notifyIconRaster = 64
+	cardGap          = 6
+	cardPadding      = 12
+	cardLeadGap      = 10
+	cardSectionGap   = 8
+	cardGlyphSize    = 18
+	centreIconSize   = 20
+	centreIconPad    = 6
 )
 
 // protocolImage decodes the notification's wire image. The sysc-notify
@@ -53,36 +58,21 @@ func protocolImage(img *protocol.Image) *ui.Image {
 	return out
 }
 
-func appLetter(app string) string {
-	app = strings.TrimSpace(app)
-	for _, r := range app {
-		return strings.ToUpper(string(r))
-	}
-	return "?"
-}
-
-func iconSlot(app string, raster *ui.Image) *ui.Node {
+// leadSlot is the card's lead: the notification's own image, or a bell in a
+// tinted tile. It carries the app name, since layout C has no app line.
+func leadSlot(app string, raster *ui.Image, urgency protocol.Urgency) *ui.Node {
 	if raster != nil {
-		return &ui.Node{Kind: ui.KindImage, Image: raster, ImageSize: cardIconSize}
+		return &ui.Node{Kind: ui.KindImage, Image: raster, ImageSize: cardIconSize, Name: app}
+	}
+	fill, tone := ui.FillContainerHighest, ui.ToneNormal
+	if urgency == protocol.UrgencyCritical {
+		fill, tone = ui.FillErrorContainer, ui.ToneError
 	}
 	return &ui.Node{
-		Kind: ui.KindCapsule, Fill: ui.FillContainer, Width: cardIconSize, Shape: ui.ShapeMedium,
-		Children: []*ui.Node{{Kind: ui.KindText, Text: appLetter(app)}},
+		Kind: ui.KindCapsule, Fill: fill, Width: cardIconSize, Height: cardIconSize, Shape: ui.ShapeMedium,
+		CenterX: true, CenterY: true, Name: app,
+		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "notifications", IconSize: cardGlyphSize, Tone: tone}},
 	}
-}
-
-func timeoutMeter(lt *protocol.Lifetime) *ui.Node {
-	if lt == nil || lt.DurationMS == 0 {
-		return nil
-	}
-	v := float64(lt.RemainingMS) / float64(lt.DurationMS)
-	if v < 0 {
-		v = 0
-	}
-	if v > 1 {
-		v = 1
-	}
-	return &ui.Node{Kind: ui.KindMeter, Height: toastMeterH, Value: v}
 }
 
 func valueMeter(value *int32) *ui.Node {
@@ -99,21 +89,15 @@ func valueMeter(value *int32) *ui.Node {
 	return &ui.Node{Kind: ui.KindMeter, Value: v}
 }
 
+// wrapNotifyCard is the centre's card chrome. A critical entry strokes the
+// error colour, the same edge a critical toast paints.
 func wrapNotifyCard(inner *ui.Node, critical bool, fill ui.Fill) *ui.Node {
-	body := inner
-	if critical {
-		body = &ui.Node{Kind: ui.KindRow, Gap: 0, Children: []*ui.Node{
-			{Kind: ui.KindCapsule, Fill: ui.FillAccent, Width: cardChipW},
-			inner,
-		}}
-	}
 	cap := &ui.Node{
 		Kind: ui.KindCapsule, Fill: fill, Padding: cardPadding, Shape: ui.ShapeCard,
-		Action: inner.Action, Children: []*ui.Node{body},
+		Action: inner.Action, Children: []*ui.Node{inner},
 	}
 	if critical {
-		cap.Stroke = 2
-		cap.StrokeFill = ui.FillAccent
+		cap.Stroke, cap.StrokeFill = 1, ui.FillError
 	}
 	return cap
 }
@@ -130,51 +114,77 @@ func centreRemoveButton(action, name string) *ui.Node {
 	}
 }
 
-func notificationTree(id uint32, app, summary, body string, urgency protocol.Urgency, raster *ui.Image, value *int32, allowLinks bool, wrap func(string) []string, now, ts time.Time) *ui.Node {
-	tone := toneFor(urgency)
-	text := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{}}
-	identity := &ui.Node{Kind: ui.KindRow, Gap: cardGap, Children: []*ui.Node{}}
-	if app != "" {
-		identity.Children = append(identity.Children, &ui.Node{Kind: ui.KindText, Text: app, Tone: tone})
-	}
-	if !ts.IsZero() && !now.IsZero() {
-		identity.Children = append(identity.Children, &ui.Node{Kind: ui.KindText, Text: formatNotifyTime(ts, now), Tone: tone})
-	}
-	if len(identity.Children) > 0 {
-		text.Children = append(text.Children, identity)
-	}
-	if summary != "" {
-		text.Children = append(text.Children, &ui.Node{
-			Kind: ui.KindText, Text: summary, TextRole: theme.RoleTitle, Tone: tone,
-		})
-	}
-	for _, run := range ParseBody(body, allowLinks) {
-		if run.Break || run.Text == "" {
-			continue
+// bodyNodes is the body under the headline. Collapsed, it is the runs up to
+// the first break on one row, so a styled word stays in its sentence and the
+// row clips at the card edge. Expanded, each run wraps over its own lines.
+func bodyNodes(id uint32, body string, allowLinks bool, wrap func(string) []string) []*ui.Node {
+	run := func(r Run, text string) *ui.Node {
+		node := &ui.Node{Kind: ui.KindText, Text: text, Bold: r.Bold, Italic: r.Italic, Underline: r.Underline, Tone: ui.ToneSubtle}
+		if r.Link {
+			node.Action = fmt.Sprintf("notify:%d:link:%s", id, r.Href)
 		}
-		lines := []string{run.Text}
-		if wrap != nil {
-			lines = wrap(run.Text)
-		}
-		for _, line := range lines {
-			if line == "" {
+		return node
+	}
+	runs := ParseBody(body, allowLinks)
+	if wrap == nil {
+		line := &ui.Node{Kind: ui.KindRow}
+		for _, r := range runs {
+			if r.Break {
+				if len(line.Children) > 0 {
+					break
+				}
 				continue
 			}
-			node := &ui.Node{
-				Kind: ui.KindText, Text: line,
-				Bold: run.Bold, Italic: run.Italic, Underline: run.Underline, Tone: tone,
+			if r.Text != "" {
+				line.Children = append(line.Children, run(r, r.Text))
 			}
-			if run.Link {
-				node.Action = fmt.Sprintf("notify:%d:link:%s", id, run.Href)
+		}
+		switch len(line.Children) {
+		case 0:
+			return nil
+		case 1:
+			return line.Children
+		}
+		return []*ui.Node{line}
+	}
+	var out []*ui.Node
+	for _, r := range runs {
+		if r.Break || r.Text == "" {
+			continue
+		}
+		for _, text := range wrap(r.Text) {
+			if text != "" {
+				out = append(out, run(r, text))
 			}
-			text.Children = append(text.Children, node)
 		}
 	}
+	return out
+}
+
+// notificationTree is the text block every notification card shares: the
+// lead beside a headline row, with the time pinned right so a long summary
+// clips before the time does, then the body and any value bar.
+func notificationTree(id uint32, app, summary, body string, urgency protocol.Urgency, raster *ui.Image, value *int32, allowLinks bool, wrap func(string) []string, now, ts time.Time) *ui.Node {
+	headline := summary
+	if headline == "" {
+		headline = app
+	}
+	head := &ui.Node{Kind: ui.KindRow, Gap: cardGap, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: headline, TextRole: theme.RoleFigure, Tone: toneFor(urgency)},
+	}}
+	if !ts.IsZero() && !now.IsZero() {
+		head.PinEnd = true
+		head.Children = append(head.Children, &ui.Node{
+			Kind: ui.KindText, Text: formatNotifyTime(ts, now), TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
+		})
+	}
+	text := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{head}}
+	text.Children = append(text.Children, bodyNodes(id, body, allowLinks, wrap)...)
 	if m := valueMeter(value); m != nil {
 		text.Children = append(text.Children, m)
 	}
-	return &ui.Node{Kind: ui.KindRow, Gap: cardGap, Children: []*ui.Node{
-		iconSlot(app, raster),
+	return &ui.Node{Kind: ui.KindRow, Gap: cardLeadGap, Children: []*ui.Node{
+		leadSlot(app, raster, urgency),
 		text,
 	}}
 }
@@ -190,40 +200,52 @@ func toneFor(urgency protocol.Urgency) ui.Tone {
 	}
 }
 
-// NotificationCard builds the retained tree for one active toast or ungrouped
-// record. lt is the service's authoritative lifetime; raster is the already
-// decoded icon, or nil for the letter fallback.
-func NotificationCard(n protocol.Notification, lt *protocol.Lifetime, raster *ui.Image, allowLinks bool) *ui.Node {
-	return notificationCard(n, lt, raster, allowLinks, nil)
+// NotificationCard builds one active toast. raster is the already decoded
+// icon, or nil for the glyph tile. measure packs action pills into rows; nil
+// stacks them one per row.
+func NotificationCard(n protocol.Notification, raster *ui.Image, allowLinks bool, measure ui.MeasureText) *ui.Node {
+	return notificationCard(n, raster, allowLinks, measure, nil, time.Now())
 }
 
 // ExpandedNotificationCard is a toast whose body is wrapped over several
 // lines after a vertical drag.
-func ExpandedNotificationCard(n protocol.Notification, lt *protocol.Lifetime, raster *ui.Image, allowLinks bool, wrap func(string) []string) *ui.Node {
-	return notificationCard(n, lt, raster, allowLinks, wrap)
+func ExpandedNotificationCard(n protocol.Notification, raster *ui.Image, allowLinks bool, measure ui.MeasureText, wrap func(string) []string) *ui.Node {
+	return notificationCard(n, raster, allowLinks, measure, wrap, time.Now())
 }
 
-func notificationCard(n protocol.Notification, lt *protocol.Lifetime, raster *ui.Image, allowLinks bool, wrap func(string) []string) *ui.Node {
+// notificationCard has no chrome of its own: the toast host paints the card
+// ground, rim and blur around it.
+func notificationCard(n protocol.Notification, raster *ui.Image, allowLinks bool, measure ui.MeasureText, wrap func(string) []string, now time.Time) *ui.Node {
 	if raster == nil {
 		raster = protocolImage(n.Image)
 	}
-	now := time.Now()
-	root := &ui.Node{Kind: ui.KindColumn, Gap: cardGap, Children: []*ui.Node{
+	root := &ui.Node{Kind: ui.KindColumn, Gap: cardSectionGap, Padding: cardPadding, Children: []*ui.Node{
 		notificationTree(n.ID, n.AppName, n.Summary, n.Body, n.Urgency, raster, n.Value, allowLinks, wrap, now, n.Timestamp),
 	}}
 
 	hasDefault := false
+	var pills []protocol.Action
 	for _, a := range n.Actions {
 		if a.Key == "default" {
 			hasDefault = true
 			markDefault(root, n.ID)
 			continue
 		}
-		root.Children = append(root.Children, &ui.Node{
-			Kind: ui.KindButton, Text: a.Label, Padding: theme.MarginXS,
-			Action: fmt.Sprintf("notify:%d:action:%s", n.ID, a.Key),
-			Name:   a.Label, Role: "button", Focusable: true,
-		})
+		pills = append(pills, a)
+	}
+	rowWidth := toastCardWidth - 2*cardPadding
+	for _, row := range actionRows(pills, rowWidth, measure) {
+		// Only a pill too wide for any row takes the column, where it spans
+		// the card and its label clips; one that fits keeps its own width.
+		if len(row) == 1 && pillWidth(row[0], rowWidth, measure) > rowWidth {
+			root.Children = append(root.Children, actionPill(n.ID, row[0]))
+			continue
+		}
+		line := &ui.Node{Kind: ui.KindRow, Gap: cardGap}
+		for _, a := range row {
+			line.Children = append(line.Children, actionPill(n.ID, a))
+		}
+		root.Children = append(root.Children, line)
 	}
 	if !hasDefault {
 		root.Action = fmt.Sprintf("notify:%d:dismiss", n.ID)
@@ -235,10 +257,47 @@ func notificationCard(n protocol.Notification, lt *protocol.Lifetime, raster *ui
 			Action: fmt.Sprintf("notify:%d:reply", n.ID),
 		})
 	}
-	if m := timeoutMeter(lt); m != nil {
-		root.Children = append(root.Children, m)
+	return root
+}
+
+func actionPill(id uint32, a protocol.Action) *ui.Node {
+	return &ui.Node{
+		Kind: ui.KindButton, Text: a.Label, TextRole: theme.RoleLabel, Fill: ui.FillContainerHighest,
+		Shape: ui.ShapeMedium, Padding: theme.MarginXS,
+		Action: fmt.Sprintf("notify:%d:action:%s", id, a.Key),
+		Name:   a.Label, Role: "button", Focusable: true,
 	}
-	return cardColumn(wrapNotifyCard(root, n.Urgency == protocol.UrgencyCritical, ui.FillNone))
+}
+
+// pillWidth is the width a pill lays out at, as ui measures a button: its
+// label plus padding on each side. Without a measure it cannot be sized, and
+// reports wider than the row so the pill takes a row of its own.
+func pillWidth(a protocol.Action, width int, measure ui.MeasureText) int {
+	if measure == nil {
+		return width + 1
+	}
+	tw, _ := measure(a.Label, ui.TextAttrs{Role: theme.RoleLabel})
+	return tw + 2*theme.MarginXS
+}
+
+// actionRows packs action pills into rows no wider than width, keeping their
+// order. A pill that fits nowhere beside another takes a row alone, which the
+// card lays out as a full-width button, so no label can push layout past the
+// card. A nil measure cannot size a pill, so every action takes its own row.
+func actionRows(actions []protocol.Action, width int, measure ui.MeasureText) [][]protocol.Action {
+	var rows [][]protocol.Action
+	used := 0
+	for _, a := range actions {
+		w := pillWidth(a, width, measure)
+		if len(rows) == 0 || used+cardGap+w > width {
+			rows = append(rows, []protocol.Action{a})
+			used = w
+			continue
+		}
+		rows[len(rows)-1] = append(rows[len(rows)-1], a)
+		used += cardGap + w
+	}
+	return rows
 }
 
 func markDefault(root *ui.Node, id uint32) {
