@@ -141,8 +141,7 @@ Settings are in the settings panel and saved to `~/.config/sysc-shell/config.jso
 
 ## License
 
-TODO: choose a license. The repository has no LICENSE file yet. [NOTICE](NOTICE) covers the
-app-theming template catalog.
+BSD-3-Clause. [NOTICE](NOTICE) covers the app-theming template catalog.
 
 ---
 
