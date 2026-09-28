@@ -8,9 +8,14 @@ import (
 	stdDraw "image/draw"
 	_ "image/jpeg"
 	_ "image/png"
+	"log"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 
+	"github.com/srwiley/oksvg"
+	"github.com/srwiley/rasterx"
 	xdraw "golang.org/x/image/draw"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -73,14 +78,20 @@ type Worker struct {
 	order    []Key
 	bytes    int
 	inFlight map[Key]struct{}
+
+	// svgFailed memoises paths whose SVG failed to rasterise, so one bad
+	// document logs once rather than on every repaint. Touched only on the
+	// worker goroutine.
+	svgFailed map[string]bool
 }
 
 func NewWorker(resolver PathResolver, publish func(Key, *ui.Image)) *Worker {
 	return &Worker{
 		resolver: resolver, publish: publish,
-		jobs:     make(chan Key, MaxQueue),
-		cache:    make(map[Key]*ui.Image),
-		inFlight: make(map[Key]struct{}),
+		jobs:      make(chan Key, MaxQueue),
+		cache:     make(map[Key]*ui.Image),
+		inFlight:  make(map[Key]struct{}),
+		svgFailed: make(map[string]bool),
 	}
 }
 
@@ -179,7 +190,59 @@ func (w *Worker) load(ctx context.Context, name string, width, height, nominal i
 	if ctx.Err() != nil {
 		return nil
 	}
+	if strings.EqualFold(filepath.Ext(path), ".svg") {
+		if img := decodeSVG(data, width, height); img != nil {
+			return img
+		}
+		return w.fallBackToRaster(ctx, name, path, width, height, nominal)
+	}
 	return decodeRaster(data, width, height)
+}
+
+// fallBackToRaster re-resolves without the vector tier after an SVG failed to
+// parse or draw. The failure is logged once per path: a theme full of
+// unsupported SVG features must not spam the journal on every repaint.
+func (w *Worker) fallBackToRaster(ctx context.Context, name, failed string, width, height, nominal int) *ui.Image {
+	if !w.svgFailed[failed] {
+		w.svgFailed[failed] = true
+		log.Printf("icons: svg %s did not rasterise; using the raster chain", failed)
+	}
+	skip, ok := w.resolver.(interface {
+		ResolveRaster(name string, size int) (string, bool)
+	})
+	if !ok {
+		return nil
+	}
+	path, found := skip.ResolveRaster(name, nominal)
+	if !found {
+		return nil
+	}
+	data, err := readBounded(path, MaxFileBytes)
+	if err != nil || ctx.Err() != nil {
+		return nil
+	}
+	return decodeRaster(data, width, height)
+}
+
+// decodeSVG rasterises an SVG document into the canvas's BGRA layout, meet-fit
+// and centred in the requested box. nil means the document could not be parsed
+// or drawn; the caller falls back to the raster chain. Runs on the worker
+// goroutine only -- never on the Wayland owner.
+func decodeSVG(data []byte, width, height int) *ui.Image {
+	if width <= 0 || height <= 0 {
+		return nil
+	}
+	icon, err := oksvg.ReadIconStream(bytes.NewReader(data), oksvg.StrictErrorMode)
+	if err != nil || icon.ViewBox.W <= 0 || icon.ViewBox.H <= 0 {
+		return nil
+	}
+	scale := min(float64(width)/icon.ViewBox.W, float64(height)/icon.ViewBox.H)
+	w, h := icon.ViewBox.W*scale, icon.ViewBox.H*scale
+	icon.SetTarget((float64(width)-w)/2, (float64(height)-h)/2, w, h)
+	rgba := image.NewRGBA(image.Rect(0, 0, width, height))
+	scanner := rasterx.NewScannerGV(width, height, rgba, rgba.Bounds())
+	icon.Draw(rasterx.NewDasher(width, height, scanner), 1.0)
+	return fromRGBA(rgba)
 }
 
 // DecodeRaster applies the same image-header and source-dimension checks as

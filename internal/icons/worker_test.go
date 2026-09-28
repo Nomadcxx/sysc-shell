@@ -390,3 +390,94 @@ func TestFileResolverTakesOnlyAbsoluteDecodablePaths(t *testing.T) {
 		}
 	}
 }
+
+// testGlyph is a two-tone document: a circle with a rectangle path over its
+// lower half. Both fills are opaque, where premultiplied and straight alpha
+// agree, so interior points assert exact BGRA bytes.
+const testGlyph = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">` +
+	`<circle cx="12" cy="12" r="10" fill="#204080"/>` +
+	`<path d="M6 12h12v6h-12z" fill="#802040"/></svg>`
+
+func TestDecodeSVGRasterisesTheGoldenGlyph(t *testing.T) {
+	for _, size := range []int{24, 48} {
+		img := decodeSVG([]byte(testGlyph), size, size)
+		if img == nil {
+			t.Fatalf("size %d: decode returned no raster", size)
+		}
+		if img.Width != size || img.Height != size || img.Stride != size*4 {
+			t.Fatalf("size %d: geometry %dx%d stride %d", size, img.Width, img.Height, img.Stride)
+		}
+		at := func(x, y int) []byte {
+			i := y*img.Stride + x*4
+			return img.Pix[i : i+4 : i+4]
+		}
+		if got := at(size/2, size*15/24); got[0] != 0x40 || got[1] != 0x20 || got[2] != 0x80 || got[3] != 0xff {
+			t.Fatalf("size %d: path interior = %v, want #802040 in BGRA", size, got)
+		}
+		if got := at(size/2, size*6/24); got[0] != 0x80 || got[1] != 0x40 || got[2] != 0x20 || got[3] != 0xff {
+			t.Fatalf("size %d: circle interior = %v, want #204080 in BGRA", size, got)
+		}
+		if at(0, 0)[3] != 0 {
+			t.Fatalf("size %d: the corner is not transparent", size)
+		}
+		coverage := 0
+		for i := 3; i < len(img.Pix); i += 4 {
+			if img.Pix[i] > 0 {
+				coverage++
+			}
+		}
+		// The circle plus the path's lower half cover about 60% of the box; a
+		// band catches anti-aliased edges without pinning a renderer version.
+		if coverage < size*size/2 || coverage > size*size*7/10 {
+			t.Fatalf("size %d: coverage %d/%d outside the 50-70%% band", size, coverage, size*size)
+		}
+	}
+}
+
+func TestWorkerFallsBackToARasterWhenTheSvgFails(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "Adwaita", "48x48", "apps")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A filter is real SVG that oksvg cannot draw: strict mode must reject it
+	// so the resolver's raster tier takes over.
+	body := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">` +
+		`<filter id="f"/><circle cx="12" cy="12" r="10" fill="#000000"/></svg>`
+	if err := os.WriteFile(filepath.Join(dir, "chat.svg"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "chat.png"), pngBytes(t, 32), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	worker, _ := startWorkerAt(t, root)
+	key := Square("chat", 24)
+	if _, _, err := worker.Request(key); err != nil {
+		t.Fatal(err)
+	}
+	img := awaitImage(t, worker, key)
+	if img == nil || img.Width != 24 {
+		t.Fatalf("fallback raster = %v", img)
+	}
+}
+
+func TestWorkerDecodesAnSvgOnlyTheme(t *testing.T) {
+	root := t.TempDir()
+	// Adwaita because startWorkerAt resolves that theme; the point is that
+	// nothing but an SVG exists.
+	dir := filepath.Join(root, "Adwaita", "scalable", "apps")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "chat.svg"), []byte(testGlyph), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	worker, _ := startWorkerAt(t, root)
+	key := Square("chat", 24)
+	if _, _, err := worker.Request(key); err != nil {
+		t.Fatal(err)
+	}
+	if img := awaitImage(t, worker, key); img == nil || img.Width != 24 {
+		t.Fatalf("svg decode = %v", img)
+	}
+}

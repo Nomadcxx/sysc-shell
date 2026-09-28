@@ -3,6 +3,7 @@ package icons
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -60,15 +61,43 @@ func TestResolverSurvivesInheritanceCycles(t *testing.T) {
 	}
 }
 
-// Milestone 5 ships no SVG rasterizer, so an SVG-only theme must report no
-// file rather than a path the decoder cannot read.
-func TestResolverIgnoresVectorOnlyThemes(t *testing.T) {
+func TestResolverTierOrder(t *testing.T) {
 	root := t.TempDir()
-	writeIcon(t, root, "Vector", "scalable/apps", "chat.svg")
-	resolver := NewResolver("Vector", []string{root})
+	writeIcon(t, root, "Mix", "48x48/apps", "chat.png")
+	writeIcon(t, root, "Mix", "96x96/apps", "chat.png")
+	writeSVG(t, root, "Mix", "scalable/apps", "chat.svg")
+	resolver := NewResolver("Mix", []string{root})
 
-	if path, ok := resolver.Resolve("chat", 48); ok {
-		t.Fatalf("an SVG resolved to %q; Milestone 5 decodes raster only", path)
+	if got, ok := resolver.Resolve("chat", 48); !ok || !strings.HasSuffix(got, "48x48/apps/chat.png") {
+		t.Fatalf("exact raster = %q (%v), want the 48px png over the svg", got, ok)
+	}
+	if got, ok := resolver.Resolve("chat", 24); !ok || !strings.HasSuffix(got, "chat.svg") {
+		t.Fatalf("svg tier = %q (%v), want the svg over a nearest raster", got, ok)
+	}
+	if got, ok := resolver.ResolveRaster("chat", 24); !ok || !strings.HasSuffix(got, "48x48/apps/chat.png") {
+		t.Fatalf("raster fallback = %q (%v), want the nearest png with no svg", got, ok)
+	}
+}
+
+func TestResolverTakesAnSvgOnlyTheme(t *testing.T) {
+	root := t.TempDir()
+	writeSVG(t, root, "Vector", "scalable/apps", "chat.svg")
+	resolver := NewResolver("Vector", []string{root})
+	if _, ok := resolver.Resolve("chat", 48); !ok {
+		t.Fatal("an svg-only theme did not resolve")
+	}
+}
+
+func writeSVG(t *testing.T, root, theme, category, name string) {
+	t.Helper()
+	dir := filepath.Join(root, theme, category)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">` +
+		`<circle cx="12" cy="12" r="10" fill="#000000"/></svg>`
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 

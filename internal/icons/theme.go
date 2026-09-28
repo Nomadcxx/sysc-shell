@@ -2,9 +2,9 @@
 // rasters. It is shared: notifications, the tray, and anything else that needs
 // an application icon use this one path.
 //
-// Milestone 5 is raster-only. No SVG rasterizer is pinned, so a theme that
-// offers only SVG for a name yields no file and the caller falls back to its
-// own placeholder. Adding SVG later means extending resolve, not a second path.
+// Resolution is tiered: an exact-size raster beats a vector, which beats a
+// nearest raster. A broken vector falls back through ResolveRaster so one bad
+// document never leaves an icon empty.
 package icons
 
 import (
@@ -21,12 +21,17 @@ import (
 // would be wasted stats on every miss.
 var rasterExtensions = []string{".png", ".xpm"}
 
+// vectorExtensions are the formats the worker can rasterise at any size. They
+// are a tier of their own, never folded into the raster scan: an exact-size
+// raster beats a vector, which beats a scaled raster.
+var vectorExtensions = []string{".svg"}
+
 // decodableExtensions are the formats the worker can decode when it is handed
 // an exact file rather than asked to find one. A caller passing an absolute
 // path has already chosen the file, so theme-search preference does not apply:
 // the only question is whether the decoder understands it. Wallpaper previews
 // are JPEG, and gating them on the theme list rejected every one of them.
-var decodableExtensions = []string{".png", ".xpm", ".jpg", ".jpeg", ".gif", ".bmp"}
+var decodableExtensions = []string{".png", ".xpm", ".jpg", ".jpeg", ".gif", ".bmp", ".svg"}
 
 // maxInheritDepth bounds theme inheritance. A cycle in index.theme files would
 // otherwise walk forever.
@@ -114,18 +119,30 @@ func (FileResolver) Resolve(name string, size int) (string, bool) {
 	return name, true
 }
 
-// Resolve reports the best file for an icon name at a wanted logical size.
+// Resolve reports the best file for an icon name at a wanted logical size,
+// preferring an exact raster, then a vector, then a nearest raster.
 //
 // An absolute path is taken as given, which is what the freedesktop
 // notification spec allows an application to send. Otherwise the configured
 // theme is searched, then everything it inherits, then hicolor, then the
 // unthemed pixmap directory.
 func (r *Resolver) Resolve(name string, size int) (string, bool) {
+	return r.resolve(name, size, true)
+}
+
+// ResolveRaster is Resolve without the vector tier. The worker calls it after
+// an SVG fails to rasterise, so a broken document falls through to the
+// nearest raster instead of leaving the icon empty.
+func (r *Resolver) ResolveRaster(name string, size int) (string, bool) {
+	return r.resolve(name, size, false)
+}
+
+func (r *Resolver) resolve(name string, size int, vectors bool) (string, bool) {
 	if name == "" {
 		return "", false
 	}
 	if filepath.IsAbs(name) {
-		if isDecodableFile(name) {
+		if isDecodableFile(name) && (vectors || !isVectorFile(name)) {
 			return name, true
 		}
 		return "", false
@@ -135,7 +152,7 @@ func (r *Resolver) Resolve(name string, size int) (string, bool) {
 		return "", false
 	}
 	for _, theme := range r.chain() {
-		if path, ok := r.findInTheme(theme, name, size); ok {
+		if path, ok := r.findInTheme(theme, name, size, vectors); ok {
 			return path, true
 		}
 	}
@@ -144,6 +161,14 @@ func (r *Resolver) Resolve(name string, size int) (string, bool) {
 			candidate := filepath.Join(dir, name+extension)
 			if isRasterFile(candidate) {
 				return candidate, true
+			}
+		}
+		if vectors {
+			for _, extension := range vectorExtensions {
+				candidate := filepath.Join(dir, name+extension)
+				if isVectorFile(candidate) {
+					return candidate, true
+				}
 			}
 		}
 	}
@@ -208,15 +233,16 @@ func parseInherits(file *os.File) []string {
 	return nil
 }
 
-// findInTheme picks the closest size a theme offers for a name. An exact match
-// wins; otherwise the smallest icon at least as large as the request, because
-// scaling down keeps more detail than scaling up.
-func (r *Resolver) findInTheme(theme, name string, size int) (string, bool) {
+// findInTheme picks the best file a theme offers for a name: an exact-size
+// raster, then a vector, then the raster nearest the request — the smallest
+// icon at least as large wins, because scaling down keeps more detail than
+// scaling up.
+func (r *Resolver) findInTheme(theme, name string, size int, vectors bool) (string, bool) {
 	type candidate struct {
 		path string
 		size int
 	}
-	var found []candidate
+	var rasters, vectorsFound []candidate
 	for _, dir := range r.dirs {
 		root := filepath.Join(dir, theme)
 		entries, err := os.ReadDir(root)
@@ -232,19 +258,36 @@ func (r *Resolver) findInTheme(theme, name string, size int) (string, bool) {
 				for _, extension := range rasterExtensions {
 					path := filepath.Join(category, name+extension)
 					if isRasterFile(path) {
-						found = append(found, candidate{path: path, size: at})
+						rasters = append(rasters, candidate{path: path, size: at})
+					}
+				}
+				if !vectors {
+					continue
+				}
+				for _, extension := range vectorExtensions {
+					path := filepath.Join(category, name+extension)
+					if isVectorFile(path) {
+						vectorsFound = append(vectorsFound, candidate{path: path, size: at})
 					}
 				}
 			}
 		}
 	}
-	if len(found) == 0 {
-		return "", false
+	if len(rasters) > 0 {
+		sort.SliceStable(rasters, func(i, j int) bool {
+			return betterSize(rasters[i].size, rasters[j].size, size)
+		})
+		if rasters[0].size == size {
+			return rasters[0].path, true
+		}
 	}
-	sort.SliceStable(found, func(i, j int) bool {
-		return betterSize(found[i].size, found[j].size, size)
-	})
-	return found[0].path, true
+	if len(vectorsFound) > 0 {
+		return vectorsFound[0].path, true
+	}
+	if len(rasters) > 0 {
+		return rasters[0].path, true
+	}
+	return "", false
 }
 
 // betterSize orders candidates: exact first, then the smallest that is large
@@ -282,8 +325,8 @@ func subdirectories(path string) []string {
 }
 
 // directorySize reads the leading pixel size of a theme directory such as
-// "48x48" or "32". A scalable directory reports zero: with no SVG support it
-// can hold nothing this resolver accepts.
+// "48x48" or "32". A scalable directory reports zero: its files carry no fixed
+// size, and the resolver treats them as fitting every request.
 func directorySize(name string) int {
 	if index := strings.IndexByte(name, 'x'); index > 0 {
 		name = name[:index]
@@ -296,6 +339,8 @@ func directorySize(name string) int {
 }
 
 func isRasterFile(path string) bool { return hasReadableExtension(path, rasterExtensions) }
+
+func isVectorFile(path string) bool { return hasReadableExtension(path, vectorExtensions) }
 
 // isDecodableFile reports whether an exact path names a file the decoder can
 // read.

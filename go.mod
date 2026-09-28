@@ -19,14 +19,14 @@ require (
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/junegunn/fzf v0.74.3
 	github.com/rivo/uniseg v0.4.7
+	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c
+	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
 	github.com/thegrumpylion/xkb-go v0.1.0
 )
 
 require (
 	github.com/junegunn/go-shellwords v0.0.0-20250127100254-2aa3b3277741 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
-	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c // indirect
-	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
 	golang.org/x/net v0.0.0-20211118161319-6a13c67c3ce4 // indirect
 	golang.org/x/text v0.40.0 // indirect
 )
