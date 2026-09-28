@@ -81,11 +81,17 @@ type Registry struct {
 	// templateRefusals names templates whose files the shell refused to write
 	// because their current bytes are not the shell's last render. The
 	// settings Templates section surfaces them with an overwrite action.
-	templateRefusals map[string]string
 	// templateForce marks templates the user explicitly overrode a refusal
 	// for; the next apply that succeeds consumes the entry.
-	templateForce map[string]bool
-	themeGen      theme.Generator
+	//
+	// generateTheme runs off the Wayland owner (wallpaper applies, config
+	// reload) and deliberately outside Registry.mu, while the panel handler
+	// writes templateForce under it. A leaf mutex guards the pair; nothing
+	// takes Registry.mu while holding it.
+	templateMu       sync.Mutex
+	templateRefusals map[string]string
+	templateForce    map[string]bool
+	themeGen         theme.Generator
 
 	// invalidations carries one entry per bar whose rendered text changed.
 	// The Wayland owner receives from it; the registry owns it and never
@@ -906,17 +912,20 @@ func (r *Registry) generateTheme(cfg config.Config) (theme.Tokens, error) {
 	}
 	if !runningAsTest() {
 		outcomes, err := theming.ApplyEnabled(os.Getenv("HOME"), cfg.TemplateEnabled, tok, r.consumeTemplateForce)
-		r.templateRefusals = map[string]string{}
+		refusals := map[string]string{}
 		for name, oerr := range outcomes {
 			if errors.Is(oerr, theming.ErrUserModified) {
-				r.templateRefusals[name] = oerr.Error()
+				refusals[name] = oerr.Error()
 			}
 		}
+		r.templateMu.Lock()
+		r.templateRefusals = refusals
 		for name := range r.templateForce {
-			if _, refused := r.templateRefusals[name]; !refused {
+			if _, refused := refusals[name]; !refused {
 				delete(r.templateForce, name)
 			}
 		}
+		r.templateMu.Unlock()
 		if err != nil {
 			return tok, fmt.Errorf("theme: external templates: %w", err)
 		}
@@ -926,6 +935,8 @@ func (r *Registry) generateTheme(cfg config.Config) (theme.Tokens, error) {
 
 // consumeTemplateForce reports and clears one template's overwrite request.
 func (r *Registry) consumeTemplateForce(name string) bool {
+	r.templateMu.Lock()
+	defer r.templateMu.Unlock()
 	forced := r.templateForce[name]
 	delete(r.templateForce, name)
 	return forced

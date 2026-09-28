@@ -3,11 +3,13 @@ package icons
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"errors"
 	"image"
 	stdDraw "image/draw"
 	_ "image/jpeg"
 	_ "image/png"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -232,6 +234,9 @@ func decodeSVG(data []byte, width, height int) *ui.Image {
 	if width <= 0 || height <= 0 {
 		return nil
 	}
+	if svgUseCyclic(data) {
+		return nil
+	}
 	icon, err := oksvg.ReadIconStream(bytes.NewReader(data), oksvg.StrictErrorMode)
 	if err != nil || icon.ViewBox.W <= 0 || icon.ViewBox.H <= 0 {
 		return nil
@@ -243,6 +248,71 @@ func decodeSVG(data []byte, width, height int) *ui.Image {
 	scanner := rasterx.NewScannerGV(width, height, rgba, rgba.Bounds())
 	icon.Draw(rasterx.NewDasher(width, height, scanner), 1.0)
 	return fromRGBA(rgba)
+}
+
+// svgUseCyclic reports whether a document's <use> references can reach
+// themselves. oksvg expands <use> by recursing into the referenced subtree
+// with no cycle check, so one self- or mutually-referencing file -- from a
+// downloaded theme or any plugin-provided path -- overflows the stack, which
+// is a fatal, unrecoverable crash of the whole shell. The guard walks ids and
+// hrefs with the stdlib XML decoder and rejects exactly what oksvg would
+// recurse on, so ordinary symbol/use documents still draw.
+func svgUseCyclic(data []byte) bool {
+	type frame struct{ id string }
+	var stack []frame
+	refs := map[string]map[string]bool{}
+	dec := xml.NewDecoder(bytes.NewReader(data))
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return false // a broken document fails the real parse too
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			id, href := "", ""
+			for _, a := range t.Attr {
+				switch a.Name.Local {
+				case "id":
+					id = a.Value
+				case "href":
+					href = strings.TrimPrefix(a.Value, "#")
+				}
+			}
+			stack = append(stack, frame{id: id})
+			if href != "" {
+				for _, f := range stack {
+					if f.id != "" {
+						if refs[f.id] == nil {
+							refs[f.id] = map[string]bool{}
+						}
+						refs[f.id][href] = true
+					}
+				}
+			}
+		case xml.EndElement:
+			stack = stack[:len(stack)-1]
+		}
+	}
+	for start := range refs {
+		cur, seen := []string{start}, map[string]bool{start: true}
+		for len(cur) > 0 {
+			id := cur[len(cur)-1]
+			cur = cur[:len(cur)-1]
+			for next := range refs[id] {
+				if next == start {
+					return true
+				}
+				if !seen[next] {
+					seen[next] = true
+					cur = append(cur, next)
+				}
+			}
+		}
+	}
+	return false
 }
 
 // DecodeRaster applies the same image-header and source-dimension checks as

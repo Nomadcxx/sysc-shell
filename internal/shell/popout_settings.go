@@ -274,16 +274,21 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 // the shell refused to write because the user edited it, each with the
 // explicit overwrite that backs the file up to <path>.bak.
 func templateRefusals(r *Registry) []*ui.Node {
-	if r == nil || len(r.templateRefusals) == 0 {
+	if r == nil {
 		return nil
 	}
-	names := make([]string, 0, len(r.templateRefusals))
+	r.templateMu.Lock()
+	refused := make([]string, 0, len(r.templateRefusals))
 	for name := range r.templateRefusals {
-		names = append(names, name)
+		refused = append(refused, name)
 	}
-	sort.Strings(names)
-	notes := make([]*ui.Node, 0, len(names))
-	for _, name := range names {
+	r.templateMu.Unlock()
+	if len(refused) == 0 {
+		return nil
+	}
+	sort.Strings(refused)
+	notes := make([]*ui.Node, 0, len(refused))
+	for _, name := range refused {
 		notes = append(notes, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, PinEnd: true,
 			Children: []*ui.Node{
 				{Kind: ui.KindText, Name: name + " refusal",

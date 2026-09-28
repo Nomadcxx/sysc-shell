@@ -57,9 +57,14 @@ func ApplyWriteForce(path, rendered string) error {
 }
 
 func applyWriteForce(path, rendered string) error {
+	// Keep the FIRST backup: it holds the bytes the shell never rendered. A
+	// second forced overwrite replaces a file the shell itself wrote, and
+	// clobbering that backup would destroy the only record of the user's.
 	if info, err := os.Stat(path); err == nil && info.Size() > 0 {
-		if err := os.Rename(path, path+".bak"); err != nil {
-			return err
+		if _, err := os.Stat(path + ".bak"); errors.Is(err, os.ErrNotExist) {
+			if err := os.Rename(path, path+".bak"); err != nil {
+				return err
+			}
 		}
 	}
 	return writeAdopted(path, []byte(rendered))
@@ -79,6 +84,16 @@ func writeAdopted(path string, data []byte) error {
 // Rename is atomic within a directory, so a reader never sees a half-written
 // config and a crash leaves the previous bytes in place.
 func swapWrite(path string, data []byte) error {
+	// A rename would sail past a read-only target the open would not: check
+	// writability first, the way writeFileAtomic always did, so a protected
+	// file is reported rather than silently replaced.
+	if probe, err := os.OpenFile(path, os.O_WRONLY, 0); err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+	} else {
+		probe.Close()
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -92,6 +107,11 @@ func swapWrite(path string, data []byte) error {
 		os.Remove(name)
 		return err
 	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(name)
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(name)
 		return err
@@ -100,7 +120,11 @@ func swapWrite(path string, data []byte) error {
 		os.Remove(name)
 		return err
 	}
-	return os.Rename(name, path)
+	if err := os.Rename(name, path); err != nil {
+		os.Remove(name)
+		return err
+	}
+	return nil
 }
 
 // statePath is $XDG_STATE_HOME/sysc-shell/templates/state.json. The design
@@ -109,7 +133,8 @@ func swapWrite(path string, data []byte) error {
 // so the record follows the convention.
 func statePath() string {
 	base := os.Getenv("XDG_STATE_HOME")
-	if base == "" {
+	// XDG is explicit that a relative state root is invalid: ignore it.
+	if base == "" || !filepath.IsAbs(base) {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return ""
@@ -125,7 +150,11 @@ func statePath() string {
 func loadState() map[string]string {
 	state := map[string]string{}
 	if data, err := os.ReadFile(statePath()); err == nil {
-		_ = json.Unmarshal(data, &state)
+		// A bare `null` decodes into a nil map; rememberHash would then
+		// panic on assignment. Treat it like any other corrupt record.
+		if err := json.Unmarshal(data, &state); err != nil || state == nil {
+			state = map[string]string{}
+		}
 	}
 	return state
 }

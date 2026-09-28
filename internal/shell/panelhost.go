@@ -2325,10 +2325,12 @@ func (h *PanelHost) activate(r *Registry) bool {
 		return true
 	}
 	if name, ok := strings.CutPrefix(n.Action, "template-overwrite:"); ok {
+		r.templateMu.Lock()
 		if r.templateForce == nil {
 			r.templateForce = map[string]bool{}
 		}
 		r.templateForce[name] = true
+		r.templateMu.Unlock()
 		// A config rewrite is the one path that re-runs every template
 		// apply; the force flag is consumed there, off this goroutine.
 		if err := r.writeConfig(r.cfg); err != nil {

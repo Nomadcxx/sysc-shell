@@ -7,8 +7,10 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -384,7 +386,16 @@ func TestFileResolverTakesOnlyAbsoluteDecodablePaths(t *testing.T) {
 	if path, ok := r.Resolve(real, 96); !ok || path != real {
 		t.Fatalf("absolute png = %q, %v", path, ok)
 	}
-	for _, name := range []string{"", "relative.png", filepath.Join(dir, "a.svg"), filepath.Join(dir, "a.txt"), filepath.Join(dir, "missing.png")} {
+	// An absolute .svg resolves since Task 4 put .svg in the decodable set;
+	// FileResolver and notification image-paths go through here.
+	svg := filepath.Join(dir, "a.svg")
+	if err := os.WriteFile(svg, []byte(testGlyph), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if path, ok := r.Resolve(svg, 96); !ok || path != svg {
+		t.Fatalf("absolute svg = %q, %v", path, ok)
+	}
+	for _, name := range []string{"", "relative.png", filepath.Join(dir, "a.txt"), filepath.Join(dir, "missing.png")} {
 		if _, ok := r.Resolve(name, 96); ok {
 			t.Fatalf("resolved %q", name)
 		}
@@ -479,5 +490,94 @@ func TestWorkerDecodesAnSvgOnlyTheme(t *testing.T) {
 	}
 	if img := awaitImage(t, worker, key); img == nil || img.Width != 24 {
 		t.Fatalf("svg decode = %v", img)
+	}
+}
+
+// Recursive <use> references make oksvg's drawer recurse without a cycle
+// check; a 125-byte document overflows the stack, which is fatal and
+// unrecoverable. The decoder must reject them before handing bytes over.
+const svgUseSelfRef = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">` +
+	`<defs><g id="a"><use href="#a"/></g></defs><use href="#a"/></svg>`
+
+const svgUseMutualRef = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">` +
+	`<defs><g id="a"><use href="#b"/></g><g id="b"><use href="#a"/></g></defs>` +
+	`<use href="#a"/></svg>`
+
+const svgUseLegit = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">` +
+	`<defs><g id="s"><rect x="0" y="0" width="24" height="24" fill="#00FF00"/></g></defs>` +
+	`<use href="#s"/></svg>`
+
+func TestDecodeSVGRejectsRecursiveUse(t *testing.T) {
+	if !svgUseCyclic([]byte(svgUseSelfRef)) {
+		t.Error("self-referencing use not detected")
+	}
+	if !svgUseCyclic([]byte(svgUseMutualRef)) {
+		t.Error("mutually referencing uses not detected")
+	}
+	if svgUseCyclic([]byte(svgUseLegit)) {
+		t.Error("a plain use flagged as cyclic")
+	}
+	if img := decodeSVG([]byte(svgUseSelfRef), 24, 24); img != nil {
+		t.Error("recursive svg decoded instead of rejected")
+	}
+	if img := decodeSVG([]byte(svgUseLegit), 24, 24); img == nil || img.Width != 24 {
+		t.Fatalf("legit use decoded to %v", img)
+	}
+}
+
+func TestWorkerSurvivesARecursiveSvg(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "Adwaita", "48x48", "apps")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "chat.svg"), []byte(svgUseSelfRef), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "chat.png"), pngBytes(t, 32), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	worker, _ := startWorkerAt(t, root)
+	key := Square("chat", 24)
+	if _, _, err := worker.Request(key); err != nil {
+		t.Fatal(err)
+	}
+	if img := awaitImage(t, worker, key); img == nil || img.Width != 24 {
+		t.Fatalf("worker after recursive svg = %v", img)
+	}
+}
+
+func TestSvgFailureIsLoggedOncePerPath(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "Adwaita", "48x48", "apps")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "chat.svg"), []byte(svgUseSelfRef), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "chat.png"), pngBytes(t, 32), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	worker, _ := startWorkerAt(t, root)
+
+	var buf bytes.Buffer
+	before := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(before)
+
+	// Two sizes of the same icon resolve to the same failing svg path.
+	for _, size := range []int{24, 32} {
+		key := Square("chat", size)
+		if _, _, err := worker.Request(key); err != nil {
+			t.Fatal(err)
+		}
+		if img := awaitImage(t, worker, key); img == nil || img.Width != size {
+			t.Fatalf("size %d = %v", size, img)
+		}
+	}
+	log.SetOutput(before)
+	if n := strings.Count(buf.String(), "did not rasterise"); n != 1 {
+		t.Fatalf("failure logged %d times, want 1:\n%s", n, buf.String())
 	}
 }

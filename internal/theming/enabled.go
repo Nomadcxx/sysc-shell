@@ -105,7 +105,12 @@ func applyOnce(home string, enabled func(string) bool, tok theme.Tokens, force f
 				record(name, UnapplyGtkThemeName(ini))
 				continue
 			}
-			record(name, applyWrite(css, rendered, forceOn(name)))
+			// Pointing gtk-theme-name at a css the shell refused to write
+			// would half-apply the theme: skip the ini when the css fails.
+			if err := applyWrite(css, rendered, forceOn(name)); err != nil {
+				record(name, err)
+				continue
+			}
 			record(name, ApplyGtkThemeName(ini, gtkOurs))
 		default:
 			target := writeTarget(home, name)
