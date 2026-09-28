@@ -570,6 +570,24 @@ func TestBarHoverInvalidatesOnlyOnTargetChange(t *testing.T) {
 	if got := p.pointer.hover; got != "synthetic-action" {
 		t.Fatalf("hover = %q, want synthetic-action", got)
 	}
+	p.mu.Lock()
+	root, _ := p.renderViewLocked()
+	p.mu.Unlock()
+	var hovered bool
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		hovered = hovered || n.State.Has(ui.StateHovered)
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(root)
+	if hovered {
+		t.Error("the bar resolved hover onto its render copy; the furniture ruling holds no more")
+	}
 	// Sliding within the same pill resolves to the same action, so it costs no
 	// frame.
 	if p.Handle(wayland.Event{Kind: wayland.EventPointerMotion, X: float64(cx + 1), Y: float64(cy)}) {

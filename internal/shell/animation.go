@@ -638,6 +638,9 @@ func animateSurfaceResting(stop, wake <-chan struct{}, settled func() bool, publ
 type interaction struct {
 	hover string
 	press string
+	// stateLayer is this surface's hover-tint policy. The bar keeps its
+	// furniture ruling; interactive panels opt in.
+	stateLayer bool
 }
 
 // setHover aims at a new hovered key and reports whether anything changed.
@@ -681,7 +684,7 @@ func (s interaction) apply(root *ui.Node, anim *animator) {
 		}
 		if interactive(n) {
 			key := n.StableKey()
-			hovered := key != "" && key == s.hover
+			hovered := s.stateLayer && key != "" && key == s.hover
 			pressed := key != "" && key == s.press
 			n.State &^= ui.StateHovered | ui.StatePressed
 			if hovered {

@@ -126,7 +126,10 @@ type trayDrawerHost struct {
 }
 
 func newTrayDrawerHost(r *Registry, harness *hostHarness) *trayDrawerHost {
-	h := &trayDrawerHost{r: r, diagnostic: func(message string) { log.Print(message) }}
+	h := &trayDrawerHost{
+		r: r, diagnostic: func(message string) { log.Print(message) },
+		pointer: interaction{stateLayer: true},
+	}
 	if harness != nil {
 		h.request = harness.request
 		h.harnessRef = harness

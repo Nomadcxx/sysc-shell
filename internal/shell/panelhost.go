@@ -771,6 +771,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		id:          id,
 		output:      output,
 		place:       place,
+		pointer:     interaction{stateLayer: true},
 		stopAnim:    make(chan struct{}),
 		shieldQuiet: time.Now().Add(shieldQuietFor),
 		theme:       r.panelThemeFor(output),

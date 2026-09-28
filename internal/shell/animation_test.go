@@ -21,6 +21,35 @@ func newTestAnimator(reduced bool) (*animator, *fakeClock) {
 	return newAnimator(clock.now, reduced, render.MotionSet{}), clock
 }
 
+func TestStateLayerPolicyGatesHoverOnly(t *testing.T) {
+	t.Parallel()
+	tree := func() *ui.Node {
+		return &ui.Node{Kind: ui.KindRow, Children: []*ui.Node{
+			{Kind: ui.KindButton, Action: "b", Bounds: ui.Rect{W: 10, H: 10}},
+		}}
+	}
+	for _, tc := range []struct {
+		name  string
+		pol   interaction
+		want  ui.Interaction
+		notWn ui.Interaction
+	}{
+		{"bar paints clickables at rest", interaction{stateLayer: false}, ui.StatePressed, ui.StateHovered},
+		{"panels tint hover and press", interaction{stateLayer: true}, ui.StatePressed | ui.StateHovered, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := tree()
+			pol := tc.pol
+			pol.hover, pol.press = "b", "b"
+			pol.apply(root, nil)
+			n := root.Children[0]
+			if !n.State.Has(tc.want) || n.State.Has(tc.notWn) {
+				t.Fatalf("state = %v, want %v without %v", n.State, tc.want, tc.notWn)
+			}
+		})
+	}
+}
+
 func TestAnimatorUsesCatalogueDurations(t *testing.T) {
 	t.Parallel()
 	a, _ := newTestAnimator(false)
