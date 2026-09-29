@@ -88,11 +88,18 @@ func run(ctx context.Context) (err error) {
 	}
 
 	registry := shell.NewRegistry(cfg)
-	// Display-power policy. Blank and Unblank are log lines until sysc-718
-	// binds the niri monitor-power actions; Suspend goes straight to logind.
+	// Display-power policy. Blank and Unblank ride the niri DPMS actions on
+	// the socket that was just required; Suspend goes straight to logind.
+	monitorPower := func(action any, what string) {
+		pctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := niri.Action(pctx, socket, action); err != nil {
+			log.Printf("sysc-shell: idle %s: %v", what, err)
+		}
+	}
 	idleSvc := services.NewIdleService(services.IdleOptions{Execs: services.IdleExecutors{
-		Blank:   func() { log.Printf("sysc-shell: idle blank") },
-		Unblank: func() { log.Printf("sysc-shell: idle unblank") },
+		Blank:   func() { monitorPower(niri.PowerOffMonitors{}, "blank") },
+		Unblank: func() { monitorPower(niri.PowerOnMonitors{}, "unblank") },
 		Suspend: func() {
 			sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()

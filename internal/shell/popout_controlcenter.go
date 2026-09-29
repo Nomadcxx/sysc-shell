@@ -302,7 +302,7 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 		level := int(n.Value)
 		r.scheduleControl(h, func() error { return brightness.Set(level) })
 		return true
-	case "session-lock", "session-logout", "session-suspend", "session-reboot", "session-poweroff":
+	case "session-lock", "session-logout", "session-suspend", "session-display-off", "session-reboot", "session-poweroff":
 		argv := sessionArgv(n.Action, r.cfg.Session.Locker)
 		run := r.runArgv
 		r.scheduleControl(h, func() error { return run(argv) })

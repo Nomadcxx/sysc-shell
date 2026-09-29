@@ -29,6 +29,7 @@ func TestActionWritesFocusAndClose(t *testing.T) {
 			`{"Action":{"FocusWorkspace":{"reference":{"Id":7}}}}`,
 			`{"Ok":"Handled"}`, false,
 		},
+
 		{
 			"screenshot screen", ScreenshotScreen{WriteToDisk: true, ShowPointer: true, Path: "/p/s.png"},
 			`{"Action":{"ScreenshotScreen":{"write_to_disk":true,"show_pointer":true,"path":"/p/s.png"}}}`,
@@ -45,6 +46,8 @@ func TestActionWritesFocusAndClose(t *testing.T) {
 			`{"Action":{"ScreenshotWindow":{"id":9,"write_to_disk":true,"show_pointer":false,"path":"/p/w.png"}}}`,
 			`{"Ok":"Handled"}`, false,
 		},
+		{"power off", PowerOffMonitors{}, `{"Action":{"PowerOffMonitors":{}}}`, `{"Ok":"Handled"}`, false},
+		{"power on", PowerOnMonitors{}, `{"Action":{"PowerOnMonitors":{}}}`, `{"Ok":"Handled"}`, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

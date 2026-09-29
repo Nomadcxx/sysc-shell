@@ -2822,7 +2822,7 @@ func (h *PanelHost) activate(r *Registry) bool {
 		if r.plugins != nil {
 			_, _ = r.plugins.openPanel("org.sysc.calendar", v1.PanelParams{Entry: "panel"})
 		}
-	case "session-lock", "session-logout", "session-suspend", "session-reboot", "session-poweroff":
+	case "session-lock", "session-logout", "session-suspend", "session-display-off", "session-reboot", "session-poweroff":
 		r.runSessionAction(h, n.Action)
 	}
 	return true

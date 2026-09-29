@@ -592,6 +592,7 @@ func ccSessionActions(m theme.Metrics, locker string) *ui.Node {
 		{"Lock", "session-lock", "lock"},
 		{"Log out", "session-logout", "logout"},
 		{"Suspend", "session-suspend", "bedtime"},
+		{"Screen off", "session-display-off", "visibility_off"},
 		{"Reboot", "session-reboot", "restart_alt"},
 		{"Power off", "session-poweroff", "power_settings_new"},
 	}

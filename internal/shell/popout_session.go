@@ -159,6 +159,7 @@ func sessionActionsCard(th Theme, locker string) *ui.Node {
 		{name: "Lock", id: "session-lock", icon: "lock"},
 		{name: "Log out", id: "session-logout", icon: "logout"},
 		{name: "Suspend", id: "session-suspend", icon: "bedtime"},
+		{name: "Screen off", id: "session-display-off", icon: "visibility_off"},
 		{name: "Reboot", id: "session-reboot", icon: "restart_alt", destructive: true},
 		{name: "Power off", id: "session-poweroff", icon: "power_settings_new", destructive: true},
 	}
@@ -194,6 +195,9 @@ func sessionArgv(action, locker string) []string {
 		return []string{"loginctl", "terminate-session", "self"}
 	case "session-suspend":
 		return []string{"loginctl", "suspend"}
+	// DPMS off; the compositor powers the outputs back on at input.
+	case "session-display-off":
+		return []string{"niri", "msg", "action", "power-off-monitors"}
 	case "session-reboot":
 		return []string{"loginctl", "reboot"}
 	case "session-poweroff":

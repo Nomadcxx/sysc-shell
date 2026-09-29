@@ -44,6 +44,12 @@ type ScreenshotWindow struct {
 	Path        string  `json:"path"`
 }
 
+// PowerOffMonitors asks the compositor to DPMS-off every output.
+type PowerOffMonitors struct{}
+
+// PowerOnMonitors asks the compositor to DPMS-on every output.
+type PowerOnMonitors struct{}
+
 // Action sends one compositor request on a short-lived connection. It does
 // not use the EventStream socket.
 func Action(ctx context.Context, socketPath string, body any) error {
@@ -102,6 +108,11 @@ func marshalAction(body any) ([]byte, error) {
 		inner = map[string]any{"FocusWorkspace": map[string]any{
 			"reference": map[string]any{"Id": v.ID},
 		}}
+	case PowerOffMonitors:
+		// Fieldless variants still serialize as an empty object.
+		inner = map[string]any{"PowerOffMonitors": map[string]any{}}
+	case PowerOnMonitors:
+		inner = map[string]any{"PowerOnMonitors": map[string]any{}}
 	default:
 		return nil, fmt.Errorf("niri: unknown action %T", body)
 	}

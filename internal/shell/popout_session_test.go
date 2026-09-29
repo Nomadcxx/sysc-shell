@@ -22,7 +22,7 @@ func TestSessionActionsList(t *testing.T) {
 	t.Parallel()
 	_, h := newSessionHost(t, "swaylock")
 	got := focusableNames(h.root)
-	want := []string{"Lock", "Log out", "Suspend", "Reboot", "Power off"}
+	want := []string{"Lock", "Log out", "Suspend", "Screen off", "Reboot", "Power off"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("actions = %v, want %v", got, want)
 	}
@@ -32,7 +32,7 @@ func TestLockHiddenWithoutLocker(t *testing.T) {
 	t.Parallel()
 	_, h := newSessionHost(t, "")
 	got := focusableNames(h.root)
-	want := []string{"Log out", "Suspend", "Reboot", "Power off"}
+	want := []string{"Log out", "Suspend", "Screen off", "Reboot", "Power off"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("actions = %v, want %v", got, want)
 	}
@@ -254,6 +254,7 @@ func TestSessionExecMapping(t *testing.T) {
 	}{
 		{"Log out", []string{"loginctl", "terminate-session", "self"}},
 		{"Suspend", []string{"loginctl", "suspend"}},
+		{"Screen off", []string{"niri", "msg", "action", "power-off-monitors"}},
 		{"Reboot", []string{"loginctl", "reboot"}},
 		{"Power off", []string{"loginctl", "poweroff"}},
 		{"Lock", []string{"swaylock"}},
@@ -604,7 +605,8 @@ func TestSessionActionsAreFullWidthIconStadiums(t *testing.T) {
 
 	icons := map[string]string{
 		"Lock": "lock", "Log out": "logout", "Suspend": "bedtime",
-		"Reboot": "restart_alt", "Power off": "power_settings_new",
+		"Screen off": "visibility_off",
+		"Reboot":     "restart_alt", "Power off": "power_settings_new",
 	}
 	var width int
 	for name, want := range icons {
@@ -687,11 +689,12 @@ func TestSessionActionIdentityIsUnchanged(t *testing.T) {
 	// The action IDs and the argv they map to are contracts with the IPC alias
 	// and the key binding. Recomposing the panel must not touch either.
 	want := map[string][]string{
-		"session-lock":     {"swaylock"},
-		"session-logout":   {"loginctl", "terminate-session", "self"},
-		"session-suspend":  {"loginctl", "suspend"},
-		"session-reboot":   {"loginctl", "reboot"},
-		"session-poweroff": {"loginctl", "poweroff"},
+		"session-lock":        {"swaylock"},
+		"session-logout":      {"loginctl", "terminate-session", "self"},
+		"session-suspend":     {"loginctl", "suspend"},
+		"session-display-off": {"niri", "msg", "action", "power-off-monitors"},
+		"session-reboot":      {"loginctl", "reboot"},
+		"session-poweroff":    {"loginctl", "poweroff"},
 	}
 	for id, argv := range want {
 		node := findNode(h.root, func(n *ui.Node) bool { return n.Action == id })
