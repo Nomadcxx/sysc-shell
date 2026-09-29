@@ -251,6 +251,44 @@ func TestCloseKillsAPluginThatIgnoresShutdown(t *testing.T) {
 	}
 }
 
+func TestCloseReturnsWhenThePluginStopsReading(t *testing.T) {
+	t.Parallel()
+
+	s := supervisor(installHelper(t, "ignore-shutdown"))
+	s.ShutdownGrace = 150 * time.Millisecond
+	sess, err := s.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Fill the plugin's stdin so the shutdown message cannot be written: the
+	// helper never reads, and a pipe holds only so much. The write blocks
+	// holding sendMu, which is the shape that used to hold Close forever.
+	big := &v1.ViewSnapshot{ViewID: "v1", Revision: 1,
+		Root: &v1.Node{Kind: v1.KindText, Text: strings.Repeat("x", 4<<20)}}
+	written := make(chan struct{})
+	go func() {
+		_ = sess.Send(big)
+		close(written)
+	}()
+	select {
+	case <-written:
+		t.Fatal("the fill write completed; the pipe never filled")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	closed := make(chan ExitReason, 1)
+	go func() { closed <- sess.Close() }()
+	select {
+	case reason := <-closed:
+		if reason.Kind != ExitKilled {
+			t.Fatalf("exit = %+v, want a kill", reason)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Close blocked behind a full stdin pipe")
+	}
+}
+
 func TestCloseIsIdempotent(t *testing.T) {
 	t.Parallel()
 

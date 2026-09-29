@@ -183,7 +183,11 @@ func (p *Preparer) work() {
 		if !ok {
 			return
 		}
-		p.results <- p.prepare(j)
+		select {
+		case p.results <- p.prepare(j):
+		case <-p.done:
+			return
+		}
 	}
 }
 

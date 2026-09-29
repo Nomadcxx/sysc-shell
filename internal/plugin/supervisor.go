@@ -21,6 +21,11 @@ import (
 // are the ones that explain it.
 const MaxStderrBytes = 64 << 10
 
+// shutdownSendTimeout bounds the best-effort host.shutdown write. A plugin
+// that stopped reading its standard input must not be able to hold Close in
+// Send; closing the pipe below unblocks the write either way.
+const shutdownSendTimeout = 100 * time.Millisecond
+
 // ErrHandshakeTimeout reports a plugin that did not answer host.hello in time.
 var ErrHandshakeTimeout = errors.New("plugin: handshake timed out")
 
@@ -400,7 +405,15 @@ func (s *Session) shutdown() ExitReason {
 	if s.cmd == nil || s.cmd.Process == nil {
 		return ExitReason{Kind: ExitCrashed, Detail: "never started"}
 	}
-	_ = s.Send(&v1.HostShutdown{})
+	sent := make(chan struct{})
+	go func() {
+		_ = s.Send(&v1.HostShutdown{})
+		close(sent)
+	}()
+	select {
+	case <-sent:
+	case <-time.After(shutdownSendTimeout):
+	}
 	_ = s.stdin.Close()
 
 	grace := s.grace

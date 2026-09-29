@@ -1779,6 +1779,9 @@ func (r *Registry) Close() {
 func (r *Registry) UpdateClock(now time.Time) []uint32 {
 	r.mu.Lock()
 	r.now = now
+	if r.notify.expireDND(now) && r.toasts != nil {
+		r.toasts.recompute()
+	}
 	var changed []uint32
 	for global, bar := range r.bars {
 		if bar.apply(r.viewLocked(bar.connector())) {

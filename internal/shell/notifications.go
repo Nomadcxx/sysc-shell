@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -205,6 +206,16 @@ func (r *Registry) applyNotify(m notifyclient.Message) {
 	if h := r.panelHosts[PanelNotifications]; h != nil {
 		r.rebuildPanel(h)
 		out, open = h.output, true
+	}
+	// The centre is open, so anything unseen is on screen: mark it seen the
+	// same way opening the centre does. The daemon confirms with a
+	// history-seen delta; an unreachable daemon leaves the badge as it was.
+	if open {
+		if ids := r.notify.unseenIDs(); len(ids) > 0 {
+			if err := r.sendNotify(protocol.Command{Kind: protocol.CommandHistoryMarkSeen, IDs: ids}); err != nil {
+				fmt.Fprintf(os.Stderr, "sysc-shell: mark notifications seen: %v\n", err)
+			}
+		}
 	}
 	controlOut, controlOpen := r.rebuildControlCentreLocked()
 	r.mu.Unlock()
