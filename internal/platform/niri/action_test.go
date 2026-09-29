@@ -29,6 +29,22 @@ func TestActionWritesFocusAndClose(t *testing.T) {
 			`{"Action":{"FocusWorkspace":{"reference":{"Id":7}}}}`,
 			`{"Ok":"Handled"}`, false,
 		},
+		{
+			"screenshot screen", ScreenshotScreen{WriteToDisk: true, ShowPointer: true, Path: "/p/s.png"},
+			`{"Action":{"ScreenshotScreen":{"write_to_disk":true,"show_pointer":true,"path":"/p/s.png"}}}`,
+			`{"Ok":"Handled"}`, false,
+		},
+		// A null id is niri's "the focused window".
+		{
+			"screenshot focused window", ScreenshotWindow{WriteToDisk: true, Path: "/p/w.png"},
+			`{"Action":{"ScreenshotWindow":{"id":null,"write_to_disk":true,"show_pointer":false,"path":"/p/w.png"}}}`,
+			`{"Ok":"Handled"}`, false,
+		},
+		{
+			"screenshot window by id", ScreenshotWindow{ID: new(uint64(9)), WriteToDisk: true, Path: "/p/w.png"},
+			`{"Action":{"ScreenshotWindow":{"id":9,"write_to_disk":true,"show_pointer":false,"path":"/p/w.png"}}}`,
+			`{"Ok":"Handled"}`, false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
