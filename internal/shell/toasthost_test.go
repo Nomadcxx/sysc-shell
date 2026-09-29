@@ -483,6 +483,16 @@ func TestTimedDNDPresetLiftsSuppressionWhenItEnds(t *testing.T) {
 	if len(got) != 2 || got[0] != true || got[1] != false {
 		t.Fatalf("DND hook calls = %v, want [true false]", got)
 	}
+
+	// Re-enabling after the preset ended must reach the hook, so the OSD
+	// describes the new state instead of being skipped by a stale flag.
+	r.setDND(true)
+	mu.Lock()
+	got = append([]bool(nil), calls...)
+	mu.Unlock()
+	if len(got) != 3 || got[2] != true {
+		t.Fatalf("DND hook calls after re-enabling = %v, want [true false true]", got)
+	}
 }
 
 func TestToastRenewsPresentationWhileCardsStayUp(t *testing.T) {
