@@ -119,6 +119,31 @@ func run(ctx context.Context) (err error) {
 		registry.SetScreenSaver(screenSaver)
 		defer screenSaver.Remove()
 	}
+	// Logind power observation: transitions are logged, and the resume edge
+	// re-arms the idle timers (raising the screen if it was blanked) and
+	// repaints every output once. The lid switch and power key keep acting on
+	// logind's own policy — this watches, it never intercepts or delays.
+	if logind, ldErr := services.NewLogind(); ldErr != nil {
+		log.Printf("sysc-shell: logind monitor: %v", ldErr)
+	} else {
+		defer logind.Close()
+		go logind.Run()
+		gate := services.NewResumeGate(time.Second)
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case ev := <-logind.Events():
+					if ev.Sleeping || !gate.Fire() {
+						continue
+					}
+					idleSvc.Wake()
+					registry.RepaintAll()
+				}
+			}
+		}()
+	}
 	// Built before the plugin host: plugin toasts send through this client,
 	// so BindNotifications must run first. The pumps below still drain it.
 	notifyClient := notifyclient.New(os.Getenv("XDG_RUNTIME_DIR"), registry.NotifyMessages())

@@ -1406,6 +1406,21 @@ func (r *Registry) toggleNotifyDND() {
 	r.publish(changed)
 }
 
+// RepaintAll invalidates every live output's surfaces once. Resume uses it:
+// after a sleep cycle shell pixels, cursor planes and damage state are stale,
+// and one forced frame per output is cheaper than reasoning about which
+// surfaces survived. While the Wayland owner is suspended its bridge queues
+// the invalidations, so this call never blocks on the socket's silence.
+func (r *Registry) RepaintAll() {
+	r.mu.Lock()
+	globals := make([]uint32, 0, len(r.bars))
+	for global := range r.bars {
+		globals = append(globals, global)
+	}
+	r.mu.Unlock()
+	r.publish(globals)
+}
+
 // outputGlobalsLocked maps each live connector to its wl_registry global. Two
 // globals may briefly share a connector during a reconnect; the newest wins,
 // because that is the one whose surfaces exist.
