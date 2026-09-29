@@ -38,7 +38,13 @@ type AuxSpec struct {
 	// InputRects, when non-nil, limit pointer input to these surface-local
 	// rectangles from the first frame. Nil leaves the whole surface.
 	InputRects []ui.Rect
-	Callbacks  HostCallbacks
+	// InhibitShortcuts asks the owner to hold a keyboard-shortcuts inhibitor
+	// for this surface while it has keyboard focus, so compositor keybinds
+	// cannot act underneath it. Without an advertised
+	// zwp_keyboard_shortcuts_inhibit_manager_v1 the surface simply shares the
+	// compositor's keybinds; the open never fails for want of one.
+	InhibitShortcuts bool
+	Callbacks        HostCallbacks
 }
 
 // AuxRequest opens (Open != nil), updates (Update != nil), or closes (both nil,
@@ -77,6 +83,7 @@ type auxPolicy struct {
 	width, height                                    uint32
 	inputRects                                       []ui.Rect
 	hasInputRegion                                   bool
+	inhibitShortcuts                                 bool
 }
 
 // errOutputGone reports an open abandoned because its output was removed while
@@ -247,6 +254,7 @@ func (o *owner) openAux(h *OutputHost, spec *AuxSpec) error {
 	if spec.InputRects != nil {
 		u.policy.inputRects, u.policy.hasInputRegion = append([]ui.Rect(nil), spec.InputRects...), true
 	}
+	u.policy.inhibitShortcuts = spec.InhibitShortcuts
 	return nil
 }
 

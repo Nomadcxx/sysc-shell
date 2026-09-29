@@ -66,7 +66,25 @@ func (o *owner) enterKeyboard(h *OutputHost, u *surfaceUnit) {
 	if o.repeat.armed {
 		o.repeat.next = o.now().Add(time.Duration(o.repeat.delay) * time.Millisecond)
 	}
+	o.inhibitShortcuts(u)
 	o.syncIME(u)
+}
+
+// inhibitShortcuts holds a keyboard-shortcuts inhibitor for a focus-bound
+// surface whose policy asks for one, so compositor keybinds cannot act
+// underneath it. Absence of the manager, or a refusal, is tolerated: the
+// surface simply shares the compositor's keybinds, which is the pre-existing
+// behavior. The inhibitor is destroyed with the unit via its cleanup stack.
+func (o *owner) inhibitShortcuts(u *surfaceUnit) {
+	if !u.policy.inhibitShortcuts || o.inhibitMgr == nil || u.inhibit != nil {
+		return
+	}
+	ink, err := o.inhibitMgr.InhibitShortcuts(u.surface, o.seat)
+	if err != nil {
+		return
+	}
+	u.inhibit = ink
+	u.cleanup.push("shortcuts-inhibitor", ink.Destroy)
 }
 
 // keyboardGone is leaveKeyboard for a surface that is going away rather than

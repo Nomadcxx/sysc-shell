@@ -144,6 +144,10 @@ func (r *Registry) selectorSpec(sel *regionSelector, s *selectorSurface) *waylan
 		ExclusiveZone: -1,
 		Keyboard:      keyboardExclusive,
 		Freeze:        true,
+		// The selector grabs the keyboard for its own Escape/Enter handling;
+		// inhibit so a compositor bind cannot fire while a region is being
+		// dragged.
+		InhibitShortcuts: true,
 		Callbacks: wayland.HostCallbacks{
 			Configure: func(w, h, _ int) error {
 				r.mu.Lock()
