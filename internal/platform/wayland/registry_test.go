@@ -42,3 +42,23 @@ func TestBackgroundEffectIsKnownButNotRequired(t *testing.T) {
 		}
 	}
 }
+
+// Every global the owner looks up must be in interfaceMaximum, or addGlobal
+// never records it and the lookup silently finds nothing. The data device
+// manager was missing for this reason: the shell's copy, paste and screenshot
+// clipboard never bound on any compositor.
+func TestDataDeviceManagerIsKnownButNotRequired(t *testing.T) {
+	t.Parallel()
+	rs := newRegistryState()
+	if got, ok := rs.addGlobal(9, "wl_data_device_manager", 3); !ok || got != 3 {
+		t.Fatalf("addGlobal = %d/%v, want 3 and recorded", got, ok)
+	}
+	if _, ok := rs.singletons["wl_data_device_manager"]; !ok {
+		t.Fatal("the data device manager was not recorded, so bindSelection finds nothing")
+	}
+	for _, iface := range requiredSingletons {
+		if iface == "wl_data_device_manager" {
+			t.Fatal("a compositor without a clipboard must still start")
+		}
+	}
+}

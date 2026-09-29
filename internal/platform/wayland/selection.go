@@ -125,7 +125,7 @@ func (o *owner) bindSelection(ctx *client.Context) error {
 		return nil
 	}
 	o.sel.manager = client.NewDataDeviceManager(ctx)
-	if err := o.registry.Bind(entry.global, "wl_data_device_manager", min(entry.version, 3), o.sel.manager); err != nil {
+	if err := o.registry.Bind(entry.global, "wl_data_device_manager", entry.version, o.sel.manager); err != nil {
 		return err
 	}
 	dev, err := o.sel.manager.GetDataDevice(o.seat)
