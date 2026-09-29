@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -213,6 +214,52 @@ func TestClosedPreparerAcceptsAndDropsWork(t *testing.T) {
 	// close must be a no-op rather than a panic on a closed channel.
 	p.Submit(barJob("late", 1, timerBar()))
 	p.Close()
+}
+
+func TestCloseReturnsWhenNobodyDrainsResults(t *testing.T) {
+	t.Parallel()
+
+	// The shell's results pump can stop before the preparer does: a host
+	// teardown cancels its context first. A worker blocked publishing into a
+	// full channel must not be able to hold Close forever.
+	p := NewPreparer(1, measureFixed)
+	for i := 0; i < 4; i++ {
+		p.Submit(barJob(fmt.Sprintf("v%d", i), 1, timerBar()))
+	}
+	// Wait until the buffer is full, then hand the worker one more job so its
+	// next publish is the one that blocks.
+	waitUntil(t, "the results buffer to fill", func() bool { return len(p.results) == 4 })
+	p.Submit(barJob("v4", 1, timerBar()))
+	waitUntil(t, "the worker to take the blocking job", func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		_, pending := p.pending["v4"]
+		return !pending
+	})
+	time.Sleep(50 * time.Millisecond)
+
+	done := make(chan struct{})
+	go func() {
+		p.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close blocked with nobody draining Results")
+	}
+}
+
+// waitUntil polls ok until it holds or the test fails.
+func waitUntil(t *testing.T, what string, ok func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for !ok() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func TestPreparedTreesAreNotSharedBetweenRevisions(t *testing.T) {
