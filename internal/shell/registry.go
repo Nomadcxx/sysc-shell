@@ -1779,8 +1779,19 @@ func (r *Registry) Close() {
 func (r *Registry) UpdateClock(now time.Time) []uint32 {
 	r.mu.Lock()
 	r.now = now
-	if r.notify.expireDND(now) && r.toasts != nil {
+	expired := r.notify.expireDND(now)
+	if expired && r.toasts != nil {
 		r.toasts.recompute()
+	}
+	// An open notification centre freezes its DND glyph in the built tree;
+	// rebuild it when a timed preset lifts (gh #56).
+	var dndCentreOut uint32
+	dndCentreOpen := false
+	if expired {
+		if h := r.panelHosts[PanelNotifications]; h != nil {
+			r.rebuildPanel(h)
+			dndCentreOut, dndCentreOpen = h.output, true
+		}
 	}
 	var changed []uint32
 	for global, bar := range r.bars {
@@ -1801,6 +1812,9 @@ func (r *Registry) UpdateClock(now time.Time) []uint32 {
 	}
 	if controlOK {
 		r.publishSurface(controlOut, panelSurfaceID(PanelControlCenter))
+	}
+	if dndCentreOpen {
+		r.publishSurface(dndCentreOut, panelSurfaceID(PanelNotifications))
 	}
 	return changed
 }

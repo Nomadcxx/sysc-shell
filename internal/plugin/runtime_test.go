@@ -405,3 +405,36 @@ func TestRuntimeDegradesAPluginThatFloods(t *testing.T) {
 		t.Fatalf("flooding plugin restarted itself: %+v", st)
 	}
 }
+
+// A session cancel must release supervise even when it is blocked publishing
+// to a messages channel with no pump; only the parent context staying alive
+// used to let the goroutine leak. gh #58.
+func TestRuntimeSuperviseStopsAfterSessionCancelWhilePublishing(t *testing.T) {
+	sess, err := supervisor(installHelper(t, "flood")).Start(context.Background())
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer sess.Close()
+
+	r := NewRuntime(Candidate{Manifest: installHelper(t, "flood")}, helperOptions())
+	for len(r.messages) < cap(r.messages) {
+		r.messages <- &v1.ViewSnapshot{ViewID: "filler"} // fill the buffer: the next publish blocks
+	}
+
+	ctx, cancelCtx := context.WithCancel(context.Background())
+	defer cancelCtx()
+	sessionCtx, cancelSession := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.supervise(ctx, sessionCtx, cancelSession, sess, 0)
+	}()
+
+	time.Sleep(150 * time.Millisecond) // let supervise block in the publish select
+	cancelSession()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("supervise stayed blocked publishing after the session was cancelled")
+	}
+}

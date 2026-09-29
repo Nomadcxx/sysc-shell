@@ -638,3 +638,30 @@ func TestDesktopEntryIconResolvesIconKeysFromApplicationsDirs(t *testing.T) {
 		t.Fatalf("separator entry = %q, want empty", got)
 	}
 }
+
+// The centre's header glyph is frozen when the tree is built; an expiring
+// timed preset must rebuild an open centre instead of leaving the DND icon
+// lit. gh #56.
+func TestCenterDNDGlyphRefreshesWhenAPresetExpiresWhileOpen(t *testing.T) {
+	r := NewRegistry(config.Default())
+	r.applyNotify(snap(1))
+	now := time.Unix(1_756_000_000, 0)
+	r.now = now
+	r.setDNDPresetAt(now, time.Minute)
+	h := &PanelHost{id: PanelNotifications, notifyMenu: true}
+	r.mu.Lock()
+	r.panelHosts[PanelNotifications] = h
+	r.rebuildPanel(h)
+	r.mu.Unlock()
+	before := buttonByName(h.root, "Do not disturb")
+	if before == nil || len(before.Children) == 0 || before.Children[0].Icon != "do_not_disturb_on" {
+		t.Fatalf("preset DND glyph = %+v, want do_not_disturb_on", before)
+	}
+
+	r.UpdateClock(now.Add(2 * time.Minute))
+
+	after := buttonByName(h.root, "Do not disturb")
+	if after == nil || len(after.Children) == 0 || after.Children[0].Icon != "notifications" {
+		t.Fatalf("stale DND glyph after expiry: %+v", after)
+	}
+}
