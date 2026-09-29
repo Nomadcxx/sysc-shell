@@ -162,6 +162,17 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 		}
 		media = r.mediaState
 	}
+	// External ScreenSaver inhibits (media players, browsers) are shown next
+	// to the manual caffeine toggle so the row never implies caffeine caused
+	// them. Names arrive through Registry.SetExternalInhibitors.
+	var holding []string
+	if r != nil {
+		for _, inh := range r.externalInhibitors {
+			if name := ccText(inh.App); name != ccDash {
+				holding = append(holding, name)
+			}
+		}
+	}
 
 	identityRows := []*ui.Node{
 		{Kind: ui.KindText, Text: ccText(identity.Name), TextRole: theme.RoleTitle},
@@ -197,6 +208,12 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 		ccQuickAccessButton(quickWidth, "coffee", "Caffeine", "cc:caffeine", caffeine),
 		ccQuickAccessButton(quickWidth, "wallpaper", "Wallpaper", "cc:wallpaper", false),
 	}}
+	if len(holding) > 0 {
+		togglePill.Children = append(togglePill.Children, &ui.Node{
+			Kind: ui.KindText, Text: "Idle held: " + strings.Join(holding, ", "),
+			TextRole: theme.RoleCaption,
+		})
+	}
 
 	weatherSummary, weatherTone := ccWeatherSummary(reading)
 	clockWeather := monitorCard(m, []*ui.Node{

@@ -390,9 +390,13 @@ func (r *Registry) SetScreenSaver(ss *services.ScreenSaverService) {
 // on that service's D-Bus signal pump goroutine.
 func (r *Registry) SetExternalInhibitors(list []services.ScreenSaverInhibitor) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.externalInhibitors = list
 	r.pushIdleInputsLocked()
+	out, open := r.rebuildControlCentreLocked()
+	r.mu.Unlock()
+	if open {
+		r.publishSurface(out, panelSurfaceID(PanelControlCenter))
+	}
 }
 
 func (r *Registry) pushIdleInputs() {
