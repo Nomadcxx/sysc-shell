@@ -1204,7 +1204,9 @@ func TestPanelSectionValidationPrecedesMutation(t *testing.T) {
 	r.mu.Lock()
 	original := r.panelHosts[PanelControlCenter]
 	r.mu.Unlock()
-	for _, section := range []string{"network", "nope"} {
+	// "session" is a panel name but not a control-centre section since
+	// network joined ccSections; both must be rejected without mutation.
+	for _, section := range []string{"session", "nope"} {
 		if err := call("open", "control-center", section); err == nil {
 			t.Errorf("section %q was accepted", section)
 		}
