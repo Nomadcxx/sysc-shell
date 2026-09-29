@@ -334,3 +334,38 @@ func TestKeyboardLayoutEventsReachTheSnapshot(t *testing.T) {
 		t.Fatal("a switch without idx was accepted")
 	}
 }
+
+func TestOverviewEventsUpdatePersistentSnapshot(t *testing.T) {
+	t.Parallel()
+	var s state
+	for _, tc := range []struct {
+		line string
+		want bool
+	}{
+		{`{"OverviewOpenedOrClosed":{"is_open":true}}`, true},
+		{`{"OverviewOpenedOrClosed":{"is_open":false}}`, false},
+	} {
+		changed, err := s.apply([]byte(tc.line))
+		if err != nil || !changed {
+			t.Fatalf("apply %s = changed %v, err %v; want true, nil", tc.line, changed, err)
+		}
+		if got := s.snapshot().OverviewOpen; got != tc.want {
+			t.Fatalf("OverviewOpen = %v after %s, want %v", got, tc.line, tc.want)
+		}
+		changed, err = s.apply([]byte(tc.line))
+		if err != nil || changed {
+			t.Fatalf("repeated apply %s = changed %v, err %v; want false, nil", tc.line, changed, err)
+		}
+	}
+}
+
+func TestMalformedOverviewEventDoesNotChangeState(t *testing.T) {
+	t.Parallel()
+	s := applyAll(t, `{"OverviewOpenedOrClosed":{"is_open":true}}`)
+	if _, err := s.apply([]byte(`{"OverviewOpenedOrClosed":{}}`)); err == nil {
+		t.Fatal("overview event without is_open was accepted")
+	}
+	if !s.snapshot().OverviewOpen {
+		t.Fatal("malformed overview event changed the open state")
+	}
+}
