@@ -463,7 +463,10 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 		return nil
 
 	case ui.KindTab:
-		return paintText(c, n.Text, style.Scale120.PhysicalRect(n.Bounds), text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline)
+		box := style.Scale120.PhysicalRect(n.Bounds)
+		radius := chromeRadius(style, nodeRadius(style, n, 0), box)
+		paintInteraction(c, n, box, radius, style.Foreground, style)
+		return paintText(c, n.Text, box, text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline)
 
 	default:
 		return fmt.Errorf("unsupported kind %d", n.Kind)
@@ -653,7 +656,9 @@ func paintSlider(c *Canvas, n *ui.Node, style Style) {
 	if kx+knob > box.X+box.W {
 		kx = box.X + box.W - knob
 	}
-	c.FillRounded(ui.Rect{X: kx, Y: box.Y + (box.H-knob)/2, W: knob, H: knob}, knob/2, style.accent())
+	c.FillRounded(ui.Rect{X: kx, Y: box.Y + (box.H-knob)/2, W: knob, H: knob},
+		ui.MorphRadius(knob/2, n.PressProgress), style.accent())
+	paintInteraction(c, n, box, box.H/2, style.Foreground, style)
 }
 
 func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
@@ -692,6 +697,9 @@ func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 		cb := style.Scale120.PhysicalRect(child.Bounds)
 		if child.Value != 0 {
 			c.FillRounded(cb, style.Scale120.Physical(4), style.accent())
+		}
+		if child.State != 0 {
+			paintInteraction(c, child, cb, style.Scale120.Physical(4), style.Foreground, style)
 		}
 		_ = paintText(c, child.Text, cb, text, style, textSpec(style, child), child.Tabular, child.Tone, child.Underline)
 	}
@@ -1335,6 +1343,51 @@ func stateLayer(fg Color, state ui.Interaction) Color {
 	return Color{R: fg.R, G: fg.G, B: fg.B, A: uint8(math.Round(float64(fg.A) * alpha))}
 }
 
+// interactionLayer resolves one state wash from the render copy's progress.
+// A state without an animator paints at full strength; animated hosts clear
+// the state bit when progress is zero.
+func interactionLayer(fg Color, n *ui.Node) Color {
+	if n.State.Has(ui.StateDisabled) {
+		return Color{}
+	}
+	alpha := 0.0
+	if n.State.Has(ui.StateHovered) {
+		p := min(max(n.HoverProgress, 0), 1)
+		if p == 0 {
+			p = 1
+		}
+		alpha = max(alpha, hoverLayerAlpha*p)
+	}
+	if n.State.Has(ui.StatePressed) {
+		p := min(max(n.PressProgress, 0), 1)
+		if p == 0 {
+			p = 1
+		}
+		alpha = max(alpha, pressedLayerAlpha*p)
+	}
+	return withAlpha(fg, alpha)
+}
+
+// paintInteraction overlays the animated state wash and any press ripple on
+// the node's physical box. Ripple origin is converted as an output point, then
+// made local to the mask so offset controls and fractional scales align.
+func paintInteraction(c *Canvas, n *ui.Node, box ui.Rect, radius int, fg Color, style Style) {
+	if layer := interactionLayer(fg, n); layer.A > 0 {
+		blendMask(c, RoundedMask(radius, box.W, box.H), box.X, box.Y, layer)
+	}
+	if n.Ripple.Phase <= 0 || n.Ripple.Phase >= 1 {
+		return
+	}
+	logicalR, alpha := ui.RippleDisc(n.Ripple.Phase, n.Bounds, n.Ripple.X, n.Ripple.Y)
+	if alpha <= 0 || logicalR <= 0 {
+		return
+	}
+	cx := style.Scale120.Physical(n.Ripple.X) - box.X
+	cy := style.Scale120.Physical(n.Ripple.Y) - box.Y
+	disc := logicalR * float64(style.Scale120) / 120
+	blendMask(c, RippleMask(box.W, box.H, radius, cx, cy, disc), box.X, box.Y, withAlpha(fg, alpha))
+}
+
 // paintChrome draws one filled, optionally outlined, optionally state-layered
 // rounded node and then its contents. Buttons, capsules, and cards share it so
 // a control cannot acquire chrome that differs from the pill beside it.
@@ -1354,6 +1407,7 @@ func sourceMarkerColor(value string) (Color, bool) {
 func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int, base Color, radiusLogical int) error {
 	box := style.Scale120.PhysicalRect(n.Bounds)
 	radius := chromeRadius(style, nodeRadius(style, n, radiusLogical), box)
+	radius = ui.MorphRadius(radius, n.PressProgress)
 	fill, fg := chromeFill(style, n, base)
 	mask := RoundedMask(radius, box.W, box.H)
 	if stops := resolveGradient(n, style); fill.A > 0 && stops != nil {
@@ -1392,7 +1446,7 @@ func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size in
 	}
 	// The layer sits over the resolved fill and under the contents, so a label
 	// never dims along with its own hover wash.
-	blendMask(c, mask, box.X, box.Y, stateLayer(fg, n.State))
+	paintInteraction(c, n, box, radius, fg, style)
 	if n.State.Has(ui.StateDisabled) {
 		fg = Color{R: fg.R, G: fg.G, B: fg.B, A: uint8(math.Round(float64(fg.A) * disabledForeground))}
 	}

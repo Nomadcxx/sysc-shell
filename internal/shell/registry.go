@@ -103,7 +103,11 @@ type Registry struct {
 	selections chan wayland.SelectionRequest
 	panels     PanelSet
 	panelHosts map[PanelID]*PanelHost
-	// roots is the one interactive root the process allows at a time.
+	// panelOrder breaks ties between open panels when their shared shield
+	// dismisses the newest one first.
+	panelOrder uint64
+	// roots is the one interactive root the process allows at a time. Open
+	// panels share one root; other modal surfaces still replace the whole group.
 	roots rootChain
 	// closed unblocks a pending publish at shutdown.
 	closed     chan struct{}

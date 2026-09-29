@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -72,11 +73,17 @@ type PanelHost struct {
 	writeTimer *time.Timer
 	id         PanelID
 	output     uint32
+	// openOrder selects the newest panel for outside dismissal.
+	openOrder uint64
+	// preferredX is the panel's original anchor before collision reflow.
+	preferredX int
 	place      Placement
-	root       *ui.Node
-	focus      []*ui.Node
-	roving     ui.Roving
-	leases     []*services.Lease
+	// rect is the placed panel body in output coordinates, excluding joints.
+	rect   ui.Rect
+	root   *ui.Node
+	focus  []*ui.Node
+	roving ui.Roving
+	leases []*services.Lease
 	// subjectLeases hold the Control Centre's per-interface and per-device rate
 	// rings. They are resolved from the first snapshot that names a subject and
 	// kept until that subject disappears, so the chart does not hop.
@@ -366,7 +373,7 @@ func (r *Registry) HandlePanelByName(action, name, section string) error {
 	if id == PanelMonitor {
 		r.machineFacts = facts
 	}
-	if where, ok := r.panels.Output(id); ok && where == out && r.roots.owns(panelRoot(id)) {
+	if where, ok := r.panels.Output(id); ok && where == out && r.panelOpenLocked(id) {
 		if action == "toggle" {
 			r.closePanelLocked(id)
 			return nil
@@ -549,24 +556,37 @@ func (r *Registry) OpenPanel(id PanelID, output uint32, trig Trigger) error {
 	if id == PanelMonitor {
 		r.machineFacts = facts
 	}
-	if where, ok := r.panels.Output(id); ok && where == output && r.roots.owns(panelRoot(id)) {
+	if where, ok := r.panels.Output(id); ok && where == output && r.panelOpenLocked(id) {
 		return nil
 	}
 	return r.openPanelRootLocked(id, output, trig)
 }
 
-// openPanelRootLocked publishes the panel as the process-wide interactive
-// root. Whatever chain was open is released first, so opening an unrelated
-// panel closes the previous one and this panel on any other output.
+// openPanelRootLocked opens a new panel or adds it to the current panel group.
+// A different modal root still replaces the whole group.
 func (r *Registry) openPanelRootLocked(id PanelID, output uint32, trig Trigger) error {
-	generation := r.roots.openRoot(panelRoot(id))
+	if where, ok := r.panels.Output(id); ok {
+		if where == output && r.panelOpenLocked(id) {
+			return nil
+		}
+		r.closePanelLocked(id)
+	}
+
+	owner, generation, open := r.roots.current()
+	panelGroupOpen := open && owner == panelGroupRoot()
+	if !panelGroupOpen {
+		generation = r.roots.openRoot(panelGroupRoot())
+		r.roots.onClose(generation, func() { r.closePanelGroupLocked() })
+	}
 	if r.panels.open == nil {
 		r.panels.open = make(map[PanelID]uint32)
 	}
 	r.panels.open[id] = output
-	if err := r.spawnPanelLocked(id, output, trig); err != nil {
+	if err := r.spawnPanelLocked(id, output, trig, generation); err != nil {
 		r.panels.Close(id)
-		r.roots.closeRoot(generation)
+		if !panelGroupOpen {
+			r.roots.closeRoot(generation)
+		}
 		return err
 	}
 	if id == PanelNotifications {
@@ -579,17 +599,37 @@ func (r *Registry) openPanelRootLocked(id PanelID, output uint32, trig Trigger) 
 			}
 		}
 	}
-	r.roots.onClose(generation, func() {
+	return nil
+}
+
+// panelOpenLocked reports whether id belongs to the current panel group.
+// Caller holds Registry.mu.
+func (r *Registry) panelOpenLocked(id PanelID) bool {
+	return r.roots.owns(panelGroupRoot()) && r.panelHosts[id] != nil
+}
+
+// closePanelGroupLocked runs as the panel group's root cleanup. The panel
+// hosts are the authoritative list; each output shield closes with its last
+// panel in teardownPanelLocked.
+func (r *Registry) closePanelGroupLocked() {
+	hadPluginPanel := r.panelHosts[PanelPlugin] != nil
+	ids := make([]PanelID, 0, len(r.panelHosts))
+	for id := range r.panelHosts {
+		ids = append(ids, id)
+	}
+	for _, id := range ids {
 		r.panels.Close(id)
 		r.teardownPanelLocked(id)
-		// A root that goes away takes any visible tooltip with it.
-		r.dwell.leave()
-		if id == PanelPlugin && r.plugins != nil {
-			ids := r.plugins.snapshotPanelViewIDs()
-			go r.plugins.dropPanelViews(ids)
-		}
-	})
-	return nil
+	}
+	for id := range r.panels.open {
+		r.panels.Close(id)
+	}
+	if hadPluginPanel && r.plugins != nil {
+		ids := r.plugins.snapshotPanelViewIDs()
+		go r.plugins.dropPanelViews(ids)
+	}
+	// A root that goes away takes any visible tooltip with it.
+	r.dwell.leave()
 }
 
 func (r *Registry) ClosePanel(id PanelID) {
@@ -598,18 +638,54 @@ func (r *Registry) ClosePanel(id PanelID) {
 	r.closePanelLocked(id)
 }
 
-// closePanelLocked closes the panel through the root chain when it owns the
-// chain, so every release runs exactly once and in one order.
+// closePanelLocked closes one panel and releases the group root when it was
+// the last member.
 func (r *Registry) closePanelLocked(id PanelID) {
-	if _, generation, ok := r.roots.current(); ok && r.roots.owns(panelRoot(id)) {
-		r.roots.closeRoot(generation)
-		return
+	h := r.panelHosts[id]
+	output, hasOutput := r.panels.Output(id)
+	if h != nil {
+		output, hasOutput = h.output, true
 	}
 	r.panels.Close(id)
 	r.teardownPanelLocked(id)
+	if hasOutput {
+		r.restorePanelPositionsLocked(output)
+	}
+	if len(r.panelHosts) > 0 && r.dwell != nil {
+		r.dwell.leave()
+	}
 	if id == PanelPlugin && r.plugins != nil {
 		ids := r.plugins.snapshotPanelViewIDs()
 		go r.plugins.dropPanelViews(ids)
+	}
+	if r.roots.owns(panelGroupRoot()) && len(r.panelHosts) == 0 {
+		_, generation, ok := r.roots.current()
+		if ok {
+			r.roots.closeRoot(generation)
+		}
+	}
+}
+
+func (r *Registry) closePanelsOnOutputLocked(output uint32) {
+	ids := r.panelIDsOnOutputLocked(output)
+	hadPluginPanel := false
+	for _, id := range ids {
+		hadPluginPanel = hadPluginPanel || id == PanelPlugin
+		r.panels.Close(id)
+		r.teardownPanelLocked(id)
+	}
+	if len(r.panelHosts) > 0 && r.dwell != nil {
+		r.dwell.leave()
+	}
+	if hadPluginPanel && r.plugins != nil {
+		views := r.plugins.snapshotPanelViewIDs()
+		go r.plugins.dropPanelViews(views)
+	}
+	if r.roots.owns(panelGroupRoot()) && len(r.panelHosts) == 0 {
+		_, generation, ok := r.roots.current()
+		if ok {
+			r.roots.closeRoot(generation)
+		}
 	}
 }
 
@@ -627,8 +703,7 @@ func (r *Registry) TogglePanel(id PanelID, output uint32, trig Trigger) error {
 		r.closePanelLocked(id)
 		return nil
 	}
-	// A panel asked for on a different output is a fresh root there; opening
-	// releases the chain that held the old instance.
+	// Moving one panel keeps any other members of the panel group open.
 	return r.openPanelRootLocked(id, output, trig)
 }
 
@@ -673,6 +748,16 @@ func (r *Registry) DropAux(output uint32, surfaceID string) {
 			delete(r.osd.open, uint32(g))
 			r.mu.Unlock()
 		}
+		return
+	}
+	if digits, ok := strings.CutPrefix(surfaceID, panelShieldPrefix); ok {
+		shieldOutput, err := strconv.ParseUint(digits, 10, 32)
+		if err != nil || uint32(shieldOutput) != output {
+			return
+		}
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.closePanelsOnOutputLocked(output)
 		return
 	}
 	id, ok := panelIDFromAux(surfaceID)
@@ -730,7 +815,124 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 	}
 }
 
-func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) error {
+const panelShieldPrefix = "shield:output:"
+
+func panelShieldSurfaceID(output uint32) string {
+	return panelShieldPrefix + strconv.FormatUint(uint64(output), 10)
+}
+
+// openPanelHostsLocked returns every other open panel on this output. Caller
+// holds r.mu.
+func (r *Registry) openPanelHostsLocked(output uint32, except *PanelID) []*PanelHost {
+	var hosts []*PanelHost
+	for id, h := range r.panelHosts {
+		if (except != nil && id == *except) || h == nil || h.output != output || h.rect.W <= 0 || h.rect.H <= 0 {
+			continue
+		}
+		hosts = append(hosts, h)
+	}
+	return hosts
+}
+
+func (r *Registry) restorePanelPositionsLocked(output uint32) {
+	hosts := r.openPanelHostsLocked(output, nil)
+	sort.Slice(hosts, func(i, j int) bool { return hosts[i].openOrder < hosts[j].openOrder })
+	placedHosts := make([]*PanelHost, 0, len(hosts))
+	placedRects := make([]ui.Rect, 0, len(hosts))
+	for _, h := range hosts {
+		anchor := h.rect
+		anchor.X = h.preferredX
+		work := panelWorkArea(anchor, h.place, placedHosts)
+		rect, nextRects := panelArrangement(anchor, work, placedRects,
+			ui.Size{W: h.rect.W, H: h.rect.H})
+		for i, placed := range placedHosts {
+			r.updatePanelPlacementLocked(placed, nextRects[i])
+		}
+		r.updatePanelPlacementLocked(h, rect)
+		placedHosts = append(placedHosts, h)
+		placedRects = append(nextRects, rect)
+	}
+}
+
+func panelWorkArea(base ui.Rect, place Placement, open []*PanelHost) ui.Rect {
+	work := place.workArea(base)
+	conflict, safeEdge := false, 0
+	for _, h := range open {
+		if base.Y >= h.rect.Y+h.rect.H || h.rect.Y >= base.Y+base.H {
+			continue
+		}
+		conflict = true
+		if h.place.Attached() && h.place.BarShape == "attached" {
+			safeEdge = max(safeEdge, h.place.Fillet)
+		}
+	}
+	if !conflict {
+		return work
+	}
+	if place.Attached() && place.BarShape == "attached" {
+		safeEdge = max(safeEdge, place.Fillet)
+	}
+	if safeEdge == 0 {
+		return work
+	}
+	left := max(work.X, safeEdge)
+	right := min(work.X+work.W, place.Output.W-safeEdge)
+	work.X, work.W = left, max(right-left, 0)
+	return work
+}
+
+// updatePanelPlacementLocked moves an existing panel without replacing its
+// Wayland surface, which keeps its focus and event callbacks attached.
+func (r *Registry) updatePanelPlacementLocked(h *PanelHost, rect ui.Rect) {
+	if h == nil || h.rect == rect {
+		return
+	}
+	h.rect = rect
+	h.place.AnchorX = rect.X + rect.W/2
+	spec := r.panelSpec(h, marginsFor(rect, h.place))
+	width, height := uint32(max(spec.Width, 0)), uint32(max(spec.Height, 0))
+	inputRects := spec.InputRects
+	if inputRects == nil {
+		inputRects = []ui.Rect{{W: int(width), H: int(height)}}
+	}
+	update := &wayland.AuxUpdate{
+		MarginTop:      &spec.MarginTop,
+		MarginBottom:   &spec.MarginBottom,
+		MarginLeft:     &spec.MarginLeft,
+		MarginRight:    &spec.MarginRight,
+		Width:          &width,
+		Height:         &height,
+		SetInputRegion: true,
+		InputRects:     inputRects,
+	}
+	r.sendAux(wayland.AuxRequest{Output: h.output, ID: panelSurfaceID(h.id), Update: update})
+}
+
+func (r *Registry) panelIDsOnOutputLocked(output uint32) []PanelID {
+	var ids []PanelID
+	for id, h := range r.panelHosts {
+		if h != nil && h.output == output {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+func (r *Registry) hasPanelOnOutputLocked(output uint32) bool {
+	return len(r.panelIDsOnOutputLocked(output)) > 0
+}
+
+func (r *Registry) newestPanelOnOutputLocked(output uint32) *PanelHost {
+	var newest *PanelHost
+	for _, h := range r.panelHosts {
+		if h != nil && h.output == output && (newest == nil || h.openOrder > newest.openOrder) {
+			newest = h
+		}
+	}
+	return newest
+}
+
+func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, generation uint64) error {
 	outW, outH := trig.OutW, trig.OutH
 	if outW <= 0 {
 		outW = 1920
@@ -810,10 +1012,14 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 		place.Overlap = 1
 	}
 
+	openShield := !r.hasPanelOnOutputLocked(output)
+	r.panelOrder++
 	h := &PanelHost{
 		id:          id,
 		output:      output,
+		openOrder:   r.panelOrder,
 		place:       place,
+		pointer:     interaction{stateLayer: true},
 		stopAnim:    make(chan struct{}),
 		shieldQuiet: time.Now().Add(shieldQuietFor),
 		theme:       r.panelThemeFor(output),
@@ -911,14 +1117,32 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 	}
 	w, hgt := h.place.FittedSize()
 	h.place.Panel.W, h.place.Panel.H = w, hgt
-	margins := h.place.Margins()
+	baseRect := h.place.panelRect()
+	h.preferredX = baseRect.X
+	openHosts := r.openPanelHostsLocked(output, &id)
+	openRects := make([]ui.Rect, len(openHosts))
+	for i, open := range openHosts {
+		openRects[i] = open.rect
+	}
+	var placedRects []ui.Rect
+	h.rect, placedRects = panelArrangement(baseRect, panelWorkArea(baseRect, h.place, openHosts),
+		openRects, ui.Size{W: w, H: hgt})
+	if h.rect.X != baseRect.X {
+		h.place.AnchorX = h.rect.X + h.rect.W/2
+	}
+	margins := marginsFor(h.rect, h.place)
 	if err := r.acquirePanelLeases(h); err != nil {
 		return err
+	}
+	for i, open := range openHosts {
+		r.updatePanelPlacementLocked(open, placedRects[i])
 	}
 
 	r.panelHosts[id] = h
 
-	r.sendAux(wayland.AuxRequest{Output: output, Open: r.shieldSpec(h)})
+	if openShield {
+		r.sendAux(wayland.AuxRequest{Output: output, Open: r.shieldSpec(h, generation)})
+	}
 	r.sendAux(wayland.AuxRequest{Output: output, Open: r.panelSpec(h, margins)})
 
 	if id == PanelSession || id == PanelControlCenter {
@@ -1075,16 +1299,15 @@ func placeholderTree() *ui.Node {
 	}}
 }
 
-func panelSurfaceID(id PanelID) string  { return "panel:" + id.String() }
-func shieldSurfaceID(id PanelID) string { return "shield:" + id.String() }
+func panelSurfaceID(id PanelID) string { return "panel:" + id.String() }
 
 // blur-exempt: the shield paints nothing. It is a transparent, fullscreen input
 // catcher, so it has no ground for a backdrop to sit under, and it opens before
 // the panel it guards -- a capture here would photograph the screen a second
 // time for no one to look at.
-func (r *Registry) shieldSpec(h *PanelHost) *wayland.AuxSpec {
+func (r *Registry) shieldSpec(h *PanelHost, generation uint64) *wayland.AuxSpec {
 	return &wayland.AuxSpec{
-		ID:            shieldSurfaceID(h.id),
+		ID:            panelShieldSurfaceID(h.output),
 		Namespace:     "sysc-shell-shield",
 		Layer:         layerOverlay,
 		Anchor:        uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorBottom | layershell.ZwlrLayerSurfaceV1AnchorLeft | layershell.ZwlrLayerSurfaceV1AnchorRight),
@@ -1094,25 +1317,31 @@ func (r *Registry) shieldSpec(h *PanelHost) *wayland.AuxSpec {
 			Configure: func(int, int, int) error { return nil },
 			Render:    func([]byte, int, int, int) error { return nil },
 			Handle: func(e wayland.Event) bool {
-				if e.Kind == wayland.EventPointerPress {
-					if time.Now().Before(h.shieldQuiet) {
-						return false
-					}
-					// A press over the panel's own body is not a click
-					// outside, even when the compositor hands it to the
-					// shield. Taking it as one closed Settings under a click
-					// on its rail, and said nothing about why.
-					r.mu.Lock()
-					body := h.place.Rect()
-					r.mu.Unlock()
-					if body.Contains(int(e.X), int(e.Y)) {
-						log.Printf("shell: shield took a press inside %s at %.0f,%.0f; keeping the panel open", h.id, e.X, e.Y)
-						return false
-					}
-					r.ClosePanel(h.id)
-					return true
+				if e.Kind != wayland.EventPointerPress {
+					return false
 				}
-				return false
+				r.mu.Lock()
+				defer r.mu.Unlock()
+				if !r.roots.owns(panelGroupRoot()) || r.roots.gen() != generation ||
+					time.Now().Before(h.shieldQuiet) {
+					return false
+				}
+				// A press over an open panel's own body is not a click
+				// outside, even when the compositor hands it to the shield.
+				// Taking it as one closed Settings under a click on its rail,
+				// and said nothing about why.
+				for _, open := range r.panelHosts {
+					if open.output == h.output && open.place.Rect().Contains(int(e.X), int(e.Y)) {
+						log.Printf("shell: shield took a press inside %s at %.0f,%.0f; keeping the panel open", open.id, e.X, e.Y)
+						return false
+					}
+				}
+				newest := r.newestPanelOnOutputLocked(h.output)
+				if newest == nil {
+					return false
+				}
+				r.closePanelLocked(newest.id)
+				return true
 			},
 		},
 	}
@@ -1437,6 +1666,30 @@ func (h *PanelHost) revealJoints(opacity float64) (left, right, edge int) {
 	return scale(j.Left), scale(j.Right), scale(h.edgeExtent(j))
 }
 
+// markMenuRowHover resolves the open menu's option onto the render copy.
+func markMenuRowHover(root *ui.Node, path string, m *Menu, x, y int) {
+	if m == nil || path == "" {
+		return
+	}
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n.Kind == ui.KindMenu && n.Action == path {
+			if i := m.RowAt(n, x, y); i >= 0 && i < len(n.Children) && n.Children[i] != nil {
+				n.Children[i].State |= ui.StateHovered
+				n.Children[i].HoverProgress = 1
+			}
+			return
+		}
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(root)
+}
+
 func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	if err := h.ensureText(); err != nil {
 		return err
@@ -1466,6 +1719,9 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	}
 	h.applyEditorView(root)
 	h.pointer.apply(root, h.anim)
+	if h.menu != nil && h.menu.Opened() && h.menuPath != "" {
+		markMenuRowHover(root, h.menuPath, h.menu, h.hoverX, h.hoverY)
+	}
 	if err := h.resolveEffectMotionLocked(root); err != nil {
 		return err
 	}
@@ -1608,6 +1864,9 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			}
 			if n := h.hitFocusable(h.hoverX, h.hoverY); n != nil {
 				h.pressed = n.StableKey()
+				if h.anim != nil && ui.Animated(n) && h.pressed != "" {
+					h.anim.TargetRipple(h.pressed, h.hoverX, h.hoverY)
+				}
 				h.pointerChanged(r, h.pointer.setPress(n.StableKey()))
 				h.setFocus(n)
 				if n.Kind == ui.KindDragSource {
@@ -1868,6 +2127,12 @@ func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) bool {
 	case keyPageDown:
 		return h.scrollBy(max(h.logicalH, 1))
 	case keySpace, keyEnter:
+		if n := h.focused(); n != nil && h.anim != nil && ui.Animated(n) {
+			if key := n.StableKey(); key != "" {
+				h.anim.TargetRipple(key, n.Bounds.X+n.Bounds.W/2, n.Bounds.Y+n.Bounds.H/2)
+				r.startSurfaceFrames(h)
+			}
+		}
 		return h.activate(r)
 	}
 	return false
@@ -3314,7 +3579,9 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 	}
 	delete(r.panelHosts, id)
 	r.sendAux(wayland.AuxRequest{Output: h.output, ID: panelSurfaceID(id)})
-	r.sendAux(wayland.AuxRequest{Output: h.output, ID: shieldSurfaceID(id)})
+	if !r.hasPanelOnOutputLocked(h.output) {
+		r.sendAux(wayland.AuxRequest{Output: h.output, ID: panelShieldSurfaceID(h.output)})
+	}
 	releaseAll(h.leases)
 	h.leases = nil
 	releaseAll(h.subjectLeases)

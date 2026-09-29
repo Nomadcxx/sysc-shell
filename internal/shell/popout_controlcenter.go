@@ -244,6 +244,7 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 		return false
 	}
 	if requested, ok := strings.CutPrefix(n.Action, "settings-section:"); ok {
+		r.closePanelLocked(h.id)
 		return r.openSettingsAtLocked(h.output, requested)
 	}
 	if strings.HasPrefix(n.Action, "media:") {
@@ -329,6 +330,9 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 		BarEdge: h.place.BarEdge, BarZone: h.place.BarZone,
 		OutW: h.place.Output.W, OutH: h.place.Output.H,
 	}
+	// These controls navigate to a different panel; retire the chooser while
+	// leaving any other open members of the panel group in place.
+	r.closePanelLocked(h.id)
 	_ = r.openPanelRootLocked(target, h.output, trig)
 	return true
 }
