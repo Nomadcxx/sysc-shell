@@ -281,21 +281,31 @@ func (r *Registry) PluginNotify(ctx context.Context, p v1.NotifyParams) (v1.Noti
 	if timeout <= 0 {
 		timeout = -1 // server default; 0 would mean never expire
 	}
-	id, err := r.producerSender.SendProducer(protocol.Command{
-		Kind: protocol.CommandProducerPublish,
-		Producer: &protocol.ProducerRequest{
-			Key:             fmt.Sprintf("sysc-shell:plugin-toast:%d", r.pluginNotifySeq.Add(1)),
-			AppName:         "sysc-shell",
-			Summary:         p.Summary,
-			Body:            p.Body,
-			Urgency:         urgency,
-			ExpireTimeoutMS: timeout,
-		},
-	})
+	id, err := r.publishToast(fmt.Sprintf("sysc-shell:plugin-toast:%d", r.pluginNotifySeq.Add(1)),
+		p.Summary, p.Body, urgency, timeout)
 	if err != nil {
 		return v1.NotifyResult{}, err
 	}
 	return v1.NotifyResult{ID: uint32(id)}, nil
+}
+
+// publishToast posts one sysc-shell toast through the service's producer
+// protocol. A timeout of -1 is the service default; 0 never expires.
+func (r *Registry) publishToast(key, summary, body string, urgency protocol.Urgency, timeoutMS int32) (uint64, error) {
+	if r.producerSender == nil {
+		return 0, errNotifyUnavailable
+	}
+	return r.producerSender.SendProducer(protocol.Command{
+		Kind: protocol.CommandProducerPublish,
+		Producer: &protocol.ProducerRequest{
+			Key:             key,
+			AppName:         "sysc-shell",
+			Summary:         summary,
+			Body:            body,
+			Urgency:         urgency,
+			ExpireTimeoutMS: timeoutMS,
+		},
+	})
 }
 
 // NotifyMessages returns the channel the notifyclient publishes to and main

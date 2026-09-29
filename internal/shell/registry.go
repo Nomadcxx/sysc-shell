@@ -201,6 +201,14 @@ type Registry struct {
 	// pluginNotifySeq makes each plugin toast a unique producer key; the
 	// service replaces live notifications that share a key.
 	pluginNotifySeq atomic.Uint32
+	// niriScreenshot sends a screenshot action and waits for its file. Tests
+	// replace it; nil uses niri.Screenshot on $NIRI_SOCKET.
+	niriScreenshot func(ctx context.Context, action any, path string) error
+	// screenshotDir names the directory captures are saved to. Tests replace
+	// it; nil is screenshot.Dir.
+	screenshotDir func() string
+	// selector is the open region selector, if any. Registry.mu.
+	selector *regionSelector
 	// toasts hosts one toast stack per output, created when wiring binds it.
 	toasts *toastHost
 	// depthClocks contains one click-through wallpaper clock per accepted mask.
