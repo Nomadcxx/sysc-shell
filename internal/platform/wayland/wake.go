@@ -40,8 +40,10 @@ func newWakePipe() (*wakePipe, error) {
 
 // bridge forwards cancellation and application invalidations to the pipe. It
 // never closes the caller-owned invalidation channel and never calls a proxy.
-func (w *wakePipe) bridge(ctx context.Context, invalidations <-chan Invalidation, reloads <-chan struct{}, aux <-chan AuxRequest, selection <-chan SelectionRequest, pastes <-chan pasteResult) {
+func (w *wakePipe) bridge(ctx context.Context, invalidations <-chan Invalidation, reloads <-chan struct{}, aux <-chan AuxRequest, selection <-chan SelectionRequest, pastes <-chan pasteResult) <-chan struct{} {
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		for {
 			select {
 			case <-ctx.Done():
@@ -84,6 +86,7 @@ func (w *wakePipe) bridge(ctx context.Context, invalidations <-chan Invalidation
 			}
 		}
 	}()
+	return done
 }
 
 // takeReload reports and clears a pending reload request.

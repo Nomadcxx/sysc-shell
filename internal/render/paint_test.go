@@ -1711,18 +1711,24 @@ func TestStateLayersCompositeThePairedForeground(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		state ui.Interaction
+		hover float64
+		press float64
 		want  Color
 	}{
-		{"idle", 0, fill},
-		{"hover", ui.StateHovered, overlay(fill, fg, hoverLayerAlpha)},
-		{"pressed", ui.StatePressed, overlay(fill, fg, pressedLayerAlpha)},
-		// Pressed outranks hover: a pointer is always inside the node it is
-		// pressing, so the two arrive together.
-		{"pressed while hovered", ui.StatePressed | ui.StateHovered, overlay(fill, fg, pressedLayerAlpha)},
-		{"disabled", ui.StateDisabled, fill},
+		{"idle", 0, 0, 0, fill},
+		{"hover", ui.StateHovered, 0, 0, overlay(fill, fg, hoverLayerAlpha)},
+		{"hover halfway", ui.StateHovered, 0.5, 0, overlay(fill, fg, hoverLayerAlpha/2)},
+		{"pressed", ui.StatePressed, 0, 0, overlay(fill, fg, pressedLayerAlpha)},
+		{"pressed halfway", ui.StatePressed, 0, 0.5, overlay(fill, fg, pressedLayerAlpha/2)},
+		{"press ramps from hover", ui.StatePressed | ui.StateHovered, 1, 0.5, overlay(fill, fg, hoverLayerAlpha)},
+		// A settled press is stronger than a settled hover.
+		{"pressed while hovered", ui.StatePressed | ui.StateHovered, 1, 1, overlay(fill, fg, pressedLayerAlpha)},
+		{"disabled", ui.StateDisabled, 0, 0, fill},
 	} {
 		n := base
 		n.State = tc.state
+		n.HoverProgress = tc.hover
+		n.PressProgress = tc.press
 		c := paintChromeNode(t, &n, testStyle)
 		fx, fy := fillPointOf(&n)
 		if got := pixelAt(t, c, fx, fy); got != tc.want {
@@ -1820,6 +1826,90 @@ func TestButtonPaintsChildrenOverItsStateLayer(t *testing.T) {
 	// dimmed by its own control's hover.
 	if litPixels(c, testStyle.Foreground) == 0 {
 		t.Error("child text was painted under the state layer, or not at all")
+	}
+}
+
+func TestPressedButtonMorphsTowardHalfRadius(t *testing.T) {
+	t.Parallel()
+	paint := func(progress float64) Color {
+		n := &ui.Node{Kind: ui.KindButton, Radius: 20, PressProgress: progress,
+			Bounds: ui.Rect{W: 40, H: 40}}
+		c := newTestCanvas(t, 40, 40)
+		if err := paintNode(c, n, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
+			t.Fatal(err)
+		}
+		return pixelAt(t, c, 5, 5)
+	}
+	if paint(0).A != 0 {
+		t.Fatal("the resting shape leaves the (5,5) corner unpainted")
+	}
+	if paint(1).A == 0 {
+		t.Fatal("the pressed radius did not pull the fill into the corner")
+	}
+}
+
+func TestRipplePaintsFromThePressOrigin(t *testing.T) {
+	t.Parallel()
+	paint := func(ripple ui.RipplePaint) Color {
+		n := &ui.Node{Kind: ui.KindCapsule, Bounds: ui.Rect{W: 40, H: 20}, Ripple: ripple}
+		c := newTestCanvas(t, 40, 20)
+		if err := paintNode(c, n, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
+			t.Fatal(err)
+		}
+		return pixelAt(t, c, 8, 10)
+	}
+	rest := paint(ui.RipplePaint{})
+	if paint(ui.RipplePaint{Phase: 0.1, X: 5, Y: 10}) == rest {
+		t.Fatal("no ripple wash near the press origin")
+	}
+	if paint(ui.RipplePaint{Phase: 1, X: 5, Y: 10}) != rest {
+		t.Fatal("a finished ripple still paints")
+	}
+}
+
+func TestRippleOriginIsMaskLocalAtFractionalScale(t *testing.T) {
+	t.Parallel()
+	style := testStyle
+	style.Scale120 = 150
+	paint := func(ripple ui.RipplePaint) *Canvas {
+		n := &ui.Node{Kind: ui.KindCapsule, Bounds: ui.Rect{X: 10, Y: 5, W: 40, H: 20}, Ripple: ripple}
+		c := newTestCanvas(t, 80, 48)
+		if err := paintNode(c, n, NewTextRenderer(mustTestFace(t)), style, style.Size); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	rest := paint(ui.RipplePaint{})
+	ripple := paint(ui.RipplePaint{Phase: 0.01, X: 15, Y: 15})
+	x, y := style.Scale120.Physical(15), style.Scale120.Physical(15)
+	if got, base := pixelAt(t, ripple, x, y), pixelAt(t, rest, x, y); got == base {
+		t.Fatalf("ripple missed the absolute press point at physical %d,%d: %+v", x, y, got)
+	}
+}
+
+func TestTabAndMenuRowCarryTheStateLayer(t *testing.T) {
+	t.Parallel()
+	tab := &ui.Node{Kind: ui.KindTab, Action: "tab", State: ui.StateHovered,
+		HoverProgress: 1, Bounds: ui.Rect{W: 30, H: 20}}
+	c := newTestCanvas(t, 30, 20)
+	if err := paintNode(c, tab, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
+		t.Fatal(err)
+	}
+	if pixelAt(t, c, 15, 10).A == 0 {
+		t.Fatal("a hovered tab painted no state layer")
+	}
+	paintRow := func(state ui.Interaction) Color {
+		row := &ui.Node{Kind: ui.KindText, State: state, HoverProgress: 1,
+			Bounds: ui.Rect{X: 2, Y: 2, W: 26, H: 14}}
+		menu := &ui.Node{Kind: ui.KindMenu, Bounds: ui.Rect{W: 30, H: 40}, Children: []*ui.Node{row}}
+		c := newTestCanvas(t, 30, 40)
+		if err := paintNode(c, menu, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
+			t.Fatal(err)
+		}
+		return pixelAt(t, c, 3, 3)
+	}
+	if paintRow(ui.StateHovered) == paintRow(0) {
+		t.Fatal("a hovered menu row painted no state layer")
 	}
 }
 

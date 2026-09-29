@@ -647,11 +647,11 @@ func (r *Registry) cancelBluetoothPromptLocked(h *PanelHost) {
 }
 
 func (r *Registry) bluetoothHostVisibleLocked() bool {
-	if h := r.panelHosts[PanelBluetooth]; h != nil && r.roots.owns(panelRoot(PanelBluetooth)) {
+	if h := r.panelHosts[PanelBluetooth]; h != nil && r.panelOpenLocked(PanelBluetooth) {
 		return true
 	}
 	if h := r.panelHosts[PanelControlCenter]; h != nil && h.section == "bluetooth" &&
-		r.roots.owns(panelRoot(PanelControlCenter)) {
+		r.panelOpenLocked(PanelControlCenter) {
 		return true
 	}
 	return false

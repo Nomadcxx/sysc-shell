@@ -178,6 +178,22 @@ func Run(ctx context.Context, cfg config.Config, callbacks Callbacks) (err error
 			cfg.Bar.Height, cfg.Bar.Gap, body)
 	}
 
+	// Connection roundtrips invoke shell callbacks that can publish redraws.
+	// Drain their bounded channels before connecting; the wake queues retain
+	// those requests until the owner loop can process them.
+	wake, err := newWakePipe()
+	if err != nil {
+		return err
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	pastes := make(chan pasteResult, 4)
+	bridgeDone := wake.bridge(runCtx, callbacks.Invalidations, callbacks.Reloads, callbacks.Aux, callbacks.Selection, pastes)
+	defer func() {
+		cancel()
+		<-bridgeDone
+		wake.close()
+	}()
+
 	o := &owner{
 		cb:    callbacks,
 		hosts: newHostSet(),
@@ -190,7 +206,7 @@ func Run(ctx context.Context, cfg config.Config, callbacks Callbacks) (err error
 	if err := o.connect(); err != nil {
 		return err
 	}
-	return o.loop(ctx)
+	return o.loop(runCtx, wake, pastes)
 }
 
 type owner struct {
@@ -1230,23 +1246,12 @@ func (o *owner) teardownSurface(h *OutputHost) error {
 
 // loop drives the owner goroutine: render when a scheduler offers work, then
 // wait on the Wayland socket and the wake pipe.
-func (o *owner) loop(ctx context.Context) error {
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	wake, err := newWakePipe()
-	if err != nil {
-		return err
-	}
-	defer wake.close()
-	pastes := make(chan pasteResult, 4)
-	wake.bridge(runCtx, o.cb.Invalidations, o.cb.Reloads, o.cb.Aux, o.cb.Selection, pastes)
-
+func (o *owner) loop(ctx context.Context, wake *wakePipe, pastes chan pasteResult) error {
 	for {
 		if o.fatal != nil {
 			return o.fatal
 		}
-		if o.closed || runCtx.Err() != nil {
+		if o.closed || ctx.Err() != nil {
 			return nil
 		}
 

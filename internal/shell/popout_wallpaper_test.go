@@ -124,7 +124,7 @@ func TestWallpaperPanelIsAnAttachedExclusiveOverlay(t *testing.T) {
 	if reqs[1].Open.Keyboard != keyboardExclusive {
 		t.Errorf("keyboard = %d, want exclusive", reqs[1].Open.Keyboard)
 	}
-	if reqs[0].Open == nil || reqs[0].Open.ID != shieldSurfaceID(PanelWallpaper) {
+	if reqs[0].Open == nil || reqs[0].Open.ID != panelShieldSurfaceID(7) {
 		t.Errorf("first request = %+v, want the dismiss shield", reqs[0].Open)
 	}
 }

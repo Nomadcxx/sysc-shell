@@ -120,6 +120,33 @@ func RingMask(radius, w, h, width int) *image.Alpha {
 	return mask
 }
 
+// RippleMask returns the coverage of a disc clipped to a rounded rectangle.
+// It is built per frame because the press origin changes per ripple; caching
+// each origin would grow without bound. The cost is one pass over this node's
+// box for each in-flight ripple.
+func RippleMask(w, h, radius, cx, cy int, disc float64) *image.Alpha {
+	mask := image.NewAlpha(image.Rect(0, 0, max(w, 0), max(h, 0)))
+	if w <= 0 || h <= 0 || disc <= 0 {
+		return mask
+	}
+	radius = min(radius, min(w, h)/2)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			box := roundedCoverage(radius, w, h, x, y)
+			if box == 0 {
+				continue
+			}
+			dx := float64(x) + 0.5 - float64(cx)
+			dy := float64(y) + 0.5 - float64(cy)
+			discCoverage := min(max(0.5-math.Hypot(dx, dy)+disc, 0), 1)
+			if a := uint8(min(float64(box), discCoverage*255)); a > 0 {
+				mask.SetAlpha(x, y, color.Alpha{A: a})
+			}
+		}
+	}
+	return mask
+}
+
 // quadrant is the corner of a w x h box that pixel (x, y) lies nearest.
 func quadrant(x, y, w, h int) Corners {
 	left, top := 2*x+1 <= w, 2*y+1 <= h

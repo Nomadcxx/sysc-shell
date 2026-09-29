@@ -228,7 +228,7 @@ func TestBluetoothPromptStaysOnTheVisibleControlCentreHost(t *testing.T) {
 	r.mu.Lock()
 	control := r.panelHosts[PanelControlCenter]
 	standalone := r.panelHosts[PanelBluetooth]
-	visible := control != nil && r.roots.owns(panelRoot(PanelControlCenter)) &&
+	visible := control != nil && r.panelOpenLocked(PanelControlCenter) &&
 		control.section == "bluetooth" && findAction(control.root, "bluetooth-prompt-accept") != nil
 	r.mu.Unlock()
 	if !visible || standalone != nil {
