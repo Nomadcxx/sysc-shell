@@ -1,6 +1,7 @@
 package wayland
 
 import (
+	"errors"
 	"io"
 	"log"
 	"os"
@@ -25,9 +26,40 @@ var textMimes = []string{"text/plain;charset=utf-8", "text/plain", "UTF8_STRING"
 type SelectionRequest struct {
 	// Copy, when non-empty, becomes the clipboard's text.
 	Copy string
+	// Data, when non-empty, becomes the clipboard's content, offered as Mime
+	// and nothing else. It is never mutated after the request is sent.
+	Mime string
+	Data []byte
 	// Paste asks for the clipboard's text, delivered later as EventPaste.
 	Paste  bool
 	Serial uint32
+	// Done, when non-nil, receives once the owner has handled a copy: nil
+	// once set_selection is sent, or why it was not. The sender buffers it;
+	// the owner never blocks on it.
+	//
+	// The compositor ignores set_selection from a client without keyboard
+	// focus, so a surface that copies and then closes must wait for Done
+	// before it closes.
+	Done chan<- error
+}
+
+// offer is the MIME types a copy offers and the bytes it serves for each.
+func (req SelectionRequest) offer() ([]string, []byte) {
+	if len(req.Data) > 0 {
+		return []string{req.Mime}, req.Data
+	}
+	return textMimes, []byte(req.Copy)
+}
+
+// answer reports a copy's outcome to its sender, if it asked.
+func (req SelectionRequest) answer(err error) {
+	if req.Done == nil {
+		return
+	}
+	select {
+	case req.Done <- err:
+	default:
+	}
 }
 
 func pickTextMime(offered []string) (string, bool) {
@@ -142,23 +174,28 @@ func (o *owner) destroySelection() []error {
 // handleSelection serves one request from the shell on the owner goroutine.
 // Pipe writes and reads run on their own goroutines.
 func (o *owner) handleSelection(req SelectionRequest, results chan<- pasteResult) {
+	copying := req.Copy != "" || len(req.Data) > 0
 	if o.sel.device == nil {
+		if copying {
+			req.answer(errors.New("wayland: the seat has no data device"))
+		}
 		return
 	}
 	switch {
-	case req.Copy != "":
+	case copying:
 		src, err := o.sel.manager.CreateDataSource()
 		if err != nil {
 			o.warnSelectionOnce("source", err)
+			req.answer(err)
 			return
 		}
-		for _, m := range textMimes {
+		mimes, payload := req.offer()
+		for _, m := range mimes {
 			_ = src.Offer(m)
 		}
-		text := req.Copy
 		src.SetSendHandler(func(e client.DataSourceSendEvent) {
 			f := os.NewFile(uintptr(e.Fd), "wl-selection-send")
-			go func() { _, _ = io.WriteString(f, text); f.Close() }()
+			go func() { _, _ = f.Write(payload); f.Close() }()
 		})
 		// The compositor cancels a source when another client takes the
 		// clipboard, including our own next copy.
@@ -170,9 +207,11 @@ func (o *owner) handleSelection(req SelectionRequest, results chan<- pasteResult
 		})
 		if err := o.sel.device.SetSelection(src, req.Serial); err != nil {
 			o.warnSelectionOnce("set", err)
+			req.answer(err)
 			return
 		}
 		o.sel.source = src
+		req.answer(nil)
 	case req.Paste:
 		if o.sel.offer == nil {
 			return
