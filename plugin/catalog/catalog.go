@@ -27,6 +27,7 @@ const (
 
 	MaxCatalogBytes       = 4 << 20
 	MaxAssetBytes   int64 = 64 << 20
+	MaxReadmeBytes  int64 = 256 << 10
 
 	CategoryOther = "other"
 )
@@ -117,6 +118,7 @@ type Entry struct {
 	License         string      `json:"license,omitempty"`
 	Homepage        string      `json:"homepage,omitempty"`
 	Screenshot      *Screenshot `json:"screenshot,omitempty"`
+	Readme          *Screenshot `json:"readme,omitempty"`
 	AddedAt         time.Time   `json:"added_at,omitzero"`
 	UpdatedAt       time.Time   `json:"updated_at,omitzero"`
 	Deprecated      bool        `json:"deprecated,omitempty"`
@@ -205,13 +207,11 @@ func (e *Entry) Validate() error {
 	if !slices.Contains(Categories, e.Category) {
 		e.Category = CategoryOther
 	}
-	if s := e.Screenshot; s != nil {
-		if err := CheckFetchURL(s.URL); err != nil {
-			return err
-		}
-		if !sha256Pattern.MatchString(s.SHA256) {
-			return fail(ErrInvalid, nil, "screenshot sha256 %q is not 64 lower-case hex digits", s.SHA256)
-		}
+	if err := validateMedia("screenshot", e.Screenshot); err != nil {
+		return err
+	}
+	if err := validateMedia("readme", e.Readme); err != nil {
+		return err
 	}
 	if err := e.Release.validate(); err != nil {
 		return err
@@ -220,6 +220,19 @@ func (e *Entry) Validate() error {
 		if err := e.Releases[i].validate(); err != nil {
 			return fail(ErrInvalid, err, "releases[%d]", i)
 		}
+	}
+	return nil
+}
+
+func validateMedia(label string, media *Screenshot) error {
+	if media == nil {
+		return nil
+	}
+	if err := CheckFetchURL(media.URL); err != nil {
+		return err
+	}
+	if !sha256Pattern.MatchString(media.SHA256) {
+		return fail(ErrInvalid, nil, "%s sha256 %q is not 64 lower-case hex digits", label, media.SHA256)
 	}
 	return nil
 }

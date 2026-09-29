@@ -20,6 +20,7 @@ const (
 	PanelBluetooth
 	PanelWeather
 	PanelClipboard
+	PanelPluginStore
 )
 
 func (p PanelID) String() string {
@@ -52,6 +53,8 @@ func (p PanelID) String() string {
 		return "weather"
 	case PanelClipboard:
 		return "clipboard"
+	case PanelPluginStore:
+		return "plugin-store"
 	default:
 		return "unknown"
 	}
@@ -187,6 +190,16 @@ func (p Placement) Margins() Margins {
 		return Margins{Bottom: anchor, Left: x}
 	}
 	return Margins{Top: anchor, Left: x}
+}
+
+// Rect is the panel's body on its output, in logical pixels.
+func (p Placement) Rect() ui.Rect {
+	m := p.Margins()
+	y := m.Top
+	if p.BarEdge == "bottom" {
+		y = p.Output.H - m.Bottom - p.Panel.H
+	}
+	return ui.Rect{X: m.Left, Y: y, W: p.Panel.W, H: p.Panel.H}
 }
 
 func alignX(p Placement) int {

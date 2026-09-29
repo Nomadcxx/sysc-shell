@@ -9,6 +9,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
+	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
 )
 
 const storeTestManifest = `{"schema":1,"id":"org.sysc.timer","name":"Timer","version":"1.0.0",
@@ -219,5 +220,13 @@ func TestPluginStoreCallWithoutAStore(t *testing.T) {
 	t.Cleanup(reg.Close)
 	if _, err := reg.PluginStoreCall("plugins.store", nil); err == nil {
 		t.Fatal("a registry with no store answered")
+	}
+}
+
+func TestStoreStateReplyCarriesShadowedUpdateFlag(t *testing.T) {
+	reply := storeStateReply(store.State{Listings: []store.Listing{{UpdateAvailable: true}}})
+	rows := reply["listings"].([]map[string]any)
+	if len(rows) != 1 || rows[0]["update_available"] != true {
+		t.Fatalf("listing reply = %+v", rows)
 	}
 }
