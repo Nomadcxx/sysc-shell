@@ -1,6 +1,6 @@
 # Design and Plan Register
 
-Last updated: 2026-09-27.
+Last updated: 2026-09-30.
 
 Every design, plan, and handover this project has produced, with where it lives and whether it is still
 live. Add a row here in the same commit that adds a document. A document that is not in this register is
@@ -600,6 +600,7 @@ Supersedes M6 design D7's deferral of a catalog, installer, updater, and removal
 | `2026-09-29-theming-personalization-w1-completion-handover.md` | completion-handover | Snapshot of the **uncommitted** tree `sysc-715`/`sysc-780` in the `feature/theming-personalization` worktree: change map, gate output as measured (four baseline shell failures named), two audit findings fixed with regression tests, accepted risks, and the live-Niri commission left open for the assessing agent. |
 | `2026-09-29-window-management-design.md` | design | Approved 2026-09-29. Reuses exact Niri window IDs; defers the foreign-toplevel binding; adds a focused-output MRU switcher, persistent overview state and verified overview/workspace actions. |
 | `2026-09-29-window-management.md` | plan | Six test-first tasks for overview events/actions, focused-output switcher ordering and overlay/IPC, and exact-ID moves from the running-app menu, followed by package/full gates and a one-output live check. |
+| `2026-09-30-window-management-completion-handover.md` | completion-handover | Snapshot on `5f45a7c`: gate output, read-only DP-1 layers, deferred live focus/move/multi-output acceptance and Beads state. |
 
 ## Sibling repositories
 
