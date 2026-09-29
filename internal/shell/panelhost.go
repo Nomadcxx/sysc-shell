@@ -734,6 +734,14 @@ func (r *Registry) DropAux(output uint32, surfaceID string) {
 		r.mu.Unlock()
 		return
 	}
+	if surfaceID == windowSwitcherSurfaceID {
+		r.mu.Lock()
+		if h := r.windowSwitcher; h != nil && h.open_ && h.output == output {
+			h.closeLocked()
+		}
+		r.mu.Unlock()
+		return
+	}
 	if strings.HasPrefix(surfaceID, "tooltip:") {
 		r.mu.Lock()
 		r.tooltips.drop(output, surfaceID)
