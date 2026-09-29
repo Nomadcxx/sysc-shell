@@ -214,6 +214,9 @@ func barOnly() config.Config {
 	cfg := config.Default()
 	cfg.Bar.Left, cfg.Bar.Center, cfg.Bar.Right = nil, nil, nil
 	cfg.Outputs = nil
+	// e55ed6d made the tray projection opt-in, so a bar that must show tray
+	// items says so rather than relying on the default composition.
+	cfg.Tray.Enabled = true
 	return cfg
 }
 
