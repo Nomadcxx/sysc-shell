@@ -123,6 +123,42 @@ func TestOsdStepDispatches(t *testing.T) {
 	}
 }
 
+func TestSwitcherShowDispatches(t *testing.T) {
+	t.Parallel()
+	called := false
+	sock, cancel := startServer(t, Handlers{
+		Switcher: func() error { called = true; return nil },
+	})
+	defer cancel()
+	out, err := Call(context.Background(), sock, "switcher.show", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(out), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.OK || response.Error != "" || !called {
+		t.Fatalf("response = %s, handler called = %v", out, called)
+	}
+}
+
+func TestSwitcherShowRequiresHandler(t *testing.T) {
+	t.Parallel()
+	sock, cancel := startServer(t, Handlers{})
+	defer cancel()
+	out, err := Call(context.Background(), sock, "switcher.show", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"error":"switcher handler unset"`) {
+		t.Fatalf("missing handler response = %s", out)
+	}
+}
+
 func TestPanelParamValidation(t *testing.T) {
 	t.Parallel()
 	called := false

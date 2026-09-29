@@ -22,6 +22,7 @@ const (
 	rootTrayMenu
 	rootTrayDrawer
 	rootRunningApps
+	rootWindowSwitcher
 )
 
 // rootID identifies one interactive root. Two roots are the same only when
@@ -50,6 +51,10 @@ func trayDrawerRoot(outputGlobal uint32) rootID {
 
 func runningAppsMenuRoot(outputGlobal uint32) rootID {
 	return rootID{kind: rootRunningApps, key: uint64(outputGlobal)}
+}
+
+func windowSwitcherRoot(outputGlobal uint32) rootID {
+	return rootID{kind: rootWindowSwitcher, key: uint64(outputGlobal)}
 }
 
 // rootChain is the single interactive root and its optional attached child.

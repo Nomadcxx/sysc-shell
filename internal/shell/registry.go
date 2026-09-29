@@ -43,15 +43,16 @@ import (
 // announced yet or has already been removed. A host is never created or
 // destroyed from a Niri event.
 type Registry struct {
-	mu          sync.Mutex
-	cfg         config.Config
-	outputs     map[string]outputState
-	bars        map[uint32]*Bar
-	leases      map[uint32][]*services.Lease
-	now         time.Time
-	focused     string
-	layouts     niri.KeyboardLayouts
-	layoutsSeen bool
+	mu           sync.Mutex
+	cfg          config.Config
+	outputs      map[string]outputState
+	bars         map[uint32]*Bar
+	leases       map[uint32][]*services.Lease
+	niriSnapshot niri.Snapshot
+	now          time.Time
+	focused      string
+	layouts      niri.KeyboardLayouts
+	layoutsSeen  bool
 	// caps is what the compositor last said it can do. The zero value, no
 	// blur, is also the answer for a compositor without the protocol.
 	caps wayland.Capabilities
@@ -166,8 +167,9 @@ type Registry struct {
 	runningIndex []runningAppEntry
 	// usernames resolves process owners for the system monitor. It carries
 	// its own lock; see usernameCache.
-	usernames   *usernameCache
-	runningMenu *runningAppMenuHost
+	usernames      *usernameCache
+	runningMenu    *runningAppMenuHost
+	windowSwitcher *windowSwitcherHost
 	// niriSend is the FocusWindow/CloseWindow seam. Tests replace it; nil
 	// sends niri.Action on $NIRI_SOCKET off this goroutine.
 	niriSend func(any) error
@@ -1909,6 +1911,7 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	// has no workspace state any more, and keeping its last value would render
 	// a stale workspace or title on a host that reconnects under that name.
 	r.outputs = next
+	r.niriSnapshot = cloneNiriSnapshot(s)
 	r.focused = s.FocusedOutput
 	r.ensureRunningIndexLocked()
 	r.running = groupRunningApps(s.Windows, r.runningIndex)
@@ -1921,9 +1924,18 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	if len(s.Layouts.Names) > 0 {
 		r.layoutsSeen = true
 	}
+	switcherUpdated := false
+	var switcherOutput uint32
+	if r.windowSwitcher != nil {
+		switcherOutput = r.windowSwitcher.output
+		switcherUpdated = r.windowSwitcher.refreshLocked(r.niriSnapshot)
+	}
 	r.mu.Unlock()
 
 	r.publish(changed)
+	if switcherUpdated {
+		r.publishSurface(switcherOutput, windowSwitcherSurfaceID)
+	}
 	if showLayout {
 		r.OSD().Show(layoutView)
 	}
