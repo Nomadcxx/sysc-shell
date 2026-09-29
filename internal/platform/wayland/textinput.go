@@ -12,15 +12,24 @@ type cursorShaper interface {
 	SetShape(serial, shape uint32) error
 }
 
-func applyCursorShape(dev cursorShaper, serial uint32, ibeam bool) error {
+func applyCursorShape(dev cursorShaper, serial, shape uint32) error {
 	if dev == nil {
 		return nil
 	}
-	shape := uint32(cursorshape.WpCursorShapeDeviceV1ShapeDefault)
-	if ibeam {
-		shape = uint32(cursorshape.WpCursorShapeDeviceV1ShapeText)
-	}
 	return dev.SetShape(serial, shape)
+}
+
+// cursorShapeFor picks the cursor for a pointer at x, y over a surface with
+// these callbacks; nil is no surface.
+func cursorShapeFor(app *HostCallbacks, x, y float64) uint32 {
+	switch {
+	case app == nil:
+	case app.Crosshair:
+		return uint32(cursorshape.WpCursorShapeDeviceV1ShapeCrosshair)
+	case app.IBeamAt != nil && app.IBeamAt(x, y):
+		return uint32(cursorshape.WpCursorShapeDeviceV1ShapeText)
+	}
+	return uint32(cursorshape.WpCursorShapeDeviceV1ShapeDefault)
 }
 
 type imePending struct {
@@ -100,6 +109,9 @@ func (o *owner) syncIME(u *surfaceUnit) {
 }
 
 func (o *owner) syncCursor(u *surfaceUnit, x, y float64, serial uint32) {
-	ibeam := u != nil && u.app.IBeamAt != nil && u.app.IBeamAt(x, y)
-	o.fail(applyCursorShape(o.cursorDevice, serial, ibeam))
+	var app *HostCallbacks
+	if u != nil {
+		app = &u.app
+	}
+	o.fail(applyCursorShape(o.cursorDevice, serial, cursorShapeFor(app, x, y)))
 }
