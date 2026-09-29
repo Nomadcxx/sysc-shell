@@ -3,6 +3,8 @@ package ipc
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -304,5 +306,67 @@ func TestDefaultSocketStaysInsideARuntimeDirectory(t *testing.T) {
 	got := DefaultSocket()
 	if !filepath.IsAbs(got) || strings.HasPrefix(got, "/tmp/") {
 		t.Fatalf("fallback socket sits in a shared directory: %q", got)
+	}
+}
+
+func TestThemeVerbsRouteToTheHandler(t *testing.T) {
+	cases := []struct {
+		name    string
+		line    string
+		want    string
+		wantErr bool
+	}{
+		{"mode get", `{"id":1,"method":"theme.mode.get"}`, `"mode":"dark"`, false},
+		{"mode set", `{"id":1,"method":"theme.mode.set","params":{"mode":"light"}}`, `"value":"light"`, false},
+		{"mode toggle", `{"id":1,"method":"theme.mode.toggle"}`, `"value":"light"`, false},
+		{"palette get", `{"id":1,"method":"theme.palette.get"}`, `"source"`, false},
+		{"templates apply", `{"id":1,"method":"theme.templates.apply","params":{"name":"foot"}}`, `"applied":"foot"`, false},
+		{"unknown verb", `{"id":1,"method":"theme.mode.flip"}`, "unknown method theme.mode.flip", true},
+		{"bad params", `{"id":1,"method":"theme.mode.set","params":7}`, "malformed params", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewServer("", Handlers{Theme: func(method string, params json.RawMessage) (map[string]any, error) {
+				if method == "theme.mode.flip" {
+					return nil, fmt.Errorf("unknown method %s", method)
+				}
+				var p struct {
+					Mode string `json:"mode"`
+					Name string `json:"name"`
+				}
+				if len(params) > 0 {
+					if err := json.Unmarshal(params, &p); err != nil {
+						return nil, errors.New("malformed params")
+					}
+				}
+				switch method {
+				case "theme.mode.get":
+					return map[string]any{"mode": "dark"}, nil
+				case "theme.mode.set":
+					return map[string]any{"path": "appearance.mode", "value": p.Mode}, nil
+				case "theme.mode.toggle":
+					return map[string]any{"path": "appearance.mode", "value": "light"}, nil
+				case "theme.palette.get":
+					return map[string]any{"source": "wallpaper", "seed": "", "scheme": "", "mode": "dark"}, nil
+				case "theme.templates.apply":
+					return map[string]any{"applied": p.Name}, nil
+				}
+				return nil, fmt.Errorf("unknown method %s", method)
+			}})
+			out := string(s.handleLine(tc.line))
+			if !strings.Contains(out, tc.want) {
+				t.Fatalf("reply %s lacks %q", out, tc.want)
+			}
+			if got := strings.Contains(out, `"error"`); got != tc.wantErr {
+				t.Fatalf("reply %s wantErr %v", out, tc.wantErr)
+			}
+		})
+	}
+	out := string(NewServer("", Handlers{}).handleLine(`{"id":2,"method":"theme.mode.get"}`))
+	if !strings.Contains(out, "theme handler unset") {
+		t.Fatalf("reply without a handler: %s", out)
+	}
+	if out := string(NewServer("", Handlers{}).handleLine(`{"id":3,"method":"theme"}`)); !strings.Contains(out, "unknown method") {
+		t.Fatalf("non-namespace method must stay unknown: %s", out)
 	}
 }

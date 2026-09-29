@@ -342,6 +342,7 @@ func run(ctx context.Context) (err error) {
 			OSDStep:    registry.OSDStep,
 			Plugins:    registry.PluginStoreCall,
 			Screenshot: registry.Screenshot,
+			Theme:      registry.ThemeCall,
 		})
 		ipcErr <- srv.Serve(ctx)
 	}()
@@ -409,7 +410,10 @@ func runIPC(args []string) error {
 	}
 	var raw any
 	if err := json.Unmarshal(params, &raw); err != nil {
-		return err
+		// Bad params never reach the server, so answer for it in the same
+		// shape the server uses.
+		fmt.Println(`{"error":"malformed params"}`)
+		os.Exit(1)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

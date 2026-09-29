@@ -78,6 +78,12 @@ type Registry struct {
 	// themeErr is why the published palette is not the requested one, empty
 	// when it is. Surfaced by the picker; never fatal.
 	themeErr string
+	// previewing reports that the surfaces currently show a candidate palette
+	// the config does not name (sysc-780, D5). The committed palette stays in
+	// r.tokens throughout; previewPrevErr is the themeErr to restore on hide,
+	// so a preview never erases a committed generation failure. Registry.mu.
+	previewing     bool
+	previewPrevErr string
 	// templateRefusals names templates whose files the shell refused to write
 	// because their current bytes are not the shell's last render. The
 	// settings Templates section surfaces them with an overwrite action.
@@ -92,6 +98,13 @@ type Registry struct {
 	templateRefusals map[string]string
 	templateForce    map[string]bool
 	themeGen         theme.Generator
+	// themeGenMu serialises the generator across goroutines (sysc-780).
+	// theme.Generator is single-flight by contract -- it writes one fixed
+	// cache path -- and before preview every Generate ran on the Wayland
+	// owner. Preview generates on the IPC goroutine, so the contract needs a
+	// real mutex. Leaf lock: nothing takes Registry.mu while it is held, and
+	// the paint that follows takes r.mu only after it is released.
+	themeGenMu sync.Mutex
 
 	// invalidations carries one entry per bar whose rendered text changed.
 	// The Wayland owner receives from it; the registry owns it and never
@@ -993,20 +1006,9 @@ func (r *Registry) panelThemeFor(output uint32) Theme {
 // colours: the wallpaper changed, the shell did not, and there was nowhere to
 // look. Callers surface this; they must not treat it as fatal.
 func (r *Registry) generateTheme(cfg config.Config) (theme.Tokens, error) {
-	tok, err := r.themeGen.Generate(
-		theme.Source{Kind: cfg.ThemeGen.Source, Seed: cfg.ThemeGen.Seed},
-		theme.Options{
-			Mode:         cfg.ThemeGen.Mode,
-			Scheme:       cfg.ThemeGen.Scheme,
-			HighContrast: cfg.Accessibility.HighContrast,
-		},
-	)
+	tok, err := r.generateOnly(cfg)
 	if err != nil {
 		return r.lastCompleteTokens(cfg.Accessibility.HighContrast), err
-	}
-	if err := tok.Complete(); err != nil {
-		return r.lastCompleteTokens(cfg.Accessibility.HighContrast),
-			fmt.Errorf("theme: generated palette is incomplete: %w", err)
 	}
 	if !runningAsTest() {
 		outcomes, err := theming.ApplyEnabled(os.Getenv("HOME"), cfg.TemplateEnabled, tok, r.consumeTemplateForce)
@@ -1033,6 +1035,32 @@ func (r *Registry) generateTheme(cfg config.Config) (theme.Tokens, error) {
 		if err != nil {
 			return tok, fmt.Errorf("theme: external templates: %w", err)
 		}
+	}
+	return tok, nil
+}
+
+// generateOnly produces palette tokens for cfg without touching published
+// state or writing application templates. It is the shared head of
+// generateTheme and the sysc-780 preview. On any failure it returns the
+// tokens the generator produced (its compiled fallback) plus the error; the
+// caller decides the failure floor -- generateTheme keeps the published
+// palette, preview refuses to paint.
+func (r *Registry) generateOnly(cfg config.Config) (theme.Tokens, error) {
+	r.themeGenMu.Lock()
+	defer r.themeGenMu.Unlock()
+	tok, err := r.themeGen.Generate(
+		theme.Source{Kind: cfg.ThemeGen.Source, Seed: cfg.ThemeGen.Seed},
+		theme.Options{
+			Mode:         cfg.ThemeGen.Mode,
+			Scheme:       cfg.ThemeGen.Scheme,
+			HighContrast: cfg.Accessibility.HighContrast,
+		},
+	)
+	if err != nil {
+		return tok, err
+	}
+	if err := tok.Complete(); err != nil {
+		return tok, fmt.Errorf("theme: generated palette is incomplete: %w", err)
 	}
 	return tok, nil
 }

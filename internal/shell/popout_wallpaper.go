@@ -1255,22 +1255,53 @@ func (r *Registry) republishTheme(cfg config.Config) {
 	// the new one is incomplete, which is what keeps a bad seed from blanking
 	// the shell.
 	tokens, genErr := r.generateTheme(cfg)
+	themeErr := ""
+	if genErr != nil {
+		themeErr = genErr.Error()
+	}
+	r.paintTheme(cfg, tokens, themeErr, true)
+}
 
+// paintTheme repaints every surface with tokens. commit is true for the
+// palette of record: it replaces the published tokens and records why the
+// published palette is not the requested one. The sysc-780 preview passes
+// commit=false: the committed palette stays authoritative in r.tokens and the
+// published failure reason is untouched, so a preview can be reverted by
+// repainting what the config already names.
+//
+// A commit that lands while a preview is up repaints the committed palette,
+// keeps the previewing flag set until the next hide, and refreshes the reason
+// that hide will restore: a preview must not erase or resurrect a generation
+// failure recorded while it was up.
+func (r *Registry) paintTheme(cfg config.Config, tokens theme.Tokens, themeErr string, commit bool) {
 	r.mu.Lock()
 	nextBars := make(map[*Bar]Theme, len(r.bars))
 	for _, bar := range r.bars {
 		next, err := resolveOutputTheme(cfg, bar.connector(), tokens, r.caps.Blur)
 		if err != nil {
-			r.themeErr = err.Error()
+			if commit {
+				r.themeErr = err.Error()
+				if r.previewing {
+					r.previewPrevErr = r.themeErr
+				}
+			}
 			r.mu.Unlock()
 			return
 		}
 		nextBars[bar] = next
 	}
-	r.tokens = tokens
-	r.themeErr = ""
-	if genErr != nil {
-		r.themeErr = genErr.Error()
+	if commit {
+		r.tokens = tokens
+		r.themeErr = ""
+		if themeErr != "" {
+			r.themeErr = themeErr
+		}
+		if r.previewing {
+			r.previewPrevErr = r.themeErr
+		}
+	} else if !r.previewing {
+		r.previewing = true
+		r.previewPrevErr = r.themeErr
 	}
 	for _, bar := range r.bars {
 		bar.retheme(nextBars[bar])

@@ -61,6 +61,8 @@ type Handlers struct {
 	Screenshot func(mode string) error
 	// Plugins answers every plugins.* method.
 	Plugins func(method string, params json.RawMessage) (map[string]any, error)
+	// Theme answers every theme.* method.
+	Theme func(method string, params json.RawMessage) (map[string]any, error)
 }
 
 type Server struct {
@@ -250,6 +252,16 @@ func (s *Server) handleLine(line string) []byte {
 				return envelope(req.ID, "", "plugin store handler unset")
 			}
 			body, err := s.h.Plugins(req.Method, req.Params)
+			if err != nil {
+				return envelope(req.ID, "", err.Error())
+			}
+			return envelope(req.ID, "ok", "", body)
+		}
+		if strings.HasPrefix(req.Method, "theme.") {
+			if s.h.Theme == nil {
+				return envelope(req.ID, "", "theme handler unset")
+			}
+			body, err := s.h.Theme(req.Method, req.Params)
 			if err != nil {
 				return envelope(req.ID, "", err.Error())
 			}

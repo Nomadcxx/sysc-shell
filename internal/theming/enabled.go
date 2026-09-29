@@ -1,6 +1,7 @@
 package theming
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -62,7 +63,10 @@ func ApplyEnabled(home string, enabled func(string) bool, tok theme.Tokens, forc
 }
 
 func applyOnce(home string, enabled func(string) bool, tok theme.Tokens, force func(string) bool) (map[string]error, error) {
-	cat := Catalog()
+	// D6: a template body in $XDG_CONFIG_HOME/sysc-shell/theming-templates
+	// replaces the embedded one for its name; the write targets, the
+	// Complete() gate and the user-modified guard are unchanged.
+	cat := Catalog().WithOverlay()
 	outcomes := map[string]error{}
 	var first error
 	record := func(name string, err error) {
@@ -81,6 +85,12 @@ func applyOnce(home string, enabled func(string) bool, tok theme.Tokens, force f
 		// app. An incomplete template behaves as off everywhere, which also
 		// removes a stub written by an older release.
 		on := enabled(name) && Complete(name)
+		// D6: an overlay body that does not parse renders empty, and an empty
+		// render must never replace a live app config. Report and skip.
+		if on && rendered == "" {
+			record(name, fmt.Errorf("theming: %s renders empty", name))
+			continue
+		}
 		switch name {
 		case "niri":
 			cfg := filepath.Join(home, ".config", "niri", "config.kdl")
