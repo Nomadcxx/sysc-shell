@@ -288,12 +288,12 @@ func TestBrightnessDDCDiscoveryNoReprobe(t *testing.T) {
 	t.Parallel()
 	b := testBrightness(t, t.TempDir(), "brightnessctl", 0)
 	calls := map[int]int{}
-	b.probe = func(bus int) (string, int, error) {
+	b.probe = func(bus int) (string, int, int, error) {
 		calls[bus]++
 		if bus == 1 {
-			return "DP-1", 100, nil
+			return "DP-1", 100, 100, nil
 		}
-		return "", 0, errors.New("absent")
+		return "", 0, 0, errors.New("absent")
 	}
 	// Make the scan look like a /dev with four buses.
 	devRoot := b.devRoot
@@ -304,6 +304,12 @@ func TestBrightnessDDCDiscoveryNoReprobe(t *testing.T) {
 	}
 	if !b.Available() {
 		t.Fatal("ddc display on bus 1 must be available")
+	}
+	// Detection must seed the render cache: sliders exist before any lease
+	// or poll, without opening the bus again.
+	seeded := b.CachedDisplays()
+	if len(seeded) != 1 || seeded[0].ID != "ddc:DP-1" || seeded[0].Level != 100 || !seeded[0].OK {
+		t.Fatalf("seeded cache = %+v, want ddc:DP-1 level 100 ok", seeded)
 	}
 	displays := b.Displays()
 	if len(displays) != 1 || displays[0].ID != "ddc:DP-1" {
@@ -325,11 +331,11 @@ func TestBrightnessDDCCooldown(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(b.devRoot, "i2c-1"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	b.probe = func(bus int) (string, int, error) {
+	b.probe = func(bus int) (string, int, int, error) {
 		if bus == 1 {
-			return "DP-1", 100, nil
+			return "DP-1", 100, 100, nil
 		}
-		return "", 0, errors.New("absent")
+		return "", 0, 0, errors.New("absent")
 	}
 	b.refresh()
 	b.mu.Lock()
@@ -412,4 +418,57 @@ echo "$*" >> "` + dir + `/log"
 		t.Fatal(err)
 	}
 	return &fakeCmd{path: path, dir: dir}
+}
+
+func TestBrightnessSeedsCacheFromSysfsDetection(t *testing.T) {
+	t.Parallel()
+	root := fixtureSysfs(t, "intel_backlight", 400, 1000)
+	b := testBrightness(t, root, "/nonexistent/brightnessctl", 0)
+	if !b.Available() {
+		t.Fatal("device present must be available")
+	}
+	seeded := b.CachedDisplays()
+	if len(seeded) != 1 || seeded[0].ID != "sysfs:intel_backlight" || seeded[0].Level != 40 || !seeded[0].OK {
+		t.Fatalf("seeded cache = %+v, want one sysfs display at level 40", seeded)
+	}
+}
+
+func TestBrightnessInotifyPoke(t *testing.T) {
+	root := fixtureSysfs(t, "first", 250, 1000)
+	b := testBrightness(t, root, "/nonexistent/brightnessctl", 0)
+	t.Cleanup(b.Close)
+	if _, err := b.Acquire(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		b.mu.Lock()
+		sampled := b.hasLast
+		b.mu.Unlock()
+		if sampled {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("baseline brightness poll never completed")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	fixtureSysfsIn(t, root, "second", 500, 1000)
+	// The ticker is an hour away; only an inotify poke can make the poll
+	// loop notice the new backlight.
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		if got := b.CachedDisplays(); len(got) == 2 {
+			for _, d := range got {
+				if d.ID == "sysfs:second" && d.Level == 50 && d.OK {
+					return
+				}
+			}
+			t.Fatalf("poke picked up a wrong second device: %+v", got)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("inotify poke did not surface a backlight created after the lease")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
