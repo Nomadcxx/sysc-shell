@@ -10,6 +10,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/screenshot"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -32,7 +33,7 @@ func testFrame(w, h int) *ui.Image {
 func openTestSelector(t *testing.T, r *Registry, frame *ui.Image, logicalW, logicalH int) (*regionSelector, *wayland.AuxSpec) {
 	t.Helper()
 	r.mu.Lock()
-	sel := newRegionSelector(map[string]uint32{"DP-1": 7}, [4]byte{0, 0, 0xff, 0xff})
+	sel := newRegionSelector(map[string]uint32{"DP-1": 7}, render.Color{R: 255, A: 255})
 	r.selector = sel
 	s := sel.surfaces[7]
 	spec := r.selectorSpec(sel, s)
@@ -239,9 +240,17 @@ func TestSelectorDamageCoversTheOldAndNewRectangle(t *testing.T) {
 	if len(d) != 1 {
 		t.Fatalf("damage = %v", d)
 	}
-	// Union of 10,10-20,20 and 10,10-50,40, each grown by the border.
-	want := ui.Rect{X: 10 - selectorBorder, Y: 10 - selectorBorder, W: 40 + 2*selectorBorder, H: 30 + 2*selectorBorder}
-	if d[0] != want {
-		t.Fatalf("damage = %v, want %v", d[0], want)
+	// Damage must cover the grown outlines of both the old and the new
+	// rectangle; the handle and label chrome may widen it further.
+	contains := func(d, r ui.Rect) bool {
+		return d.X <= r.X && d.Y <= r.Y && d.X+d.W >= r.X+r.W && d.Y+d.H >= r.Y+r.H
+	}
+	for _, want := range []ui.Rect{
+		growRect(ui.Rect{X: 10, Y: 10, W: 10, H: 10}, selectorBorder),
+		growRect(ui.Rect{X: 10, Y: 10, W: 40, H: 30}, selectorBorder),
+	} {
+		if !contains(d[0], want) {
+			t.Fatalf("damage %v does not cover %v", d[0], want)
+		}
 	}
 }

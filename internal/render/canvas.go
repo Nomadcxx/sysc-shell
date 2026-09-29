@@ -291,6 +291,17 @@ func coverageRow(mask *image.Alpha, py, y int) []uint8 {
 	return mask.Pix[(py-y)*mask.Stride:]
 }
 
+// BlendText composites a rasterised run onto the live pixels at x, y in col,
+// without clearing anything. A surface that paints its own background (the
+// screenshot selector's frozen frame) uses it to draw labels.
+func (c *Canvas) BlendText(m Mask, x, y int, col Color) {
+	if m.Color != nil {
+		blendMaskImage(c, m.Alpha, x, y, m.Color)
+		return
+	}
+	blendMask(c, m.Alpha, x, y, col)
+}
+
 func blendMask(c *Canvas, mask *image.Alpha, x, y int, col Color) {
 	if col.A == 0 || mask == nil {
 		return
