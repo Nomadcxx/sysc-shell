@@ -1275,6 +1275,15 @@ func (r *Registry) republishTheme(cfg config.Config) {
 // failure recorded while it was up.
 func (r *Registry) paintTheme(cfg config.Config, tokens theme.Tokens, themeErr string, commit bool) {
 	r.mu.Lock()
+	outputs, osdPubs := r.paintThemeLocked(cfg, tokens, themeErr, commit)
+	r.mu.Unlock()
+	r.publishTheme(outputs, osdPubs)
+}
+
+// paintThemeLocked resolves and applies a palette while holding Registry.mu.
+// Keeping the resolution and state update in one critical section lets preview
+// hide restore the latest committed palette without a stale snapshot window.
+func (r *Registry) paintThemeLocked(cfg config.Config, tokens theme.Tokens, themeErr string, commit bool) (map[string]uint32, []osdPub) {
 	nextBars := make(map[*Bar]Theme, len(r.bars))
 	for _, bar := range r.bars {
 		next, err := resolveOutputTheme(cfg, bar.connector(), tokens, r.caps.Blur)
@@ -1285,12 +1294,12 @@ func (r *Registry) paintTheme(cfg config.Config, tokens theme.Tokens, themeErr s
 					r.previewPrevErr = r.themeErr
 				}
 			}
-			r.mu.Unlock()
-			return
+			return nil, nil
 		}
 		nextBars[bar] = next
 	}
 	if commit {
+		r.invalidateThemePreviewLocked()
 		r.tokens = tokens
 		r.themeErr = ""
 		if themeErr != "" {
@@ -1299,20 +1308,27 @@ func (r *Registry) paintTheme(cfg config.Config, tokens theme.Tokens, themeErr s
 		if r.previewing {
 			r.previewPrevErr = r.themeErr
 		}
-	} else if !r.previewing {
-		r.previewing = true
-		r.previewPrevErr = r.themeErr
+	} else {
+		r.previewTheme = &themePreviewState{cfg: cfg, tokens: tokens}
+		if !r.previewing {
+			r.previewing = true
+			r.previewPrevErr = r.themeErr
+		}
 	}
 	for _, bar := range r.bars {
 		bar.retheme(nextBars[bar])
 		bar.apply(r.viewLocked(bar.connector()))
 	}
-	r.retheThemeOpenSurfacesLocked()
-	outputs := r.outputGlobalsLocked()
-	r.mu.Unlock()
+	osdPubs := r.retheThemeOpenSurfacesLocked(cfg, tokens)
+	return r.outputGlobalsLocked(), osdPubs
+}
 
+func (r *Registry) publishTheme(outputs map[string]uint32, osdPubs []osdPub) {
 	for _, global := range outputs {
 		r.publishSurface(global, "")
+	}
+	for _, p := range osdPubs {
+		r.publishSurface(p.global, p.id)
 	}
 }
 

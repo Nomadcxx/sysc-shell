@@ -39,6 +39,52 @@ func TestServerRoundTrip(t *testing.T) {
 	}
 }
 
+func TestThemePreviewCallAllowsGeneratorDuration(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	sock, cancel := startServer(t, Handlers{
+		Theme: func(string, json.RawMessage) (map[string]any, error) {
+			close(started)
+			<-release
+			return map[string]any{"previewing": true}, nil
+		},
+	})
+	defer cancel()
+
+	type result struct {
+		out string
+		err error
+	}
+	called := make(chan result, 1)
+	go func() {
+		out, err := Call(context.Background(), sock, "theme.preview.show", nil)
+		called <- result{out: out, err: err}
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("preview handler did not start")
+	}
+	// Matugen has a ten-second bound; hold past the ordinary two-second IPC
+	// deadline to prove the preview method receives enough time to finish.
+	time.Sleep(2100 * time.Millisecond)
+	close(release)
+	got := <-called
+	if got.err != nil {
+		t.Fatalf("preview call: %v", got.err)
+	}
+	if !strings.Contains(got.out, `"previewing":true`) {
+		t.Fatalf("preview reply = %s", got.out)
+	}
+}
+
 func TestIpcPowerAliasTogglesSession(t *testing.T) {
 	t.Parallel()
 	sock := filepath.Join(t.TempDir(), "ipc.v1.sock")

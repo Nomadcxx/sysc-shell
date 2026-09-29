@@ -2,9 +2,11 @@ package shell
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -221,6 +223,377 @@ func TestThemePreviewShowHide(t *testing.T) {
 		"source": "palette", "seed": "not-a-palette",
 	}); err == nil || !strings.Contains(err.Error(), "appearance.palette") {
 		t.Fatalf("err = %v, want appearance.palette", err)
+	}
+}
+
+func TestThemePreviewRepaintsOpenPanelsWithCandidatePalette(t *testing.T) {
+	r, h := rethemeHost(t, true)
+	r.themeGen = theme.Generator{CacheDir: t.TempDir()}
+
+	cfg := config.Default()
+	cfg.ThemeGen.Source = "palette"
+	cfg.ThemeGen.Seed = "gruvbox"
+	tokens, ok := theme.NamedPalette(cfg.ThemeGen.Seed, cfg.ThemeGen.Mode, false)
+	if !ok {
+		t.Fatal("gruvbox palette is missing")
+	}
+	want, err := resolveOutputTheme(cfg, "", tokens, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.themePreviewShow(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if got := h.paintTheme().Surface; got != want.Surface {
+		t.Fatalf("open panel surface = %+v, want preview surface %+v", got, want.Surface)
+	}
+}
+
+func TestThemePreviewRepaintsOpenOSDWithCandidatePalette(t *testing.T) {
+	cfg := config.Default()
+	cfg.Accessibility.ReducedMotion = true
+	r := NewRegistry(cfg)
+	t.Cleanup(r.Close)
+	r.themeGen = theme.Generator{CacheDir: t.TempDir()}
+	r.setTestBar(7, &Bar{conn: "DP-1"})
+	r.OSD().Show(OSDView{Kind: osdAudio, Level: 40})
+	_ = drainAux(t, r, 1)
+	r.mu.Lock()
+	committedSurface := r.osd.theme.Surface
+	r.mu.Unlock()
+	for len(r.invalidations) != 0 {
+		<-r.invalidations
+	}
+
+	candidate := cfg
+	candidate.ThemeGen.Source = "palette"
+	candidate.ThemeGen.Seed = "gruvbox"
+	tokens, ok := theme.NamedPalette(candidate.ThemeGen.Seed, candidate.ThemeGen.Mode, false)
+	if !ok {
+		t.Fatal("gruvbox palette is missing")
+	}
+	want, err := resolveOutputTheme(candidate, "", tokens, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.themePreviewShow(candidate); err != nil {
+		t.Fatal(err)
+	}
+
+	r.mu.Lock()
+	got := r.osd.theme.Surface
+	r.mu.Unlock()
+	if got != want.Surface {
+		t.Fatalf("open OSD surface = %+v, want preview surface %+v", got, want.Surface)
+	}
+	invalidated := false
+	for len(r.invalidations) != 0 {
+		if inv := <-r.invalidations; inv.Global == 7 && inv.SurfaceID == osdSurfaceID(7) {
+			invalidated = true
+		}
+	}
+	if !invalidated {
+		t.Fatal("theme preview did not invalidate the open OSD surface")
+	}
+
+	r.themePreviewHide()
+	r.mu.Lock()
+	got = r.osd.theme.Surface
+	r.mu.Unlock()
+	if got != committedSurface {
+		t.Fatalf("hidden preview left OSD surface = %+v, want committed surface %+v", got, committedSurface)
+	}
+	invalidated = false
+	for len(r.invalidations) != 0 {
+		if inv := <-r.invalidations; inv.Global == 7 && inv.SurfaceID == osdSurfaceID(7) {
+			invalidated = true
+		}
+	}
+	if !invalidated {
+		t.Fatal("preview hide did not invalidate the open OSD surface")
+	}
+}
+
+func TestThemePreviewOpensPanelsWithCandidatePalette(t *testing.T) {
+	cfg := config.Default()
+	cfg.Accessibility.ReducedMotion = true
+	r := NewRegistry(cfg)
+	t.Cleanup(r.Close)
+	r.themeGen = theme.Generator{CacheDir: t.TempDir()}
+
+	candidate := cfg
+	candidate.ThemeGen.Source = "palette"
+	candidate.ThemeGen.Seed = "gruvbox"
+	tokens, ok := theme.NamedPalette(candidate.ThemeGen.Seed, candidate.ThemeGen.Mode, false)
+	if !ok {
+		t.Fatal("gruvbox palette is missing")
+	}
+	want, err := resolveOutputTheme(candidate, "", tokens, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.themePreviewShow(candidate); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, r, 2)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	h := r.panelHosts[PanelSession]
+	if h == nil {
+		t.Fatal("session panel did not open")
+	}
+	if got := h.paintTheme().Surface; got != want.Surface {
+		t.Fatalf("new panel surface = %+v, want preview surface %+v", got, want.Surface)
+	}
+}
+
+func TestThemePreviewHotpluggedBarUsesCandidatePalette(t *testing.T) {
+	cfg := config.Default()
+	r := NewRegistry(cfg)
+	t.Cleanup(r.Close)
+	r.themeGen = theme.Generator{CacheDir: t.TempDir()}
+
+	candidate := cfg
+	candidate.ThemeGen.Source = "palette"
+	candidate.ThemeGen.Seed = "gruvbox"
+	tokens, ok := theme.NamedPalette(candidate.ThemeGen.Seed, candidate.ThemeGen.Mode, false)
+	if !ok {
+		t.Fatal("gruvbox palette is missing")
+	}
+	want, err := resolveOutputTheme(candidate, "DP-1", tokens, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.themePreviewShow(candidate); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.NewHost(7, "DP-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if got := r.bars[7].themeSnapshot().Surface; got != want.Surface {
+		t.Fatalf("hotplugged bar surface = %+v, want preview surface %+v", got, want.Surface)
+	}
+}
+
+func TestThemePreviewHideInvalidatesPendingGeneration(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	r := NewRegistry(config.Default())
+	t.Cleanup(r.Close)
+	r.themeGen = theme.Generator{CacheDir: t.TempDir()}
+	candidate := config.Default()
+	candidate.ThemeGen.Source = "palette"
+	candidate.ThemeGen.Seed = "gruvbox"
+
+	r.themeGenMu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			r.themeGenMu.Unlock()
+		}
+	}()
+	done := make(chan error, 1)
+	go func() {
+		_, err := r.themePreviewShow(candidate)
+		done <- err
+	}()
+	waitForPreviewCache(t, tmp)
+	r.themePreviewHide()
+	r.themeGenMu.Unlock()
+	locked = false
+
+	if err := waitForPreviewResult(t, done); err == nil {
+		t.Fatal("a preview completed after hide")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.previewing || r.previewTheme != nil {
+		t.Fatal("a hidden pending preview became active")
+	}
+}
+
+func TestThemeCommitInvalidatesPendingPreviewGeneration(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	r := NewRegistry(config.Default())
+	t.Cleanup(r.Close)
+	r.themeGen = theme.Generator{CacheDir: t.TempDir()}
+	candidate := config.Default()
+	candidate.ThemeGen.Source = "palette"
+	candidate.ThemeGen.Seed = "gruvbox"
+
+	r.themeGenMu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			r.themeGenMu.Unlock()
+		}
+	}()
+	done := make(chan error, 1)
+	go func() {
+		_, err := r.themePreviewShow(candidate)
+		done <- err
+	}()
+	waitForPreviewCache(t, tmp)
+
+	committed := config.Default()
+	committed.ThemeGen.Source = "palette"
+	committed.ThemeGen.Seed = "nord"
+	tokens, ok := theme.NamedPalette(committed.ThemeGen.Seed, committed.ThemeGen.Mode, false)
+	if !ok {
+		t.Fatal("nord palette is missing")
+	}
+	r.mu.Lock()
+	r.cfg = committed
+	r.mu.Unlock()
+	r.paintTheme(committed, tokens, "", true)
+	r.themeGenMu.Unlock()
+	locked = false
+
+	if err := waitForPreviewResult(t, done); err == nil {
+		t.Fatal("a pending preview replaced a newer committed palette")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.previewing || r.previewTheme != nil {
+		t.Fatal("a committed palette left a pending preview active")
+	}
+	if r.tokens != tokens {
+		t.Fatal("the pending preview replaced committed palette tokens")
+	}
+}
+
+func waitForPreviewCache(t *testing.T, dir string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) > 0 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("preview generation did not reach its cache")
+}
+
+func waitForPreviewResult(t *testing.T, done <-chan error) error {
+	t.Helper()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(3 * time.Second):
+		t.Fatal("preview generation did not finish")
+		return nil
+	}
+}
+
+func TestThemePreviewRepaintsOpenToastsWithCandidatePalette(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	cfg := config.Default()
+	cfg.Accessibility.ReducedMotion = true
+	r := NewRegistry(cfg)
+	t.Cleanup(r.Close)
+	r.themeGen = theme.Generator{CacheDir: t.TempDir()}
+	hh := &hostHarness{}
+	r.toasts = newToastHost(r, hh)
+	r.outputsForTest([]string{"eDP-1"})
+	r.toasts.syncOutputs(map[string]uint32{"eDP-1": 5})
+	if err := r.toasts.configure("eDP-1", 1920, 1080, 120); err != nil {
+		t.Fatal(err)
+	}
+	r.applyNotify(snap(1, note(1, "build done")))
+	committed := r.toasts.style.RootFill()
+
+	candidate := cfg
+	candidate.ThemeGen.Source = "palette"
+	candidate.ThemeGen.Seed = "gruvbox"
+	tokens, ok := theme.NamedPalette(candidate.ThemeGen.Seed, candidate.ThemeGen.Mode, false)
+	if !ok {
+		t.Fatal("gruvbox palette is missing")
+	}
+	wantTheme, err := resolveOutputTheme(candidate, "", tokens, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := withBarGeometry(wantTheme, candidate.Bar).OverlayStyle().RootFill()
+	if _, err := r.themePreviewShow(candidate); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.toasts.style.RootFill(); got != want {
+		t.Fatalf("open toast root = %+v, want preview root %+v (committed %+v)", got, want, committed)
+	}
+
+	// A later toast rebuild must keep using the preview presentation state.
+	r.applyNotify(snap(2, note(2, "second toast")))
+	if got := r.toasts.style.RootFill(); got != want {
+		t.Fatalf("rebuilt toast root = %+v, want preview root %+v", got, want)
+	}
+}
+
+func TestThemePreviewDoesNotWritePersistentCache(t *testing.T) {
+	xdgCache := t.TempDir()
+	cache := filepath.Join(xdgCache, "sysc-shell")
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(cache, "keep")
+	if err := os.WriteFile(marker, []byte("existing"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", xdgCache)
+	t.Setenv("TMPDIR", tmp)
+
+	r := NewRegistry(config.Default())
+	t.Cleanup(r.Close)
+	for name, contents := range map[string]string{
+		"matugen.toml":          "existing config",
+		"matugen-template.json": "existing template",
+	} {
+		if err := os.WriteFile(filepath.Join(cache, name), []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := config.Default()
+	cfg.ThemeGen.Source = "palette"
+	cfg.ThemeGen.Seed = "gruvbox"
+	if _, err := r.themePreviewShow(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := os.ReadDir(cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("persistent cache entries = %v, want the three pre-existing files", entries)
+	}
+	if got, err := os.ReadFile(marker); err != nil || string(got) != "existing" {
+		t.Fatalf("persistent marker = %q, err = %v", got, err)
+	}
+	for name, want := range map[string]string{
+		"matugen.toml":          "existing config",
+		"matugen-template.json": "existing template",
+	} {
+		if got, err := os.ReadFile(filepath.Join(cache, name)); err != nil || string(got) != want {
+			t.Errorf("persistent %s = %q, err = %v", name, got, err)
+		}
+	}
+	if entries, err := os.ReadDir(tmp); err != nil || len(entries) != 0 {
+		t.Fatalf("temporary preview files = %v, err = %v; want cleanup", entries, err)
 	}
 }
 

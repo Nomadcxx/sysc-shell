@@ -296,13 +296,22 @@ func isAddrInUse(err error) bool {
 
 // Call sends one request and returns the raw response line.
 func Call(ctx context.Context, sock, method string, params any) (string, error) {
+	timeout := 2 * time.Second
+	if method == "theme.preview.show" {
+		// Matugen itself is bounded at ten seconds.
+		timeout = 12 * time.Second
+	}
+	callCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	d := net.Dialer{Timeout: 2 * time.Second}
-	conn, err := d.DialContext(ctx, "unix", sock)
+	conn, err := d.DialContext(callCtx, "unix", sock)
 	if err != nil {
 		return "", err
 	}
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+	deadline, _ := callCtx.Deadline()
+	_ = conn.SetDeadline(deadline)
 	req := map[string]any{"id": 1, "method": method, "params": params}
 	if params == nil {
 		req["params"] = map[string]any{}

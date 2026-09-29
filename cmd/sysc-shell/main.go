@@ -415,9 +415,7 @@ func runIPC(args []string) error {
 		fmt.Println(`{"error":"malformed params"}`)
 		os.Exit(1)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	out, err := ipc.Call(ctx, ipc.DefaultSocket(), method, raw)
+	out, err := ipc.Call(context.Background(), ipc.DefaultSocket(), method, raw)
 	if err != nil {
 		return err
 	}

@@ -142,6 +142,20 @@ func (m *OSDManager) prepareHide() []wayland.AuxRequest {
 	return aux
 }
 
+// retheme updates a visible OSD and reports the surfaces that need repainting.
+// Registry.mu is held by the caller.
+func (m *OSDManager) retheme(t Theme) []osdPub {
+	if !m.Visible() {
+		return nil
+	}
+	m.theme = t
+	pubs := make([]osdPub, 0, len(m.open))
+	for global := range m.open {
+		pubs = append(pubs, osdPub{global: global, id: osdSurfaceID(global)})
+	}
+	return pubs
+}
+
 // blur-exempt: design D13 names the OSD as out of scope. It is a brief,
 // transient readout rather than a surface the eye rests on, and it would pay a
 // capture and a blur on every volume or brightness step.

@@ -603,7 +603,7 @@ func TestRethemeRecomputesToasts(t *testing.T) {
 	before := len(hh.updates)
 
 	r.mu.Lock()
-	r.retheThemeOpenSurfacesLocked()
+	r.retheThemeOpenSurfacesLocked(r.cfg, r.tokens)
 	r.mu.Unlock()
 
 	if len(hh.updates) <= before {
