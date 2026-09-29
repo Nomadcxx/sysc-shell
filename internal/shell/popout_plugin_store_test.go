@@ -47,7 +47,7 @@ func TestPluginStorePanelBuildsAndHeadlessRendersEmptyState(t *testing.T) {
 			t.Fatalf("render on %dx%d: %v", output.W, output.H, err)
 		}
 		h := reg.panelHosts[id]
-		if !pluginStoreHasText(h.root, "Plugins") || !pluginStoreHasText(h.root, "No plugins match") {
+		if !pluginStoreHasText(h.root, "Plugin store") || !pluginStoreHasText(h.root, "No plugins match") {
 			t.Fatalf("empty store panel on %dx%d lacks its title or empty state", output.W, output.H)
 		}
 		if !pluginStoreHasKind(h.root, ui.KindTextField) {
@@ -98,7 +98,7 @@ func TestPluginStorePanelHeadlessRendersEveryGridStateAtBothSizes(t *testing.T) 
 		{name: "loading", state: store.State{Busy: "refresh"}, want: "Loading plugins…"},
 		{name: "results and no screenshot", state: store.State{
 			Sources: []store.SourceState{{Name: "sysc"}}, Listings: []store.Listing{withScreenshot, withoutScreenshot},
-		}, want: "No screenshot provided"},
+		}, want: "Clock"},
 		{name: "empty", state: store.State{}, want: "No plugins match"},
 		{name: "all sources failed", state: store.State{
 			Sources: []store.SourceState{{Name: "sysc", Err: errors.New("network unreachable")}},
@@ -254,18 +254,18 @@ func TestPluginStoreFilterAndSortControlsUpdateTheGrid(t *testing.T) {
 		t.Fatal("Hide installed did not remove the installed community listing")
 	}
 	pluginStoreActivateAction(t, reg, host, "store-clear")
-	category := pluginStoreFindAction(host.root, "plugin-store-category")
-	if category == nil || category.Kind != ui.KindMenu {
-		t.Fatal("category chip is not a KindMenu")
+	// Categories is an expander: its chips join the keyboard order and a
+	// choice closes the row again.
+	if pluginStoreFindAction(host.root, "store-category:appearance") != nil {
+		t.Fatal("category chips showed before Categories was opened")
 	}
-	host.roving.Set(pluginStoreFocusIndex(host, "plugin-store-category"))
-	if !host.activate(reg) || host.menu == nil || !host.menu.Opened() {
-		t.Fatal("category menu did not open")
-	}
-	host.keyPress(reg, keyDown)
-	host.keyPress(reg, keyEnter)
-	if host.pluginStoreQuery.Category != "appearance" || !pluginStoreHasText(host.root, "Editor") {
+	pluginStoreActivateAction(t, reg, host, "store-categories")
+	pluginStoreActivateAction(t, reg, host, "store-category:appearance")
+	if host.pluginStoreQuery.Category != "appearance" || !pluginStoreHasText(host.root, "Editor") || pluginStoreHasText(host.root, "Timer") {
 		t.Fatalf("category choice = %q, want appearance", host.pluginStoreQuery.Category)
+	}
+	if host.pluginStoreCategoriesOpen || !pluginStoreHasText(host.root, "Appearance") {
+		t.Fatal("choosing a category did not close the row and label the chip")
 	}
 	pluginStoreActivateAction(t, reg, host, "store-sort")
 	if host.pluginStoreQuery.Sort != SortUpdated {

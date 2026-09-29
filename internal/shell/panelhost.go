@@ -232,18 +232,19 @@ type PanelHost struct {
 	pluginUpdateAllNeedsConsent []string
 	pluginStoreReviewKey        string
 
-	pluginStoreQuery         BrowseQuery
-	pluginStoreSelected      string
-	pluginStoreDetail        string
-	pluginStoreConsent       *pluginStorePinnedConsent
-	pluginStoreRemoveConfirm bool
-	pluginStoreDetailErr     string
-	pluginStoreDetailScroll  int
-	pluginStoreScroll        int
-	pluginStoreColumns       int
-	pluginStoreRowHeight     int
-	pluginStoreGridHeight    int
-	pluginStoreConfigured    bool
+	pluginStoreQuery          BrowseQuery
+	pluginStoreSelected       string
+	pluginStoreDetail         string
+	pluginStoreConsent        *pluginStorePinnedConsent
+	pluginStoreRemoveConfirm  bool
+	pluginStoreDetailErr      string
+	pluginStoreDetailScroll   int
+	pluginStoreScroll         int
+	pluginStoreColumns        int
+	pluginStoreRowHeight      int
+	pluginStoreGridHeight     int
+	pluginStoreConfigured     bool
+	pluginStoreCategoriesOpen bool
 
 	notifyFilter string
 	notifyExpand string
@@ -1732,8 +1733,6 @@ func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) bool {
 		if !h.menu.Opened() && key != keyEsc {
 			if h.id == PanelLauncher {
 				h.applyLauncherMenu(r)
-			} else if h.id == PanelPluginStore && h.menuPath == "plugin-store-category" {
-				h.applyPluginStoreCategory(r)
 			} else if strings.HasPrefix(h.menuPath, "plugin-set:") {
 				_ = r.handlePluginManager(h, &ui.Node{
 					Kind: ui.KindMenu, Action: h.menuPath, Text: h.menu.Value(),

@@ -27,7 +27,7 @@ func TestPluginStoreDetailHeadlessRendersREADMEAndFallback(t *testing.T) {
 	reg.rebuildPanel(host)
 	reg.mu.Unlock()
 	renderPluginStorePanel(t, panel)
-	for _, want := range []string{"Timer", "Ada Lovelace · v1.4.0 · MIT · Official", "README body text.", "Capabilities", "Required commands", "Install"} {
+	for _, want := range []string{"Timer", "by Ada Lovelace · v1.4.0 · MIT", "Official", "README body text.", "Capabilities", "Requires", "Install"} {
 		if !pluginStoreHasText(host.root, want) {
 			t.Errorf("detail view lacks %q", want)
 		}
@@ -69,7 +69,7 @@ func TestPluginStoreDetailConsentPinsDisplayedReleaseAndShowsErrors(t *testing.T
 		t.Fatalf("pinned consent release = %+v, want %+v", got, want)
 	}
 	reg.mu.Unlock()
-	for _, want := range []string{"runs as your user with full file and network access", "will start immediately", "SHA-256: " + sha, "Confirm Install"} {
+	for _, want := range []string{"It runs as your user with full file and network access.", "It is still enabled, so it will start immediately.", "SHA-256: " + sha, "Confirm Install"} {
 		if !pluginStoreHasText(host.root, want) {
 			t.Errorf("consent view lacks %q", want)
 		}
@@ -104,7 +104,7 @@ func TestPluginStoreRemoveNeedsInlineConfirmation(t *testing.T) {
 	reg.rebuildPanel(host)
 	pluginStoreActivateAction(t, reg, host, "store-primary")
 	reg.mu.Unlock()
-	if !pluginStoreHasText(host.root, "Remove this plugin?") || pluginStoreFindAction(host.root, "store-confirm") == nil {
+	if !pluginStoreHasText(host.root, "Remove Timer?") || pluginStoreFindAction(host.root, "store-confirm") == nil {
 		t.Fatal("Remove did not expand an inline confirmation")
 	}
 	renderPluginStorePanel(t, panel)

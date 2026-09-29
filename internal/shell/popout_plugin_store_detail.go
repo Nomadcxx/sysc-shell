@@ -66,55 +66,70 @@ func pluginStoreDetail(r *Registry, h *PanelHost, key string, width int, metrics
 	readme := r.pluginStoreReadmes[readmeKey]
 	detail = detailFor(listing, enabled, r.pluginStoreSnapshot.Media, readme)
 
-	children := []*ui.Node{pluginStoreDetailHeader(detail, width, metrics)}
-	children = append(children, pluginStoreDetailSummary(r, detail, width, metrics)...)
+	body := max(width-theme.MarginM, 1) // room for the scroll bar
+	children := []*ui.Node{pluginStoreDetailSummary(r, h, detail, body, metrics)}
 	if consentOpen {
-		children = append(children, pluginStoreConsentBlock(detail, width, metrics))
+		children = append(children, pluginStoreConsentBlock(h, detail, body, metrics))
 	} else if h.pluginStoreRemoveConfirm {
-		children = append(children, pluginStoreRemoveBlock(metrics))
+		children = append(children, pluginStoreRemoveBlock(h, detail, body, metrics))
 	}
 	if errText := pluginStoreDetailError(h, listing); errText != "" {
-		children = append(children, &ui.Node{Kind: ui.KindText, Key: "store-detail-error", Text: errText, TextRole: theme.RoleBody, Tone: ui.ToneError, Multiline: true})
+		errNode := h.wrappedText(errText, theme.RoleBody, ui.ToneError, body, 0)
+		errNode.Key = "store-detail-error"
+		children = append(children, errNode)
 	}
 	if detail.Readme != "" {
-		children = append(children, &ui.Node{Kind: ui.KindText, Text: "README", TextRole: theme.RoleTitle})
-		children = append(children, markdownNodes(detail.Readme, max(width-2*pluginStoreCardPadding, 1), metrics)...)
-	} else {
-		children = append(children, &ui.Node{Kind: ui.KindText, Text: detail.Description, TextRole: theme.RoleBody, MaxWidth: width, Multiline: true})
+		children = append(children, &ui.Node{Kind: ui.KindSeparator, Width: body})
+		children = append(children, markdownNodes(detail.Readme, body, metrics)...)
 	}
-	bodyHeight := max(h.place.Panel.H-2*pluginStorePadding, metrics.StandardControl)
-	return &ui.Node{
-		Kind: ui.KindScroll, Width: width, Height: bodyHeight,
-		ScrollOffset: h.pluginStoreDetailScroll, Children: []*ui.Node{{
-			Kind: ui.KindColumn, Gap: pluginStoreGap, Children: children,
-		}},
-	}
+	header := pluginStoreDetailHeader(detail, width, metrics)
+	headerH, _ := ui.ContentHeight(header, width, h.measureText())
+	bodyHeight := max(h.place.Panel.H-2*pluginStorePadding-headerH-pluginStoreGap, metrics.StandardControl)
+	return &ui.Node{Kind: ui.KindColumn, Gap: pluginStoreGap, Children: []*ui.Node{
+		header,
+		{
+			Kind: ui.KindScroll, Width: width, Height: bodyHeight,
+			ScrollOffset: h.pluginStoreDetailScroll, Children: []*ui.Node{{
+				Kind: ui.KindColumn, Gap: pluginStoreGap, Children: children,
+			}},
+		},
+	}}
 }
 
+// pluginStoreDetailHeader is back and the plugin's name at the start, and its
+// links, primary action and close pinned to the end (DMS's detail bar).
 func pluginStoreDetailHeader(detail Detail, width int, metrics theme.Metrics) *ui.Node {
-	children := []*ui.Node{
-		pluginStoreIconButton("store-back", "Back to plugins", "chevron_left", metrics),
-		{Kind: ui.KindText, Text: detail.Title, Role: "heading", TextRole: theme.RoleTitle, MaxWidth: max(width/2, 1)}, // the actions take the other half
-	}
+	var actions []*ui.Node
 	if detail.Homepage != "" {
-		children = append(children, pluginStoreIconButton("store-open-homepage", "Open homepage", "link", metrics))
+		actions = append(actions, pluginStoreIconButton("store-open-homepage", "Open homepage", "link", metrics))
 	}
 	if detail.ReleaseNotes != "" {
-		children = append(children, pluginStoreIconButton("store-open-release-notes", "Open release notes", "description", metrics))
+		actions = append(actions, pluginStoreIconButton("store-open-release-notes", "Open release notes", "description", metrics))
 	}
 	if detail.Action != ActionDisabled {
-		children = append(children, pluginStoreDetailPrimary(detail, metrics))
+		actions = append(actions, pluginStoreDetailPrimary(detail, metrics))
 	}
-	children = append(children, pluginStoreIconButton("store-close", "Close", "close", metrics))
-	return &ui.Node{Kind: ui.KindRow, Height: metrics.StandardControl, Gap: theme.MarginXS, PinEnd: true, Children: children}
+	actions = append(actions, pluginStoreIconButton("store-close", "Close", "close", metrics))
+	lead := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
+		pluginStoreIconButton("store-back", "Back to plugins", "chevron_left", metrics),
+		{Kind: ui.KindIcon, Icon: detail.Glyph, IconSize: metrics.IconNormal},
+		{Kind: ui.KindText, Text: detail.Title, Role: "heading", TextRole: theme.RoleTitle, MaxWidth: max(width/2, 1)}, // the actions take the other half
+	}}
+	return &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: width, Children: []*ui.Node{
+		lead,
+		{Kind: ui.KindRow, Gap: theme.MarginXS, Children: actions},
+	}}
 }
 
-func pluginStoreDetailSummary(r *Registry, detail Detail, width int, metrics theme.Metrics) []*ui.Node {
-	imageWidth := min(420, max((width-pluginStoreGap)/2, 1))
+// pluginStoreDetailSummary is the preview beside what the plugin is: badges,
+// byline, description, and its capabilities and requirements as chips.
+func pluginStoreDetailSummary(r *Registry, h *PanelHost, detail Detail, width int, metrics theme.Metrics) *ui.Node {
+	imageWidth := min(width*2/5, max((width-pluginStoreGap)/2, 1))
 	imageHeight := imageWidth * 9 / 16
+	glyph := &ui.Node{Kind: ui.KindIcon, Icon: detail.Glyph, IconSize: metrics.IconLarge, Tone: ui.ToneAccent}
 	image := &ui.Node{
 		Kind: ui.KindStack, Width: imageWidth, Height: imageHeight,
-		Children: []*ui.Node{{Kind: ui.KindCapsule, Width: imageWidth, Height: imageHeight, Fill: ui.FillContainer, Shape: ui.ShapeMedium}},
+		Children: []*ui.Node{{Kind: ui.KindCapsule, Width: imageWidth, Height: imageHeight, Fill: ui.FillContainerHighest, Shape: ui.ShapeMedium}},
 	}
 	if detail.ScreenshotPath != "" {
 		img := &ui.Node{
@@ -130,12 +145,12 @@ func pluginStoreDetailSummary(r *Registry, detail Detail, width int, metrics the
 		}
 		image.Children = append(image.Children, img)
 		if img.Image == nil {
-			image.Children = append(image.Children, &ui.Node{Kind: ui.KindIcon, Icon: detail.Glyph, IconSize: metrics.IconLarge})
+			image.Children = append(image.Children, glyph)
 		}
 	} else {
-		image.Children = append(image.Children, &ui.Node{Kind: ui.KindIcon, Icon: detail.Glyph, IconSize: metrics.IconLarge})
+		image.Children = append(image.Children, glyph)
 	}
-	mediaLabel := "No screenshot provided"
+	mediaLabel := ""
 	if detail.Screenshot.SHA256 != "" {
 		mediaLabel = "Preview loading…"
 		if media, ok := r.pluginStoreSnapshot.Media[detail.Screenshot.SHA256]; ok {
@@ -147,9 +162,17 @@ func pluginStoreDetailSummary(r *Registry, detail Detail, width int, metrics the
 		}
 	}
 
-	meta := []string{}
+	infoW := max(width-imageWidth-pluginStoreGap, 1)
+	badges := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS}
+	for _, badge := range detail.Badges {
+		badges.Children = append(badges.Children, pluginStoreTag(badge.Label, pluginStoreBadgeFill(badge.Tone)))
+	}
+	if detail.Category != "" {
+		badges.Children = append(badges.Children, pluginStoreTag(categoryLabel(detail.Category), ui.FillContainerHighest))
+	}
+	var meta []string
 	if detail.Author != "" {
-		meta = append(meta, detail.Author)
+		meta = append(meta, "by "+detail.Author)
 	}
 	if detail.Version != "" {
 		meta = append(meta, "v"+detail.Version)
@@ -157,85 +180,103 @@ func pluginStoreDetailSummary(r *Registry, detail Detail, width int, metrics the
 	if detail.License != "" {
 		meta = append(meta, detail.License)
 	}
-	meta = append(meta, detail.SourceBadge)
-	info := []*ui.Node{{Kind: ui.KindText, Text: strings.Join(meta, " · "), TextRole: theme.RoleCaption}}
-	if detail.Category != "" {
-		info = append(info, &ui.Node{Kind: ui.KindText, Text: "Category: " + categoryLabel(detail.Category), TextRole: theme.RoleCaption})
+	info := []*ui.Node{}
+	if len(badges.Children) > 0 {
+		info = append(info, badges)
 	}
-	if detail.CatalogCommit != "" {
-		info = append(info, &ui.Node{Kind: ui.KindText, Text: "Catalog commit: " + detail.CatalogCommit, TextRole: theme.RoleCaption})
-	}
-	if detail.Description != "" && detail.Readme != "" {
-		info = append(info, &ui.Node{Kind: ui.KindText, Text: detail.Description, TextRole: theme.RoleBody, MaxWidth: width - imageWidth - pluginStoreGap, Multiline: true})
+	info = append(info, &ui.Node{Kind: ui.KindText, Text: strings.Join(meta, " · "), TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: infoW})
+	if detail.Description != "" {
+		info = append(info, h.wrappedText(detail.Description, theme.RoleBody, ui.ToneNormal, infoW, 0))
 	}
 	info = append(info,
-		pluginStoreDetailSection("Capabilities", detail.Capabilities),
-		pluginStoreDetailSection("Required commands", detail.RequiredCommands),
+		pluginStoreChipSection("Capabilities", detail.Capabilities),
+		pluginStoreChipSection("Requires", detail.RequiredCommands),
 	)
+	if commit := detail.CatalogCommit; commit != "" {
+		info = append(info, &ui.Node{Kind: ui.KindText, Text: "Catalog commit " + commit[:min(len(commit), 12)], TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, Tabular: true})
+	}
 	if mediaLabel != "" {
-		info = append(info, &ui.Node{Kind: ui.KindText, Text: mediaLabel, TextRole: theme.RoleCaption})
+		info = append(info, &ui.Node{Kind: ui.KindText, Text: mediaLabel, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
 	}
-	return []*ui.Node{
-		{Kind: ui.KindRow, Gap: pluginStoreGap, Children: []*ui.Node{
-			image,
-			{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: info},
-		}},
+	return &ui.Node{Kind: ui.KindRow, Gap: pluginStoreGap, Children: []*ui.Node{
+		image,
+		{Kind: ui.KindColumn, Gap: theme.MarginS, Width: infoW, Children: info},
+	}}
+}
+
+func pluginStoreTag(label string, fill ui.Fill) *ui.Node {
+	return &ui.Node{Kind: ui.KindCapsule, Fill: fill, Shape: ui.ShapeSmall, Padding: theme.MarginXS,
+		Children: []*ui.Node{{Kind: ui.KindText, Text: label, TextRole: theme.RoleCaption}}}
+}
+
+// pluginStoreChipSection is a label over its values as outlined chips, the
+// way DMS lists capabilities and dependencies.
+func pluginStoreChipSection(title string, values []string) *ui.Node {
+	row := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS}
+	if len(values) == 0 {
+		row.Children = append(row.Children, &ui.Node{Kind: ui.KindText, Text: "None", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
 	}
+	for _, v := range values {
+		row.Children = append(row.Children, pluginStoreTag(v, ui.FillContainerHighest))
+	}
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: title, TextRole: theme.RoleLabel},
+		row,
+	}}
 }
 
 func pluginStoreDetailPrimary(detail Detail, metrics theme.Metrics) *ui.Node {
-	label := ""
 	switch detail.Action {
 	case ActionInstall:
-		label = "Install"
+		return pluginStoreFilledButton("store-primary", "Install", "download", ui.FillAccent, metrics)
 	case ActionUpdate:
-		label = "Update"
+		return pluginStoreFilledButton("store-primary", "Update", "restart_alt", ui.FillAccent, metrics)
 	case ActionRemove:
-		label = "Remove"
-	default:
-		if detail.Reason != "" {
-			return &ui.Node{Kind: ui.KindText, Text: detail.Reason, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle}
-		}
-		return &ui.Node{Kind: ui.KindText, Text: "Unavailable", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle}
+		return pluginStoreFilledButton("store-primary", "Remove", "delete", ui.FillErrorContainer, metrics)
 	}
-	return pluginStoreButton("store-primary", label, metrics)
+	text := detail.Reason
+	if text == "" {
+		text = "Unavailable"
+	}
+	return &ui.Node{Kind: ui.KindText, Text: text, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle}
 }
 
-func pluginStoreConsentBlock(detail Detail, width int, metrics theme.Metrics) *ui.Node {
-	lines := make([]*ui.Node, 0, len(detail.ConsentLines)+2)
-	for _, line := range detail.ConsentLines {
-		lines = append(lines, &ui.Node{Kind: ui.KindText, Text: line, TextRole: theme.RoleCaption, MaxWidth: max(width-2*pluginStoreCardPadding, 1), Multiline: true})
-	}
-	label := "Confirm Install"
-	if detail.Action == ActionUpdate {
-		label = "Confirm Update"
-	}
-	lines = append(lines,
-		pluginStoreButton("store-confirm", label, metrics),
-		pluginStoreButton("store-cancel-confirmation", "Cancel", metrics),
-	)
-	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXS, Padding: pluginStoreCardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeMedium, Children: lines}
-}
-
-func pluginStoreRemoveBlock(metrics theme.Metrics) *ui.Node {
-	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXS, Padding: pluginStoreCardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeMedium, Children: []*ui.Node{
-		{Kind: ui.KindText, Text: "Remove this plugin?", TextRole: theme.RoleBody},
-		{Kind: ui.KindText, Text: "Settings are kept.", TextRole: theme.RoleCaption},
-		&ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS, Children: []*ui.Node{
-			pluginStoreButton("store-confirm", "Confirm Remove", metrics),
+// pluginStoreConfirmRow is Cancel then the confirming action, at the end of
+// the block the way every other confirmation in the shell reads.
+func pluginStoreConfirmRow(width int, confirm *ui.Node, metrics theme.Metrics) *ui.Node {
+	return &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: width, Height: metrics.CompactControl, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: ""},
+		{Kind: ui.KindRow, Gap: theme.MarginXS, Children: []*ui.Node{
 			pluginStoreButton("store-cancel-confirmation", "Cancel", metrics),
+			confirm,
 		}},
 	}}
 }
 
-func pluginStoreDetailSection(title string, values []string) *ui.Node {
-	content := "None"
-	if len(values) > 0 {
-		content = strings.Join(values, ", ")
+func pluginStoreConsentBlock(h *PanelHost, detail Detail, width int, metrics theme.Metrics) *ui.Node {
+	inner := max(width-2*metrics.CardPadding, 1)
+	verb, icon := "Install", "download"
+	if detail.Action == ActionUpdate {
+		verb, icon = "Update", "restart_alt"
 	}
-	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
-		{Kind: ui.KindText, Text: title, TextRole: theme.RoleTitle},
-		{Kind: ui.KindText, Text: content, TextRole: theme.RoleBody, Multiline: true},
+	lines := []*ui.Node{{Kind: ui.KindText, Text: verb + " " + detail.Title + "?", TextRole: theme.RoleTitle}}
+	for _, line := range detail.ConsentLines {
+		lines = append(lines, h.wrappedText(line, theme.RoleCaption, ui.ToneNormal, inner, 0))
+	}
+	lines = append(lines, pluginStoreConfirmRow(inner, pluginStoreFilledButton("store-confirm", "Confirm "+verb, icon, ui.FillAccent, metrics), metrics))
+	return &ui.Node{Kind: ui.KindCapsule, Width: width, Padding: metrics.CardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeMedium, Children: []*ui.Node{
+		{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: lines},
+	}}
+}
+
+func pluginStoreRemoveBlock(h *PanelHost, detail Detail, width int, metrics theme.Metrics) *ui.Node {
+	inner := max(width-2*metrics.CardPadding, 1)
+	return &ui.Node{Kind: ui.KindCapsule, Width: width, Padding: metrics.CardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeMedium, Children: []*ui.Node{
+		{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: "Remove " + detail.Title + "?", TextRole: theme.RoleTitle},
+			{Kind: ui.KindText, Text: "Its settings and enabled state are kept.", TextRole: theme.RoleCaption},
+			pluginStoreConfirmRow(inner, pluginStoreFilledButton("store-confirm", "Confirm Remove", "delete", ui.FillErrorContainer, metrics), metrics),
+		}},
 	}}
 }
 

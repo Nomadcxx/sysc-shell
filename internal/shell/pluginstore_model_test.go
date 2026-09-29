@@ -172,8 +172,8 @@ func TestPluginStoreDetailCarriesPinnedConsentAndStartWarning(t *testing.T) {
 	if detail.Readme != "## Timer\n\nREADME text" || detail.ScreenshotPath != "/cache/timer.png" {
 		t.Fatalf("detail media = %+v", detail)
 	}
-	if !containsString(detail.ConsentLines, "runs as your user with full file and network access") ||
-		!containsString(detail.ConsentLines, "will start immediately") {
+	if !containsString(detail.ConsentLines, "It runs as your user with full file and network access.") ||
+		!containsString(detail.ConsentLines, "It is still enabled, so it will start immediately.") {
 		t.Fatalf("consent lines = %v", detail.ConsentLines)
 	}
 

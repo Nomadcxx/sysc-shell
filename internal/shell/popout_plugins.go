@@ -13,30 +13,39 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
+// pluginsTree is Settings -> Plugins (store design U4): an Installed and
+// Sources segment, Browse plugins, and the chosen page as settings group cards.
 func pluginsTree(r *Registry, h *PanelHost) *ui.Node {
 	if h.pluginManagerTab == "" {
 		h.pluginManagerTab = "installed"
 	}
 	metrics := h.metrics()
-	segments := &ui.Node{Kind: ui.KindSegmented, Key: "plugins-tab", Gap: theme.MarginXXS, Height: metrics.StandardControl, Children: []*ui.Node{
-		pluginManagerSegment(h, "installed", "Installed"),
-		pluginManagerSegment(h, "sources", "Sources"),
-	}}
-	top := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, PinEnd: true, Children: []*ui.Node{
-		segments,
-		pluginManagerButton("plugins-browse", "Browse plugins", metrics),
-	}}
+	segments := &ui.Node{
+		Kind: ui.KindSegmented, Key: "plugins-tab", Gap: theme.MarginXXS,
+		Height: metrics.CompactControl, Name: "Plugins view", Role: "tablist",
+		Children: []*ui.Node{
+			pluginManagerSegment(h, "installed", "Installed"),
+			pluginManagerSegment(h, "sources", "Sources"),
+		},
+	}
+	browse := pluginManagerButton("plugins-browse", "Browse plugins", metrics)
+	browse.Fill = ui.FillAccent
+	browse.Children = []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginXS, Children: []*ui.Node{
+		{Kind: ui.KindIcon, Icon: "search", IconSize: metrics.IconSmall},
+		{Kind: ui.KindText, Text: "Browse plugins"},
+	}}}
+	browse.Text = ""
+	top := &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: settingsBodyWidth(h), Height: metrics.StandardControl, Children: []*ui.Node{segments, browse}}
 	children := []*ui.Node{top}
-	if r == nil {
+	switch {
+	case r == nil:
 		children = append(children, &ui.Node{Kind: ui.KindText, Text: "Plugin store unavailable", TextRole: theme.RoleCaption})
-		return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Children: children}
+	case h.pluginManagerTab == "sources":
+		children = append(children, pluginManagerSourcesTree(r, h, metrics)...)
+	default:
+		children = append(children, pluginManagerInstalledTree(r, h, metrics)...)
 	}
-	if h.pluginManagerTab == "sources" {
-		children = append(children, pluginManagerSourcesTree(r, h, metrics))
-	} else {
-		children = append(children, pluginManagerInstalledTree(r, h, metrics))
-	}
-	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Children: children}
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Children: children}
 }
 
 func pluginDirectoryLabel(r *Registry) string {
@@ -315,31 +324,52 @@ type pluginManagerRow struct {
 }
 
 func pluginManagerSegment(h *PanelHost, tab, label string) *ui.Node {
-	n := &ui.Node{Kind: ui.KindButton, Text: label, Action: "plugins-tab:" + tab, Name: label, Role: "tab", Focusable: true}
+	m := h.metrics()
+	n := &ui.Node{
+		Kind: ui.KindButton, Action: "plugins-tab:" + tab, Name: label, Role: "tab", Focusable: true,
+		Height: m.CompactControl, Padding: m.ButtonPadding, Children: []*ui.Node{{Kind: ui.KindText, Text: label}},
+	}
 	if h.pluginManagerTab == tab {
 		n.State |= ui.StateSelected
 	}
 	return n
 }
 
+// pluginManagerButton is a text action sized from the density ladder, padded
+// so its label never meets the pill's edge at any scale.
 func pluginManagerButton(action, label string, metrics theme.Metrics) *ui.Node {
-	return &ui.Node{Kind: ui.KindButton, Text: label, Action: action, Name: label, Role: "button", Focusable: true, Height: metrics.StandardControl}
+	return &ui.Node{
+		Kind: ui.KindButton, Text: label, Action: action, Key: action, Name: label, Role: "button", Focusable: true,
+		Height: metrics.CompactControl, Padding: metrics.ButtonPadding, Fill: ui.FillOutline, Shape: ui.ShapeMedium,
+	}
 }
 
-func pluginManagerInstalledTree(r *Registry, h *PanelHost, metrics theme.Metrics) *ui.Node {
+// pluginManagerIconButton is a row action drawn as its symbol, the way the
+// references show open, settings and remove beside a plugin's switch.
+func pluginManagerIconButton(action, name, icon string, metrics theme.Metrics) *ui.Node {
+	return &ui.Node{
+		Kind: ui.KindButton, Action: action, Key: action, Name: name, Role: "button", Focusable: true,
+		Width: metrics.IconButton, Height: metrics.IconButton, Shape: ui.ShapeCircle,
+		Children: []*ui.Node{{Kind: ui.KindIcon, Icon: icon, IconSize: metrics.IconSmall}},
+	}
+}
+
+func pluginManagerInstalledTree(r *Registry, h *PanelHost, metrics theme.Metrics) []*ui.Node {
+	inner := settingsCardInner(h)
 	updates := pluginManagerUpdates(r.pluginStoreSnapshot.Listings)
-	header := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, PinEnd: true, Children: []*ui.Node{
+	header := &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: inner, Height: metrics.CompactControl, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: fmt.Sprintf("Updates (%d)", len(updates)), TextRole: theme.RoleLabel},
 	}}
 	if len(updates) > 0 {
 		header.Children = append(header.Children, pluginManagerButton("plugins-update-all", "Update all", metrics))
 	}
-	children := []*ui.Node{header}
+	var cards []*ui.Node
+	lead := []*ui.Node{header}
 	if h.pluginManagerError != "" {
-		children = append(children, &ui.Node{Kind: ui.KindText, Text: h.pluginManagerError, Tone: ui.ToneError})
+		lead = append(lead, &ui.Node{Kind: ui.KindText, Text: h.pluginManagerError, Tone: ui.ToneError, MaxWidth: inner, Multiline: true})
 	}
 	if len(h.pluginUpdateAllNeedsConsent) > 0 {
-		reviewRows := []*ui.Node{{Kind: ui.KindText, Text: "These updates need review", TextRole: theme.RoleLabel}}
+		lead = append(lead, &ui.Node{Kind: ui.KindText, Text: "These updates need review", TextRole: theme.RoleLabel})
 		for _, key := range h.pluginUpdateAllNeedsConsent {
 			listing, ok := pluginStoreFind(r.pluginStoreSnapshot.Listings, key)
 			if !ok {
@@ -349,22 +379,25 @@ func pluginManagerInstalledTree(r *Registry, h *PanelHost, metrics theme.Metrics
 			if name == "" {
 				name = listing.Entry.ID
 			}
-			reviewRows = append(reviewRows, &ui.Node{Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{
+			lead = append(lead, &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: inner, Height: metrics.CompactControl, Children: []*ui.Node{
 				{Kind: ui.KindText, Text: name},
 				pluginManagerButton("plugins-review:"+key, "Review", metrics),
 			}})
 		}
-		children = append(children, &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: reviewRows})
 	}
+	cards = append(cards, settingsGroupCard(h, "", lead))
 	rows := pluginManagerRows(r)
+	var installed []*ui.Node
 	if len(rows) == 0 {
-		children = append(children, &ui.Node{Kind: ui.KindText, Text: "No installed plugins", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
-	} else {
-		for _, row := range rows {
-			children = append(children, pluginManagerInstalledRow(r, h, row, metrics))
-		}
+		installed = append(installed, &ui.Node{Kind: ui.KindText, Text: "No installed plugins", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
 	}
-	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Children: children}
+	for i, row := range rows {
+		if i > 0 {
+			installed = append(installed, &ui.Node{Kind: ui.KindSeparator, Width: inner})
+		}
+		installed = append(installed, pluginManagerInstalledRow(r, h, row, inner, metrics))
+	}
+	return append(cards, settingsGroupCard(h, "Installed", installed))
 }
 
 func pluginManagerUpdates(listings []store.Listing) []store.Listing {
@@ -429,7 +462,10 @@ func pluginManagerName(row pluginManagerRow) string {
 	return row.id
 }
 
-func pluginManagerInstalledRow(r *Registry, h *PanelHost, row pluginManagerRow, metrics theme.Metrics) *ui.Node {
+// pluginManagerInstalledRow is one plugin in the settings row anatomy: its
+// icon and label column (name, source badge, version, description, Requires,
+// provenance) with the row's actions and switch pinned to the end.
+func pluginManagerInstalledRow(r *Registry, h *PanelHost, row pluginManagerRow, width int, metrics theme.Metrics) *ui.Node {
 	id, name := row.id, pluginManagerName(row)
 	version, description, source, provenance := "", "", "local", ""
 	var required []string
@@ -439,7 +475,8 @@ func pluginManagerInstalledRow(r *Registry, h *PanelHost, row pluginManagerRow, 
 		required = row.candidate.Manifest.Requires
 		source = string(row.candidate.Source)
 	}
-	if listing := row.listing; listing != nil {
+	listing := row.listing
+	if listing != nil {
 		if listing.Installed != nil {
 			version = listing.Installed.Version
 			source = listing.Installed.Source
@@ -450,11 +487,12 @@ func pluginManagerInstalledRow(r *Registry, h *PanelHost, row pluginManagerRow, 
 		if len(required) == 0 && listing.Resolution.Release != nil {
 			required = listing.Resolution.Release.Requires.Commands
 		}
-		if listing.LocalDir != "" {
+		switch {
+		case listing.LocalDir != "":
 			provenance = "local override"
-		} else if listing.Status == store.StatusUnlisted {
+		case listing.Status == store.StatusUnlisted:
 			provenance = "managed, unlisted"
-		} else if listing.Installed != nil {
+		case listing.Installed != nil:
 			provenance = "managed install"
 		}
 	}
@@ -464,147 +502,227 @@ func pluginManagerInstalledRow(r *Registry, h *PanelHost, row pluginManagerRow, 
 	if source == "" {
 		source = "local"
 	}
-	badge := source
-	if source == "sysc" {
-		badge = "Official"
-	} else if source == "community" {
-		badge = "Community"
-	}
+	badge := pluginSourceLabel(source)
 	versionText := version
 	if versionText != "" {
 		versionText = "v" + versionText
 	}
-	labelChildren := []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
-		{Kind: ui.KindIcon, Icon: "extension"},
-		{Kind: ui.KindText, Text: name, TextRole: theme.RoleLabel},
-		{Kind: ui.KindText, Text: badge, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
-		{Kind: ui.KindText, Text: versionText, TextRole: theme.RoleCaption},
-	}}}
-	if description != "" {
-		labelChildren = append(labelChildren, &ui.Node{Kind: ui.KindText, Text: description, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
-	}
-	if len(required) > 0 {
-		labelChildren = append(labelChildren, &ui.Node{Kind: ui.KindText, Text: "Requires: " + strings.Join(required, ", "), TextRole: theme.RoleCaption})
-	}
-	if provenance != "" {
-		labelChildren = append(labelChildren, &ui.Node{Kind: ui.KindText, Text: provenance, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
-	}
-	label := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: labelChildren}
-	control := &ui.Node{Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{}}
-	canToggle := row.listing != nil && row.listing.Installed != nil
-	if row.candidate != nil && row.candidate.Err == nil {
-		canToggle = true
-	}
-	if canToggle {
-		on := slices.Contains(r.cfg.Plugins.Enabled, id)
-		value := 0.0
-		if on {
-			value = 1
-		}
-		control.Children = append(control.Children, &ui.Node{Kind: ui.KindToggle, Value: value, Action: "plugin-enable:" + id,
-			Name: "Enable " + name, Role: "switch", Focusable: true})
-	}
-	children := []*ui.Node{{Kind: ui.KindRow, PinEnd: true, Gap: theme.MarginL, Children: []*ui.Node{label, control}}}
-	if listing := row.listing; listing != nil && listing.UpdateAvailable {
+
+	// Trailing actions: update and roll back as labelled buttons, because the
+	// version is the information; the rest as symbols beside the switch.
+	var actions []*ui.Node
+	if listing != nil && listing.UpdateAvailable {
 		release := listing.Entry.Version
 		if listing.Resolution.Release != nil {
 			release = listing.Resolution.Release.Version
 		}
-		children = append(children, pluginManagerButton("plugins-update:"+id, "Update to v"+release, metrics))
+		actions = append(actions, pluginManagerButton("plugins-update:"+id, "Update to v"+release, metrics))
 	}
-	if listing := row.listing; listing != nil && listing.Installed != nil && listing.Installed.Previous != nil {
-		children = append(children, pluginManagerButton("plugins-rollback:"+id, "Roll back to v"+listing.Installed.Previous.Version, metrics))
+	if listing != nil && listing.Installed != nil && listing.Installed.Previous != nil {
+		actions = append(actions, pluginManagerButton("plugins-rollback:"+id, "Roll back to v"+listing.Installed.Previous.Version, metrics))
 	}
-	if listing := row.listing; listing != nil && listing.Installed != nil {
-		if h.pluginManagerRemoveConfirm == id {
-			children = append(children, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
-				{Kind: ui.KindText, Text: "Remove the managed copy? Plugins.Enabled is kept."},
-				pluginManagerButton("plugins-remove-confirm:"+id, "Confirm", metrics),
-				pluginManagerButton("plugins-remove-cancel", "Cancel", metrics),
-			}})
-		} else {
-			children = append(children, pluginManagerButton("plugins-remove:"+id, "Remove", metrics))
-		}
+	var status plugin.Status
+	if row.candidate != nil && r.plugins != nil {
+		status = r.plugins.status(id)
 	}
-	if row.candidate != nil {
-		children = append(children, pluginManagerButton("plugin-retry:"+id, "Retry", metrics))
-		status := r.plugins.status(id)
-		if len(status.Stderr) > 0 {
-			children = append(children, &ui.Node{Kind: ui.KindText, Text: string(status.Stderr), Tone: ui.ToneError})
-		}
-		if row.candidate.Err != nil {
-			children = append(children, &ui.Node{Kind: ui.KindText, Text: row.candidate.Err.Error(), Tone: ui.ToneError})
-		}
-	}
-	if row.listing != nil && row.listing.Err != nil {
-		children = append(children, &ui.Node{Kind: ui.KindText, Text: row.listing.Err.Error(), Tone: ui.ToneError})
+	failing := row.candidate != nil && (row.candidate.Err != nil || status.Failure != "" ||
+		status.State == plugin.StateFailed || status.State == plugin.StateDegraded || status.State == plugin.StateIncompatible)
+	if failing {
+		actions = append(actions, pluginManagerIconButton("plugin-retry:"+id, "Retry "+name, "refresh", metrics))
 	}
 	if row.candidate != nil && len(row.candidate.Manifest.Settings) > 0 {
-		actionText := "Plugin settings"
+		label := "Plugin settings"
 		if h.pluginManagerExpanded[id] {
-			actionText = "Hide settings"
+			label = "Hide settings"
 		}
-		children = append(children, pluginManagerButton("plugins-settings:"+id, actionText, metrics))
-		if h.pluginManagerExpanded[id] {
-			values := pluginSettingValues(r, id, row.candidate.Manifest.Settings)
-			for _, setting := range row.candidate.Manifest.Settings {
-				if plugin.SettingVisible(setting, values) {
-					children = append(children, pluginSettingRow(r, h, id, setting))
-				}
+		actions = append(actions, pluginManagerIconButton("plugins-settings:"+id, label, "settings", metrics))
+	}
+	if listing != nil && listing.Installed != nil {
+		actions = append(actions, pluginManagerIconButton("plugins-remove:"+id, "Remove "+name, "delete", metrics))
+	}
+	canToggle := listing != nil && listing.Installed != nil
+	if row.candidate != nil && row.candidate.Err == nil {
+		canToggle = true
+	}
+	if canToggle {
+		value := 0.0
+		if slices.Contains(r.cfg.Plugins.Enabled, id) {
+			value = 1
+		}
+		actions = append(actions, &ui.Node{Kind: ui.KindToggle, Value: value, Action: "plugin-enable:" + id,
+			Name: "Enable " + name, Role: "switch", Focusable: true})
+	}
+	trailing := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS, Height: metrics.CompactControl, Children: actions}
+	trailingW := 0
+	for _, a := range actions {
+		switch {
+		case a.Kind == ui.KindToggle:
+			trailingW += metrics.StandardControl * 2
+		case a.Width > 0:
+			trailingW += a.Width
+		default:
+			trailingW += settingsControlWidth(h) / 2
+		}
+	}
+	trailingW += theme.MarginXS * max(len(actions)-1, 0)
+	labelW := max(width-metrics.IconNormal-theme.MarginM-min(trailingW, width/2)-theme.MarginL, 1)
+
+	heading := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: name, TextRole: theme.RoleLabel},
+		pluginSourceBadge(badge, metrics),
+		{Kind: ui.KindText, Text: versionText, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+	}}
+	label := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Width: labelW, Children: []*ui.Node{heading}}
+	if description != "" {
+		label.Children = append(label.Children, &ui.Node{Kind: ui.KindText, Text: description, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: labelW, Multiline: true})
+	}
+	if len(required) > 0 {
+		label.Children = append(label.Children, &ui.Node{Kind: ui.KindText, Text: "Requires: " + strings.Join(required, ", "), TextRole: theme.RoleCaption, MaxWidth: labelW})
+	}
+	if provenance != "" {
+		label.Children = append(label.Children, &ui.Node{Kind: ui.KindText, Text: provenance, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
+	}
+	if failing {
+		detail := status.Failure
+		if row.candidate.Err != nil {
+			detail = row.candidate.Err.Error()
+		}
+		if detail != "" {
+			label.Children = append(label.Children, &ui.Node{Kind: ui.KindText, Text: detail, TextRole: theme.RoleCaption, Tone: ui.ToneError, MaxWidth: labelW, Multiline: true})
+		}
+		if tail := pluginStderrTail(status.Stderr, 3); tail != "" {
+			label.Children = append(label.Children, &ui.Node{Kind: ui.KindText, Text: tail, TextRole: theme.RoleCaption, Tone: ui.ToneError, MaxWidth: labelW, Multiline: true})
+		}
+	}
+	if listing != nil && listing.Err != nil {
+		label.Children = append(label.Children, &ui.Node{Kind: ui.KindText, Text: listing.Err.Error(), TextRole: theme.RoleCaption, Tone: ui.ToneError, MaxWidth: labelW, Multiline: true})
+	}
+	lead := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
+		{Kind: ui.KindIcon, Icon: "extension", IconSize: metrics.IconNormal},
+		label,
+	}}
+	children := []*ui.Node{{Kind: ui.KindRow, PinEnd: true, Width: width, Children: []*ui.Node{lead, trailing}}}
+	if listing != nil && listing.Installed != nil && h.pluginManagerRemoveConfirm == id {
+		children = append(children, &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: width, Height: metrics.CompactControl, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: "Remove " + name + "? Its settings and enabled state are kept.", TextRole: theme.RoleCaption},
+			{Kind: ui.KindRow, Gap: theme.MarginXS, Children: []*ui.Node{
+				pluginManagerButton("plugins-remove-cancel", "Cancel", metrics),
+				pluginManagerDestructive("plugins-remove-confirm:"+id, "Remove", metrics),
+			}},
+		}})
+	}
+	if row.candidate != nil && h.pluginManagerExpanded[id] {
+		values := pluginSettingValues(r, id, row.candidate.Manifest.Settings)
+		for _, setting := range row.candidate.Manifest.Settings {
+			if plugin.SettingVisible(setting, values) {
+				children = append(children, pluginSettingRow(r, h, id, setting))
 			}
 		}
 	}
-	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Padding: theme.MarginS, Children: children}
+	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: children}
 }
 
-func pluginManagerSourcesTree(r *Registry, h *PanelHost, metrics theme.Metrics) *ui.Node {
+// pluginStderrTail is the last lines a failing plugin wrote, so a noisy
+// process cannot push the rest of the page out of reach.
+func pluginStderrTail(stderr []byte, lines int) string {
+	text := strings.TrimRight(string(stderr), "\n")
+	if text == "" {
+		return ""
+	}
+	all := strings.Split(text, "\n")
+	return strings.Join(all[max(len(all)-lines, 0):], "\n")
+}
+
+func pluginManagerDestructive(action, label string, metrics theme.Metrics) *ui.Node {
+	n := pluginManagerButton(action, label, metrics)
+	n.Fill = ui.FillErrorContainer
+	return n
+}
+
+// pluginSourceLabel names a source the way both the store and Settings do.
+func pluginSourceLabel(source string) string {
+	switch source {
+	case "sysc":
+		return "Official"
+	case "community":
+		return "Community"
+	case "", "user":
+		return "Local"
+	}
+	return source
+}
+
+func pluginSourceBadge(label string, metrics theme.Metrics) *ui.Node {
+	return &ui.Node{Kind: ui.KindCapsule, Fill: ui.FillSoft, Shape: ui.ShapeSmall, Padding: theme.MarginXS,
+		Children: []*ui.Node{{Kind: ui.KindText, Text: label, TextRole: theme.RoleCaption}}}
+}
+
+func pluginManagerSourcesTree(r *Registry, h *PanelHost, metrics theme.Metrics) []*ui.Node {
+	inner := settingsCardInner(h)
 	stateByName := make(map[string]store.SourceState, len(r.pluginStoreSnapshot.Sources))
 	for _, state := range r.pluginStoreSnapshot.Sources {
 		stateByName[state.Name] = state
 	}
-	children := []*ui.Node{{Kind: ui.KindText, Text: "Lower sources override higher ones", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle}}
 	sources := r.cfg.Plugins.EffectiveSources()
 	for _, state := range r.pluginStoreSnapshot.Sources {
 		if !slices.ContainsFunc(sources, func(source config.PluginSource) bool { return source.Name == state.Name }) {
 			sources = append(sources, config.PluginSource{Name: state.Name, URL: state.URL})
 		}
 	}
+	rows := []*ui.Node{{Kind: ui.KindText, Text: "Lower sources override higher ones when they offer the same plugin.", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: inner, Multiline: true}}
 	for _, source := range sources {
-		state := stateByName[source.Name]
-		children = append(children, pluginManagerSourceRow(h, source, state, metrics))
+		rows = append(rows, pluginManagerSourceRow(h, source, stateByName[source.Name], inner, metrics))
 	}
 	if h.pluginManagerError != "" {
-		children = append(children, &ui.Node{Kind: ui.KindText, Text: h.pluginManagerError, Tone: ui.ToneError})
+		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: h.pluginManagerError, Tone: ui.ToneError, MaxWidth: inner, Multiline: true})
 	}
-	children = append(children, &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: []*ui.Node{
-		{Kind: ui.KindText, Text: "Add source", TextRole: theme.RoleLabel},
-		pluginManagerSourceField(h, "plugins-source-name", "Source name"),
-		pluginManagerSourceField(h, "plugins-source-url", "Repository URL"),
-		pluginManagerButton("plugins-source-add", "Add source", metrics),
-	}})
+	rows = append(rows, &ui.Node{Kind: ui.KindText, Text: "The same plugin offered by two sources appears once per source.", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: inner, Multiline: true})
+
+	fieldW := max((inner-theme.MarginS*2-settingsControlWidth(h)/2)/2, 1)
+	name := pluginManagerSourceField(h, "plugins-source-name", "Source name")
+	name.Width = fieldW
+	url := pluginManagerSourceField(h, "plugins-source-url", "Repository URL")
+	url.Width = fieldW
+	add := []*ui.Node{
+		{Kind: ui.KindText, Text: "Any git repository with a catalog.json at its root.", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+		{Kind: ui.KindRow, PinEnd: true, Width: inner, Children: []*ui.Node{
+			{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{name, url}},
+			pluginManagerButton("plugins-source-add", "Add source", metrics),
+		}},
+	}
 	if h.pluginManagerSourceWarning {
-		children = append(children, &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Padding: theme.MarginM, Children: []*ui.Node{
-			{Kind: ui.KindText, Text: "Review source permissions", TextRole: theme.RoleLabel},
-			{Kind: ui.KindText, Text: "Plugins from this source run as your user with"},
-			{Kind: ui.KindText, Text: "full file and network access"},
-			{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
-				pluginManagerButton("plugins-source-confirm", "Confirm", metrics),
-				pluginManagerButton("plugins-source-cancel", "Cancel", metrics),
+		add = append(add, &ui.Node{Kind: ui.KindCapsule, Fill: ui.FillContainerHighest, Shape: ui.ShapeMedium, Padding: metrics.CardPadding, Width: inner, Children: []*ui.Node{
+			{Kind: ui.KindColumn, Gap: theme.MarginS, Children: []*ui.Node{
+				{Kind: ui.KindText, Text: "Review source permissions", TextRole: theme.RoleLabel, Tone: ui.ToneError},
+				{Kind: ui.KindText, Text: "Plugins from this source run as your user with full file and network access.", MaxWidth: inner - 2*metrics.CardPadding, Multiline: true},
+				{Kind: ui.KindRow, PinEnd: true, Width: inner - 2*metrics.CardPadding, Height: metrics.CompactControl, Children: []*ui.Node{
+					{Kind: ui.KindText, Text: ""},
+					{Kind: ui.KindRow, Gap: theme.MarginXS, Children: []*ui.Node{
+						pluginManagerButton("plugins-source-cancel", "Cancel", metrics),
+						pluginManagerDestructive("plugins-source-confirm", "Confirm", metrics),
+					}},
+				}},
 			}},
 		}})
 	}
-	children = append(children, &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: []*ui.Node{
-		{Kind: ui.KindText, Text: "Suggested", TextRole: theme.RoleLabel},
-		{Kind: ui.KindText, Text: "Community catalog", Tone: ui.ToneSubtle},
-		{Kind: ui.KindText, Text: "Not published yet", Tone: ui.ToneSubtle},
-	}})
-	children = append(children, &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginS, Children: []*ui.Node{
-		{Kind: ui.KindText, Text: "Local plugin directory", TextRole: theme.RoleLabel},
+
+	suggested := &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: inner, Height: metrics.StandardControl, Children: []*ui.Node{
+		{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: "Community catalog", Tone: ui.ToneSubtle},
+			{Kind: ui.KindText, Text: "Third-party plugins reviewed by pull request", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+		}},
+		{Kind: ui.KindText, Text: "Not published yet", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+	}}
+	local := &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: inner, Height: metrics.StandardControl, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: pluginDirectoryLabel(r), TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
 		pluginManagerButton("plugin-rescan", "Rescan", metrics),
-	}})
-	children = append(children, &ui.Node{Kind: ui.KindText, Text: "The same plugin offered by two sources appears once per source.", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
-	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginL, Children: children}
+	}}
+	return []*ui.Node{
+		settingsGroupCard(h, "Sources", rows),
+		settingsGroupCard(h, "Add source", add),
+		settingsGroupCard(h, "Suggested", []*ui.Node{suggested}),
+		settingsGroupCard(h, "Local plugin directory", []*ui.Node{local}),
+	}
 }
 
 func pluginManagerSourceField(h *PanelHost, action, label string) *ui.Node {
@@ -622,53 +740,44 @@ func pluginManagerSourceField(h *PanelHost, action, label string) *ui.Node {
 	return n
 }
 
-func pluginManagerSourceRow(h *PanelHost, source config.PluginSource, state store.SourceState, metrics theme.Metrics) *ui.Node {
-	name := source.Name
-	if name == "sysc" {
-		name = "Official"
-	}
+func pluginManagerSourceRow(h *PanelHost, source config.PluginSource, state store.SourceState, width int, metrics theme.Metrics) *ui.Node {
+	name := pluginSourceLabel(source.Name)
 	kind := "Git"
 	if strings.HasPrefix(source.URL, "file:") {
 		kind = "Path"
 	}
 	status := "Not fetched yet"
+	tone := ui.ToneSubtle
 	if !state.FetchedAt.IsZero() {
-		status = "Last fetched " + state.FetchedAt.Format("2006-01-02 15:04")
+		status = fmt.Sprintf("%d plugins · last fetched %s", state.Plugins, state.FetchedAt.Local().Format("2006-01-02 15:04"))
 	}
 	if state.Err != nil {
+		tone = ui.ToneError
 		if state.FetchedAt.IsZero() {
 			status = "Error: " + state.Err.Error()
 		} else {
-			status = "Stale: " + state.Err.Error()
+			status = fmt.Sprintf("%d plugins · Stale: %s", state.Plugins, state.Err.Error())
 		}
 	}
 	value := 0.0
 	if source.Enabled {
 		value = 1
 	}
-	controls := []*ui.Node{{Kind: ui.KindToggle, Value: value, Action: "plugins-source-toggle:" + source.Name,
-		Name: "Enable " + name, Role: "switch", Focusable: true}}
-	controls = append(controls, pluginManagerButton("plugins-source-refresh:"+source.Name, "Refresh", metrics))
+	actions := []*ui.Node{pluginManagerIconButton("plugins-source-refresh:"+source.Name, "Refresh "+name, "refresh", metrics)}
 	if source.Name != "sysc" {
-		controls = append(controls, pluginManagerButton("plugins-source-remove:"+source.Name, "Remove", metrics))
+		actions = append(actions, pluginManagerIconButton("plugins-source-remove:"+source.Name, "Remove "+name, "delete", metrics))
 	}
-	rowChildren := []*ui.Node{
-		{Kind: ui.KindRow, PinEnd: true, Gap: theme.MarginL, Children: []*ui.Node{
-			{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
-				{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
-					{Kind: ui.KindText, Text: name, TextRole: theme.RoleLabel},
-					{Kind: ui.KindText, Text: kind, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
-				}},
-				{Kind: ui.KindText, Text: source.URL, TextRole: theme.RoleCaption},
-				{Kind: ui.KindText, Text: status, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
-			}},
-			{Kind: ui.KindRow, Gap: theme.MarginS, Children: controls},
+	actions = append(actions, &ui.Node{Kind: ui.KindToggle, Value: value, Action: "plugins-source-toggle:" + source.Name,
+		Name: "Enable " + name, Role: "switch", Focusable: true})
+	labelW := max(width-3*metrics.IconButton-metrics.StandardControl*2-theme.MarginL, 1)
+	return &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: width, Children: []*ui.Node{
+		{Kind: ui.KindColumn, Gap: theme.MarginXXS, Width: labelW, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: name, TextRole: theme.RoleLabel},
+			{Kind: ui.KindText, Text: kind + " · " + source.URL, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: labelW},
+			{Kind: ui.KindText, Text: status, TextRole: theme.RoleCaption, Tone: tone, MaxWidth: labelW},
 		}},
-	}
-	if !state.FetchedAt.IsZero() {
-		rowChildren = append(rowChildren, &ui.Node{Kind: ui.KindText, Text: fmt.Sprintf("%d plugins", state.Plugins), TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
-	}
-	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXS, Padding: theme.MarginS, Children: rowChildren}
+		{Kind: ui.KindRow, Gap: theme.MarginXS, Height: metrics.CompactControl, Children: actions},
+	}}
 }
 
 func (r *Registry) handlePluginManager(h *PanelHost, n *ui.Node) bool {

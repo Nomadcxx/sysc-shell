@@ -63,8 +63,9 @@ func TestPluginManagerSourcesHeadlessShowsFreshStaleAndAddWarning(t *testing.T) 
 	reg.rebuildPanel(host)
 	reg.mu.Unlock()
 	renderPluginManagerPanel(t, panel)
+	text := treeText(host.root)
 	for _, want := range []string{"Sources", "Official", "fresh", "2 plugins", "Stale: offline", "Suggested", "Not published yet", "Local plugin directory", "Rescan"} {
-		if !pluginStoreHasText(host.root, want) {
+		if !strings.Contains(text, want) {
 			t.Errorf("Sources page lacks %q", want)
 		}
 	}
@@ -88,8 +89,9 @@ func TestPluginManagerSourcesHeadlessShowsFreshStaleAndAddWarning(t *testing.T) 
 	reg.rebuildPanel(host)
 	reg.mu.Unlock()
 	renderPluginManagerPanel(t, panel)
+	text = treeText(host.root)
 	for _, want := range []string{"full file and network access", "Confirm", "Cancel"} {
-		if !pluginStoreHasText(host.root, want) {
+		if !strings.Contains(text, want) {
 			t.Errorf("source warning lacks %q", want)
 		}
 	}
@@ -221,12 +223,17 @@ func TestPluginManagerAddSourceRejectsInsecureAndReservedSources(t *testing.T) {
 
 func openPluginManagerTestPanel(t *testing.T, cfg config.Config, state store.State) (*Registry, *PanelHost, *wayland.AuxSpec) {
 	t.Helper()
+	return openPluginManagerTestPanelOn(t, cfg, state, ui.Rect{W: 1280, H: 900})
+}
+
+func openPluginManagerTestPanelOn(t *testing.T, cfg config.Config, state store.State, output ui.Rect) (*Registry, *PanelHost, *wayland.AuxSpec) {
+	t.Helper()
 	reg := newPanelRegistry(t)
 	reg.mu.Lock()
 	reg.cfg = cfg
 	reg.pluginStoreSnapshot = state
 	reg.mu.Unlock()
-	if err := reg.OpenPanel(PanelSettings, 7, Trigger{OutW: 1280, OutH: 900}); err != nil {
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{OutW: output.W, OutH: output.H}); err != nil {
 		t.Fatal(err)
 	}
 	reqs := drainAux(t, reg, 2)

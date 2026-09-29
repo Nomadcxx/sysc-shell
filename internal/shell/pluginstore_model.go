@@ -339,10 +339,10 @@ func detailFor(listing store.Listing, enabled bool, media map[string]store.Media
 			"SHA-256: " + sha,
 			"Capabilities: " + strings.Join(detail.Capabilities, ", "),
 			"Required commands: " + strings.Join(detail.RequiredCommands, ", "),
-			"runs as your user with full file and network access",
+			"It runs as your user with full file and network access.",
 		}
 		if enabled {
-			detail.ConsentLines = append(detail.ConsentLines, "will start immediately")
+			detail.ConsentLines = append(detail.ConsentLines, "It is still enabled, so it will start immediately.")
 		}
 	}
 	return detail

@@ -13,14 +13,8 @@ import (
 const (
 	pluginStorePadding      = 20
 	pluginStoreGap          = 12
-	pluginStoreMinCardWidth = 300
-	pluginStoreCardHeight   = 344
+	pluginStoreMinCardWidth = 290
 	pluginStoreCardPadding  = 10
-	pluginStoreBadgeHeight  = 24
-	// pluginStoreDescriptionHeight holds two caption lines, so every card
-	// in a row keeps the same status line position.
-	pluginStoreDescriptionHeight = 40
-	pluginStoreControlHeight     = 40
 )
 
 // pluginStoreTree projects the immutable worker snapshot into the browse panel.
@@ -54,29 +48,27 @@ func pluginStoreTree(r *Registry, h *PanelHost) *ui.Node {
 	children := []*ui.Node{
 		pluginStoreHeader(h, len(listings), state.Busy),
 		pluginStoreSearch(h, inner, metrics),
-		pluginStoreChips(h, state, inner, metrics),
 	}
+	children = append(children, pluginStoreChips(h, state, inner, metrics)...)
 	allFailed, stale := pluginStoreSourceState(state.Sources)
 	loading := strings.Contains(strings.ToLower(state.Busy), "refresh") && len(state.Listings) == 0
 	switch {
 	case loading:
-		children = append(children, pluginStoreBanner("Loading plugins…", "", false, inner, metrics))
+		children = append(children, pluginStoreBanner(h, "Loading plugins…", "", false, inner, metrics))
 	case allFailed:
-		children = append(children, pluginStoreBanner("All sources failed", firstSourceError(state.Sources), true, inner, metrics))
+		children = append(children, pluginStoreBanner(h, "All sources failed", firstSourceError(state.Sources), true, inner, metrics))
 	}
 	if len(stale) > 0 {
-		children = append(children, pluginStoreBanner("Stale sources", strings.Join(stale, ", "), false, inner, metrics))
+		children = append(children, pluginStoreBanner(h, "Stale sources", strings.Join(stale, ", "), false, inner, metrics))
 	}
 
 	if len(listings) == 0 {
 		if !loading && !allFailed {
-			clear := pluginStoreButton("store-clear", "Clear filters", metrics)
-			children = append(children, &ui.Node{
-				Kind: ui.KindRow, Gap: pluginStoreGap, Height: metrics.StandardControl,
-				Children: []*ui.Node{
-					{Kind: ui.KindText, Text: "No plugins match", TextRole: theme.RoleBody}, clear,
-				},
-			})
+			children = append(children, &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Children: []*ui.Node{
+				{Kind: ui.KindText, Text: "No plugins match", TextRole: theme.RoleTitle},
+				{Kind: ui.KindText, Text: "Try another search, source or category.", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+				pluginStoreButton("store-clear", "Clear filters", metrics),
+			}})
 		}
 		if r.pluginStore != nil {
 			r.pluginStore.Want(nil)
@@ -84,33 +76,34 @@ func pluginStoreTree(r *Registry, h *PanelHost) *ui.Node {
 		return pluginStoreRoot(children)
 	}
 
-	columns := max(1, inner/pluginStoreMinCardWidth)
+	// The cards leave the scroll bar its own lane at the right edge.
+	cards := max(inner-theme.MarginM, 1)
+	columns := max(1, (cards+pluginStoreGap)/(pluginStoreMinCardWidth+pluginStoreGap))
+	cardWidth := (cards - pluginStoreGap*(columns-1)) / columns
+	rowHeight := pluginStoreCardHeight(h, cardWidth) + pluginStoreGap
 	rows := (len(listings) + columns - 1) / columns
-	used := pluginStorePadding*2 + pluginStoreHeaderHeight(metrics) + pluginStoreGap +
-		pluginStoreControlHeight + pluginStoreGap + pluginStoreControlHeight + pluginStoreGap
-	if loading || allFailed {
-		used += metrics.StandardControl + pluginStoreGap
+	used := pluginStorePadding*2 + pluginStoreGap
+	for _, c := range children {
+		ch, _ := ui.ContentHeight(c, inner, h.measureText())
+		used += ch + pluginStoreGap
 	}
-	if len(stale) > 0 {
-		used += metrics.StandardControl + pluginStoreGap
-	}
-	gridHeight := max(h.place.Panel.H-used, pluginStoreCardHeight)
+	gridHeight := max(h.place.Panel.H-used, rowHeight)
 	h.pluginStoreColumns = columns
-	h.pluginStoreRowHeight = pluginStoreCardHeight
+	h.pluginStoreRowHeight = rowHeight
 	h.pluginStoreGridHeight = gridHeight
-	h.pluginStoreScroll = min(max(h.pluginStoreScroll, 0), max(rows*pluginStoreCardHeight-gridHeight, 0))
-	startRow := h.pluginStoreScroll / pluginStoreCardHeight
-	visibleRows := max(1, (gridHeight+pluginStoreCardHeight-1)/pluginStoreCardHeight)
+	h.pluginStoreScroll = min(max(h.pluginStoreScroll, 0), max(rows*rowHeight-gridHeight, 0))
+	startRow := h.pluginStoreScroll / rowHeight
+	visibleRows := max(1, (gridHeight+rowHeight-1)/rowHeight)
 	media := pluginStoreVisibleMedia(listings, state.Media, columns, startRow, visibleRows)
 	if r.pluginStore != nil {
 		r.pluginStore.Want(media)
 	}
 	grid := &ui.Node{
 		Kind: ui.KindVirtualList, Key: "plugin-store-grid", Width: inner,
-		Height: gridHeight, ItemCount: rows, ItemHeight: pluginStoreCardHeight,
+		Height: gridHeight, ItemCount: rows, ItemHeight: rowHeight,
 		ScrollOffset: h.pluginStoreScroll,
 		Item: func(row int) *ui.Node {
-			return pluginStoreGridRow(r, h, listings, row, columns, inner)
+			return pluginStoreGridRow(r, h, listings, row, columns, cardWidth, rowHeight)
 		},
 	}
 	children = append(children, grid)
@@ -121,23 +114,27 @@ func pluginStoreRoot(children []*ui.Node) *ui.Node {
 	return &ui.Node{Kind: ui.KindColumn, Padding: pluginStorePadding, Gap: pluginStoreGap, Children: children}
 }
 
-func pluginStoreHeaderHeight(m theme.Metrics) int { return m.StandardControl }
-
 func pluginStoreHeader(h *PanelHost, count int, busy string) *ui.Node {
 	metrics := h.theme.Metrics
 	countText := fmt.Sprintf("%d plugins", count)
+	if count == 1 {
+		countText = "1 plugin"
+	}
 	if strings.Contains(strings.ToLower(busy), "refresh") {
 		countText = "Checking sources…"
 	}
-	left := &ui.Node{Kind: ui.KindRow, Gap: pluginStoreGap, Children: []*ui.Node{
-		{Kind: ui.KindText, Text: "Plugins", Name: "Plugins", Role: "heading", TextRole: theme.RoleTitle},
-		{Kind: ui.KindText, Text: countText, TextRole: theme.RoleCaption},
+	left := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
+		{Kind: ui.KindIcon, Icon: "extension", IconSize: metrics.IconNormal},
+		{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
+			{Kind: ui.KindText, Text: "Plugin store", Name: "Plugin store", Role: "heading", TextRole: theme.RoleTitle},
+			{Kind: ui.KindText, Text: "Install plugins from your enabled sources · " + countText, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+		}},
 	}}
 	right := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS, Children: []*ui.Node{
 		pluginStoreIconButton("store-refresh", "Refresh", "refresh", metrics),
 		pluginStoreIconButton("store-close", "Close", "close", metrics),
 	}}
-	return &ui.Node{Kind: ui.KindRow, Height: metrics.StandardControl, PinEnd: true, Children: []*ui.Node{left, right}}
+	return &ui.Node{Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{left, right}}
 }
 
 func pluginStoreSearch(h *PanelHost, width int, metrics theme.Metrics) *ui.Node {
@@ -146,32 +143,53 @@ func pluginStoreSearch(h *PanelHost, width int, metrics theme.Metrics) *ui.Node 
 	field.Placeholder = "Search plugins…"
 	field.Width = width
 	field.Height = metrics.StandardControl
-	field.Padding = 8
+	field.Padding = metrics.ButtonPadding
 	return field
 }
 
-func pluginStoreChips(h *PanelHost, state store.State, width int, metrics theme.Metrics) *ui.Node {
-	row := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS, Width: width, Height: metrics.StandardControl}
-	sources := make([]string, 0, len(state.Sources))
+// pluginStoreChips is the filter row, and under it the category row while
+// Categories is open (Noctalia's expander: every choice stays a chip, so the
+// row keeps one height and the keyboard reaches each option in turn).
+func pluginStoreChips(h *PanelHost, state store.State, width int, metrics theme.Metrics) []*ui.Node {
+	row := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS, Width: width, Height: metrics.CompactControl}
+	var sources []string
 	for _, source := range state.Sources {
 		if source.Name != "" && !slices.Contains(sources, source.Name) {
 			sources = append(sources, source.Name)
 		}
 	}
-	row.Children = append(row.Children, pluginStoreChip("store-source:", "All", h.pluginStoreQuery.Source == "", metrics))
+	row.Children = append(row.Children, pluginStoreChip("store-source:", "All sources", "", h.pluginStoreQuery.Source == "", metrics))
 	for _, source := range sources {
-		row.Children = append(row.Children, pluginStoreChip("store-source:"+source, source, h.pluginStoreQuery.Source == source, metrics))
+		row.Children = append(row.Children, pluginStoreChip("store-source:"+source, pluginSourceLabel(source), "", h.pluginStoreQuery.Source == source, metrics))
 	}
-	row.Children = append(row.Children, pluginStoreCategoryMenu(h, state, metrics))
+	categoryLabelText := "Categories"
+	if h.pluginStoreQuery.Category != "" {
+		categoryLabelText = categoryLabel(h.pluginStoreQuery.Category)
+	}
+	chevron := "chevron_right"
+	if h.pluginStoreCategoriesOpen {
+		chevron = "expand_more"
+	}
 	row.Children = append(row.Children,
-		pluginStoreChip("store-hide-installed", "Hide installed", h.pluginStoreQuery.HideInstalled, metrics),
-		pluginStoreChip("store-sort", pluginStoreSortLabel(h.pluginStoreQuery.Sort), false, metrics),
+		pluginStoreChip("store-categories", categoryLabelText, chevron, h.pluginStoreQuery.Category != "", metrics),
+		pluginStoreChip("store-hide-installed", "Hide installed", "", h.pluginStoreQuery.HideInstalled, metrics),
+		pluginStoreChip("store-sort", "Sort: "+pluginStoreSortLabel(h.pluginStoreQuery.Sort), "swap_vert", false, metrics),
 	)
-	return row
+	out := []*ui.Node{row}
+	if h.pluginStoreCategoriesOpen {
+		cats := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS, Width: width, Height: metrics.CompactControl}
+		cats.Children = append(cats.Children, pluginStoreChip("store-category:", "All categories", "", h.pluginStoreQuery.Category == "", metrics))
+		for _, category := range pluginStoreCategories(h, state) {
+			cats.Children = append(cats.Children, pluginStoreChip("store-category:"+category, categoryLabel(category), "", h.pluginStoreQuery.Category == category, metrics))
+		}
+		out = append(out, cats)
+	}
+	return out
 }
 
-func pluginStoreCategoryMenu(h *PanelHost, state store.State, metrics theme.Metrics) *ui.Node {
-	categories := make([]string, 0, len(state.Listings))
+// pluginStoreCategories is every category the chosen source offers.
+func pluginStoreCategories(h *PanelHost, state store.State) []string {
+	var categories []string
 	for _, listing := range state.Listings {
 		if h.pluginStoreQuery.Source != "" && listing.Source != h.pluginStoreQuery.Source {
 			continue
@@ -181,47 +199,7 @@ func pluginStoreCategoryMenu(h *PanelHost, state store.State, metrics theme.Metr
 		}
 	}
 	slices.Sort(categories)
-	options := []string{"All categories"}
-	for _, category := range categories {
-		options = append(options, categoryLabel(category))
-	}
-	selected := 0
-	if h.pluginStoreQuery.Category != "" {
-		for i, category := range categories {
-			if category == h.pluginStoreQuery.Category {
-				selected = i + 1
-				break
-			}
-		}
-	}
-	if h.menus == nil {
-		h.menus = map[string]*Menu{}
-	}
-	const path = "plugin-store-category"
-	menu := h.menus[path]
-	if menu == nil || !slices.Equal(menu.options, options) {
-		wasOpen := menu != nil && h.menu == menu && menu.Opened()
-		menu = NewMenu(options, selected)
-		if wasOpen {
-			menu.Open()
-			h.menu = menu
-		}
-		h.menus[path] = menu
-	} else {
-		menu.index = selected
-		if !menu.Opened() {
-			menu.cursor = selected
-		}
-	}
-	n := menu.Node()
-	n.Action = path
-	n.Key = path
-	n.Width = 180
-	n.Height = metrics.StandardControl
-	n.Padding = metrics.ButtonPadding
-	n.Name = "Category"
-	n.Role = "combobox"
-	return n
+	return categories
 }
 
 func categoryLabel(category string) string {
@@ -246,17 +224,22 @@ func pluginStoreSortLabel(key SortKey) string {
 	}
 }
 
-func pluginStoreChip(action, label string, selected bool, metrics theme.Metrics) *ui.Node {
-	fill := ui.FillContainerHigh
+func pluginStoreChip(action, label, icon string, selected bool, metrics theme.Metrics) *ui.Node {
+	content := []*ui.Node{{Kind: ui.KindText, Text: label, TextRole: theme.RoleLabel}}
 	if selected {
-		fill = ui.FillAccent
+		content = append([]*ui.Node{{Kind: ui.KindIcon, Icon: "check", IconSize: metrics.IconSmall}}, content...)
+	}
+	if icon != "" {
+		content = append(content, &ui.Node{Kind: ui.KindIcon, Icon: icon, IconSize: metrics.IconSmall})
 	}
 	n := &ui.Node{
 		Kind: ui.KindButton, Action: action, Key: action, Name: label, Role: "button",
-		Focusable: true, Height: metrics.StandardControl, Padding: metrics.ButtonPadding,
-		Fill: fill, Shape: ui.ShapeMedium, Children: []*ui.Node{{Kind: ui.KindText, Text: label, TextRole: theme.RoleCaption}},
+		Focusable: true, Height: metrics.CompactControl, Padding: metrics.ButtonPadding,
+		Fill: ui.FillContainerHigh, Shape: ui.ShapeMedium,
+		Children: []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginXS, Children: content}},
 	}
 	if selected {
+		n.Fill = ui.FillSoft
 		n.State |= ui.StateSelected
 	}
 	return n
@@ -265,63 +248,121 @@ func pluginStoreChip(action, label string, selected bool, metrics theme.Metrics)
 func pluginStoreButton(action, label string, metrics theme.Metrics) *ui.Node {
 	return &ui.Node{
 		Kind: ui.KindButton, Action: action, Key: action, Text: label, Name: label,
-		Role: "button", Focusable: true, Height: metrics.StandardControl,
-		Padding: metrics.ButtonPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeMedium,
+		Role: "button", Focusable: true, Height: metrics.CompactControl,
+		Padding: metrics.ButtonPadding, Fill: ui.FillOutline, Shape: ui.ShapeMedium,
+	}
+}
+
+// pluginStoreFilledButton is the one prominent action on a surface.
+func pluginStoreFilledButton(action, label, icon string, fill ui.Fill, metrics theme.Metrics) *ui.Node {
+	content := []*ui.Node{{Kind: ui.KindText, Text: label}}
+	if icon != "" {
+		content = append([]*ui.Node{{Kind: ui.KindIcon, Icon: icon, IconSize: metrics.IconSmall}}, content...)
+	}
+	return &ui.Node{
+		Kind: ui.KindButton, Action: action, Key: action, Name: label, Role: "button", Focusable: true,
+		Height: metrics.CompactControl, Padding: metrics.ButtonPadding, Fill: fill, Shape: ui.ShapeMedium,
+		Children: []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginXS, Children: content}},
 	}
 }
 
 func pluginStoreIconButton(action, name, icon string, metrics theme.Metrics) *ui.Node {
 	return &ui.Node{
 		Kind: ui.KindButton, Action: action, Key: action, Name: name, Role: "button",
-		Focusable: true, Width: metrics.StandardControl, Height: metrics.StandardControl,
+		Focusable: true, Width: metrics.IconButton, Height: metrics.IconButton,
 		Shape: ui.ShapeCircle, Children: []*ui.Node{{Kind: ui.KindIcon, Icon: icon, IconSize: metrics.IconNormal}},
 	}
 }
 
-func pluginStoreBanner(title, detail string, retry bool, width int, metrics theme.Metrics) *ui.Node {
-	children := []*ui.Node{{Kind: ui.KindText, Text: title, TextRole: theme.RoleBody}}
-	if detail != "" {
-		children = append(children, &ui.Node{Kind: ui.KindText, Text: detail, TextRole: theme.RoleCaption, MaxWidth: max(width-pluginStoreMinCardWidth, 1)}) // the title and Retry fit in a card width
-	}
+func pluginStoreBanner(h *PanelHost, title, detail string, retry bool, width int, metrics theme.Metrics) *ui.Node {
+	fill, icon := ui.FillContainerHigh, "refresh"
 	if retry {
-		children = append(children, pluginStoreButton("store-refresh", "Retry", metrics))
+		fill, icon = ui.FillErrorContainer, "cancel"
 	}
-	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS, Height: metrics.StandardControl, Fill: ui.FillErrorContainer, Shape: ui.ShapeMedium, Children: children}
+	text := []*ui.Node{{Kind: ui.KindText, Text: title, TextRole: theme.RoleLabel}}
+	actionsW := 0
+	var trailing *ui.Node
+	if retry {
+		trailing = pluginStoreButton("store-refresh", "Retry", metrics)
+		actionsW = settingsResetWidth(h) + theme.MarginM
+	}
+	textW := max(width-2*metrics.CardPadding-metrics.IconNormal-theme.MarginM-actionsW, 1)
+	if detail != "" {
+		text = append(text, h.wrappedText(detail, theme.RoleCaption, ui.ToneNormal, textW, 2))
+	}
+	lead := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
+		{Kind: ui.KindIcon, Icon: icon, IconSize: metrics.IconNormal},
+		{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: text},
+	}}
+	body := &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: width - 2*metrics.CardPadding, Children: []*ui.Node{lead}}
+	if trailing != nil {
+		body.Children = append(body.Children, trailing)
+	}
+	return &ui.Node{Kind: ui.KindCapsule, Width: width, Padding: metrics.CardPadding, Fill: fill, Shape: ui.ShapeMedium, Children: []*ui.Node{body}}
 }
 
-func pluginStoreGridRow(r *Registry, h *PanelHost, listings []store.Listing, row, columns, width int) *ui.Node {
+// wrappedText breaks text into measured lines at width, at most maxLines of
+// them (0 for no limit), the last one ending in an ellipsis when cut. A text
+// node's Multiline only honours the breaks already in its string.
+func (h *PanelHost) wrappedText(text string, role theme.TextRole, tone ui.Tone, width, maxLines int) *ui.Node {
+	measure := h.measureText()
+	attrs := ui.TextAttrsOf(&ui.Node{Kind: ui.KindText, TextRole: role})
+	lines := wrapLines(text, max(width, 1), func(s string) int { w, _ := measure(s, attrs); return w }, maxLines)
+	col := &ui.Node{Kind: ui.KindColumn, Width: width}
+	for _, line := range lines {
+		col.Children = append(col.Children, &ui.Node{Kind: ui.KindText, Text: line, TextRole: role, Tone: tone, MaxWidth: width})
+	}
+	return col
+}
+
+// pluginStoreLineHeight is one line of text in a role, as the painter sets it.
+func (h *PanelHost) pluginStoreLineHeight(role theme.TextRole) int {
+	_, lh := h.measureText()("Ag", ui.TextAttrsOf(&ui.Node{Kind: ui.KindText, TextRole: role}))
+	return lh
+}
+
+func pluginStoreImageHeight(cardWidth int) int {
+	return max(cardWidth-2*pluginStoreCardPadding, 1) * 2 / 5
+}
+
+// pluginStoreCardHeight is a card sized to what it holds: the preview, the
+// title row, the byline and two lines of description. Deriving it keeps the
+// card tight at every density and scale instead of a fixed height that left
+// dead space under the text.
+func pluginStoreCardHeight(h *PanelHost, cardWidth int) int {
+	m := h.theme.Metrics
+	caption := h.pluginStoreLineHeight(theme.RoleCaption)
+	title := max(h.pluginStoreLineHeight(theme.RoleTitle), m.CompactControl)
+	return 2*pluginStoreCardPadding + pluginStoreImageHeight(cardWidth) + theme.MarginS +
+		title + theme.MarginXXS + caption + theme.MarginXS + 2*caption
+}
+
+func pluginStoreGridRow(r *Registry, h *PanelHost, listings []store.Listing, row, columns, cardWidth, rowHeight int) *ui.Node {
 	start := row * columns
 	count := min(columns, len(listings)-start)
-	if count <= 0 {
-		return &ui.Node{Kind: ui.KindRow, Height: pluginStoreCardHeight}
+	out := &ui.Node{Kind: ui.KindRow, Gap: pluginStoreGap, Height: rowHeight}
+	for i := start; i < start+max(count, 0); i++ {
+		out.Children = append(out.Children, pluginStoreCardNode(r, h, listings[i], cardWidth))
 	}
-	gap := pluginStoreGap
-	cardWidth := (width - gap*(columns-1)) / columns
-	children := make([]*ui.Node, 0, count)
-	for i := start; i < start+count; i++ {
-		children = append(children, pluginStoreCardNode(r, h, listings[i], cardWidth))
-	}
-	return &ui.Node{Kind: ui.KindRow, Gap: gap, Height: pluginStoreCardHeight, Children: children}
+	return out
 }
 
+// pluginStoreCardNode is one plugin in the grid: the preview with its badges
+// laid over the corner (DMS), then the title and status, byline, and two
+// lines of description (Noctalia).
 func pluginStoreCardNode(r *Registry, h *PanelHost, listing store.Listing, width int) *ui.Node {
+	m := h.theme.Metrics
 	card := cardFor(listing, r.pluginStoreSnapshot.Media)
 	key := pluginStoreKey(listing)
-	imageWidth := max(width-2*pluginStoreCardPadding, 1)
-	imageHeight := imageWidth * 9 / 16
-	placeholderLabel := "No screenshot provided"
-	if card.Screenshot.SHA256 != "" {
-		placeholderLabel = "Preview loading…"
-		if media, ok := r.pluginStoreSnapshot.Media[card.Screenshot.SHA256]; ok && media.Err != nil {
-			placeholderLabel = "Preview unavailable"
-		}
-	}
-	stack := &ui.Node{Kind: ui.KindStack, Width: imageWidth, Height: imageHeight, Children: []*ui.Node{
-		{Kind: ui.KindCapsule, Width: imageWidth, Height: imageHeight, Fill: ui.FillContainer, Shape: ui.ShapeMedium},
+	inner := max(width-2*pluginStoreCardPadding, 1)
+	imageHeight := pluginStoreImageHeight(width)
+	stack := &ui.Node{Kind: ui.KindStack, Width: inner, Height: imageHeight, Children: []*ui.Node{
+		{Kind: ui.KindCapsule, Width: inner, Height: imageHeight, Fill: ui.FillContainerHighest, Shape: ui.ShapeMedium},
 	}}
+	glyph := &ui.Node{Kind: ui.KindIcon, Icon: card.Glyph, IconSize: m.IconLarge, Tone: ui.ToneAccent}
 	if card.ScreenshotPath != "" {
 		image := &ui.Node{
-			Kind: ui.KindImage, ImageW: imageWidth, ImageH: imageHeight,
+			Kind: ui.KindImage, ImageW: inner, ImageH: imageHeight,
 			ImagePath: card.ScreenshotPath, Background: true,
 		}
 		if r.plugins != nil && r.plugins.images != nil {
@@ -333,53 +374,55 @@ func pluginStoreCardNode(r *Registry, h *PanelHost, listing store.Listing, width
 		}
 		stack.Children = append(stack.Children, image)
 		if image.Image == nil {
-			stack.Children = append(stack.Children, &ui.Node{Kind: ui.KindIcon, Icon: card.Glyph, IconSize: h.theme.Metrics.IconLarge})
+			stack.Children = append(stack.Children, glyph)
 		}
 	} else {
-		stack.Children = append(stack.Children, &ui.Node{Kind: ui.KindIcon, Icon: card.Glyph, IconSize: h.theme.Metrics.IconLarge})
+		stack.Children = append(stack.Children, glyph)
 	}
 	if len(card.Badges) > 0 {
-		badgeGap := theme.MarginXXS
-		badgeWidth := max((imageWidth-badgeGap*(len(card.Badges)-1))/len(card.Badges), 1)
-		badges := &ui.Node{Kind: ui.KindRow, Width: imageWidth, Height: pluginStoreBadgeHeight, Gap: badgeGap}
+		badges := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXXS}
 		for _, badge := range card.Badges {
 			badges.Children = append(badges.Children, &ui.Node{
-				Kind: ui.KindCapsule, Width: badgeWidth, Height: pluginStoreBadgeHeight - 2*theme.MarginXXS,
-				Fill: pluginStoreBadgeFill(badge.Tone), Shape: ui.ShapeSmall, Padding: theme.MarginXXS,
-				Children: []*ui.Node{{Kind: ui.KindText, Text: badge.Label, MaxWidth: badgeWidth - 2*theme.MarginXXS, TextRole: theme.RoleCaption}},
+				Kind: ui.KindCapsule, Fill: pluginStoreBadgeFill(badge.Tone), Shape: ui.ShapeSmall, Padding: theme.MarginXS,
+				Children: []*ui.Node{{Kind: ui.KindText, Text: badge.Label, TextRole: theme.RoleCaption}},
 			})
 		}
-		stack.Children = append(stack.Children, &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{badges}})
+		stack.Children = append(stack.Children, &ui.Node{Kind: ui.KindColumn, Padding: theme.MarginXS, Children: []*ui.Node{badges}})
 	}
 	description := card.Description
 	if description == "" {
 		description = "No description provided"
 	}
-	statusIcon, statusLabel := pluginStoreCardStatus(card)
-	contentChildren := []*ui.Node{stack}
-	if placeholderLabel != "" {
-		contentChildren = append(contentChildren, &ui.Node{Kind: ui.KindText, Text: placeholderLabel, TextRole: theme.RoleCaption, MaxWidth: imageWidth})
-	}
-	contentChildren = append(contentChildren,
-		&ui.Node{Kind: ui.KindText, Text: card.Title, TextRole: theme.RoleBody, MaxWidth: imageWidth},
-		&ui.Node{Kind: ui.KindText, Text: card.Byline, TextRole: theme.RoleCaption, MaxWidth: imageWidth},
-		&ui.Node{Kind: ui.KindText, Text: description, TextRole: theme.RoleCaption, MaxWidth: imageWidth, Height: pluginStoreDescriptionHeight, Multiline: true},
-		&ui.Node{Kind: ui.KindRow, PinEnd: true, Gap: theme.MarginXXS, Height: h.theme.Metrics.CompactControl, Tooltip: card.Reason, Children: []*ui.Node{
-			{Kind: ui.KindIcon, Icon: statusIcon, IconSize: h.theme.Metrics.IconSmall},
-			{Kind: ui.KindText, Text: statusLabel, TextRole: theme.RoleCaption, MaxWidth: imageWidth - h.theme.Metrics.IconSmall - theme.MarginXXS},
-		}},
-	)
-	content := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: contentChildren}
-	state := ui.Interaction(0)
-	if h.pluginStoreSelected == key {
-		state |= ui.StateSelected
-	}
-	return &ui.Node{
+	status := pluginStoreCardStatus(card, m)
+	statusLabel := status.Children[0].Children[1]
+	labelW, _ := h.measureText()(statusLabel.Text, ui.TextAttrsOf(statusLabel))
+	statusW := 2*theme.MarginXS + m.IconSmall + theme.MarginXXS + labelW
+	titleRow := &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: inner, Height: max(h.pluginStoreLineHeight(theme.RoleTitle), m.CompactControl), Children: []*ui.Node{
+		{Kind: ui.KindText, Text: card.Title, TextRole: theme.RoleTitle, MaxWidth: max(inner-statusW-theme.MarginS, 1)},
+		status,
+	}}
+	content := &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{
+		stack,
+		{Kind: ui.KindColumn, Height: theme.MarginS},
+		titleRow,
+		{Kind: ui.KindColumn, Height: theme.MarginXXS},
+		{Kind: ui.KindText, Text: card.Byline, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: inner},
+		{Kind: ui.KindColumn, Height: theme.MarginXS},
+		h.wrappedText(description, theme.RoleCaption, ui.ToneNormal, inner, 2),
+	}}
+	n := &ui.Node{
 		Kind: ui.KindButton, Key: "store-card:" + key, Action: "store-open:" + key,
-		Name: card.Title, Role: "button", Focusable: true, Width: width, Height: pluginStoreCardHeight,
+		Name: card.Title, Role: "button", Focusable: true, Width: width, Height: pluginStoreCardHeight(h, width),
 		Padding: pluginStoreCardPadding, Fill: ui.FillContainerHigh, Shape: ui.ShapeMedium,
-		State: state, Children: []*ui.Node{content},
+		Tooltip: card.Reason, Children: []*ui.Node{content},
 	}
+	if h.pluginStoreSelected == key {
+		// The selection is a lift, not a flood: the focus ring already marks
+		// the card, and an accent fill drowned its text in the references'
+		// place.
+		n.Fill = ui.FillContainerHighest
+	}
+	return n
 }
 
 func pluginStoreBadgeFill(tone BadgeTone) ui.Fill {
@@ -389,26 +432,31 @@ func pluginStoreBadgeFill(tone BadgeTone) ui.Fill {
 	case BadgeCommunity, BadgeWarning:
 		return ui.FillSoft
 	case BadgeLocal:
-		return ui.FillContainerHighest
+		return ui.FillContainerHigh
 	default:
 		return ui.FillContainer
 	}
 }
 
-func pluginStoreCardStatus(card Card) (string, string) {
+// pluginStoreCardStatus is the card's state as a small chip beside the title,
+// where DMS keeps its install button.
+func pluginStoreCardStatus(card Card, m theme.Metrics) *ui.Node {
+	icon, label, fill := "download", "Install", ui.FillOutline
 	switch card.Action {
-	case ActionInstall:
-		return "add", "Install"
 	case ActionInstalled:
-		return "check", "Installed"
+		icon, label, fill = "check", "Installed", ui.FillNone
 	case ActionUpdate:
-		return "restart_alt", "Update"
+		icon, label, fill = "restart_alt", "Update", ui.FillSoft
+	case ActionInstall:
 	default:
-		if card.Reason == "" {
-			return "disabled_by_default", "Unavailable"
-		}
-		return "disabled_by_default", card.Reason
+		icon, label, fill = "disabled_by_default", "Unavailable", ui.FillNone
 	}
+	return &ui.Node{Kind: ui.KindCapsule, Fill: fill, Shape: ui.ShapeSmall, Padding: theme.MarginXS, Children: []*ui.Node{
+		{Kind: ui.KindRow, Gap: theme.MarginXXS, Children: []*ui.Node{
+			{Kind: ui.KindIcon, Icon: icon, IconSize: m.IconSmall},
+			{Kind: ui.KindText, Text: label, TextRole: theme.RoleCaption},
+		}},
+	}}
 }
 
 func pluginStoreVisibleMedia(listings []store.Listing, media map[string]store.MediaState, columns, startRow, visibleRows int) []store.MediaKey {
@@ -565,8 +613,9 @@ func (h *PanelHost) movePluginStoreSelection(r *Registry, index int, listings []
 	h.pluginStoreSelected = pluginStoreKey(listings[index])
 	columns := max(h.pluginStoreColumns, 1)
 	row := index / columns
-	rowHeight := max(h.pluginStoreRowHeight, pluginStoreCardHeight)
-	visibleRows := max(1, (h.pluginStoreGridHeight+rowHeight-1)/rowHeight)
+	rowHeight := max(h.pluginStoreRowHeight, 1)
+	// Only whole rows count as visible: a selection on a clipped row scrolls.
+	visibleRows := max(1, h.pluginStoreGridHeight/rowHeight)
 	start := h.pluginStoreScroll / rowHeight
 	if row < start {
 		h.pluginStoreScroll = row * rowHeight
@@ -582,11 +631,18 @@ func (h *PanelHost) focusPluginStoreSelection() {
 	if h == nil {
 		return
 	}
-	key := "store-card:" + h.pluginStoreSelected
-	for i, node := range h.focus {
-		if node != nil && node.StableKey() == key {
-			h.roving.Set(i)
-			return
+	// A detail opens on its action, so Enter then Enter reaches the consent
+	// step and never installs by itself; without one, on Back.
+	keys := []string{"store-card:" + h.pluginStoreSelected}
+	if h.pluginStoreDetail != "" {
+		keys = []string{"store-primary", "store-back"}
+	}
+	for _, key := range keys {
+		for i, node := range h.focus {
+			if node != nil && node.StableKey() == key {
+				h.roving.Set(i)
+				return
+			}
 		}
 	}
 	h.focusByName("Search")
@@ -595,24 +651,6 @@ func (h *PanelHost) focusPluginStoreSelection() {
 func (h *PanelHost) activatePluginStore(r *Registry, n *ui.Node) bool {
 	if n == nil {
 		return false
-	}
-	if n.Kind == ui.KindMenu && n.Action == "plugin-store-category" {
-		menu := h.menus[n.Action]
-		if menu == nil {
-			return true
-		}
-		h.menu = menu
-		h.menuPath = n.Action
-		if !menu.Opened() {
-			menu.Open()
-			r.rebuildPanel(h)
-			return true
-		}
-		if !menu.PickAt(n, h.hoverX, h.hoverY) {
-			return h.pressMenuFilter(r)
-		}
-		menu.Select()
-		return h.applyPluginStoreCategory(r)
 	}
 	switch {
 	case n.Action == "store-close":
@@ -640,6 +678,14 @@ func (h *PanelHost) activatePluginStore(r *Registry, n *ui.Node) bool {
 		h.pluginStoreQuery.Source = strings.TrimPrefix(n.Action, "store-source:")
 		h.pluginStoreScroll = 0
 		r.rebuildPanel(h)
+	case n.Action == "store-categories":
+		h.pluginStoreCategoriesOpen = !h.pluginStoreCategoriesOpen
+		r.rebuildPanel(h)
+	case strings.HasPrefix(n.Action, "store-category:"):
+		h.pluginStoreQuery.Category = strings.TrimPrefix(n.Action, "store-category:")
+		h.pluginStoreCategoriesOpen = false
+		h.pluginStoreScroll = 0
+		r.rebuildPanel(h)
 	case strings.HasPrefix(n.Action, "store-open:"):
 		h.pluginStoreSelected = strings.TrimPrefix(n.Action, "store-open:")
 		h.pluginStoreDetail = h.pluginStoreSelected
@@ -664,20 +710,5 @@ func (h *PanelHost) activatePluginStore(r *Registry, n *ui.Node) bool {
 	default:
 		return false
 	}
-	return true
-}
-
-func (h *PanelHost) applyPluginStoreCategory(r *Registry) bool {
-	if h.menu != nil {
-		value := h.menu.Value()
-		if strings.EqualFold(value, "All categories") {
-			h.pluginStoreQuery.Category = ""
-		} else {
-			h.pluginStoreQuery.Category = strings.ToLower(value)
-		}
-		h.menuPath = ""
-	}
-	h.pluginStoreScroll = 0
-	r.rebuildPanel(h)
 	return true
 }

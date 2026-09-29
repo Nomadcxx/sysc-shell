@@ -237,7 +237,8 @@ func TestPluginsSectionShowsInstalledRowAndSourcesDirectory(t *testing.T) {
 	if !strings.Contains(text, "Timer") {
 		t.Fatalf("missing plugin name in %q", text)
 	}
-	if !strings.Contains(text, "1.0.0") || !strings.Contains(text, "user") {
+	// A plugin in the user root is labelled Local, the store's name for it.
+	if !strings.Contains(text, "1.0.0") || !strings.Contains(text, "Local") {
 		t.Fatalf("missing metadata in %q", text)
 	}
 	// Capabilities are shown in the store detail and the consent step, not on
