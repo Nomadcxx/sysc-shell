@@ -12,7 +12,6 @@ import (
 
 	"github.com/Nomadcxx/sysc-notify/protocol"
 	"github.com/Nomadcxx/sysc-shell/internal/icons"
-	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -56,8 +55,16 @@ const (
 	ccTodayH         = 336
 	ccForecastH      = 132
 	ccSessionCardH   = 232
-	ccCalendarCellW  = 74
 	ccCalendarRowMin = 32
+	// ccCalendarWeekdayH is the weekday header band: one label line and the
+	// small gap Noctalia leaves under it.
+	ccCalendarWeekdayH = 24
+	// Event markers follow Noctalia: up to three dots in a strip reserved
+	// under every day number, so a day with events and one without keep the
+	// same baseline.
+	ccCalendarDot    = 5
+	ccCalendarDotGap = 2
+	ccCalendarDotMax = 3
 	ccNotifyListH    = 416
 )
 
@@ -632,14 +639,14 @@ type ccCalendarSnapshot struct {
 	Upcoming  []ccCalOccurrence `json:"upcoming"`
 }
 
-// loadCCCalendar reads the calendar plugin's published snapshot. Missing or
-// malformed state simply means "no events"; it never breaks the page.
-func loadCCCalendar() *ccCalendarSnapshot {
-	store, err := plugin.OpenStore(plugin.StateRoot(), ccCalendarPluginID)
-	if err != nil {
+// ccCalendarSnapshotFor reads the calendar plugin's published snapshot from
+// the running plugin's in-memory store. No plugin, no key or malformed state
+// simply means "no events"; it never breaks the page.
+func ccCalendarSnapshotFor(r *Registry) *ccCalendarSnapshot {
+	if r == nil {
 		return nil
 	}
-	raw, ok := store.Get(ccCalendarStateKey)
+	raw, ok := r.plugins.stateValue(ccCalendarPluginID, ccCalendarStateKey)
 	if !ok {
 		return nil
 	}
@@ -648,6 +655,19 @@ func loadCCCalendar() *ccCalendarSnapshot {
 		return nil
 	}
 	return &snapshot
+}
+
+// ccCalendarDots is the marker strip under a day: one accent dot per event up
+// to ccCalendarDotMax, or an empty strip of the same height.
+func ccCalendarDots(count int) *ui.Node {
+	if count <= 0 {
+		return &ui.Node{Kind: ui.KindColumn, Height: ccCalendarDot}
+	}
+	strip := &ui.Node{Kind: ui.KindRow, Gap: ccCalendarDotGap, CenterX: true}
+	for range min(count, ccCalendarDotMax) {
+		strip.Children = append(strip.Children, &ui.Node{Kind: ui.KindCapsule, Width: ccCalendarDot, Fill: ui.FillAccent})
+	}
+	return strip
 }
 
 func ccCalendar(r *Registry, h *PanelHost) *ui.Node {
@@ -661,7 +681,7 @@ func ccCalendar(r *Registry, h *PanelHost) *ui.Node {
 	}
 	view := now.AddDate(0, h.monthDelta, 0)
 	grid := calendarGrid(view)
-	snapshot := loadCCCalendar()
+	snapshot := ccCalendarSnapshotFor(r)
 	var dates []time.Time
 	if snapshot != nil {
 		first := time.Date(view.Year(), view.Month(), 1, 0, 0, 0, 0, view.Location())
@@ -671,44 +691,47 @@ func ccCalendar(r *Registry, h *PanelHost) *ui.Node {
 			dates[i] = gridStart.AddDate(0, 0, i)
 		}
 	}
+	// Seven columns and six gaps span the card's content width.
+	cellW := max((ccBodyWidth(h)-2*m.CardPadding-6*theme.MarginXS)/7, 0)
 	rows := []*ui.Node{{
-		Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{
+		Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
 			calendarArrow("chevron_left", "cal-prev", "Previous month", h.theme),
 			{Kind: ui.KindText, Text: view.Format("January 2006"), TextRole: theme.RoleTitle},
 			calendarArrow("chevron_right", "cal-next", "Next month", h.theme),
 		},
 	}}
-	weekdays := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS}
+	weekdays := &ui.Node{Kind: ui.KindRow, Height: ccCalendarWeekdayH, Gap: theme.MarginXS}
 	for _, day := range []string{"S", "M", "T", "W", "T", "F", "S"} {
-		weekdays.Children = append(weekdays.Children, &ui.Node{Kind: ui.KindText, Text: day, Width: ccCalendarCellW, CenterX: true})
+		weekdays.Children = append(weekdays.Children, calendarCell(cellW,
+			&ui.Node{Kind: ui.KindText, Text: day, TextRole: theme.RoleLabel, Tone: ui.ToneSubtle, CenterX: true}))
 	}
 	rows = append(rows, weekdays)
-	upcomingShown := 0
+	// The footer holds up to three upcoming events, or the empty line, and the
+	// Open calendar row; each is one compact control and the gap above it.
+	footerH := 0
 	if snapshot != nil {
-		upcomingShown = min(len(snapshot.Upcoming), 3)
-		if upcomingShown == 0 {
-			upcomingShown = 1
-		}
+		footerH = (max(min(len(snapshot.Upcoming), 3), 1) + 1) * (m.CompactControl + theme.MarginXS)
 	}
-	footerH := (upcomingShown+1)*(m.CompactControl+theme.MarginXS) + theme.MarginXS
-	rowHeight := max((ccPageH-2*m.CardPadding-m.StandardControl-28-footerH)/max(len(grid.Weeks), 1), ccCalendarRowMin)
+	// D4: the grid is the page's principal block and grows to fill the card.
+	// The card's column puts one gap under the nav row and one above each week.
+	fixedH := 2*m.CardPadding + m.CompactControl + theme.MarginXS + ccCalendarWeekdayH + footerH
+	weeks := max(len(grid.Weeks), 1)
+	rowHeight := max((ccPageH-fixedH)/weeks-theme.MarginXS, ccCalendarRowMin)
 	for wi, week := range grid.Weeks {
 		row := &ui.Node{Kind: ui.KindRow, Height: rowHeight, Gap: theme.MarginXS}
 		for ci, cell := range week {
-			label := fmt.Sprintf("%d", cell.Day)
-			day := &ui.Node{Kind: ui.KindText, Text: label, Width: ccCalendarCellW, CenterX: true, Tabular: true}
-			if cell.Today {
+			day := &ui.Node{Kind: ui.KindText, Text: fmt.Sprintf("%d", cell.Day), CenterX: true, Tabular: true}
+			switch {
+			case cell.Today:
 				day.Tone = ui.ToneAccent
+			case !cell.InMonth:
+				day.Tone = ui.ToneSubtle
 			}
+			content := []*ui.Node{day}
 			if snapshot != nil {
-				if count := snapshot.Days[dates[wi*7+ci].Format("2006-01-02")]; count > 0 {
-					day = &ui.Node{Kind: ui.KindColumn, Width: ccCalendarCellW, Children: []*ui.Node{
-						{Kind: ui.KindText, Text: label, CenterX: true, Tabular: true, Tone: day.Tone},
-						{Kind: ui.KindText, Text: fmt.Sprintf("%d", count), CenterX: true, TextRole: theme.RoleLabel, Tone: ui.ToneAccent},
-					}}
-				}
+				content = append(content, ccCalendarDots(snapshot.Days[dates[wi*7+ci].Format("2006-01-02")]))
 			}
-			row.Children = append(row.Children, day)
+			row.Children = append(row.Children, calendarCell(cellW, content...))
 		}
 		rows = append(rows, row)
 	}

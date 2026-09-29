@@ -58,28 +58,39 @@ func clockTree(now time.Time, monthDelta int, th Theme) *ui.Node {
 			calendarArrow("chevron_right", "cal-next", "Next month", th),
 		}},
 	}}
+	// Seven columns and six gaps span the popout's padded width.
+	cellW := max((panelTargetSize(PanelClock).W-2*th.Metrics.PanelPadding-6*theme.MarginXS)/7, 0)
 	weekdays := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS}
 	for _, d := range []string{"S", "M", "T", "W", "T", "F", "S"} {
-		weekdays.Children = append(weekdays.Children, &ui.Node{Kind: ui.KindText, Text: d})
+		weekdays.Children = append(weekdays.Children, calendarCell(cellW,
+			&ui.Node{Kind: ui.KindText, Text: d, Tone: ui.ToneSubtle, CenterX: true}))
 	}
 	col.Children = append(col.Children, weekdays)
 	for _, week := range g.Weeks {
 		row := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS}
 		for _, cell := range week {
-			label := ""
-			if cell.Day != 0 {
-				label = fmt.Sprintf("%d", cell.Day)
-			}
-			n := &ui.Node{Kind: ui.KindText, Text: label}
-			if cell.Today {
-				n.Tone = ui.ToneNormal
+			n := &ui.Node{Kind: ui.KindText, Text: fmt.Sprintf("%d", cell.Day), CenterX: true, Tabular: true}
+			switch {
+			case cell.Today:
+				n.Tone = ui.ToneAccent
 				n.Action = "today"
+			case !cell.InMonth:
+				n.Tone = ui.ToneSubtle
 			}
-			row.Children = append(row.Children, n)
+			row.Children = append(row.Children, calendarCell(cellW, n))
 		}
 		col.Children = append(col.Children, row)
 	}
 	return col
+}
+
+// calendarCell is one grid column: a fixed-width box holding its content
+// centred in both axes. Every weekday and day uses it, with or without
+// events, so the seven columns line up across the header and every week.
+func calendarCell(width int, content ...*ui.Node) *ui.Node {
+	return &ui.Node{Kind: ui.KindColumn, Width: width, Children: []*ui.Node{
+		{Kind: ui.KindColumn, CenterY: true, Gap: ccCalendarDotGap, Children: content},
+	}}
 }
 
 // calendarArrow is a compact circular icon button. A square button clamps to a
