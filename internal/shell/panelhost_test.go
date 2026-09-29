@@ -317,7 +317,7 @@ func TestRevealAnimationInvalidatesUntilDone(t *testing.T) {
 }
 
 func TestRightClickingTheBarBatteryOpensSession(t *testing.T) {
-	reg := newPanelRegistry(t)
+	reg := newBatteryPanelRegistry(t)
 	cb, err := reg.NewHost(7, "eDP-1")
 	if err != nil {
 		t.Fatal(err)
@@ -350,7 +350,7 @@ func TestRightClickingTheBarBatteryOpensSession(t *testing.T) {
 }
 
 func TestRightClickingBatteryCapsulePaddingOpensSession(t *testing.T) {
-	reg := newPanelRegistry(t)
+	reg := newBatteryPanelRegistry(t)
 	cb, err := reg.NewHost(7, "eDP-1")
 	if err != nil {
 		t.Fatal(err)
@@ -833,6 +833,20 @@ func TestClosingDuringRevealStopsTicker(t *testing.T) {
 func newPanelRegistry(t *testing.T) *Registry {
 	t.Helper()
 	cfg := config.Default()
+	cfg.Accessibility.ReducedMotion = true
+	reg := NewRegistry(cfg)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	t.Cleanup(reg.Close)
+	return reg
+}
+
+// newBatteryPanelRegistry is newPanelRegistry on a bar that carries a battery
+// item; the product default stopped shipping one in e55ed6d, and these tests
+// are about the battery capsule, not about the default composition.
+func newBatteryPanelRegistry(t *testing.T) *Registry {
+	t.Helper()
+	cfg := config.Default()
+	cfg.Bar.Right = append(cfg.Bar.Right, config.Item{ID: "battery", WarnBelow: 20, Interval: 30 * time.Second})
 	cfg.Accessibility.ReducedMotion = true
 	reg := NewRegistry(cfg)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
