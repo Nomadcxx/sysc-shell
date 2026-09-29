@@ -124,6 +124,47 @@ func TestGroupRunningApps(t *testing.T) {
 	}
 }
 
+func TestRunningAppMRUTiesUseStableWindowIDOrder(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		windows []niri.Window
+		want    uint64
+	}{
+		{
+			name: "equal nonzero timestamps",
+			windows: []niri.Window{
+				{ID: 8, AppID: "steam", FocusTimestamp: 10},
+				{ID: 3, AppID: "steam", FocusTimestamp: 10},
+			},
+			want: 3,
+		},
+		{
+			name: "zero timestamps",
+			windows: []niri.Window{
+				{ID: 8, AppID: "steam"},
+				{ID: 3, AppID: "steam"},
+			},
+			want: 3,
+		},
+		{
+			name: "nonzero outranks zero",
+			windows: []niri.Window{
+				{ID: 3, AppID: "steam"},
+				{ID: 8, AppID: "steam", FocusTimestamp: 1},
+			},
+			want: 8,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := groupRunningApps(tc.windows, nil)[0].MRU.ID
+			if got != tc.want {
+				t.Fatalf("MRU ID = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestLookupRunningApp(t *testing.T) {
 	t.Parallel()
 	firefox := runningAppEntry{ID: "firefox"}
@@ -245,7 +286,7 @@ func TestRunningAppMenu(t *testing.T) {
 			{ID: "Friends", Name: "Friends"},
 		},
 	}
-	got := runningAppMenu(steam)
+	got := runningAppMenu(steam, nil)
 	want := []runningAppMenuRow{
 		{Label: "Store", ActionID: "Store"},
 		{Label: "Library", ActionID: "Library"},
@@ -260,9 +301,32 @@ func TestRunningAppMenu(t *testing.T) {
 			t.Fatalf("row %d = %+v, want %+v", i, got[i], want[i])
 		}
 	}
-	only := runningAppMenu(runningAppSlot{})
+	only := runningAppMenu(runningAppSlot{}, nil)
 	if len(only) != 1 || !only[0].CloseAll || only[0].Label != "Close all" {
 		t.Fatalf("empty actions = %+v, want Close all only", only)
+	}
+}
+
+func TestRunningAppMenuWorkspaceDestinationsPinTheMRUWindow(t *testing.T) {
+	t.Parallel()
+	slot := runningAppSlot{MRU: niri.Window{ID: 77, HasWorkspace: true, WorkspaceID: 10}}
+	workspaces := []niri.Workspace{
+		{ID: 10, Index: 1, Name: "Current", Output: "DP-1"},
+		{ID: 20, Index: 2, Name: "Build", Output: "DP-1"},
+		{ID: 30, Index: 3, Output: "DP-2"},
+	}
+	rows := runningAppMenu(slot, workspaces)
+	var moves []runningAppMenuRow
+	for _, row := range rows {
+		if row.MoveWindowID != 0 {
+			moves = append(moves, row)
+		}
+	}
+	if len(moves) != 2 {
+		t.Fatalf("workspace rows = %+v, want two destinations other than workspace 10", moves)
+	}
+	if moves[0].MoveWindowID != 77 || moves[0].MoveWorkspaceID != 20 || moves[1].MoveWindowID != 77 || moves[1].MoveWorkspaceID != 30 {
+		t.Fatalf("workspace rows = %+v, want MRU window 77 to workspaces 20 and 30", moves)
 	}
 }
 

@@ -215,6 +215,12 @@ type PanelHost struct {
 	launcherScroll  int
 	launcherMenuID  string
 	launcherActions []launcher.Action
+	// launcherAttempt stamps the user's current launcher interaction; an
+	// activation completion applies only while its stamp is still current.
+	// launcherPendingAttempt is the stamp an in-flight activation captured,
+	// so a Notes capture superseded before its provider ran is dropped.
+	launcherAttempt        uint64
+	launcherPendingAttempt uint64
 
 	wallpaperSnap    wallpaper.Snapshot
 	wallpaperDir     string
@@ -1028,7 +1034,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	// Resolve the surface clock before the first tree is built. Effect phases
 	// are keyed by the tree's stable nodes, so the first frame must target the
 	// same animator entries as every later rebuild.
-	h.anim = newAnimator(nil, r.cfg.Accessibility.ReducedMotion, h.theme.Motion)
+	h.anim = newAnimator(r.animClock, r.cfg.Accessibility.ReducedMotion, h.theme.Motion)
 	h.anim.Target(panelSurfaceID(id), animVisible, 1)
 	if bar, ok := r.bars[output]; ok {
 		h.scale120 = bar.scale120()
@@ -2410,6 +2416,7 @@ func (h *PanelHost) fieldChanged(r *Registry, n *ui.Node, f *ui.Field) bool {
 			// A failed activation's error answers that attempt, not the
 			// search the user has moved on to.
 			h.errLabel = ""
+			h.launcherAttempt++
 			h.launcherSel = 0
 			h.launcherScroll = 0
 			r.launcherServiceLocked().Query(h.query)

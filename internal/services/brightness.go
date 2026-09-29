@@ -56,7 +56,7 @@ type Brightness struct {
 	devRoot      string
 	drmRoot      string
 	i2cSysfsRoot string
-	probe        func(bus int) (connector string, max int, err error)
+	probe        func(bus int) (connector string, current, max int, err error)
 
 	devices      []brightnessDevice
 	lastDisplays []DisplayInfo
@@ -70,6 +70,7 @@ type Brightness struct {
 
 type ddcIdent struct {
 	connector string
+	current   int
 	max       int
 }
 
@@ -100,7 +101,7 @@ func NewBrightness(root, ctlPath string, interval time.Duration) *Brightness {
 // joining each bus to a DRM connector by EDID.
 func NewBrightnessDDC(root, ctlPath string, interval time.Duration) *Brightness {
 	b := NewBrightness(root, ctlPath, interval)
-	b.probe = func(bus int) (string, int, error) {
+	b.probe = func(bus int) (string, int, int, error) {
 		return probeDDCBus(bus, b.devRoot, b.drmRoot, b.i2cSysfsRoot)
 	}
 	return b
@@ -173,6 +174,32 @@ func (b *Brightness) CachedDisplays() []DisplayInfo {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return append([]DisplayInfo(nil), b.lastDisplays...)
+}
+
+// seedDisplaysLocked fills the render cache from detection so the control
+// centre shows per-display sliders before the first lease-triggered poll.
+// The poll overwrites this with live reads; seeding never opens a bus.
+func (b *Brightness) seedDisplaysLocked() {
+	if b.lastDisplays != nil || len(b.devices) == 0 {
+		return
+	}
+	infos := make([]DisplayInfo, 0, len(b.devices))
+	for _, d := range b.devices {
+		level, ok := seedOf(d)
+		infos = append(infos, DisplayInfo{ID: d.ID(), Label: d.Label(), Kind: d.Kind(), Level: level, OK: ok})
+	}
+	b.lastDisplays = infos
+}
+
+func seedOf(d brightnessDevice) (int, bool) {
+	if dd, ok := d.(*ddcDev); ok {
+		dd.mu.Lock()
+		defer dd.mu.Unlock()
+		return dd.cache, !dd.cacheAt.IsZero()
+	}
+	// sysfs: two small file reads, no ioctl, safe under the lock.
+	level, err := d.Read()
+	return level, err == nil
 }
 
 // SetDisplay and StepDisplay address one display by its ID.
@@ -371,6 +398,7 @@ func (b *Brightness) refresh() {
 	if !needScan {
 		b.mu.Lock()
 		b.devices = assemble(sysfs, known, b.devRoot, b.devices)
+		b.seedDisplaysLocked()
 		b.mu.Unlock()
 		return
 	}
@@ -399,16 +427,17 @@ func (b *Brightness) refresh() {
 				found[bus] = ident
 				continue
 			}
-			connector, max, err := b.probe(bus)
+			connector, current, max, err := b.probe(bus)
 			if err != nil || connector == "" {
 				continue // absent, not an error
 			}
-			found[bus] = ddcIdent{connector: connector, max: max}
+			found[bus] = ddcIdent{connector: connector, current: current, max: max}
 		}
 	}
 	b.mu.Lock()
 	b.knownDDC = found
 	b.devices = assemble(sysfs, found, b.devRoot, b.devices)
+	b.seedDisplaysLocked()
 	for bus, until := range cooldown {
 		if time.Now().After(until) {
 			delete(b.cooldown, bus)
@@ -456,7 +485,13 @@ func assemble(sysfs []brightnessDevice, known map[int]ddcIdent, devRoot string, 
 			out = append(out, dd)
 			continue
 		}
-		out = append(out, &ddcDev{bus: bus, connector: ident.connector, max: ident.max, devRoot: devRoot})
+		dd := &ddcDev{bus: bus, connector: ident.connector, max: ident.max, devRoot: devRoot}
+		if ident.current > 0 {
+			// Seed from the value the probe already read: detection costs no
+			// second bus round-trip and the first poll can serve the cache.
+			dd.cache, dd.cacheAt = ddcValueToPercent(ident.current, ident.max), time.Now()
+		}
+		out = append(out, dd)
 	}
 	return out
 }

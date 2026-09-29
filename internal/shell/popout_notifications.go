@@ -120,15 +120,40 @@ func (s *notifyState) setDNDPreset(now time.Time, d time.Duration) {
 }
 
 func (s *notifyState) dndState(now time.Time) (time.Time, bool) {
+	s.expireDND(now)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.dnd {
 		return time.Time{}, false
 	}
-	if !s.dndUntil.IsZero() && !now.Before(s.dndUntil) {
-		return time.Time{}, false
-	}
 	return s.dndUntil, true
+}
+
+// expireDND clears a timed preset whose end has passed and reports whether it
+// did. The hook fires once, outside the lock, so the OSD shows the lift.
+func (s *notifyState) expireDND(now time.Time) bool {
+	s.mu.Lock()
+	if !s.dnd || s.dndUntil.IsZero() || now.Before(s.dndUntil) {
+		s.mu.Unlock()
+		return false
+	}
+	s.dnd = false
+	s.dndUntil = time.Time{}
+	hook := s.onDND
+	s.mu.Unlock()
+	if hook != nil {
+		hook(false)
+	}
+	return true
+}
+
+// dndActiveLocked reports whether DND suppresses right now, treating an
+// expired preset as off without clearing it. The caller holds s.mu.
+func (s *notifyState) dndActiveLocked(now time.Time) bool {
+	if !s.dnd {
+		return false
+	}
+	return s.dndUntil.IsZero() || now.Before(s.dndUntil)
 }
 
 // Registry wrappers.

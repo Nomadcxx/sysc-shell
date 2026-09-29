@@ -344,6 +344,114 @@ func TestRunningAppsMenuSeparatesCloseAll(t *testing.T) {
 	}
 }
 
+func TestRunningAppsMenuMovesExactMRUWindowWithoutChangingFocus(t *testing.T) {
+	t.Parallel()
+	reg, bar := runningAppsWorkspaceMenuRegistry(t)
+	var sent []any
+	reg.niriSend = func(action any) error { sent = append(sent, action); return nil }
+	if !bar.onAction("running-app:steam", buttonRight) {
+		t.Fatal("right click ignored")
+	}
+	index := findWorkspaceMoveRow(reg.runningMenu.rows, 20)
+	if index < 0 {
+		t.Fatalf("menu rows = %+v, missing workspace 20", reg.runningMenu.rows)
+	}
+	reg.runningMenu.choose(index)
+	if len(sent) != 1 {
+		t.Fatalf("Niri actions = %v, want one window move", sent)
+	}
+	want := niri.MoveWindowToWorkspace{WindowID: 80, WorkspaceID: 20, Focus: false}
+	if got, ok := sent[0].(niri.MoveWindowToWorkspace); !ok || got != want {
+		t.Fatalf("move action = %#v, want %#v", sent[0], want)
+	}
+}
+
+func TestRunningAppsMenuRejectsStaleWorkspaceAndWindow(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		update niri.Snapshot
+		wsID   uint64
+	}{
+		{
+			name: "workspace removed",
+			update: niri.Snapshot{
+				FocusedOutput: "DP-1",
+				Workspaces: []niri.Workspace{
+					{ID: 10, Index: 1, Name: "Current", Output: "DP-1"},
+					{ID: 30, Index: 3, Output: "DP-2"},
+				},
+				Windows: []niri.Window{{ID: 80, AppID: "steam", WorkspaceID: 10, HasWorkspace: true, FocusTimestamp: 30}},
+			},
+			wsID: 20,
+		},
+		{
+			name: "MRU window removed",
+			update: niri.Snapshot{
+				FocusedOutput: "DP-1",
+				Workspaces: []niri.Workspace{
+					{ID: 10, Index: 1, Name: "Current", Output: "DP-1"},
+					{ID: 20, Index: 2, Name: "Build", Output: "DP-1"},
+					{ID: 30, Index: 3, Output: "DP-2"},
+				},
+				Windows: []niri.Window{{ID: 81, AppID: "steam", WorkspaceID: 20, HasWorkspace: true, FocusTimestamp: 20}},
+			},
+			wsID: 30,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			reg, bar := runningAppsWorkspaceMenuRegistry(t)
+			var sent []any
+			reg.niriSend = func(action any) error { sent = append(sent, action); return nil }
+			bar.onAction("running-app:steam", buttonRight)
+			index := findWorkspaceMoveRow(reg.runningMenu.rows, tc.wsID)
+			if index < 0 {
+				t.Fatalf("menu rows = %+v, missing workspace %d", reg.runningMenu.rows, tc.wsID)
+			}
+			reg.UpdateNiri(tc.update)
+			reg.runningMenu.choose(index)
+			if len(sent) != 0 {
+				t.Fatalf("stale move sent Niri actions: %v", sent)
+			}
+		})
+	}
+}
+
+func runningAppsWorkspaceMenuRegistry(t *testing.T) (*Registry, *Bar) {
+	t.Helper()
+	cfg := config.Default()
+	cfg.Bar.Left, cfg.Bar.Center = nil, nil
+	cfg.Bar.Right = []config.Item{{ID: "running-apps"}}
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	reg.runningIndex = []runningAppEntry{{ID: "steam"}}
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	reg.UpdateNiri(niri.Snapshot{
+		FocusedOutput: "DP-1",
+		Workspaces: []niri.Workspace{
+			{ID: 10, Index: 1, Name: "Current", Output: "DP-1"},
+			{ID: 20, Index: 2, Name: "Build", Output: "DP-1"},
+			{ID: 30, Index: 3, Output: "DP-2"},
+		},
+		Windows: []niri.Window{
+			{ID: 80, Title: "Terminal", AppID: "steam", WorkspaceID: 10, HasWorkspace: true, FocusTimestamp: 30},
+			{ID: 81, Title: "Terminal", AppID: "steam", WorkspaceID: 20, HasWorkspace: true, FocusTimestamp: 20},
+		},
+	})
+	reg.runningMenu = newRunningAppMenuHost(reg)
+	reg.runningMenu.request = func(wayland.AuxRequest) {}
+	return reg, reg.bars[1]
+}
+
+func findWorkspaceMoveRow(rows []runningAppMenuRow, workspaceID uint64) int {
+	for i, row := range rows {
+		if row.MoveWorkspaceID == workspaceID {
+			return i
+		}
+	}
+	return -1
+}
+
 func firstCapsule(n *ui.Node) *ui.Node {
 	for _, c := range capsules(n) {
 		return c

@@ -219,39 +219,39 @@ func ddcSetVCP(fd int, vcp byte, value int) error {
 // probeDDCBus returns the connector behind /dev/i2c-<bus> and the brightness
 // feature's maximum. Any failure means "no DDC-capable display here": the
 // caller treats it as absent, never as an error to retry in a loop.
-func probeDDCBus(bus int, devRoot, drmRoot, i2cSysfsRoot string) (string, int, error) {
+func probeDDCBus(bus int, devRoot, drmRoot, i2cSysfsRoot string) (string, int, int, error) {
 	nameFile, err := os.ReadFile(filepath.Join(i2cSysfsRoot, fmt.Sprintf("i2c-%d", bus), "name"))
 	if err == nil && ignorableAdapterName(strings.TrimSpace(string(nameFile))) {
-		return "", 0, fmt.Errorf("ignorable adapter")
+		return "", 0, 0, fmt.Errorf("ignorable adapter")
 	}
 	fd, err := syscall.Open(filepath.Join(devRoot, fmt.Sprintf("i2c-%d", bus)), syscall.O_RDWR, 0)
 	if err != nil {
-		return "", 0, err
+		return "", 0, 0, err
 	}
 	defer syscall.Close(fd)
 	edid, err := readBusEDID(fd)
 	if err != nil {
-		return "", 0, err
+		return "", 0, 0, err
 	}
 	connector := matchEDIDToConnector(edid, drmRoot)
 	if connector == "" {
-		return "", 0, fmt.Errorf("no connector matches this bus's EDID")
+		return "", 0, 0, fmt.Errorf("no connector matches this bus's EDID")
 	}
 	if err := ddcSetSlave(fd); err != nil {
-		return "", 0, err
+		return "", 0, 0, err
 	}
-	var max int
+	var current, max int
 	for i := 0; i < ddcCapabilityTry; i++ {
-		_, max, err = ddcGetVCP(fd, ddcVCPBright)
+		current, max, err = ddcGetVCP(fd, ddcVCPBright)
 		if err == nil && max > 0 {
 			break
 		}
 		time.Sleep(ddcRetryPause)
 	}
 	if err != nil || max == 0 {
-		return "", 0, fmt.Errorf("brightness feature unreadable: %w", err)
+		return "", 0, 0, fmt.Errorf("brightness feature unreadable: %w", err)
 	}
-	return connector, max, nil
+	return connector, current, max, nil
 }
 
 func ddcPercentToValue(percent, max int) int {

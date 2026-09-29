@@ -61,7 +61,7 @@ func (h *runningAppMenuHost) openLocked(output uint32, slot runningAppSlot, anch
 	h.pointerRow = -1
 	h.keyed = false
 	h.slot = slot
-	h.rows = runningAppMenu(slot)
+	h.rows = runningAppMenu(slot, h.r.niriSnapshot.Workspaces)
 	labels := make([]string, len(h.rows))
 	for i, row := range h.rows {
 		labels[i] = row.Label
@@ -394,6 +394,14 @@ func (h *runningAppMenuHost) chooseLocked(i int) {
 				continue
 			}
 			h.r.sendNiriLocked(niri.CloseWindow{ID: w.ID})
+		}
+		return
+	}
+	if row.MoveWindowID != 0 || row.MoveWorkspaceID != 0 {
+		if workspaceMoveTargetExists(h.r.niriSnapshot, row.MoveWindowID, row.MoveWorkspaceID) {
+			h.r.sendNiriLocked(niri.MoveWindowToWorkspace{
+				WindowID: row.MoveWindowID, WorkspaceID: row.MoveWorkspaceID, Focus: false,
+			})
 		}
 		return
 	}

@@ -21,6 +21,18 @@ func TestActionWritesFocusAndClose(t *testing.T) {
 	}{
 		{"focus", FocusWindow{ID: 80}, `{"Action":{"FocusWindow":{"id":80}}}`, `{"Ok":"Handled"}`, false},
 		{"close", CloseWindow{ID: 80}, `{"Action":{"CloseWindow":{"id":80}}}`, `{"Ok":"Handled"}`, false},
+		{"toggle overview", ToggleOverview{}, `{"Action":{"ToggleOverview":{}}}`, `{"Ok":"Handled"}`, false},
+		{"close overview", CloseOverview{}, `{"Action":{"CloseOverview":{}}}`, `{"Ok":"Handled"}`, false},
+		{
+			"move window to workspace", MoveWindowToWorkspace{WindowID: 81, WorkspaceID: 7},
+			`{"Action":{"MoveWindowToWorkspace":{"window_id":81,"reference":{"Id":7},"focus":false}}}`,
+			`{"Ok":"Handled"}`, false,
+		},
+		{
+			"move column to workspace", MoveColumnToWorkspace{WorkspaceID: 7},
+			`{"Action":{"MoveColumnToWorkspace":{"reference":{"Id":7},"focus":false}}}`,
+			`{"Ok":"Handled"}`, false,
+		},
 		{"err", FocusWindow{ID: 80}, `{"Action":{"FocusWindow":{"id":80}}}`, `{"Err":"no such window"}`, true},
 		// The reference is an externally tagged enum in niri-ipc, so an id
 		// reference is the object {"Id": n} and not a bare number.
@@ -89,15 +101,17 @@ func TestActionWritesFocusAndClose(t *testing.T) {
 
 			select {
 			case line := <-got:
-				var want, have json.RawMessage
+				var want, have any
 				if err := json.Unmarshal([]byte(tc.want), &want); err != nil {
 					t.Fatal(err)
 				}
 				if err := json.Unmarshal([]byte(line), &have); err != nil {
 					t.Fatalf("request %q: %v", line, err)
 				}
-				if string(want) != string(have) {
-					t.Fatalf("wrote %s, want %s", have, want)
+				wantJSON, _ := json.Marshal(want)
+				haveJSON, _ := json.Marshal(have)
+				if string(wantJSON) != string(haveJSON) {
+					t.Fatalf("wrote %s, want %s", haveJSON, wantJSON)
 				}
 			case <-ctx.Done():
 				t.Fatal("server got no request")

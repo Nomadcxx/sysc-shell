@@ -443,6 +443,58 @@ func TestOpeningTheCentreHidesToasts(t *testing.T) {
 	}
 }
 
+// A timed preset must lift suppression when it ends: the sticky bit clears,
+// the hook fires once, and cards come back without reopening anything.
+func TestTimedDNDPresetLiftsSuppressionWhenItEnds(t *testing.T) {
+	r, h, _ := wiredToast(t)
+	var mu sync.Mutex
+	var calls []bool
+	r.notify.onDND = func(on bool) {
+		mu.Lock()
+		calls = append(calls, on)
+		mu.Unlock()
+	}
+	now := time.Unix(1_756_000_000, 0)
+	r.UpdateClock(now)
+	r.setDNDPresetAt(now, time.Minute)
+	r.applyNotify(snap(1, note(1, "a")))
+
+	r.mu.Lock()
+	during := len(h.cards["eDP-1"])
+	r.mu.Unlock()
+	if during != 0 {
+		t.Fatalf("cards during DND = %d, want none", during)
+	}
+
+	r.UpdateClock(now.Add(2 * time.Minute))
+
+	r.mu.Lock()
+	after := len(h.cards["eDP-1"])
+	r.mu.Unlock()
+	if after == 0 {
+		t.Fatal("cards stayed suppressed after the preset ended")
+	}
+	if _, on := r.dndStateAt(now.Add(2 * time.Minute)); on {
+		t.Fatal("DND still reports on after the preset ended")
+	}
+	mu.Lock()
+	got := append([]bool(nil), calls...)
+	mu.Unlock()
+	if len(got) != 2 || got[0] != true || got[1] != false {
+		t.Fatalf("DND hook calls = %v, want [true false]", got)
+	}
+
+	// Re-enabling after the preset ended must reach the hook, so the OSD
+	// describes the new state instead of being skipped by a stale flag.
+	r.setDND(true)
+	mu.Lock()
+	got = append([]bool(nil), calls...)
+	mu.Unlock()
+	if len(got) != 3 || got[2] != true {
+		t.Fatalf("DND hook calls after re-enabling = %v, want [true false true]", got)
+	}
+}
+
 func TestToastRenewsPresentationWhileCardsStayUp(t *testing.T) {
 	r, h, sender := wiredToast(t)
 	r.applyNotify(snap(1, note(1, "a")))

@@ -52,9 +52,10 @@ func DefaultSocket() string {
 }
 
 type Handlers struct {
-	Panel   func(action, panel, section string) error
-	OSDStep func(kind, action string) error
-	Status  func() map[string]any
+	Panel    func(action, panel, section string) error
+	OSDStep  func(kind, action string) error
+	Status   func() map[string]any
+	Switcher func() error
 	// Screenshot starts a capture in one of knownScreenshotModes. It returns
 	// once the capture has started; the result reaches the user as a toast,
 	// because a region waits on the user and Call's deadline cannot.
@@ -243,6 +244,20 @@ func (s *Server) handleLine(line string) []byte {
 			return envelope(req.ID, "", "screenshot handler unset")
 		}
 		if err := s.h.Screenshot(params.Mode); err != nil {
+			return envelope(req.ID, "", err.Error())
+		}
+		return envelope(req.ID, "ok", "")
+	case "switcher.show":
+		if len(req.Params) > 0 {
+			var params struct{}
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				return envelope(req.ID, "", "malformed params")
+			}
+		}
+		if s.h.Switcher == nil {
+			return envelope(req.ID, "", "switcher handler unset")
+		}
+		if err := s.h.Switcher(); err != nil {
 			return envelope(req.ID, "", err.Error())
 		}
 		return envelope(req.ID, "ok", "")

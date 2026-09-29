@@ -8,6 +8,25 @@ import (
 	"net"
 )
 
+// ToggleOverview toggles Niri's compositor-rendered overview.
+type ToggleOverview struct{}
+
+// CloseOverview closes Niri's compositor-rendered overview.
+type CloseOverview struct{}
+
+// MoveWindowToWorkspace moves one exact window ID to a workspace ID.
+type MoveWindowToWorkspace struct {
+	WindowID    uint64
+	WorkspaceID uint64
+	Focus       bool
+}
+
+// MoveColumnToWorkspace moves the focused column to a workspace ID.
+type MoveColumnToWorkspace struct {
+	WorkspaceID uint64
+	Focus       bool
+}
+
 // FocusWindow asks the compositor to focus one window by id.
 type FocusWindow struct {
 	ID uint64 `json:"id"`
@@ -113,6 +132,21 @@ func marshalAction(body any) ([]byte, error) {
 		inner = map[string]any{"PowerOffMonitors": map[string]any{}}
 	case PowerOnMonitors:
 		inner = map[string]any{"PowerOnMonitors": map[string]any{}}
+	case ToggleOverview:
+		inner = map[string]any{"ToggleOverview": map[string]any{}}
+	case CloseOverview:
+		inner = map[string]any{"CloseOverview": map[string]any{}}
+	case MoveWindowToWorkspace:
+		inner = map[string]any{"MoveWindowToWorkspace": map[string]any{
+			"window_id": v.WindowID,
+			"reference": map[string]any{"Id": v.WorkspaceID},
+			"focus":     v.Focus,
+		}}
+	case MoveColumnToWorkspace:
+		inner = map[string]any{"MoveColumnToWorkspace": map[string]any{
+			"reference": map[string]any{"Id": v.WorkspaceID},
+			"focus":     v.Focus,
+		}}
 	default:
 		return nil, fmt.Errorf("niri: unknown action %T", body)
 	}

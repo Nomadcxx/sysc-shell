@@ -342,6 +342,7 @@ func run(ctx context.Context) (err error) {
 			OSDStep:    registry.OSDStep,
 			Plugins:    registry.PluginStoreCall,
 			Screenshot: registry.Screenshot,
+			Switcher:   registry.ShowWindowSwitcher,
 			Theme:      registry.ThemeCall,
 		})
 		ipcErr <- srv.Serve(ctx)
