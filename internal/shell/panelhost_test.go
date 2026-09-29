@@ -280,20 +280,40 @@ func TestRevealAnimationInvalidatesUntilDone(t *testing.T) {
 	reg := NewRegistry(cfg)
 	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(reg.Close)
+	// The frame loop ticks on real time but samples the reveal from the
+	// animator clock. Freeze that clock across the open and the reveal cannot
+	// be starved by a slow tree build: under -race a loaded process once
+	// spent longer building the first panel's cold glyph set than the whole
+	// reveal lasted, so the animation was over before the loop started and
+	// the surface published once. Real time now only bounds how long we wait
+	// for frames, never how many must arrive.
+	clock := &syncClock{t: time.Unix(0, 0)}
+	reg.animClock = clock.now
 	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
 		t.Fatal(err)
 	}
-	// The window follows the transition it observes, the way the reduced-motion
-	// half below already does. Frames are paced by the frame cap, so a fixed
-	// 200 ms saw four of them plus, while the enter happened to run 180 ms, the
-	// settling publish that lands exempt from the cap. That fifth frame was an
-	// accident of the old duration, not a property of the reveal.
 	reg.mu.Lock()
-	enter := reg.panelHosts[PanelSession].anim.duration(animVisible, true)
+	host := reg.panelHosts[PanelSession]
+	enter := host.anim.duration(animVisible, true)
 	reg.mu.Unlock()
-	n := countSurfaceInvalidations(reg, enter+50*time.Millisecond)
-	if n < 5 {
-		t.Fatalf("got %d surface invalidations, want at least 5 during reveal", n)
+	if got := awaitSurfaceInvalidations(reg, 5, 5*time.Second); got < 5 {
+		t.Fatalf("got %d surface invalidations, want at least 5 while the reveal runs", got)
+	}
+	// Advance the clock past the transition. The loop publishes its settling
+	// frame on the next tick and retires; drain the backlog until the surface
+	// goes quiet with no loop left standing.
+	clock.add(enter)
+	settled := false
+	deadline := time.Now().Add(5 * time.Second)
+	for !settled {
+		select {
+		case <-reg.Invalidations():
+		case <-time.After(50 * time.Millisecond):
+			settled = !host.anim.running.Load()
+		}
+		if !settled && time.Now().After(deadline) {
+			t.Fatal("the frame loop outlived its reveal")
+		}
 	}
 
 	// Reduced motion keeps a short opacity-only fade rather than snapping: the
@@ -907,6 +927,44 @@ func countSurfaceInvalidations(reg *Registry, d time.Duration) int {
 			return n
 		}
 	}
+}
+
+// syncClock is a fake instant a test advances by hand. A panel frame loop
+// samples it from its own goroutine while the test advances it, so it carries
+// the mutex the animation tests' plain fakeClock does not.
+type syncClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *syncClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *syncClock) add(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = c.t.Add(d)
+}
+
+// awaitSurfaceInvalidations drains until want surface frames have arrived or
+// the timeout passes, whichever happens first, and reports the count.
+func awaitSurfaceInvalidations(reg *Registry, want int, timeout time.Duration) int {
+	n := 0
+	deadline := time.After(timeout)
+	for n < want {
+		select {
+		case inv := <-reg.Invalidations():
+			if inv.SurfaceID != "" {
+				n++
+			}
+		case <-deadline:
+			return n
+		}
+	}
+	return n
 }
 
 func drainInvalidations(reg *Registry) {

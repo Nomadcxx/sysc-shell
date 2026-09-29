@@ -140,6 +140,10 @@ type Registry struct {
 	runArgv func([]string) error
 	// lookPath finds a binary on PATH. Tests replace it per Registry.
 	lookPath func(string) (string, error)
+	// animClock is the clock a panel animator samples. Tests freeze it to
+	// watch the reveal's pacing without racing the wall clock; production
+	// leaves it nil and the animator runs on time.Now.
+	animClock func() time.Time
 	// runArgvOutput captures stdout of powerprofilesctl list. Tests replace it.
 	runArgvOutput func([]string) (string, error)
 	// startInhibit creates the process-backed caffeine hold. Tests replace it.

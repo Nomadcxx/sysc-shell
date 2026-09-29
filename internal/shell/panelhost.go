@@ -1028,7 +1028,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	// Resolve the surface clock before the first tree is built. Effect phases
 	// are keyed by the tree's stable nodes, so the first frame must target the
 	// same animator entries as every later rebuild.
-	h.anim = newAnimator(nil, r.cfg.Accessibility.ReducedMotion, h.theme.Motion)
+	h.anim = newAnimator(r.animClock, r.cfg.Accessibility.ReducedMotion, h.theme.Motion)
 	h.anim.Target(panelSurfaceID(id), animVisible, 1)
 	if bar, ok := r.bars[output]; ok {
 		h.scale120 = bar.scale120()
