@@ -6,6 +6,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/fractionalscale"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/inhibit"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/viewporter"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
@@ -106,6 +107,11 @@ type surfaceUnit struct {
 	// non-empty blur region; blurRects is the region it last sent.
 	effect    *backgroundeffect.ExtBackgroundEffectSurfaceV1
 	blurRects []ui.Rect
+
+	// inhibit is the keyboard-shortcuts inhibitor held for this surface while
+	// it has keyboard focus, when its policy asks for one and the compositor
+	// advertises the manager. It is destroyed with the unit.
+	inhibit *inhibit.ZwpKeyboardShortcutsInhibitorV1
 
 	app HostCallbacks
 

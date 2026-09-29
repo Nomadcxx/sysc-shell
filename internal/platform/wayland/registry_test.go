@@ -62,3 +62,23 @@ func TestDataDeviceManagerIsKnownButNotRequired(t *testing.T) {
 		}
 	}
 }
+
+func TestKeyboardShortcutsInhibitIsKnownButNotRequired(t *testing.T) {
+	t.Parallel()
+	const iface = "zwp_keyboard_shortcuts_inhibit_manager_v1"
+	if got, ok := bindVersion(iface, 9); !ok || got != 1 {
+		t.Fatalf("bindVersion = %d/%v, want 1 and known; addGlobal would drop it", got, ok)
+	}
+	rs := newRegistryState()
+	if got, ok := rs.addGlobal(9, iface, 9); !ok || got != 1 {
+		t.Fatalf("addGlobal = %d/%v, want 1 and recorded", got, ok)
+	}
+	if _, ok := rs.singletons[iface]; !ok {
+		t.Fatal("the inhibitor manager was not recorded, so the selector cannot inhibit")
+	}
+	for _, name := range requiredSingletons {
+		if name == iface {
+			t.Fatal("a compositor without the inhibitor manager must still start")
+		}
+	}
+}

@@ -40,10 +40,14 @@ type regionSelector struct {
 	state    screenshot.Selector
 	// active is the output whose surface holds the rectangle.
 	active uint32
+	// text rasterises the size label and key hint; built on first paint.
+	text *render.TextRenderer
 	// done is set once the selection is confirmed or cancelled; input after
 	// that is ignored. closed is set once its surfaces are asked to close.
 	done, closed bool
-	border       [4]byte
+	// accent paints the resize/move handles; border outlines the selection.
+	accent render.Color
+	border [4]byte
 }
 
 // selectorSurface is the selector on one output.
@@ -65,8 +69,8 @@ type selectorSurface struct {
 	bufferW, bufferH int
 }
 
-func newRegionSelector(globals map[string]uint32, border [4]byte) *regionSelector {
-	sel := &regionSelector{surfaces: make(map[uint32]*selectorSurface, len(globals)), border: border}
+func newRegionSelector(globals map[string]uint32, accent render.Color) *regionSelector {
+	sel := &regionSelector{surfaces: make(map[uint32]*selectorSurface, len(globals)), accent: accent, border: premultiplied(accent)}
 	for connector, global := range globals {
 		sel.surfaces[global] = &selectorSurface{global: global, id: selectorIDPrefix + connector}
 	}
@@ -87,7 +91,8 @@ func (r *Registry) openRegionSelector() error {
 		r.mu.Unlock()
 		return errors.New("no output to select a region on")
 	}
-	sel := newRegionSelector(globals, premultiplied(r.surfaceTheme().PanelStyle().Accent))
+	style := r.surfaceTheme().PanelStyle()
+	sel := newRegionSelector(globals, style.Accent)
 	r.selector = sel
 	reqs := make([]wayland.AuxRequest, 0, len(sel.surfaces))
 	for _, s := range sel.surfaces {
@@ -139,6 +144,10 @@ func (r *Registry) selectorSpec(sel *regionSelector, s *selectorSurface) *waylan
 		ExclusiveZone: -1,
 		Keyboard:      keyboardExclusive,
 		Freeze:        true,
+		// The selector grabs the keyboard for its own Escape/Enter handling;
+		// inhibit so a compositor bind cannot fire while a region is being
+		// dragged.
+		InhibitShortcuts: true,
 		Callbacks: wayland.HostCallbacks{
 			Configure: func(w, h, _ int) error {
 				r.mu.Lock()
@@ -178,7 +187,11 @@ func (r *Registry) handleSelectorLocked(sel *regionSelector, s *selectorSurface,
 	outcome := screenshot.Pending
 	switch e.Kind {
 	case wayland.EventPointerPress:
-		outcome = sel.state.Press(e.Button, e.X, e.Y)
+		// Handles and moves clamp to the surface the rectangle lives on.
+		if a := sel.surfaces[sel.active]; a != nil {
+			sel.state.SetBounds(a.logicalW, a.logicalH)
+		}
+		outcome = sel.state.PressMods(e.Button, e.Mods, e.X, e.Y)
 		if outcome == screenshot.Pending && sel.active != s.global {
 			// The rectangle moves to this output; the old one must lose it.
 			if old, ok := sel.surfaces[sel.active]; ok {
@@ -382,6 +395,9 @@ func (r *Registry) renderSelectorLocked(sel *regionSelector, s *selectorSurface,
 	paintSelector(pixels, w, h, stride, s.frame, s.dimmed, rect, has, sel.border, selectorBorder)
 	if has {
 		outline = growRect(rect, selectorBorder)
+		if chrome, err := r.paintSelectorChromeLocked(sel, pixels, w, h, stride, rect, s.logicalW); err == nil {
+			outline = unionRect(outline, chrome)
+		}
 	}
 
 	// Nil is the whole buffer: a first frame, a resize, or no outline in
@@ -391,6 +407,90 @@ func (r *Registry) renderSelectorLocked(sel *regionSelector, s *selectorSurface,
 		s.damage = []ui.Rect{d}
 	}
 	s.painted, s.bufferW, s.bufferH = outline, w, h
+	return nil
+}
+
+// paintSelectorChromeLocked draws the eight move/resize handles and the size
+// and key-hint label over a painted selection, all in buffer pixels. It
+// returns the union of what it drew, for damage. A text renderer that cannot
+// be built costs only the label: the handles still paint.
+func (r *Registry) paintSelectorChromeLocked(sel *regionSelector, pixels []byte, w, h, stride int, rect ui.Rect, logicalW int) (ui.Rect, error) {
+	c, err := render.NewCanvas(pixels, w, h, stride)
+	if err != nil {
+		return ui.Rect{}, err
+	}
+	scale := ui.Scale120(120 * w / max(logicalW, 1))
+	if !scale.Valid() {
+		scale = ui.ScaleUnit
+	}
+	ink := render.Color{R: 16, G: 16, B: 16, A: 200}
+	var chrome ui.Rect
+	radius := scale.Physical(screenshot.HandleRadius)
+	for _, pt := range handleCenters(rect) {
+		sq := ui.Rect{X: pt[0] - radius, Y: pt[1] - radius, W: 2 * radius, H: 2 * radius}
+		c.FillRounded(sq, radius/2, sel.accent)
+		c.StrokeRounded(sq, radius/2, max(scale.Physical(1), 1), render.Color{A: 220})
+		chrome = unionRect(chrome, growRect(sq, 2))
+	}
+	if err := r.ensureSelectorTextLocked(sel); err != nil {
+		return chrome, nil
+	}
+	style := r.surfaceTheme().PanelStyle()
+	style.Scale120 = scale
+	sizeText := fmt.Sprintf("%d × %d px", rect.W, rect.H)
+	size, err1 := sel.text.Raster(sizeText, render.SpecFor(style, ui.TextAttrs{Tabular: true}), true)
+	hint, err2 := sel.text.Raster("Enter copy · Esc cancel", render.SpecFor(style, ui.TextAttrs{}), false)
+	if err1 != nil || err2 != nil {
+		return chrome, nil
+	}
+	pad, gap := scale.Physical(6), scale.Physical(2)
+	textW := max(size.Advance, hint.Advance)
+	chipH := size.Alpha.Bounds().Dy() + hint.Alpha.Bounds().Dy() + gap + 2*pad
+	chip := ui.Rect{
+		X: clampInt(rect.X, pad, w-textW-2*pad),
+		Y: rect.Y - chipH - pad,
+		W: textW + 2*pad,
+		H: chipH,
+	}
+	if chip.Y < 0 {
+		chip.Y = min(rect.Y+rect.H-pad-chipH, h-chipH-pad)
+	}
+	c.FillRounded(chip, pad, ink)
+	textCol := render.Color{R: 245, G: 245, B: 245, A: 255}
+	c.BlendText(size, chip.X+pad, chip.Y+pad, textCol)
+	c.BlendText(hint, chip.X+pad, chip.Y+pad+size.Alpha.Bounds().Dy()+gap, textCol)
+	return unionRect(chrome, growRect(chip, 2)), nil
+}
+
+// handleCenters returns the eight handle centres of a buffer rect as x, y
+// pairs: four corners and four edge midpoints.
+func handleCenters(r ui.Rect) [8][2]int {
+	mx, my := r.X+r.W/2, r.Y+r.H/2
+	return [8][2]int{
+		{r.X, r.Y}, {mx, r.Y}, {r.X + r.W, r.Y},
+		{r.X, my}, {r.X + r.W, my},
+		{r.X, r.Y + r.H}, {mx, r.Y + r.H}, {r.X + r.W, r.Y + r.H},
+	}
+}
+
+func clampInt(v, lo, hi int) int {
+	if hi < lo {
+		return lo
+	}
+	return min(max(v, lo), hi)
+}
+
+// ensureSelectorTextLocked builds the selector's text renderer once, from the
+// same system font resolution the panels and the OSD use. Registry.mu is held.
+func (r *Registry) ensureSelectorTextLocked(sel *regionSelector) error {
+	if sel.text != nil {
+		return nil
+	}
+	fonts, err := render.NewSystemFontMap(r.cfg.ForConnector("").FontFamily, render.DefaultFontCacheDir())
+	if err != nil {
+		return err
+	}
+	sel.text = render.NewTextRendererWithFontMap(fonts)
 	return nil
 }
 

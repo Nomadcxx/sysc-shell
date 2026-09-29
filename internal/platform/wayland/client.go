@@ -11,6 +11,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/backgroundeffect"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/fractionalscale"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/inhibit"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/screencopy"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/viewporter"
@@ -232,6 +233,10 @@ type owner struct {
 	// screencopy is nil when the compositor does not advertise it. Blur is
 	// decoration; its absence is not an error.
 	screencopy *screencopy.ZwlrScreencopyManagerV1
+	// inhibitMgr is nil when the compositor does not advertise
+	// zwp-keyboard-shortcuts-inhibit; a selector then simply shares the
+	// compositor's keybinds.
+	inhibitMgr *inhibit.ZwpKeyboardShortcutsInhibitManagerV1
 	// backgroundEffect is nil when the compositor does not advertise
 	// ext-background-effect; caps records what it last said it can do.
 	backgroundEffect *backgroundeffect.ExtBackgroundEffectManagerV1
@@ -435,6 +440,14 @@ func (o *owner) bindGlobals() error {
 	if _, ok := o.rs.singletons["ext_idle_notifier_v1"]; ok {
 		o.idleNotifier = idle.NewExtIdleNotifierV1(ctx)
 		if err := o.bindSingleton("ext_idle_notifier_v1", o.idleNotifier); err != nil {
+			return err
+		}
+	}
+	// Inhibit is optional like idle: without it the region selector still
+	// works, the compositor just keeps firing its own binds mid-selection.
+	if _, ok := o.rs.singletons[inhibit.ZwpKeyboardShortcutsInhibitManagerV1InterfaceName]; ok {
+		o.inhibitMgr = inhibit.NewZwpKeyboardShortcutsInhibitManagerV1(ctx)
+		if err := o.bindSingleton(inhibit.ZwpKeyboardShortcutsInhibitManagerV1InterfaceName, o.inhibitMgr); err != nil {
 			return err
 		}
 	}
