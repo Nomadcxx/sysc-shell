@@ -510,6 +510,13 @@ func (h *pluginHost) applyPluginImage(key icons.Key, image *ui.Image) {
 		return
 	}
 	h.r.mu.Lock()
+	storePanel := h.r.panelHosts[PanelPluginStore]
+	storeImage := storePanel != nil && fillPluginImages(storePanel.root, key, image)
+	var storeOutput uint32
+	if storeImage {
+		storeOutput = storePanel.output
+		h.r.rebuildPanel(storePanel)
+	}
 	h.mu.Lock()
 	panels, bars := false, false
 	for _, v := range h.views {
@@ -531,6 +538,9 @@ func (h *pluginHost) applyPluginImage(key icons.Key, image *ui.Image) {
 	}
 	if bars {
 		h.r.refreshPluginBars()
+	}
+	if storeImage {
+		h.r.publishSurface(storeOutput, panelSurfaceID(PanelPluginStore))
 	}
 }
 

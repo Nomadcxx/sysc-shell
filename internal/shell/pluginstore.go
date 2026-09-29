@@ -4,18 +4,121 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
+	"github.com/Nomadcxx/sysc-shell/plugin/catalog"
 )
 
 // BindPluginStore attaches the plugin store. The store runs its own goroutine;
 // the registry answers what it asks (enabled sources, local copies) and lends
 // it the plugin host to swap directories under.
 func (r *Registry) BindPluginStore(s *store.Store) {
+	snapshot := s.State()
 	r.mu.Lock()
 	r.pluginStore = s
+	r.pluginStoreSnapshot = snapshot
 	r.mu.Unlock()
+	go r.relayPluginStore(s)
+}
+
+// relayPluginStore publishes worker snapshots to the open Settings Plugins
+// page and the store panel, off the Wayland owner like relayWallpaper. A
+// README is read only for an open detail, and always outside Registry.mu.
+func (r *Registry) relayPluginStore(st *store.Store) {
+	r.relayPluginStoreUpdates(st, st.Updates())
+}
+
+func (r *Registry) relayPluginStoreUpdates(st *store.Store, updates <-chan store.State) {
+	for {
+		select {
+		case <-r.closed:
+			return
+		case snapshot, ok := <-updates:
+			if !ok {
+				return
+			}
+			r.mu.Lock()
+			if r.pluginStore != st {
+				r.mu.Unlock()
+				continue
+			}
+			storeHost := r.panelHosts[PanelPluginStore]
+			detailKey := ""
+			if storeHost != nil {
+				detailKey = storeHost.pluginStoreDetail
+			}
+			readmeSHA, readmePath := pluginStoreReadmeTarget(snapshot, detailKey)
+			r.mu.Unlock()
+
+			readme := ""
+			if readmePath != "" {
+				readme = readPluginStoreReadme(readmePath)
+			}
+
+			r.mu.Lock()
+			if r.pluginStore != st {
+				r.mu.Unlock()
+				continue
+			}
+			r.pluginStoreSnapshot = snapshot
+			r.pluginStoreReadmes = nil
+			storeHost = r.panelHosts[PanelPluginStore]
+			if storeHost != nil && storeHost.pluginStoreDetail == detailKey && readmeSHA != "" && readme != "" {
+				r.pluginStoreReadmes = map[string]string{readmeSHA: readme}
+			}
+
+			type publication struct {
+				output uint32
+				panel  PanelID
+			}
+			var publish []publication
+			if settingsHost := r.panelHosts[PanelSettings]; settingsHost != nil && settingsHost.section == "Plugins" {
+				r.rebuildPanel(settingsHost)
+				publish = append(publish, publication{settingsHost.output, PanelSettings})
+			}
+			if storeHost != nil {
+				r.rebuildPanel(storeHost)
+				publish = append(publish, publication{storeHost.output, PanelPluginStore})
+			}
+			r.mu.Unlock()
+
+			for _, p := range publish {
+				r.publishSurface(p.output, panelSurfaceID(p.panel))
+			}
+		}
+	}
+}
+
+func pluginStoreReadmeTarget(snapshot store.State, key string) (sha, path string) {
+	if key == "" {
+		return "", ""
+	}
+	listing, ok := pluginStoreFind(snapshot.Listings, key)
+	if !ok || listing.Entry.Readme == nil {
+		return "", ""
+	}
+	sha = listing.Entry.Readme.SHA256
+	media, ok := snapshot.Media[sha]
+	if !ok || media.Err != nil || media.Path == "" {
+		return sha, ""
+	}
+	return sha, media.Path
+}
+
+func readPluginStoreReadme(path string) string {
+	file, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, catalog.MaxReadmeBytes+1))
+	if err != nil || int64(len(data)) > catalog.MaxReadmeBytes {
+		return ""
+	}
+	return string(data)
 }
 
 // PluginSources returns the enabled sources from configuration.
@@ -70,6 +173,8 @@ func (r *Registry) PluginStoreCall(method string, params json.RawMessage) (map[s
 	var p struct {
 		Source  string `json:"source"`
 		ID      string `json:"id"`
+		Version string `json:"version"`
+		SHA256  string `json:"sha256"`
 		Confirm bool   `json:"confirm"`
 	}
 	if len(params) > 0 {
@@ -84,9 +189,9 @@ func (r *Registry) PluginStoreCall(method string, params json.RawMessage) (map[s
 	case "plugins.refresh":
 		_, err = s.Refresh()
 	case "plugins.install":
-		_, err = s.Install(p.Source, p.ID)
+		_, err = s.Install(p.Source, p.ID, store.ReleaseRef{Version: p.Version, SHA256: p.SHA256})
 	case "plugins.update":
-		_, err = s.Update(p.ID, p.Confirm)
+		_, err = s.Update(p.ID, store.ReleaseRef{Version: p.Version, SHA256: p.SHA256}, p.Confirm)
 	case "plugins.rollback":
 		_, err = s.Rollback(p.ID)
 	case "plugins.remove":
@@ -119,7 +224,7 @@ func storeStateReply(st store.State) map[string]any {
 	for _, l := range st.Listings {
 		row := map[string]any{
 			"source": l.Source, "id": l.Entry.ID, "name": l.Entry.Name, "status": string(l.Status),
-			"local_dir": l.LocalDir, "error": errText(l.Err),
+			"local_dir": l.LocalDir, "error": errText(l.Err), "update_available": l.UpdateAvailable,
 		}
 		if l.Resolution.Release != nil {
 			row["version"] = l.Resolution.Release.Version

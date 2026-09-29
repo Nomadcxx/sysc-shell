@@ -60,6 +60,51 @@ func TestDecodeReadsAValidRow(t *testing.T) {
 	}
 }
 
+func TestDecodeReadsAValidReadme(t *testing.T) {
+	cases := []struct {
+		name string
+		url  string
+	}{
+		{name: "https", url: "https://example.com/plugins/timer/README.md"},
+		{name: "loopback http", url: "http://127.0.0.1:1234/README.md"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sha := sum([]byte("# Timer"))
+			cat, err := decodeOne(t, func(m map[string]any) {
+				m["readme"] = map[string]any{"url": tc.url, "sha256": sha}
+			})
+			if err != nil || len(cat.Entries) != 1 {
+				t.Fatalf("Decode = %+v, %v", cat, err)
+			}
+			encoded, err := json.Marshal(cat.Entries[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			var row map[string]json.RawMessage
+			if err := json.Unmarshal(encoded, &row); err != nil {
+				t.Fatal(err)
+			}
+			var readme map[string]string
+			if err := json.Unmarshal(row["readme"], &readme); err != nil {
+				t.Fatalf("readme = %s: %v", row["readme"], err)
+			}
+			if readme["url"] != tc.url || readme["sha256"] != sha {
+				t.Fatalf("readme = %v", readme)
+			}
+		})
+	}
+}
+
+func TestDecodeRejectsAReadmeWithBadSHA(t *testing.T) {
+	cat, err := decodeOne(t, func(m map[string]any) {
+		m["readme"] = map[string]any{"url": "https://example.com/README.md", "sha256": "bad"}
+	})
+	if err != nil || len(cat.Entries) != 0 || len(cat.Rejected) != 1 {
+		t.Fatalf("Decode = %+v, %v; want one rejected row", cat, err)
+	}
+}
+
 func TestDecodeRejectsAnUnknownSchema(t *testing.T) {
 	t.Parallel()
 	_, err := Decode([]byte(`{"schema": 2, "plugins": []}`))

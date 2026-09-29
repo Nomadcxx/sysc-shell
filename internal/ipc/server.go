@@ -35,6 +35,7 @@ var (
 		"bluetooth":      "",
 		"weather":        "",
 		"clipboard":      "",
+		"plugin-store":   "",
 	}
 	knownScreenshotModes = map[string]bool{"region": true, "screen": true, "window": true}
 )

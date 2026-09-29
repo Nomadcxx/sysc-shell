@@ -118,8 +118,9 @@ func run(ctx context.Context) (err error) {
 			Root: plugin.ManagedRoot(), Client: store.NewHTTPClient(), Arch: runtime.GOARCH,
 			Replace: registry.ReplacePlugin,
 		},
-		Sources: registry.PluginSources,
-		Local:   registry.LocalPluginDirs,
+		Sources:       registry.PluginSources,
+		Local:         registry.LocalPluginDirs,
+		CheckInterval: 24 * time.Hour,
 	})
 	registry.BindPluginStore(pluginStore)
 	go pluginStore.Run(ctx)
