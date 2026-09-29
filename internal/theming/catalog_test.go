@@ -10,13 +10,16 @@ import (
 func TestCatalogEmbedsAllTemplates(t *testing.T) {
 	t.Parallel()
 	c := Catalog()
-	if len(c.Names()) != 16 {
+	if len(c.Names()) != 12 {
 		t.Fatalf("got %d", len(c.Names()))
 	}
 	for _, n := range c.Names() {
 		if c.Template(n) == "" {
 			t.Fatalf("empty template %s", n)
 		}
+	}
+	if Complete("scroll") || c.Template("scroll") != "" {
+		t.Fatal("Scroll compositor theming requires a separate approved design")
 	}
 }
 

@@ -342,13 +342,16 @@ type Options struct {
 // Complete and Valid use, so a role added there reaches templates without a
 // second table to keep in step.
 //
-// Only palette roles appear. Density, type, shape, opacity, elevation and
-// motion are the shell's own composition and mean nothing to another
-// application's colour file.
+// Only palette roles and the derived terminal block appear. Density, type,
+// shape, opacity, elevation and motion are the shell's own composition and
+// mean nothing to another application's colour file.
 func (t Tokens) Export() map[string]string {
-	out := make(map[string]string, len(roles))
+	out := make(map[string]string, len(roles)+len(TerminalNames()))
 	for _, r := range roles {
 		out[goName(r.name)] = *r.get(&t)
+	}
+	for k, v := range t.Terminal() {
+		out[k] = v
 	}
 	return out
 }

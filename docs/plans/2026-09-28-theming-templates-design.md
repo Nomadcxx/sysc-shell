@@ -24,8 +24,9 @@ Noctalia solved this: **sidecar theme file + one managed directive in the user c
 
 ## D1 — terminal token set (sysc-626)
 
-Add a `terminal_*` block to `internal/theme` roles so `Tokens.Export()` carries it; shape mirrors
-Noctalia `tokens.h`. Exported keys: `.TerminalBackground` `.TerminalForeground` `.TerminalCursor`
+Terminal block mirrors Noctalia `tokens.h` keys, implemented as derived export values
+(`internal/theme/terminal.go`, merged by `Tokens.Export()`) rather than matugen wire roles —
+every palette source carries the block with no second table. Exported keys: `.TerminalBackground` `.TerminalForeground` `.TerminalCursor`
 `.TerminalCursorText` `.TerminalSelectionForeground` `.TerminalSelectionBackground`,
 `.TerminalNormal{Black,Red,Green,Yellow,Blue,Magenta,Cyan,White}` and the same with `Bright`.
 
@@ -38,7 +39,8 @@ helpers in `internal/theme`):
 | TerminalForeground | `on_surface` |
 | TerminalCursor | TerminalForeground; TerminalCursorText = TerminalBackground |
 | TerminalSelection{Background,Foreground} | `surface_variant` / `on_surface_variant` |
-| ANSI 0-7, 8-15 | Noctalia's role map (error/primary/secondary/tertiary/outline/surface variants…), each clamped toward black/white until ≥3.0:1 contrast vs TerminalBackground; 0 and 15 are background/foreground shades rather than palette roles |
+| ANSI 0, 7, 8 | Anchors, not clamped: 0 = `surface_variant` (= selection background), 7 = `on_surface` (= foreground), 8 = `outline` |
+| ANSI 1-6, 9-14 | Noctalia's role map (red=error, green=primary, yellow=secondary, blue=tertiary, magenta=primary_fixed_dim, cyan=secondary_fixed_dim; bright = same), each passed through `EnsureContrast` against TerminalBackground at ≥4.5:1 (`TerminalContrast` const) |
 
 Contrast floor is a named const with a `ponytail:` comment; it is the calibration knob.
 
@@ -50,9 +52,11 @@ New mechanism in `internal/theming/apply.go` (minimal, guarded like `ApplyWrite`
 2. `EnsureDirective(path, key, value, fmt)` / `RemoveDirective` — append-or-update **one**
    single-line directive in the user's config file; only a line matching the key that sysc-shell
    wrote (or an absent file) is touched; a multi-line/preformatted user value → refuse, log,
-   no-op. Never rewrites anything else. This replaces clobbering main configs.
+   no-op. Record ownership so disable removes only the occurrence the shell inserted; an identical
+   pre-existing user line stays. Writes follow a config symlink to preserve the link.
+   This replaces clobbering main configs.
 
-`writeTarget()` becomes a table of (sidecar path, directive target+key) per template. The marker
+the default branch of `applyOnce`/`writeTarget()` in `internal/theming/enabled.go` becomes a table of (sidecar path, directive target+key) per template. The marker
 guard, temp+rename swap and `Complete()` gating stay untouched.
 
 ## D3 — per-app table (this tranche)
@@ -72,8 +76,13 @@ Formats come from the Noctalia body files; the job is token mapping + Go `text/t
 | helix | `~/.config/helix/themes/sysc-shell.toml` | `theme =` line in `config.toml` | 161L |
 | kcolorscheme | `~/.local/share/color-schemes/sysc-shell.colors` | `ColorSchemeName=` in `kdeglobals` | 146L |
 | qt | `~/.config/qt6ct/colors/sysc-shell.conf` (+qt5ct dir if present) | `color_scheme_path=` in `qt5ct.conf`/`qt6ct.conf` | 8L |
-| scroll | sidecar per `noctalia/assets/templates/scroll/apply.sh` (confirm at port time) | managed include line in `~/.config/scroll/config` | 22L |
 | niri | unchanged (`sysc-shell.kdl` include, real today) | — | done |
+
+Scroll is a separate Wayland compositor and is deferred until it has a separate
+approved design consistent with the Niri-first product constraint.
+
+WezTerm supports the managed assignment only when `wezterm.lua` ends in `return config`; the
+assignment is inserted immediately before it. Configs returning a table are left untouched.
 
 ## D4 — dispositions (sysc-629)
 
@@ -84,11 +93,10 @@ and its routing; do not ship a half-theme.
   `~/.config/gtk-N.0/gtk.css` overlay would clobber the user's own CSS, and a full named theme is
   a different product (Noctalia ships a 154-line applyer for it — not ported here). Remove the
   templates, `writeTarget` cases and the `applyOnce` gtk branch incl.
-  `ApplyGtkThemeName/UnapplyGtkThemeName`; remove `gtk3`/`gtk4` from `DefaultEnabled`. Revisit if
+  `ApplyGtkThemeName/UnapplyGtkThemeName`; drop `gtk3`/`gtk4` from the settings Templates list (`internal/settings/registry.go`). Revisit if
   a real requirement appears.
 - **emacs: DELETE.** Activation is a `(load-theme)` elisp evaluation in the running instance
-  (Noctalia uses emacsclient eval); outside the D2 directive model. Remove template, case and
-  `DefaultEnabled` entry.
+  (Noctalia uses emacsclient eval); outside the D2 directive model. Remove the template, its `writeTarget` case and its settings Templates entry.
 - **qt/kde keep** via the D3 directives: the directive only touches files that exist (absent user
   config → skip, sidecar still written).
 
