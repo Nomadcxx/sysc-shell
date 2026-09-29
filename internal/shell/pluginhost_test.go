@@ -991,8 +991,12 @@ func TestPluginPanelHostUsesManifestSize(t *testing.T) {
 			t.Fatal("plugin panel scroll has no children")
 		}
 		for i, c := range root.Children {
-			if c == nil || c.Kind != ui.KindCapsule {
-				t.Fatalf("scroll child %d = %+v, want KindCapsule", i, c)
+			want := ui.KindCapsule // Settings groups remain host cards.
+			if i == 0 {
+				want = ui.KindColumn // Plugin content keeps the backdrop visible.
+			}
+			if c == nil || c.Kind != want {
+				t.Fatalf("scroll child %d = %+v, want %v", i, c, want)
 			}
 		}
 		return
@@ -1240,7 +1244,7 @@ func TestPluginPanelResizeRetargetsTheOpenPanel(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	var lastErr error
 	for time.Now().Before(deadline) {
-		if err := reg.plugins.resizePanel(v1.PanelResizeParams{Width: 400, Height: 300}); err == nil {
+		if _, err := reg.plugins.resizePanel(v1.PanelResizeParams{Width: 400, Height: 300}); err == nil {
 			lastErr = nil
 			break
 		} else {
@@ -1309,7 +1313,7 @@ func TestPluginPanelResizeFitsTheOutput(t *testing.T) {
 	}
 	var lastErr error
 	for time.Now().Before(deadline) {
-		if lastErr = reg.plugins.resizePanel(v1.PanelResizeParams{Width: 400, Height: 2000}); lastErr == nil {
+		if _, lastErr = reg.plugins.resizePanel(v1.PanelResizeParams{Width: 400, Height: 2000}); lastErr == nil {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -1339,6 +1343,43 @@ func TestPluginPanelResizeFitsTheOutput(t *testing.T) {
 		if r.Y+r.H > int(*req.Update.Height) || r.X+r.W > int(*req.Update.Width) {
 			t.Fatalf("input rect %+v leaves the %dx%d surface", r, *req.Update.Width, *req.Update.Height)
 		}
+	}
+
+	reg.mu.Lock()
+	panelHost := reg.panelHosts[PanelPlugin]
+	panelHost.place.Output = ui.Rect{W: 800, H: 600}
+	panelHost.place.BarZone, panelHost.place.Gap, panelHost.place.Padding = 40, 0, 8
+	reg.mu.Unlock()
+	reg.mu.Lock()
+	pre := panelHost.place
+	pre.Panel = ui.Rect{W: 400, H: 900}
+	fitW, fitH := pre.FittedSize()
+	reg.mu.Unlock()
+	if fitH >= 900 {
+		t.Fatalf("fixture does not constrain the panel: fitted %dx%d", fitW, fitH)
+	}
+	fitted, err := reg.plugins.resizePanel(v1.PanelResizeParams{Width: 400, Height: 900})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (v1.PanelResizeResult{Width: wantW, Height: wantH}); fitted != want {
+		t.Fatalf("fitted resize = %+v, want %+v", fitted, want)
+	}
+	req = drainAux(t, reg, 1)[0]
+	reg.mu.Lock()
+	post := reg.panelHosts[PanelPlugin].place
+	postMargins := post.Margins()
+	postJoints := post.Joints()
+	reg.mu.Unlock()
+	if req.Update == nil || req.Update.MarginLeft == nil {
+		t.Fatalf("resize update = %+v, want margins", req.Update)
+	}
+	if want := int32(postMargins.Left - postJoints.Left); *req.Update.MarginLeft != want {
+		t.Fatalf("MarginLeft = %d, want %d (body x %d minus left joint %d)",
+			*req.Update.MarginLeft, want, postMargins.Left, postJoints.Left)
+	}
+	if got := reg.plugins.panelSize(); got.W != fitted.Width || got.H != fitted.Height {
+		t.Fatalf("stored panel size = %+v, want %+v", got, fitted)
 	}
 }
 
@@ -1493,9 +1534,10 @@ func TestPluginCallHooksChangeNothingOnceCancelled(t *testing.T) {
 	if open {
 		t.Fatal("a cancelled call opened the plugin panel")
 	}
+	_, resizeErr := env.PanelResize(ctx, v1.PanelResizeParams{Width: 400, Height: 300})
 	for name, err := range map[string]error{
 		"ClosePanel":   env.ClosePanel(ctx, v1.PanelParams{Entry: "panel"}),
-		"PanelResize":  env.PanelResize(ctx, v1.PanelResizeParams{Width: 400, Height: 300}),
+		"PanelResize":  resizeErr,
 		"ViewFocus":    env.ViewFocus(ctx, v1.ViewFocusParams{View: "view-1", Node: "act"}),
 		"CloseSurface": env.CloseSurface(ctx, v1.SurfaceCloseParams{View: "view-1"}),
 	} {
