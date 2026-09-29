@@ -279,10 +279,11 @@ func run(ctx context.Context) (err error) {
 	ipcErr := make(chan error, 1)
 	go func() {
 		srv := ipc.NewServer(ipc.DefaultSocket(), ipc.Handlers{
-			Panel:   registry.HandlePanelByName,
-			Status:  registry.Status,
-			OSDStep: registry.OSDStep,
-			Plugins: registry.PluginStoreCall,
+			Panel:      registry.HandlePanelByName,
+			Status:     registry.Status,
+			OSDStep:    registry.OSDStep,
+			Plugins:    registry.PluginStoreCall,
+			Screenshot: registry.Screenshot,
 		})
 		ipcErr <- srv.Serve(ctx)
 	}()

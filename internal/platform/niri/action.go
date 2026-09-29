@@ -26,6 +26,24 @@ type FocusWorkspace struct {
 	ID uint64
 }
 
+// ScreenshotScreen asks the compositor to capture the focused output. The
+// compositor always copies the capture to its own clipboard; WriteToDisk also
+// saves it, to Path when set. Path must be absolute.
+type ScreenshotScreen struct {
+	WriteToDisk bool   `json:"write_to_disk"`
+	ShowPointer bool   `json:"show_pointer"`
+	Path        string `json:"path"`
+}
+
+// ScreenshotWindow asks the compositor to capture one window; a nil ID is the
+// focused window. Clipboard and disk behave as for ScreenshotScreen.
+type ScreenshotWindow struct {
+	ID          *uint64 `json:"id"`
+	WriteToDisk bool    `json:"write_to_disk"`
+	ShowPointer bool    `json:"show_pointer"`
+	Path        string  `json:"path"`
+}
+
 // Action sends one compositor request on a short-lived connection. It does
 // not use the EventStream socket.
 func Action(ctx context.Context, socketPath string, body any) error {
@@ -74,6 +92,10 @@ func marshalAction(body any) ([]byte, error) {
 		inner = map[string]any{"FocusWindow": v}
 	case CloseWindow:
 		inner = map[string]any{"CloseWindow": v}
+	case ScreenshotScreen:
+		inner = map[string]any{"ScreenshotScreen": v}
+	case ScreenshotWindow:
+		inner = map[string]any{"ScreenshotWindow": v}
 	case FocusWorkspace:
 		// WorkspaceReferenceArg is an externally tagged enum, so the id
 		// reference is the object {"Id": n} rather than a bare number.

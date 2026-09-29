@@ -37,6 +37,7 @@ var (
 		"clipboard":      "",
 		"plugin-store":   "",
 	}
+	knownScreenshotModes = map[string]bool{"region": true, "screen": true, "window": true}
 )
 
 // DefaultSocket returns $XDG_RUNTIME_DIR/sysc-shell/ipc.v1.sock.
@@ -54,6 +55,10 @@ type Handlers struct {
 	Panel   func(action, panel, section string) error
 	OSDStep func(kind, action string) error
 	Status  func() map[string]any
+	// Screenshot starts a capture in one of knownScreenshotModes. It returns
+	// once the capture has started; the result reaches the user as a toast,
+	// because a region waits on the user and Call's deadline cannot.
+	Screenshot func(mode string) error
 	// Plugins answers every plugins.* method.
 	Plugins func(method string, params json.RawMessage) (map[string]any, error)
 }
@@ -217,6 +222,25 @@ func (s *Server) handleLine(line string) []byte {
 			return envelope(req.ID, "", "osd handler unset")
 		}
 		if err := s.h.OSDStep(params.Kind, params.Action); err != nil {
+			return envelope(req.ID, "", err.Error())
+		}
+		return envelope(req.ID, "ok", "")
+	case "screenshot":
+		var params struct {
+			Mode string `json:"mode"`
+		}
+		if len(req.Params) > 0 {
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				return envelope(req.ID, "", "malformed params")
+			}
+		}
+		if !knownScreenshotModes[params.Mode] {
+			return envelope(req.ID, "", "unknown screenshot mode")
+		}
+		if s.h.Screenshot == nil {
+			return envelope(req.ID, "", "screenshot handler unset")
+		}
+		if err := s.h.Screenshot(params.Mode); err != nil {
 			return envelope(req.ID, "", err.Error())
 		}
 		return envelope(req.ID, "ok", "")

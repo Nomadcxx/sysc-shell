@@ -711,6 +711,9 @@ func (r *Registry) DropAux(output uint32, surfaceID string) {
 	if r.DropTrayAux(output, surfaceID) {
 		return
 	}
+	if r.dropSelectorAux(output, surfaceID) {
+		return
+	}
 	r.mu.Lock()
 	plugins := r.plugins
 	r.mu.Unlock()

@@ -30,6 +30,11 @@ type AuxSpec struct {
 	// before it is created. Nil disables the backdrop and all of its cost.
 	BlurRegion *ui.Rect
 	BlurRadius int
+	// Freeze captures the whole output, unblurred and without the cursor,
+	// before the surface exists, and hands it to Callbacks.Backdrop. The
+	// surface can then show and crop the screen as it was without appearing in
+	// it. A failed capture fails the open. It excludes BlurRegion.
+	Freeze bool
 	// InputRects, when non-nil, limit pointer input to these surface-local
 	// rectangles from the first frame. Nil leaves the whole surface.
 	InputRects []ui.Rect
@@ -152,8 +157,20 @@ func (o *owner) openAux(h *OutputHost, spec *AuxSpec) error {
 	// panel into its own backdrop. The shield opens first but paints nothing --
 	// its Render returns immediately, leaving a cleared, fully transparent
 	// buffer -- so it cannot show up in the copy either.
-	if spec.BlurRegion != nil && spec.Callbacks.Backdrop != nil {
-		if shot := o.captureBackdrop(h.proxy, *spec.BlurRegion); shot != nil {
+	if spec.Freeze {
+		if spec.Callbacks.Backdrop == nil {
+			return fmt.Errorf("wayland: aux %s freezes the output but has no Backdrop callback", spec.ID)
+		}
+		shot := o.captureBackdrop(h.proxy, nil)
+		if !h.alive {
+			return fmt.Errorf("wayland: aux surface %s on output %d: %w", spec.ID, h.global, errOutputGone)
+		}
+		if shot == nil {
+			return fmt.Errorf("wayland: aux %s could not capture output %d", spec.ID, h.global)
+		}
+		spec.Callbacks.Backdrop(shot)
+	} else if spec.BlurRegion != nil && spec.Callbacks.Backdrop != nil {
+		if shot := o.captureBackdrop(h.proxy, spec.BlurRegion); shot != nil {
 			spec.Callbacks.Backdrop(render.Blur(shot, backdropDownsample, spec.BlurRadius))
 		}
 		// The capture round trips, and a global_remove dispatched in one of

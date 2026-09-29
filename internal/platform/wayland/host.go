@@ -70,6 +70,8 @@ type HostCallbacks struct {
 	WantIME func() bool
 	// IBeamAt reports whether the pointer is over a text field.
 	IBeamAt func(x, y float64) bool
+	// Crosshair shows a crosshair cursor anywhere over the surface.
+	Crosshair bool
 	// OpaqueBackground is the resolved palette opacity for this surface.
 	OpaqueBackground bool
 	// Radius is the surface's painted corner radius, in logical pixels. The
