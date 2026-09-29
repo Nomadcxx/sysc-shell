@@ -345,6 +345,7 @@ func (r *Registry) setCaffeine(h *PanelHost, on bool) {
 			return
 		}
 		r.inhibitWanted = true
+		r.pushIdleInputsLocked()
 		if r.inhibit != nil || r.inhibitStarting {
 			return
 		}
@@ -356,6 +357,7 @@ func (r *Registry) setCaffeine(h *PanelHost, on bool) {
 			r.inhibitStarting = false
 			if err != nil {
 				r.inhibitWanted = false
+				r.pushIdleInputsLocked()
 				r.mu.Unlock()
 				return err
 			}
@@ -379,6 +381,7 @@ func (r *Registry) setCaffeine(h *PanelHost, on bool) {
 	}
 
 	r.inhibitWanted = false
+	r.pushIdleInputsLocked()
 	if r.inhibit == nil {
 		return
 	}

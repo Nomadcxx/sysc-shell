@@ -264,6 +264,17 @@ type Session struct {
 	Locker string // external locker command; empty hides the lock action
 }
 
+// Idle are the display-power timeouts, resolved to durations. A zero timeout
+// disables that behavior on that power source; all-zero disables the idle
+// service entirely (opt-in, like Media).
+type Idle struct {
+	BlankAc        time.Duration
+	BlankBattery   time.Duration
+	SuspendAc      time.Duration
+	SuspendBattery time.Duration
+	MediaExempt    bool // playing media suppresses idle behaviors
+}
+
 type Panels struct {
 	Gap     int // offset from the bar edge, logical px
 	Padding int // output edge inset for clamping, logical px
@@ -371,6 +382,7 @@ type Config struct {
 	ThemeGen      ThemeConfig
 	Accessibility Accessibility
 	Session       Session
+	Idle          Idle
 	Panels        Panels
 	Tray          TrayPreferences
 	Weather       Weather
@@ -523,6 +535,7 @@ func Default() Config {
 		},
 		Panels:  Panels{Gap: 0, Padding: 8, OSD: "bottom-center"},
 		Monitor: defaultMonitor(),
+		Idle:    Idle{MediaExempt: true},
 		Wallpaper: Wallpaper{
 			// Stills and video share one directory by default, which D9
 			// allows: that is how the library on this machine is laid out, and

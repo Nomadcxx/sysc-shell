@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"runtime"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
+	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/shell"
 	"github.com/Nomadcxx/sysc-shell/internal/trayclient"
 )
@@ -86,6 +88,21 @@ func run(ctx context.Context) (err error) {
 	}
 
 	registry := shell.NewRegistry(cfg)
+	// Display-power policy. Blank and Unblank are log lines until sysc-718
+	// binds the niri monitor-power actions; Suspend goes straight to logind.
+	idleSvc := services.NewIdleService(services.IdleOptions{Execs: services.IdleExecutors{
+		Blank:   func() { log.Printf("sysc-shell: idle blank") },
+		Unblank: func() { log.Printf("sysc-shell: idle unblank") },
+		Suspend: func() {
+			sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := exec.CommandContext(sctx, "loginctl", "suspend").Run(); err != nil {
+				log.Printf("sysc-shell: idle suspend: %v", err)
+			}
+		},
+	}})
+	registry.SetIdleService(idleSvc)
+	go idleSvc.Run(ctx)
 	// Built before the plugin host: plugin toasts send through this client,
 	// so BindNotifications must run first. The pumps below still drain it.
 	notifyClient := notifyclient.New(os.Getenv("XDG_RUNTIME_DIR"), registry.NotifyMessages())
@@ -307,6 +324,8 @@ func run(ctx context.Context) (err error) {
 		Invalidations: registry.Invalidations(),
 		Aux:           registry.AuxRequests(),
 		Selection:     registry.Selections(),
+		Idle:          idleSvc.Requests(),
+		IdleEvents:    idleSvc.Events(),
 		Reloads:       reloads,
 		ConfigPath:    cfgPath,
 	})

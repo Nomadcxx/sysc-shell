@@ -33,6 +33,7 @@ var interfaceMaximum = map[string]uint32{
 	"wl_data_device_manager": 3,
 	// Optional like screencopy: frost needs it, a bar without it stays solid.
 	"ext_background_effect_manager_v1": 1,
+	"ext_idle_notifier_v1":             2,
 }
 
 // requiredSingletons must all be present before the proof can start. The

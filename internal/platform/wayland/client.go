@@ -18,6 +18,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-wayland/client"
 	"github.com/Nomadcxx/sysc-wayland/cursorshape"
+	"github.com/Nomadcxx/sysc-wayland/idle"
 	"github.com/Nomadcxx/sysc-wayland/textinput"
 	"golang.org/x/sys/unix"
 )
@@ -128,6 +129,12 @@ type Callbacks struct {
 	// Selection asks the owner to copy to or paste from the system
 	// clipboard. It is owned by the caller and may be nil.
 	Selection <-chan SelectionRequest
+	// Idle arms and disarms compositor idle notifications. It is owned by
+	// the caller and may be nil.
+	Idle <-chan IdleRequest
+	// IdleEvents carries compositor idled/resumed verdicts back to the
+	// policy loop. Nil drops them.
+	IdleEvents chan<- IdleEvent
 	// DropAux releases per-aux resources after a surface is destroyed, whether
 	// by request, compositor close, or output loss.
 	DropAux func(output uint32, id string)
@@ -187,7 +194,7 @@ func Run(ctx context.Context, cfg config.Config, callbacks Callbacks) (err error
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	pastes := make(chan pasteResult, 4)
-	bridgeDone := wake.bridge(runCtx, callbacks.Invalidations, callbacks.Reloads, callbacks.Aux, callbacks.Selection, pastes)
+	bridgeDone := wake.bridge(runCtx, callbacks.Invalidations, callbacks.Reloads, callbacks.Aux, callbacks.Selection, pastes, callbacks.Idle)
 	defer func() {
 		cancel()
 		<-bridgeDone
@@ -229,8 +236,16 @@ type owner struct {
 	// ext-background-effect; caps records what it last said it can do.
 	backgroundEffect *backgroundeffect.ExtBackgroundEffectManagerV1
 	caps             capabilityState
-	pointer          *client.Pointer
-	keyboard         *client.Keyboard
+	// idleNotifier is nil when the compositor does not advertise
+	// ext-idle-notify. idleNotes holds the live notifications by policy id.
+	idleNotifier *idle.ExtIdleNotifierV1
+	idleNotes    map[uint64]*idle.ExtIdleNotificationV1
+	// idleEvQueue holds idled/resumed events that could not be sent without
+	// blocking; o.wake schedules the retry. wake is set when the loop starts.
+	idleEvQueue []IdleEvent
+	wake        *wakePipe
+	pointer     *client.Pointer
+	keyboard    *client.Keyboard
 
 	textInputMgr *textinput.ZwpTextInputManagerV3
 	textInput    *textinput.ZwpTextInputV3
@@ -415,6 +430,14 @@ func (o *owner) bindGlobals() error {
 		// its frosted surfaces paint solid.
 		o.caps.update(0, o.cb.Capabilities)
 	}
+	// Idle notification is optional like blur: a compositor without it must
+	// still start, the shell then simply never arms a timer.
+	if _, ok := o.rs.singletons["ext_idle_notifier_v1"]; ok {
+		o.idleNotifier = idle.NewExtIdleNotifierV1(ctx)
+		if err := o.bindSingleton("ext_idle_notifier_v1", o.idleNotifier); err != nil {
+			return err
+		}
+	}
 	if err := o.bindOptionalInput(ctx); err != nil {
 		return err
 	}
@@ -517,6 +540,11 @@ func (o *owner) destroyGlobals() error {
 	if o.backgroundEffect != nil {
 		errs = append(errs, o.backgroundEffect.Destroy())
 		o.backgroundEffect = nil
+	}
+	o.destroyIdleAll()
+	if o.idleNotifier != nil {
+		errs = append(errs, o.idleNotifier.Destroy())
+		o.idleNotifier = nil
 	}
 	errs = append(errs, o.destroySelection()...)
 	if o.pointer != nil {
@@ -1247,6 +1275,9 @@ func (o *owner) teardownSurface(h *OutputHost) error {
 // loop drives the owner goroutine: render when a scheduler offers work, then
 // wait on the Wayland socket and the wake pipe.
 func (o *owner) loop(ctx context.Context, wake *wakePipe, pastes chan pasteResult) error {
+	// The idle emitter may fire from proxy dispatch between wakes; the owner
+	// needs the pipe to schedule delivery of anything that cannot be sent.
+	o.wake = wake
 	for {
 		if o.fatal != nil {
 			return o.fatal
@@ -1285,6 +1316,10 @@ func (o *owner) loop(ctx context.Context, wake *wakePipe, pastes chan pasteResul
 			for _, req := range wake.takeSelection() {
 				o.handleSelection(req, pastes)
 			}
+			for _, req := range wake.takeIdle() {
+				o.armIdle(req.ID, req.TimeoutMS)
+			}
+			o.deliverIdleEvents()
 			for _, p := range wake.takePastes() {
 				o.deliverPaste(p)
 			}

@@ -147,6 +147,9 @@ type Registry struct {
 	inhibit         io.Closer
 	inhibitWanted   bool
 	inhibitStarting bool
+	// idleSvc is the display-power policy. Nil means no idle service is
+	// wired, which is the test and disabled configuration.
+	idleSvc *services.IdleService
 
 	running      []runningAppSlot
 	runningIndex []runningAppEntry
@@ -337,6 +340,39 @@ func (r *Registry) setAudio(a *services.Audio) {
 // setMedia installs the media service and relays its cached snapshots into the
 // retained bar and control-centre trees. The widget and page acquire leases
 // for the service's bus watch; the relay itself never keeps the service alive.
+// SetIdleService installs the idle policy service. Its channels go into
+// wayland.Callbacks by the caller; main wires both before Run.
+func (r *Registry) SetIdleService(s *services.IdleService) {
+	r.idleSvc = s
+	// The initial publish matters: nothing else calls the setters until a
+	// media, inhibit or config change happens, and the timeouts must be
+	// armed from the configuration already loaded.
+	r.pushIdleInputs()
+}
+
+// pushIdleInputsLocked re-publishes every input the idle policy reads.
+// Caller holds r.mu.
+func (r *Registry) pushIdleInputsLocked() {
+	if r.idleSvc == nil {
+		return
+	}
+	r.idleSvc.SetConfig(services.IdleSettings{
+		BlankAc:        r.cfg.Idle.BlankAc,
+		BlankBattery:   r.cfg.Idle.BlankBattery,
+		SuspendAc:      r.cfg.Idle.SuspendAc,
+		SuspendBattery: r.cfg.Idle.SuspendBattery,
+		MediaExempt:    r.cfg.Idle.MediaExempt,
+	})
+	r.idleSvc.SetMediaPlaying(r.mediaState.Status == services.PlaybackPlaying)
+	r.idleSvc.SetInhibited(r.inhibitWanted)
+}
+
+func (r *Registry) pushIdleInputs() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pushIdleInputsLocked()
+}
+
 func (r *Registry) setMedia(m *services.Media) {
 	if r.media == m {
 		return
@@ -359,6 +395,7 @@ func (r *Registry) setMedia(m *services.Media) {
 	cancel := make(chan struct{})
 	r.mediaRelayCancel = cancel
 	go r.relayMedia(m, cancel)
+	r.pushIdleInputs()
 }
 
 func (r *Registry) relayMedia(media *services.Media, cancel <-chan struct{}) {
@@ -433,6 +470,7 @@ func (r *Registry) publishMediaSnapshot(media *services.Media, state services.Me
 	}
 	r.mediaState = state
 	r.mediaPlayers = players
+	r.pushIdleInputsLocked()
 	changed := make([]uint32, 0, len(r.bars))
 	for global, bar := range r.bars {
 		if bar.apply(r.viewLocked(bar.connector())) {
@@ -1404,6 +1442,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 					bar.apply(r.viewLocked(bar.connector()))
 				}
 				r.cfg = cfg
+				r.pushIdleInputsLocked()
 				// An open settings panel holds its own draft, and a change
 				// arriving from outside it would otherwise be reverted by the
 				// next control write, which puts that draft back whole. The
@@ -1596,6 +1635,7 @@ func (r *Registry) Close() {
 		inhibit = r.inhibit
 		r.inhibit = nil
 		r.inhibitWanted = false
+		r.pushIdleInputsLocked()
 		r.mu.Unlock()
 	}
 	for _, bar := range bars {
