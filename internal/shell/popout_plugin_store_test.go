@@ -347,3 +347,36 @@ func pluginStoreFindAction(node *ui.Node, action string) *ui.Node {
 	}
 	return nil
 }
+
+// A pointer click on a card opens its detail, and one on Back returns to the
+// grid. The keyboard path was covered; the live laptop run found the click
+// path doing nothing.
+func TestPluginStoreClickOpensDetailAndBack(t *testing.T) {
+	listing := modelListing("org.sysc.timer", "Timer", "sysc", "productivity", "1.4.0")
+	reg, host, panel := openPluginStoreTestPanel(t, store.State{Listings: []store.Listing{listing}}, ui.Rect{W: 1536, H: 864})
+	renderPluginStorePanel(t, panel)
+	reg.mu.Lock()
+	card := pluginStoreFindAction(host.root, "store-open:"+pluginStoreKey(listing))
+	reg.mu.Unlock()
+	if card == nil {
+		t.Fatal("no card")
+	}
+	pressAt(reg, host, card.Bounds.X+card.Bounds.W/2, card.Bounds.Y+card.Bounds.H/3, 0)
+	reg.mu.Lock()
+	detail := host.pluginStoreDetail
+	back := pluginStoreFindAction(host.root, "store-back")
+	reg.mu.Unlock()
+	if detail != pluginStoreKey(listing) || back == nil {
+		t.Fatalf("click on the card left detail = %q", detail)
+	}
+	renderPluginStorePanel(t, panel)
+	reg.mu.Lock()
+	back = pluginStoreFindAction(host.root, "store-back")
+	reg.mu.Unlock()
+	pressAt(reg, host, back.Bounds.X+back.Bounds.W/2, back.Bounds.Y+back.Bounds.H/2, 0)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if host.pluginStoreDetail != "" {
+		t.Fatal("click on Back did not return to the grid")
+	}
+}

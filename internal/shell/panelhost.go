@@ -779,8 +779,15 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger) err
 			place.BarZone = 0
 		}
 	}
-	if id == PanelClipboard || id == PanelPluginStore {
-		// These surfaces are true modals: centre them against the whole output,
+	if id == PanelPluginStore {
+		// The store is large enough to reach the bar, so it centres in the
+		// space the bar leaves rather than across it.
+		place.Gap = 0
+		place.CenterY = true
+		place.Align = "center"
+	}
+	if id == PanelClipboard {
+		// Clipboard history is a true modal: centre it against the whole output,
 		// not the bar-free region used by attached/floating pickers.
 		place.BarZone = 0
 		place.Gap = 0
@@ -3086,6 +3093,37 @@ func (h *PanelHost) hitFocusable(x, y int) *ui.Node {
 		if n.Bounds.Contains(x, y) {
 			return n
 		}
+	}
+	// A virtual list's rows enter the focus order through Item, as copies
+	// that are never laid out, so none of them contains any point. Resolve
+	// the point in the laid-out tree and answer with the focus entry that
+	// carries the same key.
+	if hit := laidOutFocusableAt(h.root, x, y); hit != nil {
+		key := hit.StableKey()
+		for _, n := range h.focus {
+			if n != nil && key != "" && n.StableKey() == key {
+				return n
+			}
+		}
+	}
+	return nil
+}
+
+// laidOutFocusableAt is the innermost focusable node under the point in a
+// laid-out tree, descending into a virtual list's materialised rows. Every
+// container's bounds clip, so a row scrolled out of its list is not hit
+// through whatever is drawn over it.
+func laidOutFocusableAt(n *ui.Node, x, y int) *ui.Node {
+	if n == nil || !n.Bounds.Contains(x, y) {
+		return nil
+	}
+	for i := len(n.Children) - 1; i >= 0; i-- {
+		if hit := laidOutFocusableAt(n.Children[i], x, y); hit != nil {
+			return hit
+		}
+	}
+	if n.Focusable {
+		return n
 	}
 	return nil
 }

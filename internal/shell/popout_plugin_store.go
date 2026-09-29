@@ -449,7 +449,15 @@ func pluginStoreCardStatus(card Card, m theme.Metrics) *ui.Node {
 		icon, label, fill = "restart_alt", "Update", ui.FillSoft
 	case ActionInstall:
 	default:
+		// The reason is the useful half: "Local copy" or "Needs protocol 1.9"
+		// says what to do about it, "Unavailable" does not.
 		icon, label, fill = "disabled_by_default", "Unavailable", ui.FillNone
+		if card.Reason == "local copy" {
+			icon = "folder_open"
+		}
+		if card.Reason != "" {
+			label = strings.ToUpper(card.Reason[:1]) + card.Reason[1:]
+		}
 	}
 	return &ui.Node{Kind: ui.KindCapsule, Fill: fill, Shape: ui.ShapeSmall, Padding: theme.MarginXS, Children: []*ui.Node{
 		{Kind: ui.KindRow, Gap: theme.MarginXXS, Children: []*ui.Node{
