@@ -8,6 +8,12 @@ import (
 	"net"
 )
 
+// ToggleOverview toggles Niri's compositor-rendered overview.
+type ToggleOverview struct{}
+
+// CloseOverview closes Niri's compositor-rendered overview.
+type CloseOverview struct{}
+
 // FocusWindow asks the compositor to focus one window by id.
 type FocusWindow struct {
 	ID uint64 `json:"id"`
@@ -113,6 +119,10 @@ func marshalAction(body any) ([]byte, error) {
 		inner = map[string]any{"PowerOffMonitors": map[string]any{}}
 	case PowerOnMonitors:
 		inner = map[string]any{"PowerOnMonitors": map[string]any{}}
+	case ToggleOverview:
+		inner = map[string]any{"ToggleOverview": map[string]any{}}
+	case CloseOverview:
+		inner = map[string]any{"CloseOverview": map[string]any{}}
 	default:
 		return nil, fmt.Errorf("niri: unknown action %T", body)
 	}
