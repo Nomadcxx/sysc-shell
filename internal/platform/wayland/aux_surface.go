@@ -111,7 +111,9 @@ func (o *owner) handleAux(req AuxRequest) {
 	case req.Update != nil:
 		err = o.updateAux(h, req.ID, req.Update)
 	default:
-		o.closeAux(h, req.ID)
+		// The requester already retired this surface. Echoing its queued close
+		// can retire a replacement that now owns the same ID in the registry.
+		o.removeAux(h, req.ID)
 	}
 	switch {
 	case req.Reply != nil:
@@ -153,7 +155,7 @@ func (o *owner) openAux(h *OutputHost, spec *AuxSpec) error {
 		return err
 	}
 	if _, exists := h.aux[spec.ID]; exists {
-		o.closeAux(h, spec.ID)
+		o.removeAux(h, spec.ID)
 	}
 
 	u := newSurfaceUnit(spec.ID)
@@ -214,7 +216,7 @@ func (o *owner) openAux(h *OutputHost, spec *AuxSpec) error {
 	})
 	id := spec.ID
 	layer.SetClosedHandler(func(layershell.ZwlrLayerSurfaceV1ClosedEvent) {
-		if _, ok := h.aux[id]; ok {
+		if h.aux[id] == u {
 			o.closeAux(h, id)
 		}
 	})
@@ -415,9 +417,17 @@ func (o *owner) applyAuxPolicy(u *surfaceUnit, next auxPolicy) error {
 }
 
 func (o *owner) closeAux(h *OutputHost, id string) {
+	if o.removeAux(h, id) && o.cb.DropAux != nil {
+		o.cb.DropAux(h.global, id)
+	}
+}
+
+// removeAux releases the Wayland resources without notifying their requester.
+// closeAux additionally reports an unsolicited close, failure, or output loss.
+func (o *owner) removeAux(h *OutputHost, id string) bool {
 	u, ok := h.aux[id]
 	if !ok {
-		return
+		return false
 	}
 	delete(h.aux, id)
 	if o.focus.unit == u {
@@ -427,9 +437,7 @@ func (o *owner) closeAux(h *OutputHost, id string) {
 		o.keyboardGone()
 	}
 	_ = o.teardownUnit(u)
-	if o.cb.DropAux != nil {
-		o.cb.DropAux(h.global, id)
-	}
+	return true
 }
 
 func (o *owner) closeAllAux(h *OutputHost) {

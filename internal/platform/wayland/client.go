@@ -136,8 +136,8 @@ type Callbacks struct {
 	// IdleEvents carries compositor idled/resumed verdicts back to the
 	// policy loop. Nil drops them.
 	IdleEvents chan<- IdleEvent
-	// DropAux releases per-aux resources after a surface is destroyed, whether
-	// by request, compositor close, or output loss.
+	// DropAux releases per-aux resources after a compositor close, surface
+	// failure, or output loss. Requested closes and replacements are not echoed.
 	DropAux func(output uint32, id string)
 	// Capabilities reports what optional compositor effects are available.
 	// It is called on the Wayland goroutine before the first NewHost when
