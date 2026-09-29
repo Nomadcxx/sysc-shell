@@ -110,6 +110,15 @@ func run(ctx context.Context) (err error) {
 	}})
 	registry.SetIdleService(idleSvc)
 	go idleSvc.Run(ctx)
+	// XDG ScreenSaver endpoint: media players inhibit through here and only
+	// the shell's idle timers hold; logind's own sleep block is untouched.
+	// A lost name race logs and degrades — caffeine and media rules still work.
+	if screenSaver, ssErr := services.NewScreenSaverService(registry.SetExternalInhibitors); ssErr != nil {
+		log.Printf("sysc-shell: ScreenSaver service: %v", ssErr)
+	} else {
+		registry.SetScreenSaver(screenSaver)
+		defer screenSaver.Remove()
+	}
 	// Built before the plugin host: plugin toasts send through this client,
 	// so BindNotifications must run first. The pumps below still drain it.
 	notifyClient := notifyclient.New(os.Getenv("XDG_RUNTIME_DIR"), registry.NotifyMessages())

@@ -150,6 +150,13 @@ type Registry struct {
 	// idleSvc is the display-power policy. Nil means no idle service is
 	// wired, which is the test and disabled configuration.
 	idleSvc *services.IdleService
+	// screenSaver owns the org.freedesktop.ScreenSaver name. Nil when the
+	// name belongs to another process, which is a degraded but valid state.
+	screenSaver *services.ScreenSaverService
+	// externalInhibitors is the latest published screensaver inhibitor list.
+	// These hold the shell's idle timers only; logind sleep blocking is
+	// untouched, which is the per-application behavior the protocol asks for.
+	externalInhibitors []services.ScreenSaverInhibitor
 
 	running      []runningAppSlot
 	runningIndex []runningAppEntry
@@ -364,7 +371,28 @@ func (r *Registry) pushIdleInputsLocked() {
 		MediaExempt:    r.cfg.Idle.MediaExempt,
 	})
 	r.idleSvc.SetMediaPlaying(r.mediaState.Status == services.PlaybackPlaying)
-	r.idleSvc.SetInhibited(r.inhibitWanted)
+	r.idleSvc.SetInhibited(r.inhibitWanted || len(r.externalInhibitors) > 0)
+}
+
+// SetScreenSaver installs the bus-name owner and takes its first inhibitor
+// snapshot.
+func (r *Registry) SetScreenSaver(ss *services.ScreenSaverService) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.screenSaver = ss
+	if ss != nil {
+		r.externalInhibitors = ss.ListInhibitors()
+	}
+	r.pushIdleInputsLocked()
+}
+
+// SetExternalInhibitors is the screensaver service's change callback. It runs
+// on that service's D-Bus signal pump goroutine.
+func (r *Registry) SetExternalInhibitors(list []services.ScreenSaverInhibitor) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.externalInhibitors = list
+	r.pushIdleInputsLocked()
 }
 
 func (r *Registry) pushIdleInputs() {
@@ -787,6 +815,10 @@ func (r *Registry) Status() map[string]any {
 		panels = append(panels, id.String())
 	}
 	cfg := r.cfg
+	inhibitors := make([]string, 0, len(r.externalInhibitors))
+	for _, in := range r.externalInhibitors {
+		inhibitors = append(inhibitors, in.App)
+	}
 	r.mu.Unlock()
 	templates := map[string]bool{}
 	for _, name := range theming.Catalog().Names() {
@@ -794,12 +826,13 @@ func (r *Registry) Status() map[string]any {
 	}
 	_, err := exec.LookPath("matugen")
 	return map[string]any{
-		"version":    "sysc-shell",
-		"audio":      audio,
-		"brightness": bright,
-		"panels":     panels,
-		"matugen":    err == nil,
-		"templates":  templates,
+		"version":         "sysc-shell",
+		"audio":           audio,
+		"brightness":      bright,
+		"panels":          panels,
+		"matugen":         err == nil,
+		"templates":       templates,
+		"idle_inhibitors": inhibitors,
 	}
 }
 
