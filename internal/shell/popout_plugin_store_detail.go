@@ -68,6 +68,11 @@ func pluginStoreDetail(r *Registry, h *PanelHost, key string, width int, metrics
 
 	body := max(width-theme.MarginM, 1) // room for the scroll bar
 	children := []*ui.Node{pluginStoreDetailSummary(r, h, detail, body, metrics)}
+	if h.pluginStoreDetailNote != "" {
+		note := h.wrappedText(h.pluginStoreDetailNote, theme.RoleBody, ui.ToneAccent, body, 0)
+		note.Key = "store-detail-note"
+		children = append(children, note)
+	}
 	if consentOpen {
 		children = append(children, pluginStoreConsentBlock(h, detail, body, metrics))
 	} else if h.pluginStoreRemoveConfirm {
@@ -106,9 +111,8 @@ func pluginStoreDetailHeader(detail Detail, width int, metrics theme.Metrics) *u
 	if detail.ReleaseNotes != "" {
 		actions = append(actions, pluginStoreIconButton("store-open-release-notes", "Open release notes", "description", metrics))
 	}
-	if detail.Action != ActionDisabled {
-		actions = append(actions, pluginStoreDetailPrimary(detail, metrics))
-	}
+	// With no action to offer, the reason sits where the action would.
+	actions = append(actions, pluginStoreDetailPrimary(detail, metrics))
 	actions = append(actions, pluginStoreIconButton("store-close", "Close", "close", metrics))
 	lead := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
 		pluginStoreIconButton("store-back", "Back to plugins", "chevron_left", metrics),
@@ -169,6 +173,9 @@ func pluginStoreDetailSummary(r *Registry, h *PanelHost, detail Detail, width in
 	}
 	if detail.Category != "" {
 		badges.Children = append(badges.Children, pluginStoreTag(categoryLabel(detail.Category), ui.FillContainerHighest))
+	}
+	if detail.InstalledVersion != "" {
+		badges.Children = append(badges.Children, pluginStoreTag("Installed v"+detail.InstalledVersion, ui.FillSoft))
 	}
 	var meta []string
 	if detail.Author != "" {
@@ -238,7 +245,7 @@ func pluginStoreDetailPrimary(detail Detail, metrics theme.Metrics) *ui.Node {
 	if text == "" {
 		text = "Unavailable"
 	}
-	return &ui.Node{Kind: ui.KindText, Text: text, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle}
+	return pluginStoreTag(strings.ToUpper(text[:1])+text[1:], ui.FillContainerHighest)
 }
 
 // pluginStoreConfirmRow is Cancel then the confirming action, at the end of
@@ -299,6 +306,7 @@ func (h *PanelHost) pluginStoreBeginPrimary(r *Registry) {
 		h.pluginStoreConsent = nil
 	}
 	h.pluginStoreDetailErr = ""
+	h.pluginStoreDetailNote = ""
 	enabled := slices.Contains(r.cfg.Plugins.Enabled, listing.Entry.ID)
 	detail := detailFor(listing, enabled, r.pluginStoreSnapshot.Media, "")
 	switch detail.Action {
@@ -335,6 +343,7 @@ func (h *PanelHost) pluginStoreConfirm(r *Registry) {
 		} else {
 			h.pluginStoreRemoveConfirm = false
 			h.pluginStoreDetailErr = ""
+			h.pluginStoreDetailNote = "Removed " + listing.Entry.Name + ". Its settings are kept."
 		}
 		r.rebuildPanel(h)
 		return
@@ -352,6 +361,16 @@ func (h *PanelHost) pluginStoreConfirm(r *Registry) {
 	if err != nil {
 		h.pluginStoreDetailErr = err.Error()
 	} else {
+		verb := "Installed "
+		if pinned.action == ActionUpdate {
+			verb = "Updated "
+		}
+		h.pluginStoreDetailNote = verb + pinned.listing.Entry.Name + " " + pinned.ref.Version + "."
+		if pinned.enabled {
+			h.pluginStoreDetailNote += " It is enabled and starts now."
+		} else {
+			h.pluginStoreDetailNote += " Turn it on in Settings → Plugins."
+		}
 		h.pluginStoreConsent = nil
 		h.pluginStoreDetailErr = ""
 	}
@@ -359,6 +378,7 @@ func (h *PanelHost) pluginStoreConfirm(r *Registry) {
 }
 
 func (h *PanelHost) pluginStoreLeaveDetail(r *Registry) {
+	h.pluginStoreDetailNote = ""
 	h.pluginStoreDetail = ""
 	h.pluginStoreConsent = nil
 	h.pluginStoreRemoveConfirm = false

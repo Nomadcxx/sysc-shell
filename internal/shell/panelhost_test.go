@@ -143,6 +143,51 @@ func TestShieldPressAfterQuietClosesThePanel(t *testing.T) {
 	}
 }
 
+// A press the compositor delivers to the shield while the pointer is over the
+// panel itself is not a click outside. Taking it as one closed Settings under
+// a click on its own rail, silently (2026-09-29, laptop).
+func TestShieldPressInsideThePanelKeepsItOpen(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+	reqs := drainAux(t, reg, 2)
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelSettings]
+	h.shieldQuiet = time.Time{}
+	body := h.place.Rect()
+	reg.mu.Unlock()
+	inside := wayland.Event{Kind: wayland.EventPointerPress, X: float64(body.X + body.W/2), Y: float64(body.Y + body.H/2)}
+	if reqs[0].Open.Callbacks.Handle(inside) {
+		t.Fatal("a shield press inside the panel reported a close")
+	}
+	if _, ok := reg.panels.Output(PanelSettings); !ok {
+		t.Fatal("a shield press inside the panel closed it")
+	}
+	outside := wayland.Event{Kind: wayland.EventPointerPress, X: float64(body.X + body.W + 5), Y: float64(body.Y + body.H/2)}
+	if !reqs[0].Open.Callbacks.Handle(outside) {
+		t.Fatal("a shield press beside the panel did not close it")
+	}
+}
+
+func TestPlacementRectIsTheBodyOnTheOutput(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		p    Placement
+		want ui.Rect
+	}{
+		{"top attached", Placement{BarEdge: "top", BarZone: 40, Output: ui.Rect{W: 1000, H: 800}, Panel: ui.Rect{W: 200, H: 100}, Align: "left", Padding: 8}, ui.Rect{X: 8, Y: 40, W: 200, H: 100}},
+		{"bottom attached", Placement{BarEdge: "bottom", BarZone: 40, Output: ui.Rect{W: 1000, H: 800}, Panel: ui.Rect{W: 200, H: 100}, Align: "left", Padding: 8}, ui.Rect{X: 8, Y: 660, W: 200, H: 100}},
+		{"centred below the bar", Placement{BarEdge: "top", BarZone: 40, Output: ui.Rect{W: 1000, H: 800}, Panel: ui.Rect{W: 200, H: 100}, CenterY: true, Padding: 8}, ui.Rect{X: 400, Y: 366, W: 200, H: 100}},
+	} {
+		if got := tc.p.Rect(); got != tc.want {
+			t.Errorf("%s: Rect() = %+v, want %+v", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestEscapeClosesPanel(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)

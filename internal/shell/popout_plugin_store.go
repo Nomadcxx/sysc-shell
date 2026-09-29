@@ -695,6 +695,7 @@ func (h *PanelHost) activatePluginStore(r *Registry, n *ui.Node) bool {
 		h.pluginStoreScroll = 0
 		r.rebuildPanel(h)
 	case strings.HasPrefix(n.Action, "store-open:"):
+		h.pluginStoreDetailNote = ""
 		h.pluginStoreSelected = strings.TrimPrefix(n.Action, "store-open:")
 		h.pluginStoreDetail = h.pluginStoreSelected
 		h.pluginStoreConsent = nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"os"
 	"strconv"
@@ -238,6 +239,7 @@ type PanelHost struct {
 	pluginStoreConsent        *pluginStorePinnedConsent
 	pluginStoreRemoveConfirm  bool
 	pluginStoreDetailErr      string
+	pluginStoreDetailNote     string
 	pluginStoreDetailScroll   int
 	pluginStoreScroll         int
 	pluginStoreColumns        int
@@ -1091,6 +1093,17 @@ func (r *Registry) shieldSpec(h *PanelHost) *wayland.AuxSpec {
 			Handle: func(e wayland.Event) bool {
 				if e.Kind == wayland.EventPointerPress {
 					if time.Now().Before(h.shieldQuiet) {
+						return false
+					}
+					// A press over the panel's own body is not a click
+					// outside, even when the compositor hands it to the
+					// shield. Taking it as one closed Settings under a click
+					// on its rail, and said nothing about why.
+					r.mu.Lock()
+					body := h.place.Rect()
+					r.mu.Unlock()
+					if body.Contains(int(e.X), int(e.Y)) {
+						log.Printf("shell: shield took a press inside %s at %.0f,%.0f; keeping the panel open", h.id, e.X, e.Y)
 						return false
 					}
 					r.ClosePanel(h.id)

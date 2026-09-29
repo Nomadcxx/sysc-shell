@@ -290,6 +290,7 @@ type Detail struct {
 	Reason           string
 	NeedsConsent     bool
 	StartImmediately bool
+	InstalledVersion string
 	ConsentLines     []string
 }
 
@@ -331,14 +332,17 @@ func detailFor(listing store.Listing, enabled bool, media map[string]store.Media
 		Screenshot:       card.Screenshot, ScreenshotPath: card.ScreenshotPath, Badges: card.Badges,
 		Action: action, Reason: reason, NeedsConsent: needsConsent, StartImmediately: enabled,
 	}
+	if listing.Installed != nil {
+		detail.InstalledVersion = listing.Installed.Version
+	}
 	if action == ActionInstall || action == ActionUpdate {
 		detail.ConsentLines = []string{
 			"Source: " + detail.SourceBadge,
 			"Version: " + version,
 			"Catalog commit: " + listing.CatalogCommit,
 			"SHA-256: " + sha,
-			"Capabilities: " + strings.Join(detail.Capabilities, ", "),
-			"Required commands: " + strings.Join(detail.RequiredCommands, ", "),
+			"Capabilities: " + joinOrNone(detail.Capabilities),
+			"Required commands: " + joinOrNone(detail.RequiredCommands),
 			"It runs as your user with full file and network access.",
 		}
 		if enabled {
@@ -346,6 +350,13 @@ func detailFor(listing store.Listing, enabled bool, media map[string]store.Media
 		}
 	}
 	return detail
+}
+
+func joinOrNone(values []string) string {
+	if len(values) == 0 {
+		return "none"
+	}
+	return strings.Join(values, ", ")
 }
 
 func detailAction(listing store.Listing) (StoreAction, string) {

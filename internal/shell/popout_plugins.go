@@ -35,7 +35,8 @@ func pluginsTree(r *Registry, h *PanelHost) *ui.Node {
 		{Kind: ui.KindText, Text: "Browse plugins"},
 	}}}
 	browse.Text = ""
-	top := &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: settingsBodyWidth(h), Height: metrics.StandardControl, Children: []*ui.Node{segments, browse}}
+	// The body scrolls; its bar keeps a lane at the right edge.
+	top := &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: max(settingsBodyWidth(h)-theme.MarginM, 1), Height: metrics.StandardControl, Children: []*ui.Node{segments, browse}}
 	children := []*ui.Node{top}
 	switch {
 	case r == nil:
@@ -496,9 +497,7 @@ func pluginManagerInstalledRow(r *Registry, h *PanelHost, row pluginManagerRow, 
 			provenance = "managed install"
 		}
 	}
-	if row.candidate != nil && row.candidate.Source == plugin.SourceUser && provenance == "" {
-		provenance = "local"
-	}
+	// A plugin in the user root already reads "Local" on its badge.
 	if source == "" {
 		source = "local"
 	}

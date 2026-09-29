@@ -192,6 +192,16 @@ func (p Placement) Margins() Margins {
 	return Margins{Top: anchor, Left: x}
 }
 
+// Rect is the panel's body on its output, in logical pixels.
+func (p Placement) Rect() ui.Rect {
+	m := p.Margins()
+	y := m.Top
+	if p.BarEdge == "bottom" {
+		y = p.Output.H - m.Bottom - p.Panel.H
+	}
+	return ui.Rect{X: m.Left, Y: y, W: p.Panel.W, H: p.Panel.H}
+}
+
 func alignX(p Placement) int {
 	if p.AnchorX > 0 {
 		return p.AnchorX - p.Panel.W/2
