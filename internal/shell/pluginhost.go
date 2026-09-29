@@ -372,7 +372,9 @@ func (h *pluginHost) onMessage(slot *pluginSlot, msg v1.Message) {
 		v, ok := h.views[m.ViewID]
 		h.mu.Unlock()
 		if !ok {
-			slog.Warn("plugin view for unknown placement dropped", "plugin", slot.rt.Manifest().ID, "view_id", m.ViewID)
+			// Snapshots can already be in flight when the host closes a view,
+			// especially while replacing a panel. Discard them like stale patches.
+			slog.Debug("plugin view for unknown placement dropped", "plugin", slot.rt.Manifest().ID, "view_id", m.ViewID)
 			return
 		}
 		h.mu.Lock()
