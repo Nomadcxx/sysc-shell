@@ -280,7 +280,13 @@ func NewRegistry(cfg config.Config) *Registry {
 	// a separate goroutine after the setter returns.
 	r.notify.onDND = func(on bool) { go r.OSD().Show(OSDView{Kind: osdDND, On: on}) }
 	r.setAudio(services.NewAudio(0, ""))
-	r.setBrightness(services.NewBrightness("", "", 0))
+	// DDC probing opens real i2c buses; keep unit and shell tests on sysfs
+	// only so a test run never puts traffic on a live monitor.
+	if runningAsTest() {
+		r.setBrightness(services.NewBrightness("", "", 0))
+	} else {
+		r.setBrightness(services.NewBrightnessDDC("", "", 0))
+	}
 	if !runningAsTest() {
 		r.lockKeys = services.NewLockKeys("", 0)
 		r.lockKeys.Start()

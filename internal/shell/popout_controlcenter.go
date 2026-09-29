@@ -250,6 +250,15 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 	if strings.HasPrefix(n.Action, "media:") {
 		return h.activateMedia(r, n)
 	}
+	if id, ok := strings.CutPrefix(n.Action, "cc:brightness:"); ok {
+		brightness := r.brightness
+		if brightness == nil {
+			return false
+		}
+		level := int(n.Value)
+		r.scheduleControl(h, func() error { return brightness.SetDisplay(id, level) })
+		return true
+	}
 	var target PanelID
 	switch n.Action {
 	case "cc:settings":
