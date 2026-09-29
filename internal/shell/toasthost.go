@@ -827,7 +827,7 @@ func (h *toastHost) wrapBody(s string) []string {
 func (h *toastHost) recompute() {
 	s := h.r.notify
 	s.mu.Lock()
-	suppressed := s.dnd || s.centerOpen
+	suppressed := s.dndActiveLocked(h.r.clockNow()) || s.centerOpen
 	records := make([]uint32, 0, len(s.active))
 	active := make(map[uint32]struct{}, len(s.active))
 	for id := range s.active {

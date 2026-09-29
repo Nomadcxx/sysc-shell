@@ -384,6 +384,30 @@ func TestCentreOpenClearsUnreadWhenTheDaemonConfirms(t *testing.T) {
 	}
 }
 
+// A history entry that arrives while the centre is open must be marked seen
+// too: the user is looking at it, and the badge must not come back until the
+// centre is reopened (GH #50).
+func TestCentreOpenMarksNewHistorySeen(t *testing.T) {
+	sender := &fakeNotifySender{}
+	r := openCentreWithUnseen(t, sender)
+	r.applyNotify(delta(1, 3, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
+		History: ptrH(historyEntry(3, "chat", "Chat", "new", time.Unix(1_756_000_100, 0), false))}))
+	sent := sender.ofKind(protocol.CommandHistoryMarkSeen)
+	if len(sent) != 2 {
+		t.Fatalf("mark-seen commands = %+v, want a second after the new entry", sent)
+	}
+	if len(sent[1].IDs) != 2 || sent[1].IDs[0] != 2 || sent[1].IDs[1] != 3 {
+		t.Fatalf("second mark-seen = %v, want ids [2 3]", sent[1].IDs)
+	}
+	if got := r.unreadCount(); got != 2 {
+		t.Fatalf("unread = %d before the daemon confirmed, want 2", got)
+	}
+	r.applyNotify(delta(1, 4, protocol.Delta{Kind: protocol.DeltaHistorySeen, IDs: []uint32{2, 3}}))
+	if got := r.unreadCount(); got != 0 {
+		t.Fatalf("unread = %d after the confirmation, want 0", got)
+	}
+}
+
 // The bar badge reads unread history, so a notify message that changes it
 // must repaint the bar rather than wait for the next clock tick.
 func TestNotifyMessageRepaintsTheBarBadge(t *testing.T) {
