@@ -21,6 +21,41 @@ type pluginStorePinnedConsent struct {
 	enabled bool
 }
 
+// pluginStorePendingOp is an install, update or removal the detail queued.
+// The worker reports its outcome through the snapshot, so the line under the
+// summary is read from the listing: in progress until the listing shows the
+// result, and nothing once a new error appears, which the detail shows.
+type pluginStorePendingOp struct {
+	key, name, version string
+	update, remove     bool
+	enabled            bool
+	prevErr            error
+}
+
+func (op *pluginStorePendingOp) status(l store.Listing) string {
+	switch {
+	case l.Err != nil && l.Err != op.prevErr:
+		return ""
+	case op.remove && l.Installed == nil:
+		return "Removed " + op.name + ". Its settings are kept."
+	case op.remove:
+		return "Removing " + op.name + "…"
+	case l.Installed != nil && l.Installed.Version == op.version:
+		done := "Installed "
+		if op.update {
+			done = "Updated "
+		}
+		if op.enabled {
+			return done + op.name + " " + op.version + ". It is enabled and starts now."
+		}
+		return done + op.name + " " + op.version + ". Turn it on in Settings → Plugins."
+	case op.update:
+		return "Updating " + op.name + " to " + op.version + "…"
+	default:
+		return "Installing " + op.name + " " + op.version + "…"
+	}
+}
+
 var openURL = openURLDefault
 
 func openURLDefault(raw string) error {
@@ -68,10 +103,12 @@ func pluginStoreDetail(r *Registry, h *PanelHost, key string, width int, metrics
 
 	body := max(width-theme.MarginM, 1) // room for the scroll bar
 	children := []*ui.Node{pluginStoreDetailSummary(r, h, detail, body, metrics)}
-	if h.pluginStoreDetailNote != "" {
-		note := h.wrappedText(h.pluginStoreDetailNote, theme.RoleBody, ui.ToneAccent, body, 0)
-		note.Key = "store-detail-note"
-		children = append(children, note)
+	if op := h.pluginStorePending; op != nil && op.key == key {
+		if text := op.status(listing); text != "" {
+			note := h.wrappedText(text, theme.RoleBody, ui.ToneAccent, body, 0)
+			note.Key = "store-detail-note"
+			children = append(children, note)
+		}
 	}
 	if consentOpen {
 		children = append(children, pluginStoreConsentBlock(h, detail, body, metrics))
@@ -167,15 +204,15 @@ func pluginStoreDetailSummary(r *Registry, h *PanelHost, detail Detail, width in
 	}
 
 	infoW := max(width-imageWidth-pluginStoreGap, 1)
-	badges := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS}
+	var tags []*ui.Node
 	for _, badge := range detail.Badges {
-		badges.Children = append(badges.Children, pluginStoreTag(badge.Label, pluginStoreBadgeFill(badge.Tone)))
+		tags = append(tags, pluginStoreTag(badge.Label, pluginStoreBadgeFill(badge.Tone), infoW))
 	}
 	if detail.Category != "" {
-		badges.Children = append(badges.Children, pluginStoreTag(categoryLabel(detail.Category), ui.FillContainerHighest))
+		tags = append(tags, pluginStoreTag(categoryLabel(detail.Category), ui.FillContainerHighest, infoW))
 	}
 	if detail.InstalledVersion != "" {
-		badges.Children = append(badges.Children, pluginStoreTag("Installed v"+detail.InstalledVersion, ui.FillSoft))
+		tags = append(tags, pluginStoreTag("Installed v"+detail.InstalledVersion, ui.FillSoft, infoW))
 	}
 	var meta []string
 	if detail.Author != "" {
@@ -188,16 +225,16 @@ func pluginStoreDetailSummary(r *Registry, h *PanelHost, detail Detail, width in
 		meta = append(meta, detail.License)
 	}
 	info := []*ui.Node{}
-	if len(badges.Children) > 0 {
-		info = append(info, badges)
+	if len(tags) > 0 {
+		info = append(info, h.flowRows(tags, infoW, theme.MarginXS))
 	}
 	info = append(info, &ui.Node{Kind: ui.KindText, Text: strings.Join(meta, " · "), TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: infoW})
 	if detail.Description != "" {
 		info = append(info, h.wrappedText(detail.Description, theme.RoleBody, ui.ToneNormal, infoW, 0))
 	}
 	info = append(info,
-		pluginStoreChipSection("Capabilities", detail.Capabilities),
-		pluginStoreChipSection("Requires", detail.RequiredCommands),
+		pluginStoreChipSection(h, "Capabilities", detail.Capabilities, infoW),
+		pluginStoreChipSection(h, "Requires", detail.RequiredCommands, infoW),
 	)
 	if commit := detail.CatalogCommit; commit != "" {
 		info = append(info, &ui.Node{Kind: ui.KindText, Text: "Catalog commit " + commit[:min(len(commit), 12)], TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, Tabular: true})
@@ -211,24 +248,27 @@ func pluginStoreDetailSummary(r *Registry, h *PanelHost, detail Detail, width in
 	}}
 }
 
-func pluginStoreTag(label string, fill ui.Fill) *ui.Node {
+// pluginStoreTag is a small capsule label. maxWidth bounds it: tags carry
+// catalog data, and one long requirement must not fail the row.
+func pluginStoreTag(label string, fill ui.Fill, maxWidth int) *ui.Node {
 	return &ui.Node{Kind: ui.KindCapsule, Fill: fill, Shape: ui.ShapeSmall, Padding: theme.MarginXS,
-		Children: []*ui.Node{{Kind: ui.KindText, Text: label, TextRole: theme.RoleCaption}}}
+		Children: []*ui.Node{{Kind: ui.KindText, Text: label, TextRole: theme.RoleCaption, MaxWidth: max(maxWidth-2*theme.MarginXS, 1)}}}
 }
 
-// pluginStoreChipSection is a label over its values as outlined chips, the
-// way DMS lists capabilities and dependencies.
-func pluginStoreChipSection(title string, values []string) *ui.Node {
-	row := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS}
-	if len(values) == 0 {
-		row.Children = append(row.Children, &ui.Node{Kind: ui.KindText, Text: "None", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
-	}
+// pluginStoreChipSection is a label over its values as chips, the way DMS
+// lists capabilities and dependencies, flowing onto more lines as needed.
+func pluginStoreChipSection(h *PanelHost, title string, values []string, width int) *ui.Node {
+	var chips []*ui.Node
 	for _, v := range values {
-		row.Children = append(row.Children, pluginStoreTag(v, ui.FillContainerHighest))
+		chips = append(chips, pluginStoreTag(v, ui.FillContainerHighest, width))
+	}
+	body := h.flowRows(chips, width, theme.MarginXS)
+	if len(values) == 0 {
+		body = &ui.Node{Kind: ui.KindText, Text: "None", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle}
 	}
 	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXS, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: title, TextRole: theme.RoleLabel},
-		row,
+		body,
 	}}
 }
 
@@ -245,7 +285,7 @@ func pluginStoreDetailPrimary(detail Detail, metrics theme.Metrics) *ui.Node {
 	if text == "" {
 		text = "Unavailable"
 	}
-	return pluginStoreTag(strings.ToUpper(text[:1])+text[1:], ui.FillContainerHighest)
+	return pluginStoreTag(strings.ToUpper(text[:1])+text[1:], ui.FillContainerHighest, pluginStoreMinCardWidth)
 }
 
 // pluginStoreConfirmRow is Cancel then the confirming action, at the end of
@@ -306,7 +346,7 @@ func (h *PanelHost) pluginStoreBeginPrimary(r *Registry) {
 		h.pluginStoreConsent = nil
 	}
 	h.pluginStoreDetailErr = ""
-	h.pluginStoreDetailNote = ""
+	h.pluginStorePending = nil
 	enabled := slices.Contains(r.cfg.Plugins.Enabled, listing.Entry.ID)
 	detail := detailFor(listing, enabled, r.pluginStoreSnapshot.Media, "")
 	switch detail.Action {
@@ -343,7 +383,9 @@ func (h *PanelHost) pluginStoreConfirm(r *Registry) {
 		} else {
 			h.pluginStoreRemoveConfirm = false
 			h.pluginStoreDetailErr = ""
-			h.pluginStoreDetailNote = "Removed " + listing.Entry.Name + ". Its settings are kept."
+			h.pluginStorePending = &pluginStorePendingOp{
+				key: h.pluginStoreDetail, name: listing.Entry.Name, remove: true, prevErr: listing.Err,
+			}
 		}
 		r.rebuildPanel(h)
 		return
@@ -358,18 +400,19 @@ func (h *PanelHost) pluginStoreConfirm(r *Registry) {
 	} else if pinned.action == ActionUpdate {
 		_, err = s.Update(pinned.listing.Entry.ID, pinned.ref, true)
 	}
-	if err != nil {
+	switch {
+	case store.KindOf(err) == store.KindConsent:
+		// The catalog moved under the sheet: drop the pin so the detail
+		// shows the release that is there now, and consent is asked for it.
+		h.pluginStoreConsent = nil
 		h.pluginStoreDetailErr = err.Error()
-	} else {
-		verb := "Installed "
-		if pinned.action == ActionUpdate {
-			verb = "Updated "
-		}
-		h.pluginStoreDetailNote = verb + pinned.listing.Entry.Name + " " + pinned.ref.Version + "."
-		if pinned.enabled {
-			h.pluginStoreDetailNote += " It is enabled and starts now."
-		} else {
-			h.pluginStoreDetailNote += " Turn it on in Settings → Plugins."
+	case err != nil:
+		h.pluginStoreDetailErr = err.Error()
+	default:
+		current, _ := pluginStoreFind(r.pluginStoreSnapshot.Listings, h.pluginStoreDetail)
+		h.pluginStorePending = &pluginStorePendingOp{
+			key: h.pluginStoreDetail, name: pinned.listing.Entry.Name, version: pinned.ref.Version,
+			update: pinned.action == ActionUpdate, enabled: pinned.enabled, prevErr: current.Err,
 		}
 		h.pluginStoreConsent = nil
 		h.pluginStoreDetailErr = ""
@@ -378,7 +421,7 @@ func (h *PanelHost) pluginStoreConfirm(r *Registry) {
 }
 
 func (h *PanelHost) pluginStoreLeaveDetail(r *Registry) {
-	h.pluginStoreDetailNote = ""
+	h.pluginStorePending = nil
 	h.pluginStoreDetail = ""
 	h.pluginStoreConsent = nil
 	h.pluginStoreRemoveConfirm = false

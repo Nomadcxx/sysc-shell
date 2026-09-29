@@ -155,6 +155,9 @@ type PanelHost struct {
 	// configure at another scale rebuilds it (its measured widths and the bar
 	// pictures depend on it).
 	settingsTreeScale int
+	// pluginStoreTreeScale is the same for the plugin store, whose cards,
+	// chip rows and wrapped text are measured as they are built.
+	pluginStoreTreeScale int
 	// pluginName resolves a plugin ID to its catalogue name for the bar
 	// editor's rows (settings redesign D9). Set by barLaneStripFor; nil
 	// falls back to the plugin ID.
@@ -239,7 +242,7 @@ type PanelHost struct {
 	pluginStoreConsent        *pluginStorePinnedConsent
 	pluginStoreRemoveConfirm  bool
 	pluginStoreDetailErr      string
-	pluginStoreDetailNote     string
+	pluginStorePending        *pluginStorePendingOp
 	pluginStoreDetailScroll   int
 	pluginStoreScroll         int
 	pluginStoreColumns        int
@@ -604,9 +607,6 @@ func (r *Registry) closePanelLocked(id PanelID) {
 	}
 	r.panels.Close(id)
 	r.teardownPanelLocked(id)
-	if id == PanelPluginStore && r.pluginStore != nil {
-		r.pluginStore.Want(nil)
-	}
 	if id == PanelPlugin && r.plugins != nil {
 		ids := r.plugins.snapshotPanelViewIDs()
 		go r.plugins.dropPanelViews(ids)
@@ -1328,16 +1328,18 @@ func (h *PanelHost) configureLocking(r *Registry) func(int, int, int) error {
 	return func(w, height, scale120 int) error {
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		if err := h.configure(w, height, scale120); err != nil {
-			return err
-		}
-		// The settings tree is built before the first configure, at the
-		// bar's scale or none; widths and bar pictures measured at another
-		// scale are rebuilt at this one.
-		if h.id == PanelSettings && h.settingsTreeScale != scale120 && ui.Scale120(scale120).Valid() {
+		// Settings and the plugin store measure text as their trees are
+		// built, first at the bar's scale or none. At another scale the tree
+		// is rebuilt before it is laid out: laying out the stale one first
+		// can fail to fit and close the surface.
+		if built, measured := h.treeScale(); measured && built != scale120 && ui.Scale120(scale120).Valid() {
+			h.logicalW, h.logicalH, h.scale120 = w, height, scale120
+			if err := h.ensureText(); err != nil {
+				return err
+			}
 			r.rebuildPanel(h)
 		}
-		return nil
+		return h.configure(w, height, scale120)
 	}
 }
 
@@ -1555,6 +1557,7 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			}
 			if h.scrollDrag != nil {
 				ui.ScrollSetFromY(h.scrollDrag, h.hoverY)
+				h.notePluginStoreScroll(h.scrollDrag)
 				if h.logicalW > 0 {
 					_ = h.configure(h.logicalW, h.logicalH, h.scale120)
 				}
@@ -1594,6 +1597,7 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			if s := scrollTrackAt(h.root, h.hoverX, h.hoverY); s != nil {
 				h.scrollDrag = s
 				ui.ScrollSetFromY(s, h.hoverY)
+				h.notePluginStoreScroll(s)
 				if h.logicalW > 0 {
 					_ = h.configure(h.logicalW, h.logicalH, h.scale120)
 				}
@@ -1638,6 +1642,7 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			}
 			if h.scrollDrag != nil {
 				h.scrollDrag = nil
+				h.afterPluginStoreScroll(r)
 				return true
 			}
 			if h.drag.Active() {
@@ -1846,10 +1851,15 @@ func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) bool {
 		if h.adjustSlider(r, key) {
 			return true
 		}
+		off := 1 << 30
 		if key == keyHome {
-			return h.scrollTo(0)
+			off = 0
 		}
-		return h.scrollTo(1 << 30)
+		if !h.scrollTo(off) {
+			return false
+		}
+		h.afterPluginStoreScroll(r)
+		return true
 	case keyPageUp:
 		return h.scrollBy(-max(h.logicalH, 1))
 	case keyPageDown:
@@ -1919,7 +1929,11 @@ func (h *PanelHost) scrollAxis(r *Registry, e wayland.Event) bool {
 		h.launcherMoveSel(r, rows)
 		return true
 	}
-	return h.scrollBy(delta)
+	if !h.scrollBy(delta) {
+		return false
+	}
+	h.afterPluginStoreScroll(r)
+	return true
 }
 
 func (h *PanelHost) scrollBy(delta int) bool {
@@ -1928,9 +1942,7 @@ func (h *PanelHost) scrollBy(delta int) bool {
 		return false
 	}
 	ui.ScrollBy(s, delta)
-	if h.id == PanelPluginStore && h.pluginStoreDetail != "" {
-		h.pluginStoreDetailScroll = s.ScrollOffset
-	}
+	h.notePluginStoreScroll(s)
 	if h.id == PanelLauncher {
 		h.launcherScroll = s.ScrollOffset
 	}
@@ -1947,9 +1959,7 @@ func (h *PanelHost) scrollTo(off int) bool {
 	}
 	s.ScrollOffset = off
 	ui.ScrollBy(s, 0)
-	if h.id == PanelPluginStore && h.pluginStoreDetail != "" {
-		h.pluginStoreDetailScroll = s.ScrollOffset
-	}
+	h.notePluginStoreScroll(s)
 	if h.logicalW > 0 {
 		_ = h.configure(h.logicalW, h.logicalH, h.scale120)
 	}
@@ -3259,6 +3269,12 @@ func (r *Registry) surfaceFrameLoop(h *PanelHost) {
 }
 
 func (r *Registry) teardownPanelLocked(id PanelID) {
+	// Every close of the store passes here (Escape, close, the shield, another
+	// panel taking its place), and each must stop the worker fetching media
+	// for a panel no one can see.
+	if id == PanelPluginStore && r.pluginStore != nil {
+		r.pluginStore.Want(nil)
+	}
 	if id == PanelNotifications {
 		r.setCenterOpen(false)
 	}
@@ -3439,4 +3455,38 @@ func overlayEditors(root *ui.Node, eds map[string]*retainedEditor) {
 			delete(eds, k)
 		}
 	}
+}
+
+// notePluginStoreScroll carries a scroll the pointer or a key made on the
+// store's tree back to the host, which the next rebuild reads: otherwise any
+// snapshot from the worker put the grid back at the top.
+func (h *PanelHost) notePluginStoreScroll(s *ui.Node) {
+	if h.id != PanelPluginStore || s == nil {
+		return
+	}
+	if h.pluginStoreDetail != "" {
+		h.pluginStoreDetailScroll = s.ScrollOffset
+	} else if s.Key == "plugin-store-grid" {
+		h.pluginStoreScroll = s.ScrollOffset
+	}
+}
+
+// afterPluginStoreScroll rebuilds the grid after it scrolled, so the rows
+// that came into view ask the worker for their screenshots.
+func (h *PanelHost) afterPluginStoreScroll(r *Registry) {
+	if r != nil && h.id == PanelPluginStore && h.pluginStoreDetail == "" {
+		r.rebuildPanel(h)
+	}
+}
+
+// treeScale is the scale the tree was built at, for a panel whose tree
+// measures text as it is built; measured is false for every other panel.
+func (h *PanelHost) treeScale() (built int, measured bool) {
+	switch h.id {
+	case PanelSettings:
+		return h.settingsTreeScale, true
+	case PanelPluginStore:
+		return h.pluginStoreTreeScale, true
+	}
+	return 0, false
 }

@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -122,5 +123,31 @@ func renderPluginStorePanel(t *testing.T, panel *wayland.AuxSpec) {
 	pixels := make([]byte, width*height*4)
 	if err := panel.Callbacks.Render(pixels, width, height, width*4); err != nil {
 		t.Fatalf("render plugin store panel: %v", err)
+	}
+}
+
+// The line under a queued install or removal follows the worker: in
+// progress until the listing shows the outcome, silent once a new error
+// arrives (the detail shows that), never claiming success at enqueue.
+func TestPluginStorePendingOpReadsTheOutcomeFromTheListing(t *testing.T) {
+	old := errors.New("earlier failure")
+	fresh := errors.New("download failed")
+	install := &pluginStorePendingOp{name: "Timer", version: "1.4.0", enabled: true, prevErr: old}
+	remove := &pluginStorePendingOp{name: "Timer", remove: true}
+	for _, tc := range []struct {
+		name string
+		op   *pluginStorePendingOp
+		l    store.Listing
+		want string
+	}{
+		{"install queued", install, store.Listing{Err: old}, "Installing Timer 1.4.0…"},
+		{"install done", install, store.Listing{Installed: &store.Record{Version: "1.4.0"}}, "Installed Timer 1.4.0. It is enabled and starts now."},
+		{"install failed", install, store.Listing{Err: fresh}, ""},
+		{"remove queued", remove, store.Listing{Installed: &store.Record{Version: "1.4.0"}}, "Removing Timer…"},
+		{"remove done", remove, store.Listing{}, "Removed Timer. Its settings are kept."},
+	} {
+		if got := tc.op.status(tc.l); got != tc.want {
+			t.Errorf("%s: status = %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }

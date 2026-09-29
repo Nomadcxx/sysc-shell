@@ -23,6 +23,7 @@ func pluginStoreTree(r *Registry, h *PanelHost) *ui.Node {
 		h.search = ui.NewField("")
 	}
 	h.pluginStoreQuery.Text = h.search.Text
+	h.pluginStoreTreeScale = h.scale120
 	state := r.pluginStoreSnapshot
 	metrics := h.theme.Metrics
 	inner := max(h.place.Panel.W-2*pluginStorePadding, 0)
@@ -149,18 +150,18 @@ func pluginStoreSearch(h *PanelHost, width int, metrics theme.Metrics) *ui.Node 
 
 // pluginStoreChips is the filter row, and under it the category row while
 // Categories is open (Noctalia's expander: every choice stays a chip, so the
-// row keeps one height and the keyboard reaches each option in turn).
+// keyboard reaches each option in turn). Both flow onto more lines when the
+// sources or categories a catalog brings do not fit one.
 func pluginStoreChips(h *PanelHost, state store.State, width int, metrics theme.Metrics) []*ui.Node {
-	row := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS, Width: width, Height: metrics.CompactControl}
 	var sources []string
 	for _, source := range state.Sources {
 		if source.Name != "" && !slices.Contains(sources, source.Name) {
 			sources = append(sources, source.Name)
 		}
 	}
-	row.Children = append(row.Children, pluginStoreChip("store-source:", "All sources", "", h.pluginStoreQuery.Source == "", metrics))
+	chips := []*ui.Node{pluginStoreChip("store-source:", "All sources", "", h.pluginStoreQuery.Source == "", metrics)}
 	for _, source := range sources {
-		row.Children = append(row.Children, pluginStoreChip("store-source:"+source, pluginSourceLabel(source), "", h.pluginStoreQuery.Source == source, metrics))
+		chips = append(chips, pluginStoreChip("store-source:"+source, pluginSourceLabel(source), "", h.pluginStoreQuery.Source == source, metrics))
 	}
 	categoryLabelText := "Categories"
 	if h.pluginStoreQuery.Category != "" {
@@ -170,21 +171,58 @@ func pluginStoreChips(h *PanelHost, state store.State, width int, metrics theme.
 	if h.pluginStoreCategoriesOpen {
 		chevron = "expand_more"
 	}
-	row.Children = append(row.Children,
+	chips = append(chips,
 		pluginStoreChip("store-categories", categoryLabelText, chevron, h.pluginStoreQuery.Category != "", metrics),
 		pluginStoreChip("store-hide-installed", "Hide installed", "", h.pluginStoreQuery.HideInstalled, metrics),
 		pluginStoreChip("store-sort", "Sort: "+pluginStoreSortLabel(h.pluginStoreQuery.Sort), "swap_vert", false, metrics),
 	)
-	out := []*ui.Node{row}
+	out := []*ui.Node{h.flowRows(chips, width, theme.MarginXS)}
 	if h.pluginStoreCategoriesOpen {
-		cats := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS, Width: width, Height: metrics.CompactControl}
-		cats.Children = append(cats.Children, pluginStoreChip("store-category:", "All categories", "", h.pluginStoreQuery.Category == "", metrics))
+		cats := []*ui.Node{pluginStoreChip("store-category:", "All categories", "", h.pluginStoreQuery.Category == "", metrics)}
 		for _, category := range pluginStoreCategories(h, state) {
-			cats.Children = append(cats.Children, pluginStoreChip("store-category:"+category, categoryLabel(category), "", h.pluginStoreQuery.Category == category, metrics))
+			cats = append(cats, pluginStoreChip("store-category:"+category, categoryLabel(category), "", h.pluginStoreQuery.Category == category, metrics))
 		}
-		out = append(out, cats)
+		out = append(out, h.flowRows(cats, width, theme.MarginXS))
 	}
 	return out
+}
+
+// flowRows lays items left to right and starts a new line when the next one
+// would pass width, so a set whose size comes from catalog data (sources,
+// categories, capabilities, requirements, badges) cannot fail layout.
+func (h *PanelHost) flowRows(items []*ui.Node, width, gap int) *ui.Node {
+	measure := h.measureText()
+	col := &ui.Node{Kind: ui.KindColumn, Gap: gap}
+	row := &ui.Node{Kind: ui.KindRow, Gap: gap}
+	used := 0
+	for _, item := range items {
+		w, ih, err := ui.Measure(item, measure)
+		if err != nil {
+			w = width
+		}
+		if len(row.Children) > 0 && used+gap+w > width {
+			col.Children = append(col.Children, row)
+			row = &ui.Node{Kind: ui.KindRow, Gap: gap}
+			used = 0
+		}
+		if len(row.Children) > 0 {
+			used += gap
+		}
+		used += w
+		// The line is as tall as its tallest item. A capsule takes the height
+		// of the row it sits in and measures zero on its own, so its natural
+		// height -- its content plus padding -- is asked for as well; a line
+		// of tags alone would otherwise be laid out with no height at all.
+		if natural, err := ui.ContentHeight(item, w, measure); err == nil {
+			ih = max(ih, natural)
+		}
+		row.Height = max(row.Height, ih)
+		row.Children = append(row.Children, item)
+	}
+	if len(row.Children) > 0 {
+		col.Children = append(col.Children, row)
+	}
+	return col
 }
 
 // pluginStoreCategories is every category the chosen source offers.
@@ -225,7 +263,8 @@ func pluginStoreSortLabel(key SortKey) string {
 }
 
 func pluginStoreChip(action, label, icon string, selected bool, metrics theme.Metrics) *ui.Node {
-	content := []*ui.Node{{Kind: ui.KindText, Text: label, TextRole: theme.RoleLabel}}
+	// A chip's label is at most a source name, which config caps at 32 runes.
+	content := []*ui.Node{{Kind: ui.KindText, Text: label, TextRole: theme.RoleLabel, MaxWidth: pluginStoreMinCardWidth}}
 	if selected {
 		content = append([]*ui.Node{{Kind: ui.KindIcon, Icon: "check", IconSize: metrics.IconSmall}}, content...)
 	}
@@ -380,14 +419,14 @@ func pluginStoreCardNode(r *Registry, h *PanelHost, listing store.Listing, width
 		stack.Children = append(stack.Children, glyph)
 	}
 	if len(card.Badges) > 0 {
-		badges := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXXS}
+		room := max(inner-2*theme.MarginXS, 1)
+		var badges []*ui.Node
 		for _, badge := range card.Badges {
-			badges.Children = append(badges.Children, &ui.Node{
-				Kind: ui.KindCapsule, Fill: pluginStoreBadgeFill(badge.Tone), Shape: ui.ShapeSmall, Padding: theme.MarginXS,
-				Children: []*ui.Node{{Kind: ui.KindText, Text: badge.Label, TextRole: theme.RoleCaption}},
-			})
+			badges = append(badges, pluginStoreTag(badge.Label, pluginStoreBadgeFill(badge.Tone), room))
 		}
-		stack.Children = append(stack.Children, &ui.Node{Kind: ui.KindColumn, Padding: theme.MarginXS, Children: []*ui.Node{badges}})
+		stack.Children = append(stack.Children, &ui.Node{Kind: ui.KindColumn, Padding: theme.MarginXS, Children: []*ui.Node{
+			h.flowRows(badges, room, theme.MarginXXS),
+		}})
 	}
 	description := card.Description
 	if description == "" {
@@ -571,6 +610,15 @@ func (h *PanelHost) pluginStoreKeyPress(r *Registry, key uint32) bool {
 		}
 		return false
 	}
+	// The grid keys belong to the grid. With the detail open, or a chip or
+	// button focused, Enter activates that control and the arrows move focus
+	// through the generic path.
+	if h.pluginStoreDetail != "" {
+		return false
+	}
+	if focused := h.focused(); focused != nil && !strings.HasPrefix(focused.StableKey(), "store-card:") {
+		return false
+	}
 	listings := browseListings(r.pluginStoreSnapshot.Listings, h.pluginStoreQuery)
 	index := pluginStoreSelectionIndex(listings, h.pluginStoreSelected)
 	switch key {
@@ -695,7 +743,7 @@ func (h *PanelHost) activatePluginStore(r *Registry, n *ui.Node) bool {
 		h.pluginStoreScroll = 0
 		r.rebuildPanel(h)
 	case strings.HasPrefix(n.Action, "store-open:"):
-		h.pluginStoreDetailNote = ""
+		h.pluginStorePending = nil
 		h.pluginStoreSelected = strings.TrimPrefix(n.Action, "store-open:")
 		h.pluginStoreDetail = h.pluginStoreSelected
 		h.pluginStoreConsent = nil

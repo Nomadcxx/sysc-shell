@@ -200,3 +200,67 @@ func paintPluginStorePNG(t *testing.T, panel *wayland.AuxSpec, scale120 int, pat
 	}
 	writeCardPNG(t, path, pix, pw, ph)
 }
+
+// TestPluginStoreCatalogDataNeverFailsLayout feeds the trees the catalog
+// data that has no fixed size -- source names, categories, requirements,
+// badges, plugin names -- at the smallest outputs and largest scales the
+// shell meets. A fit error closes the panel, so each must lay out and paint.
+func TestPluginStoreCatalogDataNeverFailsLayout(t *testing.T) {
+	long := func(i int) string { return fmt.Sprintf("a-rather-long-source-name-no-%d", i) }
+	var sources []store.SourceState
+	var listings []store.Listing
+	for i := 0; i < 5; i++ {
+		sources = append(sources, store.SourceState{Name: long(i), URL: "https://example.com/" + long(i), FetchedAt: time.Now(), Plugins: 1})
+	}
+	for i, category := range catalog.Categories {
+		l := modelListing(fmt.Sprintf("org.example.p%02d", i), fmt.Sprintf("Plugin %02d", i), long(i%5), category, "1.0.0")
+		listings = append(listings, l)
+	}
+	heavy := modelListing("org.example.heavy", "A plugin with an unreasonably long display name for a card", long(0), "utilities", "2.0.0")
+	heavy.Entry.Deprecated = true
+	heavy.Status = store.StatusHeldBack
+	heavy.Resolution.Compat = store.HeldBack
+	heavy.Entry.Release.Requires.Commands = []string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliett", "kilo", "an-extremely-long-command-name-that-goes-on"}
+	heavy.Entry.Release.Capabilities = []string{"notifications", "panels", "settings", "state", "clipboard-write", "open-url", "bar", "tray", "control-center"}
+	heavy.Resolution.Release = &heavy.Entry.Release
+	listings = append(listings, heavy)
+	state := store.State{Sources: sources, Listings: listings}
+
+	for _, o := range []struct {
+		out      ui.Rect
+		scale120 int
+	}{
+		{ui.Rect{W: 1008, H: 576}, 120}, {ui.Rect{W: 1229, H: 691}, 150}, {ui.Rect{W: 800, H: 500}, 192},
+	} {
+		name := fmt.Sprintf("%dx%d@%d", o.out.W, o.out.H, o.scale120)
+		t.Run("grid+categories "+name, func(t *testing.T) {
+			reg, host, panel := openPluginStoreTestPanel(t, state, o.out)
+			reg.mu.Lock()
+			host.pluginStoreCategoriesOpen = true
+			reg.rebuildPanel(host)
+			reg.mu.Unlock()
+			paintPluginStorePNG(t, panel, o.scale120, filepath.Join(t.TempDir(), "grid.png"))
+		})
+		t.Run("detail "+name, func(t *testing.T) {
+			reg, host, panel := openPluginStoreTestPanel(t, state, o.out)
+			reg.mu.Lock()
+			host.pluginStoreDetail = pluginStoreKey(heavy)
+			reg.rebuildPanel(host)
+			reg.mu.Unlock()
+			paintPluginStorePNG(t, panel, o.scale120, filepath.Join(t.TempDir(), "detail.png"))
+		})
+		t.Run("settings "+name, func(t *testing.T) {
+			installed := heavy
+			installed.Installed = &store.Record{Source: long(0), Version: "1.9.0"}
+			installed.UpdateAvailable = true
+			reg, host, panel := openPluginManagerTestPanelOn(t, config.Default(), store.State{Sources: sources, Listings: []store.Listing{installed}}, o.out)
+			for _, tab := range []string{"installed", "sources"} {
+				reg.mu.Lock()
+				host.pluginManagerTab = tab
+				reg.rebuildPanel(host)
+				reg.mu.Unlock()
+				paintPluginStorePNG(t, panel, o.scale120, filepath.Join(t.TempDir(), tab+".png"))
+			}
+		})
+	}
+}

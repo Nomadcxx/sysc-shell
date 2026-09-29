@@ -551,26 +551,31 @@ func pluginManagerInstalledRow(r *Registry, h *PanelHost, row pluginManagerRow, 
 		actions = append(actions, &ui.Node{Kind: ui.KindToggle, Value: value, Action: "plugin-enable:" + id,
 			Name: "Enable " + name, Role: "switch", Focusable: true})
 	}
+	// The actions are measured, not estimated: a guess that ran short at
+	// 1.92 left the label column narrower than the tree built for it. When
+	// they would leave the label less than a third of the row, they take a
+	// line of their own under it.
 	trailing := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS, Height: metrics.CompactControl, Children: actions}
-	trailingW := 0
-	for _, a := range actions {
-		switch {
-		case a.Kind == ui.KindToggle:
-			trailingW += metrics.StandardControl * 2
-		case a.Width > 0:
-			trailingW += a.Width
-		default:
-			trailingW += settingsControlWidth(h) / 2
-		}
+	trailingW, _, err := ui.Measure(trailing, h.measureText())
+	if err != nil {
+		trailingW = width
 	}
-	trailingW += theme.MarginXS * max(len(actions)-1, 0)
-	labelW := max(width-metrics.IconNormal-theme.MarginM-min(trailingW, width/2)-theme.MarginL, 1)
+	lead0 := metrics.IconNormal + theme.MarginM
+	labelW := width - lead0 - trailingW - theme.MarginL
+	actionsBelow := labelW < width/3
+	if actionsBelow {
+		labelW = width - lead0
+	}
+	labelW = max(labelW, 1)
 
-	heading := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
-		{Kind: ui.KindText, Text: name, TextRole: theme.RoleLabel},
-		pluginSourceBadge(badge, metrics),
-		{Kind: ui.KindText, Text: versionText, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
-	}}
+	// Name, source badge and version flow in the label column, each bounded
+	// by it: a long name beside a long source name wraps instead of failing
+	// the row.
+	heading := h.flowRows([]*ui.Node{
+		{Kind: ui.KindText, Text: name, TextRole: theme.RoleLabel, MaxWidth: labelW},
+		pluginSourceBadge(badge, labelW),
+		{Kind: ui.KindText, Text: versionText, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: labelW},
+	}, labelW, theme.MarginS)
 	label := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Width: labelW, Children: []*ui.Node{heading}}
 	if description != "" {
 		label.Children = append(label.Children, &ui.Node{Kind: ui.KindText, Text: description, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: labelW, Multiline: true})
@@ -601,6 +606,9 @@ func pluginManagerInstalledRow(r *Registry, h *PanelHost, row pluginManagerRow, 
 		label,
 	}}
 	children := []*ui.Node{{Kind: ui.KindRow, PinEnd: true, Width: width, Children: []*ui.Node{lead, trailing}}}
+	if actionsBelow {
+		children = []*ui.Node{lead, h.flowRows(actions, width, theme.MarginXS)}
+	}
 	if listing != nil && listing.Installed != nil && h.pluginManagerRemoveConfirm == id {
 		children = append(children, &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: width, Height: metrics.CompactControl, Children: []*ui.Node{
 			{Kind: ui.KindText, Text: "Remove " + name + "? Its settings and enabled state are kept.", TextRole: theme.RoleCaption},
@@ -651,9 +659,8 @@ func pluginSourceLabel(source string) string {
 	return source
 }
 
-func pluginSourceBadge(label string, metrics theme.Metrics) *ui.Node {
-	return &ui.Node{Kind: ui.KindCapsule, Fill: ui.FillSoft, Shape: ui.ShapeSmall, Padding: theme.MarginXS,
-		Children: []*ui.Node{{Kind: ui.KindText, Text: label, TextRole: theme.RoleCaption}}}
+func pluginSourceBadge(label string, maxWidth int) *ui.Node {
+	return pluginStoreTag(label, ui.FillSoft, maxWidth)
 }
 
 func pluginManagerSourcesTree(r *Registry, h *PanelHost, metrics theme.Metrics) []*ui.Node {
@@ -768,14 +775,19 @@ func pluginManagerSourceRow(h *PanelHost, source config.PluginSource, state stor
 	}
 	actions = append(actions, &ui.Node{Kind: ui.KindToggle, Value: value, Action: "plugins-source-toggle:" + source.Name,
 		Name: "Enable " + name, Role: "switch", Focusable: true})
-	labelW := max(width-3*metrics.IconButton-metrics.StandardControl*2-theme.MarginL, 1)
+	trailing := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXS, Height: metrics.CompactControl, Children: actions}
+	trailingW, _, err := ui.Measure(trailing, h.measureText())
+	if err != nil {
+		trailingW = width / 2
+	}
+	labelW := max(width-trailingW-theme.MarginL, 1)
 	return &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: width, Children: []*ui.Node{
 		{Kind: ui.KindColumn, Gap: theme.MarginXXS, Width: labelW, Children: []*ui.Node{
 			{Kind: ui.KindText, Text: name, TextRole: theme.RoleLabel},
 			{Kind: ui.KindText, Text: kind + " · " + source.URL, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: labelW},
 			{Kind: ui.KindText, Text: status, TextRole: theme.RoleCaption, Tone: tone, MaxWidth: labelW},
 		}},
-		{Kind: ui.KindRow, Gap: theme.MarginXS, Height: metrics.CompactControl, Children: actions},
+		trailing,
 	}}
 }
 

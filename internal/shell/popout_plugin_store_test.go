@@ -380,3 +380,71 @@ func TestPluginStoreClickOpensDetailAndBack(t *testing.T) {
 		t.Fatal("click on Back did not return to the grid")
 	}
 }
+
+// Enter activates the focused control. The grid only takes Enter and the
+// arrows while a card has focus; before, Enter on a chip or on Install
+// reopened the selected card instead.
+func TestPluginStoreEnterActivatesTheFocusedControl(t *testing.T) {
+	listing := modelListing("org.sysc.timer", "Timer", "sysc", "productivity", "1.4.0")
+	installed := modelListing("org.sysc.clock", "Clock", "sysc", "utilities", "1.0.0")
+	installed.Installed = &store.Record{Source: "sysc", Version: "1.0.0"}
+	installed.Status = store.StatusInstalled
+	reg, host, _ := openPluginStoreTestPanel(t, store.State{Listings: []store.Listing{listing, installed}}, ui.Rect{W: 1600, H: 1000})
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	host.roving.Set(pluginStoreFocusIndex(host, "store-hide-installed"))
+	host.keyPress(reg, keyEnter)
+	if !host.pluginStoreQuery.HideInstalled || host.pluginStoreDetail != "" {
+		t.Fatalf("Enter on Hide installed: hide=%v detail=%q", host.pluginStoreQuery.HideInstalled, host.pluginStoreDetail)
+	}
+	host.pluginStoreDetail = pluginStoreKey(listing)
+	reg.rebuildPanel(host)
+	if f := host.focused(); f == nil || f.Action != "store-primary" {
+		t.Fatalf("detail opened with focus on %+v, want the primary action", f)
+	}
+	host.keyPress(reg, keyEnter)
+	if host.pluginStoreConsent == nil || pluginStoreFindAction(host.root, "store-confirm") == nil {
+		t.Fatal("Enter on Install did not open the consent step")
+	}
+}
+
+// A wheel scroll on the grid survives the next rebuild, which a worker
+// snapshot triggers at any moment.
+func TestPluginStoreGridScrollSurvivesARebuild(t *testing.T) {
+	var listings []store.Listing
+	for i := 0; i < 24; i++ {
+		listings = append(listings, modelListing(fmt.Sprintf("org.sysc.p%02d", i), fmt.Sprintf("P%02d", i), "sysc", "utilities", "1.0.0"))
+	}
+	reg, host, panel := openPluginStoreTestPanel(t, store.State{Listings: listings}, ui.Rect{W: 1600, H: 1000})
+	renderPluginStorePanel(t, panel)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	grid := pluginStoreFindKey(host.root, "plugin-store-grid")
+	host.hoverX, host.hoverY = grid.Bounds.X+grid.Bounds.W/2, grid.Bounds.Y+grid.Bounds.H/2
+	if !host.scrollAxis(reg, wayland.Event{Kind: wayland.EventPointerAxis, AxisValue120: 240}) {
+		t.Fatal("wheel over the grid did not scroll")
+	}
+	if host.pluginStoreScroll == 0 {
+		t.Fatal("the host did not record the grid's scroll")
+	}
+	want := host.pluginStoreScroll
+	reg.rebuildPanel(host)
+	if got := pluginStoreFindKey(host.root, "plugin-store-grid").ScrollOffset; got != want {
+		t.Fatalf("grid offset after rebuild = %d, want %d", got, want)
+	}
+}
+
+func pluginStoreFindKey(node *ui.Node, key string) *ui.Node {
+	if node == nil {
+		return nil
+	}
+	if node.Key == key {
+		return node
+	}
+	for _, child := range node.Children {
+		if found := pluginStoreFindKey(child, key); found != nil {
+			return found
+		}
+	}
+	return nil
+}

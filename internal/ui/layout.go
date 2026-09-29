@@ -436,6 +436,12 @@ func layoutCapsuleChild(n *Node, measure MeasureText) error {
 	return nil
 }
 
+// Measure is a node's natural size: the one a row gives it before placing
+// it. A builder that flows controls into rows measures them with it.
+func Measure(n *Node, measure MeasureText) (int, int, error) {
+	return measureNode(n, 0, measure)
+}
+
 // measureNode reports the logical size of one leaf node. A meter fills the row
 // content height; a button pads its text on every side.
 func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, error) {
