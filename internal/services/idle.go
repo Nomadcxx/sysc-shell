@@ -316,7 +316,7 @@ func (s *IdleService) post(f func(*idleMachine)) { s.inputs <- f }
 func (s *IdleService) Run(ctx context.Context) {
 	ticker := time.NewTicker(s.pollRate)
 	defer ticker.Stop()
-	s.refreshPower()
+	s.refreshPower(&s.machine)
 	for {
 		select {
 		case <-ctx.Done():
@@ -326,26 +326,39 @@ func (s *IdleService) Run(ctx context.Context) {
 		case ev := <-s.evs:
 			s.apply(&s.machine, s.machine.idleEvent(IdleBehavior(ev.ID), ev.Idled))
 		case <-ticker.C:
-			s.refreshPower()
+			s.refreshPower(&s.machine)
 		}
 	}
 }
 
 // refreshPower maps a battery snapshot onto the AC/battery policy input. No
-// readable battery means a desktop: AC.
-func (s *IdleService) refreshPower() {
+// readable battery means a desktop: AC. It applies directly because it runs on
+// the Run goroutine, the same one that drains inputs: posting SetOnAC back
+// through the channel would re-enter the consumer and deadlock once inputs
+// fills (gh #59).
+func (s *IdleService) refreshPower(m *idleMachine) {
 	onAC := true
 	if snap, err := s.readBattery(); err == nil {
 		onAC = snap.State == metrics.BatteryCharging || snap.State == metrics.BatteryFull
 	}
-	s.SetOnAC(onAC)
+	s.apply(m, m.setPower(onAC))
 }
 
 func (s *IdleService) apply(m *idleMachine, decisions []IdleDecision) {
 	for _, d := range decisions {
 		if d.Arm != nil {
 			timeoutMS := uint32(*d.Arm / time.Millisecond)
-			s.reqs <- wayland.IdleRequest{ID: uint64(d.Behavior), TimeoutMS: timeoutMS}
+			// A stalled Wayland owner must never wedge Run: drop the arm
+			// instead of blocking, and record it as un-armed so the next
+			// recompute re-issues it.
+			// ponytail: self-heals on the next state change; add a retry
+			// timer only if a live stall outlasts real input churn.
+			select {
+			case s.reqs <- wayland.IdleRequest{ID: uint64(d.Behavior), TimeoutMS: timeoutMS}:
+			default:
+				slog.Warn("idle: request queue full, dropping arm; will re-arm on next change")
+				m.armed[idleIndex(d.Behavior)] = 0
+			}
 			continue
 		}
 		switch d.Action {

@@ -304,3 +304,32 @@ func windowIDs(windows []niri.Window) []uint64 {
 	}
 	return ids
 }
+
+// When the compositor closes the switcher surface, DropAux must retire the
+// host; otherwise the interactive root stays open and ShowWindowSwitcher is
+// refused forever. gh #57.
+func TestDropAuxClosesAnOpenWindowSwitcher(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	reg.niriSend = func(action any) error { return nil }
+	reg.UpdateNiri(switcherSnapshot([]niri.Window{
+		{ID: 1, WorkspaceID: 10, HasWorkspace: true, FocusTimestamp: 30},
+	}, false))
+	if err := reg.ShowWindowSwitcher(); err != nil {
+		t.Fatal(err)
+	}
+	host := reg.windowSwitcher
+	if !host.open_ {
+		t.Fatal("switcher did not open")
+	}
+
+	reg.DropAux(host.output, windowSwitcherSurfaceID)
+
+	if host.open_ {
+		t.Fatal("DropAux left the switcher open")
+	}
+	if err := reg.ShowWindowSwitcher(); err != nil {
+		t.Fatalf("switcher stuck after compositor close: %v", err)
+	}
+}

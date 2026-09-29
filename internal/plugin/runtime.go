@@ -304,6 +304,12 @@ func (r *Runtime) supervise(ctx, sessionCtx context.Context, cancel context.Canc
 		}
 		select {
 		case r.messages <- msg:
+		case <-sessionCtx.Done():
+			// Stop (or a lost start race) ended this session. A consumerless
+			// publish must not outlive it: parent ctx stays alive for the
+			// whole host, so without this the goroutine leaks on a full
+			// messages buffer (gh #58).
+			return
 		case <-ctx.Done():
 			return
 		}

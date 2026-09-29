@@ -244,3 +244,41 @@ func waitSignal(t *testing.T, ch <-chan struct{}, want string) {
 		t.Fatalf("%s did not run within 2s", want)
 	}
 }
+
+// A full request queue must not wedge Run: setters keep returning, and an
+// arm that had to be dropped is reissued on the next state change once the
+// queue drains. gh #59.
+func TestIdleServiceStalledRequestOwnerCannotWedge(t *testing.T) {
+	reqs := make(chan wayland.IdleRequest, 1)
+	reqs <- wayland.IdleRequest{ID: 99} // occupy the queue so every arm is dropped
+	svc := NewIdleService(IdleOptions{
+		Requests: reqs,
+		ReadBattery: func() (metrics.BatterySnapshot, error) {
+			return metrics.BatterySnapshot{}, errors.New("no battery: desktop")
+		},
+		PollRate: time.Hour,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go svc.Run(ctx)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		svc.SetConfig(IdleSettings{BlankAc: 10 * time.Minute})
+		for i := 0; i < 24; i++ { // more posts than the inputs buffer, Run must keep draining
+			svc.SetInhibited(i%2 == 0)
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("setters stalled while the request queue stayed full")
+	}
+
+	if got := <-reqs; got.ID != 99 { // free the queue
+		t.Fatalf("queued request = %+v, want the placeholder", got)
+	}
+	svc.SetInhibited(false) // the dropped arm must be reissued here
+	requireReq(t, reqs, wayland.IdleRequest{ID: uint64(IdleBlank), TimeoutMS: 600000})
+}
