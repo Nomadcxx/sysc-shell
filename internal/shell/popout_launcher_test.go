@@ -40,13 +40,20 @@ type recordedSpawn struct {
 	mu   sync.Mutex
 	argv []string
 	err  error
+	// gate, when non-nil, holds the spawn until the test closes it, so a
+	// test can act while an activation is still in flight.
+	gate chan struct{}
 }
 
 func (r *recordedSpawn) run(_ context.Context, argv []string) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.argv = append([]string(nil), argv...)
-	return r.err
+	err, gate := r.err, r.gate
+	r.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
+	return err
 }
 
 func (r *recordedSpawn) waitArgv(t *testing.T) []string {
@@ -681,6 +688,67 @@ func TestLauncherTypingClearsAFailedActivationError(t *testing.T) {
 	reg.mu.Unlock()
 	if label != "" || errorText != "" {
 		t.Fatalf("after typing, errLabel = %q and the tree shows %q, want neither", label, errorText)
+	}
+}
+
+// A failure that lands after the user has typed again answers the superseded
+// attempt; it must not repaint the error over the new search (GH #45).
+func TestLauncherLateActivationFailureDoesNotRepaintAfterTyping(t *testing.T) {
+	t.Parallel()
+
+	reg, run, reqs := openLauncherPanel(t, launcherTestEntries())
+	run.mu.Lock()
+	run.err = errors.New("niri refused")
+	run.gate = make(chan struct{})
+	gate := run.gate
+	run.mu.Unlock()
+	pressLauncherKey(reqs, keyEnter)
+	run.waitArgv(t) // the activation is in flight, held in the spawn
+
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "f"})
+	close(gate)
+
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		h := reg.panelHosts[PanelLauncher]
+		label := ""
+		if h != nil {
+			label = h.errLabel
+		}
+		reg.mu.Unlock()
+		if label != "" {
+			t.Fatalf("late failure repainted errLabel = %q after typing", label)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// A success that lands after the user has typed again answers the superseded
+// attempt; it must not dismiss the launcher the user is still using (GH #49).
+func TestLauncherLateActivationSuccessDoesNotCloseAfterTyping(t *testing.T) {
+	t.Parallel()
+
+	reg, run, reqs := openLauncherPanel(t, launcherTestEntries())
+	run.mu.Lock()
+	run.gate = make(chan struct{})
+	gate := run.gate
+	run.mu.Unlock()
+	pressLauncherKey(reqs, keyEnter)
+	run.waitArgv(t)
+
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "f"})
+	close(gate)
+
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		_, hosted := reg.panelHosts[PanelLauncher]
+		reg.mu.Unlock()
+		if !hosted {
+			t.Fatal("late activation success closed the launcher after the query moved on")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 

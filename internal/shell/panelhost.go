@@ -215,6 +215,12 @@ type PanelHost struct {
 	launcherScroll  int
 	launcherMenuID  string
 	launcherActions []launcher.Action
+	// launcherAttempt stamps the user's current launcher interaction; an
+	// activation completion applies only while its stamp is still current.
+	// launcherPendingAttempt is the stamp an in-flight activation captured,
+	// so a Notes capture superseded before its provider ran is dropped.
+	launcherAttempt        uint64
+	launcherPendingAttempt uint64
 
 	wallpaperSnap    wallpaper.Snapshot
 	wallpaperDir     string
@@ -2410,6 +2416,7 @@ func (h *PanelHost) fieldChanged(r *Registry, n *ui.Node, f *ui.Field) bool {
 			// A failed activation's error answers that attempt, not the
 			// search the user has moved on to.
 			h.errLabel = ""
+			h.launcherAttempt++
 			h.launcherSel = 0
 			h.launcherScroll = 0
 			r.launcherServiceLocked().Query(h.query)

@@ -430,6 +430,7 @@ func (h *PanelHost) launcherMoveSel(r *Registry, delta int) {
 	if n == 0 {
 		return
 	}
+	h.launcherAttempt++
 	h.launcherSel = min(max(h.launcherSel+delta, 0), n-1)
 	r.rebuildPanel(h)
 }
@@ -451,6 +452,7 @@ func (h *PanelHost) launcherActivateSelected(r *Registry) {
 	}
 	if len(res.Entry.Argv) == 0 && strings.HasPrefix(res.Entry.ID, "/") {
 		h.errLabel = ""
+		h.launcherAttempt++
 		h.query = res.Entry.ID
 		h.search = ui.NewField(h.query)
 		h.launcherSel = 0
@@ -494,6 +496,10 @@ func launcherPreview(value string, maxRunes int) string {
 }
 
 func (h *PanelHost) launcherNotesAction(r *Registry, action string) {
+	if h.launcherAttempt != h.launcherPendingAttempt {
+		return // the user moved on before this capture reached its provider
+	}
+	attempt := h.launcherAttempt
 	if action == notesLauncherTooLongID {
 		h.errLabel = "Capture is too long (maximum 1 MiB)"
 		r.rebuildPanel(h)
@@ -519,7 +525,7 @@ func (h *PanelHost) launcherNotesAction(r *Registry, action string) {
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		host := r.panelHosts[PanelLauncher]
-		if host == nil {
+		if host == nil || host.launcherAttempt != attempt {
 			return
 		}
 		if err != nil {
@@ -538,13 +544,16 @@ func (h *PanelHost) launcherNotesAction(r *Registry, action string) {
 func (h *PanelHost) launcherSpawn(r *Registry, id, action string, closeOnSuccess bool) {
 	// A retry that succeeds must not leave the last attempt's error up.
 	h.errLabel = ""
+	h.launcherAttempt++
+	attempt := h.launcherAttempt
+	h.launcherPendingAttempt = attempt
 	svc := r.launcherServiceLocked()
 	go func() {
 		err := svc.Activate(id, action)
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		host := r.panelHosts[PanelLauncher]
-		if host == nil {
+		if host == nil || host.launcherAttempt != attempt {
 			return
 		}
 		if err != nil {
@@ -573,6 +582,7 @@ func (h *PanelHost) launcherPointerPress(r *Registry, e wayland.Event) bool {
 		return false
 	}
 	res := h.launcherResults[i]
+	h.launcherAttempt++
 	if e.Button == btnRight {
 		if res.Action != "" {
 			return true // an action row has no actions menu of its own
