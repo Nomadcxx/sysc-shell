@@ -671,8 +671,17 @@ func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 			field.H = first.Y - box.Y
 		}
 	}
-	c.FillRounded(field, style.Scale120.Physical(6), style.Track)
-	_ = paintText(c, n.Text, field, text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline)
+	radius := style.Scale120.Physical(6)
+	surface := style.containerHighest()
+	c.FillRounded(field, radius, surface)
+	if boundary := style.outlineVariant(); boundary.A > 0 {
+		c.StrokeRounded(field, radius, max(style.Scale120.Physical(1), 1), boundary)
+	}
+	pad := style.Scale120.Physical(n.Padding)
+	textBox := ui.Rect{X: field.X + pad, Y: field.Y + pad,
+		W: max(field.W-2*pad, 0), H: max(field.H-2*pad, 0)}
+	textBox = centreLine(textBox, text, style, n)
+	_ = paintText(c, n.Text, textBox, text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline)
 	paintMenuChevron(c, n, text, style)
 	if len(n.Children) == 0 {
 		return nil
@@ -682,7 +691,7 @@ func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 	if ink, ok := style.shadowInk(); ok {
 		c.DrawShadow(list, style.Scale120.Physical(6), style.shadowSpreadFor(), ink)
 	}
-	c.FillRounded(list, style.Scale120.Physical(6), style.Background)
+	c.FillRounded(list, radius, surface)
 	for _, child := range n.Children {
 		// An option is a run of label text, and drawing it here rather than
 		// through paintNode keeps the list one pass. A picker's filter well
@@ -746,7 +755,8 @@ func paintMenuChevron(c *Canvas, n *ui.Node, text *TextRenderer, style Style) {
 		return
 	}
 	glyph := &ui.Node{Kind: ui.KindIcon, Icon: "expand_more"}
-	box, ok := menuChevronBox(n, style.Scale120.Logical(labelW), ui.IconSize(glyph))
+	labelLogical := style.Scale120.Logical(labelW) + n.Padding
+	box, ok := menuChevronBox(n, labelLogical, ui.IconSize(glyph))
 	if !ok {
 		return
 	}

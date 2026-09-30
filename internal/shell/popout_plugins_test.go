@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -41,26 +42,64 @@ func TestPluginSettingRowRendersSelectAsMenu(t *testing.T) {
 	}
 }
 
-func TestPluginSettingRowRendersBoolAsCheckbox(t *testing.T) {
+func TestPluginSettingRowRendersBoolAsSwitch(t *testing.T) {
 	h := &PanelHost{}
 	s := plugin.Setting{Key: "show_cursor", Type: plugin.SettingBool, Label: "Show cursor", Description: "Include the pointer in captures.", Default: true}
 	row := pluginSettingRow(nil, h, "org.sysc.screen-recorder", s)
 	if row == nil || row.Kind != ui.KindRow || len(row.Children) < 2 {
-		t.Fatalf("bool row = %+v, want checkbox then label", row)
+		t.Fatalf("bool row = %+v, want switch beside its label", row)
 	}
-	box := settingRowControl(row)
-	if box.Kind != ui.KindToggle || box.Role != "checkbox" {
-		t.Fatalf("bool control = kind %d role %q, want toggle checkbox", box.Kind, box.Role)
+	switchNode := settingRowControl(row)
+	if switchNode.Kind != ui.KindToggle || switchNode.Role != "switch" || !switchNode.Focusable || switchNode.Name != s.Label {
+		t.Fatalf("bool control = %+v, want accessible switch", switchNode)
 	}
 	label := row.Children[0].Children[0]
 	if label.Text != "Show cursor" {
 		t.Fatalf("bool label = %q", label.Text)
 	}
-	if !label.Focusable || label.Action != box.Action {
-		t.Fatal("checkbox label must share the toggle action")
+	if !label.Focusable || label.Role != "switch" || label.Value != switchNode.Value || label.Action != switchNode.Action {
+		t.Fatal("switch label must retain pointer and keyboard activation with the same accessible state")
 	}
 	if row.Children[0].Kind != ui.KindColumn || row.Children[0].Children[1].Text != s.Description || !row.Children[1].PinEnd {
 		t.Fatal("plugin setting does not use the Settings label, caption, and right-pinned control anatomy")
+	}
+}
+
+func TestPluginSettingRowShowsIntegerValue(t *testing.T) {
+	r := &Registry{}
+	r.cfg.Plugins.Settings = map[string]map[string]any{
+		"org.sysc.aiusage": {"refresh_interval": 600},
+	}
+	s := plugin.Setting{Key: "refresh_interval", Type: plugin.SettingInt, Label: "Refresh interval", Default: 300, Min: f64(60), Max: f64(3600)}
+	row := pluginSettingRow(r, &PanelHost{}, "org.sysc.aiusage", s)
+	trailing := row.Children[1]
+	if len(trailing.Children) != 2 {
+		t.Fatalf("integer control row has %d children, want slider and current value", len(trailing.Children))
+	}
+	if trailing.Children[0].Kind != ui.KindSlider {
+		t.Fatalf("integer control = %+v, want slider", trailing.Children[0])
+	}
+	value := trailing.Children[1]
+	if value.Kind != ui.KindText || value.Text != "600" || !value.Tabular {
+		t.Fatalf("integer value = %+v, want visible tabular value 600", value)
+	}
+}
+
+func TestPluginSettingControlFitsCardContent(t *testing.T) {
+	m, _ := theme.MetricsFor(theme.DensityDefault)
+	h := &PanelHost{id: PanelPlugin}
+	h.theme.Metrics = m
+	h.place = Placement{
+		Panel: ui.Rect{W: 758}, Output: ui.Rect{W: 1000}, BarEdge: "top",
+		BarShape: "attached", Fillet: 12,
+	}
+	s := plugin.Setting{Key: "provider_api_key", Type: plugin.SettingString, Label: "API key"}
+	row := pluginSettingRow(nil, h, "org.sysc.aiusage", s)
+	joints := h.place.Joints()
+	contentWidth := h.place.Panel.W - joints.Left - joints.Right - 2*m.PanelPadding - 2*m.CardPadding
+	used := row.Children[0].Width + theme.MarginL + row.Children[1].Width
+	if used > contentWidth {
+		t.Fatalf("setting row uses %dpx inside %dpx card content", used, contentWidth)
 	}
 }
 
@@ -89,6 +128,86 @@ func TestPluginPanelSettingsWrapsGroupsInCapsules(t *testing.T) {
 	settings := treeText(nodes[2])
 	if !strings.Contains(settings, "Generate on wallpaper change") || strings.Contains(settings, "Advanced details") {
 		t.Fatalf("generic settings card does not honor schema visibility: %q", settings)
+	}
+}
+
+func TestAIUsageSettingsUseThreeCardsAndSwitches(t *testing.T) {
+	h := &PanelHost{}
+	schema := []plugin.Setting{
+		{Key: "track_copilot", Type: plugin.SettingBool, Label: "Copilot", Default: false},
+		{Key: "track_minimax", Type: plugin.SettingBool, Label: "MiniMax", Default: false},
+		{Key: "minimax_api_key", Type: plugin.SettingString, Label: "MiniMax API key", Default: "",
+			VisibleWhen: &plugin.VisibleWhen{Key: "track_minimax", Equals: true}},
+		{Key: "refresh_interval", Type: plugin.SettingInt, Label: "Refresh interval (seconds)", Default: 300,
+			Min: f64(60), Max: f64(3600)},
+		{Key: "history_retention", Type: plugin.SettingSelect, Label: "History retained", Default: "2000",
+			Options: []plugin.SettingOption{{Value: "2000", Label: "2,000 entries"}}},
+		{Key: "alerts_enabled", Type: plugin.SettingBool, Label: "Threshold alerts", Default: true},
+		{Key: "warn_threshold", Type: plugin.SettingInt, Label: "Warning threshold (%)", Default: 85,
+			Min: f64(50), Max: f64(99), VisibleWhen: &plugin.VisibleWhen{Key: "alerts_enabled", Equals: true}},
+	}
+	cards := pluginPanelSettings(nil, h, "org.sysc.aiusage", schema)
+	if len(cards) != 3 {
+		t.Fatalf("cards = %d, want Providers, Usage, and Alerts", len(cards))
+	}
+	for i, title := range []string{"Providers", "Usage", "Alerts"} {
+		if cards[i].Kind != ui.KindCapsule || cards[i].Fill != ui.FillContainerHigh || !strings.Contains(treeText(cards[i]), title) {
+			t.Fatalf("card %d = %+v, want themed %s surface", i, cards[i], title)
+		}
+	}
+	root := &ui.Node{Kind: ui.KindColumn, Children: cards}
+	if strings.Contains(treeText(root), "MiniMax API key") {
+		t.Fatal("disabled provider credential is visible")
+	}
+
+	var copilot, minimax *ui.Node
+	var visit func(*ui.Node)
+	visit = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n.Kind == ui.KindToggle {
+			switch n.Action {
+			case "plugin-set:org.sysc.aiusage:track_copilot":
+				copilot = n
+			case "plugin-set:org.sysc.aiusage:track_minimax":
+				minimax = n
+			}
+		}
+		for _, child := range n.Children {
+			visit(child)
+		}
+	}
+	visit(root)
+	for name, toggle := range map[string]*ui.Node{"Copilot": copilot, "MiniMax": minimax} {
+		if toggle == nil || toggle.Role != "switch" || toggle.Value != 0 || !toggle.Focusable {
+			t.Errorf("%s toggle = %+v, want an accessible opt-in switch", name, toggle)
+		}
+	}
+
+	reg := &Registry{}
+	reg.cfg.Plugins.Settings = map[string]map[string]any{
+		"org.sysc.aiusage": {"track_minimax": true, "minimax_api_key": "saved-key"},
+	}
+	visible := pluginPanelSettings(reg, h, "org.sysc.aiusage", schema)
+	var credential *ui.Node
+	visit = func(n *ui.Node) {
+		if n == nil {
+			return
+		}
+		if n.Kind == ui.KindTextField && n.Action == "plugin-set:org.sysc.aiusage:minimax_api_key" {
+			credential = n
+		}
+		for _, child := range n.Children {
+			visit(child)
+		}
+	}
+	visit(&ui.Node{Kind: ui.KindColumn, Children: visible})
+	if credential == nil || !credential.Masked || credential.Text != "saved-key" {
+		t.Fatalf("saved provider credential = %+v, want unchanged and masked", credential)
+	}
+	if value, ok := pluginSettingValueFromNode(h, credential); !ok || value != "saved-key" {
+		t.Fatalf("masked credential value = %v, %t; want saved-key", value, ok)
 	}
 }
 

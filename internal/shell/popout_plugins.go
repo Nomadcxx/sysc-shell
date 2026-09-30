@@ -60,18 +60,28 @@ func pluginDirectoryLabel(r *Registry) string {
 	return strings.Join(parts, " · ")
 }
 
-// pluginPanelSettingGroups is the recorder panel layout from the design.
-// Keys absent from a plugin's schema are skipped; headings omit empty groups.
+// pluginPanelSettingGroups is the first-party layout for plugin forms whose
+// related controls benefit from sharing a card. Keys absent from a schema are
+// skipped; headings omit empty groups.
 var pluginPanelSettingGroups = []struct {
-	Title string
-	Keys  []string
+	PluginID string
+	Title    string
+	Keys     []string
 }{
-	{"Capture", []string{"video_source", "show_cursor", "resolution", "frame_rate"}},
-	{"File", []string{"directory", "filename_pattern"}},
-	{"Video", []string{"video_codec", "video_qp", "color_range"}},
-	{"Audio", []string{"audio_source", "audio_codec", "audio_bitrate"}},
-	{"Replay", []string{"replay_enabled", "replay_duration", "replay_filename_pattern", "replay_storage"}},
-	{"Bar", []string{"hide_inactive"}},
+	{Title: "Capture", Keys: []string{"video_source", "show_cursor", "resolution", "frame_rate"}},
+	{Title: "File", Keys: []string{"directory", "filename_pattern"}},
+	{Title: "Video", Keys: []string{"video_codec", "video_qp", "color_range"}},
+	{Title: "Audio", Keys: []string{"audio_source", "audio_codec", "audio_bitrate"}},
+	{Title: "Replay", Keys: []string{"replay_enabled", "replay_duration", "replay_filename_pattern", "replay_storage"}},
+	{Title: "Bar", Keys: []string{"hide_inactive"}},
+	{PluginID: "org.sysc.aiusage", Title: "Providers", Keys: []string{
+		"track_claude", "track_codex", "track_commandcode", "track_copilot", "track_ollama", "track_minimax", "track_opencode_go", "track_synthetic",
+		"commandcode_api_key", "ollama_api_key", "minimax_api_key", "opencode_go_api_key", "synthetic_api_key",
+	}},
+	{PluginID: "org.sysc.aiusage", Title: "Usage", Keys: []string{"refresh_interval", "history_retention"}},
+	{PluginID: "org.sysc.aiusage", Title: "Alerts", Keys: []string{
+		"alerts_enabled", "warn_threshold", "critical_threshold", "alert_thresholds", "alert_window_scope", "alert_cooldown",
+	}},
 }
 
 func pluginPanelSettings(r *Registry, h *PanelHost, pluginID string, schema []plugin.Setting) []*ui.Node {
@@ -83,6 +93,9 @@ func pluginPanelSettings(r *Registry, h *PanelHost, pluginID string, schema []pl
 	var out []*ui.Node
 	grouped := make(map[string]struct{}, len(schema))
 	for _, g := range pluginPanelSettingGroups {
+		if g.PluginID != "" && g.PluginID != pluginID {
+			continue
+		}
 		var rows []*ui.Node
 		for _, key := range g.Keys {
 			s, ok := byKey[key]
@@ -165,9 +178,27 @@ func pluginSettingRow(r *Registry, h *PanelHost, pluginID string, s plugin.Setti
 	if controlWidth > rowWidth/2 {
 		controlWidth = rowWidth / 2
 	}
-	fills := s.Type != plugin.SettingBool && s.Type != plugin.SettingSelect
+	fills := s.Type != plugin.SettingBool
+	var value *ui.Node
+	valueWidth := 0
+	if s.Type == plugin.SettingInt {
+		valueText := strconv.Itoa(int(control.Value))
+		valueWidth = len(valueText) * 8
+		if h != nil {
+			if measured, _ := h.measureText()(valueText, ui.TextAttrs{Role: theme.RoleCaption, Tabular: true}); measured > 0 {
+				valueWidth = measured
+			}
+		}
+		value = &ui.Node{Kind: ui.KindText, Text: valueText, TextRole: theme.RoleCaption,
+			Tone: ui.ToneSubtle, Tabular: true, CenterX: true, CenterY: true, Width: valueWidth}
+		if controlWidth > 0 {
+			control.Width = max(controlWidth-valueWidth-theme.MarginS, 1)
+		}
+	}
 	if fills && controlWidth > 0 {
-		control.Width = controlWidth
+		if s.Type != plugin.SettingInt {
+			control.Width = controlWidth
+		}
 	}
 	label := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: s.Label, Name: s.Label},
@@ -175,7 +206,8 @@ func pluginSettingRow(r *Registry, h *PanelHost, pluginID string, s plugin.Setti
 	if s.Type == plugin.SettingBool {
 		label.Children[0].Action = action
 		label.Children[0].Focusable = true
-		label.Children[0].Role = "checkbox"
+		label.Children[0].Role = "switch"
+		label.Children[0].Value = control.Value
 	}
 	if s.Description != "" {
 		label.Children = append(label.Children, &ui.Node{Kind: ui.KindText, Text: s.Description, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
@@ -183,11 +215,15 @@ func pluginSettingRow(r *Registry, h *PanelHost, pluginID string, s plugin.Setti
 	if rowWidth > 0 {
 		label.Width = max(rowWidth-controlWidth-theme.MarginL, 0)
 	}
-	trailing := &ui.Node{Kind: ui.KindRow, PinEnd: true, Children: []*ui.Node{control}}
+	trailingChildren := []*ui.Node{control}
+	if value != nil {
+		trailingChildren = append(trailingChildren, value)
+	}
+	trailing := &ui.Node{Kind: ui.KindRow, PinEnd: true, CenterY: true, Gap: theme.MarginS, Children: trailingChildren}
 	if fills && controlWidth > 0 {
 		trailing.Width = controlWidth
 	}
-	row := &ui.Node{Kind: ui.KindRow, PinEnd: true, Gap: theme.MarginL, Children: []*ui.Node{label, trailing}}
+	row := &ui.Node{Kind: ui.KindRow, PinEnd: true, CenterY: true, Gap: theme.MarginL, Children: []*ui.Node{label, trailing}}
 	if s.Description == "" {
 		row.Height = h.metrics().StandardControl
 	}
@@ -199,10 +235,11 @@ func pluginSettingRowWidth(h *PanelHost) int {
 		return 0
 	}
 	if h.id == PanelSettings {
-		return settingsBodyWidth(h)
+		return max(settingsBodyWidth(h)-2*h.metrics().CardPadding, 0)
 	}
 	if h.place.Panel.W > 0 {
-		return max(h.place.Panel.W-2*h.metrics().PanelPadding, 0)
+		joints := h.place.Joints()
+		return max(h.place.Panel.W-joints.Left-joints.Right-2*h.metrics().PanelPadding-2*h.metrics().CardPadding, 0)
 	}
 	return 0
 }
@@ -216,7 +253,7 @@ func pluginSettingControl(h *PanelHost, s plugin.Setting, raw, action, store str
 		}
 		return &ui.Node{
 			Kind: ui.KindToggle, Value: v, Action: action,
-			Focusable: true, Name: s.Label, Role: "checkbox",
+			Focusable: true, Name: s.Label, Role: "switch",
 		}
 	case plugin.SettingInt:
 		n, _ := strconv.Atoi(raw)
@@ -255,6 +292,7 @@ func pluginSettingControl(h *PanelHost, s plugin.Setting, raw, action, store str
 			n := m.Node()
 			n.Action = action
 			n.Name = s.Label
+			n.Height, n.Padding = h.metrics().StandardControl, theme.MarginS
 			return n
 		}
 		if h.menus == nil {
@@ -269,10 +307,13 @@ func pluginSettingControl(h *PanelHost, s plugin.Setting, raw, action, store str
 		n := m.Node()
 		n.Action = action
 		n.Name = s.Label
+		n.Height, n.Padding = h.metrics().StandardControl, theme.MarginS
 		return n
 	default:
 		if h == nil {
-			n := ui.NewField(raw).Node(s.Label)
+			field := ui.NewField(raw)
+			field.Masked = strings.HasSuffix(s.Key, "_api_key")
+			n := field.Node(s.Label)
 			n.Action = action
 			n.Width = 200
 			return n
@@ -285,6 +326,7 @@ func pluginSettingControl(h *PanelHost, s plugin.Setting, raw, action, store str
 			f = ui.NewField(raw)
 			h.fields[store] = f
 		}
+		f.Masked = strings.HasSuffix(s.Key, "_api_key")
 		n := f.Node(s.Label)
 		n.Action = action
 		n.Width = 200

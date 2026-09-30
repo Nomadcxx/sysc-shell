@@ -606,8 +606,10 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		}
 		return w, SliderKnob, nil
 	case KindMenu:
-		w, h := measure(n.Text, TextAttrsOf(n))
-		if n.Width > w {
+		w, labelHeight := measure(n.Text, TextAttrsOf(n))
+		w += 2 * n.Padding
+		h := max(n.Height, labelHeight+2*n.Padding)
+		if n.Width > 0 {
 			w = n.Width
 		}
 		for _, c := range n.Children {
