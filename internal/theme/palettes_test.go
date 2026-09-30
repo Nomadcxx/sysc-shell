@@ -1,6 +1,163 @@
 package theme
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
+
+func TestNamedPaletteCatalogMatchesApprovedSources(t *testing.T) {
+	dms := []string{
+		"amber", "blue", "coral", "cyan", "green", "monochrome", "orange", "pink", "purple", "red",
+	}
+	noctalia := []string{
+		"ayu", "catppuccin", "dracula", "eldritch", "gruvbox", "kanagawa", "noctalia", "nord", "rose-pine", "tokyo-night",
+	}
+	otherSources := []string{"eldritch-abyss", "rama", "void"}
+	want := append(append(append([]string(nil), dms...), noctalia...), otherSources...)
+	slices.Sort(want)
+	if got := PaletteNames(); !slices.Equal(got, want) {
+		t.Fatalf("PaletteNames() = %v, want %v", got, want)
+	}
+}
+
+func TestNamedPaletteSourceColors(t *testing.T) {
+	for _, tc := range []struct {
+		name, mode, surface, primary, secondary string
+	}{
+		{"ayu", "dark", "#0b0e14", "#e6b450", "#aad94c"},
+		{"ayu", "light", "#f8f9fa", "#ff8f40", "#86b300"},
+		{"catppuccin", "dark", "#1e1e2e", "#cba6f7", "#fab387"},
+		{"catppuccin", "light", "#eff1f5", "#8839ef", "#fe640b"},
+		{"dracula", "dark", "#282a36", "#bd93f9", "#ff79c6"},
+		{"dracula", "light", "#f8f8f2", "#8332f4", "#ff1399"},
+		{"eldritch", "dark", "#212337", "#37f499", "#04d1f9"},
+		{"eldritch", "light", "#f0f3f4", "#fb5bb6", "#0ad6ff"},
+		{"eldritch-abyss", "dark", "#171928", "#2dcc82", "#0396b3"},
+		{"eldritch-abyss", "light", "#171928", "#2dcc82", "#0396b3"},
+		{"gruvbox", "dark", "#282828", "#b8bb26", "#fabd2f"},
+		{"gruvbox", "light", "#fbf1c7", "#98971a", "#d79921"},
+		{"kanagawa", "dark", "#1f1f28", "#76946a", "#c0a36e"},
+		{"kanagawa", "light", "#f2ecbc", "#6f894e", "#77713f"},
+		{"noctalia", "dark", "#070722", "#fff59b", "#a9aefe"},
+		{"noctalia", "light", "#e6e8fa", "#5d65f5", "#8e93d8"},
+		{"nord", "dark", "#2e3440", "#8fbcbb", "#88c0d0"},
+		{"nord", "light", "#eceff4", "#5e81ac", "#64adc2"},
+		{"tokyo-night", "dark", "#1a1b26", "#7aa2f7", "#bb9af7"},
+		{"tokyo-night", "light", "#e1e2e7", "#2e7de9", "#9854f1"},
+		{"rose-pine", "dark", "#191724", "#ebbcba", "#9ccfd8"},
+		{"rose-pine", "light", "#fffaf3", "#d7827e", "#56949f"},
+		{"blue", "dark", "#101418", "#42a5f5", "#8ab4f8"},
+		{"blue", "light", "#f7f9ff", "#1976d2", "#42a5f5"},
+		{"purple", "dark", "#141218", "#d0bcff", "#ccc2dc"},
+		{"purple", "light", "#fef7ff", "#6750a4", "#625b71"},
+		{"green", "dark", "#10140f", "#4caf50", "#81c995"},
+		{"green", "light", "#f7fbf1", "#2e7d32", "#4caf50"},
+		{"orange", "dark", "#1a120e", "#ff6d00", "#ffb74d"},
+		{"orange", "light", "#fff8f6", "#e65100", "#ff9800"},
+		{"red", "dark", "#1a1110", "#f44336", "#f28b82"},
+		{"red", "light", "#fff8f7", "#d32f2f", "#f44336"},
+		{"cyan", "dark", "#0e1416", "#00bcd4", "#4dd0e1"},
+		{"cyan", "light", "#f5fafc", "#0097a7", "#00bcd4"},
+		{"pink", "dark", "#191112", "#e91e63", "#f8bbd9"},
+		{"pink", "light", "#fff8f7", "#c2185b", "#e91e63"},
+		{"amber", "dark", "#17130b", "#ffc107", "#ffd54f"},
+		{"amber", "light", "#fff8f2", "#ff8f00", "#ffc107"},
+		{"coral", "dark", "#1a1110", "#ffb4ab", "#f9dedc"},
+		{"coral", "light", "#fff8f7", "#8c1d18", "#ff5449"},
+		{"monochrome", "dark", "#2a2a2a", "#ffffff", "#c4c6d0"},
+		{"monochrome", "light", "#f5f5f6", "#2b303c", "#4a4d56"},
+		{"rama", "dark", "#2b2d42", "#ef233c", "#d90429"},
+		{"rama", "light", "#2b2d42", "#ef233c", "#d90429"},
+		{"void", "dark", "#000000", "#ffffff", "#ffffff"},
+		{"void", "light", "#000000", "#ffffff", "#ffffff"},
+	} {
+		tok, ok := NamedPalette(tc.name, tc.mode, false)
+		if !ok {
+			t.Fatalf("NamedPalette(%q, %q) not found", tc.name, tc.mode)
+		}
+		if tok.Surface != tc.surface || tok.Primary != tc.primary || tok.Secondary != tc.secondary {
+			t.Errorf("%s/%s anchors = surface %s primary %s secondary %s, want %s %s %s",
+				tc.name, tc.mode, tok.Surface, tok.Primary, tok.Secondary,
+				tc.surface, tc.primary, tc.secondary)
+		}
+	}
+}
+
+func TestNoctaliaHighAnchorsMatchRecordedSources(t *testing.T) {
+	for _, tc := range []struct{ name, mode, want, source string }{
+		{"ayu", "dark", "#1e222a", "surfaceVariant"},
+		{"ayu", "light", "#e4e6e9", "surfaceVariant"},
+		{"catppuccin", "dark", "#313244", "surfaceVariant"},
+		{"catppuccin", "light", "#ccd0da", "surfaceVariant"},
+		{"dracula", "dark", "#44475a", "surfaceVariant"},
+		{"dracula", "light", "#e6e6ea", "surfaceVariant"},
+		{"eldritch", "dark", "#292e42", "surfaceVariant"},
+		{"eldritch", "light", "#d5d9db", "surfaceVariant"},
+		{"gruvbox", "dark", "#3c3836", "surfaceVariant"},
+		{"gruvbox", "light", "#ebdbb2", "surfaceVariant"},
+		{"kanagawa", "dark", "#2a2a37", "surfaceVariant"},
+		{"kanagawa", "light", "#e5ddb0", "surfaceVariant"},
+		{"noctalia", "dark", "#21215f", "outline"},
+		{"noctalia", "light", "#c2c3d9", "local anchor"},
+		{"nord", "dark", "#3b4252", "surfaceVariant"},
+		{"nord", "light", "#c8d0dc", "retained anchor"},
+		{"rose-pine", "dark", "#26233a", "surfaceVariant"},
+		{"rose-pine", "light", "#f2e9e1", "surfaceVariant"},
+		{"tokyo-night", "dark", "#24283b", "surfaceVariant"},
+		{"tokyo-night", "light", "#a8aecb", "shadow"},
+	} {
+		t.Run(tc.name+"/"+tc.mode, func(t *testing.T) {
+			a := palettes[tc.name].Dark
+			if tc.mode == "light" {
+				a = palettes[tc.name].Light
+			}
+			if a.High != tc.want {
+				t.Errorf("%s/%s High = %s, want %s %s", tc.name, tc.mode, a.High, tc.source, tc.want)
+			}
+			usesSurfaceLow := tc.name == "ayu" || tc.name == "eldritch" || tc.name == "kanagawa" || tc.name == "noctalia"
+			if usesSurfaceLow && a.Low != a.Surface {
+				t.Errorf("%s/%s Low = %s, want Surface %s because Noctalia publishes no container ladder", tc.name, tc.mode, a.Low, a.Surface)
+			}
+		})
+	}
+}
+
+func TestDMSHighAnchorsMatchPublishedContainerHighest(t *testing.T) {
+	for _, tc := range []struct{ name, mode, want string }{
+		{"amber", "dark", "#39342b"}, {"amber", "light", "#ebe1d4"},
+		{"blue", "dark", "#32353a"}, {"blue", "light", "#e0e2e8"},
+		{"coral", "dark", "#3d3231"}, {"coral", "light", "#f1dedc"},
+		{"cyan", "dark", "#303637"}, {"cyan", "light", "#dee3e5"},
+		{"green", "dark", "#323630"}, {"green", "light", "#e0e4db"},
+		{"monochrome", "dark", "#505050"}, {"monochrome", "light", "#d0d0d2"},
+		{"orange", "dark", "#3d332e"}, {"orange", "light", "#f0dfd8"},
+		{"pink", "dark", "#3c3233"}, {"pink", "light", "#f0dee0"},
+		{"purple", "dark", "#36343a"}, {"purple", "light", "#e6e0e9"},
+		{"red", "dark", "#3d3231"}, {"red", "light", "#f1dedc"},
+	} {
+		a := palettes[tc.name].Dark
+		if tc.mode == "light" {
+			a = palettes[tc.name].Light
+		}
+		if a.High != tc.want {
+			t.Errorf("%s/%s High = %s, want published surfaceContainerHighest %s", tc.name, tc.mode, a.High, tc.want)
+		}
+	}
+}
+
+func TestVoidUsesSyscGreetDarkColorsInBothModes(t *testing.T) {
+	for _, mode := range []string{"dark", "light"} {
+		tok, ok := NamedPalette("void", mode, false)
+		if !ok {
+			t.Fatalf("NamedPalette(%q, %q) not found", "void", mode)
+		}
+		if tok.Surface != "#000000" || tok.Primary != "#ffffff" || tok.Secondary != "#ffffff" ||
+			tok.Tertiary != "#808080" || tok.Error != "#999999" {
+			t.Errorf("void/%s source colors = surface %s, primary %s, secondary %s, tertiary %s, error %s",
+				mode, tok.Surface, tok.Primary, tok.Secondary, tok.Tertiary, tok.Error)
+		}
+	}
+}
 
 // TestNamedPalettesAreCompleteAndValid is the gate that lets a scheme ship. A
 // named palette goes to the same surfaces generated output does, so it has to
