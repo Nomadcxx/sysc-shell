@@ -43,6 +43,8 @@ type hostedView struct {
 	Kind       v1.ViewKind
 	Revision   uint64
 	Root       *ui.Node
+	// Events belongs to the rendered revision, not the newer wire tree.
+	Events     map[string][]v1.EventKind
 	tree       *plugin.ViewTree
 	Failed     bool
 	Label      string
@@ -312,6 +314,9 @@ func (h *pluginHost) stateValue(id, key string) (json.RawMessage, bool) {
 }
 
 func (h *pluginHost) stopPlugin(id string) {
+	h.surfaceMu.Lock()
+	defer h.surfaceMu.Unlock()
+
 	h.mu.Lock()
 	slot := h.slots[id]
 	delete(h.slots, id)
@@ -372,7 +377,9 @@ func (h *pluginHost) onMessage(slot *pluginSlot, msg v1.Message) {
 		v, ok := h.views[m.ViewID]
 		h.mu.Unlock()
 		if !ok {
-			slog.Warn("plugin view for unknown placement dropped", "plugin", slot.rt.Manifest().ID, "view_id", m.ViewID)
+			// Snapshots can already be in flight when the host closes a view,
+			// especially while replacing a panel. Discard them like stale patches.
+			slog.Debug("plugin view for unknown placement dropped", "plugin", slot.rt.Manifest().ID, "view_id", m.ViewID)
 			return
 		}
 		h.mu.Lock()
@@ -443,11 +450,13 @@ func (h *pluginHost) applyResult(res plugin.Result) {
 			"revision", res.Revision, "err", res.Err)
 		v.Failed = true
 		v.Root = nil
+		v.Events = nil
 		v.Label = res.Err.Error()
 	} else {
 		stampPluginActions(res.Root, res.ViewID)
 		v.Failed = false
 		v.Root = res.Root
+		v.Events = res.Events
 		v.Label = ""
 		queuePluginImages(h, res.Root)
 	}
@@ -826,10 +835,7 @@ func (h *pluginHost) callEnv(id string, rt *plugin.Runtime, store plugin.StateSt
 			return h.openFloatingSurface(ctx, id, p)
 		},
 		CloseSurface: func(ctx context.Context, p v1.SurfaceCloseParams) error {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			return h.closeFloatingSurface(id, p)
+			return h.closeFloatingSurface(ctx, id, p)
 		},
 		SurfacePin: func(ctx context.Context, p v1.SurfacePinParams) error {
 			return h.pinFloatingSurface(ctx, id, p)
@@ -1200,14 +1206,16 @@ func (h *pluginHost) deliver(hit pluginHit, event v1.EventKind, button v1.Pointe
 	h.mu.Lock()
 	v, ok := h.views[hit.ViewID]
 	var slot *pluginSlot
+	declared := false
 	if ok {
 		slot = h.slots[v.Plugin]
-		if anchorX > 0 {
+		declared = pluginViewAcceptsEvent(v, hit.Node, event)
+		if declared && anchorX > 0 {
 			h.lastAnchor[v.Plugin] = anchorX
 		}
 	}
 	var toSend []v1.InputEvent
-	if ok {
+	if ok && declared {
 		ev := v1.InputEvent{
 			ViewID: hit.ViewID, Revision: v.Revision, Node: hit.Node,
 			Event: event, Button: button, Text: text, Output: v.Output, Generation: v.Generation,
@@ -1219,13 +1227,49 @@ func (h *pluginHost) deliver(hit pluginHit, event v1.EventKind, button v1.Pointe
 		}
 	}
 	h.mu.Unlock()
-	if !ok || slot == nil {
+	if !ok || slot == nil || !declared {
 		return false
 	}
 	for i := range toSend {
 		_ = slot.rt.Send(&toSend[i])
 	}
 	return true
+}
+
+func pluginViewAcceptsEvent(view *hostedView, node string, event v1.EventKind) bool {
+	if view == nil {
+		return false
+	}
+	if event == v1.EventActivate {
+		if view.Kind == v1.ViewBar && view.Failed && node == "camera" {
+			// The failed-view placeholder has a shell-created diagnostic action.
+			return true
+		}
+		if view.Kind != v1.ViewFloating {
+			return pluginEventDeclared(view.Events, node, event)
+		}
+		switch node {
+		case "surface-pin", "surface-close":
+			// Sticky-note chrome is synthesized by the shell and handled by the
+			// plugin through these two host-provided activation IDs.
+			return true
+		}
+	}
+	if view.Plugin == notesPluginID && view.Kind == v1.ViewPanel && view.Entry == "panel" &&
+		node == "launcher-capture" && event == v1.EventSubmit {
+		// The launcher delivers captured text without adding a visible node.
+		return true
+	}
+	return pluginEventDeclared(view.Events, node, event)
+}
+
+func pluginEventDeclared(events map[string][]v1.EventKind, node string, event v1.EventKind) bool {
+	for _, declared := range events[node] {
+		if declared == event {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *pluginHost) deliverShortcut(key string, modifiers []string) bool {

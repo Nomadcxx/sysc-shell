@@ -117,6 +117,9 @@ type Registry struct {
 	selections chan wayland.SelectionRequest
 	panels     PanelSet
 	panelHosts map[PanelID]*PanelHost
+	// panelShields records which panel host opened each output's shared shield,
+	// even if that host closes while another panel keeps the shield alive.
+	panelShields map[uint32]*PanelHost
 	// panelOrder breaks ties between open panels when their shared shield
 	// dismisses the newest one first.
 	panelOrder uint64
@@ -270,6 +273,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		aux:            make(chan wayland.AuxRequest, 8),
 		selections:     make(chan wayland.SelectionRequest, 8),
 		panelHosts:     make(map[PanelID]*PanelHost),
+		panelShields:   make(map[uint32]*PanelHost),
 		closed:         make(chan struct{}),
 		dwell:          newDwell(defaultDwell),
 		runArgv:        runArgvDefault,

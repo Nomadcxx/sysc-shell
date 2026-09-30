@@ -30,7 +30,10 @@ type Result struct {
 	Plugin   string
 	Revision uint64
 	Root     *ui.Node
-	Err      error
+	// Events remains paired with this prepared revision while a newer wire
+	// tree is waiting for layout.
+	Events map[string][]v1.EventKind
+	Err    error
 }
 
 // Preparer converts and lays out plugin views on a fixed pool of workers.
@@ -249,7 +252,26 @@ func (p *Preparer) prepare(j Job) Result {
 		return out
 	}
 	out.Root = root
+	out.Events = preparedEvents(j.Root)
 	return out
+}
+
+func preparedEvents(root *v1.Node) map[string][]v1.EventKind {
+	events := make(map[string][]v1.EventKind)
+	var walk func(*v1.Node)
+	walk = func(node *v1.Node) {
+		if node == nil {
+			return
+		}
+		if node.ID != "" && len(node.Events) != 0 {
+			events[node.ID] = append([]v1.EventKind(nil), node.Events...)
+		}
+		for _, child := range node.Children {
+			walk(child)
+		}
+	}
+	walk(root)
+	return events
 }
 
 func (p *Preparer) noteDuration(plugin string, start, end time.Time) {

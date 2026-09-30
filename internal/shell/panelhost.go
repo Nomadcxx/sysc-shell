@@ -787,6 +787,25 @@ func (r *Registry) DropAux(output uint32, surfaceID string) {
 	r.closePanelLocked(id)
 }
 
+func (r *Registry) dropPanelAux(host *PanelHost) {
+	if host == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.panelHosts[host.id] == host {
+		r.closePanelLocked(host.id)
+	}
+}
+
+func (r *Registry) dropPanelShield(output uint32, owner *PanelHost) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if owner != nil && r.panelShields[output] == owner {
+		r.closePanelsOnOutputLocked(output)
+	}
+}
+
 func panelIDFromAux(surfaceID string) (PanelID, bool) {
 	name, ok := strings.CutPrefix(surfaceID, "panel:")
 	if !ok {
@@ -1155,6 +1174,10 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	r.panelHosts[id] = h
 
 	if openShield {
+		if r.panelShields == nil {
+			r.panelShields = make(map[uint32]*PanelHost)
+		}
+		r.panelShields[output] = h
 		r.sendAux(wayland.AuxRequest{Output: output, Open: r.shieldSpec(h, generation)})
 	}
 	r.sendAux(wayland.AuxRequest{Output: output, Open: r.panelSpec(h, margins)})
@@ -1327,6 +1350,7 @@ func (r *Registry) shieldSpec(h *PanelHost, generation uint64) *wayland.AuxSpec 
 		Anchor:        uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorBottom | layershell.ZwlrLayerSurfaceV1AnchorLeft | layershell.ZwlrLayerSurfaceV1AnchorRight),
 		ExclusiveZone: -1,
 		Keyboard:      keyboardNone,
+		OnDrop:        func() { r.dropPanelShield(h.output, h) },
 		Callbacks: wayland.HostCallbacks{
 			Configure: func(int, int, int) error { return nil },
 			Render:    func([]byte, int, int, int) error { return nil },
@@ -1452,6 +1476,7 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 		Keyboard:      keyboardExclusive,
 		BlurRegion:    blurRegion,
 		BlurRadius:    r.cfg.Theme.BlurRadius,
+		OnDrop:        func() { r.dropPanelAux(h) },
 		Callbacks: wayland.HostCallbacks{
 			// Delivered from the Wayland goroutine before the surface exists,
 			// so it takes the registry lock exactly as Render does.
@@ -3596,6 +3621,7 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 	r.sendAux(wayland.AuxRequest{Output: h.output, ID: panelSurfaceID(id)})
 	if !r.hasPanelOnOutputLocked(h.output) {
 		r.sendAux(wayland.AuxRequest{Output: h.output, ID: panelShieldSurfaceID(h.output)})
+		delete(r.panelShields, h.output)
 	}
 	releaseAll(h.leases)
 	h.leases = nil

@@ -161,6 +161,17 @@ const testTimerManifest = `{
   "settings": []
 }`
 
+const testNotesPanelManifest = `{
+  "schema": 1,
+  "id": "org.sysc.notes",
+  "name": "Notes",
+  "version": "1.0.0",
+  "protocol": {"major": 1, "minor": 8},
+  "exec": "bin/sysc-plugin-timer",
+  "capabilities": ["panels"],
+  "panels": [{"id": "panel", "width": 320, "height": 280, "placement": "attached"}]
+}`
+
 func pluginConfig(root string) config.Config {
 	cfg := config.Default()
 	cfg.Accessibility.ReducedMotion = true
@@ -469,6 +480,150 @@ func TestPluginPrimaryMiddleSecondaryButtons(t *testing.T) {
 	}
 	if secondary != 1 {
 		t.Fatalf("secondary pointer events = %d, want 1 (press+release must not both fire)", secondary)
+	}
+}
+
+func TestPluginBarOnlyDeliversDeclaredEvents(t *testing.T) {
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	waitPluginText(t, reg.bars[1], "hello")
+
+	ids := reg.plugins.barViewIDs("DP-1")
+	if len(ids) != 1 {
+		t.Fatalf("bar view IDs = %v", ids)
+	}
+	reg.plugins.mu.Lock()
+	view := reg.plugins.views[ids[0]]
+	if view == nil || view.tree == nil || view.tree.Root == nil || len(view.tree.Root.Children) != 1 {
+		reg.plugins.mu.Unlock()
+		t.Fatal("bar view tree is incomplete")
+	}
+	view.Events = map[string][]v1.EventKind{"go": {v1.EventActivate}}
+	reg.plugins.mu.Unlock()
+
+	bar := reg.bars[1]
+	if err := bar.Configure(800, BarHeight, 120); err != nil {
+		t.Fatal(err)
+	}
+	_, x, y := pluginHitPoint(bar)
+	bar.Handle(wayland.Event{Kind: wayland.EventPointerEnter, X: x, Y: y})
+	bar.Handle(wayland.Event{Kind: wayland.EventPointerPress, Button: buttonLeft, X: x, Y: y})
+	bar.Handle(wayland.Event{Kind: wayland.EventPointerRelease, Button: buttonLeft, X: x, Y: y})
+
+	got := reg.plugins.lastInputs()
+	if len(got) != 1 || got[0].Event != v1.EventActivate {
+		t.Fatalf("primary click inputs = %+v, want one declared activate event", got)
+	}
+}
+
+func TestPluginInputUsesEventsFromRenderedRevision(t *testing.T) {
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	waitPluginText(t, reg.bars[1], "hello")
+	ids := reg.plugins.barViewIDs("DP-1")
+	if len(ids) != 1 {
+		t.Fatalf("bar view IDs = %v", ids)
+	}
+	reg.plugins.mu.Lock()
+	view := reg.plugins.views[ids[0]]
+	if view == nil || view.tree == nil || view.tree.Root == nil || len(view.tree.Root.Children) != 1 {
+		reg.plugins.mu.Unlock()
+		t.Fatal("bar view tree is incomplete")
+	}
+	// The latest wire tree has arrived, but its replacement has not finished
+	// preparing. The currently visible button still declares Activate.
+	view.tree.Root.Children[0].Events = []v1.EventKind{v1.EventPointer}
+	view.tree.Revision = view.Revision + 1
+	revision := view.Revision
+	reg.plugins.mu.Unlock()
+
+	if !reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "go"}, v1.EventActivate, "", "", 0) {
+		t.Fatal("activation on the rendered revision was rejected")
+	}
+	inputs := reg.plugins.lastInputs()
+	if len(inputs) != 1 || inputs[0].Revision != revision || inputs[0].Event != v1.EventActivate {
+		t.Fatalf("rendered revision input = %+v, want activate at revision %d", inputs, revision)
+	}
+}
+
+func TestPluginFloatingSurfaceActionsReachPlugin(t *testing.T) {
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	waitPluginText(t, reg.bars[1], "hello")
+
+	ids := reg.plugins.barViewIDs("DP-1")
+	if len(ids) != 1 {
+		t.Fatalf("bar view IDs = %v", ids)
+	}
+	reg.plugins.mu.Lock()
+	view := reg.plugins.views[ids[0]]
+	reg.plugins.mu.Unlock()
+	if reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "surface-close"}, v1.EventActivate, "", "", 0) {
+		t.Fatal("floating surface action was accepted on a bar view")
+	}
+	reg.plugins.mu.Lock()
+	view.Kind = v1.ViewFloating
+	reg.plugins.mu.Unlock()
+	if reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "surface-close"}, v1.EventPointer, v1.ButtonPrimary, "", 0) {
+		t.Fatal("floating surface chrome received a pointer-press event")
+	}
+
+	for _, node := range []string{"surface-pin", "surface-close"} {
+		if !reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: node}, v1.EventActivate, "", "", 0) {
+			t.Errorf("floating %s action was not delivered", node)
+		}
+	}
+	got := reg.plugins.lastInputs()
+	if len(got) != 2 || got[0].Node != "surface-pin" || got[1].Node != "surface-close" {
+		t.Fatalf("floating surface inputs = %+v", got)
+	}
+}
+
+func TestLauncherNotesCaptureReachesNotesPanel(t *testing.T) {
+	reg := bindManifestPlugin(t, "ok", notesPluginID, testNotesPanelManifest, []string{notesPluginID})
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	waitPluginText(t, reg.bars[1], "hello")
+
+	opened, err := reg.plugins.openPanel(notesPluginID, v1.PanelParams{
+		Entry: "panel", Output: "DP-1", Generation: 1, Instance: "launcher",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	waitPluginPanelRoot(t, reg)
+	if err := reg.plugins.launcherNotes("DP-1", 1, "Captured from launcher"); err != nil {
+		t.Fatal(err)
+	}
+
+	inputs := reg.plugins.lastInputs()
+	if len(inputs) == 0 {
+		t.Fatal("launcher capture was not delivered")
+	}
+	got := inputs[len(inputs)-1]
+	if got.ViewID != opened.ViewID || got.Node != "launcher-capture" || got.Event != v1.EventSubmit || got.Text != "Captured from launcher" {
+		t.Fatalf("launcher capture = %+v", got)
+	}
+}
+
+func TestPluginFailedPlaceholderActionReachesPlugin(t *testing.T) {
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	waitPluginText(t, reg.bars[1], "hello")
+	ids := reg.plugins.barViewIDs("DP-1")
+	if len(ids) != 1 {
+		t.Fatalf("bar view IDs = %v", ids)
+	}
+	reg.plugins.mu.Lock()
+	reg.plugins.views[ids[0]].Failed = true
+	reg.plugins.mu.Unlock()
+
+	if !reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "camera"}, v1.EventActivate, "", "", 0) {
+		t.Fatal("failed-view placeholder action was not delivered")
+	}
+	inputs := reg.plugins.lastInputs()
+	if len(inputs) == 0 || inputs[len(inputs)-1].Node != "camera" {
+		t.Fatalf("placeholder input = %+v", inputs)
 	}
 }
 
@@ -839,6 +994,100 @@ func TestDropPanelViewsKeepsReopenedPanel(t *testing.T) {
 	if !owns {
 		t.Fatal("PanelPlugin ownership lost after deferred drop")
 	}
+}
+
+const testPanelEntrySwitchManifest = `{
+  "schema": 1,
+  "id": "org.sysc.panel-switch",
+  "name": "Panel Switch",
+  "version": "1.0.0",
+  "protocol": {"major": 1, "minor": 4},
+  "exec": "bin/sysc-plugin-timer",
+  "capabilities": ["panels", "settings"],
+  "widgets": [{"id": "bar", "settings": []}],
+  "panels": [
+    {"id": "panel", "width": 320, "height": 280, "placement": "attached"},
+    {"id": "settings", "width": 320, "height": 400, "placement": "attached", "include_settings": true}
+  ],
+  "settings": [{"key": "enabled", "type": "bool", "label": "Enabled", "default": true}]
+}`
+
+func TestPluginPanelEntrySwitchKeepsReplacementOpen(t *testing.T) {
+	const pluginID = "org.sysc.panel-switch"
+	reg := bindManifestPlugin(t, "ok", pluginID, testPanelEntrySwitchManifest, []string{pluginID})
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+
+	first, err := reg.plugins.openPanel(pluginID, v1.PanelParams{
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: pluginID + "-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialAux := drainAux(t, reg, 2)
+	var oldPanelDrop, oldShieldDrop func()
+	for _, req := range initialAux {
+		if req.Open == nil {
+			continue
+		}
+		switch req.Open.ID {
+		case panelSurfaceID(PanelPlugin):
+			oldPanelDrop = req.Open.OnDrop
+		case panelShieldSurfaceID(7):
+			oldShieldDrop = req.Open.OnDrop
+		}
+	}
+	waitPluginPanelRoot(t, reg)
+	reg.mu.Lock()
+	oldPanelHost := reg.panelHosts[PanelPlugin]
+	reg.mu.Unlock()
+	if oldPanelHost == nil {
+		t.Fatal("initial plugin panel has no host")
+	}
+
+	second, err := reg.plugins.openPanel(pluginID, v1.PanelParams{
+		Entry: "settings", Output: "DP-1", Generation: 7, Instance: pluginID + "-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ViewID == "" || second.ViewID == first.ViewID {
+		t.Fatalf("settings view = %q, want a new placement after %q", second.ViewID, first.ViewID)
+	}
+	// Consume, but do not apply, the old close and replacement open requests.
+	// The compositor may deliver the old surface's Closed event at this point.
+	_ = drainAux(t, reg, 4)
+	if oldPanelDrop == nil || oldShieldDrop == nil {
+		t.Fatal("initial panel surfaces have no instance-bound drop callbacks")
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		reg.plugins.mu.Lock()
+		panel := reg.plugins.panel
+		view := reg.plugins.views[second.ViewID]
+		ready := panel != nil && panel.ID == second.ViewID && panel.Entry == "settings" &&
+			view != nil && !view.Failed && view.Root != nil
+		reg.plugins.mu.Unlock()
+		reg.mu.Lock()
+		_, open := reg.panels.Output(PanelPlugin)
+		host := reg.panelHosts[PanelPlugin]
+		reg.mu.Unlock()
+		if ready && open && host != nil && strings.Contains(treeText(reg.plugins.panelTree(host)), "Enabled") {
+			oldPanelDrop()
+			oldShieldDrop()
+			reg.mu.Lock()
+			stillCurrent := reg.panelHosts[PanelPlugin] == host && host != oldPanelHost &&
+				reg.panelShields[7] != nil && reg.panelShields[7] != oldPanelHost
+			reg.mu.Unlock()
+			if !stillCurrent {
+				t.Fatal("delayed close from the old aux surface retired its replacement")
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("settings replacement did not stay open: panel=%+v", second)
 }
 
 func TestPluginOpenPanelReplacesAnotherPluginPanel(t *testing.T) {

@@ -47,6 +47,23 @@ func TestCloseAuxRemovesUnitAndNotifiesDropAux(t *testing.T) {
 	}
 }
 
+func TestCloseAuxUsesTheSurfaceDropHandler(t *testing.T) {
+	t.Parallel()
+	s := newHostSet()
+	h := mappedHost(s, 7, "DP-1")
+	unit := newSurfaceUnit("panel:plugin")
+	h.aux[unit.id] = unit
+	var surfaceDrops, globalDrops int
+	unit.onDrop = func() { surfaceDrops++ }
+	o := &owner{hosts: s, cb: Callbacks{DropAux: func(uint32, string) { globalDrops++ }}}
+
+	o.closeAux(h, unit.id)
+
+	if surfaceDrops != 1 || globalDrops != 0 {
+		t.Fatalf("drop callbacks = surface:%d global:%d, want surface:1 global:0", surfaceDrops, globalDrops)
+	}
+}
+
 func TestReloadKeepsAuxMapped(t *testing.T) {
 	t.Parallel()
 	s := newHostSet()
@@ -101,6 +118,29 @@ func TestHandleAuxRequestCloseUnknownIsNoOp(t *testing.T) {
 	mappedHost(s, 7, "DP-1")
 	o := &owner{hosts: s}
 	o.handleAux(AuxRequest{Output: 7, ID: "missing"})
+}
+
+func TestRequestedAuxCloseDoesNotDropItsReplacement(t *testing.T) {
+	t.Parallel()
+	s := newHostSet()
+	h := mappedHost(s, 7, "DP-1")
+	h.aux["panel:plugin"] = newSurfaceUnit("panel:plugin")
+	h.aux["shield:plugin"] = newSurfaceUnit("shield:plugin")
+	var dropped []string
+	o := &owner{hosts: s, cb: Callbacks{DropAux: func(_ uint32, id string) {
+		// The registry already owns the replacement by the time these
+		// queued closes reach the Wayland owner. An echo closes that panel.
+		dropped = append(dropped, id)
+	}}}
+	for _, id := range []string{"panel:plugin", "shield:plugin"} {
+		o.handleAux(AuxRequest{Output: 7, ID: id})
+		if _, exists := h.aux[id]; exists {
+			t.Fatalf("requested close left %s mapped", id)
+		}
+	}
+	if len(dropped) != 0 {
+		t.Fatalf("requested closes echoed to the replacement: %v", dropped)
+	}
 }
 
 func TestWakePipeQueuesAuxRequests(t *testing.T) {
@@ -606,6 +646,24 @@ func TestFireAndForgetOpenFailureClosesInsteadOfFailing(t *testing.T) {
 	}
 	if len(dropped) != 1 || dropped[0] != "osd:7" {
 		t.Fatalf("DropAux calls = %v, want [osd:7]", dropped)
+	}
+}
+
+func TestFireAndForgetOpenFailureUsesSurfaceDropHandler(t *testing.T) {
+	t.Parallel()
+	s := newHostSet()
+	mappedHost(s, 7, "DP-1")
+	var surfaceDrops, globalDrops int
+	o := &owner{hosts: s, cb: Callbacks{DropAux: func(uint32, string) { globalDrops++ }}}
+	spec := &AuxSpec{ID: "panel:plugin", OnDrop: func() { surfaceDrops++ }}
+
+	o.handleAux(AuxRequest{Output: 7, ID: spec.ID, Open: spec})
+
+	if surfaceDrops != 1 || globalDrops != 0 {
+		t.Fatalf("drop callbacks = surface:%d global:%d, want surface:1 global:0", surfaceDrops, globalDrops)
+	}
+	if o.fatal != nil {
+		t.Fatalf("owner failed: %v", o.fatal)
 	}
 }
 

@@ -114,6 +114,9 @@ type surfaceUnit struct {
 	inhibit *inhibit.ZwpKeyboardShortcutsInhibitorV1
 
 	app HostCallbacks
+	// onDrop is bound to this surface instance, so a delayed close cannot act
+	// on a replacement that reused its id.
+	onDrop func()
 
 	// policy holds the mutable per-surface policy an AuxUpdate can change.
 	// It is re-applied on configure so a reconfigure cannot silently restore
