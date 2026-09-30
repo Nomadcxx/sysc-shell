@@ -50,8 +50,14 @@ type pluginSurfaceHost struct {
 }
 
 func (h *pluginHost) openFloatingSurface(ctx context.Context, pluginID string, params v1.SurfaceOpenParams) (v1.SurfaceResult, error) {
+	if err := ctx.Err(); err != nil {
+		return v1.SurfaceResult{}, err
+	}
 	h.surfaceMu.Lock()
 	defer h.surfaceMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return v1.SurfaceResult{}, err
+	}
 
 	h.mu.Lock()
 	slot := h.slots[pluginID]
@@ -112,9 +118,8 @@ func (h *pluginHost) openFloatingSurface(ctx context.Context, pluginID string, p
 		id: PanelPlugin, output: global,
 		place: Placement{Panel: ui.Rect{W: state.Width, H: state.Height}, Output: ui.Rect{W: outputW, H: outputH}, CenterY: true},
 		theme: theme, fontFamily: font,
-		root:  surface.loadingTree(),
-		focus: nil,
 	}
+	surface.panel.root = surface.loadingTree()
 	surface.panel.focus = ui.Focusables(surface.panel.root)
 	surface.panel.roving = ui.Roving{Count: len(surface.panel.focus)}
 
@@ -137,12 +142,41 @@ func (h *pluginHost) openFloatingSurface(ctx context.Context, pluginID string, p
 		h.mu.Unlock()
 		return v1.SurfaceResult{}, err
 	}
+	isOpen := func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		registered := h.views[view.ID]
+		return registered != nil && registered.Plugin == pluginID && registered.Kind == v1.ViewFloating && h.surfaces[view.ID] == surface
+	}
+	closeOpenedSurface := func() {
+		// outputLost can retire the view on the Wayland owner while this open
+		// waits for its reply. Queue the close after the acknowledged open.
+		h.r.sendAux(wayland.AuxRequest{Output: global, ID: surface.surfaceID})
+	}
+	if !isOpen() {
+		closeOpenedSurface()
+		return v1.SurfaceResult{}, errors.New("floating surface closed while opening")
+	}
 	surface.persist()
 	h.announceView(view, openedSlot, false)
+	if !isOpen() {
+		closeOpenedSurface()
+		_ = openedSlot.rt.Send(&v1.ViewClose{ViewID: view.ID})
+		return v1.SurfaceResult{}, errors.New("floating surface closed while opening")
+	}
 	return v1.SurfaceResult{ViewID: view.ID}, nil
 }
 
-func (h *pluginHost) closeFloatingSurface(pluginID string, params v1.SurfaceCloseParams) error {
+func (h *pluginHost) closeFloatingSurface(ctx context.Context, pluginID string, params v1.SurfaceCloseParams) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	h.surfaceMu.Lock()
+	defer h.surfaceMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	h.mu.Lock()
 	view := h.views[params.View]
 	owned := view != nil && view.Plugin == pluginID && view.Kind == v1.ViewFloating
@@ -170,19 +204,52 @@ func (h *pluginHost) dropFloatingAux(output uint32, id string) bool {
 		return false
 	}
 	h.mu.Lock()
-	viewID := ""
-	for candidate, surface := range h.surfaces {
+	var dropped *pluginSurfaceHost
+	for _, surface := range h.surfaces {
 		if surface.global == output && surface.surfaceID == id {
-			viewID = candidate
+			dropped = surface
 			break
 		}
 	}
 	h.mu.Unlock()
-	if viewID == "" {
+	if dropped == nil {
 		return false
 	}
-	h.closeView(viewID)
+	h.dropFloatingSurface(dropped)
 	return true
+}
+
+func (h *pluginHost) dropFloatingSurface(surface *pluginSurfaceHost) {
+	if surface == nil {
+		return
+	}
+	id := surface.viewID
+	h.mu.Lock()
+	if h.surfaces[id] != surface {
+		h.mu.Unlock()
+		return
+	}
+	view := h.views[id]
+	slot := (*pluginSlot)(nil)
+	if view != nil {
+		slot = h.slots[view.Plugin]
+		h.closed = append(h.closed, id)
+	}
+	delete(h.views, id)
+	delete(h.surfaces, id)
+	if h.panel != nil && h.panel.ID == id {
+		h.panel = nil
+	}
+	h.mu.Unlock()
+
+	// Wayland already removed this instance. An ID-only close here could land
+	// after a replacement opens and remove that replacement instead.
+	surface.mu.Lock()
+	surface.closed = true
+	surface.mu.Unlock()
+	if slot != nil {
+		_ = slot.rt.Send(&v1.ViewClose{ViewID: id})
+	}
 }
 
 func (h *pluginHost) outputLost(output uint32) {
@@ -288,7 +355,7 @@ func (p *pluginSurfaceHost) spec() *wayland.AuxSpec {
 		ExclusiveZone:             -1,
 		Keyboard:                  uint32(layershell.ZwlrLayerSurfaceV1KeyboardInteractivityOnDemand),
 		RequiredLayerShellVersion: 4,
-		OnDrop:                    func() { p.host.closeView(p.viewID) },
+		OnDrop:                    func() { p.host.dropFloatingSurface(p) },
 		Callbacks: wayland.HostCallbacks{
 			Configure:  p.panel.configureLocking(p.host.r),
 			OutputSize: p.outputSize,

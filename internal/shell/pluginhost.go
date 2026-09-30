@@ -314,6 +314,9 @@ func (h *pluginHost) stateValue(id, key string) (json.RawMessage, bool) {
 }
 
 func (h *pluginHost) stopPlugin(id string) {
+	h.surfaceMu.Lock()
+	defer h.surfaceMu.Unlock()
+
 	h.mu.Lock()
 	slot := h.slots[id]
 	delete(h.slots, id)
@@ -832,10 +835,7 @@ func (h *pluginHost) callEnv(id string, rt *plugin.Runtime, store plugin.StateSt
 			return h.openFloatingSurface(ctx, id, p)
 		},
 		CloseSurface: func(ctx context.Context, p v1.SurfaceCloseParams) error {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			return h.closeFloatingSurface(id, p)
+			return h.closeFloatingSurface(ctx, id, p)
 		},
 		SurfacePin: func(ctx context.Context, p v1.SurfacePinParams) error {
 			return h.pinFloatingSurface(ctx, id, p)
