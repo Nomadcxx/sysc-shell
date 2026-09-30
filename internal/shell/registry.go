@@ -1050,27 +1050,34 @@ func (r *Registry) generateTheme(cfg config.Config) (theme.Tokens, error) {
 		// behind a live one (or had nothing to do). Sweeping now would eat
 		// the overwrite the queued pass is about to consume; the goroutine
 		// that eventually runs the job reports its outcomes instead.
-		if outcomes != nil {
-			refusals := map[string]string{}
-			for name, oerr := range outcomes {
-				if errors.Is(oerr, theming.ErrUserModified) {
-					refusals[name] = oerr.Error()
-				}
-			}
-			r.templateMu.Lock()
-			r.templateRefusals = refusals
-			for name := range r.templateForce {
-				if _, refused := refusals[name]; !refused {
-					delete(r.templateForce, name)
-				}
-			}
-			r.templateMu.Unlock()
-		}
+		r.recordTemplateOutcomes(outcomes, true)
 		if err != nil {
 			return tok, fmt.Errorf("theme: external templates: %w", err)
 		}
 	}
 	return tok, nil
+}
+
+func (r *Registry) recordTemplateOutcomes(outcomes map[string]error, clearResolvedForces bool) {
+	if outcomes == nil {
+		return
+	}
+	refusals := map[string]string{}
+	for name, err := range outcomes {
+		if errors.Is(err, theming.ErrUserModified) {
+			refusals[name] = err.Error()
+		}
+	}
+	r.templateMu.Lock()
+	r.templateRefusals = refusals
+	if clearResolvedForces {
+		for name := range r.templateForce {
+			if _, refused := refusals[name]; !refused {
+				delete(r.templateForce, name)
+			}
+		}
+	}
+	r.templateMu.Unlock()
 }
 
 // generateOnly produces palette tokens for cfg without touching published

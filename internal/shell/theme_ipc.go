@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
+	"github.com/Nomadcxx/sysc-shell/internal/theming"
 )
 
 // ThemeCall answers the theme.* IPC methods (sysc-715). Writes go through the
@@ -147,28 +149,76 @@ func themeEntrySet(reg *settings.Registry, cfg *config.Config, path, value strin
 }
 
 func (r *Registry) themeTemplatesApply(name string, on *bool) (map[string]any, error) {
+	resultNames := theming.Catalog().Names()
+	var cfg config.Config
 	if name == "" {
-		// No target: rewrite every enabled template from the committed tokens
-		// by poking a reload with the config unchanged.
-		if err := r.writeConfig(r.themeSnapshot()); err != nil {
+		// No target: rewrite every template from the committed tokens and poke
+		// the normal reload so the live shell state catches up too.
+		cfg = r.themeSnapshot()
+		if err := r.writeConfig(cfg); err != nil {
 			return nil, err
 		}
-		return map[string]any{"applied": "all"}, nil
+	} else {
+		cfg = r.themeSnapshot()
+		e, ok := settings.DefaultFor(cfg).Lookup("theme.templates." + name)
+		if !ok {
+			return nil, fmt.Errorf("unknown template %s", name)
+		}
+		value := "true"
+		if on != nil && !*on {
+			value = "false"
+		}
+		if err := e.Set(&cfg, value); err != nil {
+			return nil, err
+		}
+		if err := r.writeConfig(cfg); err != nil {
+			return nil, err
+		}
 	}
-	cfg := r.themeSnapshot()
-	e, ok := settings.DefaultFor(cfg).Lookup("theme.templates." + name)
-	if !ok {
-		return nil, fmt.Errorf("unknown template %s", name)
+
+	var outcomes map[string]error
+	var applyErr error
+	home := os.Getenv("HOME")
+	if home == "" {
+		applyErr = errors.New("HOME is unset")
+	} else {
+		outcomes, applyErr = theming.ApplyEnabledAndWait(home, cfg.TemplateEnabled, r.Tokens(), nil)
 	}
-	value := "true"
-	if on != nil && !*on {
-		value = "false"
+	if outcomes != nil {
+		r.recordTemplateOutcomes(outcomes, false)
 	}
-	if err := e.Set(&cfg, value); err != nil {
-		return nil, err
+	if outcomes == nil && applyErr == nil {
+		applyErr = errors.New("template apply completed without per-template outcomes")
 	}
-	if err := r.writeConfig(cfg); err != nil {
-		return nil, err
+
+	results := make(map[string]any, len(resultNames))
+	for _, template := range resultNames {
+		var templateErr error
+		if outcomes == nil {
+			templateErr = applyErr
+		} else {
+			var attempted bool
+			templateErr, attempted = outcomes[template]
+			if !attempted {
+				continue
+			}
+		}
+		result := map[string]any{"status": "applied"}
+		if templateErr != nil {
+			status := "error"
+			if errors.Is(templateErr, theming.ErrUserModified) {
+				status = "refused"
+			}
+			result = map[string]any{"status": status, "error": templateErr.Error()}
+		}
+		results[template] = result
 	}
-	return map[string]any{"applied": name, "enabled": value == "true"}, nil
+	body := map[string]any{"results": results}
+	if name == "" {
+		body["applied"] = "all"
+		return body, nil
+	}
+	body["applied"] = name
+	body["enabled"] = cfg.TemplateEnabled(name)
+	return body, nil
 }
