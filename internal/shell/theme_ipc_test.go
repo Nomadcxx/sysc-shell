@@ -17,6 +17,10 @@ import (
 
 func themeCallRegistry(t *testing.T) (*Registry, string) {
 	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	path := filepath.Join(t.TempDir(), "config.toml")
 	r := NewRegistry(config.Default())
 	r.BindPersist(path, nil)
@@ -146,6 +150,10 @@ func TestThemeCallVerbs(t *testing.T) {
 			check: func(t *testing.T, _ string, body map[string]any) {
 				if body["applied"] != "all" {
 					t.Fatalf("body = %v", body)
+				}
+				results, ok := body["results"].(map[string]any)
+				if !ok || len(results) == 0 {
+					t.Fatalf("body has no per-template results: %v", body)
 				}
 			},
 		},
@@ -768,5 +776,101 @@ func TestThemeCallRoutesFromPersistedConfig(t *testing.T) {
 	}
 	if cfg.ThemeGen.Source != "palette" || cfg.ThemeGen.Seed != "nord" {
 		t.Fatalf("theme = %+v", cfg.ThemeGen)
+	}
+}
+
+func TestThemeTemplatesApplyReportsUserModifiedRefusal(t *testing.T) {
+	r, path := themeCallRegistry(t)
+	t.Cleanup(r.Close)
+	home := os.Getenv("HOME")
+
+	cfg := config.Default()
+	cfg.ThemeGen.Source = "palette"
+	cfg.ThemeGen.Seed = theme.PaletteNames()[0]
+	if err := config.Write(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	on := true
+	apply := func() map[string]any {
+		body, err := callTheme(t, r, "theme.templates.apply", map[string]any{
+			"name": "foot",
+			"on":   on,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		results, ok := body["results"].(map[string]any)
+		if !ok {
+			t.Fatalf("reply has no per-template results: %v", body)
+		}
+		foot, ok := results["foot"].(map[string]any)
+		if !ok {
+			t.Fatalf("foot result = %v", results["foot"])
+		}
+		return foot
+	}
+	if got := apply()["status"]; got != "applied" {
+		t.Fatalf("first foot result status = %v, want applied", got)
+	}
+
+	sidecar := filepath.Join(home, ".config", "foot", "themes", "sysc-shell")
+	if err := os.WriteFile(sidecar, []byte("user edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := apply(); got["status"] != "refused" || got["error"] == "" {
+		t.Fatalf("edited foot result = %v, want refused with a reason", got)
+	}
+	if got, err := os.ReadFile(sidecar); err != nil || string(got) != "user edit\n" {
+		t.Fatalf("sidecar = %q, err = %v; user edit must be preserved", got, err)
+	}
+}
+
+func TestThemeTemplatesApplyReportsWriteError(t *testing.T) {
+	r, _ := themeCallRegistry(t)
+	t.Cleanup(r.Close)
+	home := os.Getenv("HOME")
+	footDir := filepath.Join(home, ".config", "foot")
+	if err := os.MkdirAll(filepath.Dir(footDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(footDir, []byte("not a directory\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	on := true
+	body, err := callTheme(t, r, "theme.templates.apply", map[string]any{
+		"name": "foot",
+		"on":   on,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, ok := body["results"].(map[string]any)
+	if !ok {
+		t.Fatalf("reply has no per-template results: %v", body)
+	}
+	foot, ok := results["foot"].(map[string]any)
+	if !ok || foot["status"] != "error" || foot["error"] == "" {
+		t.Fatalf("foot result = %v, want error with a reason", results["foot"])
+	}
+}
+
+func TestThemeTemplatesApplyOmitsUnattemptedNiri(t *testing.T) {
+	r, path := themeCallRegistry(t)
+	t.Cleanup(r.Close)
+	if err := config.Write(path, config.Default()); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := callTheme(t, r, "theme.templates.apply", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, ok := body["results"].(map[string]any)
+	if !ok {
+		t.Fatalf("reply has no per-template results: %v", body)
+	}
+	if _, ok := results["niri"]; ok {
+		t.Fatalf("reply reports Niri as applied without a Niri config: %v", results["niri"])
 	}
 }
