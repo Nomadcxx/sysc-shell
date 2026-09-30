@@ -224,7 +224,7 @@ func pluginSettingRow(r *Registry, h *PanelHost, pluginID string, s plugin.Setti
 		trailing.Width = controlWidth
 	}
 	row := &ui.Node{Kind: ui.KindRow, PinEnd: true, CenterY: true, Gap: theme.MarginL, Children: []*ui.Node{label, trailing}}
-	if s.Description == "" {
+	if s.Description == "" && control.Kind != ui.KindTextField {
 		row.Height = h.metrics().StandardControl
 	}
 	return row
@@ -310,26 +310,24 @@ func pluginSettingControl(h *PanelHost, s plugin.Setting, raw, action, store str
 		n.Height, n.Padding = h.metrics().StandardControl, theme.MarginS
 		return n
 	default:
+		var f *ui.Field
 		if h == nil {
-			field := ui.NewField(raw)
-			field.Masked = strings.HasSuffix(s.Key, "_api_key")
-			n := field.Node(s.Label)
-			n.Action = action
-			n.Width = 200
-			return n
-		}
-		if h.fields == nil {
-			h.fields = map[string]*ui.Field{}
-		}
-		f := h.fields[store]
-		if f == nil {
 			f = ui.NewField(raw)
-			h.fields[store] = f
+		} else {
+			if h.fields == nil {
+				h.fields = map[string]*ui.Field{}
+			}
+			f = h.fields[store]
+			if f == nil {
+				f = ui.NewField(raw)
+				h.fields[store] = f
+			}
 		}
 		f.Masked = strings.HasSuffix(s.Key, "_api_key")
 		n := f.Node(s.Label)
 		n.Action = action
 		n.Width = 200
+		n.Padding = h.metrics().ButtonPadding
 		return n
 	}
 }
