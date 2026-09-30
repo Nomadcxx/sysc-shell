@@ -47,6 +47,23 @@ func TestCloseAuxRemovesUnitAndNotifiesDropAux(t *testing.T) {
 	}
 }
 
+func TestCloseAuxUsesTheSurfaceDropHandler(t *testing.T) {
+	t.Parallel()
+	s := newHostSet()
+	h := mappedHost(s, 7, "DP-1")
+	unit := newSurfaceUnit("panel:plugin")
+	h.aux[unit.id] = unit
+	var surfaceDrops, globalDrops int
+	unit.onDrop = func() { surfaceDrops++ }
+	o := &owner{hosts: s, cb: Callbacks{DropAux: func(uint32, string) { globalDrops++ }}}
+
+	o.closeAux(h, unit.id)
+
+	if surfaceDrops != 1 || globalDrops != 0 {
+		t.Fatalf("drop callbacks = surface:%d global:%d, want surface:1 global:0", surfaceDrops, globalDrops)
+	}
+}
+
 func TestReloadKeepsAuxMapped(t *testing.T) {
 	t.Parallel()
 	s := newHostSet()
@@ -629,6 +646,24 @@ func TestFireAndForgetOpenFailureClosesInsteadOfFailing(t *testing.T) {
 	}
 	if len(dropped) != 1 || dropped[0] != "osd:7" {
 		t.Fatalf("DropAux calls = %v, want [osd:7]", dropped)
+	}
+}
+
+func TestFireAndForgetOpenFailureUsesSurfaceDropHandler(t *testing.T) {
+	t.Parallel()
+	s := newHostSet()
+	mappedHost(s, 7, "DP-1")
+	var surfaceDrops, globalDrops int
+	o := &owner{hosts: s, cb: Callbacks{DropAux: func(uint32, string) { globalDrops++ }}}
+	spec := &AuxSpec{ID: "panel:plugin", OnDrop: func() { surfaceDrops++ }}
+
+	o.handleAux(AuxRequest{Output: 7, ID: spec.ID, Open: spec})
+
+	if surfaceDrops != 1 || globalDrops != 0 {
+		t.Fatalf("drop callbacks = surface:%d global:%d, want surface:1 global:0", surfaceDrops, globalDrops)
+	}
+	if o.fatal != nil {
+		t.Fatalf("owner failed: %v", o.fatal)
 	}
 }
 

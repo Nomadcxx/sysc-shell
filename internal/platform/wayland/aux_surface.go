@@ -45,6 +45,9 @@ type AuxSpec struct {
 	// compositor's keybinds; the open never fails for want of one.
 	InhibitShortcuts bool
 	Callbacks        HostCallbacks
+	// OnDrop reports an unexpected close or failed open for this surface
+	// instance, so a delayed drop cannot act on a replacement with the same id.
+	OnDrop func()
 }
 
 // AuxRequest opens (Open != nil), updates (Update != nil), or closes (both nil,
@@ -126,14 +129,16 @@ func (o *owner) handleAux(req AuxRequest) {
 		// Nobody waits on this open, so the shell would keep a surface that
 		// never appeared. Forget it, as failUnit does for a surface that
 		// fails later; one surface must not take the process down.
-		// An open that failed before it could replace a surface with the
-		// same id closes that one too, so none stays mapped unowned.
+		// Retire any older surface left under this id, then let this request's
+		// owner unwind the replacement it failed to open.
 		fmt.Fprintf(os.Stderr, "sysc-shell: open aux %s: %v\n", req.Open.ID, err)
-		switch _, open := h.aux[req.Open.ID]; {
-		case open:
-			o.closeAux(h, req.Open.ID)
-		case req.Open.ID != "" && o.cb.DropAux != nil:
-			o.cb.DropAux(req.Output, req.Open.ID)
+		o.removeAux(h, req.Open.ID)
+		if req.Open.ID != "" {
+			if req.Open.OnDrop != nil {
+				req.Open.OnDrop()
+			} else if o.cb.DropAux != nil {
+				o.cb.DropAux(req.Output, req.Open.ID)
+			}
 		}
 	default:
 		o.fail(err)
@@ -160,6 +165,7 @@ func (o *owner) openAux(h *OutputHost, spec *AuxSpec) error {
 
 	u := newSurfaceUnit(spec.ID)
 	u.app = spec.Callbacks
+	u.onDrop = spec.OnDrop
 
 	// Before any surface exists. Screencopy captures the composited output, so
 	// a capture taken once this panel or its shield had mapped would blur the
@@ -417,7 +423,13 @@ func (o *owner) applyAuxPolicy(u *surfaceUnit, next auxPolicy) error {
 }
 
 func (o *owner) closeAux(h *OutputHost, id string) {
-	if o.removeAux(h, id) && o.cb.DropAux != nil {
+	u := h.aux[id]
+	if u == nil || !o.removeAux(h, id) {
+		return
+	}
+	if u.onDrop != nil {
+		u.onDrop()
+	} else if o.cb.DropAux != nil {
 		o.cb.DropAux(h.global, id)
 	}
 }

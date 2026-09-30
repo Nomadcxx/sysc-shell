@@ -1024,8 +1024,26 @@ func TestPluginPanelEntrySwitchKeepsReplacementOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = drainAux(t, reg, 2)
+	initialAux := drainAux(t, reg, 2)
+	var oldPanelDrop, oldShieldDrop func()
+	for _, req := range initialAux {
+		if req.Open == nil {
+			continue
+		}
+		switch req.Open.ID {
+		case panelSurfaceID(PanelPlugin):
+			oldPanelDrop = req.Open.OnDrop
+		case panelShieldSurfaceID(7):
+			oldShieldDrop = req.Open.OnDrop
+		}
+	}
 	waitPluginPanelRoot(t, reg)
+	reg.mu.Lock()
+	oldPanelHost := reg.panelHosts[PanelPlugin]
+	reg.mu.Unlock()
+	if oldPanelHost == nil {
+		t.Fatal("initial plugin panel has no host")
+	}
 
 	second, err := reg.plugins.openPanel(pluginID, v1.PanelParams{
 		Entry: "settings", Output: "DP-1", Generation: 7, Instance: pluginID + "-1",
@@ -1035,6 +1053,12 @@ func TestPluginPanelEntrySwitchKeepsReplacementOpen(t *testing.T) {
 	}
 	if second.ViewID == "" || second.ViewID == first.ViewID {
 		t.Fatalf("settings view = %q, want a new placement after %q", second.ViewID, first.ViewID)
+	}
+	// Consume, but do not apply, the old close and replacement open requests.
+	// The compositor may deliver the old surface's Closed event at this point.
+	_ = drainAux(t, reg, 4)
+	if oldPanelDrop == nil || oldShieldDrop == nil {
+		t.Fatal("initial panel surfaces have no instance-bound drop callbacks")
 	}
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -1050,6 +1074,15 @@ func TestPluginPanelEntrySwitchKeepsReplacementOpen(t *testing.T) {
 		host := reg.panelHosts[PanelPlugin]
 		reg.mu.Unlock()
 		if ready && open && host != nil && strings.Contains(treeText(reg.plugins.panelTree(host)), "Enabled") {
+			oldPanelDrop()
+			oldShieldDrop()
+			reg.mu.Lock()
+			stillCurrent := reg.panelHosts[PanelPlugin] == host && host != oldPanelHost &&
+				reg.panelShields[7] != nil && reg.panelShields[7] != oldPanelHost
+			reg.mu.Unlock()
+			if !stillCurrent {
+				t.Fatal("delayed close from the old aux surface retired its replacement")
+			}
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
