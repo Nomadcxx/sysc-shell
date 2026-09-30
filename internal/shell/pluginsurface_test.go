@@ -40,3 +40,32 @@ func TestFloatingSurfaceTreeShowsResizeGrip(t *testing.T) {
 		t.Fatalf("resize grip = %+v", last)
 	}
 }
+
+func TestFloatingSurfaceDropOnlyClosesItsView(t *testing.T) {
+	host := &pluginHost{
+		views:    map[string]*hostedView{"v1": {ID: "v1"}, "v2": {ID: "v2"}},
+		surfaces: make(map[string]*pluginSurfaceHost),
+	}
+	old := &pluginSurfaceHost{
+		host: host, panel: &PanelHost{theme: DefaultTheme()}, viewID: "v1",
+		surfaceID: "plugin-floating:note",
+	}
+	replacement := &pluginSurfaceHost{
+		host: host, panel: &PanelHost{theme: DefaultTheme()}, viewID: "v2",
+		surfaceID: old.surfaceID,
+	}
+	host.surfaces[replacement.viewID] = replacement
+
+	drop := old.spec().OnDrop
+	if drop == nil {
+		t.Fatal("sticky note aux has no instance-bound drop callback")
+	}
+	drop()
+
+	if _, ok := host.views[old.viewID]; ok {
+		t.Fatal("delayed drop left its own view open")
+	}
+	if host.views[replacement.viewID] == nil || host.surfaces[replacement.viewID] != replacement {
+		t.Fatal("delayed drop retired the replacement sticky note")
+	}
+}

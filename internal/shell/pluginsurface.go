@@ -288,6 +288,7 @@ func (p *pluginSurfaceHost) spec() *wayland.AuxSpec {
 		ExclusiveZone:             -1,
 		Keyboard:                  uint32(layershell.ZwlrLayerSurfaceV1KeyboardInteractivityOnDemand),
 		RequiredLayerShellVersion: 4,
+		OnDrop:                    func() { p.host.closeView(p.viewID) },
 		Callbacks: wayland.HostCallbacks{
 			Configure:  p.panel.configureLocking(p.host.r),
 			OutputSize: p.outputSize,
