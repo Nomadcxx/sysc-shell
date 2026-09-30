@@ -82,3 +82,26 @@ func TestSliderArrowKeysAdjust(t *testing.T) {
 		t.Fatalf("right at max must clamp, got %v", n.Value)
 	}
 }
+
+func TestMenuGeometryHonorsPaddingAndDeclaredSize(t *testing.T) {
+	measure := func(string, TextAttrs) (int, int) { return 80, 18 }
+	makeMenu := func() *Node {
+		return &Node{Kind: KindMenu, Text: "All windows", Width: 220, Height: 36, Padding: 8}
+	}
+
+	columnMenu := makeMenu()
+	if err := LayoutColumn(&Node{Kind: KindColumn, Children: []*Node{columnMenu}}, Rect{W: 220, H: 60}, measure); err != nil {
+		t.Fatal(err)
+	}
+	if columnMenu.Bounds.W != 220 || columnMenu.Bounds.H != 36 {
+		t.Errorf("column menu bounds = %+v, want 220×36 padded control", columnMenu.Bounds)
+	}
+
+	rowMenu := makeMenu()
+	if err := Layout(&Node{Kind: KindRow, Children: []*Node{rowMenu}}, Rect{W: 220, H: 60}, measure); err != nil {
+		t.Fatal(err)
+	}
+	if rowMenu.Bounds.W != 220 || rowMenu.Bounds.H != 36 {
+		t.Errorf("row menu bounds = %+v, want 220×36 padded control", rowMenu.Bounds)
+	}
+}

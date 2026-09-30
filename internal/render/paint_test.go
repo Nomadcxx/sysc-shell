@@ -2472,6 +2472,21 @@ func TestMenuChevronAppearsOnlyWhereThereIsRoom(t *testing.T) {
 	}
 }
 
+func TestMenuUsesSemanticContainerSurface(t *testing.T) {
+	t.Parallel()
+	c := newTestCanvas(t, 120, 64)
+	menu := &ui.Node{
+		Kind: ui.KindMenu, Text: "All windows", Padding: 8,
+		Bounds: ui.Rect{X: 8, Y: 8, W: 104, H: 40},
+	}
+	if err := paintNode(c, menu, nil, testStyle, testStyle.Size); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := pixelAt(t, c, 60, 28), testStyle.containerHighest(); got != want {
+		t.Fatalf("menu surface = %+v, want semantic container surface %+v", got, want)
+	}
+}
+
 func TestPaintNodeStrokeRimsCapsulesAndButtons(t *testing.T) {
 	t.Parallel()
 
