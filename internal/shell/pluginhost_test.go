@@ -472,6 +472,39 @@ func TestPluginPrimaryMiddleSecondaryButtons(t *testing.T) {
 	}
 }
 
+func TestPluginBarOnlyDeliversDeclaredEvents(t *testing.T) {
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	waitPluginText(t, reg.bars[1], "hello")
+
+	ids := reg.plugins.barViewIDs("DP-1")
+	if len(ids) != 1 {
+		t.Fatalf("bar view IDs = %v", ids)
+	}
+	reg.plugins.mu.Lock()
+	view := reg.plugins.views[ids[0]]
+	if view == nil || view.tree == nil || view.tree.Root == nil || len(view.tree.Root.Children) != 1 {
+		reg.plugins.mu.Unlock()
+		t.Fatal("bar view tree is incomplete")
+	}
+	view.tree.Root.Children[0].Events = []v1.EventKind{v1.EventActivate}
+	reg.plugins.mu.Unlock()
+
+	bar := reg.bars[1]
+	if err := bar.Configure(800, BarHeight, 120); err != nil {
+		t.Fatal(err)
+	}
+	_, x, y := pluginHitPoint(bar)
+	bar.Handle(wayland.Event{Kind: wayland.EventPointerEnter, X: x, Y: y})
+	bar.Handle(wayland.Event{Kind: wayland.EventPointerPress, Button: buttonLeft, X: x, Y: y})
+	bar.Handle(wayland.Event{Kind: wayland.EventPointerRelease, Button: buttonLeft, X: x, Y: y})
+
+	got := reg.plugins.lastInputs()
+	if len(got) != 1 || got[0].Event != v1.EventActivate {
+		t.Fatalf("primary click inputs = %+v, want one declared activate event", got)
+	}
+}
+
 func TestPluginInteractiveNodesCarryAccessibleNames(t *testing.T) {
 	reg := bindTestPlugin(t, "ok")
 	newHosts(t, reg, map[uint32]string{1: "DP-1"})
@@ -839,6 +872,67 @@ func TestDropPanelViewsKeepsReopenedPanel(t *testing.T) {
 	if !owns {
 		t.Fatal("PanelPlugin ownership lost after deferred drop")
 	}
+}
+
+const testPanelEntrySwitchManifest = `{
+  "schema": 1,
+  "id": "org.sysc.panel-switch",
+  "name": "Panel Switch",
+  "version": "1.0.0",
+  "protocol": {"major": 1, "minor": 4},
+  "exec": "bin/sysc-plugin-timer",
+  "capabilities": ["panels", "settings"],
+  "widgets": [{"id": "bar", "settings": []}],
+  "panels": [
+    {"id": "panel", "width": 320, "height": 280, "placement": "attached"},
+    {"id": "settings", "width": 320, "height": 400, "placement": "attached", "include_settings": true}
+  ],
+  "settings": [{"key": "enabled", "type": "bool", "label": "Enabled", "default": true}]
+}`
+
+func TestPluginPanelEntrySwitchKeepsReplacementOpen(t *testing.T) {
+	const pluginID = "org.sysc.panel-switch"
+	reg := bindManifestPlugin(t, "ok", pluginID, testPanelEntrySwitchManifest, []string{pluginID})
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+
+	first, err := reg.plugins.openPanel(pluginID, v1.PanelParams{
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: pluginID + "-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	waitPluginPanelRoot(t, reg)
+
+	second, err := reg.plugins.openPanel(pluginID, v1.PanelParams{
+		Entry: "settings", Output: "DP-1", Generation: 7, Instance: pluginID + "-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ViewID == "" || second.ViewID == first.ViewID {
+		t.Fatalf("settings view = %q, want a new placement after %q", second.ViewID, first.ViewID)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		reg.plugins.mu.Lock()
+		panel := reg.plugins.panel
+		view := reg.plugins.views[second.ViewID]
+		ready := panel != nil && panel.ID == second.ViewID && panel.Entry == "settings" &&
+			view != nil && !view.Failed && view.Root != nil
+		reg.plugins.mu.Unlock()
+		reg.mu.Lock()
+		_, open := reg.panels.Output(PanelPlugin)
+		host := reg.panelHosts[PanelPlugin]
+		reg.mu.Unlock()
+		if ready && open && host != nil && strings.Contains(treeText(reg.plugins.panelTree(host)), "Enabled") {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("settings replacement did not stay open: panel=%+v", second)
 }
 
 func TestPluginOpenPanelReplacesAnotherPluginPanel(t *testing.T) {

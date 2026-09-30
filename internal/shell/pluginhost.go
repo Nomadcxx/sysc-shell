@@ -1202,14 +1202,16 @@ func (h *pluginHost) deliver(hit pluginHit, event v1.EventKind, button v1.Pointe
 	h.mu.Lock()
 	v, ok := h.views[hit.ViewID]
 	var slot *pluginSlot
+	declared := false
 	if ok {
 		slot = h.slots[v.Plugin]
-		if anchorX > 0 {
+		declared = v.tree != nil && pluginNodeDeclaresEvent(v.tree.Root, hit.Node, event)
+		if declared && anchorX > 0 {
 			h.lastAnchor[v.Plugin] = anchorX
 		}
 	}
 	var toSend []v1.InputEvent
-	if ok {
+	if ok && declared {
 		ev := v1.InputEvent{
 			ViewID: hit.ViewID, Revision: v.Revision, Node: hit.Node,
 			Event: event, Button: button, Text: text, Output: v.Output, Generation: v.Generation,
@@ -1221,13 +1223,33 @@ func (h *pluginHost) deliver(hit pluginHit, event v1.EventKind, button v1.Pointe
 		}
 	}
 	h.mu.Unlock()
-	if !ok || slot == nil {
+	if !ok || slot == nil || !declared {
 		return false
 	}
 	for i := range toSend {
 		_ = slot.rt.Send(&toSend[i])
 	}
 	return true
+}
+
+func pluginNodeDeclaresEvent(root *v1.Node, id string, event v1.EventKind) bool {
+	if root == nil {
+		return false
+	}
+	if root.ID == id {
+		for _, declared := range root.Events {
+			if declared == event {
+				return true
+			}
+		}
+		return false
+	}
+	for _, child := range root.Children {
+		if pluginNodeDeclaresEvent(child, id, event) {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *pluginHost) deliverShortcut(key string, modifiers []string) bool {
