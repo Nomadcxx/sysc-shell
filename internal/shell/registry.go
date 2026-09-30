@@ -79,6 +79,14 @@ type Registry struct {
 	// themeErr is why the published palette is not the requested one, empty
 	// when it is. Surfaced by the picker; never fatal.
 	themeErr string
+	// previewing keeps the preview session open until hide so its committed
+	// generation reason can be restored. previewTheme is the separate in-memory
+	// presentation used by every surface; commits clear it without persisting it.
+	// These fields are protected by Registry.mu.
+	previewing     bool
+	previewPrevErr string
+	previewTheme   *themePreviewState
+	previewRequest uint64
 	// templateRefusals names templates whose files the shell refused to write
 	// because their current bytes are not the shell's last render. The
 	// settings Templates section surfaces them with an overwrite action.
@@ -93,6 +101,11 @@ type Registry struct {
 	templateRefusals map[string]string
 	templateForce    map[string]bool
 	themeGen         theme.Generator
+	// themeGenMu serializes generation across goroutines (sysc-780). Committed
+	// generation shares one cache path; previews use temporary paths but still
+	// keep matugen single-flight. Leaf lock: nothing takes Registry.mu while it
+	// is held, and painting takes r.mu only after generation releases it.
+	themeGenMu sync.Mutex
 
 	// invalidations carries one entry per bar whose rendered text changed.
 	// The Wayland owner receives from it; the registry owns it and never
@@ -955,15 +968,17 @@ func (r *Registry) ReducedMotion() bool {
 // the previous theme, and the mix is hard to attribute afterwards. Templates
 // are only written for a palette that survives that check, so an external
 // consumer never sees one the shell itself refused.
-// panelTheme resolves a popout's theme from the live configuration and the
-// current palette.
+// panelTheme resolves a popout's theme from the effective presentation
+// configuration and palette, which may be a no-commit preview.
 //
 // Panels used to build ThemeFromTokens(r.tokens, 12), which rebuilds the
 // default composition and pins the radius, so the palette was the only axis
 // that reached a popout: density, radius, font scale and preset all stopped at
-// the bar. Resolving from r.cfg is what makes one theme serve every surface.
+// the bar. Resolving from the effective config is what makes one theme serve
+// every surface.
 func (r *Registry) panelTheme() Theme {
-	t, err := ResolveTheme(r.cfg, r.cfg.Bar, r.tokens)
+	cfg, tokens := r.effectiveThemeLocked()
+	t, err := ResolveTheme(cfg, cfg.Bar, tokens)
 	if err != nil {
 		return DefaultTheme()
 	}
@@ -978,11 +993,37 @@ func resolveOutputTheme(cfg config.Config, connector string, tok theme.Tokens, b
 }
 
 func (r *Registry) panelThemeFor(output uint32) Theme {
+	cfg, tokens := r.effectiveThemeLocked()
+	return r.panelThemeForState(output, cfg, tokens)
+}
+
+func (r *Registry) effectiveThemeLocked() (config.Config, theme.Tokens) {
+	if r.previewTheme != nil {
+		return r.previewTheme.cfg, r.previewTheme.tokens
+	}
+	return r.cfg, r.tokens
+}
+
+// invalidateThemePreviewLocked discards pending work before a committed theme
+// is published. A visible preview keeps its session open until hide; a first
+// preview that has not painted is simply canceled.
+func (r *Registry) invalidateThemePreviewLocked() {
+	r.previewRequest++
+	if r.previewTheme == nil {
+		r.previewing = false
+		r.previewPrevErr = ""
+	}
+	r.previewTheme = nil
+}
+
+// panelThemeForState resolves one output against the supplied palette. The
+// retheme path passes preview candidates here without publishing them in r.
+func (r *Registry) panelThemeForState(output uint32, cfg config.Config, tokens theme.Tokens) Theme {
 	connector := ""
 	if bar, ok := r.bars[output]; ok {
 		connector = bar.connector()
 	}
-	t, err := resolveOutputTheme(r.cfg, connector, r.tokens, r.caps.Blur)
+	t, err := resolveOutputTheme(cfg, connector, tokens, r.caps.Blur)
 	if err != nil {
 		return DefaultTheme()
 	}
@@ -999,20 +1040,9 @@ func (r *Registry) panelThemeFor(output uint32) Theme {
 // colours: the wallpaper changed, the shell did not, and there was nowhere to
 // look. Callers surface this; they must not treat it as fatal.
 func (r *Registry) generateTheme(cfg config.Config) (theme.Tokens, error) {
-	tok, err := r.themeGen.Generate(
-		theme.Source{Kind: cfg.ThemeGen.Source, Seed: cfg.ThemeGen.Seed},
-		theme.Options{
-			Mode:         cfg.ThemeGen.Mode,
-			Scheme:       cfg.ThemeGen.Scheme,
-			HighContrast: cfg.Accessibility.HighContrast,
-		},
-	)
+	tok, err := r.generateOnly(cfg)
 	if err != nil {
 		return r.lastCompleteTokens(cfg.Accessibility.HighContrast), err
-	}
-	if err := tok.Complete(); err != nil {
-		return r.lastCompleteTokens(cfg.Accessibility.HighContrast),
-			fmt.Errorf("theme: generated palette is incomplete: %w", err)
 	}
 	if !runningAsTest() {
 		outcomes, err := theming.ApplyEnabled(os.Getenv("HOME"), cfg.TemplateEnabled, tok, r.consumeTemplateForce)
@@ -1039,6 +1069,53 @@ func (r *Registry) generateTheme(cfg config.Config) (theme.Tokens, error) {
 		if err != nil {
 			return tok, fmt.Errorf("theme: external templates: %w", err)
 		}
+	}
+	return tok, nil
+}
+
+// generateOnly produces palette tokens for cfg without touching published
+// state or writing application templates. Preview uses the same generation
+// path with an isolated cache. On failure, the caller decides the failure
+// floor: generateTheme keeps the published palette, preview refuses to paint.
+func (r *Registry) generateOnly(cfg config.Config) (theme.Tokens, error) {
+	return r.generateOnlyWith(cfg, r.themeGen)
+}
+
+// generatePreviewOnly isolates generator files from the persistent cache. A
+// preview is disposable state, so even matugen's config and template belong in
+// a temporary directory that is removed before the preview is published.
+func (r *Registry) generatePreviewOnly(cfg config.Config) (tokens theme.Tokens, err error) {
+	dir, err := os.MkdirTemp("", "sysc-shell-theme-preview-")
+	if err != nil {
+		return theme.Tokens{}, fmt.Errorf("theme: preview cache: %w", err)
+	}
+	defer func() {
+		if cleanupErr := os.RemoveAll(dir); cleanupErr != nil {
+			err = errors.Join(err, fmt.Errorf("theme: remove preview cache: %w", cleanupErr))
+		}
+	}()
+
+	gen := r.themeGen
+	gen.CacheDir = dir
+	return r.generateOnlyWith(cfg, gen)
+}
+
+func (r *Registry) generateOnlyWith(cfg config.Config, gen theme.Generator) (theme.Tokens, error) {
+	r.themeGenMu.Lock()
+	defer r.themeGenMu.Unlock()
+	tok, err := gen.Generate(
+		theme.Source{Kind: cfg.ThemeGen.Source, Seed: cfg.ThemeGen.Seed},
+		theme.Options{
+			Mode:         cfg.ThemeGen.Mode,
+			Scheme:       cfg.ThemeGen.Scheme,
+			HighContrast: cfg.Accessibility.HighContrast,
+		},
+	)
+	if err != nil {
+		return tok, err
+	}
+	if err := tok.Complete(); err != nil {
+		return tok, fmt.Errorf("theme: generated palette is incomplete: %w", err)
 	}
 	return tok, nil
 }
@@ -1074,17 +1151,18 @@ func (r *Registry) lastCompleteTokens(highContrast bool) theme.Tokens {
 	return theme.FallbackFor(highContrast)
 }
 
-// surfaceTheme is the palette every auxiliary surface paints with: the
-// generated tokens, with the bar's geometry so a panel and the bar agree about
-// spacing and text size.
+// surfaceTheme is the effective palette every auxiliary surface paints with,
+// plus the bar's geometry so a panel and the bar agree about spacing and text
+// size.
 //
 // Callers hold Registry.mu, because the tokens are replaced by a reload.
-// surfaceTheme is the theme a non-bar surface adopts. It resolves the live
+// surfaceTheme is the theme a non-bar surface adopts. It resolves the effective
 // configuration rather than rebuilding the default composition around a
 // radius, which is what lets a density, motion or opacity change reach an
 // already-open panel, toast, tray surface or OSD on reload.
 func (r *Registry) surfaceTheme() Theme {
-	return withBarGeometry(r.panelTheme(), r.cfg.Bar)
+	cfg, _ := r.effectiveThemeLocked()
+	return withBarGeometry(r.panelTheme(), cfg.Bar)
 }
 
 func runningAsTest() bool {
@@ -1201,8 +1279,7 @@ func (r *Registry) publish(globals []uint32) {
 // NewHost builds the hooks for one output's bar and acquires its services.
 func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbacks, error) {
 	r.mu.Lock()
-	cfg := r.cfg
-	tok := r.tokens
+	cfg, tok := r.effectiveThemeLocked()
 	r.mu.Unlock()
 
 	bar, leases, callbacks, err := r.buildBar(cfg, connector, tok)
@@ -1239,6 +1316,13 @@ func (r *Registry) adoptBar(
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	// NewHost builds outside Registry.mu. Re-resolve against the effective
+	// theme before adoption so a preview or commit that arrived during the
+	// build cannot install a bar with stale colors.
+	cfg, tokens := r.effectiveThemeLocked()
+	if next, err := resolveOutputTheme(cfg, connector, tokens, r.caps.Blur); err == nil {
+		bar.retheme(next)
+	}
 	r.attachRunningIconsAtLocked(bar.scale120())
 	if bar.mediaWidget {
 		r.mediaArtFor()
@@ -1523,7 +1607,11 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				if genErr != nil {
 					r.themeErr = genErr.Error()
 				}
-				r.retheThemeOpenSurfacesLocked()
+				r.invalidateThemePreviewLocked()
+				if r.previewing {
+					r.previewPrevErr = r.themeErr
+				}
+				surfacePubs := r.retheThemeOpenSurfacesLocked(r.cfg, r.tokens)
 				if depthClockVisualChanged && r.depthClocks != nil {
 					depthEffects = r.depthClocks.reconfigureLocked(depthClockFontChanged)
 				}
@@ -1545,6 +1633,9 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				}
 				if r.depthClocks != nil {
 					r.depthClocks.emit(depthEffects)
+				}
+				for _, p := range surfacePubs {
+					r.publishSurface(p.Global, p.SurfaceID)
 				}
 				for _, bar := range outgoingBars {
 					bar.stopAnimation()
@@ -2193,24 +2284,34 @@ func releaseAll(leases []*services.Lease) {
 	}
 }
 
-// retheThemeOpenSurfacesLocked moves every open panel onto the newly published
-// palette, crossfading from what each is currently rendering. Panels used to
-// keep the theme they were spawned with, so a reload left an open surface in
-// the previous palette until it was closed and reopened.
+// retheThemeOpenSurfacesLocked moves auxiliary surfaces onto the supplied
+// theme and returns visible surfaces that need repainting after r.mu is released.
 //
 // Caller holds r.mu.
-func (r *Registry) retheThemeOpenSurfacesLocked() {
+func (r *Registry) retheThemeOpenSurfacesLocked(cfg config.Config, tokens theme.Tokens) []wayland.Invalidation {
+	var pubs []wayland.Invalidation
 	for _, h := range r.panelHosts {
 		if h == nil {
 			continue
 		}
-		next := r.panelThemeFor(h.output)
+		next := r.panelThemeForState(h.output, cfg, tokens)
 		h.retheme(withPanelRadius(next, h))
 		r.startSurfaceFrames(h)
 	}
 	if r.toasts != nil {
 		r.toasts.restyleLocked()
 	}
+	if h := r.windowSwitcher; h != nil {
+		next := withBarGeometry(r.panelThemeForState(0, cfg, tokens), cfg.Bar)
+		h.retheme(next)
+		if h.open_ {
+			pubs = append(pubs, wayland.Invalidation{Global: h.output, SurfaceID: windowSwitcherSurfaceID})
+		}
+	}
+	if r.osd != nil {
+		pubs = append(pubs, r.osd.retheme(r.panelThemeForState(0, cfg, tokens))...)
+	}
+	return pubs
 }
 
 // withPanelRadius keeps a panel's own corner radius, which is fixed rather than
@@ -2240,12 +2341,16 @@ func (r *Registry) SetCapabilities(c wayland.Capabilities) {
 	for _, bar := range r.bars {
 		bar.retheme(bar.themeSnapshot().WithCompositor(c.Blur))
 	}
-	r.retheThemeOpenSurfacesLocked()
+	cfg, tokens := r.effectiveThemeLocked()
+	surfacePubs := r.retheThemeOpenSurfacesLocked(cfg, tokens)
 	outputs := r.outputGlobalsLocked()
 	r.mu.Unlock()
 
 	for _, global := range outputs {
 		r.publishSurface(global, "")
+	}
+	for _, p := range surfacePubs {
+		r.publishSurface(p.Global, p.SurfaceID)
 	}
 }
 

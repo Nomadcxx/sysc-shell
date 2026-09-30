@@ -51,6 +51,62 @@ func TestPanelTreeDoesNotReadMachineFactsUnderRegistryLock(t *testing.T) {
 	})
 }
 
+func TestThemePreviewHideRepaintsBeforeUnlock(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	path := filepath.Join(filepath.Dir(filename), "theme_preview.go")
+	file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var method *ast.FuncDecl
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if ok && fn.Name.Name == "themePreviewHide" {
+			method = fn
+			break
+		}
+	}
+	if method == nil {
+		t.Fatal("themePreviewHide is missing")
+	}
+
+	lock, repaint, unlock := -1, -1, -1
+	usesUnlockedPainter := false
+	for i, stmt := range method.Body.List {
+		ast.Inspect(stmt, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			switch sel.Sel.Name {
+			case "Lock":
+				if call.Pos() == stmt.Pos() && lock == -1 {
+					lock = i
+				}
+			case "paintThemeLocked":
+				repaint = i
+			case "Unlock":
+				if call.Pos() == stmt.Pos() && unlock == -1 {
+					unlock = i
+				}
+			case "paintTheme":
+				usesUnlockedPainter = true
+			}
+			return true
+		})
+	}
+	if usesUnlockedPainter || lock < 0 || repaint <= lock || unlock <= repaint {
+		t.Fatal("preview hide must repaint committed state while Registry.mu is held")
+	}
+}
+
 // newHosts is the common setup: one registry with hosts at the given globals.
 func newHosts(t *testing.T, reg *Registry, hosts map[uint32]string) {
 	t.Helper()
@@ -924,7 +980,7 @@ func TestReloadMovesOpenSurfacesOntoTheNewPalette(t *testing.T) {
 
 	before := h.paintTheme().Surface
 	reg.tokens = lightPalette()
-	reg.retheThemeOpenSurfacesLocked()
+	reg.retheThemeOpenSurfacesLocked(reg.cfg, reg.tokens)
 
 	// An open panel used to keep the theme it was spawned with until it was
 	// closed and reopened.

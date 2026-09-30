@@ -110,7 +110,7 @@ func DefaultFor(cfg config.Config) *Registry {
 			Set: setInt("bar.font-size", 8, 32, func(c *config.Config, n int) { c.Bar.FontSize = n }),
 		},
 		{
-			Path: "appearance.source", Label: "Theme source", Section: "Appearance", Group: "Palette",
+			Path: "appearance.source", Label: "Theme source", Section: "Appearance", Group: "Colors & mode",
 			Describe: "Where the palette is seeded from.",
 			Kind:     KindEnum, Options: themeSources,
 			Get: func(c config.Config) string { return c.ThemeGen.Source },
@@ -124,7 +124,7 @@ func DefaultFor(cfg config.Config) *Registry {
 		// set to palette the seed names a scheme, and an enum is a kinder way
 		// to pick one than typing it.
 		{
-			Path: "appearance.palette", Label: "Palette", Section: "Appearance", Group: "Palette",
+			Path: "appearance.palette", Label: "Color palette", Section: "Appearance", Group: "Colors & mode",
 			Describe: "A bundled palette. Choosing one also sets the source to palette.",
 			Kind:     KindEnum,
 			Options:  theme.PaletteNames(),
@@ -142,14 +142,14 @@ func DefaultFor(cfg config.Config) *Registry {
 			}),
 		},
 		{
-			Path: "appearance.scheme", Label: "Scheme", Section: "Appearance", Group: "Palette",
+			Path: "appearance.scheme", Label: "Color scheme", Section: "Appearance", Group: "Colors & mode",
 			Describe: "The Material scheme the palette is generated through.",
 			Kind:     KindString,
 			Get:      func(c config.Config) string { return c.ThemeGen.Scheme },
 			Set:      setString(func(c *config.Config, v string) { c.ThemeGen.Scheme = v }),
 		},
 		{
-			Path: "appearance.mode", Label: "Mode", Section: "Appearance", Group: "Palette",
+			Path: "appearance.mode", Label: "Color mode", Section: "Appearance", Group: "Colors & mode",
 			Describe: "Light or dark resolution of the same palette.",
 			Kind:     KindEnum,
 			Options:  themeModes,
@@ -159,7 +159,7 @@ func DefaultFor(cfg config.Config) *Registry {
 		// The D3 composition axes. Percent and weight fields go through the
 		// integer control, so there is no float setting kind.
 		{
-			Path: "appearance.preset", Label: "Preset", Section: "Appearance", Group: "Composition",
+			Path: "appearance.preset", Label: "Visual preset", Section: "Appearance", Group: "Style & layout",
 			Describe: "The bundled composition the theme starts from. Every axis stays overridable.",
 			Kind:     KindEnum,
 			Options:  presetNames,
@@ -976,6 +976,18 @@ func setString(assign func(*config.Config, string)) Setter {
 
 func (r *Registry) Register(entries ...Entry) {
 	r.entries = append(r.entries, entries...)
+}
+
+// Lookup returns the entry registered under path. A caller that changes a
+// setting from outside the surface (an IPC verb, a plugin) still goes through
+// the entry's own Setter, so validation lives in exactly one place.
+func (r *Registry) Lookup(path string) (Entry, bool) {
+	for _, e := range r.entries {
+		if e.Path == path {
+			return e, true
+		}
+	}
+	return Entry{}, false
 }
 
 func (r *Registry) Section(name string) []Entry {

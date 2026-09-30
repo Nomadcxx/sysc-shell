@@ -163,6 +163,16 @@ func (h *windowSwitcherHost) render(pixels []byte, width, height, stride int) er
 	return render.Paint(canvas, h.root, h.text, h.style)
 }
 
+// retheme replaces the cached palette while keeping compositor-owned surface
+// geometry. The switcher retains its renderer after close, so updating the
+// style here also keeps the next open from reusing an old palette.
+func (h *windowSwitcherHost) retheme(next Theme) {
+	scale, body := h.style.Scale120, h.style.Body
+	h.style = next.OverlayStyle()
+	h.style.NoGround = true
+	h.style.Scale120, h.style.Body = scale, body
+}
+
 func (h *windowSwitcherHost) rebuild() {
 	count := len(h.model.windows)
 	visible := min(count, windowSwitcherMaxRows)
