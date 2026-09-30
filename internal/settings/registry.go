@@ -179,7 +179,7 @@ func DefaultFor(cfg config.Config) *Registry {
 			}),
 		},
 		{
-			Path: "appearance.density", Label: "Density", Section: "Appearance", Group: "Composition",
+			Path: "appearance.density", Label: "Control density", Section: "Appearance", Group: "Style & layout",
 			Describe: "How much room controls take. Every surface derives from it.",
 			Kind:     KindEnum,
 			Options:  densityNames,
@@ -188,21 +188,21 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, v string) { c.Theme.Density = theme.Density(v) }),
 		},
 		{
-			Path: "appearance.font-family", Label: "Font family", Section: "Appearance", Group: "Typography",
+			Path: "appearance.font-family", Label: "Interface font", Section: "Appearance", Group: "Typography & fonts",
 			Describe: "Font for interface text.",
 			Kind:     KindFont,
 			Get:      func(c config.Config) string { return c.Theme.FontFamily },
 			Set:      setString(func(c *config.Config, v string) { c.Theme.FontFamily = v }),
 		},
 		{
-			Path: "appearance.mono-font-family", Label: "Mono font family", Section: "Appearance", Group: "Typography",
+			Path: "appearance.mono-font-family", Label: "Monospace font", Section: "Appearance", Group: "Typography & fonts",
 			Describe: "Font for fixed-width text.",
 			Kind:     KindFont,
 			Get:      func(c config.Config) string { return c.Theme.MonoFontFamily },
 			Set:      setString(func(c *config.Config, v string) { c.Theme.MonoFontFamily = v }),
 		},
 		{
-			Path: "appearance.font-scale", Label: "Font scale", Section: "Appearance", Group: "Typography",
+			Path: "appearance.font-scale", Label: "Text scale", Section: "Appearance", Group: "Typography & fonts",
 			Describe: "Text size as a percentage of the preset's.",
 			Kind:     KindInt,
 			Min:      theme.FontScaleMin, Max: theme.FontScaleMax,
@@ -211,7 +211,7 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, n int) { c.Theme.FontScale = n }),
 		},
 		{
-			Path: "appearance.font-weight", Label: "Font weight", Section: "Appearance", Group: "Typography",
+			Path: "appearance.font-weight", Label: "Text weight", Section: "Appearance", Group: "Typography & fonts",
 			Describe: "Stroke weight for interface text.",
 			Kind:     KindInt,
 			Min:      theme.FontWeightMin, Max: theme.FontWeightMax,
@@ -220,7 +220,7 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, n int) { c.Theme.FontWeight = n }),
 		},
 		{
-			Path: "appearance.radius", Label: "Radius", Section: "Appearance", Group: "Shape",
+			Path: "appearance.radius", Label: "Surface corner radius", Section: "Appearance", Group: "Corners & shape",
 			Describe: "Corner radius for panels and cards.",
 			Kind:     KindInt,
 			Min:      theme.RadiusMin, Max: theme.RadiusMax,
@@ -231,7 +231,7 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, n int) { c.Theme.Radius = n }),
 		},
 		{
-			Path: "appearance.input-radius", Label: "Input radius", Section: "Appearance", Group: "Shape",
+			Path: "appearance.input-radius", Label: "Control corner radius", Section: "Appearance", Group: "Corners & shape",
 			Describe: "Corner radius for interactive elements: fields, switches and buttons.",
 			Kind:     KindInt,
 			Min:      theme.RadiusMin, Max: theme.RadiusMax,
@@ -243,8 +243,8 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, n int) { c.Theme.InputRadius = n }),
 		},
 		{
-			Path: "appearance.motion", Label: "Motion", Section: "Appearance", Group: "Motion",
-			Describe: "How animations move.",
+			Path: "appearance.motion", Label: "Animation style", Section: "Appearance", Group: "Animation",
+			Describe: "The style of motion used in shell animations.",
 			Kind:     KindEnum,
 			Options:  motionNames,
 			Get:      func(c config.Config) string { return string(c.Theme.Motion) },
@@ -252,8 +252,8 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, v string) { c.Theme.Motion = theme.MotionStyle(v) }),
 		},
 		{
-			Path: "appearance.motion-speed", Label: "Motion speed", Section: "Appearance", Group: "Motion",
-			Describe: "Animation duration as a percentage of the preset's.",
+			Path: "appearance.motion-speed", Label: "Animation speed", Section: "Appearance", Group: "Animation",
+			Describe: "How quickly motion runs compared with the preset.",
 			Kind:     KindInt,
 			Min:      theme.SpeedMin, Max: theme.SpeedMax,
 			Get: getInt(func(c config.Config) int { return c.Theme.MotionSpeed }),
@@ -261,7 +261,7 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, n int) { c.Theme.MotionSpeed = n }),
 		},
 		{
-			Path: "appearance.bar-opacity", Label: "Solid bar opacity", Section: "Appearance", Group: "Opacity",
+			Path: "appearance.bar-opacity", Label: "Solid bar opacity", Section: "Appearance", Group: "Transparency",
 			Describe: "How opaque the bar is when Style is Solid.",
 			Kind:     KindInt,
 			Min:      theme.OpacityMin, Max: theme.OpacityMax,
@@ -272,7 +272,7 @@ func DefaultFor(cfg config.Config) *Registry {
 		// Panels take the blurred floor so the axis can reach it at all; the
 		// effective floor is still 80 unless a backdrop is present.
 		{
-			Path: "appearance.panel-opacity", Label: "Panel opacity", Section: "Appearance", Group: "Opacity",
+			Path: "appearance.panel-opacity", Label: "Panel opacity", Section: "Appearance", Group: "Transparency",
 			Describe: "How opaque panels are. The lower floor applies only behind a blur.",
 			Kind:     KindInt,
 			Min:      theme.OpacityMinBlurred, Max: theme.OpacityMax,
@@ -281,7 +281,7 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, n int) { c.Theme.PanelOpacity = n }),
 		},
 		{
-			Path: "appearance.overlay-opacity", Label: "Overlay opacity", Section: "Appearance", Group: "Opacity",
+			Path: "appearance.overlay-opacity", Label: "Overlay opacity", Section: "Appearance", Group: "Transparency",
 			Describe: "How opaque overlays and dialogues are.",
 			Kind:     KindInt,
 			Min:      theme.OpacityMin, Max: theme.OpacityMax,
@@ -290,14 +290,14 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, n int) { c.Theme.OverlayOpacity = n }),
 		},
 		{
-			Path: "appearance.blur-behind", Label: "Blur behind panels", Section: "Appearance", Group: "Depth",
+			Path: "appearance.blur-behind", Label: "Background blur", Section: "Appearance", Group: "Blur & elevation",
 			Describe: "Blur what is behind a panel. Uses the compositor on Niri 26.04 and later.",
 			Kind:     KindBool,
 			Get:      getBool(func(c config.Config) bool { return c.Theme.BlurBehind }),
 			Set:      setBool("appearance.blur-behind", func(c *config.Config, b bool) { c.Theme.BlurBehind = b }),
 		},
 		{
-			Path: "appearance.blur-radius", Label: "Blur radius", Section: "Appearance", Group: "Depth",
+			Path: "appearance.blur-radius", Label: "Blur strength", Section: "Appearance", Group: "Blur & elevation",
 			Describe: "How strong that blur is.",
 			Kind:     KindInt,
 			Min:      theme.BlurRadiusMin, Max: theme.BlurRadiusMax,
@@ -306,7 +306,7 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, n int) { c.Theme.BlurRadius = n }),
 		},
 		{
-			Path: "appearance.elevation", Label: "Elevation", Section: "Appearance", Group: "Depth",
+			Path: "appearance.elevation", Label: "Shadow depth", Section: "Appearance", Group: "Blur & elevation",
 			Describe: "How much shadow separates a surface from what is under it.",
 			Kind:     KindEnum,
 			Options:  elevationNames,
@@ -726,7 +726,7 @@ func seedFor(source, seed string) string {
 // bundled themes, so it is a picker rather than a free-text field.
 func seedEntry(cfg config.Config) Entry {
 	e := Entry{
-		Path: "appearance.seed", Label: "Seed", Section: "Appearance", Group: "Palette",
+		Path: "appearance.seed", Label: "Theme input", Section: "Appearance", Group: "Colors & mode",
 		Describe: "What the source reads: an image path, a colour, a stock theme, or a palette name.",
 		Kind:     KindString,
 		Get:      func(c config.Config) string { return c.ThemeGen.Seed },

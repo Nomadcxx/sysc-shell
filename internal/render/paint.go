@@ -710,7 +710,9 @@ func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 		if child.State != 0 {
 			paintInteraction(c, child, cb, style.Scale120.Physical(4), style.Foreground, style)
 		}
-		_ = paintText(c, child.Text, cb, text, style, textSpec(style, child), child.Tabular, child.Tone, child.Underline)
+		pad := style.Scale120.Physical(n.Padding)
+		option := ui.Rect{X: cb.X + pad, Y: cb.Y, W: max(cb.W-2*pad, 0), H: cb.H}
+		_ = paintText(c, child.Text, option, text, style, textSpec(style, child), child.Tabular, child.Tone, child.Underline)
 	}
 	return nil
 }
@@ -723,8 +725,7 @@ const menuChevronInset = 6
 // hugs its label already reads as a chip; one given a column to fill does
 // not, because it then has the fill, the radius and the left-aligned text of
 // a text field, and only a press tells them apart. Where the label leaves no
-// room the glyph is withheld rather than drawn over the text, so every
-// menu that hugs keeps the shape it has today.
+// room the glyph is withheld rather than drawn over the text.
 func menuChevronBox(n *ui.Node, labelW int, iconSize int) (ui.Rect, bool) {
 	if n == nil || n.Bounds.W <= 0 || iconSize <= 0 {
 		return ui.Rect{}, false
@@ -734,11 +735,12 @@ func menuChevronBox(n *ui.Node, labelW int, iconSize int) (ui.Rect, bool) {
 		height = n.Children[0].Bounds.Y - n.Bounds.Y
 	}
 	size := min(iconSize, height)
-	if size <= 0 || n.Bounds.W-labelW < size+2*menuChevronInset {
+	padding := min(max(n.Padding, 0), max(n.Bounds.W/2, 0))
+	if size <= 0 || n.Bounds.W-labelW < size+2*menuChevronInset+2*padding {
 		return ui.Rect{}, false
 	}
 	return ui.Rect{
-		X: n.Bounds.X + n.Bounds.W - size - menuChevronInset,
+		X: n.Bounds.X + n.Bounds.W - size - menuChevronInset - padding,
 		Y: n.Bounds.Y + (height-size)/2,
 		W: size, H: size,
 	}, true
@@ -755,7 +757,7 @@ func paintMenuChevron(c *Canvas, n *ui.Node, text *TextRenderer, style Style) {
 		return
 	}
 	glyph := &ui.Node{Kind: ui.KindIcon, Icon: "expand_more"}
-	labelLogical := style.Scale120.Logical(labelW) + n.Padding
+	labelLogical := style.Scale120.Logical(labelW)
 	box, ok := menuChevronBox(n, labelLogical, ui.IconSize(glyph))
 	if !ok {
 		return

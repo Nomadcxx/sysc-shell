@@ -295,13 +295,17 @@ const (
 	RoleMono
 	// RoleDisplay is the hero rung the ladder used to top out below: the
 	// reference uses it for the calendar date header and similar treatments.
-	// It is appended rather than inserted, so every role above keeps its iota
-	// value, and textRoleCount in internal/render tracks it as the last role.
+	// It is appended rather than inserted, so every role above keeps its iota.
 	RoleDisplay
 	// RoleFigure is body-sized text one step heavier: the lead reading in a
 	// composition, such as the time beside a quieter date in the bar's centre
-	// pill. Appended for the same reason as RoleDisplay.
+	// pill. It is appended to preserve every earlier role value.
 	RoleFigure
+	// RoleSection is a 24 logical-pixel bold heading (18 pt) for subsection cards.
+	RoleSection
+	// RolePage is the 30 logical-pixel bold page heading (22.5 pt), larger than
+	// subsection headings.
+	RolePage
 )
 
 // TypeSpec is one row of the type table from design D7, before font scaling.
@@ -328,6 +332,8 @@ var typeRoles = map[TextRole]TypeSpec{
 	RoleDisplay:  {Size: 24, Weight: 600},
 	RoleMono:     {Size: 13, Weight: 400, Mono: true},
 	RoleFigure:   {Size: 15, Weight: 600},
+	RoleSection:  {Size: 24, Weight: 700},
+	RolePage:     {Size: 30, Weight: 700},
 }
 
 // TypeFor returns the unscaled row for a role. An unknown role measures as
@@ -355,6 +361,10 @@ func (r TextRole) String() string {
 		return "display"
 	case RoleFigure:
 		return "figure"
+	case RoleSection:
+		return "section"
+	case RolePage:
+		return "page"
 	default:
 		return "body"
 	}

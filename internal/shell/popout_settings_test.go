@@ -280,7 +280,7 @@ func TestSettingsRowsCarryDescriptionsAndGroupHeadings(t *testing.T) {
 		if n.TextRole == theme.RoleCaption && n.Tone == ui.ToneSubtle {
 			caption = n
 		}
-		if n.TextRole == theme.RoleLabel {
+		if n.TextRole == theme.RoleSection {
 			heading = n
 		}
 	}
@@ -293,6 +293,180 @@ func TestSettingsRowsCarryDescriptionsAndGroupHeadings(t *testing.T) {
 	if findScroll(h.root) == nil {
 		t.Error("the section does not scroll")
 	}
+}
+
+func TestAppearancePagePolish(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.section = "Appearance"
+	h.place.Panel = ui.Rect{W: 1105, H: 760}
+	h.set = settings.DefaultFor(h.draft)
+	h.root = settingsTree(nil, h)
+
+	for _, want := range []string{
+		"theme and interface",
+		"Choose a palette, then adjust type, surfaces, transparency, and motion.",
+		"colors & mode",
+		"style & layout",
+		"typography & fonts",
+		"corners & shape",
+		"animation",
+		"transparency",
+		"blur & elevation",
+		"Visual preset",
+		"Control density",
+		"Monospace font",
+	} {
+		if !strings.Contains(renderText(h.root), want) {
+			t.Errorf("Appearance page is missing %q", want)
+		}
+	}
+
+	var palette, mode *ui.Node
+	pageHeading := false
+	for _, n := range walk(h.root) {
+		if isSettingsPageHeading(n, "Appearance") {
+			pageHeading = true
+		}
+		if n.Action == "set:appearance.palette" && n.Kind == ui.KindMenu {
+			palette = n
+		}
+		if n.Name == "Color mode" && n.Kind == ui.KindSegmented {
+			mode = n
+		}
+		if group := map[string]bool{
+			"colors & mode": true, "style & layout": true, "typography & fonts": true,
+			"corners & shape": true, "animation": true, "transparency": true,
+			"blur & elevation": true,
+		}[n.Text]; group {
+			wantRole := theme.RoleSection
+			if n.TextRole != wantRole || n.Bold || theme.TypeFor(n.TextRole).Weight < 700 || n.Tone != ui.ToneAccent {
+				t.Errorf("Appearance heading %q has role=%v bold=%v weight=%d tone=%v, want semantic bold/accent",
+					n.Text, n.TextRole, n.Bold, theme.TypeFor(n.TextRole).Weight, n.Tone)
+			}
+		}
+	}
+	if palette == nil {
+		t.Fatal("Appearance palette did not render as a dropdown")
+	}
+	if !pageHeading {
+		t.Fatal("Appearance page heading is not double-size, bold, and accented")
+	}
+	if palette.Width != 240 {
+		t.Errorf("Appearance palette width = %d, want fixed width 240", palette.Width)
+	}
+	if want := h.metrics().ButtonPadding; palette.Padding != want {
+		t.Errorf("Appearance dropdown padding = %d, want %d", palette.Padding, want)
+	}
+	if mode == nil {
+		t.Fatal("Light/Dark mode is not a segmented control")
+	}
+	if mode.Width != 240 {
+		t.Errorf("Light/Dark width = %d, want fixed width 240", mode.Width)
+	}
+	if want := h.metrics().CompactControl; mode.Height != want {
+		t.Errorf("Light/Dark height = %d, want compact height %d", mode.Height, want)
+	}
+	seed := byAction(h.root, "set:appearance.seed")
+	if seed == nil || seed.Kind != ui.KindTextField {
+		t.Fatalf("Appearance seed field = %+v, want a text field", seed)
+	}
+	if want := h.metrics().ButtonPadding; seed.Padding != want {
+		t.Errorf("Appearance field padding = %d, want %d", seed.Padding, want)
+	}
+	for _, n := range walk(h.root) {
+		if n.Kind == ui.KindCapsule && n.Shape == ui.ShapeCard && n.Fill != ui.FillContainerHigh {
+			t.Errorf("Appearance card fill = %v, want shaded container fill", n.Fill)
+		}
+	}
+
+	if err := ui.LayoutColumn(h.root, h.place.Panel, settingsMeasure(h)); err != nil {
+		t.Fatalf("layout Appearance: %v", err)
+	}
+	if len(mode.Children) != 2 || mode.Children[0].Bounds.W != mode.Children[1].Bounds.W {
+		t.Errorf("Light/Dark segments are not equal width: %+v", mode.Children)
+	}
+
+	h.draft.ThemeGen.Source = "palette"
+	h.draft.ThemeGen.Seed = theme.PaletteNames()[0]
+	h.set = settings.DefaultFor(h.draft)
+	h.root = settingsTree(nil, h)
+	palette = byAction(h.root, "set:appearance.palette")
+	if palette == nil || palette.Kind != ui.KindMenu {
+		t.Fatalf("changed Appearance palette = %+v, want a dropdown", palette)
+	}
+	if palette.Width != 240 {
+		t.Errorf("changed Appearance palette width = %d, want the same fixed width 240", palette.Width)
+	}
+	if byAction(h.root, "reset:appearance.palette") == nil {
+		t.Fatal("changed Appearance palette did not retain its reset control")
+	}
+}
+
+func TestSettingsSectionTitlesUseLowercase(t *testing.T) {
+	t.Parallel()
+	for _, section := range settings.SectionNames() {
+		t.Run(section, func(t *testing.T) {
+			h := newSettingsHost()
+			h.section = section
+			h.root = settingsTree(nil, h)
+
+			var title *ui.Node
+			for _, n := range walk(h.root) {
+				if n.Kind == ui.KindText && n.Role == "heading" && n.Name == section {
+					title = n
+					break
+				}
+			}
+			if title == nil {
+				t.Fatalf("%s has no semantic section title", section)
+			}
+			if title.Text != strings.ToLower(section) {
+				t.Errorf("%s title text = %q, want lowercase %q", section, title.Text, strings.ToLower(section))
+			}
+			if !isSettingsPageHeading(title, section) {
+				t.Errorf("%s title is not a semantic bold heading: role=%v bold=%t tone=%v accessible-name=%q",
+					section, title.TextRole, title.Bold, title.Tone, title.Name)
+			}
+			for _, n := range walk(h.root) {
+				if n.Text == launcherSlashRun {
+					t.Errorf("%s title unexpectedly contains decorative slash rails", section)
+					break
+				}
+			}
+		})
+	}
+}
+
+func TestSettingsSectionCardsUseAppearanceHeadingStyle(t *testing.T) {
+	t.Parallel()
+	for _, section := range settings.SectionNames() {
+		t.Run(section, func(t *testing.T) {
+			h := newSettingsHost()
+			h.set = nil
+			page := settingsPageColumn(h, []settings.Entry{{
+				Section: section, Group: "Example Group", Path: "example.enabled",
+				Label: "Enabled", Kind: settings.KindBool,
+			}})
+			if len(page.Children) != 1 {
+				t.Fatalf("%s page has %d groups, want one", section, len(page.Children))
+			}
+			heading := page.Children[0].Children[0].Children[0]
+			if heading.Text != "example group" || heading.Name != "Example Group" {
+				t.Errorf("%s group heading text/name=%q/%q, want lowercase display with canonical accessible name", section, heading.Text, heading.Name)
+			}
+			if heading.TextRole != theme.RoleSection || heading.Bold || theme.TypeFor(heading.TextRole).Weight < 700 || heading.Tone != ui.ToneAccent || heading.Role != "heading" {
+				t.Errorf("%s group heading role=%v bold=%t weight=%d tone=%v semantic-role=%q, want semantic bold/accent",
+					section, heading.TextRole, heading.Bold, theme.TypeFor(heading.TextRole).Weight, heading.Tone, heading.Role)
+			}
+		})
+	}
+}
+
+func isSettingsPageHeading(n *ui.Node, section string) bool {
+	return n != nil && n.Kind == ui.KindText && n.Text == strings.ToLower(section) && n.Name == section &&
+		n.Role == "heading" && n.TextRole == theme.RolePage && !n.Bold &&
+		theme.TypeFor(n.TextRole).Weight >= 700 && n.Tone == ui.ToneAccent
 }
 
 // TestOnlyAChangedRowOffersItsReset is D5 at the surface: deviation is
@@ -1159,8 +1333,8 @@ func TestGroupsRenderAsCardsWithRowsInside(t *testing.T) {
 		}
 		cards++
 		col := n.Children[0]
-		if col.Children[0].TextRole != theme.RoleLabel {
-			t.Errorf("card does not open with its title: %+v", col.Children[0])
+		if col.Children[0].TextRole != theme.RoleSection || col.Children[0].Bold || theme.TypeFor(col.Children[0].TextRole).Weight < 700 || col.Children[0].Tone != ui.ToneAccent {
+			t.Errorf("Appearance card does not open with its styled title: %+v", col.Children[0])
 		}
 		for _, row := range col.Children[1:] {
 			if row.Kind == ui.KindRow && row.Width > inner {
