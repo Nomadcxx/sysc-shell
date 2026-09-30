@@ -24,86 +24,303 @@ type anchors struct {
 	Primary, Secondary, Tertiary, Error string
 }
 
-// palettes holds each scheme's dark and light anchors, taken from the
-// scheme's own published palette rather than sampled from a screenshot.
+const (
+	dmsDarkError  = "#f2b8b5"
+	dmsLightError = "#b3261e"
+)
+
+// palettes holds anchors from Noctalia, DMS, Eldritch, and sysc-greet. Roles
+// each source does not publish are completed by derive() and use the same
+// contrast validation as generated palettes.
 var palettes = map[string]struct{ Dark, Light anchors }{
 	"catppuccin": {
 		// Mocha and Latte.
 		Dark: anchors{
 			Surface: "#1e1e2e", OnSurface: "#cdd6f4",
-			Low: "#11111b", High: "#585b70",
-			Primary: "#89b4fa", Secondary: "#cba6f7", Tertiary: "#f5c2e7", Error: "#f38ba8",
+			Low: "#11111b", High: "#313244",
+			Primary: "#cba6f7", Secondary: "#fab387", Tertiary: "#94e2d5", Error: "#f38ba8",
 		},
 		Light: anchors{
 			Surface: "#eff1f5", OnSurface: "#4c4f69",
-			Low: "#dce0e8", High: "#acb0be",
-			Primary: "#1e66f5", Secondary: "#8839ef", Tertiary: "#ea76cb", Error: "#d20f39",
+			Low: "#dce0e8", High: "#ccd0da",
+			Primary: "#8839ef", Secondary: "#fe640b", Tertiary: "#40a02b", Error: "#d20f39",
 		},
 	},
 	"gruvbox": {
 		Dark: anchors{
-			Surface: "#282828", OnSurface: "#ebdbb2",
-			Low: "#1d2021", High: "#665c54",
-			Primary: "#83a598", Secondary: "#8ec07c", Tertiary: "#fabd2f", Error: "#fb4934",
+			Surface: "#282828", OnSurface: "#fbf1c7",
+			Low: "#1d2021", High: "#3c3836",
+			Primary: "#b8bb26", Secondary: "#fabd2f", Tertiary: "#83a598", Error: "#fb4934",
 		},
 		Light: anchors{
 			Surface: "#fbf1c7", OnSurface: "#3c3836",
-			Low: "#f9f5d7", High: "#bdae93",
-			Primary: "#076678", Secondary: "#427b58", Tertiary: "#b57614", Error: "#9d0006",
+			Low: "#f9f5d7", High: "#ebdbb2",
+			Primary: "#98971a", Secondary: "#d79921", Tertiary: "#458588", Error: "#cc241d",
 		},
 	},
 	"nord": {
 		// Polar Night and Snow Storm.
 		Dark: anchors{
 			Surface: "#2e3440", OnSurface: "#eceff4",
-			Low: "#272c36", High: "#4c566a",
-			Primary: "#88c0d0", Secondary: "#81a1c1", Tertiary: "#a3be8c", Error: "#bf616a",
+			Low: "#272c36", High: "#3b4252",
+			Primary: "#8fbcbb", Secondary: "#88c0d0", Tertiary: "#5e81ac", Error: "#bf616a",
 		},
 		Light: anchors{
 			Surface: "#eceff4", OnSurface: "#2e3440",
 			Low: "#e5e9f0", High: "#c8d0dc",
-			Primary: "#5e81ac", Secondary: "#4c566a", Tertiary: "#5d7a4a", Error: "#a3454f",
+			Primary: "#5e81ac", Secondary: "#64adc2", Tertiary: "#6fa9a8", Error: "#bf616a",
 		},
 	},
 	"dracula": {
-		// Dracula and its light counterpart, Alucard.
 		Dark: anchors{
 			Surface: "#282a36", OnSurface: "#f8f8f2",
 			Low: "#21222c", High: "#44475a",
 			Primary: "#bd93f9", Secondary: "#ff79c6", Tertiary: "#8be9fd", Error: "#ff5555",
 		},
 		Light: anchors{
-			Surface: "#fffbeb", OnSurface: "#1f1f1f",
-			Low: "#f5f1e0", High: "#cfcbb8",
-			Primary: "#644ac9", Secondary: "#a3144d", Tertiary: "#036a96", Error: "#cb3a2a",
+			Surface: "#f8f8f2", OnSurface: "#282a36",
+			Low: "#f5f1e0", High: "#e6e6ea",
+			Primary: "#8332f4", Secondary: "#ff1399", Tertiary: "#0398b9", Error: "#ff5555",
 		},
 	},
 	"tokyo-night": {
-		// Night and Day.
 		Dark: anchors{
 			Surface: "#1a1b26", OnSurface: "#c0caf5",
-			Low: "#16161e", High: "#3b4261",
-			Primary: "#7aa2f7", Secondary: "#bb9af7", Tertiary: "#7dcfff", Error: "#f7768e",
+			Low: "#16161e", High: "#24283b",
+			Primary: "#7aa2f7", Secondary: "#bb9af7", Tertiary: "#9ece6a", Error: "#f7768e",
 		},
 		Light: anchors{
-			// The scheme publishes #3760bf as fg, but that blue is an accent and
-			// leaves no room for a ladder above it; #343b58 is its dark ink.
+			// Noctalia's #3760bf is an accent and leaves too little contrast
+			// against raised light surfaces; use Tokyo Night's dark ink instead.
 			Surface: "#e1e2e7", OnSurface: "#343b58",
 			Low: "#d5d6db", High: "#a8aecb",
-			Primary: "#2e7de9", Secondary: "#9854f1", Tertiary: "#007197", Error: "#f52a65",
+			Primary: "#2e7de9", Secondary: "#9854f1", Tertiary: "#587539", Error: "#f52a65",
 		},
 	},
 	"rose-pine": {
 		// Main and Dawn.
 		Dark: anchors{
 			Surface: "#191724", OnSurface: "#e0def4",
-			Low: "#16141f", High: "#403d52",
-			Primary: "#c4a7e7", Secondary: "#9ccfd8", Tertiary: "#f6c177", Error: "#eb6f92",
+			Low: "#16141f", High: "#26233a",
+			Primary: "#ebbcba", Secondary: "#9ccfd8", Tertiary: "#31748f", Error: "#eb6f92",
 		},
 		Light: anchors{
-			Surface: "#faf4ed", OnSurface: "#575279",
-			Low: "#fffaf3", High: "#dfdad9",
-			Primary: "#907aa9", Secondary: "#56949f", Tertiary: "#ea9d34", Error: "#b4637a",
+			Surface: "#fffaf3", OnSurface: "#575279",
+			Low: "#fffaf3", High: "#f2e9e1",
+			Primary: "#d7827e", Secondary: "#56949f", Tertiary: "#286983", Error: "#b4637a",
+		},
+	},
+	// Noctalia's other built-ins publish surface and surfaceVariant but no
+	// container ladder. Surface supplies the lowest anchor; the resolver builds
+	// the intermediate Material roles from the published surfaceVariant.
+	"ayu": {
+		Dark: anchors{
+			Surface: "#0b0e14", OnSurface: "#d1d1c7",
+			Low: "#0b0e14", High: "#1e222a",
+			Primary: "#e6b450", Secondary: "#aad94c", Tertiary: "#39bae6", Error: "#d95757",
+		},
+		Light: anchors{
+			Surface: "#f8f9fa", OnSurface: "#42474c",
+			Low: "#f8f9fa", High: "#e4e6e9",
+			Primary: "#ff8f40", Secondary: "#86b300", Tertiary: "#55b4d4", Error: "#e65050",
+		},
+	},
+	"kanagawa": {
+		Dark: anchors{
+			Surface: "#1f1f28", OnSurface: "#c8c093",
+			Low: "#1f1f28", High: "#2a2a37",
+			Primary: "#76946a", Secondary: "#c0a36e", Tertiary: "#7e9cd8", Error: "#c34043",
+		},
+		Light: anchors{
+			Surface: "#f2ecbc", OnSurface: "#545464",
+			Low: "#f2ecbc", High: "#e5ddb0",
+			Primary: "#6f894e", Secondary: "#77713f", Tertiary: "#4d699b", Error: "#c84053",
+		},
+	},
+	"noctalia": {
+		Dark: anchors{
+			Surface: "#070722", OnSurface: "#f3edf7",
+			Low: "#070722", High: "#21215f",
+			Primary: "#fff59b", Secondary: "#a9aefe", Tertiary: "#9bfece", Error: "#fd4663",
+		},
+		Light: anchors{
+			Surface: "#e6e8fa", OnSurface: "#0e0e43",
+			Low: "#e6e8fa", High: "#c2c3d9",
+			Primary: "#5d65f5", Secondary: "#8e93d8", Tertiary: "#0e0e43", Error: "#fd4663",
+		},
+	},
+	// Cthulhu and Dusk use the upstream Eldritch dark/light palettes.
+	// Abyss remains separately selectable and uses its published colors in both modes.
+	"eldritch": {
+		Dark: anchors{
+			Surface: "#212337", OnSurface: "#ebfafa",
+			Low: "#323449", High: "#5b5c66",
+			Primary: "#37f499", Secondary: "#04d1f9", Tertiary: "#a48cf2", Error: "#f16c75",
+		},
+		Light: anchors{
+			Surface: "#f0f3f4", OnSurface: "#1e2029",
+			Low: "#e2e6e8", High: "#c9cbcd",
+			Primary: "#fb5bb6", Secondary: "#0ad6ff", Tertiary: "#8a69f7", Error: "#fb5b66",
+		},
+	},
+	"eldritch-abyss": {
+		Dark: anchors{
+			Surface: "#171928", OnSurface: "#d8e6e6",
+			Low: "#252738", High: "#474852",
+			Primary: "#2dcc82", Secondary: "#0396b3", Tertiary: "#8b75d9", Error: "#cc5860",
+		},
+		Light: anchors{
+			Surface: "#171928", OnSurface: "#d8e6e6",
+			Low: "#252738", High: "#474852",
+			Primary: "#2dcc82", Secondary: "#0396b3", Tertiary: "#8b75d9", Error: "#cc5860",
+		},
+	},
+	// RAMA has no light definition in sysc-greet; preserve its source colors in both modes.
+	"rama": {
+		Dark: anchors{
+			Surface: "#2b2d42", OnSurface: "#edf2f4",
+			Low: "#2b2d42", High: "#3b3d52",
+			Primary: "#ef233c", Secondary: "#d90429", Tertiary: "#f59e0b", Error: "#ef233c",
+		},
+		Light: anchors{
+			Surface: "#2b2d42", OnSurface: "#edf2f4",
+			Low: "#2b2d42", High: "#3b3d52",
+			Primary: "#ef233c", Secondary: "#d90429", Tertiary: "#f59e0b", Error: "#ef233c",
+		},
+	},
+	// Void has only a dark sysc-greet source palette; retain it in either mode.
+	"void": {
+		Dark: anchors{
+			Surface: "#000000", OnSurface: "#ffffff",
+			Low: "#000000", High: "#1a1a1a",
+			Primary: "#ffffff", Secondary: "#ffffff", Tertiary: "#808080", Error: "#999999",
+		},
+		Light: anchors{
+			Surface: "#000000", OnSurface: "#ffffff",
+			Low: "#000000", High: "#1a1a1a",
+			Primary: "#ffffff", Secondary: "#ffffff", Tertiary: "#808080", Error: "#999999",
+		},
+	},
+	// DMS stock themes publish no tertiary for these entries; surfaceTint supplies
+	// that accent. Missing error colors use the Material 3 light/dark defaults.
+	"amber": {
+		Dark: anchors{
+			Surface: "#17130b", OnSurface: "#ebe1d4",
+			Low: "#130f07", High: "#39342b",
+			Primary: "#ffc107", Secondary: "#ffd54f", Tertiary: "#ffd54f", Error: dmsDarkError,
+		},
+		Light: anchors{
+			Surface: "#fff8f2", OnSurface: "#1f1b13",
+			Low: "#fffaf4", High: "#ebe1d4",
+			Primary: "#ff8f00", Secondary: "#ffc107", Tertiary: "#ff8f00", Error: dmsLightError,
+		},
+	},
+	"blue": {
+		Dark: anchors{
+			Surface: "#101418", OnSurface: "#e0e2e8",
+			Low: "#0c1014", High: "#32353a",
+			Primary: "#42a5f5", Secondary: "#8ab4f8", Tertiary: "#8ab4f8", Error: dmsDarkError,
+		},
+		Light: anchors{
+			Surface: "#f7f9ff", OnSurface: "#181c20",
+			Low: "#f9fbff", High: "#e0e2e8",
+			Primary: "#1976d2", Secondary: "#42a5f5", Tertiary: "#1976d2", Error: dmsLightError,
+		},
+	},
+	"purple": {
+		Dark: anchors{
+			Surface: "#141218", OnSurface: "#e6e0e9",
+			Low: "#100e14", High: "#36343a",
+			Primary: "#d0bcff", Secondary: "#ccc2dc", Tertiary: "#d0bcff", Error: dmsDarkError,
+		},
+		Light: anchors{
+			Surface: "#fef7ff", OnSurface: "#1d1b20",
+			Low: "#fff9ff", High: "#e6e0e9",
+			Primary: "#6750a4", Secondary: "#625b71", Tertiary: "#6750a4", Error: dmsLightError,
+		},
+	},
+	"green": {
+		Dark: anchors{
+			Surface: "#10140f", OnSurface: "#e0e4db",
+			Low: "#0c100b", High: "#323630",
+			Primary: "#4caf50", Secondary: "#81c995", Tertiary: "#81c995", Error: dmsDarkError,
+		},
+		Light: anchors{
+			Surface: "#f7fbf1", OnSurface: "#191d17",
+			Low: "#f9fdf3", High: "#e0e4db",
+			Primary: "#2e7d32", Secondary: "#4caf50", Tertiary: "#2e7d32", Error: dmsLightError,
+		},
+	},
+	"orange": {
+		Dark: anchors{
+			Surface: "#1a120e", OnSurface: "#f0dfd8",
+			Low: "#160e0a", High: "#3d332e",
+			Primary: "#ff6d00", Secondary: "#ffb74d", Tertiary: "#ffb74d", Error: dmsDarkError,
+		},
+		Light: anchors{
+			Surface: "#fff8f6", OnSurface: "#221a16",
+			Low: "#fffaf8", High: "#f0dfd8",
+			Primary: "#e65100", Secondary: "#ff9800", Tertiary: "#e65100", Error: dmsLightError,
+		},
+	},
+	"red": {
+		Dark: anchors{
+			Surface: "#1a1110", OnSurface: "#f1dedc",
+			Low: "#160d0c", High: "#3d3231",
+			Primary: "#f44336", Secondary: "#f28b82", Tertiary: "#f28b82", Error: dmsDarkError,
+		},
+		Light: anchors{
+			Surface: "#fff8f7", OnSurface: "#231918",
+			Low: "#fffaf9", High: "#f1dedc",
+			Primary: "#d32f2f", Secondary: "#f44336", Tertiary: "#d32f2f", Error: dmsLightError,
+		},
+	},
+	"cyan": {
+		Dark: anchors{
+			Surface: "#0e1416", OnSurface: "#dee3e5",
+			Low: "#0a1012", High: "#303637",
+			Primary: "#00bcd4", Secondary: "#4dd0e1", Tertiary: "#4dd0e1", Error: dmsDarkError,
+		},
+		Light: anchors{
+			Surface: "#f5fafc", OnSurface: "#171d1e",
+			Low: "#f7fcfe", High: "#dee3e5",
+			Primary: "#0097a7", Secondary: "#00bcd4", Tertiary: "#0097a7", Error: dmsLightError,
+		},
+	},
+	"coral": {
+		Dark: anchors{
+			Surface: "#1a1110", OnSurface: "#f1dedc",
+			Low: "#160d0c", High: "#3d3231",
+			Primary: "#ffb4ab", Secondary: "#f9dedc", Tertiary: "#ffb4ab", Error: dmsDarkError,
+		},
+		Light: anchors{
+			Surface: "#fff8f7", OnSurface: "#231918",
+			Low: "#fffaf9", High: "#f1dedc",
+			Primary: "#8c1d18", Secondary: "#ff5449", Tertiary: "#8c1d18", Error: dmsLightError,
+		},
+	},
+	"pink": {
+		Dark: anchors{
+			Surface: "#191112", OnSurface: "#f0dee0",
+			Low: "#150d0e", High: "#3c3233",
+			Primary: "#e91e63", Secondary: "#f8bbd9", Tertiary: "#f8bbd9", Error: dmsDarkError,
+		},
+		Light: anchors{
+			Surface: "#fff8f7", OnSurface: "#22191a",
+			Low: "#fffaf9", High: "#f0dee0",
+			Primary: "#c2185b", Secondary: "#e91e63", Tertiary: "#c2185b", Error: dmsLightError,
+		},
+	},
+	"monochrome": {
+		Dark: anchors{
+			Surface: "#2a2a2a", OnSurface: "#e4e2e3",
+			Low: "#252525", High: "#505050",
+			Primary: "#ffffff", Secondary: "#c4c6d0", Tertiary: "#c2c6d6", Error: "#ffb4ab",
+		},
+		Light: anchors{
+			Surface: "#f5f5f6", OnSurface: "#2a2a2a",
+			Low: "#fafafb", High: "#d0d0d2",
+			Primary: "#2b303c", Secondary: "#4a4d56", Tertiary: "#5a5f6e", Error: "#ba1a1a",
 		},
 	},
 }
@@ -293,7 +510,7 @@ func derive(a anchors, highContrast bool) Tokens {
 	// A fixed accent is the light end of that accent and keeps its value in
 	// either mode, which is what the role means.
 	white := Color{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
-	fixedLift, dimLift := 0.62, 0.28
+	fixedLift, dimLift := 0.62, 0.45
 	if highContrast {
 		fixedLift, dimLift = 0.88, 0.7
 	}
