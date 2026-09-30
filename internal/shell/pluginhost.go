@@ -1210,6 +1210,11 @@ func (h *pluginHost) deliver(hit pluginHit, event v1.EventKind, button v1.Pointe
 	if ok {
 		slot = h.slots[v.Plugin]
 		declared = pluginViewAcceptsEvent(v, hit.Node, event)
+		// Some wire snapshots have no prepared event map. Fall back to the
+		// declarative tree only when it is the revision currently on screen.
+		if !declared && v.tree != nil && v.tree.Revision == v.Revision {
+			declared = pluginNodeDeclaresEvent(v.tree.Root, hit.Node, event)
+		}
 		if declared && anchorX > 0 {
 			h.lastAnchor[v.Plugin] = anchorX
 		}
@@ -1266,6 +1271,26 @@ func pluginViewAcceptsEvent(view *hostedView, node string, event v1.EventKind) b
 func pluginEventDeclared(events map[string][]v1.EventKind, node string, event v1.EventKind) bool {
 	for _, declared := range events[node] {
 		if declared == event {
+			return true
+		}
+	}
+	return false
+}
+
+func pluginNodeDeclaresEvent(root *v1.Node, id string, event v1.EventKind) bool {
+	if root == nil {
+		return false
+	}
+	if root.ID == id {
+		for _, declared := range root.Events {
+			if declared == event {
+				return true
+			}
+		}
+		return false
+	}
+	for _, child := range root.Children {
+		if pluginNodeDeclaresEvent(child, id, event) {
 			return true
 		}
 	}

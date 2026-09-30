@@ -498,7 +498,9 @@ func TestPluginBarOnlyDeliversDeclaredEvents(t *testing.T) {
 		reg.plugins.mu.Unlock()
 		t.Fatal("bar view tree is incomplete")
 	}
-	view.Events = map[string][]v1.EventKind{"go": {v1.EventActivate}}
+	view.Events = nil
+	view.tree.Root.Children[0].Events = []v1.EventKind{v1.EventActivate}
+	view.tree.Revision = view.Revision
 	reg.plugins.mu.Unlock()
 
 	bar := reg.bars[1]
