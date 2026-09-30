@@ -95,8 +95,24 @@ func TestPluginSettingControlFitsCardContent(t *testing.T) {
 	}
 	s := plugin.Setting{Key: "provider_api_key", Type: plugin.SettingString, Label: "API key"}
 	row := pluginSettingRow(nil, h, "org.sysc.aiusage", s)
+	field := row.Children[1].Children[0]
+	if field.Kind != ui.KindTextField || field.Padding != m.ButtonPadding {
+		t.Fatalf("plugin setting field = %+v, want a padded text field", field)
+	}
 	joints := h.place.Joints()
 	contentWidth := h.place.Panel.W - joints.Left - joints.Right - 2*m.PanelPadding - 2*m.CardPadding
+	measure := func(string, ui.TextAttrs) (int, int) { return 100, 20 }
+	_, fieldHeight, err := ui.Measure(field, measure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rowHeight, err := ui.ContentHeight(row, contentWidth, measure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rowHeight < fieldHeight {
+		t.Fatalf("setting row height = %d, smaller than field height %d", rowHeight, fieldHeight)
+	}
 	used := row.Children[0].Width + theme.MarginL + row.Children[1].Width
 	if used > contentWidth {
 		t.Fatalf("setting row uses %dpx inside %dpx card content", used, contentWidth)
