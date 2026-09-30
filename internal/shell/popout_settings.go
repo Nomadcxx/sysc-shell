@@ -65,6 +65,47 @@ func settingsControlWidth(h *PanelHost) int {
 	return max(w, 0)
 }
 
+const settingsAppearanceFixedWidth = 240
+
+func settingsAppearanceWidth(h *PanelHost) int {
+	return min(settingsAppearanceFixedWidth, max(settingsBodyWidth(h)/2, 0))
+}
+
+func settingsAppearanceDropdown(e settings.Entry) bool {
+	if e.Section != "Appearance" {
+		return false
+	}
+	if e.Kind == settings.KindFont {
+		return true
+	}
+	return e.Kind == settings.KindEnum && len(e.Options) > 1 &&
+		(e.Present != settings.PresentAuto || len(e.Options) > settingsSegmentLimit)
+}
+
+func settingsAppearanceDropdownWidth(h *PanelHost, e settings.Entry) int {
+	available := max(settingsBodyWidth(h)/2, 0)
+	if !e.IsDefault(h.draft) {
+		available = max(available-settingsResetWidth(h)-theme.MarginS, 0)
+	}
+	return min(settingsAppearanceFixedWidth, available)
+}
+
+func settingsControlWidthFor(h *PanelHost, e settings.Entry) int {
+	w := settingsControlWidth(h)
+	maxColumn := max(settingsBodyWidth(h)/2, 0)
+	need := 0
+	switch {
+	case e.Section == "Appearance" && e.Path == "appearance.mode":
+		need = settingsAppearanceWidth(h)
+	case settingsAppearanceDropdown(e):
+		need = settingsAppearanceDropdownWidth(h, e)
+		if !e.IsDefault(h.draft) {
+			need += settingsResetWidth(h) + theme.MarginS
+		}
+	}
+	return min(max(w, need), maxColumn)
+}
+
 // settingsBodyWidth is what is left for the rows once the rail and the gutter
 // have taken theirs. The rows right-pin their controls, so the column has to
 // carry it: without a width the controls pin to the panel's own edge and every
@@ -227,7 +268,7 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	// The section name is always visible over the content, which is what lets
 	// the group titles inside the column stay unsticky.
-	head = append(head, &ui.Node{Kind: ui.KindText, Text: section, TextRole: theme.RoleTitle})
+	head = append(head, settingsSectionHeading(section))
 	if pages := settings.SectionPages(section); len(pages) > 0 && !searching {
 		head = append(head, settingsPageTabs(h, pages, page))
 	}
@@ -268,6 +309,13 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 		content.Children = append(content.Children, templateRefusals(r)...)
 	}
 	return body(content)
+}
+
+func settingsSectionHeading(section string) *ui.Node {
+	return &ui.Node{
+		Kind: ui.KindText, Text: strings.ToLower(section), Name: section, Role: "heading",
+		TextRole: theme.RolePage, Tone: ui.ToneAccent,
+	}
 }
 
 // templateRefusals reports, under the toggle rows, every template whose file
@@ -315,9 +363,11 @@ func settingsContentHeight(h *PanelHost, head []*ui.Node) int {
 	for _, n := range head {
 		if n.Height > 0 {
 			used += n.Height
+		} else if height, err := ui.ContentHeight(n, settingsBodyWidth(h), measure); err == nil {
+			used += height
 		} else {
-			_, th := measure(n.Text, ui.TextAttrsOf(n))
-			used += th
+			_, height := measure(n.Text, ui.TextAttrsOf(n))
+			used += height
 		}
 		used += theme.MarginL
 	}
@@ -599,7 +649,21 @@ func settingsSectionColumn(h *PanelHost, section string, entries []settings.Entr
 	if len(entries) == 0 {
 		return settingsBody(h, theme.MarginXL, settingsEmptyNote(section))
 	}
+	if section == "Appearance" {
+		return settingsPageColumn(h, entries, settingsAppearanceIntro(h))
+	}
 	return settingsPageColumn(h, entries)
+}
+
+func settingsAppearanceIntro(h *PanelHost) *ui.Node {
+	return &ui.Node{
+		Kind: ui.KindColumn, Width: settingsBodyWidth(h), Gap: theme.MarginXS,
+		Children: []*ui.Node{
+			{Kind: ui.KindText, Text: "theme and interface", Name: "Theme and interface", Role: "heading", TextRole: theme.RoleHeadline},
+			{Kind: ui.KindText, Text: "Choose a palette, then adjust type, surfaces, transparency, and motion.",
+				TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+		},
+	}
 }
 
 // settingsGroupCard is one group as a titled card (settings redesign D3,
@@ -608,7 +672,10 @@ func settingsGroupCard(h *PanelHost, title string, rows []*ui.Node) *ui.Node {
 	m := h.metrics()
 	col := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM}
 	if title != "" {
-		col.Children = append(col.Children, &ui.Node{Kind: ui.KindText, Text: title, TextRole: theme.RoleLabel})
+		col.Children = append(col.Children, &ui.Node{
+			Kind: ui.KindText, Text: strings.ToLower(title), Name: title, Role: "heading",
+			TextRole: theme.RoleSection, Tone: ui.ToneAccent,
+		})
 	}
 	col.Children = append(col.Children, rows...)
 	return &ui.Node{
@@ -635,17 +702,25 @@ func settingsPageColumn(h *PanelHost, entries []settings.Entry, lead ...*ui.Node
 		rows[e.Group] = append(rows[e.Group], settingsEntryRow(h, e, rowW))
 	}
 	children := append([]*ui.Node{}, lead...)
+	section := ""
+	if len(entries) > 0 {
+		section = entries[0].Section
+	}
 	for _, g := range order {
 		children = append(children, settingsGroupCard(h, g, rows[g]))
 	}
-	return settingsBody(h, theme.MarginL, children...)
+	gap := theme.MarginL
+	if section == "Appearance" {
+		gap = theme.MarginXL
+	}
+	return settingsBody(h, gap, children...)
 }
 
 // settingsEntryRow is one setting: its label over its description, and the
 // control at the end. width is the column the row sits in: the body for a
 // search hit, the inside of a card for a group row.
 func settingsEntryRow(h *PanelHost, e settings.Entry, width int) *ui.Node {
-	controlW := settingsControlWidth(h)
+	controlW := settingsControlWidthFor(h, e)
 	label := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: e.Label, Name: e.Label},
 	}}
@@ -678,6 +753,9 @@ func settingsEntryRow(h *PanelHost, e settings.Entry, width int) *ui.Node {
 	if !settingsControlFills(e) {
 		room = 0
 	}
+	if settingsAppearanceDropdown(e) {
+		room = min(room, settingsAppearanceDropdownWidth(h, e))
+	}
 	trailing.Children = append(trailing.Children, settingsControl(h, e, room))
 
 	row := &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: width, Children: []*ui.Node{label, trailing}}
@@ -702,6 +780,8 @@ func settingsControlFills(e settings.Entry) bool {
 	case settings.KindInt:
 		// A short range renders as a stepper, which is three small controls.
 		return !(e.Max-e.Min > 0 && e.Max-e.Min <= settingsStepperSpan)
+	case settings.KindEnum:
+		return settingsAppearanceDropdown(e)
 	}
 	return false
 }
@@ -803,6 +883,9 @@ func settingsSegmented(h *PanelHost, e settings.Entry, raw string) *ui.Node {
 		Kind: ui.KindSegmented, Key: "seg:" + e.Path, Gap: theme.MarginXXS,
 		Height: m.CompactControl, Name: e.Label, Role: "radiogroup",
 	}
+	if e.Section == "Appearance" && e.Path == "appearance.mode" {
+		seg.Width = settingsAppearanceWidth(h)
+	}
 	for _, opt := range e.Options {
 		label := settingsOptionLabel(opt)
 		b := &ui.Node{
@@ -888,6 +971,7 @@ func settingsPickerControl(h *PanelHost, e settings.Entry, options, values []str
 	n := m.Node()
 	n.Action = "set:" + e.Path
 	n.Name = e.Label
+	n.Padding = h.metrics().ButtonPadding
 	if width > 0 {
 		n.Width = width
 	}
@@ -933,6 +1017,7 @@ func settingsField(h *PanelHost, e settings.Entry, raw string, width int) *ui.No
 	n := f.Node(e.Label)
 	n.Action = "set:" + e.Path
 	n.Width = width
+	n.Padding = h.metrics().ButtonPadding
 	// A colour is checkable as it is typed, so the field says so itself
 	// rather than waiting for the write to fail.
 	if e.Kind == settings.KindHex && !settingsValidHex(f.Text) {

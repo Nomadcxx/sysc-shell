@@ -2472,6 +2472,71 @@ func TestMenuChevronAppearsOnlyWhereThereIsRoom(t *testing.T) {
 	}
 }
 
+func TestPaintMenuHonorsRoundedFieldPadding(t *testing.T) {
+	t.Parallel()
+	const x, y, padding = 8, 8, 12
+	c := newTestCanvas(t, 160, 96)
+	r := NewTextRenderer(mustTestFace(t))
+	n := &ui.Node{
+		Kind: ui.KindMenu, Text: "All windows", Padding: padding,
+		Bounds: ui.Rect{X: x, Y: y, W: 144, H: 72},
+		Children: []*ui.Node{{Kind: ui.KindText, Text: "All windows",
+			Bounds: ui.Rect{X: x, Y: y + 44, W: 144, H: 28}}},
+	}
+	if err := paintNode(c, n, r, testStyle, testStyle.Size); err != nil {
+		t.Fatalf("paint menu: %v", err)
+	}
+	surface := testStyle.containerHighest()
+	for _, region := range []ui.Rect{
+		{X: x + 7, Y: y + 7, W: padding - 7, H: 30},
+		{X: x + 7, Y: y + 51, W: padding - 7, H: 18},
+	} {
+		for px := region.X; px < region.X+region.W; px++ {
+			for py := region.Y; py < region.Y+region.H; py++ {
+				if got := pixelAt(t, c, px, py); got != surface {
+					t.Fatalf("menu text entered rounded inset at (%d,%d): got %+v, surface %+v", px, py, got, surface)
+				}
+			}
+		}
+	}
+	found := false
+	for px := x + padding; px < x+64; px++ {
+		for py := y + 7; py < y+33; py++ {
+			if pixelAt(t, c, px, py) != surface {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("menu label was not painted inside its padded text area")
+	}
+	optionFound := false
+	for px := x + padding; px < x+64; px++ {
+		for py := y + 51; py < y+69; py++ {
+			if pixelAt(t, c, px, py) != surface {
+				optionFound = true
+			}
+		}
+	}
+	if !optionFound {
+		t.Fatal("menu option was not painted inside its padded text area")
+	}
+}
+
+func TestMenuChevronHonorsRoundedFieldPadding(t *testing.T) {
+	t.Parallel()
+	const x, padding, label, icon = 5, 10, 44, 18
+	width := label + icon + 2*menuChevronInset + 2*padding
+	n := &ui.Node{Kind: ui.KindMenu, Padding: padding, Bounds: ui.Rect{X: x, W: width, H: 32}}
+	box, ok := menuChevronBox(n, label, icon)
+	if !ok {
+		t.Fatal("menu with room for a padded label and chevron withheld the chevron")
+	}
+	if want := x + width - icon - menuChevronInset - padding; box.X != want {
+		t.Errorf("chevron x = %d, want %d after the right text inset", box.X, want)
+	}
+}
+
 func TestMenuUsesSemanticContainerSurface(t *testing.T) {
 	t.Parallel()
 	c := newTestCanvas(t, 120, 64)

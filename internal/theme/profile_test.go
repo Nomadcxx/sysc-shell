@@ -182,6 +182,8 @@ func TestProfileTypeRoles(t *testing.T) {
 		{RoleDisplay, 24, 600, false, "display"},   // 18 pt
 		{RoleMono, 13, 400, true, "mono"},          // 10 pt -> 13.33
 		{RoleFigure, 15, 600, false, "figure"},     // 11 pt, one step heavier
+		{RoleSection, 24, 700, false, "section"},   // 18 pt, bold and below the 30-pixel page heading
+		{RolePage, 30, 700, false, "page"},         // 22.5 pt, bold and larger than section headings
 	} {
 		got := TypeFor(tc.role)
 		if got.Size != tc.size || got.Weight != tc.weight || got.Mono != tc.mono {

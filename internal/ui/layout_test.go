@@ -52,6 +52,18 @@ func TestLayoutArrangesRow(t *testing.T) {
 	}
 }
 
+func TestToggleUsesSlightlyLargerDefaultSize(t *testing.T) {
+	t.Parallel()
+	toggle := &Node{Kind: KindToggle}
+	root := &Node{Kind: KindRow, Children: []*Node{toggle}}
+	if err := Layout(root, Rect{W: 40, H: 24}, fakeMeasure); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := (Rect{W: toggle.Bounds.W, H: toggle.Bounds.H}), (Rect{W: 36, H: 22}); got != want {
+		t.Errorf("toggle bounds = %+v, want %dx%d", got, want.W, want.H)
+	}
+}
+
 func TestLayoutPreservesMeterWidth(t *testing.T) {
 	t.Parallel()
 

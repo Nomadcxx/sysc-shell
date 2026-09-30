@@ -64,7 +64,7 @@ func TestPluginManagerSourcesHeadlessShowsFreshStaleAndAddWarning(t *testing.T) 
 	reg.mu.Unlock()
 	renderPluginManagerPanel(t, panel)
 	text := treeText(host.root)
-	for _, want := range []string{"Sources", "Official", "fresh", "2 plugins", "Stale: offline", "Suggested", "Not published yet", "Local plugin directory", "Rescan"} {
+	for _, want := range []string{"Sources", "Official", "fresh", "2 plugins", "Stale: offline", "suggested", "Not published yet", "local plugin directory", "Rescan"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("Sources page lacks %q", want)
 		}

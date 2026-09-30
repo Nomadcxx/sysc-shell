@@ -16,7 +16,7 @@ func TestStyleTypeSetResolvesEveryRole(t *testing.T) {
 	for _, role := range []theme.TextRole{
 		theme.RoleBody, theme.RoleCaption, theme.RoleLabel,
 		theme.RoleTitle, theme.RoleHeadline, theme.RoleMono,
-		theme.RoleDisplay, theme.RoleFigure,
+		theme.RoleDisplay, theme.RoleFigure, theme.RoleSection, theme.RolePage,
 	} {
 		if got := set.Spec(role).Size; got != 10+int(role) {
 			t.Errorf("%s size = %d, want %d", role, got, 10+int(role))
@@ -40,12 +40,21 @@ func TestStyleTableCoversEveryDeclaredRole(t *testing.T) {
 	t.Parallel()
 	// The table is sized off the last role. If a role is added past it, this
 	// is the check that says so before a frame indexes out of range.
-	if textRoleCount != int(theme.RoleFigure)+1 {
-		t.Fatalf("textRoleCount = %d, want %d", textRoleCount, int(theme.RoleFigure)+1)
+	if textRoleCount != int(theme.RolePage)+1 {
+		t.Fatalf("textRoleCount = %d, want %d", textRoleCount, int(theme.RolePage)+1)
 	}
 	var set TypeSet
 	if len(set.Roles) != textRoleCount {
 		t.Errorf("role table holds %d entries, want %d", len(set.Roles), textRoleCount)
+	}
+}
+
+func TestSectionRoleIsAddressable(t *testing.T) {
+	t.Parallel()
+	var set TypeSet
+	set.Roles[theme.RoleSection] = TextSpec{Size: 24, Weight: 700}
+	if got := set.Spec(theme.RoleSection); got.Size != 24 || got.Weight != 700 {
+		t.Errorf("Spec(section) = %+v, want size 24 weight 700", got)
 	}
 }
 
