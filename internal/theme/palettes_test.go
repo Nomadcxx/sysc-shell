@@ -6,12 +6,15 @@ import (
 )
 
 func TestNamedPaletteCatalogMatchesApprovedSources(t *testing.T) {
-	want := []string{
-		"amber", "ayu", "blue", "catppuccin", "coral", "cyan", "dracula",
-		"eldritch", "eldritch-abyss", "green", "gruvbox", "kanagawa",
-		"monochrome", "noctalia", "nord", "orange", "pink", "purple", "rama",
-		"red", "rose-pine", "tokyo-night", "void",
+	dms := []string{
+		"amber", "blue", "coral", "cyan", "green", "monochrome", "orange", "pink", "purple", "red",
 	}
+	noctalia := []string{
+		"ayu", "catppuccin", "dracula", "eldritch", "gruvbox", "kanagawa", "noctalia", "nord", "rose-pine", "tokyo-night",
+	}
+	otherSources := []string{"eldritch-abyss", "rama", "void"}
+	want := append(append(append([]string(nil), dms...), noctalia...), otherSources...)
+	slices.Sort(want)
 	if got := PaletteNames(); !slices.Equal(got, want) {
 		t.Fatalf("PaletteNames() = %v, want %v", got, want)
 	}
@@ -76,6 +79,68 @@ func TestNamedPaletteSourceColors(t *testing.T) {
 			t.Errorf("%s/%s anchors = surface %s primary %s secondary %s, want %s %s %s",
 				tc.name, tc.mode, tok.Surface, tok.Primary, tok.Secondary,
 				tc.surface, tc.primary, tc.secondary)
+		}
+	}
+}
+
+func TestNoctaliaHighAnchorsMatchRecordedSources(t *testing.T) {
+	for _, tc := range []struct{ name, mode, want, source string }{
+		{"ayu", "dark", "#1e222a", "surfaceVariant"},
+		{"ayu", "light", "#e4e6e9", "surfaceVariant"},
+		{"catppuccin", "dark", "#313244", "surfaceVariant"},
+		{"catppuccin", "light", "#ccd0da", "surfaceVariant"},
+		{"dracula", "dark", "#44475a", "surfaceVariant"},
+		{"dracula", "light", "#e6e6ea", "surfaceVariant"},
+		{"eldritch", "dark", "#292e42", "surfaceVariant"},
+		{"eldritch", "light", "#d5d9db", "surfaceVariant"},
+		{"gruvbox", "dark", "#3c3836", "surfaceVariant"},
+		{"gruvbox", "light", "#ebdbb2", "surfaceVariant"},
+		{"kanagawa", "dark", "#2a2a37", "surfaceVariant"},
+		{"kanagawa", "light", "#e5ddb0", "surfaceVariant"},
+		{"noctalia", "dark", "#21215f", "outline"},
+		{"noctalia", "light", "#c2c3d9", "local anchor"},
+		{"nord", "dark", "#3b4252", "surfaceVariant"},
+		{"nord", "light", "#c8d0dc", "retained anchor"},
+		{"rose-pine", "dark", "#26233a", "surfaceVariant"},
+		{"rose-pine", "light", "#f2e9e1", "surfaceVariant"},
+		{"tokyo-night", "dark", "#24283b", "surfaceVariant"},
+		{"tokyo-night", "light", "#a8aecb", "shadow"},
+	} {
+		t.Run(tc.name+"/"+tc.mode, func(t *testing.T) {
+			a := palettes[tc.name].Dark
+			if tc.mode == "light" {
+				a = palettes[tc.name].Light
+			}
+			if a.High != tc.want {
+				t.Errorf("%s/%s High = %s, want %s %s", tc.name, tc.mode, a.High, tc.source, tc.want)
+			}
+			usesSurfaceLow := tc.name == "ayu" || tc.name == "eldritch" || tc.name == "kanagawa" || tc.name == "noctalia"
+			if usesSurfaceLow && a.Low != a.Surface {
+				t.Errorf("%s/%s Low = %s, want Surface %s because Noctalia publishes no container ladder", tc.name, tc.mode, a.Low, a.Surface)
+			}
+		})
+	}
+}
+
+func TestDMSHighAnchorsMatchPublishedContainerHighest(t *testing.T) {
+	for _, tc := range []struct{ name, mode, want string }{
+		{"amber", "dark", "#39342b"}, {"amber", "light", "#ebe1d4"},
+		{"blue", "dark", "#32353a"}, {"blue", "light", "#e0e2e8"},
+		{"coral", "dark", "#3d3231"}, {"coral", "light", "#f1dedc"},
+		{"cyan", "dark", "#303637"}, {"cyan", "light", "#dee3e5"},
+		{"green", "dark", "#323630"}, {"green", "light", "#e0e4db"},
+		{"monochrome", "dark", "#505050"}, {"monochrome", "light", "#d0d0d2"},
+		{"orange", "dark", "#3d332e"}, {"orange", "light", "#f0dfd8"},
+		{"pink", "dark", "#3c3233"}, {"pink", "light", "#f0dee0"},
+		{"purple", "dark", "#36343a"}, {"purple", "light", "#e6e0e9"},
+		{"red", "dark", "#3d3231"}, {"red", "light", "#f1dedc"},
+	} {
+		a := palettes[tc.name].Dark
+		if tc.mode == "light" {
+			a = palettes[tc.name].Light
+		}
+		if a.High != tc.want {
+			t.Errorf("%s/%s High = %s, want published surfaceContainerHighest %s", tc.name, tc.mode, a.High, tc.want)
 		}
 	}
 }

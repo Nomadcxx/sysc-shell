@@ -31,7 +31,12 @@ const (
 
 // palettes holds anchors from Noctalia, DMS, Eldritch, and sysc-greet. Roles
 // each source does not publish are completed by derive() and use the same
-// contrast validation as generated palettes.
+// contrast validation as generated palettes. Noctalia's surfaceVariant is the
+// preferred High anchor; entries that need another value name its source or
+// local tuning. The four newly added Noctalia schemes use Surface for Low,
+// while the six earlier schemes retain their existing Low anchors. DMS maps
+// surfaceContainerHighest to High and uses authored Low endpoints because it
+// publishes no surfaceContainerLowest.
 var palettes = map[string]struct{ Dark, Light anchors }{
 	"catppuccin": {
 		// Mocha and Latte.
@@ -67,7 +72,7 @@ var palettes = map[string]struct{ Dark, Light anchors }{
 		},
 		Light: anchors{
 			Surface: "#eceff4", OnSurface: "#2e3440",
-			Low: "#e5e9f0", High: "#c8d0dc",
+			Low: "#e5e9f0", High: "#c8d0dc", // Retained anchor; surfaceVariant collapses the shell's visible container ladder.
 			Primary: "#5e81ac", Secondary: "#64adc2", Tertiary: "#6fa9a8", Error: "#bf616a",
 		},
 	},
@@ -93,7 +98,7 @@ var palettes = map[string]struct{ Dark, Light anchors }{
 			// Noctalia's #3760bf is an accent and leaves too little contrast
 			// against raised light surfaces; use Tokyo Night's dark ink instead.
 			Surface: "#e1e2e7", OnSurface: "#343b58",
-			Low: "#d5d6db", High: "#a8aecb",
+			Low: "#d5d6db", High: "#a8aecb", // Noctalia shadow supplies sufficient container separation.
 			Primary: "#2e7de9", Secondary: "#9854f1", Tertiary: "#587539", Error: "#f52a65",
 		},
 	},
@@ -110,9 +115,9 @@ var palettes = map[string]struct{ Dark, Light anchors }{
 			Primary: "#d7827e", Secondary: "#56949f", Tertiary: "#286983", Error: "#b4637a",
 		},
 	},
-	// Noctalia's other built-ins publish surface and surfaceVariant but no
-	// container ladder. Surface supplies the lowest anchor; the resolver builds
-	// the intermediate Material roles from the published surfaceVariant.
+	// Noctalia's other built-ins publish surfaceVariant but no container ladder.
+	// Surface supplies Low; surfaceVariant supplies High unless an entry notes
+	// an alternate anchor needed to keep the shell's container ladder visible.
 	"ayu": {
 		Dark: anchors{
 			Surface: "#0b0e14", OnSurface: "#d1d1c7",
@@ -140,12 +145,12 @@ var palettes = map[string]struct{ Dark, Light anchors }{
 	"noctalia": {
 		Dark: anchors{
 			Surface: "#070722", OnSurface: "#f3edf7",
-			Low: "#070722", High: "#21215f",
+			Low: "#070722", High: "#21215f", // Noctalia outline; variant collapses the shell's visible container ladder.
 			Primary: "#fff59b", Secondary: "#a9aefe", Tertiary: "#9bfece", Error: "#fd4663",
 		},
 		Light: anchors{
 			Surface: "#e6e8fa", OnSurface: "#0e0e43",
-			Low: "#e6e8fa", High: "#c2c3d9",
+			Low: "#e6e8fa", High: "#c2c3d9", // Local anchor; surfaceVariant is too close to Surface for a visible ladder.
 			Primary: "#5d65f5", Secondary: "#8e93d8", Tertiary: "#0e0e43", Error: "#fd4663",
 		},
 	},
@@ -154,15 +159,16 @@ var palettes = map[string]struct{ Dark, Light anchors }{
 	"eldritch": {
 		Dark: anchors{
 			Surface: "#212337", OnSurface: "#ebfafa",
-			Low: "#323449", High: "#5b5c66",
+			Low: "#212337", High: "#292e42",
 			Primary: "#37f499", Secondary: "#04d1f9", Tertiary: "#a48cf2", Error: "#f16c75",
 		},
 		Light: anchors{
 			Surface: "#f0f3f4", OnSurface: "#1e2029",
-			Low: "#e2e6e8", High: "#c9cbcd",
+			Low: "#f0f3f4", High: "#d5d9db",
 			Primary: "#fb5bb6", Secondary: "#0ad6ff", Tertiary: "#8a69f7", Error: "#fb5b66",
 		},
 	},
+	// Published by https://github.com/eldritch-theme/eldritch at b1cf2bf7fae65a32974eababb4b86926a0ffebef.
 	"eldritch-abyss": {
 		Dark: anchors{
 			Surface: "#171928", OnSurface: "#d8e6e6",
@@ -201,8 +207,10 @@ var palettes = map[string]struct{ Dark, Light anchors }{
 			Primary: "#ffffff", Secondary: "#ffffff", Tertiary: "#808080", Error: "#999999",
 		},
 	},
-	// DMS stock themes publish no tertiary for these entries; surfaceTint supplies
-	// that accent. Missing error colors use the Material 3 light/dark defaults.
+	// DMS stock themes publish surfaceContainerHighest but not
+	// surfaceContainerLowest. High maps to the published highest; Low is authored
+	// below Surface for dark themes and above it for light themes. These entries
+	// also lack tertiary and error, so surfaceTint and Material 3 defaults fill them.
 	"amber": {
 		Dark: anchors{
 			Surface: "#17130b", OnSurface: "#ebe1d4",
@@ -510,6 +518,7 @@ func derive(a anchors, highContrast bool) Tokens {
 	// A fixed accent is the light end of that accent and keeps its value in
 	// either mode, which is what the role means.
 	white := Color{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
+	// Pale named accents need this lift to keep On*Fixed above the 4.5:1 floor.
 	fixedLift, dimLift := 0.62, 0.45
 	if highContrast {
 		fixedLift, dimLift = 0.88, 0.7
