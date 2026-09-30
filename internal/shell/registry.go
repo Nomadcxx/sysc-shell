@@ -1611,7 +1611,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				if r.previewing {
 					r.previewPrevErr = r.themeErr
 				}
-				osdPubs := r.retheThemeOpenSurfacesLocked(r.cfg, r.tokens)
+				surfacePubs := r.retheThemeOpenSurfacesLocked(r.cfg, r.tokens)
 				if depthClockVisualChanged && r.depthClocks != nil {
 					depthEffects = r.depthClocks.reconfigureLocked(depthClockFontChanged)
 				}
@@ -1634,8 +1634,8 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				if r.depthClocks != nil {
 					r.depthClocks.emit(depthEffects)
 				}
-				for _, p := range osdPubs {
-					r.publishSurface(p.global, p.id)
+				for _, p := range surfacePubs {
+					r.publishSurface(p.Global, p.SurfaceID)
 				}
 				for _, bar := range outgoingBars {
 					bar.stopAnimation()
@@ -2284,11 +2284,12 @@ func releaseAll(leases []*services.Lease) {
 	}
 }
 
-// retheThemeOpenSurfacesLocked moves every open panel, toast and OSD onto the
-// supplied theme. It returns OSD surfaces to repaint after releasing r.mu.
+// retheThemeOpenSurfacesLocked moves auxiliary surfaces onto the supplied
+// theme and returns visible surfaces that need repainting after r.mu is released.
 //
 // Caller holds r.mu.
-func (r *Registry) retheThemeOpenSurfacesLocked(cfg config.Config, tokens theme.Tokens) []osdPub {
+func (r *Registry) retheThemeOpenSurfacesLocked(cfg config.Config, tokens theme.Tokens) []wayland.Invalidation {
+	var pubs []wayland.Invalidation
 	for _, h := range r.panelHosts {
 		if h == nil {
 			continue
@@ -2300,10 +2301,17 @@ func (r *Registry) retheThemeOpenSurfacesLocked(cfg config.Config, tokens theme.
 	if r.toasts != nil {
 		r.toasts.restyleLocked()
 	}
-	if r.osd != nil {
-		return r.osd.retheme(r.panelThemeForState(0, cfg, tokens))
+	if h := r.windowSwitcher; h != nil {
+		next := withBarGeometry(r.panelThemeForState(0, cfg, tokens), cfg.Bar)
+		h.retheme(next)
+		if h.open_ {
+			pubs = append(pubs, wayland.Invalidation{Global: h.output, SurfaceID: windowSwitcherSurfaceID})
+		}
 	}
-	return nil
+	if r.osd != nil {
+		pubs = append(pubs, r.osd.retheme(r.panelThemeForState(0, cfg, tokens))...)
+	}
+	return pubs
 }
 
 // withPanelRadius keeps a panel's own corner radius, which is fixed rather than
@@ -2334,15 +2342,15 @@ func (r *Registry) SetCapabilities(c wayland.Capabilities) {
 		bar.retheme(bar.themeSnapshot().WithCompositor(c.Blur))
 	}
 	cfg, tokens := r.effectiveThemeLocked()
-	osdPubs := r.retheThemeOpenSurfacesLocked(cfg, tokens)
+	surfacePubs := r.retheThemeOpenSurfacesLocked(cfg, tokens)
 	outputs := r.outputGlobalsLocked()
 	r.mu.Unlock()
 
 	for _, global := range outputs {
 		r.publishSurface(global, "")
 	}
-	for _, p := range osdPubs {
-		r.publishSurface(p.global, p.id)
+	for _, p := range surfacePubs {
+		r.publishSurface(p.Global, p.SurfaceID)
 	}
 }
 

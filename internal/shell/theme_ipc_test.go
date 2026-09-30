@@ -9,6 +9,9 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
 
@@ -314,6 +317,125 @@ func TestThemePreviewRepaintsOpenOSDWithCandidatePalette(t *testing.T) {
 	}
 	if !invalidated {
 		t.Fatal("preview hide did not invalidate the open OSD surface")
+	}
+}
+
+func TestThemePreviewRepaintsOpenWindowSwitcher(t *testing.T) {
+	cfg := config.Default()
+	cfg.Accessibility.ReducedMotion = true
+	r := NewRegistry(cfg)
+	t.Cleanup(r.Close)
+	r.themeGen = theme.Generator{CacheDir: t.TempDir()}
+	newHosts(t, r, map[uint32]string{7: "DP-1"})
+	r.UpdateNiri(switcherSnapshot([]niri.Window{
+		{ID: 1, WorkspaceID: 10, HasWorkspace: true, FocusTimestamp: 30},
+	}, false))
+	if err := r.ShowWindowSwitcher(); err != nil {
+		t.Fatal(err)
+	}
+	h := r.windowSwitcher
+	if err := h.spec().Callbacks.Configure(800, 600, 120); err != nil {
+		t.Fatal(err)
+	}
+
+	// Model the style retained by an already-rendered switcher surface.
+	r.mu.Lock()
+	committed := r.surfaceTheme().OverlayStyle()
+	committed.NoGround = true
+	committed.Scale120, committed.Body = h.style.Scale120, h.style.Body
+	h.style = committed
+	h.text = render.NewTextRenderer(nil)
+	r.mu.Unlock()
+
+	candidate := cfg
+	candidate.ThemeGen.Source = "palette"
+	candidate.ThemeGen.Seed = "gruvbox"
+	tokens, ok := theme.NamedPalette(candidate.ThemeGen.Seed, candidate.ThemeGen.Mode, false)
+	if !ok {
+		t.Fatal("gruvbox palette is missing")
+	}
+	wantTheme, err := resolveOutputTheme(candidate, "DP-1", tokens, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := withBarGeometry(wantTheme, candidate.Bar).OverlayStyle()
+	want.NoGround = true
+	want.Scale120, want.Body = committed.Scale120, committed.Body
+
+	drainInvalidations(r)
+	if _, err := r.themePreviewShow(candidate); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	gotPreview := h.style.Accent
+	geometryPreserved := h.style.Scale120 == committed.Scale120 && h.style.Body == committed.Body && h.style.NoGround
+	r.mu.Unlock()
+	if gotPreview != want.Accent {
+		t.Fatalf("open switcher accent = %+v, want preview accent %+v", gotPreview, want.Accent)
+	}
+	if !geometryPreserved {
+		t.Fatal("preview retheme changed the switcher's scale, body, or transparent ground")
+	}
+	previewInvalidated := false
+	for len(r.invalidations) > 0 {
+		inv := <-r.invalidations
+		if inv.Global == 7 && inv.SurfaceID == windowSwitcherSurfaceID {
+			previewInvalidated = true
+		}
+	}
+	if !previewInvalidated {
+		t.Fatal("theme preview did not invalidate the open window switcher")
+	}
+
+	r.themePreviewHide()
+	r.mu.Lock()
+	gotRestored := h.style.Accent
+	r.mu.Unlock()
+	if gotRestored != committed.Accent {
+		t.Fatalf("hidden preview left switcher accent = %+v, want committed accent %+v", gotRestored, committed.Accent)
+	}
+	restoredInvalidated := false
+	for len(r.invalidations) > 0 {
+		inv := <-r.invalidations
+		if inv.Global == 7 && inv.SurfaceID == windowSwitcherSurfaceID {
+			restoredInvalidated = true
+		}
+	}
+	if !restoredInvalidated {
+		t.Fatal("preview hide did not invalidate the open window switcher")
+	}
+
+	if !h.handleLocking(wayland.Event{Kind: wayland.EventKeyPress, Key: keyEsc}) {
+		t.Fatal("Escape did not close the switcher")
+	}
+	drainInvalidations(r)
+	if _, err := r.themePreviewShow(candidate); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	closedPreview := h.style.Accent
+	stillClosed := !h.open_
+	r.mu.Unlock()
+	if !stillClosed || closedPreview != want.Accent {
+		t.Fatalf("closed switcher cache = %+v, open = %v; want preview accent %+v while closed", closedPreview, !stillClosed, want.Accent)
+	}
+	for len(r.invalidations) > 0 {
+		if inv := <-r.invalidations; inv.Global == 7 && inv.SurfaceID == windowSwitcherSurfaceID {
+			t.Fatal("closed switcher received an invalidation")
+		}
+	}
+	r.themePreviewHide()
+	if err := r.ShowWindowSwitcher(); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	gotReopened := h.style.Accent
+	r.mu.Unlock()
+	if gotReopened != committed.Accent {
+		t.Fatalf("reopened switcher accent = %+v, want committed accent %+v", gotReopened, committed.Accent)
+	}
+	if !h.handleLocking(wayland.Event{Kind: wayland.EventKeyPress, Key: keyEsc}) {
+		t.Fatal("Escape did not close the reopened switcher")
 	}
 }
 

@@ -1275,15 +1275,15 @@ func (r *Registry) republishTheme(cfg config.Config) {
 // failure recorded while it was up.
 func (r *Registry) paintTheme(cfg config.Config, tokens theme.Tokens, themeErr string, commit bool) {
 	r.mu.Lock()
-	outputs, osdPubs := r.paintThemeLocked(cfg, tokens, themeErr, commit)
+	outputs, surfacePubs := r.paintThemeLocked(cfg, tokens, themeErr, commit)
 	r.mu.Unlock()
-	r.publishTheme(outputs, osdPubs)
+	r.publishTheme(outputs, surfacePubs)
 }
 
 // paintThemeLocked resolves and applies a palette while holding Registry.mu.
 // Keeping the resolution and state update in one critical section lets preview
 // hide restore the latest committed palette without a stale snapshot window.
-func (r *Registry) paintThemeLocked(cfg config.Config, tokens theme.Tokens, themeErr string, commit bool) (map[string]uint32, []osdPub) {
+func (r *Registry) paintThemeLocked(cfg config.Config, tokens theme.Tokens, themeErr string, commit bool) (map[string]uint32, []wayland.Invalidation) {
 	nextBars := make(map[*Bar]Theme, len(r.bars))
 	for _, bar := range r.bars {
 		next, err := resolveOutputTheme(cfg, bar.connector(), tokens, r.caps.Blur)
@@ -1319,16 +1319,16 @@ func (r *Registry) paintThemeLocked(cfg config.Config, tokens theme.Tokens, them
 		bar.retheme(nextBars[bar])
 		bar.apply(r.viewLocked(bar.connector()))
 	}
-	osdPubs := r.retheThemeOpenSurfacesLocked(cfg, tokens)
-	return r.outputGlobalsLocked(), osdPubs
+	surfacePubs := r.retheThemeOpenSurfacesLocked(cfg, tokens)
+	return r.outputGlobalsLocked(), surfacePubs
 }
 
-func (r *Registry) publishTheme(outputs map[string]uint32, osdPubs []osdPub) {
+func (r *Registry) publishTheme(outputs map[string]uint32, surfacePubs []wayland.Invalidation) {
 	for _, global := range outputs {
 		r.publishSurface(global, "")
 	}
-	for _, p := range osdPubs {
-		r.publishSurface(p.global, p.id)
+	for _, p := range surfacePubs {
+		r.publishSurface(p.Global, p.SurfaceID)
 	}
 }
 

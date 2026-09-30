@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
 
@@ -45,9 +46,9 @@ func (r *Registry) themePreviewShow(cfg config.Config) (map[string]any, error) {
 		r.mu.Unlock()
 		return nil, errors.New("theme preview superseded")
 	}
-	outputs, osdPubs := r.paintThemeLocked(cfg, tokens, "", false)
+	outputs, surfacePubs := r.paintThemeLocked(cfg, tokens, "", false)
 	r.mu.Unlock()
-	r.publishTheme(outputs, osdPubs)
+	r.publishTheme(outputs, surfacePubs)
 	return map[string]any{
 		"previewing": true,
 		"mode":       cfg.ThemeGen.Mode,
@@ -71,14 +72,14 @@ func (r *Registry) themePreviewHide() map[string]any {
 	prevErr := r.previewPrevErr
 	r.previewPrevErr = ""
 	var outputs map[string]uint32
-	var osdPubs []osdPub
+	var surfacePubs []wayland.Invalidation
 	if visible {
-		outputs, osdPubs = r.paintThemeLocked(r.cfg, r.tokens, prevErr, true)
+		outputs, surfacePubs = r.paintThemeLocked(r.cfg, r.tokens, prevErr, true)
 	} else {
 		r.previewTheme = nil
 	}
 	r.mu.Unlock()
 
-	r.publishTheme(outputs, osdPubs)
+	r.publishTheme(outputs, surfacePubs)
 	return map[string]any{"previewing": false}
 }
