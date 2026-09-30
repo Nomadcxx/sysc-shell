@@ -61,6 +61,26 @@ func TestPreparerLaysOutABarView(t *testing.T) {
 	}
 }
 
+func TestPreparerKeepsEventDeclarationsWithRenderedRevision(t *testing.T) {
+	t.Parallel()
+
+	p := NewPreparer(1, measureFixed)
+	defer p.Close()
+	root := &v1.Node{Kind: v1.KindRow, Children: []*v1.Node{{
+		Kind: v1.KindButton, ID: "open", Text: "Open", Name: "Open", Role: "button",
+		Events: []v1.EventKind{v1.EventActivate, v1.EventPointer},
+	}}}
+	p.Submit(barJob("v1", 4, root))
+	got := await(t, p)
+	if got.Err != nil {
+		t.Fatalf("prepare: %v", got.Err)
+	}
+	events := got.Events["open"]
+	if len(events) != 2 || events[0] != v1.EventActivate || events[1] != v1.EventPointer {
+		t.Fatalf("rendered events = %v", events)
+	}
+}
+
 func TestPreparerLaysOutAPanelAsAColumn(t *testing.T) {
 	t.Parallel()
 

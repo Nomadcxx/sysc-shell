@@ -43,6 +43,8 @@ type hostedView struct {
 	Kind       v1.ViewKind
 	Revision   uint64
 	Root       *ui.Node
+	// Events belongs to the rendered revision, not the newer wire tree.
+	Events     map[string][]v1.EventKind
 	tree       *plugin.ViewTree
 	Failed     bool
 	Label      string
@@ -445,11 +447,13 @@ func (h *pluginHost) applyResult(res plugin.Result) {
 			"revision", res.Revision, "err", res.Err)
 		v.Failed = true
 		v.Root = nil
+		v.Events = nil
 		v.Label = res.Err.Error()
 	} else {
 		stampPluginActions(res.Root, res.ViewID)
 		v.Failed = false
 		v.Root = res.Root
+		v.Events = res.Events
 		v.Label = ""
 		queuePluginImages(h, res.Root)
 	}
@@ -1205,7 +1209,7 @@ func (h *pluginHost) deliver(hit pluginHit, event v1.EventKind, button v1.Pointe
 	declared := false
 	if ok {
 		slot = h.slots[v.Plugin]
-		declared = v.tree != nil && pluginNodeDeclaresEvent(v.tree.Root, hit.Node, event)
+		declared = pluginViewAcceptsEvent(v, hit.Node, event)
 		if declared && anchorX > 0 {
 			h.lastAnchor[v.Plugin] = anchorX
 		}
@@ -1232,20 +1236,36 @@ func (h *pluginHost) deliver(hit pluginHit, event v1.EventKind, button v1.Pointe
 	return true
 }
 
-func pluginNodeDeclaresEvent(root *v1.Node, id string, event v1.EventKind) bool {
-	if root == nil {
+func pluginViewAcceptsEvent(view *hostedView, node string, event v1.EventKind) bool {
+	if view == nil {
 		return false
 	}
-	if root.ID == id {
-		for _, declared := range root.Events {
-			if declared == event {
-				return true
-			}
+	if event == v1.EventActivate {
+		if view.Kind == v1.ViewBar && view.Failed && node == "camera" {
+			// The failed-view placeholder has a shell-created diagnostic action.
+			return true
 		}
-		return false
+		if view.Kind != v1.ViewFloating {
+			return pluginEventDeclared(view.Events, node, event)
+		}
+		switch node {
+		case "surface-pin", "surface-close":
+			// Sticky-note chrome is synthesized by the shell and handled by the
+			// plugin through these two host-provided activation IDs.
+			return true
+		}
 	}
-	for _, child := range root.Children {
-		if pluginNodeDeclaresEvent(child, id, event) {
+	if view.Plugin == notesPluginID && view.Kind == v1.ViewPanel && view.Entry == "panel" &&
+		node == "launcher-capture" && event == v1.EventSubmit {
+		// The launcher delivers captured text without adding a visible node.
+		return true
+	}
+	return pluginEventDeclared(view.Events, node, event)
+}
+
+func pluginEventDeclared(events map[string][]v1.EventKind, node string, event v1.EventKind) bool {
+	for _, declared := range events[node] {
+		if declared == event {
 			return true
 		}
 	}

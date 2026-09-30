@@ -161,6 +161,17 @@ const testTimerManifest = `{
   "settings": []
 }`
 
+const testNotesPanelManifest = `{
+  "schema": 1,
+  "id": "org.sysc.notes",
+  "name": "Notes",
+  "version": "1.0.0",
+  "protocol": {"major": 1, "minor": 8},
+  "exec": "bin/sysc-plugin-timer",
+  "capabilities": ["panels"],
+  "panels": [{"id": "panel", "width": 320, "height": 280, "placement": "attached"}]
+}`
+
 func pluginConfig(root string) config.Config {
 	cfg := config.Default()
 	cfg.Accessibility.ReducedMotion = true
@@ -487,7 +498,7 @@ func TestPluginBarOnlyDeliversDeclaredEvents(t *testing.T) {
 		reg.plugins.mu.Unlock()
 		t.Fatal("bar view tree is incomplete")
 	}
-	view.tree.Root.Children[0].Events = []v1.EventKind{v1.EventActivate}
+	view.Events = map[string][]v1.EventKind{"go": {v1.EventActivate}}
 	reg.plugins.mu.Unlock()
 
 	bar := reg.bars[1]
@@ -502,6 +513,117 @@ func TestPluginBarOnlyDeliversDeclaredEvents(t *testing.T) {
 	got := reg.plugins.lastInputs()
 	if len(got) != 1 || got[0].Event != v1.EventActivate {
 		t.Fatalf("primary click inputs = %+v, want one declared activate event", got)
+	}
+}
+
+func TestPluginInputUsesEventsFromRenderedRevision(t *testing.T) {
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	waitPluginText(t, reg.bars[1], "hello")
+	ids := reg.plugins.barViewIDs("DP-1")
+	if len(ids) != 1 {
+		t.Fatalf("bar view IDs = %v", ids)
+	}
+	reg.plugins.mu.Lock()
+	view := reg.plugins.views[ids[0]]
+	if view == nil || view.tree == nil || view.tree.Root == nil || len(view.tree.Root.Children) != 1 {
+		reg.plugins.mu.Unlock()
+		t.Fatal("bar view tree is incomplete")
+	}
+	// The latest wire tree has arrived, but its replacement has not finished
+	// preparing. The currently visible button still declares Activate.
+	view.tree.Root.Children[0].Events = []v1.EventKind{v1.EventPointer}
+	view.tree.Revision = view.Revision + 1
+	revision := view.Revision
+	reg.plugins.mu.Unlock()
+
+	if !reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "go"}, v1.EventActivate, "", "", 0) {
+		t.Fatal("activation on the rendered revision was rejected")
+	}
+	inputs := reg.plugins.lastInputs()
+	if len(inputs) != 1 || inputs[0].Revision != revision || inputs[0].Event != v1.EventActivate {
+		t.Fatalf("rendered revision input = %+v, want activate at revision %d", inputs, revision)
+	}
+}
+
+func TestPluginFloatingSurfaceActionsReachPlugin(t *testing.T) {
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	waitPluginText(t, reg.bars[1], "hello")
+
+	ids := reg.plugins.barViewIDs("DP-1")
+	if len(ids) != 1 {
+		t.Fatalf("bar view IDs = %v", ids)
+	}
+	reg.plugins.mu.Lock()
+	view := reg.plugins.views[ids[0]]
+	reg.plugins.mu.Unlock()
+	if reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "surface-close"}, v1.EventActivate, "", "", 0) {
+		t.Fatal("floating surface action was accepted on a bar view")
+	}
+	reg.plugins.mu.Lock()
+	view.Kind = v1.ViewFloating
+	reg.plugins.mu.Unlock()
+	if reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "surface-close"}, v1.EventPointer, v1.ButtonPrimary, "", 0) {
+		t.Fatal("floating surface chrome received a pointer-press event")
+	}
+
+	for _, node := range []string{"surface-pin", "surface-close"} {
+		if !reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: node}, v1.EventActivate, "", "", 0) {
+			t.Errorf("floating %s action was not delivered", node)
+		}
+	}
+	got := reg.plugins.lastInputs()
+	if len(got) != 2 || got[0].Node != "surface-pin" || got[1].Node != "surface-close" {
+		t.Fatalf("floating surface inputs = %+v", got)
+	}
+}
+
+func TestLauncherNotesCaptureReachesNotesPanel(t *testing.T) {
+	reg := bindManifestPlugin(t, "ok", notesPluginID, testNotesPanelManifest, []string{notesPluginID})
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	waitPluginText(t, reg.bars[1], "hello")
+
+	opened, err := reg.plugins.openPanel(notesPluginID, v1.PanelParams{
+		Entry: "panel", Output: "DP-1", Generation: 1, Instance: "launcher",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	waitPluginPanelRoot(t, reg)
+	if err := reg.plugins.launcherNotes("DP-1", 1, "Captured from launcher"); err != nil {
+		t.Fatal(err)
+	}
+
+	inputs := reg.plugins.lastInputs()
+	if len(inputs) == 0 {
+		t.Fatal("launcher capture was not delivered")
+	}
+	got := inputs[len(inputs)-1]
+	if got.ViewID != opened.ViewID || got.Node != "launcher-capture" || got.Event != v1.EventSubmit || got.Text != "Captured from launcher" {
+		t.Fatalf("launcher capture = %+v", got)
+	}
+}
+
+func TestPluginFailedPlaceholderActionReachesPlugin(t *testing.T) {
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	waitPluginText(t, reg.bars[1], "hello")
+	ids := reg.plugins.barViewIDs("DP-1")
+	if len(ids) != 1 {
+		t.Fatalf("bar view IDs = %v", ids)
+	}
+	reg.plugins.mu.Lock()
+	reg.plugins.views[ids[0]].Failed = true
+	reg.plugins.mu.Unlock()
+
+	if !reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "camera"}, v1.EventActivate, "", "", 0) {
+		t.Fatal("failed-view placeholder action was not delivered")
+	}
+	inputs := reg.plugins.lastInputs()
+	if len(inputs) == 0 || inputs[len(inputs)-1].Node != "camera" {
+		t.Fatalf("placeholder input = %+v", inputs)
 	}
 }
 
