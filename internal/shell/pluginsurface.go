@@ -381,7 +381,7 @@ func (p *pluginSurfaceHost) wrapTreeMeasured(content *ui.Node, measure ui.Measur
 	if body := firstMultiline(content); body != nil {
 		if natural, err := ui.ContentHeight(content, state.Width, measure); err == nil {
 			slack := state.Height - header - grip - natural
-			body.Height = max(body.Height+slack, 2*minLineHeight(measure))
+			body.Height = max(body.Height+slack, 2*minLineHeight(measure)+2*body.Padding)
 		}
 	}
 	return &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{chrome, content, gripRow}}

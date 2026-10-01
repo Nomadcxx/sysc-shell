@@ -2173,7 +2173,14 @@ func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) bool {
 		return true
 	}
 	if h.id == PanelPlugin {
-		if n := h.focused(); n == nil || n.Kind != ui.KindTextField {
+		// A bare key typed into a field is text, so a field keeps it; one
+		// held with Ctrl or Alt that the field did not use above cannot be
+		// text, and still reaches the plugin (Notes saves on Ctrl+S).
+		typing := false
+		if n := h.focused(); n != nil && n.Kind == ui.KindTextField {
+			typing = !h.mods.Has(ui.ModCtrl) && !h.mods.Has(ui.ModAlt)
+		}
+		if !typing {
 			mods := make([]string, 0, 3)
 			if h.mods.Has(ui.ModAlt) {
 				mods = append(mods, "alt")

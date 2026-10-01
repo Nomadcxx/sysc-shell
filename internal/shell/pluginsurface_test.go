@@ -460,3 +460,15 @@ func TestStickyFailureCardDoesNotReplaceThePluginContent(t *testing.T) {
 		t.Fatal("the failure card replaced the plugin's tree, so a resize can never recover it")
 	}
 }
+
+// The floor is two lines of text inside the field, so its padding is added
+// on top: without it a squeezed sticky showed barely one line.
+func TestStickyBodyFloorCountsFieldPadding(t *testing.T) {
+	content := stickyContent()
+	findKind(content, ui.KindTextField).Padding = 8
+	p := &pluginSurfaceHost{title: "N", viewID: "v1", width: 200, height: 100, panel: &PanelHost{theme: DefaultTheme()}}
+	body := findKind(p.wrapTreeMeasured(content, stickyMeasure), ui.KindTextField)
+	if want := 2*20 + 2*8; body.Height < want {
+		t.Fatalf("body %dpx, want at least %d for two padded lines", body.Height, want)
+	}
+}
