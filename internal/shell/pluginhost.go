@@ -100,7 +100,7 @@ const pluginBarViewHeight = lint.BarHeight
 var hostPluginCaps = []plugin.Capability{
 	plugin.CapNotifications, plugin.CapPanels, plugin.CapSettings, plugin.CapState,
 	plugin.CapFloatingSurfaces, plugin.CapWallpaper, plugin.CapClipboardRead,
-	plugin.CapOpenURL, plugin.CapClipboardWrite,
+	plugin.CapOpenURL, plugin.CapClipboardWrite, plugin.CapScreenshot,
 }
 
 // BindPlugins discovers enabled plugins and starts one runtime for each.
@@ -840,7 +840,26 @@ func (h *pluginHost) callEnv(id string, rt *plugin.Runtime, store plugin.StateSt
 			return h.registerWallpaperMask(ctx, id, p)
 		},
 		ClipboardRead: readSystemClipboard,
+
+		Screenshot:          h.screenshotStart,
+		ScreenshotDirectory: h.screenshotDirectory,
 	}
+}
+
+// screenshotStart hands a capture to the registry. It runs in the dispatcher's
+// own goroutine, never under Registry.mu, which Screenshot takes itself.
+func (h *pluginHost) screenshotStart(ctx context.Context, mode string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return h.r.Screenshot(mode)
+}
+
+func (h *pluginHost) screenshotDirectory(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return h.r.screenshotDirectory(), nil
 }
 
 func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResult, error) {
