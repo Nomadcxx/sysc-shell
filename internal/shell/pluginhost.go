@@ -29,7 +29,6 @@ type PluginHostOptions struct {
 
 type pluginSlot struct {
 	rt    *plugin.Runtime
-	disp  *plugin.Dispatcher
 	store plugin.StateStore
 }
 
@@ -250,9 +249,8 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 	if err := rt.Start(h.ctx); err != nil {
 		return err
 	}
-	disp := plugin.NewDispatcher(h.callEnv(id, rt, store))
-	rt.SetCalls(disp)
-	slot := &pluginSlot{rt: rt, disp: disp, store: store}
+	rt.SetCalls(plugin.NewDispatcher(h.callEnv(id, rt, store)))
+	slot := &pluginSlot{rt: rt, store: store}
 	if h.ensureRaceHook != nil {
 		h.ensureRaceHook(id, rt)
 	}
@@ -428,9 +426,6 @@ func (h *pluginHost) onMessage(slot *pluginSlot, msg v1.Message) {
 			Revision: rev, Root: root,
 			Bounds: ui.Rect{W: w, H: ht},
 		})
-	case *v1.HostCall:
-		reply := slot.disp.Handle(h.ctx, m)
-		_ = slot.rt.Send(&reply)
 	}
 }
 

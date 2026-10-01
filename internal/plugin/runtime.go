@@ -109,6 +109,7 @@ type Runtime struct {
 	session       *Session
 	sessionCancel context.CancelFunc
 	disp          *Dispatcher
+	early         []earlyCall
 	budget        *restartBudget
 	// generation rises on every deliberate stop, so a supervise goroutine
 	// belonging to a previous life cannot restart a plugin the user disabled.
@@ -133,12 +134,29 @@ func NewRuntime(c Candidate, opts RuntimeOptions) *Runtime {
 // alternative to discarding a view the plugin meant the user to see.
 func (r *Runtime) Messages() <-chan v1.Message { return r.messages }
 
+// earlyCall is a host.call that arrived before SetCalls. It keeps the session
+// it belongs to, so answering it later is bound to that session's lifetime.
+type earlyCall struct {
+	ctx  context.Context
+	sess *Session
+	call *v1.HostCall
+}
+
+// maxEarlyCalls bounds the calls held between Start and SetCalls.
+const maxEarlyCalls = 32
+
 // SetCalls attaches the host-call dispatcher. Calls are answered off the
-// shell's message pump so a slow notify cannot stall view updates.
+// shell's message pump so a slow notify cannot stall view updates. Calls that
+// arrived since Start are answered now, under their own session's context.
 func (r *Runtime) SetCalls(d *Dispatcher) {
 	r.mu.Lock()
 	r.disp = d
+	early := r.early
+	r.early = nil
 	r.mu.Unlock()
+	for _, e := range early {
+		go r.answer(e.ctx, e.sess, d, e.call)
+	}
 }
 
 // Send writes one host message to the live session.
@@ -296,11 +314,16 @@ func (r *Runtime) supervise(ctx, sessionCtx context.Context, cancel context.Canc
 		if call, ok := msg.(*v1.HostCall); ok {
 			r.mu.Lock()
 			d := r.disp
+			if d == nil && len(r.early) < maxEarlyCalls {
+				r.early = append(r.early, earlyCall{sessionCtx, sess, call})
+			}
 			r.mu.Unlock()
 			if d != nil {
 				go r.answer(sessionCtx, sess, d, call)
-				continue
 			}
+			// A call is never a view update: it is answered under its own
+			// session's context, never queued for the consumer (gh #66).
+			continue
 		}
 		select {
 		case r.messages <- msg:
@@ -369,6 +392,7 @@ func (r *Runtime) Stop() {
 	cancelSession := r.sessionCancel
 	r.session = nil
 	r.sessionCancel = nil
+	r.early = nil
 	r.mu.Unlock()
 
 	if cancelSession != nil {

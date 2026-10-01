@@ -297,3 +297,27 @@ func TestDepthClockTreeUsesThemedTimeAndDateRoles(t *testing.T) {
 		t.Fatalf("date node = %+v", dateNode)
 	}
 }
+
+func TestDropAuxForgetsDepthClockAndReopens(t *testing.T) {
+	r, h, harness := newDepthClockTestHost(t, map[string]struct {
+		global uint32
+		width  int
+		height int
+	}{"DP-1": {global: 7, width: 1920, height: 1080}})
+	if err := h.set("DP-1", depthClockTestDescriptor("plugin-a", 0)); err != nil {
+		t.Fatal(err)
+	}
+	r.DropAux(7, depthClockSurfaceID("DP-1"))
+	r.mu.Lock()
+	remaining, lease := len(h.surfaces), r.depthClockLease
+	r.mu.Unlock()
+	if remaining != 0 || lease != nil {
+		t.Fatalf("after DropAux: surfaces=%d lease=%v, want none", remaining, lease)
+	}
+	if err := h.set("DP-1", depthClockTestDescriptor("plugin-a", 0)); err != nil {
+		t.Fatal(err)
+	}
+	if len(harness.opens) != 2 {
+		t.Fatalf("opens = %d, want the surface re-opened", len(harness.opens))
+	}
+}

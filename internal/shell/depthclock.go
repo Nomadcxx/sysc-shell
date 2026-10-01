@@ -150,6 +150,23 @@ func (h *depthClockHost) clearLocked(connector, owner string) depthClockEffects 
 	return effects
 }
 
+// dropLocked forgets a connector whose layer the compositor already closed, so
+// no close request is sent. A later set re-opens it, and the clock lease is
+// released with the last surface.
+func (h *depthClockHost) dropLocked(connector string, global uint32) depthClockEffects {
+	surface, ok := h.surfaces[connector]
+	if !ok || surface.global != global {
+		return depthClockEffects{}
+	}
+	delete(h.surfaces, connector)
+	effects := depthClockEffects{}
+	if len(h.surfaces) == 0 {
+		effects.release = h.r.depthClockLease
+		h.r.depthClockLease = nil
+	}
+	return effects
+}
+
 func (h *depthClockHost) clearOwner(owner string) {
 	h.r.mu.Lock()
 	effects := depthClockEffects{}
