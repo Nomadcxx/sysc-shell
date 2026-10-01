@@ -36,7 +36,7 @@ func TestPluginManagerInstalledHeadlessShowsManagedOverrideUnlistedErrorsAndUpda
 	reg.rebuildPanel(host)
 	reg.mu.Unlock()
 	renderPluginManagerPanel(t, panel)
-	for _, want := range []string{"Installed", "Updates (1)", "Update to v1.5.0", "local override", "managed, unlisted", "plugin failed to start"} {
+	for _, want := range []string{"Installed", "updates (1)", "Update to v1.5.0", "local override", "managed, unlisted", "plugin failed to start"} {
 		if !pluginStoreHasText(host.root, want) {
 			t.Errorf("Installed page lacks %q", want)
 		}

@@ -38,6 +38,13 @@ const (
 	PresentAuto Presentation = iota
 	PresentMenu
 	PresentCards
+	// PresentSlider draws an int as a slider even when its range is short
+	// enough for a stepper, so related values in one card look alike (owner
+	// decision, 2026-10-01: opacities and bar geometry).
+	PresentSlider
+	// PresentSwatch draws a theme-role enum as a dropdown of readable role
+	// names beside a swatch of the selected role (Monitor's colours).
+	PresentSwatch
 )
 
 type Entry struct {
@@ -61,6 +68,9 @@ type Entry struct {
 	// has to carry in its place.
 	EmptyLabel string
 	Min, Max   int
+	// Unit follows the displayed value of a number ("%", "px"). Display
+	// only: the stored value never carries it.
+	Unit string
 
 	Get Getter
 	Set Setter

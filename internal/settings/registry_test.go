@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/theming"
@@ -888,5 +889,25 @@ func TestOnlyCompleteTemplatesGetToggles(t *testing.T) {
 	}
 	if !seen["niri"] {
 		t.Errorf("complete template niri has no toggle: %v", seen)
+	}
+}
+
+func TestConciseDurationDropsZeroUnits(t *testing.T) {
+	t.Parallel()
+	for d, want := range map[time.Duration]string{
+		15 * time.Minute:            "15m",
+		time.Hour:                   "1h",
+		time.Hour + 30*time.Minute:  "1h30m",
+		90 * time.Second:            "1m30s",
+		45 * time.Second:            "45s",
+		2*time.Hour + 5*time.Second: "2h0m5s",
+		500 * time.Millisecond:      "500ms",
+	} {
+		if got := conciseDuration(d); got != want {
+			t.Errorf("conciseDuration(%v) = %q, want %q", d, got, want)
+		}
+		if parsed, err := time.ParseDuration(conciseDuration(d)); err != nil || parsed != d {
+			t.Errorf("conciseDuration(%v) does not parse back: %v, %v", d, parsed, err)
+		}
 	}
 }

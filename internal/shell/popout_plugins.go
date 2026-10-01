@@ -21,8 +21,8 @@ func pluginsTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	metrics := h.metrics()
 	segments := &ui.Node{
-		Kind: ui.KindSegmented, Key: "plugins-tab", Gap: theme.MarginXXS,
-		Height: metrics.CompactControl, Name: "Plugins view", Role: "tablist",
+		Kind: ui.KindSegmented, Key: "plugins-tab", Gap: theme.MarginXXS, Width: settingsBodyWidth(h),
+		Height: metrics.CompactControl, Name: "Plugins view", Role: "radiogroup",
 		Children: []*ui.Node{
 			pluginManagerSegment(h, "installed", "Installed"),
 			pluginManagerSegment(h, "sources", "Sources"),
@@ -36,8 +36,11 @@ func pluginsTree(r *Registry, h *PanelHost) *ui.Node {
 	}}}
 	browse.Text = ""
 	// The body scrolls; its bar keeps a lane at the right edge.
-	top := &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: max(settingsBodyWidth(h)-theme.MarginM, 1), Height: metrics.StandardControl, Children: []*ui.Node{segments, browse}}
-	children := []*ui.Node{top}
+	store := &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: max(settingsBodyWidth(h)-theme.MarginM, 1), Height: metrics.StandardControl, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: "Find and install plugins from the store", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+		browse,
+	}}
+	children := []*ui.Node{segments, store}
 	switch {
 	case r == nil:
 		children = append(children, &ui.Node{Kind: ui.KindText, Text: "Plugin store unavailable", TextRole: theme.RoleCaption})
@@ -367,7 +370,7 @@ type pluginManagerRow struct {
 func pluginManagerSegment(h *PanelHost, tab, label string) *ui.Node {
 	m := h.metrics()
 	n := &ui.Node{
-		Kind: ui.KindButton, Action: "plugins-tab:" + tab, Name: label, Role: "tab", Focusable: true,
+		Kind: ui.KindButton, Action: "plugins-tab:" + tab, Name: label, Role: "radio", Focusable: true,
 		Height: m.CompactControl, Padding: m.ButtonPadding, Children: []*ui.Node{{Kind: ui.KindText, Text: label}},
 	}
 	if h.pluginManagerTab == tab {
@@ -398,14 +401,14 @@ func pluginManagerIconButton(action, name, icon string, metrics theme.Metrics) *
 func pluginManagerInstalledTree(r *Registry, h *PanelHost, metrics theme.Metrics) []*ui.Node {
 	inner := settingsCardInner(h)
 	updates := pluginManagerUpdates(r.pluginStoreSnapshot.Listings)
-	header := &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: inner, Height: metrics.CompactControl, Children: []*ui.Node{
-		{Kind: ui.KindText, Text: fmt.Sprintf("Updates (%d)", len(updates)), TextRole: theme.RoleLabel},
-	}}
+	var lead []*ui.Node
 	if len(updates) > 0 {
-		header.Children = append(header.Children, pluginManagerButton("plugins-update-all", "Update all", metrics))
+		lead = append(lead, &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: inner, Height: metrics.CompactControl, Children: []*ui.Node{
+			settingsCardHeading(fmt.Sprintf("Updates (%d)", len(updates))),
+			pluginManagerButton("plugins-update-all", "Update all", metrics),
+		}})
 	}
 	var cards []*ui.Node
-	lead := []*ui.Node{header}
 	if h.pluginManagerError != "" {
 		lead = append(lead, &ui.Node{Kind: ui.KindText, Text: h.pluginManagerError, Tone: ui.ToneError, MaxWidth: inner, Multiline: true})
 	}
@@ -426,7 +429,9 @@ func pluginManagerInstalledTree(r *Registry, h *PanelHost, metrics theme.Metrics
 			}})
 		}
 	}
-	cards = append(cards, settingsGroupCard(h, "", lead))
+	if len(lead) > 0 {
+		cards = append(cards, settingsGroupCard(h, "", lead))
+	}
 	rows := pluginManagerRows(r)
 	var installed []*ui.Node
 	if len(rows) == 0 {

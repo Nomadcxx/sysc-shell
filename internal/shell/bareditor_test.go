@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -165,6 +166,26 @@ func TestEachLaneHasExactlyOneDropZone(t *testing.T) {
 	})
 	if zones != len(config.LaneNames()) {
 		t.Errorf("drop zones = %d, want one per lane (%d)", zones, len(config.LaneNames()))
+	}
+}
+
+func TestEachLaneDropZoneCarriesItsCardHeading(t *testing.T) {
+	t.Parallel()
+	h := barHost(t, config.Bar{Left: []config.Item{{ID: "clock"}}})
+	root := barLaneStrip(h)
+	for lane, label := range barLaneLabels {
+		zone := findNode(root, func(n *ui.Node) bool { return n.Kind == ui.KindDropZone && n.Action == "bar-lane:"+lane })
+		if zone == nil {
+			t.Errorf("%s lane has no drop zone", lane)
+			continue
+		}
+		if zone.Fill != ui.FillContainerHigh || zone.Shape != ui.ShapeCard {
+			t.Errorf("%s lane chrome = fill %v, shape %v", lane, zone.Fill, zone.Shape)
+		}
+		heading := findNode(zone, func(n *ui.Node) bool { return n.Role == "heading" && n.Name == label })
+		if heading == nil || heading.TextRole != theme.RoleSection || heading.Tone != ui.ToneAccent {
+			t.Errorf("%s lane has no accented card heading: %+v", lane, heading)
+		}
 	}
 }
 

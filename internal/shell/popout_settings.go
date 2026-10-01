@@ -243,11 +243,13 @@ func settingsRailItemHeight(h *PanelHost, search *ui.Node) int {
 		ph = panelTargetSize(PanelSettings).H
 	}
 	clusters := settings.SectionClusters()
-	_, captionH := settingsMeasure(h)("Look", ui.TextAttrs{Role: theme.RoleCaption})
-	searchH := search.Height
-	if searchH <= 0 {
-		searchH = m.InputHeight
-	}
+	measure := settingsMeasure(h)
+	_, captionH := measure("Look", ui.TextAttrs{Role: theme.RoleCaption})
+	// The field's laid-out height, as the row layout measures it: one padded
+	// line, or its declared height when that is taller. Assuming InputHeight
+	// ran the last tab past the pane once the field took the button inset.
+	_, lineH := measure(" ", ui.TextAttrsOf(search))
+	searchH := max(search.Height, lineH+2*search.Padding)
 	children := 1 + len(clusters) + len(settingsSections)
 	room := ph - 2*m.PanelPadding - searchH - len(clusters)*captionH - (children-1)*theme.MarginXXS
 	// Never shorter than the icon and its padding, which the tab has to hold.
@@ -337,11 +339,45 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	if h.set != nil {
 		entries = h.set.Section(section)
 	}
+	if section == "Tray" {
+		entries = settingsTrayTitles(r, entries)
+	}
 	content := settingsSectionColumn(h, section, entries)
 	if section == "Templates" {
 		content.Children = append(content.Children, templateRefusals(r)...)
 	}
 	return body(content)
+}
+
+// settingsTrayTitles names each Tray card after the item it holds (sysc-861).
+// A running item gives its own title; one that is not running falls back to
+// the token's value, marked with what kind of token it is, so id:blueman and
+// title:blueman stay two cards that can be told apart. Only the card title
+// changes: the paths and the stored tokens do not.
+func settingsTrayTitles(r *Registry, entries []settings.Entry) []settings.Entry {
+	live := map[string]string{}
+	if r != nil && r.tray != nil {
+		r.tray.mu.Lock()
+		for _, item := range r.tray.items {
+			if token, ok := stableTrayToken(item); ok && strings.TrimSpace(item.Title) != "" {
+				live[token] = strings.TrimSpace(item.Title)
+			}
+		}
+		r.tray.mu.Unlock()
+	}
+	out := make([]settings.Entry, len(entries))
+	for i, e := range entries {
+		switch kind, value, _ := strings.Cut(e.Group, ":"); {
+		case live[e.Group] != "":
+			e.Group = live[e.Group]
+		case kind == "id":
+			e.Group = value + " (app ID)"
+		case kind == "title":
+			e.Group = value + " (title)"
+		}
+		out[i] = e
+	}
+	return out
 }
 
 // settingsSectionHeading frames the section title with the launcher's SYSC
@@ -746,12 +782,12 @@ func settingsCardInner(h *PanelHost) int {
 func settingsPageColumn(h *PanelHost, entries []settings.Entry, lead ...*ui.Node) *ui.Node {
 	rowW := settingsCardInner(h)
 	var order []string
-	rows := map[string][]*ui.Node{}
+	groups := map[string][]settings.Entry{}
 	for _, e := range entries {
-		if _, seen := rows[e.Group]; !seen {
+		if _, seen := groups[e.Group]; !seen {
 			order = append(order, e.Group)
 		}
-		rows[e.Group] = append(rows[e.Group], settingsEntryRow(h, e, rowW))
+		groups[e.Group] = append(groups[e.Group], e)
 	}
 	children := append([]*ui.Node{}, lead...)
 	section := ""
@@ -759,13 +795,41 @@ func settingsPageColumn(h *PanelHost, entries []settings.Entry, lead ...*ui.Node
 		section = entries[0].Section
 	}
 	for _, g := range order {
-		children = append(children, settingsGroupCard(h, g, rows[g]))
+		children = append(children, settingsGroupCard(h, g, settingsGroupRows(h, groups[g], rowW)))
 	}
 	gap := theme.MarginL
 	if section == "Appearance" {
 		gap = theme.MarginXL
 	}
 	return settingsBody(h, gap, children...)
+}
+
+// settingsGroupRows builds a card's rows. When every row in the card shares
+// one description (Templates' twelve applications), it is said once, under
+// the card's title, rather than repeated on every row. The entries keep it,
+// so search still finds each one by it.
+func settingsGroupRows(h *PanelHost, entries []settings.Entry, rowW int) []*ui.Node {
+	shared := ""
+	if len(entries) > 1 {
+		shared = entries[0].Describe
+		for _, e := range entries[1:] {
+			if e.Describe != shared {
+				shared = ""
+				break
+			}
+		}
+	}
+	var rows []*ui.Node
+	if shared != "" {
+		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: shared, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle})
+	}
+	for _, e := range entries {
+		if shared != "" {
+			e.Describe = ""
+		}
+		rows = append(rows, settingsEntryRow(h, e, rowW))
+	}
+	return rows
 }
 
 // settingsEntryRow is one setting: its label over its description, and the
@@ -801,7 +865,7 @@ func settingsEntryRow(h *PanelHost, e settings.Entry, width int) *ui.Node {
 	}
 	room := controlW
 	if !e.IsDefault(h.draft) {
-		reset := settingsResetButton(e)
+		reset := settingsResetButton(h, e)
 		trailing.Children = append(trailing.Children, reset)
 		room = max(room-settingsResetWidth(h)-theme.MarginS, 0)
 	}
@@ -834,21 +898,38 @@ func settingsControlFills(e settings.Entry) bool {
 		return true
 	case settings.KindInt:
 		// A short range renders as a stepper, which is three small controls.
-		return !(e.Max-e.Min > 0 && e.Max-e.Min <= settingsStepperSpan)
+		return !settingsSteps(e)
 	}
 	return false
 }
 
-// settingsResetWidth is the room the reset control takes when a row shows one.
-// It is a text button, so it is sized from the density ladder's master control
-// dimension rather than from a literal: a fixed 64 was standard density's
-// answer imposed on all five rows.
-func settingsResetWidth(h *PanelHost) int { return h.metrics().BaseWidget * 2 }
+// settingsSteps reports whether an int row is a stepper. A short range is
+// worth a pixel at a time, unless the entry asks for a slider so it matches
+// the related values around it.
+func settingsSteps(e settings.Entry) bool {
+	return e.Present != settings.PresentSlider && e.Max-e.Min > 0 && e.Max-e.Min <= settingsStepperSpan
+}
 
-func settingsResetButton(e settings.Entry) *ui.Node {
+// settingsResetWidth is the room the reset control takes when a row shows one.
+// It is sized from the density ladder's master control dimension rather than
+// from a literal (a fixed 64 was standard density's answer imposed on all five
+// rows), and never narrower than its label inside the button inset, which the
+// outlined chrome now shows.
+func settingsResetWidth(h *PanelHost) int {
+	m := h.metrics()
+	labelW, _ := settingsMeasure(h)("Reset", ui.TextAttrs{})
+	return max(m.BaseWidget*2, labelW+2*m.ButtonPadding)
+}
+
+// settingsResetButton is outlined button chrome (sysc-864): as bare text
+// beside a segmented control it read as one more option.
+func settingsResetButton(h *PanelHost, e settings.Entry) *ui.Node {
+	m := h.metrics()
 	return &ui.Node{
 		Kind: ui.KindButton, Text: "Reset", Action: "reset:" + e.Path,
 		Name: "Reset " + e.Label, Role: "button", Focusable: true,
+		Width: settingsResetWidth(h), Height: m.CompactControl,
+		Fill: ui.FillOutline, Shape: ui.ShapeMedium,
 	}
 }
 
@@ -873,19 +954,19 @@ func settingsControl(h *PanelHost, e settings.Entry, width int) *ui.Node {
 		// A short range is worth a pixel at a time, and a slider cannot give
 		// that: a 0..32 track is a handful of pixels per step. A wide one —
 		// an opacity, a scale — is easier to sweep than to click.
-		if e.Max-e.Min > 0 && e.Max-e.Min <= settingsStepperSpan {
+		if settingsSteps(e) {
 			return settingsStepper(e, n)
 		}
 		// The value sits beside the track in a cell measured for the widest
-		// value the range holds (design D4; a fixed cell overflowed at 1.25
-		// in the audio panel, sysc-589).
-		valueW, _ := settingsMeasure(h)(strconv.Itoa(max(e.Max, -e.Min)), ui.TextAttrs{Tabular: true})
+		// value the range holds, unit included (design D4; a fixed cell
+		// overflowed at 1.25 in the audio panel, sysc-589).
+		valueW, _ := settingsMeasure(h)(strconv.Itoa(max(e.Max, -e.Min))+e.Unit, ui.TextAttrs{Tabular: true})
 		return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Width: width, Children: []*ui.Node{
 			{
 				Kind: ui.KindSlider, Value: float64(n), Min: float64(e.Min), Max: float64(e.Max), Step: 1,
 				Action: action, Width: max(width-valueW-theme.MarginS, 0), Focusable: true, Name: e.Label, Role: "slider",
 			},
-			{Kind: ui.KindText, Text: strconv.Itoa(n), Tabular: true, Width: valueW},
+			{Kind: ui.KindText, Text: strconv.Itoa(n) + e.Unit, Tabular: true, Width: valueW},
 		}}
 	case settings.KindFont:
 		options, values := settingsFontOptions(e)
@@ -916,6 +997,9 @@ func settingsControl(h *PanelHost, e settings.Entry, width int) *ui.Node {
 		}
 		if settingsSegments(e) {
 			return settingsSegmented(h, e, raw)
+		}
+		if e.Present == settings.PresentSwatch {
+			return settingsSwatchControl(h, e, raw, width)
 		}
 		return settingsMenuControl(h, e, e.Options, raw, width)
 	default:
@@ -955,7 +1039,7 @@ func settingsSegmented(h *PanelHost, e settings.Entry, raw string) *ui.Node {
 // settingsOptionLabel turns a config value into a label: "auto-pause" reads
 // "Auto pause".
 func settingsOptionLabel(opt string) string {
-	s := strings.ReplaceAll(opt, "-", " ")
+	s := strings.NewReplacer("-", " ", "_", " ").Replace(opt)
 	if s == "" {
 		return s
 	}
@@ -985,13 +1069,36 @@ func settingsStepper(e settings.Entry, value int) *ui.Node {
 	}
 	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Name: e.Label, Children: []*ui.Node{
 		step("remove", "down", "Decrease", value > e.Min),
-		{Kind: ui.KindText, Text: strconv.Itoa(value)},
+		{Kind: ui.KindText, Text: strconv.Itoa(value) + e.Unit},
 		step("add", "up", "Increase", value < e.Max),
 	}}
 }
 
 func settingsMenuControl(h *PanelHost, e settings.Entry, options []string, raw string, width int) *ui.Node {
 	return settingsPickerControl(h, e, options, nil, raw, width)
+}
+
+// settingsSwatchControl shows a theme role as what it looks like: a swatch of
+// the selected role beside a dropdown of readable names ("Surface variant",
+// not surface_variant). The dropdown still writes the role's stored name.
+func settingsSwatchControl(h *PanelHost, e settings.Entry, raw string, width int) *ui.Node {
+	size := h.metrics().CompactControl
+	labels := make([]string, len(e.Options))
+	for i, opt := range e.Options {
+		labels[i] = settingsOptionLabel(opt)
+	}
+	menu := settingsPickerControl(h, e, labels, e.Options, raw, max(width-size-theme.MarginS, 0))
+	row := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Width: width}
+	if role, ok := ui.PaintRoleFor(raw); ok {
+		row.Children = append(row.Children, &ui.Node{
+			Kind: ui.KindCapsule, Width: size, Height: size, Shape: ui.ShapeMedium,
+			Fill: ui.FillRole, FillRole: role, Role: "img", Name: settingsOptionLabel(raw) + " swatch",
+		})
+	} else {
+		row.Children = append(row.Children, &ui.Node{Kind: ui.KindColumn, Width: size})
+	}
+	row.Children = append(row.Children, menu)
+	return row
 }
 
 // settingsMenuLimit is the point past which a list stops being readable whole

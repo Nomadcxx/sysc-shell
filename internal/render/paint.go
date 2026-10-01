@@ -436,6 +436,10 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 
 	// Segmented rows own allocation, not chrome: each segment paints itself.
 	case ui.KindColumn, ui.KindDropZone, ui.KindSegmented, ui.KindStack:
+		// A drop zone that names a fill is a card whose contents are droppable.
+		if n.Kind == ui.KindDropZone && n.Fill != ui.FillNone {
+			return paintChrome(c, n, text, style, size, style.Capsule, capsuleInherit(style, n))
+		}
 		for i, child := range n.Children {
 			if child == nil {
 				return fmt.Errorf("nil child %d", i)
@@ -806,7 +810,11 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 	// A field is a control, so its boundary is the outline token. It used to
 	// stroke Rim, which is the floating panel's own edge: the well and the
 	// panel it sits on drew the same colour, and neither read as deliberate.
-	if boundary := style.outline(); boundary.A > 0 {
+	boundary := style.outlineVariant()
+	if n.Editing {
+		boundary = style.outline()
+	}
+	if boundary.A > 0 {
 		c.StrokeRounded(box, radius, max(style.Scale120.Physical(1), 1), boundary)
 	}
 	searchMark := n.Name == "Search" && !n.Multiline
@@ -885,7 +893,9 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 		}
 	}
 	caret := ui.Rect{X: origin.X + prefixW, Y: origin.Y, W: 1, H: origin.H}
-	fillRect(c, caret, style.accent())
+	if n.Editing {
+		fillRect(c, caret, style.accent())
+	}
 	return nil
 }
 
@@ -992,7 +1002,9 @@ func paintMultilineField(c *Canvas, n *ui.Node, text *TextRenderer, style Style,
 		}
 	}
 	caret := ui.Rect{X: phys.X + prefixW, Y: phys.Y + (caretLine-scrollY)*lineH, W: 1, H: lineH}
-	fillRect(c, caret, style.accent())
+	if n.Editing {
+		fillRect(c, caret, style.accent())
+	}
 	return nil
 }
 

@@ -226,8 +226,8 @@ func barGroupChip(h *PanelHost, ref config.ItemRef, it config.Item, selected str
 	return run
 }
 
-// barLane is one lane: a caption, then the drop zone holding the chips and the
-// add control.
+// barLane is one lane, a card whose heading names it and whose drop zone holds
+// the chips and the add control.
 func barLane(h *PanelHost, bar config.Bar, name string, width int) *ui.Node {
 	m := h.metrics()
 	inner := max(width-2*m.CardPadding, 0)
@@ -238,6 +238,8 @@ func barLane(h *PanelHost, bar config.Bar, name string, width int) *ui.Node {
 		Action: "bar-lane:" + name,
 		Name:   barLaneLabels[name] + " lane", Role: "group",
 	}
+
+	zone.Children = append(zone.Children, barLaneHeader(h, name, inner))
 
 	lane := barLaneItems(bar, name)
 	for i := range lane {
@@ -269,31 +271,34 @@ func barLane(h *PanelHost, bar config.Bar, name string, width int) *ui.Node {
 		}}},
 	})
 
-	// D7 in the interface. A lane is inherited whole or overridden whole,
-	// because applyBar takes it whole, so the heading says which this is and
-	// offers the only reset that exists -- the whole lane. A per-widget
-	// override affordance would be a lie.
+	return zone
+}
+
+// barLaneHeader is a lane card's heading row. D7 in the interface: a lane is
+// inherited whole or overridden whole, because applyBar takes it whole, so the
+// heading says which this is and offers the only reset that exists -- the
+// whole lane. A per-widget override affordance would be a lie.
+func barLaneHeader(h *PanelHost, name string, width int) *ui.Node {
+	m := h.metrics()
 	label := barLaneLabels[name]
 	header := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Width: width, PinEnd: true, Children: []*ui.Node{
-		{Kind: ui.KindText, Text: label, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle},
+		settingsCardHeading(label),
 	}}
-
-	if h.barOutput != "" {
-		state := "Inherited"
-		trailing := &ui.Node{Kind: ui.KindText, Text: state,
-			TextRole: theme.RoleCaption, Tone: ui.ToneSubtle}
-		if h.barLaneOverridden(name) {
-			trailing = &ui.Node{
-				Kind: ui.KindButton, Action: "bar-reset-lane:" + name,
-				Name: "Reset the " + label + " lane to shared", Role: "button", Focusable: true,
-				Height: m.StandardControl, Padding: m.ButtonPadding, Shape: ui.ShapeMedium,
-				Children: []*ui.Node{{Kind: ui.KindText, Text: "Overridden -- reset to shared"}},
-			}
-		}
-		header.Children = append(header.Children, trailing)
+	if h.barOutput == "" {
+		return header
 	}
-	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXS, Width: width,
-		Children: []*ui.Node{header, zone}}
+	trailing := &ui.Node{Kind: ui.KindText, Text: "Inherited",
+		TextRole: theme.RoleCaption, Tone: ui.ToneSubtle}
+	if h.barLaneOverridden(name) {
+		trailing = &ui.Node{
+			Kind: ui.KindButton, Action: "bar-reset-lane:" + name,
+			Name: "Reset the " + label + " lane to shared", Role: "button", Focusable: true,
+			Height: m.StandardControl, Padding: m.ButtonPadding, Shape: ui.ShapeMedium,
+			Children: []*ui.Node{{Kind: ui.KindText, Text: "Overridden -- reset to shared"}},
+		}
+	}
+	header.Children = append(header.Children, trailing)
+	return header
 }
 
 // barLaneItems reads one lane out of a bar by name.

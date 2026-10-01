@@ -15,6 +15,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	tray "github.com/Nomadcxx/sysc-tray/protocol"
 )
 
 func TestSettingsSidebarSectionsAndFocus(t *testing.T) {
@@ -298,8 +299,10 @@ func TestSettingsRowsCarryDescriptionsAndGroupHeadings(t *testing.T) {
 
 func TestAppearancePagePolish(t *testing.T) {
 	t.Parallel()
-	h := newSettingsHost()
-	h.section = "Appearance"
+	h := &PanelHost{
+		id: PanelSettings, set: settings.Default(), draft: config.Default(),
+		menus: map[string]*Menu{}, fields: map[string]*ui.Field{},
+	}
 	h.place.Panel = ui.Rect{W: 1105, H: 760}
 	h.set = settings.DefaultFor(h.draft)
 	h.root = settingsTree(nil, h)
@@ -307,7 +310,7 @@ func TestAppearancePagePolish(t *testing.T) {
 	for _, want := range []string{
 		"theme and interface",
 		"Choose a palette, then adjust type, surfaces, transparency, and motion.",
-		"colors & mode",
+		"colours & mode",
 		"style & layout",
 		"typography & fonts",
 		"corners & shape",
@@ -332,11 +335,11 @@ func TestAppearancePagePolish(t *testing.T) {
 		if n.Action == "set:appearance.palette" && n.Kind == ui.KindMenu {
 			palette = n
 		}
-		if n.Name == "Color mode" && n.Kind == ui.KindSegmented {
+		if n.Name == "Colour mode" && n.Kind == ui.KindSegmented {
 			mode = n
 		}
 		if group := map[string]bool{
-			"colors & mode": true, "style & layout": true, "typography & fonts": true,
+			"colours & mode": true, "style & layout": true, "typography & fonts": true,
 			"corners & shape": true, "animation": true, "transparency": true,
 			"blur & elevation": true,
 		}[n.Text]; group {
@@ -678,6 +681,201 @@ func TestOnlyAChangedRowOffersItsReset(t *testing.T) {
 	}
 }
 
+func TestAppearanceResetUsesOutlinedButtonBesideSegments(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.section = "Appearance"
+	e := h.set.ByPath("appearance.source")
+	if e == nil {
+		t.Fatal("appearance.source is not registered")
+	}
+	current := e.Get(h.draft)
+	changed := false
+	for _, option := range e.Options {
+		if option != current {
+			if err := e.Set(&h.draft, option); err != nil {
+				t.Fatal(err)
+			}
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		t.Fatal("appearance.source has no alternate option")
+	}
+	row := settingsEntryRow(h, *e, 600)
+	reset := byAction(row, "reset:appearance.source")
+	segments := findNode(row, func(n *ui.Node) bool {
+		return n.Kind == ui.KindSegmented && n.Key == "seg:appearance.source"
+	})
+	if reset == nil || segments == nil {
+		t.Fatalf("theme source controls: reset=%+v segments=%+v", reset, segments)
+	}
+	if reset.Fill != ui.FillOutline {
+		t.Errorf("Reset fill = %v, want outlined chrome beside the option group", reset.Fill)
+	}
+}
+
+func TestTemplatesShareTheirDescriptionAndRemainSearchable(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.section = "Templates"
+	h.root = settingsTree(nil, h)
+
+	const description = "Write this application's colours when the theme changes."
+	count := 0
+	for _, n := range walk(h.root) {
+		if n.Text == description {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("template description appears %d times, want once in the group card", count)
+	}
+	if got := len(h.set.Search("colours when the theme changes")); got < 2 {
+		t.Fatalf("description search returned %d template entries, want several", got)
+	}
+}
+
+func TestTraySettingsUseLiveNamesAndDisambiguateFallbacks(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Tray.Hidden = []string{"id:org.blueman", "id:blueman", "title:blueman"}
+	h := newSettingsHost()
+	h.set = settings.DefaultFor(cfg)
+	h.draft = cfg
+	h.section = "Tray"
+	r := &Registry{tray: newTrayState()}
+	key := tray.ItemKey{}
+	r.tray.items[key] = tray.Item{ID: "org.blueman", Title: "Bluetooth"}
+	r.tray.order = []tray.ItemKey{key}
+	h.root = settingsTree(r, h)
+
+	got := map[string]bool{}
+	for _, n := range walk(h.root) {
+		if n.Role == "heading" && n.TextRole == theme.RoleSection {
+			got[n.Name] = true
+		}
+	}
+	for _, want := range []string{"Bluetooth", "blueman (app ID)", "blueman (title)"} {
+		if !got[want] {
+			t.Errorf("tray card title %q missing from %v", want, got)
+		}
+	}
+}
+
+func TestMonitorColorControlsUseReadableRolesAndThemeSwatches(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	for _, e := range h.set.Section("Monitor") {
+		if e.Group != "Colours" {
+			continue
+		}
+		control := settingsControl(h, e, settingsDropdownFixedWidth)
+		menu := findNode(control, func(n *ui.Node) bool { return n.Kind == ui.KindMenu })
+		if menu == nil || menu.Text != settingsOptionLabel(e.Get(h.draft)) {
+			t.Errorf("%s selected label = %q, want %q", e.Path, textOf(menu), settingsOptionLabel(e.Get(h.draft)))
+		}
+		role, ok := ui.PaintRoleFor(e.Get(h.draft))
+		if !ok {
+			t.Fatalf("%s has unknown paint role %q", e.Path, e.Get(h.draft))
+		}
+		swatch := findNode(control, func(n *ui.Node) bool { return n.Kind == ui.KindCapsule && n.Fill == ui.FillRole })
+		if swatch == nil || swatch.FillRole != role || swatch.Role != "img" || swatch.Name == "" {
+			t.Errorf("%s swatch = %+v, want labelled fill role %v", e.Path, swatch, role)
+		}
+	}
+}
+
+func TestOpacityAndBarGeometryControlsShowUnitsAndUseSliders(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	units := map[string]string{
+		"appearance.bar-opacity":     "%",
+		"appearance.panel-opacity":   "%",
+		"appearance.overlay-opacity": "%",
+		"bar.height":                 "px",
+		"bar.gap":                    "px",
+		"bar.padding":                "px",
+		"bar.spacing":                "px",
+	}
+	for path, unit := range units {
+		e := h.set.ByPath(path)
+		if e == nil {
+			t.Fatalf("setting %s is not registered", path)
+		}
+		control := settingsControl(h, *e, 360)
+		if findNode(control, func(n *ui.Node) bool { return n.Kind == ui.KindSlider }) == nil {
+			t.Errorf("%s uses no slider", path)
+		}
+		value := findNode(control, func(n *ui.Node) bool { return n.Kind == ui.KindText && strings.HasSuffix(n.Text, unit) })
+		if value == nil {
+			t.Errorf("%s has no displayed %q unit", path, unit)
+		}
+	}
+}
+
+func TestWeatherRefreshDurationUsesConciseUnitForm(t *testing.T) {
+	t.Parallel()
+	e := settings.Default().ByPath("weather.interval")
+	if e == nil {
+		t.Fatal("weather.interval is not registered")
+	}
+	if got := e.Get(config.Default()); got != "15m" {
+		t.Fatalf("weather interval = %q, want the input-style form 15m", got)
+	}
+}
+
+func TestPluginSettingsUseFullWidthRadioTabsAndHideEmptyUpdates(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	root := pluginsTree(&Registry{}, h)
+	tabs := findNode(root, func(n *ui.Node) bool { return n.Kind == ui.KindSegmented && n.Name == "Plugins view" })
+	if tabs == nil || tabs.Width != settingsBodyWidth(h) {
+		t.Fatalf("plugin tabs width = %d, want %d", widthOf(tabs), settingsBodyWidth(h))
+	}
+	for _, child := range tabs.Children {
+		if child.Role != "radio" {
+			t.Errorf("plugin tab %q has role %q, want radio", child.Name, child.Role)
+		}
+	}
+	if n := findNode(root, func(n *ui.Node) bool { return n.Kind == ui.KindText && n.Text == "Updates (0)" }); n != nil {
+		t.Fatal("empty Updates card is visible")
+	}
+}
+
+func TestAppearanceColorLabelsUseBritishSpelling(t *testing.T) {
+	t.Parallel()
+	set := settings.Default()
+	for path, want := range map[string]string{
+		"appearance.palette": "Colour palette",
+		"appearance.scheme":  "Colour scheme",
+	} {
+		e := set.ByPath(path)
+		if e == nil || e.Label != want {
+			got := ""
+			if e != nil {
+				got = e.Label
+			}
+			t.Errorf("%s label = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func textOf(n *ui.Node) string {
+	if n == nil {
+		return ""
+	}
+	return n.Text
+}
+
+func widthOf(n *ui.Node) int {
+	if n == nil {
+		return 0
+	}
+	return n.Width
+}
+
 // TestResetReturnsTheRowToItsDefault drives the control rather than the
 // registry, so the action wiring is covered and not just the resolution.
 func TestResetReturnsTheRowToItsDefault(t *testing.T) {
@@ -899,15 +1097,17 @@ func TestStepperMovesTheDraftByOneStep(t *testing.T) {
 	h.section = "Bar"
 	reg.rebuildPanel(h)
 
-	up := byAction(h.root, "step:up:bar.spacing")
+	// Bar font size is still a stepper; spacing became a slider when the owner
+	// asked for bar geometry to read alike (2026-10-01).
+	up := byAction(h.root, "step:up:bar.font-size")
 	if up == nil {
-		t.Fatal("bar.spacing rendered no stepper")
+		t.Fatal("bar.font-size rendered no stepper")
 	}
-	before := h.draft.Bar.Spacing
+	before := h.draft.Bar.FontSize
 	h.setFocus(up)
 	h.activate(reg)
-	if got := h.draft.Bar.Spacing; got != before+1 {
-		t.Fatalf("spacing = %d after one step, want %d", got, before+1)
+	if got := h.draft.Bar.FontSize; got != before+1 {
+		t.Fatalf("font size = %d after one step, want %d", got, before+1)
 	}
 }
 
@@ -1573,7 +1773,7 @@ func TestRailIsLabelledAndClustered(t *testing.T) {
 	if !slices.Equal(tabs, settings.SectionNames()) {
 		t.Errorf("tabs %v, want %v", tabs, settings.SectionNames())
 	}
-	if !slices.Equal(captions, []string{"Look", "Bar", "Panels", "System"}) {
+	if !slices.Equal(captions, []string{"Look", "Shell", "Surfaces", "Extensions", "System"}) {
 		t.Errorf("captions %v", captions)
 	}
 }

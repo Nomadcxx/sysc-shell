@@ -2406,13 +2406,13 @@ func TestPaintMenuDrawsANestedFieldAsAField(t *testing.T) {
 		t.Fatalf("paintNode: %v", err)
 	}
 
-	// paintTextField strokes the control's outline around the well. Nothing
-	// on the plain-text path draws that token anywhere.
-	want := testStyle.Outline
+	// paintTextField strokes a boundary around the well: the quiet outline
+	// while idle, the strong one while edited. Nothing on the plain-text path
+	// draws either token anywhere.
 	found := false
 	for x := range 120 {
 		for y := 20; y < 40; y++ {
-			if pixelAt(t, c, x, y) == want {
+			if px := pixelAt(t, c, x, y); px == testStyle.Outline || px == testStyle.OutlineVariant {
 				found = true
 			}
 		}
@@ -2806,5 +2806,17 @@ func TestTranslucentAttachedPanelHasNoDenserBand(t *testing.T) {
 	}
 	if got := pixelAt(t, c, 0, 59); got.A != 0 {
 		t.Errorf("far corner = %v, want rounded away", got)
+	}
+}
+
+// A lane card is a drop zone with a fill; without chrome it would be an
+// invisible region and the heading inside it would float on the page.
+func TestDropZoneWithAFillPaintsItsCard(t *testing.T) {
+	t.Parallel()
+	zone := func(fill ui.Fill) []byte {
+		return paintStackToStyle(t, testStyle, &ui.Node{Kind: ui.KindDropZone, Fill: fill, Bounds: ui.Rect{W: 20, H: 20}})
+	}
+	if bytes.Equal(zone(ui.FillContainerHigh), zone(ui.FillNone)) {
+		t.Fatal("a filled drop zone painted nothing")
 	}
 }
