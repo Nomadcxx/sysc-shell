@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
@@ -17,8 +18,8 @@ import (
 )
 
 const (
-	pluginSurfaceMinWidth  = 240
-	pluginSurfaceMinHeight = 400
+	pluginSurfaceMinWidth  = 200
+	pluginSurfaceMinHeight = 180
 	pluginSurfaceMaxExtent = 2048
 	pluginSurfaceIDPrefix  = "plugin-floating:"
 	pluginSurfaceStateNS   = "floating."
@@ -39,6 +40,9 @@ type pluginSurfaceHost struct {
 	connector string
 	global    uint32
 	surfaceID string
+	// content is the last plugin root, kept so a resize can re-wrap it and
+	// the body can take the new height. Guarded by the registry lock.
+	content *ui.Node
 
 	mu                         sync.Mutex
 	x, y, width, height        int
@@ -276,32 +280,51 @@ func (h *pluginHost) refreshFloatingSurface(viewID string) {
 	root, label, failed := view.Root, view.Label, view.Failed
 	h.mu.Unlock()
 	if failed || root == nil {
-		metrics := surface.panel.theme.Metrics
-		root = &ui.Node{Kind: ui.KindColumn, Padding: metrics.PanelPadding, Gap: metrics.CardGap, Children: []*ui.Node{
-			{Kind: ui.KindText, Text: "This sticky note could not be rendered", Tone: ui.ToneError},
-			{Kind: ui.KindText, Text: label, Tone: ui.ToneSubtle},
-		}}
+		root = surface.failureTree(label)
 	}
-	p := surface.panel
 	h.r.mu.Lock()
-	focusKey := ""
-	if n := p.focused(); n != nil {
-		focusKey = n.StableKey()
-	}
-	p.root = surface.wrapTree(root)
-	p.focus = ui.Focusables(p.root)
-	p.roving = ui.Roving{Count: len(p.focus)}
-	for i, n := range p.focus {
-		if focusKey != "" && n.StableKey() == focusKey {
-			p.roving.Set(i)
-			break
-		}
-	}
-	if p.logicalW > 0 && p.logicalH > 0 {
-		_ = p.configure(p.logicalW, p.logicalH, p.scale120)
-	}
+	surface.install(root)
 	h.r.mu.Unlock()
 	h.r.publishSurface(surface.global, surface.surfaceID)
+}
+
+// install wraps content in the sticky chrome and lays it out, keeping the
+// focused control by its stable key. A tree the layout refuses is replaced by
+// the failure card rather than painted unarranged. The caller holds the
+// registry lock.
+func (p *pluginSurfaceHost) install(content *ui.Node) {
+	panel := p.panel
+	focusKey := ""
+	if n := panel.focused(); n != nil {
+		focusKey = n.StableKey()
+	}
+	place := func(content *ui.Node) error {
+		panel.root = p.wrapTree(content)
+		panel.focus = ui.Focusables(panel.root)
+		panel.roving = ui.Roving{Count: len(panel.focus)}
+		for i, n := range panel.focus {
+			if focusKey != "" && n.StableKey() == focusKey {
+				panel.roving.Set(i)
+				break
+			}
+		}
+		if panel.logicalW > 0 && panel.logicalH > 0 {
+			return panel.configure(panel.logicalW, panel.logicalH, panel.scale120)
+		}
+		return nil
+	}
+	if err := place(content); err != nil {
+		slog.Warn("sticky note layout refused", "plugin", p.plugin, "view", p.viewID, "err", err)
+		_ = place(p.failureTree(err.Error()))
+	}
+}
+
+func (p *pluginSurfaceHost) failureTree(detail string) *ui.Node {
+	metrics := p.panel.theme.Metrics
+	return &ui.Node{Kind: ui.KindColumn, Padding: metrics.PanelPadding, Gap: metrics.CardGap, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: "This sticky note could not be rendered", Tone: ui.ToneError},
+		{Kind: ui.KindText, Text: detail, Tone: ui.ToneSubtle},
+	}}
 }
 
 func (p *pluginSurfaceHost) loadingTree() *ui.Node {
@@ -309,30 +332,67 @@ func (p *pluginSurfaceHost) loadingTree() *ui.Node {
 }
 
 func (p *pluginSurfaceHost) wrapTree(content *ui.Node) *ui.Node {
+	return p.wrapTreeMeasured(content, p.panel.measureText())
+}
+
+// wrapTreeMeasured frames plugin content in the shell's sticky chrome. The
+// chrome rows are sized from the theme's control metrics so they fit at every
+// surface size, the content's fill becomes the surface paper rather than a
+// child fill (a column paints no chrome of its own), and the first multiline
+// field absorbs whatever height the chrome and the rest of the content leave,
+// so resizing a sticky resizes its writing area.
+func (p *pluginSurfaceHost) wrapTreeMeasured(content *ui.Node, measure ui.MeasureText) *ui.Node {
+	p.content = content
 	content = copyNode(content)
-	fill := content.Fill
-	content.Fill = ui.FillNone
+	p.panel.paper, content.Fill = content.Fill, ui.FillNone
 	state := p.snapshot()
-	pinText, pinFill, pinName := "Pin", ui.FillNone, "Keep sticky note above other windows"
+	m := p.panel.theme.Metrics
+	pinFill, pinName := ui.FillNone, "Keep sticky note above other windows"
 	if state.Pinned {
-		pinText, pinFill, pinName = "Pinned", ui.FillAccent, "Unpin sticky note"
+		pinFill, pinName = ui.FillAccent, "Unpin sticky note"
 	}
-	metrics := p.panel.theme.Metrics
-	buttonPadding := metrics.ButtonPadding / 2
-	headerHeight := metrics.StandardControl
-	chromeWidth := metrics.StandardControl*3 + metrics.BarSpacing*2 + buttonPadding*2
-	return &ui.Node{Kind: ui.KindColumn, Fill: fill, Children: []*ui.Node{
-		{Kind: ui.KindRow, Height: headerHeight, Padding: buttonPadding, Gap: metrics.BarSpacing, Children: []*ui.Node{
-			{Kind: ui.KindText, Text: p.title, MaxWidth: max(state.Width-chromeWidth-metrics.BarSpacing, metrics.StandardControl*2), TextRole: theme.RoleLabel},
-			{Kind: ui.KindButton, Text: pinText, Action: pluginActionPrefix + p.viewID + ":surface-pin", Width: metrics.StandardControl * 2, Height: metrics.CompactControl, Padding: buttonPadding, Fill: pinFill, Name: pinName, Role: "button", Focusable: true},
-			{Kind: ui.KindButton, Text: "×", Action: pluginActionPrefix + p.viewID + ":surface-close", Width: metrics.StandardControl, Height: metrics.CompactControl, Padding: buttonPadding, Name: "Close sticky note", Role: "button", Focusable: true},
-		}},
-		content,
-		{Kind: ui.KindRow, Height: metrics.StandardControl / 2, PinEnd: true, Children: []*ui.Node{
-			{Kind: ui.KindText, Text: ""},
-			{Kind: ui.KindIcon, Icon: "drag_indicator", IconSize: metrics.StandardControl / 2},
-		}},
+	header := m.StandardControl
+	inset := (header - m.CompactControl) / 2
+	grip := m.CompactControl / 2
+	titleW := max(state.Width-2*inset-2*m.CompactControl-2*m.BarSpacing, m.StandardControl)
+	chrome := &ui.Node{Kind: ui.KindRow, Height: header, Padding: inset, Gap: m.BarSpacing, Children: []*ui.Node{
+		{Kind: ui.KindText, Text: p.title, MaxWidth: titleW, TextRole: theme.RoleLabel},
+		{Kind: ui.KindButton, Action: pluginActionPrefix + p.viewID + ":surface-pin", Width: m.CompactControl, Height: m.CompactControl, Fill: pinFill, Name: pinName, Role: "button", Focusable: true,
+			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "push_pin"}}},
+		{Kind: ui.KindButton, Action: pluginActionPrefix + p.viewID + ":surface-close", Width: m.CompactControl, Height: m.CompactControl, Name: "Close sticky note", Role: "button", Focusable: true,
+			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "close"}}},
 	}}
+	gripRow := &ui.Node{Kind: ui.KindRow, Height: grip, PinEnd: true, Children: []*ui.Node{
+		{Kind: ui.KindColumn},
+		{Kind: ui.KindIcon, Icon: "drag_indicator", IconSize: grip},
+	}}
+	if body := firstMultiline(content); body != nil {
+		if natural, err := ui.ContentHeight(content, state.Width, measure); err == nil {
+			slack := state.Height - header - grip - natural
+			body.Height = max(body.Height+slack, 2*minLineHeight(measure))
+		}
+	}
+	return &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{chrome, content, gripRow}}
+}
+
+func firstMultiline(n *ui.Node) *ui.Node {
+	if n == nil {
+		return nil
+	}
+	if n.Kind == ui.KindTextField && n.Multiline {
+		return n
+	}
+	for _, c := range n.Children {
+		if f := firstMultiline(c); f != nil {
+			return f
+		}
+	}
+	return nil
+}
+
+func minLineHeight(measure ui.MeasureText) int {
+	_, h := measure(" ", ui.TextAttrs{})
+	return max(h, 1)
 }
 
 func (p *pluginSurfaceHost) snapshot() pluginSurfaceState {
@@ -400,6 +460,12 @@ func (p *pluginSurfaceHost) outputSize(width, height int) {
 
 func (p *pluginSurfaceHost) handle(e wayland.Event) bool {
 	if e.Kind == wayland.EventKeyPress && e.Key == keyEsc {
+		p.host.r.mu.Lock()
+		left := p.panel.leaveTextField()
+		p.host.r.mu.Unlock()
+		if left {
+			return true
+		}
 		return p.host.r.deliverPluginText(pluginActionPrefix+p.viewID+":surface-close", "", v1.EventActivate)
 	}
 	if e.Kind == wayland.EventPointerPress && (e.Button == 0 || e.Button == btnLeft) {
@@ -473,7 +539,13 @@ func (p *pluginSurfaceHost) setGeometry(next pluginSurfaceState, resized bool) {
 		p.host.r.mu.Lock()
 		p.panel.place.Panel.W, p.panel.place.Panel.H = next.Width, next.Height
 		if p.panel.logicalW > 0 {
-			_ = p.panel.configure(next.Width, next.Height, p.panel.scale120)
+			p.panel.logicalW, p.panel.logicalH = next.Width, next.Height
+			if p.content != nil {
+				// Re-wrap so the body takes the new height.
+				p.install(p.content)
+			} else {
+				_ = p.panel.configure(next.Width, next.Height, p.panel.scale120)
+			}
 		}
 		p.host.r.mu.Unlock()
 	}
