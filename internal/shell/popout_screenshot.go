@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"time"
+
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -51,4 +53,33 @@ func shortenPath(p string, max int) string {
 	head := (max - 1) / 2
 	tail := max - 1 - head
 	return string(r[:head]) + "…" + string(r[len(r)-tail:])
+}
+
+// screenshotPanelCloseDelay gives the compositor time to unmap the panel
+// before a capture reads the screen. The live gate measures whether it is
+// enough.
+const screenshotPanelCloseDelay = 150 * time.Millisecond
+
+// launchScreenshot runs under Registry.mu. An open selector is refused in the
+// panel, which stays up so choosing again is the retry. Otherwise the panel
+// closes first and the capture starts off the lock, because Screenshot takes
+// it; a later failure arrives as the existing failure toast.
+func (r *Registry) launchScreenshot(h *PanelHost, mode string) {
+	if r.selector != nil {
+		h.errLabel = errSelectorOpen.Error() + ": finish or cancel it"
+		r.rebuildPanel(h)
+		r.publishSurface(h.output, panelSurfaceID(h.id))
+		return
+	}
+	start := r.startScreenshot
+	if start == nil {
+		start = r.Screenshot
+	}
+	r.closePanelLocked(h.id)
+	go func() {
+		time.Sleep(screenshotPanelCloseDelay)
+		if err := start(mode); err != nil {
+			r.screenshotToast("", err)
+		}
+	}()
 }

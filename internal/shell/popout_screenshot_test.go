@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -121,5 +122,80 @@ func TestScreenshotCaptionShortensButNamesTheWholePath(t *testing.T) {
 	}
 	if len([]rune(found.Text)) > screenshotPathRunes {
 		t.Fatalf("caption %q is longer than %d runes", found.Text, screenshotPathRunes)
+	}
+}
+
+func TestScreenshotRowsClosePanelThenStartTheirMode(t *testing.T) {
+	for _, tc := range []struct{ row, mode string }{
+		{"Region", "region"}, {"Window", "window"}, {"Screen", "screen"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			reg, h := newScreenshotHost(t, t.TempDir())
+			started := make(chan string, 1)
+			reg.mu.Lock()
+			reg.startScreenshot = func(mode string) error { started <- mode; return nil }
+			reg.mu.Unlock()
+			activateNamed(h, reg, tc.row)
+			reg.mu.Lock()
+			open := reg.panelOpenLocked(PanelScreenshot)
+			reg.mu.Unlock()
+			if open {
+				t.Fatal("the panel must close before the capture starts, or it is in the shot")
+			}
+			select {
+			case got := <-started:
+				if got != tc.mode {
+					t.Fatalf("started %q, want %q", got, tc.mode)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("capture never started")
+			}
+		})
+	}
+}
+
+func TestScreenshotRowWhileASelectorIsOpenKeepsThePanelAndShowsWhy(t *testing.T) {
+	reg, h := newScreenshotHost(t, t.TempDir())
+	started := make(chan string, 1)
+	reg.mu.Lock()
+	reg.startScreenshot = func(mode string) error { started <- mode; return nil }
+	reg.selector = &regionSelector{}
+	reg.mu.Unlock()
+	activateNamed(h, reg, "Region")
+	reg.mu.Lock()
+	open := reg.panelOpenLocked(PanelScreenshot)
+	label := h.errLabel
+	reg.mu.Unlock()
+	if !open {
+		t.Fatal("the panel must stay open so choosing again is the retry")
+	}
+	if !strings.Contains(label, "region selector is already open") {
+		t.Fatalf("errLabel = %q, want the selector-open cause", label)
+	}
+	select {
+	case got := <-started:
+		t.Fatalf("started %q while a selector was open", got)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+func TestScreenshotBarClickOpensThePanel(t *testing.T) {
+	reg := newPanelRegistry(t)
+	bar := &Bar{right: []textWidget{{node: &ui.Node{
+		Action: panelScreenshotAction, Bounds: ui.Rect{X: 1200, Y: 0, W: 40, H: 44},
+	}}}}
+	bar.setOutputSize(1536, 864)
+	reg.mu.Lock()
+	reg.bars[7] = bar
+	reg.mu.Unlock()
+	reg.bindBarPanelActionsLocked(7, bar)
+	target := bar.actionBounds(panelScreenshotAction)
+	drainAuxQueue(reg)
+	if !clickButton(bar, target.X+target.W/2, target.Y+target.H/2, buttonLeft) {
+		t.Fatal("left-click on the screenshot item did not activate")
+	}
+	_ = drainAux(t, reg, 2)
+	if reg.panelHosts[PanelScreenshot] == nil {
+		t.Fatal("the screenshot panel did not open")
 	}
 }

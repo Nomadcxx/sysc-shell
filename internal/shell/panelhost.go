@@ -2868,6 +2868,8 @@ func (h *PanelHost) activate(r *Registry) bool {
 		}
 	case "session-lock", "session-logout", "session-suspend", "session-display-off", "session-reboot", "session-poweroff":
 		r.runSessionAction(h, n.Action)
+	case "screenshot-region", "screenshot-window", "screenshot-screen":
+		r.launchScreenshot(h, strings.TrimPrefix(n.Action, "screenshot-"))
 	}
 	return true
 }
