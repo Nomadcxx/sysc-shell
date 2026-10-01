@@ -1285,3 +1285,40 @@ func TestLauncherOverviewListsProvidersWithGlyphs(t *testing.T) {
 		return strings.Join(got, ",") == "Applications|glyph:apps,Calculator|glyph:calculate,Emoji|glyph:mood,Notes|glyph:description"
 	})
 }
+
+// gh #77: between a keystroke and the service's answer the list still shows the
+// previous query's rows, so Enter on it must not run one of them.
+func TestLauncherEnterWaitsForResultsOfTheCurrentQuery(t *testing.T) {
+	t.Parallel()
+
+	reg, run, _ := openLauncherPanel(t, launcherTestEntries())
+
+	// Holding r.mu keeps the relay from applying the new snapshot, which is
+	// exactly the window the field and the list disagree in.
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelLauncher]
+	if !h.fieldChanged(reg, &ui.Node{Name: "Search"}, ui.NewField("nautilus")) {
+		reg.mu.Unlock()
+		t.Fatal("search change not handled")
+	}
+	h.launcherActivateSelected(reg)
+	reg.mu.Unlock()
+
+	time.Sleep(150 * time.Millisecond) // a wrong spawn is asynchronous
+	run.mu.Lock()
+	spawned := run.argv
+	run.mu.Unlock()
+	if spawned != nil {
+		t.Fatalf("Enter ran %v from the previous query's rows", spawned)
+	}
+
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && !h.launcherAwaiting && len(h.launcherResults) == 1
+	})
+	reg.mu.Lock()
+	reg.panelHosts[PanelLauncher].launcherActivateSelected(reg)
+	reg.mu.Unlock()
+	if got := run.waitArgv(t); len(got) == 0 || got[len(got)-1] != "nautilus" {
+		t.Fatalf("Enter after the results landed ran %v, want nautilus", got)
+	}
+}
