@@ -51,6 +51,16 @@ func (d *dwell) enter(global uint32, anchor ui.Rect, text string) {
 	d.queue(tooltipRequest{Global: global, Anchor: anchor, Text: text})
 }
 
+// enterOnOutput is enter for an anchor already in output coordinates: a
+// panel node, which sits wherever its panel was placed rather than in the bar.
+func (d *dwell) enterOnOutput(global uint32, anchor ui.Rect, text string) {
+	if text == "" {
+		d.leave()
+		return
+	}
+	d.queue(tooltipRequest{Global: global, Anchor: anchor, Text: text, OnOutput: true})
+}
+
 func (d *dwell) enterRoot(global uint32, anchor ui.Rect, root *ui.Node) {
 	if root == nil {
 		d.leave()
@@ -60,6 +70,9 @@ func (d *dwell) enterRoot(global uint32, anchor ui.Rect, root *ui.Node) {
 }
 
 func (d *dwell) queue(req tooltipRequest) {
+	if d == nil {
+		return
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.closed {
@@ -91,8 +104,12 @@ func (d *dwell) fire(generation uint64, req tooltipRequest) {
 	d.send(req)
 }
 
-// leave cancels a pending dwell, and hides a tooltip that is already up.
+// leave cancels a pending dwell, and hides a tooltip that is already up. A nil
+// dwell, a registry built without one, has nothing to cancel.
 func (d *dwell) leave() {
+	if d == nil {
+		return
+	}
 	d.mu.Lock()
 	d.generation++
 	if d.timer != nil {

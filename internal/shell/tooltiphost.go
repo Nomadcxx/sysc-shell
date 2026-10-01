@@ -9,16 +9,18 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
-// tooltipRequest asks for a tooltip anchored to a bar widget, or for the
-// current one to go when Text and Root are both empty. Anchor is in the bar
-// surface's logical coordinates.
+// tooltipRequest asks for a tooltip anchored to a bar widget or a panel
+// node, or for the current one to go when Text and Root are both empty.
+// Anchor is in the bar surface's logical coordinates unless OnOutput says it
+// is already on the output, as a panel node's is.
 type tooltipRequest struct {
 	Global uint32
 	Anchor ui.Rect
 	Text   string
 	// Root is a structured read-only tree; when set it is shown instead of
 	// Text.
-	Root *ui.Node
+	Root     *ui.Node
+	OnOutput bool
 }
 
 func (q tooltipRequest) empty() bool { return q.Text == "" && q.Root == nil }
@@ -116,7 +118,7 @@ func (h *tooltipHost) showLocked(req tooltipRequest) []wayland.AuxRequest {
 		outW, outH = 1920, 1080
 	}
 	anchor := req.Anchor
-	if policy.Edge == "bottom" {
+	if policy.Edge == "bottom" && !req.OnOutput {
 		_, barH := bar.configuredSize()
 		if barH <= 0 {
 			barH = policy.Extent()
