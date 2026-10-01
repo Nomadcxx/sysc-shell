@@ -189,7 +189,7 @@ func settingsRail(h *PanelHost, section string) *ui.Node {
 	settingsFieldInset(h, search)
 	search.Placeholder = "Search settings…"
 	rail := &ui.Node{Kind: ui.KindColumn, Width: settingsRailWidth, Gap: theme.MarginXXS, Children: []*ui.Node{search}}
-	item := settingsRailItemHeight(h, search)
+	item, itemPad := settingsRailItemHeight(h, search)
 	for _, c := range settings.SectionClusters() {
 		rail.Children = append(rail.Children, &ui.Node{
 			Kind: ui.KindText, Text: c.Name, TextRole: theme.RoleCaption,
@@ -202,7 +202,7 @@ func settingsRail(h *PanelHost, section string) *ui.Node {
 				// A rail tab is a list row, not a push button: the button
 				// padding (18 at spacious) would make twelve of them overrun
 				// a short pane.
-				Tooltip: name, Shape: ui.ShapeMedium, Padding: theme.MarginS,
+				Tooltip: name, Shape: ui.ShapeMedium, Padding: itemPad,
 				// One row child: layoutButtonContent lays a single row out in
 				// full, where several children would get no box (barChip).
 				Children: []*ui.Node{{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{
@@ -220,10 +220,6 @@ func settingsRail(h *PanelHost, section string) *ui.Node {
 	return rail
 }
 
-// settingsRailItemHeight is a section tab's height: the density's standard
-// control, or less when twelve of them, the four captions and search would
-// not fit the pane. At spacious density on a 1280x720 output they ran 150 px
-// past its bottom edge.
 // settingsFieldInset gives a Settings text field the button inset, as the
 // setting rows' fields have. Without it a field measures to its bare text, a
 // strip about 22 px tall with the first glyph against the rounded edge; with
@@ -234,10 +230,16 @@ func settingsFieldInset(h *PanelHost, n *ui.Node) {
 	n.Padding = h.metrics().ButtonPadding
 }
 
-func settingsRailItemHeight(h *PanelHost, search *ui.Node) int {
+// settingsRailItemHeight is a section tab's height and inset: the density's
+// standard control, or less when the tabs, the cluster captions and search
+// would not fit the pane. At spacious density on a 1280x720 output they ran
+// 150 px past its bottom edge. When even an icon with its usual inset does not
+// fit, the inset narrows rather than the rail running off the pane: thirteen
+// sections at spacious density overran it by 27 px.
+func settingsRailItemHeight(h *PanelHost, search *ui.Node) (height, pad int) {
 	m := h.metrics()
 	if m.StandardControl <= 0 {
-		return 0 // no density metrics: the layout measures the tab
+		return 0, theme.MarginS // no density metrics: the layout measures the tab
 	}
 	ph := h.place.Panel.H
 	if ph <= 0 {
@@ -253,8 +255,13 @@ func settingsRailItemHeight(h *PanelHost, search *ui.Node) int {
 	searchH := max(search.Height, lineH+2*search.Padding)
 	children := 1 + len(clusters) + len(settingsSections)
 	room := ph - 2*m.PanelPadding - searchH - len(clusters)*captionH - (children-1)*theme.MarginXXS
+	per := room / max(len(settingsSections), 1)
+	pad = theme.MarginS
+	if per < m.IconNormal+2*pad {
+		pad = theme.MarginXS
+	}
 	// Never shorter than the icon and its padding, which the tab has to hold.
-	return max(min(m.StandardControl, room/max(len(settingsSections), 1)), captionH, m.IconNormal+2*theme.MarginS)
+	return max(min(m.StandardControl, per), captionH, m.IconNormal+2*pad), pad
 }
 
 // settingsPageTabs switches a section's pages. They are a segmented control

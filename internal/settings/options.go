@@ -1,6 +1,10 @@
 package settings
 
-import "slices"
+import (
+	"slices"
+
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
+)
 
 // CustomPalette is one saved palette as the settings pane needs it. The
 // settings package never reads the palettes directory; the shell passes this in.
@@ -24,6 +28,18 @@ func (o options) slugs() []string {
 	out := make([]string, len(o.custom))
 	for i, p := range o.custom {
 		out[i] = p.Slug
+	}
+	return out
+}
+
+// CustomPalettesFrom is the usable part of a store listing. A file that cannot
+// be loaded is left out of the settings; the Palettes page shows it.
+func CustomPalettesFrom(list []theme.PaletteInfo) []CustomPalette {
+	var out []CustomPalette
+	for _, p := range list {
+		if p.Err == nil {
+			out = append(out, CustomPalette{Slug: p.Slug, Name: p.Name})
+		}
 	}
 	return out
 }

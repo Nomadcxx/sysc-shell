@@ -282,31 +282,19 @@ func (r *Registry) refreshPalettes() {
 	r.mu.Unlock()
 }
 
-// customPalettesOf is the usable part of a snapshot, for the settings
-// registry. A file that cannot be loaded is left out; the Palettes page shows it.
-func customPalettesOf(list []theme.PaletteInfo) []settings.CustomPalette {
-	var out []settings.CustomPalette
-	for _, p := range list {
-		if p.Err == nil {
-			out = append(out, settings.CustomPalette{Slug: p.Slug, Name: p.Name})
-		}
-	}
-	return out
-}
-
 // settingsFor builds the settings registry for cfg with the saved palettes.
 // It must not be called with Registry.mu held; use settingsForLocked there.
 func (r *Registry) settingsFor(cfg config.Config) *settings.Registry {
 	r.mu.Lock()
 	list := r.palettes
 	r.mu.Unlock()
-	return settings.DefaultFor(cfg, settings.WithCustomPalettes(customPalettesOf(list)))
+	return settings.DefaultFor(cfg, settings.WithCustomPalettes(settings.CustomPalettesFrom(list)))
 }
 
 // settingsForLocked is settingsFor for callers that already hold Registry.mu.
 // It reads only the snapshot, so it is cheap enough for every settings edit.
 func (r *Registry) settingsForLocked(cfg config.Config) *settings.Registry {
-	return settings.DefaultFor(cfg, settings.WithCustomPalettes(customPalettesOf(r.palettes)))
+	return settings.DefaultFor(cfg, settings.WithCustomPalettes(settings.CustomPalettesFrom(r.palettes)))
 }
 
 // paletteDir is where saved palettes live: beside the config file main
