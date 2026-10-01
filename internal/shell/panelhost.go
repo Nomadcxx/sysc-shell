@@ -3213,7 +3213,7 @@ func panelTargetSize(id PanelID) ui.Rect {
 	case PanelPluginStore:
 		return ui.Rect{W: 1280, H: 820}
 	case PanelScreenshot:
-		return ui.Rect{W: 360, H: 240}
+		return ui.Rect{W: 360, H: 208}
 	default:
 		return ui.Rect{W: 280, H: 200}
 	}

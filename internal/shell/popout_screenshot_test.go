@@ -74,8 +74,8 @@ func TestScreenshotPanelNamesItsPanelAndSize(t *testing.T) {
 	if id, err := parsePanelName("screenshot"); err != nil || id != PanelScreenshot {
 		t.Fatalf("parsePanelName = %v, %v", id, err)
 	}
-	if got := panelTargetSize(PanelScreenshot); got.W != 360 || got.H != 240 {
-		t.Fatalf("size = %+v, want 360x240", got)
+	if got := panelTargetSize(PanelScreenshot); got.W != 360 || got.H != 208 {
+		t.Fatalf("size = %+v, want 360x208", got)
 	}
 }
 
