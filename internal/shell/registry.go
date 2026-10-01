@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -101,6 +102,9 @@ type Registry struct {
 	templateRefusals map[string]string
 	templateForce    map[string]bool
 	themeGen         theme.Generator
+	// paletteStore holds the user's saved palettes. Set once in NewRegistry and
+	// never reassigned outside tests, so it is read without Registry.mu.
+	paletteStore *theme.Store
 	// themeGenMu serializes generation across goroutines (sysc-780). Committed
 	// generation shares one cache path; previews use temporary paths but still
 	// keep matugen single-flight. Leaf lock: nothing takes Registry.mu while it
@@ -256,8 +260,25 @@ type Registry struct {
 	launcherSvc *launcher.Service
 }
 
+// paletteDir is where saved palettes live: beside the config file main
+// persists to (config.DefaultPath). Empty when there is no config directory.
+func paletteDir() string {
+	path := config.DefaultPath()
+	if path == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(path), "palettes")
+}
+
 func NewRegistry(cfg config.Config) *Registry {
 	gen := theme.Generator{}
+	var palettes *theme.Store
+	if dir := paletteDir(); dir != "" {
+		palettes = &theme.Store{Dir: dir}
+		// Set before the first Generate below, and never written again, so
+		// generateOnlyWith may copy r.themeGen without Registry.mu.
+		gen.Custom = palettes
+	}
 	r := &Registry{
 		cfg:     cfg,
 		outputs: make(map[string]outputState),
@@ -268,6 +289,7 @@ func NewRegistry(cfg config.Config) *Registry {
 		weather: services.NewWeather(
 			cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit)),
 		themeGen:       gen,
+		paletteStore:   palettes,
 		templateForce:  map[string]bool{},
 		invalidations:  make(chan wayland.Invalidation, 8),
 		aux:            make(chan wayland.AuxRequest, 8),

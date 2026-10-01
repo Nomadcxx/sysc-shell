@@ -1226,11 +1226,11 @@ func (r *Registry) setWallpaperSeed(source, seed string) {
 		return
 	}
 	r.mu.Lock()
-	// A pinned scheme outranks the wallpaper. Without this the first apply
-	// after choosing Catppuccin would silently put the palette back on
-	// whatever matugen derives from the image, and the choice would look like
-	// it had never been made.
-	if r.cfg.ThemeGen.Source == "palette" {
+	// A pinned scheme or saved palette outranks the wallpaper. Without this the
+	// first apply after choosing Catppuccin or a saved palette would silently
+	// put the palette back on whatever matugen derives from the image, and the
+	// choice would look like it had never been made.
+	if src := r.cfg.ThemeGen.Source; src == "palette" || src == "custom" {
 		r.mu.Unlock()
 		return
 	}

@@ -15,6 +15,9 @@ import (
 type Generator struct {
 	CacheDir string // defaults to $XDG_CACHE_HOME/sysc-shell
 	Matugen  string // defaults to "matugen" (PATH lookup)
+	// Custom resolves the custom source kind. Nil means saved palettes are
+	// unavailable, which is an error for a config that names one.
+	Custom *Store
 }
 
 // Generate renders the palette for src. It is single-flight per process by
@@ -66,6 +69,20 @@ func (g Generator) Generate(src Source, opts Options) (Tokens, error) {
 		}
 		if err := tok.Valid(opts.HighContrast); err != nil {
 			return fallback, fmt.Errorf("theme: palette %q is unusable: %w", src.Seed, err)
+		}
+		return tok, nil
+	}
+
+	// A custom palette is read from the store and, like a named palette, never
+	// spawns matugen. Store.Tokens has already validated and, if needed,
+	// repaired it for the floor in force.
+	if src.Kind == "custom" {
+		if g.Custom == nil {
+			return fallback, errors.New("theme: saved palettes are unavailable")
+		}
+		tok, err := g.Custom.Tokens(src.Seed, opts.Mode, opts.HighContrast)
+		if err != nil {
+			return fallback, fmt.Errorf("theme: custom palette %q: %w", src.Seed, err)
 		}
 		return tok, nil
 	}
