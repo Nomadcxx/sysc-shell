@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -754,6 +755,21 @@ func (r *Registry) DropAux(output uint32, surfaceID string) {
 			r.toasts.drop(connector)
 		}
 		r.mu.Unlock()
+		return
+	}
+	if escaped, ok := strings.CutPrefix(surfaceID, "depth-clock:"); ok {
+		if connector, err := url.PathUnescape(escaped); err == nil {
+			r.mu.Lock()
+			h := r.depthClocks
+			var effects depthClockEffects
+			if h != nil {
+				effects = h.dropLocked(connector, output)
+			}
+			r.mu.Unlock()
+			if h != nil {
+				h.emit(effects)
+			}
+		}
 		return
 	}
 	if digits, ok := strings.CutPrefix(surfaceID, "osd:"); ok {

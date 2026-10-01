@@ -438,3 +438,46 @@ func TestRuntimeSuperviseStopsAfterSessionCancelWhilePublishing(t *testing.T) {
 		t.Fatal("supervise stayed blocked publishing after the session was cancelled")
 	}
 }
+
+func TestEarlyHostCallDoesNotOutliveItsSession(t *testing.T) {
+	ctxErr := make(chan error, 1) // receives only if the hook runs
+	d := NewDispatcher(CallEnv{
+		PluginID: "org.sysc.timer",
+		Granted:  []Capability{CapNotifications},
+		Notify: func(ctx context.Context, _ v1.NotifyParams) (v1.NotifyResult, error) {
+			ctxErr <- ctx.Err()
+			return v1.NotifyResult{ID: 1}, nil
+		},
+	})
+	r := NewRuntime(Candidate{Manifest: installHelper(t, "notify-then-snapshot")}, helperOptions())
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		r.mu.Lock()
+		held := len(r.early)
+		r.mu.Unlock()
+		if held == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the call before SetCalls was not held")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	r.Stop()
+	r.SetCalls(d)
+	select {
+	case <-ctxErr:
+		t.Fatal("a call from a stopped session ran its side effect")
+	case <-time.After(300 * time.Millisecond):
+	}
+	select {
+	case msg := <-r.Messages():
+		if _, ok := msg.(*v1.HostCall); ok {
+			t.Fatal("host call reached the message queue")
+		}
+	default:
+	}
+}
