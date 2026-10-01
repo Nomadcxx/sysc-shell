@@ -257,8 +257,6 @@ func buildWidgetsWithClockFloor(items []config.Item, pad int, m theme.Metrics, c
 			out = append(out, buildWifiWidget(m))
 		case "bluetooth":
 			out = append(out, buildBluetoothWidget())
-		case "screenshot":
-			out = append(out, buildScreenshotWidget())
 		case "running-apps":
 			row := &ui.Node{Kind: ui.KindRow, Gap: runningAppGap}
 			cap := &ui.Node{Kind: ui.KindCapsule}
