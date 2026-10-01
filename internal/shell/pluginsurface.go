@@ -351,16 +351,17 @@ func (p *pluginSurfaceHost) wrapTreeMeasured(content *ui.Node, measure ui.Measur
 	if state.Pinned {
 		pinFill, pinName = ui.FillAccent, "Unpin sticky note"
 	}
-	header := m.StandardControl
-	inset := (header - m.CompactControl) / 2
+	header, inset, controlsW := p.titleBar()
 	grip := m.CompactControl / 2
-	titleW := max(state.Width-2*inset-2*m.CompactControl-2*m.BarSpacing, m.StandardControl)
-	chrome := &ui.Node{Kind: ui.KindRow, Height: header, Padding: inset, Gap: m.BarSpacing, Children: []*ui.Node{
+	titleW := max(state.Width-2*inset-controlsW-m.BarSpacing, m.StandardControl)
+	chrome := &ui.Node{Kind: ui.KindRow, Height: header, Padding: inset, Gap: m.BarSpacing, PinEnd: true, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: p.title, MaxWidth: titleW, TextRole: theme.RoleLabel},
-		{Kind: ui.KindButton, Action: pluginActionPrefix + p.viewID + ":surface-pin", Width: m.CompactControl, Height: m.CompactControl, Fill: pinFill, Name: pinName, Role: "button", Focusable: true,
-			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "push_pin"}}},
-		{Kind: ui.KindButton, Action: pluginActionPrefix + p.viewID + ":surface-close", Width: m.CompactControl, Height: m.CompactControl, Name: "Close sticky note", Role: "button", Focusable: true,
-			Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "close"}}},
+		{Kind: ui.KindRow, Width: controlsW, Height: m.CompactControl, Gap: m.BarSpacing, Children: []*ui.Node{
+			{Kind: ui.KindButton, Action: pluginActionPrefix + p.viewID + ":surface-pin", Width: m.CompactControl, Height: m.CompactControl, Fill: pinFill, Name: pinName, Role: "button", Focusable: true,
+				Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "push_pin"}}},
+			{Kind: ui.KindButton, Action: pluginActionPrefix + p.viewID + ":surface-close", Width: m.CompactControl, Height: m.CompactControl, Name: "Close sticky note", Role: "button", Focusable: true,
+				Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "close"}}},
+		}},
 	}}
 	gripRow := &ui.Node{Kind: ui.KindRow, Height: grip, PinEnd: true, Children: []*ui.Node{
 		{Kind: ui.KindColumn},
@@ -477,7 +478,7 @@ func (p *pluginSurfaceHost) handle(e wayland.Event) bool {
 			p.resizing = true
 			p.mu.Unlock()
 			return true
-		case int(e.Y) < p.panel.theme.Metrics.StandardControl && int(e.X) < p.width-p.chromeWidth():
+		case p.inDragZoneLocked(int(e.X), int(e.Y)):
 			p.dragging = true
 			p.mu.Unlock()
 			return true
@@ -518,9 +519,26 @@ func (p *pluginSurfaceHost) handle(e wayland.Event) bool {
 	return p.panel.handle(p.host.r)(e)
 }
 
-func (p *pluginSurfaceHost) chromeWidth() int {
+// titleBar is the sticky title bar's geometry: a control height plus an inset
+// on every side, so the title clears the corner and the two controls pin to
+// the right edge.
+func (p *pluginSurfaceHost) titleBar() (height, inset, controlsW int) {
 	m := p.panel.theme.Metrics
-	return m.StandardControl*3 + m.BarSpacing*2 + m.ButtonPadding
+	inset = m.BarSpacing + m.BarSpacing/2
+	return m.CompactControl + 2*inset, inset, 2*m.CompactControl + m.BarSpacing
+}
+
+// inDragZone reports whether a surface-local point starts a move: anywhere in
+// the title bar except over its controls.
+func (p *pluginSurfaceHost) inDragZone(x, y int) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.inDragZoneLocked(x, y)
+}
+
+func (p *pluginSurfaceHost) inDragZoneLocked(x, y int) bool {
+	height, inset, controlsW := p.titleBar()
+	return y >= 0 && y < height && x < p.width-inset-controlsW
 }
 
 func surfacePointerDelta(startX, startY, startLocalX, startLocalY, currentX, currentY, currentLocalX, currentLocalY int) (int, int) {

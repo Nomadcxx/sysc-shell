@@ -2885,3 +2885,17 @@ func TestNoteFillsPaintTheirPaper(t *testing.T) {
 		}
 	}
 }
+
+func TestPaperKeepsSubtleAndErrorTextReadable(t *testing.T) {
+	toTheme := func(c Color) theme.Color { return theme.Color{R: c.R, G: c.G, B: c.B, A: c.A} }
+	pale := Style{Subtle: Color{R: 0xC4, G: 0xC6, B: 0xD0, A: 0xFF}, Error: Color{R: 0xFF, G: 0xB4, B: 0xAB, A: 0xFF}}
+	for _, f := range []ui.Fill{ui.FillNoteSun, ui.FillNoteMint, ui.FillNoteSky, ui.FillNoteRose, ui.FillNoteLilac} {
+		s := pale.WithPaper(f)
+		paper, _, _ := PaperPair(f)
+		for name, c := range map[string]Color{"subtle": s.Subtle, "error": s.Error} {
+			if r := theme.ContrastRatio(toTheme(c), toTheme(paper)); r < theme.TextRatio(false) {
+				t.Errorf("fill %d %s text %.2f:1 on paper, want >= %.1f:1", f, name, r, theme.TextRatio(false))
+			}
+		}
+	}
+}

@@ -413,3 +413,38 @@ func TestStickyThatCannotLayOutShowsTheFailureCard(t *testing.T) {
 		t.Fatalf("a refused sticky painted %q instead of the failure card", renderText(p.panel.root))
 	}
 }
+
+func TestStickyTitleIsInsetAndControlsSitAtTheRightEdge(t *testing.T) {
+	p := &pluginSurfaceHost{title: "Short", viewID: "v1", width: 300, height: 320, panel: &PanelHost{theme: DefaultTheme()}}
+	root := p.wrapTreeMeasured(stickyContent(), stickyMeasure)
+	if err := ui.LayoutColumn(root, ui.Rect{W: 300, H: 320}, stickyMeasure); err != nil {
+		t.Fatal(err)
+	}
+	title := findKind(root.Children[0], ui.KindText)
+	closeBtn := findByName(root.Children[0], "Close sticky note")
+	if title.Bounds.X < 6 {
+		t.Errorf("title starts at x=%d, want an inset of at least 6", title.Bounds.X)
+	}
+	if right := closeBtn.Bounds.X + closeBtn.Bounds.W; right < 300-8 {
+		t.Errorf("close button ends at x=%d, want it at the right edge", right)
+	}
+}
+
+func TestStickyDragZoneIsTheTitleBarMinusItsControls(t *testing.T) {
+	p := &pluginSurfaceHost{title: "N", viewID: "v1", width: 300, height: 320, panel: &PanelHost{theme: DefaultTheme()}}
+	root := p.wrapTreeMeasured(stickyContent(), stickyMeasure)
+	if err := ui.LayoutColumn(root, ui.Rect{W: 300, H: 320}, stickyMeasure); err != nil {
+		t.Fatal(err)
+	}
+	bar := root.Children[0].Bounds
+	pin := findByName(root.Children[0], "Keep sticky note above other windows").Bounds
+	if !p.inDragZone(20, bar.H-1) {
+		t.Error("the bottom of the title bar must drag")
+	}
+	if p.inDragZone(pin.X+1, pin.Y+1) {
+		t.Error("the pin button must not start a drag")
+	}
+	if p.inDragZone(20, bar.H+1) {
+		t.Error("the note body must not drag")
+	}
+}
