@@ -149,11 +149,17 @@ func parseColors(path, mode string) (Tokens, error) {
 	if strings.EqualFold(mode, "light") {
 		src = file.Light
 	}
+	return ParseRoles(src)
+}
+
+// ParseRoles builds tokens from a role-name to colour map. Every role must be
+// present and parse; a partial palette is refused whole.
+func ParseRoles(src map[string]string) (Tokens, error) {
 	var tok Tokens
 	for _, r := range roles {
 		v, ok := src[r.name]
 		if !ok {
-			return Tokens{}, fmt.Errorf("theme: generated palette omits role %s", r.name)
+			return Tokens{}, fmt.Errorf("theme: palette omits role %s", r.name)
 		}
 		if _, err := ParseColor(v); err != nil {
 			return Tokens{}, fmt.Errorf("theme: role %s is %q: %w", r.name, v, err)
