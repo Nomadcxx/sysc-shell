@@ -27,18 +27,39 @@ func dir(home, configHome string, read func(string) ([]byte, error)) string {
 	return filepath.Join(PicturesDir(home, configHome, read), "Screenshots")
 }
 
-// PicturesDir reads XDG_PICTURES_DIR from user-dirs.dirs. The file holds
-// shell assignments whose value is either absolute or starts with $HOME/;
-// anything else, and a missing file or key, falls back to ~/Pictures.
+// PicturesDir reads XDG_PICTURES_DIR from user-dirs.dirs.
 func PicturesDir(home, configHome string, read func(string) ([]byte, error)) string {
-	fallback := filepath.Join(home, "Pictures")
+	return userDir("XDG_PICTURES_DIR", "Pictures", home, configHome, read)
+}
+
+// DownloadsDir reads XDG_DOWNLOAD_DIR from user-dirs.dirs, falling back to
+// ~/Downloads.
+func DownloadsDir(home, configHome string, read func(string) ([]byte, error)) string {
+	return userDir("XDG_DOWNLOAD_DIR", "Downloads", home, configHome, read)
+}
+
+// UserDownloadsDir is DownloadsDir for the running user.
+func UserDownloadsDir() string {
+	home, _ := os.UserHomeDir()
+	configHome := os.Getenv("XDG_CONFIG_HOME")
+	if configHome == "" {
+		configHome = filepath.Join(home, ".config")
+	}
+	return DownloadsDir(home, configHome, os.ReadFile)
+}
+
+// userDir reads one key from user-dirs.dirs. The file holds shell assignments
+// whose value is either absolute or starts with $HOME/; anything else, and a
+// missing file or key, falls back to ~/<fallbackName>.
+func userDir(key, fallbackName, home, configHome string, read func(string) ([]byte, error)) string {
+	fallback := filepath.Join(home, fallbackName)
 	data, err := read(filepath.Join(configHome, "user-dirs.dirs"))
 	if err != nil {
 		return fallback
 	}
 	sc := bufio.NewScanner(bytes.NewReader(data))
 	for sc.Scan() {
-		value, ok := strings.CutPrefix(strings.TrimSpace(sc.Text()), "XDG_PICTURES_DIR=")
+		value, ok := strings.CutPrefix(strings.TrimSpace(sc.Text()), key+"=")
 		if !ok {
 			continue
 		}

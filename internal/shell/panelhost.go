@@ -250,7 +250,9 @@ type PanelHost struct {
 	// wallpaperThemeErr mirrors Registry.themeErr for the picker's banners.
 	wallpaperThemeErr string
 
-	pluginManagerTab            string
+	pluginManagerTab string
+	// palettes is the Palettes page state (custom palettes P12). Registry.mu.
+	palettes                    paletteUI
 	pluginManagerSourceWarning  bool
 	pluginManagerRemoveConfirm  string
 	pluginManagerError          string
@@ -493,6 +495,9 @@ func (r *Registry) selectPanelSectionLocked(id PanelID, section string) error {
 		h.selectControlCentreSection(r, section)
 		r.publishSurface(h.output, panelSurfaceID(id))
 		return nil
+	}
+	if id == PanelSettings {
+		r.settingsSectionChangingLocked(h, section)
 	}
 	h.section, h.settingsPage = section, page
 	r.rebuildPanel(h)
@@ -1096,7 +1101,8 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		h.scale120 = bar.scale120()
 	}
 	if id == PanelSettings {
-		h.set = settings.DefaultFor(r.cfg)
+		h.set = r.settingsForLocked(r.cfg)
+		r.refreshPalettesAsync(h)
 		h.draft = r.cfg
 		h.section = "Bar"
 		h.search = ui.NewField("")
@@ -2503,6 +2509,19 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 // change event, the Bluetooth prompt, a panel query, the plugin manager, or
 // a setting.
 func (h *PanelHost) fieldChanged(r *Registry, n *ui.Node, f *ui.Field) bool {
+	if h.id == PanelSettings {
+		if role, ok := strings.CutPrefix(n.Action, "palette-role:"); ok {
+			r.paletteRoleEdited(h, role, f.Text)
+			return true
+		}
+		switch n.Action {
+		case "palette-edit-name":
+			r.paletteNameEdited(h, f.Text)
+			return true
+		case "palette-name", "palette-import-path":
+			return true // read when their button is pressed; never a setting
+		}
+	}
 	if _, ok := parsePluginAction(n.Action); ok {
 		r.deliverPluginText(n.Action, n.Text, v1.EventChange)
 		return true
@@ -2788,6 +2807,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if r.handlePluginManager(h, n) {
 		return true
 	}
+	if r.handlePalettes(h, n) {
+		return true
+	}
 	if strings.HasPrefix(n.Action, "bluetooth-") && bluetoothBodyVisible(h) {
 		return h.activateBluetooth(r, n)
 	}
@@ -2877,6 +2899,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 		section := strings.TrimPrefix(n.Action, "section:")
 		if h.id == PanelControlCenter {
 			return h.selectControlCentreSection(r, section)
+		}
+		if h.id == PanelSettings {
+			r.settingsSectionChangingLocked(h, section)
 		}
 		h.section, h.settingsPage, h.settingsScrollTop = section, "", true
 		r.rebuildPanel(h)
@@ -3423,7 +3448,7 @@ func (h *PanelHost) commitSetting(r *Registry, e *settings.Entry, v string) {
 		r.rebuildPanel(h)
 		return
 	}
-	h.set = settings.DefaultFor(h.draft)
+	h.set = r.settingsForLocked(h.draft)
 	// A toggle or a menu is a decision the user has finished making, so it
 	// goes to the file at once. A slider or a field is a stream of them, and
 	// writing per keystroke rewrote the whole document each time.
@@ -3684,6 +3709,10 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 		return
 	}
 	h.flushDraft(r)
+	if id == PanelSettings && h.palettes.preview {
+		h.palettes.preview = false
+		go r.themePreviewHide()
+	}
 	if bluetoothBodyVisible(h) {
 		r.stopBluetoothDiscoveryLocked(h)
 		r.cancelBluetoothPromptLocked(h)

@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -101,6 +102,22 @@ type Registry struct {
 	templateRefusals map[string]string
 	templateForce    map[string]bool
 	themeGen         theme.Generator
+	// paletteStore holds the user's saved palettes. Set once in NewRegistry and
+	// never reassigned outside tests, so it is read without Registry.mu.
+	paletteStore *theme.Store
+	// paletteImportDir is where the import field starts (the Downloads
+	// folder, shown with ~), resolved once at construction so building the
+	// page reads no file.
+	paletteImportDir string
+	// palettes is the last listing of paletteStore. Registry.mu; replaced
+	// whole by refreshPalettes.
+	palettes []theme.PaletteInfo
+	// paletteRefreshMu serialises a listing with its swap, so a listing taken
+	// before a save never lands after one taken after it. Taken before
+	// Registry.mu, never while holding it.
+	paletteRefreshMu sync.Mutex
+	// paletteLister reads the store; tests replace it to hold a listing open.
+	paletteLister func(*theme.Store) []theme.PaletteInfo
 	// themeGenMu serializes generation across goroutines (sysc-780). Committed
 	// generation shares one cache path; previews use temporary paths but still
 	// keep matugen single-flight. Leaf lock: nothing takes Registry.mu while it
@@ -256,8 +273,61 @@ type Registry struct {
 	launcherSvc *launcher.Service
 }
 
+func listPalettes(st *theme.Store) []theme.PaletteInfo {
+	if st == nil {
+		return nil
+	}
+	return st.List()
+}
+
+// refreshPalettes re-reads the palettes directory outside Registry.mu and
+// swaps the snapshot under it. Every Registry.Palette* mutation calls it, and
+// so do opening Settings and entering the Palettes section, so a hand-edited
+// file shows up the next time the page is entered. Must not be called with
+// Registry.mu held.
+func (r *Registry) refreshPalettes() {
+	r.paletteRefreshMu.Lock()
+	defer r.paletteRefreshMu.Unlock()
+	list := r.paletteLister(r.paletteStore)
+	r.mu.Lock()
+	r.palettes = list
+	r.mu.Unlock()
+}
+
+// settingsFor builds the settings registry for cfg with the saved palettes.
+// It must not be called with Registry.mu held; use settingsForLocked there.
+func (r *Registry) settingsFor(cfg config.Config) *settings.Registry {
+	r.mu.Lock()
+	list := r.palettes
+	r.mu.Unlock()
+	return settings.DefaultFor(cfg, settings.WithCustomPalettes(settings.CustomPalettesFrom(list)))
+}
+
+// settingsForLocked is settingsFor for callers that already hold Registry.mu.
+// It reads only the snapshot, so it is cheap enough for every settings edit.
+func (r *Registry) settingsForLocked(cfg config.Config) *settings.Registry {
+	return settings.DefaultFor(cfg, settings.WithCustomPalettes(settings.CustomPalettesFrom(r.palettes)))
+}
+
+// paletteDir is where saved palettes live: beside the config file main
+// persists to (config.DefaultPath). Empty when there is no config directory.
+func paletteDir() string {
+	path := config.DefaultPath()
+	if path == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(path), "palettes")
+}
+
 func NewRegistry(cfg config.Config) *Registry {
 	gen := theme.Generator{}
+	var palettes *theme.Store
+	if dir := paletteDir(); dir != "" {
+		palettes = &theme.Store{Dir: dir}
+		// Set before the first Generate below, and never written again, so
+		// generateOnlyWith may copy r.themeGen without Registry.mu.
+		gen.Custom = palettes
+	}
 	r := &Registry{
 		cfg:     cfg,
 		outputs: make(map[string]outputState),
@@ -267,25 +337,28 @@ func NewRegistry(cfg config.Config) *Registry {
 		metrics: services.NewMetrics(),
 		weather: services.NewWeather(
 			cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit)),
-		themeGen:       gen,
-		templateForce:  map[string]bool{},
-		invalidations:  make(chan wayland.Invalidation, 8),
-		aux:            make(chan wayland.AuxRequest, 8),
-		selections:     make(chan wayland.SelectionRequest, 8),
-		panelHosts:     make(map[PanelID]*PanelHost),
-		panelShields:   make(map[uint32]*PanelHost),
-		closed:         make(chan struct{}),
-		dwell:          newDwell(defaultDwell),
-		runArgv:        runArgvDefault,
-		lookPath:       exec.LookPath,
-		runArgvOutput:  runArgvOutputDefault,
-		startInhibit:   startInhibitDefault,
-		signalProcess:  signalProcessDefault,
-		notify:         newNotifyState(),
-		batteryWarning: newBatteryWarning(),
-		clipboard:      newClipboardProjection(),
-		tray:           newTrayState(),
-		trayCh:         make(chan trayclient.Message, 32),
+		themeGen:         gen,
+		paletteStore:     palettes,
+		paletteLister:    listPalettes,
+		paletteImportDir: paletteImportDir(),
+		templateForce:    map[string]bool{},
+		invalidations:    make(chan wayland.Invalidation, 8),
+		aux:              make(chan wayland.AuxRequest, 8),
+		selections:       make(chan wayland.SelectionRequest, 8),
+		panelHosts:       make(map[PanelID]*PanelHost),
+		panelShields:     make(map[uint32]*PanelHost),
+		closed:           make(chan struct{}),
+		dwell:            newDwell(defaultDwell),
+		runArgv:          runArgvDefault,
+		lookPath:         exec.LookPath,
+		runArgvOutput:    runArgvOutputDefault,
+		startInhibit:     startInhibitDefault,
+		signalProcess:    signalProcessDefault,
+		notify:           newNotifyState(),
+		batteryWarning:   newBatteryWarning(),
+		clipboard:        newClipboardProjection(),
+		tray:             newTrayState(),
+		trayCh:           make(chan trayclient.Message, 32),
 		// Intrinsic state, not a binding: a message can settle a close before
 		// anything is bound, and a nil tracker would drop it.
 		trayCloses:      newTrayCloseTracker(),
@@ -295,6 +368,8 @@ func NewRegistry(cfg config.Config) *Registry {
 	}
 	r.depthClocks = newDepthClockHost(r, nil)
 	r.weather.SetCity(cfg.Weather.City)
+	// Construction is single-threaded, so the first snapshot needs no lock.
+	r.palettes = listPalettes(palettes)
 	r.tokens, r.themeErr = tokensAndReason(r.generateTheme(cfg))
 	r.osd = newOSDManager(r, 0)
 	r.tooltips = newTooltipHost(r, nil)
@@ -1609,7 +1684,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				// depend on another setting.
 				if h := r.panelHosts[PanelSettings]; h != nil {
 					h.draft = cfg
-					h.set = settings.DefaultFor(cfg)
+					h.set = r.settingsForLocked(cfg)
 				}
 				r.refreshMonitorLeasesLocked(r.panelHosts[PanelMonitor])
 				media = r.media

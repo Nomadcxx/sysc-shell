@@ -3,6 +3,7 @@ package shell
 import (
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -25,7 +26,15 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == plugin.HelperFlag {
 		os.Exit(plugin.HelperServe(os.Args[2:]))
 	}
-	os.Exit(m.Run())
+	dir, err := os.MkdirTemp("", "sysc-shell-test-config-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	os.Setenv("XDG_CONFIG_HOME", dir)
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 func TestPluginHostGrantsCalendarActionCapabilities(t *testing.T) {

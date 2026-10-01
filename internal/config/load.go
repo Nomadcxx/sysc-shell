@@ -1436,7 +1436,7 @@ func applyTheme(base Theme, w wireTheme, path string) (Theme, error) {
 	return out, nil
 }
 
-var themeSources = map[string]bool{"wallpaper": true, "hex": true, "stock": true, "palette": true}
+var themeSources = map[string]bool{"wallpaper": true, "hex": true, "stock": true, "palette": true, "custom": true}
 var themeModes = map[string]bool{"dark": true, "light": true}
 var osdPositions = map[string]bool{
 	"top-left": true, "top-center": true, "top-right": true,
@@ -1448,7 +1448,7 @@ func applyThemeGen(base ThemeConfig, w wireThemeGen, path string) (ThemeConfig, 
 	out := base
 	if w.Source != nil {
 		if !themeSources[*w.Source] {
-			return ThemeConfig{}, pathErr(path+".source", "%q is not one of wallpaper, hex, stock", *w.Source)
+			return ThemeConfig{}, pathErr(path+".source", "%q is not one of wallpaper, hex, stock, palette, custom", *w.Source)
 		}
 		out.Source = *w.Source
 	}
@@ -1471,6 +1471,9 @@ func applyThemeGen(base ThemeConfig, w wireThemeGen, path string) (ThemeConfig, 
 		if _, ok := theme.StockSeed(out.Seed); !ok {
 			return ThemeConfig{}, pathErr(path+".seed", "%q is not a known stock theme", out.Seed)
 		}
+	}
+	if out.Source == "custom" && !theme.ValidSlug(out.Seed) {
+		return ThemeConfig{}, pathErr(path+".seed", "%q is not a saved palette id", out.Seed)
 	}
 	return out, nil
 }

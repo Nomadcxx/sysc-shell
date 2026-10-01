@@ -167,6 +167,16 @@ func RoleNames() []string {
 	return out
 }
 
+// Roles returns every palette role keyed by its wire name. It walks the same
+// ordered list the parser and validator use, so it cannot omit a role.
+func (t Tokens) Roles() map[string]string {
+	out := make(map[string]string, len(roles))
+	for _, r := range roles {
+		out[r.name] = *r.get(&t)
+	}
+	return out
+}
+
 // Contrast floors from design D5. Normal mode asks 4.5:1 of text and 3:1 of a
 // meaningful boundary; high contrast raises those to 7:1 and 4.5:1.
 const (
@@ -268,6 +278,35 @@ func (t Tokens) Complete() error {
 	return nil
 }
 
+// ContrastFailure is one foreground/background pair below its floor. Fg and Bg
+// are wire role names; the editor turns them into labels.
+type ContrastFailure struct {
+	Fg, Bg       string
+	Ratio, Floor float64
+}
+
+// ContrastFailures lists every pair below the floor in force, in pair order.
+// An unparseable role is not a contrast failure; Complete reports it.
+func (t Tokens) ContrastFailures(highContrast bool) []ContrastFailure {
+	text, nonText := TextRatio(highContrast), NonTextRatio(highContrast)
+	var out []ContrastFailure
+	for _, pr := range pairs {
+		fg, err1 := ParseColor(*pr.getFg(&t))
+		bg, err2 := ParseColor(*pr.getBg(&t))
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		want := text
+		if pr.nonText {
+			want = nonText
+		}
+		if got := ContrastRatio(fg, bg); got < want {
+			out = append(out, ContrastFailure{Fg: pr.fg, Bg: pr.bg, Ratio: got, Floor: want})
+		}
+	}
+	return out
+}
+
 // Valid parses every role and checks each paired foreground against the
 // background it is painted on. It is the gate a generated candidate passes
 // before the registry publishes it.
@@ -275,25 +314,10 @@ func (t Tokens) Valid(highContrast bool) error {
 	if err := t.Complete(); err != nil {
 		return err
 	}
-	text, nonText := TextRatio(highContrast), NonTextRatio(highContrast)
 	var errs []error
-	for _, pr := range pairs {
-		fg, err := ParseColor(*pr.getFg(&t))
-		if err != nil {
-			return err
-		}
-		bg, err := ParseColor(*pr.getBg(&t))
-		if err != nil {
-			return err
-		}
-		want := text
-		if pr.nonText {
-			want = nonText
-		}
-		if got := ContrastRatio(fg, bg); got < want {
-			errs = append(errs, fmt.Errorf(
-				"theme: %s on %s is %.2f:1, below the %.1f:1 floor", pr.fg, pr.bg, got, want))
-		}
+	for _, f := range t.ContrastFailures(highContrast) {
+		errs = append(errs, fmt.Errorf(
+			"theme: %s on %s is %.2f:1, below the %.1f:1 floor", f.Fg, f.Bg, f.Ratio, f.Floor))
 	}
 	return errors.Join(errs...)
 }

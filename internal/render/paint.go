@@ -850,8 +850,15 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 	if !n.Multiline {
 		phys = centreLine(phys, text, style, n)
 	}
+	// The field narrows the clip to its text box within whatever clip is
+	// already in force: replacing it let a field scrolled half out of a
+	// scroll view paint its value past the view's edge.
 	prev := c.restrict
-	c.restrict = phys
+	visible := intersectClip(prev, phys)
+	if visible.W <= 0 || visible.H <= 0 {
+		return nil // scrolled wholly out: an empty clip would read as none
+	}
+	c.restrict = visible
 	defer func() { c.restrict = prev }()
 	if n.Multiline {
 		return paintMultilineField(c, n, text, style, size, phys)
@@ -1179,14 +1186,7 @@ func paintTextMarquee(c *Canvas, s string, box ui.Rect, text *TextRenderer, styl
 		offset += cycle
 	}
 	old := c.restrict
-	clip := box
-	if old.W > 0 && old.H > 0 {
-		x0 := max(old.X, box.X)
-		y0 := max(old.Y, box.Y)
-		x1 := min(old.X+old.W, box.X+box.W)
-		y1 := min(old.Y+old.H, box.Y+box.H)
-		clip = ui.Rect{X: x0, Y: y0, W: max(x1-x0, 0), H: max(y1-y0, 0)}
-	}
+	clip := intersectClip(old, box)
 	if clip.W <= 0 || clip.H <= 0 {
 		return nil
 	}
@@ -1869,4 +1869,15 @@ func fillEdgeFade(c *Canvas, r ui.Rect, surface Color) {
 			blendPixel(row[x*4:x*4+4], src, uint32(col.A))
 		}
 	}
+}
+
+// intersectClip narrows the clip in force to box. A zero clip means none is in
+// force, so box alone applies.
+func intersectClip(clip, box ui.Rect) ui.Rect {
+	if clip.W <= 0 || clip.H <= 0 {
+		return box
+	}
+	x0, y0 := max(clip.X, box.X), max(clip.Y, box.Y)
+	x1, y1 := min(clip.X+clip.W, box.X+box.W), min(clip.Y+clip.H, box.Y+box.H)
+	return ui.Rect{X: x0, Y: y0, W: max(x1-x0, 0), H: max(y1-y0, 0)}
 }

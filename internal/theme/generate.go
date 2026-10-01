@@ -15,6 +15,9 @@ import (
 type Generator struct {
 	CacheDir string // defaults to $XDG_CACHE_HOME/sysc-shell
 	Matugen  string // defaults to "matugen" (PATH lookup)
+	// Custom resolves the custom source kind. Nil means saved palettes are
+	// unavailable, which is an error for a config that names one.
+	Custom *Store
 }
 
 // Generate renders the palette for src. It is single-flight per process by
@@ -66,6 +69,20 @@ func (g Generator) Generate(src Source, opts Options) (Tokens, error) {
 		}
 		if err := tok.Valid(opts.HighContrast); err != nil {
 			return fallback, fmt.Errorf("theme: palette %q is unusable: %w", src.Seed, err)
+		}
+		return tok, nil
+	}
+
+	// A custom palette is read from the store and, like a named palette, never
+	// spawns matugen. Store.Tokens has already validated and, if needed,
+	// repaired it for the floor in force.
+	if src.Kind == "custom" {
+		if g.Custom == nil {
+			return fallback, errors.New("theme: saved palettes are unavailable")
+		}
+		tok, err := g.Custom.Tokens(src.Seed, opts.Mode, opts.HighContrast)
+		if err != nil {
+			return fallback, fmt.Errorf("theme: custom palette %q: %w", src.Seed, err)
 		}
 		return tok, nil
 	}
@@ -149,11 +166,17 @@ func parseColors(path, mode string) (Tokens, error) {
 	if strings.EqualFold(mode, "light") {
 		src = file.Light
 	}
+	return ParseRoles(src)
+}
+
+// ParseRoles builds tokens from a role-name to colour map. Every role must be
+// present and parse; a partial palette is refused whole.
+func ParseRoles(src map[string]string) (Tokens, error) {
 	var tok Tokens
 	for _, r := range roles {
 		v, ok := src[r.name]
 		if !ok {
-			return Tokens{}, fmt.Errorf("theme: generated palette omits role %s", r.name)
+			return Tokens{}, fmt.Errorf("theme: palette omits role %s", r.name)
 		}
 		if _, err := ParseColor(v); err != nil {
 			return Tokens{}, fmt.Errorf("theme: role %s is %q: %w", r.name, v, err)
