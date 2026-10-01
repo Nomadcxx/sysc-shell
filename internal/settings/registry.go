@@ -25,7 +25,7 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 	for _, opt := range opts {
 		opt(&o)
 	}
-	slugs := o.slugs()
+	slugs, names := o.slugs(), o.names()
 	sources := themeSources
 	if len(slugs) > 0 {
 		sources = append(slices.Clone(themeSources), "custom")
@@ -128,7 +128,7 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 				c.ThemeGen.Seed = seedFor(v, c.ThemeGen.Seed, slugs)
 			}),
 		},
-		seedEntry(cfg, slugs),
+		seedEntry(cfg, slugs, names),
 		// The palette entry writes the same field the seed does: with source
 		// set to palette the seed names a scheme, and an enum is a kinder way
 		// to pick one than typing it.
@@ -534,8 +534,8 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 		r.insertAfter("appearance.palette", Entry{
 			Path: "appearance.custom", Label: "Custom palette", Section: "Appearance", Group: "Colours & mode",
 			Describe: "A palette you saved on the Palettes page. Choosing one also sets the source to custom.",
-			Kind:     KindEnum,
-			Options:  slugs,
+			Kind:     KindEnum, Present: PresentMenu,
+			Options: slugs, OptionLabels: names,
 			Get: func(c config.Config) string {
 				if c.ThemeGen.Source == "custom" {
 					return c.ThemeGen.Seed
@@ -773,7 +773,7 @@ func seedFor(source, seed string, custom []string) string {
 // seedEntry is built from the supplied configuration because what the seed
 // means follows the source: under "stock" it names one of a closed set of
 // bundled themes, so it is a picker rather than a free-text field.
-func seedEntry(cfg config.Config, custom []string) Entry {
+func seedEntry(cfg config.Config, custom, names []string) Entry {
 	e := Entry{
 		Path: "appearance.seed", Label: "Theme input", Section: "Appearance", Group: "Colours & mode",
 		Describe: "What the source reads: an image path, a colour, a stock theme, or a palette name.",
@@ -800,8 +800,10 @@ func seedEntry(cfg config.Config, custom []string) Entry {
 	}
 	if cfg.ThemeGen.Source == "custom" {
 		if len(custom) > 0 {
-			e.Kind = KindEnum
-			e.Options = custom
+			// Saved palettes are user-named: a menu, labelled with the
+			// names, storing the slugs (P5, R13).
+			e.Kind, e.Present = KindEnum, PresentMenu
+			e.Options, e.OptionLabels = custom, names
 			e.Set = setEnum("appearance.seed", custom, func(c *config.Config, v string) { c.ThemeGen.Seed = v })
 		} else {
 			// Nothing saved (every palette was deleted): a free field that

@@ -358,6 +358,13 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	if section == "Templates" {
 		content.Children = append(content.Children, templateRefusals(r)...)
 	}
+	if section == "Appearance" && r != nil {
+		// The source may say custom while a saved palette is not what is
+		// painted; say why where the source is chosen (P4).
+		if problem := customPaletteProblem(h.draft, r.themeErr, r.palettes); problem != "" {
+			content.Children = append([]*ui.Node{h.wrappedText(problem, theme.RoleBody, ui.ToneError, settingsBodyWidth(h), 0)}, content.Children...)
+		}
+	}
 	return body(content)
 }
 
@@ -1005,13 +1012,16 @@ func settingsControl(h *PanelHost, e settings.Entry, width int) *ui.Node {
 		// One option is a fact, not a choice: a one-row menu drew as a
 		// clipped pill (the bar's Edge, which is only ever top).
 		if len(e.Options) == 1 {
-			return &ui.Node{Kind: ui.KindText, Text: settingsOptionLabel(e.Options[0]), Tone: ui.ToneSubtle, Name: e.Label}
+			return &ui.Node{Kind: ui.KindText, Text: settingsEntryOptionLabel(e, 0), Tone: ui.ToneSubtle, Name: e.Label}
 		}
 		if settingsSegments(e) {
 			return settingsSegmented(h, e, raw)
 		}
 		if e.Present == settings.PresentSwatch {
 			return settingsSwatchControl(h, e, raw, width)
+		}
+		if len(e.OptionLabels) > 0 && len(e.OptionLabels) == len(e.Options) {
+			return settingsPickerControl(h, e, e.OptionLabels, e.Options, raw, width)
 		}
 		return settingsMenuControl(h, e, e.Options, raw, width)
 	default:
@@ -1050,6 +1060,15 @@ func settingsSegmented(h *PanelHost, e settings.Entry, raw string) *ui.Node {
 
 // settingsOptionLabel turns a config value into a label: "auto-pause" reads
 // "Auto pause".
+// settingsEntryOptionLabel is option i as the entry names it on screen: its
+// own label when it carries labels, the readable form of the value otherwise.
+func settingsEntryOptionLabel(e settings.Entry, i int) string {
+	if len(e.OptionLabels) == len(e.Options) {
+		return e.OptionLabels[i]
+	}
+	return settingsOptionLabel(e.Options[i])
+}
+
 func settingsOptionLabel(opt string) string {
 	s := strings.NewReplacer("-", " ", "_", " ").Replace(opt)
 	if s == "" {

@@ -24,6 +24,15 @@ func WithCustomPalettes(p []CustomPalette) Option {
 	return func(o *options) { o.custom = slices.Clone(p) }
 }
 
+// names is each saved palette's display name, in slugs order.
+func (o options) names() []string {
+	out := make([]string, len(o.custom))
+	for i, p := range o.custom {
+		out[i] = p.Name
+	}
+	return out
+}
+
 func (o options) slugs() []string {
 	out := make([]string, len(o.custom))
 	for i, p := range o.custom {

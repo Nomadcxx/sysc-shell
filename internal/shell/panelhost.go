@@ -496,6 +496,9 @@ func (r *Registry) selectPanelSectionLocked(id PanelID, section string) error {
 		r.publishSurface(h.output, panelSurfaceID(id))
 		return nil
 	}
+	if id == PanelSettings {
+		r.settingsSectionChangingLocked(h, section)
+	}
 	h.section, h.settingsPage = section, page
 	r.rebuildPanel(h)
 	r.publishSurface(h.output, panelSurfaceID(id))
@@ -2849,12 +2852,8 @@ func (h *PanelHost) activate(r *Registry) bool {
 		if h.id == PanelControlCenter {
 			return h.selectControlCentreSection(r, section)
 		}
-		if h.id == PanelSettings && h.section == "Palettes" && section != "Palettes" {
-			r.paletteLeaveEditor(h)
-			h.palettes.clearStatus()
-		}
-		if h.id == PanelSettings && section == "Palettes" {
-			r.refreshPalettesAsync(h)
+		if h.id == PanelSettings {
+			r.settingsSectionChangingLocked(h, section)
 		}
 		h.section, h.settingsPage, h.settingsScrollTop = section, "", true
 		r.rebuildPanel(h)

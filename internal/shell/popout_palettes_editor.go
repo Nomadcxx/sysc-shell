@@ -3,6 +3,7 @@ package shell
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -256,16 +257,27 @@ func (r *Registry) paletteSaveDraft(h *PanelHost, action string, use bool) bool 
 		}
 		return fmt.Sprintf("Saved “%s”", draft.Name), nil
 	}, func() {
-		p.dirty = false
-		resetPaletteFields(h)
 		if use {
 			if e := r.settingsForLocked(h.draft).ByPath("appearance.custom"); e != nil {
 				h.commitSetting(r, e, slug)
 			}
 		}
+		// An edit made while the save ran is not in the file: it stays
+		// unsaved, with its fields and its preview, rather than being
+		// marked saved and dropped on the way out.
+		if p.editing != slug || !samePaletteFile(p.draft, draft) {
+			return
+		}
+		p.dirty = false
+		resetPaletteFields(h)
 		r.paletteHidePreview(h)
 	})
 	return true
+}
+
+// samePaletteFile reports whether two drafts hold the same name and colours.
+func samePaletteFile(a, b theme.PaletteFile) bool {
+	return a.Name == b.Name && maps.Equal(a.Dark, b.Dark) && maps.Equal(a.Light, b.Light)
 }
 
 func (r *Registry) handlePaletteEditor(h *PanelHost, n *ui.Node) bool {

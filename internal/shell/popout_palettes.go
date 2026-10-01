@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/screenshot"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
@@ -203,16 +204,17 @@ func paletteFieldText(h *PanelHost, action string) string {
 	return ""
 }
 
-// paletteImportSeed is where the import field starts: the folder Export
-// writes to, shown with ~ when it is under home (R6).
-func paletteImportSeed() string {
+// paletteImportDir is where the import field starts: the folder Export
+// writes to, shown with ~ when it is under home (R6). It reads
+// user-dirs.dirs, so NewRegistry resolves it once rather than every build.
+func paletteImportDir() string {
 	dir := screenshot.UserDownloadsDir()
 	if home, err := os.UserHomeDir(); err == nil {
 		if rel, err := filepath.Rel(home, dir); err == nil && !strings.HasPrefix(rel, "..") {
 			dir = filepath.Join("~", rel)
 		}
 	}
-	return dir + "/"
+	return dir
 }
 
 // paletteStatusLine is the one place an outcome is shown: under the page
@@ -228,9 +230,8 @@ func paletteStatusLine(r *Registry, h *PanelHost, inner int) []*ui.Node {
 	if h.palettes.notice != "" {
 		line(h.palettes.notice, ui.ToneSubtle)
 	}
-	if h.draft.ThemeGen.Source == "custom" && r.themeErr != "" {
-		line("The palette in use could not be applied, so the shell keeps its last colours: "+
-			strings.ReplaceAll(r.themeErr, "theme: ", ""), ui.ToneError)
+	if problem := customPaletteProblem(h.draft, r.themeErr, r.palettes); problem != "" {
+		line(problem, ui.ToneError)
 	}
 	return out
 }
@@ -258,7 +259,7 @@ func palettesTree(r *Registry, h *PanelHost) *ui.Node {
 	imp := []*ui.Node{
 		h.wrappedText("A palette file, or any JSON with dark and light colour maps, such as matugen's colors.json. Up to 64 KiB.", theme.RoleCaption, ui.ToneSubtle, inner, 0),
 		{Kind: ui.KindRow, PinEnd: true, Width: inner, Children: []*ui.Node{
-			paletteField(h, "palette-import-path", "Path to a palette file", paletteImportSeed(), fieldW),
+			paletteField(h, "palette-import-path", "Path to a palette file", r.paletteImportDir+"/", fieldW),
 			paletteButton(h, "palette-import-file", "Import", "Importing…", m),
 		}},
 		{Kind: ui.KindRow, PinEnd: true, Width: inner, Children: []*ui.Node{
@@ -486,4 +487,46 @@ func paletteFileReason(p theme.PaletteInfo) string {
 		reason = strings.TrimPrefix(reason, prefix)
 	}
 	return reason
+}
+
+// settingsSectionChangingLocked runs before Settings moves to another section,
+// by the rail, IPC or a deep link alike: leaving Palettes ends the editor and
+// its preview (P16, any route), and entering it re-reads the directory (R2).
+// Registry.mu is held.
+func (r *Registry) settingsSectionChangingLocked(h *PanelHost, section string) {
+	if h.section == "Palettes" && section != "Palettes" {
+		r.paletteLeaveEditor(h)
+		h.palettes.clearStatus()
+		h.palettes.deleting = ""
+	}
+	if section == "Palettes" && h.section != "Palettes" {
+		r.refreshPalettesAsync(h)
+	}
+}
+
+// customPaletteProblem is why the custom palette cfg names is not what the
+// shell paints, in words for people, or "" when there is none. Only the
+// generator's own custom-palette errors count: a refused template shares
+// themeErr and is not the palette's fault (P4, P10).
+func customPaletteProblem(cfg config.Config, themeErr string, list []theme.PaletteInfo) string {
+	if cfg.ThemeGen.Source != "custom" || themeErr == "" {
+		return ""
+	}
+	if strings.HasPrefix(themeErr, "theme: saved palettes are unavailable") {
+		return "Saved palettes are unavailable, so the shell keeps its last colours."
+	}
+	slug := cfg.ThemeGen.Seed
+	reason, ok := strings.CutPrefix(themeErr, fmt.Sprintf("theme: custom palette %q: ", slug))
+	if !ok {
+		return ""
+	}
+	name := paletteName(list, slug)
+	if strings.Contains(reason, "no such file or directory") {
+		return fmt.Sprintf("The palette in use, “%s”, is no longer saved, so the shell keeps its last colours. Choose another palette.", name)
+	}
+	reason = strings.ReplaceAll(reason, "theme: ", "")
+	for _, prefix := range []string{fmt.Sprintf("palette %q: ", slug), "palette file: "} {
+		reason = strings.TrimPrefix(reason, prefix)
+	}
+	return fmt.Sprintf("The palette in use, “%s”, could not be applied, so the shell keeps its last colours: %s", name, reason)
 }

@@ -991,3 +991,15 @@ func TestPalettesSectionSitsAfterAppearance(t *testing.T) {
 		t.Fatalf("sections = %v, want Palettes right after Appearance", names)
 	}
 }
+
+func TestCustomPaletteOptionsCarryDisplayNames(t *testing.T) {
+	cfg := config.Default()
+	cfg.ThemeGen.Source, cfg.ThemeGen.Seed = "custom", "my-nord"
+	reg := DefaultFor(cfg, WithCustomPalettes(customs()))
+	for _, path := range []string{"appearance.custom", "appearance.seed"} {
+		e, ok := reg.Lookup(path)
+		if !ok || !slices.Equal(e.OptionLabels, []string{"My Nord", "Work"}) {
+			t.Errorf("%s labels = %v, want the display names", path, e.OptionLabels)
+		}
+	}
+}

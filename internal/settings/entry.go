@@ -60,6 +60,10 @@ type Entry struct {
 	Present Presentation
 	Kind    Kind
 	Options []string
+	// OptionLabels, when set, is what each option is called on screen, in
+	// Options order; the option itself stays the stored value. Saved palettes
+	// use it: the slug is stored, the name the user chose is shown.
+	OptionLabels []string
 	// EmptyLabel names the row a picker offers for the empty value, and is
 	// set only where empty is a state the setting can actually hold. Most
 	// cannot: the loader refuses an empty appearance font family, so a picker

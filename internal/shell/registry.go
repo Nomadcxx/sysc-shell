@@ -105,6 +105,10 @@ type Registry struct {
 	// paletteStore holds the user's saved palettes. Set once in NewRegistry and
 	// never reassigned outside tests, so it is read without Registry.mu.
 	paletteStore *theme.Store
+	// paletteImportDir is where the import field starts (the Downloads
+	// folder, shown with ~), resolved once at construction so building the
+	// page reads no file.
+	paletteImportDir string
 	// palettes is the last listing of paletteStore. Registry.mu; replaced
 	// whole by refreshPalettes.
 	palettes []theme.PaletteInfo
@@ -333,27 +337,28 @@ func NewRegistry(cfg config.Config) *Registry {
 		metrics: services.NewMetrics(),
 		weather: services.NewWeather(
 			cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit)),
-		themeGen:       gen,
-		paletteStore:   palettes,
-		paletteLister:  listPalettes,
-		templateForce:  map[string]bool{},
-		invalidations:  make(chan wayland.Invalidation, 8),
-		aux:            make(chan wayland.AuxRequest, 8),
-		selections:     make(chan wayland.SelectionRequest, 8),
-		panelHosts:     make(map[PanelID]*PanelHost),
-		panelShields:   make(map[uint32]*PanelHost),
-		closed:         make(chan struct{}),
-		dwell:          newDwell(defaultDwell),
-		runArgv:        runArgvDefault,
-		lookPath:       exec.LookPath,
-		runArgvOutput:  runArgvOutputDefault,
-		startInhibit:   startInhibitDefault,
-		signalProcess:  signalProcessDefault,
-		notify:         newNotifyState(),
-		batteryWarning: newBatteryWarning(),
-		clipboard:      newClipboardProjection(),
-		tray:           newTrayState(),
-		trayCh:         make(chan trayclient.Message, 32),
+		themeGen:         gen,
+		paletteStore:     palettes,
+		paletteLister:    listPalettes,
+		paletteImportDir: paletteImportDir(),
+		templateForce:    map[string]bool{},
+		invalidations:    make(chan wayland.Invalidation, 8),
+		aux:              make(chan wayland.AuxRequest, 8),
+		selections:       make(chan wayland.SelectionRequest, 8),
+		panelHosts:       make(map[PanelID]*PanelHost),
+		panelShields:     make(map[uint32]*PanelHost),
+		closed:           make(chan struct{}),
+		dwell:            newDwell(defaultDwell),
+		runArgv:          runArgvDefault,
+		lookPath:         exec.LookPath,
+		runArgvOutput:    runArgvOutputDefault,
+		startInhibit:     startInhibitDefault,
+		signalProcess:    signalProcessDefault,
+		notify:           newNotifyState(),
+		batteryWarning:   newBatteryWarning(),
+		clipboard:        newClipboardProjection(),
+		tray:             newTrayState(),
+		trayCh:           make(chan trayclient.Message, 32),
 		// Intrinsic state, not a binding: a message can settle a close before
 		// anything is bound, and a nil tracker would drop it.
 		trayCloses:      newTrayCloseTracker(),
