@@ -615,6 +615,30 @@ func TestTwoClocksTakeDifferentFormats(t *testing.T) {
 	}
 }
 
+// Two clocks inside one bar group share the group's lane position, so the
+// group title has to carry the member too or the pane shows one card with two
+// identical "Format" rows and no way to tell which clock each one sets.
+func TestGroupedClocksGetTheirOwnGroups(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Bar.Left, cfg.Bar.Right = nil, nil
+	cfg.Bar.Center = []config.Item{{ID: "group", Items: []config.Item{
+		{ID: "clock", Format: "15:04"},
+		{ID: "clock", Format: "Mon 2 Jan"},
+	}}}
+
+	var groups []string
+	for _, e := range DefaultFor(cfg).Section("Widgets") {
+		if strings.HasSuffix(e.Path, ".format") {
+			groups = append(groups, e.Group)
+		}
+	}
+	want := []string{"Clock (center 1, item 1)", "Clock (center 1, item 2)"}
+	if !slices.Equal(groups, want) {
+		t.Errorf("grouped clock groups = %q, want %q", groups, want)
+	}
+}
+
 // D3: addressing a widget is what mints its id, and an option write is one of
 // the three things the design names as addressing it.
 func TestAnOptionWriteMintsTheWidgetsId(t *testing.T) {

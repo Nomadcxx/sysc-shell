@@ -349,7 +349,7 @@ func (h *PanelHost) barLaneStripFor(r *Registry) *ui.Node {
 	// are draggable or what the three lanes correspond to, and a pane whose
 	// central gesture is undiscoverable is a pane most people will not use.
 	strip := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Width: width, Children: []*ui.Node{
-		{Kind: ui.KindText, Text: "Layout", TextRole: theme.RoleLabel},
+		settingsCardHeading("Layout"),
 		{
 			Kind: ui.KindText, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
 			Text: "Drag a widget to reorder it or to move it between lanes. " +

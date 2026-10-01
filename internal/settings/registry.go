@@ -803,7 +803,13 @@ func widgetEntryGroup(ref config.ItemRef, it config.Item) string {
 	if it.Instance != "" {
 		return name + " (" + it.Instance + ")"
 	}
-	return name + " (" + ref.Lane + " " + strconv.Itoa(ref.Path.Index+1) + ")"
+	where := ref.Lane + " " + strconv.Itoa(ref.Path.Index+1)
+	// A widget inside a group shares the group's position; without the
+	// member, two grouped clocks merged into one card of identical rows.
+	if ref.Path.Member >= 0 {
+		where += ", item " + strconv.Itoa(ref.Path.Member+1)
+	}
+	return name + " (" + where + ")"
 }
 
 // widgetEntryPath addresses the item rather than the widget type, so two

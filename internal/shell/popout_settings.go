@@ -65,29 +65,50 @@ func settingsControlWidth(h *PanelHost) int {
 	return max(w, 0)
 }
 
-const settingsAppearanceFixedWidth = 240
+// settingsDropdownFixedWidth is the width every dropdown and the narrowest
+// segmented control take when the panel has room (the Appearance polish,
+// carried to every page by sysc-858). A menu that hugs its value has no room
+// for its chevron and reads as a static tag.
+const settingsDropdownFixedWidth = 240
 
-func settingsAppearanceWidth(h *PanelHost) int {
-	return min(settingsAppearanceFixedWidth, max(settingsBodyWidth(h)/2, 0))
-}
-
-func settingsAppearanceDropdown(e settings.Entry) bool {
-	if e.Section != "Appearance" {
-		return false
-	}
-	if e.Kind == settings.KindFont {
-		return true
-	}
-	return e.Kind == settings.KindEnum && len(e.Options) > 1 &&
-		(e.Present != settings.PresentAuto || len(e.Options) > settingsSegmentLimit)
-}
-
-func settingsAppearanceDropdownWidth(h *PanelHost, e settings.Entry) int {
+// settingsControlRoom is the control column's cap, less Reset when the row
+// shows one.
+func settingsControlRoom(h *PanelHost, e settings.Entry) int {
 	available := max(settingsBodyWidth(h)/2, 0)
 	if !e.IsDefault(h.draft) {
 		available = max(available-settingsResetWidth(h)-theme.MarginS, 0)
 	}
-	return min(settingsAppearanceFixedWidth, available)
+	return available
+}
+
+func settingsDropdown(e settings.Entry) bool {
+	if e.Kind == settings.KindFont {
+		return true
+	}
+	return e.Kind == settings.KindEnum && len(e.Options) > 1 && !settingsSegments(e)
+}
+
+func settingsSegments(e settings.Entry) bool {
+	return e.Kind == settings.KindEnum && e.Present == settings.PresentAuto &&
+		len(e.Options) >= 2 && len(e.Options) <= settingsSegmentLimit
+}
+
+func settingsDropdownWidth(h *PanelHost, e settings.Entry) int {
+	return min(settingsDropdownFixedWidth, settingsControlRoom(h, e))
+}
+
+// settingsSegmentWidth gives every option the same width: the fixed width,
+// or more when the longest label needs it, never past the control column.
+func settingsSegmentWidth(h *PanelHost, e settings.Entry) int {
+	measure := settingsMeasure(h)
+	widest := 0
+	for _, opt := range e.Options {
+		w, _ := measure(settingsOptionLabel(opt), ui.TextAttrs{})
+		widest = max(widest, w)
+	}
+	n := len(e.Options)
+	need := n*(widest+2*h.metrics().ButtonPadding) + (n-1)*theme.MarginXXS
+	return min(max(settingsDropdownFixedWidth, need), settingsControlRoom(h, e))
 }
 
 func settingsControlWidthFor(h *PanelHost, e settings.Entry) int {
@@ -95,13 +116,13 @@ func settingsControlWidthFor(h *PanelHost, e settings.Entry) int {
 	maxColumn := max(settingsBodyWidth(h)/2, 0)
 	need := 0
 	switch {
-	case e.Section == "Appearance" && e.Path == "appearance.mode":
-		need = settingsAppearanceWidth(h)
-	case settingsAppearanceDropdown(e):
-		need = settingsAppearanceDropdownWidth(h, e)
-		if !e.IsDefault(h.draft) {
-			need += settingsResetWidth(h) + theme.MarginS
-		}
+	case settingsSegments(e):
+		need = settingsSegmentWidth(h, e)
+	case settingsDropdown(e):
+		need = settingsDropdownWidth(h, e)
+	}
+	if need > 0 && !e.IsDefault(h.draft) {
+		need += settingsResetWidth(h) + theme.MarginS
 	}
 	return min(max(w, need), maxColumn)
 }
@@ -672,15 +693,21 @@ func settingsGroupCard(h *PanelHost, title string, rows []*ui.Node) *ui.Node {
 	m := h.metrics()
 	col := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM}
 	if title != "" {
-		col.Children = append(col.Children, &ui.Node{
-			Kind: ui.KindText, Text: strings.ToLower(title), Name: title, Role: "heading",
-			TextRole: theme.RoleSection, Tone: ui.ToneAccent,
-		})
+		col.Children = append(col.Children, settingsCardHeading(title))
 	}
 	col.Children = append(col.Children, rows...)
 	return &ui.Node{
 		Kind: ui.KindCapsule, Padding: m.CardPadding, Fill: ui.FillContainerHigh,
 		Shape: ui.ShapeCard, Width: settingsBodyWidth(h), Children: []*ui.Node{col},
+	}
+}
+
+// settingsCardHeading is a group's title: lowercase on screen, the title as
+// written for assistive technology.
+func settingsCardHeading(title string) *ui.Node {
+	return &ui.Node{
+		Kind: ui.KindText, Text: strings.ToLower(title), Name: title, Role: "heading",
+		TextRole: theme.RoleSection, Tone: ui.ToneAccent,
 	}
 }
 
@@ -736,11 +763,14 @@ func settingsEntryRow(h *PanelHost, e settings.Entry, width int) *ui.Node {
 	label.Width = max(width-controlW-theme.MarginL, 0)
 
 	// Only a control that benefits from length takes the column: a slider is
-	// swept and a field is typed into. A toggle and a dropdown have a natural
-	// size, and stretching them across a 300-pixel column -- or, with no reset
-	// beside them to pin against, leaving them adrift at its left edge -- is
-	// what made them read as taking the whole panel.
-	trailing := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, PinEnd: true}
+	// swept and a field is typed into. A toggle and a dropdown have a size of
+	// their own, and stretching them across a 300-pixel column is what made
+	// them read as taking the whole panel. Either way the group is not a
+	// pinned row of its own: the row pins it, so every control ends at the
+	// card's edge with Reset beside it. Pinning inside the group moved a
+	// control from the column's left edge to the card's edge the moment Reset
+	// appeared, because a row only pins its second of two children.
+	trailing := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS}
 	if settingsControlFills(e) {
 		trailing.Width = controlW
 	}
@@ -750,11 +780,11 @@ func settingsEntryRow(h *PanelHost, e settings.Entry, width int) *ui.Node {
 		trailing.Children = append(trailing.Children, reset)
 		room = max(room-settingsResetWidth(h)-theme.MarginS, 0)
 	}
-	if !settingsControlFills(e) {
+	switch {
+	case settingsDropdown(e):
+		room = settingsDropdownWidth(h, e)
+	case !settingsControlFills(e):
 		room = 0
-	}
-	if settingsAppearanceDropdown(e) {
-		room = min(room, settingsAppearanceDropdownWidth(h, e))
 	}
 	trailing.Children = append(trailing.Children, settingsControl(h, e, room))
 
@@ -775,13 +805,11 @@ func settingsEntryRow(h *PanelHost, e settings.Entry, width int) *ui.Node {
 // each have a size of their own and are simply placed at the end of the row.
 func settingsControlFills(e settings.Entry) bool {
 	switch e.Kind {
-	case settings.KindString, settings.KindHex, settings.KindPath, settings.KindFont:
+	case settings.KindString, settings.KindHex, settings.KindPath:
 		return true
 	case settings.KindInt:
 		// A short range renders as a stepper, which is three small controls.
 		return !(e.Max-e.Min > 0 && e.Max-e.Min <= settingsStepperSpan)
-	case settings.KindEnum:
-		return settingsAppearanceDropdown(e)
 	}
 	return false
 }
@@ -861,7 +889,7 @@ func settingsControl(h *PanelHost, e settings.Entry, width int) *ui.Node {
 		if len(e.Options) == 1 {
 			return &ui.Node{Kind: ui.KindText, Text: settingsOptionLabel(e.Options[0]), Tone: ui.ToneSubtle, Name: e.Label}
 		}
-		if e.Present == settings.PresentAuto && len(e.Options) >= 2 && len(e.Options) <= settingsSegmentLimit {
+		if settingsSegments(e) {
 			return settingsSegmented(h, e, raw)
 		}
 		return settingsMenuControl(h, e, e.Options, raw, width)
@@ -882,9 +910,7 @@ func settingsSegmented(h *PanelHost, e settings.Entry, raw string) *ui.Node {
 	seg := &ui.Node{
 		Kind: ui.KindSegmented, Key: "seg:" + e.Path, Gap: theme.MarginXXS,
 		Height: m.CompactControl, Name: e.Label, Role: "radiogroup",
-	}
-	if e.Section == "Appearance" && e.Path == "appearance.mode" {
-		seg.Width = settingsAppearanceWidth(h)
+		Width: settingsSegmentWidth(h, e),
 	}
 	for _, opt := range e.Options {
 		label := settingsOptionLabel(opt)

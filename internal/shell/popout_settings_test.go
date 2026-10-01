@@ -463,6 +463,140 @@ func TestSettingsSectionCardsUseAppearanceHeadingStyle(t *testing.T) {
 	}
 }
 
+// TestSettingsControlsEndAtTheCardEdge is sysc-858's alignment rule: every
+// row's control ends at the row's inner right edge, with Reset directly to its
+// left. A default toggle used to sit at the control column's left edge and a
+// changed one at the card edge, so a control jumped across the card when its
+// row gained Reset; a field without Reset stopped one margin short.
+func TestSettingsControlsEndAtTheCardEdge(t *testing.T) {
+	t.Parallel()
+	for _, section := range []string{"Appearance", "Templates", "Wallpaper", "Bar", "Widgets", "Tray", "Panels"} {
+		t.Run(section, func(t *testing.T) {
+			h := newSettingsHost()
+			h.section = section
+			h.place.Panel = ui.Rect{W: 1105, H: 760}
+			// One changed row per page, so each page lays out rows with
+			// and without Reset side by side.
+			h.draft.Templates = map[string]bool{"kitty": true}
+			h.draft.Wallpaper.FadeDuration = 1.5
+			h.draft.Panels.Gap = 4
+			h.draft.Panels.OSD = "top-left"
+			h.draft.Bar.Enabled = false
+			h.draft.Tray.Hidden = []string{"id:blueman"}
+			h.draft.Tray.Pinned = []string{"id:nm-applet"}
+			h.draft.ThemeGen.Source = "palette"
+			h.draft.ThemeGen.Seed = theme.PaletteNames()[0]
+			h.draft.Bar.Left = append(h.draft.Bar.Left, config.Item{ID: "window-title", MaxWidth: 300})
+			h.set = settings.DefaultFor(h.draft)
+			h.root = settingsTree(nil, h)
+			if err := ui.LayoutColumn(h.root, h.place.Panel, settingsMeasure(h)); err != nil {
+				t.Fatalf("layout %s: %v", section, err)
+			}
+
+			rows, resets := 0, 0
+			for _, row := range walk(h.root) {
+				path := settingsRowPath(row)
+				if path == "" {
+					continue
+				}
+				rows++
+				trailing := row.Children[1]
+				control := trailing.Children[len(trailing.Children)-1]
+				edge := row.Bounds.X + row.Bounds.W - row.Padding
+				if got := control.Bounds.X + control.Bounds.W; got != edge {
+					t.Errorf("%s: control ends at %d, want the row edge %d", path, got, edge)
+				}
+				if len(trailing.Children) == 2 {
+					resets++
+					reset := trailing.Children[0]
+					if gap := control.Bounds.X - (reset.Bounds.X + reset.Bounds.W); gap != trailing.Gap {
+						t.Errorf("%s: Reset sits %d from its control, want %d", path, gap, trailing.Gap)
+					}
+				}
+			}
+			if rows == 0 {
+				t.Fatalf("%s rendered no setting rows", section)
+			}
+			if section != "Bar" && resets == 0 {
+				t.Errorf("%s rendered no changed row to compare against", section)
+			}
+		})
+	}
+}
+
+// TestSettingsDropdownsAndSegmentsMatchAppearance carries the accepted
+// Appearance controls to every page: a dropdown keeps the fixed 240 width that
+// earns it a chevron, and a segmented control's options share its width
+// equally.
+func TestSettingsDropdownsAndSegmentsMatchAppearance(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.section = "Panels"
+	h.place.Panel = ui.Rect{W: 1105, H: 760}
+	h.set = settings.DefaultFor(h.draft)
+	h.root = settingsTree(nil, h)
+	osd := byAction(h.root, "set:panels.osd")
+	if osd == nil || osd.Kind != ui.KindMenu {
+		t.Fatalf("OSD position = %+v, want a dropdown", osd)
+	}
+	if osd.Width != settingsDropdownFixedWidth {
+		t.Errorf("OSD position width = %d, want %d", osd.Width, settingsDropdownFixedWidth)
+	}
+	if got := h.menus["panels.osd"].Value(); got != "bottom-center" {
+		t.Errorf("OSD position holds %q, want the stored value bottom-center", got)
+	}
+
+	h.section = "Wallpaper"
+	h.root = settingsTree(nil, h)
+	if err := ui.LayoutColumn(h.root, h.place.Panel, settingsMeasure(h)); err != nil {
+		t.Fatalf("layout Wallpaper: %v", err)
+	}
+	for _, name := range []string{"Scaling", "Frame cap", "When occluded"} {
+		var seg *ui.Node
+		for _, n := range walk(h.root) {
+			if n.Kind == ui.KindSegmented && n.Name == name {
+				seg = n
+			}
+		}
+		if seg == nil {
+			t.Fatalf("Wallpaper %s is not a segmented control", name)
+		}
+		if seg.Width < settingsDropdownFixedWidth {
+			t.Errorf("%s width = %d, want at least %d", name, seg.Width, settingsDropdownFixedWidth)
+		}
+		for _, s := range seg.Children[1:] {
+			if d := s.Bounds.W - seg.Children[0].Bounds.W; d < -1 || d > 1 {
+				t.Errorf("%s segments differ in width: %d vs %d", name, s.Bounds.W, seg.Children[0].Bounds.W)
+			}
+		}
+		for _, s := range seg.Children {
+			if textW, _ := settingsMeasure(h)(s.Name, ui.TextAttrs{}); textW > s.Bounds.W {
+				t.Errorf("%s segment %q is %d wide, narrower than its label %d", name, s.Name, s.Bounds.W, textW)
+			}
+		}
+	}
+}
+
+// TestBarLayoutTitleUsesTheCardHeading keeps the lane editor's title in the
+// same hierarchy as every other Settings card.
+func TestBarLayoutTitleUsesTheCardHeading(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	var title *ui.Node
+	for _, n := range walk(barLaneStrip(h)) {
+		if n.Kind == ui.KindText && n.Name == "Layout" {
+			title = n
+		}
+	}
+	if title == nil {
+		t.Fatal("Bar Layout has no title named Layout")
+	}
+	if title.Text != "layout" || title.Role != "heading" || title.TextRole != theme.RoleSection || title.Tone != ui.ToneAccent {
+		t.Errorf("Bar Layout title text=%q role=%q text-role=%v tone=%v, want the card heading",
+			title.Text, title.Role, title.TextRole, title.Tone)
+	}
+}
+
 func isSettingsPageHeading(n *ui.Node, section string) bool {
 	return n != nil && n.Kind == ui.KindText && n.Text == strings.ToLower(section) && n.Name == section &&
 		n.Role == "heading" && n.TextRole == theme.RolePage && !n.Bold &&
