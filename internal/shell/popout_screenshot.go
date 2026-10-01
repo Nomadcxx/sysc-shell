@@ -2,12 +2,10 @@ package shell
 
 import (
 	"time"
+	"unicode/utf8"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
-
-// screenshotPathRunes bounds the save-folder caption in the 360 px panel.
-const screenshotPathRunes = 40
 
 type screenshotRow struct{ name, action, icon string }
 
@@ -38,17 +36,33 @@ func screenshotTree(r *Registry, h *PanelHost) *ui.Node {
 		})
 	}
 	dir := r.screenshotDirectory()
-	rows = append(rows, &ui.Node{Kind: ui.KindText, Text: shortenPath(dir, screenshotPathRunes), Name: dir})
+	_ = h.ensureText()
+	avail := h.place.Panel.W - 2*m.PanelPadding - 2*m.CardPadding
+	rows = append(rows, &ui.Node{Kind: ui.KindText, Text: shortenToWidth(dir, avail, h.measureText()), Name: dir})
 	children = append(children, monitorCard(m, rows))
 	return &ui.Node{Kind: ui.KindColumn, Gap: monitorCardGap, Padding: m.PanelPadding, Children: children}
+}
+
+// shortenToWidth is the longest shortenPath of p that measures within avail.
+// Width, not character count, bounds it: a CJK path is twice as wide per rune.
+func shortenToWidth(p string, avail int, measure ui.MeasureText) string {
+	for n := utf8.RuneCountInString(p); ; n-- {
+		s := shortenPath(p, n)
+		if w, _ := measure(s, ui.TextAttrs{}); w <= avail || n <= 1 {
+			return s
+		}
+	}
 }
 
 // shortenPath keeps the head and the tail of p within max runes, joined by an
 // ellipsis, so the folder's own name stays visible.
 func shortenPath(p string, max int) string {
 	r := []rune(p)
-	if len(r) <= max || max < 3 {
+	if len(r) <= max {
 		return p
+	}
+	if max <= 0 {
+		return ""
 	}
 	head := (max - 1) / 2
 	tail := max - 1 - head
@@ -66,7 +80,7 @@ const screenshotPanelCloseDelay = 150 * time.Millisecond
 // it; a later failure arrives as the existing failure toast.
 func (r *Registry) launchScreenshot(h *PanelHost, mode string) {
 	if r.selector != nil {
-		h.errLabel = errSelectorOpen.Error() + ": finish or cancel it"
+		h.errLabel = errSelectorOpen.Error()
 		r.rebuildPanel(h)
 		r.publishSurface(h.output, panelSurfaceID(h.id))
 		return

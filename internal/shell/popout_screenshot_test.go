@@ -74,8 +74,8 @@ func TestScreenshotPanelNamesItsPanelAndSize(t *testing.T) {
 	if id, err := parsePanelName("screenshot"); err != nil || id != PanelScreenshot {
 		t.Fatalf("parsePanelName = %v, %v", id, err)
 	}
-	if got := panelTargetSize(PanelScreenshot); got.W != 360 || got.H != 208 {
-		t.Fatalf("size = %+v, want 360x208", got)
+	if got := panelTargetSize(PanelScreenshot); got.W != 360 || got.H != 240 {
+		t.Fatalf("size = %+v, want 360x240", got)
 	}
 }
 
@@ -90,6 +90,9 @@ func TestShortenPath(t *testing.T) {
 		{"fits", "/home/u/Pictures", 40, "/home/u/Pictures"},
 		{"exact", "abcdef", 6, "abcdef"},
 		{"middle", "/home/u/Pictures/Screenshots", 16, "/home/u…eenshots"},
+		{"zero", "abcdef", 0, ""},
+		{"one", "abcdef", 1, "…"},
+		{"two", "abcdef", 2, "…f"},
 	}
 	for _, tc := range tests {
 		if got := shortenPath(tc.in, tc.max); got != tc.want {
@@ -102,26 +105,23 @@ func TestShortenPath(t *testing.T) {
 	}
 }
 
-func TestScreenshotCaptionShortensButNamesTheWholePath(t *testing.T) {
+func TestScreenshotCaptionNamesTheWholePath(t *testing.T) {
 	t.Parallel()
 	dir := "/home/someone/Pictures/Screenshots/with/a/very/deep/tree/of/folders"
 	_, h := newScreenshotHost(t, dir)
-	var found *ui.Node
+	var found bool
 	var walk func(*ui.Node)
 	walk = func(n *ui.Node) {
-		if n.Name == dir {
-			found = n
+		if n.Name == dir && n.Text != dir {
+			found = true
 		}
 		for _, c := range n.Children {
 			walk(c)
 		}
 	}
 	walk(h.root)
-	if found == nil {
-		t.Fatal("no node carries the full save directory as its name")
-	}
-	if len([]rune(found.Text)) > screenshotPathRunes {
-		t.Fatalf("caption %q is longer than %d runes", found.Text, screenshotPathRunes)
+	if !found {
+		t.Fatal("the shortened caption must carry the full save directory as its name")
 	}
 }
 
@@ -197,5 +197,57 @@ func TestScreenshotBarClickOpensThePanel(t *testing.T) {
 	_ = drainAux(t, reg, 2)
 	if reg.panelHosts[PanelScreenshot] == nil {
 		t.Fatal("the screenshot panel did not open")
+	}
+}
+
+func screenshotCardInnerWidth(h *PanelHost) int {
+	m := h.theme.Metrics
+	return h.place.Panel.W - 2*m.PanelPadding - 2*m.CardPadding
+}
+
+func TestScreenshotCaptionFitsThePanelWidth(t *testing.T) {
+	t.Parallel()
+	for _, dir := range []string{
+		"/home/someone/Pictures/Screenshots/with/a/very/deep/tree/of/folders",
+		"/home/ユーザー/ピクチャ/スクリーンショット/とても/深い/フォルダ/の/階層/です",
+	} {
+		_, h := newScreenshotHost(t, dir)
+		var caption *ui.Node
+		var walk func(*ui.Node)
+		walk = func(n *ui.Node) {
+			if n.Name == dir {
+				caption = n
+			}
+			for _, c := range n.Children {
+				walk(c)
+			}
+		}
+		walk(h.root)
+		if caption == nil {
+			t.Fatalf("%q: no caption", dir)
+		}
+		if w, _ := h.measureText()(caption.Text, ui.TextAttrs{}); w > screenshotCardInnerWidth(h) {
+			t.Errorf("%q: caption %q measures %d, panel allows %d", dir, caption.Text, w, screenshotCardInnerWidth(h))
+		}
+	}
+}
+
+func TestScreenshotErrorStateStillFitsThePanel(t *testing.T) {
+	reg, h := newScreenshotHost(t, "/home/someone/Pictures/Screenshots")
+	reg.mu.Lock()
+	reg.selector = &regionSelector{}
+	reg.mu.Unlock()
+	activateNamed(h, reg, "Region")
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if w, _ := h.measureText()(h.errLabel, ui.TextAttrs{}); w > h.place.Panel.W-2*h.theme.Metrics.PanelPadding {
+		t.Errorf("error %q measures %d, wider than the panel", h.errLabel, w)
+	}
+	ht, err := ui.ContentHeight(h.root, h.place.Panel.W, h.measureText())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ht > h.place.Panel.H {
+		t.Errorf("content with the error is %d tall, panel is %d", ht, h.place.Panel.H)
 	}
 }
