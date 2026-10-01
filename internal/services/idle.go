@@ -361,17 +361,20 @@ func (s *IdleService) Run(ctx context.Context) {
 	}
 }
 
-// refreshPower maps a battery snapshot onto the AC/battery policy input. No
-// readable battery means a desktop: AC. It applies directly because it runs on
-// the Run goroutine, the same one that drains inputs: posting SetOnAC back
-// through the channel would re-enter the consumer and deadlock once inputs
-// fills (gh #59).
+// onACPower maps a battery read onto the AC/battery policy input. Only a
+// present battery that reports discharging is on battery: a failed read, a
+// machine with no battery (a successful read with Present false) and a status
+// the reader cannot classify ("Not charging" on a docked laptop) all fail open
+// to AC, because the timer choice must never depend on telemetry (gh #76).
+func onACPower(snap metrics.BatterySnapshot, err error) bool {
+	return err != nil || !snap.Present || snap.State != metrics.BatteryDischarging
+}
+
+// refreshPower applies the power source directly because it runs on the Run
+// goroutine, the same one that drains inputs: posting SetOnAC back through the
+// queue would re-enter the consumer (gh #59).
 func (s *IdleService) refreshPower(m *idleMachine) {
-	onAC := true
-	if snap, err := s.readBattery(); err == nil {
-		onAC = snap.State == metrics.BatteryCharging || snap.State == metrics.BatteryFull
-	}
-	s.apply(m, m.setPower(onAC))
+	s.apply(m, m.setPower(onACPower(s.readBattery())))
 }
 
 func (s *IdleService) apply(m *idleMachine, decisions []IdleDecision) {

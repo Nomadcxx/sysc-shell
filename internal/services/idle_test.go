@@ -336,3 +336,28 @@ func TestIdleServiceSettersNeverBlockOnRun(t *testing.T) {
 	<-runDone
 	post("after Run has exited")
 }
+
+// gh #76: only a present battery that reports discharging is "on battery".
+// A desktop reads as a successful snapshot with Present false, and a docked
+// laptop reports "Not charging" as Unknown; neither may select battery timers.
+func TestOnACPower(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		snap metrics.BatterySnapshot
+		err  error
+		want bool
+	}{
+		{"read failed", metrics.BatterySnapshot{}, errors.New("sysfs"), true},
+		{"desktop without a battery", metrics.BatterySnapshot{Present: false, State: metrics.BatteryUnknown}, nil, true},
+		{"discharging", metrics.BatterySnapshot{Present: true, State: metrics.BatteryDischarging}, nil, false},
+		{"charging", metrics.BatterySnapshot{Present: true, State: metrics.BatteryCharging}, nil, true},
+		{"full", metrics.BatterySnapshot{Present: true, State: metrics.BatteryFull}, nil, true},
+		{"not charging on AC", metrics.BatterySnapshot{Present: true, State: metrics.BatteryUnknown}, nil, true},
+	}
+	for _, tc := range cases {
+		if got := onACPower(tc.snap, tc.err); got != tc.want {
+			t.Errorf("%s: onACPower = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
