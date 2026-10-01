@@ -936,3 +936,33 @@ func TestProtonGlyphIsTheMark(t *testing.T) {
 		t.Fatalf("proton glyph's widest row %d is not in the upper half", widestRow)
 	}
 }
+
+func TestMoonbitGlyphIsInProjectFace(t *testing.T) {
+	t.Parallel()
+	r, ok := IconByName("moonbit")
+	if !ok {
+		t.Fatal("moonbit is missing from the project icon catalogue")
+	}
+	if r != 0xE076 {
+		t.Fatalf("moonbit rune %U is not the codepoint after the Proton mark", r)
+	}
+	if got := glyphCoverage(t, r, 32); got == 0 {
+		t.Fatalf("moonbit glyph %U has no ink", r)
+	}
+	tr := NewTextRenderer(newIconFace())
+	mask, err := tr.RasterProjectIcon("moonbit", 64)
+	if err != nil || mask.Alpha == nil {
+		t.Fatalf("raster moonbit: %v", err)
+	}
+	scale := 64.0 * 50 / 1000
+	const orbLeftEdge = 12 - 7.5
+	alphaAt := func(x, y float64) uint8 {
+		return mask.Alpha.AlphaAt(int((x-orbLeftEdge)*scale), mask.Baseline-int((22-y)*scale)).A
+	}
+	if got := alphaAt(12, 12); got < 128 {
+		t.Fatalf("orb centre has alpha %d, want filled", got)
+	}
+	if got := alphaAt(9.375, 9.75); got != 0 {
+		t.Fatalf("first dimple has alpha %d, want transparent", got)
+	}
+}

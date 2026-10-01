@@ -115,6 +115,9 @@ GLYPHS.append(("uniE074", 0xE074, "github-unread"))
 # header.
 GLYPHS.append(("uniE075", 0xE075, "proton"))
 
+# The Moonbit orb follows for its theme-tinted bar pill.
+GLYPHS.append(("uniE076", 0xE076, "moonbit"))
+
 UPM = 1000
 # 24px SVG -> font units, y-flipped so the icon sits on the baseline.
 #
