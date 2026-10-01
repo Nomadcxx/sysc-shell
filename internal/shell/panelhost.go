@@ -1822,11 +1822,10 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 			ring := scale.PhysicalRect(n.Bounds)
 			radius := min(scale.Physical(h.theme.Radius), min(ring.W, ring.H)/2)
 			if n.Kind == ui.KindTextField {
-				// A field is a stadium, and it carries the focus itself: the
-				// comment here used to say it painted its own focused well,
-				// but nothing ever told the painter which field had focus, so
-				// a focused search field looked exactly like an idle one.
-				radius = min(ring.W, ring.H) / 2
+				// A field carries the focus itself, so the ring takes the
+				// well's own corners: a pill for a search field, a 12px page
+				// for a multiline one, never a stadium as tall as the page.
+				radius = render.FieldRadius(n, ring, scale)
 			}
 			c.StrokeRounded(ring, radius, max(scale.Physical(2), 2), h.theme.Accent)
 		}

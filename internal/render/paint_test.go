@@ -2899,3 +2899,16 @@ func TestPaperKeepsSubtleAndErrorTextReadable(t *testing.T) {
 		}
 	}
 }
+
+func TestFieldRadiusKeepsMultilineCornersOffTheStadium(t *testing.T) {
+	scale := ui.ScaleUnit
+	search := &ui.Node{Kind: ui.KindTextField}
+	if got := FieldRadius(search, ui.Rect{W: 192, H: 44}, scale); got != 22 {
+		t.Errorf("single-line radius = %d, want the 22px stadium", got)
+	}
+	// The Notes body: a 432x420 stadium is a 210px circle drawn over the text.
+	body := &ui.Node{Kind: ui.KindTextField, Multiline: true}
+	if got := FieldRadius(body, ui.Rect{W: 432, H: 420}, scale); got != multilineFieldRadius {
+		t.Errorf("multiline radius = %d, want %d", got, multilineFieldRadius)
+	}
+}
