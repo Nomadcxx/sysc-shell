@@ -4,7 +4,7 @@ import "encoding/json"
 
 const (
 	ProtocolMajor = 1
-	ProtocolMinor = 9
+	ProtocolMinor = 10
 )
 
 // The version-one message names. Every line on the wire carries one of these
@@ -264,6 +264,9 @@ const (
 	CallWallpaperMaskSet  CallKind = "wallpaper.mask.set"
 	CallOpenURL           CallKind = "open-url"
 	CallClipboardWrite    CallKind = "clipboard.write"
+
+	CallScreenshotStart     CallKind = "screenshot.start"
+	CallScreenshotDirectory CallKind = "screenshot.directory"
 )
 
 // HostCall is a request from the plugin. Params is left raw so that adding a
@@ -432,6 +435,18 @@ type OpenURLParams struct {
 // ClipboardWriteParams writes bounded plain text to the user's clipboard.
 type ClipboardWriteParams struct {
 	Text string `json:"text"`
+}
+
+// ScreenshotStartParams asks the shell to start a capture. Mode is "region",
+// "window" or "screen". The reply acknowledges the start only; the saved path
+// or failure arrives as the shell's own toast.
+type ScreenshotStartParams struct {
+	Mode string `json:"mode"`
+}
+
+// ScreenshotDirectoryResult is the directory captures are saved to.
+type ScreenshotDirectoryResult struct {
+	Directory string `json:"directory"`
 }
 
 // PanelResult names the view the host opened, so the plugin can close it.

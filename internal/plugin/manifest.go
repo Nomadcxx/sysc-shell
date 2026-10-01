@@ -81,6 +81,8 @@ const (
 	CapOpenURL Capability = "open-url"
 	// CapClipboardWrite lets a plugin write bounded plain text to the clipboard.
 	CapClipboardWrite Capability = "clipboard-write"
+	// CapScreenshot lets a plugin start a screenshot and read the save directory.
+	CapScreenshot Capability = "screenshot"
 )
 
 var knownCapabilities = map[Capability]bool{
@@ -89,6 +91,7 @@ var knownCapabilities = map[Capability]bool{
 	CapWallpaper:        true,
 	CapClipboardRead:    true,
 	CapOpenURL:          true, CapClipboardWrite: true,
+	CapScreenshot: true,
 }
 
 // Placement says how a declared panel is positioned. Version one attaches a
