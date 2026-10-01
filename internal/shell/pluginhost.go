@@ -722,6 +722,10 @@ func (h *pluginHost) closeView(id string) {
 		return
 	}
 	slot := h.slots[v.Plugin]
+	// Text typed in the last frame is still waiting for the flush timer,
+	// which drops changes for a view that has gone. It goes out first.
+	pending := h.textOut.Take(id)
+	h.inputs = append(h.inputs, pending...)
 	delete(h.views, id)
 	surface := h.surfaces[id]
 	delete(h.surfaces, id)
@@ -734,6 +738,9 @@ func (h *pluginHost) closeView(id string) {
 		surface.closeWayland()
 	}
 	if slot != nil {
+		for i := range pending {
+			_ = slot.rt.Send(&pending[i])
+		}
 		_ = slot.rt.Send(&v1.ViewClose{ViewID: id})
 	}
 }

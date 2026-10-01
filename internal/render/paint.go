@@ -801,14 +801,22 @@ func FieldTextRect(n *ui.Node) ui.Rect {
 // multilineFieldRadius is a multiline well's corner, in logical pixels.
 const multilineFieldRadius = 12
 
+// FieldRadius is the physical corner radius of a text field's well at box,
+// its physical bounds. A search well is a pill, not a 6px-radius box. A
+// multiline field is a page, and a stadium that tall is an oval the text
+// spills out of. The focus ring follows the same silhouette, so it is
+// exported rather than re-derived by the host.
+func FieldRadius(n *ui.Node, box ui.Rect, scale ui.Scale120) int {
+	radius := min(box.W, box.H) / 2
+	if n.Multiline {
+		radius = min(radius, scale.Physical(multilineFieldRadius))
+	}
+	return radius
+}
+
 func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
 	box := style.Scale120.PhysicalRect(n.Bounds)
-	// Stadium: a search well is a pill, not a 6px-radius box. A multiline
-	// field is a page, and a stadium that tall is an oval the text spills out of.
-	radius := box.H / 2
-	if n.Multiline {
-		radius = min(radius, style.Scale120.Physical(multilineFieldRadius))
-	}
+	radius := FieldRadius(n, box, style.Scale120)
 	well := style.Capsule
 	if well.A == 0 {
 		well = style.Track

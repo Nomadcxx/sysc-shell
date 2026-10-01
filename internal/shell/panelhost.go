@@ -662,6 +662,11 @@ func (r *Registry) ClosePanel(id PanelID) {
 // the last member.
 func (r *Registry) closePanelLocked(id PanelID) {
 	h := r.panelHosts[id]
+	if h != nil {
+		// A hint over a panel that is going would stay on screen until the
+		// pointer next moved somewhere that drives the dwell.
+		r.dwell.leave()
+	}
 	output, hasOutput := r.panels.Output(id)
 	if h != nil {
 		output, hasOutput = h.output, true
@@ -1586,6 +1591,46 @@ func (h *PanelHost) surfaceSize() (w, hgt int) {
 // surfaceBody is where the body sits in a surface of the given size: inset by
 // the left joint, and below the screen-edge wedge when the bar is on the lower
 // edge.
+// driveTooltip arms the hover card for the node under the pointer, the way
+// the bar does for its widgets. The card is placed on the output, so the
+// node's surface rect is moved by where the panel body sits there.
+func (h *PanelHost) driveTooltip(r *Registry) {
+	text, anchor := tooltipAt(h.root, h.hoverX, h.hoverY)
+	if text == "" {
+		r.dwell.leave()
+		return
+	}
+	w, hgt := h.logicalW, h.logicalH
+	if w <= 0 || hgt <= 0 {
+		w, hgt = h.surfaceSize()
+	}
+	body := h.surfaceBody(w, hgt)
+	anchor.X += h.rect.X - body.X
+	anchor.Y += h.rect.Y - body.Y
+	r.dwell.enterOnOutput(h.output, anchor, text)
+}
+
+// tooltipAt is the hover text of the innermost node under x, y, and that
+// node's bounds. The walk only descends into nodes containing the point, so a
+// row scrolled out of its list is never found.
+func tooltipAt(root *ui.Node, x, y int) (string, ui.Rect) {
+	text, bounds := "", ui.Rect{}
+	var walk func(*ui.Node)
+	walk = func(n *ui.Node) {
+		if n == nil || !n.Bounds.Contains(x, y) {
+			return
+		}
+		if n.Tooltip != "" {
+			text, bounds = n.Tooltip, n.Bounds
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+	return text, bounds
+}
+
 func (h *PanelHost) surfaceBody(w, hgt int) ui.Rect {
 	j := h.place.Joints()
 	edge := h.edgeExtent(j)
@@ -1828,11 +1873,10 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 			ring := scale.PhysicalRect(n.Bounds)
 			radius := min(scale.Physical(h.theme.Radius), min(ring.W, ring.H)/2)
 			if n.Kind == ui.KindTextField {
-				// A field is a stadium, and it carries the focus itself: the
-				// comment here used to say it painted its own focused well,
-				// but nothing ever told the painter which field had focus, so
-				// a focused search field looked exactly like an idle one.
-				radius = min(ring.W, ring.H) / 2
+				// A field carries the focus itself, so the ring takes the
+				// well's own corners: a pill for a search field, a 12px page
+				// for a multiline one, never a stadium as tall as the page.
+				radius = render.FieldRadius(n, ring, scale)
 			}
 			c.StrokeRounded(ring, radius, max(scale.Physical(2), 2), h.theme.Accent)
 		}
@@ -1899,11 +1943,13 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 				}
 				h.fieldDrag = nil
 			}
+			h.driveTooltip(r)
 			// Only a change of resolved target repaints. Movement inside the
 			// control the pointer is already on resolves to the same key and
 			// costs nothing.
 			return h.pointerChanged(r, h.pointer.setHover(hoverKeyAt(h.root, h.hoverX, h.hoverY)))
 		case wayland.EventPointerLeave:
+			r.dwell.leave()
 			h.pressed = ""
 			h.sliderDrag = nil
 			h.scrollDrag = nil
@@ -1911,6 +1957,8 @@ func (h *PanelHost) handle(r *Registry) func(wayland.Event) bool {
 			return h.pointerChanged(r, h.pointer.clear())
 		case wayland.EventPointerPress:
 			h.hoverX, h.hoverY = int(math.Floor(e.X)), int(math.Floor(e.Y))
+			// A click acts on the control; its hint has done its job.
+			r.dwell.leave()
 			// The clear glyph sits inside the field's own bounds, so it is
 			// resolved before any panel's hit testing gets a look at the point.
 			if h.searchClearPress(r, e) {

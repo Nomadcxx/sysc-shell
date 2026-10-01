@@ -120,6 +120,9 @@ func (h *pluginHost) openFloatingSurface(ctx context.Context, pluginID string, p
 	}
 	surface.panel = &PanelHost{
 		id: PanelPlugin, output: global,
+		// rect is where the sticky sits on the output; hover hints are
+		// placed against it.
+		rect:  ui.Rect{X: state.X, Y: state.Y, W: state.Width, H: state.Height},
 		place: Placement{Panel: ui.Rect{W: state.Width, H: state.Height}, Output: ui.Rect{W: outputW, H: outputH}, CenterY: true},
 		theme: theme, fontFamily: font,
 	}
@@ -235,6 +238,9 @@ func (h *pluginHost) dropFloatingSurface(surface *pluginSurfaceHost) {
 	}
 	view := h.views[id]
 	slot := (*pluginSlot)(nil)
+	// As in closeView: the sticky's last keystrokes go out before its close.
+	pending := h.textOut.Take(id)
+	h.inputs = append(h.inputs, pending...)
 	if view != nil {
 		slot = h.slots[view.Plugin]
 		h.closed = append(h.closed, id)
@@ -252,6 +258,9 @@ func (h *pluginHost) dropFloatingSurface(surface *pluginSurfaceHost) {
 	surface.closed = true
 	surface.mu.Unlock()
 	if slot != nil {
+		for i := range pending {
+			_ = slot.rt.Send(&pending[i])
+		}
 		_ = slot.rt.Send(&v1.ViewClose{ViewID: id})
 	}
 }
@@ -555,8 +564,9 @@ func (p *pluginSurfaceHost) setGeometry(next pluginSurfaceState, resized bool) {
 	}
 	p.x, p.y, p.width, p.height = next.X, next.Y, next.Width, next.Height
 	p.mu.Unlock()
+	p.host.r.mu.Lock()
+	p.panel.rect = ui.Rect{X: next.X, Y: next.Y, W: next.Width, H: next.Height}
 	if resized {
-		p.host.r.mu.Lock()
 		p.panel.place.Panel.W, p.panel.place.Panel.H = next.Width, next.Height
 		if p.panel.logicalW > 0 {
 			p.panel.logicalW, p.panel.logicalH = next.Width, next.Height
@@ -567,8 +577,8 @@ func (p *pluginSurfaceHost) setGeometry(next pluginSurfaceState, resized bool) {
 				_ = p.panel.configure(next.Width, next.Height, p.panel.scale120)
 			}
 		}
-		p.host.r.mu.Unlock()
 	}
+	p.host.r.mu.Unlock()
 	p.applyGeometry(resized)
 }
 

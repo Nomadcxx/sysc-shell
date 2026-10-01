@@ -41,3 +41,16 @@ func (o *TextOut) Flush() []v1.InputEvent {
 	}
 	return out
 }
+
+// Take returns and clears the pending changes for one view, for a close to
+// send ahead of itself: a flush that runs after the view is gone drops them.
+func (o *TextOut) Take(viewID string) []v1.InputEvent {
+	var out []v1.InputEvent
+	for k, ev := range o.change {
+		if ev.ViewID == viewID {
+			out = append(out, ev)
+			delete(o.change, k)
+		}
+	}
+	return out
+}
