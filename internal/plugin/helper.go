@@ -118,6 +118,15 @@ func HelperServe(args []string) int {
 		}
 	}
 
+	if mode == "call-flood" {
+		// More calls than the host holds before SetCalls; each reply is
+		// echoed back as "<id>:<error>" so a test can see which went unanswered.
+		params, _ := json.Marshal(v1.NotifyParams{Summary: "flood"})
+		for i := 0; i < maxEarlyCalls+8; i++ {
+			_ = out.Encode(&v1.HostCall{ID: fmt.Sprintf("f%d", i), Call: v1.CallNotify, Params: params})
+		}
+	}
+
 	if mode == "notify-then-snapshot" {
 		params, _ := json.Marshal(v1.NotifyParams{Summary: "saved"})
 		_ = out.Encode(&v1.HostCall{ID: "n1", Call: v1.CallNotify, Params: params})
@@ -165,6 +174,10 @@ func HelperServe(args []string) int {
 				return 4
 			}
 		case *v1.HostReply:
+			if mode == "call-flood" {
+				_ = out.Encode(&v1.PluginStatus{State: v1.StatusOK, Message: m.ID + ":" + m.Error})
+				break
+			}
 			_ = out.Encode(&v1.PluginStatus{State: v1.StatusOK, Message: string(m.Result)})
 		case *v1.InputEvent:
 			_ = out.Encode(&v1.PluginStatus{State: v1.StatusOK, Message: m.Node})

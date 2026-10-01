@@ -314,12 +314,26 @@ func (r *Runtime) supervise(ctx, sessionCtx context.Context, cancel context.Canc
 		if call, ok := msg.(*v1.HostCall); ok {
 			r.mu.Lock()
 			d := r.disp
-			if d == nil && len(r.early) < maxEarlyCalls {
-				r.early = append(r.early, earlyCall{sessionCtx, sess, call})
+			overflow := false
+			if d == nil {
+				if len(r.early) < maxEarlyCalls {
+					r.early = append(r.early, earlyCall{sessionCtx, sess, call})
+				} else {
+					overflow = true
+				}
 			}
 			r.mu.Unlock()
 			if d != nil {
 				go r.answer(sessionCtx, sess, d, call)
+			}
+			if overflow {
+				// Every call gets exactly one reply; a dropped one would leave
+				// the plugin waiting on its id until the session ends. Sent
+				// off this goroutine so a plugin not reading cannot stall Recv.
+				go func(id string) {
+					reply := failReply(id, "too many host calls before the host was ready")
+					_ = sess.Send(&reply)
+				}(call.ID)
 			}
 			// A call is never a view update: it is answered under its own
 			// session's context, never queued for the consumer (gh #66).

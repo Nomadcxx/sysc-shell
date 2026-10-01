@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -479,5 +480,41 @@ func TestEarlyHostCallDoesNotOutliveItsSession(t *testing.T) {
 			t.Fatal("host call reached the message queue")
 		}
 	default:
+	}
+}
+
+// A call that finds the early buffer full must still get its one reply; before
+// the fix it was dropped and the plugin waited on its id for the whole session.
+func TestEarlyHostCallOverflowIsAnsweredWithAnError(t *testing.T) {
+	r := NewRuntime(Candidate{Manifest: installHelper(t, "call-flood")}, helperOptions())
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer r.Stop()
+
+	// The dispatcher is attached late on purpose, so the first maxEarlyCalls
+	// calls are held and every later one overflows.
+	overflowed := map[string]bool{}
+	deadline := time.After(3 * time.Second)
+	for len(overflowed) < 8 {
+		select {
+		case msg := <-r.Messages():
+			st, ok := msg.(*v1.PluginStatus)
+			if !ok {
+				continue
+			}
+			id, errText, _ := strings.Cut(st.Message, ":")
+			if errText == "" {
+				t.Fatalf("call %s was answered before SetCalls", id)
+			}
+			overflowed[id] = true
+		case <-deadline:
+			t.Fatalf("overflowing calls never got a reply: %v", overflowed)
+		}
+	}
+	for i := maxEarlyCalls; i < maxEarlyCalls+8; i++ {
+		if id := fmt.Sprintf("f%d", i); !overflowed[id] {
+			t.Fatalf("call %s got no reply", id)
+		}
 	}
 }
