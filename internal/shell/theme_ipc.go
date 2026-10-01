@@ -51,7 +51,7 @@ func (r *Registry) ThemeCall(method string, params json.RawMessage) (map[string]
 		return r.themePaletteSet(p.Source, p.Seed)
 	case "theme.preview.show":
 		cfg := r.themeSnapshot()
-		if err := themeApplyOverrides(&cfg, p.Mode, p.Source, p.Seed); err != nil {
+		if err := themeApplyOverrides(r.settingsFor, &cfg, p.Mode, p.Source, p.Seed); err != nil {
 			return nil, err
 		}
 		return r.themePreviewShow(cfg)
@@ -87,7 +87,7 @@ func (r *Registry) themeSnapshot() config.Config {
 
 func (r *Registry) themeSet(path, value string) (map[string]any, error) {
 	cfg := r.themeSnapshot()
-	if err := themeEntrySet(settings.DefaultFor(cfg), &cfg, path, value); err != nil {
+	if err := themeEntrySet(r.settingsFor(cfg), &cfg, path, value); err != nil {
 		return nil, err
 	}
 	if err := r.writeConfig(cfg); err != nil {
@@ -101,7 +101,7 @@ func (r *Registry) themePaletteSet(source, seed string) (map[string]any, error) 
 		return nil, errors.New("theme.palette.set needs source or seed")
 	}
 	cfg := r.themeSnapshot()
-	if err := themeApplyOverrides(&cfg, "", source, seed); err != nil {
+	if err := themeApplyOverrides(r.settingsFor, &cfg, "", source, seed); err != nil {
 		return nil, err
 	}
 	if err := r.writeConfig(cfg); err != nil {
@@ -115,14 +115,14 @@ func (r *Registry) themePaletteSet(source, seed string) (map[string]any, error) 
 // validated by the entry's own Setter. An empty value leaves its field alone.
 // Order matters: what a seed means follows the source, so the seed entry is
 // chosen from the registry rebuilt after the source is applied.
-func themeApplyOverrides(cfg *config.Config, mode, source, seed string) error {
+func themeApplyOverrides(reg func(config.Config) *settings.Registry, cfg *config.Config, mode, source, seed string) error {
 	if mode != "" {
-		if err := themeEntrySet(settings.DefaultFor(*cfg), cfg, "appearance.mode", mode); err != nil {
+		if err := themeEntrySet(reg(*cfg), cfg, "appearance.mode", mode); err != nil {
 			return err
 		}
 	}
 	if source != "" {
-		if err := themeEntrySet(settings.DefaultFor(*cfg), cfg, "appearance.source", source); err != nil {
+		if err := themeEntrySet(reg(*cfg), cfg, "appearance.source", source); err != nil {
 			return err
 		}
 	}
@@ -131,7 +131,7 @@ func themeApplyOverrides(cfg *config.Config, mode, source, seed string) error {
 		if cfg.ThemeGen.Source == "palette" {
 			path = "appearance.palette"
 		}
-		if err := themeEntrySet(settings.DefaultFor(*cfg), cfg, path, seed); err != nil {
+		if err := themeEntrySet(reg(*cfg), cfg, path, seed); err != nil {
 			return err
 		}
 	}
@@ -160,7 +160,7 @@ func (r *Registry) themeTemplatesApply(name string, on *bool) (map[string]any, e
 		}
 	} else {
 		cfg = r.themeSnapshot()
-		e, ok := settings.DefaultFor(cfg).Lookup("theme.templates." + name)
+		e, ok := r.settingsFor(cfg).Lookup("theme.templates." + name)
 		if !ok {
 			return nil, fmt.Errorf("unknown template %s", name)
 		}

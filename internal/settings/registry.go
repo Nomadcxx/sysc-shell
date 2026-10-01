@@ -20,7 +20,16 @@ func Default() *Registry {
 	return DefaultFor(config.Default())
 }
 
-func DefaultFor(cfg config.Config) *Registry {
+func DefaultFor(cfg config.Config, opts ...Option) *Registry {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+	slugs := o.slugs()
+	sources := themeSources
+	if len(slugs) > 0 {
+		sources = append(slices.Clone(themeSources), "custom")
+	}
 	r := &Registry{entries: []Entry{
 		{
 			Path: "bar.enabled", Label: "Enabled", Section: "Bar", Page: "Appearance", Group: "Surface",
@@ -112,14 +121,14 @@ func DefaultFor(cfg config.Config) *Registry {
 		{
 			Path: "appearance.source", Label: "Theme source", Section: "Appearance", Group: "Colours & mode",
 			Describe: "Where the palette is seeded from.",
-			Kind:     KindEnum, Options: themeSources,
+			Kind:     KindEnum, Options: sources,
 			Get: func(c config.Config) string { return c.ThemeGen.Source },
-			Set: setEnum("appearance.source", themeSources, func(c *config.Config, v string) {
+			Set: setEnum("appearance.source", sources, func(c *config.Config, v string) {
 				c.ThemeGen.Source = v
-				c.ThemeGen.Seed = seedFor(v, c.ThemeGen.Seed)
+				c.ThemeGen.Seed = seedFor(v, c.ThemeGen.Seed, slugs)
 			}),
 		},
-		seedEntry(cfg),
+		seedEntry(cfg, slugs),
 		// The palette entry writes the same field the seed does: with source
 		// set to palette the seed names a scheme, and an enum is a kinder way
 		// to pick one than typing it.
@@ -521,8 +530,37 @@ func DefaultFor(cfg config.Config) *Registry {
 	r.addTemplateEntries()
 	r.addTrayEntries(cfg)
 	r.addOutputEntries(cfg)
+	if len(slugs) > 0 {
+		r.insertAfter("appearance.palette", Entry{
+			Path: "appearance.custom", Label: "Custom palette", Section: "Appearance", Group: "Colours & mode",
+			Describe: "A palette you saved on the Palettes page. Choosing one also sets the source to custom.",
+			Kind:     KindEnum,
+			Options:  slugs,
+			Get: func(c config.Config) string {
+				if c.ThemeGen.Source == "custom" {
+					return c.ThemeGen.Seed
+				}
+				return ""
+			},
+			Set: setEnum("appearance.custom", slugs, func(c *config.Config, v string) {
+				c.ThemeGen.Source = "custom"
+				c.ThemeGen.Seed = v
+			}),
+		})
+	}
 	r.resolveDefaults()
 	return r
+}
+
+// insertAfter places e right after the entry at path, or appends it.
+func (r *Registry) insertAfter(path string, e Entry) {
+	for i := range r.entries {
+		if r.entries[i].Path == path {
+			r.entries = slices.Insert(r.entries, i+1, e)
+			return
+		}
+	}
+	r.entries = append(r.entries, e)
 }
 
 // presetAxisPaths names the entries that write a theme.Composition axis.
@@ -592,7 +630,7 @@ func SectionClusters() []Cluster {
 		// Captions name the group, never one of its items (owner decision,
 		// 2026-10-01): "Bar" over Bar and "Panels" over Panels read as
 		// duplicates, and Plugins is not a panel.
-		{"Look", []string{"Appearance", "Templates", "Wallpaper"}},
+		{"Look", []string{"Appearance", "Palettes", "Templates", "Wallpaper"}},
 		{"Shell", []string{"Bar", "Widgets", "Tray"}},
 		{"Surfaces", []string{"Panels", "Monitor", "Weather"}},
 		{"Extensions", []string{"Plugins"}},
@@ -681,8 +719,15 @@ func validHex(v string) bool { return config.ValidColor(v) }
 // the other wrote a file the shell then refused to load. That is why a stock
 // theme could not be chosen from settings at all: the picker was not missing,
 // the choice it made was unloadable.
-func seedFor(source, seed string) string {
+func seedFor(source, seed string, custom []string) string {
 	switch source {
+	case "custom":
+		if slices.Contains(custom, seed) {
+			return seed
+		}
+		if len(custom) > 0 {
+			return custom[0]
+		}
 	case "stock":
 		if _, ok := theme.StockSeed(seed); ok {
 			return seed
@@ -718,7 +763,7 @@ func seedFor(source, seed string) string {
 		if _, ok := theme.StockSeed(seed); ok {
 			return ""
 		}
-		if slices.Contains(theme.PaletteNames(), seed) || validHex(seed) {
+		if slices.Contains(theme.PaletteNames(), seed) || slices.Contains(custom, seed) || validHex(seed) {
 			return ""
 		}
 	}
@@ -728,7 +773,7 @@ func seedFor(source, seed string) string {
 // seedEntry is built from the supplied configuration because what the seed
 // means follows the source: under "stock" it names one of a closed set of
 // bundled themes, so it is a picker rather than a free-text field.
-func seedEntry(cfg config.Config) Entry {
+func seedEntry(cfg config.Config, custom []string) Entry {
 	e := Entry{
 		Path: "appearance.seed", Label: "Theme input", Section: "Appearance", Group: "Colours & mode",
 		Describe: "What the source reads: an image path, a colour, a stock theme, or a palette name.",
@@ -752,6 +797,23 @@ func seedEntry(cfg config.Config) Entry {
 		e.Kind = KindEnum
 		e.Options = names
 		e.Set = setEnum("appearance.seed", names, func(c *config.Config, v string) { c.ThemeGen.Seed = v })
+	}
+	if cfg.ThemeGen.Source == "custom" {
+		if len(custom) > 0 {
+			e.Kind = KindEnum
+			e.Options = custom
+			e.Set = setEnum("appearance.seed", custom, func(c *config.Config, v string) { c.ThemeGen.Seed = v })
+		} else {
+			// Nothing saved (every palette was deleted): a free field that
+			// still refuses anything that is not an id, so the config stays loadable.
+			e.Set = write(func(c *config.Config, v string) error {
+				if !theme.ValidSlug(strings.TrimSpace(v)) {
+					return fmt.Errorf("settings: appearance.seed: %q is not a saved palette id", v)
+				}
+				c.ThemeGen.Seed = strings.TrimSpace(v)
+				return nil
+			})
+		}
 	}
 	return e
 }

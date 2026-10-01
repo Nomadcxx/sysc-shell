@@ -38,6 +38,7 @@ const settingsRailWidth = 208
 // invisible control rather than failing anywhere visible.
 var settingsSectionIcons = map[string]string{
 	"Appearance":    "palette",
+	"Palettes":      "tune",
 	"Templates":     "description",
 	"Bar":           "toolbar",
 	"Widgets":       "widgets",

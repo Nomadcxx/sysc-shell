@@ -1091,7 +1091,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		h.scale120 = bar.scale120()
 	}
 	if id == PanelSettings {
-		h.set = settings.DefaultFor(r.cfg)
+		h.set = r.settingsForLocked(r.cfg)
 		h.draft = r.cfg
 		h.section = "Bar"
 		h.search = ui.NewField("")
@@ -3375,7 +3375,7 @@ func (h *PanelHost) commitSetting(r *Registry, e *settings.Entry, v string) {
 		r.rebuildPanel(h)
 		return
 	}
-	h.set = settings.DefaultFor(h.draft)
+	h.set = r.settingsForLocked(h.draft)
 	// A toggle or a menu is a decision the user has finished making, so it
 	// goes to the file at once. A slider or a field is a stream of them, and
 	// writing per keystroke rewrote the whole document each time.

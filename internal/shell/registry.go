@@ -105,6 +105,9 @@ type Registry struct {
 	// paletteStore holds the user's saved palettes. Set once in NewRegistry and
 	// never reassigned outside tests, so it is read without Registry.mu.
 	paletteStore *theme.Store
+	// palettes is the last listing of paletteStore. Registry.mu; replaced
+	// whole by refreshPalettes.
+	palettes []theme.PaletteInfo
 	// themeGenMu serializes generation across goroutines (sysc-780). Committed
 	// generation shares one cache path; previews use temporary paths but still
 	// keep matugen single-flight. Leaf lock: nothing takes Registry.mu while it
@@ -260,6 +263,52 @@ type Registry struct {
 	launcherSvc *launcher.Service
 }
 
+func listPalettes(st *theme.Store) []theme.PaletteInfo {
+	if st == nil {
+		return nil
+	}
+	return st.List()
+}
+
+// refreshPalettes re-reads the palettes directory outside Registry.mu and
+// swaps the snapshot under it. Every Registry.Palette* mutation calls it, and
+// so do opening Settings and entering the Palettes section, so a hand-edited
+// file shows up the next time the page is entered. Must not be called with
+// Registry.mu held.
+func (r *Registry) refreshPalettes() {
+	list := listPalettes(r.paletteStore)
+	r.mu.Lock()
+	r.palettes = list
+	r.mu.Unlock()
+}
+
+// customPalettesOf is the usable part of a snapshot, for the settings
+// registry. A file that cannot be loaded is left out; the Palettes page shows it.
+func customPalettesOf(list []theme.PaletteInfo) []settings.CustomPalette {
+	var out []settings.CustomPalette
+	for _, p := range list {
+		if p.Err == nil {
+			out = append(out, settings.CustomPalette{Slug: p.Slug, Name: p.Name})
+		}
+	}
+	return out
+}
+
+// settingsFor builds the settings registry for cfg with the saved palettes.
+// It must not be called with Registry.mu held; use settingsForLocked there.
+func (r *Registry) settingsFor(cfg config.Config) *settings.Registry {
+	r.mu.Lock()
+	list := r.palettes
+	r.mu.Unlock()
+	return settings.DefaultFor(cfg, settings.WithCustomPalettes(customPalettesOf(list)))
+}
+
+// settingsForLocked is settingsFor for callers that already hold Registry.mu.
+// It reads only the snapshot, so it is cheap enough for every settings edit.
+func (r *Registry) settingsForLocked(cfg config.Config) *settings.Registry {
+	return settings.DefaultFor(cfg, settings.WithCustomPalettes(customPalettesOf(r.palettes)))
+}
+
 // paletteDir is where saved palettes live: beside the config file main
 // persists to (config.DefaultPath). Empty when there is no config directory.
 func paletteDir() string {
@@ -317,6 +366,8 @@ func NewRegistry(cfg config.Config) *Registry {
 	}
 	r.depthClocks = newDepthClockHost(r, nil)
 	r.weather.SetCity(cfg.Weather.City)
+	// Construction is single-threaded, so the first snapshot needs no lock.
+	r.palettes = listPalettes(palettes)
 	r.tokens, r.themeErr = tokensAndReason(r.generateTheme(cfg))
 	r.osd = newOSDManager(r, 0)
 	r.tooltips = newTooltipHost(r, nil)
@@ -1631,7 +1682,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				// depend on another setting.
 				if h := r.panelHosts[PanelSettings]; h != nil {
 					h.draft = cfg
-					h.set = settings.DefaultFor(cfg)
+					h.set = r.settingsForLocked(cfg)
 				}
 				r.refreshMonitorLeasesLocked(r.panelHosts[PanelMonitor])
 				media = r.media
