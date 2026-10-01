@@ -429,11 +429,29 @@ func TestSettingsSectionTitlesUseLowercase(t *testing.T) {
 				t.Errorf("%s title is not a semantic bold heading: role=%v bold=%t tone=%v accessible-name=%q",
 					section, title.TextRole, title.Bold, title.Tone, title.Name)
 			}
+			// Owner decision 2026-09-30 (appearance polish design): the
+			// launcher's SYSC rail frames every section title, "////// title
+			// //////", set left over the content rather than centred.
+			var rail *ui.Node
 			for _, n := range walk(h.root) {
-				if n.Text == launcherSlashRun {
-					t.Errorf("%s title unexpectedly contains decorative slash rails", section)
-					break
+				if n.Kind == ui.KindRow && len(n.Children) == 3 && n.Children[1] == title {
+					rail = n
 				}
+			}
+			if rail == nil {
+				t.Fatalf("%s title is not framed by the slash rail", section)
+			}
+			for _, side := range []*ui.Node{rail.Children[0], rail.Children[2]} {
+				if side.Text != launcherSlashRun || side.Tone != ui.ToneAccent || side.TextRole != title.TextRole || side.Name != "" {
+					t.Errorf("%s rail side = %q tone=%v role=%v name=%q, want unnamed accent %q in the title's role",
+						section, side.Text, side.Tone, side.TextRole, side.Name, launcherSlashRun)
+				}
+			}
+			if rail.CenterX {
+				t.Errorf("%s rail is centred, want it set left like the content", section)
+			}
+			if want := h.metrics().CardPadding; rail.Padding != want {
+				t.Errorf("%s rail padding = %d, want the card padding %d so it lines up with card text", section, rail.Padding, want)
 			}
 		})
 	}

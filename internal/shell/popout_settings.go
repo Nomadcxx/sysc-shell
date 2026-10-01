@@ -301,7 +301,7 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	// The section name is always visible over the content, which is what lets
 	// the group titles inside the column stay unsticky.
-	head = append(head, settingsSectionHeading(section))
+	head = append(head, settingsSectionHeading(h, section))
 	if pages := settings.SectionPages(section); len(pages) > 0 && !searching {
 		head = append(head, settingsPageTabs(h, pages, page))
 	}
@@ -344,11 +344,24 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	return body(content)
 }
 
-func settingsSectionHeading(section string) *ui.Node {
-	return &ui.Node{
-		Kind: ui.KindText, Text: strings.ToLower(section), Name: section, Role: "heading",
-		TextRole: theme.RolePage, Tone: ui.ToneAccent,
+// settingsSectionHeading frames the section title with the launcher's SYSC
+// rail, "////// appearance //////", set left over the content (owner decision,
+// appearance polish design, 2026-09-30). The slashes take the title's role so
+// they sit on its line, and carry no name: the title alone is the heading.
+// The card padding insets it, so the first slash lines up with the card text
+// under it rather than with the card's edge.
+func settingsSectionHeading(h *PanelHost, section string) *ui.Node {
+	slashes := func() *ui.Node {
+		return &ui.Node{Kind: ui.KindText, Text: launcherSlashRun, TextRole: theme.RolePage, Tone: ui.ToneAccent}
 	}
+	return &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Padding: h.metrics().CardPadding, Children: []*ui.Node{
+		slashes(),
+		{
+			Kind: ui.KindText, Text: strings.ToLower(section), Name: section, Role: "heading",
+			TextRole: theme.RolePage, Tone: ui.ToneAccent,
+		},
+		slashes(),
+	}}
 }
 
 // templateRefusals reports, under the toggle rows, every template whose file
