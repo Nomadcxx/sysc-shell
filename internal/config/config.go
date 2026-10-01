@@ -416,9 +416,6 @@ var knownItems = map[string]struct{}{
 	// Bluetooth is opt-in: its bar glyph is useful when requested, but adding
 	// it to the default would change existing layouts.
 	"bluetooth": {},
-	// Screenshot is opt-in like Wallpaper and Bluetooth: its glyph opens the
-	// capture launcher, and adding it to the default would change layouts.
-	"screenshot": {},
 	// Media is opt-in like Bluetooth: the glyph and title appear only while a
 	// player is on the session bus, and the design carries no player picker
 	// here — the control centre's Media page is the one picker.

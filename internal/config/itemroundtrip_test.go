@@ -41,7 +41,6 @@ var itemFixtures = map[string]Item{
 	"wifi":          {ID: "wifi"},
 	"media":         {ID: "media"},
 	"bluetooth":     {ID: "bluetooth"},
-	"screenshot":    {ID: "screenshot"},
 	"clipboard":     {ID: "clipboard"},
 	"plugin":        {ID: "plugin", Plugin: "org.sysc.weather", Entry: "bar", Instance: "weather-1"},
 	"group":         {ID: "group", Items: []Item{{ID: "cpu", Display: "radial", Interval: 2 * time.Second}}},

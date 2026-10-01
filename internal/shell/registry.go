@@ -245,12 +245,6 @@ type Registry struct {
 	// screenshotDir names the directory captures are saved to. Tests replace
 	// it; nil is screenshot.Dir.
 	screenshotDir func() string
-	// startScreenshot starts a capture by mode. Tests replace it; nil is
-	// Registry.Screenshot.
-	startScreenshot func(mode string) error
-	// openFolder opens a directory in the file manager. Tests replace it; nil
-	// is openFolderDefault.
-	openFolder func(dir string) error
 	// selector is the open region selector, if any. Registry.mu.
 	selector *regionSelector
 	// toasts hosts one toast stack per output, created when wiring binds it.
@@ -1435,9 +1429,6 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 		case action == panelBluetoothAction && (button == 0 || button == buttonLeft):
 			trig.AnchorX = bar.actionCenterX(panelBluetoothAction)
 			return r.TogglePanel(PanelBluetooth, out, trig) == nil
-		case action == panelScreenshotAction && (button == 0 || button == buttonLeft):
-			trig.AnchorX = bar.actionCenterX(panelScreenshotAction)
-			return r.TogglePanel(PanelScreenshot, out, trig) == nil
 		case action == panelWeatherAction && (button == 0 || button == buttonLeft || button == buttonRight):
 			trig.AnchorX = bar.actionCenterX(panelWeatherAction)
 			return r.TogglePanel(PanelWeather, out, trig) == nil

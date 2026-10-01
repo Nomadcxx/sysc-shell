@@ -15,7 +15,6 @@ var widgetNames = map[string]string{
 	"battery":       "Battery",
 	"block":         "Disk activity",
 	"bluetooth":     "Bluetooth",
-	"screenshot":    "Screenshot",
 	"clipboard":     "Clipboard",
 	"clock":         "Clock",
 	"cpu":           "Processor",
