@@ -2113,6 +2113,14 @@ func (r *Registry) viewLocked(connector string) barView {
 	if r.plugins != nil {
 		view.Plugins = r.plugins.frames(connector)
 	}
+	for _, item := range allItems(r.cfg.ForConnector(connector)) {
+		if item.ID == "plugin" && !slices.Contains(r.cfg.Plugins.Enabled, item.Plugin) {
+			if view.PluginsOff == nil {
+				view.PluginsOff = map[string]bool{}
+			}
+			view.PluginsOff[item.Plugin] = true
+		}
+	}
 	return view
 }
 

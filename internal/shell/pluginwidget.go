@@ -60,10 +60,21 @@ func buildPluginWidget(item config.Item) textWidget {
 	*rev = ^uint64(0)
 	tip := new(*ui.Node)
 	return textWidget{
-		node:    row,
-		tooltip: item.Plugin,
-		tip:     tip,
+		node:           row,
+		tooltip:        item.Plugin,
+		tip:            tip,
+		hideWhenAbsent: true,
 		refresh: func(v barView) bool {
+			if off := v.PluginsOff[item.Plugin]; off != row.Absent {
+				row.Absent = off
+				*rev = ^uint64(0)
+				if off {
+					*tip = nil
+					return true
+				}
+			} else if off {
+				return false
+			}
 			frame, ok := v.Plugins[item.Instance]
 			id := uint64(0)
 			if ok {
