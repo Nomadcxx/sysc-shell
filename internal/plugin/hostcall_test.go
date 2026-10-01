@@ -717,3 +717,66 @@ func TestCancelledHostCallHoldsItsSlotUntilTheHookReturns(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 }
+
+func TestHostCallScreenshotStartValidatesModeAndGrant(t *testing.T) {
+	var got []string
+	d := NewDispatcher(CallEnv{Granted: []Capability{CapScreenshot}, Screenshot: func(_ context.Context, mode string) error {
+		got = append(got, mode)
+		return nil
+	}})
+	for _, mode := range []string{"region", "window", "screen"} {
+		reply := d.Handle(context.Background(), &v1.HostCall{ID: "1", Call: v1.CallScreenshotStart, Params: jsonOf(t, v1.ScreenshotStartParams{Mode: mode})})
+		if !reply.OK {
+			t.Fatalf("mode %q refused: %+v", mode, reply)
+		}
+	}
+	if !reflect.DeepEqual(got, []string{"region", "window", "screen"}) {
+		t.Fatalf("started %v", got)
+	}
+	for _, mode := range []string{"", "scroll", "REGION"} {
+		reply := d.Handle(context.Background(), &v1.HostCall{ID: "bad", Call: v1.CallScreenshotStart, Params: jsonOf(t, v1.ScreenshotStartParams{Mode: mode})})
+		if reply.OK || !strings.Contains(reply.Error, "mode") {
+			t.Fatalf("mode %q reply = %+v, want a mode error", mode, reply)
+		}
+	}
+	if len(got) != 3 {
+		t.Fatalf("a bad mode started a capture: %v", got)
+	}
+	refusal := errors.New("a region selector is already open")
+	refused := NewDispatcher(CallEnv{Granted: []Capability{CapScreenshot}, Screenshot: func(context.Context, string) error { return refusal }})
+	reply := refused.Handle(context.Background(), &v1.HostCall{ID: "r", Call: v1.CallScreenshotStart, Params: jsonOf(t, v1.ScreenshotStartParams{Mode: "region"})})
+	if reply.OK || reply.Error != refusal.Error() {
+		t.Fatalf("refusal reply = %+v, want error %q", reply, refusal)
+	}
+	denied := NewDispatcher(CallEnv{}).Handle(context.Background(), &v1.HostCall{ID: "d", Call: v1.CallScreenshotStart, Params: jsonOf(t, v1.ScreenshotStartParams{Mode: "region"})})
+	if denied.OK || !strings.Contains(denied.Error, "capability") {
+		t.Fatalf("ungranted reply = %+v", denied)
+	}
+	unwired := NewDispatcher(CallEnv{Granted: []Capability{CapScreenshot}}).Handle(context.Background(), &v1.HostCall{ID: "u", Call: v1.CallScreenshotStart, Params: jsonOf(t, v1.ScreenshotStartParams{Mode: "region"})})
+	if unwired.OK || !strings.Contains(unwired.Error, "not available") {
+		t.Fatalf("unwired reply = %+v", unwired)
+	}
+}
+
+func TestHostCallScreenshotDirectory(t *testing.T) {
+	d := NewDispatcher(CallEnv{Granted: []Capability{CapScreenshot}, ScreenshotDirectory: func(context.Context) (string, error) {
+		return "/home/u/Pictures/Screenshots", nil
+	}})
+	reply := d.Handle(context.Background(), &v1.HostCall{ID: "1", Call: v1.CallScreenshotDirectory})
+	if !reply.OK {
+		t.Fatalf("reply = %+v", reply)
+	}
+	var result v1.ScreenshotDirectoryResult
+	if err := json.Unmarshal(reply.Result, &result); err != nil || result.Directory != "/home/u/Pictures/Screenshots" {
+		t.Fatalf("result = %s (%v)", reply.Result, err)
+	}
+	failing := NewDispatcher(CallEnv{Granted: []Capability{CapScreenshot}, ScreenshotDirectory: func(context.Context) (string, error) {
+		return "", errors.New("no directory")
+	}})
+	if r := failing.Handle(context.Background(), &v1.HostCall{ID: "2", Call: v1.CallScreenshotDirectory}); r.OK {
+		t.Fatalf("a failing hook was reported OK: %+v", r)
+	}
+	if r := NewDispatcher(CallEnv{}).Handle(context.Background(), &v1.HostCall{ID: "3", Call: v1.CallScreenshotDirectory}); r.OK || !strings.Contains(r.Error, "capability") {
+		t.Fatalf("ungranted directory reply = %+v", r)
+	}
+}

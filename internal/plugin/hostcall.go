@@ -26,26 +26,28 @@ type StateStore interface {
 
 // CallEnv is the host surface one plugin is allowed to use.
 type CallEnv struct {
-	PluginID          string
-	Granted           []Capability
-	DeclaredPanels    []Panel
-	Store             StateStore
-	OpenPanel         func(context.Context, v1.PanelParams) (v1.PanelResult, error)
-	ClosePanel        func(context.Context, v1.PanelParams) error
-	Notify            func(context.Context, v1.NotifyParams) (v1.NotifyResult, error)
-	OutputContext     func(context.Context, v1.OutputContextParams) (v1.OutputContextResult, error)
-	PanelResize       func(context.Context, v1.PanelResizeParams) (v1.PanelResizeResult, error)
-	ViewFocus         func(context.Context, v1.ViewFocusParams) error
-	OpenSurface       func(context.Context, v1.SurfaceOpenParams) (v1.SurfaceResult, error)
-	CloseSurface      func(context.Context, v1.SurfaceCloseParams) error
-	SurfacePin        func(context.Context, v1.SurfacePinParams) error
-	WallpaperSnapshot func(context.Context) (v1.WallpaperSnapshotResult, error)
-	WallpaperMaskSet  func(context.Context, v1.WallpaperMaskSetParams) error
-	ClipboardRead     func(context.Context) (v1.ClipboardReadResult, error)
-	OpenURL           func(context.Context, v1.OpenURLParams) error
-	ClipboardWrite    func(context.Context, v1.ClipboardWriteParams) error
-	MaxPending        int
-	CallTimeout       time.Duration
+	PluginID            string
+	Granted             []Capability
+	DeclaredPanels      []Panel
+	Store               StateStore
+	OpenPanel           func(context.Context, v1.PanelParams) (v1.PanelResult, error)
+	ClosePanel          func(context.Context, v1.PanelParams) error
+	Notify              func(context.Context, v1.NotifyParams) (v1.NotifyResult, error)
+	OutputContext       func(context.Context, v1.OutputContextParams) (v1.OutputContextResult, error)
+	PanelResize         func(context.Context, v1.PanelResizeParams) (v1.PanelResizeResult, error)
+	ViewFocus           func(context.Context, v1.ViewFocusParams) error
+	OpenSurface         func(context.Context, v1.SurfaceOpenParams) (v1.SurfaceResult, error)
+	CloseSurface        func(context.Context, v1.SurfaceCloseParams) error
+	SurfacePin          func(context.Context, v1.SurfacePinParams) error
+	WallpaperSnapshot   func(context.Context) (v1.WallpaperSnapshotResult, error)
+	WallpaperMaskSet    func(context.Context, v1.WallpaperMaskSetParams) error
+	ClipboardRead       func(context.Context) (v1.ClipboardReadResult, error)
+	OpenURL             func(context.Context, v1.OpenURLParams) error
+	ClipboardWrite      func(context.Context, v1.ClipboardWriteParams) error
+	Screenshot          func(context.Context, string) error
+	ScreenshotDirectory func(context.Context) (string, error)
+	MaxPending          int
+	CallTimeout         time.Duration
 }
 
 func (e CallEnv) maxPending() int {
@@ -209,6 +211,11 @@ func (d *Dispatcher) dispatch(ctx context.Context, call *v1.HostCall) v1.HostRep
 			return failReply(call.ID, "capability clipboard-write is not granted")
 		}
 		return d.clipboardWrite(ctx, call)
+	case v1.CallScreenshotStart, v1.CallScreenshotDirectory:
+		if !d.env.allows(CapScreenshot) {
+			return failReply(call.ID, "capability screenshot is not granted")
+		}
+		return d.screenshot(ctx, call)
 	default:
 		return failReply(call.ID, fmt.Sprintf("unknown call %q", call.Call))
 	}
@@ -328,6 +335,41 @@ func (d *Dispatcher) openURL(ctx context.Context, call *v1.HostCall) v1.HostRepl
 		return failReply(call.ID, err.Error())
 	}
 	return okReply(call.ID, nil)
+}
+
+func (d *Dispatcher) screenshot(ctx context.Context, call *v1.HostCall) v1.HostReply {
+	switch call.Call {
+	case v1.CallScreenshotStart:
+		var p v1.ScreenshotStartParams
+		if err := decodeStrictParams(call.Params, &p); err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		switch p.Mode {
+		case "region", "window", "screen":
+		default:
+			return failReply(call.ID, "screenshot mode must be region, window or screen")
+		}
+		if d.env.Screenshot == nil {
+			return failReply(call.ID, "screenshot is not available")
+		}
+		if err := d.env.Screenshot(ctx, p.Mode); err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		return okReply(call.ID, nil)
+	default:
+		var params struct{}
+		if err := decodeStrictParams(call.Params, &params); err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		if d.env.ScreenshotDirectory == nil {
+			return failReply(call.ID, "screenshot is not available")
+		}
+		dir, err := d.env.ScreenshotDirectory(ctx)
+		if err != nil {
+			return failReply(call.ID, err.Error())
+		}
+		return okReply(call.ID, v1.ScreenshotDirectoryResult{Directory: dir})
+	}
 }
 
 func (d *Dispatcher) clipboardWrite(ctx context.Context, call *v1.HostCall) v1.HostReply {
