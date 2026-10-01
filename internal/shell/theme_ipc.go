@@ -23,6 +23,8 @@ func (r *Registry) ThemeCall(method string, params json.RawMessage) (map[string]
 		Source string `json:"source"`
 		Seed   string `json:"seed"`
 		Name   string `json:"name"`
+		Slug   string `json:"slug"`
+		Path   string `json:"path"`
 		On     *bool  `json:"on"`
 	}
 	if len(params) > 0 {
@@ -59,6 +61,44 @@ func (r *Registry) ThemeCall(method string, params json.RawMessage) (map[string]
 		return r.themePreviewHide(), nil
 	case "theme.templates.apply":
 		return r.themeTemplatesApply(p.Name, p.On)
+	case "theme.palettes.list":
+		list, err := r.PalettesList()
+		if err != nil {
+			return nil, err
+		}
+		rows := make([]map[string]any, 0, len(list))
+		for _, p := range list {
+			rows = append(rows, map[string]any{"slug": p.Slug, "name": p.Name, "active": p.Active, "error": p.Err})
+		}
+		return map[string]any{"palettes": rows}, nil
+	case "theme.palettes.save":
+		slug, err := r.PaletteSaveCurrent(r.themeSnapshot(), p.Name)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"slug": slug}, nil
+	case "theme.palettes.rename":
+		if err := r.PaletteRename(p.Slug, p.Name); err != nil {
+			return nil, err
+		}
+		return map[string]any{"slug": p.Slug, "name": p.Name}, nil
+	case "theme.palettes.delete":
+		if err := r.PaletteDelete(p.Slug); err != nil {
+			return nil, err
+		}
+		return map[string]any{"slug": p.Slug}, nil
+	case "theme.palettes.export":
+		path, err := r.PaletteExport(p.Slug)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"path": path}, nil
+	case "theme.palettes.import":
+		slug, adjusted, err := r.PaletteImportFile(p.Path)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"slug": slug, "adjusted": adjusted}, nil
 	default:
 		return nil, fmt.Errorf("unknown method %s", method)
 	}

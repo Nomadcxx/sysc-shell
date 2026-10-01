@@ -513,3 +513,14 @@ func TestServeWaitsForInFlightRequestBeforeReturning(t *testing.T) {
 		t.Fatal("Serve did not return once the handler finished")
 	}
 }
+
+func TestCallTimeouts(t *testing.T) {
+	cases := map[string]time.Duration{
+		"status": 2 * time.Second, "theme.preview.show": 12 * time.Second, "theme.palettes.save": 25 * time.Second,
+	}
+	for method, want := range cases {
+		if got := callTimeout(method); got != want {
+			t.Errorf("callTimeout(%q) = %v, want %v", method, got, want)
+		}
+	}
+}

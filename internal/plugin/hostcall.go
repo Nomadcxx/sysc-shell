@@ -439,6 +439,12 @@ func clipboardWriteCommand(parent context.Context, value string) error {
 	return nil
 }
 
+// WriteClipboardText copies text to the system clipboard. The shell's own
+// panels use it where a plugin would use the clipboard.write host call.
+func WriteClipboardText(ctx context.Context, value string) error {
+	return clipboardWriteCommand(ctx, value)
+}
+
 func (d *Dispatcher) state(ctx context.Context, call *v1.HostCall) v1.HostReply {
 	switch call.Call {
 	case v1.CallStateGet:
