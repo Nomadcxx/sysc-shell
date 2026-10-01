@@ -129,9 +129,11 @@ func NewRuntime(c Candidate, opts RuntimeOptions) *Runtime {
 	}
 }
 
-// Messages carries every message the plugin sends after its handshake. The
-// read loop has to put what it reads somewhere, and delivering it is the only
-// alternative to discarding a view the plugin meant the user to see.
+// Messages carries what the plugin sends after its handshake, except host
+// calls: those are answered by the dispatcher under their own session's
+// context and never queued here (gh #66). The read loop has to put the rest
+// somewhere, and delivering it is the only alternative to discarding a view
+// the plugin meant the user to see.
 func (r *Runtime) Messages() <-chan v1.Message { return r.messages }
 
 // earlyCall is a host.call that arrived before SetCalls. It keeps the session
