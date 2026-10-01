@@ -155,7 +155,11 @@ func TestContrastErrorsSitOnTheRowAndFixClearsThem(t *testing.T) {
 	onRow := hasText(h, "Hard to read on Surface")
 	wire := hasText(h, "on_surface on surface")
 	summary := hasText(h, "hard to read in "+mode)
+	singular := hasText(h, "1 colour is hard to read") && !hasText(h, "1 colours")
 	reg.mu.Unlock()
+	if !singular {
+		t.Error("one failing colour is counted as \"1 colours are\"")
+	}
 	if len(failures) == 0 || failures[0].Fg != "on_surface" {
 		t.Fatalf("failures = %+v, want one for on_surface", failures)
 	}
@@ -183,6 +187,12 @@ func TestSaveIsRefusedWhileTheDraftFailsValidation(t *testing.T) {
 	editRole(t, reg, h, "on_surface", surface)
 	press(t, reg, h, "palette-save")
 	settle(t, reg, h, func(p *paletteUI) bool { return p.busy == "" && p.err != "" })
+	reg.mu.Lock()
+	refusal := h.palettes.err
+	reg.mu.Unlock()
+	if strings.Contains(refusal, "on_surface") {
+		t.Errorf("refusal %q uses wire role names (R7)", refusal)
+	}
 
 	f, err := reg.paletteStore.Load(slug)
 	if err != nil || f.Dark["on_surface"] == surface {

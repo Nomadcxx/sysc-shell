@@ -108,6 +108,12 @@ type Registry struct {
 	// palettes is the last listing of paletteStore. Registry.mu; replaced
 	// whole by refreshPalettes.
 	palettes []theme.PaletteInfo
+	// paletteRefreshMu serialises a listing with its swap, so a listing taken
+	// before a save never lands after one taken after it. Taken before
+	// Registry.mu, never while holding it.
+	paletteRefreshMu sync.Mutex
+	// paletteLister reads the store; tests replace it to hold a listing open.
+	paletteLister func(*theme.Store) []theme.PaletteInfo
 	// themeGenMu serializes generation across goroutines (sysc-780). Committed
 	// generation shares one cache path; previews use temporary paths but still
 	// keep matugen single-flight. Leaf lock: nothing takes Registry.mu while it
@@ -276,7 +282,9 @@ func listPalettes(st *theme.Store) []theme.PaletteInfo {
 // file shows up the next time the page is entered. Must not be called with
 // Registry.mu held.
 func (r *Registry) refreshPalettes() {
-	list := listPalettes(r.paletteStore)
+	r.paletteRefreshMu.Lock()
+	defer r.paletteRefreshMu.Unlock()
+	list := r.paletteLister(r.paletteStore)
 	r.mu.Lock()
 	r.palettes = list
 	r.mu.Unlock()
@@ -327,6 +335,7 @@ func NewRegistry(cfg config.Config) *Registry {
 			cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit)),
 		themeGen:       gen,
 		paletteStore:   palettes,
+		paletteLister:  listPalettes,
 		templateForce:  map[string]bool{},
 		invalidations:  make(chan wayland.Invalidation, 8),
 		aux:            make(chan wayland.AuxRequest, 8),

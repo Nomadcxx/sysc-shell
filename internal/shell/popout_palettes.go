@@ -138,7 +138,9 @@ func (r *Registry) runPaletteOp(h *PanelHost, action string, op func() (string, 
 // reopening the panel. An unchanged listing touches nothing.
 func (r *Registry) refreshPalettesAsync(h *PanelHost) {
 	go func() {
-		list := listPalettes(r.paletteStore)
+		r.paletteRefreshMu.Lock()
+		defer r.paletteRefreshMu.Unlock()
+		list := r.paletteLister(r.paletteStore)
 		r.mu.Lock()
 		if samePalettes(r.palettes, list) {
 			r.mu.Unlock()
@@ -218,7 +220,7 @@ func paletteImportSeed() string {
 func paletteStatusLine(r *Registry, h *PanelHost, inner int) []*ui.Node {
 	var out []*ui.Node
 	line := func(text string, tone ui.Tone) {
-		out = append(out, &ui.Node{Kind: ui.KindText, Text: text, Tone: tone, MaxWidth: inner, Multiline: true})
+		out = append(out, h.wrappedText(text, theme.RoleBody, tone, inner, 0))
 	}
 	if h.palettes.err != "" {
 		line(h.palettes.err, ui.ToneError)
@@ -247,14 +249,14 @@ func palettesTree(r *Registry, h *PanelHost) *ui.Node {
 	fieldW := max((inner-settingsControlWidth(h)/2)*3/5, 1)
 
 	save := []*ui.Node{
-		{Kind: ui.KindText, Text: "Keeps the colours in effect now, dark and light, under a name you choose.", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: inner, Multiline: true},
+		h.wrappedText("Keeps the colours in effect now, dark and light, under a name you choose.", theme.RoleCaption, ui.ToneSubtle, inner, 0),
 		{Kind: ui.KindRow, PinEnd: true, Width: inner, Children: []*ui.Node{
 			paletteField(h, "palette-name", "Palette name", r.paletteSuggestedNameLocked(h.draft), fieldW),
 			paletteButton(h, "palette-save-current", "Save", "Saving…", m),
 		}},
 	}
 	imp := []*ui.Node{
-		{Kind: ui.KindText, Text: "A palette file, or any JSON with dark and light colour maps, such as matugen's colors.json. Up to 64 KiB.", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: inner, Multiline: true},
+		h.wrappedText("A palette file, or any JSON with dark and light colour maps, such as matugen's colors.json. Up to 64 KiB.", theme.RoleCaption, ui.ToneSubtle, inner, 0),
 		{Kind: ui.KindRow, PinEnd: true, Width: inner, Children: []*ui.Node{
 			paletteField(h, "palette-import-path", "Path to a palette file", paletteImportSeed(), fieldW),
 			paletteButton(h, "palette-import-file", "Import", "Importing…", m),
@@ -277,7 +279,7 @@ func palettesTree(r *Registry, h *PanelHost) *ui.Node {
 
 func paletteRows(r *Registry, h *PanelHost, m theme.Metrics, inner int) []*ui.Node {
 	if len(r.palettes) == 0 {
-		return []*ui.Node{{Kind: ui.KindText, Text: "No saved palettes yet. Save the current colours or import a file below.", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: inner, Multiline: true}}
+		return []*ui.Node{h.wrappedText("No saved palettes yet. Save the current colours or import a file below.", theme.RoleCaption, ui.ToneSubtle, inner, 0)}
 	}
 	var rows []*ui.Node
 	for _, p := range r.palettes {
@@ -297,7 +299,7 @@ func paletteRow(r *Registry, h *PanelHost, m theme.Metrics, inner int, p theme.P
 	switch {
 	case p.Err != nil:
 		// The file is named so it can be repaired by hand.
-		caption, tone = fmt.Sprintf("Cannot be used (%s.json): %s", p.Slug, strings.ReplaceAll(p.Err.Error(), "theme: ", "")), ui.ToneError
+		caption, tone = fmt.Sprintf("Cannot be used (%s.json): %s", p.Slug, paletteFileReason(p)), ui.ToneError
 		actions = []*ui.Node{del}
 	case h.palettes.deleting == p.Slug:
 		caption, tone = "Delete this palette? This cannot be undone.", ui.ToneError
@@ -331,24 +333,37 @@ func paletteRow(r *Registry, h *PanelHost, m theme.Metrics, inner int, p theme.P
 	if err != nil {
 		trailingW = inner / 2
 	}
+	// Every row reserves the strip's width, so a corrupt file's name lines
+	// up with the names of the palettes beside it.
+	strip := paletteSwatchStrip(p.File, h.draft.ThemeGen.Mode, m)
 	stripW := 0
-	var strip *ui.Node
-	if p.Err == nil {
-		strip = paletteSwatchStrip(p.File, h.draft.ThemeGen.Mode, m)
-		if w, _, err := ui.Measure(strip, h.measureText()); err == nil {
-			stripW = w + theme.MarginM
-		}
+	if w, _, err := ui.Measure(strip, h.measureText()); err == nil {
+		stripW = w + theme.MarginM
+	}
+	if p.Err != nil {
+		strip = paletteBlankStrip(m)
 	}
 	labelW := max(inner-trailingW-stripW-theme.MarginL, 1)
 	label := &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Width: labelW, Children: []*ui.Node{
 		{Kind: ui.KindText, Text: p.Name, TextRole: theme.RoleLabel, MaxWidth: labelW},
-		{Kind: ui.KindText, Text: caption, TextRole: theme.RoleCaption, Tone: tone, MaxWidth: labelW, Multiline: p.Err != nil || h.palettes.deleting == p.Slug},
+		h.wrappedText(caption, theme.RoleCaption, tone, labelW, 0),
 	}}
-	lead := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{label}}
-	if strip != nil {
-		lead.Children = []*ui.Node{strip, label}
-	}
+	lead := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Children: []*ui.Node{strip, label}}
 	return &ui.Node{Kind: ui.KindRow, PinEnd: true, Width: inner, Gap: theme.MarginM, Children: []*ui.Node{lead, trailing}}
+}
+
+// paletteBlankStrip holds a swatch strip's place in a row whose file cannot be
+// read: five transparent, decorative squares laid out exactly as the strip is.
+func paletteBlankStrip(m theme.Metrics) *ui.Node {
+	size := max(m.CompactControl/2, 1)
+	row := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginXXS}
+	for range 5 {
+		row.Children = append(row.Children, &ui.Node{
+			Kind: ui.KindImage, ImageSize: size,
+			Image: &ui.Image{Width: size, Height: size, Stride: size * 4, Pix: make([]byte, size*size*4)},
+		})
+	}
+	return row
 }
 
 // paletteSwatchStrip is the five-colour preview of one mode of a palette.
@@ -461,4 +476,14 @@ func (r *Registry) importNotice(slug string, adjusted int) string {
 		return fmt.Sprintf("Imported “%s”; %d text colours were adjusted so they stay readable", name, adjusted)
 	}
 	return fmt.Sprintf("Imported “%s”", name)
+}
+
+// paletteFileReason is why a stored file cannot be used, without the store's
+// prefixes that repeat what the row already says.
+func paletteFileReason(p theme.PaletteInfo) string {
+	reason := strings.ReplaceAll(p.Err.Error(), "theme: ", "")
+	for _, prefix := range []string{fmt.Sprintf("palette %q: ", p.Slug), "palette file: "} {
+		reason = strings.TrimPrefix(reason, prefix)
+	}
+	return reason
 }

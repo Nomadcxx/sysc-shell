@@ -100,3 +100,36 @@ func countColor(t *testing.T, c *Canvas, r ui.Rect, want Color) int {
 	}
 	return n
 }
+
+// A field scrolled half out of its scroll view must not paint its text past
+// the view's edge. The field narrowed the clip to its own box instead of
+// intersecting it with the scroll's, so on a long settings page a field at
+// the bottom edge printed its value over the panel's padding.
+func TestFieldTextStaysInsideItsScrollView(t *testing.T) {
+	t.Parallel()
+	const w, h, viewH = 200, 100, 50
+	style := capsuleStyle()
+	style.Body = ui.Rect{W: w, H: h}
+	paint := func(children ...*ui.Node) *Canvas {
+		c := newTestCanvas(t, w, h)
+		scroll := &ui.Node{Kind: ui.KindScroll, Bounds: ui.Rect{W: w, H: viewH}, Children: children}
+		root := &ui.Node{Kind: ui.KindColumn, Bounds: ui.Rect{W: w, H: h}, Children: []*ui.Node{scroll}}
+		if err := Paint(c, root, NewTextRenderer(mustTestFace(t)), style); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	empty := paint()
+	// Half out of the view, then wholly below it: an empty intersection is
+	// nothing to draw, not "no clip".
+	for _, top := range []int{30, 60} {
+		withField := paint(&ui.Node{Kind: ui.KindTextField, Text: "#495a62", Padding: 4, Bounds: ui.Rect{Y: top, W: w, H: 40}})
+		for y := viewH; y < h; y++ {
+			for x := 0; x < w; x++ {
+				if a, b := pixelAt(t, empty, x, y), pixelAt(t, withField, x, y); a != b {
+					t.Fatalf("field at y=%d: pixel %d,%d is %v with the field and %v without, below the %dpx scroll view", top, x, y, b, a, viewH)
+				}
+			}
+		}
+	}
+}

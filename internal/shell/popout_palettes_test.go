@@ -263,3 +263,27 @@ func TestPaletteNamesAreNeverCardHeadings(t *testing.T) {
 		t.Fatal("the palette's name is not shown with its case intact")
 	}
 }
+
+// A corrupt file's row names the file once and gives the cause, without the
+// store's own prefixes repeating the name ("palette \"broken\": palette file:").
+func TestCorruptRowNamesTheFileOnce(t *testing.T) {
+	reg, h := openPalettesPage(t)
+	if err := os.MkdirAll(reg.paletteStore.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(reg.paletteStore.Dir+"/broken.json", []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reg.refreshPalettes()
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	reg.rebuildPanel(h)
+	if !hasText(h, "broken.json") {
+		t.Fatal("the corrupt file is not named")
+	}
+	for _, repeat := range []string{`palette "broken"`, "palette file:"} {
+		if hasText(h, repeat) {
+			t.Errorf("the row repeats %q", repeat)
+		}
+	}
+}

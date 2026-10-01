@@ -231,7 +231,17 @@ func paletteFixDraft(p *paletteUI) {
 func (r *Registry) paletteSaveDraft(h *PanelHost, action string, use bool) bool {
 	p := &h.palettes
 	if err := p.draft.Validate(); err != nil {
-		p.finish("", fmt.Errorf("Fix the colours marked below before saving: %w", firstLine(err)))
+		// Contrast failures are already on their rows in role labels (R7);
+		// anything else, such as an unusable name, is said as it is.
+		switch {
+		case len(paletteFailures(p.draft, p.mode)) > 0:
+			err = errors.New("Fix the colours marked below before saving.")
+		case len(paletteFailures(p.draft, otherMode(p.mode))) > 0:
+			err = fmt.Errorf("Fix the colours marked in %s before saving.", otherMode(p.mode))
+		default:
+			err = firstLine(err)
+		}
+		p.finish("", err)
 		r.rebuildPanel(h)
 		return true
 	}
@@ -367,7 +377,7 @@ func paletteEditorTree(r *Registry, h *PanelHost, m theme.Metrics) *ui.Node {
 
 	head := []*ui.Node{
 		{Kind: ui.KindRow, PinEnd: true, Width: inner, Children: []*ui.Node{name, paletteButton(h, "palette-back", back, "", m)}},
-		{Kind: ui.KindText, Text: "ID for scripts and IPC: " + p.editing + " · " + state, TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: inner, Multiline: true},
+		h.wrappedText("ID for scripts and IPC: "+p.editing+" · "+state, theme.RoleCaption, ui.ToneSubtle, inner, 0),
 		{Kind: ui.KindRow, PinEnd: true, Width: inner, Children: []*ui.Node{
 			{Kind: ui.KindRow, Gap: theme.MarginXS, Children: []*ui.Node{revert, save, apply}},
 			{Kind: ui.KindRow, Gap: theme.MarginXS, Children: []*ui.Node{export, copyJSON}},
@@ -377,7 +387,7 @@ func paletteEditorTree(r *Registry, h *PanelHost, m theme.Metrics) *ui.Node {
 			Height: m.CompactControl, Name: "Palette mode", Role: "radiogroup",
 			Children: []*ui.Node{paletteModeSegment(p, "dark", "Dark", m), paletteModeSegment(p, "light", "Light", m)},
 		},
-		{Kind: ui.KindText, Text: "Edits preview on the whole shell until you save or leave.", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: inner, Multiline: true},
+		h.wrappedText("Edits preview on the whole shell until you save or leave.", theme.RoleCaption, ui.ToneSubtle, inner, 0),
 	}
 	children := []*ui.Node{settingsGroupCard(h, "Editor", head)}
 	children = append(children, paletteStatusLine(r, h, inner)...)
@@ -385,7 +395,7 @@ func paletteEditorTree(r *Registry, h *PanelHost, m theme.Metrics) *ui.Node {
 	failures := paletteFailures(p.draft, p.mode)
 	otherN := failingForegrounds(paletteFailures(p.draft, otherMode(p.mode)))
 	if len(failures) > 0 || otherN > 0 {
-		children = append(children, paletteContrastSummary(p, failingForegrounds(failures), otherN, inner, m))
+		children = append(children, paletteContrastSummary(h, p, failingForegrounds(failures), otherN, inner, m))
 	}
 	byRole := map[string][]theme.ContrastFailure{}
 	for _, f := range failures {
@@ -414,10 +424,10 @@ func paletteModeSegment(p *paletteUI, mode, label string, m theme.Metrics) *ui.N
 
 // paletteContrastSummary counts colours, not pairs, offers the other mode
 // when it fails too, and says what Fix contrast will touch (R10).
-func paletteContrastSummary(p *paletteUI, here, other, inner int, m theme.Metrics) *ui.Node {
+func paletteContrastSummary(h *PanelHost, p *paletteUI, here, other, inner int, m theme.Metrics) *ui.Node {
 	var col []*ui.Node
 	if here > 0 {
-		col = append(col, &ui.Node{Kind: ui.KindText, Text: fmt.Sprintf("%d colours are hard to read in %s", here, p.mode), TextRole: theme.RoleLabel, Tone: ui.ToneError})
+		col = append(col, &ui.Node{Kind: ui.KindText, Text: fmt.Sprintf("%s hard to read in %s", colourCount(here), p.mode), TextRole: theme.RoleLabel, Tone: ui.ToneError})
 	}
 	if other > 0 {
 		o := otherMode(p.mode)
@@ -428,7 +438,7 @@ func paletteContrastSummary(p *paletteUI, here, other, inner int, m theme.Metric
 	}
 	col = append(col, &ui.Node{Kind: ui.KindRow, Gap: theme.MarginS, Children: []*ui.Node{
 		pluginManagerButton("palette-fix", "Fix contrast", m),
-		{Kind: ui.KindText, Text: "Changes only text and outline colours, in dark and light.", TextRole: theme.RoleCaption, Tone: ui.ToneSubtle, MaxWidth: max(inner/2, 1), Multiline: true},
+		h.wrappedText("Changes only text and outline colours, in dark and light.", theme.RoleCaption, ui.ToneSubtle, max(inner/2, 1), 0),
 	}})
 	return &ui.Node{Kind: ui.KindCapsule, Fill: ui.FillContainerHighest, Shape: ui.ShapeMedium, Padding: m.CardPadding, Width: inner,
 		Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginS, Children: col}}}
@@ -470,6 +480,14 @@ func paletteRoleRow(h *PanelHost, role, value string, fails []theme.ContrastFail
 	}
 	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginXXS, Children: []*ui.Node{
 		row,
-		{Kind: ui.KindText, Text: note, TextRole: theme.RoleCaption, Tone: ui.ToneError, MaxWidth: inner, Multiline: true},
+		h.wrappedText(note, theme.RoleCaption, ui.ToneError, inner, 0),
 	}}
+}
+
+// colourCount is "1 colour is" or "3 colours are".
+func colourCount(n int) string {
+	if n == 1 {
+		return "1 colour is"
+	}
+	return fmt.Sprintf("%d colours are", n)
 }
