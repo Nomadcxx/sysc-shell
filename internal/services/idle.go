@@ -7,6 +7,7 @@ package services
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	metrics "github.com/Nomadcxx/sysc-metrics"
@@ -225,10 +226,17 @@ type IdleExecutors struct {
 // any goroutine; decisions flow to the Wayland owner through Requests and
 // events flow back through Events, both connected by Callbacks.
 type IdleService struct {
-	machine  idleMachine
-	reqs     chan wayland.IdleRequest
-	evs      chan wayland.IdleEvent
-	inputs   chan func(*idleMachine)
+	machine idleMachine
+	reqs    chan wayland.IdleRequest
+	evs     chan wayland.IdleEvent
+	// inputs is the setters' queue. It is a slice behind a mutex rather than a
+	// channel so a setter never waits on Run: setters run under Registry.mu,
+	// and Run can sit in a blocking executor or have exited (gh #70).
+	inputsMu sync.Mutex
+	inputs   []func(*idleMachine)
+	// kick wakes Run to drain inputs; one slot, because a pending wake already
+	// covers every input queued before it is consumed.
+	kick     chan struct{}
 	execs    IdleExecutors
 	pollRate time.Duration
 	// readBattery is a seam; tests replace it. nil means "always AC" and is
@@ -269,7 +277,7 @@ func NewIdleService(opt IdleOptions) *IdleService {
 	return &IdleService{
 		reqs:        reqs,
 		evs:         evs,
-		inputs:      make(chan func(*idleMachine), 16),
+		kick:        make(chan struct{}, 1),
 		execs:       opt.Execs,
 		pollRate:    rate,
 		readBattery: read,
@@ -306,13 +314,35 @@ func (s *IdleService) Wake() {
 	s.post(func(m *idleMachine) { s.apply(m, m.wake()) })
 }
 
-func (s *IdleService) post(f func(*idleMachine)) { s.inputs <- f }
+// post queues f for Run and never blocks. The queue grows only while Run is
+// stuck in an executor (seconds) or has exited, and holds closures that each
+// replace a scalar input, so it stays small.
+func (s *IdleService) post(f func(*idleMachine)) {
+	s.inputsMu.Lock()
+	s.inputs = append(s.inputs, f)
+	s.inputsMu.Unlock()
+	select {
+	case s.kick <- struct{}{}:
+	default:
+	}
+}
+
+func (s *IdleService) drainInputs() {
+	s.inputsMu.Lock()
+	batch := s.inputs
+	s.inputs = nil
+	s.inputsMu.Unlock()
+	for _, f := range batch {
+		f(&s.machine)
+	}
+}
 
 // Run owns the loop until ctx ends. The machine is only touched here, so no
 // lock is needed; every setter's closure executes in this goroutine.
-// ponytail: actions run inline, so executors must be fast (spawn, never
-// block). If a blocking executor appears, move action dispatch to its own
-// queue goroutine so a slow suspend cannot stall event drain.
+// ponytail: actions run inline, so a slow executor (niri DPMS 2s, loginctl
+// suspend 5s) delays event drain and ctx cancel by that long. Setters are not
+// affected: post never waits on Run. Move dispatch to its own goroutine only
+// if that delay is ever measured to matter.
 func (s *IdleService) Run(ctx context.Context) {
 	ticker := time.NewTicker(s.pollRate)
 	defer ticker.Stop()
@@ -321,8 +351,8 @@ func (s *IdleService) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case f := <-s.inputs:
-			f(&s.machine)
+		case <-s.kick:
+			s.drainInputs()
 		case ev := <-s.evs:
 			s.apply(&s.machine, s.machine.idleEvent(IdleBehavior(ev.ID), ev.Idled))
 		case <-ticker.C:

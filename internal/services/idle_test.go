@@ -282,3 +282,57 @@ func TestIdleServiceStalledRequestOwnerCannotWedge(t *testing.T) {
 	svc.SetInhibited(false) // the dropped arm must be reissued here
 	requireReq(t, reqs, wayland.IdleRequest{ID: uint64(IdleBlank), TimeoutMS: 600000})
 }
+
+// gh #70: setters run under Registry.mu, so they must return while Run sits in
+// a slow executor and never wait on a Run that has already exited.
+func TestIdleServiceSettersNeverBlockOnRun(t *testing.T) {
+	inBlank := make(chan struct{})
+	releaseBlank := make(chan struct{})
+	svc := NewIdleService(IdleOptions{
+		Execs: IdleExecutors{Blank: func() {
+			close(inBlank)
+			<-releaseBlank
+		}},
+		ReadBattery: func() (metrics.BatterySnapshot, error) {
+			return metrics.BatterySnapshot{}, errors.New("no battery: desktop")
+		},
+		PollRate: time.Hour,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan struct{})
+	go func() { svc.Run(ctx); close(runDone) }()
+
+	svc.SetConfig(IdleSettings{BlankAc: time.Minute})
+	requireReq(t, svc.Requests(), wayland.IdleRequest{ID: uint64(IdleBlank), TimeoutMS: 60000}) // config applied
+	svc.Events() <- wayland.IdleEvent{ID: uint64(IdleBlank), Idled: true}                       // Run now blanks
+	select {
+	case <-inBlank:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run never reached the blank executor")
+	}
+
+	post := func(name string) {
+		t.Helper()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for i := 0; i < 64; i++ { // far more than any queue bound
+				svc.SetMediaPlaying(i%2 == 0)
+				svc.SetInhibited(i%2 == 1)
+				svc.SetConfig(IdleSettings{BlankAc: time.Minute})
+			}
+			svc.Wake()
+		}()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatalf("%s: a setter blocked", name)
+		}
+	}
+	post("while Run is inside an executor")
+
+	cancel()
+	close(releaseBlank)
+	<-runDone
+	post("after Run has exited")
+}
