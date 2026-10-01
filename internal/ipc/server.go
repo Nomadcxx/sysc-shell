@@ -361,13 +361,21 @@ func isAddrInUse(err error) bool {
 	return errors.Is(err, syscall.EADDRINUSE) || strings.Contains(err.Error(), "address already in use")
 }
 
+func callTimeout(method string) time.Duration {
+	switch method {
+	case "theme.preview.show":
+		// Matugen itself is bounded at ten seconds.
+		return 12 * time.Second
+	case "theme.palettes.save":
+		// Two generations (dark and light), each bounded at ten seconds.
+		return 25 * time.Second
+	}
+	return 2 * time.Second
+}
+
 // Call sends one request and returns the raw response line.
 func Call(ctx context.Context, sock, method string, params any) (string, error) {
-	timeout := 2 * time.Second
-	if method == "theme.preview.show" {
-		// Matugen itself is bounded at ten seconds.
-		timeout = 12 * time.Second
-	}
+	timeout := callTimeout(method)
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 

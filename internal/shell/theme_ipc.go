@@ -23,6 +23,8 @@ func (r *Registry) ThemeCall(method string, params json.RawMessage) (map[string]
 		Source string `json:"source"`
 		Seed   string `json:"seed"`
 		Name   string `json:"name"`
+		Slug   string `json:"slug"`
+		Path   string `json:"path"`
 		On     *bool  `json:"on"`
 	}
 	if len(params) > 0 {
@@ -51,7 +53,7 @@ func (r *Registry) ThemeCall(method string, params json.RawMessage) (map[string]
 		return r.themePaletteSet(p.Source, p.Seed)
 	case "theme.preview.show":
 		cfg := r.themeSnapshot()
-		if err := themeApplyOverrides(&cfg, p.Mode, p.Source, p.Seed); err != nil {
+		if err := themeApplyOverrides(r.settingsFor, &cfg, p.Mode, p.Source, p.Seed); err != nil {
 			return nil, err
 		}
 		return r.themePreviewShow(cfg)
@@ -59,6 +61,50 @@ func (r *Registry) ThemeCall(method string, params json.RawMessage) (map[string]
 		return r.themePreviewHide(), nil
 	case "theme.templates.apply":
 		return r.themeTemplatesApply(p.Name, p.On)
+	case "theme.palettes.list":
+		list, err := r.PalettesList()
+		if err != nil {
+			return nil, err
+		}
+		rows := make([]map[string]any, 0, len(list))
+		for _, p := range list {
+			row := map[string]any{"slug": p.Slug, "name": p.Name, "active": p.Active}
+			// Not "error": the CLI reads that key anywhere in a reply as a
+			// failed call, and a listing that names a broken file succeeded.
+			if p.Err != "" {
+				row["unavailable"] = p.Err
+			}
+			rows = append(rows, row)
+		}
+		return map[string]any{"palettes": rows}, nil
+	case "theme.palettes.save":
+		slug, err := r.PaletteSaveCurrent(r.themeSnapshot(), p.Name)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"slug": slug}, nil
+	case "theme.palettes.rename":
+		if err := r.PaletteRename(p.Slug, p.Name); err != nil {
+			return nil, err
+		}
+		return map[string]any{"slug": p.Slug, "name": p.Name}, nil
+	case "theme.palettes.delete":
+		if err := r.PaletteDelete(p.Slug); err != nil {
+			return nil, err
+		}
+		return map[string]any{"slug": p.Slug}, nil
+	case "theme.palettes.export":
+		path, err := r.PaletteExport(p.Slug)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"path": path}, nil
+	case "theme.palettes.import":
+		slug, adjusted, err := r.PaletteImportFile(p.Path)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"slug": slug, "adjusted": adjusted}, nil
 	default:
 		return nil, fmt.Errorf("unknown method %s", method)
 	}
@@ -87,7 +133,7 @@ func (r *Registry) themeSnapshot() config.Config {
 
 func (r *Registry) themeSet(path, value string) (map[string]any, error) {
 	cfg := r.themeSnapshot()
-	if err := themeEntrySet(settings.DefaultFor(cfg), &cfg, path, value); err != nil {
+	if err := themeEntrySet(r.settingsFor(cfg), &cfg, path, value); err != nil {
 		return nil, err
 	}
 	if err := r.writeConfig(cfg); err != nil {
@@ -101,7 +147,7 @@ func (r *Registry) themePaletteSet(source, seed string) (map[string]any, error) 
 		return nil, errors.New("theme.palette.set needs source or seed")
 	}
 	cfg := r.themeSnapshot()
-	if err := themeApplyOverrides(&cfg, "", source, seed); err != nil {
+	if err := themeApplyOverrides(r.settingsFor, &cfg, "", source, seed); err != nil {
 		return nil, err
 	}
 	if err := r.writeConfig(cfg); err != nil {
@@ -115,14 +161,14 @@ func (r *Registry) themePaletteSet(source, seed string) (map[string]any, error) 
 // validated by the entry's own Setter. An empty value leaves its field alone.
 // Order matters: what a seed means follows the source, so the seed entry is
 // chosen from the registry rebuilt after the source is applied.
-func themeApplyOverrides(cfg *config.Config, mode, source, seed string) error {
+func themeApplyOverrides(reg func(config.Config) *settings.Registry, cfg *config.Config, mode, source, seed string) error {
 	if mode != "" {
-		if err := themeEntrySet(settings.DefaultFor(*cfg), cfg, "appearance.mode", mode); err != nil {
+		if err := themeEntrySet(reg(*cfg), cfg, "appearance.mode", mode); err != nil {
 			return err
 		}
 	}
 	if source != "" {
-		if err := themeEntrySet(settings.DefaultFor(*cfg), cfg, "appearance.source", source); err != nil {
+		if err := themeEntrySet(reg(*cfg), cfg, "appearance.source", source); err != nil {
 			return err
 		}
 	}
@@ -131,7 +177,7 @@ func themeApplyOverrides(cfg *config.Config, mode, source, seed string) error {
 		if cfg.ThemeGen.Source == "palette" {
 			path = "appearance.palette"
 		}
-		if err := themeEntrySet(settings.DefaultFor(*cfg), cfg, path, seed); err != nil {
+		if err := themeEntrySet(reg(*cfg), cfg, path, seed); err != nil {
 			return err
 		}
 	}
@@ -160,7 +206,7 @@ func (r *Registry) themeTemplatesApply(name string, on *bool) (map[string]any, e
 		}
 	} else {
 		cfg = r.themeSnapshot()
-		e, ok := settings.DefaultFor(cfg).Lookup("theme.templates." + name)
+		e, ok := r.settingsFor(cfg).Lookup("theme.templates." + name)
 		if !ok {
 			return nil, fmt.Errorf("unknown template %s", name)
 		}

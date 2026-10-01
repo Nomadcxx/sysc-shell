@@ -249,8 +249,8 @@ type Theme struct {
 
 // ThemeConfig selects how the Material 3 palette is seeded.
 type ThemeConfig struct {
-	Source string // wallpaper | hex | stock | palette
-	Seed   string // image path, #RRGGBB, stock name, or palette name — follows Source
+	Source string // wallpaper | hex | stock | palette | custom
+	Seed   string // image path, #RRGGBB, stock name, palette name, or saved-palette id — follows Source
 	Scheme string // matugen scheme-*, default scheme-tonal-spot
 	Mode   string // dark | light
 }
