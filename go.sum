@@ -1,5 +1,5 @@
-github.com/Nomadcxx/sysc-clipboard v0.1.0 h1:vSA4juJjLMtQ7tQxgrkCzBLniNAXvxH+3TmDeEDPsOk=
-github.com/Nomadcxx/sysc-clipboard v0.1.0/go.mod h1:7cmxzqX/qI30j30Yd0aVh1aOmIE9Z0lUjmBgkT1fe9w=
+github.com/Nomadcxx/sysc-clipboard v0.1.2-0.20261001114242-d1798d6838d7 h1:aq7yifPIFWXJIvyGDjCFZcrgcQTwQvSrvHoygqdpSFE=
+github.com/Nomadcxx/sysc-clipboard v0.1.2-0.20261001114242-d1798d6838d7/go.mod h1:7cmxzqX/qI30j30Yd0aVh1aOmIE9Z0lUjmBgkT1fe9w=
 github.com/Nomadcxx/sysc-launch v0.2.1-0.20260928124755-5ccc1d40f3cf h1:fnxwcoTiiWcT5GhwLyzoxr9P4CfM/MvZf7g4R7A8oXE=
 github.com/Nomadcxx/sysc-launch v0.2.1-0.20260928124755-5ccc1d40f3cf/go.mod h1:5qLWSiYkjWvOMxbRpzoZF2R55uSy2vLjZM5Wr9dJMtg=
 github.com/Nomadcxx/sysc-metrics v0.7.0 h1:eJZNzqPL9eeJgy9DxJXFm7utRaMd+GIFRZT6+zX0Jro=

@@ -3,7 +3,7 @@ module github.com/Nomadcxx/sysc-shell
 go 1.26.4
 
 require (
-	github.com/Nomadcxx/sysc-clipboard v0.1.0
+	github.com/Nomadcxx/sysc-clipboard v0.1.2-0.20261001114242-d1798d6838d7
 	github.com/Nomadcxx/sysc-wayland v0.3.1
 	github.com/go-freedesktop/desktopentry v0.1.0
 	github.com/go-text/typesetting v0.3.5-0.20260729084153-ddb7ff96ad4d
