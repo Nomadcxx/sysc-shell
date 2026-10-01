@@ -50,6 +50,13 @@ func HelperServe(args []string) int {
 		crashOnce = p
 		mode = "ok"
 	}
+	// shutdown-marker:<path> serves normally and writes path when asked to
+	// stop: proof the host let it finish its work rather than killing it.
+	shutdownMarker := ""
+	if p, ok := strings.CutPrefix(mode, "shutdown-marker:"); ok {
+		shutdownMarker = p
+		mode = "ok"
+	}
 	out := v1.NewEncoder(os.Stdout)
 	in := v1.NewDecoder(os.Stdin, v1.ToPlugin)
 
@@ -140,6 +147,9 @@ func HelperServe(args []string) int {
 		}
 		switch m := msg.(type) {
 		case *v1.HostShutdown:
+			if shutdownMarker != "" {
+				_ = os.WriteFile(shutdownMarker, []byte("flushed"), 0o600)
+			}
 			return 0
 		case *v1.ViewOpen:
 			if crashOnce != "" {

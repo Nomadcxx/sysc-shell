@@ -136,7 +136,6 @@ func (h *pluginHost) Close() {
 	if h == nil {
 		return
 	}
-	h.stop()
 	h.mu.Lock()
 	slots := h.slots
 	h.slots = nil
@@ -147,8 +146,23 @@ func (h *pluginHost) Close() {
 	for _, surface := range surfaces {
 		surface.closeWayland()
 	}
+	// Each plugin is asked to stop and given its grace period before the
+	// host context goes: every plugin process runs under that context, so
+	// cancelling it first killed them all before HostShutdown was sent, and
+	// Notes lost whatever it had not yet autosaved. They stop in parallel so
+	// the slowest grace, not their sum, bounds a shutdown under systemd's
+	// stop timeout.
+	var wg sync.WaitGroup
 	for _, s := range slots {
-		s.rt.Stop()
+		wg.Add(1)
+		go func(s *pluginSlot) {
+			defer wg.Done()
+			s.rt.Stop()
+		}(s)
+	}
+	wg.Wait()
+	h.stop()
+	for _, s := range slots {
 		if h.r.depthClocks != nil {
 			h.r.depthClocks.clearOwner(s.rt.Manifest().ID)
 		}

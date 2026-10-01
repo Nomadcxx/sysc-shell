@@ -146,6 +146,17 @@ func TestPluginPanelRoutesDeclaredShortcutsAndKeepsEditorKeysLocal(t *testing.T)
 		}
 	}
 
+	// A modified shortcut the field does not use itself still reaches the
+	// plugin while typing: it cannot be text, and Ctrl+S in an editor is
+	// what a writer reaches for.
+	if !handle(keyEv(19, ui.ModCtrl)) { // KEY_R
+		t.Fatal("Ctrl+R was not handled while the text input had focus")
+	}
+	inputs = reg.plugins.lastInputs()
+	if got = inputs[len(inputs)-1]; got.Event != v1.EventShortcut || got.Node != "refresh" {
+		t.Fatalf("Ctrl+R with the text input focused = %+v, want the refresh shortcut", got)
+	}
+
 	_ = handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyEsc})
 	reg.mu.Lock()
 	_, panelStillOpen := reg.panels.Output(PanelPlugin)
@@ -1823,5 +1834,19 @@ func TestClosingAViewSendsItsPendingTextFirst(t *testing.T) {
 	inputs := h.lastInputs()
 	if len(inputs) != 1 || inputs[0].Text != "last words" {
 		t.Fatalf("inputs = %+v, want the pending change sent with the close", inputs)
+	}
+}
+
+// Shutting the shell down must ask each plugin to stop and let it finish:
+// Notes saves unsaved text on HostShutdown. Cancelling the host context first
+// killed every plugin process before the message was sent.
+func TestRegistryCloseLetsPluginsFinish(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "flushed")
+	reg := bindTestPlugin(t, "shutdown-marker:"+marker)
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	reg.Close()
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("plugin never ran its shutdown: %v", err)
 	}
 }
