@@ -178,6 +178,11 @@ func TestThemeCallPalettesVerbs(t *testing.T) {
 	if err != nil || len(list["palettes"].([]map[string]any)) != 1 {
 		t.Fatalf("list = %v, %v", list, err)
 	}
+	// The CLI exits 1 on any "error" key in a reply, so a successful
+	// listing must not carry one, not even empty (found live on the laptop).
+	if raw, _ := json.Marshal(list); strings.Contains(string(raw), `"error"`) {
+		t.Fatalf("a successful listing carries an error key: %s", raw)
+	}
 	if _, err := call("theme.palettes.rename", map[string]any{"slug": "via-ipc", "name": "Renamed"}); err != nil {
 		t.Fatal(err)
 	}

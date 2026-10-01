@@ -68,7 +68,13 @@ func (r *Registry) ThemeCall(method string, params json.RawMessage) (map[string]
 		}
 		rows := make([]map[string]any, 0, len(list))
 		for _, p := range list {
-			rows = append(rows, map[string]any{"slug": p.Slug, "name": p.Name, "active": p.Active, "error": p.Err})
+			row := map[string]any{"slug": p.Slug, "name": p.Name, "active": p.Active}
+			// Not "error": the CLI reads that key anywhere in a reply as a
+			// failed call, and a listing that names a broken file succeeded.
+			if p.Err != "" {
+				row["unavailable"] = p.Err
+			}
+			rows = append(rows, row)
 		}
 		return map[string]any{"palettes": rows}, nil
 	case "theme.palettes.save":
