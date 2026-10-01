@@ -83,3 +83,29 @@ func (r *Registry) themePreviewHide() map[string]any {
 	r.publishTheme(outputs, surfacePubs)
 	return map[string]any{"previewing": false}
 }
+
+// themePreviewTokensLocked paints candidate tokens across every surface without
+// generating anything and without touching the committed palette or any file.
+// The caller holds Registry.mu. It takes a request number now and paints on a
+// goroutine, because painting publishes surfaces and must not run under the
+// lock; a request that has been superseded by the time the goroutine runs is
+// dropped, so rapid edits cannot paint out of order.
+func (r *Registry) themePreviewTokensLocked(tokens theme.Tokens) {
+	r.previewRequest++
+	request := r.previewRequest
+	if !r.previewing {
+		r.previewing = true
+		r.previewPrevErr = r.themeErr
+	}
+	cfg := r.cfg
+	go func() {
+		r.mu.Lock()
+		if request != r.previewRequest || !r.previewing {
+			r.mu.Unlock()
+			return
+		}
+		outputs, surfacePubs := r.paintThemeLocked(cfg, tokens, "", false)
+		r.mu.Unlock()
+		r.publishTheme(outputs, surfacePubs)
+	}()
+}

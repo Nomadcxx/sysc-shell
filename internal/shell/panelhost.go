@@ -250,7 +250,9 @@ type PanelHost struct {
 	// wallpaperThemeErr mirrors Registry.themeErr for the picker's banners.
 	wallpaperThemeErr string
 
-	pluginManagerTab            string
+	pluginManagerTab string
+	// palettes is the Palettes page state (custom palettes P12). Registry.mu.
+	palettes                    paletteUI
 	pluginManagerSourceWarning  bool
 	pluginManagerRemoveConfirm  string
 	pluginManagerError          string
@@ -3636,6 +3638,10 @@ func (r *Registry) teardownPanelLocked(id PanelID) {
 		return
 	}
 	h.flushDraft(r)
+	if id == PanelSettings && h.palettes.preview {
+		h.palettes.preview = false
+		go r.themePreviewHide()
+	}
 	if bluetoothBodyVisible(h) {
 		r.stopBluetoothDiscoveryLocked(h)
 		r.cancelBluetoothPromptLocked(h)
