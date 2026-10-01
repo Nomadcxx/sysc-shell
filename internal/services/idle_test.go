@@ -282,3 +282,82 @@ func TestIdleServiceStalledRequestOwnerCannotWedge(t *testing.T) {
 	svc.SetInhibited(false) // the dropped arm must be reissued here
 	requireReq(t, reqs, wayland.IdleRequest{ID: uint64(IdleBlank), TimeoutMS: 600000})
 }
+
+// gh #70: setters run under Registry.mu, so they must return while Run sits in
+// a slow executor and never wait on a Run that has already exited.
+func TestIdleServiceSettersNeverBlockOnRun(t *testing.T) {
+	inBlank := make(chan struct{})
+	releaseBlank := make(chan struct{})
+	svc := NewIdleService(IdleOptions{
+		Execs: IdleExecutors{Blank: func() {
+			close(inBlank)
+			<-releaseBlank
+		}},
+		ReadBattery: func() (metrics.BatterySnapshot, error) {
+			return metrics.BatterySnapshot{}, errors.New("no battery: desktop")
+		},
+		PollRate: time.Hour,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan struct{})
+	go func() { svc.Run(ctx); close(runDone) }()
+
+	svc.SetConfig(IdleSettings{BlankAc: time.Minute})
+	requireReq(t, svc.Requests(), wayland.IdleRequest{ID: uint64(IdleBlank), TimeoutMS: 60000}) // config applied
+	svc.Events() <- wayland.IdleEvent{ID: uint64(IdleBlank), Idled: true}                       // Run now blanks
+	select {
+	case <-inBlank:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run never reached the blank executor")
+	}
+
+	post := func(name string) {
+		t.Helper()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for i := 0; i < 64; i++ { // far more than any queue bound
+				svc.SetMediaPlaying(i%2 == 0)
+				svc.SetInhibited(i%2 == 1)
+				svc.SetConfig(IdleSettings{BlankAc: time.Minute})
+			}
+			svc.Wake()
+		}()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatalf("%s: a setter blocked", name)
+		}
+	}
+	post("while Run is inside an executor")
+
+	cancel()
+	close(releaseBlank)
+	<-runDone
+	post("after Run has exited")
+}
+
+// gh #76: only a present battery that reports discharging is "on battery".
+// A desktop reads as a successful snapshot with Present false, and a docked
+// laptop reports "Not charging" as Unknown; neither may select battery timers.
+func TestOnACPower(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		snap metrics.BatterySnapshot
+		err  error
+		want bool
+	}{
+		{"read failed", metrics.BatterySnapshot{}, errors.New("sysfs"), true},
+		{"desktop without a battery", metrics.BatterySnapshot{Present: false, State: metrics.BatteryUnknown}, nil, true},
+		{"discharging", metrics.BatterySnapshot{Present: true, State: metrics.BatteryDischarging}, nil, false},
+		{"charging", metrics.BatterySnapshot{Present: true, State: metrics.BatteryCharging}, nil, true},
+		{"full", metrics.BatterySnapshot{Present: true, State: metrics.BatteryFull}, nil, true},
+		{"not charging on AC", metrics.BatterySnapshot{Present: true, State: metrics.BatteryUnknown}, nil, true},
+	}
+	for _, tc := range cases {
+		if got := onACPower(tc.snap, tc.err); got != tc.want {
+			t.Errorf("%s: onACPower = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -66,10 +67,22 @@ type Handlers struct {
 	Theme func(method string, params json.RawMessage) (map[string]any, error)
 }
 
+// shutdownGrace bounds how long Serve waits for in-flight requests once its
+// context is cancelled. A handler stuck on a lock must not hold shutdown.
+const shutdownGrace = 2 * time.Second
+
+// writeTimeout bounds one response write, so a client that stops reading
+// cannot pin its connection goroutine.
+const writeTimeout = 5 * time.Second
+
 type Server struct {
 	path string
 	h    Handlers
 	ln   net.Listener
+
+	mu    sync.Mutex
+	conns map[net.Conn]struct{}
+	wg    sync.WaitGroup
 }
 
 func NewServer(path string, h Handlers) *Server {
@@ -109,6 +122,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		conn, err := ln.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
+				s.drain()
 				return nil
 			}
 			return err
@@ -117,7 +131,35 @@ func (s *Server) Serve(ctx context.Context) error {
 			_ = conn.Close()
 			continue
 		}
-		go s.serveConn(conn)
+		s.track(conn)
+		go s.serveConn(ctx, conn)
+	}
+}
+
+func (s *Server) track(conn net.Conn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.conns == nil {
+		s.conns = map[net.Conn]struct{}{}
+	}
+	s.conns[conn] = struct{}{}
+	s.wg.Add(1)
+}
+
+// drain ends every open connection and waits, within shutdownGrace, for the
+// request each one is running. Serve returns only after this, so the caller can
+// tear down what the handlers use knowing no new request starts (gh #74).
+func (s *Server) drain() {
+	s.mu.Lock()
+	for conn := range s.conns {
+		_ = conn.Close()
+	}
+	s.mu.Unlock()
+	done := make(chan struct{})
+	go func() { s.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(shutdownGrace):
 	}
 }
 
@@ -161,15 +203,25 @@ type request struct {
 	Params json.RawMessage `json:"params"`
 }
 
-func (s *Server) serveConn(conn net.Conn) {
-	defer conn.Close()
+func (s *Server) serveConn(ctx context.Context, conn net.Conn) {
+	defer s.wg.Done()
+	defer func() {
+		s.mu.Lock()
+		delete(s.conns, conn)
+		s.mu.Unlock()
+		_ = conn.Close()
+	}()
 	sc := bufio.NewScanner(conn)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" {
 			continue
 		}
+		if ctx.Err() != nil {
+			return
+		}
 		resp := s.handleLine(line)
+		_ = conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 		_, _ = conn.Write(append(resp, '\n'))
 	}
 }

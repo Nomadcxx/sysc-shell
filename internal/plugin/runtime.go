@@ -129,9 +129,11 @@ func NewRuntime(c Candidate, opts RuntimeOptions) *Runtime {
 	}
 }
 
-// Messages carries every message the plugin sends after its handshake. The
-// read loop has to put what it reads somewhere, and delivering it is the only
-// alternative to discarding a view the plugin meant the user to see.
+// Messages carries what the plugin sends after its handshake, except host
+// calls: those are answered by the dispatcher under their own session's
+// context and never queued here (gh #66). The read loop has to put the rest
+// somewhere, and delivering it is the only alternative to discarding a view
+// the plugin meant the user to see.
 func (r *Runtime) Messages() <-chan v1.Message { return r.messages }
 
 // earlyCall is a host.call that arrived before SetCalls. It keeps the session
@@ -314,12 +316,26 @@ func (r *Runtime) supervise(ctx, sessionCtx context.Context, cancel context.Canc
 		if call, ok := msg.(*v1.HostCall); ok {
 			r.mu.Lock()
 			d := r.disp
-			if d == nil && len(r.early) < maxEarlyCalls {
-				r.early = append(r.early, earlyCall{sessionCtx, sess, call})
+			overflow := false
+			if d == nil {
+				if len(r.early) < maxEarlyCalls {
+					r.early = append(r.early, earlyCall{sessionCtx, sess, call})
+				} else {
+					overflow = true
+				}
 			}
 			r.mu.Unlock()
 			if d != nil {
 				go r.answer(sessionCtx, sess, d, call)
+			}
+			if overflow {
+				// Every call gets exactly one reply; a dropped one would leave
+				// the plugin waiting on its id until the session ends. Sent
+				// off this goroutine so a plugin not reading cannot stall Recv.
+				go func(id string) {
+					reply := failReply(id, "too many host calls before the host was ready")
+					_ = sess.Send(&reply)
+				}(call.ID)
 			}
 			// A call is never a view update: it is answered under its own
 			// session's context, never queued for the consumer (gh #66).

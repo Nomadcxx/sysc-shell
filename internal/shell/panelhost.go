@@ -222,6 +222,11 @@ type PanelHost struct {
 	// so a Notes capture superseded before its provider ran is dropped.
 	launcherAttempt        uint64
 	launcherPendingAttempt uint64
+	// launcherAwaiting is set when a query is sent and cleared when the next
+	// snapshot lands. The rows on screen belong to the previous query until
+	// then, so activating one would run something the field no longer asks for
+	// (gh #77).
+	launcherAwaiting bool
 
 	wallpaperSnap    wallpaper.Snapshot
 	wallpaperDir     string
@@ -2468,6 +2473,7 @@ func (h *PanelHost) fieldChanged(r *Registry, n *ui.Node, f *ui.Field) bool {
 			h.launcherAttempt++
 			h.launcherSel = 0
 			h.launcherScroll = 0
+			h.launcherAwaiting = true
 			r.launcherServiceLocked().Query(h.query)
 		}
 		idx := h.roving.Index()

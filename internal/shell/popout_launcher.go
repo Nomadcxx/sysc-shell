@@ -103,6 +103,7 @@ func (r *Registry) relayLauncher(svc *launcher.Service) {
 			h := r.panelHosts[PanelLauncher]
 			if h != nil {
 				h.launcherResults = launcherWithHints(h.query, results)
+				h.launcherAwaiting = false
 				r.rebuildPanel(h)
 			}
 			r.mu.Unlock()
@@ -442,7 +443,7 @@ func (h *PanelHost) launcherPageRows() int {
 // launcherActivateSelected activates the highlighted row. An overview row
 // (no argv, prefix ID) navigates into that provider instead of spawning.
 func (h *PanelHost) launcherActivateSelected(r *Registry) {
-	if len(h.launcherResults) == 0 {
+	if len(h.launcherResults) == 0 || h.launcherAwaiting {
 		return
 	}
 	h.launcherSel = min(h.launcherSel, len(h.launcherResults)-1)
@@ -456,6 +457,7 @@ func (h *PanelHost) launcherActivateSelected(r *Registry) {
 		h.query = res.Entry.ID
 		h.search = ui.NewField(h.query)
 		h.launcherSel = 0
+		h.launcherAwaiting = true
 		r.launcherServiceLocked().Query(h.query)
 		r.rebuildPanel(h)
 		return

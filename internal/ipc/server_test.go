@@ -452,3 +452,64 @@ func TestThemeVerbsRouteToTheHandler(t *testing.T) {
 		t.Fatalf("non-namespace method must stay unknown: %s", out)
 	}
 }
+
+// gh #74: cancelling Serve must end open connections and wait for the request
+// each is running, so the caller can tear down what handlers use.
+func TestServeCancelClosesIdleConnections(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "ipc.v1.sock")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	srv := NewServer(sock, Handlers{})
+	served := make(chan error, 1)
+	go func() { served <- srv.Serve(ctx) }()
+	waitSock(t, sock)
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	cancel()
+	select {
+	case <-served:
+	case <-time.After(time.Second):
+		t.Fatal("Serve did not return after cancel with a connection open")
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := conn.Read(make([]byte, 1)); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("connection stayed open after Serve returned: %v", err)
+	}
+}
+
+func TestServeWaitsForInFlightRequestBeforeReturning(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "ipc.v1.sock")
+	started := make(chan struct{})
+	release := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	srv := NewServer(sock, Handlers{
+		Switcher: func() error {
+			close(started)
+			<-release
+			return nil
+		},
+	})
+	served := make(chan error, 1)
+	go func() { served <- srv.Serve(ctx) }()
+	waitSock(t, sock)
+	go func() { _, _ = Call(context.Background(), sock, "switcher.show", nil) }()
+	<-started
+
+	cancel()
+	select {
+	case <-served:
+		t.Fatal("Serve returned while a handler was still running")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-served:
+	case <-time.After(time.Second):
+		t.Fatal("Serve did not return once the handler finished")
+	}
+}
