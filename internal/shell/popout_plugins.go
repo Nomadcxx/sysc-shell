@@ -783,6 +783,7 @@ func pluginManagerSourceField(h *PanelHost, action, label string) *ui.Node {
 	n := field.Node(label)
 	n.Action = action
 	n.Width = settingsControlWidth(h)
+	settingsFieldInset(h, n)
 	return n
 }
 

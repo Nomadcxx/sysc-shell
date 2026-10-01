@@ -10,6 +10,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -574,6 +575,44 @@ func TestSettingsDropdownsAndSegmentsMatchAppearance(t *testing.T) {
 				t.Errorf("%s segment %q is %d wide, narrower than its label %d", name, s.Name, s.Bounds.W, textW)
 			}
 		}
+	}
+}
+
+// TestSettingsTextFieldsTakeTheControlHeight: the rail search and the plugin
+// source fields used to size to their text, a strip about 22 px tall with the
+// first glyph against the rounded edge, while the plugin store's search was a
+// full control. Every Settings text field takes the button inset, and with it
+// at least a standard control's height.
+func TestSettingsTextFieldsTakeTheControlHeight(t *testing.T) {
+	reg, h, _ := openPluginManagerTestPanelOn(t, config.Default(), store.State{}, ui.Rect{W: 1536, H: 864})
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h.pluginManagerTab = "sources"
+	reg.rebuildPanel(h)
+	m := h.metrics()
+	var search *ui.Node
+	for _, n := range walk(h.root) {
+		if n.Kind == ui.KindTextField && n.Name == "Search" {
+			search = n
+		}
+	}
+	for name, n := range map[string]*ui.Node{
+		"rail search":    search,
+		"source name":    byAction(h.root, "plugins-source-name"),
+		"repository URL": byAction(h.root, "plugins-source-url"),
+	} {
+		if n == nil {
+			t.Fatalf("%s field missing", name)
+		}
+		if n.Padding != m.ButtonPadding {
+			t.Errorf("%s padding = %d, want the button inset %d", name, n.Padding, m.ButtonPadding)
+		}
+		if n.Bounds.H < m.StandardControl {
+			t.Errorf("%s is %d tall, want at least the standard control %d", name, n.Bounds.H, m.StandardControl)
+		}
+	}
+	if search.Placeholder == "" {
+		t.Error("rail search has no placeholder saying what it searches")
 	}
 }
 

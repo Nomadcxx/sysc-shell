@@ -185,6 +185,8 @@ func settingsRail(h *PanelHost, section string) *ui.Node {
 	}
 	search := h.search.Node("Search")
 	search.Width = settingsRailWidth
+	settingsFieldInset(h, search)
+	search.Placeholder = "Search settings…"
 	rail := &ui.Node{Kind: ui.KindColumn, Width: settingsRailWidth, Gap: theme.MarginXXS, Children: []*ui.Node{search}}
 	item := settingsRailItemHeight(h, search)
 	for _, c := range settings.SectionClusters() {
@@ -221,6 +223,16 @@ func settingsRail(h *PanelHost, section string) *ui.Node {
 // control, or less when twelve of them, the four captions and search would
 // not fit the pane. At spacious density on a 1280x720 output they ran 150 px
 // past its bottom edge.
+// settingsFieldInset gives a Settings text field the button inset, as the
+// setting rows' fields have. Without it a field measures to its bare text, a
+// strip about 22 px tall with the first glyph against the rounded edge; with
+// it the field is a full control. A fixed height would not do: a field
+// measures text plus padding in a row and its declared height in a column,
+// and the two disagree once the padding outgrows the height.
+func settingsFieldInset(h *PanelHost, n *ui.Node) {
+	n.Padding = h.metrics().ButtonPadding
+}
+
 func settingsRailItemHeight(h *PanelHost, search *ui.Node) int {
 	m := h.metrics()
 	if m.StandardControl <= 0 {
