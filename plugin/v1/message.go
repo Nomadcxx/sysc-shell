@@ -4,7 +4,11 @@ import "encoding/json"
 
 const (
 	ProtocolMajor = 1
-	ProtocolMinor = 10
+	// Minor 11 adds the sticky_note_2, push_pin, star and note_add icons and
+	// paints floating sticky notes on their paper; a plugin that uses those
+	// icons declares minor 11 so an older shell refuses it instead of failing
+	// to convert its views.
+	ProtocolMinor = 11
 )
 
 // The version-one message names. Every line on the wire carries one of these

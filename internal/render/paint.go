@@ -798,10 +798,17 @@ func FieldTextRect(n *ui.Node) ui.Rect {
 	}
 }
 
+// multilineFieldRadius is a multiline well's corner, in logical pixels.
+const multilineFieldRadius = 12
+
 func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
 	box := style.Scale120.PhysicalRect(n.Bounds)
-	// Stadium: a search well is a pill, not a 6px-radius box.
+	// Stadium: a search well is a pill, not a 6px-radius box. A multiline
+	// field is a page, and a stadium that tall is an oval the text spills out of.
 	radius := box.H / 2
+	if n.Multiline {
+		radius = min(radius, style.Scale120.Physical(multilineFieldRadius))
+	}
 	well := style.Capsule
 	if well.A == 0 {
 		well = style.Track
@@ -1276,16 +1283,9 @@ func fillPair(style Style, fill ui.Fill, base Color) (Color, Color) {
 		return style.Error, style.onError()
 	case ui.FillErrorContainer:
 		return style.errorContainer()
-	case ui.FillNoteSun:
-		return noteWash(style.Tertiary, style.Capsule, style.Foreground), style.Foreground
-	case ui.FillNoteMint:
-		return noteWash(style.Secondary, style.Capsule, style.Foreground), style.Foreground
-	case ui.FillNoteSky:
-		return noteWash(style.Accent, style.Capsule, style.Foreground), style.Foreground
-	case ui.FillNoteRose:
-		return noteWash(style.Error, style.Capsule, style.Foreground), style.Foreground
-	case ui.FillNoteLilac:
-		return noteWash(style.Tertiary, noteWash(style.Accent, style.Capsule, style.Foreground), style.Foreground), style.Foreground
+	case ui.FillNoteSun, ui.FillNoteMint, ui.FillNoteSky, ui.FillNoteRose, ui.FillNoteLilac:
+		paper, ink, _ := PaperPair(fill)
+		return paper, ink
 	case ui.FillScrim:
 		// The wash is the scrim token at the shield's alpha, so the content
 		// behind it survives the composite. Contents keep the surface
@@ -1659,23 +1659,6 @@ func wash(accent, surface Color) Color {
 		return uint8((uint32(over)*a + uint32(under)*ia) / 255)
 	}
 	return Color{R: mix(accent.R, surface.R), G: mix(accent.G, surface.G), B: mix(accent.B, surface.B), A: 0xff}
-}
-
-// noteWash keeps as much tint as possible while preserving normal-text
-// contrast against the foreground paired with the surface.
-func noteWash(tint, surface, foreground Color) Color {
-	const maxAlpha uint32 = 64
-	toTheme := func(c Color) theme.Color { return theme.Color{R: c.R, G: c.G, B: c.B, A: c.A} }
-	for alpha := maxAlpha; ; alpha-- {
-		inv := uint32(255) - alpha
-		mix := func(over, under uint8) uint8 {
-			return uint8((uint32(over)*alpha + uint32(under)*inv) / 255)
-		}
-		candidate := Color{R: mix(tint.R, surface.R), G: mix(tint.G, surface.G), B: mix(tint.B, surface.B), A: 0xff}
-		if theme.ContrastRatio(toTheme(foreground), toTheme(candidate)) >= theme.TextRatio(false) || alpha == 0 {
-			return candidate
-		}
-	}
 }
 
 // paintSearchMark draws a magnifying glass in the leading well. There is no

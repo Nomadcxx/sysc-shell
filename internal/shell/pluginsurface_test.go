@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,6 +60,69 @@ func TestFloatingSurfaceTreeShowsResizeGrip(t *testing.T) {
 	last := root.Children[len(root.Children)-1]
 	if last.Kind != ui.KindRow || len(last.Children) != 2 || last.Children[1].Kind != ui.KindIcon || last.Children[1].Icon != "drag_indicator" {
 		t.Fatalf("resize grip = %+v", last)
+	}
+}
+
+func stickyMeasure(s string, _ ui.TextAttrs) (int, int) { return len(s) * 8, 20 } // real faces measure taller than 16
+
+func stickyContent() *ui.Node {
+	return &ui.Node{Kind: ui.KindColumn, Fill: ui.FillNoteSun, Padding: 10, Gap: 8, Children: []*ui.Node{
+		{Kind: ui.KindTextField, Multiline: true, Height: 120, Name: "Sticky note body"},
+		{Kind: ui.KindRow, Height: 24, Children: []*ui.Node{{Kind: ui.KindText, Text: "Saving…"}}},
+	}}
+}
+
+func TestStickyLaysOutAtEverySize(t *testing.T) {
+	for _, size := range [][2]int{{200, 180}, {300, 320}, {520, 600}} {
+		p := &pluginSurfaceHost{title: strings.Repeat("Long title ", 20), viewID: "v1", width: size[0], height: size[1],
+			panel: &PanelHost{theme: DefaultTheme()}}
+		root := p.wrapTreeMeasured(stickyContent(), stickyMeasure)
+		if err := ui.LayoutColumn(root, ui.Rect{W: size[0], H: size[1]}, stickyMeasure); err != nil {
+			t.Errorf("%dx%d: %v", size[0], size[1], err)
+		}
+		if body := findKind(root, ui.KindTextField); body.Height < 40 {
+			t.Errorf("%dx%d: body %dpx, want at least two lines", size[0], size[1], body.Height)
+		}
+	}
+}
+
+func TestStickyBodyGrowsWithTheSurface(t *testing.T) {
+	small := &pluginSurfaceHost{title: "N", viewID: "v1", width: 300, height: 320, panel: &PanelHost{theme: DefaultTheme()}}
+	large := &pluginSurfaceHost{title: "N", viewID: "v1", width: 300, height: 600, panel: &PanelHost{theme: DefaultTheme()}}
+	a := findKind(small.wrapTreeMeasured(stickyContent(), stickyMeasure), ui.KindTextField).Height
+	b := findKind(large.wrapTreeMeasured(stickyContent(), stickyMeasure), ui.KindTextField).Height
+	if b-a != 280 {
+		t.Fatalf("body grew %d for 280px more surface", b-a)
+	}
+}
+
+func TestStickyTakesItsPaperFromTheContent(t *testing.T) {
+	p := &pluginSurfaceHost{title: "N", viewID: "v1", width: 300, height: 320, panel: &PanelHost{theme: DefaultTheme()}}
+	root := p.wrapTreeMeasured(stickyContent(), stickyMeasure)
+	if p.panel.paper != ui.FillNoteSun {
+		t.Fatalf("panel paper = %d, want note-sun", p.panel.paper)
+	}
+	if root.Children[1].Fill != ui.FillNone {
+		t.Fatal("the content must not also paint the paper as a child")
+	}
+}
+
+func TestStickyMinimumIs200x180(t *testing.T) {
+	got := clampPluginSurface(pluginSurfaceState{Width: 10, Height: 10}, 1920, 1080)
+	if got.Width != 200 || got.Height != 180 {
+		t.Fatalf("min = %dx%d", got.Width, got.Height)
+	}
+}
+
+func TestStickyEscapeLeavesTheFieldBeforeClosing(t *testing.T) {
+	field := &ui.Node{Kind: ui.KindTextField, Multiline: true}
+	pin := &ui.Node{Kind: ui.KindButton, Name: "pin"}
+	h := &PanelHost{focus: []*ui.Node{field, pin}, roving: ui.Roving{Count: 2}}
+	if !h.leaveTextField() || h.focused() != pin {
+		t.Fatalf("first Esc must move focus off the field, focused %+v", h.focused())
+	}
+	if h.leaveTextField() {
+		t.Fatal("with no field focused, Esc must fall through to close")
 	}
 }
 
@@ -335,5 +399,64 @@ func TestFloatingSurfaceCloseChecksCancellationAfterSerializationWait(t *testing
 	case req := <-r.aux:
 		t.Fatalf("cancelled close queued an aux request: %+v", req)
 	default:
+	}
+}
+
+func TestStickyThatCannotLayOutShowsTheFailureCard(t *testing.T) {
+	p := &pluginSurfaceHost{title: "N", viewID: "v1", width: 300, height: 320,
+		panel: &PanelHost{theme: DefaultTheme(), logicalW: 300, logicalH: 320, scale120: int(ui.ScaleUnit)}}
+	broken := &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{
+		{Kind: ui.KindRow, Height: 10, Children: []*ui.Node{{Kind: ui.KindButton, Text: "x", Width: 40, Height: 40, Focusable: true}}},
+	}}
+	p.install(broken)
+	if !strings.Contains(renderText(p.panel.root), "could not be rendered") {
+		t.Fatalf("a refused sticky painted %q instead of the failure card", renderText(p.panel.root))
+	}
+}
+
+func TestStickyTitleIsInsetAndControlsSitAtTheRightEdge(t *testing.T) {
+	p := &pluginSurfaceHost{title: "Short", viewID: "v1", width: 300, height: 320, panel: &PanelHost{theme: DefaultTheme()}}
+	root := p.wrapTreeMeasured(stickyContent(), stickyMeasure)
+	if err := ui.LayoutColumn(root, ui.Rect{W: 300, H: 320}, stickyMeasure); err != nil {
+		t.Fatal(err)
+	}
+	title := findKind(root.Children[0], ui.KindText)
+	closeBtn := findByName(root.Children[0], "Close sticky note")
+	if title.Bounds.X < 6 {
+		t.Errorf("title starts at x=%d, want an inset of at least 6", title.Bounds.X)
+	}
+	if right := closeBtn.Bounds.X + closeBtn.Bounds.W; right < 300-8 {
+		t.Errorf("close button ends at x=%d, want it at the right edge", right)
+	}
+}
+
+func TestStickyDragZoneIsTheTitleBarMinusItsControls(t *testing.T) {
+	p := &pluginSurfaceHost{title: "N", viewID: "v1", width: 300, height: 320, panel: &PanelHost{theme: DefaultTheme()}}
+	root := p.wrapTreeMeasured(stickyContent(), stickyMeasure)
+	if err := ui.LayoutColumn(root, ui.Rect{W: 300, H: 320}, stickyMeasure); err != nil {
+		t.Fatal(err)
+	}
+	bar := root.Children[0].Bounds
+	pin := findByName(root.Children[0], "Keep sticky note above other windows").Bounds
+	if !p.inDragZone(20, bar.H-1) {
+		t.Error("the bottom of the title bar must drag")
+	}
+	if p.inDragZone(pin.X+1, pin.Y+1) {
+		t.Error("the pin button must not start a drag")
+	}
+	if p.inDragZone(20, bar.H+1) {
+		t.Error("the note body must not drag")
+	}
+}
+
+func TestStickyFailureCardDoesNotReplaceThePluginContent(t *testing.T) {
+	p := &pluginSurfaceHost{title: "N", viewID: "v1", width: 300, height: 320,
+		panel: &PanelHost{theme: DefaultTheme(), logicalW: 300, logicalH: 320, scale120: int(ui.ScaleUnit)}}
+	broken := &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{
+		{Kind: ui.KindRow, Height: 10, Children: []*ui.Node{{Kind: ui.KindButton, Text: "x", Width: 40, Height: 40, Focusable: true}}},
+	}}
+	p.install(broken)
+	if p.content != broken {
+		t.Fatal("the failure card replaced the plugin's tree, so a resize can never recover it")
 	}
 }

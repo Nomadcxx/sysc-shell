@@ -115,6 +115,9 @@ type PanelHost struct {
 	// taken before either of its surfaces existed. Nil means no blur, and the
 	// panel then paints over whatever the compositor shows, as it always has.
 	backdrop *ui.Image
+	// paper is the sticky-note fill a floating plugin surface paints as its
+	// ground; FillNone keeps the theme's panel ground.
+	paper    ui.Fill
 	logicalW int
 	logicalH int
 	scale120 int
@@ -1790,7 +1793,7 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	resolveSpriteMotion(h.anim, root)
 
 	paintTheme := h.paintTheme()
-	style := h.rootStyle(paintTheme)
+	style := h.rootStyle(paintTheme).WithPaper(h.paper)
 	style.Scale120 = scale
 	style.Body = body
 	opacity, offsetY := h.panelReveal()
@@ -2626,6 +2629,23 @@ func (h *PanelHost) metrics() theme.Metrics {
 		return m
 	}
 	return h.theme.Metrics
+}
+
+// leaveTextField moves focus off a focused text field to the first control
+// that is not one, and reports whether it did. A sticky's Esc uses it so the
+// first press stops typing and only the second closes the note.
+func (h *PanelHost) leaveTextField() bool {
+	n := h.focused()
+	if n == nil || n.Kind != ui.KindTextField {
+		return false
+	}
+	for i, f := range h.focus {
+		if f != nil && f.Kind != ui.KindTextField {
+			h.roving.Set(i)
+			return true
+		}
+	}
+	return false
 }
 
 func (h *PanelHost) focused() *ui.Node {

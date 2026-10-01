@@ -43,6 +43,7 @@ var materialInventory = []string{
 	"menu_book",
 	"sports_esports",
 	"calculate", "mood",
+	"sticky_note_2", "push_pin", "star", "note_add",
 }
 
 func TestAudioPanelIconsAreInTheSubset(t *testing.T) {
@@ -172,6 +173,14 @@ func TestClipboardGlyphIsInTheSubsetAndRasterises(t *testing.T) {
 		}
 	}
 	t.Fatal("content_paste rasterised with no ink")
+}
+
+func TestNotesIconsAreInTheSubset(t *testing.T) {
+	for _, name := range []string{"sticky_note_2", "push_pin", "star", "note_add"} {
+		if !ValidMaterialIcon(name) {
+			t.Errorf("%q missing from the subset: Notes would paint an invisible control", name)
+		}
+	}
 }
 
 func TestKindIconUsesTheMaterialFaceNotTheBodyFace(t *testing.T) {

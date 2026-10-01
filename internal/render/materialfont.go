@@ -65,6 +65,8 @@ var materialIcons = map[string]struct{}{
 	"sports_esports": {},
 	// The launcher's Calculator and Emoji providers.
 	"calculate": {}, "mood": {},
+	// The Notes plugin's bar, favourite, sticky and pin glyphs.
+	"sticky_note_2": {}, "push_pin": {}, "star": {}, "note_add": {},
 }
 
 // The pinned Material Symbols source no longer carries the older

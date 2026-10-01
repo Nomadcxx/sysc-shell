@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"image"
 	"math"
+	"reflect"
 	"testing"
 	"time"
 
@@ -2818,5 +2819,83 @@ func TestDropZoneWithAFillPaintsItsCard(t *testing.T) {
 	}
 	if bytes.Equal(zone(ui.FillContainerHigh), zone(ui.FillNone)) {
 		t.Fatal("a filled drop zone painted nothing")
+	}
+}
+
+func TestNotePapersAreDistinctAndFixed(t *testing.T) {
+	fills := []ui.Fill{ui.FillNoteSun, ui.FillNoteMint, ui.FillNoteSky, ui.FillNoteRose, ui.FillNoteLilac}
+	seen := map[Color]bool{}
+	toTheme := func(c Color) theme.Color { return theme.Color{R: c.R, G: c.G, B: c.B, A: c.A} }
+	for _, f := range fills {
+		paper, ink, ok := PaperPair(f)
+		if !ok {
+			t.Fatalf("fill %d has no paper", f)
+		}
+		if seen[paper] {
+			t.Errorf("fill %d repeats paper %v", f, paper)
+		}
+		seen[paper] = true
+		if r := theme.ContrastRatio(toTheme(ink), toTheme(paper)); r < 7 {
+			t.Errorf("fill %d ink contrast %.2f:1, want >= 7:1", f, r)
+		}
+	}
+	if _, _, ok := PaperPair(ui.FillAccent); ok {
+		t.Error("accent is not a paper")
+	}
+}
+
+func TestWithPaperRepaintsTheRootAndItsControls(t *testing.T) {
+	base := Style{Background: Color{R: 20, G: 20, B: 24, A: 255}, Foreground: Color{R: 230, G: 230, B: 230, A: 255}, SurfaceOpacity: 166}
+	got := base.WithPaper(ui.FillNoteSun)
+	paper, ink, _ := PaperPair(ui.FillNoteSun)
+	if got.RootFill() != paper || got.Foreground != ink {
+		t.Fatalf("root %v fg %v, want %v %v", got.RootFill(), got.Foreground, paper, ink)
+	}
+	if got.Capsule == paper || got.Capsule.A != 255 {
+		t.Errorf("field well %v must be a darker opaque paper", got.Capsule)
+	}
+	if !reflect.DeepEqual(base.WithPaper(ui.FillAccent), base) {
+		t.Error("a non-paper fill must leave the style unchanged")
+	}
+}
+
+func TestMultilineFieldIsARoundedRectNotAStadium(t *testing.T) {
+	r := NewTextRenderer(mustTestFace(t))
+	pix := make([]byte, 200*200*4)
+	c, _ := NewCanvas(pix, 200, 200, 200*4)
+	n := &ui.Node{Kind: ui.KindTextField, Multiline: true, Bounds: ui.Rect{W: 200, H: 200}}
+	style := testStyle
+	style.Capsule = Color{R: 200, G: 0, B: 0, A: 255}
+	if err := paintTextField(c, n, r, style, 14); err != nil {
+		t.Fatal(err)
+	}
+	// A 200x200 stadium is a circle, so (20,20) lies outside it; a 12px
+	// rounded rect covers it.
+	if a := pix[(20*200+20)*4+3]; a == 0 {
+		t.Fatal("multiline field painted as a stadium")
+	}
+}
+
+func TestNoteFillsPaintTheirPaper(t *testing.T) {
+	for _, f := range []ui.Fill{ui.FillNoteSun, ui.FillNoteMint, ui.FillNoteSky, ui.FillNoteRose, ui.FillNoteLilac} {
+		bg, fg := fillPair(testStyle, f, testStyle.Capsule)
+		paper, ink, _ := PaperPair(f)
+		if bg != paper || fg != ink {
+			t.Errorf("fill %d paints %v/%v, want paper %v/%v", f, bg, fg, paper, ink)
+		}
+	}
+}
+
+func TestPaperKeepsSubtleAndErrorTextReadable(t *testing.T) {
+	toTheme := func(c Color) theme.Color { return theme.Color{R: c.R, G: c.G, B: c.B, A: c.A} }
+	pale := Style{Subtle: Color{R: 0xC4, G: 0xC6, B: 0xD0, A: 0xFF}, Error: Color{R: 0xFF, G: 0xB4, B: 0xAB, A: 0xFF}}
+	for _, f := range []ui.Fill{ui.FillNoteSun, ui.FillNoteMint, ui.FillNoteSky, ui.FillNoteRose, ui.FillNoteLilac} {
+		s := pale.WithPaper(f)
+		paper, _, _ := PaperPair(f)
+		for name, c := range map[string]Color{"subtle": s.Subtle, "error": s.Error} {
+			if r := theme.ContrastRatio(toTheme(c), toTheme(paper)); r < theme.TextRatio(false) {
+				t.Errorf("fill %d %s text %.2f:1 on paper, want >= %.1f:1", f, name, r, theme.TextRatio(false))
+			}
+		}
 	}
 }
