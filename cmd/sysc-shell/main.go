@@ -334,8 +334,18 @@ func run(ctx context.Context) (err error) {
 	}()
 	registry.BindPersist(cfgPath, reloads)
 
+	// The IPC server gets its own cancel so it stops on any exit from run, not
+	// only a signal, and run waits for it before the deferred registry.Close:
+	// no request may still be inside a handler when the registry is torn down.
+	ipcCtx, stopIPC := context.WithCancel(ctx)
+	ipcDone := make(chan struct{})
 	ipcErr := make(chan error, 1)
+	defer func() {
+		stopIPC()
+		<-ipcDone
+	}()
 	go func() {
+		defer close(ipcDone)
 		srv := ipc.NewServer(ipc.DefaultSocket(), ipc.Handlers{
 			Panel:      registry.HandlePanelByName,
 			Status:     registry.Status,
@@ -345,7 +355,7 @@ func run(ctx context.Context) (err error) {
 			Switcher:   registry.ShowWindowSwitcher,
 			Theme:      registry.ThemeCall,
 		})
-		ipcErr <- srv.Serve(ctx)
+		ipcErr <- srv.Serve(ipcCtx)
 	}()
 	select {
 	case err := <-ipcErr:
