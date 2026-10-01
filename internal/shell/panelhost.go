@@ -2870,6 +2870,8 @@ func (h *PanelHost) activate(r *Registry) bool {
 		r.runSessionAction(h, n.Action)
 	case "screenshot-region", "screenshot-window", "screenshot-screen":
 		r.launchScreenshot(h, strings.TrimPrefix(n.Action, "screenshot-"))
+	case screenshotOpenFolderAction:
+		r.openScreenshotFolder(h)
 	}
 	return true
 }
@@ -3213,7 +3215,7 @@ func panelTargetSize(id PanelID) ui.Rect {
 	case PanelPluginStore:
 		return ui.Rect{W: 1280, H: 820}
 	case PanelScreenshot:
-		return ui.Rect{W: 360, H: 240}
+		return ui.Rect{W: 360, H: 280}
 	default:
 		return ui.Rect{W: 280, H: 200}
 	}

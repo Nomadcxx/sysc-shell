@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"errors"
 	"os/exec"
 	"reflect"
 	"strings"
@@ -53,11 +54,11 @@ func newScreenshotHost(t *testing.T, dir string) (*Registry, *PanelHost) {
 	return reg, reg.panelHosts[PanelScreenshot]
 }
 
-func TestScreenshotPanelListsThreeModesInOrder(t *testing.T) {
+func TestScreenshotPanelListsItsRowsInOrder(t *testing.T) {
 	t.Parallel()
 	_, h := newScreenshotHost(t, "/home/u/Pictures/Screenshots")
 	got := focusableNames(h.root)
-	want := []string{"Region", "Window", "Screen"}
+	want := []string{"Region", "Window", "Screen", "Open folder"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("rows = %v, want %v", got, want)
 	}
@@ -74,8 +75,8 @@ func TestScreenshotPanelNamesItsPanelAndSize(t *testing.T) {
 	if id, err := parsePanelName("screenshot"); err != nil || id != PanelScreenshot {
 		t.Fatalf("parsePanelName = %v, %v", id, err)
 	}
-	if got := panelTargetSize(PanelScreenshot); got.W != 360 || got.H != 240 {
-		t.Fatalf("size = %+v, want 360x240", got)
+	if got := panelTargetSize(PanelScreenshot); got.W != 360 || got.H != 280 {
+		t.Fatalf("size = %+v, want 360x280", got)
 	}
 }
 
@@ -249,5 +250,63 @@ func TestScreenshotErrorStateStillFitsThePanel(t *testing.T) {
 	}
 	if ht > h.place.Panel.H {
 		t.Errorf("content with the error is %d tall, panel is %d", ht, h.place.Panel.H)
+	}
+}
+
+func TestScreenshotOpenFolderOpensTheSaveDirectoryThenCloses(t *testing.T) {
+	dir := t.TempDir()
+	reg, h := newScreenshotHost(t, dir)
+	opened := make(chan string, 1)
+	reg.mu.Lock()
+	reg.openFolder = func(d string) error { opened <- d; return nil }
+	reg.mu.Unlock()
+	activateNamed(h, reg, "Open folder")
+	select {
+	case got := <-opened:
+		if got != dir {
+			t.Fatalf("opened %q, want the save directory %q", got, dir)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the folder was never opened")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		reg.mu.Lock()
+		open := reg.panelOpenLocked(PanelScreenshot)
+		reg.mu.Unlock()
+		if !open {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the panel stayed open after the folder opened")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestScreenshotOpenFolderFailureStaysInThePanel(t *testing.T) {
+	reg, h := newScreenshotHost(t, t.TempDir())
+	reg.mu.Lock()
+	reg.openFolder = func(string) error { return errors.New("no handler") }
+	reg.mu.Unlock()
+	activateNamed(h, reg, "Open folder")
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		reg.mu.Lock()
+		label, open := h.errLabel, reg.panelOpenLocked(PanelScreenshot)
+		reg.mu.Unlock()
+		if label != "" {
+			if !open {
+				t.Fatal("the panel closed on a failed open; the error would never be seen")
+			}
+			if !strings.Contains(label, "folder") {
+				t.Fatalf("errLabel = %q, want it to name the folder", label)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no error shown for a failed open")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

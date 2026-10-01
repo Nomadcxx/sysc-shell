@@ -248,6 +248,9 @@ type Registry struct {
 	// startScreenshot starts a capture by mode. Tests replace it; nil is
 	// Registry.Screenshot.
 	startScreenshot func(mode string) error
+	// openFolder opens a directory in the file manager. Tests replace it; nil
+	// is openFolderDefault.
+	openFolder func(dir string) error
 	// selector is the open region selector, if any. Registry.mu.
 	selector *regionSelector
 	// toasts hosts one toast stack per output, created when wiring binds it.

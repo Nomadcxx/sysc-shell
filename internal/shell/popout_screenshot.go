@@ -1,11 +1,15 @@
 package shell
 
 import (
+	"os"
+	"os/exec"
 	"time"
 	"unicode/utf8"
 
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
+
+const screenshotOpenFolderAction = "screenshot-open-folder"
 
 type screenshotRow struct{ name, action, icon string }
 
@@ -35,6 +39,14 @@ func screenshotTree(r *Registry, h *PanelHost) *ui.Node {
 			},
 		})
 	}
+	rows = append(rows, &ui.Node{
+		Kind: ui.KindButton, Action: screenshotOpenFolderAction, Name: "Open folder", Role: "button", Focusable: true,
+		Gap: m.ButtonPadding / 2, Padding: m.ButtonPadding, Height: m.StandardControl,
+		Children: []*ui.Node{
+			{Kind: ui.KindIcon, Icon: "folder_open", IconSize: m.IconNormal},
+			{Kind: ui.KindText, Text: "Open folder"},
+		},
+	})
 	dir := r.screenshotDirectory()
 	_ = h.ensureText()
 	avail := h.place.Panel.W - 2*m.PanelPadding - 2*m.CardPadding
@@ -96,4 +108,44 @@ func (r *Registry) launchScreenshot(h *PanelHost, mode string) {
 			r.screenshotToast("", err)
 		}
 	}()
+}
+
+// openScreenshotFolder runs under Registry.mu and opens the save directory off
+// it, because starting a file manager is not the Wayland owner's business. The
+// panel closes on success; a failure stays in the panel as its error line.
+func (r *Registry) openScreenshotFolder(h *PanelHost) {
+	dir := r.screenshotDirectory()
+	open := r.openFolder
+	if open == nil {
+		open = openFolderDefault
+	}
+	go func() {
+		err := open(dir)
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if r.panelHosts[h.id] != h {
+			return
+		}
+		if err != nil {
+			h.errLabel = "Could not open the folder"
+			r.rebuildPanel(h)
+			r.publishSurface(h.output, panelSurfaceID(h.id))
+			return
+		}
+		r.closePanelLocked(h.id)
+	}()
+}
+
+// openFolderDefault creates the directory first: a fresh install has not saved
+// a capture yet, and opening a missing folder would fail for no reason.
+func openFolderDefault(dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	cmd := exec.Command("xdg-open", dir)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() { _ = cmd.Wait() }()
+	return nil
 }
