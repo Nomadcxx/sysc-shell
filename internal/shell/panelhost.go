@@ -332,6 +332,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelClipboard, nil
 	case "plugin-store":
 		return PanelPluginStore, nil
+	case "screenshot":
+		return PanelScreenshot, nil
 	default:
 		return 0, fmt.Errorf("unknown panel")
 	}
@@ -843,6 +845,8 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelWeather, true
 	case "clipboard":
 		return PanelClipboard, true
+	case "screenshot":
+		return PanelScreenshot, true
 	default:
 		return 0, false
 	}
@@ -2864,6 +2868,10 @@ func (h *PanelHost) activate(r *Registry) bool {
 		}
 	case "session-lock", "session-logout", "session-suspend", "session-display-off", "session-reboot", "session-poweroff":
 		r.runSessionAction(h, n.Action)
+	case "screenshot-region", "screenshot-window", "screenshot-screen":
+		r.launchScreenshot(h, strings.TrimPrefix(n.Action, "screenshot-"))
+	case screenshotOpenFolderAction:
+		r.openScreenshotFolder(h)
 	}
 	return true
 }
@@ -3155,6 +3163,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		return weatherTree(r, h)
 	case PanelClipboard:
 		return clipboardTree(r, h)
+	case PanelScreenshot:
+		return screenshotTree(r, h)
 	default:
 		return placeholderTree()
 	}
@@ -3204,6 +3214,8 @@ func panelTargetSize(id PanelID) ui.Rect {
 		return ui.Rect{W: 720, H: 560}
 	case PanelPluginStore:
 		return ui.Rect{W: 1280, H: 820}
+	case PanelScreenshot:
+		return ui.Rect{W: 360, H: 280}
 	default:
 		return ui.Rect{W: 280, H: 200}
 	}
