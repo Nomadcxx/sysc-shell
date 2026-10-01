@@ -313,6 +313,9 @@ func (p *pluginSurfaceHost) install(content *ui.Node) {
 		}
 		return nil
 	}
+	// content is kept even when it is refused: a resize re-installs it, and
+	// at the new size it may fit.
+	p.content = content
 	if err := place(content); err != nil {
 		slog.Warn("sticky note layout refused", "plugin", p.plugin, "view", p.viewID, "err", err)
 		_ = place(p.failureTree(err.Error()))
@@ -342,7 +345,6 @@ func (p *pluginSurfaceHost) wrapTree(content *ui.Node) *ui.Node {
 // field absorbs whatever height the chrome and the rest of the content leave,
 // so resizing a sticky resizes its writing area.
 func (p *pluginSurfaceHost) wrapTreeMeasured(content *ui.Node, measure ui.MeasureText) *ui.Node {
-	p.content = content
 	content = copyNode(content)
 	p.panel.paper, content.Fill = content.Fill, ui.FillNone
 	state := p.snapshot()

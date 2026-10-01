@@ -448,3 +448,15 @@ func TestStickyDragZoneIsTheTitleBarMinusItsControls(t *testing.T) {
 		t.Error("the note body must not drag")
 	}
 }
+
+func TestStickyFailureCardDoesNotReplaceThePluginContent(t *testing.T) {
+	p := &pluginSurfaceHost{title: "N", viewID: "v1", width: 300, height: 320,
+		panel: &PanelHost{theme: DefaultTheme(), logicalW: 300, logicalH: 320, scale120: int(ui.ScaleUnit)}}
+	broken := &ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{
+		{Kind: ui.KindRow, Height: 10, Children: []*ui.Node{{Kind: ui.KindButton, Text: "x", Width: 40, Height: 40, Focusable: true}}},
+	}}
+	p.install(broken)
+	if p.content != broken {
+		t.Fatal("the failure card replaced the plugin's tree, so a resize can never recover it")
+	}
+}
