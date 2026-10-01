@@ -238,6 +238,9 @@ func (h *pluginHost) dropFloatingSurface(surface *pluginSurfaceHost) {
 	}
 	view := h.views[id]
 	slot := (*pluginSlot)(nil)
+	// As in closeView: the sticky's last keystrokes go out before its close.
+	pending := h.textOut.Take(id)
+	h.inputs = append(h.inputs, pending...)
 	if view != nil {
 		slot = h.slots[view.Plugin]
 		h.closed = append(h.closed, id)
@@ -255,6 +258,9 @@ func (h *pluginHost) dropFloatingSurface(surface *pluginSurfaceHost) {
 	surface.closed = true
 	surface.mu.Unlock()
 	if slot != nil {
+		for i := range pending {
+			_ = slot.rt.Send(&pending[i])
+		}
 		_ = slot.rt.Send(&v1.ViewClose{ViewID: id})
 	}
 }

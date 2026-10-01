@@ -29,3 +29,21 @@ func TestTextOutCoalescesChangeAndOrdersSubmit(t *testing.T) {
 		t.Fatalf("flush after submit still held %+v", extra)
 	}
 }
+
+// A view that closes takes its unsent text with it unless the close drains
+// it first; other views keep theirs.
+func TestTextOutTakeDrainsOneView(t *testing.T) {
+	var o TextOut
+	o.Push(v1.InputEvent{ViewID: "a", Node: "body", Event: v1.EventChange, Text: "last words"})
+	o.Push(v1.InputEvent{ViewID: "b", Node: "body", Event: v1.EventChange, Text: "other"})
+	got := o.Take("a")
+	if len(got) != 1 || got[0].Text != "last words" {
+		t.Fatalf("Take(a) = %+v, want the pending change", got)
+	}
+	if again := o.Take("a"); len(again) != 0 {
+		t.Fatalf("second Take(a) = %+v, want nothing", again)
+	}
+	if rest := o.Flush(); len(rest) != 1 || rest[0].ViewID != "b" {
+		t.Fatalf("Flush = %+v, want only view b", rest)
+	}
+}

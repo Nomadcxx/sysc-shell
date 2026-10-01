@@ -1797,3 +1797,22 @@ func TestPluginCallHooksChangeNothingOnceCancelled(t *testing.T) {
 		}
 	}
 }
+
+// Text typed in the frame before a close is held for the flush timer, which
+// drops changes for a view that has gone. The close sends it instead.
+func TestClosingAViewSendsItsPendingTextFirst(t *testing.T) {
+	h := &pluginHost{
+		views:    map[string]*hostedView{"v1": {ID: "v1", Plugin: "p"}},
+		slots:    map[string]*pluginSlot{},
+		surfaces: map[string]*pluginSurfaceHost{},
+	}
+	h.textOut.Push(v1.InputEvent{ViewID: "v1", Node: "body", Event: v1.EventChange, Text: "last words"})
+	h.closeView("v1")
+	if left := h.textOut.Flush(); len(left) != 0 {
+		t.Fatalf("close left %+v for the flush timer to drop", left)
+	}
+	inputs := h.lastInputs()
+	if len(inputs) != 1 || inputs[0].Text != "last words" {
+		t.Fatalf("inputs = %+v, want the pending change sent with the close", inputs)
+	}
+}
