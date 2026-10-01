@@ -96,3 +96,52 @@ func TestPalettesListLaysOutWithEveryRowState(t *testing.T) {
 		}
 	}
 }
+
+// TestPalettesEditorLaysOutEverywhere lays out the role editor, with a failing
+// pair so the summary and a row error are present, on three outputs and three
+// scales. Save must sit in the first viewport: R9 moved it above the 49 rows
+// so nobody scrolls to it.
+func TestPalettesEditorLaysOutEverywhere(t *testing.T) {
+	for _, out := range [][2]int{{1280, 720}, {1536, 864}, {3440, 1440}} {
+		reg := newPanelRegistry(t)
+		st := withPaletteStore(t, reg)
+		dark, _ := theme.NamedPalette("nord", "dark", false)
+		light, _ := theme.NamedPalette("nord", "light", false)
+		slug, err := st.Save(theme.PaletteFile{Name: "Editor matrix", Dark: dark.Roles(), Light: light.Roles()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		reg.refreshPalettes()
+		withTestBar(t, reg, 7, reg.cfg)
+		if err := reg.OpenPanel(PanelSettings, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: out[0], OutH: out[1]}); err != nil {
+			t.Fatal(err)
+		}
+		panel := drainAux(t, reg, 2)[1].Open
+		for _, scale := range []int{120, 150, 180} {
+			reg.mu.Lock()
+			h := reg.panelHosts[PanelSettings]
+			h.section, h.scale120 = "Palettes", scale
+			reg.paletteOpenEditor(h, slug)
+			h.palettes.mode = "dark"
+			h.palettes.draft.Dark["on_surface"] = h.palettes.draft.Dark["surface"]
+			h.palettes.dirty = true
+			reg.rebuildPanel(h)
+			reg.mu.Unlock()
+			if err := panel.Callbacks.Configure(int(panel.Width), int(panel.Height), scale); err != nil {
+				t.Errorf("%dx%d @%d: %v", out[0], out[1], scale, err)
+				continue
+			}
+			reg.mu.Lock()
+			root := reg.panelHosts[PanelSettings].root
+			body := findScroll(root)
+			save := findAction(root, "palette-save")
+			reg.mu.Unlock()
+			if body == nil || body.Bounds.H < int(panel.Height)/2 {
+				t.Errorf("%dx%d @%d: body %+v in a %d-tall pane", out[0], out[1], scale, body, panel.Height)
+			}
+			if save == nil || save.Bounds.Y+save.Bounds.H > int(panel.Height) {
+				t.Errorf("%dx%d @%d: Save at %+v, below the %d-tall first viewport", out[0], out[1], scale, save, panel.Height)
+			}
+		}
+	}
+}

@@ -462,10 +462,3 @@ func (r *Registry) importNotice(slug string, adjusted int) string {
 	}
 	return fmt.Sprintf("Imported “%s”", name)
 }
-
-func paletteEditorTree(r *Registry, h *PanelHost, m theme.Metrics) *ui.Node {
-	return &ui.Node{Kind: ui.KindColumn}
-}
-func (r *Registry) paletteOpenEditor(h *PanelHost, slug string) bool  { return false }
-func (r *Registry) paletteLeaveEditor(h *PanelHost) bool              { return false }
-func (r *Registry) handlePaletteEditor(h *PanelHost, n *ui.Node) bool { return false }

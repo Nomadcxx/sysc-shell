@@ -2458,6 +2458,19 @@ func (h *PanelHost) editField(r *Registry, fn func(*ui.Field)) bool {
 // change event, the Bluetooth prompt, a panel query, the plugin manager, or
 // a setting.
 func (h *PanelHost) fieldChanged(r *Registry, n *ui.Node, f *ui.Field) bool {
+	if h.id == PanelSettings {
+		if role, ok := strings.CutPrefix(n.Action, "palette-role:"); ok {
+			r.paletteRoleEdited(h, role, f.Text)
+			return true
+		}
+		switch n.Action {
+		case "palette-edit-name":
+			r.paletteNameEdited(h, f.Text)
+			return true
+		case "palette-name", "palette-import-path":
+			return true // read when their button is pressed; never a setting
+		}
+	}
 	if _, ok := parsePluginAction(n.Action); ok {
 		r.deliverPluginText(n.Action, n.Text, v1.EventChange)
 		return true
