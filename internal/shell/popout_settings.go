@@ -327,6 +327,10 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 		return body(settingsSearchColumn(h, hits))
 	}
 
+	if section == "Palettes" {
+		return body(settingsBody(h, theme.MarginM, palettesTree(r, h)))
+	}
+
 	if section == "Plugins" {
 		// The plugin host's view is a column of cards with no width of its
 		// own, so inside the body row its switches stretched the full

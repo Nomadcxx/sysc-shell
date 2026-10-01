@@ -1,9 +1,12 @@
 package shell
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
 )
 
 // TestEverySettingsPageLaysOutEverywhere opens every section and page at the
@@ -44,6 +47,52 @@ func TestEverySettingsPageLaysOutEverywhere(t *testing.T) {
 					}
 				}
 			}
+		}
+	}
+}
+
+// TestPalettesListLaysOutWithEveryRowState lays out the Palettes list with an
+// active, a corrupt and a delete-pending row, at the narrowest output and every
+// scale. A row's name must keep a visible width beside its controls (R8).
+func TestPalettesListLaysOutWithEveryRowState(t *testing.T) {
+	for _, out := range [][2]int{{1280, 720}, {3440, 1440}} {
+		reg := newPanelRegistry(t)
+		st := withPaletteStore(t, reg)
+		dark, _ := theme.NamedPalette("nord", "dark", false)
+		light, _ := theme.NamedPalette("nord", "light", false)
+		for _, name := range []string{"Active palette", "Pending deletion"} {
+			if _, err := st.Save(theme.PaletteFile{Name: name, Dark: dark.Roles(), Light: light.Roles()}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.WriteFile(filepath.Join(st.Dir, "broken.json"), []byte("{"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		reg.refreshPalettes()
+		withTestBar(t, reg, 7, reg.cfg)
+		if err := reg.OpenPanel(PanelSettings, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: out[0], OutH: out[1]}); err != nil {
+			t.Fatal(err)
+		}
+		panel := drainAux(t, reg, 2)[1].Open
+		for _, scale := range []int{120, 150, 180} {
+			reg.mu.Lock()
+			h := reg.panelHosts[PanelSettings]
+			h.section, h.scale120 = "Palettes", scale
+			h.draft.ThemeGen.Source, h.draft.ThemeGen.Seed = "custom", "active-palette"
+			h.palettes.deleting = "pending-deletion"
+			reg.rebuildPanel(h)
+			reg.mu.Unlock()
+			if err := panel.Callbacks.Configure(int(panel.Width), int(panel.Height), scale); err != nil {
+				t.Errorf("%dx%d @%d: %v", out[0], out[1], scale, err)
+				continue
+			}
+			reg.mu.Lock()
+			for _, n := range walk(reg.panelHosts[PanelSettings].root) {
+				if (n.Text == "Active palette" || n.Text == "Pending deletion") && n.Bounds.W < 40 {
+					t.Errorf("%dx%d @%d: name %q squeezed to %dpx", out[0], out[1], scale, n.Text, n.Bounds.W)
+				}
+			}
+			reg.mu.Unlock()
 		}
 	}
 }

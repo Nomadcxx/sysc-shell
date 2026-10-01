@@ -1094,6 +1094,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	}
 	if id == PanelSettings {
 		h.set = r.settingsForLocked(r.cfg)
+		r.refreshPalettesAsync(h)
 		h.draft = r.cfg
 		h.section = "Bar"
 		h.search = ui.NewField("")
@@ -2742,6 +2743,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if r.handlePluginManager(h, n) {
 		return true
 	}
+	if r.handlePalettes(h, n) {
+		return true
+	}
 	if strings.HasPrefix(n.Action, "bluetooth-") && bluetoothBodyVisible(h) {
 		return h.activateBluetooth(r, n)
 	}
@@ -2831,6 +2835,13 @@ func (h *PanelHost) activate(r *Registry) bool {
 		section := strings.TrimPrefix(n.Action, "section:")
 		if h.id == PanelControlCenter {
 			return h.selectControlCentreSection(r, section)
+		}
+		if h.id == PanelSettings && h.section == "Palettes" && section != "Palettes" {
+			r.paletteLeaveEditor(h)
+			h.palettes.clearStatus()
+		}
+		if h.id == PanelSettings && section == "Palettes" {
+			r.refreshPalettesAsync(h)
 		}
 		h.section, h.settingsPage, h.settingsScrollTop = section, "", true
 		r.rebuildPanel(h)
