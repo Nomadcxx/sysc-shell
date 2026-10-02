@@ -9,7 +9,8 @@ const (
 	// icons declares minor 11 so an older shell refuses it instead of failing
 	// to convert its views. Minor 12 adds the "center" panel placement, which
 	// drops a panel from the middle of the output instead of under its widget.
-	ProtocolMinor = 12
+	// Minor 13 adds the spinner kind, an activity indicator the host turns.
+	ProtocolMinor = 13
 )
 
 // The version-one message names. Every line on the wire carries one of these

@@ -252,11 +252,23 @@ func (a *animator) duration(channel animChannel, rising bool) time.Duration {
 	return 0
 }
 
+// spinnerCycle is one turn of an activity spinner, and spinnerPoses the
+// steps it takes: about thirty a second, smooth at an inline size while
+// letting the frame loop sleep between poses the way a sprite's does.
+const (
+	spinnerCycle = 1200 * time.Millisecond
+	spinnerPoses = 36
+	// spinnerPrint stands in for a pose list: every spinner turns through
+	// the same poses, so one fingerprint keeps a rebuild from restarting it.
+	spinnerPrint uint64 = 0x5350494e // "SPIN"
+)
+
 // resolveSpriteMotion steps every sprite icon through its frames, writing
 // the pose the surface clock has reached into the render copy's Icon the way
-// resolveProgressMotion writes a glided value. Under reduced motion nothing
-// is tracked and the icon keeps its resting pose. Keys whose nodes left the
-// tree are retired, which is also what ends a sprite's frames.
+// resolveProgressMotion writes a glided value, and turns every spinner,
+// writing its pose into Value. Under reduced motion nothing is tracked: the
+// icon keeps its resting pose and a spinner rests at the top. Keys whose
+// nodes left the tree are retired, which is also what ends a sprite's frames.
 func resolveSpriteMotion(anim *animator, root *ui.Node) {
 	if anim == nil {
 		return
@@ -273,6 +285,14 @@ func resolveSpriteMotion(anim *animator, root *ui.Node) {
 				anim.TargetCycle(key, n.Cycle, len(n.Frames), posePrint(n.Frames))
 				pose := int(anim.Value(key, animSprite) * float64(len(n.Frames)))
 				n.Icon = n.Frames[min(max(pose, 0), len(n.Frames)-1)]
+			}
+		}
+		if n.Kind == ui.KindSpinner && !anim.reduced {
+			if key := n.StableKey(); key != "" {
+				seen[key] = true
+				anim.TargetCycle(key, spinnerCycle, spinnerPoses, spinnerPrint)
+				pose := int(anim.Value(key, animSprite) * spinnerPoses)
+				n.Value = float64(min(max(pose, 0), spinnerPoses-1)) / spinnerPoses
 			}
 		}
 		for _, child := range n.Children {

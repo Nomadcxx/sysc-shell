@@ -20,6 +20,8 @@ func Animated(n *Node) bool {
 		return n.Action != ""
 	case KindMeter, KindRadialGauge:
 		return n.Animate
+	case KindSpinner:
+		return true
 	default:
 		return false
 	}
