@@ -1837,6 +1837,7 @@ func queuePendingBarText(t *testing.T, h *pluginHost, text string) {
 	if sent := h.textOut.Push(v1.InputEvent{ViewID: id, Node: "body", Event: v1.EventChange, Text: text}); len(sent) != 0 {
 		t.Fatalf("change was sent immediately: %+v", sent)
 	}
+	h.scheduleTextFlushLocked()
 }
 
 func recordedInputText(t *testing.T, path string) string {
@@ -1922,6 +1923,32 @@ func TestClosingAViewSendsItsPendingTextFirst(t *testing.T) {
 	if len(inputs) != 1 || inputs[0].Text != "last words" {
 		t.Fatalf("inputs = %+v, want the pending change sent with the close", inputs)
 	}
+}
+
+func TestSettleTextFlushStopsAScheduledTimer(t *testing.T) {
+	h := &pluginHost{}
+	h.mu.Lock()
+	h.scheduleTextFlushLocked()
+	h.mu.Unlock()
+	h.settleTextFlush()
+	h.mu.Lock()
+	pending := h.flushPending
+	h.mu.Unlock()
+	if pending {
+		t.Fatal("flush still pending after settle")
+	}
+}
+
+func TestSettleTextFlushWaitsOutAFiringTimer(t *testing.T) {
+	h := &pluginHost{
+		views: map[string]*hostedView{"v1": {ID: "v1", Plugin: "p"}},
+		slots: map[string]*pluginSlot{},
+	}
+	h.mu.Lock()
+	h.scheduleTextFlushLocked()
+	h.flushTimer.Reset(0)
+	h.mu.Unlock()
+	h.settleTextFlush()
 }
 
 // Shutting the shell down must ask each plugin to stop and let it finish:

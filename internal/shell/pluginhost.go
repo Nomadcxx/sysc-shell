@@ -345,10 +345,11 @@ func (h *pluginHost) stateValue(id, key string) (json.RawMessage, bool) {
 }
 
 func (h *pluginHost) stopPlugin(id string) {
+	h.settleTextFlush()
+
 	h.surfaceMu.Lock()
 	defer h.surfaceMu.Unlock()
 
-	h.settleTextFlush()
 	h.mu.Lock()
 	slot := h.slots[id]
 	delete(h.slots, id)
@@ -360,7 +361,7 @@ func (h *pluginHost) stopPlugin(id string) {
 	}
 	h.mu.Unlock()
 	// The slot is already gone from the map so teardown cannot open new
-	// views, but closeView still has the pointer to Send on.
+	// views, but closeViewUsing still has the pointer to Send on.
 	for _, vid := range drop {
 		h.closeViewUsing(vid, slot)
 	}
@@ -1718,20 +1719,10 @@ func (h *pluginHost) retryLocked(id string) error {
 	}
 	h.r.mu.Unlock()
 	h.settleTextFlush()
-	h.sendPendingFor(slot, id)
-	err := slot.rt.Retry(h.ctx)
-	h.r.mu.Lock()
-	return err
-}
-
-func (h *pluginHost) sendPendingFor(slot *pluginSlot, pluginID string) {
-	if slot == nil {
-		return
-	}
 	h.mu.Lock()
 	var pending []v1.InputEvent
 	for _, v := range h.views {
-		if v.Plugin == pluginID {
+		if v.Plugin == id {
 			pending = append(pending, h.textOut.Take(v.ID)...)
 		}
 	}
@@ -1740,6 +1731,9 @@ func (h *pluginHost) sendPendingFor(slot *pluginSlot, pluginID string) {
 	for i := range pending {
 		_ = slot.rt.Send(&pending[i])
 	}
+	err := slot.rt.Retry(h.ctx)
+	h.r.mu.Lock()
+	return err
 }
 
 func (h *pluginHost) rescan() error { return h.syncEnabled() }
