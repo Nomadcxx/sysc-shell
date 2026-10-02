@@ -519,6 +519,7 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		}
 		out.Multiline = n.Multiline
 		out.SubmitOnEnter = n.SubmitOnEnter
+		out.Masked = n.Masked
 		out.Reseed = n.Reseed
 	case v1.KindList:
 		out.Kind = ui.KindScroll

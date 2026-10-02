@@ -1003,3 +1003,23 @@ func TestMinorEightFieldsRoundTripOnTheWire(t *testing.T) {
 		t.Fatalf("round trip lost the icon size: %+v", got)
 	}
 }
+
+func TestValidateMaskedOnlyOnASingleLineTextInput(t *testing.T) {
+	t.Parallel()
+
+	input := func(n Node) *Node {
+		n.Kind, n.ID, n.Name, n.Role = KindTextInput, "pw", "Password", "textbox"
+		n.Events = []EventKind{EventSubmit}
+		return &Node{Kind: KindColumn, Children: []*Node{&n}}
+	}
+	if err := Validate(input(Node{Masked: true, SubmitOnEnter: true}), ViewPanel); err != nil {
+		t.Fatalf("masked single-line input rejected: %v", err)
+	}
+	if err := Validate(input(Node{Masked: true, Multiline: true}), ViewPanel); err == nil {
+		t.Fatal("a masked multiline input was accepted")
+	}
+	text := &Node{Kind: KindColumn, Children: []*Node{{Kind: KindText, Text: "x", Masked: true}}}
+	if err := Validate(text, ViewPanel); err == nil {
+		t.Fatal("masked was accepted on a text node")
+	}
+}

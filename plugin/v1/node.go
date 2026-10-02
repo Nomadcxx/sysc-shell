@@ -348,6 +348,10 @@ type Node struct {
 	// Placeholder is presentation copy shown only while a text input is empty.
 	// Name remains the accessible label.
 	Placeholder string `json:"placeholder,omitempty"`
+	// Masked draws a single-line text input as bullets and refuses copy and
+	// cut, for a password. The committed value still reaches the plugin on
+	// submit. It arrived with protocol minor fifteen.
+	Masked bool `json:"masked,omitempty"`
 
 	Children []*Node `json:"children,omitempty"`
 }
@@ -648,8 +652,11 @@ func (v *validator) vocabulary(n *Node, path string) error {
 	if n.Kind == KindDragSource && n.Name == "" {
 		return fmt.Errorf("%s: a drag handle needs an accessible name", path)
 	}
-	if n.Kind != KindTextInput && (n.Multiline || n.SubmitOnEnter || n.Reseed != 0 || n.Placeholder != "") {
+	if n.Kind != KindTextInput && (n.Multiline || n.SubmitOnEnter || n.Reseed != 0 || n.Placeholder != "" || n.Masked) {
 		return fmt.Errorf("%s: %s cannot carry editor flags", path, n.Kind)
+	}
+	if n.Masked && n.Multiline {
+		return fmt.Errorf("%s: a masked text input must be single-line", path)
 	}
 	return nil
 }

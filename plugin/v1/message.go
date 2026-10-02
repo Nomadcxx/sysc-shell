@@ -11,7 +11,8 @@ const (
 	// drops a panel from the middle of the output instead of under its widget.
 	// Minor 13 adds the spinner kind, an activity indicator the host turns.
 	// Minor 14 adds the moonbit icon, the Moonbit orb for its bar pill.
-	ProtocolMinor = 14
+	// Minor 15 adds masked text inputs, for a password the plugin needs.
+	ProtocolMinor = 15
 )
 
 // The version-one message names. Every line on the wire carries one of these

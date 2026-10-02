@@ -2605,6 +2605,7 @@ func (h *PanelHost) fieldFor(n *ui.Node) *ui.Field {
 			h.editors[k] = slot
 		}
 		slot.field.SyncFrom(n)
+		slot.field.Masked = n.Masked
 		f = slot.field
 	} else if store := pluginSettingStoreKey(n.Action); store != "" {
 		if h.fields == nil {
@@ -3848,7 +3849,7 @@ func (r *Registry) closeAllPanelsLocked() {
 func seedField(n *ui.Node) *ui.Field {
 	f := ui.NewField(n.Text)
 	f.PreeditText = n.Preedit
-	f.Multiline, f.SubmitOnEnter = n.Multiline, n.SubmitOnEnter
+	f.Multiline, f.SubmitOnEnter, f.Masked = n.Multiline, n.SubmitOnEnter, n.Masked
 	f.SetCaret(n.Cursor, false)
 	return f
 }
@@ -3878,6 +3879,7 @@ func overlayEditors(root *ui.Node, eds map[string]*retainedEditor) {
 				} else {
 					slot.field.Multiline = n.Multiline
 					slot.field.SubmitOnEnter = n.SubmitOnEnter
+					slot.field.Masked = n.Masked
 					slot.field.SyncTo(n)
 				}
 			}

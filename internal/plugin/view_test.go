@@ -1032,3 +1032,19 @@ func TestConvertSpinnerKeepsKeySizeAndTone(t *testing.T) {
 		t.Fatalf("converted spinner = %+v", n)
 	}
 }
+
+func TestConvertCarriesAMaskedTextInput(t *testing.T) {
+	t.Parallel()
+
+	root := &v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{{
+		Kind: v1.KindTextInput, ID: "pw", Name: "Password", Role: "textbox",
+		Events: []v1.EventKind{v1.EventSubmit}, Masked: true, SubmitOnEnter: true,
+	}}}
+	got, err := Convert(root, v1.ViewPanel)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if f := got.Children[0]; f.Kind != ui.KindTextField || !f.Masked {
+		t.Fatalf("field = %+v, want a masked text field", f)
+	}
+}
