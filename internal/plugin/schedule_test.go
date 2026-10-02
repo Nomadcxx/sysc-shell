@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -42,5 +43,28 @@ func TestPluginEnvironmentIsAllowlisted(t *testing.T) {
 	}
 	if strings.Contains(got, "MY_SESSION_TOKEN") {
 		t.Fatalf("non-allowlisted var leaked: %q", got)
+	}
+}
+
+// A plugin that hands off to a desktop app (xdg-open of a game, a folder, a
+// config file) must pass on the display session: without DISPLAY an X11 app
+// such as Steam, started through Lutris, died with "Unable to open a
+// connection to X".
+func TestPluginEnvironmentCarriesTheDisplaySession(t *testing.T) {
+	session := map[string]string{
+		"DISPLAY":                  ":0",
+		"XAUTHORITY":               "/run/user/1000/xauth",
+		"DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
+		"XDG_CURRENT_DESKTOP":      "niri",
+		"XDG_SESSION_TYPE":         "wayland",
+	}
+	for k, v := range session {
+		t.Setenv(k, v)
+	}
+	got := pluginEnvironment()
+	for k, v := range session {
+		if !slices.Contains(got, k+"="+v) {
+			t.Errorf("%s missing from the plugin environment", k)
+		}
 	}
 }
