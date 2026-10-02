@@ -57,6 +57,13 @@ func HelperServe(args []string) int {
 		shutdownMarker = p
 		mode = "ok"
 	}
+	// record-input:<path> appends each input event. A host that drops the
+	// last buffered change never produces a line for it.
+	recordInput := ""
+	if p, ok := strings.CutPrefix(mode, "record-input:"); ok {
+		recordInput = p
+		mode = "ok"
+	}
 	out := v1.NewEncoder(os.Stdout)
 	in := v1.NewDecoder(os.Stdin, v1.ToPlugin)
 
@@ -190,6 +197,13 @@ func HelperServe(args []string) int {
 			}
 			_ = out.Encode(&v1.PluginStatus{State: v1.StatusOK, Message: string(m.Result)})
 		case *v1.InputEvent:
+			if recordInput != "" {
+				f, err := os.OpenFile(recordInput, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+				if err == nil {
+					_, _ = fmt.Fprintf(f, "%s\t%s\n", m.Event, m.Text)
+					_ = f.Close()
+				}
+			}
 			_ = out.Encode(&v1.PluginStatus{State: v1.StatusOK, Message: m.Node})
 			if mode == "panel-on-input" {
 				params, _ := json.Marshal(v1.PanelParams{Entry: "panel", Output: m.Output})
