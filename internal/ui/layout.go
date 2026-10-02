@@ -467,6 +467,9 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 			return 0, 0, fmt.Errorf("meter value %v is outside zero through one", n.Value)
 		}
 		return n.Width, ownHeight(n, contentHeight), nil
+	case KindSpinner:
+		size := SpinnerDiameter(n)
+		return size, size, nil
 	case KindRadialGauge:
 		size := n.Width
 		if size <= 0 {

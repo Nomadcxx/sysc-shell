@@ -61,6 +61,11 @@ const (
 	KindStack
 	// KindEffect is a non-interactive background layer for a stack.
 	KindEffect
+	// KindSpinner is an indeterminate activity indicator: an arc turning on
+	// the surface clock for work whose length is unknown, such as a game
+	// starting. Width is its diameter; Value is the turn the animator has
+	// reached, zero through one, so under reduced motion it rests at zero.
+	KindSpinner
 
 	// kindCount is one past the last kind. It exists so a test can assert that
 	// every declared kind is measurable, and it must stay last.
@@ -124,6 +129,8 @@ func (k Kind) String() string {
 		return "stack"
 	case KindEffect:
 		return "effect"
+	case KindSpinner:
+		return "spinner"
 	}
 	return "kind " + strconv.Itoa(int(k))
 }

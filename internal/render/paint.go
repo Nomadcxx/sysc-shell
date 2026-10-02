@@ -327,6 +327,9 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 	case ui.KindRadialGauge:
 		return paintRadialGauge(c, n, text, style)
 
+	case ui.KindSpinner:
+		return paintSpinner(c, n, style)
+
 	case ui.KindWordmark:
 		return paintWordmark(c, n, style)
 
