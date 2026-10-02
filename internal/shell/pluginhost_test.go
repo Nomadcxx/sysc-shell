@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -1962,5 +1963,127 @@ func TestRegistryCloseLetsPluginsFinish(t *testing.T) {
 	reg.Close()
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatalf("plugin never ran its shutdown: %v", err)
+	}
+}
+
+// pumpRuntimeIDs reports goroutines inside pluginHost.pumpRuntime. Ids are
+// not reused, so a pump that has returned is absent on the next read.
+func pumpRuntimeIDs() map[string]struct{} {
+	buf := make([]byte, 64<<10)
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			buf = buf[:n]
+			break
+		}
+		buf = make([]byte, len(buf)*2)
+	}
+	ids := map[string]struct{}{}
+	for _, block := range strings.Split(string(buf), "\n\n") {
+		if !strings.Contains(block, ".pumpRuntime(") {
+			continue
+		}
+		line, _, _ := strings.Cut(block, "\n")
+		rest, ok := strings.CutPrefix(line, "goroutine ")
+		if !ok {
+			continue
+		}
+		id, _, _ := strings.Cut(rest, " ")
+		ids[id] = struct{}{}
+	}
+	return ids
+}
+
+func pumpsBeyond(base map[string]struct{}) []string {
+	var extra []string
+	for id := range pumpRuntimeIDs() {
+		if _, ok := base[id]; !ok {
+			extra = append(extra, id)
+		}
+	}
+	return extra
+}
+
+// waitOwnPump waits until exactly one pumpRuntime from this test is running
+// and it is not gone, the goroutine stopPlugin was supposed to release.
+// A brief overlap while the old pump exits is allowed; staying overlapped is not.
+func waitOwnPump(t *testing.T, base map[string]struct{}, gone string) string {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	var last []string
+	for time.Now().Before(deadline) {
+		last = pumpsBeyond(base)
+		if len(last) == 1 && last[0] != gone {
+			return last[0]
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("pumpRuntime goroutines = %v, want one new pump after %s", last, gone)
+	return ""
+}
+
+// stopPlugin must let the message pump return. Messages is never closed and
+// the host context lives until shell exit, so disable/replace/retry used to
+// leave a goroutine blocked on the dead runtime forever.
+func TestStopPluginReleasesTheRuntimePump(t *testing.T) {
+	base := pumpRuntimeIDs()
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	reg.plugins.mu.Lock()
+	cat := reg.plugins.catalog
+	reg.plugins.mu.Unlock()
+
+	const pluginID = "org.sysc.timer"
+	current := waitOwnPump(t, base, "")
+	for i := 0; i < 3; i++ {
+		reg.plugins.stopPlugin(pluginID)
+		if err := reg.plugins.ensure(pluginID, cat, false); err != nil {
+			t.Fatal(err)
+		}
+		current = waitOwnPump(t, base, current)
+	}
+}
+
+// retryLocked restarts the same runtime in place. Its pump has to stay: a
+// new process publishes on the same Messages channel.
+func TestRetryLockedKeepsTheSameRuntimePump(t *testing.T) {
+	base := pumpRuntimeIDs()
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	current := waitOwnPump(t, base, "")
+
+	const pluginID = "org.sysc.timer"
+	reg.plugins.mu.Lock()
+	slot := reg.plugins.slots[pluginID]
+	reg.plugins.mu.Unlock()
+	if slot == nil {
+		t.Fatal("plugin is not running")
+	}
+	pid := slot.rt.Status().PID
+
+	reg.mu.Lock()
+	err := reg.plugins.retryLocked(pluginID)
+	reg.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Retry resets the start counter, so a new process id is the signal
+	// that the same runtime came back.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		st := slot.rt.Status()
+		if st.State == plugin.StateRunning && st.PID != 0 && st.PID != pid {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("retry did not start again: %+v", st)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	own := pumpsBeyond(base)
+	if len(own) != 1 || own[0] != current {
+		t.Fatalf("pumps = %v, want the original pump %s", own, current)
 	}
 }

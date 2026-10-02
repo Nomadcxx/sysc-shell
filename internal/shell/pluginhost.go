@@ -30,6 +30,11 @@ type PluginHostOptions struct {
 type pluginSlot struct {
 	rt    *plugin.Runtime
 	store plugin.StateStore
+	// ctx is cancelled by stopPlugin. The host context stays live across
+	// disable, and the runtime never closes Messages, so this is what lets
+	// pumpRuntime return.
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 type hostedView struct {
@@ -283,7 +288,8 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 		return err
 	}
 	rt.SetCalls(plugin.NewDispatcher(h.callEnv(id, rt, store)))
-	slot := &pluginSlot{rt: rt, store: store}
+	slotCtx, cancel := context.WithCancel(h.ctx)
+	slot := &pluginSlot{rt: rt, store: store, ctx: slotCtx, cancel: cancel}
 	if h.ensureRaceHook != nil {
 		h.ensureRaceHook(id, rt)
 	}
@@ -293,6 +299,7 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 		// the pre-swap catalog, or another ensure already won the insert.
 		// Stop what was just started rather than let it occupy the slot.
 		h.mu.Unlock()
+		cancel()
 		rt.Stop()
 		return nil
 	}
@@ -366,6 +373,9 @@ func (h *pluginHost) stopPlugin(id string) {
 		h.closeViewUsing(vid, slot)
 	}
 	if slot != nil {
+		if slot.cancel != nil {
+			slot.cancel()
+		}
 		slot.rt.Stop()
 	}
 	h.clearWallpaperMasks(id)
@@ -380,7 +390,7 @@ func (h *pluginHost) clearWallpaperMasks(id string) {
 func (h *pluginHost) pumpRuntime(slot *pluginSlot) {
 	for {
 		select {
-		case <-h.ctx.Done():
+		case <-slot.ctx.Done():
 			return
 		case msg, ok := <-slot.rt.Messages():
 			if !ok {
