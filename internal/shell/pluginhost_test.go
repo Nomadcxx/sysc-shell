@@ -1818,6 +1818,93 @@ func TestPluginCallHooksChangeNothingOnceCancelled(t *testing.T) {
 	}
 }
 
+// queuePendingBarText leaves one change in the coalescer, the state typing
+// is in until the frame flush runs.
+func queuePendingBarText(t *testing.T, h *pluginHost, text string) {
+	t.Helper()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var id string
+	for _, v := range h.views {
+		if v.Plugin == "org.sysc.timer" && v.Kind == v1.ViewBar {
+			id = v.ID
+			break
+		}
+	}
+	if id == "" {
+		t.Fatal("timer bar view is not open")
+	}
+	if sent := h.textOut.Push(v1.InputEvent{ViewID: id, Node: "body", Event: v1.EventChange, Text: text}); len(sent) != 0 {
+		t.Fatalf("change was sent immediately: %+v", sent)
+	}
+}
+
+func recordedInputText(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ""
+		}
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+// Disabling a plugin must deliver keystrokes still waiting on the flush
+// timer. stopPlugin used to drop the slot first, so closeView took the
+// change and then had nobody to send it to.
+func TestStopPluginSendsPendingTextBeforeStop(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "inputs")
+	reg := bindTestPlugin(t, "record-input:"+marker)
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	queuePendingBarText(t, reg.plugins, "last words")
+
+	reg.plugins.stopPlugin("org.sysc.timer")
+
+	if got := recordedInputText(t, marker); !strings.Contains(got, "change\tlast words\n") {
+		t.Fatalf("plugin input log = %q, want the pending change", got)
+	}
+}
+
+// Shell exit has the same obligation: the last buffered change has to reach
+// the plugin before Stop, or the process shuts down without it.
+func TestCloseSendsPendingTextBeforeStop(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "inputs")
+	reg := bindTestPlugin(t, "record-input:"+marker)
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	queuePendingBarText(t, reg.plugins, "last words")
+
+	reg.Close()
+
+	if got := recordedInputText(t, marker); !strings.Contains(got, "change\tlast words\n") {
+		t.Fatalf("plugin input log = %q, want the pending change", got)
+	}
+}
+
+// Plugin-manager retry restarts the same runtime in place. The pending
+// change still has to go out before Stop, or the new process never sees it.
+func TestRetryLockedSendsPendingTextBeforeStop(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "inputs")
+	reg := bindTestPlugin(t, "record-input:"+marker)
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	queuePendingBarText(t, reg.plugins, "last words")
+
+	reg.mu.Lock()
+	err := reg.plugins.retryLocked("org.sysc.timer")
+	reg.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := recordedInputText(t, marker); !strings.Contains(got, "change\tlast words\n") {
+		t.Fatalf("plugin input log = %q, want the pending change", got)
+	}
+}
+
 // Text typed in the frame before a close is held for the flush timer, which
 // drops changes for a view that has gone. The close sends it instead.
 func TestClosingAViewSendsItsPendingTextFirst(t *testing.T) {

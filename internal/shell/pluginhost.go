@@ -73,6 +73,8 @@ type pluginHost struct {
 	inputs              []v1.InputEvent
 	textOut             plugin.TextOut
 	flushPending        bool
+	flushTimer          *time.Timer
+	flushing            sync.WaitGroup
 	closed              []string
 	panel               *hostedView
 	wallpaperProjection pluginWallpaperProjection
@@ -136,13 +138,30 @@ func (h *pluginHost) Close() {
 	if h == nil {
 		return
 	}
+	h.settleTextFlush()
 	h.mu.Lock()
 	slots := h.slots
+	views := h.views
+	// Keystrokes still waiting on the flush timer have to reach the plugin
+	// before Stop. Clearing the views first is what made flushText drop them.
+	pending := h.textOut.Flush()
+	h.inputs = append(h.inputs, pending...)
 	h.slots = nil
 	h.views = make(map[string]*hostedView)
 	surfaces := h.surfaces
 	h.surfaces = make(map[string]*pluginSurfaceHost)
 	h.mu.Unlock()
+	for i := range pending {
+		v := views[pending[i].ViewID]
+		if v == nil {
+			continue
+		}
+		slot := slots[v.Plugin]
+		if slot == nil {
+			continue
+		}
+		_ = slot.rt.Send(&pending[i])
+	}
 	for _, surface := range surfaces {
 		surface.closeWayland()
 	}
@@ -329,6 +348,7 @@ func (h *pluginHost) stopPlugin(id string) {
 	h.surfaceMu.Lock()
 	defer h.surfaceMu.Unlock()
 
+	h.settleTextFlush()
 	h.mu.Lock()
 	slot := h.slots[id]
 	delete(h.slots, id)
@@ -339,8 +359,10 @@ func (h *pluginHost) stopPlugin(id string) {
 		}
 	}
 	h.mu.Unlock()
+	// The slot is already gone from the map so teardown cannot open new
+	// views, but closeView still has the pointer to Send on.
 	for _, vid := range drop {
-		h.closeView(vid)
+		h.closeViewUsing(vid, slot)
 	}
 	if slot != nil {
 		slot.rt.Stop()
@@ -729,13 +751,19 @@ func (h *pluginHost) reopenViews(pluginID string) {
 }
 
 func (h *pluginHost) closeView(id string) {
+	h.closeViewUsing(id, nil)
+}
+
+func (h *pluginHost) closeViewUsing(id string, slot *pluginSlot) {
 	h.mu.Lock()
 	v, ok := h.views[id]
 	if !ok {
 		h.mu.Unlock()
 		return
 	}
-	slot := h.slots[v.Plugin]
+	if slot == nil {
+		slot = h.slots[v.Plugin]
+	}
 	// Text typed in the last frame is still waiting for the flush timer,
 	// which drops changes for a view that has gone. It goes out first.
 	pending := h.textOut.Take(id)
@@ -1387,12 +1415,32 @@ func (h *pluginHost) scheduleTextFlushLocked() {
 		return
 	}
 	h.flushPending = true
-	time.AfterFunc(time.Second/30, h.flushText)
+	h.flushing.Add(1)
+	h.flushTimer = time.AfterFunc(time.Second/30, func() {
+		defer h.flushing.Done()
+		h.flushText()
+	})
+}
+
+// settleTextFlush stops a timer that has not fired and waits for one that
+// has, so Stop cannot race an in-flight Send. Must not hold h.mu.
+func (h *pluginHost) settleTextFlush() {
+	h.mu.Lock()
+	if h.flushTimer != nil && h.flushPending {
+		if h.flushTimer.Stop() {
+			h.flushing.Done()
+			h.flushPending = false
+		}
+		h.flushTimer = nil
+	}
+	h.mu.Unlock()
+	h.flushing.Wait()
 }
 
 func (h *pluginHost) flushText() {
 	h.mu.Lock()
 	h.flushPending = false
+	h.flushTimer = nil
 	pending := h.textOut.Flush()
 	h.inputs = append(h.inputs, pending...)
 	slots := make([]*pluginSlot, 0, len(pending))
@@ -1669,9 +1717,29 @@ func (h *pluginHost) retryLocked(id string) error {
 		return h.enableLocked(id, true)
 	}
 	h.r.mu.Unlock()
+	h.settleTextFlush()
+	h.sendPendingFor(slot, id)
 	err := slot.rt.Retry(h.ctx)
 	h.r.mu.Lock()
 	return err
+}
+
+func (h *pluginHost) sendPendingFor(slot *pluginSlot, pluginID string) {
+	if slot == nil {
+		return
+	}
+	h.mu.Lock()
+	var pending []v1.InputEvent
+	for _, v := range h.views {
+		if v.Plugin == pluginID {
+			pending = append(pending, h.textOut.Take(v.ID)...)
+		}
+	}
+	h.inputs = append(h.inputs, pending...)
+	h.mu.Unlock()
+	for i := range pending {
+		_ = slot.rt.Send(&pending[i])
+	}
 }
 
 func (h *pluginHost) rescan() error { return h.syncEnabled() }
