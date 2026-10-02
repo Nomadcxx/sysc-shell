@@ -960,7 +960,9 @@ func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResul
 			// right edge of smaller screens (sysc-578).
 			trig = h.r.triggerLocked(global, bar.connector())
 			trig.BarZone = exclusiveBarZone(bar)
-			if anchor > 0 {
+			// A center panel keeps the zero anchor, so Align centres it on
+			// the output under the wordmark.
+			if anchor > 0 && spec.Placement != plugin.PlacementCenter {
 				trig.AnchorX = anchor
 			}
 			if trig.OutW > 0 && trig.OutH > 0 {
