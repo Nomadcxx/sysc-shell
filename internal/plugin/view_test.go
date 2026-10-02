@@ -139,6 +139,7 @@ func TestConvertMapsEveryVersionOneKind(t *testing.T) {
 		{"icon", &v1.Node{Kind: v1.KindIcon, Icon: "rain"}, ui.KindText},
 		{"progress", &v1.Node{Kind: v1.KindProgress, Value: 0.5}, ui.KindMeter},
 		{"gauge", &v1.Node{Kind: v1.KindGauge, Value: 0.5, ValueText: "12:34"}, ui.KindRadialGauge},
+		{"spinner", &v1.Node{Kind: v1.KindSpinner, Key: "launching", Width: 24}, ui.KindSpinner},
 		{"button", &v1.Node{Kind: v1.KindButton, ID: "b", Text: "x", Name: "x", Role: "button",
 			Events: []v1.EventKind{v1.EventActivate}}, ui.KindButton},
 		{"text input", &v1.Node{Kind: v1.KindTextInput, ID: "i", Name: "i", Role: "textbox",
@@ -1014,5 +1015,20 @@ func TestConvertCarriesASpriteCycle(t *testing.T) {
 	}}
 	if _, err := Convert(bad, v1.ViewBar); err == nil || !strings.Contains(err.Error(), "frames[1]") {
 		t.Fatalf("an unknown pose converted: %v", err)
+	}
+}
+
+// The host owns a spinner's turning: the converted node carries its key, size
+// and tone, and a phase of zero for the animator to advance.
+func TestConvertSpinnerKeepsKeySizeAndTone(t *testing.T) {
+	root, err := Convert(&v1.Node{Kind: v1.KindColumn, Children: []*v1.Node{
+		{Kind: v1.KindSpinner, Key: "launching", Width: 28, Tone: v1.ToneError},
+	}}, v1.ViewPanel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := root.Children[0]
+	if n.Kind != ui.KindSpinner || n.Key != "launching" || n.Width != 28 || n.Tone != ui.ToneError || n.Value != 0 {
+		t.Fatalf("converted spinner = %+v", n)
 	}
 }

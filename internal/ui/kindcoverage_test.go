@@ -40,7 +40,7 @@ var allKinds = []Kind{
 	KindSeparator, KindTab, KindToggle, KindSlider, KindMenu, KindTextField,
 	KindScroll, KindVirtualList, KindImage, KindCapsule, KindEdgeFade, KindIcon, KindSegmented, KindScheduleGrid,
 	KindDragSource, KindDropZone, KindWordmark, KindRadialGauge, KindStack,
-	KindEffect,
+	KindEffect, KindSpinner,
 }
 
 // rowUnsupported and columnUnsupported name the kinds each measure path
