@@ -7,8 +7,9 @@ const (
 	// Minor 11 adds the sticky_note_2, push_pin, star and note_add icons and
 	// paints floating sticky notes on their paper; a plugin that uses those
 	// icons declares minor 11 so an older shell refuses it instead of failing
-	// to convert its views.
-	ProtocolMinor = 11
+	// to convert its views. Minor 12 adds the "center" panel placement, which
+	// drops a panel from the middle of the output instead of under its widget.
+	ProtocolMinor = 12
 )
 
 // The version-one message names. Every line on the wire carries one of these

@@ -2087,3 +2087,43 @@ func TestRetryLockedKeepsTheSameRuntimePump(t *testing.T) {
 		t.Fatalf("pumps = %v, want the original pump %s", own, current)
 	}
 }
+
+// A center-placed panel drops from the middle of the output, the way the
+// wordmark's control center does, however far along the bar its pill sits.
+func TestCenterPlacedPluginPanelIgnoresTheClickedWidget(t *testing.T) {
+	manifest := strings.Replace(testRecorderPanelManifest,
+		`"width": 640, "height": 720, "placement": "attached"`,
+		`"width": 640, "height": 720, "placement": "center"`, 1)
+	manifest = strings.Replace(manifest, `"minor": 0`, `"minor": 12`, 1)
+	reg := bindManifestPlugin(t, "ok", "org.sysc.screen-recorder", manifest,
+		[]string{"org.sysc.screen-recorder"})
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	bar := reg.bars[7]
+	bar.setOutputSize(3440, 1440)
+	if err := bar.Configure(3440, BarHeight, 120); err != nil {
+		t.Fatal(err)
+	}
+	reg.plugins.mu.Lock()
+	reg.plugins.lastAnchor["org.sysc.screen-recorder"] = 2900
+	reg.plugins.mu.Unlock()
+	if _, err := reg.plugins.openPanel("org.sysc.screen-recorder", v1.PanelParams{
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "org.sysc.screen-recorder-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	reg.mu.Lock()
+	host := reg.panelHosts[PanelPlugin]
+	reg.mu.Unlock()
+	if host == nil {
+		t.Fatal("plugin panel never opened")
+	}
+	if host.place.AnchorX != 0 {
+		t.Fatalf("panel anchor = %d, want the output centre (no widget anchor)", host.place.AnchorX)
+	}
+	m := host.place.Margins()
+	if left, want := m.Left, (3440-host.place.Panel.W)/2; left != want {
+		t.Fatalf("panel left = %d, want centred %d", left, want)
+	}
+}
