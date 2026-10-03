@@ -642,7 +642,7 @@ func (b *Bar) renderViewLocked() (*ui.Node, render.Style) {
 	// from the control ladder rather than a literal, like every other measured
 	// piece of this bar.
 	root.Children = append(root.Children,
-		overflowFades(sections, b.overflow, b.theme.Metrics.StandardControl)...)
+		overflowFades(sections, b.overflow, b.theme.Metrics.StandardControl, b.barAxis())...)
 	// The painter consumes an immutable mask, so state is resolved onto the
 	// copy that is about to be drawn rather than onto live model state.
 	b.pointer.apply(root, b.anim)

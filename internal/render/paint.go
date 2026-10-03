@@ -475,7 +475,7 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 		return nil
 
 	case ui.KindEdgeFade:
-		fillEdgeFade(c, style.Scale120.PhysicalRect(n.Bounds), style.rootFill())
+		fillEdgeFade(c, style.Scale120.PhysicalRect(n.Bounds), style.rootFill(), n.FadeAxis)
 		return nil
 
 	case ui.KindTab:
@@ -1849,36 +1849,36 @@ func textColor(style Style, tone ui.Tone) Color {
 }
 
 // fillEdgeFade ramps the bar's own surface over what it covers, transparent at
-// the left and solid at the trailing edge, so an overflowing section reads as
+// the leading edge and solid at the trailing edge, so an overflowing section reads as
 // continuing past the cut instead of stopping there. It composites over the
 // widget beneath rather than replacing it: the fade adds no width and moves
 // nothing, which is why this treatment cannot cause the overflow it reports.
-func fillEdgeFade(c *Canvas, r ui.Rect, surface Color) {
+func fillEdgeFade(c *Canvas, r ui.Rect, surface Color, axis ui.Axis) {
 	if r.W <= 0 || r.H <= 0 || surface.A == 0 {
 		return
 	}
 	x0, y0, x1, y1 := c.clip(r)
-	// The ramp spans the gaps between columns, not the columns themselves, so
-	// the last one lands on the surface exactly rather than a step short of it.
+	// The ramp spans the gaps between pixels, so the last one lands on the
+	// surface exactly rather than a step short of it.
 	span := r.W - 1
-	for x := x0; x < x1; x++ {
-		// Distance across the box decides the cover: the first column is the
-		// widget as drawn, the last is the bar.
-		at := x - r.X
-		if at < 0 {
-			at = 0
-		}
-		col := surface
-		if span > 0 {
-			col.A = uint8(uint32(surface.A) * uint32(at) / uint32(span))
-		}
-		if col.A == 0 {
-			continue
-		}
-		src := col.premultiply()
-		for y := y0; y < y1; y++ {
-			row := c.Pix[y*c.Stride:]
-			blendPixel(row[x*4:x*4+4], src, uint32(col.A))
+	if axis == ui.Vertical {
+		span = r.H - 1
+	}
+	for y := y0; y < y1; y++ {
+		row := c.Pix[y*c.Stride:]
+		for x := x0; x < x1; x++ {
+			at := x - r.X
+			if axis == ui.Vertical {
+				at = y - r.Y
+			}
+			col := surface
+			if span > 0 {
+				col.A = uint8(uint32(surface.A) * uint32(at) / uint32(span))
+			}
+			if col.A == 0 {
+				continue
+			}
+			blendPixel(row[x*4:x*4+4], col.premultiply(), uint32(col.A))
 		}
 	}
 }
