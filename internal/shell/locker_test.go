@@ -6,6 +6,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
 type fakeLock struct {
@@ -157,6 +160,32 @@ func TestLockerSigtermBeforeLockedNoRespawn(t *testing.T) {
 	}
 }
 
+func TestLockerSingleFlightDuringRespawnBackoff(t *testing.T) {
+	f := newFakeLock([]int{1, 0}, []string{"sysc-lock: locked", "sysc-lock: locked"})
+	inBackoff := make(chan struct{})
+	var once sync.Once
+	m := &lockerManager{
+		spawn:  f.spawn,
+		paused: func(bool) {},
+		sleep: func(time.Duration) {
+			once.Do(func() { close(inBackoff) })
+			time.Sleep(30 * time.Millisecond)
+		},
+	}
+	if err := m.request([]string{"x"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-inBackoff:
+	case <-time.After(2 * time.Second):
+		t.Fatal("never entered respawn backoff")
+	}
+	if err := m.request([]string{"x"}); err != errLockerRunning {
+		t.Fatalf("request during backoff = %v, want errLockerRunning", err)
+	}
+	waitWhile(t, func() bool { return m.State().Running }, "still running")
+}
+
 func TestLockerSingleFlight(t *testing.T) {
 	f := newFakeLock(nil, []string{"sysc-lock: locked"})
 	f.codes = nil // keep it running
@@ -224,6 +253,59 @@ func TestLockActionLabel(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+func TestControlCentreLockRowFollowsHandshake(t *testing.T) {
+	cfg := config.Default()
+	cfg.Session.Locker = "sysc-lock"
+	cfg.Accessibility.ReducedMotion = true
+	reg := NewRegistry(cfg)
+	t.Cleanup(reg.Close)
+	withTestBar(t, reg, 1, cfg)
+	if err := reg.OpenPanelByName("control-center"); err != nil {
+		t.Fatal(err)
+	}
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelControlCenter]
+	if h == nil {
+		reg.mu.Unlock()
+		t.Fatal("no control centre")
+	}
+	h.selectControlCentreSection(reg, "power")
+	reg.mu.Unlock()
+
+	pr, pw := io.Pipe()
+	exits := make(chan int, 1)
+	reg.lockerSpawn = func([]string) (io.ReadCloser, <-chan int, error) {
+		return pr, exits, nil
+	}
+	if err := reg.LockTracked(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pw.Write([]byte(lockHandshakeLine + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		reg.mu.Lock()
+		h = reg.panelHosts[PanelControlCenter]
+		name := ""
+		if h != nil {
+			if n := findNode(h.root, func(n *ui.Node) bool { return n.Action == "session-lock" }); n != nil {
+				name = n.Name
+			}
+		}
+		reg.mu.Unlock()
+		if name == "Locked" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("CC session-lock row = %q, want Locked after handshake", name)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	pw.Close()
+	exits <- 0
 }
 
 // lockedLabel mirrors the panel-rebuild call path: readers hold r.mu.

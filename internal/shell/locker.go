@@ -101,7 +101,6 @@ func (m *lockerManager) pump(out io.Reader, exits <-chan int, argv []string) {
 	code := <-exits
 
 	m.mu.Lock()
-	m.running = false
 	m.exitCode = code
 	m.notifyLocked()
 	// ponytail: one respawn total; if the locker keeps crashing the shell
@@ -109,10 +108,9 @@ func (m *lockerManager) pump(out io.Reader, exits <-chan int, argv []string) {
 	needRespawn := m.acquired && code != 0 && !m.respawnUsed
 	if needRespawn {
 		m.respawnUsed = true
-	}
-	m.mu.Unlock()
-
-	if needRespawn {
+		// Keep running=true across backoff so a concurrent request cannot
+		// start a second locker (niri will refuse it with finished).
+		m.mu.Unlock()
 		m.sleep(lockerRespawnBackoff)
 		m.mu.Lock()
 		err := m.beginLocked(argv)
@@ -120,6 +118,14 @@ func (m *lockerManager) pump(out io.Reader, exits <-chan int, argv []string) {
 		if err == nil {
 			return
 		}
+		m.mu.Lock()
+		m.running = false
+		m.notifyLocked()
+		m.mu.Unlock()
+	} else {
+		m.running = false
+		m.notifyLocked()
+		m.mu.Unlock()
 	}
 	if m.paused != nil {
 		m.paused(false)
@@ -206,6 +212,10 @@ func (r *Registry) lockerLocked() *lockerManager {
 			stateCB: func(running, acquired bool) {
 				r.mu.Lock()
 				r.lockerRunning, r.lockerAcquired = running, acquired
+				if h := r.panelHosts[PanelControlCenter]; h != nil {
+					r.rebuildPanel(h)
+					r.publishSurface(h.output, panelSurfaceID(h.id))
+				}
 				r.mu.Unlock()
 			},
 			paused: func(p bool) {
