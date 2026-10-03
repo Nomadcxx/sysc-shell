@@ -50,7 +50,7 @@ func workspaceID(action string) (uint64, bool) {
 // The pill paints no label, so its identity lives here: the action carries the
 // workspace id a click focuses, and the accessible name reads the workspace's
 // own name, or its index when it has none.
-func pillNode(p workspacePill, m theme.Metrics) *ui.Node {
+func pillNode(p workspacePill, m theme.Metrics, side bool) *ui.Node {
 	// An empty workspace is a hollow dot rather than an absent one. FillNone
 	// paints no fill and no boundary, so on the live bar three workspaces read
 	// as two shapes; the outline keeps the slot countable while still saying
@@ -65,9 +65,13 @@ func pillNode(p workspacePill, m theme.Metrics) *ui.Node {
 	case p.Occupied:
 		fill = ui.FillContainer
 	}
-	width := m.IconLarge
+	width, height := m.IconLarge, m.IconLarge
 	if p.Focused {
-		width = 2 * m.IconLarge
+		if side {
+			height *= 2
+		} else {
+			width *= 2
+		}
 	}
 	label := p.Name
 	if label == "" {
@@ -78,7 +82,7 @@ func pillNode(p workspacePill, m theme.Metrics) *ui.Node {
 		Fill:   fill,
 		Shape:  ui.ShapeStadium,
 		Width:  width,
-		Height: m.IconLarge,
+		Height: height,
 		Action: workspaceAction(p.ID),
 		Name:   "Workspace " + label,
 		Role:   "button",
@@ -89,7 +93,7 @@ func pillNode(p workspacePill, m theme.Metrics) *ui.Node {
 // occupancy, urgency or focus changes, and reports whether it did. The pills
 // are shapes only: the row never paints a workspace number, so the projection
 // cannot hide a label inside a smaller node.
-func refreshWorkspacePills(row *ui.Node, v barView, m theme.Metrics) bool {
+func refreshWorkspacePills(row *ui.Node, v barView, m theme.Metrics, side bool) bool {
 	// With no projection yet, the widget still shows the stable fallback
 	// rather than collapsing to nothing, which is what tells an owner that
 	// Niri has not reported this output.
@@ -109,12 +113,12 @@ func refreshWorkspacePills(row *ui.Node, v barView, m theme.Metrics) bool {
 		})
 		return true
 	}
-	if workspacePillsMatch(row, v.Pills, m) {
+	if workspacePillsMatch(row, v.Pills, m, side) {
 		return false
 	}
 	row.Children = row.Children[:0]
 	for _, p := range v.Pills {
-		row.Children = append(row.Children, pillNode(p, m))
+		row.Children = append(row.Children, pillNode(p, m, side))
 	}
 	return true
 }
@@ -122,7 +126,7 @@ func refreshWorkspacePills(row *ui.Node, v barView, m theme.Metrics) bool {
 // workspacePillsMatch reports whether the row already paints these pills. It
 // compares against a freshly built pill rather than repeating the state rules,
 // so the painter and the change detector cannot drift apart.
-func workspacePillsMatch(row *ui.Node, pills []workspacePill, m theme.Metrics) bool {
+func workspacePillsMatch(row *ui.Node, pills []workspacePill, m theme.Metrics, side bool) bool {
 	if len(row.Children) != len(pills) {
 		return false
 	}
@@ -131,7 +135,7 @@ func workspacePillsMatch(row *ui.Node, pills []workspacePill, m theme.Metrics) b
 		if c == nil || len(c.Children) != 0 {
 			return false
 		}
-		want := pillNode(p, m)
+		want := pillNode(p, m, side)
 		if c.Kind != want.Kind || c.Fill != want.Fill || c.Shape != want.Shape ||
 			c.Width != want.Width || c.Height != want.Height ||
 			c.Action != want.Action || c.Name != want.Name || c.Role != want.Role {
