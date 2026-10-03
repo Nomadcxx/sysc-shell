@@ -20,7 +20,16 @@ func Default() *Registry {
 	return DefaultFor(config.Default())
 }
 
-func DefaultFor(cfg config.Config) *Registry {
+func DefaultFor(cfg config.Config, opts ...Option) *Registry {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+	slugs, names := o.slugs(), o.names()
+	sources := themeSources
+	if len(slugs) > 0 {
+		sources = append(slices.Clone(themeSources), "custom")
+	}
 	r := &Registry{entries: []Entry{
 		{
 			Path: "bar.enabled", Label: "Enabled", Section: "Bar", Page: "Appearance", Group: "Surface",
@@ -51,7 +60,7 @@ func DefaultFor(cfg config.Config) *Registry {
 			Set:      setEnum("bar.shape", config.BarShapes, func(c *config.Config, v string) { c.Bar.Shape = v }),
 		},
 		{
-			Path: "bar.frost-opacity", Label: "Frost opacity", Section: "Bar", Page: "Appearance", Group: "Frost",
+			Path: "bar.frost-opacity", Present: PresentSlider, Unit: "%", Label: "Frost opacity", Section: "Bar", Page: "Appearance", Group: "Frost",
 			Describe: "How opaque the frosted bar's ground is. Applies to the Frosted style.",
 			Kind:     KindInt, Min: theme.OpacityMinFrost, Max: theme.OpacityMax,
 			Get: getInt(func(c config.Config) int { return c.Bar.FrostOpacity }),
@@ -59,7 +68,7 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, n int) { c.Bar.FrostOpacity = n }),
 		},
 		{
-			Path: "bar.pill-opacity", Label: "Pill opacity", Section: "Bar", Page: "Appearance", Group: "Frost",
+			Path: "bar.pill-opacity", Present: PresentSlider, Unit: "%", Label: "Pill opacity", Section: "Bar", Page: "Appearance", Group: "Frost",
 			Describe: "How opaque the bar's pills are when Style is Frosted or Islands.",
 			Kind:     KindInt, Min: theme.OpacityMinFrost, Max: theme.OpacityMax,
 			Get: getInt(func(c config.Config) int { return c.Bar.PillOpacity }),
@@ -67,28 +76,28 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, n int) { c.Bar.PillOpacity = n }),
 		},
 		{
-			Path: "bar.height", Label: "Height", Section: "Bar", Page: "Appearance", Group: "Geometry",
+			Path: "bar.height", Present: PresentSlider, Unit: "px", Label: "Height", Section: "Bar", Page: "Appearance", Group: "Geometry",
 			Describe: "Bar height in logical pixels. It follows the density ladder unless set here.",
 			Kind:     KindInt, Min: 24, Max: 64,
 			Get: getInt(func(c config.Config) int { return c.Bar.Height }),
 			Set: setInt("bar.height", 24, 64, func(c *config.Config, n int) { c.Bar.Height = n }),
 		},
 		{
-			Path: "bar.gap", Label: "Gap", Section: "Bar", Page: "Appearance", Group: "Geometry",
+			Path: "bar.gap", Present: PresentSlider, Unit: "px", Label: "Gap", Section: "Bar", Page: "Appearance", Group: "Geometry",
 			Describe: "Space between the bar and the screen edge.",
 			Kind:     KindInt, Min: 0, Max: 32,
 			Get: getInt(func(c config.Config) int { return c.Bar.Gap }),
 			Set: setInt("bar.gap", 0, 32, func(c *config.Config, n int) { c.Bar.Gap = n }),
 		},
 		{
-			Path: "bar.padding", Label: "Padding", Section: "Bar", Page: "Appearance", Group: "Geometry",
+			Path: "bar.padding", Present: PresentSlider, Unit: "px", Label: "Padding", Section: "Bar", Page: "Appearance", Group: "Geometry",
 			Describe: "Space inside the bar, before its first widget.",
 			Kind:     KindInt, Min: 0, Max: 32,
 			Get: getInt(func(c config.Config) int { return c.Bar.Padding }),
 			Set: setInt("bar.padding", 0, 32, func(c *config.Config, n int) { c.Bar.Padding = n }),
 		},
 		{
-			Path: "bar.spacing", Label: "Spacing", Section: "Bar", Page: "Appearance", Group: "Geometry",
+			Path: "bar.spacing", Present: PresentSlider, Unit: "px", Label: "Spacing", Section: "Bar", Page: "Appearance", Group: "Geometry",
 			Describe: "Space between neighbouring widgets.",
 			Kind:     KindInt, Min: 0, Max: 32,
 			Get: getInt(func(c config.Config) int { return c.Bar.Spacing }),
@@ -110,21 +119,21 @@ func DefaultFor(cfg config.Config) *Registry {
 			Set: setInt("bar.font-size", 8, 32, func(c *config.Config, n int) { c.Bar.FontSize = n }),
 		},
 		{
-			Path: "appearance.source", Label: "Theme source", Section: "Appearance", Group: "Palette",
+			Path: "appearance.source", Label: "Theme source", Section: "Appearance", Group: "Colours & mode",
 			Describe: "Where the palette is seeded from.",
-			Kind:     KindEnum, Options: themeSources,
+			Kind:     KindEnum, Options: sources,
 			Get: func(c config.Config) string { return c.ThemeGen.Source },
-			Set: setEnum("appearance.source", themeSources, func(c *config.Config, v string) {
+			Set: setEnum("appearance.source", sources, func(c *config.Config, v string) {
 				c.ThemeGen.Source = v
-				c.ThemeGen.Seed = seedFor(v, c.ThemeGen.Seed)
+				c.ThemeGen.Seed = seedFor(v, c.ThemeGen.Seed, slugs)
 			}),
 		},
-		seedEntry(cfg),
+		seedEntry(cfg, slugs, names),
 		// The palette entry writes the same field the seed does: with source
 		// set to palette the seed names a scheme, and an enum is a kinder way
 		// to pick one than typing it.
 		{
-			Path: "appearance.palette", Label: "Palette", Section: "Appearance", Group: "Palette",
+			Path: "appearance.palette", Label: "Colour palette", Section: "Appearance", Group: "Colours & mode",
 			Describe: "A bundled palette. Choosing one also sets the source to palette.",
 			Kind:     KindEnum,
 			Options:  theme.PaletteNames(),
@@ -142,14 +151,14 @@ func DefaultFor(cfg config.Config) *Registry {
 			}),
 		},
 		{
-			Path: "appearance.scheme", Label: "Scheme", Section: "Appearance", Group: "Palette",
+			Path: "appearance.scheme", Label: "Colour scheme", Section: "Appearance", Group: "Colours & mode",
 			Describe: "The Material scheme the palette is generated through.",
 			Kind:     KindString,
 			Get:      func(c config.Config) string { return c.ThemeGen.Scheme },
 			Set:      setString(func(c *config.Config, v string) { c.ThemeGen.Scheme = v }),
 		},
 		{
-			Path: "appearance.mode", Label: "Mode", Section: "Appearance", Group: "Palette",
+			Path: "appearance.mode", Label: "Colour mode", Section: "Appearance", Group: "Colours & mode",
 			Describe: "Light or dark resolution of the same palette.",
 			Kind:     KindEnum,
 			Options:  themeModes,
@@ -159,7 +168,7 @@ func DefaultFor(cfg config.Config) *Registry {
 		// The D3 composition axes. Percent and weight fields go through the
 		// integer control, so there is no float setting kind.
 		{
-			Path: "appearance.preset", Label: "Preset", Section: "Appearance", Group: "Composition",
+			Path: "appearance.preset", Label: "Visual preset", Section: "Appearance", Group: "Style & layout",
 			Describe: "The bundled composition the theme starts from. Every axis stays overridable.",
 			Kind:     KindEnum,
 			Options:  presetNames,
@@ -179,7 +188,7 @@ func DefaultFor(cfg config.Config) *Registry {
 			}),
 		},
 		{
-			Path: "appearance.density", Label: "Density", Section: "Appearance", Group: "Composition",
+			Path: "appearance.density", Label: "Control density", Section: "Appearance", Group: "Style & layout",
 			Describe: "How much room controls take. Every surface derives from it.",
 			Kind:     KindEnum,
 			Options:  densityNames,
@@ -188,21 +197,21 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, v string) { c.Theme.Density = theme.Density(v) }),
 		},
 		{
-			Path: "appearance.font-family", Label: "Font family", Section: "Appearance", Group: "Typography",
+			Path: "appearance.font-family", Label: "Interface font", Section: "Appearance", Group: "Typography & fonts",
 			Describe: "Font for interface text.",
 			Kind:     KindFont,
 			Get:      func(c config.Config) string { return c.Theme.FontFamily },
 			Set:      setString(func(c *config.Config, v string) { c.Theme.FontFamily = v }),
 		},
 		{
-			Path: "appearance.mono-font-family", Label: "Mono font family", Section: "Appearance", Group: "Typography",
+			Path: "appearance.mono-font-family", Label: "Monospace font", Section: "Appearance", Group: "Typography & fonts",
 			Describe: "Font for fixed-width text.",
 			Kind:     KindFont,
 			Get:      func(c config.Config) string { return c.Theme.MonoFontFamily },
 			Set:      setString(func(c *config.Config, v string) { c.Theme.MonoFontFamily = v }),
 		},
 		{
-			Path: "appearance.font-scale", Label: "Font scale", Section: "Appearance", Group: "Typography",
+			Path: "appearance.font-scale", Label: "Text scale", Section: "Appearance", Group: "Typography & fonts",
 			Describe: "Text size as a percentage of the preset's.",
 			Kind:     KindInt,
 			Min:      theme.FontScaleMin, Max: theme.FontScaleMax,
@@ -211,7 +220,7 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, n int) { c.Theme.FontScale = n }),
 		},
 		{
-			Path: "appearance.font-weight", Label: "Font weight", Section: "Appearance", Group: "Typography",
+			Path: "appearance.font-weight", Label: "Text weight", Section: "Appearance", Group: "Typography & fonts",
 			Describe: "Stroke weight for interface text.",
 			Kind:     KindInt,
 			Min:      theme.FontWeightMin, Max: theme.FontWeightMax,
@@ -220,7 +229,7 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, n int) { c.Theme.FontWeight = n }),
 		},
 		{
-			Path: "appearance.radius", Label: "Radius", Section: "Appearance", Group: "Shape",
+			Path: "appearance.radius", Label: "Surface corner radius", Section: "Appearance", Group: "Corners & shape",
 			Describe: "Corner radius for panels and cards.",
 			Kind:     KindInt,
 			Min:      theme.RadiusMin, Max: theme.RadiusMax,
@@ -231,7 +240,7 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, n int) { c.Theme.Radius = n }),
 		},
 		{
-			Path: "appearance.input-radius", Label: "Input radius", Section: "Appearance", Group: "Shape",
+			Path: "appearance.input-radius", Label: "Control corner radius", Section: "Appearance", Group: "Corners & shape",
 			Describe: "Corner radius for interactive elements: fields, switches and buttons.",
 			Kind:     KindInt,
 			Min:      theme.RadiusMin, Max: theme.RadiusMax,
@@ -243,8 +252,8 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, n int) { c.Theme.InputRadius = n }),
 		},
 		{
-			Path: "appearance.motion", Label: "Motion", Section: "Appearance", Group: "Motion",
-			Describe: "How animations move.",
+			Path: "appearance.motion", Label: "Animation style", Section: "Appearance", Group: "Animation",
+			Describe: "The style of motion used in shell animations.",
 			Kind:     KindEnum,
 			Options:  motionNames,
 			Get:      func(c config.Config) string { return string(c.Theme.Motion) },
@@ -252,8 +261,8 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, v string) { c.Theme.Motion = theme.MotionStyle(v) }),
 		},
 		{
-			Path: "appearance.motion-speed", Label: "Motion speed", Section: "Appearance", Group: "Motion",
-			Describe: "Animation duration as a percentage of the preset's.",
+			Path: "appearance.motion-speed", Label: "Animation speed", Section: "Appearance", Group: "Animation",
+			Describe: "How quickly motion runs compared with the preset.",
 			Kind:     KindInt,
 			Min:      theme.SpeedMin, Max: theme.SpeedMax,
 			Get: getInt(func(c config.Config) int { return c.Theme.MotionSpeed }),
@@ -261,7 +270,7 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, n int) { c.Theme.MotionSpeed = n }),
 		},
 		{
-			Path: "appearance.bar-opacity", Label: "Solid bar opacity", Section: "Appearance", Group: "Opacity",
+			Path: "appearance.bar-opacity", Present: PresentSlider, Unit: "%", Label: "Solid bar opacity", Section: "Appearance", Group: "Transparency",
 			Describe: "How opaque the bar is when Style is Solid.",
 			Kind:     KindInt,
 			Min:      theme.OpacityMin, Max: theme.OpacityMax,
@@ -272,7 +281,7 @@ func DefaultFor(cfg config.Config) *Registry {
 		// Panels take the blurred floor so the axis can reach it at all; the
 		// effective floor is still 80 unless a backdrop is present.
 		{
-			Path: "appearance.panel-opacity", Label: "Panel opacity", Section: "Appearance", Group: "Opacity",
+			Path: "appearance.panel-opacity", Present: PresentSlider, Unit: "%", Label: "Panel opacity", Section: "Appearance", Group: "Transparency",
 			Describe: "How opaque panels are. The lower floor applies only behind a blur.",
 			Kind:     KindInt,
 			Min:      theme.OpacityMinBlurred, Max: theme.OpacityMax,
@@ -281,7 +290,7 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, n int) { c.Theme.PanelOpacity = n }),
 		},
 		{
-			Path: "appearance.overlay-opacity", Label: "Overlay opacity", Section: "Appearance", Group: "Opacity",
+			Path: "appearance.overlay-opacity", Present: PresentSlider, Unit: "%", Label: "Overlay opacity", Section: "Appearance", Group: "Transparency",
 			Describe: "How opaque overlays and dialogues are.",
 			Kind:     KindInt,
 			Min:      theme.OpacityMin, Max: theme.OpacityMax,
@@ -290,14 +299,14 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, n int) { c.Theme.OverlayOpacity = n }),
 		},
 		{
-			Path: "appearance.blur-behind", Label: "Blur behind panels", Section: "Appearance", Group: "Depth",
+			Path: "appearance.blur-behind", Label: "Background blur", Section: "Appearance", Group: "Blur & elevation",
 			Describe: "Blur what is behind a panel. Uses the compositor on Niri 26.04 and later.",
 			Kind:     KindBool,
 			Get:      getBool(func(c config.Config) bool { return c.Theme.BlurBehind }),
 			Set:      setBool("appearance.blur-behind", func(c *config.Config, b bool) { c.Theme.BlurBehind = b }),
 		},
 		{
-			Path: "appearance.blur-radius", Label: "Blur radius", Section: "Appearance", Group: "Depth",
+			Path: "appearance.blur-radius", Label: "Blur strength", Section: "Appearance", Group: "Blur & elevation",
 			Describe: "How strong that blur is.",
 			Kind:     KindInt,
 			Min:      theme.BlurRadiusMin, Max: theme.BlurRadiusMax,
@@ -306,7 +315,7 @@ func DefaultFor(cfg config.Config) *Registry {
 				func(c *config.Config, n int) { c.Theme.BlurRadius = n }),
 		},
 		{
-			Path: "appearance.elevation", Label: "Elevation", Section: "Appearance", Group: "Depth",
+			Path: "appearance.elevation", Label: "Shadow depth", Section: "Appearance", Group: "Blur & elevation",
 			Describe: "How much shadow separates a surface from what is under it.",
 			Kind:     KindEnum,
 			Options:  elevationNames,
@@ -450,9 +459,9 @@ func DefaultFor(cfg config.Config) *Registry {
 			Describe: "How often the forecast is fetched, as a duration such as 15m.",
 			Get: func(c config.Config) string {
 				if c.Weather.Interval <= 0 {
-					return defaultWeatherInterval.String()
+					return conciseDuration(defaultWeatherInterval)
 				}
-				return c.Weather.Interval.String()
+				return conciseDuration(c.Weather.Interval)
 			},
 			Set: setDuration("weather.interval", func(c *config.Config, d time.Duration) { c.Weather.Interval = d }),
 		},
@@ -521,8 +530,37 @@ func DefaultFor(cfg config.Config) *Registry {
 	r.addTemplateEntries()
 	r.addTrayEntries(cfg)
 	r.addOutputEntries(cfg)
+	if len(slugs) > 0 {
+		r.insertAfter("appearance.palette", Entry{
+			Path: "appearance.custom", Label: "Custom palette", Section: "Appearance", Group: "Colours & mode",
+			Describe: "A palette you saved on the Palettes page. Choosing one also sets the source to custom.",
+			Kind:     KindEnum, Present: PresentMenu,
+			Options: slugs, OptionLabels: names,
+			Get: func(c config.Config) string {
+				if c.ThemeGen.Source == "custom" {
+					return c.ThemeGen.Seed
+				}
+				return ""
+			},
+			Set: setEnum("appearance.custom", slugs, func(c *config.Config, v string) {
+				c.ThemeGen.Source = "custom"
+				c.ThemeGen.Seed = v
+			}),
+		})
+	}
 	r.resolveDefaults()
 	return r
+}
+
+// insertAfter places e right after the entry at path, or appends it.
+func (r *Registry) insertAfter(path string, e Entry) {
+	for i := range r.entries {
+		if r.entries[i].Path == path {
+			r.entries = slices.Insert(r.entries, i+1, e)
+			return
+		}
+	}
+	r.entries = append(r.entries, e)
 }
 
 // presetAxisPaths names the entries that write a theme.Composition axis.
@@ -589,9 +627,13 @@ type Cluster struct {
 // cannot disagree.
 func SectionClusters() []Cluster {
 	return []Cluster{
-		{"Look", []string{"Appearance", "Templates", "Wallpaper"}},
-		{"Bar", []string{"Bar", "Widgets", "Tray"}},
-		{"Panels", []string{"Panels", "Monitor", "Weather", "Plugins"}},
+		// Captions name the group, never one of its items (owner decision,
+		// 2026-10-01): "Bar" over Bar and "Panels" over Panels read as
+		// duplicates, and Plugins is not a panel.
+		{"Look", []string{"Appearance", "Palettes", "Templates", "Wallpaper"}},
+		{"Shell", []string{"Bar", "Widgets", "Tray"}},
+		{"Surfaces", []string{"Panels", "Monitor", "Weather"}},
+		{"Extensions", []string{"Plugins"}},
 		{"System", []string{"Session", "Accessibility"}},
 	}
 }
@@ -677,8 +719,15 @@ func validHex(v string) bool { return config.ValidColor(v) }
 // the other wrote a file the shell then refused to load. That is why a stock
 // theme could not be chosen from settings at all: the picker was not missing,
 // the choice it made was unloadable.
-func seedFor(source, seed string) string {
+func seedFor(source, seed string, custom []string) string {
 	switch source {
+	case "custom":
+		if slices.Contains(custom, seed) {
+			return seed
+		}
+		if len(custom) > 0 {
+			return custom[0]
+		}
 	case "stock":
 		if _, ok := theme.StockSeed(seed); ok {
 			return seed
@@ -714,7 +763,7 @@ func seedFor(source, seed string) string {
 		if _, ok := theme.StockSeed(seed); ok {
 			return ""
 		}
-		if slices.Contains(theme.PaletteNames(), seed) || validHex(seed) {
+		if slices.Contains(theme.PaletteNames(), seed) || slices.Contains(custom, seed) || validHex(seed) {
 			return ""
 		}
 	}
@@ -724,9 +773,9 @@ func seedFor(source, seed string) string {
 // seedEntry is built from the supplied configuration because what the seed
 // means follows the source: under "stock" it names one of a closed set of
 // bundled themes, so it is a picker rather than a free-text field.
-func seedEntry(cfg config.Config) Entry {
+func seedEntry(cfg config.Config, custom, names []string) Entry {
 	e := Entry{
-		Path: "appearance.seed", Label: "Seed", Section: "Appearance", Group: "Palette",
+		Path: "appearance.seed", Label: "Theme input", Section: "Appearance", Group: "Colours & mode",
 		Describe: "What the source reads: an image path, a colour, a stock theme, or a palette name.",
 		Kind:     KindString,
 		Get:      func(c config.Config) string { return c.ThemeGen.Seed },
@@ -748,6 +797,25 @@ func seedEntry(cfg config.Config) Entry {
 		e.Kind = KindEnum
 		e.Options = names
 		e.Set = setEnum("appearance.seed", names, func(c *config.Config, v string) { c.ThemeGen.Seed = v })
+	}
+	if cfg.ThemeGen.Source == "custom" {
+		if len(custom) > 0 {
+			// Saved palettes are user-named: a menu, labelled with the
+			// names, storing the slugs (P5, R13).
+			e.Kind, e.Present = KindEnum, PresentMenu
+			e.Options, e.OptionLabels = custom, names
+			e.Set = setEnum("appearance.seed", custom, func(c *config.Config, v string) { c.ThemeGen.Seed = v })
+		} else {
+			// Nothing saved (every palette was deleted): a free field that
+			// still refuses anything that is not an id, so the config stays loadable.
+			e.Set = write(func(c *config.Config, v string) error {
+				if !theme.ValidSlug(strings.TrimSpace(v)) {
+					return fmt.Errorf("settings: appearance.seed: %q is not a saved palette id", v)
+				}
+				c.ThemeGen.Seed = strings.TrimSpace(v)
+				return nil
+			})
+		}
 	}
 	return e
 }
@@ -777,6 +845,20 @@ func (r *Registry) addTemplateEntries() {
 	}
 }
 
+// conciseDuration prints a duration the way it is typed: 15m, 1h30m, 90s.
+// time.Duration.String spells out zero units (15m0s, 1h0m0s), which the
+// field's own description does not.
+func conciseDuration(d time.Duration) string {
+	s := d.String()
+	if strings.HasSuffix(s, "m0s") {
+		s = strings.TrimSuffix(s, "0s")
+	}
+	if strings.HasSuffix(s, "h0m") {
+		s = strings.TrimSuffix(s, "0m")
+	}
+	return s
+}
+
 // addWidgetEntries gives every option-bearing widget on the bar its own rows,
 // addressed by position rather than by widget id.
 //
@@ -803,7 +885,13 @@ func widgetEntryGroup(ref config.ItemRef, it config.Item) string {
 	if it.Instance != "" {
 		return name + " (" + it.Instance + ")"
 	}
-	return name + " (" + ref.Lane + " " + strconv.Itoa(ref.Path.Index+1) + ")"
+	where := ref.Lane + " " + strconv.Itoa(ref.Path.Index+1)
+	// A widget inside a group shares the group's position; without the
+	// member, two grouped clocks merged into one card of identical rows.
+	if ref.Path.Member >= 0 {
+		where += ", item " + strconv.Itoa(ref.Path.Member+1)
+	}
+	return name + " (" + where + ")"
 }
 
 // widgetEntryPath addresses the item rather than the widget type, so two
@@ -916,7 +1004,7 @@ func monitorRoleEntry(path, label, describe string, field func(*config.Config) *
 	roles := theme.ColorRoleNames()
 	return Entry{
 		Path: path, Label: label, Describe: describe, Section: "Monitor", Group: "Colours",
-		Kind: KindEnum, Options: roles,
+		Kind: KindEnum, Options: roles, Present: PresentSwatch,
 		Get: func(c config.Config) string { return *field(&c) },
 		Set: setEnum(path, roles, func(c *config.Config, v string) { *field(c) = v }),
 	}
@@ -976,6 +1064,18 @@ func setString(assign func(*config.Config, string)) Setter {
 
 func (r *Registry) Register(entries ...Entry) {
 	r.entries = append(r.entries, entries...)
+}
+
+// Lookup returns the entry registered under path. A caller that changes a
+// setting from outside the surface (an IPC verb, a plugin) still goes through
+// the entry's own Setter, so validation lives in exactly one place.
+func (r *Registry) Lookup(path string) (Entry, bool) {
+	for _, e := range r.entries {
+		if e.Path == path {
+			return e, true
+		}
+	}
+	return Entry{}, false
 }
 
 func (r *Registry) Section(name string) []Entry {

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/theming"
@@ -306,9 +307,10 @@ func TestEverySectionIsOneOfTheNamedSections(t *testing.T) {
 	cfg.Plugins.Enabled = []string{"com.example.widget"}
 
 	names := SectionNames()
-	// Twelve: Displays became Bar's Displays page (settings redesign D5).
-	if len(names) != 12 {
-		t.Fatalf("SectionNames = %d sections, want the twelve of the information architecture", len(names))
+	// Thirteen: Displays became Bar's Displays page (settings redesign D5),
+	// and Palettes joined the Look cluster (custom palettes P11).
+	if len(names) != 13 {
+		t.Fatalf("SectionNames = %d sections, want the thirteen of the information architecture", len(names))
 	}
 	for _, e := range DefaultFor(cfg).entries {
 		if !slices.Contains(names, e.Section) {
@@ -615,6 +617,30 @@ func TestTwoClocksTakeDifferentFormats(t *testing.T) {
 	}
 }
 
+// Two clocks inside one bar group share the group's lane position, so the
+// group title has to carry the member too or the pane shows one card with two
+// identical "Format" rows and no way to tell which clock each one sets.
+func TestGroupedClocksGetTheirOwnGroups(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Bar.Left, cfg.Bar.Right = nil, nil
+	cfg.Bar.Center = []config.Item{{ID: "group", Items: []config.Item{
+		{ID: "clock", Format: "15:04"},
+		{ID: "clock", Format: "Mon 2 Jan"},
+	}}}
+
+	var groups []string
+	for _, e := range DefaultFor(cfg).Section("Widgets") {
+		if strings.HasSuffix(e.Path, ".format") {
+			groups = append(groups, e.Group)
+		}
+	}
+	want := []string{"Clock (center 1, item 1)", "Clock (center 1, item 2)"}
+	if !slices.Equal(groups, want) {
+		t.Errorf("grouped clock groups = %q, want %q", groups, want)
+	}
+}
+
 // D3: addressing a widget is what mints its id, and an option write is one of
 // the three things the design names as addressing it.
 func TestAnOptionWriteMintsTheWidgetsId(t *testing.T) {
@@ -864,5 +890,116 @@ func TestOnlyCompleteTemplatesGetToggles(t *testing.T) {
 	}
 	if !seen["niri"] {
 		t.Errorf("complete template niri has no toggle: %v", seen)
+	}
+}
+
+func TestConciseDurationDropsZeroUnits(t *testing.T) {
+	t.Parallel()
+	for d, want := range map[time.Duration]string{
+		15 * time.Minute:            "15m",
+		time.Hour:                   "1h",
+		time.Hour + 30*time.Minute:  "1h30m",
+		90 * time.Second:            "1m30s",
+		45 * time.Second:            "45s",
+		2*time.Hour + 5*time.Second: "2h0m5s",
+		500 * time.Millisecond:      "500ms",
+	} {
+		if got := conciseDuration(d); got != want {
+			t.Errorf("conciseDuration(%v) = %q, want %q", d, got, want)
+		}
+		if parsed, err := time.ParseDuration(conciseDuration(d)); err != nil || parsed != d {
+			t.Errorf("conciseDuration(%v) does not parse back: %v, %v", d, parsed, err)
+		}
+	}
+}
+
+func customs() []CustomPalette {
+	return []CustomPalette{{Slug: "my-nord", Name: "My Nord"}, {Slug: "work", Name: "Work"}}
+}
+
+func TestSourceOffersCustomOnlyWithSavedPalettes(t *testing.T) {
+	cfg := config.Default()
+	without, _ := DefaultFor(cfg).Lookup("appearance.source")
+	if slices.Contains(without.Options, "custom") {
+		t.Fatal("custom offered with no saved palettes")
+	}
+	with, _ := DefaultFor(cfg, WithCustomPalettes(customs())).Lookup("appearance.source")
+	if !slices.Contains(with.Options, "custom") {
+		t.Fatal("custom missing although palettes exist")
+	}
+	if _, ok := DefaultFor(cfg).Lookup("appearance.custom"); ok {
+		t.Fatal("appearance.custom exists with no saved palettes")
+	}
+}
+
+func TestSelectingCustomWithNoPalettesIsRefused(t *testing.T) {
+	cfg := config.Default()
+	e, _ := DefaultFor(cfg).Lookup("appearance.source")
+	if err := e.Set(&cfg, "custom"); err == nil {
+		t.Fatal("custom accepted with nothing saved")
+	}
+}
+
+func TestCustomSeedIsAPickerOfSavedIDs(t *testing.T) {
+	cfg := config.Default()
+	cfg.ThemeGen.Source, cfg.ThemeGen.Seed = "custom", "my-nord"
+	e, _ := DefaultFor(cfg, WithCustomPalettes(customs())).Lookup("appearance.seed")
+	if e.Kind != KindEnum || !slices.Equal(e.Options, []string{"my-nord", "work"}) {
+		t.Fatalf("seed entry = kind %v options %v", e.Kind, e.Options)
+	}
+	if err := e.Set(&cfg, "ghost"); err == nil {
+		t.Fatal("an unsaved id was accepted")
+	}
+	if err := e.Set(&cfg, "work"); err != nil || cfg.ThemeGen.Seed != "work" {
+		t.Fatalf("Set work: %v, seed %q", err, cfg.ThemeGen.Seed)
+	}
+}
+
+func TestAppearanceCustomSetsSourceAndSeed(t *testing.T) {
+	cfg := config.Default()
+	e, ok := DefaultFor(cfg, WithCustomPalettes(customs())).Lookup("appearance.custom")
+	if !ok {
+		t.Fatal("no appearance.custom entry")
+	}
+	if err := e.Set(&cfg, "work"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ThemeGen.Source != "custom" || cfg.ThemeGen.Seed != "work" {
+		t.Fatalf("theme = %q/%q", cfg.ThemeGen.Source, cfg.ThemeGen.Seed)
+	}
+	if got := e.Get(cfg); got != "work" {
+		t.Fatalf("Get = %q", got)
+	}
+}
+
+func TestChangingSourceKeepsTheSeedReadable(t *testing.T) {
+	cfg := config.Default()
+	reg := DefaultFor(cfg, WithCustomPalettes(customs()))
+	src, _ := reg.Lookup("appearance.source")
+	if err := src.Set(&cfg, "custom"); err != nil || cfg.ThemeGen.Seed != "my-nord" {
+		t.Fatalf("to custom: %v seed %q, want the first saved id", err, cfg.ThemeGen.Seed)
+	}
+	if err := src.Set(&cfg, "wallpaper"); err != nil || cfg.ThemeGen.Seed != "" {
+		t.Fatalf("back to wallpaper: %v seed %q, want it cleared", err, cfg.ThemeGen.Seed)
+	}
+}
+
+func TestPalettesSectionSitsAfterAppearance(t *testing.T) {
+	names := SectionNames()
+	i := slices.Index(names, "Appearance")
+	if i < 0 || names[i+1] != "Palettes" {
+		t.Fatalf("sections = %v, want Palettes right after Appearance", names)
+	}
+}
+
+func TestCustomPaletteOptionsCarryDisplayNames(t *testing.T) {
+	cfg := config.Default()
+	cfg.ThemeGen.Source, cfg.ThemeGen.Seed = "custom", "my-nord"
+	reg := DefaultFor(cfg, WithCustomPalettes(customs()))
+	for _, path := range []string{"appearance.custom", "appearance.seed"} {
+		e, ok := reg.Lookup(path)
+		if !ok || !slices.Equal(e.OptionLabels, []string{"My Nord", "Work"}) {
+			t.Errorf("%s labels = %v, want the display names", path, e.OptionLabels)
+		}
 	}
 }

@@ -37,6 +37,50 @@ func TestMenuEscapeReturnsToField(t *testing.T) {
 	}
 }
 
+func TestMenuRowAtFindsTheOptionUnderAPoint(t *testing.T) {
+	n := &ui.Node{Kind: ui.KindMenu, Children: []*ui.Node{
+		{Kind: ui.KindText, Bounds: ui.Rect{Y: 0, W: 10, H: 10}},
+		{Kind: ui.KindText, Bounds: ui.Rect{Y: 10, W: 10, H: 10}},
+	}}
+	m := &Menu{}
+	if got := m.RowAt(n, 5, 12); got != 1 {
+		t.Fatalf("RowAt = %d, want 1", got)
+	}
+	if got := m.RowAt(n, 5, 25); got != -1 {
+		t.Fatalf("RowAt below the list = %d, want -1", got)
+	}
+	if got := m.RowAt(nil, 0, 0); got != -1 {
+		t.Fatalf("RowAt(nil) = %d, want -1", got)
+	}
+	picker := NewPicker([]string{"dark"}, nil, 0)
+	filtered := &ui.Node{Kind: ui.KindMenu, Children: []*ui.Node{
+		{Kind: ui.KindTextField, Bounds: ui.Rect{Y: 0, W: 10, H: 10}},
+		{Kind: ui.KindText, Bounds: ui.Rect{Y: 10, W: 10, H: 10}},
+	}}
+	if got := picker.RowAt(filtered, 5, 5); got != -1 {
+		t.Fatalf("RowAt(filter field) = %d, want -1", got)
+	}
+	if got := picker.RowAt(filtered, 5, 12); got != 1 {
+		t.Fatalf("RowAt(filtered option) = %d, want child 1", got)
+	}
+}
+
+func TestMarkMenuRowHoverMarksOnlyTheOptionUnderPointer(t *testing.T) {
+	m := NewMenu([]string{"dark", "light"}, 0)
+	m.Open()
+	n := &ui.Node{Kind: ui.KindMenu, Action: "set:theme", Children: []*ui.Node{
+		{Kind: ui.KindText, Bounds: ui.Rect{Y: 0, W: 10, H: 10}},
+		{Kind: ui.KindText, Bounds: ui.Rect{Y: 10, W: 10, H: 10}},
+	}}
+	markMenuRowHover(n, "set:theme", m, 5, 12)
+	if n.Children[0].State.Has(ui.StateHovered) || !n.Children[1].State.Has(ui.StateHovered) {
+		t.Fatalf("menu row hover = %v, %v; want only row 1", n.Children[0].State, n.Children[1].State)
+	}
+	if n.Children[1].HoverProgress != 1 {
+		t.Fatalf("menu hover progress = %v, want immediate state", n.Children[1].HoverProgress)
+	}
+}
+
 // sysc-330. D8 calls for a searchable picker; A shipped the enumerating half
 // only, so several hundred font families arrived as a wall. A picker is a
 // menu over a list too long to read whole: it carries a filter, and it may

@@ -60,19 +60,14 @@ func (m *OSDManager) Show(v OSDView) {
 		m.r.sendAux(req)
 	}
 	for _, p := range pubs {
-		m.r.publishSurface(p.global, p.id)
+		m.r.publishSurface(p.Global, p.SurfaceID)
 	}
 	if startReveal {
 		go m.revealLoop()
 	}
 }
 
-type osdPub struct {
-	global uint32
-	id     string
-}
-
-func (m *OSDManager) prepareShow(v OSDView) (aux []wayland.AuxRequest, pubs []osdPub, startReveal bool) {
+func (m *OSDManager) prepareShow(v OSDView) (aux []wayland.AuxRequest, pubs []wayland.Invalidation, startReveal bool) {
 	if v.Level < 0 {
 		v.Level = 0
 	}
@@ -97,7 +92,7 @@ func (m *OSDManager) prepareShow(v OSDView) (aux []wayland.AuxRequest, pubs []os
 			aux = append(aux, wayland.AuxRequest{Output: global, Open: m.spec(id, anchor, margins)})
 			m.open[global] = true
 		}
-		pubs = append(pubs, osdPub{global: global, id: id})
+		pubs = append(pubs, wayland.Invalidation{Global: global, SurfaceID: id})
 	}
 	if m.timer == nil {
 		m.timer = time.AfterFunc(m.hideFor, m.hideAll)
@@ -140,6 +135,20 @@ func (m *OSDManager) prepareHide() []wayland.AuxRequest {
 	}
 	m.open = map[uint32]bool{}
 	return aux
+}
+
+// retheme updates a visible OSD and reports the surfaces that need repainting.
+// Registry.mu is held by the caller.
+func (m *OSDManager) retheme(t Theme) []wayland.Invalidation {
+	if !m.Visible() {
+		return nil
+	}
+	m.theme = t
+	pubs := make([]wayland.Invalidation, 0, len(m.open))
+	for global := range m.open {
+		pubs = append(pubs, wayland.Invalidation{Global: global, SurfaceID: osdSurfaceID(global)})
+	}
+	return pubs
 }
 
 // blur-exempt: design D13 names the OSD as out of scope. It is a brief,
@@ -254,13 +263,13 @@ func (m *OSDManager) revealLoop() {
 		return m.anim == nil || m.anim.Settled()
 	}, func() {
 		m.r.mu.Lock()
-		pubs := make([]osdPub, 0, len(m.open))
+		pubs := make([]wayland.Invalidation, 0, len(m.open))
 		for global := range m.open {
-			pubs = append(pubs, osdPub{global: global, id: osdSurfaceID(global)})
+			pubs = append(pubs, wayland.Invalidation{Global: global, SurfaceID: osdSurfaceID(global)})
 		}
 		m.r.mu.Unlock()
 		for _, p := range pubs {
-			m.r.publishSurface(p.global, p.id)
+			m.r.publishSurface(p.Global, p.SurfaceID)
 		}
 	}, func() time.Duration { return frameCap })
 }

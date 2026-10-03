@@ -58,9 +58,10 @@ type KeyboardLayouts struct {
 
 // Snapshot is an immutable view of workspace, window, and keyboard state.
 type Snapshot struct {
-	Workspaces []Workspace
-	Windows    []Window
-	Layouts    KeyboardLayouts
+	Workspaces   []Workspace
+	Windows      []Window
+	Layouts      KeyboardLayouts
+	OverviewOpen bool
 	// FocusedOutput is derived from the workspace whose is_focused is true.
 	// Niri has no dedicated event or field for it.
 	FocusedOutput string
@@ -188,15 +189,20 @@ type wireKeyboardLayoutSwitched struct {
 	Idx *int `json:"idx"`
 }
 
+type wireOverviewOpenedOrClosed struct {
+	IsOpen *bool `json:"is_open"`
+}
+
 // state accumulates workspace and window events into snapshots.
 //
 // last is the most recently published snapshot. Comparing against it is what
 // keeps an event that changes no projected field from waking the shell.
 type state struct {
-	workspaces []Workspace
-	windows    []Window
-	layouts    KeyboardLayouts
-	last       Snapshot
+	workspaces   []Workspace
+	windows      []Window
+	layouts      KeyboardLayouts
+	overviewOpen bool
+	last         Snapshot
 }
 
 // apply decodes one event line. It reports whether a new snapshot should be
@@ -367,6 +373,18 @@ func (s *state) apply(line []byte) (bool, error) {
 		return s.publishIfChanged(), nil
 	}
 
+	if payload, ok := envelope["OverviewOpenedOrClosed"]; ok {
+		var changed wireOverviewOpenedOrClosed
+		if err := json.Unmarshal(payload, &changed); err != nil {
+			return false, fmt.Errorf("niri: decode OverviewOpenedOrClosed: %w", err)
+		}
+		if changed.IsOpen == nil {
+			return false, fmt.Errorf("niri: OverviewOpenedOrClosed is missing is_open")
+		}
+		s.overviewOpen = *changed.IsOpen
+		return s.publishIfChanged(), nil
+	}
+
 	return false, nil
 }
 
@@ -425,8 +443,9 @@ func (s *state) snapshot() Snapshot {
 	})
 
 	snap := Snapshot{
-		Workspaces: workspaces,
-		Windows:    windows,
+		Workspaces:   workspaces,
+		Windows:      windows,
+		OverviewOpen: s.overviewOpen,
 		Layouts: KeyboardLayouts{
 			Names:   slices.Clone(s.layouts.Names),
 			Current: s.layouts.Current,
@@ -447,6 +466,7 @@ func (s *state) snapshot() Snapshot {
 func (s *state) publishIfChanged() bool {
 	next := s.snapshot()
 	if next.FocusedOutput == s.last.FocusedOutput &&
+		next.OverviewOpen == s.last.OverviewOpen &&
 		slices.Equal(next.Workspaces, s.last.Workspaces) &&
 		slices.Equal(next.Windows, s.last.Windows) &&
 		slices.Equal(next.Layouts.Names, s.last.Layouts.Names) &&

@@ -249,8 +249,8 @@ type Theme struct {
 
 // ThemeConfig selects how the Material 3 palette is seeded.
 type ThemeConfig struct {
-	Source string // wallpaper | hex | stock | palette
-	Seed   string // image path, #RRGGBB, stock name, or palette name — follows Source
+	Source string // wallpaper | hex | stock | palette | custom
+	Seed   string // image path, #RRGGBB, stock name, palette name, or saved-palette id — follows Source
 	Scheme string // matugen scheme-*, default scheme-tonal-spot
 	Mode   string // dark | light
 }
@@ -262,6 +262,17 @@ type Accessibility struct {
 
 type Session struct {
 	Locker string // external locker command; empty hides the lock action
+}
+
+// Idle are the display-power timeouts, resolved to durations. A zero timeout
+// disables that behavior on that power source; all-zero disables the idle
+// service entirely (opt-in, like Media).
+type Idle struct {
+	BlankAc        time.Duration
+	BlankBattery   time.Duration
+	SuspendAc      time.Duration
+	SuspendBattery time.Duration
+	MediaExempt    bool // playing media suppresses idle behaviors
 }
 
 type Panels struct {
@@ -371,6 +382,7 @@ type Config struct {
 	ThemeGen      ThemeConfig
 	Accessibility Accessibility
 	Session       Session
+	Idle          Idle
 	Panels        Panels
 	Tray          TrayPreferences
 	Weather       Weather
@@ -523,6 +535,7 @@ func Default() Config {
 		},
 		Panels:  Panels{Gap: 0, Padding: 8, OSD: "bottom-center"},
 		Monitor: defaultMonitor(),
+		Idle:    Idle{MediaExempt: true},
 		Wallpaper: Wallpaper{
 			// Stills and video share one directory by default, which D9
 			// allows: that is how the library on this machine is laid out, and

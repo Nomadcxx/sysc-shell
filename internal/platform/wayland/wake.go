@@ -25,6 +25,7 @@ type wakePipe struct {
 	// reads finished on their goroutines, both served by the owner.
 	selection []SelectionRequest
 	pastes    []pasteResult
+	idle      []IdleRequest
 	// reload is set when a SIGHUP arrived. The owner reads and clears it, so
 	// repeated signals during one wait coalesce into a single reload.
 	reload bool
@@ -40,8 +41,10 @@ func newWakePipe() (*wakePipe, error) {
 
 // bridge forwards cancellation and application invalidations to the pipe. It
 // never closes the caller-owned invalidation channel and never calls a proxy.
-func (w *wakePipe) bridge(ctx context.Context, invalidations <-chan Invalidation, reloads <-chan struct{}, aux <-chan AuxRequest, selection <-chan SelectionRequest, pastes <-chan pasteResult) {
+func (w *wakePipe) bridge(ctx context.Context, invalidations <-chan Invalidation, reloads <-chan struct{}, aux <-chan AuxRequest, selection <-chan SelectionRequest, pastes <-chan pasteResult, idleCh <-chan IdleRequest) <-chan struct{} {
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		for {
 			select {
 			case <-ctx.Done():
@@ -81,9 +84,19 @@ func (w *wakePipe) bridge(ctx context.Context, invalidations <-chan Invalidation
 				w.pastes = append(w.pastes, p)
 				w.mu.Unlock()
 				w.signal()
+			case req, ok := <-idleCh:
+				if !ok {
+					idleCh = nil
+					continue
+				}
+				w.mu.Lock()
+				w.idle = append(w.idle, req)
+				w.mu.Unlock()
+				w.signal()
 			}
 		}
 	}()
+	return done
 }
 
 // takeReload reports and clears a pending reload request.
@@ -113,6 +126,14 @@ func (w *wakePipe) takeSelection() []SelectionRequest {
 	w.mu.Lock()
 	out := w.selection
 	w.selection = nil
+	w.mu.Unlock()
+	return out
+}
+
+func (w *wakePipe) takeIdle() []IdleRequest {
+	w.mu.Lock()
+	out := w.idle
+	w.idle = nil
 	w.mu.Unlock()
 	return out
 }

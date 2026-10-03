@@ -1,6 +1,8 @@
 package theming
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,6 +20,7 @@ type applyJob struct {
 	enabled func(string) bool
 	tok     theme.Tokens
 	force   func(string) bool
+	done    chan applyResult
 }
 
 var (
@@ -26,10 +29,20 @@ var (
 	applyQueued *applyJob
 )
 
+var ErrApplySuperseded = errors.New("theming: queued apply superseded by a newer apply")
+
+type applyResult struct {
+	outcomes map[string]error
+	results  map[string]error
+	err      error
+}
+
 // ApplyEnabled renders every enabled template for home. It returns the
 // per-template outcomes -- a refusal or write failure keyed by template name
 // -- plus the first error overall. force names templates the user explicitly
-// overrode a refusal for; those are overwritten with a backup.
+// overrode a refusal for; those are overwritten with a backup. While another
+// apply runs, the latest queued job replaces its predecessor and this call
+// returns nil outcomes; use ApplyEnabledAndWait when this caller needs results.
 func ApplyEnabled(home string, enabled func(string) bool, tok theme.Tokens, force func(string) bool) (map[string]error, error) {
 	if home == "" || enabled == nil {
 		return nil, nil
@@ -37,23 +50,66 @@ func ApplyEnabled(home string, enabled func(string) bool, tok theme.Tokens, forc
 	job := applyJob{home: home, enabled: enabled, tok: tok, force: force}
 	applyMu.Lock()
 	if applyBusy {
-		applyQueued = &job
+		queueApplyLocked(job)
 		applyMu.Unlock()
 		return nil, nil
 	}
 	applyBusy = true
 	applyMu.Unlock()
+	result := runApply(job)
+	return result.outcomes, result.err
+}
 
-	var err error
-	var outcomes map[string]error
+// ApplyEnabledAndWait returns outcomes for templates actually attempted, with
+// nil values for success, even when another apply is already running. As with
+// ApplyEnabled, only the newest queued job runs; a queued request replaced
+// before it starts returns ErrApplySuperseded.
+func ApplyEnabledAndWait(home string, enabled func(string) bool, tok theme.Tokens, force func(string) bool) (map[string]error, error) {
+	if home == "" || enabled == nil {
+		return nil, nil
+	}
+	job := applyJob{home: home, enabled: enabled, tok: tok, force: force, done: make(chan applyResult, 1)}
+	applyMu.Lock()
+	if applyBusy {
+		queueApplyLocked(job)
+		applyMu.Unlock()
+		result := <-job.done
+		return result.results, result.err
+	}
+	applyBusy = true
+	applyMu.Unlock()
+	go runApply(job)
+	result := <-job.done
+	return result.results, result.err
+}
+
+func queueApplyLocked(job applyJob) {
+	if applyQueued != nil && applyQueued.done != nil {
+		finishApplyWaiter(applyQueued.done, applyResult{err: ErrApplySuperseded})
+	}
+	applyQueued = &job
+}
+
+func finishApplyWaiter(done chan applyResult, result applyResult) {
+	if done == nil {
+		return
+	}
+	done <- result
+	close(done)
+}
+
+func runApply(job applyJob) applyResult {
 	current := job
+	var result applyResult
 	for {
-		outcomes, err = applyOnce(current.home, current.enabled, current.tok, current.force)
+		result.results, result.err = applyOnce(current.home, current.enabled, current.tok, current.force)
+		result.outcomes = applyFailures(result.results)
+		finishApplyWaiter(current.done, result)
 		applyMu.Lock()
 		if applyQueued == nil {
 			applyBusy = false
 			applyMu.Unlock()
-			return outcomes, err
+			return result
 		}
 		current = *applyQueued
 		applyQueued = nil
@@ -61,16 +117,26 @@ func ApplyEnabled(home string, enabled func(string) bool, tok theme.Tokens, forc
 	}
 }
 
+func applyFailures(results map[string]error) map[string]error {
+	failures := make(map[string]error)
+	for name, err := range results {
+		if err != nil {
+			failures[name] = err
+		}
+	}
+	return failures
+}
+
 func applyOnce(home string, enabled func(string) bool, tok theme.Tokens, force func(string) bool) (map[string]error, error) {
-	cat := Catalog()
-	outcomes := map[string]error{}
+	// D6: a template body in $XDG_CONFIG_HOME/sysc-shell/theming-templates
+	// replaces the embedded one for its name; the write targets, the
+	// Complete() gate and the user-modified guard are unchanged.
+	cat := Catalog().WithOverlay()
+	results := map[string]error{}
 	var first error
 	record := func(name string, err error) {
-		if err == nil {
-			return
-		}
-		outcomes[name] = err
-		if first == nil {
+		results[name] = err
+		if err != nil && first == nil {
 			first = err
 		}
 	}
@@ -81,6 +147,12 @@ func applyOnce(home string, enabled func(string) bool, tok theme.Tokens, force f
 		// app. An incomplete template behaves as off everywhere, which also
 		// removes a stub written by an older release.
 		on := enabled(name) && Complete(name)
+		// D6: an overlay body that does not parse renders empty, and an empty
+		// render must never replace a live app config. Report and skip.
+		if on && rendered == "" {
+			record(name, fmt.Errorf("theming: %s renders empty", name))
+			continue
+		}
 		switch name {
 		case "niri":
 			cfg := filepath.Join(home, ".config", "niri", "config.kdl")
@@ -97,7 +169,7 @@ func applyOnce(home string, enabled func(string) bool, tok theme.Tokens, force f
 			record(name, applyTemplateTarget(name, home, on, rendered, forceOn(name)))
 		}
 	}
-	return outcomes, first
+	return results, first
 }
 
 func writeTarget(home, name string) string {

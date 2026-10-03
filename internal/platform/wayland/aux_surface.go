@@ -30,10 +30,24 @@ type AuxSpec struct {
 	// before it is created. Nil disables the backdrop and all of its cost.
 	BlurRegion *ui.Rect
 	BlurRadius int
+	// Freeze captures the whole output, unblurred and without the cursor,
+	// before the surface exists, and hands it to Callbacks.Backdrop. The
+	// surface can then show and crop the screen as it was without appearing in
+	// it. A failed capture fails the open. It excludes BlurRegion.
+	Freeze bool
 	// InputRects, when non-nil, limit pointer input to these surface-local
 	// rectangles from the first frame. Nil leaves the whole surface.
 	InputRects []ui.Rect
-	Callbacks  HostCallbacks
+	// InhibitShortcuts asks the owner to hold a keyboard-shortcuts inhibitor
+	// for this surface while it has keyboard focus, so compositor keybinds
+	// cannot act underneath it. Without an advertised
+	// zwp_keyboard_shortcuts_inhibit_manager_v1 the surface simply shares the
+	// compositor's keybinds; the open never fails for want of one.
+	InhibitShortcuts bool
+	Callbacks        HostCallbacks
+	// OnDrop reports an unexpected close or failed open for this surface
+	// instance, so a delayed drop cannot act on a replacement with the same id.
+	OnDrop func()
 }
 
 // AuxRequest opens (Open != nil), updates (Update != nil), or closes (both nil,
@@ -72,6 +86,7 @@ type auxPolicy struct {
 	width, height                                    uint32
 	inputRects                                       []ui.Rect
 	hasInputRegion                                   bool
+	inhibitShortcuts                                 bool
 }
 
 // errOutputGone reports an open abandoned because its output was removed while
@@ -99,7 +114,9 @@ func (o *owner) handleAux(req AuxRequest) {
 	case req.Update != nil:
 		err = o.updateAux(h, req.ID, req.Update)
 	default:
-		o.closeAux(h, req.ID)
+		// The requester already retired this surface. Echoing its queued close
+		// can retire a replacement that now owns the same ID in the registry.
+		o.removeAux(h, req.ID)
 	}
 	switch {
 	case req.Reply != nil:
@@ -112,14 +129,16 @@ func (o *owner) handleAux(req AuxRequest) {
 		// Nobody waits on this open, so the shell would keep a surface that
 		// never appeared. Forget it, as failUnit does for a surface that
 		// fails later; one surface must not take the process down.
-		// An open that failed before it could replace a surface with the
-		// same id closes that one too, so none stays mapped unowned.
+		// Retire any older surface left under this id, then let this request's
+		// owner unwind the replacement it failed to open.
 		fmt.Fprintf(os.Stderr, "sysc-shell: open aux %s: %v\n", req.Open.ID, err)
-		switch _, open := h.aux[req.Open.ID]; {
-		case open:
-			o.closeAux(h, req.Open.ID)
-		case req.Open.ID != "" && o.cb.DropAux != nil:
-			o.cb.DropAux(req.Output, req.Open.ID)
+		o.removeAux(h, req.Open.ID)
+		if req.Open.ID != "" {
+			if req.Open.OnDrop != nil {
+				req.Open.OnDrop()
+			} else if o.cb.DropAux != nil {
+				o.cb.DropAux(req.Output, req.Open.ID)
+			}
 		}
 	default:
 		// An update with no reply used to be process-fatal, so one surface whose
@@ -151,19 +170,32 @@ func (o *owner) openAux(h *OutputHost, spec *AuxSpec) error {
 		return err
 	}
 	if _, exists := h.aux[spec.ID]; exists {
-		o.closeAux(h, spec.ID)
+		o.removeAux(h, spec.ID)
 	}
 
 	u := newSurfaceUnit(spec.ID)
 	u.app = spec.Callbacks
+	u.onDrop = spec.OnDrop
 
 	// Before any surface exists. Screencopy captures the composited output, so
 	// a capture taken once this panel or its shield had mapped would blur the
 	// panel into its own backdrop. The shield opens first but paints nothing --
 	// its Render returns immediately, leaving a cleared, fully transparent
 	// buffer -- so it cannot show up in the copy either.
-	if spec.BlurRegion != nil && spec.Callbacks.Backdrop != nil {
-		if shot := o.captureBackdrop(h.proxy, *spec.BlurRegion); shot != nil {
+	if spec.Freeze {
+		if spec.Callbacks.Backdrop == nil {
+			return fmt.Errorf("wayland: aux %s freezes the output but has no Backdrop callback", spec.ID)
+		}
+		shot := o.captureBackdrop(h.proxy, nil)
+		if !h.alive {
+			return fmt.Errorf("wayland: aux surface %s on output %d: %w", spec.ID, h.global, errOutputGone)
+		}
+		if shot == nil {
+			return fmt.Errorf("wayland: aux %s could not capture output %d", spec.ID, h.global)
+		}
+		spec.Callbacks.Backdrop(shot)
+	} else if spec.BlurRegion != nil && spec.Callbacks.Backdrop != nil {
+		if shot := o.captureBackdrop(h.proxy, spec.BlurRegion); shot != nil {
 			spec.Callbacks.Backdrop(render.Blur(shot, backdropDownsample, spec.BlurRadius))
 		}
 		// The capture round trips, and a global_remove dispatched in one of
@@ -200,7 +232,7 @@ func (o *owner) openAux(h *OutputHost, spec *AuxSpec) error {
 	})
 	id := spec.ID
 	layer.SetClosedHandler(func(layershell.ZwlrLayerSurfaceV1ClosedEvent) {
-		if _, ok := h.aux[id]; ok {
+		if h.aux[id] == u {
 			o.closeAux(h, id)
 		}
 	})
@@ -240,6 +272,7 @@ func (o *owner) openAux(h *OutputHost, spec *AuxSpec) error {
 	if spec.InputRects != nil {
 		u.policy.inputRects, u.policy.hasInputRegion = append([]ui.Rect(nil), spec.InputRects...), true
 	}
+	u.policy.inhibitShortcuts = spec.InhibitShortcuts
 	return nil
 }
 
@@ -400,9 +433,23 @@ func (o *owner) applyAuxPolicy(u *surfaceUnit, next auxPolicy) error {
 }
 
 func (o *owner) closeAux(h *OutputHost, id string) {
+	u := h.aux[id]
+	if u == nil || !o.removeAux(h, id) {
+		return
+	}
+	if u.onDrop != nil {
+		u.onDrop()
+	} else if o.cb.DropAux != nil {
+		o.cb.DropAux(h.global, id)
+	}
+}
+
+// removeAux releases the Wayland resources without notifying their requester.
+// closeAux additionally reports an unsolicited close, failure, or output loss.
+func (o *owner) removeAux(h *OutputHost, id string) bool {
 	u, ok := h.aux[id]
 	if !ok {
-		return
+		return false
 	}
 	delete(h.aux, id)
 	if o.focus.unit == u {
@@ -412,9 +459,7 @@ func (o *owner) closeAux(h *OutputHost, id string) {
 		o.keyboardGone()
 	}
 	_ = o.teardownUnit(u)
-	if o.cb.DropAux != nil {
-		o.cb.DropAux(h.global, id)
-	}
+	return true
 }
 
 func (o *owner) closeAllAux(h *OutputHost) {

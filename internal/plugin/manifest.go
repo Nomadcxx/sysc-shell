@@ -81,6 +81,8 @@ const (
 	CapOpenURL Capability = "open-url"
 	// CapClipboardWrite lets a plugin write bounded plain text to the clipboard.
 	CapClipboardWrite Capability = "clipboard-write"
+	// CapScreenshot lets a plugin start a screenshot and read the save directory.
+	CapScreenshot Capability = "screenshot"
 )
 
 var knownCapabilities = map[Capability]bool{
@@ -89,13 +91,20 @@ var knownCapabilities = map[Capability]bool{
 	CapWallpaper:        true,
 	CapClipboardRead:    true,
 	CapOpenURL:          true, CapClipboardWrite: true,
+	CapScreenshot: true,
 }
 
-// Placement says how a declared panel is positioned. Version one attaches a
-// panel to the widget that opened it.
+// Placement says how a declared panel is positioned. An attached panel drops
+// under the widget that opened it; a center panel drops from the middle of
+// the output, the way the wordmark's control center does, wherever its
+// widget sits on the bar.
 type Placement string
 
-const PlacementAttached Placement = "attached"
+const (
+	PlacementAttached Placement = "attached"
+	// PlacementCenter arrived in protocol minor 12.
+	PlacementCenter Placement = "center"
+)
 
 // SettingType names a value the shell can generate a control for. A plugin
 // declares its settings and the shell renders them; a plugin cannot supply a
@@ -448,6 +457,13 @@ func validateManifest(w wireManifest) (Manifest, error) {
 			}
 		}
 	}
+	if m.Protocol.Minor < 12 {
+		for i, panel := range m.Panels {
+			if panel.Placement == PlacementCenter {
+				return Manifest{}, fmt.Errorf("panels[%d]: center placement requires protocol minor 12", i)
+			}
+		}
+	}
 	if m.Settings, err = settings(w.Settings, "settings"); err != nil {
 		return Manifest{}, err
 	}
@@ -565,7 +581,8 @@ func panels(w []wirePanel) ([]Panel, error) {
 		if err := text(fmt.Sprintf("panels[%d].label", i), e.Label, maxLabelBytes, false); err != nil {
 			return nil, err
 		}
-		if Placement(e.Placement) != PlacementAttached {
+		placement := Placement(e.Placement)
+		if placement != PlacementAttached && placement != PlacementCenter {
 			return nil, fmt.Errorf("panels[%d]: placement %q is not one this shell supports", i, e.Placement)
 		}
 		for _, d := range []struct {
@@ -583,7 +600,7 @@ func panels(w []wirePanel) ([]Panel, error) {
 		}
 		out[i] = Panel{
 			ID: e.ID, Label: e.Label, Width: e.Width, Height: e.Height,
-			Placement: PlacementAttached, IncludeSettings: e.IncludeSettings, Shortcuts: shortcuts,
+			Placement: placement, IncludeSettings: e.IncludeSettings, Shortcuts: shortcuts,
 		}
 	}
 	return out, nil

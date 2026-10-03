@@ -26,7 +26,7 @@ func (v presentationView) on(set []string, output string) bool {
 func (r *Registry) aggregatePresentation(_ uint32, v presentationView) protocol.PresentationState {
 	r.notify.mu.Lock()
 	outputs := r.notify.outputs
-	suppressed := r.notify.dnd || r.notify.centerOpen || len(outputs) == 0
+	suppressed := r.notify.dndActiveLocked(r.clockNow()) || r.notify.centerOpen || len(outputs) == 0
 	r.notify.mu.Unlock()
 
 	if suppressed {

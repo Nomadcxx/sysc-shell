@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1352,5 +1353,29 @@ func TestInputRadiusIsBoundedLikeItsSibling(t *testing.T) {
 		t.Fatal("a negative input radius was accepted")
 	} else if !strings.Contains(err.Error(), "theme.input-radius") {
 		t.Fatalf("error %q does not name the field", err)
+	}
+}
+
+func TestThemeGenAcceptsACustomSourceWithASlugSeed(t *testing.T) {
+	dir := t.TempDir()
+	write := func(src, seed string) (Config, error) {
+		path := filepath.Join(dir, "config.json")
+		body := fmt.Sprintf(`{"theme-gen":{"source":%q,"seed":%q}}`, src, seed)
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return Load(path)
+	}
+	cfg, err := write("custom", "my-nord")
+	if err != nil || cfg.ThemeGen.Source != "custom" || cfg.ThemeGen.Seed != "my-nord" {
+		t.Fatalf("custom/my-nord: %+v, %v", cfg.ThemeGen, err)
+	}
+	for _, seed := range []string{"", "../x", "My Nord", "a/b"} {
+		if _, err := write("custom", seed); err == nil {
+			t.Errorf("custom with seed %q loaded", seed)
+		}
+	}
+	if _, err := write("nonsense", "x"); err == nil || !strings.Contains(err.Error(), "custom") {
+		t.Errorf("unknown source error should list the valid sources including custom: %v", err)
 	}
 }

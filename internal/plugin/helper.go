@@ -50,6 +50,20 @@ func HelperServe(args []string) int {
 		crashOnce = p
 		mode = "ok"
 	}
+	// shutdown-marker:<path> serves normally and writes path when asked to
+	// stop: proof the host let it finish its work rather than killing it.
+	shutdownMarker := ""
+	if p, ok := strings.CutPrefix(mode, "shutdown-marker:"); ok {
+		shutdownMarker = p
+		mode = "ok"
+	}
+	// record-input:<path> appends each input event. A host that drops the
+	// last buffered change never produces a line for it.
+	recordInput := ""
+	if p, ok := strings.CutPrefix(mode, "record-input:"); ok {
+		recordInput = p
+		mode = "ok"
+	}
 	out := v1.NewEncoder(os.Stdout)
 	in := v1.NewDecoder(os.Stdin, v1.ToPlugin)
 
@@ -118,6 +132,15 @@ func HelperServe(args []string) int {
 		}
 	}
 
+	if mode == "call-flood" {
+		// More calls than the host holds before SetCalls; each reply is
+		// echoed back as "<id>:<error>" so a test can see which went unanswered.
+		params, _ := json.Marshal(v1.NotifyParams{Summary: "flood"})
+		for i := 0; i < maxEarlyCalls+8; i++ {
+			_ = out.Encode(&v1.HostCall{ID: fmt.Sprintf("f%d", i), Call: v1.CallNotify, Params: params})
+		}
+	}
+
 	if mode == "notify-then-snapshot" {
 		params, _ := json.Marshal(v1.NotifyParams{Summary: "saved"})
 		_ = out.Encode(&v1.HostCall{ID: "n1", Call: v1.CallNotify, Params: params})
@@ -131,6 +154,9 @@ func HelperServe(args []string) int {
 		}
 		switch m := msg.(type) {
 		case *v1.HostShutdown:
+			if shutdownMarker != "" {
+				_ = os.WriteFile(shutdownMarker, []byte("flushed"), 0o600)
+			}
 			return 0
 		case *v1.ViewOpen:
 			if crashOnce != "" {
@@ -165,8 +191,19 @@ func HelperServe(args []string) int {
 				return 4
 			}
 		case *v1.HostReply:
+			if mode == "call-flood" {
+				_ = out.Encode(&v1.PluginStatus{State: v1.StatusOK, Message: m.ID + ":" + m.Error})
+				break
+			}
 			_ = out.Encode(&v1.PluginStatus{State: v1.StatusOK, Message: string(m.Result)})
 		case *v1.InputEvent:
+			if recordInput != "" {
+				f, err := os.OpenFile(recordInput, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+				if err == nil {
+					_, _ = fmt.Fprintf(f, "%s\t%s\n", m.Event, m.Text)
+					_ = f.Close()
+				}
+			}
 			_ = out.Encode(&v1.PluginStatus{State: v1.StatusOK, Message: m.Node})
 			if mode == "panel-on-input" {
 				params, _ := json.Marshal(v1.PanelParams{Entry: "panel", Output: m.Output})

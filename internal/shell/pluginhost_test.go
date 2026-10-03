@@ -3,12 +3,14 @@ package shell
 import (
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -25,7 +27,15 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == plugin.HelperFlag {
 		os.Exit(plugin.HelperServe(os.Args[2:]))
 	}
-	os.Exit(m.Run())
+	dir, err := os.MkdirTemp("", "sysc-shell-test-config-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	os.Setenv("XDG_CONFIG_HOME", dir)
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 func TestPluginHostGrantsCalendarActionCapabilities(t *testing.T) {
@@ -137,6 +147,17 @@ func TestPluginPanelRoutesDeclaredShortcutsAndKeepsEditorKeysLocal(t *testing.T)
 		}
 	}
 
+	// A modified shortcut the field does not use itself still reaches the
+	// plugin while typing: it cannot be text, and Ctrl+S in an editor is
+	// what a writer reaches for.
+	if !handle(keyEv(19, ui.ModCtrl)) { // KEY_R
+		t.Fatal("Ctrl+R was not handled while the text input had focus")
+	}
+	inputs = reg.plugins.lastInputs()
+	if got = inputs[len(inputs)-1]; got.Event != v1.EventShortcut || got.Node != "refresh" {
+		t.Fatalf("Ctrl+R with the text input focused = %+v, want the refresh shortcut", got)
+	}
+
 	_ = handle(wayland.Event{Kind: wayland.EventKeyPress, Key: keyEsc})
 	reg.mu.Lock()
 	_, panelStillOpen := reg.panels.Output(PanelPlugin)
@@ -159,6 +180,17 @@ const testTimerManifest = `{
   "widgets": [{"id": "bar", "settings": []}],
   "panels": [{"id": "panel", "width": 320, "height": 280, "placement": "attached"}],
   "settings": []
+}`
+
+const testNotesPanelManifest = `{
+  "schema": 1,
+  "id": "org.sysc.notes",
+  "name": "Notes",
+  "version": "1.0.0",
+  "protocol": {"major": 1, "minor": 8},
+  "exec": "bin/sysc-plugin-timer",
+  "capabilities": ["panels"],
+  "panels": [{"id": "panel", "width": 320, "height": 280, "placement": "attached"}]
 }`
 
 func pluginConfig(root string) config.Config {
@@ -469,6 +501,152 @@ func TestPluginPrimaryMiddleSecondaryButtons(t *testing.T) {
 	}
 	if secondary != 1 {
 		t.Fatalf("secondary pointer events = %d, want 1 (press+release must not both fire)", secondary)
+	}
+}
+
+func TestPluginBarOnlyDeliversDeclaredEvents(t *testing.T) {
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	waitPluginText(t, reg.bars[1], "hello")
+
+	ids := reg.plugins.barViewIDs("DP-1")
+	if len(ids) != 1 {
+		t.Fatalf("bar view IDs = %v", ids)
+	}
+	reg.plugins.mu.Lock()
+	view := reg.plugins.views[ids[0]]
+	if view == nil || view.tree == nil || view.tree.Root == nil || len(view.tree.Root.Children) != 1 {
+		reg.plugins.mu.Unlock()
+		t.Fatal("bar view tree is incomplete")
+	}
+	view.Events = nil
+	view.tree.Root.Children[0].Events = []v1.EventKind{v1.EventActivate}
+	view.tree.Revision = view.Revision
+	reg.plugins.mu.Unlock()
+
+	bar := reg.bars[1]
+	if err := bar.Configure(800, BarHeight, 120); err != nil {
+		t.Fatal(err)
+	}
+	_, x, y := pluginHitPoint(bar)
+	bar.Handle(wayland.Event{Kind: wayland.EventPointerEnter, X: x, Y: y})
+	bar.Handle(wayland.Event{Kind: wayland.EventPointerPress, Button: buttonLeft, X: x, Y: y})
+	bar.Handle(wayland.Event{Kind: wayland.EventPointerRelease, Button: buttonLeft, X: x, Y: y})
+
+	got := reg.plugins.lastInputs()
+	if len(got) != 1 || got[0].Event != v1.EventActivate {
+		t.Fatalf("primary click inputs = %+v, want one declared activate event", got)
+	}
+}
+
+func TestPluginInputUsesEventsFromRenderedRevision(t *testing.T) {
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	waitPluginText(t, reg.bars[1], "hello")
+	ids := reg.plugins.barViewIDs("DP-1")
+	if len(ids) != 1 {
+		t.Fatalf("bar view IDs = %v", ids)
+	}
+	reg.plugins.mu.Lock()
+	view := reg.plugins.views[ids[0]]
+	if view == nil || view.tree == nil || view.tree.Root == nil || len(view.tree.Root.Children) != 1 {
+		reg.plugins.mu.Unlock()
+		t.Fatal("bar view tree is incomplete")
+	}
+	// The latest wire tree has arrived, but its replacement has not finished
+	// preparing. The currently visible button still declares Activate.
+	view.tree.Root.Children[0].Events = []v1.EventKind{v1.EventPointer}
+	view.tree.Revision = view.Revision + 1
+	revision := view.Revision
+	reg.plugins.mu.Unlock()
+
+	if !reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "go"}, v1.EventActivate, "", "", 0) {
+		t.Fatal("activation on the rendered revision was rejected")
+	}
+	inputs := reg.plugins.lastInputs()
+	if len(inputs) != 1 || inputs[0].Revision != revision || inputs[0].Event != v1.EventActivate {
+		t.Fatalf("rendered revision input = %+v, want activate at revision %d", inputs, revision)
+	}
+}
+
+func TestPluginFloatingSurfaceActionsReachPlugin(t *testing.T) {
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	waitPluginText(t, reg.bars[1], "hello")
+
+	ids := reg.plugins.barViewIDs("DP-1")
+	if len(ids) != 1 {
+		t.Fatalf("bar view IDs = %v", ids)
+	}
+	reg.plugins.mu.Lock()
+	view := reg.plugins.views[ids[0]]
+	reg.plugins.mu.Unlock()
+	if reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "surface-close"}, v1.EventActivate, "", "", 0) {
+		t.Fatal("floating surface action was accepted on a bar view")
+	}
+	reg.plugins.mu.Lock()
+	view.Kind = v1.ViewFloating
+	reg.plugins.mu.Unlock()
+	if reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "surface-close"}, v1.EventPointer, v1.ButtonPrimary, "", 0) {
+		t.Fatal("floating surface chrome received a pointer-press event")
+	}
+
+	for _, node := range []string{"surface-pin", "surface-close"} {
+		if !reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: node}, v1.EventActivate, "", "", 0) {
+			t.Errorf("floating %s action was not delivered", node)
+		}
+	}
+	got := reg.plugins.lastInputs()
+	if len(got) != 2 || got[0].Node != "surface-pin" || got[1].Node != "surface-close" {
+		t.Fatalf("floating surface inputs = %+v", got)
+	}
+}
+
+func TestLauncherNotesCaptureReachesNotesPanel(t *testing.T) {
+	reg := bindManifestPlugin(t, "ok", notesPluginID, testNotesPanelManifest, []string{notesPluginID})
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	waitPluginText(t, reg.bars[1], "hello")
+
+	opened, err := reg.plugins.openPanel(notesPluginID, v1.PanelParams{
+		Entry: "panel", Output: "DP-1", Generation: 1, Instance: "launcher",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	waitPluginPanelRoot(t, reg)
+	if err := reg.plugins.launcherNotes("DP-1", 1, "Captured from launcher"); err != nil {
+		t.Fatal(err)
+	}
+
+	inputs := reg.plugins.lastInputs()
+	if len(inputs) == 0 {
+		t.Fatal("launcher capture was not delivered")
+	}
+	got := inputs[len(inputs)-1]
+	if got.ViewID != opened.ViewID || got.Node != "launcher-capture" || got.Event != v1.EventSubmit || got.Text != "Captured from launcher" {
+		t.Fatalf("launcher capture = %+v", got)
+	}
+}
+
+func TestPluginFailedPlaceholderActionReachesPlugin(t *testing.T) {
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{1: "DP-1"})
+	waitPluginText(t, reg.bars[1], "hello")
+	ids := reg.plugins.barViewIDs("DP-1")
+	if len(ids) != 1 {
+		t.Fatalf("bar view IDs = %v", ids)
+	}
+	reg.plugins.mu.Lock()
+	reg.plugins.views[ids[0]].Failed = true
+	reg.plugins.mu.Unlock()
+
+	if !reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "camera"}, v1.EventActivate, "", "", 0) {
+		t.Fatal("failed-view placeholder action was not delivered")
+	}
+	inputs := reg.plugins.lastInputs()
+	if len(inputs) == 0 || inputs[len(inputs)-1].Node != "camera" {
+		t.Fatalf("placeholder input = %+v", inputs)
 	}
 }
 
@@ -834,11 +1012,105 @@ func TestDropPanelViewsKeepsReopenedPanel(t *testing.T) {
 	}
 	reg.mu.Lock()
 	where, open := reg.panels.Output(PanelPlugin)
-	owns := open && where == 7 && reg.roots.owns(panelRoot(PanelPlugin))
+	owns := open && where == 7 && reg.panelOpenLocked(PanelPlugin)
 	reg.mu.Unlock()
 	if !owns {
 		t.Fatal("PanelPlugin ownership lost after deferred drop")
 	}
+}
+
+const testPanelEntrySwitchManifest = `{
+  "schema": 1,
+  "id": "org.sysc.panel-switch",
+  "name": "Panel Switch",
+  "version": "1.0.0",
+  "protocol": {"major": 1, "minor": 4},
+  "exec": "bin/sysc-plugin-timer",
+  "capabilities": ["panels", "settings"],
+  "widgets": [{"id": "bar", "settings": []}],
+  "panels": [
+    {"id": "panel", "width": 320, "height": 280, "placement": "attached"},
+    {"id": "settings", "width": 320, "height": 400, "placement": "attached", "include_settings": true}
+  ],
+  "settings": [{"key": "enabled", "type": "bool", "label": "Enabled", "default": true}]
+}`
+
+func TestPluginPanelEntrySwitchKeepsReplacementOpen(t *testing.T) {
+	const pluginID = "org.sysc.panel-switch"
+	reg := bindManifestPlugin(t, "ok", pluginID, testPanelEntrySwitchManifest, []string{pluginID})
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+
+	first, err := reg.plugins.openPanel(pluginID, v1.PanelParams{
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: pluginID + "-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialAux := drainAux(t, reg, 2)
+	var oldPanelDrop, oldShieldDrop func()
+	for _, req := range initialAux {
+		if req.Open == nil {
+			continue
+		}
+		switch req.Open.ID {
+		case panelSurfaceID(PanelPlugin):
+			oldPanelDrop = req.Open.OnDrop
+		case panelShieldSurfaceID(7):
+			oldShieldDrop = req.Open.OnDrop
+		}
+	}
+	waitPluginPanelRoot(t, reg)
+	reg.mu.Lock()
+	oldPanelHost := reg.panelHosts[PanelPlugin]
+	reg.mu.Unlock()
+	if oldPanelHost == nil {
+		t.Fatal("initial plugin panel has no host")
+	}
+
+	second, err := reg.plugins.openPanel(pluginID, v1.PanelParams{
+		Entry: "settings", Output: "DP-1", Generation: 7, Instance: pluginID + "-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ViewID == "" || second.ViewID == first.ViewID {
+		t.Fatalf("settings view = %q, want a new placement after %q", second.ViewID, first.ViewID)
+	}
+	// Consume, but do not apply, the old close and replacement open requests.
+	// The compositor may deliver the old surface's Closed event at this point.
+	_ = drainAux(t, reg, 4)
+	if oldPanelDrop == nil || oldShieldDrop == nil {
+		t.Fatal("initial panel surfaces have no instance-bound drop callbacks")
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		reg.plugins.mu.Lock()
+		panel := reg.plugins.panel
+		view := reg.plugins.views[second.ViewID]
+		ready := panel != nil && panel.ID == second.ViewID && panel.Entry == "settings" &&
+			view != nil && !view.Failed && view.Root != nil
+		reg.plugins.mu.Unlock()
+		reg.mu.Lock()
+		_, open := reg.panels.Output(PanelPlugin)
+		host := reg.panelHosts[PanelPlugin]
+		reg.mu.Unlock()
+		if ready && open && host != nil && strings.Contains(treeText(reg.plugins.panelTree(host)), "Enabled") {
+			oldPanelDrop()
+			oldShieldDrop()
+			reg.mu.Lock()
+			stillCurrent := reg.panelHosts[PanelPlugin] == host && host != oldPanelHost &&
+				reg.panelShields[7] != nil && reg.panelShields[7] != oldPanelHost
+			reg.mu.Unlock()
+			if !stillCurrent {
+				t.Fatal("delayed close from the old aux surface retired its replacement")
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("settings replacement did not stay open: panel=%+v", second)
 }
 
 func TestPluginOpenPanelReplacesAnotherPluginPanel(t *testing.T) {
@@ -1544,5 +1816,314 @@ func TestPluginCallHooksChangeNothingOnceCancelled(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Errorf("%s = %v, want context.Canceled", name, err)
 		}
+	}
+}
+
+// queuePendingBarText leaves one change in the coalescer, the state typing
+// is in until the frame flush runs.
+func queuePendingBarText(t *testing.T, h *pluginHost, text string) {
+	t.Helper()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var id string
+	for _, v := range h.views {
+		if v.Plugin == "org.sysc.timer" && v.Kind == v1.ViewBar {
+			id = v.ID
+			break
+		}
+	}
+	if id == "" {
+		t.Fatal("timer bar view is not open")
+	}
+	if sent := h.textOut.Push(v1.InputEvent{ViewID: id, Node: "body", Event: v1.EventChange, Text: text}); len(sent) != 0 {
+		t.Fatalf("change was sent immediately: %+v", sent)
+	}
+	h.scheduleTextFlushLocked()
+}
+
+func recordedInputText(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ""
+		}
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+// Disabling a plugin must deliver keystrokes still waiting on the flush
+// timer. stopPlugin used to drop the slot first, so closeView took the
+// change and then had nobody to send it to.
+func TestStopPluginSendsPendingTextBeforeStop(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "inputs")
+	reg := bindTestPlugin(t, "record-input:"+marker)
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	queuePendingBarText(t, reg.plugins, "last words")
+
+	reg.plugins.stopPlugin("org.sysc.timer")
+
+	if got := recordedInputText(t, marker); !strings.Contains(got, "change\tlast words\n") {
+		t.Fatalf("plugin input log = %q, want the pending change", got)
+	}
+}
+
+// Shell exit has the same obligation: the last buffered change has to reach
+// the plugin before Stop, or the process shuts down without it.
+func TestCloseSendsPendingTextBeforeStop(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "inputs")
+	reg := bindTestPlugin(t, "record-input:"+marker)
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	queuePendingBarText(t, reg.plugins, "last words")
+
+	reg.Close()
+
+	if got := recordedInputText(t, marker); !strings.Contains(got, "change\tlast words\n") {
+		t.Fatalf("plugin input log = %q, want the pending change", got)
+	}
+}
+
+// Plugin-manager retry restarts the same runtime in place. The pending
+// change still has to go out before Stop, or the new process never sees it.
+func TestRetryLockedSendsPendingTextBeforeStop(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "inputs")
+	reg := bindTestPlugin(t, "record-input:"+marker)
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	queuePendingBarText(t, reg.plugins, "last words")
+
+	reg.mu.Lock()
+	err := reg.plugins.retryLocked("org.sysc.timer")
+	reg.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := recordedInputText(t, marker); !strings.Contains(got, "change\tlast words\n") {
+		t.Fatalf("plugin input log = %q, want the pending change", got)
+	}
+}
+
+// Text typed in the frame before a close is held for the flush timer, which
+// drops changes for a view that has gone. The close sends it instead.
+func TestClosingAViewSendsItsPendingTextFirst(t *testing.T) {
+	h := &pluginHost{
+		views:    map[string]*hostedView{"v1": {ID: "v1", Plugin: "p"}},
+		slots:    map[string]*pluginSlot{},
+		surfaces: map[string]*pluginSurfaceHost{},
+	}
+	h.textOut.Push(v1.InputEvent{ViewID: "v1", Node: "body", Event: v1.EventChange, Text: "last words"})
+	h.closeView("v1")
+	if left := h.textOut.Flush(); len(left) != 0 {
+		t.Fatalf("close left %+v for the flush timer to drop", left)
+	}
+	inputs := h.lastInputs()
+	if len(inputs) != 1 || inputs[0].Text != "last words" {
+		t.Fatalf("inputs = %+v, want the pending change sent with the close", inputs)
+	}
+}
+
+func TestSettleTextFlushStopsAScheduledTimer(t *testing.T) {
+	h := &pluginHost{}
+	h.mu.Lock()
+	h.scheduleTextFlushLocked()
+	h.mu.Unlock()
+	h.settleTextFlush()
+	h.mu.Lock()
+	pending := h.flushPending
+	h.mu.Unlock()
+	if pending {
+		t.Fatal("flush still pending after settle")
+	}
+}
+
+func TestSettleTextFlushWaitsOutAFiringTimer(t *testing.T) {
+	h := &pluginHost{
+		views: map[string]*hostedView{"v1": {ID: "v1", Plugin: "p"}},
+		slots: map[string]*pluginSlot{},
+	}
+	h.mu.Lock()
+	h.scheduleTextFlushLocked()
+	h.flushTimer.Reset(0)
+	h.mu.Unlock()
+	h.settleTextFlush()
+}
+
+// Shutting the shell down must ask each plugin to stop and let it finish:
+// Notes saves unsaved text on HostShutdown. Cancelling the host context first
+// killed every plugin process before the message was sent.
+func TestRegistryCloseLetsPluginsFinish(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "flushed")
+	reg := bindTestPlugin(t, "shutdown-marker:"+marker)
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	reg.Close()
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("plugin never ran its shutdown: %v", err)
+	}
+}
+
+// pumpRuntimeIDs reports goroutines inside pluginHost.pumpRuntime. Ids are
+// not reused, so a pump that has returned is absent on the next read.
+func pumpRuntimeIDs() map[string]struct{} {
+	buf := make([]byte, 64<<10)
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			buf = buf[:n]
+			break
+		}
+		buf = make([]byte, len(buf)*2)
+	}
+	ids := map[string]struct{}{}
+	for _, block := range strings.Split(string(buf), "\n\n") {
+		if !strings.Contains(block, ".pumpRuntime(") {
+			continue
+		}
+		line, _, _ := strings.Cut(block, "\n")
+		rest, ok := strings.CutPrefix(line, "goroutine ")
+		if !ok {
+			continue
+		}
+		id, _, _ := strings.Cut(rest, " ")
+		ids[id] = struct{}{}
+	}
+	return ids
+}
+
+func pumpsBeyond(base map[string]struct{}) []string {
+	var extra []string
+	for id := range pumpRuntimeIDs() {
+		if _, ok := base[id]; !ok {
+			extra = append(extra, id)
+		}
+	}
+	return extra
+}
+
+// waitOwnPump waits until exactly one pumpRuntime from this test is running
+// and it is not gone, the goroutine stopPlugin was supposed to release.
+// A brief overlap while the old pump exits is allowed; staying overlapped is not.
+func waitOwnPump(t *testing.T, base map[string]struct{}, gone string) string {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	var last []string
+	for time.Now().Before(deadline) {
+		last = pumpsBeyond(base)
+		if len(last) == 1 && last[0] != gone {
+			return last[0]
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("pumpRuntime goroutines = %v, want one new pump after %s", last, gone)
+	return ""
+}
+
+// stopPlugin must let the message pump return. Messages is never closed and
+// the host context lives until shell exit, so disable/replace/retry used to
+// leave a goroutine blocked on the dead runtime forever.
+func TestStopPluginReleasesTheRuntimePump(t *testing.T) {
+	base := pumpRuntimeIDs()
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	reg.plugins.mu.Lock()
+	cat := reg.plugins.catalog
+	reg.plugins.mu.Unlock()
+
+	const pluginID = "org.sysc.timer"
+	current := waitOwnPump(t, base, "")
+	for i := 0; i < 3; i++ {
+		reg.plugins.stopPlugin(pluginID)
+		if err := reg.plugins.ensure(pluginID, cat, false); err != nil {
+			t.Fatal(err)
+		}
+		current = waitOwnPump(t, base, current)
+	}
+}
+
+// retryLocked restarts the same runtime in place. Its pump has to stay: a
+// new process publishes on the same Messages channel.
+func TestRetryLockedKeepsTheSameRuntimePump(t *testing.T) {
+	base := pumpRuntimeIDs()
+	reg := bindTestPlugin(t, "ok")
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	current := waitOwnPump(t, base, "")
+
+	const pluginID = "org.sysc.timer"
+	reg.plugins.mu.Lock()
+	slot := reg.plugins.slots[pluginID]
+	reg.plugins.mu.Unlock()
+	if slot == nil {
+		t.Fatal("plugin is not running")
+	}
+	pid := slot.rt.Status().PID
+
+	reg.mu.Lock()
+	err := reg.plugins.retryLocked(pluginID)
+	reg.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Retry resets the start counter, so a new process id is the signal
+	// that the same runtime came back.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		st := slot.rt.Status()
+		if st.State == plugin.StateRunning && st.PID != 0 && st.PID != pid {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("retry did not start again: %+v", st)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	own := pumpsBeyond(base)
+	if len(own) != 1 || own[0] != current {
+		t.Fatalf("pumps = %v, want the original pump %s", own, current)
+	}
+}
+
+// A center-placed panel drops from the middle of the output, the way the
+// wordmark's control center does, however far along the bar its pill sits.
+func TestCenterPlacedPluginPanelIgnoresTheClickedWidget(t *testing.T) {
+	manifest := strings.Replace(testRecorderPanelManifest,
+		`"width": 640, "height": 720, "placement": "attached"`,
+		`"width": 640, "height": 720, "placement": "center"`, 1)
+	manifest = strings.Replace(manifest, `"minor": 0`, `"minor": 12`, 1)
+	reg := bindManifestPlugin(t, "ok", "org.sysc.screen-recorder", manifest,
+		[]string{"org.sysc.screen-recorder"})
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	waitPluginText(t, reg.bars[7], "hello")
+	bar := reg.bars[7]
+	bar.setOutputSize(3440, 1440)
+	if err := bar.Configure(3440, BarHeight, 120); err != nil {
+		t.Fatal(err)
+	}
+	reg.plugins.mu.Lock()
+	reg.plugins.lastAnchor["org.sysc.screen-recorder"] = 2900
+	reg.plugins.mu.Unlock()
+	if _, err := reg.plugins.openPanel("org.sysc.screen-recorder", v1.PanelParams{
+		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "org.sysc.screen-recorder-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	reg.mu.Lock()
+	host := reg.panelHosts[PanelPlugin]
+	reg.mu.Unlock()
+	if host == nil {
+		t.Fatal("plugin panel never opened")
+	}
+	if host.place.AnchorX != 0 {
+		t.Fatalf("panel anchor = %d, want the output centre (no widget anchor)", host.place.AnchorX)
+	}
+	m := host.place.Margins()
+	if left, want := m.Left, (3440-host.place.Panel.W)/2; left != want {
+		t.Fatalf("panel left = %d, want centred %d", left, want)
 	}
 }

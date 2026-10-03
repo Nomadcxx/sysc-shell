@@ -220,6 +220,21 @@ func (m *Menu) PickAt(n *ui.Node, x, y int) bool {
 	return false
 }
 
+// RowAt returns the option row under a point, or -1. A picker's filter field
+// is the first child and is not an option.
+func (m *Menu) RowAt(n *ui.Node, x, y int) int {
+	if m == nil || n == nil {
+		return -1
+	}
+	for i, c := range n.Children {
+		if c == nil || !c.Bounds.Contains(x, y) || m.filter != nil && i == 0 {
+			continue
+		}
+		return i
+	}
+	return -1
+}
+
 func (m *Menu) Node() *ui.Node {
 	if m == nil {
 		return &ui.Node{Kind: ui.KindMenu, Role: "combobox"}

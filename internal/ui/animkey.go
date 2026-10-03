@@ -16,8 +16,12 @@ func Animated(n *Node) bool {
 		return true
 	case KindCapsule:
 		return n.Action != ""
+	case KindTab, KindSlider, KindMenu:
+		return n.Action != ""
 	case KindMeter, KindRadialGauge:
 		return n.Animate
+	case KindSpinner:
+		return true
 	default:
 		return false
 	}

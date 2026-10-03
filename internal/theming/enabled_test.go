@@ -374,6 +374,253 @@ func TestApplyEnabledSupersedeUsesLatestHome(t *testing.T) {
 	}
 }
 
+func TestApplyEnabledAndWaitReturnsItsQueuedOutcome(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	home1 := t.TempDir()
+	home2 := t.TempDir()
+	markTemplatesComplete(t, "alacritty", "foot")
+	footSidecar := filepath.Join(home2, ".config", "foot", "themes", "sysc-shell")
+	if err := os.MkdirAll(filepath.Dir(footSidecar), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(footSidecar, []byte("user edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	started := make(chan struct{})
+	block := make(chan struct{})
+	defer func() {
+		select {
+		case <-block:
+		default:
+			close(block)
+		}
+	}()
+	first := func(name string) bool {
+		if name != "alacritty" {
+			return false
+		}
+		select {
+		case <-started:
+		default:
+			close(started)
+		}
+		<-block
+		return true
+	}
+	firstDone := make(chan struct{})
+	go func() {
+		_, _ = ApplyEnabled(home1, first, theme.Fallback, nil)
+		close(firstDone)
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first apply did not reach alacritty")
+	}
+
+	type result struct {
+		outcomes map[string]error
+		err      error
+	}
+	secondDone := make(chan result, 1)
+	go func() {
+		outcomes, err := ApplyEnabledAndWait(home2, func(name string) bool { return name == "foot" }, theme.Fallback, nil)
+		secondDone <- result{outcomes: outcomes, err: err}
+	}()
+	deadline := time.After(2 * time.Second)
+	for {
+		applyMu.Lock()
+		queued := applyQueued != nil
+		applyMu.Unlock()
+		if queued {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("second apply was not queued")
+		case <-time.After(time.Millisecond):
+		}
+	}
+
+	close(block)
+	select {
+	case <-firstDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first apply did not finish")
+	}
+	select {
+	case got := <-secondDone:
+		if !errors.Is(got.outcomes["foot"], ErrUserModified) {
+			t.Fatalf("second outcomes = %v, want foot refusal; err = %v", got.outcomes, got.err)
+		}
+		if !errors.Is(got.err, ErrUserModified) {
+			t.Fatalf("second err = %v, want foot refusal", got.err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("second apply did not return its outcome")
+	}
+}
+
+func TestApplyEnabledAndWaitReturnsWhenSuperseded(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	home1 := t.TempDir()
+	home2 := t.TempDir()
+	home3 := t.TempDir()
+	markTemplatesComplete(t, "alacritty", "foot")
+
+	started := make(chan struct{})
+	block := make(chan struct{})
+	defer func() {
+		select {
+		case <-block:
+		default:
+			close(block)
+		}
+	}()
+	first := func(name string) bool {
+		if name != "alacritty" {
+			return false
+		}
+		select {
+		case <-started:
+		default:
+			close(started)
+		}
+		<-block
+		return true
+	}
+	firstDone := make(chan struct{})
+	go func() {
+		_, _ = ApplyEnabled(home1, first, theme.Fallback, nil)
+		close(firstDone)
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first apply did not reach alacritty")
+	}
+
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := ApplyEnabledAndWait(home2, func(name string) bool { return name == "foot" }, theme.Fallback, nil)
+		secondDone <- err
+	}()
+	deadline := time.After(2 * time.Second)
+	for {
+		applyMu.Lock()
+		queued := applyQueued != nil && applyQueued.done != nil
+		applyMu.Unlock()
+		if queued {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("second apply was not queued")
+		case <-time.After(time.Millisecond):
+		}
+	}
+
+	if _, err := ApplyEnabled(home3, func(name string) bool { return name == "foot" }, theme.Fallback, nil); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-secondDone:
+		if !errors.Is(err, ErrApplySuperseded) {
+			t.Fatalf("second error = %v, want superseded", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("superseded caller did not return")
+	}
+
+	close(block)
+	select {
+	case <-firstDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first apply did not finish")
+	}
+	if _, err := os.Stat(filepath.Join(home3, ".config", "foot", "themes", "sysc-shell")); err != nil {
+		t.Fatalf("latest queued apply did not run: %v", err)
+	}
+}
+
+func TestApplyEnabledAndWaitDoesNotWaitForLaterQueuedApply(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	markTemplatesComplete(t, "alacritty")
+	home1 := t.TempDir()
+	home2 := t.TempDir()
+	firstStarted := make(chan struct{})
+	firstBlock := make(chan struct{})
+	secondStarted := make(chan struct{})
+	secondBlock := make(chan struct{})
+	var firstStartOnce, firstReleaseOnce, secondStartOnce, secondReleaseOnce sync.Once
+	defer func() {
+		firstReleaseOnce.Do(func() { close(firstBlock) })
+		secondReleaseOnce.Do(func() { close(secondBlock) })
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			applyMu.Lock()
+			busy := applyBusy
+			applyMu.Unlock()
+			if !busy {
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+		t.Error("apply worker did not become idle")
+	}()
+
+	firstDone := make(chan error, 1)
+	go func() {
+		outcomes, err := ApplyEnabledAndWait(home1, func(name string) bool {
+			if name == "alacritty" {
+				firstStartOnce.Do(func() { close(firstStarted) })
+				<-firstBlock
+				return true
+			}
+			return false
+		}, theme.Fallback, nil)
+		if err == nil {
+			var attempted bool
+			err, attempted = outcomes["alacritty"]
+			if !attempted {
+				err = errors.New("first apply returned no alacritty result")
+			}
+		}
+		firstDone <- err
+	}()
+	select {
+	case <-firstStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first apply did not reach alacritty")
+	}
+
+	if _, err := ApplyEnabled(home2, func(name string) bool {
+		if name == "alacritty" {
+			secondStartOnce.Do(func() { close(secondStarted) })
+			<-secondBlock
+			return true
+		}
+		return false
+	}, theme.Fallback, nil); err != nil {
+		t.Fatal(err)
+	}
+	firstReleaseOnce.Do(func() { close(firstBlock) })
+	select {
+	case <-secondStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("later queued apply did not start")
+	}
+	select {
+	case err := <-firstDone:
+		if err != nil {
+			t.Fatalf("first apply = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("first waiter blocked behind a later apply")
+	}
+}
+
 func TestApplyEnabledGatesIncompleteTemplates(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", t.TempDir())

@@ -4,7 +4,15 @@ import "encoding/json"
 
 const (
 	ProtocolMajor = 1
-	ProtocolMinor = 9
+	// Minor 11 adds the sticky_note_2, push_pin, star and note_add icons and
+	// paints floating sticky notes on their paper; a plugin that uses those
+	// icons declares minor 11 so an older shell refuses it instead of failing
+	// to convert its views. Minor 12 adds the "center" panel placement, which
+	// drops a panel from the middle of the output instead of under its widget.
+	// Minor 13 adds the spinner kind, an activity indicator the host turns.
+	// Minor 14 adds the moonbit icon, the Moonbit orb for its bar pill.
+	// Minor 15 adds masked text inputs, for a password the plugin needs.
+	ProtocolMinor = 15
 )
 
 // The version-one message names. Every line on the wire carries one of these
@@ -264,6 +272,9 @@ const (
 	CallWallpaperMaskSet  CallKind = "wallpaper.mask.set"
 	CallOpenURL           CallKind = "open-url"
 	CallClipboardWrite    CallKind = "clipboard.write"
+
+	CallScreenshotStart     CallKind = "screenshot.start"
+	CallScreenshotDirectory CallKind = "screenshot.directory"
 )
 
 // HostCall is a request from the plugin. Params is left raw so that adding a
@@ -432,6 +443,18 @@ type OpenURLParams struct {
 // ClipboardWriteParams writes bounded plain text to the user's clipboard.
 type ClipboardWriteParams struct {
 	Text string `json:"text"`
+}
+
+// ScreenshotStartParams asks the shell to start a capture. Mode is "region",
+// "window" or "screen". The reply acknowledges the start only; the saved path
+// or failure arrives as the shell's own toast.
+type ScreenshotStartParams struct {
+	Mode string `json:"mode"`
+}
+
+// ScreenshotDirectoryResult is the directory captures are saved to.
+type ScreenshotDirectoryResult struct {
+	Directory string `json:"directory"`
 }
 
 // PanelResult names the view the host opened, so the plugin can close it.

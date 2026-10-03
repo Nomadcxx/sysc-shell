@@ -50,3 +50,20 @@ func TestCanvasFillRoundedMatchesMask(t *testing.T) {
 		t.Fatalf("center alpha = %d, want opaque", got)
 	}
 }
+
+func TestRippleMaskClipsTheDiscToTheBox(t *testing.T) {
+	inside := RippleMask(20, 20, 5, 10, 10, 6)
+	if inside.AlphaAt(10, 10).A != 255 {
+		t.Fatal("the disc's centre is not opaque")
+	}
+	if inside.AlphaAt(0, 0).A != 0 {
+		t.Fatal("the disc leaks past the rounded corner")
+	}
+	// The centre is seven pixels past the right edge, farther than its radius.
+	outside := RippleMask(20, 20, 5, 27, 10, 6)
+	for i := range outside.Pix {
+		if outside.Pix[i] != 0 {
+			t.Fatal("a disc beyond the box painted inside it")
+		}
+	}
+}

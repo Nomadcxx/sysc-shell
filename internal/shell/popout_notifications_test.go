@@ -384,6 +384,30 @@ func TestCentreOpenClearsUnreadWhenTheDaemonConfirms(t *testing.T) {
 	}
 }
 
+// A history entry that arrives while the centre is open must be marked seen
+// too: the user is looking at it, and the badge must not come back until the
+// centre is reopened (GH #50).
+func TestCentreOpenMarksNewHistorySeen(t *testing.T) {
+	sender := &fakeNotifySender{}
+	r := openCentreWithUnseen(t, sender)
+	r.applyNotify(delta(1, 3, protocol.Delta{Kind: protocol.DeltaHistoryAdded,
+		History: ptrH(historyEntry(3, "chat", "Chat", "new", time.Unix(1_756_000_100, 0), false))}))
+	sent := sender.ofKind(protocol.CommandHistoryMarkSeen)
+	if len(sent) != 2 {
+		t.Fatalf("mark-seen commands = %+v, want a second after the new entry", sent)
+	}
+	if len(sent[1].IDs) != 2 || sent[1].IDs[0] != 2 || sent[1].IDs[1] != 3 {
+		t.Fatalf("second mark-seen = %v, want ids [2 3]", sent[1].IDs)
+	}
+	if got := r.unreadCount(); got != 2 {
+		t.Fatalf("unread = %d before the daemon confirmed, want 2", got)
+	}
+	r.applyNotify(delta(1, 4, protocol.Delta{Kind: protocol.DeltaHistorySeen, IDs: []uint32{2, 3}}))
+	if got := r.unreadCount(); got != 0 {
+		t.Fatalf("unread = %d after the confirmation, want 0", got)
+	}
+}
+
 // The bar badge reads unread history, so a notify message that changes it
 // must repaint the bar rather than wait for the next clock tick.
 func TestNotifyMessageRepaintsTheBarBadge(t *testing.T) {
@@ -612,5 +636,32 @@ func TestDesktopEntryIconResolvesIconKeysFromApplicationsDirs(t *testing.T) {
 	}
 	if got := desktopEntryIcon("no/separator"); got != "" {
 		t.Fatalf("separator entry = %q, want empty", got)
+	}
+}
+
+// The centre's header glyph is frozen when the tree is built; an expiring
+// timed preset must rebuild an open centre instead of leaving the DND icon
+// lit. gh #56.
+func TestCenterDNDGlyphRefreshesWhenAPresetExpiresWhileOpen(t *testing.T) {
+	r := NewRegistry(config.Default())
+	r.applyNotify(snap(1))
+	now := time.Unix(1_756_000_000, 0)
+	r.now = now
+	r.setDNDPresetAt(now, time.Minute)
+	h := &PanelHost{id: PanelNotifications, notifyMenu: true}
+	r.mu.Lock()
+	r.panelHosts[PanelNotifications] = h
+	r.rebuildPanel(h)
+	r.mu.Unlock()
+	before := buttonByName(h.root, "Do not disturb")
+	if before == nil || len(before.Children) == 0 || before.Children[0].Icon != "do_not_disturb_on" {
+		t.Fatalf("preset DND glyph = %+v, want do_not_disturb_on", before)
+	}
+
+	r.UpdateClock(now.Add(2 * time.Minute))
+
+	after := buttonByName(h.root, "Do not disturb")
+	if after == nil || len(after.Children) == 0 || after.Children[0].Icon != "notifications" {
+		t.Fatalf("stale DND glyph after expiry: %+v", after)
 	}
 }

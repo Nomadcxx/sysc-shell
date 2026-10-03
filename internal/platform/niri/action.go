@@ -8,6 +8,25 @@ import (
 	"net"
 )
 
+// ToggleOverview toggles Niri's compositor-rendered overview.
+type ToggleOverview struct{}
+
+// CloseOverview closes Niri's compositor-rendered overview.
+type CloseOverview struct{}
+
+// MoveWindowToWorkspace moves one exact window ID to a workspace ID.
+type MoveWindowToWorkspace struct {
+	WindowID    uint64
+	WorkspaceID uint64
+	Focus       bool
+}
+
+// MoveColumnToWorkspace moves the focused column to a workspace ID.
+type MoveColumnToWorkspace struct {
+	WorkspaceID uint64
+	Focus       bool
+}
+
 // FocusWindow asks the compositor to focus one window by id.
 type FocusWindow struct {
 	ID uint64 `json:"id"`
@@ -25,6 +44,30 @@ type CloseWindow struct {
 type FocusWorkspace struct {
 	ID uint64
 }
+
+// ScreenshotScreen asks the compositor to capture the focused output. The
+// compositor always copies the capture to its own clipboard; WriteToDisk also
+// saves it, to Path when set. Path must be absolute.
+type ScreenshotScreen struct {
+	WriteToDisk bool   `json:"write_to_disk"`
+	ShowPointer bool   `json:"show_pointer"`
+	Path        string `json:"path"`
+}
+
+// ScreenshotWindow asks the compositor to capture one window; a nil ID is the
+// focused window. Clipboard and disk behave as for ScreenshotScreen.
+type ScreenshotWindow struct {
+	ID          *uint64 `json:"id"`
+	WriteToDisk bool    `json:"write_to_disk"`
+	ShowPointer bool    `json:"show_pointer"`
+	Path        string  `json:"path"`
+}
+
+// PowerOffMonitors asks the compositor to DPMS-off every output.
+type PowerOffMonitors struct{}
+
+// PowerOnMonitors asks the compositor to DPMS-on every output.
+type PowerOnMonitors struct{}
 
 // Action sends one compositor request on a short-lived connection. It does
 // not use the EventStream socket.
@@ -74,11 +117,35 @@ func marshalAction(body any) ([]byte, error) {
 		inner = map[string]any{"FocusWindow": v}
 	case CloseWindow:
 		inner = map[string]any{"CloseWindow": v}
+	case ScreenshotScreen:
+		inner = map[string]any{"ScreenshotScreen": v}
+	case ScreenshotWindow:
+		inner = map[string]any{"ScreenshotWindow": v}
 	case FocusWorkspace:
 		// WorkspaceReferenceArg is an externally tagged enum, so the id
 		// reference is the object {"Id": n} rather than a bare number.
 		inner = map[string]any{"FocusWorkspace": map[string]any{
 			"reference": map[string]any{"Id": v.ID},
+		}}
+	case PowerOffMonitors:
+		// Fieldless variants still serialize as an empty object.
+		inner = map[string]any{"PowerOffMonitors": map[string]any{}}
+	case PowerOnMonitors:
+		inner = map[string]any{"PowerOnMonitors": map[string]any{}}
+	case ToggleOverview:
+		inner = map[string]any{"ToggleOverview": map[string]any{}}
+	case CloseOverview:
+		inner = map[string]any{"CloseOverview": map[string]any{}}
+	case MoveWindowToWorkspace:
+		inner = map[string]any{"MoveWindowToWorkspace": map[string]any{
+			"window_id": v.WindowID,
+			"reference": map[string]any{"Id": v.WorkspaceID},
+			"focus":     v.Focus,
+		}}
+	case MoveColumnToWorkspace:
+		inner = map[string]any{"MoveColumnToWorkspace": map[string]any{
+			"reference": map[string]any{"Id": v.WorkspaceID},
+			"focus":     v.Focus,
 		}}
 	default:
 		return nil, fmt.Errorf("niri: unknown action %T", body)

@@ -66,3 +66,41 @@ func TestPluginWidgetRefreshAdoptsPreparedTree(t *testing.T) {
 		t.Fatal("identical revision refreshed again")
 	}
 }
+
+// A disabled plugin has no runtime and so no frame, the same as one still
+// starting. Without the off set it fell through to the "!" placeholder and
+// stayed in the bar after the user switched it off.
+func TestPluginWidgetHidesWhileItsPluginIsDisabled(t *testing.T) {
+	t.Parallel()
+	widgets := buildWidgets([]config.Item{
+		{ID: "plugin", Plugin: "org.sysc.timer", Entry: "bar", Instance: "t1"},
+	}, 8, standardMetrics())
+	w := widgets[0]
+	w.refresh(barView{PluginsOff: map[string]bool{"org.sysc.timer": true}})
+	if visibleWidgetNode(w) != nil {
+		t.Fatal("a disabled plugin's widget is still in the bar")
+	}
+	if !w.refresh(barView{}) {
+		t.Fatal("re-enabling reported no change")
+	}
+	if visibleWidgetNode(w) == nil {
+		t.Fatal("a re-enabled plugin's widget stayed hidden")
+	}
+}
+
+func TestBarViewNamesDisabledPluginItems(t *testing.T) {
+	t.Parallel()
+	reg := newPanelRegistry(t)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	reg.cfg.Bar.Right = append(reg.cfg.Bar.Right,
+		config.Item{ID: "plugin", Plugin: "org.sysc.on", Entry: "bar", Instance: "a"},
+		config.Item{ID: "group", Items: []config.Item{
+			{ID: "plugin", Plugin: "org.sysc.off", Entry: "bar", Instance: "b"},
+		}})
+	reg.cfg.Plugins.Enabled = []string{"org.sysc.on"}
+	off := reg.viewLocked("DP-1").PluginsOff
+	if off["org.sysc.on"] || !off["org.sysc.off"] {
+		t.Fatalf("PluginsOff = %v, want only org.sysc.off", off)
+	}
+}

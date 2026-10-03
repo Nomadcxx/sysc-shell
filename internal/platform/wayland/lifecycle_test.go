@@ -77,6 +77,7 @@ func TestRegistryBindsAtTheLowerVersion(t *testing.T) {
 		{"wp_viewporter", 1, 1},
 		{"zwp_text_input_manager_v3", 1, 1},
 		{"wp_cursor_shape_manager_v1", 2, 1},
+		{"wl_data_device_manager", 3, 3},
 		// A server older than our maximum caps us at the server's version.
 		{"wl_compositor", 4, 4},
 	}
@@ -93,7 +94,7 @@ func TestRegistryBindsAtTheLowerVersion(t *testing.T) {
 		})
 	}
 
-	if _, ok := bindVersion("wl_data_device_manager", 3); ok {
+	if _, ok := bindVersion("wl_subcompositor", 1); ok {
 		t.Error("bindVersion wanted an interface the proof does not use")
 	}
 }

@@ -413,6 +413,35 @@ func TestLoadManifestRejectsInvalidPanelGeometry(t *testing.T) {
 	}
 }
 
+func TestLoadManifestCenterPlacementNeedsMinor12(t *testing.T) {
+	t.Parallel()
+
+	manifest := func(minor int) string {
+		var document map[string]any
+		if err := json.Unmarshal([]byte(edit(t, "panels", []any{map[string]any{
+			"id": "panel", "width": 1200, "height": 800, "placement": "center",
+		}})), &document); err != nil {
+			t.Fatal(err)
+		}
+		document["protocol"].(map[string]any)["minor"] = float64(minor)
+		b, err := json.Marshal(document)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	m, err := LoadManifest(writePlugin(t, manifest(12), "bin/sysc-plugin-timer"))
+	if err != nil {
+		t.Fatalf("center placement at minor 12 refused: %v", err)
+	}
+	if got := m.Panels[0].Placement; got != PlacementCenter {
+		t.Fatalf("placement = %q, want %q", got, PlacementCenter)
+	}
+	if _, err := LoadManifest(writePlugin(t, manifest(11), "bin/sysc-plugin-timer")); err == nil {
+		t.Fatal("center placement accepted at minor 11")
+	}
+}
+
 func TestLoadManifestValidatesSettingSchemas(t *testing.T) {
 	t.Parallel()
 

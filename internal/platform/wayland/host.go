@@ -6,6 +6,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/fractionalscale"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/inhibit"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/viewporter"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
@@ -70,6 +71,8 @@ type HostCallbacks struct {
 	WantIME func() bool
 	// IBeamAt reports whether the pointer is over a text field.
 	IBeamAt func(x, y float64) bool
+	// Crosshair shows a crosshair cursor anywhere over the surface.
+	Crosshair bool
 	// OpaqueBackground is the resolved palette opacity for this surface.
 	OpaqueBackground bool
 	// Radius is the surface's painted corner radius, in logical pixels. The
@@ -105,7 +108,15 @@ type surfaceUnit struct {
 	effect    *backgroundeffect.ExtBackgroundEffectSurfaceV1
 	blurRects []ui.Rect
 
+	// inhibit is the keyboard-shortcuts inhibitor held for this surface while
+	// it has keyboard focus, when its policy asks for one and the compositor
+	// advertises the manager. It is destroyed with the unit.
+	inhibit *inhibit.ZwpKeyboardShortcutsInhibitorV1
+
 	app HostCallbacks
+	// onDrop is bound to this surface instance, so a delayed close cannot act
+	// on a replacement that reused its id.
+	onDrop func()
 
 	// policy holds the mutable per-surface policy an AuxUpdate can change.
 	// It is re-applied on configure so a reconfigure cannot silently restore

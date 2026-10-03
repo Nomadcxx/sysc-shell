@@ -124,3 +124,16 @@ func newKeyedHost() (*owner, *OutputHost, *[]Event, *[]Event) {
 	}}
 	return &owner{hosts: s}, h, barSeen, panelSeen
 }
+
+func TestInhibitShortcutsToleratesNoManagerAndQuietPolicy(t *testing.T) {
+	on := &surfaceUnit{policy: auxPolicy{inhibitShortcuts: true}}
+	(&owner{}).inhibitShortcuts(on)
+	if on.inhibit != nil || len(on.cleanup.steps) != 0 {
+		t.Fatal("a missing inhibitor manager must be silently tolerated")
+	}
+	off := &surfaceUnit{}
+	(&owner{}).inhibitShortcuts(off)
+	if off.inhibit != nil || len(off.cleanup.steps) != 0 {
+		t.Fatal("a policy that does not ask must request nothing")
+	}
+}

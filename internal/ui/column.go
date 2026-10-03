@@ -93,6 +93,8 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 			return n.Width, nil
 		}
 		return MeterHeight, nil
+	case KindSpinner:
+		return SpinnerDiameter(n), nil
 	case KindCapsule:
 		// A capsule in a column is its child plus padding. The design does not
 		// use one here yet; the case exists so placing one cannot crash a
@@ -171,7 +173,8 @@ func columnChildHeight(n *Node, width int, measure MeasureText) (int, error) {
 	case KindSlider:
 		return SliderKnob, nil
 	case KindMenu:
-		_, h := measure(n.Text, TextAttrsOf(n))
+		_, labelHeight := measure(n.Text, TextAttrsOf(n))
+		h := max(n.Height, labelHeight+2*n.Padding)
 		for _, c := range n.Children {
 			if c == nil {
 				continue
@@ -358,8 +361,9 @@ func placeColumnChild(n *Node, box Rect, measure MeasureText) error {
 		return layoutScroll(n, box, measure)
 	case KindMenu:
 		n.Bounds = box
-		_, fh := measure(n.Text, TextAttrsOf(n))
-		y := box.Y + fh
+		_, labelHeight := measure(n.Text, TextAttrsOf(n))
+		headHeight := max(n.Height, labelHeight+2*n.Padding)
+		y := box.Y + headHeight
 		for _, c := range n.Children {
 			if c == nil {
 				continue

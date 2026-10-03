@@ -467,6 +467,9 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 			return 0, 0, fmt.Errorf("meter value %v is outside zero through one", n.Value)
 		}
 		return n.Width, ownHeight(n, contentHeight), nil
+	case KindSpinner:
+		size := SpinnerDiameter(n)
+		return size, size, nil
 	case KindRadialGauge:
 		size := n.Width
 		if size <= 0 {
@@ -606,8 +609,10 @@ func measureNode(n *Node, contentHeight int, measure MeasureText) (int, int, err
 		}
 		return w, SliderKnob, nil
 	case KindMenu:
-		w, h := measure(n.Text, TextAttrsOf(n))
-		if n.Width > w {
+		w, labelHeight := measure(n.Text, TextAttrsOf(n))
+		w += 2 * n.Padding
+		h := max(n.Height, labelHeight+2*n.Padding)
+		if n.Width > 0 {
 			w = n.Width
 		}
 		for _, c := range n.Children {

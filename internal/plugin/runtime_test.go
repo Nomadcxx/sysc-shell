@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -403,5 +404,117 @@ func TestRuntimeDegradesAPluginThatFloods(t *testing.T) {
 	}
 	if st.Starts != 1 {
 		t.Fatalf("flooding plugin restarted itself: %+v", st)
+	}
+}
+
+// A session cancel must release supervise even when it is blocked publishing
+// to a messages channel with no pump; only the parent context staying alive
+// used to let the goroutine leak. gh #58.
+func TestRuntimeSuperviseStopsAfterSessionCancelWhilePublishing(t *testing.T) {
+	sess, err := supervisor(installHelper(t, "flood")).Start(context.Background())
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer sess.Close()
+
+	r := NewRuntime(Candidate{Manifest: installHelper(t, "flood")}, helperOptions())
+	for len(r.messages) < cap(r.messages) {
+		r.messages <- &v1.ViewSnapshot{ViewID: "filler"} // fill the buffer: the next publish blocks
+	}
+
+	ctx, cancelCtx := context.WithCancel(context.Background())
+	defer cancelCtx()
+	sessionCtx, cancelSession := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.supervise(ctx, sessionCtx, cancelSession, sess, 0)
+	}()
+
+	time.Sleep(150 * time.Millisecond) // let supervise block in the publish select
+	cancelSession()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("supervise stayed blocked publishing after the session was cancelled")
+	}
+}
+
+func TestEarlyHostCallDoesNotOutliveItsSession(t *testing.T) {
+	ctxErr := make(chan error, 1) // receives only if the hook runs
+	d := NewDispatcher(CallEnv{
+		PluginID: "org.sysc.timer",
+		Granted:  []Capability{CapNotifications},
+		Notify: func(ctx context.Context, _ v1.NotifyParams) (v1.NotifyResult, error) {
+			ctxErr <- ctx.Err()
+			return v1.NotifyResult{ID: 1}, nil
+		},
+	})
+	r := NewRuntime(Candidate{Manifest: installHelper(t, "notify-then-snapshot")}, helperOptions())
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		r.mu.Lock()
+		held := len(r.early)
+		r.mu.Unlock()
+		if held == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the call before SetCalls was not held")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	r.Stop()
+	r.SetCalls(d)
+	select {
+	case <-ctxErr:
+		t.Fatal("a call from a stopped session ran its side effect")
+	case <-time.After(300 * time.Millisecond):
+	}
+	select {
+	case msg := <-r.Messages():
+		if _, ok := msg.(*v1.HostCall); ok {
+			t.Fatal("host call reached the message queue")
+		}
+	default:
+	}
+}
+
+// A call that finds the early buffer full must still get its one reply; before
+// the fix it was dropped and the plugin waited on its id for the whole session.
+func TestEarlyHostCallOverflowIsAnsweredWithAnError(t *testing.T) {
+	r := NewRuntime(Candidate{Manifest: installHelper(t, "call-flood")}, helperOptions())
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer r.Stop()
+
+	// The dispatcher is attached late on purpose, so the first maxEarlyCalls
+	// calls are held and every later one overflows.
+	overflowed := map[string]bool{}
+	deadline := time.After(3 * time.Second)
+	for len(overflowed) < 8 {
+		select {
+		case msg := <-r.Messages():
+			st, ok := msg.(*v1.PluginStatus)
+			if !ok {
+				continue
+			}
+			id, errText, _ := strings.Cut(st.Message, ":")
+			if errText == "" {
+				t.Fatalf("call %s was answered before SetCalls", id)
+			}
+			overflowed[id] = true
+		case <-deadline:
+			t.Fatalf("overflowing calls never got a reply: %v", overflowed)
+		}
+	}
+	for i := maxEarlyCalls; i < maxEarlyCalls+8; i++ {
+		if id := fmt.Sprintf("f%d", i); !overflowed[id] {
+			t.Fatalf("call %s got no reply", id)
+		}
 	}
 }

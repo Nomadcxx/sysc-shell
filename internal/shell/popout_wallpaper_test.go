@@ -23,6 +23,14 @@ import (
 // service backed by a fake engine, so nothing here execs or touches a socket.
 func openWallpaperPanel(t *testing.T, roots []string) (*Registry, *wallpaper.Service, []wayland.AuxRequest) {
 	t.Helper()
+	return wallpaperPanel(t, roots, true)
+}
+
+// wallpaperPanel opens the picker. With relay false the snapshot relay never
+// starts, so a caller can prove something about a wallpaper state change
+// without an asynchronous rebuild racing its assertion.
+func wallpaperPanel(t *testing.T, roots []string, relay bool) (*Registry, *wallpaper.Service, []wayland.AuxRequest) {
+	t.Helper()
 	reg := newPanelRegistry(t)
 	withTestBar(t, reg, 7, reg.cfg)
 	svc := wallpaper.NewService(wallpaper.ServiceConfig{
@@ -36,7 +44,9 @@ func openWallpaperPanel(t *testing.T, roots []string) (*Registry, *wallpaper.Ser
 	reg.mu.Lock()
 	reg.wallpaperSvc = svc
 	reg.mu.Unlock()
-	go reg.relayWallpaper(svc)
+	if relay {
+		go reg.relayWallpaper(svc)
+	}
 
 	if err := reg.OpenPanel(PanelWallpaper, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1920, OutH: 1080}); err != nil {
 		t.Fatal(err)
@@ -124,7 +134,7 @@ func TestWallpaperPanelIsAnAttachedExclusiveOverlay(t *testing.T) {
 	if reqs[1].Open.Keyboard != keyboardExclusive {
 		t.Errorf("keyboard = %d, want exclusive", reqs[1].Open.Keyboard)
 	}
-	if reqs[0].Open == nil || reqs[0].Open.ID != shieldSurfaceID(PanelWallpaper) {
+	if reqs[0].Open == nil || reqs[0].Open.ID != panelShieldSurfaceID(7) {
 		t.Errorf("first request = %+v, want the dismiss shield", reqs[0].Open)
 	}
 }
@@ -1194,7 +1204,9 @@ func TestThumbArrivalDoesNotRebuildTheTree(t *testing.T) {
 	// is roughly 40 ms of blit per thumbnail, paid once per file in a library
 	// of hundreds.
 	root := seedWallpaperRoot(t)
-	reg, _, _ := openWallpaperPanel(t, []string{root})
+	// No relay: a snapshot update rebuilds the tree asynchronously, and a
+	// stray rebuild would masquerade as the failure this test hunts.
+	reg, _, _ := wallpaperPanel(t, []string{root}, false)
 	h := wallpaperHost(t, reg)
 
 	reg.mu.Lock()

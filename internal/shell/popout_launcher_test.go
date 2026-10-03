@@ -40,13 +40,20 @@ type recordedSpawn struct {
 	mu   sync.Mutex
 	argv []string
 	err  error
+	// gate, when non-nil, holds the spawn until the test closes it, so a
+	// test can act while an activation is still in flight.
+	gate chan struct{}
 }
 
 func (r *recordedSpawn) run(_ context.Context, argv []string) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.argv = append([]string(nil), argv...)
-	return r.err
+	err, gate := r.err, r.gate
+	r.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
+	return err
 }
 
 func (r *recordedSpawn) waitArgv(t *testing.T) []string {
@@ -684,6 +691,67 @@ func TestLauncherTypingClearsAFailedActivationError(t *testing.T) {
 	}
 }
 
+// A failure that lands after the user has typed again answers the superseded
+// attempt; it must not repaint the error over the new search (GH #45).
+func TestLauncherLateActivationFailureDoesNotRepaintAfterTyping(t *testing.T) {
+	t.Parallel()
+
+	reg, run, reqs := openLauncherPanel(t, launcherTestEntries())
+	run.mu.Lock()
+	run.err = errors.New("niri refused")
+	run.gate = make(chan struct{})
+	gate := run.gate
+	run.mu.Unlock()
+	pressLauncherKey(reqs, keyEnter)
+	run.waitArgv(t) // the activation is in flight, held in the spawn
+
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "f"})
+	close(gate)
+
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		h := reg.panelHosts[PanelLauncher]
+		label := ""
+		if h != nil {
+			label = h.errLabel
+		}
+		reg.mu.Unlock()
+		if label != "" {
+			t.Fatalf("late failure repainted errLabel = %q after typing", label)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// A success that lands after the user has typed again answers the superseded
+// attempt; it must not dismiss the launcher the user is still using (GH #49).
+func TestLauncherLateActivationSuccessDoesNotCloseAfterTyping(t *testing.T) {
+	t.Parallel()
+
+	reg, run, reqs := openLauncherPanel(t, launcherTestEntries())
+	run.mu.Lock()
+	run.gate = make(chan struct{})
+	gate := run.gate
+	run.mu.Unlock()
+	pressLauncherKey(reqs, keyEnter)
+	run.waitArgv(t)
+
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "f"})
+	close(gate)
+
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		_, hosted := reg.panelHosts[PanelLauncher]
+		reg.mu.Unlock()
+		if !hosted {
+			t.Fatal("late activation success closed the launcher after the query moved on")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 // launcherErrorText returns the first error-toned text in the tree.
 func launcherErrorText(n *ui.Node) string {
 	if n == nil {
@@ -1216,4 +1284,181 @@ func TestLauncherOverviewListsProvidersWithGlyphs(t *testing.T) {
 		}
 		return strings.Join(got, ",") == "Applications|glyph:apps,Calculator|glyph:calculate,Emoji|glyph:mood,Notes|glyph:description"
 	})
+}
+
+// gh #77: between a keystroke and the service's answer the list still shows the
+// previous query's rows, so Enter on it must not run one of them.
+func TestLauncherEnterWaitsForResultsOfTheCurrentQuery(t *testing.T) {
+	t.Parallel()
+
+	reg, run, _ := openLauncherPanel(t, launcherTestEntries())
+
+	// Holding r.mu keeps the relay from applying the new snapshot, which is
+	// exactly the window the field and the list disagree in.
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelLauncher]
+	if !h.fieldChanged(reg, &ui.Node{Name: "Search"}, ui.NewField("nautilus")) {
+		reg.mu.Unlock()
+		t.Fatal("search change not handled")
+	}
+	h.launcherActivateSelected(reg)
+	reg.mu.Unlock()
+
+	time.Sleep(150 * time.Millisecond) // a wrong spawn is asynchronous
+	run.mu.Lock()
+	spawned := run.argv
+	run.mu.Unlock()
+	if spawned != nil {
+		t.Fatalf("Enter ran %v from the previous query's rows", spawned)
+	}
+
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && !h.launcherAwaiting && len(h.launcherResults) == 1
+	})
+	reg.mu.Lock()
+	reg.panelHosts[PanelLauncher].launcherActivateSelected(reg)
+	reg.mu.Unlock()
+	if got := run.waitArgv(t); len(got) == 0 || got[len(got)-1] != "nautilus" {
+		t.Fatalf("Enter after the results landed ran %v, want nautilus", got)
+	}
+}
+
+// Inline calc is merged into the stamped snapshot. The service composes it
+// ahead of the application rows; the shell's stamp has to do the same.
+func TestLauncherInlineExpressionLeadsTheResults(t *testing.T) {
+	t.Parallel()
+
+	reg, _, reqs := openLauncherPanel(t, launcherTestEntries())
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "6*7"})
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && !h.launcherAwaiting && len(h.launcherResults) > 0 &&
+			h.launcherResults[0].Entry.ID == "calc:42"
+	})
+}
+
+func TestClassifyLauncherQueryUsesRegisteredProviderPrefix(t *testing.T) {
+	provider := (&Registry{}).emojiProvider()
+	got := classifyLauncherQuery(provider.Prefix+" party", []launcher.Provider{provider})
+	if got.kind != launcherKindProvider || got.provider != provider.Prefix || got.passed != "party" {
+		t.Fatalf("classifyLauncherQuery() = %+v, want provider %q and query %q", got, provider.Prefix, "party")
+	}
+}
+
+// gh #90: a snapshot already published for query A can be applied after
+// Query(B) has set launcherAwaiting. That apply must not clear the flag, and
+// Enter must not spawn A's row.
+func TestLauncherQueuedSnapshotDoesNotClearAwaiting(t *testing.T) {
+	t.Parallel()
+
+	reg, run, _ := openLauncherPanel(t, launcherTestEntries())
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseRank := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(releaseRank)
+
+	dequeued := make(chan struct{}, 4)
+	applied := make(chan struct{}, 4)
+	started := make(chan struct{}, 1)
+	reg.launcherMu.Lock()
+	reg.launcherRankWait = func(query string) {
+		if query != "firefox" {
+			return
+		}
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-release
+	}
+	reg.onLauncherDequeued = func() {
+		select {
+		case dequeued <- struct{}{}:
+		default:
+		}
+	}
+	reg.launcherMu.Unlock()
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelLauncher]
+	if !h.fieldChanged(reg, &ui.Node{Name: "Search"}, ui.NewField("nautilus")) {
+		reg.mu.Unlock()
+		t.Fatal("query A was not handled")
+	}
+	select {
+	case <-dequeued:
+	case <-time.After(2 * time.Second):
+		reg.mu.Unlock()
+		t.Fatal("query A published nothing for the relay to hold")
+	}
+	if !h.fieldChanged(reg, &ui.Node{Name: "Search"}, ui.NewField("firefox")) {
+		reg.mu.Unlock()
+		t.Fatal("query B was not handled")
+	}
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		reg.mu.Unlock()
+		t.Fatal("query B did not reach rank")
+	}
+	// B is ranked but not published. The relay is blocked on r.mu holding A's
+	// snapshot. Enter must not run it.
+	h.launcherActivateSelected(reg)
+	reg.afterLauncherSnap = func() {
+		select {
+		case applied <- struct{}{}:
+		default:
+		}
+	}
+	awaitingBefore := h.launcherAwaiting
+	genB := h.launcherQueryGen
+	reg.mu.Unlock()
+	if !awaitingBefore {
+		t.Fatal("query B did not set awaiting")
+	}
+
+	select {
+	case <-applied:
+	case <-time.After(2 * time.Second):
+		t.Fatal("relay did not finish the queued snapshot")
+	}
+	run.mu.Lock()
+	spawned := run.argv
+	run.mu.Unlock()
+	if spawned != nil {
+		t.Fatalf("Enter ran %v from the previous query's queued snapshot", spawned)
+	}
+
+	reg.mu.Lock()
+	h = reg.panelHosts[PanelLauncher]
+	if !h.launcherAwaiting || h.launcherQueryGen != genB {
+		awaiting, gen := h.launcherAwaiting, h.launcherQueryGen
+		reg.mu.Unlock()
+		t.Fatalf("queued snapshot cleared awaiting=%v gen=%d, want awaiting gen %d", awaiting, gen, genB)
+	}
+	if len(h.launcherResults) == 1 && h.launcherResults[0].Entry.ID == "nautilus.desktop" {
+		reg.mu.Unlock()
+		t.Fatal("queued snapshot installed the previous query's row")
+	}
+	h.launcherActivateSelected(reg)
+	reg.mu.Unlock()
+
+	time.Sleep(150 * time.Millisecond)
+	run.mu.Lock()
+	spawned = run.argv
+	run.mu.Unlock()
+	if spawned != nil {
+		t.Fatalf("Enter after the queued snapshot ran %v", spawned)
+	}
+
+	releaseRank()
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && !h.launcherAwaiting && len(h.launcherResults) > 0 &&
+			h.launcherResults[0].Entry.ID == "firefox.desktop"
+	})
+	reg.mu.Lock()
+	reg.panelHosts[PanelLauncher].launcherActivateSelected(reg)
+	reg.mu.Unlock()
+	if got := run.waitArgv(t); len(got) == 0 || got[len(got)-1] != "firefox" {
+		t.Fatalf("Enter after B's snapshot ran %v, want firefox", got)
+	}
 }

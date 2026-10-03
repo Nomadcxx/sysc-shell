@@ -31,6 +31,10 @@ type barView struct {
 	Weather services.Reading
 	// Plugins is this output's prepared plugin frames, keyed by instance.
 	Plugins map[string]pluginFrame
+	// PluginsOff names the plugins this bar places that are not enabled. A
+	// disabled plugin has no frame, like one still starting, so only this
+	// tells the two apart.
+	PluginsOff map[string]bool
 	// Unread is unseen history. DND is do-not-disturb at this view's clock.
 	Unread int
 	DND    bool

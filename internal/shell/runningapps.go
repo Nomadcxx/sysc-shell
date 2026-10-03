@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -43,9 +44,11 @@ type runningAppSlot struct {
 }
 
 type runningAppMenuRow struct {
-	Label    string
-	ActionID string
-	CloseAll bool
+	Label           string
+	ActionID        string
+	MoveWindowID    uint64
+	MoveWorkspaceID uint64
+	CloseAll        bool
 }
 
 func groupRunningApps(windows []niri.Window, entries []runningAppEntry) []runningAppSlot {
@@ -181,7 +184,7 @@ func desktopActionIDs(path string) []string {
 func mruMember(members []niri.Window) niri.Window {
 	best := members[0]
 	for _, w := range members[1:] {
-		if w.FocusTimestamp > best.FocusTimestamp {
+		if compareWindowMRU(w, best) < 0 {
 			best = w
 		}
 	}
@@ -200,12 +203,50 @@ func nextFocusID(slot runningAppSlot) uint64 {
 	return slot.MRU.ID
 }
 
-func runningAppMenu(slot runningAppSlot) []runningAppMenuRow {
-	rows := make([]runningAppMenuRow, 0, len(slot.Actions)+1)
+func runningAppMenu(slot runningAppSlot, workspaces []niri.Workspace) []runningAppMenuRow {
+	rows := make([]runningAppMenuRow, 0, len(slot.Actions)+len(workspaces)+1)
 	for _, a := range slot.Actions {
 		rows = append(rows, runningAppMenuRow{Label: a.Name, ActionID: a.ID})
 	}
+	if slot.MRU.ID != 0 {
+		for _, workspace := range workspaces {
+			if slot.MRU.HasWorkspace && workspace.ID == slot.MRU.WorkspaceID {
+				continue
+			}
+			name := workspace.Name
+			if name == "" {
+				name = "Workspace " + strconv.Itoa(workspace.Index)
+			}
+			rows = append(rows, runningAppMenuRow{
+				Label: "Move window to " + name, MoveWindowID: slot.MRU.ID,
+				MoveWorkspaceID: workspace.ID,
+			})
+		}
+	}
 	return append(rows, runningAppMenuRow{Label: "Close all", CloseAll: true})
+}
+
+func workspaceMoveTargetExists(snapshot niri.Snapshot, windowID, workspaceID uint64) bool {
+	if windowID == 0 || workspaceID == 0 {
+		return false
+	}
+	windowFound, workspaceFound := false, false
+	for _, window := range snapshot.Windows {
+		if window.ID == windowID {
+			windowFound = true
+			if window.HasWorkspace && window.WorkspaceID == workspaceID {
+				return false
+			}
+			break
+		}
+	}
+	for _, workspace := range snapshot.Workspaces {
+		if workspace.ID == workspaceID {
+			workspaceFound = true
+			break
+		}
+	}
+	return windowFound && workspaceFound
 }
 
 const (

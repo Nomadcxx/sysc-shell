@@ -65,6 +65,10 @@ const (
 	// panel hero glyph is the consumer; past this a glyph is a wallpaper,
 	// and a rasterisation that large is an attack on the paint budget.
 	MaxIconSize = 256
+	// MinSpinnerSize and MaxSpinnerSize bound a spinner's diameter: below
+	// the minimum the arc is a smudge, above the maximum it is decoration.
+	MinSpinnerSize = 12
+	MaxSpinnerSize = 96
 	// MinSpriteFrames and MaxSpriteFrames bound a sprite cycle's poses. One
 	// pose is a still icon; past this a cycle is a video the glyph catalogue
 	// was never meant to carry.
@@ -128,6 +132,13 @@ const (
 	// needs. The host owns the decode; the plugin names a path and gains
 	// display, not read, power.
 	KindImage NodeKind = "image"
+	// KindSpinner is an indeterminate activity indicator, for work whose
+	// length is unknown, such as a game starting. The host turns it on its
+	// own frame clock, so a plugin publishes it once rather than a revision
+	// per frame, and it rests still under reduced motion. It needs a Key so
+	// the turn survives rebuilds; Width is its diameter. It arrived with
+	// protocol minor thirteen.
+	KindSpinner NodeKind = "spinner"
 	// KindSegmented exposes the shell's exclusive segmented control to plugins.
 	KindSegmented NodeKind = "segmented"
 	// KindScheduleGrid arranges bounded event occurrences in local-time columns.
@@ -337,6 +348,10 @@ type Node struct {
 	// Placeholder is presentation copy shown only while a text input is empty.
 	// Name remains the accessible label.
 	Placeholder string `json:"placeholder,omitempty"`
+	// Masked draws a single-line text input as bullets and refuses copy and
+	// cut, for a password. The committed value still reaches the plugin on
+	// submit. It arrived with protocol minor fifteen.
+	Masked bool `json:"masked,omitempty"`
 
 	Children []*Node `json:"children,omitempty"`
 }
@@ -371,7 +386,7 @@ var knownKinds = map[NodeKind]bool{
 	KindProgress: true, KindButton: true, KindTextInput: true,
 	KindList: true, KindDragSource: true, KindDropZone: true,
 	KindGauge: true, KindGraph: true, KindSeparator: true, KindImage: true,
-	KindSegmented: true, KindScheduleGrid: true,
+	KindSegmented: true, KindScheduleGrid: true, KindSpinner: true,
 }
 
 var knownViews = map[ViewKind]bool{ViewBar: true, ViewTooltip: true, ViewPanel: true, ViewFloating: true}
@@ -601,6 +616,16 @@ func (v *validator) vocabulary(n *Node, path string) error {
 		if n.Value < 0 || n.Value > 1 {
 			return fmt.Errorf("%s: progress value %v is outside zero through one", path, n.Value)
 		}
+	case KindSpinner:
+		if n.Key == "" {
+			return fmt.Errorf("%s: a spinner needs a key so the host keeps one turn across revisions", path)
+		}
+		if n.Width != 0 && (n.Width < MinSpinnerSize || n.Width > MaxSpinnerSize) {
+			return fmt.Errorf("%s: spinner width %d is outside %d through %d", path, n.Width, MinSpinnerSize, MaxSpinnerSize)
+		}
+		if n.Value != 0 {
+			return fmt.Errorf("%s: a spinner has no value; the host turns it", path)
+		}
 	case KindGauge:
 		if math.IsNaN(n.Value) || math.IsInf(n.Value, 0) {
 			return fmt.Errorf("%s: gauge value is not finite", path)
@@ -627,8 +652,11 @@ func (v *validator) vocabulary(n *Node, path string) error {
 	if n.Kind == KindDragSource && n.Name == "" {
 		return fmt.Errorf("%s: a drag handle needs an accessible name", path)
 	}
-	if n.Kind != KindTextInput && (n.Multiline || n.SubmitOnEnter || n.Reseed != 0 || n.Placeholder != "") {
+	if n.Kind != KindTextInput && (n.Multiline || n.SubmitOnEnter || n.Reseed != 0 || n.Placeholder != "" || n.Masked) {
 		return fmt.Errorf("%s: %s cannot carry editor flags", path, n.Kind)
+	}
+	if n.Masked && n.Multiline {
+		return fmt.Errorf("%s: a masked text input must be single-line", path)
 	}
 	return nil
 }

@@ -38,6 +38,13 @@ const (
 	PresentAuto Presentation = iota
 	PresentMenu
 	PresentCards
+	// PresentSlider draws an int as a slider even when its range is short
+	// enough for a stepper, so related values in one card look alike (owner
+	// decision, 2026-10-01: opacities and bar geometry).
+	PresentSlider
+	// PresentSwatch draws a theme-role enum as a dropdown of readable role
+	// names beside a swatch of the selected role (Monitor's colours).
+	PresentSwatch
 )
 
 type Entry struct {
@@ -53,6 +60,10 @@ type Entry struct {
 	Present Presentation
 	Kind    Kind
 	Options []string
+	// OptionLabels, when set, is what each option is called on screen, in
+	// Options order; the option itself stays the stored value. Saved palettes
+	// use it: the slug is stored, the name the user chose is shown.
+	OptionLabels []string
 	// EmptyLabel names the row a picker offers for the empty value, and is
 	// set only where empty is a state the setting can actually hold. Most
 	// cannot: the loader refuses an empty appearance font family, so a picker
@@ -61,6 +72,9 @@ type Entry struct {
 	// has to carry in its place.
 	EmptyLabel string
 	Min, Max   int
+	// Unit follows the displayed value of a number ("%", "px"). Display
+	// only: the stored value never carries it.
+	Unit string
 
 	Get Getter
 	Set Setter

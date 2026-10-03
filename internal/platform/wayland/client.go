@@ -11,6 +11,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/backgroundeffect"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/fractionalscale"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/inhibit"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/screencopy"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/viewporter"
@@ -18,6 +19,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-wayland/client"
 	"github.com/Nomadcxx/sysc-wayland/cursorshape"
+	"github.com/Nomadcxx/sysc-wayland/idle"
 	"github.com/Nomadcxx/sysc-wayland/textinput"
 	"golang.org/x/sys/unix"
 )
@@ -128,8 +130,15 @@ type Callbacks struct {
 	// Selection asks the owner to copy to or paste from the system
 	// clipboard. It is owned by the caller and may be nil.
 	Selection <-chan SelectionRequest
-	// DropAux releases per-aux resources after a surface is destroyed, whether
-	// by request, compositor close, or output loss.
+	// Idle arms and disarms compositor idle notifications. It is owned by
+	// the caller and may be nil.
+	Idle <-chan IdleRequest
+	// IdleEvents carries compositor idled/resumed verdicts back to the
+	// policy loop. Nil drops them.
+	IdleEvents chan<- IdleEvent
+	// DropAux releases per-aux resources after a compositor close, surface
+	// failure, or output loss, when the AuxSpec has no OnDrop handler. Requested
+	// closes and replacements are not echoed.
 	DropAux func(output uint32, id string)
 	// Capabilities reports what optional compositor effects are available.
 	// It is called on the Wayland goroutine before the first NewHost when
@@ -178,6 +187,22 @@ func Run(ctx context.Context, cfg config.Config, callbacks Callbacks) (err error
 			cfg.Bar.Height, cfg.Bar.Gap, body)
 	}
 
+	// Connection roundtrips invoke shell callbacks that can publish redraws.
+	// Drain their bounded channels before connecting; the wake queues retain
+	// those requests until the owner loop can process them.
+	wake, err := newWakePipe()
+	if err != nil {
+		return err
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	pastes := make(chan pasteResult, 4)
+	bridgeDone := wake.bridge(runCtx, callbacks.Invalidations, callbacks.Reloads, callbacks.Aux, callbacks.Selection, pastes, callbacks.Idle)
+	defer func() {
+		cancel()
+		<-bridgeDone
+		wake.close()
+	}()
+
 	o := &owner{
 		cb:    callbacks,
 		hosts: newHostSet(),
@@ -190,7 +215,7 @@ func Run(ctx context.Context, cfg config.Config, callbacks Callbacks) (err error
 	if err := o.connect(); err != nil {
 		return err
 	}
-	return o.loop(ctx)
+	return o.loop(runCtx, wake, pastes)
 }
 
 type owner struct {
@@ -209,12 +234,24 @@ type owner struct {
 	// screencopy is nil when the compositor does not advertise it. Blur is
 	// decoration; its absence is not an error.
 	screencopy *screencopy.ZwlrScreencopyManagerV1
+	// inhibitMgr is nil when the compositor does not advertise
+	// zwp-keyboard-shortcuts-inhibit; a selector then simply shares the
+	// compositor's keybinds.
+	inhibitMgr *inhibit.ZwpKeyboardShortcutsInhibitManagerV1
 	// backgroundEffect is nil when the compositor does not advertise
 	// ext-background-effect; caps records what it last said it can do.
 	backgroundEffect *backgroundeffect.ExtBackgroundEffectManagerV1
 	caps             capabilityState
-	pointer          *client.Pointer
-	keyboard         *client.Keyboard
+	// idleNotifier is nil when the compositor does not advertise
+	// ext-idle-notify. idleNotes holds the live notifications by policy id.
+	idleNotifier *idle.ExtIdleNotifierV1
+	idleNotes    map[uint64]*idle.ExtIdleNotificationV1
+	// idleEvQueue holds idled/resumed events that could not be sent without
+	// blocking; o.wake schedules the retry. wake is set when the loop starts.
+	idleEvQueue []IdleEvent
+	wake        *wakePipe
+	pointer     *client.Pointer
+	keyboard    *client.Keyboard
 
 	textInputMgr *textinput.ZwpTextInputManagerV3
 	textInput    *textinput.ZwpTextInputV3
@@ -246,10 +283,10 @@ type owner struct {
 	// clock is the owner's time source. Nil means time.Now; tests replace it
 	// to drive the repeat deadline without sleeping.
 	clock func() time.Time
-	// capture copies an output region for a backdrop. Nil means
-	// captureRegion; tests replace it to act while a capture's round trips
-	// are dispatching.
-	capture func(*client.Output, ui.Rect) *ui.Image
+	// capture copies an output region for a backdrop, or the whole output for
+	// a nil region. Nil means captureRegion and captureOutput; tests replace it
+	// to act while a capture's round trips are dispatching.
+	capture func(*client.Output, *ui.Rect) *ui.Image
 	// cfg is the live configuration. It is replaced only after a candidate has
 	// resolved for every connected output.
 	cfg *config.Config
@@ -399,6 +436,22 @@ func (o *owner) bindGlobals() error {
 		// its frosted surfaces paint solid.
 		o.caps.update(0, o.cb.Capabilities)
 	}
+	// Idle notification is optional like blur: a compositor without it must
+	// still start, the shell then simply never arms a timer.
+	if _, ok := o.rs.singletons["ext_idle_notifier_v1"]; ok {
+		o.idleNotifier = idle.NewExtIdleNotifierV1(ctx)
+		if err := o.bindSingleton("ext_idle_notifier_v1", o.idleNotifier); err != nil {
+			return err
+		}
+	}
+	// Inhibit is optional like idle: without it the region selector still
+	// works, the compositor just keeps firing its own binds mid-selection.
+	if _, ok := o.rs.singletons[inhibit.ZwpKeyboardShortcutsInhibitManagerV1InterfaceName]; ok {
+		o.inhibitMgr = inhibit.NewZwpKeyboardShortcutsInhibitManagerV1(ctx)
+		if err := o.bindSingleton(inhibit.ZwpKeyboardShortcutsInhibitManagerV1InterfaceName, o.inhibitMgr); err != nil {
+			return err
+		}
+	}
 	if err := o.bindOptionalInput(ctx); err != nil {
 		return err
 	}
@@ -501,6 +554,11 @@ func (o *owner) destroyGlobals() error {
 	if o.backgroundEffect != nil {
 		errs = append(errs, o.backgroundEffect.Destroy())
 		o.backgroundEffect = nil
+	}
+	o.destroyIdleAll()
+	if o.idleNotifier != nil {
+		errs = append(errs, o.idleNotifier.Destroy())
+		o.idleNotifier = nil
 	}
 	errs = append(errs, o.destroySelection()...)
 	if o.pointer != nil {
@@ -1230,23 +1288,15 @@ func (o *owner) teardownSurface(h *OutputHost) error {
 
 // loop drives the owner goroutine: render when a scheduler offers work, then
 // wait on the Wayland socket and the wake pipe.
-func (o *owner) loop(ctx context.Context) error {
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	wake, err := newWakePipe()
-	if err != nil {
-		return err
-	}
-	defer wake.close()
-	pastes := make(chan pasteResult, 4)
-	wake.bridge(runCtx, o.cb.Invalidations, o.cb.Reloads, o.cb.Aux, o.cb.Selection, pastes)
-
+func (o *owner) loop(ctx context.Context, wake *wakePipe, pastes chan pasteResult) error {
+	// The idle emitter may fire from proxy dispatch between wakes; the owner
+	// needs the pipe to schedule delivery of anything that cannot be sent.
+	o.wake = wake
 	for {
 		if o.fatal != nil {
 			return o.fatal
 		}
-		if o.closed || runCtx.Err() != nil {
+		if o.closed || ctx.Err() != nil {
 			return nil
 		}
 
@@ -1280,6 +1330,10 @@ func (o *owner) loop(ctx context.Context) error {
 			for _, req := range wake.takeSelection() {
 				o.handleSelection(req, pastes)
 			}
+			for _, req := range wake.takeIdle() {
+				o.armIdle(req.ID, req.TimeoutMS)
+			}
+			o.deliverIdleEvents()
 			for _, p := range wake.takePastes() {
 				o.deliverPaste(p)
 			}

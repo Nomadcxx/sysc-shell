@@ -58,7 +58,7 @@ type notifyResolver struct {
 }
 
 func newNotifyResolver(a notifyActions) *notifyResolver {
-	return &notifyResolver{actions: a}
+	return &notifyResolver{actions: a, pointer: interaction{stateLayer: true}}
 }
 
 // classifyToastDrag keeps dismissal for a leftward, horizontally dominant

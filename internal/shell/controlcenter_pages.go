@@ -146,6 +146,7 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 	var audio services.AudioState
 	var brightness services.BrightnessState
 	var media services.MediaState
+	var displays []services.DisplayInfo
 	audioOK, brightnessOK := false, false
 	if r != nil {
 		identity = r.controlIdentity
@@ -159,8 +160,20 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 		}
 		if r.brightness != nil {
 			brightness, brightnessOK = r.brightness.CachedState()
+			displays = r.brightness.CachedDisplays()
 		}
 		media = r.mediaState
+	}
+	// External ScreenSaver inhibits (media players, browsers) are shown next
+	// to the manual caffeine toggle so the row never implies caffeine caused
+	// them. Names arrive through Registry.SetExternalInhibitors.
+	var holding []string
+	if r != nil {
+		for _, inh := range r.externalInhibitors {
+			if name := ccText(inh.App); name != ccDash {
+				holding = append(holding, name)
+			}
+		}
 	}
 
 	identityRows := []*ui.Node{
@@ -197,6 +210,12 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 		ccQuickAccessButton(quickWidth, "coffee", "Caffeine", "cc:caffeine", caffeine),
 		ccQuickAccessButton(quickWidth, "wallpaper", "Wallpaper", "cc:wallpaper", false),
 	}}
+	if len(holding) > 0 {
+		togglePill.Children = append(togglePill.Children, &ui.Node{
+			Kind: ui.KindText, Text: "Idle held: " + strings.Join(holding, ", "),
+			TextRole: theme.RoleCaption,
+		})
+	}
 
 	weatherSummary, weatherTone := ccWeatherSummary(reading)
 	clockWeather := monitorCard(m, []*ui.Node{
@@ -254,10 +273,18 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 	}}
 	split := &ui.Node{Kind: ui.KindRow, Height: ccSplitH, Gap: theme.MarginL, Children: []*ui.Node{left, right}}
 
-	sliders := &ui.Node{Kind: ui.KindColumn, Height: ccSlidersH, Gap: theme.MarginM, Children: []*ui.Node{
-		ccSlider(m, "volume_up", "Volume", "cc:volume", audio.Level, audioOK),
-		ccSlider(m, "brightness_high", "Brightness", "cc:brightness", brightness.Level, brightnessOK),
-	}}
+	brightnessSliders := []*ui.Node{}
+	if len(displays) > 1 {
+		for _, d := range displays {
+			brightnessSliders = append(brightnessSliders,
+				ccSlider(m, "brightness_high", "Brightness "+d.Label, "cc:brightness:"+d.ID, d.Level, d.OK))
+		}
+	} else {
+		brightnessSliders = append(brightnessSliders,
+			ccSlider(m, "brightness_high", "Brightness", "cc:brightness", brightness.Level, brightnessOK))
+	}
+	sliders := &ui.Node{Kind: ui.KindColumn, Height: ccSlidersH, Gap: theme.MarginM,
+		Children: append([]*ui.Node{ccSlider(m, "volume_up", "Volume", "cc:volume", audio.Level, audioOK)}, brightnessSliders...)}
 	return &ui.Node{Kind: ui.KindColumn, Height: ccPageH, Gap: theme.MarginL,
 		Children: []*ui.Node{identityCard, togglePill, split, sliders}}
 }
@@ -592,6 +619,7 @@ func ccSessionActions(m theme.Metrics, locker string) *ui.Node {
 		{"Lock", "session-lock", "lock"},
 		{"Log out", "session-logout", "logout"},
 		{"Suspend", "session-suspend", "bedtime"},
+		{"Screen off", "session-display-off", "visibility_off"},
 		{"Reboot", "session-reboot", "restart_alt"},
 		{"Power off", "session-poweroff", "power_settings_new"},
 	}

@@ -5,7 +5,9 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"text/template"
 
@@ -57,6 +59,55 @@ func Catalog() *CatalogT {
 		return nil
 	})
 	return c
+}
+
+// OverlayDir is the user template directory that takes precedence over the
+// embedded catalog when templates are rendered for a live apply:
+// $XDG_CONFIG_HOME/sysc-shell/theming-templates. A file <name>.tpl there
+// replaces the embedded body for that name (D6). A name the catalog does not
+// know has no write target, so it is inert -- adding one is a port task, not
+// a layering task.
+func OverlayDir() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "sysc-shell", "theming-templates")
+}
+
+// WithOverlay returns the catalog with the user's template bodies layered
+// over the embedded ones (D6). Read failures are ignored: a missing or
+// unreadable overlay dir means the embedded catalog stands. Complete() and
+// the ErrUserModified guard still apply to an overlaid template -- only the
+// body changed.
+func (c *CatalogT) WithOverlay() *CatalogT {
+	dir := OverlayDir()
+	if dir == "" {
+		return c
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return c
+	}
+	out := &CatalogT{names: append([]string(nil), c.names...), tpl: map[string]string{}}
+	for k, v := range c.tpl {
+		out.tpl[k] = v
+	}
+	for _, e := range ents {
+		if e.IsDir() || path.Ext(e.Name()) != ".tpl" {
+			continue
+		}
+		name := strings.TrimSuffix(e.Name(), ".tpl")
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		if _, seen := out.tpl[name]; !seen {
+			out.names = append(out.names, name)
+		}
+		out.tpl[name] = string(b)
+	}
+	return out
 }
 
 func (c *CatalogT) Names() []string {

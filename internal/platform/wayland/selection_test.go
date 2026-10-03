@@ -55,3 +55,32 @@ func TestPasteForAnUnfocusedSurfaceIsDropped(t *testing.T) {
 		t.Fatalf("focused surface got %+v, want the paste", got)
 	}
 }
+
+func TestSelectionOfferForTextAndImage(t *testing.T) {
+	t.Parallel()
+	mimes, payload := SelectionRequest{Copy: "hi"}.offer()
+	if len(mimes) != len(textMimes) || mimes[0] != textMimes[0] || string(payload) != "hi" {
+		t.Fatalf("text offer = %v %q", mimes, payload)
+	}
+	mimes, payload = SelectionRequest{Mime: "image/png", Data: []byte{1, 2}}.offer()
+	if len(mimes) != 1 || mimes[0] != "image/png" || len(payload) != 2 {
+		t.Fatalf("image offer = %v %v", mimes, payload)
+	}
+}
+
+// A copy whose sender waits on Done must hear back even when the seat has no
+// data device, or the selector it belongs to never closes.
+func TestSelectionCopyWithoutADeviceStillAnswersDone(t *testing.T) {
+	t.Parallel()
+	o := &owner{}
+	done := make(chan error, 1)
+	o.handleSelection(SelectionRequest{Mime: "image/png", Data: []byte{1}, Done: done}, nil)
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Done reported success with no data device")
+		}
+	default:
+		t.Fatal("Done was never answered")
+	}
+}

@@ -251,6 +251,44 @@ func TestCloseKillsAPluginThatIgnoresShutdown(t *testing.T) {
 	}
 }
 
+func TestCloseReturnsWhenThePluginStopsReading(t *testing.T) {
+	t.Parallel()
+
+	s := supervisor(installHelper(t, "ignore-shutdown"))
+	s.ShutdownGrace = 150 * time.Millisecond
+	sess, err := s.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Fill the plugin's stdin so the shutdown message cannot be written: the
+	// helper never reads, and a pipe holds only so much. The write blocks
+	// holding sendMu, which is the shape that used to hold Close forever.
+	big := &v1.ViewSnapshot{ViewID: "v1", Revision: 1,
+		Root: &v1.Node{Kind: v1.KindText, Text: strings.Repeat("x", 4<<20)}}
+	written := make(chan struct{})
+	go func() {
+		_ = sess.Send(big)
+		close(written)
+	}()
+	select {
+	case <-written:
+		t.Fatal("the fill write completed; the pipe never filled")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	closed := make(chan ExitReason, 1)
+	go func() { closed <- sess.Close() }()
+	select {
+	case reason := <-closed:
+		if reason.Kind != ExitKilled {
+			t.Fatalf("exit = %+v, want a kill", reason)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Close blocked behind a full stdin pipe")
+	}
+}
+
 func TestCloseIsIdempotent(t *testing.T) {
 	t.Parallel()
 
@@ -354,16 +392,16 @@ func TestSupervisorRejectsUnsupportedManifestMinor(t *testing.T) {
 	}
 }
 
-func TestSupervisorMinorNineBounds(t *testing.T) {
+func TestSupervisorMinorFifteenBounds(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
 		manifestMinor  int
 		handshakeMinor int
 		wantSuccess    bool
 	}{
-		{name: "minor nine", manifestMinor: 9, handshakeMinor: 9, wantSuccess: true},
-		{name: "manifest minor ten", manifestMinor: 10, handshakeMinor: 9},
-		{name: "handshake minor ten", manifestMinor: 9, handshakeMinor: 10},
+		{name: "minor fifteen", manifestMinor: 15, handshakeMinor: 15, wantSuccess: true},
+		{name: "manifest minor sixteen", manifestMinor: 16, handshakeMinor: 15},
+		{name: "handshake minor sixteen", manifestMinor: 15, handshakeMinor: 16},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := installHelper(t, "ok")
@@ -383,8 +421,8 @@ IFS= read -r _
 					t.Fatalf("Start: %v", err)
 				}
 				defer sess.Close()
-				if sess.Protocol != (v1.Version{Major: 1, Minor: 9}) {
-					t.Fatalf("protocol = %+v, want 1.9", sess.Protocol)
+				if sess.Protocol != (v1.Version{Major: 1, Minor: 15}) {
+					t.Fatalf("protocol = %+v, want 1.15", sess.Protocol)
 				}
 				return
 			}

@@ -4,9 +4,9 @@ import "math"
 
 // Control sizes are logical pixels, matching the settings catalog tokens.
 const (
-	ToggleWidth  = 34
-	ToggleHeight = 20
-	ToggleKnob   = 16
+	ToggleWidth  = 36
+	ToggleHeight = 22
+	ToggleKnob   = 18
 	CheckboxSize = 18
 	SliderTrack  = 4
 	SliderKnob   = 14

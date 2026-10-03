@@ -34,9 +34,7 @@ const (
 
 	// Events the shell does not model and must ignore. WindowsChanged left this
 	// set when window state became modelled state.
-	unknownEvents = `{"OverviewOpenedOrClosed":{"is_open":true}}` + "\n" +
-		`{"OverviewOpenedOrClosed":{"is_open":false}}` + "\n" +
-		`{"ConfigLoaded":{"failed":false}}`
+	unknownEvents = `{"ConfigLoaded":{"failed":false}}`
 )
 
 // fakeNiri is a scripted Unix socket server standing in for the compositor.

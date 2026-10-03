@@ -15,14 +15,26 @@ import (
 // table. Provider functions run on the service goroutine while the caller
 // of Activate waits without holding Registry.mu, so they may take it.
 func (r *Registry) launcherProviders() []launcher.Provider {
-	return []launcher.Provider{r.calcProvider(), r.emojiProvider(), r.notesProvider()}
+	providers := []launcher.Provider{r.calcProvider(), r.emojiProvider(), r.notesProvider()}
+	for i := range providers {
+		prefix, query := providers[i].Prefix, providers[i].Query
+		providers[i].Query = func(q string) []launcher.Result {
+			rows := query(q)
+			r.noteLauncherRows(prefix, q, rows)
+			return rows
+		}
+	}
+	return providers
 }
+
+const launcherAppsPrefix = "/apps"
 
 const calcHintComment = "Try 6*7 · sqrt(2) · 2^10 · sin(pi/2)"
 
 func (r *Registry) calcProvider() launcher.Provider {
+	const prefix = "/calc"
 	return launcher.Provider{
-		Name: "Calculator", Prefix: "/calc", Glyph: "glyph:calculate", Inline: true,
+		Name: "Calculator", Prefix: prefix, Glyph: "glyph:calculate", Inline: true,
 		Description: "Arithmetic as you type · Enter copies",
 		Query: func(q string) []launcher.Result {
 			if !calc.IsExpression(q) {
@@ -52,8 +64,9 @@ func launcherWithHints(query string, results []launcher.Result) []launcher.Resul
 }
 
 func (r *Registry) emojiProvider() launcher.Provider {
+	const prefix = "/emo"
 	return launcher.Provider{
-		Name: "Emoji", Prefix: "/emo", Glyph: "glyph:mood",
+		Name: "Emoji", Prefix: prefix, Glyph: "glyph:mood",
 		Description: "Search emoji by name · Enter copies",
 		Query: func(q string) []launcher.Result {
 			hits := emoji.Search(q, 50)
@@ -89,16 +102,18 @@ func (r *Registry) launcherCopy(text string) error {
 // launcherServiceConfig is the service wiring shared by the live launcher and
 // its tests; the caller adds Scan, Run and History as it needs.
 func (r *Registry) launcherServiceConfig() launcher.ServiceConfig {
+	r.ensureLauncherSnaps()
 	return launcher.ServiceConfig{
-		Rank:              launcherRank,
+		Rank:              r.rankLauncher,
 		Providers:         r.launcherProviders(),
 		ApplicationsGlyph: "glyph:apps",
 	}
 }
 
 func (r *Registry) notesProvider() launcher.Provider {
+	const prefix = "/nt"
 	return launcher.Provider{
-		Name: "Notes", Prefix: "/nt", Glyph: "glyph:description",
+		Name: "Notes", Prefix: prefix, Glyph: "glyph:description",
 		Description: "Search notes or capture with /nt <text>",
 		Query: func(q string) []launcher.Result {
 			rows, _ := notesLauncherResults(strings.TrimSpace("/nt " + q))

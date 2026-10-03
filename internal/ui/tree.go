@@ -61,6 +61,11 @@ const (
 	KindStack
 	// KindEffect is a non-interactive background layer for a stack.
 	KindEffect
+	// KindSpinner is an indeterminate activity indicator: an arc turning on
+	// the surface clock for work whose length is unknown, such as a game
+	// starting. Width is its diameter; Value is the turn the animator has
+	// reached, zero through one, so under reduced motion it rests at zero.
+	KindSpinner
 
 	// kindCount is one past the last kind. It exists so a test can assert that
 	// every declared kind is measurable, and it must stay last.
@@ -124,6 +129,8 @@ func (k Kind) String() string {
 		return "stack"
 	case KindEffect:
 		return "effect"
+	case KindSpinner:
+		return "spinner"
 	}
 	return "kind " + strconv.Itoa(int(k))
 }
@@ -139,6 +146,16 @@ type Image struct {
 
 // Rect is a logical-pixel rectangle.
 type Rect struct{ X, Y, W, H int }
+
+// Size is a logical-pixel width and height.
+type Size struct{ W, H int }
+
+// RipplePaint carries the host-resolved ripple phase and origin in the
+// surface's logical coordinate space.
+type RipplePaint struct {
+	Phase float64
+	X, Y  int
+}
 
 // Contains reports whether the point lies inside the rectangle.
 func (r Rect) Contains(x, y int) bool {
@@ -296,6 +313,11 @@ type Node struct {
 	// TextOffset is the resolved physical-pixel phase for a marquee copy. It
 	// lives on the render copy, not the retained widget tree.
 	TextOffset int
+	// HoverProgress, PressProgress, and Ripple are resolved by the surface host
+	// on the render copy, never on the retained tree.
+	HoverProgress float64
+	PressProgress float64
+	Ripple        RipplePaint
 	// MinWidthText floors a text node's width at the measured width of this
 	// sample string, shaped through the same path as the node's own text.
 	// Empty means natural width.

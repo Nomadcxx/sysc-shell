@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"runtime"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
+	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/shell"
 	"github.com/Nomadcxx/sysc-shell/internal/trayclient"
 )
@@ -86,6 +88,62 @@ func run(ctx context.Context) (err error) {
 	}
 
 	registry := shell.NewRegistry(cfg)
+	// Display-power policy. Blank and Unblank ride the niri DPMS actions on
+	// the socket that was just required; Suspend goes straight to logind.
+	monitorPower := func(action any, what string) {
+		pctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := niri.Action(pctx, socket, action); err != nil {
+			log.Printf("sysc-shell: idle %s: %v", what, err)
+		}
+	}
+	idleSvc := services.NewIdleService(services.IdleOptions{Execs: services.IdleExecutors{
+		Blank:   func() { monitorPower(niri.PowerOffMonitors{}, "blank") },
+		Unblank: func() { monitorPower(niri.PowerOnMonitors{}, "unblank") },
+		Suspend: func() {
+			sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := exec.CommandContext(sctx, "loginctl", "suspend").Run(); err != nil {
+				log.Printf("sysc-shell: idle suspend: %v", err)
+			}
+		},
+	}})
+	registry.SetIdleService(idleSvc)
+	go idleSvc.Run(ctx)
+	// XDG ScreenSaver endpoint: media players inhibit through here and only
+	// the shell's idle timers hold; logind's own sleep block is untouched.
+	// A lost name race logs and degrades — caffeine and media rules still work.
+	if screenSaver, ssErr := services.NewScreenSaverService(registry.SetExternalInhibitors); ssErr != nil {
+		log.Printf("sysc-shell: ScreenSaver service: %v", ssErr)
+	} else {
+		registry.SetScreenSaver(screenSaver)
+		defer screenSaver.Remove()
+	}
+	// Logind power observation: transitions are logged, and the resume edge
+	// re-arms the idle timers (raising the screen if it was blanked) and
+	// repaints every output once. The lid switch and power key keep acting on
+	// logind's own policy — this watches, it never intercepts or delays.
+	if logind, ldErr := services.NewLogind(); ldErr != nil {
+		log.Printf("sysc-shell: logind monitor: %v", ldErr)
+	} else {
+		defer logind.Close()
+		go logind.Run()
+		gate := services.NewResumeGate(time.Second)
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case ev := <-logind.Events():
+					if ev.Sleeping || !gate.Fire() {
+						continue
+					}
+					idleSvc.Wake()
+					registry.RepaintAll()
+				}
+			}
+		}()
+	}
 	// Built before the plugin host: plugin toasts send through this client,
 	// so BindNotifications must run first. The pumps below still drain it.
 	notifyClient := notifyclient.New(os.Getenv("XDG_RUNTIME_DIR"), registry.NotifyMessages())
@@ -276,15 +334,28 @@ func run(ctx context.Context) (err error) {
 	}()
 	registry.BindPersist(cfgPath, reloads)
 
+	// The IPC server gets its own cancel so it stops on any exit from run, not
+	// only a signal, and run waits for it before the deferred registry.Close:
+	// no request may still be inside a handler when the registry is torn down.
+	ipcCtx, stopIPC := context.WithCancel(ctx)
+	ipcDone := make(chan struct{})
 	ipcErr := make(chan error, 1)
+	defer func() {
+		stopIPC()
+		<-ipcDone
+	}()
 	go func() {
+		defer close(ipcDone)
 		srv := ipc.NewServer(ipc.DefaultSocket(), ipc.Handlers{
-			Panel:   registry.HandlePanelByName,
-			Status:  registry.Status,
-			OSDStep: registry.OSDStep,
-			Plugins: registry.PluginStoreCall,
+			Panel:      registry.HandlePanelByName,
+			Status:     registry.Status,
+			OSDStep:    registry.OSDStep,
+			Plugins:    registry.PluginStoreCall,
+			Screenshot: registry.Screenshot,
+			Switcher:   registry.ShowWindowSwitcher,
+			Theme:      registry.ThemeCall,
 		})
-		ipcErr <- srv.Serve(ctx)
+		ipcErr <- srv.Serve(ipcCtx)
 	}()
 	select {
 	case err := <-ipcErr:
@@ -306,6 +377,8 @@ func run(ctx context.Context) (err error) {
 		Invalidations: registry.Invalidations(),
 		Aux:           registry.AuxRequests(),
 		Selection:     registry.Selections(),
+		Idle:          idleSvc.Requests(),
+		IdleEvents:    idleSvc.Events(),
 		Reloads:       reloads,
 		ConfigPath:    cfgPath,
 	})
@@ -348,11 +421,12 @@ func runIPC(args []string) error {
 	}
 	var raw any
 	if err := json.Unmarshal(params, &raw); err != nil {
-		return err
+		// Bad params never reach the server, so answer for it in the same
+		// shape the server uses.
+		fmt.Println(`{"error":"malformed params"}`)
+		os.Exit(1)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	out, err := ipc.Call(ctx, ipc.DefaultSocket(), method, raw)
+	out, err := ipc.Call(context.Background(), ipc.DefaultSocket(), method, raw)
 	if err != nil {
 		return err
 	}

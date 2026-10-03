@@ -105,7 +105,7 @@ type trayMenuHost struct {
 }
 
 func newTrayMenuHost(r *Registry, harness *hostHarness) *trayMenuHost {
-	h := &trayMenuHost{r: r}
+	h := &trayMenuHost{r: r, pointer: interaction{stateLayer: true}}
 	if harness != nil {
 		h.request = harness.request
 		h.harnessRef = harness

@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -43,15 +44,16 @@ import (
 // announced yet or has already been removed. A host is never created or
 // destroyed from a Niri event.
 type Registry struct {
-	mu          sync.Mutex
-	cfg         config.Config
-	outputs     map[string]outputState
-	bars        map[uint32]*Bar
-	leases      map[uint32][]*services.Lease
-	now         time.Time
-	focused     string
-	layouts     niri.KeyboardLayouts
-	layoutsSeen bool
+	mu           sync.Mutex
+	cfg          config.Config
+	outputs      map[string]outputState
+	bars         map[uint32]*Bar
+	leases       map[uint32][]*services.Lease
+	niriSnapshot niri.Snapshot
+	now          time.Time
+	focused      string
+	layouts      niri.KeyboardLayouts
+	layoutsSeen  bool
 	// caps is what the compositor last said it can do. The zero value, no
 	// blur, is also the answer for a compositor without the protocol.
 	caps wayland.Capabilities
@@ -78,6 +80,14 @@ type Registry struct {
 	// themeErr is why the published palette is not the requested one, empty
 	// when it is. Surfaced by the picker; never fatal.
 	themeErr string
+	// previewing keeps the preview session open until hide so its committed
+	// generation reason can be restored. previewTheme is the separate in-memory
+	// presentation used by every surface; commits clear it without persisting it.
+	// These fields are protected by Registry.mu.
+	previewing     bool
+	previewPrevErr string
+	previewTheme   *themePreviewState
+	previewRequest uint64
 	// templateRefusals names templates whose files the shell refused to write
 	// because their current bytes are not the shell's last render. The
 	// settings Templates section surfaces them with an overwrite action.
@@ -92,6 +102,27 @@ type Registry struct {
 	templateRefusals map[string]string
 	templateForce    map[string]bool
 	themeGen         theme.Generator
+	// paletteStore holds the user's saved palettes. Set once in NewRegistry and
+	// never reassigned outside tests, so it is read without Registry.mu.
+	paletteStore *theme.Store
+	// paletteImportDir is where the import field starts (the Downloads
+	// folder, shown with ~), resolved once at construction so building the
+	// page reads no file.
+	paletteImportDir string
+	// palettes is the last listing of paletteStore. Registry.mu; replaced
+	// whole by refreshPalettes.
+	palettes []theme.PaletteInfo
+	// paletteRefreshMu serialises a listing with its swap, so a listing taken
+	// before a save never lands after one taken after it. Taken before
+	// Registry.mu, never while holding it.
+	paletteRefreshMu sync.Mutex
+	// paletteLister reads the store; tests replace it to hold a listing open.
+	paletteLister func(*theme.Store) []theme.PaletteInfo
+	// themeGenMu serializes generation across goroutines (sysc-780). Committed
+	// generation shares one cache path; previews use temporary paths but still
+	// keep matugen single-flight. Leaf lock: nothing takes Registry.mu while it
+	// is held, and painting takes r.mu only after generation releases it.
+	themeGenMu sync.Mutex
 
 	// invalidations carries one entry per bar whose rendered text changed.
 	// The Wayland owner receives from it; the registry owns it and never
@@ -103,7 +134,14 @@ type Registry struct {
 	selections chan wayland.SelectionRequest
 	panels     PanelSet
 	panelHosts map[PanelID]*PanelHost
-	// roots is the one interactive root the process allows at a time.
+	// panelShields records which panel host opened each output's shared shield,
+	// even if that host closes while another panel keeps the shield alive.
+	panelShields map[uint32]*PanelHost
+	// panelOrder breaks ties between open panels when their shared shield
+	// dismisses the newest one first.
+	panelOrder uint64
+	// roots is the one interactive root the process allows at a time. Open
+	// panels share one root; other modal surfaces still replace the whole group.
 	roots rootChain
 	// closed unblocks a pending publish at shutdown.
 	closed     chan struct{}
@@ -136,6 +174,10 @@ type Registry struct {
 	runArgv func([]string) error
 	// lookPath finds a binary on PATH. Tests replace it per Registry.
 	lookPath func(string) (string, error)
+	// animClock is the clock a panel animator samples. Tests freeze it to
+	// watch the reveal's pacing without racing the wall clock; production
+	// leaves it nil and the animator runs on time.Now.
+	animClock func() time.Time
 	// runArgvOutput captures stdout of powerprofilesctl list. Tests replace it.
 	runArgvOutput func([]string) (string, error)
 	// startInhibit creates the process-backed caffeine hold. Tests replace it.
@@ -143,13 +185,24 @@ type Registry struct {
 	inhibit         io.Closer
 	inhibitWanted   bool
 	inhibitStarting bool
+	// idleSvc is the display-power policy. Nil means no idle service is
+	// wired, which is the test and disabled configuration.
+	idleSvc *services.IdleService
+	// screenSaver owns the org.freedesktop.ScreenSaver name. Nil when the
+	// name belongs to another process, which is a degraded but valid state.
+	screenSaver *services.ScreenSaverService
+	// externalInhibitors is the latest published screensaver inhibitor list.
+	// These hold the shell's idle timers only; logind sleep blocking is
+	// untouched, which is the per-application behavior the protocol asks for.
+	externalInhibitors []services.ScreenSaverInhibitor
 
 	running      []runningAppSlot
 	runningIndex []runningAppEntry
 	// usernames resolves process owners for the system monitor. It carries
 	// its own lock; see usernameCache.
-	usernames   *usernameCache
-	runningMenu *runningAppMenuHost
+	usernames      *usernameCache
+	runningMenu    *runningAppMenuHost
+	windowSwitcher *windowSwitcherHost
 	// niriSend is the FocusWindow/CloseWindow seam. Tests replace it; nil
 	// sends niri.Action on $NIRI_SOCKET off this goroutine.
 	niriSend func(any) error
@@ -203,6 +256,14 @@ type Registry struct {
 	// pluginNotifySeq makes each plugin toast a unique producer key; the
 	// service replaces live notifications that share a key.
 	pluginNotifySeq atomic.Uint32
+	// niriScreenshot sends a screenshot action and waits for its file. Tests
+	// replace it; nil uses niri.Screenshot on $NIRI_SOCKET.
+	niriScreenshot func(ctx context.Context, action any, path string) error
+	// screenshotDir names the directory captures are saved to. Tests replace
+	// it; nil is screenshot.Dir.
+	screenshotDir func() string
+	// selector is the open region selector, if any. Registry.mu.
+	selector *regionSelector
 	// toasts hosts one toast stack per output, created when wiring binds it.
 	toasts *toastHost
 	// depthClocks contains one click-through wallpaper clock per accepted mask.
@@ -210,10 +271,81 @@ type Registry struct {
 	depthClockLease *services.Lease
 	// launcherSvc is created on the first launcher open; nil until then.
 	launcherSvc *launcher.Service
+	// launcherMu guards the query generation, its current plan,
+	// and the batch of provider rows being assembled into one snapshot.
+	// Lock order is Registry.mu then launcherMu. The service goroutine takes
+	// launcherMu only; it never takes Registry.mu while ranking.
+	launcherMu    sync.Mutex
+	launcherGen   uint64
+	launcherPlan  launcherPlan
+	launcherBatch launcherBatch
+	launcherSnaps chan launcherSnap
+	// launcherRankWait, when set, runs on the service goroutine after a rank
+	// and before that rank is stamped. Tests hold a publish there.
+	launcherRankWait func(query string)
+	// onLauncherDequeued runs on the relay after a snapshot is received and
+	// before Registry.mu is taken.
+	onLauncherDequeued func()
+	// afterLauncherSnap runs on the relay after a received snapshot has been
+	// accepted or ignored. Registry.mu.
+	afterLauncherSnap func()
+}
+
+func listPalettes(st *theme.Store) []theme.PaletteInfo {
+	if st == nil {
+		return nil
+	}
+	return st.List()
+}
+
+// refreshPalettes re-reads the palettes directory outside Registry.mu and
+// swaps the snapshot under it. Every Registry.Palette* mutation calls it, and
+// so do opening Settings and entering the Palettes section, so a hand-edited
+// file shows up the next time the page is entered. Must not be called with
+// Registry.mu held.
+func (r *Registry) refreshPalettes() {
+	r.paletteRefreshMu.Lock()
+	defer r.paletteRefreshMu.Unlock()
+	list := r.paletteLister(r.paletteStore)
+	r.mu.Lock()
+	r.palettes = list
+	r.mu.Unlock()
+}
+
+// settingsFor builds the settings registry for cfg with the saved palettes.
+// It must not be called with Registry.mu held; use settingsForLocked there.
+func (r *Registry) settingsFor(cfg config.Config) *settings.Registry {
+	r.mu.Lock()
+	list := r.palettes
+	r.mu.Unlock()
+	return settings.DefaultFor(cfg, settings.WithCustomPalettes(settings.CustomPalettesFrom(list)))
+}
+
+// settingsForLocked is settingsFor for callers that already hold Registry.mu.
+// It reads only the snapshot, so it is cheap enough for every settings edit.
+func (r *Registry) settingsForLocked(cfg config.Config) *settings.Registry {
+	return settings.DefaultFor(cfg, settings.WithCustomPalettes(settings.CustomPalettesFrom(r.palettes)))
+}
+
+// paletteDir is where saved palettes live: beside the config file main
+// persists to (config.DefaultPath). Empty when there is no config directory.
+func paletteDir() string {
+	path := config.DefaultPath()
+	if path == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(path), "palettes")
 }
 
 func NewRegistry(cfg config.Config) *Registry {
 	gen := theme.Generator{}
+	var palettes *theme.Store
+	if dir := paletteDir(); dir != "" {
+		palettes = &theme.Store{Dir: dir}
+		// Set before the first Generate below, and never written again, so
+		// generateOnlyWith may copy r.themeGen without Registry.mu.
+		gen.Custom = palettes
+	}
 	r := &Registry{
 		cfg:     cfg,
 		outputs: make(map[string]outputState),
@@ -223,24 +355,28 @@ func NewRegistry(cfg config.Config) *Registry {
 		metrics: services.NewMetrics(),
 		weather: services.NewWeather(
 			cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit)),
-		themeGen:       gen,
-		templateForce:  map[string]bool{},
-		invalidations:  make(chan wayland.Invalidation, 8),
-		aux:            make(chan wayland.AuxRequest, 8),
-		selections:     make(chan wayland.SelectionRequest, 8),
-		panelHosts:     make(map[PanelID]*PanelHost),
-		closed:         make(chan struct{}),
-		dwell:          newDwell(defaultDwell),
-		runArgv:        runArgvDefault,
-		lookPath:       exec.LookPath,
-		runArgvOutput:  runArgvOutputDefault,
-		startInhibit:   startInhibitDefault,
-		signalProcess:  signalProcessDefault,
-		notify:         newNotifyState(),
-		batteryWarning: newBatteryWarning(),
-		clipboard:      newClipboardProjection(),
-		tray:           newTrayState(),
-		trayCh:         make(chan trayclient.Message, 32),
+		themeGen:         gen,
+		paletteStore:     palettes,
+		paletteLister:    listPalettes,
+		paletteImportDir: paletteImportDir(),
+		templateForce:    map[string]bool{},
+		invalidations:    make(chan wayland.Invalidation, 8),
+		aux:              make(chan wayland.AuxRequest, 8),
+		selections:       make(chan wayland.SelectionRequest, 8),
+		panelHosts:       make(map[PanelID]*PanelHost),
+		panelShields:     make(map[uint32]*PanelHost),
+		closed:           make(chan struct{}),
+		dwell:            newDwell(defaultDwell),
+		runArgv:          runArgvDefault,
+		lookPath:         exec.LookPath,
+		runArgvOutput:    runArgvOutputDefault,
+		startInhibit:     startInhibitDefault,
+		signalProcess:    signalProcessDefault,
+		notify:           newNotifyState(),
+		batteryWarning:   newBatteryWarning(),
+		clipboard:        newClipboardProjection(),
+		tray:             newTrayState(),
+		trayCh:           make(chan trayclient.Message, 32),
 		// Intrinsic state, not a binding: a message can settle a close before
 		// anything is bound, and a nil tracker would drop it.
 		trayCloses:      newTrayCloseTracker(),
@@ -250,6 +386,8 @@ func NewRegistry(cfg config.Config) *Registry {
 	}
 	r.depthClocks = newDepthClockHost(r, nil)
 	r.weather.SetCity(cfg.Weather.City)
+	// Construction is single-threaded, so the first snapshot needs no lock.
+	r.palettes = listPalettes(palettes)
 	r.tokens, r.themeErr = tokensAndReason(r.generateTheme(cfg))
 	r.osd = newOSDManager(r, 0)
 	r.tooltips = newTooltipHost(r, nil)
@@ -258,7 +396,13 @@ func NewRegistry(cfg config.Config) *Registry {
 	// a separate goroutine after the setter returns.
 	r.notify.onDND = func(on bool) { go r.OSD().Show(OSDView{Kind: osdDND, On: on}) }
 	r.setAudio(services.NewAudio(0, ""))
-	r.setBrightness(services.NewBrightness("", "", 0))
+	// DDC probing opens real i2c buses; keep unit and shell tests on sysfs
+	// only so a test run never puts traffic on a live monitor.
+	if runningAsTest() {
+		r.setBrightness(services.NewBrightness("", "", 0))
+	} else {
+		r.setBrightness(services.NewBrightnessDDC("", "", 0))
+	}
 	if !runningAsTest() {
 		r.lockKeys = services.NewLockKeys("", 0)
 		r.lockKeys.Start()
@@ -325,6 +469,64 @@ func (r *Registry) setAudio(a *services.Audio) {
 // setMedia installs the media service and relays its cached snapshots into the
 // retained bar and control-centre trees. The widget and page acquire leases
 // for the service's bus watch; the relay itself never keeps the service alive.
+// SetIdleService installs the idle policy service. Its channels go into
+// wayland.Callbacks by the caller; main wires both before Run.
+func (r *Registry) SetIdleService(s *services.IdleService) {
+	r.idleSvc = s
+	// The initial publish matters: nothing else calls the setters until a
+	// media, inhibit or config change happens, and the timeouts must be
+	// armed from the configuration already loaded.
+	r.pushIdleInputs()
+}
+
+// pushIdleInputsLocked re-publishes every input the idle policy reads.
+// Caller holds r.mu.
+func (r *Registry) pushIdleInputsLocked() {
+	if r.idleSvc == nil {
+		return
+	}
+	r.idleSvc.SetConfig(services.IdleSettings{
+		BlankAc:        r.cfg.Idle.BlankAc,
+		BlankBattery:   r.cfg.Idle.BlankBattery,
+		SuspendAc:      r.cfg.Idle.SuspendAc,
+		SuspendBattery: r.cfg.Idle.SuspendBattery,
+		MediaExempt:    r.cfg.Idle.MediaExempt,
+	})
+	r.idleSvc.SetMediaPlaying(r.mediaState.Status == services.PlaybackPlaying)
+	r.idleSvc.SetInhibited(r.inhibitWanted || len(r.externalInhibitors) > 0)
+}
+
+// SetScreenSaver installs the bus-name owner and takes its first inhibitor
+// snapshot.
+func (r *Registry) SetScreenSaver(ss *services.ScreenSaverService) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.screenSaver = ss
+	if ss != nil {
+		r.externalInhibitors = ss.ListInhibitors()
+	}
+	r.pushIdleInputsLocked()
+}
+
+// SetExternalInhibitors is the screensaver service's change callback. It runs
+// on that service's D-Bus signal pump goroutine.
+func (r *Registry) SetExternalInhibitors(list []services.ScreenSaverInhibitor) {
+	r.mu.Lock()
+	r.externalInhibitors = list
+	r.pushIdleInputsLocked()
+	out, open := r.rebuildControlCentreLocked()
+	r.mu.Unlock()
+	if open {
+		r.publishSurface(out, panelSurfaceID(PanelControlCenter))
+	}
+}
+
+func (r *Registry) pushIdleInputs() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pushIdleInputsLocked()
+}
+
 func (r *Registry) setMedia(m *services.Media) {
 	if r.media == m {
 		return
@@ -347,6 +549,7 @@ func (r *Registry) setMedia(m *services.Media) {
 	cancel := make(chan struct{})
 	r.mediaRelayCancel = cancel
 	go r.relayMedia(m, cancel)
+	r.pushIdleInputs()
 }
 
 func (r *Registry) relayMedia(media *services.Media, cancel <-chan struct{}) {
@@ -421,6 +624,7 @@ func (r *Registry) publishMediaSnapshot(media *services.Media, state services.Me
 	}
 	r.mediaState = state
 	r.mediaPlayers = players
+	r.pushIdleInputsLocked()
 	changed := make([]uint32, 0, len(r.bars))
 	for global, bar := range r.bars {
 		if bar.apply(r.viewLocked(bar.connector())) {
@@ -737,6 +941,10 @@ func (r *Registry) Status() map[string]any {
 		panels = append(panels, id.String())
 	}
 	cfg := r.cfg
+	inhibitors := make([]string, 0, len(r.externalInhibitors))
+	for _, in := range r.externalInhibitors {
+		inhibitors = append(inhibitors, in.App)
+	}
 	r.mu.Unlock()
 	templates := map[string]bool{}
 	for _, name := range theming.Catalog().Names() {
@@ -744,12 +952,13 @@ func (r *Registry) Status() map[string]any {
 	}
 	_, err := exec.LookPath("matugen")
 	return map[string]any{
-		"version":    "sysc-shell",
-		"audio":      audio,
-		"brightness": bright,
-		"panels":     panels,
-		"matugen":    err == nil,
-		"templates":  templates,
+		"version":         "sysc-shell",
+		"audio":           audio,
+		"brightness":      bright,
+		"panels":          panels,
+		"matugen":         err == nil,
+		"templates":       templates,
+		"idle_inhibitors": inhibitors,
 	}
 }
 
@@ -856,15 +1065,17 @@ func (r *Registry) ReducedMotion() bool {
 // the previous theme, and the mix is hard to attribute afterwards. Templates
 // are only written for a palette that survives that check, so an external
 // consumer never sees one the shell itself refused.
-// panelTheme resolves a popout's theme from the live configuration and the
-// current palette.
+// panelTheme resolves a popout's theme from the effective presentation
+// configuration and palette, which may be a no-commit preview.
 //
 // Panels used to build ThemeFromTokens(r.tokens, 12), which rebuilds the
 // default composition and pins the radius, so the palette was the only axis
 // that reached a popout: density, radius, font scale and preset all stopped at
-// the bar. Resolving from r.cfg is what makes one theme serve every surface.
+// the bar. Resolving from the effective config is what makes one theme serve
+// every surface.
 func (r *Registry) panelTheme() Theme {
-	t, err := ResolveTheme(r.cfg, r.cfg.Bar, r.tokens)
+	cfg, tokens := r.effectiveThemeLocked()
+	t, err := ResolveTheme(cfg, cfg.Bar, tokens)
 	if err != nil {
 		return DefaultTheme()
 	}
@@ -879,11 +1090,37 @@ func resolveOutputTheme(cfg config.Config, connector string, tok theme.Tokens, b
 }
 
 func (r *Registry) panelThemeFor(output uint32) Theme {
+	cfg, tokens := r.effectiveThemeLocked()
+	return r.panelThemeForState(output, cfg, tokens)
+}
+
+func (r *Registry) effectiveThemeLocked() (config.Config, theme.Tokens) {
+	if r.previewTheme != nil {
+		return r.previewTheme.cfg, r.previewTheme.tokens
+	}
+	return r.cfg, r.tokens
+}
+
+// invalidateThemePreviewLocked discards pending work before a committed theme
+// is published. A visible preview keeps its session open until hide; a first
+// preview that has not painted is simply canceled.
+func (r *Registry) invalidateThemePreviewLocked() {
+	r.previewRequest++
+	if r.previewTheme == nil {
+		r.previewing = false
+		r.previewPrevErr = ""
+	}
+	r.previewTheme = nil
+}
+
+// panelThemeForState resolves one output against the supplied palette. The
+// retheme path passes preview candidates here without publishing them in r.
+func (r *Registry) panelThemeForState(output uint32, cfg config.Config, tokens theme.Tokens) Theme {
 	connector := ""
 	if bar, ok := r.bars[output]; ok {
 		connector = bar.connector()
 	}
-	t, err := resolveOutputTheme(r.cfg, connector, r.tokens, r.caps.Blur)
+	t, err := resolveOutputTheme(cfg, connector, tokens, r.caps.Blur)
 	if err != nil {
 		return DefaultTheme()
 	}
@@ -900,7 +1137,77 @@ func (r *Registry) panelThemeFor(output uint32) Theme {
 // colours: the wallpaper changed, the shell did not, and there was nowhere to
 // look. Callers surface this; they must not treat it as fatal.
 func (r *Registry) generateTheme(cfg config.Config) (theme.Tokens, error) {
-	tok, err := r.themeGen.Generate(
+	tok, err := r.generateOnly(cfg)
+	if err != nil {
+		return r.lastCompleteTokens(cfg.Accessibility.HighContrast), err
+	}
+	if !runningAsTest() {
+		outcomes, err := theming.ApplyEnabled(os.Getenv("HOME"), cfg.TemplateEnabled, tok, r.consumeTemplateForce)
+		// A nil outcomes map means the apply did not run: it was queued
+		// behind a live one (or had nothing to do). Sweeping now would eat
+		// the overwrite the queued pass is about to consume; the goroutine
+		// that eventually runs the job reports its outcomes instead.
+		r.recordTemplateOutcomes(outcomes, true)
+		if err != nil {
+			return tok, fmt.Errorf("theme: external templates: %w", err)
+		}
+	}
+	return tok, nil
+}
+
+func (r *Registry) recordTemplateOutcomes(outcomes map[string]error, clearResolvedForces bool) {
+	if outcomes == nil {
+		return
+	}
+	refusals := map[string]string{}
+	for name, err := range outcomes {
+		if errors.Is(err, theming.ErrUserModified) {
+			refusals[name] = err.Error()
+		}
+	}
+	r.templateMu.Lock()
+	r.templateRefusals = refusals
+	if clearResolvedForces {
+		for name := range r.templateForce {
+			if _, refused := refusals[name]; !refused {
+				delete(r.templateForce, name)
+			}
+		}
+	}
+	r.templateMu.Unlock()
+}
+
+// generateOnly produces palette tokens for cfg without touching published
+// state or writing application templates. Preview uses the same generation
+// path with an isolated cache. On failure, the caller decides the failure
+// floor: generateTheme keeps the published palette, preview refuses to paint.
+func (r *Registry) generateOnly(cfg config.Config) (theme.Tokens, error) {
+	return r.generateOnlyWith(cfg, r.themeGen)
+}
+
+// generatePreviewOnly isolates generator files from the persistent cache. A
+// preview is disposable state, so even matugen's config and template belong in
+// a temporary directory that is removed before the preview is published.
+func (r *Registry) generatePreviewOnly(cfg config.Config) (tokens theme.Tokens, err error) {
+	dir, err := os.MkdirTemp("", "sysc-shell-theme-preview-")
+	if err != nil {
+		return theme.Tokens{}, fmt.Errorf("theme: preview cache: %w", err)
+	}
+	defer func() {
+		if cleanupErr := os.RemoveAll(dir); cleanupErr != nil {
+			err = errors.Join(err, fmt.Errorf("theme: remove preview cache: %w", cleanupErr))
+		}
+	}()
+
+	gen := r.themeGen
+	gen.CacheDir = dir
+	return r.generateOnlyWith(cfg, gen)
+}
+
+func (r *Registry) generateOnlyWith(cfg config.Config, gen theme.Generator) (theme.Tokens, error) {
+	r.themeGenMu.Lock()
+	defer r.themeGenMu.Unlock()
+	tok, err := gen.Generate(
 		theme.Source{Kind: cfg.ThemeGen.Source, Seed: cfg.ThemeGen.Seed},
 		theme.Options{
 			Mode:         cfg.ThemeGen.Mode,
@@ -909,37 +1216,10 @@ func (r *Registry) generateTheme(cfg config.Config) (theme.Tokens, error) {
 		},
 	)
 	if err != nil {
-		return r.lastCompleteTokens(cfg.Accessibility.HighContrast), err
+		return tok, err
 	}
 	if err := tok.Complete(); err != nil {
-		return r.lastCompleteTokens(cfg.Accessibility.HighContrast),
-			fmt.Errorf("theme: generated palette is incomplete: %w", err)
-	}
-	if !runningAsTest() {
-		outcomes, err := theming.ApplyEnabled(os.Getenv("HOME"), cfg.TemplateEnabled, tok, r.consumeTemplateForce)
-		// A nil outcomes map means the apply did not run: it was queued
-		// behind a live one (or had nothing to do). Sweeping now would eat
-		// the overwrite the queued pass is about to consume; the goroutine
-		// that eventually runs the job reports its outcomes instead.
-		if outcomes != nil {
-			refusals := map[string]string{}
-			for name, oerr := range outcomes {
-				if errors.Is(oerr, theming.ErrUserModified) {
-					refusals[name] = oerr.Error()
-				}
-			}
-			r.templateMu.Lock()
-			r.templateRefusals = refusals
-			for name := range r.templateForce {
-				if _, refused := refusals[name]; !refused {
-					delete(r.templateForce, name)
-				}
-			}
-			r.templateMu.Unlock()
-		}
-		if err != nil {
-			return tok, fmt.Errorf("theme: external templates: %w", err)
-		}
+		return tok, fmt.Errorf("theme: generated palette is incomplete: %w", err)
 	}
 	return tok, nil
 }
@@ -975,17 +1255,18 @@ func (r *Registry) lastCompleteTokens(highContrast bool) theme.Tokens {
 	return theme.FallbackFor(highContrast)
 }
 
-// surfaceTheme is the palette every auxiliary surface paints with: the
-// generated tokens, with the bar's geometry so a panel and the bar agree about
-// spacing and text size.
+// surfaceTheme is the effective palette every auxiliary surface paints with,
+// plus the bar's geometry so a panel and the bar agree about spacing and text
+// size.
 //
 // Callers hold Registry.mu, because the tokens are replaced by a reload.
-// surfaceTheme is the theme a non-bar surface adopts. It resolves the live
+// surfaceTheme is the theme a non-bar surface adopts. It resolves the effective
 // configuration rather than rebuilding the default composition around a
 // radius, which is what lets a density, motion or opacity change reach an
 // already-open panel, toast, tray surface or OSD on reload.
 func (r *Registry) surfaceTheme() Theme {
-	return withBarGeometry(r.panelTheme(), r.cfg.Bar)
+	cfg, _ := r.effectiveThemeLocked()
+	return withBarGeometry(r.panelTheme(), cfg.Bar)
 }
 
 func runningAsTest() bool {
@@ -1102,8 +1383,7 @@ func (r *Registry) publish(globals []uint32) {
 // NewHost builds the hooks for one output's bar and acquires its services.
 func (r *Registry) NewHost(global uint32, connector string) (wayland.HostCallbacks, error) {
 	r.mu.Lock()
-	cfg := r.cfg
-	tok := r.tokens
+	cfg, tok := r.effectiveThemeLocked()
 	r.mu.Unlock()
 
 	bar, leases, callbacks, err := r.buildBar(cfg, connector, tok)
@@ -1140,6 +1420,13 @@ func (r *Registry) adoptBar(
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	// NewHost builds outside Registry.mu. Re-resolve against the effective
+	// theme before adoption so a preview or commit that arrived during the
+	// build cannot install a bar with stale colors.
+	cfg, tokens := r.effectiveThemeLocked()
+	if next, err := resolveOutputTheme(cfg, connector, tokens, r.caps.Blur); err == nil {
+		bar.retheme(next)
+	}
 	r.attachRunningIconsAtLocked(bar.scale120())
 	if bar.mediaWidget {
 		r.mediaArtFor()
@@ -1319,6 +1606,21 @@ func (r *Registry) toggleNotifyDND() {
 	r.publish(changed)
 }
 
+// RepaintAll invalidates every live output's surfaces once. Resume uses it:
+// after a sleep cycle shell pixels, cursor planes and damage state are stale,
+// and one forced frame per output is cheaper than reasoning about which
+// surfaces survived. While the Wayland owner is suspended its bridge queues
+// the invalidations, so this call never blocks on the socket's silence.
+func (r *Registry) RepaintAll() {
+	r.mu.Lock()
+	globals := make([]uint32, 0, len(r.bars))
+	for global := range r.bars {
+		globals = append(globals, global)
+	}
+	r.mu.Unlock()
+	r.publish(globals)
+}
+
 // outputGlobalsLocked maps each live connector to its wl_registry global. Two
 // globals may briefly share a connector during a reconnect; the newest wins,
 // because that is the one whose surfaces exist.
@@ -1392,6 +1694,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 					bar.apply(r.viewLocked(bar.connector()))
 				}
 				r.cfg = cfg
+				r.pushIdleInputsLocked()
 				// An open settings panel holds its own draft, and a change
 				// arriving from outside it would otherwise be reverted by the
 				// next control write, which puts that draft back whole. The
@@ -1399,7 +1702,7 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				// depend on another setting.
 				if h := r.panelHosts[PanelSettings]; h != nil {
 					h.draft = cfg
-					h.set = settings.DefaultFor(cfg)
+					h.set = r.settingsForLocked(cfg)
 				}
 				r.refreshMonitorLeasesLocked(r.panelHosts[PanelMonitor])
 				media = r.media
@@ -1408,7 +1711,11 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				if genErr != nil {
 					r.themeErr = genErr.Error()
 				}
-				r.retheThemeOpenSurfacesLocked()
+				r.invalidateThemePreviewLocked()
+				if r.previewing {
+					r.previewPrevErr = r.themeErr
+				}
+				surfacePubs := r.retheThemeOpenSurfacesLocked(r.cfg, r.tokens)
 				if depthClockVisualChanged && r.depthClocks != nil {
 					depthEffects = r.depthClocks.reconfigureLocked(depthClockFontChanged)
 				}
@@ -1430,6 +1737,9 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				}
 				if r.depthClocks != nil {
 					r.depthClocks.emit(depthEffects)
+				}
+				for _, p := range surfacePubs {
+					r.publishSurface(p.Global, p.SurfaceID)
 				}
 				for _, bar := range outgoingBars {
 					bar.stopAnimation()
@@ -1584,6 +1894,7 @@ func (r *Registry) Close() {
 		inhibit = r.inhibit
 		r.inhibit = nil
 		r.inhibitWanted = false
+		r.pushIdleInputsLocked()
 		r.mu.Unlock()
 	}
 	for _, bar := range bars {
@@ -1663,6 +1974,20 @@ func (r *Registry) Close() {
 func (r *Registry) UpdateClock(now time.Time) []uint32 {
 	r.mu.Lock()
 	r.now = now
+	expired := r.notify.expireDND(now)
+	if expired && r.toasts != nil {
+		r.toasts.recompute()
+	}
+	// An open notification centre freezes its DND glyph in the built tree;
+	// rebuild it when a timed preset lifts (gh #56).
+	var dndCentreOut uint32
+	dndCentreOpen := false
+	if expired {
+		if h := r.panelHosts[PanelNotifications]; h != nil {
+			r.rebuildPanel(h)
+			dndCentreOut, dndCentreOpen = h.output, true
+		}
+	}
 	var changed []uint32
 	for global, bar := range r.bars {
 		if bar.apply(r.viewLocked(bar.connector())) {
@@ -1682,6 +2007,9 @@ func (r *Registry) UpdateClock(now time.Time) []uint32 {
 	}
 	if controlOK {
 		r.publishSurface(controlOut, panelSurfaceID(PanelControlCenter))
+	}
+	if dndCentreOpen {
+		r.publishSurface(dndCentreOut, panelSurfaceID(PanelNotifications))
 	}
 	return changed
 }
@@ -1795,6 +2123,7 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	// has no workspace state any more, and keeping its last value would render
 	// a stale workspace or title on a host that reconnects under that name.
 	r.outputs = next
+	r.niriSnapshot = cloneNiriSnapshot(s)
 	r.focused = s.FocusedOutput
 	r.ensureRunningIndexLocked()
 	r.running = groupRunningApps(s.Windows, r.runningIndex)
@@ -1807,9 +2136,18 @@ func (r *Registry) UpdateNiri(s niri.Snapshot) []uint32 {
 	if len(s.Layouts.Names) > 0 {
 		r.layoutsSeen = true
 	}
+	switcherUpdated := false
+	var switcherOutput uint32
+	if r.windowSwitcher != nil {
+		switcherOutput = r.windowSwitcher.output
+		switcherUpdated = r.windowSwitcher.refreshLocked(r.niriSnapshot)
+	}
 	r.mu.Unlock()
 
 	r.publish(changed)
+	if switcherUpdated {
+		r.publishSurface(switcherOutput, windowSwitcherSurfaceID)
+	}
 	if showLayout {
 		r.OSD().Show(layoutView)
 	}
@@ -1858,6 +2196,14 @@ func (r *Registry) viewLocked(connector string) barView {
 	view.Bluetooth = r.bluetoothState
 	if r.plugins != nil {
 		view.Plugins = r.plugins.frames(connector)
+	}
+	for _, item := range allItems(r.cfg.ForConnector(connector)) {
+		if item.ID == "plugin" && !slices.Contains(r.cfg.Plugins.Enabled, item.Plugin) {
+			if view.PluginsOff == nil {
+				view.PluginsOff = map[string]bool{}
+			}
+			view.PluginsOff[item.Plugin] = true
+		}
 	}
 	return view
 }
@@ -2050,24 +2396,34 @@ func releaseAll(leases []*services.Lease) {
 	}
 }
 
-// retheThemeOpenSurfacesLocked moves every open panel onto the newly published
-// palette, crossfading from what each is currently rendering. Panels used to
-// keep the theme they were spawned with, so a reload left an open surface in
-// the previous palette until it was closed and reopened.
+// retheThemeOpenSurfacesLocked moves auxiliary surfaces onto the supplied
+// theme and returns visible surfaces that need repainting after r.mu is released.
 //
 // Caller holds r.mu.
-func (r *Registry) retheThemeOpenSurfacesLocked() {
+func (r *Registry) retheThemeOpenSurfacesLocked(cfg config.Config, tokens theme.Tokens) []wayland.Invalidation {
+	var pubs []wayland.Invalidation
 	for _, h := range r.panelHosts {
 		if h == nil {
 			continue
 		}
-		next := r.panelThemeFor(h.output)
+		next := r.panelThemeForState(h.output, cfg, tokens)
 		h.retheme(withPanelRadius(next, h))
 		r.startSurfaceFrames(h)
 	}
 	if r.toasts != nil {
 		r.toasts.restyleLocked()
 	}
+	if h := r.windowSwitcher; h != nil {
+		next := withBarGeometry(r.panelThemeForState(0, cfg, tokens), cfg.Bar)
+		h.retheme(next)
+		if h.open_ {
+			pubs = append(pubs, wayland.Invalidation{Global: h.output, SurfaceID: windowSwitcherSurfaceID})
+		}
+	}
+	if r.osd != nil {
+		pubs = append(pubs, r.osd.retheme(r.panelThemeForState(0, cfg, tokens))...)
+	}
+	return pubs
 }
 
 // withPanelRadius keeps a panel's own corner radius, which is fixed rather than
@@ -2097,12 +2453,16 @@ func (r *Registry) SetCapabilities(c wayland.Capabilities) {
 	for _, bar := range r.bars {
 		bar.retheme(bar.themeSnapshot().WithCompositor(c.Blur))
 	}
-	r.retheThemeOpenSurfacesLocked()
+	cfg, tokens := r.effectiveThemeLocked()
+	surfacePubs := r.retheThemeOpenSurfacesLocked(cfg, tokens)
 	outputs := r.outputGlobalsLocked()
 	r.mu.Unlock()
 
 	for _, global := range outputs {
 		r.publishSurface(global, "")
+	}
+	for _, p := range surfacePubs {
+		r.publishSurface(p.Global, p.SurfaceID)
 	}
 }
 

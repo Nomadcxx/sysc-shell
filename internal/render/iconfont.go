@@ -191,6 +191,9 @@ const (
 // bar pill and panel header.
 const iconProton rune = iconGitHubUnread + 1
 
+// The Moonbit orb follows for its theme-tinted bar pill.
+const iconMoonbit rune = iconProton + 1
+
 // batteryLevels is how many level glyphs each state has.
 const batteryLevels = 7
 
@@ -527,6 +530,7 @@ var iconNames = map[string]rune{
 	"github":                iconGitHub,
 	"github-unread":         iconGitHubUnread,
 	"proton":                iconProton,
+	"moonbit":               iconMoonbit,
 }
 
 func init() {

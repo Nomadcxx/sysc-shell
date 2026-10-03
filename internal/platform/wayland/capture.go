@@ -183,12 +183,16 @@ func (o *owner) pumpUntil(ready func() bool) bool {
 	return ready()
 }
 
-// captureBackdrop is captureRegion unless a test replaced the capture.
-func (o *owner) captureBackdrop(out *client.Output, r ui.Rect) *ui.Image {
+// captureBackdrop is captureRegion, or captureOutput for a nil region, unless
+// a test replaced the capture.
+func (o *owner) captureBackdrop(out *client.Output, r *ui.Rect) *ui.Image {
 	if o.capture != nil {
 		return o.capture(out, r)
 	}
-	return o.captureRegion(out, r)
+	if r == nil {
+		return o.captureOutput(out)
+	}
+	return o.captureRegion(out, *r)
 }
 
 // captureRegion copies one output region through zwlr_screencopy_frame_v1 and
@@ -208,13 +212,31 @@ func (o *owner) captureRegion(out *client.Output, r ui.Rect) *ui.Image {
 	if r.W <= 0 || r.H <= 0 {
 		return nil
 	}
-
 	// overlayCursor 0: a frozen pointer in the backdrop is an artefact.
 	frame, err := o.screencopy.CaptureOutputRegion(0, out,
 		int32(r.X), int32(r.Y), int32(r.W), int32(r.H))
 	if err != nil {
 		return nil
 	}
+	return o.captureFrame(frame)
+}
+
+// captureOutput copies a whole output, without the cursor, in output buffer
+// pixels. It fails the way captureRegion does.
+func (o *owner) captureOutput(out *client.Output) *ui.Image {
+	if o == nil || o.screencopy == nil || o.shm == nil || o.display == nil || out == nil {
+		return nil
+	}
+	frame, err := o.screencopy.CaptureOutput(0, out)
+	if err != nil {
+		return nil
+	}
+	return o.captureFrame(frame)
+}
+
+// captureFrame negotiates a buffer for one requested frame, copies into it and
+// returns the normalised image, destroying the frame on every path.
+func (o *owner) captureFrame(frame *screencopy.ZwlrScreencopyFrameV1) *ui.Image {
 	defer func() { _ = frame.Destroy() }()
 
 	var (

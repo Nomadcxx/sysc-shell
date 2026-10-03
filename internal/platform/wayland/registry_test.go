@@ -42,3 +42,43 @@ func TestBackgroundEffectIsKnownButNotRequired(t *testing.T) {
 		}
 	}
 }
+
+// Every global the owner looks up must be in interfaceMaximum, or addGlobal
+// never records it and the lookup silently finds nothing. The data device
+// manager was missing for this reason: the shell's copy, paste and screenshot
+// clipboard never bound on any compositor.
+func TestDataDeviceManagerIsKnownButNotRequired(t *testing.T) {
+	t.Parallel()
+	rs := newRegistryState()
+	if got, ok := rs.addGlobal(9, "wl_data_device_manager", 3); !ok || got != 3 {
+		t.Fatalf("addGlobal = %d/%v, want 3 and recorded", got, ok)
+	}
+	if _, ok := rs.singletons["wl_data_device_manager"]; !ok {
+		t.Fatal("the data device manager was not recorded, so bindSelection finds nothing")
+	}
+	for _, iface := range requiredSingletons {
+		if iface == "wl_data_device_manager" {
+			t.Fatal("a compositor without a clipboard must still start")
+		}
+	}
+}
+
+func TestKeyboardShortcutsInhibitIsKnownButNotRequired(t *testing.T) {
+	t.Parallel()
+	const iface = "zwp_keyboard_shortcuts_inhibit_manager_v1"
+	if got, ok := bindVersion(iface, 9); !ok || got != 1 {
+		t.Fatalf("bindVersion = %d/%v, want 1 and known; addGlobal would drop it", got, ok)
+	}
+	rs := newRegistryState()
+	if got, ok := rs.addGlobal(9, iface, 9); !ok || got != 1 {
+		t.Fatalf("addGlobal = %d/%v, want 1 and recorded", got, ok)
+	}
+	if _, ok := rs.singletons[iface]; !ok {
+		t.Fatal("the inhibitor manager was not recorded, so the selector cannot inhibit")
+	}
+	for _, name := range requiredSingletons {
+		if name == iface {
+			t.Fatal("a compositor without the inhibitor manager must still start")
+		}
+	}
+}

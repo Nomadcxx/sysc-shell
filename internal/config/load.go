@@ -130,6 +130,14 @@ type wireSession struct {
 	Locker *string `json:"locker,omitempty"`
 }
 
+type wireIdle struct {
+	BlankAc        *string `json:"blank_ac,omitempty"`
+	BlankBattery   *string `json:"blank_battery,omitempty"`
+	SuspendAc      *string `json:"suspend_ac,omitempty"`
+	SuspendBattery *string `json:"suspend_battery,omitempty"`
+	MediaExempt    *bool   `json:"media_exempt,omitempty"`
+}
+
 type wirePanels struct {
 	Gap     *int    `json:"gap,omitempty"`
 	Padding *int    `json:"padding,omitempty"`
@@ -189,6 +197,7 @@ type wireConfig struct {
 	ThemeGen      *wireThemeGen        `json:"theme-gen,omitempty"`
 	Accessibility *wireAccessibility   `json:"accessibility,omitempty"`
 	Session       *wireSession         `json:"session,omitempty"`
+	Idle          *wireIdle            `json:"idle,omitempty"`
 	Panels        *wirePanels          `json:"panels,omitempty"`
 	Tray          *wireTrayPreferences `json:"tray,omitempty"`
 	Weather       *wireWeather         `json:"weather,omitempty"`
@@ -316,6 +325,13 @@ func Parse(data []byte) (Config, error) {
 	}
 	if wire.Session != nil {
 		cfg.Session = applySession(cfg.Session, *wire.Session)
+	}
+	if wire.Idle != nil {
+		idle, err := applyIdle(cfg.Idle, *wire.Idle)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Idle = idle
 	}
 	if wire.Panels != nil {
 		panels, err := applyPanels(cfg.Panels, *wire.Panels, "panels")
@@ -1420,7 +1436,7 @@ func applyTheme(base Theme, w wireTheme, path string) (Theme, error) {
 	return out, nil
 }
 
-var themeSources = map[string]bool{"wallpaper": true, "hex": true, "stock": true, "palette": true}
+var themeSources = map[string]bool{"wallpaper": true, "hex": true, "stock": true, "palette": true, "custom": true}
 var themeModes = map[string]bool{"dark": true, "light": true}
 var osdPositions = map[string]bool{
 	"top-left": true, "top-center": true, "top-right": true,
@@ -1432,7 +1448,7 @@ func applyThemeGen(base ThemeConfig, w wireThemeGen, path string) (ThemeConfig, 
 	out := base
 	if w.Source != nil {
 		if !themeSources[*w.Source] {
-			return ThemeConfig{}, pathErr(path+".source", "%q is not one of wallpaper, hex, stock", *w.Source)
+			return ThemeConfig{}, pathErr(path+".source", "%q is not one of wallpaper, hex, stock, palette, custom", *w.Source)
 		}
 		out.Source = *w.Source
 	}
@@ -1456,6 +1472,9 @@ func applyThemeGen(base ThemeConfig, w wireThemeGen, path string) (ThemeConfig, 
 			return ThemeConfig{}, pathErr(path+".seed", "%q is not a known stock theme", out.Seed)
 		}
 	}
+	if out.Source == "custom" && !theme.ValidSlug(out.Seed) {
+		return ThemeConfig{}, pathErr(path+".seed", "%q is not a saved palette id", out.Seed)
+	}
 	return out, nil
 }
 
@@ -1474,6 +1493,33 @@ func applySession(base Session, w wireSession) Session {
 		base.Locker = *w.Locker
 	}
 	return base
+}
+
+func applyIdle(base Idle, w wireIdle) (Idle, error) {
+	out := base
+	for _, f := range []struct {
+		name string
+		in   *string
+		to   *time.Duration
+	}{
+		{"blank_ac", w.BlankAc, &out.BlankAc},
+		{"blank_battery", w.BlankBattery, &out.BlankBattery},
+		{"suspend_ac", w.SuspendAc, &out.SuspendAc},
+		{"suspend_battery", w.SuspendBattery, &out.SuspendBattery},
+	} {
+		if f.in == nil {
+			continue
+		}
+		d, err := time.ParseDuration(*f.in)
+		if err != nil || d < 0 {
+			return Idle{}, pathErr("idle."+f.name, "%q is not a duration such as 5m", *f.in)
+		}
+		*f.to = d
+	}
+	if w.MediaExempt != nil {
+		out.MediaExempt = *w.MediaExempt
+	}
+	return out, nil
 }
 
 func applyWallpaper(base Wallpaper, w wireWallpaper, path string) (Wallpaper, error) {

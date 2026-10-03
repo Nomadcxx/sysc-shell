@@ -29,8 +29,12 @@ type PluginHostOptions struct {
 
 type pluginSlot struct {
 	rt    *plugin.Runtime
-	disp  *plugin.Dispatcher
 	store plugin.StateStore
+	// ctx is cancelled by stopPlugin. The host context stays live across
+	// disable, and the runtime never closes Messages, so this is what lets
+	// pumpRuntime return.
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 type hostedView struct {
@@ -43,6 +47,8 @@ type hostedView struct {
 	Kind       v1.ViewKind
 	Revision   uint64
 	Root       *ui.Node
+	// Events belongs to the rendered revision, not the newer wire tree.
+	Events     map[string][]v1.EventKind
 	tree       *plugin.ViewTree
 	Failed     bool
 	Label      string
@@ -72,6 +78,8 @@ type pluginHost struct {
 	inputs              []v1.InputEvent
 	textOut             plugin.TextOut
 	flushPending        bool
+	flushTimer          *time.Timer
+	flushing            sync.WaitGroup
 	closed              []string
 	panel               *hostedView
 	wallpaperProjection pluginWallpaperProjection
@@ -99,7 +107,7 @@ const pluginBarViewHeight = lint.BarHeight
 var hostPluginCaps = []plugin.Capability{
 	plugin.CapNotifications, plugin.CapPanels, plugin.CapSettings, plugin.CapState,
 	plugin.CapFloatingSurfaces, plugin.CapWallpaper, plugin.CapClipboardRead,
-	plugin.CapOpenURL, plugin.CapClipboardWrite,
+	plugin.CapOpenURL, plugin.CapClipboardWrite, plugin.CapScreenshot,
 }
 
 // BindPlugins discovers enabled plugins and starts one runtime for each.
@@ -135,19 +143,50 @@ func (h *pluginHost) Close() {
 	if h == nil {
 		return
 	}
-	h.stop()
+	h.settleTextFlush()
 	h.mu.Lock()
 	slots := h.slots
+	views := h.views
+	// Keystrokes still waiting on the flush timer have to reach the plugin
+	// before Stop. Clearing the views first is what made flushText drop them.
+	pending := h.textOut.Flush()
+	h.inputs = append(h.inputs, pending...)
 	h.slots = nil
 	h.views = make(map[string]*hostedView)
 	surfaces := h.surfaces
 	h.surfaces = make(map[string]*pluginSurfaceHost)
 	h.mu.Unlock()
+	for i := range pending {
+		v := views[pending[i].ViewID]
+		if v == nil {
+			continue
+		}
+		slot := slots[v.Plugin]
+		if slot == nil {
+			continue
+		}
+		_ = slot.rt.Send(&pending[i])
+	}
 	for _, surface := range surfaces {
 		surface.closeWayland()
 	}
+	// Each plugin is asked to stop and given its grace period before the
+	// host context goes: every plugin process runs under that context, so
+	// cancelling it first killed them all before HostShutdown was sent, and
+	// Notes lost whatever it had not yet autosaved. They stop in parallel so
+	// the slowest grace, not their sum, bounds a shutdown under systemd's
+	// stop timeout.
+	var wg sync.WaitGroup
 	for _, s := range slots {
-		s.rt.Stop()
+		wg.Add(1)
+		go func(s *pluginSlot) {
+			defer wg.Done()
+			s.rt.Stop()
+		}(s)
+	}
+	wg.Wait()
+	h.stop()
+	for _, s := range slots {
 		if h.r.depthClocks != nil {
 			h.r.depthClocks.clearOwner(s.rt.Manifest().ID)
 		}
@@ -248,9 +287,9 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 	if err := rt.Start(h.ctx); err != nil {
 		return err
 	}
-	disp := plugin.NewDispatcher(h.callEnv(id, rt, store))
-	rt.SetCalls(disp)
-	slot := &pluginSlot{rt: rt, disp: disp, store: store}
+	rt.SetCalls(plugin.NewDispatcher(h.callEnv(id, rt, store)))
+	slotCtx, cancel := context.WithCancel(h.ctx)
+	slot := &pluginSlot{rt: rt, store: store, ctx: slotCtx, cancel: cancel}
 	if h.ensureRaceHook != nil {
 		h.ensureRaceHook(id, rt)
 	}
@@ -260,6 +299,7 @@ func (h *pluginHost) ensure(id string, cat plugin.Catalog, registryHeld bool) er
 		// the pre-swap catalog, or another ensure already won the insert.
 		// Stop what was just started rather than let it occupy the slot.
 		h.mu.Unlock()
+		cancel()
 		rt.Stop()
 		return nil
 	}
@@ -312,6 +352,11 @@ func (h *pluginHost) stateValue(id, key string) (json.RawMessage, bool) {
 }
 
 func (h *pluginHost) stopPlugin(id string) {
+	h.settleTextFlush()
+
+	h.surfaceMu.Lock()
+	defer h.surfaceMu.Unlock()
+
 	h.mu.Lock()
 	slot := h.slots[id]
 	delete(h.slots, id)
@@ -322,10 +367,15 @@ func (h *pluginHost) stopPlugin(id string) {
 		}
 	}
 	h.mu.Unlock()
+	// The slot is already gone from the map so teardown cannot open new
+	// views, but closeViewUsing still has the pointer to Send on.
 	for _, vid := range drop {
-		h.closeView(vid)
+		h.closeViewUsing(vid, slot)
 	}
 	if slot != nil {
+		if slot.cancel != nil {
+			slot.cancel()
+		}
 		slot.rt.Stop()
 	}
 	h.clearWallpaperMasks(id)
@@ -340,7 +390,7 @@ func (h *pluginHost) clearWallpaperMasks(id string) {
 func (h *pluginHost) pumpRuntime(slot *pluginSlot) {
 	for {
 		select {
-		case <-h.ctx.Done():
+		case <-slot.ctx.Done():
 			return
 		case msg, ok := <-slot.rt.Messages():
 			if !ok {
@@ -372,7 +422,9 @@ func (h *pluginHost) onMessage(slot *pluginSlot, msg v1.Message) {
 		v, ok := h.views[m.ViewID]
 		h.mu.Unlock()
 		if !ok {
-			slog.Warn("plugin view for unknown placement dropped", "plugin", slot.rt.Manifest().ID, "view_id", m.ViewID)
+			// Snapshots can already be in flight when the host closes a view,
+			// especially while replacing a panel. Discard them like stale patches.
+			slog.Debug("plugin view for unknown placement dropped", "plugin", slot.rt.Manifest().ID, "view_id", m.ViewID)
 			return
 		}
 		h.mu.Lock()
@@ -421,9 +473,6 @@ func (h *pluginHost) onMessage(slot *pluginSlot, msg v1.Message) {
 			Revision: rev, Root: root,
 			Bounds: ui.Rect{W: w, H: ht},
 		})
-	case *v1.HostCall:
-		reply := slot.disp.Handle(h.ctx, m)
-		_ = slot.rt.Send(&reply)
 	}
 }
 
@@ -443,11 +492,13 @@ func (h *pluginHost) applyResult(res plugin.Result) {
 			"revision", res.Revision, "err", res.Err)
 		v.Failed = true
 		v.Root = nil
+		v.Events = nil
 		v.Label = res.Err.Error()
 	} else {
 		stampPluginActions(res.Root, res.ViewID)
 		v.Failed = false
 		v.Root = res.Root
+		v.Events = res.Events
 		v.Label = ""
 		queuePluginImages(h, res.Root)
 	}
@@ -711,13 +762,23 @@ func (h *pluginHost) reopenViews(pluginID string) {
 }
 
 func (h *pluginHost) closeView(id string) {
+	h.closeViewUsing(id, nil)
+}
+
+func (h *pluginHost) closeViewUsing(id string, slot *pluginSlot) {
 	h.mu.Lock()
 	v, ok := h.views[id]
 	if !ok {
 		h.mu.Unlock()
 		return
 	}
-	slot := h.slots[v.Plugin]
+	if slot == nil {
+		slot = h.slots[v.Plugin]
+	}
+	// Text typed in the last frame is still waiting for the flush timer,
+	// which drops changes for a view that has gone. It goes out first.
+	pending := h.textOut.Take(id)
+	h.inputs = append(h.inputs, pending...)
 	delete(h.views, id)
 	surface := h.surfaces[id]
 	delete(h.surfaces, id)
@@ -730,6 +791,9 @@ func (h *pluginHost) closeView(id string) {
 		surface.closeWayland()
 	}
 	if slot != nil {
+		for i := range pending {
+			_ = slot.rt.Send(&pending[i])
+		}
 		_ = slot.rt.Send(&v1.ViewClose{ViewID: id})
 	}
 }
@@ -826,10 +890,7 @@ func (h *pluginHost) callEnv(id string, rt *plugin.Runtime, store plugin.StateSt
 			return h.openFloatingSurface(ctx, id, p)
 		},
 		CloseSurface: func(ctx context.Context, p v1.SurfaceCloseParams) error {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			return h.closeFloatingSurface(id, p)
+			return h.closeFloatingSurface(ctx, id, p)
 		},
 		SurfacePin: func(ctx context.Context, p v1.SurfacePinParams) error {
 			return h.pinFloatingSurface(ctx, id, p)
@@ -839,7 +900,26 @@ func (h *pluginHost) callEnv(id string, rt *plugin.Runtime, store plugin.StateSt
 			return h.registerWallpaperMask(ctx, id, p)
 		},
 		ClipboardRead: readSystemClipboard,
+
+		Screenshot:          h.screenshotStart,
+		ScreenshotDirectory: h.screenshotDirectory,
 	}
+}
+
+// screenshotStart hands a capture to the registry. It runs in the dispatcher's
+// own goroutine, never under Registry.mu, which Screenshot takes itself.
+func (h *pluginHost) screenshotStart(ctx context.Context, mode string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return h.r.Screenshot(mode)
+}
+
+func (h *pluginHost) screenshotDirectory(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return h.r.screenshotDirectory(), nil
 }
 
 func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResult, error) {
@@ -880,7 +960,9 @@ func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResul
 			// right edge of smaller screens (sysc-578).
 			trig = h.r.triggerLocked(global, bar.connector())
 			trig.BarZone = exclusiveBarZone(bar)
-			if anchor > 0 {
+			// A center panel keeps the zero anchor, so Align centres it on
+			// the output under the wordmark.
+			if anchor > 0 && spec.Placement != plugin.PlacementCenter {
 				trig.AnchorX = anchor
 			}
 			if trig.OutW > 0 && trig.OutH > 0 {
@@ -966,7 +1048,7 @@ func (h *pluginHost) closePanel(pluginID string, p v1.PanelParams) error {
 func (h *pluginHost) closePanelOwned(pluginID string, p v1.PanelParams, global uint32, requireOutput bool) error {
 	h.r.mu.Lock()
 	where, open := h.r.panels.Output(PanelPlugin)
-	owns := open && h.r.roots.owns(panelRoot(PanelPlugin))
+	owns := open && h.r.panelOpenLocked(PanelPlugin)
 	if requireOutput {
 		owns = owns && where == global
 	}
@@ -1012,7 +1094,7 @@ func (h *pluginHost) snapshotPanelViewIDs() []string {
 func (h *pluginHost) dropPanelViews(ids []string) {
 	h.r.mu.Lock()
 	live := ""
-	if _, open := h.r.panels.Output(PanelPlugin); open && h.r.roots.owns(panelRoot(PanelPlugin)) {
+	if _, open := h.r.panels.Output(PanelPlugin); open && h.r.panelOpenLocked(PanelPlugin) {
 		h.mu.Lock()
 		if h.panel != nil {
 			live = h.panel.ID
@@ -1200,14 +1282,21 @@ func (h *pluginHost) deliver(hit pluginHit, event v1.EventKind, button v1.Pointe
 	h.mu.Lock()
 	v, ok := h.views[hit.ViewID]
 	var slot *pluginSlot
+	declared := false
 	if ok {
 		slot = h.slots[v.Plugin]
-		if anchorX > 0 {
+		declared = pluginViewAcceptsEvent(v, hit.Node, event)
+		// Some wire snapshots have no prepared event map. Fall back to the
+		// declarative tree only when it is the revision currently on screen.
+		if !declared && v.tree != nil && v.tree.Revision == v.Revision {
+			declared = pluginNodeDeclaresEvent(v.tree.Root, hit.Node, event)
+		}
+		if declared && anchorX > 0 {
 			h.lastAnchor[v.Plugin] = anchorX
 		}
 	}
 	var toSend []v1.InputEvent
-	if ok {
+	if ok && declared {
 		ev := v1.InputEvent{
 			ViewID: hit.ViewID, Revision: v.Revision, Node: hit.Node,
 			Event: event, Button: button, Text: text, Output: v.Output, Generation: v.Generation,
@@ -1219,13 +1308,69 @@ func (h *pluginHost) deliver(hit pluginHit, event v1.EventKind, button v1.Pointe
 		}
 	}
 	h.mu.Unlock()
-	if !ok || slot == nil {
+	if !ok || slot == nil || !declared {
 		return false
 	}
 	for i := range toSend {
 		_ = slot.rt.Send(&toSend[i])
 	}
 	return true
+}
+
+func pluginViewAcceptsEvent(view *hostedView, node string, event v1.EventKind) bool {
+	if view == nil {
+		return false
+	}
+	if event == v1.EventActivate {
+		if view.Kind == v1.ViewBar && view.Failed && node == "camera" {
+			// The failed-view placeholder has a shell-created diagnostic action.
+			return true
+		}
+		if view.Kind != v1.ViewFloating {
+			return pluginEventDeclared(view.Events, node, event)
+		}
+		switch node {
+		case "surface-pin", "surface-close":
+			// Sticky-note chrome is synthesized by the shell and handled by the
+			// plugin through these two host-provided activation IDs.
+			return true
+		}
+	}
+	if view.Plugin == notesPluginID && view.Kind == v1.ViewPanel && view.Entry == "panel" &&
+		node == "launcher-capture" && event == v1.EventSubmit {
+		// The launcher delivers captured text without adding a visible node.
+		return true
+	}
+	return pluginEventDeclared(view.Events, node, event)
+}
+
+func pluginEventDeclared(events map[string][]v1.EventKind, node string, event v1.EventKind) bool {
+	for _, declared := range events[node] {
+		if declared == event {
+			return true
+		}
+	}
+	return false
+}
+
+func pluginNodeDeclaresEvent(root *v1.Node, id string, event v1.EventKind) bool {
+	if root == nil {
+		return false
+	}
+	if root.ID == id {
+		for _, declared := range root.Events {
+			if declared == event {
+				return true
+			}
+		}
+		return false
+	}
+	for _, child := range root.Children {
+		if pluginNodeDeclaresEvent(child, id, event) {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *pluginHost) deliverShortcut(key string, modifiers []string) bool {
@@ -1283,12 +1428,32 @@ func (h *pluginHost) scheduleTextFlushLocked() {
 		return
 	}
 	h.flushPending = true
-	time.AfterFunc(time.Second/30, h.flushText)
+	h.flushing.Add(1)
+	h.flushTimer = time.AfterFunc(time.Second/30, func() {
+		defer h.flushing.Done()
+		h.flushText()
+	})
+}
+
+// settleTextFlush stops a timer that has not fired and waits for one that
+// has, so Stop cannot race an in-flight Send. Must not hold h.mu.
+func (h *pluginHost) settleTextFlush() {
+	h.mu.Lock()
+	if h.flushTimer != nil && h.flushPending {
+		if h.flushTimer.Stop() {
+			h.flushing.Done()
+			h.flushPending = false
+		}
+		h.flushTimer = nil
+	}
+	h.mu.Unlock()
+	h.flushing.Wait()
 }
 
 func (h *pluginHost) flushText() {
 	h.mu.Lock()
 	h.flushPending = false
+	h.flushTimer = nil
 	pending := h.textOut.Flush()
 	h.inputs = append(h.inputs, pending...)
 	slots := make([]*pluginSlot, 0, len(pending))
@@ -1565,6 +1730,19 @@ func (h *pluginHost) retryLocked(id string) error {
 		return h.enableLocked(id, true)
 	}
 	h.r.mu.Unlock()
+	h.settleTextFlush()
+	h.mu.Lock()
+	var pending []v1.InputEvent
+	for _, v := range h.views {
+		if v.Plugin == id {
+			pending = append(pending, h.textOut.Take(v.ID)...)
+		}
+	}
+	h.inputs = append(h.inputs, pending...)
+	h.mu.Unlock()
+	for i := range pending {
+		_ = slot.rt.Send(&pending[i])
+	}
 	err := slot.rt.Retry(h.ctx)
 	h.r.mu.Lock()
 	return err

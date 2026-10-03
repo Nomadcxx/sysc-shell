@@ -31,8 +31,9 @@
   over re-deriving state by reading documents.
 - Claim work with `bd update <id> --status in_progress`, close it with `bd close <id> --reason "..."`.
   Record discovered work as `bd create "..." --deps discovered-from:<id>`.
-- `.beads/` is gitignored and lives only in the primary checkout `/home/nomadx/sysc-shell`. bd's
-  pre-commit hook still exports `issues.jsonl` there, and its `git add` is a no-op. Never force-add it.
+- `.beads/` is gitignored; the SQLite database lives only in the primary checkout
+  `/home/nomadx/sysc-shell`. `.beads/issues.jsonl` is already tracked and the pre-commit hook exports
+  it. Review and commit its normal changes; never force-add ignored files.
 - **Status lives in bd, not in documents.** A design or plan states its decisions; bd states whether the
   work is done, in flight, or blocked. Do not duplicate status into a document header, where it drifts.
 - Cross-repository gates are modelled as issues in this repository — `sysc-metrics` needing a release tag,

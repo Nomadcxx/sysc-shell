@@ -327,6 +327,9 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 	case ui.KindRadialGauge:
 		return paintRadialGauge(c, n, text, style)
 
+	case ui.KindSpinner:
+		return paintSpinner(c, n, style)
+
 	case ui.KindWordmark:
 		return paintWordmark(c, n, style)
 
@@ -436,6 +439,10 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 
 	// Segmented rows own allocation, not chrome: each segment paints itself.
 	case ui.KindColumn, ui.KindDropZone, ui.KindSegmented, ui.KindStack:
+		// A drop zone that names a fill is a card whose contents are droppable.
+		if n.Kind == ui.KindDropZone && n.Fill != ui.FillNone {
+			return paintChrome(c, n, text, style, size, style.Capsule, capsuleInherit(style, n))
+		}
 		for i, child := range n.Children {
 			if child == nil {
 				return fmt.Errorf("nil child %d", i)
@@ -463,7 +470,10 @@ func paintNodeContent(c *Canvas, n *ui.Node, text *TextRenderer, style Style, si
 		return nil
 
 	case ui.KindTab:
-		return paintText(c, n.Text, style.Scale120.PhysicalRect(n.Bounds), text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline)
+		box := style.Scale120.PhysicalRect(n.Bounds)
+		radius := chromeRadius(style, nodeRadius(style, n, 0), box)
+		paintInteraction(c, n, box, radius, style.Foreground, style)
+		return paintText(c, n.Text, box, text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline)
 
 	default:
 		return fmt.Errorf("unsupported kind %d", n.Kind)
@@ -653,7 +663,9 @@ func paintSlider(c *Canvas, n *ui.Node, style Style) {
 	if kx+knob > box.X+box.W {
 		kx = box.X + box.W - knob
 	}
-	c.FillRounded(ui.Rect{X: kx, Y: box.Y + (box.H-knob)/2, W: knob, H: knob}, knob/2, style.accent())
+	c.FillRounded(ui.Rect{X: kx, Y: box.Y + (box.H-knob)/2, W: knob, H: knob},
+		ui.MorphRadius(knob/2, n.PressProgress), style.accent())
+	paintInteraction(c, n, box, box.H/2, style.Foreground, style)
 }
 
 func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
@@ -666,8 +678,17 @@ func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 			field.H = first.Y - box.Y
 		}
 	}
-	c.FillRounded(field, style.Scale120.Physical(6), style.Track)
-	_ = paintText(c, n.Text, field, text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline)
+	radius := style.Scale120.Physical(6)
+	surface := style.containerHighest()
+	c.FillRounded(field, radius, surface)
+	if boundary := style.outlineVariant(); boundary.A > 0 {
+		c.StrokeRounded(field, radius, max(style.Scale120.Physical(1), 1), boundary)
+	}
+	pad := style.Scale120.Physical(n.Padding)
+	textBox := ui.Rect{X: field.X + pad, Y: field.Y + pad,
+		W: max(field.W-2*pad, 0), H: max(field.H-2*pad, 0)}
+	textBox = centreLine(textBox, text, style, n)
+	_ = paintText(c, n.Text, textBox, text, style, textSpec(style, n), n.Tabular, n.Tone, n.Underline)
 	paintMenuChevron(c, n, text, style)
 	if len(n.Children) == 0 {
 		return nil
@@ -677,7 +698,7 @@ func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 	if ink, ok := style.shadowInk(); ok {
 		c.DrawShadow(list, style.Scale120.Physical(6), style.shadowSpreadFor(), ink)
 	}
-	c.FillRounded(list, style.Scale120.Physical(6), style.Background)
+	c.FillRounded(list, radius, surface)
 	for _, child := range n.Children {
 		// An option is a run of label text, and drawing it here rather than
 		// through paintNode keeps the list one pass. A picker's filter well
@@ -693,7 +714,12 @@ func paintMenu(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 		if child.Value != 0 {
 			c.FillRounded(cb, style.Scale120.Physical(4), style.accent())
 		}
-		_ = paintText(c, child.Text, cb, text, style, textSpec(style, child), child.Tabular, child.Tone, child.Underline)
+		if child.State != 0 {
+			paintInteraction(c, child, cb, style.Scale120.Physical(4), style.Foreground, style)
+		}
+		pad := style.Scale120.Physical(n.Padding)
+		option := ui.Rect{X: cb.X + pad, Y: cb.Y, W: max(cb.W-2*pad, 0), H: cb.H}
+		_ = paintText(c, child.Text, option, text, style, textSpec(style, child), child.Tabular, child.Tone, child.Underline)
 	}
 	return nil
 }
@@ -706,8 +732,7 @@ const menuChevronInset = 6
 // hugs its label already reads as a chip; one given a column to fill does
 // not, because it then has the fill, the radius and the left-aligned text of
 // a text field, and only a press tells them apart. Where the label leaves no
-// room the glyph is withheld rather than drawn over the text, so every
-// menu that hugs keeps the shape it has today.
+// room the glyph is withheld rather than drawn over the text.
 func menuChevronBox(n *ui.Node, labelW int, iconSize int) (ui.Rect, bool) {
 	if n == nil || n.Bounds.W <= 0 || iconSize <= 0 {
 		return ui.Rect{}, false
@@ -717,11 +742,12 @@ func menuChevronBox(n *ui.Node, labelW int, iconSize int) (ui.Rect, bool) {
 		height = n.Children[0].Bounds.Y - n.Bounds.Y
 	}
 	size := min(iconSize, height)
-	if size <= 0 || n.Bounds.W-labelW < size+2*menuChevronInset {
+	padding := min(max(n.Padding, 0), max(n.Bounds.W/2, 0))
+	if size <= 0 || n.Bounds.W-labelW < size+2*menuChevronInset+2*padding {
 		return ui.Rect{}, false
 	}
 	return ui.Rect{
-		X: n.Bounds.X + n.Bounds.W - size - menuChevronInset,
+		X: n.Bounds.X + n.Bounds.W - size - menuChevronInset - padding,
 		Y: n.Bounds.Y + (height-size)/2,
 		W: size, H: size,
 	}, true
@@ -738,7 +764,8 @@ func paintMenuChevron(c *Canvas, n *ui.Node, text *TextRenderer, style Style) {
 		return
 	}
 	glyph := &ui.Node{Kind: ui.KindIcon, Icon: "expand_more"}
-	box, ok := menuChevronBox(n, style.Scale120.Logical(labelW), ui.IconSize(glyph))
+	labelLogical := style.Scale120.Logical(labelW)
+	box, ok := menuChevronBox(n, labelLogical, ui.IconSize(glyph))
 	if !ok {
 		return
 	}
@@ -774,10 +801,25 @@ func FieldTextRect(n *ui.Node) ui.Rect {
 	}
 }
 
+// multilineFieldRadius is a multiline well's corner, in logical pixels.
+const multilineFieldRadius = 12
+
+// FieldRadius is the physical corner radius of a text field's well at box,
+// its physical bounds. A search well is a pill, not a 6px-radius box. A
+// multiline field is a page, and a stadium that tall is an oval the text
+// spills out of. The focus ring follows the same silhouette, so it is
+// exported rather than re-derived by the host.
+func FieldRadius(n *ui.Node, box ui.Rect, scale ui.Scale120) int {
+	radius := min(box.W, box.H) / 2
+	if n.Multiline {
+		radius = min(radius, scale.Physical(multilineFieldRadius))
+	}
+	return radius
+}
+
 func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int) error {
 	box := style.Scale120.PhysicalRect(n.Bounds)
-	// Stadium: a search well is a pill, not a 6px-radius box.
-	radius := box.H / 2
+	radius := FieldRadius(n, box, style.Scale120)
 	well := style.Capsule
 	if well.A == 0 {
 		well = style.Track
@@ -786,7 +828,11 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 	// A field is a control, so its boundary is the outline token. It used to
 	// stroke Rim, which is the floating panel's own edge: the well and the
 	// panel it sits on drew the same colour, and neither read as deliberate.
-	if boundary := style.outline(); boundary.A > 0 {
+	boundary := style.outlineVariant()
+	if n.Editing {
+		boundary = style.outline()
+	}
+	if boundary.A > 0 {
 		c.StrokeRounded(box, radius, max(style.Scale120.Physical(1), 1), boundary)
 	}
 	searchMark := n.Name == "Search" && !n.Multiline
@@ -807,8 +853,15 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 	if !n.Multiline {
 		phys = centreLine(phys, text, style, n)
 	}
+	// The field narrows the clip to its text box within whatever clip is
+	// already in force: replacing it let a field scrolled half out of a
+	// scroll view paint its value past the view's edge.
 	prev := c.restrict
-	c.restrict = phys
+	visible := intersectClip(prev, phys)
+	if visible.W <= 0 || visible.H <= 0 {
+		return nil // scrolled wholly out: an empty clip would read as none
+	}
+	c.restrict = visible
 	defer func() { c.restrict = prev }()
 	if n.Multiline {
 		return paintMultilineField(c, n, text, style, size, phys)
@@ -865,7 +918,9 @@ func paintTextField(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size
 		}
 	}
 	caret := ui.Rect{X: origin.X + prefixW, Y: origin.Y, W: 1, H: origin.H}
-	fillRect(c, caret, style.accent())
+	if n.Editing {
+		fillRect(c, caret, style.accent())
+	}
 	return nil
 }
 
@@ -972,7 +1027,9 @@ func paintMultilineField(c *Canvas, n *ui.Node, text *TextRenderer, style Style,
 		}
 	}
 	caret := ui.Rect{X: phys.X + prefixW, Y: phys.Y + (caretLine-scrollY)*lineH, W: 1, H: lineH}
-	fillRect(c, caret, style.accent())
+	if n.Editing {
+		fillRect(c, caret, style.accent())
+	}
 	return nil
 }
 
@@ -1132,14 +1189,7 @@ func paintTextMarquee(c *Canvas, s string, box ui.Rect, text *TextRenderer, styl
 		offset += cycle
 	}
 	old := c.restrict
-	clip := box
-	if old.W > 0 && old.H > 0 {
-		x0 := max(old.X, box.X)
-		y0 := max(old.Y, box.Y)
-		x1 := min(old.X+old.W, box.X+box.W)
-		y1 := min(old.Y+old.H, box.Y+box.H)
-		clip = ui.Rect{X: x0, Y: y0, W: max(x1-x0, 0), H: max(y1-y0, 0)}
-	}
+	clip := intersectClip(old, box)
 	if clip.W <= 0 || clip.H <= 0 {
 		return nil
 	}
@@ -1244,16 +1294,9 @@ func fillPair(style Style, fill ui.Fill, base Color) (Color, Color) {
 		return style.Error, style.onError()
 	case ui.FillErrorContainer:
 		return style.errorContainer()
-	case ui.FillNoteSun:
-		return noteWash(style.Tertiary, style.Capsule, style.Foreground), style.Foreground
-	case ui.FillNoteMint:
-		return noteWash(style.Secondary, style.Capsule, style.Foreground), style.Foreground
-	case ui.FillNoteSky:
-		return noteWash(style.Accent, style.Capsule, style.Foreground), style.Foreground
-	case ui.FillNoteRose:
-		return noteWash(style.Error, style.Capsule, style.Foreground), style.Foreground
-	case ui.FillNoteLilac:
-		return noteWash(style.Tertiary, noteWash(style.Accent, style.Capsule, style.Foreground), style.Foreground), style.Foreground
+	case ui.FillNoteSun, ui.FillNoteMint, ui.FillNoteSky, ui.FillNoteRose, ui.FillNoteLilac:
+		paper, ink, _ := PaperPair(fill)
+		return paper, ink
 	case ui.FillScrim:
 		// The wash is the scrim token at the shield's alpha, so the content
 		// behind it survives the composite. Contents keep the surface
@@ -1335,6 +1378,51 @@ func stateLayer(fg Color, state ui.Interaction) Color {
 	return Color{R: fg.R, G: fg.G, B: fg.B, A: uint8(math.Round(float64(fg.A) * alpha))}
 }
 
+// interactionLayer resolves one state wash from the render copy's progress.
+// A state without an animator paints at full strength; animated hosts clear
+// the state bit when progress is zero.
+func interactionLayer(fg Color, n *ui.Node) Color {
+	if n.State.Has(ui.StateDisabled) {
+		return Color{}
+	}
+	alpha := 0.0
+	if n.State.Has(ui.StateHovered) {
+		p := min(max(n.HoverProgress, 0), 1)
+		if p == 0 {
+			p = 1
+		}
+		alpha = max(alpha, hoverLayerAlpha*p)
+	}
+	if n.State.Has(ui.StatePressed) {
+		p := min(max(n.PressProgress, 0), 1)
+		if p == 0 {
+			p = 1
+		}
+		alpha = max(alpha, pressedLayerAlpha*p)
+	}
+	return withAlpha(fg, alpha)
+}
+
+// paintInteraction overlays the animated state wash and any press ripple on
+// the node's physical box. Ripple origin is converted as an output point, then
+// made local to the mask so offset controls and fractional scales align.
+func paintInteraction(c *Canvas, n *ui.Node, box ui.Rect, radius int, fg Color, style Style) {
+	if layer := interactionLayer(fg, n); layer.A > 0 {
+		blendMask(c, RoundedMask(radius, box.W, box.H), box.X, box.Y, layer)
+	}
+	if n.Ripple.Phase <= 0 || n.Ripple.Phase >= 1 {
+		return
+	}
+	logicalR, alpha := ui.RippleDisc(n.Ripple.Phase, n.Bounds, n.Ripple.X, n.Ripple.Y)
+	if alpha <= 0 || logicalR <= 0 {
+		return
+	}
+	cx := style.Scale120.Physical(n.Ripple.X) - box.X
+	cy := style.Scale120.Physical(n.Ripple.Y) - box.Y
+	disc := logicalR * float64(style.Scale120) / 120
+	blendMask(c, RippleMask(box.W, box.H, radius, cx, cy, disc), box.X, box.Y, withAlpha(fg, alpha))
+}
+
 // paintChrome draws one filled, optionally outlined, optionally state-layered
 // rounded node and then its contents. Buttons, capsules, and cards share it so
 // a control cannot acquire chrome that differs from the pill beside it.
@@ -1354,6 +1442,7 @@ func sourceMarkerColor(value string) (Color, bool) {
 func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int, base Color, radiusLogical int) error {
 	box := style.Scale120.PhysicalRect(n.Bounds)
 	radius := chromeRadius(style, nodeRadius(style, n, radiusLogical), box)
+	radius = ui.MorphRadius(radius, n.PressProgress)
 	fill, fg := chromeFill(style, n, base)
 	mask := RoundedMask(radius, box.W, box.H)
 	if stops := resolveGradient(n, style); fill.A > 0 && stops != nil {
@@ -1392,7 +1481,7 @@ func paintChrome(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size in
 	}
 	// The layer sits over the resolved fill and under the contents, so a label
 	// never dims along with its own hover wash.
-	blendMask(c, mask, box.X, box.Y, stateLayer(fg, n.State))
+	paintInteraction(c, n, box, radius, fg, style)
 	if n.State.Has(ui.StateDisabled) {
 		fg = Color{R: fg.R, G: fg.G, B: fg.B, A: uint8(math.Round(float64(fg.A) * disabledForeground))}
 	}
@@ -1581,23 +1670,6 @@ func wash(accent, surface Color) Color {
 		return uint8((uint32(over)*a + uint32(under)*ia) / 255)
 	}
 	return Color{R: mix(accent.R, surface.R), G: mix(accent.G, surface.G), B: mix(accent.B, surface.B), A: 0xff}
-}
-
-// noteWash keeps as much tint as possible while preserving normal-text
-// contrast against the foreground paired with the surface.
-func noteWash(tint, surface, foreground Color) Color {
-	const maxAlpha uint32 = 64
-	toTheme := func(c Color) theme.Color { return theme.Color{R: c.R, G: c.G, B: c.B, A: c.A} }
-	for alpha := maxAlpha; ; alpha-- {
-		inv := uint32(255) - alpha
-		mix := func(over, under uint8) uint8 {
-			return uint8((uint32(over)*alpha + uint32(under)*inv) / 255)
-		}
-		candidate := Color{R: mix(tint.R, surface.R), G: mix(tint.G, surface.G), B: mix(tint.B, surface.B), A: 0xff}
-		if theme.ContrastRatio(toTheme(foreground), toTheme(candidate)) >= theme.TextRatio(false) || alpha == 0 {
-			return candidate
-		}
-	}
 }
 
 // paintSearchMark draws a magnifying glass in the leading well. There is no
@@ -1800,4 +1872,15 @@ func fillEdgeFade(c *Canvas, r ui.Rect, surface Color) {
 			blendPixel(row[x*4:x*4+4], src, uint32(col.A))
 		}
 	}
+}
+
+// intersectClip narrows the clip in force to box. A zero clip means none is in
+// force, so box alone applies.
+func intersectClip(clip, box ui.Rect) ui.Rect {
+	if clip.W <= 0 || clip.H <= 0 {
+		return box
+	}
+	x0, y0 := max(clip.X, box.X), max(clip.Y, box.Y)
+	x1, y1 := min(clip.X+clip.W, box.X+box.W), min(clip.Y+clip.H, box.Y+box.H)
+	return ui.Rect{X: x0, Y: y0, W: max(x1-x0, 0), H: max(y1-y0, 0)}
 }

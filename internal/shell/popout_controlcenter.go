@@ -244,10 +244,20 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 		return false
 	}
 	if requested, ok := strings.CutPrefix(n.Action, "settings-section:"); ok {
+		r.closePanelLocked(h.id)
 		return r.openSettingsAtLocked(h.output, requested)
 	}
 	if strings.HasPrefix(n.Action, "media:") {
 		return h.activateMedia(r, n)
+	}
+	if id, ok := strings.CutPrefix(n.Action, "cc:brightness:"); ok {
+		brightness := r.brightness
+		if brightness == nil {
+			return false
+		}
+		level := int(n.Value)
+		r.scheduleControl(h, func() error { return brightness.SetDisplay(id, level) })
+		return true
 	}
 	var target PanelID
 	switch n.Action {
@@ -301,7 +311,7 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 		level := int(n.Value)
 		r.scheduleControl(h, func() error { return brightness.Set(level) })
 		return true
-	case "session-lock", "session-logout", "session-suspend", "session-reboot", "session-poweroff":
+	case "session-lock", "session-logout", "session-suspend", "session-display-off", "session-reboot", "session-poweroff":
 		argv := sessionArgv(n.Action, r.cfg.Session.Locker)
 		run := r.runArgv
 		r.scheduleControl(h, func() error { return run(argv) })
@@ -329,6 +339,9 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 		BarEdge: h.place.BarEdge, BarZone: h.place.BarZone,
 		OutW: h.place.Output.W, OutH: h.place.Output.H,
 	}
+	// These controls navigate to a different panel; retire the chooser while
+	// leaving any other open members of the panel group in place.
+	r.closePanelLocked(h.id)
 	_ = r.openPanelRootLocked(target, h.output, trig)
 	return true
 }
@@ -341,6 +354,7 @@ func (r *Registry) setCaffeine(h *PanelHost, on bool) {
 			return
 		}
 		r.inhibitWanted = true
+		r.pushIdleInputsLocked()
 		if r.inhibit != nil || r.inhibitStarting {
 			return
 		}
@@ -352,6 +366,7 @@ func (r *Registry) setCaffeine(h *PanelHost, on bool) {
 			r.inhibitStarting = false
 			if err != nil {
 				r.inhibitWanted = false
+				r.pushIdleInputsLocked()
 				r.mu.Unlock()
 				return err
 			}
@@ -375,6 +390,7 @@ func (r *Registry) setCaffeine(h *PanelHost, on bool) {
 	}
 
 	r.inhibitWanted = false
+	r.pushIdleInputsLocked()
 	if r.inhibit == nil {
 		return
 	}

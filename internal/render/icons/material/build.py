@@ -175,6 +175,11 @@ ICONS = [
     # Material Symbols has no "emoji_emotions"; "mood" is its smiley.
     "calculate",
     "mood",
+    # Notes plugin.
+    "sticky_note_2",
+    "push_pin",
+    "star",
+    "note_add",
 ]
 
 # The pinned source renamed the older smartphone ligature. Keep the shell's

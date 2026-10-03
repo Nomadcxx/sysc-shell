@@ -1,6 +1,6 @@
 # Design and Plan Register
 
-Last updated: 2026-09-27.
+Last updated: 2026-09-30.
 
 Every design, plan, and handover this project has produced, with where it lives and whether it is still
 live. Add a row here in the same commit that adds a document. A document that is not in this register is
@@ -598,6 +598,9 @@ Supersedes M6 design D7's deferral of a catalog, installer, updater, and removal
 | `2026-09-29-screenshot-pipeline-design.md` | design | `sysc-696`, `sysc-697`. Restates the screenshot commission's §5 defaults against `07d59fe` and records four tree-forced changes: the IPC `screenshot` reply acknowledges the start and the result arrives as a toast (the IPC client's 2 s deadline cannot wait on a region drag); feedback is a sysc-notify producer publish, not a shell-local toast (the toast host paints only sysc-notify records, and sysc-notify runs on the desktop); the image selection waits for an owner acknowledgement before the selector unmaps (Smithay refuses `set_selection` from an unfocused client); and the directory override and config domain are deferred. Selector follows DMS's confirm-on-Enter default. |
 | `2026-09-29-screenshot-pipeline.md` | plan | Eight tasks for the screenshot design: niri `ScreenshotScreen`/`ScreenshotWindow` wire types; the subscribe-first `ScreenshotCaptured` wait; pure path/PNG/crop/selector helpers in `internal/screenshot`; `AuxSpec.Freeze` over a shared `captureFrame` plus a crosshair cursor; an image `SelectionRequest` with a `Done` acknowledgement; the IPC verb with toasts; the per-output selector surfaces; and the laptop live gate. |
 | `2026-09-29-theming-personalization-w1-completion-handover.md` | completion-handover | Snapshot of the **uncommitted** tree `sysc-715`/`sysc-780` in the `feature/theming-personalization` worktree: change map, gate output as measured (four baseline shell failures named), two audit findings fixed with regression tests, accepted risks, and the live-Niri commission left open for the assessing agent. |
+| `2026-09-29-window-management-design.md` | design | Approved 2026-09-29. Reuses exact Niri window IDs; defers the foreign-toplevel binding; adds a focused-output MRU switcher, persistent overview state and verified overview/workspace actions. |
+| `2026-09-29-window-management.md` | plan | Six test-first tasks for overview events/actions, focused-output switcher ordering and overlay/IPC, and exact-ID moves from the running-app menu, followed by package/full gates and a one-output live check. |
+| `2026-09-30-window-management-completion-handover.md` | completion-handover | Snapshot on `5f45a7c`: gate output, read-only DP-1 layers, deferred live focus/move/multi-output acceptance and Beads state. |
 
 ## Sibling repositories
 

@@ -10,10 +10,12 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/plugin/store"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
 	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	tray "github.com/Nomadcxx/sysc-tray/protocol"
 )
 
 func TestSettingsSidebarSectionsAndFocus(t *testing.T) {
@@ -280,7 +282,7 @@ func TestSettingsRowsCarryDescriptionsAndGroupHeadings(t *testing.T) {
 		if n.TextRole == theme.RoleCaption && n.Tone == ui.ToneSubtle {
 			caption = n
 		}
-		if n.TextRole == theme.RoleLabel {
+		if n.TextRole == theme.RoleSection {
 			heading = n
 		}
 	}
@@ -293,6 +295,372 @@ func TestSettingsRowsCarryDescriptionsAndGroupHeadings(t *testing.T) {
 	if findScroll(h.root) == nil {
 		t.Error("the section does not scroll")
 	}
+}
+
+func TestAppearancePagePolish(t *testing.T) {
+	t.Parallel()
+	h := &PanelHost{
+		id: PanelSettings, set: settings.Default(), draft: config.Default(),
+		menus: map[string]*Menu{}, fields: map[string]*ui.Field{},
+	}
+	h.place.Panel = ui.Rect{W: 1105, H: 760}
+	h.set = settings.DefaultFor(h.draft)
+	h.root = settingsTree(nil, h)
+
+	for _, want := range []string{
+		"theme and interface",
+		"Choose a palette, then adjust type, surfaces, transparency, and motion.",
+		"colours & mode",
+		"style & layout",
+		"typography & fonts",
+		"corners & shape",
+		"animation",
+		"transparency",
+		"blur & elevation",
+		"Visual preset",
+		"Control density",
+		"Monospace font",
+	} {
+		if !strings.Contains(renderText(h.root), want) {
+			t.Errorf("Appearance page is missing %q", want)
+		}
+	}
+
+	var palette, mode *ui.Node
+	pageHeading := false
+	for _, n := range walk(h.root) {
+		if isSettingsPageHeading(n, "Appearance") {
+			pageHeading = true
+		}
+		if n.Action == "set:appearance.palette" && n.Kind == ui.KindMenu {
+			palette = n
+		}
+		if n.Name == "Colour mode" && n.Kind == ui.KindSegmented {
+			mode = n
+		}
+		if group := map[string]bool{
+			"colours & mode": true, "style & layout": true, "typography & fonts": true,
+			"corners & shape": true, "animation": true, "transparency": true,
+			"blur & elevation": true,
+		}[n.Text]; group {
+			wantRole := theme.RoleSection
+			if n.TextRole != wantRole || n.Bold || theme.TypeFor(n.TextRole).Weight < 700 || n.Tone != ui.ToneAccent {
+				t.Errorf("Appearance heading %q has role=%v bold=%v weight=%d tone=%v, want semantic bold/accent",
+					n.Text, n.TextRole, n.Bold, theme.TypeFor(n.TextRole).Weight, n.Tone)
+			}
+		}
+	}
+	if palette == nil {
+		t.Fatal("Appearance palette did not render as a dropdown")
+	}
+	if !pageHeading {
+		t.Fatal("Appearance page heading is not double-size, bold, and accented")
+	}
+	if palette.Width != 240 {
+		t.Errorf("Appearance palette width = %d, want fixed width 240", palette.Width)
+	}
+	if want := h.metrics().ButtonPadding; palette.Padding != want {
+		t.Errorf("Appearance dropdown padding = %d, want %d", palette.Padding, want)
+	}
+	if mode == nil {
+		t.Fatal("Light/Dark mode is not a segmented control")
+	}
+	if mode.Width != 240 {
+		t.Errorf("Light/Dark width = %d, want fixed width 240", mode.Width)
+	}
+	if want := h.metrics().CompactControl; mode.Height != want {
+		t.Errorf("Light/Dark height = %d, want compact height %d", mode.Height, want)
+	}
+	seed := byAction(h.root, "set:appearance.seed")
+	if seed == nil || seed.Kind != ui.KindTextField {
+		t.Fatalf("Appearance seed field = %+v, want a text field", seed)
+	}
+	if want := h.metrics().ButtonPadding; seed.Padding != want {
+		t.Errorf("Appearance field padding = %d, want %d", seed.Padding, want)
+	}
+	for _, n := range walk(h.root) {
+		if n.Kind == ui.KindCapsule && n.Shape == ui.ShapeCard && n.Fill != ui.FillContainerHigh {
+			t.Errorf("Appearance card fill = %v, want shaded container fill", n.Fill)
+		}
+	}
+
+	if err := ui.LayoutColumn(h.root, h.place.Panel, settingsMeasure(h)); err != nil {
+		t.Fatalf("layout Appearance: %v", err)
+	}
+	if len(mode.Children) != 2 || mode.Children[0].Bounds.W != mode.Children[1].Bounds.W {
+		t.Errorf("Light/Dark segments are not equal width: %+v", mode.Children)
+	}
+
+	h.draft.ThemeGen.Source = "palette"
+	h.draft.ThemeGen.Seed = theme.PaletteNames()[0]
+	h.set = settings.DefaultFor(h.draft)
+	h.root = settingsTree(nil, h)
+	palette = byAction(h.root, "set:appearance.palette")
+	if palette == nil || palette.Kind != ui.KindMenu {
+		t.Fatalf("changed Appearance palette = %+v, want a dropdown", palette)
+	}
+	if palette.Width != 240 {
+		t.Errorf("changed Appearance palette width = %d, want the same fixed width 240", palette.Width)
+	}
+	if byAction(h.root, "reset:appearance.palette") == nil {
+		t.Fatal("changed Appearance palette did not retain its reset control")
+	}
+}
+
+func TestSettingsSectionTitlesUseLowercase(t *testing.T) {
+	t.Parallel()
+	for _, section := range settings.SectionNames() {
+		t.Run(section, func(t *testing.T) {
+			h := newSettingsHost()
+			h.section = section
+			h.root = settingsTree(nil, h)
+
+			var title *ui.Node
+			for _, n := range walk(h.root) {
+				if n.Kind == ui.KindText && n.Role == "heading" && n.Name == section {
+					title = n
+					break
+				}
+			}
+			if title == nil {
+				t.Fatalf("%s has no semantic section title", section)
+			}
+			if title.Text != strings.ToLower(section) {
+				t.Errorf("%s title text = %q, want lowercase %q", section, title.Text, strings.ToLower(section))
+			}
+			if !isSettingsPageHeading(title, section) {
+				t.Errorf("%s title is not a semantic bold heading: role=%v bold=%t tone=%v accessible-name=%q",
+					section, title.TextRole, title.Bold, title.Tone, title.Name)
+			}
+			// Owner decision 2026-09-30 (appearance polish design): the
+			// launcher's SYSC rail frames every section title, "////// title
+			// //////", set left over the content rather than centred.
+			var rail *ui.Node
+			for _, n := range walk(h.root) {
+				if n.Kind == ui.KindRow && len(n.Children) == 3 && n.Children[1] == title {
+					rail = n
+				}
+			}
+			if rail == nil {
+				t.Fatalf("%s title is not framed by the slash rail", section)
+			}
+			for _, side := range []*ui.Node{rail.Children[0], rail.Children[2]} {
+				if side.Text != launcherSlashRun || side.Tone != ui.ToneAccent || side.TextRole != title.TextRole || side.Name != "" {
+					t.Errorf("%s rail side = %q tone=%v role=%v name=%q, want unnamed accent %q in the title's role",
+						section, side.Text, side.Tone, side.TextRole, side.Name, launcherSlashRun)
+				}
+			}
+			if rail.CenterX {
+				t.Errorf("%s rail is centred, want it set left like the content", section)
+			}
+			if want := h.metrics().CardPadding; rail.Padding != want {
+				t.Errorf("%s rail padding = %d, want the card padding %d so it lines up with card text", section, rail.Padding, want)
+			}
+		})
+	}
+}
+
+func TestSettingsSectionCardsUseAppearanceHeadingStyle(t *testing.T) {
+	t.Parallel()
+	for _, section := range settings.SectionNames() {
+		t.Run(section, func(t *testing.T) {
+			h := newSettingsHost()
+			h.set = nil
+			page := settingsPageColumn(h, []settings.Entry{{
+				Section: section, Group: "Example Group", Path: "example.enabled",
+				Label: "Enabled", Kind: settings.KindBool,
+			}})
+			if len(page.Children) != 1 {
+				t.Fatalf("%s page has %d groups, want one", section, len(page.Children))
+			}
+			heading := page.Children[0].Children[0].Children[0]
+			if heading.Text != "example group" || heading.Name != "Example Group" {
+				t.Errorf("%s group heading text/name=%q/%q, want lowercase display with canonical accessible name", section, heading.Text, heading.Name)
+			}
+			if heading.TextRole != theme.RoleSection || heading.Bold || theme.TypeFor(heading.TextRole).Weight < 700 || heading.Tone != ui.ToneAccent || heading.Role != "heading" {
+				t.Errorf("%s group heading role=%v bold=%t weight=%d tone=%v semantic-role=%q, want semantic bold/accent",
+					section, heading.TextRole, heading.Bold, theme.TypeFor(heading.TextRole).Weight, heading.Tone, heading.Role)
+			}
+		})
+	}
+}
+
+// TestSettingsControlsEndAtTheCardEdge is sysc-858's alignment rule: every
+// row's control ends at the row's inner right edge, with Reset directly to its
+// left. A default toggle used to sit at the control column's left edge and a
+// changed one at the card edge, so a control jumped across the card when its
+// row gained Reset; a field without Reset stopped one margin short.
+func TestSettingsControlsEndAtTheCardEdge(t *testing.T) {
+	t.Parallel()
+	for _, section := range []string{"Appearance", "Templates", "Wallpaper", "Bar", "Widgets", "Tray", "Panels"} {
+		t.Run(section, func(t *testing.T) {
+			h := newSettingsHost()
+			h.section = section
+			h.place.Panel = ui.Rect{W: 1105, H: 760}
+			// One changed row per page, so each page lays out rows with
+			// and without Reset side by side.
+			h.draft.Templates = map[string]bool{"kitty": true}
+			h.draft.Wallpaper.FadeDuration = 1.5
+			h.draft.Panels.Gap = 4
+			h.draft.Panels.OSD = "top-left"
+			h.draft.Bar.Enabled = false
+			h.draft.Tray.Hidden = []string{"id:blueman"}
+			h.draft.Tray.Pinned = []string{"id:nm-applet"}
+			h.draft.ThemeGen.Source = "palette"
+			h.draft.ThemeGen.Seed = theme.PaletteNames()[0]
+			h.draft.Bar.Left = append(h.draft.Bar.Left, config.Item{ID: "window-title", MaxWidth: 300})
+			h.set = settings.DefaultFor(h.draft)
+			h.root = settingsTree(nil, h)
+			if err := ui.LayoutColumn(h.root, h.place.Panel, settingsMeasure(h)); err != nil {
+				t.Fatalf("layout %s: %v", section, err)
+			}
+
+			rows, resets := 0, 0
+			for _, row := range walk(h.root) {
+				path := settingsRowPath(row)
+				if path == "" {
+					continue
+				}
+				rows++
+				trailing := row.Children[1]
+				control := trailing.Children[len(trailing.Children)-1]
+				edge := row.Bounds.X + row.Bounds.W - row.Padding
+				if got := control.Bounds.X + control.Bounds.W; got != edge {
+					t.Errorf("%s: control ends at %d, want the row edge %d", path, got, edge)
+				}
+				if len(trailing.Children) == 2 {
+					resets++
+					reset := trailing.Children[0]
+					if gap := control.Bounds.X - (reset.Bounds.X + reset.Bounds.W); gap != trailing.Gap {
+						t.Errorf("%s: Reset sits %d from its control, want %d", path, gap, trailing.Gap)
+					}
+				}
+			}
+			if rows == 0 {
+				t.Fatalf("%s rendered no setting rows", section)
+			}
+			if section != "Bar" && resets == 0 {
+				t.Errorf("%s rendered no changed row to compare against", section)
+			}
+		})
+	}
+}
+
+// TestSettingsDropdownsAndSegmentsMatchAppearance carries the accepted
+// Appearance controls to every page: a dropdown keeps the fixed 240 width that
+// earns it a chevron, and a segmented control's options share its width
+// equally.
+func TestSettingsDropdownsAndSegmentsMatchAppearance(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.section = "Panels"
+	h.place.Panel = ui.Rect{W: 1105, H: 760}
+	h.set = settings.DefaultFor(h.draft)
+	h.root = settingsTree(nil, h)
+	osd := byAction(h.root, "set:panels.osd")
+	if osd == nil || osd.Kind != ui.KindMenu {
+		t.Fatalf("OSD position = %+v, want a dropdown", osd)
+	}
+	if osd.Width != settingsDropdownFixedWidth {
+		t.Errorf("OSD position width = %d, want %d", osd.Width, settingsDropdownFixedWidth)
+	}
+	if got := h.menus["panels.osd"].Value(); got != "bottom-center" {
+		t.Errorf("OSD position holds %q, want the stored value bottom-center", got)
+	}
+
+	h.section = "Wallpaper"
+	h.root = settingsTree(nil, h)
+	if err := ui.LayoutColumn(h.root, h.place.Panel, settingsMeasure(h)); err != nil {
+		t.Fatalf("layout Wallpaper: %v", err)
+	}
+	for _, name := range []string{"Scaling", "Frame cap", "When occluded"} {
+		var seg *ui.Node
+		for _, n := range walk(h.root) {
+			if n.Kind == ui.KindSegmented && n.Name == name {
+				seg = n
+			}
+		}
+		if seg == nil {
+			t.Fatalf("Wallpaper %s is not a segmented control", name)
+		}
+		if seg.Width < settingsDropdownFixedWidth {
+			t.Errorf("%s width = %d, want at least %d", name, seg.Width, settingsDropdownFixedWidth)
+		}
+		for _, s := range seg.Children[1:] {
+			if d := s.Bounds.W - seg.Children[0].Bounds.W; d < -1 || d > 1 {
+				t.Errorf("%s segments differ in width: %d vs %d", name, s.Bounds.W, seg.Children[0].Bounds.W)
+			}
+		}
+		for _, s := range seg.Children {
+			if textW, _ := settingsMeasure(h)(s.Name, ui.TextAttrs{}); textW > s.Bounds.W {
+				t.Errorf("%s segment %q is %d wide, narrower than its label %d", name, s.Name, s.Bounds.W, textW)
+			}
+		}
+	}
+}
+
+// TestSettingsTextFieldsTakeTheControlHeight: the rail search and the plugin
+// source fields used to size to their text, a strip about 22 px tall with the
+// first glyph against the rounded edge, while the plugin store's search was a
+// full control. Every Settings text field takes the button inset, and with it
+// at least a standard control's height.
+func TestSettingsTextFieldsTakeTheControlHeight(t *testing.T) {
+	reg, h, _ := openPluginManagerTestPanelOn(t, config.Default(), store.State{}, ui.Rect{W: 1536, H: 864})
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h.pluginManagerTab = "sources"
+	reg.rebuildPanel(h)
+	m := h.metrics()
+	var search *ui.Node
+	for _, n := range walk(h.root) {
+		if n.Kind == ui.KindTextField && n.Name == "Search" {
+			search = n
+		}
+	}
+	for name, n := range map[string]*ui.Node{
+		"rail search":    search,
+		"source name":    byAction(h.root, "plugins-source-name"),
+		"repository URL": byAction(h.root, "plugins-source-url"),
+	} {
+		if n == nil {
+			t.Fatalf("%s field missing", name)
+		}
+		if n.Padding != m.ButtonPadding {
+			t.Errorf("%s padding = %d, want the button inset %d", name, n.Padding, m.ButtonPadding)
+		}
+		if n.Bounds.H < m.StandardControl {
+			t.Errorf("%s is %d tall, want at least the standard control %d", name, n.Bounds.H, m.StandardControl)
+		}
+	}
+	if search.Placeholder == "" {
+		t.Error("rail search has no placeholder saying what it searches")
+	}
+}
+
+// TestBarLayoutTitleUsesTheCardHeading keeps the lane editor's title in the
+// same hierarchy as every other Settings card.
+func TestBarLayoutTitleUsesTheCardHeading(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	var title *ui.Node
+	for _, n := range walk(barLaneStrip(h)) {
+		if n.Kind == ui.KindText && n.Name == "Layout" {
+			title = n
+		}
+	}
+	if title == nil {
+		t.Fatal("Bar Layout has no title named Layout")
+	}
+	if title.Text != "layout" || title.Role != "heading" || title.TextRole != theme.RoleSection || title.Tone != ui.ToneAccent {
+		t.Errorf("Bar Layout title text=%q role=%q text-role=%v tone=%v, want the card heading",
+			title.Text, title.Role, title.TextRole, title.Tone)
+	}
+}
+
+func isSettingsPageHeading(n *ui.Node, section string) bool {
+	return n != nil && n.Kind == ui.KindText && n.Text == strings.ToLower(section) && n.Name == section &&
+		n.Role == "heading" && n.TextRole == theme.RolePage && !n.Bold &&
+		theme.TypeFor(n.TextRole).Weight >= 700 && n.Tone == ui.ToneAccent
 }
 
 // TestOnlyAChangedRowOffersItsReset is D5 at the surface: deviation is
@@ -311,6 +679,201 @@ func TestOnlyAChangedRowOffersItsReset(t *testing.T) {
 	if got := byAction(h.root, "reset:bar.height"); got == nil {
 		t.Fatal("a changed row did not reveal its reset")
 	}
+}
+
+func TestAppearanceResetUsesOutlinedButtonBesideSegments(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.section = "Appearance"
+	e := h.set.ByPath("appearance.source")
+	if e == nil {
+		t.Fatal("appearance.source is not registered")
+	}
+	current := e.Get(h.draft)
+	changed := false
+	for _, option := range e.Options {
+		if option != current {
+			if err := e.Set(&h.draft, option); err != nil {
+				t.Fatal(err)
+			}
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		t.Fatal("appearance.source has no alternate option")
+	}
+	row := settingsEntryRow(h, *e, 600)
+	reset := byAction(row, "reset:appearance.source")
+	segments := findNode(row, func(n *ui.Node) bool {
+		return n.Kind == ui.KindSegmented && n.Key == "seg:appearance.source"
+	})
+	if reset == nil || segments == nil {
+		t.Fatalf("theme source controls: reset=%+v segments=%+v", reset, segments)
+	}
+	if reset.Fill != ui.FillOutline {
+		t.Errorf("Reset fill = %v, want outlined chrome beside the option group", reset.Fill)
+	}
+}
+
+func TestTemplatesShareTheirDescriptionAndRemainSearchable(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.section = "Templates"
+	h.root = settingsTree(nil, h)
+
+	const description = "Write this application's colours when the theme changes."
+	count := 0
+	for _, n := range walk(h.root) {
+		if n.Text == description {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("template description appears %d times, want once in the group card", count)
+	}
+	if got := len(h.set.Search("colours when the theme changes")); got < 2 {
+		t.Fatalf("description search returned %d template entries, want several", got)
+	}
+}
+
+func TestTraySettingsUseLiveNamesAndDisambiguateFallbacks(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Tray.Hidden = []string{"id:org.blueman", "id:blueman", "title:blueman"}
+	h := newSettingsHost()
+	h.set = settings.DefaultFor(cfg)
+	h.draft = cfg
+	h.section = "Tray"
+	r := &Registry{tray: newTrayState()}
+	key := tray.ItemKey{}
+	r.tray.items[key] = tray.Item{ID: "org.blueman", Title: "Bluetooth"}
+	r.tray.order = []tray.ItemKey{key}
+	h.root = settingsTree(r, h)
+
+	got := map[string]bool{}
+	for _, n := range walk(h.root) {
+		if n.Role == "heading" && n.TextRole == theme.RoleSection {
+			got[n.Name] = true
+		}
+	}
+	for _, want := range []string{"Bluetooth", "blueman (app ID)", "blueman (title)"} {
+		if !got[want] {
+			t.Errorf("tray card title %q missing from %v", want, got)
+		}
+	}
+}
+
+func TestMonitorColorControlsUseReadableRolesAndThemeSwatches(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	for _, e := range h.set.Section("Monitor") {
+		if e.Group != "Colours" {
+			continue
+		}
+		control := settingsControl(h, e, settingsDropdownFixedWidth)
+		menu := findNode(control, func(n *ui.Node) bool { return n.Kind == ui.KindMenu })
+		if menu == nil || menu.Text != settingsOptionLabel(e.Get(h.draft)) {
+			t.Errorf("%s selected label = %q, want %q", e.Path, textOf(menu), settingsOptionLabel(e.Get(h.draft)))
+		}
+		role, ok := ui.PaintRoleFor(e.Get(h.draft))
+		if !ok {
+			t.Fatalf("%s has unknown paint role %q", e.Path, e.Get(h.draft))
+		}
+		swatch := findNode(control, func(n *ui.Node) bool { return n.Kind == ui.KindCapsule && n.Fill == ui.FillRole })
+		if swatch == nil || swatch.FillRole != role || swatch.Role != "img" || swatch.Name == "" {
+			t.Errorf("%s swatch = %+v, want labelled fill role %v", e.Path, swatch, role)
+		}
+	}
+}
+
+func TestOpacityAndBarGeometryControlsShowUnitsAndUseSliders(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	units := map[string]string{
+		"appearance.bar-opacity":     "%",
+		"appearance.panel-opacity":   "%",
+		"appearance.overlay-opacity": "%",
+		"bar.height":                 "px",
+		"bar.gap":                    "px",
+		"bar.padding":                "px",
+		"bar.spacing":                "px",
+	}
+	for path, unit := range units {
+		e := h.set.ByPath(path)
+		if e == nil {
+			t.Fatalf("setting %s is not registered", path)
+		}
+		control := settingsControl(h, *e, 360)
+		if findNode(control, func(n *ui.Node) bool { return n.Kind == ui.KindSlider }) == nil {
+			t.Errorf("%s uses no slider", path)
+		}
+		value := findNode(control, func(n *ui.Node) bool { return n.Kind == ui.KindText && strings.HasSuffix(n.Text, unit) })
+		if value == nil {
+			t.Errorf("%s has no displayed %q unit", path, unit)
+		}
+	}
+}
+
+func TestWeatherRefreshDurationUsesConciseUnitForm(t *testing.T) {
+	t.Parallel()
+	e := settings.Default().ByPath("weather.interval")
+	if e == nil {
+		t.Fatal("weather.interval is not registered")
+	}
+	if got := e.Get(config.Default()); got != "15m" {
+		t.Fatalf("weather interval = %q, want the input-style form 15m", got)
+	}
+}
+
+func TestPluginSettingsUseFullWidthRadioTabsAndHideEmptyUpdates(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	root := pluginsTree(&Registry{}, h)
+	tabs := findNode(root, func(n *ui.Node) bool { return n.Kind == ui.KindSegmented && n.Name == "Plugins view" })
+	if tabs == nil || tabs.Width != settingsBodyWidth(h) {
+		t.Fatalf("plugin tabs width = %d, want %d", widthOf(tabs), settingsBodyWidth(h))
+	}
+	for _, child := range tabs.Children {
+		if child.Role != "radio" {
+			t.Errorf("plugin tab %q has role %q, want radio", child.Name, child.Role)
+		}
+	}
+	if n := findNode(root, func(n *ui.Node) bool { return n.Kind == ui.KindText && n.Text == "Updates (0)" }); n != nil {
+		t.Fatal("empty Updates card is visible")
+	}
+}
+
+func TestAppearanceColorLabelsUseBritishSpelling(t *testing.T) {
+	t.Parallel()
+	set := settings.Default()
+	for path, want := range map[string]string{
+		"appearance.palette": "Colour palette",
+		"appearance.scheme":  "Colour scheme",
+	} {
+		e := set.ByPath(path)
+		if e == nil || e.Label != want {
+			got := ""
+			if e != nil {
+				got = e.Label
+			}
+			t.Errorf("%s label = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func textOf(n *ui.Node) string {
+	if n == nil {
+		return ""
+	}
+	return n.Text
+}
+
+func widthOf(n *ui.Node) int {
+	if n == nil {
+		return 0
+	}
+	return n.Width
 }
 
 // TestResetReturnsTheRowToItsDefault drives the control rather than the
@@ -534,15 +1097,17 @@ func TestStepperMovesTheDraftByOneStep(t *testing.T) {
 	h.section = "Bar"
 	reg.rebuildPanel(h)
 
-	up := byAction(h.root, "step:up:bar.spacing")
+	// Bar font size is still a stepper; spacing became a slider when the owner
+	// asked for bar geometry to read alike (2026-10-01).
+	up := byAction(h.root, "step:up:bar.font-size")
 	if up == nil {
-		t.Fatal("bar.spacing rendered no stepper")
+		t.Fatal("bar.font-size rendered no stepper")
 	}
-	before := h.draft.Bar.Spacing
+	before := h.draft.Bar.FontSize
 	h.setFocus(up)
 	h.activate(reg)
-	if got := h.draft.Bar.Spacing; got != before+1 {
-		t.Fatalf("spacing = %d after one step, want %d", got, before+1)
+	if got := h.draft.Bar.FontSize; got != before+1 {
+		t.Fatalf("font size = %d after one step, want %d", got, before+1)
 	}
 }
 
@@ -1159,8 +1724,8 @@ func TestGroupsRenderAsCardsWithRowsInside(t *testing.T) {
 		}
 		cards++
 		col := n.Children[0]
-		if col.Children[0].TextRole != theme.RoleLabel {
-			t.Errorf("card does not open with its title: %+v", col.Children[0])
+		if col.Children[0].TextRole != theme.RoleSection || col.Children[0].Bold || theme.TypeFor(col.Children[0].TextRole).Weight < 700 || col.Children[0].Tone != ui.ToneAccent {
+			t.Errorf("Appearance card does not open with its styled title: %+v", col.Children[0])
 		}
 		for _, row := range col.Children[1:] {
 			if row.Kind == ui.KindRow && row.Width > inner {
@@ -1208,7 +1773,7 @@ func TestRailIsLabelledAndClustered(t *testing.T) {
 	if !slices.Equal(tabs, settings.SectionNames()) {
 		t.Errorf("tabs %v, want %v", tabs, settings.SectionNames())
 	}
-	if !slices.Equal(captions, []string{"Look", "Bar", "Panels", "System"}) {
+	if !slices.Equal(captions, []string{"Look", "Shell", "Surfaces", "Extensions", "System"}) {
 		t.Errorf("captions %v", captions)
 	}
 }

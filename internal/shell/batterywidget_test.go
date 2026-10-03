@@ -135,8 +135,11 @@ func TestAnInvalidChargeRendersNothing(t *testing.T) {
 
 func TestABatteryWidgetOpensTheSessionPanel(t *testing.T) {
 	t.Parallel()
+	// The default bar carries no battery item since e55ed6d, so the test
+	// builds the lane it needs instead of assuming the default has one.
+	items := append(config.Default().Bar.Right, config.Item{ID: "battery", WarnBelow: 20, Interval: 30 * time.Second})
 	var node *ui.Node
-	for _, w := range buildWidgets(config.Default().Bar.Right, 8, standardMetrics()) {
+	for _, w := range buildWidgets(items, 8, standardMetrics()) {
 		if w.inner != nil && w.inner.Kind == ui.KindText && w.tooltip == "Battery" {
 			node = w.inner
 			break

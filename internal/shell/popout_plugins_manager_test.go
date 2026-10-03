@@ -36,7 +36,7 @@ func TestPluginManagerInstalledHeadlessShowsManagedOverrideUnlistedErrorsAndUpda
 	reg.rebuildPanel(host)
 	reg.mu.Unlock()
 	renderPluginManagerPanel(t, panel)
-	for _, want := range []string{"Installed", "Updates (1)", "Update to v1.5.0", "local override", "managed, unlisted", "plugin failed to start"} {
+	for _, want := range []string{"Installed", "updates (1)", "Update to v1.5.0", "local override", "managed, unlisted", "plugin failed to start"} {
 		if !pluginStoreHasText(host.root, want) {
 			t.Errorf("Installed page lacks %q", want)
 		}
@@ -64,7 +64,7 @@ func TestPluginManagerSourcesHeadlessShowsFreshStaleAndAddWarning(t *testing.T) 
 	reg.mu.Unlock()
 	renderPluginManagerPanel(t, panel)
 	text := treeText(host.root)
-	for _, want := range []string{"Sources", "Official", "fresh", "2 plugins", "Stale: offline", "Suggested", "Not published yet", "Local plugin directory", "Rescan"} {
+	for _, want := range []string{"Sources", "Official", "fresh", "2 plugins", "Stale: offline", "suggested", "Not published yet", "local plugin directory", "Rescan"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("Sources page lacks %q", want)
 		}

@@ -221,7 +221,19 @@ func TestProcessSignalRunsUnlockedAndReportsIdentityFailure(t *testing.T) {
 	reg.sample.Processes = &services.ProcessSnapshot{Processes: processFixture()[:1]}
 	called := make(chan struct{}, 1)
 	reg.signalProcess = func(id services.ProcessIdentity, sig syscall.Signal) error {
-		if !reg.mu.TryLock() {
+		// The signal runs on its own goroutine, so an unrelated holder
+		// (renewer, relay) can own mu for microseconds: contend with it. A
+		// call made under the lock comes from the holding goroutine itself
+		// and can never acquire, so the deadline still proves the invariant.
+		acquired := false
+		deadline := time.Now().Add(200 * time.Millisecond)
+		for !acquired && time.Now().Before(deadline) {
+			acquired = reg.mu.TryLock()
+			if !acquired {
+				time.Sleep(time.Millisecond)
+			}
+		}
+		if !acquired {
 			t.Error("process signal ran while Registry.mu was held")
 		} else {
 			reg.mu.Unlock()

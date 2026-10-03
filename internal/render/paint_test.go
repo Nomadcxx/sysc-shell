@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"image"
 	"math"
+	"reflect"
 	"testing"
 	"time"
 
@@ -1711,18 +1712,24 @@ func TestStateLayersCompositeThePairedForeground(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		state ui.Interaction
+		hover float64
+		press float64
 		want  Color
 	}{
-		{"idle", 0, fill},
-		{"hover", ui.StateHovered, overlay(fill, fg, hoverLayerAlpha)},
-		{"pressed", ui.StatePressed, overlay(fill, fg, pressedLayerAlpha)},
-		// Pressed outranks hover: a pointer is always inside the node it is
-		// pressing, so the two arrive together.
-		{"pressed while hovered", ui.StatePressed | ui.StateHovered, overlay(fill, fg, pressedLayerAlpha)},
-		{"disabled", ui.StateDisabled, fill},
+		{"idle", 0, 0, 0, fill},
+		{"hover", ui.StateHovered, 0, 0, overlay(fill, fg, hoverLayerAlpha)},
+		{"hover halfway", ui.StateHovered, 0.5, 0, overlay(fill, fg, hoverLayerAlpha/2)},
+		{"pressed", ui.StatePressed, 0, 0, overlay(fill, fg, pressedLayerAlpha)},
+		{"pressed halfway", ui.StatePressed, 0, 0.5, overlay(fill, fg, pressedLayerAlpha/2)},
+		{"press ramps from hover", ui.StatePressed | ui.StateHovered, 1, 0.5, overlay(fill, fg, hoverLayerAlpha)},
+		// A settled press is stronger than a settled hover.
+		{"pressed while hovered", ui.StatePressed | ui.StateHovered, 1, 1, overlay(fill, fg, pressedLayerAlpha)},
+		{"disabled", ui.StateDisabled, 0, 0, fill},
 	} {
 		n := base
 		n.State = tc.state
+		n.HoverProgress = tc.hover
+		n.PressProgress = tc.press
 		c := paintChromeNode(t, &n, testStyle)
 		fx, fy := fillPointOf(&n)
 		if got := pixelAt(t, c, fx, fy); got != tc.want {
@@ -1820,6 +1827,90 @@ func TestButtonPaintsChildrenOverItsStateLayer(t *testing.T) {
 	// dimmed by its own control's hover.
 	if litPixels(c, testStyle.Foreground) == 0 {
 		t.Error("child text was painted under the state layer, or not at all")
+	}
+}
+
+func TestPressedButtonMorphsTowardHalfRadius(t *testing.T) {
+	t.Parallel()
+	paint := func(progress float64) Color {
+		n := &ui.Node{Kind: ui.KindButton, Radius: 20, PressProgress: progress,
+			Bounds: ui.Rect{W: 40, H: 40}}
+		c := newTestCanvas(t, 40, 40)
+		if err := paintNode(c, n, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
+			t.Fatal(err)
+		}
+		return pixelAt(t, c, 5, 5)
+	}
+	if paint(0).A != 0 {
+		t.Fatal("the resting shape leaves the (5,5) corner unpainted")
+	}
+	if paint(1).A == 0 {
+		t.Fatal("the pressed radius did not pull the fill into the corner")
+	}
+}
+
+func TestRipplePaintsFromThePressOrigin(t *testing.T) {
+	t.Parallel()
+	paint := func(ripple ui.RipplePaint) Color {
+		n := &ui.Node{Kind: ui.KindCapsule, Bounds: ui.Rect{W: 40, H: 20}, Ripple: ripple}
+		c := newTestCanvas(t, 40, 20)
+		if err := paintNode(c, n, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
+			t.Fatal(err)
+		}
+		return pixelAt(t, c, 8, 10)
+	}
+	rest := paint(ui.RipplePaint{})
+	if paint(ui.RipplePaint{Phase: 0.1, X: 5, Y: 10}) == rest {
+		t.Fatal("no ripple wash near the press origin")
+	}
+	if paint(ui.RipplePaint{Phase: 1, X: 5, Y: 10}) != rest {
+		t.Fatal("a finished ripple still paints")
+	}
+}
+
+func TestRippleOriginIsMaskLocalAtFractionalScale(t *testing.T) {
+	t.Parallel()
+	style := testStyle
+	style.Scale120 = 150
+	paint := func(ripple ui.RipplePaint) *Canvas {
+		n := &ui.Node{Kind: ui.KindCapsule, Bounds: ui.Rect{X: 10, Y: 5, W: 40, H: 20}, Ripple: ripple}
+		c := newTestCanvas(t, 80, 48)
+		if err := paintNode(c, n, NewTextRenderer(mustTestFace(t)), style, style.Size); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	rest := paint(ui.RipplePaint{})
+	ripple := paint(ui.RipplePaint{Phase: 0.01, X: 15, Y: 15})
+	x, y := style.Scale120.Physical(15), style.Scale120.Physical(15)
+	if got, base := pixelAt(t, ripple, x, y), pixelAt(t, rest, x, y); got == base {
+		t.Fatalf("ripple missed the absolute press point at physical %d,%d: %+v", x, y, got)
+	}
+}
+
+func TestTabAndMenuRowCarryTheStateLayer(t *testing.T) {
+	t.Parallel()
+	tab := &ui.Node{Kind: ui.KindTab, Action: "tab", State: ui.StateHovered,
+		HoverProgress: 1, Bounds: ui.Rect{W: 30, H: 20}}
+	c := newTestCanvas(t, 30, 20)
+	if err := paintNode(c, tab, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
+		t.Fatal(err)
+	}
+	if pixelAt(t, c, 15, 10).A == 0 {
+		t.Fatal("a hovered tab painted no state layer")
+	}
+	paintRow := func(state ui.Interaction) Color {
+		row := &ui.Node{Kind: ui.KindText, State: state, HoverProgress: 1,
+			Bounds: ui.Rect{X: 2, Y: 2, W: 26, H: 14}}
+		menu := &ui.Node{Kind: ui.KindMenu, Bounds: ui.Rect{W: 30, H: 40}, Children: []*ui.Node{row}}
+		c := newTestCanvas(t, 30, 40)
+		if err := paintNode(c, menu, NewTextRenderer(mustTestFace(t)), testStyle, testStyle.Size); err != nil {
+			t.Fatal(err)
+		}
+		return pixelAt(t, c, 3, 3)
+	}
+	if paintRow(ui.StateHovered) == paintRow(0) {
+		t.Fatal("a hovered menu row painted no state layer")
 	}
 }
 
@@ -2316,13 +2407,13 @@ func TestPaintMenuDrawsANestedFieldAsAField(t *testing.T) {
 		t.Fatalf("paintNode: %v", err)
 	}
 
-	// paintTextField strokes the control's outline around the well. Nothing
-	// on the plain-text path draws that token anywhere.
-	want := testStyle.Outline
+	// paintTextField strokes a boundary around the well: the quiet outline
+	// while idle, the strong one while edited. Nothing on the plain-text path
+	// draws either token anywhere.
 	found := false
 	for x := range 120 {
 		for y := 20; y < 40; y++ {
-			if pixelAt(t, c, x, y) == want {
+			if px := pixelAt(t, c, x, y); px == testStyle.Outline || px == testStyle.OutlineVariant {
 				found = true
 			}
 		}
@@ -2379,6 +2470,86 @@ func TestMenuChevronAppearsOnlyWhereThereIsRoom(t *testing.T) {
 	short := &ui.Node{Kind: ui.KindMenu, Bounds: ui.Rect{W: label + room, H: 16}}
 	if box, ok := menuChevronBox(short, label, icon); !ok || box.H != 16 {
 		t.Errorf("short menu mark = %+v ok=%v, want it clamped to the box height", box, ok)
+	}
+}
+
+func TestPaintMenuHonorsRoundedFieldPadding(t *testing.T) {
+	t.Parallel()
+	const x, y, padding = 8, 8, 12
+	c := newTestCanvas(t, 160, 96)
+	r := NewTextRenderer(mustTestFace(t))
+	n := &ui.Node{
+		Kind: ui.KindMenu, Text: "All windows", Padding: padding,
+		Bounds: ui.Rect{X: x, Y: y, W: 144, H: 72},
+		Children: []*ui.Node{{Kind: ui.KindText, Text: "All windows",
+			Bounds: ui.Rect{X: x, Y: y + 44, W: 144, H: 28}}},
+	}
+	if err := paintNode(c, n, r, testStyle, testStyle.Size); err != nil {
+		t.Fatalf("paint menu: %v", err)
+	}
+	surface := testStyle.containerHighest()
+	for _, region := range []ui.Rect{
+		{X: x + 7, Y: y + 7, W: padding - 7, H: 30},
+		{X: x + 7, Y: y + 51, W: padding - 7, H: 18},
+	} {
+		for px := region.X; px < region.X+region.W; px++ {
+			for py := region.Y; py < region.Y+region.H; py++ {
+				if got := pixelAt(t, c, px, py); got != surface {
+					t.Fatalf("menu text entered rounded inset at (%d,%d): got %+v, surface %+v", px, py, got, surface)
+				}
+			}
+		}
+	}
+	found := false
+	for px := x + padding; px < x+64; px++ {
+		for py := y + 7; py < y+33; py++ {
+			if pixelAt(t, c, px, py) != surface {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("menu label was not painted inside its padded text area")
+	}
+	optionFound := false
+	for px := x + padding; px < x+64; px++ {
+		for py := y + 51; py < y+69; py++ {
+			if pixelAt(t, c, px, py) != surface {
+				optionFound = true
+			}
+		}
+	}
+	if !optionFound {
+		t.Fatal("menu option was not painted inside its padded text area")
+	}
+}
+
+func TestMenuChevronHonorsRoundedFieldPadding(t *testing.T) {
+	t.Parallel()
+	const x, padding, label, icon = 5, 10, 44, 18
+	width := label + icon + 2*menuChevronInset + 2*padding
+	n := &ui.Node{Kind: ui.KindMenu, Padding: padding, Bounds: ui.Rect{X: x, W: width, H: 32}}
+	box, ok := menuChevronBox(n, label, icon)
+	if !ok {
+		t.Fatal("menu with room for a padded label and chevron withheld the chevron")
+	}
+	if want := x + width - icon - menuChevronInset - padding; box.X != want {
+		t.Errorf("chevron x = %d, want %d after the right text inset", box.X, want)
+	}
+}
+
+func TestMenuUsesSemanticContainerSurface(t *testing.T) {
+	t.Parallel()
+	c := newTestCanvas(t, 120, 64)
+	menu := &ui.Node{
+		Kind: ui.KindMenu, Text: "All windows", Padding: 8,
+		Bounds: ui.Rect{X: 8, Y: 8, W: 104, H: 40},
+	}
+	if err := paintNode(c, menu, nil, testStyle, testStyle.Size); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := pixelAt(t, c, 60, 28), testStyle.containerHighest(); got != want {
+		t.Fatalf("menu surface = %+v, want semantic container surface %+v", got, want)
 	}
 }
 
@@ -2636,5 +2807,108 @@ func TestTranslucentAttachedPanelHasNoDenserBand(t *testing.T) {
 	}
 	if got := pixelAt(t, c, 0, 59); got.A != 0 {
 		t.Errorf("far corner = %v, want rounded away", got)
+	}
+}
+
+// A lane card is a drop zone with a fill; without chrome it would be an
+// invisible region and the heading inside it would float on the page.
+func TestDropZoneWithAFillPaintsItsCard(t *testing.T) {
+	t.Parallel()
+	zone := func(fill ui.Fill) []byte {
+		return paintStackToStyle(t, testStyle, &ui.Node{Kind: ui.KindDropZone, Fill: fill, Bounds: ui.Rect{W: 20, H: 20}})
+	}
+	if bytes.Equal(zone(ui.FillContainerHigh), zone(ui.FillNone)) {
+		t.Fatal("a filled drop zone painted nothing")
+	}
+}
+
+func TestNotePapersAreDistinctAndFixed(t *testing.T) {
+	fills := []ui.Fill{ui.FillNoteSun, ui.FillNoteMint, ui.FillNoteSky, ui.FillNoteRose, ui.FillNoteLilac}
+	seen := map[Color]bool{}
+	toTheme := func(c Color) theme.Color { return theme.Color{R: c.R, G: c.G, B: c.B, A: c.A} }
+	for _, f := range fills {
+		paper, ink, ok := PaperPair(f)
+		if !ok {
+			t.Fatalf("fill %d has no paper", f)
+		}
+		if seen[paper] {
+			t.Errorf("fill %d repeats paper %v", f, paper)
+		}
+		seen[paper] = true
+		if r := theme.ContrastRatio(toTheme(ink), toTheme(paper)); r < 7 {
+			t.Errorf("fill %d ink contrast %.2f:1, want >= 7:1", f, r)
+		}
+	}
+	if _, _, ok := PaperPair(ui.FillAccent); ok {
+		t.Error("accent is not a paper")
+	}
+}
+
+func TestWithPaperRepaintsTheRootAndItsControls(t *testing.T) {
+	base := Style{Background: Color{R: 20, G: 20, B: 24, A: 255}, Foreground: Color{R: 230, G: 230, B: 230, A: 255}, SurfaceOpacity: 166}
+	got := base.WithPaper(ui.FillNoteSun)
+	paper, ink, _ := PaperPair(ui.FillNoteSun)
+	if got.RootFill() != paper || got.Foreground != ink {
+		t.Fatalf("root %v fg %v, want %v %v", got.RootFill(), got.Foreground, paper, ink)
+	}
+	if got.Capsule == paper || got.Capsule.A != 255 {
+		t.Errorf("field well %v must be a darker opaque paper", got.Capsule)
+	}
+	if !reflect.DeepEqual(base.WithPaper(ui.FillAccent), base) {
+		t.Error("a non-paper fill must leave the style unchanged")
+	}
+}
+
+func TestMultilineFieldIsARoundedRectNotAStadium(t *testing.T) {
+	r := NewTextRenderer(mustTestFace(t))
+	pix := make([]byte, 200*200*4)
+	c, _ := NewCanvas(pix, 200, 200, 200*4)
+	n := &ui.Node{Kind: ui.KindTextField, Multiline: true, Bounds: ui.Rect{W: 200, H: 200}}
+	style := testStyle
+	style.Capsule = Color{R: 200, G: 0, B: 0, A: 255}
+	if err := paintTextField(c, n, r, style, 14); err != nil {
+		t.Fatal(err)
+	}
+	// A 200x200 stadium is a circle, so (20,20) lies outside it; a 12px
+	// rounded rect covers it.
+	if a := pix[(20*200+20)*4+3]; a == 0 {
+		t.Fatal("multiline field painted as a stadium")
+	}
+}
+
+func TestNoteFillsPaintTheirPaper(t *testing.T) {
+	for _, f := range []ui.Fill{ui.FillNoteSun, ui.FillNoteMint, ui.FillNoteSky, ui.FillNoteRose, ui.FillNoteLilac} {
+		bg, fg := fillPair(testStyle, f, testStyle.Capsule)
+		paper, ink, _ := PaperPair(f)
+		if bg != paper || fg != ink {
+			t.Errorf("fill %d paints %v/%v, want paper %v/%v", f, bg, fg, paper, ink)
+		}
+	}
+}
+
+func TestPaperKeepsSubtleAndErrorTextReadable(t *testing.T) {
+	toTheme := func(c Color) theme.Color { return theme.Color{R: c.R, G: c.G, B: c.B, A: c.A} }
+	pale := Style{Subtle: Color{R: 0xC4, G: 0xC6, B: 0xD0, A: 0xFF}, Error: Color{R: 0xFF, G: 0xB4, B: 0xAB, A: 0xFF}}
+	for _, f := range []ui.Fill{ui.FillNoteSun, ui.FillNoteMint, ui.FillNoteSky, ui.FillNoteRose, ui.FillNoteLilac} {
+		s := pale.WithPaper(f)
+		paper, _, _ := PaperPair(f)
+		for name, c := range map[string]Color{"subtle": s.Subtle, "error": s.Error} {
+			if r := theme.ContrastRatio(toTheme(c), toTheme(paper)); r < theme.TextRatio(false) {
+				t.Errorf("fill %d %s text %.2f:1 on paper, want >= %.1f:1", f, name, r, theme.TextRatio(false))
+			}
+		}
+	}
+}
+
+func TestFieldRadiusKeepsMultilineCornersOffTheStadium(t *testing.T) {
+	scale := ui.ScaleUnit
+	search := &ui.Node{Kind: ui.KindTextField}
+	if got := FieldRadius(search, ui.Rect{W: 192, H: 44}, scale); got != 22 {
+		t.Errorf("single-line radius = %d, want the 22px stadium", got)
+	}
+	// The Notes body: a 432x420 stadium is a 210px circle drawn over the text.
+	body := &ui.Node{Kind: ui.KindTextField, Multiline: true}
+	if got := FieldRadius(body, ui.Rect{W: 432, H: 420}, scale); got != multilineFieldRadius {
+		t.Errorf("multiline radius = %d, want %d", got, multilineFieldRadius)
 	}
 }

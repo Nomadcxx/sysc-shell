@@ -393,6 +393,9 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		out.Kind = ui.KindMeter
 		out.Value = n.Value
 		out.Key, out.Animate = n.Key, n.Animate
+	case v1.KindSpinner:
+		out.Kind = ui.KindSpinner
+		out.Key = n.Key
 	case v1.KindGauge:
 		out.Kind = ui.KindRadialGauge
 		out.Value = n.Value
@@ -516,6 +519,7 @@ func convertNode(n *v1.Node, path string) (*ui.Node, error) {
 		}
 		out.Multiline = n.Multiline
 		out.SubmitOnEnter = n.SubmitOnEnter
+		out.Masked = n.Masked
 		out.Reseed = n.Reseed
 	case v1.KindList:
 		out.Kind = ui.KindScroll

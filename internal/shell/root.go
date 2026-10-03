@@ -1,9 +1,9 @@
 package shell
 
-// The process allows one interactive root at a time. A root is whatever holds
-// keyboard focus and the pointer grab for a modal surface: today a panel,
-// during Milestone 5 also the notification centre and the tray drawer. A root
-// may own one attached child, such as a tray popup opened from a drawer.
+// The process allows one interactive root at a time. A root is the top-level
+// owner of keyboard focus and pointer interactivity: a panel group, tray menu,
+// tray drawer, or running-app menu. A root may own one attached child, such as
+// a tray popup opened from a drawer.
 //
 // Opening an unrelated root replaces the whole chain. The replaced chain's
 // cleanup runs before the new owner is published, so keyboard interactivity,
@@ -18,9 +18,11 @@ type rootKind uint8
 const (
 	rootNone rootKind = iota
 	rootPanel
+	rootPanelGroup
 	rootTrayMenu
 	rootTrayDrawer
 	rootRunningApps
+	rootWindowSwitcher
 )
 
 // rootID identifies one interactive root. Two roots are the same only when
@@ -31,6 +33,10 @@ type rootID struct {
 }
 
 func panelRoot(id PanelID) rootID { return rootID{kind: rootPanel, key: uint64(id)} }
+
+// panelGroupRoot represents every open panel as one interactive modal root.
+// Opening another panel joins this group; opening any other root releases it.
+func panelGroupRoot() rootID { return rootID{kind: rootPanelGroup} }
 
 // trayMenuRoot keys a tray menu root by the wl_registry global of the output
 // it is open on. One chain exists at a time, so one menu per output is enough
@@ -45,6 +51,10 @@ func trayDrawerRoot(outputGlobal uint32) rootID {
 
 func runningAppsMenuRoot(outputGlobal uint32) rootID {
 	return rootID{kind: rootRunningApps, key: uint64(outputGlobal)}
+}
+
+func windowSwitcherRoot(outputGlobal uint32) rootID {
+	return rootID{kind: rootWindowSwitcher, key: uint64(outputGlobal)}
 }
 
 // rootChain is the single interactive root and its optional attached child.

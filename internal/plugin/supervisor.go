@@ -21,6 +21,11 @@ import (
 // are the ones that explain it.
 const MaxStderrBytes = 64 << 10
 
+// shutdownSendTimeout bounds the best-effort host.shutdown write. A plugin
+// that stopped reading its standard input must not be able to hold Close in
+// Send; closing the pipe below unblocks the write either way.
+const shutdownSendTimeout = 100 * time.Millisecond
+
 // ErrHandshakeTimeout reports a plugin that did not answer host.hello in time.
 var ErrHandshakeTimeout = errors.New("plugin: handshake timed out")
 
@@ -400,7 +405,15 @@ func (s *Session) shutdown() ExitReason {
 	if s.cmd == nil || s.cmd.Process == nil {
 		return ExitReason{Kind: ExitCrashed, Detail: "never started"}
 	}
-	_ = s.Send(&v1.HostShutdown{})
+	sent := make(chan struct{})
+	go func() {
+		_ = s.Send(&v1.HostShutdown{})
+		close(sent)
+	}()
+	select {
+	case <-sent:
+	case <-time.After(shutdownSendTimeout):
+	}
 	_ = s.stdin.Close()
 
 	grace := s.grace
@@ -501,11 +514,15 @@ func pluginEnvironment() []string {
 }
 
 // pluginEnvKeys covers: finding binaries (PATH), config and state dirs (HOME,
-// XDG_*), locale and timezone, and the session buses a widget draws on
-// (WAYLAND_DISPLAY, NIRI_SOCKET).
+// XDG_*), locale and timezone, the session buses a widget draws on
+// (WAYLAND_DISPLAY, NIRI_SOCKET), and the display session a desktop app the
+// plugin hands off to needs (DISPLAY and XAUTHORITY for X11 apps under
+// Xwayland, the D-Bus session bus, the desktop and session type). These name
+// sockets and files the user's processes already reach; none is a credential.
 var pluginEnvKeys = []string{
 	"PATH", "HOME", "USER", "LOGNAME", "SHELL",
 	"LANG", "LC_ALL", "TZ",
 	"XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME",
 	"WAYLAND_DISPLAY", "WAYLAND_SOCKET", "NIRI_SOCKET",
+	"DISPLAY", "XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS", "XDG_CURRENT_DESKTOP", "XDG_SESSION_TYPE",
 }
