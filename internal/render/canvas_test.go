@@ -139,7 +139,7 @@ func TestFilletCoverageClipsToCanvas(t *testing.T) {
 func TestSurfaceTransformScalesPremultipliedChannels(t *testing.T) {
 	c := newTestCanvas(t, 1, 1)
 	copy(c.Pix, []byte{80, 60, 40, 100})
-	c.ApplySurfaceTransform(0.5, 0)
+	c.ApplySurfaceTransform(0.5, 0, 0)
 	if got, want := c.Pix[:4], []byte{40, 30, 20, 50}; !bytes.Equal(got, want) {
 		t.Fatalf("transformed pixel = %v, want %v", got, want)
 	}
@@ -160,13 +160,76 @@ func TestSurfaceTransformTranslatesInPlaceAndClearsExposedRows(t *testing.T) {
 				c.Pix[y*c.Stride+3] = alpha
 			}
 			backing := &c.Pix[0]
-			c.ApplySurfaceTransform(1, tc.dy)
+			c.ApplySurfaceTransform(1, 0, tc.dy)
 			if &c.Pix[0] != backing {
 				t.Fatal("surface transform replaced the frame buffer")
 			}
 			for y, want := range tc.want {
 				if got := c.Pix[y*c.Stride+3]; got != want {
 					t.Fatalf("row %d alpha = %d, want %d", y, got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestSurfaceTransformCarriesBothOffsets(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		dx, dy  int
+		opacity float64
+	}{
+		{"right", 1, 0, 1},
+		{"left", -1, 0, 1},
+		{"down", 0, 1, 1},
+		{"up", 0, -1, 1},
+		{"right and down", 1, 1, 1},
+		{"left and up", -1, -1, 1},
+		{"past width", 3, 0, 1},
+		{"past height", 0, -3, 1},
+		{"zero", 0, 0, 1},
+		{"fractional opacity", 1, -1, 0.5},
+		{"zero opacity", 0, 0, 0},
+		{"NaN opacity", 0, 0, math.NaN()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const w, h, stride = 3, 3, 16
+			pix := make([]byte, stride*h)
+			for y := 0; y < h; y++ {
+				for x := 0; x < w; x++ {
+					v := byte(10 + (y*w+x)*10)
+					copy(pix[y*stride+x*4:], []byte{v, v, v, v})
+				}
+				copy(pix[y*stride+w*4:], []byte{0xaa, 0xbb, 0xcc, 0xdd})
+			}
+			original := append([]byte(nil), pix...)
+			c, err := NewCanvas(pix, w, h, stride)
+			if err != nil {
+				t.Fatal(err)
+			}
+			backing := &c.Pix[0]
+			c.ApplySurfaceTransform(tc.opacity, tc.dx, tc.dy)
+			if &c.Pix[0] != backing {
+				t.Fatal("surface transform replaced the frame buffer")
+			}
+			for y := 0; y < h; y++ {
+				for x := 0; x < w; x++ {
+					srcX, srcY := x-tc.dx, y-tc.dy
+					var want [4]byte
+					if srcX >= 0 && srcX < w && srcY >= 0 && srcY < h && tc.opacity > 0 && !math.IsNaN(tc.opacity) {
+						at := srcY*stride + srcX*4
+						for channel, value := range original[at : at+4] {
+							want[channel] = byte(math.Round(float64(value) * min(tc.opacity, 1)))
+						}
+					}
+					at := y*stride + x*4
+					if got := c.Pix[at : at+4]; !bytes.Equal(got, want[:]) {
+						t.Fatalf("pixel (%d,%d) = %v, want %v", x, y, got, want)
+					}
+				}
+				pad := y*stride + w*4
+				if got, want := c.Pix[pad:pad+4], original[pad:pad+4]; !bytes.Equal(got, want) {
+					t.Fatalf("row %d padding = %v, want %v", y, got, want)
 				}
 			}
 		})

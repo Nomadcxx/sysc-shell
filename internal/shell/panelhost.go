@@ -1914,7 +1914,7 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 			c.StrokeRounded(ring, radius, max(scale.Physical(2), 2), h.theme.Accent)
 		}
 	}
-	c.ApplySurfaceTransform(opacity, scale.Physical(offsetY))
+	c.ApplySurfaceTransform(opacity, 0, scale.Physical(offsetY))
 	return nil
 }
 

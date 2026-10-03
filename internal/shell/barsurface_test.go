@@ -293,6 +293,55 @@ func TestAttachedBarRendersItsEndFillets(t *testing.T) {
 	}
 }
 
+func TestSideAttachedBarRendersItsScreenFillets(t *testing.T) {
+	t.Parallel()
+	for _, edge := range []string{"left", "right"} {
+		for _, scale := range []ui.Scale120{120, 150} {
+			cfg := config.Default()
+			policy := cfg.Bar
+			policy.Edge, policy.Style, policy.Shape = edge, "frosted", "attached"
+			policy.Left, policy.Center, policy.Right = nil, nil, nil
+			bar, err := NewWithTheme(ThemeFrom(cfg, policy).WithCompositor(true), policy, "DP-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(bar.stopAnimation)
+			const outH = 160
+			if err := bar.Configure(policy.SurfaceExtent(), outH, int(scale)); err != nil {
+				t.Fatal(err)
+			}
+			w, h := scale.Physical(policy.SurfaceExtent()), scale.Physical(outH)
+			pixels := make([]byte, w*h*4)
+			if err := bar.Render(pixels, w, h, w*4); err != nil {
+				t.Fatal(err)
+			}
+			alpha := func(x, y int) byte { return pixels[(y*w+x)*4+3] }
+			body := scale.PhysicalRect(bar.bodyLocked(policy.SurfaceExtent(), outH))
+			farX := body.X + body.W
+			if edge == "right" {
+				farX = body.X - 1
+			}
+			if got := alpha(farX, body.Y); got == 0 {
+				t.Errorf("%s scale %d: leading screen-edge wedge is empty", edge, scale)
+			}
+			midY := body.Y + body.H/2
+			if got := alpha(farX, midY); got != 0 {
+				t.Errorf("%s scale %d: mid overhang alpha %d", edge, scale, got)
+			}
+			for _, strip := range bar.blurShape() {
+				physical := scale.PhysicalRect(strip)
+				for y := physical.Y; y < physical.Y+physical.H; y++ {
+					for x := physical.X; x < physical.X+physical.W; x++ {
+						if alpha(x, y) == 0 {
+							t.Fatalf("%s scale %d: blurred pixel (%d,%d) is transparent", edge, scale, x, y)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
 // TestIslandsPaintNoGround renders an islands bar: the capsules paint, and the
 // bar between them stays transparent whether or not the compositor blurs.
 func TestIslandsPaintNoGround(t *testing.T) {
