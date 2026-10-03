@@ -169,8 +169,12 @@ func probeCapabilities(lookup func(string) bool) Capabilities {
 		}
 	}
 	if lookup("sysc-terminal") {
-		if out, err := exec.Command("sysc-terminal", "--list").CombinedOutput(); err == nil && listSupports(out) {
-			caps.Terminal = true
+		if out, err := exec.Command("sysc-terminal", "--list").CombinedOutput(); err == nil {
+			cat := ParseList(string(out))
+			if len(cat.Effects) > 0 {
+				caps.Terminal = true
+				caps.Catalog = cat
+			}
 		}
 	}
 	caps.Statics = installedFallbacks(lookup)

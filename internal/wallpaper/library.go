@@ -10,7 +10,7 @@ import (
 	"unicode/utf8"
 )
 
-// Filter is the All / Images / Videos selector in the picker chrome. It never
+// Filter is the All / Images / Videos / Effects selector in the picker chrome. It never
 // hides a directory: filtering the media must not make the library
 // unnavigable.
 type Filter uint8
@@ -19,6 +19,7 @@ const (
 	FilterAll Filter = iota
 	FilterImages
 	FilterVideos
+	FilterEffects
 )
 
 // Entry is one row in a directory: a playable file, or a child directory the
@@ -161,6 +162,8 @@ func matchesFilter(kind Kind, filter Filter) bool {
 		return kind == KindImage
 	case FilterVideos:
 		return kind == KindVideo
+	case FilterEffects:
+		return kind == KindEffect
 	}
 	return true
 }

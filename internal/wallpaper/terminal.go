@@ -1,13 +1,36 @@
 package wallpaper
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
+	"strings"
 )
 
-func listSupports(out []byte) bool {
-	return bytes.Contains(out, []byte("effect "))
+type EffectInfo struct {
+	ID   string
+	Text bool
+}
+
+type Catalog struct {
+	Effects []EffectInfo
+	Themes  []string
+}
+
+func ParseList(s string) Catalog {
+	var c Catalog
+	for line := range strings.SplitSeq(s, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 {
+			continue
+		}
+		switch f[0] {
+		case "effect":
+			c.Effects = append(c.Effects, EffectInfo{ID: f[1], Text: len(f) >= 3 && f[2] != "0"})
+		case "theme":
+			c.Themes = append(c.Themes, f[1])
+		}
+	}
+	return c
 }
 
 func terminalArgs(socket, connector, effect, theme, artwork string) []string {

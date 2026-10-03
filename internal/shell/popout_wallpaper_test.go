@@ -357,12 +357,13 @@ func TestWallpaperSummaryIsReadBackFromTheSnapshot(t *testing.T) {
 	}
 
 	h := &PanelHost{wallpaperSnap: snap, wallpaperOutput: wallpaper.AllOutputs}
-	matched, total := wallpaperMatchCount(h, "/w/a.png")
+	png := wallpaper.Entry{Path: "/w/a.png"}
+	matched, total := wallpaperMatchCount(h, png)
 	if matched != 2 || total != 2 {
 		t.Fatalf("match count = %d/%d, want 2/2", matched, total)
 	}
 	snap.Assignments["DP-3"] = wallpaper.Assignment{Kind: wallpaper.KindVideo, Path: "/w/b.mp4"}
-	if matched, total = wallpaperMatchCount(h, "/w/a.png"); matched != 1 || total != 2 {
+	if matched, total = wallpaperMatchCount(h, png); matched != 1 || total != 2 {
 		t.Fatalf("match count = %d/%d, want 1/2", matched, total)
 	}
 }
@@ -564,8 +565,8 @@ func TestWallpaperChromeHasEveryControl(t *testing.T) {
 
 	var filters []string
 	collectActions(h.root, "wallpaper-filter:", &filters)
-	if len(filters) != 3 {
-		t.Errorf("kind filter = %v, want All/Images/Videos", filters)
+	if len(filters) != 4 {
+		t.Errorf("kind filter = %v, want All/Images/Videos/Effects", filters)
 	}
 
 	// Child directories are the folder dropdown's options.
@@ -615,6 +616,83 @@ func TestWallpaperChromeActionsDrivePanelState(t *testing.T) {
 			t.Fatalf("the videos filter still shows %s", e.Name)
 		}
 	}
+}
+
+func TestWallpaperEffectsFilterListsCatalog(t *testing.T) {
+	t.Parallel()
+
+	root := seedWallpaperRoot(t)
+	reg, _, _ := openWallpaperPanel(t, []string{root})
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	snap := h.wallpaperSnap
+	snap.Caps = wallpaper.Capabilities{
+		Terminal: true,
+		Catalog: wallpaper.Catalog{
+			Effects: []wallpaper.EffectInfo{{ID: "fire"}, {ID: "rain", Text: true}},
+			Themes:  []string{"nord", "dracula"},
+		},
+	}
+	h.wallpaperSnap = snap
+	effects := findAction(h.root, fmt.Sprintf("wallpaper-filter:%d", wallpaper.FilterEffects))
+	if effects == nil || !h.wallpaperAction(reg, effects) {
+		t.Fatal("the Effects filter is missing")
+	}
+	var names []string
+	for _, e := range wallpaperMedia(h) {
+		if e.Kind != wallpaper.KindEffect {
+			t.Fatalf("effects filter still shows %s", e.Name)
+		}
+		names = append(names, e.Name)
+	}
+	if !slices.Equal(names, []string{"fire", "rain"}) {
+		t.Fatalf("effect tiles = %v, want the --list catalog", names)
+	}
+}
+
+func TestWallpaperEffectTileAppliesWithoutPath(t *testing.T) {
+	root := seedWallpaperRoot(t)
+	reg, svc, _ := wallpaperPanel(t, []string{root}, false)
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	snap := h.wallpaperSnap
+	snap.Caps = wallpaper.Capabilities{
+		Terminal: true,
+		Catalog: wallpaper.Catalog{
+			Effects: []wallpaper.EffectInfo{{ID: "fire"}},
+			Themes:  []string{"nord"},
+		},
+	}
+	h.wallpaperSnap = snap
+	h.wallpaperOutput = "DP-1"
+	if !h.wallpaperAction(reg, &ui.Node{Action: fmt.Sprintf("wallpaper-filter:%d", wallpaper.FilterEffects)}) {
+		reg.mu.Unlock()
+		t.Fatal("effects filter")
+	}
+	tile := findAction(h.root, "wallpaper-tile")
+	if tile == nil {
+		reg.mu.Unlock()
+		t.Fatal("no effect tile")
+	}
+	if !h.wallpaperAction(reg, tile) {
+		reg.mu.Unlock()
+		t.Fatal("effect tile was not handled")
+	}
+	reg.mu.Unlock()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		a := svc.Snapshot().Assignments["DP-1"]
+		if a.Kind == wallpaper.KindEffect && a.Effect == "fire" && a.Path == "" {
+			if a.Theme != "nord" {
+				t.Fatalf("theme = %q, want nord from the catalog", a.Theme)
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("assignment = %+v, want kind=effect fire with empty path", svc.Snapshot().Assignments["DP-1"])
 }
 
 func TestWallpaperTitleOffersRefresh(t *testing.T) {
@@ -795,6 +873,33 @@ func TestWallpaperEngineStripNamesWhatIsInstalled(t *testing.T) {
 	walk(h.root)
 	if !said {
 		t.Error("a machine with no engine must be told so")
+	}
+}
+
+func TestWallpaperEngineStripIncludesTerminal(t *testing.T) {
+	t.Parallel()
+
+	root := seedWallpaperRoot(t)
+	reg, _, _ := openWallpaperPanel(t, []string{root})
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	snap := h.wallpaperSnap
+	snap.Caps = wallpaper.Capabilities{
+		GSlapper: true,
+		Terminal: true,
+		Statics:  []string{"awww"},
+	}
+	h.wallpaperSnap = snap
+	reg.rebuildPanel(h)
+
+	got := wallpaperEngineLabels(h.root)
+	if !slices.Contains(got, "sysc-terminal") {
+		t.Fatalf("engine pills %v omit sysc-terminal", got)
+	}
+	if got[0] != "gSlapper" || !slices.Contains(got, "awww") {
+		t.Fatalf("engine pills %v lost the existing engines", got)
 	}
 }
 

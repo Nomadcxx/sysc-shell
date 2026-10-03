@@ -39,7 +39,7 @@ const (
 
 	// Chrome controls. The output select is D4's 170px minimum.
 	wallpaperOutputWidth     = 170
-	wallpaperFilterWidth     = 220
+	wallpaperFilterWidth     = 280
 	wallpaperControlPad      = 8
 	wallpaperIconSize        = 18
 	wallpaperPlaceholderIcon = 32
@@ -138,12 +138,33 @@ func wallpaperView(h *PanelHost) []wallpaper.Entry {
 
 // wallpaperMedia is what the tile grid shows: playable files only.
 func wallpaperMedia(h *PanelHost) []wallpaper.Entry {
+	if h.wallpaperFilter == wallpaper.FilterEffects {
+		return wallpaperEffectEntries(h)
+	}
 	view := wallpaperView(h)
 	out := make([]wallpaper.Entry, 0, len(view))
 	for _, e := range view {
 		if !e.IsDir {
 			out = append(out, e)
 		}
+	}
+	return out
+}
+
+// wallpaperEffectEntries is the Effects source: registry ids from --list,
+// never transcribed into the shell.
+func wallpaperEffectEntries(h *PanelHost) []wallpaper.Entry {
+	needle := strings.ToLower(strings.TrimSpace(wallpaperSearch(h)))
+	out := make([]wallpaper.Entry, 0, len(h.wallpaperSnap.Caps.Catalog.Effects))
+	for _, e := range h.wallpaperSnap.Caps.Catalog.Effects {
+		if needle != "" && !strings.Contains(strings.ToLower(e.ID), needle) {
+			continue
+		}
+		out = append(out, wallpaper.Entry{
+			Name: e.ID,
+			Path: "effect:" + e.ID,
+			Kind: wallpaper.KindEffect,
+		})
 	}
 	return out
 }
@@ -281,6 +302,29 @@ func wallpaperPaletteOptions(h *PanelHost) []wallpaperOption {
 	return out
 }
 
+func wallpaperEffectTheme(h *PanelHost) string {
+	if h.wallpaperEffectTheme != "" {
+		return h.wallpaperEffectTheme
+	}
+	if ts := h.wallpaperSnap.Caps.Catalog.Themes; len(ts) > 0 {
+		return ts[0]
+	}
+	return "nord"
+}
+
+func wallpaperEffectThemeOptions(h *PanelHost) []wallpaperOption {
+	current := wallpaperEffectTheme(h)
+	out := make([]wallpaperOption, 0, len(h.wallpaperSnap.Caps.Catalog.Themes))
+	for _, name := range h.wallpaperSnap.Caps.Catalog.Themes {
+		out = append(out, wallpaperOption{
+			action:   "wallpaper-effect-theme:" + name,
+			label:    name,
+			selected: name == current,
+		})
+	}
+	return out
+}
+
 // wallpaperTree projects the last snapshot as the D4 chrome: title and close,
 // search with an output select, the kind filter with Up, the folder strip,
 // banners, the active strip, the virtualized grid, and the media count.
@@ -303,6 +347,9 @@ func wallpaperTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	if h.wallpaperMenu == "folder" {
 		children = append(children, wallpaperOptionList(h, wallpaperFolderOptions(h)))
+	}
+	if h.wallpaperMenu == "effect-theme" {
+		children = append(children, wallpaperOptionList(h, wallpaperEffectThemeOptions(h)))
 	}
 	children = append(children, wallpaperThemeEngineRow(h))
 	if h.wallpaperMenu == "palette" {
@@ -436,6 +483,7 @@ func wallpaperNavRow(h *PanelHost, inner int) *ui.Node {
 		{"All", wallpaper.FilterAll},
 		{"Images", wallpaper.FilterImages},
 		{"Videos", wallpaper.FilterVideos},
+		{"Effects", wallpaper.FilterEffects},
 	}
 	segments := make([]*ui.Node, 0, len(filters))
 	for _, f := range filters {
@@ -449,7 +497,11 @@ func wallpaperNavRow(h *PanelHost, inner int) *ui.Node {
 
 	folder := []*ui.Node{wallpaperCombo(h, "folder", wallpaperFolderLabel(h), wallpaperFolderWidth)}
 	folderW := wallpaperFolderWidth
-	if h.wallpaperSnap.Library != nil {
+	folderLabel := "FOLDER"
+	if h.wallpaperFilter == wallpaper.FilterEffects {
+		folder = []*ui.Node{wallpaperCombo(h, "effect-theme", wallpaperEffectTheme(h), wallpaperFolderWidth)}
+		folderLabel = "PALETTE"
+	} else if h.wallpaperSnap.Library != nil {
 		if _, ok := h.wallpaperSnap.Library.Parent(h.wallpaperDir); ok {
 			up := wallpaperButton(h, "wallpaper-up", "Up", false)
 			up.Height = ch
@@ -463,7 +515,7 @@ func wallpaperNavRow(h *PanelHost, inner int) *ui.Node {
 		Kind: ui.KindRow, Gap: wallpaperGridGap, Height: wallpaperGroupH(h),
 		Children: []*ui.Node{
 			wallpaperLabeled(h, "SHOW", wallpaperFilterWidth, show),
-			wallpaperLabeled(h, "FOLDER", folderW, group),
+			wallpaperLabeled(h, folderLabel, folderW, group),
 		},
 	}
 }
@@ -574,7 +626,7 @@ func wallpaperTile(r *Registry, h *PanelHost, entry wallpaper.Entry, index int) 
 	}
 	// The output's current wallpaper is outlined, so the picker says what is
 	// already applied rather than only what could be (D6).
-	if matched, _ := wallpaperMatchCount(h, entry.Path); matched > 0 {
+	if matched, _ := wallpaperMatchCount(h, entry); matched > 0 {
 		tile.Stroke = wallpaperSelectedStroke
 		tile.StrokeFill = ui.FillAccent
 	}
@@ -594,7 +646,13 @@ func wallpaperTile(r *Registry, h *PanelHost, entry wallpaper.Entry, index int) 
 
 // wallpaperCanApply reports whether a tile is activatable.
 func wallpaperCanApply(h *PanelHost, entry wallpaper.Entry) bool {
-	return entry.Kind != wallpaper.KindVideo || h.wallpaperSnap.Caps.GSlapper
+	switch entry.Kind {
+	case wallpaper.KindVideo:
+		return h.wallpaperSnap.Caps.GSlapper
+	case wallpaper.KindEffect:
+		return h.wallpaperSnap.Caps.Terminal
+	}
+	return true
 }
 
 // wallpaperPlaceholderGlyph is the tile's stand-in before a preview exists.
@@ -621,7 +679,7 @@ func wallpaperCaption(h *PanelHost, entry wallpaper.Entry) string {
 	if entry.Kind == wallpaper.KindVideo {
 		name = "VIDEO \u00b7 " + name
 	}
-	if matched, total := wallpaperMatchCount(h, entry.Path); total > 1 && matched > 0 {
+	if matched, total := wallpaperMatchCount(h, entry); total > 1 && matched > 0 {
 		return fmt.Sprintf("%s  %d / %d", name, matched, total)
 	}
 	return name
@@ -646,10 +704,17 @@ func wallpaperOutputSelection(snap wallpaper.Snapshot, selected string) string {
 // wallpaperMatchCount reports how many of the selected outputs already show
 // path. It is read back from the snapshot rather than composed here, so the
 // badge cannot drift from what is actually assigned.
-func wallpaperMatchCount(h *PanelHost, path string) (matched, total int) {
+func wallpaperMatchCount(h *PanelHost, entry wallpaper.Entry) (matched, total int) {
 	for _, connector := range wallpaperTargets(h) {
 		total++
-		if h.wallpaperSnap.Assignments[connector].Path == path {
+		a := h.wallpaperSnap.Assignments[connector]
+		if entry.Kind == wallpaper.KindEffect {
+			if a.Kind == wallpaper.KindEffect && a.Effect == entry.Name {
+				matched++
+			}
+			continue
+		}
+		if a.Path == entry.Path {
 			matched++
 		}
 	}
@@ -683,6 +748,9 @@ func wallpaperBanners(h *PanelHost) []*ui.Node {
 		add(h.wallpaperSnap.Library.Err, ui.ToneError)
 	}
 	add(h.wallpaperSnap.Err, ui.ToneError)
+	if h.wallpaperFilter == wallpaper.FilterEffects && !h.wallpaperSnap.Caps.Terminal {
+		add("sysc-terminal is not installed", ui.ToneError)
+	}
 	// The palette is the other half of applying a wallpaper. A generator that
 	// cannot produce a usable one leaves the old colours up, which is correct
 	// but looks exactly like nothing having happened unless it says so.
@@ -726,6 +794,9 @@ func wallpaperEngineRow(h *PanelHost) *ui.Node {
 	var pills []*ui.Node
 	if h.wallpaperSnap.Caps.GSlapper {
 		pills = append(pills, wallpaperEnginePill(h, "gSlapper", active == wallpaper.EngineGSlapper))
+	}
+	if h.wallpaperSnap.Caps.Terminal {
+		pills = append(pills, wallpaperEnginePill(h, wallpaper.EngineTerminal, active == wallpaper.EngineTerminal))
 	}
 	for _, name := range h.wallpaperSnap.Caps.Statics {
 		pills = append(pills, wallpaperEnginePill(h, name, active == name))
@@ -815,7 +886,8 @@ func wallpaperRestoreLabel(h *PanelHost) string {
 // whether it is paused. All outputs offers the control when any of them does.
 func wallpaperPlaybackState(h *PanelHost) (paused, ok bool) {
 	for _, connector := range wallpaperTargets(h) {
-		if h.wallpaperSnap.Assignments[connector].Kind != wallpaper.KindVideo {
+		if h.wallpaperSnap.Assignments[connector].Kind != wallpaper.KindVideo &&
+			h.wallpaperSnap.Assignments[connector].Kind != wallpaper.KindEffect {
 			continue
 		}
 		ok = true
@@ -826,6 +898,13 @@ func wallpaperPlaybackState(h *PanelHost) (paused, ok bool) {
 	return paused, ok
 }
 
+func wallpaperAssignmentLabel(a wallpaper.Assignment) string {
+	if a.Kind == wallpaper.KindEffect && a.Effect != "" {
+		return a.Effect
+	}
+	return filepath.Base(a.Path)
+}
+
 // wallpaperSummary is the active strip's line for one output, or the mixed
 // summary for All.
 func wallpaperSummary(snap wallpaper.Snapshot, output string) string {
@@ -834,7 +913,7 @@ func wallpaperSummary(snap wallpaper.Snapshot, output string) string {
 		if !ok {
 			return output + " \u00b7 nothing assigned"
 		}
-		return fmt.Sprintf("%s \u00b7 %s \u00b7 %s", output, filepath.Base(a.Path),
+		return fmt.Sprintf("%s \u00b7 %s \u00b7 %s", output, wallpaperAssignmentLabel(a),
 			wallpaperStateName(snap.Runtime[output].State))
 	}
 	outputs, videos, images := 0, 0, 0
@@ -950,6 +1029,25 @@ func (h *PanelHost) wallpaperApply(r *Registry, entry wallpaper.Entry) {
 		h.wallpaperDir = entry.Path
 		h.wallpaperSel = 0
 		r.rebuildPanel(h)
+		return
+	}
+	if entry.Kind == wallpaper.KindEffect {
+		if !h.wallpaperSnap.Caps.Terminal {
+			return
+		}
+		h.wallpaperOutput = wallpaperOutputSelection(h.wallpaperSnap, h.wallpaperOutput)
+		svc := r.wallpaperServiceLocked()
+		if svc == nil {
+			return
+		}
+		svc.Enqueue(wallpaper.Command{
+			Op:     wallpaper.OpApply,
+			Token:  h.wallpaperOutput,
+			Kind:   wallpaper.KindEffect,
+			Effect: entry.Name,
+			Theme:  wallpaperEffectTheme(h),
+			// ponytail: no artwork file picker; RequiresText uses engine default text until a file combo is worth the chrome.
+		})
 		return
 	}
 	if entry.Kind == wallpaper.KindVideo && !h.wallpaperSnap.Caps.GSlapper {
@@ -1388,6 +1486,11 @@ func (h *PanelHost) wallpaperAction(r *Registry, n *ui.Node) bool {
 	case strings.HasPrefix(n.Action, "wallpaper-palette:"):
 		h.wallpaperMenu = ""
 		r.setPalette(strings.TrimPrefix(n.Action, "wallpaper-palette:"))
+		r.rebuildPanel(h)
+		return true
+	case strings.HasPrefix(n.Action, "wallpaper-effect-theme:"):
+		h.wallpaperMenu = ""
+		h.wallpaperEffectTheme = strings.TrimPrefix(n.Action, "wallpaper-effect-theme:")
 		r.rebuildPanel(h)
 		return true
 	case n.Action == "wallpaper-up":

@@ -239,6 +239,8 @@ type PanelHost struct {
 	wallpaperOutput  string
 	wallpaperSel     int
 	wallpaperFocused bool
+	// wallpaperEffectTheme is the sysc-Go palette used when applying KindEffect.
+	wallpaperEffectTheme string
 	// wallpaperMenu names the open chrome dropdown ("folder" or "palette"),
 	// or is empty when none is. One field rather than a flag each keeps them
 	// mutually exclusive: two lists open at once would each claim a slice of

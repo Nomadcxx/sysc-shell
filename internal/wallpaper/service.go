@@ -46,6 +46,8 @@ type Capabilities struct {
 	// Terminal is true when sysc-terminal answers --list. KindEffect uses it
 	// and nothing else does.
 	Terminal bool
+	// Catalog is the --list registry, filled only when Terminal is true.
+	Catalog Catalog
 	// Statics are the installed static fallback binaries in preference order.
 	// The picker names every one; Restore uses the first.
 	Statics []string
