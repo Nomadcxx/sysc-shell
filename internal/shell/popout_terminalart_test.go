@@ -3,6 +3,7 @@ package shell
 import (
 	"testing"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/wallpaper"
 )
 
@@ -52,6 +53,40 @@ func openArtPanel(t *testing.T, reg *Registry) *PanelHost {
 		t.Fatal("no terminal art panel host")
 	}
 	return h
+}
+
+func TestTerminalArtBarItemTogglesItsPanel(t *testing.T) {
+	got := buildWidgets([]config.Item{{ID: "terminal-art"}}, 8, standardMetrics())
+	if len(got) != 1 || got[0].node == nil || got[0].node.Action != panelTerminalArtAction {
+		t.Fatalf("terminal-art builds %+v, want one widget acting %q", got, panelTerminalArtAction)
+	}
+	if got[0].tooltip != "Terminal Art" {
+		t.Errorf("tooltip = %q", got[0].tooltip)
+	}
+	if _, err := config.Parse([]byte(`{"bar":{"items":{"right":[{"id":"terminal-art"}]}}}`)); err != nil {
+		t.Fatalf("a configured terminal-art item must load: %v", err)
+	}
+
+	r := NewRegistry(config.Default())
+	t.Cleanup(r.Close)
+	bar := &Bar{}
+	r.bindBarPanelActionsLocked(1, bar)
+	if !bar.onAction(panelTerminalArtAction, buttonLeft) {
+		t.Fatal("left click was not handled")
+	}
+	drainAux(t, r, 2)
+	if _, ok := r.panelHosts[PanelTerminalArt]; !ok {
+		t.Fatal("left click did not open PanelTerminalArt")
+	}
+	if _, ok := r.panelHosts[PanelWallpaper]; ok {
+		t.Fatal("the terminal art item must not open the wallpaper panel")
+	}
+	if !bar.onAction(panelTerminalArtAction, buttonRight) {
+		t.Fatal("right click was not handled")
+	}
+	if _, ok := r.panelHosts[PanelTerminalArt]; ok {
+		t.Fatal("a second click must close the panel")
+	}
 }
 
 func TestTerminalArtPanelOpensIndependently(t *testing.T) {

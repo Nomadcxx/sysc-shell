@@ -14,6 +14,9 @@ const (
 	// an authoring-time step with the real source file, not something to force
 	// here, so the widget draws from the text stack until it happens.
 	wallpaperGlyph = "▦"
+
+	panelTerminalArtAction = "panel:terminal-art"
+	terminalArtGlyph       = "▒"
 )
 
 // buildWallpaperWidget is the bar affordance for the wallpaper picker.
@@ -34,5 +37,20 @@ func buildWallpaperWidget() textWidget {
 		},
 		tooltip: "Wallpaper",
 		format:  func(barView) string { return wallpaperGlyph },
+	}
+}
+
+// buildTerminalArtWidget is the bar affordance for the Terminal Art panel. It
+// draws from the text stack for the same reason the wallpaper glyph does.
+func buildTerminalArtWidget() textWidget {
+	return textWidget{
+		node: &ui.Node{
+			Kind:     ui.KindText,
+			Text:     terminalArtGlyph,
+			TextRole: theme.RoleLabel,
+			Action:   panelTerminalArtAction,
+		},
+		tooltip: "Terminal Art",
+		format:  func(barView) string { return terminalArtGlyph },
 	}
 }

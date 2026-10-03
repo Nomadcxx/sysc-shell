@@ -407,7 +407,9 @@ var knownItems = map[string]struct{}{
 	// "wallpaper" opens the picker. It is deliberately not in Default(): a
 	// user who wants the glyph adds it, and an existing bar does not change.
 	"wallpaper": {},
-	"volume":    {},
+	// "terminal-art" opens the Terminal Art panel. Opt-in like "wallpaper".
+	"terminal-art": {},
+	"volume":       {},
 	// "wifi" is connectivity: the signal glyph that opens the network panel.
 	// It is deliberately not "network", which is already bound above as the
 	// throughput rate source with rx/tx directions. Naming it "network" would
