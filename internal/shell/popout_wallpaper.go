@@ -486,22 +486,35 @@ func wallpaperSearchRow(h *PanelHost, inner int) *ui.Node {
 	field.Padding = 8
 	field.Width = fieldW
 
-	tokens := append([]string{wallpaper.AllOutputs}, h.wallpaperSnap.Connectors...)
-	segments := make([]*ui.Node, 0, len(tokens))
-	for _, token := range tokens {
-		segments = append(segments, wallpaperSegment(h, "wallpaper-output:"+token,
-			wallpaperOutputLabel(token), token == h.wallpaperOutput))
-	}
-	sel := &ui.Node{
-		Kind: ui.KindSegmented, Key: "wallpaper-output", Gap: theme.MarginXXS,
-		Width: wallpaperOutputWidth, Height: ch, Children: segments,
-	}
 	return &ui.Node{
 		Kind: ui.KindRow, Gap: wallpaperGridGap, Height: wallpaperGroupH(h),
 		Children: []*ui.Node{
 			wallpaperLabeled(h, "SEARCH", fieldW, field),
-			wallpaperLabeled(h, "OUTPUT", wallpaperOutputWidth, sel),
+			wallpaperLabeled(h, "OUTPUT", wallpaperOutputWidth, wallpaperOutputSelect(h, "wallpaper-output:")),
 		},
+	}
+}
+
+// wallpaperOutputSelect is All plus one segment per connector, each acting
+// prefix+token. With one connector there is nothing to choose, so it is a
+// caption naming the output instead of a two-segment control.
+func wallpaperOutputSelect(h *PanelHost, prefix string) *ui.Node {
+	ch := wallpaperChromeH(h)
+	if len(h.wallpaperSnap.Connectors) == 1 {
+		return &ui.Node{
+			Kind: ui.KindText, Text: h.wallpaperSnap.Connectors[0],
+			TextRole: theme.RoleCaption, Height: ch,
+		}
+	}
+	tokens := append([]string{wallpaper.AllOutputs}, h.wallpaperSnap.Connectors...)
+	segments := make([]*ui.Node, 0, len(tokens))
+	for _, token := range tokens {
+		segments = append(segments, wallpaperSegment(h, prefix+token,
+			wallpaperOutputLabel(token), token == h.wallpaperOutput))
+	}
+	return &ui.Node{
+		Kind: ui.KindSegmented, Key: strings.TrimSuffix(prefix, ":"), Gap: theme.MarginXXS,
+		Width: wallpaperOutputWidth, Height: ch, Children: segments,
 	}
 }
 

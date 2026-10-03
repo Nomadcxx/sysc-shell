@@ -1,9 +1,13 @@
 package shell
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-shell/internal/wallpaper"
 )
 
@@ -23,15 +27,19 @@ func (artWallpaperEngine) Capabilities() wallpaper.Capabilities {
 }
 
 // artRegistry is a registry with a bar on output 7 and a wallpaper service on
-// DP-1 and DP-3 backed by engine. No panel is open yet.
-func artRegistry(t *testing.T, engine wallpaper.Engine) (*Registry, *wallpaper.Service) {
+// connectors (DP-1 and DP-3 when none are named) backed by engine. No panel is
+// open yet.
+func artRegistry(t *testing.T, engine wallpaper.Engine, connectors ...string) (*Registry, *wallpaper.Service) {
 	t.Helper()
+	if len(connectors) == 0 {
+		connectors = []string{"DP-1", "DP-3"}
+	}
 	reg := newPanelRegistry(t)
 	withTestBar(t, reg, 7, reg.cfg)
 	svc := wallpaper.NewService(wallpaper.ServiceConfig{
 		Engine:     engine,
 		Settings:   wallpaper.Settings{Scale: "fill", Loop: true, FPS: 30, Hidden: wallpaper.HiddenNone},
-		Connectors: []string{"DP-1", "DP-3"},
+		Connectors: connectors,
 	})
 	t.Cleanup(svc.Close)
 	reg.mu.Lock()
@@ -45,7 +53,11 @@ func openArtPanel(t *testing.T, reg *Registry) *PanelHost {
 	if err := reg.OpenPanel(PanelTerminalArt, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1920, OutH: 1080}); err != nil {
 		t.Fatal(err)
 	}
-	drainAuxQueue(reg)
+	reqs := drainAux(t, reg, 2)
+	open := reqs[1].Open
+	if err := open.Callbacks.Configure(int(open.Width), int(open.Height), 120); err != nil {
+		t.Fatal(err)
+	}
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
 	h := reg.panelHosts[PanelTerminalArt]
@@ -132,5 +144,98 @@ func TestTerminalArtPanelOpensIndependently(t *testing.T) {
 	reg.mu.Unlock()
 	if wall, art := state(); wall || !art {
 		t.Fatalf("closing wallpaper: wallpaper=%v art=%v, want art only", wall, art)
+	}
+}
+
+// artTexts lists every text in the tree.
+func artTexts(n *ui.Node) []string {
+	var out []string
+	walkNodes(n, func(n *ui.Node) {
+		if n.Kind == ui.KindText && n.Text != "" {
+			out = append(out, n.Text)
+		}
+	})
+	return out
+}
+
+func TestTerminalArtTreeNeverSaysWallpaper(t *testing.T) {
+	reg, _ := artRegistry(t, artWallpaperEngine{})
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	for _, text := range artTexts(h.root) {
+		if strings.Contains(text, "Wallpaper") {
+			t.Errorf("the Terminal Art panel says %q", text)
+		}
+	}
+	title := findNode(h.root, func(n *ui.Node) bool { return n.Kind == ui.KindText && n.Text == "Terminal Art" })
+	if title == nil || title.TextRole != theme.RoleTitle {
+		t.Fatalf("title = %+v, want Terminal Art as RoleTitle", title)
+	}
+}
+
+func TestTerminalArtCardsFromCatalog(t *testing.T) {
+	reg, _ := artRegistry(t, artWallpaperEngine{})
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	var cards []string
+	collectActions(h.root, "art-apply:", &cards)
+	if !slices.Equal(cards, []string{"art-apply:fire", "art-apply:rain"}) {
+		t.Fatalf("cards = %v, want fire and rain; text effects are hidden", cards)
+	}
+	for _, action := range cards {
+		card := findAction(h.root, action)
+		if card.Name != strings.TrimPrefix(action, "art-apply:") || !card.Focusable || card.State&ui.StateDisabled != 0 {
+			t.Errorf("card %s = name %q focusable %v state %v", action, card.Name, card.Focusable, card.State)
+		}
+	}
+	if findByName(h.root, "fire-text") != nil {
+		t.Error("a text effect is listed")
+	}
+	if !slices.Contains(artTexts(h.root), "2 effects") {
+		t.Errorf("footer missing; texts = %v", artTexts(h.root))
+	}
+}
+
+func TestTerminalArtUnavailableExplains(t *testing.T) {
+	reg, _ := artRegistry(t, stubWallpaperEngine{})
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	found := false
+	for _, text := range artTexts(h.root) {
+		if strings.Contains(text, "sysc-terminal") && strings.Contains(text, "/usr/local/bin") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no install banner; texts = %v", artTexts(h.root))
+	}
+	if findAction(h.root, "art-menu:palette") != nil {
+		t.Error("the palette combo must be hidden without sysc-terminal")
+	}
+}
+
+func TestTerminalArtOutputSelectCollapsesOnOneOutput(t *testing.T) {
+	reg, _ := artRegistry(t, artWallpaperEngine{}, "eDP-1")
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	var outputs []string
+	collectActions(h.root, "art-output:", &outputs)
+	texts := artTexts(h.root)
+	reg.mu.Unlock()
+	if len(outputs) != 0 || !slices.Contains(texts, "eDP-1") {
+		t.Fatalf("one output: select %v, texts %v; want a caption naming eDP-1", outputs, texts)
+	}
+
+	reg, _ = artRegistry(t, artWallpaperEngine{})
+	h = openArtPanel(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	outputs = nil
+	collectActions(h.root, "art-output:", &outputs)
+	if !slices.Equal(outputs, []string{"art-output:all", "art-output:DP-1", "art-output:DP-3"}) {
+		t.Fatalf("two outputs: select %v", outputs)
 	}
 }
