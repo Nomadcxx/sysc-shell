@@ -1069,58 +1069,8 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	if id == PanelSettings {
 		size = settingsPanelSize(outW, outH)
 	}
-	gap := r.cfg.Panels.Gap
-	if id == PanelPlugin || id == PanelAudio || id == PanelControlCenter || id == PanelPluginStore {
-		gap = 0
-	}
-	place := Placement{
-		BarEdge: trig.BarEdge,
-		Output:  ui.Rect{W: outW, H: outH},
-		BarZone: trig.BarZone,
-		Gap:     gap,
-		Padding: r.cfg.Panels.Padding,
-		Panel:   size,
-		Align:   trig.Align,
-		AnchorX: trig.AnchorX,
-		AnchorY: trig.AnchorY,
-	}
-	if id == PanelSettings && place.Align == "" {
-		place.Align = "center"
-	}
-	if id == PanelSession || id == PanelNotifications {
-		place.Align = "right"
-	}
-	if bar, ok := r.bars[output]; ok {
-		bt := bar.themeSnapshot()
-		place.BarShape, place.BarGap, place.BarRadius, place.Fillet = bt.BarShape, bt.BarGap, bt.Radius, bt.Fillet
-	}
-	// Settings, the launcher, the clipboard and the plugin store float over the desktop; every
-	// other panel attaches to the bar.
-	if id == PanelLauncher || id == PanelSettings || id == PanelClipboard || id == PanelPluginStore {
-		place.CenterY = true
-	}
-	if _, hasBar := r.bars[output]; !place.CenterY && (!hasBar || r.panelThemeFor(output).BarStyle == "islands") {
-		place.Detached = true
-		place.Gap = theme.MarginS
-		if !hasBar {
-			place.BarZone = 0
-		}
-	}
-	if id == PanelPluginStore {
-		// The store is large enough to reach the bar, so it centres in the
-		// space the bar leaves rather than across it.
-		place.Gap = 0
-		place.CenterY = true
-		place.Align = "center"
-	}
-	if id == PanelClipboard {
-		// Clipboard history is a true modal: centre it against the whole output,
-		// not the bar-free region used by attached/floating pickers.
-		place.BarZone = 0
-		place.Gap = 0
-		place.CenterY = true
-		place.Align = "center"
-	}
+	trig.OutW, trig.OutH = outW, outH
+	place := r.panelPlacementLocked(id, output, trig, size)
 	if id == PanelPluginStore {
 		w, hgt := place.FittedSize()
 		place.Panel.W, place.Panel.H = w, hgt
@@ -1128,9 +1078,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 
 	// Tuck an attached panel one pixel under an opaque bar. Over a
 	// translucent one the doubled row would paint a darker line instead.
-	if place.Attached() && r.panelThemeFor(output).Surfaces.Bar == 0xff {
-		place.Overlap = 1
-	}
+	r.panelOverlapLocked(output, &place)
 
 	openShield := !r.hasPanelOnOutputLocked(output)
 	r.panelOrder++
@@ -1287,6 +1235,70 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 
 	r.scheduleSurfaceFrames(h)
 	return nil
+}
+
+// panelPlacementLocked is the single source of axis, edge, detached and
+// surface-join placement policy for a panel body on one output.
+// Registry.mu is held by the caller.
+func (r *Registry) panelPlacementLocked(id PanelID, output uint32, trig Trigger, size ui.Rect) Placement {
+	outW, outH := trig.OutW, trig.OutH
+	if outW <= 0 {
+		outW = 1920
+	}
+	if outH <= 0 {
+		outH = 1080
+	}
+	gap := r.cfg.Panels.Gap
+	if id == PanelPlugin || id == PanelAudio || id == PanelControlCenter || id == PanelPluginStore {
+		gap = 0
+	}
+	place := Placement{
+		BarEdge: trig.BarEdge, Output: ui.Rect{W: outW, H: outH}, BarZone: trig.BarZone,
+		Gap: gap, Padding: r.cfg.Panels.Padding, Panel: size,
+		Align: trig.Align, AnchorX: trig.AnchorX, AnchorY: trig.AnchorY,
+	}
+	if id == PanelSettings && place.Align == "" {
+		place.Align = "center"
+	}
+	if id == PanelSession || id == PanelNotifications {
+		place.Align = "right"
+	}
+	if bar, ok := r.bars[output]; ok {
+		bt := bar.themeSnapshot()
+		place.BarShape, place.BarGap, place.BarRadius, place.Fillet = bt.BarShape, bt.BarGap, bt.Radius, bt.Fillet
+	}
+	// Settings, the launcher, the clipboard and the plugin store float; other
+	// panels attach to the bar.
+	if id == PanelLauncher || id == PanelSettings || id == PanelClipboard || id == PanelPluginStore {
+		place.CenterY = true
+	}
+	if _, hasBar := r.bars[output]; !place.CenterY && (!hasBar || r.panelThemeFor(output).BarStyle == "islands") {
+		place.Detached = true
+		place.Gap = theme.MarginS
+		if !hasBar {
+			place.BarZone = 0
+		}
+	}
+	if id == PanelPluginStore {
+		// The store centres in the space the bar leaves.
+		place.Gap = 0
+		place.CenterY = true
+		place.Align = "center"
+	}
+	if id == PanelClipboard {
+		// Clipboard is a true modal centred on the whole output.
+		place.BarZone = 0
+		place.Gap = 0
+		place.CenterY = true
+		place.Align = "center"
+	}
+	return place
+}
+
+func (r *Registry) panelOverlapLocked(output uint32, place *Placement) {
+	if place.Attached() && r.panelThemeFor(output).Surfaces.Bar == 0xff {
+		place.Overlap = 1
+	}
 }
 
 func (r *Registry) acquirePanelLeases(h *PanelHost) error {
@@ -1530,13 +1542,7 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	// Body is the one output-space rectangle shared by placement and capture.
 	region := h.place.Rect()
 	joints := h.place.Joints()
-	if h.place.sideAxis() {
-		m.Top -= joints.Left
-		m.Bottom -= joints.Right
-	} else {
-		m.Left -= joints.Left
-		m.Right -= joints.Right
-	}
+	m = panelSurfaceMargins(h.place, m)
 	width, height := h.surfaceSize()
 	opaque := h.theme.BackgroundOpaque()
 	var input []ui.Rect
@@ -1709,6 +1715,18 @@ func (h *PanelHost) surfaceBody(w, hgt int) ui.Rect {
 		body.Y = edge
 	}
 	return body
+}
+
+func panelSurfaceMargins(place Placement, margins Margins) Margins {
+	joints := place.Joints()
+	if place.sideAxis() {
+		margins.Top -= joints.Left
+		margins.Bottom -= joints.Right
+	} else {
+		margins.Left -= joints.Left
+		margins.Right -= joints.Right
+	}
+	return margins
 }
 
 // panelFontFamily resolves the font of the output the panel opens on. A panel
@@ -2849,7 +2867,7 @@ func (h *PanelHost) activate(r *Registry) bool {
 		if n.Kind == ui.KindTextField {
 			return r.deliverPluginText(n.Action, n.Text, v1.EventSubmit)
 		}
-		return r.handlePluginBar(n.Action, wayland.Event{Kind: wayland.EventPointerRelease, Button: 272}, 0)
+		return r.handlePluginBar(n.Action, wayland.Event{Kind: wayland.EventPointerRelease, Button: 272}, ui.Rect{})
 	}
 	if strings.HasPrefix(n.Action, "plugin-set:") {
 		switch n.Kind {

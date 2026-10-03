@@ -1461,10 +1461,9 @@ func (r *Registry) bindBarTrayLocked(global uint32, connector string, bar *Bar) 
 
 func (r *Registry) bindBarPluginLocked(bar *Bar) {
 	bar.setPluginHandler(func(action string, event wayland.Event) bool {
-		// The handler runs without the bar lock, so reading the action's
-		// centre here is safe and gives the plugin's panel an anchor under
-		// the widget that was clicked.
-		return r.handlePluginBar(action, event, bar.actionCenterX(action))
+		// The handler runs without the bar lock, so the action bounds can be
+		// copied here for the plugin panel's output-space anchor.
+		return r.handlePluginBar(action, event, bar.actionBounds(action))
 	})
 }
 

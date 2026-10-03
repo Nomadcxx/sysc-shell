@@ -6,6 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	v1 "github.com/Nomadcxx/sysc-shell/plugin/v1"
 )
 
@@ -37,7 +38,7 @@ func (h *pluginHost) launcherNotes(output string, generation uint32, body string
 			return errors.New("Notes panel closed before capture could be delivered")
 		}
 	}
-	if body != "" && !h.deliver(pluginHit{ViewID: viewID, Node: "launcher-capture"}, v1.EventSubmit, "", body, 0) {
+	if body != "" && !h.deliver(pluginHit{ViewID: viewID, Node: "launcher-capture"}, v1.EventSubmit, "", body, ui.Rect{}) {
 		return errors.New("Notes panel is no longer available")
 	}
 	return nil
