@@ -525,11 +525,10 @@ var batteryLabels = map[string]bool{
 	"percent": true, "time": true, "rate": true, "none": true,
 }
 
-// supportedEdges names every edge the model understands and whether this
-// milestone implements it. An unimplemented edge is rejected with a named
-// error rather than silently mis-rendering.
+// supportedEdges is the set of bar edges implemented by the geometry pipeline.
+// Unknown values are rejected with bar.edge field context.
 var supportedEdges = map[string]bool{
-	"top": true, "bottom": true, "left": false, "right": false,
+	"top": true, "bottom": true, "left": true, "right": true,
 }
 
 // Default is the built-in configuration, used when no file exists.

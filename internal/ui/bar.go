@@ -338,9 +338,33 @@ func placeSection(items []*Node, axis Axis, mainOrigin int, content Rect, budget
 				return 0, fmt.Errorf("ui: item %d: %w", i, err)
 			}
 		}
+		if axis == Vertical && subtreeExceedsCross(n, n.Bounds, axis) {
+			n.ClipBounds = true
+		}
 		m += granted[i]
 	}
 	return dropped, nil
+}
+
+// subtreeExceedsCross detects upright content that would paint outside its
+// granted cross-axis box; the outer item then clips paint to that box.
+func subtreeExceedsCross(n *Node, bounds Rect, axis Axis) bool {
+	if n == nil {
+		return false
+	}
+	if n.Bounds.W > 0 && n.Bounds.H > 0 {
+		start, size := axis.crossOf(n.Bounds)
+		clipStart, clipSize := axis.crossOf(bounds)
+		if start < clipStart || start+size > clipStart+clipSize {
+			return true
+		}
+	}
+	for _, child := range n.Children {
+		if subtreeExceedsCross(child, bounds, axis) {
+			return true
+		}
+	}
+	return false
 }
 
 // elastic reports whether a node is built to shrink rather than disappear.
@@ -490,6 +514,9 @@ func placeTruncating(items []*Node, axis Axis, mainOrigin int, content Rect, bud
 			if err := layoutCapsuleChild(n, measure); err != nil {
 				return fmt.Errorf("ui: item %d: %w", i, err)
 			}
+		}
+		if axis == Vertical && subtreeExceedsCross(n, n.Bounds, axis) {
+			n.ClipBounds = true
 		}
 		m += granted
 		remaining -= granted

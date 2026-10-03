@@ -39,11 +39,11 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			Set:      setBool("bar.enabled", func(c *config.Config, b bool) { c.Bar.Enabled = b }),
 		},
 		{
-			Path: "bar.edge", Label: "Edge", Section: "Bar", Page: "Appearance", Group: "Surface", Kind: KindEnum,
+			Path: "bar.edge", Label: "Edge", Section: "Bar", Page: "Appearance", Group: "Surface", Kind: KindEnum, Present: PresentMenu,
 			Describe: "Which screen edge the bar anchors to.",
-			Options:  barEdges,
-			Get:      func(c config.Config) string { return c.Bar.Edge },
-			Set:      setEnum("bar.edge", barEdges, func(c *config.Config, v string) { c.Bar.Edge = v }),
+			Options:  barEdges, OptionLabels: []string{"Top", "Bottom", "Left", "Right"},
+			Get: func(c config.Config) string { return c.Bar.Edge },
+			Set: setEnum("bar.edge", barEdges, func(c *config.Config, v string) { c.Bar.Edge = v }),
 		},
 		{
 			Path: "bar.style", Label: "Style", Section: "Bar", Page: "Appearance", Group: "Surface", Kind: KindEnum, Present: PresentCards,
@@ -745,11 +745,7 @@ func SectionPages(section string) []string {
 // a value the surface offers and the setter rejects is unreachable, and one
 // the setter accepts and the surface hides is undiscoverable.
 var (
-	// The loader accepts one edge today and names the rest unsupported, so
-	// offering them would hand the user a control that writes a file the shell
-	// then declines to start from. The remaining edges arrive with the bar
-	// geometry work, which is what makes them real.
-	barEdges     = []string{"top"}
+	barEdges     = []string{"top", "bottom", "left", "right"}
 	themeSources = []string{"wallpaper", "hex", "stock", "palette"}
 	themeModes   = []string{"dark", "light"}
 	presetNames  = []string{

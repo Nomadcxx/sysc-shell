@@ -444,8 +444,8 @@ type Node struct {
 	Bounds  Rect
 	// FadeAxis selects the trailing edge covered by a KindEdgeFade.
 	FadeAxis Axis
-	// ClipBounds confines this subtree to Bounds when a side bar gives an
-	// oversized centre item only the visible main-axis extent.
+	// ClipBounds confines this subtree to Bounds for an oversized centre item
+	// or side-bar content that exceeds its cross-axis grant.
 	ClipBounds       bool
 	Children         []*Node
 	Schedule         *ScheduleLayout
