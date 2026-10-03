@@ -71,7 +71,7 @@ func artStatusRow(h *PanelHost) *ui.Node {
 	running, paused, still := false, false, false
 	for _, connector := range wallpaperTargets(h) {
 		a := h.wallpaperSnap.Assignments[connector]
-		if a.Kind != wallpaper.KindEffect {
+		if !artLive(h, connector) {
 			continue
 		}
 		running = true
@@ -195,7 +195,7 @@ func artEffects(h *PanelHost) []wallpaper.EffectInfo {
 func artRunningOn(h *PanelHost, id string) []string {
 	var out []string
 	for _, connector := range h.wallpaperSnap.Connectors {
-		if a := h.wallpaperSnap.Assignments[connector]; a.Kind == wallpaper.KindEffect && a.Effect == id {
+		if artLive(h, connector) && h.wallpaperSnap.Assignments[connector].Effect == id {
 			out = append(out, connector)
 		}
 	}
@@ -237,13 +237,13 @@ func (h *PanelHost) artAction(r *Registry, n *ui.Node) bool {
 		r.closePanelLocked(PanelTerminalArt)
 		return true
 	case "art-pause":
-		h.wallpaperSetPaused(r, true)
+		h.artEnqueue(r, wallpaper.OpPause)
 		return true
 	case "art-resume":
-		h.wallpaperSetPaused(r, false)
+		h.artEnqueue(r, wallpaper.OpResume)
 		return true
 	case "art-restore":
-		h.wallpaperRestore(r)
+		h.artEnqueue(r, wallpaper.OpRestore)
 		return true
 	}
 	if n.Action == "art-menu:palette" {
@@ -270,7 +270,7 @@ func (h *PanelHost) artAction(r *Registry, n *ui.Node) bool {
 		// once and the wallpaper behind the panel is the preview.
 		if svc := r.wallpaperServiceLocked(); svc != nil {
 			for _, connector := range wallpaperTargets(h) {
-				if a := h.wallpaperSnap.Assignments[connector]; a.Kind == wallpaper.KindEffect {
+				if a := h.wallpaperSnap.Assignments[connector]; artLive(h, connector) {
 					svc.Enqueue(wallpaper.Command{
 						Op: wallpaper.OpApply, Token: connector,
 						Kind: wallpaper.KindEffect, Effect: a.Effect, Theme: name,
@@ -400,4 +400,25 @@ func (h *PanelHost) artSettingsAction(r *Registry, n *ui.Node) bool {
 	}
 	r.rebuildPanel(h)
 	return true
+}
+
+// artLive reports whether connector is running an effect now. Restore puts
+// the still back but keeps the effect assigned, so the kind alone is not it.
+func artLive(h *PanelHost, connector string) bool {
+	return h.wallpaperSnap.Assignments[connector].Kind == wallpaper.KindEffect &&
+		h.wallpaperSnap.Runtime[connector].State != wallpaper.StateStatic
+}
+
+// artEnqueue sends op to each selected output running an effect, so All
+// outputs never reaches a video the Wallpaper panel owns.
+func (h *PanelHost) artEnqueue(r *Registry, op wallpaper.Op) {
+	svc := r.wallpaperServiceLocked()
+	if svc == nil {
+		return
+	}
+	for _, connector := range wallpaperTargets(h) {
+		if artLive(h, connector) {
+			svc.Enqueue(wallpaper.Command{Op: op, Token: connector})
+		}
+	}
 }

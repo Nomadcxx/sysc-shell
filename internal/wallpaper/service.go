@@ -437,17 +437,25 @@ func (s *Service) notifySeed(seed string) {
 	}
 }
 
-func (s *Service) setPaused(connector string, paused bool) {
-	a, ok := s.store.Assignment(connector)
-	if !ok || (a.Kind != KindVideo && a.Kind != KindEffect) {
-		// Pause is for pipelines that play; an image has nothing to hold.
-		return
+func (s *Service) setPaused(token string, paused bool) {
+	targets := []string{token}
+	if token == AllOutputs {
+		targets = s.store.Connectors()
 	}
-	if err := s.engine.SetPaused(connector, paused); err != nil {
-		s.store.noteRuntimeErr(connector, err)
-		return
+	for _, connector := range targets {
+		a, ok := s.store.Assignment(connector)
+		if !ok || (a.Kind != KindVideo && a.Kind != KindEffect) ||
+			s.store.Runtime(connector).State == StateStatic {
+			// Pause is for pipelines that play; an image, or a player restored
+			// to its still, has nothing to hold.
+			continue
+		}
+		if err := s.engine.SetPaused(connector, paused); err != nil {
+			s.store.noteRuntimeErr(connector, err)
+			continue
+		}
+		s.store.SetPlayback(connector, paused)
 	}
-	s.store.SetPlayback(connector, paused)
 	s.persist()
 }
 

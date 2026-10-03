@@ -556,3 +556,23 @@ func TestRestoreEffectReturnsToPriorStill(t *testing.T) {
 		t.Fatalf("Restore got still %q, want the image the effect replaced", got)
 	}
 }
+
+func TestServicePauseAllReachesEachPlayer(t *testing.T) {
+	engine := newFakeEngine()
+	svc := newTestService(t, engine)
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: "/w/a.mp4", Kind: KindVideo})
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-3", Path: "/w/b.mp4", Kind: KindVideo})
+	awaitSnapshot(t, svc, func(s Snapshot) bool {
+		return s.Runtime["DP-1"].State == StatePlaying && s.Runtime["DP-3"].State == StatePlaying
+	})
+	svc.Enqueue(Command{Op: OpRestore, Token: "DP-3"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Runtime["DP-3"].State == StateStatic })
+
+	svc.Enqueue(Command{Op: OpPause, Token: AllOutputs})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Runtime["DP-1"].State == StatePaused })
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if _, touched := engine.paused["DP-3"]; touched {
+		t.Fatal("pause reached an output that was restored to a still")
+	}
+}

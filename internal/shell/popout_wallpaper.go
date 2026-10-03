@@ -979,7 +979,12 @@ func (h *PanelHost) wallpaperSetPaused(r *Registry, paused bool) {
 	if paused {
 		op = wallpaper.OpPause
 	}
-	svc.Enqueue(wallpaper.Command{Op: op, Token: h.wallpaperOutput})
+	// An effect's playback is the Terminal Art panel's.
+	for _, connector := range wallpaperTargets(h) {
+		if h.wallpaperSnap.Assignments[connector].Kind == wallpaper.KindVideo {
+			svc.Enqueue(wallpaper.Command{Op: op, Token: connector})
+		}
+	}
 }
 
 // wallpaperUp leaves the current directory, stopping at a library root.

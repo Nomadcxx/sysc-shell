@@ -601,3 +601,42 @@ func TestTerminalArtSettingsOpensThePanel(t *testing.T) {
 		t.Fatalf("settings open=%v art=%v; want the panel on output %d", reg.panelHosts[PanelSettings] != nil, art != nil, h.output)
 	}
 }
+
+// Restore from Terminal Art is about effects: on All outputs it must leave a
+// video on another output playing, and an output back on its still is no
+// longer running anything the panel can pause.
+func TestTerminalArtRestoreTouchesOnlyEffects(t *testing.T) {
+	reg, svc := artRegistry(t, artWallpaperEngine{})
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-1", Kind: wallpaper.KindImage, Path: "/w/a.png"})
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-1", Kind: wallpaper.KindEffect, Effect: "fire", Theme: "nord"})
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-3", Kind: wallpaper.KindVideo, Path: "/w/b.mp4"})
+	awaitArt(t, svc, "DP-1", runningEffect("fire", "nord"))
+	awaitArt(t, svc, "DP-3", func(a wallpaper.Assignment) bool { return a.Path == "/w/b.mp4" })
+	if svc.Snapshot().Runtime["DP-3"].State == wallpaper.StateStatic {
+		t.Fatal("the video never started, so the check below proves nothing")
+	}
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	artAct(t, reg, h, "art-restore")
+	reg.mu.Unlock()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && svc.Snapshot().Runtime["DP-1"].State != wallpaper.StateStatic {
+		time.Sleep(5 * time.Millisecond)
+	}
+	snap := svc.Snapshot()
+	if snap.Runtime["DP-1"].State != wallpaper.StateStatic {
+		t.Fatalf("DP-1 runtime = %+v, want its still", snap.Runtime["DP-1"])
+	}
+	if snap.Runtime["DP-3"].State == wallpaper.StateStatic {
+		t.Fatal("restoring effects also stopped the video on DP-3")
+	}
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h.wallpaperSnap = snap
+	reg.rebuildPanel(h)
+	if findAction(h.root, "art-pause") != nil || len(artRunningOn(h, "fire")) > 0 {
+		t.Fatalf("a restored output still reads as running: %q", artTexts(h.root))
+	}
+}
