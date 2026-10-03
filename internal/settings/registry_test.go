@@ -56,6 +56,28 @@ func TestSetRejectsInvalidValues(t *testing.T) {
 	}
 }
 
+func TestBarEdgeSettingCanSelectEveryEdge(t *testing.T) {
+	t.Parallel()
+	entry := Default().ByPath("bar.edge")
+	if entry == nil {
+		t.Fatal("missing bar.edge")
+	}
+	want := []string{"top", "bottom", "left", "right"}
+	if !slices.Equal(entry.Options, want) {
+		t.Fatalf("bar.edge options = %v, want %v", entry.Options, want)
+	}
+	for _, edge := range want {
+		cfg := config.Default()
+		if err := entry.Set(&cfg, edge); err != nil {
+			t.Errorf("select %s: %v", edge, err)
+			continue
+		}
+		if got := entry.Get(cfg); got != edge || cfg.Bar.Edge != edge {
+			t.Errorf("select %s = getter %q config %q", edge, got, cfg.Bar.Edge)
+		}
+	}
+}
+
 func TestSearchMatchesLabels(t *testing.T) {
 	t.Parallel()
 	// Motion is three settings now: the composition axis, its speed, and the

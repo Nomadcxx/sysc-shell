@@ -599,6 +599,54 @@ func TestSettingsDropdownsAndSegmentsMatchAppearance(t *testing.T) {
 	}
 }
 
+func TestCompactBarEdgeMenuSelectsEveryEdge(t *testing.T) {
+	t.Parallel()
+	h := newSettingsHost()
+	h.section = "Bar"
+	h.place.Panel = settingsPanelSize(800, 500)
+	h.root = settingsTree(nil, h)
+	if err := ui.LayoutColumn(h.root, h.place.Panel, settingsMeasure(h)); err != nil {
+		t.Fatalf("layout compact Bar settings: %v", err)
+	}
+
+	e := h.set.ByPath("bar.edge")
+	if e == nil {
+		t.Fatal("missing bar.edge setting")
+	}
+	n := byAction(h.root, "set:bar.edge")
+	if n == nil || n.Kind != ui.KindMenu {
+		t.Fatalf("bar.edge control = %+v, want a compact menu", n)
+	}
+	m := h.menus[e.Path]
+	if m == nil {
+		t.Fatal("bar.edge menu was not retained")
+	}
+	m.Open()
+	choices := m.Node().Children
+	if len(choices) != len(e.Options) {
+		t.Fatalf("menu exposes %d choices, want %d", len(choices), len(e.Options))
+	}
+	for i, label := range e.OptionLabels {
+		if choices[i].Text != label {
+			t.Errorf("menu choice %d = %q, want %q", i, choices[i].Text, label)
+		}
+	}
+	m.Cancel()
+	for i, edge := range e.Options {
+		m.Open()
+		if i > 0 {
+			m.Next()
+		}
+		m.Select()
+		if got := m.Value(); got != edge {
+			t.Fatalf("menu selection %d = %q, want %q", i, got, edge)
+		}
+		if err := e.Set(&h.draft, m.Value()); err != nil || e.Get(h.draft) != edge {
+			t.Fatalf("apply edge %q: getter=%q err=%v", edge, e.Get(h.draft), err)
+		}
+	}
+}
+
 // TestSettingsTextFieldsTakeTheControlHeight: the rail search and the plugin
 // source fields used to size to their text, a strip about 22 px tall with the
 // first glyph against the rounded edge, while the plugin store's search was a

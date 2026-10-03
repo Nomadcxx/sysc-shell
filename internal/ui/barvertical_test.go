@@ -174,6 +174,22 @@ func TestWideTitleIsCrossClampedNotDropped(t *testing.T) {
 	}
 }
 
+func TestVerticalBarClipsCapsuleChildrenThatExceedCrossBounds(t *testing.T) {
+	t.Parallel()
+	button := &Node{Kind: KindButton, Text: "Scan", Padding: 4, Action: "run"}
+	row := &Node{Kind: KindRow, Children: []*Node{button}}
+	pill := &Node{Kind: KindCapsule, Padding: 4, Children: []*Node{row}}
+	if _, err := ArrangeBar(Rect{W: 28, H: 240}, Vertical, []*Node{pill}, nil, nil, 6, sized); err != nil {
+		t.Fatal(err)
+	}
+	if row.Bounds.X+row.Bounds.W <= pill.Bounds.X+pill.Bounds.W {
+		t.Fatalf("fixture row %+v does not exceed capsule %+v", row.Bounds, pill.Bounds)
+	}
+	if !pill.ClipBounds {
+		t.Fatalf("capsule %+v must clip its cross-axis overflow from row %+v", pill.Bounds, row.Bounds)
+	}
+}
+
 func TestVerticalBarUsesIntrinsicColumnHeight(t *testing.T) {
 	t.Parallel()
 	first := text("hi")

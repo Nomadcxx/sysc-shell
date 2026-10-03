@@ -183,8 +183,6 @@ func TestValidationReportsTheFieldPath(t *testing.T) {
 	}{
 		{"height below the gap", `{"bar":{"height":7,"gap":4}}`, "bar.height"},
 		{"negative gap", `{"bar":{"gap":-1}}`, "bar.gap"},
-		// bottom is implemented as of sysc-321; the vertical axis is not.
-		{"unsupported edge", `{"bar":{"edge":"left"}}`, "bar.edge"},
 		{"unknown edge", `{"bar":{"edge":"sideways"}}`, "bar.edge"},
 		{"negative reserve", `{"bar":{"reserve":-1}}`, "bar.reserve"},
 		{"negative padding", `{"bar":{"padding":-3}}`, "bar.padding"},

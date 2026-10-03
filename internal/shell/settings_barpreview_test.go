@@ -217,8 +217,12 @@ func TestLaptopGateFixes(t *testing.T) {
 	if preview.Image == nil || preview.Image.Width < 1536*h.scale120/120 {
 		t.Errorf("preview raster %+v is narrower than the output", preview.Image)
 	}
-	if edge := settingsControl(h, *h.set.ByPath("bar.edge"), 200); edge.Kind != ui.KindText || edge.Text != "Top" {
-		t.Errorf("one-option Edge renders as %v %q, want the text Top", edge.Kind, edge.Text)
+	edgeEntry := *h.set.ByPath("bar.edge")
+	edge := settingsControl(h, edgeEntry, 200)
+	if edge.Kind != ui.KindMenu {
+		t.Errorf("four-edge picker renders as %v, want a menu", edge.Kind)
+	} else if menu := h.menus[edgeEntry.Path]; menu == nil || menu.Value() != "top" {
+		t.Errorf("edge menu value = %v, want the default Top edge", menu)
 	}
 	frost := settingsControl(h, *h.set.ByPath("bar.frost-opacity"), 300)
 	if frost.Kind != ui.KindRow || len(frost.Children) != 2 || frost.Children[1].Kind != ui.KindText || frost.Children[1].Text == "" {

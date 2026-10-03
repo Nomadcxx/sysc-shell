@@ -246,15 +246,15 @@ func TestTheLowerEdgeLoads(t *testing.T) {
 	}
 }
 
-func TestVerticalEdgesAreStillGated(t *testing.T) {
+func TestVerticalEdgesLoad(t *testing.T) {
 	t.Parallel()
 	for _, edge := range []string{"left", "right"} {
-		_, err := Parse([]byte(`{"bar":{"edge":"` + edge + `"}}`))
-		if err == nil {
-			t.Fatalf("%q must still be rejected: the vertical axis waits on sysc-314", edge)
+		got, err := Parse([]byte(`{"bar":{"edge":"` + edge + `"}}`))
+		if err != nil {
+			t.Fatalf("%q edge: %v", edge, err)
 		}
-		if !strings.Contains(err.Error(), "top or bottom") {
-			t.Fatalf("%q must be told what does work, got: %v", edge, err)
+		if got.Bar.Edge != edge {
+			t.Fatalf("edge = %q, want %q", got.Bar.Edge, edge)
 		}
 	}
 }
@@ -268,4 +268,67 @@ func TestAnUnknownEdgeNamesAllFour(t *testing.T) {
 	if !strings.Contains(err.Error(), "top, bottom, left, right") {
 		t.Fatalf("an unknown edge must name the vocabulary, got: %v", err)
 	}
+}
+
+func TestSideEdgeRoundTrip(t *testing.T) {
+	t.Parallel()
+	zero, custom := 0, 17
+	for _, tc := range []struct {
+		name, edge, style, shape                   string
+		reserve                                    *int
+		overrideEdge, overrideStyle, overrideShape string
+		overrideReserve                            *int
+	}{
+		{
+			name: "left with unset reserve and right override",
+			edge: "left", style: "solid", shape: "attached",
+			overrideEdge: "right", overrideStyle: "islands", overrideShape: "floating",
+			overrideReserve: &zero,
+		},
+		{
+			name: "right with custom reserve and left override",
+			edge: "right", style: "frosted", shape: "floating", reserve: &custom,
+			overrideEdge: "left", overrideStyle: "solid", overrideShape: "attached",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Default()
+			cfg.Bar.Edge, cfg.Bar.Style, cfg.Bar.Shape, cfg.Bar.Reserve = tc.edge, tc.style, tc.shape, tc.reserve
+			override := cfg.Bar
+			override.Edge, override.Style, override.Shape, override.Reserve =
+				tc.overrideEdge, tc.overrideStyle, tc.overrideShape, tc.overrideReserve
+			cfg.Outputs = []OutputOverride{{Connector: "DP-1", Bar: override}}
+
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := Write(path, cfg); err != nil {
+				t.Fatalf("Write: %v", err)
+			}
+			got, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if got.Bar.Edge != tc.edge || got.Bar.Style != tc.style || got.Bar.Shape != tc.shape || !sameReserve(got.Bar.Reserve, tc.reserve) {
+				t.Fatalf("base bar = edge %q style %q shape %q reserve %v, want %q %q %q %v",
+					got.Bar.Edge, got.Bar.Style, got.Bar.Shape, got.Bar.Reserve, tc.edge, tc.style, tc.shape, tc.reserve)
+			}
+			if len(got.Outputs) != 1 {
+				t.Fatalf("outputs = %d, want one override", len(got.Outputs))
+			}
+			gotOverride := got.Outputs[0].Bar
+			wantOverrideReserve := tc.overrideReserve
+			if wantOverrideReserve == nil {
+				wantOverrideReserve = tc.reserve
+			}
+			if gotOverride.Edge != tc.overrideEdge || gotOverride.Style != tc.overrideStyle ||
+				gotOverride.Shape != tc.overrideShape || !sameReserve(gotOverride.Reserve, wantOverrideReserve) {
+				t.Fatalf("override = edge %q style %q shape %q reserve %v, want %q %q %q %v",
+					gotOverride.Edge, gotOverride.Style, gotOverride.Shape, gotOverride.Reserve,
+					tc.overrideEdge, tc.overrideStyle, tc.overrideShape, wantOverrideReserve)
+			}
+		})
+	}
+}
+
+func sameReserve(a, b *int) bool {
+	return a == nil && b == nil || a != nil && b != nil && *a == *b
 }
