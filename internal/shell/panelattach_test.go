@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -97,6 +98,82 @@ func TestJointsFollowTheBarsStraightEdge(t *testing.T) {
 		if got := p.Margins().Left; got != tc.wantX {
 			t.Errorf("%s: x %d, want %d", tc.name, got, tc.wantX)
 		}
+	}
+}
+
+func TestSidePanelUsesUprightBodyAndVerticalJoints(t *testing.T) {
+	for _, edge := range []string{"left", "right"} {
+		t.Run(edge, func(t *testing.T) {
+			place := Placement{
+				BarEdge: edge, BarZone: 60, Padding: 8, AnchorY: 20,
+				Fillet: 12, BarShape: "attached", BarRadius: 12,
+				Output: ui.Rect{W: 1536, H: 864}, Panel: ui.Rect{W: 380, H: 300},
+			}
+			if got, want := place.Joints(), (Joints{FlushLeft: true, Right: 12}); got != want {
+				t.Fatalf("joints = %+v, want %+v", got, want)
+			}
+			h := &PanelHost{id: PanelSession, theme: DefaultTheme(), place: place}
+			w, hgt := h.surfaceSize()
+			if w != 392 || hgt != 312 {
+				t.Fatalf("surface size = %dx%d, want 392x312", w, hgt)
+			}
+			wantBody := ui.Rect{W: 380, H: 300}
+			if edge == "right" {
+				wantBody.X = 12
+			}
+			if got := h.surfaceBody(w, hgt); got != wantBody {
+				t.Fatalf("surface body = %+v, want %+v", got, wantBody)
+			}
+			wantOutputBody := ui.Rect{X: 60, Y: 0, W: 380, H: 300}
+			if edge == "right" {
+				wantOutputBody.X = 1536 - 60 - 380
+			}
+			if got := place.Rect(); got != wantOutputBody {
+				t.Fatalf("output body = %+v, want %+v", got, wantOutputBody)
+			}
+		})
+	}
+}
+
+func TestSidePanelSpecAnchorsAndRegionsMatchItsBody(t *testing.T) {
+	for _, edge := range []string{"left", "right"} {
+		t.Run(edge, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Theme.BlurBehind = true
+			reg := newPanelRegistry(t)
+			reg.cfg = cfg
+			place := Placement{
+				BarEdge: edge, BarZone: 60, Padding: 8, AnchorY: 20,
+				Fillet: 12, BarShape: "attached", BarRadius: 12,
+				Output: ui.Rect{W: 1536, H: 864}, Panel: ui.Rect{W: 380, H: 300},
+			}
+			h := &PanelHost{id: PanelSession, theme: DefaultTheme(), place: place}
+			spec := reg.panelSpec(h, place.Margins())
+			wantAnchor := uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorLeft)
+			if edge == "right" {
+				wantAnchor = uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorRight)
+			}
+			if spec.Anchor != wantAnchor {
+				t.Errorf("anchor = %d, want %d", spec.Anchor, wantAnchor)
+			}
+			wantBody := ui.Rect{X: 60, Y: 0, W: 380, H: 300}
+			if edge == "right" {
+				wantBody.X = 1536 - 60 - 380
+			}
+			if spec.BlurRegion == nil || *spec.BlurRegion != wantBody {
+				t.Errorf("blur region = %v, want output body %+v", spec.BlurRegion, wantBody)
+			}
+			wantInput := ui.Rect{W: 380, H: 300}
+			if edge == "right" {
+				wantInput.X = 12
+			}
+			if len(spec.InputRects) != 1 || spec.InputRects[0] != wantInput {
+				t.Errorf("input rects = %+v, want local body %+v", spec.InputRects, wantInput)
+			}
+			if spec.Width != 392 || spec.Height != 312 {
+				t.Errorf("surface size = %dx%d, want 392x312", spec.Width, spec.Height)
+			}
+		})
 	}
 }
 

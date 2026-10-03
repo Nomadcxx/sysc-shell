@@ -1468,6 +1468,17 @@ func (r *Registry) bindBarPluginLocked(bar *Bar) {
 	})
 }
 
+func triggerAtAction(bar *Bar, trig Trigger, action string) Trigger {
+	w, h := bar.configuredSize()
+	anchor := barRectOnOutput(bar.actionBounds(action), trig.BarEdge, trig.OutW, trig.OutH, w, h)
+	if anchor.W <= 0 || anchor.H <= 0 {
+		return trig
+	}
+	trig.AnchorX = anchor.X + anchor.W/2
+	trig.AnchorY = anchor.Y + anchor.H/2
+	return trig
+}
+
 // bindBarPanelActionsLocked gives one bar its panel-toggle seam. The handler
 // is called without the bar lock, matching the tray path, because TogglePanel
 // takes the registry lock and then the bar lock.
@@ -1490,7 +1501,7 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 		case action == panelWallpaperAction && (button == 0 || button == buttonLeft || button == buttonRight):
 			return r.TogglePanel(PanelWallpaper, out, trig) == nil
 		case action == panelControlCenterAction && button == buttonRight:
-			trig.AnchorX = bar.actionCenterX(panelControlCenterAction)
+			trig = triggerAtAction(bar, trig, panelControlCenterAction)
 			return r.TogglePanel(PanelControlCenter, out, trig) == nil
 		case action == panelNotificationsAction && (button == 0 || button == buttonLeft):
 			return r.TogglePanel(PanelNotifications, out, trig) == nil
@@ -1511,22 +1522,22 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 			r.mu.Unlock()
 			return true
 		case action == panelAudioAction && (button == 0 || button == buttonLeft):
-			trig.AnchorX = bar.actionCenterX(panelAudioAction)
+			trig = triggerAtAction(bar, trig, panelAudioAction)
 			return r.TogglePanel(PanelAudio, out, trig) == nil
 		case action == panelWifiAction && (button == 0 || button == buttonLeft):
-			trig.AnchorX = bar.actionCenterX(panelWifiAction)
+			trig = triggerAtAction(bar, trig, panelWifiAction)
 			return r.TogglePanel(PanelNetwork, out, trig) == nil
 		case action == panelWifiAction && button == buttonRight:
 			r.toggleWirelessAsync()
 			return true
 		case action == panelBluetoothAction && (button == 0 || button == buttonLeft):
-			trig.AnchorX = bar.actionCenterX(panelBluetoothAction)
+			trig = triggerAtAction(bar, trig, panelBluetoothAction)
 			return r.TogglePanel(PanelBluetooth, out, trig) == nil
 		case action == panelWeatherAction && (button == 0 || button == buttonLeft || button == buttonRight):
-			trig.AnchorX = bar.actionCenterX(panelWeatherAction)
+			trig = triggerAtAction(bar, trig, panelWeatherAction)
 			return r.TogglePanel(PanelWeather, out, trig) == nil
 		case action == panelBluetoothAction && button == buttonRight:
-			trig.AnchorX = bar.actionCenterX(panelBluetoothAction)
+			trig = triggerAtAction(bar, trig, panelBluetoothAction)
 			if err := r.OpenPanel(PanelControlCenter, out, trig); err != nil {
 				return false
 			}
@@ -1540,7 +1551,7 @@ func (r *Registry) bindBarPanelActionsLocked(global uint32, bar *Bar) {
 		case action == panelMediaAction && (button == 0 || button == buttonLeft):
 			// The control centre is the one player picker (D7): the widget
 			// routes there and the spine lands on the Media section.
-			trig.AnchorX = bar.actionCenterX(panelMediaAction)
+			trig = triggerAtAction(bar, trig, panelMediaAction)
 			if err := r.OpenPanel(PanelControlCenter, out, trig); err != nil {
 				return false
 			}

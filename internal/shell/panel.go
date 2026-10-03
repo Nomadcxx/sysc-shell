@@ -68,11 +68,11 @@ type Placement struct {
 	Gap, Padding int
 	Panel        ui.Rect
 	Align        string
-	// AnchorX is the logical centre of the triggering widget. Zero means
-	// unset; Align then centres on the output.
-	AnchorX int
-	// CenterY centres the panel vertically inside the output minus the bar
-	// zone and padding: Settings, the launcher and the clipboard float.
+	// AnchorX and AnchorY are the logical centre of the triggering widget.
+	// Zero means unset; Align then centres along the bar's main axis.
+	AnchorX, AnchorY int
+	// CenterY centres the panel on the cross axis inside the remaining work
+	// area: Settings, the launcher and the clipboard float.
 	CenterY bool
 	// Detached keeps a panel off the bar, Gap away from it with no joints:
 	// islands paint no ground to join, and an output without a bar has none.
@@ -105,12 +105,52 @@ func (p Placement) Joints() Joints {
 	return j
 }
 
+func (p Placement) sideAxis() bool { return p.BarEdge == "left" || p.BarEdge == "right" }
+
+func transposeRect(r ui.Rect) ui.Rect { return ui.Rect{X: r.Y, Y: r.X, W: r.H, H: r.W} }
+
+// horizontalAxis maps the bar's main axis onto X so placement and collision
+// rules keep one implementation for all four edges.
+func (p Placement) horizontalAxis() Placement {
+	if !p.sideAxis() {
+		return p
+	}
+	p.Output = transposeRect(p.Output)
+	p.Panel = transposeRect(p.Panel)
+	p.AnchorX, p.AnchorY = p.AnchorY, p.AnchorX
+	if p.BarEdge == "left" {
+		p.BarEdge = "top"
+	} else {
+		p.BarEdge = "bottom"
+	}
+	return p
+}
+
+func (p Placement) mainStart(r ui.Rect) int {
+	if p.sideAxis() {
+		return r.Y
+	}
+	return r.X
+}
+
+func (p *Placement) setMainAnchor(center int) {
+	if p.sideAxis() {
+		p.AnchorY = center
+	} else {
+		p.AnchorX = center
+	}
+}
+
 // layout places the panel horizontally and derives its joints. A joint is as
 // wide as the fillet, less where the bar's straight edge ends sooner: at the
 // screen edge for an attached bar, at its rounded end for a floating one. On
 // an attached bar a panel too close to the screen edge for a whole joint
 // snaps flush to it instead.
 func (p Placement) layout() (int, Joints) {
+	return p.horizontalAxis().layoutHorizontal()
+}
+
+func (p Placement) layoutHorizontal() (int, Joints) {
 	x := clampAxis(alignX(p), p.Panel.W, p.Output.W, p.Padding)
 	if !p.Attached() || p.Fillet <= 0 {
 		return x, Joints{}
@@ -145,6 +185,9 @@ type Margins struct{ Top, Bottom, Left, Right int }
 // attached panel meets the bar, tucked under it by the overlap, whatever gap
 // the others keep.
 func (p Placement) anchor() int {
+	if p.sideAxis() {
+		return p.horizontalAxis().anchor()
+	}
 	if p.Attached() {
 		return p.BarZone - p.Overlap
 	}
@@ -165,6 +208,14 @@ func clampAxis(desired, size, extent, pad int) int {
 }
 
 func (p Placement) Margins() Margins {
+	if p.sideAxis() {
+		m := p.horizontalAxis().marginsHorizontal()
+		return Margins{Top: m.Left, Bottom: m.Right, Left: m.Top, Right: m.Bottom}
+	}
+	return p.marginsHorizontal()
+}
+
+func (p Placement) marginsHorizontal() Margins {
 	x, _ := p.layout()
 	anchor := p.anchor()
 	if p.CenterY {
@@ -194,6 +245,13 @@ func (p Placement) Margins() Margins {
 
 // Rect is the panel's body on its output, in logical pixels.
 func (p Placement) Rect() ui.Rect {
+	if p.sideAxis() {
+		return transposeRect(p.horizontalAxis().rectHorizontal())
+	}
+	return p.rectHorizontal()
+}
+
+func (p Placement) rectHorizontal() ui.Rect {
 	m := p.Margins()
 	y := m.Top
 	if p.BarEdge == "bottom" {
@@ -228,6 +286,10 @@ func exclusiveBarZone(bar *Bar) int {
 
 // FittedSize returns the panel size after reserving the bar edge and output padding.
 func (p Placement) FittedSize() (w, h int) {
+	if p.sideAxis() {
+		h, w = p.horizontalAxis().FittedSize()
+		return w, h
+	}
 	w, h = p.Panel.W, p.Panel.H
 	if max := p.Output.W - 2*p.Padding; max < 0 {
 		w = 0
