@@ -1391,24 +1391,13 @@ func (h *PanelHost) wallpaperAction(r *Registry, n *ui.Node) bool {
 		r.rebuildPanel(h)
 		return true
 	case n.Action == "wallpaper-library-settings":
-		output := h.output
 		r.closePanelLocked(PanelWallpaper)
-		r.openSettingsAtLocked(output, "Wallpaper")
+		r.openSettingsAtLocked(h.output, "Wallpaper")
 		return true
 	case n.Action == "wallpaper-open-art":
-		// Like Control Centre's links: the panel you came from retires, the
-		// one you asked for opens on the same output selection.
-		output := h.wallpaperOutput
-		trig := Trigger{
-			BarEdge: h.place.BarEdge, BarZone: h.place.BarZone,
-			OutW: h.place.Output.W, OutH: h.place.Output.H,
-		}
-		r.closePanelLocked(PanelWallpaper)
-		if err := r.openPanelRootLocked(PanelTerminalArt, h.output, trig); err == nil {
-			if art := r.panelHosts[PanelTerminalArt]; art != nil {
-				art.wallpaperOutput = wallpaperOutputSelection(art.wallpaperSnap, output)
-				r.rebuildPanel(art)
-			}
+		if art := r.switchPanelLocked(h, PanelTerminalArt); art != nil {
+			art.wallpaperOutput = wallpaperOutputSelection(art.wallpaperSnap, h.wallpaperOutput)
+			r.rebuildPanel(art)
 		}
 		return true
 	case n.Action == "wallpaper-restore":

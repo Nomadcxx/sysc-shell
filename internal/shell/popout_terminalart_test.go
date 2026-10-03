@@ -497,3 +497,107 @@ func TestWallpaperAllSummaryCountsEffects(t *testing.T) {
 		t.Fatalf("summary = %q; an effect is not an image", got)
 	}
 }
+
+func openArtSettings(t *testing.T, reg *Registry) *PanelHost {
+	t.Helper()
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Terminal Art"
+	reg.rebuildPanel(h)
+	return h
+}
+
+func TestTerminalArtSectionIsReachable(t *testing.T) {
+	i := slices.Index(settingsSections, "Terminal Art")
+	if i < 1 || settingsSections[i-1] != "Wallpaper" {
+		t.Fatalf("sections = %v, want Terminal Art right after Wallpaper", settingsSections)
+	}
+	if settingsSectionIcons["Terminal Art"] != "terminal" {
+		t.Errorf("icon = %q, want terminal", settingsSectionIcons["Terminal Art"])
+	}
+	reg, _ := artRegistry(t, artWallpaperEngine{})
+	h := openArtSettings(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if findAction(h.root, "art-open") == nil {
+		t.Fatalf("Terminal Art settings built no Open button: %q", artTexts(h.root))
+	}
+}
+
+func TestTerminalArtSettingsShowsEngineAndDefault(t *testing.T) {
+	reg, _ := artRegistry(t, sixArtEngine{})
+	h := openArtSettings(t, reg)
+	reg.mu.Lock()
+	texts := strings.Join(artTexts(h.root), "\n")
+	combo := findAction(h.root, "art-menu:default")
+	reg.mu.Unlock()
+	if !strings.Contains(texts, "sysc-Go") || !strings.Contains(texts, "6 effects") {
+		t.Errorf("status = %q, want sysc-Go and 6 effects", texts)
+	}
+	if combo == nil || !strings.Contains(combo.Name, "nord") {
+		t.Fatalf("unset palette combo = %+v, want the first catalog theme", combo)
+	}
+
+	reg, _ = artRegistry(t, artWallpaperEngine{})
+	reg.mu.Lock()
+	reg.cfg.TerminalArt.Palette = "dracula"
+	reg.mu.Unlock()
+	h = openArtSettings(t, reg)
+	reg.mu.Lock()
+	combo = findAction(h.root, "art-menu:default")
+	reg.mu.Unlock()
+	if combo == nil || !strings.Contains(combo.Name, "dracula") {
+		t.Fatalf("configured palette combo = %+v, want dracula", combo)
+	}
+
+	reg, _ = artRegistry(t, stubWallpaperEngine{})
+	h = openArtSettings(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if !slices.Contains(artTexts(h.root), "sysc-terminal is not installed. Install it to /usr/local/bin") ||
+		findAction(h.root, "art-menu:default") != nil {
+		t.Fatalf("without sysc-terminal: %q", artTexts(h.root))
+	}
+}
+
+func TestTerminalArtSettingsPicksTheDefault(t *testing.T) {
+	reg, _ := artRegistry(t, artWallpaperEngine{})
+	h := openArtSettings(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if !h.artAction(reg, &ui.Node{Action: "art-default:dracula"}) || h.draft.TerminalArt.Palette != "dracula" {
+		t.Fatalf("draft palette = %q, want dracula", h.draft.TerminalArt.Palette)
+	}
+}
+
+func TestTerminalArtPanelStartsOnDefaultPalette(t *testing.T) {
+	reg, _ := artRegistry(t, artWallpaperEngine{})
+	reg.mu.Lock()
+	reg.cfg.TerminalArt.Palette = "dracula"
+	reg.mu.Unlock()
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if got := artPalette(h); got != "dracula" {
+		t.Fatalf("palette = %q, want the configured dracula", got)
+	}
+}
+
+func TestTerminalArtSettingsOpensThePanel(t *testing.T) {
+	reg, _ := artRegistry(t, artWallpaperEngine{})
+	h := openArtSettings(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if !h.artAction(reg, &ui.Node{Action: "art-open"}) {
+		t.Fatal("Open Terminal Art was not handled")
+	}
+	art := reg.panelHosts[PanelTerminalArt]
+	if reg.panelHosts[PanelSettings] != nil || art == nil || art.output != h.output {
+		t.Fatalf("settings open=%v art=%v; want the panel on output %d", reg.panelHosts[PanelSettings] != nil, art != nil, h.output)
+	}
+}

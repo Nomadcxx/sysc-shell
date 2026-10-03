@@ -326,6 +326,27 @@ type Wallpaper struct {
 	Hidden string
 }
 
+// TerminalArt is what Terminal Art starts on. Palette is a sysc-Go theme
+// name; empty means the catalog's first. The catalog is only known at run
+// time, so the loader checks the name's shape and the panel checks it exists.
+type TerminalArt struct {
+	Palette string
+}
+
+// ValidPaletteName holds a palette to letters, digits, and dashes: it reaches
+// sysc-terminal's command line, so nothing that reads as a path or an option.
+func ValidPaletteName(name string) bool {
+	if name == "" || name[0] == '-' {
+		return false
+	}
+	for _, r := range name {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-') {
+			return false
+		}
+	}
+	return true
+}
+
 // wallpaperScales, wallpaperFPS, and wallpaperHidden are closed vocabularies:
 // an unknown value fails the load rather than silently falling back, so a typo
 // is visible instead of quietly changing what the engine does.
@@ -389,6 +410,7 @@ type Config struct {
 	Media         Media
 	Monitor       Monitor
 	Wallpaper     Wallpaper
+	TerminalArt   TerminalArt
 	Outputs       []OutputOverride
 	Templates     map[string]bool
 	Plugins       Plugins

@@ -2,6 +2,7 @@ package shell
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -164,7 +165,7 @@ func artBanners(h *PanelHost) []*ui.Node {
 		}
 	}
 	if !h.wallpaperSnap.Caps.Terminal {
-		add("sysc-terminal is not installed. Install it to /usr/local/bin")
+		add(artNotInstalled)
 	}
 	add(h.wallpaperSnap.Err)
 	for _, connector := range h.wallpaperSnap.Connectors {
@@ -225,6 +226,9 @@ func artCard(h *PanelHost, id string, index int) *ui.Node {
 
 // artAction handles the Terminal Art panel's controls.
 func (h *PanelHost) artAction(r *Registry, n *ui.Node) bool {
+	if n != nil && h.id == PanelSettings {
+		return h.artSettingsAction(r, n)
+	}
 	if h.id != PanelTerminalArt || n == nil {
 		return false
 	}
@@ -319,6 +323,81 @@ func (h *PanelHost) artKeyPress(r *Registry, key uint32) bool {
 		return false
 	}
 	h.wallpaperSel = gridMoveSel(h.wallpaperSel, delta, len(effects))
+	r.rebuildPanel(h)
+	return true
+}
+
+const artNotInstalled = "sysc-terminal is not installed. Install it to /usr/local/bin"
+
+// terminalArtSettingsTree is Settings → Terminal Art: whether the engine is
+// there, the palette the panel starts on, and the way into the panel. Picking
+// a palette here writes config only; a running effect is the panel's.
+func terminalArtSettingsTree(r *Registry, h *PanelHost) *ui.Node {
+	var caps wallpaper.Capabilities
+	if r != nil {
+		if svc := r.wallpaperServiceLocked(); svc != nil {
+			caps = svc.Snapshot().Caps
+		}
+	}
+	var rows []*ui.Node
+	if !caps.Terminal {
+		rows = append(rows, &ui.Node{Kind: ui.KindText, Text: artNotInstalled, Tone: ui.ToneError, Height: wallpaperCaptionH})
+	} else {
+		effects := 0
+		for _, e := range caps.Catalog.Effects {
+			if !e.Text {
+				effects++
+			}
+		}
+		rows = append(rows, &ui.Node{
+			Kind: ui.KindText, Text: "sysc-terminal \u00b7 sysc-Go \u00b7 " + plural(effects, "effect"),
+			Role: "status", Height: wallpaperCaptionH,
+		})
+		palette := h.draft.TerminalArt.Palette
+		if !slices.Contains(caps.Catalog.Themes, palette) && len(caps.Catalog.Themes) > 0 {
+			palette = caps.Catalog.Themes[0]
+		}
+		combo := wallpaperCombo(h, "default", palette, wallpaperPaletteWidth)
+		combo.Action = "art-menu:default"
+		rows = append(rows, &ui.Node{
+			Kind: ui.KindRow, Gap: wallpaperGridGap, Height: wallpaperChromeH(h),
+			Children: []*ui.Node{{Kind: ui.KindText, Text: "Default palette", Height: wallpaperChromeH(h)}, combo},
+		})
+		if h.wallpaperMenu == "default" {
+			opts := make([]wallpaperOption, 0, len(caps.Catalog.Themes))
+			for _, name := range caps.Catalog.Themes {
+				opts = append(opts, wallpaperOption{action: "art-default:" + name, label: name, selected: name == palette})
+			}
+			rows = append(rows, wallpaperOptionList(h, opts))
+		}
+	}
+	open := wallpaperButton(h, "art-open", "Open Terminal Art", false)
+	rows = append(rows, &ui.Node{Kind: ui.KindRow, Height: wallpaperChromeH(h), Children: []*ui.Node{open}})
+	return settingsBody(h, theme.MarginM, rows...)
+}
+
+func (h *PanelHost) artSettingsAction(r *Registry, n *ui.Node) bool {
+	switch {
+	case n.Action == "art-menu:default":
+		if h.wallpaperMenu == "default" {
+			h.wallpaperMenu = ""
+		} else {
+			h.wallpaperMenu = "default"
+		}
+		r.rebuildPanel(h)
+		return true
+	case n.Action == "art-open":
+		r.switchPanelLocked(h, PanelTerminalArt)
+		return true
+	}
+	name, ok := strings.CutPrefix(n.Action, "art-default:")
+	if !ok || h.set == nil {
+		return false
+	}
+	h.wallpaperMenu = ""
+	if e := h.set.ByPath("terminal-art.palette"); e != nil {
+		h.commitSetting(r, e, name)
+	}
 	r.rebuildPanel(h)
 	return true
 }
