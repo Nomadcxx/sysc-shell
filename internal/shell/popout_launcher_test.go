@@ -1322,3 +1322,135 @@ func TestLauncherEnterWaitsForResultsOfTheCurrentQuery(t *testing.T) {
 		t.Fatalf("Enter after the results landed ran %v, want nautilus", got)
 	}
 }
+
+// Inline calc is merged into the stamped snapshot. The service composes it
+// ahead of the application rows; the shell's stamp has to do the same.
+func TestLauncherInlineExpressionLeadsTheResults(t *testing.T) {
+	t.Parallel()
+
+	reg, _, reqs := openLauncherPanel(t, launcherTestEntries())
+	reqs[1].Open.Callbacks.Handle(wayland.Event{Kind: wayland.EventIME, IMECommit: "6*7"})
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && !h.launcherAwaiting && len(h.launcherResults) > 0 &&
+			h.launcherResults[0].Entry.ID == "calc:42"
+	})
+}
+
+// gh #90: a snapshot already published for query A can be applied after
+// Query(B) has set launcherAwaiting. That apply must not clear the flag, and
+// Enter must not spawn A's row.
+func TestLauncherQueuedSnapshotDoesNotClearAwaiting(t *testing.T) {
+	t.Parallel()
+
+	reg, run, _ := openLauncherPanel(t, launcherTestEntries())
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseRank := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(releaseRank)
+
+	dequeued := make(chan struct{}, 4)
+	applied := make(chan struct{}, 4)
+	started := make(chan struct{}, 1)
+	reg.launcherMu.Lock()
+	reg.launcherRankWait = func(query string) {
+		if query != "firefox" {
+			return
+		}
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-release
+	}
+	reg.onLauncherDequeued = func() {
+		select {
+		case dequeued <- struct{}{}:
+		default:
+		}
+	}
+	reg.launcherMu.Unlock()
+
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelLauncher]
+	if !h.fieldChanged(reg, &ui.Node{Name: "Search"}, ui.NewField("nautilus")) {
+		reg.mu.Unlock()
+		t.Fatal("query A was not handled")
+	}
+	select {
+	case <-dequeued:
+	case <-time.After(2 * time.Second):
+		reg.mu.Unlock()
+		t.Fatal("query A published nothing for the relay to hold")
+	}
+	if !h.fieldChanged(reg, &ui.Node{Name: "Search"}, ui.NewField("firefox")) {
+		reg.mu.Unlock()
+		t.Fatal("query B was not handled")
+	}
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		reg.mu.Unlock()
+		t.Fatal("query B did not reach rank")
+	}
+	// B is ranked but not published. The relay is blocked on r.mu holding A's
+	// snapshot. Enter must not run it.
+	h.launcherActivateSelected(reg)
+	reg.afterLauncherSnap = func() {
+		select {
+		case applied <- struct{}{}:
+		default:
+		}
+	}
+	awaitingBefore := h.launcherAwaiting
+	genB := h.launcherQueryGen
+	reg.mu.Unlock()
+	if !awaitingBefore {
+		t.Fatal("query B did not set awaiting")
+	}
+
+	select {
+	case <-applied:
+	case <-time.After(2 * time.Second):
+		t.Fatal("relay did not finish the queued snapshot")
+	}
+	run.mu.Lock()
+	spawned := run.argv
+	run.mu.Unlock()
+	if spawned != nil {
+		t.Fatalf("Enter ran %v from the previous query's queued snapshot", spawned)
+	}
+
+	reg.mu.Lock()
+	h = reg.panelHosts[PanelLauncher]
+	if !h.launcherAwaiting || h.launcherQueryGen != genB {
+		awaiting, gen := h.launcherAwaiting, h.launcherQueryGen
+		reg.mu.Unlock()
+		t.Fatalf("queued snapshot cleared awaiting=%v gen=%d, want awaiting gen %d", awaiting, gen, genB)
+	}
+	if len(h.launcherResults) == 1 && h.launcherResults[0].Entry.ID == "nautilus.desktop" {
+		reg.mu.Unlock()
+		t.Fatal("queued snapshot installed the previous query's row")
+	}
+	h.launcherActivateSelected(reg)
+	reg.mu.Unlock()
+
+	time.Sleep(150 * time.Millisecond)
+	run.mu.Lock()
+	spawned = run.argv
+	run.mu.Unlock()
+	if spawned != nil {
+		t.Fatalf("Enter after the queued snapshot ran %v", spawned)
+	}
+
+	releaseRank()
+	waitForLauncherState(t, reg, func(h *PanelHost) bool {
+		return h != nil && !h.launcherAwaiting && len(h.launcherResults) > 0 &&
+			h.launcherResults[0].Entry.ID == "firefox.desktop"
+	})
+	reg.mu.Lock()
+	reg.panelHosts[PanelLauncher].launcherActivateSelected(reg)
+	reg.mu.Unlock()
+	if got := run.waitArgv(t); len(got) == 0 || got[len(got)-1] != "firefox" {
+		t.Fatalf("Enter after B's snapshot ran %v, want firefox", got)
+	}
+}

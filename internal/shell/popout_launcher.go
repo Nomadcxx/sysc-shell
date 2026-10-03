@@ -90,28 +90,263 @@ func launcherHistoryPath(getenv func(string) string) string {
 	return filepath.Join(base, "sysc-shell", "launcher", "history.gob")
 }
 
-// relayLauncher applies result snapshots to the open launcher panel. The
-// channel is owned by the service; the relay ends with the registry.
+// launcherSnap is one ranked publish stamped with the query generation that
+// produced it. The service's own Results channel carries no generation, so a
+// value already sitting there (or already dequeued) can belong to an older
+// query (gh #90).
+type launcherSnap struct {
+	gen  uint64
+	rows []launcher.Result
+}
+
+type launcherKind int
+
+const (
+	launcherKindApps launcherKind = iota
+	launcherKindInline
+	launcherKindProvider
+	launcherKindOverview
+)
+
+// launcherPlan is the shape of one shell query. passed is the text the
+// service hands to Rank or to a provider, which is how a callback proves it
+// belongs to the current generation.
+type launcherPlan struct {
+	kind     launcherKind
+	passed   string
+	provider string
+	need     int
+}
+
+// launcherBatch accumulates the callbacks of one service run. Inline calc and
+// application rank publish as a single snapshot, matching the service.
+type launcherBatch struct {
+	gen      uint64
+	haveCalc bool
+	haveMain bool
+	emitted  bool
+	calc     []launcher.Result
+	rows     []launcher.Result
+}
+
+// relayLauncher applies result snapshots to the open launcher panel. Service
+// Results values are drained and ignored: they are unstamped, and applying
+// one that was queued for the previous query clears launcherAwaiting (gh #90).
 func (r *Registry) relayLauncher(svc *launcher.Service) {
+	r.launcherMu.Lock()
+	snaps := r.launcherSnaps
+	r.launcherMu.Unlock()
+	if snaps == nil {
+		return
+	}
 	ch := svc.Results()
 	for {
 		select {
 		case <-r.closed:
 			return
-		case results := <-ch:
+		case snap := <-snaps:
+			r.launcherMu.Lock()
+			dequeued := r.onLauncherDequeued
+			r.launcherMu.Unlock()
+			if dequeued != nil {
+				dequeued()
+			}
 			r.mu.Lock()
 			h := r.panelHosts[PanelLauncher]
-			if h != nil {
-				h.launcherResults = launcherWithHints(h.query, results)
+			var output uint32
+			applied := false
+			if h != nil && h.launcherQueryGen == snap.gen {
+				h.launcherResults = launcherWithHints(h.query, snap.rows)
 				h.launcherAwaiting = false
 				r.rebuildPanel(h)
+				output = h.output
+				applied = true
 			}
+			after := r.afterLauncherSnap
 			r.mu.Unlock()
-			if h != nil {
-				r.publishSurface(h.output, panelSurfaceID(PanelLauncher))
+			if after != nil {
+				after()
+			}
+			if applied {
+				r.publishSurface(output, panelSurfaceID(PanelLauncher))
+			}
+		case <-ch:
+		}
+	}
+}
+
+func (r *Registry) ensureLauncherSnaps() {
+	r.launcherMu.Lock()
+	defer r.launcherMu.Unlock()
+	if r.launcherSnaps == nil {
+		r.launcherSnaps = make(chan launcherSnap, 1)
+	}
+	if r.launcherPlans == nil {
+		r.launcherPlans = map[uint64]launcherPlan{}
+	}
+}
+
+// rankLauncher is the service rank hook. It stamps the rows with the query
+// generation after an optional test wait, so a publish can be held until a
+// newer query has been issued.
+func (r *Registry) rankLauncher(entries []launcher.Entry, query string, boost func(query, identifier string) int) []launcher.Result {
+	rows := launcherRank(entries, query, boost)
+	r.launcherMu.Lock()
+	wait := r.launcherRankWait
+	r.launcherMu.Unlock()
+	if wait != nil {
+		wait(query)
+	}
+	r.noteLauncherRows("apps", query, rows)
+	return rows
+}
+
+// launcherSendQuery records the field's generation and submits text. Caller
+// holds r.mu. A snapshot from an earlier generation no longer matches, so it
+// cannot clear launcherAwaiting.
+func (r *Registry) launcherSendQuery(h *PanelHost, text string) {
+	r.launcherMu.Lock()
+	r.launcherGen++
+	gen := r.launcherGen
+	if r.launcherPlans == nil {
+		r.launcherPlans = map[uint64]launcherPlan{}
+	}
+	plan := classifyLauncherQuery(text)
+	r.launcherPlans[gen] = plan
+	for g := range r.launcherPlans {
+		if g+8 < gen {
+			delete(r.launcherPlans, g)
+		}
+	}
+	r.launcherMu.Unlock()
+
+	h.launcherQueryGen = gen
+	h.launcherAwaiting = true
+	if plan.kind == launcherKindOverview {
+		h.launcherResults = r.launcherOverviewRows(plan.passed)
+		h.launcherSel = 0
+		h.launcherAwaiting = false
+	}
+	r.launcherServiceLocked().Query(text)
+}
+
+func classifyLauncherQuery(text string) launcherPlan {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return launcherPlan{kind: launcherKindApps, provider: "apps", need: 1}
+	}
+	if !strings.HasPrefix(text, "/") {
+		return launcherPlan{kind: launcherKindInline, passed: text, provider: "apps", need: 2}
+	}
+	seg, rest, _ := strings.Cut(text[1:], " ")
+	prefix := "/" + seg
+	passed := strings.TrimSpace(rest)
+	switch prefix {
+	case "/apps":
+		return launcherPlan{kind: launcherKindApps, passed: passed, provider: "apps", need: 1}
+	case "/calc":
+		return launcherPlan{kind: launcherKindProvider, passed: passed, provider: "calc", need: 1}
+	case "/emo":
+		return launcherPlan{kind: launcherKindProvider, passed: passed, provider: "emoji", need: 1}
+	case "/nt":
+		return launcherPlan{kind: launcherKindProvider, passed: passed, provider: "notes", need: 1}
+	default:
+		return launcherPlan{kind: launcherKindOverview, passed: seg}
+	}
+}
+
+// noteLauncherRows records one service callback. The callback's query has to
+// match the plan for the current generation; a rank that started for the
+// previous text is ignored, and so is a snapshot emitted before the new
+// generation was issued.
+func (r *Registry) noteLauncherRows(provider, query string, rows []launcher.Result) {
+	r.launcherMu.Lock()
+	defer r.launcherMu.Unlock()
+	plan, ok := r.launcherPlans[r.launcherGen]
+	if !ok || query != plan.passed {
+		return
+	}
+	switch plan.kind {
+	case launcherKindApps:
+		if provider != "apps" {
+			return
+		}
+	case launcherKindInline:
+		if provider != "apps" && provider != "calc" {
+			return
+		}
+	case launcherKindProvider:
+		if provider != plan.provider {
+			return
+		}
+	default:
+		return
+	}
+	b := &r.launcherBatch
+	if b.gen != r.launcherGen || (b.emitted && (provider == "calc" || plan.need == 1)) {
+		*b = launcherBatch{gen: r.launcherGen}
+	}
+	cloned := append([]launcher.Result(nil), rows...)
+	if provider == "calc" && plan.kind == launcherKindInline {
+		b.calc = cloned
+		b.haveCalc = true
+	} else {
+		b.rows = cloned
+		b.haveMain = true
+	}
+	if plan.need == 2 && (!b.haveCalc || !b.haveMain) {
+		return
+	}
+	if !b.haveMain {
+		return
+	}
+	out := append([]launcher.Result(nil), b.rows...)
+	if plan.need == 2 {
+		out = append(append([]launcher.Result(nil), b.calc...), b.rows...)
+	}
+	b.emitted = true
+	r.emitLauncherSnapLocked(launcherSnap{gen: r.launcherGen, rows: out})
+}
+
+func (r *Registry) emitLauncherSnapLocked(snap launcherSnap) {
+	if r.launcherSnaps == nil {
+		return
+	}
+	for {
+		select {
+		case r.launcherSnaps <- snap:
+			return
+		default:
+			select {
+			case <-r.launcherSnaps:
+			default:
 			}
 		}
 	}
+}
+
+// launcherOverviewRows is the service's unknown-prefix list. Overview never
+// calls Rank or a provider, so the shell applies it with the query that asked
+// for it instead of waiting on an unstamped publish.
+func (r *Registry) launcherOverviewRows(filter string) []launcher.Result {
+	filter = strings.ToLower(filter)
+	type item struct{ id, name, comment, icon string }
+	items := []item{{"/apps", "Applications", "Installed desktop applications", "glyph:apps"}}
+	for _, p := range r.launcherProviders() {
+		items = append(items, item{p.Prefix, p.Name, p.Description, p.Glyph})
+	}
+	out := make([]launcher.Result, 0, len(items))
+	for _, it := range items {
+		if filter != "" &&
+			!strings.Contains(strings.ToLower(it.name), filter) &&
+			!strings.Contains(strings.ToLower(it.id), filter) {
+			continue
+		}
+		out = append(out, launcher.Result{Entry: launcher.Entry{
+			ID: it.id, Name: it.name, Comment: it.comment, IconName: it.icon,
+		}})
+	}
+	return out
 }
 
 // launcherHeader is the SYSC rail: six slashes, the brand mark, six slashes.
@@ -457,8 +692,7 @@ func (h *PanelHost) launcherActivateSelected(r *Registry) {
 		h.query = res.Entry.ID
 		h.search = ui.NewField(h.query)
 		h.launcherSel = 0
-		h.launcherAwaiting = true
-		r.launcherServiceLocked().Query(h.query)
+		r.launcherSendQuery(h, h.query)
 		r.rebuildPanel(h)
 		return
 	}
