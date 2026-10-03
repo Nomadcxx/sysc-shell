@@ -149,3 +149,37 @@ func TestAttachedBarRegionsExcludeTheOverhang(t *testing.T) {
 		}
 	}
 }
+
+func TestBarRegionGeometryAllEdges(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		shape, edge   string
+		surface, body ui.Rect
+	}{
+		{"attached", "top", ui.Rect{W: 1200, H: 52}, ui.Rect{W: 1200, H: 40}},
+		{"attached", "bottom", ui.Rect{W: 1200, H: 52}, ui.Rect{Y: 12, W: 1200, H: 40}},
+		{"attached", "left", ui.Rect{W: 52, H: 800}, ui.Rect{W: 40, H: 800}},
+		{"attached", "right", ui.Rect{W: 52, H: 800}, ui.Rect{X: 12, W: 40, H: 800}},
+		{"floating", "bottom", ui.Rect{W: 1200, H: 44}, ui.Rect{X: 4, W: 1192, H: 40}},
+		{"floating", "left", ui.Rect{W: 44, H: 800}, ui.Rect{X: 4, Y: 4, W: 40, H: 792}},
+		{"floating", "right", ui.Rect{W: 44, H: 800}, ui.Rect{Y: 4, W: 40, H: 792}},
+	} {
+		t.Run(tc.shape+" "+tc.edge, func(t *testing.T) {
+			policy := config.Bar{Height: 48, Gap: 4, Shape: tc.shape, Edge: tc.edge}
+			h := newHost(7, nil)
+			h.bar.ss.configure(tc.surface.W, tc.surface.H)
+			h.bar.ss.acknowledge()
+			surface, body := hostRegionGeometry(h, policy)
+			if surface != tc.surface || body != tc.body {
+				t.Fatalf("surface/body = %+v/%+v, want %+v/%+v", surface, body, tc.surface, tc.body)
+			}
+			wantInput := tc.surface
+			if policy.Attached() {
+				wantInput = tc.body
+			}
+			if got := inputRect(policy, surface, body); got != wantInput {
+				t.Fatalf("input = %+v, want %+v", got, wantInput)
+			}
+		})
+	}
+}

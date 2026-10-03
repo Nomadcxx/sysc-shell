@@ -50,7 +50,7 @@ func TestBodyInFollowsShapeAndEdge(t *testing.T) {
 		want        [4]int
 	}{
 		{"floating", "top", [4]int{4, 4, 1192, 40}},
-		{"floating", "bottom", [4]int{4, 4, 1192, 40}},
+		{"floating", "bottom", [4]int{4, 0, 1192, 40}},
 		{"attached", "top", [4]int{0, 0, 1200, 40}},
 		{"attached", "bottom", [4]int{0, 12, 1200, 40}},
 	} {
@@ -58,6 +58,74 @@ func TestBodyInFollowsShapeAndEdge(t *testing.T) {
 		x, y, w, h := bar.BodyIn(1200, bar.SurfaceExtent())
 		if got := [4]int{x, y, w, h}; got != tc.want {
 			t.Errorf("%s %s body = %v, want %v", tc.shape, tc.edge, got, tc.want)
+		}
+	}
+}
+
+func TestBarBodyInAllEdges(t *testing.T) {
+	t.Parallel()
+	body := func(bar Bar, w, h int) [4]int {
+		x, y, bw, bh := bar.BodyIn(w, h)
+		return [4]int{x, y, bw, bh}
+	}
+	for _, tc := range []struct {
+		name, edge, shape, style string
+		w, h                     int
+		want                     [4]int
+	}{
+		{"attached top", "top", "attached", "frosted", 1200, 52, [4]int{0, 0, 1200, 40}},
+		{"attached bottom", "bottom", "attached", "frosted", 1200, 52, [4]int{0, 12, 1200, 40}},
+		{"attached left", "left", "attached", "frosted", 60, 800, [4]int{0, 0, 48, 800}},
+		{"attached right", "right", "attached", "frosted", 60, 800, [4]int{12, 0, 48, 800}},
+		{"floating top", "top", "floating", "frosted", 1200, 44, [4]int{4, 4, 1192, 40}},
+		{"floating bottom", "bottom", "floating", "frosted", 1200, 44, [4]int{4, 0, 1192, 40}},
+		{"floating left", "left", "floating", "frosted", 44, 800, [4]int{4, 4, 40, 792}},
+		{"floating right", "right", "floating", "frosted", 44, 800, [4]int{0, 4, 40, 792}},
+		{"islands attached left", "left", "attached", "islands", 44, 800, [4]int{4, 4, 40, 792}},
+		{"islands attached right", "right", "attached", "islands", 44, 800, [4]int{0, 4, 40, 792}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bar := Bar{Height: 48, Gap: 4, Edge: tc.edge, Shape: tc.shape, Style: tc.style}
+			if got := body(bar, tc.w, tc.h); got != tc.want {
+				t.Errorf("body = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	zero, custom := 0, 17
+	for _, tc := range []struct {
+		name    string
+		reserve *int
+		zone    int
+	}{
+		{"default", nil, 44},
+		{"zero", &zero, 0},
+		{"custom", &custom, 17},
+	} {
+		t.Run("reserve "+tc.name, func(t *testing.T) {
+			bar := Bar{Height: 48, Gap: 4, Edge: "right", Shape: "floating", Reserve: tc.reserve}
+			if got := body(bar, 44, 800); got != [4]int{0, 4, 40, 792} {
+				t.Errorf("body = %v; reserve moved paint", got)
+			}
+			if got := bar.ExclusiveZone(); got != tc.zone {
+				t.Errorf("zone = %d, want %d", got, tc.zone)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		edge, shape string
+		w, h        int
+		want        [4]int
+	}{
+		{"top", "floating", 2, 3, [4]int{4, 4, 0, 0}},
+		{"bottom", "floating", 2, 3, [4]int{4, 0, 0, 0}},
+		{"left", "floating", 2, 3, [4]int{4, 4, 0, 0}},
+		{"right", "floating", 2, 3, [4]int{0, 4, 0, 0}},
+		{"left", "attached", 5, 3, [4]int{0, 0, 0, 3}},
+		{"right", "attached", 5, 3, [4]int{12, 0, 0, 3}},
+	} {
+		bar := Bar{Height: 48, Gap: 4, Shape: tc.shape, Edge: tc.edge}
+		if got := body(bar, tc.w, tc.h); got != tc.want {
+			t.Errorf("tiny %s %s body = %v, want %v", tc.shape, tc.edge, got, tc.want)
 		}
 	}
 }
