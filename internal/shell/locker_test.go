@@ -191,3 +191,37 @@ func TestLockerUserRequestResetsBudget(t *testing.T) {
 		t.Fatalf("starts=%d", f.count())
 	}
 }
+
+func TestLockActionLabel(t *testing.T) {
+	t.Parallel()
+	reg, _ := newSessionHost(t, "swaylock")
+	pr, pw := io.Pipe()
+	exits := make(chan int, 1)
+	reg.lockerSpawn = func([]string) (io.ReadCloser, <-chan int, error) {
+		go func() {
+			pw.Write([]byte(lockHandshakeLine + "\n"))
+		}()
+		return pr, exits, nil
+	}
+	if got := reg.lockActionLabel(); got != "Lock" {
+		t.Fatalf("before spawn: %q", got)
+	}
+	if err := reg.LockTracked(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for reg.lockActionLabel() != "Locked" {
+		if time.Now().After(deadline) {
+			t.Fatalf("never reached Locked, got %q", reg.lockActionLabel())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	pw.Close()
+	exits <- 0
+	for reg.lockActionLabel() != "Lock" {
+		if time.Now().After(deadline) {
+			t.Fatalf("never returned to Lock, got %q", reg.lockActionLabel())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}

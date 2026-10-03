@@ -359,6 +359,7 @@ func run(ctx context.Context) (err error) {
 			Screenshot: registry.Screenshot,
 			Switcher:   registry.ShowWindowSwitcher,
 			Theme:      registry.ThemeCall,
+			LockState:  registry.LockStateMap,
 		})
 		ipcErr <- srv.Serve(ipcCtx)
 	}()

@@ -208,3 +208,30 @@ func (r *Registry) lockerLocked() *lockerManager {
 	}
 	return r.locker
 }
+
+// LockStateMap answers session.lock-state for the IPC server.
+func (r *Registry) LockStateMap() map[string]any {
+	st, ok := r.LockState()
+	return map[string]any{
+		"running":   st.Running,
+		"acquired":  st.Acquired,
+		"respawned": st.RespawnedUsed,
+		"known":     ok,
+		"exit_code": st.ExitCode,
+	}
+}
+
+// lockActionLabel names the Control Centre lock row by tracked state: a
+// running-but-unacquired locker is "Locking…" (handshake pending), an
+// acquired one "Locked". Third-party lockers without the handshake line only
+// ever show "Locking…" while alive — honest, not a fake "Locked".
+func (r *Registry) lockActionLabel() string {
+	st, ok := r.LockState()
+	if ok && st.Running {
+		if st.Acquired {
+			return "Locked"
+		}
+		return "Locking…"
+	}
+	return "Lock"
+}
