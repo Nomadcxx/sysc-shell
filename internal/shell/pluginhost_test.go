@@ -389,7 +389,7 @@ func TestPluginHostIgnoresStaleEventsAfterClose(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	ok := reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "go"}, v1.EventActivate, "", "", 0)
+	ok := reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "go"}, v1.EventActivate, "", "", ui.Rect{})
 	if ok {
 		t.Fatal("closed view still accepted input")
 	}
@@ -560,7 +560,7 @@ func TestPluginInputUsesEventsFromRenderedRevision(t *testing.T) {
 	revision := view.Revision
 	reg.plugins.mu.Unlock()
 
-	if !reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "go"}, v1.EventActivate, "", "", 0) {
+	if !reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "go"}, v1.EventActivate, "", "", ui.Rect{}) {
 		t.Fatal("activation on the rendered revision was rejected")
 	}
 	inputs := reg.plugins.lastInputs()
@@ -581,18 +581,18 @@ func TestPluginFloatingSurfaceActionsReachPlugin(t *testing.T) {
 	reg.plugins.mu.Lock()
 	view := reg.plugins.views[ids[0]]
 	reg.plugins.mu.Unlock()
-	if reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "surface-close"}, v1.EventActivate, "", "", 0) {
+	if reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "surface-close"}, v1.EventActivate, "", "", ui.Rect{}) {
 		t.Fatal("floating surface action was accepted on a bar view")
 	}
 	reg.plugins.mu.Lock()
 	view.Kind = v1.ViewFloating
 	reg.plugins.mu.Unlock()
-	if reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "surface-close"}, v1.EventPointer, v1.ButtonPrimary, "", 0) {
+	if reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "surface-close"}, v1.EventPointer, v1.ButtonPrimary, "", ui.Rect{}) {
 		t.Fatal("floating surface chrome received a pointer-press event")
 	}
 
 	for _, node := range []string{"surface-pin", "surface-close"} {
-		if !reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: node}, v1.EventActivate, "", "", 0) {
+		if !reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: node}, v1.EventActivate, "", "", ui.Rect{}) {
 			t.Errorf("floating %s action was not delivered", node)
 		}
 	}
@@ -641,7 +641,7 @@ func TestPluginFailedPlaceholderActionReachesPlugin(t *testing.T) {
 	reg.plugins.views[ids[0]].Failed = true
 	reg.plugins.mu.Unlock()
 
-	if !reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "camera"}, v1.EventActivate, "", "", 0) {
+	if !reg.plugins.deliver(pluginHit{ViewID: ids[0], Node: "camera"}, v1.EventActivate, "", "", ui.Rect{}) {
 		t.Fatal("failed-view placeholder action was not delivered")
 	}
 	inputs := reg.plugins.lastInputs()
@@ -1315,6 +1315,182 @@ func TestPluginBarTreeFitsHostSlot(t *testing.T) {
 	}
 }
 
+func TestPluginSideBarGeometry(t *testing.T) {
+	for _, edge := range []string{"left", "right"} {
+		t.Run(edge, func(t *testing.T) {
+			reg, bar := sidePluginRegistry(t, "ok", edge, 260, 200, 104)
+			ids := reg.plugins.barViewIDs("DP-1")
+			if len(ids) != 1 {
+				t.Fatalf("bar view IDs = %v", ids)
+			}
+
+			reg.mu.Lock()
+			surfaceWidth := reg.cfg.Bar.SurfaceExtent()
+			reg.mu.Unlock()
+			bar.mu.Lock()
+			wantWidth := bar.contentLocked(surfaceWidth, 200).W
+			bar.mu.Unlock()
+			reg.plugins.mu.Lock()
+			view := *reg.plugins.views[ids[0]]
+			reg.plugins.mu.Unlock()
+			if view.Width != wantWidth || view.Height != pluginBarViewHeight {
+				t.Fatalf("side bar view bounds = %dx%d, want usable cross width %d and height %d",
+					view.Width, view.Height, wantWidth, pluginBarViewHeight)
+			}
+			if view.Root == nil || view.Root.Kind != ui.KindRow || len(view.Root.Children) != 1 ||
+				view.Root.Children[0].Kind != ui.KindButton || view.Root.Children[0].Bounds.H <= 0 {
+				t.Fatalf("plugin bar content was not retained upright: %+v", view.Root)
+			}
+			if reg.plugins.deliver(pluginHit{ViewID: "stale-view", Node: "go"}, v1.EventActivate, "", "", ui.Rect{}) {
+				t.Fatal("input from an unknown view owner was accepted")
+			}
+		})
+	}
+}
+
+func TestPluginSidePanelResize(t *testing.T) {
+	for _, edge := range []string{"left", "right"} {
+		t.Run(edge, func(t *testing.T) {
+			reg, bar := sidePluginRegistry(t, "panel-on-input", edge, 260, 200, 104)
+			widget := pluginWidget(bar)
+			var action string
+			var findAction func(*ui.Node)
+			findAction = func(n *ui.Node) {
+				if n == nil || action != "" {
+					return
+				}
+				if n.Action != "" {
+					action = n.Action
+					return
+				}
+				for _, child := range n.Children {
+					findAction(child)
+				}
+			}
+			findAction(widget.node)
+			if action == "" {
+				t.Fatal("plugin tree has no action")
+			}
+			anchor := bar.actionBounds(action)
+			wantAnchorX := anchor.X + anchor.W/2
+			if edge == "right" {
+				barWidth, _ := bar.configuredSize()
+				wantAnchorX += 260 - barWidth
+			}
+			wantAnchorY := anchor.Y + anchor.H/2
+			bar.mu.Lock()
+			deliver := bar.onPlugin
+			bar.mu.Unlock()
+			if deliver == nil || !deliver(action, wayland.Event{Kind: wayland.EventPointerPress, Button: 272}) {
+				t.Fatal("plugin input was not delivered")
+			}
+
+			deadline := time.Now().Add(2 * time.Second)
+			for time.Now().Before(deadline) {
+				reg.mu.Lock()
+				host := reg.panelHosts[PanelPlugin]
+				reg.mu.Unlock()
+				if host != nil {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			reg.mu.Lock()
+			host := reg.panelHosts[PanelPlugin]
+			if host == nil {
+				reg.mu.Unlock()
+				t.Fatal("plugin panel never opened")
+			}
+			if host.place.AnchorY != wantAnchorY {
+				reg.mu.Unlock()
+				t.Fatalf("panel output anchor Y = %d, want clicked widget center %d", host.place.AnchorY, wantAnchorY)
+			}
+			if host.place.AnchorX != wantAnchorX {
+				reg.mu.Unlock()
+				t.Fatalf("panel output anchor X = %d, want clicked widget center %d", host.place.AnchorX, wantAnchorX)
+			}
+			opened := host.place.Panel
+			reg.mu.Unlock()
+			if opened.W >= 320 || opened.H >= 280 {
+				t.Fatalf("panel manifest size was not fitted to the side output: %+v", opened)
+			}
+			_ = drainAux(t, reg, 2)
+
+			reg.plugins.mu.Lock()
+			var panelView *hostedView
+			for _, view := range reg.plugins.views {
+				if view.Kind == v1.ViewPanel {
+					copy := *view
+					panelView = &copy
+					break
+				}
+			}
+			reg.plugins.mu.Unlock()
+			if panelView == nil || panelView.Width != opened.W || panelView.Height != opened.H {
+				t.Fatalf("view.open size = %+v, want fitted panel %+v", panelView, opened)
+			}
+
+			beforeAnchor := host.place.AnchorY
+			got, err := reg.plugins.resizePanel(v1.PanelResizeParams{Width: 2000, Height: 2000})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Width >= 2000 || got.Height >= 2000 {
+				t.Fatalf("oversized resize was not fitted: %+v", got)
+			}
+			reg.mu.Lock()
+			place := host.place
+			surfaceW, surfaceH := host.surfaceSize()
+			body := host.surfaceBody(surfaceW, surfaceH)
+			joints := place.Joints()
+			reg.mu.Unlock()
+			if place.AnchorY != beforeAnchor || place.Panel != (ui.Rect{W: got.Width, H: got.Height}) {
+				t.Fatalf("resize changed trigger anchor or body size: anchor=%d panel=%+v result=%+v",
+					place.AnchorY, place.Panel, got)
+			}
+			req := drainAux(t, reg, 1)[0]
+			if req.Update == nil || req.Update.Width == nil || req.Update.Height == nil ||
+				int(*req.Update.Width) != surfaceW || int(*req.Update.Height) != surfaceH {
+				t.Fatalf("resized surface = %+v, want %dx%d", req.Update, surfaceW, surfaceH)
+			}
+			margins := panelSurfaceMargins(place, place.Margins())
+			if req.Update.MarginTop == nil || req.Update.MarginBottom == nil ||
+				req.Update.MarginLeft == nil || req.Update.MarginRight == nil ||
+				*req.Update.MarginTop != int32(margins.Top) || *req.Update.MarginBottom != int32(margins.Bottom) ||
+				*req.Update.MarginLeft != int32(margins.Left) || *req.Update.MarginRight != int32(margins.Right) {
+				t.Fatalf("resized surface margins = %+v, want %+v", req.Update, margins)
+			}
+			if joints != (Joints{}) {
+				if !req.Update.SetInputRegion || !reflect.DeepEqual(req.Update.InputRects, []ui.Rect{body}) {
+					t.Fatalf("resized body/input geometry = %+v, want body %+v for joints %+v", req.Update.InputRects, body, joints)
+				}
+			} else if req.Update.SetInputRegion {
+				t.Fatalf("resized panel added an input region without joints: %+v", req.Update.InputRects)
+			}
+		})
+	}
+}
+
+func sidePluginRegistry(t *testing.T, mode, edge string, outputW, outputH, thickness int) (*Registry, *Bar) {
+	t.Helper()
+	reg := bindTestPlugin(t, mode)
+	reg.mu.Lock()
+	reg.cfg.Bar.Edge = edge
+	reg.cfg.Bar.Height = thickness
+	reg.mu.Unlock()
+	newHosts(t, reg, map[uint32]string{7: "DP-1"})
+	reg.mu.Lock()
+	bar := reg.bars[7]
+	policy := reg.cfg.ForConnector("DP-1")
+	reg.mu.Unlock()
+	bar.setOutputSize(outputW, outputH)
+	waitPluginText(t, bar, "hello")
+	if err := bar.Configure(policy.SurfaceExtent(), outputH, 120); err != nil {
+		t.Fatal(err)
+	}
+	return reg, bar
+}
+
 func TestPluginPanelAnchorsUnderTheClickedWidget(t *testing.T) {
 	reg := bindTestPlugin(t, "panel-on-input")
 	newHosts(t, reg, map[uint32]string{1: "DP-1"})
@@ -1365,7 +1541,9 @@ func TestPluginPanelIsPlacedAgainstTheRealOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	reg.plugins.mu.Lock()
-	reg.plugins.lastAnchor["org.sysc.screen-recorder"] = 1400
+	reg.plugins.lastAnchor["org.sysc.screen-recorder"] = pluginAnchor{
+		Bounds: ui.Rect{X: 1399, Y: 1, W: 2, H: 2}, Output: "DP-1", Generation: 7,
+	}
 	reg.plugins.mu.Unlock()
 	if _, err := reg.plugins.openPanel("org.sysc.screen-recorder", v1.PanelParams{
 		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "org.sysc.screen-recorder-1",
@@ -2105,7 +2283,9 @@ func TestCenterPlacedPluginPanelIgnoresTheClickedWidget(t *testing.T) {
 		t.Fatal(err)
 	}
 	reg.plugins.mu.Lock()
-	reg.plugins.lastAnchor["org.sysc.screen-recorder"] = 2900
+	reg.plugins.lastAnchor["org.sysc.screen-recorder"] = pluginAnchor{
+		Bounds: ui.Rect{X: 2899, Y: 1, W: 2, H: 2}, Output: "DP-1", Generation: 7,
+	}
 	reg.plugins.mu.Unlock()
 	if _, err := reg.plugins.openPanel("org.sysc.screen-recorder", v1.PanelParams{
 		Entry: "panel", Output: "DP-1", Generation: 7, Instance: "org.sysc.screen-recorder-1",

@@ -58,6 +58,12 @@ type hostedView struct {
 	SurfaceKey string
 }
 
+type pluginAnchor struct {
+	Bounds     ui.Rect
+	Output     string
+	Generation uint32
+}
+
 type pluginHost struct {
 	r    *Registry
 	opts PluginHostOptions
@@ -83,10 +89,9 @@ type pluginHost struct {
 	closed              []string
 	panel               *hostedView
 	wallpaperProjection pluginWallpaperProjection
-	// lastAnchor remembers the bar X of the widget that most recently
-	// delivered input for a plugin, so the panel it opens can anchor under
-	// that widget instead of floating at the default position.
-	lastAnchor map[string]int
+	// lastAnchor keeps the last plugin trigger in bar-local coordinates, scoped
+	// to the output view that delivered it. Panel placement converts it once.
+	lastAnchor map[string]pluginAnchor
 	catalog    plugin.Catalog
 	// images decodes the absolute paths plugin image nodes name, off the
 	// Wayland owner and under the worker's caps and bounded cache.
@@ -123,7 +128,7 @@ func (r *Registry) BindPlugins(opts PluginHostOptions) error {
 		slots:      make(map[string]*pluginSlot),
 		views:      make(map[string]*hostedView),
 		surfaces:   make(map[string]*pluginSurfaceHost),
-		lastAnchor: make(map[string]int),
+		lastAnchor: make(map[string]pluginAnchor),
 		swapping:   make(map[string]bool),
 	}
 	h.images = icons.NewWorker(icons.FileResolver{}, h.applyPluginImage)
@@ -632,9 +637,13 @@ func (h *pluginHost) desiredBarViewsLocked() []hostedView {
 			if item.ID != "plugin" {
 				continue
 			}
+			width := pluginBarViewWidth
+			if policy.Edge == "left" || policy.Edge == "right" {
+				width = max(0, policy.Body()-2*bar.themeSnapshot().Metrics.BarPadding)
+			}
 			desired = append(desired, hostedView{
 				Plugin: item.Plugin, Entry: item.Entry, Instance: item.Instance,
-				Output: conn, Generation: global, Kind: v1.ViewBar, Width: pluginBarViewWidth, Height: pluginBarViewHeight,
+				Output: conn, Generation: global, Kind: v1.ViewBar, Width: width, Height: pluginBarViewHeight,
 			})
 		}
 	}
@@ -927,7 +936,7 @@ func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResul
 	slot := h.slots[pluginID]
 	var spec plugin.Panel
 	found := false
-	anchor := h.lastAnchor[pluginID]
+	anchor, hasAnchor := h.lastAnchor[pluginID]
 	delete(h.lastAnchor, pluginID)
 	if slot != nil {
 		for _, panel := range slot.rt.Manifest().Panels {
@@ -962,13 +971,18 @@ func (h *pluginHost) openPanel(pluginID string, p v1.PanelParams) (v1.PanelResul
 			trig.BarZone = exclusiveBarZone(bar)
 			// A center panel keeps the zero anchor, so Align centres it on
 			// the output under the wordmark.
-			if anchor > 0 && spec.Placement != plugin.PlacementCenter {
-				trig.AnchorX = anchor
+			if hasAnchor && anchor.Output == conn && anchor.Generation == global &&
+				spec.Placement != plugin.PlacementCenter {
+				w, ht := bar.configuredSize()
+				bounds := barRectOnOutput(anchor.Bounds, trig.BarEdge, trig.OutW, trig.OutH, w, ht)
+				if bounds.W > 0 && bounds.H > 0 {
+					trig.AnchorX = bounds.X + bounds.W/2
+					trig.AnchorY = bounds.Y + bounds.H/2
+				}
 			}
-			if trig.OutW > 0 && trig.OutH > 0 {
-				size.W, size.H = Placement{Output: ui.Rect{W: trig.OutW, H: trig.OutH}, BarZone: trig.BarZone,
-					Padding: h.r.cfg.Panels.Padding, Panel: size}.FittedSize()
-			}
+			place := h.r.panelPlacementLocked(PanelPlugin, global, trig, size)
+			h.r.panelOverlapLocked(global, &place)
+			size.W, size.H = place.FittedSize()
 		}
 	}
 	h.r.mu.Unlock()
@@ -1190,7 +1204,12 @@ func (h *pluginHost) resizePanel(p v1.PanelResizeParams) (v1.PanelResizeResult, 
 	// The surface keeps the joints it opened with around the new body,
 	// which is also what surfaceBody places it by (sysc-588).
 	joints := place.Joints()
-	margins := place.Margins()
+	sw, sh := host.surfaceSize()
+	margins := panelSurfaceMargins(place, place.Margins())
+	var input []ui.Rect
+	if joints != (Joints{}) {
+		input = []ui.Rect{host.surfaceBody(sw, sh)}
+	}
 	h.r.mu.Unlock()
 	h.mu.Lock()
 	if h.panel == nil {
@@ -1200,19 +1219,9 @@ func (h *pluginHost) resizePanel(p v1.PanelResizeParams) (v1.PanelResizeResult, 
 	h.panel.Width, h.panel.Height = p.Width, p.Height
 	h.mu.Unlock()
 	h.refreshPanel()
-	sw, sh := p.Width, p.Height
-	var input []ui.Rect
-	h.r.mu.Lock()
-	sw, sh = sw+joints.Left+joints.Right, sh+host.edgeExtent(joints)
-	if joints != (Joints{}) {
-		input = []ui.Rect{host.surfaceBody(sw, sh)}
-	}
-	h.r.mu.Unlock()
 	w, hgt := uint32(sw), uint32(sh)
 	top, bottom := int32(margins.Top), int32(margins.Bottom)
-	// The surface is inset by the left joint, exactly as panelSpec places it
-	// at open: the body must land on margins.Left, not the surface edge.
-	left, right := int32(margins.Left-joints.Left), int32(margins.Right)
+	left, right := int32(margins.Left), int32(margins.Right)
 	h.r.sendAux(wayland.AuxRequest{
 		Output: global,
 		ID:     panelSurfaceID(PanelPlugin),
@@ -1278,7 +1287,7 @@ func pluginPanelError(reason string, actions bool) *ui.Node {
 	return &ui.Node{Kind: ui.KindColumn, Gap: theme.MarginM, Padding: theme.MarginL, Children: rows}
 }
 
-func (h *pluginHost) deliver(hit pluginHit, event v1.EventKind, button v1.PointerButton, text string, anchorX int) bool {
+func (h *pluginHost) deliver(hit pluginHit, event v1.EventKind, button v1.PointerButton, text string, anchor ui.Rect) bool {
 	h.mu.Lock()
 	v, ok := h.views[hit.ViewID]
 	var slot *pluginSlot
@@ -1291,8 +1300,8 @@ func (h *pluginHost) deliver(hit pluginHit, event v1.EventKind, button v1.Pointe
 		if !declared && v.tree != nil && v.tree.Revision == v.Revision {
 			declared = pluginNodeDeclaresEvent(v.tree.Root, hit.Node, event)
 		}
-		if declared && anchorX > 0 {
-			h.lastAnchor[v.Plugin] = anchorX
+		if declared && anchor.W > 0 && anchor.H > 0 {
+			h.lastAnchor[v.Plugin] = pluginAnchor{Bounds: anchor, Output: v.Output, Generation: v.Generation}
 		}
 	}
 	var toSend []v1.InputEvent
@@ -1602,7 +1611,7 @@ func (h *pluginHost) resolveOutputLocked(p v1.OutputContextParams) (string, uint
 	return conn, global, nil
 }
 
-func (r *Registry) handlePluginBar(action string, event wayland.Event, anchorX int) bool {
+func (r *Registry) handlePluginBar(action string, event wayland.Event, anchor ui.Rect) bool {
 	hit, ok := parsePluginAction(action)
 	if !ok || r.plugins == nil {
 		return false
@@ -1625,7 +1634,7 @@ func (r *Registry) handlePluginBar(action string, event wayland.Event, anchorX i
 			button = pointerButton(event.Button)
 		}
 	}
-	return r.plugins.deliver(hit, kind, button, "", anchorX)
+	return r.plugins.deliver(hit, kind, button, "", anchor)
 }
 
 func (r *Registry) deliverPluginText(action, text string, kind v1.EventKind) bool {
@@ -1633,7 +1642,7 @@ func (r *Registry) deliverPluginText(action, text string, kind v1.EventKind) boo
 	if !ok || r.plugins == nil {
 		return false
 	}
-	return r.plugins.deliver(hit, kind, "", text, 0)
+	return r.plugins.deliver(hit, kind, "", text, ui.Rect{})
 }
 
 func (r *Registry) PluginPID(id string) int {
