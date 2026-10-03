@@ -228,3 +228,69 @@ func TestLaptopGateFixes(t *testing.T) {
 		t.Errorf("slider and value overrun their 300 column")
 	}
 }
+
+func TestSideBarPreviewUsesUprightOutputGeometry(t *testing.T) {
+	reg, h := openSettingsForPreview(t)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h.place.Output = ui.Rect{W: 1536, H: 864}
+	h.draft.Bar.Edge = "left"
+
+	preview := settingsBarPreview(reg, h)
+	n := findAllKind(preview, ui.KindImage)[0]
+	wantW := h.draft.Bar.SurfaceExtent() * h.scale120 / 120
+	wantH := h.place.Output.H * h.scale120 / 120
+	const maxSidePreviewHeight = 240
+	if n.Image == nil || n.Image.Width != wantW || n.Image.Height != wantH {
+		if n.Image == nil {
+			t.Fatal("side preview has no raster")
+		}
+		t.Fatalf("side preview raster = %dx%d, want %dx%d from (SurfaceExtent, output.H)", n.Image.Width, n.Image.Height, wantW, wantH)
+	}
+	if n.ImageH <= 0 || n.ImageH > maxSidePreviewHeight {
+		t.Fatalf("side preview display height = %d, want a positive height at most %d", n.ImageH, maxSidePreviewHeight)
+	}
+	delta := n.ImageW*h.place.Output.H - n.ImageH*h.draft.Bar.SurfaceExtent()
+	if delta < 0 {
+		delta = -delta
+	}
+	if delta > h.place.Output.H/2 {
+		t.Errorf("side preview display %dx%d distorts the %dx%d strip", n.ImageW, n.ImageH, h.draft.Bar.SurfaceExtent(), h.place.Output.H)
+	}
+
+	cards := settingsPictureCards(reg, h, *h.set.ByPath("bar.style"))
+	cardImage := findAllKind(cards.Children[0], ui.KindImage)[0].Image
+	if cardImage == nil || cardImage.Width != wantW || cardImage.Height >= wantH {
+		t.Fatalf("side style card image = %v, want a top-end crop of the upright strip", cardImage)
+	}
+	if len(cardImage.Pix) == 0 || &cardImage.Pix[0] != &n.Image.Pix[0] {
+		t.Error("style card did not crop the top end of the cached side image")
+	}
+
+	good := n.Image
+	h.place.Output.H = 1000
+	resized := reg.settingsBarImage(h, h.draft, settingsPreviewLayoutW(h, settingsCardInner(h)))
+	if resized == nil || resized == good || resized.Height != 1000*h.scale120/120 {
+		if resized == nil {
+			t.Error("output-height change produced no side preview")
+		} else {
+			t.Errorf("output-height change reused an incompatible %dx%d preview", resized.Width, resized.Height)
+		}
+	}
+	h.scale120 = 150
+	scaled := reg.settingsBarImage(h, h.draft, settingsPreviewLayoutW(h, settingsCardInner(h)))
+	if scaled == nil || scaled == resized || scaled.Width != wantW*150/120 || scaled.Height != 1000*150/120 {
+		if scaled == nil {
+			t.Error("scale change produced no side preview")
+		} else {
+			t.Errorf("scale change reused an incompatible %dx%d preview", scaled.Width, scaled.Height)
+		}
+	}
+
+	h.barPreview = scaled
+	h.draft.Bar.Gap = -5
+	bad := findAllKind(settingsBarPreview(reg, h), ui.KindImage)[0].Image
+	if bad != scaled {
+		t.Error("an invalid side draft replaced the last good image")
+	}
+}

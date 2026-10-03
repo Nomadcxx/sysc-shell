@@ -831,13 +831,16 @@ func (o *owner) onConfigure(h *OutputHost, u *surfaceUnit, e layershell.ZwlrLaye
 		o.fail(fmt.Errorf("wayland: ack configure: %w", err))
 		return
 	}
-	changed := u.ss.configure(int(e.Width), int(e.Height))
-	u.ss.acknowledge()
+	reconfigure := u.acceptConfigure(int(e.Width), int(e.Height))
 	if u == h.bar {
 		h.state = hostConfiguring
 	}
-	if changed || u.current == nil {
-		o.failUnit(h, u, o.reconfigure(h, u))
+	if reconfigure {
+		if err := o.reconfigure(h, u); err != nil {
+			o.failUnit(h, u, err)
+			return
+		}
+		u.awaitingConfigure = false
 	}
 }
 
@@ -851,7 +854,7 @@ func (o *owner) onPreferredScale(h *OutputHost, u *surfaceUnit, e fractionalscal
 	if !u.ss.preferredScale(ui.Scale120(e.Scale)) {
 		return
 	}
-	if u.ss.eligible() {
+	if u.ss.eligible() && !u.awaitingConfigure {
 		o.failUnit(h, u, o.reconfigure(h, u))
 	}
 }
@@ -1032,7 +1035,7 @@ func (o *owner) nextJob() (*OutputHost, *surfaceUnit, render.Decision, render.Jo
 			continue
 		}
 		for _, u := range h.units() {
-			if u.surface == nil {
+			if u.surface == nil || u.awaitingConfigure {
 				continue
 			}
 			if d, job := u.sched.Next(); d == render.DecisionRender {
@@ -1107,6 +1110,29 @@ type preparedOwnerConfig struct {
 	commit func()
 }
 
+func sideBarEdge(edge string) bool { return edge == "left" || edge == "right" }
+
+func prospectiveBarSize(current config.Bar, transitionPending bool, next config.Bar,
+	configuredW, configuredH, outputW, outputH int) (int, int) {
+	if sideBarEdge(next.Edge) {
+		main := outputH
+		if !transitionPending && sideBarEdge(current.Edge) && configuredH > 0 {
+			main = configuredH
+		}
+		return next.SurfaceExtent(), main
+	}
+	main := outputW
+	if !transitionPending && !sideBarEdge(current.Edge) && configuredW > 0 {
+		main = configuredW
+	}
+	return main, next.SurfaceExtent()
+}
+
+func barConfigureTransition(current, next config.Bar) bool {
+	return current.Edge != next.Edge || current.SurfaceExtent() != next.SurfaceExtent() ||
+		current.ExclusiveZone() != next.ExclusiveZone()
+}
+
 // abandon releases what a prepared candidate acquired, for an owner-side
 // failure after the application already prepared it.
 func abandon(prepared PreparedConfig, err error) (preparedOwnerConfig, error) {
@@ -1166,12 +1192,20 @@ func (o *owner) prepareConfig(cfg config.Config) (preparedOwnerConfig, error) {
 				return abandon(prepared, err)
 			}
 			if h.state == hostMapped {
+				outW, outH := h.logicalSize(h.bar.ss.scale120)
 				if app.OutputSize != nil {
-					if w, hgt := h.logicalSize(h.bar.ss.scale120); w > 0 && hgt > 0 {
-						app.OutputSize(w, hgt)
+					if outW > 0 && outH > 0 {
+						app.OutputSize(outW, outH)
 					}
 				}
-				if err := app.Configure(h.bar.ss.logicalWidth, h.bar.ss.logicalHeight, int(h.bar.ss.scale120)); err != nil {
+				width, height := prospectiveBarSize(
+					h.policy, h.bar.awaitingConfigure, update.policy,
+					h.bar.ss.logicalWidth, h.bar.ss.logicalHeight, outW, outH)
+				if width <= 0 || height <= 0 {
+					return abandon(prepared, fmt.Errorf(
+						"wayland: prospective surface size for %s is unusable: %dx%d", h.connector, width, height))
+				}
+				if err := app.Configure(width, height, int(h.bar.ss.scale120)); err != nil {
 					return abandon(prepared, fmt.Errorf(
 						"wayland: configure prepared replacement for %s: %w", h.connector, err))
 				}
@@ -1200,6 +1234,7 @@ func (o *owner) applyConfig(cfg config.Config) error {
 func (o *owner) applyPreparedConfig(prepared preparedOwnerConfig) error {
 	for _, update := range prepared.hosts {
 		h, bar := update.host, update.policy
+		configureTransition := barConfigureTransition(h.policy, bar)
 		h.policy = bar
 		h.opaqueBackground = update.opaqueBackground
 		switch {
@@ -1218,6 +1253,7 @@ func (o *owner) applyPreparedConfig(prepared preparedOwnerConfig) error {
 			}
 		case bar.Enabled && h.bar.surface != nil:
 			h.bar.app = update.app
+			h.bar.awaitingConfigure = h.bar.awaitingConfigure || configureTransition
 			// Geometry and anchor changes are ordinary layer-surface requests
 			// followed by a configure, which is cheaper and more correct than
 			// destroying and rebuilding the role.
@@ -1232,7 +1268,7 @@ func (o *owner) applyPreparedConfig(prepared preparedOwnerConfig) error {
 			if err := h.bar.surface.Commit(); err != nil {
 				return err
 			}
-			if h.state == hostMapped {
+			if h.state == hostMapped && !h.bar.awaitingConfigure {
 				h.bar.sched.Invalidate()
 			}
 		}

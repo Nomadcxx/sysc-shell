@@ -11,24 +11,27 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
+const settingsSidePreviewMaxH = 240
+
 // settingsBarImage paints the bar cfg describes, width logical pixels wide, at
 // the panel's scale (settings redesign D6). The bar's own painter draws it, so
 // the picture cannot drift from what the setting does. It resolves as if the
 // compositor blurs, so a translucent style shows as translucent. Nil when cfg
 // does not resolve. Callers hold r.mu.
 func (r *Registry) settingsBarImage(h *PanelHost, cfg config.Config, width int) *ui.Image {
-	if width <= 0 {
+	layoutW, layoutH := settingsBarLayoutSize(h, cfg, width)
+	if layoutW <= 0 || layoutH <= 0 {
 		return nil
 	}
 	scale := h.scale120
 	if !ui.Scale120(scale).Valid() {
 		scale = int(ui.ScaleUnit)
 	}
-	key := settingsBarImageKey(cfg, r.tokens, width, scale)
+	key := settingsBarImageKey(cfg, r.tokens, layoutW, layoutH, scale)
 	if img, ok := h.barImages[key]; ok {
 		return img
 	}
-	img := r.paintSettingsBar(h, cfg, width, scale)
+	img := r.paintSettingsBar(h, cfg, layoutW, layoutH, scale)
 	if img == nil {
 		return nil
 	}
@@ -42,18 +45,25 @@ func (r *Registry) settingsBarImage(h *PanelHost, cfg config.Config, width int) 
 }
 
 // settingsBarImageKey names a picture by everything it is painted from except
-// the live widget data: the draft, the palette, the width and the scale. A
+// the live widget data: the draft, palette, layout dimensions and scale. A
 // clock in a cached picture keeps the minute it was drawn at.
-func settingsBarImageKey(cfg config.Config, tok theme.Tokens, width, scale int) string {
+func settingsBarImageKey(cfg config.Config, tok theme.Tokens, width, height, scale int) string {
 	f := fnv.New64a()
-	fmt.Fprintf(f, "%v|%v|%d|%d", cfg, tok, width, scale)
+	fmt.Fprintf(f, "%v|%v|%d|%d|%d", cfg, tok, width, height, scale)
 	return strconv.FormatUint(f.Sum64(), 16)
+}
+
+func settingsBarLayoutSize(h *PanelHost, cfg config.Config, width int) (int, int) {
+	if cfg.Bar.Edge == "left" || cfg.Bar.Edge == "right" {
+		return cfg.Bar.SurfaceExtent(), h.place.Output.H
+	}
+	return width, cfg.Bar.SurfaceExtent()
 }
 
 // paintSettingsBar draws the shared bar policy, cfg.Bar, which is the one
 // Appearance edits. The output's own override would ignore the draft's Style
 // and Shape on an output that has one.
-func (r *Registry) paintSettingsBar(h *PanelHost, cfg config.Config, width, scale int) *ui.Image {
+func (r *Registry) paintSettingsBar(h *PanelHost, cfg config.Config, width, height, scale int) *ui.Image {
 	connector := ""
 	if bar, ok := r.bars[h.output]; ok {
 		connector = bar.connector()
@@ -70,7 +80,6 @@ func (r *Registry) paintSettingsBar(h *PanelHost, cfg config.Config, width, scal
 	}
 	defer bar.stopAnimation()
 	bar.apply(r.viewLocked(connector))
-	height := policy.SurfaceExtent()
 	if err := bar.Configure(width, height, scale); err != nil {
 		return nil
 	}
@@ -96,15 +105,28 @@ func settingsPreviewLayoutW(h *PanelHost, least int) int {
 func settingsBarPreview(r *Registry, h *PanelHost) *ui.Node {
 	w := settingsCardInner(h)
 	layoutW := settingsPreviewLayoutW(h, w)
+	layoutW, layoutH := settingsBarLayoutSize(h, h.draft, layoutW)
 	if img := r.settingsBarImage(h, h.draft, layoutW); img != nil {
 		h.barPreview = img
 	}
-	extent := h.draft.Bar.SurfaceExtent()
+	imageW, imageH := w, max(h.draft.Bar.SurfaceExtent()*w/max(layoutW, 1), 1)
+	if h.draft.Bar.Edge == "left" || h.draft.Bar.Edge == "right" {
+		imageW, imageH = fitSettingsPreview(layoutW, layoutH, w, settingsSidePreviewMaxH)
+	}
 	return settingsGroupCard(h, "Preview", []*ui.Node{{
-		Kind: ui.KindImage, Image: h.barPreview, ImageW: w,
-		ImageH: max(extent*w/max(layoutW, 1), 1),
-		Name:   "Bar preview", Role: "img",
+		Kind: ui.KindImage, Image: h.barPreview, ImageW: imageW, ImageH: imageH,
+		Name: "Bar preview", Role: "img",
 	}})
+}
+
+func fitSettingsPreview(width, height, maxWidth, maxHeight int) (int, int) {
+	if width <= 0 || height <= 0 || maxWidth <= 0 || maxHeight <= 0 {
+		return 0, 0
+	}
+	if width*maxHeight > height*maxWidth {
+		return maxWidth, max(1, height*maxWidth/width)
+	}
+	return max(1, width*maxHeight/height), maxHeight
 }
 
 // settingsBarEnd is the left end of a full-width bar image, width logical
@@ -119,6 +141,20 @@ func settingsBarEnd(img *ui.Image, width, scale120 int) *ui.Image {
 	}
 	crop := *img
 	crop.Width = min(img.Width, width*scale120/120)
+	return &crop
+}
+
+// settingsBarTop is the vertical counterpart to settingsBarEnd: cards show the
+// first, top-end segment of an upright side bar without copying its pixels.
+func settingsBarTop(img *ui.Image, height, scale120 int) *ui.Image {
+	if img == nil {
+		return nil
+	}
+	if !ui.Scale120(scale120).Valid() {
+		scale120 = int(ui.ScaleUnit)
+	}
+	crop := *img
+	crop.Height = min(img.Height, height*scale120/120)
 	return &crop
 }
 
@@ -147,6 +183,15 @@ func settingsPictureCards(r *Registry, h *PanelHost, e settings.Entry) *ui.Node 
 		}
 		label := settingsOptionLabel(opt)
 		imgH := cfg.Bar.SurfaceExtent()
+		imgWForNode := imgW
+		img := r.settingsBarImage(h, cfg, settingsPreviewLayoutW(h, imgW))
+		if cfg.Bar.Edge == "left" || cfg.Bar.Edge == "right" {
+			imgH = min(imgW, h.place.Output.H)
+			imgWForNode = cfg.Bar.SurfaceExtent()
+			img = settingsBarTop(img, imgH, h.scale120)
+		} else {
+			img = settingsBarEnd(img, imgW, h.scale120)
+		}
 		_, labelH := measure(label, ui.TextAttrs{})
 		// A button sizes to a control, not to its content, so the card states
 		// the height its picture and label need.
@@ -156,9 +201,9 @@ func settingsPictureCards(r *Registry, h *PanelHost, e settings.Entry) *ui.Node 
 			Fill: ui.FillContainerHighest, Padding: pad, Width: cardW,
 			Height: imgH + theme.MarginS + labelH + 2*pad,
 			Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginS, Children: []*ui.Node{
-				// The left end of the bar at the output's width: where the
-				// ground, the pills and an attached or floating end differ.
-				{Kind: ui.KindImage, Image: settingsBarEnd(r.settingsBarImage(h, cfg, settingsPreviewLayoutW(h, imgW)), imgW, h.scale120), ImageW: imgW, ImageH: imgH},
+				// Horizontal cards crop the left end; side cards crop the top
+				// end while keeping the rendered strip upright.
+				{Kind: ui.KindImage, Image: img, ImageW: imgWForNode, ImageH: imgH},
 				{Kind: ui.KindText, Text: label},
 			}}},
 		}

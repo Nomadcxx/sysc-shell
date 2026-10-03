@@ -625,6 +625,18 @@ func (r *Registry) closeTrayLocked() {
 	}
 }
 
+func (r *Registry) closeTrayOutputLocked(global uint32) {
+	if r.pendingTrayMenu.active && r.pendingTrayMenu.output == global {
+		r.pendingTrayMenu = pendingTrayMenu{}
+	}
+	if r.trayMenu != nil && r.trayMenu.open_ && r.trayMenu.output == global {
+		r.trayMenu.close()
+	}
+	if r.trayDrawer != nil && r.trayDrawer.open_ && r.trayDrawer.output == global {
+		r.trayDrawer.close()
+	}
+}
+
 // stopTrayIcons ends the icon worker. Called once, from Close.
 func (r *Registry) stopTrayIconsLocked() {
 	if r.trayIconCancel != nil {

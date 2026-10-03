@@ -99,6 +99,9 @@ type surfaceUnit struct {
 	current  *generation
 	retiring []*generation
 	genID    int
+	// awaitingConfigure holds a replacement policy behind the compositor's
+	// geometry acknowledgement so its tree cannot paint into the old buffer.
+	awaitingConfigure bool
 
 	frameCallback *client.Callback
 	cleanup       cleanupStack
@@ -133,6 +136,12 @@ func newSurfaceUnit(id string) *surfaceUnit {
 }
 
 func (u *surfaceUnit) bufferSize() (int32, int32, error) { return u.ss.bufferSize() }
+
+func (u *surfaceUnit) acceptConfigure(width, height int) bool {
+	changed := u.ss.configure(width, height)
+	u.ss.acknowledge()
+	return changed || u.current == nil || u.awaitingConfigure
+}
 
 func (u *surfaceUnit) dropFrameCallback() error {
 	if u.frameCallback != nil {

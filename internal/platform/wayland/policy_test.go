@@ -100,6 +100,8 @@ func TestPrepareConfigDoesNotMutateLiveHosts(t *testing.T) {
 	h.doneSeen = true
 	h.state = hostMapped
 	h.policy = current.Bar
+	h.bar.ss.configure(1200, current.Bar.SurfaceExtent())
+	h.bar.ss.acknowledge()
 	hosts := newHostSet()
 	hosts.hosts[h.global] = h
 	hosts.arrival = append(hosts.arrival, h.global)
@@ -187,6 +189,124 @@ func TestPrepareConfigConfiguresMappedReplacementBeforePublishing(t *testing.T) 
 	}
 	if !configured {
 		t.Fatal("mapped replacement was not configured during preparation")
+	}
+}
+
+func TestPrepareConfigConfiguresMappedReplacementForProspectiveGeometry(t *testing.T) {
+	t.Parallel()
+
+	current := config.Default()
+	h := newHost(7, nil)
+	h.connector = "DP-1"
+	h.doneSeen = true
+	h.state = hostMapped
+	h.policy = current.Bar
+	h.applyMode(1920, 1080)
+	h.bar.ss.configure(1536, current.Bar.SurfaceExtent())
+	h.bar.ss.acknowledge()
+	h.bar.ss.preferredScale(150)
+	hosts := newHostSet()
+	hosts.hosts[h.global] = h
+	hosts.arrival = append(hosts.arrival, h.global)
+
+	for _, tc := range []struct {
+		name      string
+		edge      string
+		height    int
+		gap       int
+		wantWidth int
+		wantH     int
+	}{
+		{name: "left", edge: "left", height: 48, gap: 4, wantWidth: 52, wantH: 864},
+		{name: "right", edge: "right", height: 48, gap: 4, wantWidth: 52, wantH: 864},
+		{name: "bottom", edge: "bottom", height: 48, gap: 4, wantWidth: 1536, wantH: 52},
+		{name: "thickness override", edge: "left", height: 60, gap: 4, wantWidth: 64, wantH: 864},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := config.Default()
+			candidate.Bar.Edge, candidate.Bar.Height, candidate.Bar.Gap = tc.edge, tc.height, tc.gap
+			candidateBar := candidate.Bar
+			if tc.name == "thickness override" {
+				candidate.Outputs = []config.OutputOverride{{Connector: "DP-1", Bar: candidateBar}}
+			}
+			configured, outputSized := false, false
+			o := owner{
+				cfg:   &current,
+				hosts: hosts,
+				cb: Callbacks{PrepareConfig: func(_ config.Config, _ []HostIdentity) (PreparedConfig, error) {
+					callbacks := validHostCallbacks()
+					callbacks.OutputSize = func(width, height int) {
+						outputSized = width == 1536 && height == 864
+					}
+					callbacks.Configure = func(width, height, scale120 int) error {
+						configured = true
+						if width != tc.wantWidth || height != tc.wantH || scale120 != 150 {
+							t.Errorf("Configure(%d, %d, %d), want (%d, %d, 150)", width, height, scale120, tc.wantWidth, tc.wantH)
+						}
+						return nil
+					}
+					return PreparedConfig{
+						Hosts:    map[uint32]HostCallbacks{7: callbacks},
+						Commit:   func() {},
+						Rollback: func() {},
+					}, nil
+				}},
+			}
+			if _, err := o.prepareConfig(candidate); err != nil {
+				t.Fatalf("prepareConfig: %v", err)
+			}
+			if !configured || !outputSized {
+				t.Fatalf("prepared callbacks configured=%v output-sized=%v", configured, outputSized)
+			}
+		})
+	}
+}
+
+func TestPrepareConfigFailureRollsBackEveryCandidate(t *testing.T) {
+	t.Parallel()
+
+	current := config.Default()
+	hosts := newHostSet()
+	for global, connector := range map[uint32]string{7: "DP-1", 8: "DP-2"} {
+		h := newHost(global, nil)
+		h.connector, h.doneSeen, h.state, h.policy = connector, true, hostMapped, current.Bar
+		h.applyMode(1920, 1080)
+		h.bar.ss.configure(1536, current.Bar.SurfaceExtent())
+		h.bar.ss.acknowledge()
+		hosts.hosts[global] = h
+		hosts.arrival = append(hosts.arrival, global)
+	}
+	rolledBack := false
+	o := owner{
+		cfg:   &current,
+		hosts: hosts,
+		cb: Callbacks{PrepareConfig: func(_ config.Config, identities []HostIdentity) (PreparedConfig, error) {
+			callbacks := map[uint32]HostCallbacks{}
+			for _, identity := range identities {
+				callbacks[identity.Global] = validHostCallbacks()
+			}
+			failed := callbacks[8]
+			failed.Configure = func(int, int, int) error { return errors.New("candidate rejected") }
+			callbacks[8] = failed
+			return PreparedConfig{
+				Hosts:    callbacks,
+				Commit:   func() { t.Error("failed preparation committed") },
+				Rollback: func() { rolledBack = true },
+			}, nil
+		}},
+	}
+	candidate := config.Default()
+	candidate.Bar.Edge = "left"
+	if _, err := o.prepareConfig(candidate); err == nil {
+		t.Fatal("prepareConfig accepted the rejected candidate")
+	}
+	if !rolledBack {
+		t.Fatal("failed candidate resources were not rolled back")
+	}
+	for _, h := range hosts.each() {
+		if h.policy.Edge != "top" || h.bar.ss.logicalHeight != current.Bar.SurfaceExtent() {
+			t.Fatalf("failed prepare changed %s host to policy=%+v size=%dx%d", h.connector, h.policy, h.bar.ss.logicalWidth, h.bar.ss.logicalHeight)
+		}
 	}
 }
 
