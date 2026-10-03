@@ -15,7 +15,7 @@
 | `internal/platform/wayland/client.go:1302` `dispatchAll` returns `Dispatch()` errors → `run` returns `o.fatal` → `os.Exit(1)` | **F3** A `wl_display.error` is **fatal by construction**; there is no `recover` | `internal/platform/wayland/client.go:1303`, `:266` `fail` |
 | `aux_surface.go:125` `handleAux` default branch `o.fail(err)` for a no-Reply error | **F4** Non-stale aux errors with no reply were promoted to process-fatal; now contained to the surface | `internal/platform/wayland/aux_surface.go:125` |
 | `regions.go:82` — `input.Destroy()` was skipped when `Add`/`SetInputRegion` errored | **F5** Region leak on the error path; now `defer`red | `internal/platform/wayland/regions.go:82` |
-| New regression test, 300-note burst + churn + output loss + resync + DND | **F6** In-bounds contract holds; the toast host is **not** the source of bad rects | `internal/shell/toastburst_audit_test.go` |
+| New regression test, 300-note burst + churn + output loss + resync + DND | **F6** The tested toast-host paths emit input rectangles within output bounds; this does not explain a malformed `create_region` request | `internal/shell/toastburst_audit_test.go` |
 
 ## 1. Crash signature
 
@@ -43,7 +43,7 @@ compositor.create_region(new_id) = 8-byte header + 4-byte new_id
 
 The `new_id` comes from `Context.Register`, a monotonic `currentID` that skips IDs still present in the `objects` map. In `sysc-wayland v0.3.1` that map cannot reuse a live ID and `DeleteID` only runs on a server `delete_id` event. So a **correctly-decoded** stream cannot produce a duplicate `new_id`.
 
-Therefore the corruption must come from a **mis-decoded inbound event that desyncs the object map / byte stream**. The deployed `v0.3.1` predates exactly this class of fix on `sysc-wayland` `main`:
+One possible cause is a **mis-decoded inbound event that desyncs the object map or byte stream**. The deployed `v0.3.1` predates a fix for this class of issue on `sysc-wayland` `main`:
 
 | Commit | Fix |
 |---|---|
@@ -68,27 +68,27 @@ A bad downgraded request should not take the shell down even before the root cau
 - **F4 — `handleAux` default branch promoted to fatal (fixed).** Errors that are not `errOutputGone`/`errAuxNotOpen` and arrive with no `Reply` called `o.fail(err)` (`aux_surface.go:125`), exiting the process. It now calls `failUnit` for a known surface, so one bad surface closes and the shell survives; only a bar failure stays fatal. A `wl_display.error` still bypasses this and is handled by the display error handler.
 - **F5 — region leak (fixed).** `applyInputRects` and `applyOpaqueRegion` skipped `Destroy()` when `Add`/`SetInputRegion`/`SetOpaqueRegion` failed. Both now `defer` the destroy once the region exists.
 
-## 4. Ruled out: the toast host's region math
+## 4. Toast-host region bounds
 
-A regression test drives the host through every shape the burst produces — a 300-note snapshot, 300 churn deltas, output loss/return, a daemon resync (disconnect + fresh snapshot), and DND on/off — and checks every emitted input rect against the real output size:
+A regression test drives the host through a 300-note snapshot, 300 churn deltas, output loss and return, daemon resync, and DND toggles. It checks each emitted input rectangle against the output size:
 
 ```sh
 cd sysc-shell
 go test -race -count=1 -run TestToast ./internal/shell/
 ```
 
-Both tests pass. No empty, negative-origin, or out-of-bounds rect is emitted at any stage. The rects the host feeds to `CreateRegion` are within bounds, so the rejected `create_region` is **not** caused by bad rectangle values — it is the `new_id` itself.
+The test checks the host's bounds contract for this simulated burst and churn path. It found no empty, negative-origin, or out-of-bounds rectangle. `wl_compositor.create_region` carries only a new object ID; rectangle coordinates arrive later through `wl_region.add`. This test cannot explain an error reported at `create_region` or prove the suspected decoder issue. A protocol trace or minimal client reproduction must confirm that cause.
 
 ## 5. Verdict
 
 1. The crash is a **shell-side Wayland protocol failure**, not a `sysc-notify` panic and not a shell logic panic.
-2. The `create_region` `new_id` is corrupt because the v0.3.1 client's object-ID state desynced; the unreleased `sysc-wayland` decoder fixes are the leading cause.
-3. The toast host's rect logic is exonerated.
-4. `sysc-notify` contributed only by tearing down slow presenters under bursts (fixed in the companion PR).
+2. The v0.3.1 object-ID desync is a leading hypothesis; the unreleased `sysc-wayland` decoder fixes match the failure pattern, but no capture or reproduction proves the cause.
+3. The test found no out-of-bounds toast input rectangles in the scenarios it covers.
+4. `sysc-notify` can disconnect a slow presenter during bursts; the companion PR replaces that path with snapshot resync. No evidence ties the disconnect to the `create_region` error.
 
 ## 6. Remediation
 
-1. **Upgrade `sysc-wayland`** on the deployed branch to a revision containing `b31ea23` (ideally tag a `v0.3.2`). This is the primary fix and is **not** part of this PR.
+1. **Test `sysc-wayland`** on the deployed branch with a revision containing `b31ea23`. If that build resolves the captured failure, tag and deploy it. This PR does not change the dependency.
 2. **Contain aux errors** so a single surface failure cannot exit the process (`handleAux` default branch). **Done.**
 3. **Fix the region leak** in `applyInputRects`/`applyOpaqueRegion`. **Done.**
 4. Ship the burst regression test to lock in the in-bounds contract. **Done.**

@@ -53,12 +53,10 @@ func (rr *regionRecorder) inputRegions() []wayland.AuxRequest {
 // resyncs, and asserts every input region the host publishes stays a valid,
 // in-bounds rectangle for its output.
 //
-// sysc-shell died on a Wayland protocol error from the toast surface's input
-// region ("invalid arguments for wl_compositor#6.create_region"). The
-// compositor rejects a region any of whose rectangles is empty, negative, or
-// off the surface; the shell treats that error as fatal. Whatever the exact
-// trigger was, the host must never hand the platform such a rectangle, so this
-// test pins that contract under the burst the ai-usage plugin produces.
+// The captured Wayland error names wl_compositor.create_region, whose request
+// carries only a new object ID. Rectangle coordinates arrive later through
+// wl_region.add. This test checks the toast host's bounds contract under the
+// burst the ai-usage plugin produces; it does not explain the object-ID error.
 func TestToastInputRegionsStayInBoundsUnderBurst(t *testing.T) {
 	r := NewRegistry(config.Default())
 	t.Cleanup(r.Close)
