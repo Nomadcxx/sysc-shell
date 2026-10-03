@@ -332,3 +332,24 @@ func TestTerminalArtPaletteChangeReappliesRunningEffect(t *testing.T) {
 		t.Fatalf("DP-3 = %+v; a palette change must not start an effect", a)
 	}
 }
+
+func TestTerminalArtRestoreDisabledWithoutStill(t *testing.T) {
+	reg, svc := artRegistry(t, artWallpaperEngine{})
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-1", Kind: wallpaper.KindEffect, Effect: "fire", Theme: "nord"})
+	awaitArt(t, svc, "DP-1", runningEffect("fire", "nord"))
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	artAct(t, reg, h, "art-output:DP-1")
+	if findAction(h.root, "art-pause") == nil {
+		t.Error("a running effect offers Pause")
+	}
+	restore := findAction(h.root, "art-restore")
+	if restore == nil || restore.State&ui.StateDisabled == 0 || restore.Tooltip != "No previous still recorded" {
+		t.Fatalf("Restore still = %+v, want disabled with a reason", restore)
+	}
+	artAct(t, reg, h, "art-output:DP-3")
+	if findAction(h.root, "art-restore") != nil || findAction(h.root, "art-pause") != nil {
+		t.Error("an output showing a wallpaper offers no effect controls")
+	}
+}

@@ -171,3 +171,44 @@ func TestRuntimeRecordsTheEngineThatPainted(t *testing.T) {
 		t.Errorf("engine after restore = %q, want swaybg", got)
 	}
 }
+
+// An effect has no image of its own, so committing one records the still the
+// output showed before it. Restore hands that to the static fallback instead
+// of leaving the output blank.
+func TestEffectCommitKeepsPriorStill(t *testing.T) {
+	s := newTestStore()
+	effect := func(connector, id string) {
+		t.Helper()
+		jobs := s.Apply(connector, "", KindEffect)
+		for i := range jobs {
+			jobs[i].Effect = id
+		}
+		commitAll(t, s, jobs, "")
+	}
+	still := func(connector string) string {
+		a, _ := s.Assignment(connector)
+		return a.PreviewPath
+	}
+
+	commitAll(t, s, s.Apply("DP-1", "/w/a.png", KindImage), "")
+	effect("DP-1", "fire")
+	if got := still("DP-1"); got != "/w/a.png" {
+		t.Fatalf("effect over an image: still = %q, want /w/a.png", got)
+	}
+	effect("DP-1", "rain")
+	if got := still("DP-1"); got != "/w/a.png" {
+		t.Fatalf("effect over an effect: still = %q, want the image from before both", got)
+	}
+
+	commitAll(t, s, s.Apply("DP-3", "/w/b.mp4", KindVideo), "/c/b.jpg")
+	effect("DP-3", "fire")
+	if got := still("DP-3"); got != "/c/b.jpg" {
+		t.Fatalf("effect over a video: still = %q, want its extracted still", got)
+	}
+
+	s = newTestStore()
+	effect("DP-1", "fire")
+	if got := still("DP-1"); got != "" {
+		t.Fatalf("effect over nothing: still = %q, want empty", got)
+	}
+}

@@ -174,6 +174,10 @@ func (s *Store) Commit(j Job, preview, engine string) bool {
 		return false
 	}
 	prior := s.assigned[j.Connector]
+	if j.Kind == KindEffect && preview == "" {
+		// An effect has no image of its own; Restore returns to the one it replaced.
+		preview = stillFor(prior)
+	}
 	desired := StatePlaying
 	if j.Kind == KindImage {
 		desired = StateStatic

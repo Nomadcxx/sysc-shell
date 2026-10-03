@@ -16,6 +16,7 @@ type fakeEngine struct {
 	mu         sync.Mutex
 	applied    []Job
 	restored   []string
+	stills     []string
 	paused     map[string]bool
 	closeCalls int
 
@@ -53,7 +54,7 @@ func (f *fakeEngine) Apply(job Job, _ Settings) (string, error) {
 	return f.preview[job.Path], nil
 }
 
-func (f *fakeEngine) Restore(connector, _ string) error {
+func (f *fakeEngine) Restore(connector, still string) error {
 	f.mu.Lock()
 	gate := f.restoreGate[connector]
 	f.mu.Unlock()
@@ -63,6 +64,7 @@ func (f *fakeEngine) Restore(connector, _ string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.restored = append(f.restored, connector)
+	f.stills = append(f.stills, still)
 	return nil
 }
 
@@ -531,5 +533,26 @@ func TestServiceReconnectWaitsForDisconnectCleanup(t *testing.T) {
 	time.Sleep(30 * time.Millisecond)
 	if len(engine.appliedPaths()) != 1 {
 		t.Fatal("reconnect applied before disconnect cleanup finished")
+	}
+}
+
+func TestRestoreEffectReturnsToPriorStill(t *testing.T) {
+	engine := newFakeEngine()
+	engine.caps.Terminal = true
+	svc := newTestService(t, engine)
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: "/w/a.png", Kind: KindImage})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Path == "/w/a.png" })
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Kind: KindEffect, Effect: "fire", Theme: "nord"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Kind == KindEffect })
+	svc.Enqueue(Command{Op: OpRestore, Token: "DP-1"})
+	awaitSnapshot(t, svc, func(Snapshot) bool {
+		engine.mu.Lock()
+		defer engine.mu.Unlock()
+		return len(engine.stills) > 0
+	})
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if got := engine.stills[len(engine.stills)-1]; got != "/w/a.png" {
+		t.Fatalf("Restore got still %q, want the image the effect replaced", got)
 	}
 }

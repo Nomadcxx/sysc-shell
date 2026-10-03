@@ -63,11 +63,35 @@ func artHeader(h *PanelHost) *ui.Node {
 	}
 }
 
-// artStatusRow says what the selected outputs run now.
+// artStatusRow says what the selected outputs run now, with Pause and
+// Restore still when any of them runs an effect.
 func artStatusRow(h *PanelHost) *ui.Node {
+	children := []*ui.Node{{Kind: ui.KindText, Text: artStatusText(h)}}
+	running, paused, still := false, false, false
+	for _, connector := range wallpaperTargets(h) {
+		a := h.wallpaperSnap.Assignments[connector]
+		if a.Kind != wallpaper.KindEffect {
+			continue
+		}
+		running = true
+		paused = paused || h.wallpaperSnap.Runtime[connector].State == wallpaper.StatePaused
+		still = still || a.PreviewPath != ""
+	}
+	if running {
+		action, label := "art-pause", "Pause"
+		if paused {
+			action, label = "art-resume", "Resume"
+		}
+		restore := wallpaperButton(h, "art-restore", "Restore still", false)
+		if !still {
+			restore.State |= ui.StateDisabled
+			restore.Tooltip = "No previous still recorded"
+		}
+		children = append(children, wallpaperButton(h, action, label, false), restore)
+	}
 	return &ui.Node{
 		Kind: ui.KindRow, Gap: wallpaperGridGap, Height: h.theme.Metrics.StandardControl,
-		Children: []*ui.Node{{Kind: ui.KindText, Text: artStatusText(h)}},
+		Children: children,
 	}
 }
 
@@ -193,8 +217,18 @@ func (h *PanelHost) artAction(r *Registry, n *ui.Node) bool {
 	if h.id != PanelTerminalArt || n == nil {
 		return false
 	}
-	if n.Action == "art-close" {
+	switch n.Action {
+	case "art-close":
 		r.closePanelLocked(PanelTerminalArt)
+		return true
+	case "art-pause":
+		h.wallpaperSetPaused(r, true)
+		return true
+	case "art-resume":
+		h.wallpaperSetPaused(r, false)
+		return true
+	case "art-restore":
+		h.wallpaperRestore(r)
 		return true
 	}
 	if n.Action == "art-menu:palette" {
