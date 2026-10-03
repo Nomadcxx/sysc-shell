@@ -34,7 +34,7 @@ var materialInventory = []string{
 	"wifi", "bluetooth", "cloud", "calendar_month",
 	"battery_full", "coffee", "wallpaper", "person",
 	"sunny", "partly_cloudy_day", "rainy", "thunderstorm",
-	"weather_snowy", "foggy",
+	"weather_snowy", "foggy", "terminal",
 	"signal_wifi_0_bar", "network_wifi_1_bar", "network_wifi_2_bar",
 	"network_wifi_3_bar", "signal_wifi_4_bar", "wifi_off",
 	"lan", "visibility", "visibility_off",
@@ -73,6 +73,12 @@ func TestControlCentreIconsAreInTheSubset(t *testing.T) {
 		if !ValidMaterialIcon(name) {
 			t.Errorf("%q missing from the subset: it would shape to nothing and paint an invisible control", name)
 		}
+	}
+}
+
+func TestTerminalArtIconIsInTheSubset(t *testing.T) {
+	if !ValidMaterialIcon("terminal") {
+		t.Fatal(`"terminal" missing from the subset: the Terminal Art controls would paint an invisible icon`)
 	}
 }
 
