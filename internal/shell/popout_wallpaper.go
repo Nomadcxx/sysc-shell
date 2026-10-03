@@ -753,6 +753,12 @@ func wallpaperActiveStrip(h *PanelHost) *ui.Node {
 		}
 		children = append(children, wallpaperButton(h, action, label, false))
 	}
+	for _, connector := range wallpaperTargets(h) {
+		if h.wallpaperSnap.Assignments[connector].Kind == wallpaper.KindEffect {
+			children = append(children, wallpaperButton(h, "wallpaper-open-art", "Open Terminal Art", false))
+			break
+		}
+	}
 	children = append(children, wallpaperButton(h, "wallpaper-restore", wallpaperRestoreLabel(h), false))
 	return &ui.Node{
 		Kind: ui.KindRow, Gap: wallpaperGridGap,
@@ -769,10 +775,10 @@ func wallpaperRestoreLabel(h *PanelHost) string {
 
 // wallpaperPlaybackState reports whether the selected outputs hold a video and
 // whether it is paused. All outputs offers the control when any of them does.
+// An effect's playback is the Terminal Art panel's.
 func wallpaperPlaybackState(h *PanelHost) (paused, ok bool) {
 	for _, connector := range wallpaperTargets(h) {
-		if h.wallpaperSnap.Assignments[connector].Kind != wallpaper.KindVideo &&
-			h.wallpaperSnap.Assignments[connector].Kind != wallpaper.KindEffect {
+		if h.wallpaperSnap.Assignments[connector].Kind != wallpaper.KindVideo {
 			continue
 		}
 		ok = true
@@ -785,7 +791,7 @@ func wallpaperPlaybackState(h *PanelHost) (paused, ok bool) {
 
 func wallpaperAssignmentLabel(a wallpaper.Assignment) string {
 	if a.Kind == wallpaper.KindEffect && a.Effect != "" {
-		return a.Effect
+		return fmt.Sprintf("Terminal Art: %s (%s)", a.Effect, a.Theme)
 	}
 	return filepath.Base(a.Path)
 }
@@ -801,24 +807,31 @@ func wallpaperSummary(snap wallpaper.Snapshot, output string) string {
 		return fmt.Sprintf("%s \u00b7 %s \u00b7 %s", output, wallpaperAssignmentLabel(a),
 			wallpaperStateName(snap.Runtime[output].State))
 	}
-	outputs, videos, images := 0, 0, 0
+	outputs, videos, images, effects := 0, 0, 0, 0
 	for _, connector := range snap.Connectors {
 		a, ok := snap.Assignments[connector]
 		if !ok {
 			continue
 		}
 		outputs++
-		if a.Kind == wallpaper.KindVideo {
+		switch a.Kind {
+		case wallpaper.KindVideo:
 			videos++
-		} else {
+		case wallpaper.KindEffect:
+			effects++
+		default:
 			images++
 		}
 	}
 	if outputs == 0 {
 		return "nothing assigned"
 	}
-	return fmt.Sprintf("%s \u00b7 %d video \u00b7 %d image",
+	summary := fmt.Sprintf("%s \u00b7 %d video \u00b7 %d image",
 		plural(outputs, "output"), videos, images)
+	if effects > 0 {
+		summary += fmt.Sprintf(" \u00b7 %d effect", effects)
+	}
+	return summary
 }
 
 // plural counts a noun. The All summary read "1 outputs" on a laptop, which is
@@ -1347,6 +1360,22 @@ func (h *PanelHost) wallpaperAction(r *Registry, n *ui.Node) bool {
 		return true
 	case n.Action == "wallpaper-up":
 		h.wallpaperUp(r)
+		return true
+	case n.Action == "wallpaper-open-art":
+		// Like Control Centre's links: the panel you came from retires, the
+		// one you asked for opens on the same output selection.
+		output := h.wallpaperOutput
+		trig := Trigger{
+			BarEdge: h.place.BarEdge, BarZone: h.place.BarZone,
+			OutW: h.place.Output.W, OutH: h.place.Output.H,
+		}
+		r.closePanelLocked(PanelWallpaper)
+		if err := r.openPanelRootLocked(PanelTerminalArt, h.output, trig); err == nil {
+			if art := r.panelHosts[PanelTerminalArt]; art != nil {
+				art.wallpaperOutput = wallpaperOutputSelection(art.wallpaperSnap, output)
+				r.rebuildPanel(art)
+			}
+		}
 		return true
 	case n.Action == "wallpaper-restore":
 		h.wallpaperRestore(r)

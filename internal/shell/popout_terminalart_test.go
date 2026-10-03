@@ -431,3 +431,69 @@ func TestWallpaperPanelHasNoTerminalArt(t *testing.T) {
 		t.Errorf("art controls remain: %v", actions)
 	}
 }
+
+// wallpaperWithEffect opens the wallpaper panel with fire/nord running on
+// DP-1 and DP-1 selected.
+func wallpaperWithEffect(t *testing.T) (*Registry, *PanelHost) {
+	t.Helper()
+	reg, svc := artRegistry(t, artWallpaperEngine{})
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-1", Kind: wallpaper.KindEffect, Effect: "fire", Theme: "nord"})
+	awaitArt(t, svc, "DP-1", runningEffect("fire", "nord"))
+	if err := reg.OpenPanel(PanelWallpaper, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	drainAuxQueue(reg)
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelWallpaper]
+	if !h.wallpaperAction(reg, findAction(h.root, "wallpaper-output:DP-1")) {
+		reg.mu.Unlock()
+		t.Fatal("select DP-1")
+	}
+	reg.mu.Unlock()
+	return reg, h
+}
+
+func TestWallpaperStripNamesRunningEffect(t *testing.T) {
+	reg, h := wallpaperWithEffect(t)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	strip := h.root.Children[1]
+	if !slices.ContainsFunc(artTexts(strip), func(s string) bool { return strings.Contains(s, "DP-1 \u00b7 Terminal Art: fire (nord)") }) {
+		t.Errorf("strip texts = %v", artTexts(strip))
+	}
+	if findAction(strip, "wallpaper-open-art") == nil {
+		t.Error("an effect output links to the Terminal Art panel")
+	}
+	if findAction(strip, "wallpaper-pause") != nil {
+		t.Error("effect playback is controlled on the Terminal Art panel, not here")
+	}
+}
+
+func TestWallpaperOpenArtSwitchesPanels(t *testing.T) {
+	reg, h := wallpaperWithEffect(t)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if !h.wallpaperAction(reg, findAction(h.root, "wallpaper-open-art")) {
+		t.Fatal("Open Terminal Art was not handled")
+	}
+	art := reg.panelHosts[PanelTerminalArt]
+	if reg.panelHosts[PanelWallpaper] != nil || art == nil {
+		t.Fatalf("wallpaper open=%v art open=%v; want only art", reg.panelHosts[PanelWallpaper] != nil, art != nil)
+	}
+	if art.wallpaperOutput != "DP-1" {
+		t.Fatalf("art output = %q, want the wallpaper panel's DP-1", art.wallpaperOutput)
+	}
+}
+
+func TestWallpaperAllSummaryCountsEffects(t *testing.T) {
+	snap := wallpaper.Snapshot{
+		Connectors: []string{"DP-1", "DP-3"},
+		Assignments: map[string]wallpaper.Assignment{
+			"DP-1": {Kind: wallpaper.KindImage, Path: "/w/a.png"},
+			"DP-3": {Kind: wallpaper.KindEffect, Effect: "fire"},
+		},
+	}
+	if got := wallpaperSummary(snap, wallpaper.AllOutputs); got != "2 outputs \u00b7 0 video \u00b7 1 image \u00b7 1 effect" {
+		t.Fatalf("summary = %q; an effect is not an image", got)
+	}
+}
