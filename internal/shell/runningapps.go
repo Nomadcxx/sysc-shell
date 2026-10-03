@@ -258,7 +258,7 @@ const (
 	runningAppPrefix   = "running-app:"
 )
 
-func refreshRunningApps(cap, row *ui.Node, v barView) bool {
+func refreshRunningApps(cap, row *ui.Node, v barView, pad int) bool {
 	if len(v.Running) == 0 {
 		if len(cap.Children) == 0 && cap.Padding == 0 {
 			return false
@@ -271,7 +271,7 @@ func refreshRunningApps(cap, row *ui.Node, v barView) bool {
 	if runningAppsMatch(row, v.Running) && len(cap.Children) == 1 {
 		return false
 	}
-	cap.Padding = runningAppPad
+	cap.Padding = pad
 	cap.Children = []*ui.Node{row}
 	row.Children = row.Children[:0]
 	for _, s := range v.Running {

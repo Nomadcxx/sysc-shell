@@ -47,7 +47,7 @@ type Bar struct {
 	trayImages          map[tray.ItemKey]*ui.Image
 	trayActions         map[string]tray.ItemKey
 	trayArranged        trayArrangement
-	// trayAvailable is the logical width the last layout granted tray icons,
+	// trayAvailable is the logical main-axis extent the last layout granted tray icons,
 	// after any reserve for the overflow control. The drawer re-derives the
 	// same arrangement from it without waiting for the next frame.
 	trayAvailable int
@@ -141,9 +141,11 @@ func NewWithTheme(theme Theme, policy config.Bar, connector string) (*Bar, error
 		stopAnim:      make(chan struct{}),
 	}
 
-	b.left = buildWidgets(policy.Left, b.theme.Metrics.CapsulePadding, b.theme.Metrics)
-	b.center = buildWidgets(policy.Center, b.theme.Metrics.CapsulePadding, b.theme.Metrics)
-	b.right = buildWidgets(policy.Right, b.theme.Metrics.CapsulePadding, b.theme.Metrics)
+	side := b.barAxis() == ui.Vertical
+	contentWidth := max(0, b.theme.barGeometry().Body()-2*b.theme.Metrics.BarPadding)
+	b.left = buildWidgetsAxis(policy.Left, b.theme.Metrics.CapsulePadding, b.theme.Metrics, side, contentWidth)
+	b.center = buildWidgetsAxis(policy.Center, b.theme.Metrics.CapsulePadding, b.theme.Metrics, side, contentWidth)
+	b.right = buildWidgetsAxis(policy.Right, b.theme.Metrics.CapsulePadding, b.theme.Metrics, side, contentWidth)
 	return b, nil
 }
 
