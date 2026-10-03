@@ -175,6 +175,75 @@ func TestAnchoredWordmarkKeepsTheContentBandCentre(t *testing.T) {
 	}
 }
 
+func TestAnchoredBarAsymmetricFlanksAndElasticCollision(t *testing.T) {
+	t.Parallel()
+	content := Rect{X: 10, Y: 5, W: 300, H: 40}
+	left := text("llllllllll")
+	left.MaxWidth = 100
+	before := text("aa")
+	mark := &Node{Kind: KindWordmark, ImageW: 40, ImageH: 20}
+	after := text("bbbb")
+	right := text("rrrrrrrr")
+
+	over, err := ArrangeBar(content, []*Node{left}, []*Node{before, mark, after}, []*Node{right}, 6, fixed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		node *Node
+		want Rect
+	}{
+		{"elastic left", left, Rect{X: 10, Y: 15, W: 98, H: 20}},
+		{"before", before, Rect{X: 114, Y: 15, W: 20, H: 20}},
+		{"mark", mark, Rect{X: 140, Y: 15, W: 40, H: 20}},
+		{"after", after, Rect{X: 186, Y: 15, W: 40, H: 20}},
+		{"dropped right", right, Rect{}},
+	} {
+		if tc.node.Bounds != tc.want {
+			t.Errorf("%s bounds = %+v, want %+v", tc.name, tc.node.Bounds, tc.want)
+		}
+	}
+	if over != (BarOverflow{Right: 1}) {
+		t.Fatalf("overflow = %+v, want one right drop", over)
+	}
+}
+
+func TestAnchoredBarFallsBackWhenCompositionDoesNotFit(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		before string
+		markW  int
+	}{
+		{"mark exceeds band", "", 60},
+		{"flanks exceed band", "time", 30},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			content := Rect{X: 5, W: 50, H: 40}
+			left, right := text("aaa"), text("zzz")
+			mark := &Node{Kind: KindWordmark, ImageW: tc.markW, ImageH: 20}
+			center := []*Node{mark}
+			if tc.before != "" {
+				center = append([]*Node{text(tc.before)}, center...)
+			}
+			over, err := ArrangeBar(content, []*Node{left}, center, []*Node{right}, 6, fixed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if over != (BarOverflow{Left: 1, Right: 1}) || left.Bounds != (Rect{}) || right.Bounds != (Rect{}) {
+				t.Fatalf("fallback sides = %+v/%+v, overflow %+v", left.Bounds, right.Bounds, over)
+			}
+			if center[0].Bounds.X != content.X || center[0].Bounds.W != min(50, len(tc.before)*10) && tc.before != "" {
+				t.Fatalf("fallback first item = %+v", center[0].Bounds)
+			}
+			if tc.before == "" && mark.Bounds != (Rect{X: 5, Y: 10, W: 50, H: 20}) {
+				t.Fatalf("oversized mark = %+v", mark.Bounds)
+			}
+		})
+	}
+}
+
 func TestEmptySectionsContributeNothing(t *testing.T) {
 	t.Parallel()
 	content := Rect{X: 0, Y: 0, W: 300, H: 40}
