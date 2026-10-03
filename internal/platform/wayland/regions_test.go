@@ -1,11 +1,27 @@
 package wayland
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
+
+func TestJoinCleanupErrorPreservesBothFailures(t *testing.T) {
+	operationErr := errors.New("apply region")
+	cleanupErr := errors.New("destroy region")
+
+	got := joinCleanupError(operationErr, func() error { return cleanupErr })
+	if !errors.Is(got, operationErr) || !errors.Is(got, cleanupErr) {
+		t.Fatalf("joined error = %v, want both operation and cleanup errors", got)
+	}
+
+	got = joinCleanupError(nil, func() error { return cleanupErr })
+	if !errors.Is(got, cleanupErr) {
+		t.Fatalf("cleanup-only error = %v, want %v", got, cleanupErr)
+	}
+}
 
 func TestOpaqueRectsExcludeCorners(t *testing.T) {
 	t.Parallel()
