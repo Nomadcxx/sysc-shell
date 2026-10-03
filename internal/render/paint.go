@@ -250,6 +250,15 @@ func paintNode(c *Canvas, n *ui.Node, text *TextRenderer, style Style, size int)
 	if n == nil {
 		return fmt.Errorf("nil node")
 	}
+	if n.ClipBounds {
+		previous := c.restrict
+		clip := intersectClip(previous, style.Scale120.PhysicalRect(n.Bounds))
+		if clip.W <= 0 || clip.H <= 0 {
+			return nil
+		}
+		c.restrict = clip
+		defer func() { c.restrict = previous }()
+	}
 	if n.Opacity > 0 && n.Opacity < 100 {
 		return paintNodeOpacity(c, n, text, style, size)
 	}

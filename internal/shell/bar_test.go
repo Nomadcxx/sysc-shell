@@ -71,6 +71,49 @@ func newTestBar(t *testing.T) *Bar {
 	return p
 }
 
+func TestSideBarLayoutUsesVerticalAxis(t *testing.T) {
+	cfg := config.Default()
+	cfg.Bar.Edge = "left"
+	bar, err := NewWithTheme(ThemeFrom(cfg, cfg.Bar), cfg.Bar, "DP-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(bar.stopAnimation)
+	left := &ui.Node{Kind: ui.KindText, Text: "L"}
+	center := &ui.Node{Kind: ui.KindText, Text: "C"}
+	right := &ui.Node{Kind: ui.KindText, Text: "R"}
+	bar.left = []textWidget{{node: left}}
+	bar.center = []textWidget{{node: center}}
+	bar.right = []textWidget{{node: right}}
+	if err := bar.Configure(cfg.Bar.SurfaceExtent(), 800, 120); err != nil {
+		t.Fatal(err)
+	}
+	content := bar.contentLocked(cfg.Bar.SurfaceExtent(), 800)
+	if left.Bounds.Y != content.Y || right.Bounds.Y+right.Bounds.H != content.Y+content.H {
+		t.Fatalf("side lanes = %+v/%+v, content %+v", left.Bounds, right.Bounds, content)
+	}
+	if got, want := center.Bounds.Y+center.Bounds.H/2, content.Y+content.H/2; got < want-1 || got > want+1 {
+		t.Fatalf("centre Y = %d, want %d", got, want)
+	}
+	for _, node := range []*ui.Node{left, center, right} {
+		if node.Bounds.W <= 0 || node.Bounds.H <= 0 || node.Bounds.X < content.X || node.Bounds.X+node.Bounds.W > content.X+content.W {
+			t.Fatalf("node %+v escaped side content %+v", node.Bounds, content)
+		}
+	}
+}
+
+func TestSideBarTrayBudgetUsesVerticalExtent(t *testing.T) {
+	bar := &Bar{}
+	bar.theme.BarEdge = "right"
+	bar.theme.Metrics.BarSpacing = 6
+	content := ui.Rect{X: 4, Y: 10, W: 40, H: 800}
+	center := []*ui.Node{{Bounds: ui.Rect{Y: 350, H: 40}}}
+	right := []*ui.Node{{Bounds: ui.Rect{Y: 740, H: 20}}}
+	if got := bar.trayAvailableLocked(content, center, right); got != 338 {
+		t.Fatalf("tray available = %d, want 338 along Y", got)
+	}
+}
+
 func TestZeroBarStopsAnimationSafely(t *testing.T) {
 	t.Parallel()
 	bar := &Bar{}
