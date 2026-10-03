@@ -13,8 +13,8 @@
 | `wl_display.error: object=1 code=1: invalid arguments for wl_compositor#6.create_region` | **F1** The fatal is a **server-rejected `create_region` `new_id`**, not a shell panic and not a daemon panic | `internal/platform/wayland/regions.go:82` `applyInputRects` |
 | `go.mod` on deployed branch pins `sysc-wayland v0.3.1`; `main` pins `v0.2.2`; 8 unreleased decoder fixes sit between `v0.3.1` and `sysc-wayland@main` | **F2 (root-cause lead)** v0.3.1's client object-ID state can desync on a mis-decoded event, so a later `create_region` gets a bad `new_id` | `sysc-wayland` `baedfe9`…`b31ea23` |
 | `internal/platform/wayland/client.go:1302` `dispatchAll` returns `Dispatch()` errors → `run` returns `o.fatal` → `os.Exit(1)` | **F3** A `wl_display.error` is **fatal by construction**; there is no `recover` | `internal/platform/wayland/client.go:1303`, `:266` `fail` |
-| `aux_surface.go:125` `handleAux` default branch `o.fail(err)` for a no-Reply error | **F4** Non-stale aux errors with no reply are promoted to process-fatal; only `open` is contained | `internal/platform/wayland/aux_surface.go:125` |
-| `regions.go:82` — `input.Destroy()` is skipped when `Add`/`SetInputRegion` errors | **F5** Region leak on the error path | `internal/platform/wayland/regions.go:82-92` |
+| `aux_surface.go:125` `handleAux` default branch `o.fail(err)` for a no-Reply error | **F4** Non-stale aux errors with no reply were promoted to process-fatal; now contained to the surface | `internal/platform/wayland/aux_surface.go:125` |
+| `regions.go:82` — `input.Destroy()` was skipped when `Add`/`SetInputRegion` errored | **F5** Region leak on the error path; now `defer`red | `internal/platform/wayland/regions.go:82` |
 | New regression test, 300-note burst + churn + output loss + resync + DND | **F6** In-bounds contract holds; the toast host is **not** the source of bad rects | `internal/shell/toastburst_audit_test.go` |
 
 ## 1. Crash signature
@@ -60,13 +60,13 @@ Therefore the corruption must come from a **mis-decoded inbound event that desyn
 
 **Status:** leading hypothesis, not yet proven end-to-end. Final proof needs a `WAYLAND_DEBUG=1` capture or a minimal client repro that shows the object map diverging from the server's.
 
-## 3. Containment gaps (independent of root cause)
+## 3. Containment gaps (fixed in this PR)
 
-Even with the root cause fixed, the shell should not die on one bad downgraded request:
+A bad downgraded request should not take the shell down even before the root cause is fixed:
 
-- **F3 — display error is fatal by construction.** `dispatchAll` (`client.go:1302`) returns `Dispatch()` errors, and a `wl_display.error` is delivered there. There is no recovery. This is *correct* per the Wayland protocol — after a display error the connection is dead — but it means any client-side desync is a hard process exit.
-- **F4 — `handleAux` default branch promotes to fatal.** Errors that are not `errOutputGone`/`errAuxNotOpen` and arrive with no `Reply` call `o.fail(err)` (`aux_surface.go:125`), which exits the process. Only the `open` path is contained. A `create_region` failure surfaces as a `wl_display.error`, so it bypasses `failUnit`/`openAux` containment entirely.
-- **F5 — region leak.** `applyInputRects` skips `input.Destroy()` when `Add` or `SetInputRegion` fails.
+- **F3 — display error is fatal by construction.** `dispatchAll` (`client.go:1302`) returns `Dispatch()` errors, and a `wl_display.error` is delivered there. There is no recovery. This is *correct* per the Wayland protocol — after a display error the connection is dead — but it means any client-side desync is a hard process exit. **Not changed:** a display error genuinely invalidates the connection.
+- **F4 — `handleAux` default branch promoted to fatal (fixed).** Errors that are not `errOutputGone`/`errAuxNotOpen` and arrive with no `Reply` called `o.fail(err)` (`aux_surface.go:125`), exiting the process. It now calls `failUnit` for a known surface, so one bad surface closes and the shell survives; only a bar failure stays fatal. A `wl_display.error` still bypasses this and is handled by the display error handler.
+- **F5 — region leak (fixed).** `applyInputRects` and `applyOpaqueRegion` skipped `Destroy()` when `Add`/`SetInputRegion`/`SetOpaqueRegion` failed. Both now `defer` the destroy once the region exists.
 
 ## 4. Ruled out: the toast host's region math
 
@@ -88,17 +88,20 @@ Both tests pass. No empty, negative-origin, or out-of-bounds rect is emitted at 
 
 ## 6. Remediation
 
-1. **Upgrade `sysc-wayland`** on the deployed branch to a revision containing `b31ea23` (ideally tag a `v0.3.2`). This is the primary fix.
-2. **Contain aux errors** so a single surface failure cannot exit the process (`handleAux` default branch).
-3. **Fix the region leak** in `applyInputRects` (`defer input.Destroy()` once created).
-4. Ship the burst regression test to lock in the in-bounds contract.
+1. **Upgrade `sysc-wayland`** on the deployed branch to a revision containing `b31ea23` (ideally tag a `v0.3.2`). This is the primary fix and is **not** part of this PR.
+2. **Contain aux errors** so a single surface failure cannot exit the process (`handleAux` default branch). **Done.**
+3. **Fix the region leak** in `applyInputRects`/`applyOpaqueRegion`. **Done.**
+4. Ship the burst regression test to lock in the in-bounds contract. **Done.**
 
 ## 7. Reproduction
 
 ```sh
 cd sysc-shell
 go test -race -count=1 -run TestToast ./internal/shell/
+go test -race -count=1 ./internal/platform/wayland/
 ```
+
+Note: `internal/shell` and `tests/integration` have pre-existing failures on `main` unrelated to this change (battery/panel widget tests and tray tests). They are not touched here.
 
 ## 8. Follow-up
 

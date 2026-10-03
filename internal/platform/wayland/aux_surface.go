@@ -122,7 +122,17 @@ func (o *owner) handleAux(req AuxRequest) {
 			o.cb.DropAux(req.Output, req.Open.ID)
 		}
 	default:
-		o.fail(err)
+		// An update with no reply used to be process-fatal, so one surface whose
+		// region or geometry a compositor rejected took the whole shell down.
+		// Contain it to the surface, exactly as a failed open and a failed
+		// configure are contained; only a bar failure stays fatal. Display-level
+		// errors never arrive here -- they are reported through the display
+		// error handler -- so this branch is always a single surface's problem.
+		if u, open := h.aux[req.ID]; open {
+			o.failUnit(h, u, err)
+		} else {
+			o.fail(err)
+		}
 	}
 }
 

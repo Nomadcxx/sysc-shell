@@ -84,15 +84,15 @@ func (o *owner) applyInputRects(surface *client.Surface, rects []ui.Rect) error 
 	if err != nil {
 		return err
 	}
+	// Destroy even when a later step fails, so a bad rect or a rejected
+	// SetInputRegion does not leak the wl_region for the surface's lifetime.
+	defer input.Destroy()
 	for _, r := range rects {
 		if err := input.Add(int32(r.X), int32(r.Y), int32(r.W), int32(r.H)); err != nil {
 			return err
 		}
 	}
-	if err := surface.SetInputRegion(input); err != nil {
-		return err
-	}
-	return input.Destroy()
+	return surface.SetInputRegion(input)
 }
 
 func (o *owner) applyOpaqueRegion(surface *client.Surface, body ui.Rect, radius int, opaqueBackground bool) error {
@@ -106,15 +106,14 @@ func (o *owner) applyOpaqueRegion(surface *client.Surface, body ui.Rect, radius 
 	if err != nil {
 		return err
 	}
+	// As above: destroy on every path once the region exists.
+	defer opaque.Destroy()
 	for _, rect := range rects {
 		if err := opaque.Add(int32(rect.X), int32(rect.Y), int32(rect.W), int32(rect.H)); err != nil {
 			return err
 		}
 	}
-	if err := surface.SetOpaqueRegion(opaque); err != nil {
-		return err
-	}
-	return opaque.Destroy()
+	return surface.SetOpaqueRegion(opaque)
 }
 
 // blurRegionUpdate decides what one commit sends for a surface's blur. send
