@@ -33,12 +33,164 @@ func ArrangeBar(content Rect, left, center, right []*Node, spacing int, measure 
 	if content.W < 0 || content.H < 0 {
 		return BarOverflow{}, fmt.Errorf("ui: negative content bounds %dx%d", content.W, content.H)
 	}
-	// ponytail: keep anchored placement specific to this one wordmark consumer;
-	// a second anchored composition needs its own layout contract.
-	if mark := wordmarkIndex(center); mark >= 0 {
-		return arrangeAnchoredWordmark(content, left, center, right, mark, spacing, measure)
+	var over BarOverflow
+	wL, err := sectionWidth(left, spacing, content.H, measure)
+	if err != nil {
+		return over, fmt.Errorf("ui: left section: %w", err)
 	}
-	return arrangeBarSections(content, left, center, right, spacing, measure)
+	wR, err := sectionWidth(right, spacing, content.H, measure)
+	if err != nil {
+		return over, fmt.Errorf("ui: right section: %w", err)
+	}
+	start, end, err := centreInterval(content, center, spacing, measure, &over)
+	if err != nil {
+		return over, err
+	}
+	leftMax := max(0, start-content.X-spacing)
+	if over.Left, err = placeSection(left, content.X, content, min(wL, leftMax), 0, spacing, measure); err != nil {
+		return over, fmt.Errorf("ui: left section: %w", err)
+	}
+	rightMax := max(0, content.X+content.W-end-spacing)
+	granted := min(wR, rightMax)
+	used, err := fittedWidth(right, content, granted, 0, spacing, measure)
+	if err != nil {
+		return over, fmt.Errorf("ui: right section: %w", err)
+	}
+	if over.Right, err = placeSection(right, content.X+content.W-used, content, granted, 0, spacing, measure); err != nil {
+		return over, fmt.Errorf("ui: right section: %w", err)
+	}
+	return over, nil
+}
+
+// centreInterval places the centre section and reports the interval [start,
+// end) it occupies along the band. It is the skeleton's one variant: a plain
+// centre is one block centred in the band; a lone wordmark pins the mark to
+// the band centre with its flanks, falling back to the plain variant when the
+// composition does not fit.
+func centreInterval(content Rect, center []*Node, spacing int, measure MeasureText, over *BarOverflow) (int, int, error) {
+	// ponytail: only the centre pill/mark uses anchored placement; another
+	// anchored composition needs a separate layout contract.
+	if mark := wordmarkIndex(center); mark >= 0 {
+		return anchoredCentreInterval(content, center, mark, spacing, measure, over)
+	}
+	return sectionCentreInterval(content, center, spacing, measure, over)
+}
+
+// sectionCentreInterval centres one block and reports its interval. The
+// truncating escape below is the one place a partial grant survives.
+func sectionCentreInterval(content Rect, center []*Node, spacing int, measure MeasureText, over *BarOverflow) (int, int, error) {
+	wC, err := sectionWidth(center, spacing, content.H, measure)
+	if err != nil {
+		return 0, 0, fmt.Errorf("ui: center section: %w", err)
+	}
+
+	// Only a centre that alone exceeds the band truncates, and it then takes
+	// the whole band; the sides have nowhere left to go.
+	//
+	// This is the one place a partial grant survives, and deliberately: there
+	// is nowhere to move a centre wider than the output, so dropping it whole
+	// would leave the bar empty rather than degraded. The item is granted every
+	// pixel there is and the painter ellipsizes inside it, which is the
+	// documented "granted its whole extent" case and not a silent clip.
+	if wC > content.W {
+		if err := placeTruncating(center, content.X, content, content.W, spacing, measure); err != nil {
+			return 0, 0, err
+		}
+		return content.X, content.X + content.W, nil
+	}
+
+	start := content.X + (content.W-wC)/2
+	if over.Center, err = placeSection(center, start, content, wC, 0, spacing, measure); err != nil {
+		return 0, 0, err
+	}
+	return start, start + wC, nil
+}
+
+// anchoredCentreInterval pins the mark to the band centre with its before and
+// after flanks, and reports the interval the whole composition spans so the
+// side budgets leave the flanks their room. When the mark or the composition
+// does not fit it falls back to the plain variant, which is the documented
+// degradation for an over-wide anchored centre.
+func anchoredCentreInterval(content Rect, center []*Node, markIndex, spacing int, measure MeasureText, over *BarOverflow) (int, int, error) {
+	before, mark, after := center[:markIndex], center[markIndex:markIndex+1], center[markIndex+1:]
+	wBefore, err := sectionWidth(before, spacing, content.H, measure)
+	if err != nil {
+		return 0, 0, fmt.Errorf("ui: centre before wordmark: %w", err)
+	}
+	wMark, _, err := measureNode(mark[0], content.H, measure)
+	if err != nil {
+		return 0, 0, fmt.Errorf("ui: wordmark: %w", err)
+	}
+	wAfter, err := sectionWidth(after, spacing, content.H, measure)
+	if err != nil {
+		return 0, 0, fmt.Errorf("ui: centre after wordmark: %w", err)
+	}
+	beforeActive, afterActive := wBefore > 0, wAfter > 0
+	compositionWidth := wBefore + wMark + wAfter
+	if beforeActive {
+		compositionWidth += spacing
+	}
+	if afterActive {
+		compositionWidth += spacing
+	}
+	if wMark > content.W || compositionWidth > content.W {
+		return sectionCentreInterval(content, center, spacing, measure, over)
+	}
+
+	markX := content.X + (content.W-wMark)/2
+	markRight := markX + wMark
+	beforeStart := content.X
+	if beforeActive {
+		beforeBudget := max(markX-content.X-spacing, 0)
+		beforeGrant := min(wBefore, beforeBudget)
+		if beforeGrant > 0 {
+			beforeStart = markX - spacing - beforeGrant
+		}
+		n, err := placeSection(before, beforeStart, content, beforeGrant, 0, spacing, measure)
+		if err != nil {
+			return 0, 0, fmt.Errorf("ui: centre before wordmark: %w", err)
+		}
+		over.Center += n
+	} else if len(before) > 0 {
+		n, err := placeSection(before, content.X, content, 0, 0, spacing, measure)
+		if err != nil {
+			return 0, 0, fmt.Errorf("ui: centre before wordmark: %w", err)
+		}
+		over.Center += n
+	}
+	if n, err := placeSection(mark, markX, content, wMark, 0, spacing, measure); err != nil {
+		return 0, 0, fmt.Errorf("ui: wordmark: %w", err)
+	} else {
+		over.Center += n
+	}
+	afterStart, afterBudget := markRight, 0
+	if afterActive {
+		afterBudget = max(content.X+content.W-markRight-spacing, 0)
+		afterGrant := min(wAfter, afterBudget)
+		afterStart = min(markRight+spacing, content.X+content.W)
+		n, err := placeSection(after, afterStart, content, afterGrant, 0, spacing, measure)
+		if err != nil {
+			return 0, 0, fmt.Errorf("ui: centre after wordmark: %w", err)
+		}
+		over.Center += n
+		afterBudget = afterGrant
+	} else if len(after) > 0 {
+		n, err := placeSection(after, markRight, content, 0, 0, spacing, measure)
+		if err != nil {
+			return 0, 0, fmt.Errorf("ui: centre after wordmark: %w", err)
+		}
+		over.Center += n
+	}
+
+	compositionLeft := markX
+	if beforeActive {
+		compositionLeft = beforeStart
+	}
+	compositionRight := markRight
+	if afterActive {
+		compositionRight = afterStart + afterBudget
+	}
+	return compositionLeft, compositionRight, nil
 }
 
 func wordmarkIndex(items []*Node) int {
@@ -54,10 +206,8 @@ func wordmarkIndex(items []*Node) int {
 	return mark
 }
 
-// anchorsWordmark reports whether a centre item is the SYSC wordmark or the
-// capsule whose row holds it. The centre pill carries the mark beside the
-// time and date, and it is the pill, not the mark inside it, that stays on
-// the band's centre while media comes and goes beside it.
+// anchorsWordmark reports whether a centre item is the mark or the capsule
+// that holds it. The centre pill, rather than its inner mark, stays pinned.
 func anchorsWordmark(n *Node) bool {
 	if n == nil {
 		return false
@@ -74,171 +224,6 @@ func anchorsWordmark(n *Node) bool {
 		}
 	}
 	return false
-}
-
-func arrangeAnchoredWordmark(content Rect, left, center, right []*Node, markIndex, spacing int, measure MeasureText) (BarOverflow, error) {
-	var over BarOverflow
-	before, mark, after := center[:markIndex], center[markIndex:markIndex+1], center[markIndex+1:]
-	wL, err := sectionWidth(left, spacing, content.H, measure)
-	if err != nil {
-		return over, fmt.Errorf("ui: left section: %w", err)
-	}
-	wR, err := sectionWidth(right, spacing, content.H, measure)
-	if err != nil {
-		return over, fmt.Errorf("ui: right section: %w", err)
-	}
-	wBefore, err := sectionWidth(before, spacing, content.H, measure)
-	if err != nil {
-		return over, fmt.Errorf("ui: centre before wordmark: %w", err)
-	}
-	wMark, _, err := measureNode(mark[0], content.H, measure)
-	if err != nil {
-		return over, fmt.Errorf("ui: wordmark: %w", err)
-	}
-	wAfter, err := sectionWidth(after, spacing, content.H, measure)
-	if err != nil {
-		return over, fmt.Errorf("ui: centre after wordmark: %w", err)
-	}
-	beforeActive, afterActive := wBefore > 0, wAfter > 0
-	compositionWidth := wBefore + wMark + wAfter
-	if beforeActive {
-		compositionWidth += spacing
-	}
-	if afterActive {
-		compositionWidth += spacing
-	}
-	if wMark > content.W || compositionWidth > content.W {
-		return arrangeBarSections(content, left, center, right, spacing, measure)
-	}
-
-	markX := content.X + (content.W-wMark)/2
-	markRight := markX + wMark
-	beforeStart := content.X
-	if beforeActive {
-		beforeBudget := max(markX-content.X-spacing, 0)
-		beforeGrant := min(wBefore, beforeBudget)
-		if beforeGrant > 0 {
-			beforeStart = markX - spacing - beforeGrant
-		}
-		n, err := placeSection(before, beforeStart, content, beforeGrant, 0, spacing, measure)
-		if err != nil {
-			return over, fmt.Errorf("ui: centre before wordmark: %w", err)
-		}
-		over.Center += n
-	} else if len(before) > 0 {
-		n, err := placeSection(before, content.X, content, 0, 0, spacing, measure)
-		if err != nil {
-			return over, fmt.Errorf("ui: centre before wordmark: %w", err)
-		}
-		over.Center += n
-	}
-	if n, err := placeSection(mark, markX, content, wMark, 0, spacing, measure); err != nil {
-		return over, fmt.Errorf("ui: wordmark: %w", err)
-	} else {
-		over.Center += n
-	}
-	afterStart, afterBudget := markRight, 0
-	if afterActive {
-		afterBudget = max(content.X+content.W-markRight-spacing, 0)
-		afterGrant := min(wAfter, afterBudget)
-		afterStart = min(markRight+spacing, content.X+content.W)
-		n, err := placeSection(after, afterStart, content, afterGrant, 0, spacing, measure)
-		if err != nil {
-			return over, fmt.Errorf("ui: centre after wordmark: %w", err)
-		}
-		over.Center += n
-		afterBudget = afterGrant
-	} else if len(after) > 0 {
-		n, err := placeSection(after, markRight, content, 0, 0, spacing, measure)
-		if err != nil {
-			return over, fmt.Errorf("ui: centre after wordmark: %w", err)
-		}
-		over.Center += n
-	}
-
-	compositionLeft := markX
-	if beforeActive {
-		compositionLeft = beforeStart
-	}
-	compositionRight := markRight
-	if afterActive {
-		compositionRight = afterStart + afterBudget
-	}
-	leftMax := max(0, compositionLeft-content.X-spacing)
-	nL, err := placeSection(left, content.X, content, min(wL, leftMax), 0, spacing, measure)
-	if err != nil {
-		return over, fmt.Errorf("ui: left section: %w", err)
-	}
-	over.Left = nL
-	rightMax := max(0, content.X+content.W-compositionRight-spacing)
-	rightBudget := min(wR, rightMax)
-	used, err := fittedWidth(right, content, rightBudget, 0, spacing, measure)
-	if err != nil {
-		return over, fmt.Errorf("ui: right section: %w", err)
-	}
-	nR, err := placeSection(right, content.X+content.W-used, content, rightBudget, 0, spacing, measure)
-	if err != nil {
-		return over, fmt.Errorf("ui: right section: %w", err)
-	}
-	over.Right = nR
-	return over, nil
-}
-
-func arrangeBarSections(content Rect, left, center, right []*Node, spacing int, measure MeasureText) (BarOverflow, error) {
-	var over BarOverflow
-	wL, err := sectionWidth(left, spacing, content.H, measure)
-	if err != nil {
-		return over, fmt.Errorf("ui: left section: %w", err)
-	}
-	wC, err := sectionWidth(center, spacing, content.H, measure)
-	if err != nil {
-		return over, fmt.Errorf("ui: center section: %w", err)
-	}
-	wR, err := sectionWidth(right, spacing, content.H, measure)
-	if err != nil {
-		return over, fmt.Errorf("ui: right section: %w", err)
-	}
-
-	// Only a centre that alone exceeds the band truncates, and it then takes
-	// the whole band; the sides have nowhere left to go.
-	//
-	// This is the one place a partial grant survives, and deliberately: there
-	// is nowhere to move a centre wider than the output, so dropping it whole
-	// would leave the bar empty rather than degraded. The item is granted every
-	// pixel there is and the painter ellipsizes inside it, which is the
-	// documented "granted its whole extent" case and not a silent clip.
-	if wC > content.W {
-		if err = placeTruncating(center, content.X, content, content.W, spacing, measure); err != nil {
-			return over, err
-		}
-		if over.Left, err = placeSection(left, content.X, content, 0, 0, spacing, measure); err != nil {
-			return over, err
-		}
-		if over.Right, err = placeSection(right, content.X+content.W, content, 0, 0, spacing, measure); err != nil {
-			return over, err
-		}
-		return over, nil
-	}
-
-	centerX := content.X + (content.W-wC)/2
-	leftMax := max(0, centerX-content.X-spacing)
-	rightMax := max(0, content.X+content.W-(centerX+wC)-spacing)
-
-	if over.Center, err = placeSection(center, centerX, content, wC, 0, spacing, measure); err != nil {
-		return over, err
-	}
-	if over.Left, err = placeSection(left, content.X, content, min(wL, leftMax), 0, spacing, measure); err != nil {
-		return over, err
-	}
-	granted := min(wR, rightMax)
-	used, err := fittedWidth(right, content, granted, 0, spacing, measure)
-	if err != nil {
-		return over, err
-	}
-	if over.Right, err = placeSection(right, content.X+content.W-used, content, granted, 0, spacing, measure); err != nil {
-		return over, err
-	}
-	return over, nil
 }
 
 // sectionWidth reports a section's natural width: its items plus the spacing
