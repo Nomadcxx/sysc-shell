@@ -1573,19 +1573,7 @@ func (h *PanelHost) wallpaperAction(r *Registry, n *ui.Node) bool {
 		return true
 	}
 	if token, ok := strings.CutPrefix(n.Action, "wallpaper-output:"); ok {
-		// The node may have been built before a hot-unplug snapshot arrived.
-		// Validate against the service's current connector list before letting a
-		// stale action become the selected target.
-		if svc := r.wallpaperServiceLocked(); svc != nil {
-			h.wallpaperSnap = svc.Snapshot()
-		}
-		if token != wallpaper.AllOutputs && !slices.Contains(h.wallpaperSnap.Connectors, token) {
-			h.wallpaperOutput = wallpaper.AllOutputs
-			r.rebuildPanel(h)
-			return true
-		}
-		h.wallpaperOutput = token
-		r.rebuildPanel(h)
+		h.wallpaperSelectOutput(r, token)
 		return true
 	}
 	if value, ok := strings.CutPrefix(n.Action, "wallpaper-filter:"); ok {
@@ -1604,6 +1592,21 @@ func (h *PanelHost) wallpaperAction(r *Registry, n *ui.Node) bool {
 		return true
 	}
 	return false
+}
+
+// wallpaperSelectOutput makes token the selected output.
+func (h *PanelHost) wallpaperSelectOutput(r *Registry, token string) {
+	// The node may have been built before a hot-unplug snapshot arrived.
+	// Validate against the service's current connector list before letting a
+	// stale action become the selected target.
+	if svc := r.wallpaperServiceLocked(); svc != nil {
+		h.wallpaperSnap = svc.Snapshot()
+	}
+	if token != wallpaper.AllOutputs && !slices.Contains(h.wallpaperSnap.Connectors, token) {
+		token = wallpaper.AllOutputs
+	}
+	h.wallpaperOutput = token
+	r.rebuildPanel(h)
 }
 
 // wallpaperCoverageProbe asks the compositor which outputs already carry a

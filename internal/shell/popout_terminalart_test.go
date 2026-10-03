@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
@@ -237,5 +238,97 @@ func TestTerminalArtOutputSelectCollapsesOnOneOutput(t *testing.T) {
 	collectActions(h.root, "art-output:", &outputs)
 	if !slices.Equal(outputs, []string{"art-output:all", "art-output:DP-1", "art-output:DP-3"}) {
 		t.Fatalf("two outputs: select %v", outputs)
+	}
+}
+
+// awaitArt waits for connector's assignment to satisfy ok.
+func awaitArt(t *testing.T, svc *wallpaper.Service, connector string, ok func(wallpaper.Assignment) bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if ok(svc.Snapshot().Assignments[connector]) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("%s assignment = %+v", connector, svc.Snapshot().Assignments[connector])
+}
+
+func runningEffect(effect, palette string) func(wallpaper.Assignment) bool {
+	return func(a wallpaper.Assignment) bool {
+		return a.Kind == wallpaper.KindEffect && a.Effect == effect && a.Theme == palette && a.Path == ""
+	}
+}
+
+// artAct runs action through the panel's own dispatch, as a click does.
+func artAct(t *testing.T, reg *Registry, h *PanelHost, action string) {
+	t.Helper()
+	n := findAction(h.root, action)
+	if n == nil {
+		t.Fatalf("no %s in the tree", action)
+	}
+	if !h.artAction(reg, n) {
+		t.Fatalf("%s was not handled", action)
+	}
+}
+
+func TestTerminalArtCardAppliesToSelectedOutput(t *testing.T) {
+	reg, svc := artRegistry(t, artWallpaperEngine{})
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	artAct(t, reg, h, "art-output:DP-1")
+	artAct(t, reg, h, "art-apply:fire")
+	reg.mu.Unlock()
+	awaitArt(t, svc, "DP-1", runningEffect("fire", "nord"))
+	if _, ok := svc.Snapshot().Assignments["DP-3"]; ok {
+		t.Fatal("DP-3 was not selected and must stay untouched")
+	}
+}
+
+func TestTerminalArtAppliesPerOutput(t *testing.T) {
+	reg, svc := artRegistry(t, artWallpaperEngine{})
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	artAct(t, reg, h, "art-output:DP-1")
+	artAct(t, reg, h, "art-apply:fire")
+	artAct(t, reg, h, "art-output:DP-3")
+	artAct(t, reg, h, "art-apply:rain")
+	reg.mu.Unlock()
+	awaitArt(t, svc, "DP-1", runningEffect("fire", "nord"))
+	awaitArt(t, svc, "DP-3", runningEffect("rain", "nord"))
+}
+
+func TestTerminalArtPaletteFollowsRunningEffect(t *testing.T) {
+	reg, svc := artRegistry(t, artWallpaperEngine{})
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-1", Kind: wallpaper.KindEffect, Effect: "fire", Theme: "dracula"})
+	awaitArt(t, svc, "DP-1", runningEffect("fire", "dracula"))
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	artAct(t, reg, h, "art-output:DP-1")
+	combo := findAction(h.root, "art-menu:palette")
+	if got := artPalette(h); got != "dracula" || combo == nil || !strings.Contains(combo.Name, "dracula") {
+		t.Fatalf("palette = %q, combo %+v; want the running dracula, not the catalog's first theme", got, combo)
+	}
+}
+
+func TestTerminalArtPaletteChangeReappliesRunningEffect(t *testing.T) {
+	reg, svc := artRegistry(t, artWallpaperEngine{})
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-1", Kind: wallpaper.KindEffect, Effect: "fire", Theme: "nord"})
+	awaitArt(t, svc, "DP-1", runningEffect("fire", "nord"))
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	// DP-3 runs nothing: a palette pick there only sets the next click's palette.
+	artAct(t, reg, h, "art-output:DP-3")
+	artAct(t, reg, h, "art-menu:palette")
+	artAct(t, reg, h, "art-palette:dracula")
+	artAct(t, reg, h, "art-output:DP-1")
+	artAct(t, reg, h, "art-menu:palette")
+	artAct(t, reg, h, "art-palette:dracula")
+	reg.mu.Unlock()
+	awaitArt(t, svc, "DP-1", runningEffect("fire", "dracula"))
+	// Commands run in order, so a DP-3 apply would have landed by now.
+	if a, ok := svc.Snapshot().Assignments["DP-3"]; ok {
+		t.Fatalf("DP-3 = %+v; a palette change must not start an effect", a)
 	}
 }

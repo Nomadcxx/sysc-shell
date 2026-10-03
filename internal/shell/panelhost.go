@@ -2875,6 +2875,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if strings.HasPrefix(n.Action, "wallpaper") && h.wallpaperAction(r, n) {
 		return true
 	}
+	if strings.HasPrefix(n.Action, "art-") && h.artAction(r, n) {
+		return true
+	}
 	if strings.HasPrefix(n.Action, "audio-") && h.applyAudioControl(r, n) {
 		return true
 	}

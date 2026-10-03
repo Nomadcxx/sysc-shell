@@ -101,8 +101,14 @@ func artPaletteRow(h *PanelHost) *ui.Node {
 	}
 }
 
-// artPalette is the palette the next card click applies.
+// artPalette is the palette the combo shows: what a selected output is
+// running, otherwise the last pick here, otherwise the catalog's first.
 func artPalette(h *PanelHost) string {
+	for _, connector := range wallpaperTargets(h) {
+		if a := h.wallpaperSnap.Assignments[connector]; a.Kind == wallpaper.KindEffect && a.Theme != "" {
+			return a.Theme
+		}
+	}
 	return wallpaperEffectTheme(h)
 }
 
@@ -180,4 +186,65 @@ func artCard(h *PanelHost, id string, index int) *ui.Node {
 		card.State |= ui.StateDisabled
 	}
 	return card
+}
+
+// artAction handles the Terminal Art panel's controls.
+func (h *PanelHost) artAction(r *Registry, n *ui.Node) bool {
+	if h.id != PanelTerminalArt || n == nil {
+		return false
+	}
+	if n.Action == "art-close" {
+		r.closePanelLocked(PanelTerminalArt)
+		return true
+	}
+	if n.Action == "art-menu:palette" {
+		if h.wallpaperMenu == "palette" {
+			h.wallpaperMenu = ""
+		} else {
+			h.wallpaperMenu = "palette"
+		}
+		r.rebuildPanel(h)
+		return true
+	}
+	if token, ok := strings.CutPrefix(n.Action, "art-output:"); ok {
+		h.wallpaperSelectOutput(r, token)
+		return true
+	}
+	if id, ok := strings.CutPrefix(n.Action, "art-apply:"); ok {
+		h.artApply(r, id)
+		return true
+	}
+	if name, ok := strings.CutPrefix(n.Action, "art-palette:"); ok {
+		h.wallpaperMenu = ""
+		h.wallpaperEffectTheme = name
+		// No thumbnails preview a palette, so a running effect takes it at
+		// once and the wallpaper behind the panel is the preview.
+		if svc := r.wallpaperServiceLocked(); svc != nil {
+			for _, connector := range wallpaperTargets(h) {
+				if a := h.wallpaperSnap.Assignments[connector]; a.Kind == wallpaper.KindEffect {
+					svc.Enqueue(wallpaper.Command{
+						Op: wallpaper.OpApply, Token: connector,
+						Kind: wallpaper.KindEffect, Effect: a.Effect, Theme: name,
+					})
+				}
+			}
+		}
+		r.rebuildPanel(h)
+		return true
+	}
+	return false
+}
+
+// artApply runs effect id on the selected outputs.
+func (h *PanelHost) artApply(r *Registry, id string) {
+	if !h.wallpaperSnap.Caps.Terminal {
+		return
+	}
+	h.wallpaperOutput = wallpaperOutputSelection(h.wallpaperSnap, h.wallpaperOutput)
+	if svc := r.wallpaperServiceLocked(); svc != nil {
+		svc.Enqueue(wallpaper.Command{
+			Op: wallpaper.OpApply, Token: h.wallpaperOutput,
+			Kind: wallpaper.KindEffect, Effect: id, Theme: artPalette(h),
+		})
+	}
 }
