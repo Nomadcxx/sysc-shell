@@ -119,8 +119,7 @@ func TestToastInputRegionsStayInBoundsUnderBurst(t *testing.T) {
 	}
 	check("churn")
 
-	// Phase 3: the output goes away and comes back mid-burst. A surface that
-	// is gone must not keep receiving sized regions.
+	// Phase 3: remove and restore the output while the toast stack is populated.
 	h.syncOutputs(map[string]uint32{})
 	check("output lost")
 	h.syncOutputs(map[string]uint32{"eDP-1": outputGlobal})
@@ -146,17 +145,15 @@ func TestToastInputRegionsStayInBoundsUnderBurst(t *testing.T) {
 	h.recompute()
 	check("dnd off")
 
-	// Every recorded region update must still target a live surface, and the
-	// host must not have leaked per-output state through all that churn.
+	// The host must not leak per-output state through all that churn.
 	if len(h.outputs) != 1 {
 		t.Fatalf("open outputs = %v, want just eDP-1", h.outputs)
 	}
 }
 
-// TestToastHostBurstWithLeaseRenewStaysResponsive runs the pump, the toast
-// callbacks, output bookkeeping, and the presentation lease renewer at once
-// under a burst, and fails if the host wedges. It extends the lock-order test
-// with the renew goroutine, which publishes presentation while holding
+// TestToastHostBurstWithLeaseRenewStaysResponsive runs notification updates,
+// render callbacks, and lease renewal concurrently under a burst. It extends
+// the lock-order check by keeping renewal active while both paths use
 // Registry.mu.
 func TestToastHostBurstWithLeaseRenewStaysResponsive(t *testing.T) {
 	r, h, _ := wiredToast(t)
