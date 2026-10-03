@@ -112,21 +112,24 @@ const (
 // service hands to Rank or to a provider, which is how a callback proves it
 // belongs to the current generation.
 type launcherPlan struct {
-	kind     launcherKind
-	passed   string
-	provider string
-	need     int
+	kind           launcherKind
+	passed         string
+	provider       string
+	inlineProvider string
+	need           int
 }
 
 // launcherBatch accumulates the callbacks of one service run. Inline calc and
 // application rank publish as a single snapshot, matching the service.
+// ponytail: this shell has one Inline provider; if another is added, collect
+// rows by prefix and merge them in registry order.
 type launcherBatch struct {
-	gen      uint64
-	haveCalc bool
-	haveMain bool
-	emitted  bool
-	calc     []launcher.Result
-	rows     []launcher.Result
+	gen        uint64
+	haveInline bool
+	haveMain   bool
+	emitted    bool
+	inline     []launcher.Result
+	rows       []launcher.Result
 }
 
 // relayLauncher applies result snapshots to the open launcher panel. Service
@@ -181,9 +184,6 @@ func (r *Registry) ensureLauncherSnaps() {
 	if r.launcherSnaps == nil {
 		r.launcherSnaps = make(chan launcherSnap, 1)
 	}
-	if r.launcherPlans == nil {
-		r.launcherPlans = map[uint64]launcherPlan{}
-	}
 }
 
 // rankLauncher is the service rank hook. It stamps the rows with the query
@@ -197,7 +197,7 @@ func (r *Registry) rankLauncher(entries []launcher.Entry, query string, boost fu
 	if wait != nil {
 		wait(query)
 	}
-	r.noteLauncherRows("apps", query, rows)
+	r.noteLauncherRows(launcherAppsPrefix, query, rows)
 	return rows
 }
 
@@ -205,19 +205,11 @@ func (r *Registry) rankLauncher(entries []launcher.Entry, query string, boost fu
 // holds r.mu. A snapshot from an earlier generation no longer matches, so it
 // cannot clear launcherAwaiting.
 func (r *Registry) launcherSendQuery(h *PanelHost, text string) {
+	plan := classifyLauncherQuery(text, r.launcherProviders())
 	r.launcherMu.Lock()
 	r.launcherGen++
 	gen := r.launcherGen
-	if r.launcherPlans == nil {
-		r.launcherPlans = map[uint64]launcherPlan{}
-	}
-	plan := classifyLauncherQuery(text)
-	r.launcherPlans[gen] = plan
-	for g := range r.launcherPlans {
-		if g+8 < gen {
-			delete(r.launcherPlans, g)
-		}
-	}
+	r.launcherPlan = plan
 	r.launcherMu.Unlock()
 
 	h.launcherQueryGen = gen
@@ -230,29 +222,32 @@ func (r *Registry) launcherSendQuery(h *PanelHost, text string) {
 	r.launcherServiceLocked().Query(text)
 }
 
-func classifyLauncherQuery(text string) launcherPlan {
+func classifyLauncherQuery(text string, providers []launcher.Provider) launcherPlan {
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return launcherPlan{kind: launcherKindApps, provider: "apps", need: 1}
+		return launcherPlan{kind: launcherKindApps, provider: launcherAppsPrefix, need: 1}
 	}
 	if !strings.HasPrefix(text, "/") {
-		return launcherPlan{kind: launcherKindInline, passed: text, provider: "apps", need: 2}
+		for _, provider := range providers {
+			if provider.Inline {
+				return launcherPlan{kind: launcherKindInline, passed: text,
+					provider: launcherAppsPrefix, inlineProvider: provider.Prefix, need: 2}
+			}
+		}
+		return launcherPlan{kind: launcherKindApps, passed: text, provider: launcherAppsPrefix, need: 1}
 	}
 	seg, rest, _ := strings.Cut(text[1:], " ")
 	prefix := "/" + seg
 	passed := strings.TrimSpace(rest)
-	switch prefix {
-	case "/apps":
-		return launcherPlan{kind: launcherKindApps, passed: passed, provider: "apps", need: 1}
-	case "/calc":
-		return launcherPlan{kind: launcherKindProvider, passed: passed, provider: "calc", need: 1}
-	case "/emo":
-		return launcherPlan{kind: launcherKindProvider, passed: passed, provider: "emoji", need: 1}
-	case "/nt":
-		return launcherPlan{kind: launcherKindProvider, passed: passed, provider: "notes", need: 1}
-	default:
-		return launcherPlan{kind: launcherKindOverview, passed: seg}
+	if prefix == launcherAppsPrefix {
+		return launcherPlan{kind: launcherKindApps, passed: passed, provider: launcherAppsPrefix, need: 1}
 	}
+	for _, provider := range providers {
+		if prefix == provider.Prefix {
+			return launcherPlan{kind: launcherKindProvider, passed: passed, provider: provider.Prefix, need: 1}
+		}
+	}
+	return launcherPlan{kind: launcherKindOverview, passed: seg}
 }
 
 // noteLauncherRows records one service callback. The callback's query has to
@@ -262,17 +257,17 @@ func classifyLauncherQuery(text string) launcherPlan {
 func (r *Registry) noteLauncherRows(provider, query string, rows []launcher.Result) {
 	r.launcherMu.Lock()
 	defer r.launcherMu.Unlock()
-	plan, ok := r.launcherPlans[r.launcherGen]
-	if !ok || query != plan.passed {
+	plan := r.launcherPlan
+	if r.launcherGen == 0 || query != plan.passed {
 		return
 	}
 	switch plan.kind {
 	case launcherKindApps:
-		if provider != "apps" {
+		if provider != launcherAppsPrefix {
 			return
 		}
 	case launcherKindInline:
-		if provider != "apps" && provider != "calc" {
+		if provider != launcherAppsPrefix && provider != plan.inlineProvider {
 			return
 		}
 	case launcherKindProvider:
@@ -283,26 +278,26 @@ func (r *Registry) noteLauncherRows(provider, query string, rows []launcher.Resu
 		return
 	}
 	b := &r.launcherBatch
-	if b.gen != r.launcherGen || (b.emitted && (provider == "calc" || plan.need == 1)) {
+	if b.gen != r.launcherGen || (b.emitted && (provider == plan.inlineProvider || plan.need == 1)) {
 		*b = launcherBatch{gen: r.launcherGen}
 	}
 	cloned := append([]launcher.Result(nil), rows...)
-	if provider == "calc" && plan.kind == launcherKindInline {
-		b.calc = cloned
-		b.haveCalc = true
+	if provider == plan.inlineProvider && plan.kind == launcherKindInline {
+		b.inline = cloned
+		b.haveInline = true
 	} else {
 		b.rows = cloned
 		b.haveMain = true
 	}
-	if plan.need == 2 && (!b.haveCalc || !b.haveMain) {
+	if plan.need == 2 && (!b.haveInline || !b.haveMain) {
 		return
 	}
 	if !b.haveMain {
 		return
 	}
-	out := append([]launcher.Result(nil), b.rows...)
+	out := b.rows
 	if plan.need == 2 {
-		out = append(append([]launcher.Result(nil), b.calc...), b.rows...)
+		out = append(append([]launcher.Result(nil), b.inline...), b.rows...)
 	}
 	b.emitted = true
 	r.emitLauncherSnapLocked(launcherSnap{gen: r.launcherGen, rows: out})

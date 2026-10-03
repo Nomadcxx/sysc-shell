@@ -1336,6 +1336,14 @@ func TestLauncherInlineExpressionLeadsTheResults(t *testing.T) {
 	})
 }
 
+func TestClassifyLauncherQueryUsesRegisteredProviderPrefix(t *testing.T) {
+	provider := (&Registry{}).emojiProvider()
+	got := classifyLauncherQuery(provider.Prefix+" party", []launcher.Provider{provider})
+	if got.kind != launcherKindProvider || got.provider != provider.Prefix || got.passed != "party" {
+		t.Fatalf("classifyLauncherQuery() = %+v, want provider %q and query %q", got, provider.Prefix, "party")
+	}
+}
+
 // gh #90: a snapshot already published for query A can be applied after
 // Query(B) has set launcherAwaiting. That apply must not clear the flag, and
 // Enter must not spawn A's row.

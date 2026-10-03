@@ -271,13 +271,13 @@ type Registry struct {
 	depthClockLease *services.Lease
 	// launcherSvc is created on the first launcher open; nil until then.
 	launcherSvc *launcher.Service
-	// launcherMu guards the query generation, the plan for that generation,
+	// launcherMu guards the query generation, its current plan,
 	// and the batch of provider rows being assembled into one snapshot.
 	// Lock order is Registry.mu then launcherMu. The service goroutine takes
 	// launcherMu only; it never takes Registry.mu while ranking.
 	launcherMu    sync.Mutex
 	launcherGen   uint64
-	launcherPlans map[uint64]launcherPlan
+	launcherPlan  launcherPlan
 	launcherBatch launcherBatch
 	launcherSnaps chan launcherSnap
 	// launcherRankWait, when set, runs on the service goroutine after a rank
