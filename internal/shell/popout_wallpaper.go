@@ -71,9 +71,6 @@ const (
 
 	// wallpaperCoverageTimeout bounds the compositor probe.
 	wallpaperCoverageTimeout = 2 * time.Second
-
-	wallpaperTabWallpapers = "wallpapers"
-	wallpaperTabArt        = "terminal-art"
 )
 
 // wallpaperServiceLocked returns the running service, or nil before the
@@ -128,10 +125,6 @@ func firstRoot(snap wallpaper.Snapshot) string {
 	return ""
 }
 
-func wallpaperArtTab(h *PanelHost) bool {
-	return h.wallpaperTab == wallpaperTabArt
-}
-
 // wallpaperSearch is the current search box text.
 func wallpaperSearch(h *PanelHost) string {
 	if h.search == nil {
@@ -150,33 +143,12 @@ func wallpaperView(h *PanelHost) []wallpaper.Entry {
 
 // wallpaperMedia is what the tile grid shows: playable files only.
 func wallpaperMedia(h *PanelHost) []wallpaper.Entry {
-	if wallpaperArtTab(h) {
-		return wallpaperEffectEntries(h)
-	}
 	view := wallpaperView(h)
 	out := make([]wallpaper.Entry, 0, len(view))
 	for _, e := range view {
 		if !e.IsDir {
 			out = append(out, e)
 		}
-	}
-	return out
-}
-
-// wallpaperEffectEntries is the Effects source: registry ids from --list,
-// never transcribed into the shell.
-func wallpaperEffectEntries(h *PanelHost) []wallpaper.Entry {
-	needle := strings.ToLower(strings.TrimSpace(wallpaperSearch(h)))
-	out := make([]wallpaper.Entry, 0, len(h.wallpaperSnap.Caps.Catalog.Effects))
-	for _, e := range h.wallpaperSnap.Caps.Catalog.Effects {
-		if needle != "" && !strings.Contains(strings.ToLower(e.ID), needle) {
-			continue
-		}
-		out = append(out, wallpaper.Entry{
-			Name: e.ID,
-			Path: "effect:" + e.ID,
-			Kind: wallpaper.KindEffect,
-		})
 	}
 	return out
 }
@@ -314,29 +286,6 @@ func wallpaperPaletteOptions(h *PanelHost) []wallpaperOption {
 	return out
 }
 
-func wallpaperEffectTheme(h *PanelHost) string {
-	if h.wallpaperEffectTheme != "" {
-		return h.wallpaperEffectTheme
-	}
-	if ts := h.wallpaperSnap.Caps.Catalog.Themes; len(ts) > 0 {
-		return ts[0]
-	}
-	return "nord"
-}
-
-func wallpaperEffectThemeOptions(h *PanelHost) []wallpaperOption {
-	current := wallpaperEffectTheme(h)
-	out := make([]wallpaperOption, 0, len(h.wallpaperSnap.Caps.Catalog.Themes))
-	for _, name := range h.wallpaperSnap.Caps.Catalog.Themes {
-		out = append(out, wallpaperOption{
-			action:   "wallpaper-effect-theme:" + name,
-			label:    name,
-			selected: name == current,
-		})
-	}
-	return out
-}
-
 // wallpaperTree projects the last snapshot as the D4 chrome: title and close,
 // search with an output select, the kind filter with Up, the folder strip,
 // banners, the active strip, the virtualized grid, and the media count.
@@ -353,24 +302,16 @@ func wallpaperTree(r *Registry, h *PanelHost) *ui.Node {
 	inner := max(h.place.Panel.W-2*wallpaperPadding, 0)
 
 	children := []*ui.Node{
-		wallpaperSectionTabs(h),
 		wallpaperTitleRow(h),
 		wallpaperSearchRow(h, inner),
+		wallpaperNavRow(h, inner),
 	}
-	if wallpaperArtTab(h) {
-		children = append(children, wallpaperArtThemeRow(h))
-		if h.wallpaperMenu == "effect-theme" {
-			children = append(children, wallpaperOptionList(h, wallpaperEffectThemeOptions(h)))
-		}
-	} else {
-		children = append(children, wallpaperNavRow(h, inner))
-		if h.wallpaperMenu == "folder" {
-			children = append(children, wallpaperOptionList(h, wallpaperFolderOptions(h)))
-		}
-		children = append(children, wallpaperThemeEngineRow(h))
-		if h.wallpaperMenu == "palette" {
-			children = append(children, wallpaperOptionList(h, wallpaperPaletteOptions(h)))
-		}
+	if h.wallpaperMenu == "folder" {
+		children = append(children, wallpaperOptionList(h, wallpaperFolderOptions(h)))
+	}
+	children = append(children, wallpaperThemeEngineRow(h))
+	if h.wallpaperMenu == "palette" {
+		children = append(children, wallpaperOptionList(h, wallpaperPaletteOptions(h)))
 	}
 	children = append(children, wallpaperBanners(h)...)
 	children = append(children, wallpaperActiveStrip(h))
@@ -421,40 +362,12 @@ func childHeightFor(n *ui.Node) int {
 // directory that holds nothing.
 func wallpaperEmptyState(h *PanelHost) *ui.Node {
 	text := "No supported wallpapers in this directory"
-	if wallpaperArtTab(h) {
-		text = "No terminal art available"
-		if !h.wallpaperSnap.Caps.Terminal {
-			text = "sysc-terminal is not installed"
-		} else if wallpaperSearch(h) != "" {
-			text = "No terminal art matches your search"
-		}
-	} else if wallpaperSearch(h) != "" {
+	if wallpaperSearch(h) != "" {
 		text = "No wallpapers match your search"
 	} else if h.wallpaperSnap.Library == nil {
 		text = "Indexing wallpaper library\u2026"
 	}
 	return &ui.Node{Kind: ui.KindText, Text: text, Height: wallpaperCaptionH}
-}
-
-func wallpaperSectionTabs(h *PanelHost) *ui.Node {
-	return &ui.Node{
-		Kind: ui.KindSegmented, Key: "wallpaper-section", Gap: theme.MarginXXS,
-		Height: wallpaperChromeH(h), Role: "tablist",
-		Children: []*ui.Node{
-			wallpaperSegment(h, "wallpaper-tab:"+wallpaperTabWallpapers, "Wallpapers", !wallpaperArtTab(h)),
-			wallpaperSegment(h, "wallpaper-tab:"+wallpaperTabArt, "Terminal Art", wallpaperArtTab(h)),
-		},
-	}
-}
-
-func wallpaperArtThemeRow(h *PanelHost) *ui.Node {
-	return &ui.Node{
-		Kind: ui.KindRow, Gap: wallpaperGridGap, Height: wallpaperGroupH(h),
-		Children: []*ui.Node{
-			wallpaperLabeled(h, "THEME", wallpaperPaletteWidth,
-				wallpaperCombo(h, "effect-theme", wallpaperEffectTheme(h), wallpaperPaletteWidth)),
-		},
-	}
 }
 
 // wallpaperTitleRow is the panel's name and its controls.
@@ -701,8 +614,6 @@ func wallpaperCanApply(h *PanelHost, entry wallpaper.Entry) bool {
 	switch entry.Kind {
 	case wallpaper.KindVideo:
 		return h.wallpaperSnap.Caps.GSlapper
-	case wallpaper.KindEffect:
-		return h.wallpaperSnap.Caps.Terminal
 	}
 	return true
 }
@@ -759,14 +670,7 @@ func wallpaperOutputSelection(snap wallpaper.Snapshot, selected string) string {
 func wallpaperMatchCount(h *PanelHost, entry wallpaper.Entry) (matched, total int) {
 	for _, connector := range wallpaperTargets(h) {
 		total++
-		a := h.wallpaperSnap.Assignments[connector]
-		if entry.Kind == wallpaper.KindEffect {
-			if a.Kind == wallpaper.KindEffect && a.Effect == entry.Name {
-				matched++
-			}
-			continue
-		}
-		if a.Path == entry.Path {
+		if h.wallpaperSnap.Assignments[connector].Path == entry.Path {
 			matched++
 		}
 	}
@@ -800,9 +704,6 @@ func wallpaperBanners(h *PanelHost) []*ui.Node {
 		add(h.wallpaperSnap.Library.Err, ui.ToneError)
 	}
 	add(h.wallpaperSnap.Err, ui.ToneError)
-	if wallpaperArtTab(h) && !h.wallpaperSnap.Caps.Terminal {
-		add("sysc-terminal is not installed", ui.ToneError)
-	}
 	// The palette is the other half of applying a wallpaper. A generator that
 	// cannot produce a usable one leaves the old colours up, which is correct
 	// but looks exactly like nothing having happened unless it says so.
@@ -846,9 +747,6 @@ func wallpaperEngineRow(h *PanelHost) *ui.Node {
 	var pills []*ui.Node
 	if h.wallpaperSnap.Caps.GSlapper {
 		pills = append(pills, wallpaperEnginePill(h, "gSlapper", active == wallpaper.EngineGSlapper))
-	}
-	if h.wallpaperSnap.Caps.Terminal {
-		pills = append(pills, wallpaperEnginePill(h, wallpaper.EngineTerminal, active == wallpaper.EngineTerminal))
 	}
 	for _, name := range h.wallpaperSnap.Caps.Statics {
 		pills = append(pills, wallpaperEnginePill(h, name, active == name))
@@ -1087,25 +985,6 @@ func (h *PanelHost) wallpaperApply(r *Registry, entry wallpaper.Entry) {
 		h.wallpaperDir = entry.Path
 		h.wallpaperSel = 0
 		r.rebuildPanel(h)
-		return
-	}
-	if entry.Kind == wallpaper.KindEffect {
-		if !h.wallpaperSnap.Caps.Terminal {
-			return
-		}
-		h.wallpaperOutput = wallpaperOutputSelection(h.wallpaperSnap, h.wallpaperOutput)
-		svc := r.wallpaperServiceLocked()
-		if svc == nil {
-			return
-		}
-		svc.Enqueue(wallpaper.Command{
-			Op:     wallpaper.OpApply,
-			Token:  h.wallpaperOutput,
-			Kind:   wallpaper.KindEffect,
-			Effect: entry.Name,
-			Theme:  wallpaperEffectTheme(h),
-			// ponytail: no artwork file picker; RequiresText uses engine default text until a file combo is worth the chrome.
-		})
 		return
 	}
 	if entry.Kind == wallpaper.KindVideo && !h.wallpaperSnap.Caps.GSlapper {
@@ -1532,12 +1411,6 @@ func (h *PanelHost) wallpaperAction(r *Registry, n *ui.Node) bool {
 			svc.Enqueue(wallpaper.Command{Op: wallpaper.OpRefresh})
 		}
 		return true
-	case strings.HasPrefix(n.Action, "wallpaper-tab:"):
-		h.wallpaperTab = strings.TrimPrefix(n.Action, "wallpaper-tab:")
-		h.wallpaperSel = 0
-		h.wallpaperMenu = ""
-		r.rebuildPanel(h)
-		return true
 	case strings.HasPrefix(n.Action, "wallpaper-menu:"):
 		name := strings.TrimPrefix(n.Action, "wallpaper-menu:")
 		if h.wallpaperMenu == name {
@@ -1550,11 +1423,6 @@ func (h *PanelHost) wallpaperAction(r *Registry, n *ui.Node) bool {
 	case strings.HasPrefix(n.Action, "wallpaper-palette:"):
 		h.wallpaperMenu = ""
 		r.setPalette(strings.TrimPrefix(n.Action, "wallpaper-palette:"))
-		r.rebuildPanel(h)
-		return true
-	case strings.HasPrefix(n.Action, "wallpaper-effect-theme:"):
-		h.wallpaperMenu = ""
-		h.wallpaperEffectTheme = strings.TrimPrefix(n.Action, "wallpaper-effect-theme:")
 		r.rebuildPanel(h)
 		return true
 	case n.Action == "wallpaper-up":

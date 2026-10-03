@@ -563,22 +563,10 @@ func TestWallpaperChromeHasEveryControl(t *testing.T) {
 		t.Errorf("output select = %v, want All plus each connector", outputs)
 	}
 
-	var tabs []string
-	collectActions(h.root, "wallpaper-tab:", &tabs)
-	if !slices.Equal(tabs, []string{"wallpaper-tab:wallpapers", "wallpaper-tab:terminal-art"}) {
-		t.Errorf("section tabs = %v, want Wallpapers then Terminal Art", tabs)
-	}
-	if findAction(h.root, "wallpaper-tab:wallpapers") == nil || findAction(h.root, "wallpaper-tab:wallpapers").State&ui.StateSelected == 0 {
-		t.Error("Wallpapers must be the default tab")
-	}
-
 	var filters []string
 	collectActions(h.root, "wallpaper-filter:", &filters)
 	if len(filters) != 3 {
-		t.Errorf("kind filter = %v, want All/Images/Videos on the Wallpapers tab", filters)
-	}
-	if slices.Contains(filters, fmt.Sprintf("wallpaper-filter:%d", wallpaper.FilterEffects)) {
-		t.Error("Effects must not live on the Wallpapers filter strip")
+		t.Errorf("kind filter = %v, want All/Images/Videos", filters)
 	}
 
 	// Child directories are the folder dropdown's options.
@@ -627,52 +615,6 @@ func TestWallpaperChromeActionsDrivePanelState(t *testing.T) {
 		if e.Kind != wallpaper.KindVideo {
 			t.Fatalf("the videos filter still shows %s", e.Name)
 		}
-	}
-}
-
-func TestTerminalArtTabListsCatalog(t *testing.T) {
-	t.Parallel()
-
-	root := seedWallpaperRoot(t)
-	reg, _, _ := openWallpaperPanel(t, []string{root})
-	h := wallpaperHost(t, reg)
-	reg.mu.Lock()
-	defer reg.mu.Unlock()
-
-	snap := h.wallpaperSnap
-	snap.Caps = wallpaper.Capabilities{
-		Terminal: true,
-		Catalog: wallpaper.Catalog{
-			Effects: []wallpaper.EffectInfo{{ID: "fire"}, {ID: "rain", Text: true}},
-			Themes:  []string{"nord", "dracula"},
-		},
-	}
-	h.wallpaperSnap = snap
-	reg.rebuildPanel(h)
-	for _, e := range wallpaperMedia(h) {
-		if e.Kind == wallpaper.KindEffect {
-			t.Fatal("the Wallpapers tab must not list terminal art")
-		}
-	}
-	tab := findAction(h.root, "wallpaper-tab:terminal-art")
-	if tab == nil || !h.wallpaperAction(reg, tab) {
-		t.Fatal("the Terminal Art tab is missing")
-	}
-	if findAction(h.root, fmt.Sprintf("wallpaper-filter:%d", wallpaper.FilterVideos)) != nil {
-		t.Error("Terminal Art must not show the Images/Videos filter")
-	}
-	if findAction(h.root, "wallpaper-menu:effect-theme") == nil {
-		t.Error("Terminal Art must offer the sysc-Go theme dropdown")
-	}
-	var names []string
-	for _, e := range wallpaperMedia(h) {
-		if e.Kind != wallpaper.KindEffect {
-			t.Fatalf("Terminal Art still shows %s", e.Name)
-		}
-		names = append(names, e.Name)
-	}
-	if !slices.Equal(names, []string{"fire", "rain"}) {
-		t.Fatalf("effect tiles = %v, want the --list catalog", names)
 	}
 }
 
@@ -854,33 +796,6 @@ func TestWallpaperEngineStripNamesWhatIsInstalled(t *testing.T) {
 	walk(h.root)
 	if !said {
 		t.Error("a machine with no engine must be told so")
-	}
-}
-
-func TestWallpaperEngineStripIncludesTerminal(t *testing.T) {
-	t.Parallel()
-
-	root := seedWallpaperRoot(t)
-	reg, _, _ := openWallpaperPanel(t, []string{root})
-	h := wallpaperHost(t, reg)
-	reg.mu.Lock()
-	defer reg.mu.Unlock()
-
-	snap := h.wallpaperSnap
-	snap.Caps = wallpaper.Capabilities{
-		GSlapper: true,
-		Terminal: true,
-		Statics:  []string{"awww"},
-	}
-	h.wallpaperSnap = snap
-	reg.rebuildPanel(h)
-
-	got := wallpaperEngineLabels(h.root)
-	if !slices.Contains(got, "sysc-terminal") {
-		t.Fatalf("engine pills %v omit sysc-terminal", got)
-	}
-	if got[0] != "gSlapper" || !slices.Contains(got, "awww") {
-		t.Fatalf("engine pills %v lost the existing engines", got)
 	}
 }
 

@@ -239,9 +239,7 @@ type PanelHost struct {
 	wallpaperOutput  string
 	wallpaperSel     int
 	wallpaperFocused bool
-	// wallpaperTab is wallpapers (default) or terminal-art.
-	wallpaperTab string
-	// wallpaperEffectTheme is the sysc-Go palette used when applying KindEffect.
+	// wallpaperEffectTheme is the last sysc-Go palette picked on Terminal Art.
 	wallpaperEffectTheme string
 	// wallpaperMenu names the open chrome dropdown ("folder" or "palette"),
 	// or is empty when none is. One field rather than a flag each keeps them
@@ -1133,7 +1131,6 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	if id == PanelWallpaper {
 		h.search = ui.NewField("")
 		h.wallpaperFilter = wallpaper.FilterAll
-		h.wallpaperTab = wallpaperTabWallpapers
 		h.wallpaperOutput = wallpaper.AllOutputs
 		if svc := r.wallpaperServiceLocked(); svc != nil {
 			h.wallpaperSnap = svc.Snapshot()

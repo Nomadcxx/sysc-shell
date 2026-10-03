@@ -19,7 +19,6 @@ const (
 	FilterAll Filter = iota
 	FilterImages
 	FilterVideos
-	FilterEffects
 )
 
 // Entry is one row in a directory: a playable file, or a child directory the
@@ -162,8 +161,6 @@ func matchesFilter(kind Kind, filter Filter) bool {
 		return kind == KindImage
 	case FilterVideos:
 		return kind == KindVideo
-	case FilterEffects:
-		return kind == KindEffect
 	}
 	return true
 }

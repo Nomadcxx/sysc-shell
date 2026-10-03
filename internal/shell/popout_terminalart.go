@@ -136,6 +136,17 @@ func artPalette(h *PanelHost) string {
 	return wallpaperEffectTheme(h)
 }
 
+// wallpaperEffectTheme is the last palette picked here, else the catalog's first.
+func wallpaperEffectTheme(h *PanelHost) string {
+	if h.wallpaperEffectTheme != "" {
+		return h.wallpaperEffectTheme
+	}
+	if ts := h.wallpaperSnap.Caps.Catalog.Themes; len(ts) > 0 {
+		return ts[0]
+	}
+	return "nord"
+}
+
 func artPaletteOptions(h *PanelHost) []wallpaperOption {
 	current := artPalette(h)
 	out := make([]wallpaperOption, 0, len(h.wallpaperSnap.Caps.Catalog.Themes))

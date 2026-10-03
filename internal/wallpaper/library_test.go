@@ -90,9 +90,6 @@ func TestLibraryFilterAndSearch(t *testing.T) {
 	if got := names(lib.View(root, FilterVideos, "")); !slices.Equal(got, []string{"c.gif", "sub"}) {
 		t.Errorf("videos = %v, want the gif and the directory", got)
 	}
-	if got := names(lib.View(root, FilterEffects, "")); !slices.Equal(got, []string{"sub"}) {
-		t.Errorf("effects = %v, want only the directory; registry ids are not library files", got)
-	}
 	if got := names(lib.View(root, FilterAll, "A.J")); !slices.Equal(got, []string{"a.jpg"}) {
 		t.Errorf("search = %v, want a case-insensitive filename match", got)
 	}

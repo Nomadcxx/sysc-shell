@@ -396,3 +396,38 @@ func TestTerminalArtArrowKeysWalkThreeColumns(t *testing.T) {
 	reg.mu.Unlock()
 	awaitArt(t, svc, "DP-1", runningEffect("e", "nord"))
 }
+
+func TestWallpaperPanelHasNoTerminalArt(t *testing.T) {
+	reg, _ := artRegistry(t, artWallpaperEngine{})
+	if err := reg.OpenPanel(PanelWallpaper, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	drainAuxQueue(reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelWallpaper]
+	if n := findNode(h.root, func(n *ui.Node) bool { return n.Role == "tablist" }); n != nil {
+		t.Errorf("tab strip still present: %+v", n)
+	}
+	for _, text := range artTexts(h.root) {
+		if strings.Contains(text, "Terminal Art") || strings.Contains(text, "sysc-terminal") {
+			t.Errorf("the wallpaper panel says %q", text)
+		}
+	}
+	for _, label := range wallpaperEngineLabels(h.root) {
+		if label == wallpaper.EngineTerminal {
+			t.Error("the wallpaper engine readout names sysc-terminal")
+		}
+	}
+	for _, e := range wallpaperMedia(h) {
+		if e.Kind == wallpaper.KindEffect {
+			t.Errorf("the grid lists effect %s", e.Name)
+		}
+	}
+	var actions []string
+	collectActions(h.root, "wallpaper-tab:", &actions)
+	collectActions(h.root, "wallpaper-menu:effect-theme", &actions)
+	if len(actions) > 0 {
+		t.Errorf("art controls remain: %v", actions)
+	}
+}
