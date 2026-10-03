@@ -614,6 +614,46 @@ func TestStaleAuxUpdateAfterCloseIsDropped(t *testing.T) {
 	}
 }
 
+// A fire-and-forget update that fails for a reason other than staleness used
+// to call o.fail and end the shell. It must be contained to the surface, like a
+// failed open and a failed configure.
+func TestFireAndForgetUpdateFailureClosesSurfaceInsteadOfFailing(t *testing.T) {
+	t.Parallel()
+	s := newHostSet()
+	h := mappedHost(s, 7, "DP-1")
+	h.aux["toast:DP-1"] = newSurfaceUnit("toast:DP-1")
+	o := &owner{hosts: s}
+	zero := uint32(0)
+	// An empty size is a live-surface error, not errAuxNotOpen, so it reaches
+	// the containment branch. No Reply means nobody is waiting on it.
+	o.handleAux(AuxRequest{Output: 7, ID: "toast:DP-1", Update: &AuxUpdate{Width: &zero}})
+	if o.fatal != nil {
+		t.Fatalf("a failed fire-and-forget update failed the owner: %v", o.fatal)
+	}
+	if _, open := h.aux["toast:DP-1"]; open {
+		t.Fatal("a failed fire-and-forget update left the surface mapped")
+	}
+}
+
+// A replied update still surfaces the error to the caller and must not touch
+// the owner's fatal state, whichever branch produced the error.
+func TestRepliedUpdateFailureDoesNotFailTheOwner(t *testing.T) {
+	t.Parallel()
+	s := newHostSet()
+	h := mappedHost(s, 7, "DP-1")
+	h.aux["toast:DP-1"] = newSurfaceUnit("toast:DP-1")
+	o := &owner{hosts: s}
+	reply := make(chan error, 1)
+	zero := uint32(0)
+	o.handleAux(AuxRequest{Output: 7, ID: "toast:DP-1", Update: &AuxUpdate{Width: &zero}, Reply: reply})
+	if err := <-reply; err == nil {
+		t.Fatal("replied update returned no error for an empty size")
+	}
+	if o.fatal != nil {
+		t.Fatalf("a replied update failed the owner: %v", o.fatal)
+	}
+}
+
 func TestStaleAuxUpdateStillRepliesWithTheError(t *testing.T) {
 	t.Parallel()
 	s := newHostSet()

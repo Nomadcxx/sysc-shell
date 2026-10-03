@@ -1,6 +1,7 @@
 package wayland
 
 import (
+	"errors"
 	"slices"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
@@ -79,23 +80,23 @@ func (o *owner) applyRegions(surface *client.Surface, input, body ui.Rect, radiu
 // applyInputRects sets the surface input region to exactly these rectangles.
 // An empty slice yields an empty region, which accepts no pointer input; that
 // differs from leaving the region unset, which accepts the whole surface.
-func (o *owner) applyInputRects(surface *client.Surface, rects []ui.Rect) error {
+func (o *owner) applyInputRects(surface *client.Surface, rects []ui.Rect) (result error) {
 	input, err := o.compositor.CreateRegion()
 	if err != nil {
 		return err
 	}
+	// Destroy even when a later step fails, so a bad rect or a rejected
+	// SetInputRegion does not leak the wl_region for the surface's lifetime.
+	defer func() { result = joinCleanupError(result, input.Destroy) }()
 	for _, r := range rects {
 		if err := input.Add(int32(r.X), int32(r.Y), int32(r.W), int32(r.H)); err != nil {
 			return err
 		}
 	}
-	if err := surface.SetInputRegion(input); err != nil {
-		return err
-	}
-	return input.Destroy()
+	return surface.SetInputRegion(input)
 }
 
-func (o *owner) applyOpaqueRegion(surface *client.Surface, body ui.Rect, radius int, opaqueBackground bool) error {
+func (o *owner) applyOpaqueRegion(surface *client.Surface, body ui.Rect, radius int, opaqueBackground bool) (result error) {
 	rects := opaqueRects(body, radius, opaqueBackground)
 	if len(rects) == 0 {
 		// A nil region means "no opaque area", which is what a translucent bar
@@ -106,15 +107,18 @@ func (o *owner) applyOpaqueRegion(surface *client.Surface, body ui.Rect, radius 
 	if err != nil {
 		return err
 	}
+	// As above: destroy on every path once the region exists.
+	defer func() { result = joinCleanupError(result, opaque.Destroy) }()
 	for _, rect := range rects {
 		if err := opaque.Add(int32(rect.X), int32(rect.Y), int32(rect.W), int32(rect.H)); err != nil {
 			return err
 		}
 	}
-	if err := surface.SetOpaqueRegion(opaque); err != nil {
-		return err
-	}
-	return opaque.Destroy()
+	return surface.SetOpaqueRegion(opaque)
+}
+
+func joinCleanupError(operationErr error, cleanup func() error) error {
+	return errors.Join(operationErr, cleanup())
 }
 
 // blurRegionUpdate decides what one commit sends for a surface's blur. send
