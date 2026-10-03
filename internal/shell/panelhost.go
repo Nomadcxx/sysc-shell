@@ -65,6 +65,7 @@ type Trigger struct {
 	Align      string
 	OutW, OutH int
 	AnchorX    int
+	AnchorY    int
 }
 
 // PanelHost is one open panel: two surfaces' callbacks, content tree, focus,
@@ -77,9 +78,9 @@ type PanelHost struct {
 	output     uint32
 	// openOrder selects the newest panel for outside dismissal.
 	openOrder uint64
-	// preferredX is the panel's original anchor before collision reflow.
-	preferredX int
-	place      Placement
+	// preferredMain is the panel's original bar-axis anchor before reflow.
+	preferredMain int
+	place         Placement
 	// rect is the placed panel body in output coordinates, excluding joints.
 	rect   ui.Rect
 	root   *ui.Node
@@ -558,24 +559,50 @@ func (r *Registry) triggerLocked(global uint32, connector string) Trigger {
 	trig := Trigger{BarEdge: policy.Edge, BarZone: policy.Extent(), Align: "center"}
 	if bar, ok := r.bars[global]; ok {
 		w, h := bar.configuredSize()
-		if w > 0 {
+		// BarZone is the painted cross extent; an attached bar's overhang lies
+		// past its body and must not move panel contact inward.
+		cross := h
+		if policy.Edge == "left" || policy.Edge == "right" {
+			cross = w
+		}
+		if cross > 0 {
+			trig.BarZone = max(0, cross-policy.Overhang())
+		}
+		// Keep the output's dimensions separate from a narrow side strip.
+		ow, oh := bar.outputSize()
+		if ow > 0 {
+			trig.OutW = ow
+		}
+		if oh > 0 {
+			trig.OutH = oh
+		}
+		// Before the first output-size notification, a horizontal strip's
+		// configured width still identifies the output width, and a side
+		// strip's configured height identifies the output height.
+		if trig.OutW <= 0 && policy.Edge != "left" && policy.Edge != "right" && w > 0 {
 			trig.OutW = w
 		}
-		// Panels meet the body; an attached bar's overhang lies past it.
-		if h -= policy.Overhang(); h > 0 {
-			trig.BarZone = h
-		}
-		// The screen, not the bar. Without it every panel was placed as if the
-		// output were 1080 logical tall, and a taller panel than the output
-		// could hold overran the bottom edge on a scaled laptop.
-		if ow, oh := bar.outputSize(); oh > 0 {
-			trig.OutW, trig.OutH = ow, oh
-			if w > 0 {
-				trig.OutW = w
-			}
+		if trig.OutH <= 0 && (policy.Edge == "left" || policy.Edge == "right") && h > 0 {
+			trig.OutH = h
 		}
 	}
 	return trig
+}
+
+// barRectOnOutput converts one bar-local widget rectangle to output
+// coordinates, accounting for the strip's actual configured dimensions once.
+func barRectOnOutput(local ui.Rect, edge string, outW, outH, barW, barH int) ui.Rect {
+	switch edge {
+	case "bottom":
+		if outH > 0 && barH > 0 {
+			local.Y += outH - barH
+		}
+	case "right":
+		if outW > 0 && barW > 0 {
+			local.X += outW - barW
+		}
+	}
+	return local
 }
 
 func (r *Registry) OpenPanel(id PanelID, output uint32, trig Trigger) error {
@@ -925,10 +952,14 @@ func (r *Registry) restorePanelPositionsLocked(output uint32) {
 	placedRects := make([]ui.Rect, 0, len(hosts))
 	for _, h := range hosts {
 		anchor := h.rect
-		anchor.X = h.preferredX
+		if h.place.sideAxis() {
+			anchor.Y = h.preferredMain
+		} else {
+			anchor.X = h.preferredMain
+		}
 		work := panelWorkArea(anchor, h.place, placedHosts)
 		rect, nextRects := panelArrangement(anchor, work, placedRects,
-			ui.Size{W: h.rect.W, H: h.rect.H})
+			ui.Size{W: h.rect.W, H: h.rect.H}, h.place.sideAxis())
 		for i, placed := range placedHosts {
 			r.updatePanelPlacementLocked(placed, nextRects[i])
 		}
@@ -939,16 +970,31 @@ func (r *Registry) restorePanelPositionsLocked(output uint32) {
 }
 
 func panelWorkArea(base ui.Rect, place Placement, open []*PanelHost) ui.Rect {
-	work := place.workArea(base)
-	conflict, safeEdge := false, 0
-	for _, h := range open {
-		if base.Y >= h.rect.Y+h.rect.H || h.rect.Y >= base.Y+base.H {
-			continue
-		}
-		conflict = true
+	openRects := make([]ui.Rect, len(open))
+	safeEdge := 0
+	for i, h := range open {
+		openRects[i] = h.rect
 		if h.place.Attached() && h.place.BarShape == "attached" {
 			safeEdge = max(safeEdge, h.place.Fillet)
 		}
+	}
+	if place.sideAxis() {
+		for i, rect := range openRects {
+			openRects[i] = transposeRect(rect)
+		}
+		return transposeRect(panelWorkAreaRects(transposeRect(base), place.horizontalAxis(), openRects, safeEdge))
+	}
+	return panelWorkAreaRects(base, place, openRects, safeEdge)
+}
+
+func panelWorkAreaRects(base ui.Rect, place Placement, openRects []ui.Rect, safeEdge int) ui.Rect {
+	work := place.workArea(base)
+	conflict := false
+	for _, rect := range openRects {
+		if base.Y >= rect.Y+rect.H || rect.Y >= base.Y+base.H {
+			continue
+		}
+		conflict = true
 	}
 	if !conflict {
 		return work
@@ -972,7 +1018,11 @@ func (r *Registry) updatePanelPlacementLocked(h *PanelHost, rect ui.Rect) {
 		return
 	}
 	h.rect = rect
-	h.place.AnchorX = rect.X + rect.W/2
+	center := rect.X + rect.W/2
+	if h.place.sideAxis() {
+		center = rect.Y + rect.H/2
+	}
+	h.place.setMainAnchor(center)
 	spec := r.panelSpec(h, marginsFor(rect, h.place))
 	width, height := uint32(max(spec.Width, 0)), uint32(max(spec.Height, 0))
 	inputRects := spec.InputRects
@@ -1047,6 +1097,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		Panel:   size,
 		Align:   trig.Align,
 		AnchorX: trig.AnchorX,
+		AnchorY: trig.AnchorY,
 	}
 	if id == PanelSettings && place.Align == "" {
 		place.Align = "center"
@@ -1219,7 +1270,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	w, hgt := h.place.FittedSize()
 	h.place.Panel.W, h.place.Panel.H = w, hgt
 	baseRect := h.place.panelRect()
-	h.preferredX = baseRect.X
+	h.preferredMain = h.place.mainStart(baseRect)
 	openHosts := r.openPanelHostsLocked(output, &id)
 	openRects := make([]ui.Rect, len(openHosts))
 	for i, open := range openHosts {
@@ -1227,9 +1278,13 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 	}
 	var placedRects []ui.Rect
 	h.rect, placedRects = panelArrangement(baseRect, panelWorkArea(baseRect, h.place, openHosts),
-		openRects, ui.Size{W: w, H: hgt})
-	if h.rect.X != baseRect.X {
-		h.place.AnchorX = h.rect.X + h.rect.W/2
+		openRects, ui.Size{W: w, H: hgt}, h.place.sideAxis())
+	if h.place.mainStart(h.rect) != h.place.mainStart(baseRect) {
+		center := h.rect.X + h.rect.W/2
+		if h.place.sideAxis() {
+			center = h.rect.Y + h.rect.H/2
+		}
+		h.place.setMainAnchor(center)
 	}
 	margins := marginsFor(h.rect, h.place)
 	if err := r.acquirePanelLeases(h); err != nil {
@@ -1497,19 +1552,22 @@ const settingsOpacityFloor uint8 = 0xf0
 
 func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	anchor := uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorLeft)
-	if h.place.BarEdge == "bottom" {
+	switch h.place.BarEdge {
+	case "bottom":
 		anchor = uint32(layershell.ZwlrLayerSurfaceV1AnchorBottom | layershell.ZwlrLayerSurfaceV1AnchorLeft)
+	case "right":
+		anchor = uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorRight)
 	}
-	// Where the panel's body will land on the output, in the same logical
-	// coordinates the capture takes. It is computed before the fillet shifts
-	// the surface left, because the body sits inset by exactly that much inside
-	// the surface, so the two cancel.
-	region := ui.Rect{X: m.Left, Y: m.Top, W: h.place.Panel.W, H: h.place.Panel.H}
-	if h.place.BarEdge == "bottom" {
-		region.Y = h.place.Output.H - m.Bottom - h.place.Panel.H
-	}
+	// Body is the one output-space rectangle shared by placement and capture.
+	region := h.place.Rect()
 	joints := h.place.Joints()
-	m.Left -= joints.Left
+	if h.place.sideAxis() {
+		m.Top -= joints.Left
+		m.Bottom -= joints.Right
+	} else {
+		m.Left -= joints.Left
+		m.Right -= joints.Right
+	}
 	width, height := h.surfaceSize()
 	opaque := h.theme.BackgroundOpaque()
 	var input []ui.Rect
@@ -1596,7 +1654,7 @@ func (h *PanelHost) blurShape(r *Registry) []ui.Rect {
 	}
 	shape := ui.SurfaceShape{Body: h.surfaceBody(w, hgt), Radius: h.theme.Radius}
 	if h.place.Attached() {
-		opacity, _ := h.panelReveal()
+		opacity, _, _ := h.panelReveal()
 		j := h.place.Joints()
 		shape.AttachEdge = h.place.BarEdge
 		shape.JointLeft, shape.JointRight, shape.EdgeFillet = h.revealJoints(opacity)
@@ -1618,6 +1676,9 @@ func (h *PanelHost) edgeExtent(j Joints) int {
 // joints and lengthened by any screen-edge wedge.
 func (h *PanelHost) surfaceSize() (w, hgt int) {
 	j := h.place.Joints()
+	if h.place.sideAxis() {
+		return h.place.Panel.W + h.edgeExtent(j), h.place.Panel.H + j.Left + j.Right
+	}
 	return h.place.Panel.W + j.Left + j.Right, h.place.Panel.H + h.edgeExtent(j)
 }
 
@@ -1667,6 +1728,13 @@ func tooltipAt(root *ui.Node, x, y int) (string, ui.Rect) {
 func (h *PanelHost) surfaceBody(w, hgt int) ui.Rect {
 	j := h.place.Joints()
 	edge := h.edgeExtent(j)
+	if h.place.sideAxis() {
+		body := ui.Rect{Y: j.Left, W: max(0, w-edge), H: max(0, hgt-j.Left-j.Right)}
+		if h.place.BarEdge == "right" {
+			body.X = edge
+		}
+		return body
+	}
 	body := ui.Rect{X: j.Left, W: max(0, w-j.Left-j.Right), H: max(0, hgt-edge)}
 	if h.place.BarEdge == "bottom" {
 		body.Y = edge
@@ -1792,17 +1860,24 @@ func (h *PanelHost) measureText() ui.MeasureText {
 }
 
 // panelReveal is the surface's reveal: its opacity and slide.
-func (h *PanelHost) panelReveal() (opacity float64, offsetY int) {
+func (h *PanelHost) panelReveal() (opacity float64, offsetX, offsetY int) {
 	if h == nil || h.anim == nil || !h.anim.has(panelSurfaceID(h.id), animVisible) {
-		return 1, 0
+		return 1, 0, 0
 	}
 	key := panelSurfaceID(h.id)
 	opacity = h.anim.PanelOpacity(key)
-	offsetY = h.anim.PanelSlide(key)
-	if h.place.BarEdge == "top" {
-		offsetY = -offsetY
+	slide := h.anim.PanelSlide(key)
+	switch h.place.BarEdge {
+	case "top":
+		offsetY = -slide
+	case "bottom":
+		offsetY = slide
+	case "left":
+		offsetX = -slide
+	case "right":
+		offsetX = slide
 	}
-	return opacity, offsetY
+	return opacity, offsetX, offsetY
 }
 
 // revealJoints scales each joint and the screen-edge wedge by the reveal's
@@ -1880,7 +1955,7 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 	style := h.rootStyle(paintTheme).WithPaper(h.paper)
 	style.Scale120 = scale
 	style.Body = body
-	opacity, offsetY := h.panelReveal()
+	opacity, offsetX, offsetY := h.panelReveal()
 	if h.place.Attached() {
 		style.AttachEdge = h.place.BarEdge
 		j := h.place.Joints()
@@ -1914,7 +1989,7 @@ func (h *PanelHost) render(pixels []byte, width, height, stride int) error {
 			c.StrokeRounded(ring, radius, max(scale.Physical(2), 2), h.theme.Accent)
 		}
 	}
-	c.ApplySurfaceTransform(opacity, 0, scale.Physical(offsetY))
+	c.ApplySurfaceTransform(opacity, scale.Physical(offsetX), scale.Physical(offsetY))
 	return nil
 }
 

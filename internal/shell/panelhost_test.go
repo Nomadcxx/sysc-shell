@@ -219,6 +219,67 @@ func TestPlacementRectIsTheBodyOnTheOutput(t *testing.T) {
 	}
 }
 
+func TestTriggerKeepsTheOutputWidthSeparateFromASideBar(t *testing.T) {
+	cfg := config.Default()
+	cfg.Bar.Edge = "left"
+	reg := newPanelRegistry(t)
+	reg.cfg = cfg
+	bar, err := NewWithTheme(ThemeFrom(cfg, cfg.Bar).WithCompositor(true), cfg.Bar, "DP-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bar.Configure(cfg.Bar.SurfaceExtent(), 864, 120); err != nil {
+		t.Fatal(err)
+	}
+	bar.setOutputSize(1536, 864)
+	reg.setTestBar(7, bar)
+
+	reg.mu.Lock()
+	got := reg.triggerLocked(7, "DP-1")
+	reg.mu.Unlock()
+	if got.OutW != 1536 || got.OutH != 864 {
+		t.Fatalf("trigger output = %dx%d, want 1536x864", got.OutW, got.OutH)
+	}
+	if got.BarZone != cfg.Bar.Extent() {
+		t.Fatalf("side painted cross extent = %d, want %d", got.BarZone, cfg.Bar.Extent())
+	}
+}
+
+func TestTriggerAtActionUsesTheWidgetCentreInOutputCoordinates(t *testing.T) {
+	bar := &Bar{left: []textWidget{{node: &ui.Node{
+		Action: "panel:test", Bounds: ui.Rect{X: 4, Y: 100, W: 20, H: 40},
+	}}}}
+	bar.configured.width, bar.configured.height, bar.configured.set = 60, 864, true
+	trig := Trigger{BarEdge: "right", OutW: 1536, OutH: 864}
+	got := triggerAtAction(bar, trig, "panel:test")
+	if got.AnchorX != 1490 || got.AnchorY != 120 {
+		t.Fatalf("trigger centre = (%d,%d), want (1490,120)", got.AnchorX, got.AnchorY)
+	}
+}
+
+func TestPanelRevealMovesInwardFromEachBarEdge(t *testing.T) {
+	for _, tc := range []struct {
+		edge         string
+		wantX, wantY int
+	}{
+		{"top", 0, -panelSlidePx},
+		{"bottom", 0, panelSlidePx},
+		{"left", -panelSlidePx, 0},
+		{"right", panelSlidePx, 0},
+	} {
+		t.Run(tc.edge, func(t *testing.T) {
+			a, _ := newTestAnimator(false)
+			key := panelSurfaceID(PanelSession)
+			a.Target(key, animVisible, 1)
+			h := &PanelHost{id: PanelSession, anim: a, place: Placement{BarEdge: tc.edge}}
+			_, gotX, gotY := h.panelReveal()
+			if gotX != tc.wantX || gotY != tc.wantY {
+				t.Fatalf("reveal offset = (%d,%d), want (%d,%d)", gotX, gotY, tc.wantX, tc.wantY)
+			}
+		})
+	}
+}
+
 func TestEscapeClosesPanel(t *testing.T) {
 	t.Parallel()
 	reg := newPanelRegistry(t)

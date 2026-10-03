@@ -147,7 +147,7 @@ func TestControlCentreRevealFollowsSurfaceAnimator(t *testing.T) {
 			h.anim = newAnimator(func() time.Time { return now }, tc.reduced, h.theme.Motion)
 			h.anim.Target(panelSurfaceID(h.id), animVisible, 1)
 
-			opacity, offsetY := h.panelReveal()
+			opacity, _, offsetY := h.panelReveal()
 			fillet, _, _ := h.revealJoints(opacity)
 			if opacity != 0 || offsetY != tc.wantY || fillet != 0 {
 				t.Fatalf("initial reveal = opacity %v offset %d joint %d, want 0, %d, 0", opacity, offsetY, fillet, tc.wantY)
@@ -157,7 +157,7 @@ func TestControlCentreRevealFollowsSurfaceAnimator(t *testing.T) {
 				settle = reducedPanelCap
 			}
 			now = now.Add(settle)
-			opacity, offsetY = h.panelReveal()
+			opacity, _, offsetY = h.panelReveal()
 			fillet, _, _ = h.revealJoints(opacity)
 			if opacity != 1 || offsetY != 0 || fillet != 12 {
 				t.Fatalf("settled reveal = opacity %v offset %d joint %d, want 1, 0, 12", opacity, offsetY, fillet)

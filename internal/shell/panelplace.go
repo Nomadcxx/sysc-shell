@@ -6,9 +6,17 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
-// panelPlacement starts at the panel's legacy position and moves horizontally
-// to the nearest clear spot. workArea is the range the panel body may occupy.
-func panelPlacement(anchor, workArea ui.Rect, alreadyOpen []ui.Rect, size ui.Size) ui.Rect {
+// panelPlacement starts at the panel's legacy position and moves along the
+// bar's main axis to the nearest clear spot. workArea is the body range.
+func panelPlacement(anchor, workArea ui.Rect, alreadyOpen []ui.Rect, size ui.Size, vertical bool) ui.Rect {
+	if vertical {
+		open := make([]ui.Rect, len(alreadyOpen))
+		for i, r := range alreadyOpen {
+			open[i] = transposeRect(r)
+		}
+		return transposeRect(panelPlacement(transposeRect(anchor), transposeRect(workArea), open,
+			ui.Size{W: size.H, H: size.W}, false))
+	}
 	w := min(max(size.W, 0), max(workArea.W, 0))
 	h := min(max(size.H, 0), max(workArea.H, 0))
 	minX, maxX := workArea.X, max(workArea.X, workArea.X+workArea.W-w)
@@ -59,8 +67,20 @@ func panelPlacement(anchor, workArea ui.Rect, alreadyOpen []ui.Rect, size ui.Siz
 // panelArrangement moves the existing row only when the new panel cannot fit
 // beside it. It keeps existing panels as close as possible to their positions
 // and preserves each panel's vertical position.
-func panelArrangement(anchor, workArea ui.Rect, alreadyOpen []ui.Rect, size ui.Size) (ui.Rect, []ui.Rect) {
-	placed := panelPlacement(anchor, workArea, alreadyOpen, size)
+func panelArrangement(anchor, workArea ui.Rect, alreadyOpen []ui.Rect, size ui.Size, vertical bool) (ui.Rect, []ui.Rect) {
+	if vertical {
+		open := make([]ui.Rect, len(alreadyOpen))
+		for i, r := range alreadyOpen {
+			open[i] = transposeRect(r)
+		}
+		placed, shifted := panelArrangement(transposeRect(anchor), transposeRect(workArea), open,
+			ui.Size{W: size.H, H: size.W}, false)
+		for i, r := range shifted {
+			shifted[i] = transposeRect(r)
+		}
+		return transposeRect(placed), shifted
+	}
+	placed := panelPlacement(anchor, workArea, alreadyOpen, size, false)
 	shifted := append([]ui.Rect(nil), alreadyOpen...)
 	needsReflow := false
 	for _, open := range alreadyOpen {
@@ -126,22 +146,22 @@ func overlaps(a, b ui.Rect) bool {
 	return a.X < b.X+b.W && b.X < a.X+a.W && a.Y < b.Y+b.H && b.Y < a.Y+a.H
 }
 
-func (p Placement) panelRect() ui.Rect {
-	m := p.Margins()
-	y := m.Top
-	if p.BarEdge == "bottom" {
-		y = p.Output.H - m.Bottom - p.Panel.H
-	}
-	return ui.Rect{X: m.Left, Y: y, W: p.Panel.W, H: p.Panel.H}
-}
+func (p Placement) panelRect() ui.Rect { return p.Rect() }
 
 func (p Placement) workArea(anchor ui.Rect) ui.Rect {
+	if p.sideAxis() {
+		return transposeRect(p.horizontalAxis().workArea(transposeRect(anchor)))
+	}
 	left := min(p.Padding, anchor.X)
 	right := max(p.Output.W-p.Padding, anchor.X+anchor.W)
 	return ui.Rect{X: left, Y: anchor.Y, W: max(right-left, 0), H: anchor.H}
 }
 
 func marginsFor(rect ui.Rect, p Placement) Margins {
+	if p.sideAxis() {
+		m := marginsFor(transposeRect(rect), p.horizontalAxis())
+		return Margins{Top: m.Left, Bottom: m.Right, Left: m.Top, Right: m.Bottom}
+	}
 	if p.BarEdge == "bottom" {
 		return Margins{Left: rect.X, Bottom: p.Output.H - rect.Y - rect.H}
 	}

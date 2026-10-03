@@ -41,7 +41,7 @@ func TestPanelPlacementPreservesCurrentMarginsWithoutConflicts(t *testing.T) {
 			want := p.Margins()
 			baseRect := p.panelRect()
 			got := panelPlacement(baseRect, p.workArea(baseRect), nil,
-				ui.Size{W: p.Panel.W, H: p.Panel.H})
+				ui.Size{W: p.Panel.W, H: p.Panel.H}, false)
 			if marginsFor(got, p) != want {
 				t.Fatalf("no-conflict margins = %+v, want existing Placement.Margins %+v", marginsFor(got, p), want)
 			}
@@ -62,18 +62,114 @@ func TestPanelPlacementChoosesTheNearestClearSide(t *testing.T) {
 		{"other edge stays put", []ui.Rect{{X: 810, Y: 832, W: 300, H: 200}}, 810},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := panelPlacement(base, work, tc.open, ui.Size{W: 300, H: 200})
+			got := panelPlacement(base, work, tc.open, ui.Size{W: 300, H: 200}, false)
 			if got.X != tc.want {
 				t.Fatalf("panel x = %d, want %d (%v)", got.X, tc.want, got)
 			}
 		})
 	}
 	open := []ui.Rect{{X: 700, Y: 48, W: 300, H: 200}, {X: 1050, Y: 48, W: 300, H: 200}}
-	got := panelPlacement(base, work, open, ui.Size{W: 300, H: 200})
+	got := panelPlacement(base, work, open, ui.Size{W: 300, H: 200}, false)
 	for _, r := range open {
 		if got.X < r.X+r.W && r.X < got.X+got.W && got.Y < r.Y+r.H && r.Y < got.Y+got.H {
 			t.Fatalf("placed %v still overlaps %v", got, r)
 		}
+	}
+}
+
+func TestSidePanelPlacementChoosesTheNearestClearY(t *testing.T) {
+	base := ui.Rect{X: 60, Y: 332, W: 400, H: 200}
+	work := ui.Rect{X: 60, Y: 8, W: 400, H: 848}
+	for _, tc := range []struct {
+		name string
+		open []ui.Rect
+		want int
+	}{
+		{"leading wins equal distance", []ui.Rect{{X: 60, Y: 332, W: 400, H: 200}}, 132},
+		{"cross-axis gap stays put", []ui.Rect{{X: 500, Y: 332, W: 400, H: 200}}, 332},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := panelPlacement(base, work, tc.open, ui.Size{W: 400, H: 200}, true)
+			if got.Y != tc.want || got.X != base.X {
+				t.Fatalf("placed rect = %+v, want x=%d y=%d", got, base.X, tc.want)
+			}
+		})
+	}
+}
+
+func TestBarRectOnOutputAppliesTheSurfaceOffsetOnce(t *testing.T) {
+	local := ui.Rect{X: 12, Y: 24, W: 30, H: 40}
+	for _, tc := range []struct {
+		edge string
+		want ui.Rect
+	}{
+		{"top", local},
+		{"bottom", ui.Rect{X: 12, Y: 824, W: 30, H: 40}},
+		{"left", local},
+		{"right", ui.Rect{X: 1488, Y: 24, W: 30, H: 40}},
+	} {
+		if got := barRectOnOutput(local, tc.edge, 1536, 864, 60, 64); got != tc.want {
+			t.Errorf("%s trigger = %+v, want %+v", tc.edge, got, tc.want)
+		}
+	}
+}
+
+func TestSidePanelArrangementReflowsAlongYAndRestores(t *testing.T) {
+	for _, edge := range []string{"left", "right"} {
+		t.Run(edge, func(t *testing.T) {
+			reg := newPanelRegistry(t)
+			cfg := reg.cfg
+			cfg.Bar.Edge = edge
+			reg.mu.Lock()
+			reg.cfg = cfg
+			reg.mu.Unlock()
+			bar, err := NewWithTheme(ThemeFrom(cfg, cfg.Bar).WithCompositor(true), cfg.Bar, "DP-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(bar.stopAnimation)
+			if err := bar.Configure(cfg.Bar.SurfaceExtent(), 864, 120); err != nil {
+				t.Fatal(err)
+			}
+			bar.setOutputSize(1536, 864)
+			reg.setTestBar(7, bar)
+			trig := Trigger{BarEdge: edge, BarZone: cfg.Bar.Extent(), Align: "center", OutW: 1536, OutH: 864}
+			if err := reg.OpenPanel(PanelClock, 7, trig); err != nil {
+				t.Fatal(err)
+			}
+			_ = drainAux(t, reg, 2)
+			reg.mu.Lock()
+			first := reg.panelHosts[PanelClock]
+			if first == nil {
+				reg.mu.Unlock()
+				t.Fatal("first panel did not open")
+			}
+			originalRect := first.rect
+			reg.mu.Unlock()
+
+			if err := reg.OpenPanel(PanelSession, 7, trig); err != nil {
+				t.Fatal(err)
+			}
+			_ = drainAux(t, reg, 2)
+			reg.mu.Lock()
+			firstRect, secondRect := reg.panelHosts[PanelClock].rect, reg.panelHosts[PanelSession].rect
+			reg.mu.Unlock()
+			if edge == "left" && firstRect.X != secondRect.X || edge == "right" && firstRect.X+firstRect.W != secondRect.X+secondRect.W {
+				t.Fatalf("panels left the same attached edge: first=%+v second=%+v", firstRect, secondRect)
+			}
+			if overlaps(firstRect, secondRect) {
+				t.Fatalf("side panels still overlap: %+v and %+v", firstRect, secondRect)
+			}
+
+			reg.ClosePanel(PanelSession)
+			_ = drainAux(t, reg, 2)
+			reg.mu.Lock()
+			got := reg.panelHosts[PanelClock].rect
+			reg.mu.Unlock()
+			if got != originalRect {
+				t.Fatalf("remaining panel moved to %+v after close, want restored %+v", got, originalRect)
+			}
+		})
 	}
 }
 
@@ -142,7 +238,7 @@ func TestOutsideDismissalClosesNewestPanelAndKeepsSharedShield(t *testing.T) {
 		t.Fatal("first panel did not open an interactive shield")
 	}
 	reg.mu.Lock()
-	preferredX := reg.panelHosts[PanelClock].preferredX
+	preferredX := reg.panelHosts[PanelClock].preferredMain
 	reg.mu.Unlock()
 
 	if err := reg.OpenPanel(PanelMonitor, 7, trig); err != nil {
