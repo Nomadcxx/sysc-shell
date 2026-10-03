@@ -105,6 +105,10 @@ func toWire(c Config) wireConfig {
 	if p := wallpaperDiff(c.Wallpaper, d.Wallpaper); p != nil {
 		w.Wallpaper = p
 	}
+	if c.TerminalArt.Palette != "" {
+		palette := c.TerminalArt.Palette
+		w.TerminalArt = &wireTerminalArt{Palette: &palette}
+	}
 	if p := panelsDiff(c.Panels, d.Panels); p != nil {
 		w.Panels = p
 	}

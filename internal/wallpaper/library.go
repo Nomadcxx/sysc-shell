@@ -10,7 +10,7 @@ import (
 	"unicode/utf8"
 )
 
-// Filter is the All / Images / Videos selector in the picker chrome. It never
+// Filter is the All / Images / Videos / Effects selector in the picker chrome. It never
 // hides a directory: filtering the media must not make the library
 // unnavigable.
 type Filter uint8

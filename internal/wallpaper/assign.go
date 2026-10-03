@@ -30,6 +30,13 @@ const (
 type Assignment struct {
 	Kind Kind
 	Path string
+	// Effect and Theme name the sysc-Go registry ids for KindEffect.
+	// Artwork is an optional allowlisted file for text effects. Path stays
+	// empty for an effect: stuffing the id into Path would look like a
+	// missing image on disk.
+	Effect  string
+	Theme   string
+	Artwork string
 	// PreviewPath is a still for a video, used for the theme seed and the
 	// static fallback on Restore. Empty when we could not extract one.
 	PreviewPath string
@@ -65,6 +72,9 @@ type Job struct {
 	PlaybackGen uint64
 	Path        string
 	Kind        Kind
+	Effect      string
+	Theme       string
+	Artwork     string
 }
 
 // Store holds the assignments, the live runtime, and the per-connector
@@ -164,15 +174,19 @@ func (s *Store) Commit(j Job, preview, engine string) bool {
 		return false
 	}
 	prior := s.assigned[j.Connector]
+	if j.Kind == KindEffect && preview == "" {
+		// An effect has no image of its own; Restore returns to the one it replaced.
+		preview = stillFor(prior)
+	}
 	desired := StatePlaying
 	if j.Kind == KindImage {
 		desired = StateStatic
 	} else if s.playbackGen[j.Connector] != j.PlaybackGen {
 		desired = s.playback[j.Connector]
-	} else if prior.Path == j.Path && prior.DesiredPlayback == StatePaused {
+	} else if prior.Path == j.Path && prior.Kind == j.Kind && prior.Effect == j.Effect && prior.Theme == j.Theme && prior.Artwork == j.Artwork && prior.DesiredPlayback == StatePaused {
 		desired = StatePaused
 	}
-	a := Assignment{Kind: j.Kind, Path: j.Path, PreviewPath: preview, DesiredPlayback: desired}
+	a := Assignment{Kind: j.Kind, Path: j.Path, Effect: j.Effect, Theme: j.Theme, Artwork: j.Artwork, PreviewPath: preview, DesiredPlayback: desired}
 	s.assigned[j.Connector] = a
 
 	rt := s.runtime[j.Connector]
@@ -209,6 +223,9 @@ func seedFor(a Assignment) string {
 	if a.Kind == KindImage {
 		return a.Path
 	}
+	if a.Kind == KindEffect {
+		return ""
+	}
 	return a.PreviewPath
 }
 
@@ -234,7 +251,13 @@ func (s *Store) Reconnect(connector string) []Job {
 	if !ok {
 		return nil
 	}
-	return s.Apply(connector, a.Path, a.Kind)
+	jobs := s.Apply(connector, a.Path, a.Kind)
+	for i := range jobs {
+		jobs[i].Effect = a.Effect
+		jobs[i].Theme = a.Theme
+		jobs[i].Artwork = a.Artwork
+	}
+	return jobs
 }
 
 // Adopt takes the persisted assignment table at startup. Runtime stays empty:

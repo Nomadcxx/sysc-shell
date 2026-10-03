@@ -1,0 +1,642 @@
+package shell
+
+import (
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/theme"
+	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	"github.com/Nomadcxx/sysc-shell/internal/wallpaper"
+)
+
+// artWallpaperEngine is a fake engine with sysc-terminal installed and a
+// catalog, so art tests read capabilities from the service like production
+// does rather than patching them onto each snapshot.
+type artWallpaperEngine struct{ stubWallpaperEngine }
+
+func (artWallpaperEngine) Capabilities() wallpaper.Capabilities {
+	return wallpaper.Capabilities{
+		GSlapper: true, Terminal: true, Statics: []string{"awww"},
+		Catalog: wallpaper.Catalog{
+			Effects: []wallpaper.EffectInfo{{ID: "fire"}, {ID: "rain"}, {ID: "fire-text", Text: true}},
+			Themes:  []string{"nord", "dracula"},
+		},
+	}
+}
+
+// artRegistry is a registry with a bar on output 7 and a wallpaper service on
+// connectors (DP-1 and DP-3 when none are named) backed by engine. No panel is
+// open yet.
+func artRegistry(t *testing.T, engine wallpaper.Engine, connectors ...string) (*Registry, *wallpaper.Service) {
+	t.Helper()
+	if len(connectors) == 0 {
+		connectors = []string{"DP-1", "DP-3"}
+	}
+	reg := newPanelRegistry(t)
+	withTestBar(t, reg, 7, reg.cfg)
+	svc := wallpaper.NewService(wallpaper.ServiceConfig{
+		Engine:     engine,
+		Settings:   wallpaper.Settings{Scale: "fill", Loop: true, FPS: 30, Hidden: wallpaper.HiddenNone},
+		Connectors: connectors,
+	})
+	t.Cleanup(svc.Close)
+	reg.mu.Lock()
+	reg.wallpaperSvc = svc
+	reg.mu.Unlock()
+	return reg, svc
+}
+
+func openArtPanel(t *testing.T, reg *Registry) *PanelHost {
+	t.Helper()
+	if err := reg.OpenPanel(PanelTerminalArt, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	reqs := drainAux(t, reg, 2)
+	open := reqs[1].Open
+	if err := open.Callbacks.Configure(int(open.Width), int(open.Height), 120); err != nil {
+		t.Fatal(err)
+	}
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelTerminalArt]
+	if h == nil {
+		t.Fatal("no terminal art panel host")
+	}
+	return h
+}
+
+func TestTerminalArtBarItemTogglesItsPanel(t *testing.T) {
+	got := buildWidgets([]config.Item{{ID: "terminal-art"}}, 8, standardMetrics())
+	if len(got) != 1 || got[0].node == nil || got[0].node.Action != panelTerminalArtAction {
+		t.Fatalf("terminal-art builds %+v, want one widget acting %q", got, panelTerminalArtAction)
+	}
+	if got[0].tooltip != "Terminal Art" {
+		t.Errorf("tooltip = %q", got[0].tooltip)
+	}
+	if _, err := config.Parse([]byte(`{"bar":{"items":{"right":[{"id":"terminal-art"}]}}}`)); err != nil {
+		t.Fatalf("a configured terminal-art item must load: %v", err)
+	}
+
+	r := NewRegistry(config.Default())
+	t.Cleanup(r.Close)
+	bar := &Bar{}
+	r.bindBarPanelActionsLocked(1, bar)
+	if !bar.onAction(panelTerminalArtAction, buttonLeft) {
+		t.Fatal("left click was not handled")
+	}
+	drainAux(t, r, 2)
+	if _, ok := r.panelHosts[PanelTerminalArt]; !ok {
+		t.Fatal("left click did not open PanelTerminalArt")
+	}
+	if _, ok := r.panelHosts[PanelWallpaper]; ok {
+		t.Fatal("the terminal art item must not open the wallpaper panel")
+	}
+	if !bar.onAction(panelTerminalArtAction, buttonRight) {
+		t.Fatal("right click was not handled")
+	}
+	if _, ok := r.panelHosts[PanelTerminalArt]; ok {
+		t.Fatal("a second click must close the panel")
+	}
+}
+
+func TestTerminalArtPanelOpensIndependently(t *testing.T) {
+	if got := PanelTerminalArt.String(); got != "terminal-art" {
+		t.Fatalf("String() = %q", got)
+	}
+	if id, err := parsePanelName("terminal-art"); err != nil || id != PanelTerminalArt {
+		t.Fatalf("parsePanelName = %v, %v", id, err)
+	}
+	if id, ok := panelIDFromAux(panelSurfaceID(PanelTerminalArt)); !ok || id != PanelTerminalArt {
+		t.Fatalf("panelIDFromAux = %v, %v", id, ok)
+	}
+
+	reg, _ := artRegistry(t, artWallpaperEngine{})
+	trig := Trigger{BarEdge: "top", BarZone: 40, OutW: 1920, OutH: 1080}
+	open := func(id PanelID) {
+		t.Helper()
+		if err := reg.OpenPanel(id, 7, trig); err != nil {
+			t.Fatal(err)
+		}
+		drainAuxQueue(reg)
+	}
+	state := func() (wall, art bool) {
+		reg.mu.Lock()
+		defer reg.mu.Unlock()
+		return reg.panelHosts[PanelWallpaper] != nil, reg.panelHosts[PanelTerminalArt] != nil
+	}
+
+	open(PanelWallpaper)
+	open(PanelTerminalArt)
+	if wall, art := state(); !wall || !art {
+		t.Fatalf("after opening both: wallpaper=%v art=%v", wall, art)
+	}
+	reg.mu.Lock()
+	reg.closePanelLocked(PanelTerminalArt)
+	reg.mu.Unlock()
+	if wall, art := state(); !wall || art {
+		t.Fatalf("closing art: wallpaper=%v art=%v, want wallpaper only", wall, art)
+	}
+	open(PanelTerminalArt)
+	reg.mu.Lock()
+	reg.closePanelLocked(PanelWallpaper)
+	reg.mu.Unlock()
+	if wall, art := state(); wall || !art {
+		t.Fatalf("closing wallpaper: wallpaper=%v art=%v, want art only", wall, art)
+	}
+}
+
+// artTexts lists every text in the tree.
+func artTexts(n *ui.Node) []string {
+	var out []string
+	walkNodes(n, func(n *ui.Node) {
+		if n.Kind == ui.KindText && n.Text != "" {
+			out = append(out, n.Text)
+		}
+	})
+	return out
+}
+
+func TestTerminalArtTreeNeverSaysWallpaper(t *testing.T) {
+	reg, _ := artRegistry(t, artWallpaperEngine{})
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	for _, text := range artTexts(h.root) {
+		if strings.Contains(text, "Wallpaper") {
+			t.Errorf("the Terminal Art panel says %q", text)
+		}
+	}
+	title := findNode(h.root, func(n *ui.Node) bool { return n.Kind == ui.KindText && n.Text == "Terminal Art" })
+	if title == nil || title.TextRole != theme.RoleTitle {
+		t.Fatalf("title = %+v, want Terminal Art as RoleTitle", title)
+	}
+}
+
+func TestTerminalArtCardsFromCatalog(t *testing.T) {
+	reg, _ := artRegistry(t, artWallpaperEngine{})
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	var cards []string
+	collectActions(h.root, "art-apply:", &cards)
+	if !slices.Equal(cards, []string{"art-apply:fire", "art-apply:rain"}) {
+		t.Fatalf("cards = %v, want fire and rain; text effects are hidden", cards)
+	}
+	for _, action := range cards {
+		card := findAction(h.root, action)
+		if card.Name != strings.TrimPrefix(action, "art-apply:") || !card.Focusable || card.State&ui.StateDisabled != 0 {
+			t.Errorf("card %s = name %q focusable %v state %v", action, card.Name, card.Focusable, card.State)
+		}
+	}
+	if findByName(h.root, "fire-text") != nil {
+		t.Error("a text effect is listed")
+	}
+	if !slices.Contains(artTexts(h.root), "2 effects") {
+		t.Errorf("footer missing; texts = %v", artTexts(h.root))
+	}
+}
+
+func TestTerminalArtUnavailableExplains(t *testing.T) {
+	reg, _ := artRegistry(t, stubWallpaperEngine{})
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	found := false
+	for _, text := range artTexts(h.root) {
+		if strings.Contains(text, "sysc-terminal") && strings.Contains(text, "/usr/local/bin") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no install banner; texts = %v", artTexts(h.root))
+	}
+	if findAction(h.root, "art-menu:palette") != nil {
+		t.Error("the palette combo must be hidden without sysc-terminal")
+	}
+}
+
+func TestTerminalArtOutputSelectCollapsesOnOneOutput(t *testing.T) {
+	reg, _ := artRegistry(t, artWallpaperEngine{}, "eDP-1")
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	var outputs []string
+	collectActions(h.root, "art-output:", &outputs)
+	texts := artTexts(h.root)
+	reg.mu.Unlock()
+	if len(outputs) != 0 || !slices.Contains(texts, "eDP-1") {
+		t.Fatalf("one output: select %v, texts %v; want a caption naming eDP-1", outputs, texts)
+	}
+
+	reg, _ = artRegistry(t, artWallpaperEngine{})
+	h = openArtPanel(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	outputs = nil
+	collectActions(h.root, "art-output:", &outputs)
+	if !slices.Equal(outputs, []string{"art-output:all", "art-output:DP-1", "art-output:DP-3"}) {
+		t.Fatalf("two outputs: select %v", outputs)
+	}
+}
+
+// awaitArt waits for connector's assignment to satisfy ok.
+func awaitArt(t *testing.T, svc *wallpaper.Service, connector string, ok func(wallpaper.Assignment) bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if ok(svc.Snapshot().Assignments[connector]) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("%s assignment = %+v", connector, svc.Snapshot().Assignments[connector])
+}
+
+func runningEffect(effect, palette string) func(wallpaper.Assignment) bool {
+	return func(a wallpaper.Assignment) bool {
+		return a.Kind == wallpaper.KindEffect && a.Effect == effect && a.Theme == palette && a.Path == ""
+	}
+}
+
+// artAct runs action through the panel's own dispatch, as a click does.
+func artAct(t *testing.T, reg *Registry, h *PanelHost, action string) {
+	t.Helper()
+	n := findAction(h.root, action)
+	if n == nil {
+		t.Fatalf("no %s in the tree", action)
+	}
+	if !h.artAction(reg, n) {
+		t.Fatalf("%s was not handled", action)
+	}
+}
+
+func TestTerminalArtCardAppliesToSelectedOutput(t *testing.T) {
+	reg, svc := artRegistry(t, artWallpaperEngine{})
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	artAct(t, reg, h, "art-output:DP-1")
+	artAct(t, reg, h, "art-apply:fire")
+	reg.mu.Unlock()
+	awaitArt(t, svc, "DP-1", runningEffect("fire", "nord"))
+	if _, ok := svc.Snapshot().Assignments["DP-3"]; ok {
+		t.Fatal("DP-3 was not selected and must stay untouched")
+	}
+}
+
+func TestTerminalArtAppliesPerOutput(t *testing.T) {
+	reg, svc := artRegistry(t, artWallpaperEngine{})
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	artAct(t, reg, h, "art-output:DP-1")
+	artAct(t, reg, h, "art-apply:fire")
+	artAct(t, reg, h, "art-output:DP-3")
+	artAct(t, reg, h, "art-apply:rain")
+	reg.mu.Unlock()
+	awaitArt(t, svc, "DP-1", runningEffect("fire", "nord"))
+	awaitArt(t, svc, "DP-3", runningEffect("rain", "nord"))
+}
+
+func TestTerminalArtPaletteFollowsRunningEffect(t *testing.T) {
+	reg, svc := artRegistry(t, artWallpaperEngine{})
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-1", Kind: wallpaper.KindEffect, Effect: "fire", Theme: "dracula"})
+	awaitArt(t, svc, "DP-1", runningEffect("fire", "dracula"))
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	artAct(t, reg, h, "art-output:DP-1")
+	combo := findAction(h.root, "art-menu:palette")
+	if got := artPalette(h); got != "dracula" || combo == nil || !strings.Contains(combo.Name, "dracula") {
+		t.Fatalf("palette = %q, combo %+v; want the running dracula, not the catalog's first theme", got, combo)
+	}
+}
+
+func TestTerminalArtPaletteChangeReappliesRunningEffect(t *testing.T) {
+	reg, svc := artRegistry(t, artWallpaperEngine{})
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-1", Kind: wallpaper.KindEffect, Effect: "fire", Theme: "nord"})
+	awaitArt(t, svc, "DP-1", runningEffect("fire", "nord"))
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	// DP-3 runs nothing: a palette pick there only sets the next click's palette.
+	artAct(t, reg, h, "art-output:DP-3")
+	artAct(t, reg, h, "art-menu:palette")
+	artAct(t, reg, h, "art-palette:dracula")
+	artAct(t, reg, h, "art-output:DP-1")
+	artAct(t, reg, h, "art-menu:palette")
+	artAct(t, reg, h, "art-palette:dracula")
+	reg.mu.Unlock()
+	awaitArt(t, svc, "DP-1", runningEffect("fire", "dracula"))
+	// Commands run in order, so a DP-3 apply would have landed by now.
+	if a, ok := svc.Snapshot().Assignments["DP-3"]; ok {
+		t.Fatalf("DP-3 = %+v; a palette change must not start an effect", a)
+	}
+}
+
+func TestTerminalArtRestoreDisabledWithoutStill(t *testing.T) {
+	reg, svc := artRegistry(t, artWallpaperEngine{})
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-1", Kind: wallpaper.KindEffect, Effect: "fire", Theme: "nord"})
+	awaitArt(t, svc, "DP-1", runningEffect("fire", "nord"))
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	artAct(t, reg, h, "art-output:DP-1")
+	if findAction(h.root, "art-pause") == nil {
+		t.Error("a running effect offers Pause")
+	}
+	restore := findAction(h.root, "art-restore")
+	if restore == nil || restore.State&ui.StateDisabled == 0 || restore.Tooltip != "No previous still recorded" {
+		t.Fatalf("Restore still = %+v, want disabled with a reason", restore)
+	}
+	artAct(t, reg, h, "art-output:DP-3")
+	if findAction(h.root, "art-restore") != nil || findAction(h.root, "art-pause") != nil {
+		t.Error("an output showing a wallpaper offers no effect controls")
+	}
+}
+
+type sixArtEngine struct{ stubWallpaperEngine }
+
+func (sixArtEngine) Capabilities() wallpaper.Capabilities {
+	return wallpaper.Capabilities{
+		Terminal: true,
+		Catalog: wallpaper.Catalog{
+			Effects: []wallpaper.EffectInfo{
+				{ID: "a"}, {ID: "b"}, {ID: "c"}, {ID: "words", Text: true}, {ID: "d"}, {ID: "e"}, {ID: "f"},
+			},
+			Themes: []string{"nord"},
+		},
+	}
+}
+
+func TestTerminalArtArrowKeysWalkThreeColumns(t *testing.T) {
+	reg, svc := artRegistry(t, sixArtEngine{})
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	for _, step := range []struct {
+		key  uint32
+		want int
+	}{
+		{keyDown, 3}, {keyRight, 4}, {keyDown, 5}, {keyUp, 2}, {keyLeft, 1}, {keyUp, 0}, {keyLeft, 0},
+	} {
+		if !h.keyPress(reg, step.key) {
+			reg.mu.Unlock()
+			t.Fatalf("key %d was not handled", step.key)
+		}
+		if h.wallpaperSel != step.want {
+			reg.mu.Unlock()
+			t.Fatalf("after key %d: selection %d, want %d", step.key, h.wallpaperSel, step.want)
+		}
+	}
+	h.keyPress(reg, keyRight)
+	h.keyPress(reg, keyDown) // "e": the hidden text effect is not a stop
+	if !h.keyPress(reg, keyEnter) {
+		reg.mu.Unlock()
+		t.Fatal("Enter on the grid was not handled")
+	}
+	reg.mu.Unlock()
+	awaitArt(t, svc, "DP-1", runningEffect("e", "nord"))
+}
+
+func TestWallpaperPanelHasNoTerminalArt(t *testing.T) {
+	reg, _ := artRegistry(t, artWallpaperEngine{})
+	if err := reg.OpenPanel(PanelWallpaper, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	drainAuxQueue(reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelWallpaper]
+	if n := findNode(h.root, func(n *ui.Node) bool { return n.Role == "tablist" }); n != nil {
+		t.Errorf("tab strip still present: %+v", n)
+	}
+	for _, text := range artTexts(h.root) {
+		if strings.Contains(text, "Terminal Art") || strings.Contains(text, "sysc-terminal") {
+			t.Errorf("the wallpaper panel says %q", text)
+		}
+	}
+	for _, label := range wallpaperEngineLabels(h.root) {
+		if label == wallpaper.EngineTerminal {
+			t.Error("the wallpaper engine readout names sysc-terminal")
+		}
+	}
+	for _, e := range wallpaperMedia(h) {
+		if e.Kind == wallpaper.KindEffect {
+			t.Errorf("the grid lists effect %s", e.Name)
+		}
+	}
+	var actions []string
+	collectActions(h.root, "wallpaper-tab:", &actions)
+	collectActions(h.root, "wallpaper-menu:effect-theme", &actions)
+	if len(actions) > 0 {
+		t.Errorf("art controls remain: %v", actions)
+	}
+}
+
+// wallpaperWithEffect opens the wallpaper panel with fire/nord running on
+// DP-1 and DP-1 selected.
+func wallpaperWithEffect(t *testing.T) (*Registry, *PanelHost) {
+	t.Helper()
+	reg, svc := artRegistry(t, artWallpaperEngine{})
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-1", Kind: wallpaper.KindEffect, Effect: "fire", Theme: "nord"})
+	awaitArt(t, svc, "DP-1", runningEffect("fire", "nord"))
+	if err := reg.OpenPanel(PanelWallpaper, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	drainAuxQueue(reg)
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelWallpaper]
+	if !h.wallpaperAction(reg, findAction(h.root, "wallpaper-output:DP-1")) {
+		reg.mu.Unlock()
+		t.Fatal("select DP-1")
+	}
+	reg.mu.Unlock()
+	return reg, h
+}
+
+func TestWallpaperStripNamesRunningEffect(t *testing.T) {
+	reg, h := wallpaperWithEffect(t)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	strip := h.root.Children[1]
+	if !slices.ContainsFunc(artTexts(strip), func(s string) bool { return strings.Contains(s, "DP-1 \u00b7 Terminal Art: fire (nord)") }) {
+		t.Errorf("strip texts = %v", artTexts(strip))
+	}
+	if findAction(strip, "wallpaper-open-art") == nil {
+		t.Error("an effect output links to the Terminal Art panel")
+	}
+	if findAction(strip, "wallpaper-pause") != nil {
+		t.Error("effect playback is controlled on the Terminal Art panel, not here")
+	}
+}
+
+func TestWallpaperOpenArtSwitchesPanels(t *testing.T) {
+	reg, h := wallpaperWithEffect(t)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if !h.wallpaperAction(reg, findAction(h.root, "wallpaper-open-art")) {
+		t.Fatal("Open Terminal Art was not handled")
+	}
+	art := reg.panelHosts[PanelTerminalArt]
+	if reg.panelHosts[PanelWallpaper] != nil || art == nil {
+		t.Fatalf("wallpaper open=%v art open=%v; want only art", reg.panelHosts[PanelWallpaper] != nil, art != nil)
+	}
+	if art.wallpaperOutput != "DP-1" {
+		t.Fatalf("art output = %q, want the wallpaper panel's DP-1", art.wallpaperOutput)
+	}
+}
+
+func TestWallpaperAllSummaryCountsEffects(t *testing.T) {
+	snap := wallpaper.Snapshot{
+		Connectors: []string{"DP-1", "DP-3"},
+		Assignments: map[string]wallpaper.Assignment{
+			"DP-1": {Kind: wallpaper.KindImage, Path: "/w/a.png"},
+			"DP-3": {Kind: wallpaper.KindEffect, Effect: "fire"},
+		},
+	}
+	if got := wallpaperSummary(snap, wallpaper.AllOutputs); got != "2 outputs \u00b7 0 video \u00b7 1 image \u00b7 1 effect" {
+		t.Fatalf("summary = %q; an effect is not an image", got)
+	}
+}
+
+func openArtSettings(t *testing.T, reg *Registry) *PanelHost {
+	t.Helper()
+	if err := reg.OpenPanel(PanelSettings, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelSettings]
+	h.section = "Terminal Art"
+	reg.rebuildPanel(h)
+	return h
+}
+
+func TestTerminalArtSectionIsReachable(t *testing.T) {
+	i := slices.Index(settingsSections, "Terminal Art")
+	if i < 1 || settingsSections[i-1] != "Wallpaper" {
+		t.Fatalf("sections = %v, want Terminal Art right after Wallpaper", settingsSections)
+	}
+	if settingsSectionIcons["Terminal Art"] != "terminal" {
+		t.Errorf("icon = %q, want terminal", settingsSectionIcons["Terminal Art"])
+	}
+	reg, _ := artRegistry(t, artWallpaperEngine{})
+	h := openArtSettings(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if findAction(h.root, "art-open") == nil {
+		t.Fatalf("Terminal Art settings built no Open button: %q", artTexts(h.root))
+	}
+}
+
+func TestTerminalArtSettingsShowsEngineAndDefault(t *testing.T) {
+	reg, _ := artRegistry(t, sixArtEngine{})
+	h := openArtSettings(t, reg)
+	reg.mu.Lock()
+	texts := strings.Join(artTexts(h.root), "\n")
+	combo := findAction(h.root, "art-menu:default")
+	reg.mu.Unlock()
+	if !strings.Contains(texts, "sysc-Go") || !strings.Contains(texts, "6 effects") {
+		t.Errorf("status = %q, want sysc-Go and 6 effects", texts)
+	}
+	if combo == nil || !strings.Contains(combo.Name, "nord") {
+		t.Fatalf("unset palette combo = %+v, want the first catalog theme", combo)
+	}
+
+	reg, _ = artRegistry(t, artWallpaperEngine{})
+	reg.mu.Lock()
+	reg.cfg.TerminalArt.Palette = "dracula"
+	reg.mu.Unlock()
+	h = openArtSettings(t, reg)
+	reg.mu.Lock()
+	combo = findAction(h.root, "art-menu:default")
+	reg.mu.Unlock()
+	if combo == nil || !strings.Contains(combo.Name, "dracula") {
+		t.Fatalf("configured palette combo = %+v, want dracula", combo)
+	}
+
+	reg, _ = artRegistry(t, stubWallpaperEngine{})
+	h = openArtSettings(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if !slices.Contains(artTexts(h.root), "sysc-terminal is not installed. Install it to /usr/local/bin") ||
+		findAction(h.root, "art-menu:default") != nil {
+		t.Fatalf("without sysc-terminal: %q", artTexts(h.root))
+	}
+}
+
+func TestTerminalArtSettingsPicksTheDefault(t *testing.T) {
+	reg, _ := artRegistry(t, artWallpaperEngine{})
+	h := openArtSettings(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if !h.artAction(reg, &ui.Node{Action: "art-default:dracula"}) || h.draft.TerminalArt.Palette != "dracula" {
+		t.Fatalf("draft palette = %q, want dracula", h.draft.TerminalArt.Palette)
+	}
+}
+
+func TestTerminalArtPanelStartsOnDefaultPalette(t *testing.T) {
+	reg, _ := artRegistry(t, artWallpaperEngine{})
+	reg.mu.Lock()
+	reg.cfg.TerminalArt.Palette = "dracula"
+	reg.mu.Unlock()
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if got := artPalette(h); got != "dracula" {
+		t.Fatalf("palette = %q, want the configured dracula", got)
+	}
+}
+
+func TestTerminalArtSettingsOpensThePanel(t *testing.T) {
+	reg, _ := artRegistry(t, artWallpaperEngine{})
+	h := openArtSettings(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if !h.artAction(reg, &ui.Node{Action: "art-open"}) {
+		t.Fatal("Open Terminal Art was not handled")
+	}
+	art := reg.panelHosts[PanelTerminalArt]
+	if reg.panelHosts[PanelSettings] != nil || art == nil || art.output != h.output {
+		t.Fatalf("settings open=%v art=%v; want the panel on output %d", reg.panelHosts[PanelSettings] != nil, art != nil, h.output)
+	}
+}
+
+// Restore from Terminal Art is about effects: on All outputs it must leave a
+// video on another output playing, and an output back on its still is no
+// longer running anything the panel can pause.
+func TestTerminalArtRestoreTouchesOnlyEffects(t *testing.T) {
+	reg, svc := artRegistry(t, artWallpaperEngine{})
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-1", Kind: wallpaper.KindImage, Path: "/w/a.png"})
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-1", Kind: wallpaper.KindEffect, Effect: "fire", Theme: "nord"})
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-3", Kind: wallpaper.KindVideo, Path: "/w/b.mp4"})
+	awaitArt(t, svc, "DP-1", runningEffect("fire", "nord"))
+	awaitArt(t, svc, "DP-3", func(a wallpaper.Assignment) bool { return a.Path == "/w/b.mp4" })
+	if svc.Snapshot().Runtime["DP-3"].State == wallpaper.StateStatic {
+		t.Fatal("the video never started, so the check below proves nothing")
+	}
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	artAct(t, reg, h, "art-restore")
+	reg.mu.Unlock()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && svc.Snapshot().Runtime["DP-1"].State != wallpaper.StateStatic {
+		time.Sleep(5 * time.Millisecond)
+	}
+	snap := svc.Snapshot()
+	if snap.Runtime["DP-1"].State != wallpaper.StateStatic {
+		t.Fatalf("DP-1 runtime = %+v, want its still", snap.Runtime["DP-1"])
+	}
+	if snap.Runtime["DP-3"].State == wallpaper.StateStatic {
+		t.Fatal("restoring effects also stopped the video on DP-3")
+	}
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h.wallpaperSnap = snap
+	reg.rebuildPanel(h)
+	if findAction(h.root, "art-pause") != nil || len(artRunningOn(h, "fire")) > 0 {
+		t.Fatalf("a restored output still reads as running: %q", artTexts(h.root))
+	}
+}

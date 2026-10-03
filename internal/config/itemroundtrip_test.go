@@ -37,6 +37,7 @@ var itemFixtures = map[string]Item{
 	"wordmark":      {ID: "wordmark"},
 	"launcher":      {ID: "launcher"},
 	"wallpaper":     {ID: "wallpaper"},
+	"terminal-art":  {ID: "terminal-art"},
 	"volume":        {ID: "volume"},
 	"wifi":          {ID: "wifi"},
 	"media":         {ID: "media"},

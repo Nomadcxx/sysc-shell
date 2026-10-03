@@ -29,10 +29,13 @@ const (
 // Command is one queued request. It is a value, so nothing the panel holds is
 // shared with the service after the send.
 type Command struct {
-	Op    Op
-	Token string
-	Path  string
-	Kind  Kind
+	Op      Op
+	Token   string
+	Path    string
+	Kind    Kind
+	Effect  string
+	Theme   string
+	Artwork string
 }
 
 // Capabilities is what is installed, probed once at start and projected into
@@ -40,6 +43,11 @@ type Command struct {
 // a static engine Restore has nowhere to go.
 type Capabilities struct {
 	GSlapper bool
+	// Terminal is true when sysc-terminal answers --list. KindEffect uses it
+	// and nothing else does.
+	Terminal bool
+	// Catalog is the --list registry, filled only when Terminal is true.
+	Catalog Catalog
 	// Statics are the installed static fallback binaries in preference order.
 	// The picker names every one; Restore uses the first.
 	Statics []string
@@ -57,16 +65,23 @@ func (c Capabilities) Static() string {
 // static engines are recorded under their binary name, which is what Statics
 // already holds.
 const EngineGSlapper = "gslapper"
+const EngineTerminal = "sysc-terminal"
 
 // EngineFor names the engine an apply of kind will use, or "" when nothing
-// installed can paint it -- a video without gSlapper, or anything at all with
-// no engine installed.
+// installed can paint it -- a video without gSlapper, an effect without
+// sysc-terminal, or anything at all with no engine installed.
 //
 // This is the one statement of that policy: the engine branches on it, and the
 // picker reports it. An earlier version had the picker infer the engine from
 // Runtime.Socket and Runtime.FallbackPID, which nothing outside the engine's
 // own private handles ever writes, so no engine was ever named.
 func (c Capabilities) EngineFor(kind Kind) string {
+	if kind == KindEffect {
+		if c.Terminal {
+			return EngineTerminal
+		}
+		return ""
+	}
 	if c.GSlapper {
 		return EngineGSlapper
 	}
@@ -239,7 +254,7 @@ func (s *Service) reconcile() {
 		if !slices.Contains(s.store.Connectors(), connector) {
 			continue
 		}
-		s.Enqueue(Command{Op: OpApply, Token: connector, Path: a.Path, Kind: a.Kind})
+		s.Enqueue(Command{Op: OpApply, Token: connector, Path: a.Path, Kind: a.Kind, Effect: a.Effect, Theme: a.Theme, Artwork: a.Artwork})
 	}
 }
 
@@ -329,7 +344,13 @@ func (s *Service) enqueueThumbs() {
 func (s *Service) handle(c Command) {
 	switch c.Op {
 	case OpApply:
-		s.dispatch(s.store.Apply(c.Token, c.Path, c.Kind))
+		jobs := s.store.Apply(c.Token, c.Path, c.Kind)
+		for i := range jobs {
+			jobs[i].Effect = c.Effect
+			jobs[i].Theme = c.Theme
+			jobs[i].Artwork = c.Artwork
+		}
+		s.dispatch(jobs)
 		return
 	case OpPause, OpResume:
 		s.setPaused(c.Token, c.Op == OpPause)
@@ -416,17 +437,25 @@ func (s *Service) notifySeed(seed string) {
 	}
 }
 
-func (s *Service) setPaused(connector string, paused bool) {
-	a, ok := s.store.Assignment(connector)
-	if !ok || a.Kind != KindVideo {
-		// Pause is video-only; an image has no pipeline to hold.
-		return
+func (s *Service) setPaused(token string, paused bool) {
+	targets := []string{token}
+	if token == AllOutputs {
+		targets = s.store.Connectors()
 	}
-	if err := s.engine.SetPaused(connector, paused); err != nil {
-		s.store.noteRuntimeErr(connector, err)
-		return
+	for _, connector := range targets {
+		a, ok := s.store.Assignment(connector)
+		if !ok || (a.Kind != KindVideo && a.Kind != KindEffect) ||
+			s.store.Runtime(connector).State == StateStatic {
+			// Pause is for pipelines that play; an image, or a player restored
+			// to its still, has nothing to hold.
+			continue
+		}
+		if err := s.engine.SetPaused(connector, paused); err != nil {
+			s.store.noteRuntimeErr(connector, err)
+			continue
+		}
+		s.store.SetPlayback(connector, paused)
 	}
-	s.store.SetPlayback(connector, paused)
 	s.persist()
 }
 
