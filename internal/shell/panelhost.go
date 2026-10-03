@@ -335,6 +335,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelNotifications, nil
 	case "wallpaper":
 		return PanelWallpaper, nil
+	case "terminal-art":
+		return PanelTerminalArt, nil
 	case "audio":
 		return PanelAudio, nil
 	case "control-center":
@@ -871,6 +873,8 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelNotifications, true
 	case "wallpaper":
 		return PanelWallpaper, true
+	case "terminal-art":
+		return PanelTerminalArt, true
 	case "audio":
 		return PanelAudio, true
 	case "control-center":
@@ -1134,6 +1138,12 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		if svc := r.wallpaperServiceLocked(); svc != nil {
 			h.wallpaperSnap = svc.Snapshot()
 			h.wallpaperDir = firstRoot(h.wallpaperSnap)
+		}
+	}
+	if id == PanelTerminalArt {
+		h.wallpaperOutput = wallpaper.AllOutputs
+		if svc := r.wallpaperServiceLocked(); svc != nil {
+			h.wallpaperSnap = svc.Snapshot()
 		}
 	}
 	if id == PanelAudio {
@@ -3263,6 +3273,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		return launcherTree(r, h)
 	case PanelWallpaper:
 		return wallpaperTree(r, h)
+	case PanelTerminalArt:
+		return terminalArtTree(r, h)
 	case PanelPluginStore:
 		return pluginStoreTree(r, h)
 	case PanelPlugin:
@@ -3315,6 +3327,8 @@ func panelTargetSize(id PanelID) ui.Rect {
 		// The plugin picker's size, not native Noctalia's 980x700. A short
 		// output clamps it through Placement.FittedSize (D2).
 		return ui.Rect{W: 980, H: 1100}
+	case PanelTerminalArt:
+		return ui.Rect{W: 640, H: 640}
 	case PanelAudio:
 		return audioPanelSize(1920, 1080)
 	case PanelControlCenter:

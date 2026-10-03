@@ -95,18 +95,23 @@ func (r *Registry) relayWallpaper(svc *wallpaper.Service) {
 			return
 		case snap := <-ch:
 			r.mu.Lock()
-			h := r.panelHosts[PanelWallpaper]
-			if h != nil {
+			var hosts []*PanelHost
+			for _, id := range []PanelID{PanelWallpaper, PanelTerminalArt} {
+				h := r.panelHosts[id]
+				if h == nil {
+					continue
+				}
 				h.wallpaperSnap = snap
 				h.wallpaperOutput = wallpaperOutputSelection(snap, h.wallpaperOutput)
-				if h.wallpaperDir == "" {
+				if id == PanelWallpaper && h.wallpaperDir == "" {
 					h.wallpaperDir = firstRoot(snap)
 				}
 				r.rebuildPanel(h)
+				hosts = append(hosts, h)
 			}
 			r.mu.Unlock()
-			if h != nil {
-				r.publishSurface(h.output, panelSurfaceID(PanelWallpaper))
+			for _, h := range hosts {
+				r.publishSurface(h.output, panelSurfaceID(h.id))
 			}
 		}
 	}
