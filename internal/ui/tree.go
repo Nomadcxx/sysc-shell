@@ -440,8 +440,11 @@ type Node struct {
 	Action   string
 	// Tooltip is bounded hover text owned by the node's feature. The shared
 	// dwell controller decides when and where to show it.
-	Tooltip          string
-	Bounds           Rect
+	Tooltip string
+	Bounds  Rect
+	// ClipBounds confines this subtree to Bounds when a side bar gives an
+	// oversized centre item only the visible main-axis extent.
+	ClipBounds       bool
 	Children         []*Node
 	Schedule         *ScheduleLayout
 	ScheduleItem     *ScheduleItem

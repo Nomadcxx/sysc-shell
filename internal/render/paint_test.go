@@ -143,6 +143,21 @@ func TestPaintFillsOnlyTheRoundedBody(t *testing.T) {
 	}
 }
 
+func TestClippedNodeKeepsDescendantPaintInsideItsBounds(t *testing.T) {
+	t.Parallel()
+	c := newTestCanvas(t, 50, 50)
+	root := &ui.Node{Kind: ui.KindCapsule, Bounds: ui.Rect{X: 2, Y: 2, W: 20, H: 20}, ClipBounds: true,
+		Children: []*ui.Node{{Kind: ui.KindCapsule, Fill: ui.FillAccent, Bounds: ui.Rect{X: 2, Y: 12, W: 20, H: 20}}}}
+	if err := paintNode(c, root, nil, testStyle, 16); err != nil {
+		t.Fatal(err)
+	}
+	inside := (16*c.Stride + 10*4) + 3
+	outside := (28*c.Stride + 10*4) + 3
+	if c.Pix[inside] == 0 || c.Pix[outside] != 0 {
+		t.Fatalf("clipped subtree alpha inside/outside = %d/%d, want paint only inside", c.Pix[inside], c.Pix[outside])
+	}
+}
+
 // An attached panel squares the bar edge so its rounded top does not punch a
 // wallpaper seam between the bar and the body.
 func TestPaintSquaresTheAttachedEdge(t *testing.T) {
