@@ -228,6 +228,20 @@ func Paint(c *Canvas, root *ui.Node, text *TextRenderer, style Style) error {
 // squareCorners is the body's square corners: the two on the attached edge,
 // and each far corner that turns into an edge fillet.
 func (s Style) squareCorners() Corners {
+	if s.AttachEdge == "left" || s.AttachEdge == "right" {
+		near, far := SquareTL|SquareBL, SquareTR|SquareBR
+		if s.AttachEdge == "right" {
+			near, far = far, near
+		}
+		square := near
+		if s.EdgeFillet > 0 && s.EdgeLeft {
+			square |= far & (SquareTL | SquareTR)
+		}
+		if s.EdgeFillet > 0 && s.EdgeRight {
+			square |= far & (SquareBL | SquareBR)
+		}
+		return square
+	}
 	near, far := SquareTL|SquareTR, SquareBL|SquareBR
 	switch s.AttachEdge {
 	case "top":
