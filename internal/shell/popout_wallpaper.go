@@ -1052,15 +1052,21 @@ func (h *PanelHost) wallpaperKeyPress(r *Registry, key uint32) bool {
 	return true
 }
 
-// wallpaperMoveSel walks the four-column grid, clamped at each end rather than
-// wrapping: wrapping from the last tile to the first reads as a jump.
+// wallpaperMoveSel walks the four-column grid.
 func (h *PanelHost) wallpaperMoveSel(r *Registry, delta, count int) {
-	if count == 0 {
-		h.wallpaperSel = 0
-		return
+	h.wallpaperSel = gridMoveSel(h.wallpaperSel, delta, count)
+	if count > 0 {
+		r.rebuildPanel(h)
 	}
-	h.wallpaperSel = min(max(h.wallpaperSel+delta, 0), count-1)
-	r.rebuildPanel(h)
+}
+
+// gridMoveSel moves a grid selection, clamped at each end rather than
+// wrapping: wrapping from the last tile to the first reads as a jump.
+func gridMoveSel(sel, delta, count int) int {
+	if count == 0 {
+		return 0
+	}
+	return min(max(sel+delta, 0), count-1)
 }
 
 // wallpaperActivate applies the selected tile, or descends into it when it is

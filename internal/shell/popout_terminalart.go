@@ -282,3 +282,32 @@ func (h *PanelHost) artApply(r *Registry, id string) {
 		})
 	}
 }
+
+// artKeyPress walks the three-column card grid and applies the selected card.
+func (h *PanelHost) artKeyPress(r *Registry, key uint32) bool {
+	effects := artEffects(h)
+	delta := 0
+	switch key {
+	case keyLeft:
+		delta = -1
+	case keyRight:
+		delta = 1
+	case keyUp:
+		delta = -artColumns
+	case keyDown:
+		delta = artColumns
+	case keyEnter:
+		if n := h.focused(); n != nil && n.Kind == ui.KindButton && n.Action != "" {
+			return false
+		}
+		if h.wallpaperSel >= 0 && h.wallpaperSel < len(effects) {
+			h.artApply(r, effects[h.wallpaperSel].ID)
+		}
+		return true
+	default:
+		return false
+	}
+	h.wallpaperSel = gridMoveSel(h.wallpaperSel, delta, len(effects))
+	r.rebuildPanel(h)
+	return true
+}

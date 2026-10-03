@@ -1191,6 +1191,13 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		h.focusByName("Search")
 		h.wallpaperFocused = true
 	}
+	if id == PanelTerminalArt {
+		// The cards own Enter, so focus starts on them rather than on the
+		// output select that happens to come first.
+		if effects := artEffects(h); len(effects) > 0 {
+			h.focusByName(effects[0].ID)
+		}
+	}
 	if id == PanelAudio {
 		h.focusByName("Volumes")
 	}
@@ -2181,6 +2188,9 @@ func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) bool {
 		return true
 	}
 	if h.id == PanelWallpaper && h.wallpaperKeyPress(r, key) {
+		return true
+	}
+	if h.id == PanelTerminalArt && h.artKeyPress(r, key) {
 		return true
 	}
 	if h.id == PanelClipboard && h.clipboardKeyPress(r, key) {

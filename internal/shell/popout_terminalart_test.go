@@ -353,3 +353,46 @@ func TestTerminalArtRestoreDisabledWithoutStill(t *testing.T) {
 		t.Error("an output showing a wallpaper offers no effect controls")
 	}
 }
+
+type sixArtEngine struct{ stubWallpaperEngine }
+
+func (sixArtEngine) Capabilities() wallpaper.Capabilities {
+	return wallpaper.Capabilities{
+		Terminal: true,
+		Catalog: wallpaper.Catalog{
+			Effects: []wallpaper.EffectInfo{
+				{ID: "a"}, {ID: "b"}, {ID: "c"}, {ID: "words", Text: true}, {ID: "d"}, {ID: "e"}, {ID: "f"},
+			},
+			Themes: []string{"nord"},
+		},
+	}
+}
+
+func TestTerminalArtArrowKeysWalkThreeColumns(t *testing.T) {
+	reg, svc := artRegistry(t, sixArtEngine{})
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	for _, step := range []struct {
+		key  uint32
+		want int
+	}{
+		{keyDown, 3}, {keyRight, 4}, {keyDown, 5}, {keyUp, 2}, {keyLeft, 1}, {keyUp, 0}, {keyLeft, 0},
+	} {
+		if !h.keyPress(reg, step.key) {
+			reg.mu.Unlock()
+			t.Fatalf("key %d was not handled", step.key)
+		}
+		if h.wallpaperSel != step.want {
+			reg.mu.Unlock()
+			t.Fatalf("after key %d: selection %d, want %d", step.key, h.wallpaperSel, step.want)
+		}
+	}
+	h.keyPress(reg, keyRight)
+	h.keyPress(reg, keyDown) // "e": the hidden text effect is not a stop
+	if !h.keyPress(reg, keyEnter) {
+		reg.mu.Unlock()
+		t.Fatal("Enter on the grid was not handled")
+	}
+	reg.mu.Unlock()
+	awaitArt(t, svc, "DP-1", runningEffect("e", "nord"))
+}
