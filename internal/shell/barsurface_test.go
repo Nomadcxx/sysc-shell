@@ -184,7 +184,7 @@ func TestIslandsBlurEachVisibleCapsule(t *testing.T) {
 }
 
 // TestBarBodyMatchesThePlatform: the shell paints its body where the platform
-// declares it, for both shapes on both edges.
+// declares it, for every shape and edge.
 func TestBarBodyMatchesThePlatform(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -192,7 +192,7 @@ func TestBarBodyMatchesThePlatform(t *testing.T) {
 		hc    bool
 	}{{"frosted", false}, {"islands", false}, {"islands", true}} {
 		for _, shape := range config.BarShapes {
-			for _, edge := range []string{"top", "bottom"} {
+			for _, edge := range []string{"top", "bottom", "left", "right"} {
 				checkBarBodyMatchesThePlatform(t, tc.style, tc.hc, shape, edge)
 			}
 		}
@@ -215,10 +215,13 @@ func checkBarBodyMatchesThePlatform(t *testing.T, style string, hc bool, shape, 
 	}
 	t.Cleanup(bar.stopAnimation)
 	name := fmt.Sprintf("%s hc=%v %s %s", style, hc, shape, edge)
-	height := policy.SurfaceExtent()
+	width, height := 1200, policy.SurfaceExtent()
+	if edge == "left" || edge == "right" {
+		width, height = policy.SurfaceExtent(), 800
+	}
 	var want ui.Rect
-	want.X, want.Y, want.W, want.H = policy.BodyIn(1200, height)
-	if got := bar.bodyLocked(1200, height); got != want {
+	want.X, want.Y, want.W, want.H = policy.BodyIn(width, height)
+	if got := bar.bodyLocked(width, height); got != want {
 		t.Errorf("%s: shell body %+v, platform body %+v", name, got, want)
 	}
 	if surface, _, _ := bar.themeSnapshot().Geometry(); surface != policy.Extent() {
