@@ -53,21 +53,10 @@ const (
 	wallpaperFolderWidth  = 300
 	wallpaperPaletteWidth = 240
 
-	// Section labels. RoleCaption is 12px, and the launcher already uses it
-	// where a muted colour would otherwise be reached for: the palette has no
-	// muted role, so a smaller type role is how secondary text reads as
-	// secondary.
-	wallpaperLabelH   = 16
-	wallpaperLabelGap = 2
-
 	// wallpaperAutoPalette is the theme option that means "derive the palette
 	// from whatever wallpaper is applied", which is the behaviour before any
 	// scheme is pinned.
 	wallpaperAutoPalette = "Auto (from wallpaper)"
-
-	// wallpaperEnginePillH is the engine strip: shorter than a control, since
-	// the pills are read, not pressed.
-	wallpaperEnginePillH = 26
 
 	// wallpaperCoverageTimeout bounds the compositor probe.
 	wallpaperCoverageTimeout = 2 * time.Second
@@ -173,27 +162,6 @@ func wallpaperDirs(h *PanelHost) []wallpaper.Entry {
 // even at standard density: these rows frame the grid rather than being the
 // thing you came for, and section labels above them cost height of their own.
 func wallpaperChromeH(h *PanelHost) int { return h.theme.Metrics.CompactControl }
-
-// wallpaperGroupH is the height of a labelled control group.
-func wallpaperGroupH(h *PanelHost) int {
-	return wallpaperLabelH + wallpaperLabelGap + wallpaperChromeH(h)
-}
-
-// wallpaperLabeled stacks a section label over its control. The label names
-// what the control acts on, which the controls alone did not say.
-func wallpaperLabeled(h *PanelHost, label string, width int, control *ui.Node) *ui.Node {
-	return &ui.Node{
-		Kind: ui.KindColumn, Gap: wallpaperLabelGap, Width: width,
-		Height: wallpaperGroupH(h),
-		Children: []*ui.Node{
-			{
-				Kind: ui.KindText, Text: label, TextRole: theme.RoleCaption,
-				Height: wallpaperLabelH,
-			},
-			control,
-		},
-	}
-}
 
 // wallpaperCombo is a closed dropdown: the current value and a chevron. It is
 // a button rather than a ui.KindMenu because KindMenu renders its options
@@ -303,30 +271,33 @@ func wallpaperTree(r *Registry, h *PanelHost) *ui.Node {
 
 	children := []*ui.Node{
 		wallpaperTitleRow(h),
-		wallpaperSearchRow(h, inner),
-		wallpaperNavRow(h, inner),
+		wallpaperActiveStrip(h),
+		wallpaperToolbar(h, inner),
 	}
 	if h.wallpaperMenu == "folder" {
 		children = append(children, wallpaperOptionList(h, wallpaperFolderOptions(h)))
 	}
-	children = append(children, wallpaperThemeEngineRow(h))
-	if h.wallpaperMenu == "palette" {
-		children = append(children, wallpaperOptionList(h, wallpaperPaletteOptions(h)))
-	}
 	children = append(children, wallpaperBanners(h)...)
-	children = append(children, wallpaperActiveStrip(h))
 
 	media := wallpaperMedia(h)
+	// The theme list opens beside its combo in the footer, so it sits under
+	// the grid and the grid gives up the height.
+	var after []*ui.Node
+	if h.wallpaperMenu == "palette" {
+		after = append(after, wallpaperOptionList(h, wallpaperPaletteOptions(h)))
+	}
+	after = append(after, wallpaperFooter(h, media))
+
 	rows := (len(media) + wallpaperColumns - 1) / wallpaperColumns
 	used := 0
-	for _, child := range children {
+	for _, child := range append(slices.Clone(children), after...) {
 		used += childHeightFor(child)
 	}
 	list := &ui.Node{
 		Kind:       ui.KindVirtualList,
 		ItemCount:  rows,
 		ItemHeight: wallpaperRowHeight,
-		Height:     max(h.place.Panel.H-2*wallpaperPadding-used-wallpaperCaptionH-wallpaperGridGap, 0),
+		Height:     max(h.place.Panel.H-2*wallpaperPadding-used, 0),
 		Item: func(row int) *ui.Node {
 			return wallpaperRow(r, h, media, row)
 		},
@@ -336,7 +307,7 @@ func wallpaperTree(r *Registry, h *PanelHost) *ui.Node {
 	} else {
 		children = append(children, list)
 	}
-	children = append(children, wallpaperCount(media))
+	children = append(children, after...)
 
 	return &ui.Node{
 		Kind:     ui.KindColumn,
@@ -370,7 +341,8 @@ func wallpaperEmptyState(h *PanelHost) *ui.Node {
 	return &ui.Node{Kind: ui.KindText, Text: text, Height: wallpaperCaptionH}
 }
 
-// wallpaperTitleRow is the panel's name and its controls.
+// wallpaperTitleRow is the panel's name, the outputs it acts on, and its
+// controls.
 func wallpaperTitleRow(h *PanelHost) *ui.Node {
 	return &ui.Node{
 		Kind:   ui.KindRow,
@@ -378,6 +350,7 @@ func wallpaperTitleRow(h *PanelHost) *ui.Node {
 		Height: h.theme.Metrics.StandardControl,
 		Children: []*ui.Node{
 			{Kind: ui.KindText, Text: "Wallpaper", TextRole: theme.RoleTitle},
+			wallpaperOutputSelect(h, "wallpaper-output:"),
 			wallpaperButton(h, "wallpaper-refresh", "Refresh", false),
 			{
 				Kind: ui.KindButton, Action: "wallpaper-close", Name: "Close",
@@ -385,25 +358,6 @@ func wallpaperTitleRow(h *PanelHost) *ui.Node {
 				Height:   h.theme.Metrics.StandardControl,
 				Children: []*ui.Node{{Kind: ui.KindIcon, Icon: "close", IconSize: wallpaperIconSize}},
 			},
-		},
-	}
-}
-
-// wallpaperSearchRow is the search field beside the output select. The select
-// is the fan-out control: All is two applies, not gSlapper's wildcard (D14).
-func wallpaperSearchRow(h *PanelHost, inner int) *ui.Node {
-	ch := wallpaperChromeH(h)
-	fieldW := max(inner-wallpaperOutputWidth-wallpaperGridGap, 0)
-	field := h.search.Node("Search")
-	field.Height = ch
-	field.Padding = 8
-	field.Width = fieldW
-
-	return &ui.Node{
-		Kind: ui.KindRow, Gap: wallpaperGridGap, Height: wallpaperGroupH(h),
-		Children: []*ui.Node{
-			wallpaperLabeled(h, "SEARCH", fieldW, field),
-			wallpaperLabeled(h, "OUTPUT", wallpaperOutputWidth, wallpaperOutputSelect(h, "wallpaper-output:")),
 		},
 	}
 }
@@ -438,13 +392,15 @@ func wallpaperOutputLabel(token string) string {
 	return token
 }
 
-// wallpaperNavRow carries what to show and where to look: the kind filter,
-// the folder dropdown, and Up once the picker has descended out of a root.
+// wallpaperToolbar is how to find something: search, the kind filter, the
+// folder dropdown, and Up once the picker has descended out of a root. The
+// search field's role is unambiguous, so it carries a search icon rather than
+// a caption label above it.
 //
 // The folder control replaces a two-row band of chips. That band showed 8 of
 // 26 folders and, being a scrollable region above the grid, quietly took every
 // wheel event the grid was meant to get.
-func wallpaperNavRow(h *PanelHost, inner int) *ui.Node {
+func wallpaperToolbar(h *PanelHost, inner int) *ui.Node {
 	ch := wallpaperChromeH(h)
 	filters := []struct {
 		label string
@@ -465,23 +421,28 @@ func wallpaperNavRow(h *PanelHost, inner int) *ui.Node {
 	}
 
 	folder := []*ui.Node{wallpaperCombo(h, "folder", wallpaperFolderLabel(h), wallpaperFolderWidth)}
-	folderW := wallpaperFolderWidth
+	used := wallpaperFilterWidth + wallpaperFolderWidth + 3*wallpaperGridGap + wallpaperIconSize
 	if h.wallpaperSnap.Library != nil {
 		if _, ok := h.wallpaperSnap.Library.Parent(h.wallpaperDir); ok {
 			up := wallpaperButton(h, "wallpaper-up", "Up", false)
 			up.Height = ch
 			folder = append(folder, up)
-			folderW += wallpaperGridGap + 64
+			used += wallpaperGridGap + 64
 		}
 	}
-	group := &ui.Node{Kind: ui.KindRow, Gap: wallpaperGridGap, Height: ch, Children: folder}
+	field := h.search.Node("Search")
+	field.Height = ch
+	// One padded line has to fit the compact row: 8 overflowed it.
+	field.Padding = 6
+	field.Width = max(inner-used, 0)
 
 	return &ui.Node{
-		Kind: ui.KindRow, Gap: wallpaperGridGap, Height: wallpaperGroupH(h),
-		Children: []*ui.Node{
-			wallpaperLabeled(h, "SHOW", wallpaperFilterWidth, show),
-			wallpaperLabeled(h, "FOLDER", folderW, group),
-		},
+		Kind: ui.KindRow, Gap: wallpaperGridGap, Height: ch,
+		Children: append([]*ui.Node{
+			{Kind: ui.KindIcon, Icon: "search", IconSize: wallpaperIconSize},
+			field,
+			show,
+		}, folder...),
 	}
 }
 
@@ -688,12 +649,6 @@ func wallpaperBanners(h *PanelHost) []*ui.Node {
 		}
 		out = append(out, &ui.Node{Kind: ui.KindText, Text: text, Tone: tone, Height: wallpaperCaptionH})
 	}
-	if done, total := h.wallpaperSnap.ThumbsDone, h.wallpaperSnap.ThumbsTotal; total > 0 && done < total {
-		// Previews are generated slowly on purpose. Saying so is the
-		// difference between a library that is still filling in and one that
-		// looks broken.
-		add(fmt.Sprintf("Generating previews \u00b7 %d / %d", done, total), ui.ToneNormal)
-	}
 	for _, connector := range wallpaperTargets(h) {
 		if h.wallpaperSnap.Runtime[connector].State == wallpaper.StateStarting {
 			add("Applying wallpaper\u2026", ui.ToneNormal)
@@ -722,45 +677,38 @@ func wallpaperBanners(h *PanelHost) []*ui.Node {
 	return out
 }
 
-// wallpaperThemeEngineRow carries the palette choice and the engine readout.
-func wallpaperThemeEngineRow(h *PanelHost) *ui.Node {
+// wallpaperFooter is the rest: what the grid holds, preview progress, the
+// shell theme, and the one engine painting the selected outputs.
+func wallpaperFooter(h *PanelHost, media []wallpaper.Entry) *ui.Node {
+	count := plural(len(media), "item")
+	if done, total := h.wallpaperSnap.ThumbsDone, h.wallpaperSnap.ThumbsTotal; total > 0 && done < total {
+		// Previews are generated slowly on purpose. Saying so is the
+		// difference between a library that is still filling in and one that
+		// looks broken.
+		count += fmt.Sprintf(" \u00b7 Generating previews \u00b7 %d / %d", done, total)
+	}
+	engine := &ui.Node{Kind: ui.KindText, Role: "status", Name: "Engine", TextRole: theme.RoleCaption}
+	if name := wallpaperActiveEngine(h); name == wallpaper.EngineGSlapper {
+		engine.Text = "gSlapper"
+	} else if name != "" {
+		engine.Text = name
+	} else if wallpaperNoEngine(h) {
+		engine.Text, engine.Tone = "no wallpaper engine installed", ui.ToneError
+	}
 	return &ui.Node{
-		Kind: ui.KindRow, Gap: wallpaperGridGap, Height: wallpaperGroupH(h),
+		Kind: ui.KindRow, Gap: wallpaperGridGap, Height: wallpaperChromeH(h),
 		Children: []*ui.Node{
-			wallpaperLabeled(h, "THEME", wallpaperPaletteWidth,
-				wallpaperCombo(h, "palette", wallpaperPaletteLabel(h), wallpaperPaletteWidth)),
-			wallpaperLabeled(h, "ENGINE", 0, wallpaperEngineRow(h)),
+			{Kind: ui.KindText, Text: count, TextRole: theme.RoleCaption},
+			{Kind: ui.KindText, Text: "Shell theme", TextRole: theme.RoleCaption},
+			wallpaperCombo(h, "palette", wallpaperPaletteLabel(h), wallpaperPaletteWidth),
+			engine,
 		},
 	}
 }
 
-// wallpaperEngineRow names the wallpaper engines this machine has, one pill
-// each, in the order they are reached: gSlapper drives video and image, the
-// static fallbacks are where Restore hands off. A pill is absent when its
-// binary is not installed, which reads faster than a sentence saying so.
-//
-// The pill for the engine actually painting the selected output is marked
-// selected, so "installed" and "in use" stop looking the same. Without it the
-// row listed three names with nothing to say which of them was doing the work.
-func wallpaperEngineRow(h *PanelHost) *ui.Node {
-	active := wallpaperActiveEngine(h)
-	var pills []*ui.Node
-	if h.wallpaperSnap.Caps.GSlapper {
-		pills = append(pills, wallpaperEnginePill(h, "gSlapper", active == wallpaper.EngineGSlapper))
-	}
-	for _, name := range h.wallpaperSnap.Caps.Statics {
-		pills = append(pills, wallpaperEnginePill(h, name, active == name))
-	}
-	if len(pills) == 0 {
-		// The one case prose earns its space: nothing can paint anything.
-		return &ui.Node{
-			Kind: ui.KindText, Height: wallpaperChromeH(h), Tone: ui.ToneError,
-			Text: "no wallpaper engine installed",
-		}
-	}
-	return &ui.Node{
-		Kind: ui.KindRow, Gap: theme.MarginS, Height: wallpaperChromeH(h), Children: pills,
-	}
+// wallpaperNoEngine reports that nothing installed can paint a wallpaper.
+func wallpaperNoEngine(h *PanelHost) bool {
+	return !h.wallpaperSnap.Caps.GSlapper && len(h.wallpaperSnap.Caps.Statics) == 0
 }
 
 // wallpaperActiveEngine is the engine painting the selected outputs, or "" when
@@ -789,19 +737,6 @@ func wallpaperActiveEngine(h *PanelHost) string {
 		agreed = name
 	}
 	return agreed
-}
-
-func wallpaperEnginePill(h *PanelHost, label string, selected bool) *ui.Node {
-	n := &ui.Node{
-		Kind: ui.KindButton, Name: label, Role: "status",
-		Padding:  wallpaperControlPad,
-		Height:   wallpaperChromeH(h),
-		Children: []*ui.Node{{Kind: ui.KindText, Text: label}},
-	}
-	if selected {
-		n.State |= ui.StateSelected
-	}
-	return n
 }
 
 // wallpaperActiveStrip is what the selected output is showing, with the
@@ -907,21 +842,6 @@ func wallpaperStateName(s wallpaper.State) string {
 		return "error"
 	}
 	return "static"
-}
-
-// wallpaperCount is the media count under the grid.
-func wallpaperCount(media []wallpaper.Entry) *ui.Node {
-	files := 0
-	for _, e := range media {
-		if !e.IsDir {
-			files++
-		}
-	}
-	return &ui.Node{
-		Kind:   ui.KindText,
-		Text:   fmt.Sprintf("%d items", files),
-		Height: wallpaperCaptionH,
-	}
 }
 
 // wallpaperKeyPress moves the grid selection and applies. It returns false for
