@@ -329,16 +329,40 @@ func childHeightFor(n *ui.Node) int {
 }
 
 // wallpaperEmptyState explains an empty grid, which otherwise reads as a
-// broken picker. A search that matches nothing is a different situation from a
-// directory that holds nothing.
+// broken picker, and offers the one action that gets out of it.
 func wallpaperEmptyState(h *PanelHost) *ui.Node {
-	text := "No supported wallpapers in this directory"
-	if wallpaperSearch(h) != "" {
-		text = "No wallpapers match your search"
-	} else if h.wallpaperSnap.Library == nil {
-		text = "Indexing wallpaper library\u2026"
+	row := func(text string, lead, button *ui.Node) *ui.Node {
+		n := &ui.Node{Kind: ui.KindRow, Gap: theme.MarginM, Height: wallpaperChromeH(h)}
+		if lead != nil {
+			n.Children = append(n.Children, lead)
+		}
+		n.Children = append(n.Children, &ui.Node{Kind: ui.KindText, Text: text})
+		if button != nil {
+			n.Children = append(n.Children, button)
+		}
+		return n
 	}
-	return &ui.Node{Kind: ui.KindText, Text: text, Height: wallpaperCaptionH}
+	lib := h.wallpaperSnap.Library
+	if lib == nil {
+		return row("Indexing wallpaper library\u2026", &ui.Node{Kind: ui.KindSpinner, Key: "wallpaper-indexing"}, nil)
+	}
+	if search := wallpaperSearch(h); search != "" {
+		return row(fmt.Sprintf("No wallpapers match %q", search), nil,
+			wallpaperButton(h, "wallpaper-clear-search", "Clear search", false))
+	}
+	if h.wallpaperFilter != wallpaper.FilterAll && len(lib.View(h.wallpaperDir, wallpaper.FilterAll, "")) > 0 {
+		text := "No videos here"
+		if h.wallpaperFilter == wallpaper.FilterImages {
+			text = "No images here"
+		}
+		return row(text, nil, wallpaperButton(h, fmt.Sprintf("wallpaper-filter:%d", wallpaper.FilterAll), "Show all", false))
+	}
+	if _, ok := lib.Parent(h.wallpaperDir); ok {
+		return row("No images or videos in "+filepath.Base(h.wallpaperDir), nil,
+			wallpaperButton(h, "wallpaper-up", "Up", false))
+	}
+	return row("No supported wallpapers in this library", nil,
+		wallpaperButton(h, "wallpaper-library-settings", "Library settings", false))
 }
 
 // wallpaperTitleRow is the panel's name, the outputs it acts on, and its
@@ -1360,6 +1384,16 @@ func (h *PanelHost) wallpaperAction(r *Registry, n *ui.Node) bool {
 		return true
 	case n.Action == "wallpaper-up":
 		h.wallpaperUp(r)
+		return true
+	case n.Action == "wallpaper-clear-search":
+		h.search.Clear()
+		h.wallpaperSel = 0
+		r.rebuildPanel(h)
+		return true
+	case n.Action == "wallpaper-library-settings":
+		output := h.output
+		r.closePanelLocked(PanelWallpaper)
+		r.openSettingsAtLocked(output, "Wallpaper")
 		return true
 	case n.Action == "wallpaper-open-art":
 		// Like Control Centre's links: the panel you came from retires, the

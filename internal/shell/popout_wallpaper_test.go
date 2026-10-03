@@ -869,23 +869,81 @@ func TestWallpaperReportsPreviewGeneration(t *testing.T) {
 	}
 }
 
-func TestWallpaperEmptyStatesExplainThemselves(t *testing.T) {
+// An empty grid reads as a broken picker unless it says why and offers the
+// one action that gets out of it.
+func TestWallpaperEmptyStatesOfferAnAction(t *testing.T) {
 	t.Parallel()
 
-	empty := t.TempDir()
-	reg, _, _ := openWallpaperPanel(t, []string{empty})
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.png"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg, _, _ := openWallpaperPanel(t, []string{root})
 	h := wallpaperHost(t, reg)
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
 
-	text := wallpaperEmptyState(h).Text
-	if !strings.Contains(text, "No supported wallpapers") {
-		t.Errorf("empty directory says %q", text)
+	state := func() (string, string) {
+		t.Helper()
+		n := wallpaperEmptyState(h)
+		text, action := "", ""
+		walkNodes(n, func(c *ui.Node) {
+			if c.Kind == ui.KindText && text == "" {
+				text = c.Text
+			}
+			if c.Action != "" {
+				action = c.Action
+			}
+		})
+		return text, action
 	}
 
 	h.search = ui.NewField("zzzz")
-	if text := wallpaperEmptyState(h).Text; !strings.Contains(text, "match your search") {
-		t.Errorf("a search with no hits says %q", text)
+	if text, action := state(); !strings.Contains(text, `match "zzzz"`) || action != "wallpaper-clear-search" {
+		t.Errorf("search: %q / %q", text, action)
+	}
+	if !h.wallpaperAction(reg, &ui.Node{Action: "wallpaper-clear-search"}) || wallpaperSearch(h) != "" {
+		t.Error("Clear search did not clear the field")
+	}
+
+	h.wallpaperFilter = wallpaper.FilterVideos
+	if text, action := state(); !strings.Contains(text, "No videos") || action != "wallpaper-filter:0" {
+		t.Errorf("filtered: %q / %q", text, action)
+	}
+	h.wallpaperFilter = wallpaper.FilterAll
+
+	h.wallpaperDir = filepath.Join(root, "empty")
+	if text, action := state(); !strings.Contains(text, "No images or videos in empty") || action != "wallpaper-up" {
+		t.Errorf("empty folder: %q / %q", text, action)
+	}
+
+	h.wallpaperSnap.Library = wallpaper.Scan([]string{filepath.Join(root, "empty")})
+	h.wallpaperDir = filepath.Join(root, "empty")
+	if _, action := state(); action != "wallpaper-library-settings" {
+		t.Errorf("empty root: action %q, want Library settings", action)
+	}
+
+	h.wallpaperSnap.Library = nil
+	if text, action := state(); !strings.Contains(text, "Indexing") || action != "" ||
+		findNode(wallpaperEmptyState(h), func(n *ui.Node) bool { return n.Kind == ui.KindSpinner }) == nil {
+		t.Errorf("indexing: %q / %q, want a spinner and no action", text, action)
+	}
+}
+
+func TestWallpaperLibrarySettingsOpensSettings(t *testing.T) {
+	reg, _, _ := openWallpaperPanel(t, []string{t.TempDir()})
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if !h.wallpaperAction(reg, &ui.Node{Action: "wallpaper-library-settings"}) {
+		t.Fatal("Library settings was not handled")
+	}
+	settings := reg.panelHosts[PanelSettings]
+	if reg.panelHosts[PanelWallpaper] != nil || settings == nil || settings.section != "Wallpaper" {
+		t.Fatalf("wallpaper open=%v settings=%+v; want Settings at Wallpaper", reg.panelHosts[PanelWallpaper] != nil, settings)
 	}
 }
 
