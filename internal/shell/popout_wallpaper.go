@@ -1467,7 +1467,7 @@ func wallpaperCoverageProbe() (map[string]string, error) {
 // belongs to somebody else and is left alone (D17/D18).
 func wallpaperOurNamespace(namespace string) bool {
 	switch namespace {
-	case "slapper", "awww-daemon", "swaybg":
+	case "slapper", "awww-daemon", "swaybg", "sysc-terminal":
 		return true
 	}
 	return strings.HasPrefix(namespace, "sysc-shell")

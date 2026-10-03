@@ -1224,3 +1224,15 @@ func TestThumbArrivalDoesNotRebuildTheTree(t *testing.T) {
 		t.Error("the tree was rebuilt for a raster arrival")
 	}
 }
+
+func TestWallpaperOurNamespaceIncludesTerminal(t *testing.T) {
+	if !wallpaperOurNamespace("sysc-terminal") {
+		t.Fatal("sysc-terminal on Background must be ours")
+	}
+	if !wallpaperOurNamespace("slapper") {
+		t.Fatal("slapper must stay ours")
+	}
+	if wallpaperOurNamespace("org.gnome.Shell") {
+		t.Fatal("a foreign Background namespace was claimed")
+	}
+}

@@ -15,12 +15,15 @@ import (
 type wireAssignment struct {
 	Kind            string `json:"kind"`
 	Path            string `json:"path"`
+	Effect          string `json:"effect,omitempty"`
+	Theme           string `json:"theme,omitempty"`
+	Artwork         string `json:"artwork,omitempty"`
 	PreviewPath     string `json:"preview_path,omitempty"`
 	DesiredPlayback string `json:"desired_playback"`
 }
 
 var (
-	kindNames     = map[Kind]string{KindImage: "image", KindVideo: "video"}
+	kindNames     = map[Kind]string{KindImage: "image", KindVideo: "video", KindEffect: "effect"}
 	playbackNames = map[State]string{StateStatic: "static", StatePlaying: "playing", StatePaused: "paused"}
 )
 
@@ -69,13 +72,49 @@ func checkPath(path string) error {
 	return nil
 }
 
+func checkAssignment(a Assignment) error {
+	if a.Kind == KindEffect {
+		if err := checkToken("effect", a.Effect); err != nil {
+			return err
+		}
+		if a.Theme != "" {
+			if err := checkToken("theme", a.Theme); err != nil {
+				return err
+			}
+		}
+		if a.Artwork != "" {
+			if err := checkPath(a.Artwork); err != nil {
+				return err
+			}
+		}
+		if a.Path != "" {
+			return checkPath(a.Path)
+		}
+		return nil
+	}
+	return checkPath(a.Path)
+}
+
+func checkToken(what, v string) error {
+	if v == "" {
+		return fmt.Errorf("wallpaper: empty %s", what)
+	}
+	if strings.ContainsAny(v, "\n\r") {
+		return fmt.Errorf("wallpaper: %s %q contains a newline", what, v)
+	}
+	if !utf8.ValidString(v) {
+		return fmt.Errorf("wallpaper: %s is not valid UTF-8", what)
+	}
+	return nil
+}
+
 // SaveAssignments writes the assignment table atomically at mode 0600. A
 // refused entry fails the whole write and leaves the previous file in place:
 // half a table would silently drop an output's wallpaper.
 func SaveAssignments(path string, assignments map[string]Assignment) error {
 	wire := make(map[string]wireAssignment, len(assignments))
 	for connector, a := range assignments {
-		if err := checkPath(a.Path); err != nil {
+		if err := checkAssignment(a); err != nil {
 			return err
 		}
 		if a.PreviewPath != "" {
@@ -92,7 +131,8 @@ func SaveAssignments(path string, assignments map[string]Assignment) error {
 			playback = playbackNames[StateStatic]
 		}
 		wire[connector] = wireAssignment{
-			Kind: kind, Path: a.Path, PreviewPath: a.PreviewPath, DesiredPlayback: playback,
+			Kind: kind, Path: a.Path, Effect: a.Effect, Theme: a.Theme, Artwork: a.Artwork,
+			PreviewPath: a.PreviewPath, DesiredPlayback: playback,
 		}
 	}
 
@@ -154,7 +194,12 @@ func LoadAssignments(path string) (map[string]Assignment, error) {
 
 	out := make(map[string]Assignment, len(wire))
 	for connector, w := range wire {
-		if err := checkPath(w.Path); err != nil {
+		kind, ok := lookupName(kindNames, w.Kind)
+		if !ok {
+			return nil, fmt.Errorf("wallpaper: %s has unknown kind %q", connector, w.Kind)
+		}
+		a := Assignment{Kind: kind, Path: w.Path, Effect: w.Effect, Theme: w.Theme, Artwork: w.Artwork, PreviewPath: w.PreviewPath}
+		if err := checkAssignment(a); err != nil {
 			return nil, err
 		}
 		if w.PreviewPath != "" {
@@ -162,17 +207,12 @@ func LoadAssignments(path string) (map[string]Assignment, error) {
 				return nil, err
 			}
 		}
-		kind, ok := lookupName(kindNames, w.Kind)
-		if !ok {
-			return nil, fmt.Errorf("wallpaper: %s has unknown kind %q", connector, w.Kind)
-		}
 		playback, ok := lookupName(playbackNames, w.DesiredPlayback)
 		if !ok {
 			return nil, fmt.Errorf("wallpaper: %s has unknown playback %q", connector, w.DesiredPlayback)
 		}
-		out[connector] = Assignment{
-			Kind: kind, Path: w.Path, PreviewPath: w.PreviewPath, DesiredPlayback: playback,
-		}
+		a.DesiredPlayback = playback
+		out[connector] = a
 	}
 	return out, nil
 }

@@ -137,7 +137,7 @@ func newEngineHarness(t *testing.T) *engineHarness {
 			proc := newFakeProcess()
 			h.procs = append(h.procs, proc)
 			h.mu.Unlock()
-			if create && argv[0] == "gslapper" {
+			if create && (argv[0] == "gslapper" || argv[0] == "sysc-terminal") {
 				if i := slices.Index(argv, "-I"); i >= 0 {
 					_ = os.WriteFile(argv[i+1], nil, 0o600)
 				}
@@ -205,6 +205,49 @@ func TestEngineLaunchesWhenNoSocket(t *testing.T) {
 	}
 	if argAfter(argvs[0], "-I") != h.socket("DP-1") {
 		t.Fatalf("launched on %q, want the owned socket", argAfter(argvs[0], "-I"))
+	}
+}
+
+func TestApplyEffectDoesNotStatEmptyPath(t *testing.T) {
+	h := newEngineHarness(t)
+	h.eng.caps.Terminal = true
+	job := Job{Connector: "DP-1", Gen: 1, Kind: KindEffect, Effect: "fire", Theme: "nord"}
+	if _, err := h.eng.Apply(job, defaultSettings()); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	argvs := h.argvs()
+	if len(argvs) != 1 {
+		t.Fatalf("spawned %d processes, want 1: %v", len(argvs), argvs)
+	}
+	if argvs[0][0] != "sysc-terminal" {
+		t.Fatalf("spawned %v, want sysc-terminal", argvs[0])
+	}
+	if argAfter(argvs[0], "--effect") != "fire" || argAfter(argvs[0], "--theme") != "nord" || argAfter(argvs[0], "--output") != "DP-1" {
+		t.Fatalf("argv %v missing effect launch flags", argvs[0])
+	}
+	if slices.Contains(argvs[0], "") {
+		t.Fatalf("empty path leaked onto argv: %v", argvs[0])
+	}
+}
+
+func TestApplyEffectStopsOwnedGSlapper(t *testing.T) {
+	h := newEngineHarness(t)
+	h.eng.caps.Terminal = true
+	if _, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Path: h.media("a.png"), Kind: KindImage}, defaultSettings()); err != nil {
+		t.Fatalf("image: %v", err)
+	}
+	h.mu.Lock()
+	gslapper := h.procs[0]
+	h.mu.Unlock()
+	if _, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 2, Kind: KindEffect, Effect: "rain", Theme: "dracula"}, defaultSettings()); err != nil {
+		t.Fatalf("effect: %v", err)
+	}
+	if !gslapper.wasStopped() {
+		t.Fatal("applying an effect left gSlapper running on the output")
+	}
+	argvs := h.argvs()
+	if len(argvs) != 2 || argvs[1][0] != "sysc-terminal" {
+		t.Fatalf("spawned %v, want gslapper then sysc-terminal", argvs)
 	}
 }
 

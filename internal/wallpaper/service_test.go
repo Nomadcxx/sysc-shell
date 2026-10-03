@@ -478,6 +478,43 @@ func TestEngineForNamesTheEngineAnApplyWillUse(t *testing.T) {
 	}
 }
 
+func TestEngineForEffectComesBeforeGSlapper(t *testing.T) {
+	both := Capabilities{GSlapper: true, Terminal: true, Statics: []string{"awww"}}
+	if got := both.EngineFor(KindEffect); got != EngineTerminal {
+		t.Errorf("effect with both engines = %q, want %q", got, EngineTerminal)
+	}
+	if got := both.EngineFor(KindVideo); got != EngineGSlapper {
+		t.Errorf("video with gslapper = %q, want %q", got, EngineGSlapper)
+	}
+	if got := both.EngineFor(KindImage); got != EngineGSlapper {
+		t.Errorf("image with gslapper = %q, want %q", got, EngineGSlapper)
+	}
+	gslapperOnly := Capabilities{GSlapper: true, Statics: []string{"awww"}}
+	if got := gslapperOnly.EngineFor(KindEffect); got != "" {
+		t.Errorf("effect without terminal = %q, want none", got)
+	}
+	termOnly := Capabilities{Terminal: true, Statics: []string{"awww"}}
+	if got := termOnly.EngineFor(KindEffect); got != EngineTerminal {
+		t.Errorf("effect without gslapper = %q, want %q", got, EngineTerminal)
+	}
+}
+
+func TestServicePauseWorksForEffect(t *testing.T) {
+	engine := newFakeEngine()
+	engine.caps.Terminal = true
+	svc := newTestService(t, engine)
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Kind: KindEffect, Effect: "fire", Theme: "nord"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Kind == KindEffect })
+	svc.Enqueue(Command{Op: OpPause, Token: "DP-1"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Runtime["DP-1"].State == StatePaused })
+	engine.mu.Lock()
+	paused := engine.paused["DP-1"]
+	engine.mu.Unlock()
+	if !paused {
+		t.Fatal("KindEffect pause did not reach the engine")
+	}
+}
+
 func TestServiceReconnectWaitsForDisconnectCleanup(t *testing.T) {
 	engine := newFakeEngine()
 	svc := newTestService(t, engine)
