@@ -442,6 +442,8 @@ type Node struct {
 	// dwell controller decides when and where to show it.
 	Tooltip string
 	Bounds  Rect
+	// FadeAxis selects the trailing edge covered by a KindEdgeFade.
+	FadeAxis Axis
 	// ClipBounds confines this subtree to Bounds when a side bar gives an
 	// oversized centre item only the visible main-axis extent.
 	ClipBounds       bool

@@ -15,7 +15,7 @@ import "github.com/Nomadcxx/sysc-shell/internal/ui"
 //
 // A section drops the tail of its declaration order, so the cut is always at
 // the trailing edge of what is left, for every section.
-func overflowFades(sections [][]*ui.Node, over ui.BarOverflow, extent int) []*ui.Node {
+func overflowFades(sections [][]*ui.Node, over ui.BarOverflow, extent int, axis ui.Axis) []*ui.Node {
 	if !over.Any() || extent <= 0 {
 		return nil
 	}
@@ -32,6 +32,14 @@ func overflowFades(sections [][]*ui.Node, over ui.BarOverflow, extent int) []*ui
 			continue
 		}
 		box := last.Bounds
+		if axis == ui.Vertical {
+			height := min(extent, box.H)
+			out = append(out, &ui.Node{
+				Kind: ui.KindEdgeFade, FadeAxis: axis,
+				Bounds: ui.Rect{X: box.X, Y: box.Y + box.H - height, W: box.W, H: height},
+			})
+			continue
+		}
 		width := min(extent, box.W)
 		out = append(out, &ui.Node{
 			Kind:   ui.KindEdgeFade,
