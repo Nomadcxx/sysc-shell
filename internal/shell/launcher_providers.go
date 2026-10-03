@@ -26,15 +26,19 @@ func (r *Registry) calcProvider() launcher.Provider {
 		Description: "Arithmetic as you type · Enter copies",
 		Query: func(q string) []launcher.Result {
 			if !calc.IsExpression(q) {
+				r.noteLauncherRows("calc", q, nil)
 				return nil
 			}
 			v, err := calc.Eval(q)
 			if err != nil {
+				r.noteLauncherRows("calc", q, nil)
 				return nil
 			}
 			s := calc.Format(v)
-			return []launcher.Result{{Entry: launcher.Entry{ID: "calc:" + s, Name: "= " + s,
+			rows := []launcher.Result{{Entry: launcher.Entry{ID: "calc:" + s, Name: "= " + s,
 				Comment: strings.TrimSpace(q) + " · Enter copies", IconName: "glyph:calculate"}}}
+			r.noteLauncherRows("calc", q, rows)
+			return rows
 		},
 		Activate: func(_, id, _ string) error { return r.launcherCopy(strings.TrimPrefix(id, "calc:")) },
 	}
@@ -63,6 +67,7 @@ func (r *Registry) emojiProvider() launcher.Provider {
 				out = append(out, launcher.Result{Entry: launcher.Entry{
 					ID: e.Char, Name: e.Name, Comment: strings.Join(kw, " · "), IconName: "text:" + e.Char}})
 			}
+			r.noteLauncherRows("emoji", q, out)
 			return out
 		},
 		Activate: func(_, id, _ string) error { return r.launcherCopy(id) },
@@ -89,8 +94,9 @@ func (r *Registry) launcherCopy(text string) error {
 // launcherServiceConfig is the service wiring shared by the live launcher and
 // its tests; the caller adds Scan, Run and History as it needs.
 func (r *Registry) launcherServiceConfig() launcher.ServiceConfig {
+	r.ensureLauncherSnaps()
 	return launcher.ServiceConfig{
-		Rank:              launcherRank,
+		Rank:              r.rankLauncher,
 		Providers:         r.launcherProviders(),
 		ApplicationsGlyph: "glyph:apps",
 	}
@@ -102,6 +108,7 @@ func (r *Registry) notesProvider() launcher.Provider {
 		Description: "Search notes or capture with /nt <text>",
 		Query: func(q string) []launcher.Result {
 			rows, _ := notesLauncherResults(strings.TrimSpace("/nt " + q))
+			r.noteLauncherRows("notes", q, rows)
 			return rows
 		},
 		// launcherNotesAction reads the capture body from the panel's query
