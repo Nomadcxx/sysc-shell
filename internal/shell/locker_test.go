@@ -203,25 +203,32 @@ func TestLockActionLabel(t *testing.T) {
 		}()
 		return pr, exits, nil
 	}
-	if got := reg.lockActionLabel(); got != "Lock" {
+	if got := lockedLabel(reg); got != "Lock" {
 		t.Fatalf("before spawn: %q", got)
 	}
 	if err := reg.LockTracked(); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
-	for reg.lockActionLabel() != "Locked" {
+	for lockedLabel(reg) != "Locked" {
 		if time.Now().After(deadline) {
-			t.Fatalf("never reached Locked, got %q", reg.lockActionLabel())
+			t.Fatalf("never reached Locked, got %q", lockedLabel(reg))
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 	pw.Close()
 	exits <- 0
-	for reg.lockActionLabel() != "Lock" {
+	for lockedLabel(reg) != "Lock" {
 		if time.Now().After(deadline) {
-			t.Fatalf("never returned to Lock, got %q", reg.lockActionLabel())
+			t.Fatalf("never returned to Lock, got %q", lockedLabel(reg))
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+// lockedLabel mirrors the panel-rebuild call path: readers hold r.mu.
+func lockedLabel(reg *Registry) string {
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	return reg.lockActionLabel()
 }

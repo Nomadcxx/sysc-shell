@@ -33,9 +33,11 @@ type lockerSpawnFn func(argv []string) (io.ReadCloser, <-chan int, error)
 // respawn if it crashes after having acquired the lock (niri readmits a
 // new lock after client death, so re-acquire is load-bearing).
 type lockerManager struct {
-	spawn  lockerSpawnFn
-	paused func(bool)
-	sleep  func(time.Duration)
+	// stateCB is called with m.mu held (order: manager -> registry).
+	stateCB func(running, acquired bool)
+	spawn   lockerSpawnFn
+	paused  func(bool)
+	sleep   func(time.Duration)
 
 	mu          sync.Mutex
 	running     bool
@@ -76,6 +78,7 @@ func (m *lockerManager) beginLocked(argv []string) error {
 	}
 	m.running = true
 	m.acquired = false
+	m.notifyLocked()
 	m.exitCode = 0
 	if m.paused != nil {
 		m.paused(true)
@@ -91,6 +94,7 @@ func (m *lockerManager) pump(out io.Reader, exits <-chan int, argv []string) {
 		if strings.TrimSpace(scanner.Text()) == lockHandshakeLine {
 			m.mu.Lock()
 			m.acquired = true
+			m.notifyLocked()
 			m.mu.Unlock()
 		}
 	}
@@ -99,6 +103,7 @@ func (m *lockerManager) pump(out io.Reader, exits <-chan int, argv []string) {
 	m.mu.Lock()
 	m.running = false
 	m.exitCode = code
+	m.notifyLocked()
 	// ponytail: one respawn total; if the locker keeps crashing the shell
 	// surfaces the failure instead of respawning in a loop.
 	needRespawn := m.acquired && code != 0 && !m.respawnUsed
@@ -170,6 +175,13 @@ func (r *Registry) LockTracked() error {
 	return m.request(argv)
 }
 
+// notifyLocked publishes cached state for lock-held readers (panel rebuild).
+func (m *lockerManager) notifyLocked() {
+	if m.stateCB != nil {
+		m.stateCB(m.running, m.acquired)
+	}
+}
+
 // LockState reports the tracked locker's status (T17/CC status label).
 func (r *Registry) LockState() (LockState, bool) {
 	r.mu.Lock()
@@ -191,6 +203,11 @@ func (r *Registry) lockerLocked() *lockerManager {
 			spawn = realLockerSpawn
 		}
 		r.locker = &lockerManager{spawn: spawn, sleep: time.Sleep,
+			stateCB: func(running, acquired bool) {
+				r.mu.Lock()
+				r.lockerRunning, r.lockerAcquired = running, acquired
+				r.mu.Unlock()
+			},
 			paused: func(p bool) {
 				r.mu.Lock()
 				svc := r.wallpaperSvc
@@ -225,10 +242,11 @@ func (r *Registry) LockStateMap() map[string]any {
 // running-but-unacquired locker is "Locking…" (handshake pending), an
 // acquired one "Locked". Third-party lockers without the handshake line only
 // ever show "Locking…" while alive — honest, not a fake "Locked".
+// lockActionLabel reads the state cache; callers hold r.mu (panel rebuild)
+// or lock it (the exported wrapper below).
 func (r *Registry) lockActionLabel() string {
-	st, ok := r.LockState()
-	if ok && st.Running {
-		if st.Acquired {
+	if r.lockerRunning {
+		if r.lockerAcquired {
 			return "Locked"
 		}
 		return "Locking…"
