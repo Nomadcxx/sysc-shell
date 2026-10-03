@@ -225,11 +225,13 @@ type PanelHost struct {
 	// so a Notes capture superseded before its provider ran is dropped.
 	launcherAttempt        uint64
 	launcherPendingAttempt uint64
-	// launcherAwaiting is set when a query is sent and cleared when the next
-	// snapshot lands. The rows on screen belong to the previous query until
-	// then, so activating one would run something the field no longer asks for
-	// (gh #77).
+	// launcherAwaiting is set when a query is sent and cleared only by a
+	// snapshot stamped with that query's launcherQueryGen. Until then the
+	// rows on screen belong to the previous query, so activating one would
+	// run something the field no longer asks for. A snapshot already queued
+	// for the previous query must not clear the flag (gh #77, gh #90).
 	launcherAwaiting bool
+	launcherQueryGen uint64
 
 	wallpaperSnap    wallpaper.Snapshot
 	wallpaperDir     string
@@ -1118,7 +1120,7 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		h.search = ui.NewField("")
 		svc := r.launcherServiceLocked()
 		svc.Open()
-		svc.Query("")
+		r.launcherSendQuery(h, "")
 	}
 	if id == PanelWallpaper {
 		h.search = ui.NewField("")
@@ -2550,8 +2552,7 @@ func (h *PanelHost) fieldChanged(r *Registry, n *ui.Node, f *ui.Field) bool {
 			h.launcherAttempt++
 			h.launcherSel = 0
 			h.launcherScroll = 0
-			h.launcherAwaiting = true
-			r.launcherServiceLocked().Query(h.query)
+			r.launcherSendQuery(h, h.query)
 		}
 		idx := h.roving.Index()
 		r.rebuildPanel(h)
