@@ -490,6 +490,8 @@ func (r *Registry) pushIdleInputsLocked() {
 		BlankBattery:   r.cfg.Idle.BlankBattery,
 		SuspendAc:      r.cfg.Idle.SuspendAc,
 		SuspendBattery: r.cfg.Idle.SuspendBattery,
+		LockAc:         r.cfg.Idle.Lock,
+		LockBattery:    r.cfg.Idle.Lock,
 		MediaExempt:    r.cfg.Idle.MediaExempt,
 	})
 	r.idleSvc.SetMediaPlaying(r.mediaState.Status == services.PlaybackPlaying)
