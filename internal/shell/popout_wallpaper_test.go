@@ -563,10 +563,22 @@ func TestWallpaperChromeHasEveryControl(t *testing.T) {
 		t.Errorf("output select = %v, want All plus each connector", outputs)
 	}
 
+	var tabs []string
+	collectActions(h.root, "wallpaper-tab:", &tabs)
+	if !slices.Equal(tabs, []string{"wallpaper-tab:wallpapers", "wallpaper-tab:terminal-art"}) {
+		t.Errorf("section tabs = %v, want Wallpapers then Terminal Art", tabs)
+	}
+	if findAction(h.root, "wallpaper-tab:wallpapers") == nil || findAction(h.root, "wallpaper-tab:wallpapers").State&ui.StateSelected == 0 {
+		t.Error("Wallpapers must be the default tab")
+	}
+
 	var filters []string
 	collectActions(h.root, "wallpaper-filter:", &filters)
-	if len(filters) != 4 {
-		t.Errorf("kind filter = %v, want All/Images/Videos/Effects", filters)
+	if len(filters) != 3 {
+		t.Errorf("kind filter = %v, want All/Images/Videos on the Wallpapers tab", filters)
+	}
+	if slices.Contains(filters, fmt.Sprintf("wallpaper-filter:%d", wallpaper.FilterEffects)) {
+		t.Error("Effects must not live on the Wallpapers filter strip")
 	}
 
 	// Child directories are the folder dropdown's options.
@@ -618,7 +630,7 @@ func TestWallpaperChromeActionsDrivePanelState(t *testing.T) {
 	}
 }
 
-func TestWallpaperEffectsFilterListsCatalog(t *testing.T) {
+func TestTerminalArtTabListsCatalog(t *testing.T) {
 	t.Parallel()
 
 	root := seedWallpaperRoot(t)
@@ -636,14 +648,26 @@ func TestWallpaperEffectsFilterListsCatalog(t *testing.T) {
 		},
 	}
 	h.wallpaperSnap = snap
-	effects := findAction(h.root, fmt.Sprintf("wallpaper-filter:%d", wallpaper.FilterEffects))
-	if effects == nil || !h.wallpaperAction(reg, effects) {
-		t.Fatal("the Effects filter is missing")
+	reg.rebuildPanel(h)
+	for _, e := range wallpaperMedia(h) {
+		if e.Kind == wallpaper.KindEffect {
+			t.Fatal("the Wallpapers tab must not list terminal art")
+		}
+	}
+	tab := findAction(h.root, "wallpaper-tab:terminal-art")
+	if tab == nil || !h.wallpaperAction(reg, tab) {
+		t.Fatal("the Terminal Art tab is missing")
+	}
+	if findAction(h.root, fmt.Sprintf("wallpaper-filter:%d", wallpaper.FilterVideos)) != nil {
+		t.Error("Terminal Art must not show the Images/Videos filter")
+	}
+	if findAction(h.root, "wallpaper-menu:effect-theme") == nil {
+		t.Error("Terminal Art must offer the sysc-Go theme dropdown")
 	}
 	var names []string
 	for _, e := range wallpaperMedia(h) {
 		if e.Kind != wallpaper.KindEffect {
-			t.Fatalf("effects filter still shows %s", e.Name)
+			t.Fatalf("Terminal Art still shows %s", e.Name)
 		}
 		names = append(names, e.Name)
 	}
@@ -667,9 +691,9 @@ func TestWallpaperEffectTileAppliesWithoutPath(t *testing.T) {
 	}
 	h.wallpaperSnap = snap
 	h.wallpaperOutput = "DP-1"
-	if !h.wallpaperAction(reg, &ui.Node{Action: fmt.Sprintf("wallpaper-filter:%d", wallpaper.FilterEffects)}) {
+	if !h.wallpaperAction(reg, &ui.Node{Action: "wallpaper-tab:terminal-art"}) {
 		reg.mu.Unlock()
-		t.Fatal("effects filter")
+		t.Fatal("terminal art tab")
 	}
 	tile := findAction(h.root, "wallpaper-tile")
 	if tile == nil {
@@ -693,6 +717,63 @@ func TestWallpaperEffectTileAppliesWithoutPath(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("assignment = %+v, want kind=effect fire with empty path", svc.Snapshot().Assignments["DP-1"])
+}
+
+func TestTerminalArtAppliesPerOutput(t *testing.T) {
+	root := seedWallpaperRoot(t)
+	reg, svc, _ := wallpaperPanel(t, []string{root}, false)
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	snap := h.wallpaperSnap
+	snap.Caps = wallpaper.Capabilities{
+		Terminal: true,
+		Catalog: wallpaper.Catalog{
+			Effects: []wallpaper.EffectInfo{{ID: "fire"}, {ID: "rain"}},
+			Themes:  []string{"nord"},
+		},
+	}
+	h.wallpaperSnap = snap
+	if !h.wallpaperAction(reg, &ui.Node{Action: "wallpaper-tab:terminal-art"}) {
+		reg.mu.Unlock()
+		t.Fatal("terminal art tab")
+	}
+	if findAction(h.root, "wallpaper-output:DP-1") == nil || findAction(h.root, "wallpaper-output:DP-3") == nil {
+		reg.mu.Unlock()
+		t.Fatal("Terminal Art must keep the output select")
+	}
+	applyNamed := func(output, name string) {
+		t.Helper()
+		if !h.wallpaperAction(reg, &ui.Node{Action: "wallpaper-output:" + output}) {
+			t.Fatalf("select %s", output)
+		}
+		h.wallpaperSnap.Caps = snap.Caps
+		if h.wallpaperOutput != output {
+			t.Fatalf("output = %q, want %s", h.wallpaperOutput, output)
+		}
+		for _, e := range wallpaperMedia(h) {
+			if e.Name == name {
+				h.wallpaperApply(reg, e)
+				return
+			}
+		}
+		t.Fatalf("no tile %s", name)
+	}
+	applyNamed("DP-1", "fire")
+	applyNamed("DP-3", "rain")
+	reg.mu.Unlock()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		snap := svc.Snapshot()
+		one := snap.Assignments["DP-1"]
+		three := snap.Assignments["DP-3"]
+		if one.Kind == wallpaper.KindEffect && one.Effect == "fire" &&
+			three.Kind == wallpaper.KindEffect && three.Effect == "rain" {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	snap = svc.Snapshot()
+	t.Fatalf("DP-1=%+v DP-3=%+v, want fire and rain on separate outputs", snap.Assignments["DP-1"], snap.Assignments["DP-3"])
 }
 
 func TestWallpaperTitleOffersRefresh(t *testing.T) {

@@ -39,7 +39,7 @@ const (
 
 	// Chrome controls. The output select is D4's 170px minimum.
 	wallpaperOutputWidth     = 170
-	wallpaperFilterWidth     = 280
+	wallpaperFilterWidth     = 220
 	wallpaperControlPad      = 8
 	wallpaperIconSize        = 18
 	wallpaperPlaceholderIcon = 32
@@ -71,6 +71,9 @@ const (
 
 	// wallpaperCoverageTimeout bounds the compositor probe.
 	wallpaperCoverageTimeout = 2 * time.Second
+
+	wallpaperTabWallpapers = "wallpapers"
+	wallpaperTabArt        = "terminal-art"
 )
 
 // wallpaperServiceLocked returns the running service, or nil before the
@@ -120,6 +123,10 @@ func firstRoot(snap wallpaper.Snapshot) string {
 	return ""
 }
 
+func wallpaperArtTab(h *PanelHost) bool {
+	return h.wallpaperTab == wallpaperTabArt
+}
+
 // wallpaperSearch is the current search box text.
 func wallpaperSearch(h *PanelHost) string {
 	if h.search == nil {
@@ -138,7 +145,7 @@ func wallpaperView(h *PanelHost) []wallpaper.Entry {
 
 // wallpaperMedia is what the tile grid shows: playable files only.
 func wallpaperMedia(h *PanelHost) []wallpaper.Entry {
-	if h.wallpaperFilter == wallpaper.FilterEffects {
+	if wallpaperArtTab(h) {
 		return wallpaperEffectEntries(h)
 	}
 	view := wallpaperView(h)
@@ -341,19 +348,24 @@ func wallpaperTree(r *Registry, h *PanelHost) *ui.Node {
 	inner := max(h.place.Panel.W-2*wallpaperPadding, 0)
 
 	children := []*ui.Node{
+		wallpaperSectionTabs(h),
 		wallpaperTitleRow(h),
 		wallpaperSearchRow(h, inner),
-		wallpaperNavRow(h, inner),
 	}
-	if h.wallpaperMenu == "folder" {
-		children = append(children, wallpaperOptionList(h, wallpaperFolderOptions(h)))
-	}
-	if h.wallpaperMenu == "effect-theme" {
-		children = append(children, wallpaperOptionList(h, wallpaperEffectThemeOptions(h)))
-	}
-	children = append(children, wallpaperThemeEngineRow(h))
-	if h.wallpaperMenu == "palette" {
-		children = append(children, wallpaperOptionList(h, wallpaperPaletteOptions(h)))
+	if wallpaperArtTab(h) {
+		children = append(children, wallpaperArtThemeRow(h))
+		if h.wallpaperMenu == "effect-theme" {
+			children = append(children, wallpaperOptionList(h, wallpaperEffectThemeOptions(h)))
+		}
+	} else {
+		children = append(children, wallpaperNavRow(h, inner))
+		if h.wallpaperMenu == "folder" {
+			children = append(children, wallpaperOptionList(h, wallpaperFolderOptions(h)))
+		}
+		children = append(children, wallpaperThemeEngineRow(h))
+		if h.wallpaperMenu == "palette" {
+			children = append(children, wallpaperOptionList(h, wallpaperPaletteOptions(h)))
+		}
 	}
 	children = append(children, wallpaperBanners(h)...)
 	children = append(children, wallpaperActiveStrip(h))
@@ -404,13 +416,40 @@ func childHeightFor(n *ui.Node) int {
 // directory that holds nothing.
 func wallpaperEmptyState(h *PanelHost) *ui.Node {
 	text := "No supported wallpapers in this directory"
-	if wallpaperSearch(h) != "" {
+	if wallpaperArtTab(h) {
+		text = "No terminal art available"
+		if !h.wallpaperSnap.Caps.Terminal {
+			text = "sysc-terminal is not installed"
+		} else if wallpaperSearch(h) != "" {
+			text = "No terminal art matches your search"
+		}
+	} else if wallpaperSearch(h) != "" {
 		text = "No wallpapers match your search"
-	}
-	if h.wallpaperSnap.Library == nil {
+	} else if h.wallpaperSnap.Library == nil {
 		text = "Indexing wallpaper library\u2026"
 	}
 	return &ui.Node{Kind: ui.KindText, Text: text, Height: wallpaperCaptionH}
+}
+
+func wallpaperSectionTabs(h *PanelHost) *ui.Node {
+	return &ui.Node{
+		Kind: ui.KindSegmented, Key: "wallpaper-section", Gap: theme.MarginXXS,
+		Height: wallpaperChromeH(h), Role: "tablist",
+		Children: []*ui.Node{
+			wallpaperSegment(h, "wallpaper-tab:"+wallpaperTabWallpapers, "Wallpapers", !wallpaperArtTab(h)),
+			wallpaperSegment(h, "wallpaper-tab:"+wallpaperTabArt, "Terminal Art", wallpaperArtTab(h)),
+		},
+	}
+}
+
+func wallpaperArtThemeRow(h *PanelHost) *ui.Node {
+	return &ui.Node{
+		Kind: ui.KindRow, Gap: wallpaperGridGap, Height: wallpaperGroupH(h),
+		Children: []*ui.Node{
+			wallpaperLabeled(h, "THEME", wallpaperPaletteWidth,
+				wallpaperCombo(h, "effect-theme", wallpaperEffectTheme(h), wallpaperPaletteWidth)),
+		},
+	}
 }
 
 // wallpaperTitleRow is the panel's name and its controls.
@@ -483,7 +522,6 @@ func wallpaperNavRow(h *PanelHost, inner int) *ui.Node {
 		{"All", wallpaper.FilterAll},
 		{"Images", wallpaper.FilterImages},
 		{"Videos", wallpaper.FilterVideos},
-		{"Effects", wallpaper.FilterEffects},
 	}
 	segments := make([]*ui.Node, 0, len(filters))
 	for _, f := range filters {
@@ -497,11 +535,7 @@ func wallpaperNavRow(h *PanelHost, inner int) *ui.Node {
 
 	folder := []*ui.Node{wallpaperCombo(h, "folder", wallpaperFolderLabel(h), wallpaperFolderWidth)}
 	folderW := wallpaperFolderWidth
-	folderLabel := "FOLDER"
-	if h.wallpaperFilter == wallpaper.FilterEffects {
-		folder = []*ui.Node{wallpaperCombo(h, "effect-theme", wallpaperEffectTheme(h), wallpaperFolderWidth)}
-		folderLabel = "PALETTE"
-	} else if h.wallpaperSnap.Library != nil {
+	if h.wallpaperSnap.Library != nil {
 		if _, ok := h.wallpaperSnap.Library.Parent(h.wallpaperDir); ok {
 			up := wallpaperButton(h, "wallpaper-up", "Up", false)
 			up.Height = ch
@@ -515,7 +549,7 @@ func wallpaperNavRow(h *PanelHost, inner int) *ui.Node {
 		Kind: ui.KindRow, Gap: wallpaperGridGap, Height: wallpaperGroupH(h),
 		Children: []*ui.Node{
 			wallpaperLabeled(h, "SHOW", wallpaperFilterWidth, show),
-			wallpaperLabeled(h, folderLabel, folderW, group),
+			wallpaperLabeled(h, "FOLDER", folderW, group),
 		},
 	}
 }
@@ -748,7 +782,7 @@ func wallpaperBanners(h *PanelHost) []*ui.Node {
 		add(h.wallpaperSnap.Library.Err, ui.ToneError)
 	}
 	add(h.wallpaperSnap.Err, ui.ToneError)
-	if h.wallpaperFilter == wallpaper.FilterEffects && !h.wallpaperSnap.Caps.Terminal {
+	if wallpaperArtTab(h) && !h.wallpaperSnap.Caps.Terminal {
 		add("sysc-terminal is not installed", ui.ToneError)
 	}
 	// The palette is the other half of applying a wallpaper. A generator that
@@ -1473,6 +1507,12 @@ func (h *PanelHost) wallpaperAction(r *Registry, n *ui.Node) bool {
 		if svc := r.wallpaperServiceLocked(); svc != nil {
 			svc.Enqueue(wallpaper.Command{Op: wallpaper.OpRefresh})
 		}
+		return true
+	case strings.HasPrefix(n.Action, "wallpaper-tab:"):
+		h.wallpaperTab = strings.TrimPrefix(n.Action, "wallpaper-tab:")
+		h.wallpaperSel = 0
+		h.wallpaperMenu = ""
+		r.rebuildPanel(h)
 		return true
 	case strings.HasPrefix(n.Action, "wallpaper-menu:"):
 		name := strings.TrimPrefix(n.Action, "wallpaper-menu:")
