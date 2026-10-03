@@ -75,3 +75,27 @@ func TestResolvePreservesConnectorOrder(t *testing.T) {
 			bars[0].Height, bars[1].Height)
 	}
 }
+
+func TestReloadCandidateResolvesSideOutputOverrideWithoutLosingReserve(t *testing.T) {
+	t.Parallel()
+
+	cfg := Default()
+	zero := 0
+	override := cfg.Bar
+	override.Edge, override.Shape, override.Style = "right", "floating", "solid"
+	override.Height, override.Gap, override.Reserve = 64, 8, &zero
+	cfg.Outputs = []OutputOverride{{Connector: "DP-1", Bar: override}}
+
+	policies, err := Resolve(cfg, []string{"DP-1", "DP-2"})
+	if err != nil {
+		t.Fatalf("Resolve reload candidate: %v", err)
+	}
+	if policies[0].Edge != "right" || policies[0].ExclusiveZone() != 0 || policies[0].SurfaceExtent() != 56 {
+		t.Fatalf("DP-1 reload policy = edge %q zone %d extent %d, want right/0/56",
+			policies[0].Edge, policies[0].ExclusiveZone(), policies[0].SurfaceExtent())
+	}
+	if policies[1].Edge != cfg.Bar.Edge || policies[1].Reserve != nil {
+		t.Fatalf("DP-2 inherited policy = edge %q reserve %v, want %q with nil reserve",
+			policies[1].Edge, policies[1].Reserve, cfg.Bar.Edge)
+	}
+}

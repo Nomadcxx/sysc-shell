@@ -1539,6 +1539,226 @@ func TestReloadReseedsAnOpenSettingsDraft(t *testing.T) {
 	}
 }
 
+func TestEdgeReloadPreservesSettingsAndClosesOldGeometryPanels(t *testing.T) {
+	reg := newPanelRegistry(t)
+	withTestBar(t, reg, 7, reg.cfg).setOutputSize(1536, 864)
+	trigger := Trigger{BarEdge: "top", BarZone: 40, OutW: 1536, OutH: 864}
+	if err := reg.OpenPanel(PanelSettings, 7, trigger); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	if err := reg.OpenPanel(PanelClock, 7, trigger); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 1)
+	reg.dwell.enter(7, ui.Rect{X: 3, Y: 4, W: 10, H: 10}, "pending hint")
+
+	candidate := config.Default()
+	override := candidate.Bar
+	override.Edge = "right"
+	candidate.Outputs = []config.OutputOverride{{Connector: "DP-1", Bar: override}}
+	prepared, err := reg.PrepareConfig(candidate, []wayland.HostIdentity{{Global: 7, Connector: "DP-1"}})
+	if err != nil {
+		t.Fatalf("PrepareConfig: %v", err)
+	}
+	callbacks := prepared.Hosts[7]
+	callbacks.OutputSize(1536, 864)
+	if err := callbacks.Configure(override.SurfaceExtent(), 864, 120); err != nil {
+		t.Fatalf("candidate Configure: %v", err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	settingsHost := reg.panelHosts[PanelSettings]
+	clockHost := reg.panelHosts[PanelClock]
+	if settingsHost == nil {
+		reg.mu.Unlock()
+		t.Fatal("edge reload closed Settings")
+	}
+	if clockHost != nil {
+		reg.mu.Unlock()
+		t.Fatal("edge reload kept a panel attached to the old bar geometry")
+	}
+	if settingsHost.place.BarEdge != "right" || settingsHost.place.Output != (ui.Rect{W: 1536, H: 864}) {
+		got := settingsHost.place
+		reg.mu.Unlock()
+		t.Fatalf("Settings placement = edge %q output %+v, want right on 1536x864", got.BarEdge, got.Output)
+	}
+	if got := settingsHost.place.Rect(); got != settingsHost.rect {
+		reg.mu.Unlock()
+		t.Fatalf("Settings host rect %+v disagrees with its updated placement %+v", settingsHost.rect, got)
+	}
+	if settingsHost.rect.X == 0 || settingsHost.rect.Y == 0 {
+		reg.mu.Unlock()
+		t.Fatalf("Settings was not refitted and repositioned: %+v", settingsHost.rect)
+	}
+	reg.mu.Unlock()
+	reg.dwell.mu.Lock()
+	dwellArmed := reg.dwell.armedValid
+	reg.dwell.mu.Unlock()
+	if dwellArmed {
+		t.Fatal("edge reload left an old-geometry tooltip dwell armed")
+	}
+
+	updatedSettings := false
+	for pending := true; pending; {
+		select {
+		case req := <-reg.AuxRequests():
+			if req.ID == panelSurfaceID(PanelSettings) && req.Update != nil && req.Update.Width != nil && req.Update.Height != nil {
+				updatedSettings = true
+			}
+		default:
+			if !updatedSettings {
+				t.Fatal("edge reload did not update the Settings surface placement")
+			}
+			pending = false
+		}
+	}
+
+	reg.mu.Lock()
+	trigger = reg.triggerLocked(7, "DP-1")
+	reg.mu.Unlock()
+	if err := reg.OpenPanel(PanelClock, 7, trigger); err != nil {
+		t.Fatalf("open panel after edge reload: %v", err)
+	}
+	_ = drainAux(t, reg, 1)
+
+	thicker := override
+	thicker.Height += 8
+	next := config.Default()
+	next.Outputs = []config.OutputOverride{{Connector: "DP-1", Bar: thicker}}
+	prepared, err = reg.PrepareConfig(next, []wayland.HostIdentity{{Global: 7, Connector: "DP-1"}})
+	if err != nil {
+		t.Fatalf("PrepareConfig thickness: %v", err)
+	}
+	callbacks = prepared.Hosts[7]
+	callbacks.OutputSize(1536, 864)
+	if err := callbacks.Configure(thicker.SurfaceExtent(), 864, 120); err != nil {
+		t.Fatalf("thickness Configure: %v", err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	settingsHost = reg.panelHosts[PanelSettings]
+	clockHost = reg.panelHosts[PanelClock]
+	if settingsHost == nil {
+		reg.mu.Unlock()
+		t.Fatal("thickness reload closed Settings")
+	}
+	if clockHost != nil || settingsHost.place.BarZone != thicker.Extent() {
+		got := settingsHost.place.BarZone
+		reg.mu.Unlock()
+		t.Fatalf("thickness reload kept Clock=%v or left Settings zone %d, want closed and %d",
+			clockHost != nil, got, thicker.Extent())
+	}
+	reg.mu.Unlock()
+}
+
+func TestEdgeReloadClosesAffectedTrayDrawer(t *testing.T) {
+	reg := newPanelRegistry(t)
+	withTestBar(t, reg, 7, reg.cfg).setOutputSize(1536, 864)
+	harness := &hostHarness{}
+	reg.mu.Lock()
+	reg.trayDrawer = newTrayDrawerHost(reg, harness)
+	opened := reg.trayDrawer.open(7, "DP-1", trayArrangement{}, nil)
+	reg.mu.Unlock()
+	if !opened {
+		t.Fatal("could not open test drawer")
+	}
+
+	candidate := config.Default()
+	candidate.Bar.Edge = "left"
+	prepared, err := reg.PrepareConfig(candidate, []wayland.HostIdentity{{Global: 7, Connector: "DP-1"}})
+	if err != nil {
+		t.Fatalf("PrepareConfig: %v", err)
+	}
+	callbacks := prepared.Hosts[7]
+	callbacks.OutputSize(1536, 864)
+	if err := callbacks.Configure(candidate.Bar.SurfaceExtent(), 864, 120); err != nil {
+		t.Fatalf("candidate Configure: %v", err)
+	}
+	prepared.Commit()
+	reg.mu.Lock()
+	drawerOpen := reg.trayDrawer.open_
+	reg.mu.Unlock()
+	if drawerOpen || len(harness.closes) != 1 {
+		t.Fatalf("edge reload left drawer open=%v with %d close requests", drawerOpen, len(harness.closes))
+	}
+}
+
+func TestUnrelatedReloadKeepsOpenPanelLifetime(t *testing.T) {
+	reg := newPanelRegistry(t)
+	withTestBar(t, reg, 7, reg.cfg).setOutputSize(1536, 864)
+	if err := reg.OpenPanel(PanelClock, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	reg.mu.Lock()
+	before := reg.panelHosts[PanelClock]
+	reg.mu.Unlock()
+
+	candidate := config.Default()
+	candidate.Session.Locker = "external-locker"
+	candidate.Bar.Style = "solid"
+	prepared, err := reg.PrepareConfig(candidate, []wayland.HostIdentity{{Global: 7, Connector: "DP-1"}})
+	if err != nil {
+		t.Fatalf("PrepareConfig: %v", err)
+	}
+	callbacks := prepared.Hosts[7]
+	callbacks.OutputSize(1536, 864)
+	if err := callbacks.Configure(1536, candidate.Bar.SurfaceExtent(), 120); err != nil {
+		t.Fatalf("candidate Configure: %v", err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if reg.panelHosts[PanelClock] != before {
+		t.Fatal("an unrelated edit replaced or closed the open panel")
+	}
+}
+
+func TestOutputScaleConfigureRefitsOpenSettings(t *testing.T) {
+	cfg := config.Default()
+	cfg.Accessibility.ReducedMotion = true
+	cfg.Bar.Edge = "right"
+	reg := NewRegistry(cfg)
+	reg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	t.Cleanup(reg.Close)
+	bar := withTestBar(t, reg, 7, cfg)
+	bar.setOutputSize(1536, 864)
+	if err := bar.Configure(cfg.Bar.SurfaceExtent(), 864, 120); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.OpenPanel(PanelSettings, 7,
+		Trigger{BarEdge: "right", BarZone: cfg.Bar.Extent(), OutW: 1536, OutH: 864}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+
+	callbacks := reg.bindHost(7, bar, wayland.HostCallbacks{
+		Configure:  bar.Configure,
+		OutputSize: bar.setOutputSize,
+	})
+	callbacks.OutputSize(1600, 900)
+	if err := callbacks.Configure(cfg.Bar.SurfaceExtent(), 900, 150); err != nil {
+		t.Fatalf("scaled Configure: %v", err)
+	}
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelSettings]
+	if h == nil {
+		t.Fatal("scale configure closed Settings")
+	}
+	if h.place.Output != (ui.Rect{W: 1600, H: 900}) || h.place.BarEdge != "right" {
+		t.Fatalf("Settings placement retained stale output geometry: edge %q output %+v", h.place.BarEdge, h.place.Output)
+	}
+	if h.rect != h.place.Rect() {
+		t.Fatalf("Settings rect %+v disagrees with scale-updated placement %+v", h.rect, h.place.Rect())
+	}
+}
+
 // The owner's bridge drains invalidations continuously, so a full channel is
 // momentary. Dropping there leaves a surface stale until an unrelated event;
 // publishSurface must block and deliver like publish (GH #4).

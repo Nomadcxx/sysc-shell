@@ -13,8 +13,12 @@ import (
 // newTooltipFixture is a registry with one bar on a 1536x960 logical output,
 // the laptop's, and a tooltip host whose requests are captured.
 func newTooltipFixture(t *testing.T, blur bool) (*Registry, *tooltipHost, *hostHarness) {
-	t.Helper()
 	cfg := config.Default()
+	return newTooltipFixtureWithConfig(t, blur, cfg)
+}
+
+func newTooltipFixtureWithConfig(t *testing.T, blur bool, cfg config.Config) (*Registry, *tooltipHost, *hostHarness) {
+	t.Helper()
 	cfg.Accessibility.ReducedMotion = true
 	cfg.Theme.BlurBehind = true
 	cfg.Theme.PanelOpacity = 65

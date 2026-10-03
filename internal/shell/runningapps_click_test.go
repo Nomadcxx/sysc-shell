@@ -479,6 +479,36 @@ func runningAppsWorkspaceMenuRegistry(t *testing.T) (*Registry, *Bar) {
 	return reg, reg.bars[1]
 }
 
+func TestEdgeReloadClosesRunningAppsMenu(t *testing.T) {
+	reg, bar := runningAppsWorkspaceMenuRegistry(t)
+	bar.setOutputSize(1536, 864)
+	if !bar.onAction("running-app:steam", buttonRight) {
+		t.Fatal("right click did not open the running-app menu")
+	}
+	if !reg.runningMenu.open_ {
+		t.Fatal("running-app menu did not open")
+	}
+
+	candidate := config.Default()
+	candidate.Bar.Edge = "left"
+	prepared, err := reg.PrepareConfig(candidate, []wayland.HostIdentity{{Global: 1, Connector: "DP-1"}})
+	if err != nil {
+		t.Fatalf("PrepareConfig: %v", err)
+	}
+	callbacks := prepared.Hosts[1]
+	callbacks.OutputSize(1536, 864)
+	if err := callbacks.Configure(candidate.Bar.SurfaceExtent(), 864, 120); err != nil {
+		t.Fatalf("candidate Configure: %v", err)
+	}
+	prepared.Commit()
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if reg.runningMenu.open_ || reg.roots.owns(runningAppsMenuRoot(1)) {
+		t.Fatal("edge reload left the running-app menu on its old bar anchor")
+	}
+}
+
 func findWorkspaceMoveRow(rows []runningAppMenuRow, workspaceID uint64) int {
 	for i, row := range rows {
 		if row.MoveWorkspaceID == workspaceID {

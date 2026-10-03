@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -52,8 +53,9 @@ func TestPanelHoverArmsAHintAnchoredOnTheOutput(t *testing.T) {
 // the output; a panel node's is already on the output and must not move.
 func TestAnOutputAnchorIgnoresTheBottomBarOffset(t *testing.T) {
 	t.Parallel()
-	r, h, hh := newTooltipFixture(t, true)
-	r.cfg.Bar.Edge = "bottom"
+	cfg := config.Default()
+	cfg.Bar.Edge = "bottom"
+	_, h, hh := newTooltipFixtureWithConfig(t, true, cfg)
 	anchor := ui.Rect{X: 700, Y: 500, W: 36, H: 36}
 	h.show(tooltipRequest{Global: 1, Anchor: anchor, Text: "Delete note", OnOutput: true})
 	spec := onlyOpen(t, hh)

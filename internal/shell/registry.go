@@ -1681,6 +1681,21 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				r.mu.Lock()
 				outgoing := r.leases
 				outgoingBars := r.bars
+				geometryOutputs := make(map[uint32]bool)
+				for global, oldBar := range outgoingBars {
+					oldPolicy := r.cfg.ForConnector(oldBar.connector())
+					nextPolicy := cfg.ForConnector(oldBar.connector())
+					if barGeometryChanged(oldPolicy, nextPolicy) {
+						geometryOutputs[global] = true
+					}
+				}
+				for global, nextBar := range bars {
+					oldPolicy := r.cfg.ForConnector(nextBar.connector())
+					nextPolicy := cfg.ForConnector(nextBar.connector())
+					if barGeometryChanged(oldPolicy, nextPolicy) {
+						geometryOutputs[global] = true
+					}
+				}
 				depthClockFontChanged := r.cfg.Bar.FontFamily != cfg.Bar.FontFamily
 				depthClockVisualChanged := r.cfg.Wallpaper.Scale != cfg.Wallpaper.Scale ||
 					r.tokens != tok || depthClockFontChanged ||
@@ -1696,10 +1711,20 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				r.weather.Reconfigure(
 					cfg.Weather.Latitude, cfg.Weather.Longitude, weatherUnit(cfg.Weather.Unit))
 				r.weather.SetCity(cfg.Weather.City)
-				r.dwell.leave()
-				// The open menu and drawer were placed against the outgoing
-				// geometry and hold a root; a candidate replaces both.
-				r.closeTrayLocked()
+				if len(geometryOutputs) > 0 {
+					r.dwell.leave()
+					for global := range geometryOutputs {
+						r.closeTrayOutputLocked(global)
+						if h := r.runningMenu; h != nil && h.open_ && h.output == global {
+							h.closeLocked()
+						}
+						for _, id := range r.panelIDsOnOutputLocked(global) {
+							if id != PanelSettings {
+								r.closePanelLocked(id)
+							}
+						}
+					}
+				}
 				for _, bar := range bars {
 					bar.apply(r.viewLocked(bar.connector()))
 				}
@@ -1731,6 +1756,11 @@ func (r *Registry) PrepareConfig(cfg config.Config, identities []wayland.HostIde
 				}
 				r.bars = bars
 				r.leases = leases
+				for global := range geometryOutputs {
+					if h := r.panelHosts[PanelSettings]; h != nil && h.output == global {
+						r.repositionSettingsLocked(h)
+					}
+				}
 				for global, bar := range r.bars {
 					r.bindBarTrayLocked(global, bar.connector(), bar)
 					r.bindBarPluginLocked(bar)
@@ -2373,11 +2403,11 @@ func (r *Registry) bindHost(global uint32, bar *Bar, hooks wayland.HostCallbacks
 		if err := innerConfigure(width, height, scale120); err != nil {
 			return err
 		}
-		if bar.scale120() == prev {
-			return nil
+		r.refreshSettingsPlacement(global, bar)
+		if bar.scale120() != prev {
+			r.reprojectTray()
+			r.reprojectRunningApps()
 		}
-		r.reprojectTray()
-		r.reprojectRunningApps()
 		return nil
 	}
 	return hooks

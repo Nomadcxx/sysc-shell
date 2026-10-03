@@ -1013,6 +1013,55 @@ func panelWorkArea(base ui.Rect, place Placement, open []*PanelHost) ui.Rect {
 	return panelWorkAreaRects(base, place, openRects, safeEdge)
 }
 
+func barGeometryChanged(a, b config.Bar) bool {
+	if a.Enabled != b.Enabled || a.Edge != b.Edge || a.Attached() != b.Attached() ||
+		(a.Style == "islands") != (b.Style == "islands") ||
+		a.Body() != b.Body() || a.Extent() != b.Extent() || a.SurfaceExtent() != b.SurfaceExtent() ||
+		a.Radius != b.Radius || a.ExclusiveZone() != b.ExclusiveZone() {
+		return true
+	}
+	return (!a.Attached() || !b.Attached()) && a.Gap != b.Gap
+}
+
+func (r *Registry) repositionSettingsLocked(h *PanelHost) {
+	if h == nil {
+		return
+	}
+	connector := ""
+	if bar := r.bars[h.output]; bar != nil {
+		connector = bar.connector()
+	}
+	trigger := r.triggerLocked(h.output, connector)
+	if trigger.OutW <= 0 {
+		trigger.OutW = h.place.Output.W
+	}
+	if trigger.OutH <= 0 {
+		trigger.OutH = h.place.Output.H
+	}
+	trigger.Align = "center"
+	place := r.panelPlacementLocked(PanelSettings, h.output, trigger,
+		settingsPanelSize(trigger.OutW, trigger.OutH))
+	place.Panel.W, place.Panel.H = place.FittedSize()
+	rect := place.Rect()
+	if place == h.place && rect == h.rect {
+		return
+	}
+	h.place, h.rect = place, rect
+	h.preferredMain = place.mainStart(rect)
+	r.sendPanelPlacementLocked(h)
+}
+
+func (r *Registry) refreshSettingsPlacement(global uint32, bar *Bar) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.bars[global] != bar {
+		return
+	}
+	if h := r.panelHosts[PanelSettings]; h != nil && h.output == global {
+		r.repositionSettingsLocked(h)
+	}
+}
+
 func panelWorkAreaRects(base ui.Rect, place Placement, openRects []ui.Rect, safeEdge int) ui.Rect {
 	work := place.workArea(base)
 	conflict := false
@@ -1049,7 +1098,14 @@ func (r *Registry) updatePanelPlacementLocked(h *PanelHost, rect ui.Rect) {
 		center = rect.Y + rect.H/2
 	}
 	h.place.setMainAnchor(center)
-	spec := r.panelSpec(h, marginsFor(rect, h.place))
+	r.sendPanelPlacementLocked(h)
+}
+
+func (r *Registry) sendPanelPlacementLocked(h *PanelHost) {
+	if h == nil {
+		return
+	}
+	spec := r.panelSpec(h, marginsFor(h.rect, h.place))
 	width, height := uint32(max(spec.Width, 0)), uint32(max(spec.Height, 0))
 	inputRects := spec.InputRects
 	if inputRects == nil {
