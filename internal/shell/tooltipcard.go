@@ -98,21 +98,26 @@ func widestLine(n *ui.Node, measure ui.MeasureText) int {
 // tooltipGap is the space between the bar's edge and the card.
 const tooltipGap = theme.MarginS
 
-// tooltipPlacement positions a card beside its anchor, centred on it and
-// clamped fully inside the output, in output-logical coordinates. On a bottom
-// bar it goes above the anchor; otherwise below.
+// tooltipPlacement positions a card inward from its anchor and clamps the
+// measured card inside the output, in output-logical coordinates.
 //
 // This is the panel design's D5 rule: anchored off the triggering bar's edge,
 // aligned to the triggering widget, clamped inside the output.
 func tooltipPlacement(edge string, anchor ui.Rect, width, height, outputWidth, outputHeight int) ui.Rect {
-	width = min(width, outputWidth)
-	x := anchor.X + anchor.W/2 - width/2
-	x = max(min(x, outputWidth-width), 0)
-
-	y := anchor.Y + anchor.H + tooltipGap
-	if edge == "bottom" {
+	width = min(max(width, 0), max(outputWidth, 0))
+	height = min(max(height, 0), max(outputHeight, 0))
+	x, y := anchor.X+anchor.W/2-width/2, anchor.Y+anchor.H+tooltipGap
+	switch edge {
+	case "bottom":
 		y = anchor.Y - height - tooltipGap
+	case "left":
+		x = anchor.X + anchor.W + tooltipGap
+		y = anchor.Y + anchor.H/2 - height/2
+	case "right":
+		x = anchor.X - width - tooltipGap
+		y = anchor.Y + anchor.H/2 - height/2
 	}
+	x = max(min(x, outputWidth-width), 0)
 	y = max(min(y, outputHeight-height), 0)
 	return ui.Rect{X: x, Y: y, W: width, H: height}
 }

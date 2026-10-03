@@ -595,6 +595,47 @@ func barRectOnOutput(local ui.Rect, edge string, outW, outH, barW, barH int) ui.
 	return local
 }
 
+// barGeometryOnOutputLocked resolves a bar-local trigger and its painted body
+// into output coordinates. The caller holds Registry.mu; BodyIn remains the
+// source of the body origin, including attached overhang and floating gaps.
+func (r *Registry) barGeometryOnOutputLocked(global uint32, local ui.Rect) (edge string, anchor, body, output ui.Rect) {
+	edge = r.cfg.Bar.Edge
+	bar := r.bars[global]
+	if bar == nil {
+		return edge, local, ui.Rect{}, ui.Rect{}
+	}
+	policy := r.cfg.ForConnector(bar.connector())
+	edge = policy.Edge
+	barW, barH := bar.configuredSize()
+	outW, outH := bar.outputSize()
+	output = ui.Rect{W: outW, H: outH}
+	if barW <= 0 || barH <= 0 {
+		return edge, local, ui.Rect{}, output
+	}
+	anchor = barRectOnOutput(local, edge, outW, outH, barW, barH)
+	x, y, w, h := policy.BodyIn(barW, barH)
+	body = barRectOnOutput(ui.Rect{X: x, Y: y, W: w, H: h}, edge, outW, outH, barW, barH)
+	return edge, anchor, body, output
+}
+
+func barWorkArea(policy config.Bar, output ui.Rect) ui.Rect {
+	work := ui.Rect{W: max(output.W, 0), H: max(output.H, 0)}
+	zone := max(policy.ExclusiveZone(), 0)
+	switch policy.Edge {
+	case "bottom":
+		work.H = max(0, work.H-min(zone, work.H))
+	case "left":
+		zone = min(zone, work.W)
+		work.X, work.W = zone, work.W-zone
+	case "right":
+		work.W = max(0, work.W-min(zone, work.W))
+	case "top":
+		zone = min(zone, work.H)
+		work.Y, work.H = zone, work.H-zone
+	}
+	return work
+}
+
 func (r *Registry) OpenPanel(id PanelID, output uint32, trig Trigger) error {
 	var facts machineFacts
 	if id == PanelMonitor {

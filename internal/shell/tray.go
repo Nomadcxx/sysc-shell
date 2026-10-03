@@ -483,12 +483,12 @@ func (r *Registry) handleTrayBar(
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if key.IsZero() {
-		return r.toggleTrayDrawerLocked(global, connector, arranged)
+		return r.toggleTrayDrawerLocked(global, connector, arranged, anchor)
 	}
 	return r.handleTrayItemLocked(key, connector, global, anchor, false, event)
 }
 
-func (r *Registry) toggleTrayDrawerLocked(global uint32, connector string, arranged trayArrangement) bool {
+func (r *Registry) toggleTrayDrawerLocked(global uint32, connector string, arranged trayArrangement, anchor ui.Rect) bool {
 	if r.trayDrawer == nil {
 		return false
 	}
@@ -501,7 +501,7 @@ func (r *Registry) toggleTrayDrawerLocked(global uint32, connector string, arran
 	if bar, ok := r.bars[global]; ok {
 		images = r.trayImagesLocked(r.tray.itemsList(), trayIconPixelSize(bar.scale120()))
 	}
-	return r.trayDrawer.open(global, connector, arranged, images)
+	return r.trayDrawer.openAt(global, connector, arranged, images, anchor)
 }
 
 // drawerItemAction is the drawer's activation seam. A menu opened from the
