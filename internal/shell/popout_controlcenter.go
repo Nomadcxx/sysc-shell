@@ -314,6 +314,9 @@ func (h *PanelHost) activateControlCentre(r *Registry, n *ui.Node) bool {
 	case "session-lock", "session-logout", "session-suspend", "session-display-off", "session-reboot", "session-poweroff":
 		argv := sessionArgv(n.Action, r.cfg.Session.Locker)
 		run := r.runArgv
+		if n.Action == "session-lock" {
+			run = func([]string) error { return r.LockTracked() }
+		}
 		r.scheduleControl(h, func() error { return run(argv) })
 		return true
 	default:

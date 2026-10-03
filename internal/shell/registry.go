@@ -172,6 +172,9 @@ type Registry struct {
 	networkLease     *services.Lease
 	// runArgv launches a session action. Tests replace it per Registry.
 	runArgv func([]string) error
+	// locker tracks the session-lock process; lockerSpawn is the test seam.
+	locker      *lockerManager
+	lockerSpawn lockerSpawnFn
 	// lookPath finds a binary on PATH. Tests replace it per Registry.
 	lookPath func(string) (string, error)
 	// animClock is the clock a panel animator samples. Tests freeze it to

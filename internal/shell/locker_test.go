@@ -1,0 +1,193 @@
+package shell
+
+import (
+	"io"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+type fakeLock struct {
+	mu     sync.Mutex
+	codes  []int
+	lines  []string
+	slept  []time.Duration
+	starts int
+	exits  []chan int
+	outs   []*io.PipeWriter
+}
+
+func newFakeLock(codes []int, lines []string) *fakeLock {
+	return &fakeLock{codes: codes, lines: lines}
+}
+
+func (f *fakeLock) spawn(argv []string) (io.ReadCloser, <-chan int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	i := f.starts
+	f.starts++
+	r, w := io.Pipe()
+	ch := make(chan int, 1)
+	f.exits = append(f.exits, ch)
+	f.outs = append(f.outs, w)
+	go func(i int) {
+		if i < len(f.lines) {
+			for _, l := range strings.Split(f.lines[i], "\n") {
+				if l == "" {
+					continue
+				}
+				w.Write([]byte(l + "\n"))
+				time.Sleep(time.Millisecond)
+			}
+		}
+		if i < len(f.codes) {
+			w.Close()
+			ch <- f.codes[i]
+		}
+	}(i)
+	return r, ch, nil
+}
+
+func (f *fakeLock) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.starts
+}
+
+func (f *fakeLock) finish(i int, code int) {
+	f.mu.Lock()
+	w, ch := f.outs[i], f.exits[i]
+	f.mu.Unlock()
+	w.Close()
+	ch <- code
+}
+
+func waitWhile(t *testing.T, cond func() bool, msg string) {
+	t.Helper()
+	for i := 0; i < 500; i++ {
+		if !cond() {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatal(msg)
+}
+
+func TestLockerHandshakePauseResume(t *testing.T) {
+	f := newFakeLock([]int{0}, []string{"sysc-lock: locked"})
+	var pauses []bool
+	var pmu sync.Mutex
+	m := &lockerManager{
+		spawn: f.spawn,
+		paused: func(p bool) {
+			pmu.Lock()
+			pauses = append(pauses, p)
+			pmu.Unlock()
+		},
+		sleep: func(time.Duration) {},
+	}
+	if err := m.request([]string{"sysc-lock"}); err != nil {
+		t.Fatal(err)
+	}
+	waitWhile(t, func() bool { return m.State().Acquired == false }, "handshake not seen")
+	waitWhile(t, func() bool { return m.State().Running }, "still running")
+	st := m.State()
+	if st.Running || st.ExitCode != 0 {
+		t.Fatalf("st=%+v", st)
+	}
+	pmu.Lock()
+	defer pmu.Unlock()
+	if len(pauses) != 2 || pauses[0] != true || pauses[1] != false {
+		t.Fatalf("pauses=%v", pauses)
+	}
+	if f.count() != 1 {
+		t.Fatalf("respawned clean exit: starts=%d", f.count())
+	}
+}
+
+func TestLockerRefusedNoRespawn(t *testing.T) {
+	f := newFakeLock([]int{2}, []string{"sysc-lock: refused (already locked)"})
+	m := &lockerManager{spawn: f.spawn, paused: func(bool) {}, sleep: func(time.Duration) {}}
+	if err := m.request([]string{"x"}); err != nil {
+		t.Fatal(err)
+	}
+	waitWhile(t, func() bool { return m.State().Running }, "still running")
+	if st := m.State(); st.ExitCode != 2 || st.Acquired {
+		t.Fatalf("st=%+v", st)
+	}
+	if f.count() != 1 {
+		t.Fatalf("refused must not respawn: %d", f.starts)
+	}
+}
+
+func TestLockerCrashAfterLockedRespawnsOnce(t *testing.T) {
+	f := newFakeLock([]int{1, 1}, []string{"sysc-lock: locked", "sysc-lock: locked"})
+	var slept []time.Duration
+	m := &lockerManager{
+		spawn:  f.spawn,
+		paused: func(bool) {},
+		sleep:  func(d time.Duration) { slept = append(slept, d) },
+	}
+	if err := m.request([]string{"x"}); err != nil {
+		t.Fatal(err)
+	}
+	// first crash respawns; second crash exhausts the budget
+	waitWhile(t, func() bool { return f.count() < 2 }, "no respawn")
+	f.finish(1, 1)
+	waitWhile(t, func() bool { return m.State().Running }, "still running")
+	if f.count() != 2 {
+		t.Fatalf("budget exhausted must stop at 2 starts, got %d", f.starts)
+	}
+	if len(slept) == 0 || slept[0] != lockerRespawnBackoff {
+		t.Fatalf("slept=%v", slept)
+	}
+	if st := m.State(); !st.RespawnedUsed {
+		t.Fatalf("st=%+v", st)
+	}
+}
+
+func TestLockerSigtermBeforeLockedNoRespawn(t *testing.T) {
+	f := newFakeLock([]int{3}, []string{"early exit before locked"})
+	m := &lockerManager{spawn: f.spawn, paused: func(bool) {}, sleep: func(time.Duration) {}}
+	m.request([]string{"x"})
+	waitWhile(t, func() bool { return m.State().Running }, "still running")
+	if f.count() != 1 || m.State().Acquired {
+		t.Fatalf("starts=%d st=%+v", f.starts, m.State())
+	}
+}
+
+func TestLockerSingleFlight(t *testing.T) {
+	f := newFakeLock(nil, []string{"sysc-lock: locked"})
+	f.codes = nil // keep it running
+	m := &lockerManager{spawn: f.spawn, paused: func(bool) {}, sleep: func(time.Duration) {}}
+	if err := m.request([]string{"x"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.request([]string{"x"}); err != errLockerRunning {
+		t.Fatalf("second request=%v", err)
+	}
+	f.finish(0, 0)
+	waitWhile(t, func() bool { return m.State().Running }, "still running")
+}
+
+func TestLockerUserRequestResetsBudget(t *testing.T) {
+	f := newFakeLock([]int{1, 1, 0}, []string{"sysc-lock: locked", "sysc-lock: locked", "sysc-lock: locked"})
+	m := &lockerManager{spawn: f.spawn, paused: func(bool) {}, sleep: func(time.Duration) {}}
+	m.request([]string{"x"})
+	waitWhile(t, func() bool { return f.count() < 2 }, "no respawn")
+	f.finish(1, 1)
+	waitWhile(t, func() bool { return m.State().Running }, "still running")
+	if f.count() != 2 {
+		t.Fatalf("want respawn then stop, starts=%d", f.count())
+	}
+	// fresh user request re-arms
+	if err := m.request([]string{"x"}); err != nil {
+		t.Fatal(err)
+	}
+	waitWhile(t, func() bool { return f.count() < 3 }, "third run")
+	waitWhile(t, func() bool { return m.State().Running }, "still running")
+	if f.count() != 3 {
+		t.Fatalf("starts=%d", f.count())
+	}
+}
