@@ -117,15 +117,11 @@ func (h *tooltipHost) showLocked(req tooltipRequest) []wayland.AuxRequest {
 	if outW <= 0 || outH <= 0 {
 		outW, outH = 1920, 1080
 	}
-	anchor := req.Anchor
-	if policy.Edge == "bottom" && !req.OnOutput {
-		_, barH := bar.configuredSize()
-		if barH <= 0 {
-			barH = policy.Extent()
-		}
-		anchor.Y += outH - barH
+	edge, anchor := policy.Edge, req.Anchor
+	if !req.OnOutput {
+		edge, anchor, _, _ = h.r.barGeometryOnOutputLocked(req.Global, req.Anchor)
 	}
-	place := tooltipPlacement(policy.Edge, anchor, size.W, size.H, outW, outH)
+	place := tooltipPlacement(edge, anchor, size.W, size.H, outW, outH)
 
 	glass := h.r.cfg.Theme.BlurBehind && h.r.caps.Blur
 

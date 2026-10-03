@@ -190,6 +190,32 @@ func TestTooltipPlacement(t *testing.T) {
 	}
 }
 
+func TestSideTooltipPlacement(t *testing.T) {
+	t.Parallel()
+	const outW, outH = 1000, 600
+	cases := []struct {
+		name   string
+		edge   string
+		anchor ui.Rect
+		w, h   int
+		want   ui.Rect
+	}{
+		{"left bar opens right and clamps at top", "left", ui.Rect{X: 40, Y: 2, W: 20, H: 20}, 80, 50,
+			ui.Rect{X: 40 + 20 + tooltipGap, Y: 0, W: 80, H: 50}},
+		{"right bar opens left and clamps at bottom", "right", ui.Rect{X: 940, Y: 570, W: 20, H: 20}, 80, 50,
+			ui.Rect{X: 940 - 80 - tooltipGap, Y: outH - 50, W: 80, H: 50}},
+		{"oversized card clamps in both dimensions", "left", ui.Rect{X: 0, Y: 0, W: 10, H: 10}, 1200, 800,
+			ui.Rect{W: outW, H: outH}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tooltipPlacement(tc.edge, tc.anchor, tc.w, tc.h, outW, outH); got != tc.want {
+				t.Fatalf("placement = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
 // The laptop's output is 1536 logical wide at 1.25; a tray item at its right
 // edge must not push the card off it.
 func TestATooltipAtTheRightEdgeOfAScaledOutputStaysInside(t *testing.T) {
