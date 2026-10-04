@@ -1425,6 +1425,13 @@ func (h *PanelHost) applyIdleSetting(r *Registry, path, value string) {
 		r.rebuildPanel(h)
 		return
 	}
+	switch mode {
+	case "screensaver":
+		r.wallsSnapshot.UnitFileState = "enabled"
+		r.wallsSnapshot.Timeout = delay.String()
+	default:
+		r.wallsSnapshot.UnitFileState = "disabled"
+	}
 	h.errLabel = ""
 	h.set = r.settingsForLocked(h.draft)
 	h.persistDraft(r)
