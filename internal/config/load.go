@@ -135,6 +135,7 @@ type wireIdle struct {
 	BlankBattery   *string `json:"blank_battery,omitempty"`
 	SuspendAc      *string `json:"suspend_ac,omitempty"`
 	SuspendBattery *string `json:"suspend_battery,omitempty"`
+	Lock           *string `json:"lock,omitempty"`
 	MediaExempt    *bool   `json:"media_exempt,omitempty"`
 }
 
@@ -1506,6 +1507,7 @@ func applyIdle(base Idle, w wireIdle) (Idle, error) {
 		{"blank_battery", w.BlankBattery, &out.BlankBattery},
 		{"suspend_ac", w.SuspendAc, &out.SuspendAc},
 		{"suspend_battery", w.SuspendBattery, &out.SuspendBattery},
+		{"lock", w.Lock, &out.Lock},
 	} {
 		if f.in == nil {
 			continue

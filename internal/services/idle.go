@@ -21,9 +21,13 @@ type IdleBehavior uint64
 const (
 	IdleBlank IdleBehavior = iota + 1
 	IdleSuspend
+	// IdleLock locks the session before the display powers off or suspends.
+	// The locker itself holds a logind sleep inhibitor until the compositor
+	// confirms the lock, so ordering against suspend is protocol-level.
+	IdleLock
 )
 
-const idleBehaviorCount = 2
+const idleBehaviorCount = 3
 
 // IdleDecision is one instruction produced by a policy input. The service
 // forwards Arm to the Wayland owner (timeout 0 disarms) and runs Actions
@@ -42,6 +46,7 @@ const (
 	IdleActionBlank
 	IdleActionUnblank
 	IdleActionSuspend
+	IdleActionLock
 )
 
 // IdleSettings is the resolved idle configuration. A zero timeout disables
@@ -49,6 +54,7 @@ const (
 type IdleSettings struct {
 	BlankAc, BlankBattery     time.Duration
 	SuspendAc, SuspendBattery time.Duration
+	LockAc, LockBattery       time.Duration
 	MediaExempt               bool
 }
 
@@ -84,6 +90,11 @@ func (m *idleMachine) desired(b IdleBehavior) time.Duration {
 			return m.settings.SuspendAc
 		}
 		return m.settings.SuspendBattery
+	case IdleLock:
+		if m.onAC {
+			return m.settings.LockAc
+		}
+		return m.settings.LockBattery
 	}
 	return 0
 }
@@ -175,10 +186,14 @@ func (m *idleMachine) idleEvent(b IdleBehavior, idled bool) []IdleDecision {
 			return nil // stale or duplicate: an un-armed object cannot go idle
 		}
 		m.idled[i] = true
-		if b == IdleBlank {
+		switch b {
+		case IdleBlank:
 			return []IdleDecision{{Behavior: b, Action: IdleActionBlank}}
+		case IdleLock:
+			return []IdleDecision{{Behavior: b, Action: IdleActionLock}}
+		default:
+			return []IdleDecision{{Behavior: b, Action: IdleActionSuspend}}
 		}
-		return []IdleDecision{{Behavior: b, Action: IdleActionSuspend}}
 	}
 	if !m.idled[i] {
 		return nil
@@ -220,6 +235,7 @@ type IdleExecutors struct {
 	Blank   func()
 	Unblank func()
 	Suspend func()
+	Lock    func()
 }
 
 // IdleService runs the machine on its own goroutine. Setters are safe from
@@ -401,6 +417,8 @@ func (s *IdleService) apply(m *idleMachine, decisions []IdleDecision) {
 			s.run(s.execs.Unblank)
 		case IdleActionSuspend:
 			s.run(s.execs.Suspend)
+		case IdleActionLock:
+			s.run(s.execs.Lock)
 		}
 	}
 }

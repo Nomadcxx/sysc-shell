@@ -417,16 +417,23 @@ func (s *Service) notifySeed(seed string) {
 }
 
 func (s *Service) setPaused(connector string, paused bool) {
-	a, ok := s.store.Assignment(connector)
-	if !ok || a.Kind != KindVideo {
-		// Pause is video-only; an image has no pipeline to hold.
-		return
+	targets := []string{connector}
+	if connector == AllOutputs {
+		// Same fan-out restore uses: the locker pauses every output.
+		targets = s.store.Connectors()
 	}
-	if err := s.engine.SetPaused(connector, paused); err != nil {
-		s.store.noteRuntimeErr(connector, err)
-		return
+	for _, c := range targets {
+		a, ok := s.store.Assignment(c)
+		if !ok || a.Kind != KindVideo {
+			// Pause is video-only; an image has no pipeline to hold.
+			continue
+		}
+		if err := s.engine.SetPaused(c, paused); err != nil {
+			s.store.noteRuntimeErr(c, err)
+			continue
+		}
+		s.store.SetPlayback(c, paused)
 	}
-	s.store.SetPlayback(connector, paused)
 	s.persist()
 }
 

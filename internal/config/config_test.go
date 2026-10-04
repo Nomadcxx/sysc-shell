@@ -1377,3 +1377,15 @@ func TestThemeGenAcceptsACustomSourceWithASlugSeed(t *testing.T) {
 		t.Errorf("unknown source error should list the valid sources including custom: %v", err)
 	}
 }
+
+func TestApplyIdleLock(t *testing.T) {
+	ok, bad := "10m", "nope"
+	base := Default().Idle
+	got, err := applyIdle(base, wireIdle{Lock: &ok})
+	if err != nil || got.Lock != 10*time.Minute {
+		t.Fatalf("lock idle parse: %v %+v", got.Lock, err)
+	}
+	if _, err := applyIdle(base, wireIdle{Lock: &bad}); err == nil {
+		t.Fatal("want error on non-duration")
+	}
+}

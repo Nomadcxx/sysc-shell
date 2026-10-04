@@ -3,6 +3,7 @@ package shell
 import (
 	"errors"
 	"github.com/Nomadcxx/sysc-shell/internal/render"
+	"io"
 	"os/exec"
 	"reflect"
 	"slices"
@@ -240,6 +241,20 @@ func TestASuccessfulProfileSetClearsAPriorError(t *testing.T) {
 func TestSessionExecMapping(t *testing.T) {
 	t.Parallel()
 	reg, h := newSessionHost(t, "swaylock")
+	// Lock now routes through the tracked-spawn manager (plan T16), not
+	// runArgv; stub the spawn seam so no real process execs under test.
+	var lockMu sync.Mutex
+	var lockArgv []string
+	reg.lockerSpawn = func(argv []string) (io.ReadCloser, <-chan int, error) {
+		lockMu.Lock()
+		lockArgv = append([]string(nil), argv...)
+		lockMu.Unlock()
+		pr, pw := io.Pipe()
+		pw.Close()
+		ch := make(chan int, 1)
+		ch <- 0
+		return pr, ch, nil
+	}
 	var mu sync.Mutex
 	var got [][]string
 	reg.runArgv = func(argv []string) error {
@@ -257,7 +272,6 @@ func TestSessionExecMapping(t *testing.T) {
 		{"Screen off", []string{"niri", "msg", "action", "power-off-monitors"}},
 		{"Reboot", []string{"loginctl", "reboot"}},
 		{"Power off", []string{"loginctl", "poweroff"}},
-		{"Lock", []string{"swaylock"}},
 	}
 	for i, tc := range cases {
 		if i > 0 {
@@ -295,6 +309,32 @@ func TestSessionExecMapping(t *testing.T) {
 		waitSessionPanelClosed(t, reg)
 		_ = drainAux(t, reg, 2) // close requests after a successful action
 	}
+	// Lock runs through the tracked-spawn seam with the same argv mapping.
+	if err := reg.OpenPanel(PanelSession, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = drainAux(t, reg, 2)
+	activateNamed(reg.panelHosts[PanelSession], reg, "Lock")
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		lockMu.Lock()
+		done := lockArgv != nil
+		lockMu.Unlock()
+		if done {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Lock: tracked spawn never ran")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	lockMu.Lock()
+	argv := lockArgv
+	lockMu.Unlock()
+	if !reflect.DeepEqual(argv, []string{"swaylock"}) {
+		t.Fatalf("Lock argv = %v, want [swaylock]", argv)
+	}
+	waitSessionPanelClosed(t, reg)
 }
 
 func waitSessionPanelClosed(t *testing.T, reg *Registry) {

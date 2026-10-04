@@ -285,6 +285,10 @@ type Idle struct {
 	BlankBattery   time.Duration
 	SuspendAc      time.Duration
 	SuspendBattery time.Duration
+	// Lock arms the session-lock behavior on both power sources. The locker
+	// holds a logind sleep inhibitor until the compositor confirms the lock,
+	// so a suspend armed shorter than lock still cannot outrun locking.
+	Lock time.Duration
 	MediaExempt    bool // playing media suppresses idle behaviors
 }
 

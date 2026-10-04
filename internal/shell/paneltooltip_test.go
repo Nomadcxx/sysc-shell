@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
 
@@ -53,9 +52,14 @@ func TestPanelHoverArmsAHintAnchoredOnTheOutput(t *testing.T) {
 // the output; a panel node's is already on the output and must not move.
 func TestAnOutputAnchorIgnoresTheBottomBarOffset(t *testing.T) {
 	t.Parallel()
-	cfg := config.Default()
-	cfg.Bar.Edge = "bottom"
-	_, h, hh := newTooltipFixtureWithConfig(t, true, cfg)
+	r, h, hh := newTooltipFixture(t, true)
+	// Take the registry lock: NewRegistry already runs the media relay
+	// goroutine, which reads r.cfg under r.mu (viewLocked). Writing the
+	// config from the test without the lock is a data race the detector
+	// catches deterministically with -race -count.
+	r.mu.Lock()
+	r.cfg.Bar.Edge = "bottom"
+	r.mu.Unlock()
 	anchor := ui.Rect{X: 700, Y: 500, W: 36, H: 36}
 	h.show(tooltipRequest{Global: 1, Anchor: anchor, Text: "Delete note", OnOutput: true})
 	spec := onlyOpen(t, hh)
