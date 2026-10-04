@@ -160,6 +160,15 @@ func TestSettingsAfterIdleApply(t *testing.T) {
 		if selectedIdleAfter(h) != "screensaver" {
 			t.Fatalf("After idle = %q, want screensaver without waiting for Updates()", selectedIdleAfter(h))
 		}
+		delay := findNode(h.root, func(n *ui.Node) bool { return n.Action == "set:idle.delay" })
+		wantDelay := settings.WhenIdleDelay(0, r.wallsSnapshot.Timeout).String()
+		if delay == nil || delay.Text != wantDelay {
+			got := ""
+			if delay != nil {
+				got = delay.Text
+			}
+			t.Fatalf("delay text = %q, want %q after leaving nothing", got, wantDelay)
+		}
 
 		h.applySetting(r, &ui.Node{Kind: ui.KindTextField, Action: "set:idle.delay", Text: "3m"})
 		if h.draft.Idle.Lock != 0 {
@@ -205,6 +214,44 @@ func TestSettingsAfterIdleApply(t *testing.T) {
 		fake.mu.Unlock()
 		if len(enables) != 0 || len(patches) != 0 {
 			t.Fatalf("toggled unit while ActionPending: enables=%v patches=%v", enables, patches)
+		}
+	})
+
+	t.Run("pending enable keeps screensaver", func(t *testing.T) {
+		r, h, fake := newOpenIdleSettings(t, readyWallsSnapshot(), "sysc-lock")
+		r.mu.Lock()
+		pickIdleAfter(t, r, h, "screensaver")
+		if selectedIdleAfter(h) != "screensaver" {
+			r.mu.Unlock()
+			t.Fatalf("After idle = %q, want screensaver", selectedIdleAfter(h))
+		}
+		r.mu.Unlock()
+
+		pending := readyWallsSnapshot()
+		pending.ActionPending = true
+		fake.Publish(pending)
+		waitFor(t, func() bool {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			return r.wallsSnapshot.ActionPending
+		})
+		r.mu.Lock()
+		if selectedIdleAfter(h) != "screensaver" {
+			r.mu.Unlock()
+			t.Fatalf("After idle during pending = %q, want screensaver", selectedIdleAfter(h))
+		}
+		r.mu.Unlock()
+
+		fake.Publish(enabledAtLoginSnapshot())
+		waitFor(t, func() bool {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			return !r.wallsSnapshot.ActionPending && r.wallsSnapshot.EnabledAtLogin()
+		})
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if selectedIdleAfter(h) != "screensaver" {
+			t.Fatalf("After idle after enable = %q, want screensaver", selectedIdleAfter(h))
 		}
 	})
 }

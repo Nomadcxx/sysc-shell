@@ -1436,6 +1436,7 @@ func (h *PanelHost) applyIdleSetting(r *Registry, path, value string) {
 	h.set = r.settingsForLocked(h.draft)
 	h.persistDraft(r)
 	if path == "idle.after" {
+		delete(h.fields, "idle.delay")
 		r.rebuildPanel(h)
 	}
 }

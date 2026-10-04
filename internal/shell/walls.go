@@ -96,6 +96,11 @@ func (r *Registry) applyWallsSnapshot(svc wallsController, snapshot walls.Snapsh
 		r.mu.Unlock()
 		return
 	}
+	if snapshot.ActionPending && r.wallsSnapshot.EnabledAtLogin() != snapshot.EnabledAtLogin() {
+		snapshot.UnitFileState = r.wallsSnapshot.UnitFileState
+		snapshot.UnitKnown = r.wallsSnapshot.UnitKnown
+		snapshot.UnitStale = r.wallsSnapshot.UnitStale
+	}
 	r.wallsSnapshot = snapshot
 	var publish []waylandSurface
 	if h := r.panelHosts[PanelSettings]; h != nil && (h.section == "Screensaver" || h.section == "Session") {
