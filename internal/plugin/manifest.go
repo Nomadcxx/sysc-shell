@@ -83,6 +83,8 @@ const (
 	CapClipboardWrite Capability = "clipboard-write"
 	// CapScreenshot lets a plugin start a screenshot and read the save directory.
 	CapScreenshot Capability = "screenshot"
+	// CapFiles lets a plugin open the host-owned file browser under a named root.
+	CapFiles Capability = "files"
 )
 
 var knownCapabilities = map[Capability]bool{
@@ -92,6 +94,7 @@ var knownCapabilities = map[Capability]bool{
 	CapClipboardRead:    true,
 	CapOpenURL:          true, CapClipboardWrite: true,
 	CapScreenshot: true,
+	CapFiles:      true,
 }
 
 // Placement says how a declared panel is positioned. An attached panel drops

@@ -25,3 +25,29 @@ func TestHostSupports(t *testing.T) {
 		}
 	}
 }
+
+func TestHostSupportedVersionsNamesEveryMinor(t *testing.T) {
+	t.Parallel()
+	got := hostSupportedVersions()
+	if len(got) != HostProtocolMinor+1 {
+		t.Fatalf("len = %d, want %d", len(got), HostProtocolMinor+1)
+	}
+	if got[0] != (v1.Version{Major: 1, Minor: HostProtocolMinor}) {
+		t.Fatalf("best = %+v, want 1.%d", got[0], HostProtocolMinor)
+	}
+	if got[len(got)-1] != (v1.Version{Major: 1, Minor: 0}) {
+		t.Fatalf("oldest = %+v, want 1.0", got[len(got)-1])
+	}
+	seen15 := false
+	for i, v := range got {
+		if v.Major != 1 || v.Minor != HostProtocolMinor-i {
+			t.Fatalf("got[%d] = %+v, want 1.%d", i, v, HostProtocolMinor-i)
+		}
+		if v.Minor == 15 {
+			seen15 = true
+		}
+	}
+	if HostProtocolMinor >= 15 && !seen15 {
+		t.Fatal("minor 15 missing from host.hello Supported")
+	}
+}
