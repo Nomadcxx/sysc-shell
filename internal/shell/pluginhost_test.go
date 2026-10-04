@@ -1348,6 +1348,30 @@ func TestPluginSideBarGeometry(t *testing.T) {
 	}
 }
 
+func TestPluginHorizontalBarWidthRemainsStandard(t *testing.T) {
+	for _, edge := range []string{"top", "bottom"} {
+		t.Run(edge, func(t *testing.T) {
+			reg := bindTestPlugin(t, "ok")
+			reg.mu.Lock()
+			reg.cfg.Bar.Edge = edge
+			reg.mu.Unlock()
+			newHosts(t, reg, map[uint32]string{7: "DP-1"})
+			waitPluginText(t, reg.bars[7], "hello")
+
+			ids := reg.plugins.barViewIDs("DP-1")
+			if len(ids) != 1 {
+				t.Fatalf("bar view IDs = %v", ids)
+			}
+			reg.plugins.mu.Lock()
+			width := reg.plugins.views[ids[0]].Width
+			reg.plugins.mu.Unlock()
+			if width != pluginBarViewWidth {
+				t.Fatalf("%s bar plugin width = %d, want standard %d", edge, width, pluginBarViewWidth)
+			}
+		})
+	}
+}
+
 func TestPluginSidePanelResize(t *testing.T) {
 	for _, edge := range []string{"left", "right"} {
 		t.Run(edge, func(t *testing.T) {
@@ -1467,6 +1491,16 @@ func TestPluginSidePanelResize(t *testing.T) {
 			} else if req.Update.SetInputRegion {
 				t.Fatalf("resized panel added an input region without joints: %+v", req.Update.InputRects)
 			}
+			if _, err := reg.plugins.resizePanel(v1.PanelResizeParams{Width: 80, Height: 60}); err != nil {
+				t.Fatal(err)
+			}
+			reg.mu.Lock()
+			tracked, want := host.rect, host.place.Rect()
+			reg.mu.Unlock()
+			if tracked != want {
+				t.Fatalf("tracked resized body = %+v, want %+v", tracked, want)
+			}
+
 		})
 	}
 }

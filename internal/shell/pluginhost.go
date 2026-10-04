@@ -1200,7 +1200,7 @@ func (h *pluginHost) resizePanel(p v1.PanelResizeParams) (v1.PanelResizeResult, 
 	place.Panel = ui.Rect{W: p.Width, H: p.Height}
 	p.Width, p.Height = place.FittedSize()
 	place.Panel.W, place.Panel.H = p.Width, p.Height
-	host.place = place
+	host.place, host.rect = place, place.Rect()
 	// The surface keeps the joints it opened with around the new body,
 	// which is also what surfaceBody places it by (sysc-588).
 	joints := place.Joints()
