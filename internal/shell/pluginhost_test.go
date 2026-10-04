@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -16,6 +17,8 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/files"
+	"github.com/Nomadcxx/sysc-shell/internal/icons"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/niri"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/plugin"
@@ -39,7 +42,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestPluginHostGrantsCalendarActionCapabilities(t *testing.T) {
-	for _, want := range []plugin.Capability{plugin.CapOpenURL, plugin.CapClipboardWrite} {
+	for _, want := range []plugin.Capability{plugin.CapOpenURL, plugin.CapClipboardWrite, plugin.CapFiles} {
 		found := false
 		for _, got := range hostPluginCaps {
 			if got == want {
@@ -1806,6 +1809,15 @@ func TestPluginCallHooksChangeNothingOnceCancelled(t *testing.T) {
 	if open {
 		t.Fatal("a cancelled call opened the plugin panel")
 	}
+	if _, err := env.BrowseFiles(ctx, v1.FilesBrowseParams{Root: t.TempDir(), Mode: "open"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("BrowseFiles = %v, want context.Canceled", err)
+	}
+	reg.mu.Lock()
+	_, filesOpen := reg.panels.Output(PanelFiles)
+	reg.mu.Unlock()
+	if filesOpen {
+		t.Fatal("a cancelled call opened the files panel")
+	}
 	_, resizeErr := env.PanelResize(ctx, v1.PanelResizeParams{Width: 400, Height: 300})
 	for name, err := range map[string]error{
 		"ClosePanel":   env.ClosePanel(ctx, v1.PanelParams{Entry: "panel"}),
@@ -2126,4 +2138,59 @@ func TestCenterPlacedPluginPanelIgnoresTheClickedWidget(t *testing.T) {
 	if left, want := m.Left, (3440-host.place.Panel.W)/2; left != want {
 		t.Fatalf("panel left = %d, want centred %d", left, want)
 	}
+}
+
+type stubImageResolver struct{ path string }
+
+func (s stubImageResolver) Resolve(name string, size int) (string, bool) { return s.path, true }
+
+func hasStampedImage(n *ui.Node) bool {
+	if n.Kind == ui.KindImage && n.Image != nil {
+		return true
+	}
+	for _, c := range n.Children {
+		if hasStampedImage(c) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestFilesPanelStampsThumbnails(t *testing.T) {
+	root := t.TempDir()
+	pic := filepath.Join(root, "pic.png")
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pic, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg := NewRegistry(config.Default())
+	t.Cleanup(reg.Close)
+	go func() {
+		for range reg.AuxRequests() {
+		}
+	}()
+	h := &pluginHost{r: reg}
+	h.images = icons.NewWorker(stubImageResolver{path: pic}, h.applyPluginImage)
+	reg.plugins = h
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go h.images.Run(ctx)
+	if _, err := reg.openFilesBrowser(context.Background(), v1.FilesBrowseParams{Root: root, Mode: files.ModeOpen}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		reg.mu.Lock()
+		fh := reg.panelHosts[PanelFiles]
+		stamped := fh != nil && hasStampedImage(fh.root)
+		reg.mu.Unlock()
+		if stamped {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("files panel thumbnail was never stamped")
 }
