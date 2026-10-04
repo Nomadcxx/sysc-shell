@@ -37,6 +37,9 @@ func Write(path string, c Config) error {
 	if _, err := applyMonitor(*monitorWire(c.Monitor), "monitor"); err != nil {
 		return err
 	}
+	if _, err := applyDisplays(Displays{}, wireDisplays{NiriConfigPath: &c.Displays.NiriConfigPath}, "displays"); err != nil {
+		return err
+	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("config: mkdir %s: %w", dir, err)
@@ -108,6 +111,10 @@ func toWire(c Config) wireConfig {
 	}
 	if p := wallpaperDiff(c.Wallpaper, d.Wallpaper); p != nil {
 		w.Wallpaper = p
+	}
+	if c.Displays.NiriConfigPath != "" {
+		p := c.Displays.NiriConfigPath
+		w.Displays = &wireDisplays{NiriConfigPath: &p}
 	}
 	if c.TerminalArt.Palette != "" {
 		palette := c.TerminalArt.Palette

@@ -196,6 +196,10 @@ type wireTerminalArt struct {
 	Palette *string `json:"palette,omitempty"`
 }
 
+type wireDisplays struct {
+	NiriConfigPath *string `json:"niri_config_path,omitempty"`
+}
+
 type wireConfig struct {
 	Bar           *wireBar             `json:"bar,omitempty"`
 	Theme         *wireTheme           `json:"theme,omitempty"`
@@ -210,6 +214,7 @@ type wireConfig struct {
 	Monitor       *wireMonitor         `json:"monitor,omitempty"`
 	Wallpaper     *wireWallpaper       `json:"wallpaper,omitempty"`
 	TerminalArt   *wireTerminalArt     `json:"terminal-art,omitempty"`
+	Displays      *wireDisplays        `json:"displays,omitempty"`
 	Outputs       []wireOutput         `json:"outputs,omitempty"`
 	Templates     map[string]bool      `json:"templates,omitempty"`
 	Plugins       *wirePlugins         `json:"plugins,omitempty"`
@@ -366,6 +371,14 @@ func Parse(data []byte) (Config, error) {
 		}
 		cfg.TerminalArt.Palette = *wire.TerminalArt.Palette
 	}
+	if wire.Displays != nil && wire.Displays.NiriConfigPath != nil {
+		displays, err := applyDisplays(Displays{}, *wire.Displays, "displays")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Displays = displays
+	}
+
 	// The base bar's geometry derives from the resolved composition before any
 	// explicit bar block is applied, so the precedence is preset, then theme
 	// axes, then the derived bar, then bar, then output. This supersedes the
@@ -727,6 +740,20 @@ func isBusNameStart(c byte) bool {
 
 func isBusNameChar(c byte) bool {
 	return isBusNameStart(c) || c >= '0' && c <= '9'
+}
+
+// applyDisplays resolves the displays block. The path has to be absolute: it
+// is handed to the compositor as a configuration root and to the shell's own
+// include, where a relative path would resolve against two different
+// directories.
+func applyDisplays(base Displays, w wireDisplays, path string) (Displays, error) {
+	if p := *w.NiriConfigPath; p != "" {
+		if !filepath.IsAbs(p) {
+			return base, pathErr(path+".niri_config_path", "%q is not an absolute path", p)
+		}
+		base.NiriConfigPath = filepath.Clean(p)
+	}
+	return base, nil
 }
 
 // applyMonitor resolves the monitor block over its defaults. A colour must be
