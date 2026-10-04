@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -239,6 +240,8 @@ type PanelHost struct {
 	wallpaperOutput  string
 	wallpaperSel     int
 	wallpaperFocused bool
+	// wallpaperEffectTheme is the last sysc-Go palette picked on Terminal Art.
+	wallpaperEffectTheme string
 	// wallpaperMenu names the open chrome dropdown ("folder" or "palette"),
 	// or is empty when none is. One field rather than a flag each keeps them
 	// mutually exclusive: two lists open at once would each claim a slice of
@@ -331,6 +334,8 @@ func parsePanelName(name string) (PanelID, error) {
 		return PanelNotifications, nil
 	case "wallpaper":
 		return PanelWallpaper, nil
+	case "terminal-art":
+		return PanelTerminalArt, nil
 	case "audio":
 		return PanelAudio, nil
 	case "control-center":
@@ -867,6 +872,8 @@ func panelIDFromAux(surfaceID string) (PanelID, bool) {
 		return PanelNotifications, true
 	case "wallpaper":
 		return PanelWallpaper, true
+	case "terminal-art":
+		return PanelTerminalArt, true
 	case "audio":
 		return PanelAudio, true
 	case "control-center":
@@ -1131,6 +1138,15 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 			h.wallpaperDir = firstRoot(h.wallpaperSnap)
 		}
 	}
+	if id == PanelTerminalArt {
+		h.wallpaperOutput = wallpaper.AllOutputs
+		if svc := r.wallpaperServiceLocked(); svc != nil {
+			h.wallpaperSnap = svc.Snapshot()
+		}
+		if p := r.cfg.TerminalArt.Palette; slices.Contains(h.wallpaperSnap.Caps.Catalog.Themes, p) {
+			h.wallpaperEffectTheme = p
+		}
+	}
 	if id == PanelAudio {
 		h.audioTab = "volumes"
 	}
@@ -1175,6 +1191,13 @@ func (r *Registry) spawnPanelLocked(id PanelID, output uint32, trig Trigger, gen
 		// that happens to be first in the tree.
 		h.focusByName("Search")
 		h.wallpaperFocused = true
+	}
+	if id == PanelTerminalArt {
+		// The cards own Enter, so focus starts on them rather than on the
+		// output select that happens to come first.
+		if effects := artEffects(h); len(effects) > 0 {
+			h.focusByName(effects[0].ID)
+		}
 	}
 	if id == PanelAudio {
 		h.focusByName("Volumes")
@@ -2168,6 +2191,9 @@ func (h *PanelHost) keyInput(r *Registry, k ui.KeyInput) bool {
 	if h.id == PanelWallpaper && h.wallpaperKeyPress(r, key) {
 		return true
 	}
+	if h.id == PanelTerminalArt && h.artKeyPress(r, key) {
+		return true
+	}
 	if h.id == PanelClipboard && h.clipboardKeyPress(r, key) {
 		return true
 	}
@@ -2860,6 +2886,9 @@ func (h *PanelHost) activate(r *Registry) bool {
 	if strings.HasPrefix(n.Action, "wallpaper") && h.wallpaperAction(r, n) {
 		return true
 	}
+	if strings.HasPrefix(n.Action, "art-") && h.artAction(r, n) {
+		return true
+	}
 	if strings.HasPrefix(n.Action, "audio-") && h.applyAudioControl(r, n) {
 		return true
 	}
@@ -3258,6 +3287,8 @@ func (r *Registry) panelTree(h *PanelHost) *ui.Node {
 		return launcherTree(r, h)
 	case PanelWallpaper:
 		return wallpaperTree(r, h)
+	case PanelTerminalArt:
+		return terminalArtTree(r, h)
 	case PanelPluginStore:
 		return pluginStoreTree(r, h)
 	case PanelPlugin:
@@ -3310,6 +3341,8 @@ func panelTargetSize(id PanelID) ui.Rect {
 		// The plugin picker's size, not native Noctalia's 980x700. A short
 		// output clamps it through Placement.FittedSize (D2).
 		return ui.Rect{W: 980, H: 1100}
+	case PanelTerminalArt:
+		return ui.Rect{W: 640, H: 640}
 	case PanelAudio:
 		return audioPanelSize(1920, 1080)
 	case PanelControlCenter:

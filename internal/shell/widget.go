@@ -247,6 +247,8 @@ func buildWidgetsWithClockFloor(items []config.Item, pad int, m theme.Metrics, c
 			out = append(out, buildNotifyWidget(m))
 		case "wallpaper":
 			out = append(out, buildWallpaperWidget())
+		case "terminal-art":
+			out = append(out, buildTerminalArtWidget())
 		case "volume":
 			out = append(out, buildVolumeWidget())
 		case "media":

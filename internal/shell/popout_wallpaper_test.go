@@ -63,11 +63,32 @@ func wallpaperPanel(t *testing.T, roots []string, relay bool) (*Registry, *wallp
 
 type stubWallpaperEngine struct{}
 
+func (stubWallpaperEngine) AdvanceGeneration(string, uint64)                        {}
 func (stubWallpaperEngine) Apply(wallpaper.Job, wallpaper.Settings) (string, error) { return "", nil }
 func (stubWallpaperEngine) Restore(string, string) error                            { return nil }
 func (stubWallpaperEngine) SetPaused(string, bool) error                            { return nil }
 func (stubWallpaperEngine) Capabilities() wallpaper.Capabilities {
 	return wallpaper.Capabilities{GSlapper: true, Statics: []string{"awww"}}
+}
+
+type wallpaperRestoreProbe struct {
+	stubWallpaperEngine
+	restored chan string
+}
+
+func (e *wallpaperRestoreProbe) Restore(connector, _ string) error {
+	e.restored <- connector
+	return nil
+}
+
+func (wallpaperRestoreProbe) Capabilities() wallpaper.Capabilities {
+	return wallpaper.Capabilities{
+		Terminal: true,
+		Catalog: wallpaper.Catalog{
+			Effects: []wallpaper.EffectInfo{{ID: "fire"}},
+			Themes:  []string{"nord"},
+		},
+	}
 }
 
 func wallpaperHost(t *testing.T, reg *Registry) *PanelHost {
@@ -357,12 +378,13 @@ func TestWallpaperSummaryIsReadBackFromTheSnapshot(t *testing.T) {
 	}
 
 	h := &PanelHost{wallpaperSnap: snap, wallpaperOutput: wallpaper.AllOutputs}
-	matched, total := wallpaperMatchCount(h, "/w/a.png")
+	png := wallpaper.Entry{Path: "/w/a.png"}
+	matched, total := wallpaperMatchCount(h, png)
 	if matched != 2 || total != 2 {
 		t.Fatalf("match count = %d/%d, want 2/2", matched, total)
 	}
 	snap.Assignments["DP-3"] = wallpaper.Assignment{Kind: wallpaper.KindVideo, Path: "/w/b.mp4"}
-	if matched, total = wallpaperMatchCount(h, "/w/a.png"); matched != 1 || total != 2 {
+	if matched, total = wallpaperMatchCount(h, png); matched != 1 || total != 2 {
 		t.Fatalf("match count = %d/%d, want 1/2", matched, total)
 	}
 }
@@ -394,6 +416,103 @@ func TestWallpaperRestoreEnqueuesRestore(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("restore never put the output back on the static fallback")
+}
+
+func TestWallpaperRestoreLeavesEffectsToTerminalArt(t *testing.T) {
+	engine := &wallpaperRestoreProbe{restored: make(chan string, 1)}
+	reg, svc := artRegistry(t, engine, "DP-1")
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-1", Kind: wallpaper.KindEffect, Effect: "fire", Theme: "nord"})
+	awaitArt(t, svc, "DP-1", func(a wallpaper.Assignment) bool { return a.Kind == wallpaper.KindEffect })
+
+	if err := reg.OpenPanel(PanelWallpaper, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	drainAuxQueue(reg)
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelWallpaper]
+	h.wallpaperOutput = "DP-1"
+	reg.rebuildPanel(h)
+	restore := findAction(h.root, "wallpaper-restore")
+	if restore == nil || restore.State&ui.StateDisabled == 0 || !strings.Contains(restore.Tooltip, "Terminal Art") {
+		reg.mu.Unlock()
+		t.Fatalf("Restore = %+v; Terminal Art effects must route to their own panel", restore)
+	}
+	h.wallpaperRestore(reg) // a stale action must not blank an effect without a prior still
+	reg.mu.Unlock()
+
+	select {
+	case connector := <-engine.restored:
+		t.Fatalf("Wallpaper panel restored effect on %s", connector)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if got := svc.Snapshot().Runtime["DP-1"].State; got != wallpaper.StatePlaying {
+		t.Fatalf("effect runtime = %v, want it still playing", got)
+	}
+}
+
+func TestWallpaperPlaybackStateRequiresPlayableVideo(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		states    []wallpaper.State
+		wantPause bool
+		want      bool
+	}{
+		{name: "playing", states: []wallpaper.State{wallpaper.StatePlaying}, want: true},
+		{name: "paused", states: []wallpaper.State{wallpaper.StatePaused}, wantPause: true, want: true},
+		{name: "restored still", states: []wallpaper.State{wallpaper.StateStatic}},
+		{name: "failed", states: []wallpaper.State{wallpaper.StateError}},
+		{name: "mixed playing and paused", states: []wallpaper.State{wallpaper.StatePlaying, wallpaper.StatePaused}, want: true},
+		{name: "mixed paused and restored", states: []wallpaper.State{wallpaper.StatePaused, wallpaper.StateStatic}, wantPause: true, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			connectors := make([]string, len(tc.states))
+			snap := wallpaper.Snapshot{
+				Assignments: make(map[string]wallpaper.Assignment, len(tc.states)),
+				Runtime:     make(map[string]wallpaper.Runtime, len(tc.states)),
+			}
+			for i, state := range tc.states {
+				connector := fmt.Sprintf("DP-%d", i+1)
+				connectors[i] = connector
+				snap.Assignments[connector] = wallpaper.Assignment{Kind: wallpaper.KindVideo, Path: "/w/video.mp4"}
+				snap.Runtime[connector] = wallpaper.Runtime{State: state}
+			}
+			snap.Connectors = connectors
+			h := &PanelHost{wallpaperSnap: snap, wallpaperOutput: wallpaper.AllOutputs}
+			paused, ok := wallpaperPlaybackState(h)
+			if paused != tc.wantPause || ok != tc.want {
+				t.Fatalf("wallpaperPlaybackState = (%v, %v), want (%v, %v)", paused, ok, tc.wantPause, tc.want)
+			}
+		})
+	}
+}
+
+func TestWallpaperPauseRefreshesStaleSnapshot(t *testing.T) {
+	reg, svc, _ := wallpaperPanel(t, nil, false)
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-1", Kind: wallpaper.KindImage, Path: "/w/still.png"})
+	awaitArt(t, svc, "DP-1", func(a wallpaper.Assignment) bool { return a.Kind == wallpaper.KindImage })
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelWallpaper]
+	h.wallpaperOutput = "DP-1"
+	h.wallpaperSnap = wallpaper.Snapshot{
+		Connectors: []string{"DP-1"},
+		Assignments: map[string]wallpaper.Assignment{
+			"DP-1": {Kind: wallpaper.KindVideo, Path: "/w/old.mp4"},
+		},
+		Runtime: map[string]wallpaper.Runtime{"DP-1": {State: wallpaper.StatePlaying}},
+	}
+	h.wallpaperSetPaused(reg, true)
+	if got := h.wallpaperSnap.Assignments["DP-1"].Kind; got != wallpaper.KindImage {
+		reg.mu.Unlock()
+		t.Fatalf("Pause used stale assignment kind %v", got)
+	}
+	if findAction(h.root, "wallpaper-pause") != nil || findAction(h.root, "wallpaper-resume") != nil {
+		reg.mu.Unlock()
+		t.Fatal("the stale playback control remained after refreshing to a still")
+	}
+	reg.mu.Unlock()
+	if got := svc.Snapshot().Runtime["DP-1"].State; got != wallpaper.StateStatic {
+		t.Fatalf("stale pause changed still state to %v", got)
+	}
 }
 
 func TestWallpaperApplyUpdatesTheThemeSeed(t *testing.T) {
@@ -731,29 +850,21 @@ func TestWallpaperVideoTileIsInertWithoutGSlapper(t *testing.T) {
 }
 
 // wallpaperEngineLabels reads the engine strip's pills back out of the tree.
+// wallpaperEngineLabels lists the engine readouts: text with Role "status".
 func wallpaperEngineLabels(root *ui.Node) []string {
 	var out []string
-	var walk func(*ui.Node)
-	walk = func(n *ui.Node) {
-		if n == nil {
-			return
+	walkNodes(root, func(n *ui.Node) {
+		if n.Role == "status" && n.Kind == ui.KindText && n.Text != "" {
+			out = append(out, n.Text)
 		}
-		// Role "status" is the engine pill: a button shape so it can carry
-		// StateSelected, but not an action -- the engine is reported, not
-		// chosen.
-		if n.Role == "status" && len(n.Children) == 1 && n.Children[0].Kind == ui.KindText {
-			out = append(out, n.Children[0].Text)
-		}
-		for _, c := range n.Children {
-			walk(c)
-		}
-	}
-	walk(root)
+	})
 	return out
 }
 
 // Every installed engine gets a pill, in the order they are reached.
-func TestWallpaperEngineStripNamesWhatIsInstalled(t *testing.T) {
+// The footer names the one engine painting the selected outputs. It used to
+// be a row of pills for every installed engine, which read as a choice.
+func TestWallpaperFooterNamesOneEngine(t *testing.T) {
 	t.Parallel()
 
 	root := seedWallpaperRoot(t)
@@ -762,39 +873,21 @@ func TestWallpaperEngineStripNamesWhatIsInstalled(t *testing.T) {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
 
-	snap := h.wallpaperSnap
-	snap.Caps = wallpaper.Capabilities{GSlapper: true, Statics: []string{"awww", "swaybg"}}
-	h.wallpaperSnap = snap
+	footer := func() *ui.Node { return h.root.Children[len(h.root.Children)-1] }
+	h.wallpaperSnap.Caps = wallpaper.Capabilities{GSlapper: true, Statics: []string{"awww", "swaybg"}}
 	reg.rebuildPanel(h)
-
-	want := []string{"gSlapper", "awww", "swaybg"}
-	if got := wallpaperEngineLabels(h.root); !slices.Equal(got, want) {
-		t.Errorf("engine pills = %v, want %v", got, want)
+	if got := wallpaperEngineLabels(footer()); !slices.Equal(got, []string{"gSlapper"}) {
+		t.Errorf("footer engine = %v, want only the engine that would paint", got)
+	}
+	if findAction(footer(), "wallpaper-menu:palette") == nil {
+		t.Error("the shell theme combo belongs in the footer")
 	}
 
-	// With nothing installed the strip says so rather than vanishing.
-	snap.Caps = wallpaper.Capabilities{}
-	h.wallpaperSnap = snap
+	h.wallpaperSnap.Caps = wallpaper.Capabilities{}
 	reg.rebuildPanel(h)
-	if got := wallpaperEngineLabels(h.root); len(got) != 0 {
-		t.Errorf("engine pills = %v, want none", got)
-	}
-	var said bool
-	var walk func(*ui.Node)
-	walk = func(n *ui.Node) {
-		if n == nil {
-			return
-		}
-		if n.Kind == ui.KindText && strings.Contains(n.Text, "no wallpaper engine installed") {
-			said = true
-		}
-		for _, c := range n.Children {
-			walk(c)
-		}
-	}
-	walk(h.root)
-	if !said {
-		t.Error("a machine with no engine must be told so")
+	engine := findNode(footer(), func(n *ui.Node) bool { return n.Role == "status" })
+	if engine == nil || engine.Text != "no wallpaper engine installed" || engine.Tone != ui.ToneError {
+		t.Errorf("no engine: footer engine = %+v", engine)
 	}
 }
 
@@ -894,23 +987,81 @@ func TestWallpaperReportsPreviewGeneration(t *testing.T) {
 	}
 }
 
-func TestWallpaperEmptyStatesExplainThemselves(t *testing.T) {
+// An empty grid reads as a broken picker unless it says why and offers the
+// one action that gets out of it.
+func TestWallpaperEmptyStatesOfferAnAction(t *testing.T) {
 	t.Parallel()
 
-	empty := t.TempDir()
-	reg, _, _ := openWallpaperPanel(t, []string{empty})
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.png"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg, _, _ := openWallpaperPanel(t, []string{root})
 	h := wallpaperHost(t, reg)
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
 
-	text := wallpaperEmptyState(h).Text
-	if !strings.Contains(text, "No supported wallpapers") {
-		t.Errorf("empty directory says %q", text)
+	state := func() (string, string) {
+		t.Helper()
+		n := wallpaperEmptyState(h)
+		text, action := "", ""
+		walkNodes(n, func(c *ui.Node) {
+			if c.Kind == ui.KindText && text == "" {
+				text = c.Text
+			}
+			if c.Action != "" {
+				action = c.Action
+			}
+		})
+		return text, action
 	}
 
 	h.search = ui.NewField("zzzz")
-	if text := wallpaperEmptyState(h).Text; !strings.Contains(text, "match your search") {
-		t.Errorf("a search with no hits says %q", text)
+	if text, action := state(); !strings.Contains(text, `match "zzzz"`) || action != "wallpaper-clear-search" {
+		t.Errorf("search: %q / %q", text, action)
+	}
+	if !h.wallpaperAction(reg, &ui.Node{Action: "wallpaper-clear-search"}) || wallpaperSearch(h) != "" {
+		t.Error("Clear search did not clear the field")
+	}
+
+	h.wallpaperFilter = wallpaper.FilterVideos
+	if text, action := state(); !strings.Contains(text, "No videos") || action != "wallpaper-filter:0" {
+		t.Errorf("filtered: %q / %q", text, action)
+	}
+	h.wallpaperFilter = wallpaper.FilterAll
+
+	h.wallpaperDir = filepath.Join(root, "empty")
+	if text, action := state(); !strings.Contains(text, "No images or videos in empty") || action != "wallpaper-up" {
+		t.Errorf("empty folder: %q / %q", text, action)
+	}
+
+	h.wallpaperSnap.Library = wallpaper.Scan([]string{filepath.Join(root, "empty")})
+	h.wallpaperDir = filepath.Join(root, "empty")
+	if _, action := state(); action != "wallpaper-library-settings" {
+		t.Errorf("empty root: action %q, want Library settings", action)
+	}
+
+	h.wallpaperSnap.Library = nil
+	if text, action := state(); !strings.Contains(text, "Indexing") || action != "" ||
+		findNode(wallpaperEmptyState(h), func(n *ui.Node) bool { return n.Kind == ui.KindSpinner }) == nil {
+		t.Errorf("indexing: %q / %q, want a spinner and no action", text, action)
+	}
+}
+
+func TestWallpaperLibrarySettingsOpensSettings(t *testing.T) {
+	reg, _, _ := openWallpaperPanel(t, []string{t.TempDir()})
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if !h.wallpaperAction(reg, &ui.Node{Action: "wallpaper-library-settings"}) {
+		t.Fatal("Library settings was not handled")
+	}
+	settings := reg.panelHosts[PanelSettings]
+	if reg.panelHosts[PanelWallpaper] != nil || settings == nil || settings.section != "Wallpaper" {
+		t.Fatalf("wallpaper open=%v settings=%+v; want Settings at Wallpaper", reg.panelHosts[PanelWallpaper] != nil, settings)
 	}
 }
 
@@ -1106,7 +1257,7 @@ func TestScrollGoesToTheRegionUnderThePointer(t *testing.T) {
 
 // The engine row listed every installed binary with nothing to say which was
 // doing the work.
-func TestWallpaperEnginePillMarksTheOneDrivingTheOutput(t *testing.T) {
+func TestWallpaperEngineCaptionFollowsTheOutput(t *testing.T) {
 	t.Parallel()
 
 	root := seedWallpaperRoot(t)
@@ -1119,8 +1270,8 @@ func TestWallpaperEnginePillMarksTheOneDrivingTheOutput(t *testing.T) {
 	h.wallpaperSnap.Connectors = []string{"DP-1"}
 	h.wallpaperSnap.Caps = wallpaper.Capabilities{GSlapper: true, Statics: []string{"awww", "swaybg"}}
 
-	// Nothing painted yet: the row still names the engine that would take it,
-	// so the strip is never three names with none marked.
+	// Nothing painted yet: the caption still names the engine that would take
+	// it, so it is never blank on a fresh session.
 	h.wallpaperSnap.Runtime = map[string]wallpaper.Runtime{}
 	if got := wallpaperActiveEngine(h); got != wallpaper.EngineGSlapper {
 		t.Errorf("with nothing assigned, active engine = %q, want the default", got)
@@ -1128,21 +1279,9 @@ func TestWallpaperEnginePillMarksTheOneDrivingTheOutput(t *testing.T) {
 
 	// Once something has painted, the recorded engine wins over the default.
 	h.wallpaperSnap.Runtime = map[string]wallpaper.Runtime{"DP-1": {Engine: "awww"}}
-	if got := wallpaperActiveEngine(h); got != "awww" {
-		t.Errorf("active engine = %q, want the engine that painted it", got)
-	}
-
-	selected := map[string]bool{}
-	walkNodes(wallpaperEngineRow(h), func(n *ui.Node) {
-		if n.Role == "status" && len(n.Children) == 1 {
-			selected[n.Children[0].Text] = n.State.Has(ui.StateSelected)
-		}
-	})
-	if !selected["awww"] {
-		t.Error("the engine painting the output is not marked selected")
-	}
-	if selected["gSlapper"] || selected["swaybg"] {
-		t.Error("an engine that is merely installed must not look selected")
+	reg.rebuildPanel(h)
+	if got := wallpaperEngineLabels(h.root); !slices.Equal(got, []string{"awww"}) {
+		t.Errorf("engine caption = %v, want the engine that painted it", got)
 	}
 }
 
@@ -1222,5 +1361,108 @@ func TestThumbArrivalDoesNotRebuildTheTree(t *testing.T) {
 	reg.mu.Unlock()
 	if after != before {
 		t.Error("the tree was rebuilt for a raster arrival")
+	}
+}
+
+func TestWallpaperOurNamespaceIncludesTerminal(t *testing.T) {
+	if !wallpaperOurNamespace("sysc-terminal") {
+		t.Fatal("sysc-terminal on Background must be ours")
+	}
+	if !wallpaperOurNamespace("slapper") {
+		t.Fatal("slapper must stay ours")
+	}
+	if wallpaperOurNamespace("org.gnome.Shell") {
+		t.Fatal("a foreign Background namespace was claimed")
+	}
+}
+
+// The rows are in the order a user scans them, which is also the focus order:
+// where am I, what is showing, how do I find something, the grid, the rest.
+func TestWallpaperRowOrderIsTheScanPath(t *testing.T) {
+	t.Parallel()
+
+	reg, _, _ := openWallpaperPanel(t, []string{seedWallpaperRoot(t)})
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	// Banners, when there are any, sit between the toolbar and the grid.
+	all := h.root.Children
+	if len(all) < 5 {
+		t.Fatalf("%d rows, want header, strip, toolbar, grid, footer", len(all))
+	}
+	rows := append(slices.Clone(all[:3]), all[len(all)-2:]...)
+	for _, action := range []string{"wallpaper-refresh", "wallpaper-close", "wallpaper-output:all"} {
+		if findAction(rows[0], action) == nil {
+			t.Errorf("header lacks %s", action)
+		}
+	}
+	if findAction(rows[1], "wallpaper-restore") == nil {
+		t.Error("the now-showing strip lacks Restore")
+	}
+	if findNode(rows[2], func(n *ui.Node) bool { return n.Kind == ui.KindTextField }) == nil ||
+		findAction(rows[2], "wallpaper-filter:0") == nil || findAction(rows[2], "wallpaper-menu:folder") == nil {
+		t.Error("the toolbar must carry search, the kind filter and the folder")
+	}
+	if rows[3].Kind != ui.KindVirtualList {
+		t.Errorf("row 3 is %v, want the grid", rows[3].Kind)
+	}
+	if findAction(rows[4], "wallpaper-menu:palette") == nil {
+		t.Error("the footer lacks the shell theme")
+	}
+}
+
+func TestWallpaperChromeHasNoCaptionLabels(t *testing.T) {
+	t.Parallel()
+
+	reg, _, _ := openWallpaperPanel(t, []string{seedWallpaperRoot(t)})
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	walkNodes(h.root, func(n *ui.Node) {
+		switch n.Text {
+		case "SEARCH", "OUTPUT", "SHOW", "FOLDER", "THEME", "ENGINE":
+			t.Errorf("caption label %q is still in the chrome", n.Text)
+		}
+	})
+}
+
+// The laptop's panel is about 820 tall. The labelled chrome left 3.4 rows of
+// tiles there; the compact chrome has to leave at least four.
+func TestWallpaperGridRowsOnLaptop(t *testing.T) {
+	t.Parallel()
+
+	reg, _, _ := openWallpaperPanel(t, []string{seedWallpaperRoot(t)})
+	h := wallpaperHost(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h.place.Panel.W, h.place.Panel.H = 980, 820
+	reg.rebuildPanel(h)
+	if got := wallpaperListNode(t, h).Height; got < 4*wallpaperRowHeight {
+		t.Fatalf("grid is %d tall, want at least four %d rows", got, wallpaperRowHeight)
+	}
+	if err := ui.LayoutColumn(h.root, ui.Rect{W: 980, H: 820}, h.measureText()); err != nil {
+		t.Fatalf("layout: %v", err)
+	}
+	last := h.root.Children[len(h.root.Children)-1]
+	if bottom := last.Bounds.Y + last.Bounds.H; bottom > 820 {
+		t.Fatalf("footer ends at %d, past the panel", bottom)
+	}
+}
+
+func TestWallpaperOutputSelectCollapsesOnOneOutput(t *testing.T) {
+	reg, _ := artRegistry(t, stubWallpaperEngine{}, "eDP-1")
+	if err := reg.OpenPanel(PanelWallpaper, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	drainAuxQueue(reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h := reg.panelHosts[PanelWallpaper]
+	var outputs []string
+	collectActions(h.root, "wallpaper-output:", &outputs)
+	header := h.root.Children[0]
+	if len(outputs) != 0 || findNode(header, func(n *ui.Node) bool { return n.Text == "eDP-1" }) == nil {
+		t.Fatalf("one output: select %v; want a caption naming eDP-1 in the header", outputs)
 	}
 }

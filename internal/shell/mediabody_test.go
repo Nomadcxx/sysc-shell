@@ -189,6 +189,7 @@ func TestWallpaperThumbnailRebuildsAndPublishesTheOpenMediaPage(t *testing.T) {
 
 type mediaWallpaperEngine struct{}
 
+func (mediaWallpaperEngine) AdvanceGeneration(string, uint64) {}
 func (mediaWallpaperEngine) Apply(wallpaper.Job, wallpaper.Settings) (string, error) {
 	return "", nil
 }

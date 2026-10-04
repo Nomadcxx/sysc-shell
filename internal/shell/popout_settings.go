@@ -45,6 +45,7 @@ var settingsSectionIcons = map[string]string{
 	"Panels":        "web_asset",
 	"Monitor":       "memory",
 	"Wallpaper":     "wallpaper",
+	"Terminal Art":  "terminal",
 	"Weather":       "partly_cloudy_day",
 	"Displays":      "display_settings",
 	"Tray":          "apps",
@@ -257,8 +258,10 @@ func settingsRailItemHeight(h *PanelHost, search *ui.Node) (height, pad int) {
 	room := ph - 2*m.PanelPadding - searchH - len(clusters)*captionH - (children-1)*theme.MarginXXS
 	per := room / max(len(settingsSections), 1)
 	pad = theme.MarginS
-	if per < m.IconNormal+2*pad {
-		pad = theme.MarginXS
+	for _, tighter := range []int{theme.MarginXS, theme.MarginXXS} {
+		if per < m.IconNormal+2*pad {
+			pad = tighter
+		}
 	}
 	// Never shorter than the icon and its padding, which the tab has to hold.
 	return max(min(m.StandardControl, per), captionH, m.IconNormal+2*pad), pad
@@ -338,6 +341,9 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 		return body(settingsBody(h, theme.MarginM, palettesTree(r, h)))
 	}
 
+	if section == "Terminal Art" {
+		return body(terminalArtSettingsTree(r, h))
+	}
 	if section == "Plugins" {
 		// The plugin host's view is a column of cards with no width of its
 		// own, so inside the body row its switches stretched the full

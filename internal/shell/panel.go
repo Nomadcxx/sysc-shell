@@ -21,6 +21,7 @@ const (
 	PanelWeather
 	PanelClipboard
 	PanelPluginStore
+	PanelTerminalArt
 )
 
 func (p PanelID) String() string {
@@ -55,6 +56,8 @@ func (p PanelID) String() string {
 		return "clipboard"
 	case PanelPluginStore:
 		return "plugin-store"
+	case PanelTerminalArt:
+		return "terminal-art"
 	default:
 		return "unknown"
 	}
