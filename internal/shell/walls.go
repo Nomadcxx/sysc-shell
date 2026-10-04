@@ -21,19 +21,23 @@ type wallsController interface {
 	Close() error
 }
 
-type idleWallsAdapter struct{ c wallsController }
+type idleWallsAdapter struct{ r *Registry }
 
-func (a idleWallsAdapter) SetEnabled(on bool) bool { return a.c.SetEnabled(on) }
+func (a idleWallsAdapter) SetEnabled(on bool) bool { return setWallsEnabled(a.r, on) }
 
 func (a idleWallsAdapter) SetTimeout(d time.Duration) bool {
-	return a.c.Apply([]walls.Setting{{Key: "timeout", Value: d.String()}})
+	if a.r == nil || a.r.lockerAcquired || a.r.wallsService == nil ||
+		!a.r.wallsSnapshot.CanApply || a.r.wallsSnapshot.ActionPending || a.r.wallsSnapshot.Previewing {
+		return false
+	}
+	return a.r.wallsService.Apply([]walls.Setting{{Key: "timeout", Value: d.String()}})
 }
 
 func idleWallsFor(r *Registry) settings.IdleWalls {
 	if r == nil || r.wallsService == nil {
 		return nil
 	}
-	return idleWallsAdapter{r.wallsService}
+	return idleWallsAdapter{r}
 }
 
 var wallsSettingOrder = []string{"effect", "theme", "timeout", "file", "datetime", "datetime-position"}
@@ -94,8 +98,10 @@ func (r *Registry) applyWallsSnapshot(svc wallsController, snapshot walls.Snapsh
 	}
 	r.wallsSnapshot = snapshot
 	var publish []waylandSurface
-	if h := r.panelHosts[PanelSettings]; h != nil && h.section == "Screensaver" {
-		syncWallsDraft(h, snapshot)
+	if h := r.panelHosts[PanelSettings]; h != nil && (h.section == "Screensaver" || h.section == "Session") {
+		if h.section == "Screensaver" {
+			syncWallsDraft(h, snapshot)
+		}
 		r.rebuildPanel(h)
 		publish = append(publish, waylandSurface{output: h.output, id: panelSurfaceID(h.id)})
 	}
