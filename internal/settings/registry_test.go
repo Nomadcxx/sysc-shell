@@ -1046,3 +1046,75 @@ func TestTerminalArtPaletteSetterRejectsJunk(t *testing.T) {
 		}
 	}
 }
+
+func TestIdleAfterEntries(t *testing.T) {
+	cfg := config.Default()
+	r := DefaultFor(cfg)
+
+	after, ok := r.Lookup("idle.after")
+	if !ok {
+		t.Fatal("Lookup idle.after: false")
+	}
+	if after.Kind != KindEnum {
+		t.Fatalf("idle.after Kind = %v, want KindEnum", after.Kind)
+	}
+	if !slices.Equal(after.Options, []string{"nothing", "screensaver", "lock"}) {
+		t.Fatalf("idle.after options = %v, want nothing/screensaver/lock", after.Options)
+	}
+	if after.Section != "Session" || after.Group != "When idle" {
+		t.Fatalf("idle.after is in %s › %s, want Session › When idle", after.Section, after.Group)
+	}
+
+	delay, ok := r.Lookup("idle.delay")
+	if !ok {
+		t.Fatal("Lookup idle.delay: false")
+	}
+	if delay.Section != "Session" || delay.Group != "When idle" {
+		t.Fatalf("idle.delay is in %s › %s, want Session › When idle", delay.Section, delay.Group)
+	}
+
+	for _, path := range []string{"idle.blank_ac", "idle.blank_battery", "idle.suspend_ac", "idle.suspend_battery"} {
+		e, ok := r.Lookup(path)
+		if !ok {
+			t.Fatalf("Lookup %s: false", path)
+		}
+		if e.Section != "Session" || e.Group != "Display Power" {
+			t.Fatalf("%s is in %s › %s, want Session › Display Power", path, e.Section, e.Group)
+		}
+	}
+
+	cfg.Idle.Lock = 10 * time.Minute
+	if got := after.Get(cfg); got != "lock" {
+		t.Fatalf("idle.after Get with Lock=10m = %q, want lock", got)
+	}
+	cfg.Idle.Lock = 0
+	if got := after.Get(cfg); got != "nothing" {
+		t.Fatalf("idle.after Get with Lock=0 = %q, want nothing", got)
+	}
+
+	if err := delay.Set(&cfg, "10m"); err != nil {
+		t.Fatalf("idle.delay Set 10m: %v", err)
+	}
+	if cfg.Idle.Lock != 10*time.Minute {
+		t.Fatalf("idle.delay Set 10m wrote %v", cfg.Idle.Lock)
+	}
+	for _, z := range []string{"", "0", "0s"} {
+		if err := delay.Set(&cfg, z); err != nil {
+			t.Fatalf("idle.delay Set %q: %v", z, err)
+		}
+		if cfg.Idle.Lock != 0 {
+			t.Fatalf("idle.delay Set %q left Lock=%v", z, cfg.Idle.Lock)
+		}
+	}
+	if err := delay.Set(&cfg, "-1s"); err == nil {
+		t.Fatal("setNonNegDuration accepted a negative duration")
+	}
+
+	interval, ok := r.Lookup("weather.interval")
+	if !ok {
+		t.Fatal("Lookup weather.interval: false")
+	}
+	if err := interval.Set(&cfg, "0s"); err == nil {
+		t.Fatal("setDuration accepted 0s")
+	}
+}
