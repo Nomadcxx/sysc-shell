@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -30,7 +31,19 @@ func (a idleWallsAdapter) SetTimeout(d time.Duration) bool {
 		!a.r.wallsSnapshot.CanApply || a.r.wallsSnapshot.ActionPending || a.r.wallsSnapshot.Previewing {
 		return false
 	}
-	return a.r.wallsService.Apply([]walls.Setting{{Key: "timeout", Value: d.String()}})
+	return a.r.wallsService.Apply([]walls.Setting{{Key: "timeout", Value: wallsIdleTimeout(d)}})
+}
+
+// wallsIdleTimeout is the sysc-walls wire format: one whole number plus s, m, or h.
+// time.Duration.String() emits 5m0s, which parseIdleTimeout rejects.
+func wallsIdleTimeout(d time.Duration) string {
+	if d%time.Hour == 0 {
+		return fmt.Sprintf("%dh", d/time.Hour)
+	}
+	if d%time.Minute == 0 {
+		return fmt.Sprintf("%dm", d/time.Minute)
+	}
+	return fmt.Sprintf("%ds", d/time.Second)
 }
 
 func idleWallsFor(r *Registry) settings.IdleWalls {
