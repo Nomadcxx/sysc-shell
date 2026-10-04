@@ -1669,6 +1669,12 @@ func (r *Registry) panelSpec(h *PanelHost, m Margins) *wayland.AuxSpec {
 	}
 	// Body is the one output-space rectangle shared by placement and capture.
 	region := h.place.Rect()
+	if h.place.CenterY {
+		// Floating roots keep one output anchor as the bar moves between
+		// edges; their margins already describe an output-space body.
+		anchor = uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorLeft)
+		m = Margins{Top: region.Y, Left: region.X}
+	}
 	joints := h.place.Joints()
 	m = panelSurfaceMargins(h.place, m)
 	width, height := h.surfaceSize()

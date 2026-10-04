@@ -12,6 +12,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
 	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland/layershell"
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 )
@@ -1837,4 +1838,34 @@ func TestWantIMEAndIBeamAtTakeTheRegistryLock(t *testing.T) {
 		spec.Callbacks.IBeamAt(1, 1)
 	}
 	wg.Wait()
+}
+
+func TestFloatingSettingsUsesStableOutputAnchor(t *testing.T) {
+	for _, edge := range []string{"top", "bottom", "left", "right"} {
+		t.Run(edge, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Bar.Edge = edge
+			reg := NewRegistry(cfg)
+			t.Cleanup(reg.Close)
+			withTestBar(t, reg, 7, cfg).setOutputSize(1536, 864)
+			reg.mu.Lock()
+			trig := reg.triggerLocked(7, "DP-1")
+			reg.mu.Unlock()
+			if err := reg.OpenPanel(PanelSettings, 7, trig); err != nil {
+				t.Fatal(err)
+			}
+			requests := drainAux(t, reg, 2)
+			reg.mu.Lock()
+			rect := reg.panelHosts[PanelSettings].place.Rect()
+			reg.mu.Unlock()
+			for _, request := range requests {
+				if spec := request.Open; spec != nil && spec.ID == panelSurfaceID(PanelSettings) {
+					wantAnchor := uint32(layershell.ZwlrLayerSurfaceV1AnchorTop | layershell.ZwlrLayerSurfaceV1AnchorLeft)
+					if spec.Anchor != wantAnchor || int(spec.MarginLeft) != rect.X || int(spec.MarginTop) != rect.Y {
+						t.Fatalf("floating surface anchor=%d margins=(%d,%d), want anchor=%d rect=%+v", spec.Anchor, spec.MarginLeft, spec.MarginTop, wantAnchor, rect)
+					}
+				}
+			}
+		})
+	}
 }
