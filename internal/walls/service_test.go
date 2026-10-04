@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1227,5 +1228,26 @@ func waitFile(t *testing.T, path string) []byte {
 		case <-deadline.C:
 			t.Fatalf("timed out waiting for %s", path)
 		}
+	}
+}
+
+func TestConfigureIdleDoesNotEnableAfterTimeoutFailure(t *testing.T) {
+	service, command, paths := newActionService(t, "disabled", "inactive", "dead", nil)
+	command.mu.Lock()
+	command.results = map[string]commandResult{paths["sysc-walls-client"] + " set timeout 3m": {err: errors.New("denied")}}
+	command.mu.Unlock()
+	if err := service.ConfigureIdle(true, "3m"); err == nil {
+		t.Fatal("failed timeout reported success")
+	}
+	for _, call := range command.callsCopy() {
+		if slices.Contains(call, "enable") {
+			t.Fatalf("enabled after timeout failure: %v", call)
+		}
+	}
+}
+func TestConfigureIdleReturnsUnitFailure(t *testing.T) {
+	service, _, _ := newActionService(t, "enabled", "active", "running", map[string]commandResult{"systemctl --user disable --now sysc-walls.service": {err: errors.New("denied")}})
+	if err := service.ConfigureIdle(false, ""); err == nil || !strings.Contains(err.Error(), "denied") {
+		t.Fatalf("disable result: %v", err)
 	}
 }

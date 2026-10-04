@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Nomadcxx/sysc-shell/internal/settings"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-shell/internal/walls"
 )
@@ -16,22 +15,21 @@ type wallsController interface {
 	Refresh()
 	Apply([]walls.Setting) bool
 	SetEnabled(bool) bool
+	ConfigureIdle(bool, string) error
 	SetRuntimeRunning(bool) bool
 	Preview() bool
 	StopPreview() bool
 	Close() error
 }
 
-type idleWallsAdapter struct{ r *Registry }
+type idleWallsAdapter struct{ service wallsController }
 
-func (a idleWallsAdapter) SetEnabled(on bool) bool { return setWallsEnabled(a.r, on) }
-
-func (a idleWallsAdapter) SetTimeout(d time.Duration) bool {
-	if a.r == nil || a.r.lockerAcquired || a.r.wallsService == nil ||
-		!a.r.wallsSnapshot.CanApply || a.r.wallsSnapshot.ActionPending || a.r.wallsSnapshot.Previewing {
-		return false
+func (a idleWallsAdapter) ConfigureIdle(enabled bool, delay time.Duration) error {
+	timeout := ""
+	if enabled {
+		timeout = wallsIdleTimeout(delay)
 	}
-	return a.r.wallsService.Apply([]walls.Setting{{Key: "timeout", Value: wallsIdleTimeout(d)}})
+	return a.service.ConfigureIdle(enabled, timeout)
 }
 
 // wallsIdleTimeout is the sysc-walls wire format: one whole number plus s, m, or h.
@@ -44,13 +42,6 @@ func wallsIdleTimeout(d time.Duration) string {
 		return fmt.Sprintf("%dm", d/time.Minute)
 	}
 	return fmt.Sprintf("%ds", d/time.Second)
-}
-
-func idleWallsFor(r *Registry) settings.IdleWalls {
-	if r == nil || r.wallsService == nil {
-		return nil
-	}
-	return idleWallsAdapter{r}
 }
 
 var wallsSettingOrder = []string{"effect", "theme", "timeout", "file", "datetime", "datetime-position"}
@@ -257,7 +248,7 @@ func resetWallsDraft(r *Registry, h *PanelHost) bool {
 
 func applyWallsDraft(r *Registry, h *PanelHost) bool {
 	if r == nil || h == nil || r.lockerAcquired || r.wallsService == nil ||
-		!r.wallsSnapshot.CanApply || r.wallsSnapshot.ActionPending || r.wallsSnapshot.Previewing {
+		!r.wallsSnapshot.CanApply || (r.wallsSnapshot.ActionPending || r.idleApplying) || r.wallsSnapshot.Previewing {
 		return false
 	}
 	patch := make([]walls.Setting, 0, len(h.wallsDirty))
@@ -273,7 +264,7 @@ func applyWallsDraft(r *Registry, h *PanelHost) bool {
 }
 
 func setWallsEnabled(r *Registry, enabled bool) bool {
-	if r == nil || r.lockerAcquired || r.wallsService == nil || r.wallsSnapshot.ActionPending ||
+	if r == nil || r.lockerAcquired || r.wallsService == nil || (r.wallsSnapshot.ActionPending || r.idleApplying) ||
 		!r.wallsSnapshot.ServiceAvailable || !r.wallsSnapshot.UnitKnown || r.wallsSnapshot.UnitStale || r.wallsSnapshot.Previewing ||
 		(r.wallsSnapshot.UnitFileState != "enabled" && r.wallsSnapshot.UnitFileState != "disabled") {
 		return false

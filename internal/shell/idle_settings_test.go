@@ -1,6 +1,9 @@
 package shell
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -45,6 +48,20 @@ func pickIdleAfter(t *testing.T, r *Registry, h *PanelHost, mode string) {
 	if !h.activate(r) {
 		t.Fatalf("activate pick:idle.after=%s", mode)
 	}
+	waitIdleApplyLocked(t, r)
+}
+
+func waitIdleApplyLocked(t *testing.T, r *Registry) {
+	t.Helper()
+	r.mu.Unlock()
+	waitFor(t, func() bool { r.mu.Lock(); defer r.mu.Unlock(); return !r.idleApplying })
+	r.mu.Lock()
+}
+
+func applyIdleForTest(t *testing.T, r *Registry, h *PanelHost, node *ui.Node) {
+	t.Helper()
+	h.applySetting(r, node)
+	waitIdleApplyLocked(t, r)
 }
 
 func selectedIdleAfter(h *PanelHost) string {
@@ -72,7 +89,7 @@ func TestSettingsAfterIdleApply(t *testing.T) {
 			t.Fatalf("After idle = %+v (catalog Get %q), want screensaver from unit snapshot", ss, got)
 		}
 
-		h.applySetting(r, &ui.Node{Kind: ui.KindMenu, Action: "set:idle.after", Text: "lock"})
+		applyIdleForTest(t, r, h, &ui.Node{Kind: ui.KindMenu, Action: "set:idle.after", Text: "lock"})
 		if h.draft.Idle.Lock <= 0 {
 			t.Fatalf("set:idle.after lock left Idle.Lock=%v", h.draft.Idle.Lock)
 		}
@@ -90,7 +107,7 @@ func TestSettingsAfterIdleApply(t *testing.T) {
 		fake.mu.Lock()
 		fake.patches = nil
 		fake.mu.Unlock()
-		h.applySetting(r, &ui.Node{Kind: ui.KindTextField, Action: "set:idle.delay", Text: "10m"})
+		applyIdleForTest(t, r, h, &ui.Node{Kind: ui.KindTextField, Action: "set:idle.delay", Text: "10m"})
 		if h.draft.Idle.Lock != 10*time.Minute {
 			t.Fatalf("delay while lock wrote Idle.Lock=%v", h.draft.Idle.Lock)
 		}
@@ -100,11 +117,11 @@ func TestSettingsAfterIdleApply(t *testing.T) {
 		}
 		fake.mu.Unlock()
 
-		h.applySetting(r, &ui.Node{Kind: ui.KindMenu, Action: "set:idle.after", Text: "screensaver"})
+		applyIdleForTest(t, r, h, &ui.Node{Kind: ui.KindMenu, Action: "set:idle.after", Text: "screensaver"})
 		fake.mu.Lock()
 		fake.patches = nil
 		fake.mu.Unlock()
-		h.applySetting(r, &ui.Node{Kind: ui.KindTextField, Action: "set:idle.delay", Text: "3m"})
+		applyIdleForTest(t, r, h, &ui.Node{Kind: ui.KindTextField, Action: "set:idle.delay", Text: "3m"})
 		if h.draft.Idle.Lock != 0 {
 			t.Fatalf("delay while screensaver set Idle.Lock=%v", h.draft.Idle.Lock)
 		}
@@ -172,7 +189,7 @@ func TestSettingsAfterIdleApply(t *testing.T) {
 			t.Fatalf("delay text = %q, want %q after leaving nothing", got, wantDelay)
 		}
 
-		h.applySetting(r, &ui.Node{Kind: ui.KindTextField, Action: "set:idle.delay", Text: "3m"})
+		applyIdleForTest(t, r, h, &ui.Node{Kind: ui.KindTextField, Action: "set:idle.delay", Text: "3m"})
 		if h.draft.Idle.Lock != 0 {
 			t.Fatalf("screensaver delay set Idle.Lock=%v", h.draft.Idle.Lock)
 		}
@@ -256,4 +273,64 @@ func TestSettingsAfterIdleApply(t *testing.T) {
 			t.Fatalf("After idle after enable = %q, want screensaver", selectedIdleAfter(h))
 		}
 	})
+}
+
+func TestSettingsAfterIdleRejectsQueuedUnitFailure(t *testing.T) {
+	r, h, fake := newOpenIdleSettings(t, enabledAtLoginSnapshot(), "sysc-lock")
+	result := make(chan error, 1)
+	fake.idleResult = result
+	r.mu.Lock()
+	h.applySetting(r, &ui.Node{Kind: ui.KindMenu, Action: "set:idle.after", Text: "lock"})
+	if r.cfg.Idle.Lock != 0 {
+		t.Fatal("lock armed before unit disable completed")
+	}
+	r.mu.Unlock()
+	failed := enabledAtLoginSnapshot()
+	failed.ActionError = "could not disable sysc-walls: denied"
+	fake.Publish(failed)
+	result <- errors.New(failed.ActionError)
+	waitFor(t, func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return !r.idleApplying
+	})
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if h.draft.Idle.Lock != 0 {
+		t.Fatalf("failed disable still arms lock: %v", h.draft.Idle.Lock)
+	}
+	if h.errLabel == "" {
+		t.Fatal("failed disable was not reported in Session")
+	}
+}
+
+func TestSettingsAfterIdleRestoresLockAfterFailedEnable(t *testing.T) {
+	r, h, fake := newOpenIdleSettings(t, readyWallsSnapshot(), "sysc-lock")
+	r.mu.Lock()
+	h.draft.Idle.Lock = 10 * time.Minute
+	r.cfg.Idle.Lock = 10 * time.Minute
+	fake.accept = false
+	applyIdleForTest(t, r, h, &ui.Node{Kind: ui.KindMenu, Action: "set:idle.after", Text: "screensaver"})
+	defer r.mu.Unlock()
+	if h.draft.Idle.Lock != 10*time.Minute || r.cfg.Idle.Lock != 10*time.Minute || h.errLabel == "" {
+		t.Fatalf("failed enable lost lock policy: draft=%v actual=%v error=%q", h.draft.Idle.Lock, r.cfg.Idle.Lock, h.errLabel)
+	}
+}
+
+func TestSettingsAfterIdleConfigFailureRestoresUnit(t *testing.T) {
+	r, h, fake := newOpenIdleSettings(t, enabledAtLoginSnapshot(), "sysc-lock")
+	blocker := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(blocker, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	r.configPath = filepath.Join(blocker, "config.json")
+	applyIdleForTest(t, r, h, &ui.Node{Kind: ui.KindMenu, Action: "set:idle.after", Text: "lock"})
+	defer r.mu.Unlock()
+	if r.cfg.Idle.Lock != 0 || h.draft.Idle.Lock != 0 {
+		t.Fatal("failed config write armed lock")
+	}
+	if !fake.Snapshot().EnabledAtLogin() || h.errLabel == "" {
+		t.Fatalf("unit rollback failed: %+v, %q", fake.Snapshot(), h.errLabel)
+	}
 }

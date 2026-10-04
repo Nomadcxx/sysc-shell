@@ -131,12 +131,14 @@ const (
 	opRuntime
 	opPreview
 	opStopPreview
+	opIdle
 )
 
 type serviceCommand struct {
-	op    serviceOp
-	patch []Setting
-	value bool
+	op     serviceOp
+	patch  []Setting
+	value  bool
+	result chan error
 }
 
 type timerHandle struct {
@@ -296,6 +298,25 @@ func (s *Service) SetEnabled(enabled bool) bool {
 	return s.enqueue(serviceCommand{op: opEnable, value: enabled})
 }
 
+// ConfigureIdle serializes timeout and enablement, and reports their completed
+// result. Call off the Wayland owner: commands use the existing bounded runner.
+func (s *Service) ConfigureIdle(enabled bool, timeout string) error {
+	result := make(chan error, 1)
+	command := serviceCommand{op: opIdle, value: enabled, result: result}
+	if enabled {
+		command.patch = []Setting{{Key: "timeout", Value: timeout}}
+	}
+	if !s.enqueue(command) {
+		return errors.New("screensaver command could not be queued")
+	}
+	select {
+	case err := <-result:
+		return err
+	case <-s.done:
+		return errors.New("screensaver service closed before idle settings completed")
+	}
+}
+
 // SetRuntimeRunning starts or stops the user unit without changing whether it
 // starts at login. It is used by the lock coordinator and retry action.
 func (s *Service) SetRuntimeRunning(running bool) bool {
@@ -427,6 +448,9 @@ func (s *Service) handle(command serviceCommand, preview *previewSession) {
 	s.publish(current)
 	message, actionErr := s.perform(command)
 	s.refreshAndPublish(message, errorText(actionErr), preview)
+	if command.result != nil {
+		command.result <- actionErr
+	}
 }
 
 func (s *Service) refreshAndPublish(message, actionError string, preview *previewSession) {
@@ -457,6 +481,19 @@ func (s *Service) perform(command serviceCommand) (string, error) {
 		return s.apply(snapshot, command.patch)
 	case opEnable:
 		return s.enable(snapshot, command.value)
+	case opIdle:
+		if command.value {
+			if _, err := s.apply(snapshot, command.patch); err != nil {
+				return "", err
+			}
+		}
+		message, err := s.enable(snapshot, command.value)
+		if err != nil && command.value && !snapshot.EnabledAtLogin() {
+			// A failed --now start can still enable login startup. Undo that partial change.
+			_, cleanupErr := s.enable(snapshot, false)
+			err = errors.Join(err, cleanupErr)
+		}
+		return message, err
 	case opRuntime:
 		return s.setRuntime(snapshot, command.value)
 	default:

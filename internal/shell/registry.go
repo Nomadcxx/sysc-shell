@@ -240,6 +240,7 @@ type Registry struct {
 	wallpaperSvc         *wallpaper.Service
 	wallsService         wallsController
 	wallsSnapshot        walls.Snapshot
+	idleApplying         bool
 	wallpaperThumbs      *icons.Worker
 	wallpaperThumbCancel context.CancelFunc
 	mediaArt             *mediaArtWorker

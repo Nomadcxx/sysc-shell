@@ -20,14 +20,15 @@ type fakeWallsService struct {
 	snapshot walls.Snapshot
 	updates  chan walls.Snapshot
 
-	refreshes int
-	patches   [][]walls.Setting
-	enables   []bool
-	runtime   []bool
-	previews  int
-	stops     int
-	closes    int
-	accept    bool
+	refreshes  int
+	patches    [][]walls.Setting
+	enables    []bool
+	runtime    []bool
+	previews   int
+	stops      int
+	closes     int
+	accept     bool
+	idleResult <-chan error
 }
 
 func newFakeWallsService(snapshot walls.Snapshot) *fakeWallsService {
@@ -60,6 +61,32 @@ func (f *fakeWallsService) SetEnabled(value bool) bool {
 	defer f.mu.Unlock()
 	f.enables = append(f.enables, value)
 	return f.accept
+}
+
+func (f *fakeWallsService) ConfigureIdle(enabled bool, timeout string) error {
+	f.mu.Lock()
+	f.enables = append(f.enables, enabled)
+	if enabled {
+		f.patches = append(f.patches, []walls.Setting{{Key: "timeout", Value: timeout}})
+	}
+	accept, result := f.accept, f.idleResult
+	f.mu.Unlock()
+	if !accept {
+		return errors.New("unit command rejected")
+	}
+	if result != nil {
+		if err := <-result; err != nil {
+			return err
+		}
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.snapshot.UnitFileState = "disabled"
+	if enabled {
+		f.snapshot.UnitFileState = "enabled"
+		f.snapshot.Timeout = timeout
+	}
+	return nil
 }
 
 func (f *fakeWallsService) SetRuntimeRunning(value bool) bool {

@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1372,6 +1374,11 @@ func settingsDimIdle(r *Registry, h *PanelHost, root *ui.Node) {
 		if n == nil {
 			return
 		}
+		if r.idleApplying && (strings.HasPrefix(n.Action, "pick:idle.after=") || n.Action == "set:idle.delay") {
+			n.State |= ui.StateDisabled
+			n.AriaDisabled = true
+			n.Focusable = false
+		}
 		switch n.Action {
 		case "pick:idle.after=lock":
 			if locker == "" {
@@ -1423,25 +1430,116 @@ func (h *PanelHost) applyIdleSetting(r *Registry, path, value string) {
 	default:
 		return
 	}
-	if err := settings.ApplyWhenIdle(mode, delay, &h.draft, idleWallsFor(r)); err != nil {
-		h.errLabel = err.Error()
+	if r.idleApplying || r.lockerAcquired || r.wallsSnapshot.ActionPending {
+		h.errLabel = "Wait for the current screensaver action to finish."
 		r.rebuildPanel(h)
 		return
 	}
-	switch mode {
-	case "screensaver":
-		r.wallsSnapshot.UnitFileState = "enabled"
-		r.wallsSnapshot.Timeout = wallsIdleTimeout(delay)
-	default:
-		r.wallsSnapshot.UnitFileState = "disabled"
+	service := r.wallsService
+	var controller settings.IdleWalls
+	if service != nil && !(r.wallsSnapshot.UnitKnown && !r.wallsSnapshot.UnitStale && r.wallsSnapshot.LoadState == "not-found") {
+		controller = idleWallsAdapter{service: service}
 	}
-	h.errLabel = ""
-	h.set = r.settingsForLocked(h.draft)
-	h.persistDraft(r)
-	if path == "idle.after" {
-		delete(h.fields, "idle.delay")
-		r.rebuildPanel(h)
+	before := h.draft
+	previous := r.wallsSnapshot
+	candidate := before
+	staged := mode == "screensaver" && before.Idle.Lock > 0
+	if staged {
+		// Disarm and persist the lock before the screensaver can start.
+		safe := before
+		safe.Idle.Lock = 0
+		if err := r.writeConfig(safe); err != nil {
+			h.errLabel = err.Error()
+			r.rebuildPanel(h)
+			return
+		}
+		r.cfg.Idle.Lock = 0
+		h.draft.Idle.Lock = 0
+		r.pushIdleInputsLocked()
 	}
+	r.idleApplying = true
+	r.rebuildPanel(h)
+	go func() {
+		err := settings.ApplyWhenIdle(mode, delay, &candidate, controller)
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		select {
+		case <-r.closed:
+			return
+		default:
+		}
+		r.idleApplying = false
+		if service != nil {
+			r.wallsSnapshot = service.Snapshot()
+		}
+		if err == nil {
+			current := h.draft
+			current.Idle.Lock = candidate.Idle.Lock
+			err = r.writeConfig(current)
+			if err == nil {
+				h.draft = current
+				r.cfg.Idle.Lock = candidate.Idle.Lock
+				r.pushIdleInputsLocked()
+			} else if service != nil {
+				// Restore the previous unit policy after a failed config write, off the owner.
+				r.idleApplying = true
+				go func(cause error) {
+					rollback := service.ConfigureIdle(previous.EnabledAtLogin(), previous.Timeout)
+					r.mu.Lock()
+					defer r.mu.Unlock()
+					select {
+					case <-r.closed:
+						return
+					default:
+					}
+					r.idleApplying = false
+					r.wallsSnapshot = service.Snapshot()
+					if rollback == nil && staged {
+						current := h.draft
+						current.Idle.Lock = before.Idle.Lock
+						rollback = r.writeConfig(current)
+						if rollback == nil {
+							h.draft = current
+							r.cfg.Idle.Lock = before.Idle.Lock
+							r.pushIdleInputsLocked()
+						}
+					}
+					h.errLabel = errors.Join(cause, rollback).Error()
+					if r.panelHosts[h.id] == h {
+						r.rebuildPanel(h)
+						r.publishSurface(h.output, panelSurfaceID(h.id))
+					}
+				}(err)
+			}
+		} else if staged {
+			// Rearm the old lock only when the screensaver is confirmed disabled.
+			snap := r.wallsSnapshot
+			if controller == nil || (snap.UnitKnown && !snap.UnitStale && snap.UnitFileState == "disabled" && !snap.Running()) {
+				current := h.draft
+				current.Idle.Lock = before.Idle.Lock
+				rollback := r.writeConfig(current)
+				err = errors.Join(err, rollback)
+				if rollback == nil {
+					h.draft = current
+					r.cfg.Idle.Lock = before.Idle.Lock
+					r.pushIdleInputsLocked()
+				}
+			} else {
+				err = errors.Join(err, fmt.Errorf("lock remains disabled until screensaver shutdown is confirmed"))
+			}
+		}
+		if err != nil {
+			h.errLabel = err.Error()
+		} else {
+			h.errLabel = ""
+			delete(h.fields, "idle.delay")
+		}
+		h.set = r.settingsForLocked(h.draft)
+		if r.panelHosts[h.id] == h {
+			r.rebuildPanel(h)
+			r.publishSurface(h.output, panelSurfaceID(h.id))
+		}
+	}()
 }
 
 func (h *PanelHost) persistDraft(r *Registry) {

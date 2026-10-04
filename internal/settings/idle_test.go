@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -13,20 +14,15 @@ type fakeWalls struct {
 	fail    bool
 }
 
-func (f *fakeWalls) SetEnabled(on bool) bool {
+func (f *fakeWalls) ConfigureIdle(on bool, delay time.Duration) error {
 	if f.fail {
-		return false
+		return fmt.Errorf("unit command failed")
 	}
 	f.enabled = on
-	return true
-}
-
-func (f *fakeWalls) SetTimeout(d time.Duration) bool {
-	if f.fail {
-		return false
+	if on {
+		f.timeout = delay.String()
 	}
-	f.timeout = d.String()
-	return true
+	return nil
 }
 
 func TestWhenIdleMode(t *testing.T) {
@@ -86,7 +82,7 @@ func TestApplyWhenIdle(t *testing.T) {
 	if cfg.Idle.Lock != 0 || w.enabled {
 		t.Fatalf("nothing apply: lock=%v enabled=%v", cfg.Idle.Lock, w.enabled)
 	}
-	if w.timeout != (3*time.Minute).String() {
+	if w.timeout != (3 * time.Minute).String() {
 		t.Fatalf("nothing must not rewrite timeout, got %q", w.timeout)
 	}
 }
@@ -154,5 +150,19 @@ func TestApplyWhenIdleUnitReject(t *testing.T) {
 	}
 	if cfg.Idle.Lock != time.Hour || w.enabled != true || w.timeout != "5m" {
 		t.Fatalf("failed screensaver mutated state: lock=%v enabled=%v timeout=%q", cfg.Idle.Lock, w.enabled, w.timeout)
+	}
+}
+
+func TestApplyWhenIdleBoundsScreensaverDelay(t *testing.T) {
+	for _, delay := range []time.Duration{500 * time.Millisecond, 1500 * time.Millisecond, 25 * time.Hour} {
+		cfg := config.Default()
+		cfg.Idle.Lock = time.Minute
+		w := &fakeWalls{}
+		if err := ApplyWhenIdle("screensaver", delay, &cfg, w); err == nil {
+			t.Fatalf("accepted %v", delay)
+		}
+		if w.enabled || cfg.Idle.Lock != time.Minute {
+			t.Fatal("invalid delay changed policy")
+		}
 	}
 }
