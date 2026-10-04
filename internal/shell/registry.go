@@ -357,6 +357,7 @@ func NewRegistry(cfg config.Config) *Registry {
 	}
 	r := &Registry{
 		cfg:     cfg,
+		now:     time.Now(),
 		outputs: make(map[string]outputState),
 		bars:    make(map[uint32]*Bar),
 		leases:  make(map[uint32][]*services.Lease),
