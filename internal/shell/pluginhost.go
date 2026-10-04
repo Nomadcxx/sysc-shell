@@ -633,18 +633,33 @@ func (h *pluginHost) desiredBarViewsLocked() []hostedView {
 	for global, bar := range h.r.bars {
 		conn := bar.connector()
 		policy := cfg.ForConnector(conn)
-		for _, item := range allItems(policy) {
-			if item.ID != "plugin" {
-				continue
+		metrics := bar.themeSnapshot().Metrics
+		side := policy.Edge == "left" || policy.Edge == "right"
+		width := pluginBarViewWidth
+		if side {
+			width = max(0, policy.Body()-2*metrics.BarPadding)
+		}
+		var appendItems func([]config.Item, int)
+		appendItems = func(items []config.Item, width int) {
+			for _, item := range items {
+				if item.ID == "group" {
+					groupWidth := width
+					if side {
+						groupWidth = max(0, width-2*metrics.CapsulePadding)
+					}
+					appendItems(item.Items, groupWidth)
+					continue
+				}
+				if item.ID == "plugin" {
+					desired = append(desired, hostedView{
+						Plugin: item.Plugin, Entry: item.Entry, Instance: item.Instance,
+						Output: conn, Generation: global, Kind: v1.ViewBar, Width: width, Height: pluginBarViewHeight,
+					})
+				}
 			}
-			width := pluginBarViewWidth
-			if policy.Edge == "left" || policy.Edge == "right" {
-				width = max(0, policy.Body()-2*bar.themeSnapshot().Metrics.BarPadding)
-			}
-			desired = append(desired, hostedView{
-				Plugin: item.Plugin, Entry: item.Entry, Instance: item.Instance,
-				Output: conn, Generation: global, Kind: v1.ViewBar, Width: width, Height: pluginBarViewHeight,
-			})
+		}
+		for _, section := range [][]config.Item{policy.Left, policy.Center, policy.Right} {
+			appendItems(section, width)
 		}
 	}
 	return desired

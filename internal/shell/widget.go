@@ -286,7 +286,12 @@ func buildWidgetsWithAxis(items []config.Item, pad int, m theme.Metrics, clockFl
 			w.refresh = func(v barView) bool { return refreshRunningApps(cap, stack, v, appPad) }
 			out = append(out, w)
 		case "plugin":
-			out = append(out, buildPluginWidget(item))
+			w := buildPluginWidget(item)
+			if side && pad >= 0 {
+				// The plugin already owns padding inside its advertised viewport.
+				w = capsuled(w, 0)
+			}
+			out = append(out, w)
 		}
 	}
 	for i := range out {

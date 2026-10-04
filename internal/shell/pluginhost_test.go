@@ -2341,3 +2341,24 @@ func TestCenterPlacedPluginPanelIgnoresTheClickedWidget(t *testing.T) {
 		t.Fatalf("panel left = %d, want centred %d", left, want)
 	}
 }
+
+func TestSidePluginViewportAccountsForGroupChrome(t *testing.T) {
+	for _, edge := range []string{"left", "right"} {
+		cfg := config.Default()
+		cfg.Bar.Edge, cfg.Bar.Height = edge, 60
+		item := config.Item{ID: "plugin", Plugin: "org.sysc.probe", Entry: "bar", Instance: "probe"}
+		cfg.Bar.Left = []config.Item{item, {ID: "group", Items: []config.Item{{ID: "plugin", Plugin: item.Plugin, Entry: item.Entry, Instance: "grouped"}}}}
+		bar, err := NewWithTheme(ThemeFrom(cfg, cfg.Bar), cfg.Bar, "eDP-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(bar.stopAnimation)
+		reg := &Registry{cfg: cfg, bars: map[uint32]*Bar{7: bar}}
+		views := (&pluginHost{r: reg}).desiredBarViewsLocked()
+		metrics := bar.themeSnapshot().Metrics
+		want := cfg.Bar.Body() - 2*metrics.BarPadding
+		if len(views) != 2 || views[0].Width != want || views[1].Width != want-2*metrics.CapsulePadding {
+			t.Fatalf("%s plugin widths = %+v, want %d standalone and %d grouped", edge, views, want, want-2*metrics.CapsulePadding)
+		}
+	}
+}

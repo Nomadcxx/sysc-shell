@@ -773,3 +773,34 @@ func matrixActionBounds(bar *Bar, action string) (ui.Rect, bool) {
 	}
 	return ui.Rect{}, false
 }
+
+func TestSidePluginKeepsItsAdvertisedCrossWidth(t *testing.T) {
+	for _, edge := range []string{"left", "right"} {
+		t.Run(edge, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Bar.Edge, cfg.Bar.Height = edge, 48
+			cfg.Bar.Left = []config.Item{{ID: "plugin", Plugin: "org.sysc.probe", Entry: "bar", Instance: "probe"}}
+			root, err := shellplugin.Convert(&v1.Node{Kind: v1.KindRow, Children: []*v1.Node{{
+				Kind: v1.KindButton, ID: "open", Name: "Open probe", Role: "button", Height: 32, Padding: 4,
+				Events: []v1.EventKind{v1.EventActivate}, Children: []*v1.Node{{Kind: v1.KindIcon, Icon: "cat-run-0", IconSize: 20}},
+			}}}, v1.ViewBar)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bar, err := NewWithTheme(ThemeFrom(cfg, cfg.Bar), cfg.Bar, "eDP-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(bar.stopAnimation)
+			bar.apply(barView{Plugins: map[string]pluginFrame{"probe": {Root: root, Revision: 1}}})
+			if err := bar.Configure(cfg.Bar.SurfaceExtent(), 864, 150); err != nil {
+				t.Fatal(err)
+			}
+			outer := bar.left[0].node
+			control := findKind(outer, ui.KindButton)
+			if control == nil || control.Bounds.X < outer.Bounds.X || control.Bounds.X+control.Bounds.W > outer.Bounds.X+outer.Bounds.W || outer.ClipBounds {
+				t.Fatalf("validated plugin is clipped by host padding: outer=%+v control=%+v clip=%v", outer.Bounds, control.Bounds, outer.ClipBounds)
+			}
+		})
+	}
+}
