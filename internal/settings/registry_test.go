@@ -1118,3 +1118,25 @@ func TestIdleAfterEntries(t *testing.T) {
 		t.Fatal("setDuration accepted 0s")
 	}
 }
+
+func TestBarThicknessAllowsReadableSideText(t *testing.T) {
+	cfg := config.Default()
+	cfg.Bar.Edge = "left"
+	cfg.Outputs = []config.OutputOverride{{Connector: "eDP-1", Bar: cfg.Bar}}
+	r := DefaultFor(cfg)
+	for _, path := range []string{"bar.height", "outputs.eDP-1.height"} {
+		e, ok := r.Lookup(path)
+		if !ok {
+			t.Fatalf("missing %s", path)
+		}
+		if e.Label != "Thickness" {
+			t.Errorf("%s label = %q, want Thickness", path, e.Label)
+		}
+		if err := e.Set(&cfg, "96"); err != nil {
+			t.Fatalf("%s cannot set a readable side thickness: %v", path, err)
+		}
+	}
+	if cfg.Bar.Height != 96 || cfg.ForConnector("eDP-1").Height != 96 {
+		t.Fatalf("thickness was not retained: shared=%d output=%d", cfg.Bar.Height, cfg.ForConnector("eDP-1").Height)
+	}
+}

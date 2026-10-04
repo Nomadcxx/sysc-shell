@@ -114,8 +114,10 @@ func settingsBarPreview(r *Registry, h *PanelHost) *ui.Node {
 		imageW, imageH = fitSettingsPreview(layoutW, layoutH, w, settingsSidePreviewMaxH)
 	}
 	return settingsGroupCard(h, "Preview", []*ui.Node{{
-		Kind: ui.KindImage, Image: h.barPreview, ImageW: imageW, ImageH: imageH,
-		Name: "Bar preview", Role: "img",
+		Kind: ui.KindRow, CenterX: true, Children: []*ui.Node{{
+			Kind: ui.KindImage, Image: h.barPreview, ImageW: imageW, ImageH: imageH,
+			Name: "Bar preview", Role: "img",
+		}},
 	}})
 }
 
@@ -203,7 +205,7 @@ func settingsPictureCards(r *Registry, h *PanelHost, e settings.Entry) *ui.Node 
 			Children: []*ui.Node{{Kind: ui.KindColumn, Gap: theme.MarginS, Children: []*ui.Node{
 				// Horizontal cards crop the left end; side cards crop the top
 				// end while keeping the rendered strip upright.
-				{Kind: ui.KindImage, Image: img, ImageW: imgWForNode, ImageH: imgH},
+				{Kind: ui.KindRow, CenterX: true, Children: []*ui.Node{{Kind: ui.KindImage, Image: img, ImageW: imgWForNode, ImageH: imgH}}},
 				{Kind: ui.KindText, Text: label},
 			}}},
 		}

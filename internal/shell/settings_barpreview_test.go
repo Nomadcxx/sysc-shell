@@ -271,6 +271,17 @@ func TestSideBarPreviewUsesUprightOutputGeometry(t *testing.T) {
 		t.Error("style card did not crop the top end of the cached side image")
 	}
 
+	for _, tree := range []*ui.Node{preview, cards} {
+		if err := ui.LayoutColumn(&ui.Node{Kind: ui.KindColumn, Children: []*ui.Node{tree}}, ui.Rect{W: settingsCardInner(h), H: 600}, h.measureText()); err != nil {
+			t.Fatal(err)
+		}
+		for _, image := range findAllKind(tree, ui.KindImage) {
+			if image.Bounds.W != image.ImageW || image.Bounds.H != image.ImageH {
+				t.Errorf("side preview laid out at %+v, want image size %dx%d", image.Bounds, image.ImageW, image.ImageH)
+			}
+		}
+	}
+
 	good := n.Image
 	h.place.Output.H = 1000
 	resized := reg.settingsBarImage(h, h.draft, settingsPreviewLayoutW(h, settingsCardInner(h)))
