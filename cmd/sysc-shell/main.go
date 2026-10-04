@@ -26,6 +26,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/shell"
 	"github.com/Nomadcxx/sysc-shell/internal/trayclient"
+	"github.com/Nomadcxx/sysc-shell/internal/walls"
 )
 
 func pumpNiri(
@@ -88,6 +89,7 @@ func run(ctx context.Context) (err error) {
 	}
 
 	registry := shell.NewRegistry(cfg)
+	registry.SetWallsService(walls.NewService())
 	// Display-power policy. Blank and Unblank ride the niri DPMS actions on
 	// the socket that was just required; Suspend goes straight to logind.
 	monitorPower := func(action any, what string) {

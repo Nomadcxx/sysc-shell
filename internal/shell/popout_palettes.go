@@ -502,6 +502,17 @@ func (r *Registry) settingsSectionChangingLocked(h *PanelHost, section string) {
 	if section == "Palettes" && h.section != "Palettes" {
 		r.refreshPalettesAsync(h)
 	}
+	if h.section == "Screensaver" && section != "Screensaver" {
+		h.wallsDraft, h.wallsDirty, h.wallsDraftReady = nil, nil, false
+		for key := range h.fields {
+			if strings.HasPrefix(key, "walls.") {
+				delete(h.fields, key)
+			}
+		}
+	}
+	if section == "Screensaver" && h.section != "Screensaver" {
+		r.refreshWallsLocked()
+	}
 }
 
 // customPaletteProblem is why the custom palette cfg names is not what the

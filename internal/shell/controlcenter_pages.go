@@ -16,6 +16,7 @@ import (
 	"github.com/Nomadcxx/sysc-shell/internal/services"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
+	"github.com/Nomadcxx/sysc-shell/internal/walls"
 )
 
 const (
@@ -30,6 +31,8 @@ const (
 	// them -- the two were sized to fit the old gap exactly, so a literal
 	// would silently overflow the moment the ladder moved.
 	ccPageH         = 480
+	ccWallsRowH     = 120
+	ccHomePageH     = ccPageH + theme.MarginL + ccWallsRowH
 	ccIdentityCardH = 96
 	ccTogglePillH   = 48
 	ccCardH         = 88
@@ -143,6 +146,8 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 	now := time.Time{}
 	reading := services.Reading{}
 	caffeine, dnd := false, false
+	wallsSnapshot := walls.Snapshot{}
+	locked := false
 	var audio services.AudioState
 	var brightness services.BrightnessState
 	var media services.MediaState
@@ -152,6 +157,8 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 		identity = r.controlIdentity
 		snap, now, reading = r.sample, r.now, r.reading
 		caffeine = r.inhibitWanted
+		wallsSnapshot = r.wallsSnapshot
+		locked = r.lockerAcquired
 		if r.notify != nil {
 			_, dnd = r.notify.dndState(now)
 		}
@@ -217,6 +224,7 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 		ccQuickAccessButton(quickWidth, "wallpaper", "Wallpaper", "cc:wallpaper", false),
 		ccQuickAccessButton(quickWidth, "terminal", "Terminal Art", "cc:terminal-art", false),
 	}}
+	wallsRow := ccWallsRow(quickWidth, wallsSnapshot, caffeine, locked)
 
 	weatherSummary, weatherTone := ccWeatherSummary(reading)
 	clockWeather := monitorCard(m, []*ui.Node{
@@ -286,8 +294,45 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 	}
 	sliders := &ui.Node{Kind: ui.KindColumn, Height: ccSlidersH, Gap: theme.MarginM,
 		Children: append([]*ui.Node{ccSlider(m, "volume_up", "Volume", "cc:volume", audio.Level, audioOK)}, brightnessSliders...)}
-	return &ui.Node{Kind: ui.KindColumn, Height: ccPageH, Gap: theme.MarginL,
-		Children: []*ui.Node{identityCard, togglePill, split, sliders}}
+	return &ui.Node{Kind: ui.KindColumn, Height: ccHomePageH, Gap: theme.MarginL,
+		Children: []*ui.Node{identityCard, togglePill, wallsRow, split, sliders}}
+}
+
+func ccWallsRow(width int, snapshot walls.Snapshot, caffeine, locked bool) *ui.Node {
+	leftDetail := wallsServiceStatus(snapshot)
+	left := ccQuickTile(width, "schedule", "Screensaver", leftDetail, "settings-section:Screensaver", false)
+	left.Height = ccWallsRowH
+	left.Name = "Screensaver. " + wallsServiceStatus(snapshot)
+	if caffeine && snapshot.Running() {
+		left.Padding = theme.MarginM
+		if len(left.Children) > 0 && left.Children[0].Kind == ui.KindColumn {
+			left.Children[0].Children = append(left.Children[0].Children, &ui.Node{
+				Kind: ui.KindText, Text: "Caffeine does not pause the screensaver.",
+				TextRole: theme.RoleCaption, Tone: ui.ToneSubtle,
+			})
+		}
+		left.Name += ". Caffeine does not pause the screensaver."
+	}
+
+	label, icon, detail, action := "Preview", "play_arrow", "Uses saved settings", "cc:walls-preview"
+	if snapshot.Previewing {
+		label, icon, detail, action = "Stop preview", "stop", "Preview session active; display coverage unknown", "cc:walls-stop"
+		if snapshot.PreviewStopping {
+			detail = "Stopping preview"
+		} else if !snapshot.PreviewReady {
+			detail = "Starting preview"
+		}
+	} else if !snapshot.CanPreview {
+		detail = "Unavailable: " + wallsCapabilityReason(snapshot, "preview")
+	}
+	preview := ccQuickTile(width, icon, label, detail, action, false)
+	preview.Height = ccWallsRowH
+	preview.Name = label + ". " + detail
+	if locked || snapshot.ActionPending || (!snapshot.CanPreview && !snapshot.Previewing) || snapshot.PreviewStopping {
+		preview.State |= ui.StateDisabled
+		preview.AriaDisabled = true
+	}
+	return &ui.Node{Kind: ui.KindRow, Height: ccWallsRowH, Gap: theme.MarginM, Children: []*ui.Node{left, preview}}
 }
 
 func ccText(s string) string {

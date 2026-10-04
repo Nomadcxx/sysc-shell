@@ -46,6 +46,7 @@ var settingsSectionIcons = map[string]string{
 	"Monitor":       "memory",
 	"Wallpaper":     "wallpaper",
 	"Terminal Art":  "terminal",
+	"Screensaver":   "schedule",
 	"Weather":       "partly_cloudy_day",
 	"Displays":      "display_settings",
 	"Tray":          "apps",
@@ -234,9 +235,8 @@ func settingsFieldInset(h *PanelHost, n *ui.Node) {
 // settingsRailItemHeight is a section tab's height and inset: the density's
 // standard control, or less when the tabs, the cluster captions and search
 // would not fit the pane. At spacious density on a 1280x720 output they ran
-// 150 px past its bottom edge. When even an icon with its usual inset does not
-// fit, the inset narrows rather than the rail running off the pane: thirteen
-// sections at spacious density overran it by 27 px.
+// 150 px past its bottom edge. The inset narrows in two steps before an icon
+// row is allowed to force the rail past the pane.
 func settingsRailItemHeight(h *PanelHost, search *ui.Node) (height, pad int) {
 	m := h.metrics()
 	if m.StandardControl <= 0 {
@@ -262,6 +262,9 @@ func settingsRailItemHeight(h *PanelHost, search *ui.Node) (height, pad int) {
 		if per < m.IconNormal+2*pad {
 			pad = tighter
 		}
+	}
+	if per < m.IconNormal+2*pad {
+		pad = theme.MarginXXS
 	}
 	// Never shorter than the icon and its padding, which the tab has to hold.
 	return max(min(m.StandardControl, per), captionH, m.IconNormal+2*pad), pad
@@ -352,6 +355,9 @@ func settingsTree(r *Registry, h *PanelHost) *ui.Node {
 	}
 	if section == "Bar" {
 		return body(settingsBarPage(r, h, page))
+	}
+	if section == "Screensaver" {
+		return body(screensaverSettingsBody(r, h))
 	}
 	var entries []settings.Entry
 	if h.set != nil {
@@ -960,7 +966,7 @@ func settingsResetButton(h *PanelHost, e settings.Entry) *ui.Node {
 
 func settingsControl(h *PanelHost, e settings.Entry, width int) *ui.Node {
 	raw := ""
-	if h.set != nil {
+	if e.Get != nil {
 		raw = e.Get(h.draft)
 	}
 	action := "set:" + e.Path

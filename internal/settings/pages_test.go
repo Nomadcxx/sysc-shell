@@ -44,6 +44,21 @@ func TestBarPagesAndPresentation(t *testing.T) {
 	}
 }
 
+func TestScreensaverFollowsWallpaperInLookCluster(t *testing.T) {
+	t.Parallel()
+	for _, cluster := range SectionClusters() {
+		if cluster.Name != "Look" {
+			continue
+		}
+		want := []string{"Appearance", "Palettes", "Templates", "Wallpaper", "Terminal Art", "Screensaver"}
+		if !slices.Equal(cluster.Sections, want) {
+			t.Fatalf("Look sections = %v, want %v", cluster.Sections, want)
+		}
+		return
+	}
+	t.Fatal("Look cluster is missing")
+}
+
 func TestClustersCoverTheRailOnce(t *testing.T) {
 	t.Parallel()
 	var flat []string
