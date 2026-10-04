@@ -94,6 +94,9 @@ func (c Capabilities) EngineFor(kind Kind) string {
 // Engine is the side of the service that runs processes. It is an interface so
 // the service can be tested without exec, a socket, or a compositor.
 type Engine interface {
+	// AdvanceGeneration announces the newest requested state for connector.
+	// Pending older applies must not paint after it.
+	AdvanceGeneration(connector string, generation uint64)
 	// Apply puts one path on one output and returns a still for a video, which
 	// may be empty when none could be extracted.
 	Apply(job Job, set Settings) (preview string, err error)
@@ -360,7 +363,10 @@ func (s *Service) handle(c Command) {
 		s.dispatch(s.store.Reconnect(c.Token))
 		return
 	case OpDisconnect:
-		s.store.Disconnect(c.Token)
+		generation := s.store.Disconnect(c.Token)
+		if s.engine != nil {
+			s.engine.AdvanceGeneration(c.Token, generation)
+		}
 		s.publish()
 		if s.engine != nil {
 			_ = s.engine.Restore(c.Token, "")
@@ -377,6 +383,11 @@ func (s *Service) handle(c Command) {
 // dispatch runs each job on its own goroutine and publishes the starting
 // state at once, so the picker shows work in flight rather than nothing.
 func (s *Service) dispatch(jobs []Job) {
+	if s.engine != nil {
+		for _, job := range jobs {
+			s.engine.AdvanceGeneration(job.Connector, job.Gen)
+		}
+	}
 	s.publish()
 	for _, job := range jobs {
 		s.work.Add(1)
@@ -393,14 +404,35 @@ func (s *Service) dispatch(jobs []Job) {
 
 func (s *Service) finish(r engineResult) {
 	if r.err != nil {
-		s.store.Fail(r.job, r.err)
+		before, hadBefore := s.store.Assignment(r.job.Connector)
+		assignmentChanged := false
+		if s.store.Fail(r.job, r.err) {
+			after, hasAfter := s.store.Assignment(r.job.Connector)
+			assignmentChanged = hadBefore != hasAfter || (hadBefore && before != after)
+			if assignmentChanged {
+				// A failed replacement may have restored an apply that finished
+				// after this job was queued; keep that actual assignment on disk.
+				s.persist()
+				s.refreshCoverage()
+			}
+		}
 		s.publish()
+		// An adopted assignment may be the only available theme seed, even
+		// when rollback leaves its value unchanged. notifySeed deduplicates it.
+		s.notifySeed(s.store.SeedPath())
 		return
 	}
 	if !s.store.Commit(r.job, r.preview, s.caps.EngineFor(r.job.Kind)) {
 		// A stale generation: a newer apply already owns this output, so the
 		// work is discarded rather than committed over it.
 		return
+	}
+	if a, ok := s.store.Assignment(r.job.Connector); ok && a.DesiredPlayback == StatePaused {
+		// Some engines replace their process when an assignment changes. Restore
+		// the persisted playback request before publishing the successful apply.
+		if err := s.engine.SetPaused(r.job.Connector, true); err != nil {
+			s.store.noteRuntimeErr(r.job.Connector, err)
+		}
 	}
 	s.persist()
 	s.refreshCoverage()
@@ -465,6 +497,8 @@ func (s *Service) restore(token string) {
 		targets = s.store.Connectors()
 	}
 	for _, connector := range targets {
+		generation := s.store.Invalidate(connector)
+		s.engine.AdvanceGeneration(connector, generation)
 		a, _ := s.store.Assignment(connector)
 		if err := s.engine.Restore(connector, stillFor(a)); err != nil {
 			s.store.noteRuntimeErr(connector, err)

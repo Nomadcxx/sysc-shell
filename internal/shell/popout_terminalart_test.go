@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-shell/internal/config"
+	"github.com/Nomadcxx/sysc-shell/internal/platform/wayland"
 	"github.com/Nomadcxx/sysc-shell/internal/theme"
 	"github.com/Nomadcxx/sysc-shell/internal/ui"
 	"github.com/Nomadcxx/sysc-shell/internal/wallpaper"
@@ -354,6 +355,134 @@ func TestTerminalArtRestoreDisabledWithoutStill(t *testing.T) {
 	}
 }
 
+func TestTerminalArtRestoredWithoutStillReportsBlankOutput(t *testing.T) {
+	h := &PanelHost{
+		wallpaperOutput: "DP-1",
+		wallpaperSnap: wallpaper.Snapshot{
+			Connectors: []string{"DP-1"},
+			Assignments: map[string]wallpaper.Assignment{
+				"DP-1": {Kind: wallpaper.KindEffect, Effect: "fire", Theme: "nord"},
+			},
+			Runtime: map[string]wallpaper.Runtime{"DP-1": {State: wallpaper.StateStatic}},
+		},
+	}
+	if got := artStatusText(h); got != "DP-1 \u00b7 no wallpaper displayed" {
+		t.Fatalf("restored effect status = %q, want a blank-output message", got)
+	}
+}
+
+func TestTerminalArtFailedEffectCanRestoreWithoutPause(t *testing.T) {
+	reg, _ := artRegistry(t, artWallpaperEngine{}, "DP-1")
+	h := openArtPanel(t, reg)
+	h.wallpaperOutput = "DP-1"
+	h.wallpaperSnap.Assignments = map[string]wallpaper.Assignment{
+		"DP-1": {Kind: wallpaper.KindEffect, Effect: "fire", Theme: "nord", PreviewPath: "/w/still.png"},
+	}
+	h.wallpaperSnap.Runtime = map[string]wallpaper.Runtime{
+		"DP-1": {State: wallpaper.StateError, Err: "terminal failed"},
+	}
+
+	row := artStatusRow(h)
+	if findAction(row, "art-pause") != nil || findAction(row, "art-resume") != nil {
+		t.Fatal("a failed effect offers playback controls")
+	}
+	restore := findAction(row, "art-restore")
+	if restore == nil || restore.State&ui.StateDisabled != 0 {
+		t.Fatalf("Restore still = %+v, want an enabled recovery action", restore)
+	}
+}
+
+func TestTerminalArtMixedRestoreSkipsOutputsWithoutStills(t *testing.T) {
+	reg, svc := artRegistry(t, artWallpaperEngine{})
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-1", Kind: wallpaper.KindImage, Path: "/w/still.png"})
+	awaitArt(t, svc, "DP-1", func(a wallpaper.Assignment) bool { return a.Kind == wallpaper.KindImage })
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-1", Kind: wallpaper.KindEffect, Effect: "fire", Theme: "nord"})
+	awaitArt(t, svc, "DP-1", func(a wallpaper.Assignment) bool {
+		return a.Kind == wallpaper.KindEffect && a.PreviewPath == "/w/still.png"
+	})
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-3", Kind: wallpaper.KindEffect, Effect: "rain", Theme: "nord"})
+	awaitArt(t, svc, "DP-3", runningEffect("rain", "nord"))
+
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	restore := findAction(h.root, "art-restore")
+	if restore == nil || restore.State&ui.StateDisabled != 0 ||
+		!strings.Contains(restore.Tooltip, "DP-3") || !strings.Contains(restore.Tooltip, "previous still") {
+		reg.mu.Unlock()
+		t.Fatalf("mixed Restore = %+v, want its skipped output explained", restore)
+	}
+	if !h.artAction(reg, restore) {
+		reg.mu.Unlock()
+		t.Fatal("mixed Restore was not handled")
+	}
+	reg.mu.Unlock()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && svc.Snapshot().Runtime["DP-1"].State != wallpaper.StateStatic {
+		time.Sleep(5 * time.Millisecond)
+	}
+	snap := svc.Snapshot()
+	if snap.Runtime["DP-1"].State != wallpaper.StateStatic || snap.Runtime["DP-3"].State != wallpaper.StatePlaying {
+		t.Fatalf("runtimes after mixed Restore: DP-1=%+v DP-3=%+v", snap.Runtime["DP-1"], snap.Runtime["DP-3"])
+	}
+}
+
+func TestTerminalArtStalePlaybackActionRefreshesSnapshot(t *testing.T) {
+	reg, svc := artRegistry(t, artWallpaperEngine{}, "DP-1")
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-1", Kind: wallpaper.KindImage, Path: "/w/still.png"})
+	awaitArt(t, svc, "DP-1", func(a wallpaper.Assignment) bool { return a.Kind == wallpaper.KindImage })
+	h := openArtPanel(t, reg)
+	stale := svc.Snapshot()
+	stale.Assignments["DP-1"] = wallpaper.Assignment{
+		Kind: wallpaper.KindEffect, Effect: "fire", Theme: "nord", PreviewPath: "/w/old.png",
+	}
+	stale.Runtime["DP-1"] = wallpaper.Runtime{State: wallpaper.StatePlaying}
+
+	reg.mu.Lock()
+	h.wallpaperSnap = stale
+	if !h.artAction(reg, &ui.Node{Action: "art-pause"}) {
+		reg.mu.Unlock()
+		t.Fatal("stale Pause was not handled")
+	}
+	if got := h.wallpaperSnap.Assignments["DP-1"].Kind; got != wallpaper.KindImage {
+		reg.mu.Unlock()
+		t.Fatalf("Pause used stale assignment kind %v", got)
+	}
+	h.wallpaperSnap = stale
+	if !h.artAction(reg, &ui.Node{Action: "art-restore"}) {
+		reg.mu.Unlock()
+		t.Fatal("stale Restore was not handled")
+	}
+	if got := h.wallpaperSnap.Assignments["DP-1"].Kind; got != wallpaper.KindImage {
+		reg.mu.Unlock()
+		t.Fatalf("Restore used stale assignment kind %v", got)
+	}
+	reg.mu.Unlock()
+	if got := svc.Snapshot().Runtime["DP-1"].State; got != wallpaper.StateStatic {
+		t.Fatalf("stale playback action changed the still's state to %v", got)
+	}
+}
+
+func TestTerminalArtPaletteChangePreservesArtwork(t *testing.T) {
+	reg, svc := artRegistry(t, artWallpaperEngine{}, "DP-1")
+	const artwork = "/w/poem.txt"
+	svc.Enqueue(wallpaper.Command{
+		Op: wallpaper.OpApply, Token: "DP-1", Kind: wallpaper.KindEffect,
+		Effect: "fire-text", Theme: "nord", Artwork: artwork,
+	})
+	awaitArt(t, svc, "DP-1", func(a wallpaper.Assignment) bool { return a.Artwork == artwork })
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	if !h.artAction(reg, &ui.Node{Action: "art-palette:dracula"}) {
+		reg.mu.Unlock()
+		t.Fatal("palette change was not handled")
+	}
+	reg.mu.Unlock()
+	awaitArt(t, svc, "DP-1", func(a wallpaper.Assignment) bool {
+		return a.Kind == wallpaper.KindEffect && a.Effect == "fire-text" && a.Theme == "dracula" && a.Artwork == artwork
+	})
+}
+
 type sixArtEngine struct{ stubWallpaperEngine }
 
 func (sixArtEngine) Capabilities() wallpaper.Capabilities {
@@ -395,6 +524,58 @@ func TestTerminalArtArrowKeysWalkThreeColumns(t *testing.T) {
 	}
 	reg.mu.Unlock()
 	awaitArt(t, svc, "DP-1", runningEffect("e", "nord"))
+}
+
+func TestTerminalArtArrowKeysRequireCardFocus(t *testing.T) {
+	reg, _ := artRegistry(t, sixArtEngine{})
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h.wallpaperSel = 3
+	h.focusByName("Close")
+	handled := h.artKeyPress(reg, keyLeft)
+	if handled || h.wallpaperSel != 3 {
+		t.Fatalf("arrow without card focus handled=%v selection=%d", handled, h.wallpaperSel)
+	}
+	if h.artKeyPress(reg, keyEnter) {
+		t.Fatal("Enter without card focus was consumed by the effect grid")
+	}
+}
+
+func TestTerminalArtFocusedCardOwnsGridNavigation(t *testing.T) {
+	reg, _ := artRegistry(t, sixArtEngine{})
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	h.focusByName("d")
+	if !h.artKeyPress(reg, keyRight) {
+		t.Fatal("right arrow was not handled by a focused card")
+	}
+	if h.wallpaperSel != 4 || h.focused() == nil || h.focused().Action != "art-apply:e" {
+		t.Fatalf("selection=%d focused=%+v, want e at index 4", h.wallpaperSel, h.focused())
+	}
+}
+
+func TestTerminalArtCardActivationSynchronizesSelectionAndFocus(t *testing.T) {
+	reg, svc := artRegistry(t, artWallpaperEngine{})
+	h := openArtPanel(t, reg)
+	reg.mu.Lock()
+	h.wallpaperSel = 0
+	card := findAction(h.root, "art-apply:rain")
+	x, y := float64(card.Bounds.X+card.Bounds.W/2), float64(card.Bounds.Y+card.Bounds.H/2)
+	reg.mu.Unlock()
+	handle := h.handle(reg)
+	if !handle(wayland.Event{Kind: wayland.EventPointerPress, Button: buttonLeft, X: x, Y: y}) ||
+		!handle(wayland.Event{Kind: wayland.EventPointerRelease, Button: buttonLeft, X: x, Y: y}) {
+		t.Fatal("click on the rain card was not handled")
+	}
+	reg.mu.Lock()
+	if h.wallpaperSel != 1 || h.focused() == nil || h.focused().Action != "art-apply:rain" {
+		reg.mu.Unlock()
+		t.Fatalf("after card activation selection=%d focused=%+v, want rain", h.wallpaperSel, h.focused())
+	}
+	reg.mu.Unlock()
+	awaitArt(t, svc, "DP-1", runningEffect("rain", "nord"))
 }
 
 func TestWallpaperPanelHasNoTerminalArt(t *testing.T) {
@@ -608,6 +789,7 @@ func TestTerminalArtSettingsOpensThePanel(t *testing.T) {
 func TestTerminalArtRestoreTouchesOnlyEffects(t *testing.T) {
 	reg, svc := artRegistry(t, artWallpaperEngine{})
 	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-1", Kind: wallpaper.KindImage, Path: "/w/a.png"})
+	awaitArt(t, svc, "DP-1", func(a wallpaper.Assignment) bool { return a.Kind == wallpaper.KindImage })
 	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-1", Kind: wallpaper.KindEffect, Effect: "fire", Theme: "nord"})
 	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-3", Kind: wallpaper.KindVideo, Path: "/w/b.mp4"})
 	awaitArt(t, svc, "DP-1", runningEffect("fire", "nord"))
@@ -636,6 +818,9 @@ func TestTerminalArtRestoreTouchesOnlyEffects(t *testing.T) {
 	defer reg.mu.Unlock()
 	h.wallpaperSnap = snap
 	reg.rebuildPanel(h)
+	if got := strings.Join(artTexts(h.root), "\n"); !strings.Contains(got, "DP-1 \u00b7 showing a wallpaper") {
+		t.Fatalf("restored output status = %q, want the still currently shown", got)
+	}
 	if findAction(h.root, "art-pause") != nil || len(artRunningOn(h, "fire")) > 0 {
 		t.Fatalf("a restored output still reads as running: %q", artTexts(h.root))
 	}

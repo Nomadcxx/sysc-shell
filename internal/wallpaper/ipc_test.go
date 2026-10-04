@@ -89,7 +89,7 @@ func TestIPCStatusPausedVideo(t *testing.T) {
 }
 
 func TestIPCStatusRejects(t *testing.T) {
-	for _, line := range []string{"ERROR: no pipeline", "", "STATUS: playing", "nonsense"} {
+	for _, line := range []string{"ERROR: no pipeline", "ERR not ready", "", "STATUS: playing", "nonsense"} {
 		if _, err := ParseStatus(line); err == nil {
 			t.Errorf("ParseStatus(%q) must fail", line)
 		}
@@ -131,8 +131,34 @@ func TestIPCChangeAcceptsOKPrefix(t *testing.T) {
 			t.Errorf("checkOK(%q) = %v, want nil", reply, err)
 		}
 	}
+	if err := checkOK("STATUS: playing image /w/a.png"); err == nil {
+		t.Error("a query status must not read as a successful change")
+	}
 	if err := checkOK("ERROR: bad path"); err == nil {
 		t.Error("an ERROR reply must not read as success")
+	}
+	if err := checkOK("ERR not ready"); err == nil || !strings.Contains(err.Error(), "not ready") {
+		t.Errorf("an ERR reply must carry its message and fail, got %v", err)
+	}
+	if err := checkOK("nonsense"); err == nil {
+		t.Error("an unknown reply must not be accepted as success")
+	}
+}
+
+func TestIPCQueryAcceptsBothEngineStatusFormats(t *testing.T) {
+	for _, reply := range []string{
+		"STATUS: playing image /w/a path.png",
+		"STATUS: paused video /w/a.mp4",
+		"STATUS: playing effect fire theme nord",
+	} {
+		if err := checkQuery(reply); err != nil {
+			t.Errorf("checkQuery(%q) = %v, want nil", reply, err)
+		}
+	}
+	for _, reply := range []string{"STATUS: playing", "STATUS: paused effect fire nord", "ERR not ready", "nonsense"} {
+		if err := checkQuery(reply); err == nil {
+			t.Errorf("checkQuery(%q) must fail", reply)
+		}
 	}
 }
 

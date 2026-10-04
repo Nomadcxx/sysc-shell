@@ -1,6 +1,7 @@
 package wallpaper
 
 import (
+	"errors"
 	"maps"
 	"slices"
 )
@@ -70,12 +71,32 @@ type Job struct {
 	Connector   string
 	Gen         uint64
 	PlaybackGen uint64
+	SeedGen     uint64
 	Path        string
 	Kind        Kind
 	Effect      string
 	Theme       string
 	Artwork     string
+	// Previous captures the output assignment before this apply marks its
+	// runtime as starting. The engine uses it to roll back a failed replacement.
+	Previous       Assignment
+	HasPrevious    bool
+	PreviousState  State
+	PreviousEngine string
 }
+
+// restoredApplyError reports a failed new apply while preserving the runtime
+// state that the engine successfully restored.
+type restoredApplyError struct {
+	cause         error
+	state         State
+	engine        string
+	assignment    Assignment
+	hasAssignment bool
+}
+
+func (e *restoredApplyError) Error() string { return e.cause.Error() }
+func (e *restoredApplyError) Unwrap() error { return e.cause }
 
 // Store holds the assignments, the live runtime, and the per-connector
 // generation counter. It is a plain value with methods: the service owns the
@@ -88,6 +109,7 @@ type Store struct {
 	playback    map[string]State
 	playbackGen map[string]uint64
 	seed        string
+	seedGen     uint64
 	err         string
 }
 
@@ -149,12 +171,18 @@ func (s *Store) Apply(token, path string, kind Kind) []Job {
 
 	jobs := make([]Job, 0, len(targets))
 	for _, c := range targets {
+		previous, hasPrevious := s.assigned[c]
 		s.gen[c]++
 		rt := s.runtime[c]
+		previousState, previousEngine := rt.State, rt.Engine
 		rt.State = StateStarting
 		rt.Err = ""
 		s.runtime[c] = rt
-		jobs = append(jobs, Job{Connector: c, Gen: s.gen[c], PlaybackGen: s.playbackGen[c], Path: path, Kind: kind})
+		jobs = append(jobs, Job{
+			Connector: c, Gen: s.gen[c], PlaybackGen: s.playbackGen[c], SeedGen: s.seedGen, Path: path, Kind: kind,
+			Previous: previous, HasPrevious: hasPrevious,
+			PreviousState: previousState, PreviousEngine: previousEngine,
+		})
 	}
 	return jobs
 }
@@ -183,8 +211,16 @@ func (s *Store) Commit(j Job, preview, engine string) bool {
 		desired = StateStatic
 	} else if s.playbackGen[j.Connector] != j.PlaybackGen {
 		desired = s.playback[j.Connector]
-	} else if prior.Path == j.Path && prior.Kind == j.Kind && prior.Effect == j.Effect && prior.Theme == j.Theme && prior.Artwork == j.Artwork && prior.DesiredPlayback == StatePaused {
-		desired = StatePaused
+	} else if prior.DesiredPlayback == StatePaused {
+		sameSelection := prior.Kind == j.Kind
+		if j.Kind == KindEffect {
+			sameSelection = sameSelection && prior.Effect == j.Effect
+		} else {
+			sameSelection = sameSelection && prior.Path == j.Path
+		}
+		if sameSelection {
+			desired = StatePaused
+		}
 	}
 	a := Assignment{Kind: j.Kind, Path: j.Path, Effect: j.Effect, Theme: j.Theme, Artwork: j.Artwork, PreviewPath: preview, DesiredPlayback: desired}
 	s.assigned[j.Connector] = a
@@ -197,6 +233,7 @@ func (s *Store) Commit(j Job, preview, engine string) bool {
 
 	if seed := seedFor(a); seed != "" {
 		s.seed = seed
+		s.seedGen++
 	}
 	return true
 }
@@ -209,7 +246,20 @@ func (s *Store) Fail(j Job, err error) bool {
 		return false
 	}
 	rt := s.runtime[j.Connector]
-	rt.State = StateError
+	var restored *restoredApplyError
+	if errors.As(err, &restored) {
+		rt.State = restored.state
+		rt.Engine = restored.engine
+		if restored.hasAssignment {
+			s.assigned[j.Connector] = restored.assignment
+			if seed := seedFor(restored.assignment); seed != "" && s.seedGen == j.SeedGen {
+				s.seed = seed
+				s.seedGen++
+			}
+		}
+	} else {
+		rt.State = StateError
+	}
 	if err != nil {
 		rt.Err = err.Error()
 	}
@@ -232,11 +282,20 @@ func seedFor(a Assignment) string {
 // Disconnect drops an output from the live list and discards its runtime while
 // keeping the assignment, so a monitor that comes back gets its wallpaper back
 // rather than an empty desktop (D20).
-func (s *Store) Disconnect(connector string) {
+func (s *Store) Disconnect(connector string) uint64 {
 	s.ensure()
 	s.gen[connector]++
 	s.connectors = slices.DeleteFunc(s.connectors, func(c string) bool { return c == connector })
 	delete(s.runtime, connector)
+	return s.gen[connector]
+}
+
+// Invalidate makes every apply already dispatched for connector stale. Restore
+// calls this before stopping the engine so a waiting apply cannot repaint it.
+func (s *Store) Invalidate(connector string) uint64 {
+	s.ensure()
+	s.gen[connector]++
+	return s.gen[connector]
 }
 
 // Reconnect returns the output to the live list and replays its saved
@@ -268,6 +327,7 @@ func (s *Store) Adopt(saved map[string]Assignment) {
 		s.assigned[connector] = a
 		if seed := seedFor(a); seed != "" && s.seed == "" {
 			s.seed = seed
+			s.seedGen++
 		}
 	}
 }

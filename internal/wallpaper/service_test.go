@@ -25,6 +25,7 @@ type fakeEngine struct {
 	preview     map[string]string
 	fail        map[string]error
 	caps        Capabilities
+	generation  map[string]uint64
 }
 
 func newFakeEngine() *fakeEngine {
@@ -34,7 +35,16 @@ func newFakeEngine() *fakeEngine {
 		restoreGate: map[string]chan struct{}{},
 		preview:     map[string]string{},
 		fail:        map[string]error{},
+		generation:  map[string]uint64{},
 		caps:        Capabilities{GSlapper: true, Statics: []string{"awww"}},
+	}
+}
+
+func (f *fakeEngine) AdvanceGeneration(connector string, generation uint64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if generation > f.generation[connector] {
+		f.generation[connector] = generation
 	}
 }
 
@@ -47,7 +57,14 @@ func (f *fakeEngine) Apply(job Job, _ Settings) (string, error) {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if job.Gen < f.generation[job.Connector] {
+		return "", nil
+	}
 	f.applied = append(f.applied, job)
+	if job.Kind == KindEffect {
+		// The real terminal engine replaces its process on every apply.
+		f.paused[job.Connector] = false
+	}
 	if err := f.fail[job.Path]; err != nil {
 		return "", err
 	}
@@ -170,6 +187,47 @@ func TestServiceStaleApplyDoesNotCommit(t *testing.T) {
 	}
 }
 
+func TestServiceSkipsSupersededApplyBeforeEngineWork(t *testing.T) {
+	engine := newFakeEngine()
+	release := make(chan struct{})
+	engine.gate["/w/slow.mp4"] = release
+	svc := newTestService(t, engine)
+
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: "/w/slow.mp4", Kind: KindVideo})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Runtime["DP-1"].State == StateStarting })
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: "/w/fast.png", Kind: KindImage})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Path == "/w/fast.png" })
+	close(release)
+	svc.work.Wait()
+
+	if got := engine.appliedPaths(); !slices.Equal(got, []string{"/w/fast.png"}) {
+		t.Fatalf("engine work = %v, want only the latest assignment", got)
+	}
+}
+
+func TestServiceRestoreInvalidatesWaitingApply(t *testing.T) {
+	engine := newFakeEngine()
+	release := make(chan struct{})
+	engine.gate["/w/slow.mp4"] = release
+	svc := newTestService(t, engine)
+
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: "/w/slow.mp4", Kind: KindVideo})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Runtime["DP-1"].State == StateStarting })
+	svc.Enqueue(Command{Op: OpRestore, Token: "DP-1"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Runtime["DP-1"].State == StateStatic })
+	close(release)
+	svc.work.Wait()
+
+	if got := engine.appliedPaths(); len(got) != 0 {
+		t.Fatalf("engine applied a request superseded by Restore: %v", got)
+	}
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if !slices.Equal(engine.restored, []string{"DP-1"}) {
+		t.Fatalf("restored outputs = %v, want DP-1", engine.restored)
+	}
+}
+
 func TestServiceReconnectReplays(t *testing.T) {
 	engine := newFakeEngine()
 	svc := newTestService(t, engine)
@@ -244,32 +302,6 @@ func TestServiceCloseClosesEngine(t *testing.T) {
 	defer engine.mu.Unlock()
 	if engine.closeCalls != 1 {
 		t.Fatalf("engine close calls = %d, want 1", engine.closeCalls)
-	}
-}
-
-func TestServiceRestoreSupersedesInFlightApply(t *testing.T) {
-	engine := newFakeEngine()
-	release := make(chan struct{})
-	engine.gate["/w/slow.mp4"] = release
-	svc := newTestService(t, engine)
-
-	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: "/w/slow.mp4", Kind: KindVideo})
-	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Runtime["DP-1"].State == StateStarting })
-	svc.Enqueue(Command{Op: OpRestore, Token: "DP-1"})
-	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Runtime["DP-1"].State == StateStatic })
-
-	close(release)
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) && len(engine.appliedPaths()) == 0 {
-		time.Sleep(5 * time.Millisecond)
-	}
-	if len(engine.appliedPaths()) == 0 {
-		t.Fatal("the gated apply never finished")
-	}
-	time.Sleep(20 * time.Millisecond)
-	snap := svc.Snapshot()
-	if snap.Assignments["DP-1"].Path == "/w/slow.mp4" || snap.Runtime["DP-1"].State != StateStatic {
-		t.Fatalf("restore did not remain final: snapshot=%+v", snap)
 	}
 }
 
@@ -514,6 +546,116 @@ func TestServicePauseWorksForEffect(t *testing.T) {
 	engine.mu.Unlock()
 	if !paused {
 		t.Fatal("KindEffect pause did not reach the engine")
+	}
+}
+
+func TestReapplyingPausedEffectKeepsEnginePaused(t *testing.T) {
+	engine := newFakeEngine()
+	engine.caps.Terminal = true
+	svc := newTestService(t, engine)
+	apply := Command{Op: OpApply, Token: "DP-1", Kind: KindEffect, Effect: "fire", Theme: "nord"}
+	svc.Enqueue(apply)
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Kind == KindEffect })
+	svc.Enqueue(Command{Op: OpPause, Token: "DP-1"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Runtime["DP-1"].State == StatePaused })
+	svc.Enqueue(apply)
+	snap := awaitSnapshot(t, svc, func(s Snapshot) bool {
+		engine.mu.Lock()
+		applied := len(engine.applied)
+		engine.mu.Unlock()
+		return s.Assignments["DP-1"].Kind == KindEffect && s.Runtime["DP-1"].State == StatePaused && applied == 2
+	})
+	if snap.Runtime["DP-1"].State != StatePaused {
+		t.Fatalf("runtime = %+v, want paused", snap.Runtime["DP-1"])
+	}
+	engine.mu.Lock()
+	paused := engine.paused["DP-1"]
+	engine.mu.Unlock()
+	if !paused {
+		t.Fatal("reapplying a paused effect restarted it without pausing the new process")
+	}
+	apply.Theme = "dracula"
+	svc.Enqueue(apply)
+	snap = awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Theme == "dracula" })
+	if snap.Runtime["DP-1"].State != StatePaused {
+		t.Fatalf("changing a paused effect's palette changed playback to %v", snap.Runtime["DP-1"].State)
+	}
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if !engine.paused["DP-1"] {
+		t.Fatal("changing a paused effect's palette restarted it without pausing the new process")
+	}
+}
+
+func TestServicePersistsActualAssignmentAfterFailedApplyRollback(t *testing.T) {
+	engine := newFakeEngine()
+	engine.caps.Terminal = true
+	path := filepath.Join(t.TempDir(), "assignments.json")
+	svc := NewService(ServiceConfig{
+		Engine:      engine,
+		Settings:    Settings{Scale: "fill", Loop: true, FPS: 30, Hidden: HiddenNone},
+		Connectors:  []string{"DP-1"},
+		PersistPath: path,
+	})
+	t.Cleanup(svc.Close)
+
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Kind: KindImage, Path: "/w/first.png"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Path == "/w/first.png" })
+	seeded := make(chan string, 1)
+	svc.SetConfigHook(func(_, seed string) { seeded <- seed })
+	engine.mu.Lock()
+	engine.fail[""] = &restoredApplyError{
+		cause: errors.New("new effect failed"), state: StateStatic, engine: EngineGSlapper,
+		assignment: Assignment{Kind: KindImage, Path: "/w/restored.png", DesiredPlayback: StateStatic}, hasAssignment: true,
+	}
+	engine.mu.Unlock()
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Kind: KindEffect, Effect: "storm", Theme: "nord"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool {
+		return s.Assignments["DP-1"].Path == "/w/restored.png" && s.Runtime["DP-1"].State == StateStatic && s.Seed == "/w/restored.png"
+	})
+
+	saved, err := LoadAssignments(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved["DP-1"].Kind != KindImage || saved["DP-1"].Path != "/w/restored.png" {
+		t.Fatalf("persisted assignment = %+v, want the actual restored image", saved["DP-1"])
+	}
+	select {
+	case seed := <-seeded:
+		if seed != "/w/restored.png" {
+			t.Fatalf("seed hook = %q, want the restored image", seed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("restored image did not update the theme seed")
+	}
+}
+
+func TestServiceNotifiesAdoptedSeedWhenReconcileFails(t *testing.T) {
+	engine := newFakeEngine()
+	engine.fail["/w/adopted.png"] = errors.New("wallpaper unavailable")
+	path := filepath.Join(t.TempDir(), "assignments.json")
+	if err := SaveAssignments(path, map[string]Assignment{
+		"DP-1": {Kind: KindImage, Path: "/w/adopted.png", DesiredPlayback: StateStatic},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	seeded := make(chan string, 1)
+	svc := NewService(ServiceConfig{
+		Engine: engine, Settings: Settings{Scale: "fill", Loop: true, FPS: 30, Hidden: HiddenNone},
+		Connectors: []string{"DP-1"}, PersistPath: path,
+		ConfigHook: func(_, seed string) { seeded <- seed },
+	})
+	t.Cleanup(svc.Close)
+
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Runtime["DP-1"].State == StateError })
+	select {
+	case seed := <-seeded:
+		if seed != "/w/adopted.png" {
+			t.Fatalf("theme seed = %q, want adopted assignment", seed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("failed startup reconcile did not publish the adopted theme seed")
 	}
 }
 

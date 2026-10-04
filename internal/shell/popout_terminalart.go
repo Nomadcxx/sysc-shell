@@ -64,31 +64,47 @@ func artHeader(h *PanelHost) *ui.Node {
 	}
 }
 
-// artStatusRow says what the selected outputs run now, with Pause and
-// Restore still when any of them runs an effect.
+// artStatusRow says what the selected outputs run now and offers only the
+// controls their current effect states support.
 func artStatusRow(h *PanelHost) *ui.Node {
 	children := []*ui.Node{{Kind: ui.KindText, Text: artStatusText(h)}}
-	running, paused, still := false, false, false
+	active, playing, paused := false, false, false
+	var restorable, skipped []string
 	for _, connector := range wallpaperTargets(h) {
 		a := h.wallpaperSnap.Assignments[connector]
 		if !artLive(h, connector) {
 			continue
 		}
-		running = true
-		paused = paused || h.wallpaperSnap.Runtime[connector].State == wallpaper.StatePaused
-		still = still || a.PreviewPath != ""
+		active = true
+		switch h.wallpaperSnap.Runtime[connector].State {
+		case wallpaper.StatePlaying:
+			playing = true
+		case wallpaper.StatePaused:
+			paused = true
+		}
+		if a.PreviewPath == "" {
+			skipped = append(skipped, connector)
+		} else {
+			restorable = append(restorable, connector)
+		}
 	}
-	if running {
-		action, label := "art-pause", "Pause"
-		if paused {
-			action, label = "art-resume", "Resume"
+	if active {
+		if playing || paused {
+			action, label := "art-pause", "Pause"
+			if !playing && paused {
+				action, label = "art-resume", "Resume"
+			}
+			children = append(children, wallpaperButton(h, action, label, false))
 		}
 		restore := wallpaperButton(h, "art-restore", "Restore still", false)
-		if !still {
+		if len(restorable) == 0 {
 			restore.State |= ui.StateDisabled
 			restore.Tooltip = "No previous still recorded"
+		} else if len(skipped) > 0 {
+			restore.Tooltip = fmt.Sprintf("Restores %s; skips %s without a previous still",
+				strings.Join(restorable, ", "), strings.Join(skipped, ", "))
 		}
-		children = append(children, wallpaperButton(h, action, label, false), restore)
+		children = append(children, restore)
 	}
 	return &ui.Node{
 		Kind: ui.KindRow, Gap: wallpaperGridGap, Height: h.theme.Metrics.StandardControl,
@@ -103,6 +119,14 @@ func artStatusText(h *PanelHost) string {
 		a := snap.Assignments[connector]
 		if a.Kind != wallpaper.KindEffect {
 			parts = append(parts, connector+" \u00b7 showing a wallpaper")
+			continue
+		}
+		if snap.Runtime[connector].State == wallpaper.StateStatic {
+			if a.PreviewPath == "" {
+				parts = append(parts, connector+" \u00b7 no wallpaper displayed")
+			} else {
+				parts = append(parts, connector+" \u00b7 showing a wallpaper")
+			}
 			continue
 		}
 		parts = append(parts, fmt.Sprintf("%s \u00b7 %s \u00b7 %s \u00b7 %s", connector, a.Effect, a.Theme,
@@ -269,11 +293,12 @@ func (h *PanelHost) artAction(r *Registry, n *ui.Node) bool {
 		// No thumbnails preview a palette, so a running effect takes it at
 		// once and the wallpaper behind the panel is the preview.
 		if svc := r.wallpaperServiceLocked(); svc != nil {
+			h.wallpaperSnap = svc.Snapshot()
 			for _, connector := range wallpaperTargets(h) {
 				if a := h.wallpaperSnap.Assignments[connector]; artLive(h, connector) {
 					svc.Enqueue(wallpaper.Command{
 						Op: wallpaper.OpApply, Token: connector,
-						Kind: wallpaper.KindEffect, Effect: a.Effect, Theme: name,
+						Kind: wallpaper.KindEffect, Effect: a.Effect, Theme: name, Artwork: a.Artwork,
 					})
 				}
 			}
@@ -286,10 +311,12 @@ func (h *PanelHost) artAction(r *Registry, n *ui.Node) bool {
 
 // artApply runs effect id on the selected outputs.
 func (h *PanelHost) artApply(r *Registry, id string) {
-	if !h.wallpaperSnap.Caps.Terminal {
+	if !h.wallpaperSnap.Caps.Terminal || !h.artSelectEffect(id) {
 		return
 	}
 	h.wallpaperOutput = wallpaperOutputSelection(h.wallpaperSnap, h.wallpaperOutput)
+	r.rebuildPanel(h)
+	h.focusByName(id)
 	if svc := r.wallpaperServiceLocked(); svc != nil {
 		svc.Enqueue(wallpaper.Command{
 			Op: wallpaper.OpApply, Token: h.wallpaperOutput,
@@ -298,9 +325,42 @@ func (h *PanelHost) artApply(r *Registry, id string) {
 	}
 }
 
-// artKeyPress walks the three-column card grid and applies the selected card.
+// artSelectEffect finds the current catalog index for a card action. Actions
+// can arrive from either a key or a pointer and may outlive a rebuilt tree.
+func (h *PanelHost) artSelectEffect(id string) bool {
+	for i, effect := range artEffects(h) {
+		if effect.ID == id {
+			h.wallpaperSel = i
+			return true
+		}
+	}
+	return false
+}
+
+func artFocusedEffect(h *PanelHost, effects []wallpaper.EffectInfo) int {
+	n := h.focused()
+	if n == nil {
+		return -1
+	}
+	id, ok := strings.CutPrefix(n.Action, "art-apply:")
+	if !ok {
+		return -1
+	}
+	for i, effect := range effects {
+		if effect.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// artKeyPress walks the three-column grid from the focused card and applies it.
 func (h *PanelHost) artKeyPress(r *Registry, key uint32) bool {
 	effects := artEffects(h)
+	focused := artFocusedEffect(h, effects)
+	if focused < 0 {
+		return false
+	}
 	delta := 0
 	switch key {
 	case keyLeft:
@@ -312,18 +372,14 @@ func (h *PanelHost) artKeyPress(r *Registry, key uint32) bool {
 	case keyDown:
 		delta = artColumns
 	case keyEnter:
-		if n := h.focused(); n != nil && n.Kind == ui.KindButton && n.Action != "" {
-			return false
-		}
-		if h.wallpaperSel >= 0 && h.wallpaperSel < len(effects) {
-			h.artApply(r, effects[h.wallpaperSel].ID)
-		}
+		h.artApply(r, effects[focused].ID)
 		return true
 	default:
 		return false
 	}
-	h.wallpaperSel = gridMoveSel(h.wallpaperSel, delta, len(effects))
+	h.wallpaperSel = gridMoveSel(focused, delta, len(effects))
 	r.rebuildPanel(h)
+	h.focusByName(effects[h.wallpaperSel].ID)
 	return true
 }
 
@@ -402,23 +458,40 @@ func (h *PanelHost) artSettingsAction(r *Registry, n *ui.Node) bool {
 	return true
 }
 
-// artLive reports whether connector is running an effect now. Restore puts
-// the still back but keeps the effect assigned, so the kind alone is not it.
+// artLive reports an effect assignment that has not returned to its still.
+// Starting and failed effects remain live so Restore can recover them.
 func artLive(h *PanelHost, connector string) bool {
 	return h.wallpaperSnap.Assignments[connector].Kind == wallpaper.KindEffect &&
 		h.wallpaperSnap.Runtime[connector].State != wallpaper.StateStatic
 }
 
-// artEnqueue sends op to each selected output running an effect, so All
-// outputs never reaches a video the Wallpaper panel owns.
+// artEnqueue refreshes state and sends op only to eligible selected effects,
+// so stale controls and All outputs cannot reach unrelated assignments.
 func (h *PanelHost) artEnqueue(r *Registry, op wallpaper.Op) {
 	svc := r.wallpaperServiceLocked()
 	if svc == nil {
 		return
 	}
+	h.wallpaperSnap = svc.Snapshot()
 	for _, connector := range wallpaperTargets(h) {
-		if artLive(h, connector) {
-			svc.Enqueue(wallpaper.Command{Op: op, Token: connector})
+		if !artLive(h, connector) {
+			continue
 		}
+		switch op {
+		case wallpaper.OpPause:
+			if h.wallpaperSnap.Runtime[connector].State != wallpaper.StatePlaying {
+				continue
+			}
+		case wallpaper.OpResume:
+			if h.wallpaperSnap.Runtime[connector].State != wallpaper.StatePaused {
+				continue
+			}
+		case wallpaper.OpRestore:
+			if h.wallpaperSnap.Assignments[connector].PreviewPath == "" {
+				continue
+			}
+		}
+		svc.Enqueue(wallpaper.Command{Op: op, Token: connector})
 	}
+	r.rebuildPanel(h)
 }

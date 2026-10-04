@@ -212,3 +212,57 @@ func TestEffectCommitKeepsPriorStill(t *testing.T) {
 		t.Fatalf("effect over nothing: still = %q, want empty", got)
 	}
 }
+
+func TestEffectJobCarriesPriorAssignmentForLaunchRollback(t *testing.T) {
+	s := newTestStore()
+	image := s.Apply("DP-1", "/w/a.png", KindImage)[0]
+	if !s.Commit(image, "", EngineGSlapper) {
+		t.Fatal("commit image")
+	}
+	jobs := s.Apply("DP-1", "", KindEffect)
+	if len(jobs) != 1 || !jobs[0].HasPrevious || jobs[0].Previous.Kind != KindImage ||
+		jobs[0].Previous.Path != "/w/a.png" || jobs[0].PreviousState != StateStatic ||
+		jobs[0].PreviousEngine != EngineGSlapper {
+		t.Fatalf("effect job = %+v, want prior assignment and runtime for rollback", jobs)
+	}
+}
+
+func TestFailRestoredApplyPreservesActualRuntimeAndError(t *testing.T) {
+	s := newTestStore()
+	image := s.Apply("DP-1", "/w/a.png", KindImage)[0]
+	s.Commit(image, "", EngineGSlapper)
+	job := s.Apply("DP-1", "", KindEffect)[0]
+	err := &restoredApplyError{cause: errors.New("sysc-terminal failed"), state: StateStatic, engine: "swaybg"}
+	if !s.Fail(job, err) {
+		t.Fatal("current failed job was rejected")
+	}
+	rt := s.Runtime("DP-1")
+	if rt.State != StateStatic || rt.Engine != "swaybg" || rt.Err != err.Error() {
+		t.Fatalf("runtime = %+v, want restored static engine and apply error", rt)
+	}
+	if a, ok := s.Assignment("DP-1"); !ok || a.Kind != KindImage || a.Path != "/w/a.png" {
+		t.Fatalf("failed apply replaced prior assignment: %+v, %v", a, ok)
+	}
+}
+
+func TestFailedRollbackDoesNotReplaceASeedCommittedAfterTheApplyStarted(t *testing.T) {
+	s := newTestStore()
+	first := s.Apply("DP-1", "/w/old.png", KindImage)[0]
+	s.Commit(first, "", EngineGSlapper)
+	failed := s.Apply("DP-1", "", KindEffect)[0]
+	failed.Effect = "fire"
+	newer := s.Apply("DP-3", "/w/newer.png", KindImage)[0]
+	if !s.Commit(newer, "", EngineGSlapper) {
+		t.Fatal("newer image commit")
+	}
+	err := &restoredApplyError{
+		cause: errors.New("effect launch failed"), state: StateStatic, engine: EngineGSlapper,
+		assignment: Assignment{Kind: KindImage, Path: "/w/old-restore.png", DesiredPlayback: StateStatic}, hasAssignment: true,
+	}
+	if !s.Fail(failed, err) {
+		t.Fatal("current failed job was rejected")
+	}
+	if got := s.SeedPath(); got != "/w/newer.png" {
+		t.Fatalf("seed = %q, want newer output's committed image", got)
+	}
+}

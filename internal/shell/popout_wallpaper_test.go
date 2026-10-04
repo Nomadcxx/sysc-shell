@@ -63,11 +63,32 @@ func wallpaperPanel(t *testing.T, roots []string, relay bool) (*Registry, *wallp
 
 type stubWallpaperEngine struct{}
 
+func (stubWallpaperEngine) AdvanceGeneration(string, uint64)                        {}
 func (stubWallpaperEngine) Apply(wallpaper.Job, wallpaper.Settings) (string, error) { return "", nil }
 func (stubWallpaperEngine) Restore(string, string) error                            { return nil }
 func (stubWallpaperEngine) SetPaused(string, bool) error                            { return nil }
 func (stubWallpaperEngine) Capabilities() wallpaper.Capabilities {
 	return wallpaper.Capabilities{GSlapper: true, Statics: []string{"awww"}}
+}
+
+type wallpaperRestoreProbe struct {
+	stubWallpaperEngine
+	restored chan string
+}
+
+func (e *wallpaperRestoreProbe) Restore(connector, _ string) error {
+	e.restored <- connector
+	return nil
+}
+
+func (wallpaperRestoreProbe) Capabilities() wallpaper.Capabilities {
+	return wallpaper.Capabilities{
+		Terminal: true,
+		Catalog: wallpaper.Catalog{
+			Effects: []wallpaper.EffectInfo{{ID: "fire"}},
+			Themes:  []string{"nord"},
+		},
+	}
 }
 
 func wallpaperHost(t *testing.T, reg *Registry) *PanelHost {
@@ -395,6 +416,103 @@ func TestWallpaperRestoreEnqueuesRestore(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("restore never put the output back on the static fallback")
+}
+
+func TestWallpaperRestoreLeavesEffectsToTerminalArt(t *testing.T) {
+	engine := &wallpaperRestoreProbe{restored: make(chan string, 1)}
+	reg, svc := artRegistry(t, engine, "DP-1")
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-1", Kind: wallpaper.KindEffect, Effect: "fire", Theme: "nord"})
+	awaitArt(t, svc, "DP-1", func(a wallpaper.Assignment) bool { return a.Kind == wallpaper.KindEffect })
+
+	if err := reg.OpenPanel(PanelWallpaper, 7, Trigger{BarEdge: "top", BarZone: 40, OutW: 1920, OutH: 1080}); err != nil {
+		t.Fatal(err)
+	}
+	drainAuxQueue(reg)
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelWallpaper]
+	h.wallpaperOutput = "DP-1"
+	reg.rebuildPanel(h)
+	restore := findAction(h.root, "wallpaper-restore")
+	if restore == nil || restore.State&ui.StateDisabled == 0 || !strings.Contains(restore.Tooltip, "Terminal Art") {
+		reg.mu.Unlock()
+		t.Fatalf("Restore = %+v; Terminal Art effects must route to their own panel", restore)
+	}
+	h.wallpaperRestore(reg) // a stale action must not blank an effect without a prior still
+	reg.mu.Unlock()
+
+	select {
+	case connector := <-engine.restored:
+		t.Fatalf("Wallpaper panel restored effect on %s", connector)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if got := svc.Snapshot().Runtime["DP-1"].State; got != wallpaper.StatePlaying {
+		t.Fatalf("effect runtime = %v, want it still playing", got)
+	}
+}
+
+func TestWallpaperPlaybackStateRequiresPlayableVideo(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		states    []wallpaper.State
+		wantPause bool
+		want      bool
+	}{
+		{name: "playing", states: []wallpaper.State{wallpaper.StatePlaying}, want: true},
+		{name: "paused", states: []wallpaper.State{wallpaper.StatePaused}, wantPause: true, want: true},
+		{name: "restored still", states: []wallpaper.State{wallpaper.StateStatic}},
+		{name: "failed", states: []wallpaper.State{wallpaper.StateError}},
+		{name: "mixed playing and paused", states: []wallpaper.State{wallpaper.StatePlaying, wallpaper.StatePaused}, want: true},
+		{name: "mixed paused and restored", states: []wallpaper.State{wallpaper.StatePaused, wallpaper.StateStatic}, wantPause: true, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			connectors := make([]string, len(tc.states))
+			snap := wallpaper.Snapshot{
+				Assignments: make(map[string]wallpaper.Assignment, len(tc.states)),
+				Runtime:     make(map[string]wallpaper.Runtime, len(tc.states)),
+			}
+			for i, state := range tc.states {
+				connector := fmt.Sprintf("DP-%d", i+1)
+				connectors[i] = connector
+				snap.Assignments[connector] = wallpaper.Assignment{Kind: wallpaper.KindVideo, Path: "/w/video.mp4"}
+				snap.Runtime[connector] = wallpaper.Runtime{State: state}
+			}
+			snap.Connectors = connectors
+			h := &PanelHost{wallpaperSnap: snap, wallpaperOutput: wallpaper.AllOutputs}
+			paused, ok := wallpaperPlaybackState(h)
+			if paused != tc.wantPause || ok != tc.want {
+				t.Fatalf("wallpaperPlaybackState = (%v, %v), want (%v, %v)", paused, ok, tc.wantPause, tc.want)
+			}
+		})
+	}
+}
+
+func TestWallpaperPauseRefreshesStaleSnapshot(t *testing.T) {
+	reg, svc, _ := wallpaperPanel(t, nil, false)
+	svc.Enqueue(wallpaper.Command{Op: wallpaper.OpApply, Token: "DP-1", Kind: wallpaper.KindImage, Path: "/w/still.png"})
+	awaitArt(t, svc, "DP-1", func(a wallpaper.Assignment) bool { return a.Kind == wallpaper.KindImage })
+	reg.mu.Lock()
+	h := reg.panelHosts[PanelWallpaper]
+	h.wallpaperOutput = "DP-1"
+	h.wallpaperSnap = wallpaper.Snapshot{
+		Connectors: []string{"DP-1"},
+		Assignments: map[string]wallpaper.Assignment{
+			"DP-1": {Kind: wallpaper.KindVideo, Path: "/w/old.mp4"},
+		},
+		Runtime: map[string]wallpaper.Runtime{"DP-1": {State: wallpaper.StatePlaying}},
+	}
+	h.wallpaperSetPaused(reg, true)
+	if got := h.wallpaperSnap.Assignments["DP-1"].Kind; got != wallpaper.KindImage {
+		reg.mu.Unlock()
+		t.Fatalf("Pause used stale assignment kind %v", got)
+	}
+	if findAction(h.root, "wallpaper-pause") != nil || findAction(h.root, "wallpaper-resume") != nil {
+		reg.mu.Unlock()
+		t.Fatal("the stale playback control remained after refreshing to a still")
+	}
+	reg.mu.Unlock()
+	if got := svc.Snapshot().Runtime["DP-1"].State; got != wallpaper.StateStatic {
+		t.Fatalf("stale pause changed still state to %v", got)
+	}
 }
 
 func TestWallpaperApplyUpdatesTheThemeSeed(t *testing.T) {

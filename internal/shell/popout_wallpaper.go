@@ -783,7 +783,19 @@ func wallpaperActiveStrip(h *PanelHost) *ui.Node {
 			break
 		}
 	}
-	children = append(children, wallpaperButton(h, "wallpaper-restore", wallpaperRestoreLabel(h), false))
+	targets, hasEffects := wallpaperRestoreTargets(h)
+	restore := wallpaperButton(h, "wallpaper-restore", wallpaperRestoreLabel(h), false)
+	if len(targets) == 0 {
+		restore.State |= ui.StateDisabled
+		if hasEffects {
+			restore.Tooltip = "Restore effects in Terminal Art"
+		} else {
+			restore.Tooltip = "No wallpaper assigned"
+		}
+	} else if hasEffects {
+		restore.Tooltip = "Terminal Art outputs are skipped"
+	}
+	children = append(children, restore)
 	return &ui.Node{
 		Kind: ui.KindRow, Gap: wallpaperGridGap,
 		Height: h.theme.Metrics.StandardControl, Children: children,
@@ -797,20 +809,23 @@ func wallpaperRestoreLabel(h *PanelHost) string {
 	return "Restore"
 }
 
-// wallpaperPlaybackState reports whether the selected outputs hold a video and
-// whether it is paused. All outputs offers the control when any of them does.
+// wallpaperPlaybackState reports playback controls only for videos that are
+// playing or paused. A restored or failed video has no playback to control.
 // An effect's playback is the Terminal Art panel's.
 func wallpaperPlaybackState(h *PanelHost) (paused, ok bool) {
+	playing := false
 	for _, connector := range wallpaperTargets(h) {
 		if h.wallpaperSnap.Assignments[connector].Kind != wallpaper.KindVideo {
 			continue
 		}
-		ok = true
-		if h.wallpaperSnap.Runtime[connector].State == wallpaper.StatePaused {
+		switch h.wallpaperSnap.Runtime[connector].State {
+		case wallpaper.StatePlaying:
+			playing = true
+		case wallpaper.StatePaused:
 			paused = true
 		}
 	}
-	return paused, ok
+	return paused && !playing, playing || paused
 }
 
 func wallpaperAssignmentLabel(a wallpaper.Assignment) string {
@@ -962,29 +977,66 @@ func (h *PanelHost) wallpaperApply(r *Registry, entry wallpaper.Entry) {
 
 // wallpaperRestore hands the selected output back to the static fallback.
 func (h *PanelHost) wallpaperRestore(r *Registry) {
-	h.wallpaperOutput = wallpaperOutputSelection(h.wallpaperSnap, h.wallpaperOutput)
-	if svc := r.wallpaperServiceLocked(); svc != nil {
-		svc.Enqueue(wallpaper.Command{Op: wallpaper.OpRestore, Token: h.wallpaperOutput})
-	}
-}
-
-// wallpaperSetPaused holds or releases playback on the selected output.
-func (h *PanelHost) wallpaperSetPaused(r *Registry, paused bool) {
-	h.wallpaperOutput = wallpaperOutputSelection(h.wallpaperSnap, h.wallpaperOutput)
 	svc := r.wallpaperServiceLocked()
 	if svc == nil {
 		return
 	}
+	h.wallpaperSnap = svc.Snapshot()
+	h.wallpaperOutput = wallpaperOutputSelection(h.wallpaperSnap, h.wallpaperOutput)
+	targets, _ := wallpaperRestoreTargets(h)
+	for _, connector := range targets {
+		svc.Enqueue(wallpaper.Command{Op: wallpaper.OpRestore, Token: connector})
+	}
+	r.rebuildPanel(h)
+}
+
+// wallpaperRestoreTargets keeps Terminal Art assignments in their owning
+// panel, even when a stale Restore action arrives from the Wallpaper panel.
+func wallpaperRestoreTargets(h *PanelHost) ([]string, bool) {
+	var targets []string
+	hasEffects := false
+	for _, connector := range wallpaperTargets(h) {
+		a, assigned := h.wallpaperSnap.Assignments[connector]
+		if !assigned {
+			continue
+		}
+		if a.Kind == wallpaper.KindEffect {
+			hasEffects = true
+			continue
+		}
+		targets = append(targets, connector)
+	}
+	return targets, hasEffects
+}
+
+// wallpaperSetPaused holds or releases playback on the selected output.
+func (h *PanelHost) wallpaperSetPaused(r *Registry, paused bool) {
+	svc := r.wallpaperServiceLocked()
+	if svc == nil {
+		return
+	}
+	h.wallpaperSnap = svc.Snapshot()
+	h.wallpaperOutput = wallpaperOutputSelection(h.wallpaperSnap, h.wallpaperOutput)
 	op := wallpaper.OpResume
 	if paused {
 		op = wallpaper.OpPause
 	}
 	// An effect's playback is the Terminal Art panel's.
 	for _, connector := range wallpaperTargets(h) {
-		if h.wallpaperSnap.Assignments[connector].Kind == wallpaper.KindVideo {
-			svc.Enqueue(wallpaper.Command{Op: op, Token: connector})
+		if h.wallpaperSnap.Assignments[connector].Kind != wallpaper.KindVideo {
+			continue
 		}
+		state := h.wallpaperSnap.Runtime[connector].State
+		if paused {
+			if state != wallpaper.StatePlaying {
+				continue
+			}
+		} else if state != wallpaper.StatePaused {
+			continue
+		}
+		svc.Enqueue(wallpaper.Command{Op: op, Token: connector})
 	}
+	r.rebuildPanel(h)
 }
 
 // wallpaperUp leaves the current directory, stopping at a library root.
