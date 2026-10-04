@@ -108,5 +108,5 @@ func socketPath(dir, connector string) string {
 }
 
 func terminalSocketPath(dir, connector string) string {
-	return filepath.Join(dir, "sysc-terminal-"+SanitizeConnector(connector)+".sock")
+	return filepath.Join(dir, "terminal-"+SanitizeConnector(connector)+".sock")
 }

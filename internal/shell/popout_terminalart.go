@@ -116,7 +116,11 @@ func artStatusText(h *PanelHost) string {
 	snap := h.wallpaperSnap
 	var parts []string
 	for _, connector := range wallpaperTargets(h) {
-		a := snap.Assignments[connector]
+		a, assigned := snap.Assignments[connector]
+		if !assigned {
+			parts = append(parts, connector+" \u00b7 nothing assigned")
+			continue
+		}
 		if a.Kind != wallpaper.KindEffect {
 			parts = append(parts, connector+" \u00b7 showing a wallpaper")
 			continue
@@ -192,10 +196,7 @@ func artBanners(h *PanelHost) []*ui.Node {
 		add(artNotInstalled)
 	}
 	add(h.wallpaperSnap.Err)
-	for _, connector := range h.wallpaperSnap.Connectors {
-		if h.wallpaperSnap.Assignments[connector].Kind != wallpaper.KindEffect {
-			continue
-		}
+	for _, connector := range wallpaperTargets(h) {
 		if rt := h.wallpaperSnap.Runtime[connector]; rt.Err != "" {
 			add(connector + ": " + rt.Err)
 		}

@@ -176,6 +176,37 @@ func TestTerminalArtTreeNeverSaysWallpaper(t *testing.T) {
 	}
 }
 
+func TestTerminalArtStatusReportsUnassignedOutput(t *testing.T) {
+	h := &PanelHost{
+		wallpaperOutput: "DP-1",
+		wallpaperSnap: wallpaper.Snapshot{
+			Connectors:  []string{"DP-1"},
+			Assignments: map[string]wallpaper.Assignment{},
+		},
+	}
+	if got, want := artStatusText(h), "DP-1 · nothing assigned"; got != want {
+		t.Fatalf("artStatusText() = %q, want %q", got, want)
+	}
+}
+
+func TestTerminalArtShowsApplyErrorAfterRollback(t *testing.T) {
+	h := &PanelHost{
+		wallpaperOutput: "DP-1",
+		wallpaperSnap: wallpaper.Snapshot{
+			Caps:        wallpaper.Capabilities{Terminal: true},
+			Connectors:  []string{"DP-1"},
+			Assignments: map[string]wallpaper.Assignment{"DP-1": {Kind: wallpaper.KindImage, Path: "/tmp/still.png"}},
+			Runtime:     map[string]wallpaper.Runtime{"DP-1": {State: wallpaper.StateStatic, Err: "sysc-terminal failed"}},
+		},
+	}
+	for _, banner := range artBanners(h) {
+		if banner.Text == "DP-1: sysc-terminal failed" {
+			return
+		}
+	}
+	t.Fatal("Terminal Art did not show the failed effect apply after restoring the still")
+}
+
 func TestTerminalArtCardsFromCatalog(t *testing.T) {
 	reg, _ := artRegistry(t, artWallpaperEngine{})
 	h := openArtPanel(t, reg)
