@@ -2,6 +2,7 @@ package wallpaper
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"slices"
 	"sync"
@@ -183,10 +184,11 @@ type Service struct {
 	stopWork context.CancelFunc
 
 	// store, lib, caps, and covered are touched only by the loop goroutine.
-	store   Store
-	lib     *Library
-	caps    Capabilities
-	covered map[string]string
+	store     Store
+	lib       *Library
+	caps      Capabilities
+	covered   map[string]string
+	restarted map[string]bool
 
 	mu   sync.Mutex
 	snap Snapshot
@@ -204,6 +206,7 @@ type Service struct {
 func NewService(cfg ServiceConfig) *Service {
 	s := &Service{
 		engine:      cfg.Engine,
+		restarted:   make(map[string]bool),
 		set:         cfg.Settings,
 		roots:       slices.Clone(cfg.Roots),
 		persistPath: cfg.PersistPath,
@@ -311,6 +314,9 @@ func (s *Service) Close() {
 
 func (s *Service) run() {
 	defer close(s.done)
+	// Reuse the process watchers; no IPC or extra goroutine is needed to check exits.
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-s.quit:
@@ -319,11 +325,38 @@ func (s *Service) run() {
 			s.handle(c)
 		case r := <-s.results:
 			s.finish(r)
+		case <-ticker.C:
+			s.supervise()
 		case <-s.thumbProgress():
 			// A preview landed on disk; the picker only picks it up on a
 			// snapshot, so publish one.
 			s.publish()
 		}
+	}
+}
+
+// supervise replays a committed assignment when its current owned child exits.
+func (s *Service) supervise() {
+	watcher, ok := s.engine.(interface{ OwnedExited(string, uint64) bool })
+	if !ok {
+		return
+	}
+	for _, connector := range s.store.Connectors() {
+		rt := s.store.Runtime(connector)
+		if rt.State == StateStarting || rt.State == StateError ||
+			(rt.Engine != EngineTerminal && rt.Engine != EngineGSlapper) ||
+			!watcher.OwnedExited(connector, s.store.gen[connector]) {
+			continue
+		}
+		// ponytail: one automatic restart per selection avoids crash loops;
+		// sustained recovery would need a backoff policy. Apply explicitly retries.
+		if s.restarted[connector] {
+			s.store.noteRuntimeErr(connector, errors.New("wallpaper: process exited again after automatic restart; apply to retry"))
+			s.publish()
+			continue
+		}
+		s.restarted[connector] = true
+		s.dispatch(s.store.Reconnect(connector))
 	}
 }
 
@@ -347,6 +380,11 @@ func (s *Service) enqueueThumbs() {
 func (s *Service) handle(c Command) {
 	switch c.Op {
 	case OpApply:
+		if c.Token == AllOutputs {
+			clear(s.restarted)
+		} else {
+			delete(s.restarted, c.Token)
+		}
 		jobs := s.store.Apply(c.Token, c.Path, c.Kind)
 		for i := range jobs {
 			jobs[i].Effect = c.Effect
@@ -360,9 +398,11 @@ func (s *Service) handle(c Command) {
 	case OpRestore:
 		s.restore(c.Token)
 	case OpConnect:
+		delete(s.restarted, c.Token)
 		s.dispatch(s.store.Reconnect(c.Token))
 		return
 	case OpDisconnect:
+		delete(s.restarted, c.Token)
 		generation := s.store.Disconnect(c.Token)
 		if s.engine != nil {
 			s.engine.AdvanceGeneration(c.Token, generation)

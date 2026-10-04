@@ -718,3 +718,42 @@ func TestServicePauseAllReachesEachPlayer(t *testing.T) {
 		t.Fatal("pause reached an output that was restored to a still")
 	}
 }
+
+func TestServiceRestartsExitedWallpaperOnce(t *testing.T) {
+	for _, kind := range []Kind{KindEffect, KindImage} {
+		t.Run(map[Kind]string{KindEffect: "effect", KindImage: "image"}[kind], func(t *testing.T) {
+			h := newEngineHarness(t)
+			h.eng.caps.Terminal = true
+			svc := newTestService(t, h.eng)
+			svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Kind: kind, Path: h.media("still.png"), Effect: "fire", Theme: "nord"})
+			awaitSnapshot(t, svc, func(s Snapshot) bool { return len(s.Assignments) == 1 && s.Runtime["DP-1"].State != StateStarting })
+			if kind == KindEffect {
+				svc.Enqueue(Command{Op: OpPause, Token: "DP-1"})
+				awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Runtime["DP-1"].State == StatePaused })
+			}
+			original := svc.Snapshot().Assignments["DP-1"]
+			h.mu.Lock()
+			proc := h.procs[0]
+			h.mu.Unlock()
+			_ = proc.Stop() // simulate an unexpected child exit after readiness
+			awaitSnapshot(t, svc, func(s Snapshot) bool {
+				return len(h.argvs()) == 2 && s.Runtime["DP-1"].State == original.DesiredPlayback
+			})
+			if got := svc.Snapshot().Assignments["DP-1"]; got != original {
+				t.Fatalf("restart changed assignment: got %+v, want %+v", got, original)
+			}
+			h.mu.Lock()
+			proc = h.procs[1]
+			h.mu.Unlock()
+			_ = proc.Stop()
+			awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Runtime["DP-1"].State == StateError })
+			if got := len(h.argvs()); got != 2 {
+				t.Fatalf("crash loop launched %d children, want 2", got)
+			}
+			svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Kind: kind, Path: original.Path, Effect: "fire", Theme: "nord"})
+			awaitSnapshot(t, svc, func(s Snapshot) bool {
+				return len(h.argvs()) == 3 && s.Runtime["DP-1"].State == original.DesiredPlayback
+			})
+		})
+	}
+}

@@ -203,6 +203,14 @@ func (e *gslapperEngine) ownedProcess(connector string) Process {
 	return e.owned[connector]
 }
 
+// OwnedExited checks only the process belonging to the requested generation.
+// Replacement, restore and disconnect invalidate older observations.
+func (e *gslapperEngine) OwnedExited(connector string, generation uint64) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return !e.closed && e.generations[connector] == generation && processExited(e.owned[connector])
+}
+
 func (e *gslapperEngine) lockConnector(connector string) func() {
 	e.mu.Lock()
 	if e.locks == nil {

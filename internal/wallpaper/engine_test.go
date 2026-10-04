@@ -1428,3 +1428,35 @@ func TestStillForExtractsVideoStillOnDemand(t *testing.T) {
 		t.Fatalf("failed extractor must degrade to no seed, got %q", got)
 	}
 }
+
+func TestOwnedExitedRejectsStaleGenerationAndStoppedOwnership(t *testing.T) {
+	h := newEngineHarness(t)
+	h.eng.caps.Terminal = true
+	defer h.eng.Close()
+	if _, err := h.eng.Apply(Job{Connector: "DP-1", Gen: 1, Kind: KindEffect, Effect: "fire", Theme: "nord"}, defaultSettings()); err != nil {
+		t.Fatal(err)
+	}
+	if h.eng.OwnedExited("DP-1", 1) {
+		t.Fatal("live process reported exited")
+	}
+	h.mu.Lock()
+	proc := h.procs[0]
+	h.mu.Unlock()
+	_ = proc.Stop()
+	if !waitProcess(h.eng.ownedProcess("DP-1"), time.Second) {
+		t.Fatal("child was not reaped")
+	}
+	if !h.eng.OwnedExited("DP-1", 1) {
+		t.Fatal("current exited process was missed")
+	}
+	h.eng.AdvanceGeneration("DP-1", 2)
+	if h.eng.OwnedExited("DP-1", 1) {
+		t.Fatal("stale generation reported exited")
+	}
+	if err := h.eng.Restore("DP-1", ""); err != nil {
+		t.Fatal(err)
+	}
+	if h.eng.OwnedExited("DP-1", 2) {
+		t.Fatal("restored output reported exited")
+	}
+}
