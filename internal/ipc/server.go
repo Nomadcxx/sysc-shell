@@ -30,6 +30,7 @@ var (
 		"launcher":       "",
 		"notifications":  "",
 		"wallpaper":      "",
+		"terminal-art":   "",
 		"audio":          "",
 		"control-center": "",
 		"network":        "",

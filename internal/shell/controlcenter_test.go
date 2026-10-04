@@ -472,10 +472,10 @@ func TestHomeWeatherSummaryFollowsNightAndFailureStates(t *testing.T) {
 func TestControlCentreHomeQuickAccessControlsAreSeparated(t *testing.T) {
 	h := &PanelHost{id: PanelControlCenter, section: "home", theme: DefaultTheme()}
 	quick := ccHome(&Registry{}, h).Children[1]
-	if quick.Kind != ui.KindRow || quick.Gap != theme.MarginM || len(quick.Children) != 2 {
-		t.Fatalf("quick access = %+v, want two controls in a MarginM-gap row", quick)
+	if quick.Kind != ui.KindRow || quick.Gap != theme.MarginM || len(quick.Children) != 3 {
+		t.Fatalf("quick access = %+v, want three controls in a MarginM-gap row", quick)
 	}
-	for _, name := range []string{"Caffeine", "Wallpaper"} {
+	for _, name := range []string{"Caffeine", "Wallpaper", "Terminal Art"} {
 		n := findByName(quick, name)
 		if n == nil || n.Kind != ui.KindButton || n.Shape != ui.ShapeStadium || !n.Focusable {
 			t.Errorf("%s = %+v, want independent capsule button", name, n)
@@ -783,6 +783,70 @@ func TestHomeWallpaperControlOpensTheExistingPanel(t *testing.T) {
 	r.mu.Unlock()
 	if controlOpen || !wallpaperOpen {
 		t.Fatalf("after Wallpaper: control open=%v wallpaper open=%v", controlOpen, wallpaperOpen)
+	}
+}
+
+func TestHomeTerminalArtControlOpensItsPanel(t *testing.T) {
+	r := newPanelRegistry(t)
+	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	h := r.panelHosts[PanelControlCenter]
+	n := findByName(h.root, "Terminal Art")
+	if n == nil || n.Action != "cc:terminal-art" {
+		r.mu.Unlock()
+		t.Fatalf("Terminal Art control = %+v", n)
+	}
+	if !h.activateControlCentre(r, n) {
+		r.mu.Unlock()
+		t.Fatal("Terminal Art control was not handled")
+	}
+	_, controlOpen := r.panelHosts[PanelControlCenter]
+	_, artOpen := r.panelHosts[PanelTerminalArt]
+	_, wallpaperOpen := r.panelHosts[PanelWallpaper]
+	r.mu.Unlock()
+	if controlOpen || !artOpen || wallpaperOpen {
+		t.Fatalf("after Terminal Art: control=%v art=%v wallpaper=%v", controlOpen, artOpen, wallpaperOpen)
+	}
+}
+
+// The quick row holds three stadium buttons. The idle-held list used to share
+// the row as a fourth child and ran past the body; it now rides on the
+// Caffeine button's tooltip, because the page height is fixed.
+func TestHomeQuickRowFitsThreeButtons(t *testing.T) {
+	r := newPanelRegistry(t)
+	r.SetExternalInhibitors([]services.ScreenSaverInhibitor{{App: "mpv", Cookie: 1}})
+	if err := r.OpenPanel(PanelControlCenter, 7, Trigger{}); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	h := r.panelHosts[PanelControlCenter]
+	caffeine := findByName(h.root, "Caffeine")
+	if caffeine == nil {
+		t.Fatal("no Caffeine control")
+	}
+	var row *ui.Node
+	walkNodes(h.root, func(n *ui.Node) {
+		for _, c := range n.Children {
+			if c == caffeine {
+				row = n
+			}
+		}
+	})
+	if row == nil || len(row.Children) != 3 {
+		t.Fatalf("quick row = %+v, want exactly three buttons", row)
+	}
+	width := 2 * theme.MarginM
+	for _, c := range row.Children {
+		width += c.Width
+	}
+	if body := ccBodyWidth(h); width > body {
+		t.Fatalf("quick row is %d wide, body is %d", width, body)
+	}
+	if !strings.Contains(caffeine.Tooltip, "Idle held: mpv") {
+		t.Fatalf("Caffeine tooltip = %q, want the idle-held list", caffeine.Tooltip)
 	}
 }
 

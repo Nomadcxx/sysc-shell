@@ -204,18 +204,19 @@ func ccHome(r *Registry, h *PanelHost) *ui.Node {
 	}})
 	identityCard.Height = ccIdentityCardH
 
-	quickWidth := max((ccBodyWidth(h)-theme.MarginM)/2, 0)
+	quickWidth := max((ccBodyWidth(h)-2*theme.MarginM)/3, 0)
 	tileW := ccTileW
-	togglePill := &ui.Node{Kind: ui.KindRow, Height: ccTogglePillH, Gap: theme.MarginM, Children: []*ui.Node{
-		ccQuickAccessButton(quickWidth, "coffee", "Caffeine", "cc:caffeine", caffeine),
-		ccQuickAccessButton(quickWidth, "wallpaper", "Wallpaper", "cc:wallpaper", false),
-	}}
+	caffeineButton := ccQuickAccessButton(quickWidth, "coffee", "Caffeine", "cc:caffeine", caffeine)
+	// The page height is fixed, so the idle-held list rides on the tooltip
+	// rather than taking a row of its own or overflowing this one.
 	if len(holding) > 0 {
-		togglePill.Children = append(togglePill.Children, &ui.Node{
-			Kind: ui.KindText, Text: "Idle held: " + strings.Join(holding, ", "),
-			TextRole: theme.RoleCaption,
-		})
+		caffeineButton.Tooltip = "Idle held: " + strings.Join(holding, ", ")
 	}
+	togglePill := &ui.Node{Kind: ui.KindRow, Height: ccTogglePillH, Gap: theme.MarginM, Children: []*ui.Node{
+		caffeineButton,
+		ccQuickAccessButton(quickWidth, "wallpaper", "Wallpaper", "cc:wallpaper", false),
+		ccQuickAccessButton(quickWidth, "terminal", "Terminal Art", "cc:terminal-art", false),
+	}}
 
 	weatherSummary, weatherTone := ccWeatherSummary(reading)
 	clockWeather := monitorCard(m, []*ui.Node{

@@ -16,6 +16,7 @@ type fakeEngine struct {
 	mu         sync.Mutex
 	applied    []Job
 	restored   []string
+	stills     []string
 	paused     map[string]bool
 	closeCalls int
 
@@ -53,7 +54,7 @@ func (f *fakeEngine) Apply(job Job, _ Settings) (string, error) {
 	return f.preview[job.Path], nil
 }
 
-func (f *fakeEngine) Restore(connector, _ string) error {
+func (f *fakeEngine) Restore(connector, still string) error {
 	f.mu.Lock()
 	gate := f.restoreGate[connector]
 	f.mu.Unlock()
@@ -63,6 +64,7 @@ func (f *fakeEngine) Restore(connector, _ string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.restored = append(f.restored, connector)
+	f.stills = append(f.stills, still)
 	return nil
 }
 
@@ -478,6 +480,43 @@ func TestEngineForNamesTheEngineAnApplyWillUse(t *testing.T) {
 	}
 }
 
+func TestEngineForEffectComesBeforeGSlapper(t *testing.T) {
+	both := Capabilities{GSlapper: true, Terminal: true, Statics: []string{"awww"}}
+	if got := both.EngineFor(KindEffect); got != EngineTerminal {
+		t.Errorf("effect with both engines = %q, want %q", got, EngineTerminal)
+	}
+	if got := both.EngineFor(KindVideo); got != EngineGSlapper {
+		t.Errorf("video with gslapper = %q, want %q", got, EngineGSlapper)
+	}
+	if got := both.EngineFor(KindImage); got != EngineGSlapper {
+		t.Errorf("image with gslapper = %q, want %q", got, EngineGSlapper)
+	}
+	gslapperOnly := Capabilities{GSlapper: true, Statics: []string{"awww"}}
+	if got := gslapperOnly.EngineFor(KindEffect); got != "" {
+		t.Errorf("effect without terminal = %q, want none", got)
+	}
+	termOnly := Capabilities{Terminal: true, Statics: []string{"awww"}}
+	if got := termOnly.EngineFor(KindEffect); got != EngineTerminal {
+		t.Errorf("effect without gslapper = %q, want %q", got, EngineTerminal)
+	}
+}
+
+func TestServicePauseWorksForEffect(t *testing.T) {
+	engine := newFakeEngine()
+	engine.caps.Terminal = true
+	svc := newTestService(t, engine)
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Kind: KindEffect, Effect: "fire", Theme: "nord"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Kind == KindEffect })
+	svc.Enqueue(Command{Op: OpPause, Token: "DP-1"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Runtime["DP-1"].State == StatePaused })
+	engine.mu.Lock()
+	paused := engine.paused["DP-1"]
+	engine.mu.Unlock()
+	if !paused {
+		t.Fatal("KindEffect pause did not reach the engine")
+	}
+}
+
 func TestServiceReconnectWaitsForDisconnectCleanup(t *testing.T) {
 	engine := newFakeEngine()
 	svc := newTestService(t, engine)
@@ -494,5 +533,46 @@ func TestServiceReconnectWaitsForDisconnectCleanup(t *testing.T) {
 	time.Sleep(30 * time.Millisecond)
 	if len(engine.appliedPaths()) != 1 {
 		t.Fatal("reconnect applied before disconnect cleanup finished")
+	}
+}
+
+func TestRestoreEffectReturnsToPriorStill(t *testing.T) {
+	engine := newFakeEngine()
+	engine.caps.Terminal = true
+	svc := newTestService(t, engine)
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: "/w/a.png", Kind: KindImage})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Path == "/w/a.png" })
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Kind: KindEffect, Effect: "fire", Theme: "nord"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Assignments["DP-1"].Kind == KindEffect })
+	svc.Enqueue(Command{Op: OpRestore, Token: "DP-1"})
+	awaitSnapshot(t, svc, func(Snapshot) bool {
+		engine.mu.Lock()
+		defer engine.mu.Unlock()
+		return len(engine.stills) > 0
+	})
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if got := engine.stills[len(engine.stills)-1]; got != "/w/a.png" {
+		t.Fatalf("Restore got still %q, want the image the effect replaced", got)
+	}
+}
+
+func TestServicePauseAllReachesEachPlayer(t *testing.T) {
+	engine := newFakeEngine()
+	svc := newTestService(t, engine)
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-1", Path: "/w/a.mp4", Kind: KindVideo})
+	svc.Enqueue(Command{Op: OpApply, Token: "DP-3", Path: "/w/b.mp4", Kind: KindVideo})
+	awaitSnapshot(t, svc, func(s Snapshot) bool {
+		return s.Runtime["DP-1"].State == StatePlaying && s.Runtime["DP-3"].State == StatePlaying
+	})
+	svc.Enqueue(Command{Op: OpRestore, Token: "DP-3"})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Runtime["DP-3"].State == StateStatic })
+
+	svc.Enqueue(Command{Op: OpPause, Token: AllOutputs})
+	awaitSnapshot(t, svc, func(s Snapshot) bool { return s.Runtime["DP-1"].State == StatePaused })
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if _, touched := engine.paused["DP-3"]; touched {
+		t.Fatal("pause reached an output that was restored to a still")
 	}
 }

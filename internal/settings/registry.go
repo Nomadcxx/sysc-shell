@@ -525,6 +525,19 @@ func DefaultFor(cfg config.Config, opts ...Option) *Registry {
 			Get:      func(c config.Config) string { return c.Wallpaper.Hidden },
 			Set:      setEnum("wallpaper.hidden", wallpaperHidden, func(c *config.Config, v string) { c.Wallpaper.Hidden = v }),
 		},
+		{
+			Path: "terminal-art.palette", Label: "Default palette", Section: "Terminal Art", Group: "Effects",
+			Describe: "The sysc-Go palette Terminal Art starts on.",
+			Kind:     KindString,
+			Get:      func(c config.Config) string { return c.TerminalArt.Palette },
+			Set: write(func(c *config.Config, v string) error {
+				if !config.ValidPaletteName(v) {
+					return fmt.Errorf("settings: terminal-art.palette: %q is not a palette name", v)
+				}
+				c.TerminalArt.Palette = v
+				return nil
+			}),
+		},
 	}}
 	r.addWidgetEntries(cfg)
 	r.addTemplateEntries()
@@ -630,7 +643,7 @@ func SectionClusters() []Cluster {
 		// Captions name the group, never one of its items (owner decision,
 		// 2026-10-01): "Bar" over Bar and "Panels" over Panels read as
 		// duplicates, and Plugins is not a panel.
-		{"Look", []string{"Appearance", "Palettes", "Templates", "Wallpaper"}},
+		{"Look", []string{"Appearance", "Palettes", "Templates", "Wallpaper", "Terminal Art"}},
 		{"Shell", []string{"Bar", "Widgets", "Tray"}},
 		{"Surfaces", []string{"Panels", "Monitor", "Weather"}},
 		{"Extensions", []string{"Plugins"}},

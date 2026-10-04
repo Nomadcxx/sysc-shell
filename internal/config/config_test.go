@@ -1389,3 +1389,25 @@ func TestApplyIdleLock(t *testing.T) {
 		t.Fatal("want error on non-duration")
 	}
 }
+
+func TestTerminalArtPaletteRoundTrips(t *testing.T) {
+	cfg := Default()
+	cfg.TerminalArt.Palette = "dracula"
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Write(path, cfg); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	back, err := Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if back.TerminalArt.Palette != "dracula" {
+		t.Fatalf("palette = %q, want dracula", back.TerminalArt.Palette)
+	}
+	if bare, err := Parse([]byte(`{}`)); err != nil || bare.TerminalArt.Palette != "" {
+		t.Fatalf("missing key: palette %q, err %v", bare.TerminalArt.Palette, err)
+	}
+	if _, err := Parse([]byte(`{"terminal-art":{"palette":"../x"}}`)); err == nil {
+		t.Fatal("a palette name with a path in it loaded")
+	}
+}
