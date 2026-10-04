@@ -510,8 +510,8 @@ func (s *Service) restore(token string) {
 }
 
 // stillFor is the image Restore hands to the static fallback: the image
-// itself, or the extracted still for a video. Empty leaves the output blank,
-// which is the design's one intentional exception to gSlapper-first (D16).
+// itself, or the saved still for a video or effect. Empty leaves the output
+// blank, which is the design's one intentional exception to gSlapper-first (D16).
 func stillFor(a Assignment) string {
 	if a.Kind == KindImage {
 		return a.Path

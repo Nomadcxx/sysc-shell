@@ -554,7 +554,7 @@ func ccPower(r *Registry, h *PanelHost) *ui.Node {
 	}
 	battery := ccPowerBattery(m, snap, errLabel)
 	profiles := ccPowerProfiles(m, h)
-	actions := ccSessionActions(m, locker)
+	actions := ccSessionActions(m, locker, r.lockActionLabel())
 	return &ui.Node{Kind: ui.KindColumn, Height: ccPageH, Gap: theme.MarginM,
 		Children: []*ui.Node{battery, profiles, actions}}
 }
@@ -615,9 +615,9 @@ func ccPowerProfiles(m theme.Metrics, h *PanelHost) *ui.Node {
 	return card
 }
 
-func ccSessionActions(m theme.Metrics, locker string) *ui.Node {
+func ccSessionActions(m theme.Metrics, locker, lockLabel string) *ui.Node {
 	actions := []struct{ name, action, icon string }{
-		{"Lock", "session-lock", "lock"},
+		{lockLabel, "session-lock", "lock"},
 		{"Log out", "session-logout", "logout"},
 		{"Suspend", "session-suspend", "bedtime"},
 		{"Screen off", "session-display-off", "visibility_off"},

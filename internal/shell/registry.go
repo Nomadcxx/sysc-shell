@@ -172,6 +172,11 @@ type Registry struct {
 	networkLease     *services.Lease
 	// runArgv launches a session action. Tests replace it per Registry.
 	runArgv func([]string) error
+	// locker tracks the session-lock process; lockerSpawn is the test seam.
+	locker         *lockerManager
+	lockerSpawn    lockerSpawnFn
+	lockerRunning  bool // state cache for lock-held readers; guarded by mu
+	lockerAcquired bool
 	// lookPath finds a binary on PATH. Tests replace it per Registry.
 	lookPath func(string) (string, error)
 	// animClock is the clock a panel animator samples. Tests freeze it to
@@ -490,6 +495,8 @@ func (r *Registry) pushIdleInputsLocked() {
 		BlankBattery:   r.cfg.Idle.BlankBattery,
 		SuspendAc:      r.cfg.Idle.SuspendAc,
 		SuspendBattery: r.cfg.Idle.SuspendBattery,
+		LockAc:         r.cfg.Idle.Lock,
+		LockBattery:    r.cfg.Idle.Lock,
 		MediaExempt:    r.cfg.Idle.MediaExempt,
 	})
 	r.idleSvc.SetMediaPlaying(r.mediaState.Status == services.PlaybackPlaying)

@@ -1401,3 +1401,15 @@ func TestTerminalArtPaletteRoundTrips(t *testing.T) {
 		t.Fatal("a palette name with a path in it loaded")
 	}
 }
+
+func TestApplyIdleLock(t *testing.T) {
+	ok, bad := "10m", "nope"
+	base := Default().Idle
+	got, err := applyIdle(base, wireIdle{Lock: &ok})
+	if err != nil || got.Lock != 10*time.Minute {
+		t.Fatalf("lock idle parse: %v %+v", got.Lock, err)
+	}
+	if _, err := applyIdle(base, wireIdle{Lock: &bad}); err == nil {
+		t.Fatal("want error on non-duration")
+	}
+}

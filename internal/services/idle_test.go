@@ -21,6 +21,9 @@ func fmtDecisions(ds []IdleDecision) string {
 		if d.Behavior == IdleSuspend {
 			name = "suspend"
 		}
+		if d.Behavior == IdleLock {
+			name = "lock"
+		}
 		switch {
 		case d.Arm != nil && *d.Arm == 0:
 			parts = append(parts, name+":disarm")
@@ -32,6 +35,8 @@ func fmtDecisions(ds []IdleDecision) string {
 			parts = append(parts, name+":unblank")
 		case d.Action == IdleActionSuspend:
 			parts = append(parts, name+":suspend")
+		case d.Action == IdleActionLock:
+			parts = append(parts, name+":lock")
 		}
 	}
 	return strings.Join(parts, ",")
@@ -360,4 +365,23 @@ func TestOnACPower(t *testing.T) {
 			t.Errorf("%s: onACPower = %v, want %v", tc.name, got, tc.want)
 		}
 	}
+}
+
+func TestIdleMachineLock(t *testing.T) {
+	set := IdleSettings{LockAc: 10 * time.Minute, MediaExempt: true}
+	runIdleSteps(t, true, set, []idleStep{
+		{"arm lock", func(m *idleMachine) []IdleDecision { return m.recompute() }, "lock:arm=10m0s"},
+		{"lock idle", func(m *idleMachine) []IdleDecision { return m.idleEvent(IdleLock, true) }, "lock:lock"},
+		{"lock resume no action", func(m *idleMachine) []IdleDecision { return m.idleEvent(IdleLock, false) }, "-"},
+		{"inhibit disarms", func(m *idleMachine) []IdleDecision { return m.setInhibit(true) }, "lock:disarm"},
+		{"reinhibit rearms", func(m *idleMachine) []IdleDecision { return m.setInhibit(false) }, "lock:arm=10m0s"},
+		{"media disarms", func(m *idleMachine) []IdleDecision { return m.setMedia(true) }, "lock:disarm"},
+	})
+	runIdleSteps(t, true, IdleSettings{}, []idleStep{
+		{"zero disables", func(m *idleMachine) []IdleDecision { return m.recompute() }, "-"},
+	})
+	// battery-specific timeout
+	runIdleSteps(t, false, IdleSettings{LockBattery: 5 * time.Minute}, []idleStep{
+		{"arm lock battery", func(m *idleMachine) []IdleDecision { return m.recompute() }, "lock:arm=5m0s"},
+	})
 }

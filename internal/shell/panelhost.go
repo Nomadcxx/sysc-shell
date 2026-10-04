@@ -3845,6 +3845,11 @@ func (r *Registry) publishSurface(global uint32, surfaceID string) {
 func (r *Registry) runSessionAction(h *PanelHost, action string) {
 	argv := sessionArgv(action, r.cfg.Session.Locker)
 	run := r.runArgv
+	if action == "session-lock" {
+		// Tracked spawn: handshake, wallpaper pause, respawn policy
+		// (docs/plans/2026-10-03-sysc-lock.md T16).
+		run = func([]string) error { return r.LockTracked() }
+	}
 	// loginctl actions run under a 5-second timeout; holding Registry.mu
 	// across them stalls every relay and the Wayland owner (GH #5). Launch
 	// off the lock and commit the panel result after re-acquiring it, the
